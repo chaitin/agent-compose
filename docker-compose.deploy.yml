@@ -1,22 +1,24 @@
 services:
 
   agent-compose:
-    image: agent-compose:latest
+    image: ${AGENT_COMPOSE_IMAGE:-ghcr.io/chaitin/agent-compose:latest}
     container_name: agent-compose
     restart: always
     privileged: true
     command: ["/app/agent-compose", "daemon"]
     devices:
       - /dev/kvm:/dev/kvm
-    ports:
-      - "7410:7410"
     environment:
       DATA_ROOT: /data
       SESSION_ROOT: /data/sessions
       DOCKER_HOST_SESSION_ROOT: ${DOCKER_HOST_SESSION_ROOT:-$PWD/data/agent-compose/sessions}
       HTTP_LISTEN: 0.0.0.0:7410
+      AUTH_USERNAME: ${AUTH_USERNAME:-}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-}
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      AUTH_SESSION_TTL: ${AUTH_SESSION_TTL:-24h}
       RUNTIME_DRIVER: docker
-      DEFAULT_IMAGE: ${DEFAULT_IMAGE:-debian:bookworm-slim}
+      DEFAULT_IMAGE: ${DEFAULT_IMAGE:-ghcr.io/chaitin/agent-compose-guest:latest}
       GUEST_WORKSPACE: /workspace
       GUEST_STATE_ROOT: /data/state
       GUEST_RUNTIME_ROOT: /data/runtime
@@ -35,12 +37,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   agent-compose-frontend:
-    build:
-      context: .
-      dockerfile: nginx/Dockerfile
-      args:
-        REGISTRY_MIRROR: ${REGISTRY_MIRROR:-docker.io}
-    image: agent-compose-frontend:latest
+    image: ${AGENT_COMPOSE_FRONTEND_IMAGE:-ghcr.io/chaitin/agent-compose-frontend:latest}
     container_name: agent-compose-frontend
     restart: always
     depends_on:
@@ -48,7 +45,6 @@ services:
     environment:
       JUPYTER_PROXY_BASE: ${JUPYTER_PROXY_BASE:-/jupyter}
     ports:
-      - 8000:8000/tcp
+      - "${AGENT_COMPOSE_HTTP_PORT:-80}:8000/tcp"
     volumes:
-      - ./nginx_log:/var/log/nginx
-      - ./data:/data
+      - ./nginx/nginx.conf:/etc/nginx/templates/agent-compose.conf.template:ro
