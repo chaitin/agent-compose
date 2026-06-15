@@ -270,10 +270,29 @@ textarea {
   gap: 12px;
 }
 
+.auth-form {
+  width: 100%;
+  display: grid;
+  gap: 12px;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  text-align: left;
+}
+
+.auth-form input {
+  min-height: 40px;
+  color: var(--text);
+}
+
 .auth-button {
   width: 100%;
-  min-height: 44px;
-  max-width: 280px;
+  min-height: 42px;
   font-size: var(--font-size-base);
 }
 

@@ -27,3 +27,23 @@ export async function getAuthStatus(): Promise<AuthStatus> {
     expiresAt: response.expiresAt ?? '',
   };
 }
+
+export async function loginWithPassword(username: string, password: string): Promise<AuthStatus> {
+  const response = await apiFetchJson<{
+    enabled?: boolean;
+    loggedIn?: boolean;
+    oauthEnabled?: boolean;
+    username?: string;
+    expiresAt?: string;
+  }>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  });
+  return {
+    enabled: Boolean(response.enabled),
+    loggedIn: Boolean(response.loggedIn),
+    oauthEnabled: Boolean(response.oauthEnabled),
+    username: response.username ?? '',
+    expiresAt: response.expiresAt ?? '',
+  };
+}
