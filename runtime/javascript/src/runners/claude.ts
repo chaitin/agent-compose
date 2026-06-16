@@ -32,6 +32,17 @@ function claudeExecutable(): string | undefined {
   return existsSync("/usr/bin/claude") ? "/usr/bin/claude" : undefined;
 }
 
+function claudeEnvironment(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, IS_SANDBOX: "1" };
+  if (!env.ANTHROPIC_API_KEY && env.LLM_API_KEY) {
+    env.ANTHROPIC_API_KEY = env.LLM_API_KEY;
+  }
+  if (!env.ANTHROPIC_BASE_URL && env.LLM_API_ENDPOINT) {
+    env.ANTHROPIC_BASE_URL = env.LLM_API_ENDPOINT;
+  }
+  return env;
+}
+
 export class ClaudeRunner {
   private readonly writer = new TranscriptWriter();
   private readonly pendingToolUses = new Map<string, PendingToolUse>();
@@ -42,7 +53,7 @@ export class ClaudeRunner {
     const executable = claudeExecutable();
     return {
       cwd: this.options.workspace,
-      env: { ...process.env, IS_SANDBOX: "1" },
+      env: claudeEnvironment(),
       ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
       additionalDirectories: uniqueDirectories([this.options.stateRoot, this.options.home, this.options.runtimeRoot]),
       includePartialMessages: true,

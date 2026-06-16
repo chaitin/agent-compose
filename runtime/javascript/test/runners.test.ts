@@ -140,6 +140,36 @@ describe("CodexRunner", () => {
 });
 
 describe("ClaudeRunner", () => {
+  it("bridges generic LLM settings into Claude SDK environment variables", async () => {
+    await withTempSession(async (root) => {
+      vi.stubEnv("LLM_API_KEY", "generic-key");
+      vi.stubEnv("LLM_API_ENDPOINT", "https://llm.example.invalid");
+      vi.stubEnv("ANTHROPIC_API_KEY", "");
+      vi.stubEnv("ANTHROPIC_BASE_URL", "");
+      const runner = new ClaudeRunner(runnerOptions(root));
+
+      const env = runner.queryOptions(null).env as NodeJS.ProcessEnv;
+
+      expect(env.ANTHROPIC_API_KEY).toBe("generic-key");
+      expect(env.ANTHROPIC_BASE_URL).toBe("https://llm.example.invalid");
+    });
+  });
+
+  it("keeps explicit Claude SDK environment variables over generic LLM settings", async () => {
+    await withTempSession(async (root) => {
+      vi.stubEnv("LLM_API_KEY", "generic-key");
+      vi.stubEnv("LLM_API_ENDPOINT", "https://llm.example.invalid");
+      vi.stubEnv("ANTHROPIC_API_KEY", "anthropic-key");
+      vi.stubEnv("ANTHROPIC_BASE_URL", "https://anthropic.example.invalid");
+      const runner = new ClaudeRunner(runnerOptions(root));
+
+      const env = runner.queryOptions(null).env as NodeJS.ProcessEnv;
+
+      expect(env.ANTHROPIC_API_KEY).toBe("anthropic-key");
+      expect(env.ANTHROPIC_BASE_URL).toBe("https://anthropic.example.invalid");
+    });
+  });
+
   it("passes explicit Claude executable paths and bypass permissions for non-root users", async () => {
     await withTempSession(async (root) => {
       vi.stubEnv("CLAUDE_CODE_EXECUTABLE", "/custom/bin/claude");
