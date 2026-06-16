@@ -599,6 +599,7 @@
             <option value="codex">codex</option>
             <option value="claude">claude</option>
             <option value="gemini">gemini</option>
+            <option value="deepseek">deepseek</option>
           </select>
         </label>
         <label class="form-item">

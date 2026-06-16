@@ -143,7 +143,8 @@ Top-level fields:
 
 Common agent fields:
 
-- `provider`, `model`, `system_prompt`: agent and LLM settings.
+- `provider`, `model`, `system_prompt`: agent and LLM settings. Supported guest
+  providers are `codex`, `claude`, `gemini`, and `deepseek`.
 - `image`: guest image reference.
 - `driver`: runtime driver override. Supported drivers are `boxlite`, `docker`,
   and `microsandbox`.
@@ -238,7 +239,8 @@ Important variables include:
 - `HTTP_BASIC_AUTH`: base64-encoded `username:password` for additional HTTP
   Basic authentication.
 - `LLM_API_ENDPOINT`, `LLM_API_KEY`, `OPENAI_API_KEY`, `LLM_MODEL`,
-  `LLM_TIMEOUT`: LLM client settings.
+  `LLM_TIMEOUT`: LLM client settings for the daemon `LLMService` only. These do
+  not inject API keys into guest agent runtimes.
 - `RUNTIME_DRIVER`: default runtime driver.
 - `DEFAULT_IMAGE`, `DOCKER_DEFAULT_IMAGE`, `MICROSANDBOX_DEFAULT_IMAGE`: guest
   image defaults.
@@ -254,6 +256,54 @@ Important variables include:
 - `GUEST_WORKSPACE`, `GUEST_STATE_ROOT`, `GUEST_RUNTIME_ROOT`,
   `GUEST_LOG_ROOT`, `JUPYTER_GUEST_PORT`: guest paths and Jupyter port.
 - `WEBHOOK_BODY_LIMIT_BYTES`, `WORKSPACE_UPLOAD_LIMIT_BYTES`: request limits.
+
+### Agent providers
+
+Guest agent sessions run provider CLIs or HTTP clients inside the guest
+container (`agent-compose-runtime-js`). API keys for Codex, Claude, Gemini, and
+DeepSeek must be supplied as session or global environment variables (for
+example through the UI: Settings -> Global environment variables), not only in
+the daemon `.env`.
+
+| Provider | Typical env vars | Notes |
+| --- | --- | --- |
+| `codex` | `OPENAI_API_KEY` or provider-specific keys in `assets/.codex/config.toml` | Uses Codex CLI/SDK in the guest image |
+| `claude` | `ANTHROPIC_API_KEY` | Uses Claude Code CLI in the guest image |
+| `gemini` | `GEMINI_API_KEY` | Uses Gemini CLI in the guest image |
+| `deepseek` | `DEEPSEEK_API_KEY` | HTTP API via `agent-compose-runtime-js`; no separate CLI |
+
+After changing guest runtime code or provider support, rebuild the guest image:
+
+```bash
+task image:agent-compose-guest
+```
+
+Create a new session (or resume one) so the updated image and environment
+variables are picked up.
+
+#### DeepSeek
+
+DeepSeek uses the OpenAI-compatible chat completions API from inside the guest
+runtime. Configure it in the UI or compose env, then set the agent provider to
+`deepseek`:
+
+```yaml
+agents:
+  assistant:
+    provider: deepseek
+    env:
+      DEEPSEEK_API_KEY:
+        value: ${DEEPSEEK_API_KEY}
+        secret: true
+```
+
+Optional guest environment variables:
+
+- `DEEPSEEK_MODEL`: defaults to `deepseek-v4-flash`
+- `DEEPSEEK_API_BASE`: defaults to `https://api.deepseek.com`
+
+DeepSeek is a chat API provider only: unlike Codex or Claude Code, it does not
+ship a full tool-using agent CLI in the guest image.
 
 ## Security Notes
 

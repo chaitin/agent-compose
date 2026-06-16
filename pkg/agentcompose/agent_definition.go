@@ -90,7 +90,7 @@ func normalizeAgentDefinition(item AgentDefinition, assignDefaults bool) (AgentD
 	if item.Provider == "" {
 		return AgentDefinition{}, fmt.Errorf("agent definition provider is required")
 	}
-	if item.Provider != "codex" && item.Provider != "claude" && item.Provider != "gemini" {
+	if item.Provider != "codex" && item.Provider != "claude" && item.Provider != "gemini" && item.Provider != "deepseek" {
 		return AgentDefinition{}, fmt.Errorf("agent definition provider %q is not supported", item.Provider)
 	}
 	if !isJSONObject(item.ConfigJSON) {

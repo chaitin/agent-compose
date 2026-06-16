@@ -848,6 +848,8 @@ func normalizeAgentKind(agent string) string {
 		return "claude"
 	case "gemini", "gemini-cli", "gemini_cli":
 		return "gemini"
+	case "deepseek":
+		return "deepseek"
 	default:
 		return agent
 	}

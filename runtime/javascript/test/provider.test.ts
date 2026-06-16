@@ -10,6 +10,7 @@ describe("provider normalization", () => {
     ["claude_code", "claude"],
     ["gemini-cli", "gemini"],
     ["gemini_cli", "gemini"],
+    ["deepseek", "deepseek"],
   ])("maps %j to %s", (input, expected) => {
     expect(normalizeProvider(input)).toBe(expected);
   });

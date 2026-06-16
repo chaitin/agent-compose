@@ -1415,7 +1415,7 @@ func loaderSecretEnvName(name string) bool {
 		return true
 	}
 	switch name {
-	case "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY", "LLM_API_KEY":
+	case "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY", "LLM_API_KEY":
 		return true
 	default:
 		return false

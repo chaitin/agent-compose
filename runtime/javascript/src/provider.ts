@@ -14,6 +14,8 @@ export function normalizeProvider(raw: unknown): Provider {
     case "gemini-cli":
     case "gemini_cli":
       return "gemini";
+    case "deepseek":
+      return "deepseek";
     default:
       throw new Error(`unsupported provider ${JSON.stringify(raw)}`);
   }

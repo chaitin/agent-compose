@@ -141,7 +141,7 @@ export async function createAgentDefinitionSession(input: {
 
 function normalizeAgentProvider(value: string): string {
   const provider = value.trim().toLowerCase();
-  if (provider === 'claude' || provider === 'gemini' || provider === 'codex') {
+  if (provider === 'claude' || provider === 'gemini' || provider === 'codex' || provider === 'deepseek') {
     return provider;
   }
   throw new Error(`不支持的智能体 Provider：${value || '-'}`);

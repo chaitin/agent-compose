@@ -6,6 +6,7 @@ export { normalizeProvider } from "./provider.js";
 export { runPromptCommand } from "./prompt.js";
 export { ClaudeRunner } from "./runners/claude.js";
 export { CodexRunner } from "./runners/codex.js";
+export { DeepSeekRunner } from "./runners/deepseek.js";
 export { GeminiRunner } from "./runners/gemini.js";
 export { readStoredSession, sessionStatePath, writeStoredSession } from "./session-state.js";
 export { appendDelta, TranscriptWriter } from "./transcript.js";

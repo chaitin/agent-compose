@@ -6,6 +6,7 @@ import { readMpiContext } from "./mpi.js";
 import { normalizeProvider } from "./provider.js";
 import { ClaudeRunner } from "./runners/claude.js";
 import { CodexRunner } from "./runners/codex.js";
+import { DeepSeekRunner } from "./runners/deepseek.js";
 import { GeminiRunner } from "./runners/gemini.js";
 import type { AgentResult, RuntimeJsonSchema } from "./types.js";
 
@@ -42,6 +43,9 @@ export async function runPromptCommand(commandOptions: PromptCommandOptions): Pr
   }
   if (provider === "claude") {
     return await new ClaudeRunner(options).runPrompt(promptText);
+  }
+  if (provider === "deepseek") {
+    return await new DeepSeekRunner(options).runPrompt(promptText);
   }
   return await new GeminiRunner(options).runPrompt(promptText);
 }

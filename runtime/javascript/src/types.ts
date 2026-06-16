@@ -1,4 +1,4 @@
-export type Provider = "codex" | "claude" | "gemini";
+export type Provider = "codex" | "claude" | "gemini" | "deepseek";
 export type RuntimeJsonSchema = Record<string, unknown>;
 
 export interface AgentResult {
