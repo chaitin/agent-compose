@@ -656,7 +656,7 @@ func projectAgentRecordsFromSpec(projectID string, revision int64, spec *compose
 func projectManagedAgentDefinitionsFromSpec(project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]AgentDefinition, error) {
 	agents := make([]AgentDefinition, 0, len(spec.Agents))
 	for _, agent := range spec.Agents {
-		record, err := projectManagedAgentDefinitionFromSpec(project, revision, agent)
+		record, err := projectManagedAgentDefinitionFromSpec(project, revision, spec.Workspace, agent)
 		if err != nil {
 			return nil, err
 		}
@@ -665,7 +665,7 @@ func projectManagedAgentDefinitionsFromSpec(project ProjectRecord, revision int6
 	return agents, nil
 }
 
-func projectManagedAgentDefinitionFromSpec(project ProjectRecord, revision int64, agent compose.NormalizedAgentSpec) (AgentDefinition, error) {
+func projectManagedAgentDefinitionFromSpec(project ProjectRecord, revision int64, projectWorkspace *compose.WorkspaceSpec, agent compose.NormalizedAgentSpec) (AgentDefinition, error) {
 	managedAgentID, err := StableManagedAgentID(project.ID, agent.Name)
 	if err != nil {
 		return AgentDefinition{}, err
@@ -673,6 +673,13 @@ func projectManagedAgentDefinitionFromSpec(project ProjectRecord, revision int64
 	driver := ""
 	if agent.Driver != nil {
 		driver = agent.Driver.Name
+	}
+	// Resolve workspace: agent-level takes precedence, fall back to project-level.
+	workspaceID := ""
+	if agent.Workspace != nil {
+		workspaceID = compose.StableWorkspaceID(agent.Workspace)
+	} else if projectWorkspace != nil {
+		workspaceID = compose.StableWorkspaceID(projectWorkspace)
 	}
 	return AgentDefinition{
 		ID:                     managedAgentID,
@@ -685,6 +692,7 @@ func projectManagedAgentDefinitionFromSpec(project ProjectRecord, revision int64
 		GuestImage:             agent.Image,
 		EnvItems:               sessionEnvItemsFromCompose(agent.Env),
 		ConfigJSON:             "{}",
+		WorkspaceID:            workspaceID,
 		ManagedProjectID:       project.ID,
 		ManagedProjectRevision: revision,
 		ManagedAgentName:       agent.Name,
