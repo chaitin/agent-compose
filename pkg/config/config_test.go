@@ -57,6 +57,7 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	t.Setenv("AGENT_COMPOSE_SOCKET", filepath.Join(root, "agent-compose.sock"))
 	t.Setenv("AGENT_COMPOSE_HOST", "https://agent-compose.example")
 	t.Setenv("LLM_API_ENDPOINT", "https://llm.example")
+	t.Setenv("LLM_API_PROTOCOL", "chat_completions")
 	t.Setenv("LLM_API_KEY", "llm-key")
 	t.Setenv("LLM_MODEL", "model-x")
 	t.Setenv("LLM_TIMEOUT", "7s")
@@ -110,7 +111,7 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	if config.AgentComposeSocket != filepath.Join(root, "agent-compose.sock") || config.AgentComposeHost != "https://agent-compose.example" {
 		t.Fatalf("daemon endpoint config = %q/%q", config.AgentComposeSocket, config.AgentComposeHost)
 	}
-	if config.LLMAPIEndpoint != "https://llm.example" || config.LLMAPIKey != "llm-key" || config.LLMModel != "model-x" {
+	if config.LLMAPIEndpoint != "https://llm.example" || config.LLMAPIProtocol != "chat_completions" || config.LLMAPIKey != "llm-key" || config.LLMModel != "model-x" {
 		t.Fatalf("llm config = %#v", config)
 	}
 	if config.LLMTimeout != 7*time.Second || config.AgentTimeout != 8*time.Second {

@@ -708,7 +708,9 @@ the same Zod schema. When `outputSchema` is set, `finalText` must be a JSON
 string, which the SDK parses into `result.json`; when unset, `result.json` is
 `null`.
 
-`runtime.llm(prompt, options?)` calls `LLMService.Generate`:
+`runtime.llm(prompt, options?)` calls `LLMService.Generate`. The daemon selects
+the HTTP protocol with `LLM_API_PROTOCOL` (`responses` by default, or
+`chat_completions` for OpenAI-compatible Chat Completions backends):
 
 | Field | Description |
 | --- | --- |

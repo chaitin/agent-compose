@@ -210,7 +210,9 @@ Error behavior:
 
 ### `runtime.llm(prompt, options?)`
 
-Calls the agent-compose LLM service.
+Calls the agent-compose LLM service. The daemon selects the HTTP protocol via
+`LLM_API_PROTOCOL` (`responses` by default, or `chat_completions` for
+OpenAI-compatible Chat Completions backends).
 
 ```ts
 const result = await runtime.llm("Summarize the workspace risk.", {

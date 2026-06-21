@@ -151,7 +151,7 @@ const reply = scheduler.agent(prompt, {
 }
 ```
 
-`scheduler.llm(...)` 调用服务端 LLM 配置：
+`scheduler.llm(...)` 调用 daemon 侧 LLM 配置。通过 daemon 环境变量或 UI global env 设置 `LLM_API_PROTOCOL=chat_completions`（别名 `chat`、`chat_completion`）可切换到 OpenAI 兼容 Chat Completions 后端；默认为 `responses`（OpenAI Responses API）。该路径仅用于单次文本生成，不会创建 workspace agent session。
 
 ```js
 const result = scheduler.llm(prompt, {

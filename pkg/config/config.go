@@ -59,6 +59,7 @@ type Config struct {
 	OAuthUserInfoURL          string
 	OAuthClientAuthMethod     string
 	LLMAPIEndpoint            string
+	LLMAPIProtocol            string
 	LLMAPIKey                 string
 	LLMModel                  string
 	LLMTimeout                time.Duration
@@ -142,6 +143,7 @@ func NewConfig(di do.Injector) (*Config, error) {
 	}
 
 	llmAPIEndpoint := os.Getenv("LLM_API_ENDPOINT")
+	llmAPIProtocol := strings.ToLower(strings.TrimSpace(os.Getenv("LLM_API_PROTOCOL")))
 	llmAPIKey := getenvFirst("LLM_API_KEY", "OPENAI_API_KEY")
 
 	llmModel := os.Getenv("LLM_MODEL")
@@ -444,6 +446,7 @@ func NewConfig(di do.Injector) (*Config, error) {
 		OAuthUserInfoURL:          oauthUserInfoURL,
 		OAuthClientAuthMethod:     oauthClientAuthMethod,
 		LLMAPIEndpoint:            llmAPIEndpoint,
+		LLMAPIProtocol:            llmAPIProtocol,
 		LLMAPIKey:                 llmAPIKey,
 		LLMModel:                  llmModel,
 		LLMTimeout:                llmTimeout,

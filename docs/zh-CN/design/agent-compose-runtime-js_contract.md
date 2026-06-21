@@ -594,7 +594,9 @@ type RuntimeCommandResult = {
 
 `runtime.agent` 支持 `outputSchema`。它接受 Zod schema 或 plain JSON Schema object；Zod schema 会转换成 JSON Schema 写入 `--output-schema-file`，并在返回后用同一个 Zod schema 校验 `result.json`。设置 `outputSchema` 时，`finalText` 必须是 JSON 字符串，SDK 会解析到 `result.json`；未设置时 `result.json` 为 `null`。
 
-`runtime.llm(prompt, options?)` 调用 `LLMService.Generate`：
+`runtime.llm(prompt, options?)` 调用 `LLMService.Generate`。daemon 通过
+`LLM_API_PROTOCOL` 选择 HTTP 协议（默认 `responses`，或
+`chat_completions` 对接 OpenAI 兼容 Chat Completions 后端）：
 
 | 字段 | 说明 |
 |---|---|

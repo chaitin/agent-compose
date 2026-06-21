@@ -613,6 +613,25 @@ Main JavaScript APIs:
 a `scheduler.z` schema generates JSON Schema and validates the returned value
 locally. Passing plain JSON Schema performs JSON parsing.
 
+### Daemon LLM client
+
+`scheduler.llm`, `LLMService.Generate`, and SDK `runtime.llm` delegate to
+`LLMClient` in the Go daemon. Configuration is daemon-global:
+
+- `LLM_API_ENDPOINT`, `LLM_API_KEY`, `OPENAI_API_KEY`, `LLM_MODEL`,
+  `LLM_TIMEOUT`
+- `LLM_API_PROTOCOL`: `responses` (default, OpenAI Responses API) or
+  `chat_completions` (OpenAI-compatible Chat Completions; aliases: `chat`,
+  `chat_completion`)
+
+Global env from the UI/database overrides process environment for these keys.
+The `chat_completions` protocol is for unary text generation only. It does not
+create workspace-capable agent sessions or grant file, command, or MCP tool
+access.
+
+Guest agent providers (`codex`, `claude`, `gemini`) remain separate CLI runners
+inside guest containers with their own API keys and session state.
+
 The loader also exposes a unary RPC bridge for v1 `SessionService`:
 
 - `scheduler.session.createSession(request)`

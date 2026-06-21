@@ -143,7 +143,10 @@ Top-level fields:
 
 Common agent fields:
 
-- `provider`, `model`, `system_prompt`: agent and LLM settings.
+- `provider`, `model`, `system_prompt`: guest agent settings (`provider` selects
+  the guest CLI runner; `model` is passed to that agent runtime). Supported guest
+  providers are `codex`, `claude`, and `gemini`. Daemon-side LLM calls
+  (`LLMService`, `scheduler.llm`) use `LLM_MODEL` instead.
 - `image`: guest image reference.
 - `driver`: runtime driver override. Supported drivers are `boxlite`, `docker`,
   and `microsandbox`.
@@ -237,8 +240,11 @@ Important variables include:
 - `OAUTH_*`: OAuth login settings.
 - `HTTP_BASIC_AUTH`: base64-encoded `username:password` for additional HTTP
   Basic authentication.
-- `LLM_API_ENDPOINT`, `LLM_API_KEY`, `OPENAI_API_KEY`, `LLM_MODEL`,
-  `LLM_TIMEOUT`: LLM client settings.
+- `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, `LLM_API_KEY`, `OPENAI_API_KEY`,
+  `LLM_MODEL`, `LLM_TIMEOUT`: LLM client settings for the daemon `LLMService`
+  only. These do not inject API keys into guest agent runtimes. Set
+  `LLM_API_PROTOCOL=chat_completions` for OpenAI-compatible chat completions
+  backends (aliases: `chat`, `chat_completion`).
 - `RUNTIME_DRIVER`: default runtime driver.
 - `DEFAULT_IMAGE`, `DOCKER_DEFAULT_IMAGE`, `MICROSANDBOX_DEFAULT_IMAGE`: guest
   image defaults.
@@ -254,6 +260,47 @@ Important variables include:
 - `GUEST_WORKSPACE`, `GUEST_STATE_ROOT`, `GUEST_RUNTIME_ROOT`,
   `GUEST_LOG_ROOT`, `JUPYTER_GUEST_PORT`: guest paths and Jupyter port.
 - `WEBHOOK_BODY_LIMIT_BYTES`, `WORKSPACE_UPLOAD_LIMIT_BYTES`: request limits.
+
+### Agent providers
+
+Guest agent sessions run provider CLIs inside the guest container
+(`agent-compose-runtime-js`). API keys for Codex, Claude, and Gemini must be
+supplied as session or global environment variables (for example through the UI:
+Settings -> Global environment variables), not only in the daemon `.env`.
+
+| Provider | Typical env vars | Notes |
+| --- | --- | --- |
+| `codex` | `OPENAI_API_KEY` or provider-specific keys in `assets/.codex/config.toml` | Uses Codex CLI/SDK in the guest image |
+| `claude` | `ANTHROPIC_API_KEY` | Uses Claude Code CLI in the guest image |
+| `gemini` | `GEMINI_API_KEY` | Uses Gemini CLI in the guest image |
+
+After changing guest runtime code or provider support, rebuild the guest image:
+
+```bash
+task image:agent-compose-guest
+```
+
+Create a new session (or resume one) so the updated image and environment
+variables are picked up.
+
+### Chat Completions LLM Protocol
+
+Set `LLM_API_PROTOCOL=chat_completions` to use an OpenAI-compatible Chat
+Completions backend for daemon-side unary text generation. This path is used by
+`LLMService.Generate` and loader `scheduler.llm` calls.
+
+```env
+LLM_API_PROTOCOL=chat_completions
+LLM_API_ENDPOINT=https://api.example.com
+LLM_API_KEY=...
+LLM_MODEL=your-model
+```
+
+Compatible backends include DeepSeek, local OpenAI-compatible proxies
+(vLLM/Ollama), and similar Chat Completions endpoints.
+
+This does not create a workspace-capable agent session and does not grant file,
+command, or MCP tool access.
 
 ## Security Notes
 
