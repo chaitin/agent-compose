@@ -84,6 +84,44 @@ func TestServiceSessionKernelAgentAndLLMAPIs(t *testing.T) {
 	testServiceSessionKernelAgentAndLLMAPIs(t)
 }
 
+func TestServiceGenerateLLMChatCompletionsProtocol(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("LLM_API_ENDPOINT", "")
+
+	var gotBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody = readRequestBodyForTest(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-svc","model":"model-a","choices":[{"message":{"role":"assistant","content":"llm text"},"finish_reason":"stop"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	service := &Service{
+		llm: &LLMClient{
+			config: &appconfig.Config{
+				LLMAPIEndpoint: server.URL,
+				LLMAPIProtocol: llmAPIProtocolChatCompletions,
+				LLMModel:       "model-a",
+			},
+			configDB: newTestConfigStore(t),
+			client:   server.Client(),
+		},
+	}
+	resp, err := service.Generate(ctx, connect.NewRequest(&agentcomposev1.GenerateLLMRequest{
+		Prompt: "hello",
+		Model:  "model-a",
+	}))
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if resp.Msg.GetText() != "llm text" || resp.Msg.GetResponseId() != "chatcmpl-svc" || resp.Msg.GetFinishReason() != "stop" {
+		t.Fatalf("unexpected llm response: %+v", resp.Msg)
+	}
+	if !strings.Contains(gotBody, `"messages":[{"role":"user","content":"hello"}`) {
+		t.Fatalf("expected chat completions request body, got %s", gotBody)
+	}
+}
+
 func testServiceSessionKernelAgentAndLLMAPIs(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()

@@ -81,7 +81,7 @@ agent-compose down
 
 agent 常用字段：
 
-- `provider` / `model` / `system_prompt`：传给 agent/LLM 层的模型配置。
+- `provider` / `model` / `system_prompt`：guest agent 配置（`provider` 选择 guest CLI runner；`model` 传给该 agent runtime）。目前支持 `codex`、`claude`、`gemini`。daemon 侧 LLM 调用（`LLMService`、`scheduler.llm`）使用 `LLM_MODEL`，不是 compose 里的 agent `model`。
 - `image`：guest 镜像引用；为空时使用 driver 对应默认镜像。
 - `driver`：每个 agent 可选择一个 runtime，支持 `boxlite`、`docker`、`microsandbox`。
 - `env`：agent 级环境变量，支持 scalar 或 `{ value, secret }` 形状。
@@ -111,6 +111,55 @@ npm run dev:ui
 ```
 
 前端可以由 daemon 静态资源能力提供，也可以作为独立静态服务部署，并反向代理到 daemon 的 API 和 Jupyter proxy 路由。
+
+## 配置
+
+本地实验可复制 `.env.example` 为 `.env`。
+
+常用环境变量：
+
+- `DATA_ROOT`：daemon 数据根目录；session 数据位于 `<DATA_ROOT>/sessions`。
+- `HTTP_LISTEN`：可选 TCP 监听地址；本地无认证开发建议保持 loopback。
+- `AGENT_COMPOSE_SOCKET`、`AGENT_COMPOSE_HOST`：daemon 连接设置。
+- `AUTH_USERNAME`、`AUTH_PASSWORD`、`AUTH_SECRET`、`AUTH_SESSION_TTL`：密码登录设置。
+- `OAUTH_*`：OAuth 登录设置。
+- `HTTP_BASIC_AUTH`：额外 HTTP Basic 认证（base64 编码的 `username:password`）。
+- `LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`LLM_API_KEY`、`OPENAI_API_KEY`、`LLM_MODEL`、`LLM_TIMEOUT`：daemon 侧 `LLMService` 配置。这些变量不会注入 guest agent runtime。对接 OpenAI 兼容 Chat Completions 后端时设置 `LLM_API_PROTOCOL=chat_completions`。
+- `RUNTIME_DRIVER`：默认 runtime driver。
+- `DEFAULT_IMAGE`、`DOCKER_DEFAULT_IMAGE`、`MICROSANDBOX_DEFAULT_IMAGE`：guest 镜像默认值。
+
+### Agent Provider
+
+Guest agent session 在 guest 容器内运行 provider CLI（`agent-compose-runtime-js`）。Codex、Claude、Gemini 的 API key 需通过 session 或全局环境变量配置（例如 UI：Settings -> Global environment variables），不能只在 daemon `.env` 中设置。
+
+| Provider | 典型环境变量 | 说明 |
+| --- | --- | --- |
+| `codex` | `OPENAI_API_KEY` 或 `assets/.codex/config.toml` 中的 provider key | 使用 guest 镜像中的 Codex CLI/SDK |
+| `claude` | `ANTHROPIC_API_KEY` | 使用 guest 镜像中的 Claude Code CLI |
+| `gemini` | `GEMINI_API_KEY` | 使用 guest 镜像中的 Gemini CLI |
+
+修改 guest runtime 代码或 provider 支持后，需重建 guest 镜像：
+
+```bash
+task image:agent-compose-guest
+```
+
+创建新 session（或 resume 已有 session）以加载更新后的镜像和环境变量。
+
+### Chat Completions LLM 协议
+
+设置 `LLM_API_PROTOCOL=chat_completions`（别名 `chat`、`chat_completion`）后，daemon 侧单次文本生成（`LLMService.Generate`、`scheduler.llm`）可走 OpenAI 兼容 Chat Completions 后端：
+
+```env
+LLM_API_PROTOCOL=chat_completions
+LLM_API_ENDPOINT=https://api.example.com
+LLM_API_KEY=...
+LLM_MODEL=your-model
+```
+
+兼容后端包括 DeepSeek、本地 OpenAI 兼容代理（vLLM/Ollama）等 Chat Completions endpoint。
+
+该路径不会创建具备 workspace 能力的 agent session，也不提供文件、命令或 MCP 工具访问。
 
 ## 安全提醒
 

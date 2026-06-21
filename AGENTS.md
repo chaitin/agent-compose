@@ -55,6 +55,11 @@ Important defaults:
 - `DEFAULT_IMAGE`: `debian:bookworm-slim`
 - `JUPYTER_PROXY_BASE`: `/jupyter`
 
+Daemon LLM client (`LLMService`, `scheduler.llm`, SDK `runtime.llm`):
+- `LLM_API_ENDPOINT`, `LLM_API_KEY`, `OPENAI_API_KEY`, `LLM_MODEL`, `LLM_TIMEOUT`
+- `LLM_API_PROTOCOL`: `responses` (default) or `chat_completions` for OpenAI-compatible backends (aliases: `chat`, `chat_completion`)
+- Guest agent providers remain `codex`, `claude`, and `gemini` CLI runners in guest containers
+
 ## Persistence
 
 Session metadata, notebook cells, event history, runtime state, and proxy state are stored under `SESSION_ROOT`.
