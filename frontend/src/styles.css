@@ -1285,9 +1285,11 @@ fieldset input {
 .agent-detail-panel {
   gap: 18px;
   padding: 20px 22px;
+  max-height: calc(100vh - 200px);
+  min-height: 0;
+  overflow: auto;
 }
 
-.agent-detail-panel,
 .task-detail-panel {
   align-content: start;
 }
@@ -1564,13 +1566,19 @@ fieldset input {
 
 .agent-prompt-panel pre {
   min-height: 120px;
+  max-height: 320px;
   margin: 0;
   padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface-2);
   color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-body);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
 }
 
 .agent-config-preview {
