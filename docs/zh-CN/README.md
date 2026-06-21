@@ -82,7 +82,6 @@ agent-compose down
 agent 常用字段：
 
 - `provider` / `model` / `system_prompt`：传给 agent/LLM 层的模型配置。
-- 非空 `system_prompt` 会在运行时生效，并作为 Agent Identity 层注入到 provider system/developer 指令。
 - `image`：guest 镜像引用；为空时使用 driver 对应默认镜像。
 - `driver`：每个 agent 可选择一个 runtime，支持 `boxlite`、`docker`、`microsandbox`。
 - `env`：agent 级环境变量，支持 scalar 或 `{ value, secret }` 形状。
@@ -138,7 +137,6 @@ task test
 
 - [英文文档索引](../README.md)
 - [架构说明](design/agent-compose_design.md)
-- [Agent system prompt（Phase 1）](design/agent_system_prompt_design.md)
 - [Runtime JS contract](design/agent-compose-runtime-js_contract.md)
 - [Webhook design](design/webhook_design.md)
 - [Loader script API](../../loader-script/README.md)

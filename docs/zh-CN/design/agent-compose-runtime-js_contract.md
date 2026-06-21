@@ -102,18 +102,7 @@ guest: /data/state/agents/prompts/<provider>-<unix_nano>.txt
 
 guest 路径随后通过 `--message-file` 传给 JS runtime。
 
-### 3.3 agent system prompt 文件
-
-当运行绑定的 agent definition 存在非空 `system_prompt` 时，host 还会写一个 system prompt 文件：
-
-```text
-host:  <session>/state/agents/system-prompts/<provider>-<unix_nano>.txt
-guest: /data/state/agents/system-prompts/<provider>-<unix_nano>.txt
-```
-
-guest 路径通过 `--system-prompt-file` 传给 JS runtime；如果 `system_prompt` 为空则省略该参数。
-
-### 3.4 agent HOME 与初始配置
+### 3.3 agent HOME 与初始配置
 
 host 为 agent 执行设置：
 
@@ -134,7 +123,6 @@ host 通过 runtime driver 的 `ExecStream` 在 sandbox 内执行：
 sh -lc 'set -e && cd /workspace && agent-compose-runtime prompt \
   --provider <provider> \
   --message-file /data/state/agents/prompts/<provider>-<unix_nano>.txt \
-  --system-prompt-file /data/state/agents/system-prompts/<provider>-<unix_nano>.txt \
   --state-root /data/state \
   --workspace /workspace \
   --home /root'
@@ -155,7 +143,6 @@ CLI 使用 `commander` 解析命令和参数。npm 包的 `bin` 入口为 `agent
 |---|---:|---|
 | `--provider` | 是 | `codex`、`claude`、`gemini`，支持少量别名 |
 | `--message-file` | 是 | prompt 文件路径 |
-| `--system-prompt-file` | 否 | agent 身份提示词文件路径 |
 | `--state-root` | 否 | agent-compose runtime 状态根目录，默认 `/srv/agent-compose/session/state` |
 | `--workspace` | 否 | agent 工作目录，默认 `WORKSPACE` 或 `/workspace` |
 | `--home` | 否 | agent HOME，默认 `HOME` 或 `/root` |
@@ -472,12 +459,7 @@ approvalPolicy=never
 networkAccessEnabled=true
 ```
 
-JS runtime 会按以下顺序组装 system context：
-
-1. `## Agent Identity`（来自 `--system-prompt-file`，可选）
-2. `## MPI Catalog`（来自 `/data/runtime/mpi/catalog.md`，可选）
-
-组合后的上下文通过 Codex `config.developer_instructions` 注入。
+如果 `/data/runtime/mpi/catalog.md` 存在且可读，JS runtime 会通过 Codex `config.developer_instructions` 注入 MPI catalog 上下文。
 
 Codex 事件会被转换成人类可读 transcript，包括 agent message、reasoning、command execution、file change、MCP call、web search、todo list 等。
 
@@ -497,14 +479,14 @@ allowDangerouslySkipPermissions=true
 resume=<stored session id>
 ```
 
-同一份组合后的 system context 会通过 `systemPrompt: { type: "preset", preset: "claude_code", append: <system-context> }` 注入。
+如果 `/data/runtime/mpi/catalog.md` 存在且可读，JS runtime 会通过 `systemPrompt: { type: "preset", preset: "claude_code", append: <mpi-context> }` 注入 MPI catalog 上下文。
 
 ### 10.3 Gemini
 
 JS runtime 通过子进程调用：
 
 ```sh
-gemini -p <system-context + 空行 + prompt | prompt> --output-format stream-json --approval-mode yolo
+gemini -p <prompt> --output-format stream-json --approval-mode yolo
 ```
 
 当前 Gemini runner 读取 stream-json 并生成 transcript，但不写 `/data/state/agents/providers/gemini.json`。
@@ -666,7 +648,7 @@ runtime.env.all()
 
 - `agent-compose-runtime prompt` 子命令继续可用。
 - `agent-compose-runtime exec` 子命令继续输出带 `__COMMAND_RESULT__` 前缀的 command result JSON。
-- `--provider`、`--message-file`、`--system-prompt-file`、`--state-root`、`--workspace`、`--home` 参数语义不变。
+- `--provider`、`--message-file`、`--state-root`、`--workspace`、`--home` 参数语义不变。
 - 成功时 stdout 必须输出可解析的 agent result JSON，推荐使用 `__AGENT_RESULT__` 前缀。
 - 人类可读过程输出应继续走 stderr，避免污染 stdout 协议通道。
 - provider state 文件路径保持 `/data/state/agents/providers/<provider>.json`。

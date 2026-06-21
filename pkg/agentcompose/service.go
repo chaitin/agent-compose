@@ -924,24 +924,6 @@ func writeAgentPromptFile(config *appconfig.Config, session *Session, agent, mes
 	return filepath.Join(config.GuestStateRoot, "agents", "prompts", name), nil
 }
 
-func writeAgentSystemPromptFile(config *appconfig.Config, session *Session, provider, systemPrompt string) (string, error) {
-	systemPrompt = strings.TrimSpace(systemPrompt)
-	if systemPrompt == "" {
-		return "", nil
-	}
-	hostSessionDir := filepath.Dir(session.Summary.WorkspacePath)
-	promptDir := filepath.Join(hostSessionDir, "state", "agents", "system-prompts")
-	if err := os.MkdirAll(promptDir, 0o755); err != nil {
-		return "", fmt.Errorf("create agent system prompt dir: %w", err)
-	}
-	name := fmt.Sprintf("%s-%d.txt", normalizeAgentKind(provider), time.Now().UTC().UnixNano())
-	hostPath := filepath.Join(promptDir, name)
-	if err := os.WriteFile(hostPath, []byte(systemPrompt), 0o644); err != nil {
-		return "", fmt.Errorf("write agent system prompt file: %w", err)
-	}
-	return filepath.Join(config.GuestStateRoot, "agents", "system-prompts", name), nil
-}
-
 func writeAgentOutputSchemaFile(config *appconfig.Config, session *Session, agent, schemaJSON string) (string, error) {
 	schemaJSON = strings.TrimSpace(schemaJSON)
 	if schemaJSON == "" {
@@ -1260,18 +1242,6 @@ func stripAgentResultPayload(raw string) string {
 	return raw[:idx]
 }
 
-func isUnknownSystemPromptFileFlag(err error, result ExecResult) bool {
-	const flag = "--system-prompt-file"
-	if err != nil && strings.Contains(strings.ToLower(err.Error()), strings.ToLower(flag)) {
-		return true
-	}
-	combined := strings.ToLower(firstNonEmpty(result.Stderr, result.Output, result.Stdout))
-	if combined == "" || !strings.Contains(combined, strings.ToLower(flag)) {
-		return false
-	}
-	return strings.Contains(combined, "unknown option") || strings.Contains(combined, "unknown flag")
-}
-
 func sanitizeAgentExecResult(result ExecResult) ExecResult {
 	cleaned := result
 	cleaned.Stdout = stripAgentResultPayload(result.Stdout)
@@ -1279,31 +1249,7 @@ func sanitizeAgentExecResult(result ExecResult) ExecResult {
 	return cleaned
 }
 
-func (e *Executor) resolveAgentSystemPrompt(ctx context.Context, session *Session, agentDefinitionID string) (string, error) {
-	if e == nil || e.configDB == nil {
-		return "", nil
-	}
-	agentID := strings.TrimSpace(agentDefinitionID)
-	if agentID == "" {
-		taggedAgentID := sessionTagValue(session.Summary.Tags, agentSessionTagID)
-		if !sessionHasAgentTag(session, taggedAgentID) {
-			return "", nil
-		}
-		agentID = taggedAgentID
-	}
-	if agentID == "" {
-		return "", nil
-	}
-	agentDef, err := e.configDB.GetAgentDefinition(ctx, agentID)
-	if err != nil {
-		// Agent identity is optional at execution time; lookup failures degrade to MPI-only context.
-		slog.Warn("resolve agent system prompt failed", "agent_id", agentID, "error", err)
-		return "", nil
-	}
-	return strings.TrimSpace(agentDef.SystemPrompt), nil
-}
-
-func (e *Executor) executeAgentRun(ctx context.Context, session *Session, agent, agentDefinitionID, message, outputSchemaJSON string, stream ExecStreamWriter) (ExecResult, AgentRunResult, error) {
+func (e *Executor) executeAgentRun(ctx context.Context, session *Session, agent, message, outputSchemaJSON string, stream ExecStreamWriter) (ExecResult, AgentRunResult, error) {
 	if session.Summary.VMStatus != VMStatusRunning {
 		return ExecResult{}, AgentRunResult{}, fmt.Errorf("session is not running")
 	}
@@ -1319,27 +1265,11 @@ func (e *Executor) executeAgentRun(ctx context.Context, session *Session, agent,
 	if err != nil {
 		return ExecResult{}, AgentRunResult{}, err
 	}
-	systemPrompt, err := e.resolveAgentSystemPrompt(ctx, session, agentDefinitionID)
-	if err != nil {
-		return ExecResult{}, AgentRunResult{}, err
-	}
-	systemPromptPath, err := writeAgentSystemPromptFile(e.config, session, agent, systemPrompt)
-	if err != nil {
-		return ExecResult{}, AgentRunResult{}, err
-	}
 	runtime, err := e.runtimes.ForSession(session)
 	if err != nil {
 		return ExecResult{}, AgentRunResult{}, err
 	}
-	result, err := runtime.ExecStream(ctx, session, vmState, buildAgentExecSpec(e.config, session, agent, promptPath, schemaPath, systemPromptPath), stream)
-	if err != nil && strings.TrimSpace(systemPromptPath) != "" && isUnknownSystemPromptFileFlag(err, result) {
-		slog.Warn("guest runtime does not support --system-prompt-file, retrying without system prompt file",
-			"session_id", session.Summary.ID,
-			"agent", agent,
-			"error", err,
-		)
-		result, err = runtime.ExecStream(ctx, session, vmState, buildAgentExecSpec(e.config, session, agent, promptPath, schemaPath, ""), stream)
-	}
+	result, err := runtime.ExecStream(ctx, session, vmState, buildAgentExecSpec(e.config, session, agent, promptPath, schemaPath), stream)
 	if err != nil {
 		return sanitizeAgentExecResult(result), AgentRunResult{}, err
 	}
@@ -1350,7 +1280,7 @@ func (e *Executor) executeAgentRun(ctx context.Context, session *Session, agent,
 	return sanitizeAgentExecResult(result), parsed, nil
 }
 
-func buildAgentExecSpec(config *appconfig.Config, session *Session, agent, promptPath, schemaPath, systemPromptPath string) ExecSpec {
+func buildAgentExecSpec(config *appconfig.Config, session *Session, agent, promptPath, schemaPath string) ExecSpec {
 	appconfig.ApplyDefaultGuestPaths(config)
 	agentHome := guestSessionHome(config)
 	env := buildSessionExecEnv(config, session, agentHome)
@@ -1363,9 +1293,6 @@ func buildAgentExecSpec(config *appconfig.Config, session *Session, agent, promp
 		" --home " + shellQuote(agentHome)
 	if strings.TrimSpace(schemaPath) != "" {
 		promptCommand += " --output-schema-file " + shellQuote(schemaPath)
-	}
-	if strings.TrimSpace(systemPromptPath) != "" {
-		promptCommand += " --system-prompt-file " + shellQuote(systemPromptPath)
 	}
 	command := strings.Join([]string{
 		"set -e",

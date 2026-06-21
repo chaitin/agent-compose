@@ -67,11 +67,11 @@ export class ClaudeRunner {
           schema: this.options.outputSchema,
         },
       } : {}),
-      ...(this.options.systemContext ? {
+      ...(this.options.mpiContext ? {
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          append: this.options.systemContext,
+          append: this.options.mpiContext,
         },
       } : {}),
     };

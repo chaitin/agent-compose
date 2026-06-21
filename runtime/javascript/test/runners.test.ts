@@ -12,8 +12,8 @@ afterEach(() => {
 describe("CodexRunner", () => {
   it("exposes Codex thread options without constructor-only config", async () => {
     await withTempSession(async (root) => {
-      const systemContext = "## MPI Catalog\n\ncatalog body";
-      const runner = new CodexRunner(runnerOptions(root, systemContext));
+      const mpiContext = "catalog body";
+      const runner = new CodexRunner(runnerOptions(root, mpiContext));
 
       const threadOptions = runner.threadOptions();
 
@@ -198,10 +198,10 @@ describe("ClaudeRunner", () => {
     });
   });
 
-  it("appends combined system context and exposes runtime directory", async () => {
+  it("appends MPI context and exposes runtime directory", async () => {
     await withTempSession(async (root) => {
-      const systemContext = "## Agent Identity\n\nReply only in Chinese";
-      const runner = new ClaudeRunner(runnerOptions(root, systemContext));
+      const mpiContext = "catalog body";
+      const runner = new ClaudeRunner(runnerOptions(root, mpiContext));
 
       const queryOptions = runner.queryOptions({
         provider: "claude",
@@ -216,7 +216,7 @@ describe("ClaudeRunner", () => {
       expect(queryOptions.systemPrompt).toEqual({
         type: "preset",
         preset: "claude_code",
-        append: systemContext,
+        append: mpiContext,
       });
       expect(queryOptions.resume).toBe("existing-session");
     });

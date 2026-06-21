@@ -149,10 +149,10 @@ export class CodexRunner {
       codexPathOverride: resolveCodexPath(),
       env: stringEnv(),
       // `config` (the `--config key=value` overrides) is a CodexOptions field on the
-      // constructor; it is NOT read from ThreadOptions/startThread. Injecting the
-      // combined system context here applies to both start and resume flows.
-      ...(this.options.systemContext
-        ? { config: { developer_instructions: this.options.systemContext } }
+      // constructor; it is NOT read from ThreadOptions/startThread. Injecting the MPI
+      // capability catalog here is what makes it reach codex as developer instructions.
+      ...(this.options.mpiContext
+        ? { config: { developer_instructions: this.options.mpiContext } }
         : {}),
     });
     const thread = stored?.sessionId

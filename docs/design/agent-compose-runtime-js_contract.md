@@ -121,22 +121,7 @@ guest: /data/state/agents/prompts/<provider>-<unix_nano>.txt
 
 The guest path is then passed to the JavaScript runtime through `--message-file`.
 
-### 3.3 Agent System Prompt File
-
-When a run is bound to an agent definition with non-empty `system_prompt`, the
-host writes an additional system prompt file:
-
-```text
-host:  <session>/state/agents/system-prompts/<provider>-<unix_nano>.txt
-guest: /data/state/agents/system-prompts/<provider>-<unix_nano>.txt
-```
-
-The guest path is passed through `--system-prompt-file`. If the agent
-`system_prompt` is empty, this flag is omitted. If an older guest runtime rejects
-the flag as unknown, the host logs a warning and retries once without the system
-prompt file.
-
-### 3.4 Agent HOME And Initial Config
+### 3.3 Agent HOME And Initial Config
 
 The host sets these values for agent execution:
 
@@ -161,7 +146,6 @@ The host executes this command inside the sandbox through runtime driver
 sh -lc 'set -e && cd /workspace && agent-compose-runtime prompt \
   --provider <provider> \
   --message-file /data/state/agents/prompts/<provider>-<unix_nano>.txt \
-  --system-prompt-file /data/state/agents/system-prompts/<provider>-<unix_nano>.txt \
   --state-root /data/state \
   --workspace /workspace \
   --home /root'
@@ -184,7 +168,6 @@ Command arguments:
 | --- | ---: | --- |
 | `--provider` | yes | `codex`, `claude`, `gemini`, with a small set of aliases |
 | `--message-file` | yes | Prompt file path |
-| `--system-prompt-file` | no | Agent identity prompt file path |
 | `--state-root` | no | agent-compose runtime state root; default `/srv/agent-compose/session/state` |
 | `--workspace` | no | Agent working directory; default `WORKSPACE` or `/workspace` |
 | `--home` | no | Agent HOME; default `HOME` or `/root` |
@@ -548,12 +531,8 @@ approvalPolicy=never
 networkAccessEnabled=true
 ```
 
-The JavaScript runtime composes system context in this order:
-
-1. `## Agent Identity` from `--system-prompt-file` (when provided)
-2. `## MPI Catalog` from `/data/runtime/mpi/catalog.md` (when readable)
-
-The combined context is injected through Codex `config.developer_instructions`.
+If `/data/runtime/mpi/catalog.md` exists and is readable, the JavaScript runtime
+injects MPI catalog context through Codex `config.developer_instructions`.
 
 Codex events are converted into a human-readable transcript, including agent
 messages, reasoning, command execution, file changes, MCP calls, web search, and
@@ -575,15 +554,16 @@ allowDangerouslySkipPermissions=true
 resume=<stored session id>
 ```
 
-The same combined system context is injected through
-`systemPrompt: { type: "preset", preset: "claude_code", append: <system-context> }`.
+If `/data/runtime/mpi/catalog.md` exists and is readable, the JavaScript runtime
+injects MPI catalog context through
+`systemPrompt: { type: "preset", preset: "claude_code", append: <mpi-context> }`.
 
 ### 10.3 Gemini
 
 The JavaScript runtime invokes Gemini as a subprocess:
 
 ```sh
-gemini -p <system-context + blank line + prompt | prompt> --output-format stream-json --approval-mode yolo
+gemini -p <prompt> --output-format stream-json --approval-mode yolo
 ```
 
 The current Gemini runner reads stream-json and generates a transcript, but does
@@ -788,8 +768,8 @@ Changes to the JavaScript runtime or host invocation should preserve:
 - `agent-compose-runtime prompt` subcommand availability.
 - `agent-compose-runtime exec` subcommand outputting command result JSON with
   the `__COMMAND_RESULT__` prefix.
-- Existing semantics for `--provider`, `--message-file`,
-  `--system-prompt-file`, `--state-root`, `--workspace`, and `--home`.
+- Existing semantics for `--provider`, `--message-file`, `--state-root`,
+  `--workspace`, and `--home`.
 - On success, stdout must contain parseable agent result JSON. The
   `__AGENT_RESULT__` prefix is recommended.
 - Human-readable process output should continue to use stderr to avoid

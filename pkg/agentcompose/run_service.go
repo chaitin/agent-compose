@@ -134,11 +134,10 @@ func (s *Service) runProjectAgent(ctx context.Context, msg *agentcomposev2.RunAg
 		return run, err, nil
 	}
 	cell, _, _, execErr := s.executor.ExecuteAgentRequest(ctx, sessionResult.Session, ExecuteAgentRequest{
-		Agent:             agentProvider,
-		AgentDefinitionID: run.ManagedAgentID,
-		Message:           msg.GetPrompt(),
-		OutputSchemaJSON:  msg.GetOutputSchemaJson(),
-		Stream:            projectRunAgentExecutionStream(run, stream),
+		Agent:            agentProvider,
+		Message:          msg.GetPrompt(),
+		OutputSchemaJSON: msg.GetOutputSchemaJson(),
+		Stream:           projectRunAgentExecutionStream(run, stream),
 	})
 	transition := projectRunTransitionFromAgentCell(run, sessionResult.Session, cell, execErr)
 	if execErr != nil || !cell.Success {

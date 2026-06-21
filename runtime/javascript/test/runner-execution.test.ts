@@ -175,7 +175,7 @@ describe("runner execution", () => {
     });
   });
 
-  it("resumes a stored Codex thread with the latest system context", async () => {
+  it("resumes a stored Codex thread", async () => {
     const { CodexRunner } = await import("../src/runners/codex.js");
     await withTempSession(async (root) => {
       const providerRoot = path.join(root, "state", "agents", "providers");
@@ -185,20 +185,14 @@ describe("runner execution", () => {
         sessionId: "old-thread",
       }), "utf8");
       codexState.events = [{ type: "item.completed", item: { id: "a2", type: "agent_message", text: "resumed" } }];
-      codexState.constructorOptions = [];
       const stdio = captureStdio();
       try {
-        const result = await new CodexRunner(
-          runnerOptions(root, "## Agent Identity\n\nReply only in Chinese"),
-        ).runPrompt("prompt");
+        const result = await new CodexRunner(runnerOptions(root)).runPrompt("prompt");
         expect(result.sessionId).toBe("thread-resumed");
       } finally {
         stdio.restore();
       }
       expect(codexState.resumed).toBe("old-thread");
-      expect(codexState.constructorOptions.at(-1)).toMatchObject({
-        config: { developer_instructions: "## Agent Identity\n\nReply only in Chinese" },
-      });
     });
   });
 
@@ -393,7 +387,7 @@ describe("runner execution", () => {
     });
   });
 
-  it("runs Gemini stream-json output and prepends system context to the user prompt", async () => {
+  it("runs Gemini stream-json output and keeps stdout protocol clean", async () => {
     const { GeminiRunner } = await import("../src/runners/gemini.js");
     await withTempSession(async (root) => {
       childProcessState.stdoutLines = [
@@ -408,10 +402,9 @@ describe("runner execution", () => {
       childProcessState.stderrChunks = ["warn\n"];
       childProcessState.exitCode = 0;
       childProcessState.error = null;
-      const systemContext = "## Agent Identity\n\nReply only in Chinese";
       const stdio = captureStdio();
       try {
-        const result = await new GeminiRunner(runnerOptions(root, systemContext, "gemini")).runPrompt("prompt");
+        const result = await new GeminiRunner(runnerOptions(root, "", "gemini")).runPrompt("prompt");
 
         expect(result).toMatchObject({
           provider: "gemini",
@@ -423,7 +416,7 @@ describe("runner execution", () => {
         expect(result.transcript).toContain("file contents");
         expect(childProcessState.spawnCalls.at(-1)).toMatchObject({
           command: "gemini",
-          args: ["-p", `${systemContext}\n\nprompt`, "--output-format", "stream-json", "--approval-mode", "yolo"],
+          args: ["-p", "prompt", "--output-format", "stream-json", "--approval-mode", "yolo"],
         });
       } finally {
         stdio.restore();
