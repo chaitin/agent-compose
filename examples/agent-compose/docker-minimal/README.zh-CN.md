@@ -60,8 +60,8 @@ driver:
   docker: {}
 ```
 
-如果 agent 省略 `driver`，当前 compose normalizer 会默认使用
-`boxlite`，不是 Docker。
+如果 agent 省略 `driver`，compose normalizer 会默认使用 `docker`。
+本示例显式设置 `docker: {}`，是为了明确说明预期的 runtime。
 
 ## 运行示例
 

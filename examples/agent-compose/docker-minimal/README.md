@@ -60,8 +60,8 @@ driver:
   docker: {}
 ```
 
-If the agent omits `driver`, the compose normalizer currently defaults to
-`boxlite`, not Docker.
+If the agent omits `driver`, the compose normalizer defaults to `docker`.
+This example sets `docker: {}` explicitly to document the intended runtime.
 
 ## Run the example
 
