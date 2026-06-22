@@ -12,6 +12,9 @@ export type CapabilityStatus = {
   status: string;
   serviceCount: number;
   error: string;
+  runtimeConfigured: boolean;
+  proxyListenConfigured: boolean;
+  proxyTargetConfigured: boolean;
 };
 
 export async function getCapabilityGatewayConfig(): Promise<CapabilityGatewayConfig> {
@@ -34,6 +37,9 @@ export async function getCapabilityStatus(): Promise<CapabilityStatus> {
     status: response.status,
     serviceCount: response.serviceCount,
     error: response.error,
+    runtimeConfigured: response.runtimeConfigured,
+    proxyListenConfigured: response.proxyListenConfigured,
+    proxyTargetConfigured: response.proxyTargetConfigured,
   };
 }
 

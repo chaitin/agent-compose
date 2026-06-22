@@ -125,6 +125,7 @@ npm run dev:ui
 - `OAUTH_*`：OAuth 登录设置。
 - `HTTP_BASIC_AUTH`：额外 HTTP Basic 认证（base64 编码的 `username:password`）。
 - `LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`LLM_API_KEY`、`OPENAI_API_KEY`、`LLM_MODEL`、`LLM_TIMEOUT`：daemon 侧 `LLMService` 配置。这些变量不会注入 guest agent runtime。对接 OpenAI 兼容 Chat Completions 后端时设置 `LLM_API_PROTOCOL=chat_completions`。
+- `CAP_GRPC_LISTEN`、`CAP_GRPC_TARGET`：仅在 Agent 需要调用 OctoBus gRPC capability 时必须配置。`CAP_GRPC_LISTEN` 启动 agent-compose capability proxy；`CAP_GRPC_TARGET` 是注入新 session 的 guest 可达地址。修改后需要重启 daemon 并新建 session。
 - `RUNTIME_DRIVER`：默认 runtime driver。
 - `DEFAULT_IMAGE`、`DOCKER_DEFAULT_IMAGE`、`MICROSANDBOX_DEFAULT_IMAGE`：guest 镜像默认值。
 

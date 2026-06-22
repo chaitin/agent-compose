@@ -4080,6 +4080,21 @@ export class CapabilityStatusResponse extends Message<CapabilityStatusResponse> 
    */
   error = "";
 
+  /**
+   * @generated from field: bool runtime_configured = 6;
+   */
+  runtimeConfigured = false;
+
+  /**
+   * @generated from field: bool proxy_listen_configured = 7;
+   */
+  proxyListenConfigured = false;
+
+  /**
+   * @generated from field: bool proxy_target_configured = 8;
+   */
+  proxyTargetConfigured = false;
+
   constructor(data?: PartialMessage<CapabilityStatusResponse>) {
     super();
     proto3.util.initPartial(data, this);
@@ -4093,6 +4108,9 @@ export class CapabilityStatusResponse extends Message<CapabilityStatusResponse> 
     { no: 3, name: "status", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 4, name: "service_count", kind: "scalar", T: 13 /* ScalarType.UINT32 */ },
     { no: 5, name: "error", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 6, name: "runtime_configured", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 7, name: "proxy_listen_configured", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 8, name: "proxy_target_configured", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): CapabilityStatusResponse {

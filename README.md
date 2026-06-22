@@ -245,6 +245,11 @@ Important variables include:
   only. These do not inject API keys into guest agent runtimes. Set
   `LLM_API_PROTOCOL=chat_completions` for OpenAI-compatible chat completions
   backends (aliases: `chat`, `chat_completion`).
+- `CAP_GRPC_LISTEN`, `CAP_GRPC_TARGET`: required only when agents need to call
+  OctoBus gRPC capabilities. `CAP_GRPC_LISTEN` starts the agent-compose
+  capability proxy; `CAP_GRPC_TARGET` is the guest-reachable address injected
+  into new sessions. After changing either value, restart the daemon and create
+  a new session.
 - `RUNTIME_DRIVER`: default runtime driver.
 - `DEFAULT_IMAGE`, `DOCKER_DEFAULT_IMAGE`, `MICROSANDBOX_DEFAULT_IMAGE`: guest
   image defaults.

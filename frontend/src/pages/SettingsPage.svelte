@@ -35,6 +35,9 @@
   let gatewayOk = false;
   let gatewayStatusText = '';
   let capabilityCount = 0;
+  let capabilityRuntimeConfigured = false;
+  let capabilityProxyListenConfigured = false;
+  let capabilityProxyTargetConfigured = false;
   let lastSyncedAt = '';
   let gatewayAddr = '';
   let savedGatewayAddr = '';
@@ -191,11 +194,17 @@
       gatewayOk = status.ok;
       gatewayStatusText = status.error || status.status;
       capabilityCount = status.serviceCount;
+      capabilityRuntimeConfigured = status.runtimeConfigured;
+      capabilityProxyListenConfigured = status.proxyListenConfigured;
+      capabilityProxyTargetConfigured = status.proxyTargetConfigured;
     } catch (err) {
       gatewayConfigured = false;
       gatewayOk = false;
       gatewayStatusText = err instanceof Error ? err.message : String(err);
       capabilityCount = 0;
+      capabilityRuntimeConfigured = false;
+      capabilityProxyListenConfigured = false;
+      capabilityProxyTargetConfigured = false;
     }
     await loadCapabilitySets();
     lastSyncedAt = new Date().toISOString();
@@ -256,6 +265,7 @@
   $: gatewayStatusLabel = !gatewayConfigured ? '未配置' : gatewayOk ? '已连接' : '连接失败';
   $: gatewayStatusChip = !gatewayConfigured ? 'amber' : gatewayOk ? 'green' : 'red';
   $: gatewayDirty = gatewayAddr.trim() !== savedGatewayAddr || gatewayToken.trim() !== '';
+  $: capabilityRuntimeWarning = gatewayConfigured && gatewayOk && !capabilityRuntimeConfigured;
 
   function addEnvItem(): void {
     const name = newEnvName.trim();
@@ -695,6 +705,10 @@
     </div>
     {#if gatewayConfigured && !gatewayOk && gatewayStatusText}
       <div class="alert danger">{gatewayStatusText}</div>
+    {/if}
+    {#if capabilityRuntimeWarning}
+      <div class="alert warning">OctoBus 控制面已连接，但运行时 gRPC capability proxy 尚未完整配置。需要在 daemon 启动环境中设置 CAP_GRPC_LISTEN 和 CAP_GRPC_TARGET，并重启后新建会话，Agent 才能调用 gRPC capability。</div>
+      <div class="settings-hint">当前状态：CAP_GRPC_LISTEN {capabilityProxyListenConfigured ? '已配置' : '未配置'}，CAP_GRPC_TARGET {capabilityProxyTargetConfigured ? '已配置' : '未配置'}。</div>
     {/if}
     {#if gatewayDirty}
       <div class="alert warning">当前输入尚未保存，连接状态仍来自已保存配置。请先保存后再测试连接。</div>

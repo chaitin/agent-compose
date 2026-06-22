@@ -121,12 +121,17 @@ func (p *capabilityProvider) ResolveCapabilityBinding(ctx context.Context, capse
 func (s *Service) GetCapabilityStatus(ctx context.Context, req *connect.Request[agentcomposev1.GetCapabilityStatusRequest]) (*connect.Response[agentcomposev1.CapabilityStatusResponse], error) {
 	_ = req
 	status := s.cap.Status(ctx)
+	proxyListenConfigured := s.config != nil && strings.TrimSpace(s.config.CapGRPCListen) != ""
+	proxyTargetConfigured := strings.TrimSpace(s.cap.ProxyTarget()) != ""
 	return connect.NewResponse(&agentcomposev1.CapabilityStatusResponse{
-		Configured:   status.Configured,
-		Ok:           status.OK,
-		Status:       status.Status,
-		ServiceCount: status.ServiceCount,
-		Error:        status.Error,
+		Configured:            status.Configured,
+		Ok:                    status.OK,
+		Status:                status.Status,
+		ServiceCount:          status.ServiceCount,
+		Error:                 status.Error,
+		RuntimeConfigured:     proxyListenConfigured && proxyTargetConfigured,
+		ProxyListenConfigured: proxyListenConfigured,
+		ProxyTargetConfigured: proxyTargetConfigured,
 	}), nil
 }
 

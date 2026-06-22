@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	appconfig "agent-compose/pkg/config"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
@@ -45,6 +46,28 @@ func TestCapabilityServiceStatusDoesNotExposeAddr(t *testing.T) {
 	}
 	if resp.Msg.GetError() != "" {
 		t.Fatalf("unexpected error leak %q", resp.Msg.GetError())
+	}
+	if resp.Msg.GetRuntimeConfigured() || resp.Msg.GetProxyListenConfigured() || resp.Msg.GetProxyTargetConfigured() {
+		t.Fatalf("runtime config should be false without daemon listen/target env: %+v", resp.Msg)
+	}
+}
+
+func TestCapabilityServiceStatusReportsRuntimeProxyConfig(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+	}))
+	defer server.Close()
+
+	service := &Service{
+		config: &appconfig.Config{CapGRPCListen: "127.0.0.1:9100"},
+		cap:    newTestCapabilityProvider(server.URL, "agent-compose:9100"),
+	}
+	resp, err := service.GetCapabilityStatus(context.Background(), connect.NewRequest(&agentcomposev1.GetCapabilityStatusRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Msg.GetRuntimeConfigured() || !resp.Msg.GetProxyListenConfigured() || !resp.Msg.GetProxyTargetConfigured() {
+		t.Fatalf("runtime config not reported: %+v", resp.Msg)
 	}
 }
 

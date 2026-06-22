@@ -54,6 +54,11 @@ message UpdateCapabilityGatewayConfigRequest {
 
 - 代理 bind 地址：agent-compose 内部 gRPC 透明代理 server 的监听地址。
 - guest 可达的代理地址：注入 session 的 `CAP_GRPC_TARGET`，由容器 / 网络映射决定。
+- 运行时 gRPC capability 调用要求 daemon 启动时同时配置 `CAP_GRPC_LISTEN`
+  和 `CAP_GRPC_TARGET`。`CAP_GRPC_LISTEN` 启动本地 capability gRPC proxy；
+  `CAP_GRPC_TARGET` 是注入新 session 的 guest 可达地址。缺少任一项时，控制面仍可能显示
+  OctoBus 已连接，但选了 capset 的 session 不会获得可用的 runtime capability
+  连接变量。修改这些值后需要重启 agent-compose 并新建 session。
 
 ## 控制面 CapabilityService
 
@@ -73,6 +78,9 @@ message CapabilityStatusResponse {
   string status = 3;
   uint32 service_count = 4;
   string error = 5;
+  bool runtime_configured = 6;
+  bool proxy_listen_configured = 7;
+  bool proxy_target_configured = 8;
 }
 
 message CapabilitySet {

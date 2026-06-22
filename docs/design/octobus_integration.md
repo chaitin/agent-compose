@@ -69,6 +69,13 @@ Deployment-fixed, bound once at startup, not page-configured:
   proxy server.
 - Guest-reachable proxy address: `CAP_GRPC_TARGET` injected into sessions,
   determined by container / network mapping.
+- Runtime gRPC capability calls require both `CAP_GRPC_LISTEN` and
+  `CAP_GRPC_TARGET` to be set when the daemon starts. `CAP_GRPC_LISTEN` starts
+  the local capability gRPC proxy; `CAP_GRPC_TARGET` is the guest-reachable
+  address injected into new sessions. If either is missing, the control plane
+  can still show OctoBus as connected, but sessions with selected capsets will
+  not receive usable runtime capability connection variables. Restart
+  agent-compose and create a new session after changing these values.
 
 ## Control-Plane CapabilityService
 
@@ -88,6 +95,9 @@ message CapabilityStatusResponse {
   string status = 3;
   uint32 service_count = 4;
   string error = 5;
+  bool runtime_configured = 6;
+  bool proxy_listen_configured = 7;
+  bool proxy_target_configured = 8;
 }
 
 message CapabilitySet {

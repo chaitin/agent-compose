@@ -646,6 +646,9 @@ message CapabilityStatusResponse {
   string status = 3;
   uint32 service_count = 4;
   string error = 5;
+  bool runtime_configured = 6;
+  bool proxy_listen_configured = 7;
+  bool proxy_target_configured = 8;
 }
 
 message ListCapabilitySetsRequest {}
