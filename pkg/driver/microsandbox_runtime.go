@@ -135,7 +135,7 @@ func (r *microsandboxRuntime) StopSession(ctx context.Context, session *Session,
 				r.closeSandboxHandle(sandbox)
 			}
 		}()
-		if _, err := sandbox.StopAndWait(ctx); err != nil {
+		if err := sandbox.Stop(ctx); err != nil {
 			if microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
 				return true, nil
 			}
@@ -155,7 +155,7 @@ func (r *microsandboxRuntime) StopSession(ctx context.Context, session *Session,
 		return true, nil
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
-	if _, err := sandbox.StopAndWait(ctx); err != nil {
+	if err := sandbox.Stop(ctx); err != nil {
 		if microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
 			return true, nil
 		}

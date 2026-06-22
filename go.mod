@@ -22,7 +22,7 @@ require (
 	github.com/samber/mo v1.16.0
 	github.com/samber/oops v1.21.0
 	github.com/spf13/cobra v1.10.1
-	github.com/superradcompany/microsandbox/sdk/go v0.5.4
+	github.com/superradcompany/microsandbox/sdk/go v0.5.8
 	go.mongodb.org/mongo-driver/v2 v2.5.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.45.0
@@ -36,7 +36,6 @@ require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
-	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/stargz-snapshotter/estargz v0.16.3 // indirect
 	github.com/docker/cli v28.2.2+incompatible // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect
@@ -52,7 +51,7 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
-	github.com/moby/sys/atomicwriter v0.1.0 // indirect
+	github.com/moby/sys/sequential v0.6.0 // indirect
 	github.com/moby/term v0.5.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421 // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect

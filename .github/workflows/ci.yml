@@ -9,6 +9,14 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs on the same ref. A new commit makes an older run's
+# result irrelevant, so cancel in-progress runs — but only for pull requests.
+# Pushes to main are never cancelled (cancel-in-progress is false there) so
+# every merged commit still gets tested.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   go-test:
     name: Go tests

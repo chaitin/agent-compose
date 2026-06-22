@@ -31,6 +31,12 @@ permissions:
   contents: read
   packages: write
 
+# Cancel superseded pull-request runs only. Pushes to main and tags publish
+# images, so they must never be cancelled mid-flight (cancel-in-progress false).
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
@@ -38,19 +44,41 @@ env:
   GOPROXY: https://goproxy.cn,direct
 
 jobs:
+  # Emit the build matrix as JSON: amd64 only on pull requests (fast Dockerfile
+  # validation), the full amd64 + arm64 set on pushes to main and tags where the
+  # multi-arch manifest is published. Done in a job rather than a job-level `if`
+  # because that `if` cannot read the matrix context, so the arm64 legs would
+  # otherwise still be created (and only skipped) on PRs.
+  setup:
+    name: Configure build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      platforms: ${{ steps.platforms.outputs.json }}
+    steps:
+      - id: platforms
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          amd64='{"tag":"linux/amd64","arch":"amd64","runner":"ubuntu-latest"}'
+          arm64='{"tag":"linux/arm64","arch":"arm64","runner":"ubuntu-24.04-arm"}'
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "json=[$amd64]" >> "$GITHUB_OUTPUT"
+          else
+            echo "json=[$amd64,$arm64]" >> "$GITHUB_OUTPUT"
+          fi
+
   # Build each image for a single architecture on a native runner, then push by
   # digest. Native arm64 runners avoid slow QEMU emulation of the Rust-based
   # microsandbox build stage. The manifest list is assembled in the merge job.
   build:
     name: Build ${{ matrix.name }} (${{ matrix.platform.tag }})
+    needs: setup
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
       matrix:
         name: [agent-compose, agent-compose-frontend, agent-compose-guest]
-        platform:
-          - { tag: linux/amd64, arch: amd64, runner: ubuntu-latest }
-          - { tag: linux/arm64, arch: arm64, runner: ubuntu-24.04-arm }
+        platform: ${{ fromJSON(needs.setup.outputs.platforms) }}
         include:
           - name: agent-compose
             image: agent-compose

@@ -141,8 +141,8 @@ github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UV
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-github.com/superradcompany/microsandbox/sdk/go v0.5.4 h1:TpfCws3bHsr+G9LG7j4imh4+w8bbxgISTXSLXkcSbLg=
-github.com/superradcompany/microsandbox/sdk/go v0.5.4/go.mod h1:Nqi2S7Xm1lgsUyV2vo21EVTL4de68lVC/YRDApB+2R0=
+github.com/superradcompany/microsandbox/sdk/go v0.5.8 h1:zXQ3S1RokzB8YAGmV5lG+cjrTpebFNKB1lTtrjjF1OY=
+github.com/superradcompany/microsandbox/sdk/go v0.5.8/go.mod h1:Nqi2S7Xm1lgsUyV2vo21EVTL4de68lVC/YRDApB+2R0=
 github.com/tetratelabs/wazero v1.9.0 h1:IcZ56OuxrtaEz8UYNRHBrUa9bYeX9oVY93KspZZBf/I=
 github.com/tetratelabs/wazero v1.9.0/go.mod h1:TSbcXCfFP0L2FGkRPxHphadXPjo1T6W+CseNNY7EkjM=
 github.com/valyala/bytebufferpool v1.0.0 h1:GqA5TC/0021Y/b9FG4Oi9Mr3q7XYx6KllzawFIhcdPw=
