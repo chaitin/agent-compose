@@ -351,6 +351,51 @@ func TestSessionRPCBridgeCreateSessionInjectsCapabilityGatewayVars(t *testing.T)
 	}
 }
 
+func TestSessionRPCBridgeResumeSessionRefreshesCapabilityGuide(t *testing.T) {
+	ctx := context.Background()
+	bridge, _ := newTestSessionRPCBridge(t)
+	catalog := "# Catalog: dev\n\ninitial"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/admin/v1/catalog/dev" && r.URL.Query().Get("format") == "md" {
+			w.Header().Set("Content-Type", "text/markdown")
+			_, _ = w.Write([]byte(catalog))
+			return
+		}
+		t.Errorf("unexpected request %s?%s", r.URL.Path, r.URL.RawQuery)
+		http.Error(w, "unexpected", http.StatusBadRequest)
+	}))
+	defer server.Close()
+	bridge.cap = newTestCapabilityProvider(server.URL, "agent-compose:9100")
+
+	resp, err := bridge.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{Title: "capability", CapsetIds: []string{"dev"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID := resp.Msg.GetSession().GetSummary().GetSessionId()
+	session, err := bridge.store.GetSession(ctx, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guidePath := sessionCapabilityGuidePath(session)
+	if err := os.Remove(guidePath); err != nil {
+		t.Fatalf("remove capability guide returned error: %v", err)
+	}
+	catalog = "# Catalog: dev\n\nrefreshed"
+	if _, err := bridge.StopSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sessionID})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bridge.ResumeSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sessionID})); err != nil {
+		t.Fatal(err)
+	}
+	guide, err := os.ReadFile(guidePath)
+	if err != nil {
+		t.Fatalf("capability guide not refreshed on resume: %v", err)
+	}
+	if !strings.Contains(string(guide), "refreshed") {
+		t.Fatalf("capability guide content was not refreshed: %s", guide)
+	}
+}
+
 func TestSessionRPCBridgeCapabilityInjectionIsBestEffort(t *testing.T) {
 	ctx := context.Background()
 	bridge, _ := newTestSessionRPCBridge(t)
@@ -375,6 +420,22 @@ func TestSessionRPCBridgeCapabilityInjectionIsBestEffort(t *testing.T) {
 	if _, err := os.Stat(sessionCapabilityGuidePath(session)); !os.IsNotExist(err) {
 		t.Fatalf("expected no capability guide when OctoBus unreachable, stat err = %v", err)
 	}
+	events, err := bridge.store.ListEvents(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("ListEvents returned error: %v", err)
+	}
+	if !sessionEventsContain(events, "capability.guide.warning") {
+		t.Fatalf("expected capability guide warning event, got %#v", events)
+	}
+}
+
+func sessionEventsContain(events []SessionEvent, eventType string) bool {
+	for _, event := range events {
+		if event.Type == eventType {
+			return true
+		}
+	}
+	return false
 }
 
 func TestLoaderEngineExecuteSupportsSessionRPCBindings(t *testing.T) {

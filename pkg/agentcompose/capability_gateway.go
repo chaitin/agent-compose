@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -72,10 +73,10 @@ func buildCapabilityGatewaySessionVars(publicTarget string, capsetIDs []string) 
 // writes the concatenation as the session's MPI catalog (guest
 // /data/runtime/mpi/catalog.md), which agent-compose-runtime-js injects into the agent
 // system prompt (codex developer_instructions, claude systemPrompt append). It
-// is best-effort: any failure is logged and ignored so it never blocks
-// session/loader startup. Must be called after the session directory exists and
-// before the runtime mounts it.
-func writeCapabilityGuide(ctx context.Context, provider CapabilityProvider, session *Session, capsetIDs []string) {
+// is best-effort: failures are logged and recorded as warning events, but never
+// block session/loader startup. Must be called after the session directory
+// exists and before the runtime mounts it.
+func writeCapabilityGuide(ctx context.Context, provider CapabilityProvider, store *Store, streams *SessionStreamBroker, session *Session, capsetIDs []string) {
 	ids := normalizeCapsetIDs(capsetIDs)
 	if len(ids) == 0 || provider == nil || session == nil {
 		return
@@ -90,6 +91,7 @@ func writeCapabilityGuide(ctx context.Context, provider CapabilityProvider, sess
 		guide, err := provider.CapabilityGuide(ctx, id)
 		if err != nil {
 			slog.Warn("capability guide render skipped", "capset", id, "session_id", session.Summary.ID, "error", err)
+			recordCapabilityGuideWarning(ctx, store, streams, session.Summary.ID, fmt.Sprintf("capability guide render skipped for capset %s", id))
 			continue
 		}
 		if rendered {
@@ -107,10 +109,32 @@ func writeCapabilityGuide(ctx context.Context, provider CapabilityProvider, sess
 	}
 	if err := os.MkdirAll(filepath.Dir(catalogPath), 0o755); err != nil {
 		slog.Warn("capability guide dir create failed", "session_id", session.Summary.ID, "error", err)
+		recordCapabilityGuideWarning(ctx, store, streams, session.Summary.ID, "capability guide directory create failed")
 		return
 	}
 	if err := os.WriteFile(catalogPath, []byte(content), 0o644); err != nil {
 		slog.Warn("capability guide write failed", "session_id", session.Summary.ID, "error", err)
+		recordCapabilityGuideWarning(ctx, store, streams, session.Summary.ID, "capability guide write failed")
+	}
+}
+
+func recordCapabilityGuideWarning(ctx context.Context, store *Store, streams *SessionStreamBroker, sessionID, message string) {
+	if store == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	event := SessionEvent{
+		ID:        uuid.NewString(),
+		Type:      "capability.guide.warning",
+		Level:     "warning",
+		Message:   message,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := store.AddEvent(ctx, sessionID, event); err != nil {
+		slog.Warn("capability guide warning event failed", "session_id", sessionID, "error", err)
+		return
+	}
+	if streams != nil {
+		streams.PublishEventAdded(sessionID, event)
 	}
 }
 

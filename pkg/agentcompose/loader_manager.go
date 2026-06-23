@@ -1243,7 +1243,7 @@ func (m *LoaderManager) ensureLoaderSessionWithOptions(ctx context.Context, load
 		_ = m.store.UpdateSession(ctx, session)
 		return nil, "", err
 	}
-	writeCapabilityGuide(ctx, m.cap, session, loader.Summary.CapsetIDs)
+	writeCapabilityGuide(ctx, m.cap, m.store, m.streams, session, loader.Summary.CapsetIDs)
 	if err := m.driver.StartSessionVM(ctx, session); err != nil {
 		session.Summary.VMStatus = VMStatusFailed
 		_ = m.store.UpdateSession(ctx, session)
@@ -1323,6 +1323,7 @@ func (m *LoaderManager) loadOrResumeLoaderSession(ctx context.Context, sessionID
 	if err := prepareSessionWorkspace(ctx, m.config, m.configDB, session); err != nil {
 		return nil, "", err
 	}
+	writeCapabilityGuide(ctx, m.cap, m.store, m.streams, session, sessionCapabilityCapsets(session))
 	if err := m.driver.StartSessionVM(ctx, session); err != nil {
 		return nil, "", err
 	}

@@ -207,7 +207,7 @@ func (b *SessionRPCBridge) createSession(ctx context.Context, req *connect.Reque
 		_ = b.store.UpdateSession(ctx, session)
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	writeCapabilityGuide(ctx, b.cap, session, req.Msg.GetCapsetIds())
+	writeCapabilityGuide(ctx, b.cap, b.store, b.streams, session, req.Msg.GetCapsetIds())
 	if err := b.driver.StartSessionVM(ctx, session); err != nil {
 		session.Summary.VMStatus = VMStatusFailed
 		_ = b.store.UpdateSession(ctx, session)
@@ -248,6 +248,7 @@ func (b *SessionRPCBridge) resumeSession(ctx context.Context, req *connect.Reque
 	if err := prepareSessionWorkspace(ctx, b.config, b.configDB, session); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	writeCapabilityGuide(ctx, b.cap, b.store, b.streams, session, sessionCapabilityCapsets(session))
 	if err := b.driver.StartSessionVM(ctx, session); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
