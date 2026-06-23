@@ -1,11 +1,22 @@
 ARG REGISTRY_MIRROR=docker.io
 ARG PYPI_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 ARG PYPI_TRUSTED_HOST=mirrors.tuna.tsinghua.edu.cn
+ARG GOPROXY=https://goproxy.cn,direct
+ARG GO_VERSION=1.26.4
+ARG GRPCURL_VERSION=v1.9.3
+ARG PROTOC_GEN_GO_VERSION=v1.36.11
+ARG PROTOC_GEN_GO_GRPC_VERSION=v1.6.2
 ARG NODE_MAJOR=22
+
+FROM ${REGISTRY_MIRROR}/library/golang:${GO_VERSION}-alpine AS golang-toolchain
 
 FROM ${REGISTRY_MIRROR}/library/debian:bookworm-slim
 ARG PYPI_INDEX_URL
 ARG PYPI_TRUSTED_HOST
+ARG GOPROXY
+ARG GRPCURL_VERSION
+ARG PROTOC_GEN_GO_VERSION
+ARG PROTOC_GEN_GO_GRPC_VERSION
 ARG NODE_MAJOR
 ARG TARGETARCH
 
@@ -19,7 +30,7 @@ RUN if [ -f /etc/apt/sources.list ]; then \
     fi
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 python3-pip git curl ca-certificates tini gnupg build-essential pkg-config && \
+    apt-get install -y --no-install-recommends python3 python3-pip git curl ca-certificates tini gnupg build-essential pkg-config protobuf-compiler && \
     mkdir -p /etc/apt/keyrings && \
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
@@ -31,6 +42,21 @@ RUN apt-get update && \
     apt-get purge -y --auto-remove gnupg dirmngr && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /root/.npm /root/.cache
+
+COPY --from=golang-toolchain /usr/local/go /usr/local/go
+
+ENV GOPATH=/root/go \
+    GOPROXY=${GOPROXY} \
+    PATH=/usr/local/go/bin:${PATH}
+
+RUN go env -w GOPROXY="${GOPROXY}" && \
+    go install github.com/fullstorydev/grpcurl/cmd/grpcurl@"${GRPCURL_VERSION}" && \
+    go install google.golang.org/protobuf/cmd/protoc-gen-go@"${PROTOC_GEN_GO_VERSION}" && \
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@"${PROTOC_GEN_GO_GRPC_VERSION}" && \
+    install -m755 /root/go/bin/grpcurl /usr/local/bin/grpcurl && \
+    install -m755 /root/go/bin/protoc-gen-go /usr/local/bin/protoc-gen-go && \
+    install -m755 /root/go/bin/protoc-gen-go-grpc /usr/local/bin/protoc-gen-go-grpc && \
+    go clean -cache -modcache -testcache -fuzzcache
 
 ENV PIP_INDEX_URL=${PYPI_INDEX_URL}
 ENV PIP_TRUSTED_HOST=${PYPI_TRUSTED_HOST}
@@ -51,7 +77,7 @@ RUN set -e; \
     esac; \
     npm install -g @openai/codex @anthropic-ai/claude-code "${CLAUDE_CODE_PLATFORM_PACKAGE}" @google/gemini-cli
 
-RUN mkdir -p /usr/local/share/jupyter/kernels/javascript /root/.codex /root/.local/bin /root/.cargo/bin /usr/local/go /usr/local/go/bin /workspace /data/state /data/runtime /data/logs
+RUN mkdir -p /usr/local/share/jupyter/kernels/javascript /root/.codex /root/.local/bin /root/.cargo/bin /root/go/bin /workspace /data/state /data/runtime /data/logs
 
 COPY ./assets/.codex/ /root/.codex/
 COPY ./assets/.claude/ /root/.claude/
@@ -82,15 +108,17 @@ RUN mkdir -p /opt/agent-compose/npm && \
     rm -rf /tmp/agent-compose-runtime-sdk /tmp/agent-compose-runtime-sdk-offline-check /tmp/agent-compose-runtime-sdk-empty-cache
 
 ENV HOME=/root \
-    GOPATH=/usr/local/go \
+    GOPATH=/root/go \
+    GOPROXY=${GOPROXY} \
     PATH=/root/.local/bin:/usr/local/go/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
-  'mkdir -p /root/.codex /root/.local/bin /root/.cargo/bin /usr/local/go /usr/local/go/bin /workspace /data/state /data/runtime /data/logs' \
+  'mkdir -p /root/.codex /root/.local/bin /root/.cargo/bin /root/go/bin /workspace /data/state /data/runtime /data/logs' \
   'export HOME=${HOME:-/root}' \
-  'export GOPATH=${GOPATH:-/usr/local/go}' \
+  'export GOPATH=${GOPATH:-/root/go}' \
+  'export GOPROXY=${GOPROXY:-https://goproxy.cn,direct}' \
   'export PATH=/root/.local/bin:/usr/local/go/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
   'exec "$@"' > /usr/local/bin/agent-compose-env && chmod +x /usr/local/bin/agent-compose-env
 
