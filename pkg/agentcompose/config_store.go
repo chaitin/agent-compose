@@ -379,6 +379,50 @@ func (s *ConfigStore) UpdateWorkspaceConfig(ctx context.Context, item WorkspaceC
 	return normalized, nil
 }
 
+func (s *ConfigStore) getWorkspaceConfigIfExists(ctx context.Context, id string) (WorkspaceConfig, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, type, config_json, comment, created_at, updated_at FROM workspace_config WHERE id = ?`, strings.TrimSpace(id))
+	item, err := scanWorkspaceConfig(row.Scan)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return WorkspaceConfig{}, false, nil
+		}
+		return WorkspaceConfig{}, false, err
+	}
+	return item, true, nil
+}
+
+func (s *ConfigStore) UpsertWorkspaceConfig(ctx context.Context, item WorkspaceConfig) (WorkspaceConfig, error) {
+	normalized, err := normalizeWorkspaceConfig(item, false)
+	if err != nil {
+		return WorkspaceConfig{}, err
+	}
+	now := time.Now().UTC()
+	existing, found, err := s.getWorkspaceConfigIfExists(ctx, normalized.ID)
+	if err != nil {
+		return WorkspaceConfig{}, err
+	}
+	if found {
+		normalized.CreatedAt = existing.CreatedAt
+		normalized.UpdatedAt = now
+		result, err := s.db.ExecContext(ctx, `UPDATE workspace_config SET name = ?, type = ?, config_json = ?, comment = ?, updated_at = ? WHERE id = ?`,
+			normalized.Name, normalized.Type, normalized.ConfigJSON, normalized.Comment, normalized.UpdatedAt.Unix(), normalized.ID)
+		if err != nil {
+			return WorkspaceConfig{}, fmt.Errorf("update workspace config %s: %w", normalized.ID, err)
+		}
+		if rows, _ := result.RowsAffected(); rows == 0 {
+			return WorkspaceConfig{}, fmt.Errorf("workspace config %s not found", normalized.ID)
+		}
+		return s.GetWorkspaceConfig(ctx, normalized.ID)
+	}
+	normalized.CreatedAt = now
+	normalized.UpdatedAt = now
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO workspace_config(id, name, type, config_json, comment, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		normalized.ID, normalized.Name, normalized.Type, normalized.ConfigJSON, normalized.Comment, normalized.CreatedAt.Unix(), normalized.UpdatedAt.Unix()); err != nil {
+		return WorkspaceConfig{}, fmt.Errorf("insert workspace config %s: %w", normalized.ID, err)
+	}
+	return normalized, nil
+}
+
 func (s *ConfigStore) DeleteWorkspaceConfig(ctx context.Context, id string) error {
 	trimmedID := strings.TrimSpace(id)
 	if trimmedID == "" {
