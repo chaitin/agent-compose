@@ -1,6 +1,8 @@
 package compose
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -414,6 +416,23 @@ func cloneWorkspaceSpec(value *WorkspaceSpec) *WorkspaceSpec {
 	cloned.Branch = strings.TrimSpace(cloned.Branch)
 	cloned.Path = strings.TrimSpace(cloned.Path)
 	return &cloned
+}
+
+// StableWorkspaceID returns a deterministic ID derived from the workspace spec
+// fields.  Two specs with the same provider + URL + branch + path produce the
+// same ID, so repeated YAML imports don't create duplicate workspace configs.
+func StableWorkspaceID(ws *WorkspaceSpec) string {
+	if ws == nil {
+		return ""
+	}
+	parts := []string{
+		strings.TrimSpace(ws.Provider),
+		strings.TrimSpace(ws.URL),
+		strings.TrimSpace(ws.Branch),
+		strings.TrimSpace(ws.Path),
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	return "ws-" + hex.EncodeToString(sum[:])[:12]
 }
 
 func cloneBoxliteDriverSpec(value *BoxliteDriverSpec) *BoxliteDriverSpec {

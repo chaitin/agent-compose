@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1025,6 +1026,321 @@ func assertProjectServiceAgent(t *testing.T, agents []*agentcomposev2.ProjectAge
 		return
 	}
 	t.Fatalf("agent %s not found in %#v", name, agents)
+}
+
+func TestProjectServiceApplyProjectUpsertsWorkspaceConfigs(t *testing.T) {
+	store := newTestConfigStore(t)
+	service := newProjectServiceTestService(t, store)
+	ctx := context.Background()
+	source := &agentcomposev2.ProjectSource{ComposePath: filepath.Join(t.TempDir(), "agent-compose.yml")}
+
+	// Spec with a project-level git workspace and one agent.
+	spec := &agentcomposev2.ProjectSpec{
+		Name: "workspace-test",
+		Workspace: &agentcomposev2.WorkspaceSpec{
+			Url:    "https://github.com/example/repo.git",
+			Branch: "main",
+			Path:   "subdir",
+		},
+		Agents: []*agentcomposev2.AgentSpec{
+			{
+				Name:     "reviewer",
+				Provider: "codex",
+				Model:    "gpt-test",
+				Image:    "guest:v1",
+				Driver:   &agentcomposev2.DriverSpec{Name: "boxlite"},
+			},
+		},
+	}
+
+	resp, err := service.ApplyProject(ctx, connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
+		Spec:   spec,
+		Source: source,
+	}))
+	if err != nil {
+		t.Fatalf("ApplyProject returned error: %v", err)
+	}
+	if !resp.Msg.GetApplied() || len(resp.Msg.GetIssues()) != 0 {
+		t.Fatalf("ApplyProject response = %#v", resp.Msg)
+	}
+
+	// Verify the workspace config was created with the deterministic stable ID.
+	wsSpec := &compose.WorkspaceSpec{
+		URL:    "https://github.com/example/repo.git",
+		Branch: "main",
+		Path:   "subdir",
+	}
+	wantID := compose.StableWorkspaceID(wsSpec)
+	wc, err := store.GetWorkspaceConfig(ctx, wantID)
+	if err != nil {
+		t.Fatalf("GetWorkspaceConfig(%s) after ApplyProject returned error: %v", wantID, err)
+	}
+	if wc.Type != "git" {
+		t.Fatalf("workspace config type = %q, want git", wc.Type)
+	}
+	if !strings.Contains(wc.ConfigJSON, "https://github.com/example/repo.git") {
+		t.Fatalf("workspace config JSON = %q, want git url", wc.ConfigJSON)
+	}
+
+	// Re-apply with same spec — must be idempotent, workspace config should still exist.
+	repeated, err := service.ApplyProject(ctx, connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
+		Spec:   spec,
+		Source: source,
+	}))
+	if err != nil {
+		t.Fatalf("ApplyProject repeated returned error: %v", err)
+	}
+	if !repeated.Msg.GetApplied() {
+		t.Fatalf("ApplyProject repeated response = %#v", repeated.Msg)
+	}
+	wc2, err := store.GetWorkspaceConfig(ctx, wantID)
+	if err != nil {
+		t.Fatalf("GetWorkspaceConfig(%s) after repeated ApplyProject returned error: %v", wantID, err)
+	}
+	if wc2.Type != "git" {
+		t.Fatalf("workspace config type after re-apply = %q, want git", wc2.Type)
+	}
+
+	t.Run("agent level workspace override", func(t *testing.T) {
+		store2 := newTestConfigStore(t)
+		service2 := newProjectServiceTestService(t, store2)
+		ctx2 := context.Background()
+		source2 := &agentcomposev2.ProjectSource{ComposePath: filepath.Join(t.TempDir(), "agent-compose.yml")}
+
+		agentGitSpec := &agentcomposev2.WorkspaceSpec{
+			Url:    "https://github.com/agent/agent-repo.git",
+			Branch: "dev",
+		}
+		projectGitSpec := &agentcomposev2.WorkspaceSpec{
+			Url:    "https://github.com/project/project-repo.git",
+			Branch: "main",
+		}
+
+		spec2 := &agentcomposev2.ProjectSpec{
+			Name:      "override-test",
+			Workspace: projectGitSpec,
+			Agents: []*agentcomposev2.AgentSpec{
+				{
+					Name:      "reviewer",
+					Provider:  "codex",
+					Model:     "gpt-test",
+					Image:     "guest:v1",
+					Driver:    &agentcomposev2.DriverSpec{Name: "boxlite"},
+					Workspace: agentGitSpec,
+				},
+				{
+					Name:     "worker",
+					Provider: "claude",
+					Driver:   &agentcomposev2.DriverSpec{Name: "docker"},
+					// No agent workspace — falls back to project-level.
+				},
+			},
+		}
+
+		resp, err := service2.ApplyProject(ctx2, connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
+			Spec:   spec2,
+			Source: source2,
+		}))
+		if err != nil {
+			t.Fatalf("ApplyProject returned error: %v", err)
+		}
+		if !resp.Msg.GetApplied() || len(resp.Msg.GetIssues()) != 0 {
+			t.Fatalf("ApplyProject response = %#v", resp.Msg)
+		}
+
+		// Agent-level workspace should exist.
+		agentWSID := compose.StableWorkspaceID(&compose.WorkspaceSpec{
+			URL:    "https://github.com/agent/agent-repo.git",
+			Branch: "dev",
+		})
+		if _, err := store2.GetWorkspaceConfig(ctx2, agentWSID); err != nil {
+			t.Fatalf("agent workspace config %s not found: %v", agentWSID, err)
+		}
+
+		// Project-level workspace should exist (referenced by "worker" agent).
+		projectWSID := compose.StableWorkspaceID(&compose.WorkspaceSpec{
+			URL:    "https://github.com/project/project-repo.git",
+			Branch: "main",
+		})
+		if _, err := store2.GetWorkspaceConfig(ctx2, projectWSID); err != nil {
+			t.Fatalf("project workspace config %s not found: %v", projectWSID, err)
+		}
+	})
+
+	t.Run("git auto-detection from URL", func(t *testing.T) {
+		store3 := newTestConfigStore(t)
+		service3 := newProjectServiceTestService(t, store3)
+		ctx3 := context.Background()
+
+		// Workspace with URL/branch/path but no explicit provider
+		// must auto-detect as git, not file.
+		autoSpec := &agentcomposev2.ProjectSpec{
+			Name: "auto-detect-test",
+			Workspace: &agentcomposev2.WorkspaceSpec{
+				Url:    "https://github.com/example/auto-repo.git",
+				Branch: "main",
+				Path:   "src",
+			},
+			Agents: []*agentcomposev2.AgentSpec{
+				{
+					Name:     "reviewer",
+					Provider: "codex",
+					Model:    "gpt-test",
+					Image:    "guest:v1",
+					Driver:   &agentcomposev2.DriverSpec{Name: "boxlite"},
+				},
+			},
+		}
+		resp, err := service3.ApplyProject(ctx3, connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
+			Spec:   autoSpec,
+			Source: &agentcomposev2.ProjectSource{ComposePath: filepath.Join(t.TempDir(), "agent-compose.yml")},
+		}))
+		if err != nil {
+			t.Fatalf("ApplyProject auto-detect returned error: %v", err)
+		}
+		if !resp.Msg.GetApplied() || len(resp.Msg.GetIssues()) != 0 {
+			t.Fatalf("ApplyProject auto-detect response = %#v", resp.Msg)
+		}
+
+		autoWSID := compose.StableWorkspaceID(&compose.WorkspaceSpec{
+			URL:    "https://github.com/example/auto-repo.git",
+			Branch: "main",
+			Path:   "src",
+		})
+		autoWc, err := store3.GetWorkspaceConfig(ctx3, autoWSID)
+		if err != nil {
+			t.Fatalf("GetWorkspaceConfig auto-detect(%s) returned error: %v", autoWSID, err)
+		}
+		if autoWc.Type != "git" {
+			t.Fatalf("auto-detected workspace config type = %q, want git", autoWc.Type)
+		}
+
+		// Explicit provider: git with the same URL/branch/path
+		// must also produce type "git" (different ID because
+		// provider is part of the stable hash).
+		explicitWSID := compose.StableWorkspaceID(&compose.WorkspaceSpec{
+			Provider: "git",
+			URL:      "https://github.com/example/auto-repo.git",
+			Branch:   "main",
+			Path:     "src",
+		})
+		if autoWSID == explicitWSID {
+			t.Fatalf("auto-detected (%s) and explicit git (%s) workspace IDs should differ", autoWSID, explicitWSID)
+		}
+
+		explicitSpec := &agentcomposev2.ProjectSpec{
+			Name: "explicit-git-test",
+			Workspace: &agentcomposev2.WorkspaceSpec{
+				Provider: "git",
+				Url:      "https://github.com/example/auto-repo.git",
+				Branch:   "main",
+				Path:     "src",
+			},
+			Agents: []*agentcomposev2.AgentSpec{
+				{
+					Name:     "reviewer",
+					Provider: "codex",
+					Model:    "gpt-test",
+					Image:    "guest:v1",
+					Driver:   &agentcomposev2.DriverSpec{Name: "boxlite"},
+				},
+			},
+		}
+		explicitResp, err := service3.ApplyProject(ctx3, connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
+			Spec:   explicitSpec,
+			Source: &agentcomposev2.ProjectSource{ComposePath: filepath.Join(t.TempDir(), "agent-compose.yml")},
+		}))
+		if err != nil {
+			t.Fatalf("ApplyProject explicit returned error: %v", err)
+		}
+		if !explicitResp.Msg.GetApplied() || len(explicitResp.Msg.GetIssues()) != 0 {
+			t.Fatalf("ApplyProject explicit response = %#v", explicitResp.Msg)
+		}
+		explicitWc, err := store3.GetWorkspaceConfig(ctx3, explicitWSID)
+		if err != nil {
+			t.Fatalf("GetWorkspaceConfig explicit(%s) returned error: %v", explicitWSID, err)
+		}
+		if explicitWc.Type != "git" {
+			t.Fatalf("explicit git workspace config type = %q, want git", explicitWc.Type)
+		}
+	})
+}
+
+func TestProjectServiceApplyProjectUpsertsLocalWorkspaceContent(t *testing.T) {
+	store := newTestConfigStore(t)
+	service := newProjectServiceTestService(t, store)
+	ctx := context.Background()
+	projectDir := t.TempDir()
+
+	// Create test files in the project directory.
+	if err := os.WriteFile(filepath.Join(projectDir, "README.md"), []byte("# Test Project\n"), 0644); err != nil {
+		t.Fatalf("write test file: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, "src"), 0755); err != nil {
+		t.Fatalf("create src dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "src", "main.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatalf("write test source file: %v", err)
+	}
+	source := &agentcomposev2.ProjectSource{ComposePath: filepath.Join(projectDir, "agent-compose.yml")}
+
+	spec := &agentcomposev2.ProjectSpec{
+		Name: "local-workspace-test",
+		Workspace: &agentcomposev2.WorkspaceSpec{
+			Provider: "local",
+			Path:     ".",
+		},
+		Agents: []*agentcomposev2.AgentSpec{
+			{
+				Name:     "reviewer",
+				Provider: "codex",
+				Model:    "gpt-test",
+				Image:    "guest:v1",
+				Driver:   &agentcomposev2.DriverSpec{Name: "boxlite"},
+			},
+		},
+	}
+
+	resp, err := service.ApplyProject(ctx, connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
+		Spec:   spec,
+		Source: source,
+	}))
+	if err != nil {
+		t.Fatalf("ApplyProject returned error: %v", err)
+	}
+	if !resp.Msg.GetApplied() || len(resp.Msg.GetIssues()) != 0 {
+		t.Fatalf("ApplyProject response = %#v", resp.Msg)
+	}
+
+	// Verify the workspace config was created as a file type.
+	wsSpec := &compose.WorkspaceSpec{
+		Provider: "local",
+		Path:     ".",
+	}
+	wantID := compose.StableWorkspaceID(wsSpec)
+	wc, err := store.GetWorkspaceConfig(ctx, wantID)
+	if err != nil {
+		t.Fatalf("GetWorkspaceConfig(%s) after ApplyProject returned error: %v", wantID, err)
+	}
+	if wc.Type != "file" {
+		t.Fatalf("workspace config type = %q, want file", wc.Type)
+	}
+
+	// Verify the content root contains the test files.
+	content, err := openFileWorkspaceContent(service.config, wc)
+	if err != nil {
+		t.Fatalf("openFileWorkspaceContent returned error: %v", err)
+	}
+	defer func() { _ = content.Root.Close() }()
+
+	// README.md should exist in the content root.
+	if _, err := content.Root.Lstat("README.md"); err != nil {
+		t.Fatalf("content root missing README.md: %v", err)
+	}
+	// src/main.go should exist in the content root.
+	if _, err := content.Root.Lstat("src/main.go"); err != nil {
+		t.Fatalf("content root missing src/main.go: %v", err)
+	}
 }
 
 func managedAgentIDByName(t *testing.T, agents []*agentcomposev2.ProjectAgent, name string) string {

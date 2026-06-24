@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -148,6 +149,11 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 	schedulerRecords, managedLoaders, err = s.projectManagedSchedulersFromSpec(ctx, project, revision.Revision, normalized.spec)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
+	}
+	// Materialize workspace configs referenced by managed agent definitions
+	// so that CreateAgentSession and agent validation can resolve them.
+	if err := s.upsertProjectWorkspaceConfigs(ctx, project, normalized.spec); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
 	}
 	changes := projectApplyChanges(project, existingProject, projectFound, revision, revisionCreated)
 	agentsUnchanged := true
@@ -656,7 +662,7 @@ func projectAgentRecordsFromSpec(projectID string, revision int64, spec *compose
 func projectManagedAgentDefinitionsFromSpec(project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]AgentDefinition, error) {
 	agents := make([]AgentDefinition, 0, len(spec.Agents))
 	for _, agent := range spec.Agents {
-		record, err := projectManagedAgentDefinitionFromSpec(project, revision, agent)
+		record, err := projectManagedAgentDefinitionFromSpec(project, revision, spec.Workspace, agent)
 		if err != nil {
 			return nil, err
 		}
@@ -665,7 +671,7 @@ func projectManagedAgentDefinitionsFromSpec(project ProjectRecord, revision int6
 	return agents, nil
 }
 
-func projectManagedAgentDefinitionFromSpec(project ProjectRecord, revision int64, agent compose.NormalizedAgentSpec) (AgentDefinition, error) {
+func projectManagedAgentDefinitionFromSpec(project ProjectRecord, revision int64, projectWorkspace *compose.WorkspaceSpec, agent compose.NormalizedAgentSpec) (AgentDefinition, error) {
 	managedAgentID, err := StableManagedAgentID(project.ID, agent.Name)
 	if err != nil {
 		return AgentDefinition{}, err
@@ -673,6 +679,13 @@ func projectManagedAgentDefinitionFromSpec(project ProjectRecord, revision int64
 	driver := ""
 	if agent.Driver != nil {
 		driver = agent.Driver.Name
+	}
+	// Resolve workspace: agent-level takes precedence, fall back to project-level.
+	workspaceID := ""
+	if agent.Workspace != nil {
+		workspaceID = compose.StableWorkspaceID(agent.Workspace)
+	} else if projectWorkspace != nil {
+		workspaceID = compose.StableWorkspaceID(projectWorkspace)
 	}
 	return AgentDefinition{
 		ID:                     managedAgentID,
@@ -685,10 +698,127 @@ func projectManagedAgentDefinitionFromSpec(project ProjectRecord, revision int64
 		GuestImage:             agent.Image,
 		EnvItems:               sessionEnvItemsFromCompose(agent.Env),
 		ConfigJSON:             "{}",
+		WorkspaceID:            workspaceID,
 		ManagedProjectID:       project.ID,
 		ManagedProjectRevision: revision,
 		ManagedAgentName:       agent.Name,
 	}, nil
+}
+
+// projectWorkspaceConfigFromSpec builds a WorkspaceConfig model from a compose
+// WorkspaceSpec using the deterministic stable workspace ID.  The caller is
+// expected to persist the result via UpsertWorkspaceConfig.
+func (s *Service) projectWorkspaceConfigFromSpec(project ProjectRecord, ws *compose.WorkspaceSpec) (WorkspaceConfig, error) {
+	id := compose.StableWorkspaceID(ws)
+	name := strings.TrimSpace(project.Name)
+	if name == "" {
+		name = project.ID
+	}
+	provider := strings.ToLower(strings.TrimSpace(ws.Provider))
+	if provider == "" && strings.TrimSpace(ws.URL) != "" {
+		provider = "git"
+	}
+	switch provider {
+	case "git":
+		cfg := gitWorkspaceConfig{
+			URL:         strings.TrimSpace(ws.URL),
+			Branch:      strings.TrimSpace(ws.Branch),
+			CloneTarget: strings.TrimSpace(ws.Path),
+		}
+		data, err := json.Marshal(cfg)
+		if err != nil {
+			return WorkspaceConfig{}, fmt.Errorf("encode git workspace config: %w", err)
+		}
+		return WorkspaceConfig{
+			ID:         id,
+			Name:       name + "/workspace/" + id[:8],
+			Type:       "git",
+			ConfigJSON: string(data),
+		}, nil
+	case "local", "":
+		wc := WorkspaceConfig{
+			ID:         id,
+			Name:       name + "/workspace/" + id[:8],
+			Type:       "file",
+			ConfigJSON: defaultFileWorkspaceConfigJSON(s.config, id),
+		}
+		// For local workspaces with an explicit path, snapshot the source
+		// directory into the workspace content root so that agent sessions
+		// start with the project files rather than an empty directory.
+		if strings.TrimSpace(ws.Path) != "" {
+			if err := s.materializeProjectApplyLocalWorkspace(project, wc, ws); err != nil {
+				return WorkspaceConfig{}, err
+			}
+		}
+		return wc, nil
+	default:
+		return WorkspaceConfig{}, fmt.Errorf("unsupported workspace provider %q", ws.Provider)
+	}
+}
+
+// materializeProjectApplyLocalWorkspace snapshots the local directory referenced
+// by a file-type workspace into the workspace content root.  This follows the
+// same pattern as materializeLocalProjectRunWorkspace but uses the stable
+// workspace ID so that re-imports are safe.
+func (s *Service) materializeProjectApplyLocalWorkspace(project ProjectRecord, wc WorkspaceConfig, ws *compose.WorkspaceSpec) error {
+	if s == nil || s.config == nil {
+		return fmt.Errorf("config is required")
+	}
+	sourceDir, err := resolveLocalProjectWorkspacePath(project, ws.Path)
+	if err != nil {
+		return err
+	}
+	if _, err := validateFileWorkspaceConfig(s.config, wc.ID, wc.ConfigJSON); err != nil {
+		return err
+	}
+	if err := resetFileWorkspaceSnapshotContent(s.config, wc.ID); err != nil {
+		return err
+	}
+	content, err := openFileWorkspaceContent(s.config, wc)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = content.Root.Close() }()
+	sourceRoot, err := os.OpenRoot(sourceDir)
+	if err != nil {
+		return fmt.Errorf("open local workspace source %s: %w", sourceDir, err)
+	}
+	defer func() { _ = sourceRoot.Close() }()
+	if err := copyRootDirectoryContents(sourceRoot, content.AbsRoot); err != nil {
+		return fmt.Errorf("materialize local workspace snapshot: %w", err)
+	}
+	return nil
+}
+
+// upsertProjectWorkspaceConfigs ensures every workspace referenced by managed
+// agent definitions has a corresponding WorkspaceConfig row before the agent
+// definitions are reconciled.  Without this, CreateAgentSession fails because
+// agentWorkspace → GetWorkspaceConfig returns "not found" for the deterministic
+// IDs written by projectManagedAgentDefinitionFromSpec.
+func (s *Service) upsertProjectWorkspaceConfigs(ctx context.Context, project ProjectRecord, spec *compose.NormalizedProjectSpec) error {
+	seen := make(map[string]struct{})
+	for _, agent := range spec.Agents {
+		ws := agent.Workspace
+		if ws == nil {
+			ws = spec.Workspace
+		}
+		if ws == nil {
+			continue
+		}
+		id := compose.StableWorkspaceID(ws)
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		wc, err := s.projectWorkspaceConfigFromSpec(project, ws)
+		if err != nil {
+			return err
+		}
+		if _, err := s.configDB.UpsertWorkspaceConfig(ctx, wc); err != nil {
+			return fmt.Errorf("upsert workspace config %s: %w", id, err)
+		}
+	}
+	return nil
 }
 
 func sessionEnvItemsFromCompose(values map[string]compose.EnvVarSpec) []SessionEnvVar {
