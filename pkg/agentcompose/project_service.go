@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -714,6 +715,9 @@ func (s *Service) projectWorkspaceConfigFromSpec(project ProjectRecord, ws *comp
 		name = project.ID
 	}
 	provider := strings.ToLower(strings.TrimSpace(ws.Provider))
+	if provider == "" && strings.TrimSpace(ws.URL) != "" {
+		provider = "git"
+	}
 	switch provider {
 	case "git":
 		cfg := gitWorkspaceConfig{
@@ -732,15 +736,58 @@ func (s *Service) projectWorkspaceConfigFromSpec(project ProjectRecord, ws *comp
 			ConfigJSON: string(data),
 		}, nil
 	case "local", "":
-		return WorkspaceConfig{
+		wc := WorkspaceConfig{
 			ID:         id,
 			Name:       name + "/workspace/" + id[:8],
 			Type:       "file",
 			ConfigJSON: defaultFileWorkspaceConfigJSON(s.config, id),
-		}, nil
+		}
+		// For local workspaces with an explicit path, snapshot the source
+		// directory into the workspace content root so that agent sessions
+		// start with the project files rather than an empty directory.
+		if strings.TrimSpace(ws.Path) != "" {
+			if err := s.materializeProjectApplyLocalWorkspace(project, wc, ws); err != nil {
+				return WorkspaceConfig{}, err
+			}
+		}
+		return wc, nil
 	default:
 		return WorkspaceConfig{}, fmt.Errorf("unsupported workspace provider %q", ws.Provider)
 	}
+}
+
+// materializeProjectApplyLocalWorkspace snapshots the local directory referenced
+// by a file-type workspace into the workspace content root.  This follows the
+// same pattern as materializeLocalProjectRunWorkspace but uses the stable
+// workspace ID so that re-imports are safe.
+func (s *Service) materializeProjectApplyLocalWorkspace(project ProjectRecord, wc WorkspaceConfig, ws *compose.WorkspaceSpec) error {
+	if s == nil || s.config == nil {
+		return fmt.Errorf("config is required")
+	}
+	sourceDir, err := resolveLocalProjectWorkspacePath(project, ws.Path)
+	if err != nil {
+		return err
+	}
+	if _, err := validateFileWorkspaceConfig(s.config, wc.ID, wc.ConfigJSON); err != nil {
+		return err
+	}
+	if err := resetFileWorkspaceSnapshotContent(s.config, wc.ID); err != nil {
+		return err
+	}
+	content, err := openFileWorkspaceContent(s.config, wc)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = content.Root.Close() }()
+	sourceRoot, err := os.OpenRoot(sourceDir)
+	if err != nil {
+		return fmt.Errorf("open local workspace source %s: %w", sourceDir, err)
+	}
+	defer func() { _ = sourceRoot.Close() }()
+	if err := copyRootDirectoryContents(sourceRoot, content.AbsRoot); err != nil {
+		return fmt.Errorf("materialize local workspace snapshot: %w", err)
+	}
+	return nil
 }
 
 // upsertProjectWorkspaceConfigs ensures every workspace referenced by managed
