@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -137,12 +138,14 @@ func (r *microsandboxRuntime) StopSession(ctx context.Context, session *Session,
 		}()
 		if err := sandbox.Stop(ctx); err != nil {
 			if microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
+				r.removeDockerDisk(session.Summary.ID)
 				return true, nil
 			}
 			r.trackLifecycleHandle(name, sandbox)
 			sandbox = nil
 			return false, err
 		}
+		r.removeDockerDisk(session.Summary.ID)
 		return false, nil
 	}
 
@@ -152,15 +155,18 @@ func (r *microsandboxRuntime) StopSession(ctx context.Context, session *Session,
 	}
 	if stale || sandbox == nil {
 		r.discardLifecycleHandle(name)
+		r.removeDockerDisk(session.Summary.ID)
 		return true, nil
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
 	if err := sandbox.Stop(ctx); err != nil {
 		if microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
+			r.removeDockerDisk(session.Summary.ID)
 			return true, nil
 		}
 		return false, err
 	}
+	r.removeDockerDisk(session.Summary.ID)
 	return false, nil
 }
 
@@ -288,6 +294,7 @@ func (r *microsandboxRuntime) prepareEnvironment() error {
 	if err := r.writeMicrosandboxConfig(libkrunfwPath); err != nil {
 		return err
 	}
+	r.gcDockerDisks()
 	return nil
 }
 
@@ -444,6 +451,73 @@ func (r *microsandboxRuntime) removeGeneratedMicrosandboxRegistryCA(registries m
 
 func (r *microsandboxRuntime) sandboxStateDir(name string) string {
 	return filepath.Join(r.config.MicrosandboxHome, "sandboxes", name)
+}
+
+func (r *microsandboxRuntime) dockerDiskPath(sessionID string) string {
+	return filepath.Join(r.config.MicrosandboxHome, "docker-disks", sessionID+".raw")
+}
+
+func (r *microsandboxRuntime) ensureDockerDisk(sessionID string) (string, error) {
+	path := r.dockerDiskPath(sessionID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", fmt.Errorf("create docker-disks directory: %w", err)
+	}
+	if _, err := os.Stat(path); err == nil {
+		// Disk already exists; reuse it (idempotent for session reconnects).
+		return path, nil
+	}
+	// Create a sparse 8 GiB raw file then format it as ext4.
+	f, err := os.Create(path)
+	if err != nil {
+		return "", fmt.Errorf("create docker disk image %s: %w", path, err)
+	}
+	if err := f.Truncate(8 << 30); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return "", fmt.Errorf("size docker disk image %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("close docker disk image %s: %w", path, err)
+	}
+	if out, err := exec.Command("mkfs.ext4", "-F", "-q", path).CombinedOutput(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("mkfs.ext4 docker disk image %s: %w: %s", path, err, strings.TrimSpace(string(out)))
+	}
+	return path, nil
+}
+
+func (r *microsandboxRuntime) gcDockerDisks() {
+	disksDir := filepath.Join(r.config.MicrosandboxHome, "docker-disks")
+	entries, err := os.ReadDir(disksDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("agent-compose microsandbox gc docker-disks: cannot read directory", "dir", disksDir, "error", err)
+		}
+		return
+	}
+	removed := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".raw") {
+			continue
+		}
+		p := filepath.Join(disksDir, entry.Name())
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			slog.Warn("agent-compose microsandbox gc docker-disks: failed to remove stale disk", "path", p, "error", err)
+			continue
+		}
+		removed++
+	}
+	if removed > 0 {
+		slog.Info("agent-compose microsandbox gc docker-disks: removed stale disk images on startup", "count", removed)
+	}
+}
+
+func (r *microsandboxRuntime) removeDockerDisk(sessionID string) {
+	path := r.dockerDiskPath(sessionID)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		slog.Warn("agent-compose microsandbox: failed to remove docker disk image", "path", path, "error", err)
+	}
 }
 
 func (r *microsandboxRuntime) sandboxAgentSockPath(name string) string {
@@ -609,18 +683,25 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sessio
 	}
 	// Give docker its own disk-backed ext4 volume. The guest root is virtiofs,
 	// on which the kernel rejects overlayfs (docker's default storage driver)
-	// with "invalid argument"; a disk-backed named volume keeps docker's
-	// overlay storage off the virtiofs root. One volume per session so
-	// concurrent VMs never share the same ext4 image.
-	mounts["/var/lib/docker"] = microsandbox.Mount.NamedWith(
-		"docker-data-"+session.Summary.ID,
-		microsandbox.MountOptions{},
-		microsandbox.NamedVolumeOptions{
-			Mode:    "ensure-exists",
-			Kind:    "disk",
-			SizeMiB: 8 * 1024,
-		},
-	)
+	// with "invalid argument"; a disk-image mount keeps docker's overlay
+	// storage on a real block device. One disk image per session so concurrent
+	// VMs never share the same ext4 image. The image is provisioned on the
+	// host by agent-compose and removed when the session stops.
+	rawPath, err := r.ensureDockerDisk(session.Summary.ID)
+	if err != nil {
+		return nil, fmt.Errorf("provision docker disk: %w", err)
+	}
+	// If the sandbox never comes up, remove the disk we just provisioned:
+	// StopSession is not guaranteed to run for a session that never started,
+	// so without this the .raw would linger until the next daemon restart
+	// (gcDockerDisks). On success the flag below disarms the cleanup.
+	sandboxCreated := false
+	defer func() {
+		if !sandboxCreated {
+			r.removeDockerDisk(session.Summary.ID)
+		}
+	}()
+	mounts["/var/lib/docker"] = microsandbox.Mount.Disk(rawPath, microsandbox.DiskOptions{Format: "raw", Fstype: "ext4"})
 	hostPort := uint16(proxyState.HostPort)
 	guestPort := uint16(r.config.JupyterGuestPort)
 	imageRef := resolveSessionGuestImage(vmState.Image, session.Summary.GuestImage, defaultGuestImageForDriver(r.config, RuntimeDriverMicrosandbox))
@@ -661,7 +742,11 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sessio
 		microsandbox.WithMemory(8192),
 		microsandbox.WithCPUs(4),
 	)
-	return sandbox, err
+	if err != nil {
+		return nil, err
+	}
+	sandboxCreated = true
+	return sandbox, nil
 }
 
 func (r *microsandboxRuntime) resolveMicrosandboxImageRef(ctx context.Context, imageRef string) (string, bool, error) {
