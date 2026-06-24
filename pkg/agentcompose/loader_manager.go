@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -21,20 +22,21 @@ import (
 )
 
 type LoaderManager struct {
-	config    *appconfig.Config
-	rootCtx   context.Context
-	store     *Store
-	configDB  *ConfigStore
-	driver    Driver
-	executor  *Executor
-	images    ImageBackend
-	llm       *LLMClient
-	cap       CapabilityProvider
-	bus       *LoaderBus
-	streams   *SessionStreamBroker
-	engine    LoaderEngine
-	sessions  *SessionRPCBridge
-	dashboard *DashboardOverviewHub
+	config     *appconfig.Config
+	rootCtx    context.Context
+	store      *Store
+	configDB   *ConfigStore
+	driver     Driver
+	executor   *Executor
+	images     ImageBackend
+	llm        *LLMClient
+	cap        CapabilityProvider
+	bus        *LoaderBus
+	streams    *SessionStreamBroker
+	engine     LoaderEngine
+	sessions   *SessionRPCBridge
+	dashboard  *DashboardOverviewHub
+	eventQueue *WebhookRunQueue
 
 	once         sync.Once
 	mu           sync.RWMutex
@@ -61,14 +63,31 @@ type scheduledLoaderRun struct {
 	source      string
 }
 
+type eventLoaderTarget struct {
+	loader  Loader
+	trigger LoaderTrigger
+}
+
+type preparedLoaderRun struct {
+	loader      Loader
+	trigger     *LoaderTrigger
+	run         LoaderRunSummary
+	payloadJSON string
+}
+
 func NewLoaderManager(di do.Injector) (*LoaderManager, error) {
 	rootCtx := do.MustInvoke[context.Context](di)
 	if rootCtx == nil {
 		rootCtx = context.Background()
 	}
+	config := do.MustInvoke[*appconfig.Config](di)
+	eventQueue, err := newWebhookRunQueueFromConfig(config)
+	if err != nil {
+		return nil, err
+	}
 	dashboard, _ := do.Invoke[*DashboardOverviewHub](di)
 	return &LoaderManager{
-		config:       do.MustInvoke[*appconfig.Config](di),
+		config:       config,
 		rootCtx:      rootCtx,
 		store:        do.MustInvoke[*Store](di),
 		configDB:     do.MustInvoke[*ConfigStore](di),
@@ -82,6 +101,7 @@ func NewLoaderManager(di do.Injector) (*LoaderManager, error) {
 		engine:       do.MustInvoke[LoaderEngine](di),
 		sessions:     do.MustInvoke[*SessionRPCBridge](di),
 		dashboard:    dashboard,
+		eventQueue:   eventQueue,
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
 		scheduleWake: make(chan struct{}, 1),
@@ -339,39 +359,9 @@ func (m *LoaderManager) eventLoop() {
 				slog.Warn("failed to encode loader topic event payload", "topic", event.Topic, "error", err)
 				continue
 			}
-			matched := false
-			for _, loader := range m.snapshotLoaders() {
-				if !loader.Summary.Enabled {
-					continue
-				}
-				for _, trigger := range loader.Triggers {
-					if !trigger.Enabled || trigger.Kind != LoaderTriggerKindEvent || !loaderTriggerTopicMatches(trigger.Topic, event.Topic) {
-						continue
-					}
-					matched = true
-					if event.EventID != "" {
-						if err := m.configDB.UpsertEventDelivery(m.rootCtx, EventDelivery{
-							EventID:   event.EventID,
-							LoaderID:  loader.Summary.ID,
-							TriggerID: trigger.ID,
-							Status:    EventDeliveryStatusMatched,
-						}); err != nil {
-							slog.Warn("failed to record event delivery match", "event_id", event.EventID, "loader_id", loader.Summary.ID, "trigger_id", trigger.ID, "error", err)
-						}
-					}
-					runCtx, cancel := context.WithTimeout(m.rootCtx, m.loaderRunTimeout(0))
-					go func(loader Loader, trigger LoaderTrigger, payloadJSON string, topic string, ack func(context.Context) error, release func()) {
-						defer cancel()
-						if _, err := m.runLoader(runCtx, loader, &trigger, payloadJSON, topic, true, loaderRunOptions{}, ack); err != nil {
-							slog.Warn("loader event run failed", "loader_id", loader.Summary.ID, "trigger_id", trigger.ID, "topic", topic, "error", err)
-							if release != nil {
-								release()
-							}
-						}
-					}(loader, trigger, payloadJSON, event.Topic, event.Ack, event.Release)
-				}
-			}
-			if !matched {
+			targets := m.collectEventLoaderTargets(event.Topic)
+			targets = dedupeWebhookEventTargets(event, targets)
+			if len(targets) == 0 {
 				ack := event.NoSubscriberAck
 				if ack == nil {
 					ack = event.Ack
@@ -381,9 +371,210 @@ func (m *LoaderManager) eventLoop() {
 						slog.Warn("failed to mark unmatched loader topic event published", "event_id", event.EventID, "topic", event.Topic, "error", err)
 					}
 				}
+				continue
+			}
+			if m.eventShouldRetryForBusy(event, targets) {
+				m.retryLoaderTopicEvent(event, "loader is already running")
+				continue
+			}
+			reservations, ok := m.reserveEventQueueSlots(event, len(targets))
+			if !ok {
+				m.retryLoaderTopicEvent(event, "webhook queue is full")
+				continue
+			}
+			if event.Source == TopicEventSourceWebhook {
+				m.dispatchWebhookEventTargets(event, targets, payloadJSON, reservations)
+				continue
+			}
+			for _, target := range targets {
+				if event.EventID != "" {
+					if err := m.configDB.UpsertEventDelivery(m.rootCtx, EventDelivery{
+						EventID:   event.EventID,
+						LoaderID:  target.loader.Summary.ID,
+						TriggerID: target.trigger.ID,
+						Status:    EventDeliveryStatusMatched,
+					}); err != nil {
+						slog.Warn("failed to record event delivery match", "event_id", event.EventID, "loader_id", target.loader.Summary.ID, "trigger_id", target.trigger.ID, "error", err)
+					}
+				}
+				reservation := reservations[0]
+				reservations = reservations[1:]
+				runCtx, cancel := context.WithTimeout(m.rootCtx, m.loaderRunTimeout(0))
+				go func(target eventLoaderTarget, payloadJSON string, topic string, ack func(context.Context) error, release func(), reservation *webhookQueueReservation) {
+					defer cancel()
+					defer reservation.Release()
+					if _, err := m.runLoader(runCtx, target.loader, &target.trigger, payloadJSON, topic, true, loaderRunOptions{retryWhenBusy: event.Source == TopicEventSourceWebhook}, ack); err != nil {
+						if errors.Is(err, errLoaderRunBusyForRetry) {
+							m.retryLoaderTopicEvent(event, "loader is already running")
+							return
+						}
+						slog.Warn("loader event run failed", "loader_id", target.loader.Summary.ID, "trigger_id", target.trigger.ID, "topic", topic, "error", err)
+						if release != nil {
+							release()
+						}
+					}
+				}(target, payloadJSON, event.Topic, event.Ack, event.Release, reservation)
 			}
 		}
 	}
+}
+
+func (m *LoaderManager) retryLoaderTopicEvent(event LoaderTopicEvent, reason string) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "loader topic event retry requested"
+	}
+	if event.Retry != nil {
+		if err := event.Retry(m.rootCtx, reason, time.Now().UTC().Add(time.Second)); err != nil {
+			slog.Warn("failed to retry loader topic event", "event_id", event.EventID, "topic", event.Topic, "reason", reason, "error", err)
+		}
+		return
+	}
+	if event.Release != nil {
+		event.Release()
+	}
+}
+
+func (m *LoaderManager) dispatchWebhookEventTargets(event LoaderTopicEvent, targets []eventLoaderTarget, payloadJSON string, reservations []*webhookQueueReservation) {
+	acquiredLoaderIDs := make([]string, 0, len(targets))
+	for _, target := range targets {
+		if !m.enterRun(target.loader) {
+			for _, loaderID := range acquiredLoaderIDs {
+				m.leaveRun(loaderID)
+			}
+			for _, reservation := range reservations {
+				reservation.Release()
+			}
+			m.retryLoaderTopicEvent(event, "loader is already running")
+			return
+		}
+		acquiredLoaderIDs = append(acquiredLoaderIDs, target.loader.Summary.ID)
+	}
+	prepared := make([]preparedLoaderRun, 0, len(targets))
+	for index, target := range targets {
+		preparedRun, err := m.prepareLoaderRun(m.rootCtx, target.loader, &target.trigger, payloadJSON, event.Topic, loaderRunOptions{alreadyEntered: true})
+		if err != nil {
+			for _, item := range prepared {
+				m.abortPreparedLoaderRun(context.WithoutCancel(m.rootCtx), item, err.Error())
+			}
+			for _, loaderID := range acquiredLoaderIDs[index+1:] {
+				m.leaveRun(loaderID)
+			}
+			for _, reservation := range reservations {
+				reservation.Release()
+			}
+			reason := err.Error()
+			if errors.Is(err, errLoaderRunBusyForRetry) {
+				reason = "loader is already running"
+			}
+			m.retryLoaderTopicEvent(event, reason)
+			return
+		}
+		prepared = append(prepared, preparedRun)
+	}
+	if event.Ack != nil {
+		if err := event.Ack(m.rootCtx); err != nil {
+			slog.Warn("failed to mark loader topic event published", "event_id", event.EventID, "topic", event.Topic, "error", err)
+		}
+	}
+	for index, item := range prepared {
+		var reservation *webhookQueueReservation
+		if index < len(reservations) {
+			reservation = reservations[index]
+		}
+		runCtx, cancel := context.WithTimeout(m.rootCtx, m.loaderRunTimeout(0))
+		go func(item preparedLoaderRun, reservation *webhookQueueReservation) {
+			defer cancel()
+			defer reservation.Release()
+			if _, err := m.executePreparedLoaderRun(runCtx, item); err != nil {
+				slog.Warn("loader event run failed", "loader_id", item.loader.Summary.ID, "trigger_id", item.run.TriggerID, "topic", event.Topic, "error", err)
+			}
+		}(item, reservation)
+	}
+}
+
+func (m *LoaderManager) collectEventLoaderTargets(topic string) []eventLoaderTarget {
+	targets := make([]eventLoaderTarget, 0)
+	for _, loader := range m.snapshotLoaders() {
+		if !loader.Summary.Enabled {
+			continue
+		}
+		for _, trigger := range loader.Triggers {
+			if !trigger.Enabled || trigger.Kind != LoaderTriggerKindEvent || !loaderTriggerTopicMatches(trigger.Topic, topic) {
+				continue
+			}
+			targets = append(targets, eventLoaderTarget{
+				loader:  loader,
+				trigger: trigger,
+			})
+		}
+	}
+	return targets
+}
+
+func dedupeWebhookEventTargets(event LoaderTopicEvent, targets []eventLoaderTarget) []eventLoaderTarget {
+	if event.Source != TopicEventSourceWebhook || len(targets) <= 1 {
+		return targets
+	}
+	seen := map[string]struct{}{}
+	deduped := make([]eventLoaderTarget, 0, len(targets))
+	for _, target := range targets {
+		loaderID := strings.TrimSpace(target.loader.Summary.ID)
+		if loaderID == "" {
+			deduped = append(deduped, target)
+			continue
+		}
+		if _, ok := seen[loaderID]; ok {
+			continue
+		}
+		seen[loaderID] = struct{}{}
+		deduped = append(deduped, target)
+	}
+	return deduped
+}
+
+func (m *LoaderManager) eventShouldRetryForBusy(event LoaderTopicEvent, targets []eventLoaderTarget) bool {
+	if event.Source != TopicEventSourceWebhook || len(targets) == 0 {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, target := range targets {
+		loaderID := strings.TrimSpace(target.loader.Summary.ID)
+		if normalizeLoaderConcurrencyPolicy(target.loader.Summary.ConcurrencyPolicy) != LoaderConcurrencyPolicyParallel && m.running[loaderID] > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *LoaderManager) reserveEventQueueSlots(event LoaderTopicEvent, count int) ([]*webhookQueueReservation, bool) {
+	if count <= 0 {
+		return nil, true
+	}
+	if event.Source != TopicEventSourceWebhook {
+		return noopWebhookQueueReservations(count), true
+	}
+	if m.eventQueue == nil {
+		queue, err := newWebhookRunQueueFromConfig(m.config)
+		if err != nil {
+			slog.Warn("failed to initialize webhook queue config", "error", err)
+			queue = &WebhookRunQueue{running: map[string]int{}}
+		}
+		m.eventQueue = queue
+	}
+	reservations := make([]*webhookQueueReservation, 0, count)
+	for i := 0; i < count; i++ {
+		reservation, ok := m.eventQueue.Reserve(event)
+		if !ok {
+			for _, reserved := range reservations {
+				reserved.Release()
+			}
+			return nil, false
+		}
+		reservations = append(reservations, reservation)
+	}
+	return reservations, true
 }
 
 func (m *LoaderManager) collectDueScheduledRuns(now time.Time) []scheduledLoaderRun {
@@ -453,12 +644,33 @@ type loaderTriggerEventMetadata struct {
 	CorrelationID string
 }
 
-type loaderRunOptions struct{}
+type loaderRunOptions struct {
+	retryWhenBusy  bool
+	alreadyEntered bool
+}
+
+var errLoaderRunBusyForRetry = errors.New("loader is already running")
 
 func (m *LoaderManager) runLoader(ctx context.Context, loader Loader, trigger *LoaderTrigger, payloadJSON, source string, automatic bool, options loaderRunOptions, triggerEventAck ...func(context.Context) error) (LoaderRunSummary, error) {
-	payloadJSON, err := normalizeJSONDocument(payloadJSON)
+	prepared, err := m.prepareLoaderRun(ctx, loader, trigger, payloadJSON, source, options)
 	if err != nil {
 		return LoaderRunSummary{}, err
+	}
+	if len(triggerEventAck) > 0 && triggerEventAck[0] != nil {
+		if err := triggerEventAck[0](ctx); err != nil {
+			slog.Warn("failed to mark loader topic event published", "topic", source, "error", err)
+		}
+	}
+	return m.executePreparedLoaderRun(ctx, prepared)
+}
+
+func (m *LoaderManager) prepareLoaderRun(ctx context.Context, loader Loader, trigger *LoaderTrigger, payloadJSON, source string, options loaderRunOptions) (preparedLoaderRun, error) {
+	payloadJSON, err := normalizeJSONDocument(payloadJSON)
+	if err != nil {
+		if options.alreadyEntered {
+			m.leaveRun(loader.Summary.ID)
+		}
+		return preparedLoaderRun{}, err
 	}
 	now := time.Now().UTC()
 	run := LoaderRunSummary{
@@ -476,50 +688,58 @@ func (m *LoaderManager) runLoader(ctx context.Context, loader Loader, trigger *L
 		run.TriggerKind = trigger.Kind
 	}
 	run.ArtifactsDir = m.runArtifactsDir(loader.Summary.ID, run.ID)
-	if err := os.MkdirAll(run.ArtifactsDir, 0o755); err != nil {
-		return LoaderRunSummary{}, fmt.Errorf("create loader run artifacts dir: %w", err)
-	}
-	_ = m.writeRunArtifact(run.ArtifactsDir, "payload.json", payloadJSON)
 
-	if !m.enterRun(loader) {
+	entered := options.alreadyEntered
+	if !entered && !m.enterRun(loader) {
+		if options.retryWhenBusy {
+			return preparedLoaderRun{}, errLoaderRunBusyForRetry
+		}
+		if err := os.MkdirAll(run.ArtifactsDir, 0o755); err != nil {
+			return preparedLoaderRun{}, fmt.Errorf("create loader run artifacts dir: %w", err)
+		}
+		_ = m.writeRunArtifact(run.ArtifactsDir, "payload.json", payloadJSON)
 		run.Status = LoaderRunStatusSkipped
 		run.CompletedAt = now
 		run.Error = "loader is already running"
 		if err := m.configDB.CreateLoaderRun(ctx, run); err != nil {
-			return LoaderRunSummary{}, err
+			return preparedLoaderRun{}, err
 		}
 		m.updateTriggerEventDelivery(ctx, run)
 		m.notifyDashboard("loader_run_updated")
-		if len(triggerEventAck) > 0 && triggerEventAck[0] != nil {
-			if err := triggerEventAck[0](ctx); err != nil {
-				slog.Warn("failed to mark loader topic event published", "topic", source, "error", err)
-			}
-		}
 		_ = m.configDB.UpdateLoaderLastError(ctx, loader.Summary.ID, run.Error)
 		_ = m.addLoaderEvent(ctx, loader.Summary.ID, run.ID, run.TriggerID, "loader.run.skipped", "warn", run.Error, nil, "", "", "")
 		_ = m.writeRunArtifact(run.ArtifactsDir, "error.txt", run.Error)
-		return run, nil
+		return preparedLoaderRun{loader: loader, trigger: trigger, run: run, payloadJSON: payloadJSON}, nil
 	}
-	defer m.leaveRun(loader.Summary.ID)
+
+	if err := os.MkdirAll(run.ArtifactsDir, 0o755); err != nil {
+		m.leaveRun(loader.Summary.ID)
+		return preparedLoaderRun{}, fmt.Errorf("create loader run artifacts dir: %w", err)
+	}
+	_ = m.writeRunArtifact(run.ArtifactsDir, "payload.json", payloadJSON)
 
 	if err := m.configDB.CreateLoaderRun(ctx, run); err != nil {
-		return LoaderRunSummary{}, err
+		m.leaveRun(loader.Summary.ID)
+		return preparedLoaderRun{}, err
 	}
 	m.updateTriggerEventDelivery(ctx, run)
 	m.notifyDashboard("loader_run_updated")
-	if len(triggerEventAck) > 0 && triggerEventAck[0] != nil {
-		if err := triggerEventAck[0](ctx); err != nil {
-			slog.Warn("failed to mark loader topic event published", "topic", source, "error", err)
-		}
-	}
 	_ = m.addLoaderEvent(ctx, loader.Summary.ID, run.ID, run.TriggerID, "loader.run.started", "info", "loader run started", map[string]any{"source": run.TriggerSource}, "", "", "")
+	return preparedLoaderRun{loader: loader, trigger: trigger, run: run, payloadJSON: payloadJSON}, nil
+}
 
-	host := &loaderRunHost{manager: m, loader: loader, run: &run, triggerEvent: parseLoaderTriggerEventMetadata(payloadJSON)}
+func (m *LoaderManager) executePreparedLoaderRun(ctx context.Context, prepared preparedLoaderRun) (LoaderRunSummary, error) {
+	if prepared.run.Status == LoaderRunStatusSkipped {
+		return prepared.run, nil
+	}
+	defer m.leaveRun(prepared.loader.Summary.ID)
+	run := prepared.run
+	host := &loaderRunHost{manager: m, loader: prepared.loader, run: &run, triggerEvent: parseLoaderTriggerEventMetadata(prepared.payloadJSON)}
 	execution, execErr := m.engine.Execute(ctx, LoaderExecutionRequest{
-		Runtime:     loader.Summary.Runtime,
-		Script:      loader.Script,
-		Trigger:     trigger,
-		PayloadJSON: payloadJSON,
+		Runtime:     prepared.loader.Summary.Runtime,
+		Script:      prepared.loader.Script,
+		Trigger:     prepared.trigger,
+		PayloadJSON: prepared.payloadJSON,
 	}, host)
 
 	// Use a cancel-free context for all post-run bookkeeping so cleanup and
@@ -534,16 +754,16 @@ func (m *LoaderManager) runLoader(ctx context.Context, loader Loader, trigger *L
 		run.Status = LoaderRunStatusFailed
 		run.Error = execErr.Error()
 		_ = m.writeRunArtifact(run.ArtifactsDir, "error.txt", run.Error)
-		_ = m.configDB.UpdateLoaderLastError(writeCtx, loader.Summary.ID, run.Error)
-		_ = m.addLoaderEvent(writeCtx, loader.Summary.ID, run.ID, run.TriggerID, "loader.run.failed", "error", run.Error, nil, "", "", "")
+		_ = m.configDB.UpdateLoaderLastError(writeCtx, prepared.loader.Summary.ID, run.Error)
+		_ = m.addLoaderEvent(writeCtx, prepared.loader.Summary.ID, run.ID, run.TriggerID, "loader.run.failed", "error", run.Error, nil, "", "", "")
 	} else {
 		run.Status = LoaderRunStatusSucceeded
 		run.ResultJSON = execution.ResultJSON
 		if execution.ResultJSON != "" {
 			_ = m.writeRunArtifact(run.ArtifactsDir, "result.json", execution.ResultJSON)
 		}
-		_ = m.configDB.UpdateLoaderLastError(writeCtx, loader.Summary.ID, "")
-		_ = m.addLoaderEvent(writeCtx, loader.Summary.ID, run.ID, run.TriggerID, "loader.run.completed", "info", "loader run completed", map[string]any{"resultJson": execution.ResultJSON}, "", "", "")
+		_ = m.configDB.UpdateLoaderLastError(writeCtx, prepared.loader.Summary.ID, "")
+		_ = m.addLoaderEvent(writeCtx, prepared.loader.Summary.ID, run.ID, run.TriggerID, "loader.run.completed", "info", "loader run completed", map[string]any{"resultJson": execution.ResultJSON}, "", "", "")
 	}
 	if err := m.configDB.UpdateLoaderRun(writeCtx, run); err != nil {
 		return LoaderRunSummary{}, err
@@ -551,9 +771,34 @@ func (m *LoaderManager) runLoader(ctx context.Context, loader Loader, trigger *L
 	m.updateTriggerEventDelivery(writeCtx, run)
 	m.notifyDashboard("loader_run_updated")
 	if err := m.Refresh(writeCtx); err != nil {
-		slog.Warn("failed to refresh loaders after run", "loader_id", loader.Summary.ID, "error", err)
+		slog.Warn("failed to refresh loaders after run", "loader_id", prepared.loader.Summary.ID, "error", err)
 	}
 	return run, nil
+}
+
+func (m *LoaderManager) abortPreparedLoaderRun(ctx context.Context, prepared preparedLoaderRun, reason string) {
+	if prepared.run.Status == LoaderRunStatusSkipped {
+		return
+	}
+	defer m.leaveRun(prepared.loader.Summary.ID)
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "loader run aborted before execution"
+	}
+	run := prepared.run
+	completedAt := time.Now().UTC()
+	run.Status = LoaderRunStatusFailed
+	run.CompletedAt = completedAt
+	run.DurationMs = completedAt.Sub(run.StartedAt).Milliseconds()
+	run.Error = reason
+	_ = m.writeRunArtifact(run.ArtifactsDir, "error.txt", run.Error)
+	_ = m.configDB.UpdateLoaderLastError(ctx, prepared.loader.Summary.ID, run.Error)
+	_ = m.addLoaderEvent(ctx, prepared.loader.Summary.ID, run.ID, run.TriggerID, "loader.run.failed", "error", run.Error, nil, "", "", "")
+	if err := m.configDB.UpdateLoaderRun(ctx, run); err != nil {
+		slog.Warn("failed to abort prepared loader run", "loader_id", prepared.loader.Summary.ID, "run_id", run.ID, "error", err)
+	}
+	m.updateTriggerEventDelivery(ctx, run)
+	m.notifyDashboard("loader_run_updated")
 }
 
 func (m *LoaderManager) updateTriggerEventDelivery(ctx context.Context, run LoaderRunSummary) {

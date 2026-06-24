@@ -200,4 +200,5 @@ task test
 - [Runtime JS contract](design/agent-compose-runtime-js_contract.md)
 - [OpenCode CLI Provider 支持](design/opencode_cli_support.md)
 - [Webhook design](design/webhook_design.md)
+- [Webhook queue design](design/webhook_queue_design.md)
 - [Loader script API](../../loader-script/README.md)

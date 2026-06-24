@@ -96,6 +96,8 @@ func (d *EventDispatcher) publishOne(ctx context.Context, item TopicEventRecord,
 	if ok := d.bus.Publish(LoaderTopicEvent{
 		EventID:   item.ID,
 		Topic:     item.Topic,
+		Source:    item.Source,
+		Provider:  item.Provider,
 		Payload:   payload,
 		CreatedAt: item.CreatedAt,
 		Ack: func(ctx context.Context) error {
@@ -105,6 +107,10 @@ func (d *EventDispatcher) publishOne(ctx context.Context, item TopicEventRecord,
 		NoSubscriberAck: func(ctx context.Context) error {
 			defer d.clearInFlight(item.ID)
 			return d.configDB.MarkEventNoSubscriber(ctx, item.ID, claimID, time.Now().UTC())
+		},
+		Retry: func(ctx context.Context, reason string, nextAttemptAt time.Time) error {
+			defer d.clearInFlight(item.ID)
+			return d.configDB.ReleaseEventClaim(ctx, item.ID, claimID, TopicEventDispatchRetrying, reason, nextAttemptAt)
 		},
 		Release: func() {
 			d.clearInFlight(item.ID)

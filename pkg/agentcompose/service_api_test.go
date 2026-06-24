@@ -595,7 +595,8 @@ claude answer`, time.Now())
 
 func testServiceStreamingAPIs(t *testing.T) {
 	t.Helper()
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	service, _, _ := newTestServiceAPIHarness(t)
 	created, err := service.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{
 		Title:      "Streaming Session",

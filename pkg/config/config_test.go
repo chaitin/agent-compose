@@ -82,6 +82,8 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	t.Setenv("SESSION_STOP_TIMEOUT", "10s")
 	t.Setenv("HTTP_BASIC_AUTH", base64.StdEncoding.EncodeToString([]byte("user:pass")))
 	t.Setenv("WEBHOOK_BODY_LIMIT_BYTES", "1234")
+	t.Setenv("WEBHOOK_QUEUE_RULES_JSON", `[{"name":"repo-a","workers":2,"match":{"topic":"webhook.github.push"}}]`)
+	t.Setenv("WEBHOOK_QUEUE_DEFAULT_WORKERS", "6")
 	t.Setenv("WORKSPACE_UPLOAD_LIMIT_BYTES", "4321")
 	t.Setenv("AUTH_USERNAME", "root")
 	t.Setenv("AUTH_PASSWORD", "secret")
@@ -137,6 +139,9 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	}
 	if config.WebhookBodyLimitBytes != 1234 || config.WorkspaceUploadLimitBytes != 4321 {
 		t.Fatalf("limits = %d/%d", config.WebhookBodyLimitBytes, config.WorkspaceUploadLimitBytes)
+	}
+	if config.WebhookQueueRulesJSON == "" || config.WebhookQueueDefaultWorkers != 6 {
+		t.Fatalf("webhook queue config = %q/%d", config.WebhookQueueRulesJSON, config.WebhookQueueDefaultWorkers)
 	}
 	if config.AuthUsername != "root" || config.AuthPassword != "secret" || config.AuthSecret != "auth-secret" || config.AuthSessionTTL != 3*time.Hour {
 		t.Fatalf("auth config = %#v", config)

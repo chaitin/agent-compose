@@ -187,13 +187,16 @@ type LoaderLLMResult struct {
 }
 
 type LoaderTopicEvent struct {
-	EventID         string                      `json:"event_id,omitempty"`
-	Topic           string                      `json:"topic"`
-	Payload         map[string]any              `json:"payload,omitempty"`
-	CreatedAt       time.Time                   `json:"created_at"`
-	Ack             func(context.Context) error `json:"-"`
-	NoSubscriberAck func(context.Context) error `json:"-"`
-	Release         func()                      `json:"-"`
+	EventID         string                                         `json:"event_id,omitempty"`
+	Topic           string                                         `json:"topic"`
+	Source          string                                         `json:"source,omitempty"`
+	Provider        string                                         `json:"provider,omitempty"`
+	Payload         map[string]any                                 `json:"payload,omitempty"`
+	CreatedAt       time.Time                                      `json:"created_at"`
+	Ack             func(context.Context) error                    `json:"-"`
+	NoSubscriberAck func(context.Context) error                    `json:"-"`
+	Retry           func(context.Context, string, time.Time) error `json:"-"`
+	Release         func()                                         `json:"-"`
 }
 
 func normalizeLoaderRuntime(runtime string) (string, error) {
