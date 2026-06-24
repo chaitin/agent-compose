@@ -158,10 +158,14 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions) (Nor
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
+	model, err := interpolateEnvValue(joinPath("agents", name)+".model", strings.TrimSpace(agent.Model), options)
+	if err != nil {
+		return NormalizedAgentSpec{}, err
+	}
 	return NormalizedAgentSpec{
 		Name:         name,
 		Provider:     strings.TrimSpace(agent.Provider),
-		Model:        strings.TrimSpace(agent.Model),
+		Model:        model,
 		SystemPrompt: agent.SystemPrompt,
 		Image:        strings.TrimSpace(agent.Image),
 		Driver:       driver,

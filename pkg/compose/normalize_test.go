@@ -193,6 +193,42 @@ agents:
 	}
 }
 
+func TestNormalizeInterpolatesAgentModelFromEnvironment(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: model-env
+agents:
+  reviewer:
+    provider: claude
+    model: ${ANTHROPIC_MODEL}
+`)
+
+	normalized, err := Normalize(spec, NormalizeOptions{Env: map[string]string{"ANTHROPIC_MODEL": "kimi-k2.6"}})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if got := normalized.Agents[0].Model; got != "kimi-k2.6" {
+		t.Fatalf("agent model = %q, want kimi-k2.6", got)
+	}
+}
+
+func TestNormalizeRequiresAgentModelEnvironmentReference(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: model-env
+agents:
+  reviewer:
+    provider: claude
+    model: ${ANTHROPIC_MODEL}
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{Env: map[string]string{}})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "agents.reviewer.model") || !strings.Contains(got, "ANTHROPIC_MODEL") {
+		t.Fatalf("error = %q, want model env reference path", got)
+	}
+}
+
 func TestNormalizeRejectsEmptyDriver(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: invalid-driver
