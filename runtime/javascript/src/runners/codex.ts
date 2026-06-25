@@ -1,7 +1,13 @@
 import { resolveCodexPath } from "../codex-path.js";
 import { stringEnv } from "../env.js";
 import { uniqueDirectories } from "../paths.js";
-import { readStoredSession, writeStoredSession } from "../session-state.js";
+import { warn } from "../mpi.js";
+import {
+  hashSystemContext,
+  readStoredSession,
+  shouldResumeCodexThread,
+  writeStoredSession,
+} from "../session-state.js";
 import { extractText } from "../text.js";
 import { appendDelta, TranscriptWriter } from "../transcript.js";
 import type { AgentResult, RunnerOptions } from "../types.js";
@@ -155,9 +161,15 @@ export class CodexRunner {
         ? { config: { developer_instructions: this.options.systemContext } }
         : {}),
     });
-    const thread = stored?.sessionId
-      ? codex.resumeThread(stored.sessionId, this.threadOptions())
+    const hashNow = hashSystemContext(this.options.systemContext ?? "");
+    const resume = shouldResumeCodexThread(stored, hashNow);
+    const thread = resume
+      ? codex.resumeThread(stored!.sessionId, this.threadOptions())
       : codex.startThread(this.threadOptions());
+
+    if (stored?.sessionId && !resume && stored.systemContextHash && stored.systemContextHash !== hashNow) {
+      warn("system context changed; started new Codex thread");
+    }
 
     const result: AgentResult = {
       provider: "codex",
@@ -180,7 +192,7 @@ export class CodexRunner {
     if (!result.finalText && result.transcript) {
       result.finalText = result.transcript;
     }
-    await writeStoredSession(this.options.stateRoot, "codex", result.sessionId);
+    await writeStoredSession(this.options.stateRoot, "codex", result.sessionId, new Date(), hashNow);
     return result;
   }
 }

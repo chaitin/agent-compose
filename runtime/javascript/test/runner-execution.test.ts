@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { captureStdio, runnerOptions, withTempSession } from "./helpers.js";
+import { hashSystemContext } from "../src/session-state.js";
 
 const codexState = vi.hoisted(() => ({
   constructorOptions: [] as Array<Record<string, unknown>>,
@@ -149,6 +150,8 @@ describe("runner execution", () => {
       });
       const stored = JSON.parse(await fs.readFile(path.join(root, "state", "agents", "providers", "codex.json"), "utf8"));
       expect(stored.sessionId).toBe("thread-new");
+      expect(stored.systemContextHash).toBe(hashSystemContext("catalog body"));
+      expect(stored.systemContextHashVersion).toBe(1);
     });
   });
 
@@ -193,6 +196,111 @@ describe("runner execution", () => {
         stdio.restore();
       }
       expect(codexState.resumed).toBe("old-thread");
+      const stored = JSON.parse(await fs.readFile(path.join(providerRoot, "codex.json"), "utf8"));
+      expect(stored.systemContextHash).toBe(hashSystemContext(""));
+      expect(stored.systemContextHashVersion).toBe(1);
+    });
+  });
+
+  it("resumes a stored Codex thread when the system context hash matches", async () => {
+    const { CodexRunner } = await import("../src/runners/codex.js");
+    await withTempSession(async (root) => {
+      const systemContext = "catalog body";
+      const providerRoot = path.join(root, "state", "agents", "providers");
+      await fs.mkdir(providerRoot, { recursive: true });
+      await fs.writeFile(path.join(providerRoot, "codex.json"), JSON.stringify({
+        provider: "codex",
+        sessionId: "old-thread",
+        systemContextHash: hashSystemContext(systemContext),
+        systemContextHashVersion: 1,
+      }), "utf8");
+      codexState.events = [{ type: "item.completed", item: { id: "a2", type: "agent_message", text: "resumed" } }];
+      const stdio = captureStdio();
+      try {
+        const result = await new CodexRunner(runnerOptions(root, systemContext)).runPrompt("prompt");
+        expect(result.sessionId).toBe("thread-resumed");
+      } finally {
+        stdio.restore();
+      }
+      expect(codexState.resumed).toBe("old-thread");
+    });
+  });
+
+  it("starts a new Codex thread when the system context hash changes", async () => {
+    const { CodexRunner } = await import("../src/runners/codex.js");
+    await withTempSession(async (root) => {
+      const providerRoot = path.join(root, "state", "agents", "providers");
+      await fs.mkdir(providerRoot, { recursive: true });
+      await fs.writeFile(path.join(providerRoot, "codex.json"), JSON.stringify({
+        provider: "codex",
+        sessionId: "old-thread",
+        systemContextHash: hashSystemContext("old context"),
+        systemContextHashVersion: 1,
+      }), "utf8");
+      codexState.events = [{ type: "item.completed", item: { id: "a3", type: "agent_message", text: "fresh" } }];
+      const stdio = captureStdio();
+      try {
+        const result = await new CodexRunner(runnerOptions(root, "new context")).runPrompt("prompt");
+        expect(result.sessionId).toBe("thread-new");
+        expect(stdio.stderr).toMatch(/warning: system context changed; started new Codex thread/);
+      } finally {
+        stdio.restore();
+      }
+      expect(codexState.resumed).toBe("");
+      const stored = JSON.parse(await fs.readFile(path.join(providerRoot, "codex.json"), "utf8"));
+      expect(stored.sessionId).toBe("thread-new");
+      expect(stored.systemContextHash).toBe(hashSystemContext("new context"));
+    });
+  });
+
+  it("starts a new Codex thread when the stored hash version is unsupported", async () => {
+    const { CodexRunner } = await import("../src/runners/codex.js");
+    await withTempSession(async (root) => {
+      const systemContext = "catalog body";
+      const providerRoot = path.join(root, "state", "agents", "providers");
+      await fs.mkdir(providerRoot, { recursive: true });
+      await fs.writeFile(path.join(providerRoot, "codex.json"), JSON.stringify({
+        provider: "codex",
+        sessionId: "old-thread",
+        systemContextHash: hashSystemContext(systemContext),
+        systemContextHashVersion: 999,
+      }), "utf8");
+      codexState.events = [{ type: "item.completed", item: { id: "a3", type: "agent_message", text: "fresh" } }];
+      const stdio = captureStdio();
+      try {
+        const result = await new CodexRunner(runnerOptions(root, systemContext)).runPrompt("prompt");
+        expect(result.sessionId).toBe("thread-new");
+      } finally {
+        stdio.restore();
+      }
+      expect(codexState.resumed).toBe("");
+      const stored = JSON.parse(await fs.readFile(path.join(providerRoot, "codex.json"), "utf8"));
+      expect(stored.sessionId).toBe("thread-new");
+      expect(stored.systemContextHash).toBe(hashSystemContext(systemContext));
+      expect(stored.systemContextHashVersion).toBe(1);
+    });
+  });
+
+  it("starts a new Codex thread when system context changes from non-empty to empty", async () => {
+    const { CodexRunner } = await import("../src/runners/codex.js");
+    await withTempSession(async (root) => {
+      const providerRoot = path.join(root, "state", "agents", "providers");
+      await fs.mkdir(providerRoot, { recursive: true });
+      await fs.writeFile(path.join(providerRoot, "codex.json"), JSON.stringify({
+        provider: "codex",
+        sessionId: "old-thread",
+        systemContextHash: hashSystemContext("old context"),
+        systemContextHashVersion: 1,
+      }), "utf8");
+      codexState.events = [{ type: "item.completed", item: { id: "a4", type: "agent_message", text: "cleared" } }];
+      const stdio = captureStdio();
+      try {
+        await new CodexRunner(runnerOptions(root)).runPrompt("prompt");
+        expect(stdio.stderr).toMatch(/warning: system context changed; started new Codex thread/);
+      } finally {
+        stdio.restore();
+      }
+      expect(codexState.resumed).toBe("");
     });
   });
 
