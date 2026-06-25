@@ -5,6 +5,7 @@ import (
 	driverpkg "agent-compose/pkg/driver"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -818,6 +819,60 @@ func newTestServiceAPIHarness(t *testing.T) (*Service, *fakeLoaderAgentRuntime, 
 		sessions:  sessions,
 	}
 	return service, runtime, driver
+}
+
+func TestAgentDefinitionHTTPCreateSessionEmptyCapsetsOverride(t *testing.T) {
+	service, _, _ := newTestServiceAPIHarness(t)
+	service.sessions.cap = newTestCapabilityProvider("", "agent-compose:9100")
+	created, err := service.CreateAgentDefinition(context.Background(), connect.NewRequest(&agentcomposev1.CreateAgentDefinitionRequest{
+		Name:      "HTTP Capability Runner",
+		Enabled:   true,
+		Provider:  "codex",
+		CapsetIds: []string{"dev"},
+	}))
+	if err != nil {
+		t.Fatalf("CreateAgentDefinition returned error: %v", err)
+	}
+	path, handler := agentcomposev1connect.NewAgentDefinitionServiceHandler(service)
+	server := httptest.NewServer(markCreateAgentSessionCapsetPresence(handler))
+	t.Cleanup(server.Close)
+
+	body := strings.NewReader(fmt.Sprintf(`{"agentId":%q,"title":"http clears capsets","capsetIds":[]}`, created.Msg.GetAgent().GetAgentId()))
+	resp, err := http.Post(server.URL+path+"CreateAgentSession", "application/json", body)
+	if err != nil {
+		t.Fatalf("HTTP CreateAgentSession returned error: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("HTTP CreateAgentSession status = %d", resp.StatusCode)
+	}
+	var decoded struct {
+		Session struct {
+			Summary struct {
+				SessionID string `json:"sessionId"`
+				Tags      []struct {
+					Name  string `json:"name"`
+					Value string `json:"value"`
+				} `json:"tags"`
+			} `json:"summary"`
+			EnvItems []struct {
+				Name string `json:"name"`
+			} `json:"envItems"`
+		} `json:"session"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		t.Fatalf("decode HTTP CreateAgentSession response: %v", err)
+	}
+	for _, tag := range decoded.Session.Summary.Tags {
+		if tag.Name == capabilityCapsetTagName {
+			t.Fatalf("HTTP cleared session has capability tag %q", tag.Value)
+		}
+	}
+	for _, item := range decoded.Session.EnvItems {
+		if item.Name == capProxyTargetEnvName || item.Name == capabilitySessionTokenEnvName {
+			t.Fatalf("HTTP cleared session has capability env %q", item.Name)
+		}
+	}
 }
 
 func testServiceConfigAndLoaderAPIs(t *testing.T) {

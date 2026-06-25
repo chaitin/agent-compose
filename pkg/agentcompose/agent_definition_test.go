@@ -254,6 +254,59 @@ func TestAgentDefinitionCreateSession(t *testing.T) {
 	testAgentDefinitionCreateSession(t)
 }
 
+func TestAgentDefinitionCreateSessionCapsetOverride(t *testing.T) {
+	ctx := context.Background()
+	service, _, _ := newTestServiceAPIHarness(t)
+	service.sessions.cap = newTestCapabilityProvider("", "agent-compose:9100")
+	created, err := service.CreateAgentDefinition(ctx, connect.NewRequest(&agentcomposev1.CreateAgentDefinitionRequest{
+		Name:      "Capability Runner",
+		Enabled:   true,
+		Provider:  "codex",
+		CapsetIds: []string{"dev"},
+	}))
+	if err != nil {
+		t.Fatalf("CreateAgentDefinition returned error: %v", err)
+	}
+
+	inherited, err := service.CreateAgentSession(ctx, connect.NewRequest(&agentcomposev1.CreateAgentSessionRequest{
+		AgentId: created.Msg.GetAgent().GetAgentId(),
+		Title:   "inherits agent capsets",
+	}))
+	if err != nil {
+		t.Fatalf("CreateAgentSession(inherit) returned error: %v", err)
+	}
+	inheritedSession, err := service.store.GetSession(ctx, inherited.Msg.GetSession().GetSummary().GetSessionId())
+	if err != nil {
+		t.Fatalf("GetSession(inherit) returned error: %v", err)
+	}
+	if capsets := sessionCapabilityCapsets(inheritedSession); len(capsets) != 1 || capsets[0] != "dev" {
+		t.Fatalf("inherited capsets = %+v, want [dev]", capsets)
+	}
+
+	cleared, err := service.CreateAgentSession(ctx, connect.NewRequest(&agentcomposev1.CreateAgentSessionRequest{
+		AgentId:   created.Msg.GetAgent().GetAgentId(),
+		Title:     "clears agent capsets",
+		CapsetIds: []string{},
+	}))
+	if err != nil {
+		t.Fatalf("CreateAgentSession(clear) returned error: %v", err)
+	}
+	clearedSession, err := service.store.GetSession(ctx, cleared.Msg.GetSession().GetSummary().GetSessionId())
+	if err != nil {
+		t.Fatalf("GetSession(clear) returned error: %v", err)
+	}
+	if capsets := sessionCapabilityCapsets(clearedSession); len(capsets) != 0 {
+		t.Fatalf("cleared capsets = %+v, want none", capsets)
+	}
+	env := map[string]string{}
+	for _, item := range clearedSession.EnvItems {
+		env[item.Name] = item.Value
+	}
+	if env[capProxyTargetEnvName] != "" || env[capabilitySessionTokenEnvName] != "" {
+		t.Fatalf("cleared session capability env = %+v, want no capability vars", env)
+	}
+}
+
 func TestAgentSessionMessageUsesDefinitionProvider(t *testing.T) {
 	ctx := context.Background()
 	service, runtime, _ := newTestServiceAPIHarness(t)

@@ -283,8 +283,8 @@ func (s *Service) CreateAgentSession(ctx context.Context, req *connect.Request[a
 	}
 	envItems := mergeEnvItems(agent.EnvItems, envItemsFromProto(req.Msg.GetEnvItems()))
 	capsetIDs := agent.CapsetIDs
-	if reqCapsets := req.Msg.GetCapsetIds(); len(reqCapsets) > 0 {
-		capsetIDs = reqCapsets
+	if req.Msg.CapsetIds != nil || req.Header().Get(createAgentSessionCapsetIDsPresentHeader) == "true" {
+		capsetIDs = req.Msg.CapsetIds
 	}
 	createReq := &agentcomposev1.CreateSessionRequest{
 		Title:       title,

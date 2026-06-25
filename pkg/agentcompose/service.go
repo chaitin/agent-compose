@@ -3,9 +3,11 @@ package agentcompose
 import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -148,7 +150,7 @@ func Register(di do.Injector) {
 	path, handler = agentcomposev1connect.NewAgentServiceHandler(service)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev1connect.NewAgentDefinitionServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
+	app.Any(path+"*", echo.WrapHandler(markCreateAgentSessionCapsetPresence(handler)))
 	path, handler = agentcomposev1connect.NewLLMServiceHandler(service)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev1connect.NewConfigServiceHandler(service)
@@ -173,6 +175,40 @@ func Register(di do.Injector) {
 	registerRuntimeLLMFacadeRoutes(app, service)
 	registerProxyRoutes(app, service)
 	registerWorkspaceRoutes(app, service)
+}
+
+const createAgentSessionCapsetIDsPresentHeader = "Agent-Compose-Capset-Ids-Present"
+
+func markCreateAgentSessionCapsetPresence(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost ||
+			r.URL.Path != agentcomposev1connect.AgentDefinitionServiceCreateAgentSessionProcedure ||
+			!strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "json") ||
+			r.Body == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		if err == nil && jsonObjectHasAnyKey(body, "capsetIds", "capset_ids") {
+			r.Header.Set(createAgentSessionCapsetIDsPresentHeader, "true")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func jsonObjectHasAnyKey(body []byte, keys ...string) bool {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return false
+	}
+	for _, key := range keys {
+		if _, ok := raw[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func StartBackground(di do.Injector) error {
