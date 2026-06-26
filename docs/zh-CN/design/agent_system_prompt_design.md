@@ -240,7 +240,9 @@ new Codex({
 })
 ```
 
-`@openai/codex-sdk` 在 constructor 作用域读取 `config`，而非 `ThreadOptions`。因此 `startThread` 和 `resumeThread` 在每次运行都会收到当前组合 context，包括 `system_prompt` 编辑之后。
+`@openai/codex-sdk` 在 constructor 作用域读取 `config`，而非 `ThreadOptions`。constructor `config` 在每次运行都会传入，但上游缺陷 [codex#19045](https://github.com/openai/codex/issues/19045) 意味着 **resume 时无法保证模型在首轮看到更新后的 `developer_instructions`**。
+
+**Phase 2（已实现）：** guest runtime 对完整 `systemContext` 计算 SHA-256，并以 `systemContextHash` 存入 `codex.json`。仅当 `sessionId` 存在**且**哈希匹配时才 resume，否则调用 `startThread`。因 hash 不匹配而强制新建 thread 时会向 stderr 写入一条 warning。无 `systemContextHash` 的旧状态会先 resume 一次，随后补写 hash（lazy migration）。
 
 ### Claude
 
@@ -336,7 +338,7 @@ Runner 测试（`runners.test.ts`、`runner-execution.test.ts`）已更新为使
 
 1. `system_prompt: "Reply only in Chinese"` 的 agent 在 Codex/Claude chat 运行后应遵守该指令。
 2. 空 `system_prompt` → 与改动前 MPI-only 行为一致。
-3. Codex session 在 prompt 编辑后 resume 时使用新指令。
+3. `systemContext` 未变时 Codex session resume 保留连续性；变更时新建 thread（Phase 2）。
 4. 绑定 agent definition 的 loader 继承 `system_prompt`。
 5. `task test`、runtime JS 测试套件、以及 touched packages 的 `task lint` 均通过。
 
@@ -368,9 +370,9 @@ Runner 测试（`runners.test.ts`、`runner-execution.test.ts`）已更新为使
 
 为 API 与 UI 语义更清晰而重命名。需要 Proto、DB 迁移、UI 与客户端更新。
 
-### Prompt 变更时强制新建 Codex thread
+### Prompt 变更时强制新建 Codex thread —— **已实现（Phase 2）**
 
-若未来 SDK 版本在 resume 时不再应用 constructor `config`，host 可检测 `system_prompt` 哈希并在指令变更时强制新 thread。Phase 1 依赖当前 SDK 行为。
+当组合 `systemContext` 的 SHA-256 哈希与 `codex.json.systemContextHash` 不一致时，`CodexRunner` 改为调用 `startThread` 而非 `resumeThread`，以规避 [codex#19045](https://github.com/openai/codex/issues/19045)。详见 [issues/codex-start-thread-on-system-prompt-change.md](issues/codex-start-thread-on-system-prompt-change.md)。
 
 ### Prompt 文件软大小限制
 
