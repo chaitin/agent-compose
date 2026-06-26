@@ -186,7 +186,7 @@
   }
 
   // refreshGatewayStatus does one live sync: probe status + load capability
-  // sets. It is triggered on page load, on save, and by the 测试连接 button —
+  // sets. It is triggered on page load, on save, and by the 测试探活 button —
   // there is no background polling, so 最近同步 reflects the last manual sync.
   async function refreshGatewayStatus(): Promise<void> {
     try {
@@ -263,7 +263,7 @@
 
   // Derived reactively (not as function calls) so the status pill re-renders
   // when gatewayConfigured / gatewayOk change after a save or status refresh.
-  $: gatewayStatusLabel = !gatewayConfigured ? '未配置' : gatewayOk ? '已连接' : '连接失败';
+  $: gatewayStatusLabel = !gatewayConfigured ? '未配置' : gatewayOk ? '服务可达' : '服务不可达';
   $: gatewayStatusChip = !gatewayConfigured ? 'amber' : gatewayOk ? 'green' : 'red';
   $: gatewayDirty = gatewayAddr.trim() !== savedGatewayAddr || gatewayToken.trim() !== '';
   $: capabilityRuntimeWarning = gatewayConfigured && gatewayOk && !capabilityRuntimeConfigured;
@@ -703,14 +703,14 @@
     <div class="panel-head">
       <h2>能力接入网关</h2>
       <div class="toolbar">
-        <button on:click={refreshGatewayStatus} disabled={gatewaySaving || gatewayDirty}>测试已保存配置</button>
+        <button on:click={refreshGatewayStatus} disabled={gatewaySaving || gatewayDirty}>测试服务探活</button>
         <button on:click={saveGateway} disabled={gatewaySaving}>{gatewaySaving ? '保存中…' : '保存'}</button>
       </div>
     </div>
     <div class="description-grid compact">
       <label>OctoBus 地址<input bind:value={gatewayAddr} placeholder="http://127.0.0.1:9000"></label>
       <label>访问 Token<input type="password" bind:value={gatewayToken} placeholder={gatewayTokenSet ? '已设置（留空清空）' : '可选'}></label>
-      <div><span>连接状态</span><b><span class="chip {gatewayStatusChip}">{gatewayStatusLabel}</span></b></div>
+      <div><span>探活状态</span><b><span class="chip {gatewayStatusChip}">{gatewayStatusLabel}</span></b></div>
       <div><span>可用服务数量</span><b>{capabilityCount}</b></div>
       <div><span>最近同步</span><b>{formatDateTime(lastSyncedAt)}</b></div>
     </div>
@@ -718,17 +718,17 @@
       <div class="alert danger">{gatewayStatusText}</div>
     {/if}
     {#if capabilityRuntimeWarning}
-      <div class="alert warning">OctoBus 控制面已连接，但运行时 gRPC capability proxy 尚未完整配置。需要在 daemon 启动环境中设置 CAP_GRPC_LISTEN 和 CAP_GRPC_TARGET，并重启后新建会话，Agent 才能调用 gRPC capability。</div>
+      <div class="alert warning">OctoBus 服务可达，但运行时 gRPC capability proxy 尚未完整配置。需要在 daemon 启动环境中设置 CAP_GRPC_LISTEN 和 CAP_GRPC_TARGET，并重启后新建会话，Agent 才能调用 gRPC capability。</div>
       <div class="settings-hint">当前状态：CAP_GRPC_LISTEN {capabilityProxyListenConfigured ? '已配置' : '未配置'}，CAP_GRPC_TARGET {capabilityProxyTargetConfigured ? '已配置' : '未配置'}。</div>
     {/if}
     {#if gatewayDirty}
-      <div class="alert warning">当前输入尚未保存，连接状态仍来自已保存配置。请先保存后再测试连接。</div>
+      <div class="alert warning">当前输入尚未保存，探活状态仍来自已保存配置。请先保存后再测试探活。</div>
     {/if}
     {#if gatewayConfigured && gatewayOk}
       <div class="cap-sets">
         <h3>能力集</h3>
         {#if capabilitySets.length === 0}
-          <p class="cap-empty">OctoBus 暂无已发布的能力集。</p>
+          <p class="cap-empty">未加载到能力集。探活状态只表示 OctoBus 服务可达，能力集列表会使用已保存 Token 访问受保护接口。</p>
         {:else}
           {#each capabilitySets as set}
             <div class="cap-set">
