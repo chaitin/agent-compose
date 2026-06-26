@@ -225,7 +225,7 @@ jobs:
           {
             echo "AGENT_COMPOSE_IMAGE=${IMAGE_PREFIX}/agent-compose:${VERSION}"
             echo "AGENT_COMPOSE_FRONTEND_VERSION=${frontend_version}"
-            echo "AGENT_COMPOSE_FRONTEND_IMAGE=${IMAGE_PREFIX}/agent-compose-frontend:${frontend_version}"
+            echo "AGENT_COMPOSE_FRONTEND_IMAGE=${IMAGE_PREFIX}/agent-compose-ui:${frontend_version}"
             echo "DEFAULT_IMAGE=${IMAGE_PREFIX}/agent-compose-guest:${VERSION}"
           } > "${payload}/images/manifest.env"
 

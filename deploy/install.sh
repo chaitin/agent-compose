@@ -124,7 +124,7 @@ apply_image_refs() { # $1=file $2=mode(set-missing|overwrite)
     for pair in \
       "AGENT_COMPOSE_IMAGE=${IMAGE_PREFIX}/agent-compose:${IMAGE_VERSION}" \
       "AGENT_COMPOSE_FRONTEND_VERSION=${FRONTEND_VERSION}" \
-      "AGENT_COMPOSE_FRONTEND_IMAGE=${IMAGE_PREFIX}/agent-compose-frontend:${FRONTEND_VERSION}" \
+      "AGENT_COMPOSE_FRONTEND_IMAGE=${IMAGE_PREFIX}/agent-compose-ui:${FRONTEND_VERSION}" \
       "DEFAULT_IMAGE=${IMAGE_PREFIX}/agent-compose-guest:${IMAGE_VERSION}"; do
       key="${pair%%=*}"
       value="${pair#*=}"

@@ -34,7 +34,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   agent-compose-frontend:
-    image: ${AGENT_COMPOSE_FRONTEND_IMAGE:-ghcr.io/chaitin/agent-compose-frontend:latest}
+    image: ${AGENT_COMPOSE_FRONTEND_IMAGE:-ghcr.io/chaitin/agent-compose-ui:latest}
     container_name: agent-compose-frontend
     restart: unless-stopped
     depends_on:

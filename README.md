@@ -209,7 +209,7 @@ generated API client from the published
 package, which is built from this repository's `proto/` via `proto-client/`.
 
 The daemon does not host the Web UI. The frontend repository builds an nginx
-image (`ghcr.io/chaitin/agent-compose-frontend`) that serves the built UI and
+image (`ghcr.io/chaitin/agent-compose-ui`) that serves the built UI and
 reverse-proxies API and Jupyter routes to the daemon. The `docker-compose.yml`
 and `docker-compose.deploy.yml` here reference that published image.
 
