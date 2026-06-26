@@ -26,6 +26,7 @@
   } from '../api/config';
   import { getAuthStatus, type AuthStatus } from '../api/auth';
   import { formatBeijingTime } from '../time';
+  import { defaultGuestImage } from '../model/runtime';
   import { currentQueryParams, updateQueryParams } from '../url';
 
   let envItems: EnvItem[] = [];
@@ -54,8 +55,8 @@
   };
   let capabilitySets: CapabilitySetView[] = [];
   // System runtime image is fixed for now (managed at deploy time); shown
-  // read-only. Matches AgentsPage's defaultGuestImage.
-  const runtimeImage = 'agent-compose-guest:latest';
+  // read-only using the shared frontend default guest image.
+  const runtimeImage = defaultGuestImage;
   let authStatus: AuthStatus | null = null;
 
   type SettingsSection = 'workspace' | 'env' | 'runtime' | 'auth' | 'gateway' | 'webhook';

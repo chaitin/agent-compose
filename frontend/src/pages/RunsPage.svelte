@@ -23,12 +23,12 @@
   } from '../api/sessions';
   import { automationRunToRun, sessionToRun, type ProductRun } from '../model/runs';
   import { CellType } from '../gen/proto/agentcompose/v1/agentcompose_pb.js';
+  import { defaultGuestImage } from '../model/runtime';
   import { appPath } from '../paths';
   import { formatBeijingTime } from '../time';
   import { currentQueryParams, updateQueryParams } from '../url';
 
   const dispatch = createEventDispatcher<{ debug: string }>();
-  const defaultGuestImage = 'agent-compose-guest:latest';
   type TerminalActionParams = { id?: string; text: string; running: boolean };
   type RunView = 'run' | 'agent' | 'task' | 'agent_task';
   type GroupTab = 'runs' | 'timeline' | 'artifacts' | 'automation';

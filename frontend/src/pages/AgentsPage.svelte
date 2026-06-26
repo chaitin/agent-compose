@@ -16,14 +16,13 @@
   import { listCapabilitySets, listWorkspacePresets, type CapabilitySet, type WorkspacePreset } from '../api/config';
   import { appPath } from '../paths';
   import { formatBeijingTime } from '../time';
+  import { defaultGuestImage } from '../model/runtime';
   import { currentQueryParams, updateQueryParams } from '../url';
 
   type WorkSource = 'empty' | 'file' | 'git';
   type AgentDraft = AgentDefinition & {
     workSource: WorkSource;
   };
-
-  const defaultGuestImage = 'agent-compose-guest:latest';
 
   let agents: AgentDraft[] = [];
   let selectedAgent: AgentDraft | null = null;
