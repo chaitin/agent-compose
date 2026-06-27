@@ -448,7 +448,7 @@ func TestAnthropicProviderCanBootstrapFromAuthToken(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "auth-token")
-	t.Setenv("ANTHROPIC_BASE_URL", "https://aiapi.chaitin.net")
+	t.Setenv("ANTHROPIC_BASE_URL", "https://anthropic.example.invalid")
 	service, _, _ := newTestServiceAPIHarness(t)
 
 	target, err := resolveLLMTargetForProviderFamily(ctx, service.config, service.configDB, llmProviderFamilyAnthropic, "kimi-k2.6")
@@ -461,8 +461,8 @@ func TestAnthropicProviderCanBootstrapFromAuthToken(t *testing.T) {
 	if target.Headers.Get("x-api-key") != "" {
 		t.Fatalf("x-api-key = %q, want empty when auth token is used", target.Headers.Get("x-api-key"))
 	}
-	if target.Provider.BaseURL != "https://aiapi.chaitin.net/v1" {
-		t.Fatalf("provider base url = %q, want normalized aiapi base url", target.Provider.BaseURL)
+	if target.Provider.BaseURL != "https://anthropic.example.invalid/v1" {
+		t.Fatalf("provider base url = %q, want normalized anthropic base url", target.Provider.BaseURL)
 	}
 }
 
