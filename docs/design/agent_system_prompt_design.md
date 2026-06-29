@@ -269,8 +269,16 @@ new Codex({
 ```
 
 The `@openai/codex-sdk` reads `config` at constructor scope, not from
-`ThreadOptions`. That means both `startThread` and `resumeThread` receive the
-current combined context on each run, including after `system_prompt` edits.
+`ThreadOptions`. Constructor `config` is passed on every run, but upstream
+[codex#19045](https://github.com/openai/codex/issues/19045) means **resume does
+not guarantee the model sees updated `developer_instructions` on the first turn**.
+
+**Phase 2 (implemented):** The guest runtime SHA-256-hashes the full
+`systemContext` and stores it in `codex.json` as `systemContextHash`. Codex
+resumes only when `sessionId` exists **and** the hash matches; otherwise it
+calls `startThread`. A stderr warning is emitted when a hash mismatch forces a
+new thread. Legacy state files without `systemContextHash` resume once, then
+record the hash (lazy migration).
 
 ### Claude
 
@@ -374,7 +382,7 @@ Runner tests (`runners.test.ts`, `runner-execution.test.ts`) were updated to use
 
 1. Agent with `system_prompt: "Reply only in Chinese"` obeys after Codex/Claude chat run.
 2. Empty `system_prompt` → identical to pre-change MPI-only behavior.
-3. Codex session resume after prompt edit uses new instructions.
+3. Codex session resume preserves continuity when `systemContext` is unchanged; when it changes, a fresh thread is started (Phase 2).
 4. Loader bound to an agent definition inherits `system_prompt`.
 5. `task test`, runtime JS tests, and `task lint` pass on touched packages.
 
@@ -415,11 +423,12 @@ relaxed for Gemini only.
 Rename for clearer semantics in API and UI. Requires Proto, DB migration, UI,
 and client updates.
 
-### Force fresh Codex thread on prompt change
+### Force fresh Codex thread on prompt change — **implemented (Phase 2)**
 
-If a future SDK version stops applying constructor `config` on resume, the host
-could detect a hash of `system_prompt` and force a new thread when instructions
-change. Phase 1 relies on current SDK behavior.
+When the SHA-256 hash of the composed `systemContext` differs from
+`codex.json.systemContextHash`, `CodexRunner` calls `startThread` instead of
+`resumeThread`, working around [codex#19045](https://github.com/openai/codex/issues/19045).
+See [codex-start-thread-on-system-prompt-change.md](issues/codex-start-thread-on-system-prompt-change.md).
 
 ### Prompt file soft size limit
 

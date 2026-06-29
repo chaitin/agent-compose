@@ -443,13 +443,23 @@ Content:
 {
   "provider": "codex",
   "sessionId": "<provider-session-id>",
-  "updatedAt": "2026-01-01T00:00:00.000Z"
+  "updatedAt": "2026-01-01T00:00:00.000Z",
+  "systemContextHash": "<sha256-hex-of-systemContext>",
+  "systemContextHashVersion": 1
 }
 ```
 
+`systemContextHash` and `systemContextHashVersion` are written by the Codex
+runner only. Claude and other providers omit these fields.
+
 Codex and Claude read this file on the next call and resume:
 
-- Codex: `codex.resumeThread(sessionId, ...)`
+- Codex: `codex.resumeThread(sessionId, ...)` when `sessionId` exists **and**
+  `systemContextHash` matches the current composed system context (or is absent
+  for legacy state — see lazy migration below); otherwise `codex.startThread(...)`.
+  When a hash mismatch forces a new thread, the runtime writes
+  `[agent-compose-runtime] warning: system context changed; started new Codex thread`
+  to stderr.
 - Claude: `resume: sessionId`
 
 Gemini currently does not write provider state.
@@ -553,6 +563,10 @@ If `/data/state/agents/system-prompts/system-prompt.txt` and/or
 `/data/runtime/mpi/catalog.md` exist and are readable, the JavaScript runtime
 composes Agent Identity + MPI into `systemContext` and injects it through Codex
 `config.developer_instructions`.
+
+Thread selection compares the SHA-256 hash of `systemContext` against
+`codex.json.systemContextHash`. Resume when the hash matches (or is absent in
+legacy state); otherwise start a fresh thread. See §8.
 
 Codex events are converted into a human-readable transcript, including agent
 messages, reasoning, command execution, file changes, MCP calls, web search, and

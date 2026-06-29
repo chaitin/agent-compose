@@ -25,4 +25,6 @@ export interface StoredSession {
   provider: string;
   sessionId: string;
   updatedAt?: string;
+  systemContextHash?: string;
+  systemContextHashVersion?: number;
 }

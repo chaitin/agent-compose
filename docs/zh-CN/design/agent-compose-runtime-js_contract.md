@@ -382,13 +382,17 @@ JS runtime 负责保存 provider 级续接索引：
 {
   "provider": "codex",
   "sessionId": "<provider-session-id>",
-  "updatedAt": "2026-01-01T00:00:00.000Z"
+  "updatedAt": "2026-01-01T00:00:00.000Z",
+  "systemContextHash": "<sha256-hex-of-systemContext>",
+  "systemContextHashVersion": 1
 }
 ```
 
+`systemContextHash` 与 `systemContextHashVersion` 仅由 Codex runner 写入，Claude 及其他 provider 不写这两个字段。
+
 Codex 和 Claude 会在下一次调用时读取该文件并 resume：
 
-- Codex：`codex.resumeThread(sessionId, ...)`
+- Codex：当 `sessionId` 存在**且** `systemContextHash` 与当前组合 system context 匹配（或属于无 hash 的旧状态——见下文 lazy migration）时执行 `codex.resumeThread(sessionId, ...)`；否则执行 `codex.startThread(...)`。当因 hash 不匹配而强制新建 thread 时，runtime 会向 stderr 写入 `[agent-compose-runtime] warning: system context changed; started new Codex thread`。
 - Claude：`resume: sessionId`
 
 Gemini 当前不写该 provider state。
@@ -473,6 +477,8 @@ networkAccessEnabled=true
 ```
 
 如果 `/data/runtime/mpi/catalog.md` 存在且可读，JS runtime 会通过 Codex `config.developer_instructions` 注入 MPI catalog 上下文。
+
+线程选择会将 `systemContext` 的 SHA-256 哈希与 `codex.json.systemContextHash` 比较：哈希匹配（或旧状态无 hash）时 resume，否则新建 thread。详见 §8。
 
 Codex 事件会被转换成人类可读 transcript，包括 agent message、reasoning、command execution、file change、MCP call、web search、todo list 等。
 
