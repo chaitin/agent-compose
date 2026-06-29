@@ -429,11 +429,19 @@ func normalizeLLMAPIEndpointForProtocol(raw, protocol string) string {
 		return parsed.String()
 	}
 	cleanPath := strings.TrimRight(parsed.Path, "/")
-	if protocol == llmAPIProtocolChatCompletions && cleanPath == "/v1" {
+	if protocol == llmAPIProtocolChatCompletions && (cleanPath == "/v1" || strings.HasSuffix(cleanPath, "/openai/v1")) {
 		parsed.Path = pathpkg.Join(parsed.Path, "/chat/completions")
 		return parsed.String()
 	}
-	if protocol == llmAPIProtocolResponses && cleanPath == "/v1" {
+	if protocol == llmAPIProtocolChatCompletions && strings.HasSuffix(cleanPath, "/openai") {
+		parsed.Path = pathpkg.Join(parsed.Path, "/v1/chat/completions")
+		return parsed.String()
+	}
+	if protocol == llmAPIProtocolResponses && strings.HasSuffix(cleanPath, "/openai") {
+		parsed.Path = pathpkg.Join(parsed.Path, "/v1/responses")
+		return parsed.String()
+	}
+	if protocol == llmAPIProtocolResponses && (cleanPath == "/v1" || strings.HasSuffix(cleanPath, "/openai/v1")) {
 		parsed.Path = pathpkg.Join(parsed.Path, "/responses")
 		return parsed.String()
 	}

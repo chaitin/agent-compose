@@ -1073,18 +1073,26 @@ func appendLLMAPIEndpointToBaseURL(baseURL, wireAPI string) string {
 	switch normalizeLLMWireAPI(wireAPI) {
 	case llmAPIProtocolChatCompletions:
 		if cleanPath == "/v1" || strings.HasSuffix(cleanPath, "/v1") {
-			parsed.Path = pathpkg.Join(cleanPath, "chat/completions")
+			joinLLMAPIBasePath(parsed, cleanPath, "chat/completions")
 		} else {
-			parsed.Path = pathpkg.Join(cleanPath, "v1/chat/completions")
+			joinLLMAPIBasePath(parsed, cleanPath, "v1/chat/completions")
 		}
 	default:
 		if cleanPath == "/v1" || strings.HasSuffix(cleanPath, "/v1") {
-			parsed.Path = pathpkg.Join(cleanPath, "responses")
+			joinLLMAPIBasePath(parsed, cleanPath, "responses")
 		} else {
-			parsed.Path = pathpkg.Join(cleanPath, "v1/responses")
+			joinLLMAPIBasePath(parsed, cleanPath, "v1/responses")
 		}
 	}
 	return parsed.String()
+}
+
+func joinLLMAPIBasePath(parsed *url.URL, basePath, suffix string) {
+	joined := pathpkg.Join(basePath, suffix)
+	if parsed != nil && parsed.Host != "" && !strings.HasPrefix(joined, "/") {
+		joined = "/" + joined
+	}
+	parsed.Path = joined
 }
 
 func normalizeAnthropicAPIBaseURL(raw string) string {
