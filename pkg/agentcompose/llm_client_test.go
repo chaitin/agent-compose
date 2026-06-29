@@ -62,6 +62,19 @@ func TestNormalizeLLMAPIEndpointKeepsExplicitPath(t *testing.T) {
 	}
 }
 
+func TestLLMEndpointForProviderBaseURLAppendsProtocolPath(t *testing.T) {
+	provider := LLMProvider{
+		ProviderType: llmProviderFamilyOpenAI,
+		BaseURL:      "https://openai-compatible.example.invalid/openai",
+	}
+	if got := llmEndpointForProvider(provider, llmAPIProtocolChatCompletions); got != "https://openai-compatible.example.invalid/openai/v1/chat/completions" {
+		t.Fatalf("llmEndpointForProvider chat = %q, want provider base URL plus chat path", got)
+	}
+	if got := llmEndpointForProvider(provider, llmAPIProtocolResponses); got != "https://openai-compatible.example.invalid/openai/v1/responses" {
+		t.Fatalf("llmEndpointForProvider responses = %q, want provider base URL plus responses path", got)
+	}
+}
+
 func TestLLMClientGenerateHandlesSuccessAndFailures(t *testing.T) {
 	testLLMClientGenerateHandlesSuccessAndFailures(t)
 }

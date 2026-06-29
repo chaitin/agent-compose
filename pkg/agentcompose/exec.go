@@ -119,6 +119,13 @@ func (e *Executor) ExecuteLoaderCommand(ctx context.Context, session *Session, r
 		CreatedAt: startedAt,
 		Running:   true,
 	}
+	execSession, facadeToken, err := e.prepareLoaderCommandLLMFacadeEnv(ctx, session, request, cellID)
+	if err != nil {
+		return LoaderCommandResult{}, err
+	}
+	if e.configDB != nil && facadeToken != "" {
+		defer func() { _ = e.configDB.DeleteLLMFacadeToken(context.WithoutCancel(ctx), facadeToken) }()
+	}
 	if err := e.store.AddCell(ctx, session, cell); err != nil {
 		return LoaderCommandResult{}, err
 	}
@@ -230,7 +237,7 @@ func (e *Executor) ExecuteLoaderCommand(ctx context.Context, session *Session, r
 		}
 		e.streams.PublishCellOutput(session.Summary.ID, snapshot.ID, chunk.Text, chunk.IsStderr)
 	}
-	execResult, err := runtime.ExecStream(execCtx, session, vmState, buildLoaderCommandExecSpec(e.config, session, filepath.Join(guestCellDir, "command-request.json")), streamWriter)
+	execResult, err := runtime.ExecStream(execCtx, execSession, vmState, buildLoaderCommandExecSpec(e.config, execSession, filepath.Join(guestCellDir, "command-request.json")), streamWriter)
 	streamErrMu.Lock()
 	deferredStreamErr := streamErr
 	streamErrMu.Unlock()
@@ -290,6 +297,65 @@ func (e *Executor) ExecuteLoaderCommand(ctx context.Context, session *Session, r
 		CellID:          cellID,
 		Artifacts:       artifacts,
 	}, nil
+}
+
+func (e *Executor) prepareLoaderCommandLLMFacadeEnv(ctx context.Context, session *Session, request LoaderCommandRequest, runID string) (*Session, string, error) {
+	if e == nil || e.config == nil || e.configDB == nil || session == nil {
+		return session, "", nil
+	}
+	agent, model := loaderCommandLLMFacadeAgentModel(request.Env)
+	if agent == "" {
+		return session, "", nil
+	}
+
+	execSession := *session
+	execSession.EnvItems = append([]SessionEnvVar(nil), session.EnvItems...)
+	execSession.RuntimeEnvItems = append([]SessionEnvVar(nil), session.RuntimeEnvItems...)
+	execSession.ProviderEnvItems = append([]SessionEnvVar(nil), session.ProviderEnvItems...)
+	if len(execSession.ProviderEnvItems) == 0 {
+		globalEnv, err := e.configDB.ListGlobalEnv(ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		providerEnv := mergeEnvItems(globalEnv, session.EnvItems)
+		providerEnv = mergeEnvItems(providerEnv, request.SessionEnv)
+		execSession.ProviderEnvItems = providerEnv
+	}
+
+	managedEnv, err := ensureSessionLLMFacadeConfig(ctx, e.config, e.configDB, &execSession, agent, model, llmFacadeTokenSourceLoaderCommand, runID)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(managedEnv) > 0 {
+		execSession.RuntimeEnvItems = mergeEnvItems(execSession.RuntimeEnvItems, envItemsFromMap(managedEnv, false))
+	}
+	return &execSession, managedEnv["AGENT_COMPOSE_SESSION_TOKEN"], nil
+}
+
+func loaderCommandLLMFacadeAgentModel(env map[string]string) (string, string) {
+	if env == nil {
+		return "codex", ""
+	}
+	agent := normalizeAgentKind(firstNonEmpty(
+		env["PROJECT_AGENT_PROVIDER"],
+		env["AGENT_PROVIDER"],
+		env["AGENT_COMPOSE_PROVIDER"],
+		"codex",
+	))
+	switch agent {
+	case "codex":
+		return agent, firstNonEmpty(env["CODEX_MODEL"], env["LLM_MODEL"])
+	case "claude":
+		return agent, firstNonEmpty(env["ANTHROPIC_MODEL"], env["CLAUDE_MODEL"], env["LLM_MODEL"])
+	case "opencode":
+		model := firstNonEmpty(env["OPENCODE_MODEL"], env["LLM_MODEL"])
+		if strings.TrimSpace(model) == "" {
+			return "", ""
+		}
+		return agent, model
+	default:
+		return "", ""
+	}
 }
 
 func (e *Executor) executeCell(ctx context.Context, session *Session, cellType, source string, stream CellExecutionStream) (NotebookCell, error) {

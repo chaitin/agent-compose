@@ -898,7 +898,7 @@ func selectLLMProviderForModel(ctx context.Context, store *ConfigStore, provider
 	providerID = strings.TrimSpace(providerID)
 	var candidates []candidate
 	for _, provider := range providers {
-		if providerFamily != "" && normalizeLLMProviderType(provider.ProviderType) != providerFamily {
+		if providerID == "" && providerFamily != "" && normalizeLLMProviderType(provider.ProviderType) != providerFamily {
 			continue
 		}
 		if providerID != "" && provider.ID != providerID {

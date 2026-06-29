@@ -974,6 +974,83 @@ func TestLoaderRunHostCommandPersistsRunningCellOutput(t *testing.T) {
 	}
 }
 
+func TestLoaderRunHostCommandDeletesLLMFacadeToken(t *testing.T) {
+	ctx := context.Background()
+	manager, runtime, _, loader := newTestLoaderCommandManager(t, ctx)
+	manager.config.RuntimeBaseURL = "http://agent-compose.test"
+	if _, err := manager.configDB.ReplaceGlobalEnv(ctx, []SessionEnvVar{
+		{Name: "LLM_API_ENDPOINT", Value: "https://openai-compatible.example.invalid/openai"},
+		{Name: "LLM_API_KEY", Value: "provider-key", Secret: true},
+		{Name: "LLM_MODEL", Value: "svip/gpt-5.5"},
+	}); err != nil {
+		t.Fatalf("ReplaceGlobalEnv returned error: %v", err)
+	}
+	host := &loaderRunHost{
+		manager: manager,
+		loader:  loader,
+		run:     &LoaderRunSummary{ID: "run-command-facade-token", LoaderID: loader.Summary.ID},
+	}
+
+	result, err := host.Command(ctx, LoaderCommandRequest{
+		Mode:    "exec",
+		Command: "python3",
+		Args:    []string{"-V"},
+		Env:     map[string]string{"PROJECT_AGENT_PROVIDER": "codex"},
+	})
+	if err != nil {
+		t.Fatalf("Command returned error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("command result = %#v", result)
+	}
+	if len(runtime.commandSpecs) != 1 {
+		t.Fatalf("command ExecStream calls = %d, want 1", len(runtime.commandSpecs))
+	}
+	token := runtime.commandSpecs[0].Env["AGENT_COMPOSE_SESSION_TOKEN"]
+	if token == "" {
+		t.Fatalf("command spec missing AGENT_COMPOSE_SESSION_TOKEN: %#v", runtime.commandSpecs[0].Env)
+	}
+	if _, err := manager.configDB.GetLLMFacadeToken(ctx, token); err == nil {
+		t.Fatalf("loader command facade token should be deleted after command returns")
+	}
+}
+
+func TestLoaderRunHostCommandSkipsOpenCodeFacadeWithoutModel(t *testing.T) {
+	ctx := context.Background()
+	manager, runtime, _, loader := newTestLoaderCommandManager(t, ctx)
+	manager.config.RuntimeBaseURL = "http://agent-compose.test"
+	if _, err := manager.configDB.ReplaceGlobalEnv(ctx, []SessionEnvVar{
+		{Name: "LLM_API_ENDPOINT", Value: "https://openai-compatible.example.invalid/openai"},
+		{Name: "LLM_API_KEY", Value: "provider-key", Secret: true},
+	}); err != nil {
+		t.Fatalf("ReplaceGlobalEnv returned error: %v", err)
+	}
+	host := &loaderRunHost{
+		manager: manager,
+		loader:  loader,
+		run:     &LoaderRunSummary{ID: "run-command-opencode-no-model", LoaderID: loader.Summary.ID},
+	}
+
+	result, err := host.Command(ctx, LoaderCommandRequest{
+		Mode:    "exec",
+		Command: "python3",
+		Args:    []string{"-V"},
+		Env:     map[string]string{"PROJECT_AGENT_PROVIDER": "opencode"},
+	})
+	if err != nil {
+		t.Fatalf("Command returned error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("command result = %#v", result)
+	}
+	if len(runtime.commandSpecs) != 1 {
+		t.Fatalf("command ExecStream calls = %d, want 1", len(runtime.commandSpecs))
+	}
+	if token := runtime.commandSpecs[0].Env["AGENT_COMPOSE_SESSION_TOKEN"]; token != "" {
+		t.Fatalf("opencode command without model should not receive facade token %q", token)
+	}
+}
+
 func testLoaderRunHostCommandPersistsShellCellArtifactsAndEvents(t *testing.T) {
 	ctx := context.Background()
 	manager, runtime, _, loader := newTestLoaderCommandManager(t, ctx)
@@ -1815,7 +1892,7 @@ func newTestLoaderCommandManager(t *testing.T, ctx context.Context) (*LoaderMana
 		store:    store,
 		configDB: configDB,
 		driver:   driver,
-		executor: &Executor{config: config, store: store, runtimes: fixedRuntimeProvider{runtime: runtime}},
+		executor: &Executor{config: config, store: store, configDB: configDB, runtimes: fixedRuntimeProvider{runtime: runtime}},
 		engine:   &QJSLoaderEngine{},
 		running:  map[string]int{},
 	}

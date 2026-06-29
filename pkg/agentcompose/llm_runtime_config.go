@@ -11,11 +11,17 @@ import (
 	"strings"
 )
 
-// llmFacadeTokenSourceAgent marks a per-agent-run facade token. Such a token is
-// only used for the duration of a single bounded agent run, so the caller is
-// expected to delete it when that run completes (see executeAgentRun) rather
-// than letting it live for the whole session lifetime.
-const llmFacadeTokenSourceAgent = "agent"
+const (
+	// llmFacadeTokenSourceAgent marks a per-agent-run facade token. Such a token is
+	// only used for the duration of a single bounded agent run, so the caller is
+	// expected to delete it when that run completes (see executeAgentRun) rather
+	// than letting it live for the whole session lifetime.
+	llmFacadeTokenSourceAgent = "agent"
+
+	// llmFacadeTokenSourceLoaderCommand marks a per-loader-command facade token.
+	// The caller must delete it when the bounded command returns.
+	llmFacadeTokenSourceLoaderCommand = "loader_command"
+)
 
 type agentRuntimeLLMConfig struct {
 	Env map[string]string

@@ -3,6 +3,7 @@ package agentcompose
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -114,6 +115,14 @@ func (s *Service) handleRuntimeLLM(c echo.Context, inboundProtocol protocolbridg
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
+	if inboundProtocol == protocolbridge.ProtocolOpenAIResponses && upstreamProtocol == protocolbridge.ProtocolOpenAIResponses {
+		upstreamBody, err := rewriteRuntimeLLMRequestModel(body, target.Model.Name)
+		if err != nil {
+			raw, status := inboundAdapter.EncodeError(err)
+			return writeRuntimeLLMEncodedError(c, raw, status)
+		}
+		return s.proxyRuntimeLLMTransparent(c, upstreamEndpoint, upstreamBody, target)
+	}
 	upstreamBody, err := encodeRuntimeLLMUpstreamRequest(inboundProtocol, upstreamProtocol, target, llmReq)
 	if err != nil {
 		raw, status := inboundAdapter.EncodeError(err)
@@ -156,6 +165,47 @@ func (s *Service) handleRuntimeLLM(c echo.Context, inboundProtocol protocolbridg
 	c.Response().WriteHeader(resp.StatusCode)
 	_, err = c.Response().Writer.Write(clientBody)
 	return err
+}
+
+func (s *Service) proxyRuntimeLLMTransparent(c echo.Context, upstreamEndpoint string, body []byte, target LLMResolvedTarget) error {
+	upstreamReq, err := http.NewRequestWithContext(c.Request().Context(), http.MethodPost, upstreamEndpoint, bytes.NewReader(body))
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "create upstream llm request failed"})
+	}
+	copyRuntimeLLMHeaders(upstreamReq.Header, c.Request().Header)
+	applyLLMForwardHeaders(upstreamReq.Header, target.Headers)
+	resp, err := s.llm.client.Do(upstreamReq)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "call upstream llm failed"})
+	}
+	defer func() { _ = resp.Body.Close() }()
+	copyRuntimeLLMResponseHeaders(c.Response().Header(), resp.Header)
+	c.Response().WriteHeader(resp.StatusCode)
+	if err := copyRuntimeLLMResponseBody(c.Response().Writer, resp); err != nil && !errors.Is(err, http.ErrAbortHandler) {
+		return err
+	}
+	return nil
+}
+
+func rewriteRuntimeLLMRequestModel(body []byte, model string) ([]byte, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return body, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	var current string
+	if err := json.Unmarshal(payload["model"], &current); err == nil && current == model {
+		return body, nil
+	}
+	modelJSON, err := json.Marshal(model)
+	if err != nil {
+		return nil, err
+	}
+	payload["model"] = modelJSON
+	return json.Marshal(payload)
 }
 
 func llmProtocolAdapter(protocol protocolbridge.Protocol) (protocolbridge.Adapter, error) {

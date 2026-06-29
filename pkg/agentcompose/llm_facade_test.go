@@ -120,14 +120,14 @@ func TestRuntimeLLMFacadeFlushesSSEResponses(t *testing.T) {
 	service, _, _ := newTestServiceAPIHarness(t)
 	service.config.LLMAPIKey = "provider-key"
 
+	const upstreamEvents = "event: message\ndata: hello\n\nevent: done\ndata: [DONE]\n\n"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("event: message\ndata: hello\n\n"))
+		_, _ = w.Write([]byte(upstreamEvents))
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
-		_, _ = w.Write([]byte("event: done\ndata: [DONE]\n\n"))
 	}))
 	t.Cleanup(upstream.Close)
 	service.config.LLMAPIEndpoint = upstream.URL
@@ -165,7 +165,7 @@ func TestRuntimeLLMFacadeFlushesSSEResponses(t *testing.T) {
 	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "text/event-stream") {
 		t.Fatalf("Content-Type = %q, want text/event-stream", got)
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "event: raw") || !strings.Contains(body, "event: response.completed") {
+	if body := rec.Body.String(); body != upstreamEvents {
 		t.Fatalf("unexpected SSE body: %q", body)
 	}
 }
@@ -1096,6 +1096,38 @@ func TestSessionEnvProviderSelectionUsesAgentFamilyPreference(t *testing.T) {
 	}
 }
 
+func TestCodexFacadeCanUseAnthropicOnlySessionEnvProvider(t *testing.T) {
+	ctx := context.Background()
+	for _, k := range []string{"LLM_API_ENDPOINT", "LLM_API_KEY", "OPENAI_API_KEY", "LLM_MODEL", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_ENDPOINT", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "CLAUDE_MODEL"} {
+		t.Setenv(k, "")
+	}
+	service, _, _ := newTestServiceAPIHarness(t)
+	service.config.RuntimeBaseURL = "http://agent-compose.test"
+	service.config.LLMAPIEndpoint = ""
+	service.config.LLMAPIKey = ""
+	service.config.LLMModel = ""
+
+	session := createRunningLLMFacadeSession(t, ctx, service, "session-env-anthropic-only-codex")
+	session.ProviderEnvItems = []SessionEnvVar{
+		{Name: "ANTHROPIC_BASE_URL", Value: "https://session-anthropic.example.invalid"},
+		{Name: "ANTHROPIC_AUTH_TOKEN", Value: "session-anthropic-token", Secret: true},
+		{Name: "ANTHROPIC_MODEL", Value: "kimi-k2.6"},
+	}
+
+	env, err := ensureSessionLLMFacadeConfig(ctx, service.config, service.configDB, session, "codex", "", "test", "run-codex")
+	if err != nil {
+		t.Fatalf("ensureSessionLLMFacadeConfig(codex) returned error: %v", err)
+	}
+	token, err := service.configDB.GetLLMFacadeToken(ctx, env["AGENT_COMPOSE_SESSION_TOKEN"])
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
+	}
+	wantProviderID := sessionEnvProviderID(session.Summary.ID, llmProviderFamilyAnthropic)
+	if token.ProviderID != wantProviderID || token.Model != "kimi-k2.6" || token.WireAPI != llmAPIProtocolResponses {
+		t.Fatalf("facade token = %#v, want provider %q, model kimi-k2.6, responses facade", token, wantProviderID)
+	}
+}
+
 func TestDaemonEnvProviderSelectionUsesAgentFamilyPreference(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("LLM_API_ENDPOINT", "")
@@ -1572,19 +1604,41 @@ func TestE2ERuntimeLLMFacadeRoundTrips(t *testing.T) {
 	}
 
 	t.Run("openai_responses", func(t *testing.T) {
+		const requestBody = `{"model":"alias-resp","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"metadata":{"keep":"exact"}}`
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("Authorization") != "Bearer provider-key" {
 				t.Errorf("upstream auth = %q", r.Header.Get("Authorization"))
+			}
+			gotBody, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read upstream body: %v", err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(gotBody, &got); err != nil {
+				t.Errorf("decode upstream body: %v", err)
+			}
+			if got["model"] != "m-resp" {
+				t.Errorf("upstream model = %v, want resolved provider model", got["model"])
+			}
+			if metadata, _ := got["metadata"].(map[string]any); metadata["keep"] != "exact" {
+				t.Errorf("upstream metadata = %#v, want preserved request fields", got["metadata"])
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":"resp-e2e","model":"m-resp","status":"completed","output_text":"ok"}`))
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
-		upsertProvider(t, "e2e-openai-resp", llmProviderFamilyOpenAI, llmAPIProtocolResponses, upstream.URL, "Authorization", "Bearer", "m-resp")
+		upsertProvider(t, "e2e-openai-resp", llmProviderFamilyOpenAI, llmAPIProtocolResponses, upstream.URL, "Authorization", "Bearer", "alias-resp")
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+			ID: "e2e-openai-resp", Name: "e2e-openai-resp", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolResponses,
+			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "Authorization", AuthScheme: "Bearer",
+			Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
+		}, LLMModel{ID: "alias-resp", Name: "m-resp", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			t.Fatalf("UpsertDefaultLLMConfig(alias-resp): %v", err)
+		}
 		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-openai-resp")
-		token := mintToken(t, session, "m-resp", "e2e-openai-resp", llmAPIProtocolResponses)
-		rec := post(session.Summary.ID, "/llm/openai/v1/responses", token, `{"model":"m-resp","input":"hi"}`)
+		token := mintToken(t, session, "alias-resp", "e2e-openai-resp", llmAPIProtocolResponses)
+		rec := post(session.Summary.ID, "/llm/openai/v1/responses", token, requestBody)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 		}
@@ -1642,14 +1696,14 @@ func TestE2ERuntimeLLMFacadeRoundTrips(t *testing.T) {
 	})
 
 	t.Run("sse_stream", func(t *testing.T) {
+		const upstreamEvents = "event: response.output_text.delta\ndata: {\"delta\":\"hello\"}\n\nevent: response.completed\ndata: {\"status\":\"completed\"}\n\n"
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("event: message\ndata: hello\n\n"))
+			_, _ = w.Write([]byte(upstreamEvents))
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
-			_, _ = w.Write([]byte("event: done\ndata: [DONE]\n\n"))
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
@@ -1660,8 +1714,8 @@ func TestE2ERuntimeLLMFacadeRoundTrips(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 		}
-		if !strings.Contains(rec.Body.String(), "data:") {
-			t.Fatalf("expected SSE data in response, got %q", rec.Body.String())
+		if rec.Body.String() != upstreamEvents {
+			t.Fatalf("facade SSE body = %q, want exact upstream events", rec.Body.String())
 		}
 	})
 
