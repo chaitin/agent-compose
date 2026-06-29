@@ -501,6 +501,20 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 	runCmd.Flags().StringVar(&runOptions.SessionID, "session-id", "", "Reuse an existing session")
 	runCmd.Flags().BoolVar(&runOptions.KeepRunning, "keep-running", false, "Keep the session runtime running after completion")
 
+	invokeOptions := composeInvokeOptions{}
+	invokeCmd := &cobra.Command{
+		Use:   "invoke <service>",
+		Short: "Invoke a project service",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeInvokeCommand(cmd, options, invokeOptions, args[0])
+		},
+	}
+	invokeCmd.Flags().StringVar(&invokeOptions.InputJSON, "input-json", "", "Service input JSON")
+	invokeCmd.Flags().StringVar(&invokeOptions.InputFile, "input-file", "", "Read service input JSON from file")
+	invokeCmd.Flags().StringVar(&invokeOptions.SessionID, "session-id", "", "Reuse an existing session")
+	invokeCmd.Flags().BoolVar(&invokeOptions.KeepRunning, "keep-running", false, "Keep the session runtime running after completion")
+
 	logsOptions := composeLogsOptions{}
 	logsCmd := &cobra.Command{
 		Use:   "logs",
@@ -629,7 +643,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		},
 	}
 
-	root.AddCommand(daemonCmd, versionCmd, statusCmd, configCmd, upCmd, downCmd, runCmd, logsCmd, psCmd, execCmd, imagesCmd, imageCmd, pullCmd, rmiCmd, inspectCmd)
+	root.AddCommand(daemonCmd, versionCmd, statusCmd, configCmd, upCmd, downCmd, runCmd, invokeCmd, logsCmd, psCmd, execCmd, imagesCmd, imageCmd, pullCmd, rmiCmd, inspectCmd)
 	return root
 }
 
@@ -646,6 +660,13 @@ type composeConfigOptions struct {
 
 type composeRunOptions struct {
 	Prompt      string
+	SessionID   string
+	KeepRunning bool
+}
+
+type composeInvokeOptions struct {
+	InputJSON   string
+	InputFile   string
 	SessionID   string
 	KeepRunning bool
 }
@@ -861,6 +882,82 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 		return commandExitError{Code: runSummaryExitCode(completed), Err: fmt.Errorf("run %s for project %s agent %s failed: %s", completed.GetRunId(), normalized.Name, agentName, firstNonEmptyString(completed.GetError(), runStatusText(completed.GetStatus())))}
 	}
 	return nil
+}
+
+func runComposeInvokeCommand(cmd *cobra.Command, cli cliOptions, options composeInvokeOptions, serviceName string) error {
+	_, normalized, projectID, err := resolveComposeProject(cli)
+	if err != nil {
+		return err
+	}
+	serviceName = strings.TrimSpace(serviceName)
+	inputJSON, err := composeInvokeInputJSON(options)
+	if err != nil {
+		return err
+	}
+	clientConfig, err := resolveCLIClientConfig(cli.Host)
+	if err != nil {
+		return err
+	}
+	cleanupPolicy := agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION
+	if options.KeepRunning {
+		cleanupPolicy = agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING
+	}
+	client := agentcomposev2connect.NewRunServiceClient(newDaemonHTTPClient(clientConfig), clientConfig.BaseURL)
+	resp, err := client.InvokeService(cmd.Context(), connect.NewRequest(&agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     serviceName,
+		InputJson:       inputJSON,
+		Source:          agentcomposev2.RunSource_RUN_SOURCE_MANUAL,
+		SessionId:       strings.TrimSpace(options.SessionID),
+		CleanupPolicy:   cleanupPolicy,
+		ClientRequestId: manualRunClientRequestID(normalized.Name, serviceName, inputJSON),
+	}))
+	if err != nil {
+		return commandExitErrorForConnect(fmt.Errorf("invoke project %s service %s: %w", normalized.Name, serviceName, err))
+	}
+	run := resp.Msg.GetRun()
+	if cli.JSON {
+		data, err := json.MarshalIndent(composeRunOutputFromDetail(run), "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := writeCommandOutput(cmd.OutOrStdout(), append(data, '\n')); err != nil {
+			return err
+		}
+	} else if strings.TrimSpace(run.GetOutput()) != "" {
+		if _, err := io.WriteString(cmd.OutOrStdout(), run.GetOutput()); err != nil {
+			return err
+		}
+	}
+	if runSummaryFailed(run.GetSummary()) {
+		return commandExitError{
+			Code: runSummaryExitCode(run.GetSummary()),
+			Err:  fmt.Errorf("invoke project %s service %s failed: %s", normalized.Name, serviceName, firstNonEmptyString(run.GetSummary().GetError(), run.GetOutput())),
+		}
+	}
+	return nil
+}
+
+func composeInvokeInputJSON(options composeInvokeOptions) (string, error) {
+	inline := strings.TrimSpace(options.InputJSON)
+	file := strings.TrimSpace(options.InputFile)
+	if inline != "" && file != "" {
+		return "", fmt.Errorf("use only one of --input-json or --input-file")
+	}
+	if file != "" {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return "", fmt.Errorf("read input file %s: %w", file, err)
+		}
+		inline = strings.TrimSpace(string(data))
+	}
+	if inline == "" {
+		inline = "{}"
+	}
+	if !json.Valid([]byte(inline)) {
+		return "", fmt.Errorf("service input must be valid JSON")
+	}
+	return inline, nil
 }
 
 func runComposeLogsCommand(cmd *cobra.Command, cli cliOptions, options composeLogsOptions) error {
@@ -1268,6 +1365,8 @@ type composeRunOutput struct {
 	RunID        string `json:"run_id"`
 	ProjectID    string `json:"project_id"`
 	ProjectName  string `json:"project_name"`
+	TargetType   string `json:"target_type,omitempty"`
+	TargetName   string `json:"target_name,omitempty"`
 	AgentName    string `json:"agent_name"`
 	Source       string `json:"source"`
 	Status       string `json:"status"`
@@ -1279,6 +1378,8 @@ type composeRunOutput struct {
 	DurationMs   int64  `json:"duration_ms,omitempty"`
 	Prompt       string `json:"prompt,omitempty"`
 	Output       string `json:"output,omitempty"`
+	InputJSON    string `json:"input_json,omitempty"`
+	OutputJSON   string `json:"output_json,omitempty"`
 	ResultJSON   string `json:"result_json,omitempty"`
 	LogsPath     string `json:"logs_path,omitempty"`
 	ArtifactsDir string `json:"artifacts_dir,omitempty"`
@@ -1842,6 +1943,8 @@ func composeRunOutputFromDetail(run *agentcomposev2.RunDetail) composeRunOutput 
 		RunID:        summary.GetRunId(),
 		ProjectID:    summary.GetProjectId(),
 		ProjectName:  summary.GetProjectName(),
+		TargetType:   runTargetTypeText(summary.GetTargetType()),
+		TargetName:   summary.GetTargetName(),
 		AgentName:    summary.GetAgentName(),
 		Source:       runSourceText(summary.GetSource()),
 		Status:       runStatusText(summary.GetStatus()),
@@ -1853,6 +1956,8 @@ func composeRunOutputFromDetail(run *agentcomposev2.RunDetail) composeRunOutput 
 		DurationMs:   summary.GetDurationMs(),
 		Prompt:       run.GetPrompt(),
 		Output:       run.GetOutput(),
+		InputJSON:    run.GetInputJson(),
+		OutputJSON:   run.GetOutputJson(),
 		ResultJSON:   run.GetResultJson(),
 		LogsPath:     run.GetLogsPath(),
 		ArtifactsDir: run.GetArtifactsDir(),
@@ -2281,6 +2386,23 @@ func runSourceText(source agentcomposev2.RunSource) string {
 		return "scheduler"
 	case agentcomposev2.RunSource_RUN_SOURCE_API:
 		return "api"
+	default:
+		return "unspecified"
+	}
+}
+
+func runTargetTypeText(targetType agentcomposev2.RunTargetType) string {
+	switch targetType {
+	case agentcomposev2.RunTargetType_RUN_TARGET_TYPE_AGENT:
+		return "agent"
+	case agentcomposev2.RunTargetType_RUN_TARGET_TYPE_SERVICE:
+		return "service"
+	case agentcomposev2.RunTargetType_RUN_TARGET_TYPE_EXEC:
+		return "exec"
+	case agentcomposev2.RunTargetType_RUN_TARGET_TYPE_TRIGGER:
+		return "trigger"
+	case agentcomposev2.RunTargetType_RUN_TARGET_TYPE_WEBHOOK:
+		return "webhook"
 	default:
 		return "unspecified"
 	}

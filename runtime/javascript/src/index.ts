@@ -1,9 +1,10 @@
-export { RESULT_PREFIX, SESSION_ROOT } from "./constants.js";
+export { COMMAND_RESULT_PREFIX, RESULT_PREFIX, SERVICE_RESULT_PREFIX, SESSION_ROOT } from "./constants.js";
 export { formatError } from "./errors.js";
 export { formatMpiContext, readMpiContext, warn } from "./mpi.js";
 export { runtimeRootForStateRoot, uniqueDirectories } from "./paths.js";
 export { normalizeProvider } from "./provider.js";
 export { runPromptCommand } from "./prompt.js";
+export { runServiceCommand } from "./service.js";
 export { ClaudeRunner } from "./runners/claude.js";
 export { CodexRunner } from "./runners/codex.js";
 export { GeminiRunner } from "./runners/gemini.js";

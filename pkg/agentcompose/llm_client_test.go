@@ -238,6 +238,7 @@ func testLLMClientGenerateHandlesSuccessAndFailures(t *testing.T) {
 }
 
 func TestLLMClientGenerateSendsOutputSchema(t *testing.T) {
+	clearProcessLLMEnvForTest(t)
 	ctx := context.Background()
 	var gotBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -329,6 +330,7 @@ func TestLLMClientGenerateUnsupportedProtocol(t *testing.T) {
 }
 
 func TestLLMClientGenerateChatCompletionsPlainText(t *testing.T) {
+	clearProcessLLMEnvForTest(t)
 	ctx := context.Background()
 	var gotBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -363,6 +365,7 @@ func TestLLMClientGenerateChatCompletionsPlainText(t *testing.T) {
 }
 
 func TestLLMClientGenerateChatCompletions(t *testing.T) {
+	clearProcessLLMEnvForTest(t)
 	ctx := context.Background()
 	store := newTestConfigStore(t)
 	if _, err := store.ReplaceGlobalEnv(ctx, []SessionEnvVar{
@@ -409,6 +412,7 @@ func TestLLMClientGenerateChatCompletions(t *testing.T) {
 }
 
 func TestLLMClientGenerateChatCompletionsValidatesSchemaJSONMode(t *testing.T) {
+	clearProcessLLMEnvForTest(t)
 	ctx := context.Background()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -432,6 +436,7 @@ func TestLLMClientGenerateChatCompletionsValidatesSchemaJSONMode(t *testing.T) {
 }
 
 func TestLLMClientGenerateChatCompletionsSurfacesErrors(t *testing.T) {
+	clearProcessLLMEnvForTest(t)
 	ctx := context.Background()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -479,6 +484,7 @@ func TestLLMClientResolveSettingPrefersGlobalEnvThenProcessEnvThenConfig(t *test
 }
 
 func TestLLMClientGenerateChatCompletionsRejectsInvalidSchema(t *testing.T) {
+	clearProcessLLMEnvForTest(t)
 	ctx := context.Background()
 	client := &LLMClient{
 		config: &appconfig.Config{
@@ -544,4 +550,11 @@ func readRequestBodyForTest(t *testing.T, r *http.Request) string {
 		t.Fatalf("ReadAll request body returned error: %v", err)
 	}
 	return string(body)
+}
+
+func clearProcessLLMEnvForTest(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"LLM_API_ENDPOINT", "LLM_API_KEY", "OPENAI_API_KEY", "LLM_MODEL", "LLM_API_PROTOCOL"} {
+		t.Setenv(key, "")
+	}
 }

@@ -156,19 +156,26 @@ func projectRunSessionTitle(run ProjectRunRecord) string {
 	if project == "" {
 		project = strings.TrimSpace(run.ProjectID)
 	}
-	agent := strings.TrimSpace(run.AgentName)
-	if agent == "" {
-		agent = "agent"
+	target := strings.TrimSpace(run.TargetName)
+	if target == "" {
+		target = strings.TrimSpace(run.AgentName)
 	}
-	return strings.TrimSpace(fmt.Sprintf("%s/%s run", project, agent))
+	if target == "" {
+		target = "run"
+	}
+	return strings.TrimSpace(fmt.Sprintf("%s/%s run", project, target))
 }
 
 func projectRunSessionTags(run ProjectRunRecord) []SessionTag {
 	tags := []SessionTag{
 		{Name: "project", Value: strings.TrimSpace(run.ProjectID)},
-		{Name: "agent", Value: strings.TrimSpace(run.AgentName)},
+		{Name: "target_type", Value: strings.TrimSpace(run.TargetType)},
+		{Name: "target_name", Value: strings.TrimSpace(run.TargetName)},
 		{Name: "run_id", Value: strings.TrimSpace(run.RunID)},
 		{Name: "source", Value: normalizeProjectRunSource(run.Source)},
+	}
+	if agentName := strings.TrimSpace(run.AgentName); agentName != "" {
+		tags = append(tags, SessionTag{Name: "agent", Value: agentName})
 	}
 	if schedulerID := strings.TrimSpace(run.SchedulerID); schedulerID != "" {
 		tags = append(tags, SessionTag{Name: "scheduler_id", Value: schedulerID})

@@ -60,9 +60,12 @@ type TopicEventRecord struct {
 
 type TopicEventFilter struct {
 	EventID        string
+	ProjectID      string
+	RunID          string
 	Topic          string
 	CorrelationID  string
 	AfterSequence  int64
+	Offset         int
 	Limit          int
 	DispatchStatus string
 }

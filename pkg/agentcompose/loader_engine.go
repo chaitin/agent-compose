@@ -26,6 +26,10 @@ type LoaderHost interface {
 	CallSessionRPC(ctx context.Context, method, requestJSON string) (string, error)
 }
 
+type LoaderServiceHost interface {
+	Service(ctx context.Context, serviceName, inputJSON string, request LoaderServiceRequest) (LoaderServiceResult, error)
+}
+
 type LoaderValidationResult struct {
 	Triggers []LoaderTrigger
 	Warnings []string
@@ -444,6 +448,51 @@ func (e *QJSLoaderEngine) installRuntime(jsctx *qjs.Context, state *loaderExecut
 		return value, nil
 	})
 	schedulerObj.SetPropertyStr("agent", agentFn)
+
+	serviceFn := jsctx.Function(func(call *qjs.This) (*qjs.Value, error) {
+		if state.host == nil {
+			return nil, fmt.Errorf("scheduler.service is unavailable during validation")
+		}
+		serviceHost, ok := state.host.(LoaderServiceHost)
+		if !ok {
+			return nil, fmt.Errorf("scheduler.service is unavailable for this loader host")
+		}
+		serviceName, inputJSON, request, err := parseLoaderServiceRequest(call.Args())
+		if err != nil {
+			return nil, err
+		}
+		var outputSchemaValue *qjs.Value
+		request.OutputSchema, outputSchemaValue, err = parseLoaderOutputSchema(jsctx, call.Args(), "scheduler.service")
+		if err != nil {
+			return nil, err
+		}
+		response, err := serviceHost.Service(state.ctx, serviceName, inputJSON, request)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(request.OutputSchema) != "" {
+			jsonValue, err := loaderJSONResult(firstNonEmpty(response.OutputJSON, response.Output, response.Text), request.OutputSchema, "service output")
+			if err != nil {
+				return nil, err
+			}
+			response.JSON = jsonValue
+		}
+		data, err := json.Marshal(response)
+		if err != nil {
+			return nil, fmt.Errorf("encode scheduler.service response: %w", err)
+		}
+		value, err := payloadValueFromJSON(jsctx, string(data))
+		if err != nil {
+			return nil, fmt.Errorf("decode scheduler.service response: %w", err)
+		}
+		if strings.TrimSpace(request.OutputSchema) != "" {
+			if err := validateLoaderJSONWithSchema(jsctx, outputSchemaValue, value, "service"); err != nil {
+				return nil, err
+			}
+		}
+		return value, nil
+	})
+	schedulerObj.SetPropertyStr("service", serviceFn)
 
 	execFn := jsctx.Function(func(call *qjs.This) (*qjs.Value, error) {
 		if state.host == nil {
@@ -1131,6 +1180,69 @@ func parseLoaderShellRequest(args []*qjs.Value) (LoaderCommandRequest, error) {
 	}
 	request.Mode = "shell"
 	request.Script = script
+	return request, nil
+}
+
+func parseLoaderServiceRequest(args []*qjs.Value) (string, string, LoaderServiceRequest, error) {
+	if len(args) == 0 || args[0] == nil || args[0].IsUndefined() || args[0].IsNull() {
+		return "", "", LoaderServiceRequest{}, fmt.Errorf("scheduler.service requires a service name")
+	}
+	if len(args) > 3 {
+		return "", "", LoaderServiceRequest{}, fmt.Errorf("scheduler.service accepts a service name, optional input, and optional options object")
+	}
+	serviceName := strings.TrimSpace(args[0].String())
+	if serviceName == "" {
+		return "", "", LoaderServiceRequest{}, fmt.Errorf("scheduler.service requires a non-empty service name")
+	}
+	inputJSON := "{}"
+	if len(args) > 1 && args[1] != nil && !args[1].IsUndefined() && !args[1].IsNull() {
+		var err error
+		inputJSON, err = jsValueToJSON(args[1])
+		if err != nil {
+			return "", "", LoaderServiceRequest{}, fmt.Errorf("encode scheduler.service input: %w", err)
+		}
+		if strings.TrimSpace(inputJSON) == "" {
+			inputJSON = "{}"
+		}
+	}
+	options := map[string]any{}
+	if len(args) > 2 && args[2] != nil && !args[2].IsUndefined() && !args[2].IsNull() {
+		if !args[2].IsObject() || args[2].IsArray() {
+			return "", "", LoaderServiceRequest{}, fmt.Errorf("scheduler.service options must be an object")
+		}
+		decoded, err := qjs.ToGoValue[map[string]any](args[2])
+		if err != nil {
+			return "", "", LoaderServiceRequest{}, fmt.Errorf("decode scheduler.service options: %w", err)
+		}
+		options = decoded
+	}
+	request, err := loaderServiceRequestFromOptions(options, "scheduler.service")
+	if err != nil {
+		return "", "", LoaderServiceRequest{}, err
+	}
+	return serviceName, inputJSON, request, nil
+}
+
+func loaderServiceRequestFromOptions(options map[string]any, apiName string) (LoaderServiceRequest, error) {
+	request := LoaderServiceRequest{
+		SessionID:     loaderStringOption(options, "sessionId", "session_id"),
+		SessionPolicy: normalizeLoaderSessionPolicy(loaderStringOption(options, "sessionPolicy", "session_policy")),
+		Title:         loaderStringOption(options, "title"),
+		Driver:        loaderStringOption(options, "driver"),
+		GuestImage:    loaderStringOption(options, "guestImage", "guest_image"),
+		WorkspaceID:   loaderStringOption(options, "workspaceId", "workspace_id"),
+	}
+	timeoutMs, err := loaderInt64Option(options, "timeoutMs", "timeout_ms")
+	if err != nil {
+		return LoaderServiceRequest{}, fmt.Errorf("decode %s timeoutMs: %w", apiName, err)
+	}
+	if timeoutMs > 0 {
+		request.Timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+	request.SessionEnv, err = loaderSessionEnvOption(options)
+	if err != nil {
+		return LoaderServiceRequest{}, fmt.Errorf("%s", strings.Replace(err.Error(), "scheduler.agent", apiName, 1))
+	}
 	return request, nil
 }
 

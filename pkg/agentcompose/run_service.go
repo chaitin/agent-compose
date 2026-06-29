@@ -73,6 +73,7 @@ func (s *Service) runProjectAgent(ctx context.Context, msg *agentcomposev2.RunAg
 		TriggerID:       msg.GetTriggerId(),
 		Prompt:          msg.GetPrompt(),
 		ClientRequestID: msg.GetClientRequestId(),
+		RuntimeContext:  msg.GetRuntimeContext(),
 	})
 	if err != nil {
 		return ProjectRunRecord{}, nil, connect.NewError(connect.CodeInvalidArgument, err)
@@ -307,7 +308,7 @@ func (s *Service) GetRun(ctx context.Context, req *connect.Request[agentcomposev
 	if projectID := strings.TrimSpace(req.Msg.GetProjectId()); projectID != "" && run.ProjectID != projectID {
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("project run %s not found in project %s", runID, projectID))
 	}
-	return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: runDetailResponse(run)}), nil
+	return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: s.runDetailResponse(ctx, run)}), nil
 }
 
 func (s *Service) ListRuns(ctx context.Context, req *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
@@ -315,14 +316,17 @@ func (s *Service) ListRuns(ctx context.Context, req *connect.Request[agentcompos
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
 	}
 	runs, err := s.configDB.ListProjectRunsByOptions(ctx, ProjectRunListOptions{
-		ProjectID:   req.Msg.GetProjectId(),
-		AgentName:   req.Msg.GetAgentName(),
-		SessionID:   req.Msg.GetSessionId(),
-		SchedulerID: req.Msg.GetSchedulerId(),
-		Status:      projectRunStatusFromProto(req.Msg.GetStatus()),
-		Source:      projectRunSourceFilterFromProto(req.Msg.GetSource()),
-		Offset:      int(req.Msg.GetOffset()),
-		Limit:       int(req.Msg.GetLimit()),
+		ProjectID:       req.Msg.GetProjectId(),
+		AgentName:       req.Msg.GetAgentName(),
+		SessionID:       req.Msg.GetSessionId(),
+		SchedulerID:     req.Msg.GetSchedulerId(),
+		ClientRequestID: req.Msg.GetClientRequestId(),
+		Status:          projectRunStatusFromProto(req.Msg.GetStatus()),
+		Source:          projectRunSourceFilterFromProto(req.Msg.GetSource()),
+		TargetType:      projectRunTargetTypeFromProto(req.Msg.GetTargetType()),
+		TargetName:      req.Msg.GetTargetName(),
+		Offset:          int(req.Msg.GetOffset()),
+		Limit:           int(req.Msg.GetLimit()),
 	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -374,17 +378,39 @@ func (s *Service) StopRun(ctx context.Context, req *connect.Request[agentcompose
 }
 
 func runDetailResponse(run ProjectRunRecord) *agentcomposev2.RunDetail {
+	artifacts, metrics := projectRunArtifactsAndMetrics(run)
 	return &agentcomposev2.RunDetail{
-		Summary:      runSummaryResponse(run),
-		Prompt:       run.Prompt,
-		Output:       run.Output,
-		ResultJson:   run.ResultJSON,
-		LogsPath:     run.LogsPath,
-		ArtifactsDir: run.ArtifactsDir,
-		CleanupError: run.CleanupError,
-		Driver:       run.Driver,
-		ImageRef:     run.ImageRef,
+		Summary:        runSummaryResponse(run),
+		Prompt:         run.Prompt,
+		Output:         run.Output,
+		ResultJson:     run.ResultJSON,
+		InputJson:      run.InputJSON,
+		OutputJson:     run.OutputJSON,
+		RuntimeContext: runtimeContextResponse(run.RuntimeContextJSON),
+		LogsPath:       run.LogsPath,
+		ArtifactsDir:   run.ArtifactsDir,
+		CleanupError:   run.CleanupError,
+		Driver:         run.Driver,
+		ImageRef:       run.ImageRef,
+		Artifacts:      artifacts,
+		Metrics:        metrics,
 	}
+}
+
+func runtimeContextResponse(raw string) *agentcomposev2.RuntimeContext {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "{}" {
+		return nil
+	}
+	raw = redactRuntimeContextJSON(raw)
+	if raw == "{}" {
+		return nil
+	}
+	var context agentcomposev2.RuntimeContext
+	if err := json.Unmarshal([]byte(raw), &context); err != nil {
+		return nil
+	}
+	return &context
 }
 
 func runSummaryResponse(run ProjectRunRecord) *agentcomposev2.RunSummary {
@@ -398,6 +424,7 @@ func runSummaryResponse(run ProjectRunRecord) *agentcomposev2.RunSummary {
 		Source:          projectRunSourceResponse(run.Source),
 		SchedulerId:     run.SchedulerID,
 		TriggerId:       run.TriggerID,
+		ClientRequestId: run.ClientRequestID,
 		Status:          projectRunStatusResponse(run.Status),
 		SessionId:       run.SessionID,
 		ExitCode:        int32(run.ExitCode),
@@ -407,6 +434,42 @@ func runSummaryResponse(run ProjectRunRecord) *agentcomposev2.RunSummary {
 		DurationMs:      run.DurationMs,
 		CreatedAt:       formatProjectTime(run.CreatedAt),
 		UpdatedAt:       formatProjectTime(run.UpdatedAt),
+		TargetType:      projectRunTargetTypeResponse(run.TargetType),
+		TargetName:      run.TargetName,
+	}
+}
+
+func projectRunTargetTypeResponse(targetType string) agentcomposev2.RunTargetType {
+	switch strings.ToLower(strings.TrimSpace(targetType)) {
+	case "agent":
+		return agentcomposev2.RunTargetType_RUN_TARGET_TYPE_AGENT
+	case "service":
+		return agentcomposev2.RunTargetType_RUN_TARGET_TYPE_SERVICE
+	case "exec":
+		return agentcomposev2.RunTargetType_RUN_TARGET_TYPE_EXEC
+	case "trigger":
+		return agentcomposev2.RunTargetType_RUN_TARGET_TYPE_TRIGGER
+	case "webhook":
+		return agentcomposev2.RunTargetType_RUN_TARGET_TYPE_WEBHOOK
+	default:
+		return agentcomposev2.RunTargetType_RUN_TARGET_TYPE_UNSPECIFIED
+	}
+}
+
+func projectRunTargetTypeFromProto(targetType agentcomposev2.RunTargetType) string {
+	switch targetType {
+	case agentcomposev2.RunTargetType_RUN_TARGET_TYPE_AGENT:
+		return "agent"
+	case agentcomposev2.RunTargetType_RUN_TARGET_TYPE_SERVICE:
+		return "service"
+	case agentcomposev2.RunTargetType_RUN_TARGET_TYPE_EXEC:
+		return "exec"
+	case agentcomposev2.RunTargetType_RUN_TARGET_TYPE_TRIGGER:
+		return "trigger"
+	case agentcomposev2.RunTargetType_RUN_TARGET_TYPE_WEBHOOK:
+		return "webhook"
+	default:
+		return ""
 	}
 }
 

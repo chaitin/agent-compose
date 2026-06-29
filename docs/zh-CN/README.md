@@ -190,6 +190,7 @@ task test
 
 - [英文文档索引](../README.md)
 - [架构说明](design/agent-compose_design.md)
+- [引擎基础能力建设计划](design/agent-compose_engine_foundation_plan.md)
 - [Agent system prompt（Phase 1）](design/agent_system_prompt_design.md)
 - [Runtime contract](design/agent-compose-runtime_contract.md)
 - [OpenCode CLI Provider 支持](design/opencode_cli_support.md)

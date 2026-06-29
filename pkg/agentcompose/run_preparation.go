@@ -37,13 +37,16 @@ func (s *Service) prepareProjectRun(ctx context.Context, run ProjectRunRecord, r
 	if err != nil {
 		return ProjectRunPreparation{}, err
 	}
-	agentSpec, ok := normalizedProjectAgentByName(spec, run.AgentName)
-	if !ok {
+	agentSpec, _ := normalizedProjectAgentByName(spec, run.AgentName)
+	var agent AgentDefinition
+	if strings.TrimSpace(run.ManagedAgentID) != "" {
+		var err error
+		agent, err = s.configDB.GetAgentDefinition(ctx, run.ManagedAgentID)
+		if err != nil {
+			return ProjectRunPreparation{}, fmt.Errorf("resolve managed agent definition %s: %w", run.ManagedAgentID, err)
+		}
+	} else if strings.TrimSpace(run.TargetType) != "service" {
 		return ProjectRunPreparation{}, fmt.Errorf("project revision %s/%d missing agent %s", run.ProjectID, run.ProjectRevision, run.AgentName)
-	}
-	agent, err := s.configDB.GetAgentDefinition(ctx, run.ManagedAgentID)
-	if err != nil {
-		return ProjectRunPreparation{}, fmt.Errorf("resolve managed agent definition %s: %w", run.ManagedAgentID, err)
 	}
 	globalEnv, err := s.configDB.ListGlobalEnv(ctx)
 	if err != nil {
@@ -57,7 +60,11 @@ func (s *Service) prepareProjectRun(ctx context.Context, run ProjectRunRecord, r
 	)
 	providerEnvItems := envItems
 	envItems = filterPersistedRuntimeEnv(envItems)
-	workspace, err := s.prepareProjectRunWorkspace(ctx, run, project, composeWorkspaceSpecFromV2(spec.GetWorkspace()), composeWorkspaceSpecFromV2(agentSpec.GetWorkspace()))
+	var agentWorkspace *compose.WorkspaceSpec
+	if agentSpec != nil {
+		agentWorkspace = composeWorkspaceSpecFromV2(agentSpec.GetWorkspace())
+	}
+	workspace, err := s.prepareProjectRunWorkspace(ctx, run, project, composeWorkspaceSpecFromV2(spec.GetWorkspace()), agentWorkspace)
 	if err != nil {
 		return ProjectRunPreparation{}, err
 	}

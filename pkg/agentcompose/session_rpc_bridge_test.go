@@ -62,6 +62,18 @@ type invalidStructuredAgentHost struct {
 	recordingLoaderHost
 }
 
+type recordingServiceLoaderHost struct {
+	recordingLoaderHost
+	serviceName string
+	inputJSON   string
+}
+
+func (h *recordingServiceLoaderHost) Service(_ context.Context, serviceName, inputJSON string, _ LoaderServiceRequest) (LoaderServiceResult, error) {
+	h.serviceName = serviceName
+	h.inputJSON = inputJSON
+	return LoaderServiceResult{ServiceName: serviceName, OutputJSON: `{"ok":true}`, JSON: map[string]any{"ok": true}, Success: true}, nil
+}
+
 func (h *invalidStructuredAgentHost) Agent(ctx context.Context, prompt string, request LoaderAgentRequest) (LoaderAgentResult, error) {
 	result, err := h.recordingLoaderHost.Agent(ctx, prompt, request)
 	result.Text = `{"summary":"ok","risk":"medium"}`
@@ -440,6 +452,26 @@ func sessionEventsContain(events []SessionEvent, eventType string) bool {
 
 func TestLoaderEngineExecuteSupportsSessionRPCBindings(t *testing.T) {
 	testLoaderEngineExecuteSupportsSessionRPCBindings(t)
+}
+
+func TestLoaderEngineExecuteSupportsServiceBinding(t *testing.T) {
+	engine := &QJSLoaderEngine{}
+	host := &recordingServiceLoaderHost{}
+	result, err := engine.Execute(context.Background(), LoaderExecutionRequest{
+		Runtime: LoaderRuntimeScheduler,
+		Script: `function main() {
+  return scheduler.service("risk-review", { message: "hello" });
+}`,
+	}, host)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if host.serviceName != "risk-review" || host.inputJSON != `{"message":"hello"}` {
+		t.Fatalf("service call = %q %s", host.serviceName, host.inputJSON)
+	}
+	if !strings.Contains(result.ResultJSON, `"serviceName":"risk-review"`) {
+		t.Fatalf("service result json = %s", result.ResultJSON)
+	}
 }
 
 func testLoaderEngineExecuteSupportsSessionRPCBindings(t *testing.T) {

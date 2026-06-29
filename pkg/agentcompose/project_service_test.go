@@ -650,6 +650,52 @@ func testProjectServiceManagedSchedulerCompileCoversTriggerKinds(t *testing.T) {
 	}
 }
 
+func TestProjectServiceManagedServiceTriggerCompileUsesSchedulerService(t *testing.T) {
+	project := ProjectRecord{ID: "project-demo", Name: "demo"}
+	spec := &compose.NormalizedProjectSpec{
+		Name:     "demo",
+		Services: []compose.NormalizedServiceSpec{{Name: "risk-review", Entry: "risk.mjs"}},
+		Triggers: []compose.NormalizedProjectTriggerSpec{
+			{Name: "daily", Kind: "cron", Cron: "0 9 * * *", Target: compose.TriggerTargetSpec{Service: "risk-review"}, Input: `{"mode":"daily"}`},
+			{Name: "push", Kind: "event", Event: &compose.EventTriggerSpec{Topic: "git.push"}, Target: compose.TriggerTargetSpec{Service: "risk-review"}},
+		},
+	}
+	builds, err := projectManagedServiceTriggerBuildsFromSpec(project, 7, spec)
+	if err != nil {
+		t.Fatalf("projectManagedServiceTriggerBuildsFromSpec returned error: %v", err)
+	}
+	if len(builds) != 2 {
+		t.Fatalf("build count = %d, want 2", len(builds))
+	}
+	for _, build := range builds {
+		if build.scheduler.ProjectID != project.ID || build.scheduler.Revision != 7 || build.scheduler.TriggerCount != 1 {
+			t.Fatalf("scheduler build = %#v", build.scheduler)
+		}
+		if !strings.HasPrefix(build.scheduler.AgentName, "service-risk-review-") {
+			t.Fatalf("service trigger managed name = %q", build.scheduler.AgentName)
+		}
+		if !strings.Contains(build.loader.Script, "scheduler.service") || !strings.Contains(build.loader.Script, "risk-review") {
+			t.Fatalf("service trigger script missing scheduler.service:\n%s", build.loader.Script)
+		}
+	}
+	if !strings.Contains(builds[0].loader.Script, `{"mode":"daily"}`) {
+		t.Fatalf("static input missing from cron script:\n%s", builds[0].loader.Script)
+	}
+	if !strings.Contains(builds[1].loader.Script, "event == null ? {} : event") {
+		t.Fatalf("event payload fallback missing from event script:\n%s", builds[1].loader.Script)
+	}
+}
+
+func TestProjectServiceManagedServiceTriggerRejectsMissingService(t *testing.T) {
+	_, err := projectManagedServiceTriggerBuildsFromSpec(ProjectRecord{ID: "project-demo", Name: "demo"}, 1, &compose.NormalizedProjectSpec{
+		Name:     "demo",
+		Triggers: []compose.NormalizedProjectTriggerSpec{{Name: "daily", Kind: "cron", Cron: "0 9 * * *", Target: compose.TriggerTargetSpec{Service: "missing"}}},
+	})
+	if err == nil || !strings.Contains(err.Error(), `service "missing" is not defined`) {
+		t.Fatalf("missing service error = %v", err)
+	}
+}
+
 func TestIntegrationProjectServiceApplyProjectCreatesAndReusesRevision(t *testing.T) {
 	testProjectServiceApplyProjectCreatesAndReusesRevision(t)
 }

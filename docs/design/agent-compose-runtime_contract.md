@@ -221,6 +221,7 @@ Example exec request JSON:
 
 ```json
 {
+  "protocolVersion": "service.v1",
   "mode": "exec",
   "command": "python3",
   "args": ["-V"],
@@ -238,6 +239,7 @@ Example shell request:
 
 ```json
 {
+  "protocolVersion": "service.v1",
   "mode": "shell",
   "script": "set -e\necho hello\n",
   "cwd": "/workspace",
@@ -248,6 +250,8 @@ Example shell request:
 
 Runtime behavior:
 
+- `protocolVersion` is optional for backward-compatible command requests. When
+  present for service calls, the current supported value is `service.v1`.
 - `mode=exec` uses `spawn(command, args, { shell: false })`.
 - `mode=shell` uses `spawn("bash", ["-lc", script])`.
 - stdout/stderr are captured separately and merged into output.
@@ -366,6 +370,7 @@ Command result JSON fields:
 
 | Field | Type | Description |
 | --- | --- | --- |
+| `protocolVersion` | string | Runtime service protocol version, currently `service.v1` for service calls |
 | `stdout` | string | Truncated stdout |
 | `stderr` | string | Truncated stderr |
 | `output` | string | Truncated merged stdout/stderr output |

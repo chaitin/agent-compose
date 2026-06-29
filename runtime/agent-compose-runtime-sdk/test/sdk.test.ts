@@ -187,6 +187,80 @@ describe("@chaitin-ai/agent-compose-runtime-sdk", () => {
     }
   });
 
+  it("reads runtime context from json env", () => {
+    const previous = process.env.AGENT_COMPOSE_RUNTIME_CONTEXT_JSON;
+    process.env.AGENT_COMPOSE_RUNTIME_CONTEXT_JSON = JSON.stringify({
+      source: "api",
+      client_request_id: "request-1",
+      trace_id: "trace-1",
+      external_run_id: "external-1",
+      metadata: { project: "demo" },
+      env: { MODE: "test" },
+      identity_context: { user: "user-1" },
+      capability_scope: { capset_ids: ["capset-a"], metadata: { corp: "x" } },
+    });
+    try {
+      const context = runtime.context.read();
+      expect(context.source).toBe("api");
+      expect(context.clientRequestId).toBe("request-1");
+      expect(context.traceId).toBe("trace-1");
+      expect(context.externalRunId).toBe("external-1");
+      expect(context.metadata.project).toBe("demo");
+      expect(context.env.MODE).toBe("test");
+      expect(context.identityContext.user).toBe("user-1");
+      expect(context.capabilityScope.capsetIds).toEqual(["capset-a"]);
+      expect(context.capabilityScope.metadata.corp).toBe("x");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AGENT_COMPOSE_RUNTIME_CONTEXT_JSON;
+      } else {
+        process.env.AGENT_COMPOSE_RUNTIME_CONTEXT_JSON = previous;
+      }
+    }
+  });
+
+  it("writes, reads, and lists artifacts", async () => {
+    await withTempDir(async (root) => {
+      const record = await runtime.artifact.write("reports/summary.txt", "hello", {
+        dir: root,
+        contentType: "text/plain",
+        metadata: { kind: "summary" },
+      });
+
+      expect(record.name).toBe("reports/summary.txt");
+      expect(record.contentType).toBe("text/plain");
+      expect(record.metadata.kind).toBe("summary");
+      expect(await runtime.artifact.read("reports/summary.txt", { dir: root, encoding: "utf8" })).toBe("hello");
+      expect(await runtime.artifact.list({ dir: root })).toEqual(["reports/summary.txt"]);
+    });
+  });
+
+  it("stores namespaced state as json", async () => {
+    await withTempDir(async (root) => {
+      const store = runtime.stateStore("service", { dir: root });
+      await store.set("cursor", { value: 42 });
+      expect(await store.get("cursor")).toEqual({ value: 42 });
+      await store.delete("cursor");
+      expect(await store.get("cursor")).toBeUndefined();
+    });
+  });
+
+  it("publishes structured runtime events to stdout", () => {
+    const stdio = captureStdio();
+    try {
+      const event = runtime.event.publish("demo.created", { ok: true }, { source: "test" });
+      expect(event.topic).toBe("demo.created");
+    } finally {
+      stdio.restore();
+    }
+
+    const published = JSON.parse(stdio.stdout);
+    expect(published.type).toBe("agent-compose.runtime.event");
+    expect(published.topic).toBe("demo.created");
+    expect(published.payload).toEqual({ ok: true });
+    expect(published.metadata).toEqual({ source: "test" });
+  });
+
   it("writes structured logs to stdout", () => {
     const stdio = captureStdio();
     try {

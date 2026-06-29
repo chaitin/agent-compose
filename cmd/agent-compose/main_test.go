@@ -946,6 +946,97 @@ agents:
 	}
 }
 
+func TestIntegrationCLIInvokeServiceSendsInputAndPrintsJSON(t *testing.T) {
+	dir := t.TempDir()
+	composePath := writeComposeFile(t, dir, `
+name: cli-invoke-demo
+services:
+  echo:
+    entry: echo.mjs
+`)
+	var sawRequest bool
+	server := newRunServiceStubServer(t, runServiceStub{
+		invokeService: func(ctx context.Context, req *connect.Request[agentcomposev2.InvokeServiceRequest]) (*connect.Response[agentcomposev2.InvokeServiceResponse], error) {
+			sawRequest = true
+			if req.Msg.GetServiceName() != "echo" || req.Msg.GetInputJson() != `{"message":"hello"}` || req.Msg.GetSessionId() != "session-reuse" {
+				t.Fatalf("InvokeService request = %#v", req.Msg)
+			}
+			if req.Msg.GetSource() != agentcomposev2.RunSource_RUN_SOURCE_MANUAL || req.Msg.GetCleanupPolicy() != agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING {
+				t.Fatalf("InvokeService source/cleanup = %#v", req.Msg)
+			}
+			return connect.NewResponse(&agentcomposev2.InvokeServiceResponse{Run: &agentcomposev2.RunDetail{
+				Summary: &agentcomposev2.RunSummary{
+					RunId:      "run-service",
+					ProjectId:  req.Msg.GetProjectId(),
+					Status:     agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
+					SessionId:  "session-reuse",
+					TargetType: agentcomposev2.RunTargetType_RUN_TARGET_TYPE_SERVICE,
+					TargetName: "echo",
+				},
+				Output:     "service output\n",
+				InputJson:  req.Msg.GetInputJson(),
+				OutputJson: `{"ok":true}`,
+			}}), nil
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, runCount, exitCode := executeCLICommand("invoke", "--host", server.URL, "--file", composePath, "--json", "--session-id", "session-reuse", "--keep-running", "echo", "--input-json", `{"message":"hello"}`)
+	if exitCode != 0 {
+		t.Fatalf("invoke success exit code = %d, stderr=%q", exitCode, stderr)
+	}
+	if runCount != 0 {
+		t.Fatalf("daemon runner called %d times, want 0", runCount)
+	}
+	if !sawRequest {
+		t.Fatal("InvokeService was not called")
+	}
+	var decoded composeRunOutput
+	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
+		t.Fatalf("invoke JSON output failed to decode: %v\n%s", err, stdout)
+	}
+	if decoded.RunID != "run-service" || decoded.TargetType != "service" || decoded.TargetName != "echo" || decoded.InputJSON != `{"message":"hello"}` || decoded.OutputJSON != `{"ok":true}` {
+		t.Fatalf("invoke JSON output = %#v", decoded)
+	}
+}
+
+func TestIntegrationCLIInvokeServiceFailureReturnsStableExitCode(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-invoke-failure
+services:
+  echo:
+    entry: echo.mjs
+`)
+	server := newRunServiceStubServer(t, runServiceStub{
+		invokeService: func(ctx context.Context, req *connect.Request[agentcomposev2.InvokeServiceRequest]) (*connect.Response[agentcomposev2.InvokeServiceResponse], error) {
+			return connect.NewResponse(&agentcomposev2.InvokeServiceResponse{Run: &agentcomposev2.RunDetail{
+				Summary: &agentcomposev2.RunSummary{
+					RunId:      "run-service-failed",
+					ProjectId:  req.Msg.GetProjectId(),
+					Status:     agentcomposev2.RunStatus_RUN_STATUS_FAILED,
+					ExitCode:   9,
+					Error:      "service failed",
+					TargetType: agentcomposev2.RunTargetType_RUN_TARGET_TYPE_SERVICE,
+					TargetName: "echo",
+				},
+				Output: "failure detail\n",
+			}}), nil
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("invoke", "--host", server.URL, "--file", composePath, "echo")
+	if exitCode != 9 {
+		t.Fatalf("invoke failure exit code = %d, want 9; stderr=%q", exitCode, stderr)
+	}
+	if stdout != "failure detail\n" {
+		t.Fatalf("invoke failure stdout = %q", stdout)
+	}
+	if !strings.Contains(stderr, "service failed") {
+		t.Fatalf("invoke failure stderr = %q", stderr)
+	}
+}
+
 func TestIntegrationCLILogsFiltersRunAgentSessionAndJSON(t *testing.T) {
 	composePath := writeComposeFile(t, t.TempDir(), `
 name: cli-logs-demo
@@ -2165,11 +2256,19 @@ func assertComposeUpChange(t *testing.T, changes []composeUpChangeOutput, action
 }
 
 type runServiceStub struct {
+	invokeService  func(context.Context, *connect.Request[agentcomposev2.InvokeServiceRequest]) (*connect.Response[agentcomposev2.InvokeServiceResponse], error)
 	runAgentStream func(context.Context, *connect.Request[agentcomposev2.RunAgentRequest], *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error
 	getRun         func(context.Context, *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error)
 	listRuns       func(context.Context, *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error)
 
 	agentcomposev2connect.UnimplementedRunServiceHandler
+}
+
+func (s runServiceStub) InvokeService(ctx context.Context, req *connect.Request[agentcomposev2.InvokeServiceRequest]) (*connect.Response[agentcomposev2.InvokeServiceResponse], error) {
+	if s.invokeService == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("InvokeService stub is not configured"))
+	}
+	return s.invokeService(ctx, req)
 }
 
 func (s runServiceStub) RunAgentStream(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {

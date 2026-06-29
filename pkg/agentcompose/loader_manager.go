@@ -35,6 +35,7 @@ type LoaderManager struct {
 	sessions   *SessionRPCBridge
 	dashboard  *DashboardOverviewHub
 	eventQueue *WebhookRunQueue
+	service    *Service
 
 	runExecutor        *LoaderRunExecutor
 	eventDispatcher    *LoaderEventDispatcher
@@ -915,6 +916,104 @@ func (h *loaderRunHost) ProjectAgent(ctx context.Context, prompt string, request
 		return result, execErr
 	}
 	return result, nil
+}
+
+func (h *loaderRunHost) Service(ctx context.Context, serviceName, inputJSON string, request LoaderServiceRequest) (LoaderServiceResult, error) {
+	if h == nil || h.manager == nil || h.manager.service == nil {
+		return LoaderServiceResult{}, fmt.Errorf("service invocation is unavailable")
+	}
+	projectID := strings.TrimSpace(h.loader.Summary.ManagedProjectID)
+	if projectID == "" {
+		return LoaderServiceResult{}, fmt.Errorf("scheduler.service requires a managed project loader")
+	}
+	serviceName = strings.TrimSpace(serviceName)
+	if serviceName == "" {
+		return LoaderServiceResult{}, fmt.Errorf("service name is required")
+	}
+	inputJSON = strings.TrimSpace(inputJSON)
+	if inputJSON == "" {
+		inputJSON = "{}"
+	}
+	run, execErr, err := h.manager.service.invokeProjectService(ctx, &agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     serviceName,
+		InputJson:       inputJSON,
+		Source:          agentcomposev2.RunSource_RUN_SOURCE_SCHEDULER,
+		SessionId:       strings.TrimSpace(request.SessionID),
+		CleanupPolicy:   serviceLoaderCleanupPolicy(request),
+		SchedulerId:     h.loader.Summary.ManagedSchedulerID,
+		TriggerId:       h.run.TriggerID,
+		ClientRequestId: firstNonEmpty(h.run.ID, uuid.NewString()),
+		RuntimeContext:  serviceLoaderRuntimeContext(h, serviceName),
+	})
+	if err != nil {
+		return LoaderServiceResult{}, err
+	}
+	result := loaderServiceResultFromProjectRun(run, request.OutputSchema)
+	level := "info"
+	eventName := "loader.service.completed"
+	if execErr != nil || run.Status != ProjectRunStatusSucceeded {
+		level = "error"
+		eventName = "loader.service.failed"
+		result.Text = firstNonEmpty(result.Text, run.Error, execErrString(execErr))
+	}
+	_ = h.addLinkedLoaderEvent(ctx, eventName, level, firstNonEmpty(result.Text, fmt.Sprintf("service %s completed", serviceName)), result, result.SessionID, "", "")
+	h.manager.Publish("agent-compose.service.completed", map[string]any{
+		"sessionId":    result.SessionID,
+		"success":      result.Success,
+		"source":       "loader",
+		"loaderId":     h.loader.Summary.ID,
+		"loaderRunId":  h.run.ID,
+		"projectId":    run.ProjectID,
+		"projectRunId": run.RunID,
+		"serviceName":  serviceName,
+	})
+	if execErr != nil {
+		return result, execErr
+	}
+	return result, nil
+}
+
+func serviceLoaderCleanupPolicy(request LoaderServiceRequest) agentcomposev2.RunSessionCleanupPolicy {
+	if normalizeLoaderSessionPolicy(request.SessionPolicy) == LoaderSessionPolicyReuse {
+		return agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING
+	}
+	return agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION
+}
+
+func serviceLoaderRuntimeContext(h *loaderRunHost, serviceName string) *agentcomposev2.RuntimeContext {
+	return &agentcomposev2.RuntimeContext{
+		Source:          "scheduler",
+		ClientRequestId: firstNonEmpty(h.run.ID, uuid.NewString()),
+		Metadata: map[string]string{
+			"loaderId":      h.loader.Summary.ID,
+			"loaderRunId":   h.run.ID,
+			"schedulerId":   h.loader.Summary.ManagedSchedulerID,
+			"triggerId":     h.run.TriggerID,
+			"triggerKind":   h.run.TriggerKind,
+			"triggerSource": h.run.TriggerSource,
+			"serviceName":   serviceName,
+		},
+	}
+}
+
+func loaderServiceResultFromProjectRun(run ProjectRunRecord, outputSchemaJSON string) LoaderServiceResult {
+	text := firstNonEmpty(run.OutputJSON, run.Output, run.Error)
+	jsonValue, _ := loaderJSONResult(text, outputSchemaJSON, "project service output")
+	return LoaderServiceResult{
+		Text:         text,
+		Output:       run.Output,
+		OutputJSON:   run.OutputJSON,
+		JSON:         jsonValue,
+		RunID:        run.RunID,
+		ProjectID:    run.ProjectID,
+		ServiceName:  run.TargetName,
+		SessionID:    run.SessionID,
+		Success:      run.Status == ProjectRunStatusSucceeded,
+		ExitCode:     run.ExitCode,
+		Error:        run.Error,
+		ArtifactsDir: run.ArtifactsDir,
+	}
 }
 
 func loaderAgentResultFromProjectRun(run ProjectRunRecord, outputSchemaJSON string) (LoaderAgentResult, error) {

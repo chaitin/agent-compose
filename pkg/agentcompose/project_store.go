@@ -76,32 +76,38 @@ type ProjectSchedulerRecord struct {
 }
 
 type ProjectRunRecord struct {
-	RunID           string    `json:"run_id"`
-	ProjectID       string    `json:"project_id"`
-	ProjectName     string    `json:"project_name,omitempty"`
-	ProjectRevision int64     `json:"project_revision"`
-	AgentName       string    `json:"agent_name,omitempty"`
-	ManagedAgentID  string    `json:"managed_agent_id,omitempty"`
-	Source          string    `json:"source,omitempty"`
-	SchedulerID     string    `json:"scheduler_id,omitempty"`
-	TriggerID       string    `json:"trigger_id,omitempty"`
-	Status          string    `json:"status"`
-	SessionID       string    `json:"session_id,omitempty"`
-	ExitCode        int       `json:"exit_code,omitempty"`
-	Error           string    `json:"error,omitempty"`
-	Prompt          string    `json:"prompt,omitempty"`
-	Output          string    `json:"output,omitempty"`
-	ResultJSON      string    `json:"result_json,omitempty"`
-	LogsPath        string    `json:"logs_path,omitempty"`
-	ArtifactsDir    string    `json:"artifacts_dir,omitempty"`
-	CleanupError    string    `json:"cleanup_error,omitempty"`
-	Driver          string    `json:"driver,omitempty"`
-	ImageRef        string    `json:"image_ref,omitempty"`
-	StartedAt       time.Time `json:"started_at,omitempty"`
-	CompletedAt     time.Time `json:"completed_at,omitempty"`
-	DurationMs      int64     `json:"duration_ms,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	RunID              string    `json:"run_id"`
+	ProjectID          string    `json:"project_id"`
+	ProjectName        string    `json:"project_name,omitempty"`
+	ProjectRevision    int64     `json:"project_revision"`
+	TargetType         string    `json:"target_type,omitempty"`
+	TargetName         string    `json:"target_name,omitempty"`
+	AgentName          string    `json:"agent_name,omitempty"`
+	ManagedAgentID     string    `json:"managed_agent_id,omitempty"`
+	Source             string    `json:"source,omitempty"`
+	SchedulerID        string    `json:"scheduler_id,omitempty"`
+	TriggerID          string    `json:"trigger_id,omitempty"`
+	ClientRequestID    string    `json:"client_request_id,omitempty"`
+	Status             string    `json:"status"`
+	SessionID          string    `json:"session_id,omitempty"`
+	ExitCode           int       `json:"exit_code,omitempty"`
+	Error              string    `json:"error,omitempty"`
+	Prompt             string    `json:"prompt,omitempty"`
+	Output             string    `json:"output,omitempty"`
+	ResultJSON         string    `json:"result_json,omitempty"`
+	InputJSON          string    `json:"input_json,omitempty"`
+	OutputJSON         string    `json:"output_json,omitempty"`
+	RuntimeContextJSON string    `json:"runtime_context_json,omitempty"`
+	LogsPath           string    `json:"logs_path,omitempty"`
+	ArtifactsDir       string    `json:"artifacts_dir,omitempty"`
+	CleanupError       string    `json:"cleanup_error,omitempty"`
+	Driver             string    `json:"driver,omitempty"`
+	ImageRef           string    `json:"image_ref,omitempty"`
+	StartedAt          time.Time `json:"started_at,omitempty"`
+	CompletedAt        time.Time `json:"completed_at,omitempty"`
+	DurationMs         int64     `json:"duration_ms,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 type ProjectListOptions struct {
@@ -112,18 +118,28 @@ type ProjectListOptions struct {
 }
 
 type ProjectRunListOptions struct {
-	ProjectID   string
-	AgentName   string
-	SessionID   string
-	SchedulerID string
-	Status      string
-	Source      string
-	Offset      int
-	Limit       int
+	ProjectID       string
+	AgentName       string
+	SessionID       string
+	SchedulerID     string
+	ClientRequestID string
+	TargetType      string
+	TargetName      string
+	Status          string
+	Source          string
+	Offset          int
+	Limit           int
 }
 
 type ProjectListResult struct {
 	Projects   []ProjectRecord
+	TotalCount int
+	HasMore    bool
+	NextOffset int
+}
+
+type ProjectRevisionListResult struct {
+	Revisions  []ProjectRevisionRecord
 	TotalCount int
 	HasMore    bool
 	NextOffset int
@@ -217,17 +233,22 @@ func StableManagedTriggerID(projectID, agentName, schedulerName, triggerName str
 }
 
 func StableProjectRunID(projectID, agentName, source, idempotencyKey string) (string, error) {
+	return StableProjectTargetRunID(projectID, "agent", agentName, source, idempotencyKey)
+}
+
+func StableProjectTargetRunID(projectID, targetType, targetName, source, idempotencyKey string) (string, error) {
 	projectID = strings.TrimSpace(projectID)
-	agentName = strings.TrimSpace(agentName)
+	targetType = strings.TrimSpace(targetType)
+	targetName = strings.TrimSpace(targetName)
 	source = strings.TrimSpace(source)
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
-	if projectID == "" || agentName == "" || source == "" || idempotencyKey == "" {
-		return "", fmt.Errorf("project id, agent name, source, and idempotency key are required")
+	if projectID == "" || targetType == "" || targetName == "" || source == "" || idempotencyKey == "" {
+		return "", fmt.Errorf("project id, target type, target name, source, and idempotency key are required")
 	}
-	if !isProjectStableIdentifier(agentName) {
-		return "", fmt.Errorf("agent name %q is not a stable identifier", agentName)
+	if !isProjectStableIdentifier(targetName) {
+		return "", fmt.Errorf("target name %q is not a stable identifier", targetName)
 	}
-	return stableReadableID("run", agentName, projectID+"|"+agentName+"|"+source+"|"+idempotencyKey), nil
+	return stableReadableID("run", targetName, projectID+"|"+targetType+"|"+targetName+"|"+source+"|"+idempotencyKey), nil
 }
 
 func NewProjectRecordFromSpec(spec *compose.NormalizedProjectSpec, sourcePath string) (ProjectRecord, error) {
@@ -482,6 +503,45 @@ func (s *ConfigStore) GetProjectRevision(ctx context.Context, projectID string, 
 	return item, nil
 }
 
+func (s *ConfigStore) ListProjectRevisions(ctx context.Context, projectID string, offset, limit int) (ProjectRevisionListResult, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return ProjectRevisionListResult{}, fmt.Errorf("project id is required")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_revision WHERE project_id = ?`, projectID).Scan(&total); err != nil {
+		return ProjectRevisionListResult{}, fmt.Errorf("count project revisions %s: %w", projectID, err)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT project_id, revision, spec_hash, spec_json, created_at
+		FROM project_revision WHERE project_id = ? ORDER BY revision DESC LIMIT ? OFFSET ?`, projectID, limit, offset)
+	if err != nil {
+		return ProjectRevisionListResult{}, fmt.Errorf("query project revisions %s: %w", projectID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	revisions := make([]ProjectRevisionRecord, 0, limit)
+	for rows.Next() {
+		item, err := scanProjectRevision(rows.Scan)
+		if err != nil {
+			return ProjectRevisionListResult{}, err
+		}
+		revisions = append(revisions, item)
+	}
+	if err := rows.Err(); err != nil {
+		return ProjectRevisionListResult{}, fmt.Errorf("iterate project revisions %s: %w", projectID, err)
+	}
+	next := offset + len(revisions)
+	return ProjectRevisionListResult{Revisions: revisions, TotalCount: total, HasMore: next < total, NextOffset: next}, nil
+}
+
 func (s *ConfigStore) UpsertProjectAgent(ctx context.Context, agent ProjectAgentRecord) (ProjectAgentRecord, error) {
 	agent, err := normalizeProjectAgentRecord(agent)
 	if err != nil {
@@ -634,12 +694,12 @@ func (s *ConfigStore) CreateProjectRun(ctx context.Context, run ProjectRunRecord
 	run.CreatedAt = now
 	run.UpdatedAt = now
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO project_run(
-		run_id, project_id, project_name, project_revision, agent_name, managed_agent_id, source, scheduler_id, trigger_id, status,
-		session_id, exit_code, error, prompt, output, result_json, logs_path, artifacts_dir, cleanup_error, driver, image_ref,
+		run_id, project_id, project_name, project_revision, target_type, target_name, agent_name, managed_agent_id, source, scheduler_id, trigger_id, client_request_id, status,
+		session_id, exit_code, error, prompt, output, result_json, input_json, output_json, runtime_context_json, logs_path, artifacts_dir, cleanup_error, driver, image_ref,
 		started_at, completed_at, duration_ms, created_at, updated_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.RunID, run.ProjectID, run.ProjectName, run.ProjectRevision, run.AgentName, run.ManagedAgentID, run.Source, run.SchedulerID, run.TriggerID, run.Status,
-		run.SessionID, run.ExitCode, run.Error, run.Prompt, run.Output, run.ResultJSON, run.LogsPath, run.ArtifactsDir, run.CleanupError, run.Driver, run.ImageRef,
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.RunID, run.ProjectID, run.ProjectName, run.ProjectRevision, run.TargetType, run.TargetName, run.AgentName, run.ManagedAgentID, run.Source, run.SchedulerID, run.TriggerID, run.ClientRequestID, run.Status,
+		run.SessionID, run.ExitCode, run.Error, run.Prompt, run.Output, run.ResultJSON, run.InputJSON, run.OutputJSON, run.RuntimeContextJSON, run.LogsPath, run.ArtifactsDir, run.CleanupError, run.Driver, run.ImageRef,
 		nonZeroTimeUnixMilli(run.StartedAt), nonZeroTimeUnixMilli(run.CompletedAt), run.DurationMs, run.CreatedAt.Unix(), run.UpdatedAt.Unix()); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("insert project run %s: %w", run.RunID, err)
 	}
@@ -653,12 +713,12 @@ func (s *ConfigStore) UpdateProjectRun(ctx context.Context, run ProjectRunRecord
 	}
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(ctx, `UPDATE project_run SET
-		project_id = ?, project_name = ?, project_revision = ?, agent_name = ?, managed_agent_id = ?, source = ?, scheduler_id = ?, trigger_id = ?, status = ?,
-		session_id = ?, exit_code = ?, error = ?, prompt = ?, output = ?, result_json = ?, logs_path = ?, artifacts_dir = ?, cleanup_error = ?, driver = ?, image_ref = ?,
+		project_id = ?, project_name = ?, project_revision = ?, target_type = ?, target_name = ?, agent_name = ?, managed_agent_id = ?, source = ?, scheduler_id = ?, trigger_id = ?, client_request_id = ?, status = ?,
+		session_id = ?, exit_code = ?, error = ?, prompt = ?, output = ?, result_json = ?, input_json = ?, output_json = ?, runtime_context_json = ?, logs_path = ?, artifacts_dir = ?, cleanup_error = ?, driver = ?, image_ref = ?,
 		started_at = ?, completed_at = ?, duration_ms = ?, updated_at = ?
 		WHERE run_id = ?`,
-		run.ProjectID, run.ProjectName, run.ProjectRevision, run.AgentName, run.ManagedAgentID, run.Source, run.SchedulerID, run.TriggerID, run.Status,
-		run.SessionID, run.ExitCode, run.Error, run.Prompt, run.Output, run.ResultJSON, run.LogsPath, run.ArtifactsDir, run.CleanupError, run.Driver, run.ImageRef,
+		run.ProjectID, run.ProjectName, run.ProjectRevision, run.TargetType, run.TargetName, run.AgentName, run.ManagedAgentID, run.Source, run.SchedulerID, run.TriggerID, run.ClientRequestID, run.Status,
+		run.SessionID, run.ExitCode, run.Error, run.Prompt, run.Output, run.ResultJSON, run.InputJSON, run.OutputJSON, run.RuntimeContextJSON, run.LogsPath, run.ArtifactsDir, run.CleanupError, run.Driver, run.ImageRef,
 		nonZeroTimeUnixMilli(run.StartedAt), nonZeroTimeUnixMilli(run.CompletedAt), run.DurationMs, now.Unix(), run.RunID)
 	if err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("update project run %s: %w", run.RunID, err)
@@ -707,6 +767,14 @@ func (s *ConfigStore) ListProjectRunsByOptions(ctx context.Context, options Proj
 		where = append(where, "agent_name = ?")
 		args = append(args, agentName)
 	}
+	if targetType := strings.TrimSpace(options.TargetType); targetType != "" {
+		where = append(where, "target_type = ?")
+		args = append(args, targetType)
+	}
+	if targetName := strings.TrimSpace(options.TargetName); targetName != "" {
+		where = append(where, "target_name = ?")
+		args = append(args, targetName)
+	}
 	if sessionID := strings.TrimSpace(options.SessionID); sessionID != "" {
 		where = append(where, "session_id = ?")
 		args = append(args, sessionID)
@@ -714,6 +782,10 @@ func (s *ConfigStore) ListProjectRunsByOptions(ctx context.Context, options Proj
 	if schedulerID := strings.TrimSpace(options.SchedulerID); schedulerID != "" {
 		where = append(where, "scheduler_id = ?")
 		args = append(args, schedulerID)
+	}
+	if clientRequestID := strings.TrimSpace(options.ClientRequestID); clientRequestID != "" {
+		where = append(where, "client_request_id = ?")
+		args = append(args, clientRequestID)
 	}
 	if status := strings.TrimSpace(options.Status); status != "" {
 		where = append(where, "status = ?")
@@ -870,20 +942,30 @@ func normalizeProjectRunRecord(run ProjectRunRecord) (ProjectRunRecord, error) {
 	run.RunID = strings.TrimSpace(run.RunID)
 	run.ProjectID = strings.TrimSpace(run.ProjectID)
 	run.ProjectName = strings.TrimSpace(run.ProjectName)
+	run.TargetType = strings.TrimSpace(run.TargetType)
+	run.TargetName = strings.TrimSpace(run.TargetName)
 	run.AgentName = strings.TrimSpace(run.AgentName)
 	run.ManagedAgentID = strings.TrimSpace(run.ManagedAgentID)
 	run.Source = strings.TrimSpace(run.Source)
 	run.SchedulerID = strings.TrimSpace(run.SchedulerID)
 	run.TriggerID = strings.TrimSpace(run.TriggerID)
+	run.ClientRequestID = strings.TrimSpace(run.ClientRequestID)
 	run.Status = normalizeProjectRunStatus(run.Status)
 	run.SessionID = strings.TrimSpace(run.SessionID)
 	run.ResultJSON = strings.TrimSpace(run.ResultJSON)
+	run.InputJSON = strings.TrimSpace(run.InputJSON)
+	run.OutputJSON = strings.TrimSpace(run.OutputJSON)
+	run.RuntimeContextJSON = strings.TrimSpace(run.RuntimeContextJSON)
 	run.LogsPath = strings.TrimSpace(run.LogsPath)
 	run.ArtifactsDir = strings.TrimSpace(run.ArtifactsDir)
 	run.Driver = strings.TrimSpace(run.Driver)
 	run.ImageRef = strings.TrimSpace(run.ImageRef)
 	if run.RunID == "" || run.ProjectID == "" {
 		return ProjectRunRecord{}, fmt.Errorf("project run id and project id are required")
+	}
+	if run.TargetType == "" && run.AgentName != "" {
+		run.TargetType = "agent"
+		run.TargetName = run.AgentName
 	}
 	if run.ProjectRevision < 0 {
 		return ProjectRunRecord{}, fmt.Errorf("project run revision cannot be negative")
@@ -893,6 +975,18 @@ func normalizeProjectRunRecord(run ProjectRunRecord) (ProjectRunRecord, error) {
 	}
 	if !json.Valid([]byte(run.ResultJSON)) {
 		return ProjectRunRecord{}, fmt.Errorf("project run result_json must be valid JSON")
+	}
+	if run.InputJSON != "" && !json.Valid([]byte(run.InputJSON)) {
+		return ProjectRunRecord{}, fmt.Errorf("project run input_json must be valid JSON")
+	}
+	if run.OutputJSON != "" && !json.Valid([]byte(run.OutputJSON)) {
+		return ProjectRunRecord{}, fmt.Errorf("project run output_json must be valid JSON")
+	}
+	if run.RuntimeContextJSON == "" {
+		run.RuntimeContextJSON = "{}"
+	}
+	if !json.Valid([]byte(run.RuntimeContextJSON)) {
+		return ProjectRunRecord{}, fmt.Errorf("project run runtime_context_json must be valid JSON")
 	}
 	return run, nil
 }
@@ -973,8 +1067,8 @@ func scanProjectRun(scan func(dest ...any) error) (ProjectRunRecord, error) {
 	var createdAtRaw any
 	var updatedAtRaw any
 	if err := scan(
-		&item.RunID, &item.ProjectID, &item.ProjectName, &item.ProjectRevision, &item.AgentName, &item.ManagedAgentID, &item.Source, &item.SchedulerID, &item.TriggerID, &item.Status,
-		&item.SessionID, &item.ExitCode, &item.Error, &item.Prompt, &item.Output, &item.ResultJSON, &item.LogsPath, &item.ArtifactsDir, &item.CleanupError, &item.Driver, &item.ImageRef,
+		&item.RunID, &item.ProjectID, &item.ProjectName, &item.ProjectRevision, &item.TargetType, &item.TargetName, &item.AgentName, &item.ManagedAgentID, &item.Source, &item.SchedulerID, &item.TriggerID, &item.ClientRequestID, &item.Status,
+		&item.SessionID, &item.ExitCode, &item.Error, &item.Prompt, &item.Output, &item.ResultJSON, &item.InputJSON, &item.OutputJSON, &item.RuntimeContextJSON, &item.LogsPath, &item.ArtifactsDir, &item.CleanupError, &item.Driver, &item.ImageRef,
 		&startedAtRaw, &completedAtRaw, &item.DurationMs, &createdAtRaw, &updatedAtRaw,
 	); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("scan project run: %w", err)
@@ -987,8 +1081,8 @@ func scanProjectRun(scan func(dest ...any) error) (ProjectRunRecord, error) {
 }
 
 func selectProjectRunSQL() string {
-	return `SELECT run_id, project_id, project_name, project_revision, agent_name, managed_agent_id, source, scheduler_id, trigger_id, status,
-		session_id, exit_code, error, prompt, output, result_json, logs_path, artifacts_dir, cleanup_error, driver, image_ref,
+	return `SELECT run_id, project_id, project_name, project_revision, target_type, target_name, agent_name, managed_agent_id, source, scheduler_id, trigger_id, client_request_id, status,
+		session_id, exit_code, error, prompt, output, result_json, input_json, output_json, runtime_context_json, logs_path, artifacts_dir, cleanup_error, driver, image_ref,
 		started_at, completed_at, duration_ms, created_at, updated_at FROM project_run`
 }
 

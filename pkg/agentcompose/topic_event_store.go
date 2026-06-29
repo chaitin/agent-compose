@@ -286,8 +286,8 @@ func (s *ConfigStore) ListPendingEvents(ctx context.Context, limit int) ([]Topic
 }
 
 func (s *ConfigStore) ListEvents(ctx context.Context, filter TopicEventFilter) ([]TopicEventRecord, error) {
-	if strings.TrimSpace(filter.Topic) == "" && strings.TrimSpace(filter.CorrelationID) == "" {
-		return nil, fmt.Errorf("topic or correlation id is required")
+	if strings.TrimSpace(filter.EventID) == "" && strings.TrimSpace(filter.Topic) == "" && strings.TrimSpace(filter.CorrelationID) == "" && strings.TrimSpace(filter.ProjectID) == "" && strings.TrimSpace(filter.RunID) == "" {
+		return nil, fmt.Errorf("event id, topic, correlation id, project id, or run id is required")
 	}
 	limit := filter.Limit
 	if limit <= 0 {
@@ -296,14 +296,26 @@ func (s *ConfigStore) ListEvents(ctx context.Context, filter TopicEventFilter) (
 	if limit > 500 {
 		limit = 500
 	}
-	clauses := make([]string, 0, 4)
-	args := make([]any, 0, 5)
+	clauses := make([]string, 0, 6)
+	args := make([]any, 0, 8)
+	if eventID := strings.TrimSpace(filter.EventID); eventID != "" {
+		clauses = append(clauses, "id = ?")
+		args = append(args, eventID)
+	}
 	if topic := strings.TrimSpace(filter.Topic); topic != "" {
 		if err := validateTopicEventName(topic); err != nil {
 			return nil, err
 		}
 		clauses = append(clauses, "topic = ?")
 		args = append(args, topic)
+	}
+	if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" {
+		clauses = append(clauses, "(publisher_id = ? OR publisher_run_id IN (SELECT run_id FROM project_run WHERE project_id = ?))")
+		args = append(args, projectID, projectID)
+	}
+	if runID := strings.TrimSpace(filter.RunID); runID != "" {
+		clauses = append(clauses, "publisher_run_id = ?")
+		args = append(args, runID)
 	}
 	if correlationID := strings.TrimSpace(filter.CorrelationID); correlationID != "" {
 		clauses = append(clauses, "correlation_id = ?")
@@ -317,8 +329,12 @@ func (s *ConfigStore) ListEvents(ctx context.Context, filter TopicEventFilter) (
 		clauses = append(clauses, "dispatch_status = ?")
 		args = append(args, status)
 	}
-	args = append(args, limit)
-	query := selectTopicEventSQL() + ` WHERE ` + strings.Join(clauses, " AND ") + ` ORDER BY sequence ASC LIMIT ?`
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	args = append(args, limit, offset)
+	query := selectTopicEventSQL() + ` WHERE ` + strings.Join(clauses, " AND ") + ` ORDER BY sequence ASC LIMIT ? OFFSET ?`
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query events: %w", err)

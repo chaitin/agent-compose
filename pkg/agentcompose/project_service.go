@@ -322,6 +322,119 @@ func (s *Service) RemoveProject(ctx context.Context, req *connect.Request[agentc
 	}), nil
 }
 
+func (s *Service) DiffProject(ctx context.Context, req *connect.Request[agentcomposev2.DiffProjectRequest]) (*connect.Response[agentcomposev2.DiffProjectResponse], error) {
+	if s.configDB == nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
+	}
+	project, err := s.resolveProjectRef(ctx, req.Msg.GetProject())
+	if err != nil {
+		return nil, projectRefConnectError(err)
+	}
+	normalized, issues, err := normalizeProjectServiceSpec(req.Msg.GetIncomingSpec(), req.Msg.GetSource(), "")
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	if len(issues) > 0 {
+		return connect.NewResponse(&agentcomposev2.DiffProjectResponse{Issues: issues, CurrentSpecHash: project.SpecHash, IncomingSpecHash: specHashOrEmpty(normalized)}), nil
+	}
+	project.ID = strings.TrimSpace(project.ID)
+	incomingProject, err := NewProjectRecordFromSpec(normalized.spec, normalized.sourcePath)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	incomingProject.ID = project.ID
+	incomingProject.CurrentRevision = project.CurrentRevision
+	currentAgents, err := s.configDB.ListProjectAgents(ctx, project.ID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	currentSchedulers, err := s.configDB.ListProjectSchedulers(ctx, project.ID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	incomingAgents, err := projectAgentRecordsFromSpec(project.ID, project.CurrentRevision, normalized.spec)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	incomingSchedulers, _, err := s.projectManagedSchedulersFromSpec(ctx, incomingProject, project.CurrentRevision, normalized.spec)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewResponse(&agentcomposev2.DiffProjectResponse{
+		Changes:          projectDiffChanges(project, incomingProject, currentAgents, incomingAgents, currentSchedulers, incomingSchedulers),
+		CurrentSpecHash:  project.SpecHash,
+		IncomingSpecHash: normalized.specHash,
+	}), nil
+}
+
+func (s *Service) ListProjectRevisions(ctx context.Context, req *connect.Request[agentcomposev2.ListProjectRevisionsRequest]) (*connect.Response[agentcomposev2.ListProjectRevisionsResponse], error) {
+	if s.configDB == nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
+	}
+	project, err := s.resolveProjectRef(ctx, req.Msg.GetProject())
+	if err != nil {
+		return nil, projectRefConnectError(err)
+	}
+	result, err := s.configDB.ListProjectRevisions(ctx, project.ID, int(req.Msg.GetOffset()), int(req.Msg.GetLimit()))
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	items := make([]*agentcomposev2.ProjectRevision, 0, len(result.Revisions))
+	for _, revision := range result.Revisions {
+		spec, err := decodeProjectRevisionSpec(revision.SpecJSON)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		items = append(items, projectRevisionResponse(revision, spec))
+	}
+	return connect.NewResponse(&agentcomposev2.ListProjectRevisionsResponse{
+		Revisions:  items,
+		TotalCount: uint32(result.TotalCount),
+		HasMore:    result.HasMore,
+		NextOffset: uint32(result.NextOffset),
+	}), nil
+}
+
+func (s *Service) RollbackProjectRevision(ctx context.Context, req *connect.Request[agentcomposev2.RollbackProjectRevisionRequest]) (*connect.Response[agentcomposev2.RollbackProjectRevisionResponse], error) {
+	if s.configDB == nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
+	}
+	project, err := s.resolveProjectRef(ctx, req.Msg.GetProject())
+	if err != nil {
+		return nil, projectRefConnectError(err)
+	}
+	revisionNumber := int64(req.Msg.GetRevision())
+	if revisionNumber <= 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("revision is required"))
+	}
+	revision, err := s.configDB.GetProjectRevision(ctx, project.ID, revisionNumber)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	spec, err := decodeProjectRevisionSpec(revision.SpecJSON)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	applyResp, err := s.ApplyProject(ctx, connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
+		Spec:   spec,
+		Source: &agentcomposev2.ProjectSource{ComposePath: project.SourcePath},
+		DryRun: req.Msg.GetDryRun(),
+	}))
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&agentcomposev2.RollbackProjectRevisionResponse{
+		Project:  applyResp.Msg.GetProject(),
+		Revision: applyResp.Msg.GetRevision(),
+		Changes:  applyResp.Msg.GetChanges(),
+		Issues:   applyResp.Msg.GetIssues(),
+		Applied:  applyResp.Msg.GetApplied(),
+	}), nil
+}
+
 func (s *Service) resolveProjectRef(ctx context.Context, ref *agentcomposev2.ProjectRef) (ProjectRecord, error) {
 	if ref == nil {
 		return ProjectRecord{}, fmt.Errorf("project ref is required")
@@ -358,6 +471,16 @@ func (s *Service) resolveProjectRef(ctx context.Context, ref *agentcomposev2.Pro
 		return ProjectRecord{}, fmt.Errorf("project name %s is ambiguous; use project_id or source_path", name)
 	}
 	return matches[0], nil
+}
+
+func projectRefConnectError(err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return connect.NewError(connect.CodeNotFound, err)
+	}
+	if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "ambiguous") {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewError(connect.CodeInternal, err)
 }
 
 func normalizeProjectServiceSpec(spec *agentcomposev2.ProjectSpec, source *agentcomposev2.ProjectSource, expectedHash string) (normalizedV2Project, []*agentcomposev2.ProjectValidationIssue, error) {
@@ -406,10 +529,18 @@ func projectSpecYAMLShape(spec *agentcomposev2.ProjectSpec) (map[string]any, []*
 	if strings.TrimSpace(spec.GetName()) != "" {
 		root["name"] = spec.GetName()
 	}
+	if metadata := metadataYAMLShape(spec.GetMetadata()); len(metadata) > 0 {
+		root["metadata"] = metadata
+	}
 	if variables, issues := envVarYAMLMap("variables", spec.GetVariables()); len(issues) > 0 {
 		return nil, issues
 	} else if len(variables) > 0 {
 		root["variables"] = variables
+	}
+	if runtime, issues := runtimeYAMLShape(spec.GetRuntime()); len(issues) > 0 {
+		return nil, issues
+	} else if len(runtime) > 0 {
+		root["runtime"] = runtime
 	}
 	if workspace := workspaceYAMLShape(spec.GetWorkspace()); len(workspace) > 0 {
 		root["workspace"] = workspace
@@ -422,7 +553,68 @@ func projectSpecYAMLShape(spec *agentcomposev2.ProjectSpec) (map[string]any, []*
 	if network := networkYAMLShape(spec.GetNetwork()); len(network) > 0 {
 		root["network"] = network
 	}
+	if services, issues := serviceYAMLMap(spec.GetServices()); len(issues) > 0 {
+		return nil, issues
+	} else if len(services) > 0 {
+		root["services"] = services
+	}
+	if triggers, issues := projectTriggerYAMLMap(spec.GetTriggers()); len(issues) > 0 {
+		return nil, issues
+	} else if len(triggers) > 0 {
+		root["triggers"] = triggers
+	}
+	if permissions := permissionYAMLShape(spec.GetPermissions()); len(permissions) > 0 {
+		root["permissions"] = permissions
+	}
+	if artifacts := artifactPolicyYAMLShape(spec.GetArtifacts()); len(artifacts) > 0 {
+		root["artifacts"] = artifacts
+	}
 	return root, nil
+}
+
+func metadataYAMLShape(metadata *agentcomposev2.ProjectMetadata) map[string]any {
+	if metadata == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if strings.TrimSpace(metadata.GetName()) != "" {
+		raw["name"] = metadata.GetName()
+	}
+	if len(metadata.GetLabels()) > 0 {
+		raw["labels"] = cloneStringMap(metadata.GetLabels())
+	}
+	if len(metadata.GetAnnotations()) > 0 {
+		raw["annotations"] = cloneStringMap(metadata.GetAnnotations())
+	}
+	return raw
+}
+
+func runtimeYAMLShape(runtime *agentcomposev2.RuntimeSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
+	if runtime == nil {
+		return nil, nil
+	}
+	raw := map[string]any{}
+	if strings.TrimSpace(runtime.GetDriver()) != "" {
+		raw["driver"] = runtime.GetDriver()
+	}
+	if strings.TrimSpace(runtime.GetImage()) != "" {
+		raw["image"] = runtime.GetImage()
+	}
+	if env, issues := envVarYAMLMap("runtime.env", runtime.GetEnv()); len(issues) > 0 {
+		return nil, issues
+	} else if len(env) > 0 {
+		raw["env"] = env
+	}
+	if len(runtime.GetResources()) > 0 {
+		raw["resources"] = cloneStringMap(runtime.GetResources())
+	}
+	if network := networkYAMLShape(runtime.GetNetwork()); len(network) > 0 {
+		raw["network"] = network
+	}
+	if cleanup := cleanupPolicyYAMLValue(runtime.GetCleanupPolicy()); cleanup != "" {
+		raw["cleanup_policy"] = cleanup
+	}
+	return raw, nil
 }
 
 func envVarYAMLMap(path string, vars []*agentcomposev2.EnvVarSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
@@ -482,6 +674,134 @@ func agentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		}
 		if scheduler := schedulerYAMLShape(agent.GetScheduler()); len(scheduler) > 0 {
 			raw["scheduler"] = scheduler
+		}
+		values[name] = raw
+	}
+	return values, nil
+}
+
+func serviceYAMLMap(services []*agentcomposev2.ServiceSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
+	values := make(map[string]any, len(services))
+	for i, service := range services {
+		name := strings.TrimSpace(service.GetName())
+		if _, ok := values[name]; ok {
+			return nil, []*agentcomposev2.ProjectValidationIssue{projectValidationIssue(fmt.Sprintf("services[%d].name", i), fmt.Sprintf("duplicate service %q", name))}
+		}
+		raw := map[string]any{}
+		if strings.TrimSpace(service.GetDescription()) != "" {
+			raw["description"] = service.GetDescription()
+		}
+		if strings.TrimSpace(service.GetRuntime()) != "" {
+			raw["runtime"] = service.GetRuntime()
+		}
+		if strings.TrimSpace(service.GetEntry()) != "" {
+			raw["entry"] = service.GetEntry()
+		}
+		if strings.TrimSpace(service.GetInputSchemaJson()) != "" {
+			raw["input_schema"] = service.GetInputSchemaJson()
+		} else if strings.TrimSpace(service.GetInputSchemaRef()) != "" {
+			raw["input_schema"] = service.GetInputSchemaRef()
+		}
+		if strings.TrimSpace(service.GetOutputSchemaJson()) != "" {
+			raw["output_schema"] = service.GetOutputSchemaJson()
+		} else if strings.TrimSpace(service.GetOutputSchemaRef()) != "" {
+			raw["output_schema"] = service.GetOutputSchemaRef()
+		}
+		if strings.TrimSpace(service.GetErrorSchemaJson()) != "" {
+			raw["error_schema"] = service.GetErrorSchemaJson()
+		} else if strings.TrimSpace(service.GetErrorSchemaRef()) != "" {
+			raw["error_schema"] = service.GetErrorSchemaRef()
+		}
+		if service.GetTimeoutMs() > 0 {
+			raw["timeout"] = fmt.Sprintf("%dms", service.GetTimeoutMs())
+		}
+		if retry := retryPolicyYAMLShape(service.GetRetry()); len(retry) > 0 {
+			raw["retry"] = retry
+		}
+		if permissions := permissionYAMLShape(service.GetPermissions()); len(permissions) > 0 {
+			raw["permissions"] = permissions
+		}
+		if env, issues := envVarYAMLMap(fmt.Sprintf("services[%d].env", i), service.GetEnv()); len(issues) > 0 {
+			return nil, issues
+		} else if len(env) > 0 {
+			raw["env"] = env
+		}
+		if len(service.GetAgents()) > 0 {
+			raw["agents"] = append([]string(nil), service.GetAgents()...)
+		}
+		if examples := serviceExampleYAMLShapes(service.GetExamples()); len(examples) > 0 {
+			raw["examples"] = examples
+		}
+		values[name] = raw
+	}
+	return values, nil
+}
+
+func retryPolicyYAMLShape(retry *agentcomposev2.RetryPolicySpec) map[string]any {
+	if retry == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if retry.GetMaxAttempts() > 0 {
+		raw["max_attempts"] = retry.GetMaxAttempts()
+	}
+	if retry.GetBackoffMs() > 0 {
+		raw["backoff"] = fmt.Sprintf("%dms", retry.GetBackoffMs())
+	}
+	return raw
+}
+
+func serviceExampleYAMLShapes(examples []*agentcomposev2.ServiceExampleSpec) []map[string]any {
+	items := make([]map[string]any, 0, len(examples))
+	for _, example := range examples {
+		raw := map[string]any{}
+		if strings.TrimSpace(example.GetName()) != "" {
+			raw["name"] = example.GetName()
+		}
+		if strings.TrimSpace(example.GetInputJson()) != "" {
+			raw["input"] = example.GetInputJson()
+		}
+		if strings.TrimSpace(example.GetOutputJson()) != "" {
+			raw["output"] = example.GetOutputJson()
+		}
+		if len(raw) > 0 {
+			items = append(items, raw)
+		}
+	}
+	return items
+}
+
+func projectTriggerYAMLMap(triggers []*agentcomposev2.ProjectTriggerSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
+	values := make(map[string]any, len(triggers))
+	for i, trigger := range triggers {
+		name := strings.TrimSpace(trigger.GetName())
+		if _, ok := values[name]; ok {
+			return nil, []*agentcomposev2.ProjectValidationIssue{projectValidationIssue(fmt.Sprintf("triggers[%d].name", i), fmt.Sprintf("duplicate trigger %q", name))}
+		}
+		raw := map[string]any{}
+		if strings.TrimSpace(trigger.GetType()) != "" {
+			raw["type"] = trigger.GetType()
+		}
+		if strings.TrimSpace(trigger.GetCron()) != "" {
+			raw["cron"] = trigger.GetCron()
+		}
+		if strings.TrimSpace(trigger.GetInterval()) != "" {
+			raw["interval"] = trigger.GetInterval()
+		}
+		if strings.TrimSpace(trigger.GetTimeout()) != "" {
+			raw["timeout"] = trigger.GetTimeout()
+		}
+		if event := eventTriggerYAMLShape(trigger.GetEvent()); len(event) > 0 {
+			raw["event"] = event
+		}
+		if webhook := webhookTriggerYAMLShape(trigger.GetWebhook()); len(webhook) > 0 {
+			raw["webhook"] = webhook
+		}
+		if target := triggerTargetYAMLShape(trigger.GetTarget()); len(target) > 0 {
+			raw["target"] = target
+		}
+		if strings.TrimSpace(trigger.GetInputJson()) != "" {
+			raw["input"] = trigger.GetInputJson()
 		}
 		values[name] = raw
 	}
@@ -602,6 +922,87 @@ func networkYAMLShape(network *agentcomposev2.NetworkSpec) map[string]any {
 		return nil
 	}
 	return map[string]any{"mode": network.GetMode()}
+}
+
+func eventTriggerYAMLShape(event *agentcomposev2.EventTriggerSpec) map[string]any {
+	if event == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if strings.TrimSpace(event.GetTopic()) != "" {
+		raw["topic"] = event.GetTopic()
+	}
+	return raw
+}
+
+func webhookTriggerYAMLShape(webhook *agentcomposev2.WebhookTriggerSpec) map[string]any {
+	if webhook == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if strings.TrimSpace(webhook.GetTopic()) != "" {
+		raw["topic"] = webhook.GetTopic()
+	}
+	if strings.TrimSpace(webhook.GetMethod()) != "" {
+		raw["method"] = webhook.GetMethod()
+	}
+	return raw
+}
+
+func triggerTargetYAMLShape(target *agentcomposev2.TriggerTargetSpec) map[string]any {
+	if target == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if strings.TrimSpace(target.GetServiceName()) != "" {
+		raw["service"] = target.GetServiceName()
+	}
+	if strings.TrimSpace(target.GetAgentName()) != "" {
+		raw["agent"] = target.GetAgentName()
+	}
+	return raw
+}
+
+func permissionYAMLShape(permission *agentcomposev2.PermissionSpec) map[string]any {
+	if permission == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if len(permission.GetAgents()) > 0 {
+		raw["agents"] = append([]string(nil), permission.GetAgents()...)
+	}
+	if len(permission.GetCapabilities()) > 0 {
+		raw["capabilities"] = append([]string(nil), permission.GetCapabilities()...)
+	}
+	if len(permission.GetResources()) > 0 {
+		raw["resources"] = append([]string(nil), permission.GetResources()...)
+	}
+	return raw
+}
+
+func artifactPolicyYAMLShape(policy *agentcomposev2.ArtifactPolicySpec) map[string]any {
+	if policy == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if strings.TrimSpace(policy.GetRetention()) != "" {
+		raw["retention"] = policy.GetRetention()
+	}
+	if strings.TrimSpace(policy.GetStorage()) != "" {
+		raw["storage"] = policy.GetStorage()
+	}
+	return raw
+}
+
+func cleanupPolicyYAMLValue(policy agentcomposev2.RunSessionCleanupPolicy) string {
+	switch policy {
+	case agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING:
+		return "keep_running"
+	case agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION:
+		return "stop_on_completion"
+	default:
+		return ""
+	}
 }
 
 func projectServiceSourcePath(source *agentcomposev2.ProjectSource) string {
@@ -786,7 +1187,84 @@ func (s *Service) projectManagedSchedulerBuildsFromSpec(ctx context.Context, pro
 			validationTriggers: validationTriggers,
 		})
 	}
+	serviceBuilds, err := projectManagedServiceTriggerBuildsFromSpec(project, revision, spec)
+	if err != nil {
+		return nil, err
+	}
+	builds = append(builds, serviceBuilds...)
 	return builds, nil
+}
+
+func projectManagedServiceTriggerBuildsFromSpec(project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]projectManagedSchedulerBuild, error) {
+	builds := make([]projectManagedSchedulerBuild, 0)
+	for _, trigger := range spec.Triggers {
+		serviceName := strings.TrimSpace(trigger.Target.Service)
+		if serviceName == "" {
+			continue
+		}
+		if !normalizedProjectHasService(spec, serviceName) {
+			return nil, &projectManagedSchedulerBuildError{path: "triggers." + trigger.Name + ".target.service", message: fmt.Sprintf("service %q is not defined", serviceName)}
+		}
+		agentName := projectServiceTriggerSchedulerAgentName(serviceName, trigger.Name)
+		schedulerID, err := StableProjectSchedulerID(project.ID, agentName, "")
+		if err != nil {
+			return nil, err
+		}
+		loaderID, err := StableManagedLoaderID(project.ID, agentName, "")
+		if err != nil {
+			return nil, err
+		}
+		loaderTrigger, registration, err := projectManagedServiceLoaderTriggerAndRegistration(project.ID, serviceName, trigger)
+		if err != nil {
+			return nil, &projectManagedSchedulerBuildError{path: "triggers." + trigger.Name, message: err.Error()}
+		}
+		script := "// Generated by agent-compose project service trigger reconcile.\n" + registration
+		specJSON, err := marshalJSONCompact(trigger)
+		if err != nil {
+			return nil, err
+		}
+		record := ProjectSchedulerRecord{
+			ProjectID:       project.ID,
+			SchedulerID:     schedulerID,
+			AgentName:       agentName,
+			ManagedLoaderID: loaderID,
+			Revision:        revision,
+			Enabled:         true,
+			TriggerCount:    1,
+			SpecJSON:        specJSON,
+		}
+		loader := Loader{
+			Summary: LoaderSummary{
+				ID:                 loaderID,
+				Name:               fmt.Sprintf("%s/%s trigger", project.Name, trigger.Name),
+				Enabled:            true,
+				Runtime:            LoaderRuntimeScheduler,
+				SessionPolicy:      LoaderSessionPolicyNew,
+				ConcurrencyPolicy:  LoaderConcurrencyPolicySkip,
+				ManagedProjectID:   project.ID,
+				ManagedRevision:    revision,
+				ManagedAgentName:   agentName,
+				ManagedSchedulerID: schedulerID,
+			},
+			Script:   script,
+			Triggers: []LoaderTrigger{loaderTrigger},
+		}
+		builds = append(builds, projectManagedSchedulerBuild{scheduler: record, loader: loader, validationTriggers: loader.Triggers})
+	}
+	return builds, nil
+}
+
+func normalizedProjectHasService(spec *compose.NormalizedProjectSpec, serviceName string) bool {
+	for _, service := range spec.Services {
+		if service.Name == serviceName {
+			return true
+		}
+	}
+	return false
+}
+
+func projectServiceTriggerSchedulerAgentName(serviceName, triggerName string) string {
+	return "service-" + strings.TrimSpace(serviceName) + "-" + strings.TrimSpace(triggerName)
 }
 
 func projectManagedLoaderFromScheduler(project ProjectRecord, scheduler ProjectSchedulerRecord, agent compose.NormalizedAgentSpec) (Loader, error) {
@@ -940,6 +1418,72 @@ func projectManagedLoaderTriggerAndRegistration(id, agentName string, trigger co
 		}, fmt.Sprintf("scheduler.on(%s, %s, %s);\n", jsStringLiteral(topic), jsStringLiteral(id), callback), nil
 	default:
 		return LoaderTrigger{}, "", fmt.Errorf("unsupported scheduler trigger kind %q", trigger.Kind)
+	}
+}
+
+func projectManagedServiceLoaderTriggerAndRegistration(projectID, serviceName string, trigger compose.NormalizedProjectTriggerSpec) (LoaderTrigger, string, error) {
+	id, err := StableManagedTriggerID(projectID, projectServiceTriggerSchedulerAgentName(serviceName, trigger.Name), "", trigger.Name, 0)
+	if err != nil {
+		return LoaderTrigger{}, "", err
+	}
+	input := strings.TrimSpace(trigger.Input)
+	inputExpr := "(event == null ? {} : event)"
+	if input == "" {
+		input = "{}"
+	} else {
+		inputExpr = input
+	}
+	if !json.Valid([]byte(input)) {
+		return LoaderTrigger{}, "", fmt.Errorf("service trigger input must be valid JSON")
+	}
+	callback := fmt.Sprintf("async function(event) { return scheduler.service(%s, %s); }", jsStringLiteral(serviceName), inputExpr)
+	switch trigger.Kind {
+	case "cron":
+		specJSON, err := loaderCronSpecJSON(trigger.Cron, "")
+		if err != nil {
+			return LoaderTrigger{}, "", err
+		}
+		return LoaderTrigger{ID: id, Kind: LoaderTriggerKindCron, Enabled: true, SpecJSON: specJSON}, fmt.Sprintf("scheduler.cron(%s, %s, %s);\n", jsStringLiteral(id), jsStringLiteral(trigger.Cron), callback), nil
+	case "interval":
+		interval, err := time.ParseDuration(trigger.Interval)
+		if err != nil {
+			return LoaderTrigger{}, "", err
+		}
+		intervalMs := interval.Milliseconds()
+		if intervalMs <= 0 {
+			return LoaderTrigger{}, "", fmt.Errorf("interval trigger %s must be at least 1ms", id)
+		}
+		specJSON, err := marshalJSONCompact(map[string]any{"kind": LoaderTriggerKindInterval, "interval": trigger.Interval})
+		if err != nil {
+			return LoaderTrigger{}, "", err
+		}
+		return LoaderTrigger{ID: id, Kind: LoaderTriggerKindInterval, IntervalMs: intervalMs, Enabled: true, SpecJSON: specJSON}, fmt.Sprintf("scheduler.interval(%s, %s, %d);\n", jsStringLiteral(id), callback, intervalMs), nil
+	case "timeout":
+		delay, err := time.ParseDuration(trigger.Timeout)
+		if err != nil {
+			return LoaderTrigger{}, "", err
+		}
+		delayMs := delay.Milliseconds()
+		if delayMs <= 0 {
+			return LoaderTrigger{}, "", fmt.Errorf("timeout trigger %s must be at least 1ms", id)
+		}
+		specJSON, err := marshalJSONCompact(map[string]any{"kind": LoaderTriggerKindTimeout, "timeout": trigger.Timeout})
+		if err != nil {
+			return LoaderTrigger{}, "", err
+		}
+		return LoaderTrigger{ID: id, Kind: LoaderTriggerKindTimeout, IntervalMs: delayMs, Enabled: true, SpecJSON: specJSON}, fmt.Sprintf("scheduler.timeout(%s, %s, %d);\n", jsStringLiteral(id), callback, delayMs), nil
+	case "event":
+		if trigger.Event == nil {
+			return LoaderTrigger{}, "", fmt.Errorf("event trigger topic is required")
+		}
+		topic := strings.TrimSpace(trigger.Event.Topic)
+		specJSON, err := marshalJSONCompact(map[string]any{"kind": LoaderTriggerKindEvent, "topic": topic})
+		if err != nil {
+			return LoaderTrigger{}, "", err
+		}
+		return LoaderTrigger{ID: id, Kind: LoaderTriggerKindEvent, Topic: topic, Enabled: true, SpecJSON: specJSON}, fmt.Sprintf("scheduler.on(%s, %s, %s);\n", jsStringLiteral(topic), jsStringLiteral(id), callback), nil
+	default:
+		return LoaderTrigger{}, "", fmt.Errorf("unsupported service trigger kind %q", trigger.Kind)
 	}
 }
 
@@ -1477,6 +2021,77 @@ func dryRunProjectChanges(project ProjectRecord, agents []ProjectAgentRecord, ag
 	return changes
 }
 
+func projectDiffChanges(current ProjectRecord, incoming ProjectRecord, currentAgents []ProjectAgentRecord, incomingAgents []ProjectAgentRecord, currentSchedulers []ProjectSchedulerRecord, incomingSchedulers []ProjectSchedulerRecord) []*agentcomposev2.ProjectChange {
+	changes := []*agentcomposev2.ProjectChange{{
+		Action:       projectChangeAction(projectRecordUnchanged(current, incoming)),
+		ResourceType: "project",
+		ResourceId:   current.ID,
+		Name:         incoming.Name,
+	}}
+
+	currentAgentByName := make(map[string]ProjectAgentRecord, len(currentAgents))
+	for _, agent := range currentAgents {
+		currentAgentByName[agent.AgentName] = agent
+	}
+	seenAgents := make(map[string]struct{}, len(incomingAgents))
+	for _, agent := range incomingAgents {
+		seenAgents[agent.AgentName] = struct{}{}
+		existing, found := currentAgentByName[agent.AgentName]
+		changes = append(changes, &agentcomposev2.ProjectChange{
+			Action:       agentChangeAction(existing, found, agent),
+			ResourceType: "project_agent",
+			ResourceId:   agent.ManagedAgentID,
+			Name:         agent.AgentName,
+		})
+	}
+	for _, agent := range currentAgents {
+		if _, ok := seenAgents[agent.AgentName]; ok {
+			continue
+		}
+		changes = append(changes, &agentcomposev2.ProjectChange{
+			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_REMOVED,
+			ResourceType: "project_agent",
+			ResourceId:   agent.ManagedAgentID,
+			Name:         agent.AgentName,
+		})
+	}
+
+	currentSchedulerByID := make(map[string]ProjectSchedulerRecord, len(currentSchedulers))
+	for _, scheduler := range currentSchedulers {
+		currentSchedulerByID[scheduler.SchedulerID] = scheduler
+	}
+	seenSchedulers := make(map[string]struct{}, len(incomingSchedulers))
+	for _, scheduler := range incomingSchedulers {
+		seenSchedulers[scheduler.SchedulerID] = struct{}{}
+		existing, found := currentSchedulerByID[scheduler.SchedulerID]
+		changes = append(changes, &agentcomposev2.ProjectChange{
+			Action:       schedulerChangeAction(existing, found, scheduler),
+			ResourceType: "project_scheduler",
+			ResourceId:   scheduler.SchedulerID,
+			Name:         scheduler.AgentName,
+		})
+	}
+	for _, scheduler := range currentSchedulers {
+		if _, ok := seenSchedulers[scheduler.SchedulerID]; ok {
+			continue
+		}
+		changes = append(changes, &agentcomposev2.ProjectChange{
+			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_REMOVED,
+			ResourceType: "project_scheduler",
+			ResourceId:   scheduler.SchedulerID,
+			Name:         scheduler.AgentName,
+		})
+	}
+	return changes
+}
+
+func projectChangeAction(unchanged bool) agentcomposev2.ProjectChangeAction {
+	if unchanged {
+		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED
+	}
+	return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
+}
+
 func projectRecordUnchanged(existing ProjectRecord, current ProjectRecord) bool {
 	return existing.ID == current.ID &&
 		existing.Name == current.Name &&
@@ -1575,11 +2190,42 @@ func ProjectSpecResponse(spec *compose.NormalizedProjectSpec) *agentcomposev2.Pr
 		return nil
 	}
 	return &agentcomposev2.ProjectSpec{
-		Name:      spec.Name,
-		Variables: envVarResponses(spec.Variables),
-		Workspace: workspaceResponse(spec.Workspace),
-		Agents:    agentSpecResponses(spec.Agents),
-		Network:   networkResponse(spec.Network),
+		Name:        spec.Name,
+		Metadata:    metadataResponse(spec.Metadata),
+		Variables:   envVarResponses(spec.Variables),
+		Runtime:     runtimeResponse(spec.Runtime),
+		Workspace:   workspaceResponse(spec.Workspace),
+		Agents:      agentSpecResponses(spec.Agents),
+		Network:     networkResponse(spec.Network),
+		Services:    serviceSpecResponses(spec.Services),
+		Triggers:    projectTriggerSpecResponses(spec.Triggers),
+		Permissions: permissionResponse(spec.Permissions),
+		Artifacts:   artifactPolicyResponse(spec.Artifacts),
+	}
+}
+
+func metadataResponse(metadata *compose.ProjectMetadataSpec) *agentcomposev2.ProjectMetadata {
+	if metadata == nil {
+		return nil
+	}
+	return &agentcomposev2.ProjectMetadata{
+		Name:        metadata.Name,
+		Labels:      cloneStringMap(metadata.Labels),
+		Annotations: cloneStringMap(metadata.Annotations),
+	}
+}
+
+func runtimeResponse(runtime *compose.NormalizedProjectRuntimeSpec) *agentcomposev2.RuntimeSpec {
+	if runtime == nil {
+		return nil
+	}
+	return &agentcomposev2.RuntimeSpec{
+		Driver:        runtime.Driver,
+		Image:         runtime.Image,
+		Env:           envVarResponses(runtime.Env),
+		Resources:     cloneStringMap(runtime.Resources),
+		Network:       networkResponse(runtime.Network),
+		CleanupPolicy: cleanupPolicyResponse(runtime.CleanupPolicy),
 	}
 }
 
@@ -1600,6 +2246,119 @@ func agentSpecResponses(agents []compose.NormalizedAgentSpec) []*agentcomposev2.
 		})
 	}
 	return items
+}
+
+func serviceSpecResponses(services []compose.NormalizedServiceSpec) []*agentcomposev2.ServiceSpec {
+	items := make([]*agentcomposev2.ServiceSpec, 0, len(services))
+	for _, service := range services {
+		items = append(items, &agentcomposev2.ServiceSpec{
+			Name:             service.Name,
+			Description:      service.Description,
+			Runtime:          service.Runtime,
+			Entry:            service.Entry,
+			InputSchemaJson:  service.InputSchema,
+			OutputSchemaJson: service.OutputSchema,
+			ErrorSchemaJson:  service.ErrorSchema,
+			TimeoutMs:        durationStringToMillis(service.Timeout),
+			Retry:            retryPolicyResponse(service.Retry),
+			Permissions:      permissionResponse(service.Permissions),
+			Env:              envVarResponses(service.Env),
+			Agents:           append([]string(nil), service.Agents...),
+			Examples:         serviceExampleResponses(service.Examples),
+		})
+	}
+	return items
+}
+
+func retryPolicyResponse(retry *compose.RetryPolicySpec) *agentcomposev2.RetryPolicySpec {
+	if retry == nil {
+		return nil
+	}
+	return &agentcomposev2.RetryPolicySpec{MaxAttempts: uint32(retry.MaxAttempts), BackoffMs: durationStringToMillis(retry.Backoff)}
+}
+
+func serviceExampleResponses(examples []compose.ServiceExampleSpec) []*agentcomposev2.ServiceExampleSpec {
+	items := make([]*agentcomposev2.ServiceExampleSpec, 0, len(examples))
+	for _, example := range examples {
+		items = append(items, &agentcomposev2.ServiceExampleSpec{Name: example.Name, InputJson: example.Input, OutputJson: example.Output})
+	}
+	return items
+}
+
+func projectTriggerSpecResponses(triggers []compose.NormalizedProjectTriggerSpec) []*agentcomposev2.ProjectTriggerSpec {
+	items := make([]*agentcomposev2.ProjectTriggerSpec, 0, len(triggers))
+	for _, trigger := range triggers {
+		items = append(items, &agentcomposev2.ProjectTriggerSpec{
+			Name:      trigger.Name,
+			Type:      trigger.Kind,
+			Cron:      trigger.Cron,
+			Interval:  trigger.Interval,
+			Timeout:   trigger.Timeout,
+			Event:     eventTriggerResponse(trigger.Event),
+			Webhook:   webhookTriggerResponse(trigger.Webhook),
+			Target:    triggerTargetResponse(&trigger.Target),
+			InputJson: trigger.Input,
+		})
+	}
+	return items
+}
+
+func eventTriggerResponse(event *compose.EventTriggerSpec) *agentcomposev2.EventTriggerSpec {
+	if event == nil {
+		return nil
+	}
+	return &agentcomposev2.EventTriggerSpec{Topic: event.Topic}
+}
+
+func webhookTriggerResponse(webhook *compose.WebhookTriggerSpec) *agentcomposev2.WebhookTriggerSpec {
+	if webhook == nil {
+		return nil
+	}
+	return &agentcomposev2.WebhookTriggerSpec{Topic: webhook.Topic, Method: webhook.Method}
+}
+
+func triggerTargetResponse(target *compose.TriggerTargetSpec) *agentcomposev2.TriggerTargetSpec {
+	if target == nil || (strings.TrimSpace(target.Service) == "" && strings.TrimSpace(target.Agent) == "") {
+		return nil
+	}
+	return &agentcomposev2.TriggerTargetSpec{ServiceName: target.Service, AgentName: target.Agent}
+}
+
+func permissionResponse(permission *compose.PermissionSpec) *agentcomposev2.PermissionSpec {
+	if permission == nil {
+		return nil
+	}
+	return &agentcomposev2.PermissionSpec{
+		Agents:       append([]string(nil), permission.Agents...),
+		Capabilities: append([]string(nil), permission.Capabilities...),
+		Resources:    append([]string(nil), permission.Resources...),
+	}
+}
+
+func artifactPolicyResponse(policy *compose.ArtifactPolicySpec) *agentcomposev2.ArtifactPolicySpec {
+	if policy == nil {
+		return nil
+	}
+	return &agentcomposev2.ArtifactPolicySpec{Retention: policy.Retention, Storage: policy.Storage}
+}
+
+func durationStringToMillis(value string) uint32 {
+	duration, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil || duration <= 0 {
+		return 0
+	}
+	return uint32(duration.Milliseconds())
+}
+
+func cleanupPolicyResponse(value string) agentcomposev2.RunSessionCleanupPolicy {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "keep_running", "keep-running", "keep":
+		return agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING
+	case "stop", "stop_on_completion", "stop-on-completion":
+		return agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION
+	default:
+		return agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_UNSPECIFIED
+	}
 }
 
 func envVarResponses(values map[string]compose.EnvVarSpec) []*agentcomposev2.EnvVarSpec {

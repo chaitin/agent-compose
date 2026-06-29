@@ -833,6 +833,123 @@ func TestRunServiceStopRunCancelsPendingRun(t *testing.T) {
 	}
 }
 
+func TestRunServiceInvokeServiceValidatesInputSchemaBeforeRun(t *testing.T) {
+	store, service, projectID := setupRunCoordinatorServiceProject(t)
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+
+	_, err := client.InvokeService(ctx, connect.NewRequest(&agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     "echo",
+		InputJson:       `{"extra":true}`,
+		ClientRequestId: "service-input-schema",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "input.message is required") {
+		t.Fatalf("InvokeService error = %v, want input schema failure", err)
+	}
+	runs, listErr := store.ListProjectRuns(ctx, projectID, 10)
+	if listErr != nil {
+		t.Fatalf("ListProjectRuns returned error: %v", listErr)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("runs after input validation failure = %#v", runs)
+	}
+}
+
+func TestRunServiceInvokeServicePersistsRuntimeEnvelope(t *testing.T) {
+	store, service, projectID := setupRunCoordinatorServiceProject(t)
+	runServiceFakeRuntime(t, service).commandStdout = "service log\n__SERVICE_RESULT__" + `{"serviceName":"echo","outputJson":"{\"reply\":\"ok\"}","success":true,"artifacts":{"result":"/data/state/artifacts/service/service-result.json"},"metrics":{"durationMs":"12"}}` + "\n"
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+
+	resp, err := client.InvokeService(ctx, connect.NewRequest(&agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     "echo",
+		InputJson:       `{"message":"hello"}`,
+		ClientRequestId: "service-runtime-envelope",
+	}))
+	if err != nil {
+		t.Fatalf("InvokeService returned error: %v", err)
+	}
+	run := resp.Msg.GetRun()
+	if run.GetSummary().GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED || run.GetOutputJson() != `{"reply":"ok"}` {
+		t.Fatalf("run = %#v", run)
+	}
+	if run.GetMetrics()["durationMs"] != "12" {
+		t.Fatalf("metrics = %#v", run.GetMetrics())
+	}
+	if len(run.GetArtifacts()) == 0 {
+		t.Fatalf("artifacts missing from run detail")
+	}
+	stored, err := store.GetProjectRun(ctx, run.GetSummary().GetRunId())
+	if err != nil {
+		t.Fatalf("GetProjectRun returned error: %v", err)
+	}
+	if !strings.Contains(stored.ResultJSON, `"runtimeArtifacts"`) || !strings.Contains(stored.ResultJSON, `"durationMs":"12"`) {
+		t.Fatalf("stored result json = %s", stored.ResultJSON)
+	}
+}
+
+func TestRunServiceInvokeServiceFailsOutputSchemaValidation(t *testing.T) {
+	store, service, projectID := setupRunCoordinatorServiceProject(t)
+	runServiceFakeRuntime(t, service).commandStdout = "__SERVICE_RESULT__" + `{"serviceName":"echo","outputJson":"{\"reply\":1}","success":true,"artifacts":{},"metrics":{}}` + "\n"
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+
+	resp, err := client.InvokeService(ctx, connect.NewRequest(&agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     "echo",
+		InputJson:       `{"message":"hello"}`,
+		ClientRequestId: "service-output-schema",
+	}))
+	if err != nil {
+		t.Fatalf("InvokeService returned control-plane error: %v", err)
+	}
+	run := resp.Msg.GetRun().GetSummary()
+	if run.GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_FAILED || !strings.Contains(run.GetError(), "output.reply must be string") {
+		t.Fatalf("run summary = %#v", run)
+	}
+	stored, err := store.GetProjectRun(ctx, run.GetRunId())
+	if err != nil {
+		t.Fatalf("GetProjectRun returned error: %v", err)
+	}
+	if stored.Status != ProjectRunStatusFailed || stored.OutputJSON != `{"reply":1}` {
+		t.Fatalf("stored run = %#v", stored)
+	}
+}
+
+func TestRunServiceInvokeServiceIgnoresUnsupportedRuntimeProtocolPayload(t *testing.T) {
+	store, service, projectID := setupRunCoordinatorServiceProject(t)
+	runServiceFakeRuntime(t, service).commandStdout = "__SERVICE_RESULT__" + `{"protocolVersion":"service.v99","serviceName":"echo","outputJson":"{\"reply\":\"ok\"}","success":true,"artifacts":{},"metrics":{}}` + "\n"
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+
+	resp, err := client.InvokeService(ctx, connect.NewRequest(&agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     "echo",
+		InputJson:       `{"message":"hello"}`,
+		ClientRequestId: "service-protocol-version",
+	}))
+	if err != nil {
+		t.Fatalf("InvokeService returned control-plane error: %v", err)
+	}
+	run := resp.Msg.GetRun().GetSummary()
+	if run.GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_FAILED || !strings.Contains(run.GetError(), "output_json is required") {
+		t.Fatalf("run summary = %#v", run)
+	}
+	stored, err := store.GetProjectRun(ctx, run.GetRunId())
+	if err != nil {
+		t.Fatalf("GetProjectRun returned error: %v", err)
+	}
+	if stored.OutputJSON != "" {
+		t.Fatalf("stored output json = %q, want empty for unsupported protocol", stored.OutputJSON)
+	}
+}
+
 func TestIntegrationRunServiceRunAgentReusesSessionAndPreservesTags(t *testing.T) {
 	testRunServiceRunAgentReusesSessionAndPreservesTags(t)
 }
@@ -1113,6 +1230,44 @@ func testRunServiceWorkspacePreparationFailureMarksRunFailed(t *testing.T) {
 func setupRunCoordinatorProject(t *testing.T) (*ConfigStore, *Service, string) {
 	t.Helper()
 	return setupRunPreparationProject(t, newProjectServiceTestSpec("demo", "gpt-test"), t.TempDir())
+}
+
+func setupRunCoordinatorServiceProject(t *testing.T) (*ConfigStore, *Service, string) {
+	t.Helper()
+	store, service, projectID := setupRunCoordinatorProject(t)
+	project, err := store.GetProject(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("GetProject returned error: %v", err)
+	}
+	revision, err := store.GetProjectRevision(context.Background(), project.ID, project.CurrentRevision)
+	if err != nil {
+		t.Fatalf("GetProjectRevision returned error: %v", err)
+	}
+	spec, err := decodeProjectRevisionSpec(revision.SpecJSON)
+	if err != nil {
+		t.Fatalf("decodeProjectRevisionSpec returned error: %v", err)
+	}
+	spec.Services = []*agentcomposev2.ServiceSpec{{
+		Name:             "echo",
+		Runtime:          "boxlite",
+		Entry:            "echo.mjs",
+		InputSchemaJson:  `{"type":"object","required":["message"],"properties":{"message":{"type":"string"}},"additionalProperties":false}`,
+		OutputSchemaJson: `{"type":"object","required":["reply"],"properties":{"reply":{"type":"string"}},"additionalProperties":false}`,
+	}}
+	specJSON, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatalf("marshal service spec returned error: %v", err)
+	}
+	updated, _, err := store.SaveProjectRevision(context.Background(), ProjectRevisionRecord{
+		ProjectID: project.ID,
+		SpecHash:  revision.SpecHash + "-service",
+		SpecJSON:  string(specJSON),
+	})
+	if err != nil {
+		t.Fatalf("SaveProjectRevision returned error: %v", err)
+	}
+	project.CurrentRevision = updated.Revision
+	return store, service, projectID
 }
 
 func setupRunPreparationProject(t *testing.T, spec *agentcomposev2.ProjectSpec, projectDir string) (*ConfigStore, *Service, string) {

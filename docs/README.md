@@ -18,6 +18,7 @@ The design notes below describe current implementation details. Chinese versions
 are available under [zh-CN/design/](zh-CN/design/).
 
 - [Architecture notes](design/agent-compose_design.md)
+- [Engine foundation plan](design/agent-compose_engine_foundation_plan.md)
 - [Agent system prompt (Phase 1)](design/agent_system_prompt_design.md)
 - [Runtime LLM Facade](zh-CN/design/agent-compose-runtime-llm-facade.md)
 - [Runtime contract](design/agent-compose-runtime_contract.md)

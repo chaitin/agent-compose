@@ -106,6 +106,38 @@ func (s *ConfigStore) ensureProjectSchema(ctx context.Context) error {
 	if err := s.ensureManagedResourceColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureProjectRunColumns(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *ConfigStore) ensureProjectRunColumns(ctx context.Context) error {
+	columns := []struct {
+		name       string
+		definition string
+	}{
+		{name: "client_request_id", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "target_type", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "target_name", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "input_json", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "output_json", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "runtime_context_json", definition: "TEXT NOT NULL DEFAULT '{}'"},
+	}
+	for _, column := range columns {
+		if err := ensureColumn(ctx, s.db, "project_run", column.name, column.definition); err != nil {
+			return fmt.Errorf("ensure project run column %s: %w", column.name, err)
+		}
+	}
+	statements := []string{
+		`CREATE INDEX IF NOT EXISTS idx_project_run_client_request ON project_run(client_request_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_project_run_target ON project_run(project_id, target_type, target_name, created_at DESC);`,
+	}
+	for _, stmt := range statements {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("create project run context index: %w", err)
+		}
+	}
 	return nil
 }
 

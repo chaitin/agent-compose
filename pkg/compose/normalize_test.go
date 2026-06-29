@@ -3,6 +3,7 @@ package compose
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -144,6 +145,212 @@ agents:
 		if got[i] != want[i] {
 			t.Fatalf("capset ids = %#v, want %#v", got, want)
 		}
+	}
+}
+
+func TestNormalizeServicesAndProjectTriggers(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: service-project
+metadata:
+  labels:
+    owner: platform
+runtime:
+  driver: docker
+  image: ghcr.io/org/runtime:latest
+  env:
+    RUNTIME_FLAG: enabled
+agents:
+  reviewer:
+    provider: codex
+services:
+  risk-review:
+    runtime: node
+    entry: services/risk-review.js
+    timeout: 10m
+    retry:
+      max_attempts: 2
+      backoff: 5s
+    permissions:
+      agents:
+        - reviewer
+      capabilities:
+        - repo.read
+    agents:
+      - reviewer
+triggers:
+  daily:
+    cron: "0 9 * * *"
+    target:
+      service: risk-review
+    input: '{"scope":"daily"}'
+`)
+
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if normalized.Metadata == nil || normalized.Metadata.Labels["owner"] != "platform" {
+		t.Fatalf("metadata = %#v", normalized.Metadata)
+	}
+	if normalized.Runtime == nil || normalized.Runtime.Driver != "docker" || normalized.Runtime.Env["RUNTIME_FLAG"].Value != "enabled" {
+		t.Fatalf("runtime = %#v", normalized.Runtime)
+	}
+	if got := len(normalized.Services); got != 1 {
+		t.Fatalf("service count = %d, want 1", got)
+	}
+	service := normalized.Services[0]
+	if service.Name != "risk-review" || service.Entry != "services/risk-review.js" || service.Retry == nil || service.Retry.Backoff != "5s" {
+		t.Fatalf("service = %#v", service)
+	}
+	if service.Permissions == nil || service.Permissions.Capabilities[0] != "repo.read" {
+		t.Fatalf("service permissions = %#v", service.Permissions)
+	}
+	if got := len(normalized.Triggers); got != 1 {
+		t.Fatalf("trigger count = %d, want 1", got)
+	}
+	trigger := normalized.Triggers[0]
+	if trigger.Name != "daily" || trigger.Kind != "cron" || trigger.Target.Service != "risk-review" || trigger.Input == "" {
+		t.Fatalf("trigger = %#v", trigger)
+	}
+}
+
+func TestNormalizeServiceSchemas(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: schema-project
+services:
+  inline-review:
+    entry: services/review.js
+    input_schema: '{"type":"object"}'
+    output_schema: schemas/review.output.json
+    error_schema: ./schemas/review.error.json
+`)
+
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	service := normalized.Services[0]
+	if service.InputSchema != `{"type":"object"}` {
+		t.Fatalf("input schema = %q", service.InputSchema)
+	}
+	if service.OutputSchema != "schemas/review.output.json" || service.ErrorSchema != "schemas/review.error.json" {
+		t.Fatalf("service schemas = %#v", service)
+	}
+}
+
+func TestNormalizeRejectsInvalidServiceSchemas(t *testing.T) {
+	tests := []struct {
+		name      string
+		field     string
+		value     string
+		wantError string
+	}{
+		{name: "invalid inline json", field: "input_schema", value: `{"type":`, wantError: "valid JSON"},
+		{name: "parent reference", field: "output_schema", value: "../secret.json", wantError: "project directory"},
+		{name: "absolute reference", field: "error_schema", value: "/etc/passwd", wantError: "relative path"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := mustParseCompose(t, `
+name: invalid-schema
+services:
+  risk-review:
+    entry: services/review.js
+    `+tt.field+`: `+quoteYAMLScalar(tt.value)+`
+`)
+
+			_, err := Normalize(spec, NormalizeOptions{})
+			if err == nil {
+				t.Fatalf("expected Normalize to fail")
+			}
+			if got := err.Error(); !strings.Contains(got, "services.risk-review."+tt.field) || !strings.Contains(got, tt.wantError) {
+				t.Fatalf("error = %q, want field %s and %q", got, tt.field, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestNormalizeRejectsUnsafeServiceEntry(t *testing.T) {
+	tests := []struct {
+		name      string
+		entry     string
+		wantError string
+	}{
+		{name: "parent reference", entry: "../review.js", wantError: "project directory"},
+		{name: "absolute reference", entry: "/tmp/review.js", wantError: "relative path"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := mustParseCompose(t, `
+name: invalid-entry
+services:
+  risk-review:
+    entry: `+quoteYAMLScalar(tt.entry)+`
+`)
+
+			_, err := Normalize(spec, NormalizeOptions{})
+			if err == nil {
+				t.Fatalf("expected Normalize to fail")
+			}
+			if got := err.Error(); !strings.Contains(got, "services.risk-review.entry") || !strings.Contains(got, tt.wantError) {
+				t.Fatalf("error = %q, want entry field and %q", got, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestNormalizeRejectsInvalidEnvName(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: invalid-env
+agents:
+  reviewer:
+    provider: codex
+    env:
+      BAD-NAME: value
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "agents.reviewer.env.BAD-NAME") || !strings.Contains(got, "environment variable name") {
+		t.Fatalf("error = %q, want env name path", got)
+	}
+}
+
+func TestNormalizeRejectsServiceWithoutEntry(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: bad-service
+services:
+  risk-review:
+    runtime: node
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "services.risk-review.entry") {
+		t.Fatalf("error = %q, want service entry path", got)
+	}
+}
+
+func TestNormalizeRejectsTriggerWithoutTarget(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: bad-trigger
+triggers:
+  daily:
+    cron: "0 9 * * *"
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "triggers.daily.target") {
+		t.Fatalf("error = %q, want trigger target path", got)
 	}
 }
 
@@ -599,4 +806,8 @@ func mustParseCompose(t *testing.T, raw string) *ProjectSpec {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 	return spec
+}
+
+func quoteYAMLScalar(value string) string {
+	return strconv.Quote(value)
 }
