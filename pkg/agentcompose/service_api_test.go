@@ -80,6 +80,102 @@ func TestUpdateGlobalEnvConfigPreservesUnchangedSecrets(t *testing.T) {
 	}
 }
 
+func TestUpdateLoaderPreservesMaskedSecretEnvValues(t *testing.T) {
+	ctx := context.Background()
+	service, _, _ := newTestServiceAPIHarness(t)
+	createResp, err := service.CreateLoader(ctx, connect.NewRequest(&agentcomposev1.CreateLoaderRequest{
+		Name:              "Secret Loader",
+		Runtime:           LoaderRuntimeScheduler,
+		Script:            `scheduler.interval("tick", function(){ scheduler.log("tick"); }, 60000);`,
+		DefaultAgent:      "codex",
+		SessionPolicy:     LoaderSessionPolicyNew,
+		ConcurrencyPolicy: LoaderConcurrencyPolicyParallel,
+		Enabled:           true,
+		EnvItems: []*agentcomposev1.SessionEnvVar{
+			{Name: "LOADER_SECRET", Value: "real-secret", Secret: true},
+			{Name: "VISIBLE", Value: "visible"},
+		},
+	}))
+	if err != nil {
+		t.Fatalf("CreateLoader returned error: %v", err)
+	}
+	loaderID := createResp.Msg.GetLoader().GetSummary().GetLoaderId()
+	detailResp, err := service.GetLoader(ctx, connect.NewRequest(&agentcomposev1.LoaderIDRequest{LoaderId: loaderID}))
+	if err != nil {
+		t.Fatalf("GetLoader returned error: %v", err)
+	}
+	envItems := detailResp.Msg.GetLoader().GetEnvItems()
+	if len(envItems) != 2 || envItems[0].GetName() != "LOADER_SECRET" || envItems[0].GetValue() != "********" {
+		t.Fatalf("loader env detail = %+v, want masked secret first", envItems)
+	}
+
+	if _, err := service.UpdateLoader(ctx, connect.NewRequest(&agentcomposev1.UpdateLoaderRequest{
+		LoaderId:          loaderID,
+		Name:              "Secret Loader",
+		Description:       "description changed",
+		Runtime:           LoaderRuntimeScheduler,
+		Script:            `scheduler.interval("tick", function(){ scheduler.log("tick"); }, 60000);`,
+		DefaultAgent:      "codex",
+		SessionPolicy:     LoaderSessionPolicyNew,
+		ConcurrencyPolicy: LoaderConcurrencyPolicyParallel,
+		Enabled:           true,
+		EnvItems:          envItems,
+	})); err != nil {
+		t.Fatalf("UpdateLoader(masked secret) returned error: %v", err)
+	}
+	stored, err := service.configDB.GetLoader(ctx, loaderID)
+	if err != nil {
+		t.Fatalf("GetLoader stored returned error: %v", err)
+	}
+	env := sessionEnvMap(stored.EnvItems)
+	if got := env["LOADER_SECRET"]; got != "real-secret" {
+		t.Fatalf("stored LOADER_SECRET = %q, want original secret", got)
+	}
+
+	if _, err := service.UpdateLoader(ctx, connect.NewRequest(&agentcomposev1.UpdateLoaderRequest{
+		LoaderId:          loaderID,
+		Name:              "Secret Loader",
+		Description:       "secret changed",
+		Runtime:           LoaderRuntimeScheduler,
+		Script:            `scheduler.interval("tick", function(){ scheduler.log("tick"); }, 60000);`,
+		DefaultAgent:      "codex",
+		SessionPolicy:     LoaderSessionPolicyNew,
+		ConcurrencyPolicy: LoaderConcurrencyPolicyParallel,
+		Enabled:           true,
+		EnvItems: []*agentcomposev1.SessionEnvVar{
+			{Name: "LOADER_SECRET", Value: "new-secret", Secret: true},
+			{Name: "VISIBLE", Value: "visible"},
+		},
+	})); err != nil {
+		t.Fatalf("UpdateLoader(new secret) returned error: %v", err)
+	}
+	stored, err = service.configDB.GetLoader(ctx, loaderID)
+	if err != nil {
+		t.Fatalf("GetLoader stored after new secret returned error: %v", err)
+	}
+	env = sessionEnvMap(stored.EnvItems)
+	if got := env["LOADER_SECRET"]; got != "new-secret" {
+		t.Fatalf("stored LOADER_SECRET = %q, want updated secret", got)
+	}
+
+	_, err = service.UpdateLoader(ctx, connect.NewRequest(&agentcomposev1.UpdateLoaderRequest{
+		LoaderId:          loaderID,
+		Name:              "Secret Loader",
+		Runtime:           LoaderRuntimeScheduler,
+		Script:            `scheduler.interval("tick", function(){ scheduler.log("tick"); }, 60000);`,
+		DefaultAgent:      "codex",
+		SessionPolicy:     LoaderSessionPolicyNew,
+		ConcurrencyPolicy: LoaderConcurrencyPolicyParallel,
+		Enabled:           true,
+		EnvItems: []*agentcomposev1.SessionEnvVar{
+			{Name: "NEW_SECRET", Value: "********", Secret: true},
+		},
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("UpdateLoader(new masked secret) code = %v, want invalid_argument", connect.CodeOf(err))
+	}
+}
+
 func TestServiceSessionKernelAgentAndLLMAPIs(t *testing.T) {
 	testServiceSessionKernelAgentAndLLMAPIs(t)
 }
