@@ -105,8 +105,17 @@ func TestUpdateLoaderPreservesMaskedSecretEnvValues(t *testing.T) {
 		t.Fatalf("GetLoader returned error: %v", err)
 	}
 	envItems := detailResp.Msg.GetLoader().GetEnvItems()
-	if len(envItems) != 2 || envItems[0].GetName() != "LOADER_SECRET" || envItems[0].GetValue() != "********" {
-		t.Fatalf("loader env detail = %+v, want masked secret first", envItems)
+	envByName := make(map[string]*agentcomposev1.SessionEnvVar, len(envItems))
+	for _, item := range envItems {
+		envByName[item.GetName()] = item
+	}
+	secretItem := envByName["LOADER_SECRET"]
+	if len(envItems) != 2 || secretItem == nil || secretItem.GetValue() != "********" || !secretItem.GetSecret() {
+		t.Fatalf("loader env detail = %+v, want masked LOADER_SECRET", envItems)
+	}
+	visibleItem := envByName["VISIBLE"]
+	if visibleItem == nil || visibleItem.GetValue() != "visible" || visibleItem.GetSecret() {
+		t.Fatalf("loader env detail = %+v, want visible VISIBLE", envItems)
 	}
 
 	if _, err := service.UpdateLoader(ctx, connect.NewRequest(&agentcomposev1.UpdateLoaderRequest{
