@@ -150,10 +150,12 @@ func (s *Store) ListSessions(_ context.Context, options SessionListOptions) (Ses
 		return SessionListResult{}, fmt.Errorf("read session root: %w", err)
 	}
 	var sessions []*Session
+	existingSessionIDs := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
+		existingSessionIDs[entry.Name()] = struct{}{}
 		session, err := s.loadSession(entry.Name())
 		if err != nil {
 			continue
@@ -164,6 +166,7 @@ func (s *Store) ListSessions(_ context.Context, options SessionListOptions) (Ses
 		}
 		sessions = append(sessions, session)
 	}
+	s.pruneTimelineLocks(existingSessionIDs)
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].Summary.UpdatedAt.After(sessions[j].Summary.UpdatedAt)
 	})
@@ -295,6 +298,16 @@ func (s *Store) timelineLock(id string) *sync.Mutex {
 		s.timelineLocks[id] = lock
 	}
 	return lock
+}
+
+func (s *Store) pruneTimelineLocks(existingSessionIDs map[string]struct{}) {
+	s.timelineLocksMu.Lock()
+	defer s.timelineLocksMu.Unlock()
+	for id := range s.timelineLocks {
+		if _, ok := existingSessionIDs[id]; !ok {
+			delete(s.timelineLocks, id)
+		}
+	}
 }
 
 func (s *Store) sessionDir(id string) string {

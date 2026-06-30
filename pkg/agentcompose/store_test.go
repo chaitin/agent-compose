@@ -145,6 +145,42 @@ func TestStoreAddCellConcurrentWritesDoNotDropCells(t *testing.T) {
 	}
 }
 
+func TestStoreListSessionsPrunesTimelineLocksForRemovedSessionDirs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := newTestTimelineStore(t)
+	first, err := store.CreateSession(ctx, "Removed", "", driverpkg.RuntimeDriverBoxlite, "", "", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession first returned error: %v", err)
+	}
+	second, err := store.CreateSession(ctx, "Kept", "", driverpkg.RuntimeDriverBoxlite, "", "", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession second returned error: %v", err)
+	}
+	if err := store.AddEvent(ctx, first.Summary.ID, SessionEvent{ID: "event-removed", Type: "session.test", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("AddEvent first returned error: %v", err)
+	}
+	if err := store.AddEvent(ctx, second.Summary.ID, SessionEvent{ID: "event-kept", Type: "session.test", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("AddEvent second returned error: %v", err)
+	}
+	if err := os.RemoveAll(store.sessionDir(first.Summary.ID)); err != nil {
+		t.Fatalf("RemoveAll first session dir: %v", err)
+	}
+
+	if _, err := store.ListSessions(ctx, SessionListOptions{}); err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+
+	store.timelineLocksMu.Lock()
+	defer store.timelineLocksMu.Unlock()
+	if _, ok := store.timelineLocks[first.Summary.ID]; ok {
+		t.Fatalf("timeline lock for removed session %q was not pruned", first.Summary.ID)
+	}
+	if _, ok := store.timelineLocks[second.Summary.ID]; !ok {
+		t.Fatalf("timeline lock for existing session %q was pruned", second.Summary.ID)
+	}
+}
+
 func newTestTimelineStore(t *testing.T) *Store {
 	t.Helper()
 	config := &appconfig.Config{
