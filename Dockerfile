@@ -1,11 +1,15 @@
 ARG REGISTRY_MIRROR=docker.io
 ARG GOPROXY=https://goproxy.cn,direct
+ARG APT_MIRROR_HOST=
+ARG APT_RETRIES=5
 
 FROM ${REGISTRY_MIRROR}/library/golang:1-alpine AS golang-toolchain
 
 FROM ${REGISTRY_MIRROR}/library/debian:bookworm AS boxlite-build
 ARG BOXLITE_VERSION=v0.9.5
 ARG TARGETARCH
+ARG APT_MIRROR_HOST
+ARG APT_RETRIES
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ARG ALL_PROXY
@@ -15,8 +19,8 @@ ENV HTTPS_PROXY=${HTTPS_PROXY}
 ENV ALL_PROXY=${ALL_PROXY}
 ENV NO_PROXY=${NO_PROXY}
 ENV no_proxy=${NO_PROXY}
-RUN if [ -f /etc/apt/sources.list ]; then       sed -i -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list &&       sed -i -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list;     fi &&     if [ -f /etc/apt/sources.list.d/debian.sources ]; then       sed -i -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources &&       sed -i -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources;     fi
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl python3 tar &&     rm -rf /var/lib/apt/lists/*
+RUN if [ -n "${APT_MIRROR_HOST}" ]; then       if [ -f /etc/apt/sources.list ]; then         sed -i -e "s|deb.debian.org|${APT_MIRROR_HOST}|g" -e "s|security.debian.org|${APT_MIRROR_HOST}|g" /etc/apt/sources.list;       fi;       if [ -f /etc/apt/sources.list.d/debian.sources ]; then         sed -i -e "s|deb.debian.org|${APT_MIRROR_HOST}|g" -e "s|security.debian.org|${APT_MIRROR_HOST}|g" /etc/apt/sources.list.d/debian.sources;       fi;     fi
+RUN apt-get -o Acquire::Retries=${APT_RETRIES} update && apt-get -o Acquire::Retries=${APT_RETRIES} install -y --no-install-recommends ca-certificates curl python3 tar &&     rm -rf /var/lib/apt/lists/*
 RUN set -e;     target_arch="${TARGETARCH:-$(dpkg --print-architecture)}";     case "${target_arch}" in       amd64) BOXLITE_ARCH=x64 ;;       arm64) BOXLITE_ARCH=arm64 ;;       *) echo "unsupported BoxLite target arch: ${target_arch}" >&2; exit 1 ;;     esac;     mkdir -p /tmp/boxlite/runtime /tmp/boxlite/sdk /out/include /out/lib /out/runtime &&     BOXLITE_RUNTIME_NAME=boxlite-runtime-${BOXLITE_VERSION}-linux-${BOXLITE_ARCH}-gnu.tar.gz &&     BOXLITE_C_NAME=boxlite-c-${BOXLITE_VERSION}-linux-${BOXLITE_ARCH}-gnu.tar.gz &&     curl --http1.1 --retry 5 --retry-all-errors --retry-delay 2 -fsSL -o /tmp/boxlite/${BOXLITE_RUNTIME_NAME} https://github.com/boxlite-ai/boxlite/releases/download/${BOXLITE_VERSION}/${BOXLITE_RUNTIME_NAME} &&     curl --http1.1 --retry 5 --retry-all-errors --retry-delay 2 -fsSL -o /tmp/boxlite/${BOXLITE_C_NAME} https://github.com/boxlite-ai/boxlite/releases/download/${BOXLITE_VERSION}/${BOXLITE_C_NAME} &&     tar -xzf /tmp/boxlite/${BOXLITE_RUNTIME_NAME} -C /tmp/boxlite/runtime &&     tar -xzf /tmp/boxlite/${BOXLITE_C_NAME} -C /tmp/boxlite/sdk &&     cp -a /tmp/boxlite/runtime/boxlite-runtime/. /out/runtime/ &&     cp /tmp/boxlite/sdk/*/include/boxlite.h /out/include/boxlite.h &&     cp -a /tmp/boxlite/sdk/*/lib/libboxlite.* /out/lib/
 
 # Fetch the prebuilt microsandbox artifacts for the target architecture. The Go
@@ -28,6 +32,8 @@ RUN set -e;     target_arch="${TARGETARCH:-$(dpkg --print-architecture)}";     c
 FROM ${REGISTRY_MIRROR}/library/debian:bookworm AS microsandbox-fetch
 ARG MICROSANDBOX_VERSION=v0.5.8
 ARG TARGETARCH
+ARG APT_MIRROR_HOST
+ARG APT_RETRIES
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ARG ALL_PROXY
@@ -37,14 +43,16 @@ ENV HTTPS_PROXY=${HTTPS_PROXY}
 ENV ALL_PROXY=${ALL_PROXY}
 ENV NO_PROXY=${NO_PROXY}
 ENV no_proxy=${NO_PROXY}
-RUN if [ -f /etc/apt/sources.list ]; then       sed -i -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list &&       sed -i -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list;     fi &&     if [ -f /etc/apt/sources.list.d/debian.sources ]; then       sed -i -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources &&       sed -i -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources;     fi
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl binutils tar &&     rm -rf /var/lib/apt/lists/*
+RUN if [ -n "${APT_MIRROR_HOST}" ]; then       if [ -f /etc/apt/sources.list ]; then         sed -i -e "s|deb.debian.org|${APT_MIRROR_HOST}|g" -e "s|security.debian.org|${APT_MIRROR_HOST}|g" /etc/apt/sources.list;       fi;       if [ -f /etc/apt/sources.list.d/debian.sources ]; then         sed -i -e "s|deb.debian.org|${APT_MIRROR_HOST}|g" -e "s|security.debian.org|${APT_MIRROR_HOST}|g" /etc/apt/sources.list.d/debian.sources;       fi;     fi
+RUN apt-get -o Acquire::Retries=${APT_RETRIES} update && apt-get -o Acquire::Retries=${APT_RETRIES} install -y --no-install-recommends ca-certificates curl binutils tar &&     rm -rf /var/lib/apt/lists/*
 RUN set -e;     target_arch="${TARGETARCH:-$(dpkg --print-architecture)}";     case "${target_arch}" in       amd64) MICROSANDBOX_ARCH=x86_64 ;;       arm64) MICROSANDBOX_ARCH=aarch64 ;;       *) echo "unsupported Microsandbox target arch: ${target_arch}" >&2; exit 1 ;;     esac;     base="https://github.com/superradcompany/microsandbox/releases/download/${MICROSANDBOX_VERSION}";     mkdir -p /tmp/microsandbox/extract /out/bin /out/lib;     cd /tmp/microsandbox;     curl --http1.1 --retry 5 --retry-all-errors --retry-delay 2 -fsSL -O "${base}/microsandbox-linux-${MICROSANDBOX_ARCH}.tar.gz";     curl --http1.1 --retry 5 --retry-all-errors --retry-delay 2 -fsSL -O "${base}/agentd-${MICROSANDBOX_ARCH}";     curl --http1.1 --retry 5 --retry-all-errors --retry-delay 2 -fsSL -O "${base}/libmicrosandbox_go_ffi-linux-${target_arch}.so";     curl --http1.1 --retry 5 --retry-all-errors --retry-delay 2 -fsSL -O "${base}/checksums.sha256";     sha256sum -c --ignore-missing checksums.sha256;     tar -xzf "microsandbox-linux-${MICROSANDBOX_ARCH}.tar.gz" -C /tmp/microsandbox/extract;     install -m755 /tmp/microsandbox/extract/msb /out/bin/msb;     install -m755 "agentd-${MICROSANDBOX_ARCH}" /out/bin/agentd;     install -m644 /tmp/microsandbox/extract/libkrunfw.so.5.2.1 /out/lib/libkrunfw.so.5.2.1;     ln -sf libkrunfw.so.5.2.1 /out/lib/libkrunfw.so.5;     ln -sf libkrunfw.so.5 /out/lib/libkrunfw.so;     install -m644 "libmicrosandbox_go_ffi-linux-${target_arch}.so" /out/lib/libmicrosandbox_go_ffi.so;     strip --strip-unneeded /out/lib/libmicrosandbox_go_ffi.so 2>/dev/null || true
 
 FROM ${REGISTRY_MIRROR}/library/debian:bookworm AS go-build
 ARG VERSION=0
 ARG TARGETARCH
 ARG GOPROXY
+ARG APT_MIRROR_HOST
+ARG APT_RETRIES
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ARG ALL_PROXY
@@ -54,8 +62,8 @@ ENV HTTPS_PROXY=${HTTPS_PROXY}
 ENV ALL_PROXY=${ALL_PROXY}
 ENV NO_PROXY=${NO_PROXY}
 ENV no_proxy=${NO_PROXY}
-RUN if [ -f /etc/apt/sources.list ]; then       sed -i -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list &&       sed -i -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list;     fi &&     if [ -f /etc/apt/sources.list.d/debian.sources ]; then       sed -i -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources &&       sed -i -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources;     fi
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential ca-certificates curl git tar && rm -rf /var/lib/apt/lists/*
+RUN if [ -n "${APT_MIRROR_HOST}" ]; then       if [ -f /etc/apt/sources.list ]; then         sed -i -e "s|deb.debian.org|${APT_MIRROR_HOST}|g" -e "s|security.debian.org|${APT_MIRROR_HOST}|g" /etc/apt/sources.list;       fi;       if [ -f /etc/apt/sources.list.d/debian.sources ]; then         sed -i -e "s|deb.debian.org|${APT_MIRROR_HOST}|g" -e "s|security.debian.org|${APT_MIRROR_HOST}|g" /etc/apt/sources.list.d/debian.sources;       fi;     fi
+RUN apt-get -o Acquire::Retries=${APT_RETRIES} update && apt-get -o Acquire::Retries=${APT_RETRIES} install -y --no-install-recommends build-essential ca-certificates curl git tar && rm -rf /var/lib/apt/lists/*
 COPY --from=golang-toolchain /usr/local/go /usr/local/go
 ENV PATH=/usr/local/go/bin:${PATH}
 WORKDIR /app
@@ -72,8 +80,10 @@ FROM scratch AS agent-compose-artifact
 COPY --from=go-build /out/agent-compose /out/agent-compose
 
 FROM ${REGISTRY_MIRROR}/library/debian:trixie-slim
-RUN if [ -f /etc/apt/sources.list ]; then       sed -i -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list &&       sed -i -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list;     fi &&     if [ -f /etc/apt/sources.list.d/debian.sources ]; then       sed -i -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources &&       sed -i -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources;     fi
-RUN apt-get update &&     apt-get install -y --no-install-recommends ca-certificates git python3 tini tzdata e2fsprogs &&     rm -rf /var/lib/apt/lists/*
+ARG APT_MIRROR_HOST
+ARG APT_RETRIES
+RUN if [ -n "${APT_MIRROR_HOST}" ]; then       if [ -f /etc/apt/sources.list ]; then         sed -i -e "s|deb.debian.org|${APT_MIRROR_HOST}|g" -e "s|security.debian.org|${APT_MIRROR_HOST}|g" /etc/apt/sources.list;       fi;       if [ -f /etc/apt/sources.list.d/debian.sources ]; then         sed -i -e "s|deb.debian.org|${APT_MIRROR_HOST}|g" -e "s|security.debian.org|${APT_MIRROR_HOST}|g" /etc/apt/sources.list.d/debian.sources;       fi;     fi
+RUN apt-get -o Acquire::Retries=${APT_RETRIES} update &&     apt-get -o Acquire::Retries=${APT_RETRIES} install -y --no-install-recommends ca-certificates git python3 tini tzdata e2fsprogs &&     rm -rf /var/lib/apt/lists/*
 RUN ln -sfv /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone
 WORKDIR /app
 COPY --from=go-build /out/agent-compose /app/agent-compose
