@@ -238,6 +238,97 @@ services:
 	}
 }
 
+func TestNormalizeValidatesServiceFileReferencesWithComposePath(t *testing.T) {
+	dir := t.TempDir()
+	mustMkdirAll(t, filepath.Join(dir, "services"))
+	mustMkdirAll(t, filepath.Join(dir, "schemas"))
+	mustWriteFile(t, filepath.Join(dir, "services", "review.js"), []byte("export async function main() {}\n"))
+	mustWriteFile(t, filepath.Join(dir, "schemas", "review.input.json"), []byte(`{"type":"object"}`))
+	mustWriteFile(t, filepath.Join(dir, "schemas", "review.output.json"), []byte(`{"type":"object","properties":{"ok":{"type":"boolean"}}}`))
+	composePath := filepath.Join(dir, "agent-compose.yml")
+
+	spec := mustParseCompose(t, `
+name: schema-files
+services:
+  risk-review:
+    entry: ./services/review.js
+    input_schema: schemas/review.input.json
+    output_schema: ./schemas/review.output.json
+`)
+
+	normalized, err := Normalize(spec, NormalizeOptions{ComposePath: composePath})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	service := normalized.Services[0]
+	if service.Entry != "services/review.js" {
+		t.Fatalf("entry = %q, want services/review.js", service.Entry)
+	}
+	if service.InputSchema != "schemas/review.input.json" || service.OutputSchema != "schemas/review.output.json" {
+		t.Fatalf("schemas = %#v, want normalized relative references", service)
+	}
+}
+
+func TestNormalizeRejectsMissingServiceEntryWithComposePath(t *testing.T) {
+	dir := t.TempDir()
+	spec := mustParseCompose(t, `
+name: missing-entry
+services:
+  risk-review:
+    entry: services/review.js
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{ComposePath: filepath.Join(dir, "agent-compose.yml")})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "services.risk-review.entry") || !strings.Contains(got, "does not exist") {
+		t.Fatalf("error = %q, want missing entry field error", got)
+	}
+}
+
+func TestNormalizeRejectsServiceEntryDirectoryWithComposePath(t *testing.T) {
+	dir := t.TempDir()
+	mustMkdirAll(t, filepath.Join(dir, "services", "review.js"))
+	spec := mustParseCompose(t, `
+name: directory-entry
+services:
+  risk-review:
+    entry: services/review.js
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{ComposePath: filepath.Join(dir, "agent-compose.yml")})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "services.risk-review.entry") || !strings.Contains(got, "regular file") {
+		t.Fatalf("error = %q, want directory entry field error", got)
+	}
+}
+
+func TestNormalizeRejectsInvalidSchemaFileJSONWithComposePath(t *testing.T) {
+	dir := t.TempDir()
+	mustMkdirAll(t, filepath.Join(dir, "services"))
+	mustMkdirAll(t, filepath.Join(dir, "schemas"))
+	mustWriteFile(t, filepath.Join(dir, "services", "review.js"), []byte("export async function main() {}\n"))
+	mustWriteFile(t, filepath.Join(dir, "schemas", "review.input.json"), []byte(`{"type":`))
+	spec := mustParseCompose(t, `
+name: invalid-schema-file
+services:
+  risk-review:
+    entry: services/review.js
+    input_schema: schemas/review.input.json
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{ComposePath: filepath.Join(dir, "agent-compose.yml")})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "services.risk-review.input_schema") || !strings.Contains(got, "valid JSON") {
+		t.Fatalf("error = %q, want invalid schema JSON field error", got)
+	}
+}
+
 func TestNormalizeRejectsInvalidServiceSchemas(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -810,4 +901,18 @@ func mustParseCompose(t *testing.T, raw string) *ProjectSpec {
 
 func quoteYAMLScalar(value string) string {
 	return strconv.Quote(value)
+}
+
+func mustMkdirAll(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatalf("create directory %s: %v", path, err)
+	}
+}
+
+func mustWriteFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write file %s: %v", path, err)
+	}
 }

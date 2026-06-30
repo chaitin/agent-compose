@@ -18,6 +18,8 @@ import (
 
 var errRunAgentStreamSend = errors.New("run agent stream send failed")
 
+const watchRunPollInterval = 100 * time.Millisecond
+
 func (s *Service) RunAgent(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest]) (*connect.Response[agentcomposev2.RunAgentResponse], error) {
 	run, _, err := s.runProjectAgent(ctx, req.Msg, nil)
 	if err != nil {
@@ -54,6 +56,115 @@ func (s *Service) RunAgentStream(ctx context.Context, req *connect.Request[agent
 		return connect.NewError(connect.CodeUnknown, sendErr)
 	}
 	return nil
+}
+
+func (s *Service) WatchRun(ctx context.Context, req *connect.Request[agentcomposev2.WatchRunRequest], stream *connect.ServerStream[agentcomposev2.RunStreamResponse]) error {
+	if s == nil || s.configDB == nil {
+		return connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
+	}
+	runID := strings.TrimSpace(req.Msg.GetRunId())
+	if runID == "" {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run id is required"))
+	}
+	projectID := strings.TrimSpace(req.Msg.GetProjectId())
+	prepareStreamingHeaders(stream.ResponseHeader())
+
+	run, err := s.watchRunLoad(ctx, runID, projectID)
+	if err != nil {
+		return err
+	}
+	if err := stream.Send(runStreamResponseFromRun(run, runStreamEventTypeForStatus(run.Status))); err != nil {
+		return connect.NewError(connect.CodeUnknown, err)
+	}
+	if projectRunStatusIsTerminal(run.Status) {
+		return nil
+	}
+	last := runStreamSnapshotFromRun(run)
+	ticker := time.NewTicker(watchRunPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			run, err := s.watchRunLoad(ctx, runID, projectID)
+			if err != nil {
+				return err
+			}
+			next := runStreamSnapshotFromRun(run)
+			if next == last {
+				continue
+			}
+			last = next
+			if err := stream.Send(runStreamResponseFromRun(run, runStreamEventTypeForStatus(run.Status))); err != nil {
+				return connect.NewError(connect.CodeUnknown, err)
+			}
+			if projectRunStatusIsTerminal(run.Status) {
+				return nil
+			}
+		}
+	}
+}
+
+func (s *Service) watchRunLoad(ctx context.Context, runID, projectID string) (ProjectRunRecord, error) {
+	run, err := s.configDB.GetProjectRun(ctx, runID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ProjectRunRecord{}, connect.NewError(connect.CodeNotFound, err)
+		}
+		return ProjectRunRecord{}, connect.NewError(connect.CodeInternal, err)
+	}
+	if projectID != "" && run.ProjectID != projectID {
+		return ProjectRunRecord{}, connect.NewError(connect.CodeNotFound, fmt.Errorf("project run %s not found", runID))
+	}
+	return run, nil
+}
+
+func runStreamEventTypeForStatus(status string) agentcomposev2.RunStreamEventType {
+	if projectRunStatusIsTerminal(status) {
+		return agentcomposev2.RunStreamEventType_RUN_STREAM_EVENT_TYPE_COMPLETED
+	}
+	return agentcomposev2.RunStreamEventType_RUN_STREAM_EVENT_TYPE_STATUS
+}
+
+func runStreamResponseFromRun(run ProjectRunRecord, eventType agentcomposev2.RunStreamEventType) *agentcomposev2.RunStreamResponse {
+	chunk := strings.TrimSpace(run.Error)
+	isStderr := chunk != ""
+	if projectRunStatusIsTerminal(run.Status) {
+		artifacts, metrics := projectRunArtifactsAndMetrics(run)
+		chunk = projectRunEnvelopeJSON(run, artifacts, metrics)
+		isStderr = false
+	}
+	return &agentcomposev2.RunStreamResponse{
+		EventType: eventType,
+		Run:       runSummaryResponse(run),
+		RunId:     run.RunID,
+		Chunk:     chunk,
+		IsStderr:  isStderr,
+		CreatedAt: formatProjectTime(run.UpdatedAt),
+	}
+}
+
+type runStreamSnapshot struct {
+	status      string
+	sessionID   string
+	exitCode    int
+	err         string
+	startedAt   int64
+	completedAt int64
+	updatedAt   int64
+}
+
+func runStreamSnapshotFromRun(run ProjectRunRecord) runStreamSnapshot {
+	return runStreamSnapshot{
+		status:      normalizeProjectRunStatus(run.Status),
+		sessionID:   run.SessionID,
+		exitCode:    run.ExitCode,
+		err:         run.Error,
+		startedAt:   nonZeroTimeUnixMilli(run.StartedAt),
+		completedAt: nonZeroTimeUnixMilli(run.CompletedAt),
+		updatedAt:   run.UpdatedAt.Unix(),
+	}
 }
 
 type projectRunStreamSink struct {
@@ -383,7 +494,7 @@ func runDetailResponse(run ProjectRunRecord) *agentcomposev2.RunDetail {
 		Summary:        runSummaryResponse(run),
 		Prompt:         run.Prompt,
 		Output:         run.Output,
-		ResultJson:     run.ResultJSON,
+		ResultJson:     projectRunEnvelopeJSON(run, artifacts, metrics),
 		InputJson:      run.InputJSON,
 		OutputJson:     run.OutputJSON,
 		RuntimeContext: runtimeContextResponse(run.RuntimeContextJSON),
@@ -395,6 +506,84 @@ func runDetailResponse(run ProjectRunRecord) *agentcomposev2.RunDetail {
 		Artifacts:      artifacts,
 		Metrics:        metrics,
 	}
+}
+
+func projectRunEnvelopeJSON(run ProjectRunRecord, artifacts []*agentcomposev2.Artifact, metrics map[string]string) string {
+	payload := map[string]any{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(run.ResultJSON)), &payload); err != nil || payload == nil {
+		payload = map[string]any{}
+	}
+	payload["run_id"] = run.RunID
+	payload["runId"] = run.RunID
+	payload["status"] = normalizeProjectRunStatus(run.Status)
+	payload["target_type"] = strings.TrimSpace(run.TargetType)
+	payload["targetType"] = strings.TrimSpace(run.TargetType)
+	payload["target_name"] = strings.TrimSpace(run.TargetName)
+	payload["targetName"] = strings.TrimSpace(run.TargetName)
+	payload["output_json"] = strings.TrimSpace(run.OutputJSON)
+	payload["outputJson"] = strings.TrimSpace(run.OutputJSON)
+	payload["error"] = strings.TrimSpace(run.Error)
+	payload["logs"] = run.Output
+	payload["logs_path"] = strings.TrimSpace(run.LogsPath)
+	payload["logsPath"] = strings.TrimSpace(run.LogsPath)
+	payload["artifacts"] = projectRunEnvelopeArtifacts(payload["artifacts"], artifacts)
+	payload["metrics"] = cloneProjectRunStringMap(metrics)
+	payload["started_at"] = formatProjectTime(run.StartedAt)
+	payload["startedAt"] = formatProjectTime(run.StartedAt)
+	payload["completed_at"] = formatProjectTime(run.CompletedAt)
+	payload["completedAt"] = formatProjectTime(run.CompletedAt)
+	payload["result_json"] = firstNonEmpty(strings.TrimSpace(run.ResultJSON), "{}")
+	payload["resultJson"] = firstNonEmpty(strings.TrimSpace(run.ResultJSON), "{}")
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return firstNonEmpty(strings.TrimSpace(run.ResultJSON), "{}")
+	}
+	return string(raw)
+}
+
+func projectRunEnvelopeArtifacts(existing any, artifacts []*agentcomposev2.Artifact) any {
+	if len(artifacts) == 0 {
+		if existing != nil {
+			return existing
+		}
+		return []map[string]any{}
+	}
+	items := make([]map[string]any, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if artifact == nil {
+			continue
+		}
+		items = append(items, map[string]any{
+			"artifact_id":  artifact.GetArtifactId(),
+			"artifactId":   artifact.GetArtifactId(),
+			"run_id":       artifact.GetRunId(),
+			"runId":        artifact.GetRunId(),
+			"project_id":   artifact.GetProjectId(),
+			"projectId":    artifact.GetProjectId(),
+			"name":         artifact.GetName(),
+			"path":         artifact.GetPath(),
+			"content_type": artifact.GetContentType(),
+			"contentType":  artifact.GetContentType(),
+			"size_bytes":   artifact.GetSizeBytes(),
+			"sizeBytes":    artifact.GetSizeBytes(),
+			"digest":       artifact.GetDigest(),
+			"created_at":   artifact.GetCreatedAt(),
+			"createdAt":    artifact.GetCreatedAt(),
+			"metadata":     cloneProjectRunStringMap(artifact.GetMetadata()),
+		})
+	}
+	return items
+}
+
+func cloneProjectRunStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return map[string]string{}
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func runtimeContextResponse(raw string) *agentcomposev2.RuntimeContext {

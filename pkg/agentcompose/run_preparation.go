@@ -64,7 +64,7 @@ func (s *Service) prepareProjectRun(ctx context.Context, run ProjectRunRecord, r
 	if agentSpec != nil {
 		agentWorkspace = composeWorkspaceSpecFromV2(agentSpec.GetWorkspace())
 	}
-	workspace, err := s.prepareProjectRunWorkspace(ctx, run, project, composeWorkspaceSpecFromV2(spec.GetWorkspace()), agentWorkspace)
+	workspace, err := s.prepareProjectRunWorkspace(ctx, run, project, revision, composeWorkspaceSpecFromV2(spec.GetWorkspace()), agentWorkspace)
 	if err != nil {
 		return ProjectRunPreparation{}, err
 	}
@@ -132,7 +132,7 @@ func mergeRunEnvItems(groups ...[]SessionEnvVar) []SessionEnvVar {
 	return merged
 }
 
-func (s *Service) prepareProjectRunWorkspace(ctx context.Context, run ProjectRunRecord, project ProjectRecord, projectWorkspace, agentWorkspace *compose.WorkspaceSpec) (*WorkspaceConfig, error) {
+func (s *Service) prepareProjectRunWorkspace(ctx context.Context, run ProjectRunRecord, project ProjectRecord, revision ProjectRevisionRecord, projectWorkspace, agentWorkspace *compose.WorkspaceSpec) (*WorkspaceConfig, error) {
 	_ = ctx
 	workspace := projectWorkspace
 	if agentWorkspace != nil {
@@ -144,7 +144,7 @@ func (s *Service) prepareProjectRunWorkspace(ctx context.Context, run ProjectRun
 	provider := strings.ToLower(strings.TrimSpace(workspace.Provider))
 	switch provider {
 	case "local":
-		config, err := s.materializeLocalProjectRunWorkspace(run, project, workspace)
+		config, err := s.materializeLocalProjectRunWorkspace(run, project, revision, workspace)
 		if err != nil {
 			return nil, err
 		}
@@ -163,11 +163,11 @@ func (s *Service) prepareProjectRunWorkspace(ctx context.Context, run ProjectRun
 	}
 }
 
-func (s *Service) materializeLocalProjectRunWorkspace(run ProjectRunRecord, project ProjectRecord, workspace *compose.WorkspaceSpec) (WorkspaceConfig, error) {
+func (s *Service) materializeLocalProjectRunWorkspace(run ProjectRunRecord, project ProjectRecord, revision ProjectRevisionRecord, workspace *compose.WorkspaceSpec) (WorkspaceConfig, error) {
 	if s == nil || s.config == nil {
 		return WorkspaceConfig{}, fmt.Errorf("config is required")
 	}
-	sourceDir, err := resolveLocalProjectWorkspacePath(project, workspace.Path)
+	sourceDir, err := s.resolveLocalProjectWorkspacePath(project, revision, workspace.Path)
 	if err != nil {
 		return WorkspaceConfig{}, err
 	}
@@ -202,24 +202,29 @@ func (s *Service) materializeLocalProjectRunWorkspace(run ProjectRunRecord, proj
 	return config, nil
 }
 
-func resolveLocalProjectWorkspacePath(project ProjectRecord, rawPath string) (string, error) {
+func (s *Service) resolveLocalProjectWorkspacePath(project ProjectRecord, revision ProjectRevisionRecord, rawPath string) (string, error) {
 	cleanPath, err := cleanLocalWorkspacePath(rawPath)
 	if err != nil {
 		return "", err
 	}
-	sourcePath := strings.TrimSpace(project.SourcePath)
-	if sourcePath == "" {
-		return "", fmt.Errorf("local workspace requires project source path")
-	}
-	sourceAbs, err := filepath.Abs(sourcePath)
-	if err != nil {
-		return "", fmt.Errorf("resolve project source path %q: %w", sourcePath, err)
-	}
-	sourceDir := sourceAbs
-	if info, err := os.Stat(sourceAbs); err == nil && !info.IsDir() {
-		sourceDir = filepath.Dir(sourceAbs)
-	} else if err != nil {
-		sourceDir = filepath.Dir(sourceAbs)
+	sourceDir := ""
+	if strings.TrimSpace(revision.BundleHash) != "" {
+		sourceDir = s.projectRevisionBundleDir(project.ID, revision.Revision)
+	} else {
+		sourcePath := strings.TrimSpace(project.SourcePath)
+		if sourcePath == "" {
+			return "", fmt.Errorf("local workspace requires project source path")
+		}
+		sourceAbs, err := filepath.Abs(sourcePath)
+		if err != nil {
+			return "", fmt.Errorf("resolve project source path %q: %w", sourcePath, err)
+		}
+		sourceDir = sourceAbs
+		if info, err := os.Stat(sourceAbs); err == nil && !info.IsDir() {
+			sourceDir = filepath.Dir(sourceAbs)
+		} else if err != nil {
+			sourceDir = filepath.Dir(sourceAbs)
+		}
 	}
 	target := sourceDir
 	if cleanPath != "." {

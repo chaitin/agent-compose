@@ -17,6 +17,15 @@ func TestIntegrationServiceGraphRegistersV2Routes(t *testing.T) {
 	testSupportSetupRegistersServiceGraph(t)
 }
 
+func TestIntegrationObservabilityAndServiceRunRobustness(t *testing.T) {
+	TestEventServicePublishEventRequiresExistingProject(t)
+	TestEventServiceWatchEventsSendsExistingEventsAndStopsAfterCancel(t)
+	TestRunServiceWatchRunSendsCurrentStatus(t)
+	TestRunServiceWatchRunSendsTerminalStatusChange(t)
+	TestRunServiceInvokeServiceStreamOutputSchemaFailureSendsFailedAndCompleted(t)
+	TestRunServiceInvokeServiceIdempotencyRejectsDifferentInput(t)
+}
+
 func TestIntegrationWebhookWorkspaceAndLoaderWorkflow(t *testing.T) {
 	testConfigStoreMigrationAndTimeParsingWorkflows(t)
 	testServiceConfigAndLoaderAPIs(t)
@@ -80,6 +89,15 @@ func TestE2ELoaderEngineWorkflow(t *testing.T) {
 
 func TestE2EServiceGraphRegistersV2Routes(t *testing.T) {
 	testSupportSetupRegistersServiceGraph(t)
+}
+
+func TestE2EObservabilityAndServiceRunRobustness(t *testing.T) {
+	TestEventServicePublishEventRequiresExistingProject(t)
+	TestEventServiceWatchEventsSendsExistingEventsAndStopsAfterCancel(t)
+	TestRunServiceWatchRunSendsCurrentStatus(t)
+	TestRunServiceWatchRunSendsTerminalStatusChange(t)
+	TestRunServiceInvokeServiceStreamOutputSchemaFailureSendsFailedAndCompleted(t)
+	TestRunServiceInvokeServiceIdempotencyRejectsDifferentInput(t)
 }
 
 func TestE2EWebhookWorkspaceAndLoaderWorkflow(t *testing.T) {

@@ -7,6 +7,7 @@ Chinese documentation is available at [zh-CN/README.md](zh-CN/README.md).
 ## User Guides
 
 - [Project overview and quick start](../README.md)
+- [Examples](../examples/README.md)
 - [Configuration example](../.env.example)
 - [Loader script API](../loader-script/README.md)
 - [Security policy](../SECURITY.md)
@@ -14,10 +15,13 @@ Chinese documentation is available at [zh-CN/README.md](zh-CN/README.md).
 
 ## Design Notes
 
-The design notes below describe current implementation details. Chinese versions
-are available under [zh-CN/design/](zh-CN/design/).
+The design notes below include current implementation contracts and active
+engineering plans. Concept documents define boundaries, plan documents define
+workstreams, and runtime/API contract documents describe current behavior.
+Chinese versions are available under [zh-CN/design/](zh-CN/design/).
 
 - [Architecture notes](design/agent-compose_design.md)
+- [Concept positioning and externalization boundary](design/agent-compose_concept_positioning_and_externalization.md)
 - [Engine foundation plan](design/agent-compose_engine_foundation_plan.md)
 - [Agent system prompt (Phase 1)](design/agent_system_prompt_design.md)
 - [Runtime LLM Facade](zh-CN/design/agent-compose-runtime-llm-facade.md)

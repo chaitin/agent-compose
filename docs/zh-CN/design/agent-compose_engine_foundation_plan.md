@@ -9,9 +9,20 @@ agent-compose 建设成开源、业务无关、可被上层平台稳定集成的
 本文不是从当前实现出发的迁移计划，而是最终目标态下的任务分解。它用于给维护者和
 多个并行开发 agent 提供清晰的模块边界、依赖关系、交付物和验收标准。
 
+概念来源：
+[agent-compose_concept_positioning_and_externalization.md](agent-compose_concept_positioning_and_externalization.md)。
+该文档定义产品和架构边界；本文档把这些边界压缩成工程 workstream。二者不是互相
+替代关系，本文也不是当前行为的唯一事实来源。
+
+当前行为以代码、生成后的 proto、manifest schema、CLI help 以及 runtime/API 模块合同
+文档为准。本文中涉及市场化包装、上层 UI 工作流、远端 bundle 分发或产品专属权限
+策略的内容，除非能通过业务无关的 manifest、runtime context、service、artifact、
+event 或 capability contract 表达，否则不属于 agent-compose 引擎自身职责。
+
 相关现有文档：
 
 - [总体设计](agent-compose_design.md)
+- [概念定位与对外使用边界](agent-compose_concept_positioning_and_externalization.md)
 - [Runtime JavaScript contract](agent-compose-runtime-js_contract.md)
 - [Runtime 环境变量](runtime_environment_variables_design.md)
 - [Runtime mount manifest](runtime_mount_manifest_design.md)

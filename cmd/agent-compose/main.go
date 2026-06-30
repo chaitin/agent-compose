@@ -459,6 +459,19 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		},
 	}
 
+	listOptions := composeProjectListOptions{}
+	lsCmd := &cobra.Command{
+		Use:     "ls",
+		Aliases: []string{"list"},
+		Short:   "List applied daemon projects",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeLSCommand(cmd, options, listOptions)
+		},
+	}
+	lsCmd.Flags().StringVar(&listOptions.Query, "query", "", "Filter projects by name, id, or source path")
+	lsCmd.Flags().BoolVarP(&listOptions.Verbose, "verbose", "v", false, "Show hashes and other detailed columns")
+
 	configOptions := composeConfigOptions{}
 	configCmd := &cobra.Command{
 		Use:   "config",
@@ -469,6 +482,47 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		},
 	}
 	configCmd.Flags().BoolVar(&configOptions.Quiet, "quiet", false, "Only validate config")
+
+	validateOptions := composeValidateOptions{}
+	validateCmd := &cobra.Command{
+		Use:   "validate",
+		Short: "Validate a local compose manifest",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeValidateCommand(cmd, options, validateOptions)
+		},
+	}
+	validateCmd.Flags().BoolVar(&validateOptions.DryRun, "dry-run", false, "Print validation summary without contacting the daemon")
+	validateCmd.Flags().BoolVar(&validateOptions.Schema, "schema", false, "Print the embedded manifest JSON Schema")
+
+	bundleOptions := composeBundleOptions{}
+	bundleCmd := &cobra.Command{
+		Use:   "bundle",
+		Short: "Validate and inspect a local compose bundle",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+	}
+	bundleValidateCmd := &cobra.Command{
+		Use:   "validate [dir]",
+		Short: "Validate a local compose bundle directory",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeBundleCommand(cmd, options, bundleOptions, args, false)
+		},
+	}
+	bundleValidateCmd.Flags().BoolVar(&bundleOptions.DryRun, "dry-run", false, "Print validation summary without contacting the daemon")
+	bundleInspectOptions := composeBundleOptions{DryRun: true}
+	bundleInspectCmd := &cobra.Command{
+		Use:   "inspect [dir]",
+		Short: "Inspect a local compose bundle directory",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeBundleCommand(cmd, options, bundleInspectOptions, args, true)
+		},
+	}
+	bundleCmd.AddCommand(bundleValidateCmd, bundleInspectCmd)
 
 	upCmd := &cobra.Command{
 		Use:   "up",
@@ -643,7 +697,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		},
 	}
 
-	root.AddCommand(daemonCmd, versionCmd, statusCmd, configCmd, upCmd, downCmd, runCmd, invokeCmd, logsCmd, psCmd, execCmd, imagesCmd, imageCmd, pullCmd, rmiCmd, inspectCmd)
+	root.AddCommand(daemonCmd, versionCmd, statusCmd, lsCmd, configCmd, validateCmd, bundleCmd, upCmd, downCmd, runCmd, invokeCmd, logsCmd, psCmd, execCmd, imagesCmd, imageCmd, pullCmd, rmiCmd, inspectCmd)
 	return root
 }
 
@@ -656,6 +710,20 @@ type cliOptions struct {
 
 type composeConfigOptions struct {
 	Quiet bool
+}
+
+type composeValidateOptions struct {
+	DryRun bool
+	Schema bool
+}
+
+type composeBundleOptions struct {
+	DryRun bool
+}
+
+type composeProjectListOptions struct {
+	Query   string
+	Verbose bool
 }
 
 type composeRunOptions struct {
@@ -734,27 +802,131 @@ func runComposeConfigCommand(cmd *cobra.Command, cli cliOptions, options compose
 	return writeCommandOutput(cmd.OutOrStdout(), data)
 }
 
+func runComposeValidateCommand(cmd *cobra.Command, cli cliOptions, options composeValidateOptions) error {
+	if options.Schema {
+		return writeCommandOutput(cmd.OutOrStdout(), append(compose.ManifestSchemaJSON(), '\n'))
+	}
+	composePath, normalized, err := loadNormalizedCompose(cli)
+	if err != nil {
+		return err
+	}
+	inspect, err := compose.NewBundleInspect(composePath, normalized)
+	if err != nil {
+		return err
+	}
+	if cli.JSON {
+		data, err := json.MarshalIndent(inspect, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	if options.DryRun {
+		return writeBundleInspectText(cmd.OutOrStdout(), inspect)
+	}
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Valid: %s\n", composePath)
+	return err
+}
+
+func runComposeBundleCommand(cmd *cobra.Command, cli cliOptions, options composeBundleOptions, args []string, inspectOnly bool) error {
+	dir := "."
+	if len(args) > 0 {
+		dir = args[0]
+	}
+	inspect, err := compose.InspectBundle(dir)
+	if err != nil {
+		return commandExitError{Code: exitCodeUsage, Err: err}
+	}
+	if cli.JSON {
+		data, err := json.MarshalIndent(inspect, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	if options.DryRun || inspectOnly {
+		return writeBundleInspectText(cmd.OutOrStdout(), inspect)
+	}
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Valid bundle: %s\nManifest: %s\n", inspect.Dir, inspect.Manifest)
+	return err
+}
+
+func runComposeLSCommand(cmd *cobra.Command, cli cliOptions, options composeProjectListOptions) error {
+	clients, err := newCLIServiceClients(cli)
+	if err != nil {
+		return err
+	}
+	var projects []*agentcomposev2.ProjectSummary
+	var totalCount uint32
+	var offset uint32
+	for {
+		resp, err := clients.project.ListProjects(cmd.Context(), connect.NewRequest(&agentcomposev2.ListProjectsRequest{
+			Query:  strings.TrimSpace(options.Query),
+			Offset: offset,
+			Limit:  200,
+		}))
+		if err != nil {
+			return commandExitErrorForConnect(fmt.Errorf("list projects: %w", err))
+		}
+		totalCount = resp.Msg.GetTotalCount()
+		projects = append(projects, resp.Msg.GetProjects()...)
+		if !resp.Msg.GetHasMore() {
+			break
+		}
+		nextOffset := resp.Msg.GetNextOffset()
+		if nextOffset <= offset {
+			return fmt.Errorf("list projects: daemon returned non-advancing next offset %d", nextOffset)
+		}
+		offset = nextOffset
+	}
+	output := composeProjectListOutputFromSummaries(projects, totalCount)
+	if cli.JSON {
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	return writeProjectsText(cmd.OutOrStdout(), output.Projects, options.Verbose)
+}
+
 func runComposeUpCommand(cmd *cobra.Command, cli cliOptions) error {
 	composePath, normalized, err := loadNormalizedCompose(cli)
 	if err != nil {
 		return err
 	}
-	specHash, err := normalized.Hash()
+	bundleFiles, bundleHash, err := compose.CollectBundleFiles(composePath, normalized)
 	if err != nil {
-		return fmt.Errorf("%s: hash normalized compose spec: %w", composePath, err)
+		return err
+	}
+	protoBundleFiles := make([]*agentcomposev2.ProjectBundleFile, 0, len(bundleFiles))
+	for _, file := range bundleFiles {
+		protoBundleFiles = append(protoBundleFiles, &agentcomposev2.ProjectBundleFile{
+			Path:    file.Path,
+			Content: file.Content,
+			Sha256:  file.SHA256,
+		})
 	}
 	clientConfig, err := resolveCLIClientConfig(cli.Host)
 	if err != nil {
 		return err
 	}
 	client := agentcomposev2connect.NewProjectServiceClient(newDaemonHTTPClient(clientConfig), clientConfig.BaseURL)
+	protoSpec := agentcompose.ProjectSpecResponse(normalized)
+	source := &agentcomposev2.ProjectSource{
+		ComposePath: composePath,
+		ProjectDir:  filepath.Dir(composePath),
+	}
+	specHash, err := agentcompose.ProjectSpecHashForApplyRequest(protoSpec, source)
+	if err != nil {
+		return fmt.Errorf("%s: hash normalized compose spec: %w", composePath, err)
+	}
 	resp, err := client.ApplyProject(cmd.Context(), connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
-		Spec: agentcompose.ProjectSpecResponse(normalized),
-		Source: &agentcomposev2.ProjectSource{
-			ComposePath: composePath,
-			ProjectDir:  filepath.Dir(composePath),
-		},
+		Spec:             protoSpec,
+		Source:           source,
 		ExpectedSpecHash: specHash,
+		BundleFiles:      protoBundleFiles,
+		BundleHash:       bundleHash,
 	}))
 	if err != nil {
 		return commandExitErrorForConnect(fmt.Errorf("apply project %s: %w", normalized.Name, err))
@@ -1338,6 +1510,24 @@ type composeDownOutput struct {
 	Changes            []composeUpChangeOutput `json:"changes"`
 }
 
+type composeProjectListOutput struct {
+	Projects   []composeProjectListItemOutput `json:"projects"`
+	TotalCount uint32                         `json:"total_count"`
+}
+
+type composeProjectListItemOutput struct {
+	Name            string `json:"name"`
+	ID              string `json:"id"`
+	SourcePath      string `json:"source_path"`
+	ProjectDir      string `json:"project_dir"`
+	CurrentRevision uint64 `json:"current_revision"`
+	SpecHash        string `json:"spec_hash"`
+	AgentCount      uint32 `json:"agent_count"`
+	SchedulerCount  uint32 `json:"scheduler_count"`
+	ServiceCount    uint32 `json:"service_count"`
+	BundleHash      string `json:"bundle_hash"`
+}
+
 type composeUpProjectOutput struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
@@ -1362,30 +1552,57 @@ type composeUpChangeOutput struct {
 }
 
 type composeRunOutput struct {
-	RunID        string `json:"run_id"`
-	ProjectID    string `json:"project_id"`
-	ProjectName  string `json:"project_name"`
-	TargetType   string `json:"target_type,omitempty"`
-	TargetName   string `json:"target_name,omitempty"`
-	AgentName    string `json:"agent_name"`
-	Source       string `json:"source"`
-	Status       string `json:"status"`
-	SessionID    string `json:"session_id"`
-	ExitCode     int32  `json:"exit_code"`
-	Error        string `json:"error,omitempty"`
-	StartedAt    string `json:"started_at,omitempty"`
-	CompletedAt  string `json:"completed_at,omitempty"`
-	DurationMs   int64  `json:"duration_ms,omitempty"`
-	Prompt       string `json:"prompt,omitempty"`
-	Output       string `json:"output,omitempty"`
-	InputJSON    string `json:"input_json,omitempty"`
-	OutputJSON   string `json:"output_json,omitempty"`
-	ResultJSON   string `json:"result_json,omitempty"`
-	LogsPath     string `json:"logs_path,omitempty"`
-	ArtifactsDir string `json:"artifacts_dir,omitempty"`
-	CleanupError string `json:"cleanup_error,omitempty"`
-	Driver       string `json:"driver,omitempty"`
-	ImageRef     string `json:"image_ref,omitempty"`
+	RunID        string                     `json:"run_id"`
+	ProjectID    string                     `json:"project_id"`
+	ProjectName  string                     `json:"project_name"`
+	TargetType   string                     `json:"target_type,omitempty"`
+	TargetName   string                     `json:"target_name,omitempty"`
+	AgentName    string                     `json:"agent_name"`
+	Source       string                     `json:"source"`
+	Status       string                     `json:"status"`
+	SessionID    string                     `json:"session_id"`
+	ExitCode     int32                      `json:"exit_code"`
+	Error        string                     `json:"error,omitempty"`
+	StartedAt    string                     `json:"started_at,omitempty"`
+	CompletedAt  string                     `json:"completed_at,omitempty"`
+	DurationMs   int64                      `json:"duration_ms,omitempty"`
+	Prompt       string                     `json:"prompt,omitempty"`
+	Output       string                     `json:"output,omitempty"`
+	Logs         string                     `json:"logs,omitempty"`
+	InputJSON    string                     `json:"input_json,omitempty"`
+	OutputJSON   string                     `json:"output_json,omitempty"`
+	ResultJSON   string                     `json:"result_json,omitempty"`
+	LogsPath     string                     `json:"logs_path,omitempty"`
+	ArtifactsDir string                     `json:"artifacts_dir,omitempty"`
+	Artifacts    []composeRunArtifactOutput `json:"artifacts,omitempty"`
+	Events       []composeRunEventOutput    `json:"events,omitempty"`
+	Metrics      map[string]string          `json:"metrics,omitempty"`
+	CleanupError string                     `json:"cleanup_error,omitempty"`
+	Driver       string                     `json:"driver,omitempty"`
+	ImageRef     string                     `json:"image_ref,omitempty"`
+}
+
+type composeRunArtifactOutput struct {
+	ArtifactID  string            `json:"artifact_id"`
+	RunID       string            `json:"run_id"`
+	ProjectID   string            `json:"project_id"`
+	Name        string            `json:"name"`
+	Path        string            `json:"path"`
+	ContentType string            `json:"content_type,omitempty"`
+	SizeBytes   uint64            `json:"size_bytes,omitempty"`
+	Digest      string            `json:"digest,omitempty"`
+	CreatedAt   string            `json:"created_at,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+}
+
+type composeRunEventOutput struct {
+	EventID     string            `json:"event_id"`
+	ProjectID   string            `json:"project_id"`
+	RunID       string            `json:"run_id,omitempty"`
+	Topic       string            `json:"topic"`
+	PayloadJSON string            `json:"payload_json,omitempty"`
+	CreatedAt   string            `json:"created_at,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 type composeLogsOutput struct {
@@ -1575,6 +1792,32 @@ func composeUpOutputFromResponse(resp *agentcomposev2.ApplyProjectResponse) comp
 	}
 }
 
+func composeProjectListOutputFromSummaries(projects []*agentcomposev2.ProjectSummary, totalCount uint32) composeProjectListOutput {
+	output := composeProjectListOutput{
+		Projects:   make([]composeProjectListItemOutput, 0, len(projects)),
+		TotalCount: totalCount,
+	}
+	for _, project := range projects {
+		output.Projects = append(output.Projects, composeProjectListItemOutputFromSummary(project))
+	}
+	return output
+}
+
+func composeProjectListItemOutputFromSummary(summary *agentcomposev2.ProjectSummary) composeProjectListItemOutput {
+	return composeProjectListItemOutput{
+		Name:            summary.GetName(),
+		ID:              summary.GetProjectId(),
+		SourcePath:      summary.GetSourcePath(),
+		ProjectDir:      summary.GetProjectDir(),
+		CurrentRevision: summary.GetCurrentRevision(),
+		SpecHash:        summary.GetSpecHash(),
+		AgentCount:      summary.GetAgentCount(),
+		SchedulerCount:  summary.GetSchedulerCount(),
+		ServiceCount:    summary.GetServiceCount(),
+		BundleHash:      summary.GetBundleHash(),
+	}
+}
+
 func composeDownOutputFromResponse(resp *agentcomposev2.RemoveProjectResponse) composeDownOutput {
 	changes := composeChangeOutputs(resp.GetChanges())
 	failedSessionStops := countProjectDownFailedSessionStops(resp.GetChanges())
@@ -1669,6 +1912,21 @@ func writeComposeDownText(out io.Writer, output composeDownOutput) error {
 		}
 	}
 	return tw.Flush()
+}
+
+func writeBundleInspectText(out io.Writer, inspect *compose.BundleInspect) error {
+	if inspect == nil {
+		return nil
+	}
+	_, err := fmt.Fprintf(out, "Valid: %s\nManifest: %s\nProject: %s\nAgents: %d\nServices: %d\nTriggers: %d\n",
+		inspect.Dir,
+		inspect.Manifest,
+		inspect.Project,
+		inspect.AgentCount,
+		inspect.ServiceCount,
+		inspect.TriggerCount,
+	)
+	return err
 }
 
 func countProjectDownFailedSessionStops(changes []*agentcomposev2.ProjectChange) int {
@@ -1818,15 +2076,21 @@ func firstRunningSessionOutput(ctx context.Context, clients cliServiceClients, p
 
 func writePSText(out io.Writer, output composePSOutput) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "AGENT\tSCHEDULER\tLATEST RUN\tRUN STATUS\tSESSION\tDRIVER\tIMAGE"); err != nil {
+	if _, err := fmt.Fprintln(tw, "AGENT\tSCHEDULER\tLATEST RUN\tRUN STATUS\tLATEST STARTED\tDURATION\tSESSION\tDRIVER\tIMAGE"); err != nil {
 		return err
 	}
 	for _, agent := range output.Agents {
 		latestRunID := "-"
 		latestStatus := "-"
+		latestStarted := "-"
+		latestDuration := "-"
 		if agent.LatestRun != nil {
 			latestRunID = agent.LatestRun.RunID
 			latestStatus = agent.LatestRun.Status
+			latestStarted = firstNonEmptyString(agent.LatestRun.StartedAt, "-")
+			if agent.LatestRun.DurationMs > 0 {
+				latestDuration = formatCLIDuration(time.Duration(agent.LatestRun.DurationMs) * time.Millisecond)
+			}
 		}
 		sessionID := "-"
 		if agent.RunningSession != nil {
@@ -1836,11 +2100,13 @@ func writePSText(out io.Writer, output composePSOutput) error {
 		if agent.SchedulerEnabled {
 			scheduler = "enabled"
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			agent.AgentName,
 			scheduler,
 			latestRunID,
 			latestStatus,
+			latestStarted,
+			latestDuration,
 			sessionID,
 			firstNonEmptyString(agent.Driver, "-"),
 			firstNonEmptyString(agent.Image, "-"),
@@ -1849,6 +2115,60 @@ func writePSText(out io.Writer, output composePSOutput) error {
 		}
 	}
 	return tw.Flush()
+}
+
+func writeProjectsText(out io.Writer, projects []composeProjectListItemOutput, verbose bool) error {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if verbose {
+		if _, err := fmt.Fprintln(tw, "NAME\tID\tSOURCE_PATH\tPROJECT_DIR\tCURRENT_REVISION\tSPEC_HASH\tAGENTS\tSCHEDULERS\tSERVICES\tBUNDLE_HASH"); err != nil {
+			return err
+		}
+	} else {
+		if _, err := fmt.Fprintln(tw, "NAME\tID\tCONFIG_FILE\tREVISION\tAGENTS\tSCHEDULERS\tSERVICES"); err != nil {
+			return err
+		}
+	}
+	for _, project := range projects {
+		if verbose {
+			if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%d\t%d\t%d\t%s\n",
+				firstNonEmptyString(project.Name, "-"),
+				firstNonEmptyString(project.ID, "-"),
+				firstNonEmptyString(project.SourcePath, "-"),
+				firstNonEmptyString(project.ProjectDir, "-"),
+				project.CurrentRevision,
+				firstNonEmptyString(project.SpecHash, "-"),
+				project.AgentCount,
+				project.SchedulerCount,
+				project.ServiceCount,
+				firstNonEmptyString(project.BundleHash, "-"),
+			); err != nil {
+				return err
+			}
+		} else {
+			if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%d\n",
+				firstNonEmptyString(project.Name, "-"),
+				firstNonEmptyString(project.ID, "-"),
+				firstNonEmptyString(project.SourcePath, "-"),
+				project.CurrentRevision,
+				project.AgentCount,
+				project.SchedulerCount,
+				project.ServiceCount,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	return tw.Flush()
+}
+
+func formatCLIDuration(value time.Duration) string {
+	if value <= 0 {
+		return "-"
+	}
+	if value < time.Second {
+		return value.Truncate(time.Millisecond).String()
+	}
+	return value.Truncate(time.Second).String()
 }
 
 func schedulersByAgent(items []*agentcomposev2.ProjectScheduler) map[string]*agentcomposev2.ProjectScheduler {
@@ -1956,15 +2276,66 @@ func composeRunOutputFromDetail(run *agentcomposev2.RunDetail) composeRunOutput 
 		DurationMs:   summary.GetDurationMs(),
 		Prompt:       run.GetPrompt(),
 		Output:       run.GetOutput(),
+		Logs:         run.GetOutput(),
 		InputJSON:    run.GetInputJson(),
 		OutputJSON:   run.GetOutputJson(),
 		ResultJSON:   run.GetResultJson(),
 		LogsPath:     run.GetLogsPath(),
 		ArtifactsDir: run.GetArtifactsDir(),
+		Artifacts:    composeRunArtifactsOutputFromProto(run.GetArtifacts()),
+		Events:       composeRunEventsOutputFromProto(run.GetEvents()),
+		Metrics:      cloneStringMapForCLI(run.GetMetrics()),
 		CleanupError: run.GetCleanupError(),
 		Driver:       run.GetDriver(),
 		ImageRef:     run.GetImageRef(),
 	}
+}
+
+func composeRunArtifactsOutputFromProto(items []*agentcomposev2.Artifact) []composeRunArtifactOutput {
+	if len(items) == 0 {
+		return nil
+	}
+	output := make([]composeRunArtifactOutput, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		output = append(output, composeRunArtifactOutput{
+			ArtifactID:  item.GetArtifactId(),
+			RunID:       item.GetRunId(),
+			ProjectID:   item.GetProjectId(),
+			Name:        item.GetName(),
+			Path:        item.GetPath(),
+			ContentType: item.GetContentType(),
+			SizeBytes:   item.GetSizeBytes(),
+			Digest:      item.GetDigest(),
+			CreatedAt:   item.GetCreatedAt(),
+			Metadata:    cloneStringMapForCLI(item.GetMetadata()),
+		})
+	}
+	return output
+}
+
+func composeRunEventsOutputFromProto(items []*agentcomposev2.EventRecord) []composeRunEventOutput {
+	if len(items) == 0 {
+		return nil
+	}
+	output := make([]composeRunEventOutput, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		output = append(output, composeRunEventOutput{
+			EventID:     item.GetEventId(),
+			ProjectID:   item.GetProjectId(),
+			RunID:       item.GetRunId(),
+			Topic:       item.GetTopic(),
+			PayloadJSON: item.GetPayloadJson(),
+			CreatedAt:   item.GetCreatedAt(),
+			Metadata:    cloneStringMapForCLI(item.GetMetadata()),
+		})
+	}
+	return output
 }
 
 func composeExecOutputFromResult(result *agentcomposev2.ExecResult) composeExecOutput {

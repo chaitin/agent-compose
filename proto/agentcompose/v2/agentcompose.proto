@@ -168,6 +168,8 @@ message ApplyProjectRequest {
   ProjectSource source = 2;
   string expected_spec_hash = 3;
   bool dry_run = 4;
+  repeated ProjectBundleFile bundle_files = 5;
+  string bundle_hash = 6;
 }
 
 message ApplyProjectResponse {
@@ -281,6 +283,7 @@ message Project {
   ProjectSpec spec = 2;
   repeated ProjectAgent agents = 3;
   repeated ProjectScheduler schedulers = 4;
+  repeated ProjectServiceResource services = 5;
 }
 
 message ProjectSummary {
@@ -296,6 +299,9 @@ message ProjectSummary {
   string created_at = 10;
   string updated_at = 11;
   string removed_at = 12;
+  uint32 service_count = 13;
+  string bundle_hash = 14;
+  string project_dir = 15;
 }
 
 message ProjectRevision {
@@ -304,6 +310,7 @@ message ProjectRevision {
   string spec_hash = 3;
   ProjectSpec spec = 4;
   string created_at = 5;
+  string bundle_hash = 6;
 }
 
 message ProjectAgent {
@@ -324,6 +331,27 @@ message ProjectScheduler {
   string managed_loader_id = 4;
   bool enabled = 5;
   uint32 trigger_count = 6;
+  string target_type = 7;
+  string target_name = 8;
+}
+
+message ProjectServiceResource {
+  string project_id = 1;
+  string service_name = 2;
+  uint64 revision = 3;
+  string runtime = 4;
+  string entry = 5;
+  string input_schema_ref = 6;
+  string output_schema_ref = 7;
+  string error_schema_ref = 8;
+  uint32 timeout_ms = 9;
+  string spec_json = 10;
+}
+
+message ProjectBundleFile {
+  string path = 1;
+  bytes content = 2;
+  string sha256 = 3;
 }
 
 message ProjectValidationIssue {

@@ -53,15 +53,10 @@ filter_go_profile() {
     cp "$input" "$output"
     return
   fi
-  awk -v exclude="$go_exclude_regex" '
-    /^mode:/ {
-      print
-      next
-    }
-    $0 !~ exclude {
-      print
-    }
-  ' "$input" > "$output"
+  {
+    head -n 1 "$input"
+    tail -n +2 "$input" | grep -Ev "$go_exclude_regex" || true
+  } > "$output"
 }
 
 run_combined_js_coverage() {

@@ -2,15 +2,21 @@ package agentcompose
 
 import (
 	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 
 	"agent-compose/pkg/compose"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
+	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
 
 func TestArtifactServiceListsGetsAndReadsRunArtifacts(t *testing.T) {
@@ -212,6 +218,30 @@ func TestArtifactServiceRejectsUnsafeWritePath(t *testing.T) {
 	if err == nil || connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("WriteArtifact symlink escape error = %v, want invalid argument", err)
 	}
+
+	outsideFile := filepath.Join(outside, "outside.txt")
+	if err := os.WriteFile(outsideFile, []byte("secret"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(root, "target-link.txt")); err != nil {
+		t.Skipf("file symlink not supported: %v", err)
+	}
+	_, err = service.WriteArtifact(ctx, connect.NewRequest(&agentcomposev2.WriteArtifactRequest{
+		RunId:   run.RunID,
+		Name:    "target-link",
+		Path:    "target-link.txt",
+		Content: []byte("replacement"),
+	}))
+	if err == nil || connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("WriteArtifact target symlink error = %v, want invalid argument", err)
+	}
+	content, err := os.ReadFile(outsideFile)
+	if err != nil {
+		t.Fatalf("read outside file: %v", err)
+	}
+	if string(content) != "secret" {
+		t.Fatalf("outside file content = %q, want unchanged", string(content))
+	}
 }
 
 func TestArtifactServiceRejectsUnsafeReadPath(t *testing.T) {
@@ -317,6 +347,91 @@ func TestEventServicePublishesListsAndRunDetailIncludesEvents(t *testing.T) {
 	}
 	if detail.Msg.GetRun().GetMetrics()["durationMs"] != "9" || len(detail.Msg.GetRun().GetEvents()) != 1 {
 		t.Fatalf("GetRun detail = %#v", detail.Msg.GetRun())
+	}
+}
+
+func TestEventServicePublishEventRequiresExistingProject(t *testing.T) {
+	store := newTestConfigStore(t)
+	service := newProjectServiceTestService(t, store)
+	ctx := context.Background()
+
+	_, err := service.PublishEvent(ctx, connect.NewRequest(&agentcomposev2.PublishEventRequest{Topic: "runtime.api.requested", PayloadJson: `{}`}))
+	if err == nil || connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("PublishEvent missing project error = %v, want invalid argument", err)
+	}
+
+	_, err = service.PublishEvent(ctx, connect.NewRequest(&agentcomposev2.PublishEventRequest{ProjectId: "project-missing", Topic: "runtime.api.requested", PayloadJson: `{}`}))
+	if err == nil || connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("PublishEvent unknown project error = %v, want not found", err)
+	}
+}
+
+func TestEventServiceWatchEventsSendsExistingEventsAndStopsAfterCancel(t *testing.T) {
+	store := newTestConfigStore(t)
+	service := newProjectServiceTestService(t, store)
+	ctx := context.Background()
+	run := createObservabilityRun(t, ctx, store, ProjectRunRecord{
+		RunID:       "run-watch-events",
+		ProjectID:   "project-watch-events",
+		ProjectName: "demo",
+		TargetType:  "service",
+		TargetName:  "echo",
+		Status:      ProjectRunStatusSucceeded,
+		ResultJSON:  `{}`,
+	})
+	created, err := store.CreateEvent(ctx, TopicEventRecord{
+		Topic:          "runtime.watch.completed",
+		Source:         TopicEventSourceLoader,
+		CorrelationID:  "corr-watch-events",
+		PayloadJSON:    `{"watched":true}`,
+		DispatchStatus: TopicEventDispatchPending,
+		PublisherType:  TopicEventSourceLoader,
+		PublisherID:    run.ProjectID,
+		PublisherRunID: run.RunID,
+	})
+	if err != nil {
+		t.Fatalf("CreateEvent returned error: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	path, handler := agentcomposev2connect.NewEventServiceHandler(service)
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	client := agentcomposev2connect.NewEventServiceClient(server.Client(), server.URL)
+	watchCtx, cancel := context.WithCancel(context.Background())
+	stream, err := client.WatchEvents(watchCtx, connect.NewRequest(&agentcomposev2.WatchEventsRequest{
+		ProjectId: run.ProjectID,
+		Topic:     created.Topic,
+	}))
+	if err != nil {
+		t.Fatalf("WatchEvents returned error: %v", err)
+	}
+	if !stream.Receive() {
+		t.Fatalf("WatchEvents first receive error = %v", stream.Err())
+	}
+	event := stream.Msg()
+	if event.GetEventId() != created.ID || event.GetProjectId() != run.ProjectID || event.GetTopic() != created.Topic {
+		t.Fatalf("WatchEvents event = %#v", event)
+	}
+
+	cancel()
+	done := make(chan error, 1)
+	go func() {
+		for stream.Receive() {
+		}
+		done <- stream.Err()
+	}()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) && connect.CodeOf(err) != connect.CodeCanceled {
+			t.Fatalf("WatchEvents after cancel error = %v", err)
+		}
+		if connect.CodeOf(err) == connect.CodeUnimplemented {
+			t.Fatalf("WatchEvents returned unimplemented after cancel: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("WatchEvents did not stop after context cancel")
 	}
 }
 

@@ -18,11 +18,26 @@ type orderedEnvVarSpec struct {
 }
 
 type orderedProjectSpec struct {
-	Name      string              `yaml:"name" json:"name"`
-	Variables []orderedEnvVarSpec `yaml:"variables,omitempty" json:"variables,omitempty"`
-	Workspace *WorkspaceSpec      `yaml:"workspace,omitempty" json:"workspace,omitempty"`
-	Agents    []orderedAgentSpec  `yaml:"agents,omitempty" json:"agents,omitempty"`
-	Network   *NetworkSpec        `yaml:"network,omitempty" json:"network,omitempty"`
+	Name        string                         `yaml:"name" json:"name"`
+	Metadata    *ProjectMetadataSpec           `yaml:"metadata,omitempty" json:"metadata,omitempty"`
+	Variables   []orderedEnvVarSpec            `yaml:"variables,omitempty" json:"variables,omitempty"`
+	Runtime     *orderedProjectRuntimeSpec     `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Workspace   *WorkspaceSpec                 `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+	Agents      []orderedAgentSpec             `yaml:"agents,omitempty" json:"agents,omitempty"`
+	Services    []orderedServiceSpec           `yaml:"services,omitempty" json:"services,omitempty"`
+	Triggers    []NormalizedProjectTriggerSpec `yaml:"triggers,omitempty" json:"triggers,omitempty"`
+	Permissions *PermissionSpec                `yaml:"permissions,omitempty" json:"permissions,omitempty"`
+	Artifacts   *ArtifactPolicySpec            `yaml:"artifacts,omitempty" json:"artifacts,omitempty"`
+	Network     *NetworkSpec                   `yaml:"network,omitempty" json:"network,omitempty"`
+}
+
+type orderedProjectRuntimeSpec struct {
+	Driver        string              `yaml:"driver,omitempty" json:"driver,omitempty"`
+	Image         string              `yaml:"image,omitempty" json:"image,omitempty"`
+	Env           []orderedEnvVarSpec `yaml:"env,omitempty" json:"env,omitempty"`
+	Resources     map[string]string   `yaml:"resources,omitempty" json:"resources,omitempty"`
+	Network       *NetworkSpec        `yaml:"network,omitempty" json:"network,omitempty"`
+	CleanupPolicy string              `yaml:"cleanup_policy,omitempty" json:"cleanup_policy,omitempty"`
 }
 
 type orderedAgentSpec struct {
@@ -36,6 +51,22 @@ type orderedAgentSpec struct {
 	CapsetIDs    []string                 `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
 	Workspace    *WorkspaceSpec           `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Scheduler    *NormalizedSchedulerSpec `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
+}
+
+type orderedServiceSpec struct {
+	Name         string               `yaml:"name" json:"name"`
+	Description  string               `yaml:"description,omitempty" json:"description,omitempty"`
+	Runtime      string               `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Entry        string               `yaml:"entry" json:"entry"`
+	InputSchema  string               `yaml:"input_schema,omitempty" json:"input_schema,omitempty"`
+	OutputSchema string               `yaml:"output_schema,omitempty" json:"output_schema,omitempty"`
+	ErrorSchema  string               `yaml:"error_schema,omitempty" json:"error_schema,omitempty"`
+	Timeout      string               `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Retry        *RetryPolicySpec     `yaml:"retry,omitempty" json:"retry,omitempty"`
+	Permissions  *PermissionSpec      `yaml:"permissions,omitempty" json:"permissions,omitempty"`
+	Env          []orderedEnvVarSpec  `yaml:"env,omitempty" json:"env,omitempty"`
+	Agents       []string             `yaml:"agents,omitempty" json:"agents,omitempty"`
+	Examples     []ServiceExampleSpec `yaml:"examples,omitempty" json:"examples,omitempty"`
 }
 
 func (s *NormalizedProjectSpec) Redacted() *NormalizedProjectSpec {
@@ -66,6 +97,7 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 	if s == nil {
 		return orderedProjectSpec{}
 	}
+	runtime := orderedProjectRuntime(s.Runtime, redactSecrets)
 	agents := make([]orderedAgentSpec, 0, len(s.Agents))
 	for _, agent := range s.Agents {
 		agents = append(agents, orderedAgentSpec{
@@ -84,22 +116,57 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 	slices.SortFunc(agents, func(a, b orderedAgentSpec) int {
 		return compareString(a.Name, b.Name)
 	})
+	services := make([]orderedServiceSpec, 0, len(s.Services))
+	for _, service := range s.Services {
+		services = append(services, orderedServiceSpec{
+			Name:         service.Name,
+			Description:  service.Description,
+			Runtime:      service.Runtime,
+			Entry:        service.Entry,
+			InputSchema:  service.InputSchema,
+			OutputSchema: service.OutputSchema,
+			ErrorSchema:  service.ErrorSchema,
+			Timeout:      service.Timeout,
+			Retry:        cloneRetryPolicySpec(service.Retry),
+			Permissions:  clonePermissionSpecForOutput(service.Permissions),
+			Env:          orderedEnvVars(service.Env, redactSecrets),
+			Agents:       slices.Clone(service.Agents),
+			Examples:     slices.Clone(service.Examples),
+		})
+	}
+	slices.SortFunc(services, func(a, b orderedServiceSpec) int {
+		return compareString(a.Name, b.Name)
+	})
+	triggers := slices.Clone(s.Triggers)
+	slices.SortFunc(triggers, func(a, b NormalizedProjectTriggerSpec) int {
+		return compareString(a.Name, b.Name)
+	})
 	return orderedProjectSpec{
-		Name:      s.Name,
-		Variables: orderedEnvVars(s.Variables, redactSecrets),
-		Workspace: cloneWorkspaceSpec(s.Workspace),
-		Agents:    agents,
-		Network:   cloneNetworkSpecForOutput(s.Network),
+		Name:        s.Name,
+		Metadata:    cloneProjectMetadataSpec(s.Metadata),
+		Variables:   orderedEnvVars(s.Variables, redactSecrets),
+		Runtime:     runtime,
+		Workspace:   cloneWorkspaceSpec(s.Workspace),
+		Agents:      agents,
+		Services:    services,
+		Triggers:    triggers,
+		Permissions: clonePermissionSpecForOutput(s.Permissions),
+		Artifacts:   cloneArtifactPolicySpec(s.Artifacts),
+		Network:     cloneNetworkSpecForOutput(s.Network),
 	}
 }
 
 func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec {
 	ordered := s.ordered(redactSecrets)
 	cloned := &NormalizedProjectSpec{
-		Name:      ordered.Name,
-		Variables: envVarMapFromOrdered(ordered.Variables),
-		Workspace: ordered.Workspace,
-		Network:   ordered.Network,
+		Name:        ordered.Name,
+		Metadata:    ordered.Metadata,
+		Variables:   envVarMapFromOrdered(ordered.Variables),
+		Runtime:     normalizedProjectRuntimeFromOrdered(ordered.Runtime),
+		Workspace:   ordered.Workspace,
+		Permissions: ordered.Permissions,
+		Artifacts:   ordered.Artifacts,
+		Network:     ordered.Network,
 	}
 	for _, agent := range ordered.Agents {
 		cloned.Agents = append(cloned.Agents, NormalizedAgentSpec{
@@ -114,6 +181,74 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 			Workspace:    agent.Workspace,
 			Scheduler:    agent.Scheduler,
 		})
+	}
+	for _, service := range ordered.Services {
+		cloned.Services = append(cloned.Services, NormalizedServiceSpec{
+			Name:         service.Name,
+			Description:  service.Description,
+			Runtime:      service.Runtime,
+			Entry:        service.Entry,
+			InputSchema:  service.InputSchema,
+			OutputSchema: service.OutputSchema,
+			ErrorSchema:  service.ErrorSchema,
+			Timeout:      service.Timeout,
+			Retry:        service.Retry,
+			Permissions:  service.Permissions,
+			Env:          envVarMapFromOrdered(service.Env),
+			Agents:       slices.Clone(service.Agents),
+			Examples:     slices.Clone(service.Examples),
+		})
+	}
+	cloned.Triggers = slices.Clone(ordered.Triggers)
+	return cloned
+}
+
+func orderedProjectRuntime(value *NormalizedProjectRuntimeSpec, redactSecrets bool) *orderedProjectRuntimeSpec {
+	if value == nil {
+		return nil
+	}
+	return &orderedProjectRuntimeSpec{
+		Driver:        value.Driver,
+		Image:         value.Image,
+		Env:           orderedEnvVars(value.Env, redactSecrets),
+		Resources:     cloneStringMapForOutput(value.Resources),
+		Network:       cloneNetworkSpecForOutput(value.Network),
+		CleanupPolicy: value.CleanupPolicy,
+	}
+}
+
+func normalizedProjectRuntimeFromOrdered(value *orderedProjectRuntimeSpec) *NormalizedProjectRuntimeSpec {
+	if value == nil {
+		return nil
+	}
+	return &NormalizedProjectRuntimeSpec{
+		Driver:        value.Driver,
+		Image:         value.Image,
+		Env:           envVarMapFromOrdered(value.Env),
+		Resources:     cloneStringMapForOutput(value.Resources),
+		Network:       cloneNetworkSpecForOutput(value.Network),
+		CleanupPolicy: value.CleanupPolicy,
+	}
+}
+
+func clonePermissionSpecForOutput(value *PermissionSpec) *PermissionSpec {
+	if value == nil {
+		return nil
+	}
+	return &PermissionSpec{
+		Agents:       slices.Clone(value.Agents),
+		Capabilities: slices.Clone(value.Capabilities),
+		Resources:    slices.Clone(value.Resources),
+	}
+}
+
+func cloneStringMapForOutput(value map[string]string) map[string]string {
+	if len(value) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(value))
+	for key, item := range value {
+		cloned[key] = item
 	}
 	return cloned
 }

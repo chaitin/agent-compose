@@ -8,11 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -55,8 +58,11 @@ func (s *Service) ReadArtifact(ctx context.Context, req *connect.Request[agentco
 	if err := ensureArtifactReadableFile(run.ArtifactsDir, artifact.GetPath()); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	content, readErr := os.ReadFile(artifact.GetPath())
+	content, readErr := readArtifactFileNoFollow(artifact.GetPath())
 	if readErr != nil {
+		if errors.Is(readErr, syscall.ELOOP) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("artifact path must be a regular file"))
+		}
 		return nil, connect.NewError(connect.CodeInternal, readErr)
 	}
 	return connect.NewResponse(&agentcomposev2.ReadArtifactResponse{Artifact: artifact, Content: content}), nil
@@ -95,7 +101,7 @@ func (s *Service) WriteArtifact(ctx context.Context, req *connect.Request[agentc
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	if err := os.WriteFile(artifactPath, req.Msg.GetContent(), 0o644); err != nil {
+	if err := writeArtifactFileAtomic(artifactPath, req.Msg.GetContent()); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	run.ResultJSON = upsertProjectRunArtifactResultJSON(run.ResultJSON, name, artifactPath)
@@ -154,6 +160,9 @@ func (s *Service) PublishEvent(ctx context.Context, req *connect.Request[agentco
 	projectID := strings.TrimSpace(req.Msg.GetProjectId())
 	topic := strings.TrimSpace(req.Msg.GetTopic())
 	payloadJSON := strings.TrimSpace(req.Msg.GetPayloadJson())
+	if err := s.ensureEventProject(ctx, projectID); err != nil {
+		return nil, err
+	}
 	if topic == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("topic is required"))
 	}
@@ -214,8 +223,71 @@ func (s *Service) ListEvents(ctx context.Context, req *connect.Request[agentcomp
 	return connect.NewResponse(resp), nil
 }
 
-func (s *Service) WatchEvents(context.Context, *connect.Request[agentcomposev2.WatchEventsRequest], *connect.ServerStream[agentcomposev2.EventRecord]) error {
-	return connect.NewError(connect.CodeUnimplemented, fmt.Errorf("event watch is not implemented"))
+func (s *Service) WatchEvents(ctx context.Context, req *connect.Request[agentcomposev2.WatchEventsRequest], stream *connect.ServerStream[agentcomposev2.EventRecord]) error {
+	if s == nil || s.configDB == nil {
+		return connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
+	}
+	projectID := strings.TrimSpace(req.Msg.GetProjectId())
+	topic := strings.TrimSpace(req.Msg.GetTopic())
+	if err := s.ensureEventProject(ctx, projectID); err != nil {
+		return err
+	}
+	if topic != "" {
+		if err := validateTopicEventName(topic); err != nil {
+			return connect.NewError(connect.CodeInvalidArgument, err)
+		}
+	}
+
+	var afterSequence int64
+	sendAvailable := func() error {
+		items, err := s.configDB.ListEvents(ctx, TopicEventFilter{
+			ProjectID:     projectID,
+			Topic:         topic,
+			AfterSequence: afterSequence,
+			Limit:         100,
+		})
+		if err != nil {
+			return connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		for _, item := range items {
+			if err := stream.Send(topicEventRecordResponse(item)); err != nil {
+				return err
+			}
+			if item.Sequence > afterSequence {
+				afterSequence = item.Sequence
+			}
+		}
+		return nil
+	}
+	if err := sendAvailable(); err != nil {
+		return err
+	}
+
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := sendAvailable(); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (s *Service) ensureEventProject(ctx context.Context, projectID string) error {
+	if strings.TrimSpace(projectID) == "" {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("project id is required"))
+	}
+	if _, err := s.configDB.GetProject(ctx, strings.TrimSpace(projectID)); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return connect.NewError(connect.CodeNotFound, err)
+		}
+		return connect.NewError(connect.CodeInternal, err)
+	}
+	return nil
 }
 
 func (s *Service) runDetailResponse(ctx context.Context, run ProjectRunRecord) *agentcomposev2.RunDetail {
@@ -491,6 +563,53 @@ func ensureArtifactReadableFile(root string, artifactPath string) error {
 	if info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
 		return fmt.Errorf("artifact path must be a regular file")
 	}
+	return nil
+}
+
+func readArtifactFileNoFollow(artifactPath string) ([]byte, error) {
+	file, err := os.OpenFile(artifactPath, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("artifact path must be a regular file")
+	}
+	return io.ReadAll(file)
+}
+
+func writeArtifactFileAtomic(artifactPath string, content []byte) error {
+	dir := filepath.Dir(artifactPath)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(artifactPath)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, artifactPath); err != nil {
+		return err
+	}
+	cleanup = false
 	return nil
 }
 

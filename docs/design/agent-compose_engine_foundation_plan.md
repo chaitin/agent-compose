@@ -11,9 +11,23 @@ The goal is to give maintainers and parallel implementation agents a shared task
 map with clear ownership boundaries, dependencies, deliverables, and acceptance
 criteria.
 
+Concept source:
+[agent-compose_concept_positioning_and_externalization.md](agent-compose_concept_positioning_and_externalization.md).
+That document defines the product and architecture boundary. This document
+compresses that boundary into engineering workstreams. It does not replace the
+concept document, and it is not the sole source of current behavior.
+
+Current behavior is defined by the code, generated proto, manifest schema, CLI
+help, and module-specific runtime/API contract documents. Items in this plan
+that mention marketplace packaging, upper UI workflows, remote bundle
+distribution, or product-specific permissions are intentionally out of scope for
+the engine unless they are expressed through business-neutral manifest,
+runtime-context, service, artifact, event, or capability contracts.
+
 Related current documents:
 
 - [Architecture notes](agent-compose_design.md)
+- [Concept positioning and externalization boundary](agent-compose_concept_positioning_and_externalization.md)
 - [Runtime JavaScript contract](agent-compose-runtime-js_contract.md)
 - [Runtime environment variables](runtime_environment_variables_design.md)
 - [Runtime mount manifest](runtime_mount_manifest_design.md)

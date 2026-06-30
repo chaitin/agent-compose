@@ -461,6 +461,201 @@ func TestConfigCommandMissingComposeFileWritesStderrAndExitCode(t *testing.T) {
 	}
 }
 
+func TestValidateCommandDryRunValidatesLocalManifestWithoutDaemon(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "validate-project")
+	mustMkdirAll(t, filepath.Join(dir, "services"))
+	mustMkdirAll(t, filepath.Join(dir, "schemas"))
+	mustWriteFile(t, filepath.Join(dir, "services", "review.js"), []byte("export async function main() {}\n"))
+	mustWriteFile(t, filepath.Join(dir, "schemas", "input.json"), []byte(`{"type":"object"}`))
+	composePath := writeComposeFile(t, dir, `
+name: validate-demo
+services:
+  risk-review:
+    entry: services/review.js
+    input_schema: schemas/input.json
+`)
+	t.Setenv("AGENT_COMPOSE_SOCKET", filepath.Join(t.TempDir(), "missing.sock"))
+	t.Setenv("AGENT_COMPOSE_HOST", "")
+
+	stdout, stderr, runCount, err := executeCommand("validate", "--file", composePath, "--dry-run")
+	if err != nil {
+		t.Fatalf("validate returned error: %v", err)
+	}
+	if stderr != "" {
+		t.Fatalf("validate stderr = %q, want empty", stderr)
+	}
+	if runCount != 0 {
+		t.Fatalf("daemon runner called %d times, want 0", runCount)
+	}
+	for _, want := range []string{"Valid:", "validate-demo", "Services: 1"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("validate stdout %q does not contain %q", stdout, want)
+		}
+	}
+}
+
+func TestValidateCommandResolvesRelativeFilesFromComposeDirectory(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "project")
+	otherDir := filepath.Join(root, "other")
+	mustMkdirAll(t, filepath.Join(projectDir, "services"))
+	mustMkdirAll(t, filepath.Join(projectDir, "schemas"))
+	mustMkdirAll(t, filepath.Join(otherDir, "services"))
+	mustMkdirAll(t, filepath.Join(otherDir, "schemas"))
+	mustWriteFile(t, filepath.Join(projectDir, "services", "review.js"), []byte("export async function main() {}\n"))
+	mustWriteFile(t, filepath.Join(projectDir, "schemas", "input.json"), []byte(`{"type":"object"}`))
+	mustWriteFile(t, filepath.Join(otherDir, "services", "review.js"), []byte("export async function main() {}\n"))
+	mustWriteFile(t, filepath.Join(otherDir, "schemas", "input.json"), []byte(`{"type":`))
+	composePath := writeComposeFile(t, projectDir, `
+name: validate-compose-root
+services:
+  risk-review:
+    entry: services/review.js
+    input_schema: schemas/input.json
+`)
+	withWorkingDir(t, otherDir)
+	t.Setenv("AGENT_COMPOSE_SOCKET", filepath.Join(t.TempDir(), "missing.sock"))
+	t.Setenv("AGENT_COMPOSE_HOST", "")
+
+	stdout, stderr, runCount, err := executeCommand("validate", "--file", composePath, "--dry-run")
+	if err != nil {
+		t.Fatalf("validate returned error: %v", err)
+	}
+	if stderr != "" {
+		t.Fatalf("validate stderr = %q, want empty", stderr)
+	}
+	if runCount != 0 {
+		t.Fatalf("daemon runner called %d times, want 0", runCount)
+	}
+	for _, want := range []string{"Valid:", "validate-compose-root", "Services: 1"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("validate stdout %q does not contain %q", stdout, want)
+		}
+	}
+}
+
+func TestValidateCommandSchemaPrintsJSONSchema(t *testing.T) {
+	stdout, stderr, runCount, err := executeCommand("validate", "--schema")
+	if err != nil {
+		t.Fatalf("validate --schema returned error: %v", err)
+	}
+	if stderr != "" {
+		t.Fatalf("validate --schema stderr = %q, want empty", stderr)
+	}
+	if runCount != 0 {
+		t.Fatalf("daemon runner called %d times, want 0", runCount)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
+		t.Fatalf("validate --schema output is not JSON: %v\n%s", err, stdout)
+	}
+	if decoded["$schema"] == "" || decoded["$defs"] == nil {
+		t.Fatalf("schema output missing expected fields: %#v", decoded)
+	}
+}
+
+func TestBundleValidateAcceptsLocalDirectory(t *testing.T) {
+	dir := t.TempDir()
+	mustMkdirAll(t, filepath.Join(dir, "services"))
+	mustWriteFile(t, filepath.Join(dir, "services", "review.js"), []byte("export async function main() {}\n"))
+	writeComposeFile(t, dir, `
+name: bundle-demo
+agents:
+  reviewer:
+    provider: codex
+services:
+  risk-review:
+    entry: services/review.js
+`)
+	t.Setenv("AGENT_COMPOSE_SOCKET", filepath.Join(t.TempDir(), "missing.sock"))
+	t.Setenv("AGENT_COMPOSE_HOST", "")
+
+	stdout, stderr, runCount, err := executeCommand("bundle", "validate", dir, "--dry-run")
+	if err != nil {
+		t.Fatalf("bundle validate returned error: %v", err)
+	}
+	if stderr != "" {
+		t.Fatalf("bundle validate stderr = %q, want empty", stderr)
+	}
+	if runCount != 0 {
+		t.Fatalf("daemon runner called %d times, want 0", runCount)
+	}
+	for _, want := range []string{"Valid:", "bundle-demo", "Agents: 1", "Services: 1"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("bundle validate stdout %q does not contain %q", stdout, want)
+		}
+	}
+}
+
+func TestBundleValidateResolvesRelativeFilesFromComposeDirectory(t *testing.T) {
+	root := t.TempDir()
+	bundleDir := filepath.Join(root, "bundle")
+	otherDir := filepath.Join(root, "other")
+	mustMkdirAll(t, filepath.Join(bundleDir, "services"))
+	mustMkdirAll(t, filepath.Join(bundleDir, "schemas"))
+	mustMkdirAll(t, filepath.Join(otherDir, "services"))
+	mustMkdirAll(t, filepath.Join(otherDir, "schemas"))
+	mustWriteFile(t, filepath.Join(bundleDir, "services", "review.js"), []byte("export async function main() {}\n"))
+	mustWriteFile(t, filepath.Join(bundleDir, "schemas", "input.json"), []byte(`{"type":"object"}`))
+	mustWriteFile(t, filepath.Join(otherDir, "services", "review.js"), []byte("export async function main() {}\n"))
+	mustWriteFile(t, filepath.Join(otherDir, "schemas", "input.json"), []byte(`{"type":`))
+	writeComposeFile(t, bundleDir, `
+name: bundle-compose-root
+services:
+  risk-review:
+    entry: services/review.js
+    input_schema: schemas/input.json
+`)
+	withWorkingDir(t, otherDir)
+	t.Setenv("AGENT_COMPOSE_SOCKET", filepath.Join(t.TempDir(), "missing.sock"))
+	t.Setenv("AGENT_COMPOSE_HOST", "")
+
+	stdout, stderr, runCount, err := executeCommand("bundle", "validate", bundleDir, "--dry-run")
+	if err != nil {
+		t.Fatalf("bundle validate returned error: %v", err)
+	}
+	if stderr != "" {
+		t.Fatalf("bundle validate stderr = %q, want empty", stderr)
+	}
+	if runCount != 0 {
+		t.Fatalf("daemon runner called %d times, want 0", runCount)
+	}
+	for _, want := range []string{"Valid:", "bundle-compose-root", "Services: 1"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("bundle validate stdout %q does not contain %q", stdout, want)
+		}
+	}
+}
+
+func TestBundleValidateRejectsInvalidSchemaFileJSON(t *testing.T) {
+	dir := t.TempDir()
+	mustMkdirAll(t, filepath.Join(dir, "services"))
+	mustMkdirAll(t, filepath.Join(dir, "schemas"))
+	mustWriteFile(t, filepath.Join(dir, "services", "review.js"), []byte("export async function main() {}\n"))
+	mustWriteFile(t, filepath.Join(dir, "schemas", "input.json"), []byte(`{"type":`))
+	writeComposeFile(t, dir, `
+name: cli-invalid-schema-bundle
+services:
+  risk-review:
+    entry: services/review.js
+    input_schema: schemas/input.json
+`)
+
+	stdout, stderr, runCount, exitCode := executeCLICommand("bundle", "validate", dir)
+	if exitCode != exitCodeUsage {
+		t.Fatalf("bundle validate invalid schema exit code = %d, want %d", exitCode, exitCodeUsage)
+	}
+	if stdout != "" {
+		t.Fatalf("bundle validate invalid schema stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "services.risk-review.input_schema") || !strings.Contains(stderr, "valid JSON") {
+		t.Fatalf("bundle validate invalid schema stderr = %q", stderr)
+	}
+	if runCount != 0 {
+		t.Fatalf("daemon runner called %d times, want 0", runCount)
+	}
+}
+
 func TestStatusCommandUnavailableWritesStderrAndExitCode(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "missing.sock")
 	t.Setenv("AGENT_COMPOSE_SOCKET", socketPath)
@@ -954,6 +1149,7 @@ services:
   echo:
     entry: echo.mjs
 `)
+	mustWriteFile(t, filepath.Join(dir, "echo.mjs"), []byte("export async function main() {}\n"))
 	var sawRequest bool
 	server := newRunServiceStubServer(t, runServiceStub{
 		invokeService: func(ctx context.Context, req *connect.Request[agentcomposev2.InvokeServiceRequest]) (*connect.Response[agentcomposev2.InvokeServiceResponse], error) {
@@ -976,6 +1172,24 @@ services:
 				Output:     "service output\n",
 				InputJson:  req.Msg.GetInputJson(),
 				OutputJson: `{"ok":true}`,
+				ResultJson: `{"run_id":"run-service","status":"succeeded","target_type":"service","target_name":"echo","output_json":"{\"ok\":true}","logs":"service output\n","artifacts":[],"metrics":{"durationMs":"8"}}`,
+				LogsPath:   "/tmp/run-service/output.txt",
+				Artifacts: []*agentcomposev2.Artifact{{
+					ArtifactId: "run-service:runtime.trace",
+					RunId:      "run-service",
+					ProjectId:  req.Msg.GetProjectId(),
+					Name:       "runtime.trace",
+					Path:       "/tmp/run-service/trace.json",
+					Metadata:   map[string]string{"scope": "runtime"},
+				}},
+				Events: []*agentcomposev2.EventRecord{{
+					EventId:     "evt-1",
+					ProjectId:   req.Msg.GetProjectId(),
+					RunId:       "run-service",
+					Topic:       "service.done",
+					PayloadJson: `{"ok":true}`,
+				}},
+				Metrics: map[string]string{"durationMs": "8"},
 			}}), nil
 		},
 	})
@@ -998,15 +1212,23 @@ services:
 	if decoded.RunID != "run-service" || decoded.TargetType != "service" || decoded.TargetName != "echo" || decoded.InputJSON != `{"message":"hello"}` || decoded.OutputJSON != `{"ok":true}` {
 		t.Fatalf("invoke JSON output = %#v", decoded)
 	}
+	if decoded.Logs != "service output\n" || decoded.LogsPath != "/tmp/run-service/output.txt" || decoded.ResultJSON == "" {
+		t.Fatalf("invoke JSON envelope fields = %#v", decoded)
+	}
+	if decoded.Metrics["durationMs"] != "8" || len(decoded.Artifacts) != 1 || decoded.Artifacts[0].Name != "runtime.trace" || len(decoded.Events) != 1 || decoded.Events[0].Topic != "service.done" {
+		t.Fatalf("invoke JSON observability fields = %#v", decoded)
+	}
 }
 
 func TestIntegrationCLIInvokeServiceFailureReturnsStableExitCode(t *testing.T) {
-	composePath := writeComposeFile(t, t.TempDir(), `
+	dir := t.TempDir()
+	composePath := writeComposeFile(t, dir, `
 name: cli-invoke-failure
 services:
   echo:
     entry: echo.mjs
 `)
+	mustWriteFile(t, filepath.Join(dir, "echo.mjs"), []byte("export async function main() {}\n"))
 	server := newRunServiceStubServer(t, runServiceStub{
 		invokeService: func(ctx context.Context, req *connect.Request[agentcomposev2.InvokeServiceRequest]) (*connect.Response[agentcomposev2.InvokeServiceResponse], error) {
 			return connect.NewResponse(&agentcomposev2.InvokeServiceResponse{Run: &agentcomposev2.RunDetail{
@@ -1202,7 +1424,7 @@ agents:
 	if textCode != 0 || textErr != "" {
 		t.Fatalf("ps text code/stderr = %d / %q", textCode, textErr)
 	}
-	for _, want := range []string{"AGENT", "reviewer", "enabled", "run-ps", "succeeded", "session-ps", "worker"} {
+	for _, want := range []string{"AGENT", "LATEST STARTED", "DURATION", "reviewer", "enabled", "run-ps", "succeeded", "2026-06-11T00:00:00Z", "1s", "session-ps", "worker"} {
 		if !strings.Contains(textOut, want) {
 			t.Fatalf("ps text output %q does not contain %q", textOut, want)
 		}
@@ -1399,6 +1621,79 @@ agents:
 	}
 	if sessionDecoded.SessionID != "session-inspect" || sessionDecoded.VMStatus != "running" || sessionDecoded.Tags["project"] == "" {
 		t.Fatalf("inspect session JSON = %#v", sessionDecoded)
+	}
+}
+
+func TestIntegrationCLIListProjectsJSONAndText(t *testing.T) {
+	calls := 0
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		project: projectServiceStub{
+			listProjects: func(ctx context.Context, req *connect.Request[agentcomposev2.ListProjectsRequest]) (*connect.Response[agentcomposev2.ListProjectsResponse], error) {
+				calls++
+				if calls == 1 && (req.Msg.GetQuery() != "demo" || req.Msg.GetLimit() != 200) {
+					t.Fatalf("ListProjects request = %#v", req.Msg)
+				}
+				return connect.NewResponse(&agentcomposev2.ListProjectsResponse{
+					Projects: []*agentcomposev2.ProjectSummary{
+						testCLIProject("project-list", "demo", "/workspace/agent-compose.yml").GetSummary(),
+					},
+					TotalCount: 1,
+				}), nil
+			},
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("ls", "--host", server.URL, "--json", "--query", "demo")
+	if exitCode != 0 || stderr != "" {
+		t.Fatalf("ls --json code/stderr = %d / %q", exitCode, stderr)
+	}
+	var decoded composeProjectListOutput
+	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
+		t.Fatalf("ls JSON decode failed: %v\n%s", err, stdout)
+	}
+	if decoded.TotalCount != 1 || len(decoded.Projects) != 1 {
+		t.Fatalf("ls JSON = %#v", decoded)
+	}
+	project := decoded.Projects[0]
+	if project.Name != "demo" ||
+		project.ID != "project-list" ||
+		project.SourcePath != "/workspace/agent-compose.yml" ||
+		project.CurrentRevision != 1 ||
+		project.SpecHash != "sha256:test" ||
+		project.AgentCount != 2 ||
+		project.SchedulerCount != 1 ||
+		project.ServiceCount != 0 ||
+		project.BundleHash != "" {
+		t.Fatalf("ls project JSON = %#v", project)
+	}
+
+	textOut, textErr, _, textCode := executeCLICommand("list", "--host", server.URL)
+	if textCode != 0 || textErr != "" {
+		t.Fatalf("list code/stderr = %d / %q", textCode, textErr)
+	}
+	for _, want := range []string{"NAME", "CONFIG_FILE", "REVISION", "AGENTS", "SCHEDULERS", "SERVICES", "demo", "project-list"} {
+		if !strings.Contains(textOut, want) {
+			t.Fatalf("list output %q does not contain %q", textOut, want)
+		}
+	}
+	for _, hidden := range []string{"PROJECT_DIR", "SPEC_HASH", "BUNDLE_HASH", "sha256:test"} {
+		if strings.Contains(textOut, hidden) {
+			t.Fatalf("list output %q unexpectedly contains %q", textOut, hidden)
+		}
+	}
+
+	verboseOut, verboseErr, _, verboseCode := executeCLICommand("ls", "--host", server.URL, "--verbose")
+	if verboseCode != 0 || verboseErr != "" {
+		t.Fatalf("ls --verbose code/stderr = %d / %q", verboseCode, verboseErr)
+	}
+	for _, want := range []string{"SOURCE_PATH", "CURRENT_REVISION", "SPEC_HASH", "BUNDLE_HASH", "sha256:test"} {
+		if !strings.Contains(verboseOut, want) {
+			t.Fatalf("ls --verbose output %q does not contain %q", verboseOut, want)
+		}
+	}
+	if calls != 3 {
+		t.Fatalf("ListProjects calls = %d, want 3", calls)
 	}
 }
 
@@ -2219,6 +2514,20 @@ func writeComposeFile(t *testing.T, dir string, content string) string {
 		t.Fatalf("write compose file: %v", err)
 	}
 	return path
+}
+
+func mustWriteFile(t *testing.T, path string, content []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write file %s: %v", path, err)
+	}
+}
+
+func mustMkdirAll(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatalf("create dir %s: %v", path, err)
+	}
 }
 
 func inlineSchedulerComposeYAML(name string, intervalMs int) string {

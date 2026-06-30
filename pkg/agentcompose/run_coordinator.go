@@ -17,8 +17,6 @@ import (
 type ProjectRunStartRequest struct {
 	ProjectID       string
 	AgentName       string
-	TargetType      string
-	TargetName      string
 	Source          string
 	SchedulerID     string
 	TriggerID       string

@@ -41,50 +41,6 @@ func redactRuntimeContextJSON(raw string) string {
 	return string(redacted)
 }
 
-func redactRuntimeContext(context *agentcomposev2.RuntimeContext) *agentcomposev2.RuntimeContext {
-	if context == nil {
-		return nil
-	}
-	clone := protoCloneRuntimeContext(context)
-	redactStringMap(clone.Metadata)
-	redactStringMap(clone.Env)
-	redactStringMap(clone.IdentityContext)
-	if clone.CapabilityScope != nil {
-		redactStringMap(clone.CapabilityScope.Metadata)
-	}
-	return clone
-}
-
-func protoCloneRuntimeContext(context *agentcomposev2.RuntimeContext) *agentcomposev2.RuntimeContext {
-	clone := &agentcomposev2.RuntimeContext{
-		Source:          context.GetSource(),
-		ClientRequestId: context.GetClientRequestId(),
-		TraceId:         context.GetTraceId(),
-		ExternalRunId:   context.GetExternalRunId(),
-		Metadata:        cloneRuntimeContextStringMap(context.GetMetadata()),
-		Env:             cloneRuntimeContextStringMap(context.GetEnv()),
-		IdentityContext: cloneRuntimeContextStringMap(context.GetIdentityContext()),
-	}
-	if context.GetCapabilityScope() != nil {
-		clone.CapabilityScope = &agentcomposev2.CapabilityScope{
-			CapsetIds: append([]string(nil), context.GetCapabilityScope().GetCapsetIds()...),
-			Metadata:  cloneRuntimeContextStringMap(context.GetCapabilityScope().GetMetadata()),
-		}
-	}
-	return clone
-}
-
-func cloneRuntimeContextStringMap(values map[string]string) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	clone := make(map[string]string, len(values))
-	for key, value := range values {
-		clone[key] = value
-	}
-	return clone
-}
-
 func redactStringMap(values map[string]string) {
 	for key := range values {
 		if runtimeContextKeyIsSensitive(key) {

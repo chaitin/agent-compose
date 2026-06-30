@@ -2,10 +2,14 @@ package agentcompose
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -23,6 +27,8 @@ type normalizedV2Project struct {
 	spec       *compose.NormalizedProjectSpec
 	specProto  *agentcomposev2.ProjectSpec
 	specHash   string
+	bundleHash string
+	bundleDir  string
 	sourcePath string
 }
 
@@ -65,7 +71,8 @@ func (s *Service) ValidateProject(ctx context.Context, req *connect.Request[agen
 }
 
 func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentcomposev2.ApplyProjectRequest]) (*connect.Response[agentcomposev2.ApplyProjectResponse], error) {
-	normalized, issues, err := normalizeProjectServiceSpec(req.Msg.GetSpec(), req.Msg.GetSource(), req.Msg.GetExpectedSpecHash())
+	normalized, cleanupBundle, issues, err := s.normalizeApplyProjectRequest(ctx, req.Msg)
+	defer cleanupBundle()
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -82,6 +89,7 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
 	}
+	project.BundleHash = normalized.bundleHash
 	if issues := s.validateProjectManagedAgentDefinitions(normalized); len(issues) > 0 {
 		return connect.NewResponse(&agentcomposev2.ApplyProjectResponse{Issues: issues}), nil
 	}
@@ -89,6 +97,10 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 		return connect.NewResponse(&agentcomposev2.ApplyProjectResponse{Issues: issues}), nil
 	}
 	agentRecords, err := projectAgentRecordsFromSpec(project.ID, 0, normalized.spec)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
+	}
+	serviceRecords, err := projectServiceRecordsFromSpec(project.ID, 0, normalized.spec)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
 	}
@@ -102,8 +114,8 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 	}
 	if req.Msg.GetDryRun() {
 		return connect.NewResponse(&agentcomposev2.ApplyProjectResponse{
-			Project:  projectResponse(project, normalized.specProto, agentRecords, schedulerRecords),
-			Revision: projectRevisionResponse(ProjectRevisionRecord{ProjectID: project.ID, SpecHash: normalized.specHash}, normalized.specProto),
+			Project:  projectResponse(project, normalized.specProto, agentRecords, serviceRecords, schedulerRecords),
+			Revision: projectRevisionResponse(ProjectRevisionRecord{ProjectID: project.ID, SpecHash: normalized.specHash, BundleHash: normalized.bundleHash}, normalized.specProto),
 			Changes:  dryRunProjectChanges(project, agentRecords, agentDefinitions, schedulerRecords, managedLoaders),
 			Applied:  false,
 		}), nil
@@ -125,12 +137,18 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: marshal project spec: %w", normalized.spec.Name, err))
 	}
 	revision, revisionCreated, err := s.configDB.SaveProjectRevision(ctx, ProjectRevisionRecord{
-		ProjectID: project.ID,
-		SpecHash:  normalized.specHash,
-		SpecJSON:  string(specJSON),
+		ProjectID:  project.ID,
+		SpecHash:   normalized.specHash,
+		BundleHash: normalized.bundleHash,
+		SpecJSON:   string(specJSON),
 	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: save revision: %w", normalized.spec.Name, err))
+	}
+	if strings.TrimSpace(normalized.bundleDir) != "" {
+		if err := s.persistProjectRevisionBundle(project.ID, revision.Revision, normalized.bundleDir); err != nil {
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: persist revision bundle: %w", normalized.spec.Name, err))
+		}
 	}
 	project, err = s.configDB.GetProject(ctx, project.ID)
 	if err != nil {
@@ -138,6 +156,10 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 	}
 
 	agentRecords, err = projectAgentRecordsFromSpec(project.ID, revision.Revision, normalized.spec)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
+	}
+	serviceRecords, err = projectServiceRecordsFromSpec(project.ID, revision.Revision, normalized.spec)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
 	}
@@ -170,6 +192,14 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 			Name:         agent.AgentName,
 		})
 	}
+	serviceChanges, servicesUnchanged, err := s.reconcileProjectServices(ctx, project, serviceRecords)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
+	}
+	if !servicesUnchanged {
+		agentsUnchanged = false
+	}
+	changes = append(changes, serviceChanges...)
 	agentDefinitionChanges, agentDefinitionsUnchanged, err := s.reconcileProjectManagedAgentDefinitions(ctx, project, agentDefinitions)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
@@ -185,12 +215,16 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 		if listAgentsErr != nil {
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: %w; list project agents after reconcile failure: %v", normalized.spec.Name, err, listAgentsErr))
 		}
+		services, listServicesErr := s.configDB.ListProjectServices(ctx, project.ID)
+		if listServicesErr != nil {
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: %w; list project services after reconcile failure: %v", normalized.spec.Name, err, listServicesErr))
+		}
 		schedulers, listSchedulersErr := s.configDB.ListProjectSchedulers(ctx, project.ID)
 		if listSchedulersErr != nil {
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: %w; list project schedulers after reconcile failure: %v", normalized.spec.Name, err, listSchedulersErr))
 		}
 		return connect.NewResponse(&agentcomposev2.ApplyProjectResponse{
-			Project:  projectResponse(project, normalized.specProto, agents, schedulers),
+			Project:  projectResponse(project, normalized.specProto, agents, services, schedulers),
 			Revision: projectRevisionResponse(revision, normalized.specProto),
 			Changes:  changes,
 			Issues: []*agentcomposev2.ProjectValidationIssue{
@@ -209,12 +243,16 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: list project agents: %w", normalized.spec.Name, err))
 	}
+	services, err := s.configDB.ListProjectServices(ctx, project.ID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: list project services: %w", normalized.spec.Name, err))
+	}
 	schedulers, err := s.configDB.ListProjectSchedulers(ctx, project.ID)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: list project schedulers: %w", normalized.spec.Name, err))
 	}
 	return connect.NewResponse(&agentcomposev2.ApplyProjectResponse{
-		Project:  projectResponse(project, normalized.specProto, agents, schedulers),
+		Project:  projectResponse(project, normalized.specProto, agents, services, schedulers),
 		Revision: projectRevisionResponse(revision, normalized.specProto),
 		Changes:  changes,
 		Applied:  true,
@@ -247,6 +285,10 @@ func (s *Service) GetProject(ctx context.Context, req *connect.Request[agentcomp
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	services, err := s.configDB.ListProjectServices(ctx, project.ID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
 	var spec *agentcomposev2.ProjectSpec
 	if req.Msg.GetIncludeSpec() && project.CurrentRevision > 0 {
 		revision, err := s.configDB.GetProjectRevision(ctx, project.ID, project.CurrentRevision)
@@ -259,7 +301,7 @@ func (s *Service) GetProject(ctx context.Context, req *connect.Request[agentcomp
 		}
 	}
 	return connect.NewResponse(&agentcomposev2.GetProjectResponse{
-		Project: projectResponse(project, spec, agents, schedulers),
+		Project: projectResponse(project, spec, agents, services, schedulers),
 	}), nil
 }
 
@@ -282,7 +324,11 @@ func (s *Service) ListProjects(ctx context.Context, req *connect.Request[agentco
 		NextOffset: uint32(result.NextOffset),
 	}
 	for _, project := range result.Projects {
-		resp.Projects = append(resp.Projects, projectSummaryResponse(project, nil, nil))
+		summary, err := s.projectListSummaryResponse(ctx, project)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		resp.Projects = append(resp.Projects, summary)
 	}
 	return connect.NewResponse(resp), nil
 }
@@ -316,8 +362,12 @@ func (s *Service) RemoveProject(ctx context.Context, req *connect.Request[agentc
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	services, err := s.configDB.ListProjectServices(ctx, project.ID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
 	return connect.NewResponse(&agentcomposev2.RemoveProjectResponse{
-		Project: projectResponse(project, nil, agents, schedulers),
+		Project: projectResponse(project, nil, agents, services, schedulers),
 		Changes: changes,
 	}), nil
 }
@@ -484,6 +534,11 @@ func projectRefConnectError(err error) error {
 }
 
 func normalizeProjectServiceSpec(spec *agentcomposev2.ProjectSpec, source *agentcomposev2.ProjectSource, expectedHash string) (normalizedV2Project, []*agentcomposev2.ProjectValidationIssue, error) {
+	sourcePath := projectServiceSourcePath(source)
+	return normalizeProjectServiceSpecWithPaths(spec, source, expectedHash, sourcePath, strings.TrimSpace(source.GetProjectDir()))
+}
+
+func normalizeProjectServiceSpecWithPaths(spec *agentcomposev2.ProjectSpec, source *agentcomposev2.ProjectSource, expectedHash, composePath, projectDir string) (normalizedV2Project, []*agentcomposev2.ProjectValidationIssue, error) {
 	if spec == nil {
 		return normalizedV2Project{}, []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("spec", "project spec is required")}, nil
 	}
@@ -501,8 +556,8 @@ func normalizeProjectServiceSpec(spec *agentcomposev2.ProjectSpec, source *agent
 	}
 	sourcePath := projectServiceSourcePath(source)
 	normalized, err := compose.Normalize(parsed, compose.NormalizeOptions{
-		ComposePath: sourcePath,
-		ProjectDir:  strings.TrimSpace(source.GetProjectDir()),
+		ComposePath: composePath,
+		ProjectDir:  projectDir,
 	})
 	if err != nil {
 		return normalizedV2Project{}, []*agentcomposev2.ProjectValidationIssue{issueFromComposeError(err)}, nil
@@ -1045,9 +1100,209 @@ func specHashOrEmpty(normalized normalizedV2Project) string {
 	return normalized.specHash
 }
 
+func ProjectSpecHashForApplyRequest(spec *agentcomposev2.ProjectSpec, source *agentcomposev2.ProjectSource) (string, error) {
+	normalized, issues, err := normalizeProjectServiceSpec(spec, source, "")
+	if err != nil {
+		return "", err
+	}
+	if len(issues) > 0 {
+		issue := issues[0]
+		return "", fmt.Errorf("%s: %s", issue.GetPath(), issue.GetMessage())
+	}
+	return normalized.specHash, nil
+}
+
+func (s *Service) normalizeApplyProjectRequest(ctx context.Context, req *agentcomposev2.ApplyProjectRequest) (normalizedV2Project, func(), []*agentcomposev2.ProjectValidationIssue, error) {
+	cleanup := func() {}
+	source := req.GetSource()
+	composePath := projectServiceSourcePath(source)
+	projectDir := strings.TrimSpace(source.GetProjectDir())
+	bundleHash := strings.TrimSpace(req.GetBundleHash())
+	if len(req.GetBundleFiles()) > 0 {
+		staged, err := s.stageProjectBundle(ctx, req.GetBundleFiles(), bundleHash)
+		if err != nil {
+			return normalizedV2Project{}, cleanup, []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("bundle", err.Error())}, nil
+		}
+		cleanup = staged.cleanup
+		composePath = staged.composePath
+		projectDir = staged.dir
+		if bundleHash == "" {
+			bundleHash = staged.bundleHash
+		}
+	}
+	normalized, issues, err := normalizeProjectServiceSpecWithPaths(req.GetSpec(), source, req.GetExpectedSpecHash(), composePath, projectDir)
+	normalized.bundleHash = bundleHash
+	if len(req.GetBundleFiles()) > 0 {
+		normalized.bundleDir = projectDir
+	}
+	return normalized, cleanup, issues, err
+}
+
+type stagedProjectBundle struct {
+	dir         string
+	composePath string
+	bundleHash  string
+	cleanup     func()
+}
+
+func (s *Service) stageProjectBundle(ctx context.Context, files []*agentcomposev2.ProjectBundleFile, expectedHash string) (stagedProjectBundle, error) {
+	root := ""
+	if s != nil && s.config != nil {
+		root = strings.TrimSpace(s.config.DataRoot)
+	}
+	if root == "" {
+		root = os.TempDir()
+	}
+	tmpRoot := filepath.Join(root, "project-bundles", "tmp")
+	if err := os.MkdirAll(tmpRoot, 0o755); err != nil {
+		return stagedProjectBundle{}, fmt.Errorf("create project bundle temp root: %w", err)
+	}
+	dir, err := os.MkdirTemp(tmpRoot, "bundle-*")
+	if err != nil {
+		return stagedProjectBundle{}, fmt.Errorf("create project bundle temp dir: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	hash := sha256.New()
+	manifestPath := ""
+	for _, file := range files {
+		relPath, err := cleanProjectBundlePath(file.GetPath())
+		if err != nil {
+			cleanup()
+			return stagedProjectBundle{}, err
+		}
+		content := file.GetContent()
+		sum := sha256.Sum256(content)
+		sumHex := hex.EncodeToString(sum[:])
+		if expected := strings.TrimSpace(file.GetSha256()); expected != "" && expected != sumHex {
+			cleanup()
+			return stagedProjectBundle{}, fmt.Errorf("bundle file %s sha256 mismatch", relPath)
+		}
+		hash.Write([]byte(relPath))
+		hash.Write([]byte{0})
+		hash.Write([]byte(sumHex))
+		hash.Write([]byte{0})
+		target := filepath.Join(dir, filepath.FromSlash(relPath))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			cleanup()
+			return stagedProjectBundle{}, fmt.Errorf("create bundle file parent %s: %w", relPath, err)
+		}
+		if err := os.WriteFile(target, content, 0o644); err != nil {
+			cleanup()
+			return stagedProjectBundle{}, fmt.Errorf("write bundle file %s: %w", relPath, err)
+		}
+		if manifestPath == "" && isProjectBundleManifestName(filepath.Base(relPath)) {
+			manifestPath = target
+		}
+	}
+	if manifestPath == "" {
+		cleanup()
+		return stagedProjectBundle{}, fmt.Errorf("bundle manifest is required")
+	}
+	bundleHash := "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	if expectedHash = strings.TrimSpace(expectedHash); expectedHash != "" && expectedHash != bundleHash {
+		cleanup()
+		return stagedProjectBundle{}, fmt.Errorf("bundle hash %s does not match expected %s", bundleHash, expectedHash)
+	}
+	select {
+	case <-ctx.Done():
+		cleanup()
+		return stagedProjectBundle{}, ctx.Err()
+	default:
+	}
+	return stagedProjectBundle{dir: dir, composePath: manifestPath, bundleHash: bundleHash, cleanup: cleanup}, nil
+}
+
+func cleanProjectBundlePath(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("bundle file path is required")
+	}
+	if filepath.IsAbs(value) {
+		return "", fmt.Errorf("bundle file path %q must be relative", value)
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(value)))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("bundle file path %q escapes project directory", value)
+	}
+	return clean, nil
+}
+
+func isProjectBundleManifestName(name string) bool {
+	switch name {
+	case "agent-compose.yml", "agent-compose.yaml", "agent-compose.json":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) persistProjectRevisionBundle(projectID string, revision int64, stagedDir string) error {
+	projectID = strings.TrimSpace(projectID)
+	stagedDir = strings.TrimSpace(stagedDir)
+	if projectID == "" || revision <= 0 || stagedDir == "" {
+		return fmt.Errorf("project id, revision, and staged bundle dir are required")
+	}
+	root := ""
+	if s != nil && s.config != nil {
+		root = strings.TrimSpace(s.config.DataRoot)
+	}
+	if root == "" {
+		return fmt.Errorf("data root is required")
+	}
+	targetDir := s.projectRevisionBundleDir(projectID, revision)
+	if err := os.RemoveAll(targetDir); err != nil {
+		return fmt.Errorf("clear revision bundle %s: %w", targetDir, err)
+	}
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return fmt.Errorf("create revision bundle %s: %w", targetDir, err)
+	}
+	return filepath.WalkDir(stagedDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(stagedDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		target := filepath.Join(targetDir, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, content, 0o644)
+	})
+}
+
+func (s *Service) projectRevisionBundleDir(projectID string, revision int64) string {
+	root := ""
+	if s != nil && s.config != nil {
+		root = strings.TrimSpace(s.config.DataRoot)
+	}
+	return filepath.Join(root, "project-bundles", strings.TrimSpace(projectID), "revisions", fmt.Sprintf("%d", revision))
+}
+
 func projectAgentRecordsFromSpec(projectID string, revision int64, spec *compose.NormalizedProjectSpec) ([]ProjectAgentRecord, error) {
 	agents := make([]ProjectAgentRecord, 0, len(spec.Agents))
 	for _, agent := range spec.Agents {
+		if agent.Image == "" && spec.Runtime != nil {
+			agent.Image = spec.Runtime.Image
+		}
 		record, err := NewProjectAgentRecordFromSpec(projectID, revision, agent)
 		if err != nil {
 			return nil, err
@@ -1057,9 +1312,24 @@ func projectAgentRecordsFromSpec(projectID string, revision int64, spec *compose
 	return agents, nil
 }
 
+func projectServiceRecordsFromSpec(projectID string, revision int64, spec *compose.NormalizedProjectSpec) ([]ProjectServiceRecord, error) {
+	services := make([]ProjectServiceRecord, 0, len(spec.Services))
+	for _, service := range spec.Services {
+		record, err := NewProjectServiceRecordFromSpec(projectID, revision, service)
+		if err != nil {
+			return nil, err
+		}
+		services = append(services, record)
+	}
+	return services, nil
+}
+
 func projectManagedAgentDefinitionsFromSpec(project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]AgentDefinition, error) {
 	agents := make([]AgentDefinition, 0, len(spec.Agents))
 	for _, agent := range spec.Agents {
+		if agent.Image == "" && spec.Runtime != nil {
+			agent.Image = spec.Runtime.Image
+		}
 		record, err := projectManagedAgentDefinitionFromSpec(project, revision, agent)
 		if err != nil {
 			return nil, err
@@ -1205,12 +1475,12 @@ func projectManagedServiceTriggerBuildsFromSpec(project ProjectRecord, revision 
 		if !normalizedProjectHasService(spec, serviceName) {
 			return nil, &projectManagedSchedulerBuildError{path: "triggers." + trigger.Name + ".target.service", message: fmt.Sprintf("service %q is not defined", serviceName)}
 		}
-		agentName := projectServiceTriggerSchedulerAgentName(serviceName, trigger.Name)
-		schedulerID, err := StableProjectSchedulerID(project.ID, agentName, "")
+		schedulerName := projectServiceTriggerSchedulerName(serviceName, trigger.Name)
+		schedulerID, err := StableProjectTargetSchedulerID(project.ID, "service", serviceName, schedulerName)
 		if err != nil {
 			return nil, err
 		}
-		loaderID, err := StableManagedLoaderID(project.ID, agentName, "")
+		loaderID, err := StableManagedTargetLoaderID(project.ID, "service", serviceName, schedulerName)
 		if err != nil {
 			return nil, err
 		}
@@ -1226,7 +1496,9 @@ func projectManagedServiceTriggerBuildsFromSpec(project ProjectRecord, revision 
 		record := ProjectSchedulerRecord{
 			ProjectID:       project.ID,
 			SchedulerID:     schedulerID,
-			AgentName:       agentName,
+			AgentName:       schedulerName,
+			TargetType:      "service",
+			TargetName:      serviceName,
 			ManagedLoaderID: loaderID,
 			Revision:        revision,
 			Enabled:         true,
@@ -1243,7 +1515,7 @@ func projectManagedServiceTriggerBuildsFromSpec(project ProjectRecord, revision 
 				ConcurrencyPolicy:  LoaderConcurrencyPolicySkip,
 				ManagedProjectID:   project.ID,
 				ManagedRevision:    revision,
-				ManagedAgentName:   agentName,
+				ManagedAgentName:   schedulerName,
 				ManagedSchedulerID: schedulerID,
 			},
 			Script:   script,
@@ -1263,8 +1535,13 @@ func normalizedProjectHasService(spec *compose.NormalizedProjectSpec, serviceNam
 	return false
 }
 
-func projectServiceTriggerSchedulerAgentName(serviceName, triggerName string) string {
-	return "service-" + strings.TrimSpace(serviceName) + "-" + strings.TrimSpace(triggerName)
+func projectServiceTriggerSchedulerName(serviceName, triggerName string) string {
+	serviceName = strings.TrimSpace(serviceName)
+	triggerName = strings.TrimSpace(triggerName)
+	if triggerName == "" {
+		return "service-" + serviceName
+	}
+	return "service-" + serviceName + "-" + triggerName
 }
 
 func projectManagedLoaderFromScheduler(project ProjectRecord, scheduler ProjectSchedulerRecord, agent compose.NormalizedAgentSpec) (Loader, error) {
@@ -1422,7 +1699,7 @@ func projectManagedLoaderTriggerAndRegistration(id, agentName string, trigger co
 }
 
 func projectManagedServiceLoaderTriggerAndRegistration(projectID, serviceName string, trigger compose.NormalizedProjectTriggerSpec) (LoaderTrigger, string, error) {
-	id, err := StableManagedTriggerID(projectID, projectServiceTriggerSchedulerAgentName(serviceName, trigger.Name), "", trigger.Name, 0)
+	id, err := StableManagedTriggerID(projectID, serviceName, projectServiceTriggerSchedulerName(serviceName, trigger.Name), trigger.Name, 0)
 	if err != nil {
 		return LoaderTrigger{}, "", err
 	}
@@ -1761,6 +2038,61 @@ func (s *Service) reconcileProjectManagedSchedulers(ctx context.Context, project
 	return changes, unchanged, nil
 }
 
+func (s *Service) reconcileProjectServices(ctx context.Context, project ProjectRecord, services []ProjectServiceRecord) ([]*agentcomposev2.ProjectChange, bool, error) {
+	if s.configDB == nil {
+		return nil, false, fmt.Errorf("config store is required")
+	}
+	currentByName := make(map[string]ProjectServiceRecord, len(services))
+	changes := make([]*agentcomposev2.ProjectChange, 0, len(services))
+	unchanged := true
+	for _, service := range services {
+		currentByName[service.ServiceName] = service
+		existing, found, err := getProjectServiceIfExists(ctx, s.configDB, service.ProjectID, service.ServiceName)
+		if err != nil {
+			return changes, false, fmt.Errorf("load project service %s/%s: %w", service.ProjectID, service.ServiceName, err)
+		}
+		saved, err := s.configDB.UpsertProjectService(ctx, service)
+		if err != nil {
+			return changes, false, fmt.Errorf("upsert project service %s/%s: %w", service.ProjectID, service.ServiceName, err)
+		}
+		action := serviceChangeAction(existing, found, service)
+		if action != agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED {
+			unchanged = false
+		}
+		changes = append(changes, &agentcomposev2.ProjectChange{
+			Action:       action,
+			ResourceType: "project_service",
+			ResourceId:   saved.ServiceName,
+			Name:         saved.ServiceName,
+		})
+	}
+	existingServices, err := s.configDB.ListProjectServices(ctx, project.ID)
+	if err != nil {
+		return changes, false, fmt.Errorf("list project services: %w", err)
+	}
+	for _, existing := range existingServices {
+		if _, ok := currentByName[existing.ServiceName]; ok {
+			continue
+		}
+		unchanged = false
+		changes = append(changes, &agentcomposev2.ProjectChange{
+			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_REMOVED,
+			ResourceType: "project_service",
+			ResourceId:   existing.ServiceName,
+			Name:         existing.ServiceName,
+			Message:      "service is no longer present in the project spec",
+		})
+	}
+	keepNames := make([]string, 0, len(currentByName))
+	for name := range currentByName {
+		keepNames = append(keepNames, name)
+	}
+	if err := s.configDB.DeleteProjectServicesExcept(ctx, project.ID, keepNames); err != nil {
+		return changes, false, err
+	}
+	return changes, unchanged, nil
+}
+
 func (s *Service) cleanupFailedManagedSchedulerReconcile(ctx context.Context, scheduler ProjectSchedulerRecord, loaderID string) {
 	if s == nil || s.configDB == nil {
 		return
@@ -1828,6 +2160,9 @@ func schedulerChangeAction(existing ProjectSchedulerRecord, found bool, current 
 		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
 	}
 	if existing.ManagedLoaderID == current.ManagedLoaderID &&
+		existing.AgentName == current.AgentName &&
+		existing.TargetType == current.TargetType &&
+		existing.TargetName == current.TargetName &&
 		existing.Revision == current.Revision &&
 		existing.Enabled == current.Enabled &&
 		existing.TriggerCount == current.TriggerCount &&
@@ -1938,6 +2273,17 @@ func getProjectAgentIfExists(ctx context.Context, store *ConfigStore, projectID,
 		return ProjectAgentRecord{}, false, nil
 	}
 	return ProjectAgentRecord{}, false, err
+}
+
+func getProjectServiceIfExists(ctx context.Context, store *ConfigStore, projectID, serviceName string) (ProjectServiceRecord, bool, error) {
+	service, err := store.GetProjectService(ctx, projectID, serviceName)
+	if err == nil {
+		return service, true, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return ProjectServiceRecord{}, false, nil
+	}
+	return ProjectServiceRecord{}, false, err
 }
 
 func getProjectSchedulerIfExists(ctx context.Context, store *ConfigStore, projectID, schedulerID string) (ProjectSchedulerRecord, bool, error) {
@@ -2097,6 +2443,7 @@ func projectRecordUnchanged(existing ProjectRecord, current ProjectRecord) bool 
 		existing.Name == current.Name &&
 		existing.SourcePath == current.SourcePath &&
 		existing.SpecHash == current.SpecHash &&
+		existing.BundleHash == current.BundleHash &&
 		existing.CurrentRevision == current.CurrentRevision &&
 		existing.RemovedAt.IsZero()
 }
@@ -2118,16 +2465,54 @@ func agentChangeAction(existing ProjectAgentRecord, found bool, current ProjectA
 	return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
 }
 
-func projectResponse(project ProjectRecord, spec *agentcomposev2.ProjectSpec, agents []ProjectAgentRecord, schedulers []ProjectSchedulerRecord) *agentcomposev2.Project {
+func serviceChangeAction(existing ProjectServiceRecord, found bool, current ProjectServiceRecord) agentcomposev2.ProjectChangeAction {
+	if !found {
+		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
+	}
+	if existing.Revision == current.Revision &&
+		existing.Runtime == current.Runtime &&
+		existing.Entry == current.Entry &&
+		existing.InputSchemaRef == current.InputSchemaRef &&
+		existing.OutputSchemaRef == current.OutputSchemaRef &&
+		existing.ErrorSchemaRef == current.ErrorSchemaRef &&
+		existing.TimeoutMs == current.TimeoutMs &&
+		existing.SpecJSON == current.SpecJSON {
+		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED
+	}
+	return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
+}
+
+func projectResponse(project ProjectRecord, spec *agentcomposev2.ProjectSpec, agents []ProjectAgentRecord, services []ProjectServiceRecord, schedulers []ProjectSchedulerRecord) *agentcomposev2.Project {
 	return &agentcomposev2.Project{
 		Summary:    projectSummaryResponse(project, agents, schedulers),
 		Spec:       spec,
 		Agents:     projectAgentResponses(agents),
+		Services:   projectServiceResponses(services),
 		Schedulers: projectSchedulerResponses(schedulers),
 	}
 }
 
-func projectSummaryResponse(project ProjectRecord, agents []ProjectAgentRecord, schedulers []ProjectSchedulerRecord) *agentcomposev2.ProjectSummary {
+func (s *Service) projectListSummaryResponse(ctx context.Context, project ProjectRecord) (*agentcomposev2.ProjectSummary, error) {
+	agents, err := s.configDB.ListProjectAgents(ctx, project.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list project %s agents: %w", project.ID, err)
+	}
+	schedulers, err := s.configDB.ListProjectSchedulers(ctx, project.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list project %s schedulers: %w", project.ID, err)
+	}
+	services, err := s.configDB.ListProjectServices(ctx, project.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list project %s services: %w", project.ID, err)
+	}
+	return projectSummaryResponse(project, agents, schedulers, services), nil
+}
+
+func projectSummaryResponse(project ProjectRecord, agents []ProjectAgentRecord, schedulers []ProjectSchedulerRecord, services ...[]ProjectServiceRecord) *agentcomposev2.ProjectSummary {
+	serviceCount := 0
+	if len(services) > 0 {
+		serviceCount = len(services[0])
+	}
 	return &agentcomposev2.ProjectSummary{
 		ProjectId:       project.ID,
 		Name:            project.Name,
@@ -2136,19 +2521,31 @@ func projectSummaryResponse(project ProjectRecord, agents []ProjectAgentRecord, 
 		SpecHash:        project.SpecHash,
 		AgentCount:      uint32(len(agents)),
 		SchedulerCount:  uint32(len(schedulers)),
+		ServiceCount:    uint32(serviceCount),
+		BundleHash:      project.BundleHash,
+		ProjectDir:      projectDirFromSourcePath(project.SourcePath),
 		CreatedAt:       formatProjectTime(project.CreatedAt),
 		UpdatedAt:       formatProjectTime(project.UpdatedAt),
 		RemovedAt:       formatProjectTime(project.RemovedAt),
 	}
 }
 
+func projectDirFromSourcePath(sourcePath string) string {
+	sourcePath = strings.TrimSpace(sourcePath)
+	if sourcePath == "" {
+		return ""
+	}
+	return filepath.Dir(sourcePath)
+}
+
 func projectRevisionResponse(revision ProjectRevisionRecord, spec *agentcomposev2.ProjectSpec) *agentcomposev2.ProjectRevision {
 	return &agentcomposev2.ProjectRevision{
-		ProjectId: revision.ProjectID,
-		Revision:  uint64(revision.Revision),
-		SpecHash:  revision.SpecHash,
-		Spec:      spec,
-		CreatedAt: formatProjectTime(revision.CreatedAt),
+		ProjectId:  revision.ProjectID,
+		Revision:   uint64(revision.Revision),
+		SpecHash:   revision.SpecHash,
+		BundleHash: revision.BundleHash,
+		Spec:       spec,
+		CreatedAt:  formatProjectTime(revision.CreatedAt),
 	}
 }
 
@@ -2169,6 +2566,25 @@ func projectAgentResponses(agents []ProjectAgentRecord) []*agentcomposev2.Projec
 	return items
 }
 
+func projectServiceResponses(services []ProjectServiceRecord) []*agentcomposev2.ProjectServiceResource {
+	items := make([]*agentcomposev2.ProjectServiceResource, 0, len(services))
+	for _, service := range services {
+		items = append(items, &agentcomposev2.ProjectServiceResource{
+			ProjectId:       service.ProjectID,
+			ServiceName:     service.ServiceName,
+			Revision:        uint64(service.Revision),
+			Runtime:         service.Runtime,
+			Entry:           service.Entry,
+			InputSchemaRef:  service.InputSchemaRef,
+			OutputSchemaRef: service.OutputSchemaRef,
+			ErrorSchemaRef:  service.ErrorSchemaRef,
+			TimeoutMs:       uint32(service.TimeoutMs),
+			SpecJson:        service.SpecJSON,
+		})
+	}
+	return items
+}
+
 func projectSchedulerResponses(schedulers []ProjectSchedulerRecord) []*agentcomposev2.ProjectScheduler {
 	items := make([]*agentcomposev2.ProjectScheduler, 0, len(schedulers))
 	for _, scheduler := range schedulers {
@@ -2179,6 +2595,8 @@ func projectSchedulerResponses(schedulers []ProjectSchedulerRecord) []*agentcomp
 			ManagedLoaderId: scheduler.ManagedLoaderID,
 			Enabled:         scheduler.Enabled,
 			TriggerCount:    uint32(scheduler.TriggerCount),
+			TargetType:      scheduler.TargetType,
+			TargetName:      scheduler.TargetName,
 		})
 	}
 	return items
@@ -2251,14 +2669,20 @@ func agentSpecResponses(agents []compose.NormalizedAgentSpec) []*agentcomposev2.
 func serviceSpecResponses(services []compose.NormalizedServiceSpec) []*agentcomposev2.ServiceSpec {
 	items := make([]*agentcomposev2.ServiceSpec, 0, len(services))
 	for _, service := range services {
+		inputSchemaJSON, inputSchemaRef := splitSchemaResponse(service.InputSchema)
+		outputSchemaJSON, outputSchemaRef := splitSchemaResponse(service.OutputSchema)
+		errorSchemaJSON, errorSchemaRef := splitSchemaResponse(service.ErrorSchema)
 		items = append(items, &agentcomposev2.ServiceSpec{
 			Name:             service.Name,
 			Description:      service.Description,
 			Runtime:          service.Runtime,
 			Entry:            service.Entry,
-			InputSchemaJson:  service.InputSchema,
-			OutputSchemaJson: service.OutputSchema,
-			ErrorSchemaJson:  service.ErrorSchema,
+			InputSchemaJson:  inputSchemaJSON,
+			InputSchemaRef:   inputSchemaRef,
+			OutputSchemaJson: outputSchemaJSON,
+			OutputSchemaRef:  outputSchemaRef,
+			ErrorSchemaJson:  errorSchemaJSON,
+			ErrorSchemaRef:   errorSchemaRef,
 			TimeoutMs:        durationStringToMillis(service.Timeout),
 			Retry:            retryPolicyResponse(service.Retry),
 			Permissions:      permissionResponse(service.Permissions),
@@ -2268,6 +2692,17 @@ func serviceSpecResponses(services []compose.NormalizedServiceSpec) []*agentcomp
 		})
 	}
 	return items
+}
+
+func splitSchemaResponse(value string) (schemaJSON string, schemaRef string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", ""
+	}
+	if strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[") {
+		return value, ""
+	}
+	return "", value
 }
 
 func retryPolicyResponse(retry *compose.RetryPolicySpec) *agentcomposev2.RetryPolicySpec {

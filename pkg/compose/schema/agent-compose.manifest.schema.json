@@ -1,0 +1,317 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-compose.dev/schema/agent-compose.manifest.schema.json",
+  "title": "agent-compose Project Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": { "type": "string" },
+    "kind": { "type": "string", "const": "Project" },
+    "name": { "$ref": "#/$defs/stableIdentifier" },
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "variables": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/envVar" }
+    },
+    "runtime": { "$ref": "#/$defs/runtime" },
+    "workspace": { "$ref": "#/$defs/workspace" },
+    "agents": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/agent" }
+    },
+    "services": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/service" }
+    },
+    "triggers": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/projectTrigger" }
+    },
+    "permissions": { "$ref": "#/$defs/permissions" },
+    "artifacts": { "$ref": "#/$defs/artifacts" },
+    "network": { "$ref": "#/$defs/network" }
+  },
+  "$defs": {
+    "stableIdentifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    },
+    "duration": {
+      "type": "string",
+      "examples": ["30s", "10m", "1h"]
+    },
+    "relativePath": {
+      "type": "string",
+      "not": {
+        "anyOf": [
+          { "pattern": "^/" },
+          { "pattern": "^\\.\\.(?:/|$)" },
+          { "pattern": "/\\.\\.(?:/|$)" }
+        ]
+      }
+    },
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "envVar": {
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "value": { "type": "string" },
+            "secret": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "labels": { "$ref": "#/$defs/stringMap" },
+        "annotations": { "$ref": "#/$defs/stringMap" }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "driver": { "type": "string", "enum": ["docker", "boxlite", "microsandbox", "firecracker"] },
+        "image": { "type": "string" },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/envVar" }
+        },
+        "resources": { "$ref": "#/$defs/stringMap" },
+        "network": { "$ref": "#/$defs/network" },
+        "cleanup_policy": { "type": "string" }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": "string" },
+        "url": { "type": "string" },
+        "branch": { "type": "string" },
+        "path": { "$ref": "#/$defs/relativePath" }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "system_prompt": { "type": "string" },
+        "image": { "type": "string" },
+        "driver": { "$ref": "#/$defs/driver" },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/envVar" }
+        },
+        "capset_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "metadata": { "$ref": "#/$defs/stringMap" },
+        "workspace": { "$ref": "#/$defs/workspace" },
+        "scheduler": { "$ref": "#/$defs/scheduler" }
+      }
+    },
+    "driver": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "boxlite": { "$ref": "#/$defs/boxliteDriver" },
+        "docker": { "$ref": "#/$defs/dockerDriver" },
+        "microsandbox": { "$ref": "#/$defs/microsandboxDriver" },
+        "firecracker": { "$ref": "#/$defs/firecrackerDriver" }
+      },
+      "minProperties": 1,
+      "maxProperties": 1
+    },
+    "boxliteDriver": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kernel": { "type": "string" },
+        "rootfs": { "type": "string" }
+      }
+    },
+    "dockerDriver": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": { "type": "string" }
+      }
+    },
+    "microsandboxDriver": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": { "type": "string" }
+      }
+    },
+    "firecrackerDriver": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kernel": { "type": "string" },
+        "rootfs": { "type": "string" }
+      }
+    },
+    "scheduler": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "triggers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/schedulerTrigger" }
+        },
+        "script": { "type": "string" }
+      }
+    },
+    "schedulerTrigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "cron": { "type": "string" },
+        "interval": { "$ref": "#/$defs/duration" },
+        "timeout": { "$ref": "#/$defs/duration" },
+        "event": { "$ref": "#/$defs/eventTrigger" },
+        "prompt": { "type": "string" }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry"],
+      "properties": {
+        "description": { "type": "string" },
+        "runtime": { "type": "string" },
+        "entry": { "$ref": "#/$defs/relativePath" },
+        "input_schema": {
+          "type": "string",
+          "description": "Inline JSON Schema object/array or a relative path to a JSON Schema file."
+        },
+        "output_schema": {
+          "type": "string",
+          "description": "Inline JSON Schema object/array or a relative path to a JSON Schema file."
+        },
+        "error_schema": {
+          "type": "string",
+          "description": "Inline JSON Schema object/array or a relative path to a JSON Schema file."
+        },
+        "timeout": { "$ref": "#/$defs/duration" },
+        "retry": { "$ref": "#/$defs/retry" },
+        "permissions": { "$ref": "#/$defs/permissions" },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/envVar" }
+        },
+        "agents": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "examples": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/serviceExample" }
+        }
+      }
+    },
+    "retry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_attempts": { "type": "integer", "minimum": 0 },
+        "backoff": { "$ref": "#/$defs/duration" }
+      }
+    },
+    "serviceExample": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "input": { "type": "string" },
+        "output": { "type": "string" }
+      }
+    },
+    "projectTrigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "enum": ["cron", "interval", "timeout", "event", "webhook"] },
+        "cron": { "type": "string" },
+        "interval": { "$ref": "#/$defs/duration" },
+        "timeout": { "$ref": "#/$defs/duration" },
+        "event": { "$ref": "#/$defs/eventTrigger" },
+        "webhook": { "$ref": "#/$defs/webhookTrigger" },
+        "target": { "$ref": "#/$defs/triggerTarget" },
+        "input": { "type": "string" }
+      }
+    },
+    "eventTrigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "topic": { "type": "string" }
+      }
+    },
+    "webhookTrigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "topic": { "type": "string" },
+        "method": { "type": "string" }
+      }
+    },
+    "triggerTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "service": { "type": "string" },
+        "agent": { "type": "string" }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "resources": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "retention": { "$ref": "#/$defs/duration" },
+        "storage": { "type": "string" }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "type": "string", "enum": ["default"] }
+      }
+    }
+  }
+}

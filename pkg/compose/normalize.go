@@ -301,6 +301,9 @@ func normalizeServiceSpec(name string, service ServiceSpec, options NormalizeOpt
 	if err != nil {
 		return NormalizedServiceSpec{}, err
 	}
+	if err := validateRelativeFile(path+".entry", entry, "service entry", options); err != nil {
+		return NormalizedServiceSpec{}, err
+	}
 	if service.Timeout != "" {
 		if err := validatePositiveDuration(path+".timeout", strings.TrimSpace(service.Timeout)); err != nil {
 			return NormalizedServiceSpec{}, err
@@ -320,15 +323,15 @@ func normalizeServiceSpec(name string, service ServiceSpec, options NormalizeOpt
 	if err != nil {
 		return NormalizedServiceSpec{}, err
 	}
-	inputSchema, err := normalizeSchemaValue(path+".input_schema", service.InputSchema)
+	inputSchema, err := normalizeSchemaValue(path+".input_schema", service.InputSchema, options)
 	if err != nil {
 		return NormalizedServiceSpec{}, err
 	}
-	outputSchema, err := normalizeSchemaValue(path+".output_schema", service.OutputSchema)
+	outputSchema, err := normalizeSchemaValue(path+".output_schema", service.OutputSchema, options)
 	if err != nil {
 		return NormalizedServiceSpec{}, err
 	}
-	errorSchema, err := normalizeSchemaValue(path+".error_schema", service.ErrorSchema)
+	errorSchema, err := normalizeSchemaValue(path+".error_schema", service.ErrorSchema, options)
 	if err != nil {
 		return NormalizedServiceSpec{}, err
 	}
@@ -679,7 +682,7 @@ func normalizeEnvVarMap(path string, values map[string]EnvVarSpec, options Norma
 	return normalized, nil
 }
 
-func normalizeSchemaValue(path string, value string) (string, error) {
+func normalizeSchemaValue(path string, value string, options NormalizeOptions) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "", nil
@@ -690,7 +693,14 @@ func normalizeSchemaValue(path string, value string) (string, error) {
 		}
 		return value, nil
 	}
-	return normalizeRelativeFileReference(path, value, "schema reference")
+	normalized, err := normalizeRelativeFileReference(path, value, "schema reference")
+	if err != nil {
+		return "", err
+	}
+	if err := validateRelativeJSONFile(path, normalized, "schema reference", options); err != nil {
+		return "", err
+	}
+	return normalized, nil
 }
 
 func normalizeRelativeFileReference(path string, value string, label string) (string, error) {
@@ -702,6 +712,60 @@ func normalizeRelativeFileReference(path string, value string, label string) (st
 		return "", &ValidationError{Path: path, Message: label + " must stay within the project directory"}
 	}
 	return filepath.ToSlash(cleaned), nil
+}
+
+func validateRelativeFile(path string, value string, label string, options NormalizeOptions) error {
+	absPath, ok := resolveRelativeFileReference(value, options)
+	if !ok {
+		return nil
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &ValidationError{Path: path, Message: label + " file does not exist"}
+		}
+		return &ValidationError{Path: path, Message: fmt.Sprintf("cannot read %s file: %v", label, err)}
+	}
+	if !info.Mode().IsRegular() {
+		return &ValidationError{Path: path, Message: label + " must reference a regular file"}
+	}
+	return nil
+}
+
+func validateRelativeJSONFile(path string, value string, label string, options NormalizeOptions) error {
+	absPath, ok := resolveRelativeFileReference(value, options)
+	if !ok {
+		return nil
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &ValidationError{Path: path, Message: label + " file does not exist"}
+		}
+		return &ValidationError{Path: path, Message: fmt.Sprintf("cannot read %s file: %v", label, err)}
+	}
+	if !info.Mode().IsRegular() {
+		return &ValidationError{Path: path, Message: label + " must reference a regular file"}
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return &ValidationError{Path: path, Message: fmt.Sprintf("cannot read %s file: %v", label, err)}
+	}
+	if !json.Valid(data) {
+		return &ValidationError{Path: path, Message: label + " file must contain valid JSON"}
+	}
+	return nil
+}
+
+func resolveRelativeFileReference(value string, options NormalizeOptions) (string, bool) {
+	composePath := strings.TrimSpace(options.ComposePath)
+	if composePath == "" {
+		return "", false
+	}
+	if abs, err := filepath.Abs(composePath); err == nil {
+		composePath = abs
+	}
+	return filepath.Join(filepath.Dir(composePath), filepath.FromSlash(value)), true
 }
 
 func interpolateEnvValue(path string, value string, options NormalizeOptions) (string, error) {

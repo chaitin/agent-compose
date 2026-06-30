@@ -14,6 +14,7 @@ func (s *ConfigStore) ensureProjectSchema(ctx context.Context) error {
 			source_json TEXT NOT NULL DEFAULT '{}',
 			current_revision INTEGER NOT NULL DEFAULT 0,
 			spec_hash TEXT NOT NULL DEFAULT '',
+			bundle_hash TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
 			updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
 			removed_at INTEGER NOT NULL DEFAULT 0
@@ -24,12 +25,12 @@ func (s *ConfigStore) ensureProjectSchema(ctx context.Context) error {
 			project_id TEXT NOT NULL,
 			revision INTEGER NOT NULL,
 			spec_hash TEXT NOT NULL,
+			bundle_hash TEXT NOT NULL DEFAULT '',
 			spec_json TEXT NOT NULL,
 			created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
 			PRIMARY KEY(project_id, revision),
 			FOREIGN KEY(project_id) REFERENCES project(id) ON DELETE CASCADE
 		);`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_project_revision_hash ON project_revision(project_id, spec_hash);`,
 		`CREATE TABLE IF NOT EXISTS project_agent (
 			project_id TEXT NOT NULL,
 			agent_name TEXT NOT NULL,
@@ -47,10 +48,28 @@ func (s *ConfigStore) ensureProjectSchema(ctx context.Context) error {
 			FOREIGN KEY(project_id) REFERENCES project(id) ON DELETE CASCADE
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_agent_managed_agent ON project_agent(managed_agent_id);`,
+		`CREATE TABLE IF NOT EXISTS project_service (
+			project_id TEXT NOT NULL,
+			service_name TEXT NOT NULL,
+			revision INTEGER NOT NULL DEFAULT 0,
+			runtime TEXT NOT NULL DEFAULT '',
+			entry TEXT NOT NULL DEFAULT '',
+			input_schema_ref TEXT NOT NULL DEFAULT '',
+			output_schema_ref TEXT NOT NULL DEFAULT '',
+			error_schema_ref TEXT NOT NULL DEFAULT '',
+			timeout_ms INTEGER NOT NULL DEFAULT 0,
+			spec_json TEXT NOT NULL DEFAULT '{}',
+			created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+			updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+			PRIMARY KEY(project_id, service_name),
+			FOREIGN KEY(project_id) REFERENCES project(id) ON DELETE CASCADE
+		);`,
 		`CREATE TABLE IF NOT EXISTS project_scheduler (
 			project_id TEXT NOT NULL,
 			scheduler_id TEXT NOT NULL,
 			agent_name TEXT NOT NULL,
+			target_type TEXT NOT NULL DEFAULT 'agent',
+			target_name TEXT NOT NULL DEFAULT '',
 			managed_loader_id TEXT NOT NULL DEFAULT '',
 			revision INTEGER NOT NULL DEFAULT 0,
 			enabled INTEGER NOT NULL DEFAULT 1,
@@ -59,8 +78,7 @@ func (s *ConfigStore) ensureProjectSchema(ctx context.Context) error {
 			created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
 			updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
 			PRIMARY KEY(project_id, scheduler_id),
-			FOREIGN KEY(project_id) REFERENCES project(id) ON DELETE CASCADE,
-			FOREIGN KEY(project_id, agent_name) REFERENCES project_agent(project_id, agent_name) ON DELETE CASCADE
+			FOREIGN KEY(project_id) REFERENCES project(id) ON DELETE CASCADE
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_scheduler_agent ON project_scheduler(project_id, agent_name);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_scheduler_managed_loader ON project_scheduler(managed_loader_id);`,
@@ -103,11 +121,135 @@ func (s *ConfigStore) ensureProjectSchema(ctx context.Context) error {
 			return fmt.Errorf("create project schema: %w", err)
 		}
 	}
+	if err := s.ensureProjectColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureProjectRevisionColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureProjectSchedulerTargetSchema(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureManagedResourceColumns(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureProjectRunColumns(ctx); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *ConfigStore) ensureProjectColumns(ctx context.Context) error {
+	if err := ensureColumn(ctx, s.db, "project", "bundle_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("ensure project bundle_hash column: %w", err)
+	}
+	return nil
+}
+
+func (s *ConfigStore) ensureProjectRevisionColumns(ctx context.Context) error {
+	if err := ensureColumn(ctx, s.db, "project_revision", "bundle_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("ensure project revision bundle_hash column: %w", err)
+	}
+	statements := []string{
+		`DROP INDEX IF EXISTS idx_project_revision_hash;`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_project_revision_hash_bundle ON project_revision(project_id, spec_hash, bundle_hash);`,
+	}
+	for _, stmt := range statements {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("create project revision bundle index: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *ConfigStore) ensureProjectSchedulerTargetSchema(ctx context.Context) error {
+	if err := ensureColumn(ctx, s.db, "project_scheduler", "target_type", "TEXT NOT NULL DEFAULT 'agent'"); err != nil {
+		return fmt.Errorf("ensure project scheduler target_type column: %w", err)
+	}
+	if err := ensureColumn(ctx, s.db, "project_scheduler", "target_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("ensure project scheduler target_name column: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE project_scheduler SET target_type = 'agent' WHERE target_type = ''`); err != nil {
+		return fmt.Errorf("backfill project scheduler target_type: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE project_scheduler SET target_name = agent_name WHERE target_name = ''`); err != nil {
+		return fmt.Errorf("backfill project scheduler target_name: %w", err)
+	}
+	if err := s.rebuildProjectSchedulerWithoutAgentFK(ctx); err != nil {
+		return err
+	}
+	statements := []string{
+		`CREATE INDEX IF NOT EXISTS idx_project_scheduler_agent ON project_scheduler(project_id, agent_name);`,
+		`CREATE INDEX IF NOT EXISTS idx_project_scheduler_target ON project_scheduler(project_id, target_type, target_name);`,
+		`CREATE INDEX IF NOT EXISTS idx_project_scheduler_managed_loader ON project_scheduler(managed_loader_id);`,
+	}
+	for _, stmt := range statements {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("create project scheduler target index: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *ConfigStore) rebuildProjectSchedulerWithoutAgentFK(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA foreign_key_list(project_scheduler)`)
+	if err != nil {
+		return fmt.Errorf("inspect project_scheduler foreign keys: %w", err)
+	}
+	hasAgentFK := false
+	for rows.Next() {
+		var id, seq int
+		var table, from, to, onUpdate, onDelete, match string
+		if err := rows.Scan(&id, &seq, &table, &from, &to, &onUpdate, &onDelete, &match); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan project_scheduler foreign keys: %w", err)
+		}
+		if table == "project_agent" {
+			hasAgentFK = true
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close project_scheduler foreign keys: %w", err)
+	}
+	if !hasAgentFK {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("disable foreign keys for project_scheduler rebuild: %w", err)
+	}
+	defer func() { _, _ = s.db.ExecContext(context.Background(), `PRAGMA foreign_keys = ON`) }()
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS project_scheduler_new (
+			project_id TEXT NOT NULL,
+			scheduler_id TEXT NOT NULL,
+			agent_name TEXT NOT NULL,
+			target_type TEXT NOT NULL DEFAULT 'agent',
+			target_name TEXT NOT NULL DEFAULT '',
+			managed_loader_id TEXT NOT NULL DEFAULT '',
+			revision INTEGER NOT NULL DEFAULT 0,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			trigger_count INTEGER NOT NULL DEFAULT 0,
+			spec_json TEXT NOT NULL DEFAULT '{}',
+			created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+			updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+			PRIMARY KEY(project_id, scheduler_id),
+			FOREIGN KEY(project_id) REFERENCES project(id) ON DELETE CASCADE
+		);`,
+		`INSERT INTO project_scheduler_new(
+			project_id, scheduler_id, agent_name, target_type, target_name, managed_loader_id, revision, enabled, trigger_count, spec_json, created_at, updated_at
+		)
+		SELECT project_id, scheduler_id, agent_name,
+			CASE WHEN target_type = '' THEN 'agent' ELSE target_type END,
+			CASE WHEN target_name = '' THEN agent_name ELSE target_name END,
+			managed_loader_id, revision, enabled, trigger_count, spec_json, created_at, updated_at
+		FROM project_scheduler;`,
+		`DROP TABLE project_scheduler;`,
+		`ALTER TABLE project_scheduler_new RENAME TO project_scheduler;`,
+	}
+	for _, stmt := range statements {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("rebuild project_scheduler without agent foreign key: %w", err)
+		}
 	}
 	return nil
 }
