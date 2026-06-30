@@ -178,6 +178,9 @@ func ensureSessionOpenCodeAnthropicFacadeConfig(ctx context.Context, config *app
 		return nil, err
 	}
 	anthropicBaseURL := strings.TrimRight(baseURL, "/") + "/api/runtime/sessions/" + session.Summary.ID + "/llm/anthropic"
+	if err := writeOpenCodeAnthropicLLMConfig(session, target.Model.Name, anthropicBaseURL+"/v1"); err != nil {
+		return nil, err
+	}
 	return map[string]string{
 		"AGENT_COMPOSE_SESSION_TOKEN": tokenValue,
 		"LLM_API_ENDPOINT":            anthropicBaseURL,
@@ -185,6 +188,7 @@ func ensureSessionOpenCodeAnthropicFacadeConfig(ctx context.Context, config *app
 		"LLM_API_PROTOCOL":            llmAPIProtocolMessages,
 		"ANTHROPIC_API_KEY":           tokenValue,
 		"ANTHROPIC_BASE_URL":          anthropicBaseURL,
+		"OPENCODE_CONFIG":             guestOpenCodeLLMConfigPath(config),
 	}, nil
 }
 
@@ -398,6 +402,46 @@ func writeOpenCodeLLMConfig(session *Session, providerID, model, baseURL string)
 		return fmt.Errorf("encode opencode config: %w", err)
 	}
 	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write opencode config: %w", err)
+	}
+	return nil
+}
+
+func writeOpenCodeAnthropicLLMConfig(session *Session, model, baseURL string) error {
+	if session == nil {
+		return nil
+	}
+	model = strings.TrimSpace(model)
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if model == "" || baseURL == "" {
+		return nil
+	}
+	path := filepath.Join(hostSessionHome(session), ".config", "opencode", "opencode.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create opencode config dir: %w", err)
+	}
+	payload := map[string]any{
+		"$schema": "https://opencode.ai/config.json",
+		"provider": map[string]any{
+			"anthropic": map[string]any{
+				"npm":  "@ai-sdk/anthropic",
+				"name": "agent-compose anthropic",
+				"options": map[string]any{
+					"baseURL": baseURL,
+					"apiKey":  "{env:AGENT_COMPOSE_SESSION_TOKEN}",
+				},
+				"models": map[string]any{
+					model: map[string]any{"name": model},
+				},
+			},
+		},
+	}
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode opencode config: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write opencode config: %w", err)
 	}
 	return nil

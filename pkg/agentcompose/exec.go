@@ -338,6 +338,9 @@ func loaderCommandLLMFacadeAgentModel(env map[string]string) (string, string) {
 		return "codex", ""
 	}
 	agent := normalizeAgentKind(firstNonEmpty(
+		env["PROJECT_AGENT_LLM_PROVIDER"],
+		env["AGENT_COMPOSE_LLM_PROVIDER"],
+		env["LLM_AGENT_PROVIDER"],
 		env["PROJECT_AGENT_PROVIDER"],
 		env["AGENT_PROVIDER"],
 		env["AGENT_COMPOSE_PROVIDER"],

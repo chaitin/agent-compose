@@ -843,10 +843,14 @@ func agentExecutionConfigFromDefinition(agent AgentDefinition, fallbackProvider 
 	if provider == "" {
 		provider = normalizeAgentKind(fallbackProvider)
 	}
+	model := strings.TrimSpace(agent.Model)
+	if provider == "opencode" {
+		model = strings.TrimSpace(sessionEnvMap(agent.EnvItems)["OPENCODE_MODEL"])
+	}
 	return agentExecutionConfig{
 		Provider:          provider,
 		AgentDefinitionID: strings.TrimSpace(agent.ID),
-		Model:             strings.TrimSpace(agent.Model),
+		Model:             model,
 		EnvItems:          append([]SessionEnvVar(nil), agent.EnvItems...),
 	}
 }

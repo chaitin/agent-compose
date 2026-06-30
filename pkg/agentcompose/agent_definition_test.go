@@ -297,8 +297,11 @@ func TestAgentSessionMessageUsesDefinitionProvider(t *testing.T) {
 		Name:         "Claude Runner",
 		Enabled:      true,
 		Provider:     "open-code",
-		Model:        "anthropic/claude-sonnet-4-5",
+		Model:        "unused-model-field",
 		SystemPrompt: "system body",
+		EnvItems: []*agentcomposev1.SessionEnvVar{
+			{Name: "OPENCODE_MODEL", Value: "anthropic/claude-sonnet-4-5"},
+		},
 	}))
 	if err != nil {
 		t.Fatalf("CreateAgentDefinition returned error: %v", err)

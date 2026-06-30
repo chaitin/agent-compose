@@ -1015,6 +1015,55 @@ func TestLoaderRunHostCommandDeletesLLMFacadeToken(t *testing.T) {
 	}
 }
 
+func TestLoaderRunHostCommandUsesLLMProviderOverrideForFacade(t *testing.T) {
+	ctx := context.Background()
+	manager, runtime, _, loader := newTestLoaderCommandManager(t, ctx)
+	manager.config.RuntimeBaseURL = "http://agent-compose.test"
+	if _, err := manager.configDB.ReplaceGlobalEnv(ctx, []SessionEnvVar{
+		{Name: "ANTHROPIC_BASE_URL", Value: "https://anthropic.example.invalid"},
+		{Name: "ANTHROPIC_AUTH_TOKEN", Value: "provider-key", Secret: true},
+		{Name: "ANTHROPIC_MODEL", Value: "vip/deepseek-v4-pro"},
+	}); err != nil {
+		t.Fatalf("ReplaceGlobalEnv returned error: %v", err)
+	}
+	host := &loaderRunHost{
+		manager: manager,
+		loader:  loader,
+		run:     &LoaderRunSummary{ID: "run-command-llm-provider-override", LoaderID: loader.Summary.ID},
+	}
+
+	result, err := host.Command(ctx, LoaderCommandRequest{
+		Mode:    "exec",
+		Command: "python3",
+		Args:    []string{"-V"},
+		Env: map[string]string{
+			"PROJECT_AGENT_PROVIDER":     "pilot",
+			"PROJECT_AGENT_LLM_PROVIDER": "claude",
+			"ANTHROPIC_MODEL":            "vip/deepseek-v4-pro",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Command returned error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("command result = %#v", result)
+	}
+	if len(runtime.commandSpecs) != 1 {
+		t.Fatalf("command ExecStream calls = %d, want 1", len(runtime.commandSpecs))
+	}
+	env := runtime.commandSpecs[0].Env
+	token := env["AGENT_COMPOSE_SESSION_TOKEN"]
+	if token == "" {
+		t.Fatalf("command spec missing AGENT_COMPOSE_SESSION_TOKEN: %#v", env)
+	}
+	if env["ANTHROPIC_API_KEY"] != token {
+		t.Fatalf("ANTHROPIC_API_KEY = %q, want facade token", env["ANTHROPIC_API_KEY"])
+	}
+	if strings.TrimSpace(env["ANTHROPIC_BASE_URL"]) == "" {
+		t.Fatalf("ANTHROPIC_BASE_URL missing from command env: %#v", env)
+	}
+}
+
 func TestLoaderRunHostCommandSkipsOpenCodeFacadeWithoutModel(t *testing.T) {
 	ctx := context.Background()
 	manager, runtime, _, loader := newTestLoaderCommandManager(t, ctx)

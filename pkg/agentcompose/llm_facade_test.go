@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	protocolbridge "github.com/chaitin/ai-api-protocol-bridge"
 	"github.com/labstack/echo/v4"
 
 	appconfig "agent-compose/pkg/config"
@@ -49,6 +50,23 @@ func TestIsRuntimeLLMFacadeRequestMatchesOnlyRegisteredPOSTRoutes(t *testing.T) 
 		if IsRuntimeLLMFacadeRequest(req) {
 			t.Fatalf("IsRuntimeLLMFacadeRequest(%s %q) = true, want false", tc.method, tc.path)
 		}
+	}
+}
+
+func TestRuntimeLLMUseGenericResponsesTextPartsRequiresExplicitProviderFlag(t *testing.T) {
+	target := LLMResolvedTarget{
+		Provider: LLMProvider{ID: "not-qwen", Name: "qwen-compatible-v2"},
+		Model:    LLMModel{ID: "alias-qwen", Name: "qwen3.7-max"},
+	}
+	if runtimeLLMUseGenericResponsesTextParts(target, protocolbridge.ProtocolOpenAIResponses) {
+		t.Fatalf("generic responses text parts should not be enabled by provider/model names")
+	}
+	target.Provider.UseGenericResponsesTextParts = true
+	if !runtimeLLMUseGenericResponsesTextParts(target, protocolbridge.ProtocolOpenAIResponses) {
+		t.Fatalf("generic responses text parts should be enabled by explicit provider flag")
+	}
+	if runtimeLLMUseGenericResponsesTextParts(target, protocolbridge.ProtocolOpenAIChat) {
+		t.Fatalf("generic responses text parts should only apply to OpenAI Responses upstreams")
 	}
 }
 
@@ -824,11 +842,31 @@ func TestEnsureSessionOpenCodeAnthropicUsesFacadeEnv(t *testing.T) {
 	if env["ANTHROPIC_BASE_URL"] != "http://agent-compose.test/api/runtime/sessions/"+session.Summary.ID+"/llm/anthropic" {
 		t.Fatalf("ANTHROPIC_BASE_URL = %q", env["ANTHROPIC_BASE_URL"])
 	}
-	if env["OPENCODE_CONFIG"] != "" {
-		t.Fatalf("OPENCODE_CONFIG = %q, want no custom config for built-in anthropic provider", env["OPENCODE_CONFIG"])
+	if env["OPENCODE_CONFIG"] != "/root/.config/opencode/opencode.json" {
+		t.Fatalf("OPENCODE_CONFIG = %q, want guest opencode config path", env["OPENCODE_CONFIG"])
 	}
-	if _, err := os.Stat(filepath.Join(hostSessionHome(session), ".config", "opencode", "opencode.json")); !os.IsNotExist(err) {
-		t.Fatalf("opencode config file should not exist for built-in anthropic provider, stat err=%v", err)
+	payload, err := os.ReadFile(filepath.Join(hostSessionHome(session), ".config", "opencode", "opencode.json"))
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("decode opencode config: %v\n%s", err, string(payload))
+	}
+	anthropic := decoded["provider"].(map[string]any)["anthropic"].(map[string]any)
+	if anthropic["npm"] != "@ai-sdk/anthropic" {
+		t.Fatalf("opencode anthropic npm = %#v, want @ai-sdk/anthropic", anthropic["npm"])
+	}
+	options := anthropic["options"].(map[string]any)
+	if options["baseURL"] != "http://agent-compose.test/api/runtime/sessions/"+session.Summary.ID+"/llm/anthropic/v1" {
+		t.Fatalf("opencode anthropic baseURL = %#v", options["baseURL"])
+	}
+	if options["apiKey"] != "{env:AGENT_COMPOSE_SESSION_TOKEN}" {
+		t.Fatalf("opencode anthropic apiKey = %#v", options["apiKey"])
+	}
+	models := anthropic["models"].(map[string]any)
+	if _, ok := models["claude-sonnet-4-5"]; !ok {
+		t.Fatalf("opencode anthropic models = %#v, want requested model", models)
 	}
 	token, err := service.configDB.GetLLMFacadeToken(ctx, env["AGENT_COMPOSE_SESSION_TOKEN"])
 	if err != nil {
@@ -1609,6 +1647,11 @@ func TestResolveRuntimeLLMTargetByExistingProviderID(t *testing.T) {
 // rejection paths. Named with the E2E convention so the coverage gate's e2e
 // shape exercises the facade HTTP handlers and provider/token resolution.
 func TestE2ERuntimeLLMFacadeRoundTrips(t *testing.T) {
+	testRuntimeLLMFacadeRoundTrips(t)
+}
+
+func testRuntimeLLMFacadeRoundTrips(t *testing.T) {
+	t.Helper()
 	ctx := context.Background()
 	t.Setenv("LLM_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -1651,7 +1694,7 @@ func TestE2ERuntimeLLMFacadeRoundTrips(t *testing.T) {
 	}
 
 	t.Run("openai_responses", func(t *testing.T) {
-		const requestBody = `{"model":"alias-resp","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"metadata":{"keep":"exact"}}`
+		const requestBody = `{"model":"alias-resp","input":[{"role":"developer","content":[{"text":"follow project rules"}]},{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"metadata":{"keep":"exact"}}`
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("Authorization") != "Bearer provider-key" {
 				t.Errorf("upstream auth = %q", r.Header.Get("Authorization"))
@@ -1669,6 +1712,27 @@ func TestE2ERuntimeLLMFacadeRoundTrips(t *testing.T) {
 			}
 			if metadata, _ := got["metadata"].(map[string]any); metadata["keep"] != "exact" {
 				t.Errorf("upstream metadata = %#v, want preserved request fields", got["metadata"])
+			}
+			input, _ := got["input"].([]any)
+			var sawSystem bool
+			for _, item := range input {
+				message, _ := item.(map[string]any)
+				if message["role"] == "developer" {
+					t.Errorf("upstream body kept developer role: %s", gotBody)
+				}
+				if message["role"] == "system" {
+					sawSystem = true
+				}
+				content, _ := message["content"].([]any)
+				for _, part := range content {
+					part, _ := part.(map[string]any)
+					if part["text"] != nil && part["type"] != "input_text" {
+						t.Errorf("upstream text content part type = %v, want input_text; body=%s", part["type"], gotBody)
+					}
+				}
+			}
+			if !sawSystem {
+				t.Errorf("upstream body did not map developer role to system: %s", gotBody)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":"resp-e2e","model":"m-resp","status":"completed","output_text":"ok"}`))
@@ -1692,35 +1756,195 @@ func TestE2ERuntimeLLMFacadeRoundTrips(t *testing.T) {
 	})
 
 	t.Run("openai_chat_completions", func(t *testing.T) {
+		const requestBody = `{"model":"alias-chat","messages":[{"role":"user","content":"hi"}],"metadata":{"keep":"exact"},"stream":false}`
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer provider-key" {
+				t.Errorf("upstream auth = %q", r.Header.Get("Authorization"))
+			}
+			gotBody, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read upstream body: %v", err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(gotBody, &got); err != nil {
+				t.Errorf("decode upstream body: %v", err)
+			}
+			if got["model"] != "m-chat" {
+				t.Errorf("upstream model = %v, want resolved provider model", got["model"])
+			}
+			if metadata, _ := got["metadata"].(map[string]any); metadata["keep"] != "exact" {
+				t.Errorf("upstream metadata = %#v, want preserved request fields", got["metadata"])
+			}
+			if _, ok := got["input"]; ok {
+				t.Errorf("upstream body was bridged to responses shape: %s", gotBody)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":"chat-e2e","object":"chat.completion","model":"m-chat","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
-		upsertProvider(t, "e2e-openai-chat", llmProviderFamilyOpenAI, llmAPIProtocolChatCompletions, upstream.URL, "Authorization", "Bearer", "m-chat")
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+			ID: "e2e-openai-chat", Name: "e2e-openai-chat", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolChatCompletions,
+			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "Authorization", AuthScheme: "Bearer",
+			Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
+		}, LLMModel{ID: "alias-chat", Name: "m-chat", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			t.Fatalf("UpsertDefaultLLMConfig(alias-chat): %v", err)
+		}
 		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-openai-chat")
-		token := mintToken(t, session, "m-chat", "e2e-openai-chat", llmAPIProtocolChatCompletions)
-		rec := post(session.Summary.ID, "/llm/openai/v1/chat/completions", token, `{"model":"m-chat","messages":[{"role":"user","content":"hi"}]}`)
+		token := mintToken(t, session, "alias-chat", "e2e-openai-chat", llmAPIProtocolChatCompletions)
+		rec := post(session.Summary.ID, "/llm/openai/v1/chat/completions", token, requestBody)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 		}
 	})
 
+	t.Run("openai_responses_qwen_generic_text_parts", func(t *testing.T) {
+		const requestBody = `{"model":"alias-qwen","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}],"stream":false}`
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotBody, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read upstream body: %v", err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(gotBody, &got); err != nil {
+				t.Errorf("decode upstream body: %v", err)
+			}
+			input, _ := got["input"].([]any)
+			for _, item := range input {
+				message, _ := item.(map[string]any)
+				content, _ := message["content"].([]any)
+				for _, part := range content {
+					part, _ := part.(map[string]any)
+					if part["text"] != nil && part["type"] != "text" {
+						t.Errorf("upstream qwen text content part type = %v, want text; body=%s", part["type"], gotBody)
+					}
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"chat-qwen","object":"chat.completion","model":"qwen-compatible","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+		}))
+		t.Cleanup(upstream.Close)
+		service.llm.client = upstream.Client()
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+			ID: "e2e-qwen-compatible", Name: "e2e-qwen-compatible", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolResponses,
+			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "Authorization", AuthScheme: "Bearer",
+			UseGenericResponsesTextParts: true, Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
+		}, LLMModel{ID: "alias-qwen", Name: "qwen-compatible", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			t.Fatalf("UpsertDefaultLLMConfig(alias-qwen): %v", err)
+		}
+		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-qwen-compatible")
+		token := mintToken(t, session, "alias-qwen", "e2e-qwen-compatible", llmAPIProtocolResponses)
+		rec := post(session.Summary.ID, "/llm/openai/v1/responses", token, requestBody)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode facade response: %v", err)
+		}
+		if got["output_text"] != "ok" {
+			t.Fatalf("facade output_text = %v, want ok; body=%s", got["output_text"], rec.Body.String())
+		}
+	})
+
+	t.Run("openai_responses_qwen_sparse_responses_sse", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotBody, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read upstream body: %v", err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(gotBody, &got); err != nil {
+				t.Errorf("decode upstream body: %v", err)
+			}
+			input, _ := got["input"].([]any)
+			for _, item := range input {
+				message, _ := item.(map[string]any)
+				content, _ := message["content"].([]any)
+				for _, part := range content {
+					part, _ := part.(map[string]any)
+					if part["text"] != nil && part["type"] != "text" {
+						t.Errorf("upstream qwen stream text content part type = %v, want text; body=%s", part["type"], gotBody)
+					}
+				}
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(strings.Join([]string{
+				`data: {"type":"response.output_text.delta"}`,
+				"",
+				`data: {"type":"response.output_text.delta","delta":"ok"}`,
+				"",
+				`data: {"type":"response.completed","response":{"id":"resp-qwen-stream","object":"response","status":"completed","model":"qwen-compatible","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}}`,
+				"",
+				"data: [DONE]",
+				"",
+			}, "\n")))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}))
+		t.Cleanup(upstream.Close)
+		service.llm.client = upstream.Client()
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+			ID: "e2e-qwen-stream", Name: "e2e-qwen-stream", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolResponses,
+			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "Authorization", AuthScheme: "Bearer",
+			UseGenericResponsesTextParts: true, Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
+		}, LLMModel{ID: "alias-qwen-stream", Name: "qwen-compatible-stream", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			t.Fatalf("UpsertDefaultLLMConfig(alias-qwen-stream): %v", err)
+		}
+		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-qwen-stream")
+		token := mintToken(t, session, "alias-qwen-stream", "e2e-qwen-stream", llmAPIProtocolResponses)
+		rec := post(session.Summary.ID, "/llm/openai/v1/responses", token, `{"model":"alias-qwen-stream","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":true}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		for _, want := range []string{"response.output_text.delta", `"delta":"ok"`, "response.output_text.done", "response.output_item.done", "response.completed", `"text":"ok"`} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("facade qwen SSE body missing %q: %s", want, body)
+			}
+		}
+	})
+
 	t.Run("anthropic_messages", func(t *testing.T) {
+		const requestBody = `{"model":"alias-claude","max_tokens":64,"messages":[{"role":"user","content":"hi"}],"metadata":{"user_id":"user-1"},"stream":false}`
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("x-api-key") != "provider-key" {
 				t.Errorf("upstream x-api-key = %q", r.Header.Get("x-api-key"))
+			}
+			gotBody, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read upstream body: %v", err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(gotBody, &got); err != nil {
+				t.Errorf("decode upstream body: %v", err)
+			}
+			if got["model"] != "m-claude" {
+				t.Errorf("upstream model = %v, want resolved provider model", got["model"])
+			}
+			if metadata, _ := got["metadata"].(map[string]any); metadata["user_id"] != "user-1" {
+				t.Errorf("upstream metadata = %#v, want preserved request fields", got["metadata"])
+			}
+			if _, ok := got["input"]; ok {
+				t.Errorf("upstream body was bridged to openai shape: %s", gotBody)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":"msg-e2e","type":"message","role":"assistant","model":"m-claude","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`))
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
-		upsertProvider(t, "e2e-anthropic", llmProviderFamilyAnthropic, llmAPIProtocolMessages, upstream.URL, "x-api-key", "", "m-claude")
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+			ID: "e2e-anthropic", Name: "e2e-anthropic", ProviderType: llmProviderFamilyAnthropic, DefaultWireAPI: llmAPIProtocolMessages,
+			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "x-api-key", AuthScheme: "",
+			HeadersJSON: `{"anthropic-version":"2023-06-01"}`, Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
+		}, LLMModel{ID: "alias-claude", Name: "m-claude", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			t.Fatalf("UpsertDefaultLLMConfig(alias-claude): %v", err)
+		}
 		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-anthropic")
-		token := mintToken(t, session, "m-claude", "e2e-anthropic", llmAPIProtocolMessages)
-		rec := post(session.Summary.ID, "/llm/anthropic/v1/messages", token, `{"model":"m-claude","messages":[{"role":"user","content":"hi"}]}`)
+		token := mintToken(t, session, "alias-claude", "e2e-anthropic", llmAPIProtocolMessages)
+		rec := post(session.Summary.ID, "/llm/anthropic/v1/messages", token, requestBody)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 		}
@@ -1739,6 +1963,126 @@ func TestE2ERuntimeLLMFacadeRoundTrips(t *testing.T) {
 		rec := post(session.Summary.ID, "/llm/openai/v1/responses", token, `{"model":"m-bridge","input":"hi"}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("openai_responses_to_chat_completions", func(t *testing.T) {
+		const requestBody = `{"model":"alias-resp-chat","input":[{"role":"developer","content":[{"type":"input_text","text":"follow project rules"}]},{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":false}`
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v1/chat/completions" {
+				t.Errorf("upstream path = %q, want /v1/chat/completions", r.URL.Path)
+			}
+			gotBody, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read upstream body: %v", err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(gotBody, &got); err != nil {
+				t.Errorf("decode upstream body: %v", err)
+			}
+			if got["model"] != "m-resp-chat" {
+				t.Errorf("upstream model = %v, want resolved provider model", got["model"])
+			}
+			if _, ok := got["messages"]; !ok {
+				t.Errorf("upstream body was not chat completions shape: %s", gotBody)
+			}
+			if _, ok := got["input"]; ok {
+				t.Errorf("upstream body still had responses input: %s", gotBody)
+			}
+			messages, _ := got["messages"].([]any)
+			var sawSystem bool
+			for _, item := range messages {
+				message, _ := item.(map[string]any)
+				if message["role"] == "developer" {
+					t.Errorf("upstream body kept developer role: %s", gotBody)
+				}
+				if message["role"] == "system" {
+					sawSystem = true
+				}
+			}
+			if !sawSystem {
+				t.Errorf("upstream body did not map developer role to system: %s", gotBody)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"chat-bridge","object":"chat.completion","model":"m-resp-chat","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+		}))
+		t.Cleanup(upstream.Close)
+		service.llm.client = upstream.Client()
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+			ID: "e2e-openai-resp-chat", Name: "e2e-openai-resp-chat", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolChatCompletions,
+			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "Authorization", AuthScheme: "Bearer",
+			Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
+		}, LLMModel{ID: "alias-resp-chat", Name: "m-resp-chat", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			t.Fatalf("UpsertDefaultLLMConfig(alias-resp-chat): %v", err)
+		}
+		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-openai-resp-chat")
+		token := mintToken(t, session, "alias-resp-chat", "e2e-openai-resp-chat", llmAPIProtocolResponses)
+		rec := post(session.Summary.ID, "/llm/openai/v1/responses", token, requestBody)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode facade response: %v", err)
+		}
+		if got["output_text"] != "ok" {
+			t.Fatalf("facade output_text = %v, want ok; body=%s", got["output_text"], rec.Body.String())
+		}
+	})
+
+	t.Run("openai_chat_completions_to_responses", func(t *testing.T) {
+		const requestBody = `{"model":"alias-chat-resp","messages":[{"role":"user","content":"hi"}],"stream":false}`
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v1/responses" {
+				t.Errorf("upstream path = %q, want /v1/responses", r.URL.Path)
+			}
+			gotBody, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read upstream body: %v", err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(gotBody, &got); err != nil {
+				t.Errorf("decode upstream body: %v", err)
+			}
+			if got["model"] != "m-chat-resp" {
+				t.Errorf("upstream model = %v, want resolved provider model", got["model"])
+			}
+			if _, ok := got["input"]; !ok {
+				t.Errorf("upstream body was not responses shape: %s", gotBody)
+			}
+			if _, ok := got["messages"]; ok {
+				t.Errorf("upstream body still had chat messages: %s", gotBody)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"resp-bridge","object":"response","model":"m-chat-resp","status":"completed","output":[{"id":"msg-1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`))
+		}))
+		t.Cleanup(upstream.Close)
+		service.llm.client = upstream.Client()
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+			ID: "e2e-openai-chat-resp", Name: "e2e-openai-chat-resp", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolResponses,
+			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "Authorization", AuthScheme: "Bearer",
+			Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
+		}, LLMModel{ID: "alias-chat-resp", Name: "m-chat-resp", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			t.Fatalf("UpsertDefaultLLMConfig(alias-chat-resp): %v", err)
+		}
+		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-openai-chat-resp")
+		token := mintToken(t, session, "alias-chat-resp", "e2e-openai-chat-resp", llmAPIProtocolChatCompletions)
+		rec := post(session.Summary.ID, "/llm/openai/v1/chat/completions", token, requestBody)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode facade response: %v", err)
+		}
+		choices, _ := got["choices"].([]any)
+		if len(choices) != 1 {
+			t.Fatalf("facade choices = %#v, want one choice; body=%s", got["choices"], rec.Body.String())
+		}
+		choice, _ := choices[0].(map[string]any)
+		message, _ := choice["message"].(map[string]any)
+		if message["content"] != "ok" {
+			t.Fatalf("facade message content = %v, want ok; body=%s", message["content"], rec.Body.String())
 		}
 	})
 
@@ -1763,6 +2107,50 @@ func TestE2ERuntimeLLMFacadeRoundTrips(t *testing.T) {
 		}
 		if rec.Body.String() != upstreamEvents {
 			t.Fatalf("facade SSE body = %q, want exact upstream events", rec.Body.String())
+		}
+	})
+
+	t.Run("sse_openai_responses_to_chat_completions", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v1/chat/completions" {
+				t.Errorf("upstream path = %q, want /v1/chat/completions", r.URL.Path)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(strings.Join([]string{
+				`data: {"id":"chat-stream","object":"chat.completion.chunk","model":"m-stream-chat","choices":[{"index":0,"delta":{"role":"assistant"}}]}`,
+				"",
+				`data: {"id":"chat-stream","object":"chat.completion.chunk","model":"m-stream-chat","choices":[{"index":0,"delta":{"content":"ok"}}]}`,
+				"",
+				`data: {"id":"chat-stream","object":"chat.completion.chunk","model":"m-stream-chat","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+				"",
+				"data: [DONE]",
+				"",
+			}, "\n")))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}))
+		t.Cleanup(upstream.Close)
+		service.llm.client = upstream.Client()
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+			ID: "e2e-openai-stream-chat", Name: "e2e-openai-stream-chat", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolChatCompletions,
+			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "Authorization", AuthScheme: "Bearer",
+			Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
+		}, LLMModel{ID: "alias-stream-chat", Name: "m-stream-chat", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			t.Fatalf("UpsertDefaultLLMConfig(alias-stream-chat): %v", err)
+		}
+		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-openai-stream-chat")
+		token := mintToken(t, session, "alias-stream-chat", "e2e-openai-stream-chat", llmAPIProtocolResponses)
+		rec := post(session.Summary.ID, "/llm/openai/v1/responses", token, `{"model":"alias-stream-chat","input":"hi","stream":true}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		for _, want := range []string{"response.output_text.delta", `"delta":"ok"`, "response.output_text.done", "response.output_item.done", "response.completed", `"text":"ok"`} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("facade SSE body missing %q: %s", want, body)
+			}
 		}
 	})
 

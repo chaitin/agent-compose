@@ -31,20 +31,21 @@ const (
 )
 
 type LLMProvider struct {
-	ID             string
-	Name           string
-	ProviderType   string
-	DefaultWireAPI string
-	BaseURL        string
-	APIKey         string
-	AuthHeader     string
-	AuthScheme     string
-	HeadersJSON    string
-	Weight         int
-	Enabled        bool
-	Scope          string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                           string
+	Name                         string
+	ProviderType                 string
+	DefaultWireAPI               string
+	BaseURL                      string
+	APIKey                       string
+	AuthHeader                   string
+	AuthScheme                   string
+	HeadersJSON                  string
+	UseGenericResponsesTextParts bool
+	Weight                       int
+	Enabled                      bool
+	Scope                        string
+	CreatedAt                    time.Time
+	UpdatedAt                    time.Time
 }
 
 type LLMModel struct {
@@ -135,6 +136,9 @@ func (s *ConfigStore) ensureLLMSchema(ctx context.Context) error {
 			return fmt.Errorf("create llm schema: %w", err)
 		}
 	}
+	if err := ensureColumn(ctx, s.db, "llm_provider", "use_generic_responses_text_parts", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("ensure llm provider generic responses text parts column: %w", err)
+	}
 	return nil
 }
 
@@ -179,9 +183,9 @@ func (s *ConfigStore) UpsertDefaultLLMConfig(ctx context.Context, provider LLMPr
 		return fmt.Errorf("begin llm default config tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_provider(id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, headers_json, weight, enabled, scope, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET name = excluded.name, provider_type = excluded.provider_type, default_wire_api = excluded.default_wire_api, base_url = excluded.base_url, api_key = excluded.api_key, auth_header = excluded.auth_header, auth_scheme = excluded.auth_scheme, headers_json = excluded.headers_json, weight = excluded.weight, enabled = excluded.enabled, scope = excluded.scope, updated_at = excluded.updated_at`, provider.ID, provider.Name, provider.ProviderType, provider.DefaultWireAPI, provider.BaseURL, provider.APIKey, provider.AuthHeader, provider.AuthScheme, provider.HeadersJSON, provider.Weight, provider.Scope, now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_provider(id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, headers_json, use_generic_responses_text_parts, weight, enabled, scope, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET name = excluded.name, provider_type = excluded.provider_type, default_wire_api = excluded.default_wire_api, base_url = excluded.base_url, api_key = excluded.api_key, auth_header = excluded.auth_header, auth_scheme = excluded.auth_scheme, headers_json = excluded.headers_json, use_generic_responses_text_parts = excluded.use_generic_responses_text_parts, weight = excluded.weight, enabled = excluded.enabled, scope = excluded.scope, updated_at = excluded.updated_at`, provider.ID, provider.Name, provider.ProviderType, provider.DefaultWireAPI, provider.BaseURL, provider.APIKey, provider.AuthHeader, provider.AuthScheme, provider.HeadersJSON, boolToInt(provider.UseGenericResponsesTextParts), provider.Weight, provider.Scope, now, now); err != nil {
 		return fmt.Errorf("insert default llm provider: %w", err)
 	}
 	if model.DefaultModel {
@@ -203,7 +207,7 @@ func (s *ConfigStore) UpsertDefaultLLMConfig(ctx context.Context, provider LLMPr
 }
 
 func (s *ConfigStore) ListEnabledLLMProviders(ctx context.Context) ([]LLMProvider, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, headers_json, weight, enabled, scope, created_at, updated_at FROM llm_provider WHERE enabled != 0 ORDER BY weight ASC, id ASC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, headers_json, use_generic_responses_text_parts, weight, enabled, scope, created_at, updated_at FROM llm_provider WHERE enabled != 0 ORDER BY weight ASC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query llm providers: %w", err)
 	}
@@ -332,11 +336,12 @@ func (s *ConfigStore) RevokeLLMFacadeTokensForSession(ctx context.Context, sessi
 
 func scanLLMProvider(scan func(dest ...any) error) (LLMProvider, error) {
 	var item LLMProvider
-	var enabled int
+	var genericResponsesTextParts, enabled int
 	var createdAt, updatedAt int64
-	if err := scan(&item.ID, &item.Name, &item.ProviderType, &item.DefaultWireAPI, &item.BaseURL, &item.APIKey, &item.AuthHeader, &item.AuthScheme, &item.HeadersJSON, &item.Weight, &enabled, &item.Scope, &createdAt, &updatedAt); err != nil {
+	if err := scan(&item.ID, &item.Name, &item.ProviderType, &item.DefaultWireAPI, &item.BaseURL, &item.APIKey, &item.AuthHeader, &item.AuthScheme, &item.HeadersJSON, &genericResponsesTextParts, &item.Weight, &enabled, &item.Scope, &createdAt, &updatedAt); err != nil {
 		return LLMProvider{}, err
 	}
+	item.UseGenericResponsesTextParts = genericResponsesTextParts != 0
 	item.Enabled = enabled != 0
 	item.ProviderType = normalizeLLMProviderType(item.ProviderType)
 	item.DefaultWireAPI = normalizeLLMWireAPI(item.DefaultWireAPI)
@@ -1031,11 +1036,6 @@ func normalizeLLMAPIBaseURL(raw, wireAPI string) string {
 		parsed.Path = cleanPath
 	}
 	return strings.TrimRight(parsed.String(), "/")
-}
-
-func llmEndpointForWireAPI(baseURL, wireAPI string) string {
-	baseURL = normalizeLLMAPIBaseURL(baseURL, wireAPI)
-	return normalizeLLMAPIEndpointForProtocol(baseURL, wireAPI)
 }
 
 func llmEndpointForProvider(provider LLMProvider, wireAPI string) string {

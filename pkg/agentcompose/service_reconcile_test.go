@@ -14,6 +14,89 @@ func TestServiceReconcilePersistedSessionsMarksStalePendingFailed(t *testing.T) 
 	testServiceReconcilePersistedSessionsMarksStalePendingFailed(t)
 }
 
+func TestServiceReconcilePersistedSessionsMarksStaleProjectRunsFailed(t *testing.T) {
+	testServiceReconcilePersistedSessionsMarksStaleProjectRunsFailed(t)
+}
+
+func testServiceReconcilePersistedSessionsMarksStaleProjectRunsFailed(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	store, service, projectID := setupRunCoordinatorProject(t)
+	if err := os.MkdirAll(service.config.SessionRoot, 0o755); err != nil {
+		t.Fatalf("create session root: %v", err)
+	}
+	coordinator := NewRunCoordinator(store)
+
+	stalePending, err := coordinator.BeginRun(ctx, ProjectRunStartRequest{
+		ProjectID:       projectID,
+		AgentName:       "reviewer",
+		Source:          ProjectRunSourceManual,
+		Prompt:          "stale pending",
+		ClientRequestID: "stale-pending",
+	})
+	if err != nil {
+		t.Fatalf("BeginRun(stale pending) returned error: %v", err)
+	}
+	staleRunning, err := coordinator.BeginRun(ctx, ProjectRunStartRequest{
+		ProjectID:       projectID,
+		AgentName:       "reviewer",
+		Source:          ProjectRunSourceManual,
+		Prompt:          "stale running",
+		ClientRequestID: "stale-running",
+	})
+	if err != nil {
+		t.Fatalf("BeginRun(stale running) returned error: %v", err)
+	}
+	staleRunning, err = coordinator.MarkRunning(ctx, staleRunning.RunID, "session-stale")
+	if err != nil {
+		t.Fatalf("MarkRunning(stale running) returned error: %v", err)
+	}
+	freshPending, err := coordinator.BeginRun(ctx, ProjectRunStartRequest{
+		ProjectID:       projectID,
+		AgentName:       "reviewer",
+		Source:          ProjectRunSourceManual,
+		Prompt:          "fresh pending",
+		ClientRequestID: "fresh-pending",
+	})
+	if err != nil {
+		t.Fatalf("BeginRun(fresh pending) returned error: %v", err)
+	}
+
+	startedAt := time.Now().UTC()
+	staleCreatedAt := startedAt.Add(-time.Minute).Unix()
+	freshCreatedAt := startedAt.Add(time.Minute).Unix()
+	for _, runID := range []string{stalePending.RunID, staleRunning.RunID} {
+		if _, err := store.db.ExecContext(ctx, `UPDATE project_run SET created_at = ?, updated_at = ? WHERE run_id = ?`, staleCreatedAt, staleCreatedAt, runID); err != nil {
+			t.Fatalf("backdate project run %s: %v", runID, err)
+		}
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE project_run SET created_at = ?, updated_at = ? WHERE run_id = ?`, freshCreatedAt, freshCreatedAt, freshPending.RunID); err != nil {
+		t.Fatalf("forward-date fresh project run: %v", err)
+	}
+
+	service.startedAt = startedAt
+	if err := service.reconcilePersistedSessions(ctx); err != nil {
+		t.Fatalf("reconcilePersistedSessions returned error: %v", err)
+	}
+
+	for _, runID := range []string{stalePending.RunID, staleRunning.RunID} {
+		run, err := store.GetProjectRun(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetProjectRun(%s) returned error: %v", runID, err)
+		}
+		if run.Status != ProjectRunStatusFailed || run.CompletedAt.IsZero() || run.ExitCode != 1 || run.Error != staleProjectRunError {
+			t.Fatalf("stale run after reconcile = %#v", run)
+		}
+	}
+	fresh, err := store.GetProjectRun(ctx, freshPending.RunID)
+	if err != nil {
+		t.Fatalf("GetProjectRun(fresh) returned error: %v", err)
+	}
+	if fresh.Status != ProjectRunStatusPending || !fresh.CompletedAt.IsZero() {
+		t.Fatalf("fresh run after reconcile = %#v", fresh)
+	}
+}
+
 func TestServiceAndBridgeReconcileMicrosandboxRuntimeTypeBranches(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

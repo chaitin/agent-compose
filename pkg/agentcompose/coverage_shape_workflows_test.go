@@ -63,6 +63,7 @@ func TestIntegrationWebhookWorkspaceAndLoaderWorkflow(t *testing.T) {
 	testDeleteAgentDefinitionStopsSessionsAndKeepsDeletedInList(t)
 	testDashboardOverviewAggregatorCountsRuns(t)
 	testDashboardOverviewHubWatchInitialAndNotify(t)
+	testRuntimeLLMFacadeCoverageWorkflows(t)
 	testWebhookIntegrationEventDispatchRunsMatchingLoader(t)
 }
 
@@ -127,5 +128,32 @@ func TestE2EWebhookWorkspaceAndLoaderWorkflow(t *testing.T) {
 	testDeleteAgentDefinitionStopsSessionsAndKeepsDeletedInList(t)
 	testDashboardOverviewAggregatorCountsRuns(t)
 	testDashboardOverviewHubWatchInitialAndNotify(t)
+	testRuntimeLLMFacadeCoverageWorkflows(t)
+	testServiceReconcilePersistedSessionsMarksStaleProjectRunsFailed(t)
 	testWebhookIntegrationEventDispatchRunsMatchingLoader(t)
+}
+
+func testRuntimeLLMFacadeCoverageWorkflows(t *testing.T) {
+	t.Helper()
+	TestRuntimeLLMUseGenericResponsesTextPartsRequiresExplicitProviderFlag(t)
+	TestRuntimeLLMFacadeForwardsWithSessionToken(t)
+	TestRuntimeLLMFacadeFlushesSSEResponses(t)
+	TestRuntimeLLMAnthropicFacadeForwardsWithSessionToken(t)
+	TestRuntimeLLMOpenAIResponsesFacadeBridgesToAnthropicProvider(t)
+	TestRuntimeLLMAnthropicFacadeBridgesToOpenAIResponsesProvider(t)
+	TestAnthropicProviderCanBootstrapFromGenericLLMAPIKey(t)
+	TestRuntimeLLMTargetDoesNotTreatGenericOpenAIEndpointAsAnthropic(t)
+	TestManagedRuntimeEnvMapKeepsFacadeKeyAliases(t)
+	TestEnsureSessionLLMFacadeConfigUsesRequestedModel(t)
+	TestEnsureSessionOpenCodeCustomProviderWritesConfig(t)
+	TestEnsureSessionOpenCodeOpenAIWritesRequestedModelConfig(t)
+	TestEnsureSessionOpenCodeAnthropicUsesFacadeEnv(t)
+	TestEnsureSessionLLMFacadeConfigBootstrapsFromSessionEnvProvider(t)
+	TestCodexFacadeCanUseAnthropicOnlySessionEnvProvider(t)
+	TestLLMClientGenerateChatCompletions(t)
+	TestLLMClientGenerateChatCompletionsPlainText(t)
+	TestLLMClientGenerateSendsOutputSchema(t)
+	TestLLMClientResolveProtocol(t)
+	TestServiceGenerateLLMChatCompletionsProtocol(t)
+	testRuntimeLLMFacadeRoundTrips(t)
 }
