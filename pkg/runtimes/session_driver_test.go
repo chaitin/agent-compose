@@ -1,8 +1,10 @@
-package agentcompose
+package runtimes
 
 import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/model"
+	"agent-compose/pkg/storage"
 	"context"
 	"os"
 	"path/filepath"
@@ -27,9 +29,12 @@ func TestSessionDriverStartSessionVMSavesRuntimeProxyState(t *testing.T) {
 	if err := os.MkdirAll(config.SessionRoot, 0o755); err != nil {
 		t.Fatalf("MkdirAll(session root) returned error: %v", err)
 	}
-	store := mustTestStore(t, config)
+	store, err := storage.NewStoreFromConfig(config)
+	if err != nil {
+		t.Fatalf("NewStoreFromConfig returned error: %v", err)
+	}
 
-	session, err := store.CreateSession(ctx, "Proxy Session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil, nil, nil)
+	session, err := store.CreateSession(ctx, "Proxy Session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", model.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}

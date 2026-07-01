@@ -1,4 +1,4 @@
-package agentcompose
+package runtimes
 
 import (
 	appconfig "agent-compose/pkg/config"
@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/samber/do/v2"
+
+	"agent-compose/pkg/model"
+	"agent-compose/pkg/storage"
 )
 
 type Driver interface {
@@ -15,19 +18,34 @@ type Driver interface {
 }
 
 type SessionDriver struct {
-	config   *appconfig.Config
-	store    *Store
-	configDB *ConfigStore
-	runtimes RuntimeProvider
+	config             *appconfig.Config
+	store              *storage.Store
+	configDB           *storage.ConfigStore
+	runtimes           RuntimeProvider
+	runtimeEnvPreparer SessionRuntimeEnvPreparer
+}
+
+type SessionRuntimeEnvPreparer func(context.Context, *model.Session) ([]model.SessionEnvVar, error)
+
+func NewSessionDriver(config *appconfig.Config, store *storage.Store, configDB *storage.ConfigStore, runtimes RuntimeProvider, preparer SessionRuntimeEnvPreparer) *SessionDriver {
+	return &SessionDriver{
+		config:             config,
+		store:              store,
+		configDB:           configDB,
+		runtimes:           runtimes,
+		runtimeEnvPreparer: preparer,
+	}
 }
 
 func NewDriver(di do.Injector) (Driver, error) {
-	return &SessionDriver{
-		config:   do.MustInvoke[*appconfig.Config](di),
-		store:    do.MustInvoke[*Store](di),
-		configDB: do.MustInvoke[*ConfigStore](di),
-		runtimes: do.MustInvoke[RuntimeProvider](di),
-	}, nil
+	preparer, _ := do.Invoke[SessionRuntimeEnvPreparer](di)
+	return NewSessionDriver(
+		do.MustInvoke[*appconfig.Config](di),
+		do.MustInvoke[*storage.Store](di),
+		do.MustInvoke[*storage.ConfigStore](di),
+		do.MustInvoke[RuntimeProvider](di),
+		preparer,
+	), nil
 }
 
 func (d *SessionDriver) StartSessionVM(ctx context.Context, session *Session) error {
@@ -126,17 +144,28 @@ func (d *SessionDriver) StopSessionVM(ctx context.Context, session *Session) err
 }
 
 func (d *SessionDriver) prepareSessionStart(ctx context.Context, driver string, session *Session, vmState *VMState) error {
-	prepared, err := driverpkg.PrepareSessionStart(ctx, d.config, driver, toDriverSession(session), toDriverVMState(*vmState))
+	prepared, err := driverpkg.PrepareSessionStart(ctx, d.config, driver, ToDriverSession(session), ToDriverVMState(*vmState))
 	if err != nil {
 		return err
 	}
-	managedEnv, err := ensureSessionLLMFacadeConfig(ctx, d.config, d.configDB, session, "codex", "", "session", "")
-	if err != nil {
-		return err
+	if d.runtimeEnvPreparer != nil {
+		managedEnv, err := d.runtimeEnvPreparer(ctx, session)
+		if err != nil {
+			return err
+		}
+		if len(managedEnv) > 0 {
+			session.RuntimeEnvItems = managedEnv
+		}
 	}
-	if len(managedEnv) > 0 {
-		session.RuntimeEnvItems = envItemsFromMap(managedEnv, false)
-	}
-	*vmState = fromDriverVMState(prepared)
+	*vmState = FromDriverVMState(prepared)
 	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

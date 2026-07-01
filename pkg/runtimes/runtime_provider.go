@@ -1,4 +1,4 @@
-package agentcompose
+package runtimes
 
 import (
 	appconfig "agent-compose/pkg/config"
@@ -11,6 +11,13 @@ import (
 )
 
 type SessionVMInfo = model.SessionVMInfo
+type Session = model.Session
+type VMState = model.VMState
+type ProxyState = model.ProxyState
+type ExecSpec = model.ExecSpec
+type ExecResult = model.ExecResult
+type ExecChunk = model.ExecChunk
+type ExecStreamWriter = model.ExecStreamWriter
 
 type BoxRuntime interface {
 	EnsureSession(context.Context, *Session, VMState, ProxyState) (SessionVMInfo, error)
@@ -19,7 +26,7 @@ type BoxRuntime interface {
 	ExecStream(context.Context, *Session, VMState, ExecSpec, ExecStreamWriter) (ExecResult, error)
 }
 
-type sessionAliveRuntime interface {
+type AliveRuntime interface {
 	IsSessionAlive(context.Context, *Session, VMState) (bool, error)
 }
 
@@ -85,20 +92,20 @@ func (p *runtimeProvider) ForSession(session *Session) (BoxRuntime, error) {
 }
 
 func (r driverRuntimeAdapter) EnsureSession(ctx context.Context, session *Session, vmState VMState, proxyState ProxyState) (SessionVMInfo, error) {
-	info, err := r.runtime.EnsureSession(ctx, toDriverSession(session), toDriverVMState(vmState), toDriverProxyState(proxyState))
+	info, err := r.runtime.EnsureSession(ctx, ToDriverSession(session), ToDriverVMState(vmState), ToDriverProxyState(proxyState))
 	if err != nil {
 		return SessionVMInfo{}, err
 	}
-	return fromDriverSessionVMInfo(info), nil
+	return FromDriverSessionVMInfo(info), nil
 }
 
 func (r driverRuntimeAdapter) StopSession(ctx context.Context, session *Session, vmState VMState) (bool, error) {
-	return r.runtime.StopSession(ctx, toDriverSession(session), toDriverVMState(vmState))
+	return r.runtime.StopSession(ctx, ToDriverSession(session), ToDriverVMState(vmState))
 }
 
 func (r driverRuntimeAdapter) Exec(ctx context.Context, session *Session, vmState VMState, spec ExecSpec) (ExecResult, error) {
-	result, err := r.runtime.Exec(ctx, toDriverSession(session), toDriverVMState(vmState), toDriverExecSpec(spec))
-	return fromDriverExecResult(result), err
+	result, err := r.runtime.Exec(ctx, ToDriverSession(session), ToDriverVMState(vmState), ToDriverExecSpec(spec))
+	return FromDriverExecResult(result), err
 }
 
 func (r driverRuntimeAdapter) ExecStream(ctx context.Context, session *Session, vmState VMState, spec ExecSpec, stream ExecStreamWriter) (ExecResult, error) {
@@ -107,8 +114,8 @@ func (r driverRuntimeAdapter) ExecStream(ctx context.Context, session *Session, 
 			stream(ExecChunk{Text: chunk.Text, IsStderr: chunk.IsStderr})
 		}
 	}
-	result, err := r.runtime.ExecStream(ctx, toDriverSession(session), toDriverVMState(vmState), toDriverExecSpec(spec), driverStream)
-	return fromDriverExecResult(result), err
+	result, err := r.runtime.ExecStream(ctx, ToDriverSession(session), ToDriverVMState(vmState), ToDriverExecSpec(spec), driverStream)
+	return FromDriverExecResult(result), err
 }
 
 func (r driverRuntimeAdapter) IsSessionAlive(ctx context.Context, session *Session, vmState VMState) (bool, error) {
@@ -118,10 +125,10 @@ func (r driverRuntimeAdapter) IsSessionAlive(ctx context.Context, session *Sessi
 	if !ok {
 		return false, fmt.Errorf("runtime does not support session liveness checks")
 	}
-	return aliveRuntime.IsSessionAlive(ctx, toDriverSession(session), toDriverVMState(vmState))
+	return aliveRuntime.IsSessionAlive(ctx, ToDriverSession(session), ToDriverVMState(vmState))
 }
 
-func toDriverSession(session *Session) *driverpkg.Session {
+func ToDriverSession(session *Session) *driverpkg.Session {
 	if session == nil {
 		return nil
 	}
@@ -148,7 +155,7 @@ func toDriverSession(session *Session) *driverpkg.Session {
 	}
 }
 
-func toDriverVMState(state VMState) driverpkg.VMState {
+func ToDriverVMState(state VMState) driverpkg.VMState {
 	return driverpkg.VMState{
 		Driver:       state.Driver,
 		Mode:         state.Mode,
@@ -164,7 +171,7 @@ func toDriverVMState(state VMState) driverpkg.VMState {
 	}
 }
 
-func fromDriverVMState(state driverpkg.VMState) VMState {
+func FromDriverVMState(state driverpkg.VMState) VMState {
 	return VMState{
 		Driver:       state.Driver,
 		Mode:         state.Mode,
@@ -180,7 +187,7 @@ func fromDriverVMState(state driverpkg.VMState) VMState {
 	}
 }
 
-func toDriverProxyState(state ProxyState) driverpkg.ProxyState {
+func ToDriverProxyState(state ProxyState) driverpkg.ProxyState {
 	return driverpkg.ProxyState{
 		ProxyPath:  state.ProxyPath,
 		GuestHost:  state.GuestHost,
@@ -191,7 +198,7 @@ func toDriverProxyState(state ProxyState) driverpkg.ProxyState {
 	}
 }
 
-func toDriverExecSpec(spec ExecSpec) driverpkg.ExecSpec {
+func ToDriverExecSpec(spec ExecSpec) driverpkg.ExecSpec {
 	return driverpkg.ExecSpec{
 		Command: spec.Command,
 		Args:    append([]string(nil), spec.Args...),
@@ -200,16 +207,16 @@ func toDriverExecSpec(spec ExecSpec) driverpkg.ExecSpec {
 	}
 }
 
-func fromDriverSessionVMInfo(info driverpkg.SessionVMInfo) SessionVMInfo {
+func FromDriverSessionVMInfo(info driverpkg.SessionVMInfo) SessionVMInfo {
 	result := SessionVMInfo{BoxID: info.BoxID, JupyterURL: info.JupyterURL}
 	if info.ProxyState != nil {
-		proxyState := fromDriverProxyState(*info.ProxyState)
+		proxyState := FromDriverProxyState(*info.ProxyState)
 		result.ProxyState = &proxyState
 	}
 	return result
 }
 
-func fromDriverProxyState(state driverpkg.ProxyState) ProxyState {
+func FromDriverProxyState(state driverpkg.ProxyState) ProxyState {
 	return ProxyState{
 		ProxyPath:  state.ProxyPath,
 		GuestHost:  state.GuestHost,
@@ -220,7 +227,7 @@ func fromDriverProxyState(state driverpkg.ProxyState) ProxyState {
 	}
 }
 
-func fromDriverExecResult(result driverpkg.ExecResult) ExecResult {
+func FromDriverExecResult(result driverpkg.ExecResult) ExecResult {
 	return ExecResult{
 		ExitCode: result.ExitCode,
 		Stdout:   result.Stdout,

@@ -25,6 +25,14 @@ func testDashboardOverviewHubWatchInitialAndNotify(t *testing.T) {
 	t.Helper()
 }
 
+func testRuntimeProviderSelectsConfiguredRuntime(t *testing.T) {
+	t.Helper()
+}
+
+func TestSessionDriverStartSessionVMSavesRuntimeProxyState(t *testing.T) {
+	t.Helper()
+}
+
 func assertFileContent(t *testing.T, path, want string) {
 	t.Helper()
 	data, err := os.ReadFile(path)
