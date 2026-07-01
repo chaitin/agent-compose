@@ -1,8 +1,6 @@
-package agentcompose
+package executor
 
 import (
-	appconfig "agent-compose/pkg/config"
-	"agent-compose/pkg/model"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,37 +15,34 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/samber/do/v2"
-)
 
-const (
-	CellTypeShell      = model.CellTypeShell
-	CellTypeJavaScript = model.CellTypeJavaScript
-	CellTypePython     = model.CellTypePython
-	CellTypeAgent      = model.CellTypeAgent
+	appconfig "agent-compose/pkg/config"
 )
 
 const defaultLoaderCommandMaxOutputBytes = int64(1024 * 1024)
 
-type CellExecutionStream = model.CellExecutionStream
-type AgentExecutionStream = model.AgentExecutionStream
-type ExecuteAgentRequest = model.ExecuteAgentRequest
-
 type Executor struct {
-	config   *appconfig.Config
-	store    *Store
-	configDB *ConfigStore
-	runtimes RuntimeProvider
-	streams  *SessionStreamBroker
+	config     *appconfig.Config
+	store      *Store
+	configDB   *ConfigStore
+	runtimes   RuntimeProvider
+	streams    StreamPublisher
+	prepareLLM LLMFacadeEnvPreparer
 }
 
 func NewExecutor(di do.Injector) (*Executor, error) {
+	return New(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[RuntimeProvider](di), do.MustInvoke[StreamPublisher](di), nil), nil
+}
+
+func New(config *appconfig.Config, store *Store, configDB *ConfigStore, runtimes RuntimeProvider, streams StreamPublisher, prepareLLM LLMFacadeEnvPreparer) *Executor {
 	return &Executor{
-		config:   do.MustInvoke[*appconfig.Config](di),
-		store:    do.MustInvoke[*Store](di),
-		configDB: do.MustInvoke[*ConfigStore](di),
-		runtimes: do.MustInvoke[RuntimeProvider](di),
-		streams:  do.MustInvoke[*SessionStreamBroker](di),
-	}, nil
+		config:     config,
+		store:      store,
+		configDB:   configDB,
+		runtimes:   runtimes,
+		streams:    streams,
+		prepareLLM: prepareLLM,
+	}
 }
 
 func (e *Executor) ExecuteCell(ctx context.Context, session *Session, cellType, source string) (NotebookCell, error) {
@@ -306,7 +301,7 @@ func (e *Executor) prepareLoaderCommandLLMFacadeEnv(ctx context.Context, session
 		execSession.ProviderEnvItems = providerEnv
 	}
 
-	managedEnv, err := ensureSessionLLMFacadeConfig(ctx, e.config, e.configDB, &execSession, agent, model, llmFacadeTokenSourceLoaderCommand, runID)
+	managedEnv, err := e.prepareSessionLLMFacadeConfig(ctx, &execSession, agent, model, LLMFacadeTokenSourceLoaderCommand, runID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -520,6 +515,10 @@ func writeJSONArtifact(path string, value any) error {
 	return nil
 }
 
+func WriteJSONArtifact(path string, value any) error {
+	return writeJSONArtifact(path, value)
+}
+
 func recoverExecResultFromCellArtifacts(cellDir string, fallback ExecResult) ExecResult {
 	recovered := fallback
 	for _, item := range []struct {
@@ -682,6 +681,10 @@ func collectAgentResumeInfo(session *Session, agent, agentSessionID, manifestPat
 	return info
 }
 
+func CollectAgentResumeInfo(session *Session, agent, agentSessionID, manifestPath string) *AgentResumeInfo {
+	return collectAgentResumeInfo(session, agent, agentSessionID, manifestPath)
+}
+
 func findAgentSessionJSONLPaths(homeDir, provider, sessionID string) []string {
 	roots := agentSessionJSONLRoots(homeDir, provider)
 	if len(roots) == 0 {
@@ -757,6 +760,10 @@ func shouldIncludeAgentJSONL(path, provider, sessionID string) bool {
 		return strings.Contains(filepath.Base(path), sessionID)
 	}
 	return true
+}
+
+func ShouldIncludeAgentJSONL(path, provider, sessionID string) bool {
+	return shouldIncludeAgentJSONL(path, provider, sessionID)
 }
 
 func (e *Executor) executeAgent(ctx context.Context, session *Session, request ExecuteAgentRequest) (NotebookCell, SessionEvent, SessionEvent, error) {

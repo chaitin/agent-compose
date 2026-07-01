@@ -17,10 +17,6 @@ const (
 	// expected to delete it when that run completes (see executeAgentRun) rather
 	// than letting it live for the whole session lifetime.
 	llmFacadeTokenSourceAgent = "agent"
-
-	// llmFacadeTokenSourceLoaderCommand marks a per-loader-command facade token.
-	// The caller must delete it when the bounded command returns.
-	llmFacadeTokenSourceLoaderCommand = "loader_command"
 )
 
 type agentRuntimeLLMConfig struct {

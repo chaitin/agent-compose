@@ -688,17 +688,6 @@ func agentExecutionConfigFromDefinition(agent AgentDefinition, fallbackProvider 
 	}
 }
 
-func applyAgentProviderEnv(session *Session, agentEnv []SessionEnvVar) {
-	if session == nil || len(agentEnv) == 0 {
-		return
-	}
-	providerEnv := session.ProviderEnvItems
-	if len(providerEnv) == 0 {
-		providerEnv = session.EnvItems
-	}
-	session.ProviderEnvItems = mergeEnvItems(agentEnv, providerEnv)
-}
-
 func sessionTagValue(tags []SessionTag, name string) string {
 	for _, tag := range tags {
 		if strings.TrimSpace(tag.Name) == name {
