@@ -9,7 +9,7 @@ import (
 func TestEventDispatcherPublishesPendingEvents(t *testing.T) {
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	bus := &LoaderBus{ch: make(chan LoaderTopicEvent, 4)}
+	bus := NewLoaderBusWithBuffer(4)
 	dispatcher := NewEventDispatcher(ctx, store, bus)
 
 	created, err := store.CreateEvent(ctx, TopicEventRecord{
@@ -69,7 +69,7 @@ func TestEventDispatcherPublishesPendingEvents(t *testing.T) {
 func TestEventDispatcherKeepsPendingWhenBusFull(t *testing.T) {
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	bus := &LoaderBus{ch: make(chan LoaderTopicEvent, 1)}
+	bus := NewLoaderBusWithBuffer(1)
 	if !bus.Publish(LoaderTopicEvent{Topic: "preloaded", CreatedAt: time.Now().UTC()}) {
 		t.Fatalf("failed to preload bus")
 	}
@@ -101,7 +101,7 @@ func TestEventDispatcherKeepsPendingWhenBusFull(t *testing.T) {
 func TestEventDispatcherIgnoresStaleClaimAck(t *testing.T) {
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	bus := &LoaderBus{ch: make(chan LoaderTopicEvent, 4)}
+	bus := NewLoaderBusWithBuffer(4)
 	dispatcher := NewEventDispatcher(ctx, store, bus)
 
 	created, err := store.CreateEvent(ctx, TopicEventRecord{

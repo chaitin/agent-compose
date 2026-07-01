@@ -115,7 +115,7 @@ func testSupportControlPlaneStartAndConfigHelpers(t *testing.T) {
 	}
 	configDB := newSupportTestConfigStore(t)
 	store := mustTestStore(t, config)
-	bus := &LoaderBus{ch: make(chan LoaderTopicEvent, 8)}
+	bus := NewLoaderBusWithBuffer(8)
 	manager := &LoaderManager{
 		config:       config,
 		rootCtx:      ctx,
@@ -147,7 +147,7 @@ func testSupportControlPlaneStartAndConfigHelpers(t *testing.T) {
 	}
 	manager.Start()
 
-	dispatchBus := &LoaderBus{ch: make(chan LoaderTopicEvent, 8)}
+	dispatchBus := NewLoaderBusWithBuffer(8)
 	dispatcher := NewEventDispatcher(ctx, configDB, dispatchBus)
 	dispatcher.interval = time.Millisecond
 	dispatcher.Start()
@@ -207,7 +207,7 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	runtimes := fixedRuntimeProvider{runtime: runtime}
 	executor := &Executor{config: config, store: store, runtimes: runtimes}
 	capProvider := newTestCapabilityProvider("", "")
-	bus := &LoaderBus{ch: make(chan LoaderTopicEvent, 4)}
+	bus := NewLoaderBusWithBuffer(4)
 	sessions := &SessionRPCBridge{config: config, store: store, configDB: configDB, driver: driver, runtimes: runtimes, bus: bus}
 	manager := &LoaderManager{
 		config:       config,
@@ -266,11 +266,11 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 		t.Fatalf("NewService = %#v/%v", service, err)
 	}
 	ociBackend, ok := service.ociImages.(*OCIImageBackend)
-	if !ok || ociBackend.cache == nil || ociBackend.cache.Root() != config.ImageCacheRoot {
+	if !ok || ociBackend.Cache() == nil || ociBackend.Cache().Root() != config.ImageCacheRoot {
 		t.Fatalf("NewService OCI backend = %#v ok=%v", service.ociImages, ok)
 	}
 	autoBackend, ok := service.autoImages.(*AutoImageBackend)
-	if !ok || autoBackend.docker == nil || autoBackend.oci == nil || autoBackend.mode != config.ImageStoreMode {
+	if !ok || autoBackend.DockerBackend() == nil || autoBackend.OCIBackend() == nil || autoBackend.Mode() != config.ImageStoreMode {
 		t.Fatalf("NewService auto backend = %#v ok=%v", service.autoImages, ok)
 	}
 

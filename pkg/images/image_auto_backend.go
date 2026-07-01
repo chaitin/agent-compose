@@ -1,4 +1,4 @@
-package agentcompose
+package images
 
 import (
 	"context"
@@ -32,6 +32,27 @@ func NewAutoImageBackend(mode string, dockerBackend, ociBackend ImageBackend) *A
 		pingDocker:  pingDockerDaemon,
 		pingTimeout: defaultDockerPingTimeout,
 	}
+}
+
+func (b *AutoImageBackend) Mode() string {
+	if b == nil {
+		return ""
+	}
+	return b.mode
+}
+
+func (b *AutoImageBackend) DockerBackend() ImageBackend {
+	if b == nil {
+		return nil
+	}
+	return b.docker
+}
+
+func (b *AutoImageBackend) OCIBackend() ImageBackend {
+	if b == nil {
+		return nil
+	}
+	return b.oci
 }
 
 func (b *AutoImageBackend) ListImages(ctx context.Context, req ImageListRequest) (ImageListResult, error) {

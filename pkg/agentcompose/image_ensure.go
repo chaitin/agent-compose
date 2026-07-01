@@ -2,13 +2,11 @@ package agentcompose
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
-	cerrdefs "github.com/containerd/errdefs"
-
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/images"
 )
 
 type driverImageEnsureRequest struct {
@@ -67,12 +65,5 @@ func (s *Service) ensureDriverImage(ctx context.Context, req driverImageEnsureRe
 }
 
 func imageBackendErrorIsNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	var backendErr imageBackendOpError
-	if errors.As(err, &backendErr) {
-		return cerrdefs.IsNotFound(backendErr.Err)
-	}
-	return cerrdefs.IsNotFound(err)
+	return images.BackendErrorIsNotFound(err)
 }

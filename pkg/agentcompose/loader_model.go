@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"agent-compose/pkg/bus"
 	"agent-compose/pkg/model"
 )
 
@@ -43,7 +44,7 @@ type LoaderCommandRequest = model.LoaderCommandRequest
 type LoaderCommandResult = model.LoaderCommandResult
 type LoaderLLMRequest = model.LoaderLLMRequest
 type LoaderLLMResult = model.LoaderLLMResult
-type LoaderTopicEvent = model.LoaderTopicEvent
+type LoaderTopicEvent = bus.LoaderTopicEvent
 
 func normalizeLoaderRuntime(runtime string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(runtime)) {

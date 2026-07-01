@@ -21,7 +21,7 @@ func testWebhookIntegrationEventDispatchRunsMatchingLoader(t *testing.T) {
 		rootCtx:      ctx,
 		config:       &appconfig.Config{DataRoot: filepath.Join(t.TempDir(), "data")},
 		configDB:     store,
-		bus:          &LoaderBus{ch: make(chan LoaderTopicEvent, 8)},
+		bus:          NewLoaderBusWithBuffer(8),
 		engine:       &QJSLoaderEngine{},
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},

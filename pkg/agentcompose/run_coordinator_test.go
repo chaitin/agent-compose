@@ -1198,7 +1198,7 @@ func newRunServiceLoaderManager(service *Service) *LoaderManager {
 		driver:       service.driver,
 		executor:     service.executor,
 		streams:      service.streams,
-		bus:          &LoaderBus{ch: make(chan LoaderTopicEvent, 16)},
+		bus:          NewLoaderBusWithBuffer(16),
 		engine:       &QJSLoaderEngine{},
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},

@@ -1,10 +1,14 @@
-package agentcompose
+package bus
 
 import (
 	"strings"
 
+	"agent-compose/pkg/model"
+
 	"github.com/samber/do/v2"
 )
+
+type LoaderTopicEvent = model.LoaderTopicEvent
 
 type LoaderBus struct {
 	ch chan LoaderTopicEvent
@@ -12,6 +16,13 @@ type LoaderBus struct {
 
 func NewLoaderBus(do.Injector) (*LoaderBus, error) {
 	return &LoaderBus{ch: make(chan LoaderTopicEvent, 256)}, nil
+}
+
+func NewLoaderBusWithBuffer(size int) *LoaderBus {
+	if size <= 0 {
+		size = 1
+	}
+	return &LoaderBus{ch: make(chan LoaderTopicEvent, size)}
 }
 
 func (b *LoaderBus) Events() <-chan LoaderTopicEvent {

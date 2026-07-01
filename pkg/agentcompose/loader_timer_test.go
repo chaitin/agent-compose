@@ -1755,7 +1755,7 @@ func testLoaderManagerRunLifecycleStateLLMAndEventDispatch(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 	manager, _, _, loader := newTestLoaderCommandManager(t, ctx)
-	bus := &LoaderBus{ch: make(chan LoaderTopicEvent, 8)}
+	bus := NewLoaderBusWithBuffer(8)
 	manager.bus = bus
 	manager.llm = newTestLLMClient(t, manager.configDB, "loader llm text")
 	engine := &recordingLoaderEngine{}

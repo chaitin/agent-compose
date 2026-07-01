@@ -23,12 +23,14 @@ import (
 
 	"agent-compose/pkg/capproxy"
 	"agent-compose/pkg/imagecache"
+	"agent-compose/pkg/images"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
 
 type Service struct {
+	*images.Service
 	config     *appconfig.Config
 	store      *Store
 	configDB   *ConfigStore
@@ -79,7 +81,7 @@ func NewService(di do.Injector) (*Service, error) {
 		imageCacheRoot = filepath.Join(config.DataRoot, "images")
 		config.ImageCacheRoot = imageCacheRoot
 	}
-	dockerImages := NewDockerImageBackend()
+	dockerImages := images.NewDockerImageBackend()
 	ociCache, err := imagecache.New(imagecache.Config{
 		Root:               imageCacheRoot,
 		DefaultRegistry:    config.ImageRegistry,
@@ -89,9 +91,10 @@ func NewService(di do.Injector) (*Service, error) {
 		return nil, err
 	}
 	config.ImageCacheRoot = ociCache.Root()
-	ociImages := NewOCIImageBackend(ociCache)
-	autoImages := NewAutoImageBackend(config.ImageStoreMode, dockerImages, ociImages)
+	ociImages := images.NewOCIImageBackend(ociCache)
+	autoImages := images.NewAutoImageBackend(config.ImageStoreMode, dockerImages, ociImages)
 	return &Service{
+		Service:    images.NewService(dockerImages, ociImages, autoImages),
 		config:     config,
 		store:      do.MustInvoke[*Store](di),
 		configDB:   do.MustInvoke[*ConfigStore](di),

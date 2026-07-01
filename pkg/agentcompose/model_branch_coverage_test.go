@@ -209,7 +209,7 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 		t.Fatalf("nil loader bus helpers returned unexpected values")
 	}
 
-	serviceBus := &LoaderBus{ch: make(chan LoaderTopicEvent, 1)}
+	serviceBus := NewLoaderBusWithBuffer(1)
 	service := &Service{bus: serviceBus}
 	service.publishLoaderTopic("agent-compose.session.test", map[string]any{"sessionId": "session-branch"})
 	select {

@@ -1,4 +1,4 @@
-package agentcompose
+package images
 
 import (
 	"context"
@@ -20,6 +20,13 @@ func NewOCIImageBackend(cache *imagecache.Cache) *OCIImageBackend {
 		cache: cache,
 		now:   time.Now,
 	}
+}
+
+func (b *OCIImageBackend) Cache() *imagecache.Cache {
+	if b == nil {
+		return nil
+	}
+	return b.cache
 }
 
 func (b *OCIImageBackend) ListImages(ctx context.Context, req ImageListRequest) (ImageListResult, error) {

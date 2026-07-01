@@ -521,7 +521,7 @@ func TestTopicEventModelAndStoreErrorBranches(t *testing.T) {
 }
 
 func TestLoaderBusPublishReportsFullChannel(t *testing.T) {
-	bus := &LoaderBus{ch: make(chan LoaderTopicEvent, 1)}
+	bus := NewLoaderBusWithBuffer(1)
 	if !bus.Publish(LoaderTopicEvent{Topic: "webhook.test", Payload: map[string]any{}, CreatedAt: time.Now().UTC()}) {
 		t.Fatalf("first Publish returned false, want true")
 	}
