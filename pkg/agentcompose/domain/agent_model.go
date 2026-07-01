@@ -203,3 +203,21 @@ func AgentRunSummaries(agentID string, sessions []*Session) (AgentCurrentRunSumm
 	}
 	return current, latest
 }
+
+func ValidateAgentWorkspaceValue(workspaceID string, workspace *WorkspaceConfig, lookupErr error) error {
+	if strings.TrimSpace(workspaceID) == "" {
+		return nil
+	}
+	if lookupErr != nil {
+		return lookupErr
+	}
+	if workspace == nil {
+		return fmt.Errorf("workspace config %s not found", strings.TrimSpace(workspaceID))
+	}
+	switch strings.ToLower(strings.TrimSpace(workspace.Type)) {
+	case "file", "git":
+		return nil
+	default:
+		return fmt.Errorf("unsupported agent workspace type %q", workspace.Type)
+	}
+}

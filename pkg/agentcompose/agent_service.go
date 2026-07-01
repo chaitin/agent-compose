@@ -348,21 +348,7 @@ func (s *Service) validateAgentWorkspace(ctx context.Context, workspaceID string
 }
 
 func validateAgentWorkspaceValue(workspaceID string, workspace *WorkspaceConfig, lookupErr error) error {
-	if strings.TrimSpace(workspaceID) == "" {
-		return nil
-	}
-	if lookupErr != nil {
-		return lookupErr
-	}
-	if workspace == nil {
-		return fmt.Errorf("workspace config %s not found", strings.TrimSpace(workspaceID))
-	}
-	switch strings.ToLower(strings.TrimSpace(workspace.Type)) {
-	case "file", "git":
-		return nil
-	default:
-		return fmt.Errorf("unsupported agent workspace type %q", workspace.Type)
-	}
+	return domain.ValidateAgentWorkspaceValue(workspaceID, workspace, lookupErr)
 }
 
 func (s *Service) agentDefinitionToProto(ctx context.Context, item AgentDefinition) (*agentcomposev1.AgentDefinition, error) {
