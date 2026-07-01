@@ -1,9 +1,10 @@
-package agentcompose
+package agents
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -11,9 +12,42 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/model"
+	sessionspkg "agent-compose/pkg/sessions"
+	"agent-compose/pkg/storage"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
+
+const (
+	VMStatusPending = model.VMStatusPending
+	VMStatusRunning = model.VMStatusRunning
+	VMStatusStopped = model.VMStatusStopped
+	VMStatusFailed  = model.VMStatusFailed
+)
+
+type Store = storage.Store
+type ConfigStore = storage.ConfigStore
+type SessionListOptions = model.SessionListOptions
+type SessionEvent = model.SessionEvent
+
+type SessionHandler interface {
+	StopSession(context.Context, *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error)
+	CreateSession(context.Context, *connect.Request[agentcomposev1.CreateSessionRequest]) (*connect.Response[agentcomposev1.SessionResponse], error)
+}
+
+type Service struct {
+	config   *appconfig.Config
+	store    *Store
+	configDB *ConfigStore
+	sessions SessionHandler
+	streams  *sessionspkg.SessionStreamBroker
+}
+
+func NewService(config *appconfig.Config, store *Store, configDB *ConfigStore, sessions SessionHandler, streams *sessionspkg.SessionStreamBroker) *Service {
+	return &Service{config: config, store: store, configDB: configDB, sessions: sessions, streams: streams}
+}
 
 // agentSessionScanLimit bounds how many sessions we load when computing agent
 // run summaries. It must stay large enough to never truncate the scan: run
@@ -371,6 +405,10 @@ func (s *Service) agentDefinitionToProto(ctx context.Context, item AgentDefiniti
 	return s.agentDefinitionToProtoWith(ctx, item, sessions), nil
 }
 
+func (s *Service) AgentDefinitionToProto(ctx context.Context, item AgentDefinition) (*agentcomposev1.AgentDefinition, error) {
+	return s.agentDefinitionToProto(ctx, item)
+}
+
 // agentDefinitionToProtoWith builds the proto view from a pre-loaded session
 // slice so list responses scan sessions once instead of once per agent.
 func (s *Service) agentDefinitionToProtoWith(ctx context.Context, item AgentDefinition, sessions []*Session) *agentcomposev1.AgentDefinition {
@@ -432,10 +470,50 @@ func agentRunSummaries(agentID string, sessions []*Session) (AgentCurrentRunSumm
 	return current, latest
 }
 
+func AgentRunSummaries(agentID string, sessions []*Session) (AgentCurrentRunSummary, *AgentLatestRunSummary) {
+	return agentRunSummaries(agentID, sessions)
+}
+
 func envItemsFromProto(items []*agentcomposev1.SessionEnvVar) []SessionEnvVar {
 	result := make([]SessionEnvVar, 0, len(items))
 	for _, item := range items {
 		result = append(result, SessionEnvVar{Name: item.GetName(), Value: item.GetValue(), Secret: item.GetSecret()})
+	}
+	return result
+}
+
+func EnvItemsFromProto(items []*agentcomposev1.SessionEnvVar) []SessionEnvVar {
+	return envItemsFromProto(items)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func mergeEnvItems(globalItems, sessionItems []SessionEnvVar) []SessionEnvVar {
+	merged := make(map[string]SessionEnvVar, len(globalItems)+len(sessionItems))
+	for _, item := range normalizeEnvItems(globalItems) {
+		merged[item.Name] = item
+	}
+	for _, item := range normalizeEnvItems(sessionItems) {
+		merged[item.Name] = item
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(merged))
+	for key := range merged {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]SessionEnvVar, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, merged[key])
 	}
 	return result
 }

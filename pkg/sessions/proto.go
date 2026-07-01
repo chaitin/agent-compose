@@ -76,6 +76,10 @@ func toProtoSessionDetail(session *Session) *agentcomposev1.SessionDetail {
 	return resp
 }
 
+func ToProtoSessionDetail(session *Session) *agentcomposev1.SessionDetail {
+	return toProtoSessionDetail(session)
+}
+
 func toProtoSessionSummary(summary *SessionSummary) *agentcomposev1.SessionSummary {
 	resp := &agentcomposev1.SessionSummary{
 		SessionId:     summary.ID,
@@ -97,6 +101,10 @@ func toProtoSessionSummary(summary *SessionSummary) *agentcomposev1.SessionSumma
 	return resp
 }
 
+func ToProtoSessionSummary(summary *SessionSummary) *agentcomposev1.SessionSummary {
+	return toProtoSessionSummary(summary)
+}
+
 func toProtoSessionWorkspace(item *SessionWorkspace) *agentcomposev1.SessionWorkspaceSnapshot {
 	if item == nil {
 		return nil
@@ -107,6 +115,10 @@ func toProtoSessionWorkspace(item *SessionWorkspace) *agentcomposev1.SessionWork
 		Type:       item.Type,
 		ConfigJson: item.ConfigJSON,
 	}
+}
+
+func ToProtoSessionWorkspace(item *SessionWorkspace) *agentcomposev1.SessionWorkspaceSnapshot {
+	return toProtoSessionWorkspace(item)
 }
 
 func toProtoCell(cell NotebookCell) *agentcomposev1.NotebookCell {
@@ -127,6 +139,10 @@ func toProtoCell(cell NotebookCell) *agentcomposev1.NotebookCell {
 	}
 }
 
+func ToProtoCell(cell NotebookCell) *agentcomposev1.NotebookCell {
+	return toProtoCell(cell)
+}
+
 func toProtoAgentRun(cell NotebookCell) *agentcomposev1.AgentRun {
 	return &agentcomposev1.AgentRun{
 		Id:             cell.ID,
@@ -142,6 +158,10 @@ func toProtoAgentRun(cell NotebookCell) *agentcomposev1.AgentRun {
 	}
 }
 
+func ToProtoAgentRun(cell NotebookCell) *agentcomposev1.AgentRun {
+	return toProtoAgentRun(cell)
+}
+
 func fromProtoCellType(cellType agentcomposev1.CellType) string {
 	switch cellType {
 	case agentcomposev1.CellType_CELL_TYPE_SHELL:
@@ -155,6 +175,10 @@ func fromProtoCellType(cellType agentcomposev1.CellType) string {
 	default:
 		return CellTypeJavaScript
 	}
+}
+
+func FromProtoCellType(cellType agentcomposev1.CellType) string {
+	return fromProtoCellType(cellType)
 }
 
 func toProtoWatchSessionResponse(event sessionWatchEvent) *agentcomposev1.WatchSessionResponse {
@@ -209,6 +233,10 @@ func toProtoCellType(cellType string) agentcomposev1.CellType {
 	}
 }
 
+func ToProtoCellType(cellType string) agentcomposev1.CellType {
+	return toProtoCellType(cellType)
+}
+
 func toProtoEvent(event SessionEvent) *agentcomposev1.SessionEvent {
 	return &agentcomposev1.SessionEvent{
 		Id:        event.ID,
@@ -217,6 +245,10 @@ func toProtoEvent(event SessionEvent) *agentcomposev1.SessionEvent {
 		Message:   event.Message,
 		CreatedAt: event.CreatedAt.Format(time.RFC3339Nano),
 	}
+}
+
+func ToProtoEvent(event SessionEvent) *agentcomposev1.SessionEvent {
+	return toProtoEvent(event)
 }
 
 func firstNonEmpty(values ...string) string {

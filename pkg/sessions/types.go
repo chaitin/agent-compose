@@ -199,3 +199,7 @@ func jupyterTargetReachable(proxyState ProxyState, timeout time.Duration) bool {
 	_ = conn.Close()
 	return true
 }
+
+func JupyterTargetReachable(proxyState ProxyState, timeout time.Duration) bool {
+	return jupyterTargetReachable(proxyState, timeout)
+}

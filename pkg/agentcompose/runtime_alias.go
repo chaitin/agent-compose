@@ -15,7 +15,6 @@ type BoxRuntime = runtimes.BoxRuntime
 type RuntimeProvider = runtimes.RuntimeProvider
 type Driver = runtimes.Driver
 type SessionDriver = runtimes.SessionDriver
-type sessionAliveRuntime = runtimes.AliveRuntime
 
 func NewRuntimeProvider(di do.Injector) (RuntimeProvider, error) {
 	return runtimes.NewRuntimeProvider(di)

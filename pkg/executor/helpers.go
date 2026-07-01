@@ -44,6 +44,8 @@ type runtimeCommandRequestJSON struct {
 	ArtifactDir    string            `json:"artifactDir"`
 }
 
+type RuntimeCommandRequestJSON = runtimeCommandRequestJSON
+
 func NormalizeAgentKind(agent string) string {
 	agent = strings.ToLower(strings.TrimSpace(agent))
 	switch agent {
@@ -236,6 +238,10 @@ func agentTraceEvents(transcript string, createdAt time.Time) []SessionEvent {
 	return events
 }
 
+func AgentTraceEvents(transcript string, createdAt time.Time) []SessionEvent {
+	return agentTraceEvents(transcript, createdAt)
+}
+
 func collectAgentTraceDetails(eventType string, lines []string) (string, int) {
 	details := make([]string, 0, len(lines))
 	for offset, raw := range lines {
@@ -292,6 +298,10 @@ func loaderCommandContext(ctx context.Context, timeoutMs int64) (context.Context
 		return context.WithCancel(ctx)
 	}
 	return context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+}
+
+func LoaderCommandContext(ctx context.Context, timeoutMs int64) (context.Context, context.CancelFunc) {
+	return loaderCommandContext(ctx, timeoutMs)
 }
 
 func LoaderCommandCellSource(request LoaderCommandRequest) string {
@@ -416,6 +426,10 @@ func parseCommandExecResult(result ExecResult) (RuntimeCommandResult, error) {
 	return payload, nil
 }
 
+func ParseCommandExecResult(result ExecResult) (RuntimeCommandResult, error) {
+	return parseCommandExecResult(result)
+}
+
 func mirrorRuntimeCommandArtifacts(hostCellDir string, result RuntimeCommandResult) error {
 	files := map[string]string{
 		"stdout.txt": result.Stdout,
@@ -434,6 +448,10 @@ func mirrorRuntimeCommandArtifacts(hostCellDir string, result RuntimeCommandResu
 	return nil
 }
 
+func MirrorRuntimeCommandArtifacts(hostCellDir string, result RuntimeCommandResult) error {
+	return mirrorRuntimeCommandArtifacts(hostCellDir, result)
+}
+
 func summarizeAgentExecFailure(result ExecResult) string {
 	detail := strings.TrimSpace(firstNonEmpty(result.Stderr, result.Output, result.Stdout))
 	if detail == "" {
@@ -444,6 +462,10 @@ func summarizeAgentExecFailure(result ExecResult) string {
 		detail = detail[:240] + "..."
 	}
 	return detail
+}
+
+func SummarizeAgentExecFailure(result ExecResult) string {
+	return summarizeAgentExecFailure(result)
 }
 
 func summarizeAgentResult(result AgentRunResult) string {
@@ -457,12 +479,20 @@ func summarizeAgentResult(result AgentRunResult) string {
 	return body
 }
 
+func SummarizeAgentResult(result AgentRunResult) string {
+	return summarizeAgentResult(result)
+}
+
 func stripAgentResultPayload(raw string) string {
 	idx := strings.LastIndex(raw, AgentResultPrefix)
 	if idx < 0 {
 		return raw
 	}
 	return raw[:idx]
+}
+
+func StripAgentResultPayload(raw string) string {
+	return stripAgentResultPayload(raw)
 }
 
 func sanitizeAgentExecResult(result ExecResult) ExecResult {

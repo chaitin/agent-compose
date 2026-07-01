@@ -25,10 +25,6 @@ func NewCapProxyServer(di do.Injector) (*capproxy.Server, error) {
 	return capabilities.NewCapProxyServer(di)
 }
 
-func normalizeCapsetIDs(ids []string) []string {
-	return capabilities.NormalizeCapsetIDs(ids)
-}
-
 func sessionCapabilityCapsets(session *Session) []string {
 	return capabilities.SessionCapabilityCapsets(session)
 }

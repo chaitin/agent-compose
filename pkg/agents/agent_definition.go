@@ -1,11 +1,14 @@
-package agentcompose
+package agents
 
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
+	"agent-compose/pkg/capabilities"
+	"agent-compose/pkg/loaders"
 	"agent-compose/pkg/model"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
@@ -22,6 +25,11 @@ const (
 type AgentDefinition = model.AgentDefinition
 type AgentDefinitionListOptions = model.AgentDefinitionListOptions
 type AgentDefinitionListResult = model.AgentDefinitionListResult
+type AgentCurrentRunSummary = model.AgentCurrentRunSummary
+type AgentLatestRunSummary = model.AgentLatestRunSummary
+type Session = model.Session
+type SessionEnvVar = model.SessionEnvVar
+type WorkspaceConfig = model.WorkspaceConfig
 
 type AgentValidationResult struct {
 	Availability agentcomposev1.AgentAvailabilityStatus
@@ -80,6 +88,18 @@ func normalizeAgentDefinition(item AgentDefinition, assignDefaults bool) (AgentD
 	return item, nil
 }
 
+func NormalizeAgentDefinition(item AgentDefinition, assignDefaults bool) (AgentDefinition, error) {
+	return normalizeAgentDefinition(item, assignDefaults)
+}
+
+func normalizeAgentKind(kind string) string {
+	return loaders.NormalizeAgentKind(kind)
+}
+
+func normalizeCapsetIDs(ids []string) []string {
+	return capabilities.NormalizeCapsetIDs(ids)
+}
+
 func isJSONObject(raw string) bool {
 	var decoded map[string]any
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &decoded); err != nil {
@@ -94,6 +114,10 @@ func agentDefinitionTags(agent AgentDefinition) []*agentcomposev1.SessionTag {
 		{Name: agentSessionTagID, Value: agent.ID},
 		{Name: agentSessionTagName, Value: agent.Name},
 	}
+}
+
+func AgentDefinitionTags(agent AgentDefinition) []*agentcomposev1.SessionTag {
+	return agentDefinitionTags(agent)
 }
 
 func sessionHasAgentTag(session *Session, agentID string) bool {
@@ -117,6 +141,10 @@ func sessionHasAgentTag(session *Session, agentID string) bool {
 		}
 	}
 	return hasSource && hasAgentID
+}
+
+func SessionHasAgentTag(session *Session, agentID string) bool {
+	return sessionHasAgentTag(session, agentID)
 }
 
 func toProtoAgentDefinition(item AgentDefinition, workspace *WorkspaceConfig, validation AgentValidationResult, current AgentCurrentRunSummary, latest *AgentLatestRunSummary) *agentcomposev1.AgentDefinition {
@@ -152,6 +180,10 @@ func toProtoAgentDefinition(item AgentDefinition, workspace *WorkspaceConfig, va
 		}
 	}
 	return resp
+}
+
+func ToProtoAgentDefinition(item AgentDefinition, workspace *WorkspaceConfig, validation AgentValidationResult, current AgentCurrentRunSummary, latest *AgentLatestRunSummary) *agentcomposev1.AgentDefinition {
+	return toProtoAgentDefinition(item, workspace, validation, current, latest)
 }
 
 func toProtoEnvItems(items []SessionEnvVar) []*agentcomposev1.SessionEnvVar {
@@ -234,5 +266,26 @@ func formatProtoTime(value time.Time) string {
 	return value.UTC().Format(time.RFC3339)
 }
 
-type AgentCurrentRunSummary = model.AgentCurrentRunSummary
-type AgentLatestRunSummary = model.AgentLatestRunSummary
+func normalizeEnvItems(items []SessionEnvVar) []SessionEnvVar {
+	merged := make(map[string]SessionEnvVar, len(items))
+	for _, item := range items {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			continue
+		}
+		merged[name] = SessionEnvVar{Name: name, Value: item.Value, Secret: item.Secret}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(merged))
+	for key := range merged {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]SessionEnvVar, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, merged[key])
+	}
+	return result
+}

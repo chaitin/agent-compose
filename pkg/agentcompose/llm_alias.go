@@ -24,8 +24,6 @@ const (
 	llmProviderScopeSessionEnv    = llmpkg.ProviderScopeSessionEnv
 	llmProviderIDDefaultOpenAI    = llmpkg.ProviderIDDefaultOpenAI
 	llmProviderIDDefaultAnthropic = llmpkg.ProviderIDDefaultAnthropic
-
-	llmFacadeTokenSourceAgent = llmpkg.FacadeTokenSourceAgent
 )
 
 type LLMGenerateResult = model.LLMGenerateResult
@@ -130,10 +128,6 @@ func runtimeLLMUseGenericResponsesTextParts(target LLMResolvedTarget, upstreamPr
 
 func forbiddenRuntimeLLMHeader(name string) bool {
 	return llmpkg.ForbiddenRuntimeHeader(name)
-}
-
-func mergeManagedExecEnv(base map[string]string, managed map[string]string) map[string]string {
-	return llmpkg.MergeManagedExecEnv(base, managed)
 }
 
 func envItemsFromMap(values map[string]string, secret bool) []SessionEnvVar {

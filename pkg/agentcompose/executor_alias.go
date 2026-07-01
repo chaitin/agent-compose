@@ -111,14 +111,6 @@ func hostSessionHome(session *Session) string {
 	return filepath.Join(hostSessionDir(session), "home")
 }
 
-func guestSessionHome(config *appconfig.Config) string {
-	return config.GuestHomePath
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `"'"'"'`) + "'"
-}
-
 func collectAgentResumeInfo(session *Session, agent, agentSessionID, manifestPath string) *AgentResumeInfo {
 	return executorpkg.CollectAgentResumeInfo(session, agent, agentSessionID, manifestPath)
 }
