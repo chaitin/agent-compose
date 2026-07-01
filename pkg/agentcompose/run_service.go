@@ -18,7 +18,7 @@ import (
 
 var errRunAgentStreamSend = errors.New("run agent stream send failed")
 
-const watchRunPollInterval = 100 * time.Millisecond
+const watchRunPollInterval = 250 * time.Millisecond
 
 func (s *Service) RunAgent(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest]) (*connect.Response[agentcomposev2.RunAgentResponse], error) {
 	run, _, err := s.runProjectAgent(ctx, req.Msg, nil)
@@ -85,7 +85,7 @@ func (s *Service) WatchRun(ctx context.Context, req *connect.Request[agentcompos
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil
 		case <-ticker.C:
 			run, err := s.watchRunLoad(ctx, runID, projectID)
 			if err != nil {

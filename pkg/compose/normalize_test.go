@@ -428,6 +428,75 @@ services:
 	}
 }
 
+func TestNormalizeRejectsSymlinkServiceEntry(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "outside.js")
+	if err := os.WriteFile(target, []byte("export async function main() {}\n"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "services"), 0o700); err != nil {
+		t.Fatalf("mkdir services: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "services", "review.js")); err != nil {
+		t.Fatalf("symlink service entry: %v", err)
+	}
+	composePath := filepath.Join(dir, "agent-compose.yml")
+	if err := os.WriteFile(composePath, []byte(`
+name: symlink-entry
+services:
+  risk-review:
+    entry: services/review.js
+`), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+
+	_, err := NormalizeFile(composePath)
+	if err == nil {
+		t.Fatalf("expected NormalizeFile to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "services.risk-review.entry") || !strings.Contains(got, "regular file") {
+		t.Fatalf("error = %q, want symlink service entry rejection", got)
+	}
+}
+
+func TestNormalizeRejectsSymlinkInputSchema(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "services"), 0o700); err != nil {
+		t.Fatalf("mkdir services: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "schemas"), 0o700); err != nil {
+		t.Fatalf("mkdir schemas: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "services", "review.js"), []byte("export async function main() {}\n"), 0o600); err != nil {
+		t.Fatalf("write service: %v", err)
+	}
+	target := filepath.Join(dir, "outside.json")
+	if err := os.WriteFile(target, []byte(`{"type":"object"}`), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "schemas", "input.json")); err != nil {
+		t.Fatalf("symlink schema: %v", err)
+	}
+	composePath := filepath.Join(dir, "agent-compose.yml")
+	if err := os.WriteFile(composePath, []byte(`
+name: symlink-schema
+services:
+  risk-review:
+    entry: services/review.js
+    input_schema: schemas/input.json
+`), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+
+	_, err := NormalizeFile(composePath)
+	if err == nil {
+		t.Fatalf("expected NormalizeFile to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "services.risk-review.input_schema") || !strings.Contains(got, "regular file") {
+		t.Fatalf("error = %q, want symlink schema rejection", got)
+	}
+}
+
 func TestNormalizeRejectsTriggerWithoutTarget(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: bad-trigger

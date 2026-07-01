@@ -196,7 +196,7 @@ describe("@chaitin-ai/agent-compose-runtime-sdk", () => {
     const stdio = captureStdio();
     try {
       expect(runtime.secret.get("AGENT_COMPOSE_RUNTIME_SDK_TEST_SECRET")).toBe("prefixed");
-      expect(runtime.secret.get("AGENT_COMPOSE_RUNTIME_SDK_TEST_DIRECT_SECRET")).toBe("direct");
+      expect(runtime.secret.get("AGENT_COMPOSE_RUNTIME_SDK_TEST_DIRECT_SECRET")).toBeUndefined();
       expect(runtime.secret.get("AGENT_COMPOSE_RUNTIME_SDK_TEST_MISSING_SECRET")).toBeUndefined();
     } finally {
       stdio.restore();

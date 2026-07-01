@@ -4,6 +4,6 @@ export const secret = {
     if (!normalizedName) {
       throw new Error("secret name is required");
     }
-    return process.env["SECRET_" + normalizedName] ?? process.env[normalizedName];
+    return process.env["SECRET_" + normalizedName];
   },
 };

@@ -1164,12 +1164,22 @@ func (s *Service) stageProjectBundle(ctx context.Context, files []*agentcomposev
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	hash := sha256.New()
 	manifestPath := ""
-	for _, file := range files {
+	bundleFiles := slices.Clone(files)
+	slices.SortFunc(bundleFiles, func(a, b *agentcomposev2.ProjectBundleFile) int {
+		return strings.Compare(strings.TrimSpace(a.GetPath()), strings.TrimSpace(b.GetPath()))
+	})
+	seenPaths := make(map[string]struct{}, len(bundleFiles))
+	for _, file := range bundleFiles {
 		relPath, err := cleanProjectBundlePath(file.GetPath())
 		if err != nil {
 			cleanup()
 			return stagedProjectBundle{}, err
 		}
+		if _, exists := seenPaths[relPath]; exists {
+			cleanup()
+			return stagedProjectBundle{}, fmt.Errorf("bundle file path %s is duplicated", relPath)
+		}
+		seenPaths[relPath] = struct{}{}
 		content := file.GetContent()
 		sum := sha256.Sum256(content)
 		sumHex := hex.EncodeToString(sum[:])

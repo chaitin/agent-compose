@@ -22,6 +22,8 @@ import (
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
+var errArtifactPathNotRegular = errors.New("artifact path must be a regular file")
+
 func (s *Service) ListArtifacts(ctx context.Context, req *connect.Request[agentcomposev2.ListArtifactsRequest]) (*connect.Response[agentcomposev2.ListArtifactsResponse], error) {
 	runs, err := s.resolveArtifactRuns(ctx, req.Msg.GetProjectId(), req.Msg.GetRunId())
 	if err != nil {
@@ -60,8 +62,8 @@ func (s *Service) ReadArtifact(ctx context.Context, req *connect.Request[agentco
 	}
 	content, readErr := readArtifactFileNoFollow(artifact.GetPath())
 	if readErr != nil {
-		if errors.Is(readErr, syscall.ELOOP) {
-			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("artifact path must be a regular file"))
+		if errors.Is(readErr, syscall.ELOOP) || errors.Is(readErr, errArtifactPathNotRegular) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, errArtifactPathNotRegular)
 		}
 		return nil, connect.NewError(connect.CodeInternal, readErr)
 	}
@@ -560,8 +562,8 @@ func ensureArtifactReadableFile(root string, artifactPath string) error {
 	if err != nil {
 		return err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
-		return fmt.Errorf("artifact path must be a regular file")
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return errArtifactPathNotRegular
 	}
 	return nil
 }
@@ -577,7 +579,7 @@ func readArtifactFileNoFollow(artifactPath string) ([]byte, error) {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("artifact path must be a regular file")
+		return nil, errArtifactPathNotRegular
 	}
 	return io.ReadAll(file)
 }

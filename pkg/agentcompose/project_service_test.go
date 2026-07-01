@@ -1126,6 +1126,46 @@ func TestProjectServiceApplyProjectValidationFailureDoesNotPersist(t *testing.T)
 	testProjectServiceApplyProjectValidationFailureDoesNotPersist(t)
 }
 
+func TestProjectServiceStageProjectBundleHashIgnoresInputOrder(t *testing.T) {
+	service := &Service{config: &appconfig.Config{DataRoot: t.TempDir()}}
+	ctx := context.Background()
+	files := []*agentcomposev2.ProjectBundleFile{
+		{Path: "agent-compose.yml", Content: []byte("name: bundle\n")},
+		{Path: "services/review.js", Content: []byte("export async function main() {}\n")},
+		{Path: "schemas/input.json", Content: []byte(`{"type":"object"}`)},
+	}
+	first, err := service.stageProjectBundle(ctx, files, "")
+	if err != nil {
+		t.Fatalf("stageProjectBundle first returned error: %v", err)
+	}
+	defer first.cleanup()
+	reversed := []*agentcomposev2.ProjectBundleFile{files[2], files[1], files[0]}
+	second, err := service.stageProjectBundle(ctx, reversed, "")
+	if err != nil {
+		t.Fatalf("stageProjectBundle second returned error: %v", err)
+	}
+	defer second.cleanup()
+
+	if first.bundleHash == "" || first.bundleHash != second.bundleHash {
+		t.Fatalf("bundle hashes = %q and %q, want stable hash", first.bundleHash, second.bundleHash)
+	}
+}
+
+func TestProjectServiceStageProjectBundleRejectsDuplicateCleanPath(t *testing.T) {
+	service := &Service{config: &appconfig.Config{DataRoot: t.TempDir()}}
+	_, err := service.stageProjectBundle(context.Background(), []*agentcomposev2.ProjectBundleFile{
+		{Path: "agent-compose.yml", Content: []byte("name: bundle\n")},
+		{Path: "services/review.js", Content: []byte("one")},
+		{Path: "services/./review.js", Content: []byte("two")},
+	}, "")
+	if err == nil {
+		t.Fatalf("expected stageProjectBundle to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "duplicated") {
+		t.Fatalf("error = %q, want duplicate path rejection", got)
+	}
+}
+
 func TestE2EProjectServiceApplyProjectValidationFailureDoesNotPersist(t *testing.T) {
 	testProjectServiceApplyProjectValidationFailureDoesNotPersist(t)
 }

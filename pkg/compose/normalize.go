@@ -2,12 +2,15 @@ package compose
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -719,14 +722,14 @@ func validateRelativeFile(path string, value string, label string, options Norma
 	if !ok {
 		return nil
 	}
-	info, err := os.Stat(absPath)
+	info, err := os.Lstat(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &ValidationError{Path: path, Message: label + " file does not exist"}
 		}
 		return &ValidationError{Path: path, Message: fmt.Sprintf("cannot read %s file: %v", label, err)}
 	}
-	if !info.Mode().IsRegular() {
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return &ValidationError{Path: path, Message: label + " must reference a regular file"}
 	}
 	return nil
@@ -737,24 +740,42 @@ func validateRelativeJSONFile(path string, value string, label string, options N
 	if !ok {
 		return nil
 	}
-	info, err := os.Stat(absPath)
+	data, err := readRelativeRegularFileNoFollow(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &ValidationError{Path: path, Message: label + " file does not exist"}
 		}
-		return &ValidationError{Path: path, Message: fmt.Sprintf("cannot read %s file: %v", label, err)}
-	}
-	if !info.Mode().IsRegular() {
-		return &ValidationError{Path: path, Message: label + " must reference a regular file"}
-	}
-	data, err := os.ReadFile(absPath)
-	if err != nil {
+		if errorsIsSymlinkOrNotRegular(err) {
+			return &ValidationError{Path: path, Message: label + " must reference a regular file"}
+		}
 		return &ValidationError{Path: path, Message: fmt.Sprintf("cannot read %s file: %v", label, err)}
 	}
 	if !json.Valid(data) {
 		return &ValidationError{Path: path, Message: label + " file must contain valid JSON"}
 	}
 	return nil
+}
+
+func readRelativeRegularFileNoFollow(absPath string) ([]byte, error) {
+	file, err := os.OpenFile(absPath, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errRelativeFileNotRegular
+	}
+	return io.ReadAll(file)
+}
+
+var errRelativeFileNotRegular = errors.New("relative file must be regular")
+
+func errorsIsSymlinkOrNotRegular(err error) bool {
+	return errors.Is(err, errRelativeFileNotRegular) || errors.Is(err, syscall.ELOOP)
 }
 
 func resolveRelativeFileReference(value string, options NormalizeOptions) (string, bool) {

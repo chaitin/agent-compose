@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -101,7 +102,7 @@ func TestInspectBundleValidatesServiceEntryExample(t *testing.T) {
 
 func TestInspectBundleValidatesAllExamples(t *testing.T) {
 	examplesRoot := filepath.Join("..", "..", "examples")
-	manifestDirs := make([]string, 0)
+	manifestDirSet := make(map[string]struct{})
 	err := filepath.WalkDir(examplesRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -111,13 +112,18 @@ func TestInspectBundleValidatesAllExamples(t *testing.T) {
 		}
 		switch filepath.Base(path) {
 		case "agent-compose.yml", "agent-compose.yaml", "agent-compose.json":
-			manifestDirs = append(manifestDirs, filepath.Dir(path))
+			manifestDirSet[filepath.Dir(path)] = struct{}{}
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walk examples returned error: %v", err)
 	}
+	manifestDirs := make([]string, 0, len(manifestDirSet))
+	for dir := range manifestDirSet {
+		manifestDirs = append(manifestDirs, dir)
+	}
+	slices.Sort(manifestDirs)
 	if len(manifestDirs) < 4 {
 		t.Fatalf("example bundle count = %d, want at least 4", len(manifestDirs))
 	}
