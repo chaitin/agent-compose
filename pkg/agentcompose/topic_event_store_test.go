@@ -20,7 +20,7 @@ func newTopicEventTestConfigStore(t *testing.T) *ConfigStore {
 	if err != nil {
 		t.Fatalf("NewConfigStore returned error: %v", err)
 	}
-	t.Cleanup(func() { _ = store.db.Close() })
+	t.Cleanup(func() { _ = store.DB().Close() })
 	return store
 }
 
@@ -650,7 +650,7 @@ func TestLoaderRunHostLinkedLoaderEventStoresEventSessionLink(t *testing.T) {
 func TestConfigStoreEventSchemaCreated(t *testing.T) {
 	store := newTopicEventTestConfigStore(t)
 	var name string
-	if err := store.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'event'`).Scan(&name); err != nil {
+	if err := store.DB().QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'event'`).Scan(&name); err != nil {
 		t.Fatalf("query event schema returned error: %v", err)
 	}
 	if name != "event" {
@@ -687,8 +687,8 @@ func TestConfigStoreEventSchemaMigratesLegacyDispatchColumnsBeforeIndexes(t *tes
 	)`); err != nil {
 		t.Fatalf("create legacy event: %v", err)
 	}
-	store := &ConfigStore{db: db}
-	if err := store.ensureEventSchema(ctx); err != nil {
+	store := NewConfigStoreFromDB(db)
+	if err := store.EnsureEventSchema(ctx); err != nil {
 		t.Fatalf("ensureEventSchema returned error: %v", err)
 	}
 	for _, column := range []string{"next_attempt_at", "claim_id", "claim_until", "attempt_count", "last_error", "dead_letter_at"} {

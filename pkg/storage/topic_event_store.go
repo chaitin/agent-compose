@@ -1,4 +1,4 @@
-package agentcompose
+package storage
 
 import (
 	"context"
@@ -115,6 +115,10 @@ func (s *ConfigStore) ensureEventSchema(ctx context.Context) error {
 	return nil
 }
 
+func (s *ConfigStore) EnsureEventSchema(ctx context.Context) error {
+	return s.ensureEventSchema(ctx)
+}
+
 func normalizeTopicEventRecord(item TopicEventRecord, assignID bool) (TopicEventRecord, error) {
 	item.ID = strings.TrimSpace(item.ID)
 	if assignID && item.ID == "" {
@@ -182,6 +186,10 @@ func normalizeTopicEventRecord(item TopicEventRecord, assignID bool) (TopicEvent
 		item.DispatchedAt = item.DispatchedAt.UTC()
 	}
 	return item, nil
+}
+
+func NormalizeTopicEventRecord(item TopicEventRecord, assignID bool) (TopicEventRecord, error) {
+	return normalizeTopicEventRecord(item, assignID)
 }
 
 func (s *ConfigStore) CreateEvent(ctx context.Context, item TopicEventRecord) (TopicEventRecord, error) {
@@ -808,6 +816,10 @@ func webhookSourceTopicMatches(topic, topicPrefix string) bool {
 		return true
 	}
 	return strings.HasSuffix(topicPrefix, ".") && topic == strings.TrimSuffix(topicPrefix, ".")
+}
+
+func WebhookSourceTopicMatches(topic, topicPrefix string) bool {
+	return webhookSourceTopicMatches(topic, topicPrefix)
 }
 
 func (s *ConfigStore) ListWebhookSources(ctx context.Context) ([]WebhookSource, error) {

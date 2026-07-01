@@ -1,4 +1,4 @@
-package agentcompose
+package storage
 
 import (
 	driverpkg "agent-compose/pkg/driver"
@@ -120,6 +120,10 @@ func (s *ConfigStore) ensureLoaderSchema(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+func (s *ConfigStore) EnsureLoaderSchema(ctx context.Context) error {
+	return s.ensureLoaderSchema(ctx)
 }
 
 func (s *ConfigStore) ensureLoaderManagedColumns(ctx context.Context) error {
@@ -265,6 +269,10 @@ func normalizeLoader(item Loader, assignID bool) (Loader, error) {
 	return item, nil
 }
 
+func NormalizeLoader(item Loader, assignID bool) (Loader, error) {
+	return normalizeLoader(item, assignID)
+}
+
 func normalizeLoaderTrigger(loaderID string, trigger LoaderTrigger) (LoaderTrigger, error) {
 	trigger.LoaderID = strings.TrimSpace(loaderID)
 	trigger.ID = strings.TrimSpace(trigger.ID)
@@ -320,6 +328,10 @@ func normalizeLoaderTrigger(loaderID string, trigger LoaderTrigger) (LoaderTrigg
 		trigger.LastFiredAt = trigger.LastFiredAt.UTC()
 	}
 	return trigger, nil
+}
+
+func NormalizeLoaderTrigger(loaderID string, trigger LoaderTrigger) (LoaderTrigger, error) {
+	return normalizeLoaderTrigger(loaderID, trigger)
 }
 
 func encodeLoaderEnvItems(items []SessionEnvVar) (string, error) {
@@ -512,6 +524,10 @@ func (s *ConfigStore) getLoaderIfExists(ctx context.Context, loaderID string) (L
 		return Loader{}, false, err
 	}
 	return item, true, nil
+}
+
+func (s *ConfigStore) GetLoaderIfExists(ctx context.Context, loaderID string) (Loader, bool, error) {
+	return s.getLoaderIfExists(ctx, loaderID)
 }
 
 func (s *ConfigStore) DeleteLoader(ctx context.Context, loaderID string) error {

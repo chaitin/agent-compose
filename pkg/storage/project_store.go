@@ -1,4 +1,4 @@
-package agentcompose
+package storage
 
 import (
 	"context"
@@ -136,6 +136,10 @@ func StableProjectRunID(projectID, agentName, source, idempotencyKey string) (st
 		return "", fmt.Errorf("agent name %q is not a stable identifier", agentName)
 	}
 	return stableReadableID("run", agentName, projectID+"|"+agentName+"|"+source+"|"+idempotencyKey), nil
+}
+
+func StableReadableID(prefix, readable, seed string) string {
+	return stableReadableID(prefix, readable, seed)
 }
 
 func NewProjectRecordFromSpec(spec *compose.NormalizedProjectSpec, sourcePath string) (ProjectRecord, error) {
@@ -677,6 +681,10 @@ func (s *ConfigStore) getProject(ctx context.Context, projectID string, includeR
 	return item, true, nil
 }
 
+func (s *ConfigStore) GetProjectIfExists(ctx context.Context, projectID string, includeRemoved bool) (ProjectRecord, bool, error) {
+	return s.getProject(ctx, projectID, includeRemoved)
+}
+
 func normalizeProjectRecord(project ProjectRecord) (ProjectRecord, error) {
 	project.ID = strings.TrimSpace(project.ID)
 	project.Name = strings.TrimSpace(project.Name)
@@ -820,6 +828,10 @@ func normalizeProjectRunStatus(status string) string {
 	default:
 		return ProjectRunStatusPending
 	}
+}
+
+func NormalizeProjectRunStatus(status string) string {
+	return normalizeProjectRunStatus(status)
 }
 
 func scanProject(scan func(dest ...any) error) (ProjectRecord, error) {

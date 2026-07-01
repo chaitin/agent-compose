@@ -192,8 +192,9 @@ func testControlPlaneHelperErrorAndParsingBranches(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	store := &Store{config: &appconfig.Config{SessionRoot: filepath.Join(root, "sessions"), RuntimeDriver: driverpkg.RuntimeDriverBoxlite, DefaultImage: "guest:latest", JupyterProxyBasePath: "/agent-compose/session", JupyterGuestPort: 8888}}
-	if err := os.MkdirAll(store.config.SessionRoot, 0o755); err != nil {
+	sessionConfig := &appconfig.Config{SessionRoot: filepath.Join(root, "sessions"), RuntimeDriver: driverpkg.RuntimeDriverBoxlite, DefaultImage: "guest:latest", JupyterProxyBasePath: "/agent-compose/session", JupyterGuestPort: 8888}
+	store := mustTestStore(t, sessionConfig)
+	if err := os.MkdirAll(sessionConfig.SessionRoot, 0o755); err != nil {
 		t.Fatalf("mkdir sessions: %v", err)
 	}
 	created, err := store.CreateSession(ctx, "Stopped", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", "", nil, nil, nil)

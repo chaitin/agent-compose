@@ -1123,7 +1123,7 @@ func setupRunPreparationProject(t *testing.T, spec *agentcomposev2.ProjectSpec, 
 	service.config.SessionRoot = filepath.Join(t.TempDir(), "sessions")
 	service.config.JupyterProxyBasePath = "/agent-compose/session"
 	service.config.JupyterGuestPort = 8888
-	service.store = &Store{config: service.config}
+	service.store = mustTestStore(t, service.config)
 	service.driver = &fakeSessionDriver{}
 	runtime := &fakeLoaderAgentRuntime{}
 	runtimes := fixedRuntimeProvider{runtime: runtime}

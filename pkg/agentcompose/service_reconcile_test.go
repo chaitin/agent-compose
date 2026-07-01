@@ -66,11 +66,11 @@ func testServiceReconcilePersistedSessionsMarksStaleProjectRunsFailed(t *testing
 	staleCreatedAt := startedAt.Add(-time.Minute).Unix()
 	freshCreatedAt := startedAt.Add(time.Minute).Unix()
 	for _, runID := range []string{stalePending.RunID, staleRunning.RunID} {
-		if _, err := store.db.ExecContext(ctx, `UPDATE project_run SET created_at = ?, updated_at = ? WHERE run_id = ?`, staleCreatedAt, staleCreatedAt, runID); err != nil {
+		if _, err := store.DB().ExecContext(ctx, `UPDATE project_run SET created_at = ?, updated_at = ? WHERE run_id = ?`, staleCreatedAt, staleCreatedAt, runID); err != nil {
 			t.Fatalf("backdate project run %s: %v", runID, err)
 		}
 	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE project_run SET created_at = ?, updated_at = ? WHERE run_id = ?`, freshCreatedAt, freshCreatedAt, freshPending.RunID); err != nil {
+	if _, err := store.DB().ExecContext(ctx, `UPDATE project_run SET created_at = ?, updated_at = ? WHERE run_id = ?`, freshCreatedAt, freshCreatedAt, freshPending.RunID); err != nil {
 		t.Fatalf("forward-date fresh project run: %v", err)
 	}
 
@@ -110,7 +110,7 @@ func TestServiceAndBridgeReconcileMicrosandboxRuntimeTypeBranches(t *testing.T) 
 		JupyterGuestPort:         8888,
 		JupyterProxyBasePath:     "/agent-compose/session",
 	}
-	store := &Store{config: config}
+	store := mustTestStore(t, config)
 	session, err := store.CreateSession(ctx, "running micro", "", driverpkg.RuntimeDriverMicrosandbox, "devbox:archlinux", "", SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
@@ -155,7 +155,7 @@ func TestServiceAndBridgeReconcileMicrosandboxRuntimeTypeBranches(t *testing.T) 
 	if err := store.UpdateSession(ctx, missingProxySession); err != nil {
 		t.Fatalf("UpdateSession missing proxy returned error: %v", err)
 	}
-	if err := os.Remove(store.proxyStatePath(missingProxySession.Summary.ID)); err != nil {
+	if err := os.Remove(store.ProxyStatePath(missingProxySession.Summary.ID)); err != nil {
 		t.Fatalf("remove proxy state: %v", err)
 	}
 	if _, err := service.reconcileSessionRuntimeState(ctx, missingProxySession); err == nil {
@@ -180,7 +180,7 @@ func testServiceReconcilePersistedSessionsMarksStalePendingFailed(t *testing.T) 
 		JupyterGuestPort:         8888,
 		JupyterProxyBasePath:     "/agent-compose/session",
 	}
-	store := &Store{config: config}
+	store := mustTestStore(t, config)
 	staleSession, err := store.CreateSession(ctx, "stale", "", driverpkg.RuntimeDriverMicrosandbox, "devbox:archlinux", "", SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession(stale) returned error: %v", err)

@@ -196,7 +196,11 @@ func testAgentDefinitionValidationAndProtoMapping(t *testing.T) {
 	service := &Service{
 		config:   &appconfig.Config{RuntimeDriver: driverpkg.RuntimeDriverBoxlite, DefaultImage: "guest:latest"},
 		configDB: store,
-		store:    &Store{config: &appconfig.Config{SessionRoot: t.TempDir(), RuntimeDriver: driverpkg.RuntimeDriverBoxlite, DefaultImage: "guest:latest"}},
+		store: mustTestStore(t, &appconfig.Config{
+			SessionRoot:   t.TempDir(),
+			RuntimeDriver: driverpkg.RuntimeDriverBoxlite,
+			DefaultImage:  "guest:latest",
+		}),
 	}
 	validated, err := service.ValidateAgentDefinition(ctx, connect.NewRequest(&agentcomposev1.ValidateAgentDefinitionRequest{
 		Name:        "Agent",

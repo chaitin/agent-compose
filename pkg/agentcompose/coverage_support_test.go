@@ -4,7 +4,6 @@ import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -82,7 +81,7 @@ func testSupportSetupRegistersServiceGraph(t *testing.T) {
 	}
 
 	configDB := do.MustInvoke[*ConfigStore](di)
-	t.Cleanup(func() { _ = configDB.db.Close() })
+	t.Cleanup(func() { _ = configDB.DB().Close() })
 }
 
 func hasEchoRoute(app *echo.Echo, method string, path string) bool {
@@ -115,7 +114,7 @@ func testSupportControlPlaneStartAndConfigHelpers(t *testing.T) {
 		t.Fatalf("MkdirAll session root: %v", err)
 	}
 	configDB := newSupportTestConfigStore(t)
-	store := &Store{config: config}
+	store := mustTestStore(t, config)
 	bus := &LoaderBus{ch: make(chan LoaderTopicEvent, 8)}
 	manager := &LoaderManager{
 		config:       config,
@@ -202,7 +201,7 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 		SessionStopTimeout:   time.Second,
 	}
 	configDB := newSupportTestConfigStore(t)
-	store := &Store{config: config}
+	store := mustTestStore(t, config)
 	runtime := &fakeLoaderAgentRuntime{}
 	driver := &fakeSessionDriver{}
 	runtimes := fixedRuntimeProvider{runtime: runtime}
@@ -352,8 +351,8 @@ func testSupportLegacyAgentRunMerge(t *testing.T, store *Store) {
 	}
 	older := time.Now().UTC().Add(-2 * time.Minute)
 	newer := time.Now().UTC().Add(-time.Minute)
-	if err := store.saveCells(session.Summary.ID, []NotebookCell{{ID: "cell-1", Type: CellTypeShell, Source: "echo", CreatedAt: newer}}); err != nil {
-		t.Fatalf("saveCells returned error: %v", err)
+	if err := store.SaveCells(session.Summary.ID, []NotebookCell{{ID: "cell-1", Type: CellTypeShell, Source: "echo", CreatedAt: newer}}); err != nil {
+		t.Fatalf("SaveCells returned error: %v", err)
 	}
 	legacyRuns := []AgentRun{
 		{ID: "run-1", Agent: "codex", Message: "legacy", Output: "done", Success: true, CreatedAt: older, AgentSessionID: "agent-1"},
@@ -363,7 +362,7 @@ func testSupportLegacyAgentRunMerge(t *testing.T, store *Store) {
 	if err != nil {
 		t.Fatalf("marshal legacy runs: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(store.sessionDir(session.Summary.ID), "state", "agent_runs.json"), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(store.SessionDir(session.Summary.ID), "state", "agent_runs.json"), data, 0o644); err != nil {
 		t.Fatalf("write legacy runs: %v", err)
 	}
 	cells, err := store.ListCells(ctx, session.Summary.ID)
@@ -485,16 +484,9 @@ func testSupportSessionRPCAndAgentResumeHelpers(t *testing.T, manager *LoaderMan
 
 func newSupportTestConfigStore(t *testing.T) *ConfigStore {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "data.db"))
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	store := &ConfigStore{db: db}
-	store.db.SetMaxOpenConns(1)
-	store.db.SetMaxIdleConns(1)
-	t.Cleanup(func() { _ = store.db.Close() })
-	if err := store.initSchema(context.Background()); err != nil {
-		t.Fatalf("initSchema: %v", err)
-	}
-	return store
+	root := t.TempDir()
+	return mustTestConfigStore(t, &appconfig.Config{
+		DataRoot: root,
+		DbAddr:   filepath.Join(root, "data.db"),
+	})
 }

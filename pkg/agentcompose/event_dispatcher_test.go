@@ -135,7 +135,7 @@ func TestEventDispatcherIgnoresStaleClaimAck(t *testing.T) {
 		t.Fatalf("claim id was empty after dispatch: %#v", claimed)
 	}
 	expiredAt := time.Now().UTC().Add(-time.Second)
-	if _, err := store.db.ExecContext(ctx, `UPDATE event SET claim_until = ? WHERE id = ?`, expiredAt.UnixMilli(), created.ID); err != nil {
+	if _, err := store.DB().ExecContext(ctx, `UPDATE event SET claim_until = ? WHERE id = ?`, expiredAt.UnixMilli(), created.ID); err != nil {
 		t.Fatalf("expire claim: %v", err)
 	}
 	if ok, err := store.ClaimEvent(ctx, created.ID, "fresh-claim", time.Now().UTC(), time.Now().UTC().Add(time.Minute)); err != nil {

@@ -1,4 +1,4 @@
-package agentcompose
+package storage
 
 import (
 	"strings"
@@ -6,6 +6,7 @@ import (
 )
 
 const defaultSessionListLimit = 50
+const DefaultSessionListLimit = defaultSessionListLimit
 
 func normalizeSessionTriggerSource(value string, tags []SessionTag) string {
 	value = strings.TrimSpace(value)
@@ -32,12 +33,20 @@ func normalizeSessionTriggerSource(value string, tags []SessionTag) string {
 	return SessionTypeManual
 }
 
+func NormalizeSessionTriggerSource(value string, tags []SessionTag) string {
+	return normalizeSessionTriggerSource(value, tags)
+}
+
 func sessionTypeFromTriggerSource(value string) string {
 	value = normalizeSessionTriggerSource(value, nil)
 	if strings.HasPrefix(value, SessionTypeScript+":") {
 		return SessionTypeScript
 	}
 	return SessionTypeManual
+}
+
+func SessionTypeFromTriggerSource(value string) string {
+	return sessionTypeFromTriggerSource(value)
 }
 
 func normalizeSessionListBounds(offset, limit int) (int, int) {
@@ -50,6 +59,10 @@ func normalizeSessionListBounds(offset, limit int) (int, int) {
 	return offset, limit
 }
 
+func NormalizeSessionListBounds(offset, limit int) (int, int) {
+	return normalizeSessionListBounds(offset, limit)
+}
+
 func paginateSessions(items []*Session, offset, limit int) []*Session {
 	if offset >= len(items) {
 		return nil
@@ -59,6 +72,10 @@ func paginateSessions(items []*Session, offset, limit int) []*Session {
 		end = len(items)
 	}
 	return items[offset:end]
+}
+
+func PaginateSessions(items []*Session, offset, limit int) []*Session {
+	return paginateSessions(items, offset, limit)
 }
 
 func sessionMatchesListOptions(session *Session, options SessionListOptions) bool {
@@ -117,6 +134,10 @@ func sessionMatchesListOptions(session *Session, options SessionListOptions) boo
 		return false
 	}
 	return true
+}
+
+func SessionMatchesListOptions(session *Session, options SessionListOptions) bool {
+	return sessionMatchesListOptions(session, options)
 }
 
 func matchesTimeRange(value, from, to time.Time) bool {

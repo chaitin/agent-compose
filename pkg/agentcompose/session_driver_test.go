@@ -27,7 +27,7 @@ func TestSessionDriverStartSessionVMSavesRuntimeProxyState(t *testing.T) {
 	if err := os.MkdirAll(config.SessionRoot, 0o755); err != nil {
 		t.Fatalf("MkdirAll(session root) returned error: %v", err)
 	}
-	store := &Store{config: config}
+	store := mustTestStore(t, config)
 
 	session, err := store.CreateSession(ctx, "Proxy Session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil, nil, nil)
 	if err != nil {

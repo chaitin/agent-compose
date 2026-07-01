@@ -42,6 +42,19 @@ func normalizeCapsetIDs(ids []string) []string {
 	return out
 }
 
+func sessionCapabilityCapsets(session *Session) []string {
+	if session == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(session.Summary.Tags))
+	for _, tag := range session.Summary.Tags {
+		if strings.TrimSpace(tag.Name) == capabilityCapsetTagName {
+			ids = append(ids, tag.Value)
+		}
+	}
+	return normalizeCapsetIDs(ids)
+}
+
 // buildCapabilityGatewaySessionVars produces the capability env items and tags
 // for a session bound to a set of capsets. It is pure and never contacts
 // OctoBus, so capability setup can never block session/loader creation. The env

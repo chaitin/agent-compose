@@ -4,7 +4,6 @@ import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
-	"database/sql"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -743,18 +742,10 @@ func newTestServiceAPIHarness(t *testing.T) (*Service, *fakeLoaderAgentRuntime, 
 	if err := os.MkdirAll(config.SessionRoot, 0o755); err != nil {
 		t.Fatalf("os.MkdirAll(session root) returned error: %v", err)
 	}
-	db, err := sql.Open("sqlite", filepath.Join(root, "data.db"))
-	if err != nil {
-		t.Fatalf("sql.Open returned error: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	configDB := &ConfigStore{db: db}
-	if err := configDB.initSchema(ctx); err != nil {
-		_ = db.Close()
-		t.Fatalf("initSchema returned error: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	configDB := mustTestConfigStore(t, &appconfig.Config{
+		DataRoot: root,
+		DbAddr:   filepath.Join(root, "data.db"),
+	})
 	t.Cleanup(cancel)
 
 	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -770,7 +761,7 @@ func newTestServiceAPIHarness(t *testing.T) (*Service, *fakeLoaderAgentRuntime, 
 	config.LLMAPIEndpoint = llmServer.URL
 	config.LLMModel = "model-a"
 
-	store := &Store{config: config}
+	store := mustTestStore(t, config)
 	runtime := &fakeLoaderAgentRuntime{}
 	runtimes := fixedRuntimeProvider{runtime: runtime}
 	driver := &fakeSessionDriver{}
@@ -839,7 +830,7 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 		rootCtx:      ctx,
 		configDB:     configDB,
 		engine:       &QJSLoaderEngine{},
-		store:        &Store{config: config},
+		store:        mustTestStore(t, config),
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
 		scheduleWake: make(chan struct{}, 1),

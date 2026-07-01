@@ -4,7 +4,6 @@ import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -1146,23 +1145,14 @@ func newTestSessionRPCBridge(t *testing.T) (*SessionRPCBridge, *fakeSessionDrive
 	if err := os.MkdirAll(config.SessionRoot, 0o755); err != nil {
 		t.Fatalf("os.MkdirAll(session root) returned error: %v", err)
 	}
-	dbPath := filepath.Join(root, "data.db")
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("sql.Open returned error: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	configDB := &ConfigStore{db: db}
-	if err := configDB.initSchema(context.Background()); err != nil {
-		_ = db.Close()
-		t.Fatalf("initSchema returned error: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	configDB := mustTestConfigStore(t, &appconfig.Config{
+		DataRoot: root,
+		DbAddr:   filepath.Join(root, "data.db"),
+	})
 	driver := &fakeSessionDriver{}
 	return &SessionRPCBridge{
 		config:   config,
-		store:    &Store{config: config},
+		store:    mustTestStore(t, config),
 		configDB: configDB,
 		driver:   driver,
 		cap:      newTestCapabilityProvider("", ""),

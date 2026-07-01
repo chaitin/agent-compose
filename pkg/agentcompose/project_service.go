@@ -16,6 +16,7 @@ import (
 
 	"agent-compose/pkg/compose"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/storage"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
@@ -112,7 +113,7 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
 	}
 
-	existingProject, projectFound, err := s.configDB.getProject(ctx, project.ID, true)
+	existingProject, projectFound, err := s.configDB.GetProjectIfExists(ctx, project.ID, true)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: load existing project: %w", normalized.spec.Name, err))
 	}
@@ -962,11 +963,11 @@ func (s *Service) validateProjectManagedSchedulers(ctx context.Context, normaliz
 	}
 	loaders := projectManagedSchedulerLoaders(builds)
 	for _, loader := range loaders {
-		if _, err := normalizeLoader(loader, false); err != nil {
+		if _, err := storage.NormalizeLoader(loader, false); err != nil {
 			return []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("schedulers."+loader.Summary.ManagedAgentName, err.Error())}
 		}
 		for _, trigger := range loader.Triggers {
-			if _, err := normalizeLoaderTrigger(loader.Summary.ID, trigger); err != nil {
+			if _, err := storage.NormalizeLoaderTrigger(loader.Summary.ID, trigger); err != nil {
 				return []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("schedulers."+loader.Summary.ManagedAgentName+".triggers", err.Error())}
 			}
 		}
@@ -1049,7 +1050,7 @@ func (s *Service) reconcileProjectManagedAgentDefinitions(ctx context.Context, p
 	changes := make([]*agentcomposev2.ProjectChange, 0, len(current))
 	unchanged := true
 	for _, agent := range current {
-		existing, found, err := s.configDB.getAgentDefinitionIfExists(ctx, agent.ID, true)
+		existing, found, err := s.configDB.GetAgentDefinitionIfExists(ctx, agent.ID, true)
 		if err != nil {
 			return nil, false, fmt.Errorf("load managed agent definition %s: %w", agent.ID, err)
 		}
@@ -1124,7 +1125,7 @@ func (s *Service) reconcileProjectManagedSchedulers(ctx context.Context, project
 		if !ok {
 			return changes, false, fmt.Errorf("managed loader %s for scheduler %s missing", saved.ManagedLoaderID, saved.SchedulerID)
 		}
-		existingLoader, loaderFound, err := s.configDB.getLoaderIfExists(ctx, loader.Summary.ID)
+		existingLoader, loaderFound, err := s.configDB.GetLoaderIfExists(ctx, loader.Summary.ID)
 		if err != nil {
 			return changes, false, fmt.Errorf("load managed loader %s: %w", loader.Summary.ID, err)
 		}
@@ -1237,7 +1238,7 @@ func (s *Service) disableManagedLoaderIfOwned(ctx context.Context, loaderID, pro
 	if loaderID == "" {
 		return nil
 	}
-	loader, found, err := s.configDB.getLoaderIfExists(ctx, loaderID)
+	loader, found, err := s.configDB.GetLoaderIfExists(ctx, loaderID)
 	if err != nil {
 		return err
 	}

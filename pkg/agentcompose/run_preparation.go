@@ -271,7 +271,7 @@ func projectRunGitWorkspaceConfig(run ProjectRunRecord, workspace *compose.Works
 }
 
 func projectRunWorkspaceID(run ProjectRunRecord, provider string) string {
-	return stableReadableID("workspace", run.AgentName+"-"+provider, run.RunID+"|workspace|"+provider)
+	return StableReadableID("workspace", run.AgentName+"-"+provider, run.RunID+"|workspace|"+provider)
 }
 
 func projectRunWorkspaceName(run ProjectRunRecord, provider string) string {

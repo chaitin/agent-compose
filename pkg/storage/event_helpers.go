@@ -1,42 +1,16 @@
-package agentcompose
+package storage
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
-
-	"agent-compose/pkg/model"
-)
-
-const (
-	TopicEventSourceWebhook = model.TopicEventSourceWebhook
-	TopicEventSourceLoader  = model.TopicEventSourceLoader
-	TopicEventSourceSystem  = model.TopicEventSourceSystem
-
-	TopicEventDispatchPending        = model.TopicEventDispatchPending
-	TopicEventDispatchPublishing     = model.TopicEventDispatchPublishing
-	TopicEventDispatchPublishedToBus = model.TopicEventDispatchPublishedToBus
-	TopicEventDispatchNoSubscriber   = model.TopicEventDispatchNoSubscriber
-	TopicEventDispatchRetrying       = model.TopicEventDispatchRetrying
-	TopicEventDispatchDeadLetter     = model.TopicEventDispatchDeadLetter
-
-	EventDeliveryStatusMatched      = model.EventDeliveryStatusMatched
-	EventDeliveryStatusRunStarted   = model.EventDeliveryStatusRunStarted
-	EventDeliveryStatusRunSucceeded = model.EventDeliveryStatusRunSucceeded
-	EventDeliveryStatusRunFailed    = model.EventDeliveryStatusRunFailed
-	EventDeliveryStatusSkipped      = model.EventDeliveryStatusSkipped
 )
 
 var topicEventNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-
-type TopicEventRecord = model.TopicEventRecord
-type TopicEventFilter = model.TopicEventFilter
-type WebhookSource = model.WebhookSource
-type EventDelivery = model.EventDelivery
-type EventSessionLink = model.EventSessionLink
-type EventSessionTraceItem = model.EventSessionTraceItem
 
 func validateTopicEventName(topic string) error {
 	topic = strings.TrimSpace(topic)
@@ -84,7 +58,48 @@ func normalizeTopicEventDispatchStatus(status string) string {
 	}
 }
 
+func normalizeEventDeliveryStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case EventDeliveryStatusMatched:
+		return EventDeliveryStatusMatched
+	case EventDeliveryStatusRunStarted:
+		return EventDeliveryStatusRunStarted
+	case EventDeliveryStatusRunSucceeded:
+		return EventDeliveryStatusRunSucceeded
+	case EventDeliveryStatusRunFailed:
+		return EventDeliveryStatusRunFailed
+	case EventDeliveryStatusSkipped:
+		return EventDeliveryStatusSkipped
+	default:
+		return ""
+	}
+}
+
 func topicEventPayloadSHA256(payloadJSON string) string {
 	sum := sha256.Sum256([]byte(payloadJSON))
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func normalizeJSONDocument(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "{}", nil
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return "", err
+	}
+	return marshalJSONCompact(decoded)
+}
+
+func marshalJSONCompact(value any) (string, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, raw); err != nil {
+		return "", err
+	}
+	return compact.String(), nil
 }

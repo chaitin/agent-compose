@@ -1,4 +1,4 @@
-package agentcompose
+package storage
 
 import (
 	appconfig "agent-compose/pkg/config"
@@ -24,6 +24,10 @@ type Store struct {
 
 func NewStore(di do.Injector) (*Store, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
+	return NewStoreFromConfig(config)
+}
+
+func NewStoreFromConfig(config *appconfig.Config) (*Store, error) {
 	if err := os.MkdirAll(config.SessionRoot, 0o755); err != nil {
 		return nil, fmt.Errorf("create session root: %w", err)
 	}
@@ -276,6 +280,10 @@ func (s *Store) sessionDir(id string) string {
 	return filepath.Join(s.config.SessionRoot, id)
 }
 
+func (s *Store) SessionDir(id string) string {
+	return s.sessionDir(id)
+}
+
 func (s *Store) hydrateSessionGuestImage(session *Session) {
 	if session == nil {
 		return
@@ -300,6 +308,10 @@ func (s *Store) legacyVMStatePath(id string) string {
 
 func (s *Store) proxyStatePath(id string) string {
 	return filepath.Join(s.sessionDir(id), "proxy", "jupyter.json")
+}
+
+func (s *Store) ProxyStatePath(id string) string {
+	return s.proxyStatePath(id)
 }
 
 func (s *Store) loadSession(id string) (*Session, error) {
@@ -393,6 +405,10 @@ func (s *Store) saveCells(id string, cells []NotebookCell) error {
 		return fmt.Errorf("write cells: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) SaveCells(id string, cells []NotebookCell) error {
+	return s.saveCells(id, cells)
 }
 
 func (s *Store) loadAgentRuns(id string) ([]AgentRun, error) {

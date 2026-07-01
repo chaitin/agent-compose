@@ -1,4 +1,4 @@
-package agentcompose
+package storage
 
 import (
 	appconfig "agent-compose/pkg/config"
@@ -20,13 +20,25 @@ import (
 )
 
 const storedUnixMillisecondThreshold int64 = 10_000_000_000
+const StoredUnixMillisecondThreshold int64 = storedUnixMillisecondThreshold
 
 type ConfigStore struct {
 	db *sql.DB
 }
 
+func (s *ConfigStore) DB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
+
 func NewConfigStore(di do.Injector) (*ConfigStore, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
+	return NewConfigStoreFromConfig(config)
+}
+
+func NewConfigStoreFromConfig(config *appconfig.Config) (*ConfigStore, error) {
 	if err := os.MkdirAll(config.DataRoot, 0o755); err != nil {
 		return nil, fmt.Errorf("create agent-compose data root: %w", err)
 	}
@@ -43,6 +55,10 @@ func NewConfigStore(di do.Injector) (*ConfigStore, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+func NewConfigStoreFromDB(db *sql.DB) *ConfigStore {
+	return &ConfigStore{db: db}
 }
 
 func (s *ConfigStore) initSchema(ctx context.Context) error {
@@ -563,6 +579,10 @@ func (s *ConfigStore) getAgentDefinitionIfExists(ctx context.Context, id string,
 	return item, true, nil
 }
 
+func (s *ConfigStore) GetAgentDefinitionIfExists(ctx context.Context, id string, includeDeleted bool) (AgentDefinition, bool, error) {
+	return s.getAgentDefinitionIfExists(ctx, id, includeDeleted)
+}
+
 func (s *ConfigStore) ListAgentDefinitions(ctx context.Context, options AgentDefinitionListOptions) (AgentDefinitionListResult, error) {
 	limit := options.Limit
 	if limit <= 0 {
@@ -789,29 +809,6 @@ func agentMatchesQuery(item AgentDefinition, query string) bool {
 	return false
 }
 
-func mergeEnvItems(globalItems, sessionItems []SessionEnvVar) []SessionEnvVar {
-	merged := make(map[string]SessionEnvVar, len(globalItems)+len(sessionItems))
-	for _, item := range normalizeEnvItems(globalItems) {
-		merged[item.Name] = item
-	}
-	for _, item := range normalizeEnvItems(sessionItems) {
-		merged[item.Name] = item
-	}
-	if len(merged) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(merged))
-	for key := range merged {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	result := make([]SessionEnvVar, 0, len(keys))
-	for _, key := range keys {
-		result = append(result, merged[key])
-	}
-	return result
-}
-
 func normalizeWorkspaceConfig(item WorkspaceConfig, assignID bool) (WorkspaceConfig, error) {
 	item.ID = strings.TrimSpace(item.ID)
 	item.Name = strings.TrimSpace(item.Name)
@@ -837,6 +834,10 @@ func normalizeWorkspaceConfig(item WorkspaceConfig, assignID bool) (WorkspaceCon
 		item.ConfigJSON = "{}"
 	}
 	return item, nil
+}
+
+func NormalizeWorkspaceConfig(item WorkspaceConfig, assignID bool) (WorkspaceConfig, error) {
+	return normalizeWorkspaceConfig(item, assignID)
 }
 
 func scanWorkspaceConfig(scan func(dest ...any) error) (WorkspaceConfig, error) {

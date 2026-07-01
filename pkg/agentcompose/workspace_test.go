@@ -5,7 +5,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1095,20 +1094,11 @@ func assertGitCommand(t *testing.T, dir string, args ...string) {
 
 func newWorkspaceRouteTestConfigStore(t *testing.T) *ConfigStore {
 	t.Helper()
-	dbDir := t.TempDir()
-	store := &ConfigStore{}
-	var err error
-	store.db, err = sql.Open("sqlite", filepath.Join(dbDir, "data.db"))
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	store.db.SetMaxOpenConns(1)
-	store.db.SetMaxIdleConns(1)
-	t.Cleanup(func() { _ = store.db.Close() })
-	if err := store.initSchema(context.Background()); err != nil {
-		t.Fatalf("initSchema: %v", err)
-	}
-	return store
+	root := t.TempDir()
+	return mustTestConfigStore(t, &appconfig.Config{
+		DataRoot: root,
+		DbAddr:   filepath.Join(root, "data.db"),
+	})
 }
 
 func encodeFileWorkspaceConfigForTest(t *testing.T, root string) string {

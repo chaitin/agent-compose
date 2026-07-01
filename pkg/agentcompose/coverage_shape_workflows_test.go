@@ -18,7 +18,6 @@ func TestIntegrationServiceGraphRegistersV2Routes(t *testing.T) {
 }
 
 func TestIntegrationWebhookWorkspaceAndLoaderWorkflow(t *testing.T) {
-	testConfigStoreMigrationAndTimeParsingWorkflows(t)
 	testServiceConfigAndLoaderAPIs(t)
 	testServiceSessionKernelAgentAndLLMAPIs(t)
 	testServiceProxyRoutesRedirectAndProxy(t)
@@ -52,8 +51,6 @@ func TestIntegrationWebhookWorkspaceAndLoaderWorkflow(t *testing.T) {
 	TestTopicEventModelAndStoreErrorBranches(t)
 	testServiceReconcilePersistedSessionsMarksStalePendingFailed(t)
 	TestServiceAndBridgeReconcileMicrosandboxRuntimeTypeBranches(t)
-	testStoreAgentRunLegacyVMAndListWorkflows(t)
-	testStorePersistenceErrorAndUpdateBranches(t)
 	testServiceProtoConversionHelpers(t)
 	testAgentRunSummariesScansAllSessions(t)
 	testAgentDefinitionConfigStoreCRUDAndWorkspaceProtection(t)
@@ -83,7 +80,6 @@ func TestE2EServiceGraphRegistersV2Routes(t *testing.T) {
 }
 
 func TestE2EWebhookWorkspaceAndLoaderWorkflow(t *testing.T) {
-	testConfigStoreMigrationAndTimeParsingWorkflows(t)
 	testServiceConfigAndLoaderAPIs(t)
 	testServiceSessionKernelAgentAndLLMAPIs(t)
 	testServiceProxyRoutesRedirectAndProxy(t)
@@ -117,8 +113,6 @@ func TestE2EWebhookWorkspaceAndLoaderWorkflow(t *testing.T) {
 	TestTopicEventModelAndStoreErrorBranches(t)
 	testServiceReconcilePersistedSessionsMarksStalePendingFailed(t)
 	TestServiceAndBridgeReconcileMicrosandboxRuntimeTypeBranches(t)
-	testStoreAgentRunLegacyVMAndListWorkflows(t)
-	testStorePersistenceErrorAndUpdateBranches(t)
 	testServiceProtoConversionHelpers(t)
 	testAgentRunSummariesScansAllSessions(t)
 	testAgentDefinitionConfigStoreCRUDAndWorkspaceProtection(t)

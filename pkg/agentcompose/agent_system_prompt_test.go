@@ -281,7 +281,7 @@ func TestExecuteAgentRunWritesConventionSystemPromptBeforeExec(t *testing.T) {
 		GuestStateRoot:     "/data/state",
 		GuestWorkspacePath: "/workspace",
 	}
-	store := &Store{config: cfg}
+	store := mustTestStore(t, cfg)
 	if err := os.MkdirAll(filepath.Join(root, sessionID, "vm"), 0o755); err != nil {
 		t.Fatalf("MkdirAll returned error: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestLoaderRunHostAgentWritesSystemPromptFromBoundAgentDefinition(t *testing
 		t.Fatalf("CreateLoader returned error: %v", err)
 	}
 
-	store := &Store{config: config}
+	store := mustTestStore(t, config)
 	runtime := &fakeLoaderAgentRuntime{}
 	driver := &fakeSessionDriver{}
 	manager := &LoaderManager{

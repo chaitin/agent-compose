@@ -4,7 +4,6 @@ import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -322,7 +321,7 @@ func TestConfigStoreReplaceLoaderTriggersStoresMillisecondScheduleTimes(t *testi
 		t.Fatalf("expected 1 trigger, got %d", len(triggers))
 	}
 	var nextFireAtRaw int64
-	if err := store.db.QueryRowContext(ctx, `SELECT next_fire_at FROM loader_trigger WHERE loader_id = ? AND trigger_id = ?`, loader.Summary.ID, "fast").Scan(&nextFireAtRaw); err != nil {
+	if err := store.DB().QueryRowContext(ctx, `SELECT next_fire_at FROM loader_trigger WHERE loader_id = ? AND trigger_id = ?`, loader.Summary.ID, "fast").Scan(&nextFireAtRaw); err != nil {
 		t.Fatalf("QueryRowContext returned error: %v", err)
 	}
 	if nextFireAtRaw < storedUnixMillisecondThreshold {
@@ -361,7 +360,7 @@ func TestScanLoaderTriggerParsesLegacySecondPrecisionTimes(t *testing.T) {
 	}
 	legacyNext := time.Now().UTC().Add(5 * time.Second).Truncate(time.Second)
 	legacyLast := time.Now().UTC().Add(-3 * time.Second).Truncate(time.Second)
-	if _, err := store.db.ExecContext(ctx, `UPDATE loader_trigger SET next_fire_at = ?, last_fired_at = ? WHERE loader_id = ? AND trigger_id = ?`, legacyNext.Unix(), legacyLast.Unix(), loader.Summary.ID, "legacy"); err != nil {
+	if _, err := store.DB().ExecContext(ctx, `UPDATE loader_trigger SET next_fire_at = ?, last_fired_at = ? WHERE loader_id = ? AND trigger_id = ?`, legacyNext.Unix(), legacyLast.Unix(), loader.Summary.ID, "legacy"); err != nil {
 		t.Fatalf("ExecContext returned error: %v", err)
 	}
 
@@ -547,7 +546,7 @@ func TestConfigStoreCreateLoaderRunStoresMillisecondStartedAt(t *testing.T) {
 
 	var startedAtRaw int64
 	var completedAtRaw int64
-	if err := store.db.QueryRowContext(ctx, `SELECT started_at, completed_at FROM loader_run WHERE loader_id = ? AND run_id = ?`, loader.Summary.ID, run.ID).Scan(&startedAtRaw, &completedAtRaw); err != nil {
+	if err := store.DB().QueryRowContext(ctx, `SELECT started_at, completed_at FROM loader_run WHERE loader_id = ? AND run_id = ?`, loader.Summary.ID, run.ID).Scan(&startedAtRaw, &completedAtRaw); err != nil {
 		t.Fatalf("QueryRowContext returned error: %v", err)
 	}
 	if startedAtRaw < storedUnixMillisecondThreshold {
@@ -588,7 +587,7 @@ func TestConfigStoreAddLoaderEventStoresMillisecondCreatedAt(t *testing.T) {
 	}
 
 	var createdAtRaw int64
-	if err := store.db.QueryRowContext(ctx, `SELECT created_at FROM loader_event WHERE loader_id = ? AND event_id = ?`, loader.Summary.ID, event.ID).Scan(&createdAtRaw); err != nil {
+	if err := store.DB().QueryRowContext(ctx, `SELECT created_at FROM loader_event WHERE loader_id = ? AND event_id = ?`, loader.Summary.ID, event.ID).Scan(&createdAtRaw); err != nil {
 		t.Fatalf("QueryRowContext returned error: %v", err)
 	}
 	if createdAtRaw < storedUnixMillisecondThreshold {
@@ -615,24 +614,24 @@ func TestEnsureLoaderSchemaMigratesLegacyRunAndEventTimestamps(t *testing.T) {
 	legacyStartedAt := time.Now().UTC().Add(-4 * time.Second).Truncate(time.Second)
 	legacyCompletedAt := legacyStartedAt.Add(2 * time.Second)
 	legacyEventAt := time.Now().UTC().Add(-2 * time.Second).Truncate(time.Second)
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO loader_run(loader_id, run_id, status, started_at, completed_at) VALUES(?, ?, ?, ?, ?)`, loader.Summary.ID, "legacy-run", LoaderRunStatusSucceeded, legacyStartedAt.Unix(), legacyCompletedAt.Unix()); err != nil {
+	if _, err := store.DB().ExecContext(ctx, `INSERT INTO loader_run(loader_id, run_id, status, started_at, completed_at) VALUES(?, ?, ?, ?, ?)`, loader.Summary.ID, "legacy-run", LoaderRunStatusSucceeded, legacyStartedAt.Unix(), legacyCompletedAt.Unix()); err != nil {
 		t.Fatalf("insert legacy run returned error: %v", err)
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO loader_event(loader_id, event_id, type, level, message, created_at) VALUES(?, ?, ?, ?, ?, ?)`, loader.Summary.ID, "legacy-event", "loader.test", "info", "legacy", legacyEventAt.Unix()); err != nil {
+	if _, err := store.DB().ExecContext(ctx, `INSERT INTO loader_event(loader_id, event_id, type, level, message, created_at) VALUES(?, ?, ?, ?, ?, ?)`, loader.Summary.ID, "legacy-event", "loader.test", "info", "legacy", legacyEventAt.Unix()); err != nil {
 		t.Fatalf("insert legacy event returned error: %v", err)
 	}
 
-	if err := store.ensureLoaderSchema(ctx); err != nil {
-		t.Fatalf("ensureLoaderSchema returned error: %v", err)
+	if err := store.EnsureLoaderSchema(ctx); err != nil {
+		t.Fatalf("EnsureLoaderSchema returned error: %v", err)
 	}
 
 	var startedAtRaw int64
 	var completedAtRaw int64
 	var createdAtRaw int64
-	if err := store.db.QueryRowContext(ctx, `SELECT started_at, completed_at FROM loader_run WHERE loader_id = ? AND run_id = ?`, loader.Summary.ID, "legacy-run").Scan(&startedAtRaw, &completedAtRaw); err != nil {
+	if err := store.DB().QueryRowContext(ctx, `SELECT started_at, completed_at FROM loader_run WHERE loader_id = ? AND run_id = ?`, loader.Summary.ID, "legacy-run").Scan(&startedAtRaw, &completedAtRaw); err != nil {
 		t.Fatalf("query migrated run returned error: %v", err)
 	}
-	if err := store.db.QueryRowContext(ctx, `SELECT created_at FROM loader_event WHERE loader_id = ? AND event_id = ?`, loader.Summary.ID, "legacy-event").Scan(&createdAtRaw); err != nil {
+	if err := store.DB().QueryRowContext(ctx, `SELECT created_at FROM loader_event WHERE loader_id = ? AND event_id = ?`, loader.Summary.ID, "legacy-event").Scan(&createdAtRaw); err != nil {
 		t.Fatalf("query migrated event returned error: %v", err)
 	}
 	if startedAtRaw != legacyStartedAt.UnixMilli() {
@@ -753,7 +752,7 @@ func TestLoaderManagerEnsureLoaderSessionAppliesAgentSessionOverrides(t *testing
 	manager := &LoaderManager{
 		config:   config,
 		rootCtx:  ctx,
-		store:    &Store{config: config},
+		store:    mustTestStore(t, config),
 		configDB: configDB,
 		driver:   driver,
 	}
@@ -852,7 +851,7 @@ func testLoaderRunHostAgentStopsSessionAfterExecution(t *testing.T) {
 	}
 
 	configDB := newTestConfigStore(t)
-	store := &Store{config: config}
+	store := mustTestStore(t, config)
 	runtime := &fakeLoaderAgentRuntime{}
 	driver := &fakeSessionDriver{}
 	manager := &LoaderManager{
@@ -1867,7 +1866,7 @@ func TestLoaderRunHostAgentUsesLoaderDefaultAgentWhenRequestOmitsProvider(t *tes
 	}
 
 	configDB := newTestConfigStore(t)
-	store := &Store{config: config}
+	store := mustTestStore(t, config)
 	runtime := &fakeLoaderAgentRuntime{}
 	driver := &fakeSessionDriver{}
 	manager := &LoaderManager{
@@ -1932,7 +1931,7 @@ func newTestLoaderCommandManager(t *testing.T, ctx context.Context) (*LoaderMana
 	}
 
 	configDB := newTestConfigStore(t)
-	store := &Store{config: config}
+	store := mustTestStore(t, config)
 	runtime := &fakeLoaderAgentRuntime{}
 	driver := &fakeSessionDriver{}
 	manager := &LoaderManager{
@@ -1951,20 +1950,11 @@ func newTestLoaderCommandManager(t *testing.T, ctx context.Context) (*LoaderMana
 
 func newTestConfigStore(t *testing.T) *ConfigStore {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "data.db")
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("sql.Open returned error: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	store := &ConfigStore{db: db}
-	if err := store.initSchema(context.Background()); err != nil {
-		_ = db.Close()
-		t.Fatalf("initSchema returned error: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	return store
+	root := t.TempDir()
+	return mustTestConfigStore(t, &appconfig.Config{
+		DataRoot: root,
+		DbAddr:   filepath.Join(root, "data.db"),
+	})
 }
 
 func newTestLLMClient(t *testing.T, configDB *ConfigStore, text string) *LLMClient {
