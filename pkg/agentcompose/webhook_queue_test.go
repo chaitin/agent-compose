@@ -33,7 +33,7 @@ func testWebhookRunQueueMatchesPayloadRules(t *testing.T) {
 		t.Fatalf("newWebhookRunQueueFromConfig returned error: %v", err)
 	}
 
-	name, workers := queue.match(LoaderTopicEvent{
+	name, workers := queue.Match(LoaderTopicEvent{
 		Topic: "webhook.github.push",
 		Payload: map[string]any{
 			"body": map[string]any{
@@ -45,7 +45,7 @@ func testWebhookRunQueueMatchesPayloadRules(t *testing.T) {
 		t.Fatalf("repo-a queue = %s/%d", name, workers)
 	}
 
-	name, workers = queue.match(LoaderTopicEvent{
+	name, workers = queue.Match(LoaderTopicEvent{
 		Topic: "webhook.github.push",
 		Payload: map[string]any{
 			"body": map[string]any{
@@ -117,7 +117,7 @@ func testLoaderEventLoopRetriesWhenWebhookQueueFull(t *testing.T) {
 		configDB:     store,
 		bus:          newTestLoaderBus(8),
 		engine:       &QJSLoaderEngine{},
-		eventQueue:   &WebhookRunQueue{defaultWorkers: 1, running: map[string]int{}},
+		eventQueue:   newWebhookRunQueue(1),
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
 		scheduleWake: make(chan struct{}, 1),
@@ -210,7 +210,7 @@ func testLoaderEventLoopRetriesWhenSkipPolicyLoaderBusy(t *testing.T) {
 		configDB:     store,
 		bus:          newTestLoaderBus(8),
 		engine:       &QJSLoaderEngine{},
-		eventQueue:   &WebhookRunQueue{defaultWorkers: 8, running: map[string]int{}},
+		eventQueue:   newWebhookRunQueue(8),
 		loaders:      map[string]Loader{},
 		running:      map[string]int{"loader-webhook-busy": 1},
 		scheduleWake: make(chan struct{}, 1),
@@ -298,7 +298,7 @@ func testLoaderEventLoopDedupesWebhookTargetsByLoader(t *testing.T) {
 		configDB:     store,
 		bus:          newTestLoaderBus(8),
 		engine:       &QJSLoaderEngine{},
-		eventQueue:   &WebhookRunQueue{defaultWorkers: 8, running: map[string]int{}},
+		eventQueue:   newWebhookRunQueue(8),
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
 		scheduleWake: make(chan struct{}, 1),
@@ -388,7 +388,7 @@ func testLoaderEventLoopRunsAllWebhookTargetLoaders(t *testing.T) {
 		configDB:     store,
 		bus:          newTestLoaderBus(8),
 		engine:       &QJSLoaderEngine{},
-		eventQueue:   &WebhookRunQueue{defaultWorkers: 8, running: map[string]int{}},
+		eventQueue:   newWebhookRunQueue(8),
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
 		scheduleWake: make(chan struct{}, 1),
@@ -484,7 +484,7 @@ func testLoaderManagerWebhookQueueBypassesNonWebhookEvents(t *testing.T) {
 	t.Helper()
 	manager := &LoaderManager{
 		config:     &appconfig.Config{WebhookQueueDefaultWorkers: 1},
-		eventQueue: &WebhookRunQueue{defaultWorkers: 1, running: map[string]int{}},
+		eventQueue: newWebhookRunQueue(1),
 	}
 	first, ok := manager.eventQueue.Reserve(LoaderTopicEvent{
 		Source:  TopicEventSourceWebhook,

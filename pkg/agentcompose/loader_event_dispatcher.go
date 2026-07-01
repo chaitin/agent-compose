@@ -221,7 +221,7 @@ func (d *LoaderEventDispatcher) reserveQueueSlots(event LoaderTopicEvent, count 
 		queue, err := newWebhookRunQueueFromConfig(m.config)
 		if err != nil {
 			slog.Warn("failed to initialize webhook queue config", "error", err)
-			queue = &WebhookRunQueue{running: map[string]int{}}
+			queue = newWebhookRunQueue(0)
 		}
 		m.eventQueue = queue
 	}
