@@ -13,6 +13,8 @@ import (
 	pathpkg "path"
 	"strings"
 
+	"agent-compose/pkg/model"
+
 	"github.com/samber/do/v2"
 )
 
@@ -22,12 +24,7 @@ type LLMClient struct {
 	client   *http.Client
 }
 
-type LLMGenerateResult struct {
-	Text         string
-	Model        string
-	ResponseID   string
-	FinishReason string
-}
+type LLMGenerateResult = model.LLMGenerateResult
 
 const (
 	llmAPIProtocolResponses       = "responses"

@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/model"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -19,35 +20,17 @@ import (
 )
 
 const (
-	CellTypeShell      = "shell"
-	CellTypeJavaScript = "javascript"
-	CellTypePython     = "python"
-	CellTypeAgent      = "agent"
+	CellTypeShell      = model.CellTypeShell
+	CellTypeJavaScript = model.CellTypeJavaScript
+	CellTypePython     = model.CellTypePython
+	CellTypeAgent      = model.CellTypeAgent
 )
 
 const defaultLoaderCommandMaxOutputBytes = int64(1024 * 1024)
 
-type CellExecutionStream struct {
-	OnStart func(NotebookCell) error
-	OnChunk func(string, ExecChunk) error
-}
-
-type AgentExecutionStream struct {
-	OnStart func(NotebookCell) error
-	OnChunk func(string, ExecChunk) error
-}
-
-type ExecuteAgentRequest struct {
-	Agent             string
-	AgentDefinitionID string
-	Model             string
-	ProviderEnvItems  []SessionEnvVar
-	RunID             string
-	Message           string
-	Timeout           time.Duration
-	OutputSchemaJSON  string
-	Stream            AgentExecutionStream
-}
+type CellExecutionStream = model.CellExecutionStream
+type AgentExecutionStream = model.AgentExecutionStream
+type ExecuteAgentRequest = model.ExecuteAgentRequest
 
 type Executor struct {
 	config   *appconfig.Config

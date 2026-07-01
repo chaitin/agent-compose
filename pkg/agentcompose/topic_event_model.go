@@ -6,113 +6,37 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
+
+	"agent-compose/pkg/model"
 )
 
 const (
-	TopicEventSourceWebhook = "webhook"
-	TopicEventSourceLoader  = "loader"
-	TopicEventSourceSystem  = "system"
+	TopicEventSourceWebhook = model.TopicEventSourceWebhook
+	TopicEventSourceLoader  = model.TopicEventSourceLoader
+	TopicEventSourceSystem  = model.TopicEventSourceSystem
 
-	TopicEventDispatchPending        = "pending"
-	TopicEventDispatchPublishing     = "publishing_to_bus"
-	TopicEventDispatchPublishedToBus = "published_to_bus"
-	TopicEventDispatchNoSubscriber   = "no_subscriber"
-	TopicEventDispatchRetrying       = "retrying"
-	TopicEventDispatchDeadLetter     = "dead_letter"
+	TopicEventDispatchPending        = model.TopicEventDispatchPending
+	TopicEventDispatchPublishing     = model.TopicEventDispatchPublishing
+	TopicEventDispatchPublishedToBus = model.TopicEventDispatchPublishedToBus
+	TopicEventDispatchNoSubscriber   = model.TopicEventDispatchNoSubscriber
+	TopicEventDispatchRetrying       = model.TopicEventDispatchRetrying
+	TopicEventDispatchDeadLetter     = model.TopicEventDispatchDeadLetter
 
-	EventDeliveryStatusMatched      = "matched"
-	EventDeliveryStatusRunStarted   = "run_started"
-	EventDeliveryStatusRunSucceeded = "run_succeeded"
-	EventDeliveryStatusRunFailed    = "run_failed"
-	EventDeliveryStatusSkipped      = "skipped"
+	EventDeliveryStatusMatched      = model.EventDeliveryStatusMatched
+	EventDeliveryStatusRunStarted   = model.EventDeliveryStatusRunStarted
+	EventDeliveryStatusRunSucceeded = model.EventDeliveryStatusRunSucceeded
+	EventDeliveryStatusRunFailed    = model.EventDeliveryStatusRunFailed
+	EventDeliveryStatusSkipped      = model.EventDeliveryStatusSkipped
 )
 
 var topicEventNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-type TopicEventRecord struct {
-	ID              string    `json:"event_id"`
-	Sequence        int64     `json:"sequence"`
-	Topic           string    `json:"topic"`
-	Source          string    `json:"source"`
-	Provider        string    `json:"provider,omitempty"`
-	Intent          string    `json:"intent,omitempty"`
-	CorrelationID   string    `json:"correlation_id"`
-	IdempotencyKey  string    `json:"idempotency_key,omitempty"`
-	DeliveryID      string    `json:"delivery_id,omitempty"`
-	PayloadHash     string    `json:"payload_hash"`
-	PayloadJSON     string    `json:"payload_json"`
-	DispatchStatus  string    `json:"dispatch_status"`
-	ParentEventID   string    `json:"parent_event_id,omitempty"`
-	PublisherType   string    `json:"publisher_type,omitempty"`
-	PublisherID     string    `json:"publisher_id,omitempty"`
-	PublisherRunID  string    `json:"publisher_run_id,omitempty"`
-	ReplayOfEventID string    `json:"replay_of_event_id,omitempty"`
-	ClaimID         string    `json:"claim_id,omitempty"`
-	ClaimUntil      time.Time `json:"claim_until,omitempty"`
-	AttemptCount    int       `json:"attempt_count,omitempty"`
-	NextAttemptAt   time.Time `json:"next_attempt_at,omitempty"`
-	LastError       string    `json:"last_error,omitempty"`
-	DeadLetterAt    time.Time `json:"dead_letter_at,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	DispatchedAt    time.Time `json:"dispatched_at,omitempty"`
-}
-
-type TopicEventFilter struct {
-	EventID        string
-	Topic          string
-	CorrelationID  string
-	AfterSequence  int64
-	Limit          int
-	DispatchStatus string
-}
-
-type WebhookSource struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	Enabled         bool      `json:"enabled"`
-	Provider        string    `json:"provider"`
-	TopicPrefix     string    `json:"topic_prefix"`
-	TokenHash       string    `json:"token_hash,omitempty"`
-	SignatureType   string    `json:"signature_type,omitempty"`
-	SignatureSecret string    `json:"signature_secret,omitempty"`
-	BodyLimitBytes  int64     `json:"body_limit_bytes,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-}
-
-type EventDelivery struct {
-	EventID   string    `json:"event_id"`
-	LoaderID  string    `json:"loader_id"`
-	TriggerID string    `json:"trigger_id"`
-	RunID     string    `json:"run_id,omitempty"`
-	Status    string    `json:"status"`
-	Error     string    `json:"error,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-type EventSessionLink struct {
-	EventID       string    `json:"event_id"`
-	SessionID     string    `json:"session_id"`
-	Relation      string    `json:"relation"`
-	LoaderID      string    `json:"loader_id,omitempty"`
-	RunID         string    `json:"run_id,omitempty"`
-	TriggerID     string    `json:"trigger_id,omitempty"`
-	LoaderEventID string    `json:"loader_event_id,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-}
-
-type EventSessionTraceItem struct {
-	SessionID     string    `json:"session_id"`
-	Relation      string    `json:"relation"`
-	LoaderID      string    `json:"loader_id,omitempty"`
-	RunID         string    `json:"run_id,omitempty"`
-	TriggerID     string    `json:"trigger_id,omitempty"`
-	LoaderEventID string    `json:"loader_event_id,omitempty"`
-	EventID       string    `json:"event_id"`
-	CreatedAt     time.Time `json:"created_at"`
-}
+type TopicEventRecord = model.TopicEventRecord
+type TopicEventFilter = model.TopicEventFilter
+type WebhookSource = model.WebhookSource
+type EventDelivery = model.EventDelivery
+type EventSessionLink = model.EventSessionLink
+type EventSessionTraceItem = model.EventSessionTraceItem
 
 func validateTopicEventName(topic string) error {
 	topic = strings.TrimSpace(topic)

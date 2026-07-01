@@ -10,16 +10,11 @@ import (
 
 	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/model"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
-type ProjectRunPreparation struct {
-	EnvItems         []SessionEnvVar
-	ProviderEnvItems []SessionEnvVar
-	CapsetIDs        []string
-	WorkspaceConfig  *WorkspaceConfig
-	Workspace        *SessionWorkspace
-}
+type ProjectRunPreparation = model.ProjectRunPreparation
 
 func (s *Service) prepareProjectRun(ctx context.Context, run ProjectRunRecord, requestEnv []*agentcomposev2.EnvVarSpec) (ProjectRunPreparation, error) {
 	if s == nil || s.configDB == nil {

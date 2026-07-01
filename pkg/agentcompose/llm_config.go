@@ -18,68 +18,24 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"agent-compose/pkg/model"
 )
 
 const (
-	llmProviderFamilyOpenAI       = "openai"
-	llmProviderFamilyAnthropic    = "anthropic"
-	llmProviderScopeSystem        = "system"
-	llmProviderScopeEnvDefault    = "env_default"
-	llmProviderScopeSessionEnv    = "session_env"
-	llmProviderIDDefaultOpenAI    = "default"
-	llmProviderIDDefaultAnthropic = "anthropic"
+	llmProviderFamilyOpenAI       = model.LLMProviderFamilyOpenAI
+	llmProviderFamilyAnthropic    = model.LLMProviderFamilyAnthropic
+	llmProviderScopeSystem        = model.LLMProviderScopeSystem
+	llmProviderScopeEnvDefault    = model.LLMProviderScopeEnvDefault
+	llmProviderScopeSessionEnv    = model.LLMProviderScopeSessionEnv
+	llmProviderIDDefaultOpenAI    = model.LLMProviderIDDefaultOpenAI
+	llmProviderIDDefaultAnthropic = model.LLMProviderIDDefaultAnthropic
 )
 
-type LLMProvider struct {
-	ID                           string
-	Name                         string
-	ProviderType                 string
-	DefaultWireAPI               string
-	BaseURL                      string
-	APIKey                       string
-	AuthHeader                   string
-	AuthScheme                   string
-	HeadersJSON                  string
-	UseGenericResponsesTextParts bool
-	Weight                       int
-	Enabled                      bool
-	Scope                        string
-	CreatedAt                    time.Time
-	UpdatedAt                    time.Time
-}
-
-type LLMModel struct {
-	ID           string
-	Name         string
-	Description  string
-	DefaultModel bool
-	Enabled      bool
-	Scope        string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-}
-
-type LLMResolvedTarget struct {
-	Provider LLMProvider
-	Model    LLMModel
-	WireAPI  string
-	Endpoint string
-	Headers  http.Header
-}
-
-type LLMFacadeToken struct {
-	SessionID        string
-	TokenHash        string
-	TokenFingerprint string
-	Model            string
-	ProviderID       string
-	WireAPI          string
-	Source           string
-	RunID            string
-	IssuedAt         time.Time
-	ExpiresAt        time.Time
-	RevokedAt        time.Time
-}
+type LLMProvider = model.LLMProvider
+type LLMModel = model.LLMModel
+type LLMResolvedTarget = model.LLMResolvedTarget
+type LLMFacadeToken = model.LLMFacadeToken
 
 func (s *ConfigStore) ensureLLMSchema(ctx context.Context) error {
 	statements := []string{

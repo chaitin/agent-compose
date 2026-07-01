@@ -6,11 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"agent-compose/pkg/model"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
 const (
-	defaultAgentProvider = "codex"
+	defaultAgentProvider = model.DefaultAgentProvider
 
 	agentSessionTagSource    = "source"
 	agentSessionTagSourceVal = "agent"
@@ -18,41 +19,9 @@ const (
 	agentSessionTagName      = "agent_name"
 )
 
-type AgentDefinition struct {
-	ID                     string          `json:"id"`
-	Name                   string          `json:"name"`
-	Description            string          `json:"description,omitempty"`
-	Enabled                bool            `json:"enabled"`
-	DeletedAt              time.Time       `json:"deleted_at,omitempty"`
-	Provider               string          `json:"provider"`
-	Model                  string          `json:"model,omitempty"`
-	SystemPrompt           string          `json:"system_prompt,omitempty"`
-	Driver                 string          `json:"driver,omitempty"`
-	GuestImage             string          `json:"guest_image,omitempty"`
-	WorkspaceID            string          `json:"workspace_id,omitempty"`
-	EnvItems               []SessionEnvVar `json:"env_items,omitempty"`
-	ConfigJSON             string          `json:"config_json"`
-	CapsetIDs              []string        `json:"capset_ids,omitempty"`
-	ManagedProjectID       string          `json:"managed_project_id,omitempty"`
-	ManagedProjectRevision int64           `json:"managed_project_revision,omitempty"`
-	ManagedAgentName       string          `json:"managed_agent_name,omitempty"`
-	CreatedAt              time.Time       `json:"created_at"`
-	UpdatedAt              time.Time       `json:"updated_at"`
-}
-
-type AgentDefinitionListOptions struct {
-	Query           string
-	IncludeDisabled bool
-	Offset          int
-	Limit           int
-}
-
-type AgentDefinitionListResult struct {
-	Agents     []AgentDefinition
-	TotalCount int
-	HasMore    bool
-	NextOffset int
-}
+type AgentDefinition = model.AgentDefinition
+type AgentDefinitionListOptions = model.AgentDefinitionListOptions
+type AgentDefinitionListResult = model.AgentDefinitionListResult
 
 type AgentValidationResult struct {
 	Availability agentcomposev1.AgentAvailabilityStatus
@@ -265,14 +234,5 @@ func formatProtoTime(value time.Time) string {
 	return value.UTC().Format(time.RFC3339)
 }
 
-type AgentCurrentRunSummary struct {
-	RunningSessionCount int
-}
-
-type AgentLatestRunSummary struct {
-	RunType string
-	Status  string
-	RunID   string
-	Title   string
-	At      time.Time
-}
+type AgentCurrentRunSummary = model.AgentCurrentRunSummary
+type AgentLatestRunSummary = model.AgentLatestRunSummary

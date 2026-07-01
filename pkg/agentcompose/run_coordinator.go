@@ -8,31 +8,13 @@ import (
 	"strings"
 	"time"
 
+	"agent-compose/pkg/model"
+
 	"github.com/google/uuid"
 )
 
-type ProjectRunStartRequest struct {
-	ProjectID       string
-	AgentName       string
-	Source          string
-	SchedulerID     string
-	TriggerID       string
-	Prompt          string
-	ClientRequestID string
-}
-
-type ProjectRunTransitionRequest struct {
-	RunID        string
-	Status       string
-	SessionID    string
-	ExitCode     int
-	Error        string
-	Output       string
-	ResultJSON   string
-	LogsPath     string
-	ArtifactsDir string
-	CleanupError string
-}
+type ProjectRunStartRequest = model.ProjectRunStartRequest
+type ProjectRunTransitionRequest = model.ProjectRunTransitionRequest
 
 type RunCoordinator struct {
 	store *ConfigStore
