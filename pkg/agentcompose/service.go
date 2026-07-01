@@ -26,6 +26,7 @@ import (
 	"agent-compose/pkg/dashboard"
 	"agent-compose/pkg/imagecache"
 	"agent-compose/pkg/images"
+	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/workspaces"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
@@ -37,26 +38,27 @@ type Service struct {
 	*DashboardService
 	*CapabilityService
 	*WorkspaceService
-	config     *appconfig.Config
-	store      *Store
-	configDB   *ConfigStore
-	driver     Driver
-	runtimes   RuntimeProvider
-	executor   *Executor
-	loaders    *LoaderManager
-	images     ImageBackend
-	ociImages  ImageBackend
-	autoImages ImageBackend
-	llm        *LLMClient
-	cap        CapabilityProvider
-	bus        *LoaderBus
-	streams    *SessionStreamBroker
-	dashboard  *DashboardOverviewHub
-	events     *EventDispatcher
-	sessions   *SessionRPCBridge
-	startedAt  time.Time
-	startOnce  sync.Once
-	startErr   error
+	config          *appconfig.Config
+	store           *Store
+	configDB        *ConfigStore
+	driver          Driver
+	runtimes        RuntimeProvider
+	executor        *Executor
+	loaders         *LoaderManager
+	images          ImageBackend
+	ociImages       ImageBackend
+	autoImages      ImageBackend
+	llm             *LLMClient
+	cap             CapabilityProvider
+	bus             *LoaderBus
+	streams         *SessionStreamBroker
+	dashboard       *DashboardOverviewHub
+	events          *EventDispatcher
+	sessions        *SessionRPCBridge
+	sessionHandlers *sessions.Service
+	startedAt       time.Time
+	startOnce       sync.Once
+	startErr        error
 	agentcomposev1connect.UnimplementedSessionServiceHandler
 	agentcomposev1connect.UnimplementedKernelServiceHandler
 	agentcomposev1connect.UnimplementedAgentServiceHandler
@@ -100,7 +102,7 @@ func NewService(di do.Injector) (*Service, error) {
 	config.ImageCacheRoot = ociCache.Root()
 	ociImages := images.NewOCIImageBackend(ociCache)
 	autoImages := images.NewAutoImageBackend(config.ImageStoreMode, dockerImages, ociImages)
-	return &Service{
+	service := &Service{
 		Service:           images.NewService(dockerImages, ociImages, autoImages),
 		DashboardService:  dashboard.NewService(dashHub),
 		CapabilityService: capabilities.NewService(config, do.MustInvoke[*ConfigStore](di), capProvider),
@@ -123,7 +125,9 @@ func NewService(di do.Injector) (*Service, error) {
 		events:            NewEventDispatcher(do.MustInvoke[context.Context](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderBus](di)),
 		sessions:          do.MustInvoke[*SessionRPCBridge](di),
 		startedAt:         time.Now().UTC(),
-	}, nil
+	}
+	service.sessionHandlers = sessions.NewService(service.store, service.executor, service.bus, service.streams.componentBroker(), service.sessions.componentBridge(), service.resolveSessionAgentConfigForSessions)
+	return service, nil
 }
 
 func Setup(di do.Injector) {
@@ -221,37 +225,36 @@ func startCapabilityProxy(ctx context.Context, capProxy *capproxy.Server) error 
 	return nil
 }
 
+func (s *Service) sessionsService() *sessions.Service {
+	if s.sessionHandlers != nil {
+		return s.sessionHandlers
+	}
+	if s.streams == nil {
+		s.streams = &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}}
+	}
+	if s.sessions == nil {
+		s.sessions = &SessionRPCBridge{
+			config:    s.config,
+			store:     s.store,
+			configDB:  s.configDB,
+			driver:    s.driver,
+			runtimes:  s.runtimes,
+			bus:       s.bus,
+			streams:   s.streams,
+			cap:       s.cap,
+			dashboard: s.dashboard,
+		}
+	}
+	s.sessionHandlers = sessions.NewService(s.store, s.executor, s.bus, s.streams.componentBroker(), s.sessions.componentBridge(), s.resolveSessionAgentConfigForSessions)
+	return s.sessionHandlers
+}
+
 func (s *Service) CreateSession(ctx context.Context, req *connect.Request[agentcomposev1.CreateSessionRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-	return s.sessions.CreateSession(ctx, req)
+	return s.sessionsService().CreateSession(ctx, req)
 }
 
 func (s *Service) WatchSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest], stream *connect.ServerStream[agentcomposev1.WatchSessionResponse]) error {
-	prepareStreamingHeaders(stream.ResponseHeader())
-	session, err := s.store.GetSession(ctx, req.Msg.GetSessionId())
-	if err != nil {
-		return connect.NewError(connect.CodeNotFound, err)
-	}
-	if sendErr := stream.Send(&agentcomposev1.WatchSessionResponse{
-		EventType: agentcomposev1.WatchSessionEventType_WATCH_SESSION_EVENT_TYPE_SESSION_UPDATED,
-		Session:   toProtoSessionSummary(&session.Summary),
-	}); sendErr != nil {
-		return connect.NewError(connect.CodeUnknown, sendErr)
-	}
-	events, cancel := s.streams.Subscribe(session.Summary.ID)
-	defer cancel()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case event, ok := <-events:
-			if !ok {
-				return nil
-			}
-			if sendErr := stream.Send(toProtoWatchSessionResponse(event)); sendErr != nil {
-				return connect.NewError(connect.CodeUnknown, sendErr)
-			}
-		}
-	}
+	return s.sessionsService().WatchSession(ctx, req, stream)
 }
 
 func (s *Service) GetGlobalEnvConfig(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[agentcomposev1.GlobalEnvConfigResponse], error) {
@@ -517,7 +520,7 @@ func (s *Service) fileWorkspaceContentRemovalTarget(workspace WorkspaceConfig) (
 }
 
 func (s *Service) ResumeSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-	return s.sessions.ResumeSession(ctx, req)
+	return s.sessionsService().ResumeSession(ctx, req)
 }
 
 func (s *Service) reconcileSessionRuntimeState(ctx context.Context, session *Session) (*Session, error) {
@@ -582,15 +585,15 @@ func (s *Service) reconcileSessionRuntimeState(ctx context.Context, session *Ses
 }
 
 func (s *Service) StopSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-	return s.sessions.StopSession(ctx, req)
+	return s.sessionsService().StopSession(ctx, req)
 }
 
 func (s *Service) GetSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-	return s.sessions.GetSession(ctx, req)
+	return s.sessionsService().GetSession(ctx, req)
 }
 
 func (s *Service) ListSessions(ctx context.Context, req *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
-	return s.sessions.ListSessions(ctx, req)
+	return s.sessionsService().ListSessions(ctx, req)
 }
 
 func jupyterTargetReachable(proxyState ProxyState, timeout time.Duration) bool {
@@ -607,224 +610,31 @@ func jupyterTargetReachable(proxyState ProxyState, timeout time.Duration) bool {
 }
 
 func (s *Service) ensureSessionProxyReady(ctx context.Context, sessionID string) (*Session, ProxyState, error) {
-	session, err := s.store.GetSession(ctx, sessionID)
-	if err != nil {
-		return nil, ProxyState{}, err
-	}
-	proxyState, err := s.store.GetProxyState(session.Summary.ID)
-	if err != nil {
-		return nil, ProxyState{}, err
-	}
-	if session.Summary.VMStatus == VMStatusRunning && jupyterTargetReachable(proxyState, 1500*time.Millisecond) {
-		return session, proxyState, nil
-	}
-	startCtx, cancel := context.WithTimeout(ctx, s.config.SessionStartTimeout)
-	defer cancel()
-	if err := prepareSessionWorkspace(startCtx, s.config, s.configDB, session); err != nil {
-		session.Summary.VMStatus = VMStatusFailed
-		_ = s.store.UpdateSession(ctx, session)
-		return nil, ProxyState{}, err
-	}
-	if err := s.driver.StartSessionVM(startCtx, session); err != nil {
-		session.Summary.VMStatus = VMStatusFailed
-		_ = s.store.UpdateSession(ctx, session)
-		return nil, ProxyState{}, err
-	}
-	session.Summary.VMStatus = VMStatusRunning
-	if err := s.store.UpdateSession(ctx, session); err != nil {
-		return nil, ProxyState{}, err
-	}
-	loaded, err := s.store.GetSession(ctx, session.Summary.ID)
-	if err != nil {
-		return nil, ProxyState{}, err
-	}
-	proxyState, err = s.store.GetProxyState(session.Summary.ID)
-	if err != nil {
-		return nil, ProxyState{}, err
-	}
-	return loaded, proxyState, nil
+	return s.sessionsService().EnsureSessionProxyReady(ctx, sessionID)
 }
 
 func (s *Service) GetSessionProxy(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionProxyResponse], error) {
-	return s.sessions.GetSessionProxy(ctx, req)
+	return s.sessionsService().GetSessionProxy(ctx, req)
 }
 
 func (s *Service) ExecuteCell(ctx context.Context, req *connect.Request[agentcomposev1.ExecuteCellRequest]) (*connect.Response[agentcomposev1.ExecuteCellResponse], error) {
-	session, err := s.store.GetSession(ctx, req.Msg.GetSessionId())
-	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
-	}
-	if session.Summary.VMStatus != VMStatusRunning {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("session is not running"))
-	}
-	cell, err := s.executor.ExecuteCell(ctx, session, fromProtoCellType(req.Msg.GetType()), req.Msg.GetSource())
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	loaded, err := s.store.GetSession(ctx, session.Summary.ID)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	s.publishLoaderTopic("agent-compose.cell.completed", cellTopicPayload(session.Summary.ID, cell, "api"))
-	return connect.NewResponse(&agentcomposev1.ExecuteCellResponse{Session: toProtoSessionSummary(&loaded.Summary), Cell: toProtoCell(cell)}), nil
+	return s.sessionsService().ExecuteCell(ctx, req)
 }
 
 func (s *Service) ExecuteCellStream(ctx context.Context, req *connect.Request[agentcomposev1.ExecuteCellRequest], stream *connect.ServerStream[agentcomposev1.ExecuteCellStreamResponse]) error {
-	prepareStreamingHeaders(stream.ResponseHeader())
-	session, err := s.store.GetSession(ctx, req.Msg.GetSessionId())
-	if err != nil {
-		return connect.NewError(connect.CodeNotFound, err)
-	}
-	if session.Summary.VMStatus != VMStatusRunning {
-		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("session is not running"))
-	}
-
-	streamErr := func(sendErr error) error {
-		if sendErr == nil {
-			return nil
-		}
-		return connect.NewError(connect.CodeUnknown, sendErr)
-	}
-	cell, err := s.executor.ExecuteCellStream(ctx, session, fromProtoCellType(req.Msg.GetType()), req.Msg.GetSource(), CellExecutionStream{
-		OnStart: func(cell NotebookCell) error {
-			return streamErr(stream.Send(&agentcomposev1.ExecuteCellStreamResponse{
-				EventType: agentcomposev1.ExecuteCellStreamEventType_EXECUTE_CELL_STREAM_EVENT_TYPE_STARTED,
-				Session:   toProtoSessionSummary(&session.Summary),
-				Cell:      toProtoCell(cell),
-				CellId:    cell.ID,
-			}))
-		},
-		OnChunk: func(cellID string, chunk ExecChunk) error {
-			if chunk.Text == "" {
-				return nil
-			}
-			return streamErr(stream.Send(&agentcomposev1.ExecuteCellStreamResponse{
-				EventType: agentcomposev1.ExecuteCellStreamEventType_EXECUTE_CELL_STREAM_EVENT_TYPE_OUTPUT,
-				CellId:    cellID,
-				Chunk:     chunk.Text,
-				IsStderr:  chunk.IsStderr,
-			}))
-		},
-	})
-	if err != nil {
-		return connect.NewError(connect.CodeInternal, err)
-	}
-	loaded, err := s.store.GetSession(ctx, session.Summary.ID)
-	if err != nil {
-		return connect.NewError(connect.CodeInternal, err)
-	}
-	s.publishLoaderTopic("agent-compose.cell.completed", cellTopicPayload(session.Summary.ID, cell, "api"))
-	return streamErr(stream.Send(&agentcomposev1.ExecuteCellStreamResponse{
-		EventType: agentcomposev1.ExecuteCellStreamEventType_EXECUTE_CELL_STREAM_EVENT_TYPE_COMPLETED,
-		Session:   toProtoSessionSummary(&loaded.Summary),
-		Cell:      toProtoCell(cell),
-		CellId:    cell.ID,
-	}))
+	return s.sessionsService().ExecuteCellStream(ctx, req, stream)
 }
 
 func (s *Service) ListCells(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.ListCellsResponse], error) {
-	cells, err := s.store.ListCells(ctx, req.Msg.GetSessionId())
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	resp := &agentcomposev1.ListCellsResponse{SessionId: req.Msg.GetSessionId()}
-	for _, cell := range cells {
-		resp.Cells = append(resp.Cells, toProtoCell(cell))
-	}
-	return connect.NewResponse(resp), nil
+	return s.sessionsService().ListCells(ctx, req)
 }
 
 func (s *Service) SendAgentMessage(ctx context.Context, req *connect.Request[agentcomposev1.SendAgentMessageRequest]) (*connect.Response[agentcomposev1.SendAgentMessageResponse], error) {
-	session, err := s.store.GetSession(ctx, req.Msg.GetSessionId())
-	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
-	}
-	if session.Summary.VMStatus != VMStatusRunning {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("session is not running"))
-	}
-	message := strings.TrimSpace(req.Msg.GetMessage())
-	if message == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("message is required"))
-	}
-	agentConfig := s.resolveSessionAgentConfig(ctx, session, req.Msg.GetAgent())
-	cell, userEvent, assistantEvent, err := s.executor.ExecuteAgentRequest(ctx, session, ExecuteAgentRequest{
-		Agent:             agentConfig.Provider,
-		AgentDefinitionID: agentConfig.AgentDefinitionID,
-		Model:             agentConfig.Model,
-		ProviderEnvItems:  agentConfig.EnvItems,
-		Message:           message,
-	})
-	_ = cell
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	s.publishLoaderTopic("agent-compose.agent.completed", cellTopicPayload(session.Summary.ID, cell, "api"))
-	return connect.NewResponse(&agentcomposev1.SendAgentMessageResponse{UserEvent: toProtoEvent(userEvent), AssistantEvent: toProtoEvent(assistantEvent)}), nil
+	return s.sessionsService().SendAgentMessage(ctx, req)
 }
 
 func (s *Service) SendAgentMessageStream(ctx context.Context, req *connect.Request[agentcomposev1.SendAgentMessageRequest], stream *connect.ServerStream[agentcomposev1.SendAgentMessageStreamResponse]) error {
-	prepareStreamingHeaders(stream.ResponseHeader())
-	session, err := s.store.GetSession(ctx, req.Msg.GetSessionId())
-	if err != nil {
-		return connect.NewError(connect.CodeNotFound, err)
-	}
-	if session.Summary.VMStatus != VMStatusRunning {
-		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("session is not running"))
-	}
-	message := strings.TrimSpace(req.Msg.GetMessage())
-	if message == "" {
-		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("message is required"))
-	}
-	agentConfig := s.resolveSessionAgentConfig(ctx, session, req.Msg.GetAgent())
-
-	streamErr := func(sendErr error) error {
-		if sendErr == nil {
-			return nil
-		}
-		return connect.NewError(connect.CodeUnknown, sendErr)
-	}
-
-	cell, userEvent, assistantEvent, err := s.executor.ExecuteAgentRequest(ctx, session, ExecuteAgentRequest{
-		Agent:             agentConfig.Provider,
-		AgentDefinitionID: agentConfig.AgentDefinitionID,
-		Model:             agentConfig.Model,
-		ProviderEnvItems:  agentConfig.EnvItems,
-		Message:           message,
-		Stream: AgentExecutionStream{
-			OnStart: func(cell NotebookCell) error {
-				return streamErr(stream.Send(&agentcomposev1.SendAgentMessageStreamResponse{
-					EventType: agentcomposev1.SendAgentMessageStreamEventType_SEND_AGENT_MESSAGE_STREAM_EVENT_TYPE_STARTED,
-					Session:   toProtoSessionSummary(&session.Summary),
-					Run:       toProtoAgentRun(cell),
-					RunId:     cell.ID,
-				}))
-			},
-			OnChunk: func(cellID string, chunk ExecChunk) error {
-				return streamErr(stream.Send(&agentcomposev1.SendAgentMessageStreamResponse{
-					EventType: agentcomposev1.SendAgentMessageStreamEventType_SEND_AGENT_MESSAGE_STREAM_EVENT_TYPE_OUTPUT,
-					RunId:     cellID,
-					Chunk:     chunk.Text,
-					IsStderr:  chunk.IsStderr,
-				}))
-			},
-		},
-	})
-	if err != nil {
-		return connect.NewError(connect.CodeInternal, err)
-	}
-	loaded, err := s.store.GetSession(ctx, session.Summary.ID)
-	if err != nil {
-		return connect.NewError(connect.CodeInternal, err)
-	}
-	s.publishLoaderTopic("agent-compose.agent.completed", cellTopicPayload(session.Summary.ID, cell, "api"))
-	return streamErr(stream.Send(&agentcomposev1.SendAgentMessageStreamResponse{
-		EventType:      agentcomposev1.SendAgentMessageStreamEventType_SEND_AGENT_MESSAGE_STREAM_EVENT_TYPE_COMPLETED,
-		Session:        toProtoSessionSummary(&loaded.Summary),
-		Run:            toProtoAgentRun(cell),
-		RunId:          cell.ID,
-		UserEvent:      toProtoEvent(userEvent),
-		AssistantEvent: toProtoEvent(assistantEvent),
-	}))
+	return s.sessionsService().SendAgentMessageStream(ctx, req, stream)
 }
 
 type agentExecutionConfig struct {
@@ -849,6 +659,16 @@ func (s *Service) resolveSessionAgentConfig(ctx context.Context, session *Sessio
 		return config
 	}
 	return agentExecutionConfigFromDefinition(agent, provider)
+}
+
+func (s *Service) resolveSessionAgentConfigForSessions(ctx context.Context, session *Session, requested string) sessions.AgentExecutionConfig {
+	config := s.resolveSessionAgentConfig(ctx, session, requested)
+	return sessions.AgentExecutionConfig{
+		Provider:          config.Provider,
+		AgentDefinitionID: config.AgentDefinitionID,
+		Model:             config.Model,
+		EnvItems:          append([]SessionEnvVar(nil), config.EnvItems...),
+	}
 }
 
 func agentExecutionConfigFromDefinition(agent AgentDefinition, fallbackProvider string) agentExecutionConfig {
@@ -897,15 +717,7 @@ func prepareStreamingHeaders(headers http.Header) {
 }
 
 func (s *Service) ListSessionEvents(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.ListSessionEventsResponse], error) {
-	events, err := s.store.ListEvents(ctx, req.Msg.GetSessionId())
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	resp := &agentcomposev1.ListSessionEventsResponse{SessionId: req.Msg.GetSessionId()}
-	for _, event := range events {
-		resp.Events = append(resp.Events, toProtoEvent(event))
-	}
-	return connect.NewResponse(resp), nil
+	return s.sessionsService().ListSessionEvents(ctx, req)
 }
 
 func (s *Service) Generate(ctx context.Context, req *connect.Request[agentcomposev1.GenerateLLMRequest]) (*connect.Response[agentcomposev1.GenerateLLMResponse], error) {
@@ -1607,43 +1419,6 @@ func fromProtoCellType(cellType agentcomposev1.CellType) string {
 	default:
 		return CellTypeJavaScript
 	}
-}
-
-func toProtoWatchSessionResponse(event sessionWatchEvent) *agentcomposev1.WatchSessionResponse {
-	resp := &agentcomposev1.WatchSessionResponse{
-		Chunk:    event.Chunk,
-		IsStderr: event.IsStderr,
-		CellId:   event.CellID,
-	}
-	switch event.EventType {
-	case sessionWatchEventTypeSessionUpdated:
-		resp.EventType = agentcomposev1.WatchSessionEventType_WATCH_SESSION_EVENT_TYPE_SESSION_UPDATED
-		if event.Session != nil {
-			resp.Session = toProtoSessionSummary(event.Session)
-		}
-	case sessionWatchEventTypeCellStarted:
-		resp.EventType = agentcomposev1.WatchSessionEventType_WATCH_SESSION_EVENT_TYPE_CELL_STARTED
-		if event.Cell != nil {
-			resp.Cell = toProtoCell(*event.Cell)
-			resp.CellId = event.Cell.ID
-		}
-	case sessionWatchEventTypeCellOutput:
-		resp.EventType = agentcomposev1.WatchSessionEventType_WATCH_SESSION_EVENT_TYPE_CELL_OUTPUT
-	case sessionWatchEventTypeCellCompleted:
-		resp.EventType = agentcomposev1.WatchSessionEventType_WATCH_SESSION_EVENT_TYPE_CELL_COMPLETED
-		if event.Cell != nil {
-			resp.Cell = toProtoCell(*event.Cell)
-			resp.CellId = event.Cell.ID
-		}
-	case sessionWatchEventTypeEventAdded:
-		resp.EventType = agentcomposev1.WatchSessionEventType_WATCH_SESSION_EVENT_TYPE_EVENT_ADDED
-		if event.Event != nil {
-			resp.Event = toProtoEvent(*event.Event)
-		}
-	default:
-		resp.EventType = agentcomposev1.WatchSessionEventType_WATCH_SESSION_EVENT_TYPE_UNSPECIFIED
-	}
-	return resp
 }
 
 func toProtoCellType(cellType string) agentcomposev1.CellType {

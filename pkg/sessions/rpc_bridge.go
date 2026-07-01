@@ -1,4 +1,4 @@
-package agentcompose
+package sessions
 
 import (
 	appconfig "agent-compose/pkg/config"
@@ -34,17 +34,31 @@ type SessionRPCBridge struct {
 
 func NewSessionRPCBridge(di do.Injector) (*SessionRPCBridge, error) {
 	dashboard, _ := do.Invoke[*DashboardOverviewHub](di)
+	return NewSessionRPCBridgeFromDeps(
+		do.MustInvoke[*appconfig.Config](di),
+		do.MustInvoke[*Store](di),
+		do.MustInvoke[*ConfigStore](di),
+		do.MustInvoke[Driver](di),
+		do.MustInvoke[RuntimeProvider](di),
+		do.MustInvoke[*LoaderBus](di),
+		do.MustInvoke[*SessionStreamBroker](di),
+		do.MustInvoke[CapabilityIntegration](di),
+		dashboard,
+	), nil
+}
+
+func NewSessionRPCBridgeFromDeps(config *appconfig.Config, store *Store, configDB *ConfigStore, driver Driver, runtimes RuntimeProvider, bus *LoaderBus, streams *SessionStreamBroker, cap CapabilityProvider, dashboard *DashboardOverviewHub) *SessionRPCBridge {
 	return &SessionRPCBridge{
-		config:    do.MustInvoke[*appconfig.Config](di),
-		store:     do.MustInvoke[*Store](di),
-		configDB:  do.MustInvoke[*ConfigStore](di),
-		driver:    do.MustInvoke[Driver](di),
-		runtimes:  do.MustInvoke[RuntimeProvider](di),
-		bus:       do.MustInvoke[*LoaderBus](di),
-		streams:   do.MustInvoke[*SessionStreamBroker](di),
-		cap:       do.MustInvoke[capabilityIntegration](di),
+		config:    config,
+		store:     store,
+		configDB:  configDB,
+		driver:    driver,
+		runtimes:  runtimes,
+		bus:       bus,
+		streams:   streams,
+		cap:       cap,
 		dashboard: dashboard,
-	}, nil
+	}
 }
 
 var sessionProtoJSONMarshal = protojson.MarshalOptions{}
@@ -300,7 +314,7 @@ func (b *SessionRPCBridge) reconcileSessionRuntimeState(ctx context.Context, ses
 	if err != nil {
 		return nil, err
 	}
-	microsandboxRuntime, ok := runtime.(sessionAliveRuntime)
+	microsandboxRuntime, ok := runtime.(AliveRuntime)
 	if !ok {
 		return session, nil
 	}
@@ -337,6 +351,10 @@ func (b *SessionRPCBridge) reconcileSessionRuntimeState(ctx context.Context, ses
 	_ = b.store.AddEvent(ctx, session.Summary.ID, event)
 	b.streams.PublishEventAdded(session.Summary.ID, event)
 	return b.store.GetSession(ctx, session.Summary.ID)
+}
+
+func (b *SessionRPCBridge) ReconcileSessionRuntimeState(ctx context.Context, session *Session) (*Session, error) {
+	return b.reconcileSessionRuntimeState(ctx, session)
 }
 
 func (b *SessionRPCBridge) StopSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
@@ -451,6 +469,10 @@ func (b *SessionRPCBridge) ensureSessionProxyReady(ctx context.Context, sessionI
 		return nil, ProxyState{}, err
 	}
 	return loaded, proxyState, nil
+}
+
+func (b *SessionRPCBridge) EnsureSessionProxyReady(ctx context.Context, sessionID string) (*Session, ProxyState, error) {
+	return b.ensureSessionProxyReady(ctx, sessionID)
 }
 
 func (b *SessionRPCBridge) GetSessionProxy(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionProxyResponse], error) {

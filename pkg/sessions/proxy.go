@@ -1,6 +1,7 @@
-package agentcompose
+package sessions
 
 import (
+	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"net/http"
 	"net/http/httputil"
@@ -11,10 +12,10 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-func registerProxyRoutes(app *echo.Echo, service *Service) {
-	base := strings.TrimRight(service.config.JupyterProxyBasePath, "/")
+func RegisterProxyRoutes(app *echo.Echo, config *appconfig.Config, store *Store, bridge *SessionRPCBridge) {
+	base := strings.TrimRight(config.JupyterProxyBasePath, "/")
 	app.GET(base+"/:sessionID", func(c echo.Context) error {
-		_, proxyState, err := service.ensureSessionProxyReady(c.Request().Context(), c.Param("sessionID"))
+		_, proxyState, err := bridge.EnsureSessionProxyReady(c.Request().Context(), c.Param("sessionID"))
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadGateway, err.Error())
 		}
@@ -27,17 +28,17 @@ func registerProxyRoutes(app *echo.Echo, service *Service) {
 	app.Any(base+"/:sessionID/*", func(c echo.Context) error {
 		sessionID := c.Param("sessionID")
 		if !jupyterTargetReachable(func() ProxyState {
-			proxyState, err := service.store.GetProxyState(sessionID)
+			proxyState, err := store.GetProxyState(sessionID)
 			if err != nil {
 				return ProxyState{}
 			}
 			return proxyState
 		}(), 250*time.Millisecond) {
-			if _, _, err := service.ensureSessionProxyReady(c.Request().Context(), sessionID); err != nil {
+			if _, _, err := bridge.EnsureSessionProxyReady(c.Request().Context(), sessionID); err != nil {
 				return echo.NewHTTPError(http.StatusBadGateway, err.Error())
 			}
 		}
-		proxyState, err := service.store.GetProxyState(sessionID)
+		proxyState, err := store.GetProxyState(sessionID)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusNotFound, err.Error())
 		}
