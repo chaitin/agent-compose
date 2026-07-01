@@ -1,4 +1,4 @@
-package agentcompose
+package events
 
 import (
 	"context"
@@ -40,6 +40,17 @@ func (d *EventDispatcher) Start() {
 	d.once.Do(func() {
 		go d.loop()
 	})
+}
+
+func (d *EventDispatcher) SetInterval(interval time.Duration) {
+	if d == nil || interval <= 0 {
+		return
+	}
+	d.interval = interval
+}
+
+func (d *EventDispatcher) DispatchOnce(ctx context.Context, limit int) {
+	d.dispatchOnce(ctx, limit)
 }
 
 func (d *EventDispatcher) loop() {

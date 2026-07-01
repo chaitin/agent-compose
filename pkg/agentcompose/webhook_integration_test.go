@@ -60,7 +60,7 @@ scheduler.on("webhook.integration.test", "on-webhook", function(event) {
 	if err != nil {
 		t.Fatalf("CreateEvent returned error: %v", err)
 	}
-	dispatcher.dispatchOnce(ctx, 10)
+	dispatcher.DispatchOnce(ctx, 10)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {

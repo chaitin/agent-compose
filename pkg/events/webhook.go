@@ -1,4 +1,4 @@
-package agentcompose
+package events
 
 import (
 	"bytes"
@@ -126,7 +126,7 @@ type topicEventJSON struct {
 	Payload        map[string]any `json:"payload"`
 }
 
-func registerWebhookRoutes(app *echo.Echo, service *Service) {
+func RegisterRoutes(app *echo.Echo, service *Service) {
 	app.POST("/api/webhooks/:topic", service.handleWebhook)
 	app.GET("/api/webhook-sources", service.handleListWebhookSources)
 	app.PUT("/api/webhook-sources/:source_id", service.handlePutWebhookSource)
@@ -463,9 +463,17 @@ func presentedWebhookToken(r *http.Request) string {
 	return presented
 }
 
+func PresentedWebhookToken(r *http.Request) string {
+	return presentedWebhookToken(r)
+}
+
 func webhookTokenHash(token string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func WebhookTokenHash(token string) string {
+	return webhookTokenHash(token)
 }
 
 func validWebhookTokenHash(r *http.Request, hash string) bool {
@@ -569,6 +577,10 @@ func existingWebhookBodyHash(payloadJSON string) string {
 	return topicEventPayloadSHA256(compact)
 }
 
+func ExistingWebhookBodyHash(payloadJSON string) string {
+	return existingWebhookBodyHash(payloadJSON)
+}
+
 func validateExternalWebhookTopic(topic string) error {
 	if err := validateTopicEventName(topic); err != nil {
 		return err
@@ -577,6 +589,10 @@ func validateExternalWebhookTopic(topic string) error {
 		return fmt.Errorf("webhook topic must use webhook.* prefix")
 	}
 	return nil
+}
+
+func ProviderFromWebhookTopic(topic string) string {
+	return providerFromWebhookTopic(topic)
 }
 
 func providerFromWebhookTopic(topic string) string {

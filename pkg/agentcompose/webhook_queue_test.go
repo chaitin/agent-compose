@@ -33,7 +33,7 @@ func testWebhookRunQueueMatchesPayloadRules(t *testing.T) {
 		t.Fatalf("newWebhookRunQueueFromConfig returned error: %v", err)
 	}
 
-	name, workers := queue.match(LoaderTopicEvent{
+	name, workers := queue.Match(LoaderTopicEvent{
 		Topic: "webhook.github.push",
 		Payload: map[string]any{
 			"body": map[string]any{
@@ -45,7 +45,7 @@ func testWebhookRunQueueMatchesPayloadRules(t *testing.T) {
 		t.Fatalf("repo-a queue = %s/%d", name, workers)
 	}
 
-	name, workers = queue.match(LoaderTopicEvent{
+	name, workers = queue.Match(LoaderTopicEvent{
 		Topic: "webhook.github.push",
 		Payload: map[string]any{
 			"body": map[string]any{
@@ -117,7 +117,7 @@ func testLoaderEventLoopRetriesWhenWebhookQueueFull(t *testing.T) {
 		configDB:     store,
 		bus:          NewLoaderBusWithBuffer(8),
 		engine:       &QJSLoaderEngine{},
-		eventQueue:   &WebhookRunQueue{defaultWorkers: 1, running: map[string]int{}},
+		eventQueue:   newWebhookRunQueue(1),
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
 		scheduleWake: make(chan struct{}, 1),
@@ -158,7 +158,7 @@ scheduler.on("webhook.queue.test", "on-webhook", function(event) {
 		t.Fatalf("CreateEvent returned error: %v", err)
 	}
 
-	dispatcher.dispatchOnce(ctx, 10)
+	dispatcher.DispatchOnce(ctx, 10)
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		loaded, err := store.GetEvent(ctx, created.ID)
@@ -210,7 +210,7 @@ func testLoaderEventLoopRetriesWhenSkipPolicyLoaderBusy(t *testing.T) {
 		configDB:     store,
 		bus:          NewLoaderBusWithBuffer(8),
 		engine:       &QJSLoaderEngine{},
-		eventQueue:   &WebhookRunQueue{defaultWorkers: 8, running: map[string]int{}},
+		eventQueue:   newWebhookRunQueue(8),
 		loaders:      map[string]Loader{},
 		running:      map[string]int{"loader-webhook-busy": 1},
 		scheduleWake: make(chan struct{}, 1),
@@ -246,7 +246,7 @@ scheduler.on("webhook.busy.test", "on-webhook", function(event) {
 		t.Fatalf("CreateEvent returned error: %v", err)
 	}
 
-	dispatcher.dispatchOnce(ctx, 10)
+	dispatcher.DispatchOnce(ctx, 10)
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		loaded, err := store.GetEvent(ctx, created.ID)
@@ -298,7 +298,7 @@ func testLoaderEventLoopDedupesWebhookTargetsByLoader(t *testing.T) {
 		configDB:     store,
 		bus:          NewLoaderBusWithBuffer(8),
 		engine:       &QJSLoaderEngine{},
-		eventQueue:   &WebhookRunQueue{defaultWorkers: 8, running: map[string]int{}},
+		eventQueue:   newWebhookRunQueue(8),
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
 		scheduleWake: make(chan struct{}, 1),
@@ -336,7 +336,7 @@ scheduler.on("webhook.dedupe.*", "wildcard", function(event) {
 		t.Fatalf("CreateEvent returned error: %v", err)
 	}
 
-	dispatcher.dispatchOnce(ctx, 10)
+	dispatcher.DispatchOnce(ctx, 10)
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		runs, err := store.ListLoaderRuns(ctx, loader.Summary.ID, 10)
@@ -388,7 +388,7 @@ func testLoaderEventLoopRunsAllWebhookTargetLoaders(t *testing.T) {
 		configDB:     store,
 		bus:          NewLoaderBusWithBuffer(8),
 		engine:       &QJSLoaderEngine{},
-		eventQueue:   &WebhookRunQueue{defaultWorkers: 8, running: map[string]int{}},
+		eventQueue:   newWebhookRunQueue(8),
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
 		scheduleWake: make(chan struct{}, 1),
@@ -435,7 +435,7 @@ scheduler.on("webhook.multi.test", "on-webhook", function(event) {
 		t.Fatalf("CreateEvent returned error: %v", err)
 	}
 
-	dispatcher.dispatchOnce(ctx, 10)
+	dispatcher.DispatchOnce(ctx, 10)
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		firstRuns, err := store.ListLoaderRuns(ctx, first.Summary.ID, 10)
@@ -484,7 +484,7 @@ func testLoaderManagerWebhookQueueBypassesNonWebhookEvents(t *testing.T) {
 	t.Helper()
 	manager := &LoaderManager{
 		config:     &appconfig.Config{WebhookQueueDefaultWorkers: 1},
-		eventQueue: &WebhookRunQueue{defaultWorkers: 1, running: map[string]int{}},
+		eventQueue: newWebhookRunQueue(1),
 	}
 	first, ok := manager.eventQueue.Reserve(LoaderTopicEvent{
 		Source:  TopicEventSourceWebhook,

@@ -1,4 +1,4 @@
-package agentcompose
+package events
 
 import (
 	appconfig "agent-compose/pkg/config"
@@ -42,30 +42,34 @@ type webhookQueueMatchConfig struct {
 	Payload  map[string]any `json:"payload"`
 }
 
-type webhookQueueReservation struct {
+type WebhookQueueReservation struct {
 	queue *WebhookRunQueue
 	name  string
 }
 
-func noopWebhookQueueReservations(count int) []*webhookQueueReservation {
-	reservations := make([]*webhookQueueReservation, 0, count)
+func NoopWebhookQueueReservations(count int) []*WebhookQueueReservation {
+	reservations := make([]*WebhookQueueReservation, 0, count)
 	for i := 0; i < count; i++ {
-		reservations = append(reservations, &webhookQueueReservation{})
+		reservations = append(reservations, &WebhookQueueReservation{})
 	}
 	return reservations
 }
 
-func newWebhookRunQueueFromConfig(config *appconfig.Config) (*WebhookRunQueue, error) {
+func NewWebhookRunQueue(defaultWorkers int) *WebhookRunQueue {
+	return &WebhookRunQueue{
+		defaultWorkers: defaultWorkers,
+		running:        map[string]int{},
+	}
+}
+
+func NewWebhookRunQueueFromConfig(config *appconfig.Config) (*WebhookRunQueue, error) {
 	defaultWorkers := 8
 	rulesJSON := ""
 	if config != nil {
 		defaultWorkers = config.WebhookQueueDefaultWorkers
 		rulesJSON = strings.TrimSpace(config.WebhookQueueRulesJSON)
 	}
-	queue := &WebhookRunQueue{
-		defaultWorkers: defaultWorkers,
-		running:        map[string]int{},
-	}
+	queue := NewWebhookRunQueue(defaultWorkers)
 	if rulesJSON == "" {
 		return queue, nil
 	}
@@ -132,13 +136,13 @@ func normalizeWebhookQueueRule(raw webhookQueueRuleConfig) (webhookQueueRule, er
 	}, nil
 }
 
-func (q *WebhookRunQueue) Reserve(event LoaderTopicEvent) (*webhookQueueReservation, bool) {
+func (q *WebhookRunQueue) Reserve(event LoaderTopicEvent) (*WebhookQueueReservation, bool) {
 	if q == nil {
-		return &webhookQueueReservation{}, true
+		return &WebhookQueueReservation{}, true
 	}
-	name, workers := q.match(event)
+	name, workers := q.Match(event)
 	if workers == 0 {
-		return &webhookQueueReservation{}, true
+		return &WebhookQueueReservation{}, true
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -146,10 +150,10 @@ func (q *WebhookRunQueue) Reserve(event LoaderTopicEvent) (*webhookQueueReservat
 		return nil, false
 	}
 	q.running[name]++
-	return &webhookQueueReservation{queue: q, name: name}, true
+	return &WebhookQueueReservation{queue: q, name: name}, true
 }
 
-func (q *WebhookRunQueue) match(event LoaderTopicEvent) (string, int) {
+func (q *WebhookRunQueue) Match(event LoaderTopicEvent) (string, int) {
 	if q == nil {
 		return defaultWebhookQueueName, 0
 	}
@@ -177,7 +181,7 @@ func (r webhookQueueRule) matches(event LoaderTopicEvent) bool {
 	return true
 }
 
-func (r *webhookQueueReservation) Release() {
+func (r *WebhookQueueReservation) Release() {
 	if r == nil || r.queue == nil || r.name == "" {
 		return
 	}

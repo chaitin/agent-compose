@@ -23,7 +23,7 @@ func TestEventDispatcherPublishesPendingEvents(t *testing.T) {
 		t.Fatalf("CreateEvent returned error: %v", err)
 	}
 
-	dispatcher.dispatchOnce(ctx, 10)
+	dispatcher.DispatchOnce(ctx, 10)
 
 	loaded, err := store.GetEvent(ctx, created.ID)
 	if err != nil {
@@ -84,7 +84,7 @@ func TestEventDispatcherKeepsPendingWhenBusFull(t *testing.T) {
 		t.Fatalf("CreateEvent returned error: %v", err)
 	}
 
-	dispatcher.dispatchOnce(ctx, 10)
+	dispatcher.DispatchOnce(ctx, 10)
 
 	loaded, err := store.GetEvent(ctx, created.ID)
 	if err != nil {
@@ -115,7 +115,7 @@ func TestEventDispatcherIgnoresStaleClaimAck(t *testing.T) {
 		t.Fatalf("CreateEvent returned error: %v", err)
 	}
 
-	dispatcher.dispatchOnce(ctx, 10)
+	dispatcher.DispatchOnce(ctx, 10)
 
 	var delivered LoaderTopicEvent
 	select {

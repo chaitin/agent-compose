@@ -1819,7 +1819,7 @@ func testLoaderManagerRunLifecycleStateLLMAndEventDispatch(t *testing.T) {
 		t.Fatalf("pending events = %#v", pending)
 	}
 	dispatcher := NewEventDispatcher(ctx, manager.configDB, bus)
-	dispatcher.dispatchOnce(ctx, 10)
+	dispatcher.DispatchOnce(ctx, 10)
 	select {
 	case event := <-bus.Events():
 		if event.Topic != "runtime.test.completed" || event.EventID != pending[0].ID {

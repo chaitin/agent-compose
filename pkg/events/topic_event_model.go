@@ -1,4 +1,4 @@
-package agentcompose
+package events
 
 import (
 	"crypto/sha256"
@@ -31,13 +31,6 @@ const (
 
 var topicEventNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-type TopicEventRecord = model.TopicEventRecord
-type TopicEventFilter = model.TopicEventFilter
-type WebhookSource = model.WebhookSource
-type EventDelivery = model.EventDelivery
-type EventSessionLink = model.EventSessionLink
-type EventSessionTraceItem = model.EventSessionTraceItem
-
 func validateTopicEventName(topic string) error {
 	topic = strings.TrimSpace(topic)
 	if topic == "" {
@@ -50,38 +43,6 @@ func validateTopicEventName(topic string) error {
 		return fmt.Errorf("topic contains invalid characters")
 	}
 	return nil
-}
-
-func normalizeTopicEventSource(source string) string {
-	switch strings.ToLower(strings.TrimSpace(source)) {
-	case TopicEventSourceWebhook:
-		return TopicEventSourceWebhook
-	case TopicEventSourceLoader:
-		return TopicEventSourceLoader
-	case TopicEventSourceSystem:
-		return TopicEventSourceSystem
-	default:
-		return ""
-	}
-}
-
-func normalizeTopicEventDispatchStatus(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "", TopicEventDispatchPending:
-		return TopicEventDispatchPending
-	case TopicEventDispatchPublishing:
-		return TopicEventDispatchPublishing
-	case TopicEventDispatchPublishedToBus:
-		return TopicEventDispatchPublishedToBus
-	case TopicEventDispatchNoSubscriber:
-		return TopicEventDispatchNoSubscriber
-	case TopicEventDispatchRetrying:
-		return TopicEventDispatchRetrying
-	case TopicEventDispatchDeadLetter:
-		return TopicEventDispatchDeadLetter
-	default:
-		return ""
-	}
 }
 
 func topicEventPayloadSHA256(payloadJSON string) string {

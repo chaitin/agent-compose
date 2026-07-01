@@ -149,7 +149,7 @@ func testSupportControlPlaneStartAndConfigHelpers(t *testing.T) {
 
 	dispatchBus := NewLoaderBusWithBuffer(8)
 	dispatcher := NewEventDispatcher(ctx, configDB, dispatchBus)
-	dispatcher.interval = time.Millisecond
+	dispatcher.SetInterval(time.Millisecond)
 	dispatcher.Start()
 	event, err := configDB.CreateEvent(ctx, TopicEventRecord{
 		Source:         TopicEventSourceLoader,
