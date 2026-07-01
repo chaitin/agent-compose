@@ -79,6 +79,10 @@ func (s *Service) UpdateLoader(ctx context.Context, req *connect.Request[agentco
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	envItems, err := s.preserveUnchangedLoaderEnvSecrets(ctx, req.Msg.GetLoaderId(), protoEnvItemsToModel(req.Msg.GetEnvItems()))
+	if err != nil {
+		return nil, err
+	}
 	item, err := s.loaders.UpdateLoader(ctx, Loader{
 		Summary: LoaderSummary{
 			ID:                req.Msg.GetLoaderId(),
@@ -96,7 +100,7 @@ func (s *Service) UpdateLoader(ctx context.Context, req *connect.Request[agentco
 			CapsetIDs:         req.Msg.GetCapsetIds(),
 		},
 		Script:   req.Msg.GetScript(),
-		EnvItems: protoEnvItemsToModel(req.Msg.GetEnvItems()),
+		EnvItems: envItems,
 	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
@@ -252,11 +256,38 @@ func toProtoLoaderDetail(item Loader) *agentcomposev1.LoaderDetail {
 	for _, envItem := range item.EnvItems {
 		value := envItem.Value
 		if envItem.Secret && value != "" {
-			value = "********"
+			value = maskedSecretValue
 		}
 		resp.EnvItems = append(resp.EnvItems, &agentcomposev1.SessionEnvVar{Name: envItem.Name, Value: value, Secret: envItem.Secret})
 	}
 	return resp
+}
+
+func (s *Service) preserveUnchangedLoaderEnvSecrets(ctx context.Context, loaderID string, items []SessionEnvVar) ([]SessionEnvVar, error) {
+	existing, err := s.configDB.GetLoader(ctx, loaderID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	existingByName := make(map[string]SessionEnvVar, len(existing.EnvItems))
+	for _, item := range existing.EnvItems {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			continue
+		}
+		existingByName[name] = item
+	}
+	for index, item := range items {
+		name := strings.TrimSpace(item.Name)
+		if name == "" || !item.Secret || item.Value != maskedSecretValue {
+			continue
+		}
+		existingItem, ok := existingByName[name]
+		if !ok || !existingItem.Secret || existingItem.Value == "" {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("secret env %s requires a value", name))
+		}
+		items[index].Value = existingItem.Value
+	}
+	return items, nil
 }
 
 func toProtoLoaderTrigger(item LoaderTrigger) *agentcomposev1.LoaderTrigger {
