@@ -24,6 +24,7 @@ import (
 
 	"agent-compose/pkg/agentcompose/api"
 	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/execution"
 	"agent-compose/pkg/capproxy"
 	"agent-compose/pkg/imagecache"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
@@ -936,8 +937,8 @@ type agentExecResponse struct {
 	Stderr     string `json:"stderr"`
 }
 
-const agentResultPrefix = "__AGENT_RESULT__"
-const commandResultPrefix = "__COMMAND_RESULT__"
+const agentResultPrefix = execution.AgentResultPrefix
+const commandResultPrefix = execution.CommandResultPrefix
 
 type runtimeCommandRequestJSON struct {
 	Mode           string            `json:"mode"`
@@ -1033,62 +1034,8 @@ func writeAgentOutputSchemaFile(config *appconfig.Config, session *Session, agen
 	return filepath.Join(config.GuestStateRoot, "agents", "schemas", name), nil
 }
 
-func findAgentExecPayload(raw string) (agentExecResponse, bool) {
-	lines := strings.Split(strings.TrimSpace(raw), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, agentResultPrefix) {
-			line = strings.TrimSpace(strings.TrimPrefix(line, agentResultPrefix))
-		}
-		if !strings.HasPrefix(line, "{") {
-			continue
-		}
-		var payload agentExecResponse
-		if json.Unmarshal([]byte(line), &payload) == nil {
-			return payload, true
-		}
-	}
-	return agentExecResponse{}, false
-}
-
 func parseAgentExecResult(agent string, result ExecResult) (AgentRunResult, error) {
-	raw := firstNonEmpty(result.Stdout, result.Output)
-	if strings.TrimSpace(raw) == "" {
-		if detail := summarizeAgentExecFailure(result); detail != "" {
-			return AgentRunResult{}, fmt.Errorf("agent %s returned empty stdout: %s", agent, detail)
-		}
-		return AgentRunResult{}, fmt.Errorf("agent %s returned empty stdout", agent)
-	}
-	payload, ok := findAgentExecPayload(raw)
-	if !ok && strings.TrimSpace(result.Output) != strings.TrimSpace(raw) {
-		payload, ok = findAgentExecPayload(result.Output)
-	}
-	if !ok {
-		if detail := summarizeAgentExecFailure(result); detail != "" {
-			return AgentRunResult{}, fmt.Errorf("decode agent result for %s: no result payload found: %s", agent, detail)
-		}
-		return AgentRunResult{}, fmt.Errorf("decode agent result for %s: no result payload found", agent)
-	}
-	humanOutput := strings.TrimSpace(result.Stderr)
-	if transcript := strings.TrimSpace(payload.Transcript); transcript != "" {
-		humanOutput = transcript
-	} else if strings.TrimSpace(humanOutput) == "" {
-		humanOutput = strings.TrimSpace(payload.FinalText)
-	}
-	return AgentRunResult{
-		Agent:         firstNonEmpty(strings.TrimSpace(payload.Provider), normalizeAgentKind(agent)),
-		DisplayOutput: humanOutput,
-		FinalText:     strings.TrimSpace(payload.FinalText),
-		JSONText:      strings.TrimSpace(payload.FinalText),
-		Transcript:    strings.TrimSpace(payload.Transcript),
-		SessionID:     strings.TrimSpace(payload.SessionID),
-		StopReason:    strings.TrimSpace(payload.StopReason),
-		ExitCode:      result.ExitCode,
-		Success:       result.Success,
-	}, nil
+	return execution.ParseAgentExecResult(agent, result)
 }
 
 func agentTraceEvents(transcript string, createdAt time.Time) []SessionEvent {
@@ -1249,40 +1196,8 @@ func buildSessionExecEnv(config *appconfig.Config, session *Session, home string
 	return env
 }
 
-func findCommandExecPayload(raw string) (RuntimeCommandResult, bool) {
-	lines := strings.Split(strings.TrimSpace(raw), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, commandResultPrefix) {
-			line = strings.TrimSpace(strings.TrimPrefix(line, commandResultPrefix))
-		}
-		if !strings.HasPrefix(line, "{") {
-			continue
-		}
-		var payload RuntimeCommandResult
-		if json.Unmarshal([]byte(line), &payload) == nil {
-			return payload, true
-		}
-	}
-	return RuntimeCommandResult{}, false
-}
-
 func parseCommandExecResult(result ExecResult) (RuntimeCommandResult, error) {
-	raw := firstNonEmpty(result.Stdout, result.Output)
-	if strings.TrimSpace(raw) == "" {
-		return RuntimeCommandResult{}, fmt.Errorf("decode command result: empty stdout")
-	}
-	payload, ok := findCommandExecPayload(raw)
-	if !ok && strings.TrimSpace(result.Output) != strings.TrimSpace(raw) {
-		payload, ok = findCommandExecPayload(result.Output)
-	}
-	if !ok {
-		return RuntimeCommandResult{}, fmt.Errorf("decode command result: no result payload found")
-	}
-	return payload, nil
+	return execution.ParseCommandExecResult(result)
 }
 
 func mirrorRuntimeCommandArtifacts(hostCellDir string, result RuntimeCommandResult) error {
@@ -1310,30 +1225,15 @@ func mirrorRuntimeCommandArtifacts(hostCellDir string, result RuntimeCommandResu
 }
 
 func summarizeAgentExecFailure(result ExecResult) string {
-	detail := strings.TrimSpace(firstNonEmpty(result.Stderr, result.Output, result.Stdout))
-	if detail == "" {
-		return ""
-	}
-	detail = strings.Join(strings.Fields(detail), " ")
-	if len(detail) > 240 {
-		detail = detail[:240] + "..."
-	}
-	return detail
+	return execution.SummarizeAgentExecFailure(result)
 }
 
 func stripAgentResultPayload(raw string) string {
-	idx := strings.LastIndex(raw, agentResultPrefix)
-	if idx < 0 {
-		return raw
-	}
-	return raw[:idx]
+	return execution.StripAgentResultPayload(raw)
 }
 
 func sanitizeAgentExecResult(result ExecResult) ExecResult {
-	cleaned := result
-	cleaned.Stdout = stripAgentResultPayload(result.Stdout)
-	cleaned.Output = stripAgentResultPayload(result.Output)
-	return cleaned
+	return execution.SanitizeAgentExecResult(result)
 }
 
 func (e *Executor) resolveAgentSystemPrompt(ctx context.Context, session *Session, agentDefinitionID string) (string, error) {
