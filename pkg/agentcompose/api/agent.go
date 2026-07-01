@@ -45,6 +45,14 @@ func AgentDefinitionToProto(item domain.AgentDefinition, workspace *domain.Works
 	return resp
 }
 
+func AgentDefinitionTagsToProto(agent domain.AgentDefinition) []*agentcomposev1.SessionTag {
+	return []*agentcomposev1.SessionTag{
+		{Name: domain.AgentSessionTagSource, Value: domain.AgentSessionTagSourceVal},
+		{Name: domain.AgentSessionTagID, Value: agent.ID},
+		{Name: domain.AgentSessionTagName, Value: agent.Name},
+	}
+}
+
 func EnvItemsToProto(items []domain.SessionEnvVar) []*agentcomposev1.SessionEnvVar {
 	resp := make([]*agentcomposev1.SessionEnvVar, 0, len(items))
 	for _, item := range items {

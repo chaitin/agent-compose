@@ -35,11 +35,7 @@ func normalizeAgentDefinition(item AgentDefinition, assignDefaults bool) (AgentD
 }
 
 func agentDefinitionTags(agent AgentDefinition) []*agentcomposev1.SessionTag {
-	return []*agentcomposev1.SessionTag{
-		{Name: agentSessionTagSource, Value: agentSessionTagSourceVal},
-		{Name: agentSessionTagID, Value: agent.ID},
-		{Name: agentSessionTagName, Value: agent.Name},
-	}
+	return api.AgentDefinitionTagsToProto(agent)
 }
 
 func sessionHasAgentTag(session *Session, agentID string) bool {
