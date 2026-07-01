@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	"agent-compose/pkg/agentcompose/api"
+	"agent-compose/pkg/agentcompose/execution"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
@@ -219,10 +219,7 @@ func (s *Service) sessionForProjectRun(ctx context.Context, run ProjectRunRecord
 }
 
 func execContext(ctx context.Context, timeoutMs uint32) (context.Context, context.CancelFunc) {
-	if timeoutMs == 0 {
-		return context.WithCancel(ctx)
-	}
-	return context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+	return execution.ExecContext(ctx, timeoutMs)
 }
 
 func execEnvMap(items []*agentcomposev2.EnvVarSpec) map[string]string {
