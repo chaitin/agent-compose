@@ -11,6 +11,7 @@ import (
 	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	loaderspkg "agent-compose/pkg/loaders"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
@@ -995,19 +996,14 @@ func testProjectServiceApplyProjectValidationFailureDoesNotPersist(t *testing.T)
 
 func newProjectServiceTestService(t *testing.T, store *ConfigStore) *Service {
 	t.Helper()
+	config := &appconfig.Config{
+		RuntimeDriver: driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:  "guest:latest",
+	}
 	return &Service{
-		config: &appconfig.Config{
-			RuntimeDriver: driverpkg.RuntimeDriverBoxlite,
-			DefaultImage:  "guest:latest",
-		},
+		config:   config,
 		configDB: store,
-		loaders: &LoaderManager{
-			configDB:     store,
-			engine:       &QJSLoaderEngine{},
-			loaders:      map[string]Loader{},
-			running:      map[string]int{},
-			scheduleWake: make(chan struct{}, 1),
-		},
+		loaders:  newTestLoaderManager(t, loaderspkg.ManagerDeps{Config: config, ConfigDB: store, Engine: &QJSLoaderEngine{}}),
 		images: &fakeImageBackend{
 			inspectImage: func(context.Context, ImageInspectRequest) (ImageInspectResult, error) {
 				return ImageInspectResult{}, nil

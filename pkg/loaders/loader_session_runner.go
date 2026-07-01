@@ -1,8 +1,7 @@
-package agentcompose
+package loaders
 
 import (
 	driverpkg "agent-compose/pkg/driver"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"context"
 	"fmt"
 	"log/slog"
@@ -105,7 +104,11 @@ func (r *LoaderSessionRunner) Ensure(ctx context.Context, loader Loader, request
 	guestImage := r.guestImage(request, loader, agentDefinition, driver)
 	title := firstNonEmpty(strings.TrimSpace(request.Title), strings.TrimSpace(loader.Summary.Name), defaultLoaderName(time.Now().UTC()))
 	if agentDefinition != nil {
-		tags = append(tags, sessionTagsFromProto(agentDefinitionTags(*agentDefinition))...)
+		tags = append(tags,
+			SessionTag{Name: "source", Value: "agent"},
+			SessionTag{Name: "agent_id", Value: agentDefinition.ID},
+			SessionTag{Name: "agent_name", Value: agentDefinition.Name},
+		)
 	}
 	session, err := m.store.CreateSession(ctx, title, "", driver, guestImage, workspaceID, SessionTypeScript+":"+loader.Summary.ID, workspaceSnapshot, envItems, tags)
 	if err != nil {
@@ -242,20 +245,6 @@ func (m *LoaderManager) ensureLoaderCommandSession(ctx context.Context, loader L
 
 func (m *LoaderManager) loadOrResumeLoaderSession(ctx context.Context, sessionID string) (*Session, string, error) {
 	return m.sessionRunnerComponent().LoadOrResume(ctx, sessionID)
-}
-
-func sessionTagsFromProto(items []*agentcomposev1.SessionTag) []SessionTag {
-	if len(items) == 0 {
-		return nil
-	}
-	result := make([]SessionTag, 0, len(items))
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-		result = append(result, SessionTag{Name: item.GetName(), Value: item.GetValue()})
-	}
-	return result
 }
 
 func slogWarnReuseLoaderStickySession(loaderID, sessionID string, err error) {

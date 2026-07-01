@@ -41,7 +41,6 @@ type EventSessionLink = model.EventSessionLink
 type EventSessionTraceItem = model.EventSessionTraceItem
 type EventDispatcher = eventspkg.EventDispatcher
 type WebhookRunQueue = eventspkg.WebhookRunQueue
-type webhookQueueReservation = eventspkg.WebhookQueueReservation
 
 type webhookAcceptedResponse struct {
 	Accepted      bool   `json:"accepted"`
@@ -148,10 +147,6 @@ func newWebhookRunQueueFromConfig(config *appconfig.Config) (*WebhookRunQueue, e
 
 func newWebhookRunQueue(defaultWorkers int) *WebhookRunQueue {
 	return eventspkg.NewWebhookRunQueue(defaultWorkers)
-}
-
-func noopWebhookQueueReservations(count int) []*webhookQueueReservation {
-	return eventspkg.NoopWebhookQueueReservations(count)
 }
 
 func validateTopicEventName(topic string) error {

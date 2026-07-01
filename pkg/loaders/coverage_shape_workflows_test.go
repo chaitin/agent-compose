@@ -1,0 +1,29 @@
+package loaders
+
+import "testing"
+
+func TestIntegrationLoaderWorkflow(t *testing.T) {
+	testLoaderManagerCollectDueScheduledRunsConsumesTimeout(t)
+	testLoaderRunHostCommandPersistsShellCellArtifactsAndEvents(t)
+	TestLoaderRunHostCommandPersistsDockerProxyTarget(t)
+	testLoaderRunHostCommandNonZeroExitCodeDoesNotThrow(t)
+	testLoaderRunHostAgentStopsSessionAfterExecution(t)
+	testLoaderRunCommandNewSessionsReuseAndCleanupAtRunEnd(t)
+	TestLoaderRunCommandStickySessionPersistsAcrossRunsWithTitle(t)
+	testLoaderManagerRunLifecycleStateLLMAndEventDispatch(t)
+	testLoaderManagerDispatchScheduledRunsAndSessionResumeBranches(t)
+	testLoaderScheduleModelWorkflows(t)
+}
+
+func TestE2ELoaderWorkflow(t *testing.T) {
+	testLoaderManagerCollectDueScheduledRunsConsumesTimeout(t)
+	testLoaderRunHostCommandPersistsShellCellArtifactsAndEvents(t)
+	TestLoaderRunHostCommandPersistsDockerProxyTarget(t)
+	testLoaderRunHostCommandNonZeroExitCodeDoesNotThrow(t)
+	testLoaderRunHostAgentStopsSessionAfterExecution(t)
+	testLoaderRunCommandNewSessionsReuseAndCleanupAtRunEnd(t)
+	TestLoaderRunCommandStickySessionPersistsAcrossRunsWithTitle(t)
+	testLoaderManagerRunLifecycleStateLLMAndEventDispatch(t)
+	testLoaderManagerDispatchScheduledRunsAndSessionResumeBranches(t)
+	testLoaderScheduleModelWorkflows(t)
+}

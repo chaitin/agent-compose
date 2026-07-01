@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	appconfig "agent-compose/pkg/config"
+	loaderspkg "agent-compose/pkg/loaders"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -536,17 +537,12 @@ func TestLoaderBusPublishReportsFullChannel(t *testing.T) {
 func TestLoaderRunHostPublishEventStoresDerivedEvent(t *testing.T) {
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	manager := &LoaderManager{configDB: store}
-	host := &loaderRunHost{
-		manager: manager,
-		loader:  Loader{Summary: LoaderSummary{ID: "loader-1"}},
-		run:     &LoaderRunSummary{ID: "run-1", LoaderID: "loader-1", TriggerID: "trigger-1"},
-		triggerEvent: loaderTriggerEventMetadata{
-			EventID:       "evt-parent",
-			CorrelationID: "corr-parent",
-			Sequence:      10,
-		},
-	}
+	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{ConfigDB: store})
+	host := newLoaderRunHost(manager, Loader{Summary: LoaderSummary{ID: "loader-1"}}, &LoaderRunSummary{ID: "run-1", LoaderID: "loader-1", TriggerID: "trigger-1"}, loaderTriggerEventMetadata{
+		EventID:       "evt-parent",
+		CorrelationID: "corr-parent",
+		Sequence:      10,
+	})
 
 	created, err := host.PublishEvent(ctx, "runtime.test.requested", `{"provider":"test-runtime","value":1}`)
 	if err != nil {
@@ -577,7 +573,7 @@ func TestLoaderRunHostPublishEventStoresDerivedEvent(t *testing.T) {
 func TestLoaderRunHostLinkedLoaderEventStoresEventSessionLink(t *testing.T) {
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	manager := &LoaderManager{configDB: store}
+	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{ConfigDB: store})
 	loader := createTestLoader(t, ctx, store)
 	run := LoaderRunSummary{
 		ID:            "run-link",
@@ -591,16 +587,9 @@ func TestLoaderRunHostLinkedLoaderEventStoresEventSessionLink(t *testing.T) {
 	if err := store.CreateLoaderRun(ctx, run); err != nil {
 		t.Fatalf("CreateLoaderRun returned error: %v", err)
 	}
-	host := &loaderRunHost{
-		manager: manager,
-		loader:  loader,
-		run:     &run,
-		triggerEvent: loaderTriggerEventMetadata{
-			EventID: "evt-link",
-		},
-	}
+	host := newLoaderRunHost(manager, loader, &run, loaderTriggerEventMetadata{EventID: "evt-link"})
 
-	if err := host.addLinkedLoaderEvent(ctx, "loader.command.completed", "info", "command completed", map[string]any{"sessionId": "session-link"}, "session-link", "cell-link", ""); err != nil {
+	if err := host.AddLinkedLoaderEvent(ctx, "loader.command.completed", "info", "command completed", map[string]any{"sessionId": "session-link"}, "session-link", "cell-link", ""); err != nil {
 		t.Fatalf("addLinkedLoaderEvent returned error: %v", err)
 	}
 	links, err := store.ListEventSessionLinks(ctx, []string{"evt-link"})
@@ -630,12 +619,8 @@ func TestLoaderRunHostLinkedLoaderEventStoresEventSessionLink(t *testing.T) {
 	if err := store.CreateLoaderRun(ctx, noEventRun); err != nil {
 		t.Fatalf("CreateLoaderRun without trigger event returned error: %v", err)
 	}
-	noEventHost := &loaderRunHost{
-		manager: manager,
-		loader:  loader,
-		run:     &noEventRun,
-	}
-	if err := noEventHost.addLinkedLoaderEvent(ctx, "loader.command.completed", "info", "command completed", nil, "session-no-event", "", ""); err != nil {
+	noEventHost := newLoaderRunHost(manager, loader, &noEventRun, loaderTriggerEventMetadata{})
+	if err := noEventHost.AddLinkedLoaderEvent(ctx, "loader.command.completed", "info", "command completed", nil, "session-no-event", "", ""); err != nil {
 		t.Fatalf("addLinkedLoaderEvent without trigger event returned error: %v", err)
 	}
 	links, err = store.ListEventSessionLinks(ctx, []string{"evt-link"})

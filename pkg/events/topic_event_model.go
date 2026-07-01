@@ -45,7 +45,15 @@ func validateTopicEventName(topic string) error {
 	return nil
 }
 
+func ValidateTopicEventName(topic string) error {
+	return validateTopicEventName(topic)
+}
+
 func topicEventPayloadSHA256(payloadJSON string) string {
 	sum := sha256.Sum256([]byte(payloadJSON))
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func TopicEventPayloadSHA256(payloadJSON string) string {
+	return topicEventPayloadSHA256(payloadJSON)
 }

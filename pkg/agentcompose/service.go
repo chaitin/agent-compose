@@ -58,6 +58,7 @@ type Service struct {
 	events          *EventDispatcher
 	sessions        *SessionRPCBridge
 	sessionHandlers *sessions.Service
+	loaderHandlers  *LoaderService
 	startedAt       time.Time
 	startOnce       sync.Once
 	startErr        error
@@ -127,6 +128,7 @@ func NewService(di do.Injector) (*Service, error) {
 		dashboard:         dashHub,
 		events:            NewEventDispatcher(do.MustInvoke[context.Context](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderBus](di)),
 		sessions:          do.MustInvoke[*SessionRPCBridge](di),
+		loaderHandlers:    NewLoaderService(do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderManager](di), do.MustInvoke[*LoaderBus](di)),
 		startedAt:         time.Now().UTC(),
 	}
 	service.sessionHandlers = sessions.NewService(service.store, service.executor, service.bus, service.streams.componentBroker(), service.sessions.componentBridge(), service.resolveSessionAgentConfigForSessions)

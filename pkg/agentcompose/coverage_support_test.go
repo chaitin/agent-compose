@@ -3,6 +3,7 @@ package agentcompose
 import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	loaderspkg "agent-compose/pkg/loaders"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -116,19 +117,17 @@ func testSupportControlPlaneStartAndConfigHelpers(t *testing.T) {
 	configDB := newSupportTestConfigStore(t)
 	store := mustTestStore(t, config)
 	bus := NewLoaderBusWithBuffer(8)
-	manager := &LoaderManager{
-		config:       config,
-		rootCtx:      ctx,
-		store:        store,
-		configDB:     configDB,
-		driver:       &fakeSessionDriver{},
-		executor:     &Executor{config: config, store: store, runtimes: fixedRuntimeProvider{runtime: &fakeLoaderAgentRuntime{}}},
-		bus:          bus,
-		engine:       &recordingLoaderEngine{},
-		loaders:      map[string]Loader{},
-		running:      map[string]int{},
-		scheduleWake: make(chan struct{}, 1),
-	}
+	runtimes := fixedRuntimeProvider{runtime: &fakeLoaderAgentRuntime{}}
+	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+		Config:   config,
+		RootCtx:  ctx,
+		Store:    store,
+		ConfigDB: configDB,
+		Driver:   &fakeSessionDriver{},
+		Executor: loaderspkg.NewExecutor(config, store, configDB, runtimes, nil),
+		Bus:      bus,
+		Engine:   &recordingLoaderEngine{},
+	})
 	loader, err := configDB.CreateLoader(ctx, Loader{
 		Summary: LoaderSummary{ID: "start-loader", Name: "Start Loader", Runtime: LoaderRuntimeScheduler, Enabled: true},
 		Script:  "function main() { return {}; }",
@@ -209,22 +208,19 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	capProvider := newTestCapabilityProvider("", "")
 	bus := NewLoaderBusWithBuffer(4)
 	sessions := &SessionRPCBridge{config: config, store: store, configDB: configDB, driver: driver, runtimes: runtimes, bus: bus}
-	manager := &LoaderManager{
-		config:       config,
-		rootCtx:      ctx,
-		store:        store,
-		configDB:     configDB,
-		driver:       driver,
-		executor:     executor,
-		llm:          &LLMClient{config: config, configDB: configDB},
-		cap:          capProvider,
-		bus:          bus,
-		engine:       &recordingLoaderEngine{},
-		sessions:     sessions,
-		loaders:      map[string]Loader{},
-		running:      map[string]int{},
-		scheduleWake: make(chan struct{}, 1),
-	}
+	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+		Config:             config,
+		RootCtx:            ctx,
+		Store:              store,
+		ConfigDB:           configDB,
+		Driver:             driver,
+		Executor:           loaderspkg.NewExecutor(config, store, configDB, runtimes, nil),
+		LLM:                (&LLMClient{config: config, configDB: configDB}).componentClient(),
+		CapabilityProvider: capProvider,
+		Bus:                bus,
+		Engine:             &recordingLoaderEngine{},
+		Sessions:           sessions.componentBridge(),
+	})
 
 	di := do.New()
 	do.ProvideValue(di, ctx)
@@ -255,7 +251,7 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	if engine, err := NewLoaderEngine(di); err != nil || engine == nil {
 		t.Fatalf("NewLoaderEngine = %#v/%v", engine, err)
 	}
-	if createdManager, err := NewLoaderManager(di); err != nil || createdManager.rootCtx == nil || createdManager.scheduleWake == nil {
+	if createdManager, err := NewLoaderManager(di); err != nil || !createdManager.HasStartupState() {
 		t.Fatalf("NewLoaderManager = %#v/%v", createdManager, err)
 	}
 	if bridge, err := NewSessionRPCBridge(di); err != nil || bridge.store != store {
@@ -277,7 +273,7 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	testSupportAgentAndLoaderHelpers(t)
 	testSupportLegacyAgentRunMerge(t, store)
 	testSupportWorkspaceMoveMerge(t)
-	testSupportSessionRPCAndAgentResumeHelpers(t, manager)
+	testSupportSessionRPCAndAgentResumeHelpers(t, manager, configDB)
 }
 
 func testSupportAgentAndLoaderHelpers(t *testing.T) {
@@ -416,10 +412,10 @@ func testSupportWorkspaceMoveMerge(t *testing.T) {
 	}
 }
 
-func testSupportSessionRPCAndAgentResumeHelpers(t *testing.T, manager *LoaderManager) {
+func testSupportSessionRPCAndAgentResumeHelpers(t *testing.T, manager *LoaderManager, configDB *ConfigStore) {
 	t.Helper()
 	ctx := context.Background()
-	loader, err := manager.configDB.CreateLoader(ctx, Loader{
+	loader, err := configDB.CreateLoader(ctx, Loader{
 		Summary: LoaderSummary{ID: "loader-rpc", Name: "Loader RPC", Runtime: LoaderRuntimeScheduler, Enabled: true},
 		Script:  "function main() { return {}; }",
 	})
@@ -427,10 +423,10 @@ func testSupportSessionRPCAndAgentResumeHelpers(t *testing.T, manager *LoaderMan
 		t.Fatalf("CreateLoader returned error: %v", err)
 	}
 	run := LoaderRunSummary{ID: "run-rpc", LoaderID: loader.Summary.ID, Status: LoaderRunStatusRunning, StartedAt: time.Now().UTC()}
-	if err := manager.configDB.CreateLoaderRun(ctx, run); err != nil {
+	if err := configDB.CreateLoaderRun(ctx, run); err != nil {
 		t.Fatalf("CreateLoaderRun returned error: %v", err)
 	}
-	host := &loaderRunHost{manager: manager, loader: loader, run: &run}
+	host := newLoaderRunHost(manager, loader, &run, loaderTriggerEventMetadata{})
 	response, err := host.CallSessionRPC(ctx, "ListSessions", `{}`)
 	if err != nil {
 		t.Fatalf("CallSessionRPC ListSessions returned error: %v", err)
@@ -441,7 +437,7 @@ func testSupportSessionRPCAndAgentResumeHelpers(t *testing.T, manager *LoaderMan
 	if _, err := host.CallSessionRPC(ctx, "NoSuchMethod", `{}`); err == nil {
 		t.Fatalf("CallSessionRPC invalid method returned nil error")
 	}
-	events, err := manager.configDB.ListLoaderEvents(ctx, loader.Summary.ID, 20)
+	events, err := configDB.ListLoaderEvents(ctx, loader.Summary.ID, 20)
 	if err != nil {
 		t.Fatalf("ListLoaderEvents returned error: %v", err)
 	}

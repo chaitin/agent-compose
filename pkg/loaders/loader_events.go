@@ -1,20 +1,6 @@
-package agentcompose
+package loaders
 
-import (
-	"strings"
-	"time"
-)
-
-func (s *Service) publishLoaderTopic(topic string, payload map[string]any) {
-	if s == nil || s.bus == nil {
-		return
-	}
-	s.bus.Publish(LoaderTopicEvent{
-		Topic:     topic,
-		Payload:   payload,
-		CreatedAt: time.Now().UTC(),
-	})
-}
+import "strings"
 
 func sessionTopicPayload(session *Session, source string) map[string]any {
 	if session == nil {
@@ -29,6 +15,10 @@ func sessionTopicPayload(session *Session, source string) map[string]any {
 		"triggerSource": session.Summary.TriggerSource,
 		"source":        source,
 	}
+}
+
+func SessionTopicPayload(session *Session, source string) map[string]any {
+	return sessionTopicPayload(session, source)
 }
 
 func cellTopicPayload(sessionID string, cell NotebookCell, source string) map[string]any {

@@ -1,4 +1,4 @@
-package agentcompose
+package loaders
 
 import (
 	"crypto/sha256"

@@ -142,15 +142,13 @@ func (b *SessionRPCBridge) componentBridge() *sessions.SessionRPCBridge {
 	if b == nil {
 		return nil
 	}
-	if b.component == nil {
-		var streams *sessions.SessionStreamBroker
-		if b.streams != nil {
-			streams = b.streams.componentBroker()
-		} else {
-			streams, _ = sessions.NewSessionStreamBroker(nil)
-		}
-		b.component = sessions.NewSessionRPCBridgeFromDeps(b.config, b.store, b.configDB, b.driver, b.runtimes, b.bus, streams, b.cap, b.dashboard)
+	var streams *sessions.SessionStreamBroker
+	if b.streams != nil {
+		streams = b.streams.componentBroker()
+	} else {
+		streams, _ = sessions.NewSessionStreamBroker(nil)
 	}
+	b.component = sessions.NewSessionRPCBridgeFromDeps(b.config, b.store, b.configDB, b.driver, b.runtimes, b.bus, streams, b.cap, b.dashboard)
 	return b.component
 }
 

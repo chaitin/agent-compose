@@ -11,6 +11,7 @@ import (
 
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	loaderspkg "agent-compose/pkg/loaders"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
@@ -146,13 +147,10 @@ func testLoaderCreateBindsAgentDefinitionProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAgentDefinition returned error: %v", err)
 	}
-	manager := &LoaderManager{
-		configDB:     store,
-		engine:       &QJSLoaderEngine{},
-		loaders:      map[string]Loader{},
-		running:      map[string]int{},
-		scheduleWake: make(chan struct{}, 1),
-	}
+	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+		ConfigDB: store,
+		Engine:   &QJSLoaderEngine{},
+	})
 	service := &Service{configDB: store, loaders: manager}
 	created, err := service.CreateLoader(ctx, connect.NewRequest(&agentcomposev1.CreateLoaderRequest{
 		Name:              "Bound Loader",

@@ -992,9 +992,6 @@ func (s *Service) validateInlineSchedulerScript(ctx context.Context, agentName s
 	if s == nil || s.loaders == nil {
 		return LoaderValidationResult{}, &projectManagedSchedulerBuildError{path: path, message: "loader manager is required to validate scheduler script"}
 	}
-	if s.loaders.engine == nil {
-		return LoaderValidationResult{}, &projectManagedSchedulerBuildError{path: path, message: "loader engine is required to validate scheduler script"}
-	}
 	validation, err := s.loaders.Validate(ctx, LoaderRuntimeScheduler, script)
 	if err != nil {
 		return LoaderValidationResult{}, &projectManagedSchedulerBuildError{path: path, message: err.Error()}

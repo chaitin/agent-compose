@@ -3,6 +3,7 @@ package agentcompose
 import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	loaderspkg "agent-compose/pkg/loaders"
 	"context"
 	"fmt"
 	"os"
@@ -381,21 +382,17 @@ func TestLoaderRunHostAgentWritesSystemPromptFromBoundAgentDefinition(t *testing
 	store := mustTestStore(t, config)
 	runtime := &fakeLoaderAgentRuntime{}
 	driver := &fakeSessionDriver{}
-	manager := &LoaderManager{
-		config:   config,
-		rootCtx:  ctx,
-		store:    store,
-		configDB: configDB,
-		driver:   driver,
-		executor: &Executor{config: config, store: store, configDB: configDB, runtimes: fixedRuntimeProvider{runtime: runtime}},
-		engine:   &QJSLoaderEngine{},
-		running:  map[string]int{},
-	}
-	host := &loaderRunHost{
-		manager: manager,
-		loader:  loader,
-		run:     &LoaderRunSummary{ID: "run-loader-system-prompt", LoaderID: loader.Summary.ID},
-	}
+	runtimes := fixedRuntimeProvider{runtime: runtime}
+	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+		Config:   config,
+		RootCtx:  ctx,
+		Store:    store,
+		ConfigDB: configDB,
+		Driver:   driver,
+		Executor: loaderspkg.NewExecutor(config, store, configDB, runtimes, nil),
+		Engine:   &QJSLoaderEngine{},
+	})
+	host := newLoaderRunHost(manager, loader, &LoaderRunSummary{ID: "run-loader-system-prompt", LoaderID: loader.Summary.ID}, loaderTriggerEventMetadata{})
 
 	result, err := host.Agent(ctx, "summarize loader state", LoaderAgentRequest{})
 	if err != nil {

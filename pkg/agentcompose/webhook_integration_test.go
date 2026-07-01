@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	appconfig "agent-compose/pkg/config"
+	loaderspkg "agent-compose/pkg/loaders"
 	"context"
 	"path/filepath"
 	"strings"
@@ -17,16 +18,13 @@ func testWebhookIntegrationEventDispatchRunsMatchingLoader(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	manager := &LoaderManager{
-		rootCtx:      ctx,
-		config:       &appconfig.Config{DataRoot: filepath.Join(t.TempDir(), "data")},
-		configDB:     store,
-		bus:          NewLoaderBusWithBuffer(8),
-		engine:       &QJSLoaderEngine{},
-		loaders:      map[string]Loader{},
-		running:      map[string]int{},
-		scheduleWake: make(chan struct{}, 1),
-	}
+	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+		RootCtx:  ctx,
+		Config:   &appconfig.Config{DataRoot: filepath.Join(t.TempDir(), "data")},
+		ConfigDB: store,
+		Bus:      NewLoaderBusWithBuffer(8),
+		Engine:   &QJSLoaderEngine{},
+	})
 	loader, err := manager.CreateLoader(ctx, Loader{
 		Summary: LoaderSummary{
 			ID:      "loader-webhook-integration",
@@ -47,8 +45,8 @@ scheduler.on("webhook.integration.test", "on-webhook", function(event) {
 	if err != nil {
 		t.Fatalf("CreateLoader returned error: %v", err)
 	}
-	go manager.eventLoop()
-	dispatcher := NewEventDispatcher(ctx, store, manager.bus)
+	go manager.RunEventLoop()
+	dispatcher := NewEventDispatcher(ctx, store, manager.Bus())
 
 	created, err := store.CreateEvent(ctx, TopicEventRecord{
 		Topic:         "webhook.integration.test",

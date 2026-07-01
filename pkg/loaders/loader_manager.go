@@ -1,7 +1,8 @@
-package agentcompose
+package loaders
 
 import (
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/events"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"bytes"
 	"context"
@@ -78,6 +79,71 @@ type preparedLoaderRun struct {
 	payloadJSON string
 }
 
+type ManagerDeps struct {
+	Config             *appconfig.Config
+	RootCtx            context.Context
+	Store              *Store
+	ConfigDB           *ConfigStore
+	Driver             Driver
+	Executor           *Executor
+	Images             ImageBackend
+	LLM                *LLMClient
+	CapabilityProvider CapabilityProvider
+	Bus                *LoaderBus
+	Streams            *SessionStreamBroker
+	Engine             LoaderEngine
+	Sessions           *SessionRPCBridge
+	Dashboard          *DashboardOverviewHub
+	EventQueue         *WebhookRunQueue
+	ProjectAgentRunner ProjectAgentRunner
+}
+
+func NewManager(deps ManagerDeps) (*LoaderManager, error) {
+	rootCtx := deps.RootCtx
+	if rootCtx == nil {
+		rootCtx = context.Background()
+	}
+	eventQueue := deps.EventQueue
+	if eventQueue == nil {
+		queue, err := newWebhookRunQueueFromConfig(deps.Config)
+		if err != nil {
+			return nil, err
+		}
+		eventQueue = queue
+	}
+	images := deps.Images
+	if images == nil {
+		images = NewDockerImageBackend()
+	}
+	engine := deps.Engine
+	if engine == nil {
+		engine = &QJSLoaderEngine{}
+	}
+	m := &LoaderManager{
+		config:             deps.Config,
+		rootCtx:            rootCtx,
+		store:              deps.Store,
+		configDB:           deps.ConfigDB,
+		driver:             deps.Driver,
+		executor:           deps.Executor,
+		images:             images,
+		llm:                deps.LLM,
+		cap:                deps.CapabilityProvider,
+		bus:                deps.Bus,
+		streams:            deps.Streams,
+		engine:             engine,
+		sessions:           deps.Sessions,
+		dashboard:          deps.Dashboard,
+		eventQueue:         eventQueue,
+		projectAgentRunner: deps.ProjectAgentRunner,
+		loaders:            map[string]Loader{},
+		running:            map[string]int{},
+		scheduleWake:       make(chan struct{}, 1),
+	}
+	m.initLoaderComponents()
+	return m, nil
+}
+
 func NewLoaderManager(di do.Injector) (*LoaderManager, error) {
 	rootCtx := do.MustInvoke[context.Context](di)
 	if rootCtx == nil {
@@ -98,7 +164,7 @@ func NewLoaderManager(di do.Injector) (*LoaderManager, error) {
 		executor:     do.MustInvoke[*Executor](di),
 		images:       NewDockerImageBackend(),
 		llm:          do.MustInvoke[*LLMClient](di),
-		cap:          do.MustInvoke[capabilityIntegration](di),
+		cap:          do.MustInvoke[CapabilityIntegration](di),
 		bus:          do.MustInvoke[*LoaderBus](di),
 		streams:      do.MustInvoke[*SessionStreamBroker](di),
 		engine:       do.MustInvoke[LoaderEngine](di),
@@ -111,6 +177,13 @@ func NewLoaderManager(di do.Injector) (*LoaderManager, error) {
 	}
 	m.initLoaderComponents()
 	return m, nil
+}
+
+func (m *LoaderManager) SetProjectAgentRunner(runner ProjectAgentRunner) {
+	if m == nil {
+		return
+	}
+	m.projectAgentRunner = runner
 }
 
 func (m *LoaderManager) initLoaderComponents() {
@@ -127,8 +200,13 @@ func (m *LoaderManager) initLoaderComponents() {
 		m.sessionRunner = NewLoaderSessionRunner(m)
 	}
 	if m.projectAgentRunner == nil {
-		m.projectAgentRunner = NewServiceProjectAgentRunner(m)
+		m.projectAgentRunner = noopProjectAgentRunner{}
 	}
+}
+
+func (m *LoaderManager) projectAgentRunnerComponent() ProjectAgentRunner {
+	m.initLoaderComponents()
+	return m.projectAgentRunner
 }
 
 func (m *LoaderManager) Start() {
@@ -882,7 +960,7 @@ func (h *loaderRunHost) ProjectAgent(ctx context.Context, prompt string, request
 		TriggerId:        h.run.TriggerID,
 		OutputSchemaJson: request.OutputSchema,
 		ClientRequestId:  firstNonEmpty(h.run.ID, uuid.NewString()),
-	}, nil)
+	})
 	if err != nil {
 		return LoaderAgentResult{}, err
 	}
@@ -1127,6 +1205,10 @@ func marshalJSONCompact(value any) (string, error) {
 	return string(data), nil
 }
 
+func MarshalJSONCompact(value any) (string, error) {
+	return marshalJSONCompact(value)
+}
+
 func parseLoaderTriggerEventMetadata(payloadJSON string) loaderTriggerEventMetadata {
 	payloadJSON = strings.TrimSpace(payloadJSON)
 	if payloadJSON == "" {
@@ -1146,7 +1228,7 @@ func parseLoaderTriggerEventMetadata(payloadJSON string) loaderTriggerEventMetad
 }
 
 func validateLoaderPublishTopic(topic string) error {
-	if err := validateTopicEventName(topic); err != nil {
+	if err := events.ValidateTopicEventName(topic); err != nil {
 		return err
 	}
 	if strings.HasPrefix(topic, "runtime.") || strings.HasPrefix(topic, "workflow.") || strings.HasPrefix(topic, "external.") {

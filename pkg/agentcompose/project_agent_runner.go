@@ -3,37 +3,31 @@ package agentcompose
 import (
 	"context"
 
+	"github.com/samber/do/v2"
+
+	appconfig "agent-compose/pkg/config"
+	loaderspkg "agent-compose/pkg/loaders"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
-type ProjectAgentRunner interface {
-	RunProjectAgent(ctx context.Context, msg *agentcomposev2.RunAgentRequest, stream *projectRunStreamSink) (ProjectRunRecord, error, error)
-}
+type ProjectAgentRunner = loaderspkg.ProjectAgentRunner
 
 type serviceProjectAgentRunner struct {
 	service *Service
 }
 
-func NewServiceProjectAgentRunner(manager *LoaderManager) ProjectAgentRunner {
-	if manager == nil {
-		return serviceProjectAgentRunner{service: &Service{}}
-	}
+func serviceProjectAgentRunnerFromDI(di do.Injector) ProjectAgentRunner {
 	return serviceProjectAgentRunner{service: &Service{
-		config:   manager.config,
-		store:    manager.store,
-		configDB: manager.configDB,
-		driver:   manager.driver,
-		executor: manager.executor,
-		images:   manager.images,
-		streams:  manager.streams,
+		config:   do.MustInvoke[*appconfig.Config](di),
+		store:    do.MustInvoke[*Store](di),
+		configDB: do.MustInvoke[*ConfigStore](di),
+		driver:   do.MustInvoke[Driver](di),
+		executor: do.MustInvoke[*Executor](di),
+		images:   NewDockerImageBackend(),
+		streams:  do.MustInvoke[*SessionStreamBroker](di),
 	}}
 }
 
-func (r serviceProjectAgentRunner) RunProjectAgent(ctx context.Context, msg *agentcomposev2.RunAgentRequest, stream *projectRunStreamSink) (ProjectRunRecord, error, error) {
-	return r.service.runProjectAgent(ctx, msg, stream)
-}
-
-func (m *LoaderManager) projectAgentRunnerComponent() ProjectAgentRunner {
-	m.initLoaderComponents()
-	return m.projectAgentRunner
+func (r serviceProjectAgentRunner) RunProjectAgent(ctx context.Context, msg *agentcomposev2.RunAgentRequest) (ProjectRunRecord, error, error) {
+	return r.service.runProjectAgent(ctx, msg, nil)
 }

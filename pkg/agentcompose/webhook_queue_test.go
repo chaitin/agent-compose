@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	appconfig "agent-compose/pkg/config"
+	loaderspkg "agent-compose/pkg/loaders"
 	"context"
 	"path/filepath"
 	"testing"
@@ -108,20 +109,17 @@ func testLoaderEventLoopRetriesWhenWebhookQueueFull(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	manager := &LoaderManager{
-		rootCtx: ctx,
-		config: &appconfig.Config{
+	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+		RootCtx: ctx,
+		Config: &appconfig.Config{
 			DataRoot:                   filepath.Join(t.TempDir(), "data"),
 			WebhookQueueDefaultWorkers: 1,
 		},
-		configDB:     store,
-		bus:          NewLoaderBusWithBuffer(8),
-		engine:       &QJSLoaderEngine{},
-		eventQueue:   newWebhookRunQueue(1),
-		loaders:      map[string]Loader{},
-		running:      map[string]int{},
-		scheduleWake: make(chan struct{}, 1),
-	}
+		ConfigDB:   store,
+		Bus:        NewLoaderBusWithBuffer(8),
+		Engine:     &QJSLoaderEngine{},
+		EventQueue: newWebhookRunQueue(1),
+	})
 	if _, err := manager.CreateLoader(ctx, Loader{
 		Summary: LoaderSummary{
 			ID:                "loader-webhook-queue",
@@ -140,14 +138,14 @@ scheduler.on("webhook.queue.test", "on-webhook", function(event) {
 		t.Fatalf("CreateLoader returned error: %v", err)
 	}
 
-	first, ok := manager.eventQueue.Reserve(LoaderTopicEvent{Topic: "webhook.queue.test", Payload: map[string]any{}})
+	first, ok := manager.EventQueue().Reserve(LoaderTopicEvent{Topic: "webhook.queue.test", Payload: map[string]any{}})
 	if !ok {
 		t.Fatalf("failed to fill queue")
 	}
 	defer first.Release()
 
-	go manager.eventLoop()
-	dispatcher := NewEventDispatcher(ctx, store, manager.bus)
+	go manager.RunEventLoop()
+	dispatcher := NewEventDispatcher(ctx, store, manager.Bus())
 	created, err := store.CreateEvent(ctx, TopicEventRecord{
 		Topic:         "webhook.queue.test",
 		Source:        TopicEventSourceWebhook,
@@ -201,20 +199,18 @@ func testLoaderEventLoopRetriesWhenSkipPolicyLoaderBusy(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	manager := &LoaderManager{
-		rootCtx: ctx,
-		config: &appconfig.Config{
+	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+		RootCtx: ctx,
+		Config: &appconfig.Config{
 			DataRoot:                   filepath.Join(t.TempDir(), "data"),
 			WebhookQueueDefaultWorkers: 8,
 		},
-		configDB:     store,
-		bus:          NewLoaderBusWithBuffer(8),
-		engine:       &QJSLoaderEngine{},
-		eventQueue:   newWebhookRunQueue(8),
-		loaders:      map[string]Loader{},
-		running:      map[string]int{"loader-webhook-busy": 1},
-		scheduleWake: make(chan struct{}, 1),
-	}
+		ConfigDB:   store,
+		Bus:        NewLoaderBusWithBuffer(8),
+		Engine:     &QJSLoaderEngine{},
+		EventQueue: newWebhookRunQueue(8),
+	})
+	manager.SetRunningCounts(map[string]int{"loader-webhook-busy": 1})
 	if _, err := manager.CreateLoader(ctx, Loader{
 		Summary: LoaderSummary{
 			ID:      "loader-webhook-busy",
@@ -230,12 +226,8 @@ scheduler.on("webhook.busy.test", "on-webhook", function(event) {
 	}); err != nil {
 		t.Fatalf("CreateLoader returned error: %v", err)
 	}
-	manager.mu.Lock()
-	manager.running["loader-webhook-busy"] = 1
-	manager.mu.Unlock()
-
-	go manager.eventLoop()
-	dispatcher := NewEventDispatcher(ctx, store, manager.bus)
+	go manager.RunEventLoop()
+	dispatcher := NewEventDispatcher(ctx, store, manager.Bus())
 	created, err := store.CreateEvent(ctx, TopicEventRecord{
 		Topic:         "webhook.busy.test",
 		Source:        TopicEventSourceWebhook,
@@ -289,20 +281,17 @@ func testLoaderEventLoopDedupesWebhookTargetsByLoader(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	manager := &LoaderManager{
-		rootCtx: ctx,
-		config: &appconfig.Config{
+	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+		RootCtx: ctx,
+		Config: &appconfig.Config{
 			DataRoot:                   filepath.Join(t.TempDir(), "data"),
 			WebhookQueueDefaultWorkers: 8,
 		},
-		configDB:     store,
-		bus:          NewLoaderBusWithBuffer(8),
-		engine:       &QJSLoaderEngine{},
-		eventQueue:   newWebhookRunQueue(8),
-		loaders:      map[string]Loader{},
-		running:      map[string]int{},
-		scheduleWake: make(chan struct{}, 1),
-	}
+		ConfigDB:   store,
+		Bus:        NewLoaderBusWithBuffer(8),
+		Engine:     &QJSLoaderEngine{},
+		EventQueue: newWebhookRunQueue(8),
+	})
 	loader, err := manager.CreateLoader(ctx, Loader{
 		Summary: LoaderSummary{
 			ID:                "loader-webhook-dedupe",
@@ -324,8 +313,8 @@ scheduler.on("webhook.dedupe.*", "wildcard", function(event) {
 		t.Fatalf("CreateLoader returned error: %v", err)
 	}
 
-	go manager.eventLoop()
-	dispatcher := NewEventDispatcher(ctx, store, manager.bus)
+	go manager.RunEventLoop()
+	dispatcher := NewEventDispatcher(ctx, store, manager.Bus())
 	created, err := store.CreateEvent(ctx, TopicEventRecord{
 		Topic:         "webhook.dedupe.test",
 		Source:        TopicEventSourceWebhook,
@@ -379,20 +368,17 @@ func testLoaderEventLoopRunsAllWebhookTargetLoaders(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	manager := &LoaderManager{
-		rootCtx: ctx,
-		config: &appconfig.Config{
+	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+		RootCtx: ctx,
+		Config: &appconfig.Config{
 			DataRoot:                   filepath.Join(t.TempDir(), "data"),
 			WebhookQueueDefaultWorkers: 8,
 		},
-		configDB:     store,
-		bus:          NewLoaderBusWithBuffer(8),
-		engine:       &QJSLoaderEngine{},
-		eventQueue:   newWebhookRunQueue(8),
-		loaders:      map[string]Loader{},
-		running:      map[string]int{},
-		scheduleWake: make(chan struct{}, 1),
-	}
+		ConfigDB:   store,
+		Bus:        NewLoaderBusWithBuffer(8),
+		Engine:     &QJSLoaderEngine{},
+		EventQueue: newWebhookRunQueue(8),
+	})
 	script := `
 scheduler.on("webhook.multi.test", "on-webhook", function(event) {
   return { ok: true };
@@ -423,8 +409,8 @@ scheduler.on("webhook.multi.test", "on-webhook", function(event) {
 		t.Fatalf("CreateLoader second returned error: %v", err)
 	}
 
-	go manager.eventLoop()
-	dispatcher := NewEventDispatcher(ctx, store, manager.bus)
+	go manager.RunEventLoop()
+	dispatcher := NewEventDispatcher(ctx, store, manager.Bus())
 	created, err := store.CreateEvent(ctx, TopicEventRecord{
 		Topic:         "webhook.multi.test",
 		Source:        TopicEventSourceWebhook,
@@ -482,11 +468,11 @@ func TestWebhookQueueE2EBypassesNonWebhookEvents(t *testing.T) {
 
 func testLoaderManagerWebhookQueueBypassesNonWebhookEvents(t *testing.T) {
 	t.Helper()
-	manager := &LoaderManager{
-		config:     &appconfig.Config{WebhookQueueDefaultWorkers: 1},
-		eventQueue: newWebhookRunQueue(1),
-	}
-	first, ok := manager.eventQueue.Reserve(LoaderTopicEvent{
+	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+		Config:     &appconfig.Config{DataRoot: filepath.Join(t.TempDir(), "data"), WebhookQueueDefaultWorkers: 1},
+		EventQueue: newWebhookRunQueue(1),
+	})
+	first, ok := manager.EventQueue().Reserve(LoaderTopicEvent{
 		Source:  TopicEventSourceWebhook,
 		Topic:   "webhook.queue.test",
 		Payload: map[string]any{},
@@ -496,7 +482,7 @@ func testLoaderManagerWebhookQueueBypassesNonWebhookEvents(t *testing.T) {
 	}
 	defer first.Release()
 
-	reservations, ok := manager.reserveEventQueueSlots(LoaderTopicEvent{
+	reservations, ok := manager.ReserveEventQueueSlots(LoaderTopicEvent{
 		Source:  TopicEventSourceLoader,
 		Topic:   "runtime.queue.test",
 		Payload: map[string]any{},

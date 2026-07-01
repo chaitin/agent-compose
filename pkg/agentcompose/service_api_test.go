@@ -3,6 +3,7 @@ package agentcompose
 import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	loaderspkg "agent-compose/pkg/loaders"
 	"context"
 	"fmt"
 	"net/http"
@@ -770,18 +771,22 @@ func newTestServiceAPIHarness(t *testing.T) (*Service, *fakeLoaderAgentRuntime, 
 	bus := NewLoaderBusWithBuffer(256)
 	aggregator := newDashboardOverviewAggregator(store, configDB)
 	dashboard := newDashboardOverviewHub(ctx, aggregator, 10*time.Millisecond)
-	manager := &LoaderManager{
-		config:       config,
-		rootCtx:      ctx,
-		configDB:     configDB,
-		engine:       &QJSLoaderEngine{},
-		streams:      streams,
-		dashboard:    dashboard,
-		loaders:      map[string]Loader{},
-		running:      map[string]int{},
-		scheduleWake: make(chan struct{}, 1),
-	}
+	llmClient := &LLMClient{config: config, configDB: configDB, client: llmServer.Client()}
 	sessions := &SessionRPCBridge{config: config, store: store, configDB: configDB, driver: driver, bus: bus, streams: streams, dashboard: dashboard}
+	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+		Config:    config,
+		RootCtx:   ctx,
+		Store:     store,
+		ConfigDB:  configDB,
+		Driver:    driver,
+		Executor:  loaderspkg.NewExecutor(config, store, configDB, runtimes, streams.componentBroker()),
+		LLM:       llmClient.componentClient(),
+		Bus:       bus,
+		Streams:   streams.componentBroker(),
+		Engine:    &QJSLoaderEngine{},
+		Sessions:  sessions.componentBridge(),
+		Dashboard: dashboard,
+	})
 	service := &Service{
 		config:    config,
 		store:     store,
@@ -790,7 +795,7 @@ func newTestServiceAPIHarness(t *testing.T) (*Service, *fakeLoaderAgentRuntime, 
 		runtimes:  runtimes,
 		executor:  executor,
 		loaders:   manager,
-		llm:       &LLMClient{config: config, configDB: configDB, client: llmServer.Client()},
+		llm:       llmClient,
 		bus:       bus,
 		streams:   streams,
 		dashboard: dashboard,
@@ -813,21 +818,20 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 		JupyterProxyBasePath: "/agent-compose/session",
 	}
 	configDB := newTestConfigStore(t)
-	manager := &LoaderManager{
-		config:       config,
-		rootCtx:      ctx,
-		configDB:     configDB,
-		engine:       &QJSLoaderEngine{},
-		store:        mustTestStore(t, config),
-		loaders:      map[string]Loader{},
-		running:      map[string]int{},
-		scheduleWake: make(chan struct{}, 1),
-	}
-	manager.llm = newTestLLMClient(t, configDB, "loader llm text")
-	manager.bus = NewLoaderBusWithBuffer(4)
+	store := mustTestStore(t, config)
+	llmClient := newTestLLMClient(t, configDB, "loader llm text")
+	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+		Config:   config,
+		RootCtx:  ctx,
+		ConfigDB: configDB,
+		Engine:   &QJSLoaderEngine{},
+		Store:    store,
+		LLM:      llmClient.componentClient(),
+		Bus:      NewLoaderBusWithBuffer(4),
+	})
 	service := &Service{
 		config:   config,
-		store:    manager.store,
+		store:    store,
 		configDB: configDB,
 		loaders:  manager,
 	}
@@ -1041,7 +1045,7 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 		t.Fatalf("loader event count = %d", len(events.Msg.GetEvents()))
 	}
 
-	manager.engine = &recordingLoaderEngine{}
+	manager.SetEngine(&recordingLoaderEngine{})
 	runNow, err := service.RunLoaderNow(ctx, connect.NewRequest(&agentcomposev1.RunLoaderNowRequest{
 		LoaderId:    loaderID,
 		PayloadJson: `{"manual":true}`,

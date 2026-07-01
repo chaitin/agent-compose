@@ -1,4 +1,4 @@
-package agentcompose
+package loaders
 
 import (
 	"encoding/json"
@@ -83,6 +83,10 @@ func loaderCronSpecJSON(expr, timezone string) (string, error) {
 		return "", err
 	}
 	return marshalJSONCompact(spec)
+}
+
+func LoaderCronSpecJSON(expr, timezone string) (string, error) {
+	return loaderCronSpecJSON(expr, timezone)
 }
 
 func parseLoaderCronSpecJSON(raw string) (loaderCronSpec, error) {

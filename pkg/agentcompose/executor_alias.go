@@ -119,10 +119,6 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `"'"'"'`) + "'"
 }
 
-func writeJSONArtifact(path string, value any) error {
-	return executorpkg.WriteJSONArtifact(path, value)
-}
-
 func collectAgentResumeInfo(session *Session, agent, agentSessionID, manifestPath string) *AgentResumeInfo {
 	return executorpkg.CollectAgentResumeInfo(session, agent, agentSessionID, manifestPath)
 }

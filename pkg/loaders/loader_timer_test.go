@@ -1,8 +1,9 @@
-package agentcompose
+package loaders
 
 import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	llmpkg "agent-compose/pkg/llm"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1902,15 +1903,15 @@ func TestLoaderRunHostAgentUsesLoaderDefaultAgentWhenRequestOmitsProvider(t *tes
 	}
 }
 
-func TestLoaderManagerProjectAgentRunnerCarriesImageBackend(t *testing.T) {
-	backend := &fakeImageBackend{}
-	manager := &LoaderManager{images: backend}
-	runner, ok := manager.projectAgentRunnerComponent().(serviceProjectAgentRunner)
+func TestLoaderManagerProjectAgentRunnerDefaultsAndInjection(t *testing.T) {
+	manager := &LoaderManager{}
+	runner, ok := manager.projectAgentRunnerComponent().(noopProjectAgentRunner)
 	if !ok {
-		t.Fatalf("projectAgentRunner type = %T, want serviceProjectAgentRunner", manager.projectAgentRunner)
+		t.Fatalf("projectAgentRunner type = %T, want noopProjectAgentRunner", manager.projectAgentRunner)
 	}
-	if runner.service.images != backend {
-		t.Fatalf("project agent runner images = %#v, want manager image backend", runner.service.images)
+	manager.SetProjectAgentRunner(runner)
+	if manager.projectAgentRunnerComponent() == nil {
+		t.Fatalf("projectAgentRunnerComponent returned nil after injection")
 	}
 }
 
@@ -1964,11 +1965,7 @@ func newTestLLMClient(t *testing.T, configDB *ConfigStore, text string) *LLMClie
 		_, _ = fmt.Fprintf(w, `{"id":"resp-loader","model":"model-a","status":"completed","output_text":%q}`, text)
 	}))
 	t.Cleanup(server.Close)
-	return &LLMClient{
-		config:   &appconfig.Config{LLMAPIEndpoint: server.URL, LLMModel: "model-a"},
-		configDB: configDB,
-		client:   server.Client(),
-	}
+	return llmpkg.NewClient(&appconfig.Config{LLMAPIEndpoint: server.URL, LLMModel: "model-a"}, configDB, server.Client())
 }
 
 type fixedRuntimeProvider struct {

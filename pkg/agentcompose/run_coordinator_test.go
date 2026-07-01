@@ -15,6 +15,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	loaderspkg "agent-compose/pkg/loaders"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
@@ -690,7 +691,7 @@ func TestManagedSchedulerManualRunPreservesProjectSecretEnv(t *testing.T) {
 		{Name: "SAFELINE_API_TOKEN", Value: "valid-token", Secret: true},
 	}
 	store, service, projectID := setupRunPreparationProject(t, spec, t.TempDir())
-	manager := newRunServiceLoaderManager(service)
+	manager := newRunServiceLoaderManager(t, service)
 	ctx := context.Background()
 	schedulers, err := store.ListProjectSchedulers(ctx, projectID)
 	if err != nil {
@@ -734,7 +735,7 @@ func TestManagedSchedulerManualRunPreservesProjectSecretEnv(t *testing.T) {
 
 func testManagedSchedulerAgentUsesProjectRunPipeline(t *testing.T) {
 	store, service, projectID := setupRunCoordinatorProject(t)
-	manager := newRunServiceLoaderManager(service)
+	manager := newRunServiceLoaderManager(t, service)
 	ctx := context.Background()
 	schedulers, err := store.ListProjectSchedulers(ctx, projectID)
 	if err != nil {
@@ -750,11 +751,7 @@ func testManagedSchedulerAgentUsesProjectRunPipeline(t *testing.T) {
 	if len(loader.Triggers) == 0 {
 		t.Fatalf("managed loader has no triggers: %#v", loader)
 	}
-	host := &loaderRunHost{
-		manager: manager,
-		loader:  loader,
-		run:     &LoaderRunSummary{ID: "loader-run-managed-project", LoaderID: loader.Summary.ID, TriggerID: loader.Triggers[0].ID},
-	}
+	host := newLoaderRunHost(manager, loader, &LoaderRunSummary{ID: "loader-run-managed-project", LoaderID: loader.Summary.ID, TriggerID: loader.Triggers[0].ID}, loaderTriggerEventMetadata{})
 	result, err := host.Agent(ctx, "scheduled project prompt", LoaderAgentRequest{})
 	if err != nil {
 		t.Fatalf("managed scheduler Agent returned error: %v", err)
@@ -1189,21 +1186,26 @@ func runServiceFakeRuntime(t *testing.T, service *Service) *fakeLoaderAgentRunti
 	return runtime
 }
 
-func newRunServiceLoaderManager(service *Service) *LoaderManager {
-	return &LoaderManager{
-		config:       service.config,
-		rootCtx:      context.Background(),
-		store:        service.store,
-		configDB:     service.configDB,
-		driver:       service.driver,
-		executor:     service.executor,
-		streams:      service.streams,
-		bus:          NewLoaderBusWithBuffer(16),
-		engine:       &QJSLoaderEngine{},
-		loaders:      map[string]Loader{},
-		running:      map[string]int{},
-		scheduleWake: make(chan struct{}, 1),
+func newRunServiceLoaderManager(t testing.TB, service *Service) *LoaderManager {
+	t.Helper()
+	var componentStreams *loaderspkg.SessionStreamBroker
+	if service.streams != nil {
+		componentStreams = service.streams.componentBroker()
 	}
+	return newTestLoaderManager(t, loaderspkg.ManagerDeps{
+		Config:   service.config,
+		RootCtx:  context.Background(),
+		Store:    service.store,
+		ConfigDB: service.configDB,
+		Driver:   service.driver,
+		Executor: loaderspkg.NewExecutor(service.config, service.store, service.configDB, service.runtimes, componentStreams),
+		Streams:  componentStreams,
+		Bus:      NewLoaderBusWithBuffer(16),
+		Engine:   &QJSLoaderEngine{},
+		ProjectAgentRunner: serviceProjectAgentRunner{
+			service: service,
+		},
+	})
 }
 
 func loaderEventsContain(events []LoaderEvent, eventType string) bool {
