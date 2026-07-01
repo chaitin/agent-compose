@@ -5,8 +5,10 @@ import (
 	driverpkg "agent-compose/pkg/driver"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +25,179 @@ func TestStorePersistenceErrorAndUpdateBranches(t *testing.T) {
 
 func TestStoreCreateSessionUsesConfiguredJupyterProxyBase(t *testing.T) {
 	testStoreCreateSessionUsesConfiguredJupyterProxyBase(t)
+}
+
+func TestStoreAddEventConcurrentWritesDoNotDropEvents(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := newTestTimelineStore(t)
+	session, err := store.CreateSession(ctx, "Concurrent Events", "", driverpkg.RuntimeDriverBoxlite, "", "", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	const eventCount = 200
+	var wg sync.WaitGroup
+	errs := make(chan error, eventCount)
+	for index := range eventCount {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			errs <- store.AddEvent(ctx, session.Summary.ID, SessionEvent{
+				ID:        fmt.Sprintf("event-%03d", index),
+				Type:      "session.concurrent",
+				Level:     "info",
+				Message:   fmt.Sprintf("event %d", index),
+				CreatedAt: time.Now().UTC(),
+			})
+		}(index)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("AddEvent returned error: %v", err)
+		}
+	}
+
+	events, err := store.ListEvents(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("ListEvents returned error: %v", err)
+	}
+	if len(events) != eventCount {
+		t.Fatalf("event count = %d, want %d", len(events), eventCount)
+	}
+	seen := make(map[string]struct{}, len(events))
+	for _, event := range events {
+		seen[event.ID] = struct{}{}
+	}
+	for index := range eventCount {
+		id := fmt.Sprintf("event-%03d", index)
+		if _, ok := seen[id]; !ok {
+			t.Fatalf("missing event %q after concurrent writes", id)
+		}
+	}
+	loaded, err := store.GetSession(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if loaded.Summary.EventCount != eventCount {
+		t.Fatalf("session event count = %d, want %d", loaded.Summary.EventCount, eventCount)
+	}
+}
+
+func TestStoreAddCellConcurrentWritesDoNotDropCells(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := newTestTimelineStore(t)
+	session, err := store.CreateSession(ctx, "Concurrent Cells", "", driverpkg.RuntimeDriverBoxlite, "", "", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	const cellCount = 200
+	var wg sync.WaitGroup
+	errs := make(chan error, cellCount)
+	for index := range cellCount {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			errs <- store.AddCell(ctx, session, NotebookCell{
+				ID:        fmt.Sprintf("cell-%03d", index),
+				Type:      CellTypeShell,
+				Source:    fmt.Sprintf("echo %d", index),
+				Success:   true,
+				CreatedAt: time.Now().UTC(),
+			})
+		}(index)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("AddCell returned error: %v", err)
+		}
+	}
+
+	cells, err := store.ListCells(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("ListCells returned error: %v", err)
+	}
+	if len(cells) != cellCount {
+		t.Fatalf("cell count = %d, want %d", len(cells), cellCount)
+	}
+	seen := make(map[string]struct{}, len(cells))
+	for _, cell := range cells {
+		seen[cell.ID] = struct{}{}
+	}
+	for index := range cellCount {
+		id := fmt.Sprintf("cell-%03d", index)
+		if _, ok := seen[id]; !ok {
+			t.Fatalf("missing cell %q after concurrent writes", id)
+		}
+	}
+	loaded, err := store.GetSession(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if loaded.Summary.CellCount != cellCount {
+		t.Fatalf("session cell count = %d, want %d", loaded.Summary.CellCount, cellCount)
+	}
+}
+
+func TestStoreListSessionsPrunesTimelineLocksForRemovedSessionDirs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := newTestTimelineStore(t)
+	first, err := store.CreateSession(ctx, "Removed", "", driverpkg.RuntimeDriverBoxlite, "", "", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession first returned error: %v", err)
+	}
+	second, err := store.CreateSession(ctx, "Kept", "", driverpkg.RuntimeDriverBoxlite, "", "", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession second returned error: %v", err)
+	}
+	if err := store.AddEvent(ctx, first.Summary.ID, SessionEvent{ID: "event-removed", Type: "session.test", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("AddEvent first returned error: %v", err)
+	}
+	if err := store.AddEvent(ctx, second.Summary.ID, SessionEvent{ID: "event-kept", Type: "session.test", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("AddEvent second returned error: %v", err)
+	}
+	if err := os.RemoveAll(store.sessionDir(first.Summary.ID)); err != nil {
+		t.Fatalf("RemoveAll first session dir: %v", err)
+	}
+
+	if _, err := store.ListSessions(ctx, SessionListOptions{}); err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+
+	store.timelineLocksMu.Lock()
+	defer store.timelineLocksMu.Unlock()
+	if _, ok := store.timelineLocks[first.Summary.ID]; ok {
+		t.Fatalf("timeline lock for removed session %q was not pruned", first.Summary.ID)
+	}
+	if _, ok := store.timelineLocks[second.Summary.ID]; !ok {
+		t.Fatalf("timeline lock for existing session %q was pruned", second.Summary.ID)
+	}
+}
+
+func newTestTimelineStore(t *testing.T) *Store {
+	t.Helper()
+	config := &appconfig.Config{
+		SessionRoot:          filepath.Join(t.TempDir(), "sessions"),
+		RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:         "default-box:latest",
+		GuestHomePath:        "/home/agent-compose",
+		JupyterGuestPort:     8888,
+		JupyterProxyBasePath: "/agent-compose/session",
+	}
+	di := do.New()
+	do.ProvideValue(di, config)
+	store, err := NewStore(di)
+	if err != nil {
+		t.Fatalf("NewStore returned error: %v", err)
+	}
+	return store
 }
 
 func testStoreCreateSessionUsesConfiguredJupyterProxyBase(t *testing.T) {

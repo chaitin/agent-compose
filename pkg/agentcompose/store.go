@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,7 +20,9 @@ import (
 )
 
 type Store struct {
-	config *appconfig.Config
+	config          *appconfig.Config
+	timelineLocks   map[string]*sync.Mutex
+	timelineLocksMu sync.Mutex
 }
 
 func NewStore(di do.Injector) (*Store, error) {
@@ -161,6 +164,7 @@ func (s *Store) ListSessions(_ context.Context, options SessionListOptions) (Ses
 		}
 		sessions = append(sessions, session)
 	}
+	s.pruneTimelineLocks()
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].Summary.UpdatedAt.After(sessions[j].Summary.UpdatedAt)
 	})
@@ -186,6 +190,10 @@ func (s *Store) UpdateSession(_ context.Context, session *Session) error {
 }
 
 func (s *Store) AddCell(_ context.Context, session *Session, cell NotebookCell) error {
+	lock := s.timelineLock(session.Summary.ID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	cells, err := s.loadCells(session.Summary.ID)
 	if err != nil {
 		return err
@@ -216,6 +224,10 @@ func (s *Store) AddCell(_ context.Context, session *Session, cell NotebookCell) 
 }
 
 func (s *Store) ListCells(_ context.Context, id string) ([]NotebookCell, error) {
+	lock := s.timelineLock(id)
+	lock.Lock()
+	defer lock.Unlock()
+
 	return s.loadCells(id)
 }
 
@@ -240,18 +252,14 @@ func (s *Store) AddAgentRun(_ context.Context, sessionID string, run AgentRun) e
 	if err := s.AddCell(context.Background(), session, cell); err != nil {
 		return err
 	}
-	session, err = s.loadSession(sessionID)
-	if err == nil {
-		timelineCells, loadErr := s.loadCells(sessionID)
-		if loadErr == nil {
-			session.Summary.CellCount = len(timelineCells)
-		}
-		_ = s.UpdateSession(context.Background(), session)
-	}
 	return nil
 }
 
 func (s *Store) AddEvent(_ context.Context, sessionID string, event SessionEvent) error {
+	lock := s.timelineLock(sessionID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	events, err := s.loadEvents(sessionID)
 	if err != nil {
 		return err
@@ -269,7 +277,35 @@ func (s *Store) AddEvent(_ context.Context, sessionID string, event SessionEvent
 }
 
 func (s *Store) ListEvents(_ context.Context, id string) ([]SessionEvent, error) {
+	lock := s.timelineLock(id)
+	lock.Lock()
+	defer lock.Unlock()
+
 	return s.loadEvents(id)
+}
+
+func (s *Store) timelineLock(id string) *sync.Mutex {
+	s.timelineLocksMu.Lock()
+	defer s.timelineLocksMu.Unlock()
+	if s.timelineLocks == nil {
+		s.timelineLocks = make(map[string]*sync.Mutex)
+	}
+	lock := s.timelineLocks[id]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		s.timelineLocks[id] = lock
+	}
+	return lock
+}
+
+func (s *Store) pruneTimelineLocks() {
+	s.timelineLocksMu.Lock()
+	defer s.timelineLocksMu.Unlock()
+	for id := range s.timelineLocks {
+		if _, err := os.Stat(s.sessionDir(id)); os.IsNotExist(err) {
+			delete(s.timelineLocks, id)
+		}
+	}
 }
 
 func (s *Store) sessionDir(id string) string {
