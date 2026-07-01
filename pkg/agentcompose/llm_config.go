@@ -9,13 +9,11 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
-	pathpkg "path"
 	"sort"
 	"strings"
 	"time"
@@ -875,42 +873,7 @@ func llmProviderSelectionPriority(scope string) int {
 }
 
 func providerForwardHeaders(provider LLMProvider) (http.Header, error) {
-	headers := http.Header{}
-	if raw := strings.TrimSpace(provider.HeadersJSON); raw != "" && raw != "{}" {
-		custom := map[string]string{}
-		if err := json.Unmarshal([]byte(raw), &custom); err != nil {
-			return nil, fmt.Errorf("decode llm provider headers: %w", err)
-		}
-		for key, value := range custom {
-			if forbiddenProviderHeader(key, provider.AuthHeader) {
-				continue
-			}
-			headers.Set(strings.TrimSpace(key), value)
-		}
-	}
-	authHeader := firstNonEmpty(strings.TrimSpace(provider.AuthHeader), "Authorization")
-	apiKey := strings.TrimSpace(provider.APIKey)
-	if apiKey != "" {
-		if scheme := strings.TrimSpace(provider.AuthScheme); scheme != "" {
-			headers.Set(authHeader, scheme+" "+apiKey)
-		} else {
-			headers.Set(authHeader, apiKey)
-		}
-	}
-	return headers, nil
-}
-
-func forbiddenProviderHeader(name, authHeader string) bool {
-	canonical := strings.ToLower(strings.TrimSpace(name))
-	if canonical == "" || canonical == strings.ToLower(strings.TrimSpace(authHeader)) {
-		return true
-	}
-	switch canonical {
-	case "authorization", "proxy-authorization", "host", "content-length", "content-type", "cookie", "set-cookie":
-		return true
-	default:
-		return false
-	}
+	return llms.ProviderForwardHeaders(provider)
 }
 
 func normalizeLLMWireAPI(value string) string {
@@ -930,24 +893,7 @@ func normalizeLLMAPIBaseURL(raw, wireAPI string) string {
 }
 
 func llmEndpointForProvider(provider LLMProvider, wireAPI string) string {
-	if normalizeLLMProviderType(provider.ProviderType) == llmProviderFamilyAnthropic {
-		baseURL := normalizeAnthropicAPIBaseURL(provider.BaseURL)
-		parsed, err := url.Parse(baseURL)
-		if err != nil {
-			return strings.TrimRight(baseURL, "/") + "/messages"
-		}
-		parsed.Path = pathpkg.Join(parsed.Path, "messages")
-		return parsed.String()
-	}
-	baseURL := normalizeLLMAPIBaseURL(provider.BaseURL, wireAPI)
-	if !llmProviderScopeIsConfigured(provider.Scope) {
-		return normalizeLLMAPIEndpointForProtocol(baseURL, wireAPI)
-	}
-	return appendLLMAPIEndpointToBaseURL(baseURL, wireAPI)
-}
-
-func appendLLMAPIEndpointToBaseURL(baseURL, wireAPI string) string {
-	return llms.AppendAPIEndpointToBaseURL(baseURL, wireAPI)
+	return llms.EndpointForProvider(provider, wireAPI)
 }
 
 func normalizeAnthropicAPIBaseURL(raw string) string {
