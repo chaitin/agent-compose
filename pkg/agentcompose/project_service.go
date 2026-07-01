@@ -630,23 +630,11 @@ func specHashOrEmpty(normalized normalizedV2Project) string {
 }
 
 func projectAgentRecordsFromSpec(projectID string, revision int64, spec *compose.NormalizedProjectSpec) ([]ProjectAgentRecord, error) {
-	agents := make([]ProjectAgentRecord, 0, len(spec.Agents))
-	for _, agent := range spec.Agents {
-		record, err := NewProjectAgentRecordFromSpec(projectID, revision, agent)
-		if err != nil {
-			return nil, err
-		}
-		agents = append(agents, record)
-	}
-	return agents, nil
+	return projects.NewAgentRecordsFromSpec(projectID, revision, spec)
 }
 
 func projectManagedAgentDefinitionsFromSpec(project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]AgentDefinition, error) {
 	return projects.NewAgentDefinitionsFromSpec(project, revision, spec)
-}
-
-func sessionEnvItemsFromCompose(values map[string]compose.EnvVarSpec) []SessionEnvVar {
-	return projects.SessionEnvItemsFromCompose(values)
 }
 
 func (s *Service) projectManagedSchedulersFromSpec(ctx context.Context, project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]ProjectSchedulerRecord, []Loader, error) {
@@ -730,45 +718,7 @@ func (s *Service) projectManagedSchedulerBuildsFromSpec(ctx context.Context, pro
 }
 
 func projectManagedLoaderFromScheduler(project ProjectRecord, scheduler ProjectSchedulerRecord, agent compose.NormalizedAgentSpec) (Loader, error) {
-	managedAgentID, err := StableManagedAgentID(project.ID, agent.Name)
-	if err != nil {
-		return Loader{}, err
-	}
-	driver := ""
-	if agent.Driver != nil {
-		driver = agent.Driver.Name
-	}
-	var triggers []LoaderTrigger
-	script := agent.Scheduler.Script
-	if strings.TrimSpace(script) == "" {
-		var err error
-		triggers, script, err = projectManagedLoaderTriggersAndScript(project.ID, agent.Name, "", agent.Scheduler)
-		if err != nil {
-			return Loader{}, err
-		}
-	}
-	return Loader{
-		Summary: LoaderSummary{
-			ID:                 scheduler.ManagedLoaderID,
-			Name:               fmt.Sprintf("%s/%s scheduler", project.Name, agent.Name),
-			Enabled:            scheduler.Enabled,
-			Runtime:            LoaderRuntimeScheduler,
-			AgentID:            managedAgentID,
-			Driver:             driver,
-			GuestImage:         agent.Image,
-			DefaultAgent:       agent.Provider,
-			SessionPolicy:      LoaderSessionPolicyNew,
-			ConcurrencyPolicy:  LoaderConcurrencyPolicySkip,
-			CapsetIDs:          normalizeCapsetIDs(agent.CapsetIDs),
-			ManagedProjectID:   project.ID,
-			ManagedRevision:    scheduler.Revision,
-			ManagedAgentName:   agent.Name,
-			ManagedSchedulerID: scheduler.SchedulerID,
-		},
-		Script:   script,
-		Triggers: triggers,
-		EnvItems: sessionEnvItemsFromCompose(agent.Env),
-	}, nil
+	return projects.NewManagedLoaderFromScheduler(project, scheduler, agent)
 }
 
 func projectManagedLoaderTriggersAndScript(projectID, agentName, schedulerName string, scheduler *compose.NormalizedSchedulerSpec) ([]LoaderTrigger, string, error) {

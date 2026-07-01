@@ -62,6 +62,18 @@ func NewAgentRecordFromSpec(projectID string, revision int64, agent compose.Norm
 	}, nil
 }
 
+func NewAgentRecordsFromSpec(projectID string, revision int64, spec *compose.NormalizedProjectSpec) ([]domain.ProjectAgentRecord, error) {
+	agents := make([]domain.ProjectAgentRecord, 0, len(spec.Agents))
+	for _, agent := range spec.Agents {
+		record, err := NewAgentRecordFromSpec(projectID, revision, agent)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, record)
+	}
+	return agents, nil
+}
+
 func NewAgentDefinitionsFromSpec(project domain.ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]domain.AgentDefinition, error) {
 	agents := make([]domain.AgentDefinition, 0, len(spec.Agents))
 	for _, agent := range spec.Agents {
@@ -98,6 +110,48 @@ func NewAgentDefinitionFromSpec(project domain.ProjectRecord, revision int64, ag
 		ManagedProjectID:       project.ID,
 		ManagedProjectRevision: revision,
 		ManagedAgentName:       agent.Name,
+	}, nil
+}
+
+func NewManagedLoaderFromScheduler(project domain.ProjectRecord, scheduler domain.ProjectSchedulerRecord, agent compose.NormalizedAgentSpec) (domain.Loader, error) {
+	managedAgentID, err := domain.StableManagedAgentID(project.ID, agent.Name)
+	if err != nil {
+		return domain.Loader{}, err
+	}
+	driver := ""
+	if agent.Driver != nil {
+		driver = agent.Driver.Name
+	}
+	var triggers []domain.LoaderTrigger
+	script := agent.Scheduler.Script
+	if strings.TrimSpace(script) == "" {
+		var err error
+		triggers, script, err = ManagedLoaderTriggersAndScript(project.ID, agent.Name, "", agent.Scheduler)
+		if err != nil {
+			return domain.Loader{}, err
+		}
+	}
+	return domain.Loader{
+		Summary: domain.LoaderSummary{
+			ID:                 scheduler.ManagedLoaderID,
+			Name:               fmt.Sprintf("%s/%s scheduler", project.Name, agent.Name),
+			Enabled:            scheduler.Enabled,
+			Runtime:            domain.LoaderRuntimeScheduler,
+			AgentID:            managedAgentID,
+			Driver:             driver,
+			GuestImage:         agent.Image,
+			DefaultAgent:       agent.Provider,
+			SessionPolicy:      domain.LoaderSessionPolicyNew,
+			ConcurrencyPolicy:  domain.LoaderConcurrencyPolicySkip,
+			CapsetIDs:          capabilities.NormalizeCapsetIDs(agent.CapsetIDs),
+			ManagedProjectID:   project.ID,
+			ManagedRevision:    scheduler.Revision,
+			ManagedAgentName:   agent.Name,
+			ManagedSchedulerID: scheduler.SchedulerID,
+		},
+		Script:   script,
+		Triggers: triggers,
+		EnvItems: SessionEnvItemsFromCompose(agent.Env),
 	}, nil
 }
 
