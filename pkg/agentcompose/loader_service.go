@@ -9,6 +9,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"agent-compose/pkg/agentcompose/api"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
@@ -216,122 +217,29 @@ func protoEnvItemsToModel(items []*agentcomposev1.SessionEnvVar) []SessionEnvVar
 }
 
 func toProtoLoaderSummary(item LoaderSummary) *agentcomposev1.LoaderSummary {
-	return &agentcomposev1.LoaderSummary{
-		LoaderId:          item.ID,
-		Name:              item.Name,
-		Description:       item.Description,
-		Enabled:           item.Enabled,
-		Runtime:           item.Runtime,
-		WorkspaceId:       item.WorkspaceID,
-		AgentId:           item.AgentID,
-		Driver:            item.Driver,
-		GuestImage:        item.GuestImage,
-		DefaultAgent:      item.DefaultAgent,
-		SessionPolicy:     item.SessionPolicy,
-		ConcurrencyPolicy: item.ConcurrencyPolicy,
-		CapsetIds:         item.CapsetIDs,
-		CreatedAt:         item.CreatedAt.Format(time.RFC3339Nano),
-		UpdatedAt:         item.UpdatedAt.Format(time.RFC3339Nano),
-		LastError:         item.LastError,
-		TriggerCount:      uint32(item.TriggerCount),
-		RunCount:          uint32(item.RunCount),
-		EventCount:        uint32(item.EventCount),
-		LatestRunAt:       formatMaybeTime(item.LatestRunAt),
-	}
+	return api.LoaderSummaryToProto(item)
 }
 
 func toProtoLoaderDetail(item Loader) *agentcomposev1.LoaderDetail {
-	resp := &agentcomposev1.LoaderDetail{
-		Summary:   toProtoLoaderSummary(item.Summary),
-		Script:    item.Script,
-		CapsetIds: item.Summary.CapsetIDs,
-	}
-	for _, trigger := range item.Triggers {
-		resp.Triggers = append(resp.Triggers, toProtoLoaderTrigger(trigger))
-	}
-	for _, envItem := range item.EnvItems {
-		value := envItem.Value
-		if envItem.Secret && value != "" {
-			value = "********"
-		}
-		resp.EnvItems = append(resp.EnvItems, &agentcomposev1.SessionEnvVar{Name: envItem.Name, Value: value, Secret: envItem.Secret})
-	}
-	return resp
+	return api.LoaderDetailToProto(item)
 }
 
 func toProtoLoaderTrigger(item LoaderTrigger) *agentcomposev1.LoaderTrigger {
-	return &agentcomposev1.LoaderTrigger{
-		LoaderId:    item.LoaderID,
-		TriggerId:   item.ID,
-		Kind:        toProtoLoaderTriggerKind(item.Kind),
-		Topic:       item.Topic,
-		IntervalMs:  item.IntervalMs,
-		Enabled:     item.Enabled,
-		AutoId:      item.AutoID,
-		SpecJson:    item.SpecJSON,
-		NextFireAt:  formatMaybeTime(item.NextFireAt),
-		LastFiredAt: formatMaybeTime(item.LastFiredAt),
-	}
+	return api.LoaderTriggerToProto(item)
 }
 
 func toProtoLoaderRunSummary(item LoaderRunSummary) *agentcomposev1.LoaderRunSummary {
-	return &agentcomposev1.LoaderRunSummary{
-		RunId:              item.ID,
-		LoaderId:           item.LoaderID,
-		TriggerId:          item.TriggerID,
-		TriggerKind:        toProtoLoaderTriggerKind(item.TriggerKind),
-		TriggerSource:      item.TriggerSource,
-		Status:             item.Status,
-		StartedAt:          item.StartedAt.Format(time.RFC3339Nano),
-		CompletedAt:        formatMaybeTime(item.CompletedAt),
-		DurationMs:         item.DurationMs,
-		Error:              item.Error,
-		ResultJson:         item.ResultJSON,
-		PayloadJson:        item.PayloadJSON,
-		SourceScriptSha256: item.SourceScriptHash,
-		ArtifactsDir:       item.ArtifactsDir,
-	}
+	return api.LoaderRunSummaryToProto(item)
 }
 
 func toProtoLoaderRunDetail(item LoaderRunSummary) *agentcomposev1.LoaderRunDetail {
-	return &agentcomposev1.LoaderRunDetail{Summary: toProtoLoaderRunSummary(item)}
+	return api.LoaderRunDetailToProto(item)
 }
 
 func toProtoLoaderEvent(item LoaderEvent) *agentcomposev1.LoaderEvent {
-	return &agentcomposev1.LoaderEvent{
-		Id:                   item.ID,
-		LoaderId:             item.LoaderID,
-		RunId:                item.RunID,
-		TriggerId:            item.TriggerID,
-		Type:                 item.Type,
-		Level:                item.Level,
-		Message:              item.Message,
-		PayloadJson:          item.PayloadJSON,
-		LinkedSessionId:      item.LinkedSessionID,
-		LinkedCellId:         item.LinkedCellID,
-		LinkedAgentSessionId: item.LinkedAgentSessionID,
-		CreatedAt:            item.CreatedAt.Format(time.RFC3339Nano),
-	}
+	return api.LoaderEventToProto(item)
 }
 
 func toProtoLoaderTriggerKind(kind string) agentcomposev1.LoaderTriggerKind {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case LoaderTriggerKindInterval:
-		return agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_INTERVAL
-	case LoaderTriggerKindEvent:
-		return agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_EVENT
-	case LoaderTriggerKindTimeout:
-		return agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_TIMEOUT
-	case LoaderTriggerKindCron:
-		return agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_CRON
-	default:
-		return agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_UNSPECIFIED
-	}
-}
-
-func formatMaybeTime(value time.Time) string {
-	if value.IsZero() {
-		return ""
-	}
-	return value.UTC().Format(time.RFC3339Nano)
+	return api.LoaderTriggerKindToProto(kind)
 }
