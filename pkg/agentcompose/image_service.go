@@ -309,30 +309,7 @@ func (b *DockerImageBackend) inspectedAt() string {
 	return now().UTC().Format(time.RFC3339Nano)
 }
 
-type imageBackendOpError struct {
-	Op       string
-	Endpoint string
-	ImageRef string
-	Err      error
-}
-
-func (e imageBackendOpError) Error() string {
-	parts := []string{strings.TrimSpace(e.Op)}
-	if e.ImageRef != "" {
-		parts = append(parts, fmt.Sprintf("image %s", e.ImageRef))
-	}
-	if e.Endpoint != "" {
-		parts = append(parts, fmt.Sprintf("endpoint %s", e.Endpoint))
-	}
-	if e.Err != nil {
-		parts = append(parts, e.Err.Error())
-	}
-	return strings.Join(parts, ": ")
-}
-
-func (e imageBackendOpError) Unwrap() error {
-	return e.Err
-}
+type imageBackendOpError = images.OpError
 
 func connectErrorForImageBackend(op, imageRef string, err error) error {
 	if err == nil {
