@@ -1,8 +1,6 @@
 package agentcompose
 
 import (
-	"context"
-
 	"github.com/samber/do/v2"
 
 	"agent-compose/pkg/capabilities"
@@ -33,18 +31,6 @@ func normalizeCapsetIDs(ids []string) []string {
 
 func sessionCapabilityCapsets(session *Session) []string {
 	return capabilities.SessionCapabilityCapsets(session)
-}
-
-func buildCapabilityGatewaySessionVars(publicTarget string, capsetIDs []string) ([]SessionEnvVar, []SessionTag) {
-	return capabilities.BuildGatewaySessionVars(publicTarget, capsetIDs)
-}
-
-func writeCapabilityGuide(ctx context.Context, provider CapabilityProvider, store *Store, streams *SessionStreamBroker, session *Session, capsetIDs []string) {
-	capabilities.WriteGuide(ctx, provider, store, streams, session, capsetIDs)
-}
-
-func capabilityGatewayProxyTarget(provider CapabilityProvider) string {
-	return capabilities.GatewayProxyTarget(provider)
 }
 
 func sessionCapabilityGuidePath(session *Session) string {

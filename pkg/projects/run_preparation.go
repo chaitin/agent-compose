@@ -1,4 +1,4 @@
-package agentcompose
+package projects
 
 import (
 	"context"
@@ -62,6 +62,10 @@ func (s *Service) prepareProjectRun(ctx context.Context, run ProjectRunRecord, r
 		prepared.Workspace = toSessionWorkspaceSnapshot(*workspace)
 	}
 	return prepared, nil
+}
+
+func (s *Service) PrepareProjectRun(ctx context.Context, run ProjectRunRecord, requestEnv []*agentcomposev2.EnvVarSpec) (ProjectRunPreparation, error) {
+	return s.prepareProjectRun(ctx, run, requestEnv)
 }
 
 func decodeProjectRevisionSpec(raw string) (*agentcomposev2.ProjectSpec, error) {

@@ -1,4 +1,4 @@
-package agentcompose
+package projects
 
 import (
 	"context"
@@ -17,6 +17,8 @@ import (
 )
 
 var errRunAgentStreamSend = errors.New("run agent stream send failed")
+
+var ErrRunAgentStreamSend = errRunAgentStreamSend
 
 func (s *Service) RunAgent(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest]) (*connect.Response[agentcomposev2.RunAgentResponse], error) {
 	run, _, err := s.runProjectAgent(ctx, req.Msg, nil)
@@ -58,6 +60,18 @@ func (s *Service) RunAgentStream(ctx context.Context, req *connect.Request[agent
 
 type projectRunStreamSink struct {
 	send func(*agentcomposev2.RunAgentStreamResponse) error
+}
+
+type ProjectRunStreamSink struct {
+	Send func(*agentcomposev2.RunAgentStreamResponse) error
+}
+
+func (s *Service) RunProjectAgentWithStream(ctx context.Context, msg *agentcomposev2.RunAgentRequest, stream *ProjectRunStreamSink) (ProjectRunRecord, error, error) {
+	var sink *projectRunStreamSink
+	if stream != nil {
+		sink = &projectRunStreamSink{send: stream.Send}
+	}
+	return s.runProjectAgent(ctx, msg, sink)
 }
 
 func (s *Service) runProjectAgent(ctx context.Context, msg *agentcomposev2.RunAgentRequest, stream *projectRunStreamSink) (ProjectRunRecord, error, error) {

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,6 +58,7 @@ type Service struct {
 	sessions        *SessionRPCBridge
 	sessionHandlers *sessions.Service
 	loaderHandlers  *LoaderService
+	projectHandlers *ProjectService
 	startedAt       time.Time
 	startOnce       sync.Once
 	startErr        error
@@ -105,6 +105,7 @@ func NewService(di do.Injector) (*Service, error) {
 	config.ImageCacheRoot = ociCache.Root()
 	ociImages := images.NewOCIImageBackend(ociCache)
 	autoImages := images.NewAutoImageBackend(config.ImageStoreMode, dockerImages, ociImages)
+	projectHandlers, _ := do.Invoke[*ProjectService](di)
 	service := &Service{
 		Service:           images.NewService(dockerImages, ociImages, autoImages),
 		DashboardService:  dashboard.NewService(dashHub),
@@ -129,8 +130,13 @@ func NewService(di do.Injector) (*Service, error) {
 		events:            NewEventDispatcher(do.MustInvoke[context.Context](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderBus](di)),
 		sessions:          do.MustInvoke[*SessionRPCBridge](di),
 		loaderHandlers:    NewLoaderService(do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderManager](di), do.MustInvoke[*LoaderBus](di)),
+		projectHandlers:   projectHandlers,
 		startedAt:         time.Now().UTC(),
 	}
+	if service.projectHandlers == nil {
+		service.projectHandlers = NewProjectServiceFromDeps(service)
+	}
+	service.loaders.SetProjectAgentRunner(service.projectHandlers)
 	service.sessionHandlers = sessions.NewService(service.store, service.executor, service.bus, service.streams.componentBroker(), service.sessions.componentBridge(), service.resolveSessionAgentConfigForSessions)
 	return service, nil
 }
@@ -158,6 +164,7 @@ func Register(di do.Injector) {
 	do.Provide(di, NewLoaderEngine)
 	do.Provide(di, NewSessionRPCBridge)
 	do.Provide(di, NewLoaderManager)
+	do.Provide(di, NewProjectService)
 	do.Provide(di, NewService)
 
 	app := do.MustInvoke[*echo.Echo](di)
@@ -462,14 +469,6 @@ func sessionTagValue(tags []SessionTag, name string) string {
 		}
 	}
 	return ""
-}
-
-func prepareStreamingHeaders(headers http.Header) {
-	if headers == nil {
-		return
-	}
-	headers.Set("Cache-Control", "no-cache, no-transform")
-	headers.Set("X-Accel-Buffering", "no")
 }
 
 func (s *Service) ListSessionEvents(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.ListSessionEventsResponse], error) {

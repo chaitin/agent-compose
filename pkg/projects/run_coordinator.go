@@ -1,4 +1,4 @@
-package agentcompose
+package projects
 
 import (
 	"context"
@@ -27,6 +27,12 @@ func NewRunCoordinator(store *ConfigStore) *RunCoordinator {
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
+	}
+}
+
+func (c *RunCoordinator) SetNow(now func() time.Time) {
+	if c != nil {
+		c.now = now
 	}
 }
 

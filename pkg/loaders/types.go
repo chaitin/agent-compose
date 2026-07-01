@@ -211,6 +211,16 @@ type agentExecutionConfig struct {
 	EnvItems          []SessionEnvVar
 }
 
+type AgentExecutionConfig = agentExecutionConfig
+
+func NormalizeAgentKind(kind string) string {
+	return normalizeAgentKind(kind)
+}
+
+func AgentExecutionConfigFromDefinition(agent AgentDefinition, fallbackProvider string) agentExecutionConfig {
+	return agentExecutionConfigFromDefinition(agent, fallbackProvider)
+}
+
 func agentExecutionConfigFromDefinition(agent AgentDefinition, fallbackProvider string) agentExecutionConfig {
 	provider := normalizeAgentKind(agent.Provider)
 	if provider == "" {

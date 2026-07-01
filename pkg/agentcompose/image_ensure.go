@@ -16,28 +16,6 @@ type driverImageEnsureRequest struct {
 	AgentName   string
 }
 
-func (s *Service) ensureProjectAgentImages(ctx context.Context, projectName string, agents []ProjectAgentRecord) error {
-	if s == nil || s.config == nil {
-		return fmt.Errorf("image ensure config is required")
-	}
-	for _, agent := range agents {
-		driver, err := driverpkg.ResolveSessionRuntimeDriver(agent.Driver, s.config.RuntimeDriver)
-		if err != nil {
-			return fmt.Errorf("ensure image for project %s agent %s: %w", projectName, agent.AgentName, err)
-		}
-		imageRef := driverpkg.ResolveSessionGuestImage(agent.Image, driverpkg.DefaultGuestImageForDriver(s.config, driver))
-		if err := s.ensureDriverImage(ctx, driverImageEnsureRequest{
-			Driver:      driver,
-			ImageRef:    imageRef,
-			ProjectName: projectName,
-			AgentName:   agent.AgentName,
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (s *Service) ensureDriverImage(ctx context.Context, req driverImageEnsureRequest) error {
 	if s == nil || s.config == nil {
 		return fmt.Errorf("image ensure config is required")

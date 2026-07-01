@@ -140,10 +140,6 @@ func envItemsFromMap(values map[string]string, secret bool) []SessionEnvVar {
 	return llmpkg.EnvItemsFromMap(values, secret)
 }
 
-func filterPersistedRuntimeEnv(items []SessionEnvVar) []SessionEnvVar {
-	return llmpkg.FilterPersistedRuntimeEnv(items)
-}
-
 func runtimeEnvMap(items []SessionEnvVar) map[string]string {
 	return llmpkg.RuntimeEnvMap(items)
 }

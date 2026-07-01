@@ -26,10 +26,10 @@ func TestRunCoordinatorStateMachineTransitions(t *testing.T) {
 	_ = service
 	coordinator := NewRunCoordinator(store)
 	now := time.Date(2026, 6, 11, 9, 10, 0, 0, time.UTC)
-	coordinator.now = func() time.Time {
+	coordinator.SetNow(func() time.Time {
 		now = now.Add(time.Second)
 		return now
-	}
+	})
 
 	run, err := coordinator.BeginRun(ctx, ProjectRunStartRequest{
 		ProjectID:       projectID,

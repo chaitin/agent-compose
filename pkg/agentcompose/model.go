@@ -37,7 +37,3 @@ type AgentRunResult = model.AgentRunResult
 func sessionEnvMap(groups ...[]SessionEnvVar) map[string]string {
 	return model.SessionEnvMap(groups...)
 }
-
-func restoreSessionTransientFields(dst, src *Session) {
-	model.RestoreSessionTransientFields(dst, src)
-}

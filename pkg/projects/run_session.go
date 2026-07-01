@@ -1,4 +1,4 @@
-package agentcompose
+package projects
 
 import (
 	"context"
@@ -174,6 +174,10 @@ func projectRunSessionTags(run ProjectRunRecord) []SessionTag {
 	return tags
 }
 
+func ProjectRunSessionTags(run ProjectRunRecord) []SessionTag {
+	return projectRunSessionTags(run)
+}
+
 func mergeSessionTags(existing, additions []SessionTag) []SessionTag {
 	result := append([]SessionTag(nil), existing...)
 	for _, addition := range additions {
@@ -194,4 +198,8 @@ func mergeSessionTags(existing, additions []SessionTag) []SessionTag {
 		}
 	}
 	return result
+}
+
+func MergeSessionTags(existing, additions []SessionTag) []SessionTag {
+	return mergeSessionTags(existing, additions)
 }

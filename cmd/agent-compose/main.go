@@ -39,6 +39,7 @@ import (
 	"agent-compose/pkg/config"
 	"agent-compose/pkg/health"
 	"agent-compose/pkg/llm"
+	"agent-compose/pkg/projects"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
@@ -729,7 +730,7 @@ func runComposeUpCommand(cmd *cobra.Command, cli cliOptions) error {
 	}
 	client := agentcomposev2connect.NewProjectServiceClient(newDaemonHTTPClient(clientConfig), clientConfig.BaseURL)
 	resp, err := client.ApplyProject(cmd.Context(), connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
-		Spec: agentcompose.ProjectSpecResponse(normalized),
+		Spec: projects.ProjectSpecResponse(normalized),
 		Source: &agentcomposev2.ProjectSource{
 			ComposePath: composePath,
 			ProjectDir:  filepath.Dir(composePath),
@@ -1174,7 +1175,7 @@ func resolveComposeProject(cli cliOptions) (string, *compose.NormalizedProjectSp
 	if err != nil {
 		return "", nil, "", err
 	}
-	project, err := agentcompose.NewProjectRecordFromSpec(normalized, composePath)
+	project, err := projects.NewProjectRecordFromSpec(normalized, composePath)
 	if err != nil {
 		return "", nil, "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("%s: resolve project %s: %w", composePath, normalized.Name, err)}
 	}

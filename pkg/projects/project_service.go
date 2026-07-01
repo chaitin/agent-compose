@@ -1,4 +1,4 @@
-package agentcompose
+package projects
 
 import (
 	"context"
@@ -31,6 +31,12 @@ type projectManagedSchedulerBuild struct {
 	scheduler          ProjectSchedulerRecord
 	loader             Loader
 	validationTriggers []LoaderTrigger
+}
+
+type ProjectManagedSchedulerBuild struct {
+	Scheduler          ProjectSchedulerRecord
+	Loader             Loader
+	ValidationTriggers []LoaderTrigger
 }
 
 func (s *Service) ValidateProject(ctx context.Context, req *connect.Request[agentcomposev2.ValidateProjectRequest]) (*connect.Response[agentcomposev2.ValidateProjectResponse], error) {
@@ -359,6 +365,10 @@ func (s *Service) resolveProjectRef(ctx context.Context, ref *agentcomposev2.Pro
 		return ProjectRecord{}, fmt.Errorf("project name %s is ambiguous; use project_id or source_path", name)
 	}
 	return matches[0], nil
+}
+
+func (s *Service) ResolveProjectRef(ctx context.Context, ref *agentcomposev2.ProjectRef) (ProjectRecord, error) {
+	return s.resolveProjectRef(ctx, ref)
 }
 
 func normalizeProjectServiceSpec(spec *agentcomposev2.ProjectSpec, source *agentcomposev2.ProjectSource, expectedHash string) (normalizedV2Project, []*agentcomposev2.ProjectValidationIssue, error) {
@@ -757,6 +767,14 @@ func projectManagedSchedulerBuildsFromSpec(project ProjectRecord, revision int64
 	return builds, nil
 }
 
+func ProjectManagedSchedulerBuildsFromSpec(project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]ProjectManagedSchedulerBuild, error) {
+	builds, err := projectManagedSchedulerBuildsFromSpec(project, revision, spec)
+	if err != nil {
+		return nil, err
+	}
+	return exportProjectManagedSchedulerBuilds(builds), nil
+}
+
 func (s *Service) projectManagedSchedulerBuildsFromSpec(ctx context.Context, project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]projectManagedSchedulerBuild, error) {
 	builds := make([]projectManagedSchedulerBuild, 0)
 	for _, agent := range spec.Agents {
@@ -788,6 +806,26 @@ func (s *Service) projectManagedSchedulerBuildsFromSpec(ctx context.Context, pro
 		})
 	}
 	return builds, nil
+}
+
+func (s *Service) ProjectManagedSchedulerBuildsFromSpec(ctx context.Context, project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]ProjectManagedSchedulerBuild, error) {
+	builds, err := s.projectManagedSchedulerBuildsFromSpec(ctx, project, revision, spec)
+	if err != nil {
+		return nil, err
+	}
+	return exportProjectManagedSchedulerBuilds(builds), nil
+}
+
+func exportProjectManagedSchedulerBuilds(builds []projectManagedSchedulerBuild) []ProjectManagedSchedulerBuild {
+	result := make([]ProjectManagedSchedulerBuild, 0, len(builds))
+	for _, build := range builds {
+		result = append(result, ProjectManagedSchedulerBuild{
+			Scheduler:          build.scheduler,
+			Loader:             build.loader,
+			ValidationTriggers: append([]LoaderTrigger(nil), build.validationTriggers...),
+		})
+	}
+	return result
 }
 
 func projectManagedLoaderFromScheduler(project ProjectRecord, scheduler ProjectSchedulerRecord, agent compose.NormalizedAgentSpec) (Loader, error) {
@@ -863,6 +901,10 @@ func projectManagedLoaderTriggersAndScript(projectID, agentName, schedulerName s
 		script.WriteString("function main() { return { status: \"idle\" }; }\n")
 	}
 	return triggers, script.String(), nil
+}
+
+func ProjectManagedLoaderTriggersAndScript(projectID, agentName, schedulerName string, scheduler *compose.NormalizedSchedulerSpec) ([]LoaderTrigger, string, error) {
+	return projectManagedLoaderTriggersAndScript(projectID, agentName, schedulerName, scheduler)
 }
 
 func projectManagedLoaderTriggerAndRegistration(id, agentName string, trigger compose.NormalizedTriggerSpec) (LoaderTrigger, string, error) {
@@ -1215,6 +1257,10 @@ func (s *Service) reconcileProjectManagedSchedulers(ctx context.Context, project
 	return changes, unchanged, nil
 }
 
+func (s *Service) ReconcileProjectManagedSchedulers(ctx context.Context, project ProjectRecord, schedulers []ProjectSchedulerRecord, loaders []Loader) ([]*agentcomposev2.ProjectChange, bool, error) {
+	return s.reconcileProjectManagedSchedulers(ctx, project, schedulers, loaders)
+}
+
 func (s *Service) cleanupFailedManagedSchedulerReconcile(ctx context.Context, scheduler ProjectSchedulerRecord, loaderID string) {
 	if s == nil || s.configDB == nil {
 		return
@@ -1336,6 +1382,10 @@ func sameLoaderTriggerSpecs(a, b []LoaderTrigger) bool {
 		}
 	}
 	return true
+}
+
+func SameLoaderTriggerSpecs(a, b []LoaderTrigger) bool {
+	return sameLoaderTriggerSpecs(a, b)
 }
 
 func normalizeComparableLoaderTriggers(items []LoaderTrigger) []LoaderTrigger {

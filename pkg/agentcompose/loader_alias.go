@@ -62,14 +62,6 @@ func newLoaderRunHost(manager *LoaderManager, loader Loader, run *LoaderRunSumma
 	return loaderspkg.NewLoaderRunHost(manager, loader, run, triggerEvent)
 }
 
-func loaderCronSpecJSON(expr, timezone string) (string, error) {
-	return loaderspkg.LoaderCronSpecJSON(expr, timezone)
-}
-
-func marshalJSONCompact(value any) (string, error) {
-	return loaderspkg.MarshalJSONCompact(value)
-}
-
 func validateLoaderPublishTopic(topic string) error {
 	return loaderspkg.ValidateLoaderPublishTopic(topic)
 }
@@ -122,7 +114,6 @@ func NewLoaderManager(di do.Injector) (*LoaderManager, error) {
 		Engine:             do.MustInvoke[LoaderEngine](di),
 		Sessions:           do.MustInvoke[*SessionRPCBridge](di).componentBridge(),
 		Dashboard:          mustDashboardHub(di),
-		ProjectAgentRunner: serviceProjectAgentRunnerFromDI(di),
 	})
 	if err != nil {
 		return nil, err

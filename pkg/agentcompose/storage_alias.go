@@ -125,10 +125,6 @@ func paginateSessions(items []*Session, offset, limit int) []*Session {
 	return storage.PaginateSessions(items, offset, limit)
 }
 
-func normalizeProjectRunStatus(status string) string {
-	return storage.NormalizeProjectRunStatus(status)
-}
-
 func normalizeWorkspaceConfig(item WorkspaceConfig, assignID bool) (WorkspaceConfig, error) {
 	return storage.NormalizeWorkspaceConfig(item, assignID)
 }
