@@ -463,7 +463,8 @@ func (m *LoaderManager) loadLoaderForRun(ctx context.Context, loaderID, triggerI
 			return loader, &current, nil
 		}
 	}
-	return Loader{}, nil, fmt.Errorf("loader trigger %s/%s not found", loaderID, triggerID)
+	id := strings.TrimSpace(loaderID) + "/" + triggerID
+	return Loader{}, nil, resourceError(ErrNotFound, "loader trigger", id, fmt.Sprintf("loader trigger %s not found", id), nil)
 }
 
 type loaderTriggerEventMetadata struct {

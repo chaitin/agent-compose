@@ -311,7 +311,7 @@ func (s *ConfigStore) UpdateLoader(ctx context.Context, item Loader) (Loader, er
 		return Loader{}, fmt.Errorf("update loader %s: %w", normalized.Summary.ID, err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return Loader{}, fmt.Errorf("loader %s not found", normalized.Summary.ID)
+		return Loader{}, resourceError(ErrNotFound, "loader", normalized.Summary.ID, fmt.Sprintf("loader %s not found", normalized.Summary.ID), nil)
 	}
 	normalized.Summary.TriggerCount = existing.Summary.TriggerCount
 	normalized.Summary.RunCount = existing.Summary.RunCount
@@ -358,7 +358,7 @@ func (s *ConfigStore) DeleteLoader(ctx context.Context, loaderID string) error {
 		return fmt.Errorf("delete loader %s: %w", loaderID, err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return fmt.Errorf("loader %s not found", loaderID)
+		return resourceError(ErrNotFound, "loader", loaderID, fmt.Sprintf("loader %s not found", loaderID), nil)
 	}
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM loader_binding WHERE loader_id = ?`, loaderID)
 	return nil
@@ -437,7 +437,7 @@ func (s *ConfigStore) GetLoader(ctx context.Context, loaderID string) (Loader, e
 	item, err := scanLoader(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return Loader{}, fmt.Errorf("loader %s not found: %w", loaderID, err)
+			return Loader{}, resourceError(ErrNotFound, "loader", loaderID, fmt.Sprintf("loader %s not found", loaderID), err)
 		}
 		return Loader{}, err
 	}
@@ -674,7 +674,7 @@ func (s *ConfigStore) SetLoaderEnabled(ctx context.Context, loaderID string, ena
 		return fmt.Errorf("update loader enabled state: %w", err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return fmt.Errorf("loader %s not found", loaderID)
+		return resourceError(ErrNotFound, "loader", loaderID, fmt.Sprintf("loader %s not found", loaderID), nil)
 	}
 	if enabled {
 		for _, trigger := range triggers {
@@ -711,7 +711,8 @@ func (s *ConfigStore) SetLoaderTriggerEnabled(ctx context.Context, loaderID, tri
 	trigger, err := scanLoaderTrigger(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("loader trigger %s/%s not found: %w", loaderID, triggerID, err)
+			id := loaderID + "/" + triggerID
+			return resourceError(ErrNotFound, "loader trigger", id, fmt.Sprintf("loader trigger %s not found", id), err)
 		}
 		return err
 	}
@@ -728,7 +729,8 @@ func (s *ConfigStore) SetLoaderTriggerEnabled(ctx context.Context, loaderID, tri
 		return fmt.Errorf("update loader trigger enabled state: %w", err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return fmt.Errorf("loader trigger %s/%s not found", loaderID, triggerID)
+		id := loaderID + "/" + triggerID
+		return resourceError(ErrNotFound, "loader trigger", id, fmt.Sprintf("loader trigger %s not found", id), nil)
 	}
 	_, _ = s.db.ExecContext(ctx, `UPDATE loader SET updated_at = ? WHERE id = ?`, time.Now().UTC().Unix(), loaderID)
 	return nil
@@ -802,7 +804,8 @@ func (s *ConfigStore) UpdateLoaderRun(ctx context.Context, run LoaderRunSummary)
 		return fmt.Errorf("update loader run %s/%s: %w", run.LoaderID, run.ID, err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return fmt.Errorf("loader run %s/%s not found", run.LoaderID, run.ID)
+		id := strings.TrimSpace(run.LoaderID) + "/" + strings.TrimSpace(run.ID)
+		return resourceError(ErrNotFound, "loader run", id, fmt.Sprintf("loader run %s not found", id), nil)
 	}
 	return nil
 }
@@ -813,7 +816,8 @@ func (s *ConfigStore) GetLoaderRun(ctx context.Context, loaderID, runID string) 
 	item, err := scanLoaderRun(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return LoaderRunSummary{}, fmt.Errorf("loader run %s/%s not found: %w", loaderID, runID, err)
+			id := strings.TrimSpace(loaderID) + "/" + strings.TrimSpace(runID)
+			return LoaderRunSummary{}, resourceError(ErrNotFound, "loader run", id, fmt.Sprintf("loader run %s not found", id), err)
 		}
 		return LoaderRunSummary{}, err
 	}
