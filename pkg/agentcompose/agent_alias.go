@@ -49,10 +49,6 @@ func sessionHasAgentTag(session *Session, agentID string) bool {
 	return agentspkg.SessionHasAgentTag(session, agentID)
 }
 
-func agentRunSummaries(agentID string, sessions []*Session) (AgentCurrentRunSummary, *AgentLatestRunSummary) {
-	return agentspkg.AgentRunSummaries(agentID, sessions)
-}
-
 func (s *Service) agentDefinitionToProto(ctx context.Context, item AgentDefinition) (*agentcomposev1.AgentDefinition, error) {
 	return s.agentDefinitionService().AgentDefinitionToProto(ctx, item)
 }

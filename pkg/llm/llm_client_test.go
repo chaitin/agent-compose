@@ -1,8 +1,8 @@
-package agentcompose
+package llm
 
 import (
 	appconfig "agent-compose/pkg/config"
-	loaderspkg "agent-compose/pkg/loaders"
+	"agent-compose/pkg/storage"
 	"context"
 	"io"
 	"net/http"
@@ -11,6 +11,16 @@ import (
 	"strings"
 	"testing"
 )
+
+func newTestConfigStore(t *testing.T) *ConfigStore {
+	t.Helper()
+	store, err := storage.NewConfigStoreFromConfig(&appconfig.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewConfigStoreFromConfig returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = store.DB().Close() })
+	return store
+}
 
 func TestLLMClientResolveEndpointPrefersGlobalEnvThenProcessEnvThenDefault(t *testing.T) {
 	ctx := context.Background()
@@ -492,46 +502,6 @@ func TestLLMClientGenerateChatCompletionsRejectsInvalidSchema(t *testing.T) {
 	_, err := client.Generate(ctx, "prompt", "", "{bad json")
 	if err == nil || !strings.Contains(err.Error(), "outputSchema must be valid JSON") {
 		t.Fatalf("Generate(invalid schema) error = %v, want schema error", err)
-	}
-}
-
-func TestLoaderRunHostLLMChatCompletionsProtocol(t *testing.T) {
-	ctx := context.Background()
-	store := newTestConfigStore(t)
-
-	var gotBody string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotBody = readRequestBodyForTest(t, r)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chatcmpl-loader","model":"model-a","choices":[{"message":{"role":"assistant","content":"loader llm text"},"finish_reason":"stop"}]}`))
-	}))
-	t.Cleanup(server.Close)
-
-	client := &LLMClient{
-		config: &appconfig.Config{
-			LLMAPIEndpoint: server.URL,
-			LLMAPIProtocol: llmAPIProtocolChatCompletions,
-			LLMModel:       "model-a",
-		},
-		configDB: store,
-		client:   server.Client(),
-	}
-	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
-		Config:   &appconfig.Config{DataRoot: t.TempDir()},
-		ConfigDB: store,
-		LLM:      client.componentClient(),
-	})
-	host := newLoaderRunHost(manager, Loader{Summary: LoaderSummary{ID: "loader-1"}}, &LoaderRunSummary{ID: "run-1", LoaderID: "loader-1"}, loaderTriggerEventMetadata{})
-
-	result, err := host.LLM(ctx, "summarize lifecycle", LoaderLLMRequest{Model: "model-a"})
-	if err != nil {
-		t.Fatalf("LLM returned error: %v", err)
-	}
-	if result.Text != "loader llm text" || result.ResponseID != "chatcmpl-loader" || result.FinishReason != "stop" {
-		t.Fatalf("unexpected loader llm result: %+v", result)
-	}
-	if !strings.Contains(gotBody, `"messages":[{"role":"user","content":"summarize lifecycle"}`) {
-		t.Fatalf("expected chat completions request body, got %s", gotBody)
 	}
 }
 

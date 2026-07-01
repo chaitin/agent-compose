@@ -1,4 +1,4 @@
-package agentcompose
+package events
 
 import (
 	appconfig "agent-compose/pkg/config"
@@ -21,7 +21,7 @@ func newTestWebhookService(t *testing.T) (*echo.Echo, *Service, *ConfigStore) {
 		configDB: store,
 	}
 	app := echo.New()
-	registerWebhookRoutes(app, service)
+	RegisterRoutes(app, service)
 	return app, service, store
 }
 

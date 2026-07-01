@@ -6,7 +6,6 @@ import (
 	"github.com/samber/do/v2"
 
 	appconfig "agent-compose/pkg/config"
-	driverpkg "agent-compose/pkg/driver"
 	"agent-compose/pkg/runtimes"
 )
 
@@ -40,8 +39,4 @@ func sessionRuntimeEnvPreparer(ctx context.Context, config *appconfig.Config, co
 		return nil, err
 	}
 	return envItemsFromMap(managedEnv, false), nil
-}
-
-func toDriverProxyState(state ProxyState) driverpkg.ProxyState {
-	return runtimes.ToDriverProxyState(state)
 }

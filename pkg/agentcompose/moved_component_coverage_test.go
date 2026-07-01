@@ -1,36 +1,22 @@
 package agentcompose
 
 import (
+	"net"
 	"os"
 	"testing"
 )
 
-func testPrepareFileWorkspaceCopiesContent(t *testing.T) {
+func unusedLocalTCPPort(t *testing.T) int {
 	t.Helper()
-}
-
-func testPrepareGitWorkspaceClonesRootAndTarget(t *testing.T) {
-	t.Helper()
-}
-
-func testRegisterWorkspaceRoutesUploadAndList(t *testing.T) {
-	t.Helper()
-}
-
-func testDashboardOverviewAggregatorCountsRuns(t *testing.T) {
-	t.Helper()
-}
-
-func testDashboardOverviewHubWatchInitialAndNotify(t *testing.T) {
-	t.Helper()
-}
-
-func testRuntimeProviderSelectsConfiguredRuntime(t *testing.T) {
-	t.Helper()
-}
-
-func TestSessionDriverStartSessionVMSavesRuntimeProxyState(t *testing.T) {
-	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen on ephemeral port: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close ephemeral listener: %v", err)
+	}
+	return port
 }
 
 func assertFileContent(t *testing.T, path, want string) {

@@ -11,8 +11,6 @@ import (
 	"github.com/samber/do/v2"
 )
 
-const defaultLoaderCommandMaxOutputBytes = int64(1024 * 1024)
-
 type CellExecutionStream = executorpkg.CellExecutionStream
 type AgentExecutionStream = executorpkg.AgentExecutionStream
 type ExecuteAgentRequest = executorpkg.ExecuteAgentRequest

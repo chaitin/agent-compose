@@ -13,39 +13,6 @@ import (
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
-func TestImageEnsureSkipsNonDockerDrivers(t *testing.T) {
-	testImageEnsureSkipsNonDockerDrivers(t)
-}
-
-func TestIntegrationImageEnsureSkipsNonDockerDrivers(t *testing.T) {
-	testImageEnsureSkipsNonDockerDrivers(t)
-}
-
-func TestE2EImageEnsureSkipsNonDockerDrivers(t *testing.T) {
-	testImageEnsureSkipsNonDockerDrivers(t)
-}
-
-func testImageEnsureSkipsNonDockerDrivers(t *testing.T) {
-	t.Helper()
-	service := newProjectServiceTestService(t, newTestConfigStore(t))
-	service.images = &fakeImageBackend{
-		inspectImage: func(context.Context, ImageInspectRequest) (ImageInspectResult, error) {
-			t.Fatal("non-Docker driver should not inspect Docker images")
-			return ImageInspectResult{}, nil
-		},
-	}
-	for _, driver := range []string{driverpkg.RuntimeDriverBoxlite, driverpkg.RuntimeDriverMicrosandbox} {
-		if err := service.ensureDriverImage(context.Background(), driverImageEnsureRequest{
-			Driver:      driver,
-			ImageRef:    "guest:v1",
-			ProjectName: "skip",
-			AgentName:   driver,
-		}); err != nil {
-			t.Fatalf("ensureDriverImage(%s) returned error: %v", driver, err)
-		}
-	}
-}
-
 func TestApplyProjectDockerImageEnsurePullsMissingImage(t *testing.T) {
 	testApplyProjectDockerImageEnsurePullsMissingImage(t)
 }

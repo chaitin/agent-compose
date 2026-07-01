@@ -1,16 +1,30 @@
-package agentcompose
+package events
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	"agent-compose/pkg/bus"
+	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/storage"
 )
+
+func newTopicEventTestConfigStore(t *testing.T) *ConfigStore {
+	t.Helper()
+	store, err := storage.NewConfigStoreFromConfig(&appconfig.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewConfigStoreFromConfig returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = store.DB().Close() })
+	return store
+}
 
 func TestEventDispatcherPublishesPendingEvents(t *testing.T) {
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	bus := NewLoaderBusWithBuffer(4)
-	dispatcher := NewEventDispatcher(ctx, store, bus)
+	loaderBus := bus.NewLoaderBusWithBuffer(4)
+	dispatcher := NewEventDispatcher(ctx, store, loaderBus)
 
 	created, err := store.CreateEvent(ctx, TopicEventRecord{
 		Topic:         "webhook.dispatch.test",
@@ -34,7 +48,7 @@ func TestEventDispatcherPublishesPendingEvents(t *testing.T) {
 	}
 
 	select {
-	case event := <-bus.Events():
+	case event := <-loaderBus.Events():
 		if event.Topic != created.Topic {
 			t.Fatalf("event topic = %q, want %q", event.Topic, created.Topic)
 		}
@@ -69,11 +83,11 @@ func TestEventDispatcherPublishesPendingEvents(t *testing.T) {
 func TestEventDispatcherKeepsPendingWhenBusFull(t *testing.T) {
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	bus := NewLoaderBusWithBuffer(1)
-	if !bus.Publish(LoaderTopicEvent{Topic: "preloaded", CreatedAt: time.Now().UTC()}) {
+	loaderBus := bus.NewLoaderBusWithBuffer(1)
+	if !loaderBus.Publish(LoaderTopicEvent{Topic: "preloaded", CreatedAt: time.Now().UTC()}) {
 		t.Fatalf("failed to preload bus")
 	}
-	dispatcher := NewEventDispatcher(ctx, store, bus)
+	dispatcher := NewEventDispatcher(ctx, store, loaderBus)
 	created, err := store.CreateEvent(ctx, TopicEventRecord{
 		Topic:         "webhook.dispatch.full",
 		Source:        TopicEventSourceWebhook,
@@ -101,8 +115,8 @@ func TestEventDispatcherKeepsPendingWhenBusFull(t *testing.T) {
 func TestEventDispatcherIgnoresStaleClaimAck(t *testing.T) {
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	bus := NewLoaderBusWithBuffer(4)
-	dispatcher := NewEventDispatcher(ctx, store, bus)
+	loaderBus := bus.NewLoaderBusWithBuffer(4)
+	dispatcher := NewEventDispatcher(ctx, store, loaderBus)
 
 	created, err := store.CreateEvent(ctx, TopicEventRecord{
 		Topic:         "webhook.dispatch.stale",
@@ -119,7 +133,7 @@ func TestEventDispatcherIgnoresStaleClaimAck(t *testing.T) {
 
 	var delivered LoaderTopicEvent
 	select {
-	case delivered = <-bus.Events():
+	case delivered = <-loaderBus.Events():
 		if delivered.Ack == nil {
 			t.Fatalf("event ack was nil")
 		}

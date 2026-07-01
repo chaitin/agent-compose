@@ -62,18 +62,6 @@ func (c *LLMClient) Generate(ctx context.Context, prompt, modelName, outputSchem
 	return c.componentClient().Generate(ctx, prompt, modelName, outputSchemaJSON)
 }
 
-func (c *LLMClient) resolveProtocol(ctx context.Context) string {
-	return c.componentClient().ResolveProtocol(ctx)
-}
-
-func (c *LLMClient) resolveEndpoint(ctx context.Context) string {
-	return c.componentClient().ResolveEndpoint(ctx)
-}
-
-func (c *LLMClient) resolveSetting(ctx context.Context, fallback string, keys ...string) string {
-	return c.componentClient().ResolveSetting(ctx, fallback, keys...)
-}
-
 func registerRuntimeLLMFacadeRoutes(app *echo.Echo, service *Service) {
 	llmpkg.RegisterRuntimeFacadeRoutes(app, llmpkg.NewService(service.config, service.store, service.configDB, service.llm.componentClient()))
 }
@@ -108,18 +96,6 @@ func resolveLLMTargetForProviderFamily(ctx context.Context, config *appconfig.Co
 
 func providerForwardHeaders(provider LLMProvider) (http.Header, error) {
 	return llmpkg.ProviderForwardHeaders(provider)
-}
-
-func normalizeLLMAPIEndpoint(raw string) string {
-	return llmpkg.NormalizeAPIEndpoint(raw)
-}
-
-func normalizeLLMAPIEndpointForProtocol(raw, protocol string) string {
-	return llmpkg.NormalizeAPIEndpointForProtocol(raw, protocol)
-}
-
-func llmEndpointForProvider(provider LLMProvider, wireAPI string) string {
-	return llmpkg.EndpointForProvider(provider, wireAPI)
 }
 
 func runtimeLLMUseGenericResponsesTextParts(target LLMResolvedTarget, upstreamProtocol protocolbridge.Protocol) bool {

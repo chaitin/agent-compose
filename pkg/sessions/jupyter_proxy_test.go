@@ -1,13 +1,16 @@
-package agentcompose
+package sessions
 
 import (
-	driverpkg "agent-compose/pkg/driver"
 	"context"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 	"time"
+
+	driverpkg "agent-compose/pkg/driver"
 )
 
 func TestJupyterConnectTargetUsesGuestHostWhenRoutable(t *testing.T) {
@@ -103,6 +106,23 @@ func unusedLocalTCPPort(t *testing.T) int {
 	port := listener.Addr().(*net.TCPAddr).Port
 	if err := listener.Close(); err != nil {
 		t.Fatalf("close ephemeral listener: %v", err)
+	}
+	return port
+}
+
+func httptestServerPort(t *testing.T, rawURL string) int {
+	t.Helper()
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse test server URL %q: %v", rawURL, err)
+	}
+	_, portRaw, err := net.SplitHostPort(parsed.Host)
+	if err != nil {
+		t.Fatalf("split test server host %q: %v", parsed.Host, err)
+	}
+	port, err := strconv.Atoi(portRaw)
+	if err != nil {
+		t.Fatalf("parse test server port %q: %v", portRaw, err)
 	}
 	return port
 }

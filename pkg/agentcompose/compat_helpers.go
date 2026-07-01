@@ -15,18 +15,6 @@ const agentResultPrefix = executorpkg.AgentResultPrefix
 const commandResultPrefix = executorpkg.CommandResultPrefix
 const agentSystemPromptFileName = "system-prompt.txt"
 
-type agentExecResponse struct {
-	Provider   string `json:"provider"`
-	SessionID  string `json:"sessionId"`
-	StopReason string `json:"stopReason"`
-	FinalText  string `json:"finalText"`
-	JSON       any    `json:"json"`
-	Transcript string `json:"transcript"`
-	Stderr     string `json:"stderr"`
-}
-
-type runtimeCommandRequestJSON = executorpkg.RuntimeCommandRequestJSON
-
 func normalizeAgentKind(agent string) string {
 	return executorpkg.NormalizeAgentKind(agent)
 }
@@ -39,48 +27,12 @@ func writeAgentSystemPromptFile(session *Session, systemPrompt string) error {
 	return executorpkg.WriteAgentSystemPromptFile(session, systemPrompt)
 }
 
-func parseAgentExecResult(agent string, result ExecResult) (AgentRunResult, error) {
-	return executorpkg.ParseAgentExecResult(agent, result)
-}
-
 func agentTraceEvents(transcript string, createdAt time.Time) []SessionEvent {
 	return executorpkg.AgentTraceEvents(transcript, createdAt)
 }
 
-func validateLoaderCommandRequest(request LoaderCommandRequest) error {
-	return executorpkg.ValidateLoaderCommandRequest(request)
-}
-
-func loaderCommandContext(ctx context.Context, timeoutMs int64) (context.Context, context.CancelFunc) {
-	return executorpkg.LoaderCommandContext(ctx, timeoutMs)
-}
-
-func loaderCommandCellSource(request LoaderCommandRequest) string {
-	return executorpkg.LoaderCommandCellSource(request)
-}
-
-func runtimeCommandRequestPayload(config *appconfig.Config, request LoaderCommandRequest, guestCellDir string) runtimeCommandRequestJSON {
-	return executorpkg.RuntimeCommandRequestPayload(config, request, guestCellDir)
-}
-
-func buildLoaderCommandExecSpec(config *appconfig.Config, session *Session, guestRequestPath string) ExecSpec {
-	return executorpkg.BuildLoaderCommandExecSpec(config, session, guestRequestPath)
-}
-
-func parseCommandExecResult(result ExecResult) (RuntimeCommandResult, error) {
-	return executorpkg.ParseCommandExecResult(result)
-}
-
-func mirrorRuntimeCommandArtifacts(hostCellDir string, result RuntimeCommandResult) error {
-	return executorpkg.MirrorRuntimeCommandArtifacts(hostCellDir, result)
-}
-
 func summarizeAgentExecFailure(result ExecResult) string {
 	return executorpkg.SummarizeAgentExecFailure(result)
-}
-
-func stripAgentResultPayload(raw string) string {
-	return executorpkg.StripAgentResultPayload(raw)
 }
 
 func buildAgentExecSpec(config *appconfig.Config, session *Session, agent, model, promptPath, schemaPath string) ExecSpec {
@@ -97,10 +49,6 @@ func (e *Executor) resolveAgentSystemPrompt(ctx context.Context, session *Sessio
 
 func (e *Executor) executeAgentRun(ctx context.Context, session *Session, agent, agentDefinitionID, model, runID, message, outputSchemaJSON string, stream ExecStreamWriter) (ExecResult, AgentRunResult, error) {
 	return e.componentExecutor().ExecuteAgentRun(ctx, session, agent, agentDefinitionID, model, runID, message, outputSchemaJSON, stream)
-}
-
-func jupyterTargetReachable(proxyState ProxyState, timeout time.Duration) bool {
-	return sessions.JupyterTargetReachable(proxyState, timeout)
 }
 
 func toProtoSessionDetail(session *Session) *agentcomposev1.SessionDetail {
