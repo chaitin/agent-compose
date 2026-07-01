@@ -1,4 +1,4 @@
-package agentcompose
+package workspaces
 
 import (
 	appconfig "agent-compose/pkg/config"
@@ -20,6 +20,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/labstack/echo/v4"
 
+	"agent-compose/pkg/storage"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
@@ -1095,10 +1096,15 @@ func assertGitCommand(t *testing.T, dir string, args ...string) {
 func newWorkspaceRouteTestConfigStore(t *testing.T) *ConfigStore {
 	t.Helper()
 	root := t.TempDir()
-	return mustTestConfigStore(t, &appconfig.Config{
+	store, err := storage.NewConfigStoreFromConfig(&appconfig.Config{
 		DataRoot: root,
 		DbAddr:   filepath.Join(root, "data.db"),
 	})
+	if err != nil {
+		t.Fatalf("NewConfigStoreFromConfig returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = store.DB().Close() })
+	return store
 }
 
 func encodeFileWorkspaceConfigForTest(t *testing.T, root string) string {

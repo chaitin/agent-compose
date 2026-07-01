@@ -21,9 +21,12 @@ import (
 	"github.com/samber/do/v2"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/capproxy"
+	"agent-compose/pkg/dashboard"
 	"agent-compose/pkg/imagecache"
 	"agent-compose/pkg/images"
+	"agent-compose/pkg/workspaces"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
@@ -31,6 +34,9 @@ import (
 
 type Service struct {
 	*images.Service
+	*DashboardService
+	*CapabilityService
+	*WorkspaceService
 	config     *appconfig.Config
 	store      *Store
 	configDB   *ConfigStore
@@ -68,14 +74,15 @@ type Service struct {
 
 func NewService(di do.Injector) (*Service, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
-	dashboard, _ := do.Invoke[*DashboardOverviewHub](di)
-	if dashboard == nil {
+	dashHub, _ := do.Invoke[*DashboardOverviewHub](di)
+	if dashHub == nil {
 		rootCtx, _ := do.Invoke[context.Context](di)
 		if rootCtx == nil {
 			rootCtx = context.Background()
 		}
-		dashboard = newDashboardOverviewHub(rootCtx, newDashboardOverviewAggregator(do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di)), 250*time.Millisecond)
+		dashHub = newDashboardOverviewHub(rootCtx, newDashboardOverviewAggregator(do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di)), 250*time.Millisecond)
 	}
+	capProvider := do.MustInvoke[capabilityIntegration](di)
 	imageCacheRoot := strings.TrimSpace(config.ImageCacheRoot)
 	if imageCacheRoot == "" {
 		imageCacheRoot = filepath.Join(config.DataRoot, "images")
@@ -94,25 +101,28 @@ func NewService(di do.Injector) (*Service, error) {
 	ociImages := images.NewOCIImageBackend(ociCache)
 	autoImages := images.NewAutoImageBackend(config.ImageStoreMode, dockerImages, ociImages)
 	return &Service{
-		Service:    images.NewService(dockerImages, ociImages, autoImages),
-		config:     config,
-		store:      do.MustInvoke[*Store](di),
-		configDB:   do.MustInvoke[*ConfigStore](di),
-		driver:     do.MustInvoke[Driver](di),
-		runtimes:   do.MustInvoke[RuntimeProvider](di),
-		executor:   do.MustInvoke[*Executor](di),
-		loaders:    do.MustInvoke[*LoaderManager](di),
-		images:     dockerImages,
-		ociImages:  ociImages,
-		autoImages: autoImages,
-		llm:        do.MustInvoke[*LLMClient](di),
-		cap:        do.MustInvoke[capabilityIntegration](di),
-		bus:        do.MustInvoke[*LoaderBus](di),
-		streams:    do.MustInvoke[*SessionStreamBroker](di),
-		dashboard:  dashboard,
-		events:     NewEventDispatcher(do.MustInvoke[context.Context](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderBus](di)),
-		sessions:   do.MustInvoke[*SessionRPCBridge](di),
-		startedAt:  time.Now().UTC(),
+		Service:           images.NewService(dockerImages, ociImages, autoImages),
+		DashboardService:  dashboard.NewService(dashHub),
+		CapabilityService: capabilities.NewService(config, do.MustInvoke[*ConfigStore](di), capProvider),
+		WorkspaceService:  workspaces.NewService(config, do.MustInvoke[*ConfigStore](di)),
+		config:            config,
+		store:             do.MustInvoke[*Store](di),
+		configDB:          do.MustInvoke[*ConfigStore](di),
+		driver:            do.MustInvoke[Driver](di),
+		runtimes:          do.MustInvoke[RuntimeProvider](di),
+		executor:          do.MustInvoke[*Executor](di),
+		loaders:           do.MustInvoke[*LoaderManager](di),
+		images:            dockerImages,
+		ociImages:         ociImages,
+		autoImages:        autoImages,
+		llm:               do.MustInvoke[*LLMClient](di),
+		cap:               capProvider,
+		bus:               do.MustInvoke[*LoaderBus](di),
+		streams:           do.MustInvoke[*SessionStreamBroker](di),
+		dashboard:         dashHub,
+		events:            NewEventDispatcher(do.MustInvoke[context.Context](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderBus](di)),
+		sessions:          do.MustInvoke[*SessionRPCBridge](di),
+		startedAt:         time.Now().UTC(),
 	}, nil
 }
 
@@ -130,12 +140,12 @@ func Register(di do.Injector) {
 	do.Provide(di, NewDriver)
 	do.Provide(di, NewExecutor)
 	do.Provide(di, NewLLMClient)
-	do.Provide(di, NewCapabilityProvider)
-	do.Provide(di, NewCapProxyServer)
+	do.Provide(di, capabilities.NewCapabilityProvider)
+	do.Provide(di, capabilities.NewCapProxyServer)
 	do.Provide(di, NewLoaderBus)
 	do.Provide(di, NewSessionStreamBroker)
-	do.Provide(di, NewDashboardOverviewAggregator)
-	do.Provide(di, NewDashboardOverviewHub)
+	do.Provide(di, dashboard.NewDashboardOverviewAggregator)
+	do.Provide(di, dashboard.NewDashboardOverviewHub)
 	do.Provide(di, NewLoaderEngine)
 	do.Provide(di, NewSessionRPCBridge)
 	do.Provide(di, NewLoaderManager)

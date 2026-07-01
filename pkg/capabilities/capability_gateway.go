@@ -1,4 +1,4 @@
-package agentcompose
+package capabilities
 
 import (
 	"context"
@@ -12,20 +12,22 @@ import (
 	"github.com/google/uuid"
 
 	"agent-compose/pkg/capproxy"
+	"agent-compose/pkg/model"
+	"agent-compose/pkg/storage"
 )
 
 const (
-	capProxyTargetEnvName         = "CAP_GRPC_TARGET"
-	capabilitySessionTokenEnvName = "CAP_TOKEN"
+	CapProxyTargetEnvName         = "CAP_GRPC_TARGET"
+	CapabilitySessionTokenEnvName = "CAP_TOKEN"
 	// capabilityCapsetTagName is the session tag carrying an allowed capset id.
 	// A session bound to multiple capsets gets one tag per id; capproxy reads
 	// these (server-side) to validate the guest's requested capset.
-	capabilityCapsetTagName = "capset"
+	CapabilityCapsetTagName = "capset"
 )
 
 // normalizeCapsetIDs trims, drops empties, and de-duplicates capset ids while
 // preserving order.
-func normalizeCapsetIDs(ids []string) []string {
+func NormalizeCapsetIDs(ids []string) []string {
 	seen := make(map[string]struct{}, len(ids))
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {
@@ -42,17 +44,17 @@ func normalizeCapsetIDs(ids []string) []string {
 	return out
 }
 
-func sessionCapabilityCapsets(session *Session) []string {
+func SessionCapabilityCapsets(session *model.Session) []string {
 	if session == nil {
 		return nil
 	}
 	ids := make([]string, 0, len(session.Summary.Tags))
 	for _, tag := range session.Summary.Tags {
-		if strings.TrimSpace(tag.Name) == capabilityCapsetTagName {
+		if strings.TrimSpace(tag.Name) == CapabilityCapsetTagName {
 			ids = append(ids, tag.Value)
 		}
 	}
-	return normalizeCapsetIDs(ids)
+	return NormalizeCapsetIDs(ids)
 }
 
 // buildCapabilityGatewaySessionVars produces the capability env items and tags
@@ -61,8 +63,8 @@ func sessionCapabilityCapsets(session *Session) []string {
 // carries only what the guest needs (proxy target + session token); the allowed
 // capset set is recorded as session tags (read server-side by capproxy). No
 // capsets means "no capability"; a missing proxy target skips injection.
-func buildCapabilityGatewaySessionVars(publicTarget string, capsetIDs []string) ([]SessionEnvVar, []SessionTag) {
-	ids := normalizeCapsetIDs(capsetIDs)
+func BuildGatewaySessionVars(publicTarget string, capsetIDs []string) ([]model.SessionEnvVar, []model.SessionTag) {
+	ids := NormalizeCapsetIDs(capsetIDs)
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -71,15 +73,19 @@ func buildCapabilityGatewaySessionVars(publicTarget string, capsetIDs []string) 
 		slog.Warn("capability injection skipped: CAP_GRPC_TARGET not configured", "capsets", ids)
 		return nil, nil
 	}
-	env := []SessionEnvVar{
-		{Name: capProxyTargetEnvName, Value: publicTarget},
-		{Name: capabilitySessionTokenEnvName, Value: uuid.NewString(), Secret: true},
+	env := []model.SessionEnvVar{
+		{Name: CapProxyTargetEnvName, Value: publicTarget},
+		{Name: CapabilitySessionTokenEnvName, Value: uuid.NewString(), Secret: true},
 	}
-	tags := make([]SessionTag, 0, len(ids))
+	tags := make([]model.SessionTag, 0, len(ids))
 	for _, id := range ids {
-		tags = append(tags, SessionTag{Name: capabilityCapsetTagName, Value: id})
+		tags = append(tags, model.SessionTag{Name: CapabilityCapsetTagName, Value: id})
 	}
 	return env, tags
+}
+
+type SessionEventPublisher interface {
+	PublishEventAdded(sessionID string, event model.SessionEvent)
 }
 
 // writeCapabilityGuide renders the guide for each bound capset from OctoBus and
@@ -89,8 +95,8 @@ func buildCapabilityGatewaySessionVars(publicTarget string, capsetIDs []string) 
 // is best-effort: failures are logged and recorded as warning events, but never
 // block session/loader startup. Must be called after the session directory
 // exists and before the runtime mounts it.
-func writeCapabilityGuide(ctx context.Context, provider CapabilityProvider, store *Store, streams *SessionStreamBroker, session *Session, capsetIDs []string) {
-	ids := normalizeCapsetIDs(capsetIDs)
+func WriteGuide(ctx context.Context, provider Provider, store *storage.Store, streams SessionEventPublisher, session *model.Session, capsetIDs []string) {
+	ids := NormalizeCapsetIDs(capsetIDs)
 	if len(ids) == 0 || provider == nil || session == nil {
 		return
 	}
@@ -117,7 +123,7 @@ func writeCapabilityGuide(ctx context.Context, provider CapabilityProvider, stor
 		return
 	}
 	content := b.String()
-	if preamble := capabilityGuidePreamble(capabilityGatewayProxyTarget(provider)); preamble != "" {
+	if preamble := capabilityGuidePreamble(GatewayProxyTarget(provider)); preamble != "" {
 		content = preamble + content
 	}
 	if err := os.MkdirAll(filepath.Dir(catalogPath), 0o755); err != nil {
@@ -131,11 +137,11 @@ func writeCapabilityGuide(ctx context.Context, provider CapabilityProvider, stor
 	}
 }
 
-func recordCapabilityGuideWarning(ctx context.Context, store *Store, streams *SessionStreamBroker, sessionID, message string) {
+func recordCapabilityGuideWarning(ctx context.Context, store *storage.Store, streams SessionEventPublisher, sessionID, message string) {
 	if store == nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
-	event := SessionEvent{
+	event := model.SessionEvent{
 		ID:        uuid.NewString(),
 		Type:      "capability.guide.warning",
 		Level:     "warning",
@@ -178,7 +184,7 @@ any method in the catalog below:
 
 // sessionRuntimeDir is the local session runtime directory (sibling of the
 // workspace dir under the session root). Returns "" when unknown.
-func sessionRuntimeDir(session *Session) string {
+func sessionRuntimeDir(session *model.Session) string {
 	workspace := strings.TrimSpace(session.Summary.WorkspacePath)
 	if workspace == "" {
 		return ""
@@ -189,7 +195,11 @@ func sessionRuntimeDir(session *Session) string {
 // sessionCapabilityGuidePath is the session MPI catalog file the capability
 // guide is written to (guest /data/runtime/mpi/catalog.md). Returns "" when the
 // session runtime dir is unknown.
-func sessionCapabilityGuidePath(session *Session) string {
+func sessionCapabilityGuidePath(session *model.Session) string {
+	return SessionGuidePath(session)
+}
+
+func SessionGuidePath(session *model.Session) string {
 	dir := sessionRuntimeDir(session)
 	if dir == "" {
 		return ""
@@ -197,7 +207,7 @@ func sessionCapabilityGuidePath(session *Session) string {
 	return filepath.Join(dir, "mpi", "catalog.md")
 }
 
-func capabilityGatewayProxyTarget(provider CapabilityProvider) string {
+func GatewayProxyTarget(provider Provider) string {
 	if provider == nil {
 		return ""
 	}

@@ -1,8 +1,12 @@
-package agentcompose
+package dashboard
 
 import (
+	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/model"
+	"agent-compose/pkg/storage"
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,38 +21,38 @@ func TestDashboardOverviewAggregatorCountsRuns(t *testing.T) {
 func testDashboardOverviewAggregatorCountsRuns(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	service, _, _ := newTestServiceAPIHarness(t)
+	service, store, configDB := newDashboardTestService(t)
 
-	running, err := service.store.CreateSession(ctx, "running", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil, nil, nil)
+	running, err := store.CreateSession(ctx, "running", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", model.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession running returned error: %v", err)
 	}
-	running.Summary.VMStatus = VMStatusRunning
-	if err := service.store.UpdateSession(ctx, running); err != nil {
+	running.Summary.VMStatus = model.VMStatusRunning
+	if err := store.UpdateSession(ctx, running); err != nil {
 		t.Fatalf("UpdateSession running returned error: %v", err)
 	}
-	failed, err := service.store.CreateSession(ctx, "failed", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil, nil, nil)
+	failed, err := store.CreateSession(ctx, "failed", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", model.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession failed returned error: %v", err)
 	}
-	failed.Summary.VMStatus = VMStatusFailed
-	if err := service.store.UpdateSession(ctx, failed); err != nil {
+	failed.Summary.VMStatus = model.VMStatusFailed
+	if err := store.UpdateSession(ctx, failed); err != nil {
 		t.Fatalf("UpdateSession failed returned error: %v", err)
 	}
 
 	now := time.Now().UTC()
-	loader, err := service.configDB.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{ID: "loader-a", Name: "loader a", Runtime: LoaderRuntimeScheduler, Enabled: true},
+	loader, err := configDB.CreateLoader(ctx, model.Loader{
+		Summary: model.LoaderSummary{ID: "loader-a", Name: "loader a", Runtime: model.LoaderRuntimeScheduler, Enabled: true},
 		Script:  "export default {}",
 	})
 	if err != nil {
 		t.Fatalf("CreateLoader returned error: %v", err)
 	}
-	for _, run := range []LoaderRunSummary{
-		{ID: "run-running", LoaderID: loader.Summary.ID, Status: LoaderRunStatusRunning, StartedAt: now},
-		{ID: "run-skipped", LoaderID: loader.Summary.ID, Status: LoaderRunStatusSkipped, StartedAt: now.Add(-time.Second)},
+	for _, run := range []model.LoaderRunSummary{
+		{ID: "run-running", LoaderID: loader.Summary.ID, Status: model.LoaderRunStatusRunning, StartedAt: now},
+		{ID: "run-skipped", LoaderID: loader.Summary.ID, Status: model.LoaderRunStatusSkipped, StartedAt: now.Add(-time.Second)},
 	} {
-		if err := service.configDB.CreateLoaderRun(ctx, run); err != nil {
+		if err := configDB.CreateLoaderRun(ctx, run); err != nil {
 			t.Fatalf("CreateLoaderRun %s returned error: %v", run.ID, err)
 		}
 	}
@@ -83,8 +87,8 @@ func testDashboardOverviewHubWatchInitialAndNotify(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	service, _, _ := newTestServiceAPIHarness(t)
-	service.dashboard.debounce = time.Millisecond
+	service, _, _ := newDashboardTestService(t)
+	service.dashboard.SetDebounceForTest(time.Millisecond)
 
 	events, unsubscribe := service.dashboard.Watch(ctx)
 	defer unsubscribe()
@@ -108,4 +112,29 @@ func testDashboardOverviewHubWatchInitialAndNotify(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatalf("timed out waiting for dashboard event")
 	}
+}
+
+func newDashboardTestService(t *testing.T) (*Service, *storage.Store, *storage.ConfigStore) {
+	t.Helper()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:             root,
+		DbAddr:               filepath.Join(root, "data.db"),
+		SessionRoot:          filepath.Join(root, "sessions"),
+		RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:         "guest:latest",
+		JupyterProxyBasePath: "/jupyter",
+	}
+	store, err := storage.NewStoreFromConfig(config)
+	if err != nil {
+		t.Fatalf("NewStoreFromConfig returned error: %v", err)
+	}
+	configDB, err := storage.NewConfigStoreFromConfig(config)
+	if err != nil {
+		t.Fatalf("NewConfigStoreFromConfig returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = configDB.DB().Close() })
+	aggregator := NewAggregator(store, configDB)
+	hub := NewHub(context.Background(), aggregator, 10*time.Millisecond)
+	return NewService(hub), store, configDB
 }

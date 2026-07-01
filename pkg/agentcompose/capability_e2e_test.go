@@ -11,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"agent-compose/pkg/capabilities"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
@@ -79,7 +80,7 @@ func TestCapabilityGatewayControlPlaneE2E(t *testing.T) {
 	octo := startFakeOctobus(t)
 	service := &Service{
 		configDB: configDB,
-		cap:      &capabilityProvider{source: configDB, proxyTarget: "agent-compose:9100"},
+		cap:      capabilities.NewProvider(configDB, "agent-compose:9100"),
 	}
 
 	// 1. Page configures the OctoBus connection (addr + token).
@@ -137,7 +138,7 @@ func TestCapabilityGatewayControlPlaneE2E(t *testing.T) {
 func TestCapabilityGatewayUpdateClearsToken(t *testing.T) {
 	ctx := context.Background()
 	configDB := newTestConfigStore(t)
-	service := &Service{configDB: configDB, cap: &capabilityProvider{source: configDB}}
+	service := &Service{configDB: configDB, cap: capabilities.NewProvider(configDB, "")}
 
 	if _, err := service.UpdateCapabilityGatewayConfig(ctx, connect.NewRequest(&agentcomposev1.UpdateCapabilityGatewayConfigRequest{Addr: "http://octo:9000", Token: "keep-me"})); err != nil {
 		t.Fatalf("initial update: %v", err)
@@ -164,7 +165,7 @@ func TestCapabilityGatewayUpdateClearsToken(t *testing.T) {
 func TestCapabilityGatewayDisabledWhenUnconfigured(t *testing.T) {
 	ctx := context.Background()
 	configDB := newTestConfigStore(t)
-	service := &Service{configDB: configDB, cap: &capabilityProvider{source: configDB}}
+	service := &Service{configDB: configDB, cap: capabilities.NewProvider(configDB, "")}
 
 	status, err := service.GetCapabilityStatus(ctx, connect.NewRequest(&agentcomposev1.GetCapabilityStatusRequest{}))
 	if err != nil {

@@ -1,4 +1,4 @@
-package agentcompose
+package capabilities
 
 import (
 	"context"
@@ -8,11 +8,12 @@ import (
 
 	"agent-compose/pkg/capproxy"
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/storage"
 )
 
 func NewCapProxyServer(di do.Injector) (*capproxy.Server, error) {
 	conf := do.MustInvoke[*appconfig.Config](di)
-	configDB := do.MustInvoke[*ConfigStore](di)
+	configDB := do.MustInvoke[*storage.ConfigStore](di)
 	return capproxy.NewServer(capproxy.Config{
 		Listen: strings.TrimSpace(conf.CapGRPCListen),
 		OctoBus: func(ctx context.Context) (string, string, bool) {
@@ -22,5 +23,5 @@ func NewCapProxyServer(di do.Injector) (*capproxy.Server, error) {
 			}
 			return settings.Addr, settings.Token, true
 		},
-	}, do.MustInvoke[*Store](di)), nil
+	}, do.MustInvoke[*storage.Store](di)), nil
 }

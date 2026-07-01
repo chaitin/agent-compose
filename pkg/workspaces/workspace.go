@@ -1,4 +1,4 @@
-package agentcompose
+package workspaces
 
 import (
 	appconfig "agent-compose/pkg/config"
@@ -13,13 +13,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"agent-compose/pkg/model"
+	"agent-compose/pkg/storage"
 )
 
 const gitWorkspaceTempDirName = ".agent-compose-git-clone"
 
 const fileWorkspaceContentDirName = "content"
 
-type gitWorkspaceConfig struct {
+type GitWorkspaceConfig struct {
 	URL         string `json:"url"`
 	Branch      string `json:"branch,omitempty"`
 	Commit      string `json:"commit,omitempty"`
@@ -29,20 +32,24 @@ type gitWorkspaceConfig struct {
 	CloneTarget string `json:"path,omitempty"`
 }
 
+type gitWorkspaceConfig = GitWorkspaceConfig
+
 type fileWorkspaceConfig struct {
 	Root string `json:"root,omitempty"`
 }
 
-type fileWorkspaceContent struct {
+type FileWorkspaceContent struct {
 	AbsRoot string
 	RelRoot string
 	Root    *os.Root
 }
 
-func prepareSessionWorkspace(ctx context.Context, config *appconfig.Config, configDB *ConfigStore, session *Session) error {
+type fileWorkspaceContent = FileWorkspaceContent
+
+func PrepareSessionWorkspace(ctx context.Context, config *appconfig.Config, configDB *storage.ConfigStore, session *model.Session) error {
 	workspaceID := strings.TrimSpace(session.WorkspaceID)
 	if session.Workspace != nil && strings.TrimSpace(session.Workspace.ID) != "" {
-		workspace := WorkspaceConfig{
+		workspace := model.WorkspaceConfig{
 			ID:         strings.TrimSpace(session.Workspace.ID),
 			Name:       session.Workspace.Name,
 			Type:       session.Workspace.Type,
@@ -51,7 +58,7 @@ func prepareSessionWorkspace(ctx context.Context, config *appconfig.Config, conf
 		if workspaceID == "" {
 			session.WorkspaceID = workspace.ID
 		}
-		return prepareWorkspaceConfig(ctx, config, session, workspace)
+		return PrepareWorkspaceConfig(ctx, config, session, workspace)
 	}
 	if workspaceID == "" {
 		return nil
@@ -60,10 +67,10 @@ func prepareSessionWorkspace(ctx context.Context, config *appconfig.Config, conf
 	if err != nil {
 		return err
 	}
-	return prepareWorkspaceConfig(ctx, config, session, workspace)
+	return PrepareWorkspaceConfig(ctx, config, session, workspace)
 }
 
-func prepareWorkspaceConfig(ctx context.Context, config *appconfig.Config, session *Session, workspace WorkspaceConfig) error {
+func PrepareWorkspaceConfig(ctx context.Context, config *appconfig.Config, session *model.Session, workspace model.WorkspaceConfig) error {
 	switch strings.ToLower(strings.TrimSpace(workspace.Type)) {
 	case "git":
 		return prepareGitWorkspace(ctx, session, workspace)
@@ -74,7 +81,7 @@ func prepareWorkspaceConfig(ctx context.Context, config *appconfig.Config, sessi
 	}
 }
 
-func prepareFileWorkspace(config *appconfig.Config, session *Session, workspace WorkspaceConfig) error {
+func prepareFileWorkspace(config *appconfig.Config, session *model.Session, workspace model.WorkspaceConfig) error {
 	workspaceRoot := strings.TrimSpace(session.Summary.WorkspacePath)
 	if workspaceRoot == "" {
 		return fmt.Errorf("session %s missing workspace path", session.Summary.ID)
@@ -82,7 +89,7 @@ func prepareFileWorkspace(config *appconfig.Config, session *Session, workspace 
 	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 		return fmt.Errorf("prepare workspace %s failed: create workspace root: %w", workspace.Name, err)
 	}
-	content, err := openFileWorkspaceContent(config, workspace)
+	content, err := OpenFileWorkspaceContent(config, workspace)
 	if err != nil {
 		return err
 	}
@@ -93,7 +100,7 @@ func prepareFileWorkspace(config *appconfig.Config, session *Session, workspace 
 	return nil
 }
 
-func fileWorkspaceContentRoot(config *appconfig.Config, workspace WorkspaceConfig) (string, error) {
+func FileWorkspaceContentRoot(config *appconfig.Config, workspace model.WorkspaceConfig) (string, error) {
 	workspaceID := strings.TrimSpace(workspace.ID)
 	if workspaceID == "" {
 		return "", fmt.Errorf("workspace config id is required for file workspace")
@@ -126,27 +133,27 @@ func fileWorkspaceContentRoot(config *appconfig.Config, workspace WorkspaceConfi
 	return cleanRoot, nil
 }
 
-func validateFileWorkspaceConfig(config *appconfig.Config, workspaceID, configJSON string) (string, error) {
-	return fileWorkspaceContentRoot(config, WorkspaceConfig{
+func ValidateFileWorkspaceConfig(config *appconfig.Config, workspaceID, configJSON string) (string, error) {
+	return FileWorkspaceContentRoot(config, model.WorkspaceConfig{
 		ID:         strings.TrimSpace(workspaceID),
 		Type:       "file",
 		ConfigJSON: configJSON,
 	})
 }
 
-func openFileWorkspaceContent(config *appconfig.Config, workspace WorkspaceConfig) (fileWorkspaceContent, error) {
-	absRoot, err := fileWorkspaceContentRoot(config, workspace)
+func OpenFileWorkspaceContent(config *appconfig.Config, workspace model.WorkspaceConfig) (FileWorkspaceContent, error) {
+	absRoot, err := FileWorkspaceContentRoot(config, workspace)
 	if err != nil {
-		return fileWorkspaceContent{}, err
+		return FileWorkspaceContent{}, err
 	}
 	workspaceID := strings.TrimSpace(workspace.ID)
-	relRoot, err := fileWorkspaceContentRelRoot(workspaceID)
+	relRoot, err := FileWorkspaceContentRelRoot(workspaceID)
 	if err != nil {
-		return fileWorkspaceContent{}, err
+		return FileWorkspaceContent{}, err
 	}
 	dataRoot, err := openFileWorkspaceDataRoot(config)
 	if err != nil {
-		return fileWorkspaceContent{}, err
+		return FileWorkspaceContent{}, err
 	}
 	defer func() { _ = dataRoot.Close() }()
 	for _, dir := range []string{"workspaces", filepath.ToSlash(filepath.Join("workspaces", workspaceID)), relRoot} {
@@ -156,12 +163,12 @@ func openFileWorkspaceContent(config *appconfig.Config, workspace WorkspaceConfi
 	}
 	contentRoot, err := dataRoot.OpenRoot(relRoot)
 	if err != nil {
-		return fileWorkspaceContent{}, fmt.Errorf("open file workspace content root: %w", err)
+		return FileWorkspaceContent{}, fmt.Errorf("open file workspace content root: %w", err)
 	}
-	return fileWorkspaceContent{AbsRoot: absRoot, RelRoot: relRoot, Root: contentRoot}, nil
+	return FileWorkspaceContent{AbsRoot: absRoot, RelRoot: relRoot, Root: contentRoot}, nil
 }
 
-func fileWorkspaceContentRelRoot(workspaceID string) (string, error) {
+func FileWorkspaceContentRelRoot(workspaceID string) (string, error) {
 	workspaceID = strings.TrimSpace(workspaceID)
 	if workspaceID == "" {
 		return "", fmt.Errorf("workspace config id is required for file workspace")
@@ -173,6 +180,10 @@ func fileWorkspaceContentRelRoot(workspaceID string) (string, error) {
 }
 
 func openFileWorkspaceDataRoot(config *appconfig.Config) (*os.Root, error) {
+	return OpenFileWorkspaceDataRoot(config)
+}
+
+func OpenFileWorkspaceDataRoot(config *appconfig.Config) (*os.Root, error) {
 	dataRootPath, err := filepath.Abs(strings.TrimSpace(config.DataRoot))
 	if err != nil {
 		return nil, fmt.Errorf("resolve data root: %w", err)
@@ -252,7 +263,7 @@ func ensureRootParentDir(root *os.Root, relPath string) error {
 	return nil
 }
 
-func copyRootDirectoryContents(srcRoot *os.Root, dstDir string) error {
+func CopyRootDirectoryContents(srcRoot *os.Root, dstDir string) error {
 	entries, err := fs.ReadDir(srcRoot.FS(), ".")
 	if err != nil {
 		return fmt.Errorf("read source workspace dir: %w", err)
@@ -374,7 +385,7 @@ func extractWorkspaceTarArchive(src io.Reader, dstRoot *os.Root) error {
 	}
 }
 
-func prepareGitWorkspace(ctx context.Context, session *Session, workspace WorkspaceConfig) error {
+func prepareGitWorkspace(ctx context.Context, session *model.Session, workspace model.WorkspaceConfig) error {
 	var cfg gitWorkspaceConfig
 	if err := json.Unmarshal([]byte(workspace.ConfigJSON), &cfg); err != nil {
 		return fmt.Errorf("decode workspace config %s: %w", workspace.ID, err)
@@ -384,7 +395,7 @@ func prepareGitWorkspace(ctx context.Context, session *Session, workspace Worksp
 		return fmt.Errorf("workspace config %s missing git url", workspace.ID)
 	}
 	cloneURL = applyGitCredentials(cloneURL, cfg)
-	cloneTarget, err := normalizeGitCloneTarget(workspace.ID, cfg.CloneTarget)
+	cloneTarget, err := NormalizeGitCloneTarget(workspace.ID, cfg.CloneTarget)
 	if err != nil {
 		return err
 	}
@@ -424,7 +435,7 @@ func prepareGitWorkspace(ctx context.Context, session *Session, workspace Worksp
 	return nil
 }
 
-func normalizeGitCloneTarget(workspaceID, raw string) (string, error) {
+func NormalizeGitCloneTarget(workspaceID, raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return ".", nil
@@ -490,7 +501,7 @@ func promoteClonedWorkspaceRoot(tempDir, workspaceRoot string) error {
 	for _, entry := range entries {
 		src := filepath.Join(tempDir, entry.Name())
 		dst := filepath.Join(workspaceRoot, entry.Name())
-		if err := moveWorkspaceEntry(src, dst); err != nil {
+		if err := MoveWorkspaceEntry(src, dst); err != nil {
 			return err
 		}
 	}
@@ -500,7 +511,7 @@ func promoteClonedWorkspaceRoot(tempDir, workspaceRoot string) error {
 	return nil
 }
 
-func moveWorkspaceEntry(src, dst string) error {
+func MoveWorkspaceEntry(src, dst string) error {
 	if err := os.Rename(src, dst); err == nil {
 		return nil
 	}
@@ -522,7 +533,7 @@ func moveWorkspaceEntry(src, dst string) error {
 	for _, entry := range entries {
 		childSrc := filepath.Join(src, entry.Name())
 		childDst := filepath.Join(dst, entry.Name())
-		if err := moveWorkspaceEntry(childSrc, childDst); err != nil {
+		if err := MoveWorkspaceEntry(childSrc, childDst); err != nil {
 			return err
 		}
 	}

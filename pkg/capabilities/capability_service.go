@@ -1,4 +1,4 @@
-package agentcompose
+package capabilities
 
 import (
 	"context"
@@ -11,16 +11,17 @@ import (
 
 	"agent-compose/pkg/capability"
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/storage"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
-// capabilityGatewaySource supplies the page-configured OctoBus connection.
+// GatewaySource supplies the page-configured OctoBus connection.
 // *ConfigStore satisfies it; tests can substitute a fake.
-type capabilityGatewaySource interface {
-	GetCapabilityGateway(ctx context.Context) (CapabilityGatewaySettings, error)
+type GatewaySource interface {
+	GetCapabilityGateway(ctx context.Context) (storage.CapabilityGatewaySettings, error)
 }
 
-type CapabilityProvider interface {
+type Provider interface {
 	Status(context.Context) capability.Status
 	ListCapsets(context.Context) ([]capability.Capset, error)
 	Catalog(context.Context, string) (capability.Catalog, error)
@@ -28,7 +29,7 @@ type CapabilityProvider interface {
 	ProxyTarget() string
 }
 
-type capabilityIntegration interface{ CapabilityProvider }
+type Integration interface{ Provider }
 
 // capabilityProvider reads the OctoBus connection from source on every call, so
 // page edits take effect without a restart. An empty addr means disabled.
@@ -38,12 +39,18 @@ type capabilityProvider struct {
 	proxyTarget string
 }
 
-func NewCapabilityProvider(di do.Injector) (capabilityIntegration, error) {
+type capabilityGatewaySource = GatewaySource
+
+func NewCapabilityProvider(di do.Injector) (Integration, error) {
 	conf := do.MustInvoke[*appconfig.Config](di)
+	return NewProvider(do.MustInvoke[*storage.ConfigStore](di), strings.TrimSpace(conf.CapGRPCTarget)), nil
+}
+
+func NewProvider(source GatewaySource, proxyTarget string) Provider {
 	return &capabilityProvider{
-		source:      do.MustInvoke[*ConfigStore](di),
-		proxyTarget: strings.TrimSpace(conf.CapGRPCTarget),
-	}, nil
+		source:      source,
+		proxyTarget: strings.TrimSpace(proxyTarget),
+	}
 }
 
 // client builds an OctoBus client from the current settings. ok is false when
@@ -93,6 +100,20 @@ func (p *capabilityProvider) CapabilityGuide(ctx context.Context, capsetID strin
 
 func (p *capabilityProvider) ProxyTarget() string {
 	return p.proxyTarget
+}
+
+type Service struct {
+	config   *appconfig.Config
+	configDB *storage.ConfigStore
+	cap      Provider
+}
+
+func NewService(config *appconfig.Config, configDB *storage.ConfigStore, provider Provider) *Service {
+	return &Service{
+		config:   config,
+		configDB: configDB,
+		cap:      provider,
+	}
 }
 
 func (s *Service) GetCapabilityStatus(ctx context.Context, req *connect.Request[agentcomposev1.GetCapabilityStatusRequest]) (*connect.Response[agentcomposev1.CapabilityStatusResponse], error) {
@@ -152,7 +173,7 @@ func (s *Service) GetCapabilityGatewayConfig(ctx context.Context, req *connect.R
 
 func (s *Service) UpdateCapabilityGatewayConfig(ctx context.Context, req *connect.Request[agentcomposev1.UpdateCapabilityGatewayConfigRequest]) (*connect.Response[agentcomposev1.CapabilityGatewayConfig], error) {
 	token := strings.TrimSpace(req.Msg.GetToken())
-	saved, err := s.configDB.SaveCapabilityGateway(ctx, CapabilityGatewaySettings{
+	saved, err := s.configDB.SaveCapabilityGateway(ctx, storage.CapabilityGatewaySettings{
 		Addr:  req.Msg.GetAddr(),
 		Token: token,
 	})
@@ -162,7 +183,7 @@ func (s *Service) UpdateCapabilityGatewayConfig(ctx context.Context, req *connec
 	return connect.NewResponse(toProtoCapabilityGatewayConfig(saved)), nil
 }
 
-func toProtoCapabilityGatewayConfig(settings CapabilityGatewaySettings) *agentcomposev1.CapabilityGatewayConfig {
+func toProtoCapabilityGatewayConfig(settings storage.CapabilityGatewaySettings) *agentcomposev1.CapabilityGatewayConfig {
 	return &agentcomposev1.CapabilityGatewayConfig{
 		Addr:     settings.Addr,
 		TokenSet: strings.TrimSpace(settings.Token) != "",

@@ -768,20 +768,8 @@ func newTestServiceAPIHarness(t *testing.T) (*Service, *fakeLoaderAgentRuntime, 
 	streams := &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}}
 	executor := &Executor{config: config, store: store, configDB: configDB, runtimes: runtimes, streams: streams}
 	bus := NewLoaderBusWithBuffer(256)
-	aggregator := &DashboardOverviewAggregator{
-		store:    store,
-		configDB: configDB,
-		clock:    func() time.Time { return time.Now().UTC() },
-	}
-	dashboard := &DashboardOverviewHub{
-		ctx:         ctx,
-		cancel:      cancel,
-		aggregator:  aggregator,
-		debounce:    10 * time.Millisecond,
-		notifyCh:    make(chan string, 1),
-		subscribers: make(map[chan DashboardOverviewEvent]struct{}),
-	}
-	go dashboard.run()
+	aggregator := newDashboardOverviewAggregator(store, configDB)
+	dashboard := newDashboardOverviewHub(ctx, aggregator, 10*time.Millisecond)
 	manager := &LoaderManager{
 		config:       config,
 		rootCtx:      ctx,

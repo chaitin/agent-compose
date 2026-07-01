@@ -1,8 +1,9 @@
-package agentcompose
+package dashboard
 
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -11,22 +12,24 @@ import (
 	"github.com/samber/do/v2"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"agent-compose/pkg/model"
+	"agent-compose/pkg/storage"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
 const dashboardOverviewPageSize = 20
 
 type DashboardOverviewAggregator struct {
-	store    *Store
-	configDB *ConfigStore
+	store    *storage.Store
+	configDB *storage.ConfigStore
 	clock    func() time.Time
 }
 
 func NewDashboardOverviewAggregator(di do.Injector) (*DashboardOverviewAggregator, error) {
-	return newDashboardOverviewAggregator(do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di)), nil
+	return NewAggregator(do.MustInvoke[*storage.Store](di), do.MustInvoke[*storage.ConfigStore](di)), nil
 }
 
-func newDashboardOverviewAggregator(store *Store, configDB *ConfigStore) *DashboardOverviewAggregator {
+func NewAggregator(store *storage.Store, configDB *storage.ConfigStore) *DashboardOverviewAggregator {
 	return &DashboardOverviewAggregator{
 		store:    store,
 		configDB: configDB,
@@ -35,7 +38,7 @@ func newDashboardOverviewAggregator(store *Store, configDB *ConfigStore) *Dashbo
 }
 
 func (a *DashboardOverviewAggregator) Build(ctx context.Context) (*agentcomposev1.DashboardOverview, error) {
-	sessions, err := a.store.ListSessions(ctx, SessionListOptions{Limit: dashboardOverviewPageSize})
+	sessions, err := a.store.ListSessions(ctx, model.SessionListOptions{Limit: dashboardOverviewPageSize})
 	if err != nil {
 		return nil, err
 	}
@@ -95,10 +98,10 @@ func NewDashboardOverviewHub(di do.Injector) (*DashboardOverviewHub, error) {
 		ctx = context.Background()
 	}
 	aggregator := do.MustInvoke[*DashboardOverviewAggregator](di)
-	return newDashboardOverviewHub(ctx, aggregator, 250*time.Millisecond), nil
+	return NewHub(ctx, aggregator, 250*time.Millisecond), nil
 }
 
-func newDashboardOverviewHub(ctx context.Context, aggregator *DashboardOverviewAggregator, debounce time.Duration) *DashboardOverviewHub {
+func NewHub(ctx context.Context, aggregator *DashboardOverviewAggregator, debounce time.Duration) *DashboardOverviewHub {
 	hubCtx, cancel := context.WithCancel(ctx)
 	hub := &DashboardOverviewHub{
 		ctx:         hubCtx,
@@ -110,6 +113,13 @@ func newDashboardOverviewHub(ctx context.Context, aggregator *DashboardOverviewA
 	}
 	go hub.run()
 	return hub
+}
+
+func (h *DashboardOverviewHub) SetDebounceForTest(debounce time.Duration) {
+	if h == nil {
+		return
+	}
+	h.debounce = debounce
 }
 
 func (h *DashboardOverviewHub) Current(ctx context.Context) (*agentcomposev1.DashboardOverview, error) {
@@ -218,6 +228,14 @@ func (h *DashboardOverviewHub) closeSubscribers() {
 	}
 }
 
+type Service struct {
+	dashboard *DashboardOverviewHub
+}
+
+func NewService(hub *DashboardOverviewHub) *Service {
+	return &Service{dashboard: hub}
+}
+
 func (s *Service) GetDashboardOverview(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[agentcomposev1.DashboardOverviewResponse], error) {
 	_ = req
 	overview, err := s.dashboard.Current(ctx)
@@ -256,7 +274,7 @@ func (s *Service) WatchDashboardOverview(ctx context.Context, req *connect.Reque
 
 func isDashboardRunningStatus(status string) bool {
 	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case VMStatusPending, VMStatusRunning:
+	case model.VMStatusPending, model.VMStatusRunning:
 		return true
 	default:
 		return false
@@ -265,11 +283,19 @@ func isDashboardRunningStatus(status string) bool {
 
 func isDashboardAttentionStatus(status string) bool {
 	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case VMStatusFailed, "SKIPPED", "CANCELED", "CANCELLED":
+	case model.VMStatusFailed, "SKIPPED", "CANCELED", "CANCELLED":
 		return true
 	default:
 		return false
 	}
+}
+
+func prepareStreamingHeaders(headers http.Header) {
+	if headers == nil {
+		return
+	}
+	headers.Set("Cache-Control", "no-cache, no-transform")
+	headers.Set("X-Accel-Buffering", "no")
 }
 
 func cloneDashboardOverview(item *agentcomposev1.DashboardOverview) *agentcomposev1.DashboardOverview {
