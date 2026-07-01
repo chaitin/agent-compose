@@ -5,9 +5,10 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { runExecCommand } from "./command.js";
-import { COMMAND_RESULT_PREFIX, RESULT_PREFIX } from "./constants.js";
+import { COMMAND_RESULT_PREFIX, RESULT_PREFIX, SERVICE_RESULT_PREFIX } from "./constants.js";
 import { formatError } from "./errors.js";
 import { runPromptCommand } from "./prompt.js";
+import { runServiceCommand } from "./service.js";
 
 export function createProgram(options: { exitOverride?: boolean } = {}): Command {
   const program = new Command();
@@ -54,6 +55,22 @@ export function createProgram(options: { exitOverride?: boolean } = {}): Command
     }) => {
       const result = await runExecCommand(options);
       process.stdout.write(`${COMMAND_RESULT_PREFIX}${JSON.stringify(result)}\n`);
+    });
+
+  program
+    .command("service")
+    .option("--request-file <path>", "service request JSON file path")
+    .option("--request-json <json>", "inline service request JSON")
+    .option("--state-root <path>", "agent-compose runtime state root")
+    .option("--workspace <path>", "service working directory")
+    .action(async (options: {
+      requestFile?: string;
+      requestJson?: string;
+      stateRoot?: string;
+      workspace?: string;
+    }) => {
+      const result = await runServiceCommand(options);
+      process.stdout.write(`${SERVICE_RESULT_PREFIX}${JSON.stringify(result)}\n`);
     });
 
   return program;

@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
+import http from "node:http";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { runtime, CommandError } from "../src/index.js";
+import { runtime, CommandError, RuntimeUnsupportedError, mockRuntime } from "../src/index.js";
 import { captureStdio, withTempDir } from "./helpers.js";
 
 describe("@chaitin-ai/agent-compose-runtime-sdk", () => {
@@ -187,6 +188,216 @@ describe("@chaitin-ai/agent-compose-runtime-sdk", () => {
     }
   });
 
+  it("reads secrets from prefixed env without writing output", () => {
+    const previousPrefixed = process.env.SECRET_AGENT_COMPOSE_RUNTIME_SDK_TEST_SECRET;
+    const previousDirect = process.env.AGENT_COMPOSE_RUNTIME_SDK_TEST_DIRECT_SECRET;
+    process.env.SECRET_AGENT_COMPOSE_RUNTIME_SDK_TEST_SECRET = "prefixed";
+    process.env.AGENT_COMPOSE_RUNTIME_SDK_TEST_DIRECT_SECRET = "direct";
+    const stdio = captureStdio();
+    try {
+      expect(runtime.secret.get("AGENT_COMPOSE_RUNTIME_SDK_TEST_SECRET")).toBe("prefixed");
+      expect(runtime.secret.get("AGENT_COMPOSE_RUNTIME_SDK_TEST_DIRECT_SECRET")).toBeUndefined();
+      expect(runtime.secret.get("AGENT_COMPOSE_RUNTIME_SDK_TEST_MISSING_SECRET")).toBeUndefined();
+    } finally {
+      stdio.restore();
+      if (previousPrefixed === undefined) {
+        delete process.env.SECRET_AGENT_COMPOSE_RUNTIME_SDK_TEST_SECRET;
+      } else {
+        process.env.SECRET_AGENT_COMPOSE_RUNTIME_SDK_TEST_SECRET = previousPrefixed;
+      }
+      if (previousDirect === undefined) {
+        delete process.env.AGENT_COMPOSE_RUNTIME_SDK_TEST_DIRECT_SECRET;
+      } else {
+        process.env.AGENT_COMPOSE_RUNTIME_SDK_TEST_DIRECT_SECRET = previousDirect;
+      }
+    }
+
+    expect(stdio.stdout).toBe("");
+    expect(stdio.stderr).toBe("");
+  });
+
+  it("invokes service bridge through endpoint env", async () => {
+    const previousEndpoint = process.env.AGENT_COMPOSE_SERVICE_BRIDGE_ENDPOINT;
+    const server = await listenJsonBridge(async (body, request) => {
+      expect(request.headers["x-runtime-test"]).toBe("yes");
+      expect(body).toEqual({
+        service: "inventory",
+        method: "lookup",
+        input: { sku: "A-1" },
+      });
+      return { ok: true, sku: body.input.sku };
+    });
+    process.env.AGENT_COMPOSE_SERVICE_BRIDGE_ENDPOINT = server.url;
+    try {
+      await expect(runtime.service.invoke(" inventory ", " lookup ", { sku: "A-1" }, {
+        headers: { "x-runtime-test": "yes" },
+      })).resolves.toEqual({ ok: true, sku: "A-1" });
+    } finally {
+      if (previousEndpoint === undefined) {
+        delete process.env.AGENT_COMPOSE_SERVICE_BRIDGE_ENDPOINT;
+      } else {
+        process.env.AGENT_COMPOSE_SERVICE_BRIDGE_ENDPOINT = previousEndpoint;
+      }
+      await server.close();
+    }
+  });
+
+  it("reports service bridge HTTP errors", async () => {
+    const server = await listenJsonBridge(async () => ({ error: "denied" }), { status: 403 });
+    try {
+      await expect(runtime.invokeService("demo", "blocked", {}, { endpoint: server.url }))
+        .rejects.toMatchObject({
+          name: "RuntimeBridgeError",
+          code: "ERR_AGENT_COMPOSE_RUNTIME_BRIDGE",
+          message: "runtime service bridge returned HTTP 403: {\"error\":\"denied\"}",
+        });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("supports injected fetch for capability bridge dry runs", async () => {
+    const requests: unknown[] = [];
+    const fakeFetch: typeof fetch = async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+    };
+
+    await expect(runtime.capability.call("notify.send", { text: "hello" }, {
+      endpoint: "http://runtime.test/capability",
+      fetch: fakeFetch,
+      headers: { "x-runtime-test": "yes" },
+    })).resolves.toEqual({ accepted: true });
+    expect(requests).toEqual([{ method: "notify.send", input: { text: "hello" } }]);
+  });
+
+  it("supports mock runtime for service and capability dry runs", async () => {
+    const mocked = mockRuntime({
+      services: {
+        "inventory.lookup": (request) => ({ sku: request.input, source: request.service }),
+      },
+      capabilities: {
+        "notify.send": (request) => ({ method: request.method, delivered: true }),
+      },
+    });
+
+    await expect(mocked.service.invoke("inventory", "lookup", "A-1"))
+      .resolves.toEqual({ sku: "A-1", source: "inventory" });
+    await expect(runtime.test.mockRuntime({
+      capabilities: {
+        "notify.send": () => ({ delivered: true }),
+      },
+    }).capability.call("notify.send", { text: "hello" }))
+      .resolves.toEqual({ delivered: true });
+    await expect(mocked.capability.call("missing", {}))
+      .rejects.toThrow("mock runtime capability handler is not configured for missing");
+  });
+
+  it("returns clear unsupported errors for unconfigured platform bridges", async () => {
+    const previousCapabilityEndpoint = process.env.AGENT_COMPOSE_CAPABILITY_ENDPOINT;
+    const previousServiceEndpoint = process.env.AGENT_COMPOSE_SERVICE_BRIDGE_ENDPOINT;
+    delete process.env.AGENT_COMPOSE_CAPABILITY_ENDPOINT;
+    delete process.env.AGENT_COMPOSE_SERVICE_BRIDGE_ENDPOINT;
+    try {
+      await expect(runtime.capability.call("demo.method", { ok: true }))
+        .rejects.toMatchObject({
+          name: "RuntimeUnsupportedError",
+          code: "ERR_AGENT_COMPOSE_RUNTIME_UNSUPPORTED",
+          message: "runtime capability bridge is not configured",
+        });
+
+      await expect(runtime.service.invoke("demo", "method", { ok: true }))
+        .rejects.toBeInstanceOf(RuntimeUnsupportedError);
+      await expect(runtime.invokeService("demo", "method", { ok: true }))
+        .rejects.toThrow("runtime service daemon bridge is not configured");
+    } finally {
+      if (previousCapabilityEndpoint === undefined) {
+        delete process.env.AGENT_COMPOSE_CAPABILITY_ENDPOINT;
+      } else {
+        process.env.AGENT_COMPOSE_CAPABILITY_ENDPOINT = previousCapabilityEndpoint;
+      }
+      if (previousServiceEndpoint === undefined) {
+        delete process.env.AGENT_COMPOSE_SERVICE_BRIDGE_ENDPOINT;
+      } else {
+        process.env.AGENT_COMPOSE_SERVICE_BRIDGE_ENDPOINT = previousServiceEndpoint;
+      }
+    }
+  });
+
+  it("reads runtime context from json env", () => {
+    const previous = process.env.AGENT_COMPOSE_RUNTIME_CONTEXT_JSON;
+    process.env.AGENT_COMPOSE_RUNTIME_CONTEXT_JSON = JSON.stringify({
+      source: "api",
+      client_request_id: "request-1",
+      trace_id: "trace-1",
+      external_run_id: "external-1",
+      metadata: { project: "demo" },
+      env: { MODE: "test" },
+      identity_context: { user: "user-1" },
+      capability_scope: { capset_ids: ["capset-a"], metadata: { corp: "x" } },
+    });
+    try {
+      const context = runtime.context.read();
+      expect(context.source).toBe("api");
+      expect(context.clientRequestId).toBe("request-1");
+      expect(context.traceId).toBe("trace-1");
+      expect(context.externalRunId).toBe("external-1");
+      expect(context.metadata.project).toBe("demo");
+      expect(context.env.MODE).toBe("test");
+      expect(context.identityContext.user).toBe("user-1");
+      expect(context.capabilityScope.capsetIds).toEqual(["capset-a"]);
+      expect(context.capabilityScope.metadata.corp).toBe("x");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AGENT_COMPOSE_RUNTIME_CONTEXT_JSON;
+      } else {
+        process.env.AGENT_COMPOSE_RUNTIME_CONTEXT_JSON = previous;
+      }
+    }
+  });
+
+  it("writes, reads, and lists artifacts", async () => {
+    await withTempDir(async (root) => {
+      const record = await runtime.artifact.write("reports/summary.txt", "hello", {
+        dir: root,
+        contentType: "text/plain",
+        metadata: { kind: "summary" },
+      });
+
+      expect(record.name).toBe("reports/summary.txt");
+      expect(record.contentType).toBe("text/plain");
+      expect(record.metadata.kind).toBe("summary");
+      expect(await runtime.artifact.read("reports/summary.txt", { dir: root, encoding: "utf8" })).toBe("hello");
+      expect(await runtime.artifact.list({ dir: root })).toEqual(["reports/summary.txt"]);
+    });
+  });
+
+  it("stores namespaced state as json", async () => {
+    await withTempDir(async (root) => {
+      const store = runtime.stateStore("service", { dir: root });
+      await store.set("cursor", { value: 42 });
+      expect(await store.get("cursor")).toEqual({ value: 42 });
+      await store.delete("cursor");
+      expect(await store.get("cursor")).toBeUndefined();
+    });
+  });
+
+  it("publishes structured runtime events to stdout", () => {
+    const stdio = captureStdio();
+    try {
+      const event = runtime.event.publish("demo.created", { ok: true }, { source: "test" });
+      expect(event.topic).toBe("demo.created");
+    } finally {
+      stdio.restore();
+    }
+
+    const published = JSON.parse(stdio.stdout);
+    expect(published.type).toBe("agent-compose.runtime.event");
+    expect(published.topic).toBe("demo.created");
+    expect(published.payload).toEqual({ ok: true });
+    expect(published.metadata).toEqual({ source: "test" });
+  });
+
   it("writes structured logs to stdout", () => {
     const stdio = captureStdio();
     try {
@@ -215,3 +426,33 @@ describe("@chaitin-ai/agent-compose-runtime-sdk", () => {
     });
   });
 });
+
+async function listenJsonBridge(
+  handler: (body: Record<string, any>, request: http.IncomingMessage) => unknown | Promise<unknown>,
+  options: { status?: number } = {},
+): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = http.createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", async () => {
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+        const payload = await handler(body, request);
+        response.writeHead(options.status ?? 200, { "content-type": "application/json" });
+        response.end(JSON.stringify(payload));
+      } catch (error) {
+        response.writeHead(500, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("test bridge did not bind to a TCP port");
+  }
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+  };
+}

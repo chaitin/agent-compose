@@ -3,12 +3,15 @@ package agentcompose
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+
+	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
 type ProjectRunStartRequest struct {
@@ -19,6 +22,7 @@ type ProjectRunStartRequest struct {
 	TriggerID       string
 	Prompt          string
 	ClientRequestID string
+	RuntimeContext  *agentcomposev2.RuntimeContext
 }
 
 type ProjectRunTransitionRequest struct {
@@ -29,6 +33,7 @@ type ProjectRunTransitionRequest struct {
 	Error        string
 	Output       string
 	ResultJSON   string
+	OutputJSON   string
 	LogsPath     string
 	ArtifactsDir string
 	CleanupError string
@@ -86,21 +91,30 @@ func (c *RunCoordinator) BeginRun(ctx context.Context, req ProjectRunStartReques
 	if err != nil {
 		return ProjectRunRecord{}, err
 	}
+	runtimeContextJSON, err := encodeRuntimeContextJSON(req.RuntimeContext)
+	if err != nil {
+		return ProjectRunRecord{}, err
+	}
 	run := ProjectRunRecord{
-		RunID:           runID,
-		ProjectID:       project.ID,
-		ProjectName:     project.Name,
-		ProjectRevision: project.CurrentRevision,
-		AgentName:       projectAgent.AgentName,
-		ManagedAgentID:  agent.ID,
-		Source:          req.Source,
-		SchedulerID:     req.SchedulerID,
-		TriggerID:       req.TriggerID,
-		Status:          ProjectRunStatusPending,
-		Prompt:          req.Prompt,
-		Driver:          firstNonEmpty(agent.Driver, projectAgent.Driver),
-		ImageRef:        firstNonEmpty(agent.GuestImage, projectAgent.Image),
-		ResultJSON:      "{}",
+		RunID:              runID,
+		ProjectID:          project.ID,
+		ProjectName:        project.Name,
+		ProjectRevision:    project.CurrentRevision,
+		TargetType:         "agent",
+		TargetName:         projectAgent.AgentName,
+		AgentName:          projectAgent.AgentName,
+		ManagedAgentID:     agent.ID,
+		Source:             req.Source,
+		SchedulerID:        req.SchedulerID,
+		TriggerID:          req.TriggerID,
+		ClientRequestID:    req.ClientRequestID,
+		Status:             ProjectRunStatusPending,
+		Prompt:             req.Prompt,
+		Driver:             firstNonEmpty(agent.Driver, projectAgent.Driver),
+		ImageRef:           firstNonEmpty(agent.GuestImage, projectAgent.Image),
+		ResultJSON:         "{}",
+		InputJSON:          encodeJSONString(req.Prompt),
+		RuntimeContextJSON: runtimeContextJSON,
 	}
 	created, err := c.store.CreateProjectRun(ctx, run)
 	if err == nil {
@@ -110,6 +124,25 @@ func (c *RunCoordinator) BeginRun(ctx context.Context, req ProjectRunStartReques
 		return existing, nil
 	}
 	return ProjectRunRecord{}, err
+}
+
+func encodeRuntimeContextJSON(value *agentcomposev2.RuntimeContext) (string, error) {
+	if value == nil {
+		return "{}", nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("marshal runtime context: %w", err)
+	}
+	return string(raw), nil
+}
+
+func encodeJSONString(value string) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 func (c *RunCoordinator) MarkRunning(ctx context.Context, runID, sessionID string) (ProjectRunRecord, error) {
@@ -197,6 +230,9 @@ func applyProjectRunTransitionFields(run *ProjectRunRecord, req ProjectRunTransi
 	}
 	if value := strings.TrimSpace(req.ResultJSON); value != "" {
 		run.ResultJSON = value
+	}
+	if value := strings.TrimSpace(req.OutputJSON); value != "" {
+		run.OutputJSON = value
 	}
 	if value := strings.TrimSpace(req.LogsPath); value != "" {
 		run.LogsPath = value

@@ -104,6 +104,83 @@ const result = await runtime.shell("echo shell:$AGENT_COMPOSE_TEST_VALUE", {
 
 Options and return values are the same as `runtime.exec()`. Use `runtime.shell()` when you need variable expansion, pipes, redirects, or compound commands.
 
+### `runtime.service.invoke(serviceName, method, input, options?)`
+
+Calls another agent-compose service through the local runtime bridge. Configure
+the bridge with `AGENT_COMPOSE_SERVICE_BRIDGE_ENDPOINT`, or pass `endpoint` in
+tests and local tools.
+
+```ts
+const user = await runtime.service.invoke("user-profile", "get", { userId: "u-1" });
+```
+
+The SDK sends a stable JSON request:
+
+```json
+{
+  "service": "user-profile",
+  "method": "get",
+  "input": { "userId": "u-1" }
+}
+```
+
+Options:
+
+| Option | Description |
+| --- | --- |
+| `endpoint` | Overrides `AGENT_COMPOSE_SERVICE_BRIDGE_ENDPOINT`. |
+| `headers` | Extra HTTP headers sent to the bridge. |
+| `signal` | Abort signal for cancellation. |
+| `fetch` | Custom fetch implementation for local dry runs. |
+
+`runtime.invokeService()` is the same function.
+
+### `runtime.capability.call(method, input, options?)`
+
+Calls a runtime capability bridge. Configure the bridge with
+`AGENT_COMPOSE_CAPABILITY_ENDPOINT`, or pass `endpoint`/`fetch` explicitly.
+
+```ts
+const result = await runtime.capability.call("notify.send", {
+  text: "deployment completed",
+});
+```
+
+The request body is:
+
+```json
+{
+  "method": "notify.send",
+  "input": { "text": "deployment completed" }
+}
+```
+
+When no endpoint is configured, service and capability calls throw
+`RuntimeUnsupportedError` with a clear bridge configuration message.
+
+### Mock Runtime
+
+Business service code can accept a runtime-like dependency in tests and use a
+small mock registry instead of daemon private protocols:
+
+```ts
+import { mockRuntime } from "@chaitin-ai/agent-compose-runtime-sdk";
+
+const runtime = mockRuntime({
+  services: {
+    "user-profile.get": ({ input }) => ({ id: input.userId, name: "Ada" }),
+  },
+  capabilities: {
+    "notify.send": () => ({ delivered: true }),
+  },
+});
+
+await runtime.service.invoke("user-profile", "get", { userId: "u-1" });
+await runtime.capability.call("notify.send", { text: "ok" });
+```
+
+The same helper is available as `runtime.test.mockRuntime`.
+
 ### `runtime.agent(prompt, options?)`
 
 Calls the agent bridge in the agent-compose runtime.

@@ -60,6 +60,8 @@ type Service struct {
 	agentcomposev1connect.UnimplementedCapabilityServiceHandler
 	agentcomposev2connect.UnimplementedProjectServiceHandler
 	agentcomposev2connect.UnimplementedRunServiceHandler
+	agentcomposev2connect.UnimplementedArtifactServiceHandler
+	agentcomposev2connect.UnimplementedEventServiceHandler
 	agentcomposev2connect.UnimplementedExecServiceHandler
 	agentcomposev2connect.UnimplementedImageServiceHandler
 }
@@ -91,7 +93,7 @@ func NewService(di do.Injector) (*Service, error) {
 	config.ImageCacheRoot = ociCache.Root()
 	ociImages := NewOCIImageBackend(ociCache)
 	autoImages := NewAutoImageBackend(config.ImageStoreMode, dockerImages, ociImages)
-	return &Service{
+	service := &Service{
 		config:     config,
 		store:      do.MustInvoke[*Store](di),
 		configDB:   do.MustInvoke[*ConfigStore](di),
@@ -110,7 +112,11 @@ func NewService(di do.Injector) (*Service, error) {
 		events:     NewEventDispatcher(do.MustInvoke[context.Context](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderBus](di)),
 		sessions:   do.MustInvoke[*SessionRPCBridge](di),
 		startedAt:  time.Now().UTC(),
-	}, nil
+	}
+	if service.loaders != nil {
+		service.loaders.service = service
+	}
+	return service, nil
 }
 
 func Setup(di do.Injector) {
@@ -163,6 +169,10 @@ func Register(di do.Injector) {
 	path, handler = agentcomposev2connect.NewProjectServiceHandler(service)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewRunServiceHandler(service)
+	app.Any(path+"*", echo.WrapHandler(handler))
+	path, handler = agentcomposev2connect.NewArtifactServiceHandler(service)
+	app.Any(path+"*", echo.WrapHandler(handler))
+	path, handler = agentcomposev2connect.NewEventServiceHandler(service)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewExecServiceHandler(service)
 	app.Any(path+"*", echo.WrapHandler(handler))

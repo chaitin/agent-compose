@@ -9,11 +9,34 @@ import (
 )
 
 type ProjectSpec struct {
-	Name      string                `yaml:"name,omitempty" json:"name,omitempty"`
-	Variables map[string]EnvVarSpec `yaml:"variables,omitempty" json:"variables,omitempty"`
-	Workspace *WorkspaceSpec        `yaml:"workspace,omitempty" json:"workspace,omitempty"`
-	Agents    map[string]AgentSpec  `yaml:"agents,omitempty" json:"agents,omitempty"`
-	Network   *NetworkSpec          `yaml:"network,omitempty" json:"network,omitempty"`
+	APIVersion  string                        `yaml:"apiVersion,omitempty" json:"apiVersion,omitempty"`
+	Kind        string                        `yaml:"kind,omitempty" json:"kind,omitempty"`
+	Name        string                        `yaml:"name,omitempty" json:"name,omitempty"`
+	Metadata    *ProjectMetadataSpec          `yaml:"metadata,omitempty" json:"metadata,omitempty"`
+	Variables   map[string]EnvVarSpec         `yaml:"variables,omitempty" json:"variables,omitempty"`
+	Runtime     *ProjectRuntimeSpec           `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Workspace   *WorkspaceSpec                `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+	Agents      map[string]AgentSpec          `yaml:"agents,omitempty" json:"agents,omitempty"`
+	Services    map[string]ServiceSpec        `yaml:"services,omitempty" json:"services,omitempty"`
+	Triggers    map[string]ProjectTriggerSpec `yaml:"triggers,omitempty" json:"triggers,omitempty"`
+	Permissions *PermissionSpec               `yaml:"permissions,omitempty" json:"permissions,omitempty"`
+	Artifacts   *ArtifactPolicySpec           `yaml:"artifacts,omitempty" json:"artifacts,omitempty"`
+	Network     *NetworkSpec                  `yaml:"network,omitempty" json:"network,omitempty"`
+}
+
+type ProjectMetadataSpec struct {
+	Name        string            `yaml:"name,omitempty" json:"name,omitempty"`
+	Labels      map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Annotations map[string]string `yaml:"annotations,omitempty" json:"annotations,omitempty"`
+}
+
+type ProjectRuntimeSpec struct {
+	Driver        string                `yaml:"driver,omitempty" json:"driver,omitempty"`
+	Image         string                `yaml:"image,omitempty" json:"image,omitempty"`
+	Env           map[string]EnvVarSpec `yaml:"env,omitempty" json:"env,omitempty"`
+	Resources     map[string]string     `yaml:"resources,omitempty" json:"resources,omitempty"`
+	Network       *NetworkSpec          `yaml:"network,omitempty" json:"network,omitempty"`
+	CleanupPolicy string                `yaml:"cleanup_policy,omitempty" json:"cleanup_policy,omitempty"`
 }
 
 type AgentSpec struct {
@@ -24,8 +47,67 @@ type AgentSpec struct {
 	Driver       *DriverSpec           `yaml:"driver,omitempty" json:"driver,omitempty"`
 	Env          map[string]EnvVarSpec `yaml:"env,omitempty" json:"env,omitempty"`
 	CapsetIDs    []string              `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
+	Metadata     map[string]string     `yaml:"metadata,omitempty" json:"metadata,omitempty"`
 	Workspace    *WorkspaceSpec        `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Scheduler    *SchedulerSpec        `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
+}
+
+type ServiceSpec struct {
+	Description  string                `yaml:"description,omitempty" json:"description,omitempty"`
+	Runtime      string                `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Entry        string                `yaml:"entry,omitempty" json:"entry,omitempty"`
+	InputSchema  string                `yaml:"input_schema,omitempty" json:"input_schema,omitempty"`
+	OutputSchema string                `yaml:"output_schema,omitempty" json:"output_schema,omitempty"`
+	ErrorSchema  string                `yaml:"error_schema,omitempty" json:"error_schema,omitempty"`
+	Timeout      string                `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Retry        *RetryPolicySpec      `yaml:"retry,omitempty" json:"retry,omitempty"`
+	Permissions  *PermissionSpec       `yaml:"permissions,omitempty" json:"permissions,omitempty"`
+	Env          map[string]EnvVarSpec `yaml:"env,omitempty" json:"env,omitempty"`
+	Agents       []string              `yaml:"agents,omitempty" json:"agents,omitempty"`
+	Examples     []ServiceExampleSpec  `yaml:"examples,omitempty" json:"examples,omitempty"`
+}
+
+type RetryPolicySpec struct {
+	MaxAttempts int    `yaml:"max_attempts,omitempty" json:"max_attempts,omitempty"`
+	Backoff     string `yaml:"backoff,omitempty" json:"backoff,omitempty"`
+}
+
+type ServiceExampleSpec struct {
+	Name   string `yaml:"name,omitempty" json:"name,omitempty"`
+	Input  string `yaml:"input,omitempty" json:"input,omitempty"`
+	Output string `yaml:"output,omitempty" json:"output,omitempty"`
+}
+
+type ProjectTriggerSpec struct {
+	Type     string              `yaml:"type,omitempty" json:"type,omitempty"`
+	Cron     string              `yaml:"cron,omitempty" json:"cron,omitempty"`
+	Interval string              `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Timeout  string              `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Event    *EventTriggerSpec   `yaml:"event,omitempty" json:"event,omitempty"`
+	Webhook  *WebhookTriggerSpec `yaml:"webhook,omitempty" json:"webhook,omitempty"`
+	Target   *TriggerTargetSpec  `yaml:"target,omitempty" json:"target,omitempty"`
+	Input    string              `yaml:"input,omitempty" json:"input,omitempty"`
+}
+
+type WebhookTriggerSpec struct {
+	Topic  string `yaml:"topic,omitempty" json:"topic,omitempty"`
+	Method string `yaml:"method,omitempty" json:"method,omitempty"`
+}
+
+type TriggerTargetSpec struct {
+	Service string `yaml:"service,omitempty" json:"service,omitempty"`
+	Agent   string `yaml:"agent,omitempty" json:"agent,omitempty"`
+}
+
+type PermissionSpec struct {
+	Agents       []string `yaml:"agents,omitempty" json:"agents,omitempty"`
+	Capabilities []string `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+	Resources    []string `yaml:"resources,omitempty" json:"resources,omitempty"`
+}
+
+type ArtifactPolicySpec struct {
+	Retention string `yaml:"retention,omitempty" json:"retention,omitempty"`
+	Storage   string `yaml:"storage,omitempty" json:"storage,omitempty"`
 }
 
 type SchedulerSpec struct {
@@ -202,11 +284,38 @@ type nodeValidator func(node *yaml.Node, path string) error
 
 func validateProjectNode(node *yaml.Node) error {
 	return validateMapping(node, "", map[string]nodeValidator{
-		"name":      validateScalar,
-		"variables": validateEnvVarMap,
-		"workspace": validateWorkspace,
-		"agents":    validateAgentMap,
-		"network":   validateNetwork,
+		"apiVersion":  validateScalar,
+		"kind":        validateScalar,
+		"name":        validateScalar,
+		"metadata":    validateProjectMetadata,
+		"variables":   validateEnvVarMap,
+		"runtime":     validateProjectRuntime,
+		"workspace":   validateWorkspace,
+		"agents":      validateAgentMap,
+		"services":    validateServiceMap,
+		"triggers":    validateProjectTriggerMap,
+		"permissions": validatePermissions,
+		"artifacts":   validateArtifactPolicy,
+		"network":     validateNetwork,
+	})
+}
+
+func validateProjectMetadata(node *yaml.Node, path string) error {
+	return validateMapping(node, path, map[string]nodeValidator{
+		"name":        validateScalar,
+		"labels":      validateStringMap,
+		"annotations": validateStringMap,
+	})
+}
+
+func validateProjectRuntime(node *yaml.Node, path string) error {
+	return validateMapping(node, path, map[string]nodeValidator{
+		"driver":         validateScalar,
+		"image":          validateScalar,
+		"env":            validateEnvVarMap,
+		"resources":      validateStringMap,
+		"network":        validateNetwork,
+		"cleanup_policy": validateScalar,
 	})
 }
 
@@ -223,8 +332,99 @@ func validateAgent(node *yaml.Node, path string) error {
 		"driver":        validateDriver,
 		"env":           validateEnvVarMap,
 		"capset_ids":    validateStringList,
+		"metadata":      validateStringMap,
 		"workspace":     validateWorkspace,
 		"scheduler":     validateScheduler,
+	})
+}
+
+func validateServiceMap(node *yaml.Node, path string) error {
+	return validateNamedMap(node, path, validateService)
+}
+
+func validateService(node *yaml.Node, path string) error {
+	return validateMapping(node, path, map[string]nodeValidator{
+		"description":   validateScalar,
+		"runtime":       validateScalar,
+		"entry":         validateScalar,
+		"input_schema":  validateScalar,
+		"output_schema": validateScalar,
+		"error_schema":  validateScalar,
+		"timeout":       validateScalar,
+		"retry":         validateRetryPolicy,
+		"permissions":   validatePermissions,
+		"env":           validateEnvVarMap,
+		"agents":        validateStringList,
+		"examples":      validateServiceExampleList,
+	})
+}
+
+func validateRetryPolicy(node *yaml.Node, path string) error {
+	return validateMapping(node, path, map[string]nodeValidator{
+		"max_attempts": validateInt,
+		"backoff":      validateScalar,
+	})
+}
+
+func validateServiceExampleList(node *yaml.Node, path string) error {
+	if err := requireKind(node, path, yaml.SequenceNode, "sequence"); err != nil {
+		return err
+	}
+	for i, item := range node.Content {
+		if err := validateMapping(item, fmt.Sprintf("%s[%d]", path, i), map[string]nodeValidator{
+			"name":   validateScalar,
+			"input":  validateScalar,
+			"output": validateScalar,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateProjectTriggerMap(node *yaml.Node, path string) error {
+	return validateNamedMap(node, path, validateProjectTrigger)
+}
+
+func validateProjectTrigger(node *yaml.Node, path string) error {
+	return validateMapping(node, path, map[string]nodeValidator{
+		"type":     validateScalar,
+		"cron":     validateScalar,
+		"interval": validateScalar,
+		"timeout":  validateScalar,
+		"event":    validateEventTrigger,
+		"webhook":  validateWebhookTrigger,
+		"target":   validateTriggerTarget,
+		"input":    validateScalar,
+	})
+}
+
+func validateWebhookTrigger(node *yaml.Node, path string) error {
+	return validateMapping(node, path, map[string]nodeValidator{
+		"topic":  validateScalar,
+		"method": validateScalar,
+	})
+}
+
+func validateTriggerTarget(node *yaml.Node, path string) error {
+	return validateMapping(node, path, map[string]nodeValidator{
+		"service": validateScalar,
+		"agent":   validateScalar,
+	})
+}
+
+func validatePermissions(node *yaml.Node, path string) error {
+	return validateMapping(node, path, map[string]nodeValidator{
+		"agents":       validateStringList,
+		"capabilities": validateStringList,
+		"resources":    validateStringList,
+	})
+}
+
+func validateArtifactPolicy(node *yaml.Node, path string) error {
+	return validateMapping(node, path, map[string]nodeValidator{
+		"retention": validateScalar,
+		"storage":   validateScalar,
 	})
 }
 
@@ -343,6 +543,21 @@ func validateNetwork(node *yaml.Node, path string) error {
 	return validateMapping(node, path, map[string]nodeValidator{
 		"mode": validateScalar,
 	})
+}
+
+func validateStringMap(node *yaml.Node, path string) error {
+	return validateNamedMap(node, path, validateScalar)
+}
+
+func validateInt(node *yaml.Node, path string) error {
+	if err := validateScalar(node, path); err != nil {
+		return err
+	}
+	var value int
+	if err := node.Decode(&value); err != nil {
+		return newParseError(node, path, "expected int")
+	}
+	return nil
 }
 
 func validateNamedMap(node *yaml.Node, path string, validateValue nodeValidator) error {

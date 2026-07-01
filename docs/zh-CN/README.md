@@ -62,21 +62,33 @@ agent-compose down
 ## 当前入口
 
 - `agent-compose daemon`：启动长期运行的 HTTP/Connect daemon。
+- `agent-compose validate`：本地校验 `agent-compose.yml`，可输出 manifest schema 或 dry-run 摘要。
+- `agent-compose bundle validate|inspect`：校验或检查本地 project bundle 目录。
 - `agent-compose up`：读取本地 `agent-compose.yml`，把 project 定义和 scheduler 应用到 daemon。
 - `agent-compose run <agent>`：手动运行一次 project agent。
+- `agent-compose invoke <service>`：调用 manifest 中定义的 service entry。
 - `agent-compose logs`：查看 project run 日志。
 - `agent-compose ps`：查看 project agent、latest run 和 running session 状态。
 - `agent-compose down`：禁用 daemon 管理的 scheduler，并停止该 project 的 running sessions。
 - `agent-compose images|pull|rmi|image inspect`：管理 daemon 侧 image store。
+
+完整命令行说明见 [CLI 操作手册](cli/usage.md)。
+
+示例入口见 [examples/README.zh-CN.md](../../examples/README.zh-CN.md)。
 
 ## Compose 配置
 
 顶层字段：
 
 - `name`：project 名称；未设置时使用 compose 文件所在目录名。
+- `apiVersion` / `kind` / `metadata`：可选 manifest 元信息。
 - `variables`：project 级变量，支持 `${ENV_NAME}` 环境变量插值。
+- `runtime`：project 默认 runtime driver、image、env、resources、network 和 cleanup 策略。
 - `workspace`：project 默认 workspace，当前支持 `local` 和 `git` provider。
 - `agents`：agent 定义 map，key 是 agent 名称。
+- `services`：可复用 service entry，声明业务逻辑入口文件、input/output/error schema、timeout、retry、permissions、examples。
+- `triggers`：project 级声明式 trigger，可指向 service 或 agent。
+- `permissions` / `artifacts`：project 级治理配置。
 - `network.mode`：当前只支持 `default`。
 
 agent 常用字段：
@@ -89,6 +101,15 @@ agent 常用字段：
 - `scheduler.enabled`：默认 `true`。
 - `scheduler.triggers`：支持 `cron`、`interval`、`timeout`、`event` 四种 trigger。
 - `scheduler.script`：内联 JavaScript scheduler 脚本。`scheduler.script` 和 `scheduler.triggers` 二选一。
+
+service 常用字段：
+
+- `entry`：service JS 入口文件。路径必须是 project 内相对路径。
+- `input_schema` / `output_schema` / `error_schema`：inline JSON schema 或 project 内 schema 文件引用。
+- `agents`：该 service 可调用或依赖的 agent profile 名称。
+- `permissions.capabilities`：该 service 需要的 capability scope。
+- `timeout` / `retry`：service 执行控制。
+- `examples`：输入输出示例，供测试、文档和上层平台 UI 使用。
 
 ## Runtime Driver
 
@@ -189,7 +210,10 @@ task test
 相关文档：
 
 - [英文文档索引](../README.md)
+- [CLI 操作手册](cli/usage.md)
 - [架构说明](design/agent-compose_design.md)
+- [概念定位与对外使用边界](design/agent-compose_concept_positioning_and_externalization.md)
+- [引擎基础能力建设计划](design/agent-compose_engine_foundation_plan.md)
 - [Agent system prompt（Phase 1）](design/agent_system_prompt_design.md)
 - [Runtime contract](design/agent-compose-runtime_contract.md)
 - [OpenCode CLI Provider 支持](design/opencode_cli_support.md)

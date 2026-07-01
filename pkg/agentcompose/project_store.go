@@ -34,17 +34,19 @@ type ProjectRecord struct {
 	SourceJSON      string    `json:"source_json"`
 	CurrentRevision int64     `json:"current_revision"`
 	SpecHash        string    `json:"spec_hash,omitempty"`
+	BundleHash      string    `json:"bundle_hash,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 	RemovedAt       time.Time `json:"removed_at,omitempty"`
 }
 
 type ProjectRevisionRecord struct {
-	ProjectID string    `json:"project_id"`
-	Revision  int64     `json:"revision"`
-	SpecHash  string    `json:"spec_hash"`
-	SpecJSON  string    `json:"spec_json"`
-	CreatedAt time.Time `json:"created_at"`
+	ProjectID  string    `json:"project_id"`
+	Revision   int64     `json:"revision"`
+	SpecHash   string    `json:"spec_hash"`
+	BundleHash string    `json:"bundle_hash,omitempty"`
+	SpecJSON   string    `json:"spec_json"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type ProjectAgentRecord struct {
@@ -62,10 +64,27 @@ type ProjectAgentRecord struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
+type ProjectServiceRecord struct {
+	ProjectID       string    `json:"project_id"`
+	ServiceName     string    `json:"service_name"`
+	Revision        int64     `json:"revision"`
+	Runtime         string    `json:"runtime,omitempty"`
+	Entry           string    `json:"entry,omitempty"`
+	InputSchemaRef  string    `json:"input_schema_ref,omitempty"`
+	OutputSchemaRef string    `json:"output_schema_ref,omitempty"`
+	ErrorSchemaRef  string    `json:"error_schema_ref,omitempty"`
+	TimeoutMs       int       `json:"timeout_ms,omitempty"`
+	SpecJSON        string    `json:"spec_json"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 type ProjectSchedulerRecord struct {
 	ProjectID       string    `json:"project_id"`
 	SchedulerID     string    `json:"scheduler_id"`
 	AgentName       string    `json:"agent_name"`
+	TargetType      string    `json:"target_type"`
+	TargetName      string    `json:"target_name"`
 	ManagedLoaderID string    `json:"managed_loader_id,omitempty"`
 	Revision        int64     `json:"revision"`
 	Enabled         bool      `json:"enabled"`
@@ -76,32 +95,38 @@ type ProjectSchedulerRecord struct {
 }
 
 type ProjectRunRecord struct {
-	RunID           string    `json:"run_id"`
-	ProjectID       string    `json:"project_id"`
-	ProjectName     string    `json:"project_name,omitempty"`
-	ProjectRevision int64     `json:"project_revision"`
-	AgentName       string    `json:"agent_name,omitempty"`
-	ManagedAgentID  string    `json:"managed_agent_id,omitempty"`
-	Source          string    `json:"source,omitempty"`
-	SchedulerID     string    `json:"scheduler_id,omitempty"`
-	TriggerID       string    `json:"trigger_id,omitempty"`
-	Status          string    `json:"status"`
-	SessionID       string    `json:"session_id,omitempty"`
-	ExitCode        int       `json:"exit_code,omitempty"`
-	Error           string    `json:"error,omitempty"`
-	Prompt          string    `json:"prompt,omitempty"`
-	Output          string    `json:"output,omitempty"`
-	ResultJSON      string    `json:"result_json,omitempty"`
-	LogsPath        string    `json:"logs_path,omitempty"`
-	ArtifactsDir    string    `json:"artifacts_dir,omitempty"`
-	CleanupError    string    `json:"cleanup_error,omitempty"`
-	Driver          string    `json:"driver,omitempty"`
-	ImageRef        string    `json:"image_ref,omitempty"`
-	StartedAt       time.Time `json:"started_at,omitempty"`
-	CompletedAt     time.Time `json:"completed_at,omitempty"`
-	DurationMs      int64     `json:"duration_ms,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	RunID              string    `json:"run_id"`
+	ProjectID          string    `json:"project_id"`
+	ProjectName        string    `json:"project_name,omitempty"`
+	ProjectRevision    int64     `json:"project_revision"`
+	TargetType         string    `json:"target_type,omitempty"`
+	TargetName         string    `json:"target_name,omitempty"`
+	AgentName          string    `json:"agent_name,omitempty"`
+	ManagedAgentID     string    `json:"managed_agent_id,omitempty"`
+	Source             string    `json:"source,omitempty"`
+	SchedulerID        string    `json:"scheduler_id,omitempty"`
+	TriggerID          string    `json:"trigger_id,omitempty"`
+	ClientRequestID    string    `json:"client_request_id,omitempty"`
+	Status             string    `json:"status"`
+	SessionID          string    `json:"session_id,omitempty"`
+	ExitCode           int       `json:"exit_code,omitempty"`
+	Error              string    `json:"error,omitempty"`
+	Prompt             string    `json:"prompt,omitempty"`
+	Output             string    `json:"output,omitempty"`
+	ResultJSON         string    `json:"result_json,omitempty"`
+	InputJSON          string    `json:"input_json,omitempty"`
+	OutputJSON         string    `json:"output_json,omitempty"`
+	RuntimeContextJSON string    `json:"runtime_context_json,omitempty"`
+	LogsPath           string    `json:"logs_path,omitempty"`
+	ArtifactsDir       string    `json:"artifacts_dir,omitempty"`
+	CleanupError       string    `json:"cleanup_error,omitempty"`
+	Driver             string    `json:"driver,omitempty"`
+	ImageRef           string    `json:"image_ref,omitempty"`
+	StartedAt          time.Time `json:"started_at,omitempty"`
+	CompletedAt        time.Time `json:"completed_at,omitempty"`
+	DurationMs         int64     `json:"duration_ms,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 type ProjectListOptions struct {
@@ -112,18 +137,28 @@ type ProjectListOptions struct {
 }
 
 type ProjectRunListOptions struct {
-	ProjectID   string
-	AgentName   string
-	SessionID   string
-	SchedulerID string
-	Status      string
-	Source      string
-	Offset      int
-	Limit       int
+	ProjectID       string
+	AgentName       string
+	SessionID       string
+	SchedulerID     string
+	ClientRequestID string
+	TargetType      string
+	TargetName      string
+	Status          string
+	Source          string
+	Offset          int
+	Limit           int
 }
 
 type ProjectListResult struct {
 	Projects   []ProjectRecord
+	TotalCount int
+	HasMore    bool
+	NextOffset int
+}
+
+type ProjectRevisionListResult struct {
+	Revisions  []ProjectRevisionRecord
 	TotalCount int
 	HasMore    bool
 	NextOffset int
@@ -190,6 +225,48 @@ func StableManagedLoaderID(projectID, agentName, schedulerName string) (string, 
 	return stableReadableID("loader", agentName+"-"+schedulerName, projectID+"|"+agentName+"|"+schedulerName), nil
 }
 
+func StableProjectTargetSchedulerID(projectID, targetType, targetName, schedulerName string) (string, error) {
+	projectID = strings.TrimSpace(projectID)
+	targetType = strings.TrimSpace(targetType)
+	targetName = strings.TrimSpace(targetName)
+	schedulerName = strings.TrimSpace(schedulerName)
+	if schedulerName == "" {
+		schedulerName = "default"
+	}
+	if projectID == "" || targetType == "" || targetName == "" {
+		return "", fmt.Errorf("project id, target type, and target name are required")
+	}
+	if !isProjectStableIdentifier(targetName) {
+		return "", fmt.Errorf("target name %q is not a stable identifier", targetName)
+	}
+	if !isProjectStableIdentifier(schedulerName) {
+		return "", fmt.Errorf("scheduler name %q is not a stable identifier", schedulerName)
+	}
+	readable := targetName + "-" + schedulerName
+	return stableReadableID("scheduler", readable, projectID+"|"+targetType+"|"+targetName+"|"+schedulerName), nil
+}
+
+func StableManagedTargetLoaderID(projectID, targetType, targetName, schedulerName string) (string, error) {
+	projectID = strings.TrimSpace(projectID)
+	targetType = strings.TrimSpace(targetType)
+	targetName = strings.TrimSpace(targetName)
+	schedulerName = strings.TrimSpace(schedulerName)
+	if schedulerName == "" {
+		schedulerName = "default"
+	}
+	if projectID == "" || targetType == "" || targetName == "" {
+		return "", fmt.Errorf("project id, target type, and target name are required")
+	}
+	if !isProjectStableIdentifier(targetName) {
+		return "", fmt.Errorf("target name %q is not a stable identifier", targetName)
+	}
+	if !isProjectStableIdentifier(schedulerName) {
+		return "", fmt.Errorf("scheduler name %q is not a stable identifier", schedulerName)
+	}
+	readable := targetName + "-" + schedulerName
+	return stableReadableID("loader", readable, projectID+"|"+targetType+"|"+targetName+"|"+schedulerName), nil
+}
+
 func StableManagedTriggerID(projectID, agentName, schedulerName, triggerName string, triggerIndex int) (string, error) {
 	projectID = strings.TrimSpace(projectID)
 	agentName = strings.TrimSpace(agentName)
@@ -217,17 +294,22 @@ func StableManagedTriggerID(projectID, agentName, schedulerName, triggerName str
 }
 
 func StableProjectRunID(projectID, agentName, source, idempotencyKey string) (string, error) {
+	return StableProjectTargetRunID(projectID, "agent", agentName, source, idempotencyKey)
+}
+
+func StableProjectTargetRunID(projectID, targetType, targetName, source, idempotencyKey string) (string, error) {
 	projectID = strings.TrimSpace(projectID)
-	agentName = strings.TrimSpace(agentName)
+	targetType = strings.TrimSpace(targetType)
+	targetName = strings.TrimSpace(targetName)
 	source = strings.TrimSpace(source)
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
-	if projectID == "" || agentName == "" || source == "" || idempotencyKey == "" {
-		return "", fmt.Errorf("project id, agent name, source, and idempotency key are required")
+	if projectID == "" || targetType == "" || targetName == "" || source == "" || idempotencyKey == "" {
+		return "", fmt.Errorf("project id, target type, target name, source, and idempotency key are required")
 	}
-	if !isProjectStableIdentifier(agentName) {
-		return "", fmt.Errorf("agent name %q is not a stable identifier", agentName)
+	if !isProjectStableIdentifier(targetName) {
+		return "", fmt.Errorf("target name %q is not a stable identifier", targetName)
 	}
-	return stableReadableID("run", agentName, projectID+"|"+agentName+"|"+source+"|"+idempotencyKey), nil
+	return stableReadableID("run", targetName, projectID+"|"+targetType+"|"+targetName+"|"+source+"|"+idempotencyKey), nil
 }
 
 func NewProjectRecordFromSpec(spec *compose.NormalizedProjectSpec, sourcePath string) (ProjectRecord, error) {
@@ -283,6 +365,25 @@ func NewProjectAgentRecordFromSpec(projectID string, revision int64, agent compo
 	}, nil
 }
 
+func NewProjectServiceRecordFromSpec(projectID string, revision int64, service compose.NormalizedServiceSpec) (ProjectServiceRecord, error) {
+	specJSON, err := marshalCanonicalProjectJSON(service)
+	if err != nil {
+		return ProjectServiceRecord{}, fmt.Errorf("marshal project service %s spec: %w", service.Name, err)
+	}
+	return ProjectServiceRecord{
+		ProjectID:       strings.TrimSpace(projectID),
+		ServiceName:     strings.TrimSpace(service.Name),
+		Revision:        revision,
+		Runtime:         strings.TrimSpace(service.Runtime),
+		Entry:           strings.TrimSpace(service.Entry),
+		InputSchemaRef:  strings.TrimSpace(service.InputSchema),
+		OutputSchemaRef: strings.TrimSpace(service.OutputSchema),
+		ErrorSchemaRef:  strings.TrimSpace(service.ErrorSchema),
+		TimeoutMs:       durationMillisInt(service.Timeout),
+		SpecJSON:        string(specJSON),
+	}, nil
+}
+
 func NewProjectSchedulerRecordFromSpec(projectID string, revision int64, agent compose.NormalizedAgentSpec) (ProjectSchedulerRecord, bool, error) {
 	if agent.Scheduler == nil {
 		return ProjectSchedulerRecord{}, false, nil
@@ -303,6 +404,8 @@ func NewProjectSchedulerRecordFromSpec(projectID string, revision int64, agent c
 		ProjectID:       strings.TrimSpace(projectID),
 		SchedulerID:     schedulerID,
 		AgentName:       strings.TrimSpace(agent.Name),
+		TargetType:      "agent",
+		TargetName:      strings.TrimSpace(agent.Name),
 		ManagedLoaderID: loaderID,
 		Revision:        revision,
 		Enabled:         agent.Scheduler.Enabled,
@@ -330,9 +433,9 @@ func (s *ConfigStore) UpsertProject(ctx context.Context, project ProjectRecord) 
 		project.UpdatedAt = now
 		project.RemovedAt = time.Time{}
 		result, err := s.db.ExecContext(ctx, `UPDATE project SET
-			name = ?, source_path = ?, source_json = ?, spec_hash = ?, updated_at = ?, removed_at = 0
+			name = ?, source_path = ?, source_json = ?, spec_hash = ?, bundle_hash = ?, updated_at = ?, removed_at = 0
 			WHERE id = ?`,
-			project.Name, project.SourcePath, project.SourceJSON, project.SpecHash, project.UpdatedAt.Unix(), project.ID)
+			project.Name, project.SourcePath, project.SourceJSON, project.SpecHash, project.BundleHash, project.UpdatedAt.Unix(), project.ID)
 		if err != nil {
 			return ProjectRecord{}, fmt.Errorf("update project %s: %w", project.ID, err)
 		}
@@ -345,9 +448,9 @@ func (s *ConfigStore) UpsertProject(ctx context.Context, project ProjectRecord) 
 	project.CreatedAt = now
 	project.UpdatedAt = now
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO project(
-		id, name, source_path, source_json, current_revision, spec_hash, created_at, updated_at, removed_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-		project.ID, project.Name, project.SourcePath, project.SourceJSON, project.CurrentRevision, project.SpecHash, project.CreatedAt.Unix(), project.UpdatedAt.Unix()); err != nil {
+		id, name, source_path, source_json, current_revision, spec_hash, bundle_hash, created_at, updated_at, removed_at
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		project.ID, project.Name, project.SourcePath, project.SourceJSON, project.CurrentRevision, project.SpecHash, project.BundleHash, project.CreatedAt.Unix(), project.UpdatedAt.Unix()); err != nil {
 		return ProjectRecord{}, fmt.Errorf("insert project %s: %w", project.ID, err)
 	}
 	return s.GetProject(ctx, project.ID)
@@ -370,8 +473,8 @@ func (s *ConfigStore) SaveProjectRevision(ctx context.Context, revision ProjectR
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	row := tx.QueryRowContext(ctx, `SELECT project_id, revision, spec_hash, spec_json, created_at
-		FROM project_revision WHERE project_id = ? AND spec_hash = ?`, revision.ProjectID, revision.SpecHash)
+	row := tx.QueryRowContext(ctx, `SELECT project_id, revision, spec_hash, bundle_hash, spec_json, created_at
+		FROM project_revision WHERE project_id = ? AND spec_hash = ? AND bundle_hash = ?`, revision.ProjectID, revision.SpecHash, revision.BundleHash)
 	existing, err := scanProjectRevision(row.Scan)
 	if err == nil {
 		return existing, false, tx.Commit()
@@ -387,12 +490,12 @@ func (s *ConfigStore) SaveProjectRevision(ctx context.Context, revision ProjectR
 	now := time.Now().UTC()
 	revision.Revision = nextRevision
 	revision.CreatedAt = now
-	if _, err := tx.ExecContext(ctx, `INSERT INTO project_revision(project_id, revision, spec_hash, spec_json, created_at)
-		VALUES(?, ?, ?, ?, ?)`, revision.ProjectID, revision.Revision, revision.SpecHash, revision.SpecJSON, revision.CreatedAt.Unix()); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO project_revision(project_id, revision, spec_hash, bundle_hash, spec_json, created_at)
+		VALUES(?, ?, ?, ?, ?, ?)`, revision.ProjectID, revision.Revision, revision.SpecHash, revision.BundleHash, revision.SpecJSON, revision.CreatedAt.Unix()); err != nil {
 		return ProjectRevisionRecord{}, false, fmt.Errorf("insert project revision %s/%d: %w", revision.ProjectID, revision.Revision, err)
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE project SET current_revision = ?, spec_hash = ?, updated_at = ?, removed_at = 0 WHERE id = ?`,
-		revision.Revision, revision.SpecHash, now.Unix(), revision.ProjectID)
+	result, err := tx.ExecContext(ctx, `UPDATE project SET current_revision = ?, spec_hash = ?, bundle_hash = ?, updated_at = ?, removed_at = 0 WHERE id = ?`,
+		revision.Revision, revision.SpecHash, revision.BundleHash, now.Unix(), revision.ProjectID)
 	if err != nil {
 		return ProjectRevisionRecord{}, false, fmt.Errorf("update project revision pointer %s: %w", revision.ProjectID, err)
 	}
@@ -428,7 +531,7 @@ func (s *ConfigStore) ListProjects(ctx context.Context, options ProjectListOptio
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, source_path, source_json, current_revision, spec_hash, created_at, updated_at, removed_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, source_path, source_json, current_revision, spec_hash, bundle_hash, created_at, updated_at, removed_at
 		FROM project ORDER BY updated_at DESC, created_at DESC, id ASC`)
 	if err != nil {
 		return ProjectListResult{}, fmt.Errorf("query projects: %w", err)
@@ -470,7 +573,7 @@ func (s *ConfigStore) ListProjects(ctx context.Context, options ProjectListOptio
 }
 
 func (s *ConfigStore) GetProjectRevision(ctx context.Context, projectID string, revision int64) (ProjectRevisionRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT project_id, revision, spec_hash, spec_json, created_at
+	row := s.db.QueryRowContext(ctx, `SELECT project_id, revision, spec_hash, bundle_hash, spec_json, created_at
 		FROM project_revision WHERE project_id = ? AND revision = ?`, strings.TrimSpace(projectID), revision)
 	item, err := scanProjectRevision(row.Scan)
 	if err != nil {
@@ -480,6 +583,45 @@ func (s *ConfigStore) GetProjectRevision(ctx context.Context, projectID string, 
 		return ProjectRevisionRecord{}, err
 	}
 	return item, nil
+}
+
+func (s *ConfigStore) ListProjectRevisions(ctx context.Context, projectID string, offset, limit int) (ProjectRevisionListResult, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return ProjectRevisionListResult{}, fmt.Errorf("project id is required")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_revision WHERE project_id = ?`, projectID).Scan(&total); err != nil {
+		return ProjectRevisionListResult{}, fmt.Errorf("count project revisions %s: %w", projectID, err)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT project_id, revision, spec_hash, bundle_hash, spec_json, created_at
+		FROM project_revision WHERE project_id = ? ORDER BY revision DESC LIMIT ? OFFSET ?`, projectID, limit, offset)
+	if err != nil {
+		return ProjectRevisionListResult{}, fmt.Errorf("query project revisions %s: %w", projectID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	revisions := make([]ProjectRevisionRecord, 0, limit)
+	for rows.Next() {
+		item, err := scanProjectRevision(rows.Scan)
+		if err != nil {
+			return ProjectRevisionListResult{}, err
+		}
+		revisions = append(revisions, item)
+	}
+	if err := rows.Err(); err != nil {
+		return ProjectRevisionListResult{}, fmt.Errorf("iterate project revisions %s: %w", projectID, err)
+	}
+	next := offset + len(revisions)
+	return ProjectRevisionListResult{Revisions: revisions, TotalCount: total, HasMore: next < total, NextOffset: next}, nil
 }
 
 func (s *ConfigStore) UpsertProjectAgent(ctx context.Context, agent ProjectAgentRecord) (ProjectAgentRecord, error) {
@@ -545,6 +687,96 @@ func (s *ConfigStore) ListProjectAgents(ctx context.Context, projectID string) (
 	return items, nil
 }
 
+func (s *ConfigStore) UpsertProjectService(ctx context.Context, service ProjectServiceRecord) (ProjectServiceRecord, error) {
+	service, err := normalizeProjectServiceRecord(service)
+	if err != nil {
+		return ProjectServiceRecord{}, err
+	}
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `UPDATE project_service SET
+		revision = ?, runtime = ?, entry = ?, input_schema_ref = ?, output_schema_ref = ?, error_schema_ref = ?, timeout_ms = ?, spec_json = ?, updated_at = ?
+		WHERE project_id = ? AND service_name = ?`,
+		service.Revision, service.Runtime, service.Entry, service.InputSchemaRef, service.OutputSchemaRef, service.ErrorSchemaRef, service.TimeoutMs, service.SpecJSON, now.Unix(),
+		service.ProjectID, service.ServiceName)
+	if err != nil {
+		return ProjectServiceRecord{}, fmt.Errorf("update project service %s/%s: %w", service.ProjectID, service.ServiceName, err)
+	}
+	if rows, _ := result.RowsAffected(); rows > 0 {
+		return s.GetProjectService(ctx, service.ProjectID, service.ServiceName)
+	}
+	service.CreatedAt = now
+	service.UpdatedAt = now
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO project_service(
+		project_id, service_name, revision, runtime, entry, input_schema_ref, output_schema_ref, error_schema_ref, timeout_ms, spec_json, created_at, updated_at
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		service.ProjectID, service.ServiceName, service.Revision, service.Runtime, service.Entry, service.InputSchemaRef, service.OutputSchemaRef, service.ErrorSchemaRef, service.TimeoutMs, service.SpecJSON,
+		service.CreatedAt.Unix(), service.UpdatedAt.Unix()); err != nil {
+		return ProjectServiceRecord{}, fmt.Errorf("insert project service %s/%s: %w", service.ProjectID, service.ServiceName, err)
+	}
+	return s.GetProjectService(ctx, service.ProjectID, service.ServiceName)
+}
+
+func (s *ConfigStore) GetProjectService(ctx context.Context, projectID, serviceName string) (ProjectServiceRecord, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT project_id, service_name, revision, runtime, entry, input_schema_ref, output_schema_ref, error_schema_ref, timeout_ms, spec_json, created_at, updated_at
+		FROM project_service WHERE project_id = ? AND service_name = ?`, strings.TrimSpace(projectID), strings.TrimSpace(serviceName))
+	item, err := scanProjectService(row.Scan)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ProjectServiceRecord{}, fmt.Errorf("project service %s/%s not found: %w", strings.TrimSpace(projectID), strings.TrimSpace(serviceName), err)
+		}
+		return ProjectServiceRecord{}, err
+	}
+	return item, nil
+}
+
+func (s *ConfigStore) ListProjectServices(ctx context.Context, projectID string) ([]ProjectServiceRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT project_id, service_name, revision, runtime, entry, input_schema_ref, output_schema_ref, error_schema_ref, timeout_ms, spec_json, created_at, updated_at
+		FROM project_service WHERE project_id = ? ORDER BY service_name ASC`, strings.TrimSpace(projectID))
+	if err != nil {
+		return nil, fmt.Errorf("query project services %s: %w", strings.TrimSpace(projectID), err)
+	}
+	defer func() { _ = rows.Close() }()
+	var items []ProjectServiceRecord
+	for rows.Next() {
+		item, err := scanProjectService(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate project services %s: %w", strings.TrimSpace(projectID), err)
+	}
+	return items, nil
+}
+
+func (s *ConfigStore) DeleteProjectServicesExcept(ctx context.Context, projectID string, keepNames []string) error {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return fmt.Errorf("project id is required")
+	}
+	keep := make(map[string]struct{}, len(keepNames))
+	for _, name := range keepNames {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			keep[name] = struct{}{}
+		}
+	}
+	services, err := s.ListProjectServices(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	for _, service := range services {
+		if _, ok := keep[service.ServiceName]; ok {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM project_service WHERE project_id = ? AND service_name = ?`, projectID, service.ServiceName); err != nil {
+			return fmt.Errorf("delete project service %s/%s: %w", projectID, service.ServiceName, err)
+		}
+	}
+	return nil
+}
+
 func (s *ConfigStore) UpsertProjectScheduler(ctx context.Context, scheduler ProjectSchedulerRecord) (ProjectSchedulerRecord, error) {
 	scheduler, err := normalizeProjectSchedulerRecord(scheduler)
 	if err != nil {
@@ -552,9 +784,9 @@ func (s *ConfigStore) UpsertProjectScheduler(ctx context.Context, scheduler Proj
 	}
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(ctx, `UPDATE project_scheduler SET
-		agent_name = ?, managed_loader_id = ?, revision = ?, enabled = ?, trigger_count = ?, spec_json = ?, updated_at = ?
+		agent_name = ?, target_type = ?, target_name = ?, managed_loader_id = ?, revision = ?, enabled = ?, trigger_count = ?, spec_json = ?, updated_at = ?
 		WHERE project_id = ? AND scheduler_id = ?`,
-		scheduler.AgentName, scheduler.ManagedLoaderID, scheduler.Revision, boolToInt(scheduler.Enabled), scheduler.TriggerCount, scheduler.SpecJSON, now.Unix(),
+		scheduler.AgentName, scheduler.TargetType, scheduler.TargetName, scheduler.ManagedLoaderID, scheduler.Revision, boolToInt(scheduler.Enabled), scheduler.TriggerCount, scheduler.SpecJSON, now.Unix(),
 		scheduler.ProjectID, scheduler.SchedulerID)
 	if err != nil {
 		return ProjectSchedulerRecord{}, fmt.Errorf("update project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
@@ -565,9 +797,9 @@ func (s *ConfigStore) UpsertProjectScheduler(ctx context.Context, scheduler Proj
 	scheduler.CreatedAt = now
 	scheduler.UpdatedAt = now
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO project_scheduler(
-		project_id, scheduler_id, agent_name, managed_loader_id, revision, enabled, trigger_count, spec_json, created_at, updated_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		scheduler.ProjectID, scheduler.SchedulerID, scheduler.AgentName, scheduler.ManagedLoaderID, scheduler.Revision, boolToInt(scheduler.Enabled), scheduler.TriggerCount, scheduler.SpecJSON,
+		project_id, scheduler_id, agent_name, target_type, target_name, managed_loader_id, revision, enabled, trigger_count, spec_json, created_at, updated_at
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		scheduler.ProjectID, scheduler.SchedulerID, scheduler.AgentName, scheduler.TargetType, scheduler.TargetName, scheduler.ManagedLoaderID, scheduler.Revision, boolToInt(scheduler.Enabled), scheduler.TriggerCount, scheduler.SpecJSON,
 		scheduler.CreatedAt.Unix(), scheduler.UpdatedAt.Unix()); err != nil {
 		return ProjectSchedulerRecord{}, fmt.Errorf("insert project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
 	}
@@ -575,7 +807,7 @@ func (s *ConfigStore) UpsertProjectScheduler(ctx context.Context, scheduler Proj
 }
 
 func (s *ConfigStore) GetProjectScheduler(ctx context.Context, projectID, schedulerID string) (ProjectSchedulerRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT project_id, scheduler_id, agent_name, managed_loader_id, revision, enabled, trigger_count, spec_json, created_at, updated_at
+	row := s.db.QueryRowContext(ctx, `SELECT project_id, scheduler_id, agent_name, target_type, target_name, managed_loader_id, revision, enabled, trigger_count, spec_json, created_at, updated_at
 		FROM project_scheduler WHERE project_id = ? AND scheduler_id = ?`, strings.TrimSpace(projectID), strings.TrimSpace(schedulerID))
 	item, err := scanProjectScheduler(row.Scan)
 	if err != nil {
@@ -605,8 +837,8 @@ func (s *ConfigStore) SetProjectSchedulerEnabled(ctx context.Context, projectID,
 }
 
 func (s *ConfigStore) ListProjectSchedulers(ctx context.Context, projectID string) ([]ProjectSchedulerRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT project_id, scheduler_id, agent_name, managed_loader_id, revision, enabled, trigger_count, spec_json, created_at, updated_at
-		FROM project_scheduler WHERE project_id = ? ORDER BY agent_name ASC, scheduler_id ASC`, strings.TrimSpace(projectID))
+	rows, err := s.db.QueryContext(ctx, `SELECT project_id, scheduler_id, agent_name, target_type, target_name, managed_loader_id, revision, enabled, trigger_count, spec_json, created_at, updated_at
+		FROM project_scheduler WHERE project_id = ? ORDER BY target_type ASC, target_name ASC, scheduler_id ASC`, strings.TrimSpace(projectID))
 	if err != nil {
 		return nil, fmt.Errorf("query project schedulers %s: %w", strings.TrimSpace(projectID), err)
 	}
@@ -634,12 +866,12 @@ func (s *ConfigStore) CreateProjectRun(ctx context.Context, run ProjectRunRecord
 	run.CreatedAt = now
 	run.UpdatedAt = now
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO project_run(
-		run_id, project_id, project_name, project_revision, agent_name, managed_agent_id, source, scheduler_id, trigger_id, status,
-		session_id, exit_code, error, prompt, output, result_json, logs_path, artifacts_dir, cleanup_error, driver, image_ref,
+		run_id, project_id, project_name, project_revision, target_type, target_name, agent_name, managed_agent_id, source, scheduler_id, trigger_id, client_request_id, status,
+		session_id, exit_code, error, prompt, output, result_json, input_json, output_json, runtime_context_json, logs_path, artifacts_dir, cleanup_error, driver, image_ref,
 		started_at, completed_at, duration_ms, created_at, updated_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.RunID, run.ProjectID, run.ProjectName, run.ProjectRevision, run.AgentName, run.ManagedAgentID, run.Source, run.SchedulerID, run.TriggerID, run.Status,
-		run.SessionID, run.ExitCode, run.Error, run.Prompt, run.Output, run.ResultJSON, run.LogsPath, run.ArtifactsDir, run.CleanupError, run.Driver, run.ImageRef,
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.RunID, run.ProjectID, run.ProjectName, run.ProjectRevision, run.TargetType, run.TargetName, run.AgentName, run.ManagedAgentID, run.Source, run.SchedulerID, run.TriggerID, run.ClientRequestID, run.Status,
+		run.SessionID, run.ExitCode, run.Error, run.Prompt, run.Output, run.ResultJSON, run.InputJSON, run.OutputJSON, run.RuntimeContextJSON, run.LogsPath, run.ArtifactsDir, run.CleanupError, run.Driver, run.ImageRef,
 		nonZeroTimeUnixMilli(run.StartedAt), nonZeroTimeUnixMilli(run.CompletedAt), run.DurationMs, run.CreatedAt.Unix(), run.UpdatedAt.Unix()); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("insert project run %s: %w", run.RunID, err)
 	}
@@ -653,12 +885,12 @@ func (s *ConfigStore) UpdateProjectRun(ctx context.Context, run ProjectRunRecord
 	}
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(ctx, `UPDATE project_run SET
-		project_id = ?, project_name = ?, project_revision = ?, agent_name = ?, managed_agent_id = ?, source = ?, scheduler_id = ?, trigger_id = ?, status = ?,
-		session_id = ?, exit_code = ?, error = ?, prompt = ?, output = ?, result_json = ?, logs_path = ?, artifacts_dir = ?, cleanup_error = ?, driver = ?, image_ref = ?,
+		project_id = ?, project_name = ?, project_revision = ?, target_type = ?, target_name = ?, agent_name = ?, managed_agent_id = ?, source = ?, scheduler_id = ?, trigger_id = ?, client_request_id = ?, status = ?,
+		session_id = ?, exit_code = ?, error = ?, prompt = ?, output = ?, result_json = ?, input_json = ?, output_json = ?, runtime_context_json = ?, logs_path = ?, artifacts_dir = ?, cleanup_error = ?, driver = ?, image_ref = ?,
 		started_at = ?, completed_at = ?, duration_ms = ?, updated_at = ?
 		WHERE run_id = ?`,
-		run.ProjectID, run.ProjectName, run.ProjectRevision, run.AgentName, run.ManagedAgentID, run.Source, run.SchedulerID, run.TriggerID, run.Status,
-		run.SessionID, run.ExitCode, run.Error, run.Prompt, run.Output, run.ResultJSON, run.LogsPath, run.ArtifactsDir, run.CleanupError, run.Driver, run.ImageRef,
+		run.ProjectID, run.ProjectName, run.ProjectRevision, run.TargetType, run.TargetName, run.AgentName, run.ManagedAgentID, run.Source, run.SchedulerID, run.TriggerID, run.ClientRequestID, run.Status,
+		run.SessionID, run.ExitCode, run.Error, run.Prompt, run.Output, run.ResultJSON, run.InputJSON, run.OutputJSON, run.RuntimeContextJSON, run.LogsPath, run.ArtifactsDir, run.CleanupError, run.Driver, run.ImageRef,
 		nonZeroTimeUnixMilli(run.StartedAt), nonZeroTimeUnixMilli(run.CompletedAt), run.DurationMs, now.Unix(), run.RunID)
 	if err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("update project run %s: %w", run.RunID, err)
@@ -707,6 +939,14 @@ func (s *ConfigStore) ListProjectRunsByOptions(ctx context.Context, options Proj
 		where = append(where, "agent_name = ?")
 		args = append(args, agentName)
 	}
+	if targetType := strings.TrimSpace(options.TargetType); targetType != "" {
+		where = append(where, "target_type = ?")
+		args = append(args, targetType)
+	}
+	if targetName := strings.TrimSpace(options.TargetName); targetName != "" {
+		where = append(where, "target_name = ?")
+		args = append(args, targetName)
+	}
 	if sessionID := strings.TrimSpace(options.SessionID); sessionID != "" {
 		where = append(where, "session_id = ?")
 		args = append(args, sessionID)
@@ -714,6 +954,10 @@ func (s *ConfigStore) ListProjectRunsByOptions(ctx context.Context, options Proj
 	if schedulerID := strings.TrimSpace(options.SchedulerID); schedulerID != "" {
 		where = append(where, "scheduler_id = ?")
 		args = append(args, schedulerID)
+	}
+	if clientRequestID := strings.TrimSpace(options.ClientRequestID); clientRequestID != "" {
+		where = append(where, "client_request_id = ?")
+		args = append(args, clientRequestID)
 	}
 	if status := strings.TrimSpace(options.Status); status != "" {
 		where = append(where, "status = ?")
@@ -757,7 +1001,7 @@ func (s *ConfigStore) getProject(ctx context.Context, projectID string, includeR
 	if includeRemoved {
 		where = "id = ?"
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, source_path, source_json, current_revision, spec_hash, created_at, updated_at, removed_at
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, source_path, source_json, current_revision, spec_hash, bundle_hash, created_at, updated_at, removed_at
 		FROM project WHERE `+where, projectID)
 	item, err := scanProject(row.Scan)
 	if err != nil {
@@ -775,6 +1019,7 @@ func normalizeProjectRecord(project ProjectRecord) (ProjectRecord, error) {
 	project.SourcePath = normalizeProjectSourcePath(project.SourcePath)
 	project.SourceJSON = strings.TrimSpace(project.SourceJSON)
 	project.SpecHash = strings.TrimSpace(project.SpecHash)
+	project.BundleHash = strings.TrimSpace(project.BundleHash)
 	if project.ID == "" {
 		return ProjectRecord{}, fmt.Errorf("project id is required")
 	}
@@ -828,24 +1073,65 @@ func normalizeProjectAgentRecord(agent ProjectAgentRecord) (ProjectAgentRecord, 
 	return agent, nil
 }
 
+func normalizeProjectServiceRecord(service ProjectServiceRecord) (ProjectServiceRecord, error) {
+	service.ProjectID = strings.TrimSpace(service.ProjectID)
+	service.ServiceName = strings.TrimSpace(service.ServiceName)
+	service.Runtime = strings.TrimSpace(service.Runtime)
+	service.Entry = strings.TrimSpace(service.Entry)
+	service.InputSchemaRef = strings.TrimSpace(service.InputSchemaRef)
+	service.OutputSchemaRef = strings.TrimSpace(service.OutputSchemaRef)
+	service.ErrorSchemaRef = strings.TrimSpace(service.ErrorSchemaRef)
+	service.SpecJSON = strings.TrimSpace(service.SpecJSON)
+	if service.ProjectID == "" || service.ServiceName == "" {
+		return ProjectServiceRecord{}, fmt.Errorf("project id and service name are required")
+	}
+	if !isProjectStableIdentifier(service.ServiceName) {
+		return ProjectServiceRecord{}, fmt.Errorf("service name %q is not a stable identifier", service.ServiceName)
+	}
+	if service.Revision < 0 {
+		return ProjectServiceRecord{}, fmt.Errorf("project service revision cannot be negative")
+	}
+	if service.TimeoutMs < 0 {
+		return ProjectServiceRecord{}, fmt.Errorf("project service timeout cannot be negative")
+	}
+	if service.SpecJSON == "" {
+		service.SpecJSON = "{}"
+	}
+	if !json.Valid([]byte(service.SpecJSON)) {
+		return ProjectServiceRecord{}, fmt.Errorf("project service spec_json must be valid JSON")
+	}
+	return service, nil
+}
+
 func normalizeProjectSchedulerRecord(scheduler ProjectSchedulerRecord) (ProjectSchedulerRecord, error) {
 	scheduler.ProjectID = strings.TrimSpace(scheduler.ProjectID)
 	scheduler.SchedulerID = strings.TrimSpace(scheduler.SchedulerID)
 	scheduler.AgentName = strings.TrimSpace(scheduler.AgentName)
+	scheduler.TargetType = strings.TrimSpace(scheduler.TargetType)
+	scheduler.TargetName = strings.TrimSpace(scheduler.TargetName)
 	scheduler.ManagedLoaderID = strings.TrimSpace(scheduler.ManagedLoaderID)
 	scheduler.SpecJSON = strings.TrimSpace(scheduler.SpecJSON)
-	if scheduler.ProjectID == "" || scheduler.AgentName == "" {
-		return ProjectSchedulerRecord{}, fmt.Errorf("project id and agent name are required")
+	if scheduler.TargetType == "" {
+		scheduler.TargetType = "agent"
+	}
+	if scheduler.TargetName == "" {
+		scheduler.TargetName = scheduler.AgentName
+	}
+	if scheduler.AgentName == "" && scheduler.TargetType == "agent" {
+		scheduler.AgentName = scheduler.TargetName
+	}
+	if scheduler.ProjectID == "" || scheduler.TargetType == "" || scheduler.TargetName == "" {
+		return ProjectSchedulerRecord{}, fmt.Errorf("project id, target type, and target name are required")
 	}
 	if scheduler.SchedulerID == "" {
-		schedulerID, err := StableProjectSchedulerID(scheduler.ProjectID, scheduler.AgentName, "")
+		schedulerID, err := StableProjectTargetSchedulerID(scheduler.ProjectID, scheduler.TargetType, scheduler.TargetName, "")
 		if err != nil {
 			return ProjectSchedulerRecord{}, err
 		}
 		scheduler.SchedulerID = schedulerID
 	}
 	if scheduler.ManagedLoaderID == "" {
-		loaderID, err := StableManagedLoaderID(scheduler.ProjectID, scheduler.AgentName, "")
+		loaderID, err := StableManagedTargetLoaderID(scheduler.ProjectID, scheduler.TargetType, scheduler.TargetName, "")
 		if err != nil {
 			return ProjectSchedulerRecord{}, err
 		}
@@ -870,20 +1156,30 @@ func normalizeProjectRunRecord(run ProjectRunRecord) (ProjectRunRecord, error) {
 	run.RunID = strings.TrimSpace(run.RunID)
 	run.ProjectID = strings.TrimSpace(run.ProjectID)
 	run.ProjectName = strings.TrimSpace(run.ProjectName)
+	run.TargetType = strings.TrimSpace(run.TargetType)
+	run.TargetName = strings.TrimSpace(run.TargetName)
 	run.AgentName = strings.TrimSpace(run.AgentName)
 	run.ManagedAgentID = strings.TrimSpace(run.ManagedAgentID)
 	run.Source = strings.TrimSpace(run.Source)
 	run.SchedulerID = strings.TrimSpace(run.SchedulerID)
 	run.TriggerID = strings.TrimSpace(run.TriggerID)
+	run.ClientRequestID = strings.TrimSpace(run.ClientRequestID)
 	run.Status = normalizeProjectRunStatus(run.Status)
 	run.SessionID = strings.TrimSpace(run.SessionID)
 	run.ResultJSON = strings.TrimSpace(run.ResultJSON)
+	run.InputJSON = strings.TrimSpace(run.InputJSON)
+	run.OutputJSON = strings.TrimSpace(run.OutputJSON)
+	run.RuntimeContextJSON = strings.TrimSpace(run.RuntimeContextJSON)
 	run.LogsPath = strings.TrimSpace(run.LogsPath)
 	run.ArtifactsDir = strings.TrimSpace(run.ArtifactsDir)
 	run.Driver = strings.TrimSpace(run.Driver)
 	run.ImageRef = strings.TrimSpace(run.ImageRef)
 	if run.RunID == "" || run.ProjectID == "" {
 		return ProjectRunRecord{}, fmt.Errorf("project run id and project id are required")
+	}
+	if run.TargetType == "" && run.AgentName != "" {
+		run.TargetType = "agent"
+		run.TargetName = run.AgentName
 	}
 	if run.ProjectRevision < 0 {
 		return ProjectRunRecord{}, fmt.Errorf("project run revision cannot be negative")
@@ -893,6 +1189,18 @@ func normalizeProjectRunRecord(run ProjectRunRecord) (ProjectRunRecord, error) {
 	}
 	if !json.Valid([]byte(run.ResultJSON)) {
 		return ProjectRunRecord{}, fmt.Errorf("project run result_json must be valid JSON")
+	}
+	if run.InputJSON != "" && !json.Valid([]byte(run.InputJSON)) {
+		return ProjectRunRecord{}, fmt.Errorf("project run input_json must be valid JSON")
+	}
+	if run.OutputJSON != "" && !json.Valid([]byte(run.OutputJSON)) {
+		return ProjectRunRecord{}, fmt.Errorf("project run output_json must be valid JSON")
+	}
+	if run.RuntimeContextJSON == "" {
+		run.RuntimeContextJSON = "{}"
+	}
+	if !json.Valid([]byte(run.RuntimeContextJSON)) {
+		return ProjectRunRecord{}, fmt.Errorf("project run runtime_context_json must be valid JSON")
 	}
 	return run, nil
 }
@@ -919,7 +1227,7 @@ func scanProject(scan func(dest ...any) error) (ProjectRecord, error) {
 	var createdAtRaw any
 	var updatedAtRaw any
 	var removedAtRaw any
-	if err := scan(&item.ID, &item.Name, &item.SourcePath, &item.SourceJSON, &item.CurrentRevision, &item.SpecHash, &createdAtRaw, &updatedAtRaw, &removedAtRaw); err != nil {
+	if err := scan(&item.ID, &item.Name, &item.SourcePath, &item.SourceJSON, &item.CurrentRevision, &item.SpecHash, &item.BundleHash, &createdAtRaw, &updatedAtRaw, &removedAtRaw); err != nil {
 		return ProjectRecord{}, fmt.Errorf("scan project: %w", err)
 	}
 	item.CreatedAt = parseStoredTime(createdAtRaw)
@@ -931,7 +1239,7 @@ func scanProject(scan func(dest ...any) error) (ProjectRecord, error) {
 func scanProjectRevision(scan func(dest ...any) error) (ProjectRevisionRecord, error) {
 	var item ProjectRevisionRecord
 	var createdAtRaw any
-	if err := scan(&item.ProjectID, &item.Revision, &item.SpecHash, &item.SpecJSON, &createdAtRaw); err != nil {
+	if err := scan(&item.ProjectID, &item.Revision, &item.SpecHash, &item.BundleHash, &item.SpecJSON, &createdAtRaw); err != nil {
 		return ProjectRevisionRecord{}, fmt.Errorf("scan project revision: %w", err)
 	}
 	item.CreatedAt = parseStoredTime(createdAtRaw)
@@ -952,12 +1260,24 @@ func scanProjectAgent(scan func(dest ...any) error) (ProjectAgentRecord, error) 
 	return item, nil
 }
 
+func scanProjectService(scan func(dest ...any) error) (ProjectServiceRecord, error) {
+	var item ProjectServiceRecord
+	var createdAtRaw any
+	var updatedAtRaw any
+	if err := scan(&item.ProjectID, &item.ServiceName, &item.Revision, &item.Runtime, &item.Entry, &item.InputSchemaRef, &item.OutputSchemaRef, &item.ErrorSchemaRef, &item.TimeoutMs, &item.SpecJSON, &createdAtRaw, &updatedAtRaw); err != nil {
+		return ProjectServiceRecord{}, fmt.Errorf("scan project service: %w", err)
+	}
+	item.CreatedAt = parseStoredTime(createdAtRaw)
+	item.UpdatedAt = parseStoredTime(updatedAtRaw)
+	return item, nil
+}
+
 func scanProjectScheduler(scan func(dest ...any) error) (ProjectSchedulerRecord, error) {
 	var item ProjectSchedulerRecord
 	var enabled int
 	var createdAtRaw any
 	var updatedAtRaw any
-	if err := scan(&item.ProjectID, &item.SchedulerID, &item.AgentName, &item.ManagedLoaderID, &item.Revision, &enabled, &item.TriggerCount, &item.SpecJSON, &createdAtRaw, &updatedAtRaw); err != nil {
+	if err := scan(&item.ProjectID, &item.SchedulerID, &item.AgentName, &item.TargetType, &item.TargetName, &item.ManagedLoaderID, &item.Revision, &enabled, &item.TriggerCount, &item.SpecJSON, &createdAtRaw, &updatedAtRaw); err != nil {
 		return ProjectSchedulerRecord{}, fmt.Errorf("scan project scheduler: %w", err)
 	}
 	item.Enabled = enabled != 0
@@ -973,8 +1293,8 @@ func scanProjectRun(scan func(dest ...any) error) (ProjectRunRecord, error) {
 	var createdAtRaw any
 	var updatedAtRaw any
 	if err := scan(
-		&item.RunID, &item.ProjectID, &item.ProjectName, &item.ProjectRevision, &item.AgentName, &item.ManagedAgentID, &item.Source, &item.SchedulerID, &item.TriggerID, &item.Status,
-		&item.SessionID, &item.ExitCode, &item.Error, &item.Prompt, &item.Output, &item.ResultJSON, &item.LogsPath, &item.ArtifactsDir, &item.CleanupError, &item.Driver, &item.ImageRef,
+		&item.RunID, &item.ProjectID, &item.ProjectName, &item.ProjectRevision, &item.TargetType, &item.TargetName, &item.AgentName, &item.ManagedAgentID, &item.Source, &item.SchedulerID, &item.TriggerID, &item.ClientRequestID, &item.Status,
+		&item.SessionID, &item.ExitCode, &item.Error, &item.Prompt, &item.Output, &item.ResultJSON, &item.InputJSON, &item.OutputJSON, &item.RuntimeContextJSON, &item.LogsPath, &item.ArtifactsDir, &item.CleanupError, &item.Driver, &item.ImageRef,
 		&startedAtRaw, &completedAtRaw, &item.DurationMs, &createdAtRaw, &updatedAtRaw,
 	); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("scan project run: %w", err)
@@ -987,8 +1307,8 @@ func scanProjectRun(scan func(dest ...any) error) (ProjectRunRecord, error) {
 }
 
 func selectProjectRunSQL() string {
-	return `SELECT run_id, project_id, project_name, project_revision, agent_name, managed_agent_id, source, scheduler_id, trigger_id, status,
-		session_id, exit_code, error, prompt, output, result_json, logs_path, artifacts_dir, cleanup_error, driver, image_ref,
+	return `SELECT run_id, project_id, project_name, project_revision, target_type, target_name, agent_name, managed_agent_id, source, scheduler_id, trigger_id, client_request_id, status,
+		session_id, exit_code, error, prompt, output, result_json, input_json, output_json, runtime_context_json, logs_path, artifacts_dir, cleanup_error, driver, image_ref,
 		started_at, completed_at, duration_ms, created_at, updated_at FROM project_run`
 }
 
@@ -1025,6 +1345,18 @@ func marshalCanonicalProjectJSON(value any) ([]byte, error) {
 		return nil, err
 	}
 	return data, nil
+}
+
+func durationMillisInt(value string) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration <= 0 {
+		return 0
+	}
+	return int(duration.Milliseconds())
 }
 
 func stableReadableID(prefix, readable, seed string) string {

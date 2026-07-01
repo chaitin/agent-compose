@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "scope": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Business scope to review."
+    }
+  },
+  "required": ["scope"]
+}

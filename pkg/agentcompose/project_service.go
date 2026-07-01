@@ -2,10 +2,14 @@ package agentcompose
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -23,6 +27,8 @@ type normalizedV2Project struct {
 	spec       *compose.NormalizedProjectSpec
 	specProto  *agentcomposev2.ProjectSpec
 	specHash   string
+	bundleHash string
+	bundleDir  string
 	sourcePath string
 }
 
@@ -65,7 +71,8 @@ func (s *Service) ValidateProject(ctx context.Context, req *connect.Request[agen
 }
 
 func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentcomposev2.ApplyProjectRequest]) (*connect.Response[agentcomposev2.ApplyProjectResponse], error) {
-	normalized, issues, err := normalizeProjectServiceSpec(req.Msg.GetSpec(), req.Msg.GetSource(), req.Msg.GetExpectedSpecHash())
+	normalized, cleanupBundle, issues, err := s.normalizeApplyProjectRequest(ctx, req.Msg)
+	defer cleanupBundle()
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -82,6 +89,7 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
 	}
+	project.BundleHash = normalized.bundleHash
 	if issues := s.validateProjectManagedAgentDefinitions(normalized); len(issues) > 0 {
 		return connect.NewResponse(&agentcomposev2.ApplyProjectResponse{Issues: issues}), nil
 	}
@@ -89,6 +97,10 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 		return connect.NewResponse(&agentcomposev2.ApplyProjectResponse{Issues: issues}), nil
 	}
 	agentRecords, err := projectAgentRecordsFromSpec(project.ID, 0, normalized.spec)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
+	}
+	serviceRecords, err := projectServiceRecordsFromSpec(project.ID, 0, normalized.spec)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
 	}
@@ -102,8 +114,8 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 	}
 	if req.Msg.GetDryRun() {
 		return connect.NewResponse(&agentcomposev2.ApplyProjectResponse{
-			Project:  projectResponse(project, normalized.specProto, agentRecords, schedulerRecords),
-			Revision: projectRevisionResponse(ProjectRevisionRecord{ProjectID: project.ID, SpecHash: normalized.specHash}, normalized.specProto),
+			Project:  projectResponse(project, normalized.specProto, agentRecords, serviceRecords, schedulerRecords),
+			Revision: projectRevisionResponse(ProjectRevisionRecord{ProjectID: project.ID, SpecHash: normalized.specHash, BundleHash: normalized.bundleHash}, normalized.specProto),
 			Changes:  dryRunProjectChanges(project, agentRecords, agentDefinitions, schedulerRecords, managedLoaders),
 			Applied:  false,
 		}), nil
@@ -125,12 +137,18 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: marshal project spec: %w", normalized.spec.Name, err))
 	}
 	revision, revisionCreated, err := s.configDB.SaveProjectRevision(ctx, ProjectRevisionRecord{
-		ProjectID: project.ID,
-		SpecHash:  normalized.specHash,
-		SpecJSON:  string(specJSON),
+		ProjectID:  project.ID,
+		SpecHash:   normalized.specHash,
+		BundleHash: normalized.bundleHash,
+		SpecJSON:   string(specJSON),
 	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: save revision: %w", normalized.spec.Name, err))
+	}
+	if strings.TrimSpace(normalized.bundleDir) != "" {
+		if err := s.persistProjectRevisionBundle(project.ID, revision.Revision, normalized.bundleDir); err != nil {
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: persist revision bundle: %w", normalized.spec.Name, err))
+		}
 	}
 	project, err = s.configDB.GetProject(ctx, project.ID)
 	if err != nil {
@@ -138,6 +156,10 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 	}
 
 	agentRecords, err = projectAgentRecordsFromSpec(project.ID, revision.Revision, normalized.spec)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
+	}
+	serviceRecords, err = projectServiceRecordsFromSpec(project.ID, revision.Revision, normalized.spec)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
 	}
@@ -170,6 +192,14 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 			Name:         agent.AgentName,
 		})
 	}
+	serviceChanges, servicesUnchanged, err := s.reconcileProjectServices(ctx, project, serviceRecords)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
+	}
+	if !servicesUnchanged {
+		agentsUnchanged = false
+	}
+	changes = append(changes, serviceChanges...)
 	agentDefinitionChanges, agentDefinitionsUnchanged, err := s.reconcileProjectManagedAgentDefinitions(ctx, project, agentDefinitions)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
@@ -185,12 +215,16 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 		if listAgentsErr != nil {
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: %w; list project agents after reconcile failure: %v", normalized.spec.Name, err, listAgentsErr))
 		}
+		services, listServicesErr := s.configDB.ListProjectServices(ctx, project.ID)
+		if listServicesErr != nil {
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: %w; list project services after reconcile failure: %v", normalized.spec.Name, err, listServicesErr))
+		}
 		schedulers, listSchedulersErr := s.configDB.ListProjectSchedulers(ctx, project.ID)
 		if listSchedulersErr != nil {
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: %w; list project schedulers after reconcile failure: %v", normalized.spec.Name, err, listSchedulersErr))
 		}
 		return connect.NewResponse(&agentcomposev2.ApplyProjectResponse{
-			Project:  projectResponse(project, normalized.specProto, agents, schedulers),
+			Project:  projectResponse(project, normalized.specProto, agents, services, schedulers),
 			Revision: projectRevisionResponse(revision, normalized.specProto),
 			Changes:  changes,
 			Issues: []*agentcomposev2.ProjectValidationIssue{
@@ -209,12 +243,16 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: list project agents: %w", normalized.spec.Name, err))
 	}
+	services, err := s.configDB.ListProjectServices(ctx, project.ID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: list project services: %w", normalized.spec.Name, err))
+	}
 	schedulers, err := s.configDB.ListProjectSchedulers(ctx, project.ID)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: list project schedulers: %w", normalized.spec.Name, err))
 	}
 	return connect.NewResponse(&agentcomposev2.ApplyProjectResponse{
-		Project:  projectResponse(project, normalized.specProto, agents, schedulers),
+		Project:  projectResponse(project, normalized.specProto, agents, services, schedulers),
 		Revision: projectRevisionResponse(revision, normalized.specProto),
 		Changes:  changes,
 		Applied:  true,
@@ -247,6 +285,10 @@ func (s *Service) GetProject(ctx context.Context, req *connect.Request[agentcomp
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	services, err := s.configDB.ListProjectServices(ctx, project.ID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
 	var spec *agentcomposev2.ProjectSpec
 	if req.Msg.GetIncludeSpec() && project.CurrentRevision > 0 {
 		revision, err := s.configDB.GetProjectRevision(ctx, project.ID, project.CurrentRevision)
@@ -259,7 +301,7 @@ func (s *Service) GetProject(ctx context.Context, req *connect.Request[agentcomp
 		}
 	}
 	return connect.NewResponse(&agentcomposev2.GetProjectResponse{
-		Project: projectResponse(project, spec, agents, schedulers),
+		Project: projectResponse(project, spec, agents, services, schedulers),
 	}), nil
 }
 
@@ -282,7 +324,11 @@ func (s *Service) ListProjects(ctx context.Context, req *connect.Request[agentco
 		NextOffset: uint32(result.NextOffset),
 	}
 	for _, project := range result.Projects {
-		resp.Projects = append(resp.Projects, projectSummaryResponse(project, nil, nil))
+		summary, err := s.projectListSummaryResponse(ctx, project)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		resp.Projects = append(resp.Projects, summary)
 	}
 	return connect.NewResponse(resp), nil
 }
@@ -316,9 +362,126 @@ func (s *Service) RemoveProject(ctx context.Context, req *connect.Request[agentc
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	services, err := s.configDB.ListProjectServices(ctx, project.ID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
 	return connect.NewResponse(&agentcomposev2.RemoveProjectResponse{
-		Project: projectResponse(project, nil, agents, schedulers),
+		Project: projectResponse(project, nil, agents, services, schedulers),
 		Changes: changes,
+	}), nil
+}
+
+func (s *Service) DiffProject(ctx context.Context, req *connect.Request[agentcomposev2.DiffProjectRequest]) (*connect.Response[agentcomposev2.DiffProjectResponse], error) {
+	if s.configDB == nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
+	}
+	project, err := s.resolveProjectRef(ctx, req.Msg.GetProject())
+	if err != nil {
+		return nil, projectRefConnectError(err)
+	}
+	normalized, issues, err := normalizeProjectServiceSpec(req.Msg.GetIncomingSpec(), req.Msg.GetSource(), "")
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	if len(issues) > 0 {
+		return connect.NewResponse(&agentcomposev2.DiffProjectResponse{Issues: issues, CurrentSpecHash: project.SpecHash, IncomingSpecHash: specHashOrEmpty(normalized)}), nil
+	}
+	project.ID = strings.TrimSpace(project.ID)
+	incomingProject, err := NewProjectRecordFromSpec(normalized.spec, normalized.sourcePath)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	incomingProject.ID = project.ID
+	incomingProject.CurrentRevision = project.CurrentRevision
+	currentAgents, err := s.configDB.ListProjectAgents(ctx, project.ID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	currentSchedulers, err := s.configDB.ListProjectSchedulers(ctx, project.ID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	incomingAgents, err := projectAgentRecordsFromSpec(project.ID, project.CurrentRevision, normalized.spec)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	incomingSchedulers, _, err := s.projectManagedSchedulersFromSpec(ctx, incomingProject, project.CurrentRevision, normalized.spec)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewResponse(&agentcomposev2.DiffProjectResponse{
+		Changes:          projectDiffChanges(project, incomingProject, currentAgents, incomingAgents, currentSchedulers, incomingSchedulers),
+		CurrentSpecHash:  project.SpecHash,
+		IncomingSpecHash: normalized.specHash,
+	}), nil
+}
+
+func (s *Service) ListProjectRevisions(ctx context.Context, req *connect.Request[agentcomposev2.ListProjectRevisionsRequest]) (*connect.Response[agentcomposev2.ListProjectRevisionsResponse], error) {
+	if s.configDB == nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
+	}
+	project, err := s.resolveProjectRef(ctx, req.Msg.GetProject())
+	if err != nil {
+		return nil, projectRefConnectError(err)
+	}
+	result, err := s.configDB.ListProjectRevisions(ctx, project.ID, int(req.Msg.GetOffset()), int(req.Msg.GetLimit()))
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	items := make([]*agentcomposev2.ProjectRevision, 0, len(result.Revisions))
+	for _, revision := range result.Revisions {
+		spec, err := decodeProjectRevisionSpec(revision.SpecJSON)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		items = append(items, projectRevisionResponse(revision, spec))
+	}
+	return connect.NewResponse(&agentcomposev2.ListProjectRevisionsResponse{
+		Revisions:  items,
+		TotalCount: uint32(result.TotalCount),
+		HasMore:    result.HasMore,
+		NextOffset: uint32(result.NextOffset),
+	}), nil
+}
+
+func (s *Service) RollbackProjectRevision(ctx context.Context, req *connect.Request[agentcomposev2.RollbackProjectRevisionRequest]) (*connect.Response[agentcomposev2.RollbackProjectRevisionResponse], error) {
+	if s.configDB == nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
+	}
+	project, err := s.resolveProjectRef(ctx, req.Msg.GetProject())
+	if err != nil {
+		return nil, projectRefConnectError(err)
+	}
+	revisionNumber := int64(req.Msg.GetRevision())
+	if revisionNumber <= 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("revision is required"))
+	}
+	revision, err := s.configDB.GetProjectRevision(ctx, project.ID, revisionNumber)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	spec, err := decodeProjectRevisionSpec(revision.SpecJSON)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	applyResp, err := s.ApplyProject(ctx, connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
+		Spec:   spec,
+		Source: &agentcomposev2.ProjectSource{ComposePath: project.SourcePath},
+		DryRun: req.Msg.GetDryRun(),
+	}))
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&agentcomposev2.RollbackProjectRevisionResponse{
+		Project:  applyResp.Msg.GetProject(),
+		Revision: applyResp.Msg.GetRevision(),
+		Changes:  applyResp.Msg.GetChanges(),
+		Issues:   applyResp.Msg.GetIssues(),
+		Applied:  applyResp.Msg.GetApplied(),
 	}), nil
 }
 
@@ -360,7 +523,22 @@ func (s *Service) resolveProjectRef(ctx context.Context, ref *agentcomposev2.Pro
 	return matches[0], nil
 }
 
+func projectRefConnectError(err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return connect.NewError(connect.CodeNotFound, err)
+	}
+	if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "ambiguous") {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewError(connect.CodeInternal, err)
+}
+
 func normalizeProjectServiceSpec(spec *agentcomposev2.ProjectSpec, source *agentcomposev2.ProjectSource, expectedHash string) (normalizedV2Project, []*agentcomposev2.ProjectValidationIssue, error) {
+	sourcePath := projectServiceSourcePath(source)
+	return normalizeProjectServiceSpecWithPaths(spec, source, expectedHash, sourcePath, strings.TrimSpace(source.GetProjectDir()))
+}
+
+func normalizeProjectServiceSpecWithPaths(spec *agentcomposev2.ProjectSpec, source *agentcomposev2.ProjectSource, expectedHash, composePath, projectDir string) (normalizedV2Project, []*agentcomposev2.ProjectValidationIssue, error) {
 	if spec == nil {
 		return normalizedV2Project{}, []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("spec", "project spec is required")}, nil
 	}
@@ -378,8 +556,8 @@ func normalizeProjectServiceSpec(spec *agentcomposev2.ProjectSpec, source *agent
 	}
 	sourcePath := projectServiceSourcePath(source)
 	normalized, err := compose.Normalize(parsed, compose.NormalizeOptions{
-		ComposePath: sourcePath,
-		ProjectDir:  strings.TrimSpace(source.GetProjectDir()),
+		ComposePath: composePath,
+		ProjectDir:  projectDir,
 	})
 	if err != nil {
 		return normalizedV2Project{}, []*agentcomposev2.ProjectValidationIssue{issueFromComposeError(err)}, nil
@@ -406,10 +584,18 @@ func projectSpecYAMLShape(spec *agentcomposev2.ProjectSpec) (map[string]any, []*
 	if strings.TrimSpace(spec.GetName()) != "" {
 		root["name"] = spec.GetName()
 	}
+	if metadata := metadataYAMLShape(spec.GetMetadata()); len(metadata) > 0 {
+		root["metadata"] = metadata
+	}
 	if variables, issues := envVarYAMLMap("variables", spec.GetVariables()); len(issues) > 0 {
 		return nil, issues
 	} else if len(variables) > 0 {
 		root["variables"] = variables
+	}
+	if runtime, issues := runtimeYAMLShape(spec.GetRuntime()); len(issues) > 0 {
+		return nil, issues
+	} else if len(runtime) > 0 {
+		root["runtime"] = runtime
 	}
 	if workspace := workspaceYAMLShape(spec.GetWorkspace()); len(workspace) > 0 {
 		root["workspace"] = workspace
@@ -422,7 +608,68 @@ func projectSpecYAMLShape(spec *agentcomposev2.ProjectSpec) (map[string]any, []*
 	if network := networkYAMLShape(spec.GetNetwork()); len(network) > 0 {
 		root["network"] = network
 	}
+	if services, issues := serviceYAMLMap(spec.GetServices()); len(issues) > 0 {
+		return nil, issues
+	} else if len(services) > 0 {
+		root["services"] = services
+	}
+	if triggers, issues := projectTriggerYAMLMap(spec.GetTriggers()); len(issues) > 0 {
+		return nil, issues
+	} else if len(triggers) > 0 {
+		root["triggers"] = triggers
+	}
+	if permissions := permissionYAMLShape(spec.GetPermissions()); len(permissions) > 0 {
+		root["permissions"] = permissions
+	}
+	if artifacts := artifactPolicyYAMLShape(spec.GetArtifacts()); len(artifacts) > 0 {
+		root["artifacts"] = artifacts
+	}
 	return root, nil
+}
+
+func metadataYAMLShape(metadata *agentcomposev2.ProjectMetadata) map[string]any {
+	if metadata == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if strings.TrimSpace(metadata.GetName()) != "" {
+		raw["name"] = metadata.GetName()
+	}
+	if len(metadata.GetLabels()) > 0 {
+		raw["labels"] = cloneStringMap(metadata.GetLabels())
+	}
+	if len(metadata.GetAnnotations()) > 0 {
+		raw["annotations"] = cloneStringMap(metadata.GetAnnotations())
+	}
+	return raw
+}
+
+func runtimeYAMLShape(runtime *agentcomposev2.RuntimeSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
+	if runtime == nil {
+		return nil, nil
+	}
+	raw := map[string]any{}
+	if strings.TrimSpace(runtime.GetDriver()) != "" {
+		raw["driver"] = runtime.GetDriver()
+	}
+	if strings.TrimSpace(runtime.GetImage()) != "" {
+		raw["image"] = runtime.GetImage()
+	}
+	if env, issues := envVarYAMLMap("runtime.env", runtime.GetEnv()); len(issues) > 0 {
+		return nil, issues
+	} else if len(env) > 0 {
+		raw["env"] = env
+	}
+	if len(runtime.GetResources()) > 0 {
+		raw["resources"] = cloneStringMap(runtime.GetResources())
+	}
+	if network := networkYAMLShape(runtime.GetNetwork()); len(network) > 0 {
+		raw["network"] = network
+	}
+	if cleanup := cleanupPolicyYAMLValue(runtime.GetCleanupPolicy()); cleanup != "" {
+		raw["cleanup_policy"] = cleanup
+	}
+	return raw, nil
 }
 
 func envVarYAMLMap(path string, vars []*agentcomposev2.EnvVarSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
@@ -482,6 +729,134 @@ func agentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		}
 		if scheduler := schedulerYAMLShape(agent.GetScheduler()); len(scheduler) > 0 {
 			raw["scheduler"] = scheduler
+		}
+		values[name] = raw
+	}
+	return values, nil
+}
+
+func serviceYAMLMap(services []*agentcomposev2.ServiceSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
+	values := make(map[string]any, len(services))
+	for i, service := range services {
+		name := strings.TrimSpace(service.GetName())
+		if _, ok := values[name]; ok {
+			return nil, []*agentcomposev2.ProjectValidationIssue{projectValidationIssue(fmt.Sprintf("services[%d].name", i), fmt.Sprintf("duplicate service %q", name))}
+		}
+		raw := map[string]any{}
+		if strings.TrimSpace(service.GetDescription()) != "" {
+			raw["description"] = service.GetDescription()
+		}
+		if strings.TrimSpace(service.GetRuntime()) != "" {
+			raw["runtime"] = service.GetRuntime()
+		}
+		if strings.TrimSpace(service.GetEntry()) != "" {
+			raw["entry"] = service.GetEntry()
+		}
+		if strings.TrimSpace(service.GetInputSchemaJson()) != "" {
+			raw["input_schema"] = service.GetInputSchemaJson()
+		} else if strings.TrimSpace(service.GetInputSchemaRef()) != "" {
+			raw["input_schema"] = service.GetInputSchemaRef()
+		}
+		if strings.TrimSpace(service.GetOutputSchemaJson()) != "" {
+			raw["output_schema"] = service.GetOutputSchemaJson()
+		} else if strings.TrimSpace(service.GetOutputSchemaRef()) != "" {
+			raw["output_schema"] = service.GetOutputSchemaRef()
+		}
+		if strings.TrimSpace(service.GetErrorSchemaJson()) != "" {
+			raw["error_schema"] = service.GetErrorSchemaJson()
+		} else if strings.TrimSpace(service.GetErrorSchemaRef()) != "" {
+			raw["error_schema"] = service.GetErrorSchemaRef()
+		}
+		if service.GetTimeoutMs() > 0 {
+			raw["timeout"] = fmt.Sprintf("%dms", service.GetTimeoutMs())
+		}
+		if retry := retryPolicyYAMLShape(service.GetRetry()); len(retry) > 0 {
+			raw["retry"] = retry
+		}
+		if permissions := permissionYAMLShape(service.GetPermissions()); len(permissions) > 0 {
+			raw["permissions"] = permissions
+		}
+		if env, issues := envVarYAMLMap(fmt.Sprintf("services[%d].env", i), service.GetEnv()); len(issues) > 0 {
+			return nil, issues
+		} else if len(env) > 0 {
+			raw["env"] = env
+		}
+		if len(service.GetAgents()) > 0 {
+			raw["agents"] = append([]string(nil), service.GetAgents()...)
+		}
+		if examples := serviceExampleYAMLShapes(service.GetExamples()); len(examples) > 0 {
+			raw["examples"] = examples
+		}
+		values[name] = raw
+	}
+	return values, nil
+}
+
+func retryPolicyYAMLShape(retry *agentcomposev2.RetryPolicySpec) map[string]any {
+	if retry == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if retry.GetMaxAttempts() > 0 {
+		raw["max_attempts"] = retry.GetMaxAttempts()
+	}
+	if retry.GetBackoffMs() > 0 {
+		raw["backoff"] = fmt.Sprintf("%dms", retry.GetBackoffMs())
+	}
+	return raw
+}
+
+func serviceExampleYAMLShapes(examples []*agentcomposev2.ServiceExampleSpec) []map[string]any {
+	items := make([]map[string]any, 0, len(examples))
+	for _, example := range examples {
+		raw := map[string]any{}
+		if strings.TrimSpace(example.GetName()) != "" {
+			raw["name"] = example.GetName()
+		}
+		if strings.TrimSpace(example.GetInputJson()) != "" {
+			raw["input"] = example.GetInputJson()
+		}
+		if strings.TrimSpace(example.GetOutputJson()) != "" {
+			raw["output"] = example.GetOutputJson()
+		}
+		if len(raw) > 0 {
+			items = append(items, raw)
+		}
+	}
+	return items
+}
+
+func projectTriggerYAMLMap(triggers []*agentcomposev2.ProjectTriggerSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
+	values := make(map[string]any, len(triggers))
+	for i, trigger := range triggers {
+		name := strings.TrimSpace(trigger.GetName())
+		if _, ok := values[name]; ok {
+			return nil, []*agentcomposev2.ProjectValidationIssue{projectValidationIssue(fmt.Sprintf("triggers[%d].name", i), fmt.Sprintf("duplicate trigger %q", name))}
+		}
+		raw := map[string]any{}
+		if strings.TrimSpace(trigger.GetType()) != "" {
+			raw["type"] = trigger.GetType()
+		}
+		if strings.TrimSpace(trigger.GetCron()) != "" {
+			raw["cron"] = trigger.GetCron()
+		}
+		if strings.TrimSpace(trigger.GetInterval()) != "" {
+			raw["interval"] = trigger.GetInterval()
+		}
+		if strings.TrimSpace(trigger.GetTimeout()) != "" {
+			raw["timeout"] = trigger.GetTimeout()
+		}
+		if event := eventTriggerYAMLShape(trigger.GetEvent()); len(event) > 0 {
+			raw["event"] = event
+		}
+		if webhook := webhookTriggerYAMLShape(trigger.GetWebhook()); len(webhook) > 0 {
+			raw["webhook"] = webhook
+		}
+		if target := triggerTargetYAMLShape(trigger.GetTarget()); len(target) > 0 {
+			raw["target"] = target
+		}
+		if strings.TrimSpace(trigger.GetInputJson()) != "" {
+			raw["input"] = trigger.GetInputJson()
 		}
 		values[name] = raw
 	}
@@ -604,6 +979,87 @@ func networkYAMLShape(network *agentcomposev2.NetworkSpec) map[string]any {
 	return map[string]any{"mode": network.GetMode()}
 }
 
+func eventTriggerYAMLShape(event *agentcomposev2.EventTriggerSpec) map[string]any {
+	if event == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if strings.TrimSpace(event.GetTopic()) != "" {
+		raw["topic"] = event.GetTopic()
+	}
+	return raw
+}
+
+func webhookTriggerYAMLShape(webhook *agentcomposev2.WebhookTriggerSpec) map[string]any {
+	if webhook == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if strings.TrimSpace(webhook.GetTopic()) != "" {
+		raw["topic"] = webhook.GetTopic()
+	}
+	if strings.TrimSpace(webhook.GetMethod()) != "" {
+		raw["method"] = webhook.GetMethod()
+	}
+	return raw
+}
+
+func triggerTargetYAMLShape(target *agentcomposev2.TriggerTargetSpec) map[string]any {
+	if target == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if strings.TrimSpace(target.GetServiceName()) != "" {
+		raw["service"] = target.GetServiceName()
+	}
+	if strings.TrimSpace(target.GetAgentName()) != "" {
+		raw["agent"] = target.GetAgentName()
+	}
+	return raw
+}
+
+func permissionYAMLShape(permission *agentcomposev2.PermissionSpec) map[string]any {
+	if permission == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if len(permission.GetAgents()) > 0 {
+		raw["agents"] = append([]string(nil), permission.GetAgents()...)
+	}
+	if len(permission.GetCapabilities()) > 0 {
+		raw["capabilities"] = append([]string(nil), permission.GetCapabilities()...)
+	}
+	if len(permission.GetResources()) > 0 {
+		raw["resources"] = append([]string(nil), permission.GetResources()...)
+	}
+	return raw
+}
+
+func artifactPolicyYAMLShape(policy *agentcomposev2.ArtifactPolicySpec) map[string]any {
+	if policy == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if strings.TrimSpace(policy.GetRetention()) != "" {
+		raw["retention"] = policy.GetRetention()
+	}
+	if strings.TrimSpace(policy.GetStorage()) != "" {
+		raw["storage"] = policy.GetStorage()
+	}
+	return raw
+}
+
+func cleanupPolicyYAMLValue(policy agentcomposev2.RunSessionCleanupPolicy) string {
+	switch policy {
+	case agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING:
+		return "keep_running"
+	case agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION:
+		return "stop_on_completion"
+	default:
+		return ""
+	}
+}
+
 func projectServiceSourcePath(source *agentcomposev2.ProjectSource) string {
 	if source == nil {
 		return ""
@@ -644,9 +1100,219 @@ func specHashOrEmpty(normalized normalizedV2Project) string {
 	return normalized.specHash
 }
 
+func ProjectSpecHashForApplyRequest(spec *agentcomposev2.ProjectSpec, source *agentcomposev2.ProjectSource) (string, error) {
+	normalized, issues, err := normalizeProjectServiceSpec(spec, source, "")
+	if err != nil {
+		return "", err
+	}
+	if len(issues) > 0 {
+		issue := issues[0]
+		return "", fmt.Errorf("%s: %s", issue.GetPath(), issue.GetMessage())
+	}
+	return normalized.specHash, nil
+}
+
+func (s *Service) normalizeApplyProjectRequest(ctx context.Context, req *agentcomposev2.ApplyProjectRequest) (normalizedV2Project, func(), []*agentcomposev2.ProjectValidationIssue, error) {
+	cleanup := func() {}
+	source := req.GetSource()
+	composePath := projectServiceSourcePath(source)
+	projectDir := strings.TrimSpace(source.GetProjectDir())
+	bundleHash := strings.TrimSpace(req.GetBundleHash())
+	if len(req.GetBundleFiles()) > 0 {
+		staged, err := s.stageProjectBundle(ctx, req.GetBundleFiles(), bundleHash)
+		if err != nil {
+			return normalizedV2Project{}, cleanup, []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("bundle", err.Error())}, nil
+		}
+		cleanup = staged.cleanup
+		composePath = staged.composePath
+		projectDir = staged.dir
+		if bundleHash == "" {
+			bundleHash = staged.bundleHash
+		}
+	}
+	normalized, issues, err := normalizeProjectServiceSpecWithPaths(req.GetSpec(), source, req.GetExpectedSpecHash(), composePath, projectDir)
+	normalized.bundleHash = bundleHash
+	if len(req.GetBundleFiles()) > 0 {
+		normalized.bundleDir = projectDir
+	}
+	return normalized, cleanup, issues, err
+}
+
+type stagedProjectBundle struct {
+	dir         string
+	composePath string
+	bundleHash  string
+	cleanup     func()
+}
+
+func (s *Service) stageProjectBundle(ctx context.Context, files []*agentcomposev2.ProjectBundleFile, expectedHash string) (stagedProjectBundle, error) {
+	root := ""
+	if s != nil && s.config != nil {
+		root = strings.TrimSpace(s.config.DataRoot)
+	}
+	if root == "" {
+		root = os.TempDir()
+	}
+	tmpRoot := filepath.Join(root, "project-bundles", "tmp")
+	if err := os.MkdirAll(tmpRoot, 0o755); err != nil {
+		return stagedProjectBundle{}, fmt.Errorf("create project bundle temp root: %w", err)
+	}
+	dir, err := os.MkdirTemp(tmpRoot, "bundle-*")
+	if err != nil {
+		return stagedProjectBundle{}, fmt.Errorf("create project bundle temp dir: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	hash := sha256.New()
+	manifestPath := ""
+	bundleFiles := slices.Clone(files)
+	slices.SortFunc(bundleFiles, func(a, b *agentcomposev2.ProjectBundleFile) int {
+		return strings.Compare(strings.TrimSpace(a.GetPath()), strings.TrimSpace(b.GetPath()))
+	})
+	seenPaths := make(map[string]struct{}, len(bundleFiles))
+	for _, file := range bundleFiles {
+		relPath, err := cleanProjectBundlePath(file.GetPath())
+		if err != nil {
+			cleanup()
+			return stagedProjectBundle{}, err
+		}
+		if _, exists := seenPaths[relPath]; exists {
+			cleanup()
+			return stagedProjectBundle{}, fmt.Errorf("bundle file path %s is duplicated", relPath)
+		}
+		seenPaths[relPath] = struct{}{}
+		content := file.GetContent()
+		sum := sha256.Sum256(content)
+		sumHex := hex.EncodeToString(sum[:])
+		if expected := strings.TrimSpace(file.GetSha256()); expected != "" && expected != sumHex {
+			cleanup()
+			return stagedProjectBundle{}, fmt.Errorf("bundle file %s sha256 mismatch", relPath)
+		}
+		hash.Write([]byte(relPath))
+		hash.Write([]byte{0})
+		hash.Write([]byte(sumHex))
+		hash.Write([]byte{0})
+		target := filepath.Join(dir, filepath.FromSlash(relPath))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			cleanup()
+			return stagedProjectBundle{}, fmt.Errorf("create bundle file parent %s: %w", relPath, err)
+		}
+		if err := os.WriteFile(target, content, 0o644); err != nil {
+			cleanup()
+			return stagedProjectBundle{}, fmt.Errorf("write bundle file %s: %w", relPath, err)
+		}
+		if manifestPath == "" && isProjectBundleManifestName(filepath.Base(relPath)) {
+			manifestPath = target
+		}
+	}
+	if manifestPath == "" {
+		cleanup()
+		return stagedProjectBundle{}, fmt.Errorf("bundle manifest is required")
+	}
+	bundleHash := "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	if expectedHash = strings.TrimSpace(expectedHash); expectedHash != "" && expectedHash != bundleHash {
+		cleanup()
+		return stagedProjectBundle{}, fmt.Errorf("bundle hash %s does not match expected %s", bundleHash, expectedHash)
+	}
+	select {
+	case <-ctx.Done():
+		cleanup()
+		return stagedProjectBundle{}, ctx.Err()
+	default:
+	}
+	return stagedProjectBundle{dir: dir, composePath: manifestPath, bundleHash: bundleHash, cleanup: cleanup}, nil
+}
+
+func cleanProjectBundlePath(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("bundle file path is required")
+	}
+	if filepath.IsAbs(value) {
+		return "", fmt.Errorf("bundle file path %q must be relative", value)
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(value)))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("bundle file path %q escapes project directory", value)
+	}
+	return clean, nil
+}
+
+func isProjectBundleManifestName(name string) bool {
+	switch name {
+	case "agent-compose.yml", "agent-compose.yaml", "agent-compose.json":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) persistProjectRevisionBundle(projectID string, revision int64, stagedDir string) error {
+	projectID = strings.TrimSpace(projectID)
+	stagedDir = strings.TrimSpace(stagedDir)
+	if projectID == "" || revision <= 0 || stagedDir == "" {
+		return fmt.Errorf("project id, revision, and staged bundle dir are required")
+	}
+	root := ""
+	if s != nil && s.config != nil {
+		root = strings.TrimSpace(s.config.DataRoot)
+	}
+	if root == "" {
+		return fmt.Errorf("data root is required")
+	}
+	targetDir := s.projectRevisionBundleDir(projectID, revision)
+	if err := os.RemoveAll(targetDir); err != nil {
+		return fmt.Errorf("clear revision bundle %s: %w", targetDir, err)
+	}
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return fmt.Errorf("create revision bundle %s: %w", targetDir, err)
+	}
+	return filepath.WalkDir(stagedDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(stagedDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		target := filepath.Join(targetDir, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, content, 0o644)
+	})
+}
+
+func (s *Service) projectRevisionBundleDir(projectID string, revision int64) string {
+	root := ""
+	if s != nil && s.config != nil {
+		root = strings.TrimSpace(s.config.DataRoot)
+	}
+	return filepath.Join(root, "project-bundles", strings.TrimSpace(projectID), "revisions", fmt.Sprintf("%d", revision))
+}
+
 func projectAgentRecordsFromSpec(projectID string, revision int64, spec *compose.NormalizedProjectSpec) ([]ProjectAgentRecord, error) {
 	agents := make([]ProjectAgentRecord, 0, len(spec.Agents))
 	for _, agent := range spec.Agents {
+		if agent.Image == "" && spec.Runtime != nil {
+			agent.Image = spec.Runtime.Image
+		}
 		record, err := NewProjectAgentRecordFromSpec(projectID, revision, agent)
 		if err != nil {
 			return nil, err
@@ -656,9 +1322,24 @@ func projectAgentRecordsFromSpec(projectID string, revision int64, spec *compose
 	return agents, nil
 }
 
+func projectServiceRecordsFromSpec(projectID string, revision int64, spec *compose.NormalizedProjectSpec) ([]ProjectServiceRecord, error) {
+	services := make([]ProjectServiceRecord, 0, len(spec.Services))
+	for _, service := range spec.Services {
+		record, err := NewProjectServiceRecordFromSpec(projectID, revision, service)
+		if err != nil {
+			return nil, err
+		}
+		services = append(services, record)
+	}
+	return services, nil
+}
+
 func projectManagedAgentDefinitionsFromSpec(project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]AgentDefinition, error) {
 	agents := make([]AgentDefinition, 0, len(spec.Agents))
 	for _, agent := range spec.Agents {
+		if agent.Image == "" && spec.Runtime != nil {
+			agent.Image = spec.Runtime.Image
+		}
 		record, err := projectManagedAgentDefinitionFromSpec(project, revision, agent)
 		if err != nil {
 			return nil, err
@@ -786,7 +1467,91 @@ func (s *Service) projectManagedSchedulerBuildsFromSpec(ctx context.Context, pro
 			validationTriggers: validationTriggers,
 		})
 	}
+	serviceBuilds, err := projectManagedServiceTriggerBuildsFromSpec(project, revision, spec)
+	if err != nil {
+		return nil, err
+	}
+	builds = append(builds, serviceBuilds...)
 	return builds, nil
+}
+
+func projectManagedServiceTriggerBuildsFromSpec(project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]projectManagedSchedulerBuild, error) {
+	builds := make([]projectManagedSchedulerBuild, 0)
+	for _, trigger := range spec.Triggers {
+		serviceName := strings.TrimSpace(trigger.Target.Service)
+		if serviceName == "" {
+			continue
+		}
+		if !normalizedProjectHasService(spec, serviceName) {
+			return nil, &projectManagedSchedulerBuildError{path: "triggers." + trigger.Name + ".target.service", message: fmt.Sprintf("service %q is not defined", serviceName)}
+		}
+		schedulerName := projectServiceTriggerSchedulerName(serviceName, trigger.Name)
+		schedulerID, err := StableProjectTargetSchedulerID(project.ID, "service", serviceName, schedulerName)
+		if err != nil {
+			return nil, err
+		}
+		loaderID, err := StableManagedTargetLoaderID(project.ID, "service", serviceName, schedulerName)
+		if err != nil {
+			return nil, err
+		}
+		loaderTrigger, registration, err := projectManagedServiceLoaderTriggerAndRegistration(project.ID, serviceName, trigger)
+		if err != nil {
+			return nil, &projectManagedSchedulerBuildError{path: "triggers." + trigger.Name, message: err.Error()}
+		}
+		script := "// Generated by agent-compose project service trigger reconcile.\n" + registration
+		specJSON, err := marshalJSONCompact(trigger)
+		if err != nil {
+			return nil, err
+		}
+		record := ProjectSchedulerRecord{
+			ProjectID:       project.ID,
+			SchedulerID:     schedulerID,
+			AgentName:       schedulerName,
+			TargetType:      "service",
+			TargetName:      serviceName,
+			ManagedLoaderID: loaderID,
+			Revision:        revision,
+			Enabled:         true,
+			TriggerCount:    1,
+			SpecJSON:        specJSON,
+		}
+		loader := Loader{
+			Summary: LoaderSummary{
+				ID:                 loaderID,
+				Name:               fmt.Sprintf("%s/%s trigger", project.Name, trigger.Name),
+				Enabled:            true,
+				Runtime:            LoaderRuntimeScheduler,
+				SessionPolicy:      LoaderSessionPolicyNew,
+				ConcurrencyPolicy:  LoaderConcurrencyPolicySkip,
+				ManagedProjectID:   project.ID,
+				ManagedRevision:    revision,
+				ManagedAgentName:   schedulerName,
+				ManagedSchedulerID: schedulerID,
+			},
+			Script:   script,
+			Triggers: []LoaderTrigger{loaderTrigger},
+		}
+		builds = append(builds, projectManagedSchedulerBuild{scheduler: record, loader: loader, validationTriggers: loader.Triggers})
+	}
+	return builds, nil
+}
+
+func normalizedProjectHasService(spec *compose.NormalizedProjectSpec, serviceName string) bool {
+	for _, service := range spec.Services {
+		if service.Name == serviceName {
+			return true
+		}
+	}
+	return false
+}
+
+func projectServiceTriggerSchedulerName(serviceName, triggerName string) string {
+	serviceName = strings.TrimSpace(serviceName)
+	triggerName = strings.TrimSpace(triggerName)
+	if triggerName == "" {
+		return "service-" + serviceName
+	}
+	return "service-" + serviceName + "-" + triggerName
 }
 
 func projectManagedLoaderFromScheduler(project ProjectRecord, scheduler ProjectSchedulerRecord, agent compose.NormalizedAgentSpec) (Loader, error) {
@@ -940,6 +1705,72 @@ func projectManagedLoaderTriggerAndRegistration(id, agentName string, trigger co
 		}, fmt.Sprintf("scheduler.on(%s, %s, %s);\n", jsStringLiteral(topic), jsStringLiteral(id), callback), nil
 	default:
 		return LoaderTrigger{}, "", fmt.Errorf("unsupported scheduler trigger kind %q", trigger.Kind)
+	}
+}
+
+func projectManagedServiceLoaderTriggerAndRegistration(projectID, serviceName string, trigger compose.NormalizedProjectTriggerSpec) (LoaderTrigger, string, error) {
+	id, err := StableManagedTriggerID(projectID, serviceName, projectServiceTriggerSchedulerName(serviceName, trigger.Name), trigger.Name, 0)
+	if err != nil {
+		return LoaderTrigger{}, "", err
+	}
+	input := strings.TrimSpace(trigger.Input)
+	inputExpr := "(event == null ? {} : event)"
+	if input == "" {
+		input = "{}"
+	} else {
+		inputExpr = input
+	}
+	if !json.Valid([]byte(input)) {
+		return LoaderTrigger{}, "", fmt.Errorf("service trigger input must be valid JSON")
+	}
+	callback := fmt.Sprintf("async function(event) { return scheduler.service(%s, %s); }", jsStringLiteral(serviceName), inputExpr)
+	switch trigger.Kind {
+	case "cron":
+		specJSON, err := loaderCronSpecJSON(trigger.Cron, "")
+		if err != nil {
+			return LoaderTrigger{}, "", err
+		}
+		return LoaderTrigger{ID: id, Kind: LoaderTriggerKindCron, Enabled: true, SpecJSON: specJSON}, fmt.Sprintf("scheduler.cron(%s, %s, %s);\n", jsStringLiteral(id), jsStringLiteral(trigger.Cron), callback), nil
+	case "interval":
+		interval, err := time.ParseDuration(trigger.Interval)
+		if err != nil {
+			return LoaderTrigger{}, "", err
+		}
+		intervalMs := interval.Milliseconds()
+		if intervalMs <= 0 {
+			return LoaderTrigger{}, "", fmt.Errorf("interval trigger %s must be at least 1ms", id)
+		}
+		specJSON, err := marshalJSONCompact(map[string]any{"kind": LoaderTriggerKindInterval, "interval": trigger.Interval})
+		if err != nil {
+			return LoaderTrigger{}, "", err
+		}
+		return LoaderTrigger{ID: id, Kind: LoaderTriggerKindInterval, IntervalMs: intervalMs, Enabled: true, SpecJSON: specJSON}, fmt.Sprintf("scheduler.interval(%s, %s, %d);\n", jsStringLiteral(id), callback, intervalMs), nil
+	case "timeout":
+		delay, err := time.ParseDuration(trigger.Timeout)
+		if err != nil {
+			return LoaderTrigger{}, "", err
+		}
+		delayMs := delay.Milliseconds()
+		if delayMs <= 0 {
+			return LoaderTrigger{}, "", fmt.Errorf("timeout trigger %s must be at least 1ms", id)
+		}
+		specJSON, err := marshalJSONCompact(map[string]any{"kind": LoaderTriggerKindTimeout, "timeout": trigger.Timeout})
+		if err != nil {
+			return LoaderTrigger{}, "", err
+		}
+		return LoaderTrigger{ID: id, Kind: LoaderTriggerKindTimeout, IntervalMs: delayMs, Enabled: true, SpecJSON: specJSON}, fmt.Sprintf("scheduler.timeout(%s, %s, %d);\n", jsStringLiteral(id), callback, delayMs), nil
+	case "event":
+		if trigger.Event == nil {
+			return LoaderTrigger{}, "", fmt.Errorf("event trigger topic is required")
+		}
+		topic := strings.TrimSpace(trigger.Event.Topic)
+		specJSON, err := marshalJSONCompact(map[string]any{"kind": LoaderTriggerKindEvent, "topic": topic})
+		if err != nil {
+			return LoaderTrigger{}, "", err
+		}
+		return LoaderTrigger{ID: id, Kind: LoaderTriggerKindEvent, Topic: topic, Enabled: true, SpecJSON: specJSON}, fmt.Sprintf("scheduler.on(%s, %s, %s);\n", jsStringLiteral(topic), jsStringLiteral(id), callback), nil
+	default:
+		return LoaderTrigger{}, "", fmt.Errorf("unsupported service trigger kind %q", trigger.Kind)
 	}
 }
 
@@ -1217,6 +2048,61 @@ func (s *Service) reconcileProjectManagedSchedulers(ctx context.Context, project
 	return changes, unchanged, nil
 }
 
+func (s *Service) reconcileProjectServices(ctx context.Context, project ProjectRecord, services []ProjectServiceRecord) ([]*agentcomposev2.ProjectChange, bool, error) {
+	if s.configDB == nil {
+		return nil, false, fmt.Errorf("config store is required")
+	}
+	currentByName := make(map[string]ProjectServiceRecord, len(services))
+	changes := make([]*agentcomposev2.ProjectChange, 0, len(services))
+	unchanged := true
+	for _, service := range services {
+		currentByName[service.ServiceName] = service
+		existing, found, err := getProjectServiceIfExists(ctx, s.configDB, service.ProjectID, service.ServiceName)
+		if err != nil {
+			return changes, false, fmt.Errorf("load project service %s/%s: %w", service.ProjectID, service.ServiceName, err)
+		}
+		saved, err := s.configDB.UpsertProjectService(ctx, service)
+		if err != nil {
+			return changes, false, fmt.Errorf("upsert project service %s/%s: %w", service.ProjectID, service.ServiceName, err)
+		}
+		action := serviceChangeAction(existing, found, service)
+		if action != agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED {
+			unchanged = false
+		}
+		changes = append(changes, &agentcomposev2.ProjectChange{
+			Action:       action,
+			ResourceType: "project_service",
+			ResourceId:   saved.ServiceName,
+			Name:         saved.ServiceName,
+		})
+	}
+	existingServices, err := s.configDB.ListProjectServices(ctx, project.ID)
+	if err != nil {
+		return changes, false, fmt.Errorf("list project services: %w", err)
+	}
+	for _, existing := range existingServices {
+		if _, ok := currentByName[existing.ServiceName]; ok {
+			continue
+		}
+		unchanged = false
+		changes = append(changes, &agentcomposev2.ProjectChange{
+			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_REMOVED,
+			ResourceType: "project_service",
+			ResourceId:   existing.ServiceName,
+			Name:         existing.ServiceName,
+			Message:      "service is no longer present in the project spec",
+		})
+	}
+	keepNames := make([]string, 0, len(currentByName))
+	for name := range currentByName {
+		keepNames = append(keepNames, name)
+	}
+	if err := s.configDB.DeleteProjectServicesExcept(ctx, project.ID, keepNames); err != nil {
+		return changes, false, err
+	}
+	return changes, unchanged, nil
+}
+
 func (s *Service) cleanupFailedManagedSchedulerReconcile(ctx context.Context, scheduler ProjectSchedulerRecord, loaderID string) {
 	if s == nil || s.configDB == nil {
 		return
@@ -1284,6 +2170,9 @@ func schedulerChangeAction(existing ProjectSchedulerRecord, found bool, current 
 		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
 	}
 	if existing.ManagedLoaderID == current.ManagedLoaderID &&
+		existing.AgentName == current.AgentName &&
+		existing.TargetType == current.TargetType &&
+		existing.TargetName == current.TargetName &&
 		existing.Revision == current.Revision &&
 		existing.Enabled == current.Enabled &&
 		existing.TriggerCount == current.TriggerCount &&
@@ -1396,6 +2285,17 @@ func getProjectAgentIfExists(ctx context.Context, store *ConfigStore, projectID,
 	return ProjectAgentRecord{}, false, err
 }
 
+func getProjectServiceIfExists(ctx context.Context, store *ConfigStore, projectID, serviceName string) (ProjectServiceRecord, bool, error) {
+	service, err := store.GetProjectService(ctx, projectID, serviceName)
+	if err == nil {
+		return service, true, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return ProjectServiceRecord{}, false, nil
+	}
+	return ProjectServiceRecord{}, false, err
+}
+
 func getProjectSchedulerIfExists(ctx context.Context, store *ConfigStore, projectID, schedulerID string) (ProjectSchedulerRecord, bool, error) {
 	scheduler, err := store.GetProjectScheduler(ctx, projectID, schedulerID)
 	if err == nil {
@@ -1477,11 +2377,83 @@ func dryRunProjectChanges(project ProjectRecord, agents []ProjectAgentRecord, ag
 	return changes
 }
 
+func projectDiffChanges(current ProjectRecord, incoming ProjectRecord, currentAgents []ProjectAgentRecord, incomingAgents []ProjectAgentRecord, currentSchedulers []ProjectSchedulerRecord, incomingSchedulers []ProjectSchedulerRecord) []*agentcomposev2.ProjectChange {
+	changes := []*agentcomposev2.ProjectChange{{
+		Action:       projectChangeAction(projectRecordUnchanged(current, incoming)),
+		ResourceType: "project",
+		ResourceId:   current.ID,
+		Name:         incoming.Name,
+	}}
+
+	currentAgentByName := make(map[string]ProjectAgentRecord, len(currentAgents))
+	for _, agent := range currentAgents {
+		currentAgentByName[agent.AgentName] = agent
+	}
+	seenAgents := make(map[string]struct{}, len(incomingAgents))
+	for _, agent := range incomingAgents {
+		seenAgents[agent.AgentName] = struct{}{}
+		existing, found := currentAgentByName[agent.AgentName]
+		changes = append(changes, &agentcomposev2.ProjectChange{
+			Action:       agentChangeAction(existing, found, agent),
+			ResourceType: "project_agent",
+			ResourceId:   agent.ManagedAgentID,
+			Name:         agent.AgentName,
+		})
+	}
+	for _, agent := range currentAgents {
+		if _, ok := seenAgents[agent.AgentName]; ok {
+			continue
+		}
+		changes = append(changes, &agentcomposev2.ProjectChange{
+			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_REMOVED,
+			ResourceType: "project_agent",
+			ResourceId:   agent.ManagedAgentID,
+			Name:         agent.AgentName,
+		})
+	}
+
+	currentSchedulerByID := make(map[string]ProjectSchedulerRecord, len(currentSchedulers))
+	for _, scheduler := range currentSchedulers {
+		currentSchedulerByID[scheduler.SchedulerID] = scheduler
+	}
+	seenSchedulers := make(map[string]struct{}, len(incomingSchedulers))
+	for _, scheduler := range incomingSchedulers {
+		seenSchedulers[scheduler.SchedulerID] = struct{}{}
+		existing, found := currentSchedulerByID[scheduler.SchedulerID]
+		changes = append(changes, &agentcomposev2.ProjectChange{
+			Action:       schedulerChangeAction(existing, found, scheduler),
+			ResourceType: "project_scheduler",
+			ResourceId:   scheduler.SchedulerID,
+			Name:         scheduler.AgentName,
+		})
+	}
+	for _, scheduler := range currentSchedulers {
+		if _, ok := seenSchedulers[scheduler.SchedulerID]; ok {
+			continue
+		}
+		changes = append(changes, &agentcomposev2.ProjectChange{
+			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_REMOVED,
+			ResourceType: "project_scheduler",
+			ResourceId:   scheduler.SchedulerID,
+			Name:         scheduler.AgentName,
+		})
+	}
+	return changes
+}
+
+func projectChangeAction(unchanged bool) agentcomposev2.ProjectChangeAction {
+	if unchanged {
+		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED
+	}
+	return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
+}
+
 func projectRecordUnchanged(existing ProjectRecord, current ProjectRecord) bool {
 	return existing.ID == current.ID &&
 		existing.Name == current.Name &&
 		existing.SourcePath == current.SourcePath &&
 		existing.SpecHash == current.SpecHash &&
+		existing.BundleHash == current.BundleHash &&
 		existing.CurrentRevision == current.CurrentRevision &&
 		existing.RemovedAt.IsZero()
 }
@@ -1503,16 +2475,54 @@ func agentChangeAction(existing ProjectAgentRecord, found bool, current ProjectA
 	return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
 }
 
-func projectResponse(project ProjectRecord, spec *agentcomposev2.ProjectSpec, agents []ProjectAgentRecord, schedulers []ProjectSchedulerRecord) *agentcomposev2.Project {
+func serviceChangeAction(existing ProjectServiceRecord, found bool, current ProjectServiceRecord) agentcomposev2.ProjectChangeAction {
+	if !found {
+		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
+	}
+	if existing.Revision == current.Revision &&
+		existing.Runtime == current.Runtime &&
+		existing.Entry == current.Entry &&
+		existing.InputSchemaRef == current.InputSchemaRef &&
+		existing.OutputSchemaRef == current.OutputSchemaRef &&
+		existing.ErrorSchemaRef == current.ErrorSchemaRef &&
+		existing.TimeoutMs == current.TimeoutMs &&
+		existing.SpecJSON == current.SpecJSON {
+		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED
+	}
+	return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
+}
+
+func projectResponse(project ProjectRecord, spec *agentcomposev2.ProjectSpec, agents []ProjectAgentRecord, services []ProjectServiceRecord, schedulers []ProjectSchedulerRecord) *agentcomposev2.Project {
 	return &agentcomposev2.Project{
 		Summary:    projectSummaryResponse(project, agents, schedulers),
 		Spec:       spec,
 		Agents:     projectAgentResponses(agents),
+		Services:   projectServiceResponses(services),
 		Schedulers: projectSchedulerResponses(schedulers),
 	}
 }
 
-func projectSummaryResponse(project ProjectRecord, agents []ProjectAgentRecord, schedulers []ProjectSchedulerRecord) *agentcomposev2.ProjectSummary {
+func (s *Service) projectListSummaryResponse(ctx context.Context, project ProjectRecord) (*agentcomposev2.ProjectSummary, error) {
+	agents, err := s.configDB.ListProjectAgents(ctx, project.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list project %s agents: %w", project.ID, err)
+	}
+	schedulers, err := s.configDB.ListProjectSchedulers(ctx, project.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list project %s schedulers: %w", project.ID, err)
+	}
+	services, err := s.configDB.ListProjectServices(ctx, project.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list project %s services: %w", project.ID, err)
+	}
+	return projectSummaryResponse(project, agents, schedulers, services), nil
+}
+
+func projectSummaryResponse(project ProjectRecord, agents []ProjectAgentRecord, schedulers []ProjectSchedulerRecord, services ...[]ProjectServiceRecord) *agentcomposev2.ProjectSummary {
+	serviceCount := 0
+	if len(services) > 0 {
+		serviceCount = len(services[0])
+	}
 	return &agentcomposev2.ProjectSummary{
 		ProjectId:       project.ID,
 		Name:            project.Name,
@@ -1521,19 +2531,31 @@ func projectSummaryResponse(project ProjectRecord, agents []ProjectAgentRecord, 
 		SpecHash:        project.SpecHash,
 		AgentCount:      uint32(len(agents)),
 		SchedulerCount:  uint32(len(schedulers)),
+		ServiceCount:    uint32(serviceCount),
+		BundleHash:      project.BundleHash,
+		ProjectDir:      projectDirFromSourcePath(project.SourcePath),
 		CreatedAt:       formatProjectTime(project.CreatedAt),
 		UpdatedAt:       formatProjectTime(project.UpdatedAt),
 		RemovedAt:       formatProjectTime(project.RemovedAt),
 	}
 }
 
+func projectDirFromSourcePath(sourcePath string) string {
+	sourcePath = strings.TrimSpace(sourcePath)
+	if sourcePath == "" {
+		return ""
+	}
+	return filepath.Dir(sourcePath)
+}
+
 func projectRevisionResponse(revision ProjectRevisionRecord, spec *agentcomposev2.ProjectSpec) *agentcomposev2.ProjectRevision {
 	return &agentcomposev2.ProjectRevision{
-		ProjectId: revision.ProjectID,
-		Revision:  uint64(revision.Revision),
-		SpecHash:  revision.SpecHash,
-		Spec:      spec,
-		CreatedAt: formatProjectTime(revision.CreatedAt),
+		ProjectId:  revision.ProjectID,
+		Revision:   uint64(revision.Revision),
+		SpecHash:   revision.SpecHash,
+		BundleHash: revision.BundleHash,
+		Spec:       spec,
+		CreatedAt:  formatProjectTime(revision.CreatedAt),
 	}
 }
 
@@ -1554,6 +2576,25 @@ func projectAgentResponses(agents []ProjectAgentRecord) []*agentcomposev2.Projec
 	return items
 }
 
+func projectServiceResponses(services []ProjectServiceRecord) []*agentcomposev2.ProjectServiceResource {
+	items := make([]*agentcomposev2.ProjectServiceResource, 0, len(services))
+	for _, service := range services {
+		items = append(items, &agentcomposev2.ProjectServiceResource{
+			ProjectId:       service.ProjectID,
+			ServiceName:     service.ServiceName,
+			Revision:        uint64(service.Revision),
+			Runtime:         service.Runtime,
+			Entry:           service.Entry,
+			InputSchemaRef:  service.InputSchemaRef,
+			OutputSchemaRef: service.OutputSchemaRef,
+			ErrorSchemaRef:  service.ErrorSchemaRef,
+			TimeoutMs:       uint32(service.TimeoutMs),
+			SpecJson:        service.SpecJSON,
+		})
+	}
+	return items
+}
+
 func projectSchedulerResponses(schedulers []ProjectSchedulerRecord) []*agentcomposev2.ProjectScheduler {
 	items := make([]*agentcomposev2.ProjectScheduler, 0, len(schedulers))
 	for _, scheduler := range schedulers {
@@ -1564,6 +2605,8 @@ func projectSchedulerResponses(schedulers []ProjectSchedulerRecord) []*agentcomp
 			ManagedLoaderId: scheduler.ManagedLoaderID,
 			Enabled:         scheduler.Enabled,
 			TriggerCount:    uint32(scheduler.TriggerCount),
+			TargetType:      scheduler.TargetType,
+			TargetName:      scheduler.TargetName,
 		})
 	}
 	return items
@@ -1575,11 +2618,42 @@ func ProjectSpecResponse(spec *compose.NormalizedProjectSpec) *agentcomposev2.Pr
 		return nil
 	}
 	return &agentcomposev2.ProjectSpec{
-		Name:      spec.Name,
-		Variables: envVarResponses(spec.Variables),
-		Workspace: workspaceResponse(spec.Workspace),
-		Agents:    agentSpecResponses(spec.Agents),
-		Network:   networkResponse(spec.Network),
+		Name:        spec.Name,
+		Metadata:    metadataResponse(spec.Metadata),
+		Variables:   envVarResponses(spec.Variables),
+		Runtime:     runtimeResponse(spec.Runtime),
+		Workspace:   workspaceResponse(spec.Workspace),
+		Agents:      agentSpecResponses(spec.Agents),
+		Network:     networkResponse(spec.Network),
+		Services:    serviceSpecResponses(spec.Services),
+		Triggers:    projectTriggerSpecResponses(spec.Triggers),
+		Permissions: permissionResponse(spec.Permissions),
+		Artifacts:   artifactPolicyResponse(spec.Artifacts),
+	}
+}
+
+func metadataResponse(metadata *compose.ProjectMetadataSpec) *agentcomposev2.ProjectMetadata {
+	if metadata == nil {
+		return nil
+	}
+	return &agentcomposev2.ProjectMetadata{
+		Name:        metadata.Name,
+		Labels:      cloneStringMap(metadata.Labels),
+		Annotations: cloneStringMap(metadata.Annotations),
+	}
+}
+
+func runtimeResponse(runtime *compose.NormalizedProjectRuntimeSpec) *agentcomposev2.RuntimeSpec {
+	if runtime == nil {
+		return nil
+	}
+	return &agentcomposev2.RuntimeSpec{
+		Driver:        runtime.Driver,
+		Image:         runtime.Image,
+		Env:           envVarResponses(runtime.Env),
+		Resources:     cloneStringMap(runtime.Resources),
+		Network:       networkResponse(runtime.Network),
+		CleanupPolicy: cleanupPolicyResponse(runtime.CleanupPolicy),
 	}
 }
 
@@ -1600,6 +2674,136 @@ func agentSpecResponses(agents []compose.NormalizedAgentSpec) []*agentcomposev2.
 		})
 	}
 	return items
+}
+
+func serviceSpecResponses(services []compose.NormalizedServiceSpec) []*agentcomposev2.ServiceSpec {
+	items := make([]*agentcomposev2.ServiceSpec, 0, len(services))
+	for _, service := range services {
+		inputSchemaJSON, inputSchemaRef := splitSchemaResponse(service.InputSchema)
+		outputSchemaJSON, outputSchemaRef := splitSchemaResponse(service.OutputSchema)
+		errorSchemaJSON, errorSchemaRef := splitSchemaResponse(service.ErrorSchema)
+		items = append(items, &agentcomposev2.ServiceSpec{
+			Name:             service.Name,
+			Description:      service.Description,
+			Runtime:          service.Runtime,
+			Entry:            service.Entry,
+			InputSchemaJson:  inputSchemaJSON,
+			InputSchemaRef:   inputSchemaRef,
+			OutputSchemaJson: outputSchemaJSON,
+			OutputSchemaRef:  outputSchemaRef,
+			ErrorSchemaJson:  errorSchemaJSON,
+			ErrorSchemaRef:   errorSchemaRef,
+			TimeoutMs:        durationStringToMillis(service.Timeout),
+			Retry:            retryPolicyResponse(service.Retry),
+			Permissions:      permissionResponse(service.Permissions),
+			Env:              envVarResponses(service.Env),
+			Agents:           append([]string(nil), service.Agents...),
+			Examples:         serviceExampleResponses(service.Examples),
+		})
+	}
+	return items
+}
+
+func splitSchemaResponse(value string) (schemaJSON string, schemaRef string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", ""
+	}
+	if strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[") {
+		return value, ""
+	}
+	return "", value
+}
+
+func retryPolicyResponse(retry *compose.RetryPolicySpec) *agentcomposev2.RetryPolicySpec {
+	if retry == nil {
+		return nil
+	}
+	return &agentcomposev2.RetryPolicySpec{MaxAttempts: uint32(retry.MaxAttempts), BackoffMs: durationStringToMillis(retry.Backoff)}
+}
+
+func serviceExampleResponses(examples []compose.ServiceExampleSpec) []*agentcomposev2.ServiceExampleSpec {
+	items := make([]*agentcomposev2.ServiceExampleSpec, 0, len(examples))
+	for _, example := range examples {
+		items = append(items, &agentcomposev2.ServiceExampleSpec{Name: example.Name, InputJson: example.Input, OutputJson: example.Output})
+	}
+	return items
+}
+
+func projectTriggerSpecResponses(triggers []compose.NormalizedProjectTriggerSpec) []*agentcomposev2.ProjectTriggerSpec {
+	items := make([]*agentcomposev2.ProjectTriggerSpec, 0, len(triggers))
+	for _, trigger := range triggers {
+		items = append(items, &agentcomposev2.ProjectTriggerSpec{
+			Name:      trigger.Name,
+			Type:      trigger.Kind,
+			Cron:      trigger.Cron,
+			Interval:  trigger.Interval,
+			Timeout:   trigger.Timeout,
+			Event:     eventTriggerResponse(trigger.Event),
+			Webhook:   webhookTriggerResponse(trigger.Webhook),
+			Target:    triggerTargetResponse(&trigger.Target),
+			InputJson: trigger.Input,
+		})
+	}
+	return items
+}
+
+func eventTriggerResponse(event *compose.EventTriggerSpec) *agentcomposev2.EventTriggerSpec {
+	if event == nil {
+		return nil
+	}
+	return &agentcomposev2.EventTriggerSpec{Topic: event.Topic}
+}
+
+func webhookTriggerResponse(webhook *compose.WebhookTriggerSpec) *agentcomposev2.WebhookTriggerSpec {
+	if webhook == nil {
+		return nil
+	}
+	return &agentcomposev2.WebhookTriggerSpec{Topic: webhook.Topic, Method: webhook.Method}
+}
+
+func triggerTargetResponse(target *compose.TriggerTargetSpec) *agentcomposev2.TriggerTargetSpec {
+	if target == nil || (strings.TrimSpace(target.Service) == "" && strings.TrimSpace(target.Agent) == "") {
+		return nil
+	}
+	return &agentcomposev2.TriggerTargetSpec{ServiceName: target.Service, AgentName: target.Agent}
+}
+
+func permissionResponse(permission *compose.PermissionSpec) *agentcomposev2.PermissionSpec {
+	if permission == nil {
+		return nil
+	}
+	return &agentcomposev2.PermissionSpec{
+		Agents:       append([]string(nil), permission.Agents...),
+		Capabilities: append([]string(nil), permission.Capabilities...),
+		Resources:    append([]string(nil), permission.Resources...),
+	}
+}
+
+func artifactPolicyResponse(policy *compose.ArtifactPolicySpec) *agentcomposev2.ArtifactPolicySpec {
+	if policy == nil {
+		return nil
+	}
+	return &agentcomposev2.ArtifactPolicySpec{Retention: policy.Retention, Storage: policy.Storage}
+}
+
+func durationStringToMillis(value string) uint32 {
+	duration, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil || duration <= 0 {
+		return 0
+	}
+	return uint32(duration.Milliseconds())
+}
+
+func cleanupPolicyResponse(value string) agentcomposev2.RunSessionCleanupPolicy {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "keep_running", "keep-running", "keep":
+		return agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING
+	case "stop", "stop_on_completion", "stop-on-completion":
+		return agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION
+	default:
+		return agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_UNSPECIFIED
+	}
 }
 
 func envVarResponses(values map[string]compose.EnvVarSpec) []*agentcomposev2.EnvVarSpec {

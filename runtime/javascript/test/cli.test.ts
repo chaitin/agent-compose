@@ -6,6 +6,7 @@ import { createProgram, isMainModule, main } from "../src/cli.js";
 import { COMMAND_RESULT_PREFIX, RESULT_PREFIX } from "../src/constants.js";
 import * as commandModule from "../src/command.js";
 import * as promptModule from "../src/prompt.js";
+import * as serviceModule from "../src/service.js";
 import { captureStdio, withTempSession } from "./helpers.js";
 
 describe("commander CLI", () => {
@@ -136,6 +137,39 @@ describe("commander CLI", () => {
       home: "/data/home",
     });
     expect(stdio.stdout).toBe(`${COMMAND_RESULT_PREFIX}{"stdout":"ok\\n","stderr":"","output":"ok\\n","exitCode":0,"success":true,"stdoutTruncated":false,"stderrTruncated":false,"outputTruncated":false,"artifacts":{"stdout":"/tmp/stdout.txt","stderr":"/tmp/stderr.txt","output":"/tmp/output.txt","request":"/tmp/request.json","result":"/tmp/result.json"}}\n`);
+  });
+
+  it("prints the prefixed result for service command", async () => {
+    const runService = vi.spyOn(serviceModule, "runServiceCommand").mockResolvedValue({
+      serviceName: "echo",
+      outputJson: "{\"ok\":true}",
+      success: true,
+      artifacts: { request: "/tmp/service-request.json", result: "/tmp/service-result.json" },
+      metrics: { durationMs: "1" },
+    });
+    const stdio = captureStdio();
+    try {
+      await createProgram({ exitOverride: true }).parseAsync([
+        "node",
+        "cli",
+        "service",
+        "--request-json",
+        "{\"entry\":\"service.js\"}",
+        "--state-root",
+        "/data/state",
+        "--workspace",
+        "/workspace",
+      ]);
+    } finally {
+      stdio.restore();
+    }
+
+    expect(runService).toHaveBeenCalledWith({
+      requestJson: "{\"entry\":\"service.js\"}",
+      stateRoot: "/data/state",
+      workspace: "/workspace",
+    });
+    expect(stdio.stdout).toBe("__SERVICE_RESULT__{\"serviceName\":\"echo\",\"outputJson\":\"{\\\"ok\\\":true}\",\"success\":true,\"artifacts\":{\"request\":\"/tmp/service-request.json\",\"result\":\"/tmp/service-result.json\"},\"metrics\":{\"durationMs\":\"1\"}}\n");
   });
 
   it("main parses argv through the configured program", async () => {

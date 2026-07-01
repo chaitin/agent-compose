@@ -2014,6 +2014,7 @@ type fakeLoaderAgentRuntime struct {
 	commandStdout          string
 	commandStderr          string
 	commandOutput          string
+	commandServiceResult   string
 	commandBlock           chan struct{}
 	commandNoPayload       bool
 	commandTruncated       bool
@@ -2070,6 +2071,11 @@ func (r *fakeLoaderAgentRuntime) ExecStream(ctx context.Context, session *Sessio
 			hostCellDir := filepath.Join(hostSessionDir(session), "state", "cells", cellID)
 			if err := os.MkdirAll(hostCellDir, 0o755); err != nil {
 				return ExecResult{}, err
+			}
+			if strings.TrimSpace(r.commandServiceResult) != "" {
+				if err := os.WriteFile(filepath.Join(hostCellDir, "service-result.json"), []byte(r.commandServiceResult), 0o644); err != nil {
+					return ExecResult{}, err
+				}
 			}
 			guestResult := commandResult
 			guestResult.Stdout = commandResult.Stdout + fakeGuestCommandResultSentinel

@@ -135,6 +135,60 @@ func TestConfigStoreProjectSchemaMigrationPreservesExistingData(t *testing.T) {
 	testConfigStoreProjectSchemaMigrationPreservesExistingData(t)
 }
 
+func TestConfigStoreProjectSchemaMigrationAddsBundleHashBeforeIndexes(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store := &ConfigStore{db: db}
+	statements := []string{
+		`CREATE TABLE project (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			source_path TEXT NOT NULL DEFAULT '',
+			source_json TEXT NOT NULL DEFAULT '{}',
+			current_revision INTEGER NOT NULL DEFAULT 0,
+			spec_hash TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL DEFAULT 0,
+			removed_at INTEGER NOT NULL DEFAULT 0
+		);`,
+		`CREATE TABLE project_revision (
+			project_id TEXT NOT NULL,
+			revision INTEGER NOT NULL,
+			spec_hash TEXT NOT NULL,
+			spec_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY(project_id, revision)
+		);`,
+		`CREATE UNIQUE INDEX idx_project_revision_hash ON project_revision(project_id, spec_hash);`,
+		`INSERT INTO project(id, name, source_path, source_json, current_revision, spec_hash, created_at, updated_at, removed_at)
+			VALUES('project-legacy', 'legacy', '/tmp/agent-compose.yml', '{}', 1, 'sha256:legacy', 1, 1, 0);`,
+		`INSERT INTO project_revision(project_id, revision, spec_hash, spec_json, created_at)
+			VALUES('project-legacy', 1, 'sha256:legacy', '{"name":"legacy"}', 1);`,
+	}
+	for _, stmt := range statements {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("prepare legacy project schema: %v", err)
+		}
+	}
+	if err := store.initSchema(ctx); err != nil {
+		t.Fatalf("initSchema returned error: %v", err)
+	}
+	assertTableColumns(t, store, "project", "bundle_hash")
+	assertTableColumns(t, store, "project_revision", "bundle_hash")
+	assertSQLiteIndexExists(t, db, "idx_project_revision_hash_bundle")
+	revision, err := store.GetProjectRevision(ctx, "project-legacy", 1)
+	if err != nil {
+		t.Fatalf("GetProjectRevision returned error: %v", err)
+	}
+	if revision.BundleHash != "" || revision.SpecHash != "sha256:legacy" {
+		t.Fatalf("revision after migration = %#v", revision)
+	}
+}
+
 func testConfigStoreProjectSchemaMigrationPreservesExistingData(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
@@ -244,10 +298,12 @@ func testConfigStoreProjectSchemaMigrationPreservesExistingData(t *testing.T) {
 func assertProjectSchema(t *testing.T, store *ConfigStore) {
 	t.Helper()
 	for table, columns := range map[string][]string{
-		"project":          {"id", "name", "source_path", "source_json", "current_revision", "spec_hash", "created_at", "updated_at", "removed_at"},
-		"project_revision": {"project_id", "revision", "spec_hash", "spec_json", "created_at"},
+		"project":          {"id", "name", "source_path", "source_json", "current_revision", "spec_hash", "bundle_hash", "created_at", "updated_at", "removed_at"},
+		"project_revision": {"project_id", "revision", "spec_hash", "bundle_hash", "spec_json", "created_at"},
 		"project_agent":    {"project_id", "agent_name", "managed_agent_id", "revision", "provider", "model", "image", "driver", "scheduler_enabled", "spec_json", "created_at", "updated_at"},
-		"project_scheduler": {"project_id", "scheduler_id", "agent_name", "managed_loader_id", "revision", "enabled", "trigger_count", "spec_json",
+		"project_service": {"project_id", "service_name", "revision", "runtime", "entry", "input_schema_ref", "output_schema_ref", "error_schema_ref", "timeout_ms", "spec_json",
+			"created_at", "updated_at"},
+		"project_scheduler": {"project_id", "scheduler_id", "agent_name", "target_type", "target_name", "managed_loader_id", "revision", "enabled", "trigger_count", "spec_json",
 			"created_at", "updated_at"},
 		"project_run": {"run_id", "project_id", "project_name", "project_revision", "agent_name", "managed_agent_id", "source", "scheduler_id", "trigger_id", "status",
 			"session_id", "exit_code", "error", "prompt", "output", "result_json", "logs_path", "artifacts_dir", "cleanup_error", "driver", "image_ref", "started_at",
@@ -260,9 +316,10 @@ func assertProjectSchema(t *testing.T, store *ConfigStore) {
 	for _, index := range []string{
 		"idx_project_name",
 		"idx_project_source_path",
-		"idx_project_revision_hash",
+		"idx_project_revision_hash_bundle",
 		"idx_project_agent_managed_agent",
 		"idx_project_scheduler_agent",
+		"idx_project_scheduler_target",
 		"idx_project_scheduler_managed_loader",
 		"idx_project_run_project_status",
 		"idx_project_run_agent",

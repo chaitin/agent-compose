@@ -31,11 +31,19 @@ agents:
 
 func TestParseFullSpec(t *testing.T) {
 	spec, err := Parse([]byte(`
+apiVersion: agent-compose/v1
+kind: Project
 name: review-project
+metadata:
+  labels:
+    owner: platform
 variables:
   OPENAI_API_KEY:
     value: ${OPENAI_API_KEY}
     secret: true
+runtime:
+  driver: docker
+  image: ghcr.io/org/runtime:latest
 workspace:
   provider: git
   url: https://github.com/org/repo.git
@@ -62,6 +70,26 @@ agents:
         - event:
             topic: git.push
           prompt: "Review changes from the incoming event."
+services:
+  risk-review:
+    runtime: node
+    entry: services/risk-review.js
+    input_schema: schemas/risk-review.input.json
+    output_schema: schemas/risk-review.output.json
+    timeout: 10m
+    agents:
+      - reviewer
+triggers:
+  daily:
+    cron: "0 9 * * *"
+    target:
+      service: risk-review
+    input: '{"scope":"daily"}'
+permissions:
+  capabilities:
+    - repo.read
+artifacts:
+  retention: 7d
 network:
   mode: default
 `))
@@ -92,6 +120,18 @@ network:
 	}
 	if spec.Network == nil || spec.Network.Mode != "default" {
 		t.Fatalf("network = %#v", spec.Network)
+	}
+	if spec.Metadata == nil || spec.Metadata.Labels["owner"] != "platform" {
+		t.Fatalf("metadata = %#v", spec.Metadata)
+	}
+	if spec.Runtime == nil || spec.Runtime.Driver != "docker" {
+		t.Fatalf("runtime = %#v", spec.Runtime)
+	}
+	if service := spec.Services["risk-review"]; service.Entry != "services/risk-review.js" || len(service.Agents) != 1 {
+		t.Fatalf("service = %#v", service)
+	}
+	if trigger := spec.Triggers["daily"]; trigger.Target == nil || trigger.Target.Service != "risk-review" {
+		t.Fatalf("trigger = %#v", trigger)
 	}
 }
 

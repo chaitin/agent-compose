@@ -124,6 +124,33 @@ Runtime JS does not inject:
 
 Child processes inherit the runtime process's native `HOME`.
 
+## Runtime Context And Redaction
+
+v2 run and service invocation APIs use `RuntimeContext` as the generic envelope
+for source, request ids, trace ids, metadata, env overrides, identity metadata,
+and capability scope. Runtime context is business-neutral: agent-compose stores
+and forwards keys without interpreting product-specific concepts such as tenant,
+channel, or enterprise user identity.
+
+Security boundary:
+
+- Runtime context may be persisted with the run record so it can be injected into
+  the runtime and used for audit/debugging.
+- API responses must redact sensitive values before returning runtime context to
+  clients.
+- Sensitive keys include provider credential names such as `OPENAI_API_KEY`,
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `GOOGLE_API_KEY`, and
+  `GEMINI_API_KEY`, plus generic key names containing `token`, `secret`,
+  `password`, `api_key`, `apikey`, `auth`, or `credential`.
+- Redaction applies to runtime context `metadata`, `env`, `identity_context`, and
+  `capability_scope.metadata`.
+- Redaction does not remove non-sensitive routing/debug values such as source,
+  trace id, external run id, capset ids, or ordinary metadata.
+
+The runtime SDK reads context from `AGENT_COMPOSE_RUNTIME_CONTEXT_JSON` when the
+host injects it. Older runtime env fallback variables may be used only for
+compatibility and should not carry provider credentials.
+
 ## Artifact Directory
 
 Artifact dir is a command/request-scoped path:

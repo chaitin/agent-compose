@@ -10,15 +10,35 @@ service ProjectService {
   rpc GetProject(GetProjectRequest) returns (GetProjectResponse);
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
   rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
+  rpc DiffProject(DiffProjectRequest) returns (DiffProjectResponse);
+  rpc ListProjectRevisions(ListProjectRevisionsRequest) returns (ListProjectRevisionsResponse);
+  rpc RollbackProjectRevision(RollbackProjectRevisionRequest) returns (RollbackProjectRevisionResponse);
   rpc WatchProject(WatchProjectRequest) returns (stream WatchProjectResponse);
 }
 
 service RunService {
+  rpc InvokeService(InvokeServiceRequest) returns (InvokeServiceResponse);
+  rpc InvokeServiceStream(InvokeServiceRequest) returns (stream RunStreamResponse);
   rpc RunAgent(RunAgentRequest) returns (RunAgentResponse);
   rpc RunAgentStream(RunAgentRequest) returns (stream RunAgentStreamResponse);
   rpc GetRun(GetRunRequest) returns (GetRunResponse);
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
   rpc StopRun(StopRunRequest) returns (StopRunResponse);
+  rpc WatchRun(WatchRunRequest) returns (stream RunStreamResponse);
+}
+
+service ArtifactService {
+  rpc ListArtifacts(ListArtifactsRequest) returns (ListArtifactsResponse);
+  rpc GetArtifact(GetArtifactRequest) returns (GetArtifactResponse);
+  rpc ReadArtifact(ReadArtifactRequest) returns (ReadArtifactResponse);
+  rpc WriteArtifact(WriteArtifactRequest) returns (WriteArtifactResponse);
+  rpc DeleteArtifact(DeleteArtifactRequest) returns (DeleteArtifactResponse);
+}
+
+service EventService {
+  rpc PublishEvent(PublishEventRequest) returns (PublishEventResponse);
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+  rpc WatchEvents(WatchEventsRequest) returns (stream EventRecord);
 }
 
 service ExecService {
@@ -68,6 +88,27 @@ enum RunSource {
   RUN_SOURCE_MANUAL = 1;
   RUN_SOURCE_SCHEDULER = 2;
   RUN_SOURCE_API = 3;
+  RUN_SOURCE_WEBHOOK = 4;
+  RUN_SOURCE_EVENT = 5;
+}
+
+enum RunTargetType {
+  RUN_TARGET_TYPE_UNSPECIFIED = 0;
+  RUN_TARGET_TYPE_AGENT = 1;
+  RUN_TARGET_TYPE_SERVICE = 2;
+  RUN_TARGET_TYPE_EXEC = 3;
+  RUN_TARGET_TYPE_TRIGGER = 4;
+  RUN_TARGET_TYPE_WEBHOOK = 5;
+}
+
+enum RunStreamEventType {
+  RUN_STREAM_EVENT_TYPE_UNSPECIFIED = 0;
+  RUN_STREAM_EVENT_TYPE_STARTED = 1;
+  RUN_STREAM_EVENT_TYPE_OUTPUT = 2;
+  RUN_STREAM_EVENT_TYPE_LOG = 3;
+  RUN_STREAM_EVENT_TYPE_ARTIFACT = 4;
+  RUN_STREAM_EVENT_TYPE_STATUS = 5;
+  RUN_STREAM_EVENT_TYPE_COMPLETED = 6;
 }
 
 enum RunAgentStreamEventType {
@@ -127,6 +168,8 @@ message ApplyProjectRequest {
   ProjectSource source = 2;
   string expected_spec_hash = 3;
   bool dry_run = 4;
+  repeated ProjectBundleFile bundle_files = 5;
+  string bundle_hash = 6;
 }
 
 message ApplyProjectResponse {
@@ -172,6 +215,47 @@ message RemoveProjectResponse {
   repeated ProjectChange changes = 2;
 }
 
+message DiffProjectRequest {
+  ProjectRef project = 1;
+  ProjectSpec incoming_spec = 2;
+  ProjectSource source = 3;
+  uint64 base_revision = 4;
+}
+
+message DiffProjectResponse {
+  repeated ProjectChange changes = 1;
+  repeated ProjectValidationIssue issues = 2;
+  string current_spec_hash = 3;
+  string incoming_spec_hash = 4;
+}
+
+message ListProjectRevisionsRequest {
+  ProjectRef project = 1;
+  uint32 offset = 2;
+  uint32 limit = 3;
+}
+
+message ListProjectRevisionsResponse {
+  repeated ProjectRevision revisions = 1;
+  uint32 total_count = 2;
+  bool has_more = 3;
+  uint32 next_offset = 4;
+}
+
+message RollbackProjectRevisionRequest {
+  ProjectRef project = 1;
+  uint64 revision = 2;
+  bool dry_run = 3;
+}
+
+message RollbackProjectRevisionResponse {
+  Project project = 1;
+  ProjectRevision revision = 2;
+  repeated ProjectChange changes = 3;
+  repeated ProjectValidationIssue issues = 4;
+  bool applied = 5;
+}
+
 message WatchProjectRequest {
   ProjectRef project = 1;
 }
@@ -199,6 +283,7 @@ message Project {
   ProjectSpec spec = 2;
   repeated ProjectAgent agents = 3;
   repeated ProjectScheduler schedulers = 4;
+  repeated ProjectServiceResource services = 5;
 }
 
 message ProjectSummary {
@@ -214,6 +299,9 @@ message ProjectSummary {
   string created_at = 10;
   string updated_at = 11;
   string removed_at = 12;
+  uint32 service_count = 13;
+  string bundle_hash = 14;
+  string project_dir = 15;
 }
 
 message ProjectRevision {
@@ -222,6 +310,7 @@ message ProjectRevision {
   string spec_hash = 3;
   ProjectSpec spec = 4;
   string created_at = 5;
+  string bundle_hash = 6;
 }
 
 message ProjectAgent {
@@ -242,6 +331,27 @@ message ProjectScheduler {
   string managed_loader_id = 4;
   bool enabled = 5;
   uint32 trigger_count = 6;
+  string target_type = 7;
+  string target_name = 8;
+}
+
+message ProjectServiceResource {
+  string project_id = 1;
+  string service_name = 2;
+  uint64 revision = 3;
+  string runtime = 4;
+  string entry = 5;
+  string input_schema_ref = 6;
+  string output_schema_ref = 7;
+  string error_schema_ref = 8;
+  uint32 timeout_ms = 9;
+  string spec_json = 10;
+}
+
+message ProjectBundleFile {
+  string path = 1;
+  bytes content = 2;
+  string sha256 = 3;
 }
 
 message ProjectValidationIssue {
@@ -264,6 +374,27 @@ message ProjectSpec {
   WorkspaceSpec workspace = 3;
   repeated AgentSpec agents = 4;
   NetworkSpec network = 5;
+  ProjectMetadata metadata = 6;
+  RuntimeSpec runtime = 7;
+  repeated ServiceSpec services = 8;
+  repeated ProjectTriggerSpec triggers = 9;
+  PermissionSpec permissions = 10;
+  ArtifactPolicySpec artifacts = 11;
+}
+
+message ProjectMetadata {
+  string name = 1;
+  map<string, string> labels = 2;
+  map<string, string> annotations = 3;
+}
+
+message RuntimeSpec {
+  string driver = 1;
+  string image = 2;
+  repeated EnvVarSpec env = 3;
+  map<string, string> resources = 4;
+  NetworkSpec network = 5;
+  RunSessionCleanupPolicy cleanup_policy = 6;
 }
 
 message AgentSpec {
@@ -277,6 +408,70 @@ message AgentSpec {
   WorkspaceSpec workspace = 8;
   SchedulerSpec scheduler = 9;
   repeated string capset_ids = 10;
+  map<string, string> metadata = 11;
+}
+
+message ServiceSpec {
+  string name = 1;
+  string description = 2;
+  string runtime = 3;
+  string entry = 4;
+  string input_schema_json = 5;
+  string input_schema_ref = 6;
+  string output_schema_json = 7;
+  string output_schema_ref = 8;
+  string error_schema_json = 9;
+  string error_schema_ref = 10;
+  uint32 timeout_ms = 11;
+  RetryPolicySpec retry = 12;
+  PermissionSpec permissions = 13;
+  repeated EnvVarSpec env = 14;
+  repeated string agents = 15;
+  repeated ServiceExampleSpec examples = 16;
+}
+
+message RetryPolicySpec {
+  uint32 max_attempts = 1;
+  uint32 backoff_ms = 2;
+}
+
+message ServiceExampleSpec {
+  string name = 1;
+  string input_json = 2;
+  string output_json = 3;
+}
+
+message ProjectTriggerSpec {
+  string name = 1;
+  string type = 2;
+  string cron = 3;
+  string interval = 4;
+  string timeout = 5;
+  EventTriggerSpec event = 6;
+  WebhookTriggerSpec webhook = 7;
+  TriggerTargetSpec target = 8;
+  string input_json = 9;
+}
+
+message WebhookTriggerSpec {
+  string topic = 1;
+  string method = 2;
+}
+
+message TriggerTargetSpec {
+  string service_name = 1;
+  string agent_name = 2;
+}
+
+message PermissionSpec {
+  repeated string agents = 1;
+  repeated string capabilities = 2;
+  repeated string resources = 3;
+}
+
+message ArtifactPolicySpec {
+  string retention = 1;
+  string storage = 2;
 }
 
 message EnvVarSpec {
@@ -348,6 +543,41 @@ message RunAgentRequest {
   string trigger_id = 9;
   string output_schema_json = 10;
   string client_request_id = 11;
+  RuntimeContext runtime_context = 12;
+}
+
+message InvokeServiceRequest {
+  string project_id = 1;
+  string service_name = 2;
+  string input_json = 3;
+  RunSource source = 4;
+  string session_id = 5;
+  repeated EnvVarSpec env = 6;
+  RunSessionCleanupPolicy cleanup_policy = 7;
+  string scheduler_id = 8;
+  string trigger_id = 9;
+  string client_request_id = 10;
+  RuntimeContext runtime_context = 11;
+}
+
+message InvokeServiceResponse {
+  RunDetail run = 1;
+}
+
+message RuntimeContext {
+  string source = 1;
+  string client_request_id = 2;
+  string trace_id = 3;
+  string external_run_id = 4;
+  map<string, string> metadata = 5;
+  map<string, string> env = 6;
+  CapabilityScope capability_scope = 7;
+  map<string, string> identity_context = 8;
+}
+
+message CapabilityScope {
+  repeated string capset_ids = 1;
+  map<string, string> metadata = 2;
 }
 
 message RunAgentResponse {
@@ -361,6 +591,17 @@ message RunAgentStreamResponse {
   string chunk = 4;
   bool is_stderr = 5;
   string created_at = 6;
+}
+
+message RunStreamResponse {
+  RunStreamEventType event_type = 1;
+  RunSummary run = 2;
+  string run_id = 3;
+  string chunk = 4;
+  bool is_stderr = 5;
+  string created_at = 6;
+  Artifact artifact = 7;
+  EventRecord event = 8;
 }
 
 message GetRunRequest {
@@ -383,6 +624,9 @@ message ListRunsRequest {
   string started_to = 8;
   uint32 offset = 9;
   uint32 limit = 10;
+  RunTargetType target_type = 11;
+  string target_name = 12;
+  string client_request_id = 13;
 }
 
 message ListRunsResponse {
@@ -397,6 +641,11 @@ message StopRunRequest {
 message StopRunResponse {
   RunDetail run = 1;
   bool stop_requested = 2;
+}
+
+message WatchRunRequest {
+  string run_id = 1;
+  string project_id = 2;
 }
 
 message RunSummary {
@@ -418,6 +667,9 @@ message RunSummary {
   int64 duration_ms = 16;
   string created_at = 17;
   string updated_at = 18;
+  RunTargetType target_type = 19;
+  string target_name = 20;
+  string client_request_id = 21;
 }
 
 message RunDetail {
@@ -430,6 +682,124 @@ message RunDetail {
   string cleanup_error = 7;
   string driver = 8;
   string image_ref = 9;
+  string input_json = 10;
+  string output_json = 11;
+  RuntimeContext runtime_context = 12;
+  repeated Artifact artifacts = 13;
+  repeated EventRecord events = 14;
+  map<string, string> metrics = 15;
+}
+
+message Artifact {
+  string artifact_id = 1;
+  string run_id = 2;
+  string project_id = 3;
+  string name = 4;
+  string path = 5;
+  string content_type = 6;
+  uint64 size_bytes = 7;
+  string digest = 8;
+  string created_at = 9;
+  map<string, string> metadata = 10;
+}
+
+message ListArtifactsRequest {
+  string project_id = 1;
+  string run_id = 2;
+  uint32 offset = 3;
+  uint32 limit = 4;
+}
+
+message ListArtifactsResponse {
+  repeated Artifact artifacts = 1;
+  uint32 total_count = 2;
+  bool has_more = 3;
+  uint32 next_offset = 4;
+}
+
+message GetArtifactRequest {
+  string artifact_id = 1;
+  string run_id = 2;
+  string path = 3;
+}
+
+message GetArtifactResponse {
+  Artifact artifact = 1;
+}
+
+message ReadArtifactRequest {
+  string artifact_id = 1;
+  string run_id = 2;
+  string path = 3;
+}
+
+message ReadArtifactResponse {
+  Artifact artifact = 1;
+  bytes content = 2;
+}
+
+message WriteArtifactRequest {
+  string run_id = 1;
+  string name = 2;
+  string path = 3;
+  string content_type = 4;
+  bytes content = 5;
+  map<string, string> metadata = 6;
+}
+
+message WriteArtifactResponse {
+  Artifact artifact = 1;
+}
+
+message DeleteArtifactRequest {
+  string artifact_id = 1;
+  string run_id = 2;
+  string path = 3;
+}
+
+message DeleteArtifactResponse {
+  bool deleted = 1;
+}
+
+message EventRecord {
+  string event_id = 1;
+  string project_id = 2;
+  string run_id = 3;
+  string topic = 4;
+  string payload_json = 5;
+  string created_at = 6;
+  map<string, string> metadata = 7;
+}
+
+message PublishEventRequest {
+  string project_id = 1;
+  string topic = 2;
+  string payload_json = 3;
+  RuntimeContext runtime_context = 4;
+}
+
+message PublishEventResponse {
+  EventRecord event = 1;
+}
+
+message ListEventsRequest {
+  string project_id = 1;
+  string run_id = 2;
+  string topic = 3;
+  uint32 offset = 4;
+  uint32 limit = 5;
+}
+
+message ListEventsResponse {
+  repeated EventRecord events = 1;
+  uint32 total_count = 2;
+  bool has_more = 3;
+  uint32 next_offset = 4;
+}
+
+message WatchEventsRequest {
+  string project_id = 1;
+  string topic = 2;
 }
 
 message ExecRequest {

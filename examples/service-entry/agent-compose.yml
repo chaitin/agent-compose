@@ -1,0 +1,42 @@
+apiVersion: agent-compose/v1alpha1
+kind: Project
+name: service-entry-demo
+metadata:
+  labels:
+    example: service-entry
+runtime:
+  driver: docker
+  image: agent-compose-guest:latest
+workspace:
+  provider: local
+  path: .
+agents:
+  reviewer:
+    provider: codex
+    model: gpt-test
+services:
+  risk-review:
+    description: Review a named scope and return a structured risk summary.
+    runtime: node
+    entry: services/risk-review.mjs
+    input_schema: schemas/risk-review.input.json
+    output_schema: schemas/risk-review.output.json
+    timeout: 5m
+    retry:
+      max_attempts: 2
+      backoff: 5s
+    permissions:
+      capabilities:
+        - repo.read
+    agents:
+      - reviewer
+    examples:
+      - name: daily
+        input: '{"scope":"daily"}'
+        output: '{"scope":"daily","risk":"low","summary":"Reviewed daily"}'
+triggers:
+  daily:
+    interval: 24h
+    target:
+      service: risk-review
+    input: '{"scope":"daily"}'

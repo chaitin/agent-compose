@@ -833,6 +833,432 @@ func TestRunServiceStopRunCancelsPendingRun(t *testing.T) {
 	}
 }
 
+func TestRunServiceWatchRunSendsCurrentStatus(t *testing.T) {
+	store, service, projectID := setupRunCoordinatorProject(t)
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+	run, err := NewRunCoordinator(store).BeginRun(ctx, ProjectRunStartRequest{
+		ProjectID:       projectID,
+		AgentName:       "reviewer",
+		ClientRequestID: "watch-current-status",
+	})
+	if err != nil {
+		t.Fatalf("BeginRun returned error: %v", err)
+	}
+	watchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stream, err := client.WatchRun(watchCtx, connect.NewRequest(&agentcomposev2.WatchRunRequest{RunId: run.RunID, ProjectId: projectID}))
+	if err != nil {
+		t.Fatalf("WatchRun returned error: %v", err)
+	}
+	if !stream.Receive() {
+		t.Fatalf("WatchRun did not send current status: %v", stream.Err())
+	}
+	event := stream.Msg()
+	if event.GetEventType() != agentcomposev2.RunStreamEventType_RUN_STREAM_EVENT_TYPE_STATUS || event.GetRunId() != run.RunID || event.GetRun().GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_PENDING {
+		t.Fatalf("current watch event = %#v", event)
+	}
+	cancel()
+}
+
+func TestRunServiceWatchRunSendsTerminalStatusChange(t *testing.T) {
+	store, service, projectID := setupRunCoordinatorProject(t)
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+	coordinator := NewRunCoordinator(store)
+	run, err := coordinator.BeginRun(ctx, ProjectRunStartRequest{
+		ProjectID:       projectID,
+		AgentName:       "reviewer",
+		ClientRequestID: "watch-terminal-status",
+	})
+	if err != nil {
+		t.Fatalf("BeginRun returned error: %v", err)
+	}
+	watchCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	stream, err := client.WatchRun(watchCtx, connect.NewRequest(&agentcomposev2.WatchRunRequest{RunId: run.RunID}))
+	if err != nil {
+		t.Fatalf("WatchRun returned error: %v", err)
+	}
+	if !stream.Receive() {
+		t.Fatalf("WatchRun did not send initial status: %v", stream.Err())
+	}
+	if _, err := coordinator.MarkFailed(ctx, ProjectRunTransitionRequest{RunID: run.RunID, Error: "watch failure"}); err != nil {
+		t.Fatalf("MarkFailed returned error: %v", err)
+	}
+	if !stream.Receive() {
+		t.Fatalf("WatchRun did not send terminal status: %v", stream.Err())
+	}
+	event := stream.Msg()
+	if event.GetEventType() != agentcomposev2.RunStreamEventType_RUN_STREAM_EVENT_TYPE_COMPLETED || event.GetRun().GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_FAILED || event.GetRun().GetError() != "watch failure" {
+		t.Fatalf("terminal watch event = %#v", event)
+	}
+	assertRunStreamTerminalEnvelope(t, event, "failed", "agent", "reviewer")
+}
+
+func TestRunServiceWatchRunUnknownRunReturnsNotFound(t *testing.T) {
+	_, service, _ := setupRunCoordinatorProject(t)
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+	stream, err := client.WatchRun(ctx, connect.NewRequest(&agentcomposev2.WatchRunRequest{RunId: "missing-run"}))
+	if err != nil {
+		if connect.CodeOf(err) != connect.CodeNotFound {
+			t.Fatalf("WatchRun error = %v, want not found", err)
+		}
+		return
+	}
+	if stream.Receive() {
+		t.Fatalf("WatchRun unexpectedly sent event: %#v", stream.Msg())
+	}
+	if connect.CodeOf(stream.Err()) != connect.CodeNotFound {
+		t.Fatalf("WatchRun stream error = %v, want not found", stream.Err())
+	}
+}
+
+func TestRunServiceInvokeServiceValidatesInputSchemaBeforeRun(t *testing.T) {
+	store, service, projectID := setupRunCoordinatorServiceProject(t)
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+
+	_, err := client.InvokeService(ctx, connect.NewRequest(&agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     "echo",
+		InputJson:       `{"extra":true}`,
+		ClientRequestId: "service-input-schema",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "input.message is required") {
+		t.Fatalf("InvokeService error = %v, want input schema failure", err)
+	}
+	runs, listErr := store.ListProjectRuns(ctx, projectID, 10)
+	if listErr != nil {
+		t.Fatalf("ListProjectRuns returned error: %v", listErr)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("runs after input validation failure = %#v", runs)
+	}
+}
+
+func TestRunServiceInvokeServicePersistsRuntimeEnvelope(t *testing.T) {
+	store, service, projectID := setupRunCoordinatorServiceProject(t)
+	runtime := runServiceFakeRuntime(t, service)
+	runtime.commandStdout = "service log\n"
+	runtime.commandServiceResult = `{"serviceName":"echo","outputJson":"{\"reply\":\"ok\"}","success":true,"artifacts":{"result":"/data/state/cells/cell-1/service-result.json","trace":"/data/state/artifacts/service/trace.json"},"metrics":{"durationMs":"12"}}`
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+
+	resp, err := client.InvokeService(ctx, connect.NewRequest(&agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     "echo",
+		InputJson:       `{"message":"hello"}`,
+		ClientRequestId: "service-runtime-envelope",
+	}))
+	if err != nil {
+		t.Fatalf("InvokeService returned error: %v", err)
+	}
+	run := resp.Msg.GetRun()
+	if run.GetSummary().GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED || run.GetOutputJson() != `{"reply":"ok"}` {
+		t.Fatalf("run = %#v", run)
+	}
+	if run.GetMetrics()["durationMs"] != "12" {
+		t.Fatalf("metrics = %#v", run.GetMetrics())
+	}
+	if len(run.GetArtifacts()) == 0 {
+		t.Fatalf("artifacts missing from run detail")
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(run.GetResultJson()), &envelope); err != nil {
+		t.Fatalf("run result_json failed to decode: %v\n%s", err, run.GetResultJson())
+	}
+	for key, want := range map[string]string{
+		"run_id":      run.GetSummary().GetRunId(),
+		"status":      "succeeded",
+		"target_type": "service",
+		"target_name": "echo",
+		"output_json": `{"reply":"ok"}`,
+	} {
+		if got, _ := envelope[key].(string); got != want {
+			t.Fatalf("result_json[%s] = %#v, want %q; envelope=%#v", key, envelope[key], want, envelope)
+		}
+	}
+	if _, ok := envelope["artifacts"].([]any); !ok {
+		t.Fatalf("result_json artifacts = %#v, want standard artifact array; envelope=%#v", envelope["artifacts"], envelope)
+	}
+	metrics, ok := envelope["metrics"].(map[string]any)
+	if !ok || metrics["durationMs"] != "12" {
+		t.Fatalf("result_json metrics = %#v; envelope=%#v", envelope["metrics"], envelope)
+	}
+	if strings.TrimSpace(envelope["logs"].(string)) != "service log" {
+		t.Fatalf("result_json logs = %#v", envelope["logs"])
+	}
+	stored, err := store.GetProjectRun(ctx, run.GetSummary().GetRunId())
+	if err != nil {
+		t.Fatalf("GetProjectRun returned error: %v", err)
+	}
+	if !strings.Contains(stored.ResultJSON, `"runtimeArtifacts"`) || !strings.Contains(stored.ResultJSON, `"durationMs":"12"`) {
+		t.Fatalf("stored result json = %s", stored.ResultJSON)
+	}
+	if !strings.Contains(stored.Output, "service log") || strings.Contains(stored.Output, "__SERVICE_RESULT__") {
+		t.Fatalf("stored output = %q, want service log without magic payload", stored.Output)
+	}
+}
+
+func TestRunServiceInvokeServiceIdempotentSameRequestReturnsExistingRun(t *testing.T) {
+	store, service, projectID := setupRunCoordinatorServiceProject(t)
+	runtime := runServiceFakeRuntime(t, service)
+	runtime.commandStdout = "__SERVICE_RESULT__" + `{"serviceName":"echo","outputJson":"{\"reply\":\"ok\"}","success":true,"artifacts":{},"metrics":{}}` + "\n"
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+	req := &agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     "echo",
+		InputJson:       `{ "message": "hello" }`,
+		ClientRequestId: "service-idempotent-same",
+		Env:             []*agentcomposev2.EnvVarSpec{{Name: "SERVICE_MODE", Value: "test"}},
+		RuntimeContext:  &agentcomposev2.RuntimeContext{Metadata: map[string]string{"trace": "same"}},
+		CleanupPolicy:   agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION,
+	}
+
+	first, err := client.InvokeService(ctx, connect.NewRequest(req))
+	if err != nil {
+		t.Fatalf("first InvokeService returned error: %v", err)
+	}
+	retryReq := &agentcomposev2.InvokeServiceRequest{
+		ProjectId:       req.GetProjectId(),
+		ServiceName:     req.GetServiceName(),
+		InputJson:       `{"message":"hello"}`,
+		ClientRequestId: req.GetClientRequestId(),
+		Env:             req.GetEnv(),
+		RuntimeContext:  req.GetRuntimeContext(),
+		CleanupPolicy:   req.GetCleanupPolicy(),
+	}
+	second, err := client.InvokeService(ctx, connect.NewRequest(retryReq))
+	if err != nil {
+		t.Fatalf("second InvokeService returned error: %v", err)
+	}
+	firstRunID := first.Msg.GetRun().GetSummary().GetRunId()
+	secondRunID := second.Msg.GetRun().GetSummary().GetRunId()
+	if firstRunID == "" || secondRunID != firstRunID {
+		t.Fatalf("run ids first=%q second=%q", firstRunID, secondRunID)
+	}
+	if runtime.execCalls != 1 {
+		t.Fatalf("runtime exec calls = %d, want 1", runtime.execCalls)
+	}
+	runs, err := store.ListProjectRuns(ctx, projectID, 10)
+	if err != nil {
+		t.Fatalf("ListProjectRuns returned error: %v", err)
+	}
+	if len(runs) != 1 || runs[0].RunID != firstRunID {
+		t.Fatalf("stored runs = %#v", runs)
+	}
+}
+
+func TestRunServiceInvokeServiceIdempotencyRejectsDifferentInput(t *testing.T) {
+	store, service, projectID := setupRunCoordinatorServiceProject(t)
+	runtime := runServiceFakeRuntime(t, service)
+	runtime.commandStdout = "__SERVICE_RESULT__" + `{"serviceName":"echo","outputJson":"{\"reply\":\"ok\"}","success":true,"artifacts":{},"metrics":{}}` + "\n"
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+
+	first, err := client.InvokeService(ctx, connect.NewRequest(&agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     "echo",
+		InputJson:       `{"message":"hello"}`,
+		ClientRequestId: "service-idempotent-conflict",
+	}))
+	if err != nil {
+		t.Fatalf("first InvokeService returned error: %v", err)
+	}
+	_, err = client.InvokeService(ctx, connect.NewRequest(&agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     "echo",
+		InputJson:       `{"message":"changed"}`,
+		ClientRequestId: "service-idempotent-conflict",
+	}))
+	if connect.CodeOf(err) != connect.CodeAlreadyExists || !strings.Contains(err.Error(), "different request fingerprint") {
+		t.Fatalf("second InvokeService error = %v, want AlreadyExists fingerprint conflict", err)
+	}
+	if runtime.execCalls != 1 {
+		t.Fatalf("runtime exec calls = %d, want 1", runtime.execCalls)
+	}
+	runs, listErr := store.ListProjectRuns(ctx, projectID, 10)
+	if listErr != nil {
+		t.Fatalf("ListProjectRuns returned error: %v", listErr)
+	}
+	if len(runs) != 1 || runs[0].RunID != first.Msg.GetRun().GetSummary().GetRunId() {
+		t.Fatalf("stored runs = %#v", runs)
+	}
+}
+
+func TestRunServiceInvokeServiceFailsOutputSchemaValidation(t *testing.T) {
+	store, service, projectID := setupRunCoordinatorServiceProject(t)
+	runServiceFakeRuntime(t, service).commandStdout = "__SERVICE_RESULT__" + `{"serviceName":"echo","outputJson":"{\"reply\":1}","success":true,"artifacts":{},"metrics":{}}` + "\n"
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+
+	resp, err := client.InvokeService(ctx, connect.NewRequest(&agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     "echo",
+		InputJson:       `{"message":"hello"}`,
+		ClientRequestId: "service-output-schema",
+	}))
+	if err != nil {
+		t.Fatalf("InvokeService returned control-plane error: %v", err)
+	}
+	run := resp.Msg.GetRun().GetSummary()
+	if run.GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_FAILED || !strings.Contains(run.GetError(), "output.reply must be string") {
+		t.Fatalf("run summary = %#v", run)
+	}
+	stored, err := store.GetProjectRun(ctx, run.GetRunId())
+	if err != nil {
+		t.Fatalf("GetProjectRun returned error: %v", err)
+	}
+	if stored.Status != ProjectRunStatusFailed || stored.OutputJSON != `{"reply":1}` {
+		t.Fatalf("stored run = %#v", stored)
+	}
+	detail, err := client.GetRun(ctx, connect.NewRequest(&agentcomposev2.GetRunRequest{
+		RunId:     run.GetRunId(),
+		ProjectId: projectID,
+	}))
+	if err != nil {
+		t.Fatalf("GetRun returned error: %v", err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(detail.Msg.GetRun().GetResultJson()), &envelope); err != nil {
+		t.Fatalf("failed result_json failed to decode: %v\n%s", err, detail.Msg.GetRun().GetResultJson())
+	}
+	if envelope["status"] != "failed" || !strings.Contains(fmt.Sprint(envelope["error"]), "output.reply must be string") || envelope["output_json"] != `{"reply":1}` {
+		t.Fatalf("failed result_json envelope = %#v", envelope)
+	}
+}
+
+func TestRunServiceInvokeServiceIgnoresUnsupportedRuntimeProtocolPayload(t *testing.T) {
+	store, service, projectID := setupRunCoordinatorServiceProject(t)
+	runServiceFakeRuntime(t, service).commandStdout = "__SERVICE_RESULT__" + `{"protocolVersion":"service.v99","serviceName":"echo","outputJson":"{\"reply\":\"ok\"}","success":true,"artifacts":{},"metrics":{}}` + "\n"
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+
+	resp, err := client.InvokeService(ctx, connect.NewRequest(&agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     "echo",
+		InputJson:       `{"message":"hello"}`,
+		ClientRequestId: "service-protocol-version",
+	}))
+	if err != nil {
+		t.Fatalf("InvokeService returned control-plane error: %v", err)
+	}
+	run := resp.Msg.GetRun().GetSummary()
+	if run.GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_FAILED || !strings.Contains(run.GetError(), "output_json is required") {
+		t.Fatalf("run summary = %#v", run)
+	}
+	stored, err := store.GetProjectRun(ctx, run.GetRunId())
+	if err != nil {
+		t.Fatalf("GetProjectRun returned error: %v", err)
+	}
+	if stored.OutputJSON != "" {
+		t.Fatalf("stored output json = %q, want empty for unsupported protocol", stored.OutputJSON)
+	}
+}
+
+func TestRunServiceInvokeServiceIgnoresUnprefixedJSONLogs(t *testing.T) {
+	store, service, projectID := setupRunCoordinatorServiceProject(t)
+	runtime := runServiceFakeRuntime(t, service)
+	runtime.commandNoPayload = true
+	runtime.commandStdout = `{"serviceName":"echo","outputJson":"{\"reply\":\"wrong\"}","success":true,"artifacts":{},"metrics":{}}` + "\n"
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+
+	resp, err := client.InvokeService(ctx, connect.NewRequest(&agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     "echo",
+		InputJson:       `{"message":"hello"}`,
+		ClientRequestId: "service-unprefixed-json-log",
+	}))
+	if err != nil {
+		t.Fatalf("InvokeService returned control-plane error: %v", err)
+	}
+	run := resp.Msg.GetRun().GetSummary()
+	if run.GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_FAILED || !strings.Contains(run.GetError(), "output_json is required") {
+		t.Fatalf("run summary = %#v", run)
+	}
+	stored, err := store.GetProjectRun(ctx, run.GetRunId())
+	if err != nil {
+		t.Fatalf("GetProjectRun returned error: %v", err)
+	}
+	if stored.OutputJSON != "" {
+		t.Fatalf("stored output json = %q, want empty for unprefixed JSON log", stored.OutputJSON)
+	}
+}
+
+func TestRunServiceInvokeServiceStreamFailureSendsCompletedRun(t *testing.T) {
+	_, service, projectID := setupRunCoordinatorServiceProject(t)
+	runtime := runServiceFakeRuntime(t, service)
+	runtime.commandNoPayload = true
+	runtime.commandExitCode = 12
+	runtime.commandStderr = "service failed\n"
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+
+	events, err := collectInvokeServiceStreamEvents(ctx, client, &agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     "echo",
+		InputJson:       `{"message":"hello"}`,
+		ClientRequestId: "service-stream-failure",
+	})
+	if err != nil {
+		t.Fatalf("InvokeServiceStream returned RPC error: %v", err)
+	}
+	status := lastRunStreamEvent(events, agentcomposev2.RunStreamEventType_RUN_STREAM_EVENT_TYPE_STATUS)
+	if status == nil || status.GetRun().GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_FAILED || !strings.Contains(status.GetRun().GetError(), "service execution failed") {
+		t.Fatalf("failed status event = %#v events=%#v", status, events)
+	}
+	completed := lastRunStreamEvent(events, agentcomposev2.RunStreamEventType_RUN_STREAM_EVENT_TYPE_COMPLETED)
+	if completed == nil || completed.GetRun().GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_FAILED {
+		t.Fatalf("completed failure event = %#v events=%#v", completed, events)
+	}
+	if completed.GetRunId() == "" || strings.TrimSpace(completed.GetRun().GetError()) == "" {
+		t.Fatalf("completed failure event = %#v", completed)
+	}
+	assertRunStreamTerminalEnvelope(t, completed, "failed", "service", "echo")
+}
+
+func TestRunServiceInvokeServiceStreamOutputSchemaFailureSendsFailedAndCompleted(t *testing.T) {
+	_, service, projectID := setupRunCoordinatorServiceProject(t)
+	runServiceFakeRuntime(t, service).commandStdout = "__SERVICE_RESULT__" + `{"serviceName":"echo","outputJson":"{\"reply\":1}","success":true,"artifacts":{},"metrics":{}}` + "\n"
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+
+	events, err := collectInvokeServiceStreamEvents(ctx, client, &agentcomposev2.InvokeServiceRequest{
+		ProjectId:       projectID,
+		ServiceName:     "echo",
+		InputJson:       `{"message":"hello"}`,
+		ClientRequestId: "service-stream-output-schema",
+	})
+	if err != nil {
+		t.Fatalf("InvokeServiceStream returned RPC error: %v", err)
+	}
+	status := lastRunStreamEvent(events, agentcomposev2.RunStreamEventType_RUN_STREAM_EVENT_TYPE_STATUS)
+	if status == nil || status.GetRun().GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_FAILED || !strings.Contains(status.GetRun().GetError(), "output.reply must be string") {
+		t.Fatalf("failed status event = %#v events=%#v", status, events)
+	}
+	completed := lastRunStreamEvent(events, agentcomposev2.RunStreamEventType_RUN_STREAM_EVENT_TYPE_COMPLETED)
+	if completed == nil || completed.GetRun().GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_FAILED || completed.GetRunId() != status.GetRunId() {
+		t.Fatalf("completed output schema event = %#v events=%#v", completed, events)
+	}
+	assertRunStreamTerminalEnvelope(t, completed, "failed", "service", "echo")
+}
+
 func TestIntegrationRunServiceRunAgentReusesSessionAndPreservesTags(t *testing.T) {
 	testRunServiceRunAgentReusesSessionAndPreservesTags(t)
 }
@@ -1045,6 +1471,54 @@ func TestRunPreparationMaterializesLocalWorkspaceSnapshot(t *testing.T) {
 	}
 }
 
+func TestRunPreparationMaterializesLocalWorkspaceFromRevisionBundle(t *testing.T) {
+	store := newTestConfigStore(t)
+	service := newProjectServiceTestService(t, store)
+	service.config.DataRoot = filepath.Join(t.TempDir(), "data")
+	service.config.SessionRoot = filepath.Join(t.TempDir(), "sessions")
+	service.config.JupyterProxyBasePath = "/agent-compose/session"
+	service.config.JupyterGuestPort = 8888
+	service.store = &Store{config: service.config}
+	service.driver = &fakeSessionDriver{}
+	runtime := &fakeLoaderAgentRuntime{}
+	runtimes := fixedRuntimeProvider{runtime: runtime}
+	streams := &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}}
+	service.runtimes = runtimes
+	service.streams = streams
+	service.executor = &Executor{config: service.config, store: service.store, configDB: store, runtimes: runtimes, streams: streams}
+
+	spec := newProjectServiceTestSpec("demo", "gpt-test")
+	spec.Workspace = &agentcomposev2.WorkspaceSpec{Provider: "local", Path: "."}
+	resp, err := service.ApplyProject(context.Background(), connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
+		Spec: spec,
+		Source: &agentcomposev2.ProjectSource{
+			ComposePath: "/host/path/not-mounted/agent-compose.yml",
+			ProjectDir:  "/host/path/not-mounted",
+		},
+		BundleFiles: []*agentcomposev2.ProjectBundleFile{
+			{Path: "agent-compose.yml", Content: []byte("name: demo\n")},
+			{Path: "bundle-workspace.txt", Content: []byte("from bundle\n")},
+		},
+	}))
+	if err != nil {
+		t.Fatalf("ApplyProject returned error: %v", err)
+	}
+	projectID := resp.Msg.GetProject().GetSummary().GetProjectId()
+	run := beginRunPreparationTestRun(t, store, projectID, "bundle-workspace-request")
+	prepared, err := service.prepareProjectRun(context.Background(), run, nil)
+	if err != nil {
+		t.Fatalf("prepareProjectRun bundle workspace returned error: %v", err)
+	}
+	if prepared.WorkspaceConfig == nil {
+		t.Fatalf("prepared bundle workspace config is nil")
+	}
+	contentRoot, err := fileWorkspaceContentRoot(service.config, *prepared.WorkspaceConfig)
+	if err != nil {
+		t.Fatalf("fileWorkspaceContentRoot returned error: %v", err)
+	}
+	assertFileContent(t, filepath.Join(contentRoot, "bundle-workspace.txt"), "from bundle\n")
+}
+
 func TestRunPreparationMapsGitWorkspace(t *testing.T) {
 	spec := newProjectServiceTestSpec("demo", "gpt-test")
 	spec.Workspace = &agentcomposev2.WorkspaceSpec{
@@ -1115,6 +1589,44 @@ func setupRunCoordinatorProject(t *testing.T) (*ConfigStore, *Service, string) {
 	return setupRunPreparationProject(t, newProjectServiceTestSpec("demo", "gpt-test"), t.TempDir())
 }
 
+func setupRunCoordinatorServiceProject(t *testing.T) (*ConfigStore, *Service, string) {
+	t.Helper()
+	store, service, projectID := setupRunCoordinatorProject(t)
+	project, err := store.GetProject(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("GetProject returned error: %v", err)
+	}
+	revision, err := store.GetProjectRevision(context.Background(), project.ID, project.CurrentRevision)
+	if err != nil {
+		t.Fatalf("GetProjectRevision returned error: %v", err)
+	}
+	spec, err := decodeProjectRevisionSpec(revision.SpecJSON)
+	if err != nil {
+		t.Fatalf("decodeProjectRevisionSpec returned error: %v", err)
+	}
+	spec.Services = []*agentcomposev2.ServiceSpec{{
+		Name:             "echo",
+		Runtime:          "boxlite",
+		Entry:            "echo.mjs",
+		InputSchemaJson:  `{"type":"object","required":["message"],"properties":{"message":{"type":"string"}},"additionalProperties":false}`,
+		OutputSchemaJson: `{"type":"object","required":["reply"],"properties":{"reply":{"type":"string"}},"additionalProperties":false}`,
+	}}
+	specJSON, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatalf("marshal service spec returned error: %v", err)
+	}
+	updated, _, err := store.SaveProjectRevision(context.Background(), ProjectRevisionRecord{
+		ProjectID: project.ID,
+		SpecHash:  revision.SpecHash + "-service",
+		SpecJSON:  string(specJSON),
+	})
+	if err != nil {
+		t.Fatalf("SaveProjectRevision returned error: %v", err)
+	}
+	project.CurrentRevision = updated.Revision
+	return store, service, projectID
+}
+
 func setupRunPreparationProject(t *testing.T, spec *agentcomposev2.ProjectSpec, projectDir string) (*ConfigStore, *Service, string) {
 	t.Helper()
 	store := newTestConfigStore(t)
@@ -1174,6 +1686,44 @@ func lastRunAgentStreamEvent(events []*agentcomposev2.RunAgentStreamResponse, ev
 		}
 	}
 	return nil
+}
+
+func collectInvokeServiceStreamEvents(ctx context.Context, client agentcomposev2connect.RunServiceClient, req *agentcomposev2.InvokeServiceRequest) ([]*agentcomposev2.RunStreamResponse, error) {
+	stream, err := client.InvokeServiceStream(ctx, connect.NewRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	var events []*agentcomposev2.RunStreamResponse
+	for stream.Receive() {
+		events = append(events, stream.Msg())
+	}
+	return events, stream.Err()
+}
+
+func lastRunStreamEvent(events []*agentcomposev2.RunStreamResponse, eventType agentcomposev2.RunStreamEventType) *agentcomposev2.RunStreamResponse {
+	for index := len(events) - 1; index >= 0; index-- {
+		if events[index].GetEventType() == eventType {
+			return events[index]
+		}
+	}
+	return nil
+}
+
+func assertRunStreamTerminalEnvelope(t *testing.T, event *agentcomposev2.RunStreamResponse, status, targetType, targetName string) {
+	t.Helper()
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(event.GetChunk()), &envelope); err != nil {
+		t.Fatalf("terminal stream chunk failed to decode: %v\n%s", err, event.GetChunk())
+	}
+	if envelope["run_id"] != event.GetRunId() || envelope["status"] != status || envelope["target_type"] != targetType || envelope["target_name"] != targetName {
+		t.Fatalf("terminal stream envelope = %#v, event=%#v", envelope, event)
+	}
+	if _, ok := envelope["artifacts"]; !ok {
+		t.Fatalf("terminal stream envelope missing artifacts: %#v", envelope)
+	}
+	if _, ok := envelope["metrics"]; !ok {
+		t.Fatalf("terminal stream envelope missing metrics: %#v", envelope)
+	}
 }
 
 func runServiceFakeRuntime(t *testing.T, service *Service) *fakeLoaderAgentRuntime {

@@ -142,6 +142,33 @@ type LoaderAgentResult struct {
 	ExitCode       int    `json:"exitCode"`
 }
 
+type LoaderServiceRequest struct {
+	SessionID     string          `json:"sessionId,omitempty"`
+	SessionPolicy string          `json:"sessionPolicy,omitempty"`
+	Timeout       time.Duration   `json:"timeout,omitempty"`
+	Title         string          `json:"title,omitempty"`
+	Driver        string          `json:"driver,omitempty"`
+	GuestImage    string          `json:"guestImage,omitempty"`
+	WorkspaceID   string          `json:"workspaceId,omitempty"`
+	SessionEnv    []SessionEnvVar `json:"sessionEnv,omitempty"`
+	OutputSchema  string          `json:"outputSchema,omitempty"`
+}
+
+type LoaderServiceResult struct {
+	Text         string `json:"text,omitempty"`
+	Output       string `json:"output,omitempty"`
+	OutputJSON   string `json:"outputJson,omitempty"`
+	JSON         any    `json:"json"`
+	RunID        string `json:"runId,omitempty"`
+	ProjectID    string `json:"projectId,omitempty"`
+	ServiceName  string `json:"serviceName,omitempty"`
+	SessionID    string `json:"sessionId,omitempty"`
+	Success      bool   `json:"success"`
+	ExitCode     int    `json:"exitCode"`
+	Error        string `json:"error,omitempty"`
+	ArtifactsDir string `json:"artifactsDir,omitempty"`
+}
+
 type LoaderCommandRequest struct {
 	Mode           string            `json:"mode"`
 	Command        string            `json:"command,omitempty"`

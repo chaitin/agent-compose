@@ -415,6 +415,121 @@ func TestProjectServiceApplyProjectPersistsAgentCapsetIDs(t *testing.T) {
 	assertStringSliceEqual(t, reviewerSpec.GetCapsetIds(), []string{"xray-dev", "data"}, "GetProject reviewer spec capset ids")
 }
 
+func TestProjectServiceApplyProjectServiceEntryCreatesServiceAndScheduler(t *testing.T) {
+	store := newTestConfigStore(t)
+	service := newProjectServiceTestService(t, store)
+	ctx := context.Background()
+	composePath := filepath.Join("..", "..", "examples", "service-entry", "agent-compose.yml")
+
+	normalized, err := compose.NormalizeFile(composePath)
+	if err != nil {
+		t.Fatalf("NormalizeFile service-entry example returned error: %v", err)
+	}
+	resp, err := service.ApplyProject(ctx, connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
+		Spec:   ProjectSpecResponse(normalized),
+		Source: &agentcomposev2.ProjectSource{ComposePath: composePath},
+	}))
+	if err != nil {
+		t.Fatalf("ApplyProject service-entry returned error: %v", err)
+	}
+	if !resp.Msg.GetApplied() || len(resp.Msg.GetIssues()) != 0 {
+		t.Fatalf("ApplyProject service-entry response = %#v", resp.Msg)
+	}
+
+	project := resp.Msg.GetProject()
+	if project.GetSummary().GetName() != "service-entry-demo" {
+		t.Fatalf("project name = %q, want service-entry-demo", project.GetSummary().GetName())
+	}
+	if got := len(project.GetSpec().GetServices()); got != 1 {
+		t.Fatalf("spec services = %d, want 1", got)
+	}
+	if got := len(project.GetAgents()); got != 1 {
+		t.Fatalf("project agents = %d, want 1", got)
+	}
+	wantImage := normalized.Runtime.Image
+	if image := project.GetAgents()[0].GetImage(); image != wantImage {
+		t.Fatalf("service-entry project agent image = %q, want project runtime image %q", image, wantImage)
+	}
+	if got := len(project.GetSchedulers()); got != 1 {
+		t.Fatalf("project schedulers = %#v, want one service-target scheduler", project.GetSchedulers())
+	}
+	scheduler := project.GetSchedulers()[0]
+	if scheduler.GetAgentName() != "service-risk-review-daily" || !scheduler.GetEnabled() || scheduler.GetTriggerCount() != 1 {
+		t.Fatalf("service-target scheduler = %#v", scheduler)
+	}
+
+	loader, err := store.GetLoader(ctx, scheduler.GetManagedLoaderId())
+	if err != nil {
+		t.Fatalf("GetLoader(%s) returned error: %v", scheduler.GetManagedLoaderId(), err)
+	}
+	if loader.Summary.ManagedProjectID != project.GetSummary().GetProjectId() ||
+		loader.Summary.ManagedAgentName != scheduler.GetAgentName() ||
+		loader.Summary.ManagedSchedulerID != scheduler.GetSchedulerId() ||
+		loader.Summary.Runtime != LoaderRuntimeScheduler ||
+		len(loader.Triggers) != 1 ||
+		loader.Triggers[0].Kind != LoaderTriggerKindInterval ||
+		!strings.Contains(loader.Script, "scheduler.service") ||
+		!strings.Contains(loader.Script, "risk-review") {
+		t.Fatalf("service-target managed loader = %#v triggers=%#v script=%s", loader.Summary, loader.Triggers, loader.Script)
+	}
+	agentDefinition, err := store.GetAgentDefinition(ctx, project.GetAgents()[0].GetManagedAgentId())
+	if err != nil {
+		t.Fatalf("GetAgentDefinition returned error: %v", err)
+	}
+	if agentDefinition.GuestImage != wantImage {
+		t.Fatalf("service-entry managed agent image = %q, want project runtime image %q", agentDefinition.GuestImage, wantImage)
+	}
+
+	var serviceCount int
+	err = store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_service WHERE project_id = ? AND service_name = ?`, project.GetSummary().GetProjectId(), "risk-review").Scan(&serviceCount)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such table") {
+			t.Fatalf("project_service persistence is not implemented: %v", err)
+		}
+		t.Fatalf("query project_service returned error: %v", err)
+	}
+	if serviceCount != 1 {
+		t.Fatalf("project_service rows for risk-review = %d, want 1", serviceCount)
+	}
+}
+
+func TestProjectServiceApplyProjectOldExamplesRemainSupported(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		dir            string
+		wantSchedulers int
+	}{
+		{name: "docker-minimal", dir: filepath.Join("..", "..", "examples", "agent-compose", "docker-minimal"), wantSchedulers: 0},
+		{name: "docker-scheduler-cron", dir: filepath.Join("..", "..", "examples", "agent-compose", "docker-scheduler-cron"), wantSchedulers: 1},
+		{name: "docker-scheduler-timeout", dir: filepath.Join("..", "..", "examples", "agent-compose", "docker-scheduler-timeout"), wantSchedulers: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestConfigStore(t)
+			service := newProjectServiceTestService(t, store)
+			ctx := context.Background()
+			composePath := filepath.Join(tc.dir, "agent-compose.yml")
+
+			normalized, err := compose.NormalizeFile(composePath)
+			if err != nil {
+				t.Fatalf("NormalizeFile returned error: %v", err)
+			}
+			resp, err := service.ApplyProject(ctx, connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
+				Spec:   ProjectSpecResponse(normalized),
+				Source: &agentcomposev2.ProjectSource{ComposePath: composePath},
+			}))
+			if err != nil {
+				t.Fatalf("ApplyProject returned error: %v", err)
+			}
+			if !resp.Msg.GetApplied() || len(resp.Msg.GetIssues()) != 0 {
+				t.Fatalf("ApplyProject response = %#v", resp.Msg)
+			}
+			if got := len(resp.Msg.GetProject().GetSchedulers()); got != tc.wantSchedulers {
+				t.Fatalf("project schedulers = %d, want %d: %#v", got, tc.wantSchedulers, resp.Msg.GetProject().GetSchedulers())
+			}
+		})
+	}
+}
+
 func TestProjectServiceGetProjectAndListProjects(t *testing.T) {
 	testProjectServiceGetProjectAndListProjects(t)
 }
@@ -461,6 +576,9 @@ func testProjectServiceGetProjectAndListProjects(t *testing.T) {
 	}
 	if listResp.Msg.GetTotalCount() != 1 || len(listResp.Msg.GetProjects()) != 1 || listResp.Msg.GetProjects()[0].GetProjectId() != projectID {
 		t.Fatalf("ListProjects response = %#v", listResp.Msg)
+	}
+	if listResp.Msg.GetProjects()[0].GetAgentCount() != 2 || listResp.Msg.GetProjects()[0].GetSchedulerCount() != 1 {
+		t.Fatalf("ListProjects counts = agents %d schedulers %d, want 2/1", listResp.Msg.GetProjects()[0].GetAgentCount(), listResp.Msg.GetProjects()[0].GetSchedulerCount())
 	}
 }
 
@@ -647,6 +765,52 @@ func testProjectServiceManagedSchedulerCompileCoversTriggerKinds(t *testing.T) {
 	}
 	if _, _, err := projectManagedLoaderTriggersAndScript("project-demo", "reviewer", "", duplicate); err == nil || !strings.Contains(err.Error(), "duplicate scheduler trigger name") {
 		t.Fatalf("duplicate trigger name error = %v", err)
+	}
+}
+
+func TestProjectServiceManagedServiceTriggerCompileUsesSchedulerService(t *testing.T) {
+	project := ProjectRecord{ID: "project-demo", Name: "demo"}
+	spec := &compose.NormalizedProjectSpec{
+		Name:     "demo",
+		Services: []compose.NormalizedServiceSpec{{Name: "risk-review", Entry: "risk.mjs"}},
+		Triggers: []compose.NormalizedProjectTriggerSpec{
+			{Name: "daily", Kind: "cron", Cron: "0 9 * * *", Target: compose.TriggerTargetSpec{Service: "risk-review"}, Input: `{"mode":"daily"}`},
+			{Name: "push", Kind: "event", Event: &compose.EventTriggerSpec{Topic: "git.push"}, Target: compose.TriggerTargetSpec{Service: "risk-review"}},
+		},
+	}
+	builds, err := projectManagedServiceTriggerBuildsFromSpec(project, 7, spec)
+	if err != nil {
+		t.Fatalf("projectManagedServiceTriggerBuildsFromSpec returned error: %v", err)
+	}
+	if len(builds) != 2 {
+		t.Fatalf("build count = %d, want 2", len(builds))
+	}
+	for _, build := range builds {
+		if build.scheduler.ProjectID != project.ID || build.scheduler.Revision != 7 || build.scheduler.TriggerCount != 1 {
+			t.Fatalf("scheduler build = %#v", build.scheduler)
+		}
+		if !strings.HasPrefix(build.scheduler.AgentName, "service-risk-review-") {
+			t.Fatalf("service trigger managed name = %q", build.scheduler.AgentName)
+		}
+		if !strings.Contains(build.loader.Script, "scheduler.service") || !strings.Contains(build.loader.Script, "risk-review") {
+			t.Fatalf("service trigger script missing scheduler.service:\n%s", build.loader.Script)
+		}
+	}
+	if !strings.Contains(builds[0].loader.Script, `{"mode":"daily"}`) {
+		t.Fatalf("static input missing from cron script:\n%s", builds[0].loader.Script)
+	}
+	if !strings.Contains(builds[1].loader.Script, "event == null ? {} : event") {
+		t.Fatalf("event payload fallback missing from event script:\n%s", builds[1].loader.Script)
+	}
+}
+
+func TestProjectServiceManagedServiceTriggerRejectsMissingService(t *testing.T) {
+	_, err := projectManagedServiceTriggerBuildsFromSpec(ProjectRecord{ID: "project-demo", Name: "demo"}, 1, &compose.NormalizedProjectSpec{
+		Name:     "demo",
+		Triggers: []compose.NormalizedProjectTriggerSpec{{Name: "daily", Kind: "cron", Cron: "0 9 * * *", Target: compose.TriggerTargetSpec{Service: "missing"}}},
+	})
+	if err == nil || !strings.Contains(err.Error(), `service "missing" is not defined`) {
+		t.Fatalf("missing service error = %v", err)
 	}
 }
 
@@ -960,6 +1124,46 @@ func TestProjectServiceReconcileSchedulersFailureDisablesStagedResources(t *test
 
 func TestProjectServiceApplyProjectValidationFailureDoesNotPersist(t *testing.T) {
 	testProjectServiceApplyProjectValidationFailureDoesNotPersist(t)
+}
+
+func TestProjectServiceStageProjectBundleHashIgnoresInputOrder(t *testing.T) {
+	service := &Service{config: &appconfig.Config{DataRoot: t.TempDir()}}
+	ctx := context.Background()
+	files := []*agentcomposev2.ProjectBundleFile{
+		{Path: "agent-compose.yml", Content: []byte("name: bundle\n")},
+		{Path: "services/review.js", Content: []byte("export async function main() {}\n")},
+		{Path: "schemas/input.json", Content: []byte(`{"type":"object"}`)},
+	}
+	first, err := service.stageProjectBundle(ctx, files, "")
+	if err != nil {
+		t.Fatalf("stageProjectBundle first returned error: %v", err)
+	}
+	defer first.cleanup()
+	reversed := []*agentcomposev2.ProjectBundleFile{files[2], files[1], files[0]}
+	second, err := service.stageProjectBundle(ctx, reversed, "")
+	if err != nil {
+		t.Fatalf("stageProjectBundle second returned error: %v", err)
+	}
+	defer second.cleanup()
+
+	if first.bundleHash == "" || first.bundleHash != second.bundleHash {
+		t.Fatalf("bundle hashes = %q and %q, want stable hash", first.bundleHash, second.bundleHash)
+	}
+}
+
+func TestProjectServiceStageProjectBundleRejectsDuplicateCleanPath(t *testing.T) {
+	service := &Service{config: &appconfig.Config{DataRoot: t.TempDir()}}
+	_, err := service.stageProjectBundle(context.Background(), []*agentcomposev2.ProjectBundleFile{
+		{Path: "agent-compose.yml", Content: []byte("name: bundle\n")},
+		{Path: "services/review.js", Content: []byte("one")},
+		{Path: "services/./review.js", Content: []byte("two")},
+	}, "")
+	if err == nil {
+		t.Fatalf("expected stageProjectBundle to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "duplicated") {
+		t.Fatalf("error = %q, want duplicate path rejection", got)
+	}
 }
 
 func TestE2EProjectServiceApplyProjectValidationFailureDoesNotPersist(t *testing.T) {
