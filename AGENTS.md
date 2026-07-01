@@ -68,6 +68,12 @@ Session metadata, notebook cells, event history, runtime state, and proxy state 
 
 Global environment variables, workspace configs, loader definitions, loader triggers, loader runs, and loader events are stored in `DATA_ROOT/data.db`.
 
+Generated local artifacts and caches are ignored by git:
+- `build/`, `dist/`, `.cache/`, `coverage/`
+- `runtime/javascript/dist/`
+- `runtime/agent-compose-runtime-sdk/dist/`
+- `proto-client/src/` and `proto-client/dist/` when generated locally
+
 ## Docker Deployment
 
 Current Docker build behavior:
@@ -91,15 +97,34 @@ Task runner:
 Primary commands:
 ```bash
 task lint
-task build
 task test
+task build
 ```
+
+Focused gates:
+```bash
+task test:unit
+task test:integration
+task test:e2e
+task build:runtime
+task build:runtime-sdk
+task build:proto-client
+```
+
+`task test` is the release-blocking coverage gate. It writes coverage artifacts to `.cache/coverage` by default and enforces the baselines documented in `TESTING.md`.
 
 The lint scope is project code only:
 ```bash
-golangci-lint fmt --diff ./cmd/... ./pkg/... ./proto/health/v1 ./proto/health/v1/healthv1connect ./proto/agentcompose/v1 ./proto/agentcompose/v1/agentcomposev1connect ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect
-golangci-lint run --allow-parallel-runners ./cmd/... ./pkg/... ./proto/health/v1 ./proto/health/v1/healthv1connect ./proto/agentcompose/v1 ./proto/agentcompose/v1/agentcomposev1connect ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect
+golangci-lint fmt --no-config --diff ./cmd/... ./pkg/... ./proto/health/v1 ./proto/health/v1/healthv1connect ./proto/agentcompose/v1 ./proto/agentcompose/v1/agentcomposev1connect ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect
+golangci-lint run --no-config --allow-parallel-runners ./cmd/... ./pkg/... ./proto/health/v1 ./proto/health/v1/healthv1connect ./proto/agentcompose/v1 ./proto/agentcompose/v1/agentcomposev1connect ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect
 ```
+
+Full local gate:
+```bash
+task all
+```
+
+`task all` also builds Docker images, so it requires Docker and the runtime image build prerequisites.
 
 ## Operational Commands
 

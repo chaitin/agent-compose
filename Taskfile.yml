@@ -38,11 +38,12 @@ tasks:
       - task --list-all
 
   all:
-    desc: Run all project checks, builds, and image tasks
+    desc: Run all project checks, package builds, and image tasks
     cmds:
       - task lint
       - task test
       - task build
+      - task build:proto-client
       - task image:agent-compose-guest
       - task image:agent-compose
 
@@ -152,10 +153,18 @@ tasks:
           {{.GO_TOOLCHAIN_ENV}} go test -tags 'boxlitecgo,boxlite_repro' ./pkg/driver -run '^TestManualBoxLiteFiveDirMountRepro$' -count=1 -v
 
   build:
-    desc: Build project binaries
-    deps: ['build:agent-compose', 'build:runtime-sdk']
+    desc: Build daemon binary and runtime packages
+    deps: ['build:agent-compose', 'build:runtime', 'build:runtime-sdk']
     cmds:
       - echo "build all done"
+
+  build:runtime:
+    desc: Build and typecheck the guest scheduler runtime package
+    dir: '{{.TASKFILE_DIR}}/runtime/javascript'
+    cmds:
+      - npm ci
+      - npm run build
+      - npm run typecheck
 
   build:runtime-sdk:
     desc: Build and verify the guest runtime SDK package
@@ -164,6 +173,19 @@ tasks:
       - npm ci
       - npm run build
       - npm run test:packaging
+
+  build:proto-client:
+    desc: Generate and build the published TypeScript Connect client
+    dir: '{{.TASKFILE_DIR}}/proto-client'
+    cmds:
+      - |
+        if ! command -v protoc >/dev/null 2>&1; then
+          echo "protoc is required for task build:proto-client" >&2
+          exit 1
+        fi
+      - npm ci
+      - npm run gen
+      - npm run build
 
   prepare:agent-compose:boxlite-dev:
     internal: true

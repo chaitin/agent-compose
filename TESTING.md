@@ -1,9 +1,16 @@
 # Testing Standards
 
-This project measures test coverage through three complementary test shapes:
-unit tests, integration tests, and end-to-end tests. Coverage standards apply to
-project code across the Go services, runtime components, and frontend/runtime
-JavaScript or TypeScript code.
+This project uses three test shapes: unit tests, integration tests, and
+end-to-end tests. The release-blocking coverage gate is `task test`, implemented
+by `scripts/test-coverage.sh`.
+
+The current coverage scope is:
+- Go control-plane code under `./cmd/...` and `./pkg/...`.
+- The guest scheduler runtime under `runtime/javascript`.
+
+The runtime SDK package under `runtime/agent-compose-runtime-sdk` and the
+generated TypeScript Connect client under `proto-client` are validated by
+package build/test gates, not by the combined coverage calculation.
 
 ## Test Shapes
 
@@ -19,6 +26,12 @@ Unit tests should:
 - cover edge cases, validation, serialization, scheduling logic, and error paths
 - avoid depending on test execution order
 
+Run unit tests with:
+
+```bash
+task test:unit
+```
+
 ### Integration Tests
 
 Integration tests verify collaboration between multiple project components or
@@ -32,6 +45,12 @@ Integration tests may use:
 
 Integration tests should prove that service boundaries, persistence, proxying,
 configuration, loader scheduling, and runtime-driver interactions work together.
+
+Run integration tests with:
+
+```bash
+task test:integration
+```
 
 ### E2E Tests
 
@@ -48,11 +67,17 @@ E2E tests should cover critical workflows such as:
 E2E tests should be isolated, repeatable, and explicit about required runtime
 dependencies.
 
+Run E2E tests with:
+
+```bash
+task test:e2e
+```
+
 ## Quality Gate
 
 `task test` is the project quality gate for tests.
 
-The `test` task in `Taskfile.yml` must calculate and print:
+It calculates and prints:
 - unit-test coverage
 - integration-test coverage
 - E2E-test coverage
@@ -65,12 +90,24 @@ Combined coverage is the merged coverage achieved by all three test shapes over
 the same project coverage scope. It must not be calculated as a simple average
 of unit, integration, and E2E percentages. When a line, branch, function, or
 statement is covered by more than one test shape, it should count once in the
-combined coverage result.
+combined Go coverage result. JavaScript combined coverage is produced by a
+single all-shapes Vitest coverage run.
 
-Generated protocol clients, vendored code, build artifacts, and test fixtures
-should be excluded from coverage calculations unless the project intentionally
-treats them as maintained source code. Any exclusions must be documented in the
-coverage tooling or the `test` task implementation.
+Generated protocol clients, vendored code, build artifacts, and runtime-driver
+code that requires host-specific sandboxes are excluded from the coverage gate.
+The default exclusions live in `scripts/test-coverage.sh` as
+`AGENT_COMPOSE_GO_COVER_EXCLUDE_REGEX`.
+
+Coverage artifacts are written to `.cache/coverage` by default. Override the
+location with `COVERAGE_DIR` or `AGENT_COMPOSE_COVERAGE_DIR`.
+
+Go test shape selection is based on test names:
+- unit: test names without `Integration` or `E2E`
+- integration: test names containing `Integration`
+- E2E: test names containing `E2E`, plus `./test/e2e`
+
+JavaScript runtime tests use the `TEST_SHAPE` environment variable consumed by
+`runtime/javascript/vitest.config.ts`.
 
 ## Coverage Baselines
 
@@ -88,6 +125,28 @@ Recommended coverage targets:
 
 The required baselines are release-blocking. The recommended targets are the
 preferred engineering standard for new and substantially changed code.
+
+## Build And Package Gates
+
+Use these package gates when touching their areas:
+
+```bash
+task build
+task build:runtime
+task build:runtime-sdk
+task build:proto-client
+```
+
+`task build:proto-client` requires `protoc` on `PATH` because it regenerates the
+published TypeScript client before compiling it.
+
+Runtime smoke tests are opt-in because they require real runtime dependencies:
+
+```bash
+task test:runtime-smoke
+SMOKE_RUNTIME_DRIVERS=boxlite task test:runtime-smoke
+SMOKE_RUNTIME_DRIVERS=microsandbox task test:runtime-smoke
+```
 
 ## Reporting Expectations
 
