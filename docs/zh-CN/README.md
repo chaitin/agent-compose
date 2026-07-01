@@ -72,6 +72,8 @@ agent-compose down
 - `agent-compose down`：禁用 daemon 管理的 scheduler，并停止该 project 的 running sessions。
 - `agent-compose images|pull|rmi|image inspect`：管理 daemon 侧 image store。
 
+完整命令行说明见 [CLI 操作手册](cli/usage.md)。
+
 示例入口见 [examples/README.zh-CN.md](../../examples/README.zh-CN.md)。
 
 ## Compose 配置
@@ -208,6 +210,7 @@ task test
 相关文档：
 
 - [英文文档索引](../README.md)
+- [CLI 操作手册](cli/usage.md)
 - [架构说明](design/agent-compose_design.md)
 - [概念定位与对外使用边界](design/agent-compose_concept_positioning_and_externalization.md)
 - [引擎基础能力建设计划](design/agent-compose_engine_foundation_plan.md)

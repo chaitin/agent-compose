@@ -51,6 +51,8 @@ runtime/                       guest runtime SDKs and JavaScript scheduler runti
 guest-images/                  guest image Dockerfiles
 loader-script/                 scheduler script examples and API notes
 docs/design/                   design notes
+docs/cli/                      CLI user guide
+docs/zh-CN/cli/                Chinese CLI user guide
 ```
 
 ## Requirements
@@ -127,6 +129,9 @@ The main commands are:
 - `agent-compose ps`: list project agents, recent runs, and active sessions.
 - `agent-compose down`: disable managed schedulers and stop running sessions.
 - `agent-compose images`, `pull`, `rmi`, `image inspect`: manage daemon-side images.
+
+For full CLI usage, remote daemon examples, and troubleshooting notes, see
+[docs/cli/usage.md](docs/cli/usage.md).
 
 Useful flags and environment variables:
 
