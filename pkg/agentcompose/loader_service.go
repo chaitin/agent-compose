@@ -256,7 +256,7 @@ func toProtoLoaderDetail(item Loader) *agentcomposev1.LoaderDetail {
 	for _, envItem := range item.EnvItems {
 		value := envItem.Value
 		if envItem.Secret && value != "" {
-			value = "********"
+			value = maskedSecretValue
 		}
 		resp.EnvItems = append(resp.EnvItems, &agentcomposev1.SessionEnvVar{Name: envItem.Name, Value: value, Secret: envItem.Secret})
 	}
@@ -278,7 +278,7 @@ func (s *Service) preserveUnchangedLoaderEnvSecrets(ctx context.Context, loaderI
 	}
 	for index, item := range items {
 		name := strings.TrimSpace(item.Name)
-		if name == "" || !item.Secret || item.Value != "********" {
+		if name == "" || !item.Secret || item.Value != maskedSecretValue {
 			continue
 		}
 		existingItem, ok := existingByName[name]

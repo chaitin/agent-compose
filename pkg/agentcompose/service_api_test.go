@@ -110,7 +110,7 @@ func TestUpdateLoaderPreservesMaskedSecretEnvValues(t *testing.T) {
 		envByName[item.GetName()] = item
 	}
 	secretItem := envByName["LOADER_SECRET"]
-	if len(envItems) != 2 || secretItem == nil || secretItem.GetValue() != "********" || !secretItem.GetSecret() {
+	if len(envItems) != 2 || secretItem == nil || secretItem.GetValue() != maskedSecretValue || !secretItem.GetSecret() {
 		t.Fatalf("loader env detail = %+v, want masked LOADER_SECRET", envItems)
 	}
 	visibleItem := envByName["VISIBLE"]
@@ -177,11 +177,56 @@ func TestUpdateLoaderPreservesMaskedSecretEnvValues(t *testing.T) {
 		ConcurrencyPolicy: LoaderConcurrencyPolicyParallel,
 		Enabled:           true,
 		EnvItems: []*agentcomposev1.SessionEnvVar{
-			{Name: "NEW_SECRET", Value: "********", Secret: true},
+			{Name: "NEW_SECRET", Value: maskedSecretValue, Secret: true},
 		},
 	}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("UpdateLoader(new masked secret) code = %v, want invalid_argument", connect.CodeOf(err))
+	}
+}
+
+func TestUpdateLoaderMaskedSecretSentinelPreservesExistingValue(t *testing.T) {
+	ctx := context.Background()
+	service, _, _ := newTestServiceAPIHarness(t)
+	createResp, err := service.CreateLoader(ctx, connect.NewRequest(&agentcomposev1.CreateLoaderRequest{
+		Name:              "Secret Loader",
+		Runtime:           LoaderRuntimeScheduler,
+		Script:            `scheduler.interval("tick", function(){ scheduler.log("tick"); }, 60000);`,
+		DefaultAgent:      "codex",
+		SessionPolicy:     LoaderSessionPolicyNew,
+		ConcurrencyPolicy: LoaderConcurrencyPolicyParallel,
+		Enabled:           true,
+		EnvItems: []*agentcomposev1.SessionEnvVar{
+			{Name: "LOADER_SECRET", Value: "real-secret", Secret: true},
+		},
+	}))
+	if err != nil {
+		t.Fatalf("CreateLoader returned error: %v", err)
+	}
+	loaderID := createResp.Msg.GetLoader().GetSummary().GetLoaderId()
+
+	if _, err := service.UpdateLoader(ctx, connect.NewRequest(&agentcomposev1.UpdateLoaderRequest{
+		LoaderId:          loaderID,
+		Name:              "Secret Loader",
+		Runtime:           LoaderRuntimeScheduler,
+		Script:            `scheduler.interval("tick", function(){ scheduler.log("tick"); }, 60000);`,
+		DefaultAgent:      "codex",
+		SessionPolicy:     LoaderSessionPolicyNew,
+		ConcurrencyPolicy: LoaderConcurrencyPolicyParallel,
+		Enabled:           true,
+		EnvItems: []*agentcomposev1.SessionEnvVar{
+			{Name: "LOADER_SECRET", Value: maskedSecretValue, Secret: true},
+		},
+	})); err != nil {
+		t.Fatalf("UpdateLoader(masked secret sentinel) returned error: %v", err)
+	}
+	stored, err := service.configDB.GetLoader(ctx, loaderID)
+	if err != nil {
+		t.Fatalf("GetLoader stored returned error: %v", err)
+	}
+	env := sessionEnvMap(stored.EnvItems)
+	if got := env["LOADER_SECRET"]; got != "real-secret" {
+		t.Fatalf("stored LOADER_SECRET = %q, want original secret", got)
 	}
 }
 
@@ -516,11 +561,11 @@ func testServiceProtoConversionHelpers(t *testing.T) {
 	if detail.GetSummary().GetSessionId() != "session-proto" || detail.GetWorkspace().GetId() != "workspace-1" {
 		t.Fatalf("session detail = %+v", detail)
 	}
-	if len(detail.GetEnvItems()) != 2 || detail.GetEnvItems()[1].GetValue() != "********" {
+	if len(detail.GetEnvItems()) != 2 || detail.GetEnvItems()[1].GetValue() != maskedSecretValue {
 		t.Fatalf("session env items = %+v", detail.GetEnvItems())
 	}
 	globalEnv := toProtoGlobalEnvConfig([]SessionEnvVar{{Name: "VISIBLE", Value: "visible"}, {Name: "TOKEN", Value: "token", Secret: true}})
-	if len(globalEnv.GetEnvItems()) != 2 || globalEnv.GetEnvItems()[1].GetValue() != "********" {
+	if len(globalEnv.GetEnvItems()) != 2 || globalEnv.GetEnvItems()[1].GetValue() != maskedSecretValue {
 		t.Fatalf("global env = %+v", globalEnv.GetEnvItems())
 	}
 	if toSessionWorkspaceSnapshot(WorkspaceConfig{ID: "ws", Name: "WS", Type: "git", ConfigJSON: "{}"}).Type != "git" {
@@ -1057,7 +1102,7 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 	if loaderID == "" {
 		t.Fatalf("expected loader id")
 	}
-	if created.Msg.GetLoader().GetEnvItems()[0].GetValue() != "********" {
+	if created.Msg.GetLoader().GetEnvItems()[0].GetValue() != maskedSecretValue {
 		t.Fatalf("expected secret env item to be masked")
 	}
 

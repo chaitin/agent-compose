@@ -64,6 +64,10 @@ type Service struct {
 	agentcomposev2connect.UnimplementedImageServiceHandler
 }
 
+// maskedSecretValue is returned for non-empty secret values. Loader updates
+// also accept it as a keep-existing placeholder during UI round-trips.
+const maskedSecretValue = "********"
+
 func NewService(di do.Injector) (*Service, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
 	dashboard, _ := do.Invoke[*DashboardOverviewHub](di)
@@ -1475,7 +1479,7 @@ func toProtoSessionDetail(session *Session) *agentcomposev1.SessionDetail {
 	for _, item := range session.EnvItems {
 		value := item.Value
 		if item.Secret && value != "" {
-			value = "********"
+			value = maskedSecretValue
 		}
 		resp.EnvItems = append(resp.EnvItems, &agentcomposev1.SessionEnvVar{Name: item.Name, Value: value, Secret: item.Secret})
 	}
@@ -1508,7 +1512,7 @@ func toProtoGlobalEnvConfig(items []SessionEnvVar) *agentcomposev1.GlobalEnvConf
 	for _, item := range items {
 		value := item.Value
 		if item.Secret && value != "" {
-			value = "********"
+			value = maskedSecretValue
 		}
 		resp.EnvItems = append(resp.EnvItems, &agentcomposev1.SessionEnvVar{Name: item.Name, Value: value, Secret: item.Secret})
 	}
