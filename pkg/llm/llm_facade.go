@@ -1,4 +1,4 @@
-package agentcompose
+package llm
 
 import (
 	"bufio"
@@ -134,7 +134,7 @@ func (s *Service) handleRuntimeLLM(c echo.Context, inboundProtocol protocolbridg
 	}
 	copyRuntimeLLMHeaders(upstreamReq.Header, c.Request().Header)
 	applyLLMForwardHeaders(upstreamReq.Header, target.Headers)
-	resp, err := s.llm.client.Do(upstreamReq)
+	resp, err := s.client.client.Do(upstreamReq)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "call upstream llm failed"})
 	}
@@ -174,7 +174,7 @@ func (s *Service) proxyRuntimeLLMTransparent(c echo.Context, upstreamEndpoint st
 	}
 	copyRuntimeLLMHeaders(upstreamReq.Header, c.Request().Header)
 	applyLLMForwardHeaders(upstreamReq.Header, target.Headers)
-	resp, err := s.llm.client.Do(upstreamReq)
+	resp, err := s.client.client.Do(upstreamReq)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "call upstream llm failed"})
 	}

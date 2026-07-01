@@ -1,4 +1,4 @@
-package agentcompose
+package llm
 
 import (
 	appconfig "agent-compose/pkg/config"
@@ -110,13 +110,17 @@ type llmChatCompletionsChoice struct {
 
 func NewLLMClient(di do.Injector) (*LLMClient, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
-	return &LLMClient{
-		config:   config,
-		configDB: do.MustInvoke[*ConfigStore](di),
-		client: &http.Client{
-			Timeout: config.LLMTimeout,
-		},
-	}, nil
+	return NewClient(config, do.MustInvoke[*ConfigStore](di), nil), nil
+}
+
+func NewClient(config *appconfig.Config, configDB *ConfigStore, client *http.Client) *LLMClient {
+	if client == nil {
+		client = &http.Client{}
+		if config != nil {
+			client.Timeout = config.LLMTimeout
+		}
+	}
+	return &LLMClient{config: config, configDB: configDB, client: client}
 }
 
 func (c *LLMClient) Generate(ctx context.Context, prompt, model, outputSchemaJSON string) (LLMGenerateResult, error) {

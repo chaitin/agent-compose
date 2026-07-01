@@ -1,4 +1,4 @@
-package agentcompose
+package llm
 
 import (
 	appconfig "agent-compose/pkg/config"
@@ -29,11 +29,6 @@ const (
 	llmProviderIDDefaultOpenAI    = model.LLMProviderIDDefaultOpenAI
 	llmProviderIDDefaultAnthropic = model.LLMProviderIDDefaultAnthropic
 )
-
-type LLMProvider = model.LLMProvider
-type LLMModel = model.LLMModel
-type LLMResolvedTarget = model.LLMResolvedTarget
-type LLMFacadeToken = model.LLMFacadeToken
 
 func bootstrapDefaultLLMConfig(ctx context.Context, config *appconfig.Config, store *ConfigStore, requestedModel string) error {
 	if hasConfiguredLLMProviderForFamily(ctx, store, llmProviderFamilyOpenAI) {

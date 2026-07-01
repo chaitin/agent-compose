@@ -27,6 +27,7 @@ import (
 	"agent-compose/pkg/imagecache"
 	"agent-compose/pkg/images"
 	"agent-compose/pkg/sessions"
+	"agent-compose/pkg/settings"
 	"agent-compose/pkg/workspaces"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
@@ -38,6 +39,7 @@ type Service struct {
 	*DashboardService
 	*CapabilityService
 	*WorkspaceService
+	*SettingsService
 	config          *appconfig.Config
 	store           *Store
 	configDB        *ConfigStore
@@ -107,6 +109,7 @@ func NewService(di do.Injector) (*Service, error) {
 		DashboardService:  dashboard.NewService(dashHub),
 		CapabilityService: capabilities.NewService(config, do.MustInvoke[*ConfigStore](di), capProvider),
 		WorkspaceService:  workspaces.NewService(config, do.MustInvoke[*ConfigStore](di)),
+		SettingsService:   settings.NewService(do.MustInvoke[*ConfigStore](di), workspaces.NewService(config, do.MustInvoke[*ConfigStore](di)), capabilities.NewService(config, do.MustInvoke[*ConfigStore](di), capProvider)),
 		config:            config,
 		store:             do.MustInvoke[*Store](di),
 		configDB:          do.MustInvoke[*ConfigStore](di),
@@ -258,265 +261,27 @@ func (s *Service) WatchSession(ctx context.Context, req *connect.Request[agentco
 }
 
 func (s *Service) GetGlobalEnvConfig(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[agentcomposev1.GlobalEnvConfigResponse], error) {
-	_ = req
-	items, err := s.configDB.ListGlobalEnv(ctx)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	return connect.NewResponse(toProtoGlobalEnvConfig(items)), nil
+	return s.settingsService().GetGlobalEnvConfig(ctx, req)
 }
 
 func (s *Service) UpdateGlobalEnvConfig(ctx context.Context, req *connect.Request[agentcomposev1.UpdateGlobalEnvConfigRequest]) (*connect.Response[agentcomposev1.GlobalEnvConfigResponse], error) {
-	items := make([]SessionEnvVar, 0, len(req.Msg.GetEnvItems()))
-	for _, item := range req.Msg.GetEnvItems() {
-		items = append(items, SessionEnvVar{Name: item.GetName(), Value: item.GetValue(), Secret: item.GetSecret()})
-	}
-	items = normalizeEnvItems(items)
-	items, err := s.preserveUnchangedGlobalEnvSecrets(ctx, items)
-	if err != nil {
-		return nil, err
-	}
-	saved, err := s.configDB.ReplaceGlobalEnv(ctx, items)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	return connect.NewResponse(toProtoGlobalEnvConfig(saved)), nil
-}
-
-func (s *Service) preserveUnchangedGlobalEnvSecrets(ctx context.Context, items []SessionEnvVar) ([]SessionEnvVar, error) {
-	existingItems, err := s.configDB.ListGlobalEnv(ctx)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	existingByName := make(map[string]SessionEnvVar, len(existingItems))
-	for _, item := range existingItems {
-		name := strings.TrimSpace(item.Name)
-		if name == "" {
-			continue
-		}
-		existingByName[name] = item
-	}
-	for index, item := range items {
-		name := strings.TrimSpace(item.Name)
-		if name == "" || !item.Secret || strings.TrimSpace(item.Value) != "" {
-			continue
-		}
-		existing, ok := existingByName[name]
-		if !ok || !existing.Secret || existing.Value == "" {
-			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("secret env %s requires a value", name))
-		}
-		items[index].Value = existing.Value
-	}
-	return items, nil
+	return s.settingsService().UpdateGlobalEnvConfig(ctx, req)
 }
 
 func (s *Service) ListWorkspaceConfigs(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[agentcomposev1.ListWorkspaceConfigsResponse], error) {
-	_ = req
-	items, err := s.configDB.ListWorkspaceConfigs(ctx)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	resp := &agentcomposev1.ListWorkspaceConfigsResponse{}
-	for _, item := range items {
-		resp.Workspaces = append(resp.Workspaces, toProtoWorkspaceConfig(item))
-	}
-	return connect.NewResponse(resp), nil
+	return s.settingsService().ListWorkspaceConfigs(ctx, req)
 }
 
 func (s *Service) CreateWorkspaceConfig(ctx context.Context, req *connect.Request[agentcomposev1.CreateWorkspaceConfigRequest]) (*connect.Response[agentcomposev1.WorkspaceConfigResponse], error) {
-	configJSON := strings.TrimSpace(req.Msg.GetConfigJson())
-	workspaceType := strings.ToLower(strings.TrimSpace(req.Msg.GetType()))
-	workspaceID := ""
-	if workspaceType == "file" {
-		workspaceID = uuid.NewString()
-		configJSON = defaultFileWorkspaceConfigJSON(s.config, workspaceID)
-		if _, err := validateFileWorkspaceConfig(s.config, workspaceID, configJSON); err != nil {
-			return nil, connect.NewError(connect.CodeInvalidArgument, err)
-		}
-		if err := s.checkFileWorkspaceContentCreatable(workspaceID); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-	}
-	item, err := s.configDB.CreateWorkspaceConfig(ctx, WorkspaceConfig{
-		ID:         workspaceID,
-		Name:       req.Msg.GetName(),
-		Type:       workspaceType,
-		ConfigJSON: configJSON,
-		Comment:    req.Msg.GetComment(),
-	})
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	if workspaceType == "file" {
-		if err := s.createFileWorkspaceContent(item.ID, item.ConfigJSON); err != nil {
-			deleteErr := s.configDB.DeleteWorkspaceConfig(ctx, item.ID)
-			if deleteErr != nil {
-				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create file workspace content: %w; rollback workspace config: %v", err, deleteErr))
-			}
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-	}
-	return connect.NewResponse(&agentcomposev1.WorkspaceConfigResponse{Workspace: toProtoWorkspaceConfig(item)}), nil
+	return s.settingsService().CreateWorkspaceConfig(ctx, req)
 }
 
 func (s *Service) UpdateWorkspaceConfig(ctx context.Context, req *connect.Request[agentcomposev1.UpdateWorkspaceConfigRequest]) (*connect.Response[agentcomposev1.WorkspaceConfigResponse], error) {
-	configJSON := strings.TrimSpace(req.Msg.GetConfigJson())
-	workspaceType := strings.ToLower(strings.TrimSpace(req.Msg.GetType()))
-	previous, err := s.configDB.GetWorkspaceConfig(ctx, req.Msg.GetWorkspaceId())
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	if workspaceType == "file" {
-		configJSON = defaultFileWorkspaceConfigJSON(s.config, req.Msg.GetWorkspaceId())
-		if _, err := validateFileWorkspaceConfig(s.config, req.Msg.GetWorkspaceId(), configJSON); err != nil {
-			return nil, connect.NewError(connect.CodeInvalidArgument, err)
-		}
-	}
-	wasFile := strings.EqualFold(strings.TrimSpace(previous.Type), "file")
-	if workspaceType == "file" {
-		if err := s.checkFileWorkspaceContentCreatable(req.Msg.GetWorkspaceId()); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-	} else if wasFile {
-		if err := s.checkFileWorkspaceContentRemovable(previous); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-	}
-	item, err := s.configDB.UpdateWorkspaceConfig(ctx, WorkspaceConfig{
-		ID:         req.Msg.GetWorkspaceId(),
-		Name:       req.Msg.GetName(),
-		Type:       workspaceType,
-		ConfigJSON: configJSON,
-		Comment:    req.Msg.GetComment(),
-	})
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	if workspaceType == "file" {
-		if err := s.createFileWorkspaceContent(item.ID, item.ConfigJSON); err != nil {
-			_, rollbackErr := s.configDB.UpdateWorkspaceConfig(ctx, previous)
-			if rollbackErr != nil {
-				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create file workspace content: %w; rollback workspace config: %v", err, rollbackErr))
-			}
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-	} else if wasFile {
-		if err := s.removeFileWorkspaceContent(previous); err != nil {
-			_, rollbackErr := s.configDB.UpdateWorkspaceConfig(ctx, previous)
-			if rollbackErr != nil {
-				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("remove file workspace content: %w; rollback workspace config: %v", err, rollbackErr))
-			}
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-	}
-	return connect.NewResponse(&agentcomposev1.WorkspaceConfigResponse{Workspace: toProtoWorkspaceConfig(item)}), nil
+	return s.settingsService().UpdateWorkspaceConfig(ctx, req)
 }
 
 func (s *Service) DeleteWorkspaceConfig(ctx context.Context, req *connect.Request[agentcomposev1.WorkspaceConfigIDRequest]) (*connect.Response[emptypb.Empty], error) {
-	workspace, err := s.configDB.GetWorkspaceConfig(ctx, req.Msg.GetWorkspaceId())
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	if strings.EqualFold(strings.TrimSpace(workspace.Type), "file") {
-		if err := s.checkFileWorkspaceContentRemovable(workspace); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-	}
-	if err := s.configDB.DeleteWorkspaceConfig(ctx, req.Msg.GetWorkspaceId()); err != nil {
-		if strings.Contains(err.Error(), "referenced by") {
-			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
-		}
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	if strings.EqualFold(strings.TrimSpace(workspace.Type), "file") {
-		if err := s.removeFileWorkspaceContent(workspace); err != nil {
-			_, rollbackErr := s.configDB.CreateWorkspaceConfig(ctx, workspace)
-			if rollbackErr != nil {
-				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("remove file workspace content: %w; rollback workspace config: %v", err, rollbackErr))
-			}
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-	}
-	return connect.NewResponse(&emptypb.Empty{}), nil
-}
-
-func (s *Service) createFileWorkspaceContent(workspaceID, configJSON string) error {
-	content, err := openFileWorkspaceContent(s.config, WorkspaceConfig{
-		ID:         workspaceID,
-		Type:       "file",
-		ConfigJSON: configJSON,
-	})
-	if err != nil {
-		return err
-	}
-	return content.Root.Close()
-}
-
-func (s *Service) checkFileWorkspaceContentCreatable(workspaceID string) error {
-	relRoot, err := fileWorkspaceContentRelRoot(workspaceID)
-	if err != nil {
-		return err
-	}
-	dataRoot, err := openFileWorkspaceDataRoot(s.config)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = dataRoot.Close() }()
-	for _, dir := range []string{"workspaces", filepath.ToSlash(filepath.Join("workspaces", strings.TrimSpace(workspaceID))), relRoot} {
-		info, err := dataRoot.Lstat(dir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("file workspace path %s is a symlink", dir)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("file workspace path %s is not a directory", dir)
-		}
-	}
-	return nil
-}
-
-func (s *Service) checkFileWorkspaceContentRemovable(workspace WorkspaceConfig) error {
-	dataRoot, _, err := s.fileWorkspaceContentRemovalTarget(workspace)
-	if err != nil {
-		return err
-	}
-	return dataRoot.Close()
-}
-
-func (s *Service) removeFileWorkspaceContent(workspace WorkspaceConfig) error {
-	dataRoot, relRoot, err := s.fileWorkspaceContentRemovalTarget(workspace)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = dataRoot.Close() }()
-	return dataRoot.RemoveAll(relRoot)
-}
-
-func (s *Service) fileWorkspaceContentRemovalTarget(workspace WorkspaceConfig) (*os.Root, string, error) {
-	dataRoot, err := openFileWorkspaceDataRoot(s.config)
-	if err != nil {
-		return nil, "", err
-	}
-	relRoot, err := fileWorkspaceContentRelRoot(workspace.ID)
-	if err != nil {
-		_ = dataRoot.Close()
-		return nil, "", err
-	}
-	info, err := dataRoot.Lstat(relRoot)
-	if err != nil && !os.IsNotExist(err) {
-		_ = dataRoot.Close()
-		return nil, "", err
-	}
-	if err == nil && info.Mode()&os.ModeSymlink != 0 {
-		_ = dataRoot.Close()
-		return nil, "", fmt.Errorf("file workspace content root %s is a symlink", relRoot)
-	}
-	return dataRoot, relRoot, nil
+	return s.settingsService().DeleteWorkspaceConfig(ctx, req)
 }
 
 func (s *Service) ResumeSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {

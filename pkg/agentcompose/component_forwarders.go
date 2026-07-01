@@ -8,6 +8,8 @@ import (
 
 	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/dashboard"
+	"agent-compose/pkg/settings"
+	"agent-compose/pkg/workspaces"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
@@ -32,11 +34,11 @@ func (s *Service) GetCapabilityCatalog(ctx context.Context, req *connect.Request
 }
 
 func (s *Service) GetCapabilityGatewayConfig(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[agentcomposev1.CapabilityGatewayConfig], error) {
-	return s.capabilityService().GetCapabilityGatewayConfig(ctx, req)
+	return s.settingsService().GetCapabilityGatewayConfig(ctx, req)
 }
 
 func (s *Service) UpdateCapabilityGatewayConfig(ctx context.Context, req *connect.Request[agentcomposev1.UpdateCapabilityGatewayConfigRequest]) (*connect.Response[agentcomposev1.CapabilityGatewayConfig], error) {
-	return s.capabilityService().UpdateCapabilityGatewayConfig(ctx, req)
+	return s.settingsService().UpdateCapabilityGatewayConfig(ctx, req)
 }
 
 func (s *Service) dashboardService() *dashboard.Service {
@@ -51,4 +53,20 @@ func (s *Service) capabilityService() *capabilities.Service {
 		return s.CapabilityService
 	}
 	return capabilities.NewService(s.config, s.configDB, s.cap)
+}
+
+func (s *Service) workspaceService() *workspaces.Service {
+	if s.WorkspaceService != nil {
+		return s.WorkspaceService
+	}
+	s.WorkspaceService = workspaces.NewService(s.config, s.configDB)
+	return s.WorkspaceService
+}
+
+func (s *Service) settingsService() *SettingsService {
+	if s.SettingsService != nil {
+		return s.SettingsService
+	}
+	s.SettingsService = settings.NewService(s.configDB, s.workspaceService(), s.capabilityService())
+	return s.SettingsService
 }
