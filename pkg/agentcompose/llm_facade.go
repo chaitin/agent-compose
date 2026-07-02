@@ -14,6 +14,8 @@ import (
 
 	protocolbridge "github.com/chaitin/ai-api-protocol-bridge"
 	"github.com/labstack/echo/v4"
+
+	"agent-compose/internal/agentcompose/transport/httpapi"
 )
 
 const runtimeLLMFacadePrefix = "/api/runtime/sessions/"
@@ -43,9 +45,11 @@ func IsRuntimeLLMFacadeRequest(r *http.Request) bool {
 }
 
 func registerRuntimeLLMFacadeRoutes(app *echo.Echo, service *Service) {
-	app.POST("/api/runtime/sessions/:session_id/llm/openai/v1/responses", service.handleRuntimeLLMResponses)
-	app.POST("/api/runtime/sessions/:session_id/llm/openai/v1/chat/completions", service.handleRuntimeLLMChatCompletions)
-	app.POST("/api/runtime/sessions/:session_id/llm/anthropic/v1/messages", service.handleRuntimeLLMAnthropicMessages)
+	httpapi.RegisterRuntimeLLMFacadeRoutes(app, httpapi.RuntimeLLMHandlers{
+		HandleResponses:         service.handleRuntimeLLMResponses,
+		HandleChatCompletions:   service.handleRuntimeLLMChatCompletions,
+		HandleAnthropicMessages: service.handleRuntimeLLMAnthropicMessages,
+	})
 }
 
 func (s *Service) handleRuntimeLLMResponses(c echo.Context) error {

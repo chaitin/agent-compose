@@ -7,9 +7,8 @@ import (
 	"github.com/samber/do/v2"
 
 	"agent-compose/internal/agentcompose/bootstrap"
+	"agent-compose/internal/agentcompose/transport/httpapi"
 	"agent-compose/pkg/capproxy"
-	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
-	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
 
 func init() {
@@ -52,34 +51,7 @@ func register(di do.Injector) {
 	app := do.MustInvoke[*echo.Echo](di)
 	service := do.MustInvoke[*Service](di)
 
-	path, handler := agentcomposev1connect.NewSessionServiceHandler(NewSessionHandler(service))
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewKernelServiceHandler(NewKernelHandler(service))
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewAgentServiceHandler(NewAgentHandler(service))
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewAgentDefinitionServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewLLMServiceHandler(NewLLMHandler(service))
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewConfigServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewLoaderServiceHandler(NewLoaderHandler(service))
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewDashboardServiceHandler(NewDashboardHandler(service))
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewCapabilityServiceHandler(NewCapabilityHandler(service))
-	app.Any(path+"*", echo.WrapHandler(handler))
-
-	path, handler = agentcomposev2connect.NewProjectServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewRunServiceHandler(NewRunHandler(service))
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewExecServiceHandler(NewExecHandler(service))
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewImageServiceHandler(NewImageHandler(service))
-	app.Any(path+"*", echo.WrapHandler(handler))
-
+	httpapi.RegisterConnectHandlers(app, service)
 	registerWebhookRoutes(app, service)
 	registerRuntimeLLMFacadeRoutes(app, service)
 	registerProxyRoutes(app, service)
