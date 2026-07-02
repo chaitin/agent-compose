@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	sessiondomain "agent-compose/internal/agentcompose/session"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
@@ -9,11 +10,7 @@ import (
 	"github.com/samber/do/v2"
 )
 
-type SessionVMInfo struct {
-	BoxID      string
-	JupyterURL string
-	ProxyState *ProxyState
-}
+type SessionVMInfo = sessiondomain.VMInfo
 
 type BoxRuntime interface {
 	EnsureSession(context.Context, *Session, VMState, ProxyState) (SessionVMInfo, error)

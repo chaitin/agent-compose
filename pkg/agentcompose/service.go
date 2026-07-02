@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	execdomain "agent-compose/internal/agentcompose/exec"
+	sessiondomain "agent-compose/internal/agentcompose/session"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
@@ -491,27 +492,14 @@ func (s *Service) reconcileSessionRuntimeState(ctx context.Context, session *Ses
 		return session, nil
 	}
 	now := time.Now().UTC()
-	vmState.StoppedAt = now
-	vmState.LastError = ""
-	vmState.BoxID = ""
-	if err := s.store.SaveVMState(session.Summary.ID, vmState); err != nil {
-		return nil, err
-	}
-	session.Summary.VMStatus = VMStatusStopped
-	if err := s.store.UpdateSession(ctx, session); err != nil {
+	loaded, err := sessiondomain.MarkRuntimeLost(ctx, s.store, session, vmState, now, uuid.NewString())
+	if err != nil {
 		return nil, err
 	}
 	if s.configDB != nil {
 		_ = s.configDB.RevokeLLMFacadeTokensForSession(ctx, session.Summary.ID)
 	}
-	_ = s.store.AddEvent(ctx, session.Summary.ID, SessionEvent{
-		ID:        uuid.NewString(),
-		Type:      "session.runtime_lost",
-		Level:     "warn",
-		Message:   "session marked stopped after microsandbox runtime became unreachable",
-		CreatedAt: now,
-	})
-	return s.store.GetSession(ctx, session.Summary.ID)
+	return loaded, nil
 }
 
 func (s *Service) StopSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
