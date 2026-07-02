@@ -87,7 +87,15 @@ agent-compose 本质上是一个可执行服务和 CLI，外加生成的 API 客
 
 ## 目标架构
 
-目标架构借鉴 DDD 中有价值的部分，但不强制套用严格分层框架。核心思想是让包边界匹配业务所有权和依赖方向。
+目标架构调整为“域优先包结构”。仍然借鉴 DDD 的核心思路，但不再把代码优先拆成横向的 `domain/application/infrastructure` 大目录。对 Go 服务来说，更自然的组织方式是让 package 名表达业务能力，让同一业务域的模型、用例、端口和基础设施适配尽量靠近。
+
+核心原则：
+
+- 先按业务域拆包，再在域内按需要拆文件。
+- `transport`、`bootstrap` 作为跨域适配层单独保留。
+- `project`、`loader`、`session`、`run` 等域拥有自己的模型、服务、repository interface 和具体实现文件。
+- 不为了形式上的 DDD 分层把同一个业务域拆散到多个远距离目录。
+- 大多数 daemon 实现代码最终应位于 `internal/agentcompose/<domain>`，而不是公开的 `pkg/<domain>`。
 
 目标依赖方向：
 
@@ -95,21 +103,20 @@ agent-compose 本质上是一个可执行服务和 CLI，外加生成的 API 客
 cmd/agent-compose
   -> internal/agentcompose/bootstrap
     -> internal/agentcompose/transport
-      -> internal/agentcompose/application
-        -> internal/agentcompose/domain
-    -> internal/agentcompose/infrastructure
-      -> internal/agentcompose/application ports
-      -> internal/agentcompose/domain
+      -> internal/agentcompose/<domain service>
+    -> internal/agentcompose/<domain>
+      -> internal/agentcompose/shared
+    -> internal/driver, internal/imagecache, internal/config, proto/...
 ```
 
 允许的依赖规则：
 
-- `domain` 不得 import Connect、Echo、生成的 proto 包、SQL、Docker client、runtime driver 或进程配置包。
-- `application` 可以 import `domain`，并定义用例需要的 port/interface。
-- `transport` 可以 import proto/connect/echo 和 `application`，但不应包含领域规则或 SQL。
-- `infrastructure` 可以 import 外部库，并实现 application 定义的 port。
+- 域包内部可以包含模型、服务、端口、repository 实现和 mapper，但文件职责要清楚。
+- 域模型和纯规则文件不得 import Connect、Echo、SQL、Docker client、runtime driver 或进程配置包。
+- 域服务可以依赖本域 repository interface、其他域暴露的窄 service/interface，以及必要的基础设施 adapter。
+- `transport` 可以 import proto/connect/echo 和域服务，但不应包含业务编排、SQL 或 runtime driver 直接调用。
 - `bootstrap` 负责依赖装配和 handler 注册。
-- 跨领域协作应通过 application 层接口或明确的领域值对象完成，而不是直接访问另一个包的持久化结构。
+- 跨域协作应通过窄接口或明确的值对象完成，避免随意访问另一个域的存储结构。
 
 ## 建议目录结构
 
@@ -145,117 +152,113 @@ internal/
         workspace_routes.go
         runtime_llm_facade_routes.go
 
-    application/
-      session/
-        service.go
-        reconcile.go
-        stream.go
-        ports.go
-      project/
-        service.go
-        validate.go
-        apply.go
-        reconcile_agents.go
-        reconcile_schedulers.go
-        dryrun.go
-        ports.go
-      run/
-        service.go
-        coordinator.go
-        preparation.go
-        ports.go
-      loader/
-        service.go
-        manager.go
-        engine.go
-        executor.go
-        dispatcher.go
-        ports.go
-      exec/
-        service.go
-        ports.go
-      config/
-        service.go
-        ports.go
-      image/
-        service.go
-        ensure.go
-        ports.go
-      llm/
-        service.go
-        facade.go
-        runtime_config.go
-        ports.go
-      capability/
-        service.go
-        gateway.go
-        ports.go
-      dashboard/
-        overview.go
-        ports.go
+    session/
+      model.go
+      service.go
+      repository.go
+      sqlite.go
+      stream.go
+      reconcile.go
+      proto_mapper.go
 
-    domain/
-      session/
-        model.go
-        status.go
-        tags.go
-        events.go
-      project/
-        model.go
-        source.go
-        revision.go
-        agent.go
-        scheduler.go
-        validation.go
-      run/
-        model.go
-        status.go
-        transition.go
-      loader/
-        model.go
-        trigger.go
-        run.go
-        event.go
-        schedule.go
-      workspace/
-        model.go
-      agent/
-        definition.go
-      image/
-        model.go
-        policy.go
-      capability/
-        model.go
-      llm/
-        model.go
+    project/
+      model.go
+      service.go
+      validate.go
+      apply.go
+      build.go
+      reconcile_agents.go
+      reconcile_schedulers.go
+      dryrun.go
+      repository.go
+      sqlite.go
+      proto_mapper.go
 
-    infrastructure/
-      persistence/
-        sqlite/
-          db.go
-          migrations.go
-          session_repository.go
-          project_repository.go
-          loader_repository.go
-          config_repository.go
-          agent_definition_repository.go
-          topic_event_repository.go
-      runtime/
-        provider.go
-        driver_adapter.go
-      image/
-        docker_backend.go
-        oci_backend.go
-        auto_backend.go
-      llm/
-        client.go
-        config_loader.go
-      capability/
-        provider.go
-        proxy.go
-      eventbus/
-        loader_bus.go
-        event_dispatcher.go
+    loader/
+      model.go
+      service.go
+      manager.go
+      engine.go
+      executor.go
+      schedule.go
+      event_dispatcher.go
+      repository.go
+      sqlite.go
+      proto_mapper.go
+
+    run/
+      model.go
+      service.go
+      coordinator.go
+      preparation.go
+      proto_mapper.go
+
+    exec/
+      service.go
+      proto_mapper.go
+
+    agent/
+      definition.go
+      service.go
+      repository.go
+      sqlite.go
+      proto_mapper.go
+
+    config/
+      env.go
+      workspace.go
+      service.go
+      repository.go
+      sqlite.go
+      proto_mapper.go
+
+    image/
+      model.go
+      service.go
+      ensure.go
+      docker_backend.go
+      oci_backend.go
+      auto_backend.go
+      proto_mapper.go
+
+    llm/
+      service.go
+      client.go
+      config.go
+      facade.go
+      runtime_config.go
+      proto_mapper.go
+
+    capability/
+      model.go
+      service.go
+      gateway.go
+      provider.go
+      proxy.go
+      repository.go
+      sqlite.go
+      proto_mapper.go
+
+    workspace/
+      model.go
+      service.go
+      routes_mapper.go
+
+    events/
+      model.go
+      dispatcher.go
+      topic_store.go
+      repository.go
+      sqlite.go
+
+    dashboard/
+      overview.go
+      aggregator.go
+      hub.go
+
+    runtime/
+      provider.go
+      driver_adapter.go
 
     shared/
       ids/
@@ -264,7 +267,7 @@ internal/
       response/
 ```
 
-这是目标方向，不是一次性大补丁。迁移过程中允许存在过渡包、wrapper 和 alias，只要每一步可 review、可测试。
+这是目标方向，不是一次性大补丁。迁移过程中允许存在过渡包、wrapper、alias 和同包文件拆分，只要每一步可 review、可测试，并且明确朝域包收敛。
 
 ## 边界说明
 
@@ -275,7 +278,7 @@ internal/
 职责：
 
 - 在依赖注入容器中注册 constructor。
-- 构建 repository、application service、transport handler 和后台 worker。
+- 构建各域 service、repository、transport handler 和后台 worker。
 - 在 Echo 上注册 Connect 与 HTTP route。
 - 启动后台 manager。
 
@@ -298,76 +301,46 @@ Transport 包只负责外部协议适配。
 - Connect handler struct。
 - HTTP endpoint 的 Echo route 注册。
 - 纯协议层面的请求校验。
-- proto message 与 application command/result 的映射。
-- application/domain error 到 Connect 或 HTTP error 的映射。
+- proto message 与域 service command/result 的映射。
+- 域错误到 Connect 或 HTTP error 的映射。
 
 Transport 包不应：
 
 - 打开 SQL transaction。
 - 直接调用 runtime driver。
 - 直接启动 scheduler run。
-- 自行 normalize compose spec，除非只是调用 application service。
-- 持有 project、loader、session 的状态流转规则。
+- 自行 normalize compose spec，除非只是调用 project 域 service。
+- 持有 project、loader、session、run 的状态流转规则。
 
-### Application
+### Domain Packages
 
-Application 包负责用例编排。当前行为应主要在这里保持，同时把依赖显式化。
+域包是本次重构的主目标。每个域包以业务能力命名，优先保持该域的相关代码靠近。
 
-示例：
+域包内部可包含：
 
-- `application/project.Service.ApplyProject`
-- `application/project.Service.ValidateProject`
-- `application/project.Service.DownProject`
-- `application/run.Service.RunAgent`
-- `application/loader.Manager.RunNow`
-- `application/session.Service.CreateSession`
-- `application/image.Service.EnsureProjectAgentImages`
+- `model.go`：领域模型、状态常量、值对象。
+- `service.go`：该域主要用例编排。
+- `repository.go`：该域需要的存储接口。
+- `sqlite.go`：当前 SQLite 实现。后续如果变大，可迁到域内 `sqlite/` 子包。
+- `proto_mapper.go`：该域与 proto 的转换。如果 mapper 变复杂，也可留在 `transport` 中。
+- 其他按用例命名的文件，例如 `apply.go`、`manager.go`、`coordinator.go`、`schedule.go`。
 
-Application 包应在靠近用例的位置定义所需 interface。例如 `application/project` 可以定义：
+域包内部仍要保持文件级边界：
 
-```go
-type ProjectRepository interface {
-    UpsertProject(ctx context.Context, record project.Record) error
-    SaveRevision(ctx context.Context, revision project.Revision) error
-    ListAgents(ctx context.Context, projectID string) ([]project.Agent, error)
-}
-```
+- 纯模型/规则文件不 import proto、connect、echo、SQL、driver。
+- service 文件可以编排 repository 和其他域接口，但不直接写 HTTP/Connect。
+- SQLite 文件可以 import SQL，但不应持有业务流程。
 
-Infrastructure 实现这些接口。Application 不应依赖 SQLite 特定类型。
+### Shared
 
-### Domain
+`shared` 只放跨域、无业务归属、稳定且小的工具：
 
-Domain 包承载业务概念和局部规则。
+- ID/hash helper。
+- 时间/JSON helper。
+- 错误分类。
+- response 工具。
 
-适合放入 domain 的内容：
-
-- Session 状态常量与状态流转 helper。
-- Project record、revision identity、scheduler/agent model。
-- Project run 状态流转。
-- Loader trigger kind、run status、concurrency/session policy 规则。
-- 稳定 ID 和 hash 规则，前提是它们属于领域身份规则。
-
-Domain 包应避免：
-
-- proto 类型。
-- SQL row scanner。
-- Connect error。
-- Echo handler。
-- Docker 或 sandbox client。
-- 环境变量加载。
-
-### Infrastructure
-
-Infrastructure 包承载具体适配器：
-
-- SQLite repository。
-- Runtime driver provider。
-- Docker/OCI image backend。
-- LLM client 实现。
-- Capability provider/proxy。
-- Loader bus 与 event dispatcher 实现。
-
-Infrastructure 可以自由 import 外部包，但它应实现 application service 需要的接口，而不是由 transport 直接调用。
+不要把 `shared` 变成新的垃圾桶。能归属到具体域的逻辑必须留在域包。
 
 ## 初始文件映射
 
@@ -376,35 +349,26 @@ Infrastructure 可以自由 import 外部包，但它应实现 application servi
 | 当前文件组 | 目标区域 |
 | --- | --- |
 | `service.go` 中的 setup/registration | `internal/agentcompose/bootstrap` |
-| `service.go` 中的 Connect 方法 | `internal/agentcompose/transport/connectv1` 与 `connectv2` |
-| `model.go` 中的 session/workspace/cell model | `domain/session`、`domain/workspace` |
-| `session_*.go` | 根据职责进入 `application/session`、`transport/connectv1` 或 `infrastructure/persistence/sqlite` |
-| `store.go` | `infrastructure/persistence/sqlite/session_repository.go`，同时拆出 session domain model |
-| `config_store.go` | 拆成 config、workspace、agent definition、capability repository |
-| `project_store.go` | `domain/project`、`domain/run`、`infrastructure/persistence/sqlite/project_repository.go` |
-| `project_service.go` | `transport/connectv2/project_handler.go` 与 `application/project/*` |
-| `project_schema.go` | `application/project/validate.go` 或 `domain/project/validation.go` |
-| `project_agent_runner.go` | 依据编排所有权放入 `application/run` 或 `application/project` |
-| `project_down.go` | `application/project/down.go` 与 transport wrapper |
-| `run_coordinator.go` | `domain/run/transition.go` 与 `application/run/coordinator.go` |
-| `run_service.go` | `application/run/service.go` 与 `transport/connectv2/run_handler.go` |
-| `run_preparation.go` | `application/run/preparation.go` |
-| `exec.go`、`exec_service.go` | `application/exec`、`transport/connectv2/exec_handler.go` |
-| `loader_model.go` | `domain/loader/model.go` |
-| `loader_store.go` | `infrastructure/persistence/sqlite/loader_repository.go` |
-| `loader_engine.go` | `application/loader/engine.go` |
-| `loader_manager.go` | `application/loader/manager.go` |
-| `loader_service.go` | `transport/connectv1/loader_handler.go` 与 `application/loader/service.go` |
-| `loader_run_executor.go` | `application/loader/executor.go` |
-| `loader_event_dispatcher.go`、`loader_events.go`、`loader_bus.go` | `application/loader` 与 `infrastructure/eventbus` |
-| `webhook*.go` | `transport/http`，事件摄入进入 `application/loader` |
-| `proxy.go` | `transport/http/proxy_routes.go` |
-| `workspace.go`、`workspace_routes.go` | `domain/workspace`、`application/config`、`transport/http` |
-| `llm_client.go`、`llm_config.go`、`llm_facade.go`、`llm_runtime_config.go` | `application/llm`、`infrastructure/llm`、`transport/http` |
-| `image_*.go` | `application/image`、`infrastructure/image`、`transport/connectv2/image_handler.go` |
-| `capability_*.go` | `domain/capability`、`application/capability`、`infrastructure/capability`、`transport/connectv1` |
-| `dashboard_overview.go` | `application/dashboard` |
-| `event_dispatcher.go`、`topic_event_*.go` | domain event model、application、`infrastructure/persistence/sqlite` |
+| `transport_handlers.go` 与 Connect 方法 | `internal/agentcompose/transport/connectv1`、`connectv2` |
+| `model.go` 中的 session/workspace/cell model | `internal/agentcompose/session`、`workspace` |
+| `session_*.go`、`store.go` session 部分 | `internal/agentcompose/session` |
+| `config_store.go` | 按职责拆到 `config`、`workspace`、`agent`、`capability` |
+| `project_store.go`、`project_service.go`、`project_*` | `internal/agentcompose/project`，project run 状态可进入 `run` |
+| `project_schema.go` | `internal/agentcompose/project/validate.go` |
+| `project_agent_runner.go` | `internal/agentcompose/run` 或 `project`，以编排所有权为准 |
+| `project_down.go` | `internal/agentcompose/project/down.go` |
+| `run_coordinator.go`、`run_service.go`、`run_preparation.go` | `internal/agentcompose/run` |
+| `exec.go`、`exec_service.go` | `internal/agentcompose/exec` |
+| `loader_model.go`、`loader_store.go`、`loader_engine.go`、`loader_manager.go` | `internal/agentcompose/loader` |
+| `loader_run_executor.go`、`loader_event_dispatcher.go`、`loader_events.go`、`loader_bus.go` | `internal/agentcompose/loader` 或 `events`，以事件所有权为准 |
+| `webhook*.go` | `transport/http`，事件摄入委托给 `events` 或 `loader` |
+| `proxy.go` | `transport/http`，session proxy 逻辑归 `session` |
+| `workspace.go`、`workspace_routes.go` | `workspace` 与 `transport/http` |
+| `llm_client.go`、`llm_config.go`、`llm_facade.go`、`llm_runtime_config.go` | `llm`，HTTP facade route 在 `transport/http` |
+| `image_*.go` | `image` |
+| `capability_*.go` | `capability` |
+| `dashboard_overview.go` | `dashboard` |
+| `event_dispatcher.go`、`topic_event_*.go` | `events` |
 
 ## 迁移阶段
 
@@ -441,17 +405,11 @@ task build
 - `cmd/agent-compose` 仍通过同一路径启动。
 - 测试通过。
 
-### Phase 2：拆分 Transport Handler
+### Phase 2：Transport Handler 外壳
 
 把 Connect 方法从宽泛的 `Service` 类型中移出，拆成按 service 分组的 handler struct。
 
-示例：
-
-- `SessionHandler` 委托给 `application/session.Service`。
-- `ProjectHandler` 委托给 `application/project.Service`。
-- `LoaderHandler` 委托给 `application/loader.Service`。
-
-此阶段 application service 可以暂时包一层现有实现。阶段目标是先打破“一个类型实现所有 service”的模式。
+此阶段 handler 可以暂时委托旧 `Service` 方法。阶段目标是先打破“一个类型实现所有 service”的模式，不移动业务逻辑。
 
 成功标准：
 
@@ -459,49 +417,45 @@ task build
 - Connect route path 不变。
 - 现有集成测试仍访问相同 endpoint。
 
-### Phase 3：抽取 Domain Model 与规则
+### Phase 3：域包种子
 
-将纯模型、常量和状态 helper 移入 domain 包。
+选择低耦合域建立真正的域包，而不是继续只做同包文件拆分。
 
-优先从低风险区域开始：
+优先顺序：
 
-- Loader status/trigger/session policy 常量。
-- Project run 状态流转 helper。
-- Session status/tag/env value object。
-
-不要改变 JSON tag、状态字符串、稳定 ID、hash 输入或时间戳语义。
-
-成功标准：
-
-- snapshot 或 JSON 相关测试继续通过。
-- domain 包不出现 proto 或 SQL import。
-
-### Phase 4：抽取 Application Service
-
-把用例逻辑从 transport 和 persistence 文件中移出。
-
-优先级：
-
-1. `application/project`
-2. `application/loader`
-3. `application/run`
-4. `application/session`
-5. `application/exec`
-6. `application/image`
-7. `application/llm`
-8. `application/config`、`capability`、`dashboard`
-
-此阶段可以引入显式 port，但不应改变行为。
+1. `image`
+2. `capability`
+3. `dashboard`
+4. `events`
+5. `loader`
+6. `project`
+7. `session`
 
 成功标准：
 
-- 用例可以不通过 Connect request/response wrapper 进行测试。
-- Transport 文件只包含映射和委托，不包含业务编排。
-- Transport 不直接调用存储 SQL。
+- 每个新域包有清晰公开 surface。
+- transport 只依赖域 service 或 mapper。
+- 纯规则文件不 import proto/connect/echo/SQL/driver。
 
-### Phase 5：拆分持久化
+### Phase 4：高复杂域迁移
 
-把 SQL-backed store method 按 aggregate 分组移动到 repository 文件中。
+迁移 `loader`、`project`、`session`、`run` 等复杂域。
+
+要求：
+
+- 先迁模型和纯规则，再迁 service 编排，再迁 repository 实现。
+- 每个 PR 只迁一个域的一块职责。
+- 对 `project_service.go`、`loader_manager.go`、`loader_engine.go` 这类热点文件，优先按同包文件拆分降低体积，再迁入域包。
+
+成功标准：
+
+- `pkg/agentcompose` 不再是主要业务实现包。
+- 大文件持续变小。
+- 用例可以绕过 Connect handler 单独测试。
+
+### Phase 5：持久化归域
+
+把 SQL-backed store method 按域归入对应域包。
 
 注意：这是包和文件组织调整，不是数据库 schema 调整。
 
@@ -548,23 +502,21 @@ task build
 
 允许：
 
-- `transport -> application -> domain`
-- `infrastructure -> application ports`
+- `transport -> domain service`
+- `domain service -> same-domain repository/interface`
+- `domain service -> other-domain narrow interface`
+- `domain sqlite/repository implementation -> database/sql`
 - `bootstrap -> 所有实现包`
 - `cmd -> bootstrap`
-- `application -> domain`
 
 禁止：
 
-- `domain -> proto`
-- `domain -> connectrpc.com/connect`
-- `domain -> github.com/labstack/echo`
-- `domain -> database/sql`
-- `domain -> pkg/driver` 或 runtime 实现
-- `transport -> infrastructure/persistence/sqlite`
+- 纯模型/规则文件 -> proto/connect/echo/database/sql/driver
+- `transport -> database/sql`
 - `transport -> runtime drivers`
 - `transport -> image backends`
-- `infrastructure -> transport`
+- 域包之间直接访问对方 SQLite 实现
+- `shared -> 具体业务域`
 
 ## 行为保持检查清单
 

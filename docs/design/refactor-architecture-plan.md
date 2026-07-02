@@ -122,9 +122,22 @@ Conservative migration path:
 
 ## Target Architecture
 
-The target architecture borrows the useful parts of DDD without enforcing a
-strict layered framework. The key idea is to make package boundaries match
-business ownership and dependency direction.
+The target architecture is now domain-first. It still borrows useful DDD ideas,
+but it does not prioritize broad horizontal directories such as
+`domain/application/infrastructure`. In a Go service, package names should
+express business capability, and code for one capability should stay close
+unless there is a strong reason to separate it.
+
+Core principles:
+
+- Split by business domain first, then split files inside that domain.
+- Keep `transport` and `bootstrap` as cross-domain adapter layers.
+- Let domains such as `project`, `loader`, `session`, and `run` own their
+  models, services, ports, and repository implementations.
+- Do not scatter one business capability across distant horizontal directories
+  just to satisfy a layered pattern.
+- Most daemon implementation code should end up under
+  `internal/agentcompose/<domain>`, not public `pkg/<domain>` packages.
 
 Target dependency direction:
 
@@ -132,27 +145,25 @@ Target dependency direction:
 cmd/agent-compose
   -> internal/agentcompose/bootstrap
     -> internal/agentcompose/transport
-      -> internal/agentcompose/application
-        -> internal/agentcompose/domain
-    -> internal/agentcompose/infrastructure
-      -> internal/agentcompose/application ports
-      -> internal/agentcompose/domain
+      -> internal/agentcompose/<domain service>
+    -> internal/agentcompose/<domain>
+      -> internal/agentcompose/shared
+    -> internal/driver, internal/imagecache, internal/config, proto/...
 ```
 
 Allowed dependency rules:
 
-- `domain` must not import Connect, Echo, proto generated packages, SQL,
-  Docker clients, runtime drivers, or process config packages.
-- `application` may import `domain` and define ports/interfaces needed for use
-  cases.
-- `transport` may import proto/connect/echo and `application`, but should not
-  contain domain rules or SQL.
-- `infrastructure` may import external libraries and implement application
-  ports.
+- A domain package may contain models, services, ports, repository
+  implementations, and mappers, but file responsibilities must stay clear.
+- Domain model and pure-rule files must not import Connect, Echo, SQL, Docker
+  clients, runtime drivers, or process config packages.
+- Domain services may depend on same-domain repository interfaces, narrow
+  interfaces exposed by other domains, and necessary infrastructure adapters.
+- `transport` may import proto/connect/echo and domain services, but must not
+  contain business orchestration, SQL, or direct runtime-driver calls.
 - `bootstrap` wires dependencies and registers handlers.
-- Cross-domain communication should go through application-level interfaces or
-  explicit domain value objects, not by reaching into another package's
-  persistence structs.
+- Cross-domain collaboration should go through narrow interfaces or explicit
+  value objects, not arbitrary access to another domain's persistence structs.
 
 ## Proposed Directory Structure
 
@@ -188,117 +199,113 @@ internal/
         workspace_routes.go
         runtime_llm_facade_routes.go
 
-    application/
-      session/
-        service.go
-        reconcile.go
-        stream.go
-        ports.go
-      project/
-        service.go
-        validate.go
-        apply.go
-        reconcile_agents.go
-        reconcile_schedulers.go
-        dryrun.go
-        ports.go
-      run/
-        service.go
-        coordinator.go
-        preparation.go
-        ports.go
-      loader/
-        service.go
-        manager.go
-        engine.go
-        executor.go
-        dispatcher.go
-        ports.go
-      exec/
-        service.go
-        ports.go
-      config/
-        service.go
-        ports.go
-      image/
-        service.go
-        ensure.go
-        ports.go
-      llm/
-        service.go
-        facade.go
-        runtime_config.go
-        ports.go
-      capability/
-        service.go
-        gateway.go
-        ports.go
-      dashboard/
-        overview.go
-        ports.go
+    session/
+      model.go
+      service.go
+      repository.go
+      sqlite.go
+      stream.go
+      reconcile.go
+      proto_mapper.go
 
-    domain/
-      session/
-        model.go
-        status.go
-        tags.go
-        events.go
-      project/
-        model.go
-        source.go
-        revision.go
-        agent.go
-        scheduler.go
-        validation.go
-      run/
-        model.go
-        status.go
-        transition.go
-      loader/
-        model.go
-        trigger.go
-        run.go
-        event.go
-        schedule.go
-      workspace/
-        model.go
-      agent/
-        definition.go
-      image/
-        model.go
-        policy.go
-      capability/
-        model.go
-      llm/
-        model.go
+    project/
+      model.go
+      service.go
+      validate.go
+      apply.go
+      build.go
+      reconcile_agents.go
+      reconcile_schedulers.go
+      dryrun.go
+      repository.go
+      sqlite.go
+      proto_mapper.go
 
-    infrastructure/
-      persistence/
-        sqlite/
-          db.go
-          migrations.go
-          session_repository.go
-          project_repository.go
-          loader_repository.go
-          config_repository.go
-          agent_definition_repository.go
-          topic_event_repository.go
-      runtime/
-        provider.go
-        driver_adapter.go
-      image/
-        docker_backend.go
-        oci_backend.go
-        auto_backend.go
-      llm/
-        client.go
-        config_loader.go
-      capability/
-        provider.go
-        proxy.go
-      eventbus/
-        loader_bus.go
-        event_dispatcher.go
+    loader/
+      model.go
+      service.go
+      manager.go
+      engine.go
+      executor.go
+      schedule.go
+      event_dispatcher.go
+      repository.go
+      sqlite.go
+      proto_mapper.go
+
+    run/
+      model.go
+      service.go
+      coordinator.go
+      preparation.go
+      proto_mapper.go
+
+    exec/
+      service.go
+      proto_mapper.go
+
+    agent/
+      definition.go
+      service.go
+      repository.go
+      sqlite.go
+      proto_mapper.go
+
+    config/
+      env.go
+      workspace.go
+      service.go
+      repository.go
+      sqlite.go
+      proto_mapper.go
+
+    image/
+      model.go
+      service.go
+      ensure.go
+      docker_backend.go
+      oci_backend.go
+      auto_backend.go
+      proto_mapper.go
+
+    llm/
+      service.go
+      client.go
+      config.go
+      facade.go
+      runtime_config.go
+      proto_mapper.go
+
+    capability/
+      model.go
+      service.go
+      gateway.go
+      provider.go
+      proxy.go
+      repository.go
+      sqlite.go
+      proto_mapper.go
+
+    workspace/
+      model.go
+      service.go
+      routes_mapper.go
+
+    events/
+      model.go
+      dispatcher.go
+      topic_store.go
+      repository.go
+      sqlite.go
+
+    dashboard/
+      overview.go
+      aggregator.go
+      hub.go
+
+    runtime/
+      provider.go
+      driver_adapter.go
 
     shared/
       ids/
@@ -307,9 +314,10 @@ internal/
       response/
 ```
 
-This structure is a target direction, not a single massive patch. During
-migration, transitional packages and aliases are acceptable if they keep the
-change reviewable.
+This is the target direction, not a single massive patch. Transitional
+packages, wrappers, aliases, and same-package file splits are acceptable during
+migration when each step is reviewable, testable, and clearly converges toward
+domain packages.
 
 ## Boundary Details
 
@@ -320,7 +328,7 @@ change reviewable.
 Responsibilities:
 
 - Register constructors in the dependency injector.
-- Build repositories, application services, transport handlers, and background
+- Build domain services, repositories, transport handlers, and background
   workers.
 - Register Connect and HTTP routes on Echo.
 - Start background managers.
@@ -345,81 +353,52 @@ Responsibilities:
 - Connect handler structs.
 - Echo route registration for HTTP endpoints.
 - Request validation that is purely protocol-level.
-- Mapping between proto messages and application commands/results.
-- Mapping application/domain errors to Connect or HTTP errors.
+- Mapping between proto messages and domain service commands/results.
+- Mapping domain errors to Connect or HTTP errors.
 
 Transport packages must not:
 
 - Open SQL transactions.
 - Call runtime drivers directly.
 - Start scheduler runs directly.
-- Normalize compose specs except by calling application services.
-- Own project/loader/session state transitions.
+- Normalize compose specs except by calling the project domain service.
+- Own project/loader/session/run state transitions.
 
-### Application
+### Domain Packages
 
-Application packages own use cases. They are the place where current behavior
-should be preserved while dependencies become explicit.
+Domain packages are the main target of this refactor. Each domain package is
+named after a business capability and keeps related code close together.
 
-Examples:
+A domain package may contain:
 
-- `application/project.Service.ApplyProject`
-- `application/project.Service.ValidateProject`
-- `application/project.Service.DownProject`
-- `application/run.Service.RunAgent`
-- `application/loader.Manager.RunNow`
-- `application/session.Service.CreateSession`
-- `application/image.Service.EnsureProjectAgentImages`
+- `model.go`: domain models, status constants, and value objects.
+- `service.go`: primary use-case orchestration for that domain.
+- `repository.go`: storage interfaces required by that domain.
+- `sqlite.go`: the current SQLite implementation. If it grows too large, it can
+  move to a domain-local `sqlite/` subpackage later.
+- `proto_mapper.go`: mapping between the domain and proto. If mapping becomes
+  complex, it may stay in `transport` instead.
+- Use-case files such as `apply.go`, `manager.go`, `coordinator.go`, and
+  `schedule.go`.
 
-Application packages should depend on interfaces defined close to the use case.
-For example, `application/project` can define:
+Domain packages still need file-level boundaries:
 
-```go
-type ProjectRepository interface {
-    UpsertProject(ctx context.Context, record project.Record) error
-    SaveRevision(ctx context.Context, revision project.Revision) error
-    ListAgents(ctx context.Context, projectID string) ([]project.Agent, error)
-}
-```
+- Pure model/rule files must not import proto, connect, echo, SQL, or drivers.
+- Service files may orchestrate repositories and other-domain interfaces, but
+  must not implement HTTP/Connect behavior.
+- SQLite files may import SQL, but must not own business workflows.
 
-Infrastructure implements these interfaces. The application should not depend
-on SQLite-specific types.
+### Shared
 
-### Domain
+`shared` is only for small, stable utilities with no clear domain owner:
 
-Domain packages own business concepts and local rules.
+- ID/hash helpers.
+- Time/JSON helpers.
+- Error classification.
+- Response helpers.
 
-Good candidates:
-
-- Session status constants and transition helpers.
-- Project records, revision identity, scheduler/agent model.
-- Project run status transitions.
-- Loader trigger kinds, run status, concurrency/session policy rules.
-- Stable ID and hash rules when they are domain identity rules.
-
-Domain packages should avoid:
-
-- Proto types.
-- SQL row scanners.
-- Connect errors.
-- Echo handlers.
-- Docker or sandbox clients.
-- Environment variable loading.
-
-### Infrastructure
-
-Infrastructure packages own concrete adapters:
-
-- SQLite repositories.
-- Runtime driver provider.
-- Docker/OCI image backends.
-- LLM client implementation.
-- Capability provider/proxy.
-- Loader bus and event dispatcher implementations.
-
-Infrastructure may import external packages freely, but it should implement
-interfaces needed by application services rather than being called directly
-from transport.
+Do not let `shared` become a new dumping ground. Logic with a clear business
+owner must stay in that domain.
 
 ## Initial File Mapping
 
@@ -428,35 +407,26 @@ The first pass can be mostly mechanical. Suggested mapping:
 | Current file group | Target area |
 | --- | --- |
 | `service.go` setup/registration | `internal/agentcompose/bootstrap` |
-| `service.go` Connect methods | `internal/agentcompose/transport/connectv1` and `connectv2` |
-| `model.go` session/workspace/cell models | `domain/session`, `domain/workspace` |
-| `session_*.go` | `application/session`, `transport/connectv1`, or `infrastructure/persistence/sqlite` depending on role |
-| `store.go` | `infrastructure/persistence/sqlite/session_repository.go` plus session domain models |
-| `config_store.go` | split into config, workspace, agent definition, capability repositories |
-| `project_store.go` | `domain/project`, `domain/run`, `infrastructure/persistence/sqlite/project_repository.go` |
-| `project_service.go` | `transport/connectv2/project_handler.go` plus `application/project/*` |
-| `project_schema.go` | `application/project/validate.go` or `domain/project/validation.go` |
-| `project_agent_runner.go` | `application/run` or `application/project` depending on orchestration ownership |
-| `project_down.go` | `application/project/down.go` plus transport wrapper |
-| `run_coordinator.go` | `domain/run/transition.go` plus `application/run/coordinator.go` |
-| `run_service.go` | `application/run/service.go` plus `transport/connectv2/run_handler.go` |
-| `run_preparation.go` | `application/run/preparation.go` |
-| `exec.go`, `exec_service.go` | `application/exec`, `transport/connectv2/exec_handler.go` |
-| `loader_model.go` | `domain/loader/model.go` |
-| `loader_store.go` | `infrastructure/persistence/sqlite/loader_repository.go` |
-| `loader_engine.go` | `application/loader/engine.go` |
-| `loader_manager.go` | `application/loader/manager.go` |
-| `loader_service.go` | `transport/connectv1/loader_handler.go` plus `application/loader/service.go` |
-| `loader_run_executor.go` | `application/loader/executor.go` |
-| `loader_event_dispatcher.go`, `loader_events.go`, `loader_bus.go` | `application/loader` and `infrastructure/eventbus` |
-| `webhook*.go` | `transport/http` plus `application/loader` event ingestion |
-| `proxy.go` | `transport/http/proxy_routes.go` |
-| `workspace.go`, `workspace_routes.go` | `domain/workspace`, `application/config`, `transport/http` |
-| `llm_client.go`, `llm_config.go`, `llm_facade.go`, `llm_runtime_config.go` | `application/llm`, `infrastructure/llm`, `transport/http` |
-| `image_*.go` | `application/image`, `infrastructure/image`, `transport/connectv2/image_handler.go` |
-| `capability_*.go` | `domain/capability`, `application/capability`, `infrastructure/capability`, `transport/connectv1` |
-| `dashboard_overview.go` | `application/dashboard` |
-| `event_dispatcher.go`, `topic_event_*.go` | `domain` event models, `application`, `infrastructure/persistence/sqlite` |
+| `transport_handlers.go` and Connect methods | `internal/agentcompose/transport/connectv1` and `connectv2` |
+| session/workspace/cell models in `model.go` | `internal/agentcompose/session`, `workspace` |
+| `session_*.go` and session parts of `store.go` | `internal/agentcompose/session` |
+| `config_store.go` | split by responsibility into `config`, `workspace`, `agent`, and `capability` |
+| `project_store.go`, `project_service.go`, `project_*` | `internal/agentcompose/project`; project run state may move to `run` |
+| `project_schema.go` | `internal/agentcompose/project/validate.go` |
+| `project_agent_runner.go` | `internal/agentcompose/run` or `project`, depending on orchestration ownership |
+| `project_down.go` | `internal/agentcompose/project/down.go` |
+| `run_coordinator.go`, `run_service.go`, `run_preparation.go` | `internal/agentcompose/run` |
+| `exec.go`, `exec_service.go` | `internal/agentcompose/exec` |
+| `loader_model.go`, `loader_store.go`, `loader_engine.go`, `loader_manager.go` | `internal/agentcompose/loader` |
+| `loader_run_executor.go`, `loader_event_dispatcher.go`, `loader_events.go`, `loader_bus.go` | `internal/agentcompose/loader` or `events`, depending on ownership |
+| `webhook*.go` | `transport/http`; event ingestion delegates to `events` or `loader` |
+| `proxy.go` | `transport/http`; session proxy logic belongs to `session` |
+| `workspace.go`, `workspace_routes.go` | `workspace` and `transport/http` |
+| `llm_client.go`, `llm_config.go`, `llm_facade.go`, `llm_runtime_config.go` | `llm`; HTTP facade routes stay in `transport/http` |
+| `image_*.go` | `image` |
+| `capability_*.go` | `capability` |
+| `dashboard_overview.go` | `dashboard` |
+| `event_dispatcher.go`, `topic_event_*.go` | `events` |
 
 ## Migration Phases
 
@@ -495,19 +465,14 @@ Success criteria:
 - `cmd/agent-compose` starts through the same path.
 - Tests pass.
 
-### Phase 2: Split Transport Handlers
+### Phase 2: Transport Handler Shells
 
 Move Connect methods out of the broad `Service` type into service-specific
 handler structs.
 
-Example:
-
-- `SessionHandler` delegates to `application/session.Service`.
-- `ProjectHandler` delegates to `application/project.Service`.
-- `LoaderHandler` delegates to `application/loader.Service`.
-
-At this phase, application services may still wrap existing implementations.
-The purpose is to break the "one type implements every service" pattern first.
+At this phase, handlers may still delegate to existing `Service` methods. The
+purpose is to break the "one type implements every service" pattern first
+without moving business logic in the same step.
 
 Success criteria:
 
@@ -515,51 +480,52 @@ Success criteria:
 - Registered Connect route paths unchanged.
 - Existing integration tests still hit the same endpoints.
 
-### Phase 3: Extract Domain Models and Rules
+### Phase 3: Seed Domain Packages
 
-Move pure models, constants, and state helpers into domain packages.
+Create real domain packages from low-coupling areas instead of continuing only
+same-package file splits.
 
-Start with low-risk areas:
+Priority order:
 
-- Loader status/trigger/session policy constants.
-- Project run status transition helpers.
-- Session status/tag/env value objects.
+1. `image`
+2. `capability`
+3. `dashboard`
+4. `events`
+5. `loader`
+6. `project`
+7. `session`
 
 Avoid changing JSON tags, status strings, stable IDs, hash inputs, or timestamp
 semantics.
 
 Success criteria:
 
-- Snapshot or JSON-based tests continue to pass.
-- No proto or SQL imports appear in domain packages.
+- Each new domain package has a clear public surface.
+- Transport depends on domain services or mappers only.
+- Pure rule files do not import proto/connect/echo/SQL/drivers.
 
-### Phase 4: Extract Application Services
+### Phase 4: Move High-Complexity Domains
 
-Move use cases out of transport and persistence files.
+Move complex domains such as `loader`, `project`, `session`, and `run`.
 
-Priority order:
+Requirements:
 
-1. `application/project`
-2. `application/loader`
-3. `application/run`
-4. `application/session`
-5. `application/exec`
-6. `application/image`
-7. `application/llm`
-8. `application/config`, `capability`, `dashboard`
-
-This phase should introduce explicit ports where needed, but should avoid
-changing behavior.
+- Move models and pure rules first, then service orchestration, then repository
+  implementations.
+- Each PR moves one responsibility slice from one domain.
+- For hotspot files such as `project_service.go`, `loader_manager.go`, and
+  `loader_engine.go`, same-package file splits may be used first to reduce
+  file size before moving code into domain packages.
 
 Success criteria:
 
+- `pkg/agentcompose` is no longer the main business implementation package.
+- Large files keep shrinking.
 - Use cases can be tested without Connect request/response wrappers.
-- Transport files contain mapping and delegation, not business orchestration.
-- No storage SQL is called directly from transport.
 
-### Phase 5: Split Persistence
+### Phase 5: Move Persistence Into Domains
 
-Move SQL-backed store methods into repository files grouped by aggregate.
+Move SQL-backed store methods into the domain that owns the aggregate.
 
 Important: this is a package and file organization change, not a database
 schema change.
@@ -611,23 +577,21 @@ needed.
 
 Allowed:
 
-- `transport -> application -> domain`
-- `infrastructure -> application ports`
+- `transport -> domain service`
+- `domain service -> same-domain repository/interface`
+- `domain service -> other-domain narrow interface`
+- `domain sqlite/repository implementation -> database/sql`
 - `bootstrap -> all implementation packages`
 - `cmd -> bootstrap`
-- `application -> domain`
 
 Forbidden:
 
-- `domain -> proto`
-- `domain -> connectrpc.com/connect`
-- `domain -> github.com/labstack/echo`
-- `domain -> database/sql`
-- `domain -> pkg/driver` or runtime implementations
-- `transport -> infrastructure/persistence/sqlite`
+- pure model/rule files -> proto/connect/echo/database/sql/drivers
+- `transport -> database/sql`
 - `transport -> runtime drivers`
 - `transport -> image backends`
-- `infrastructure -> transport`
+- domain packages directly accessing another domain's SQLite implementation
+- `shared -> concrete business domains`
 
 ## Behavior Preservation Checklist
 
@@ -678,9 +642,9 @@ Recommended PR shape:
 1. Add this design document.
 2. Move setup/bootstrap without changing behavior.
 3. Split one transport handler group at a time.
-4. Move one domain model group at a time.
-5. Extract one application use case group at a time.
-6. Split one repository group at a time.
+4. Seed one low-coupling domain package at a time.
+5. Move one responsibility slice from a complex domain at a time.
+6. Move repository implementations into the owning domain.
 
 For each PR:
 
@@ -716,3 +680,8 @@ Start with a low-risk compatibility step:
 
 This creates the first architectural boundary without changing the runtime
 surface area.
+
+After the bootstrap and transport shell steps, the next concrete step is to
+seed a low-coupling domain package, preferably `image` or `capability`, and
+route the existing transport wrapper through that domain package without
+changing behavior.

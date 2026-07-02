@@ -51,9 +51,9 @@ worker 分支命名：
 refactor/bootstrap-shell
 refactor/domain-models
 refactor/transport-handlers
-refactor/persistence-repositories
-refactor/loader-application
-refactor/project-application
+refactor/domain-image
+refactor/domain-capability
+refactor/domain-project
 ```
 
 ## 任务依赖图
@@ -62,9 +62,9 @@ refactor/project-application
 T0 文档与基线
   -> T1 Bootstrap 兼容外壳
     -> T2 Transport handler 拆分
-    -> T3 Domain model/rule 抽取
-      -> T4 Application service 抽取
-        -> T5 Persistence repository 拆分
+    -> T3 域包种子
+      -> T4 高复杂域迁移
+        -> T5 持久化归域
           -> T6 pkg/agentcompose 到 internal/agentcompose
             -> T7 其他 pkg/* 归类
 ```
@@ -73,8 +73,9 @@ T0 文档与基线
 
 - T1 是首个阻塞任务，先由负责人完成或单独 worker 完成。
 - T2 与 T3 可以在 T1 合入重构主分支后并行。
-- T4 需要依赖对应领域的 T2/T3 结果，按 project、loader、session、run 分组并行。
-- T5 依赖 T4 中接口边界基本稳定。
+- T3 优先选择低耦合域，例如 image、capability、dashboard。
+- T4 需要依赖对应领域的 T3 结果，按 project、loader、session、run 分组并行。
+- T5 依赖域包 service/repository 边界基本稳定。
 - T6 必须在大部分包边界稳定后执行，不提前做全量 import 迁移。
 - T7 是最后的清理任务，不与核心拆分并行。
 
@@ -165,72 +166,72 @@ T0 文档与基线
 - handler 中不新增业务逻辑。
 - `go test ./pkg/agentcompose`
 
-### T3：Domain Model 与规则抽取
+### T3：域包种子
 
 负责人：domain worker。
 
 目标：
 
-- 把纯模型、常量和状态规则移动到 domain 包。
-- domain 包不得 import proto、connect、echo、SQL、driver。
-- 不改变 JSON tag、状态字符串、hash 输入和稳定 ID。
+- 建立真正的 `internal/agentcompose/<domain>` 域包，而不是继续只做同 package 文件拆分。
+- 优先从低耦合域开始，例如 `image`、`capability`、`dashboard`。
+- 域包可以包含 model、service、repository interface、adapter/mapper，但文件职责必须清楚。
+- 纯模型/规则文件不得 import proto、connect、echo、SQL、driver。
 
 建议分批：
 
-- T3.1 session/workspace model。
-- T3.2 loader model、trigger、run status。
-- T3.3 project/project run model 与状态流转。
-- T3.4 agent definition、capability、image、llm 纯模型。
+- T3.1 `image` 域包：image service、backend selection、ensure policy。
+- T3.2 `capability` 域包：capability service/gateway/config。
+- T3.3 `dashboard` 域包：overview aggregator/hub。
+- T3.4 `events` 域包：topic event model/store/dispatcher。
 
 主要文件：
 
-- `pkg/agentcompose/model.go`
-- `pkg/agentcompose/loader_model.go`
-- `pkg/agentcompose/project_store.go`
-- `pkg/agentcompose/run_coordinator.go`
-- `pkg/agentcompose/agent_definition.go`
-- `pkg/agentcompose/capability_*.go`
 - `pkg/agentcompose/image_*.go`
-- `pkg/agentcompose/llm_*.go`
+- `pkg/agentcompose/capability_*.go`
+- `pkg/agentcompose/dashboard_overview.go`
+- `pkg/agentcompose/event_dispatcher.go`
+- `pkg/agentcompose/topic_event_*.go`
 
 验收：
 
-- domain 包依赖干净。
-- 现有 JSON/状态相关测试通过。
+- 新域包边界清楚。
+- transport 通过域 service 或 mapper 调用，不直接持有业务逻辑。
+- 现有行为测试通过。
 - `go test ./pkg/agentcompose`
 
-### T4：Application Service 抽取
+### T4：高复杂域迁移
 
 负责人：按领域拆多个 worker。
 
 目标：
 
-- 将用例编排从 transport 和 store 文件中抽出。
-- application service 依赖 domain 和 ports，不依赖 Connect/Echo。
+- 将 `project`、`loader`、`session`、`run` 等复杂域逐步迁入对应域包。
+- 先迁模型和纯规则，再迁 service 编排，再迁 repository 实现。
+- 每个 PR 只迁一个域的一块职责。
 - 行为保持不变。
 
 建议分组：
 
-- T4.1 `application/project`：validate/apply/down/reconcile。
-- T4.2 `application/loader`：manager/engine/executor/event dispatch。
-- T4.3 `application/run`：run coordinator、run preparation、project agent run。
-- T4.4 `application/session`：create/resume/stop/watch/reconcile/stream。
-- T4.5 `application/exec`、`image`、`llm`、`config`、`capability`、`dashboard`。
+- T4.1 `project`：validate/apply/down/reconcile/dry-run。
+- T4.2 `loader`：manager/engine/executor/event dispatch。
+- T4.3 `run`：run coordinator、run preparation、project agent run。
+- T4.4 `session`：create/resume/stop/watch/reconcile/stream。
+- T4.5 `exec`、`llm`、`config`、`workspace`。
 
 验收：
 
 - transport 只做映射和委托。
-- application 不 import connect/echo。
+- 域 service 不 import connect/echo。
 - 用例测试仍通过。
 - `go test ./pkg/agentcompose`
 
-### T5：Persistence Repository 拆分
+### T5：持久化归域
 
 负责人：persistence worker。
 
 目标：
 
-- 把 SQL store 按 aggregate 拆成 repository。
+- 把 SQL store 按业务域归入对应域包。
 - 不改 DB schema、table name、migration、JSON encoding、稳定 ID。
 
 建议分组：
@@ -383,9 +384,9 @@ Transport 第一批只拆轻 handler 外壳，不抽重业务逻辑。
 - T2 的目标是打破 “一个 `Service` 实现所有 Connect service” 的结构，不顺手重写业务。
 - `project_service.go`、workspace 和 LLM facade 的业务/安全边界较重，应等 application 层稳定后再拆。
 
-### Project Application 第一批边界
+### Project 域迁移第一批边界
 
-`project_service.go` 是当前风险最高的文件，第一批不要直接大规模迁入 `internal/agentcompose/application/project`。原因是 `ProjectRecord`、`AgentDefinition`、`Loader`、`ConfigStore` 等类型仍在 `pkg/agentcompose`，直接建立 internal application 包容易造成 import cycle，或迫使模型/存储一起大迁移。
+`project_service.go` 是当前风险最高的文件，第一批不要直接大规模迁入 `internal/agentcompose/project`。原因是 `ProjectRecord`、`AgentDefinition`、`Loader`、`ConfigStore` 等类型仍在 `pkg/agentcompose`，直接建立域包容易造成 import cycle，或迫使模型/存储一起大迁移。
 
 Project application 第一批应先拆无副作用 helper：
 
@@ -407,9 +408,9 @@ Project application 第一批应先拆无副作用 helper：
 
 推荐过渡策略：
 
-- 如果会产生 import cycle，不要强行新建 `internal/agentcompose/application/project`。
+- 如果会产生 import cycle，不要强行新建 `internal/agentcompose/project`。
 - 可以先新建 `pkg/agentcompose/projectapp` 放完全不依赖父包类型的 normalize/response helper。
-- 对依赖 `ProjectRecord`、`Loader` 等父包类型的纯 helper，先拆到 `pkg/agentcompose/project_build.go` 这类同包文件，降低 `project_service.go` 体积；等 domain/model 下沉后再迁入 application 包。
+- 对依赖 `ProjectRecord`、`Loader` 等父包类型的纯 helper，先拆到 `pkg/agentcompose/project_build.go` 这类同包文件，降低 `project_service.go` 体积；等 model/store 下沉后再迁入 `internal/agentcompose/project`。
 
 Project application 第一批测试重点：
 
