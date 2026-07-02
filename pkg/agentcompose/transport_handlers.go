@@ -10,6 +10,94 @@ import (
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
+type SessionHandler struct {
+	service *Service
+}
+
+func NewSessionHandler(service *Service) *SessionHandler {
+	return &SessionHandler{service: service}
+}
+
+func (h *SessionHandler) CreateSession(ctx context.Context, req *connect.Request[agentcomposev1.CreateSessionRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
+	return h.service.CreateSession(ctx, req)
+}
+
+func (h *SessionHandler) ResumeSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
+	return h.service.ResumeSession(ctx, req)
+}
+
+func (h *SessionHandler) StopSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
+	return h.service.StopSession(ctx, req)
+}
+
+func (h *SessionHandler) GetSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
+	return h.service.GetSession(ctx, req)
+}
+
+func (h *SessionHandler) ListSessions(ctx context.Context, req *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
+	return h.service.ListSessions(ctx, req)
+}
+
+func (h *SessionHandler) GetSessionProxy(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionProxyResponse], error) {
+	return h.service.GetSessionProxy(ctx, req)
+}
+
+func (h *SessionHandler) WatchSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest], stream *connect.ServerStream[agentcomposev1.WatchSessionResponse]) error {
+	return h.service.WatchSession(ctx, req, stream)
+}
+
+type KernelHandler struct {
+	service *Service
+}
+
+func NewKernelHandler(service *Service) *KernelHandler {
+	return &KernelHandler{service: service}
+}
+
+func (h *KernelHandler) ExecuteCell(ctx context.Context, req *connect.Request[agentcomposev1.ExecuteCellRequest]) (*connect.Response[agentcomposev1.ExecuteCellResponse], error) {
+	return h.service.ExecuteCell(ctx, req)
+}
+
+func (h *KernelHandler) ExecuteCellStream(ctx context.Context, req *connect.Request[agentcomposev1.ExecuteCellRequest], stream *connect.ServerStream[agentcomposev1.ExecuteCellStreamResponse]) error {
+	return h.service.ExecuteCellStream(ctx, req, stream)
+}
+
+func (h *KernelHandler) ListCells(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.ListCellsResponse], error) {
+	return h.service.ListCells(ctx, req)
+}
+
+type AgentHandler struct {
+	service *Service
+}
+
+func NewAgentHandler(service *Service) *AgentHandler {
+	return &AgentHandler{service: service}
+}
+
+func (h *AgentHandler) SendAgentMessage(ctx context.Context, req *connect.Request[agentcomposev1.SendAgentMessageRequest]) (*connect.Response[agentcomposev1.SendAgentMessageResponse], error) {
+	return h.service.SendAgentMessage(ctx, req)
+}
+
+func (h *AgentHandler) SendAgentMessageStream(ctx context.Context, req *connect.Request[agentcomposev1.SendAgentMessageRequest], stream *connect.ServerStream[agentcomposev1.SendAgentMessageStreamResponse]) error {
+	return h.service.SendAgentMessageStream(ctx, req, stream)
+}
+
+func (h *AgentHandler) ListSessionEvents(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.ListSessionEventsResponse], error) {
+	return h.service.ListSessionEvents(ctx, req)
+}
+
+type LLMHandler struct {
+	service *Service
+}
+
+func NewLLMHandler(service *Service) *LLMHandler {
+	return &LLMHandler{service: service}
+}
+
+func (h *LLMHandler) Generate(ctx context.Context, req *connect.Request[agentcomposev1.GenerateLLMRequest]) (*connect.Response[agentcomposev1.GenerateLLMResponse], error) {
+	return h.service.Generate(ctx, req)
+}
+
 type ImageHandler struct {
 	service *Service
 }
