@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	execdomain "agent-compose/internal/agentcompose/exec"
 	agentworkspace "agent-compose/internal/agentcompose/workspace"
 	"strings"
 	"time"
@@ -140,10 +141,7 @@ type AgentResumeInfo struct {
 	UpdatedAt           time.Time `json:"updated_at,omitempty"`
 }
 
-type ExecChunk struct {
-	Text     string
-	IsStderr bool
-}
+type ExecChunk = execdomain.Chunk
 
 type SessionEvent struct {
 	ID        string    `json:"id"`
@@ -166,13 +164,7 @@ type AgentRun struct {
 	StopReason     string    `json:"stop_reason,omitempty"`
 }
 
-type ExecResult struct {
-	ExitCode int
-	Stdout   string
-	Stderr   string
-	Output   string
-	Success  bool
-}
+type ExecResult = execdomain.Result
 
 type RuntimeCommandArtifacts struct {
 	Stdout  string `json:"stdout"`
@@ -194,7 +186,7 @@ type RuntimeCommandResult struct {
 	Artifacts       RuntimeCommandArtifacts `json:"artifacts"`
 }
 
-type ExecStreamWriter func(ExecChunk)
+type ExecStreamWriter = execdomain.StreamWriter
 
 type VMState struct {
 	Driver       string    `json:"driver"`
@@ -219,21 +211,6 @@ type ProxyState struct {
 	Token      string `json:"token,omitempty"`
 }
 
-type ExecSpec struct {
-	Command string            `json:"command"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-	Cwd     string            `json:"cwd,omitempty"`
-}
+type ExecSpec = execdomain.Spec
 
-type AgentRunResult struct {
-	Agent         string
-	DisplayOutput string
-	FinalText     string
-	JSONText      string
-	Transcript    string
-	Success       bool
-	ExitCode      int
-	SessionID     string
-	StopReason    string
-}
+type AgentRunResult = execdomain.AgentRunResult

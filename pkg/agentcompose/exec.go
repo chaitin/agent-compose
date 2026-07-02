@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	execdomain "agent-compose/internal/agentcompose/exec"
 	appconfig "agent-compose/pkg/config"
 	"context"
 	"encoding/json"
@@ -9,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	CellTypeShell      = "shell"
-	CellTypeJavaScript = "javascript"
-	CellTypePython     = "python"
-	CellTypeAgent      = "agent"
+	CellTypeShell      = execdomain.CellTypeShell
+	CellTypeJavaScript = execdomain.CellTypeJavaScript
+	CellTypePython     = execdomain.CellTypePython
+	CellTypeAgent      = execdomain.CellTypeAgent
 )
 
 const defaultLoaderCommandMaxOutputBytes = int64(1024 * 1024)
@@ -487,119 +487,39 @@ func (e *Executor) executeCell(ctx context.Context, session *Session, cellType, 
 }
 
 func normalizeCellType(cellType string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(cellType)) {
-	case "", CellTypeJavaScript:
-		return CellTypeJavaScript, nil
-	case CellTypeShell:
-		return CellTypeShell, nil
-	case CellTypePython:
-		return CellTypePython, nil
-	default:
-		return "", fmt.Errorf("unsupported cell type %q", cellType)
-	}
+	return execdomain.NormalizeCellType(cellType)
 }
 
 func cellExecSpec(cellType, guestCellDir string) (scriptName, command string, args []string) {
-	switch cellType {
-	case CellTypeShell:
-		return "cell.sh", "bash", []string{filepath.Join(guestCellDir, "cell.sh")}
-	case CellTypePython:
-		return "cell.py", "python3", []string{"-u", filepath.Join(guestCellDir, "cell.py")}
-	default:
-		return "cell.js", "node", []string{filepath.Join(guestCellDir, "cell.js")}
-	}
+	return execdomain.CellExecSpec(cellType, guestCellDir)
 }
 
 func writeCellArtifacts(cellDir, source string, result ExecResult) error {
-	files := map[string]string{
-		"source.txt":   source,
-		"stdout.txt":   result.Stdout,
-		"stderr.txt":   result.Stderr,
-		"output.txt":   result.Output,
-		"exitcode.txt": fmt.Sprintf("%d\n", result.ExitCode),
-	}
-	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(cellDir, name), []byte(content), 0o644); err != nil {
-			return fmt.Errorf("write cell artifact %s: %w", name, err)
-		}
-	}
-	return nil
+	return execdomain.WriteCellArtifacts(cellDir, source, result)
 }
 
 func writeJSONArtifact(path string, value any) error {
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode json artifact: %w", err)
-	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
-		return fmt.Errorf("write json artifact: %w", err)
-	}
-	return nil
+	return execdomain.WriteJSONArtifact(path, value)
 }
 
 func recoverExecResultFromCellArtifacts(cellDir string, fallback ExecResult) ExecResult {
-	recovered := fallback
-	for _, item := range []struct {
-		name string
-		set  func(string)
-	}{
-		{name: "stdout.txt", set: func(value string) { recovered.Stdout = value }},
-		{name: "stderr.txt", set: func(value string) { recovered.Stderr = value }},
-		{name: "output.txt", set: func(value string) { recovered.Output = value }},
-	} {
-		data, err := os.ReadFile(filepath.Join(cellDir, item.name))
-		if err != nil {
-			continue
-		}
-		item.set(string(data))
-	}
-	if data, err := os.ReadFile(filepath.Join(cellDir, "exitcode.txt")); err == nil {
-		if exitCode, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil {
-			recovered.ExitCode = exitCode
-			recovered.Success = exitCode == 0
-		}
-	}
-	if strings.TrimSpace(recovered.Output) == "" {
-		recovered.Output = recovered.Stdout + recovered.Stderr
-	}
-	return recovered
+	return execdomain.RecoverResultFromCellArtifacts(cellDir, fallback)
 }
 
 func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
+	return execdomain.FirstNonEmpty(values...)
 }
 
 type execStreamAccumulator struct {
-	stdout strings.Builder
-	stderr strings.Builder
-	output strings.Builder
+	execdomain.StreamAccumulator
 }
 
 func (a *execStreamAccumulator) writeChunk(chunk ExecChunk) {
-	if chunk.Text == "" {
-		return
-	}
-	a.output.WriteString(chunk.Text)
-	if chunk.IsStderr {
-		a.stderr.WriteString(chunk.Text)
-		return
-	}
-	a.stdout.WriteString(chunk.Text)
+	a.WriteChunk(chunk)
 }
 
 func (a *execStreamAccumulator) result(exitCode int, success bool) ExecResult {
-	return ExecResult{
-		ExitCode: exitCode,
-		Stdout:   a.stdout.String(),
-		Stderr:   a.stderr.String(),
-		Output:   a.output.String(),
-		Success:  success,
-	}
+	return a.Result(exitCode, success)
 }
 
 func hostSessionDir(session *Session) string {
@@ -619,32 +539,11 @@ func guestSessionHome(config *appconfig.Config) string {
 }
 
 func firstNonZeroInt(values ...int) int {
-	for _, value := range values {
-		if value != 0 {
-			return value
-		}
-	}
-	return 0
+	return execdomain.FirstNonZeroInt(values...)
 }
 
 func mergeExecResults(primary, fallback ExecResult) ExecResult {
-	merged := primary
-	if strings.TrimSpace(merged.Stdout) == "" {
-		merged.Stdout = fallback.Stdout
-	}
-	if strings.TrimSpace(merged.Stderr) == "" {
-		merged.Stderr = fallback.Stderr
-	}
-	if strings.TrimSpace(merged.Output) == "" {
-		merged.Output = fallback.Output
-	}
-	if merged.ExitCode == 0 {
-		merged.ExitCode = fallback.ExitCode
-	}
-	if !merged.Success {
-		merged.Success = fallback.Success
-	}
-	return merged
+	return execdomain.MergeResults(primary, fallback)
 }
 
 func writeAgentSessionArtifact(path string, info *AgentResumeInfo) error {
