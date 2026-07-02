@@ -2,14 +2,13 @@ package agentcompose
 
 import (
 	execdomain "agent-compose/internal/agentcompose/exec"
+	execcell "agent-compose/internal/agentcompose/exec/cell"
+	execresume "agent-compose/internal/agentcompose/exec/resume"
 	appconfig "agent-compose/internal/config"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -363,127 +362,13 @@ func loaderCommandLLMFacadeAgentModel(env map[string]string) (string, string) {
 }
 
 func (e *Executor) executeCell(ctx context.Context, session *Session, cellType, source string, stream CellExecutionStream) (NotebookCell, error) {
-	appconfig.ApplyDefaultGuestPaths(e.config)
-	source = strings.TrimSpace(source)
-	if source == "" {
-		return NotebookCell{}, fmt.Errorf("source is required")
+	executor := execcell.Executor{
+		Config:   e.config,
+		Store:    e.store,
+		Runtimes: e.runtimes,
+		Streams:  e.streams,
 	}
-
-	cellType, err := normalizeCellType(cellType)
-	if err != nil {
-		return NotebookCell{}, err
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, e.config.SessionStartTimeout)
-	defer cancel()
-	execCtx, execCancel := context.WithCancel(ctx)
-	defer execCancel()
-
-	vmState, err := e.store.GetVMState(session.Summary.ID)
-	if err != nil {
-		return NotebookCell{}, err
-	}
-	runtime, err := e.runtimes.ForSession(session)
-	if err != nil {
-		return NotebookCell{}, err
-	}
-
-	cellID := uuid.NewString()
-	hostCellDir := filepath.Join(filepath.Dir(session.Summary.WorkspacePath), "state", "cells", cellID)
-	if err := os.MkdirAll(hostCellDir, 0o755); err != nil {
-		return NotebookCell{}, fmt.Errorf("create cell state dir: %w", err)
-	}
-
-	guestCellDir := guestCellStateDir(e.config, cellID)
-	scriptName, command, args := cellExecSpec(cellType, guestCellDir)
-	hostScriptPath := filepath.Join(hostCellDir, scriptName)
-	if err := os.WriteFile(hostScriptPath, []byte(source), 0o644); err != nil {
-		return NotebookCell{}, fmt.Errorf("write cell script: %w", err)
-	}
-
-	startedAt := time.Now().UTC()
-	startedCell := NotebookCell{
-		ID:        cellID,
-		Type:      cellType,
-		Source:    source,
-		CreatedAt: startedAt,
-		Running:   true,
-	}
-	if stream.OnStart != nil {
-		if err := stream.OnStart(startedCell); err != nil {
-			return NotebookCell{}, err
-		}
-	}
-	e.streams.PublishCellStarted(session.Summary.ID, startedCell)
-
-	var streamErrMu sync.Mutex
-	var streamErr error
-	streamWriter := func(chunk ExecChunk) {
-		e.streams.PublishCellOutput(session.Summary.ID, cellID, chunk.Text, chunk.IsStderr)
-		if stream.OnChunk != nil {
-			if err := stream.OnChunk(cellID, chunk); err != nil {
-				streamErrMu.Lock()
-				if streamErr == nil {
-					streamErr = err
-					execCancel()
-				}
-				streamErrMu.Unlock()
-			}
-		}
-	}
-	result, err := runtime.ExecStream(execCtx, session, vmState, ExecSpec{
-		Command: command,
-		Args:    args,
-		Cwd:     e.config.GuestWorkspacePath,
-	}, streamWriter)
-	streamErrMu.Lock()
-	deferredStreamErr := streamErr
-	streamErrMu.Unlock()
-	if deferredStreamErr != nil {
-		return NotebookCell{}, deferredStreamErr
-	}
-	if err != nil {
-		return NotebookCell{}, err
-	}
-
-	if err := writeCellArtifacts(hostCellDir, source, result); err != nil {
-		return NotebookCell{}, err
-	}
-
-	cell := NotebookCell{
-		ID:        cellID,
-		Type:      cellType,
-		Source:    source,
-		Stdout:    result.Stdout,
-		Stderr:    result.Stderr,
-		Output:    result.Output,
-		ExitCode:  result.ExitCode,
-		Success:   result.Success,
-		CreatedAt: startedAt,
-	}
-	if err := e.store.AddCell(ctx, session, cell); err != nil {
-		return NotebookCell{}, err
-	}
-	e.streams.PublishCellCompleted(session.Summary.ID, cell)
-
-	eventLevel := "info"
-	eventType := "kernel.cell.succeeded"
-	eventMessage := fmt.Sprintf("executed %s cell in agent-compose guest", cellType)
-	if !result.Success {
-		eventLevel = "error"
-		eventType = "kernel.cell.failed"
-		eventMessage = firstNonEmpty(result.Stderr, fmt.Sprintf("%s cell failed with exit code %d", cellType, result.ExitCode))
-	}
-	event := SessionEvent{
-		ID:        uuid.NewString(),
-		Type:      eventType,
-		Level:     eventLevel,
-		Message:   eventMessage,
-		CreatedAt: time.Now().UTC(),
-	}
-	_ = e.store.AddEvent(ctx, session.Summary.ID, event)
-	e.streams.PublishEventAdded(session.Summary.ID, event)
-	return cell, nil
+	return executor.Execute(ctx, session, cellType, source, execcell.ExecutionStream(stream))
 }
 
 func normalizeCellType(cellType string) (string, error) {
@@ -523,11 +408,11 @@ func (a *execStreamAccumulator) result(exitCode int, success bool) ExecResult {
 }
 
 func hostSessionDir(session *Session) string {
-	return filepath.Dir(session.Summary.WorkspacePath)
+	return execresume.HostSessionDir(session)
 }
 
 func hostSessionHome(session *Session) string {
-	return filepath.Join(hostSessionDir(session), "home")
+	return execresume.HostSessionHome(session)
 }
 
 func guestCellStateDir(config *appconfig.Config, cellID string) string {
@@ -547,132 +432,27 @@ func mergeExecResults(primary, fallback ExecResult) ExecResult {
 }
 
 func writeAgentSessionArtifact(path string, info *AgentResumeInfo) error {
-	if info == nil {
-		return nil
-	}
-	data, err := json.MarshalIndent(info, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode agent session artifact: %w", err)
-	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
-		return fmt.Errorf("write agent session artifact: %w", err)
-	}
-	return nil
-}
-
-type storedAgentSessionState struct {
-	SessionID string `json:"sessionId"`
+	return execresume.WriteAgentSessionArtifact(path, info)
 }
 
 func loadStoredAgentSessionID(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var state storedAgentSessionState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(state.SessionID)
+	return execresume.LoadStoredAgentSessionID(path)
 }
 
 func collectAgentResumeInfo(session *Session, agent, agentSessionID, manifestPath string) *AgentResumeInfo {
-	provider := normalizeAgentKind(agent)
-	info := &AgentResumeInfo{
-		Provider:            provider,
-		SessionID:           strings.TrimSpace(agentSessionID),
-		SessionManifestPath: manifestPath,
-		UpdatedAt:           time.Now().UTC(),
-	}
-	statePath := filepath.Join(hostSessionDir(session), "state", "agents", "providers", provider+".json")
-	if stat, err := os.Stat(statePath); err == nil && !stat.IsDir() {
-		info.SessionStatePath = statePath
-		if info.SessionID == "" {
-			info.SessionID = loadStoredAgentSessionID(statePath)
-		}
-	}
-	info.SessionJSONLPaths = findAgentSessionJSONLPaths(hostSessionHome(session), provider, info.SessionID)
-	if info.Provider == "" && info.SessionID == "" && info.SessionStatePath == "" && info.SessionManifestPath == "" && len(info.SessionJSONLPaths) == 0 {
-		return nil
-	}
-	return info
+	return execresume.CollectAgentResumeInfo(session, agent, agentSessionID, manifestPath)
 }
 
 func findAgentSessionJSONLPaths(homeDir, provider, sessionID string) []string {
-	roots := agentSessionJSONLRoots(homeDir, provider)
-	if len(roots) == 0 {
-		return nil
-	}
-	seen := map[string]struct{}{}
-	var paths []string
-	for _, root := range roots {
-		if strings.TrimSpace(root) == "" {
-			continue
-		}
-		info, err := os.Stat(root)
-		if err != nil {
-			continue
-		}
-		if !info.IsDir() {
-			if shouldIncludeAgentJSONL(root, provider, sessionID) {
-				if _, ok := seen[root]; !ok {
-					seen[root] = struct{}{}
-					paths = append(paths, root)
-				}
-			}
-			continue
-		}
-		_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-			if walkErr != nil || entry == nil || entry.IsDir() {
-				return nil
-			}
-			if !shouldIncludeAgentJSONL(path, provider, sessionID) {
-				return nil
-			}
-			if _, ok := seen[path]; ok {
-				return nil
-			}
-			seen[path] = struct{}{}
-			paths = append(paths, path)
-			return nil
-		})
-	}
-	sort.Strings(paths)
-	return paths
+	return execresume.FindAgentSessionJSONLPaths(homeDir, provider, sessionID)
 }
 
 func agentSessionJSONLRoots(homeDir, provider string) []string {
-	switch provider {
-	case "codex":
-		return []string{
-			filepath.Join(homeDir, ".codex", "history.jsonl"),
-			filepath.Join(homeDir, ".codex", "sessions"),
-		}
-	case "claude":
-		return []string{
-			filepath.Join(homeDir, ".claude"),
-			filepath.Join(homeDir, ".config", "claude"),
-			filepath.Join(homeDir, ".config", "Claude"),
-		}
-	case "gemini":
-		return []string{
-			filepath.Join(homeDir, ".gemini"),
-			filepath.Join(homeDir, ".config", "gemini"),
-			filepath.Join(homeDir, ".local", "share", "gemini"),
-		}
-	default:
-		return nil
-	}
+	return execresume.AgentSessionJSONLRoots(homeDir, provider)
 }
 
 func shouldIncludeAgentJSONL(path, provider, sessionID string) bool {
-	if filepath.Ext(path) != ".jsonl" {
-		return false
-	}
-	if provider == "codex" && sessionID != "" && strings.Contains(path, string(filepath.Separator)+"sessions"+string(filepath.Separator)) {
-		return strings.Contains(filepath.Base(path), sessionID)
-	}
-	return true
+	return execresume.ShouldIncludeAgentJSONL(path, provider, sessionID)
 }
 
 func (e *Executor) executeAgent(ctx context.Context, session *Session, request ExecuteAgentRequest) (NotebookCell, SessionEvent, SessionEvent, error) {

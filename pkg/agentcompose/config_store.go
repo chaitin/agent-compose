@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	agentdomain "agent-compose/internal/agentcompose/agent"
 	configdomain "agent-compose/internal/agentcompose/config"
 	eventsdomain "agent-compose/internal/agentcompose/events"
 	loaderdomain "agent-compose/internal/agentcompose/loader"
@@ -668,7 +669,7 @@ func (s *ConfigStore) ensureWorkspaceNotReferencedByAgent(ctx context.Context, w
 }
 
 func normalizeEnvItems(items []SessionEnvVar) []SessionEnvVar {
-	return configEnvVarsToSession(configdomain.NormalizeEnvItems(sessionEnvVarsToConfig(items)))
+	return agentdomain.NormalizeEnvItems(items)
 }
 
 func encodeAgentEnvJSON(items []SessionEnvVar) (string, error) {

@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	agentdomain "agent-compose/internal/agentcompose/agent"
 	"context"
 	"errors"
 	"fmt"
@@ -409,27 +410,7 @@ func (s *Service) listAllSessions(ctx context.Context) ([]*Session, error) {
 }
 
 func agentRunSummaries(agentID string, sessions []*Session) (AgentCurrentRunSummary, *AgentLatestRunSummary) {
-	current := AgentCurrentRunSummary{}
-	var latest *AgentLatestRunSummary
-	for _, session := range sessions {
-		if !sessionHasAgentTag(session, agentID) {
-			continue
-		}
-		switch session.Summary.VMStatus {
-		case VMStatusPending, VMStatusRunning:
-			current.RunningSessionCount++
-		}
-		if latest == nil || session.Summary.UpdatedAt.After(latest.At) {
-			latest = &AgentLatestRunSummary{
-				RunType: "work_session",
-				Status:  session.Summary.VMStatus,
-				RunID:   session.Summary.ID,
-				Title:   session.Summary.Title,
-				At:      session.Summary.UpdatedAt,
-			}
-		}
-	}
-	return current, latest
+	return agentdomain.RunSummaries(agentID, sessions)
 }
 
 func envItemsFromProto(items []*agentcomposev1.SessionEnvVar) []SessionEnvVar {
