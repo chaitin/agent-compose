@@ -4,6 +4,7 @@ import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"agent-compose/pkg/projects"
+	sessionspkg "agent-compose/pkg/sessions"
 	"context"
 	"os"
 	"path/filepath"
@@ -139,8 +140,8 @@ func TestServiceAndBridgeReconcileMicrosandboxRuntimeTypeBranches(t *testing.T) 
 		t.Fatalf("service reconciled status = %q", reconciled.Summary.VMStatus)
 	}
 
-	bridge := &SessionRPCBridge{config: config, store: store, runtimes: runtimes}
-	reconciled, err = bridge.reconcileSessionRuntimeState(ctx, session)
+	bridge := sessionspkg.NewSessionRPCBridgeFromDeps(config, store, nil, nil, runtimes, nil, nil, nil, nil)
+	reconciled, err = bridge.ReconcileSessionRuntimeState(ctx, session)
 	if err != nil {
 		t.Fatalf("bridge reconcile returned error: %v", err)
 	}
@@ -162,7 +163,7 @@ func TestServiceAndBridgeReconcileMicrosandboxRuntimeTypeBranches(t *testing.T) 
 	if _, err := service.reconcileSessionRuntimeState(ctx, missingProxySession); err == nil {
 		t.Fatalf("service reconcile missing proxy returned nil error")
 	}
-	if _, err := bridge.reconcileSessionRuntimeState(ctx, missingProxySession); err == nil {
+	if _, err := bridge.ReconcileSessionRuntimeState(ctx, missingProxySession); err == nil {
 		t.Fatalf("bridge reconcile missing proxy returned nil error")
 	}
 }

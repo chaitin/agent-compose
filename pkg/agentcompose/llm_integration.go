@@ -51,7 +51,7 @@ func (c *LLMClient) Generate(ctx context.Context, prompt, modelName, outputSchem
 }
 
 func registerRuntimeLLMFacadeRoutes(app *echo.Echo, service *Service) {
-	llmpkg.RegisterRuntimeFacadeRoutes(app, llmpkg.NewService(service.config, service.store, service.configDB, service.llm.componentClient()))
+	llmpkg.RegisterRuntimeFacadeRoutes(app, llmpkg.NewService(service.config, service.store, service.configDB, service.llm))
 }
 
 func IsRuntimeLLMFacadeRequest(r *http.Request) bool {

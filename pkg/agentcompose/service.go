@@ -13,14 +13,20 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"agent-compose/pkg/agents"
+	"agent-compose/pkg/bus"
 	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/capproxy"
 	"agent-compose/pkg/dashboard"
+	"agent-compose/pkg/events"
+	"agent-compose/pkg/executor"
 	"agent-compose/pkg/images"
 	llmpkg "agent-compose/pkg/llm"
 	"agent-compose/pkg/loaders"
+	"agent-compose/pkg/projects"
+	"agent-compose/pkg/runtimes"
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/settings"
+	"agent-compose/pkg/storage"
 	"agent-compose/pkg/workspaces"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
@@ -29,31 +35,31 @@ import (
 
 type Service struct {
 	imageHandlers      *images.Service
-	dashboardHandlers  *DashboardService
-	capabilityHandlers *CapabilityService
-	workspaceHandlers  *WorkspaceService
-	settingsHandlers   *SettingsService
+	dashboardHandlers  *dashboard.Service
+	capabilityHandlers *capabilities.Service
+	workspaceHandlers  *workspaces.Service
+	settingsHandlers   *settings.Service
 	config             *appconfig.Config
-	store              *Store
-	configDB           *ConfigStore
-	driver             Driver
-	runtimes           RuntimeProvider
-	executor           *Executor
-	loaders            *LoaderManager
+	store              *storage.Store
+	configDB           *storage.ConfigStore
+	driver             runtimes.Driver
+	runtimes           runtimes.RuntimeProvider
+	executor           *executor.Executor
+	loaders            *loaders.LoaderManager
 	images             ImageBackend
 	ociImages          ImageBackend
 	autoImages         ImageBackend
-	llm                *LLMClient
-	cap                CapabilityProvider
-	bus                *LoaderBus
-	streams            *SessionStreamBroker
-	dashboard          *DashboardOverviewHub
-	events             *EventDispatcher
-	sessions           *SessionRPCBridge
-	agentHandlers      *AgentDefinitionService
+	llm                *llmpkg.LLMClient
+	cap                capabilities.Integration
+	bus                *bus.LoaderBus
+	streams            *sessions.SessionStreamBroker
+	dashboard          *dashboard.DashboardOverviewHub
+	events             *events.EventDispatcher
+	sessions           *sessions.SessionRPCBridge
+	agentHandlers      *agents.Service
 	sessionHandlers    *sessions.Service
-	loaderHandlers     *LoaderService
-	projectHandlers    *ProjectService
+	loaderHandlers     *loaders.Service
+	projectHandlers    *projects.Service
 	startedAt          time.Time
 	startOnce          sync.Once
 	startErr           error
@@ -74,45 +80,45 @@ type Service struct {
 
 func NewService(di do.Injector) (*Service, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
-	dashHub, _ := do.Invoke[*DashboardOverviewHub](di)
+	dashHub, _ := do.Invoke[*dashboard.DashboardOverviewHub](di)
 	if dashHub == nil {
 		rootCtx, _ := do.Invoke[context.Context](di)
 		if rootCtx == nil {
 			rootCtx = context.Background()
 		}
-		dashHub = newDashboardOverviewHub(rootCtx, newDashboardOverviewAggregator(do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di)), 250*time.Millisecond)
+		dashHub = dashboard.NewHub(rootCtx, dashboard.NewAggregator(do.MustInvoke[*storage.Store](di), do.MustInvoke[*storage.ConfigStore](di)), 250*time.Millisecond)
 	}
-	capProvider := do.MustInvoke[capabilityIntegration](di)
+	capProvider := do.MustInvoke[capabilities.Integration](di)
 	imageBackends, err := imageBackendsFromDI(di)
 	if err != nil {
 		return nil, err
 	}
-	projectHandlers, _ := do.Invoke[*ProjectService](di)
+	projectHandlers, _ := do.Invoke[*projects.Service](di)
 	service := &Service{
 		imageHandlers:      images.NewService(imageBackends.docker, imageBackends.oci, imageBackends.auto),
 		dashboardHandlers:  dashboard.NewService(dashHub),
-		capabilityHandlers: capabilities.NewService(config, do.MustInvoke[*ConfigStore](di), capProvider),
-		workspaceHandlers:  workspaces.NewService(config, do.MustInvoke[*ConfigStore](di)),
-		settingsHandlers:   settings.NewService(do.MustInvoke[*ConfigStore](di), workspaces.NewService(config, do.MustInvoke[*ConfigStore](di)), capabilities.NewService(config, do.MustInvoke[*ConfigStore](di), capProvider)),
+		capabilityHandlers: capabilities.NewService(config, do.MustInvoke[*storage.ConfigStore](di), capProvider),
+		workspaceHandlers:  workspaces.NewService(config, do.MustInvoke[*storage.ConfigStore](di)),
+		settingsHandlers:   settings.NewService(do.MustInvoke[*storage.ConfigStore](di), workspaces.NewService(config, do.MustInvoke[*storage.ConfigStore](di)), capabilities.NewService(config, do.MustInvoke[*storage.ConfigStore](di), capProvider)),
 		config:             config,
-		store:              do.MustInvoke[*Store](di),
-		configDB:           do.MustInvoke[*ConfigStore](di),
-		driver:             do.MustInvoke[Driver](di),
-		runtimes:           do.MustInvoke[RuntimeProvider](di),
-		executor:           do.MustInvoke[*Executor](di),
-		loaders:            do.MustInvoke[*LoaderManager](di),
+		store:              do.MustInvoke[*storage.Store](di),
+		configDB:           do.MustInvoke[*storage.ConfigStore](di),
+		driver:             do.MustInvoke[runtimes.Driver](di),
+		runtimes:           do.MustInvoke[runtimes.RuntimeProvider](di),
+		executor:           do.MustInvoke[*executor.Executor](di),
+		loaders:            do.MustInvoke[*loaders.LoaderManager](di),
 		images:             imageBackends.docker,
 		ociImages:          imageBackends.oci,
 		autoImages:         imageBackends.auto,
-		llm:                do.MustInvoke[*LLMClient](di),
+		llm:                do.MustInvoke[*llmpkg.LLMClient](di),
 		cap:                capProvider,
-		bus:                do.MustInvoke[*LoaderBus](di),
-		streams:            do.MustInvoke[*SessionStreamBroker](di),
+		bus:                do.MustInvoke[*bus.LoaderBus](di),
+		streams:            do.MustInvoke[*sessions.SessionStreamBroker](di),
 		dashboard:          dashHub,
-		events:             NewEventDispatcher(do.MustInvoke[context.Context](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderBus](di)),
-		sessions:           do.MustInvoke[*SessionRPCBridge](di),
-		agentHandlers:      agents.NewService(config, do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*SessionRPCBridge](di).componentBridge(), do.MustInvoke[*SessionStreamBroker](di).componentBroker()),
-		loaderHandlers:     loaders.NewService(do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderManager](di), do.MustInvoke[*LoaderBus](di)),
+		events:             events.NewEventDispatcher(do.MustInvoke[context.Context](di), do.MustInvoke[*storage.ConfigStore](di), do.MustInvoke[*bus.LoaderBus](di)),
+		sessions:           do.MustInvoke[*sessions.SessionRPCBridge](di),
+		agentHandlers:      agents.NewService(config, do.MustInvoke[*storage.Store](di), do.MustInvoke[*storage.ConfigStore](di), do.MustInvoke[*sessions.SessionRPCBridge](di), do.MustInvoke[*sessions.SessionStreamBroker](di)),
+		loaderHandlers:     loaders.NewService(do.MustInvoke[*storage.ConfigStore](di), do.MustInvoke[*loaders.LoaderManager](di), do.MustInvoke[*bus.LoaderBus](di)),
 		projectHandlers:    projectHandlers,
 		startedAt:          time.Now().UTC(),
 	}
@@ -120,7 +126,7 @@ func NewService(di do.Injector) (*Service, error) {
 		service.projectHandlers = newProjectServiceFromDeps(service)
 	}
 	service.loaders.SetProjectAgentRunner(service.projectHandlers)
-	service.sessionHandlers = sessions.NewService(service.store, service.executor, service.bus, service.streams.componentBroker(), service.sessions.componentBridge(), service.resolveSessionAgentConfigForSessions)
+	service.sessionHandlers = sessions.NewService(service.store, service.executor, service.bus, service.streams, service.sessions, service.resolveSessionAgentConfigForSessions)
 	return service, nil
 }
 
@@ -132,23 +138,23 @@ func Setup(di do.Injector) {
 }
 
 func Register(di do.Injector) {
-	do.Provide(di, newStore)
-	do.Provide(di, newConfigStore)
-	do.Provide(di, NewRuntimeProvider)
+	do.Provide(di, storage.NewStore)
+	do.Provide(di, storage.NewConfigStore)
+	do.Provide(di, runtimes.NewRuntimeProvider)
 	do.Provide(di, newSessionRuntimeEnvPreparer)
 	do.Provide(di, newExecutorLLMFacadeEnvPreparer)
-	do.Provide(di, NewDriver)
-	do.Provide(di, NewExecutor)
-	do.Provide(di, newLLMClient)
+	do.Provide(di, runtimes.NewDriver)
+	do.Provide(di, executor.NewExecutor)
+	do.Provide(di, llmpkg.NewLLMClient)
 	do.Provide(di, capabilities.NewCapabilityProvider)
 	do.Provide(di, capabilities.NewCapProxyServer)
-	do.Provide(di, NewLoaderBus)
-	do.Provide(di, NewSessionStreamBroker)
+	do.Provide(di, bus.NewLoaderBus)
+	do.Provide(di, sessions.NewSessionStreamBroker)
 	do.Provide(di, newExecutorStreamPublisher)
 	do.Provide(di, dashboard.NewDashboardOverviewAggregator)
 	do.Provide(di, dashboard.NewDashboardOverviewHub)
 	do.Provide(di, newLoaderEngine)
-	do.Provide(di, NewSessionRPCBridge)
+	do.Provide(di, sessions.NewSessionRPCBridge)
 	do.Provide(di, newImageBackends)
 	do.Provide(di, newLoaderManager)
 	do.Provide(di, newProjectService)
@@ -229,22 +235,12 @@ func (s *Service) sessionsService() *sessions.Service {
 		return s.sessionHandlers
 	}
 	if s.streams == nil {
-		s.streams = &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}}
+		s.streams, _ = sessions.NewSessionStreamBroker(nil)
 	}
 	if s.sessions == nil {
-		s.sessions = &SessionRPCBridge{
-			config:    s.config,
-			store:     s.store,
-			configDB:  s.configDB,
-			driver:    s.driver,
-			runtimes:  s.runtimes,
-			bus:       s.bus,
-			streams:   s.streams,
-			cap:       s.cap,
-			dashboard: s.dashboard,
-		}
+		s.sessions = sessions.NewSessionRPCBridgeFromDeps(s.config, s.store, s.configDB, s.driver, s.runtimes, s.bus, s.streams, s.cap, s.dashboard)
 	}
-	s.sessionHandlers = sessions.NewService(s.store, s.executor, s.bus, s.streams.componentBroker(), s.sessions.componentBridge(), s.resolveSessionAgentConfigForSessions)
+	s.sessionHandlers = sessions.NewService(s.store, s.executor, s.bus, s.streams, s.sessions, s.resolveSessionAgentConfigForSessions)
 	return s.sessionHandlers
 }
 
@@ -286,7 +282,7 @@ func (s *Service) ResumeSession(ctx context.Context, req *connect.Request[agentc
 
 func (s *Service) reconcileSessionRuntimeState(ctx context.Context, session *Session) (*Session, error) {
 	_ = s.sessionsService()
-	return s.sessions.componentBridge().ReconcileSessionRuntimeState(ctx, session)
+	return s.sessions.ReconcileSessionRuntimeState(ctx, session)
 }
 
 func (s *Service) StopSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
@@ -363,11 +359,7 @@ func (s *Service) ListSessionEvents(ctx context.Context, req *connect.Request[ag
 func (s *Service) Generate(ctx context.Context, req *connect.Request[agentcomposev1.GenerateLLMRequest]) (*connect.Response[agentcomposev1.GenerateLLMResponse], error) {
 	var service *llmpkg.Service
 	if s != nil {
-		var client *llmpkg.LLMClient
-		if s.llm != nil {
-			client = s.llm.componentClient()
-		}
-		service = llmpkg.NewService(s.config, s.store, s.configDB, client)
+		service = llmpkg.NewService(s.config, s.store, s.configDB, s.llm)
 	}
 	return service.Generate(ctx, req)
 }

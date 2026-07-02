@@ -4,6 +4,7 @@ import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	executorpkg "agent-compose/pkg/executor"
+	llmpkg "agent-compose/pkg/llm"
 	loaderspkg "agent-compose/pkg/loaders"
 	sessionspkg "agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage"
@@ -208,22 +209,25 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	runtime := &fakeLoaderAgentRuntime{}
 	driver := &fakeSessionDriver{}
 	runtimes := fixedRuntimeProvider{runtime: runtime}
-	executor := &Executor{config: config, store: store, runtimes: runtimes}
+	streams, _ := sessionspkg.NewSessionStreamBroker(nil)
+	executor := executorpkg.New(config, store, configDB, runtimes, streams, executorLLMFacadeEnvPreparer)
 	capProvider := newTestCapabilityProvider("", "")
 	bus := NewLoaderBusWithBuffer(4)
-	sessions := &SessionRPCBridge{config: config, store: store, configDB: configDB, driver: driver, runtimes: runtimes, bus: bus}
+	llmClient := llmpkg.NewClient(config, configDB, nil)
+	sessionBridge := sessionspkg.NewSessionRPCBridgeFromDeps(config, store, configDB, driver, runtimes, bus, streams, capProvider, nil)
 	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
 		Config:             config,
 		RootCtx:            ctx,
 		Store:              store,
 		ConfigDB:           configDB,
 		Driver:             driver,
-		Executor:           loaderspkg.NewExecutor(config, store, configDB, runtimes, nil),
-		LLM:                (&LLMClient{config: config, configDB: configDB}).componentClient(),
+		Executor:           loaderspkg.NewExecutor(config, store, configDB, runtimes, streams),
+		LLM:                llmClient,
 		CapabilityProvider: capProvider,
 		Bus:                bus,
+		Streams:            streams,
 		Engine:             &recordingLoaderEngine{},
-		Sessions:           sessions.componentBridge(),
+		Sessions:           sessionBridge,
 	})
 
 	di := do.New()
@@ -235,13 +239,17 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	do.ProvideValue[Driver](di, driver)
 	do.ProvideValue[RuntimeProvider](di, runtimes)
 	do.ProvideValue(di, executor)
+	do.ProvideValue(di, &Executor{config: config, store: store, configDB: configDB, runtimes: runtimes, streams: &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}}})
 	do.ProvideValue(di, manager)
+	do.ProvideValue(di, llmClient)
 	do.ProvideValue(di, &LLMClient{config: config, configDB: configDB})
 	do.ProvideValue[capabilityIntegration](di, capProvider)
 	do.ProvideValue(di, bus)
+	do.ProvideValue(di, streams)
 	do.ProvideValue(di, &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}})
 	do.ProvideValue[LoaderEngine](di, &recordingLoaderEngine{})
-	do.ProvideValue(di, sessions)
+	do.ProvideValue(di, sessionBridge)
+	do.ProvideValue(di, &SessionRPCBridge{config: config, store: store, configDB: configDB, driver: driver, runtimes: runtimes, bus: bus, streams: &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}}})
 
 	if _, err := NewExecutor(di); err != nil {
 		t.Fatalf("NewExecutor returned error: %v", err)

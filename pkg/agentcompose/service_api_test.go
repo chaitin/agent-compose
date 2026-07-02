@@ -2,8 +2,10 @@ package agentcompose
 
 import (
 	appconfig "agent-compose/pkg/config"
+	dashboardpkg "agent-compose/pkg/dashboard"
 	driverpkg "agent-compose/pkg/driver"
 	executorpkg "agent-compose/pkg/executor"
+	llmpkg "agent-compose/pkg/llm"
 	loaderspkg "agent-compose/pkg/loaders"
 	sessionspkg "agent-compose/pkg/sessions"
 	settingspkg "agent-compose/pkg/settings"
@@ -100,15 +102,11 @@ func TestServiceGenerateLLMChatCompletionsProtocol(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	service := &Service{
-		llm: &LLMClient{
-			config: &appconfig.Config{
-				LLMAPIEndpoint: server.URL,
-				LLMAPIProtocol: llmAPIProtocolChatCompletions,
-				LLMModel:       "model-a",
-			},
-			configDB: newTestConfigStore(t),
-			client:   server.Client(),
-		},
+		llm: llmpkg.NewClient(&appconfig.Config{
+			LLMAPIEndpoint: server.URL,
+			LLMAPIProtocol: llmAPIProtocolChatCompletions,
+			LLMModel:       "model-a",
+		}, newTestConfigStore(t), server.Client()),
 	}
 	resp, err := service.Generate(ctx, connect.NewRequest(&agentcomposev1.GenerateLLMRequest{
 		Prompt: "hello",
@@ -525,8 +523,7 @@ func testServiceEnsureProxyReadyStartPaths(t *testing.T) {
 	if err := service.store.UpdateSession(ctx, session); err != nil {
 		t.Fatalf("UpdateSession stopped returned error: %v", err)
 	}
-	service.sessions.runtimes = service.runtimes
-	bridgeLoaded, bridgeProxy, err := service.sessions.ensureSessionProxyReady(ctx, sessionID)
+	bridgeLoaded, bridgeProxy, err := service.ensureSessionProxyReady(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("bridge ensureSessionProxyReady returned error: %v", err)
 	}
@@ -536,7 +533,7 @@ func testServiceEnsureProxyReadyStartPaths(t *testing.T) {
 	if _, err := service.reconcileSessionRuntimeState(ctx, nil); err != nil {
 		t.Fatalf("reconcile nil returned error: %v", err)
 	}
-	if _, err := service.sessions.reconcileSessionRuntimeState(ctx, nil); err != nil {
+	if _, err := service.sessions.ReconcileSessionRuntimeState(ctx, nil); err != nil {
 		t.Fatalf("bridge reconcile nil returned error: %v", err)
 	}
 }
@@ -762,25 +759,25 @@ func newTestServiceAPIHarness(t *testing.T) (*Service, *fakeLoaderAgentRuntime, 
 	runtime := &fakeLoaderAgentRuntime{}
 	runtimes := fixedRuntimeProvider{runtime: runtime}
 	driver := &fakeSessionDriver{}
-	streams := &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}}
-	executor := &Executor{config: config, store: store, configDB: configDB, runtimes: runtimes, streams: streams}
+	streams, _ := sessionspkg.NewSessionStreamBroker(nil)
+	executor := executorpkg.New(config, store, configDB, runtimes, streams, executorLLMFacadeEnvPreparer)
 	bus := NewLoaderBusWithBuffer(256)
-	aggregator := newDashboardOverviewAggregator(store, configDB)
-	dashboard := newDashboardOverviewHub(ctx, aggregator, 10*time.Millisecond)
-	llmClient := &LLMClient{config: config, configDB: configDB, client: llmServer.Client()}
-	sessions := &SessionRPCBridge{config: config, store: store, configDB: configDB, driver: driver, bus: bus, streams: streams, dashboard: dashboard}
+	aggregator := dashboardpkg.NewAggregator(store, configDB)
+	dashboard := dashboardpkg.NewHub(ctx, aggregator, 10*time.Millisecond)
+	llmClient := llmpkg.NewClient(config, configDB, llmServer.Client())
+	sessionBridge := sessionspkg.NewSessionRPCBridgeFromDeps(config, store, configDB, driver, runtimes, bus, streams, nil, dashboard)
 	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
 		Config:    config,
 		RootCtx:   ctx,
 		Store:     store,
 		ConfigDB:  configDB,
 		Driver:    driver,
-		Executor:  loaderspkg.NewExecutor(config, store, configDB, runtimes, streams.componentBroker()),
-		LLM:       llmClient.componentClient(),
+		Executor:  loaderspkg.NewExecutor(config, store, configDB, runtimes, streams),
+		LLM:       llmClient,
 		Bus:       bus,
-		Streams:   streams.componentBroker(),
+		Streams:   streams,
 		Engine:    &QJSLoaderEngine{},
-		Sessions:  sessions.componentBridge(),
+		Sessions:  sessionBridge,
 		Dashboard: dashboard,
 	})
 	service := &Service{
@@ -795,7 +792,7 @@ func newTestServiceAPIHarness(t *testing.T) (*Service, *fakeLoaderAgentRuntime, 
 		bus:       bus,
 		streams:   streams,
 		dashboard: dashboard,
-		sessions:  sessions,
+		sessions:  sessionBridge,
 	}
 	return service, runtime, driver
 }

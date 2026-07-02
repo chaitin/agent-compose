@@ -3,6 +3,7 @@ package agentcompose
 import (
 	appconfig "agent-compose/pkg/config"
 	executorpkg "agent-compose/pkg/executor"
+	sessionspkg "agent-compose/pkg/sessions"
 	"context"
 	"path/filepath"
 	"strings"
@@ -46,7 +47,7 @@ func newExecutorLLMFacadeEnvPreparer(do.Injector) (executorpkg.LLMFacadeEnvPrepa
 }
 
 func newExecutorStreamPublisher(di do.Injector) (executorpkg.StreamPublisher, error) {
-	return do.MustInvoke[*SessionStreamBroker](di).componentBroker(), nil
+	return do.MustInvoke[*sessionspkg.SessionStreamBroker](di), nil
 }
 
 func (e *Executor) componentExecutor() *executorpkg.Executor {

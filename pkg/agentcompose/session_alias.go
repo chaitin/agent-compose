@@ -209,5 +209,5 @@ func parseOptionalRFC3339(raw, field string) (time.Time, error) {
 }
 
 func registerProxyRoutes(app *echo.Echo, service *Service) {
-	sessions.RegisterProxyRoutes(app, service.config, service.store, service.sessions.componentBridge())
+	sessions.RegisterProxyRoutes(app, service.config, service.store, service.sessions)
 }

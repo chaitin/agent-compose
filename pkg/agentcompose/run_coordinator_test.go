@@ -10,7 +10,9 @@ import (
 
 	"connectrpc.com/connect"
 
+	executorpkg "agent-compose/pkg/executor"
 	loaderspkg "agent-compose/pkg/loaders"
+	sessionspkg "agent-compose/pkg/sessions"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
@@ -215,10 +217,10 @@ func setupRunPreparationProject(t *testing.T, spec *agentcomposev2.ProjectSpec, 
 	service.driver = &fakeSessionDriver{}
 	runtime := &fakeLoaderAgentRuntime{}
 	runtimes := fixedRuntimeProvider{runtime: runtime}
-	streams := &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}}
+	streams, _ := sessionspkg.NewSessionStreamBroker(nil)
 	service.runtimes = runtimes
 	service.streams = streams
-	service.executor = &Executor{config: service.config, store: service.store, configDB: store, runtimes: runtimes, streams: streams}
+	service.executor = executorpkg.New(service.config, service.store, store, runtimes, streams, executorLLMFacadeEnvPreparer)
 	ctx := context.Background()
 	composePath := filepath.Join(projectDir, "agent-compose.yml")
 	resp, err := service.ApplyProject(ctx, connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
@@ -279,18 +281,14 @@ func runServiceFakeRuntime(t *testing.T, service *Service) *fakeLoaderAgentRunti
 
 func newRunServiceLoaderManager(t testing.TB, service *Service) *LoaderManager {
 	t.Helper()
-	var componentStreams *loaderspkg.SessionStreamBroker
-	if service.streams != nil {
-		componentStreams = service.streams.componentBroker()
-	}
 	return newTestLoaderManager(t, loaderspkg.ManagerDeps{
 		Config:             service.config,
 		RootCtx:            context.Background(),
 		Store:              service.store,
 		ConfigDB:           service.configDB,
 		Driver:             service.driver,
-		Executor:           loaderspkg.NewExecutor(service.config, service.store, service.configDB, service.runtimes, componentStreams),
-		Streams:            componentStreams,
+		Executor:           loaderspkg.NewExecutor(service.config, service.store, service.configDB, service.runtimes, service.streams),
+		Streams:            service.streams,
 		Bus:                NewLoaderBusWithBuffer(16),
 		Engine:             &QJSLoaderEngine{},
 		ProjectAgentRunner: service.projectService(),

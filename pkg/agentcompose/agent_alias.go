@@ -32,11 +32,11 @@ func (s *Service) agentDefinitionService() *AgentDefinitionService {
 	}
 	var sessionHandler agentspkg.SessionHandler
 	if s.sessions != nil {
-		sessionHandler = s.sessions.componentBridge()
+		sessionHandler = s.sessions
 	}
 	var streams *sessionspkg.SessionStreamBroker
 	if s.streams != nil {
-		streams = s.streams.componentBroker()
+		streams = s.streams
 	}
 	s.agentHandlers = agentspkg.NewService(s.config, s.store, s.configDB, sessionHandler, streams)
 	return s.agentHandlers

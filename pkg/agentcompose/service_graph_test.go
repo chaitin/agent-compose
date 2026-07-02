@@ -88,7 +88,7 @@ func TestRegisterSharesImageBackendsAcrossServiceGraph(t *testing.T) {
 	assertBackendField(t, do.MustInvoke[*ProjectService](di), "images", backends.docker)
 
 	publisher := do.MustInvoke[executorpkg.StreamPublisher](di)
-	if publisher == nil || publisher != service.streams.componentBroker() {
+	if publisher == nil || publisher != service.streams {
 		t.Fatalf("executor stream publisher = %T/%p, want service stream broker", publisher, publisher)
 	}
 	if preparer := do.MustInvoke[executorpkg.LLMFacadeEnvPreparer](di); preparer == nil {

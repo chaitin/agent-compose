@@ -5,9 +5,14 @@ import (
 
 	"github.com/samber/do/v2"
 
+	"agent-compose/pkg/bus"
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/executor"
+	llmpkg "agent-compose/pkg/llm"
 	"agent-compose/pkg/loaders"
 	"agent-compose/pkg/projects"
+	"agent-compose/pkg/runtimes"
+	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage"
 )
 
@@ -23,17 +28,17 @@ func newLoaderManager(di do.Injector) (*LoaderManager, error) {
 	manager, err := loaders.NewManager(loaders.ManagerDeps{
 		Config:             do.MustInvoke[*appconfig.Config](di),
 		RootCtx:            do.MustInvoke[context.Context](di),
-		Store:              do.MustInvoke[*Store](di),
-		ConfigDB:           do.MustInvoke[*ConfigStore](di),
-		Driver:             do.MustInvoke[Driver](di),
-		Executor:           loaders.NewExecutor(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[RuntimeProvider](di), do.MustInvoke[*SessionStreamBroker](di).componentBroker()),
+		Store:              do.MustInvoke[*storage.Store](di),
+		ConfigDB:           do.MustInvoke[*storage.ConfigStore](di),
+		Driver:             do.MustInvoke[runtimes.Driver](di),
+		Executor:           loaders.NewExecutor(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*storage.Store](di), do.MustInvoke[*storage.ConfigStore](di), do.MustInvoke[runtimes.RuntimeProvider](di), do.MustInvoke[*sessions.SessionStreamBroker](di)),
 		Images:             imageBackends.docker,
-		LLM:                do.MustInvoke[*LLMClient](di).componentClient(),
+		LLM:                do.MustInvoke[*llmpkg.LLMClient](di),
 		CapabilityProvider: do.MustInvoke[capabilityIntegration](di),
-		Bus:                do.MustInvoke[*LoaderBus](di),
-		Streams:            do.MustInvoke[*SessionStreamBroker](di).componentBroker(),
+		Bus:                do.MustInvoke[*bus.LoaderBus](di),
+		Streams:            do.MustInvoke[*sessions.SessionStreamBroker](di),
 		Engine:             do.MustInvoke[LoaderEngine](di),
-		Sessions:           do.MustInvoke[*SessionRPCBridge](di).componentBridge(),
+		Sessions:           do.MustInvoke[*sessions.SessionRPCBridge](di),
 		Dashboard:          mustDashboardHub(di),
 	})
 	if err != nil {
@@ -54,15 +59,15 @@ func newProjectService(di do.Injector) (*ProjectService, error) {
 	}
 	return newProjectServiceFromDeps(&Service{
 		config:    do.MustInvoke[*appconfig.Config](di),
-		store:     do.MustInvoke[*Store](di),
-		configDB:  do.MustInvoke[*ConfigStore](di),
-		driver:    do.MustInvoke[Driver](di),
-		executor:  do.MustInvoke[*Executor](di),
+		store:     do.MustInvoke[*storage.Store](di),
+		configDB:  do.MustInvoke[*storage.ConfigStore](di),
+		driver:    do.MustInvoke[runtimes.Driver](di),
+		executor:  do.MustInvoke[*executor.Executor](di),
 		images:    imageBackends.docker,
-		loaders:   do.MustInvoke[*LoaderManager](di),
+		loaders:   do.MustInvoke[*loaders.LoaderManager](di),
 		cap:       do.MustInvoke[capabilityIntegration](di),
-		bus:       do.MustInvoke[*LoaderBus](di),
-		streams:   do.MustInvoke[*SessionStreamBroker](di),
+		bus:       do.MustInvoke[*bus.LoaderBus](di),
+		streams:   do.MustInvoke[*sessions.SessionStreamBroker](di),
 		dashboard: mustDashboardHub(di),
 	}), nil
 }
@@ -76,33 +81,25 @@ func projectServiceDeps(s *Service) projects.ServiceDeps {
 	if s == nil {
 		return projects.ServiceDeps{}
 	}
-	var executorComponent *projects.Executor
-	if s.executor != nil {
-		executorComponent = s.executor.componentExecutor()
-	}
-	var streams *projects.SessionStreamBroker
-	if s.streams != nil {
-		streams = s.streams.componentBroker()
-	}
 	return projects.ServiceDeps{
 		Config:    s.config,
 		Store:     s.store,
 		ConfigDB:  s.configDB,
 		Driver:    s.driver,
-		Executor:  executorComponent,
+		Executor:  s.executor,
 		Images:    s.images,
 		Loaders:   s.loaders,
 		Cap:       s.cap,
 		Bus:       s.bus,
-		Streams:   streams,
+		Streams:   s.streams,
 		Dashboard: s.dashboard,
 	}
 }
 
-func newStore(di do.Injector) (*Store, error) {
+func newStore(di do.Injector) (*storage.Store, error) {
 	return storage.NewStore(di)
 }
 
-func newConfigStore(di do.Injector) (*ConfigStore, error) {
+func newConfigStore(di do.Injector) (*storage.ConfigStore, error) {
 	return storage.NewConfigStore(di)
 }
