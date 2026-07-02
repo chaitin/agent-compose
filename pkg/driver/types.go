@@ -17,6 +17,7 @@ type SessionSummary struct {
 	ID            string    `json:"id"`
 	Driver        string    `json:"driver"`
 	GuestImage    string    `json:"guest_image,omitempty"`
+	PullPolicy    string    `json:"pull_policy,omitempty"`
 	RuntimeRef    string    `json:"runtime_ref,omitempty"`
 	WorkspacePath string    `json:"workspace_path"`
 	CreatedAt     time.Time `json:"created_at"`

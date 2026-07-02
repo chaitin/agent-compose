@@ -112,6 +112,10 @@ func (r *LoaderSessionRunner) Ensure(ctx context.Context, loader Loader, request
 		return nil, "", err
 	}
 	session.ProviderEnvItems = providerEnvItems
+	if request.PullPolicy != "" {
+		session.Summary.PullPolicy = request.PullPolicy
+		_ = m.store.UpdateSession(ctx, session)
+	}
 	if err := prepareSessionWorkspace(ctx, m.config, m.configDB, session); err != nil {
 		session.Summary.VMStatus = VMStatusFailed
 		_ = m.store.UpdateSession(ctx, session)

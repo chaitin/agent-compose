@@ -55,6 +55,7 @@ type SessionSummary struct {
 	Driver        string       `json:"driver"`
 	VMStatus      string       `json:"vm_status"`
 	GuestImage    string       `json:"guest_image,omitempty"`
+	PullPolicy    string       `json:"pull_policy,omitempty"`
 	RuntimeRef    string       `json:"runtime_ref,omitempty"`
 	WorkspacePath string       `json:"workspace_path"`
 	ProxyPath     string       `json:"proxy_path"`
