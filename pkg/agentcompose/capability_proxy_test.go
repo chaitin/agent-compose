@@ -8,20 +8,20 @@ import (
 
 func TestResolveCapabilitySession(t *testing.T) {
 	ctx := context.Background()
-	bridge, _ := newTestSessionRPCBridge(t)
+	_, _, store := newTestSessionRPCBridgeWithStore(t)
 	// The capset set lives in session tags; only the token lives in env.
-	session, err := bridge.store.CreateSession(ctx, "cap", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil,
+	session, err := store.CreateSession(ctx, "cap", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil,
 		[]SessionEnvVar{{Name: capabilitySessionTokenEnvName, Value: "session-token", Secret: true}},
 		[]SessionTag{{Name: capabilityCapsetTagName, Value: "dev"}, {Name: capabilityCapsetTagName, Value: "data"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	session.Summary.VMStatus = VMStatusRunning
-	if err := bridge.store.UpdateSession(ctx, session); err != nil {
+	if err := store.UpdateSession(ctx, session); err != nil {
 		t.Fatal(err)
 	}
 
-	binding, err := bridge.store.ResolveCapabilitySession(ctx, "session-token")
+	binding, err := store.ResolveCapabilitySession(ctx, "session-token")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,10 +33,10 @@ func TestResolveCapabilitySession(t *testing.T) {
 	}
 
 	session.Summary.VMStatus = VMStatusStopped
-	if err := bridge.store.UpdateSession(ctx, session); err != nil {
+	if err := store.UpdateSession(ctx, session); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bridge.store.ResolveCapabilitySession(ctx, "session-token"); err == nil {
+	if _, err := store.ResolveCapabilitySession(ctx, "session-token"); err == nil {
 		t.Fatal("expected stopped session capability token to be rejected")
 	}
 }

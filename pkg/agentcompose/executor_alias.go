@@ -28,7 +28,7 @@ type Executor struct {
 	store     *Store
 	configDB  *ConfigStore
 	runtimes  RuntimeProvider
-	streams   *SessionStreamBroker
+	streams   *sessionspkg.SessionStreamBroker
 	component *executorpkg.Executor
 }
 
@@ -38,7 +38,7 @@ func NewExecutor(di do.Injector) (*Executor, error) {
 		store:    do.MustInvoke[*Store](di),
 		configDB: do.MustInvoke[*ConfigStore](di),
 		runtimes: do.MustInvoke[RuntimeProvider](di),
-		streams:  do.MustInvoke[*SessionStreamBroker](di),
+		streams:  do.MustInvoke[*sessionspkg.SessionStreamBroker](di),
 	}, nil
 }
 

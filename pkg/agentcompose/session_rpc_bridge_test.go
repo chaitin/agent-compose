@@ -3,6 +3,7 @@ package agentcompose
 import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/storage"
 	"context"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 
+	sessionspkg "agent-compose/pkg/sessions"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
@@ -37,7 +39,7 @@ func (d *fakeSessionDriver) StopSessionVM(ctx context.Context, session *Session)
 	return nil
 }
 
-func TestSessionRPCBridgeWrapperCallJSONSmoke(t *testing.T) {
+func TestSessionRPCBridgeCallJSONSmoke(t *testing.T) {
 	ctx := context.Background()
 	bridge, driver := newTestSessionRPCBridge(t)
 
@@ -57,7 +59,12 @@ func TestSessionRPCBridgeWrapperCallJSONSmoke(t *testing.T) {
 	}
 }
 
-func newTestSessionRPCBridge(t *testing.T) (*SessionRPCBridge, *fakeSessionDriver) {
+func newTestSessionRPCBridge(t *testing.T) (*sessionspkg.SessionRPCBridge, *fakeSessionDriver) {
+	bridge, driver, _ := newTestSessionRPCBridgeWithStore(t)
+	return bridge, driver
+}
+
+func newTestSessionRPCBridgeWithStore(t *testing.T) (*sessionspkg.SessionRPCBridge, *fakeSessionDriver, *storage.Store) {
 	t.Helper()
 	root := t.TempDir()
 	config := &appconfig.Config{
@@ -79,11 +86,7 @@ func newTestSessionRPCBridge(t *testing.T) (*SessionRPCBridge, *fakeSessionDrive
 		DbAddr:   filepath.Join(root, "data.db"),
 	})
 	driver := &fakeSessionDriver{}
-	return &SessionRPCBridge{
-		config:   config,
-		store:    mustTestStore(t, config),
-		configDB: configDB,
-		driver:   driver,
-		cap:      newTestCapabilityProvider("", ""),
-	}, driver
+	streams, _ := sessionspkg.NewSessionStreamBroker(nil)
+	store := mustTestStore(t, config)
+	return sessionspkg.NewSessionRPCBridgeFromDeps(config, store, configDB, driver, nil, nil, streams, newTestCapabilityProvider("", ""), nil), driver, store
 }

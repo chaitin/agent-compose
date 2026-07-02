@@ -239,17 +239,15 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	do.ProvideValue[Driver](di, driver)
 	do.ProvideValue[RuntimeProvider](di, runtimes)
 	do.ProvideValue(di, executor)
-	do.ProvideValue(di, &Executor{config: config, store: store, configDB: configDB, runtimes: runtimes, streams: &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}}})
+	do.ProvideValue(di, &Executor{config: config, store: store, configDB: configDB, runtimes: runtimes, streams: streams})
 	do.ProvideValue(di, manager)
 	do.ProvideValue(di, llmClient)
 	do.ProvideValue(di, &LLMClient{config: config, configDB: configDB})
 	do.ProvideValue[capabilityIntegration](di, capProvider)
 	do.ProvideValue(di, bus)
 	do.ProvideValue(di, streams)
-	do.ProvideValue(di, &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}})
 	do.ProvideValue[LoaderEngine](di, &recordingLoaderEngine{})
 	do.ProvideValue(di, sessionBridge)
-	do.ProvideValue(di, &SessionRPCBridge{config: config, store: store, configDB: configDB, driver: driver, runtimes: runtimes, bus: bus, streams: &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}}})
 
 	if _, err := NewExecutor(di); err != nil {
 		t.Fatalf("NewExecutor returned error: %v", err)
@@ -265,9 +263,6 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	}
 	if createdManager, err := newLoaderManager(di); err != nil || createdManager == nil {
 		t.Fatalf("NewLoaderManager = %#v/%v", createdManager, err)
-	}
-	if bridge, err := NewSessionRPCBridge(di); err != nil || bridge.store != store {
-		t.Fatalf("NewSessionRPCBridge = %#v/%v", bridge, err)
 	}
 	service, err := NewService(di)
 	if err != nil || service.startedAt.IsZero() || service.store != store {
