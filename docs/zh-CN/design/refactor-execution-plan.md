@@ -69,11 +69,13 @@ refactor/domain-project
   - `internal/agentcompose/dashboard` 已建立，dashboard overview 纯聚合、状态分类和 clone helper 已迁入域包；`pkg/agentcompose` 保留 Store/ConfigStore 适配、hub 和 Connect handler。
   - `internal/agentcompose/capability` 已建立，capability provider、gateway settings、session binding、guide path/preamble 等低耦合逻辑已迁入域包；`pkg/agentcompose` 保留 DI、Store、Session、Connect 和 proxy 适配。
   - `internal/agentcompose/events` 已建立，topic event 模型、状态归一化、topic 校验、payload hash、record normalize、webhook topic match 和 dispatcher 核心逻辑已迁入域包；`pkg/agentcompose` 保留 ConfigStore 持久化和 LoaderBus 适配。
+  - `internal/agentcompose/exec` 已建立，exec 纯模型、cell 类型规范化、artifact helper、stream accumulator、agent result summarizer 和 trace event 解析已迁入域包；`pkg/agentcompose` 保留 Executor、runtime 编排、Connect glue 和兼容 alias。
+  - `internal/agentcompose/workspace` 已建立，workspace 模型、file/git config、路径 normalize、file workspace content root、文件列表、复制、tar 解包和 git helper 已迁入域包；`pkg/agentcompose` 保留 HTTP routes、Service/ConfigStore/Session 适配和兼容 alias。
 - 当前验证：`refactor/architecture-main` 上 `go test ./pkg/agentcompose ./cmd/agent-compose` 通过，`task build` 通过。
 
 下一批优先级：
 
-- 收尾 T3：补齐剩余低耦合域包种子，优先评估 `exec`、`workspace`、`config` 中是否存在可独立迁移的纯 helper。
+- T3 低耦合域包种子基本完成。后续不建议继续拆 `config_store.go` 这类横跨多域的持久化文件，避免提前混入 T5。
 - T4 开始前先收敛 `project` 与 `loader` 的边界，避免同时移动高耦合 service、store 和 runtime 调用。
 - 暂不执行 T6 全量 `pkg/agentcompose` 到 `internal/agentcompose` 迁移，直到 T3/T4 的域边界更稳定。
 
