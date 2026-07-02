@@ -7,6 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	modelpkg "agent-compose/pkg/model"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
@@ -86,7 +87,7 @@ func TestAgentSessionMessageUsesDefinitionProviderEnvForFacade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
-	if env := sessionEnvMap(createdSession.EnvItems); env["ANTHROPIC_API_KEY"] != "" {
+	if env := modelpkg.SessionEnvMap(createdSession.EnvItems); env["ANTHROPIC_API_KEY"] != "" {
 		t.Fatalf("ANTHROPIC_API_KEY persisted in session env: %#v", createdSession.EnvItems)
 	}
 	if len(createdSession.ProviderEnvItems) != 0 {
@@ -96,11 +97,11 @@ func TestAgentSessionMessageUsesDefinitionProviderEnvForFacade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAgentDefinition returned error: %v", err)
 	}
-	if env := sessionEnvMap(storedAgent.EnvItems); env["ANTHROPIC_API_KEY"] != "agent-anthropic-key" {
+	if env := modelpkg.SessionEnvMap(storedAgent.EnvItems); env["ANTHROPIC_API_KEY"] != "agent-anthropic-key" {
 		t.Fatalf("stored agent env missing key: %#v", storedAgent.EnvItems)
 	}
 	agentConfig := service.resolveSessionAgentConfig(ctx, createdSession, "codex")
-	if env := sessionEnvMap(agentConfig.EnvItems); env["ANTHROPIC_API_KEY"] != "agent-anthropic-key" || agentConfig.Provider != "claude" {
+	if env := modelpkg.SessionEnvMap(agentConfig.EnvItems); env["ANTHROPIC_API_KEY"] != "agent-anthropic-key" || agentConfig.Provider != "claude" {
 		t.Fatalf("resolved agent config = %#v env=%#v", agentConfig, agentConfig.EnvItems)
 	}
 	_, err = service.SendAgentMessage(ctx, connect.NewRequest(&agentcomposev1.SendAgentMessageRequest{

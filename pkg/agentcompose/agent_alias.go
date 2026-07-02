@@ -11,13 +11,6 @@ import (
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
-const (
-	agentSessionTagSource    = "source"
-	agentSessionTagSourceVal = "agent"
-	agentSessionTagID        = "agent_id"
-	agentSessionTagName      = "agent_name"
-)
-
 type AgentDefinition = agentspkg.AgentDefinition
 type AgentDefinitionListOptions = agentspkg.AgentDefinitionListOptions
 type AgentDefinitionListResult = agentspkg.AgentDefinitionListResult
@@ -40,10 +33,6 @@ func (s *Service) agentDefinitionService() *AgentDefinitionService {
 	}
 	s.agentHandlers = agentspkg.NewService(s.config, s.store, s.configDB, sessionHandler, streams)
 	return s.agentHandlers
-}
-
-func sessionHasAgentTag(session *Session, agentID string) bool {
-	return agentspkg.SessionHasAgentTag(session, agentID)
 }
 
 func (s *Service) ListAgentDefinitions(ctx context.Context, req *connect.Request[agentcomposev1.ListAgentDefinitionsRequest]) (*connect.Response[agentcomposev1.ListAgentDefinitionsResponse], error) {

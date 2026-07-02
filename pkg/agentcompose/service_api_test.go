@@ -7,6 +7,7 @@ import (
 	executorpkg "agent-compose/pkg/executor"
 	llmpkg "agent-compose/pkg/llm"
 	loaderspkg "agent-compose/pkg/loaders"
+	modelpkg "agent-compose/pkg/model"
 	sessionspkg "agent-compose/pkg/sessions"
 	settingspkg "agent-compose/pkg/settings"
 	"context"
@@ -56,7 +57,7 @@ func TestUpdateGlobalEnvConfigPreservesUnchangedSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListGlobalEnv returned error: %v", err)
 	}
-	env := sessionEnvMap(stored)
+	env := modelpkg.SessionEnvMap(stored)
 	if got := env["TOKEN"]; got != "secret-value" {
 		t.Fatalf("stored TOKEN = %q, want preserved secret value", got)
 	}
@@ -79,7 +80,7 @@ func TestUpdateGlobalEnvConfigPreservesUnchangedSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListGlobalEnv(after delete) returned error: %v", err)
 	}
-	env = sessionEnvMap(stored)
+	env = modelpkg.SessionEnvMap(stored)
 	if _, ok := env["TOKEN"]; ok {
 		t.Fatalf("TOKEN was preserved after deletion request: %#v", stored)
 	}

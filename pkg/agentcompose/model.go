@@ -33,7 +33,3 @@ type VMState = model.VMState
 type ProxyState = model.ProxyState
 type ExecSpec = model.ExecSpec
 type AgentRunResult = model.AgentRunResult
-
-func sessionEnvMap(groups ...[]SessionEnvVar) map[string]string {
-	return model.SessionEnvMap(groups...)
-}

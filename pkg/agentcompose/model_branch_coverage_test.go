@@ -2,6 +2,8 @@ package agentcompose
 
 import (
 	driverpkg "agent-compose/pkg/driver"
+	modelpkg "agent-compose/pkg/model"
+	sessionspkg "agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage"
 	"context"
 	"testing"
@@ -73,7 +75,7 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 		t.Fatalf("normalizeSessionListBounds = %d/%d", offset, limit)
 	}
 
-	parsed, err := sessionListOptionsFromProto(&agentcomposev1.ListSessionsRequest{
+	parsed, err := sessionspkg.SessionListOptionsFromProto(&agentcomposev1.ListSessionsRequest{
 		SessionType:        SessionTypeScript,
 		TriggerSourceQuery: "script",
 		TitleQuery:         "title",
@@ -88,34 +90,34 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 		Limit:              7,
 	})
 	if err != nil {
-		t.Fatalf("sessionListOptionsFromProto returned error: %v", err)
+		t.Fatalf("SessionListOptionsFromProto returned error: %v", err)
 	}
 	if parsed.Offset != 3 || parsed.Limit != 7 || parsed.CreatedFrom.IsZero() || parsed.UpdatedTo.IsZero() {
 		t.Fatalf("parsed session options = %#v", parsed)
 	}
-	if _, err := sessionListOptionsFromProto(&agentcomposev1.ListSessionsRequest{CreatedFrom: "bad"}); err == nil {
+	if _, err := sessionspkg.SessionListOptionsFromProto(&agentcomposev1.ListSessionsRequest{CreatedFrom: "bad"}); err == nil {
 		t.Fatalf("invalid created_from returned nil error")
 	}
-	if value, err := parseOptionalRFC3339(" ", "field"); err != nil || !value.IsZero() {
-		t.Fatalf("parseOptionalRFC3339 blank = %s/%v", value, err)
+	if value, err := sessionspkg.ParseOptionalRFC3339(" ", "field"); err != nil || !value.IsZero() {
+		t.Fatalf("ParseOptionalRFC3339 blank = %s/%v", value, err)
 	}
 
-	if got := sessionEnvMap([]SessionEnvVar{{Name: " A ", Value: "1"}, {Name: " ", Value: "skip"}}); got["A"] != "1" || len(got) != 1 {
-		t.Fatalf("sessionEnvMap = %#v", got)
+	if got := modelpkg.SessionEnvMap([]SessionEnvVar{{Name: " A ", Value: "1"}, {Name: " ", Value: "skip"}}); got["A"] != "1" || len(got) != 1 {
+		t.Fatalf("SessionEnvMap = %#v", got)
 	}
-	if sessionEnvMap(nil) != nil {
-		t.Fatalf("sessionEnvMap nil did not return nil")
+	if modelpkg.SessionEnvMap(nil) != nil {
+		t.Fatalf("SessionEnvMap nil did not return nil")
 	}
-	normalizedEnv := normalizeEnvItems([]SessionEnvVar{{Name: " B ", Value: "2"}, {Name: "A", Value: "1"}, {Name: "B", Value: "3"}, {Name: " ", Value: "skip"}})
+	normalizedEnv := modelpkg.NormalizeSessionEnvItems([]SessionEnvVar{{Name: " B ", Value: "2"}, {Name: "A", Value: "1"}, {Name: "B", Value: "3"}, {Name: " ", Value: "skip"}})
 	if len(normalizedEnv) != 2 || normalizedEnv[0].Name != "A" || normalizedEnv[1].Value != "3" {
-		t.Fatalf("normalizeEnvItems = %#v", normalizedEnv)
+		t.Fatalf("NormalizeSessionEnvItems = %#v", normalizedEnv)
 	}
-	mergedEnv := mergeEnvItems([]SessionEnvVar{{Name: "A", Value: "global"}}, []SessionEnvVar{{Name: "A", Value: "session"}, {Name: "B", Value: "session"}})
+	mergedEnv := modelpkg.MergeSessionEnvItems([]SessionEnvVar{{Name: "A", Value: "global"}}, []SessionEnvVar{{Name: "A", Value: "session"}, {Name: "B", Value: "session"}})
 	if len(mergedEnv) != 2 || mergedEnv[0].Value != "session" || mergedEnv[1].Name != "B" {
-		t.Fatalf("mergeEnvItems = %#v", mergedEnv)
+		t.Fatalf("MergeSessionEnvItems = %#v", mergedEnv)
 	}
-	if mergeEnvItems(nil, nil) != nil {
-		t.Fatalf("mergeEnvItems nil did not return nil")
+	if modelpkg.MergeSessionEnvItems(nil, nil) != nil {
+		t.Fatalf("MergeSessionEnvItems nil did not return nil")
 	}
 	workspace, err := storage.NormalizeWorkspaceConfig(WorkspaceConfig{Name: " Workspace ", Type: "FILE", ConfigJSON: "", Comment: " note "}, true)
 	if err != nil || workspace.ID == "" || workspace.Type != "file" || workspace.ConfigJSON != "{}" || workspace.Comment != "note" {

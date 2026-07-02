@@ -315,11 +315,11 @@ func testSupportAgentAndLoaderHelpers(t *testing.T) {
 	if storage.SessionTypeFromTriggerSource("script:loader-1") != SessionTypeScript || storage.SessionTypeFromTriggerSource("") != SessionTypeManual {
 		t.Fatalf("sessionTypeFromTriggerSource returned unexpected values")
 	}
-	if parsed, err := parseOptionalRFC3339("2026-06-02T09:00:00Z", "created_from"); err != nil || !parsed.Equal(time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)) {
-		t.Fatalf("parseOptionalRFC3339 parsed = %s err=%v", parsed, err)
+	if parsed, err := sessionspkg.ParseOptionalRFC3339("2026-06-02T09:00:00Z", "created_from"); err != nil || !parsed.Equal(time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)) {
+		t.Fatalf("ParseOptionalRFC3339 parsed = %s err=%v", parsed, err)
 	}
-	if _, err := parseOptionalRFC3339("bad", "created_from"); err == nil {
-		t.Fatalf("parseOptionalRFC3339 invalid returned nil error")
+	if _, err := sessionspkg.ParseOptionalRFC3339("bad", "created_from"); err == nil {
+		t.Fatalf("ParseOptionalRFC3339 invalid returned nil error")
 	}
 }
 
