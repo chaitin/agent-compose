@@ -3,7 +3,6 @@ package agentcompose
 import (
 	appconfig "agent-compose/pkg/config"
 	"context"
-	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -21,6 +20,7 @@ import (
 	"agent-compose/pkg/dashboard"
 	"agent-compose/pkg/imagecache"
 	"agent-compose/pkg/images"
+	llmpkg "agent-compose/pkg/llm"
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/settings"
 	"agent-compose/pkg/workspaces"
@@ -405,25 +405,13 @@ func (s *Service) ListSessionEvents(ctx context.Context, req *connect.Request[ag
 }
 
 func (s *Service) Generate(ctx context.Context, req *connect.Request[agentcomposev1.GenerateLLMRequest]) (*connect.Response[agentcomposev1.GenerateLLMResponse], error) {
-	if s.llm == nil {
-		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("llm client is unavailable"))
+	var service *llmpkg.Service
+	if s != nil {
+		var client *llmpkg.LLMClient
+		if s.llm != nil {
+			client = s.llm.componentClient()
+		}
+		service = llmpkg.NewService(s.config, s.store, s.configDB, client)
 	}
-	result, err := s.llm.Generate(ctx, req.Msg.GetPrompt(), req.Msg.GetModel(), req.Msg.GetOutputSchema())
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	return connect.NewResponse(&agentcomposev1.GenerateLLMResponse{
-		Text:         result.Text,
-		Model:        result.Model,
-		ResponseId:   result.ResponseID,
-		FinishReason: result.FinishReason,
-		Json:         llmJSONResponseText(result.Text, req.Msg.GetOutputSchema()),
-	}), nil
-}
-
-func llmJSONResponseText(text, outputSchemaJSON string) string {
-	if strings.TrimSpace(outputSchemaJSON) == "" {
-		return ""
-	}
-	return strings.TrimSpace(text)
+	return service.Generate(ctx, req)
 }
