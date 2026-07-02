@@ -524,7 +524,7 @@ func parseBoxliteRegistry(value string) (string, C.enum_BoxliteRegistryTransport
 	return cleaned, transport
 }
 
-func (r *cgoBoxRuntime) resolveRootfsPath(ctx context.Context, imageRef string) (string, error) {
+func (r *cgoBoxRuntime) resolveRootfsPath(ctx context.Context, imageRef string, pullPolicy string, pullTimeout time.Duration) (string, error) {
 	if strings.TrimSpace(r.config.BoxRootfsPath) != "" {
 		r.maybeRunCacheGC("")
 		return r.config.BoxRootfsPath, nil
@@ -534,7 +534,7 @@ func (r *cgoBoxRuntime) resolveRootfsPath(ctx context.Context, imageRef string) 
 		r.maybeRunCacheGC("")
 		return "", nil
 	}
-	layout, ok, err := r.materializeLocalImageRootfs(ctx, imageRef)
+	layout, ok, err := r.materializeLocalImageRootfs(ctx, imageRef, pullPolicy, pullTimeout)
 	if err != nil {
 		return "", err
 	}
@@ -547,9 +547,12 @@ func (r *cgoBoxRuntime) resolveRootfsPath(ctx context.Context, imageRef string) 
 	return "", nil
 }
 
-func (r *cgoBoxRuntime) materializeLocalImageRootfs(ctx context.Context, imageRef string) (localDockerImageLayout, bool, error) {
+func (r *cgoBoxRuntime) materializeLocalImageRootfs(ctx context.Context, imageRef string, pullPolicy string, pullTimeout time.Duration) (localDockerImageLayout, bool, error) {
 	layout, ok, err := resolveBoxliteImageLayout(ctx, imageRef, boxliteImageResolverOps{
 		dockerAvailable: dockerDaemonAvailable,
+		applyDockerPullPolicy: func(ctx context.Context, imageRef string) error {
+			return applyDockerDaemonPullPolicy(ctx, imageRef, pullPolicy, pullTimeout)
+		},
 		dockerMaterialize: func(ctx context.Context, imageRef string) (boxliteImageLayoutResult, bool, error) {
 			layout, ok, err := materializeLocalDockerImageLayout(ctx, r.config.DataRoot, imageRef)
 			if err != nil || !ok {
@@ -558,7 +561,7 @@ func (r *cgoBoxRuntime) materializeLocalImageRootfs(ctx context.Context, imageRe
 			return boxliteImageLayoutResult{ImageID: layout.ImageID, ResolvedRef: layout.ResolvedRef, RootfsPath: layout.RootfsPath}, true, nil
 		},
 		ociMaterialize: func(ctx context.Context, imageRef string) (boxliteImageLayoutResult, bool, error) {
-			return materializeBoxliteOCIImageLayout(ctx, r.config, imageRef)
+			return materializeBoxliteOCIImageLayout(ctx, r.config, imageRef, pullPolicy)
 		},
 	})
 	if err != nil || !ok {
@@ -892,7 +895,11 @@ func (r *cgoBoxRuntime) buildBoxOptions(ctx context.Context, session *Session, v
 		return nil, err
 	}
 	imageRef := resolveSessionGuestImage(vmState.Image, session.Summary.GuestImage, r.config.DefaultImage)
-	rootfsPath, err := r.resolveRootfsPath(ctx, imageRef)
+	imagePullTimeout := r.config.ImagePullTimeout
+	if imagePullTimeout <= 0 {
+		imagePullTimeout = defaultImagePullTimeout
+	}
+	rootfsPath, err := r.resolveRootfsPath(ctx, imageRef, session.Summary.PullPolicy, imagePullTimeout)
 	if err != nil {
 		return nil, err
 	}

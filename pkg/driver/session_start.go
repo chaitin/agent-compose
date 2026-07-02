@@ -7,13 +7,21 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 )
 
+const defaultImagePullTimeout = 10 * time.Minute
+
 func PrepareSessionStart(ctx context.Context, config *appconfig.Config, driver string, session *Session, vmState VMState) (VMState, error) {
-	return prepareSessionStartWithResolver(ctx, config, driver, session, vmState, dockerFirstRuntimeImageResolver{ensureDocker: ensureDockerImage})
+	pullTimeout := config.ImagePullTimeout
+	if pullTimeout <= 0 {
+		pullTimeout = defaultImagePullTimeout
+	}
+	pullPolicy := strings.ToLower(strings.TrimSpace(session.Summary.PullPolicy))
+	return prepareSessionStartWithResolver(ctx, config, driver, session, vmState, pullPolicy, pullTimeout, dockerFirstRuntimeImageResolver{ensureDocker: ensureDockerImage})
 }
 
-func prepareSessionStartWithResolver(ctx context.Context, config *appconfig.Config, driver string, session *Session, vmState VMState, resolver runtimeImageResolver) (VMState, error) {
+func prepareSessionStartWithResolver(ctx context.Context, config *appconfig.Config, driver string, session *Session, vmState VMState, pullPolicy string, pullTimeout time.Duration, resolver runtimeImageResolver) (VMState, error) {
 	if _, err := prepareRuntimeMountManifest(config, session, driver); err != nil {
 		return vmState, err
 	}
@@ -26,7 +34,7 @@ func prepareSessionStartWithResolver(ctx context.Context, config *appconfig.Conf
 		vmState.Registry = config.ImageRegistry
 		if vmState.Image != "" {
 			slog.Info("agent-compose resolving boxlite guest image", "session_id", session.Summary.ID, "guest_image", vmState.Image)
-			resolvedImage, err := resolver.ResolvePrepareImage(ctx, config, driver, vmState.Image)
+			resolvedImage, err := resolver.ResolvePrepareImage(ctx, config, driver, vmState.Image, pullPolicy, pullTimeout)
 			if err != nil {
 				return vmState, err
 			}
@@ -36,7 +44,7 @@ func prepareSessionStartWithResolver(ctx context.Context, config *appconfig.Conf
 		vmState.Registry = ""
 		if vmState.Image != "" {
 			slog.Info("agent-compose ensuring docker guest image", "session_id", session.Summary.ID, "guest_image", vmState.Image)
-			resolvedImage, err := resolver.ResolvePrepareImage(ctx, config, driver, vmState.Image)
+			resolvedImage, err := resolver.ResolvePrepareImage(ctx, config, driver, vmState.Image, pullPolicy, pullTimeout)
 			if err != nil {
 				return vmState, err
 			}
@@ -51,14 +59,14 @@ func prepareSessionStartWithResolver(ctx context.Context, config *appconfig.Conf
 }
 
 type runtimeImageResolver interface {
-	ResolvePrepareImage(context.Context, *appconfig.Config, string, string) (string, error)
+	ResolvePrepareImage(context.Context, *appconfig.Config, string, string, string, time.Duration) (string, error)
 }
 
 type dockerFirstRuntimeImageResolver struct {
-	ensureDocker func(context.Context, string) (string, error)
+	ensureDocker func(context.Context, string, string, time.Duration) (string, error)
 }
 
-func (r dockerFirstRuntimeImageResolver) ResolvePrepareImage(ctx context.Context, config *appconfig.Config, driver, imageRef string) (string, error) {
+func (r dockerFirstRuntimeImageResolver) ResolvePrepareImage(ctx context.Context, config *appconfig.Config, driver, imageRef, pullPolicy string, pullTimeout time.Duration) (string, error) {
 	imageRef = strings.TrimSpace(imageRef)
 	if imageRef == "" {
 		return "", nil
@@ -69,7 +77,7 @@ func (r dockerFirstRuntimeImageResolver) ResolvePrepareImage(ctx context.Context
 		if ensure == nil {
 			ensure = ensureDockerImage
 		}
-		return ensure(ctx, imageRef)
+		return ensure(ctx, imageRef, pullPolicy, pullTimeout)
 	case RuntimeDriverBoxlite, RuntimeDriverMicrosandbox:
 		return imageRef, nil
 	default:

@@ -85,6 +85,7 @@ type Config struct {
 	ImageInsecureRegistries    []string
 	BoxDiskSizeGB              int
 	BoxCacheTTL                time.Duration
+	ImagePullTimeout           time.Duration
 	GuestWorkspacePath         string
 	GuestHomePath              string
 	GuestStateRoot             string
@@ -163,6 +164,16 @@ func NewConfig(di do.Injector) (*Config, error) {
 			logger.Warn("ignored non-positive AGENT_TIMEOUT", "value", raw)
 		} else {
 			agentTimeout = parsed
+		}
+	}
+	imagePullTimeout := 10 * time.Minute
+	if raw := os.Getenv("IMAGE_PULL_TIMEOUT"); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err != nil {
+			logger.Warn("failed to parse IMAGE_PULL_TIMEOUT", "value", raw, "error", err)
+		} else if parsed <= 0 {
+			logger.Warn("ignored non-positive IMAGE_PULL_TIMEOUT", "value", raw)
+		} else {
+			imagePullTimeout = parsed
 		}
 	}
 	loaderRunTimeout := 20 * time.Minute
@@ -479,6 +490,7 @@ func NewConfig(di do.Injector) (*Config, error) {
 		ImageInsecureRegistries:    imageInsecureRegistries,
 		BoxDiskSizeGB:              boxDiskSizeGB,
 		BoxCacheTTL:                boxCacheTTL,
+		ImagePullTimeout:           imagePullTimeout,
 		GuestWorkspacePath:         guestPaths.GuestWorkspacePath,
 		GuestHomePath:              guestPaths.GuestHomePath,
 		GuestStateRoot:             guestPaths.GuestStateRoot,

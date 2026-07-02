@@ -123,6 +123,7 @@ type LoaderAgentRequest struct {
 	Title         string          `json:"title,omitempty"`
 	Driver        string          `json:"driver,omitempty"`
 	GuestImage    string          `json:"guestImage,omitempty"`
+	PullPolicy    string          `json:"pullPolicy,omitempty"`
 	WorkspaceID   string          `json:"workspaceId,omitempty"`
 	SessionEnv    []SessionEnvVar `json:"sessionEnv,omitempty"`
 	OutputSchema  string          `json:"outputSchema,omitempty"`
@@ -155,6 +156,7 @@ type LoaderCommandRequest struct {
 	Title          string            `json:"title,omitempty"`
 	Driver         string            `json:"driver,omitempty"`
 	GuestImage     string            `json:"guestImage,omitempty"`
+	PullPolicy     string            `json:"pullPolicy,omitempty"`
 	WorkspaceID    string            `json:"workspaceId,omitempty"`
 	SessionEnv     []SessionEnvVar   `json:"sessionEnv,omitempty"`
 }

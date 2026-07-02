@@ -974,6 +974,7 @@ func (h *loaderRunHost) Command(ctx context.Context, request LoaderCommandReques
 		Title:         request.Title,
 		Driver:        request.Driver,
 		GuestImage:    request.GuestImage,
+		PullPolicy:    request.PullPolicy,
 		WorkspaceID:   request.WorkspaceID,
 		SessionEnv:    request.SessionEnv,
 	}
