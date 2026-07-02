@@ -8,6 +8,7 @@ import (
 
 	"github.com/samber/do/v2"
 
+	domaincap "agent-compose/internal/agentcompose/capability"
 	"agent-compose/pkg/capproxy"
 	appconfig "agent-compose/pkg/config"
 )
@@ -60,7 +61,7 @@ func (s *Store) ResolveCapabilitySession(ctx context.Context, token string) (cap
 }
 
 func sessionCapabilityToken(session *Session) string {
-	return sessionEnvValue(session, capabilitySessionTokenEnvName)
+	return sessionEnvValue(session, domaincap.SessionTokenEnvName)
 }
 
 // sessionCapabilityCapsets reads the allowed capset set from the session's
@@ -69,25 +70,20 @@ func sessionCapabilityCapsets(session *Session) []string {
 	if session == nil {
 		return nil
 	}
-	var ids []string
+	tags := make([]domaincap.SessionTag, 0, len(session.Summary.Tags))
 	for _, tag := range session.Summary.Tags {
-		if tag.Name == capabilityCapsetTagName {
-			if v := strings.TrimSpace(tag.Value); v != "" {
-				ids = append(ids, v)
-			}
-		}
+		tags = append(tags, domaincap.SessionTag{Name: tag.Name, Value: tag.Value})
 	}
-	return normalizeCapsetIDs(ids)
+	return domaincap.SessionCapabilityCapsets(tags)
 }
 
 func sessionEnvValue(session *Session, name string) string {
 	if session == nil {
 		return ""
 	}
+	env := make([]domaincap.SessionEnvVar, 0, len(session.EnvItems))
 	for _, item := range session.EnvItems {
-		if item.Name == name {
-			return strings.TrimSpace(item.Value)
-		}
+		env = append(env, domaincap.SessionEnvVar{Name: item.Name, Value: item.Value, Secret: item.Secret})
 	}
-	return ""
+	return domaincap.SessionEnvValue(env, name)
 }
