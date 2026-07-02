@@ -137,6 +137,10 @@ func (s *ConfigStore) ListProjectRunsByOptions(ctx context.Context, options Proj
 	return s.projectStore().ListProjectRunsByOptions(ctx, options)
 }
 
+func (s *ConfigStore) GetAgentDefinitionIfExists(ctx context.Context, id string, includeDeleted bool) (AgentDefinition, bool, error) {
+	return s.getAgentDefinitionIfExists(ctx, id, includeDeleted)
+}
+
 func (s *ConfigStore) getProject(ctx context.Context, projectID string, includeRemoved bool) (ProjectRecord, bool, error) {
 	if includeRemoved {
 		return s.projectStore().GetProjectIncludingRemoved(ctx, projectID)

@@ -3,7 +3,6 @@ package agentcompose
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"connectrpc.com/connect"
 
@@ -68,12 +67,5 @@ func projectSessionHasTag(session *Session, name, value string) bool {
 	if session == nil {
 		return false
 	}
-	name = strings.TrimSpace(name)
-	value = strings.TrimSpace(value)
-	for _, tag := range session.Summary.Tags {
-		if strings.TrimSpace(tag.Name) == name && strings.TrimSpace(tag.Value) == value {
-			return true
-		}
-	}
-	return false
+	return projectdomain.ProjectSessionHasTag(session.Summary.Tags, name, value)
 }

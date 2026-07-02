@@ -5,7 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	eventdomain "agent-compose/internal/agentcompose/events"
 )
+
+type TriggerEventMetadata struct {
+	EventID       string
+	Sequence      int64
+	CorrelationID string
+}
 
 type SessionTopicFields struct {
 	SessionID     string
@@ -82,4 +90,101 @@ func NormalizeJSONDocument(raw string) (string, error) {
 		return "", fmt.Errorf("normalize json document: %w", err)
 	}
 	return compact.String(), nil
+}
+
+func ParseTriggerEventMetadata(payloadJSON string) TriggerEventMetadata {
+	payloadJSON = strings.TrimSpace(payloadJSON)
+	if payloadJSON == "" {
+		return TriggerEventMetadata{}
+	}
+	var envelope struct {
+		Payload map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(payloadJSON), &envelope); err != nil {
+		return TriggerEventMetadata{}
+	}
+	return TriggerEventMetadata{
+		EventID:       StringFromMap(envelope.Payload, "eventId"),
+		CorrelationID: StringFromMap(envelope.Payload, "correlationId"),
+		Sequence:      Int64FromMap(envelope.Payload, "sequence"),
+	}
+}
+
+func ValidatePublishTopic(topic string) error {
+	if err := eventdomain.ValidateTopicEventName(topic); err != nil {
+		return err
+	}
+	if strings.HasPrefix(topic, "runtime.") || strings.HasPrefix(topic, "workflow.") || strings.HasPrefix(topic, "external.") {
+		return nil
+	}
+	return fmt.Errorf("loader event topic must use runtime.*, workflow.*, or external.* prefix")
+}
+
+func JSONObjectDocument(payloadJSON string) bool {
+	var payload map[string]any
+	return json.Unmarshal([]byte(payloadJSON), &payload) == nil && payload != nil
+}
+
+func StringFromMap(values map[string]any, key string) string {
+	if values == nil {
+		return ""
+	}
+	value, ok := values[key].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func Int64FromMap(values map[string]any, key string) int64 {
+	if values == nil {
+		return 0
+	}
+	switch value := values[key].(type) {
+	case float64:
+		return int64(value)
+	case int64:
+		return value
+	case json.Number:
+		parsed, _ := value.Int64()
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func SessionRPCLinkedSessionID(method, requestJSON, responseJSON string) string {
+	if value := SessionIDFromJSON(responseJSON); value != "" {
+		return value
+	}
+	if strings.TrimSpace(method) == "ListSessions" {
+		return ""
+	}
+	return SessionIDFromJSON(requestJSON)
+}
+
+func SessionIDFromJSON(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return ""
+	}
+	if value, ok := payload["sessionId"].(string); ok {
+		return strings.TrimSpace(value)
+	}
+	sessionValue, ok := payload["session"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	summaryValue, ok := sessionValue["summary"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	if value, ok := summaryValue["sessionId"].(string); ok {
+		return strings.TrimSpace(value)
+	}
+	return ""
 }

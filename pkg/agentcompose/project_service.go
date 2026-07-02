@@ -10,7 +10,6 @@ import (
 	"connectrpc.com/connect"
 
 	projectdomain "agent-compose/internal/agentcompose/project"
-	driverpkg "agent-compose/internal/driver"
 	"agent-compose/pkg/compose"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
@@ -352,36 +351,7 @@ func (s *Service) projectManagedSchedulersFromSpec(ctx context.Context, project 
 }
 
 func (s *Service) projectManagedSchedulerBuildsFromSpec(ctx context.Context, project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]projectManagedSchedulerBuild, error) {
-	builds := make([]projectManagedSchedulerBuild, 0)
-	for _, agent := range spec.Agents {
-		record, ok, err := NewProjectSchedulerRecordFromSpec(project.ID, revision, agent)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			continue
-		}
-		loader, err := projectManagedLoaderFromScheduler(project, record, agent)
-		if err != nil {
-			return nil, err
-		}
-		validationTriggers := loader.Triggers
-		if strings.TrimSpace(agent.Scheduler.Script) != "" {
-			validation, err := s.validateInlineSchedulerScript(ctx, agent.Name, agent.Scheduler.Script)
-			if err != nil {
-				return nil, err
-			}
-			validationTriggers = validation.Triggers
-			loader.Triggers = validation.Triggers
-			record.TriggerCount = len(validation.Triggers)
-		}
-		builds = append(builds, projectManagedSchedulerBuild{
-			scheduler:          record,
-			loader:             loader,
-			validationTriggers: validationTriggers,
-		})
-	}
-	return builds, nil
+	return projectdomain.ManagedSchedulerBuildsFromSpec(ctx, project, revision, spec, serviceInlineSchedulerValidator{service: s})
 }
 
 func (s *Service) validateProjectManagedSchedulers(ctx context.Context, normalized normalizedV2Project) []*agentcomposev2.ProjectValidationIssue {
@@ -389,57 +359,41 @@ func (s *Service) validateProjectManagedSchedulers(ctx context.Context, normaliz
 	if err != nil {
 		return []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("spec", err.Error())}
 	}
-	builds, err := s.projectManagedSchedulerBuildsFromSpec(ctx, project, 0, normalized.spec)
+	return projectdomain.ValidateManagedSchedulers(ctx, project, normalized.spec, serviceInlineSchedulerValidator{service: s})
+}
+
+type serviceInlineSchedulerValidator struct {
+	service *Service
+}
+
+func (v serviceInlineSchedulerValidator) ValidateInlineSchedulerScript(ctx context.Context, agentName, script string) ([]LoaderTrigger, error) {
+	if v.service == nil {
+		return nil, &projectdomain.ManagedSchedulerBuildError{Path: "agents." + agentName + ".scheduler.script", Message: "loader manager is required to validate scheduler script"}
+	}
+	validation, err := v.service.validateInlineSchedulerScript(ctx, agentName, script)
 	if err != nil {
-		return []*agentcomposev2.ProjectValidationIssue{projectManagedSchedulerBuildIssue(err)}
+		return nil, err
 	}
-	loaders := projectManagedSchedulerLoaders(builds)
-	for _, loader := range loaders {
-		if _, err := normalizeLoader(loader, false); err != nil {
-			return []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("schedulers."+loader.Summary.ManagedAgentName, err.Error())}
-		}
-		for _, trigger := range loader.Triggers {
-			if _, err := normalizeLoaderTrigger(loader.Summary.ID, trigger); err != nil {
-				return []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("schedulers."+loader.Summary.ManagedAgentName+".triggers", err.Error())}
-			}
-		}
-	}
-	return nil
-}
-
-type projectManagedSchedulerBuildError struct {
-	path    string
-	message string
-}
-
-func (e *projectManagedSchedulerBuildError) Error() string {
-	if e.path == "" {
-		return e.message
-	}
-	return e.path + ": " + e.message
+	return validation.Triggers, nil
 }
 
 func (s *Service) validateInlineSchedulerScript(ctx context.Context, agentName string, script string) (LoaderValidationResult, error) {
 	path := "agents." + agentName + ".scheduler.script"
 	if s == nil || s.loaders == nil {
-		return LoaderValidationResult{}, &projectManagedSchedulerBuildError{path: path, message: "loader manager is required to validate scheduler script"}
+		return LoaderValidationResult{}, &projectdomain.ManagedSchedulerBuildError{Path: path, Message: "loader manager is required to validate scheduler script"}
 	}
 	if s.loaders.engine == nil {
-		return LoaderValidationResult{}, &projectManagedSchedulerBuildError{path: path, message: "loader engine is required to validate scheduler script"}
+		return LoaderValidationResult{}, &projectdomain.ManagedSchedulerBuildError{Path: path, Message: "loader engine is required to validate scheduler script"}
 	}
 	validation, err := s.loaders.Validate(ctx, LoaderRuntimeScheduler, script)
 	if err != nil {
-		return LoaderValidationResult{}, &projectManagedSchedulerBuildError{path: path, message: err.Error()}
+		return LoaderValidationResult{}, &projectdomain.ManagedSchedulerBuildError{Path: path, Message: err.Error()}
 	}
 	return validation, nil
 }
 
 func projectManagedSchedulerBuildIssue(err error) *agentcomposev2.ProjectValidationIssue {
-	var buildErr *projectManagedSchedulerBuildError
-	if errors.As(err, &buildErr) {
-		return projectValidationIssue(buildErr.path, buildErr.message)
-	}
-	return projectValidationIssue("schedulers", err.Error())
+	return projectdomain.ManagedSchedulerBuildIssue(err)
 }
 
 func (s *Service) validateProjectManagedAgentDefinitions(normalized normalizedV2Project) []*agentcomposev2.ProjectValidationIssue {
@@ -447,86 +401,15 @@ func (s *Service) validateProjectManagedAgentDefinitions(normalized normalizedV2
 	if err != nil {
 		return []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("spec", err.Error())}
 	}
-	agents, err := projectManagedAgentDefinitionsFromSpec(project, 0, normalized.spec)
-	if err != nil {
-		return []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("agents", err.Error())}
-	}
-	var issues []*agentcomposev2.ProjectValidationIssue
-	defaultDriver := driverpkg.RuntimeDriverDocker
+	defaultDriver := ""
 	if s != nil && s.config != nil && strings.TrimSpace(s.config.RuntimeDriver) != "" {
 		defaultDriver = s.config.RuntimeDriver
 	}
-	for _, agent := range agents {
-		path := "agents." + agent.ManagedAgentName
-		if _, err := normalizeAgentDefinition(agent, true); err != nil {
-			issues = append(issues, projectValidationIssue(path, err.Error()))
-			continue
-		}
-		if strings.TrimSpace(agent.Driver) != "" {
-			if _, err := driverpkg.ResolveSessionRuntimeDriver(agent.Driver, defaultDriver); err != nil {
-				issues = append(issues, projectValidationIssue(path+".driver", err.Error()))
-			}
-		}
-	}
-	return issues
+	return projectdomain.ValidateManagedAgentDefinitions(project, normalized.spec, defaultDriver)
 }
 
 func (s *Service) reconcileProjectManagedAgentDefinitions(ctx context.Context, project ProjectRecord, current []AgentDefinition) ([]*agentcomposev2.ProjectChange, bool, error) {
-	if s.configDB == nil {
-		return nil, false, fmt.Errorf("config store is required")
-	}
-	currentByID := make(map[string]AgentDefinition, len(current))
-	for _, agent := range current {
-		currentByID[agent.ID] = agent
-	}
-	changes := make([]*agentcomposev2.ProjectChange, 0, len(current))
-	unchanged := true
-	for _, agent := range current {
-		existing, found, err := s.configDB.getAgentDefinitionIfExists(ctx, agent.ID, true)
-		if err != nil {
-			return nil, false, fmt.Errorf("load managed agent definition %s: %w", agent.ID, err)
-		}
-		saved, err := s.configDB.UpsertManagedAgentDefinition(ctx, agent)
-		if err != nil {
-			return nil, false, fmt.Errorf("upsert managed agent definition %s: %w", agent.ID, err)
-		}
-		action := managedAgentDefinitionChangeAction(existing, found, agent)
-		if action != agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED {
-			unchanged = false
-		}
-		changes = append(changes, &agentcomposev2.ProjectChange{
-			Action:       action,
-			ResourceType: "agent_definition",
-			ResourceId:   saved.ID,
-			Name:         saved.Name,
-		})
-	}
-
-	existingManaged, err := s.configDB.ListManagedAgentDefinitions(ctx, project.ID, false)
-	if err != nil {
-		return nil, false, fmt.Errorf("list managed agent definitions: %w", err)
-	}
-	for _, existing := range existingManaged {
-		if _, ok := currentByID[existing.ID]; ok {
-			continue
-		}
-		if !existing.Enabled {
-			continue
-		}
-		disabled, err := s.configDB.SetAgentDefinitionEnabled(ctx, existing.ID, false)
-		if err != nil {
-			return nil, false, fmt.Errorf("disable removed managed agent definition %s: %w", existing.ID, err)
-		}
-		unchanged = false
-		changes = append(changes, &agentcomposev2.ProjectChange{
-			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED,
-			ResourceType: "agent_definition",
-			ResourceId:   disabled.ID,
-			Name:         disabled.Name,
-			Message:      "disabled because the agent is no longer present in the project spec",
-		})
-	}
-	return changes, unchanged, nil
+	return projectdomain.ReconcileManagedAgentDefinitions(ctx, s.configDB, project, current)
 }
 
 func (s *Service) reconcileProjectManagedSchedulers(ctx context.Context, project ProjectRecord, schedulers []ProjectSchedulerRecord, loaders []Loader) ([]*agentcomposev2.ProjectChange, bool, error) {
@@ -548,29 +431,7 @@ func (s *Service) disableManagedLoaderIfOwned(ctx context.Context, loaderID, pro
 }
 
 func managedAgentDefinitionChangeAction(existing AgentDefinition, found bool, current AgentDefinition) agentcomposev2.ProjectChangeAction {
-	if !found {
-		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
-	}
-	if !existing.DeletedAt.IsZero() || !existing.Enabled {
-		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
-	}
-	if existing.Name == current.Name &&
-		existing.Description == current.Description &&
-		existing.Provider == current.Provider &&
-		existing.Model == current.Model &&
-		existing.SystemPrompt == current.SystemPrompt &&
-		existing.Driver == current.Driver &&
-		existing.GuestImage == current.GuestImage &&
-		existing.WorkspaceID == current.WorkspaceID &&
-		existing.ConfigJSON == current.ConfigJSON &&
-		sameSessionEnvItems(existing.EnvItems, current.EnvItems) &&
-		sameStringSlices(existing.CapsetIDs, current.CapsetIDs) &&
-		existing.ManagedProjectID == current.ManagedProjectID &&
-		existing.ManagedProjectRevision == current.ManagedProjectRevision &&
-		existing.ManagedAgentName == current.ManagedAgentName {
-		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED
-	}
-	return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
+	return projectdomain.ManagedAgentDefinitionChangeAction(existing, found, current)
 }
 
 func schedulerChangeAction(existing ProjectSchedulerRecord, found bool, current ProjectSchedulerRecord) agentcomposev2.ProjectChangeAction {
@@ -586,17 +447,7 @@ func sameLoaderTriggerSpecs(a, b []LoaderTrigger) bool {
 }
 
 func sameSessionEnvItems(a, b []SessionEnvVar) bool {
-	a = normalizeEnvItems(a)
-	b = normalizeEnvItems(b)
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return projectdomain.SameSessionEnvItems(a, b)
 }
 
 func sameStringSlices(a, b []string) bool {
@@ -614,119 +465,25 @@ func sameStringSlices(a, b []string) bool {
 }
 
 func getProjectAgentIfExists(ctx context.Context, store *ConfigStore, projectID, agentName string) (ProjectAgentRecord, bool, error) {
-	agent, err := store.GetProjectAgent(ctx, projectID, agentName)
-	if err == nil {
-		return agent, true, nil
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		return ProjectAgentRecord{}, false, nil
-	}
-	return ProjectAgentRecord{}, false, err
+	return projectdomain.GetProjectAgentIfExists(ctx, store, projectID, agentName)
 }
 
 func getProjectSchedulerIfExists(ctx context.Context, store *ConfigStore, projectID, schedulerID string) (ProjectSchedulerRecord, bool, error) {
-	scheduler, err := store.GetProjectScheduler(ctx, projectID, schedulerID)
-	if err == nil {
-		return scheduler, true, nil
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		return ProjectSchedulerRecord{}, false, nil
-	}
-	return ProjectSchedulerRecord{}, false, err
+	return projectdomain.GetProjectSchedulerIfExists(ctx, store, projectID, schedulerID)
 }
 
 func projectApplyChanges(project ProjectRecord, existing ProjectRecord, found bool, revision ProjectRevisionRecord, revisionCreated bool) []*agentcomposev2.ProjectChange {
-	projectAction := agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
-	if found {
-		projectAction = agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED
-		if !projectRecordUnchanged(existing, project) {
-			projectAction = agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
-		}
-	}
-	revisionAction := agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED
-	if revisionCreated {
-		revisionAction = agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
-	}
-	return []*agentcomposev2.ProjectChange{
-		{
-			Action:       projectAction,
-			ResourceType: "project",
-			ResourceId:   project.ID,
-			Name:         project.Name,
-		},
-		{
-			Action:       revisionAction,
-			ResourceType: "project_revision",
-			ResourceId:   fmt.Sprintf("%s/%d", revision.ProjectID, revision.Revision),
-			Name:         revision.SpecHash,
-		},
-	}
+	return projectdomain.ProjectApplyChanges(project, existing, found, revision, revisionCreated)
 }
 
 func dryRunProjectChanges(project ProjectRecord, agents []ProjectAgentRecord, agentDefinitions []AgentDefinition, schedulers []ProjectSchedulerRecord, loaders []Loader) []*agentcomposev2.ProjectChange {
-	changes := []*agentcomposev2.ProjectChange{{
-		Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED,
-		ResourceType: "project",
-		ResourceId:   project.ID,
-		Name:         project.Name,
-	}}
-	for _, agent := range agents {
-		changes = append(changes, &agentcomposev2.ProjectChange{
-			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED,
-			ResourceType: "project_agent",
-			ResourceId:   agent.ManagedAgentID,
-			Name:         agent.AgentName,
-		})
-	}
-	for _, agent := range agentDefinitions {
-		changes = append(changes, &agentcomposev2.ProjectChange{
-			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED,
-			ResourceType: "agent_definition",
-			ResourceId:   agent.ID,
-			Name:         agent.Name,
-		})
-	}
-	for _, scheduler := range schedulers {
-		changes = append(changes, &agentcomposev2.ProjectChange{
-			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED,
-			ResourceType: "project_scheduler",
-			ResourceId:   scheduler.SchedulerID,
-			Name:         scheduler.AgentName,
-		})
-	}
-	for _, loader := range loaders {
-		changes = append(changes, &agentcomposev2.ProjectChange{
-			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED,
-			ResourceType: "loader",
-			ResourceId:   loader.Summary.ID,
-			Name:         loader.Summary.Name,
-		})
-	}
-	return changes
+	return projectdomain.DryRunProjectChanges(project, agents, agentDefinitions, schedulers, loaders)
 }
 
 func projectRecordUnchanged(existing ProjectRecord, current ProjectRecord) bool {
-	return existing.ID == current.ID &&
-		existing.Name == current.Name &&
-		existing.SourcePath == current.SourcePath &&
-		existing.SpecHash == current.SpecHash &&
-		existing.CurrentRevision == current.CurrentRevision &&
-		existing.RemovedAt.IsZero()
+	return projectdomain.ProjectRecordUnchanged(existing, current)
 }
 
 func agentChangeAction(existing ProjectAgentRecord, found bool, current ProjectAgentRecord) agentcomposev2.ProjectChangeAction {
-	if !found {
-		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
-	}
-	if existing.ManagedAgentID == current.ManagedAgentID &&
-		existing.Revision == current.Revision &&
-		existing.Provider == current.Provider &&
-		existing.Model == current.Model &&
-		existing.Image == current.Image &&
-		existing.Driver == current.Driver &&
-		existing.SchedulerEnabled == current.SchedulerEnabled &&
-		existing.SpecJSON == current.SpecJSON {
-		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED
-	}
-	return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
+	return projectdomain.AgentChangeAction(existing, found, current)
 }
