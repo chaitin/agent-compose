@@ -1,4 +1,4 @@
-package agentcompose
+package capability
 
 import (
 	driverpkg "agent-compose/internal/driver"

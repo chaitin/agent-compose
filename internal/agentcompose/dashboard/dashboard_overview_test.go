@@ -1,4 +1,4 @@
-package agentcompose
+package dashboard
 
 import (
 	driverpkg "agent-compose/internal/driver"

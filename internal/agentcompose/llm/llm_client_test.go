@@ -1,4 +1,4 @@
-package agentcompose
+package llm
 
 import (
 	appconfig "agent-compose/internal/config"
