@@ -99,10 +99,11 @@ refactor/domain-project
   - `refactor/pkg-agentcompose-tests`：按域迁移 `pkg/agentcompose` 下的大型测试文件，减少旧包视觉和维护负担。
 - 本阶段目标是让 `pkg/agentcompose` 从主实现包变为兼容壳；仍按激进策略跳过完整测试，集中阶段统一修复。
 - 当前继续推进 `pkg/agentcompose` 残留大文件第二批清理：
-  - `refactor/pkg-agentcompose-control-plane`：收口 `service.go` 与 service facade residual。
-  - `refactor/pkg-agentcompose-loader-project-residual`：收口 `loader_manager.go`、`project_service.go` 等 loader/project residual。
-  - `refactor/pkg-agentcompose-config-llm-residual`：收口 `llm_config.go`、`config_store.go`、`store.go` residual。
-  - `refactor/pkg-agentcompose-http-residual`：收口 webhook/proxy/workspace HTTP residual。
+  - `refactor/pkg-agentcompose-control-plane` 已合入：run/loader facade residual 已迁入 internal transport。
+  - `refactor/pkg-agentcompose-loader-project-residual` 已合入：project spec/build/change residual 已迁入 internal project，loader payload helper 已补充。
+  - `refactor/pkg-agentcompose-config-llm-residual` 已合入：LLM persistence store residual 已迁入 internal llm。
+  - `refactor/pkg-agentcompose-http-residual` 已合入：webhook management、capability session、workspace/http residual 已迁入 internal transport/httpapi。
+  - 当前轻量检查：`go list ./cmd/... ./pkg/... ./internal/...` 通过；完整测试和 build 仍留到集中修复阶段。
 
 ## 任务依赖图
 
