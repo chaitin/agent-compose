@@ -89,7 +89,7 @@ func testImageServiceDockerUnavailableErrorIncludesEndpointAndImage(t *testing.T
 	t.Helper()
 	t.Setenv("DOCKER_HOST", "tcp://docker.example:2375")
 	service := &Service{images: &DockerImageBackend{
-		newClient: func() (dockerImageClient, error) {
+		NewClient: func() (DockerImageClient, error) {
 			return nil, errors.New("docker daemon unavailable")
 		},
 	}}
@@ -145,8 +145,8 @@ func testDockerImageBackendListPullInspectRemove(t *testing.T) {
 		removeResponse: []typesimage.DeleteResponse{{Untagged: "agent:latest"}, {Deleted: "sha256:inspect"}},
 	}
 	backend := &DockerImageBackend{
-		newClient: func() (dockerImageClient, error) { return fake, nil },
-		now:       func() time.Time { return time.Date(2026, 6, 11, 1, 2, 3, 0, time.UTC) },
+		NewClient: func() (DockerImageClient, error) { return fake, nil },
+		Now:       func() time.Time { return time.Date(2026, 6, 11, 1, 2, 3, 0, time.UTC) },
 	}
 	ctx := context.Background()
 
@@ -210,7 +210,7 @@ func TestOCIMetadataToProtoImage(t *testing.T) {
 		ManifestDigest:  "sha256:manifest",
 		ConfigDigest:    "sha256:config",
 		Platform:        imagecache.Platform{OS: "linux", Architecture: "amd64", Variant: "v3", OSVersion: "6.1"},
-		MediaType:       "application/vnd.oci.image.manifest.v1+json",
+		MediaType:       "application/vnd.OCI.image.manifest.v1+json",
 		Labels:          map[string]string{"role": "oci"},
 		SizeBytes:       2048,
 		CreatedAt:       createdAt,
@@ -291,7 +291,7 @@ func testDockerImageBackendOperationErrorsIncludeEndpointAndImage(t *testing.T) 
 				pullReader:   io.NopCloser(strings.NewReader(`{}`)),
 				inspectImage: typesimage.InspectResponse{ID: "sha256:unused"},
 			}
-			backend := &DockerImageBackend{newClient: func() (dockerImageClient, error) { return fake, nil }}
+			backend := &DockerImageBackend{NewClient: func() (DockerImageClient, error) { return fake, nil }}
 			err := tc.run(backend)
 			if err == nil {
 				t.Fatal("operation returned nil error")

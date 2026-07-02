@@ -267,11 +267,11 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 		t.Fatalf("NewService = %#v/%v", service, err)
 	}
 	ociBackend, ok := service.ociImages.(*OCIImageBackend)
-	if !ok || ociBackend.cache == nil || ociBackend.cache.Root() != config.ImageCacheRoot {
+	if !ok || ociBackend.Cache == nil || ociBackend.Cache.Root() != config.ImageCacheRoot {
 		t.Fatalf("NewService OCI backend = %#v ok=%v", service.ociImages, ok)
 	}
 	autoBackend, ok := service.autoImages.(*AutoImageBackend)
-	if !ok || autoBackend.docker == nil || autoBackend.oci == nil || autoBackend.mode != config.ImageStoreMode {
+	if !ok || autoBackend.Docker == nil || autoBackend.OCI == nil || autoBackend.Mode != config.ImageStoreMode {
 		t.Fatalf("NewService auto backend = %#v ok=%v", service.autoImages, ok)
 	}
 

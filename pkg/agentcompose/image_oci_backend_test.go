@@ -26,7 +26,7 @@ func TestOCIImageBackendListInspectRemoveWithMetadata(t *testing.T) {
 	cache := newAgentcomposeImageCache(t, "")
 	image := saveAgentcomposeOCIMetadata(t, cache, "team/app:latest")
 	backend := NewOCIImageBackend(cache)
-	backend.now = func() time.Time { return time.Date(2026, 6, 11, 13, 14, 15, 0, time.UTC) }
+	backend.Now = func() time.Time { return time.Date(2026, 6, 11, 13, 14, 15, 0, time.UTC) }
 
 	list, err := backend.ListImages(context.Background(), ImageListRequest{Query: "team"})
 	if err != nil {
@@ -195,8 +195,8 @@ func saveAgentcomposeOCIMetadata(t *testing.T, cache *imagecache.Cache, requeste
 		SizeBytes:         128,
 		CreatedAt:         time.Date(2026, 6, 11, 13, 0, 0, 0, time.UTC),
 		LayoutCachePath:   cache.OCILayoutPath(),
-		DefaultRegistry:   "index.docker.io",
-		AdditionalDigests: []string{"index.docker.io/team/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		DefaultRegistry:   "index.Docker.io",
+		AdditionalDigests: []string{"index.Docker.io/team/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	})
 	if err != nil {
 		t.Fatalf("NewImageMetadata returned error: %v", err)

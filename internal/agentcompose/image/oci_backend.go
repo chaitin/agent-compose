@@ -1,4 +1,4 @@
-package agentcompose
+package image
 
 import (
 	"context"
@@ -10,19 +10,19 @@ import (
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
-type OCIImageBackend struct {
-	cache *imagecache.Cache
-	now   func() time.Time
+type OCIBackend struct {
+	Cache *imagecache.Cache
+	Now   func() time.Time
 }
 
-func NewOCIImageBackend(cache *imagecache.Cache) *OCIImageBackend {
-	return &OCIImageBackend{
-		cache: cache,
-		now:   time.Now,
+func NewOCIBackend(cache *imagecache.Cache) *OCIBackend {
+	return &OCIBackend{
+		Cache: cache,
+		Now:   time.Now,
 	}
 }
 
-func (b *OCIImageBackend) ListImages(ctx context.Context, req ImageListRequest) (ImageListResult, error) {
+func (b *OCIBackend) ListImages(ctx context.Context, req ImageListRequest) (ImageListResult, error) {
 	cache, err := b.requireCache()
 	if err != nil {
 		return ImageListResult{}, err
@@ -36,7 +36,7 @@ func (b *OCIImageBackend) ListImages(ctx context.Context, req ImageListRequest) 
 	}
 	images := make([]*agentcomposev2.Image, 0, len(result.Images))
 	for _, image := range result.Images {
-		images = append(images, ociMetadataToProtoImage(image, b.inspectedAt()))
+		images = append(images, OCIMetadataToProtoImage(image, b.inspectedAt()))
 	}
 	return ImageListResult{
 		Images:      images,
@@ -44,7 +44,7 @@ func (b *OCIImageBackend) ListImages(ctx context.Context, req ImageListRequest) 
 	}, nil
 }
 
-func (b *OCIImageBackend) PullImage(ctx context.Context, req ImagePullRequest) (ImagePullResult, error) {
+func (b *OCIBackend) PullImage(ctx context.Context, req ImagePullRequest) (ImagePullResult, error) {
 	cache, err := b.requireCache()
 	if err != nil {
 		return ImagePullResult{}, err
@@ -66,13 +66,13 @@ func (b *OCIImageBackend) PullImage(ctx context.Context, req ImagePullRequest) (
 		})
 	}
 	return ImagePullResult{
-		Image:       ociMetadataToProtoImage(result.Image, b.inspectedAt()),
+		Image:       OCIMetadataToProtoImage(result.Image, b.inspectedAt()),
 		ResolvedRef: firstNonEmpty(result.ResolvedRef, result.Image.NormalizedRef, imageRef),
 		Progress:    progress,
 	}, nil
 }
 
-func (b *OCIImageBackend) InspectImage(ctx context.Context, req ImageInspectRequest) (ImageInspectResult, error) {
+func (b *OCIBackend) InspectImage(ctx context.Context, req ImageInspectRequest) (ImageInspectResult, error) {
 	cache, err := b.requireCache()
 	if err != nil {
 		return ImageInspectResult{}, err
@@ -83,12 +83,12 @@ func (b *OCIImageBackend) InspectImage(ctx context.Context, req ImageInspectRequ
 		return ImageInspectResult{}, b.wrapError("inspect image", imageRef, err)
 	}
 	return ImageInspectResult{
-		Image:       ociMetadataToProtoImage(result.Image, b.inspectedAt()),
+		Image:       OCIMetadataToProtoImage(result.Image, b.inspectedAt()),
 		StoreStatus: b.storeStatus(),
 	}, nil
 }
 
-func (b *OCIImageBackend) RemoveImage(ctx context.Context, req ImageRemoveRequest) (ImageRemoveResult, error) {
+func (b *OCIBackend) RemoveImage(ctx context.Context, req ImageRemoveRequest) (ImageRemoveResult, error) {
 	cache, err := b.requireCache()
 	if err != nil {
 		return ImageRemoveResult{}, err
@@ -110,17 +110,17 @@ func (b *OCIImageBackend) RemoveImage(ctx context.Context, req ImageRemoveReques
 	}, nil
 }
 
-func (b *OCIImageBackend) requireCache() (*imagecache.Cache, error) {
-	if b == nil || b.cache == nil {
-		return nil, imageBackendOpError{Op: "connect OCI image cache", Err: fmt.Errorf("OCI image cache is required")}
+func (b *OCIBackend) requireCache() (*imagecache.Cache, error) {
+	if b == nil || b.Cache == nil {
+		return nil, BackendOpError{Op: "connect OCI image cache", Err: fmt.Errorf("OCI image cache is required")}
 	}
-	return b.cache, nil
+	return b.Cache, nil
 }
 
-func (b *OCIImageBackend) storeStatus() *agentcomposev2.ImageStoreStatus {
+func (b *OCIBackend) storeStatus() *agentcomposev2.ImageStoreStatus {
 	endpoint := ""
-	if b != nil && b.cache != nil {
-		endpoint = b.cache.OCILayoutPath()
+	if b != nil && b.Cache != nil {
+		endpoint = b.Cache.OCILayoutPath()
 	}
 	return &agentcomposev2.ImageStoreStatus{
 		Store:     agentcomposev2.ImageStoreKind_IMAGE_STORE_KIND_OCI_CACHE,
@@ -129,20 +129,20 @@ func (b *OCIImageBackend) storeStatus() *agentcomposev2.ImageStoreStatus {
 	}
 }
 
-func (b *OCIImageBackend) inspectedAt() string {
+func (b *OCIBackend) inspectedAt() string {
 	now := time.Now
-	if b != nil && b.now != nil {
-		now = b.now
+	if b != nil && b.Now != nil {
+		now = b.Now
 	}
 	return now().UTC().Format(time.RFC3339Nano)
 }
 
-func (b *OCIImageBackend) wrapError(op, imageRef string, err error) error {
+func (b *OCIBackend) wrapError(op, imageRef string, err error) error {
 	endpoint := ""
-	if b != nil && b.cache != nil {
-		endpoint = b.cache.OCILayoutPath()
+	if b != nil && b.Cache != nil {
+		endpoint = b.Cache.OCILayoutPath()
 	}
-	return imageBackendOpError{Op: op, Endpoint: endpoint, ImageRef: imageRef, Err: err}
+	return BackendOpError{Op: op, Endpoint: endpoint, ImageRef: imageRef, Err: err}
 }
 
 func imageCachePlatform(platform *agentcomposev2.ImagePlatform) imagecache.Platform {

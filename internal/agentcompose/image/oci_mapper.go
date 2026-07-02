@@ -1,4 +1,4 @@
-package agentcompose
+package image
 
 import (
 	"slices"
@@ -9,7 +9,7 @@ import (
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
-func ociMetadataToProtoImage(image imagecache.ImageMetadata, inspectedAt string) *agentcomposev2.Image {
+func OCIMetadataToProtoImage(image imagecache.ImageMetadata, inspectedAt string) *agentcomposev2.Image {
 	repoTags := cleanOCIRefs(image.RepoTags)
 	repoDigests := cleanOCIRefs(image.RepoDigests)
 	imageID := firstNonEmpty(image.ConfigDigest, image.CacheKey, image.ManifestDigest)
