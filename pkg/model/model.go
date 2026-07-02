@@ -23,7 +23,12 @@ const (
 )
 
 const (
-	DefaultAgentProvider = "codex"
+	AgentProviderCodex    = "codex"
+	AgentProviderClaude   = "claude"
+	AgentProviderGemini   = "gemini"
+	AgentProviderOpenCode = "opencode"
+
+	DefaultAgentProvider = AgentProviderCodex
 )
 
 const (
