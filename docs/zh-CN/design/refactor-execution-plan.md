@@ -75,15 +75,19 @@ refactor/domain-project
 - T4 已进入大粒度域迁移阶段：
   - `internal/agentcompose/loader` 已承载 loader 模型、调度规则、cron 解析、bus publish 规则、topic payload helper，以及 LoaderEngine、run executor、event dispatcher 主业务逻辑；`pkg/agentcompose` 保留 Manager/Store/Connect glue 和兼容 wrapper。
   - `internal/agentcompose/project` 已承载 project normalize、schema ensure、SQL store、project-session 查询、proto response mapper、managed scheduler trigger/script build helper；`pkg/agentcompose` 保留 Service 编排、跨域 Session 适配和兼容 wrapper。
+  - `internal/agentcompose/run` 已承载 run coordinator、project agent run orchestration、run preparation、exec env/result mapper、run session helper；`pkg/agentcompose` 保留 Connect/Service、ConfigStore、session/runtime glue。
+  - `internal/agentcompose/session` 已承载 session 模型、列表过滤、proto option 解析、watch stream broker、reconcile rule、VM start/stop 编排；`pkg/agentcompose` 保留 Connect 映射、workspace/capability/loader/dashboard/ConfigStore glue。
+  - `internal/agentcompose/llm` 与 `internal/agentcompose/config` 已承载 LLM client 主逻辑、provider/model/target/token 域类型、runtime env helper、配置 normalize 和 SQLite/time/bool/int helper；`pkg/agentcompose` 保留 ConfigStore SQL/schema 与配置解析 wrapper。
+  - `internal/agentcompose/transport/httpapi` 已承载 Connect 注册、HTTP route 注册、Jupyter proxy/rewrite、workspace/webhook/runtime LLM facade route 入口、capability proxy server 构造；`pkg/agentcompose` 保留兼容注册入口和业务 handler glue。
 - 当前验证：`refactor/architecture-main` 上 `go test ./pkg/agentcompose ./cmd/agent-compose` 通过，`task build` 通过。
+  - 注：上述验证对应进入快速拆解阶段前的集成点。快速拆解阶段的新合入按策略暂未集中测试，后续收口阶段统一执行编译、测试和路径/import 修复。
 
 下一批优先级：
 
 - 继续按“域优先，大步迁移”的方式推进，不再把任务拆成零散 helper。
-- 优先迁移 `session` 与 `run` 两个核心域：它们是生命周期、执行编排和 runtime 调度的主干，收益高于继续打磨已迁出的低耦合 helper。
-- 并行推进 `config/llm` 与 `transport/http` 两个正交域：前者收口配置与 LLM runtime，后者收口入口层和路由适配。
+- `session`、`run`、`config/llm`、`transport/http` 四个大域主干已完成快速迁移并合入 `refactor/architecture-main`。
 - loader/project 后续只做收口：把仍留在 `pkg/agentcompose` 的 Store/Manager/Service 适配逐步压薄，避免再扩大同域内的小任务数量。
-- 暂缓全量 T6，直到 `session/run/project/loader` 的域边界稳定；否则会把旧耦合整体搬进 `internal`。
+- 下一步进入剩余 `pkg/agentcompose` 表面积收口：按域清理兼容 wrapper、迁移仍明显属于实现细节的 store/service 切片，并准备集中编译修复。
 
 ## 任务依赖图
 
