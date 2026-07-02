@@ -2,28 +2,16 @@ package loaders
 
 import "testing"
 
-func TestIntegrationLoaderWorkflow(t *testing.T) {
-	testLoaderManagerCollectDueScheduledRunsConsumesTimeout(t)
-	testLoaderRunHostCommandPersistsShellCellArtifactsAndEvents(t)
-	TestLoaderRunHostCommandPersistsDockerProxyTarget(t)
-	testLoaderRunHostCommandNonZeroExitCodeDoesNotThrow(t)
-	testLoaderRunHostAgentStopsSessionAfterExecution(t)
-	testLoaderRunCommandNewSessionsReuseAndCleanupAtRunEnd(t)
-	TestLoaderRunCommandStickySessionPersistsAcrossRunsWithTitle(t)
-	testLoaderManagerRunLifecycleStateLLMAndEventDispatch(t)
-	testLoaderManagerDispatchScheduledRunsAndSessionResumeBranches(t)
-	testLoaderScheduleModelWorkflows(t)
+func TestIntegrationLoaderEngineWorkflow(t *testing.T) {
+	testLoaderEngineExecuteSupportsSessionRPCBindings(t)
+	testLoaderEngineExecuteSupportsAgentAndLLMBindings(t)
+	testLoaderEngineExecuteSupportsCommandBindings(t)
+	TestLoaderEngineJSONAndRegistrationBranches(t)
 }
 
-func TestE2ELoaderWorkflow(t *testing.T) {
-	testLoaderManagerCollectDueScheduledRunsConsumesTimeout(t)
-	testLoaderRunHostCommandPersistsShellCellArtifactsAndEvents(t)
-	TestLoaderRunHostCommandPersistsDockerProxyTarget(t)
-	testLoaderRunHostCommandNonZeroExitCodeDoesNotThrow(t)
-	testLoaderRunHostAgentStopsSessionAfterExecution(t)
-	testLoaderRunCommandNewSessionsReuseAndCleanupAtRunEnd(t)
-	TestLoaderRunCommandStickySessionPersistsAcrossRunsWithTitle(t)
-	testLoaderManagerRunLifecycleStateLLMAndEventDispatch(t)
-	testLoaderManagerDispatchScheduledRunsAndSessionResumeBranches(t)
-	testLoaderScheduleModelWorkflows(t)
+func TestE2ELoaderEngineWorkflow(t *testing.T) {
+	testLoaderEngineExecuteSupportsSessionRPCBindings(t)
+	testLoaderEngineExecuteSupportsAgentAndLLMBindings(t)
+	testLoaderEngineExecuteSupportsCommandBindings(t)
+	TestLoaderEngineJSONAndRegistrationBranches(t)
 }

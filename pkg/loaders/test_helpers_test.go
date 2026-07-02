@@ -66,6 +66,28 @@ func (h *recordingLoaderHost) Log(context.Context, string, any) error {
 	return nil
 }
 
+type invalidStructuredAgentHost struct {
+	recordingLoaderHost
+}
+
+func (h *invalidStructuredAgentHost) Agent(ctx context.Context, prompt string, request LoaderAgentRequest) (LoaderAgentResult, error) {
+	result, err := h.recordingLoaderHost.Agent(ctx, prompt, request)
+	result.Text = `{"summary":"ok","risk":"medium"}`
+	result.Output = result.Text
+	result.FinalText = result.Text
+	return result, err
+}
+
+type invalidStructuredLLMHost struct {
+	recordingLoaderHost
+}
+
+func (h *invalidStructuredLLMHost) LLM(ctx context.Context, prompt string, request LoaderLLMRequest) (LoaderLLMResult, error) {
+	result, err := h.recordingLoaderHost.LLM(ctx, prompt, request)
+	result.Text = `{"summary":"ok","risk":"medium"}`
+	return result, err
+}
+
 func (h *recordingLoaderHost) PublishEvent(_ context.Context, topic string, payloadJSON string) (TopicEventRecord, error) {
 	h.published = append(h.published, topic+" "+payloadJSON)
 	return TopicEventRecord{ID: "evt-test", Sequence: 1, Topic: topic, CorrelationID: "corr-test"}, nil
