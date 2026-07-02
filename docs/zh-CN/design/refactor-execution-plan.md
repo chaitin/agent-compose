@@ -98,6 +98,11 @@ refactor/domain-project
   - `refactor/pkg-agentcompose-exec-agent`：迁移 exec、agent definition、runtime provider 真实实现。
   - `refactor/pkg-agentcompose-tests`：按域迁移 `pkg/agentcompose` 下的大型测试文件，减少旧包视觉和维护负担。
 - 本阶段目标是让 `pkg/agentcompose` 从主实现包变为兼容壳；仍按激进策略跳过完整测试，集中阶段统一修复。
+- 当前继续推进 `pkg/agentcompose` 残留大文件第二批清理：
+  - `refactor/pkg-agentcompose-control-plane`：收口 `service.go` 与 service facade residual。
+  - `refactor/pkg-agentcompose-loader-project-residual`：收口 `loader_manager.go`、`project_service.go` 等 loader/project residual。
+  - `refactor/pkg-agentcompose-config-llm-residual`：收口 `llm_config.go`、`config_store.go`、`store.go` residual。
+  - `refactor/pkg-agentcompose-http-residual`：收口 webhook/proxy/workspace HTTP residual。
 
 ## 任务依赖图
 
