@@ -81,3 +81,37 @@ func TestSessionDriverStartSessionVMSavesRuntimeProxyState(t *testing.T) {
 		t.Fatalf("vm state = %+v, want box id and bootstrap ref from runtime", vmState)
 	}
 }
+
+func TestSessionDriverPrepareSessionStartAppliesRuntimeEnvPreparer(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		GuestWorkspacePath: "/workspace",
+		GuestHomePath:      "/root",
+		GuestStateRoot:     "/data/state",
+		GuestRuntimeRoot:   "/data/runtime",
+		GuestLogRoot:       "/data/logs",
+	}
+	session := &Session{Summary: model.SessionSummary{
+		ID:            "session-runtime-env",
+		WorkspacePath: filepath.Join(root, "workspace"),
+	}}
+	driver := &SessionDriver{
+		config: config,
+		runtimeEnvPreparer: func(context.Context, *model.Session) ([]model.SessionEnvVar, error) {
+			return []model.SessionEnvVar{
+				{Name: "AGENT_COMPOSE_SESSION_TOKEN", Value: "session-token"},
+				{Name: "LLM_API_KEY", Value: "session-token"},
+			}, nil
+		},
+	}
+	vmState := model.VMState{Driver: driverpkg.RuntimeDriverDocker}
+
+	if err := driver.prepareSessionStart(ctx, driverpkg.RuntimeDriverDocker, session, &vmState); err != nil {
+		t.Fatalf("prepareSessionStart returned error: %v", err)
+	}
+	env := model.SessionEnvMap(session.RuntimeEnvItems)
+	if env["AGENT_COMPOSE_SESSION_TOKEN"] != "session-token" || env["LLM_API_KEY"] != "session-token" {
+		t.Fatalf("RuntimeEnvItems missing managed facade env: %#v", session.RuntimeEnvItems)
+	}
+}
