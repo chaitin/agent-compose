@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	agentworkspace "agent-compose/internal/agentcompose/workspace"
 	"strings"
 	"time"
 )
@@ -87,12 +88,7 @@ type SessionListResult struct {
 	NextOffset int
 }
 
-type SessionWorkspace struct {
-	ID         string `json:"id"`
-	Name       string `json:"name,omitempty"`
-	Type       string `json:"type,omitempty"`
-	ConfigJSON string `json:"config_json,omitempty"`
-}
+type SessionWorkspace = agentworkspace.Snapshot
 
 type Session struct {
 	Summary          SessionSummary    `json:"summary"`
@@ -116,15 +112,7 @@ func restoreSessionTransientFields(dst, src *Session) {
 	}
 }
 
-type WorkspaceConfig struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Type       string    `json:"type"`
-	ConfigJSON string    `json:"config_json"`
-	Comment    string    `json:"comment,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-}
+type WorkspaceConfig = agentworkspace.Config
 
 type NotebookCell struct {
 	ID             string           `json:"id"`

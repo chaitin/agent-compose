@@ -3,27 +3,16 @@ package agentcompose
 import (
 	appconfig "agent-compose/pkg/config"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
-	"time"
 
 	"github.com/labstack/echo/v4"
 )
-
-type workspaceFileEntry struct {
-	Path      string `json:"path"`
-	Dir       bool   `json:"dir"`
-	Size      int64  `json:"size"`
-	UpdatedAt string `json:"updated_at"`
-}
 
 type workspaceFilesResponse struct {
 	WorkspaceID string               `json:"workspace_id"`
@@ -160,64 +149,6 @@ func toWorkspaceHTTPError(err error) error {
 	}
 }
 
-func listWorkspaceFiles(contentRoot *os.Root) ([]workspaceFileEntry, error) {
-	items := make([]workspaceFileEntry, 0)
-	err := fs.WalkDir(contentRoot.FS(), ".", func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if path == "." {
-			return nil
-		}
-		relPath := filepath.ToSlash(path)
-		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("workspace file %s is a symlink", relPath)
-		}
-		info, err := contentRoot.Lstat(relPath)
-		if err != nil {
-			return err
-		}
-		items = append(items, workspaceFileEntry{
-			Path:      filepath.ToSlash(relPath),
-			Dir:       entry.IsDir(),
-			Size:      info.Size(),
-			UpdatedAt: info.ModTime().UTC().Format(time.RFC3339Nano),
-		})
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list workspace files: %w", err)
-	}
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].Path < items[j].Path
-	})
-	return items, nil
-}
-
-func cleanWorkspaceRelativePath(raw string, allowEmpty bool) (string, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		if allowEmpty {
-			return "", nil
-		}
-		return "", fmt.Errorf("workspace path is required")
-	}
-	if filepath.IsAbs(trimmed) {
-		return "", fmt.Errorf("workspace path %q must be relative", trimmed)
-	}
-	clean := filepath.Clean(trimmed)
-	if clean == "." {
-		if allowEmpty {
-			return "", nil
-		}
-		return "", fmt.Errorf("workspace path is required")
-	}
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("workspace path %q escapes workspace root", trimmed)
-	}
-	return clean, nil
-}
-
 func storeUploadedWorkspaceFile(fileHeader *multipart.FileHeader, contentRoot *os.Root, targetPath string) error {
 	if targetPath == "" {
 		targetPath = fileHeader.Filename
@@ -256,18 +187,4 @@ func extractUploadedWorkspaceArchive(fileHeader *multipart.FileHeader, contentRo
 	}
 	defer func() { _ = src.Close() }()
 	return extractWorkspaceTarArchive(src, contentRoot)
-}
-
-func defaultFileWorkspaceConfigJSON(config *appconfig.Config, workspaceID string) string {
-	root, err := defaultFileWorkspaceContentRoot(config, workspaceID)
-	if err != nil {
-		root = filepath.Join(config.DataRoot, "workspaces", strings.TrimSpace(workspaceID), fileWorkspaceContentDirName)
-	}
-	payload, _ := json.Marshal(fileWorkspaceConfig{Root: root})
-	return string(payload)
-}
-
-func defaultFileWorkspaceContentRoot(config *appconfig.Config, workspaceID string) (string, error) {
-	root := filepath.Join(config.DataRoot, "workspaces", strings.TrimSpace(workspaceID), fileWorkspaceContentDirName)
-	return filepath.Abs(root)
 }

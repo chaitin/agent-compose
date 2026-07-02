@@ -20,6 +20,7 @@ import (
 	"github.com/samber/do/v2"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	agentworkspace "agent-compose/internal/agentcompose/workspace"
 	"agent-compose/pkg/capproxy"
 	"agent-compose/pkg/imagecache"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
@@ -1460,12 +1461,7 @@ func toProtoGlobalEnvConfig(items []SessionEnvVar) *agentcomposev1.GlobalEnvConf
 }
 
 func toSessionWorkspaceSnapshot(item WorkspaceConfig) *SessionWorkspace {
-	return &SessionWorkspace{
-		ID:         item.ID,
-		Name:       item.Name,
-		Type:       item.Type,
-		ConfigJSON: item.ConfigJSON,
-	}
+	return agentworkspace.SnapshotFromConfig(item)
 }
 
 func toProtoSessionWorkspace(item *SessionWorkspace) *agentcomposev1.SessionWorkspaceSnapshot {
