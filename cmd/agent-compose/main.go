@@ -33,7 +33,8 @@ import (
 	"agent-compose/pkg/fxgo/restful"
 	"agent-compose/pkg/fxgo/utils"
 
-	"agent-compose/pkg/agentcompose"
+	appdomain "agent-compose/internal/app"
+	sqlitestore "agent-compose/internal/persistence/sqlite"
 	"agent-compose/pkg/auth"
 	"agent-compose/pkg/compose"
 	"agent-compose/pkg/config"
@@ -127,7 +128,7 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 	config.Setup(di)
 	do.Provide(di, NewEcho)
 	health.Setup(di)
-	agentcompose.Register(di)
+	appdomain.Register(di)
 
 	app := do.MustInvoke[*echo.Echo](di)
 	logger := do.MustInvoke[*slog.Logger](di)
@@ -136,7 +137,7 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 
 	startBackground := opts.StartBackground
 	if startBackground == nil {
-		startBackground = agentcompose.StartBackground
+		startBackground = appdomain.StartBackground
 	}
 	return &DaemonApp{
 		DI:              di,
@@ -164,7 +165,7 @@ func installDaemonMiddleware(app *echo.Echo, conf *config.Config) {
 		OAuthUserInfoURL:      conf.OAuthUserInfoURL,
 		OAuthClientAuthMethod: conf.OAuthClientAuthMethod,
 		Bypass:                isLocalUnixSocketRequest,
-		Skipper:               agentcompose.IsRuntimeLLMFacadeRequest,
+		Skipper:               appdomain.IsRuntimeLLMFacadeRequest,
 	})
 	authManager.RegisterRoutes(app)
 	app.Use(authManager.Middleware)
@@ -180,7 +181,7 @@ func installDaemonMiddleware(app *echo.Echo, conf *config.Config) {
 			// Same local-trust rule as AuthManager: CLI requests over the Unix
 			// socket skip basic auth too.
 			Skipper: func(c echo.Context) bool {
-				return isLocalUnixSocketRequest(c.Request()) || agentcompose.IsRuntimeLLMFacadeRequest(c.Request())
+				return isLocalUnixSocketRequest(c.Request()) || appdomain.IsRuntimeLLMFacadeRequest(c.Request())
 			},
 			Realm: "Password Required",
 			Validator: func(u, p string, c echo.Context) (bool, error) {
@@ -728,7 +729,7 @@ func runComposeUpCommand(cmd *cobra.Command, cli cliOptions) error {
 	}
 	client := agentcomposev2connect.NewProjectServiceClient(newDaemonHTTPClient(clientConfig), clientConfig.BaseURL)
 	resp, err := client.ApplyProject(cmd.Context(), connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
-		Spec: agentcompose.ProjectSpecResponse(normalized),
+		Spec: appdomain.ProjectSpecResponse(normalized),
 		Source: &agentcomposev2.ProjectSource{
 			ComposePath: composePath,
 			ProjectDir:  filepath.Dir(composePath),
@@ -1173,7 +1174,7 @@ func resolveComposeProject(cli cliOptions) (string, *compose.NormalizedProjectSp
 	if err != nil {
 		return "", nil, "", err
 	}
-	project, err := agentcompose.NewProjectRecordFromSpec(normalized, composePath)
+	project, err := sqlitestore.NewProjectRecordFromSpec(normalized, composePath)
 	if err != nil {
 		return "", nil, "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("%s: resolve project %s: %w", composePath, normalized.Name, err)}
 	}

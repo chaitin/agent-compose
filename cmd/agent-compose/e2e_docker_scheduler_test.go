@@ -15,7 +15,7 @@ import (
 	"github.com/samber/do/v2"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"agent-compose/pkg/agentcompose"
+	appdomain "agent-compose/internal/app"
 	"agent-compose/pkg/config"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
@@ -50,7 +50,7 @@ func TestE2EDockerSchedulerScriptHelloWorldFlow(t *testing.T) {
 	t.Cleanup(cancel)
 	app, err := NewDaemonApp(ctx, DaemonOptions{
 		StartBackground: func(di do.Injector) error {
-			return agentcompose.StartBackground(di)
+			return appdomain.StartBackground(di)
 		},
 	})
 	if err != nil {
