@@ -4,8 +4,9 @@
 
 相关代码：
 
-- host agent 调用：`pkg/agentcompose/service.go`
-- host 执行与落库：`pkg/agentcompose/exec.go`
+- host agent/session service wiring：`pkg/agentcompose/service.go`
+- host 执行：`pkg/executor/`
+- session 持久化和 runtime state：`pkg/storage/`、`pkg/sessions/`
 - runtime CLI 源码：`runtime/javascript/src/cli.ts`
 - runtime provider 适配器：`runtime/javascript/src/runners/`
 - guest SDK：`runtime/agent-compose-runtime-sdk/`

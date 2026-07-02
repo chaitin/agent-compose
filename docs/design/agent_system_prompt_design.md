@@ -153,8 +153,9 @@ run in the same session cannot read stale identity text.
 
 ## Host (Go) Implementation
 
-Primary files: `pkg/agentcompose/service.go`, `pkg/agentcompose/exec.go`,
-`pkg/agentcompose/loader_manager.go`, `pkg/agentcompose/run_service.go`.
+Primary files: `pkg/executor/`, `pkg/sessions/`, `pkg/loaders/`, and
+`pkg/projects/`. `pkg/agentcompose/service.go` wires these owner services into
+the daemon handlers.
 
 ### Resolve agent system prompt
 
@@ -312,7 +313,7 @@ the system prompt wiring scope.
 
 ## Testing
 
-### Go (`pkg/agentcompose/agent_system_prompt_test.go`)
+### Go (`pkg/executor/system_prompt_test.go`, `pkg/projects/agent_system_prompt_test.go`)
 
 - Empty `system_prompt` resolves to `""`
 - Session-tagged agent resolves trimmed prompt text
@@ -354,11 +355,12 @@ Runner tests (`runners.test.ts`, `runner-execution.test.ts`) were updated to use
 
 | File | Change |
 | --- | --- |
-| `pkg/agentcompose/service.go` | `resolveAgentSystemPrompt`, `writeAgentSystemPromptFile`, `executeAgentRun` |
-| `pkg/agentcompose/exec.go` | `AgentDefinitionID` on `ExecuteAgentRequest`; inject `configDB` into `Executor` |
-| `pkg/agentcompose/loader_manager.go` | Pass agent definition id into agent execution |
-| `pkg/agentcompose/run_service.go` | Pass `ManagedAgentID` into agent execution |
-| `pkg/agentcompose/agent_system_prompt_test.go` | **new** — host resolution, fixed-path write/remove tests |
+| `pkg/executor/` | Resolve agent system prompt, write/remove `system-prompt.txt`, pass `--state-root`, and execute agent runs |
+| `pkg/sessions/` | Carry `AgentDefinitionID` from session agent requests into executor requests |
+| `pkg/loaders/` | Pass bound loader agent definition id into agent execution |
+| `pkg/projects/` | Pass `ManagedAgentID` from project runs into agent execution |
+| `pkg/executor/system_prompt_test.go` | Host resolution, fixed-path write/remove, and exec spec tests |
+| `pkg/projects/agent_system_prompt_test.go` | Managed project run system prompt smoke |
 | `runtime/javascript/src/system-context.ts` | **new** — `agentSystemPromptPath`, composition, file read helpers |
 | `runtime/javascript/src/prompt.ts` | Convention-path read; compose `systemContext` before runner dispatch |
 | `runtime/javascript/src/types.ts` | `systemContext` on `RunnerOptions` |

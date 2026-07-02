@@ -9,9 +9,10 @@
 - compose 解析和规范化：`pkg/compose/`
 - v1 API：`proto/agentcompose/v1/agentcompose.proto`
 - v2 API：`proto/agentcompose/v2/agentcompose.proto`
-- project/run 持久化：`pkg/agentcompose/project_schema.go`、`pkg/agentcompose/project_store.go`
+- 持久化 store 和 schema：`pkg/storage/`
 - Jupyter 代理：`pkg/agentcompose/proxy.go`
-- loader 运行时和调度：`pkg/agentcompose/loader_engine.go`、`pkg/agentcompose/loader_manager.go`
+- loader 运行时和调度：`pkg/loaders/`
+- 领域服务：`pkg/sessions/`、`pkg/projects/`、`pkg/agents/`、`pkg/llm/`、`pkg/events/`、`pkg/images/`、`pkg/workspaces/`
 - 独立前端镜像：`nginx/Dockerfile`
 
 ## 架构目标

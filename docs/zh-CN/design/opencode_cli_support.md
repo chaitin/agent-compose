@@ -11,10 +11,10 @@ Go 控制面负责创建 session 并在 guest 内执行统一 runtime 命令，
 
 Provider 相关逻辑分在四层：
 
-- Go 控制面：`pkg/agentcompose/service.go` 的 `normalizeAgentKind`、
-  `pkg/agentcompose/agent_definition.go` 的 `normalizeAgentDefinition`、
-  loader 默认 agent 校验，以及 run/session 编排当前会把 provider 字符串传给
-  guest runtime。
+- Go 控制面：`pkg/model` 负责 provider 归一化，`pkg/agents` 负责 agent
+  definition 校验和 execution config，`pkg/loaders` 负责 loader 默认 agent
+  校验，`pkg/projects` 和 `pkg/sessions` 的 run/session 编排会把 provider
+  字符串传给 guest runtime。
 - JavaScript runtime：`runtime/javascript/src/provider.ts` 归一化 provider
   alias，`runtime/javascript/src/prompt.ts` 选择 runner，
   `runtime/javascript/src/runners/` 存放 provider adapter。
@@ -86,8 +86,8 @@ agents:
    - `runtime/javascript/src/types.ts`：`Provider` 增加 `"opencode"`。
    - `runtime/javascript/src/provider.ts`：把 `opencode`、`open-code`、
      `open_code` 归一化为 `opencode`。
-   - `pkg/agentcompose/service.go`：更新 `normalizeAgentKind`。
-   - `pkg/agentcompose/agent_definition.go`：provider 白名单允许
+   - `pkg/model`：归一化 OpenCode aliases。
+   - `pkg/agents`：agent definition 校验和 execution config 允许
      `opencode`。
 
 2. 增加 `OpenCodeRunner`。

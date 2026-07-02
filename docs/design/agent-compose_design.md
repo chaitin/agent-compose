@@ -14,11 +14,11 @@ The current code facts are anchored by these entry points:
 - Compose parsing and normalization: `pkg/compose/`
 - v1 API: `proto/agentcompose/v1/agentcompose.proto`
 - v2 API: `proto/agentcompose/v2/agentcompose.proto`
-- Project/run persistence: `pkg/agentcompose/project_schema.go` and
-  `pkg/agentcompose/project_store.go`
+- Persistence stores and schema: `pkg/storage/`
 - Jupyter proxy: `pkg/agentcompose/proxy.go`
-- Loader runtime and scheduling: `pkg/agentcompose/loader_engine.go` and
-  `pkg/agentcompose/loader_manager.go`
+- Loader runtime and scheduling: `pkg/loaders/`
+- Domain services: `pkg/sessions/`, `pkg/projects/`, `pkg/agents/`,
+  `pkg/llm/`, `pkg/events/`, `pkg/images/`, and `pkg/workspaces/`
 - Standalone frontend image: `nginx/Dockerfile`
 
 ## Architecture Goals

@@ -167,7 +167,7 @@ concurrency_policy: "parallel"
 
 集成/真实验证：
 
-- `go test ./pkg/agentcompose -run 'Webhook|EventDispatcher|Loader'`
+- `go test ./pkg/events ./pkg/loaders ./pkg/storage -run 'Webhook|EventDispatcher|Loader'`
 - `task test` 或至少相关 Go package 全量测试。
 - 本地启动 daemon，创建一个 webhook source 和 event trigger loader，快速投递多个同 topic、不同 repository 的 webhook，确认：
   - HTTP 全部返回 202。
