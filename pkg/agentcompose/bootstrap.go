@@ -7,6 +7,8 @@ import (
 	"github.com/samber/do/v2"
 
 	"agent-compose/internal/agentcompose/bootstrap"
+	"agent-compose/internal/agentcompose/transport/connectv1"
+	"agent-compose/internal/agentcompose/transport/connectv2"
 	"agent-compose/internal/agentcompose/transport/httpapi"
 	"agent-compose/pkg/capproxy"
 )
@@ -51,7 +53,8 @@ func register(di do.Injector) {
 	app := do.MustInvoke[*echo.Echo](di)
 	service := do.MustInvoke[*Service](di)
 
-	httpapi.RegisterConnectHandlers(app, service)
+	connectv1.RegisterHandlers(app, service)
+	connectv2.RegisterHandlers(app, service)
 	registerWebhookRoutes(app, service)
 	registerRuntimeLLMFacadeRoutes(app, service)
 	registerProxyRoutes(app, service)
