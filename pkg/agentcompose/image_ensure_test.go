@@ -9,7 +9,7 @@ import (
 	"connectrpc.com/connect"
 	cerrdefs "github.com/containerd/errdefs"
 
-	driverpkg "agent-compose/pkg/driver"
+	driverpkg "agent-compose/internal/driver"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 

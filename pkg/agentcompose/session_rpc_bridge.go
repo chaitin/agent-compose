@@ -2,8 +2,8 @@ package agentcompose
 
 import (
 	sessiondomain "agent-compose/internal/agentcompose/session"
-	appconfig "agent-compose/pkg/config"
-	driverpkg "agent-compose/pkg/driver"
+	appconfig "agent-compose/internal/config"
+	driverpkg "agent-compose/internal/driver"
 	"context"
 	"fmt"
 	"log/slog"

@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	domaincap "agent-compose/internal/agentcompose/capability"
-	"agent-compose/pkg/capproxy"
+	"agent-compose/internal/capproxy"
 )
 
 const (

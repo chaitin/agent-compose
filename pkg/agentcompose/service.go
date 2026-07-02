@@ -3,8 +3,8 @@ package agentcompose
 import (
 	execdomain "agent-compose/internal/agentcompose/exec"
 	sessiondomain "agent-compose/internal/agentcompose/session"
-	appconfig "agent-compose/pkg/config"
-	driverpkg "agent-compose/pkg/driver"
+	appconfig "agent-compose/internal/config"
+	driverpkg "agent-compose/internal/driver"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -23,8 +23,8 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	agentworkspace "agent-compose/internal/agentcompose/workspace"
-	"agent-compose/pkg/capproxy"
-	"agent-compose/pkg/imagecache"
+	"agent-compose/internal/capproxy"
+	"agent-compose/internal/imagecache"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"

@@ -8,7 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 

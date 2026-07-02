@@ -41,10 +41,10 @@ proxy assumptions.
 ```text
 cmd/agent-compose/             daemon and CLI entrypoint
 pkg/agentcompose/              sessions, projects, loaders, proxy, stores, APIs
-pkg/driver/                    Docker, BoxLite, and Microsandbox runtime drivers
-pkg/auth/                      authentication middleware and login flows
-pkg/config/                    environment configuration
-pkg/imagecache/                OCI image cache helpers
+internal/driver/               Docker, BoxLite, and Microsandbox runtime drivers
+internal/auth/                 authentication middleware and login flows
+internal/config/               environment configuration
+internal/imagecache/           OCI image cache helpers
 proto/                         Connect API definitions and generated Go code
 proto-client/                  npm package config for the generated TypeScript client
 runtime/                       guest runtime SDKs and JavaScript scheduler runtime

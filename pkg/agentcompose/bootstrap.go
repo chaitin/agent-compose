@@ -10,7 +10,7 @@ import (
 	"agent-compose/internal/agentcompose/transport/connectv1"
 	"agent-compose/internal/agentcompose/transport/connectv2"
 	"agent-compose/internal/agentcompose/transport/httpapi"
-	"agent-compose/pkg/capproxy"
+	"agent-compose/internal/capproxy"
 )
 
 func init() {

@@ -1,7 +1,7 @@
 package agentcompose
 
 import (
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 	"bytes"
 	"context"
 	"encoding/json"

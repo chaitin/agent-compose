@@ -128,7 +128,7 @@ static enum BoxliteErrorCode agentcompose_boxlite_execution_on_exit(
 import "C"
 
 import (
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 	"archive/tar"
 	"bytes"
 	"context"

@@ -10,7 +10,7 @@ import (
 	"github.com/samber/do/v2"
 	_ "modernc.org/sqlite"
 
-	"agent-compose/pkg/config"
+	"agent-compose/internal/config"
 )
 
 type DBResource struct {

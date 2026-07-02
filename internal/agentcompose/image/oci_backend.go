@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"agent-compose/pkg/imagecache"
+	"agent-compose/internal/imagecache"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 

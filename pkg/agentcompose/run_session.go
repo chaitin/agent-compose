@@ -7,7 +7,7 @@ import (
 	"time"
 
 	rundomain "agent-compose/internal/agentcompose/run"
-	driverpkg "agent-compose/pkg/driver"
+	driverpkg "agent-compose/internal/driver"
 
 	"github.com/google/uuid"
 )

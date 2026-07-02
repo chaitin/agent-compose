@@ -9,8 +9,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	appconfig "agent-compose/pkg/config"
-	driverpkg "agent-compose/pkg/driver"
+	appconfig "agent-compose/internal/config"
+	driverpkg "agent-compose/internal/driver"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 

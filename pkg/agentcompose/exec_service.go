@@ -3,7 +3,7 @@ package agentcompose
 import (
 	execdomain "agent-compose/internal/agentcompose/exec"
 	rundomain "agent-compose/internal/agentcompose/run"
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 	"context"
 	"database/sql"
 	"errors"

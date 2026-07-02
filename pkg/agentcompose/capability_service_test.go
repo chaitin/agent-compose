@@ -9,7 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 

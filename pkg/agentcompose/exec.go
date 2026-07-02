@@ -2,7 +2,7 @@ package agentcompose
 
 import (
 	execdomain "agent-compose/internal/agentcompose/exec"
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 	"context"
 	"encoding/json"
 	"fmt"

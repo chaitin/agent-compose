@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	driverpkg "agent-compose/pkg/driver"
+	driverpkg "agent-compose/internal/driver"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 

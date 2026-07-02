@@ -3,7 +3,7 @@ package loader
 import (
 	domaincap "agent-compose/internal/agentcompose/capability"
 	configdomain "agent-compose/internal/agentcompose/config"
-	driverpkg "agent-compose/pkg/driver"
+	driverpkg "agent-compose/internal/driver"
 	"context"
 	"database/sql"
 	"encoding/json"

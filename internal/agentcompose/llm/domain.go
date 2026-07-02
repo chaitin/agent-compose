@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	driverpkg "agent-compose/pkg/driver"
+	driverpkg "agent-compose/internal/driver"
 )
 
 const (

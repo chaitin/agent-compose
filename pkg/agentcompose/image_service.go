@@ -10,7 +10,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 
 	domainimage "agent-compose/internal/agentcompose/image"
-	"agent-compose/pkg/imagecache"
+	"agent-compose/internal/imagecache"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 

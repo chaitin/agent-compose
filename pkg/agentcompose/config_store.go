@@ -4,7 +4,7 @@ import (
 	configdomain "agent-compose/internal/agentcompose/config"
 	eventsdomain "agent-compose/internal/agentcompose/events"
 	loaderdomain "agent-compose/internal/agentcompose/loader"
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 	"context"
 	"database/sql"
 	"encoding/json"

@@ -17,7 +17,7 @@ import (
 	protocolbridge "github.com/chaitin/ai-api-protocol-bridge"
 	"github.com/labstack/echo/v4"
 
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 

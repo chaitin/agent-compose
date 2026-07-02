@@ -10,8 +10,8 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	domaincap "agent-compose/internal/agentcompose/capability"
+	appconfig "agent-compose/internal/config"
 	"agent-compose/pkg/capability"
-	appconfig "agent-compose/pkg/config"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 )
 
 const GitTempDirName = ".agent-compose-git-clone"

@@ -5,8 +5,8 @@ package driver
 import (
 	"context"
 
-	appconfig "agent-compose/pkg/config"
-	"agent-compose/pkg/imagecache"
+	appconfig "agent-compose/internal/config"
+	"agent-compose/internal/imagecache"
 )
 
 func materializeBoxliteOCIImageLayout(ctx context.Context, config *appconfig.Config, imageRef string) (boxliteImageLayoutResult, bool, error) {

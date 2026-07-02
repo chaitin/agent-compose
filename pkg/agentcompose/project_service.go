@@ -10,8 +10,8 @@ import (
 	"connectrpc.com/connect"
 
 	projectdomain "agent-compose/internal/agentcompose/project"
+	driverpkg "agent-compose/internal/driver"
 	"agent-compose/pkg/compose"
-	driverpkg "agent-compose/pkg/driver"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 

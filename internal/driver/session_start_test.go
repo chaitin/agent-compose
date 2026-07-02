@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 )
 
 func TestDockerFirstRuntimeImageResolverSkipsDockerForNonDockerPrepare(t *testing.T) {

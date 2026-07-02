@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	appconfig "agent-compose/pkg/config"
-	"agent-compose/pkg/imagecache"
+	appconfig "agent-compose/internal/config"
+	"agent-compose/internal/imagecache"
 )
 
 type microsandboxRootFSResult struct {
