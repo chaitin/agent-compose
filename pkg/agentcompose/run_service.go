@@ -2,13 +2,12 @@ package agentcompose
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	rundomain "agent-compose/internal/agentcompose/run"
+	transport "agent-compose/internal/agentcompose/transport"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -16,44 +15,26 @@ import (
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
-var errRunAgentStreamSend = errors.New("run agent stream send failed")
-
 func (s *Service) RunAgent(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest]) (*connect.Response[agentcomposev2.RunAgentResponse], error) {
-	run, _, err := s.runProjectAgent(ctx, req.Msg, nil)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&agentcomposev2.RunAgentResponse{
-		Run: runDetailResponse(run),
-	}), nil
+	return s.runTransport().RunAgent(ctx, req)
 }
 
 func (s *Service) RunAgentStream(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
-	prepareStreamingHeaders(stream.ResponseHeader())
-	sink := projectRunStreamSink{
-		send: func(resp *agentcomposev2.RunAgentStreamResponse) error {
-			if err := stream.Send(resp); err != nil {
-				return fmt.Errorf("%w: %w", errRunAgentStreamSend, err)
+	return s.runTransport().RunAgentStream(ctx, req, stream)
+}
+
+func (s *Service) runTransport() *transport.RunService {
+	return transport.NewRunService(
+		s.configDB,
+		func() transport.ProjectRunCanceler { return NewRunCoordinator(s.configDB) },
+		func(ctx context.Context, msg *agentcomposev2.RunAgentRequest, send func(*agentcomposev2.RunAgentStreamResponse) error) (ProjectRunRecord, error, error) {
+			var sink *projectRunStreamSink
+			if send != nil {
+				sink = &projectRunStreamSink{send: send}
 			}
-			return nil
+			return s.runProjectAgent(ctx, msg, sink)
 		},
-	}
-	run, execErr, err := s.runProjectAgent(ctx, req.Msg, &sink)
-	if err != nil {
-		return err
-	}
-	if errors.Is(execErr, errRunAgentStreamSend) {
-		return connect.NewError(connect.CodeUnknown, execErr)
-	}
-	if sendErr := sink.send(&agentcomposev2.RunAgentStreamResponse{
-		EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED,
-		Run:       runSummaryResponse(run),
-		RunId:     run.RunID,
-		CreatedAt: formatProjectTime(time.Now().UTC()),
-	}); sendErr != nil {
-		return connect.NewError(connect.CodeUnknown, sendErr)
-	}
-	return nil
+	)
 }
 
 type projectRunStreamSink struct {
@@ -110,7 +91,7 @@ func (s *Service) runProjectAgent(ctx context.Context, msg *agentcomposev2.RunAg
 	run, execErr, err := orchestrator.Run(ctx, transitionCtx, rundomain.AgentRunRequest{
 		ProjectID:       msg.GetProjectId(),
 		AgentName:       msg.GetAgentName(),
-		Source:          projectRunSourceFromProto(msg.GetSource()),
+		Source:          transport.ProjectRunSourceFromProto(msg.GetSource()),
 		SchedulerID:     msg.GetSchedulerId(),
 		TriggerID:       msg.GetTriggerId(),
 		Prompt:          msg.GetPrompt(),
@@ -170,9 +151,9 @@ func projectRunAgentExecutionStream(run ProjectRunRecord, sink *projectRunStream
 		OnStart: func(NotebookCell) error {
 			return sink.send(&agentcomposev2.RunAgentStreamResponse{
 				EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_STARTED,
-				Run:       runSummaryResponse(run),
+				Run:       transport.RunSummaryResponse(run),
 				RunId:     run.RunID,
-				CreatedAt: formatProjectTime(time.Now().UTC()),
+				CreatedAt: transport.FormatMaybeTime(time.Now().UTC()),
 			})
 		},
 		OnChunk: func(_ string, chunk ExecChunk) error {
@@ -181,7 +162,7 @@ func projectRunAgentExecutionStream(run ProjectRunRecord, sink *projectRunStream
 				RunId:     run.RunID,
 				Chunk:     chunk.Text,
 				IsStderr:  chunk.IsStderr,
-				CreatedAt: formatProjectTime(time.Now().UTC()),
+				CreatedAt: transport.FormatMaybeTime(time.Now().UTC()),
 			})
 		},
 	}
@@ -255,195 +236,13 @@ func (s *Service) stopProjectRunSession(ctx context.Context, session *Session) e
 }
 
 func (s *Service) GetRun(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
-	if s.configDB == nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
-	}
-	runID := strings.TrimSpace(req.Msg.GetRunId())
-	if runID == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run id is required"))
-	}
-	run, err := s.configDB.GetProjectRun(ctx, runID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
-		}
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	if projectID := strings.TrimSpace(req.Msg.GetProjectId()); projectID != "" && run.ProjectID != projectID {
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("project run %s not found in project %s", runID, projectID))
-	}
-	return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: runDetailResponse(run)}), nil
+	return s.runTransport().GetRun(ctx, req)
 }
 
 func (s *Service) ListRuns(ctx context.Context, req *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
-	if s.configDB == nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
-	}
-	runs, err := s.configDB.ListProjectRunsByOptions(ctx, ProjectRunListOptions{
-		ProjectID:   req.Msg.GetProjectId(),
-		AgentName:   req.Msg.GetAgentName(),
-		SessionID:   req.Msg.GetSessionId(),
-		SchedulerID: req.Msg.GetSchedulerId(),
-		Status:      projectRunStatusFromProto(req.Msg.GetStatus()),
-		Source:      projectRunSourceFilterFromProto(req.Msg.GetSource()),
-		Offset:      int(req.Msg.GetOffset()),
-		Limit:       int(req.Msg.GetLimit()),
-	})
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	items := make([]*agentcomposev2.RunSummary, 0, len(runs))
-	for _, run := range runs {
-		items = append(items, runSummaryResponse(run))
-	}
-	return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: items}), nil
+	return s.runTransport().ListRuns(ctx, req)
 }
 
 func (s *Service) StopRun(ctx context.Context, req *connect.Request[agentcomposev2.StopRunRequest]) (*connect.Response[agentcomposev2.StopRunResponse], error) {
-	if s.configDB == nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
-	}
-	runID := strings.TrimSpace(req.Msg.GetRunId())
-	if runID == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run id is required"))
-	}
-	coordinator := NewRunCoordinator(s.configDB)
-	current, err := s.configDB.GetProjectRun(ctx, runID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
-		}
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	if projectRunStatusIsTerminal(current.Status) {
-		return connect.NewResponse(&agentcomposev2.StopRunResponse{
-			Run:           runDetailResponse(current),
-			StopRequested: false,
-		}), nil
-	}
-	reason := strings.TrimSpace(req.Msg.GetReason())
-	if reason == "" {
-		reason = "stop requested"
-	}
-	run, err := coordinator.MarkCanceled(ctx, ProjectRunTransitionRequest{
-		RunID: runID,
-		Error: reason,
-	})
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	return connect.NewResponse(&agentcomposev2.StopRunResponse{
-		Run:           runDetailResponse(run),
-		StopRequested: true,
-	}), nil
-}
-
-func runDetailResponse(run ProjectRunRecord) *agentcomposev2.RunDetail {
-	return &agentcomposev2.RunDetail{
-		Summary:      runSummaryResponse(run),
-		Prompt:       run.Prompt,
-		Output:       run.Output,
-		ResultJson:   run.ResultJSON,
-		LogsPath:     run.LogsPath,
-		ArtifactsDir: run.ArtifactsDir,
-		CleanupError: run.CleanupError,
-		Driver:       run.Driver,
-		ImageRef:     run.ImageRef,
-	}
-}
-
-func runSummaryResponse(run ProjectRunRecord) *agentcomposev2.RunSummary {
-	return &agentcomposev2.RunSummary{
-		RunId:           run.RunID,
-		ProjectId:       run.ProjectID,
-		ProjectName:     run.ProjectName,
-		ProjectRevision: uint64(run.ProjectRevision),
-		AgentId:         run.ManagedAgentID,
-		AgentName:       run.AgentName,
-		Source:          projectRunSourceResponse(run.Source),
-		SchedulerId:     run.SchedulerID,
-		TriggerId:       run.TriggerID,
-		Status:          projectRunStatusResponse(run.Status),
-		SessionId:       run.SessionID,
-		ExitCode:        int32(run.ExitCode),
-		Error:           run.Error,
-		StartedAt:       formatProjectTime(run.StartedAt),
-		CompletedAt:     formatProjectTime(run.CompletedAt),
-		DurationMs:      run.DurationMs,
-		CreatedAt:       formatProjectTime(run.CreatedAt),
-		UpdatedAt:       formatProjectTime(run.UpdatedAt),
-	}
-}
-
-func projectRunStatusResponse(status string) agentcomposev2.RunStatus {
-	switch normalizeProjectRunStatus(status) {
-	case ProjectRunStatusPending:
-		return agentcomposev2.RunStatus_RUN_STATUS_PENDING
-	case ProjectRunStatusRunning:
-		return agentcomposev2.RunStatus_RUN_STATUS_RUNNING
-	case ProjectRunStatusSucceeded:
-		return agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED
-	case ProjectRunStatusFailed:
-		return agentcomposev2.RunStatus_RUN_STATUS_FAILED
-	case ProjectRunStatusCanceled:
-		return agentcomposev2.RunStatus_RUN_STATUS_CANCELED
-	default:
-		return agentcomposev2.RunStatus_RUN_STATUS_UNSPECIFIED
-	}
-}
-
-func projectRunStatusFromProto(status agentcomposev2.RunStatus) string {
-	switch status {
-	case agentcomposev2.RunStatus_RUN_STATUS_PENDING:
-		return ProjectRunStatusPending
-	case agentcomposev2.RunStatus_RUN_STATUS_RUNNING:
-		return ProjectRunStatusRunning
-	case agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED:
-		return ProjectRunStatusSucceeded
-	case agentcomposev2.RunStatus_RUN_STATUS_FAILED:
-		return ProjectRunStatusFailed
-	case agentcomposev2.RunStatus_RUN_STATUS_CANCELED:
-		return ProjectRunStatusCanceled
-	default:
-		return ""
-	}
-}
-
-func projectRunSourceResponse(source string) agentcomposev2.RunSource {
-	switch normalizeProjectRunSource(source) {
-	case ProjectRunSourceScheduler:
-		return agentcomposev2.RunSource_RUN_SOURCE_SCHEDULER
-	case ProjectRunSourceAPI:
-		return agentcomposev2.RunSource_RUN_SOURCE_API
-	case ProjectRunSourceManual:
-		return agentcomposev2.RunSource_RUN_SOURCE_MANUAL
-	default:
-		return agentcomposev2.RunSource_RUN_SOURCE_UNSPECIFIED
-	}
-}
-
-func projectRunSourceFromProto(source agentcomposev2.RunSource) string {
-	switch source {
-	case agentcomposev2.RunSource_RUN_SOURCE_SCHEDULER:
-		return ProjectRunSourceScheduler
-	case agentcomposev2.RunSource_RUN_SOURCE_API:
-		return ProjectRunSourceAPI
-	case agentcomposev2.RunSource_RUN_SOURCE_MANUAL:
-		return ProjectRunSourceManual
-	default:
-		return ProjectRunSourceManual
-	}
-}
-
-func projectRunSourceFilterFromProto(source agentcomposev2.RunSource) string {
-	switch source {
-	case agentcomposev2.RunSource_RUN_SOURCE_SCHEDULER:
-		return ProjectRunSourceScheduler
-	case agentcomposev2.RunSource_RUN_SOURCE_API:
-		return ProjectRunSourceAPI
-	case agentcomposev2.RunSource_RUN_SOURCE_MANUAL:
-		return ProjectRunSourceManual
-	default:
-		return ""
-	}
+	return s.runTransport().StopRun(ctx, req)
 }
