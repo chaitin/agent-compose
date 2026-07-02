@@ -4,11 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	loaderspkg "agent-compose/pkg/loaders"
-	projectspkg "agent-compose/pkg/projects"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
@@ -57,25 +55,4 @@ func newProjectServiceTestSpec(name string, reviewerModel string) *agentcomposev
 			},
 		},
 	}
-}
-
-func newProjectServiceInlineSchedulerScriptSpec(name string, script string) *agentcomposev2.ProjectSpec {
-	return &agentcomposev2.ProjectSpec{
-		Name: name,
-		Agents: []*agentcomposev2.AgentSpec{{
-			Name:     "reviewer",
-			Provider: "codex",
-			Model:    "gpt-test",
-			Image:    "guest:v1",
-			Driver:   &agentcomposev2.DriverSpec{Name: "boxlite"},
-			Scheduler: &agentcomposev2.SchedulerSpec{
-				Enabled: true,
-				Script:  script,
-			},
-		}},
-	}
-}
-
-func projectSpecResponse(spec *compose.NormalizedProjectSpec) *agentcomposev2.ProjectSpec {
-	return projectspkg.ProjectSpecResponse(spec)
 }

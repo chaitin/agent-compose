@@ -55,21 +55,6 @@ func normalizeLoaderRuntime(runtime string) (string, error) {
 	}
 }
 
-func normalizeLoaderTriggerKind(kind string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case LoaderTriggerKindInterval:
-		return LoaderTriggerKindInterval, nil
-	case LoaderTriggerKindEvent:
-		return LoaderTriggerKindEvent, nil
-	case LoaderTriggerKindTimeout:
-		return LoaderTriggerKindTimeout, nil
-	case LoaderTriggerKindCron:
-		return LoaderTriggerKindCron, nil
-	default:
-		return "", fmt.Errorf("unsupported loader trigger kind %q", kind)
-	}
-}
-
 func normalizeLoaderSessionPolicy(policy string) string {
 	switch strings.ToLower(strings.TrimSpace(policy)) {
 	case "", LoaderSessionPolicySticky, LoaderSessionPolicyReuse:

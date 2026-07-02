@@ -15,7 +15,6 @@ import (
 
 	"connectrpc.com/connect"
 
-	loaderspkg "agent-compose/pkg/loaders"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
@@ -210,6 +209,10 @@ func TestRunServiceRunAgentInjectsProjectAgentCapabilities(t *testing.T) {
 	testRunServiceRunAgentInjectsProjectAgentCapabilities(t)
 }
 
+func TestIntegrationRunServiceRunAgentInjectsProjectAgentCapabilities(t *testing.T) {
+	testRunServiceRunAgentInjectsProjectAgentCapabilities(t)
+}
+
 func TestE2ERunServiceRunAgentInjectsProjectAgentCapabilities(t *testing.T) {
 	testRunServiceRunAgentInjectsProjectAgentCapabilities(t)
 }
@@ -273,6 +276,10 @@ func testRunServiceRunAgentInjectsProjectAgentCapabilities(t *testing.T) {
 }
 
 func TestRunServiceRunAgentRefreshesCapabilitiesOnReusedSession(t *testing.T) {
+	testRunServiceRunAgentRefreshesCapabilitiesOnReusedSession(t)
+}
+
+func TestIntegrationRunServiceRunAgentRefreshesCapabilitiesOnReusedSession(t *testing.T) {
 	testRunServiceRunAgentRefreshesCapabilitiesOnReusedSession(t)
 }
 
@@ -1052,32 +1059,6 @@ func lastRunAgentStreamEvent(events []*agentcomposev2.RunAgentStreamResponse, ev
 func runServiceFakeRuntime(t *testing.T, service *Service) *fakeLoaderAgentRuntime {
 	t.Helper()
 	return projectTestFakeRuntime(t, service)
-}
-
-func newRunServiceLoaderManager(t testing.TB, service *Service) *LoaderManager {
-	t.Helper()
-	componentStreams := service.streams
-	return newTestLoaderManager(t, loaderspkg.ManagerDeps{
-		Config:             service.config,
-		RootCtx:            context.Background(),
-		Store:              service.store,
-		ConfigDB:           service.configDB,
-		Driver:             service.driver,
-		Executor:           loaderspkg.NewExecutor(service.config, service.store, service.configDB, projectTestRuntimeProvider(t, service), componentStreams),
-		Streams:            componentStreams,
-		Bus:                NewLoaderBusWithBuffer(16),
-		Engine:             &QJSLoaderEngine{},
-		ProjectAgentRunner: service,
-	})
-}
-
-func loaderEventsContain(events []LoaderEvent, eventType string) bool {
-	for _, event := range events {
-		if event.Type == eventType {
-			return true
-		}
-	}
-	return false
 }
 
 func beginRunPreparationTestRun(t *testing.T, store *ConfigStore, projectID, requestID string) ProjectRunRecord {

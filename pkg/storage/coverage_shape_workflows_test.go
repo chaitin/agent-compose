@@ -9,6 +9,8 @@ func TestIntegrationTopicEventStoreWorkflow(t *testing.T) {
 	TestConfigStoreEventDeliveryDoesNotDowngradeRunOnDuplicateMatch(t)
 	TestConfigStoreWebhookSourceCRUDAndTopicMatching(t)
 	TestTopicEventModelAndStoreErrorBranches(t)
+	testStoreAgentRunLegacyVMAndListWorkflows(t)
+	testConfigStoreMigrationAndTimeParsingWorkflows(t)
 }
 
 func TestE2ETopicEventStoreWorkflow(t *testing.T) {
@@ -18,4 +20,6 @@ func TestE2ETopicEventStoreWorkflow(t *testing.T) {
 	TestConfigStoreEventDeliveryDoesNotDowngradeRunOnDuplicateMatch(t)
 	TestConfigStoreWebhookSourceCRUDAndTopicMatching(t)
 	TestTopicEventModelAndStoreErrorBranches(t)
+	testStoreAgentRunLegacyVMAndListWorkflows(t)
+	testConfigStoreMigrationAndTimeParsingWorkflows(t)
 }

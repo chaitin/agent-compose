@@ -5,15 +5,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	projectspkg "agent-compose/pkg/projects"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
-
-var errRunAgentStreamSend = projectspkg.ErrRunAgentStreamSend
-
-type projectRunStreamSink struct {
-	send func(*agentcomposev2.RunAgentStreamResponse) error
-}
 
 func (s *Service) projectService() *ProjectService {
 	if s.projectHandlers != nil {
@@ -47,22 +40,8 @@ func (s *Service) RemoveProject(ctx context.Context, req *connect.Request[agentc
 	return s.projectService().RemoveProject(ctx, req)
 }
 
-func (s *Service) resolveProjectRef(ctx context.Context, ref *agentcomposev2.ProjectRef) (ProjectRecord, error) {
-	return s.projectService().ResolveProjectRef(ctx, ref)
-}
-
 func (s *Service) RunAgent(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest]) (*connect.Response[agentcomposev2.RunAgentResponse], error) {
 	return s.projectService().RunAgent(ctx, req)
-}
-
-func (s *Service) runProjectAgent(ctx context.Context, msg *agentcomposev2.RunAgentRequest, stream any) (ProjectRunRecord, error, error) {
-	var sink *projectspkg.ProjectRunStreamSink
-	if stream != nil {
-		if projectStream, ok := stream.(*projectRunStreamSink); ok {
-			sink = &projectspkg.ProjectRunStreamSink{Send: projectStream.send}
-		}
-	}
-	return s.projectService().RunProjectAgentWithStream(ctx, msg, sink)
 }
 
 func (s *Service) RunAgentStream(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {

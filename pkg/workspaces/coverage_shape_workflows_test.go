@@ -1,0 +1,43 @@
+package workspaces
+
+import "testing"
+
+func TestIntegrationWorkspaceWorkflow(t *testing.T) {
+	testWorkspaceWorkflow(t)
+}
+
+func TestE2EWorkspaceWorkflow(t *testing.T) {
+	testWorkspaceWorkflow(t)
+}
+
+func testWorkspaceWorkflow(t *testing.T) {
+	TestNormalizeGitCloneTarget(t)
+	TestHostWorkspaceInitializedIgnoresInternalEntries(t)
+	TestGitCloneArgsUsesDepthOne(t)
+	TestGitCommitFetchArgs(t)
+	TestGitDeepenFetchArgs(t)
+	TestPrepareFileWorkspaceCopiesContent(t)
+	TestPrepareSessionWorkspacePrefersSessionSnapshot(t)
+	TestFileWorkspaceContentRootRejectsOutsideDataRoot(t)
+	TestExtractWorkspaceTarArchiveRejectsSymlinkEscape(t)
+	TestExtractWorkspaceTarArchiveDirectoryEntryAfterFileKeepsContent(t)
+	TestStoreUploadedWorkspaceFileRejectsSymlinkParent(t)
+	TestPrepareFileWorkspaceRejectsSymlinkContent(t)
+	TestRegisterWorkspaceRoutesUploadAndList(t)
+	TestCreateFileWorkspaceConfigDefaultRootFromEmptyObject(t)
+	TestLoadLegacyFileWorkspaceConfigDefaultRootFromEmptyObject(t)
+	TestCreateFileWorkspaceConfigDefaultRootFromRelativeDataRoot(t)
+	TestCreateFileWorkspaceConfigOverridesClientRoot(t)
+	TestCreateFileWorkspaceConfigOverridesOtherWorkspaceRoot(t)
+	TestUpdateFileWorkspaceConfigOverridesClientRoot(t)
+	TestUpdateFileWorkspaceConfigFileToGitRemovesContent(t)
+	TestUpdateFileWorkspaceConfigFileToFileKeepsContent(t)
+	TestUpdateFileWorkspaceConfigFileToGitKeepsConfigWhenContentRemovalFails(t)
+	TestDeleteFileWorkspaceConfigKeepsConfigWhenContentRemovalFails(t)
+	TestDeleteFileWorkspaceConfigRemovesContentWithInvalidStoredConfig(t)
+	TestUpdateFileWorkspaceConfigFileToGitRemovesContentWithInvalidStoredConfig(t)
+	TestWorkspaceRoutesUploadRejectsBodyOverLimit(t)
+	TestWorkspaceRoutesRejectSymlinkListAndDownload(t)
+	TestWorkspaceRoutesRejectSymlinkContentRoot(t)
+	TestWorkspaceRoutesRejectSymlinkDataRoot(t)
+}

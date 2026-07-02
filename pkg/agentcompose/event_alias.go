@@ -4,11 +4,6 @@ import (
 	eventspkg "agent-compose/pkg/events"
 	"agent-compose/pkg/model"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
-	"regexp"
-	"strings"
 
 	"github.com/labstack/echo/v4"
 )
@@ -41,67 +36,10 @@ type EventSessionTraceItem = model.EventSessionTraceItem
 type EventDispatcher = eventspkg.EventDispatcher
 type WebhookRunQueue = eventspkg.WebhookRunQueue
 
-var topicEventNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-
 func NewEventDispatcher(rootCtx context.Context, configDB *ConfigStore, bus *LoaderBus) *EventDispatcher {
 	return eventspkg.NewEventDispatcher(rootCtx, configDB, bus)
 }
 
 func registerWebhookRoutes(app *echo.Echo, service *Service) {
 	eventspkg.RegisterRoutes(app, eventspkg.NewService(service.config, service.configDB))
-}
-
-func newWebhookRunQueue(defaultWorkers int) *WebhookRunQueue {
-	return eventspkg.NewWebhookRunQueue(defaultWorkers)
-}
-
-func validateTopicEventName(topic string) error {
-	topic = strings.TrimSpace(topic)
-	if topic == "" {
-		return fmt.Errorf("topic is required")
-	}
-	if len(topic) > 128 {
-		return fmt.Errorf("topic is too long")
-	}
-	if !topicEventNamePattern.MatchString(topic) {
-		return fmt.Errorf("topic contains invalid characters")
-	}
-	return nil
-}
-
-func normalizeTopicEventSource(source string) string {
-	switch strings.ToLower(strings.TrimSpace(source)) {
-	case TopicEventSourceWebhook:
-		return TopicEventSourceWebhook
-	case TopicEventSourceLoader:
-		return TopicEventSourceLoader
-	case TopicEventSourceSystem:
-		return TopicEventSourceSystem
-	default:
-		return ""
-	}
-}
-
-func normalizeTopicEventDispatchStatus(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "", TopicEventDispatchPending:
-		return TopicEventDispatchPending
-	case TopicEventDispatchPublishing:
-		return TopicEventDispatchPublishing
-	case TopicEventDispatchPublishedToBus:
-		return TopicEventDispatchPublishedToBus
-	case TopicEventDispatchNoSubscriber:
-		return TopicEventDispatchNoSubscriber
-	case TopicEventDispatchRetrying:
-		return TopicEventDispatchRetrying
-	case TopicEventDispatchDeadLetter:
-		return TopicEventDispatchDeadLetter
-	default:
-		return ""
-	}
-}
-
-func topicEventPayloadSHA256(payloadJSON string) string {
-	sum := sha256.Sum256([]byte(payloadJSON))
-	return "sha256:" + hex.EncodeToString(sum[:])
 }

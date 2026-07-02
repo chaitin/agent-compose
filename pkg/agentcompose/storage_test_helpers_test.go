@@ -23,15 +23,3 @@ func mustTestConfigStore(t testing.TB, config *appconfig.Config) *ConfigStore {
 	}
 	return store
 }
-
-func sessionHasTag(session *Session, name, value string) bool {
-	if session == nil {
-		return false
-	}
-	for _, tag := range session.Summary.Tags {
-		if tag.Name == name && tag.Value == value {
-			return true
-		}
-	}
-	return false
-}

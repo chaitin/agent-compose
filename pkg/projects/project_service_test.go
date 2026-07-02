@@ -69,6 +69,15 @@ func TestE2EProjectServiceValidateProjectAcceptsSchedulerScript(t *testing.T) {
 	testProjectServiceValidateProjectAcceptsSchedulerScript(t)
 }
 
+func TestIntegrationProjectServiceInlineSchedulerWorkflow(t *testing.T) {
+	testProjectServiceValidateProjectAcceptsSchedulerScript(t)
+	testProjectServiceValidateProjectReportsSchedulerScriptValidationIssues(t)
+	testProjectServiceApplyProjectInlineSchedulerMainOnlyAllowsZeroTriggers(t)
+	testProjectServiceApplyProjectInlineSchedulerRevisionLifecycle(t)
+	testProjectServiceManagedSchedulerBuildUsesInlineScript(t)
+	testProjectServiceManagedSchedulerBuildUsesInlineValidationTriggers(t)
+}
+
 func testProjectServiceValidateProjectAcceptsSchedulerScript(t *testing.T) {
 	service := newProjectServiceTestService(t, newTestConfigStore(t))
 	ctx := context.Background()
@@ -368,6 +377,14 @@ func testProjectServiceApplyProjectInlineSchedulerRevisionLifecycle(t *testing.T
 }
 
 func TestProjectServiceApplyProjectPersistsAgentCapsetIDs(t *testing.T) {
+	testProjectServiceApplyProjectPersistsAgentCapsetIDs(t)
+}
+
+func TestIntegrationProjectServiceApplyProjectPersistsAgentCapsetIDs(t *testing.T) {
+	testProjectServiceApplyProjectPersistsAgentCapsetIDs(t)
+}
+
+func testProjectServiceApplyProjectPersistsAgentCapsetIDs(t *testing.T) {
 	store := newTestConfigStore(t)
 	service := newProjectServiceTestService(t, store)
 	ctx := context.Background()
@@ -417,6 +434,10 @@ func TestProjectServiceApplyProjectPersistsAgentCapsetIDs(t *testing.T) {
 }
 
 func TestProjectServiceGetProjectAndListProjects(t *testing.T) {
+	testProjectServiceGetProjectAndListProjects(t)
+}
+
+func TestIntegrationProjectServiceGetProjectAndListProjects(t *testing.T) {
 	testProjectServiceGetProjectAndListProjects(t)
 }
 
@@ -888,6 +909,14 @@ func testProjectServiceApplyProjectCreatesAndReusesRevision(t *testing.T) {
 }
 
 func TestProjectServiceReconcileSchedulersFailureDisablesStagedResources(t *testing.T) {
+	testProjectServiceReconcileSchedulersFailureDisablesStagedResources(t)
+}
+
+func TestIntegrationProjectServiceReconcileSchedulersFailureDisablesStagedResources(t *testing.T) {
+	testProjectServiceReconcileSchedulersFailureDisablesStagedResources(t)
+}
+
+func testProjectServiceReconcileSchedulersFailureDisablesStagedResources(t *testing.T) {
 	store := newTestConfigStore(t)
 	service := newProjectServiceTestService(t, store)
 	ctx := context.Background()
@@ -960,6 +989,10 @@ func TestProjectServiceReconcileSchedulersFailureDisablesStagedResources(t *test
 }
 
 func TestProjectServiceApplyProjectValidationFailureDoesNotPersist(t *testing.T) {
+	testProjectServiceApplyProjectValidationFailureDoesNotPersist(t)
+}
+
+func TestIntegrationProjectServiceApplyProjectValidationFailureDoesNotPersist(t *testing.T) {
 	testProjectServiceApplyProjectValidationFailureDoesNotPersist(t)
 }
 

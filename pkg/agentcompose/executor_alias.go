@@ -104,15 +104,3 @@ func firstNonZeroInt(values ...int) int {
 func hostSessionDir(session *Session) string {
 	return filepath.Dir(session.Summary.WorkspacePath)
 }
-
-func hostSessionHome(session *Session) string {
-	return filepath.Join(hostSessionDir(session), "home")
-}
-
-func collectAgentResumeInfo(session *Session, agent, agentSessionID, manifestPath string) *AgentResumeInfo {
-	return executorpkg.CollectAgentResumeInfo(session, agent, agentSessionID, manifestPath)
-}
-
-func shouldIncludeAgentJSONL(path, provider, sessionID string) bool {
-	return executorpkg.ShouldIncludeAgentJSONL(path, provider, sessionID)
-}

@@ -24,11 +24,3 @@ func NewCapabilityProvider(di do.Injector) (capabilityIntegration, error) {
 func NewCapProxyServer(di do.Injector) (*capproxy.Server, error) {
 	return capabilities.NewCapProxyServer(di)
 }
-
-func sessionCapabilityCapsets(session *Session) []string {
-	return capabilities.SessionCapabilityCapsets(session)
-}
-
-func sessionCapabilityGuidePath(session *Session) string {
-	return capabilities.SessionGuidePath(session)
-}

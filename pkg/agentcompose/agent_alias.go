@@ -7,14 +7,11 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	agentspkg "agent-compose/pkg/agents"
-	"agent-compose/pkg/model"
 	sessionspkg "agent-compose/pkg/sessions"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
 const (
-	defaultAgentProvider = model.DefaultAgentProvider
-
 	agentSessionTagSource    = "source"
 	agentSessionTagSourceVal = "agent"
 	agentSessionTagID        = "agent_id"
@@ -47,10 +44,6 @@ func (s *Service) agentDefinitionService() *AgentDefinitionService {
 
 func sessionHasAgentTag(session *Session, agentID string) bool {
 	return agentspkg.SessionHasAgentTag(session, agentID)
-}
-
-func (s *Service) agentDefinitionToProto(ctx context.Context, item AgentDefinition) (*agentcomposev1.AgentDefinition, error) {
-	return s.agentDefinitionService().AgentDefinitionToProto(ctx, item)
 }
 
 func (s *Service) ListAgentDefinitions(ctx context.Context, req *connect.Request[agentcomposev1.ListAgentDefinitionsRequest]) (*connect.Response[agentcomposev1.ListAgentDefinitionsResponse], error) {

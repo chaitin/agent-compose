@@ -101,6 +101,5 @@ type DockerImageBackend = images.DockerImageBackend
 type OCIImageBackend = images.OCIImageBackend
 type AutoImageBackend = images.AutoImageBackend
 type DockerPingFunc = images.DockerPingFunc
-type imageBackendOpError = images.BackendOpError
 
 type WorkspaceService = workspaces.Service

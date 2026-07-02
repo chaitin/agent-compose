@@ -41,22 +41,6 @@ func newTestLLMClient(t *testing.T, configDB *ConfigStore, text string) *LLMClie
 	}
 }
 
-func createTestLoader(t *testing.T, ctx context.Context, store *ConfigStore) Loader {
-	t.Helper()
-	loader, err := store.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{
-			Name:    "Timer Loader",
-			Runtime: LoaderRuntimeScheduler,
-			Enabled: true,
-		},
-		Script: "function main() {}",
-	})
-	if err != nil {
-		t.Fatalf("CreateLoader returned error: %v", err)
-	}
-	return loader
-}
-
 func newTestLoaderManager(t testing.TB, deps loaderspkg.ManagerDeps) *LoaderManager {
 	t.Helper()
 	if deps.RootCtx == nil {
