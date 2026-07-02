@@ -103,7 +103,7 @@ const (
 	VMStatusFailed                   = modeldomain.VMStatusFailed
 )
 
-var NewDockerImageBackend = func() ImageBackend { return nil }
+var NewDockerImageBackend = imagedomain.NewDockerImageBackend
 var NewStoreForConfig = filestore.NewStoreForConfig
 var NewExecutorForTest = execdomain.NewExecutorForTest
 var mirrorRuntimeCommandArtifacts = execdomain.MirrorRuntimeCommandArtifacts

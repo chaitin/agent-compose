@@ -70,7 +70,7 @@ func imageBackendErrorIsNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	var backendErr imageBackendOpError
+	var backendErr BackendOpError
 	if errors.As(err, &backendErr) {
 		return cerrdefs.IsNotFound(backendErr.Err)
 	}

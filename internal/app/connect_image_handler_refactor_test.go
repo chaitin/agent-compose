@@ -88,11 +88,12 @@ func TestE2EImageServiceDockerUnavailableErrorIncludesEndpointAndImage(t *testin
 func testImageServiceDockerUnavailableErrorIncludesEndpointAndImage(t *testing.T) {
 	t.Helper()
 	t.Setenv("DOCKER_HOST", "tcp://docker.example:2375")
-	service := &Service{images: &DockerImageBackend{
-		newClient: func() (dockerImageClient, error) {
+	service := &Service{images: NewDockerImageBackendForTest(
+		func() (dockerImageClient, error) {
 			return nil, errors.New("docker daemon unavailable")
 		},
-	}}
+		nil,
+	)}
 
 	_, err := service.PullImage(context.Background(), connect.NewRequest(&agentcomposev2.PullImageRequest{ImageRef: "alpine:3.20"}))
 	if connect.CodeOf(err) != connect.CodeUnavailable {
@@ -144,10 +145,10 @@ func testDockerImageBackendListPullInspectRemove(t *testing.T) {
 		},
 		removeResponse: []typesimage.DeleteResponse{{Untagged: "agent:latest"}, {Deleted: "sha256:inspect"}},
 	}
-	backend := &DockerImageBackend{
-		newClient: func() (dockerImageClient, error) { return fake, nil },
-		now:       func() time.Time { return time.Date(2026, 6, 11, 1, 2, 3, 0, time.UTC) },
-	}
+	backend := NewDockerImageBackendForTest(
+		func() (dockerImageClient, error) { return fake, nil },
+		func() time.Time { return time.Date(2026, 6, 11, 1, 2, 3, 0, time.UTC) },
+	)
 	ctx := context.Background()
 
 	listResp, err := backend.ListImages(ctx, ImageListRequest{Query: "agent", All: true})
@@ -291,7 +292,7 @@ func testDockerImageBackendOperationErrorsIncludeEndpointAndImage(t *testing.T) 
 				pullReader:   io.NopCloser(strings.NewReader(`{}`)),
 				inspectImage: typesimage.InspectResponse{ID: "sha256:unused"},
 			}
-			backend := &DockerImageBackend{newClient: func() (dockerImageClient, error) { return fake, nil }}
+			backend := NewDockerImageBackendForTest(func() (dockerImageClient, error) { return fake, nil }, nil)
 			err := tc.run(backend)
 			if err == nil {
 				t.Fatal("operation returned nil error")

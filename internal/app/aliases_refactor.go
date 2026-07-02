@@ -176,9 +176,14 @@ type ImageInspectRequest = imagedomain.ImageInspectRequest
 type ImageInspectResult = imagedomain.ImageInspectResult
 type ImageRemoveRequest = imagedomain.ImageRemoveRequest
 type ImageRemoveResult = imagedomain.ImageRemoveResult
+type DockerImageBackend = imagedomain.DockerImageBackend
+type dockerImageClient = imagedomain.DockerImageClient
+type BackendOpError = imagedomain.BackendOpError
 
+var NewDockerImageBackend = imagedomain.NewDockerImageBackend
 var NewOCIImageBackend = imagedomain.NewOCIImageBackend
 var NewAutoImageBackend = imagedomain.NewAutoImageBackend
+var NewDockerImageBackendForTest = imagedomain.NewDockerImageBackendForTest
 var ociMetadataToProtoImage = imagedomain.OCIMetadataToProtoImage
 var openFileWorkspaceContent = workspacedomain.OpenFileWorkspaceContent
 var fileWorkspaceContentRelRoot = workspacedomain.FileWorkspaceContentRelRoot

@@ -112,7 +112,7 @@ func (b *OCIImageBackend) RemoveImage(ctx context.Context, req ImageRemoveReques
 
 func (b *OCIImageBackend) requireCache() (*imagecache.Cache, error) {
 	if b == nil || b.cache == nil {
-		return nil, imageBackendOpError{Op: "connect OCI image cache", Err: fmt.Errorf("OCI image cache is required")}
+		return nil, BackendOpError{Op: "connect OCI image cache", Err: fmt.Errorf("OCI image cache is required")}
 	}
 	return b.cache, nil
 }
@@ -142,7 +142,7 @@ func (b *OCIImageBackend) wrapError(op, imageRef string, err error) error {
 	if b != nil && b.cache != nil {
 		endpoint = b.cache.OCILayoutPath()
 	}
-	return imageBackendOpError{Op: op, Endpoint: endpoint, ImageRef: imageRef, Err: err}
+	return BackendOpError{Op: op, Endpoint: endpoint, ImageRef: imageRef, Err: err}
 }
 
 func imageCachePlatform(platform *agentcomposev2.ImagePlatform) imagecache.Platform {

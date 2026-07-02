@@ -5,14 +5,14 @@ import (
 	"strings"
 )
 
-type imageBackendOpError struct {
+type BackendOpError struct {
 	Op       string
 	Endpoint string
 	ImageRef string
 	Err      error
 }
 
-func (e imageBackendOpError) Error() string {
+func (e BackendOpError) Error() string {
 	parts := []string{strings.TrimSpace(e.Op)}
 	if e.ImageRef != "" {
 		parts = append(parts, fmt.Sprintf("image %s", e.ImageRef))
@@ -26,7 +26,7 @@ func (e imageBackendOpError) Error() string {
 	return strings.Join(parts, ": ")
 }
 
-func (e imageBackendOpError) Unwrap() error {
+func (e BackendOpError) Unwrap() error {
 	return e.Err
 }
 
