@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	agentworkspace "agent-compose/internal/agentcompose/workspace"
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 )
 
 const gitWorkspaceTempDirName = agentworkspace.GitTempDirName

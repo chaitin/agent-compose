@@ -8,7 +8,7 @@ import (
 
 	"agent-compose/internal/agentcompose/bootstrap"
 	"agent-compose/internal/agentcompose/transport/httpapi"
-	"agent-compose/pkg/capproxy"
+	"agent-compose/internal/capproxy"
 )
 
 func init() {

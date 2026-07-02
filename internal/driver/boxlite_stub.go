@@ -3,7 +3,7 @@
 package driver
 
 import (
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 	"context"
 	"fmt"
 )

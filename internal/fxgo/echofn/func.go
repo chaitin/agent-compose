@@ -9,7 +9,7 @@ import (
 	"github.com/samber/oops"
 	"google.golang.org/grpc/codes"
 
-	"agent-compose/pkg/fxgo/restful"
+	"agent-compose/internal/fxgo/restful"
 )
 
 func SendResultAsJson[T any, RT restful.ResponseType[T]](c echo.Context, result mo.Result[T]) error {

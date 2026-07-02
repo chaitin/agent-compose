@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	rundomain "agent-compose/internal/agentcompose/run"
+	appconfig "agent-compose/internal/config"
 	"agent-compose/pkg/compose"
-	appconfig "agent-compose/pkg/config"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 

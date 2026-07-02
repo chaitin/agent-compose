@@ -1,7 +1,7 @@
 package agentcompose
 
 import (
-	driverpkg "agent-compose/pkg/driver"
+	driverpkg "agent-compose/internal/driver"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"context"
 	"fmt"

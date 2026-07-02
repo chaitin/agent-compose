@@ -1,6 +1,6 @@
 package httpapi
 
-import "agent-compose/pkg/capproxy"
+import "agent-compose/internal/capproxy"
 
 type CapabilityProxyConfig struct {
 	Listen          string

@@ -11,7 +11,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	driverpkg "agent-compose/pkg/driver"
+	driverpkg "agent-compose/internal/driver"
 )
 
 type ProxyState struct {

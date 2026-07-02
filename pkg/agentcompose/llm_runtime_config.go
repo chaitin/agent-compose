@@ -2,7 +2,7 @@ package agentcompose
 
 import (
 	llmdomain "agent-compose/internal/agentcompose/llm"
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 	"context"
 	"encoding/json"
 	"fmt"

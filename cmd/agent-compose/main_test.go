@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"agent-compose/pkg/config"
+	"agent-compose/internal/config"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"

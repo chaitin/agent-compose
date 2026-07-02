@@ -10,8 +10,8 @@ import (
 
 	domaincap "agent-compose/internal/agentcompose/capability"
 	"agent-compose/internal/agentcompose/transport/httpapi"
-	"agent-compose/pkg/capproxy"
-	appconfig "agent-compose/pkg/config"
+	"agent-compose/internal/capproxy"
+	appconfig "agent-compose/internal/config"
 )
 
 func NewCapProxyServer(di do.Injector) (*capproxy.Server, error) {

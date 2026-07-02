@@ -1,8 +1,8 @@
 package agentcompose
 
 import (
-	appconfig "agent-compose/pkg/config"
-	driverpkg "agent-compose/pkg/driver"
+	appconfig "agent-compose/internal/config"
+	driverpkg "agent-compose/internal/driver"
 	"context"
 	"database/sql"
 	"fmt"

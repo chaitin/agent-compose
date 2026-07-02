@@ -2,7 +2,7 @@ package agentcompose
 
 import (
 	configdomain "agent-compose/internal/agentcompose/config"
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 	"context"
 	"database/sql"
 	"encoding/json"

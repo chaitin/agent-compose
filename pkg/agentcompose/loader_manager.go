@@ -2,7 +2,7 @@ package agentcompose
 
 import (
 	loaderdomain "agent-compose/internal/agentcompose/loader"
-	appconfig "agent-compose/pkg/config"
+	appconfig "agent-compose/internal/config"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"bytes"
 	"context"

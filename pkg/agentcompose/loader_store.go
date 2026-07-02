@@ -1,7 +1,7 @@
 package agentcompose
 
 import (
-	driverpkg "agent-compose/pkg/driver"
+	driverpkg "agent-compose/internal/driver"
 	"context"
 	"database/sql"
 	"encoding/json"
