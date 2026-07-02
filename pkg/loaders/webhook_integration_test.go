@@ -1,8 +1,8 @@
-package agentcompose
+package loaders
 
 import (
 	appconfig "agent-compose/pkg/config"
-	loaderspkg "agent-compose/pkg/loaders"
+	"agent-compose/pkg/model"
 	"context"
 	"path/filepath"
 	"strings"
@@ -17,8 +17,8 @@ func TestWebhookIntegrationEventDispatchRunsMatchingLoader(t *testing.T) {
 func testWebhookIntegrationEventDispatchRunsMatchingLoader(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
-	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+	store := newLoaderEventTestConfigStore(t)
+	manager := newTestLoaderManager(t, ManagerDeps{
 		RootCtx:  ctx,
 		Config:   &appconfig.Config{DataRoot: filepath.Join(t.TempDir(), "data")},
 		ConfigDB: store,
@@ -82,7 +82,7 @@ scheduler.on("webhook.integration.test", "on-webhook", function(event) {
 	if loaded.DispatchStatus != TopicEventDispatchPublishedToBus {
 		t.Fatalf("webhook event status = %q", loaded.DispatchStatus)
 	}
-	derived, err := store.ListEvents(ctx, TopicEventFilter{Topic: "runtime.integration.requested", Limit: 10})
+	derived, err := store.ListEvents(ctx, model.TopicEventFilter{Topic: "runtime.integration.requested", Limit: 10})
 	if err != nil {
 		t.Fatalf("ListEvents derived returned error: %v", err)
 	}

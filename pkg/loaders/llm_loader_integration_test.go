@@ -1,4 +1,4 @@
-package agentcompose
+package loaders
 
 import (
 	"context"
@@ -9,12 +9,12 @@ import (
 	"testing"
 
 	appconfig "agent-compose/pkg/config"
-	loaderspkg "agent-compose/pkg/loaders"
+	llmpkg "agent-compose/pkg/llm"
 )
 
 func TestLoaderRunHostLLMChatCompletionsProtocol(t *testing.T) {
 	ctx := context.Background()
-	store := newTestConfigStore(t)
+	store := newLoaderEventTestConfigStore(t)
 
 	var gotBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,21 +24,22 @@ func TestLoaderRunHostLLMChatCompletionsProtocol(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client := &LLMClient{
-		config: &appconfig.Config{
-			LLMAPIEndpoint: server.URL,
-			LLMAPIProtocol: llmAPIProtocolChatCompletions,
-			LLMModel:       "model-a",
-		},
-		configDB: store,
-		client:   server.Client(),
-	}
-	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+	client := llmpkg.NewClient(&appconfig.Config{
+		LLMAPIEndpoint: server.URL,
+		LLMAPIProtocol: llmpkg.APIProtocolChatCompletions,
+		LLMModel:       "model-a",
+	}, store, server.Client())
+	manager := newTestLoaderManager(t, ManagerDeps{
 		Config:   &appconfig.Config{DataRoot: t.TempDir()},
 		ConfigDB: store,
-		LLM:      client.componentClient(),
+		LLM:      client,
 	})
-	host := newLoaderRunHost(manager, Loader{Summary: LoaderSummary{ID: "loader-1"}}, &LoaderRunSummary{ID: "run-1", LoaderID: "loader-1"}, loaderTriggerEventMetadata{})
+	host := &loaderRunHost{
+		manager:      manager,
+		loader:       Loader{Summary: LoaderSummary{ID: "loader-1"}},
+		run:          &LoaderRunSummary{ID: "run-1", LoaderID: "loader-1"},
+		triggerEvent: loaderTriggerEventMetadata{},
+	}
 
 	result, err := host.LLM(ctx, "summarize lifecycle", LoaderLLMRequest{Model: "model-a"})
 	if err != nil {

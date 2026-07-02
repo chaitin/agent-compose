@@ -18,16 +18,9 @@ func TestIntegrationWebhookWorkspaceAndLoaderWorkflow(t *testing.T) {
 	testSupportSetupRegistersServiceGraph(t)
 	testControlPlaneHelperErrorAndParsingBranches(t)
 	TestModelSessionConfigAndBusBranchCoverage(t)
-	TestTopicEventModelAndStoreErrorBranches(t)
 	testServiceReconcilePersistedSessionsMarksStalePendingFailed(t)
 	TestServiceAndBridgeReconcileMicrosandboxRuntimeTypeBranches(t)
 	testServiceProtoConversionHelpers(t)
-	testAgentDefinitionConfigStoreCRUDAndWorkspaceProtection(t)
-	testLoaderCreateBindsAgentDefinitionProvider(t)
-	testAgentDefinitionValidationAndProtoMapping(t)
-	testAgentDefinitionCreateSession(t)
-	testDeleteAgentDefinitionStopsSessionsAndKeepsDeletedInList(t)
-	testWebhookIntegrationEventDispatchRunsMatchingLoader(t)
 }
 
 func TestE2EServiceGraphRegistersV2Routes(t *testing.T) {
@@ -46,15 +39,8 @@ func TestE2EWebhookWorkspaceAndLoaderWorkflow(t *testing.T) {
 	testSupportSetupRegistersServiceGraph(t)
 	testControlPlaneHelperErrorAndParsingBranches(t)
 	TestModelSessionConfigAndBusBranchCoverage(t)
-	TestTopicEventModelAndStoreErrorBranches(t)
 	testServiceReconcilePersistedSessionsMarksStalePendingFailed(t)
 	TestServiceAndBridgeReconcileMicrosandboxRuntimeTypeBranches(t)
 	testServiceProtoConversionHelpers(t)
-	testAgentDefinitionConfigStoreCRUDAndWorkspaceProtection(t)
-	testLoaderCreateBindsAgentDefinitionProvider(t)
-	testAgentDefinitionValidationAndProtoMapping(t)
-	testAgentDefinitionCreateSession(t)
-	testDeleteAgentDefinitionStopsSessionsAndKeepsDeletedInList(t)
 	testServiceReconcilePersistedSessionsMarksStaleProjectRunsFailed(t)
-	testWebhookIntegrationEventDispatchRunsMatchingLoader(t)
 }

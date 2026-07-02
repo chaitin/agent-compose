@@ -3,6 +3,7 @@ package loaders
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -26,6 +27,40 @@ func mustTestConfigStore(t testing.TB, config *appconfig.Config) *ConfigStore {
 		t.Fatalf("NewConfigStoreFromConfig returned error: %v", err)
 	}
 	return store
+}
+
+func newTestLoaderManager(t testing.TB, deps ManagerDeps) *LoaderManager {
+	t.Helper()
+	if deps.RootCtx == nil {
+		deps.RootCtx = context.Background()
+	}
+	if deps.Config == nil {
+		root := t.TempDir()
+		deps.Config = &appconfig.Config{
+			DataRoot:    filepath.Join(root, "data"),
+			SessionRoot: filepath.Join(root, "sessions"),
+		}
+	}
+	if deps.ConfigDB == nil {
+		deps.ConfigDB = mustTestConfigStore(t, deps.Config)
+	}
+	if deps.Bus == nil {
+		deps.Bus = NewLoaderBusWithBuffer(16)
+	}
+	if deps.Engine == nil {
+		deps.Engine = &QJSLoaderEngine{}
+	}
+	if deps.Images == nil {
+		deps.Images = NewDockerImageBackend()
+	}
+	if deps.Executor == nil {
+		deps.Executor = NewExecutor(deps.Config, deps.Store, deps.ConfigDB, nil, nil)
+	}
+	manager, err := NewManager(deps)
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	return manager
 }
 
 type fakeSessionDriver struct {

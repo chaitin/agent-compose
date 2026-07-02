@@ -1,9 +1,6 @@
-package agentcompose
+package executor
 
 import (
-	appconfig "agent-compose/pkg/config"
-	driverpkg "agent-compose/pkg/driver"
-	loaderspkg "agent-compose/pkg/loaders"
 	"context"
 	"fmt"
 	"os"
@@ -11,13 +8,26 @@ import (
 	"strings"
 	"testing"
 
-	agentcomposev2 "agent-compose/proto/agentcompose/v2"
+	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/model"
+	"agent-compose/pkg/runtimes"
+	"agent-compose/pkg/storage"
 )
+
+func newExecutorSystemPromptConfigStore(t *testing.T) *ConfigStore {
+	t.Helper()
+	store, err := storage.NewConfigStoreFromConfig(&appconfig.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewConfigStoreFromConfig returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = store.DB().Close() })
+	return store
+}
 
 func TestResolveAgentSystemPromptReturnsEmptyWhenAgentPromptUnset(t *testing.T) {
 	ctx := context.Background()
-	configDB := newTestConfigStore(t)
-	created, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
+	configDB := newExecutorSystemPromptConfigStore(t)
+	created, err := configDB.CreateAgentDefinition(ctx, model.AgentDefinition{
 		ID:       "agent-empty-prompt",
 		Name:     "Empty Prompt",
 		Provider: "codex",
@@ -27,14 +37,10 @@ func TestResolveAgentSystemPromptReturnsEmptyWhenAgentPromptUnset(t *testing.T) 
 		t.Fatalf("CreateAgentDefinition returned error: %v", err)
 	}
 	executor := &Executor{configDB: configDB}
-	session := &Session{
-		Summary: SessionSummary{
-			Tags: []SessionTag{
-				{Name: agentSessionTagSource, Value: agentSessionTagSourceVal},
-				{Name: agentSessionTagID, Value: created.ID},
-			},
-		},
-	}
+	session := &Session{Summary: model.SessionSummary{Tags: []SessionTag{
+		{Name: "source", Value: "agent"},
+		{Name: "agent_id", Value: created.ID},
+	}}}
 
 	got, err := executor.resolveAgentSystemPrompt(ctx, session, "")
 	if err != nil {
@@ -47,8 +53,8 @@ func TestResolveAgentSystemPromptReturnsEmptyWhenAgentPromptUnset(t *testing.T) 
 
 func TestResolveAgentSystemPromptFromProviderAgentID(t *testing.T) {
 	ctx := context.Background()
-	configDB := newTestConfigStore(t)
-	created, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
+	configDB := newExecutorSystemPromptConfigStore(t)
+	created, err := configDB.CreateAgentDefinition(ctx, model.AgentDefinition{
 		ID:           "agent-explicit-id",
 		Name:         "Explicit",
 		Provider:     "codex",
@@ -59,7 +65,7 @@ func TestResolveAgentSystemPromptFromProviderAgentID(t *testing.T) {
 		t.Fatalf("CreateAgentDefinition returned error: %v", err)
 	}
 	executor := &Executor{configDB: configDB}
-	session := &Session{Summary: SessionSummary{Tags: []SessionTag{}}}
+	session := &Session{Summary: model.SessionSummary{Tags: []SessionTag{}}}
 
 	got, err := executor.resolveAgentSystemPrompt(ctx, session, created.ID)
 	if err != nil {
@@ -72,8 +78,8 @@ func TestResolveAgentSystemPromptFromProviderAgentID(t *testing.T) {
 
 func TestResolveAgentSystemPromptPrefersProviderAgentOverSessionTag(t *testing.T) {
 	ctx := context.Background()
-	configDB := newTestConfigStore(t)
-	tagged, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
+	configDB := newExecutorSystemPromptConfigStore(t)
+	tagged, err := configDB.CreateAgentDefinition(ctx, model.AgentDefinition{
 		ID:           "agent-tagged",
 		Name:         "Tagged",
 		Provider:     "codex",
@@ -81,9 +87,9 @@ func TestResolveAgentSystemPromptPrefersProviderAgentOverSessionTag(t *testing.T
 		Enabled:      true,
 	})
 	if err != nil {
-		t.Fatalf("CreateAgentDefinition returned error: %v", err)
+		t.Fatalf("CreateAgentDefinition tagged returned error: %v", err)
 	}
-	explicit, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
+	explicit, err := configDB.CreateAgentDefinition(ctx, model.AgentDefinition{
 		ID:           "agent-explicit",
 		Name:         "Explicit",
 		Provider:     "codex",
@@ -91,17 +97,13 @@ func TestResolveAgentSystemPromptPrefersProviderAgentOverSessionTag(t *testing.T
 		Enabled:      true,
 	})
 	if err != nil {
-		t.Fatalf("CreateAgentDefinition returned error: %v", err)
+		t.Fatalf("CreateAgentDefinition explicit returned error: %v", err)
 	}
 	executor := &Executor{configDB: configDB}
-	session := &Session{
-		Summary: SessionSummary{
-			Tags: []SessionTag{
-				{Name: agentSessionTagSource, Value: agentSessionTagSourceVal},
-				{Name: agentSessionTagID, Value: tagged.ID},
-			},
-		},
-	}
+	session := &Session{Summary: model.SessionSummary{Tags: []SessionTag{
+		{Name: "source", Value: "agent"},
+		{Name: "agent_id", Value: tagged.ID},
+	}}}
 
 	got, err := executor.resolveAgentSystemPrompt(ctx, session, explicit.ID)
 	if err != nil {
@@ -114,8 +116,8 @@ func TestResolveAgentSystemPromptPrefersProviderAgentOverSessionTag(t *testing.T
 
 func TestResolveAgentSystemPromptReturnsEmptyWhenAgentMissing(t *testing.T) {
 	ctx := context.Background()
-	executor := &Executor{configDB: newTestConfigStore(t)}
-	session := &Session{Summary: SessionSummary{Tags: []SessionTag{}}}
+	executor := &Executor{configDB: newExecutorSystemPromptConfigStore(t)}
+	session := &Session{Summary: model.SessionSummary{Tags: []SessionTag{}}}
 
 	got, err := executor.resolveAgentSystemPrompt(ctx, session, "missing-agent-id")
 	if err != nil {
@@ -128,8 +130,8 @@ func TestResolveAgentSystemPromptReturnsEmptyWhenAgentMissing(t *testing.T) {
 
 func TestResolveAgentSystemPromptFromSessionTags(t *testing.T) {
 	ctx := context.Background()
-	configDB := newTestConfigStore(t)
-	created, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
+	configDB := newExecutorSystemPromptConfigStore(t)
+	created, err := configDB.CreateAgentDefinition(ctx, model.AgentDefinition{
 		ID:           "agent-with-prompt",
 		Name:         "Runner",
 		Provider:     "codex",
@@ -140,14 +142,10 @@ func TestResolveAgentSystemPromptFromSessionTags(t *testing.T) {
 		t.Fatalf("CreateAgentDefinition returned error: %v", err)
 	}
 	executor := &Executor{configDB: configDB}
-	session := &Session{
-		Summary: SessionSummary{
-			Tags: []SessionTag{
-				{Name: agentSessionTagSource, Value: agentSessionTagSourceVal},
-				{Name: agentSessionTagID, Value: created.ID},
-			},
-		},
-	}
+	session := &Session{Summary: model.SessionSummary{Tags: []SessionTag{
+		{Name: "source", Value: "agent"},
+		{Name: "agent_id", Value: created.ID},
+	}}}
 
 	got, err := executor.resolveAgentSystemPrompt(ctx, session, "")
 	if err != nil {
@@ -160,7 +158,7 @@ func TestResolveAgentSystemPromptFromSessionTags(t *testing.T) {
 
 func TestWriteAgentSystemPromptFileWritesFixedPath(t *testing.T) {
 	root := t.TempDir()
-	session := &Session{Summary: SessionSummary{WorkspacePath: filepath.Join(root, "workspace")}}
+	session := &Session{Summary: model.SessionSummary{WorkspacePath: filepath.Join(root, "workspace")}}
 
 	if err := writeAgentSystemPromptFile(session, "Reply only in Chinese"); err != nil {
 		t.Fatalf("writeAgentSystemPromptFile returned error: %v", err)
@@ -177,7 +175,7 @@ func TestWriteAgentSystemPromptFileWritesFixedPath(t *testing.T) {
 
 func TestWriteAgentSystemPromptFileRemovesFileWhenPromptEmpty(t *testing.T) {
 	root := t.TempDir()
-	session := &Session{Summary: SessionSummary{WorkspacePath: filepath.Join(root, "workspace")}}
+	session := &Session{Summary: model.SessionSummary{WorkspacePath: filepath.Join(root, "workspace")}}
 	hostPath := hostAgentSystemPromptPath(session)
 
 	if err := writeAgentSystemPromptFile(session, "Reply only in Chinese"); err != nil {
@@ -193,7 +191,7 @@ func TestWriteAgentSystemPromptFileRemovesFileWhenPromptEmpty(t *testing.T) {
 
 func TestHostAgentSystemPromptPathUsesSessionWorkspace(t *testing.T) {
 	root := t.TempDir()
-	session := &Session{Summary: SessionSummary{WorkspacePath: filepath.Join(root, "workspace")}}
+	session := &Session{Summary: model.SessionSummary{WorkspacePath: filepath.Join(root, "workspace")}}
 
 	got := hostAgentSystemPromptPath(session)
 	want := filepath.Join(root, "state", "agents", "system-prompts", agentSystemPromptFileName)
@@ -229,7 +227,7 @@ func TestBuildAgentExecSpecPassesStateRootForConventionPathDiscovery(t *testing.
 		GuestStateRoot:     "/data/state",
 		GuestWorkspacePath: "/workspace",
 	}
-	session := &Session{Summary: SessionSummary{ID: "session-1"}}
+	session := &Session{Summary: model.SessionSummary{ID: "session-1"}}
 
 	spec := buildAgentExecSpec(cfg, session, "codex", "", "/data/state/agents/prompts/prompt.txt", "")
 	command := strings.Join(spec.Args, " ")
@@ -242,8 +240,8 @@ type conventionSystemPromptRuntime struct {
 	commands []string
 }
 
-func (r *conventionSystemPromptRuntime) EnsureSession(context.Context, *Session, VMState, ProxyState) (SessionVMInfo, error) {
-	return SessionVMInfo{}, nil
+func (r *conventionSystemPromptRuntime) EnsureSession(context.Context, *Session, VMState, model.ProxyState) (runtimes.SessionVMInfo, error) {
+	return runtimes.SessionVMInfo{}, nil
 }
 
 func (r *conventionSystemPromptRuntime) StopSession(context.Context, *Session, VMState) (bool, error) {
@@ -257,19 +255,19 @@ func (r *conventionSystemPromptRuntime) Exec(context.Context, *Session, VMState,
 func (r *conventionSystemPromptRuntime) ExecStream(_ context.Context, _ *Session, _ VMState, spec ExecSpec, _ ExecStreamWriter) (ExecResult, error) {
 	command := strings.Join(spec.Args, " ")
 	r.commands = append(r.commands, command)
-	payload := agentResultPrefix + `{"provider":"codex","sessionId":"agent-runtime-session","stopReason":"completed","finalText":"done","transcript":"done"}`
+	payload := AgentResultPrefix + `{"provider":"codex","sessionId":"agent-runtime-session","stopReason":"completed","finalText":"done","transcript":"done"}`
 	return ExecResult{Stdout: payload + "\n", Success: true}, nil
 }
 
 type conventionSystemPromptRuntimeProvider struct {
-	runtime BoxRuntime
+	runtime runtimes.BoxRuntime
 }
 
-func (p conventionSystemPromptRuntimeProvider) ForDriver(string) (BoxRuntime, error) {
+func (p conventionSystemPromptRuntimeProvider) ForDriver(string) (runtimes.BoxRuntime, error) {
 	return p.runtime, nil
 }
 
-func (p conventionSystemPromptRuntimeProvider) ForSession(*Session) (BoxRuntime, error) {
+func (p conventionSystemPromptRuntimeProvider) ForSession(*Session) (runtimes.BoxRuntime, error) {
 	return p.runtime, nil
 }
 
@@ -282,7 +280,10 @@ func TestExecuteAgentRunWritesConventionSystemPromptBeforeExec(t *testing.T) {
 		GuestStateRoot:     "/data/state",
 		GuestWorkspacePath: "/workspace",
 	}
-	store := mustTestStore(t, cfg)
+	store, err := storage.NewStoreFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewStoreFromConfig returned error: %v", err)
+	}
 	if err := os.MkdirAll(filepath.Join(root, sessionID, "vm"), 0o755); err != nil {
 		t.Fatalf("MkdirAll returned error: %v", err)
 	}
@@ -290,8 +291,8 @@ func TestExecuteAgentRunWritesConventionSystemPromptBeforeExec(t *testing.T) {
 		t.Fatalf("SaveVMState returned error: %v", err)
 	}
 
-	configDB := newTestConfigStore(t)
-	agent, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
+	configDB := newExecutorSystemPromptConfigStore(t)
+	agent, err := configDB.CreateAgentDefinition(ctx, model.AgentDefinition{
 		ID:           "agent-convention",
 		Name:         "Convention",
 		Provider:     "codex",
@@ -309,13 +310,11 @@ func TestExecuteAgentRunWritesConventionSystemPromptBeforeExec(t *testing.T) {
 		configDB: configDB,
 		runtimes: conventionSystemPromptRuntimeProvider{runtime: runtime},
 	}
-	session := &Session{
-		Summary: SessionSummary{
-			ID:            sessionID,
-			VMStatus:      VMStatusRunning,
-			WorkspacePath: filepath.Join(root, sessionID, "workspace"),
-		},
-	}
+	session := &Session{Summary: model.SessionSummary{
+		ID:            sessionID,
+		VMStatus:      VMStatusRunning,
+		WorkspacePath: filepath.Join(root, sessionID, "workspace"),
+	}}
 
 	result, parsed, err := executor.executeAgentRun(ctx, session, "codex", agent.ID, "", "", "hello", "", nil)
 	if err != nil {
@@ -333,121 +332,6 @@ func TestExecuteAgentRunWritesConventionSystemPromptBeforeExec(t *testing.T) {
 		t.Fatalf("ReadFile(%s) returned error: %v", hostPath, err)
 	}
 	if string(content) != "Reply only in Chinese" {
-		t.Fatalf("system prompt file content = %q", string(content))
-	}
-}
-
-func TestLoaderRunHostAgentWritesSystemPromptFromBoundAgentDefinition(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	config := &appconfig.Config{
-		DataRoot:             root,
-		SessionRoot:          filepath.Join(root, "sessions"),
-		RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
-		DefaultImage:         "loader-box:latest",
-		GuestWorkspacePath:   "/data/workspace",
-		GuestStateRoot:       "/data/state",
-		JupyterGuestPort:     8888,
-		JupyterProxyBasePath: "/agent-compose/session",
-	}
-	if err := os.MkdirAll(config.SessionRoot, 0o755); err != nil {
-		t.Fatalf("MkdirAll(session root) returned error: %v", err)
-	}
-
-	configDB := newTestConfigStore(t)
-	agent, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
-		ID:           "loader-agent-prompt",
-		Name:         "Loader Prompt Agent",
-		Provider:     "codex",
-		SystemPrompt: "Reply only from loader",
-		Enabled:      true,
-	})
-	if err != nil {
-		t.Fatalf("CreateAgentDefinition returned error: %v", err)
-	}
-	loader, err := configDB.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{
-			Name:         "Loader With Agent Prompt",
-			Runtime:      LoaderRuntimeScheduler,
-			Enabled:      true,
-			AgentID:      agent.ID,
-			DefaultAgent: "codex",
-		},
-		Script: "function main() {}",
-	})
-	if err != nil {
-		t.Fatalf("CreateLoader returned error: %v", err)
-	}
-
-	store := mustTestStore(t, config)
-	runtime := &fakeLoaderAgentRuntime{}
-	driver := &fakeSessionDriver{}
-	runtimes := fixedRuntimeProvider{runtime: runtime}
-	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
-		Config:   config,
-		RootCtx:  ctx,
-		Store:    store,
-		ConfigDB: configDB,
-		Driver:   driver,
-		Executor: loaderspkg.NewExecutor(config, store, configDB, runtimes, nil),
-		Engine:   &QJSLoaderEngine{},
-	})
-	host := newLoaderRunHost(manager, loader, &LoaderRunSummary{ID: "run-loader-system-prompt", LoaderID: loader.Summary.ID}, loaderTriggerEventMetadata{})
-
-	result, err := host.Agent(ctx, "summarize loader state", LoaderAgentRequest{})
-	if err != nil {
-		t.Fatalf("Agent returned error: %v", err)
-	}
-	if !result.Success || result.SessionID == "" {
-		t.Fatalf("loader agent result = %#v", result)
-	}
-
-	hostPath := filepath.Join(config.SessionRoot, result.SessionID, "state", "agents", "system-prompts", agentSystemPromptFileName)
-	content, err := os.ReadFile(hostPath)
-	if err != nil {
-		t.Fatalf("ReadFile(%s) returned error: %v", hostPath, err)
-	}
-	if string(content) != "Reply only from loader" {
-		t.Fatalf("system prompt file content = %q", string(content))
-	}
-}
-
-func TestRunServiceProjectRunWritesSystemPromptFromManagedAgent(t *testing.T) {
-	spec := newProjectServiceTestSpec("demo", "gpt-test")
-	spec.Agents[0].SystemPrompt = "Reply only in project runs"
-	store, service, projectID := setupRunPreparationProject(t, spec, t.TempDir())
-	client, closeServer := newRunServiceTestClient(t, service)
-	defer closeServer()
-	ctx := context.Background()
-
-	events, err := collectRunAgentStreamEvents(ctx, client, &agentcomposev2.RunAgentRequest{
-		ProjectId:       projectID,
-		AgentName:       "reviewer",
-		Prompt:          "review with system prompt",
-		Source:          agentcomposev2.RunSource_RUN_SOURCE_API,
-		ClientRequestId: "system-prompt-run-request",
-	})
-	if err != nil {
-		t.Fatalf("RunAgentStream returned error: %v", err)
-	}
-	completed := lastRunAgentStreamEvent(events, agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED)
-	if completed == nil {
-		t.Fatalf("RunAgentStream events missing completion: %#v", events)
-	}
-	stored, err := store.GetProjectRun(ctx, completed.GetRunId())
-	if err != nil {
-		t.Fatalf("GetProjectRun returned error: %v", err)
-	}
-	if stored.SessionID == "" {
-		t.Fatalf("stored run missing session id: %#v", stored)
-	}
-
-	hostPath := filepath.Join(service.config.SessionRoot, stored.SessionID, "state", "agents", "system-prompts", agentSystemPromptFileName)
-	content, err := os.ReadFile(hostPath)
-	if err != nil {
-		t.Fatalf("ReadFile(%s) returned error: %v", hostPath, err)
-	}
-	if string(content) != "Reply only in project runs" {
 		t.Fatalf("system prompt file content = %q", string(content))
 	}
 }

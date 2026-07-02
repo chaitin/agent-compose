@@ -7,6 +7,8 @@ func TestIntegrationLoaderEngineWorkflow(t *testing.T) {
 	testLoaderEngineExecuteSupportsAgentAndLLMBindings(t)
 	testLoaderEngineExecuteSupportsCommandBindings(t)
 	TestLoaderEngineJSONAndRegistrationBranches(t)
+	TestLoaderCreateBindsAgentDefinitionProvider(t)
+	testWebhookIntegrationEventDispatchRunsMatchingLoader(t)
 }
 
 func TestE2ELoaderEngineWorkflow(t *testing.T) {
@@ -14,4 +16,6 @@ func TestE2ELoaderEngineWorkflow(t *testing.T) {
 	testLoaderEngineExecuteSupportsAgentAndLLMBindings(t)
 	testLoaderEngineExecuteSupportsCommandBindings(t)
 	TestLoaderEngineJSONAndRegistrationBranches(t)
+	TestLoaderCreateBindsAgentDefinitionProvider(t)
+	testWebhookIntegrationEventDispatchRunsMatchingLoader(t)
 }

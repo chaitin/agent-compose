@@ -1,4 +1,4 @@
-package agentcompose
+package projects
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 
 	driverpkg "agent-compose/pkg/driver"
+	imagespkg "agent-compose/pkg/images"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
@@ -31,11 +32,11 @@ func testApplyProjectDockerImageEnsurePullsMissingImage(t *testing.T) {
 	var inspected []string
 	var pulled []string
 	service.images = &fakeImageBackend{
-		inspectImage: func(ctx context.Context, req ImageInspectRequest) (ImageInspectResult, error) {
+		inspectImage: func(ctx context.Context, req imagespkg.ImageInspectRequest) (ImageInspectResult, error) {
 			inspected = append(inspected, req.ImageRef)
-			return ImageInspectResult{}, imageBackendOpError{Op: "inspect image", Endpoint: "unix:///var/run/docker.sock", ImageRef: req.ImageRef, Err: cerrdefs.ErrNotFound}
+			return ImageInspectResult{}, imagespkg.BackendOpError{Op: "inspect image", Endpoint: "unix:///var/run/docker.sock", ImageRef: req.ImageRef, Err: cerrdefs.ErrNotFound}
 		},
-		pullImage: func(ctx context.Context, req ImagePullRequest) (ImagePullResult, error) {
+		pullImage: func(ctx context.Context, req imagespkg.ImagePullRequest) (ImagePullResult, error) {
 			pulled = append(pulled, req.ImageRef)
 			return ImagePullResult{ResolvedRef: req.ImageRef}, nil
 		},
@@ -109,8 +110,8 @@ func testApplyProjectDockerImageEnsureErrorIncludesDriverImageEndpoint(t *testin
 	t.Helper()
 	service := newProjectServiceTestService(t, newTestConfigStore(t))
 	service.images = &fakeImageBackend{
-		inspectImage: func(ctx context.Context, req ImageInspectRequest) (ImageInspectResult, error) {
-			return ImageInspectResult{}, imageBackendOpError{Op: "inspect image", Endpoint: "tcp://docker.example:2375", ImageRef: req.ImageRef, Err: errors.New("docker daemon unavailable")}
+		inspectImage: func(ctx context.Context, req imagespkg.ImageInspectRequest) (ImageInspectResult, error) {
+			return ImageInspectResult{}, imagespkg.BackendOpError{Op: "inspect image", Endpoint: "tcp://docker.example:2375", ImageRef: req.ImageRef, Err: errors.New("docker daemon unavailable")}
 		},
 	}
 
@@ -148,11 +149,11 @@ func testRunAgentDockerImageEnsurePullsMissingImage(t *testing.T) {
 	var inspected []string
 	var pulled []string
 	service.images = &fakeImageBackend{
-		inspectImage: func(ctx context.Context, req ImageInspectRequest) (ImageInspectResult, error) {
+		inspectImage: func(ctx context.Context, req imagespkg.ImageInspectRequest) (ImageInspectResult, error) {
 			inspected = append(inspected, req.ImageRef)
-			return ImageInspectResult{}, imageBackendOpError{Op: "inspect image", Endpoint: "unix:///var/run/docker.sock", ImageRef: req.ImageRef, Err: cerrdefs.ErrNotFound}
+			return ImageInspectResult{}, imagespkg.BackendOpError{Op: "inspect image", Endpoint: "unix:///var/run/docker.sock", ImageRef: req.ImageRef, Err: cerrdefs.ErrNotFound}
 		},
-		pullImage: func(ctx context.Context, req ImagePullRequest) (ImagePullResult, error) {
+		pullImage: func(ctx context.Context, req imagespkg.ImagePullRequest) (ImagePullResult, error) {
 			pulled = append(pulled, req.ImageRef)
 			return ImagePullResult{ResolvedRef: req.ImageRef}, nil
 		},
@@ -253,8 +254,8 @@ func testRunAgentDockerImageEnsureErrorMarksRunFailed(t *testing.T) {
 	t.Helper()
 	store, service, projectID := setupRunPreparationProject(t, dockerEnsureProjectSpec("ensure-run-error", "docker", "agent:missing"), t.TempDir())
 	service.images = &fakeImageBackend{
-		inspectImage: func(ctx context.Context, req ImageInspectRequest) (ImageInspectResult, error) {
-			return ImageInspectResult{}, imageBackendOpError{Op: "inspect image", Endpoint: "tcp://docker.example:2375", ImageRef: req.ImageRef, Err: errors.New("docker daemon unavailable")}
+		inspectImage: func(ctx context.Context, req imagespkg.ImageInspectRequest) (ImageInspectResult, error) {
+			return ImageInspectResult{}, imagespkg.BackendOpError{Op: "inspect image", Endpoint: "tcp://docker.example:2375", ImageRef: req.ImageRef, Err: errors.New("docker daemon unavailable")}
 		},
 	}
 
@@ -287,11 +288,11 @@ func testRunAgentDockerImageEnsureErrorMarksRunFailed(t *testing.T) {
 func noDockerImageBackend(t *testing.T, label string) *fakeImageBackend {
 	t.Helper()
 	return &fakeImageBackend{
-		inspectImage: func(context.Context, ImageInspectRequest) (ImageInspectResult, error) {
+		inspectImage: func(context.Context, imagespkg.ImageInspectRequest) (ImageInspectResult, error) {
 			t.Fatalf("%s should not inspect Docker images", label)
 			return ImageInspectResult{}, nil
 		},
-		pullImage: func(context.Context, ImagePullRequest) (ImagePullResult, error) {
+		pullImage: func(context.Context, imagespkg.ImagePullRequest) (ImagePullResult, error) {
 			t.Fatalf("%s should not pull Docker images", label)
 			return ImagePullResult{}, nil
 		},

@@ -1,33 +1,16 @@
-package agentcompose
+package storage
 
 import (
-	appconfig "agent-compose/pkg/config"
-	loaderspkg "agent-compose/pkg/loaders"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/samber/do/v2"
 )
-
-func newTopicEventTestConfigStore(t *testing.T) *ConfigStore {
-	t.Helper()
-	di := do.New()
-	do.ProvideValue(di, &appconfig.Config{DataRoot: t.TempDir()})
-	store, err := NewConfigStore(di)
-	if err != nil {
-		t.Fatalf("NewConfigStore returned error: %v", err)
-	}
-	t.Cleanup(func() { _ = store.DB().Close() })
-	return store
-}
 
 func TestConfigStoreCreateAndListTopicEvents(t *testing.T) {
 	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
+	store := newTestConfigStore(t)
 	createdAt := time.Now().UTC().Add(-time.Second).Truncate(time.Millisecond)
 
 	created, err := store.CreateEvent(ctx, TopicEventRecord{
@@ -90,7 +73,7 @@ func TestConfigStoreCreateAndListTopicEvents(t *testing.T) {
 
 func TestConfigStoreTopicEventIdempotency(t *testing.T) {
 	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
+	store := newTestConfigStore(t)
 
 	first, err := store.CreateEvent(ctx, TopicEventRecord{
 		Topic:          "webhook.test.idempotent",
@@ -146,7 +129,7 @@ func TestConfigStoreTopicEventIdempotency(t *testing.T) {
 
 func TestConfigStorePendingAndPublishedTopicEvents(t *testing.T) {
 	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
+	store := newTestConfigStore(t)
 	first, err := store.CreateEvent(ctx, TopicEventRecord{
 		Topic:         "runtime.test.requested",
 		Source:        TopicEventSourceLoader,
@@ -205,7 +188,7 @@ func TestConfigStorePendingAndPublishedTopicEvents(t *testing.T) {
 
 func TestConfigStoreMarkEventNoSubscriberRequiresActiveClaim(t *testing.T) {
 	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
+	store := newTestConfigStore(t)
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	created, err := store.CreateEvent(ctx, TopicEventRecord{
 		Topic:         "runtime.test.no-subscriber",
@@ -245,7 +228,7 @@ func TestConfigStoreMarkEventNoSubscriberRequiresActiveClaim(t *testing.T) {
 
 func TestConfigStoreDispatchableEventsIncludeExpiredPublishingClaims(t *testing.T) {
 	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
+	store := newTestConfigStore(t)
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	created, err := store.CreateEvent(ctx, TopicEventRecord{
 		Topic:          "runtime.test.expired-claim",
@@ -286,7 +269,7 @@ func TestConfigStoreDispatchableEventsIncludeExpiredPublishingClaims(t *testing.
 
 func TestConfigStoreEventDeliveryDoesNotDowngradeRunOnDuplicateMatch(t *testing.T) {
 	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
+	store := newTestConfigStore(t)
 	created, err := store.CreateEvent(ctx, TopicEventRecord{
 		Topic:         "webhook.delivery.duplicate",
 		Source:        TopicEventSourceWebhook,
@@ -328,7 +311,7 @@ func TestConfigStoreEventDeliveryDoesNotDowngradeRunOnDuplicateMatch(t *testing.
 
 func TestConfigStoreWebhookSourceCRUDAndTopicMatching(t *testing.T) {
 	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
+	store := newTestConfigStore(t)
 	if _, err := store.ListEnabledWebhookSourcesForTopic(ctx, " "); err == nil {
 		t.Fatalf("ListEnabledWebhookSourcesForTopic blank topic returned nil error")
 	}
@@ -383,7 +366,7 @@ func TestConfigStoreWebhookSourceCRUDAndTopicMatching(t *testing.T) {
 
 func TestTopicEventModelAndStoreErrorBranches(t *testing.T) {
 	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
+	store := newTestConfigStore(t)
 
 	for _, topic := range []string{"", strings.Repeat("a", 129), "bad topic"} {
 		if err := validateTopicEventName(topic); err == nil {
@@ -521,119 +504,8 @@ func TestTopicEventModelAndStoreErrorBranches(t *testing.T) {
 	}
 }
 
-func TestLoaderBusPublishReportsFullChannel(t *testing.T) {
-	bus := NewLoaderBusWithBuffer(1)
-	if !bus.Publish(LoaderTopicEvent{Topic: "webhook.test", Payload: map[string]any{}, CreatedAt: time.Now().UTC()}) {
-		t.Fatalf("first Publish returned false, want true")
-	}
-	if bus.Publish(LoaderTopicEvent{Topic: "webhook.test", Payload: map[string]any{}, CreatedAt: time.Now().UTC()}) {
-		t.Fatalf("second Publish returned true for full channel")
-	}
-	if bus.Publish(LoaderTopicEvent{}) {
-		t.Fatalf("Publish with empty topic returned true")
-	}
-}
-
-func TestLoaderRunHostPublishEventStoresDerivedEvent(t *testing.T) {
-	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
-	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{ConfigDB: store})
-	host := newLoaderRunHost(manager, Loader{Summary: LoaderSummary{ID: "loader-1"}}, &LoaderRunSummary{ID: "run-1", LoaderID: "loader-1", TriggerID: "trigger-1"}, loaderTriggerEventMetadata{
-		EventID:       "evt-parent",
-		CorrelationID: "corr-parent",
-		Sequence:      10,
-	})
-
-	created, err := host.PublishEvent(ctx, "runtime.test.requested", `{"provider":"test-runtime","value":1}`)
-	if err != nil {
-		t.Fatalf("PublishEvent returned error: %v", err)
-	}
-	if created.CorrelationID != "corr-parent" || created.ParentEventID != "evt-parent" {
-		t.Fatalf("created event inheritance = %#v", created)
-	}
-	if created.PublisherID != "loader-1" || created.PublisherRunID != "run-1" {
-		t.Fatalf("publisher metadata = %#v", created)
-	}
-	if created.Provider != "test-runtime" {
-		t.Fatalf("provider = %q, want test-runtime", created.Provider)
-	}
-	var envelope map[string]any
-	if err := json.Unmarshal([]byte(created.PayloadJSON), &envelope); err != nil {
-		t.Fatalf("decode envelope: %v", err)
-	}
-	if envelope["sequence"].(float64) != float64(created.Sequence) {
-		t.Fatalf("sequence in envelope = %#v, want %d", envelope["sequence"], created.Sequence)
-	}
-
-	if _, err := host.PublishEvent(ctx, "webhook.not.allowed", `{}`); err == nil {
-		t.Fatalf("PublishEvent with webhook topic returned nil error")
-	}
-}
-
-func TestLoaderRunHostLinkedLoaderEventStoresEventSessionLink(t *testing.T) {
-	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
-	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{ConfigDB: store})
-	loader := createTestLoader(t, ctx, store)
-	run := LoaderRunSummary{
-		ID:            "run-link",
-		LoaderID:      loader.Summary.ID,
-		TriggerID:     "trigger-link",
-		TriggerKind:   LoaderTriggerKindEvent,
-		TriggerSource: "event",
-		Status:        LoaderRunStatusRunning,
-		StartedAt:     time.Now().UTC(),
-	}
-	if err := store.CreateLoaderRun(ctx, run); err != nil {
-		t.Fatalf("CreateLoaderRun returned error: %v", err)
-	}
-	host := newLoaderRunHost(manager, loader, &run, loaderTriggerEventMetadata{EventID: "evt-link"})
-
-	if err := host.AddLinkedLoaderEvent(ctx, "loader.command.completed", "info", "command completed", map[string]any{"sessionId": "session-link"}, "session-link", "cell-link", ""); err != nil {
-		t.Fatalf("addLinkedLoaderEvent returned error: %v", err)
-	}
-	links, err := store.ListEventSessionLinks(ctx, []string{"evt-link"})
-	if err != nil {
-		t.Fatalf("ListEventSessionLinks returned error: %v", err)
-	}
-	if len(links) != 1 {
-		t.Fatalf("event session links = %#v, want one link", links)
-	}
-	link := links[0]
-	if link.EventID != "evt-link" || link.SessionID != "session-link" || link.Relation != "loader.command.completed" {
-		t.Fatalf("event session link identity = %#v", link)
-	}
-	if link.LoaderID != loader.Summary.ID || link.RunID != "run-link" || link.TriggerID != "trigger-link" || link.LoaderEventID == "" {
-		t.Fatalf("event session link metadata = %#v", link)
-	}
-
-	noEventRun := LoaderRunSummary{
-		ID:            "run-no-event",
-		LoaderID:      loader.Summary.ID,
-		TriggerID:     "trigger-link",
-		TriggerKind:   LoaderTriggerKindEvent,
-		TriggerSource: "event",
-		Status:        LoaderRunStatusRunning,
-		StartedAt:     time.Now().UTC(),
-	}
-	if err := store.CreateLoaderRun(ctx, noEventRun); err != nil {
-		t.Fatalf("CreateLoaderRun without trigger event returned error: %v", err)
-	}
-	noEventHost := newLoaderRunHost(manager, loader, &noEventRun, loaderTriggerEventMetadata{})
-	if err := noEventHost.AddLinkedLoaderEvent(ctx, "loader.command.completed", "info", "command completed", nil, "session-no-event", "", ""); err != nil {
-		t.Fatalf("addLinkedLoaderEvent without trigger event returned error: %v", err)
-	}
-	links, err = store.ListEventSessionLinks(ctx, []string{"evt-link"})
-	if err != nil {
-		t.Fatalf("ListEventSessionLinks after no-event run returned error: %v", err)
-	}
-	if len(links) != 1 {
-		t.Fatalf("event session links after no-event run = %#v, want original link only", links)
-	}
-}
-
 func TestConfigStoreEventSchemaCreated(t *testing.T) {
-	store := newTopicEventTestConfigStore(t)
+	store := newTestConfigStore(t)
 	var name string
 	if err := store.DB().QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'event'`).Scan(&name); err != nil {
 		t.Fatalf("query event schema returned error: %v", err)

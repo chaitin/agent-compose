@@ -1,8 +1,8 @@
-package agentcompose
+package loaders
 
 import (
 	appconfig "agent-compose/pkg/config"
-	loaderspkg "agent-compose/pkg/loaders"
+	"agent-compose/pkg/model"
 	"context"
 	"path/filepath"
 	"testing"
@@ -24,8 +24,8 @@ func TestWebhookQueueE2ERetriesWhenWebhookQueueFull(t *testing.T) {
 func testLoaderEventLoopRetriesWhenWebhookQueueFull(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
-	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+	store := newLoaderEventTestConfigStore(t)
+	manager := newTestLoaderManager(t, ManagerDeps{
 		RootCtx: ctx,
 		Config: &appconfig.Config{
 			DataRoot:                   filepath.Join(t.TempDir(), "data"),
@@ -79,7 +79,7 @@ scheduler.on("webhook.queue.test", "on-webhook", function(event) {
 		if err != nil {
 			t.Fatalf("GetEvent returned error: %v", err)
 		}
-		if loaded.DispatchStatus == TopicEventDispatchRetrying {
+		if loaded.DispatchStatus == model.TopicEventDispatchRetrying {
 			if loaded.LastError == "" || loaded.NextAttemptAt.IsZero() {
 				t.Fatalf("retry metadata missing: %#v", loaded)
 			}
@@ -114,8 +114,8 @@ func TestWebhookQueueE2ERetriesWhenSkipPolicyLoaderBusy(t *testing.T) {
 func testLoaderEventLoopRetriesWhenSkipPolicyLoaderBusy(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
-	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+	store := newLoaderEventTestConfigStore(t)
+	manager := newTestLoaderManager(t, ManagerDeps{
 		RootCtx: ctx,
 		Config: &appconfig.Config{
 			DataRoot:                   filepath.Join(t.TempDir(), "data"),
@@ -161,7 +161,7 @@ scheduler.on("webhook.busy.test", "on-webhook", function(event) {
 		if err != nil {
 			t.Fatalf("GetEvent returned error: %v", err)
 		}
-		if loaded.DispatchStatus == TopicEventDispatchRetrying {
+		if loaded.DispatchStatus == model.TopicEventDispatchRetrying {
 			if loaded.LastError != "loader is already running" || loaded.NextAttemptAt.IsZero() {
 				t.Fatalf("retry metadata = %#v", loaded)
 			}
@@ -196,8 +196,8 @@ func TestWebhookQueueE2EDedupesWebhookTargetsByLoader(t *testing.T) {
 func testLoaderEventLoopDedupesWebhookTargetsByLoader(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
-	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+	store := newLoaderEventTestConfigStore(t)
+	manager := newTestLoaderManager(t, ManagerDeps{
 		RootCtx: ctx,
 		Config: &appconfig.Config{
 			DataRoot:                   filepath.Join(t.TempDir(), "data"),
@@ -283,8 +283,8 @@ func TestWebhookQueueE2ERunsAllWebhookTargetLoaders(t *testing.T) {
 func testLoaderEventLoopRunsAllWebhookTargetLoaders(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	store := newTopicEventTestConfigStore(t)
-	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+	store := newLoaderEventTestConfigStore(t)
+	manager := newTestLoaderManager(t, ManagerDeps{
 		RootCtx: ctx,
 		Config: &appconfig.Config{
 			DataRoot:                   filepath.Join(t.TempDir(), "data"),
@@ -384,7 +384,7 @@ func TestWebhookQueueE2EBypassesNonWebhookEvents(t *testing.T) {
 
 func testLoaderManagerWebhookQueueBypassesNonWebhookEvents(t *testing.T) {
 	t.Helper()
-	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
+	manager := newTestLoaderManager(t, ManagerDeps{
 		Config:     &appconfig.Config{DataRoot: filepath.Join(t.TempDir(), "data"), WebhookQueueDefaultWorkers: 1},
 		EventQueue: newWebhookRunQueue(1),
 	})
