@@ -101,8 +101,13 @@ func NewProjectService(di do.Injector) (*ProjectService, error) {
 }
 
 func NewProjectServiceFromDeps(s *Service) *ProjectService {
+	deps := ProjectServiceDeps(s)
+	return projectspkg.NewService(deps)
+}
+
+func ProjectServiceDeps(s *Service) projectspkg.ServiceDeps {
 	if s == nil {
-		return projectspkg.NewService(projectspkg.ServiceDeps{})
+		return projectspkg.ServiceDeps{}
 	}
 	var executorComponent *projectspkg.Executor
 	if s.executor != nil {
@@ -112,7 +117,7 @@ func NewProjectServiceFromDeps(s *Service) *ProjectService {
 	if s.streams != nil {
 		streams = s.streams.componentBroker()
 	}
-	return projectspkg.NewService(projectspkg.ServiceDeps{
+	return projectspkg.ServiceDeps{
 		Config:    s.config,
 		Store:     s.store,
 		ConfigDB:  s.configDB,
@@ -124,5 +129,5 @@ func NewProjectServiceFromDeps(s *Service) *ProjectService {
 		Bus:       s.bus,
 		Streams:   streams,
 		Dashboard: s.dashboard,
-	})
+	}
 }

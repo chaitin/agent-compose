@@ -14,10 +14,11 @@ func (s *Service) imageService() *images.Service {
 	if s == nil {
 		return nil
 	}
-	if s.Service != nil {
-		return s.Service
+	if s.imageHandlers != nil {
+		return s.imageHandlers
 	}
-	return images.NewService(s.images, s.ociImages, s.autoImages)
+	s.imageHandlers = images.NewService(s.images, s.ociImages, s.autoImages)
+	return s.imageHandlers
 }
 
 func (s *Service) ListImages(ctx context.Context, req *connect.Request[agentcomposev2.ListImagesRequest]) (*connect.Response[agentcomposev2.ListImagesResponse], error) {

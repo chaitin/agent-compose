@@ -30,35 +30,35 @@ import (
 )
 
 type Service struct {
-	*images.Service
-	*DashboardService
-	*CapabilityService
-	*WorkspaceService
-	*SettingsService
-	config          *appconfig.Config
-	store           *Store
-	configDB        *ConfigStore
-	driver          Driver
-	runtimes        RuntimeProvider
-	executor        *Executor
-	loaders         *LoaderManager
-	images          ImageBackend
-	ociImages       ImageBackend
-	autoImages      ImageBackend
-	llm             *LLMClient
-	cap             CapabilityProvider
-	bus             *LoaderBus
-	streams         *SessionStreamBroker
-	dashboard       *DashboardOverviewHub
-	events          *EventDispatcher
-	sessions        *SessionRPCBridge
-	agentHandlers   *AgentDefinitionService
-	sessionHandlers *sessions.Service
-	loaderHandlers  *LoaderService
-	projectHandlers *ProjectService
-	startedAt       time.Time
-	startOnce       sync.Once
-	startErr        error
+	imageHandlers      *images.Service
+	dashboardHandlers  *DashboardService
+	capabilityHandlers *CapabilityService
+	workspaceHandlers  *WorkspaceService
+	settingsHandlers   *SettingsService
+	config             *appconfig.Config
+	store              *Store
+	configDB           *ConfigStore
+	driver             Driver
+	runtimes           RuntimeProvider
+	executor           *Executor
+	loaders            *LoaderManager
+	images             ImageBackend
+	ociImages          ImageBackend
+	autoImages         ImageBackend
+	llm                *LLMClient
+	cap                CapabilityProvider
+	bus                *LoaderBus
+	streams            *SessionStreamBroker
+	dashboard          *DashboardOverviewHub
+	events             *EventDispatcher
+	sessions           *SessionRPCBridge
+	agentHandlers      *AgentDefinitionService
+	sessionHandlers    *sessions.Service
+	loaderHandlers     *LoaderService
+	projectHandlers    *ProjectService
+	startedAt          time.Time
+	startOnce          sync.Once
+	startErr           error
 	agentcomposev1connect.UnimplementedSessionServiceHandler
 	agentcomposev1connect.UnimplementedKernelServiceHandler
 	agentcomposev1connect.UnimplementedAgentServiceHandler
@@ -104,32 +104,32 @@ func NewService(di do.Injector) (*Service, error) {
 	autoImages := images.NewAutoImageBackend(config.ImageStoreMode, dockerImages, ociImages)
 	projectHandlers, _ := do.Invoke[*ProjectService](di)
 	service := &Service{
-		Service:           images.NewService(dockerImages, ociImages, autoImages),
-		DashboardService:  dashboard.NewService(dashHub),
-		CapabilityService: capabilities.NewService(config, do.MustInvoke[*ConfigStore](di), capProvider),
-		WorkspaceService:  workspaces.NewService(config, do.MustInvoke[*ConfigStore](di)),
-		SettingsService:   settings.NewService(do.MustInvoke[*ConfigStore](di), workspaces.NewService(config, do.MustInvoke[*ConfigStore](di)), capabilities.NewService(config, do.MustInvoke[*ConfigStore](di), capProvider)),
-		config:            config,
-		store:             do.MustInvoke[*Store](di),
-		configDB:          do.MustInvoke[*ConfigStore](di),
-		driver:            do.MustInvoke[Driver](di),
-		runtimes:          do.MustInvoke[RuntimeProvider](di),
-		executor:          do.MustInvoke[*Executor](di),
-		loaders:           do.MustInvoke[*LoaderManager](di),
-		images:            dockerImages,
-		ociImages:         ociImages,
-		autoImages:        autoImages,
-		llm:               do.MustInvoke[*LLMClient](di),
-		cap:               capProvider,
-		bus:               do.MustInvoke[*LoaderBus](di),
-		streams:           do.MustInvoke[*SessionStreamBroker](di),
-		dashboard:         dashHub,
-		events:            NewEventDispatcher(do.MustInvoke[context.Context](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderBus](di)),
-		sessions:          do.MustInvoke[*SessionRPCBridge](di),
-		agentHandlers:     agents.NewService(config, do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*SessionRPCBridge](di).componentBridge(), do.MustInvoke[*SessionStreamBroker](di).componentBroker()),
-		loaderHandlers:    NewLoaderService(do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderManager](di), do.MustInvoke[*LoaderBus](di)),
-		projectHandlers:   projectHandlers,
-		startedAt:         time.Now().UTC(),
+		imageHandlers:      images.NewService(dockerImages, ociImages, autoImages),
+		dashboardHandlers:  dashboard.NewService(dashHub),
+		capabilityHandlers: capabilities.NewService(config, do.MustInvoke[*ConfigStore](di), capProvider),
+		workspaceHandlers:  workspaces.NewService(config, do.MustInvoke[*ConfigStore](di)),
+		settingsHandlers:   settings.NewService(do.MustInvoke[*ConfigStore](di), workspaces.NewService(config, do.MustInvoke[*ConfigStore](di)), capabilities.NewService(config, do.MustInvoke[*ConfigStore](di), capProvider)),
+		config:             config,
+		store:              do.MustInvoke[*Store](di),
+		configDB:           do.MustInvoke[*ConfigStore](di),
+		driver:             do.MustInvoke[Driver](di),
+		runtimes:           do.MustInvoke[RuntimeProvider](di),
+		executor:           do.MustInvoke[*Executor](di),
+		loaders:            do.MustInvoke[*LoaderManager](di),
+		images:             dockerImages,
+		ociImages:          ociImages,
+		autoImages:         autoImages,
+		llm:                do.MustInvoke[*LLMClient](di),
+		cap:                capProvider,
+		bus:                do.MustInvoke[*LoaderBus](di),
+		streams:            do.MustInvoke[*SessionStreamBroker](di),
+		dashboard:          dashHub,
+		events:             NewEventDispatcher(do.MustInvoke[context.Context](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderBus](di)),
+		sessions:           do.MustInvoke[*SessionRPCBridge](di),
+		agentHandlers:      agents.NewService(config, do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*SessionRPCBridge](di).componentBridge(), do.MustInvoke[*SessionStreamBroker](di).componentBroker()),
+		loaderHandlers:     NewLoaderService(do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderManager](di), do.MustInvoke[*LoaderBus](di)),
+		projectHandlers:    projectHandlers,
+		startedAt:          time.Now().UTC(),
 	}
 	if service.projectHandlers == nil {
 		service.projectHandlers = NewProjectServiceFromDeps(service)

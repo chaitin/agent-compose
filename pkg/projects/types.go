@@ -124,19 +124,26 @@ type ServiceDeps struct {
 }
 
 func NewService(deps ServiceDeps) *Service {
-	return &Service{
-		config:    deps.Config,
-		store:     deps.Store,
-		configDB:  deps.ConfigDB,
-		driver:    deps.Driver,
-		executor:  deps.Executor,
-		images:    deps.Images,
-		loaders:   deps.Loaders,
-		cap:       deps.Cap,
-		bus:       deps.Bus,
-		streams:   deps.Streams,
-		dashboard: deps.Dashboard,
+	service := &Service{}
+	service.UpdateDeps(deps)
+	return service
+}
+
+func (s *Service) UpdateDeps(deps ServiceDeps) {
+	if s == nil {
+		return
 	}
+	s.config = deps.Config
+	s.store = deps.Store
+	s.configDB = deps.ConfigDB
+	s.driver = deps.Driver
+	s.executor = deps.Executor
+	s.images = deps.Images
+	s.loaders = deps.Loaders
+	s.cap = deps.Cap
+	s.bus = deps.Bus
+	s.streams = deps.Streams
+	s.dashboard = deps.Dashboard
 }
 
 func (s *Service) RunProjectAgent(ctx context.Context, msg *agentcomposev2.RunAgentRequest) (ProjectRunRecord, error, error) {

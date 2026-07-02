@@ -42,31 +42,33 @@ func (s *Service) UpdateCapabilityGatewayConfig(ctx context.Context, req *connec
 }
 
 func (s *Service) dashboardService() *dashboard.Service {
-	if s.DashboardService != nil {
-		return s.DashboardService
+	if s.dashboardHandlers != nil {
+		return s.dashboardHandlers
 	}
-	return dashboard.NewService(s.dashboard)
+	s.dashboardHandlers = dashboard.NewService(s.dashboard)
+	return s.dashboardHandlers
 }
 
 func (s *Service) capabilityService() *capabilities.Service {
-	if s.CapabilityService != nil {
-		return s.CapabilityService
+	if s.capabilityHandlers != nil {
+		return s.capabilityHandlers
 	}
-	return capabilities.NewService(s.config, s.configDB, s.cap)
+	s.capabilityHandlers = capabilities.NewService(s.config, s.configDB, s.cap)
+	return s.capabilityHandlers
 }
 
 func (s *Service) workspaceService() *workspaces.Service {
-	if s.WorkspaceService != nil {
-		return s.WorkspaceService
+	if s.workspaceHandlers != nil {
+		return s.workspaceHandlers
 	}
-	s.WorkspaceService = workspaces.NewService(s.config, s.configDB)
-	return s.WorkspaceService
+	s.workspaceHandlers = workspaces.NewService(s.config, s.configDB)
+	return s.workspaceHandlers
 }
 
 func (s *Service) settingsService() *SettingsService {
-	if s.SettingsService != nil {
-		return s.SettingsService
+	if s.settingsHandlers != nil {
+		return s.settingsHandlers
 	}
-	s.SettingsService = settings.NewService(s.configDB, s.workspaceService(), s.capabilityService())
-	return s.SettingsService
+	s.settingsHandlers = settings.NewService(s.configDB, s.workspaceService(), s.capabilityService())
+	return s.settingsHandlers
 }
