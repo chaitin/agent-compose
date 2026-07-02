@@ -2,12 +2,11 @@ package agentcompose
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
+	rundomain "agent-compose/internal/agentcompose/run"
 	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
@@ -70,67 +69,28 @@ func (s *Service) prepareProjectRun(ctx context.Context, run ProjectRunRecord, r
 }
 
 func decodeProjectRevisionSpec(raw string) (*agentcomposev2.ProjectSpec, error) {
-	var spec agentcomposev2.ProjectSpec
-	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &spec); err != nil {
-		return nil, fmt.Errorf("decode project revision spec: %w", err)
-	}
-	return &spec, nil
+	return rundomain.DecodeProjectRevisionSpec(raw)
 }
 
 func normalizedProjectAgentByName(spec *agentcomposev2.ProjectSpec, name string) (*agentcomposev2.AgentSpec, bool) {
-	if spec == nil {
-		return nil, false
-	}
-	name = strings.TrimSpace(name)
-	for _, agent := range spec.GetAgents() {
-		if agent.GetName() == name {
-			return agent, true
-		}
-	}
-	return nil, false
+	return rundomain.ProjectAgentByName(spec, name)
 }
 
 func sessionEnvItemsFromV2(items []*agentcomposev2.EnvVarSpec) []SessionEnvVar {
-	env := make([]SessionEnvVar, 0, len(items))
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-		env = append(env, SessionEnvVar{
-			Name:   item.GetName(),
-			Value:  item.GetValue(),
-			Secret: item.GetSecret(),
-		})
-	}
-	return normalizeEnvItems(env)
+	return rundomain.EnvItemsFromV2(items)
 }
 
 func composeWorkspaceSpecFromV2(workspace *agentcomposev2.WorkspaceSpec) *compose.WorkspaceSpec {
-	if workspace == nil {
-		return nil
-	}
-	return &compose.WorkspaceSpec{
-		Provider: workspace.GetProvider(),
-		URL:      workspace.GetUrl(),
-		Branch:   workspace.GetBranch(),
-		Path:     workspace.GetPath(),
-	}
+	return rundomain.WorkspaceSpecFromV2(workspace)
 }
 
 func mergeRunEnvItems(groups ...[]SessionEnvVar) []SessionEnvVar {
-	var merged []SessionEnvVar
-	for _, group := range groups {
-		merged = mergeEnvItems(merged, group)
-	}
-	return merged
+	return rundomain.MergeEnvItems(groups...)
 }
 
 func (s *Service) prepareProjectRunWorkspace(ctx context.Context, run ProjectRunRecord, project ProjectRecord, projectWorkspace, agentWorkspace *compose.WorkspaceSpec) (*WorkspaceConfig, error) {
 	_ = ctx
-	workspace := projectWorkspace
-	if agentWorkspace != nil {
-		workspace = agentWorkspace
-	}
+	workspace := rundomain.SelectWorkspace(projectWorkspace, agentWorkspace)
 	if workspace == nil {
 		return nil, nil
 	}
@@ -172,13 +132,7 @@ func (s *Service) materializeLocalProjectRunWorkspace(run ProjectRunRecord, proj
 	if err := resetFileWorkspaceSnapshotContent(s.config, workspaceID); err != nil {
 		return WorkspaceConfig{}, err
 	}
-	config := WorkspaceConfig{
-		ID:         workspaceID,
-		Name:       projectRunWorkspaceName(run, "local"),
-		Type:       "file",
-		ConfigJSON: configJSON,
-		Comment:    fmt.Sprintf("project run %s local workspace snapshot", run.RunID),
-	}
+	config := rundomain.LocalWorkspaceConfig(run, configJSON)
 	content, err := openFileWorkspaceContent(s.config, config)
 	if err != nil {
 		return WorkspaceConfig{}, err
@@ -196,99 +150,23 @@ func (s *Service) materializeLocalProjectRunWorkspace(run ProjectRunRecord, proj
 }
 
 func resolveLocalProjectWorkspacePath(project ProjectRecord, rawPath string) (string, error) {
-	cleanPath, err := cleanLocalWorkspacePath(rawPath)
-	if err != nil {
-		return "", err
-	}
-	sourcePath := strings.TrimSpace(project.SourcePath)
-	if sourcePath == "" {
-		return "", fmt.Errorf("local workspace requires project source path")
-	}
-	sourceAbs, err := filepath.Abs(sourcePath)
-	if err != nil {
-		return "", fmt.Errorf("resolve project source path %q: %w", sourcePath, err)
-	}
-	sourceDir := sourceAbs
-	if info, err := os.Stat(sourceAbs); err == nil && !info.IsDir() {
-		sourceDir = filepath.Dir(sourceAbs)
-	} else if err != nil {
-		sourceDir = filepath.Dir(sourceAbs)
-	}
-	target := sourceDir
-	if cleanPath != "." {
-		target = filepath.Join(sourceDir, cleanPath)
-	}
-	targetAbs, err := filepath.Abs(target)
-	if err != nil {
-		return "", fmt.Errorf("resolve local workspace path %q: %w", rawPath, err)
-	}
-	info, err := os.Lstat(targetAbs)
-	if err != nil {
-		return "", fmt.Errorf("local workspace source %s: %w", targetAbs, err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("local workspace source %s is a symlink", targetAbs)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("local workspace source %s is not a directory", targetAbs)
-	}
-	return targetAbs, nil
+	return rundomain.ResolveLocalWorkspacePath(project, rawPath)
 }
 
 func cleanLocalWorkspacePath(raw string) (string, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return "", fmt.Errorf("local workspace path is required")
-	}
-	if filepath.IsAbs(trimmed) {
-		return "", fmt.Errorf("local workspace path %q must be relative", trimmed)
-	}
-	clean := filepath.Clean(trimmed)
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("local workspace path %q escapes project source root", trimmed)
-	}
-	return clean, nil
+	return rundomain.CleanLocalWorkspacePath(raw)
 }
 
 func projectRunGitWorkspaceConfig(run ProjectRunRecord, workspace *compose.WorkspaceSpec) (WorkspaceConfig, error) {
-	workspaceID := projectRunWorkspaceID(run, "git")
-	if strings.TrimSpace(workspace.URL) == "" {
-		return WorkspaceConfig{}, fmt.Errorf("git workspace url is required")
-	}
-	if _, err := normalizeGitCloneTarget(workspaceID, workspace.Path); err != nil {
-		return WorkspaceConfig{}, err
-	}
-	payload, err := json.Marshal(gitWorkspaceConfig{
-		URL:         strings.TrimSpace(workspace.URL),
-		Branch:      strings.TrimSpace(workspace.Branch),
-		CloneTarget: strings.TrimSpace(workspace.Path),
-	})
-	if err != nil {
-		return WorkspaceConfig{}, fmt.Errorf("encode git workspace config: %w", err)
-	}
-	return WorkspaceConfig{
-		ID:         workspaceID,
-		Name:       projectRunWorkspaceName(run, "git"),
-		Type:       "git",
-		ConfigJSON: string(payload),
-		Comment:    fmt.Sprintf("project run %s git workspace snapshot", run.RunID),
-	}, nil
+	return rundomain.GitWorkspaceConfig(run, workspace)
 }
 
 func projectRunWorkspaceID(run ProjectRunRecord, provider string) string {
-	return stableReadableID("workspace", run.AgentName+"-"+provider, run.RunID+"|workspace|"+provider)
+	return rundomain.WorkspaceID(run, provider)
 }
 
 func projectRunWorkspaceName(run ProjectRunRecord, provider string) string {
-	name := strings.TrimSpace(run.ProjectName)
-	if name == "" {
-		name = strings.TrimSpace(run.ProjectID)
-	}
-	agent := strings.TrimSpace(run.AgentName)
-	if agent == "" {
-		agent = "agent"
-	}
-	return strings.TrimSpace(fmt.Sprintf("%s %s %s run workspace", name, agent, provider))
+	return rundomain.WorkspaceName(run, provider)
 }
 
 func resetFileWorkspaceSnapshotContent(config *appconfig.Config, workspaceID string) error {

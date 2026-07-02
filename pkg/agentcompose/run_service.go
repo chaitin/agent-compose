@@ -3,12 +3,12 @@ package agentcompose
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
+
+	rundomain "agent-compose/internal/agentcompose/run"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -64,8 +64,50 @@ func (s *Service) runProjectAgent(ctx context.Context, msg *agentcomposev2.RunAg
 	if s.configDB == nil {
 		return ProjectRunRecord{}, nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
 	}
+	if msg == nil {
+		msg = &agentcomposev2.RunAgentRequest{}
+	}
 	coordinator := NewRunCoordinator(s.configDB)
-	run, err := coordinator.BeginRun(ctx, ProjectRunStartRequest{
+	transitionCtx := context.WithoutCancel(ctx)
+	var agentConfig agentExecutionConfig
+	orchestrator := rundomain.AgentOrchestrator{
+		Coordinator: coordinator,
+		Prepare: func(ctx context.Context, run ProjectRunRecord) (any, error) {
+			return s.prepareProjectRun(ctx, run, msg.GetEnv())
+		},
+		Ensure: func(ctx context.Context, run ProjectRunRecord, prepared any) (rundomain.SessionRef, error) {
+			result, err := s.ensureProjectRunSession(ctx, run, prepared.(ProjectRunPreparation), msg.GetSessionId())
+			return projectRunSessionRef(result.Session), err
+		},
+		BeforeExec: func(ctx context.Context, run ProjectRunRecord, session rundomain.SessionRef) error {
+			config, err := s.projectRunAgentConfig(ctx, run)
+			if err != nil {
+				return err
+			}
+			if s.executor == nil {
+				return fmt.Errorf("executor is required")
+			}
+			agentConfig = config
+			return nil
+		},
+		Execute: func(ctx context.Context, run ProjectRunRecord, ref rundomain.SessionRef) (rundomain.AgentCell, error) {
+			session := ref.Value.(*Session)
+			cell, _, _, execErr := s.executor.ExecuteAgentRequest(ctx, session, ExecuteAgentRequest{
+				Agent:             agentConfig.Provider,
+				AgentDefinitionID: run.ManagedAgentID,
+				Model:             agentConfig.Model,
+				RunID:             run.RunID,
+				Message:           msg.GetPrompt(),
+				OutputSchemaJSON:  msg.GetOutputSchemaJson(),
+				Stream:            projectRunAgentExecutionStream(run, stream),
+			})
+			return projectRunAgentCell(cell), execErr
+		},
+		Cleanup: func(ctx context.Context, coordinator rundomain.ProjectRunCoordinator, run ProjectRunRecord, ref rundomain.SessionRef) ProjectRunRecord {
+			return s.cleanupProjectRunSession(ctx, coordinator.(*RunCoordinator), run, ref.Value.(*Session), msg.GetCleanupPolicy())
+		},
+	}
+	run, execErr, err := orchestrator.Run(ctx, transitionCtx, rundomain.AgentRunRequest{
 		ProjectID:       msg.GetProjectId(),
 		AgentName:       msg.GetAgentName(),
 		Source:          projectRunSourceFromProto(msg.GetSource()),
@@ -75,89 +117,37 @@ func (s *Service) runProjectAgent(ctx context.Context, msg *agentcomposev2.RunAg
 		ClientRequestID: msg.GetClientRequestId(),
 	})
 	if err != nil {
-		return ProjectRunRecord{}, nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	transitionCtx := context.WithoutCancel(ctx)
-	prepared, err := s.prepareProjectRun(ctx, run, msg.GetEnv())
-	if err != nil {
-		run, markErr := coordinator.MarkFailed(transitionCtx, ProjectRunTransitionRequest{
-			RunID: run.RunID,
-			Error: fmt.Sprintf("workspace preparation failed: %v", err),
-		})
-		if markErr != nil {
-			return ProjectRunRecord{}, nil, connect.NewError(connect.CodeInternal, markErr)
+		var stageErr *rundomain.StageError
+		if errors.As(err, &stageErr) && stageErr.Stage == "begin" {
+			return ProjectRunRecord{}, nil, connect.NewError(connect.CodeInvalidArgument, err)
 		}
-		return run, err, nil
-	}
-	sessionResult, err := s.ensureProjectRunSession(ctx, run, prepared, msg.GetSessionId())
-	if err != nil {
-		transition := ProjectRunTransitionRequest{
-			RunID: run.RunID,
-			Error: fmt.Sprintf("session start failed: %v", err),
-		}
-		if sessionResult.Session != nil {
-			transition.SessionID = sessionResult.Session.Summary.ID
-		}
-		run, markErr := coordinator.MarkFailed(transitionCtx, transition)
-		if markErr != nil {
-			return ProjectRunRecord{}, nil, connect.NewError(connect.CodeInternal, markErr)
-		}
-		return run, err, nil
-	}
-	run, err = coordinator.MarkRunning(transitionCtx, run.RunID, sessionResult.Session.Summary.ID)
-	if err != nil {
 		return ProjectRunRecord{}, nil, connect.NewError(connect.CodeInternal, err)
 	}
-	agentConfig, err := s.projectRunAgentConfig(ctx, run)
-	if err != nil {
-		run, markErr := coordinator.MarkFailed(transitionCtx, ProjectRunTransitionRequest{
-			RunID:     run.RunID,
-			SessionID: sessionResult.Session.Summary.ID,
-			ExitCode:  1,
-			Error:     fmt.Sprintf("agent execution failed: %v", err),
-		})
-		if markErr != nil {
-			return ProjectRunRecord{}, nil, connect.NewError(connect.CodeInternal, markErr)
-		}
-		return run, err, nil
+	return run, execErr, nil
+}
+
+func projectRunSessionRef(session *Session) rundomain.SessionRef {
+	if session == nil {
+		return rundomain.SessionRef{}
 	}
-	if s.executor == nil {
-		err = fmt.Errorf("executor is required")
-		run, markErr := coordinator.MarkFailed(transitionCtx, ProjectRunTransitionRequest{
-			RunID:     run.RunID,
-			SessionID: sessionResult.Session.Summary.ID,
-			ExitCode:  1,
-			Error:     fmt.Sprintf("agent execution failed: %v", err),
-		})
-		if markErr != nil {
-			return ProjectRunRecord{}, nil, connect.NewError(connect.CodeInternal, markErr)
-		}
-		return run, err, nil
+	return rundomain.SessionRef{
+		ID:      session.Summary.ID,
+		HostDir: hostSessionDir(session),
+		Value:   session,
 	}
-	cell, _, _, execErr := s.executor.ExecuteAgentRequest(ctx, sessionResult.Session, ExecuteAgentRequest{
-		Agent:             agentConfig.Provider,
-		AgentDefinitionID: run.ManagedAgentID,
-		Model:             agentConfig.Model,
-		RunID:             run.RunID,
-		Message:           msg.GetPrompt(),
-		OutputSchemaJSON:  msg.GetOutputSchemaJson(),
-		Stream:            projectRunAgentExecutionStream(run, stream),
-	})
-	transition := projectRunTransitionFromAgentCell(run, sessionResult.Session, cell, execErr)
-	if execErr != nil || !cell.Success {
-		run, err = coordinator.MarkFailed(transitionCtx, transition)
-		if err != nil {
-			return ProjectRunRecord{}, nil, connect.NewError(connect.CodeInternal, err)
-		}
-		run = s.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult.Session, msg.GetCleanupPolicy())
-		return run, execErr, nil
+}
+
+func projectRunAgentCell(cell NotebookCell) rundomain.AgentCell {
+	return rundomain.AgentCell{
+		ID:             cell.ID,
+		Agent:          cell.Agent,
+		AgentSessionID: cell.AgentSessionID,
+		StopReason:     cell.StopReason,
+		Success:        cell.Success,
+		ExitCode:       cell.ExitCode,
+		Output:         cell.Output,
+		Stderr:         cell.Stderr,
 	}
-	run, err = coordinator.MarkSucceeded(transitionCtx, transition)
-	if err != nil {
-		return ProjectRunRecord{}, nil, connect.NewError(connect.CodeInternal, err)
-	}
-	run = s.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult.Session, msg.GetCleanupPolicy())
-	return run, nil, nil
 }
 
 func (s *Service) projectRunAgentConfig(ctx context.Context, run ProjectRunRecord) (agentExecutionConfig, error) {
@@ -198,41 +188,16 @@ func projectRunAgentExecutionStream(run ProjectRunRecord, sink *projectRunStream
 }
 
 func projectRunTransitionFromAgentCell(run ProjectRunRecord, session *Session, cell NotebookCell, execErr error) ProjectRunTransitionRequest {
-	req := ProjectRunTransitionRequest{
-		RunID:     run.RunID,
-		SessionID: session.Summary.ID,
-		ExitCode:  cell.ExitCode,
-		Output:    cell.Output,
-	}
-	if cell.ID != "" {
-		artifactsDir := filepath.Join(hostSessionDir(session), "state", "cells", cell.ID)
-		req.ArtifactsDir = artifactsDir
-		req.LogsPath = filepath.Join(artifactsDir, "output.txt")
-	}
-	resultJSON, err := json.Marshal(map[string]any{
-		"cellId":         cell.ID,
-		"agent":          cell.Agent,
-		"agentSessionId": cell.AgentSessionID,
-		"stopReason":     cell.StopReason,
-		"success":        cell.Success,
-		"exitCode":       cell.ExitCode,
-	})
-	if err == nil {
-		req.ResultJSON = string(resultJSON)
-	}
-	if execErr != nil {
-		req.ExitCode = firstNonZeroInt(req.ExitCode, 1)
-		req.Error = fmt.Sprintf("agent execution failed: %v", execErr)
-		return req
-	}
-	if !cell.Success {
-		req.ExitCode = firstNonZeroInt(req.ExitCode, 1)
-		req.Error = "agent execution failed"
-		if detail := firstNonEmpty(cell.Stderr, cell.Output); strings.TrimSpace(detail) != "" {
-			req.Error += ": " + strings.TrimSpace(detail)
-		}
-	}
-	return req
+	return rundomain.TransitionFromAgentCell(run, session.Summary.ID, hostSessionDir(session), rundomain.AgentCell{
+		ID:             cell.ID,
+		Agent:          cell.Agent,
+		AgentSessionID: cell.AgentSessionID,
+		StopReason:     cell.StopReason,
+		Success:        cell.Success,
+		ExitCode:       cell.ExitCode,
+		Output:         cell.Output,
+		Stderr:         cell.Stderr,
+	}, execErr)
 }
 
 func (s *Service) cleanupProjectRunSession(ctx context.Context, coordinator *RunCoordinator, run ProjectRunRecord, session *Session, policy agentcomposev2.RunSessionCleanupPolicy) ProjectRunRecord {

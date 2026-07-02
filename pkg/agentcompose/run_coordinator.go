@@ -2,39 +2,15 @@ package agentcompose
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
-	"strings"
 	"time"
 
+	rundomain "agent-compose/internal/agentcompose/run"
 	"agent-compose/pkg/agentcompose/domain"
-
-	"github.com/google/uuid"
 )
 
-type ProjectRunStartRequest struct {
-	ProjectID       string
-	AgentName       string
-	Source          string
-	SchedulerID     string
-	TriggerID       string
-	Prompt          string
-	ClientRequestID string
-}
-
-type ProjectRunTransitionRequest struct {
-	RunID        string
-	Status       string
-	SessionID    string
-	ExitCode     int
-	Error        string
-	Output       string
-	ResultJSON   string
-	LogsPath     string
-	ArtifactsDir string
-	CleanupError string
-}
+type ProjectRunStartRequest = rundomain.StartRequest
+type ProjectRunTransitionRequest = rundomain.TransitionRequest
 
 type RunCoordinator struct {
 	store *ConfigStore
@@ -51,164 +27,107 @@ func NewRunCoordinator(store *ConfigStore) *RunCoordinator {
 }
 
 func (c *RunCoordinator) BeginRun(ctx context.Context, req ProjectRunStartRequest) (ProjectRunRecord, error) {
-	if c == nil || c.store == nil {
-		return ProjectRunRecord{}, fmt.Errorf("config store is required")
-	}
-	req.ProjectID = strings.TrimSpace(req.ProjectID)
-	req.AgentName = strings.TrimSpace(req.AgentName)
-	req.Source = normalizeProjectRunSource(req.Source)
-	req.SchedulerID = strings.TrimSpace(req.SchedulerID)
-	req.TriggerID = strings.TrimSpace(req.TriggerID)
-	req.ClientRequestID = strings.TrimSpace(req.ClientRequestID)
-	if req.ProjectID == "" || req.AgentName == "" {
-		return ProjectRunRecord{}, fmt.Errorf("project id and agent name are required")
-	}
-	if req.ClientRequestID == "" {
-		req.ClientRequestID = uuid.NewString()
-	}
-	project, err := c.store.GetProject(ctx, req.ProjectID)
-	if err != nil {
-		return ProjectRunRecord{}, fmt.Errorf("resolve project %s: %w", req.ProjectID, err)
-	}
-	projectAgent, err := c.store.GetProjectAgent(ctx, project.ID, req.AgentName)
-	if err != nil {
-		return ProjectRunRecord{}, fmt.Errorf("resolve project agent %s/%s: %w", project.ID, req.AgentName, err)
-	}
-	agent, err := c.store.GetAgentDefinition(ctx, projectAgent.ManagedAgentID)
-	if err != nil {
-		return ProjectRunRecord{}, fmt.Errorf("resolve managed agent definition %s: %w", projectAgent.ManagedAgentID, err)
-	}
-	if !agent.Enabled || !agent.DeletedAt.IsZero() {
-		return ProjectRunRecord{}, fmt.Errorf("managed agent definition %s is disabled", agent.ID)
-	}
-	if agent.ManagedProjectID != project.ID || agent.ManagedAgentName != projectAgent.AgentName {
-		return ProjectRunRecord{}, fmt.Errorf("managed agent definition %s does not belong to project agent %s/%s", agent.ID, project.ID, projectAgent.AgentName)
-	}
-	runID, err := StableProjectRunID(project.ID, projectAgent.AgentName, req.Source, req.ClientRequestID)
-	if err != nil {
-		return ProjectRunRecord{}, err
-	}
-	run := ProjectRunRecord{
-		RunID:           runID,
-		ProjectID:       project.ID,
-		ProjectName:     project.Name,
-		ProjectRevision: project.CurrentRevision,
-		AgentName:       projectAgent.AgentName,
-		ManagedAgentID:  agent.ID,
-		Source:          req.Source,
-		SchedulerID:     req.SchedulerID,
-		TriggerID:       req.TriggerID,
-		Status:          ProjectRunStatusPending,
-		Prompt:          req.Prompt,
-		Driver:          firstNonEmpty(agent.Driver, projectAgent.Driver),
-		ImageRef:        firstNonEmpty(agent.GuestImage, projectAgent.Image),
-		ResultJSON:      "{}",
-	}
-	created, err := c.store.CreateProjectRun(ctx, run)
-	if err == nil {
-		return created, nil
-	}
-	if existing, loadErr := c.store.GetProjectRun(ctx, runID); loadErr == nil {
-		return existing, nil
-	}
-	return ProjectRunRecord{}, err
+	return c.coordinator().BeginRun(ctx, req)
 }
 
 func (c *RunCoordinator) MarkRunning(ctx context.Context, runID, sessionID string) (ProjectRunRecord, error) {
-	return c.TransitionRun(ctx, ProjectRunTransitionRequest{
-		RunID:     runID,
-		Status:    ProjectRunStatusRunning,
-		SessionID: sessionID,
-	})
+	return c.coordinator().MarkRunning(ctx, runID, sessionID)
 }
 
 func (c *RunCoordinator) MarkSucceeded(ctx context.Context, req ProjectRunTransitionRequest) (ProjectRunRecord, error) {
-	req.Status = ProjectRunStatusSucceeded
-	return c.TransitionRun(ctx, req)
+	return c.coordinator().MarkSucceeded(ctx, req)
 }
 
 func (c *RunCoordinator) MarkFailed(ctx context.Context, req ProjectRunTransitionRequest) (ProjectRunRecord, error) {
-	req.Status = ProjectRunStatusFailed
-	return c.TransitionRun(ctx, req)
+	return c.coordinator().MarkFailed(ctx, req)
 }
 
 func (c *RunCoordinator) MarkCanceled(ctx context.Context, req ProjectRunTransitionRequest) (ProjectRunRecord, error) {
-	req.Status = ProjectRunStatusCanceled
-	return c.TransitionRun(ctx, req)
+	return c.coordinator().MarkCanceled(ctx, req)
 }
 
 func (c *RunCoordinator) TransitionRun(ctx context.Context, req ProjectRunTransitionRequest) (ProjectRunRecord, error) {
-	if c == nil || c.store == nil {
-		return ProjectRunRecord{}, fmt.Errorf("config store is required")
-	}
-	req.RunID = strings.TrimSpace(req.RunID)
-	req.Status = normalizeProjectRunStatus(req.Status)
-	if req.RunID == "" {
-		return ProjectRunRecord{}, fmt.Errorf("run id is required")
-	}
-	current, err := c.store.GetProjectRun(ctx, req.RunID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ProjectRunRecord{}, err
-		}
-		return ProjectRunRecord{}, err
-	}
-	if err := validateProjectRunTransition(current.Status, req.Status); err != nil {
-		return ProjectRunRecord{}, err
-	}
-	now := c.nowUTC()
-	next := current
-	next.Status = req.Status
-	applyProjectRunTransitionFields(&next, req)
-	switch req.Status {
-	case ProjectRunStatusRunning:
-		if next.StartedAt.IsZero() {
-			next.StartedAt = now
-		}
-	case ProjectRunStatusSucceeded, ProjectRunStatusFailed, ProjectRunStatusCanceled:
-		if next.StartedAt.IsZero() {
-			next.StartedAt = now
-		}
-		if next.CompletedAt.IsZero() {
-			next.CompletedAt = now
-		}
-		next.DurationMs = max(0, next.CompletedAt.Sub(next.StartedAt).Milliseconds())
-	}
-	return c.store.UpdateProjectRun(ctx, next)
+	return c.coordinator().TransitionRun(ctx, req)
 }
 
-func (c *RunCoordinator) nowUTC() time.Time {
-	if c != nil && c.now != nil {
-		return c.now().UTC()
+func (c *RunCoordinator) coordinator() *rundomain.Coordinator {
+	var store *ConfigStore
+	var now func() time.Time
+	if c != nil {
+		store = c.store
+		now = c.now
 	}
-	return time.Now().UTC()
+	coordinator := rundomain.NewCoordinator(projectRunStoreAdapter{store: store})
+	if now != nil {
+		coordinator.SetNow(now)
+	}
+	return coordinator
+}
+
+type projectRunStoreAdapter struct {
+	store *ConfigStore
+}
+
+func (a projectRunStoreAdapter) GetProject(ctx context.Context, projectID string) (ProjectRecord, error) {
+	if a.store == nil {
+		return ProjectRecord{}, nilConfigStoreError()
+	}
+	return a.store.GetProject(ctx, projectID)
+}
+
+func (a projectRunStoreAdapter) GetProjectAgent(ctx context.Context, projectID, agentName string) (ProjectAgentRecord, error) {
+	if a.store == nil {
+		return ProjectAgentRecord{}, nilConfigStoreError()
+	}
+	return a.store.GetProjectAgent(ctx, projectID, agentName)
+}
+
+func (a projectRunStoreAdapter) GetManagedAgentDefinition(ctx context.Context, agentID string) (rundomain.ManagedAgentDefinition, error) {
+	if a.store == nil {
+		return rundomain.ManagedAgentDefinition{}, nilConfigStoreError()
+	}
+	agent, err := a.store.GetAgentDefinition(ctx, agentID)
+	if err != nil {
+		return rundomain.ManagedAgentDefinition{}, err
+	}
+	return rundomain.ManagedAgentDefinition{
+		ID:               agent.ID,
+		Enabled:          agent.Enabled,
+		DeletedAt:        agent.DeletedAt,
+		Driver:           agent.Driver,
+		GuestImage:       agent.GuestImage,
+		ManagedProjectID: agent.ManagedProjectID,
+		ManagedAgentName: agent.ManagedAgentName,
+	}, nil
+}
+
+func (a projectRunStoreAdapter) CreateProjectRun(ctx context.Context, run ProjectRunRecord) (ProjectRunRecord, error) {
+	if a.store == nil {
+		return ProjectRunRecord{}, nilConfigStoreError()
+	}
+	return a.store.CreateProjectRun(ctx, run)
+}
+
+func (a projectRunStoreAdapter) GetProjectRun(ctx context.Context, runID string) (ProjectRunRecord, error) {
+	if a.store == nil {
+		return ProjectRunRecord{}, nilConfigStoreError()
+	}
+	return a.store.GetProjectRun(ctx, runID)
+}
+
+func (a projectRunStoreAdapter) UpdateProjectRun(ctx context.Context, run ProjectRunRecord) (ProjectRunRecord, error) {
+	if a.store == nil {
+		return ProjectRunRecord{}, nilConfigStoreError()
+	}
+	return a.store.UpdateProjectRun(ctx, run)
+}
+
+func nilConfigStoreError() error {
+	return fmt.Errorf("config store is required")
 }
 
 func applyProjectRunTransitionFields(run *ProjectRunRecord, req ProjectRunTransitionRequest) {
-	if value := strings.TrimSpace(req.SessionID); value != "" {
-		run.SessionID = value
-	}
-	if req.ExitCode != 0 {
-		run.ExitCode = req.ExitCode
-	}
-	if value := strings.TrimSpace(req.Error); value != "" {
-		run.Error = value
-	}
-	if req.Output != "" {
-		run.Output = req.Output
-	}
-	if value := strings.TrimSpace(req.ResultJSON); value != "" {
-		run.ResultJSON = value
-	}
-	if value := strings.TrimSpace(req.LogsPath); value != "" {
-		run.LogsPath = value
-	}
-	if value := strings.TrimSpace(req.ArtifactsDir); value != "" {
-		run.ArtifactsDir = value
-	}
-	if value := strings.TrimSpace(req.CleanupError); value != "" {
-		run.CleanupError = value
-	}
+	rundomain.ApplyTransitionFields(run, req)
 }
 
 func validateProjectRunTransition(from, to string) error {

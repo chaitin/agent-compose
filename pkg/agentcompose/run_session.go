@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	rundomain "agent-compose/internal/agentcompose/run"
 	driverpkg "agent-compose/pkg/driver"
 
 	"github.com/google/uuid"
@@ -152,48 +153,29 @@ func (s *Service) publishProjectRunSessionStarted(ctx context.Context, session *
 }
 
 func projectRunSessionTitle(run ProjectRunRecord) string {
-	project := strings.TrimSpace(run.ProjectName)
-	if project == "" {
-		project = strings.TrimSpace(run.ProjectID)
-	}
-	agent := strings.TrimSpace(run.AgentName)
-	if agent == "" {
-		agent = "agent"
-	}
-	return strings.TrimSpace(fmt.Sprintf("%s/%s run", project, agent))
+	return rundomain.SessionTitle(run)
 }
 
 func projectRunSessionTags(run ProjectRunRecord) []SessionTag {
-	tags := []SessionTag{
-		{Name: "project", Value: strings.TrimSpace(run.ProjectID)},
-		{Name: "agent", Value: strings.TrimSpace(run.AgentName)},
-		{Name: "run_id", Value: strings.TrimSpace(run.RunID)},
-		{Name: "source", Value: normalizeProjectRunSource(run.Source)},
-	}
-	if schedulerID := strings.TrimSpace(run.SchedulerID); schedulerID != "" {
-		tags = append(tags, SessionTag{Name: "scheduler_id", Value: schedulerID})
-	}
-	return tags
+	return sessionTagsFromRunDomain(rundomain.SessionTags(run))
 }
 
 func mergeSessionTags(existing, additions []SessionTag) []SessionTag {
-	result := append([]SessionTag(nil), existing...)
-	for _, addition := range additions {
-		addition.Name = strings.TrimSpace(addition.Name)
-		addition.Value = strings.TrimSpace(addition.Value)
-		if addition.Name == "" {
-			continue
-		}
-		found := false
-		for _, current := range result {
-			if strings.TrimSpace(current.Name) == addition.Name && strings.TrimSpace(current.Value) == addition.Value {
-				found = true
-				break
-			}
-		}
-		if !found {
-			result = append(result, addition)
-		}
+	return sessionTagsFromRunDomain(rundomain.MergeTags(runDomainTags(existing), runDomainTags(additions)))
+}
+
+func runDomainTags(tags []SessionTag) []rundomain.Tag {
+	result := make([]rundomain.Tag, 0, len(tags))
+	for _, tag := range tags {
+		result = append(result, rundomain.Tag{Name: tag.Name, Value: tag.Value})
+	}
+	return result
+}
+
+func sessionTagsFromRunDomain(tags []rundomain.Tag) []SessionTag {
+	result := make([]SessionTag, 0, len(tags))
+	for _, tag := range tags {
+		result = append(result, SessionTag{Name: tag.Name, Value: tag.Value})
 	}
 	return result
 }
