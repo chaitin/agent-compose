@@ -4,6 +4,7 @@ import (
 	agentdomain "agent-compose/internal/agentcompose/agent"
 	configdomain "agent-compose/internal/agentcompose/config"
 	eventsdomain "agent-compose/internal/agentcompose/events"
+	llmdomain "agent-compose/internal/agentcompose/llm"
 	loaderdomain "agent-compose/internal/agentcompose/loader"
 	appconfig "agent-compose/internal/config"
 	"context"
@@ -29,6 +30,7 @@ type ConfigStore struct {
 	*configdomain.PersistenceStore
 	*loaderdomain.LoaderStore
 	*eventsdomain.EventStore
+	*llmdomain.Store
 }
 
 func NewConfigStore(di do.Injector) (*ConfigStore, error) {
@@ -64,6 +66,9 @@ func (s *ConfigStore) bindDomainStores() {
 	}
 	if s.EventStore == nil {
 		s.EventStore = eventsdomain.NewStore(s.db)
+	}
+	if s.Store == nil {
+		s.Store = llmdomain.NewStore(s.db)
 	}
 }
 
