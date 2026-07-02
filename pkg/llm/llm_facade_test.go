@@ -1623,6 +1623,41 @@ func TestE2ERuntimeLLMFacadeRoundTrips(t *testing.T) {
 	testRuntimeLLMFacadeRoundTrips(t)
 }
 
+func TestIntegrationLLMClientAndServiceWorkflow(t *testing.T) {
+	testLLMClientAndServiceWorkflow(t)
+}
+
+func TestE2ELLMClientAndServiceWorkflow(t *testing.T) {
+	testLLMClientAndServiceWorkflow(t)
+}
+
+func testLLMClientAndServiceWorkflow(t *testing.T) {
+	runLLMWorkflowTest(t, "LLMClientResolveEndpointPrefersGlobalEnvThenProcessEnvThenDefault", TestLLMClientResolveEndpointPrefersGlobalEnvThenProcessEnvThenDefault)
+	runLLMWorkflowTest(t, "NormalizeLLMAPIEndpointKeepsExplicitPath", TestNormalizeLLMAPIEndpointKeepsExplicitPath)
+	runLLMWorkflowTest(t, "LLMEndpointForProviderBaseURLAppendsProtocolPath", TestLLMEndpointForProviderBaseURLAppendsProtocolPath)
+	runLLMWorkflowTest(t, "LLMClientGenerateHandlesSuccessAndFailures", TestLLMClientGenerateHandlesSuccessAndFailures)
+	runLLMWorkflowTest(t, "LLMClientGenerateKeepsCustomEndpointPath", TestLLMClientGenerateKeepsCustomEndpointPath)
+	runLLMWorkflowTest(t, "LLMClientGenerateRefreshesDefaultEnvProviderFromGlobalEnv", TestLLMClientGenerateRefreshesDefaultEnvProviderFromGlobalEnv)
+	runLLMWorkflowTest(t, "LLMClientGenerateSendsOutputSchema", TestLLMClientGenerateSendsOutputSchema)
+	runLLMWorkflowTest(t, "LLMClientResolveProtocol", TestLLMClientResolveProtocol)
+	runLLMWorkflowTest(t, "LLMClientGenerateUnsupportedProtocol", TestLLMClientGenerateUnsupportedProtocol)
+	runLLMWorkflowTest(t, "LLMClientGenerateChatCompletionsPlainText", TestLLMClientGenerateChatCompletionsPlainText)
+	runLLMWorkflowTest(t, "LLMClientGenerateChatCompletions", TestLLMClientGenerateChatCompletions)
+	runLLMWorkflowTest(t, "LLMClientGenerateChatCompletionsValidatesSchemaJSONMode", TestLLMClientGenerateChatCompletionsValidatesSchemaJSONMode)
+	runLLMWorkflowTest(t, "LLMClientGenerateChatCompletionsSurfacesErrors", TestLLMClientGenerateChatCompletionsSurfacesErrors)
+	runLLMWorkflowTest(t, "LLMClientResolveSettingPrefersGlobalEnvThenProcessEnvThenConfig", TestLLMClientResolveSettingPrefersGlobalEnvThenProcessEnvThenConfig)
+	runLLMWorkflowTest(t, "LLMClientGenerateChatCompletionsRejectsInvalidSchema", TestLLMClientGenerateChatCompletionsRejectsInvalidSchema)
+	runLLMWorkflowTest(t, "ServiceGenerateRequiresClient", TestServiceGenerateRequiresClient)
+	runLLMWorkflowTest(t, "ServiceGenerateWrapsClientErrorsAsInternal", TestServiceGenerateWrapsClientErrorsAsInternal)
+	runLLMWorkflowTest(t, "ServiceGenerateStructuredJSONResponse", TestServiceGenerateStructuredJSONResponse)
+	runLLMWorkflowTest(t, "ServiceGeneratePlainTextLeavesJSONEmpty", TestServiceGeneratePlainTextLeavesJSONEmpty)
+}
+
+func runLLMWorkflowTest(t *testing.T, name string, fn func(*testing.T)) {
+	t.Helper()
+	t.Run(name, fn)
+}
+
 func testRuntimeLLMFacadeRoundTrips(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
