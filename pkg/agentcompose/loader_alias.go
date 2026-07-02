@@ -99,6 +99,10 @@ func NewLoaderEngine(di do.Injector) (LoaderEngine, error) {
 }
 
 func NewLoaderManager(di do.Injector) (*LoaderManager, error) {
+	imageBackends, err := imageBackendsFromDI(di)
+	if err != nil {
+		return nil, err
+	}
 	manager, err := loaderspkg.NewManager(loaderspkg.ManagerDeps{
 		Config:             do.MustInvoke[*appconfig.Config](di),
 		RootCtx:            do.MustInvoke[context.Context](di),
@@ -106,7 +110,7 @@ func NewLoaderManager(di do.Injector) (*LoaderManager, error) {
 		ConfigDB:           do.MustInvoke[*ConfigStore](di),
 		Driver:             do.MustInvoke[Driver](di),
 		Executor:           loaderspkg.NewExecutor(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[RuntimeProvider](di), do.MustInvoke[*SessionStreamBroker](di).componentBroker()),
-		Images:             NewDockerImageBackend(),
+		Images:             imageBackends.docker,
 		LLM:                do.MustInvoke[*LLMClient](di).componentClient(),
 		CapabilityProvider: do.MustInvoke[capabilityIntegration](di),
 		Bus:                do.MustInvoke[*LoaderBus](di),

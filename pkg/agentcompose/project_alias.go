@@ -85,13 +85,17 @@ func ProjectSpecResponse(spec *compose.NormalizedProjectSpec) *agentcomposev2.Pr
 }
 
 func NewProjectService(di do.Injector) (*ProjectService, error) {
+	imageBackends, err := imageBackendsFromDI(di)
+	if err != nil {
+		return nil, err
+	}
 	return NewProjectServiceFromDeps(&Service{
 		config:    do.MustInvoke[*appconfig.Config](di),
 		store:     do.MustInvoke[*Store](di),
 		configDB:  do.MustInvoke[*ConfigStore](di),
 		driver:    do.MustInvoke[Driver](di),
 		executor:  do.MustInvoke[*Executor](di),
-		images:    NewDockerImageBackend(),
+		images:    imageBackends.docker,
 		loaders:   do.MustInvoke[*LoaderManager](di),
 		cap:       do.MustInvoke[capabilityIntegration](di),
 		bus:       do.MustInvoke[*LoaderBus](di),

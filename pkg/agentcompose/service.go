@@ -4,7 +4,6 @@ import (
 	appconfig "agent-compose/pkg/config"
 	"context"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +17,6 @@ import (
 	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/capproxy"
 	"agent-compose/pkg/dashboard"
-	"agent-compose/pkg/imagecache"
 	"agent-compose/pkg/images"
 	llmpkg "agent-compose/pkg/llm"
 	"agent-compose/pkg/sessions"
@@ -85,26 +83,13 @@ func NewService(di do.Injector) (*Service, error) {
 		dashHub = newDashboardOverviewHub(rootCtx, newDashboardOverviewAggregator(do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di)), 250*time.Millisecond)
 	}
 	capProvider := do.MustInvoke[capabilityIntegration](di)
-	imageCacheRoot := strings.TrimSpace(config.ImageCacheRoot)
-	if imageCacheRoot == "" {
-		imageCacheRoot = filepath.Join(config.DataRoot, "images")
-		config.ImageCacheRoot = imageCacheRoot
-	}
-	dockerImages := images.NewDockerImageBackend()
-	ociCache, err := imagecache.New(imagecache.Config{
-		Root:               imageCacheRoot,
-		DefaultRegistry:    config.ImageRegistry,
-		InsecureRegistries: config.ImageInsecureRegistries,
-	})
+	imageBackends, err := imageBackendsFromDI(di)
 	if err != nil {
 		return nil, err
 	}
-	config.ImageCacheRoot = ociCache.Root()
-	ociImages := images.NewOCIImageBackend(ociCache)
-	autoImages := images.NewAutoImageBackend(config.ImageStoreMode, dockerImages, ociImages)
 	projectHandlers, _ := do.Invoke[*ProjectService](di)
 	service := &Service{
-		imageHandlers:      images.NewService(dockerImages, ociImages, autoImages),
+		imageHandlers:      images.NewService(imageBackends.docker, imageBackends.oci, imageBackends.auto),
 		dashboardHandlers:  dashboard.NewService(dashHub),
 		capabilityHandlers: capabilities.NewService(config, do.MustInvoke[*ConfigStore](di), capProvider),
 		workspaceHandlers:  workspaces.NewService(config, do.MustInvoke[*ConfigStore](di)),
@@ -116,9 +101,9 @@ func NewService(di do.Injector) (*Service, error) {
 		runtimes:           do.MustInvoke[RuntimeProvider](di),
 		executor:           do.MustInvoke[*Executor](di),
 		loaders:            do.MustInvoke[*LoaderManager](di),
-		images:             dockerImages,
-		ociImages:          ociImages,
-		autoImages:         autoImages,
+		images:             imageBackends.docker,
+		ociImages:          imageBackends.oci,
+		autoImages:         imageBackends.auto,
 		llm:                do.MustInvoke[*LLMClient](di),
 		cap:                capProvider,
 		bus:                do.MustInvoke[*LoaderBus](di),
@@ -161,6 +146,7 @@ func Register(di do.Injector) {
 	do.Provide(di, dashboard.NewDashboardOverviewHub)
 	do.Provide(di, NewLoaderEngine)
 	do.Provide(di, NewSessionRPCBridge)
+	do.Provide(di, newImageBackends)
 	do.Provide(di, NewLoaderManager)
 	do.Provide(di, NewProjectService)
 	do.Provide(di, NewService)
