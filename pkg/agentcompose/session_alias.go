@@ -32,7 +32,7 @@ type SessionStreamBroker struct {
 	mu          sync.RWMutex
 	nextID      int
 	subscribers map[string]map[int]chan sessionWatchEvent
-	component   *sessions.SessionStreamBroker
+	owner       *sessions.SessionStreamBroker
 }
 
 func NewSessionStreamBroker(di do.Injector) (*SessionStreamBroker, error) {
@@ -40,17 +40,17 @@ func NewSessionStreamBroker(di do.Injector) (*SessionStreamBroker, error) {
 	return &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}}, nil
 }
 
-func (b *SessionStreamBroker) componentBroker() *sessions.SessionStreamBroker {
+func (b *SessionStreamBroker) ownerBroker() *sessions.SessionStreamBroker {
 	if b == nil {
 		broker, _ := sessions.NewSessionStreamBroker(nil)
 		return broker
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.component == nil {
-		b.component, _ = sessions.NewSessionStreamBroker(nil)
+	if b.owner == nil {
+		b.owner, _ = sessions.NewSessionStreamBroker(nil)
 	}
-	return b.component
+	return b.owner
 }
 
 func (b *SessionStreamBroker) Subscribe(sessionID string) (<-chan sessionWatchEvent, func()) {
@@ -91,23 +91,23 @@ func (b *SessionStreamBroker) Subscribe(sessionID string) (<-chan sessionWatchEv
 }
 
 func (b *SessionStreamBroker) PublishSessionUpdated(summary *SessionSummary) {
-	b.componentBroker().PublishSessionUpdated(summary)
+	b.ownerBroker().PublishSessionUpdated(summary)
 }
 
 func (b *SessionStreamBroker) PublishCellStarted(sessionID string, cell NotebookCell) {
-	b.componentBroker().PublishCellStarted(sessionID, cell)
+	b.ownerBroker().PublishCellStarted(sessionID, cell)
 }
 
 func (b *SessionStreamBroker) PublishCellOutput(sessionID, cellID, chunk string, isStderr bool) {
-	b.componentBroker().PublishCellOutput(sessionID, cellID, chunk, isStderr)
+	b.ownerBroker().PublishCellOutput(sessionID, cellID, chunk, isStderr)
 }
 
 func (b *SessionStreamBroker) PublishCellCompleted(sessionID string, cell NotebookCell) {
-	b.componentBroker().PublishCellCompleted(sessionID, cell)
+	b.ownerBroker().PublishCellCompleted(sessionID, cell)
 }
 
 func (b *SessionStreamBroker) PublishEventAdded(sessionID string, event SessionEvent) {
-	b.componentBroker().PublishEventAdded(sessionID, event)
+	b.ownerBroker().PublishEventAdded(sessionID, event)
 }
 
 type SessionRPCBridge struct {
@@ -120,7 +120,7 @@ type SessionRPCBridge struct {
 	streams   *SessionStreamBroker
 	cap       CapabilityProvider
 	dashboard *DashboardOverviewHub
-	component *sessions.SessionRPCBridge
+	owner     *sessions.SessionRPCBridge
 }
 
 func NewSessionRPCBridge(di do.Injector) (*SessionRPCBridge, error) {
@@ -138,50 +138,50 @@ func NewSessionRPCBridge(di do.Injector) (*SessionRPCBridge, error) {
 	}, nil
 }
 
-func (b *SessionRPCBridge) componentBridge() *sessions.SessionRPCBridge {
+func (b *SessionRPCBridge) ownerBridge() *sessions.SessionRPCBridge {
 	if b == nil {
 		return nil
 	}
 	var streams *sessions.SessionStreamBroker
 	if b.streams != nil {
-		streams = b.streams.componentBroker()
+		streams = b.streams.ownerBroker()
 	} else {
 		streams, _ = sessions.NewSessionStreamBroker(nil)
 	}
-	b.component = sessions.NewSessionRPCBridgeFromDeps(b.config, b.store, b.configDB, b.driver, b.runtimes, b.bus, streams, b.cap, b.dashboard)
-	return b.component
+	b.owner = sessions.NewSessionRPCBridgeFromDeps(b.config, b.store, b.configDB, b.driver, b.runtimes, b.bus, streams, b.cap, b.dashboard)
+	return b.owner
 }
 
 func (b *SessionRPCBridge) CallJSON(ctx context.Context, method, requestJSON string) (string, error) {
-	return b.componentBridge().CallJSON(ctx, method, requestJSON)
+	return b.ownerBridge().CallJSON(ctx, method, requestJSON)
 }
 
 func (b *SessionRPCBridge) CallJSONWithSource(ctx context.Context, method, requestJSON, source string) (string, error) {
-	return b.componentBridge().CallJSONWithSource(ctx, method, requestJSON, source)
+	return b.ownerBridge().CallJSONWithSource(ctx, method, requestJSON, source)
 }
 
 func (b *SessionRPCBridge) CreateSession(ctx context.Context, req *connect.Request[agentcomposev1.CreateSessionRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-	return b.componentBridge().CreateSession(ctx, req)
+	return b.ownerBridge().CreateSession(ctx, req)
 }
 
 func (b *SessionRPCBridge) ResumeSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-	return b.componentBridge().ResumeSession(ctx, req)
+	return b.ownerBridge().ResumeSession(ctx, req)
 }
 
 func (b *SessionRPCBridge) StopSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-	return b.componentBridge().StopSession(ctx, req)
+	return b.ownerBridge().StopSession(ctx, req)
 }
 
 func (b *SessionRPCBridge) GetSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-	return b.componentBridge().GetSession(ctx, req)
+	return b.ownerBridge().GetSession(ctx, req)
 }
 
 func (b *SessionRPCBridge) ListSessions(ctx context.Context, req *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
-	return b.componentBridge().ListSessions(ctx, req)
+	return b.ownerBridge().ListSessions(ctx, req)
 }
 
 func (b *SessionRPCBridge) EnsureSessionProxyReady(ctx context.Context, sessionID string) (*Session, ProxyState, error) {
-	return b.componentBridge().EnsureSessionProxyReady(ctx, sessionID)
+	return b.ownerBridge().EnsureSessionProxyReady(ctx, sessionID)
 }
 
 func (b *SessionRPCBridge) ensureSessionProxyReady(ctx context.Context, sessionID string) (*Session, ProxyState, error) {
@@ -189,7 +189,7 @@ func (b *SessionRPCBridge) ensureSessionProxyReady(ctx context.Context, sessionI
 }
 
 func (b *SessionRPCBridge) ReconcileSessionRuntimeState(ctx context.Context, session *Session) (*Session, error) {
-	return b.componentBridge().ReconcileSessionRuntimeState(ctx, session)
+	return b.ownerBridge().ReconcileSessionRuntimeState(ctx, session)
 }
 
 func (b *SessionRPCBridge) reconcileSessionRuntimeState(ctx context.Context, session *Session) (*Session, error) {
@@ -197,7 +197,7 @@ func (b *SessionRPCBridge) reconcileSessionRuntimeState(ctx context.Context, ses
 }
 
 func (b *SessionRPCBridge) GetSessionProxy(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionProxyResponse], error) {
-	return b.componentBridge().GetSessionProxy(ctx, req)
+	return b.ownerBridge().GetSessionProxy(ctx, req)
 }
 
 func sessionListOptionsFromProto(req *agentcomposev1.ListSessionsRequest) (SessionListOptions, error) {

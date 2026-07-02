@@ -95,11 +95,3 @@ func projectServiceDeps(s *Service) projects.ServiceDeps {
 		Dashboard: s.dashboard,
 	}
 }
-
-func newStore(di do.Injector) (*storage.Store, error) {
-	return storage.NewStore(di)
-}
-
-func newConfigStore(di do.Injector) (*storage.ConfigStore, error) {
-	return storage.NewConfigStore(di)
-}
