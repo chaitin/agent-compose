@@ -66,9 +66,9 @@ func register(di do.Injector) {
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev1connect.NewLoaderServiceHandler(service)
 	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewDashboardServiceHandler(service)
+	path, handler = agentcomposev1connect.NewDashboardServiceHandler(NewDashboardHandler(service))
 	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewCapabilityServiceHandler(service)
+	path, handler = agentcomposev1connect.NewCapabilityServiceHandler(NewCapabilityHandler(service))
 	app.Any(path+"*", echo.WrapHandler(handler))
 
 	path, handler = agentcomposev2connect.NewProjectServiceHandler(service)
@@ -77,7 +77,7 @@ func register(di do.Injector) {
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewExecServiceHandler(service)
 	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewImageServiceHandler(service)
+	path, handler = agentcomposev2connect.NewImageServiceHandler(NewImageHandler(service))
 	app.Any(path+"*", echo.WrapHandler(handler))
 
 	registerWebhookRoutes(app, service)
