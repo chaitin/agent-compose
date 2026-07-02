@@ -87,10 +87,10 @@ refactor/domain-project
 - 继续按“域优先，大步迁移”的方式推进，不再把任务拆成零散 helper。
 - `session`、`run`、`config/llm`、`transport/http` 四个大域主干已完成快速迁移并合入 `refactor/architecture-main`。
 - 当前批次继续激进推进四个正交收口任务：
-  - `refactor/domain-persistence-full`：按域迁移 loader/events/config 等 SQL store 与持久化 helper。
-  - `refactor/domain-project-loader-full`：迁移 project/loader service 与 manager 主编排，压薄 `project_service.go`、`loader_manager.go`。
-  - `refactor/domain-transport-connect-full`：建立 `transport/connectv1` 与 `transport/connectv2`，收口 Connect handler wrapper。
-  - `refactor/pkg-internalize-full`：归类其他 `pkg/*`，把明显 daemon 实现细节迁入 `internal/*`。
+  - `refactor/domain-persistence-full` 已合入：loader/events/config 等 SQL store 与持久化 helper 已按域迁移。
+  - `refactor/domain-project-loader-full` 已合入：project/loader service 与 manager 主编排已迁入域包，`project_service.go`、`loader_manager.go` 已进一步压薄。
+  - `refactor/domain-transport-connect-full` 已合入：已建立 `transport/connectv1` 与 `transport/connectv2`，Connect handler wrapper 已收口。
+  - `refactor/pkg-internalize-full` 已合入：`auth/config/dbo/health/driver/capproxy/imagecache/fxgo` 已从 `pkg/*` 迁入 `internal/*`；`pkg/compose` 与 `pkg/capability` 暂保留为潜在公共 API。
 - 本批次仍不以测试作为合入门槛；待结构归类完成后统一做编译、测试、路径/import 修复。
 
 ## 任务依赖图
