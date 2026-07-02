@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +16,8 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/samber/do/v2"
+
+	"agent-compose/pkg/model"
 )
 
 const storedUnixMillisecondThreshold int64 = 10_000_000_000
@@ -717,31 +718,7 @@ func (s *ConfigStore) ensureWorkspaceNotReferencedByAgent(ctx context.Context, w
 }
 
 func normalizeEnvItems(items []SessionEnvVar) []SessionEnvVar {
-	if len(items) == 0 {
-		return nil
-	}
-	merged := make(map[string]SessionEnvVar, len(items))
-	for _, item := range items {
-		name := strings.TrimSpace(item.Name)
-		if name == "" {
-			continue
-		}
-		item.Name = name
-		merged[name] = item
-	}
-	if len(merged) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(merged))
-	for key := range merged {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	result := make([]SessionEnvVar, 0, len(keys))
-	for _, key := range keys {
-		result = append(result, merged[key])
-	}
-	return result
+	return model.NormalizeSessionEnvItems(items)
 }
 
 func encodeAgentEnvJSON(items []SessionEnvVar) (string, error) {

@@ -2,7 +2,7 @@ package loaders
 
 import (
 	appconfig "agent-compose/pkg/config"
-	"agent-compose/pkg/events"
+	"agent-compose/pkg/model"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"bytes"
 	"context"
@@ -1228,7 +1228,7 @@ func parseLoaderTriggerEventMetadata(payloadJSON string) loaderTriggerEventMetad
 }
 
 func validateLoaderPublishTopic(topic string) error {
-	if err := events.ValidateTopicEventName(topic); err != nil {
+	if err := model.ValidateTopicEventName(topic); err != nil {
 		return err
 	}
 	if strings.HasPrefix(topic, "runtime.") || strings.HasPrefix(topic, "workflow.") || strings.HasPrefix(topic, "external.") {

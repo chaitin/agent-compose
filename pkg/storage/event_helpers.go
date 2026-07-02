@@ -2,82 +2,30 @@ package storage
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"regexp"
 	"strings"
+
+	"agent-compose/pkg/model"
 )
 
-var topicEventNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-
 func validateTopicEventName(topic string) error {
-	topic = strings.TrimSpace(topic)
-	if topic == "" {
-		return fmt.Errorf("topic is required")
-	}
-	if len(topic) > 128 {
-		return fmt.Errorf("topic is too long")
-	}
-	if !topicEventNamePattern.MatchString(topic) {
-		return fmt.Errorf("topic contains invalid characters")
-	}
-	return nil
+	return model.ValidateTopicEventName(topic)
 }
 
 func normalizeTopicEventSource(source string) string {
-	switch strings.ToLower(strings.TrimSpace(source)) {
-	case TopicEventSourceWebhook:
-		return TopicEventSourceWebhook
-	case TopicEventSourceLoader:
-		return TopicEventSourceLoader
-	case TopicEventSourceSystem:
-		return TopicEventSourceSystem
-	default:
-		return ""
-	}
+	return model.NormalizeTopicEventSource(source)
 }
 
 func normalizeTopicEventDispatchStatus(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "", TopicEventDispatchPending:
-		return TopicEventDispatchPending
-	case TopicEventDispatchPublishing:
-		return TopicEventDispatchPublishing
-	case TopicEventDispatchPublishedToBus:
-		return TopicEventDispatchPublishedToBus
-	case TopicEventDispatchNoSubscriber:
-		return TopicEventDispatchNoSubscriber
-	case TopicEventDispatchRetrying:
-		return TopicEventDispatchRetrying
-	case TopicEventDispatchDeadLetter:
-		return TopicEventDispatchDeadLetter
-	default:
-		return ""
-	}
+	return model.NormalizeTopicEventDispatchStatus(status)
 }
 
 func normalizeEventDeliveryStatus(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case EventDeliveryStatusMatched:
-		return EventDeliveryStatusMatched
-	case EventDeliveryStatusRunStarted:
-		return EventDeliveryStatusRunStarted
-	case EventDeliveryStatusRunSucceeded:
-		return EventDeliveryStatusRunSucceeded
-	case EventDeliveryStatusRunFailed:
-		return EventDeliveryStatusRunFailed
-	case EventDeliveryStatusSkipped:
-		return EventDeliveryStatusSkipped
-	default:
-		return ""
-	}
+	return model.NormalizeEventDeliveryStatus(status)
 }
 
 func topicEventPayloadSHA256(payloadJSON string) string {
-	sum := sha256.Sum256([]byte(payloadJSON))
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return model.TopicEventPayloadSHA256(payloadJSON)
 }
 
 func normalizeJSONDocument(raw string) (string, error) {

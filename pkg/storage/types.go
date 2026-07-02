@@ -142,18 +142,10 @@ func firstNonEmpty(values ...string) string {
 }
 
 func normalizeAgentKind(agent string) string {
-	switch strings.ToLower(strings.TrimSpace(agent)) {
-	case "codex", "":
-		return "codex"
-	case "claude":
-		return "claude"
-	case "gemini":
-		return "gemini"
-	case "opencode", "open-code", "open_code":
-		return "opencode"
-	default:
-		return ""
+	if strings.TrimSpace(agent) == "" {
+		return model.DefaultAgentProvider
 	}
+	return model.NormalizeAgentProvider(agent)
 }
 
 func normalizeCapsetIDs(ids []string) []string {

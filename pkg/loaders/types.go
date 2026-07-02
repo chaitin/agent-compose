@@ -2,7 +2,6 @@ package loaders
 
 import (
 	"context"
-	"sort"
 	"strings"
 
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
@@ -184,24 +183,11 @@ func NewDockerImageBackend() ImageBackend {
 }
 
 func topicEventPayloadSHA256(payloadJSON string) string {
-	return events.TopicEventPayloadSHA256(payloadJSON)
+	return model.TopicEventPayloadSHA256(payloadJSON)
 }
 
 func normalizeAgentKind(kind string) string {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "":
-		return ""
-	case "codex":
-		return "codex"
-	case "claude", "claude-code", "claude_code":
-		return "claude"
-	case "gemini", "gemini-cli", "gemini_cli":
-		return "gemini"
-	case "opencode", "open-code", "open_code":
-		return "opencode"
-	default:
-		return kind
-	}
+	return model.NormalizeAgentProvider(kind)
 }
 
 type agentExecutionConfig struct {
@@ -261,50 +247,11 @@ func firstNonZeroInt(values ...int) int {
 }
 
 func normalizeEnvItems(items []SessionEnvVar) []SessionEnvVar {
-	merged := make(map[string]SessionEnvVar, len(items))
-	for _, item := range items {
-		name := strings.TrimSpace(item.Name)
-		if name == "" {
-			continue
-		}
-		merged[name] = SessionEnvVar{Name: name, Value: item.Value, Secret: item.Secret}
-	}
-	if len(merged) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(merged))
-	for key := range merged {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	result := make([]SessionEnvVar, 0, len(keys))
-	for _, key := range keys {
-		result = append(result, merged[key])
-	}
-	return result
+	return model.NormalizeSessionEnvItems(items)
 }
 
 func mergeEnvItems(globalItems, sessionItems []SessionEnvVar) []SessionEnvVar {
-	merged := make(map[string]SessionEnvVar, len(globalItems)+len(sessionItems))
-	for _, item := range normalizeEnvItems(globalItems) {
-		merged[item.Name] = item
-	}
-	for _, item := range normalizeEnvItems(sessionItems) {
-		merged[item.Name] = item
-	}
-	if len(merged) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(merged))
-	for key := range merged {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	result := make([]SessionEnvVar, 0, len(keys))
-	for _, key := range keys {
-		result = append(result, merged[key])
-	}
-	return result
+	return model.MergeSessionEnvItems(globalItems, sessionItems)
 }
 
 func filterPersistedRuntimeEnv(items []SessionEnvVar) []SessionEnvVar {

@@ -1,10 +1,11 @@
 package llm
 
 import (
-	appconfig "agent-compose/pkg/config"
 	"path/filepath"
-	"sort"
 	"strings"
+
+	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/model"
 )
 
 func firstNonEmpty(values ...string) string {
@@ -17,46 +18,11 @@ func firstNonEmpty(values ...string) string {
 }
 
 func normalizeEnvItems(items []SessionEnvVar) []SessionEnvVar {
-	merged := make(map[string]SessionEnvVar, len(items))
-	for _, item := range items {
-		name := strings.TrimSpace(item.Name)
-		if name == "" {
-			continue
-		}
-		item.Name = name
-		merged[name] = item
-	}
-	if len(merged) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(merged))
-	for key := range merged {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	result := make([]SessionEnvVar, 0, len(keys))
-	for _, key := range keys {
-		result = append(result, merged[key])
-	}
-	return result
+	return model.NormalizeSessionEnvItems(items)
 }
 
 func normalizeAgentKind(agent string) string {
-	agent = strings.ToLower(strings.TrimSpace(agent))
-	switch agent {
-	case "":
-		return ""
-	case "codex":
-		return "codex"
-	case "claude", "claude-code", "claude_code":
-		return "claude"
-	case "gemini", "gemini-cli", "gemini_cli":
-		return "gemini"
-	case "opencode", "open-code", "open_code":
-		return "opencode"
-	default:
-		return agent
-	}
+	return model.NormalizeAgentProvider(agent)
 }
 
 func hostSessionDir(session *Session) string {

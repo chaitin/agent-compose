@@ -1,12 +1,6 @@
 package events
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
-	"regexp"
-	"strings"
-
 	"agent-compose/pkg/model"
 )
 
@@ -29,20 +23,8 @@ const (
 	EventDeliveryStatusSkipped      = model.EventDeliveryStatusSkipped
 )
 
-var topicEventNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-
 func validateTopicEventName(topic string) error {
-	topic = strings.TrimSpace(topic)
-	if topic == "" {
-		return fmt.Errorf("topic is required")
-	}
-	if len(topic) > 128 {
-		return fmt.Errorf("topic is too long")
-	}
-	if !topicEventNamePattern.MatchString(topic) {
-		return fmt.Errorf("topic contains invalid characters")
-	}
-	return nil
+	return model.ValidateTopicEventName(topic)
 }
 
 func ValidateTopicEventName(topic string) error {
@@ -50,8 +32,7 @@ func ValidateTopicEventName(topic string) error {
 }
 
 func topicEventPayloadSHA256(payloadJSON string) string {
-	sum := sha256.Sum256([]byte(payloadJSON))
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return model.TopicEventPayloadSHA256(payloadJSON)
 }
 
 func TopicEventPayloadSHA256(payloadJSON string) string {

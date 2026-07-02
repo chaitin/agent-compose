@@ -3,7 +3,6 @@ package settings
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -126,25 +125,5 @@ func ToProtoGlobalEnvConfig(items []model.SessionEnvVar) *agentcomposev1.GlobalE
 }
 
 func normalizeEnvItems(items []model.SessionEnvVar) []model.SessionEnvVar {
-	merged := make(map[string]model.SessionEnvVar, len(items))
-	for _, item := range items {
-		name := strings.TrimSpace(item.Name)
-		if name == "" {
-			continue
-		}
-		merged[name] = model.SessionEnvVar{Name: name, Value: item.Value, Secret: item.Secret}
-	}
-	if len(merged) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(merged))
-	for key := range merged {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	result := make([]model.SessionEnvVar, 0, len(keys))
-	for _, key := range keys {
-		result = append(result, merged[key])
-	}
-	return result
+	return model.NormalizeSessionEnvItems(items)
 }

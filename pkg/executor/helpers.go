@@ -15,6 +15,7 @@ import (
 
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/model"
 )
 
 const agentSystemPromptFileName = "system-prompt.txt" // keep in sync with runtime/javascript/src/system-context.ts
@@ -47,21 +48,7 @@ type runtimeCommandRequestJSON struct {
 type RuntimeCommandRequestJSON = runtimeCommandRequestJSON
 
 func NormalizeAgentKind(agent string) string {
-	agent = strings.ToLower(strings.TrimSpace(agent))
-	switch agent {
-	case "":
-		return ""
-	case "codex":
-		return "codex"
-	case "claude", "claude-code", "claude_code":
-		return "claude"
-	case "gemini", "gemini-cli", "gemini_cli":
-		return "gemini"
-	case "opencode", "open-code", "open_code":
-		return "opencode"
-	default:
-		return agent
-	}
+	return model.NormalizeAgentProvider(agent)
 }
 
 func normalizeAgentKind(agent string) string {
@@ -615,50 +602,11 @@ func applyAgentProviderEnv(session *Session, agentEnv []SessionEnvVar) {
 }
 
 func normalizeEnvItems(items []SessionEnvVar) []SessionEnvVar {
-	merged := make(map[string]SessionEnvVar, len(items))
-	for _, item := range items {
-		name := strings.TrimSpace(item.Name)
-		if name == "" {
-			continue
-		}
-		merged[name] = SessionEnvVar{Name: name, Value: item.Value, Secret: item.Secret}
-	}
-	if len(merged) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(merged))
-	for key := range merged {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	result := make([]SessionEnvVar, 0, len(keys))
-	for _, key := range keys {
-		result = append(result, merged[key])
-	}
-	return result
+	return model.NormalizeSessionEnvItems(items)
 }
 
 func mergeEnvItems(globalItems, sessionItems []SessionEnvVar) []SessionEnvVar {
-	merged := make(map[string]SessionEnvVar, len(globalItems)+len(sessionItems))
-	for _, item := range normalizeEnvItems(globalItems) {
-		merged[item.Name] = item
-	}
-	for _, item := range normalizeEnvItems(sessionItems) {
-		merged[item.Name] = item
-	}
-	if len(merged) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(merged))
-	for key := range merged {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	result := make([]SessionEnvVar, 0, len(keys))
-	for _, key := range keys {
-		result = append(result, merged[key])
-	}
-	return result
+	return model.MergeSessionEnvItems(globalItems, sessionItems)
 }
 
 func runtimeEnvMap(items []SessionEnvVar) map[string]string {
