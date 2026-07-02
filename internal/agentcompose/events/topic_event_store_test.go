@@ -1,4 +1,4 @@
-package agentcompose
+package events
 
 import (
 	appconfig "agent-compose/internal/config"

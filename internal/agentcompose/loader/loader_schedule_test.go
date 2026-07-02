@@ -1,4 +1,4 @@
-package agentcompose
+package loader
 
 import (
 	"strings"

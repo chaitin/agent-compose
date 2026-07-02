@@ -1,4 +1,4 @@
-package agentcompose
+package config
 
 import (
 	appconfig "agent-compose/internal/config"
