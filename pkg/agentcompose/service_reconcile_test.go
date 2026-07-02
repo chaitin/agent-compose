@@ -3,6 +3,7 @@ package agentcompose
 import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/projects"
 	"context"
 	"os"
 	"path/filepath"
@@ -84,7 +85,7 @@ func testServiceReconcilePersistedSessionsMarksStaleProjectRunsFailed(t *testing
 		if err != nil {
 			t.Fatalf("GetProjectRun(%s) returned error: %v", runID, err)
 		}
-		if run.Status != ProjectRunStatusFailed || run.CompletedAt.IsZero() || run.ExitCode != 1 || run.Error != staleProjectRunError {
+		if run.Status != ProjectRunStatusFailed || run.CompletedAt.IsZero() || run.ExitCode != 1 || run.Error != projects.StaleProjectRunError {
 			t.Fatalf("stale run after reconcile = %#v", run)
 		}
 	}
