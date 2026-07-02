@@ -14,7 +14,8 @@
 - 所有并行任务分支从 `refactor/architecture-main` 切出。
 - 每个 worker 使用独立 git worktree，避免相互污染工作区。
 - 每个 worker 只修改自己负责的文件集合，不回滚其他人的改动。
-- 每个任务合并前必须说明是否保持行为不变、修改了哪些文件、运行了哪些测试。
+- 当前快速拆解阶段不要求每个任务独立跑测试；worker 必须说明是否跳过测试、修改了哪些文件、哪些路径需要集中修复。
+- 等 `refactor-architecture-plan.md` 中定义的结构迁移任务整体完成后，再集中进行编译、测试、路径/import 修复和行为回归。
 
 ## 分支与 Worktree 策略
 
@@ -80,6 +81,7 @@ refactor/domain-project
 
 - 继续按“域优先，大步迁移”的方式推进，不再把任务拆成零散 helper。
 - 优先迁移 `session` 与 `run` 两个核心域：它们是生命周期、执行编排和 runtime 调度的主干，收益高于继续打磨已迁出的低耦合 helper。
+- 并行推进 `config/llm` 与 `transport/http` 两个正交域：前者收口配置与 LLM runtime，后者收口入口层和路由适配。
 - loader/project 后续只做收口：把仍留在 `pkg/agentcompose` 的 Store/Manager/Service 适配逐步压薄，避免再扩大同域内的小任务数量。
 - 暂缓全量 T6，直到 `session/run/project/loader` 的域边界稳定；否则会把旧耦合整体搬进 `internal`。
 
@@ -332,7 +334,8 @@ T0 文档与基线
 - 每个 worker 完成后，负责人先在 worker worktree review diff。
 - 负责人将 worker 分支 merge 到 `refactor/architecture-main`。
 - 发生冲突时，负责人解决冲突，不要求 worker 自行 rebase 其他 worker 的改动。
-- 冲突解决后必须运行相关测试。
+- 快速拆解阶段冲突解决后不强制立即运行测试；只做必要的结构审查和明显 import/path 修正。
+- 集中收口阶段再统一运行 `go test ./pkg/agentcompose ./cmd/agent-compose`、`task build`、`task test`，并修复编译与行为回归。
 
 ## Worker 交付格式
 
@@ -348,6 +351,8 @@ worktree：
 测试结果：
 风险/待负责人确认：
 ```
+
+快速拆解阶段允许 `测试命令` 填写为“未运行”，但必须列出预计需要集中修复的风险点。
 
 ## 第一批执行安排
 
