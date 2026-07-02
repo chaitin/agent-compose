@@ -1,12 +1,12 @@
 package agentcompose
 
 import (
-	appconfig "agent-compose/pkg/config"
+	loaderdomain "agent-compose/internal/agentcompose/loader"
+	appconfig "agent-compose/internal/config"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -162,81 +162,23 @@ func (m *LoaderManager) Validate(ctx context.Context, runtime, script string) (L
 }
 
 func (m *LoaderManager) CreateLoader(ctx context.Context, loader Loader) (Loader, error) {
-	if strings.TrimSpace(loader.Summary.Runtime) == "" {
-		loader.Summary.Runtime = LoaderRuntimeScheduler
-	}
-	if strings.TrimSpace(loader.Script) == "" {
-		loader.Script = defaultLoaderScript()
-	}
-	validation, err := m.engine.Validate(ctx, loader.Summary.Runtime, loader.Script)
-	if err != nil {
-		return Loader{}, err
-	}
-	created, err := m.configDB.CreateLoader(ctx, loader)
-	if err != nil {
-		return Loader{}, err
-	}
-	if _, err := m.configDB.ReplaceLoaderTriggers(ctx, created.Summary.ID, validation.Triggers); err != nil {
-		_ = m.configDB.DeleteLoader(ctx, created.Summary.ID)
-		return Loader{}, err
-	}
-	if err := m.Refresh(ctx); err != nil {
-		return Loader{}, err
-	}
-	m.notifyDashboard("loader_updated")
-	return m.configDB.GetLoader(ctx, created.Summary.ID)
+	return loaderdomain.CreateLoader(ctx, m.configDB, m.engine, m, m.notifyDashboard, loader, defaultLoaderScript())
 }
 
 func (m *LoaderManager) UpdateLoader(ctx context.Context, loader Loader) (Loader, error) {
-	validation, err := m.engine.Validate(ctx, loader.Summary.Runtime, loader.Script)
-	if err != nil {
-		return Loader{}, err
-	}
-	updated, err := m.configDB.UpdateLoader(ctx, loader)
-	if err != nil {
-		return Loader{}, err
-	}
-	if _, err := m.configDB.ReplaceLoaderTriggers(ctx, updated.Summary.ID, validation.Triggers); err != nil {
-		return Loader{}, err
-	}
-	if err := m.Refresh(ctx); err != nil {
-		return Loader{}, err
-	}
-	m.notifyDashboard("loader_updated")
-	return m.configDB.GetLoader(ctx, updated.Summary.ID)
+	return loaderdomain.UpdateLoader(ctx, m.configDB, m.engine, m, m.notifyDashboard, loader)
 }
 
 func (m *LoaderManager) DeleteLoader(ctx context.Context, loaderID string) error {
-	if err := m.configDB.DeleteLoader(ctx, loaderID); err != nil {
-		return err
-	}
-	if err := m.Refresh(ctx); err != nil {
-		return err
-	}
-	m.notifyDashboard("loader_updated")
-	return nil
+	return loaderdomain.DeleteLoader(ctx, m.configDB, m, m.notifyDashboard, loaderID)
 }
 
 func (m *LoaderManager) SetLoaderEnabled(ctx context.Context, loaderID string, enabled bool) (Loader, error) {
-	if err := m.configDB.SetLoaderEnabled(ctx, loaderID, enabled); err != nil {
-		return Loader{}, err
-	}
-	if err := m.Refresh(ctx); err != nil {
-		return Loader{}, err
-	}
-	m.notifyDashboard("loader_updated")
-	return m.configDB.GetLoader(ctx, loaderID)
+	return loaderdomain.SetLoaderEnabled(ctx, m.configDB, m, m.notifyDashboard, loaderID, enabled)
 }
 
 func (m *LoaderManager) SetLoaderTriggerEnabled(ctx context.Context, loaderID, triggerID string, enabled bool) (Loader, error) {
-	if err := m.configDB.SetLoaderTriggerEnabled(ctx, loaderID, triggerID, enabled); err != nil {
-		return Loader{}, err
-	}
-	if err := m.Refresh(ctx); err != nil {
-		return Loader{}, err
-	}
-	m.notifyDashboard("loader_updated")
-	return m.configDB.GetLoader(ctx, loaderID)
+	return loaderdomain.SetLoaderTriggerEnabled(ctx, m.configDB, m, m.notifyDashboard, loaderID, triggerID, enabled)
 }
 
 func (m *LoaderManager) RunNow(ctx context.Context, loaderID, triggerID, payloadJSON string, timeout time.Duration) (LoaderRunSummary, error) {
@@ -272,38 +214,23 @@ func (m *LoaderManager) notifyDashboard(reason string) {
 }
 
 func (m *LoaderManager) scheduleLoop() {
-	for {
-		jobs := m.collectDueScheduledRuns(time.Now().UTC())
-		if len(jobs) > 0 {
-			m.dispatchScheduledRuns(jobs)
-			continue
-		}
+	loaderdomain.RunScheduleLoop(m)
+}
 
-		nextFireAt, ok := m.nextScheduledFireAt()
-		if !ok {
-			select {
-			case <-m.rootCtx.Done():
-				return
-			case <-m.scheduleWake:
-				continue
-			}
-		}
-
-		wait := time.Until(nextFireAt)
-		if wait < 0 {
-			wait = 0
-		}
-		timer := time.NewTimer(wait)
-		select {
-		case <-m.rootCtx.Done():
-			stopTimer(timer)
-			return
-		case <-m.scheduleWake:
-			stopTimer(timer)
-			continue
-		case <-timer.C:
-		}
+func (m *LoaderManager) Context() context.Context {
+	if m == nil || m.rootCtx == nil {
+		return context.Background()
 	}
+	return m.rootCtx
+}
+
+func (m *LoaderManager) Wake() <-chan struct{} {
+	if m == nil || m.scheduleWake == nil {
+		closed := make(chan struct{})
+		close(closed)
+		return closed
+	}
+	return m.scheduleWake
 }
 
 func (m *LoaderManager) dispatchScheduledRuns(jobs []scheduledLoaderRun) {
@@ -318,7 +245,11 @@ func (m *LoaderManager) dispatchScheduledRuns(jobs []scheduledLoaderRun) {
 	}
 }
 
-func (m *LoaderManager) nextScheduledFireAt() (time.Time, bool) {
+func (m *LoaderManager) DispatchScheduledRuns(jobs []loaderdomain.ScheduledRun) {
+	m.dispatchScheduledRuns(scheduledLoaderRunsFromDomain(jobs))
+}
+
+func (m *LoaderManager) NextScheduledFireAt() (time.Time, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -342,6 +273,10 @@ func (m *LoaderManager) nextScheduledFireAt() (time.Time, bool) {
 	return nextFireAt, true
 }
 
+func (m *LoaderManager) nextScheduledFireAt() (time.Time, bool) {
+	return m.NextScheduledFireAt()
+}
+
 func (m *LoaderManager) wakeScheduler() {
 	if m == nil || m.scheduleWake == nil {
 		return
@@ -349,18 +284,6 @@ func (m *LoaderManager) wakeScheduler() {
 	select {
 	case m.scheduleWake <- struct{}{}:
 	default:
-	}
-}
-
-func stopTimer(timer *time.Timer) {
-	if timer == nil {
-		return
-	}
-	if !timer.Stop() {
-		select {
-		case <-timer.C:
-		default:
-		}
 	}
 }
 
@@ -403,6 +326,10 @@ func dedupeWebhookEventTargets(event LoaderTopicEvent, targets []eventLoaderTarg
 func (m *LoaderManager) reserveEventQueueSlots(event LoaderTopicEvent, count int) ([]*webhookQueueReservation, bool) {
 	m.initLoaderComponents()
 	return m.eventDispatcher.reserveQueueSlots(event, count)
+}
+
+func (m *LoaderManager) CollectDueScheduledRuns(now time.Time) []loaderdomain.ScheduledRun {
+	return scheduledLoaderRunsToDomain(m.collectDueScheduledRuns(now))
 }
 
 func (m *LoaderManager) collectDueScheduledRuns(now time.Time) []scheduledLoaderRun {
@@ -448,22 +375,34 @@ func (m *LoaderManager) collectDueScheduledRuns(now time.Time) []scheduledLoader
 	return jobs
 }
 
+func scheduledLoaderRunsToDomain(jobs []scheduledLoaderRun) []loaderdomain.ScheduledRun {
+	result := make([]loaderdomain.ScheduledRun, 0, len(jobs))
+	for _, job := range jobs {
+		result = append(result, loaderdomain.ScheduledRun{
+			Loader:      job.loader,
+			Trigger:     job.trigger,
+			PayloadJSON: job.payloadJSON,
+			Source:      job.source,
+		})
+	}
+	return result
+}
+
+func scheduledLoaderRunsFromDomain(jobs []loaderdomain.ScheduledRun) []scheduledLoaderRun {
+	result := make([]scheduledLoaderRun, 0, len(jobs))
+	for _, job := range jobs {
+		result = append(result, scheduledLoaderRun{
+			loader:      job.Loader,
+			trigger:     job.Trigger,
+			payloadJSON: job.PayloadJSON,
+			source:      job.Source,
+		})
+	}
+	return result
+}
+
 func (m *LoaderManager) loadLoaderForRun(ctx context.Context, loaderID, triggerID string) (Loader, *LoaderTrigger, error) {
-	loader, err := m.configDB.GetLoader(ctx, loaderID)
-	if err != nil {
-		return Loader{}, nil, err
-	}
-	if strings.TrimSpace(triggerID) == "" {
-		return loader, nil, nil
-	}
-	triggerID = strings.TrimSpace(triggerID)
-	for _, item := range loader.Triggers {
-		if item.ID == triggerID {
-			current := item
-			return loader, &current, nil
-		}
-	}
-	return Loader{}, nil, fmt.Errorf("loader trigger %s/%s not found", loaderID, triggerID)
+	return loaderdomain.LoadLoaderForRun(ctx, m.configDB, loaderID, triggerID)
 }
 
 type loaderTriggerEventMetadata struct {
@@ -477,7 +416,7 @@ type loaderRunOptions struct {
 	alreadyEntered bool
 }
 
-var errLoaderRunBusyForRetry = errors.New("loader is already running")
+var errLoaderRunBusyForRetry = loaderdomain.ErrRunBusyForRetry
 
 func (m *LoaderManager) updateTriggerEventDelivery(ctx context.Context, run LoaderRunSummary) {
 	if m == nil || m.configDB == nil {

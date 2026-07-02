@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	dashboarddomain "agent-compose/internal/agentcompose/dashboard"
 	"context"
 	"log/slog"
 	"strings"
@@ -14,7 +15,7 @@ import (
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
-const dashboardOverviewPageSize = 20
+const dashboardOverviewPageSize = dashboarddomain.OverviewPageSize
 
 type DashboardOverviewAggregator struct {
 	store    *Store
@@ -44,32 +45,22 @@ func (a *DashboardOverviewAggregator) Build(ctx context.Context) (*agentcomposev
 		return nil, err
 	}
 
-	overview := &agentcomposev1.DashboardOverview{
-		Runs:      &agentcomposev1.RunOverview{},
-		UpdatedAt: a.clock().Format(time.RFC3339Nano),
+	input := dashboarddomain.OverviewInput{
+		Sessions: make([]dashboarddomain.RunSource, 0, len(sessions.Sessions)),
+		Runs:     make([]dashboarddomain.RunSource, 0, len(runs)),
+		Now:      a.clock(),
 	}
-	overview.Runs.RecentCount = uint32(len(sessions.Sessions) + len(runs))
 	for _, session := range sessions.Sessions {
 		status := ""
 		if session != nil {
 			status = session.Summary.VMStatus
 		}
-		if isDashboardRunningStatus(status) {
-			overview.Runs.RunningCount++
-		}
-		if isDashboardAttentionStatus(status) {
-			overview.Runs.AttentionCount++
-		}
+		input.Sessions = append(input.Sessions, dashboarddomain.RunSource{Status: status})
 	}
 	for _, run := range runs {
-		if isDashboardRunningStatus(run.Status) {
-			overview.Runs.RunningCount++
-		}
-		if isDashboardAttentionStatus(run.Status) {
-			overview.Runs.AttentionCount++
-		}
+		input.Runs = append(input.Runs, dashboarddomain.RunSource{Status: run.Status})
 	}
-	return overview, nil
+	return dashboarddomain.BuildOverview(input), nil
 }
 
 type DashboardOverviewHub struct {
@@ -254,35 +245,6 @@ func (s *Service) WatchDashboardOverview(ctx context.Context, req *connect.Reque
 	}
 }
 
-func isDashboardRunningStatus(status string) bool {
-	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case VMStatusPending, VMStatusRunning:
-		return true
-	default:
-		return false
-	}
-}
-
-func isDashboardAttentionStatus(status string) bool {
-	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case VMStatusFailed, "SKIPPED", "CANCELED", "CANCELLED":
-		return true
-	default:
-		return false
-	}
-}
-
 func cloneDashboardOverview(item *agentcomposev1.DashboardOverview) *agentcomposev1.DashboardOverview {
-	if item == nil {
-		return nil
-	}
-	clone := &agentcomposev1.DashboardOverview{UpdatedAt: item.GetUpdatedAt()}
-	if item.GetRuns() != nil {
-		clone.Runs = &agentcomposev1.RunOverview{
-			RunningCount:   item.GetRuns().GetRunningCount(),
-			RecentCount:    item.GetRuns().GetRecentCount(),
-			AttentionCount: item.GetRuns().GetAttentionCount(),
-		}
-	}
-	return clone
+	return dashboarddomain.CloneOverview(item)
 }

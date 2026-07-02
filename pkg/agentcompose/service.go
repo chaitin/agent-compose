@@ -1,212 +1,27 @@
 package agentcompose
 
 import (
-	appconfig "agent-compose/pkg/config"
-	driverpkg "agent-compose/pkg/driver"
+	execdomain "agent-compose/internal/agentcompose/exec"
+	sessiondomain "agent-compose/internal/agentcompose/session"
+	appconfig "agent-compose/internal/config"
+	driverpkg "agent-compose/internal/driver"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
-	"github.com/samber/do/v2"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"agent-compose/pkg/capproxy"
-	"agent-compose/pkg/imagecache"
+	agentworkspace "agent-compose/internal/agentcompose/workspace"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
-	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
-	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
-
-type Service struct {
-	config     *appconfig.Config
-	store      *Store
-	configDB   *ConfigStore
-	driver     Driver
-	runtimes   RuntimeProvider
-	executor   *Executor
-	loaders    *LoaderManager
-	images     ImageBackend
-	ociImages  ImageBackend
-	autoImages ImageBackend
-	llm        *LLMClient
-	cap        CapabilityProvider
-	bus        *LoaderBus
-	streams    *SessionStreamBroker
-	dashboard  *DashboardOverviewHub
-	events     *EventDispatcher
-	sessions   *SessionRPCBridge
-	startedAt  time.Time
-	startOnce  sync.Once
-	startErr   error
-	agentcomposev1connect.UnimplementedSessionServiceHandler
-	agentcomposev1connect.UnimplementedKernelServiceHandler
-	agentcomposev1connect.UnimplementedAgentServiceHandler
-	agentcomposev1connect.UnimplementedAgentDefinitionServiceHandler
-	agentcomposev1connect.UnimplementedLLMServiceHandler
-	agentcomposev1connect.UnimplementedConfigServiceHandler
-	agentcomposev1connect.UnimplementedLoaderServiceHandler
-	agentcomposev1connect.UnimplementedDashboardServiceHandler
-	agentcomposev1connect.UnimplementedCapabilityServiceHandler
-	agentcomposev2connect.UnimplementedProjectServiceHandler
-	agentcomposev2connect.UnimplementedRunServiceHandler
-	agentcomposev2connect.UnimplementedExecServiceHandler
-	agentcomposev2connect.UnimplementedImageServiceHandler
-}
-
-func NewService(di do.Injector) (*Service, error) {
-	config := do.MustInvoke[*appconfig.Config](di)
-	dashboard, _ := do.Invoke[*DashboardOverviewHub](di)
-	if dashboard == nil {
-		rootCtx, _ := do.Invoke[context.Context](di)
-		if rootCtx == nil {
-			rootCtx = context.Background()
-		}
-		dashboard = newDashboardOverviewHub(rootCtx, newDashboardOverviewAggregator(do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di)), 250*time.Millisecond)
-	}
-	imageCacheRoot := strings.TrimSpace(config.ImageCacheRoot)
-	if imageCacheRoot == "" {
-		imageCacheRoot = filepath.Join(config.DataRoot, "images")
-		config.ImageCacheRoot = imageCacheRoot
-	}
-	dockerImages := NewDockerImageBackend()
-	ociCache, err := imagecache.New(imagecache.Config{
-		Root:               imageCacheRoot,
-		DefaultRegistry:    config.ImageRegistry,
-		InsecureRegistries: config.ImageInsecureRegistries,
-	})
-	if err != nil {
-		return nil, err
-	}
-	config.ImageCacheRoot = ociCache.Root()
-	ociImages := NewOCIImageBackend(ociCache)
-	autoImages := NewAutoImageBackend(config.ImageStoreMode, dockerImages, ociImages)
-	return &Service{
-		config:     config,
-		store:      do.MustInvoke[*Store](di),
-		configDB:   do.MustInvoke[*ConfigStore](di),
-		driver:     do.MustInvoke[Driver](di),
-		runtimes:   do.MustInvoke[RuntimeProvider](di),
-		executor:   do.MustInvoke[*Executor](di),
-		loaders:    do.MustInvoke[*LoaderManager](di),
-		images:     dockerImages,
-		ociImages:  ociImages,
-		autoImages: autoImages,
-		llm:        do.MustInvoke[*LLMClient](di),
-		cap:        do.MustInvoke[capabilityIntegration](di),
-		bus:        do.MustInvoke[*LoaderBus](di),
-		streams:    do.MustInvoke[*SessionStreamBroker](di),
-		dashboard:  dashboard,
-		events:     NewEventDispatcher(do.MustInvoke[context.Context](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderBus](di)),
-		sessions:   do.MustInvoke[*SessionRPCBridge](di),
-		startedAt:  time.Now().UTC(),
-	}, nil
-}
-
-func Setup(di do.Injector) {
-	Register(di)
-	if err := StartBackground(di); err != nil {
-		slog.Error("failed to start agent-compose background managers", "error", err)
-	}
-}
-
-func Register(di do.Injector) {
-	do.Provide(di, NewStore)
-	do.Provide(di, NewConfigStore)
-	do.Provide(di, NewRuntimeProvider)
-	do.Provide(di, NewDriver)
-	do.Provide(di, NewExecutor)
-	do.Provide(di, NewLLMClient)
-	do.Provide(di, NewCapabilityProvider)
-	do.Provide(di, NewCapProxyServer)
-	do.Provide(di, NewLoaderBus)
-	do.Provide(di, NewSessionStreamBroker)
-	do.Provide(di, NewDashboardOverviewAggregator)
-	do.Provide(di, NewDashboardOverviewHub)
-	do.Provide(di, NewLoaderEngine)
-	do.Provide(di, NewSessionRPCBridge)
-	do.Provide(di, NewLoaderManager)
-	do.Provide(di, NewService)
-
-	app := do.MustInvoke[*echo.Echo](di)
-	service := do.MustInvoke[*Service](di)
-
-	path, handler := agentcomposev1connect.NewSessionServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewKernelServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewAgentServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewAgentDefinitionServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewLLMServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewConfigServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewLoaderServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewDashboardServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewCapabilityServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-
-	path, handler = agentcomposev2connect.NewProjectServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewRunServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewExecServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewImageServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-
-	registerWebhookRoutes(app, service)
-	registerRuntimeLLMFacadeRoutes(app, service)
-	registerProxyRoutes(app, service)
-	registerWorkspaceRoutes(app, service)
-}
-
-func StartBackground(di do.Injector) error {
-	service := do.MustInvoke[*Service](di)
-	return service.StartBackground(do.MustInvoke[context.Context](di), do.MustInvoke[*capproxy.Server](di))
-}
-
-func (s *Service) StartBackground(ctx context.Context, capProxy *capproxy.Server) error {
-	s.startOnce.Do(func() {
-		reconcileCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := s.reconcilePersistedSessions(reconcileCtx); err != nil {
-			slog.Warn("failed to reconcile persisted session state on startup", "error", err)
-		}
-		s.loaders.Start()
-		s.events.Start()
-		s.startErr = startCapabilityProxy(ctx, capProxy)
-	})
-	return s.startErr
-}
-
-func startCapabilityProxy(ctx context.Context, capProxy *capproxy.Server) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if capProxy.Configured() {
-		go func() {
-			if err := capProxy.Serve(ctx); err != nil {
-				slog.Error("agent compose capability grpc proxy stopped", "error", err)
-			}
-		}()
-	}
-	return nil
-}
 
 func (s *Service) CreateSession(ctx context.Context, req *connect.Request[agentcomposev1.CreateSessionRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
 	return s.sessions.CreateSession(ctx, req)
@@ -545,27 +360,14 @@ func (s *Service) reconcileSessionRuntimeState(ctx context.Context, session *Ses
 		return session, nil
 	}
 	now := time.Now().UTC()
-	vmState.StoppedAt = now
-	vmState.LastError = ""
-	vmState.BoxID = ""
-	if err := s.store.SaveVMState(session.Summary.ID, vmState); err != nil {
-		return nil, err
-	}
-	session.Summary.VMStatus = VMStatusStopped
-	if err := s.store.UpdateSession(ctx, session); err != nil {
+	loaded, err := sessiondomain.MarkRuntimeLost(ctx, s.store, session, vmState, now, uuid.NewString())
+	if err != nil {
 		return nil, err
 	}
 	if s.configDB != nil {
 		_ = s.configDB.RevokeLLMFacadeTokensForSession(ctx, session.Summary.ID)
 	}
-	_ = s.store.AddEvent(ctx, session.Summary.ID, SessionEvent{
-		ID:        uuid.NewString(),
-		Type:      "session.runtime_lost",
-		Level:     "warn",
-		Message:   "session marked stopped after microsandbox runtime became unreachable",
-		CreatedAt: now,
-	})
-	return s.store.GetSession(ctx, session.Summary.ID)
+	return loaded, nil
 }
 
 func (s *Service) StopSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
@@ -1103,64 +905,18 @@ func parseAgentExecResult(agent string, result ExecResult) (AgentRunResult, erro
 }
 
 func agentTraceEvents(transcript string, createdAt time.Time) []SessionEvent {
-	lines := strings.Split(transcript, "\n")
-	events := make([]SessionEvent, 0)
-	for index := 0; index < len(lines); index++ {
-		line := strings.TrimSpace(lines[index])
-		eventType, name, ok := parseAgentTraceMarker(line)
-		if !ok {
-			continue
-		}
-		details, consumed := collectAgentTraceDetails(eventType, lines[index+1:])
-		index += consumed
-		message := name
-		if strings.TrimSpace(details) != "" {
-			if message == "" {
-				message = strings.TrimSpace(details)
-			} else {
-				message += "\n" + strings.TrimSpace(details)
-			}
-		}
+	domainEvents := execdomain.AgentTraceEvents(transcript)
+	events := make([]SessionEvent, 0, len(domainEvents))
+	for _, event := range domainEvents {
 		events = append(events, SessionEvent{
 			ID:        uuid.NewString(),
-			Type:      eventType,
-			Level:     "info",
-			Message:   message,
+			Type:      event.Type,
+			Level:     event.Level,
+			Message:   event.Message,
 			CreatedAt: createdAt,
 		})
 	}
 	return events
-}
-
-func collectAgentTraceDetails(eventType string, lines []string) (string, int) {
-	details := make([]string, 0, len(lines))
-	for offset, raw := range lines {
-		line := strings.TrimSpace(raw)
-		if _, _, marker := parseAgentTraceMarker(line); marker {
-			return strings.Join(details, "\n"), offset
-		}
-		if eventType != "agent.assistant" && line == "" {
-			return strings.Join(details, "\n"), offset + 1
-		}
-		details = append(details, raw)
-	}
-	return strings.Join(details, "\n"), len(lines)
-}
-
-func parseAgentTraceMarker(line string) (string, string, bool) {
-	if strings.HasPrefix(line, "[tool:") && strings.HasSuffix(line, "]") {
-		name := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "[tool:"), "]"))
-		if name != "" {
-			return "agent.tool", name, true
-		}
-	}
-	if strings.HasPrefix(line, "[hook:") && strings.HasSuffix(line, "]") {
-		name := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "[hook:"), "]"))
-		if name != "" {
-			return "agent.hook", name, true
-		}
-	}
-	return "", "", false
 }
 
 func validateLoaderCommandRequest(request LoaderCommandRequest) error {
@@ -1460,14 +1216,7 @@ func buildAgentExecSpec(config *appconfig.Config, session *Session, agent, model
 }
 
 func summarizeAgentResult(result AgentRunResult) string {
-	body := firstNonEmpty(result.FinalText, result.DisplayOutput, result.Transcript)
-	if strings.TrimSpace(body) == "" {
-		if result.Success {
-			return fmt.Sprintf("%s finished without output", result.Agent)
-		}
-		return fmt.Sprintf("%s failed without output", result.Agent)
-	}
-	return body
+	return execdomain.SummarizeAgentResult(result)
 }
 
 func toProtoSessionDetail(session *Session) *agentcomposev1.SessionDetail {
@@ -1516,12 +1265,7 @@ func toProtoGlobalEnvConfig(items []SessionEnvVar) *agentcomposev1.GlobalEnvConf
 }
 
 func toSessionWorkspaceSnapshot(item WorkspaceConfig) *SessionWorkspace {
-	return &SessionWorkspace{
-		ID:         item.ID,
-		Name:       item.Name,
-		Type:       item.Type,
-		ConfigJSON: item.ConfigJSON,
-	}
+	return agentworkspace.SnapshotFromConfig(item)
 }
 
 func toProtoSessionWorkspace(item *SessionWorkspace) *agentcomposev1.SessionWorkspaceSnapshot {

@@ -1,8 +1,9 @@
 package agentcompose
 
 import (
-	appconfig "agent-compose/pkg/config"
-	driverpkg "agent-compose/pkg/driver"
+	sessiondomain "agent-compose/internal/agentcompose/session"
+	appconfig "agent-compose/internal/config"
+	driverpkg "agent-compose/internal/driver"
 	"context"
 	"fmt"
 	"log/slog"
@@ -312,31 +313,25 @@ func (b *SessionRPCBridge) reconcileSessionRuntimeState(ctx context.Context, ses
 		return session, nil
 	}
 	now := time.Now().UTC()
-	vmState.StoppedAt = now
-	vmState.LastError = ""
-	vmState.BoxID = ""
-	if err := b.store.SaveVMState(session.Summary.ID, vmState); err != nil {
-		return nil, err
-	}
-	session.Summary.VMStatus = VMStatusStopped
-	if err := b.store.UpdateSession(ctx, session); err != nil {
+	eventID := uuid.NewString()
+	loaded, err := sessiondomain.MarkRuntimeLost(ctx, b.store, session, vmState, now, eventID)
+	if err != nil {
 		return nil, err
 	}
 	if b.configDB != nil {
 		_ = b.configDB.RevokeLLMFacadeTokensForSession(ctx, session.Summary.ID)
 	}
-	b.streams.PublishSessionUpdated(&session.Summary)
+	b.streams.PublishSessionUpdated(&loaded.Summary)
 	b.notifyDashboard("session_updated")
 	event := SessionEvent{
-		ID:        uuid.NewString(),
-		Type:      "session.runtime_lost",
+		ID:        eventID,
+		Type:      sessiondomain.RuntimeLostEventType,
 		Level:     "warn",
-		Message:   "session marked stopped after microsandbox runtime became unreachable",
+		Message:   sessiondomain.RuntimeLostMessage,
 		CreatedAt: now,
 	}
-	_ = b.store.AddEvent(ctx, session.Summary.ID, event)
 	b.streams.PublishEventAdded(session.Summary.ID, event)
-	return b.store.GetSession(ctx, session.Summary.ID)
+	return loaded, nil
 }
 
 func (b *SessionRPCBridge) StopSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {

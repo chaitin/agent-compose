@@ -5,18 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
+
+	domaincap "agent-compose/internal/agentcompose/capability"
 )
 
-// CapabilityGatewaySettings is the page-configured OctoBus connection. It is
-// persisted as a single row in the capability_gateway table and read
-// dynamically at request time. The deployment-fixed proxy listen/target
-// addresses are intentionally not stored here.
-type CapabilityGatewaySettings struct {
-	Addr  string
-	Token string
-}
+// CapabilityGatewaySettings is the page-configured OctoBus connection.
+type CapabilityGatewaySettings = domaincap.GatewaySettings
 
 // capabilityGatewayRowID pins the settings to a single row.
 const capabilityGatewayRowID = 1
@@ -50,8 +45,7 @@ func (s *ConfigStore) GetCapabilityGateway(ctx context.Context) (CapabilityGatew
 
 // SaveCapabilityGateway upserts the OctoBus connection settings.
 func (s *ConfigStore) SaveCapabilityGateway(ctx context.Context, settings CapabilityGatewaySettings) (CapabilityGatewaySettings, error) {
-	settings.Addr = strings.TrimSpace(settings.Addr)
-	settings.Token = strings.TrimSpace(settings.Token)
+	settings = settings.Trimmed()
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO capability_gateway(id, addr, token, updated_at) VALUES(?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET addr = excluded.addr, token = excluded.token, updated_at = excluded.updated_at`,

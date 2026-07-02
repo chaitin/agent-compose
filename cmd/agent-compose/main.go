@@ -29,15 +29,16 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc/codes"
 
-	"agent-compose/pkg/fxgo/echofn"
-	"agent-compose/pkg/fxgo/restful"
-	"agent-compose/pkg/fxgo/utils"
+	agentcomposebootstrap "agent-compose/internal/agentcompose/bootstrap"
+	"agent-compose/internal/fxgo/echofn"
+	"agent-compose/internal/fxgo/restful"
+	"agent-compose/internal/fxgo/utils"
 
+	"agent-compose/internal/auth"
+	"agent-compose/internal/config"
+	"agent-compose/internal/health"
 	"agent-compose/pkg/agentcompose"
-	"agent-compose/pkg/auth"
 	"agent-compose/pkg/compose"
-	"agent-compose/pkg/config"
-	"agent-compose/pkg/health"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
@@ -127,7 +128,7 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 	config.Setup(di)
 	do.Provide(di, NewEcho)
 	health.Setup(di)
-	agentcompose.Register(di)
+	agentcomposebootstrap.Register(di)
 
 	app := do.MustInvoke[*echo.Echo](di)
 	logger := do.MustInvoke[*slog.Logger](di)
@@ -136,7 +137,7 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 
 	startBackground := opts.StartBackground
 	if startBackground == nil {
-		startBackground = agentcompose.StartBackground
+		startBackground = agentcomposebootstrap.StartBackground
 	}
 	return &DaemonApp{
 		DI:              di,

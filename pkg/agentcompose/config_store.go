@@ -1,7 +1,12 @@
 package agentcompose
 
 import (
-	appconfig "agent-compose/pkg/config"
+	agentdomain "agent-compose/internal/agentcompose/agent"
+	configdomain "agent-compose/internal/agentcompose/config"
+	eventsdomain "agent-compose/internal/agentcompose/events"
+	llmdomain "agent-compose/internal/agentcompose/llm"
+	loaderdomain "agent-compose/internal/agentcompose/loader"
+	appconfig "agent-compose/internal/config"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -9,7 +14,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -19,10 +23,14 @@ import (
 	"github.com/samber/do/v2"
 )
 
-const storedUnixMillisecondThreshold int64 = 10_000_000_000
+const storedUnixMillisecondThreshold = configdomain.StoredUnixMillisecondThreshold
 
 type ConfigStore struct {
 	db *sql.DB
+	*configdomain.PersistenceStore
+	*loaderdomain.LoaderStore
+	*eventsdomain.EventStore
+	*llmdomain.Store
 }
 
 func NewConfigStore(di do.Injector) (*ConfigStore, error) {
@@ -38,6 +46,7 @@ func NewConfigStore(di do.Injector) (*ConfigStore, error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	store := &ConfigStore{db: db}
+	store.bindDomainStores()
 	if err := store.initSchema(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -45,7 +54,26 @@ func NewConfigStore(di do.Injector) (*ConfigStore, error) {
 	return store, nil
 }
 
+func (s *ConfigStore) bindDomainStores() {
+	if s == nil || s.db == nil {
+		return
+	}
+	if s.PersistenceStore == nil {
+		s.PersistenceStore = configdomain.NewPersistenceStore(s.db)
+	}
+	if s.LoaderStore == nil {
+		s.LoaderStore = loaderdomain.NewStore(s.db)
+	}
+	if s.EventStore == nil {
+		s.EventStore = eventsdomain.NewStore(s.db)
+	}
+	if s.Store == nil {
+		s.Store = llmdomain.NewStore(s.db)
+	}
+}
+
 func (s *ConfigStore) initSchema(ctx context.Context) error {
+	s.bindDomainStores()
 	statements := []string{
 		`PRAGMA journal_mode = WAL;`,
 		`PRAGMA foreign_keys = ON;`,
@@ -83,46 +111,13 @@ func (s *ConfigStore) initSchema(ctx context.Context) error {
 }
 
 func (s *ConfigStore) ensureGlobalEnvSchema(ctx context.Context) error {
-	const createStmt = `CREATE TABLE IF NOT EXISTS global_env (
-		name TEXT PRIMARY KEY,
-		value TEXT NOT NULL,
-		secret INTEGER NOT NULL DEFAULT 0,
-		updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
-	);`
-	if _, err := s.db.ExecContext(ctx, createStmt); err != nil {
-		return fmt.Errorf("create global env schema: %w", err)
-	}
-	columnTypes, err := s.tableColumnTypes(ctx, "global_env")
-	if err != nil {
-		return err
-	}
-	if isIntegerColumnType(columnTypes["updated_at"]) {
-		return nil
-	}
-	return s.rebuildGlobalEnvTable(ctx)
+	s.bindDomainStores()
+	return s.PersistenceStore.EnsureGlobalEnvSchema(ctx)
 }
 
 func (s *ConfigStore) ensureWorkspaceConfigSchema(ctx context.Context) error {
-	const createStmt = `CREATE TABLE IF NOT EXISTS workspace_config (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL,
-		type TEXT NOT NULL,
-		config_json TEXT NOT NULL DEFAULT '{}',
-		comment TEXT NOT NULL DEFAULT '',
-		created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
-		updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
-	);`
-	if _, err := s.db.ExecContext(ctx, createStmt); err != nil {
-		return fmt.Errorf("create workspace config schema: %w", err)
-	}
-	columnTypes, err := s.tableColumnTypes(ctx, "workspace_config")
-	if err != nil {
-		return err
-	}
-	if isIntegerColumnType(columnTypes["created_at"]) && isIntegerColumnType(columnTypes["updated_at"]) {
-		return nil
-	}
-	return s.rebuildWorkspaceConfigTable(ctx)
+	s.bindDomainStores()
+	return s.PersistenceStore.EnsureWorkspaceConfigSchema(ctx)
 }
 
 func (s *ConfigStore) ensureAgentDefinitionSchema(ctx context.Context) error {
@@ -176,29 +171,11 @@ func (s *ConfigStore) ensureAgentDefinitionSchema(ctx context.Context) error {
 }
 
 func (s *ConfigStore) tableColumnTypes(ctx context.Context, tableName string) (map[string]string, error) {
-	trimmedTableName := strings.TrimSpace(tableName)
-	if trimmedTableName == "" {
-		return nil, fmt.Errorf("schema table name is required")
-	}
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT name, type FROM pragma_table_info('%s')`, strings.ReplaceAll(trimmedTableName, "'", "''")))
-	if err != nil {
-		return nil, fmt.Errorf("query schema for %s: %w", tableName, err)
-	}
-	defer func() { _ = rows.Close() }()
+	return configdomain.TableColumnTypes(ctx, s.db, tableName)
+}
 
-	columnTypes := make(map[string]string)
-	for rows.Next() {
-		var name string
-		var columnType string
-		if err := rows.Scan(&name, &columnType); err != nil {
-			return nil, fmt.Errorf("scan schema for %s: %w", tableName, err)
-		}
-		columnTypes[strings.ToLower(strings.TrimSpace(name))] = strings.TrimSpace(columnType)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate schema for %s: %w", tableName, err)
-	}
-	return columnTypes, nil
+func ensureColumn(ctx context.Context, db *sql.DB, table, column, definition string) error {
+	return configdomain.EnsureColumn(ctx, db, table, column, definition)
 }
 
 func (s *ConfigStore) rebuildGlobalEnvTable(ctx context.Context) error {
@@ -697,31 +674,7 @@ func (s *ConfigStore) ensureWorkspaceNotReferencedByAgent(ctx context.Context, w
 }
 
 func normalizeEnvItems(items []SessionEnvVar) []SessionEnvVar {
-	if len(items) == 0 {
-		return nil
-	}
-	merged := make(map[string]SessionEnvVar, len(items))
-	for _, item := range items {
-		name := strings.TrimSpace(item.Name)
-		if name == "" {
-			continue
-		}
-		item.Name = name
-		merged[name] = item
-	}
-	if len(merged) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(merged))
-	for key := range merged {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	result := make([]SessionEnvVar, 0, len(keys))
-	for _, key := range keys {
-		result = append(result, merged[key])
-	}
-	return result
+	return agentdomain.NormalizeEnvItems(items)
 }
 
 func encodeAgentEnvJSON(items []SessionEnvVar) (string, error) {
@@ -852,76 +805,19 @@ func scanWorkspaceConfig(scan func(dest ...any) error) (WorkspaceConfig, error) 
 }
 
 func parseStoredUnixTimeAuto(value int64) time.Time {
-	if value <= 0 {
-		return time.Time{}
-	}
-	if value >= storedUnixMillisecondThreshold {
-		return time.UnixMilli(value).UTC()
-	}
-	return time.Unix(value, 0).UTC()
+	return configdomain.ParseStoredUnixTimeAuto(value)
 }
 
 func parseStoredLoaderTriggerTime(value any) time.Time {
-	switch typed := value.(type) {
-	case nil:
-		return time.Time{}
-	case int64:
-		return parseStoredUnixTimeAuto(typed)
-	case int:
-		return parseStoredUnixTimeAuto(int64(typed))
-	case float64:
-		return parseStoredUnixTimeAuto(int64(typed))
-	case []byte:
-		return parseStoredLoaderTriggerTime(string(typed))
-	case string:
-		trimmed := strings.TrimSpace(typed)
-		if trimmed == "" {
-			return time.Time{}
-		}
-		if unixValue, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
-			return parseStoredUnixTimeAuto(unixValue)
-		}
-		return parseStoredTime(trimmed)
-	default:
-		return parseStoredTime(value)
-	}
+	return configdomain.ParseStoredLoaderTriggerTime(value)
 }
 
 func parseStoredTime(value any) time.Time {
-	switch typed := value.(type) {
-	case nil:
-		return time.Time{}
-	case int64:
-		return parseStoredUnixTimeAuto(typed)
-	case int:
-		return parseStoredUnixTimeAuto(int64(typed))
-	case float64:
-		return parseStoredUnixTimeAuto(int64(typed))
-	case []byte:
-		return parseStoredTime(string(typed))
-	case string:
-		trimmed := strings.TrimSpace(typed)
-		if trimmed == "" {
-			return time.Time{}
-		}
-		if unixValue, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
-			return parseStoredUnixTimeAuto(unixValue)
-		}
-		for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000Z"} {
-			if parsed, err := time.Parse(layout, trimmed); err == nil {
-				return parsed.UTC()
-			}
-		}
-	}
-	return time.Time{}
+	return configdomain.ParseStoredTime(value)
 }
 
 func normalizeSQLiteTimestampExpr(columnName string) string {
-	return fmt.Sprintf(`CASE
-		WHEN trim(COALESCE(%[1]s, '')) = '' THEN CAST(strftime('%%s','now') AS INTEGER)
-		WHEN trim(COALESCE(%[1]s, '')) NOT GLOB '*[^0-9]*' THEN CAST(%[1]s AS INTEGER)
-		ELSE COALESCE(CAST(strftime('%%s', %[1]s) AS INTEGER), CAST(strftime('%%s','now') AS INTEGER))
-	END`, columnName)
+	return configdomain.NormalizeSQLiteTimestampExpr(columnName)
 }
 
 func isIntegerColumnType(columnType string) bool {
@@ -929,8 +825,27 @@ func isIntegerColumnType(columnType string) bool {
 }
 
 func boolToInt(value bool) int {
-	if value {
-		return 1
+	return configdomain.BoolToInt(value)
+}
+
+func sessionEnvVarsToConfig(items []SessionEnvVar) []configdomain.EnvVar {
+	if len(items) == 0 {
+		return nil
 	}
-	return 0
+	result := make([]configdomain.EnvVar, 0, len(items))
+	for _, item := range items {
+		result = append(result, configdomain.EnvVar{Name: item.Name, Value: item.Value, Secret: item.Secret})
+	}
+	return result
+}
+
+func configEnvVarsToSession(items []configdomain.EnvVar) []SessionEnvVar {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]SessionEnvVar, 0, len(items))
+	for _, item := range items {
+		result = append(result, SessionEnvVar{Name: item.Name, Value: item.Value, Secret: item.Secret})
+	}
+	return result
 }

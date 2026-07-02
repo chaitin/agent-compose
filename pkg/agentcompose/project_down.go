@@ -3,10 +3,10 @@ package agentcompose
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"connectrpc.com/connect"
 
+	projectdomain "agent-compose/internal/agentcompose/project"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
@@ -26,45 +26,7 @@ func (s *Service) downProject(ctx context.Context, project ProjectRecord) ([]*ag
 }
 
 func (s *Service) disableProjectManagedSchedulers(ctx context.Context, project ProjectRecord) ([]*agentcomposev2.ProjectChange, error) {
-	schedulers, err := s.configDB.ListProjectSchedulers(ctx, project.ID)
-	if err != nil {
-		return nil, fmt.Errorf("list project schedulers for down %s: %w", project.Name, err)
-	}
-	var changes []*agentcomposev2.ProjectChange
-	for _, scheduler := range schedulers {
-		if !scheduler.Enabled {
-			continue
-		}
-		disabled, err := s.configDB.SetProjectSchedulerEnabled(ctx, scheduler.ProjectID, scheduler.SchedulerID, false)
-		if err != nil {
-			return changes, fmt.Errorf("disable project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
-		}
-		if err := s.disableManagedLoaderIfOwned(ctx, scheduler.ManagedLoaderID, project.ID, scheduler.SchedulerID); err != nil {
-			return changes, fmt.Errorf("disable managed loader %s: %w", scheduler.ManagedLoaderID, err)
-		}
-		changes = append(changes, &agentcomposev2.ProjectChange{
-			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED,
-			ResourceType: "project_scheduler",
-			ResourceId:   disabled.SchedulerID,
-			Name:         disabled.AgentName,
-			Message:      "disabled by project down",
-		})
-		if scheduler.ManagedLoaderID != "" {
-			changes = append(changes, &agentcomposev2.ProjectChange{
-				Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED,
-				ResourceType: "loader",
-				ResourceId:   scheduler.ManagedLoaderID,
-				Name:         scheduler.AgentName,
-				Message:      "disabled by project down",
-			})
-		}
-	}
-	if len(changes) > 0 && s.loaders != nil {
-		if err := s.loaders.Refresh(ctx); err != nil {
-			return changes, fmt.Errorf("refresh loader manager after project down: %w", err)
-		}
-	}
-	return changes, nil
+	return projectdomain.DisableManagedSchedulersForDown(ctx, s.configDB, s.loaders, project)
 }
 
 func (s *Service) stopProjectRunningSessions(ctx context.Context, project ProjectRecord) ([]*agentcomposev2.ProjectChange, error) {
@@ -105,12 +67,5 @@ func projectSessionHasTag(session *Session, name, value string) bool {
 	if session == nil {
 		return false
 	}
-	name = strings.TrimSpace(name)
-	value = strings.TrimSpace(value)
-	for _, tag := range session.Summary.Tags {
-		if strings.TrimSpace(tag.Name) == name && strings.TrimSpace(tag.Value) == value {
-			return true
-		}
-	}
-	return false
+	return projectdomain.ProjectSessionHasTag(session.Summary.Tags, name, value)
 }

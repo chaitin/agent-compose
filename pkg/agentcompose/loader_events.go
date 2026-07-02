@@ -1,8 +1,9 @@
 package agentcompose
 
 import (
-	"strings"
 	"time"
+
+	loaderdomain "agent-compose/internal/agentcompose/loader"
 )
 
 func (s *Service) publishLoaderTopic(topic string, payload map[string]any) {
@@ -20,46 +21,29 @@ func sessionTopicPayload(session *Session, source string) map[string]any {
 	if session == nil {
 		return nil
 	}
-	return map[string]any{
-		"sessionId":     session.Summary.ID,
-		"title":         session.Summary.Title,
-		"driver":        session.Summary.Driver,
-		"vmStatus":      session.Summary.VMStatus,
-		"guestImage":    session.Summary.GuestImage,
-		"triggerSource": session.Summary.TriggerSource,
-		"source":        source,
-	}
+	return loaderdomain.SessionTopicPayload(loaderdomain.SessionTopicFields{
+		SessionID:     session.Summary.ID,
+		Title:         session.Summary.Title,
+		Driver:        session.Summary.Driver,
+		VMStatus:      session.Summary.VMStatus,
+		GuestImage:    session.Summary.GuestImage,
+		TriggerSource: session.Summary.TriggerSource,
+	}, source)
 }
 
 func cellTopicPayload(sessionID string, cell NotebookCell, source string) map[string]any {
-	return map[string]any{
-		"sessionId":      sessionID,
-		"cellId":         cell.ID,
-		"cellType":       cell.Type,
-		"success":        cell.Success,
-		"exitCode":       cell.ExitCode,
-		"agent":          cell.Agent,
-		"agentSessionId": cell.AgentSessionID,
-		"stopReason":     cell.StopReason,
-		"source":         source,
-	}
+	return loaderdomain.CellTopicPayload(loaderdomain.CellTopicFields{
+		SessionID:      sessionID,
+		CellID:         cell.ID,
+		CellType:       cell.Type,
+		Success:        cell.Success,
+		ExitCode:       cell.ExitCode,
+		Agent:          cell.Agent,
+		AgentSessionID: cell.AgentSessionID,
+		StopReason:     cell.StopReason,
+	}, source)
 }
 
 func loaderCommandEventPayload(request LoaderCommandRequest, result LoaderCommandResult) map[string]any {
-	payload := map[string]any{
-		"mode":            strings.TrimSpace(request.Mode),
-		"command":         strings.TrimSpace(request.Command),
-		"args":            append([]string(nil), request.Args...),
-		"cwd":             strings.TrimSpace(request.Cwd),
-		"exitCode":        result.ExitCode,
-		"success":         result.Success,
-		"stdoutTruncated": result.StdoutTruncated,
-		"stderrTruncated": result.StderrTruncated,
-		"sessionId":       result.SessionID,
-		"cellId":          result.CellID,
-	}
-	if payload["mode"] == "shell" {
-		payload["command"] = ""
-	}
-	return payload
+	return loaderdomain.CommandEventPayload(request, result)
 }
