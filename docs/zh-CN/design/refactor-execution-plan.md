@@ -64,23 +64,24 @@ refactor/domain-project
 - T0 已完成：架构方案、中文方案、执行计划已保留在 `main`，重构代码未合入 `main`。
 - T1 已完成：已建立 bootstrap 兼容外壳，`agentcompose.Setup/Register/StartBackground` 保持兼容。
 - T2 已部分完成：已拆出主要 Connect handler wrapper，业务逻辑仍委托旧 `Service` 实现。
-- T3 已部分完成：
-  - `internal/agentcompose/image` 已建立，Docker/OCI/Auto image backend 与 image mapper 已迁入域包；`pkg/agentcompose` 保留 Connect 映射和兼容类型别名。
-  - `internal/agentcompose/dashboard` 已建立，dashboard overview 纯聚合、状态分类和 clone helper 已迁入域包；`pkg/agentcompose` 保留 Store/ConfigStore 适配、hub 和 Connect handler。
-  - `internal/agentcompose/capability` 已建立，capability provider、gateway settings、session binding、guide path/preamble 等低耦合逻辑已迁入域包；`pkg/agentcompose` 保留 DI、Store、Session、Connect 和 proxy 适配。
-  - `internal/agentcompose/events` 已建立，topic event 模型、状态归一化、topic 校验、payload hash、record normalize、webhook topic match 和 dispatcher 核心逻辑已迁入域包；`pkg/agentcompose` 保留 ConfigStore 持久化和 LoaderBus 适配。
-  - `internal/agentcompose/exec` 已建立，exec 纯模型、cell 类型规范化、artifact helper、stream accumulator、agent result summarizer 和 trace event 解析已迁入域包；`pkg/agentcompose` 保留 Executor、runtime 编排、Connect glue 和兼容 alias。
-  - `internal/agentcompose/workspace` 已建立，workspace 模型、file/git config、路径 normalize、file workspace content root、文件列表、复制、tar 解包和 git helper 已迁入域包；`pkg/agentcompose` 保留 HTTP routes、Service/ConfigStore/Session 适配和兼容 alias。
-- T4 已开始：
-  - `internal/agentcompose/loader` 已建立，loader 模型、调度规则、cron 解析、bus publish 规则和 topic payload helper 已迁入域包；`pkg/agentcompose` 保留 Manager/Engine/Store/Connect glue 和兼容 alias。
-  - `internal/agentcompose/project` 已建立，project normalize、proto response mapper、managed scheduler trigger/script build helper 已迁入域包；`pkg/agentcompose` 保留 Service 编排、ConfigStore/SQL 和兼容 wrapper。
+- T3 已完成第一轮域包种子：
+  - `internal/agentcompose/image`：Docker/OCI/Auto image backend、image mapper 等低耦合逻辑已迁入域包。
+  - `internal/agentcompose/dashboard`：overview 聚合、状态分类、clone helper 已迁入域包。
+  - `internal/agentcompose/capability`：capability provider、gateway settings、session binding、guide path/preamble 已迁入域包。
+  - `internal/agentcompose/events`：topic event 模型、状态归一化、topic 校验、payload hash、record normalize、webhook topic match、dispatcher 核心逻辑已迁入域包。
+  - `internal/agentcompose/exec`：exec 纯模型、cell 类型规范化、artifact helper、stream accumulator、agent result summarizer、trace event 解析已迁入域包。
+  - `internal/agentcompose/workspace`：workspace 模型、file/git config、路径 normalize、file content root、文件列表、复制、tar 解包、git helper 已迁入域包。
+- T4 已进入大粒度域迁移阶段：
+  - `internal/agentcompose/loader` 已承载 loader 模型、调度规则、cron 解析、bus publish 规则、topic payload helper，以及 LoaderEngine、run executor、event dispatcher 主业务逻辑；`pkg/agentcompose` 保留 Manager/Store/Connect glue 和兼容 wrapper。
+  - `internal/agentcompose/project` 已承载 project normalize、schema ensure、SQL store、project-session 查询、proto response mapper、managed scheduler trigger/script build helper；`pkg/agentcompose` 保留 Service 编排、跨域 Session 适配和兼容 wrapper。
 - 当前验证：`refactor/architecture-main` 上 `go test ./pkg/agentcompose ./cmd/agent-compose` 通过，`task build` 通过。
 
 下一批优先级：
 
-- T3 低耦合域包种子基本完成。后续不建议继续拆 `config_store.go` 这类横跨多域的持久化文件，避免提前混入 T5。
-- T4 下一步继续细分 `project` 与 `loader`，但仍应先迁移模型/纯规则/mapper，再迁 service 编排；暂不移动 `project_store.go`、`loader_store.go` 和复杂 runtime 执行路径。
-- 暂不执行 T6 全量 `pkg/agentcompose` 到 `internal/agentcompose` 迁移，直到 T3/T4 的域边界更稳定。
+- 继续按“域优先，大步迁移”的方式推进，不再把任务拆成零散 helper。
+- 优先迁移 `session` 与 `run` 两个核心域：它们是生命周期、执行编排和 runtime 调度的主干，收益高于继续打磨已迁出的低耦合 helper。
+- loader/project 后续只做收口：把仍留在 `pkg/agentcompose` 的 Store/Manager/Service 适配逐步压薄，避免再扩大同域内的小任务数量。
+- 暂缓全量 T6，直到 `session/run/project/loader` 的域边界稳定；否则会把旧耦合整体搬进 `internal`。
 
 ## 任务依赖图
 
@@ -231,18 +232,18 @@ T0 文档与基线
 
 目标：
 
-- 将 `project`、`loader`、`session`、`run` 等复杂域逐步迁入对应域包。
-- 先迁模型和纯规则，再迁 service 编排，再迁 repository 实现。
-- 每个 PR 只迁一个域的一块职责。
+- 将 `project`、`loader`、`session`、`run` 等复杂域按完整业务域迁入对应域包。
+- 每个 worker 负责一个完整域的主干迁移，而不是只移动少量 helper。
+- 优先形成清晰的 domain package，再通过 `pkg/agentcompose` 兼容 wrapper 保持外部接口不变。
 - 行为保持不变。
 
 建议分组：
 
-- T4.1 `project`：validate/apply/down/reconcile/dry-run。
-- T4.2 `loader`：manager/engine/executor/event dispatch。
-- T4.3 `run`：run coordinator、run preparation、project agent run。
-- T4.4 `session`：create/resume/stop/watch/reconcile/stream。
-- T4.5 `exec`、`llm`、`config`、`workspace`。
+- T4.1 `project`：schema/store/session relation/response mapper/managed resource builder，已完成主干迁移；后续只做 Service 编排压薄。
+- T4.2 `loader`：engine/executor/event dispatcher，已完成核心迁移；后续只做 Manager/Store/Service 收口。
+- T4.3 `session`：create/resume/stop/watch/reconcile/stream/session store，以生命周期聚合为边界大步迁移。
+- T4.4 `run`：run coordinator、run preparation、project agent run、exec orchestration，以执行编排为边界大步迁移。
+- T4.5 `llm`、`config`、`workspace`：仅在 session/run 边界稳定后处理，避免过早触碰横切配置。
 
 验收：
 
