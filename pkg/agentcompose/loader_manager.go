@@ -1,12 +1,12 @@
 package agentcompose
 
 import (
+	loaderdomain "agent-compose/internal/agentcompose/loader"
 	appconfig "agent-compose/pkg/config"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -477,7 +477,7 @@ type loaderRunOptions struct {
 	alreadyEntered bool
 }
 
-var errLoaderRunBusyForRetry = errors.New("loader is already running")
+var errLoaderRunBusyForRetry = loaderdomain.ErrRunBusyForRetry
 
 func (m *LoaderManager) updateTriggerEventDelivery(ctx context.Context, run LoaderRunSummary) {
 	if m == nil || m.configDB == nil {

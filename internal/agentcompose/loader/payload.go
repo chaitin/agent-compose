@@ -1,6 +1,11 @@
 package loader
 
-import "strings"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"strings"
+)
 
 type SessionTopicFields struct {
 	SessionID     string
@@ -65,4 +70,16 @@ func CommandEventPayload(request CommandRequest, result CommandResult) map[strin
 		payload["command"] = ""
 	}
 	return payload
+}
+
+func NormalizeJSONDocument(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, []byte(raw)); err != nil {
+		return "", fmt.Errorf("normalize json document: %w", err)
+	}
+	return compact.String(), nil
 }

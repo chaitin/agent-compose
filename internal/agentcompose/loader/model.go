@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -264,6 +265,52 @@ func NormalizeRunStatus(status string) string {
 	default:
 		return RunStatusRunning
 	}
+}
+
+func NormalizeAgentKind(agent string) string {
+	agent = strings.ToLower(strings.TrimSpace(agent))
+	switch agent {
+	case "":
+		return ""
+	case "codex":
+		return "codex"
+	case "claude", "claude-code", "claude_code":
+		return "claude"
+	case "gemini", "gemini-cli", "gemini_cli":
+		return "gemini"
+	case "opencode", "open-code", "open_code":
+		return "opencode"
+	default:
+		return agent
+	}
+}
+
+func NormalizeEnvItems(items []EnvVar) []EnvVar {
+	if len(items) == 0 {
+		return nil
+	}
+	merged := make(map[string]EnvVar, len(items))
+	for _, item := range items {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			continue
+		}
+		item.Name = name
+		merged[name] = item
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(merged))
+	for key := range merged {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]EnvVar, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, merged[key])
+	}
+	return result
 }
 
 func TriggerStableID(kind, topic string, intervalMs int64, callbackSource string, index int) string {
