@@ -2,6 +2,8 @@ package agentcompose
 
 import (
 	configdomain "agent-compose/internal/agentcompose/config"
+	eventsdomain "agent-compose/internal/agentcompose/events"
+	loaderdomain "agent-compose/internal/agentcompose/loader"
 	appconfig "agent-compose/pkg/config"
 	"context"
 	"database/sql"
@@ -19,8 +21,13 @@ import (
 	"github.com/samber/do/v2"
 )
 
+const storedUnixMillisecondThreshold = configdomain.StoredUnixMillisecondThreshold
+
 type ConfigStore struct {
 	db *sql.DB
+	*configdomain.PersistenceStore
+	*loaderdomain.LoaderStore
+	*eventsdomain.EventStore
 }
 
 func NewConfigStore(di do.Injector) (*ConfigStore, error) {
@@ -36,6 +43,7 @@ func NewConfigStore(di do.Injector) (*ConfigStore, error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	store := &ConfigStore{db: db}
+	store.bindDomainStores()
 	if err := store.initSchema(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -43,7 +51,23 @@ func NewConfigStore(di do.Injector) (*ConfigStore, error) {
 	return store, nil
 }
 
+func (s *ConfigStore) bindDomainStores() {
+	if s == nil || s.db == nil {
+		return
+	}
+	if s.PersistenceStore == nil {
+		s.PersistenceStore = configdomain.NewPersistenceStore(s.db)
+	}
+	if s.LoaderStore == nil {
+		s.LoaderStore = loaderdomain.NewStore(s.db)
+	}
+	if s.EventStore == nil {
+		s.EventStore = eventsdomain.NewStore(s.db)
+	}
+}
+
 func (s *ConfigStore) initSchema(ctx context.Context) error {
+	s.bindDomainStores()
 	statements := []string{
 		`PRAGMA journal_mode = WAL;`,
 		`PRAGMA foreign_keys = ON;`,
@@ -81,46 +105,13 @@ func (s *ConfigStore) initSchema(ctx context.Context) error {
 }
 
 func (s *ConfigStore) ensureGlobalEnvSchema(ctx context.Context) error {
-	const createStmt = `CREATE TABLE IF NOT EXISTS global_env (
-		name TEXT PRIMARY KEY,
-		value TEXT NOT NULL,
-		secret INTEGER NOT NULL DEFAULT 0,
-		updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
-	);`
-	if _, err := s.db.ExecContext(ctx, createStmt); err != nil {
-		return fmt.Errorf("create global env schema: %w", err)
-	}
-	columnTypes, err := s.tableColumnTypes(ctx, "global_env")
-	if err != nil {
-		return err
-	}
-	if isIntegerColumnType(columnTypes["updated_at"]) {
-		return nil
-	}
-	return s.rebuildGlobalEnvTable(ctx)
+	s.bindDomainStores()
+	return s.PersistenceStore.EnsureGlobalEnvSchema(ctx)
 }
 
 func (s *ConfigStore) ensureWorkspaceConfigSchema(ctx context.Context) error {
-	const createStmt = `CREATE TABLE IF NOT EXISTS workspace_config (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL,
-		type TEXT NOT NULL,
-		config_json TEXT NOT NULL DEFAULT '{}',
-		comment TEXT NOT NULL DEFAULT '',
-		created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
-		updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
-	);`
-	if _, err := s.db.ExecContext(ctx, createStmt); err != nil {
-		return fmt.Errorf("create workspace config schema: %w", err)
-	}
-	columnTypes, err := s.tableColumnTypes(ctx, "workspace_config")
-	if err != nil {
-		return err
-	}
-	if isIntegerColumnType(columnTypes["created_at"]) && isIntegerColumnType(columnTypes["updated_at"]) {
-		return nil
-	}
-	return s.rebuildWorkspaceConfigTable(ctx)
+	s.bindDomainStores()
+	return s.PersistenceStore.EnsureWorkspaceConfigSchema(ctx)
 }
 
 func (s *ConfigStore) ensureAgentDefinitionSchema(ctx context.Context) error {
@@ -174,29 +165,11 @@ func (s *ConfigStore) ensureAgentDefinitionSchema(ctx context.Context) error {
 }
 
 func (s *ConfigStore) tableColumnTypes(ctx context.Context, tableName string) (map[string]string, error) {
-	trimmedTableName := strings.TrimSpace(tableName)
-	if trimmedTableName == "" {
-		return nil, fmt.Errorf("schema table name is required")
-	}
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT name, type FROM pragma_table_info('%s')`, strings.ReplaceAll(trimmedTableName, "'", "''")))
-	if err != nil {
-		return nil, fmt.Errorf("query schema for %s: %w", tableName, err)
-	}
-	defer func() { _ = rows.Close() }()
+	return configdomain.TableColumnTypes(ctx, s.db, tableName)
+}
 
-	columnTypes := make(map[string]string)
-	for rows.Next() {
-		var name string
-		var columnType string
-		if err := rows.Scan(&name, &columnType); err != nil {
-			return nil, fmt.Errorf("scan schema for %s: %w", tableName, err)
-		}
-		columnTypes[strings.ToLower(strings.TrimSpace(name))] = strings.TrimSpace(columnType)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate schema for %s: %w", tableName, err)
-	}
-	return columnTypes, nil
+func ensureColumn(ctx context.Context, db *sql.DB, table, column, definition string) error {
+	return configdomain.EnsureColumn(ctx, db, table, column, definition)
 }
 
 func (s *ConfigStore) rebuildGlobalEnvTable(ctx context.Context) error {

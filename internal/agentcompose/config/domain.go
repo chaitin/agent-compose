@@ -1,6 +1,8 @@
 package config
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"sort"
 	"strconv"
@@ -122,4 +124,57 @@ func BoolToInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func TableColumnTypes(ctx context.Context, db *sql.DB, tableName string) (map[string]string, error) {
+	trimmedTableName := strings.TrimSpace(tableName)
+	if trimmedTableName == "" {
+		return nil, fmt.Errorf("schema table name is required")
+	}
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT name, type FROM pragma_table_info('%s')`, strings.ReplaceAll(trimmedTableName, "'", "''")))
+	if err != nil {
+		return nil, fmt.Errorf("query schema for %s: %w", tableName, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	columnTypes := make(map[string]string)
+	for rows.Next() {
+		var name string
+		var columnType string
+		if err := rows.Scan(&name, &columnType); err != nil {
+			return nil, fmt.Errorf("scan schema for %s: %w", tableName, err)
+		}
+		columnTypes[strings.ToLower(strings.TrimSpace(name))] = strings.TrimSpace(columnType)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate schema for %s: %w", tableName, err)
+	}
+	return columnTypes, nil
+}
+
+func EnsureColumn(ctx context.Context, db *sql.DB, table, column, definition string) error {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var cid int
+		var name string
+		var typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column+" "+definition)
+	return err
 }
