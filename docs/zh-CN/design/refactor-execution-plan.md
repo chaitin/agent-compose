@@ -67,11 +67,13 @@ refactor/domain-project
 - T3 已部分完成：
   - `internal/agentcompose/image` 已建立，Docker/OCI/Auto image backend 与 image mapper 已迁入域包；`pkg/agentcompose` 保留 Connect 映射和兼容类型别名。
   - `internal/agentcompose/dashboard` 已建立，dashboard overview 纯聚合、状态分类和 clone helper 已迁入域包；`pkg/agentcompose` 保留 Store/ConfigStore 适配、hub 和 Connect handler。
+  - `internal/agentcompose/capability` 已建立，capability provider、gateway settings、session binding、guide path/preamble 等低耦合逻辑已迁入域包；`pkg/agentcompose` 保留 DI、Store、Session、Connect 和 proxy 适配。
+  - `internal/agentcompose/events` 已建立，topic event 模型、状态归一化、topic 校验、payload hash、record normalize、webhook topic match 和 dispatcher 核心逻辑已迁入域包；`pkg/agentcompose` 保留 ConfigStore 持久化和 LoaderBus 适配。
 - 当前验证：`refactor/architecture-main` 上 `go test ./pkg/agentcompose ./cmd/agent-compose` 通过，`task build` 通过。
 
 下一批优先级：
 
-- 继续完成 T3：优先处理 `capability` 与 `events`，补齐低耦合域包种子。
+- 收尾 T3：补齐剩余低耦合域包种子，优先评估 `exec`、`workspace`、`config` 中是否存在可独立迁移的纯 helper。
 - T4 开始前先收敛 `project` 与 `loader` 的边界，避免同时移动高耦合 service、store 和 runtime 调用。
 - 暂不执行 T6 全量 `pkg/agentcompose` 到 `internal/agentcompose` 迁移，直到 T3/T4 的域边界更稳定。
 
