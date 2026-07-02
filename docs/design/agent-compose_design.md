@@ -40,6 +40,38 @@ Core boundaries:
 - The v1 session-centric API remains available for the existing Web/UI and
   compatibility clients. The v2 API is the primary path for the CLI and newer
   clients.
+- `pkg/agentcompose` is the daemon composition layer. It owns DI service graph
+  registration, Connect/HTTP route registration, background startup ordering,
+  handler forwarding, and the Jupyter proxy route glue.
+- Domain behavior lives in owner packages. `pkg/agentcompose` does not re-export
+  owner types, constants, constructors, or test-only compatibility helpers.
+- Tests for domain behavior live with the owner package. `pkg/agentcompose`
+  tests cover service graph wiring, route registration, startup coordination,
+  and cross-owner smoke paths.
+
+Current owner package responsibilities:
+
+- `pkg/model`: shared data models and dependency-free normalization helpers for
+  environment items, agent providers, and topic events.
+- `pkg/storage`: SQLite stores, schemas, migrations, normalized records, and
+  query helpers.
+- `pkg/sessions`: session lifecycle service, RPC bridge, stream broker, session
+  reconciliation, and Jupyter proxy support.
+- `pkg/projects`: project apply/down, project run lifecycle, stale run
+  reconciliation, project agent runner, and v2 exec target resolution.
+- `pkg/loaders`: loader CRUD service, scheduler engine, loader manager, loader
+  run host, webhook queue consumption, and loader event publishing.
+- `pkg/agents`: agent definition CRUD/validation, agent session creation, and
+  agent definition to execution config resolution.
+- `pkg/executor`: cell/agent/loader command execution, v2 exec service, agent
+  system prompt handling, and runtime LLM facade env injection points.
+- `pkg/llm`: daemon LLM client/service, structured response parsing, runtime
+  LLM facade routes, session-scoped facade tokens, and managed LLM env helpers.
+- `pkg/events`: webhook/event HTTP routes, event dispatcher, and webhook source
+  integration with loader scheduling.
+- `pkg/images`: Docker, OCI cache, and auto image backends plus ImageService.
+- `pkg/workspaces`, `pkg/settings`, `pkg/capabilities`, and `pkg/dashboard`:
+  their corresponding owner services and HTTP/API handlers.
 
 ```text
 CLI / Web / Connect clients

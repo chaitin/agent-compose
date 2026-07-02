@@ -26,6 +26,23 @@ agent-compose 是一个 agent/session 控制面。它采用类似 Docker Engine 
 - `agent-compose.yml` 描述 project 和 agent definition，不直接描述一个已经运行的 session。
 - Web/UI 不再打进 daemon 镜像，也不由 daemon 进程托管静态资源；它作为独立前端服务部署。
 - v1 session-centric API 继续保留给现有 Web/UI 和兼容客户端；v2 API 是 CLI 和新客户端的主路径。
+- `pkg/agentcompose` 是 daemon 组合层，负责 DI service graph 注册、Connect/HTTP 路由注册、后台启动顺序、handler 转发和 Jupyter proxy 路由胶水代码。
+- 领域行为归属 owner 包。`pkg/agentcompose` 不再导出 owner 类型、常量、构造器或测试兼容 helper。
+- 领域行为测试放在对应 owner 包；`pkg/agentcompose` 测试只覆盖 service graph wiring、route registration、启动协调和跨 owner smoke 路径。
+
+当前 owner 包职责：
+
+- `pkg/model`：共享数据模型，以及 env item、agent provider、topic event 的无依赖归一化 helper。
+- `pkg/storage`：SQLite store、schema、migration、规范化持久化记录和 query helper。
+- `pkg/sessions`：session lifecycle service、RPC bridge、stream broker、session reconcile 和 Jupyter proxy 支撑。
+- `pkg/projects`：project apply/down、project run lifecycle、stale run reconcile、project agent runner 和 v2 exec target 解析。
+- `pkg/loaders`：loader CRUD service、scheduler engine、loader manager、loader run host、webhook queue 消费和 loader event 发布。
+- `pkg/agents`：agent definition CRUD/validation、agent session 创建，以及 agent definition 到 execution config 的解析。
+- `pkg/executor`：cell/agent/loader command 执行、v2 exec service、agent system prompt 处理，以及 runtime LLM facade env 注入点。
+- `pkg/llm`：daemon LLM client/service、结构化响应解析、runtime LLM facade routes、session-scoped facade token 和受管 LLM env helper。
+- `pkg/events`：webhook/event HTTP routes、event dispatcher，以及 webhook source 与 loader scheduling 的集成。
+- `pkg/images`：Docker、OCI cache 和 auto image backend，以及 ImageService。
+- `pkg/workspaces`、`pkg/settings`、`pkg/capabilities`、`pkg/dashboard`：各自 owner service 和 HTTP/API handler。
 
 ```text
 CLI / Web / Connect 客户端
