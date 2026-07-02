@@ -15,6 +15,7 @@ import (
 	appconfig "agent-compose/pkg/config"
 	executorpkg "agent-compose/pkg/executor"
 	"agent-compose/pkg/images"
+	llmpkg "agent-compose/pkg/llm"
 	loaderspkg "agent-compose/pkg/loaders"
 )
 
@@ -27,18 +28,14 @@ func newTestConfigStore(t *testing.T) *ConfigStore {
 	})
 }
 
-func newTestLLMClient(t *testing.T, configDB *ConfigStore, text string) *LLMClient {
+func newTestLLMClient(t *testing.T, configDB *ConfigStore, text string) *llmpkg.LLMClient {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(w, `{"id":"resp-loader","model":"model-a","status":"completed","output_text":%q}`, text)
 	}))
 	t.Cleanup(server.Close)
-	return &LLMClient{
-		config:   &appconfig.Config{LLMAPIEndpoint: server.URL, LLMModel: "model-a"},
-		configDB: configDB,
-		client:   server.Client(),
-	}
+	return llmpkg.NewClient(&appconfig.Config{LLMAPIEndpoint: server.URL, LLMModel: "model-a"}, configDB, server.Client())
 }
 
 func newTestLoaderManager(t testing.TB, deps loaderspkg.ManagerDeps) *LoaderManager {

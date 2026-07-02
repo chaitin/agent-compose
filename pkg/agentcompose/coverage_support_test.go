@@ -239,22 +239,14 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	do.ProvideValue[Driver](di, driver)
 	do.ProvideValue[RuntimeProvider](di, runtimes)
 	do.ProvideValue(di, executor)
-	do.ProvideValue(di, &Executor{config: config, store: store, configDB: configDB, runtimes: runtimes, streams: streams})
 	do.ProvideValue(di, manager)
 	do.ProvideValue(di, llmClient)
-	do.ProvideValue(di, &LLMClient{config: config, configDB: configDB})
 	do.ProvideValue[capabilityIntegration](di, capProvider)
 	do.ProvideValue(di, bus)
 	do.ProvideValue(di, streams)
 	do.ProvideValue[LoaderEngine](di, &recordingLoaderEngine{})
 	do.ProvideValue(di, sessionBridge)
 
-	if _, err := NewExecutor(di); err != nil {
-		t.Fatalf("NewExecutor returned error: %v", err)
-	}
-	if _, err := newLLMClient(di); err != nil {
-		t.Fatalf("NewLLMClient returned error: %v", err)
-	}
 	if createdBus, err := NewLoaderBus(di); err != nil || createdBus.Events() == nil {
 		t.Fatalf("NewLoaderBus = %#v/%v", createdBus, err)
 	}

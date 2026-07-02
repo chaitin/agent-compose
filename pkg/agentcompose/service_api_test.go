@@ -819,7 +819,7 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 		ConfigDB: configDB,
 		Engine:   &QJSLoaderEngine{},
 		Store:    store,
-		LLM:      llmClient.componentClient(),
+		LLM:      llmClient,
 		Bus:      NewLoaderBusWithBuffer(4),
 	})
 	service := &Service{
@@ -1044,7 +1044,7 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 		ConfigDB: configDB,
 		Engine:   &recordingLoaderEngine{},
 		Store:    store,
-		LLM:      llmClient.componentClient(),
+		LLM:      llmClient,
 		Bus:      service.bus,
 	})
 	service.loaders = manager
