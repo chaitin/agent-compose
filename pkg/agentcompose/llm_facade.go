@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 
-	protocolbridge "github.com/chaitin/ai-api-protocol-bridge"
 	"github.com/labstack/echo/v4"
 
 	llmdomain "agent-compose/internal/agentcompose/llm"
@@ -37,28 +36,4 @@ func (s *Service) runtimeLLMFacade() llmdomain.RuntimeFacade {
 			return resolveRuntimeLLMTarget(ctx, s.config, s.configDB, requestedModel, providerID)
 		},
 	}
-}
-
-func (s *Service) handleRuntimeLLMResponses(c echo.Context) error {
-	return s.runtimeLLMFacade().HandleResponses(c)
-}
-
-func (s *Service) handleRuntimeLLMChatCompletions(c echo.Context) error {
-	return s.runtimeLLMFacade().HandleChatCompletions(c)
-}
-
-func (s *Service) handleRuntimeLLMAnthropicMessages(c echo.Context) error {
-	return s.runtimeLLMFacade().HandleAnthropicMessages(c)
-}
-
-func (s *Service) handleRuntimeLLM(c echo.Context, inboundProtocol protocolbridge.Protocol, facadeWireAPI string) error {
-	return s.runtimeLLMFacade().Handle(c, inboundProtocol, facadeWireAPI)
-}
-
-func runtimeLLMUseGenericResponsesTextParts(target LLMResolvedTarget, upstreamProtocol protocolbridge.Protocol) bool {
-	return llmdomain.RuntimeLLMUseGenericResponsesTextParts(target, upstreamProtocol)
-}
-
-func forbiddenRuntimeLLMHeader(name string) bool {
-	return llmdomain.ForbiddenRuntimeLLMHeader(name)
 }
