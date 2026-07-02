@@ -9,6 +9,7 @@ import (
 	"github.com/samber/do/v2"
 
 	domaincap "agent-compose/internal/agentcompose/capability"
+	"agent-compose/internal/agentcompose/transport/httpapi"
 	"agent-compose/pkg/capproxy"
 	appconfig "agent-compose/pkg/config"
 )
@@ -16,7 +17,7 @@ import (
 func NewCapProxyServer(di do.Injector) (*capproxy.Server, error) {
 	conf := do.MustInvoke[*appconfig.Config](di)
 	configDB := do.MustInvoke[*ConfigStore](di)
-	return capproxy.NewServer(capproxy.Config{
+	return httpapi.NewCapabilityProxyServer(httpapi.CapabilityProxyConfig{
 		Listen: strings.TrimSpace(conf.CapGRPCListen),
 		OctoBus: func(ctx context.Context) (string, string, bool) {
 			settings, err := configDB.GetCapabilityGateway(ctx)
@@ -25,7 +26,8 @@ func NewCapProxyServer(di do.Injector) (*capproxy.Server, error) {
 			}
 			return settings.Addr, settings.Token, true
 		},
-	}, do.MustInvoke[*Store](di)), nil
+		SessionResolver: do.MustInvoke[*Store](di),
+	}), nil
 }
 
 func (s *Store) ResolveCapabilitySession(ctx context.Context, token string) (capproxy.SessionBinding, error) {

@@ -17,6 +17,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+
+	"agent-compose/internal/agentcompose/transport/httpapi"
 )
 
 type webhookAcceptedResponse struct {
@@ -127,14 +129,16 @@ type topicEventJSON struct {
 }
 
 func registerWebhookRoutes(app *echo.Echo, service *Service) {
-	app.POST("/api/webhooks/:topic", service.handleWebhook)
-	app.GET("/api/webhook-sources", service.handleListWebhookSources)
-	app.PUT("/api/webhook-sources/:source_id", service.handlePutWebhookSource)
-	app.DELETE("/api/webhook-sources/:source_id", service.handleDeleteWebhookSource)
-	app.GET("/api/events", service.handleListEvents)
-	app.GET("/api/events/:event_id/sessions", service.handleGetEventSessions)
-	app.GET("/api/events/:event_id/runs", service.handleGetEventRuns)
-	app.GET("/api/events/:event_id", service.handleGetEvent)
+	httpapi.RegisterWebhookRoutes(app, httpapi.WebhookHandlers{
+		HandleWebhook:          service.handleWebhook,
+		HandleListSources:      service.handleListWebhookSources,
+		HandlePutSource:        service.handlePutWebhookSource,
+		HandleDeleteSource:     service.handleDeleteWebhookSource,
+		HandleListEvents:       service.handleListEvents,
+		HandleGetEventSessions: service.handleGetEventSessions,
+		HandleGetEventRuns:     service.handleGetEventRuns,
+		HandleGetEvent:         service.handleGetEvent,
+	})
 }
 
 func (s *Service) handleWebhook(c echo.Context) error {
