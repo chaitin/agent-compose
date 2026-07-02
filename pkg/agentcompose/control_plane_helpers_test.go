@@ -76,4 +76,8 @@ func testControlPlaneHelperErrorAndParsingBranches(t *testing.T) {
 	if _, err := service.Generate(ctx, connect.NewRequest(&agentcomposev1.GenerateLLMRequest{Prompt: "hello"})); err == nil {
 		t.Fatalf("Generate without llm returned nil")
 	}
+	var nilService *Service
+	if _, err := nilService.Generate(ctx, connect.NewRequest(&agentcomposev1.GenerateLLMRequest{Prompt: "hello"})); err == nil {
+		t.Fatalf("Generate on nil service returned nil")
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 
 	appconfig "agent-compose/pkg/config"
@@ -34,6 +35,50 @@ func TestServiceProjectServiceCachesHandler(t *testing.T) {
 	service = &Service{projectHandlers: prebuilt}
 	if got := service.projectService(); got != prebuilt {
 		t.Fatalf("projectService ignored prebuilt handler: got=%p want=%p", got, prebuilt)
+	}
+}
+
+func TestServiceForwarderInitializationConcurrent(t *testing.T) {
+	service := &Service{}
+	const workers = 32
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = service.sessionsService()
+			_ = service.agentDefinitionService()
+			_ = service.dashboardService()
+			_ = service.capabilityService()
+			_ = service.workspaceService()
+			_ = service.settingsService()
+			_ = service.loaderService()
+			_ = service.projectService()
+			_ = service.imageService()
+		}()
+	}
+	wg.Wait()
+
+	if service.sessionHandlers == nil || service.agentHandlers == nil || service.dashboardHandlers == nil ||
+		service.capabilityHandlers == nil || service.workspaceHandlers == nil || service.settingsHandlers == nil ||
+		service.loaderHandlers == nil || service.projectHandlers == nil || service.imageHandlers == nil {
+		t.Fatalf("expected all lazy forwarders to be initialized")
+	}
+
+	if got := service.sessionsService(); got != service.sessionHandlers {
+		t.Fatalf("sessionsService rebuilt handler: got=%p want=%p", got, service.sessionHandlers)
+	}
+	if got := service.agentDefinitionService(); got != service.agentHandlers {
+		t.Fatalf("agentDefinitionService rebuilt handler: got=%p want=%p", got, service.agentHandlers)
+	}
+	if got := service.settingsService(); got != service.settingsHandlers {
+		t.Fatalf("settingsService rebuilt handler: got=%p want=%p", got, service.settingsHandlers)
+	}
+	if got := service.projectService(); got != service.projectHandlers {
+		t.Fatalf("projectService rebuilt handler: got=%p want=%p", got, service.projectHandlers)
+	}
+	if got := service.imageService(); got != service.imageHandlers {
+		t.Fatalf("imageService rebuilt handler: got=%p want=%p", got, service.imageHandlers)
 	}
 }
 

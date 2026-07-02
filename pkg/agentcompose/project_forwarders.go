@@ -10,8 +10,9 @@ import (
 )
 
 func (s *Service) projectService() *projects.Service {
+	s.forwarderMu.Lock()
+	defer s.forwarderMu.Unlock()
 	if s.projectHandlers != nil {
-		s.projectHandlers.UpdateDeps(projectServiceDeps(s))
 		return s.projectHandlers
 	}
 	s.projectHandlers = newProjectServiceFromDeps(s)

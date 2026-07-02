@@ -64,6 +64,7 @@ type Service struct {
 	startedAt          time.Time
 	startOnce          sync.Once
 	startErr           error
+	forwarderMu        sync.Mutex
 	agentcomposev1connect.UnimplementedSessionServiceHandler
 	agentcomposev1connect.UnimplementedKernelServiceHandler
 	agentcomposev1connect.UnimplementedAgentServiceHandler
@@ -232,6 +233,8 @@ func startCapabilityProxy(ctx context.Context, capProxy *capproxy.Server) error 
 }
 
 func (s *Service) sessionsService() *sessions.Service {
+	s.forwarderMu.Lock()
+	defer s.forwarderMu.Unlock()
 	if s.sessionHandlers != nil {
 		return s.sessionHandlers
 	}
@@ -358,9 +361,9 @@ func (s *Service) ListSessionEvents(ctx context.Context, req *connect.Request[ag
 }
 
 func (s *Service) Generate(ctx context.Context, req *connect.Request[agentcomposev1.GenerateLLMRequest]) (*connect.Response[agentcomposev1.GenerateLLMResponse], error) {
-	var service *llmpkg.Service
-	if s != nil {
-		service = llmpkg.NewService(s.config, s.store, s.configDB, s.llm)
+	if s == nil {
+		return llmpkg.NewService(nil, nil, nil, nil).Generate(ctx, req)
 	}
+	service := llmpkg.NewService(s.config, s.store, s.configDB, s.llm)
 	return service.Generate(ctx, req)
 }

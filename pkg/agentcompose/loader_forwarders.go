@@ -11,6 +11,8 @@ import (
 )
 
 func (s *Service) loaderService() *loaders.Service {
+	s.forwarderMu.Lock()
+	defer s.forwarderMu.Unlock()
 	if s.loaderHandlers != nil {
 		return s.loaderHandlers
 	}

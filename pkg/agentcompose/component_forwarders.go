@@ -42,6 +42,8 @@ func (s *Service) UpdateCapabilityGatewayConfig(ctx context.Context, req *connec
 }
 
 func (s *Service) dashboardService() *dashboard.Service {
+	s.forwarderMu.Lock()
+	defer s.forwarderMu.Unlock()
 	if s.dashboardHandlers != nil {
 		return s.dashboardHandlers
 	}
@@ -50,6 +52,8 @@ func (s *Service) dashboardService() *dashboard.Service {
 }
 
 func (s *Service) capabilityService() *capabilities.Service {
+	s.forwarderMu.Lock()
+	defer s.forwarderMu.Unlock()
 	if s.capabilityHandlers != nil {
 		return s.capabilityHandlers
 	}
@@ -58,6 +62,8 @@ func (s *Service) capabilityService() *capabilities.Service {
 }
 
 func (s *Service) workspaceService() *workspaces.Service {
+	s.forwarderMu.Lock()
+	defer s.forwarderMu.Unlock()
 	if s.workspaceHandlers != nil {
 		return s.workspaceHandlers
 	}
@@ -66,9 +72,17 @@ func (s *Service) workspaceService() *workspaces.Service {
 }
 
 func (s *Service) settingsService() *settings.Service {
+	s.forwarderMu.Lock()
+	defer s.forwarderMu.Unlock()
 	if s.settingsHandlers != nil {
 		return s.settingsHandlers
 	}
-	s.settingsHandlers = settings.NewService(s.configDB, s.workspaceService(), s.capabilityService())
+	if s.workspaceHandlers == nil {
+		s.workspaceHandlers = workspaces.NewService(s.config, s.configDB)
+	}
+	if s.capabilityHandlers == nil {
+		s.capabilityHandlers = capabilities.NewService(s.config, s.configDB, s.cap)
+	}
+	s.settingsHandlers = settings.NewService(s.configDB, s.workspaceHandlers, s.capabilityHandlers)
 	return s.settingsHandlers
 }

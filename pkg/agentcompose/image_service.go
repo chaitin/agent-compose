@@ -14,6 +14,8 @@ func (s *Service) imageService() *images.Service {
 	if s == nil {
 		return nil
 	}
+	s.forwarderMu.Lock()
+	defer s.forwarderMu.Unlock()
 	if s.imageHandlers != nil {
 		return s.imageHandlers
 	}

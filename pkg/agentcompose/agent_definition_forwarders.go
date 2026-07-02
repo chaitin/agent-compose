@@ -12,6 +12,8 @@ import (
 )
 
 func (s *Service) agentDefinitionService() *agents.Service {
+	s.forwarderMu.Lock()
+	defer s.forwarderMu.Unlock()
 	if s.agentHandlers != nil {
 		return s.agentHandlers
 	}
