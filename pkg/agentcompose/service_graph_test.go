@@ -10,6 +10,9 @@ import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	executorpkg "agent-compose/pkg/executor"
+	imagespkg "agent-compose/pkg/images"
+	loaderspkg "agent-compose/pkg/loaders"
+	projectspkg "agent-compose/pkg/projects"
 	runtimespkg "agent-compose/pkg/runtimes"
 
 	"github.com/labstack/echo/v4"
@@ -73,7 +76,7 @@ func TestRegisterSharesImageBackendsAcrossServiceGraph(t *testing.T) {
 	if service.imageHandlers.AutoBackend() != backends.auto {
 		t.Fatalf("ImageService auto backend = %p, want shared %p", service.imageHandlers.AutoBackend(), backends.auto)
 	}
-	auto, ok := service.autoImages.(*AutoImageBackend)
+	auto, ok := service.autoImages.(*imagespkg.AutoImageBackend)
 	if !ok {
 		t.Fatalf("Service auto backend = %T, want *AutoImageBackend", service.autoImages)
 	}
@@ -84,8 +87,8 @@ func TestRegisterSharesImageBackendsAcrossServiceGraph(t *testing.T) {
 		t.Fatalf("auto OCI backend = %p, want shared %p", auto.OCIBackend(), backends.oci)
 	}
 
-	assertBackendField(t, do.MustInvoke[*LoaderManager](di), "images", backends.docker)
-	assertBackendField(t, do.MustInvoke[*ProjectService](di), "images", backends.docker)
+	assertBackendField(t, do.MustInvoke[*loaderspkg.LoaderManager](di), "images", backends.docker)
+	assertBackendField(t, do.MustInvoke[*projectspkg.Service](di), "images", backends.docker)
 
 	publisher := do.MustInvoke[executorpkg.StreamPublisher](di)
 	if publisher == nil || publisher != service.streams {

@@ -4,16 +4,17 @@ import (
 	"context"
 
 	"agent-compose/pkg/capabilities"
+	"agent-compose/pkg/storage"
 )
 
 type fixedGatewaySource struct {
-	settings CapabilityGatewaySettings
+	settings storage.CapabilityGatewaySettings
 }
 
-func (f fixedGatewaySource) GetCapabilityGateway(context.Context) (CapabilityGatewaySettings, error) {
+func (f fixedGatewaySource) GetCapabilityGateway(context.Context) (storage.CapabilityGatewaySettings, error) {
 	return f.settings, nil
 }
 
 func newTestCapabilityProvider(addr, proxyTarget string) CapabilityProvider {
-	return capabilities.NewProvider(fixedGatewaySource{settings: CapabilityGatewaySettings{Addr: addr}}, proxyTarget)
+	return capabilities.NewProvider(fixedGatewaySource{settings: storage.CapabilityGatewaySettings{Addr: addr}}, proxyTarget)
 }

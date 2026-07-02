@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	buspkg "agent-compose/pkg/bus"
 	appconfig "agent-compose/pkg/config"
 	dashboardpkg "agent-compose/pkg/dashboard"
 	driverpkg "agent-compose/pkg/driver"
@@ -156,7 +157,7 @@ func testServiceSessionKernelAgentAndLLMAPIs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
-	if got.Msg.GetSession().GetSummary().GetVmStatus() != VMStatusRunning {
+	if got.Msg.GetSession().GetSummary().GetVmStatus() != modelpkg.VMStatusRunning {
 		t.Fatalf("session vm status = %q, want running", got.Msg.GetSession().GetSummary().GetVmStatus())
 	}
 	listed, err := service.ListSessions(ctx, connect.NewRequest(&agentcomposev1.ListSessionsRequest{Limit: 10}))
@@ -234,7 +235,7 @@ func testServiceSessionKernelAgentAndLLMAPIs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResumeSession returned error: %v", err)
 	}
-	if resumed.Msg.GetSession().GetSummary().GetVmStatus() != VMStatusRunning {
+	if resumed.Msg.GetSession().GetSummary().GetVmStatus() != modelpkg.VMStatusRunning {
 		t.Fatalf("resumed status = %q, want running", resumed.Msg.GetSession().GetSummary().GetVmStatus())
 	}
 	assertNextLoaderTopic(t, service.bus, "agent-compose.session.resumed")
@@ -243,7 +244,7 @@ func testServiceSessionKernelAgentAndLLMAPIs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StopSession returned error: %v", err)
 	}
-	if stopped.Msg.GetSession().GetSummary().GetVmStatus() != VMStatusStopped {
+	if stopped.Msg.GetSession().GetSummary().GetVmStatus() != modelpkg.VMStatusStopped {
 		t.Fatalf("stopped status = %q, want stopped", stopped.Msg.GetSession().GetSummary().GetVmStatus())
 	}
 	if len(driver.stopCalls) != 1 || driver.stopCalls[0] != sessionID {
@@ -252,7 +253,7 @@ func testServiceSessionKernelAgentAndLLMAPIs(t *testing.T) {
 	assertNextLoaderTopic(t, service.bus, "agent-compose.session.stopped")
 }
 
-func assertNextLoaderTopic(t *testing.T, bus *LoaderBus, want string) {
+func assertNextLoaderTopic(t *testing.T, bus *buspkg.LoaderBus, want string) {
 	t.Helper()
 	select {
 	case event := <-bus.Events():
@@ -292,7 +293,7 @@ func testServiceProxyRoutesRedirectAndProxy(t *testing.T) {
 	}))
 	t.Cleanup(backend.Close)
 	hostPort := httptestServerPort(t, backend.URL)
-	if err := service.store.SaveProxyState(sessionID, ProxyState{
+	if err := service.store.SaveProxyState(sessionID, modelpkg.ProxyState{
 		ProxyPath:  "/agent-compose/session/" + sessionID + "/lab",
 		GuestHost:  "127.0.0.1",
 		HostPort:   hostPort,
@@ -348,7 +349,7 @@ func TestServiceProxyRoutesUseGuestHostTarget(t *testing.T) {
 		_, _ = w.Write([]byte("guest-proxied"))
 	}))
 	t.Cleanup(backend.Close)
-	if err := service.store.SaveProxyState(sessionID, ProxyState{
+	if err := service.store.SaveProxyState(sessionID, modelpkg.ProxyState{
 		ProxyPath: "/agent-compose/session/" + sessionID + "/lab",
 		GuestHost: "localhost",
 		HostPort:  unusedLocalTCPPort(t),
@@ -386,13 +387,13 @@ func TestServiceProtoConversionHelpers(t *testing.T) {
 func testServiceProtoConversionHelpers(t *testing.T) {
 	t.Helper()
 	now := time.Date(2026, 6, 2, 9, 10, 11, 12, time.UTC)
-	session := &Session{
-		Summary: SessionSummary{
+	session := &modelpkg.Session{
+		Summary: modelpkg.SessionSummary{
 			ID:            "session-proto",
 			Title:         "Proto Session",
 			TriggerSource: "manual",
 			Driver:        driverpkg.RuntimeDriverDocker,
-			VMStatus:      VMStatusRunning,
+			VMStatus:      modelpkg.VMStatusRunning,
 			GuestImage:    "guest:latest",
 			WorkspacePath: "/workspace",
 			ProxyPath:     "/agent-compose/session/session-proto/lab",
@@ -400,11 +401,11 @@ func testServiceProtoConversionHelpers(t *testing.T) {
 			UpdatedAt:     now,
 			CellCount:     2,
 			EventCount:    1,
-			Tags:          []SessionTag{{Name: "kind", Value: "proto"}},
+			Tags:          []modelpkg.SessionTag{{Name: "kind", Value: "proto"}},
 		},
 		WorkspaceID: "workspace-1",
-		Workspace:   &SessionWorkspace{ID: "workspace-1", Name: "Workspace", Type: "file", ConfigJSON: `{"root":"."}`},
-		EnvItems: []SessionEnvVar{
+		Workspace:   &modelpkg.SessionWorkspace{ID: "workspace-1", Name: "Workspace", Type: "file", ConfigJSON: `{"root":"."}`},
+		EnvItems: []modelpkg.SessionEnvVar{
 			{Name: "PLAIN", Value: "value"},
 			{Name: "SECRET", Value: "secret-value", Secret: true},
 		},
@@ -416,7 +417,7 @@ func testServiceProtoConversionHelpers(t *testing.T) {
 	if len(detail.GetEnvItems()) != 2 || detail.GetEnvItems()[1].GetValue() != "********" {
 		t.Fatalf("session env items = %+v", detail.GetEnvItems())
 	}
-	globalEnv := settingspkg.ToProtoGlobalEnvConfig([]SessionEnvVar{{Name: "VISIBLE", Value: "visible"}, {Name: "TOKEN", Value: "token", Secret: true}})
+	globalEnv := settingspkg.ToProtoGlobalEnvConfig([]modelpkg.SessionEnvVar{{Name: "VISIBLE", Value: "visible"}, {Name: "TOKEN", Value: "token", Secret: true}})
 	if len(globalEnv.GetEnvItems()) != 2 || globalEnv.GetEnvItems()[1].GetValue() != "********" {
 		t.Fatalf("global env = %+v", globalEnv.GetEnvItems())
 	}
@@ -424,9 +425,9 @@ func testServiceProtoConversionHelpers(t *testing.T) {
 		t.Fatalf("nil session workspace did not convert to nil")
 	}
 
-	cell := NotebookCell{
+	cell := modelpkg.NotebookCell{
 		ID:             "cell-agent",
-		Type:           CellTypeAgent,
+		Type:           modelpkg.CellTypeAgent,
 		Source:         "prompt",
 		Stdout:         "stdout",
 		Stderr:         "stderr",
@@ -451,16 +452,16 @@ func testServiceProtoConversionHelpers(t *testing.T) {
 		proto agentcomposev1.CellType
 		local string
 	}{
-		{agentcomposev1.CellType_CELL_TYPE_SHELL, CellTypeShell},
-		{agentcomposev1.CellType_CELL_TYPE_PYTHON, CellTypePython},
-		{agentcomposev1.CellType_CELL_TYPE_AGENT, CellTypeAgent},
-		{agentcomposev1.CellType_CELL_TYPE_JAVASCRIPT, CellTypeJavaScript},
-		{agentcomposev1.CellType_CELL_TYPE_UNSPECIFIED, CellTypeJavaScript},
+		{agentcomposev1.CellType_CELL_TYPE_SHELL, modelpkg.CellTypeShell},
+		{agentcomposev1.CellType_CELL_TYPE_PYTHON, modelpkg.CellTypePython},
+		{agentcomposev1.CellType_CELL_TYPE_AGENT, modelpkg.CellTypeAgent},
+		{agentcomposev1.CellType_CELL_TYPE_JAVASCRIPT, modelpkg.CellTypeJavaScript},
+		{agentcomposev1.CellType_CELL_TYPE_UNSPECIFIED, modelpkg.CellTypeJavaScript},
 	} {
 		if got := sessionspkg.FromProtoCellType(item.proto); got != item.local {
 			t.Fatalf("fromProtoCellType(%v) = %q, want %q", item.proto, got, item.local)
 		}
-		if got := sessionspkg.ToProtoCellType(item.local); item.local != CellTypeJavaScript && got != item.proto {
+		if got := sessionspkg.ToProtoCellType(item.local); item.local != modelpkg.CellTypeJavaScript && got != item.proto {
 			t.Fatalf("toProtoCellType(%q) = %v, want %v", item.local, got, item.proto)
 		}
 	}
@@ -489,7 +490,7 @@ func testServiceEnsureProxyReadyStartPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
-	session.Summary.VMStatus = VMStatusStopped
+	session.Summary.VMStatus = modelpkg.VMStatusStopped
 	if err := service.store.UpdateSession(ctx, session); err != nil {
 		t.Fatalf("UpdateSession returned error: %v", err)
 	}
@@ -507,7 +508,7 @@ func testServiceEnsureProxyReadyStartPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureSessionProxyReady returned error: %v", err)
 	}
-	if loaded.Summary.VMStatus != VMStatusRunning {
+	if loaded.Summary.VMStatus != modelpkg.VMStatusRunning {
 		t.Fatalf("loaded vm status = %q, want running", loaded.Summary.VMStatus)
 	}
 	if readyProxy.JupyterURL != proxyState.JupyterURL {
@@ -520,7 +521,7 @@ func testServiceEnsureProxyReadyStartPaths(t *testing.T) {
 		t.Fatalf("ensureSessionProxyReady missing returned nil error")
 	}
 
-	session.Summary.VMStatus = VMStatusStopped
+	session.Summary.VMStatus = modelpkg.VMStatusStopped
 	if err := service.store.UpdateSession(ctx, session); err != nil {
 		t.Fatalf("UpdateSession stopped returned error: %v", err)
 	}
@@ -528,7 +529,7 @@ func testServiceEnsureProxyReadyStartPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bridge ensureSessionProxyReady returned error: %v", err)
 	}
-	if bridgeLoaded.Summary.VMStatus != VMStatusRunning || bridgeProxy.ProxyPath == "" {
+	if bridgeLoaded.Summary.VMStatus != modelpkg.VMStatusRunning || bridgeProxy.ProxyPath == "" {
 		t.Fatalf("bridge loaded/proxy = %+v/%+v", bridgeLoaded.Summary, bridgeProxy)
 	}
 	if _, err := service.reconcileSessionRuntimeState(ctx, nil); err != nil {
@@ -762,7 +763,7 @@ func newTestServiceAPIHarness(t *testing.T) (*Service, *fakeLoaderAgentRuntime, 
 	driver := &fakeSessionDriver{}
 	streams, _ := sessionspkg.NewSessionStreamBroker(nil)
 	executor := executorpkg.New(config, store, configDB, runtimes, streams, executorLLMFacadeEnvPreparer)
-	bus := NewLoaderBusWithBuffer(256)
+	bus := buspkg.NewLoaderBusWithBuffer(256)
 	aggregator := dashboardpkg.NewAggregator(store, configDB)
 	dashboard := dashboardpkg.NewHub(ctx, aggregator, 10*time.Millisecond)
 	llmClient := llmpkg.NewClient(config, configDB, llmServer.Client())
@@ -777,7 +778,7 @@ func newTestServiceAPIHarness(t *testing.T) (*Service, *fakeLoaderAgentRuntime, 
 		LLM:       llmClient,
 		Bus:       bus,
 		Streams:   streams,
-		Engine:    &QJSLoaderEngine{},
+		Engine:    &loaderspkg.QJSLoaderEngine{},
 		Sessions:  sessionBridge,
 		Dashboard: dashboard,
 	})
@@ -818,10 +819,10 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 		Config:   config,
 		RootCtx:  ctx,
 		ConfigDB: configDB,
-		Engine:   &QJSLoaderEngine{},
+		Engine:   &loaderspkg.QJSLoaderEngine{},
 		Store:    store,
 		LLM:      llmClient,
-		Bus:      NewLoaderBusWithBuffer(4),
+		Bus:      buspkg.NewLoaderBusWithBuffer(4),
 	})
 	service := &Service{
 		config:   config,
@@ -884,7 +885,7 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 	}
 
 	validateResp, err := service.ValidateLoader(ctx, connect.NewRequest(&agentcomposev1.ValidateLoaderRequest{
-		Runtime: LoaderRuntimeScheduler,
+		Runtime: loaderspkg.LoaderRuntimeScheduler,
 		Script:  `scheduler.interval("tick", function(){ scheduler.log("tick"); }, 60000);`,
 	}))
 	if err != nil {
@@ -909,14 +910,14 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 	created, err := service.CreateLoader(ctx, connect.NewRequest(&agentcomposev1.CreateLoaderRequest{
 		Name:              "Service Loader",
 		Description:       "created via service",
-		Runtime:           LoaderRuntimeScheduler,
+		Runtime:           loaderspkg.LoaderRuntimeScheduler,
 		Script:            `scheduler.interval("tick", function(){ scheduler.log("tick"); }, 60000);`,
 		WorkspaceId:       workspaceID,
 		Driver:            driverpkg.RuntimeDriverBoxlite,
 		GuestImage:        "guest:latest",
 		DefaultAgent:      "codex",
-		SessionPolicy:     LoaderSessionPolicyNew,
-		ConcurrencyPolicy: LoaderConcurrencyPolicyParallel,
+		SessionPolicy:     loaderspkg.LoaderSessionPolicyNew,
+		ConcurrencyPolicy: loaderspkg.LoaderConcurrencyPolicyParallel,
 		Enabled:           true,
 		EnvItems: []*agentcomposev1.SessionEnvVar{
 			{Name: "LOADER_SECRET", Value: "secret", Secret: true},
@@ -952,14 +953,14 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 		LoaderId:          loaderID,
 		Name:              "Service Loader Updated",
 		Description:       "updated via service",
-		Runtime:           LoaderRuntimeScheduler,
+		Runtime:           loaderspkg.LoaderRuntimeScheduler,
 		Script:            `scheduler.timeout("once", function(){ scheduler.log("once"); }, 5000);`,
 		WorkspaceId:       workspaceID,
 		Driver:            driverpkg.RuntimeDriverBoxlite,
 		GuestImage:        "guest:v2",
 		DefaultAgent:      "claude",
-		SessionPolicy:     LoaderSessionPolicySticky,
-		ConcurrencyPolicy: LoaderConcurrencyPolicySkip,
+		SessionPolicy:     loaderspkg.LoaderSessionPolicySticky,
+		ConcurrencyPolicy: loaderspkg.LoaderConcurrencyPolicySkip,
 		Enabled:           true,
 	}))
 	if err != nil {
@@ -990,13 +991,13 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	if err := configDB.CreateLoaderRun(ctx, LoaderRunSummary{
+	if err := configDB.CreateLoaderRun(ctx, loaderspkg.LoaderRunSummary{
 		LoaderID:      loaderID,
 		ID:            "run-service",
 		TriggerID:     triggerID,
-		TriggerKind:   LoaderTriggerKindTimeout,
+		TriggerKind:   loaderspkg.LoaderTriggerKindTimeout,
 		TriggerSource: "manual",
-		Status:        LoaderRunStatusSucceeded,
+		Status:        loaderspkg.LoaderRunStatusSucceeded,
 		StartedAt:     now,
 		CompletedAt:   now.Add(10 * time.Millisecond),
 		DurationMs:    10,
@@ -1005,7 +1006,7 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateLoaderRun returned error: %v", err)
 	}
-	if err := configDB.AddLoaderEvent(ctx, LoaderEvent{
+	if err := configDB.AddLoaderEvent(ctx, loaderspkg.LoaderEvent{
 		LoaderID:  loaderID,
 		ID:        "event-service",
 		RunID:     "run-service",
@@ -1057,7 +1058,7 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunLoaderNow returned error: %v", err)
 	}
-	if runNow.Msg.GetRun().GetSummary().GetStatus() != LoaderRunStatusSucceeded {
+	if runNow.Msg.GetRun().GetSummary().GetStatus() != loaderspkg.LoaderRunStatusSucceeded {
 		t.Fatalf("RunLoaderNow status = %q error = %q", runNow.Msg.GetRun().GetSummary().GetStatus(), runNow.Msg.GetRun().GetSummary().GetError())
 	}
 	if runNow.Msg.GetRun().GetSummary().GetResultJson() != `{"ok":true}` {

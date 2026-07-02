@@ -1,11 +1,16 @@
 package agentcompose
 
 import (
+	buspkg "agent-compose/pkg/bus"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	eventspkg "agent-compose/pkg/events"
 	executorpkg "agent-compose/pkg/executor"
+	imagespkg "agent-compose/pkg/images"
 	llmpkg "agent-compose/pkg/llm"
 	loaderspkg "agent-compose/pkg/loaders"
+	modelpkg "agent-compose/pkg/model"
+	runtimespkg "agent-compose/pkg/runtimes"
 	sessionspkg "agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage"
 	"agent-compose/pkg/workspaces"
@@ -86,7 +91,7 @@ func testSupportSetupRegistersServiceGraph(t *testing.T) {
 		t.Fatalf("proxy route status = %d, want %d", rec.Code, http.StatusBadGateway)
 	}
 
-	configDB := do.MustInvoke[*ConfigStore](di)
+	configDB := do.MustInvoke[*storage.ConfigStore](di)
 	t.Cleanup(func() { _ = configDB.DB().Close() })
 }
 
@@ -121,7 +126,7 @@ func testSupportControlPlaneStartAndConfigHelpers(t *testing.T) {
 	}
 	configDB := newSupportTestConfigStore(t)
 	store := mustTestStore(t, config)
-	bus := NewLoaderBusWithBuffer(8)
+	bus := buspkg.NewLoaderBusWithBuffer(8)
 	runtimes := fixedRuntimeProvider{runtime: &fakeLoaderAgentRuntime{}}
 	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
 		Config:   config,
@@ -133,12 +138,12 @@ func testSupportControlPlaneStartAndConfigHelpers(t *testing.T) {
 		Bus:      bus,
 		Engine:   &recordingLoaderEngine{},
 	})
-	loader, err := configDB.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{ID: "start-loader", Name: "Start Loader", Runtime: LoaderRuntimeScheduler, Enabled: true},
+	loader, err := configDB.CreateLoader(ctx, loaderspkg.Loader{
+		Summary: loaderspkg.LoaderSummary{ID: "start-loader", Name: "Start Loader", Runtime: loaderspkg.LoaderRuntimeScheduler, Enabled: true},
 		Script:  "function main() { return {}; }",
-		Triggers: []LoaderTrigger{{
+		Triggers: []loaderspkg.LoaderTrigger{{
 			ID:      "evt",
-			Kind:    LoaderTriggerKindEvent,
+			Kind:    loaderspkg.LoaderTriggerKindEvent,
 			Topic:   "runtime.test",
 			Enabled: true,
 		}},
@@ -151,15 +156,15 @@ func testSupportControlPlaneStartAndConfigHelpers(t *testing.T) {
 	}
 	manager.Start()
 
-	dispatchBus := NewLoaderBusWithBuffer(8)
-	dispatcher := NewEventDispatcher(ctx, configDB, dispatchBus)
+	dispatchBus := buspkg.NewLoaderBusWithBuffer(8)
+	dispatcher := eventspkg.NewEventDispatcher(ctx, configDB, dispatchBus)
 	dispatcher.SetInterval(time.Millisecond)
 	dispatcher.Start()
-	event, err := configDB.CreateEvent(ctx, TopicEventRecord{
-		Source:         TopicEventSourceLoader,
+	event, err := configDB.CreateEvent(ctx, modelpkg.TopicEventRecord{
+		Source:         modelpkg.TopicEventSourceLoader,
 		Topic:          "runtime.dispatch",
 		PayloadJSON:    `{"ok":true}`,
-		DispatchStatus: TopicEventDispatchPending,
+		DispatchStatus: modelpkg.TopicEventDispatchPending,
 		CreatedAt:      time.Now().UTC(),
 	})
 	if err != nil {
@@ -212,7 +217,7 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	streams, _ := sessionspkg.NewSessionStreamBroker(nil)
 	executor := executorpkg.New(config, store, configDB, runtimes, streams, executorLLMFacadeEnvPreparer)
 	capProvider := newTestCapabilityProvider("", "")
-	bus := NewLoaderBusWithBuffer(4)
+	bus := buspkg.NewLoaderBusWithBuffer(4)
 	llmClient := llmpkg.NewClient(config, configDB, nil)
 	sessionBridge := sessionspkg.NewSessionRPCBridgeFromDeps(config, store, configDB, driver, runtimes, bus, streams, capProvider, nil)
 	manager := newTestLoaderManager(t, loaderspkg.ManagerDeps{
@@ -236,20 +241,17 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	do.ProvideValue(di, config)
 	do.ProvideValue(di, store)
 	do.ProvideValue(di, configDB)
-	do.ProvideValue[Driver](di, driver)
-	do.ProvideValue[RuntimeProvider](di, runtimes)
+	do.ProvideValue[runtimespkg.Driver](di, driver)
+	do.ProvideValue[runtimespkg.RuntimeProvider](di, runtimes)
 	do.ProvideValue(di, executor)
 	do.ProvideValue(di, manager)
 	do.ProvideValue(di, llmClient)
 	do.ProvideValue[capabilityIntegration](di, capProvider)
 	do.ProvideValue(di, bus)
 	do.ProvideValue(di, streams)
-	do.ProvideValue[LoaderEngine](di, &recordingLoaderEngine{})
+	do.ProvideValue[loaderspkg.LoaderEngine](di, &recordingLoaderEngine{})
 	do.ProvideValue(di, sessionBridge)
 
-	if createdBus, err := NewLoaderBus(di); err != nil || createdBus.Events() == nil {
-		t.Fatalf("NewLoaderBus = %#v/%v", createdBus, err)
-	}
 	if engine, err := newLoaderEngine(di); err != nil || engine == nil {
 		t.Fatalf("NewLoaderEngine = %#v/%v", engine, err)
 	}
@@ -260,11 +262,11 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	if err != nil || service.startedAt.IsZero() || service.store != store {
 		t.Fatalf("NewService = %#v/%v", service, err)
 	}
-	ociBackend, ok := service.ociImages.(*OCIImageBackend)
+	ociBackend, ok := service.ociImages.(*imagespkg.OCIImageBackend)
 	if !ok || ociBackend.Cache() == nil || ociBackend.Cache().Root() != config.ImageCacheRoot {
 		t.Fatalf("NewService OCI backend = %#v ok=%v", service.ociImages, ok)
 	}
-	autoBackend, ok := service.autoImages.(*AutoImageBackend)
+	autoBackend, ok := service.autoImages.(*imagespkg.AutoImageBackend)
 	if !ok || autoBackend.DockerBackend() == nil || autoBackend.OCIBackend() == nil || autoBackend.Mode() != config.ImageStoreMode {
 		t.Fatalf("NewService auto backend = %#v ok=%v", service.autoImages, ok)
 	}
@@ -277,34 +279,34 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 func testSupportAgentAndLoaderHelpers(t *testing.T) {
 	t.Helper()
 	longStderr := strings.Repeat("x", 300)
-	if got := executorpkg.SummarizeAgentExecFailure(ExecResult{Stderr: "  line one\nline two  "}); got != "line one line two" {
+	if got := executorpkg.SummarizeAgentExecFailure(modelpkg.ExecResult{Stderr: "  line one\nline two  "}); got != "line one line two" {
 		t.Fatalf("summarizeAgentExecFailure whitespace = %q", got)
 	}
-	if got := executorpkg.SummarizeAgentExecFailure(ExecResult{Stderr: longStderr}); len(got) != 243 || !strings.HasSuffix(got, "...") {
+	if got := executorpkg.SummarizeAgentExecFailure(modelpkg.ExecResult{Stderr: longStderr}); len(got) != 243 || !strings.HasSuffix(got, "...") {
 		t.Fatalf("summarizeAgentExecFailure long = %q len=%d", got, len(got))
 	}
-	if got := executorpkg.SummarizeAgentExecFailure(ExecResult{}); got != "" {
+	if got := executorpkg.SummarizeAgentExecFailure(modelpkg.ExecResult{}); got != "" {
 		t.Fatalf("summarizeAgentExecFailure empty = %q", got)
 	}
-	if got := executorpkg.SummarizeAgentResult(AgentRunResult{Agent: "codex", Success: true}); got != "codex finished without output" {
+	if got := executorpkg.SummarizeAgentResult(modelpkg.AgentRunResult{Agent: "codex", Success: true}); got != "codex finished without output" {
 		t.Fatalf("summarizeAgentResult success empty = %q", got)
 	}
-	if got := executorpkg.SummarizeAgentResult(AgentRunResult{Agent: "codex", Success: false}); got != "codex failed without output" {
+	if got := executorpkg.SummarizeAgentResult(modelpkg.AgentRunResult{Agent: "codex", Success: false}); got != "codex failed without output" {
 		t.Fatalf("summarizeAgentResult failed empty = %q", got)
 	}
-	if got := executorpkg.SummarizeAgentResult(AgentRunResult{DisplayOutput: "display"}); got != "display" {
+	if got := executorpkg.SummarizeAgentResult(modelpkg.AgentRunResult{DisplayOutput: "display"}); got != "display" {
 		t.Fatalf("summarizeAgentResult display = %q", got)
 	}
 
-	if sessionspkg.FromProtoCellType(agentcomposev1.CellType_CELL_TYPE_SHELL) != CellTypeShell ||
-		sessionspkg.FromProtoCellType(agentcomposev1.CellType_CELL_TYPE_PYTHON) != CellTypePython ||
-		sessionspkg.FromProtoCellType(agentcomposev1.CellType_CELL_TYPE_AGENT) != CellTypeAgent ||
-		sessionspkg.FromProtoCellType(agentcomposev1.CellType_CELL_TYPE_UNSPECIFIED) != CellTypeJavaScript {
+	if sessionspkg.FromProtoCellType(agentcomposev1.CellType_CELL_TYPE_SHELL) != modelpkg.CellTypeShell ||
+		sessionspkg.FromProtoCellType(agentcomposev1.CellType_CELL_TYPE_PYTHON) != modelpkg.CellTypePython ||
+		sessionspkg.FromProtoCellType(agentcomposev1.CellType_CELL_TYPE_AGENT) != modelpkg.CellTypeAgent ||
+		sessionspkg.FromProtoCellType(agentcomposev1.CellType_CELL_TYPE_UNSPECIFIED) != modelpkg.CellTypeJavaScript {
 		t.Fatalf("fromProtoCellType returned unexpected values")
 	}
-	if sessionspkg.ToProtoCellType(CellTypeShell) != agentcomposev1.CellType_CELL_TYPE_SHELL ||
-		sessionspkg.ToProtoCellType(CellTypePython) != agentcomposev1.CellType_CELL_TYPE_PYTHON ||
-		sessionspkg.ToProtoCellType(CellTypeAgent) != agentcomposev1.CellType_CELL_TYPE_AGENT ||
+	if sessionspkg.ToProtoCellType(modelpkg.CellTypeShell) != agentcomposev1.CellType_CELL_TYPE_SHELL ||
+		sessionspkg.ToProtoCellType(modelpkg.CellTypePython) != agentcomposev1.CellType_CELL_TYPE_PYTHON ||
+		sessionspkg.ToProtoCellType(modelpkg.CellTypeAgent) != agentcomposev1.CellType_CELL_TYPE_AGENT ||
 		sessionspkg.ToProtoCellType("unknown") != agentcomposev1.CellType_CELL_TYPE_JAVASCRIPT {
 		t.Fatalf("toProtoCellType returned unexpected values")
 	}
@@ -312,7 +314,7 @@ func testSupportAgentAndLoaderHelpers(t *testing.T) {
 	if firstNonZeroInt(0, 0, 7, 9) != 7 || firstNonZeroInt(0, 0) != 0 {
 		t.Fatalf("firstNonZeroInt returned unexpected values")
 	}
-	if storage.SessionTypeFromTriggerSource("script:loader-1") != SessionTypeScript || storage.SessionTypeFromTriggerSource("") != SessionTypeManual {
+	if storage.SessionTypeFromTriggerSource("script:loader-1") != modelpkg.SessionTypeScript || storage.SessionTypeFromTriggerSource("") != modelpkg.SessionTypeManual {
 		t.Fatalf("sessionTypeFromTriggerSource returned unexpected values")
 	}
 	if parsed, err := sessionspkg.ParseOptionalRFC3339("2026-06-02T09:00:00Z", "created_from"); err != nil || !parsed.Equal(time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)) {
@@ -323,7 +325,7 @@ func testSupportAgentAndLoaderHelpers(t *testing.T) {
 	}
 }
 
-func testSupportLegacyAgentRunMerge(t *testing.T, store *Store) {
+func testSupportLegacyAgentRunMerge(t *testing.T, store *storage.Store) {
 	t.Helper()
 	ctx := context.Background()
 	session, err := store.CreateSession(ctx, "Legacy Runs", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", "", nil, nil, nil)
@@ -332,10 +334,10 @@ func testSupportLegacyAgentRunMerge(t *testing.T, store *Store) {
 	}
 	older := time.Now().UTC().Add(-2 * time.Minute)
 	newer := time.Now().UTC().Add(-time.Minute)
-	if err := store.SaveCells(session.Summary.ID, []NotebookCell{{ID: "cell-1", Type: CellTypeShell, Source: "echo", CreatedAt: newer}}); err != nil {
+	if err := store.SaveCells(session.Summary.ID, []modelpkg.NotebookCell{{ID: "cell-1", Type: modelpkg.CellTypeShell, Source: "echo", CreatedAt: newer}}); err != nil {
 		t.Fatalf("SaveCells returned error: %v", err)
 	}
-	legacyRuns := []AgentRun{
+	legacyRuns := []modelpkg.AgentRun{
 		{ID: "run-1", Agent: "codex", Message: "legacy", Output: "done", Success: true, CreatedAt: older, AgentSessionID: "agent-1"},
 		{ID: "cell-1", Agent: "codex", Message: "duplicate", CreatedAt: newer},
 	}
@@ -353,7 +355,7 @@ func testSupportLegacyAgentRunMerge(t *testing.T, store *Store) {
 	if len(cells) != 2 || cells[0].ID != "run-1" || cells[1].ID != "cell-1" {
 		t.Fatalf("merged cells = %#v", cells)
 	}
-	if cells[0].Type != CellTypeAgent || cells[0].AgentSessionID != "agent-1" {
+	if cells[0].Type != modelpkg.CellTypeAgent || cells[0].AgentSessionID != "agent-1" {
 		t.Fatalf("merged legacy agent cell = %#v", cells[0])
 	}
 }
@@ -397,7 +399,7 @@ func testSupportWorkspaceMoveMerge(t *testing.T) {
 	}
 }
 
-func newSupportTestConfigStore(t *testing.T) *ConfigStore {
+func newSupportTestConfigStore(t *testing.T) *storage.ConfigStore {
 	t.Helper()
 	root := t.TempDir()
 	return mustTestConfigStore(t, &appconfig.Config{

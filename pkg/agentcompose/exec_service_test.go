@@ -10,6 +10,8 @@ import (
 	"connectrpc.com/connect"
 
 	driverpkg "agent-compose/pkg/driver"
+	modelpkg "agent-compose/pkg/model"
+	"agent-compose/pkg/storage"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
@@ -20,7 +22,7 @@ func TestExecServiceExecStreamResolvesSelectorAndStreamsOutput(t *testing.T) {
 	runtime.commandStdout = "exec stdout\n"
 	runtime.commandStderr = "exec stderr\n"
 	ctx := context.Background()
-	session := createExecServiceProjectSession(t, service, store, projectID, "run-exec", "reviewer", VMStatusRunning)
+	session := createExecServiceProjectSession(t, service, store, projectID, "run-exec", "reviewer", modelpkg.VMStatusRunning)
 	client, closeServer := newExecServiceTestClient(t, service)
 	defer closeServer()
 
@@ -75,8 +77,8 @@ func TestExecServiceExecStreamSelectorErrorsWhenNoRunningSession(t *testing.T) {
 
 func TestExecServiceExecStreamSelectorErrorsWhenAmbiguous(t *testing.T) {
 	store, service, projectID := setupRunPreparationDemoProject(t)
-	createExecServiceProjectSession(t, service, store, projectID, "run-one", "reviewer", VMStatusRunning)
-	createExecServiceProjectSession(t, service, store, projectID, "run-two", "reviewer", VMStatusRunning)
+	createExecServiceProjectSession(t, service, store, projectID, "run-one", "reviewer", modelpkg.VMStatusRunning)
+	createExecServiceProjectSession(t, service, store, projectID, "run-two", "reviewer", modelpkg.VMStatusRunning)
 	client, closeServer := newExecServiceTestClient(t, service)
 	defer closeServer()
 
@@ -94,7 +96,7 @@ func TestExecServiceExecStreamSelectorErrorsWhenAmbiguous(t *testing.T) {
 
 func TestExecServiceExecStreamRunTargetRequiresRunningSession(t *testing.T) {
 	store, service, projectID := setupRunPreparationDemoProject(t)
-	createExecServiceProjectSession(t, service, store, projectID, "run-stopped", "reviewer", VMStatusPending)
+	createExecServiceProjectSession(t, service, store, projectID, "run-stopped", "reviewer", modelpkg.VMStatusPending)
 	client, closeServer := newExecServiceTestClient(t, service)
 	defer closeServer()
 
@@ -107,15 +109,15 @@ func TestExecServiceExecStreamRunTargetRequiresRunningSession(t *testing.T) {
 	}
 }
 
-func setupRunPreparationDemoProject(t *testing.T) (*ConfigStore, *Service, string) {
+func setupRunPreparationDemoProject(t *testing.T) (*storage.ConfigStore, *Service, string) {
 	t.Helper()
 	return setupRunPreparationProject(t, newProjectServiceTestSpec("demo", "gpt-test"), t.TempDir())
 }
 
-func createExecServiceProjectSession(t *testing.T, service *Service, store *ConfigStore, projectID, runID, agentName, vmStatus string) *Session {
+func createExecServiceProjectSession(t *testing.T, service *Service, store *storage.ConfigStore, projectID, runID, agentName, vmStatus string) *modelpkg.Session {
 	t.Helper()
 	ctx := context.Background()
-	session, err := service.store.CreateSession(ctx, "Exec Session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil, nil, nil)
+	session, err := service.store.CreateSession(ctx, "Exec Session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", modelpkg.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
@@ -123,14 +125,14 @@ func createExecServiceProjectSession(t *testing.T, service *Service, store *Conf
 	if err := service.store.UpdateSession(ctx, session); err != nil {
 		t.Fatalf("UpdateSession returned error: %v", err)
 	}
-	if _, err := store.CreateProjectRun(ctx, ProjectRunRecord{
+	if _, err := store.CreateProjectRun(ctx, storage.ProjectRunRecord{
 		RunID:           runID,
 		ProjectID:       projectID,
 		ProjectName:     "demo",
 		ProjectRevision: 1,
 		AgentName:       agentName,
-		Source:          ProjectRunSourceManual,
-		Status:          ProjectRunStatusRunning,
+		Source:          storage.ProjectRunSourceManual,
+		Status:          storage.ProjectRunStatusRunning,
 		SessionID:       session.Summary.ID,
 		Driver:          driverpkg.RuntimeDriverBoxlite,
 		ImageRef:        "guest:latest",

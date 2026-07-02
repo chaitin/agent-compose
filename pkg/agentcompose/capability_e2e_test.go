@@ -72,7 +72,7 @@ func (f *fakeOctobus) auth() string {
 }
 
 // TestCapabilityGatewayControlPlaneE2E drives the real ConfigService and
-// CapabilityService handlers, backed by a real ConfigStore and dynamic
+// CapabilityService handlers, backed by real persisted config and dynamic
 // provider, against a fake OctoBus — the exact path the frontend exercises.
 func TestCapabilityGatewayControlPlaneE2E(t *testing.T) {
 	ctx := context.Background()

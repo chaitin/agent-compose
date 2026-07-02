@@ -12,14 +12,18 @@ import (
 	"testing"
 	"time"
 
+	buspkg "agent-compose/pkg/bus"
 	appconfig "agent-compose/pkg/config"
 	executorpkg "agent-compose/pkg/executor"
 	"agent-compose/pkg/images"
 	llmpkg "agent-compose/pkg/llm"
 	loaderspkg "agent-compose/pkg/loaders"
+	modelpkg "agent-compose/pkg/model"
+	runtimespkg "agent-compose/pkg/runtimes"
+	"agent-compose/pkg/storage"
 )
 
-func newTestConfigStore(t *testing.T) *ConfigStore {
+func newTestConfigStore(t *testing.T) *storage.ConfigStore {
 	t.Helper()
 	root := t.TempDir()
 	return mustTestConfigStore(t, &appconfig.Config{
@@ -28,7 +32,7 @@ func newTestConfigStore(t *testing.T) *ConfigStore {
 	})
 }
 
-func newTestLLMClient(t *testing.T, configDB *ConfigStore, text string) *llmpkg.LLMClient {
+func newTestLLMClient(t *testing.T, configDB *storage.ConfigStore, text string) *llmpkg.LLMClient {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -38,7 +42,7 @@ func newTestLLMClient(t *testing.T, configDB *ConfigStore, text string) *llmpkg.
 	return llmpkg.NewClient(&appconfig.Config{LLMAPIEndpoint: server.URL, LLMModel: "model-a"}, configDB, server.Client())
 }
 
-func newTestLoaderManager(t testing.TB, deps loaderspkg.ManagerDeps) *LoaderManager {
+func newTestLoaderManager(t testing.TB, deps loaderspkg.ManagerDeps) *loaderspkg.LoaderManager {
 	t.Helper()
 	if deps.RootCtx == nil {
 		deps.RootCtx = context.Background()
@@ -58,10 +62,10 @@ func newTestLoaderManager(t testing.TB, deps loaderspkg.ManagerDeps) *LoaderMana
 		}
 	}
 	if deps.Bus == nil {
-		deps.Bus = NewLoaderBusWithBuffer(16)
+		deps.Bus = buspkg.NewLoaderBusWithBuffer(16)
 	}
 	if deps.Engine == nil {
-		deps.Engine = &QJSLoaderEngine{}
+		deps.Engine = &loaderspkg.QJSLoaderEngine{}
 	}
 	if deps.Images == nil {
 		deps.Images = images.NewDockerImageBackend()
@@ -77,51 +81,51 @@ func newTestLoaderManager(t testing.TB, deps loaderspkg.ManagerDeps) *LoaderMana
 }
 
 type recordingLoaderEngine struct {
-	requests []LoaderExecutionRequest
+	requests []loaderspkg.LoaderExecutionRequest
 }
 
-func (e *recordingLoaderEngine) Validate(context.Context, string, string) (LoaderValidationResult, error) {
-	return LoaderValidationResult{}, nil
+func (e *recordingLoaderEngine) Validate(context.Context, string, string) (loaderspkg.LoaderValidationResult, error) {
+	return loaderspkg.LoaderValidationResult{}, nil
 }
 
-func (e *recordingLoaderEngine) Execute(ctx context.Context, request LoaderExecutionRequest, host LoaderHost) (LoaderExecutionResult, error) {
+func (e *recordingLoaderEngine) Execute(ctx context.Context, request loaderspkg.LoaderExecutionRequest, host loaderspkg.LoaderHost) (loaderspkg.LoaderExecutionResult, error) {
 	e.requests = append(e.requests, request)
 	if err := host.Log(ctx, "loader lifecycle", map[string]any{"step": "start"}); err != nil {
-		return LoaderExecutionResult{}, err
+		return loaderspkg.LoaderExecutionResult{}, err
 	}
 	if err := host.StateSet(ctx, "last", `{"value":1}`); err != nil {
-		return LoaderExecutionResult{}, err
+		return loaderspkg.LoaderExecutionResult{}, err
 	}
 	if err := host.StateSet(ctx, "temporary", `{"delete":true}`); err != nil {
-		return LoaderExecutionResult{}, err
+		return loaderspkg.LoaderExecutionResult{}, err
 	}
 	if err := host.StateDelete(ctx, "temporary"); err != nil {
-		return LoaderExecutionResult{}, err
+		return loaderspkg.LoaderExecutionResult{}, err
 	}
 	if value, ok, err := host.StateGet(ctx, "last"); err != nil || !ok || value != `{"value":1}` {
-		return LoaderExecutionResult{}, fmt.Errorf("loader state read = %q/%t/%v", value, ok, err)
+		return loaderspkg.LoaderExecutionResult{}, fmt.Errorf("loader state read = %q/%t/%v", value, ok, err)
 	}
-	if llm, err := host.LLM(ctx, "summarize lifecycle", LoaderLLMRequest{Model: "model-a"}); err != nil || llm.Text != "loader llm text" {
-		return LoaderExecutionResult{}, fmt.Errorf("loader llm result = %#v/%v", llm, err)
+	if llm, err := host.LLM(ctx, "summarize lifecycle", loaderspkg.LoaderLLMRequest{Model: "model-a"}); err != nil || llm.Text != "loader llm text" {
+		return loaderspkg.LoaderExecutionResult{}, fmt.Errorf("loader llm result = %#v/%v", llm, err)
 	}
 	if _, err := host.PublishEvent(ctx, "runtime.test.completed", `{"provider":"test-runtime","value":1}`); err != nil {
-		return LoaderExecutionResult{}, err
+		return loaderspkg.LoaderExecutionResult{}, err
 	}
-	return LoaderExecutionResult{ResultJSON: `{"ok":true}`}, nil
+	return loaderspkg.LoaderExecutionResult{ResultJSON: `{"ok":true}`}, nil
 }
 
 type fixedRuntimeProvider struct {
-	runtime BoxRuntime
+	runtime runtimespkg.BoxRuntime
 }
 
-func (p fixedRuntimeProvider) ForDriver(string) (BoxRuntime, error) {
+func (p fixedRuntimeProvider) ForDriver(string) (runtimespkg.BoxRuntime, error) {
 	if p.runtime == nil {
 		return nil, fmt.Errorf("runtime is required")
 	}
 	return p.runtime, nil
 }
 
-func (p fixedRuntimeProvider) ForSession(*Session) (BoxRuntime, error) {
+func (p fixedRuntimeProvider) ForSession(*modelpkg.Session) (runtimespkg.BoxRuntime, error) {
 	if p.runtime == nil {
 		return nil, fmt.Errorf("runtime is required")
 	}
@@ -131,15 +135,15 @@ func (p fixedRuntimeProvider) ForSession(*Session) (BoxRuntime, error) {
 type fakeLoaderAgentRuntime struct {
 	execCalls              int
 	providers              []string
-	agentSpecs             []ExecSpec
+	agentSpecs             []modelpkg.ExecSpec
 	agentDeadlineDurations []time.Duration
 	agentStdout            string
 	agentStderr            string
 	agentOutput            string
 	agentNoPayload         bool
 	agentWaitForContext    bool
-	commandSpecs           []ExecSpec
-	commands               []ExecSpec
+	commandSpecs           []modelpkg.ExecSpec
+	commands               []modelpkg.ExecSpec
 	commandExitCode        int
 	commandStdout          string
 	commandStderr          string
@@ -150,19 +154,19 @@ type fakeLoaderAgentRuntime struct {
 	agentExitCode          int
 }
 
-func (r *fakeLoaderAgentRuntime) EnsureSession(context.Context, *Session, VMState, ProxyState) (SessionVMInfo, error) {
-	return SessionVMInfo{}, nil
+func (r *fakeLoaderAgentRuntime) EnsureSession(context.Context, *modelpkg.Session, modelpkg.VMState, modelpkg.ProxyState) (runtimespkg.SessionVMInfo, error) {
+	return runtimespkg.SessionVMInfo{}, nil
 }
 
-func (r *fakeLoaderAgentRuntime) StopSession(context.Context, *Session, VMState) (bool, error) {
+func (r *fakeLoaderAgentRuntime) StopSession(context.Context, *modelpkg.Session, modelpkg.VMState) (bool, error) {
 	return true, nil
 }
 
-func (r *fakeLoaderAgentRuntime) Exec(context.Context, *Session, VMState, ExecSpec) (ExecResult, error) {
-	return ExecResult{}, fmt.Errorf("unexpected Exec call")
+func (r *fakeLoaderAgentRuntime) Exec(context.Context, *modelpkg.Session, modelpkg.VMState, modelpkg.ExecSpec) (modelpkg.ExecResult, error) {
+	return modelpkg.ExecResult{}, fmt.Errorf("unexpected Exec call")
 }
 
-func (r *fakeLoaderAgentRuntime) ExecStream(ctx context.Context, session *Session, _ VMState, spec ExecSpec, stream ExecStreamWriter) (ExecResult, error) {
+func (r *fakeLoaderAgentRuntime) ExecStream(ctx context.Context, session *modelpkg.Session, _ modelpkg.VMState, spec modelpkg.ExecSpec, stream modelpkg.ExecStreamWriter) (modelpkg.ExecResult, error) {
 	r.execCalls++
 	if isLoaderCommandExecSpec(spec) {
 		r.commandSpecs = append(r.commandSpecs, spec)
@@ -175,12 +179,12 @@ func (r *fakeLoaderAgentRuntime) ExecStream(ctx context.Context, session *Sessio
 			hostCellDir := filepath.Join(hostSessionDir(session), "state", "cells", cellID)
 			_ = os.MkdirAll(hostCellDir, 0o755)
 		}
-		result := RuntimeCommandResult{Stdout: stdout, Stderr: stderr, Output: output, ExitCode: r.commandExitCode, Success: r.commandExitCode == 0}
+		result := modelpkg.RuntimeCommandResult{Stdout: stdout, Stderr: stderr, Output: output, ExitCode: r.commandExitCode, Success: r.commandExitCode == 0}
 		payload, _ := json.Marshal(result)
 		if stream != nil {
-			stream(ExecChunk{Text: stdout})
+			stream(modelpkg.ExecChunk{Text: stdout})
 			if stderr != "" {
-				stream(ExecChunk{Text: stderr, IsStderr: true})
+				stream(modelpkg.ExecChunk{Text: stderr, IsStderr: true})
 			}
 			if r.commandStreamHook != nil {
 				r.commandStreamHook()
@@ -190,23 +194,23 @@ func (r *fakeLoaderAgentRuntime) ExecStream(ctx context.Context, session *Sessio
 			<-r.commandBlock
 		}
 		if r.commandNoPayload {
-			return ExecResult{Stdout: stdout, Stderr: stderr, Output: output, ExitCode: r.commandExitCode, Success: r.commandExitCode == 0}, nil
+			return modelpkg.ExecResult{Stdout: stdout, Stderr: stderr, Output: output, ExitCode: r.commandExitCode, Success: r.commandExitCode == 0}, nil
 		}
 		payloadText := executorpkg.CommandResultPrefix + string(payload)
-		return ExecResult{Stdout: payloadText, Stderr: "", Output: output + payloadText, ExitCode: r.commandExitCode, Success: r.commandExitCode == 0}, nil
+		return modelpkg.ExecResult{Stdout: payloadText, Stderr: "", Output: output + payloadText, ExitCode: r.commandExitCode, Success: r.commandExitCode == 0}, nil
 	}
 	if spec.Command == "bash" || spec.Command == "node" || spec.Command == "python3" {
 		stdout := firstNonEmpty(r.commandStdout, "cell stdout\n")
 		stderr := r.commandStderr
 		output := firstNonEmpty(r.commandOutput, stdout+stderr)
 		if stream != nil {
-			stream(ExecChunk{Text: stdout})
+			stream(modelpkg.ExecChunk{Text: stdout})
 			if stderr != "" {
-				stream(ExecChunk{Text: stderr, IsStderr: true})
+				stream(modelpkg.ExecChunk{Text: stderr, IsStderr: true})
 			}
 		}
 		exitCode := r.commandExitCode
-		return ExecResult{Stdout: stdout, Stderr: stderr, Output: output, ExitCode: exitCode, Success: exitCode == 0}, nil
+		return modelpkg.ExecResult{Stdout: stdout, Stderr: stderr, Output: output, ExitCode: exitCode, Success: exitCode == 0}, nil
 	}
 
 	if deadline, ok := ctx.Deadline(); ok {
@@ -216,7 +220,7 @@ func (r *fakeLoaderAgentRuntime) ExecStream(ctx context.Context, session *Sessio
 	r.providers = append(r.providers, provider)
 	r.agentSpecs = append(r.agentSpecs, spec)
 	if stream != nil {
-		stream(ExecChunk{Text: "loader agent transcript\n", IsStderr: true})
+		stream(modelpkg.ExecChunk{Text: "loader agent transcript\n", IsStderr: true})
 	}
 	exitCode := r.agentExitCode
 	if r.agentWaitForContext {
@@ -224,26 +228,26 @@ func (r *fakeLoaderAgentRuntime) ExecStream(ctx context.Context, session *Sessio
 		stdout := r.agentStdout
 		stderr := r.agentStderr
 		output := firstNonEmpty(r.agentOutput, stdout+stderr)
-		return ExecResult{Stdout: stdout, Stderr: stderr, Output: output, ExitCode: firstNonZeroInt(exitCode, 1), Success: false}, ctx.Err()
+		return modelpkg.ExecResult{Stdout: stdout, Stderr: stderr, Output: output, ExitCode: firstNonZeroInt(exitCode, 1), Success: false}, ctx.Err()
 	}
 	if r.agentNoPayload {
 		stdout := r.agentStdout
 		stderr := r.agentStderr
 		output := firstNonEmpty(r.agentOutput, stdout+stderr)
-		return ExecResult{Stdout: stdout, Stderr: stderr, Output: output, ExitCode: exitCode, Success: exitCode == 0}, nil
+		return modelpkg.ExecResult{Stdout: stdout, Stderr: stderr, Output: output, ExitCode: exitCode, Success: exitCode == 0}, nil
 	}
 	payload := executorpkg.AgentResultPrefix + fmt.Sprintf(`{"provider":%q,"agent":%q,"sessionId":"agent-runtime-session","stopReason":"completed","finalText":"loader agent transcript","transcript":"loader agent transcript","success":%t,"exitCode":%d}`, provider, provider, exitCode == 0, exitCode)
-	return ExecResult{Stdout: payload, Stderr: "loader agent transcript\n", Output: "loader agent transcript\n" + payload, ExitCode: exitCode, Success: exitCode == 0}, nil
+	return modelpkg.ExecResult{Stdout: payload, Stderr: "loader agent transcript\n", Output: "loader agent transcript\n" + payload, ExitCode: exitCode, Success: exitCode == 0}, nil
 }
 
-func isLoaderCommandExecSpec(spec ExecSpec) bool {
+func isLoaderCommandExecSpec(spec modelpkg.ExecSpec) bool {
 	if spec.Command != "sh" {
 		return false
 	}
 	return strings.Contains(strings.Join(spec.Args, " "), "agent-compose-runtime exec")
 }
 
-func providerFromExecSpec(spec ExecSpec) string {
+func providerFromExecSpec(spec modelpkg.ExecSpec) string {
 	provider := "codex"
 	for index, arg := range spec.Args {
 		if arg == "--provider" && index+1 < len(spec.Args) {

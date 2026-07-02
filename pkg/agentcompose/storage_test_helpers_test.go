@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func mustTestStore(t testing.TB, config *appconfig.Config) *Store {
+func mustTestStore(t testing.TB, config *appconfig.Config) *storage.Store {
 	t.Helper()
 	store, err := storage.NewStoreFromConfig(config)
 	if err != nil {
@@ -15,7 +15,7 @@ func mustTestStore(t testing.TB, config *appconfig.Config) *Store {
 	return store
 }
 
-func mustTestConfigStore(t testing.TB, config *appconfig.Config) *ConfigStore {
+func mustTestConfigStore(t testing.TB, config *appconfig.Config) *storage.ConfigStore {
 	t.Helper()
 	store, err := storage.NewConfigStoreFromConfig(config)
 	if err != nil {

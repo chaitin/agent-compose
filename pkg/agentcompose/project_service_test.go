@@ -6,11 +6,13 @@ import (
 
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	imagespkg "agent-compose/pkg/images"
 	loaderspkg "agent-compose/pkg/loaders"
+	"agent-compose/pkg/storage"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
-func newProjectServiceTestService(t *testing.T, store *ConfigStore) *Service {
+func newProjectServiceTestService(t *testing.T, store *storage.ConfigStore) *Service {
 	t.Helper()
 	config := &appconfig.Config{
 		RuntimeDriver: driverpkg.RuntimeDriverBoxlite,
@@ -19,10 +21,10 @@ func newProjectServiceTestService(t *testing.T, store *ConfigStore) *Service {
 	return &Service{
 		config:   config,
 		configDB: store,
-		loaders:  newTestLoaderManager(t, loaderspkg.ManagerDeps{Config: config, ConfigDB: store, Engine: &QJSLoaderEngine{}}),
+		loaders:  newTestLoaderManager(t, loaderspkg.ManagerDeps{Config: config, ConfigDB: store, Engine: &loaderspkg.QJSLoaderEngine{}}),
 		images: &fakeImageBackend{
-			inspectImage: func(context.Context, ImageInspectRequest) (ImageInspectResult, error) {
-				return ImageInspectResult{}, nil
+			inspectImage: func(context.Context, imagespkg.ImageInspectRequest) (imagespkg.ImageInspectResult, error) {
+				return imagespkg.ImageInspectResult{}, nil
 			},
 		},
 	}

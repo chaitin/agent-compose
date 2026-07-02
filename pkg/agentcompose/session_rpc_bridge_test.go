@@ -3,6 +3,7 @@ package agentcompose
 import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	modelpkg "agent-compose/pkg/model"
 	"agent-compose/pkg/storage"
 	"context"
 	"os"
@@ -19,11 +20,11 @@ import (
 type fakeSessionDriver struct {
 	startCalls []string
 	stopCalls  []string
-	startHook  func(context.Context, *Session) error
-	stopHook   func(context.Context, *Session) error
+	startHook  func(context.Context, *modelpkg.Session) error
+	stopHook   func(context.Context, *modelpkg.Session) error
 }
 
-func (d *fakeSessionDriver) StartSessionVM(ctx context.Context, session *Session) error {
+func (d *fakeSessionDriver) StartSessionVM(ctx context.Context, session *modelpkg.Session) error {
 	d.startCalls = append(d.startCalls, session.Summary.ID)
 	if d.startHook != nil {
 		return d.startHook(ctx, session)
@@ -31,7 +32,7 @@ func (d *fakeSessionDriver) StartSessionVM(ctx context.Context, session *Session
 	return nil
 }
 
-func (d *fakeSessionDriver) StopSessionVM(ctx context.Context, session *Session) error {
+func (d *fakeSessionDriver) StopSessionVM(ctx context.Context, session *modelpkg.Session) error {
 	d.stopCalls = append(d.stopCalls, session.Summary.ID)
 	if d.stopHook != nil {
 		return d.stopHook(ctx, session)

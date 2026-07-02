@@ -1,22 +1,24 @@
 package agentcompose
 
 import (
-	driverpkg "agent-compose/pkg/driver"
 	"context"
 	"testing"
+
+	driverpkg "agent-compose/pkg/driver"
+	modelpkg "agent-compose/pkg/model"
 )
 
 func TestResolveCapabilitySession(t *testing.T) {
 	ctx := context.Background()
 	_, _, store := newTestSessionRPCBridgeWithStore(t)
 	// The capset set lives in session tags; only the token lives in env.
-	session, err := store.CreateSession(ctx, "cap", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil,
-		[]SessionEnvVar{{Name: capabilitySessionTokenEnvName, Value: "session-token", Secret: true}},
-		[]SessionTag{{Name: capabilityCapsetTagName, Value: "dev"}, {Name: capabilityCapsetTagName, Value: "data"}})
+	session, err := store.CreateSession(ctx, "cap", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", modelpkg.SessionTypeManual, nil,
+		[]modelpkg.SessionEnvVar{{Name: capabilitySessionTokenEnvName, Value: "session-token", Secret: true}},
+		[]modelpkg.SessionTag{{Name: capabilityCapsetTagName, Value: "dev"}, {Name: capabilityCapsetTagName, Value: "data"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.Summary.VMStatus = VMStatusRunning
+	session.Summary.VMStatus = modelpkg.VMStatusRunning
 	if err := store.UpdateSession(ctx, session); err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +34,7 @@ func TestResolveCapabilitySession(t *testing.T) {
 		t.Fatalf("unexpected capset set %+v", binding.CapsetIDs)
 	}
 
-	session.Summary.VMStatus = VMStatusStopped
+	session.Summary.VMStatus = modelpkg.VMStatusStopped
 	if err := store.UpdateSession(ctx, session); err != nil {
 		t.Fatal(err)
 	}

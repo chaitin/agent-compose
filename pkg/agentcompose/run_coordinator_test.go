@@ -10,9 +10,12 @@ import (
 
 	"connectrpc.com/connect"
 
+	buspkg "agent-compose/pkg/bus"
 	executorpkg "agent-compose/pkg/executor"
 	loaderspkg "agent-compose/pkg/loaders"
+	modelpkg "agent-compose/pkg/model"
 	sessionspkg "agent-compose/pkg/sessions"
+	"agent-compose/pkg/storage"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
@@ -49,7 +52,7 @@ func testRunAgentStreamReturnsRealtimeOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetProjectRun stream returned error: %v", err)
 	}
-	if stored.Status != ProjectRunStatusSucceeded || stored.SessionID == "" || !strings.Contains(stored.Output, "loader agent transcript") {
+	if stored.Status != storage.ProjectRunStatusSucceeded || stored.SessionID == "" || !strings.Contains(stored.Output, "loader agent transcript") {
 		t.Fatalf("stored stream run = %#v", stored)
 	}
 }
@@ -114,7 +117,7 @@ func testRunAgentStreamAgentFailurePersistsRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetProjectRun failure returned error: %v", err)
 	}
-	if stored.Status != ProjectRunStatusFailed || stored.ExitCode != 7 || stored.SessionID != completed.GetRun().GetSessionId() {
+	if stored.Status != storage.ProjectRunStatusFailed || stored.ExitCode != 7 || stored.SessionID != completed.GetRun().GetSessionId() {
 		t.Fatalf("stored failed stream run = %#v", stored)
 	}
 }
@@ -147,9 +150,9 @@ func TestManagedSchedulerManualRunPreservesProjectSecretEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunNow manual managed scheduler returned error: %v", err)
 	}
-	runs, err := store.ListProjectRunsByOptions(ctx, ProjectRunListOptions{
+	runs, err := store.ListProjectRunsByOptions(ctx, storage.ProjectRunListOptions{
 		ProjectID:   projectID,
-		Source:      ProjectRunSourceScheduler,
+		Source:      storage.ProjectRunSourceScheduler,
 		SchedulerID: loader.Summary.ManagedSchedulerID,
 	})
 	if err != nil {
@@ -184,15 +187,15 @@ func testManagedSchedulerAgentUsesProjectRunPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunNow managed scheduler returned error: %v", err)
 	}
-	runs, err := store.ListProjectRunsByOptions(ctx, ProjectRunListOptions{
+	runs, err := store.ListProjectRunsByOptions(ctx, storage.ProjectRunListOptions{
 		ProjectID:   projectID,
-		Source:      ProjectRunSourceScheduler,
+		Source:      storage.ProjectRunSourceScheduler,
 		SchedulerID: loader.Summary.ManagedSchedulerID,
 	})
 	if err != nil {
 		t.Fatalf("ListProjectRunsByOptions scheduler returned error: %v", err)
 	}
-	if len(runs) != 1 || runs[0].Status != ProjectRunStatusSucceeded || runs[0].SessionID == "" {
+	if len(runs) != 1 || runs[0].Status != storage.ProjectRunStatusSucceeded || runs[0].SessionID == "" {
 		t.Fatalf("scheduler project runs = %#v loaderRun=%#v", runs, run)
 	}
 	if events, err := store.ListLoaderEvents(ctx, loader.Summary.ID, 20); err != nil || !loaderEventsContain(events, "loader.agent.completed") {
@@ -200,12 +203,12 @@ func testManagedSchedulerAgentUsesProjectRunPipeline(t *testing.T) {
 	}
 }
 
-func setupRunCoordinatorProject(t *testing.T) (*ConfigStore, *Service, string) {
+func setupRunCoordinatorProject(t *testing.T) (*storage.ConfigStore, *Service, string) {
 	t.Helper()
 	return setupRunPreparationProject(t, newProjectServiceTestSpec("demo", "gpt-test"), t.TempDir())
 }
 
-func setupRunPreparationProject(t *testing.T, spec *agentcomposev2.ProjectSpec, projectDir string) (*ConfigStore, *Service, string) {
+func setupRunPreparationProject(t *testing.T, spec *agentcomposev2.ProjectSpec, projectDir string) (*storage.ConfigStore, *Service, string) {
 	t.Helper()
 	store := newTestConfigStore(t)
 	service := newProjectServiceTestService(t, store)
@@ -279,7 +282,7 @@ func runServiceFakeRuntime(t *testing.T, service *Service) *fakeLoaderAgentRunti
 	return runtime
 }
 
-func newRunServiceLoaderManager(t testing.TB, service *Service) *LoaderManager {
+func newRunServiceLoaderManager(t testing.TB, service *Service) *loaderspkg.LoaderManager {
 	t.Helper()
 	return newTestLoaderManager(t, loaderspkg.ManagerDeps{
 		Config:             service.config,
@@ -289,13 +292,13 @@ func newRunServiceLoaderManager(t testing.TB, service *Service) *LoaderManager {
 		Driver:             service.driver,
 		Executor:           loaderspkg.NewExecutor(service.config, service.store, service.configDB, service.runtimes, service.streams),
 		Streams:            service.streams,
-		Bus:                NewLoaderBusWithBuffer(16),
-		Engine:             &QJSLoaderEngine{},
+		Bus:                buspkg.NewLoaderBusWithBuffer(16),
+		Engine:             &loaderspkg.QJSLoaderEngine{},
 		ProjectAgentRunner: service.projectService(),
 	})
 }
 
-func loaderEventsContain(events []LoaderEvent, eventType string) bool {
+func loaderEventsContain(events []loaderspkg.LoaderEvent, eventType string) bool {
 	for _, event := range events {
 		if event.Type == eventType {
 			return true
@@ -304,8 +307,8 @@ func loaderEventsContain(events []LoaderEvent, eventType string) bool {
 	return false
 }
 
-func envItemsByName(items []SessionEnvVar) map[string]SessionEnvVar {
-	env := make(map[string]SessionEnvVar, len(items))
+func envItemsByName(items []modelpkg.SessionEnvVar) map[string]modelpkg.SessionEnvVar {
+	env := make(map[string]modelpkg.SessionEnvVar, len(items))
 	for _, item := range items {
 		env[item.Name] = item
 	}
