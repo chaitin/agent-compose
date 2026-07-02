@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -27,7 +28,73 @@ func NewStore(di do.Injector) (*Store, error) {
 	if err := os.MkdirAll(config.SessionRoot, 0o755); err != nil {
 		return nil, fmt.Errorf("create session root: %w", err)
 	}
-	return &Store{config: config}, nil
+	s := &Store{config: config}
+	s.convergeOrphanedRunningCells()
+	return s, nil
+}
+
+// convergeOrphanedRunningCells recovers cell state left behind when an agent
+// run is interrupted by a daemon restart. It runs once from NewStore, i.e.
+// before the server serves any request, so no run is active at this point and
+// every cell persisted with Running=true is an orphan. Without this, the UI
+// would stay stuck on "replying" and block further interaction with the
+// session. Orphan cells are marked finished (non-success, non-zero exit) with
+// an explanatory StopReason. Reads/writes the raw cells.json without hydration
+// so artifact files are not duplicated into cells.json. Best-effort: per-session
+// errors are logged and skipped.
+//
+// This MUST run only at startup. Calling it while a run is active would
+// incorrectly mark a genuinely running cell as finished.
+func (s *Store) convergeOrphanedRunningCells() {
+	entries, err := os.ReadDir(s.config.SessionRoot)
+	if err != nil {
+		slog.Warn("orphan cell recovery: read session root failed", "error", err)
+		return
+	}
+	const note = "run interrupted by daemon restart"
+	converged := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		sessionID := entry.Name()
+		path := filepath.Join(s.sessionDir(sessionID), "state", "cells.json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				slog.Warn("orphan cell recovery: read cells failed", "session_id", sessionID, "error", err)
+			}
+			continue
+		}
+		if len(data) == 0 {
+			continue
+		}
+		var cells []NotebookCell
+		if err := json.Unmarshal(data, &cells); err != nil {
+			slog.Warn("orphan cell recovery: decode cells failed", "session_id", sessionID, "error", err)
+			continue
+		}
+		changed := false
+		for i := range cells {
+			if !cells[i].Running {
+				continue
+			}
+			cells[i].Running = false
+			cells[i].Success = false
+			cells[i].ExitCode = 1
+			cells[i].StopReason = note
+			changed = true
+			converged++
+		}
+		if changed {
+			if err := s.saveCells(sessionID, cells); err != nil {
+				slog.Warn("orphan cell recovery: save cells failed", "session_id", sessionID, "error", err)
+			}
+		}
+	}
+	if converged > 0 {
+		slog.Info("orphan cell recovery: converged interrupted cells", "count", converged)
+	}
 }
 
 func cloneSessionWorkspace(item *SessionWorkspace) *SessionWorkspace {
