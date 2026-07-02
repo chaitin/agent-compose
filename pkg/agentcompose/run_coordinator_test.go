@@ -1193,18 +1193,16 @@ func newRunServiceLoaderManager(t testing.TB, service *Service) *LoaderManager {
 		componentStreams = service.streams.componentBroker()
 	}
 	return newTestLoaderManager(t, loaderspkg.ManagerDeps{
-		Config:   service.config,
-		RootCtx:  context.Background(),
-		Store:    service.store,
-		ConfigDB: service.configDB,
-		Driver:   service.driver,
-		Executor: loaderspkg.NewExecutor(service.config, service.store, service.configDB, service.runtimes, componentStreams),
-		Streams:  componentStreams,
-		Bus:      NewLoaderBusWithBuffer(16),
-		Engine:   &QJSLoaderEngine{},
-		ProjectAgentRunner: serviceProjectAgentRunner{
-			service: service,
-		},
+		Config:             service.config,
+		RootCtx:            context.Background(),
+		Store:              service.store,
+		ConfigDB:           service.configDB,
+		Driver:             service.driver,
+		Executor:           loaderspkg.NewExecutor(service.config, service.store, service.configDB, service.runtimes, componentStreams),
+		Streams:            componentStreams,
+		Bus:                NewLoaderBusWithBuffer(16),
+		Engine:             &QJSLoaderEngine{},
+		ProjectAgentRunner: service.projectService(),
 	})
 }
 
