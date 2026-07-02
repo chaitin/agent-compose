@@ -8,6 +8,7 @@ import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	loaderspkg "agent-compose/pkg/loaders"
+	projectspkg "agent-compose/pkg/projects"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
@@ -76,5 +77,5 @@ func newProjectServiceInlineSchedulerScriptSpec(name string, script string) *age
 }
 
 func projectSpecResponse(spec *compose.NormalizedProjectSpec) *agentcomposev2.ProjectSpec {
-	return ProjectSpecResponse(spec)
+	return projectspkg.ProjectSpecResponse(spec)
 }

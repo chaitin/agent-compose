@@ -17,10 +17,10 @@ type projectRunStreamSink struct {
 
 func (s *Service) projectService() *ProjectService {
 	if s.projectHandlers != nil {
-		s.projectHandlers.UpdateDeps(ProjectServiceDeps(s))
+		s.projectHandlers.UpdateDeps(projectServiceDeps(s))
 		return s.projectHandlers
 	}
-	s.projectHandlers = NewProjectServiceFromDeps(s)
+	s.projectHandlers = newProjectServiceFromDeps(s)
 	if s.loaders != nil {
 		s.loaders.SetProjectAgentRunner(s.projectHandlers)
 	}

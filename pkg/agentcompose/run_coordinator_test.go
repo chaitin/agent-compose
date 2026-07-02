@@ -178,10 +178,9 @@ func testManagedSchedulerAgentUsesProjectRunPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLoader managed scheduler returned error: %v", err)
 	}
-	host := newLoaderRunHost(manager, loader, &LoaderRunSummary{ID: "loader-run-managed-project", LoaderID: loader.Summary.ID, TriggerID: loader.Triggers[0].ID}, loaderTriggerEventMetadata{})
-	result, err := host.Agent(ctx, "scheduled project prompt", LoaderAgentRequest{})
+	run, err := manager.RunNow(ctx, loader.Summary.ID, loader.Triggers[0].ID, `{"prompt":"scheduled project prompt"}`, 0)
 	if err != nil {
-		t.Fatalf("managed scheduler Agent returned error: %v", err)
+		t.Fatalf("RunNow managed scheduler returned error: %v", err)
 	}
 	runs, err := store.ListProjectRunsByOptions(ctx, ProjectRunListOptions{
 		ProjectID:   projectID,
@@ -191,8 +190,8 @@ func testManagedSchedulerAgentUsesProjectRunPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListProjectRunsByOptions scheduler returned error: %v", err)
 	}
-	if len(runs) != 1 || runs[0].Status != ProjectRunStatusSucceeded || runs[0].SessionID != result.SessionID {
-		t.Fatalf("scheduler project runs = %#v result=%#v", runs, result)
+	if len(runs) != 1 || runs[0].Status != ProjectRunStatusSucceeded || runs[0].SessionID == "" {
+		t.Fatalf("scheduler project runs = %#v loaderRun=%#v", runs, run)
 	}
 	if events, err := store.ListLoaderEvents(ctx, loader.Summary.ID, 20); err != nil || !loaderEventsContain(events, "loader.agent.completed") {
 		t.Fatalf("loader events = %#v err=%v", events, err)

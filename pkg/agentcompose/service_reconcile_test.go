@@ -26,7 +26,7 @@ func testServiceReconcilePersistedSessionsMarksStaleProjectRunsFailed(t *testing
 	if err := os.MkdirAll(service.config.SessionRoot, 0o755); err != nil {
 		t.Fatalf("create session root: %v", err)
 	}
-	coordinator := NewRunCoordinator(store)
+	coordinator := projects.NewRunCoordinator(store)
 
 	stalePending, err := coordinator.BeginRun(ctx, ProjectRunStartRequest{
 		ProjectID:       projectID,

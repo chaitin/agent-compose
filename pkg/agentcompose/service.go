@@ -19,6 +19,8 @@ import (
 	"agent-compose/pkg/dashboard"
 	"agent-compose/pkg/images"
 	llmpkg "agent-compose/pkg/llm"
+	"agent-compose/pkg/loaders"
+	"agent-compose/pkg/model"
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/settings"
 	"agent-compose/pkg/workspaces"
@@ -112,12 +114,12 @@ func NewService(di do.Injector) (*Service, error) {
 		events:             NewEventDispatcher(do.MustInvoke[context.Context](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderBus](di)),
 		sessions:           do.MustInvoke[*SessionRPCBridge](di),
 		agentHandlers:      agents.NewService(config, do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*SessionRPCBridge](di).componentBridge(), do.MustInvoke[*SessionStreamBroker](di).componentBroker()),
-		loaderHandlers:     NewLoaderService(do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderManager](di), do.MustInvoke[*LoaderBus](di)),
+		loaderHandlers:     loaders.NewService(do.MustInvoke[*ConfigStore](di), do.MustInvoke[*LoaderManager](di), do.MustInvoke[*LoaderBus](di)),
 		projectHandlers:    projectHandlers,
 		startedAt:          time.Now().UTC(),
 	}
 	if service.projectHandlers == nil {
-		service.projectHandlers = NewProjectServiceFromDeps(service)
+		service.projectHandlers = newProjectServiceFromDeps(service)
 	}
 	service.loaders.SetProjectAgentRunner(service.projectHandlers)
 	service.sessionHandlers = sessions.NewService(service.store, service.executor, service.bus, service.streams.componentBroker(), service.sessions.componentBridge(), service.resolveSessionAgentConfigForSessions)
@@ -132,23 +134,23 @@ func Setup(di do.Injector) {
 }
 
 func Register(di do.Injector) {
-	do.Provide(di, NewStore)
-	do.Provide(di, NewConfigStore)
+	do.Provide(di, newStore)
+	do.Provide(di, newConfigStore)
 	do.Provide(di, NewRuntimeProvider)
 	do.Provide(di, NewDriver)
 	do.Provide(di, NewExecutor)
-	do.Provide(di, NewLLMClient)
+	do.Provide(di, newLLMClient)
 	do.Provide(di, capabilities.NewCapabilityProvider)
 	do.Provide(di, capabilities.NewCapProxyServer)
 	do.Provide(di, NewLoaderBus)
 	do.Provide(di, NewSessionStreamBroker)
 	do.Provide(di, dashboard.NewDashboardOverviewAggregator)
 	do.Provide(di, dashboard.NewDashboardOverviewHub)
-	do.Provide(di, NewLoaderEngine)
+	do.Provide(di, newLoaderEngine)
 	do.Provide(di, NewSessionRPCBridge)
 	do.Provide(di, newImageBackends)
-	do.Provide(di, NewLoaderManager)
-	do.Provide(di, NewProjectService)
+	do.Provide(di, newLoaderManager)
+	do.Provide(di, newProjectService)
 	do.Provide(di, NewService)
 
 	app := do.MustInvoke[*echo.Echo](di)
@@ -334,7 +336,7 @@ type agentExecutionConfig struct {
 }
 
 func (s *Service) resolveSessionAgentConfig(ctx context.Context, session *Session, requested string) agentExecutionConfig {
-	provider := normalizeAgentKind(requested)
+	provider := model.NormalizeAgentProvider(requested)
 	config := agentExecutionConfig{Provider: provider}
 	if session == nil {
 		return config
@@ -361,19 +363,12 @@ func (s *Service) resolveSessionAgentConfigForSessions(ctx context.Context, sess
 }
 
 func agentExecutionConfigFromDefinition(agent AgentDefinition, fallbackProvider string) agentExecutionConfig {
-	provider := normalizeAgentKind(agent.Provider)
-	if provider == "" {
-		provider = normalizeAgentKind(fallbackProvider)
-	}
-	model := strings.TrimSpace(agent.Model)
-	if provider == "opencode" {
-		model = strings.TrimSpace(sessionEnvMap(agent.EnvItems)["OPENCODE_MODEL"])
-	}
+	ownerConfig := agents.AgentExecutionConfigFromDefinition(agent, fallbackProvider)
 	return agentExecutionConfig{
-		Provider:          provider,
-		AgentDefinitionID: strings.TrimSpace(agent.ID),
-		Model:             model,
-		EnvItems:          append([]SessionEnvVar(nil), agent.EnvItems...),
+		Provider:          ownerConfig.Provider,
+		AgentDefinitionID: ownerConfig.AgentDefinitionID,
+		Model:             ownerConfig.Model,
+		EnvItems:          append([]SessionEnvVar(nil), ownerConfig.EnvItems...),
 	}
 }
 

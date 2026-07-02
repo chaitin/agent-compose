@@ -1,15 +1,16 @@
 package agentcompose
 
 import (
-	appconfig "agent-compose/pkg/config"
-	llmpkg "agent-compose/pkg/llm"
-	"agent-compose/pkg/model"
 	"context"
 	"net/http"
 
 	protocolbridge "github.com/chaitin/ai-api-protocol-bridge"
 	"github.com/labstack/echo/v4"
 	"github.com/samber/do/v2"
+
+	appconfig "agent-compose/pkg/config"
+	llmpkg "agent-compose/pkg/llm"
+	"agent-compose/pkg/model"
 )
 
 const (
@@ -38,7 +39,7 @@ type LLMClient struct {
 	client   *http.Client
 }
 
-func NewLLMClient(di do.Injector) (*LLMClient, error) {
+func newLLMClient(di do.Injector) (*LLMClient, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
 	client := llmpkg.NewClient(config, do.MustInvoke[*ConfigStore](di), nil)
 	return &LLMClient{config: config, configDB: do.MustInvoke[*ConfigStore](di), client: clientHTTPClient(client, config)}, nil

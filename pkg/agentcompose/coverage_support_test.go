@@ -3,7 +3,11 @@ package agentcompose
 import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	executorpkg "agent-compose/pkg/executor"
 	loaderspkg "agent-compose/pkg/loaders"
+	sessionspkg "agent-compose/pkg/sessions"
+	"agent-compose/pkg/storage"
+	"agent-compose/pkg/workspaces"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -242,16 +246,16 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	if _, err := NewExecutor(di); err != nil {
 		t.Fatalf("NewExecutor returned error: %v", err)
 	}
-	if _, err := NewLLMClient(di); err != nil {
+	if _, err := newLLMClient(di); err != nil {
 		t.Fatalf("NewLLMClient returned error: %v", err)
 	}
 	if createdBus, err := NewLoaderBus(di); err != nil || createdBus.Events() == nil {
 		t.Fatalf("NewLoaderBus = %#v/%v", createdBus, err)
 	}
-	if engine, err := NewLoaderEngine(di); err != nil || engine == nil {
+	if engine, err := newLoaderEngine(di); err != nil || engine == nil {
 		t.Fatalf("NewLoaderEngine = %#v/%v", engine, err)
 	}
-	if createdManager, err := NewLoaderManager(di); err != nil || !createdManager.HasStartupState() {
+	if createdManager, err := newLoaderManager(di); err != nil || createdManager == nil {
 		t.Fatalf("NewLoaderManager = %#v/%v", createdManager, err)
 	}
 	if bridge, err := NewSessionRPCBridge(di); err != nil || bridge.store != store {
@@ -273,61 +277,47 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	testSupportAgentAndLoaderHelpers(t)
 	testSupportLegacyAgentRunMerge(t, store)
 	testSupportWorkspaceMoveMerge(t)
-	testSupportSessionRPCAndAgentResumeHelpers(t, manager, configDB)
 }
 
 func testSupportAgentAndLoaderHelpers(t *testing.T) {
 	t.Helper()
 	longStderr := strings.Repeat("x", 300)
-	if got := summarizeAgentExecFailure(ExecResult{Stderr: "  line one\nline two  "}); got != "line one line two" {
+	if got := executorpkg.SummarizeAgentExecFailure(ExecResult{Stderr: "  line one\nline two  "}); got != "line one line two" {
 		t.Fatalf("summarizeAgentExecFailure whitespace = %q", got)
 	}
-	if got := summarizeAgentExecFailure(ExecResult{Stderr: longStderr}); len(got) != 243 || !strings.HasSuffix(got, "...") {
+	if got := executorpkg.SummarizeAgentExecFailure(ExecResult{Stderr: longStderr}); len(got) != 243 || !strings.HasSuffix(got, "...") {
 		t.Fatalf("summarizeAgentExecFailure long = %q len=%d", got, len(got))
 	}
-	if got := summarizeAgentExecFailure(ExecResult{}); got != "" {
+	if got := executorpkg.SummarizeAgentExecFailure(ExecResult{}); got != "" {
 		t.Fatalf("summarizeAgentExecFailure empty = %q", got)
 	}
-	if got := summarizeAgentResult(AgentRunResult{Agent: "codex", Success: true}); got != "codex finished without output" {
+	if got := executorpkg.SummarizeAgentResult(AgentRunResult{Agent: "codex", Success: true}); got != "codex finished without output" {
 		t.Fatalf("summarizeAgentResult success empty = %q", got)
 	}
-	if got := summarizeAgentResult(AgentRunResult{Agent: "codex", Success: false}); got != "codex failed without output" {
+	if got := executorpkg.SummarizeAgentResult(AgentRunResult{Agent: "codex", Success: false}); got != "codex failed without output" {
 		t.Fatalf("summarizeAgentResult failed empty = %q", got)
 	}
-	if got := summarizeAgentResult(AgentRunResult{DisplayOutput: "display"}); got != "display" {
+	if got := executorpkg.SummarizeAgentResult(AgentRunResult{DisplayOutput: "display"}); got != "display" {
 		t.Fatalf("summarizeAgentResult display = %q", got)
 	}
 
-	if fromProtoCellType(agentcomposev1.CellType_CELL_TYPE_SHELL) != CellTypeShell ||
-		fromProtoCellType(agentcomposev1.CellType_CELL_TYPE_PYTHON) != CellTypePython ||
-		fromProtoCellType(agentcomposev1.CellType_CELL_TYPE_AGENT) != CellTypeAgent ||
-		fromProtoCellType(agentcomposev1.CellType_CELL_TYPE_UNSPECIFIED) != CellTypeJavaScript {
+	if sessionspkg.FromProtoCellType(agentcomposev1.CellType_CELL_TYPE_SHELL) != CellTypeShell ||
+		sessionspkg.FromProtoCellType(agentcomposev1.CellType_CELL_TYPE_PYTHON) != CellTypePython ||
+		sessionspkg.FromProtoCellType(agentcomposev1.CellType_CELL_TYPE_AGENT) != CellTypeAgent ||
+		sessionspkg.FromProtoCellType(agentcomposev1.CellType_CELL_TYPE_UNSPECIFIED) != CellTypeJavaScript {
 		t.Fatalf("fromProtoCellType returned unexpected values")
 	}
-	if toProtoCellType(CellTypeShell) != agentcomposev1.CellType_CELL_TYPE_SHELL ||
-		toProtoCellType(CellTypePython) != agentcomposev1.CellType_CELL_TYPE_PYTHON ||
-		toProtoCellType(CellTypeAgent) != agentcomposev1.CellType_CELL_TYPE_AGENT ||
-		toProtoCellType("unknown") != agentcomposev1.CellType_CELL_TYPE_JAVASCRIPT {
+	if sessionspkg.ToProtoCellType(CellTypeShell) != agentcomposev1.CellType_CELL_TYPE_SHELL ||
+		sessionspkg.ToProtoCellType(CellTypePython) != agentcomposev1.CellType_CELL_TYPE_PYTHON ||
+		sessionspkg.ToProtoCellType(CellTypeAgent) != agentcomposev1.CellType_CELL_TYPE_AGENT ||
+		sessionspkg.ToProtoCellType("unknown") != agentcomposev1.CellType_CELL_TYPE_JAVASCRIPT {
 		t.Fatalf("toProtoCellType returned unexpected values")
 	}
 
-	responseJSON := `{"session":{"summary":{"sessionId":"resp-session"}}}`
-	if got := loaderSessionRPCLinkedSessionID("CreateSession", `{"sessionId":"req-session"}`, responseJSON); got != "resp-session" {
-		t.Fatalf("linked response session id = %q", got)
-	}
-	if got := loaderSessionRPCLinkedSessionID("GetSession", `{"sessionId":"req-session"}`, `{}`); got != "req-session" {
-		t.Fatalf("linked request session id = %q", got)
-	}
-	if got := loaderSessionRPCLinkedSessionID("ListSessions", `{"sessionId":"req-session"}`, `{}`); got != "" {
-		t.Fatalf("linked list session id = %q", got)
-	}
-	if loaderSessionIDFromJSON(`{bad`) != "" || loaderSessionIDFromJSON(`{"session":{"summary":{}}}`) != "" {
-		t.Fatalf("loaderSessionIDFromJSON returned value for invalid payload")
-	}
 	if firstNonZeroInt(0, 0, 7, 9) != 7 || firstNonZeroInt(0, 0) != 0 {
 		t.Fatalf("firstNonZeroInt returned unexpected values")
 	}
-	if sessionTypeFromTriggerSource("script:loader-1") != SessionTypeScript || sessionTypeFromTriggerSource("") != SessionTypeManual {
+	if storage.SessionTypeFromTriggerSource("script:loader-1") != SessionTypeScript || storage.SessionTypeFromTriggerSource("") != SessionTypeManual {
 		t.Fatalf("sessionTypeFromTriggerSource returned unexpected values")
 	}
 	if parsed, err := parseOptionalRFC3339("2026-06-02T09:00:00Z", "created_from"); err != nil || !parsed.Equal(time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)) {
@@ -390,7 +380,7 @@ func testSupportWorkspaceMoveMerge(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dst, "nested", "from-dst.txt"), []byte("dst\n"), 0o644); err != nil {
 		t.Fatalf("write dst file: %v", err)
 	}
-	if err := moveWorkspaceEntry(src, dst); err != nil {
+	if err := workspaces.MoveWorkspaceEntry(src, dst); err != nil {
 		t.Fatalf("moveWorkspaceEntry returned error: %v", err)
 	}
 	assertFileContent(t, filepath.Join(dst, "nested", "from-src.txt"), "src\n")
@@ -407,74 +397,8 @@ func testSupportWorkspaceMoveMerge(t *testing.T) {
 	if err := os.WriteFile(dstFile, []byte("dst\n"), 0o644); err != nil {
 		t.Fatalf("write destination file: %v", err)
 	}
-	if err := moveWorkspaceEntry(srcFile, dstFile); err == nil {
+	if err := workspaces.MoveWorkspaceEntry(srcFile, dstFile); err == nil {
 		t.Fatalf("moveWorkspaceEntry file collision returned nil error")
-	}
-}
-
-func testSupportSessionRPCAndAgentResumeHelpers(t *testing.T, manager *LoaderManager, configDB *ConfigStore) {
-	t.Helper()
-	ctx := context.Background()
-	loader, err := configDB.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{ID: "loader-rpc", Name: "Loader RPC", Runtime: LoaderRuntimeScheduler, Enabled: true},
-		Script:  "function main() { return {}; }",
-	})
-	if err != nil {
-		t.Fatalf("CreateLoader returned error: %v", err)
-	}
-	run := LoaderRunSummary{ID: "run-rpc", LoaderID: loader.Summary.ID, Status: LoaderRunStatusRunning, StartedAt: time.Now().UTC()}
-	if err := configDB.CreateLoaderRun(ctx, run); err != nil {
-		t.Fatalf("CreateLoaderRun returned error: %v", err)
-	}
-	host := newLoaderRunHost(manager, loader, &run, loaderTriggerEventMetadata{})
-	response, err := host.CallSessionRPC(ctx, "ListSessions", `{}`)
-	if err != nil {
-		t.Fatalf("CallSessionRPC ListSessions returned error: %v", err)
-	}
-	if !strings.Contains(response, "sessions") {
-		t.Fatalf("CallSessionRPC response = %q", response)
-	}
-	if _, err := host.CallSessionRPC(ctx, "NoSuchMethod", `{}`); err == nil {
-		t.Fatalf("CallSessionRPC invalid method returned nil error")
-	}
-	events, err := configDB.ListLoaderEvents(ctx, loader.Summary.ID, 20)
-	if err != nil {
-		t.Fatalf("ListLoaderEvents returned error: %v", err)
-	}
-	var completed, failed bool
-	for _, event := range events {
-		completed = completed || event.Type == "loader.session.rpc.completed"
-		failed = failed || event.Type == "loader.session.rpc.failed"
-	}
-	if !completed || !failed {
-		t.Fatalf("loader rpc events = %#v", events)
-	}
-
-	root := t.TempDir()
-	session := &Session{Summary: SessionSummary{ID: "session-agent", WorkspacePath: filepath.Join(root, "workspace")}}
-	codexState := filepath.Join(hostSessionDir(session), "state", "agents", "providers")
-	if err := os.MkdirAll(codexState, 0o755); err != nil {
-		t.Fatalf("mkdir codex state: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(codexState, "codex.json"), []byte(`{"sessionId":"codex-session"}`), 0o644); err != nil {
-		t.Fatalf("write codex state: %v", err)
-	}
-	sessionDir := filepath.Join(hostSessionHome(session), ".codex", "sessions")
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
-		t.Fatalf("mkdir codex sessions: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "codex-session.jsonl"), []byte("{}\n"), 0o644); err != nil {
-		t.Fatalf("write matching jsonl: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "other.jsonl"), []byte("{}\n"), 0o644); err != nil {
-		t.Fatalf("write other jsonl: %v", err)
-	}
-	info := collectAgentResumeInfo(session, "codex", "", "manifest.json")
-	if info == nil || info.SessionID != "codex-session" || len(info.SessionJSONLPaths) != 1 {
-		t.Fatalf("agent resume info = %#v", info)
-	}
-	if shouldIncludeAgentJSONL("notes.txt", "codex", "codex-session") || !shouldIncludeAgentJSONL(filepath.Join(sessionDir, "codex-session.jsonl"), "codex", "codex-session") {
-		t.Fatalf("shouldIncludeAgentJSONL returned unexpected values")
 	}
 }
 

@@ -25,7 +25,7 @@ func TestServiceProjectServiceCachesHandler(t *testing.T) {
 		t.Fatalf("projectService rebuilt handler: first=%p second=%p", first, second)
 	}
 
-	prebuilt := NewProjectServiceFromDeps(nil)
+	prebuilt := newProjectServiceFromDeps(nil)
 	service = &Service{projectHandlers: prebuilt}
 	if got := service.projectService(); got != prebuilt {
 		t.Fatalf("projectService ignored prebuilt handler: got=%p want=%p", got, prebuilt)

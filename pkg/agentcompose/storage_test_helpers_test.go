@@ -2,12 +2,13 @@ package agentcompose
 
 import (
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/storage"
 	"testing"
 )
 
 func mustTestStore(t testing.TB, config *appconfig.Config) *Store {
 	t.Helper()
-	store, err := NewStoreFromConfig(config)
+	store, err := storage.NewStoreFromConfig(config)
 	if err != nil {
 		t.Fatalf("NewStoreFromConfig returned error: %v", err)
 	}
@@ -16,7 +17,7 @@ func mustTestStore(t testing.TB, config *appconfig.Config) *Store {
 
 func mustTestConfigStore(t testing.TB, config *appconfig.Config) *ConfigStore {
 	t.Helper()
-	store, err := NewConfigStoreFromConfig(config)
+	store, err := storage.NewConfigStoreFromConfig(config)
 	if err != nil {
 		t.Fatalf("NewConfigStoreFromConfig returned error: %v", err)
 	}

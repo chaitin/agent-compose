@@ -7,6 +7,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"agent-compose/pkg/loaders"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
@@ -14,7 +15,7 @@ func (s *Service) loaderService() *LoaderService {
 	if s.loaderHandlers != nil {
 		return s.loaderHandlers
 	}
-	s.loaderHandlers = NewLoaderService(s.configDB, s.loaders, s.bus)
+	s.loaderHandlers = loaders.NewService(s.configDB, s.loaders, s.bus)
 	return s.loaderHandlers
 }
 

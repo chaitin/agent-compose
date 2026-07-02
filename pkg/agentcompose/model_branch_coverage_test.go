@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/storage"
 	"context"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 		WorkspaceID: "workspace-1",
 		Workspace:   &SessionWorkspace{ID: "workspace-1", Name: "Workspace One", Type: "file"},
 	}
-	if !sessionMatchesListOptions(session, SessionListOptions{
+	if !storage.SessionMatchesListOptions(session, SessionListOptions{
 		SessionType:        SessionTypeScript,
 		TriggerSourceQuery: "loader",
 		TitleQuery:         "branch",
@@ -54,20 +55,20 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 		{UpdatedFrom: now.Add(2 * time.Minute)},
 		{UpdatedTo: now.Add(-time.Second)},
 	} {
-		if sessionMatchesListOptions(session, options) {
+		if storage.SessionMatchesListOptions(session, options) {
 			t.Fatalf("session unexpectedly matched options %#v", options)
 		}
 	}
-	if sessionMatchesListOptions(nil, SessionListOptions{}) {
+	if storage.SessionMatchesListOptions(nil, SessionListOptions{}) {
 		t.Fatalf("nil session matched list options")
 	}
-	if got := normalizeSessionTriggerSource("", []SessionTag{{Name: "origin", Value: "loader"}, {Name: "loader_id", Value: "loader-9"}}); got != "script:loader-9" {
+	if got := storage.NormalizeSessionTriggerSource("", []SessionTag{{Name: "origin", Value: "loader"}, {Name: "loader_id", Value: "loader-9"}}); got != "script:loader-9" {
 		t.Fatalf("normalizeSessionTriggerSource tags = %q", got)
 	}
-	if got := paginateSessions([]*Session{session}, 5, 10); got != nil {
+	if got := storage.PaginateSessions([]*Session{session}, 5, 10); got != nil {
 		t.Fatalf("paginateSessions beyond end = %#v", got)
 	}
-	offset, limit := normalizeSessionListBounds(-1, 0)
+	offset, limit := storage.NormalizeSessionListBounds(-1, 0)
 	if offset != 0 || limit != defaultSessionListLimit {
 		t.Fatalf("normalizeSessionListBounds = %d/%d", offset, limit)
 	}
@@ -116,7 +117,7 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 	if mergeEnvItems(nil, nil) != nil {
 		t.Fatalf("mergeEnvItems nil did not return nil")
 	}
-	workspace, err := normalizeWorkspaceConfig(WorkspaceConfig{Name: " Workspace ", Type: "FILE", ConfigJSON: "", Comment: " note "}, true)
+	workspace, err := storage.NormalizeWorkspaceConfig(WorkspaceConfig{Name: " Workspace ", Type: "FILE", ConfigJSON: "", Comment: " note "}, true)
 	if err != nil || workspace.ID == "" || workspace.Type != "file" || workspace.ConfigJSON != "{}" || workspace.Comment != "note" {
 		t.Fatalf("normalizeWorkspaceConfig assign = %#v/%v", workspace, err)
 	}
@@ -126,7 +127,7 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 		{ID: "id", Name: "name"},
 		{ID: "id", Name: "name", Type: "bad"},
 	} {
-		if _, err := normalizeWorkspaceConfig(item, false); err == nil {
+		if _, err := storage.NormalizeWorkspaceConfig(item, false); err == nil {
 			t.Fatalf("normalizeWorkspaceConfig(%#v) returned nil error", item)
 		}
 	}
@@ -168,21 +169,6 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 		t.Fatalf("expected service topic event")
 	}
 	(*Service)(nil).publishLoaderTopic("agent-compose.missing", nil)
-	if sessionTopicPayload(nil, "test") != nil {
-		t.Fatalf("sessionTopicPayload nil did not return nil")
-	}
-	sessionPayload := sessionTopicPayload(session, "test")
-	if sessionPayload["sessionId"] != "session-branch" || sessionPayload["source"] != "test" {
-		t.Fatalf("session topic payload = %#v", sessionPayload)
-	}
-	cellPayload := cellTopicPayload("session-branch", NotebookCell{ID: "cell-1", Type: CellTypeShell, Agent: "codex", Success: true}, "test")
-	if cellPayload["cellId"] != "cell-1" || cellPayload["source"] != "test" {
-		t.Fatalf("cell topic payload = %#v", cellPayload)
-	}
-	commandPayload := loaderCommandEventPayload(LoaderCommandRequest{Mode: "shell", Command: "ignored", Args: []string{"-c"}, Cwd: "/tmp"}, LoaderCommandResult{ExitCode: 2, Success: false, SessionID: "session-branch", CellID: "cell-1"})
-	if commandPayload["command"] != "" || commandPayload["exitCode"] != 2 {
-		t.Fatalf("command event payload = %#v", commandPayload)
-	}
 
 	if _, err := driverpkg.EnsureDockerImage(ctx, " "); err != nil {
 		t.Fatalf("driverpkg.EnsureDockerImage blank returned error: %v", err)

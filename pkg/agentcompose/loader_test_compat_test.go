@@ -13,6 +13,8 @@ import (
 	"time"
 
 	appconfig "agent-compose/pkg/config"
+	executorpkg "agent-compose/pkg/executor"
+	"agent-compose/pkg/images"
 	loaderspkg "agent-compose/pkg/loaders"
 )
 
@@ -81,7 +83,7 @@ func newTestLoaderManager(t testing.TB, deps loaderspkg.ManagerDeps) *LoaderMana
 		deps.Engine = &QJSLoaderEngine{}
 	}
 	if deps.Images == nil {
-		deps.Images = NewDockerImageBackend()
+		deps.Images = images.NewDockerImageBackend()
 	}
 	if deps.Executor == nil {
 		deps.Executor = loaderspkg.NewExecutor(deps.Config, deps.Store, deps.ConfigDB, nil, nil)
@@ -209,7 +211,7 @@ func (r *fakeLoaderAgentRuntime) ExecStream(ctx context.Context, session *Sessio
 		if r.commandNoPayload {
 			return ExecResult{Stdout: stdout, Stderr: stderr, Output: output, ExitCode: r.commandExitCode, Success: r.commandExitCode == 0}, nil
 		}
-		payloadText := commandResultPrefix + string(payload)
+		payloadText := executorpkg.CommandResultPrefix + string(payload)
 		return ExecResult{Stdout: payloadText, Stderr: "", Output: output + payloadText, ExitCode: r.commandExitCode, Success: r.commandExitCode == 0}, nil
 	}
 	if spec.Command == "bash" || spec.Command == "node" || spec.Command == "python3" {
@@ -249,7 +251,7 @@ func (r *fakeLoaderAgentRuntime) ExecStream(ctx context.Context, session *Sessio
 		output := firstNonEmpty(r.agentOutput, stdout+stderr)
 		return ExecResult{Stdout: stdout, Stderr: stderr, Output: output, ExitCode: exitCode, Success: exitCode == 0}, nil
 	}
-	payload := agentResultPrefix + fmt.Sprintf(`{"provider":%q,"agent":%q,"sessionId":"agent-runtime-session","stopReason":"completed","finalText":"loader agent transcript","transcript":"loader agent transcript","success":%t,"exitCode":%d}`, provider, provider, exitCode == 0, exitCode)
+	payload := executorpkg.AgentResultPrefix + fmt.Sprintf(`{"provider":%q,"agent":%q,"sessionId":"agent-runtime-session","stopReason":"completed","finalText":"loader agent transcript","transcript":"loader agent transcript","success":%t,"exitCode":%d}`, provider, provider, exitCode == 0, exitCode)
 	return ExecResult{Stdout: payload, Stderr: "loader agent transcript\n", Output: "loader agent transcript\n" + payload, ExitCode: exitCode, Success: exitCode == 0}, nil
 }
 

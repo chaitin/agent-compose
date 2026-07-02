@@ -3,7 +3,10 @@ package agentcompose
 import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	executorpkg "agent-compose/pkg/executor"
 	loaderspkg "agent-compose/pkg/loaders"
+	sessionspkg "agent-compose/pkg/sessions"
+	settingspkg "agent-compose/pkg/settings"
 	"context"
 	"fmt"
 	"net/http"
@@ -407,25 +410,18 @@ func testServiceProtoConversionHelpers(t *testing.T) {
 			{Name: "SECRET", Value: "secret-value", Secret: true},
 		},
 	}
-	detail := toProtoSessionDetail(session)
+	detail := sessionspkg.ToProtoSessionDetail(session)
 	if detail.GetSummary().GetSessionId() != "session-proto" || detail.GetWorkspace().GetId() != "workspace-1" {
 		t.Fatalf("session detail = %+v", detail)
 	}
 	if len(detail.GetEnvItems()) != 2 || detail.GetEnvItems()[1].GetValue() != "********" {
 		t.Fatalf("session env items = %+v", detail.GetEnvItems())
 	}
-	globalEnv := toProtoGlobalEnvConfig([]SessionEnvVar{{Name: "VISIBLE", Value: "visible"}, {Name: "TOKEN", Value: "token", Secret: true}})
+	globalEnv := settingspkg.ToProtoGlobalEnvConfig([]SessionEnvVar{{Name: "VISIBLE", Value: "visible"}, {Name: "TOKEN", Value: "token", Secret: true}})
 	if len(globalEnv.GetEnvItems()) != 2 || globalEnv.GetEnvItems()[1].GetValue() != "********" {
 		t.Fatalf("global env = %+v", globalEnv.GetEnvItems())
 	}
-	if toSessionWorkspaceSnapshot(WorkspaceConfig{ID: "ws", Name: "WS", Type: "git", ConfigJSON: "{}"}).Type != "git" {
-		t.Fatalf("workspace snapshot conversion failed")
-	}
-	workspaceProto := toProtoWorkspaceConfig(WorkspaceConfig{ID: "ws", Name: "WS", Type: "git", ConfigJSON: "{}", Comment: "note", CreatedAt: now, UpdatedAt: now})
-	if workspaceProto.GetId() != "ws" || workspaceProto.GetComment() != "note" {
-		t.Fatalf("workspace proto = %+v", workspaceProto)
-	}
-	if toProtoSessionWorkspace(nil) != nil {
+	if sessionspkg.ToProtoSessionWorkspace(nil) != nil {
 		t.Fatalf("nil session workspace did not convert to nil")
 	}
 
@@ -444,11 +440,11 @@ func testServiceProtoConversionHelpers(t *testing.T) {
 		AgentSessionID: "agent-session",
 		StopReason:     "failed",
 	}
-	cellProto := toProtoCell(cell)
+	cellProto := sessionspkg.ToProtoCell(cell)
 	if cellProto.GetType() != agentcomposev1.CellType_CELL_TYPE_AGENT || cellProto.GetOutput() != "stdoutstderr" || cellProto.GetExitCode() != 3 {
 		t.Fatalf("cell proto = %+v", cellProto)
 	}
-	agentProto := toProtoAgentRun(cell)
+	agentProto := sessionspkg.ToProtoAgentRun(cell)
 	if agentProto.GetAgentSessionId() != "agent-session" || !agentProto.GetRunning() {
 		t.Fatalf("agent proto = %+v", agentProto)
 	}
@@ -462,17 +458,17 @@ func testServiceProtoConversionHelpers(t *testing.T) {
 		{agentcomposev1.CellType_CELL_TYPE_JAVASCRIPT, CellTypeJavaScript},
 		{agentcomposev1.CellType_CELL_TYPE_UNSPECIFIED, CellTypeJavaScript},
 	} {
-		if got := fromProtoCellType(item.proto); got != item.local {
+		if got := sessionspkg.FromProtoCellType(item.proto); got != item.local {
 			t.Fatalf("fromProtoCellType(%v) = %q, want %q", item.proto, got, item.local)
 		}
-		if got := toProtoCellType(item.local); item.local != CellTypeJavaScript && got != item.proto {
+		if got := sessionspkg.ToProtoCellType(item.local); item.local != CellTypeJavaScript && got != item.proto {
 			t.Fatalf("toProtoCellType(%q) = %v, want %v", item.local, got, item.proto)
 		}
 	}
-	if toProtoCellType("unknown") != agentcomposev1.CellType_CELL_TYPE_JAVASCRIPT {
+	if sessionspkg.ToProtoCellType("unknown") != agentcomposev1.CellType_CELL_TYPE_JAVASCRIPT {
 		t.Fatalf("unknown cell type did not map to javascript")
 	}
-	eventProto := toProtoEvent(SessionEvent{ID: "event-1", Type: "session.test", Level: "info", Message: "tested", CreatedAt: now})
+	eventProto := sessionspkg.ToProtoEvent(SessionEvent{ID: "event-1", Type: "session.test", Level: "info", Message: "tested", CreatedAt: now})
 	if eventProto.GetId() != "event-1" || eventProto.GetCreatedAt() == "" {
 		t.Fatalf("event proto = %+v", eventProto)
 	}
@@ -564,7 +560,7 @@ func TestServiceStreamingAPIs(t *testing.T) {
 
 func TestAgentTraceEventsDoNotAttachAssistantTextToLastTool(t *testing.T) {
 	t.Run("with input", func(t *testing.T) {
-		events := agentTraceEvents(`[tool:WebSearch]
+		events := executorpkg.AgentTraceEvents(`[tool:WebSearch]
 {
   "query": "first"
 }
@@ -581,7 +577,7 @@ claude answer`, time.Now())
 		}
 	})
 	t.Run("without input", func(t *testing.T) {
-		events := agentTraceEvents(`[tool:NoInputTool]
+		events := executorpkg.AgentTraceEvents(`[tool:NoInputTool]
 
 claude answer`, time.Now())
 		if len(events) != 1 {
@@ -1045,7 +1041,17 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 		t.Fatalf("loader event count = %d", len(events.Msg.GetEvents()))
 	}
 
-	manager.SetEngine(&recordingLoaderEngine{})
+	manager = newTestLoaderManager(t, loaderspkg.ManagerDeps{
+		Config:   config,
+		RootCtx:  ctx,
+		ConfigDB: configDB,
+		Engine:   &recordingLoaderEngine{},
+		Store:    store,
+		LLM:      llmClient.componentClient(),
+		Bus:      service.bus,
+	})
+	service.loaders = manager
+	service.loaderHandlers = loaderspkg.NewService(configDB, manager, service.bus)
 	runNow, err := service.RunLoaderNow(ctx, connect.NewRequest(&agentcomposev1.RunLoaderNowRequest{
 		LoaderId:    loaderID,
 		PayloadJson: `{"manual":true}`,
