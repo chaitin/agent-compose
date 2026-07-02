@@ -52,9 +52,28 @@ refactor/bootstrap-shell
 refactor/domain-models
 refactor/transport-handlers
 refactor/domain-image
+refactor/domain-dashboard
 refactor/domain-capability
 refactor/domain-project
 ```
+
+## 当前集成状态
+
+截至 `refactor/architecture-main` 当前进度：
+
+- T0 已完成：架构方案、中文方案、执行计划已保留在 `main`，重构代码未合入 `main`。
+- T1 已完成：已建立 bootstrap 兼容外壳，`agentcompose.Setup/Register/StartBackground` 保持兼容。
+- T2 已部分完成：已拆出主要 Connect handler wrapper，业务逻辑仍委托旧 `Service` 实现。
+- T3 已部分完成：
+  - `internal/agentcompose/image` 已建立，Docker/OCI/Auto image backend 与 image mapper 已迁入域包；`pkg/agentcompose` 保留 Connect 映射和兼容类型别名。
+  - `internal/agentcompose/dashboard` 已建立，dashboard overview 纯聚合、状态分类和 clone helper 已迁入域包；`pkg/agentcompose` 保留 Store/ConfigStore 适配、hub 和 Connect handler。
+- 当前验证：`refactor/architecture-main` 上 `go test ./pkg/agentcompose ./cmd/agent-compose` 通过，`task build` 通过。
+
+下一批优先级：
+
+- 继续完成 T3：优先处理 `capability` 与 `events`，补齐低耦合域包种子。
+- T4 开始前先收敛 `project` 与 `loader` 的边界，避免同时移动高耦合 service、store 和 runtime 调用。
+- 暂不执行 T6 全量 `pkg/agentcompose` 到 `internal/agentcompose` 迁移，直到 T3/T4 的域边界更稳定。
 
 ## 任务依赖图
 
