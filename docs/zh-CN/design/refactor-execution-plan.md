@@ -382,3 +382,39 @@ Transport 第一批只拆轻 handler 外壳，不抽重业务逻辑。
 
 - T2 的目标是打破 “一个 `Service` 实现所有 Connect service” 的结构，不顺手重写业务。
 - `project_service.go`、workspace 和 LLM facade 的业务/安全边界较重，应等 application 层稳定后再拆。
+
+### Project Application 第一批边界
+
+`project_service.go` 是当前风险最高的文件，第一批不要直接大规模迁入 `internal/agentcompose/application/project`。原因是 `ProjectRecord`、`AgentDefinition`、`Loader`、`ConfigStore` 等类型仍在 `pkg/agentcompose`，直接建立 internal application 包容易造成 import cycle，或迫使模型/存储一起大迁移。
+
+Project application 第一批应先拆无副作用 helper：
+
+- proto spec normalize/validation shell。
+- proto spec 到 YAML shape 的转换 helper。
+- compose parse/normalize/hash 和 issue mapping。
+- `ProjectSpecResponse` 及 response 子 mapper。
+- managed resource 构建中的纯函数，例如 project agent record、managed agent definition、scheduler loader trigger/script 构建。
+
+暂缓移动：
+
+- `ApplyProject` 主体。
+- `reconcileProjectManagedAgentDefinitions`。
+- `reconcileProjectManagedSchedulers`。
+- `validateInlineSchedulerScript`。
+- `ensureProjectAgentImages`。
+- `downProject`。
+- `runProjectAgent`。
+
+推荐过渡策略：
+
+- 如果会产生 import cycle，不要强行新建 `internal/agentcompose/application/project`。
+- 可以先新建 `pkg/agentcompose/projectapp` 放完全不依赖父包类型的 normalize/response helper。
+- 对依赖 `ProjectRecord`、`Loader` 等父包类型的纯 helper，先拆到 `pkg/agentcompose/project_build.go` 这类同包文件，降低 `project_service.go` 体积；等 domain/model 下沉后再迁入 application 包。
+
+Project application 第一批测试重点：
+
+- duplicate env/agent、driver conflict、expected hash mismatch。
+- `ProjectSpecResponse` scheduler script 字段。
+- scheduler trigger kind、inline script validation triggers、main-only zero triggers。
+- apply revision 幂等、validation failure 不落库。
+- scheduler reconcile failure 的 staged resource cleanup 行为。
