@@ -70,7 +70,7 @@ func (m *LoaderManager) reserveQueueSlots(event LoaderTopicEvent, count int) ([]
 		queue, err := newWebhookRunQueueFromConfig(m.config)
 		if err != nil {
 			slog.Warn("failed to initialize webhook queue config", "error", err)
-			queue = &WebhookRunQueue{running: map[string]int{}}
+			queue = &WebhookRunQueue{}
 		}
 		m.eventQueue = queue
 	}

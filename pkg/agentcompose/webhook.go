@@ -142,101 +142,12 @@ func registerWebhookRoutes(app *echo.Echo, service *Service) {
 }
 
 func (s *Service) handleWebhook(c echo.Context) error {
-	topic := strings.TrimSpace(c.Param("topic"))
-	if err := validateExternalWebhookTopic(topic); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-	}
-	source, bodyLimit, handled, err := s.authorizeWebhookRequest(c, topic)
-	if handled {
-		return err
-	}
-	if !requestContentTypeIsJSON(c.Request()) {
-		return c.JSON(http.StatusUnsupportedMediaType, map[string]string{"error": "content-type must be application/json"})
-	}
-	rawBody, err := readWebhookBody(c.Request(), bodyLimit)
-	if err != nil {
-		if errors.Is(err, errWebhookBodyTooLarge) {
-			return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": "request body is too large"})
-		}
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "failed to read request body"})
-	}
-	body, compactBody, err := decodeWebhookJSONObject(rawBody)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-	}
-	idempotencyKey := extractIdempotencyKey(c.Request())
-	if existing, ok, err := s.configDB.FindEventByIdempotencyKey(c.Request().Context(), topic, idempotencyKey); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load webhook event"})
-	} else if ok {
-		if existingWebhookBodyHash(existing.PayloadJSON) != topicEventPayloadSHA256(compactBody) {
-			return c.JSON(http.StatusConflict, map[string]string{"error": "idempotency key conflicts with existing payload"})
-		}
-		return c.JSON(http.StatusAccepted, webhookAcceptedResponse{
-			Accepted:      true,
-			Topic:         existing.Topic,
-			EventID:       existing.ID,
-			Sequence:      existing.Sequence,
-			CorrelationID: existing.CorrelationID,
-		})
-	}
-
-	eventID := "evt_" + newUUIDString()
-	correlationID := extractCorrelationID(c.Request(), body)
-	if correlationID == "" {
-		correlationID = eventID
-	}
-	payload := buildWebhookPayload(c, eventID, 0, topic, correlationID, idempotencyKey, source, body)
-	payloadJSON, err := marshalJSONCompact(payload)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to encode webhook payload"})
-	}
-	payloadHash := topicEventPayloadSHA256(payloadJSON)
-	created, err := s.configDB.CreateEvent(c.Request().Context(), TopicEventRecord{
-		ID:             eventID,
-		Topic:          topic,
-		Source:         TopicEventSourceWebhook,
-		Provider:       firstNonEmpty(source.Provider, providerFromWebhookTopic(topic)),
-		Intent:         intentFromWebhookBody(body),
-		CorrelationID:  correlationID,
-		IdempotencyKey: idempotencyKey,
-		DeliveryID:     extractDeliveryID(c.Request()),
-		PayloadHash:    payloadHash,
-		PayloadJSON:    payloadJSON,
-		DispatchStatus: TopicEventDispatchPending,
-		PublisherType:  TopicEventSourceWebhook,
-	})
-	if err != nil {
-		if strings.Contains(err.Error(), "idempotency conflict") {
-			return c.JSON(http.StatusConflict, map[string]string{"error": "idempotency key conflicts with existing payload"})
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to store webhook event"})
-	}
-	if created.ID != eventID {
-		return c.JSON(http.StatusAccepted, webhookAcceptedResponse{
-			Accepted:      true,
-			Topic:         created.Topic,
-			EventID:       created.ID,
-			Sequence:      created.Sequence,
-			CorrelationID: created.CorrelationID,
-		})
-	}
-	if created.Sequence != 0 {
-		payload = buildWebhookPayload(c, created.ID, created.Sequence, topic, created.CorrelationID, created.IdempotencyKey, source, body)
-		payloadJSON, err = marshalJSONCompact(payload)
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to encode webhook payload"})
-		}
-		if err := s.configDB.UpdateEventPayload(c.Request().Context(), created.ID, payloadJSON); err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to store webhook event payload"})
-		}
-	}
-	return c.JSON(http.StatusAccepted, webhookAcceptedResponse{
-		Accepted:      true,
-		Topic:         created.Topic,
-		EventID:       created.ID,
-		Sequence:      created.Sequence,
-		CorrelationID: created.CorrelationID,
-	})
+	return httpapi.WebhookReceiver{
+		Store:              s.configDB,
+		DefaultBodyLimit:   s.config.WebhookBodyLimitBytes,
+		NewID:              func() string { return "evt_" + newUUIDString() },
+		MarshalJSONCompact: marshalJSONCompact,
+	}.HandleWebhook(c)
 }
 
 func (s *Service) handleGetEvent(c echo.Context) error {

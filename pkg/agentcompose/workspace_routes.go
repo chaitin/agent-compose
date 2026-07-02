@@ -30,92 +30,29 @@ func registerWorkspaceRoutes(app *echo.Echo, service *Service) {
 }
 
 func (s *Service) handleWorkspaceListFiles(c echo.Context) error {
-	workspace, content, err := s.loadFileWorkspaceConfig(c.Request().Context(), c.Param("workspaceID"))
-	if err != nil {
-		return toWorkspaceHTTPError(err)
-	}
-	defer func() { _ = content.Root.Close() }()
-	files, err := listWorkspaceFiles(content.Root)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-	}
-	return c.JSON(http.StatusOK, workspaceFilesResponse{WorkspaceID: workspace.ID, Files: files})
+	return s.workspaceHTTPAPI().HandleListFiles(c)
 }
 
 func (s *Service) handleWorkspaceUpload(c echo.Context) error {
+	return s.workspaceHTTPAPI().HandleUpload(c)
+}
+
+func (s *Service) handleWorkspaceDownload(c echo.Context) error {
+	return s.workspaceHTTPAPI().HandleDownload(c)
+}
+
+func (s *Service) workspaceHTTPAPI() httpapi.WorkspaceAPI {
 	limit := s.config.WorkspaceUploadLimitBytes
 	if limit <= 0 {
 		limit = appconfig.DefaultWorkspaceUploadLimitBytes
 	}
-	if c.Request().ContentLength > limit {
-		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "workspace upload exceeds configured limit")
+	return httpapi.WorkspaceAPI{
+		Store:            s.configDB,
+		UploadLimitBytes: limit,
+		OpenFileContent: func(ctx context.Context, workspace WorkspaceConfig) (fileWorkspaceContent, error) {
+			return openFileWorkspaceContent(s.config, workspace)
+		},
 	}
-	c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, limit)
-	_, content, err := s.loadFileWorkspaceConfig(c.Request().Context(), c.Param("workspaceID"))
-	if err != nil {
-		return toWorkspaceHTTPError(err)
-	}
-	defer func() { _ = content.Root.Close() }()
-	fileHeader, err := c.FormFile("file")
-	if err != nil {
-		if strings.Contains(err.Error(), "http: request body too large") {
-			return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "workspace upload exceeds configured limit")
-		}
-		return echo.NewHTTPError(http.StatusBadRequest, "missing form file \"file\"")
-	}
-	uploadType := strings.ToLower(strings.TrimSpace(c.FormValue("upload_type")))
-	targetPath := strings.TrimSpace(c.FormValue("path"))
-	switch uploadType {
-	case "", "file":
-		if err := storeUploadedWorkspaceFile(fileHeader, content.Root, targetPath); err != nil {
-			return toWorkspaceUploadHTTPError(err)
-		}
-	case "archive":
-		if err := extractUploadedWorkspaceArchive(fileHeader, content.Root); err != nil {
-			return toWorkspaceUploadHTTPError(err)
-		}
-	default:
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("unsupported upload_type %q", uploadType))
-	}
-	files, err := listWorkspaceFiles(content.Root)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-	}
-	return c.JSON(http.StatusOK, workspaceFilesResponse{WorkspaceID: c.Param("workspaceID"), Files: files})
-}
-
-func (s *Service) handleWorkspaceDownload(c echo.Context) error {
-	_, content, err := s.loadFileWorkspaceConfig(c.Request().Context(), c.Param("workspaceID"))
-	if err != nil {
-		return toWorkspaceHTTPError(err)
-	}
-	defer func() { _ = content.Root.Close() }()
-	relPath, err := cleanWorkspaceRelativePath(c.QueryParam("path"), false)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-	}
-	relPath = filepath.ToSlash(relPath)
-	info, err := content.Root.Lstat(relPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return echo.NewHTTPError(http.StatusNotFound, err.Error())
-		}
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return echo.NewHTTPError(http.StatusBadRequest, "download path must not be a symlink")
-	}
-	if info.IsDir() {
-		return echo.NewHTTPError(http.StatusBadRequest, "download path must be a file")
-	}
-	file, err := content.Root.Open(relPath)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-	}
-	defer func() { _ = file.Close() }()
-	c.Response().Header().Set(echo.HeaderContentDisposition, fmt.Sprintf("attachment; filename=%q", filepath.Base(relPath)))
-	c.Response().Header().Set(echo.HeaderContentType, "application/octet-stream")
-	return c.Stream(http.StatusOK, "application/octet-stream", file)
 }
 
 func toWorkspaceUploadHTTPError(err error) error {
