@@ -86,8 +86,12 @@ refactor/domain-project
 
 - 继续按“域优先，大步迁移”的方式推进，不再把任务拆成零散 helper。
 - `session`、`run`、`config/llm`、`transport/http` 四个大域主干已完成快速迁移并合入 `refactor/architecture-main`。
-- loader/project 后续只做收口：把仍留在 `pkg/agentcompose` 的 Store/Manager/Service 适配逐步压薄，避免再扩大同域内的小任务数量。
-- 下一步进入剩余 `pkg/agentcompose` 表面积收口：按域清理兼容 wrapper、迁移仍明显属于实现细节的 store/service 切片，并准备集中编译修复。
+- 当前批次继续激进推进四个正交收口任务：
+  - `refactor/domain-persistence-full`：按域迁移 loader/events/config 等 SQL store 与持久化 helper。
+  - `refactor/domain-project-loader-full`：迁移 project/loader service 与 manager 主编排，压薄 `project_service.go`、`loader_manager.go`。
+  - `refactor/domain-transport-connect-full`：建立 `transport/connectv1` 与 `transport/connectv2`，收口 Connect handler wrapper。
+  - `refactor/pkg-internalize-full`：归类其他 `pkg/*`，把明显 daemon 实现细节迁入 `internal/*`。
+- 本批次仍不以测试作为合入门槛；待结构归类完成后统一做编译、测试、路径/import 修复。
 
 ## 任务依赖图
 
