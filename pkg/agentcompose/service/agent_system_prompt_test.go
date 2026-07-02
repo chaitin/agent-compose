@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/loaders"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
@@ -17,7 +18,7 @@ import (
 func TestResolveAgentSystemPromptReturnsEmptyWhenAgentPromptUnset(t *testing.T) {
 	ctx := context.Background()
 	configDB := newTestConfigStore(t)
-	created, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
+	created, err := configDB.CreateAgentDefinition(ctx, domain.AgentDefinition{
 		ID:       "agent-empty-prompt",
 		Name:     "Empty Prompt",
 		Provider: "codex",
@@ -30,8 +31,8 @@ func TestResolveAgentSystemPromptReturnsEmptyWhenAgentPromptUnset(t *testing.T) 
 	session := &Session{
 		Summary: SessionSummary{
 			Tags: []SessionTag{
-				{Name: agentSessionTagSource, Value: agentSessionTagSourceVal},
-				{Name: agentSessionTagID, Value: created.ID},
+				{Name: domain.AgentSessionTagSource, Value: domain.AgentSessionTagSourceVal},
+				{Name: domain.AgentSessionTagID, Value: created.ID},
 			},
 		},
 	}
@@ -48,7 +49,7 @@ func TestResolveAgentSystemPromptReturnsEmptyWhenAgentPromptUnset(t *testing.T) 
 func TestResolveAgentSystemPromptFromProviderAgentID(t *testing.T) {
 	ctx := context.Background()
 	configDB := newTestConfigStore(t)
-	created, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
+	created, err := configDB.CreateAgentDefinition(ctx, domain.AgentDefinition{
 		ID:           "agent-explicit-id",
 		Name:         "Explicit",
 		Provider:     "codex",
@@ -73,7 +74,7 @@ func TestResolveAgentSystemPromptFromProviderAgentID(t *testing.T) {
 func TestResolveAgentSystemPromptPrefersProviderAgentOverSessionTag(t *testing.T) {
 	ctx := context.Background()
 	configDB := newTestConfigStore(t)
-	tagged, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
+	tagged, err := configDB.CreateAgentDefinition(ctx, domain.AgentDefinition{
 		ID:           "agent-tagged",
 		Name:         "Tagged",
 		Provider:     "codex",
@@ -83,7 +84,7 @@ func TestResolveAgentSystemPromptPrefersProviderAgentOverSessionTag(t *testing.T
 	if err != nil {
 		t.Fatalf("CreateAgentDefinition returned error: %v", err)
 	}
-	explicit, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
+	explicit, err := configDB.CreateAgentDefinition(ctx, domain.AgentDefinition{
 		ID:           "agent-explicit",
 		Name:         "Explicit",
 		Provider:     "codex",
@@ -97,8 +98,8 @@ func TestResolveAgentSystemPromptPrefersProviderAgentOverSessionTag(t *testing.T
 	session := &Session{
 		Summary: SessionSummary{
 			Tags: []SessionTag{
-				{Name: agentSessionTagSource, Value: agentSessionTagSourceVal},
-				{Name: agentSessionTagID, Value: tagged.ID},
+				{Name: domain.AgentSessionTagSource, Value: domain.AgentSessionTagSourceVal},
+				{Name: domain.AgentSessionTagID, Value: tagged.ID},
 			},
 		},
 	}
@@ -129,7 +130,7 @@ func TestResolveAgentSystemPromptReturnsEmptyWhenAgentMissing(t *testing.T) {
 func TestResolveAgentSystemPromptFromSessionTags(t *testing.T) {
 	ctx := context.Background()
 	configDB := newTestConfigStore(t)
-	created, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
+	created, err := configDB.CreateAgentDefinition(ctx, domain.AgentDefinition{
 		ID:           "agent-with-prompt",
 		Name:         "Runner",
 		Provider:     "codex",
@@ -143,8 +144,8 @@ func TestResolveAgentSystemPromptFromSessionTags(t *testing.T) {
 	session := &Session{
 		Summary: SessionSummary{
 			Tags: []SessionTag{
-				{Name: agentSessionTagSource, Value: agentSessionTagSourceVal},
-				{Name: agentSessionTagID, Value: created.ID},
+				{Name: domain.AgentSessionTagSource, Value: domain.AgentSessionTagSourceVal},
+				{Name: domain.AgentSessionTagID, Value: created.ID},
 			},
 		},
 	}
@@ -291,7 +292,7 @@ func TestExecuteAgentRunWritesConventionSystemPromptBeforeExec(t *testing.T) {
 	}
 
 	configDB := newTestConfigStore(t)
-	agent, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
+	agent, err := configDB.CreateAgentDefinition(ctx, domain.AgentDefinition{
 		ID:           "agent-convention",
 		Name:         "Convention",
 		Provider:     "codex",
@@ -312,7 +313,7 @@ func TestExecuteAgentRunWritesConventionSystemPromptBeforeExec(t *testing.T) {
 	session := &Session{
 		Summary: SessionSummary{
 			ID:            sessionID,
-			VMStatus:      VMStatusRunning,
+			VMStatus:      domain.VMStatusRunning,
 			WorkspacePath: filepath.Join(root, sessionID, "workspace"),
 		},
 	}
@@ -355,7 +356,7 @@ func TestLoaderRunHostAgentWritesSystemPromptFromBoundAgentDefinition(t *testing
 	}
 
 	configDB := newTestConfigStore(t)
-	agent, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
+	agent, err := configDB.CreateAgentDefinition(ctx, domain.AgentDefinition{
 		ID:           "loader-agent-prompt",
 		Name:         "Loader Prompt Agent",
 		Provider:     "codex",
@@ -366,9 +367,9 @@ func TestLoaderRunHostAgentWritesSystemPromptFromBoundAgentDefinition(t *testing
 		t.Fatalf("CreateAgentDefinition returned error: %v", err)
 	}
 	loader, err := configDB.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{
+		Summary: domain.LoaderSummary{
 			Name:         "Loader With Agent Prompt",
-			Runtime:      LoaderRuntimeScheduler,
+			Runtime:      domain.LoaderRuntimeScheduler,
 			Enabled:      true,
 			AgentID:      agent.ID,
 			DefaultAgent: "codex",
@@ -389,16 +390,16 @@ func TestLoaderRunHostAgentWritesSystemPromptFromBoundAgentDefinition(t *testing
 		configDB: configDB,
 		driver:   driver,
 		executor: &Executor{config: config, store: store, configDB: configDB, runtimes: fixedRuntimeProvider{runtime: runtime}},
-		engine:   &QJSLoaderEngine{},
+		engine:   &loaders.QJSLoaderEngine{},
 		running:  map[string]int{},
 	}
 	host := &loaderRunHost{
 		manager: manager,
 		loader:  loader,
-		run:     &LoaderRunSummary{ID: "run-loader-system-prompt", LoaderID: loader.Summary.ID},
+		run:     &domain.LoaderRunSummary{ID: "run-loader-system-prompt", LoaderID: loader.Summary.ID},
 	}
 
-	result, err := host.Agent(ctx, "summarize loader state", LoaderAgentRequest{})
+	result, err := host.Agent(ctx, "summarize loader state", domain.LoaderAgentRequest{})
 	if err != nil {
 		t.Fatalf("Agent returned error: %v", err)
 	}

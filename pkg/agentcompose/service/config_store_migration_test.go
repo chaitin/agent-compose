@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	"agent-compose/pkg/agentcompose/configstore"
+	"agent-compose/pkg/agentcompose/domain"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
@@ -159,7 +160,7 @@ func testConfigStoreProjectSchemaMigrationPreservesExistingData(t *testing.T) {
 		}
 	}
 
-	agent, err := configDB.CreateAgentDefinition(ctx, AgentDefinition{
+	agent, err := configDB.CreateAgentDefinition(ctx, domain.AgentDefinition{
 		ID:           "agent-existing",
 		Name:         "Existing Agent",
 		Provider:     "codex",
@@ -173,10 +174,10 @@ func testConfigStoreProjectSchemaMigrationPreservesExistingData(t *testing.T) {
 		t.Fatalf("CreateAgentDefinition returned error: %v", err)
 	}
 	loader, err := configDB.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{
+		Summary: domain.LoaderSummary{
 			ID:           "loader-existing",
 			Name:         "Existing Loader",
-			Runtime:      LoaderRuntimeScheduler,
+			Runtime:      domain.LoaderRuntimeScheduler,
 			Enabled:      true,
 			DefaultAgent: "codex",
 		},
@@ -188,7 +189,7 @@ func testConfigStoreProjectSchemaMigrationPreservesExistingData(t *testing.T) {
 	if _, err := configDB.db.ExecContext(ctx, `INSERT INTO loader_run(
 		loader_id, run_id, trigger_id, trigger_kind, trigger_source, status, started_at
 	) VALUES(?, ?, ?, ?, ?, ?, ?)`,
-		loader.Summary.ID, "run-existing", "manual", LoaderTriggerKindEvent, "legacy", LoaderRunStatusRunning, time.Now().UTC().UnixMilli()); err != nil {
+		loader.Summary.ID, "run-existing", "manual", domain.LoaderTriggerKindEvent, "legacy", domain.LoaderRunStatusRunning, time.Now().UTC().UnixMilli()); err != nil {
 		t.Fatalf("insert existing loader run: %v", err)
 	}
 
@@ -200,7 +201,7 @@ func testConfigStoreProjectSchemaMigrationPreservesExistingData(t *testing.T) {
 		JupyterProxyBasePath: "/agent-compose/session",
 		JupyterGuestPort:     8888,
 	}}
-	session, err := sessionStore.CreateSession(ctx, "Legacy Session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil, nil, []SessionTag{{Name: "legacy", Value: "true"}})
+	session, err := sessionStore.CreateSession(ctx, "Legacy Session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SessionTypeManual, nil, nil, []SessionTag{{Name: "legacy", Value: "true"}})
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
@@ -229,7 +230,7 @@ func testConfigStoreProjectSchemaMigrationPreservesExistingData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLoaderRun after migration returned error: %v", err)
 	}
-	if run.Status != LoaderRunStatusRunning || run.TriggerSource != "legacy" {
+	if run.Status != domain.LoaderRunStatusRunning || run.TriggerSource != "legacy" {
 		t.Fatalf("loader run after migration = %#v", run)
 	}
 

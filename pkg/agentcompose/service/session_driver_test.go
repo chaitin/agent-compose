@@ -30,7 +30,7 @@ func TestSessionDriverStartSessionVMSavesRuntimeProxyState(t *testing.T) {
 	}
 	store := &Store{config: config}
 
-	session, err := store.CreateSession(ctx, "Proxy Session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil, nil, nil)
+	session, err := store.CreateSession(ctx, "Proxy Session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}

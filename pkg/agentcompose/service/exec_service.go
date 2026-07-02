@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"agent-compose/pkg/agentcompose/api"
+	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/agentcompose/execution"
 	"agent-compose/pkg/agentcompose/runs"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
@@ -131,7 +132,7 @@ func (s *Service) resolveExecTargetSession(ctx context.Context, req *agentcompos
 		if err != nil {
 			return nil, "", connect.NewError(connect.CodeNotFound, fmt.Errorf("session %s not found: %w", sessionID, err))
 		}
-		if session.Summary.VMStatus != VMStatusRunning {
+		if session.Summary.VMStatus != domain.VMStatusRunning {
 			return nil, "", connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("session %s is not running", sessionID))
 		}
 		return session, "", nil
@@ -167,7 +168,7 @@ func (s *Service) resolveExecTargetSession(ctx context.Context, req *agentcompos
 		}
 		return nil, "", connect.NewError(connect.CodeInternal, err)
 	}
-	statuses, err := runs.ListProjectSessionStatuses(ctx, s.configDB, s.store, ProjectSessionRelationFilter{
+	statuses, err := runs.ListProjectSessionStatuses(ctx, s.configDB, s.store, domain.ProjectSessionRelationFilter{
 		ProjectID: project.ID,
 		AgentName: selector.GetAgentName(),
 	})
@@ -180,7 +181,7 @@ func (s *Service) resolveExecTargetSession(ctx context.Context, req *agentcompos
 	}
 	var candidates []candidate
 	for _, status := range statuses {
-		if status.Session == nil || status.Session.Summary.VMStatus != VMStatusRunning {
+		if status.Session == nil || status.Session.Summary.VMStatus != domain.VMStatusRunning {
 			continue
 		}
 		candidates = append(candidates, candidate{session: status.Session, run: status.Run})
@@ -213,7 +214,7 @@ func (s *Service) sessionForProjectRun(ctx context.Context, run ProjectRunRecord
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("session %s for run %s not found: %w", sessionID, run.RunID, err))
 	}
-	if session.Summary.VMStatus != VMStatusRunning {
+	if session.Summary.VMStatus != domain.VMStatusRunning {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("session %s for run %s is not running", sessionID, run.RunID))
 	}
 	return session, nil

@@ -11,6 +11,7 @@ import (
 
 	"agent-compose/pkg/agentcompose/capabilities"
 	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/loaders"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
@@ -30,25 +31,25 @@ func testAgentRunSummariesScansAllSessions(t *testing.T) {
 	for i := 0; i < 60; i++ {
 		sessions = append(sessions, &Session{Summary: SessionSummary{
 			ID:        fmt.Sprintf("other-%d", i),
-			VMStatus:  VMStatusStopped,
+			VMStatus:  domain.VMStatusStopped,
 			UpdatedAt: base.Add(time.Duration(i) * time.Minute),
 		}})
 	}
 	sessions = append(sessions, &Session{Summary: SessionSummary{
 		ID:        "agent-session",
 		Title:     "Agent Run",
-		VMStatus:  VMStatusRunning,
+		VMStatus:  domain.VMStatusRunning,
 		UpdatedAt: base.Add(-time.Hour),
 		Tags: []SessionTag{
-			{Name: agentSessionTagSource, Value: agentSessionTagSourceVal},
-			{Name: agentSessionTagID, Value: "agent-x"},
+			{Name: domain.AgentSessionTagSource, Value: domain.AgentSessionTagSourceVal},
+			{Name: domain.AgentSessionTagID, Value: "agent-x"},
 		},
 	}})
 	current, latest := domain.AgentRunSummaries("agent-x", sessions)
 	if current.RunningSessionCount != 1 {
 		t.Fatalf("running session count = %d, want 1", current.RunningSessionCount)
 	}
-	if latest == nil || latest.RunID != "agent-session" || latest.Status != VMStatusRunning {
+	if latest == nil || latest.RunID != "agent-session" || latest.Status != domain.VMStatusRunning {
 		t.Fatalf("latest run summary = %+v", latest)
 	}
 }
@@ -69,7 +70,7 @@ func testAgentDefinitionConfigStoreCRUDAndWorkspaceProtection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWorkspaceConfig returned error: %v", err)
 	}
-	created, err := store.CreateAgentDefinition(ctx, AgentDefinition{
+	created, err := store.CreateAgentDefinition(ctx, domain.AgentDefinition{
 		ID:          "agent-1",
 		Name:        " Agent One ",
 		Enabled:     true,
@@ -84,7 +85,7 @@ func testAgentDefinitionConfigStoreCRUDAndWorkspaceProtection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAgentDefinition returned error: %v", err)
 	}
-	if created.Provider != defaultAgentProvider || created.ConfigJSON != "{}" {
+	if created.Provider != domain.DefaultAgentProvider || created.ConfigJSON != "{}" {
 		t.Fatalf("defaults = provider %q config %q", created.Provider, created.ConfigJSON)
 	}
 	if len(created.EnvItems) != 2 || created.EnvItems[0].Name != "A" || created.EnvItems[1].Value != "3" {
@@ -93,7 +94,7 @@ func testAgentDefinitionConfigStoreCRUDAndWorkspaceProtection(t *testing.T) {
 	if err := store.DeleteWorkspaceConfig(ctx, workspace.ID); err == nil || !strings.Contains(err.Error(), "referenced by") {
 		t.Fatalf("DeleteWorkspaceConfig error = %v, want referenced by", err)
 	}
-	listed, err := store.ListAgentDefinitions(ctx, AgentDefinitionListOptions{IncludeDisabled: true})
+	listed, err := store.ListAgentDefinitions(ctx, domain.AgentDefinitionListOptions{IncludeDisabled: true})
 	if err != nil {
 		t.Fatalf("ListAgentDefinitions returned error: %v", err)
 	}
@@ -136,7 +137,7 @@ func testLoaderCreateBindsAgentDefinitionProvider(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 	store := newTestConfigStore(t)
-	agent, err := store.CreateAgentDefinition(ctx, AgentDefinition{
+	agent, err := store.CreateAgentDefinition(ctx, domain.AgentDefinition{
 		ID:          "agent-loader",
 		Name:        "Loader Agent",
 		Enabled:     true,
@@ -150,7 +151,7 @@ func testLoaderCreateBindsAgentDefinitionProvider(t *testing.T) {
 	}
 	manager := &LoaderManager{
 		configDB:     store,
-		engine:       &QJSLoaderEngine{},
+		engine:       &loaders.QJSLoaderEngine{},
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
 		scheduleWake: make(chan struct{}, 1),
@@ -158,12 +159,12 @@ func testLoaderCreateBindsAgentDefinitionProvider(t *testing.T) {
 	service := &Service{configDB: store, loaders: manager}
 	created, err := service.CreateLoader(ctx, connect.NewRequest(&agentcomposev1.CreateLoaderRequest{
 		Name:              "Bound Loader",
-		Runtime:           LoaderRuntimeScheduler,
+		Runtime:           domain.LoaderRuntimeScheduler,
 		Script:            `scheduler.interval("tick", function(){ scheduler.log("tick"); }, 60000);`,
 		AgentId:           agent.ID,
 		DefaultAgent:      "codex",
-		SessionPolicy:     LoaderSessionPolicyNew,
-		ConcurrencyPolicy: LoaderConcurrencyPolicySkip,
+		SessionPolicy:     domain.LoaderSessionPolicyNew,
+		ConcurrencyPolicy: domain.LoaderConcurrencyPolicySkip,
 		Enabled:           true,
 	}))
 	if err != nil {
@@ -222,7 +223,7 @@ func testAgentDefinitionValidationAndProtoMapping(t *testing.T) {
 	if invalid.Msg.GetAvailabilityStatus() != agentcomposev1.AgentAvailabilityStatus_AGENT_AVAILABILITY_STATUS_VALIDATION_FAILED || len(invalid.Msg.GetErrors()) == 0 {
 		t.Fatalf("invalid validation = %+v", invalid.Msg)
 	}
-	agent, err := store.CreateAgentDefinition(ctx, AgentDefinition{
+	agent, err := store.CreateAgentDefinition(ctx, domain.AgentDefinition{
 		ID:          "agent-map",
 		Name:        "Mapper",
 		Enabled:     true,
@@ -448,7 +449,7 @@ func testAgentDefinitionCreateSession(t *testing.T) {
 	for _, tag := range summary.GetTags() {
 		tags[tag.GetName()] = tag.GetValue()
 	}
-	if tags[agentSessionTagSource] != agentSessionTagSourceVal || tags[agentSessionTagID] != created.Msg.GetAgent().GetAgentId() || tags[agentSessionTagName] != "Runner" {
+	if tags[domain.AgentSessionTagSource] != domain.AgentSessionTagSourceVal || tags[domain.AgentSessionTagID] != created.Msg.GetAgent().GetAgentId() || tags[domain.AgentSessionTagName] != "Runner" {
 		t.Fatalf("agent tags = %#v", tags)
 	}
 	if len(sessionResp.Msg.GetSession().GetEnvItems()) != 2 || sessionResp.Msg.GetSession().GetEnvItems()[0].GetValue() != "request" {
@@ -516,8 +517,8 @@ func testDeleteAgentDefinitionStopsSessionsAndKeepsDeletedInList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
-	if session.Summary.VMStatus != VMStatusStopped {
-		t.Fatalf("session status = %q, want %q", session.Summary.VMStatus, VMStatusStopped)
+	if session.Summary.VMStatus != domain.VMStatusStopped {
+		t.Fatalf("session status = %q, want %q", session.Summary.VMStatus, domain.VMStatusStopped)
 	}
 	listed, err := service.ListAgentDefinitions(ctx, connect.NewRequest(&agentcomposev1.ListAgentDefinitionsRequest{IncludeDisabled: true}))
 	if err != nil {

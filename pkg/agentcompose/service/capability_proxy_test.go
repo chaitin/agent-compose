@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/agentcompose/domain"
 	driverpkg "agent-compose/pkg/driver"
 )
 
@@ -13,13 +14,13 @@ func TestResolveCapabilitySession(t *testing.T) {
 	ctx := context.Background()
 	bridge, _ := newTestSessionRPCBridge(t)
 	// The capset set lives in session tags; only the token lives in env.
-	session, err := bridge.store.CreateSession(ctx, "cap", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil,
+	session, err := bridge.store.CreateSession(ctx, "cap", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SessionTypeManual, nil,
 		[]SessionEnvVar{{Name: capabilities.SessionTokenEnvName, Value: "session-token", Secret: true}},
 		[]SessionTag{{Name: capabilities.CapsetTagName, Value: "dev"}, {Name: capabilities.CapsetTagName, Value: "data"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.Summary.VMStatus = VMStatusRunning
+	session.Summary.VMStatus = domain.VMStatusRunning
 	if err := bridge.store.UpdateSession(ctx, session); err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +36,7 @@ func TestResolveCapabilitySession(t *testing.T) {
 		t.Fatalf("unexpected capset set %+v", binding.CapsetIDs)
 	}
 
-	session.Summary.VMStatus = VMStatusStopped
+	session.Summary.VMStatus = domain.VMStatusStopped
 	if err := bridge.store.UpdateSession(ctx, session); err != nil {
 		t.Fatal(err)
 	}

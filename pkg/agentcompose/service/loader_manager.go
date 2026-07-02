@@ -2,9 +2,13 @@ package agentcompose
 
 import (
 	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/agentcompose/dashboard"
 	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/execution"
 	"agent-compose/pkg/agentcompose/images"
 	"agent-compose/pkg/agentcompose/loaders"
+	"agent-compose/pkg/agentcompose/sessions"
+	"agent-compose/pkg/agentcompose/webhooks"
 	appconfig "agent-compose/pkg/config"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"context"
@@ -29,15 +33,15 @@ type LoaderManager struct {
 	configDB   *ConfigStore
 	driver     Driver
 	executor   *Executor
-	images     ImageBackend
+	images     images.Backend
 	llm        *LLMClient
 	cap        capabilities.Provider
 	bus        *loaders.Bus
-	streams    *SessionStreamBroker
-	engine     LoaderEngine
+	streams    *sessions.StreamBroker
+	engine     loaders.LoaderEngine
 	sessions   *SessionRPCBridge
-	dashboard  *DashboardOverviewHub
-	eventQueue *WebhookRunQueue
+	dashboard  *dashboard.Hub
+	eventQueue *webhooks.RunQueue
 
 	runExecutor        *LoaderRunExecutor
 	eventDispatcher    *LoaderEventDispatcher
@@ -54,7 +58,7 @@ type LoaderManager struct {
 type loaderRunHost struct {
 	manager                *LoaderManager
 	loader                 Loader
-	run                    *LoaderRunSummary
+	run                    *domain.LoaderRunSummary
 	triggerEvent           loaderTriggerEventMetadata
 	commandSessionIDs      map[string]struct{}
 	commandSessionIDOrder  []string
@@ -64,20 +68,20 @@ type loaderRunHost struct {
 
 type scheduledLoaderRun struct {
 	loader      Loader
-	trigger     LoaderTrigger
+	trigger     domain.LoaderTrigger
 	payloadJSON string
 	source      string
 }
 
 type eventLoaderTarget struct {
 	loader  Loader
-	trigger LoaderTrigger
+	trigger domain.LoaderTrigger
 }
 
 type preparedLoaderRun struct {
 	loader      Loader
-	trigger     *LoaderTrigger
-	run         LoaderRunSummary
+	trigger     *domain.LoaderTrigger
+	run         domain.LoaderRunSummary
 	payloadJSON string
 }
 
@@ -87,11 +91,11 @@ func NewLoaderManager(di do.Injector) (*LoaderManager, error) {
 		rootCtx = context.Background()
 	}
 	config := do.MustInvoke[*appconfig.Config](di)
-	eventQueue, err := newWebhookRunQueueFromConfig(config)
+	eventQueue, err := webhooks.NewRunQueueFromConfig(config)
 	if err != nil {
 		return nil, err
 	}
-	dashboard, _ := do.Invoke[*DashboardOverviewHub](di)
+	dashboard, _ := do.Invoke[*dashboard.Hub](di)
 	m := &LoaderManager{
 		config:       config,
 		rootCtx:      rootCtx,
@@ -103,8 +107,8 @@ func NewLoaderManager(di do.Injector) (*LoaderManager, error) {
 		llm:          do.MustInvoke[*LLMClient](di),
 		cap:          do.MustInvoke[capabilityIntegration](di),
 		bus:          do.MustInvoke[*loaders.Bus](di),
-		streams:      do.MustInvoke[*SessionStreamBroker](di),
-		engine:       do.MustInvoke[LoaderEngine](di),
+		streams:      do.MustInvoke[*sessions.StreamBroker](di),
+		engine:       do.MustInvoke[loaders.LoaderEngine](di),
 		sessions:     do.MustInvoke[*SessionRPCBridge](di),
 		dashboard:    dashboard,
 		eventQueue:   eventQueue,
@@ -160,13 +164,13 @@ func (m *LoaderManager) Refresh(ctx context.Context) error {
 	return nil
 }
 
-func (m *LoaderManager) Validate(ctx context.Context, runtime, script string) (LoaderValidationResult, error) {
+func (m *LoaderManager) Validate(ctx context.Context, runtime, script string) (loaders.LoaderValidationResult, error) {
 	return m.engine.Validate(ctx, runtime, script)
 }
 
 func (m *LoaderManager) CreateLoader(ctx context.Context, loader Loader) (Loader, error) {
 	if strings.TrimSpace(loader.Summary.Runtime) == "" {
-		loader.Summary.Runtime = LoaderRuntimeScheduler
+		loader.Summary.Runtime = domain.LoaderRuntimeScheduler
 	}
 	if strings.TrimSpace(loader.Script) == "" {
 		loader.Script = domain.DefaultLoaderScript()
@@ -242,10 +246,10 @@ func (m *LoaderManager) SetLoaderTriggerEnabled(ctx context.Context, loaderID, t
 	return m.configDB.GetLoader(ctx, loaderID)
 }
 
-func (m *LoaderManager) RunNow(ctx context.Context, loaderID, triggerID, payloadJSON string, timeout time.Duration) (LoaderRunSummary, error) {
+func (m *LoaderManager) RunNow(ctx context.Context, loaderID, triggerID, payloadJSON string, timeout time.Duration) (domain.LoaderRunSummary, error) {
 	loader, trigger, err := m.loadLoaderForRun(ctx, loaderID, triggerID)
 	if err != nil {
-		return LoaderRunSummary{}, err
+		return domain.LoaderRunSummary{}, err
 	}
 	parentCtx := m.rootCtx
 	if parentCtx == nil {
@@ -260,7 +264,7 @@ func (m *LoaderManager) Publish(topic string, payload map[string]any) {
 	if m.bus == nil {
 		return
 	}
-	m.bus.Publish(LoaderTopicEvent{
+	m.bus.Publish(domain.LoaderTopicEvent{
 		Topic:     strings.TrimSpace(topic),
 		Payload:   payload,
 		CreatedAt: time.Now().UTC(),
@@ -382,8 +386,8 @@ func (m *LoaderManager) eventLoop() {
 	}
 }
 
-func dedupeWebhookEventTargets(event LoaderTopicEvent, targets []eventLoaderTarget) []eventLoaderTarget {
-	if event.Source != TopicEventSourceWebhook || len(targets) <= 1 {
+func dedupeWebhookEventTargets(event domain.LoaderTopicEvent, targets []eventLoaderTarget) []eventLoaderTarget {
+	if event.Source != domain.TopicEventSourceWebhook || len(targets) <= 1 {
 		return targets
 	}
 	seen := map[string]struct{}{}
@@ -403,7 +407,7 @@ func dedupeWebhookEventTargets(event LoaderTopicEvent, targets []eventLoaderTarg
 	return deduped
 }
 
-func (m *LoaderManager) reserveEventQueueSlots(event LoaderTopicEvent, count int) ([]*webhookQueueReservation, bool) {
+func (m *LoaderManager) reserveEventQueueSlots(event domain.LoaderTopicEvent, count int) ([]*webhooks.Reservation, bool) {
 	m.initLoaderComponents()
 	return m.eventDispatcher.reserveQueueSlots(event, count)
 }
@@ -451,7 +455,7 @@ func (m *LoaderManager) collectDueScheduledRuns(now time.Time) []scheduledLoader
 	return jobs
 }
 
-func (m *LoaderManager) loadLoaderForRun(ctx context.Context, loaderID, triggerID string) (Loader, *LoaderTrigger, error) {
+func (m *LoaderManager) loadLoaderForRun(ctx context.Context, loaderID, triggerID string) (Loader, *domain.LoaderTrigger, error) {
 	loader, err := m.configDB.GetLoader(ctx, loaderID)
 	if err != nil {
 		return Loader{}, nil, err
@@ -483,7 +487,7 @@ type loaderRunOptions struct {
 
 var errLoaderRunBusyForRetry = errors.New("loader is already running")
 
-func (m *LoaderManager) updateTriggerEventDelivery(ctx context.Context, run LoaderRunSummary) {
+func (m *LoaderManager) updateTriggerEventDelivery(ctx context.Context, run domain.LoaderRunSummary) {
 	if m == nil || m.configDB == nil {
 		return
 	}
@@ -491,19 +495,19 @@ func (m *LoaderManager) updateTriggerEventDelivery(ctx context.Context, run Load
 	if metadata.EventID == "" || run.LoaderID == "" || run.TriggerID == "" {
 		return
 	}
-	status := EventDeliveryStatusRunStarted
+	status := domain.EventDeliveryStatusRunStarted
 	errText := ""
 	switch run.Status {
-	case LoaderRunStatusSucceeded:
-		status = EventDeliveryStatusRunSucceeded
-	case LoaderRunStatusFailed:
-		status = EventDeliveryStatusRunFailed
+	case domain.LoaderRunStatusSucceeded:
+		status = domain.EventDeliveryStatusRunSucceeded
+	case domain.LoaderRunStatusFailed:
+		status = domain.EventDeliveryStatusRunFailed
 		errText = run.Error
-	case LoaderRunStatusSkipped:
-		status = EventDeliveryStatusSkipped
+	case domain.LoaderRunStatusSkipped:
+		status = domain.EventDeliveryStatusSkipped
 		errText = run.Error
 	}
-	if err := m.configDB.UpsertEventDelivery(ctx, EventDelivery{
+	if err := m.configDB.UpsertEventDelivery(ctx, domain.EventDelivery{
 		EventID:   metadata.EventID,
 		LoaderID:  run.LoaderID,
 		TriggerID: run.TriggerID,
@@ -530,7 +534,7 @@ func (m *LoaderManager) enterRun(loader Loader) bool {
 	policy := domain.NormalizeLoaderConcurrencyPolicy(loader.Summary.ConcurrencyPolicy)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if policy != LoaderConcurrencyPolicyParallel && m.running[loaderID] > 0 {
+	if policy != domain.LoaderConcurrencyPolicyParallel && m.running[loaderID] > 0 {
 		return false
 	}
 	m.running[loaderID]++
@@ -553,12 +557,12 @@ func (m *LoaderManager) addLoaderEvent(ctx context.Context, loaderID, runID, tri
 	return err
 }
 
-func (m *LoaderManager) addLoaderEventRecord(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) (LoaderEvent, error) {
+func (m *LoaderManager) addLoaderEventRecord(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) (domain.LoaderEvent, error) {
 	payloadJSON, err := marshalJSONCompact(payload)
 	if err != nil {
-		return LoaderEvent{}, err
+		return domain.LoaderEvent{}, err
 	}
-	event := LoaderEvent{
+	event := domain.LoaderEvent{
 		ID:                   uuid.NewString(),
 		LoaderID:             strings.TrimSpace(loaderID),
 		RunID:                strings.TrimSpace(runID),
@@ -573,7 +577,7 @@ func (m *LoaderManager) addLoaderEventRecord(ctx context.Context, loaderID, runI
 		CreatedAt:            time.Now().UTC(),
 	}
 	if err := m.configDB.AddLoaderEvent(ctx, event); err != nil {
-		return LoaderEvent{}, err
+		return domain.LoaderEvent{}, err
 	}
 	return event, nil
 }
@@ -582,20 +586,20 @@ func (h *loaderRunHost) Log(ctx context.Context, message string, payload any) er
 	return h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, "loader.log", "info", message, payload, "", "", "")
 }
 
-func (h *loaderRunHost) PublishEvent(ctx context.Context, topic string, payloadJSON string) (TopicEventRecord, error) {
+func (h *loaderRunHost) PublishEvent(ctx context.Context, topic string, payloadJSON string) (domain.TopicEventRecord, error) {
 	if h.manager == nil || h.manager.configDB == nil {
-		return TopicEventRecord{}, fmt.Errorf("event store is unavailable")
+		return domain.TopicEventRecord{}, fmt.Errorf("event store is unavailable")
 	}
 	topic = strings.TrimSpace(topic)
 	if err := validateLoaderPublishTopic(topic); err != nil {
-		return TopicEventRecord{}, err
+		return domain.TopicEventRecord{}, err
 	}
 	payloadJSON, err := normalizeJSONDocument(payloadJSON)
 	if err != nil {
-		return TopicEventRecord{}, err
+		return domain.TopicEventRecord{}, err
 	}
 	if !jsonObjectDocument(payloadJSON) {
-		return TopicEventRecord{}, fmt.Errorf("scheduler.event.publish payload must be an object")
+		return domain.TopicEventRecord{}, fmt.Errorf("scheduler.event.publish payload must be an object")
 	}
 	payload := map[string]any{}
 	_ = json.Unmarshal([]byte(payloadJSON), &payload)
@@ -617,7 +621,7 @@ func (h *loaderRunHost) PublishEvent(ctx context.Context, topic string, payloadJ
 	envelope := map[string]any{
 		"eventId":       eventID,
 		"sequence":      int64(0),
-		"source":        TopicEventSourceLoader,
+		"source":        domain.TopicEventSourceLoader,
 		"provider":      stringFromMap(payload, "provider"),
 		"topic":         topic,
 		"correlationId": correlationID,
@@ -628,25 +632,25 @@ func (h *loaderRunHost) PublishEvent(ctx context.Context, topic string, payloadJ
 	}
 	envelopeJSON, err := marshalJSONCompact(envelope)
 	if err != nil {
-		return TopicEventRecord{}, err
+		return domain.TopicEventRecord{}, err
 	}
-	created, err := h.manager.configDB.CreateEvent(ctx, TopicEventRecord{
+	created, err := h.manager.configDB.CreateEvent(ctx, domain.TopicEventRecord{
 		ID:             eventID,
 		Topic:          topic,
-		Source:         TopicEventSourceLoader,
+		Source:         domain.TopicEventSourceLoader,
 		Provider:       stringFromMap(payload, "provider"),
 		CorrelationID:  correlationID,
 		PayloadHash:    domain.TopicEventPayloadSHA256(envelopeJSON),
 		PayloadJSON:    envelopeJSON,
-		DispatchStatus: TopicEventDispatchPending,
+		DispatchStatus: domain.TopicEventDispatchPending,
 		ParentEventID:  parentEventID,
-		PublisherType:  TopicEventSourceLoader,
+		PublisherType:  domain.TopicEventSourceLoader,
 		PublisherID:    h.loader.Summary.ID,
 		PublisherRunID: h.run.ID,
 	})
 	if err != nil {
 		_ = h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, "loader.event.publish.failed", "error", err.Error(), map[string]any{"topic": topic}, "", "", "")
-		return TopicEventRecord{}, err
+		return domain.TopicEventRecord{}, err
 	}
 	envelope["sequence"] = created.Sequence
 	if envelopeJSON, err = marshalJSONCompact(envelope); err == nil {
@@ -680,7 +684,7 @@ func (h *loaderRunHost) CallSessionRPC(ctx context.Context, method, requestJSON 
 	}
 	method = strings.TrimSpace(method)
 	requestJSON = strings.TrimSpace(requestJSON)
-	responseJSON, err := h.manager.sessions.CallJSONWithSource(ctx, method, requestJSON, SessionTypeScript+":"+h.loader.Summary.ID)
+	responseJSON, err := h.manager.sessions.CallJSONWithSource(ctx, method, requestJSON, domain.SessionTypeScript+":"+h.loader.Summary.ID)
 	linkedSessionID := loaderSessionRPCLinkedSessionID(method, requestJSON, responseJSON)
 	if err != nil {
 		event, _ := h.manager.addLoaderEventRecord(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID,
@@ -705,11 +709,11 @@ func (h *loaderRunHost) addLinkedLoaderEvent(ctx context.Context, eventType, lev
 	return nil
 }
 
-func (h *loaderRunHost) addEventSessionLink(ctx context.Context, event LoaderEvent, sessionID, relation string) {
+func (h *loaderRunHost) addEventSessionLink(ctx context.Context, event domain.LoaderEvent, sessionID, relation string) {
 	if h == nil || h.manager == nil || h.manager.configDB == nil || strings.TrimSpace(sessionID) == "" || h.triggerEvent.EventID == "" {
 		return
 	}
-	if err := h.manager.configDB.AddEventSessionLink(ctx, EventSessionLink{
+	if err := h.manager.configDB.AddEventSessionLink(ctx, domain.EventSessionLink{
 		EventID:       h.triggerEvent.EventID,
 		SessionID:     sessionID,
 		Relation:      relation,
@@ -756,7 +760,7 @@ func (h *loaderRunHost) cleanupCommandSessions(ctx context.Context) {
 	}
 }
 
-func (m *LoaderManager) loaderAgentDefinition(ctx context.Context, loader Loader) (*AgentDefinition, error) {
+func (m *LoaderManager) loaderAgentDefinition(ctx context.Context, loader Loader) (*domain.AgentDefinition, error) {
 	agentID := strings.TrimSpace(loader.Summary.AgentID)
 	if agentID == "" {
 		return nil, nil
@@ -771,13 +775,13 @@ func (m *LoaderManager) loaderAgentDefinition(ctx context.Context, loader Loader
 	return &agent, nil
 }
 
-func (h *loaderRunHost) Agent(ctx context.Context, prompt string, request LoaderAgentRequest) (LoaderAgentResult, error) {
+func (h *loaderRunHost) Agent(ctx context.Context, prompt string, request domain.LoaderAgentRequest) (domain.LoaderAgentResult, error) {
 	if h.useProjectManagedAgentRun(request) {
 		return h.ProjectAgent(ctx, prompt, request)
 	}
 	session, eventType, err := h.manager.ensureLoaderSession(ctx, h.loader, request)
 	if err != nil {
-		return LoaderAgentResult{}, err
+		return domain.LoaderAgentResult{}, err
 	}
 	if eventType != "" {
 		_ = h.addLinkedLoaderEvent(ctx, eventType, "info", "loader session ready", map[string]any{"sessionId": session.Summary.ID}, session.Summary.ID, "", "")
@@ -788,7 +792,7 @@ func (h *loaderRunHost) Agent(ctx context.Context, prompt string, request Loader
 	if agentConfig.Provider == "" {
 		agentDefinition, err := h.manager.loaderAgentDefinition(ctx, h.loader)
 		if err != nil {
-			return LoaderAgentResult{}, err
+			return domain.LoaderAgentResult{}, err
 		}
 		if agentDefinition != nil {
 			agentConfig = agentExecutionConfigFromDefinition(*agentDefinition, "")
@@ -805,7 +809,7 @@ func (h *loaderRunHost) Agent(ctx context.Context, prompt string, request Loader
 		agentConfig.Provider = "codex"
 	}
 
-	cell, _, _, execErr := h.manager.executor.ExecuteAgentRequest(ctx, session, ExecuteAgentRequest{
+	cell, _, _, execErr := h.manager.executor.ExecuteAgentRequest(ctx, session, execution.ExecuteAgentRequest{
 		Agent:             agentConfig.Provider,
 		AgentDefinitionID: agentDefinitionID,
 		Model:             agentConfig.Model,
@@ -819,7 +823,7 @@ func (h *loaderRunHost) Agent(ctx context.Context, prompt string, request Loader
 	if jsonErr != nil && execErr == nil {
 		execErr = jsonErr
 	}
-	result := LoaderAgentResult{
+	result := domain.LoaderAgentResult{
 		Text:           finalText,
 		Output:         cell.Output,
 		FinalText:      finalText,
@@ -863,7 +867,7 @@ func (h *loaderRunHost) Agent(ctx context.Context, prompt string, request Loader
 	return result, nil
 }
 
-func (h *loaderRunHost) useProjectManagedAgentRun(request LoaderAgentRequest) bool {
+func (h *loaderRunHost) useProjectManagedAgentRun(request domain.LoaderAgentRequest) bool {
 	if h == nil || h.manager == nil {
 		return false
 	}
@@ -876,7 +880,7 @@ func (h *loaderRunHost) useProjectManagedAgentRun(request LoaderAgentRequest) bo
 	return !loaderAgentRequestOverridesSession(request, true)
 }
 
-func (h *loaderRunHost) ProjectAgent(ctx context.Context, prompt string, request LoaderAgentRequest) (LoaderAgentResult, error) {
+func (h *loaderRunHost) ProjectAgent(ctx context.Context, prompt string, request domain.LoaderAgentRequest) (domain.LoaderAgentResult, error) {
 	run, execErr, err := h.manager.projectAgentRunnerComponent().RunProjectAgent(ctx, &agentcomposev2.RunAgentRequest{
 		ProjectId:        h.loader.Summary.ManagedProjectID,
 		AgentName:        h.loader.Summary.ManagedAgentName,
@@ -888,7 +892,7 @@ func (h *loaderRunHost) ProjectAgent(ctx context.Context, prompt string, request
 		ClientRequestId:  firstNonEmpty(h.run.ID, uuid.NewString()),
 	}, nil)
 	if err != nil {
-		return LoaderAgentResult{}, err
+		return domain.LoaderAgentResult{}, err
 	}
 	result, jsonErr := loaderAgentResultFromProjectRun(run, request.OutputSchema)
 	if jsonErr != nil && execErr == nil {
@@ -896,7 +900,7 @@ func (h *loaderRunHost) ProjectAgent(ctx context.Context, prompt string, request
 	}
 	level := "info"
 	eventName := "loader.agent.completed"
-	if execErr != nil || run.Status != ProjectRunStatusSucceeded {
+	if execErr != nil || run.Status != domain.ProjectRunStatusSucceeded {
 		level = "error"
 		eventName = "loader.agent.failed"
 		result.Text = firstNonEmpty(result.Text, run.Error, execErrString(execErr))
@@ -921,11 +925,11 @@ func (h *loaderRunHost) ProjectAgent(ctx context.Context, prompt string, request
 	return result, nil
 }
 
-func loaderAgentResultFromProjectRun(run ProjectRunRecord, outputSchemaJSON string) (LoaderAgentResult, error) {
+func loaderAgentResultFromProjectRun(run ProjectRunRecord, outputSchemaJSON string) (domain.LoaderAgentResult, error) {
 	metadata := projectRunResultMetadata(run.ResultJSON)
 	text := firstNonEmpty(run.Output, run.Error)
 	jsonValue, jsonErr := loaderJSONResult(text, outputSchemaJSON, "project run output")
-	return LoaderAgentResult{
+	return domain.LoaderAgentResult{
 		Text:           text,
 		Output:         run.Output,
 		FinalText:      run.Output,
@@ -935,7 +939,7 @@ func loaderAgentResultFromProjectRun(run ProjectRunRecord, outputSchemaJSON stri
 		Agent:          firstNonEmpty(metadata.Agent, run.AgentName),
 		AgentSessionID: metadata.AgentSessionID,
 		StopReason:     metadata.StopReason,
-		Success:        run.Status == ProjectRunStatusSucceeded,
+		Success:        run.Status == domain.ProjectRunStatusSucceeded,
 		ExitCode:       run.ExitCode,
 	}, jsonErr
 }
@@ -971,9 +975,9 @@ func loaderJSONResult(text, outputSchemaJSON, sourceName string) (any, error) {
 	return parsed, nil
 }
 
-func (h *loaderRunHost) Command(ctx context.Context, request LoaderCommandRequest) (LoaderCommandResult, error) {
+func (h *loaderRunHost) Command(ctx context.Context, request domain.LoaderCommandRequest) (domain.LoaderCommandResult, error) {
 	cleanupSession := loaderCommandRequestRequiresCleanup(h.loader, request)
-	agentRequest := LoaderAgentRequest{
+	agentRequest := domain.LoaderAgentRequest{
 		SessionPolicy: request.SessionPolicy,
 		Title:         request.Title,
 		Driver:        request.Driver,
@@ -983,8 +987,8 @@ func (h *loaderRunHost) Command(ctx context.Context, request LoaderCommandReques
 	}
 	session, eventType, err := h.ensureCommandSession(ctx, agentRequest, cleanupSession)
 	if err != nil {
-		_ = h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, "loader.command.failed", "error", err.Error(), loaders.CommandEventPayload(request, LoaderCommandResult{}), "", "", "")
-		return LoaderCommandResult{}, err
+		_ = h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, "loader.command.failed", "error", err.Error(), loaders.CommandEventPayload(request, domain.LoaderCommandResult{}), "", "", "")
+		return domain.LoaderCommandResult{}, err
 	}
 	if eventType != "" {
 		_ = h.addLinkedLoaderEvent(ctx, eventType, "info", "loader command session ready", map[string]any{"sessionId": session.Summary.ID}, session.Summary.ID, "", "")
@@ -1004,13 +1008,13 @@ func (h *loaderRunHost) Command(ctx context.Context, request LoaderCommandReques
 	return result, nil
 }
 
-func (h *loaderRunHost) ensureCommandSession(ctx context.Context, request LoaderAgentRequest, cleanupSession bool) (*Session, string, error) {
+func (h *loaderRunHost) ensureCommandSession(ctx context.Context, request domain.LoaderAgentRequest, cleanupSession bool) (*Session, string, error) {
 	if cleanupSession {
 		h.commandSessionIDsMutex.Lock()
 		session := h.commandReusableSession
 		h.commandSessionIDsMutex.Unlock()
 		if session != nil {
-			if loaded, err := h.manager.store.GetSession(ctx, session.Summary.ID); err == nil && loaded.Summary.VMStatus == VMStatusRunning {
+			if loaded, err := h.manager.store.GetSession(ctx, session.Summary.ID); err == nil && loaded.Summary.VMStatus == domain.VMStatusRunning {
 				return loaded, "", nil
 			}
 		}
@@ -1027,16 +1031,16 @@ func (h *loaderRunHost) ensureCommandSession(ctx context.Context, request Loader
 	return session, eventType, nil
 }
 
-func (h *loaderRunHost) LLM(ctx context.Context, prompt string, request LoaderLLMRequest) (LoaderLLMResult, error) {
+func (h *loaderRunHost) LLM(ctx context.Context, prompt string, request domain.LoaderLLMRequest) (domain.LoaderLLMResult, error) {
 	if h.manager == nil || h.manager.llm == nil {
-		return LoaderLLMResult{}, fmt.Errorf("llm client is unavailable")
+		return domain.LoaderLLMResult{}, fmt.Errorf("llm client is unavailable")
 	}
 	result, err := h.manager.llm.Generate(ctx, prompt, request.Model, request.OutputSchema)
 	if err != nil {
 		_ = h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, "loader.llm.failed", "error", err.Error(), map[string]any{"model": strings.TrimSpace(request.Model)}, "", "", "")
-		return LoaderLLMResult{}, err
+		return domain.LoaderLLMResult{}, err
 	}
-	response := LoaderLLMResult{
+	response := domain.LoaderLLMResult{
 		Text:         result.Text,
 		Model:        result.Model,
 		ResponseID:   result.ResponseID,
@@ -1046,7 +1050,7 @@ func (h *loaderRunHost) LLM(ctx context.Context, prompt string, request LoaderLL
 	return response, nil
 }
 
-func loaderAgentRequestOverridesSession(request LoaderAgentRequest, includeTitle bool) bool {
+func loaderAgentRequestOverridesSession(request domain.LoaderAgentRequest, includeTitle bool) bool {
 	return (includeTitle && strings.TrimSpace(request.Title) != "") ||
 		strings.TrimSpace(request.Driver) != "" ||
 		strings.TrimSpace(request.GuestImage) != "" ||
@@ -1054,7 +1058,7 @@ func loaderAgentRequestOverridesSession(request LoaderAgentRequest, includeTitle
 		len(domain.NormalizeEnvItems(request.SessionEnv)) > 0
 }
 
-func loaderCommandRequestRequiresCleanup(loader Loader, request LoaderCommandRequest) bool {
+func loaderCommandRequestRequiresCleanup(loader Loader, request domain.LoaderCommandRequest) bool {
 	return loaders.CommandRequestRequiresCleanup(loader, request)
 }
 
@@ -1079,7 +1083,7 @@ func (m *LoaderManager) writeRunArtifact(dir, name, content string) error {
 func cloneLoader(item Loader) Loader {
 	cloned := item
 	if item.Triggers != nil {
-		cloned.Triggers = append([]LoaderTrigger(nil), item.Triggers...)
+		cloned.Triggers = append([]domain.LoaderTrigger(nil), item.Triggers...)
 	}
 	if item.EnvItems != nil {
 		cloned.EnvItems = append([]SessionEnvVar(nil), item.EnvItems...)

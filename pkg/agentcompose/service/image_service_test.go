@@ -34,11 +34,11 @@ func TestE2EImageServiceListImagesUsesBackendAndPaginates(t *testing.T) {
 func testImageServiceListImagesUsesBackendAndPaginates(t *testing.T) {
 	t.Helper()
 	backend := &fakeImageBackend{
-		listImages: func(ctx context.Context, req ImageListRequest) (ImageListResult, error) {
+		listImages: func(ctx context.Context, req images.ListRequest) (images.ListResult, error) {
 			if req.Query != "agent" || !req.All {
 				t.Fatalf("ListImages backend request = %#v", req)
 			}
-			return ImageListResult{
+			return images.ListResult{
 				Images: []*agentcomposev2.Image{
 					{ImageId: "sha256:one", ImageRef: "one:latest"},
 					{ImageId: "sha256:two", ImageRef: "two:latest"},
@@ -151,7 +151,7 @@ func testDockerImageBackendListPullInspectRemove(t *testing.T) {
 	)
 	ctx := context.Background()
 
-	listResp, err := backend.ListImages(ctx, ImageListRequest{Query: "agent", All: true})
+	listResp, err := backend.ListImages(ctx, images.ListRequest{Query: "agent", All: true})
 	if err != nil {
 		t.Fatalf("ListImages returned error: %v", err)
 	}
@@ -162,7 +162,7 @@ func testDockerImageBackendListPullInspectRemove(t *testing.T) {
 		t.Fatalf("ListImages result = %#v", listResp.Images)
 	}
 
-	pullResp, err := backend.PullImage(ctx, ImagePullRequest{
+	pullResp, err := backend.PullImage(ctx, images.PullRequest{
 		ImageRef: "agent:latest",
 		Platform: &agentcomposev2.ImagePlatform{
 			Os:           "linux",
@@ -179,7 +179,7 @@ func testDockerImageBackendListPullInspectRemove(t *testing.T) {
 		t.Fatalf("PullImage result = %#v", pullResp)
 	}
 
-	inspectResp, err := backend.InspectImage(ctx, ImageInspectRequest{ImageRef: "agent:latest"})
+	inspectResp, err := backend.InspectImage(ctx, images.InspectRequest{ImageRef: "agent:latest"})
 	if err != nil {
 		t.Fatalf("InspectImage returned error: %v", err)
 	}
@@ -187,7 +187,7 @@ func testDockerImageBackendListPullInspectRemove(t *testing.T) {
 		t.Fatalf("InspectImage result = %#v", inspectResp.Image)
 	}
 
-	removeResp, err := backend.RemoveImage(ctx, ImageRemoveRequest{ImageRef: "agent:latest", Force: true, PruneChildren: true})
+	removeResp, err := backend.RemoveImage(ctx, images.RemoveRequest{ImageRef: "agent:latest", Force: true, PruneChildren: true})
 	if err != nil {
 		t.Fatalf("RemoveImage returned error: %v", err)
 	}
@@ -264,21 +264,21 @@ func testDockerImageBackendOperationErrorsIncludeEndpointAndImage(t *testing.T) 
 		{
 			name: "pull",
 			run: func(backend *images.DockerBackend) error {
-				_, err := backend.PullImage(context.Background(), ImagePullRequest{ImageRef: "broken:pull"})
+				_, err := backend.PullImage(context.Background(), images.PullRequest{ImageRef: "broken:pull"})
 				return err
 			},
 		},
 		{
 			name: "inspect",
 			run: func(backend *images.DockerBackend) error {
-				_, err := backend.InspectImage(context.Background(), ImageInspectRequest{ImageRef: "broken:inspect"})
+				_, err := backend.InspectImage(context.Background(), images.InspectRequest{ImageRef: "broken:inspect"})
 				return err
 			},
 		},
 		{
 			name: "remove",
 			run: func(backend *images.DockerBackend) error {
-				_, err := backend.RemoveImage(context.Background(), ImageRemoveRequest{ImageRef: "broken:remove"})
+				_, err := backend.RemoveImage(context.Background(), images.RemoveRequest{ImageRef: "broken:remove"})
 				return err
 			},
 		},
@@ -307,36 +307,36 @@ func testDockerImageBackendOperationErrorsIncludeEndpointAndImage(t *testing.T) 
 }
 
 type fakeImageBackend struct {
-	listImages   func(context.Context, ImageListRequest) (ImageListResult, error)
-	pullImage    func(context.Context, ImagePullRequest) (ImagePullResult, error)
-	inspectImage func(context.Context, ImageInspectRequest) (ImageInspectResult, error)
-	removeImage  func(context.Context, ImageRemoveRequest) (ImageRemoveResult, error)
+	listImages   func(context.Context, images.ListRequest) (images.ListResult, error)
+	pullImage    func(context.Context, images.PullRequest) (images.PullResult, error)
+	inspectImage func(context.Context, images.InspectRequest) (images.InspectResult, error)
+	removeImage  func(context.Context, images.RemoveRequest) (images.RemoveResult, error)
 }
 
-func (b *fakeImageBackend) ListImages(ctx context.Context, req ImageListRequest) (ImageListResult, error) {
+func (b *fakeImageBackend) ListImages(ctx context.Context, req images.ListRequest) (images.ListResult, error) {
 	if b.listImages == nil {
-		return ImageListResult{}, errors.New("ListImages fake is not configured")
+		return images.ListResult{}, errors.New("ListImages fake is not configured")
 	}
 	return b.listImages(ctx, req)
 }
 
-func (b *fakeImageBackend) PullImage(ctx context.Context, req ImagePullRequest) (ImagePullResult, error) {
+func (b *fakeImageBackend) PullImage(ctx context.Context, req images.PullRequest) (images.PullResult, error) {
 	if b.pullImage == nil {
-		return ImagePullResult{}, errors.New("PullImage fake is not configured")
+		return images.PullResult{}, errors.New("PullImage fake is not configured")
 	}
 	return b.pullImage(ctx, req)
 }
 
-func (b *fakeImageBackend) InspectImage(ctx context.Context, req ImageInspectRequest) (ImageInspectResult, error) {
+func (b *fakeImageBackend) InspectImage(ctx context.Context, req images.InspectRequest) (images.InspectResult, error) {
 	if b.inspectImage == nil {
-		return ImageInspectResult{}, errors.New("InspectImage fake is not configured")
+		return images.InspectResult{}, errors.New("InspectImage fake is not configured")
 	}
 	return b.inspectImage(ctx, req)
 }
 
-func (b *fakeImageBackend) RemoveImage(ctx context.Context, req ImageRemoveRequest) (ImageRemoveResult, error) {
+func (b *fakeImageBackend) RemoveImage(ctx context.Context, req images.RemoveRequest) (images.RemoveResult, error) {
 	if b.removeImage == nil {
-		return ImageRemoveResult{}, errors.New("RemoveImage fake is not configured")
+		return images.RemoveResult{}, errors.New("RemoveImage fake is not configured")
 	}
 	return b.removeImage(ctx, req)
 }

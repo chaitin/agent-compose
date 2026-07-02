@@ -23,7 +23,7 @@ import (
 const agentSessionScanLimit = 1 << 30
 
 func (s *Service) ListAgentDefinitions(ctx context.Context, req *connect.Request[agentcomposev1.ListAgentDefinitionsRequest]) (*connect.Response[agentcomposev1.ListAgentDefinitionsResponse], error) {
-	result, err := s.configDB.ListAgentDefinitions(ctx, AgentDefinitionListOptions{
+	result, err := s.configDB.ListAgentDefinitions(ctx, domain.AgentDefinitionListOptions{
 		Query:           req.Msg.GetQuery(),
 		IncludeDisabled: req.Msg.GetIncludeDisabled(),
 		Offset:          int(req.Msg.GetOffset()),
@@ -64,7 +64,7 @@ func (s *Service) GetAgentDefinition(ctx context.Context, req *connect.Request[a
 }
 
 func (s *Service) CreateAgentDefinition(ctx context.Context, req *connect.Request[agentcomposev1.CreateAgentDefinitionRequest]) (*connect.Response[agentcomposev1.AgentDefinitionResponse], error) {
-	item := AgentDefinition{
+	item := domain.AgentDefinition{
 		ID:           uuid.NewString(),
 		Name:         req.Msg.GetName(),
 		Description:  req.Msg.GetDescription(),
@@ -101,7 +101,7 @@ func (s *Service) UpdateAgentDefinition(ctx context.Context, req *connect.Reques
 	if _, err := s.configDB.GetAgentDefinition(ctx, id); err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
-	item := AgentDefinition{
+	item := domain.AgentDefinition{
 		ID:           id,
 		Name:         req.Msg.GetName(),
 		Description:  req.Msg.GetDescription(),
@@ -160,11 +160,11 @@ func (s *Service) stopAgentSessions(ctx context.Context, agentID string) error {
 			continue
 		}
 		switch session.Summary.VMStatus {
-		case VMStatusRunning:
+		case domain.VMStatusRunning:
 			if _, err := s.sessions.StopSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: session.Summary.ID})); err != nil {
 				return err
 			}
-		case VMStatusPending:
+		case domain.VMStatusPending:
 			if err := s.markAgentSessionStopped(ctx, session); err != nil {
 				return connect.NewError(connect.CodeInternal, err)
 			}
@@ -187,7 +187,7 @@ func (s *Service) markAgentSessionStopped(ctx context.Context, session *Session)
 			return err
 		}
 	}
-	session.Summary.VMStatus = VMStatusStopped
+	session.Summary.VMStatus = domain.VMStatusStopped
 	if err := s.store.UpdateSession(ctx, session); err != nil {
 		return err
 	}
@@ -230,7 +230,7 @@ func (s *Service) SetAgentDefinitionEnabled(ctx context.Context, req *connect.Re
 }
 
 func (s *Service) ValidateAgentDefinition(ctx context.Context, req *connect.Request[agentcomposev1.ValidateAgentDefinitionRequest]) (*connect.Response[agentcomposev1.ValidateAgentDefinitionResponse], error) {
-	item := AgentDefinition{
+	item := domain.AgentDefinition{
 		ID:           firstNonEmpty(strings.TrimSpace(req.Msg.GetAgentId()), "validate-agent"),
 		Name:         req.Msg.GetName(),
 		Provider:     req.Msg.GetProvider(),
@@ -296,7 +296,7 @@ func (s *Service) CreateAgentSession(ctx context.Context, req *connect.Request[a
 	return s.sessions.CreateSession(ctx, connect.NewRequest(createReq))
 }
 
-func (s *Service) validateAgentDefinitionInput(ctx context.Context, item AgentDefinition, runtimeImageID string) error {
+func (s *Service) validateAgentDefinitionInput(ctx context.Context, item domain.AgentDefinition, runtimeImageID string) error {
 	result := s.validateAgentDefinition(ctx, item, runtimeImageID)
 	if len(result.Errors) > 0 {
 		return errors.New(strings.Join(result.Errors, "; "))
@@ -304,7 +304,7 @@ func (s *Service) validateAgentDefinitionInput(ctx context.Context, item AgentDe
 	return nil
 }
 
-func (s *Service) validateAgentDefinition(ctx context.Context, item AgentDefinition, runtimeImageID string) AgentValidationResult {
+func (s *Service) validateAgentDefinition(ctx context.Context, item domain.AgentDefinition, runtimeImageID string) AgentValidationResult {
 	workspace, workspaceErr := s.agentWorkspace(ctx, item.WorkspaceID)
 	return s.validateAgentDefinitionWithWorkspace(item, runtimeImageID, workspace, workspaceErr)
 }
@@ -313,7 +313,7 @@ func (s *Service) validateAgentDefinition(ctx context.Context, item AgentDefinit
 // resolved workspace so callers that also need the workspace record do not query
 // it twice. Driver and workspace are checked from the raw trimmed input so the
 // error list stays complete even when normalization fails on another field.
-func (s *Service) validateAgentDefinitionWithWorkspace(item AgentDefinition, runtimeImageID string, workspace *WorkspaceConfig, workspaceLookupErr error) AgentValidationResult {
+func (s *Service) validateAgentDefinitionWithWorkspace(item domain.AgentDefinition, runtimeImageID string, workspace *WorkspaceConfig, workspaceLookupErr error) AgentValidationResult {
 	result := AgentValidationResult{
 		Availability: agentcomposev1.AgentAvailabilityStatus_AGENT_AVAILABILITY_STATUS_AVAILABLE,
 		Health:       agentcomposev1.AgentHealthStatus_AGENT_HEALTH_STATUS_HEALTHY,
@@ -347,7 +347,7 @@ func (s *Service) validateAgentWorkspace(ctx context.Context, workspaceID string
 	return domain.ValidateAgentWorkspaceValue(workspaceID, workspace, err)
 }
 
-func (s *Service) agentDefinitionToProto(ctx context.Context, item AgentDefinition) (*agentcomposev1.AgentDefinition, error) {
+func (s *Service) agentDefinitionToProto(ctx context.Context, item domain.AgentDefinition) (*agentcomposev1.AgentDefinition, error) {
 	sessions, err := s.listAllSessions(ctx)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -357,7 +357,7 @@ func (s *Service) agentDefinitionToProto(ctx context.Context, item AgentDefiniti
 
 // agentDefinitionToProtoWith builds the proto view from a pre-loaded session
 // slice so list responses scan sessions once instead of once per agent.
-func (s *Service) agentDefinitionToProtoWith(ctx context.Context, item AgentDefinition, sessions []*Session) *agentcomposev1.AgentDefinition {
+func (s *Service) agentDefinitionToProtoWith(ctx context.Context, item domain.AgentDefinition, sessions []*Session) *agentcomposev1.AgentDefinition {
 	workspace, workspaceErr := s.agentWorkspace(ctx, item.WorkspaceID)
 	validation := s.validateAgentDefinitionWithWorkspace(item, "", workspace, workspaceErr)
 	current, latest := domain.AgentRunSummaries(item.ID, sessions)
@@ -366,7 +366,7 @@ func (s *Service) agentDefinitionToProtoWith(ctx context.Context, item AgentDefi
 		validation.Health = agentcomposev1.AgentHealthStatus_AGENT_HEALTH_STATUS_AT_RISK
 	} else if validation.Availability != agentcomposev1.AgentAvailabilityStatus_AGENT_AVAILABILITY_STATUS_AVAILABLE {
 		validation.Health = agentcomposev1.AgentHealthStatus_AGENT_HEALTH_STATUS_AT_RISK
-	} else if latest != nil && latest.Status == VMStatusFailed {
+	} else if latest != nil && latest.Status == domain.VMStatusFailed {
 		validation.Health = agentcomposev1.AgentHealthStatus_AGENT_HEALTH_STATUS_AT_RISK
 	}
 	return api.AgentDefinitionToProto(item, workspace, validation.Availability, validation.Health, current, latest)

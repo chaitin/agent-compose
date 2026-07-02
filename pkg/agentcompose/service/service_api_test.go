@@ -2,6 +2,9 @@ package agentcompose
 
 import (
 	"agent-compose/pkg/agentcompose/api"
+	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/execution"
+	"agent-compose/pkg/agentcompose/llms"
 	"agent-compose/pkg/agentcompose/loaders"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
@@ -102,7 +105,7 @@ func TestServiceGenerateLLMChatCompletionsProtocol(t *testing.T) {
 		llm: &LLMClient{
 			config: &appconfig.Config{
 				LLMAPIEndpoint: server.URL,
-				LLMAPIProtocol: llmAPIProtocolChatCompletions,
+				LLMAPIProtocol: llms.APIProtocolChatCompletions,
 				LLMModel:       "model-a",
 			},
 			configDB: newTestConfigStore(t),
@@ -156,7 +159,7 @@ func testServiceSessionKernelAgentAndLLMAPIs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
-	if got.Msg.GetSession().GetSummary().GetVmStatus() != VMStatusRunning {
+	if got.Msg.GetSession().GetSummary().GetVmStatus() != domain.VMStatusRunning {
 		t.Fatalf("session vm status = %q, want running", got.Msg.GetSession().GetSummary().GetVmStatus())
 	}
 	listed, err := service.ListSessions(ctx, connect.NewRequest(&agentcomposev1.ListSessionsRequest{Limit: 10}))
@@ -234,7 +237,7 @@ func testServiceSessionKernelAgentAndLLMAPIs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResumeSession returned error: %v", err)
 	}
-	if resumed.Msg.GetSession().GetSummary().GetVmStatus() != VMStatusRunning {
+	if resumed.Msg.GetSession().GetSummary().GetVmStatus() != domain.VMStatusRunning {
 		t.Fatalf("resumed status = %q, want running", resumed.Msg.GetSession().GetSummary().GetVmStatus())
 	}
 	assertNextLoaderTopic(t, service.bus, "agent-compose.session.resumed")
@@ -243,7 +246,7 @@ func testServiceSessionKernelAgentAndLLMAPIs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StopSession returned error: %v", err)
 	}
-	if stopped.Msg.GetSession().GetSummary().GetVmStatus() != VMStatusStopped {
+	if stopped.Msg.GetSession().GetSummary().GetVmStatus() != domain.VMStatusStopped {
 		t.Fatalf("stopped status = %q, want stopped", stopped.Msg.GetSession().GetSummary().GetVmStatus())
 	}
 	if len(driver.stopCalls) != 1 || driver.stopCalls[0] != sessionID {
@@ -392,7 +395,7 @@ func testServiceProtoConversionHelpers(t *testing.T) {
 			Title:         "Proto Session",
 			TriggerSource: "manual",
 			Driver:        driverpkg.RuntimeDriverDocker,
-			VMStatus:      VMStatusRunning,
+			VMStatus:      domain.VMStatusRunning,
 			GuestImage:    "guest:latest",
 			WorkspacePath: "/workspace",
 			ProxyPath:     "/agent-compose/session/session-proto/lab",
@@ -433,7 +436,7 @@ func testServiceProtoConversionHelpers(t *testing.T) {
 
 	cell := NotebookCell{
 		ID:             "cell-agent",
-		Type:           CellTypeAgent,
+		Type:           execution.CellTypeAgent,
 		Source:         "prompt",
 		Stdout:         "stdout",
 		Stderr:         "stderr",
@@ -458,16 +461,16 @@ func testServiceProtoConversionHelpers(t *testing.T) {
 		proto agentcomposev1.CellType
 		local string
 	}{
-		{agentcomposev1.CellType_CELL_TYPE_SHELL, CellTypeShell},
-		{agentcomposev1.CellType_CELL_TYPE_PYTHON, CellTypePython},
-		{agentcomposev1.CellType_CELL_TYPE_AGENT, CellTypeAgent},
-		{agentcomposev1.CellType_CELL_TYPE_JAVASCRIPT, CellTypeJavaScript},
-		{agentcomposev1.CellType_CELL_TYPE_UNSPECIFIED, CellTypeJavaScript},
+		{agentcomposev1.CellType_CELL_TYPE_SHELL, execution.CellTypeShell},
+		{agentcomposev1.CellType_CELL_TYPE_PYTHON, execution.CellTypePython},
+		{agentcomposev1.CellType_CELL_TYPE_AGENT, execution.CellTypeAgent},
+		{agentcomposev1.CellType_CELL_TYPE_JAVASCRIPT, execution.CellTypeJavaScript},
+		{agentcomposev1.CellType_CELL_TYPE_UNSPECIFIED, execution.CellTypeJavaScript},
 	} {
 		if got := api.CellTypeFromProto(item.proto); got != item.local {
 			t.Fatalf("api.CellTypeFromProto(%v) = %q, want %q", item.proto, got, item.local)
 		}
-		if got := api.CellTypeToProto(item.local); item.local != CellTypeJavaScript && got != item.proto {
+		if got := api.CellTypeToProto(item.local); item.local != execution.CellTypeJavaScript && got != item.proto {
 			t.Fatalf("api.CellTypeToProto(%q) = %v, want %v", item.local, got, item.proto)
 		}
 	}
@@ -496,7 +499,7 @@ func testServiceEnsureProxyReadyStartPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
-	session.Summary.VMStatus = VMStatusStopped
+	session.Summary.VMStatus = domain.VMStatusStopped
 	if err := service.store.UpdateSession(ctx, session); err != nil {
 		t.Fatalf("UpdateSession returned error: %v", err)
 	}
@@ -514,7 +517,7 @@ func testServiceEnsureProxyReadyStartPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureSessionProxyReady returned error: %v", err)
 	}
-	if loaded.Summary.VMStatus != VMStatusRunning {
+	if loaded.Summary.VMStatus != domain.VMStatusRunning {
 		t.Fatalf("loaded vm status = %q, want running", loaded.Summary.VMStatus)
 	}
 	if readyProxy.JupyterURL != proxyState.JupyterURL {
@@ -527,7 +530,7 @@ func testServiceEnsureProxyReadyStartPaths(t *testing.T) {
 		t.Fatalf("ensureSessionProxyReady missing returned nil error")
 	}
 
-	session.Summary.VMStatus = VMStatusStopped
+	session.Summary.VMStatus = domain.VMStatusStopped
 	if err := service.store.UpdateSession(ctx, session); err != nil {
 		t.Fatalf("UpdateSession stopped returned error: %v", err)
 	}
@@ -536,7 +539,7 @@ func testServiceEnsureProxyReadyStartPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bridge ensureSessionProxyReady returned error: %v", err)
 	}
-	if bridgeLoaded.Summary.VMStatus != VMStatusRunning || bridgeProxy.ProxyPath == "" {
+	if bridgeLoaded.Summary.VMStatus != domain.VMStatusRunning || bridgeProxy.ProxyPath == "" {
 		t.Fatalf("bridge loaded/proxy = %+v/%+v", bridgeLoaded.Summary, bridgeProxy)
 	}
 	if _, err := service.reconcileSessionRuntimeState(ctx, nil); err != nil {
@@ -785,7 +788,7 @@ func newTestServiceAPIHarness(t *testing.T) (*Service, *fakeLoaderAgentRuntime, 
 		config:       config,
 		rootCtx:      ctx,
 		configDB:     configDB,
-		engine:       &QJSLoaderEngine{},
+		engine:       &loaders.QJSLoaderEngine{},
 		streams:      streams,
 		dashboard:    dashboard,
 		loaders:      map[string]Loader{},
@@ -828,7 +831,7 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 		config:       config,
 		rootCtx:      ctx,
 		configDB:     configDB,
-		engine:       &QJSLoaderEngine{},
+		engine:       &loaders.QJSLoaderEngine{},
 		store:        &Store{config: config},
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
@@ -897,7 +900,7 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 	}
 
 	validateResp, err := service.ValidateLoader(ctx, connect.NewRequest(&agentcomposev1.ValidateLoaderRequest{
-		Runtime: LoaderRuntimeScheduler,
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script:  `scheduler.interval("tick", function(){ scheduler.log("tick"); }, 60000);`,
 	}))
 	if err != nil {
@@ -922,14 +925,14 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 	created, err := service.CreateLoader(ctx, connect.NewRequest(&agentcomposev1.CreateLoaderRequest{
 		Name:              "Service Loader",
 		Description:       "created via service",
-		Runtime:           LoaderRuntimeScheduler,
+		Runtime:           domain.LoaderRuntimeScheduler,
 		Script:            `scheduler.interval("tick", function(){ scheduler.log("tick"); }, 60000);`,
 		WorkspaceId:       workspaceID,
 		Driver:            driverpkg.RuntimeDriverBoxlite,
 		GuestImage:        "guest:latest",
 		DefaultAgent:      "codex",
-		SessionPolicy:     LoaderSessionPolicyNew,
-		ConcurrencyPolicy: LoaderConcurrencyPolicyParallel,
+		SessionPolicy:     domain.LoaderSessionPolicyNew,
+		ConcurrencyPolicy: domain.LoaderConcurrencyPolicyParallel,
 		Enabled:           true,
 		EnvItems: []*agentcomposev1.SessionEnvVar{
 			{Name: "LOADER_SECRET", Value: "secret", Secret: true},
@@ -965,14 +968,14 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 		LoaderId:          loaderID,
 		Name:              "Service Loader Updated",
 		Description:       "updated via service",
-		Runtime:           LoaderRuntimeScheduler,
+		Runtime:           domain.LoaderRuntimeScheduler,
 		Script:            `scheduler.timeout("once", function(){ scheduler.log("once"); }, 5000);`,
 		WorkspaceId:       workspaceID,
 		Driver:            driverpkg.RuntimeDriverBoxlite,
 		GuestImage:        "guest:v2",
 		DefaultAgent:      "claude",
-		SessionPolicy:     LoaderSessionPolicySticky,
-		ConcurrencyPolicy: LoaderConcurrencyPolicySkip,
+		SessionPolicy:     domain.LoaderSessionPolicySticky,
+		ConcurrencyPolicy: domain.LoaderConcurrencyPolicySkip,
 		Enabled:           true,
 	}))
 	if err != nil {
@@ -1003,13 +1006,13 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	if err := configDB.CreateLoaderRun(ctx, LoaderRunSummary{
+	if err := configDB.CreateLoaderRun(ctx, domain.LoaderRunSummary{
 		LoaderID:      loaderID,
 		ID:            "run-service",
 		TriggerID:     triggerID,
-		TriggerKind:   LoaderTriggerKindTimeout,
+		TriggerKind:   domain.LoaderTriggerKindTimeout,
 		TriggerSource: "manual",
-		Status:        LoaderRunStatusSucceeded,
+		Status:        domain.LoaderRunStatusSucceeded,
 		StartedAt:     now,
 		CompletedAt:   now.Add(10 * time.Millisecond),
 		DurationMs:    10,
@@ -1018,7 +1021,7 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateLoaderRun returned error: %v", err)
 	}
-	if err := configDB.AddLoaderEvent(ctx, LoaderEvent{
+	if err := configDB.AddLoaderEvent(ctx, domain.LoaderEvent{
 		LoaderID:  loaderID,
 		ID:        "event-service",
 		RunID:     "run-service",
@@ -1060,7 +1063,7 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunLoaderNow returned error: %v", err)
 	}
-	if runNow.Msg.GetRun().GetSummary().GetStatus() != LoaderRunStatusSucceeded {
+	if runNow.Msg.GetRun().GetSummary().GetStatus() != domain.LoaderRunStatusSucceeded {
 		t.Fatalf("RunLoaderNow status = %q error = %q", runNow.Msg.GetRun().GetSummary().GetStatus(), runNow.Msg.GetRun().GetSummary().GetError())
 	}
 	if runNow.Msg.GetRun().GetSummary().GetResultJson() != `{"ok":true}` {
@@ -1078,7 +1081,7 @@ func testServiceConfigAndLoaderAPIs(t *testing.T) {
 			_, err := service.UpdateLoader(ctx, connect.NewRequest(&agentcomposev1.UpdateLoaderRequest{
 				LoaderId: "missing-loader",
 				Name:     "Missing",
-				Runtime:  LoaderRuntimeScheduler,
+				Runtime:  domain.LoaderRuntimeScheduler,
 				Script:   `scheduler.timeout("once", function(){}, 5000);`,
 			}))
 			return err

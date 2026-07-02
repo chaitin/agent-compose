@@ -7,6 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"agent-compose/pkg/agentcompose/domain"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
@@ -71,7 +72,7 @@ func (s *Service) stopProjectRunningSessions(ctx context.Context, project Projec
 	if s.store == nil {
 		return nil, fmt.Errorf("session store is required")
 	}
-	result, err := s.store.ListSessions(ctx, SessionListOptions{VMStatus: VMStatusRunning, Limit: 1 << 30})
+	result, err := s.store.ListSessions(ctx, SessionListOptions{VMStatus: domain.VMStatusRunning, Limit: 1 << 30})
 	if err != nil {
 		return nil, fmt.Errorf("list running sessions for project down %s: %w", project.Name, err)
 	}

@@ -16,14 +16,14 @@ func testLoaderScheduleModelWorkflows(t *testing.T) {
 	t.Helper()
 	now := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
 
-	next, err := loaders.LoaderTriggerNextFireAt(now, LoaderTrigger{Kind: LoaderTriggerKindInterval, IntervalMs: 1500}, false)
+	next, err := loaders.LoaderTriggerNextFireAt(now, domain.LoaderTrigger{Kind: domain.LoaderTriggerKindInterval, IntervalMs: 1500}, false)
 	if err != nil {
 		t.Fatalf("interval next fire returned error: %v", err)
 	}
 	if !next.Equal(now.Add(1500 * time.Millisecond)) {
 		t.Fatalf("interval next fire = %s", next)
 	}
-	next, err = loaders.LoaderTriggerNextFireAt(now, LoaderTrigger{Kind: LoaderTriggerKindTimeout, IntervalMs: 2000}, true)
+	next, err = loaders.LoaderTriggerNextFireAt(now, domain.LoaderTrigger{Kind: domain.LoaderTriggerKindTimeout, IntervalMs: 2000}, true)
 	if err != nil {
 		t.Fatalf("fired timeout next fire returned error: %v", err)
 	}
@@ -35,23 +35,23 @@ func testLoaderScheduleModelWorkflows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loaderCronSpecJSON returned error: %v", err)
 	}
-	next, err = loaders.LoaderTriggerNextFireAt(now, LoaderTrigger{Kind: LoaderTriggerKindCron, SpecJSON: specJSON}, false)
+	next, err = loaders.LoaderTriggerNextFireAt(now, domain.LoaderTrigger{Kind: domain.LoaderTriggerKindCron, SpecJSON: specJSON}, false)
 	if err != nil {
 		t.Fatalf("cron next fire returned error: %v", err)
 	}
 	if next.IsZero() || !next.After(now) {
 		t.Fatalf("cron next fire = %s, want after %s", next, now)
 	}
-	if source := loaders.LoaderTriggerSource(LoaderTrigger{Kind: LoaderTriggerKindCron, SpecJSON: specJSON}); source != "cron:*/5 * * * *@Asia/Shanghai" {
+	if source := loaders.LoaderTriggerSource(domain.LoaderTrigger{Kind: domain.LoaderTriggerKindCron, SpecJSON: specJSON}); source != "cron:*/5 * * * *@Asia/Shanghai" {
 		t.Fatalf("cron source = %q", source)
 	}
-	if source := loaders.LoaderTriggerSource(LoaderTrigger{Kind: LoaderTriggerKindInterval, IntervalMs: 1000}); source != "interval:1000" {
+	if source := loaders.LoaderTriggerSource(domain.LoaderTrigger{Kind: domain.LoaderTriggerKindInterval, IntervalMs: 1000}); source != "interval:1000" {
 		t.Fatalf("interval source = %q", source)
 	}
-	if source := loaders.LoaderTriggerSource(LoaderTrigger{Kind: LoaderTriggerKindTimeout, IntervalMs: 2000}); source != "timeout:2000" {
+	if source := loaders.LoaderTriggerSource(domain.LoaderTrigger{Kind: domain.LoaderTriggerKindTimeout, IntervalMs: 2000}); source != "timeout:2000" {
 		t.Fatalf("timeout source = %q", source)
 	}
-	if source := loaders.LoaderTriggerSource(LoaderTrigger{Kind: LoaderTriggerKindCron, SpecJSON: `{bad json`}); source != "cron" {
+	if source := loaders.LoaderTriggerSource(domain.LoaderTrigger{Kind: domain.LoaderTriggerKindCron, SpecJSON: `{bad json`}); source != "cron" {
 		t.Fatalf("invalid cron source = %q", source)
 	}
 
@@ -68,12 +68,12 @@ func testLoaderScheduleModelWorkflows(t *testing.T) {
 	if _, err := loaders.NormalizeLoaderCronSpecJSON(`{"expr":"* * * * *","timezone":"No/SuchZone"}`); err == nil {
 		t.Fatalf("invalid cron timezone returned nil error")
 	}
-	if _, err := loaders.LoaderTriggerNextFireAt(now, LoaderTrigger{Kind: LoaderTriggerKindCron, SpecJSON: `{"expr":"bad cron"}`}, false); err == nil {
+	if _, err := loaders.LoaderTriggerNextFireAt(now, domain.LoaderTrigger{Kind: domain.LoaderTriggerKindCron, SpecJSON: `{"expr":"bad cron"}`}, false); err == nil {
 		t.Fatalf("invalid cron trigger returned nil error")
 	}
 
-	stableID := domain.LoaderTriggerStableID(LoaderTriggerKindEvent, "runtime.*", 0, "function cb() {}", 1)
-	if stableID != domain.LoaderTriggerStableID(LoaderTriggerKindEvent, "runtime.*", 0, "function cb() {}", 1) {
+	stableID := domain.LoaderTriggerStableID(domain.LoaderTriggerKindEvent, "runtime.*", 0, "function cb() {}", 1)
+	if stableID != domain.LoaderTriggerStableID(domain.LoaderTriggerKindEvent, "runtime.*", 0, "function cb() {}", 1) {
 		t.Fatalf("stable trigger id was not stable")
 	}
 	if domain.LoaderSourceSHA("script") == domain.LoaderSourceSHA("other") {
@@ -86,19 +86,19 @@ func testLoaderScheduleModelWorkflows(t *testing.T) {
 		t.Fatalf("unexpected topic match")
 	}
 
-	if domain.NormalizeLoaderSessionPolicy("new") != LoaderSessionPolicyNew || domain.NormalizeLoaderSessionPolicy("bad") != LoaderSessionPolicySticky {
+	if domain.NormalizeLoaderSessionPolicy("new") != domain.LoaderSessionPolicyNew || domain.NormalizeLoaderSessionPolicy("bad") != domain.LoaderSessionPolicySticky {
 		t.Fatalf("session policy normalization failed")
 	}
-	if domain.NormalizeLoaderConcurrencyPolicy("allow") != LoaderConcurrencyPolicyParallel || domain.NormalizeLoaderConcurrencyPolicy("bad") != LoaderConcurrencyPolicySkip {
+	if domain.NormalizeLoaderConcurrencyPolicy("allow") != domain.LoaderConcurrencyPolicyParallel || domain.NormalizeLoaderConcurrencyPolicy("bad") != domain.LoaderConcurrencyPolicySkip {
 		t.Fatalf("concurrency policy normalization failed")
 	}
-	if domain.NormalizeLoaderRunStatus("failed") != LoaderRunStatusFailed || domain.NormalizeLoaderRunStatus("bad") != LoaderRunStatusRunning {
+	if domain.NormalizeLoaderRunStatus("failed") != domain.LoaderRunStatusFailed || domain.NormalizeLoaderRunStatus("bad") != domain.LoaderRunStatusRunning {
 		t.Fatalf("run status normalization failed")
 	}
 	if !domain.TimeIsSet(now) || domain.NonZeroTimeUnixMilli(time.Time{}) != 0 || domain.NonZeroTimeUnixMilli(now) != now.UnixMilli() {
 		t.Fatalf("time helpers returned unexpected values")
 	}
-	if !domain.LoaderTriggerUsesSchedule(LoaderTriggerKindCron) || domain.LoaderTriggerUsesSchedule(LoaderTriggerKindEvent) {
+	if !domain.LoaderTriggerUsesSchedule(domain.LoaderTriggerKindCron) || domain.LoaderTriggerUsesSchedule(domain.LoaderTriggerKindEvent) {
 		t.Fatalf("schedule trigger helper returned unexpected values")
 	}
 	if !domain.LoaderTriggerScheduledAt(now, 0).IsZero() || !domain.LoaderTriggerScheduledAt(now, 1).Equal(now.Add(time.Millisecond)) {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"agent-compose/pkg/agentcompose/domain"
 )
 
 func TestEventDispatcherPublishesPendingEvents(t *testing.T) {
@@ -12,9 +14,9 @@ func TestEventDispatcherPublishesPendingEvents(t *testing.T) {
 	bus := newTestLoaderBus(4)
 	dispatcher := NewEventDispatcher(ctx, store, bus)
 
-	created, err := store.CreateEvent(ctx, TopicEventRecord{
+	created, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:         "webhook.dispatch.test",
-		Source:        TopicEventSourceWebhook,
+		Source:        domain.TopicEventSourceWebhook,
 		CorrelationID: "corr-dispatch",
 		PayloadJSON:   `{"eventId":"evt-test","correlationId":"corr-dispatch","body":{"value":1}}`,
 		CreatedAt:     time.Now().UTC().Add(-time.Second),
@@ -29,7 +31,7 @@ func TestEventDispatcherPublishesPendingEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEvent before consume returned error: %v", err)
 	}
-	if loaded.DispatchStatus != TopicEventDispatchPublishing {
+	if loaded.DispatchStatus != domain.TopicEventDispatchPublishing {
 		t.Fatalf("dispatch status before consume = %q, want publishing", loaded.DispatchStatus)
 	}
 
@@ -58,7 +60,7 @@ func TestEventDispatcherPublishesPendingEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEvent returned error: %v", err)
 	}
-	if loaded.DispatchStatus != TopicEventDispatchPublishing {
+	if loaded.DispatchStatus != domain.TopicEventDispatchPublishing {
 		t.Fatalf("dispatch status after consume without ack = %q, want publishing", loaded.DispatchStatus)
 	}
 	if !loaded.DispatchedAt.IsZero() {
@@ -70,13 +72,13 @@ func TestEventDispatcherKeepsPendingWhenBusFull(t *testing.T) {
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
 	bus := newTestLoaderBus(1)
-	if !bus.Publish(LoaderTopicEvent{Topic: "preloaded", CreatedAt: time.Now().UTC()}) {
+	if !bus.Publish(domain.LoaderTopicEvent{Topic: "preloaded", CreatedAt: time.Now().UTC()}) {
 		t.Fatalf("failed to preload bus")
 	}
 	dispatcher := NewEventDispatcher(ctx, store, bus)
-	created, err := store.CreateEvent(ctx, TopicEventRecord{
+	created, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:         "webhook.dispatch.full",
-		Source:        TopicEventSourceWebhook,
+		Source:        domain.TopicEventSourceWebhook,
 		CorrelationID: "corr-full",
 		PayloadJSON:   `{}`,
 	})
@@ -90,7 +92,7 @@ func TestEventDispatcherKeepsPendingWhenBusFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEvent returned error: %v", err)
 	}
-	if loaded.DispatchStatus != TopicEventDispatchRetrying {
+	if loaded.DispatchStatus != domain.TopicEventDispatchRetrying {
 		t.Fatalf("dispatch status = %q, want retrying", loaded.DispatchStatus)
 	}
 	if loaded.LastError == "" || loaded.NextAttemptAt.IsZero() {
@@ -104,9 +106,9 @@ func TestEventDispatcherIgnoresStaleClaimAck(t *testing.T) {
 	bus := newTestLoaderBus(4)
 	dispatcher := NewEventDispatcher(ctx, store, bus)
 
-	created, err := store.CreateEvent(ctx, TopicEventRecord{
+	created, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:         "webhook.dispatch.stale",
-		Source:        TopicEventSourceWebhook,
+		Source:        domain.TopicEventSourceWebhook,
 		CorrelationID: "corr-stale",
 		PayloadJSON:   `{}`,
 		CreatedAt:     time.Now().UTC().Add(-time.Second),
@@ -117,7 +119,7 @@ func TestEventDispatcherIgnoresStaleClaimAck(t *testing.T) {
 
 	dispatcher.DispatchOnce(ctx, 10)
 
-	var delivered LoaderTopicEvent
+	var delivered domain.LoaderTopicEvent
 	select {
 	case delivered = <-bus.Events():
 		if delivered.Ack == nil {
@@ -151,7 +153,7 @@ func TestEventDispatcherIgnoresStaleClaimAck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEvent after stale ack returned error: %v", err)
 	}
-	if loaded.ClaimID != "fresh-claim" || loaded.DispatchStatus != TopicEventDispatchPublishing {
+	if loaded.ClaimID != "fresh-claim" || loaded.DispatchStatus != domain.TopicEventDispatchPublishing {
 		t.Fatalf("stale ack changed active claim: %#v", loaded)
 	}
 	if !loaded.DispatchedAt.IsZero() {

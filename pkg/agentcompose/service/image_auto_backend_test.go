@@ -18,19 +18,19 @@ func TestAutoImageBackendUsesDockerWhenAutoPingSucceeds(t *testing.T) {
 	ociCalled := false
 	backend := images.NewAutoBackend(
 		appconfig.ImageStoreModeAuto,
-		&fakeImageBackend{listImages: func(ctx context.Context, req ImageListRequest) (ImageListResult, error) {
+		&fakeImageBackend{listImages: func(ctx context.Context, req images.ListRequest) (images.ListResult, error) {
 			dockerCalled = true
-			return ImageListResult{StoreStatus: &agentcomposev2.ImageStoreStatus{Store: agentcomposev2.ImageStoreKind_IMAGE_STORE_KIND_DOCKER_DAEMON}}, nil
+			return images.ListResult{StoreStatus: &agentcomposev2.ImageStoreStatus{Store: agentcomposev2.ImageStoreKind_IMAGE_STORE_KIND_DOCKER_DAEMON}}, nil
 		}},
-		&fakeImageBackend{listImages: func(ctx context.Context, req ImageListRequest) (ImageListResult, error) {
+		&fakeImageBackend{listImages: func(ctx context.Context, req images.ListRequest) (images.ListResult, error) {
 			ociCalled = true
-			return ImageListResult{}, nil
+			return images.ListResult{}, nil
 		}},
 		images.WithDockerPing(func(ctx context.Context) error { return nil }),
 		images.WithDockerPingTimeout(time.Second),
 	)
 
-	result, err := backend.ListImages(context.Background(), ImageListRequest{})
+	result, err := backend.ListImages(context.Background(), images.ListRequest{})
 	if err != nil {
 		t.Fatalf("ListImages returned error: %v", err)
 	}
@@ -44,19 +44,19 @@ func TestAutoImageBackendUsesOCIWhenAutoPingFails(t *testing.T) {
 	ociCalled := false
 	backend := images.NewAutoBackend(
 		appconfig.ImageStoreModeAuto,
-		&fakeImageBackend{pullImage: func(ctx context.Context, req ImagePullRequest) (ImagePullResult, error) {
+		&fakeImageBackend{pullImage: func(ctx context.Context, req images.PullRequest) (images.PullResult, error) {
 			dockerCalled = true
-			return ImagePullResult{}, nil
+			return images.PullResult{}, nil
 		}},
-		&fakeImageBackend{pullImage: func(ctx context.Context, req ImagePullRequest) (ImagePullResult, error) {
+		&fakeImageBackend{pullImage: func(ctx context.Context, req images.PullRequest) (images.PullResult, error) {
 			ociCalled = true
-			return ImagePullResult{ResolvedRef: "oci"}, nil
+			return images.PullResult{ResolvedRef: "oci"}, nil
 		}},
 		images.WithDockerPing(func(ctx context.Context) error { return errors.New("docker unavailable") }),
 		images.WithDockerPingTimeout(time.Second),
 	)
 
-	result, err := backend.PullImage(context.Background(), ImagePullRequest{ImageRef: "team/app:latest"})
+	result, err := backend.PullImage(context.Background(), images.PullRequest{ImageRef: "team/app:latest"})
 	if err != nil {
 		t.Fatalf("PullImage returned error: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestAutoImageBackendForcedModesDoNotPing(t *testing.T) {
 			name: appconfig.ImageStoreModeDocker,
 			mode: appconfig.ImageStoreModeDocker,
 			run: func(backend *images.AutoBackend) error {
-				_, err := backend.InspectImage(context.Background(), ImageInspectRequest{ImageRef: "team/app:latest"})
+				_, err := backend.InspectImage(context.Background(), images.InspectRequest{ImageRef: "team/app:latest"})
 				return err
 			},
 			want: appconfig.ImageStoreModeDocker,
@@ -85,7 +85,7 @@ func TestAutoImageBackendForcedModesDoNotPing(t *testing.T) {
 			name: appconfig.ImageStoreModeOCI,
 			mode: appconfig.ImageStoreModeOCI,
 			run: func(backend *images.AutoBackend) error {
-				_, err := backend.RemoveImage(context.Background(), ImageRemoveRequest{ImageRef: "team/app:latest"})
+				_, err := backend.RemoveImage(context.Background(), images.RemoveRequest{ImageRef: "team/app:latest"})
 				return err
 			},
 			want: appconfig.ImageStoreModeOCI,
@@ -98,15 +98,15 @@ func TestAutoImageBackendForcedModesDoNotPing(t *testing.T) {
 			backend := images.NewAutoBackend(
 				tc.mode,
 				&fakeImageBackend{
-					inspectImage: func(ctx context.Context, req ImageInspectRequest) (ImageInspectResult, error) {
+					inspectImage: func(ctx context.Context, req images.InspectRequest) (images.InspectResult, error) {
 						dockerCalled = true
-						return ImageInspectResult{}, nil
+						return images.InspectResult{}, nil
 					},
 				},
 				&fakeImageBackend{
-					removeImage: func(ctx context.Context, req ImageRemoveRequest) (ImageRemoveResult, error) {
+					removeImage: func(ctx context.Context, req images.RemoveRequest) (images.RemoveResult, error) {
 						ociCalled = true
-						return ImageRemoveResult{}, nil
+						return images.RemoveResult{}, nil
 					},
 				},
 				images.WithDockerPing(func(ctx context.Context) error {
@@ -133,17 +133,17 @@ func TestAutoImageBackendForcedModesDoNotPing(t *testing.T) {
 func TestImageServiceStorePriorityWithAutoBackend(t *testing.T) {
 	calls := []string{}
 	service := &Service{
-		autoImages: &fakeImageBackend{listImages: func(ctx context.Context, req ImageListRequest) (ImageListResult, error) {
+		autoImages: &fakeImageBackend{listImages: func(ctx context.Context, req images.ListRequest) (images.ListResult, error) {
 			calls = append(calls, "auto")
-			return ImageListResult{}, nil
+			return images.ListResult{}, nil
 		}},
-		images: &fakeImageBackend{pullImage: func(ctx context.Context, req ImagePullRequest) (ImagePullResult, error) {
+		images: &fakeImageBackend{pullImage: func(ctx context.Context, req images.PullRequest) (images.PullResult, error) {
 			calls = append(calls, "docker")
-			return ImagePullResult{}, nil
+			return images.PullResult{}, nil
 		}},
-		ociImages: &fakeImageBackend{inspectImage: func(ctx context.Context, req ImageInspectRequest) (ImageInspectResult, error) {
+		ociImages: &fakeImageBackend{inspectImage: func(ctx context.Context, req images.InspectRequest) (images.InspectResult, error) {
 			calls = append(calls, "oci")
-			return ImageInspectResult{}, nil
+			return images.InspectResult{}, nil
 		}},
 	}
 

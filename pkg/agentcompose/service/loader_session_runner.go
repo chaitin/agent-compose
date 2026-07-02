@@ -37,13 +37,13 @@ func (r *LoaderSessionRunner) Shutdown(ctx context.Context, sessionID string) er
 	if err != nil {
 		return err
 	}
-	if session.Summary.VMStatus != VMStatusRunning {
+	if session.Summary.VMStatus != domain.VMStatusRunning {
 		return nil
 	}
 	if err := m.driver.StopSessionVM(stopCtx, session); err != nil {
 		return err
 	}
-	session.Summary.VMStatus = VMStatusStopped
+	session.Summary.VMStatus = domain.VMStatusStopped
 	if err := m.store.UpdateSession(stopCtx, session); err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func (r *LoaderSessionRunner) Shutdown(ctx context.Context, sessionID string) er
 	return nil
 }
 
-func (r *LoaderSessionRunner) Ensure(ctx context.Context, loader Loader, request LoaderAgentRequest, titleOverridesSession bool) (*Session, string, error) {
+func (r *LoaderSessionRunner) Ensure(ctx context.Context, loader Loader, request domain.LoaderAgentRequest, titleOverridesSession bool) (*Session, string, error) {
 	m := r.manager
 	agentDefinition, err := m.loaderAgentDefinition(ctx, loader)
 	if err != nil {
@@ -70,7 +70,7 @@ func (r *LoaderSessionRunner) Ensure(ctx context.Context, loader Loader, request
 		effectivePolicy = domain.NormalizeLoaderSessionPolicy(request.SessionPolicy)
 	}
 	hasOverrides := loaderAgentRequestOverridesSession(request, titleOverridesSession)
-	forceNew := effectivePolicy == LoaderSessionPolicyNew || hasOverrides
+	forceNew := effectivePolicy == domain.LoaderSessionPolicyNew || hasOverrides
 	if !forceNew {
 		if binding, ok, err := m.configDB.GetLoaderBinding(ctx, loader.Summary.ID); err != nil {
 			return nil, "", err
@@ -113,23 +113,23 @@ func (r *LoaderSessionRunner) Ensure(ctx context.Context, loader Loader, request
 	if agentDefinition != nil {
 		tags = append(tags, sessionTagsFromProto(api.AgentDefinitionTagsToProto(*agentDefinition))...)
 	}
-	session, err := m.store.CreateSession(ctx, title, "", driver, guestImage, workspaceID, SessionTypeScript+":"+loader.Summary.ID, workspaceSnapshot, envItems, tags)
+	session, err := m.store.CreateSession(ctx, title, "", driver, guestImage, workspaceID, domain.SessionTypeScript+":"+loader.Summary.ID, workspaceSnapshot, envItems, tags)
 	if err != nil {
 		return nil, "", err
 	}
 	session.ProviderEnvItems = providerEnvItems
 	if err := workspaces.PrepareSessionWorkspace(ctx, m.config, m.configDB, session); err != nil {
-		session.Summary.VMStatus = VMStatusFailed
+		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = m.store.UpdateSession(ctx, session)
 		return nil, "", err
 	}
 	writeCapabilityGuide(ctx, m.cap, m.store, m.streams, session, loader.Summary.CapsetIDs)
 	if err := m.driver.StartSessionVM(ctx, session); err != nil {
-		session.Summary.VMStatus = VMStatusFailed
+		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = m.store.UpdateSession(ctx, session)
 		return nil, "", err
 	}
-	session.Summary.VMStatus = VMStatusRunning
+	session.Summary.VMStatus = domain.VMStatusRunning
 	if err := m.store.UpdateSession(ctx, session); err != nil {
 		return nil, "", err
 	}
@@ -137,8 +137,8 @@ func (r *LoaderSessionRunner) Ensure(ctx context.Context, loader Loader, request
 	event := SessionEvent{ID: uuid.NewString(), Type: "session.created", Level: "info", Message: fmt.Sprintf("session started with %s driver using guest image %s", session.Summary.Driver, session.Summary.GuestImage), CreatedAt: time.Now().UTC()}
 	_ = m.store.AddEvent(ctx, session.Summary.ID, event)
 	m.streams.PublishEventAdded(session.Summary.ID, event)
-	if effectivePolicy == LoaderSessionPolicySticky {
-		_ = m.configDB.UpsertLoaderBinding(ctx, LoaderBinding{LoaderID: loader.Summary.ID, SessionID: session.Summary.ID})
+	if effectivePolicy == domain.LoaderSessionPolicySticky {
+		_ = m.configDB.UpsertLoaderBinding(ctx, domain.LoaderBinding{LoaderID: loader.Summary.ID, SessionID: session.Summary.ID})
 	}
 	loaded, err := m.store.GetSession(ctx, session.Summary.ID)
 	if err != nil {
@@ -162,7 +162,7 @@ func (r *LoaderSessionRunner) LoadOrResume(ctx context.Context, sessionID string
 	if err != nil {
 		return nil, "", err
 	}
-	if session.Summary.VMStatus == VMStatusRunning {
+	if session.Summary.VMStatus == domain.VMStatusRunning {
 		return session, "", nil
 	}
 	if err := workspaces.PrepareSessionWorkspace(ctx, m.config, m.configDB, session); err != nil {
@@ -172,7 +172,7 @@ func (r *LoaderSessionRunner) LoadOrResume(ctx context.Context, sessionID string
 	if err := m.driver.StartSessionVM(ctx, session); err != nil {
 		return nil, "", err
 	}
-	session.Summary.VMStatus = VMStatusRunning
+	session.Summary.VMStatus = domain.VMStatusRunning
 	if err := m.store.UpdateSession(ctx, session); err != nil {
 		return nil, "", err
 	}
@@ -194,7 +194,7 @@ func (r *LoaderSessionRunner) LoadOrResume(ctx context.Context, sessionID string
 	return loaded, "loader.session.resumed", nil
 }
 
-func (r *LoaderSessionRunner) workspaceID(loader Loader, request LoaderAgentRequest, agentDefinition *AgentDefinition) string {
+func (r *LoaderSessionRunner) workspaceID(loader Loader, request domain.LoaderAgentRequest, agentDefinition *domain.AgentDefinition) string {
 	workspaceID := firstNonEmpty(strings.TrimSpace(request.WorkspaceID), strings.TrimSpace(loader.Summary.WorkspaceID))
 	if agentDefinition != nil {
 		workspaceID = firstNonEmpty(strings.TrimSpace(request.WorkspaceID), strings.TrimSpace(loader.Summary.WorkspaceID), strings.TrimSpace(agentDefinition.WorkspaceID))
@@ -213,7 +213,7 @@ func (r *LoaderSessionRunner) workspaceSnapshot(ctx context.Context, workspaceID
 	return toSessionWorkspaceSnapshot(workspaceConfig), nil
 }
 
-func (r *LoaderSessionRunner) driver(request LoaderAgentRequest, loader Loader, agentDefinition *AgentDefinition) (string, error) {
+func (r *LoaderSessionRunner) driver(request domain.LoaderAgentRequest, loader Loader, agentDefinition *domain.AgentDefinition) (string, error) {
 	driverValue := firstNonEmpty(strings.TrimSpace(request.Driver), strings.TrimSpace(loader.Summary.Driver))
 	if agentDefinition != nil {
 		driverValue = firstNonEmpty(strings.TrimSpace(request.Driver), strings.TrimSpace(loader.Summary.Driver), strings.TrimSpace(agentDefinition.Driver))
@@ -221,7 +221,7 @@ func (r *LoaderSessionRunner) driver(request LoaderAgentRequest, loader Loader, 
 	return driverpkg.ResolveSessionRuntimeDriver(driverValue, r.manager.config.RuntimeDriver)
 }
 
-func (r *LoaderSessionRunner) guestImage(request LoaderAgentRequest, loader Loader, agentDefinition *AgentDefinition, driver string) string {
+func (r *LoaderSessionRunner) guestImage(request domain.LoaderAgentRequest, loader Loader, agentDefinition *domain.AgentDefinition, driver string) string {
 	agentGuestImage := ""
 	if agentDefinition != nil {
 		agentGuestImage = agentDefinition.GuestImage
@@ -238,11 +238,11 @@ func (m *LoaderManager) shutdownLoaderSession(ctx context.Context, sessionID str
 	return m.sessionRunnerComponent().Shutdown(ctx, sessionID)
 }
 
-func (m *LoaderManager) ensureLoaderSession(ctx context.Context, loader Loader, request LoaderAgentRequest) (*Session, string, error) {
+func (m *LoaderManager) ensureLoaderSession(ctx context.Context, loader Loader, request domain.LoaderAgentRequest) (*Session, string, error) {
 	return m.sessionRunnerComponent().Ensure(ctx, loader, request, true)
 }
 
-func (m *LoaderManager) ensureLoaderCommandSession(ctx context.Context, loader Loader, request LoaderAgentRequest) (*Session, string, error) {
+func (m *LoaderManager) ensureLoaderCommandSession(ctx context.Context, loader Loader, request domain.LoaderAgentRequest) (*Session, string, error) {
 	return m.sessionRunnerComponent().Ensure(ctx, loader, request, false)
 }
 

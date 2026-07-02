@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/loaders"
 	"context"
 	"fmt"
 	"log/slog"
@@ -20,10 +21,10 @@ func NewLoaderRunExecutor(manager *LoaderManager) *LoaderRunExecutor {
 	return &LoaderRunExecutor{manager: manager}
 }
 
-func (e *LoaderRunExecutor) Run(ctx context.Context, loader Loader, trigger *LoaderTrigger, payloadJSON, source string, options loaderRunOptions, triggerEventAck ...func(context.Context) error) (LoaderRunSummary, error) {
+func (e *LoaderRunExecutor) Run(ctx context.Context, loader Loader, trigger *domain.LoaderTrigger, payloadJSON, source string, options loaderRunOptions, triggerEventAck ...func(context.Context) error) (domain.LoaderRunSummary, error) {
 	prepared, err := e.Prepare(ctx, loader, trigger, payloadJSON, source, options)
 	if err != nil {
-		return LoaderRunSummary{}, err
+		return domain.LoaderRunSummary{}, err
 	}
 	if len(triggerEventAck) > 0 && triggerEventAck[0] != nil {
 		if err := triggerEventAck[0](ctx); err != nil {
@@ -33,7 +34,7 @@ func (e *LoaderRunExecutor) Run(ctx context.Context, loader Loader, trigger *Loa
 	return e.Execute(ctx, prepared)
 }
 
-func (e *LoaderRunExecutor) Prepare(ctx context.Context, loader Loader, trigger *LoaderTrigger, payloadJSON, source string, options loaderRunOptions) (preparedLoaderRun, error) {
+func (e *LoaderRunExecutor) Prepare(ctx context.Context, loader Loader, trigger *domain.LoaderTrigger, payloadJSON, source string, options loaderRunOptions) (preparedLoaderRun, error) {
 	m := e.manager
 	payloadJSON, err := normalizeJSONDocument(payloadJSON)
 	if err != nil {
@@ -43,11 +44,11 @@ func (e *LoaderRunExecutor) Prepare(ctx context.Context, loader Loader, trigger 
 		return preparedLoaderRun{}, err
 	}
 	now := time.Now().UTC()
-	run := LoaderRunSummary{
+	run := domain.LoaderRunSummary{
 		ID:               uuid.NewString(),
 		LoaderID:         loader.Summary.ID,
 		TriggerSource:    strings.TrimSpace(source),
-		Status:           LoaderRunStatusRunning,
+		Status:           domain.LoaderRunStatusRunning,
 		StartedAt:        now,
 		PayloadJSON:      payloadJSON,
 		SourceScriptHash: domain.LoaderSourceSHA(loader.Script),
@@ -68,7 +69,7 @@ func (e *LoaderRunExecutor) Prepare(ctx context.Context, loader Loader, trigger 
 			return preparedLoaderRun{}, fmt.Errorf("create loader run artifacts dir: %w", err)
 		}
 		_ = m.writeRunArtifact(run.ArtifactsDir, "payload.json", payloadJSON)
-		run.Status = LoaderRunStatusSkipped
+		run.Status = domain.LoaderRunStatusSkipped
 		run.CompletedAt = now
 		run.Error = "loader is already running"
 		if err := m.configDB.CreateLoaderRun(ctx, run); err != nil {
@@ -98,15 +99,15 @@ func (e *LoaderRunExecutor) Prepare(ctx context.Context, loader Loader, trigger 
 	return preparedLoaderRun{loader: loader, trigger: trigger, run: run, payloadJSON: payloadJSON}, nil
 }
 
-func (e *LoaderRunExecutor) Execute(ctx context.Context, prepared preparedLoaderRun) (LoaderRunSummary, error) {
+func (e *LoaderRunExecutor) Execute(ctx context.Context, prepared preparedLoaderRun) (domain.LoaderRunSummary, error) {
 	m := e.manager
-	if prepared.run.Status == LoaderRunStatusSkipped {
+	if prepared.run.Status == domain.LoaderRunStatusSkipped {
 		return prepared.run, nil
 	}
 	defer m.leaveRun(prepared.loader.Summary.ID)
 	run := prepared.run
 	host := &loaderRunHost{manager: m, loader: prepared.loader, run: &run, triggerEvent: parseLoaderTriggerEventMetadata(prepared.payloadJSON)}
-	execution, execErr := m.engine.Execute(ctx, LoaderExecutionRequest{
+	execution, execErr := m.engine.Execute(ctx, loaders.LoaderExecutionRequest{
 		Runtime:     prepared.loader.Summary.Runtime,
 		Script:      prepared.loader.Script,
 		Trigger:     prepared.trigger,
@@ -120,13 +121,13 @@ func (e *LoaderRunExecutor) Execute(ctx context.Context, prepared preparedLoader
 	run.CompletedAt = completedAt
 	run.DurationMs = completedAt.Sub(run.StartedAt).Milliseconds()
 	if execErr != nil {
-		run.Status = LoaderRunStatusFailed
+		run.Status = domain.LoaderRunStatusFailed
 		run.Error = execErr.Error()
 		_ = m.writeRunArtifact(run.ArtifactsDir, "error.txt", run.Error)
 		_ = m.configDB.UpdateLoaderLastError(writeCtx, prepared.loader.Summary.ID, run.Error)
 		_ = m.addLoaderEvent(writeCtx, prepared.loader.Summary.ID, run.ID, run.TriggerID, "loader.run.failed", "error", run.Error, nil, "", "", "")
 	} else {
-		run.Status = LoaderRunStatusSucceeded
+		run.Status = domain.LoaderRunStatusSucceeded
 		run.ResultJSON = execution.ResultJSON
 		if execution.ResultJSON != "" {
 			_ = m.writeRunArtifact(run.ArtifactsDir, "result.json", execution.ResultJSON)
@@ -135,7 +136,7 @@ func (e *LoaderRunExecutor) Execute(ctx context.Context, prepared preparedLoader
 		_ = m.addLoaderEvent(writeCtx, prepared.loader.Summary.ID, run.ID, run.TriggerID, "loader.run.completed", "info", "loader run completed", map[string]any{"resultJson": execution.ResultJSON}, "", "", "")
 	}
 	if err := m.configDB.UpdateLoaderRun(writeCtx, run); err != nil {
-		return LoaderRunSummary{}, err
+		return domain.LoaderRunSummary{}, err
 	}
 	m.updateTriggerEventDelivery(writeCtx, run)
 	m.notifyDashboard("loader_run_updated")
@@ -147,7 +148,7 @@ func (e *LoaderRunExecutor) Execute(ctx context.Context, prepared preparedLoader
 
 func (e *LoaderRunExecutor) Abort(ctx context.Context, prepared preparedLoaderRun, reason string) {
 	m := e.manager
-	if prepared.run.Status == LoaderRunStatusSkipped {
+	if prepared.run.Status == domain.LoaderRunStatusSkipped {
 		return
 	}
 	defer m.leaveRun(prepared.loader.Summary.ID)
@@ -157,7 +158,7 @@ func (e *LoaderRunExecutor) Abort(ctx context.Context, prepared preparedLoaderRu
 	}
 	run := prepared.run
 	completedAt := time.Now().UTC()
-	run.Status = LoaderRunStatusFailed
+	run.Status = domain.LoaderRunStatusFailed
 	run.CompletedAt = completedAt
 	run.DurationMs = completedAt.Sub(run.StartedAt).Milliseconds()
 	run.Error = reason
@@ -176,15 +177,15 @@ func (m *LoaderManager) runExecutorComponent() *LoaderRunExecutor {
 	return m.runExecutor
 }
 
-func (m *LoaderManager) runLoader(ctx context.Context, loader Loader, trigger *LoaderTrigger, payloadJSON, source string, automatic bool, options loaderRunOptions, triggerEventAck ...func(context.Context) error) (LoaderRunSummary, error) {
+func (m *LoaderManager) runLoader(ctx context.Context, loader Loader, trigger *domain.LoaderTrigger, payloadJSON, source string, automatic bool, options loaderRunOptions, triggerEventAck ...func(context.Context) error) (domain.LoaderRunSummary, error) {
 	return m.runExecutorComponent().Run(ctx, loader, trigger, payloadJSON, source, options, triggerEventAck...)
 }
 
-func (m *LoaderManager) prepareLoaderRun(ctx context.Context, loader Loader, trigger *LoaderTrigger, payloadJSON, source string, options loaderRunOptions) (preparedLoaderRun, error) {
+func (m *LoaderManager) prepareLoaderRun(ctx context.Context, loader Loader, trigger *domain.LoaderTrigger, payloadJSON, source string, options loaderRunOptions) (preparedLoaderRun, error) {
 	return m.runExecutorComponent().Prepare(ctx, loader, trigger, payloadJSON, source, options)
 }
 
-func (m *LoaderManager) executePreparedLoaderRun(ctx context.Context, prepared preparedLoaderRun) (LoaderRunSummary, error) {
+func (m *LoaderManager) executePreparedLoaderRun(ctx context.Context, prepared preparedLoaderRun) (domain.LoaderRunSummary, error) {
 	return m.runExecutorComponent().Execute(ctx, prepared)
 }
 

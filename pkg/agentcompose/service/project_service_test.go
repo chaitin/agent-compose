@@ -8,6 +8,9 @@ import (
 
 	"connectrpc.com/connect"
 
+	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/images"
+	"agent-compose/pkg/agentcompose/loaders"
 	"agent-compose/pkg/agentcompose/projects"
 	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
@@ -574,16 +577,16 @@ scheduler.on("agent-compose.session.created", function onSession() {});
 		t.Fatalf("loader/validation triggers = %#v / %#v, want 4 triggers", build.loader.Triggers, build.validationTriggers)
 	}
 	triggers := build.loader.Triggers
-	if triggers[0].Kind != LoaderTriggerKindInterval || triggers[0].ID != "interval-review" || triggers[0].IntervalMs != 60000 {
+	if triggers[0].Kind != domain.LoaderTriggerKindInterval || triggers[0].ID != "interval-review" || triggers[0].IntervalMs != 60000 {
 		t.Fatalf("interval trigger = %#v", triggers[0])
 	}
-	if triggers[1].Kind != LoaderTriggerKindTimeout || triggers[1].ID != "timeout-review" || triggers[1].IntervalMs != 5000 {
+	if triggers[1].Kind != domain.LoaderTriggerKindTimeout || triggers[1].ID != "timeout-review" || triggers[1].IntervalMs != 5000 {
 		t.Fatalf("timeout trigger = %#v", triggers[1])
 	}
-	if triggers[2].Kind != LoaderTriggerKindCron || triggers[2].ID != "cron-review" || !strings.Contains(triggers[2].SpecJSON, `"timezone":"UTC"`) {
+	if triggers[2].Kind != domain.LoaderTriggerKindCron || triggers[2].ID != "cron-review" || !strings.Contains(triggers[2].SpecJSON, `"timezone":"UTC"`) {
 		t.Fatalf("cron trigger = %#v", triggers[2])
 	}
-	if triggers[3].Kind != LoaderTriggerKindEvent || triggers[3].Topic != "agent-compose.session.created" {
+	if triggers[3].Kind != domain.LoaderTriggerKindEvent || triggers[3].Topic != "agent-compose.session.created" {
 		t.Fatalf("event trigger = %#v", triggers[3])
 	}
 }
@@ -613,7 +616,7 @@ func testProjectServiceManagedSchedulerCompileCoversTriggerKinds(t *testing.T) {
 	if !projects.SameLoaderTriggerSpecs(triggers, again) || script != againScript {
 		t.Fatalf("compiled scheduler is not stable:\n%#v\n%#v\n%s\n%s", triggers, again, script, againScript)
 	}
-	byKind := map[string]LoaderTrigger{}
+	byKind := map[string]domain.LoaderTrigger{}
 	for _, trigger := range triggers {
 		if strings.TrimSpace(trigger.ID) == "" {
 			t.Fatalf("trigger has empty id: %#v", trigger)
@@ -623,16 +626,16 @@ func testProjectServiceManagedSchedulerCompileCoversTriggerKinds(t *testing.T) {
 			t.Fatalf("script does not contain trigger id %q:\n%s", trigger.ID, script)
 		}
 	}
-	if got := byKind[LoaderTriggerKindCron].SpecJSON; !strings.Contains(got, `"expr":"0 * * * *"`) || !strings.Contains(got, `"timezone":"UTC"`) {
+	if got := byKind[domain.LoaderTriggerKindCron].SpecJSON; !strings.Contains(got, `"expr":"0 * * * *"`) || !strings.Contains(got, `"timezone":"UTC"`) {
 		t.Fatalf("cron spec = %q", got)
 	}
-	if got := byKind[LoaderTriggerKindInterval].IntervalMs; got != 90_000 {
+	if got := byKind[domain.LoaderTriggerKindInterval].IntervalMs; got != 90_000 {
 		t.Fatalf("interval ms = %d, want 90000", got)
 	}
-	if got := byKind[LoaderTriggerKindTimeout].IntervalMs; got != 5_000 {
+	if got := byKind[domain.LoaderTriggerKindTimeout].IntervalMs; got != 5_000 {
 		t.Fatalf("timeout ms = %d, want 5000", got)
 	}
-	if got := byKind[LoaderTriggerKindEvent].Topic; got != "git.push" {
+	if got := byKind[domain.LoaderTriggerKindEvent].Topic; got != "git.push" {
 		t.Fatalf("event topic = %q, want git.push", got)
 	}
 	if !strings.Contains(script, "scheduler.agent") || !strings.Contains(script, "review hourly") || !strings.Contains(script, "review push") {
@@ -665,7 +668,7 @@ func testProjectServiceApplyProjectCreatesAndReusesRevision(t *testing.T) {
 	service := newProjectServiceTestService(t, store)
 	ctx := context.Background()
 	source := &agentcomposev2.ProjectSource{ComposePath: filepath.Join(t.TempDir(), "agent-compose.yml")}
-	manualAgent, err := store.CreateAgentDefinition(ctx, AgentDefinition{
+	manualAgent, err := store.CreateAgentDefinition(ctx, domain.AgentDefinition{
 		ID:       "manual-reviewer",
 		Name:     "reviewer",
 		Enabled:  true,
@@ -676,11 +679,11 @@ func testProjectServiceApplyProjectCreatesAndReusesRevision(t *testing.T) {
 		t.Fatalf("CreateAgentDefinition manual returned error: %v", err)
 	}
 	manualLoader, err := store.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{
+		Summary: domain.LoaderSummary{
 			ID:      "manual-reviewer-loader",
 			Name:    "reviewer scheduler",
 			Enabled: true,
-			Runtime: LoaderRuntimeScheduler,
+			Runtime: domain.LoaderRuntimeScheduler,
 		},
 		Script: "function main() { return { manual: true }; }",
 	})
@@ -738,7 +741,7 @@ func testProjectServiceApplyProjectCreatesAndReusesRevision(t *testing.T) {
 	if reviewerLoader.Summary.AgentID != reviewerManagedID || reviewerLoader.Summary.Driver != "boxlite" || reviewerLoader.Summary.GuestImage != "guest:v1" {
 		t.Fatalf("managed reviewer loader = %#v", reviewerLoader.Summary)
 	}
-	if len(reviewerLoader.Triggers) != 1 || reviewerLoader.Triggers[0].Kind != LoaderTriggerKindCron || !strings.Contains(reviewerLoader.Triggers[0].SpecJSON, `"expr":"0 * * * *"`) {
+	if len(reviewerLoader.Triggers) != 1 || reviewerLoader.Triggers[0].Kind != domain.LoaderTriggerKindCron || !strings.Contains(reviewerLoader.Triggers[0].SpecJSON, `"expr":"0 * * * *"`) {
 		t.Fatalf("managed reviewer loader triggers = %#v", reviewerLoader.Triggers)
 	}
 	loaded, err := store.GetProject(ctx, projectID)
@@ -916,23 +919,23 @@ func TestProjectServiceReconcileSchedulersFailureDisablesStagedResources(t *test
 		SpecJSON:        `{"enabled":true}`,
 	}
 	loader := Loader{
-		Summary: LoaderSummary{
+		Summary: domain.LoaderSummary{
 			ID:                 scheduler.ManagedLoaderID,
 			Name:               "demo/reviewer scheduler",
 			Enabled:            true,
-			Runtime:            LoaderRuntimeScheduler,
+			Runtime:            domain.LoaderRuntimeScheduler,
 			DefaultAgent:       "codex",
-			SessionPolicy:      LoaderSessionPolicyNew,
-			ConcurrencyPolicy:  LoaderConcurrencyPolicySkip,
+			SessionPolicy:      domain.LoaderSessionPolicyNew,
+			ConcurrencyPolicy:  domain.LoaderConcurrencyPolicySkip,
 			ManagedProjectID:   project.ID,
 			ManagedRevision:    1,
 			ManagedAgentName:   "reviewer",
 			ManagedSchedulerID: scheduler.SchedulerID,
 		},
 		Script: "scheduler.interval(\"duplicate\", async function() {}, 1000);",
-		Triggers: []LoaderTrigger{
-			{ID: "duplicate", Kind: LoaderTriggerKindInterval, IntervalMs: 1000, Enabled: true, SpecJSON: `{"kind":"interval"}`},
-			{ID: "duplicate", Kind: LoaderTriggerKindInterval, IntervalMs: 2000, Enabled: true, SpecJSON: `{"kind":"interval"}`},
+		Triggers: []domain.LoaderTrigger{
+			{ID: "duplicate", Kind: domain.LoaderTriggerKindInterval, IntervalMs: 1000, Enabled: true, SpecJSON: `{"kind":"interval"}`},
+			{ID: "duplicate", Kind: domain.LoaderTriggerKindInterval, IntervalMs: 2000, Enabled: true, SpecJSON: `{"kind":"interval"}`},
 		},
 	}
 
@@ -1004,14 +1007,14 @@ func newProjectServiceTestService(t *testing.T, store *ConfigStore) *Service {
 		configDB: store,
 		loaders: &LoaderManager{
 			configDB:     store,
-			engine:       &QJSLoaderEngine{},
+			engine:       &loaders.QJSLoaderEngine{},
 			loaders:      map[string]Loader{},
 			running:      map[string]int{},
 			scheduleWake: make(chan struct{}, 1),
 		},
 		images: &fakeImageBackend{
-			inspectImage: func(context.Context, ImageInspectRequest) (ImageInspectResult, error) {
-				return ImageInspectResult{}, nil
+			inspectImage: func(context.Context, images.InspectRequest) (images.InspectResult, error) {
+				return images.InspectResult{}, nil
 			},
 		},
 	}
@@ -1119,7 +1122,7 @@ func managedLoaderIDByAgentName(t *testing.T, schedulers []*agentcomposev2.Proje
 	return ""
 }
 
-func assertManagedAgentDefinition(t *testing.T, store *ConfigStore, ctx context.Context, agentID, projectID, agentName string, revision int64, enabled bool) AgentDefinition {
+func assertManagedAgentDefinition(t *testing.T, store *ConfigStore, ctx context.Context, agentID, projectID, agentName string, revision int64, enabled bool) domain.AgentDefinition {
 	t.Helper()
 	agent, err := store.GetAgentDefinitionIncludingDeleted(ctx, agentID)
 	if err != nil {

@@ -18,6 +18,7 @@ import (
 	"agent-compose/pkg/agentcompose/capabilities"
 	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/agentcompose/llms"
+	"agent-compose/pkg/agentcompose/loaders"
 	"agent-compose/pkg/agentcompose/runs"
 	"agent-compose/pkg/agentcompose/workspaces"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
@@ -38,17 +39,17 @@ func TestRunCoordinatorStateMachineTransitions(t *testing.T) {
 	run, err := coordinator.BeginRun(ctx, runs.StartRequest{
 		ProjectID:       projectID,
 		AgentName:       "reviewer",
-		Source:          ProjectRunSourceManual,
+		Source:          domain.ProjectRunSourceManual,
 		Prompt:          "review now",
 		ClientRequestID: "request-1",
 	})
 	if err != nil {
 		t.Fatalf("BeginRun returned error: %v", err)
 	}
-	if run.Status != ProjectRunStatusPending || run.ProjectID != projectID || run.AgentName != "reviewer" || run.ManagedAgentID == "" {
+	if run.Status != domain.ProjectRunStatusPending || run.ProjectID != projectID || run.AgentName != "reviewer" || run.ManagedAgentID == "" {
 		t.Fatalf("created run = %#v", run)
 	}
-	if run.Source != ProjectRunSourceManual || run.ProjectName != "demo" || run.ProjectRevision != 1 || run.Driver != "boxlite" || run.ImageRef != "guest:v1" {
+	if run.Source != domain.ProjectRunSourceManual || run.ProjectName != "demo" || run.ProjectRevision != 1 || run.Driver != "boxlite" || run.ImageRef != "guest:v1" {
 		t.Fatalf("created run project/source/runtime fields = %#v", run)
 	}
 
@@ -56,7 +57,7 @@ func TestRunCoordinatorStateMachineTransitions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarkRunning returned error: %v", err)
 	}
-	if running.Status != ProjectRunStatusRunning || running.SessionID != "session-1" || running.StartedAt.IsZero() {
+	if running.Status != domain.ProjectRunStatusRunning || running.SessionID != "session-1" || running.StartedAt.IsZero() {
 		t.Fatalf("running run = %#v", running)
 	}
 
@@ -68,7 +69,7 @@ func TestRunCoordinatorStateMachineTransitions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarkSucceeded returned error: %v", err)
 	}
-	if succeeded.Status != ProjectRunStatusSucceeded || succeeded.CompletedAt.IsZero() || succeeded.DurationMs <= 0 || succeeded.Output != "done" || succeeded.ResultJSON != `{"ok":true}` {
+	if succeeded.Status != domain.ProjectRunStatusSucceeded || succeeded.CompletedAt.IsZero() || succeeded.DurationMs <= 0 || succeeded.Output != "done" || succeeded.ResultJSON != `{"ok":true}` {
 		t.Fatalf("succeeded run = %#v", succeeded)
 	}
 	if _, err := coordinator.MarkRunning(ctx, run.RunID, "session-2"); err == nil || !strings.Contains(err.Error(), "already terminal") {
@@ -84,7 +85,7 @@ func TestRunCoordinatorRejectsInvalidTransitionsAndRecordsFailureTerminal(t *tes
 	run, err := coordinator.BeginRun(ctx, runs.StartRequest{
 		ProjectID:       projectID,
 		AgentName:       "reviewer",
-		Source:          ProjectRunSourceScheduler,
+		Source:          domain.ProjectRunSourceScheduler,
 		SchedulerID:     "scheduler-1",
 		TriggerID:       "trigger-1",
 		ClientRequestID: "request-2",
@@ -102,10 +103,10 @@ func TestRunCoordinatorRejectsInvalidTransitionsAndRecordsFailureTerminal(t *tes
 	if err != nil {
 		t.Fatalf("MarkFailed returned error: %v", err)
 	}
-	if failed.Status != ProjectRunStatusFailed || failed.StartedAt.IsZero() || failed.CompletedAt.IsZero() || failed.Error != "workspace prepare failed" {
+	if failed.Status != domain.ProjectRunStatusFailed || failed.StartedAt.IsZero() || failed.CompletedAt.IsZero() || failed.Error != "workspace prepare failed" {
 		t.Fatalf("failed terminal run = %#v", failed)
 	}
-	if failed.Source != ProjectRunSourceScheduler || failed.SchedulerID != "scheduler-1" || failed.TriggerID != "trigger-1" {
+	if failed.Source != domain.ProjectRunSourceScheduler || failed.SchedulerID != "scheduler-1" || failed.TriggerID != "trigger-1" {
 		t.Fatalf("failed terminal source fields = %#v", failed)
 	}
 	if _, err := coordinator.MarkCanceled(ctx, runs.TransitionRequest{RunID: run.RunID}); err == nil || !strings.Contains(err.Error(), "already terminal") {
@@ -178,7 +179,7 @@ func testRunServiceRunAgentCreatesTerminalSucceededRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetProjectRun returned error: %v", err)
 	}
-	if stored.Status != ProjectRunStatusSucceeded || stored.ProjectID != projectID || stored.AgentName != "reviewer" || stored.ManagedAgentID == "" {
+	if stored.Status != domain.ProjectRunStatusSucceeded || stored.ProjectID != projectID || stored.AgentName != "reviewer" || stored.ManagedAgentID == "" {
 		t.Fatalf("stored RunAgent run = %#v", stored)
 	}
 	if !strings.Contains(stored.Output, "loader agent transcript") || stored.ResultJSON == "{}" || stored.ArtifactsDir == "" || stored.LogsPath == "" {
@@ -191,7 +192,7 @@ func testRunServiceRunAgentCreatesTerminalSucceededRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
-	if session.Summary.VMStatus != VMStatusStopped {
+	if session.Summary.VMStatus != domain.VMStatusStopped {
 		t.Fatalf("session status = %q, want stopped", session.Summary.VMStatus)
 	}
 	env := envItemsByName(session.EnvItems)
@@ -202,7 +203,7 @@ func testRunServiceRunAgentCreatesTerminalSucceededRecord(t *testing.T) {
 		"project": projectID,
 		"agent":   "reviewer",
 		"run_id":  stored.RunID,
-		"source":  ProjectRunSourceAPI,
+		"source":  domain.ProjectRunSourceAPI,
 	} {
 		if !sessionHasTag(session, name, value) {
 			t.Fatalf("session tags missing %s=%s: %#v", name, value, session.Summary.Tags)
@@ -302,12 +303,12 @@ func testRunServiceRunAgentRefreshesCapabilitiesOnReusedSession(t *testing.T) {
 	service.cap = newTestCapabilityProvider(server.URL, "agent-compose:9100")
 
 	ctx := context.Background()
-	existing, err := service.store.CreateSession(ctx, "Reusable Capability Session", "", "boxlite", "guest:latest", "", SessionTypeManual, nil, nil,
+	existing, err := service.store.CreateSession(ctx, "Reusable Capability Session", "", "boxlite", "guest:latest", "", domain.SessionTypeManual, nil, nil,
 		[]SessionTag{{Name: "legacy", Value: "true"}})
 	if err != nil {
 		t.Fatalf("CreateSession existing returned error: %v", err)
 	}
-	existing.Summary.VMStatus = VMStatusStopped
+	existing.Summary.VMStatus = domain.VMStatusStopped
 	if err := service.store.UpdateSession(ctx, existing); err != nil {
 		t.Fatalf("UpdateSession existing returned error: %v", err)
 	}
@@ -408,7 +409,7 @@ func testRunAgentStreamReturnsRealtimeOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetProjectRun stream returned error: %v", err)
 	}
-	if stored.Status != ProjectRunStatusSucceeded || stored.SessionID == "" || !strings.Contains(stored.Output, "loader agent transcript") {
+	if stored.Status != domain.ProjectRunStatusSucceeded || stored.SessionID == "" || !strings.Contains(stored.Output, "loader agent transcript") {
 		t.Fatalf("stored stream run = %#v", stored)
 	}
 }
@@ -487,7 +488,7 @@ func testRunAgentStreamAgentFailurePersistsRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetProjectRun failure returned error: %v", err)
 	}
-	if stored.Status != ProjectRunStatusFailed || stored.ExitCode != 7 || stored.SessionID != completed.GetRun().GetSessionId() || stored.ArtifactsDir == "" {
+	if stored.Status != domain.ProjectRunStatusFailed || stored.ExitCode != 7 || stored.SessionID != completed.GetRun().GetSessionId() || stored.ArtifactsDir == "" {
 		t.Fatalf("stored failed stream run = %#v", stored)
 	}
 }
@@ -520,14 +521,14 @@ func TestRunAgentStreamSendFailurePersistsTerminalRun(t *testing.T) {
 	if outputAttempts != 1 {
 		t.Fatalf("output send attempts = %d, want 1", outputAttempts)
 	}
-	if run.Status != ProjectRunStatusFailed || run.SessionID == "" || run.ExitCode == 0 || !strings.Contains(run.Error, "client stopped reading") {
+	if run.Status != domain.ProjectRunStatusFailed || run.SessionID == "" || run.ExitCode == 0 || !strings.Contains(run.Error, "client stopped reading") {
 		t.Fatalf("stream send failure run = %#v", run)
 	}
 	stored, err := store.GetProjectRun(ctx, run.RunID)
 	if err != nil {
 		t.Fatalf("GetProjectRun send failure returned error: %v", err)
 	}
-	if stored.Status != ProjectRunStatusFailed || stored.CompletedAt.IsZero() || stored.SessionID != run.SessionID {
+	if stored.Status != domain.ProjectRunStatusFailed || stored.CompletedAt.IsZero() || stored.SessionID != run.SessionID {
 		t.Fatalf("stored stream send failure run = %#v", stored)
 	}
 }
@@ -567,14 +568,14 @@ func TestRunAgentContextCancelPersistsTerminalRun(t *testing.T) {
 	if outputAttempts != 1 {
 		t.Fatalf("output send attempts = %d, want 1", outputAttempts)
 	}
-	if run.Status != ProjectRunStatusFailed || run.SessionID == "" || run.CompletedAt.IsZero() || !strings.Contains(run.Error, "context canceled") {
+	if run.Status != domain.ProjectRunStatusFailed || run.SessionID == "" || run.CompletedAt.IsZero() || !strings.Contains(run.Error, "context canceled") {
 		t.Fatalf("canceled run = %#v", run)
 	}
 	stored, err := store.GetProjectRun(context.Background(), run.RunID)
 	if err != nil {
 		t.Fatalf("GetProjectRun canceled run returned error: %v", err)
 	}
-	if stored.Status != ProjectRunStatusFailed || stored.CompletedAt.IsZero() || stored.SessionID != run.SessionID || !strings.Contains(stored.Error, "context canceled") {
+	if stored.Status != domain.ProjectRunStatusFailed || stored.CompletedAt.IsZero() || stored.SessionID != run.SessionID || !strings.Contains(stored.Error, "context canceled") {
 		t.Fatalf("stored canceled run = %#v", stored)
 	}
 }
@@ -613,7 +614,7 @@ func TestRunAgentSessionEnvProviderUsesAgentDefinitionModelAfterSessionReload(t 
 	if len(providers) != 1 {
 		t.Fatalf("provider count = %d, want 1: %#v", len(providers), providers)
 	}
-	if providers[0].APIKey != "session-provider-key" || providers[0].BaseURL != "https://session-openai.example.invalid/v1" || providers[0].Scope != llmProviderScopeSessionEnv {
+	if providers[0].APIKey != "session-provider-key" || providers[0].BaseURL != "https://session-openai.example.invalid/v1" || providers[0].Scope != llms.ProviderScopeSessionEnv {
 		t.Fatalf("provider was not bootstrapped from session env: %#v", providers[0])
 	}
 	models, err := store.ListEnabledLLMModels(ctx)
@@ -669,14 +670,14 @@ func testRunAgentCleanupFailureRecordsRunCleanupError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetProjectRun cleanup failure returned error: %v", err)
 	}
-	if stored.Status != ProjectRunStatusSucceeded || !strings.Contains(stored.CleanupError, "stop boom") {
+	if stored.Status != domain.ProjectRunStatusSucceeded || !strings.Contains(stored.CleanupError, "stop boom") {
 		t.Fatalf("stored cleanup failure run = %#v", stored)
 	}
 	session, err := service.store.GetSession(ctx, stored.SessionID)
 	if err != nil {
 		t.Fatalf("GetSession cleanup failure returned error: %v", err)
 	}
-	if session.Summary.VMStatus != VMStatusRunning {
+	if session.Summary.VMStatus != domain.VMStatusRunning {
 		t.Fatalf("cleanup failure session status = %q, want running", session.Summary.VMStatus)
 	}
 }
@@ -718,7 +719,7 @@ func TestManagedSchedulerManualRunPreservesProjectSecretEnv(t *testing.T) {
 	}
 	runs, err := store.ListProjectRunsByOptions(ctx, ProjectRunListOptions{
 		ProjectID:   projectID,
-		Source:      ProjectRunSourceScheduler,
+		Source:      domain.ProjectRunSourceScheduler,
 		SchedulerID: loader.Summary.ManagedSchedulerID,
 	})
 	if err != nil {
@@ -758,9 +759,9 @@ func testManagedSchedulerAgentUsesProjectRunPipeline(t *testing.T) {
 	host := &loaderRunHost{
 		manager: manager,
 		loader:  loader,
-		run:     &LoaderRunSummary{ID: "loader-run-managed-project", LoaderID: loader.Summary.ID, TriggerID: loader.Triggers[0].ID},
+		run:     &domain.LoaderRunSummary{ID: "loader-run-managed-project", LoaderID: loader.Summary.ID, TriggerID: loader.Triggers[0].ID},
 	}
-	result, err := host.Agent(ctx, "scheduled project prompt", LoaderAgentRequest{})
+	result, err := host.Agent(ctx, "scheduled project prompt", domain.LoaderAgentRequest{})
 	if err != nil {
 		t.Fatalf("managed scheduler Agent returned error: %v", err)
 	}
@@ -769,7 +770,7 @@ func testManagedSchedulerAgentUsesProjectRunPipeline(t *testing.T) {
 	}
 	runs, err := store.ListProjectRunsByOptions(ctx, ProjectRunListOptions{
 		ProjectID:   projectID,
-		Source:      ProjectRunSourceScheduler,
+		Source:      domain.ProjectRunSourceScheduler,
 		SchedulerID: loader.Summary.ManagedSchedulerID,
 	})
 	if err != nil {
@@ -779,21 +780,21 @@ func testManagedSchedulerAgentUsesProjectRunPipeline(t *testing.T) {
 		t.Fatalf("scheduler project runs = %#v", runs)
 	}
 	run := runs[0]
-	if run.Status != ProjectRunStatusSucceeded || run.TriggerID != loader.Triggers[0].ID || run.SessionID != result.SessionID {
+	if run.Status != domain.ProjectRunStatusSucceeded || run.TriggerID != loader.Triggers[0].ID || run.SessionID != result.SessionID {
 		t.Fatalf("scheduler project run = %#v", run)
 	}
 	session, err := service.store.GetSession(ctx, run.SessionID)
 	if err != nil {
 		t.Fatalf("GetSession scheduler run returned error: %v", err)
 	}
-	if session.Summary.VMStatus != VMStatusStopped {
+	if session.Summary.VMStatus != domain.VMStatusStopped {
 		t.Fatalf("scheduler project session status = %q, want stopped", session.Summary.VMStatus)
 	}
 	for name, value := range map[string]string{
 		"project":      projectID,
 		"agent":        "reviewer",
 		"run_id":       run.RunID,
-		"source":       ProjectRunSourceScheduler,
+		"source":       domain.ProjectRunSourceScheduler,
 		"scheduler_id": loader.Summary.ManagedSchedulerID,
 	} {
 		if !sessionHasTag(session, name, value) {
@@ -816,7 +817,7 @@ func TestRunServiceStopRunCancelsPendingRun(t *testing.T) {
 	run, err := coordinator.BeginRun(ctx, runs.StartRequest{
 		ProjectID:       projectID,
 		AgentName:       "reviewer",
-		Source:          ProjectRunSourceManual,
+		Source:          domain.ProjectRunSourceManual,
 		ClientRequestID: "cancel-request-1",
 	})
 	if err != nil {
@@ -849,12 +850,12 @@ func TestE2ERunServiceRunAgentReusesSessionAndPreservesTags(t *testing.T) {
 func testRunServiceRunAgentReusesSessionAndPreservesTags(t *testing.T) {
 	store, service, projectID := setupRunCoordinatorProject(t)
 	ctx := context.Background()
-	existing, err := service.store.CreateSession(ctx, "Reusable Project Session", "", "boxlite", "guest:latest", "", SessionTypeManual, nil, nil,
+	existing, err := service.store.CreateSession(ctx, "Reusable Project Session", "", "boxlite", "guest:latest", "", domain.SessionTypeManual, nil, nil,
 		[]SessionTag{{Name: "legacy", Value: "true"}})
 	if err != nil {
 		t.Fatalf("CreateSession existing returned error: %v", err)
 	}
-	existing.Summary.VMStatus = VMStatusStopped
+	existing.Summary.VMStatus = domain.VMStatusStopped
 	if err := service.store.UpdateSession(ctx, existing); err != nil {
 		t.Fatalf("UpdateSession existing returned error: %v", err)
 	}
@@ -877,7 +878,7 @@ func testRunServiceRunAgentReusesSessionAndPreservesTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession existing returned error: %v", err)
 	}
-	if loaded.Summary.VMStatus != VMStatusRunning {
+	if loaded.Summary.VMStatus != domain.VMStatusRunning {
 		t.Fatalf("reused session status = %q, want running", loaded.Summary.VMStatus)
 	}
 	for name, value := range map[string]string{
@@ -885,7 +886,7 @@ func testRunServiceRunAgentReusesSessionAndPreservesTags(t *testing.T) {
 		"project": projectID,
 		"agent":   "reviewer",
 		"run_id":  summary.GetRunId(),
-		"source":  ProjectRunSourceManual,
+		"source":  domain.ProjectRunSourceManual,
 	} {
 		if !sessionHasTag(loaded, name, value) {
 			t.Fatalf("reused session tags missing %s=%s: %#v", name, value, loaded.Summary.Tags)
@@ -937,14 +938,14 @@ func testRunServiceSessionStartFailureMarksRunFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetProjectRun returned error: %v", err)
 	}
-	if stored.SessionID != summary.GetSessionId() || stored.Status != ProjectRunStatusFailed {
+	if stored.SessionID != summary.GetSessionId() || stored.Status != domain.ProjectRunStatusFailed {
 		t.Fatalf("stored start failure run = %#v", stored)
 	}
 	session, err := service.store.GetSession(ctx, summary.GetSessionId())
 	if err != nil {
 		t.Fatalf("GetSession start failure returned error: %v", err)
 	}
-	if session.Summary.VMStatus != VMStatusFailed {
+	if session.Summary.VMStatus != domain.VMStatusFailed {
 		t.Fatalf("session start failure status = %q, want failed", session.Summary.VMStatus)
 	}
 }
@@ -954,7 +955,7 @@ func TestProjectRunSessionTagsIncludeSchedulerAndMergeAdditively(t *testing.T) {
 		RunID:       "run-1",
 		ProjectID:   "project-1",
 		AgentName:   "reviewer",
-		Source:      ProjectRunSourceScheduler,
+		Source:      domain.ProjectRunSourceScheduler,
 		SchedulerID: "scheduler-1",
 	}
 	tags := runs.SessionTags(run)
@@ -962,7 +963,7 @@ func TestProjectRunSessionTagsIncludeSchedulerAndMergeAdditively(t *testing.T) {
 		"project":      "project-1",
 		"agent":        "reviewer",
 		"run_id":       "run-1",
-		"source":       ProjectRunSourceScheduler,
+		"source":       domain.ProjectRunSourceScheduler,
 		"scheduler_id": "scheduler-1",
 	} {
 		if !sessionTagsContain(tags, name, value) {
@@ -972,7 +973,7 @@ func TestProjectRunSessionTagsIncludeSchedulerAndMergeAdditively(t *testing.T) {
 	merged := runs.MergeSessionTags([]SessionTag{{Name: "source", Value: "agent"}, {Name: "legacy", Value: "true"}}, tags)
 	for _, want := range []SessionTag{
 		{Name: "source", Value: "agent"},
-		{Name: "source", Value: ProjectRunSourceScheduler},
+		{Name: "source", Value: domain.ProjectRunSourceScheduler},
 		{Name: "legacy", Value: "true"},
 		{Name: "scheduler_id", Value: "scheduler-1"},
 	} {
@@ -1110,7 +1111,7 @@ func testRunServiceWorkspacePreparationFailureMarksRunFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetProjectRun returned error: %v", err)
 	}
-	if stored.Status != ProjectRunStatusFailed || stored.Error != summary.GetError() {
+	if stored.Status != domain.ProjectRunStatusFailed || stored.Error != summary.GetError() {
 		t.Fatalf("stored run = %#v, summary error = %q", stored, summary.GetError())
 	}
 }
@@ -1204,14 +1205,14 @@ func newRunServiceLoaderManager(service *Service) *LoaderManager {
 		executor:     service.executor,
 		streams:      service.streams,
 		bus:          newTestLoaderBus(16),
-		engine:       &QJSLoaderEngine{},
+		engine:       &loaders.QJSLoaderEngine{},
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
 		scheduleWake: make(chan struct{}, 1),
 	}
 }
 
-func loaderEventsContain(events []LoaderEvent, eventType string) bool {
+func loaderEventsContain(events []domain.LoaderEvent, eventType string) bool {
 	for _, event := range events {
 		if event.Type == eventType {
 			return true
@@ -1225,7 +1226,7 @@ func beginRunPreparationTestRun(t *testing.T, store *ConfigStore, projectID, req
 	run, err := runs.NewCoordinator(store, domain.StableProjectRunID).BeginRun(context.Background(), runs.StartRequest{
 		ProjectID:       projectID,
 		AgentName:       "reviewer",
-		Source:          ProjectRunSourceManual,
+		Source:          domain.ProjectRunSourceManual,
 		ClientRequestID: requestID,
 	})
 	if err != nil {

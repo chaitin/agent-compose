@@ -21,7 +21,7 @@ import (
 )
 
 func TestLoaderEngineValidateSupportsTimeoutAndClearTimers(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	script := strings.TrimSpace(`
 const heartbeat = scheduler.interval("heartbeat", function heartbeat() {
   scheduler.log("heartbeat");
@@ -50,15 +50,15 @@ scheduler.on("agent-compose.session.created", function onSession(event) {
 });
 `)
 
-	result, err := engine.Validate(context.Background(), LoaderRuntimeScheduler, script)
+	result, err := engine.Validate(context.Background(), domain.LoaderRuntimeScheduler, script)
 	if err != nil {
 		t.Fatalf("Validate returned error: %v", err)
 	}
 	if len(result.Triggers) != 4 {
 		t.Fatalf("expected 4 triggers after clear operations, got %d", len(result.Triggers))
 	}
-	if result.Triggers[0].Kind != LoaderTriggerKindInterval {
-		t.Fatalf("first trigger kind = %q, want %q", result.Triggers[0].Kind, LoaderTriggerKindInterval)
+	if result.Triggers[0].Kind != domain.LoaderTriggerKindInterval {
+		t.Fatalf("first trigger kind = %q, want %q", result.Triggers[0].Kind, domain.LoaderTriggerKindInterval)
 	}
 	if result.Triggers[0].ID != "poll" {
 		t.Fatalf("first trigger id = %q, want %q", result.Triggers[0].ID, "poll")
@@ -66,8 +66,8 @@ scheduler.on("agent-compose.session.created", function onSession(event) {
 	if result.Triggers[0].IntervalMs != 60000 {
 		t.Fatalf("first trigger interval = %d, want %d", result.Triggers[0].IntervalMs, 60000)
 	}
-	if result.Triggers[1].Kind != LoaderTriggerKindTimeout {
-		t.Fatalf("second trigger kind = %q, want %q", result.Triggers[1].Kind, LoaderTriggerKindTimeout)
+	if result.Triggers[1].Kind != domain.LoaderTriggerKindTimeout {
+		t.Fatalf("second trigger kind = %q, want %q", result.Triggers[1].Kind, domain.LoaderTriggerKindTimeout)
 	}
 	if result.Triggers[1].IntervalMs != 7500 {
 		t.Fatalf("second trigger delay = %d, want %d", result.Triggers[1].IntervalMs, 7500)
@@ -75,8 +75,8 @@ scheduler.on("agent-compose.session.created", function onSession(event) {
 	if strings.TrimSpace(result.Triggers[1].ID) == "" {
 		t.Fatalf("expected timeout trigger id to be assigned")
 	}
-	if result.Triggers[2].Kind != LoaderTriggerKindCron {
-		t.Fatalf("third trigger kind = %q, want %q", result.Triggers[2].Kind, LoaderTriggerKindCron)
+	if result.Triggers[2].Kind != domain.LoaderTriggerKindCron {
+		t.Fatalf("third trigger kind = %q, want %q", result.Triggers[2].Kind, domain.LoaderTriggerKindCron)
 	}
 	if result.Triggers[2].ID != "quarter-hour" {
 		t.Fatalf("third trigger id = %q, want %q", result.Triggers[2].ID, "quarter-hour")
@@ -87,8 +87,8 @@ scheduler.on("agent-compose.session.created", function onSession(event) {
 	if !strings.Contains(result.Triggers[2].SpecJSON, `"timezone":"UTC"`) {
 		t.Fatalf("expected cron spec json to include timezone, got %s", result.Triggers[2].SpecJSON)
 	}
-	if result.Triggers[3].Kind != LoaderTriggerKindEvent {
-		t.Fatalf("fourth trigger kind = %q, want %q", result.Triggers[3].Kind, LoaderTriggerKindEvent)
+	if result.Triggers[3].Kind != domain.LoaderTriggerKindEvent {
+		t.Fatalf("fourth trigger kind = %q, want %q", result.Triggers[3].Kind, domain.LoaderTriggerKindEvent)
 	}
 	if result.Triggers[3].Topic != "agent-compose.session.created" {
 		t.Fatalf("fourth trigger topic = %q, want %q", result.Triggers[3].Topic, "agent-compose.session.created")
@@ -96,9 +96,9 @@ scheduler.on("agent-compose.session.created", function onSession(event) {
 }
 
 func TestLoaderEngineSchedulerRuntimeDoesNotInjectADP(t *testing.T) {
-	engine := &QJSLoaderEngine{}
-	result, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
+	engine := &loaders.QJSLoaderEngine{}
+	result, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script: `function main() {
   return {
     runtime: scheduler.runtime.name,
@@ -126,13 +126,13 @@ func TestLoaderEngineSchedulerRuntimeDoesNotInjectADP(t *testing.T) {
 }
 
 func TestLoaderEngineExecutesSchedulerIntervalAndEventTriggers(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	host := &statefulRecordingLoaderHost{state: map[string]string{}}
 
-	intervalResult, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime:     LoaderRuntimeScheduler,
+	intervalResult, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime:     domain.LoaderRuntimeScheduler,
 		PayloadJSON: `{"value":42}`,
-		Trigger:     &LoaderTrigger{ID: "state-tick"},
+		Trigger:     &domain.LoaderTrigger{ID: "state-tick"},
 		Script: `
 scheduler.interval("state-tick", function(event) {
   scheduler.state.set("last", { event });
@@ -155,10 +155,10 @@ scheduler.interval("state-tick", function(event) {
 		t.Fatalf("deleted keys = %#v, want [last]", host.deleted)
 	}
 
-	eventResult, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime:     LoaderRuntimeScheduler,
+	eventResult, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime:     domain.LoaderRuntimeScheduler,
 		PayloadJSON: `{"topic":"agent-compose.session.created","sessionId":"session-1"}`,
-		Trigger:     &LoaderTrigger{ID: "session-created"},
+		Trigger:     &domain.LoaderTrigger{ID: "session-created"},
 		Script: `
 scheduler.on("agent-compose.session.created", "session-created", function(event) {
   scheduler.log("session created", event);
@@ -199,9 +199,9 @@ func testLoaderManagerCollectDueScheduledRunsConsumesTimeout(t *testing.T) {
 	store := newTestConfigStore(t)
 	loader := createTestLoader(t, ctx, store)
 
-	triggers, err := store.ReplaceLoaderTriggers(ctx, loader.Summary.ID, []LoaderTrigger{{
+	triggers, err := store.ReplaceLoaderTriggers(ctx, loader.Summary.ID, []domain.LoaderTrigger{{
 		ID:         "once",
-		Kind:       LoaderTriggerKindTimeout,
+		Kind:       domain.LoaderTriggerKindTimeout,
 		IntervalMs: 5000,
 		Enabled:    true,
 		SpecJSON:   `{"kind":"timeout","delayMs":5000}`,
@@ -232,8 +232,8 @@ func testLoaderManagerCollectDueScheduledRunsConsumesTimeout(t *testing.T) {
 	if len(jobs) != 1 {
 		t.Fatalf("expected 1 due job, got %d", len(jobs))
 	}
-	if jobs[0].trigger.Kind != LoaderTriggerKindTimeout {
-		t.Fatalf("job trigger kind = %q, want %q", jobs[0].trigger.Kind, LoaderTriggerKindTimeout)
+	if jobs[0].trigger.Kind != domain.LoaderTriggerKindTimeout {
+		t.Fatalf("job trigger kind = %q, want %q", jobs[0].trigger.Kind, domain.LoaderTriggerKindTimeout)
 	}
 	if jobs[0].trigger.LastFiredAt.IsZero() {
 		t.Fatalf("expected timeout trigger last_fired_at to be recorded")
@@ -311,9 +311,9 @@ func TestConfigStoreReplaceLoaderTriggersStoresMillisecondScheduleTimes(t *testi
 	loader := createTestLoader(t, ctx, store)
 
 	before := time.Now().UTC()
-	triggers, err := store.ReplaceLoaderTriggers(ctx, loader.Summary.ID, []LoaderTrigger{{
+	triggers, err := store.ReplaceLoaderTriggers(ctx, loader.Summary.ID, []domain.LoaderTrigger{{
 		ID:         "fast",
-		Kind:       LoaderTriggerKindInterval,
+		Kind:       domain.LoaderTriggerKindInterval,
 		IntervalMs: 125,
 		Enabled:    true,
 		SpecJSON:   `{"kind":"interval","intervalMs":125}`,
@@ -352,9 +352,9 @@ func TestScanLoaderTriggerParsesLegacySecondPrecisionTimes(t *testing.T) {
 	store := newTestConfigStore(t)
 	loader := createTestLoader(t, ctx, store)
 
-	_, err := store.ReplaceLoaderTriggers(ctx, loader.Summary.ID, []LoaderTrigger{{
+	_, err := store.ReplaceLoaderTriggers(ctx, loader.Summary.ID, []domain.LoaderTrigger{{
 		ID:         "legacy",
-		Kind:       LoaderTriggerKindInterval,
+		Kind:       domain.LoaderTriggerKindInterval,
 		IntervalMs: 5000,
 		Enabled:    true,
 		SpecJSON:   `{"kind":"interval","intervalMs":5000}`,
@@ -388,9 +388,9 @@ func TestConfigStoreSetLoaderTriggerEnabledRearmsTimeout(t *testing.T) {
 	store := newTestConfigStore(t)
 	loader := createTestLoader(t, ctx, store)
 
-	_, err := store.ReplaceLoaderTriggers(ctx, loader.Summary.ID, []LoaderTrigger{{
+	_, err := store.ReplaceLoaderTriggers(ctx, loader.Summary.ID, []domain.LoaderTrigger{{
 		ID:         "once",
-		Kind:       LoaderTriggerKindTimeout,
+		Kind:       domain.LoaderTriggerKindTimeout,
 		IntervalMs: 3000,
 		Enabled:    true,
 		SpecJSON:   `{"kind":"timeout","delayMs":3000}`,
@@ -432,9 +432,9 @@ func TestLoaderManagerCollectDueScheduledRunsReschedulesCron(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loaderCronSpecJSON returned error: %v", err)
 	}
-	triggers, err := store.ReplaceLoaderTriggers(ctx, loader.Summary.ID, []LoaderTrigger{{
+	triggers, err := store.ReplaceLoaderTriggers(ctx, loader.Summary.ID, []domain.LoaderTrigger{{
 		ID:       "every-five-minutes",
-		Kind:     LoaderTriggerKindCron,
+		Kind:     domain.LoaderTriggerKindCron,
 		Enabled:  true,
 		SpecJSON: specJSON,
 	}})
@@ -464,8 +464,8 @@ func TestLoaderManagerCollectDueScheduledRunsReschedulesCron(t *testing.T) {
 	if len(jobs) != 1 {
 		t.Fatalf("expected 1 due job, got %d", len(jobs))
 	}
-	if jobs[0].trigger.Kind != LoaderTriggerKindCron {
-		t.Fatalf("job trigger kind = %q, want %q", jobs[0].trigger.Kind, LoaderTriggerKindCron)
+	if jobs[0].trigger.Kind != domain.LoaderTriggerKindCron {
+		t.Fatalf("job trigger kind = %q, want %q", jobs[0].trigger.Kind, domain.LoaderTriggerKindCron)
 	}
 	if jobs[0].trigger.LastFiredAt.IsZero() {
 		t.Fatalf("expected cron trigger last_fired_at to be recorded")
@@ -498,9 +498,9 @@ func TestConfigStoreSetLoaderTriggerEnabledRearmsCron(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loaderCronSpecJSON returned error: %v", err)
 	}
-	_, err = store.ReplaceLoaderTriggers(ctx, loader.Summary.ID, []LoaderTrigger{{
+	_, err = store.ReplaceLoaderTriggers(ctx, loader.Summary.ID, []domain.LoaderTrigger{{
 		ID:       "weekday-morning",
-		Kind:     LoaderTriggerKindCron,
+		Kind:     domain.LoaderTriggerKindCron,
 		Enabled:  true,
 		SpecJSON: specJSON,
 	}})
@@ -536,10 +536,10 @@ func TestConfigStoreCreateLoaderRunStoresMillisecondStartedAt(t *testing.T) {
 	startedAt := time.Now().UTC().Truncate(time.Millisecond)
 	completedAt := startedAt.Add(145 * time.Millisecond)
 
-	run := LoaderRunSummary{
+	run := domain.LoaderRunSummary{
 		ID:          "run-ms",
 		LoaderID:    loader.Summary.ID,
-		Status:      LoaderRunStatusSucceeded,
+		Status:      domain.LoaderRunStatusSucceeded,
 		StartedAt:   startedAt,
 		CompletedAt: completedAt,
 		DurationMs:  completedAt.Sub(startedAt).Milliseconds(),
@@ -578,7 +578,7 @@ func TestConfigStoreAddLoaderEventStoresMillisecondCreatedAt(t *testing.T) {
 	loader := createTestLoader(t, ctx, store)
 	createdAt := time.Now().UTC().Truncate(time.Millisecond)
 
-	event := LoaderEvent{
+	event := domain.LoaderEvent{
 		ID:        "event-ms",
 		LoaderID:  loader.Summary.ID,
 		Type:      "loader.test",
@@ -618,7 +618,7 @@ func TestEnsureLoaderSchemaMigratesLegacyRunAndEventTimestamps(t *testing.T) {
 	legacyStartedAt := time.Now().UTC().Add(-4 * time.Second).Truncate(time.Second)
 	legacyCompletedAt := legacyStartedAt.Add(2 * time.Second)
 	legacyEventAt := time.Now().UTC().Add(-2 * time.Second).Truncate(time.Second)
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO loader_run(loader_id, run_id, status, started_at, completed_at) VALUES(?, ?, ?, ?, ?)`, loader.Summary.ID, "legacy-run", LoaderRunStatusSucceeded, legacyStartedAt.Unix(), legacyCompletedAt.Unix()); err != nil {
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO loader_run(loader_id, run_id, status, started_at, completed_at) VALUES(?, ?, ?, ?, ?)`, loader.Summary.ID, "legacy-run", domain.LoaderRunStatusSucceeded, legacyStartedAt.Unix(), legacyCompletedAt.Unix()); err != nil {
 		t.Fatalf("insert legacy run returned error: %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO loader_event(loader_id, event_id, type, level, message, created_at) VALUES(?, ?, ?, ?, ?, ?)`, loader.Summary.ID, "legacy-event", "loader.test", "info", "legacy", legacyEventAt.Unix()); err != nil {
@@ -675,20 +675,20 @@ func TestLoaderManagerNextScheduledFireAtUsesEarliestMillisecondTrigger(t *testi
 	manager := &LoaderManager{
 		loaders: map[string]Loader{
 			"slow": {
-				Summary: LoaderSummary{ID: "slow", Enabled: true},
-				Triggers: []LoaderTrigger{{
+				Summary: domain.LoaderSummary{ID: "slow", Enabled: true},
+				Triggers: []domain.LoaderTrigger{{
 					ID:         "slow-interval",
-					Kind:       LoaderTriggerKindInterval,
+					Kind:       domain.LoaderTriggerKindInterval,
 					IntervalMs: 1000,
 					Enabled:    true,
 					NextFireAt: now.Add(800 * time.Millisecond),
 				}},
 			},
 			"fast": {
-				Summary: LoaderSummary{ID: "fast", Enabled: true},
-				Triggers: []LoaderTrigger{{
+				Summary: domain.LoaderSummary{ID: "fast", Enabled: true},
+				Triggers: []domain.LoaderTrigger{{
 					ID:         "fast-interval",
-					Kind:       LoaderTriggerKindInterval,
+					Kind:       domain.LoaderTriggerKindInterval,
 					IntervalMs: 125,
 					Enabled:    true,
 					NextFireAt: now.Add(125 * time.Millisecond),
@@ -745,7 +745,7 @@ func TestLoaderManagerEnsureLoaderSessionAppliesAgentSessionOverrides(t *testing
 	}
 
 	loader := createTestLoader(t, ctx, configDB)
-	loader.Summary.SessionPolicy = LoaderSessionPolicySticky
+	loader.Summary.SessionPolicy = domain.LoaderSessionPolicySticky
 	loader.EnvItems = []SessionEnvVar{{Name: "LOADER_ONLY", Value: "loader"}, {Name: "SHARED", Value: "loader"}}
 	loader, err = configDB.UpdateLoader(ctx, loader)
 	if err != nil {
@@ -761,7 +761,7 @@ func TestLoaderManagerEnsureLoaderSessionAppliesAgentSessionOverrides(t *testing
 		driver:   driver,
 	}
 
-	firstSession, eventType, err := manager.ensureLoaderSession(ctx, loader, LoaderAgentRequest{})
+	firstSession, eventType, err := manager.ensureLoaderSession(ctx, loader, domain.LoaderAgentRequest{})
 	if err != nil {
 		t.Fatalf("ensureLoaderSession(first) returned error: %v", err)
 	}
@@ -769,7 +769,7 @@ func TestLoaderManagerEnsureLoaderSessionAppliesAgentSessionOverrides(t *testing
 		t.Fatalf("first event type = %q, want %q", eventType, "loader.session.created")
 	}
 
-	secondSession, eventType, err := manager.ensureLoaderSession(ctx, loader, LoaderAgentRequest{
+	secondSession, eventType, err := manager.ensureLoaderSession(ctx, loader, domain.LoaderAgentRequest{
 		Title:       "Loader Override Session",
 		Driver:      driverpkg.RuntimeDriverMicrosandbox,
 		GuestImage:  "override-guest:latest",
@@ -865,17 +865,17 @@ func testLoaderRunHostAgentStopsSessionAfterExecution(t *testing.T) {
 		configDB: configDB,
 		driver:   driver,
 		executor: &Executor{config: config, store: store, runtimes: fixedRuntimeProvider{runtime: runtime}},
-		engine:   &QJSLoaderEngine{},
+		engine:   &loaders.QJSLoaderEngine{},
 		running:  map[string]int{},
 	}
 	loader := createTestLoader(t, ctx, configDB)
 	host := &loaderRunHost{
 		manager: manager,
 		loader:  loader,
-		run:     &LoaderRunSummary{ID: "run-agent-stop", LoaderID: loader.Summary.ID},
+		run:     &domain.LoaderRunSummary{ID: "run-agent-stop", LoaderID: loader.Summary.ID},
 	}
 
-	result, err := host.Agent(ctx, "summarize this loader run", LoaderAgentRequest{Agent: "codex"})
+	result, err := host.Agent(ctx, "summarize this loader run", domain.LoaderAgentRequest{Agent: "codex"})
 	if err != nil {
 		t.Fatalf("Agent returned error: %v", err)
 	}
@@ -905,7 +905,7 @@ func testLoaderRunHostAgentStopsSessionAfterExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
-	if got, want := session.Summary.VMStatus, VMStatusStopped; got != want {
+	if got, want := session.Summary.VMStatus, domain.VMStatusStopped; got != want {
 		t.Fatalf("session vm status = %q, want %q", got, want)
 	}
 	if session.Summary.CellCount == 0 {
@@ -939,7 +939,7 @@ func TestLoaderRunHostCommandPersistsRunningCellOutput(t *testing.T) {
 	host := &loaderRunHost{
 		manager: manager,
 		loader:  loader,
-		run:     &LoaderRunSummary{ID: "run-command-stream", LoaderID: loader.Summary.ID},
+		run:     &domain.LoaderRunSummary{ID: "run-command-stream", LoaderID: loader.Summary.ID},
 	}
 	var streamedCell NotebookCell
 	runtime.commandStreamHook = func() {
@@ -961,7 +961,7 @@ func TestLoaderRunHostCommandPersistsRunningCellOutput(t *testing.T) {
 		}
 	}
 
-	result, err := host.Command(ctx, LoaderCommandRequest{
+	result, err := host.Command(ctx, domain.LoaderCommandRequest{
 		Mode:    "exec",
 		Command: "python3",
 		Args:    []string{"-V"},
@@ -991,10 +991,10 @@ func TestLoaderRunHostCommandDeletesLLMFacadeToken(t *testing.T) {
 	host := &loaderRunHost{
 		manager: manager,
 		loader:  loader,
-		run:     &LoaderRunSummary{ID: "run-command-facade-token", LoaderID: loader.Summary.ID},
+		run:     &domain.LoaderRunSummary{ID: "run-command-facade-token", LoaderID: loader.Summary.ID},
 	}
 
-	result, err := host.Command(ctx, LoaderCommandRequest{
+	result, err := host.Command(ctx, domain.LoaderCommandRequest{
 		Mode:    "exec",
 		Command: "python3",
 		Args:    []string{"-V"},
@@ -1032,10 +1032,10 @@ func TestLoaderRunHostCommandUsesLLMProviderOverrideForFacade(t *testing.T) {
 	host := &loaderRunHost{
 		manager: manager,
 		loader:  loader,
-		run:     &LoaderRunSummary{ID: "run-command-llm-provider-override", LoaderID: loader.Summary.ID},
+		run:     &domain.LoaderRunSummary{ID: "run-command-llm-provider-override", LoaderID: loader.Summary.ID},
 	}
 
-	result, err := host.Command(ctx, LoaderCommandRequest{
+	result, err := host.Command(ctx, domain.LoaderCommandRequest{
 		Mode:    "exec",
 		Command: "python3",
 		Args:    []string{"-V"},
@@ -1080,10 +1080,10 @@ func TestLoaderRunHostCommandSkipsOpenCodeFacadeWithoutModel(t *testing.T) {
 	host := &loaderRunHost{
 		manager: manager,
 		loader:  loader,
-		run:     &LoaderRunSummary{ID: "run-command-opencode-no-model", LoaderID: loader.Summary.ID},
+		run:     &domain.LoaderRunSummary{ID: "run-command-opencode-no-model", LoaderID: loader.Summary.ID},
 	}
 
-	result, err := host.Command(ctx, LoaderCommandRequest{
+	result, err := host.Command(ctx, domain.LoaderCommandRequest{
 		Mode:    "exec",
 		Command: "python3",
 		Args:    []string{"-V"},
@@ -1110,10 +1110,10 @@ func testLoaderRunHostCommandPersistsShellCellArtifactsAndEvents(t *testing.T) {
 	host := &loaderRunHost{
 		manager: manager,
 		loader:  loader,
-		run:     &LoaderRunSummary{ID: "run-command", LoaderID: loader.Summary.ID},
+		run:     &domain.LoaderRunSummary{ID: "run-command", LoaderID: loader.Summary.ID},
 	}
 
-	result, err := host.Command(ctx, LoaderCommandRequest{
+	result, err := host.Command(ctx, domain.LoaderCommandRequest{
 		Mode:           "exec",
 		Command:        "python3",
 		Args:           []string{"-V"},
@@ -1148,7 +1148,7 @@ func testLoaderRunHostCommandPersistsShellCellArtifactsAndEvents(t *testing.T) {
 		t.Fatalf("cell count = %d, want %d", len(cells), 1)
 	}
 	cell := cells[0]
-	if cell.ID != result.CellID || cell.Type != CellTypeShell || cell.Source != "python3 -V" {
+	if cell.ID != result.CellID || cell.Type != execution.CellTypeShell || cell.Source != "python3 -V" {
 		t.Fatalf("persisted cell = %#v", cell)
 	}
 	if cell.Running || !cell.Success || cell.Stdout != "command stdout\n" {
@@ -1277,10 +1277,10 @@ func TestLoaderRunHostCommandPersistsDockerProxyTarget(t *testing.T) {
 	host := &loaderRunHost{
 		manager: manager,
 		loader:  loader,
-		run:     &LoaderRunSummary{ID: "run-docker-command", LoaderID: loader.Summary.ID},
+		run:     &domain.LoaderRunSummary{ID: "run-docker-command", LoaderID: loader.Summary.ID},
 	}
 
-	result, err := host.Command(ctx, LoaderCommandRequest{
+	result, err := host.Command(ctx, domain.LoaderCommandRequest{
 		Driver:  driverpkg.RuntimeDriverDocker,
 		Mode:    "exec",
 		Command: "python3",
@@ -1337,10 +1337,10 @@ func testLoaderRunHostCommandNonZeroExitCodeDoesNotThrow(t *testing.T) {
 	host := &loaderRunHost{
 		manager: manager,
 		loader:  loader,
-		run:     &LoaderRunSummary{ID: "run-command-fail", LoaderID: loader.Summary.ID},
+		run:     &domain.LoaderRunSummary{ID: "run-command-fail", LoaderID: loader.Summary.ID},
 	}
 
-	result, err := host.Command(ctx, LoaderCommandRequest{
+	result, err := host.Command(ctx, domain.LoaderCommandRequest{
 		Mode:   "shell",
 		Script: "exit 9",
 	})
@@ -1381,10 +1381,10 @@ func testLoaderRunHostCommandRecoversArtifactsWhenCommandPayloadMissing(t *testi
 	host := &loaderRunHost{
 		manager: manager,
 		loader:  loader,
-		run:     &LoaderRunSummary{ID: "run-command-payload-missing", LoaderID: loader.Summary.ID},
+		run:     &domain.LoaderRunSummary{ID: "run-command-payload-missing", LoaderID: loader.Summary.ID},
 	}
 
-	result, err := host.Command(ctx, LoaderCommandRequest{
+	result, err := host.Command(ctx, domain.LoaderCommandRequest{
 		Mode:    "exec",
 		Command: "python3",
 		Args:    []string{"-V"},
@@ -1432,13 +1432,13 @@ func testLoaderRunHostCommandPersistsRunningOutputBeforeCompletion(t *testing.T)
 	host := &loaderRunHost{
 		manager: manager,
 		loader:  loader,
-		run:     &LoaderRunSummary{ID: "run-command-streaming", LoaderID: loader.Summary.ID},
+		run:     &domain.LoaderRunSummary{ID: "run-command-streaming", LoaderID: loader.Summary.ID},
 	}
 
-	resultCh := make(chan LoaderCommandResult, 1)
+	resultCh := make(chan domain.LoaderCommandResult, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		result, err := host.Command(ctx, LoaderCommandRequest{
+		result, err := host.Command(ctx, domain.LoaderCommandRequest{
 			Mode:    "exec",
 			Command: "python3",
 			Args:    []string{"-V"},
@@ -1507,8 +1507,8 @@ func testLoaderRunCommandNewSessionsReuseAndCleanupAtRunEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLoader returned error: %v", err)
 	}
-	if run.Status != LoaderRunStatusSucceeded {
-		t.Fatalf("run status = %q, want %q: %s", run.Status, LoaderRunStatusSucceeded, run.Error)
+	if run.Status != domain.LoaderRunStatusSucceeded {
+		t.Fatalf("run status = %q, want %q: %s", run.Status, domain.LoaderRunStatusSucceeded, run.Error)
 	}
 	if len(runtime.commandSpecs) != 2 {
 		t.Fatalf("command ExecStream calls = %d, want %d", len(runtime.commandSpecs), 2)
@@ -1528,8 +1528,8 @@ func testLoaderRunCommandNewSessionsReuseAndCleanupAtRunEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
-	if session.Summary.VMStatus != VMStatusStopped {
-		t.Fatalf("session vm status = %q, want %q", session.Summary.VMStatus, VMStatusStopped)
+	if session.Summary.VMStatus != domain.VMStatusStopped {
+		t.Fatalf("session vm status = %q, want %q", session.Summary.VMStatus, domain.VMStatusStopped)
 	}
 
 	events, err := manager.configDB.ListLoaderEvents(ctx, loader.Summary.ID, 20)
@@ -1562,7 +1562,7 @@ func testLoaderRunCommandNewSessionsReuseAndCleanupAtRunEnd(t *testing.T) {
 func TestLoaderRunCommandStickySessionPersistsAcrossRunsWithTitle(t *testing.T) {
 	ctx := context.Background()
 	manager, runtime, driver, loader := newTestLoaderCommandManager(t, ctx)
-	loader.Summary.SessionPolicy = LoaderSessionPolicySticky
+	loader.Summary.SessionPolicy = domain.LoaderSessionPolicySticky
 	loader.Script = `function main() {
   const result = scheduler.exec({
     command: "python3",
@@ -1581,15 +1581,15 @@ func TestLoaderRunCommandStickySessionPersistsAcrossRunsWithTitle(t *testing.T) 
 	if err != nil {
 		t.Fatalf("runLoader(first) returned error: %v", err)
 	}
-	if firstRun.Status != LoaderRunStatusSucceeded {
-		t.Fatalf("first run status = %q, want %q: %s", firstRun.Status, LoaderRunStatusSucceeded, firstRun.Error)
+	if firstRun.Status != domain.LoaderRunStatusSucceeded {
+		t.Fatalf("first run status = %q, want %q: %s", firstRun.Status, domain.LoaderRunStatusSucceeded, firstRun.Error)
 	}
 	secondRun, err := manager.runLoader(ctx, loader, nil, `{}`, "manual", false, loaderRunOptions{})
 	if err != nil {
 		t.Fatalf("runLoader(second) returned error: %v", err)
 	}
-	if secondRun.Status != LoaderRunStatusSucceeded {
-		t.Fatalf("second run status = %q, want %q: %s", secondRun.Status, LoaderRunStatusSucceeded, secondRun.Error)
+	if secondRun.Status != domain.LoaderRunStatusSucceeded {
+		t.Fatalf("second run status = %q, want %q: %s", secondRun.Status, domain.LoaderRunStatusSucceeded, secondRun.Error)
 	}
 	if len(runtime.commandSpecs) != 2 {
 		t.Fatalf("command ExecStream calls = %d, want 2", len(runtime.commandSpecs))
@@ -1608,8 +1608,8 @@ func TestLoaderRunCommandStickySessionPersistsAcrossRunsWithTitle(t *testing.T) 
 	if session.Summary.Title != "Loader Exec Heartbeat" {
 		t.Fatalf("session title = %q, want Loader Exec Heartbeat", session.Summary.Title)
 	}
-	if session.Summary.VMStatus != VMStatusRunning {
-		t.Fatalf("session vm status = %q, want %q", session.Summary.VMStatus, VMStatusRunning)
+	if session.Summary.VMStatus != domain.VMStatusRunning {
+		t.Fatalf("session vm status = %q, want %q", session.Summary.VMStatus, domain.VMStatusRunning)
 	}
 	events, err := manager.configDB.ListLoaderEvents(ctx, loader.Summary.ID, 20)
 	if err != nil {
@@ -1652,8 +1652,8 @@ func TestManualLoaderRunTimeoutDoesNotOverrideAgentTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunNow returned error: %v", err)
 	}
-	if run.Status != LoaderRunStatusSucceeded {
-		t.Fatalf("run status = %q, want %q: %s", run.Status, LoaderRunStatusSucceeded, run.Error)
+	if run.Status != domain.LoaderRunStatusSucceeded {
+		t.Fatalf("run status = %q, want %q: %s", run.Status, domain.LoaderRunStatusSucceeded, run.Error)
 	}
 	if len(runtime.agentDeadlineDurations) != 1 {
 		t.Fatalf("agent deadline count = %d, want 1", len(runtime.agentDeadlineDurations))
@@ -1676,12 +1676,12 @@ func testLoaderManagerDispatchScheduledRunsAndSessionResumeBranches(t *testing.T
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	manager, _, driver, loader := newTestLoaderCommandManager(t, ctx)
-	engine := &scheduledRecordingLoaderEngine{requests: make(chan LoaderExecutionRequest, 1)}
+	engine := &scheduledRecordingLoaderEngine{requests: make(chan loaders.LoaderExecutionRequest, 1)}
 	manager.engine = engine
 
-	trigger := LoaderTrigger{
+	trigger := domain.LoaderTrigger{
 		ID:      "scheduled-1",
-		Kind:    LoaderTriggerKindInterval,
+		Kind:    domain.LoaderTriggerKindInterval,
 		Enabled: true,
 	}
 	manager.dispatchScheduledRuns([]scheduledLoaderRun{{
@@ -1705,7 +1705,7 @@ func testLoaderManagerDispatchScheduledRunsAndSessionResumeBranches(t *testing.T
 		if err != nil {
 			t.Fatalf("ListLoaderRuns returned error: %v", err)
 		}
-		if len(runs) == 1 && runs[0].Status == LoaderRunStatusSucceeded {
+		if len(runs) == 1 && runs[0].Status == domain.LoaderRunStatusSucceeded {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -1725,7 +1725,7 @@ func testLoaderManagerDispatchScheduledRunsAndSessionResumeBranches(t *testing.T
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	session.Summary.VMStatus = VMStatusStopped
+	session.Summary.VMStatus = domain.VMStatusStopped
 	if err := manager.store.UpdateSession(ctx, session); err != nil {
 		t.Fatalf("UpdateSession stopped returned error: %v", err)
 	}
@@ -1734,7 +1734,7 @@ func testLoaderManagerDispatchScheduledRunsAndSessionResumeBranches(t *testing.T
 	if err != nil {
 		t.Fatalf("loadOrResumeLoaderSession stopped returned error: %v", err)
 	}
-	if loaded.Summary.VMStatus != VMStatusRunning || eventType != "loader.session.resumed" {
+	if loaded.Summary.VMStatus != domain.VMStatusRunning || eventType != "loader.session.resumed" {
 		t.Fatalf("resumed session/event = %#v/%q", loaded.Summary, eventType)
 	}
 	if len(driver.startCalls) != 1 || driver.startCalls[0] != session.Summary.ID {
@@ -1744,7 +1744,7 @@ func testLoaderManagerDispatchScheduledRunsAndSessionResumeBranches(t *testing.T
 	if err != nil {
 		t.Fatalf("loadOrResumeLoaderSession running returned error: %v", err)
 	}
-	if loaded.Summary.VMStatus != VMStatusRunning || eventType != "" {
+	if loaded.Summary.VMStatus != domain.VMStatusRunning || eventType != "" {
 		t.Fatalf("running session/event = %#v/%q", loaded.Summary, eventType)
 	}
 	if len(driver.startCalls) != 1 {
@@ -1764,7 +1764,7 @@ func testLoaderManagerRunLifecycleStateLLMAndEventDispatch(t *testing.T) {
 	manager.llm = newTestLLMClient(t, manager.configDB, "loader llm text")
 	engine := &recordingLoaderEngine{}
 	manager.engine = engine
-	loader.Summary.ConcurrencyPolicy = LoaderConcurrencyPolicySkip
+	loader.Summary.ConcurrencyPolicy = domain.LoaderConcurrencyPolicySkip
 	loader.Script = "function main() { return { ok: true }; }"
 	loader, err := manager.configDB.UpdateLoader(ctx, loader)
 	if err != nil {
@@ -1775,7 +1775,7 @@ func testLoaderManagerRunLifecycleStateLLMAndEventDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunNow returned error: %v", err)
 	}
-	if run.Status != LoaderRunStatusSucceeded || run.ResultJSON != `{"ok":true}` {
+	if run.Status != domain.LoaderRunStatusSucceeded || run.ResultJSON != `{"ok":true}` {
 		t.Fatalf("run summary = %#v", run)
 	}
 	if len(engine.requests) != 1 {
@@ -1839,7 +1839,7 @@ func testLoaderManagerRunLifecycleStateLLMAndEventDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEvent returned error: %v", err)
 	}
-	if dispatched.DispatchStatus != TopicEventDispatchPublishedToBus || dispatched.DispatchedAt.IsZero() {
+	if dispatched.DispatchStatus != domain.TopicEventDispatchPublishedToBus || dispatched.DispatchedAt.IsZero() {
 		t.Fatalf("dispatched event status = %#v", dispatched)
 	}
 
@@ -1848,7 +1848,7 @@ func testLoaderManagerRunLifecycleStateLLMAndEventDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunNow(skip) returned error: %v", err)
 	}
-	if skipped.Status != LoaderRunStatusSkipped || !strings.Contains(skipped.Error, "already running") {
+	if skipped.Status != domain.LoaderRunStatusSkipped || !strings.Contains(skipped.Error, "already running") {
 		t.Fatalf("skipped run = %#v", skipped)
 	}
 }
@@ -1891,10 +1891,10 @@ func TestLoaderRunHostAgentUsesLoaderDefaultAgentWhenRequestOmitsProvider(t *tes
 	host := &loaderRunHost{
 		manager: manager,
 		loader:  loader,
-		run:     &LoaderRunSummary{ID: "run-agent-default", LoaderID: loader.Summary.ID},
+		run:     &domain.LoaderRunSummary{ID: "run-agent-default", LoaderID: loader.Summary.ID},
 	}
 
-	result, err := host.Agent(ctx, "summarize this loader run", LoaderAgentRequest{Title: "Loader Agent Session"})
+	result, err := host.Agent(ctx, "summarize this loader run", domain.LoaderAgentRequest{Title: "Loader Agent Session"})
 	if err != nil {
 		t.Fatalf("Agent returned error: %v", err)
 	}
@@ -1945,7 +1945,7 @@ func newTestLoaderCommandManager(t *testing.T, ctx context.Context) (*LoaderMana
 		configDB: configDB,
 		driver:   driver,
 		executor: &Executor{config: config, store: store, configDB: configDB, runtimes: fixedRuntimeProvider{runtime: runtime}},
-		engine:   &QJSLoaderEngine{},
+		engine:   &loaders.QJSLoaderEngine{},
 		running:  map[string]int{},
 	}
 	loader := createTestLoader(t, ctx, configDB)
@@ -2247,9 +2247,9 @@ func createLocalGitRepo(t *testing.T) string {
 func createTestLoader(t *testing.T, ctx context.Context, store *ConfigStore) Loader {
 	t.Helper()
 	loader, err := store.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{
+		Summary: domain.LoaderSummary{
 			Name:    "Timer Loader",
-			Runtime: LoaderRuntimeScheduler,
+			Runtime: domain.LoaderRuntimeScheduler,
 			Enabled: true,
 		},
 		Script: "function main() {}",
@@ -2261,48 +2261,48 @@ func createTestLoader(t *testing.T, ctx context.Context, store *ConfigStore) Loa
 }
 
 type recordingLoaderEngine struct {
-	requests []LoaderExecutionRequest
+	requests []loaders.LoaderExecutionRequest
 }
 
-func (e *recordingLoaderEngine) Validate(context.Context, string, string) (LoaderValidationResult, error) {
-	return LoaderValidationResult{}, nil
+func (e *recordingLoaderEngine) Validate(context.Context, string, string) (loaders.LoaderValidationResult, error) {
+	return loaders.LoaderValidationResult{}, nil
 }
 
-func (e *recordingLoaderEngine) Execute(ctx context.Context, request LoaderExecutionRequest, host LoaderHost) (LoaderExecutionResult, error) {
+func (e *recordingLoaderEngine) Execute(ctx context.Context, request loaders.LoaderExecutionRequest, host loaders.LoaderHost) (loaders.LoaderExecutionResult, error) {
 	e.requests = append(e.requests, request)
 	if err := host.Log(ctx, "loader lifecycle", map[string]any{"step": "start"}); err != nil {
-		return LoaderExecutionResult{}, err
+		return loaders.LoaderExecutionResult{}, err
 	}
 	if err := host.StateSet(ctx, "last", `{"value":1}`); err != nil {
-		return LoaderExecutionResult{}, err
+		return loaders.LoaderExecutionResult{}, err
 	}
 	if err := host.StateSet(ctx, "temporary", `{"delete":true}`); err != nil {
-		return LoaderExecutionResult{}, err
+		return loaders.LoaderExecutionResult{}, err
 	}
 	if err := host.StateDelete(ctx, "temporary"); err != nil {
-		return LoaderExecutionResult{}, err
+		return loaders.LoaderExecutionResult{}, err
 	}
 	if value, ok, err := host.StateGet(ctx, "last"); err != nil || !ok || value != `{"value":1}` {
-		return LoaderExecutionResult{}, fmt.Errorf("loader state read = %q/%t/%v", value, ok, err)
+		return loaders.LoaderExecutionResult{}, fmt.Errorf("loader state read = %q/%t/%v", value, ok, err)
 	}
-	if llm, err := host.LLM(ctx, "summarize lifecycle", LoaderLLMRequest{Model: "model-a"}); err != nil || llm.Text != "loader llm text" {
-		return LoaderExecutionResult{}, fmt.Errorf("loader llm result = %#v/%v", llm, err)
+	if llm, err := host.LLM(ctx, "summarize lifecycle", domain.LoaderLLMRequest{Model: "model-a"}); err != nil || llm.Text != "loader llm text" {
+		return loaders.LoaderExecutionResult{}, fmt.Errorf("loader llm result = %#v/%v", llm, err)
 	}
 	if _, err := host.PublishEvent(ctx, "runtime.test.completed", `{"provider":"test-runtime","value":1}`); err != nil {
-		return LoaderExecutionResult{}, err
+		return loaders.LoaderExecutionResult{}, err
 	}
-	return LoaderExecutionResult{ResultJSON: `{"ok":true}`}, nil
+	return loaders.LoaderExecutionResult{ResultJSON: `{"ok":true}`}, nil
 }
 
 type scheduledRecordingLoaderEngine struct {
-	requests chan LoaderExecutionRequest
+	requests chan loaders.LoaderExecutionRequest
 }
 
-func (e *scheduledRecordingLoaderEngine) Validate(context.Context, string, string) (LoaderValidationResult, error) {
-	return LoaderValidationResult{}, nil
+func (e *scheduledRecordingLoaderEngine) Validate(context.Context, string, string) (loaders.LoaderValidationResult, error) {
+	return loaders.LoaderValidationResult{}, nil
 }
 
-func (e *scheduledRecordingLoaderEngine) Execute(_ context.Context, request LoaderExecutionRequest, _ LoaderHost) (LoaderExecutionResult, error) {
+func (e *scheduledRecordingLoaderEngine) Execute(_ context.Context, request loaders.LoaderExecutionRequest, _ loaders.LoaderHost) (loaders.LoaderExecutionResult, error) {
 	e.requests <- request
-	return LoaderExecutionResult{ResultJSON: `{"scheduled":true}`}, nil
+	return loaders.LoaderExecutionResult{ResultJSON: `{"scheduled":true}`}, nil
 }

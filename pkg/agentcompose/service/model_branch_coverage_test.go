@@ -3,6 +3,7 @@ package agentcompose
 import (
 	"agent-compose/pkg/agentcompose/configstore"
 	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/execution"
 	"agent-compose/pkg/agentcompose/loaders"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
@@ -24,7 +25,7 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 			Title:         "Branch Session",
 			TriggerSource: "script:loader-1",
 			Driver:        driverpkg.RuntimeDriverDocker,
-			VMStatus:      VMStatusRunning,
+			VMStatus:      domain.VMStatusRunning,
 			WorkspacePath: "/workspaces/branch",
 			CreatedAt:     now,
 			UpdatedAt:     now.Add(time.Minute),
@@ -33,12 +34,12 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 		Workspace:   &SessionWorkspace{ID: "workspace-1", Name: "Workspace One", Type: "file"},
 	}
 	if !domain.SessionMatchesListOptions(session, SessionListOptions{
-		SessionType:        SessionTypeScript,
+		SessionType:        domain.SessionTypeScript,
 		TriggerSourceQuery: "loader",
 		TitleQuery:         "branch",
 		WorkspaceQuery:     "workspace one",
 		Driver:             driverpkg.RuntimeDriverDocker,
-		VMStatus:           VMStatusRunning,
+		VMStatus:           domain.VMStatusRunning,
 		CreatedFrom:        now.Add(-time.Second),
 		CreatedTo:          now.Add(time.Second),
 		UpdatedFrom:        now,
@@ -47,12 +48,12 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 		t.Fatalf("session should match full list options")
 	}
 	for _, options := range []SessionListOptions{
-		{SessionType: SessionTypeManual},
+		{SessionType: domain.SessionTypeManual},
 		{TriggerSourceQuery: "missing"},
 		{TitleQuery: "missing"},
 		{WorkspaceQuery: "missing"},
 		{Driver: driverpkg.RuntimeDriverBoxlite},
-		{VMStatus: VMStatusStopped},
+		{VMStatus: domain.VMStatusStopped},
 		{CreatedFrom: now.Add(time.Second)},
 		{CreatedTo: now.Add(-time.Second)},
 		{UpdatedFrom: now.Add(2 * time.Minute)},
@@ -77,12 +78,12 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 	}
 
 	parsed, err := sessionListOptionsFromProto(&agentcomposev1.ListSessionsRequest{
-		SessionType:        SessionTypeScript,
+		SessionType:        domain.SessionTypeScript,
 		TriggerSourceQuery: "script",
 		TitleQuery:         "title",
 		WorkspaceQuery:     "workspace",
 		Driver:             driverpkg.RuntimeDriverDocker,
-		VmStatus:           VMStatusRunning,
+		VmStatus:           domain.VMStatusRunning,
 		CreatedFrom:        now.Format(time.RFC3339),
 		CreatedTo:          now.Add(time.Hour).Format(time.RFC3339),
 		UpdatedFrom:        now.Format(time.RFC3339),
@@ -103,8 +104,8 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 		t.Fatalf("parseOptionalRFC3339 blank = %s/%v", value, err)
 	}
 
-	for _, runtime := range []string{"", LoaderRuntimeScheduler} {
-		if got, err := domain.NormalizeLoaderRuntime(runtime); err != nil || got != LoaderRuntimeScheduler {
+	for _, runtime := range []string{"", domain.LoaderRuntimeScheduler} {
+		if got, err := domain.NormalizeLoaderRuntime(runtime); err != nil || got != domain.LoaderRuntimeScheduler {
 			t.Fatalf("domain.NormalizeLoaderRuntime(%q) = %q/%v", runtime, got, err)
 		}
 	}
@@ -113,7 +114,7 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 			t.Fatalf("domain.NormalizeLoaderRuntime(%q) returned nil error", runtime)
 		}
 	}
-	for _, kind := range []string{LoaderTriggerKindInterval, LoaderTriggerKindEvent, LoaderTriggerKindTimeout, LoaderTriggerKindCron} {
+	for _, kind := range []string{domain.LoaderTriggerKindInterval, domain.LoaderTriggerKindEvent, domain.LoaderTriggerKindTimeout, domain.LoaderTriggerKindCron} {
 		if got, err := domain.NormalizeLoaderTriggerKind(kind); err != nil || got != kind {
 			t.Fatalf("domain.NormalizeLoaderTriggerKind(%q) = %q/%v", kind, got, err)
 		}
@@ -121,18 +122,18 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 	if _, err := domain.NormalizeLoaderTriggerKind("bad"); err == nil {
 		t.Fatalf("normalizeLoaderTriggerKind bad returned nil error")
 	}
-	if domain.NormalizeLoaderSessionPolicy("new") != LoaderSessionPolicyNew || domain.NormalizeLoaderSessionPolicy("bad") != LoaderSessionPolicySticky {
+	if domain.NormalizeLoaderSessionPolicy("new") != domain.LoaderSessionPolicyNew || domain.NormalizeLoaderSessionPolicy("bad") != domain.LoaderSessionPolicySticky {
 		t.Fatalf("normalizeLoaderSessionPolicy returned unexpected values")
 	}
-	if domain.NormalizeLoaderConcurrencyPolicy("allow") != LoaderConcurrencyPolicyParallel || domain.NormalizeLoaderConcurrencyPolicy("bad") != LoaderConcurrencyPolicySkip {
+	if domain.NormalizeLoaderConcurrencyPolicy("allow") != domain.LoaderConcurrencyPolicyParallel || domain.NormalizeLoaderConcurrencyPolicy("bad") != domain.LoaderConcurrencyPolicySkip {
 		t.Fatalf("normalizeLoaderConcurrencyPolicy returned unexpected values")
 	}
-	for _, status := range []string{LoaderRunStatusRunning, LoaderRunStatusSucceeded, LoaderRunStatusFailed, LoaderRunStatusSkipped} {
+	for _, status := range []string{domain.LoaderRunStatusRunning, domain.LoaderRunStatusSucceeded, domain.LoaderRunStatusFailed, domain.LoaderRunStatusSkipped} {
 		if domain.NormalizeLoaderRunStatus(status) != status {
 			t.Fatalf("domain.NormalizeLoaderRunStatus(%q) changed", status)
 		}
 	}
-	if domain.NormalizeLoaderRunStatus("bad") != LoaderRunStatusRunning {
+	if domain.NormalizeLoaderRunStatus("bad") != domain.LoaderRunStatusRunning {
 		t.Fatalf("normalizeLoaderRunStatus bad did not default")
 	}
 	if !domain.LoaderTriggerTopicMatches("agent-compose.session.*", "agent-compose.session.created") || domain.LoaderTriggerTopicMatches("", "agent-compose.session.created") || domain.LoaderTriggerTopicMatches("agent-compose.loader", "") {
@@ -142,7 +143,7 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 	if domain.LoaderTriggerTopicMatches(legacySessionWildcard, "agent-compose.session.created") {
 		t.Fatalf("legacy session wildcard matched agent-compose lifecycle topic")
 	}
-	if !domain.LoaderTriggerUsesSchedule(LoaderTriggerKindCron) || domain.LoaderTriggerUsesSchedule(LoaderTriggerKindEvent) {
+	if !domain.LoaderTriggerUsesSchedule(domain.LoaderTriggerKindCron) || domain.LoaderTriggerUsesSchedule(domain.LoaderTriggerKindEvent) {
 		t.Fatalf("loaderTriggerUsesSchedule returned unexpected values")
 	}
 	if !domain.TimeIsSet(now) || domain.TimeIsSet(time.Time{}) || domain.NonZeroTimeUnixMilli(time.Time{}) != 0 || domain.NonZeroTimeUnixMilli(now) == 0 {
@@ -191,13 +192,13 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 	if err != nil || bus.Events() == nil {
 		t.Fatalf("NewLoaderBus = %#v/%v", bus, err)
 	}
-	if (&loaders.Bus{}).Publish(LoaderTopicEvent{Topic: "runtime.test"}) {
+	if (&loaders.Bus{}).Publish(domain.LoaderTopicEvent{Topic: "runtime.test"}) {
 		t.Fatalf("Publish on bus without channel succeeded")
 	}
-	if bus.Publish(LoaderTopicEvent{}) {
+	if bus.Publish(domain.LoaderTopicEvent{}) {
 		t.Fatalf("Publish empty topic succeeded")
 	}
-	if !bus.Publish(LoaderTopicEvent{Topic: "runtime.test", Payload: map[string]any{"ok": true}}) {
+	if !bus.Publish(domain.LoaderTopicEvent{Topic: "runtime.test", Payload: map[string]any{"ok": true}}) {
 		t.Fatalf("Publish valid event failed")
 	}
 	select {
@@ -208,7 +209,7 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 	default:
 		t.Fatalf("expected published event")
 	}
-	if (*loaders.Bus)(nil).Events() != nil || (*loaders.Bus)(nil).Publish(LoaderTopicEvent{Topic: "runtime.test"}) {
+	if (*loaders.Bus)(nil).Events() != nil || (*loaders.Bus)(nil).Publish(domain.LoaderTopicEvent{Topic: "runtime.test"}) {
 		t.Fatalf("nil loader bus helpers returned unexpected values")
 	}
 
@@ -231,11 +232,11 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 	if sessionPayload["sessionId"] != "session-branch" || sessionPayload["source"] != "test" {
 		t.Fatalf("session topic payload = %#v", sessionPayload)
 	}
-	cellPayload := loaders.CellTopicPayload("session-branch", NotebookCell{ID: "cell-1", Type: CellTypeShell, Agent: "codex", Success: true}, "test")
+	cellPayload := loaders.CellTopicPayload("session-branch", NotebookCell{ID: "cell-1", Type: execution.CellTypeShell, Agent: "codex", Success: true}, "test")
 	if cellPayload["cellId"] != "cell-1" || cellPayload["source"] != "test" {
 		t.Fatalf("cell topic payload = %#v", cellPayload)
 	}
-	commandPayload := loaders.CommandEventPayload(LoaderCommandRequest{Mode: "shell", Command: "ignored", Args: []string{"-c"}, Cwd: "/tmp"}, LoaderCommandResult{ExitCode: 2, Success: false, SessionID: "session-branch", CellID: "cell-1"})
+	commandPayload := loaders.CommandEventPayload(domain.LoaderCommandRequest{Mode: "shell", Command: "ignored", Args: []string{"-c"}, Cwd: "/tmp"}, domain.LoaderCommandResult{ExitCode: 2, Success: false, SessionID: "session-branch", CellID: "cell-1"})
 	if commandPayload["command"] != "" || commandPayload["exitCode"] != 2 {
 		t.Fatalf("command event payload = %#v", commandPayload)
 	}

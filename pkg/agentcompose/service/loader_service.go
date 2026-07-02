@@ -54,7 +54,7 @@ func (s *Service) CreateLoader(ctx context.Context, req *connect.Request[agentco
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	item, err := s.loaders.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{
+		Summary: domain.LoaderSummary{
 			Name:              req.Msg.GetName(),
 			Description:       req.Msg.GetDescription(),
 			Enabled:           req.Msg.GetEnabled(),
@@ -83,7 +83,7 @@ func (s *Service) UpdateLoader(ctx context.Context, req *connect.Request[agentco
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	item, err := s.loaders.UpdateLoader(ctx, Loader{
-		Summary: LoaderSummary{
+		Summary: domain.LoaderSummary{
 			ID:                req.Msg.GetLoaderId(),
 			Name:              req.Msg.GetName(),
 			Description:       req.Msg.GetDescription(),

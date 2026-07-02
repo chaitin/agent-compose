@@ -138,7 +138,7 @@ func (s *Service) runProjectAgent(ctx context.Context, msg *agentcomposev2.RunAg
 		}
 		return run, err, nil
 	}
-	cell, _, _, execErr := s.executor.ExecuteAgentRequest(ctx, sessionResult.Session, ExecuteAgentRequest{
+	cell, _, _, execErr := s.executor.ExecuteAgentRequest(ctx, sessionResult.Session, execution.ExecuteAgentRequest{
 		Agent:             agentConfig.Provider,
 		AgentDefinitionID: run.ManagedAgentID,
 		Model:             agentConfig.Model,
@@ -169,18 +169,18 @@ func (s *Service) projectRunAgentConfig(ctx context.Context, run ProjectRunRecor
 	if err != nil {
 		return agentExecutionConfig{}, fmt.Errorf("resolve managed agent definition %s: %w", run.ManagedAgentID, err)
 	}
-	config := agentExecutionConfigFromDefinition(agent, defaultAgentProvider)
+	config := agentExecutionConfigFromDefinition(agent, domain.DefaultAgentProvider)
 	if config.Provider == "" {
-		config.Provider = defaultAgentProvider
+		config.Provider = domain.DefaultAgentProvider
 	}
 	return config, nil
 }
 
-func projectRunAgentExecutionStream(run ProjectRunRecord, sink *projectRunStreamSink) AgentExecutionStream {
+func projectRunAgentExecutionStream(run ProjectRunRecord, sink *projectRunStreamSink) execution.AgentExecutionStream {
 	if sink == nil || sink.send == nil {
-		return AgentExecutionStream{}
+		return execution.AgentExecutionStream{}
 	}
-	return AgentExecutionStream{
+	return execution.AgentExecutionStream{
 		OnStart: func(NotebookCell) error {
 			return sink.send(&agentcomposev2.RunAgentStreamResponse{
 				EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_STARTED,
@@ -271,7 +271,7 @@ func (s *Service) stopProjectRunSession(ctx context.Context, session *Session) e
 	if err != nil {
 		return err
 	}
-	if loaded.Summary.VMStatus != VMStatusRunning {
+	if loaded.Summary.VMStatus != domain.VMStatusRunning {
 		return nil
 	}
 	if s.driver == nil {
@@ -280,7 +280,7 @@ func (s *Service) stopProjectRunSession(ctx context.Context, session *Session) e
 	if err := s.driver.StopSessionVM(ctx, loaded); err != nil {
 		return err
 	}
-	loaded.Summary.VMStatus = VMStatusStopped
+	loaded.Summary.VMStatus = domain.VMStatusStopped
 	if err := s.store.UpdateSession(ctx, loaded); err != nil {
 		return err
 	}

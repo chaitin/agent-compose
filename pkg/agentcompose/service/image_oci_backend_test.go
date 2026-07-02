@@ -30,7 +30,7 @@ func TestOCIImageBackendListInspectRemoveWithMetadata(t *testing.T) {
 		return time.Date(2026, 6, 11, 13, 14, 15, 0, time.UTC)
 	}))
 
-	list, err := backend.ListImages(context.Background(), ImageListRequest{Query: "team"})
+	list, err := backend.ListImages(context.Background(), images.ListRequest{Query: "team"})
 	if err != nil {
 		t.Fatalf("ListImages returned error: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestOCIImageBackendListInspectRemoveWithMetadata(t *testing.T) {
 		t.Fatalf("store status = %#v", list.StoreStatus)
 	}
 
-	inspect, err := backend.InspectImage(context.Background(), ImageInspectRequest{ImageRef: image.ConfigDigest})
+	inspect, err := backend.InspectImage(context.Background(), images.InspectRequest{ImageRef: image.ConfigDigest})
 	if err != nil {
 		t.Fatalf("InspectImage returned error: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestOCIImageBackendListInspectRemoveWithMetadata(t *testing.T) {
 		t.Fatalf("InspectImage result = %#v", inspect.Image)
 	}
 
-	remove, err := backend.RemoveImage(context.Background(), ImageRemoveRequest{ImageRef: "team/app:latest", PruneChildren: true})
+	remove, err := backend.RemoveImage(context.Background(), images.RemoveRequest{ImageRef: "team/app:latest", PruneChildren: true})
 	if err != nil {
 		t.Fatalf("RemoveImage returned error: %v", err)
 	}
@@ -62,15 +62,15 @@ func TestImageServiceOCIStoreUsesOCIBackend(t *testing.T) {
 	called := false
 	service := &Service{
 		images: &fakeImageBackend{
-			listImages: func(ctx context.Context, req ImageListRequest) (ImageListResult, error) {
+			listImages: func(ctx context.Context, req images.ListRequest) (images.ListResult, error) {
 				t.Fatalf("docker backend should not be used for explicit OCI store")
-				return ImageListResult{}, nil
+				return images.ListResult{}, nil
 			},
 		},
 		ociImages: &fakeImageBackend{
-			listImages: func(ctx context.Context, req ImageListRequest) (ImageListResult, error) {
+			listImages: func(ctx context.Context, req images.ListRequest) (images.ListResult, error) {
 				called = true
-				return ImageListResult{
+				return images.ListResult{
 					Images: []*agentcomposev2.Image{{ImageId: "sha256:oci", ImageRef: "team/app:latest"}},
 					StoreStatus: &agentcomposev2.ImageStoreStatus{
 						Store:     agentcomposev2.ImageStoreKind_IMAGE_STORE_KIND_OCI_CACHE,
@@ -108,8 +108,8 @@ func TestImageServiceOCIStoreRequiresBackendWithoutUnimplemented(t *testing.T) {
 
 func TestImageServiceMapsOCIBackendErrors(t *testing.T) {
 	service := &Service{ociImages: &fakeImageBackend{
-		inspectImage: func(ctx context.Context, req ImageInspectRequest) (ImageInspectResult, error) {
-			return ImageInspectResult{}, images.OpError{
+		inspectImage: func(ctx context.Context, req images.InspectRequest) (images.InspectResult, error) {
+			return images.InspectResult{}, images.OpError{
 				Op:       "inspect image",
 				Endpoint: "/cache/oci",
 				ImageRef: req.ImageRef,
@@ -144,7 +144,7 @@ func TestIntegrationOCIImageBackendPullFromLocalRegistry(t *testing.T) {
 
 	cache := newAgentcomposeImageCache(t, host)
 	backend := images.NewOCIBackend(cache)
-	pull, err := backend.PullImage(ctx, ImagePullRequest{
+	pull, err := backend.PullImage(ctx, images.PullRequest{
 		ImageRef: refString,
 		Platform: &agentcomposev2.ImagePlatform{
 			Os:           "linux",
@@ -160,7 +160,7 @@ func TestIntegrationOCIImageBackendPullFromLocalRegistry(t *testing.T) {
 	if len(pull.Progress) == 0 {
 		t.Fatalf("PullImage progress was empty")
 	}
-	inspect, err := backend.InspectImage(ctx, ImageInspectRequest{ImageRef: refString})
+	inspect, err := backend.InspectImage(ctx, images.InspectRequest{ImageRef: refString})
 	if err != nil {
 		t.Fatalf("InspectImage after pull returned error: %v", err)
 	}

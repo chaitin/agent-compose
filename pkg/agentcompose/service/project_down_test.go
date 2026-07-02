@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"agent-compose/pkg/agentcompose/domain"
 	driverpkg "agent-compose/pkg/driver"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
@@ -63,7 +64,7 @@ func testProjectDownDisablesSchedulersStopsSessionsPreservesHistory(t *testing.T
 	if err != nil {
 		t.Fatalf("GetSession before down returned error: %v", err)
 	}
-	if session.Summary.VMStatus != VMStatusRunning {
+	if session.Summary.VMStatus != domain.VMStatusRunning {
 		t.Fatalf("session status before down = %q, want running", session.Summary.VMStatus)
 	}
 
@@ -100,7 +101,7 @@ func testProjectDownDisablesSchedulersStopsSessionsPreservesHistory(t *testing.T
 	if err != nil {
 		t.Fatalf("GetSession after down returned error: %v", err)
 	}
-	if stoppedSession.Summary.VMStatus != VMStatusStopped {
+	if stoppedSession.Summary.VMStatus != domain.VMStatusStopped {
 		t.Fatalf("session status after down = %q, want stopped", stoppedSession.Summary.VMStatus)
 	}
 	driver, ok := service.driver.(*fakeSessionDriver)
@@ -165,13 +166,13 @@ func testProjectDownContinuesAfterPartialSessionStopFailure(t *testing.T) {
 	ctx := context.Background()
 	failedID := runProjectDownTestSession(t, ctx, service, projectID, "down-partial-failed")
 	stoppedID := runProjectDownTestSession(t, ctx, service, projectID, "down-partial-stopped")
-	foreignSession, err := service.store.CreateSession(ctx, "Foreign project running", "", driverpkg.RuntimeDriverBoxlite, "guest:v1", "", SessionTypeManual, nil, nil,
+	foreignSession, err := service.store.CreateSession(ctx, "Foreign project running", "", driverpkg.RuntimeDriverBoxlite, "guest:v1", "", domain.SessionTypeManual, nil, nil,
 		[]SessionTag{{Name: "project", Value: "foreign-project"}},
 	)
 	if err != nil {
 		t.Fatalf("CreateSession(foreign) returned error: %v", err)
 	}
-	foreignSession.Summary.VMStatus = VMStatusRunning
+	foreignSession.Summary.VMStatus = domain.VMStatusRunning
 	if err := service.store.UpdateSession(ctx, foreignSession); err != nil {
 		t.Fatalf("UpdateSession(foreign) returned error: %v", err)
 	}
@@ -207,9 +208,9 @@ func testProjectDownContinuesAfterPartialSessionStopFailure(t *testing.T) {
 	if !stringSliceContains(driver.stopCalls, failedID) || !stringSliceContains(driver.stopCalls, stoppedID) || stringSliceContains(driver.stopCalls, foreignSession.Summary.ID) {
 		t.Fatalf("StopSessionVM calls = %#v", driver.stopCalls)
 	}
-	assertProjectDownTestSessionStatus(t, ctx, service, failedID, VMStatusRunning)
-	assertProjectDownTestSessionStatus(t, ctx, service, stoppedID, VMStatusStopped)
-	assertProjectDownTestSessionStatus(t, ctx, service, foreignSession.Summary.ID, VMStatusRunning)
+	assertProjectDownTestSessionStatus(t, ctx, service, failedID, domain.VMStatusRunning)
+	assertProjectDownTestSessionStatus(t, ctx, service, stoppedID, domain.VMStatusStopped)
+	assertProjectDownTestSessionStatus(t, ctx, service, foreignSession.Summary.ID, domain.VMStatusRunning)
 }
 
 func TestProjectDownIsIdempotent(t *testing.T) {
@@ -257,7 +258,7 @@ func testProjectDownIsIdempotent(t *testing.T) {
 			t.Fatalf("scheduler after repeated down is enabled: %#v", scheduler)
 		}
 	}
-	assertProjectDownTestSessionStatus(t, ctx, service, sessionID, VMStatusStopped)
+	assertProjectDownTestSessionStatus(t, ctx, service, sessionID, domain.VMStatusStopped)
 }
 
 func runProjectDownTestSession(t *testing.T, ctx context.Context, service *Service, projectID, clientRequestID string) string {

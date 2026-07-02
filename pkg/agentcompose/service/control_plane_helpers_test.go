@@ -16,6 +16,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/labstack/echo/v4"
 
+	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/agentcompose/execution"
 	"agent-compose/pkg/agentcompose/loaders"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
@@ -57,16 +58,16 @@ func testControlPlaneHelperErrorAndParsingBranches(t *testing.T) {
 		}
 	}
 
-	if err := loaders.ValidateCommandRequest(LoaderCommandRequest{Mode: "exec"}); err == nil {
+	if err := loaders.ValidateCommandRequest(domain.LoaderCommandRequest{Mode: "exec"}); err == nil {
 		t.Fatalf("validate exec without command returned nil")
 	}
-	if err := loaders.ValidateCommandRequest(LoaderCommandRequest{Mode: "shell"}); err == nil {
+	if err := loaders.ValidateCommandRequest(domain.LoaderCommandRequest{Mode: "shell"}); err == nil {
 		t.Fatalf("validate shell without script returned nil")
 	}
-	if err := loaders.ValidateCommandRequest(LoaderCommandRequest{Mode: "bad"}); err == nil {
+	if err := loaders.ValidateCommandRequest(domain.LoaderCommandRequest{Mode: "bad"}); err == nil {
 		t.Fatalf("validate bad mode returned nil")
 	}
-	if err := loaders.ValidateCommandRequest(LoaderCommandRequest{Mode: "exec", Command: "python3"}); err != nil {
+	if err := loaders.ValidateCommandRequest(domain.LoaderCommandRequest{Mode: "exec", Command: "python3"}); err != nil {
 		t.Fatalf("validate exec returned error: %v", err)
 	}
 	cancelCtx, cancel := loaders.CommandContext(ctx, 0)
@@ -89,7 +90,7 @@ func testControlPlaneHelperErrorAndParsingBranches(t *testing.T) {
 		GuestRuntimeRoot:   "/data/runtime",
 		Version:            "v-test",
 	}
-	request := LoaderCommandRequest{Mode: "exec", Command: "python3", Args: []string{"-V"}, Env: map[string]string{"FOO": "bar"}}
+	request := domain.LoaderCommandRequest{Mode: "exec", Command: "python3", Args: []string{"-V"}, Env: map[string]string{"FOO": "bar"}}
 	payload := runtimeCommandRequestPayload(config, request, "/guest/cell")
 	if payload.Cwd != "/workspace" || payload.MaxOutputBytes != defaultLoaderCommandMaxOutputBytes || payload.ArtifactDir != "/guest/cell" {
 		t.Fatalf("runtime command payload = %#v", payload)
@@ -127,7 +128,7 @@ func testControlPlaneHelperErrorAndParsingBranches(t *testing.T) {
 			t.Fatalf("loader command env still contains %s: %#v", key, spec.Env)
 		}
 	}
-	if source := loaders.CommandCellSource(LoaderCommandRequest{Mode: "shell", Script: "echo hi"}); source != "echo hi" {
+	if source := loaders.CommandCellSource(domain.LoaderCommandRequest{Mode: "shell", Script: "echo hi"}); source != "echo hi" {
 		t.Fatalf("shell source = %q", source)
 	}
 

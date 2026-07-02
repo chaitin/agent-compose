@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/agentcompose/llms"
 	appconfig "agent-compose/pkg/config"
 	"context"
@@ -52,40 +53,40 @@ func TestNormalizeLLMAPIEndpointKeepsExplicitPath(t *testing.T) {
 	if got := llms.NormalizeAPIEndpoint("https://api.example.invalid/custom/path"); got != "https://api.example.invalid/custom/path" {
 		t.Fatalf("normalizeLLMAPIEndpoint custom path = %q, want unchanged", got)
 	}
-	if got := llms.NormalizeAPIEndpointForProtocol("https://api.example.invalid", llmAPIProtocolChatCompletions); got != "https://api.example.invalid/v1/chat/completions" {
+	if got := llms.NormalizeAPIEndpointForProtocol("https://api.example.invalid", llms.APIProtocolChatCompletions); got != "https://api.example.invalid/v1/chat/completions" {
 		t.Fatalf("normalizeLLMAPIEndpointForProtocol chat base = %q, want chat completions path", got)
 	}
-	if got := llms.NormalizeAPIEndpointForProtocol("https://api.example.invalid/v1", llmAPIProtocolChatCompletions); got != "https://api.example.invalid/v1/chat/completions" {
+	if got := llms.NormalizeAPIEndpointForProtocol("https://api.example.invalid/v1", llms.APIProtocolChatCompletions); got != "https://api.example.invalid/v1/chat/completions" {
 		t.Fatalf("normalizeLLMAPIEndpointForProtocol chat v1 = %q, want chat completions path", got)
 	}
 	if got := llms.NormalizeAPIEndpoint("https://api.example.invalid/openai"); got != "https://api.example.invalid/openai/v1/responses" {
 		t.Fatalf("normalizeLLMAPIEndpoint openai base = %q, want openai responses path", got)
 	}
-	if got := llms.NormalizeAPIEndpointForProtocol("https://api.example.invalid/openai/v1", llmAPIProtocolChatCompletions); got != "https://api.example.invalid/openai/v1/chat/completions" {
+	if got := llms.NormalizeAPIEndpointForProtocol("https://api.example.invalid/openai/v1", llms.APIProtocolChatCompletions); got != "https://api.example.invalid/openai/v1/chat/completions" {
 		t.Fatalf("normalizeLLMAPIEndpointForProtocol openai v1 chat = %q, want openai chat completions path", got)
 	}
-	if got := llms.NormalizeAPIEndpointForProtocol("https://api.example.invalid/custom/chat", llmAPIProtocolChatCompletions); got != "https://api.example.invalid/custom/chat" {
+	if got := llms.NormalizeAPIEndpointForProtocol("https://api.example.invalid/custom/chat", llms.APIProtocolChatCompletions); got != "https://api.example.invalid/custom/chat" {
 		t.Fatalf("normalizeLLMAPIEndpointForProtocol chat custom = %q, want unchanged", got)
 	}
 }
 
 func TestLLMEndpointForProviderBaseURLAppendsProtocolPath(t *testing.T) {
-	provider := LLMProvider{
-		ProviderType: llmProviderFamilyOpenAI,
+	provider := llms.Provider{
+		ProviderType: llms.ProviderFamilyOpenAI,
 		BaseURL:      "https://openai-compatible.example.invalid/api",
 	}
-	if got := llms.EndpointForProvider(provider, llmAPIProtocolChatCompletions); got != "https://openai-compatible.example.invalid/api/v1/chat/completions" {
+	if got := llms.EndpointForProvider(provider, llms.APIProtocolChatCompletions); got != "https://openai-compatible.example.invalid/api/v1/chat/completions" {
 		t.Fatalf("llms.EndpointForProvider chat = %q, want provider base URL plus chat path", got)
 	}
-	if got := llms.EndpointForProvider(provider, llmAPIProtocolResponses); got != "https://openai-compatible.example.invalid/api/v1/responses" {
+	if got := llms.EndpointForProvider(provider, llms.APIProtocolResponses); got != "https://openai-compatible.example.invalid/api/v1/responses" {
 		t.Fatalf("llms.EndpointForProvider responses = %q, want provider base URL plus responses path", got)
 	}
 	provider.BaseURL = "https://openai-compatible.example.invalid/api/v1"
-	if got := llms.EndpointForProvider(provider, llmAPIProtocolResponses); got != "https://openai-compatible.example.invalid/api/v1/responses" {
+	if got := llms.EndpointForProvider(provider, llms.APIProtocolResponses); got != "https://openai-compatible.example.invalid/api/v1/responses" {
 		t.Fatalf("llms.EndpointForProvider v1 responses = %q, want provider v1 base URL plus responses path", got)
 	}
 	provider.BaseURL = "https://openai-compatible.example.invalid"
-	if got := llms.EndpointForProvider(provider, llmAPIProtocolChatCompletions); got != "https://openai-compatible.example.invalid/v1/chat/completions" {
+	if got := llms.EndpointForProvider(provider, llms.APIProtocolChatCompletions); got != "https://openai-compatible.example.invalid/v1/chat/completions" {
 		t.Fatalf("llms.EndpointForProvider root chat = %q, want provider root base URL plus chat path", got)
 	}
 }
@@ -278,12 +279,12 @@ func TestLLMClientResolveProtocol(t *testing.T) {
 	ctx := context.Background()
 	store := newTestConfigStore(t)
 	client := &LLMClient{
-		config:   &appconfig.Config{LLMAPIProtocol: llmAPIProtocolChatCompletions, LLMAPIEndpoint: "https://api.example.com"},
+		config:   &appconfig.Config{LLMAPIProtocol: llms.APIProtocolChatCompletions, LLMAPIEndpoint: "https://api.example.com"},
 		configDB: store,
 	}
 
-	if got := client.resolveProtocol(ctx); got != llmAPIProtocolChatCompletions {
-		t.Fatalf("resolveProtocol from config = %q, want %q", got, llmAPIProtocolChatCompletions)
+	if got := client.resolveProtocol(ctx); got != llms.APIProtocolChatCompletions {
+		t.Fatalf("resolveProtocol from config = %q, want %q", got, llms.APIProtocolChatCompletions)
 	}
 	if got := client.resolveEndpoint(ctx); got != "https://api.example.com/v1/chat/completions" {
 		t.Fatalf("resolveEndpoint with chat_completions = %q, want chat completions path", got)
@@ -291,25 +292,25 @@ func TestLLMClientResolveProtocol(t *testing.T) {
 
 	t.Setenv("LLM_API_PROTOCOL", "chat")
 	client.config.LLMAPIProtocol = ""
-	if got := client.resolveProtocol(ctx); got != llmAPIProtocolChatCompletions {
-		t.Fatalf("resolveProtocol alias chat = %q, want %q", got, llmAPIProtocolChatCompletions)
+	if got := client.resolveProtocol(ctx); got != llms.APIProtocolChatCompletions {
+		t.Fatalf("resolveProtocol alias chat = %q, want %q", got, llms.APIProtocolChatCompletions)
 	}
 
 	if _, err := store.ReplaceGlobalEnv(ctx, []SessionEnvVar{
-		{Name: "LLM_API_PROTOCOL", Value: llmAPIProtocolChatCompletions, Secret: false},
+		{Name: "LLM_API_PROTOCOL", Value: llms.APIProtocolChatCompletions, Secret: false},
 	}); err != nil {
 		t.Fatalf("ReplaceGlobalEnv returned error: %v", err)
 	}
 	if err := os.Unsetenv("LLM_API_PROTOCOL"); err != nil {
 		t.Fatalf("Unsetenv returned error: %v", err)
 	}
-	if got := client.resolveProtocol(ctx); got != llmAPIProtocolChatCompletions {
-		t.Fatalf("resolveProtocol from db env = %q, want %q", got, llmAPIProtocolChatCompletions)
+	if got := client.resolveProtocol(ctx); got != llms.APIProtocolChatCompletions {
+		t.Fatalf("resolveProtocol from db env = %q, want %q", got, llms.APIProtocolChatCompletions)
 	}
 
-	client.config.LLMAPIProtocol = llmAPIProtocolResponses
-	if got := client.resolveProtocol(ctx); got != llmAPIProtocolChatCompletions {
-		t.Fatalf("resolveProtocol should prefer db env over config = %q, want %q", got, llmAPIProtocolChatCompletions)
+	client.config.LLMAPIProtocol = llms.APIProtocolResponses
+	if got := client.resolveProtocol(ctx); got != llms.APIProtocolChatCompletions {
+		t.Fatalf("resolveProtocol should prefer db env over config = %q, want %q", got, llms.APIProtocolChatCompletions)
 	}
 }
 
@@ -342,7 +343,7 @@ func TestLLMClientGenerateChatCompletionsPlainText(t *testing.T) {
 	client := &LLMClient{
 		config: &appconfig.Config{
 			LLMAPIEndpoint: server.URL,
-			LLMAPIProtocol: llmAPIProtocolChatCompletions,
+			LLMAPIProtocol: llms.APIProtocolChatCompletions,
 			LLMModel:       "compatible-model",
 		},
 		configDB: newTestConfigStore(t),
@@ -385,7 +386,7 @@ func TestLLMClientGenerateChatCompletions(t *testing.T) {
 	client := &LLMClient{
 		config: &appconfig.Config{
 			LLMAPIEndpoint: server.URL,
-			LLMAPIProtocol: llmAPIProtocolChatCompletions,
+			LLMAPIProtocol: llms.APIProtocolChatCompletions,
 			LLMModel:       "compatible-model",
 		},
 		configDB: store,
@@ -420,7 +421,7 @@ func TestLLMClientGenerateChatCompletionsValidatesSchemaJSONMode(t *testing.T) {
 	client := &LLMClient{
 		config: &appconfig.Config{
 			LLMAPIEndpoint: server.URL,
-			LLMAPIProtocol: llmAPIProtocolChatCompletions,
+			LLMAPIProtocol: llms.APIProtocolChatCompletions,
 			LLMModel:       "compatible-model",
 		},
 		configDB: newTestConfigStore(t),
@@ -444,7 +445,7 @@ func TestLLMClientGenerateChatCompletionsSurfacesErrors(t *testing.T) {
 	client := &LLMClient{
 		config: &appconfig.Config{
 			LLMAPIEndpoint: server.URL,
-			LLMAPIProtocol: llmAPIProtocolChatCompletions,
+			LLMAPIProtocol: llms.APIProtocolChatCompletions,
 			LLMModel:       "compatible-model",
 		},
 		configDB: newTestConfigStore(t),
@@ -484,7 +485,7 @@ func TestLLMClientGenerateChatCompletionsRejectsInvalidSchema(t *testing.T) {
 	client := &LLMClient{
 		config: &appconfig.Config{
 			LLMAPIEndpoint: "https://api.example.com",
-			LLMAPIProtocol: llmAPIProtocolChatCompletions,
+			LLMAPIProtocol: llms.APIProtocolChatCompletions,
 			LLMModel:       "compatible-model",
 		},
 		configDB: newTestConfigStore(t),
@@ -513,7 +514,7 @@ func TestLoaderRunHostLLMChatCompletionsProtocol(t *testing.T) {
 		llm: &LLMClient{
 			config: &appconfig.Config{
 				LLMAPIEndpoint: server.URL,
-				LLMAPIProtocol: llmAPIProtocolChatCompletions,
+				LLMAPIProtocol: llms.APIProtocolChatCompletions,
 				LLMModel:       "model-a",
 			},
 			configDB: store,
@@ -522,11 +523,11 @@ func TestLoaderRunHostLLMChatCompletionsProtocol(t *testing.T) {
 	}
 	host := &loaderRunHost{
 		manager: manager,
-		loader:  Loader{Summary: LoaderSummary{ID: "loader-1"}},
-		run:     &LoaderRunSummary{ID: "run-1", LoaderID: "loader-1"},
+		loader:  Loader{Summary: domain.LoaderSummary{ID: "loader-1"}},
+		run:     &domain.LoaderRunSummary{ID: "run-1", LoaderID: "loader-1"},
 	}
 
-	result, err := host.LLM(ctx, "summarize lifecycle", LoaderLLMRequest{Model: "model-a"})
+	result, err := host.LLM(ctx, "summarize lifecycle", domain.LoaderLLMRequest{Model: "model-a"})
 	if err != nil {
 		t.Fatalf("LLM returned error: %v", err)
 	}

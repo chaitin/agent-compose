@@ -24,12 +24,14 @@ import (
 
 	"agent-compose/pkg/agentcompose/api"
 	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/agentcompose/dashboard"
 	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/agentcompose/events"
 	"agent-compose/pkg/agentcompose/execution"
 	"agent-compose/pkg/agentcompose/images"
 	"agent-compose/pkg/agentcompose/llms"
 	"agent-compose/pkg/agentcompose/loaders"
+	"agent-compose/pkg/agentcompose/sessions"
 	"agent-compose/pkg/agentcompose/workspaces"
 	"agent-compose/pkg/capproxy"
 	"agent-compose/pkg/imagecache"
@@ -46,14 +48,14 @@ type Service struct {
 	runtimes   RuntimeProvider
 	executor   *Executor
 	loaders    *LoaderManager
-	images     ImageBackend
-	ociImages  ImageBackend
-	autoImages ImageBackend
+	images     images.Backend
+	ociImages  images.Backend
+	autoImages images.Backend
 	llm        *LLMClient
 	cap        capabilities.Provider
 	bus        *loaders.Bus
-	streams    *SessionStreamBroker
-	dashboard  *DashboardOverviewHub
+	streams    *sessions.StreamBroker
+	dashboard  *dashboard.Hub
 	events     *events.Dispatcher
 	sessions   *SessionRPCBridge
 	startedAt  time.Time
@@ -76,7 +78,7 @@ type Service struct {
 
 func NewService(di do.Injector) (*Service, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
-	dashboard, _ := do.Invoke[*DashboardOverviewHub](di)
+	dashboard, _ := do.Invoke[*dashboard.Hub](di)
 	if dashboard == nil {
 		rootCtx, _ := do.Invoke[context.Context](di)
 		if rootCtx == nil {
@@ -115,7 +117,7 @@ func NewService(di do.Injector) (*Service, error) {
 		llm:        do.MustInvoke[*LLMClient](di),
 		cap:        do.MustInvoke[capabilityIntegration](di),
 		bus:        do.MustInvoke[*loaders.Bus](di),
-		streams:    do.MustInvoke[*SessionStreamBroker](di),
+		streams:    do.MustInvoke[*sessions.StreamBroker](di),
 		dashboard:  dashboard,
 		events:     NewEventDispatcher(do.MustInvoke[context.Context](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[*loaders.Bus](di)),
 		sessions:   do.MustInvoke[*SessionRPCBridge](di),
@@ -518,7 +520,7 @@ func (s *Service) ResumeSession(ctx context.Context, req *connect.Request[agentc
 }
 
 func (s *Service) reconcileSessionRuntimeState(ctx context.Context, session *Session) (*Session, error) {
-	if session == nil || session.Summary.VMStatus != VMStatusRunning {
+	if session == nil || session.Summary.VMStatus != domain.VMStatusRunning {
 		return session, nil
 	}
 	driver, err := driverpkg.ResolveSessionRuntimeDriver(session.Summary.Driver, s.config.RuntimeDriver)
@@ -561,7 +563,7 @@ func (s *Service) reconcileSessionRuntimeState(ctx context.Context, session *Ses
 	if err := s.store.SaveVMState(session.Summary.ID, vmState); err != nil {
 		return nil, err
 	}
-	session.Summary.VMStatus = VMStatusStopped
+	session.Summary.VMStatus = domain.VMStatusStopped
 	if err := s.store.UpdateSession(ctx, session); err != nil {
 		return nil, err
 	}
@@ -612,22 +614,22 @@ func (s *Service) ensureSessionProxyReady(ctx context.Context, sessionID string)
 	if err != nil {
 		return nil, ProxyState{}, err
 	}
-	if session.Summary.VMStatus == VMStatusRunning && jupyterTargetReachable(proxyState, 1500*time.Millisecond) {
+	if session.Summary.VMStatus == domain.VMStatusRunning && jupyterTargetReachable(proxyState, 1500*time.Millisecond) {
 		return session, proxyState, nil
 	}
 	startCtx, cancel := context.WithTimeout(ctx, s.config.SessionStartTimeout)
 	defer cancel()
 	if err := workspaces.PrepareSessionWorkspace(startCtx, s.config, s.configDB, session); err != nil {
-		session.Summary.VMStatus = VMStatusFailed
+		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = s.store.UpdateSession(ctx, session)
 		return nil, ProxyState{}, err
 	}
 	if err := s.driver.StartSessionVM(startCtx, session); err != nil {
-		session.Summary.VMStatus = VMStatusFailed
+		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = s.store.UpdateSession(ctx, session)
 		return nil, ProxyState{}, err
 	}
-	session.Summary.VMStatus = VMStatusRunning
+	session.Summary.VMStatus = domain.VMStatusRunning
 	if err := s.store.UpdateSession(ctx, session); err != nil {
 		return nil, ProxyState{}, err
 	}
@@ -651,7 +653,7 @@ func (s *Service) ExecuteCell(ctx context.Context, req *connect.Request[agentcom
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
-	if session.Summary.VMStatus != VMStatusRunning {
+	if session.Summary.VMStatus != domain.VMStatusRunning {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("session is not running"))
 	}
 	cell, err := s.executor.ExecuteCell(ctx, session, api.CellTypeFromProto(req.Msg.GetType()), req.Msg.GetSource())
@@ -672,7 +674,7 @@ func (s *Service) ExecuteCellStream(ctx context.Context, req *connect.Request[ag
 	if err != nil {
 		return connect.NewError(connect.CodeNotFound, err)
 	}
-	if session.Summary.VMStatus != VMStatusRunning {
+	if session.Summary.VMStatus != domain.VMStatusRunning {
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("session is not running"))
 	}
 
@@ -682,7 +684,7 @@ func (s *Service) ExecuteCellStream(ctx context.Context, req *connect.Request[ag
 		}
 		return connect.NewError(connect.CodeUnknown, sendErr)
 	}
-	cell, err := s.executor.ExecuteCellStream(ctx, session, api.CellTypeFromProto(req.Msg.GetType()), req.Msg.GetSource(), CellExecutionStream{
+	cell, err := s.executor.ExecuteCellStream(ctx, session, api.CellTypeFromProto(req.Msg.GetType()), req.Msg.GetSource(), execution.CellExecutionStream{
 		OnStart: func(cell NotebookCell) error {
 			return streamErr(stream.Send(&agentcomposev1.ExecuteCellStreamResponse{
 				EventType: agentcomposev1.ExecuteCellStreamEventType_EXECUTE_CELL_STREAM_EVENT_TYPE_STARTED,
@@ -736,7 +738,7 @@ func (s *Service) SendAgentMessage(ctx context.Context, req *connect.Request[age
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
-	if session.Summary.VMStatus != VMStatusRunning {
+	if session.Summary.VMStatus != domain.VMStatusRunning {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("session is not running"))
 	}
 	message := strings.TrimSpace(req.Msg.GetMessage())
@@ -744,7 +746,7 @@ func (s *Service) SendAgentMessage(ctx context.Context, req *connect.Request[age
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("message is required"))
 	}
 	agentConfig := s.resolveSessionAgentConfig(ctx, session, req.Msg.GetAgent())
-	cell, userEvent, assistantEvent, err := s.executor.ExecuteAgentRequest(ctx, session, ExecuteAgentRequest{
+	cell, userEvent, assistantEvent, err := s.executor.ExecuteAgentRequest(ctx, session, execution.ExecuteAgentRequest{
 		Agent:             agentConfig.Provider,
 		AgentDefinitionID: agentConfig.AgentDefinitionID,
 		Model:             agentConfig.Model,
@@ -765,7 +767,7 @@ func (s *Service) SendAgentMessageStream(ctx context.Context, req *connect.Reque
 	if err != nil {
 		return connect.NewError(connect.CodeNotFound, err)
 	}
-	if session.Summary.VMStatus != VMStatusRunning {
+	if session.Summary.VMStatus != domain.VMStatusRunning {
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("session is not running"))
 	}
 	message := strings.TrimSpace(req.Msg.GetMessage())
@@ -781,13 +783,13 @@ func (s *Service) SendAgentMessageStream(ctx context.Context, req *connect.Reque
 		return connect.NewError(connect.CodeUnknown, sendErr)
 	}
 
-	cell, userEvent, assistantEvent, err := s.executor.ExecuteAgentRequest(ctx, session, ExecuteAgentRequest{
+	cell, userEvent, assistantEvent, err := s.executor.ExecuteAgentRequest(ctx, session, execution.ExecuteAgentRequest{
 		Agent:             agentConfig.Provider,
 		AgentDefinitionID: agentConfig.AgentDefinitionID,
 		Model:             agentConfig.Model,
 		ProviderEnvItems:  agentConfig.EnvItems,
 		Message:           message,
-		Stream: AgentExecutionStream{
+		Stream: execution.AgentExecutionStream{
 			OnStart: func(cell NotebookCell) error {
 				return streamErr(stream.Send(&agentcomposev1.SendAgentMessageStreamResponse{
 					EventType: agentcomposev1.SendAgentMessageStreamEventType_SEND_AGENT_MESSAGE_STREAM_EVENT_TYPE_STARTED,
@@ -837,7 +839,7 @@ func (s *Service) resolveSessionAgentConfig(ctx context.Context, session *Sessio
 	if session == nil {
 		return config
 	}
-	agentID := sessionTagValue(session.Summary.Tags, agentSessionTagID)
+	agentID := sessionTagValue(session.Summary.Tags, domain.AgentSessionTagID)
 	if agentID == "" || !domain.SessionHasAgentTag(session, agentID) || s.configDB == nil {
 		return config
 	}
@@ -848,7 +850,7 @@ func (s *Service) resolveSessionAgentConfig(ctx context.Context, session *Sessio
 	return agentExecutionConfigFromDefinition(agent, provider)
 }
 
-func agentExecutionConfigFromDefinition(agent AgentDefinition, fallbackProvider string) agentExecutionConfig {
+func agentExecutionConfigFromDefinition(agent domain.AgentDefinition, fallbackProvider string) agentExecutionConfig {
 	provider := domain.NormalizeAgentKind(agent.Provider)
 	if provider == "" {
 		provider = domain.NormalizeAgentKind(fallbackProvider)
@@ -1097,7 +1099,7 @@ func parseAgentTraceMarker(line string) (string, string, bool) {
 	return "", "", false
 }
 
-func runtimeCommandRequestPayload(config *appconfig.Config, request LoaderCommandRequest, guestCellDir string) runtimeCommandRequestJSON {
+func runtimeCommandRequestPayload(config *appconfig.Config, request domain.LoaderCommandRequest, guestCellDir string) runtimeCommandRequestJSON {
 	appconfig.ApplyDefaultGuestPaths(config)
 	maxOutputBytes := request.MaxOutputBytes
 	if maxOutputBytes <= 0 {
@@ -1193,7 +1195,7 @@ func (e *Executor) resolveAgentSystemPrompt(ctx context.Context, session *Sessio
 	}
 	agentID := strings.TrimSpace(agentDefinitionID)
 	if agentID == "" {
-		taggedAgentID := sessionTagValue(session.Summary.Tags, agentSessionTagID)
+		taggedAgentID := sessionTagValue(session.Summary.Tags, domain.AgentSessionTagID)
 		if !domain.SessionHasAgentTag(session, taggedAgentID) {
 			return "", nil
 		}
@@ -1212,7 +1214,7 @@ func (e *Executor) resolveAgentSystemPrompt(ctx context.Context, session *Sessio
 }
 
 func (e *Executor) executeAgentRun(ctx context.Context, session *Session, agent, agentDefinitionID, model, runID, message, outputSchemaJSON string, stream ExecStreamWriter) (ExecResult, AgentRunResult, error) {
-	if session.Summary.VMStatus != VMStatusRunning {
+	if session.Summary.VMStatus != domain.VMStatusRunning {
 		return ExecResult{}, AgentRunResult{}, fmt.Errorf("session is not running")
 	}
 	appconfig.ApplyDefaultGuestPaths(e.config)

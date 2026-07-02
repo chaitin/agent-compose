@@ -13,7 +13,7 @@ import (
 	"agent-compose/pkg/agentcompose/api"
 	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/agentcompose/images"
-	loaderpkg "agent-compose/pkg/agentcompose/loaders"
+	"agent-compose/pkg/agentcompose/loaders"
 	"agent-compose/pkg/agentcompose/projects"
 	"agent-compose/pkg/agentcompose/runs"
 	"agent-compose/pkg/compose"
@@ -31,7 +31,7 @@ type normalizedV2Project struct {
 type projectManagedSchedulerBuild struct {
 	scheduler          ProjectSchedulerRecord
 	loader             Loader
-	validationTriggers []LoaderTrigger
+	validationTriggers []domain.LoaderTrigger
 }
 
 func (s *Service) ValidateProject(ctx context.Context, req *connect.Request[agentcomposev2.ValidateProjectRequest]) (*connect.Response[agentcomposev2.ValidateProjectResponse], error) {
@@ -487,13 +487,13 @@ func (s *Service) validateProjectManagedSchedulers(ctx context.Context, normaliz
 	if err != nil {
 		return []*agentcomposev2.ProjectValidationIssue{projectManagedSchedulerBuildIssue(err)}
 	}
-	loaders := projects.SchedulerLoaders(projectSchedulerBuildsToProjects(builds))
-	for _, loader := range loaders {
-		if _, err := loaderpkg.NormalizeLoader(loader, false); err != nil {
+	loaderRecords := projects.SchedulerLoaders(projectSchedulerBuildsToProjects(builds))
+	for _, loader := range loaderRecords {
+		if _, err := loaders.NormalizeLoader(loader, false); err != nil {
 			return []*agentcomposev2.ProjectValidationIssue{api.ProjectValidationIssue("schedulers."+loader.Summary.ManagedAgentName, err.Error())}
 		}
 		for _, trigger := range loader.Triggers {
-			if _, err := loaderpkg.NormalizeLoaderTrigger(loader.Summary.ID, trigger); err != nil {
+			if _, err := loaders.NormalizeLoaderTrigger(loader.Summary.ID, trigger); err != nil {
 				return []*agentcomposev2.ProjectValidationIssue{api.ProjectValidationIssue("schedulers."+loader.Summary.ManagedAgentName+".triggers", err.Error())}
 			}
 		}
@@ -513,17 +513,17 @@ func (e *projectManagedSchedulerBuildError) Error() string {
 	return e.path + ": " + e.message
 }
 
-func (s *Service) validateInlineSchedulerScript(ctx context.Context, agentName string, script string) (LoaderValidationResult, error) {
+func (s *Service) validateInlineSchedulerScript(ctx context.Context, agentName string, script string) (loaders.LoaderValidationResult, error) {
 	path := "agents." + agentName + ".scheduler.script"
 	if s == nil || s.loaders == nil {
-		return LoaderValidationResult{}, &projectManagedSchedulerBuildError{path: path, message: "loader manager is required to validate scheduler script"}
+		return loaders.LoaderValidationResult{}, &projectManagedSchedulerBuildError{path: path, message: "loader manager is required to validate scheduler script"}
 	}
 	if s.loaders.engine == nil {
-		return LoaderValidationResult{}, &projectManagedSchedulerBuildError{path: path, message: "loader engine is required to validate scheduler script"}
+		return loaders.LoaderValidationResult{}, &projectManagedSchedulerBuildError{path: path, message: "loader engine is required to validate scheduler script"}
 	}
-	validation, err := s.loaders.Validate(ctx, LoaderRuntimeScheduler, script)
+	validation, err := s.loaders.Validate(ctx, domain.LoaderRuntimeScheduler, script)
 	if err != nil {
-		return LoaderValidationResult{}, &projectManagedSchedulerBuildError{path: path, message: err.Error()}
+		return loaders.LoaderValidationResult{}, &projectManagedSchedulerBuildError{path: path, message: err.Error()}
 	}
 	return validation, nil
 }
@@ -565,11 +565,11 @@ func (s *Service) validateProjectManagedAgentDefinitions(normalized normalizedV2
 	return issues
 }
 
-func (s *Service) reconcileProjectManagedAgentDefinitions(ctx context.Context, project ProjectRecord, current []AgentDefinition) ([]*agentcomposev2.ProjectChange, bool, error) {
+func (s *Service) reconcileProjectManagedAgentDefinitions(ctx context.Context, project ProjectRecord, current []domain.AgentDefinition) ([]*agentcomposev2.ProjectChange, bool, error) {
 	if s.configDB == nil {
 		return nil, false, fmt.Errorf("config store is required")
 	}
-	currentByID := make(map[string]AgentDefinition, len(current))
+	currentByID := make(map[string]domain.AgentDefinition, len(current))
 	for _, agent := range current {
 		currentByID[agent.ID] = agent
 	}
@@ -780,7 +780,7 @@ func (s *Service) disableManagedLoaderIfOwned(ctx context.Context, loaderID, pro
 	return s.configDB.SetLoaderEnabled(ctx, loaderID, false)
 }
 
-func managedAgentDefinitionChangeAction(existing AgentDefinition, found bool, current AgentDefinition) agentcomposev2.ProjectChangeAction {
+func managedAgentDefinitionChangeAction(existing domain.AgentDefinition, found bool, current domain.AgentDefinition) agentcomposev2.ProjectChangeAction {
 	if !found {
 		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
 	}

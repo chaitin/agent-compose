@@ -15,18 +15,6 @@ import (
 	"agent-compose/pkg/agentcompose/runs"
 )
 
-const (
-	ProjectRunStatusPending   = domain.ProjectRunStatusPending
-	ProjectRunStatusRunning   = domain.ProjectRunStatusRunning
-	ProjectRunStatusSucceeded = domain.ProjectRunStatusSucceeded
-	ProjectRunStatusFailed    = domain.ProjectRunStatusFailed
-	ProjectRunStatusCanceled  = domain.ProjectRunStatusCanceled
-
-	ProjectRunSourceManual    = domain.ProjectRunSourceManual
-	ProjectRunSourceScheduler = domain.ProjectRunSourceScheduler
-	ProjectRunSourceAPI       = domain.ProjectRunSourceAPI
-)
-
 type (
 	ProjectRecord          = domain.ProjectRecord
 	ProjectRevisionRecord  = domain.ProjectRevisionRecord

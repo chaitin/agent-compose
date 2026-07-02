@@ -1,6 +1,8 @@
 package agentcompose
 
 import (
+	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/loaders"
 	appconfig "agent-compose/pkg/config"
 	"context"
 	"path/filepath"
@@ -22,16 +24,16 @@ func testWebhookIntegrationEventDispatchRunsMatchingLoader(t *testing.T) {
 		config:       &appconfig.Config{DataRoot: filepath.Join(t.TempDir(), "data")},
 		configDB:     store,
 		bus:          newTestLoaderBus(8),
-		engine:       &QJSLoaderEngine{},
+		engine:       &loaders.QJSLoaderEngine{},
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
 		scheduleWake: make(chan struct{}, 1),
 	}
 	loader, err := manager.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{
+		Summary: domain.LoaderSummary{
 			ID:      "loader-webhook-integration",
 			Name:    "Webhook Integration",
-			Runtime: LoaderRuntimeScheduler,
+			Runtime: domain.LoaderRuntimeScheduler,
 			Enabled: true,
 		},
 		Script: `
@@ -50,9 +52,9 @@ scheduler.on("webhook.integration.test", "on-webhook", function(event) {
 	go manager.eventLoop()
 	dispatcher := NewEventDispatcher(ctx, store, manager.bus)
 
-	created, err := store.CreateEvent(ctx, TopicEventRecord{
+	created, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:         "webhook.integration.test",
-		Source:        TopicEventSourceWebhook,
+		Source:        domain.TopicEventSourceWebhook,
 		Provider:      "integration",
 		CorrelationID: "corr-integration",
 		PayloadJSON:   `{"eventId":"evt-integration","sequence":1,"source":"webhook","topic":"webhook.integration.test","correlationId":"corr-integration","body":{"value":42}}`,
@@ -68,7 +70,7 @@ scheduler.on("webhook.integration.test", "on-webhook", function(event) {
 		if err != nil {
 			t.Fatalf("ListLoaderRuns returned error: %v", err)
 		}
-		if len(runs) > 0 && runs[0].Status == LoaderRunStatusSucceeded {
+		if len(runs) > 0 && runs[0].Status == domain.LoaderRunStatusSucceeded {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -81,10 +83,10 @@ scheduler.on("webhook.integration.test", "on-webhook", function(event) {
 	if err != nil {
 		t.Fatalf("GetEvent returned error: %v", err)
 	}
-	if loaded.DispatchStatus != TopicEventDispatchPublishedToBus {
+	if loaded.DispatchStatus != domain.TopicEventDispatchPublishedToBus {
 		t.Fatalf("webhook event status = %q", loaded.DispatchStatus)
 	}
-	derived, err := store.ListEvents(ctx, TopicEventFilter{Topic: "runtime.integration.requested", Limit: 10})
+	derived, err := store.ListEvents(ctx, domain.TopicEventFilter{Topic: "runtime.integration.requested", Limit: 10})
 	if err != nil {
 		t.Fatalf("ListEvents derived returned error: %v", err)
 	}

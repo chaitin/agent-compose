@@ -5,6 +5,7 @@ import (
 	"agent-compose/pkg/agentcompose/execution"
 	"agent-compose/pkg/agentcompose/llms"
 	"agent-compose/pkg/agentcompose/loaders"
+	"agent-compose/pkg/agentcompose/sessions"
 	appconfig "agent-compose/pkg/config"
 	"context"
 	"fmt"
@@ -18,27 +19,14 @@ import (
 	"github.com/samber/do/v2"
 )
 
-const (
-	CellTypeShell      = execution.CellTypeShell
-	CellTypeJavaScript = execution.CellTypeJavaScript
-	CellTypePython     = execution.CellTypePython
-	CellTypeAgent      = execution.CellTypeAgent
-)
-
 const defaultLoaderCommandMaxOutputBytes = int64(1024 * 1024)
-
-type (
-	CellExecutionStream  = execution.CellExecutionStream
-	AgentExecutionStream = execution.AgentExecutionStream
-	ExecuteAgentRequest  = execution.ExecuteAgentRequest
-)
 
 type Executor struct {
 	config   *appconfig.Config
 	store    *Store
 	configDB *ConfigStore
 	runtimes RuntimeProvider
-	streams  *SessionStreamBroker
+	streams  *sessions.StreamBroker
 }
 
 func NewExecutor(di do.Injector) (*Executor, error) {
@@ -47,41 +35,41 @@ func NewExecutor(di do.Injector) (*Executor, error) {
 		store:    do.MustInvoke[*Store](di),
 		configDB: do.MustInvoke[*ConfigStore](di),
 		runtimes: do.MustInvoke[RuntimeProvider](di),
-		streams:  do.MustInvoke[*SessionStreamBroker](di),
+		streams:  do.MustInvoke[*sessions.StreamBroker](di),
 	}, nil
 }
 
 func (e *Executor) ExecuteCell(ctx context.Context, session *Session, cellType, source string) (NotebookCell, error) {
-	return e.executeCell(ctx, session, cellType, source, CellExecutionStream{})
+	return e.executeCell(ctx, session, cellType, source, execution.CellExecutionStream{})
 }
 
-func (e *Executor) ExecuteCellStream(ctx context.Context, session *Session, cellType, source string, stream CellExecutionStream) (NotebookCell, error) {
+func (e *Executor) ExecuteCellStream(ctx context.Context, session *Session, cellType, source string, stream execution.CellExecutionStream) (NotebookCell, error) {
 	return e.executeCell(ctx, session, cellType, source, stream)
 }
 
 func (e *Executor) ExecuteAgent(ctx context.Context, session *Session, agent, message string) (NotebookCell, SessionEvent, SessionEvent, error) {
-	return e.ExecuteAgentRequest(ctx, session, ExecuteAgentRequest{Agent: agent, Message: message})
+	return e.ExecuteAgentRequest(ctx, session, execution.ExecuteAgentRequest{Agent: agent, Message: message})
 }
 
-func (e *Executor) ExecuteAgentStream(ctx context.Context, session *Session, agent, message string, stream AgentExecutionStream) (NotebookCell, SessionEvent, SessionEvent, error) {
-	return e.ExecuteAgentRequest(ctx, session, ExecuteAgentRequest{Agent: agent, Message: message, Stream: stream})
+func (e *Executor) ExecuteAgentStream(ctx context.Context, session *Session, agent, message string, stream execution.AgentExecutionStream) (NotebookCell, SessionEvent, SessionEvent, error) {
+	return e.ExecuteAgentRequest(ctx, session, execution.ExecuteAgentRequest{Agent: agent, Message: message, Stream: stream})
 }
 
 func (e *Executor) ExecuteAgentWithTimeout(ctx context.Context, session *Session, agent, message string, timeout time.Duration) (NotebookCell, SessionEvent, SessionEvent, error) {
-	return e.ExecuteAgentRequest(ctx, session, ExecuteAgentRequest{Agent: agent, Message: message, Timeout: timeout})
+	return e.ExecuteAgentRequest(ctx, session, execution.ExecuteAgentRequest{Agent: agent, Message: message, Timeout: timeout})
 }
 
-func (e *Executor) ExecuteAgentRequest(ctx context.Context, session *Session, request ExecuteAgentRequest) (NotebookCell, SessionEvent, SessionEvent, error) {
+func (e *Executor) ExecuteAgentRequest(ctx context.Context, session *Session, request execution.ExecuteAgentRequest) (NotebookCell, SessionEvent, SessionEvent, error) {
 	return e.executeAgent(ctx, session, request)
 }
 
-func (e *Executor) ExecuteLoaderCommand(ctx context.Context, session *Session, request LoaderCommandRequest) (LoaderCommandResult, error) {
+func (e *Executor) ExecuteLoaderCommand(ctx context.Context, session *Session, request domain.LoaderCommandRequest) (domain.LoaderCommandResult, error) {
 	appconfig.ApplyDefaultGuestPaths(e.config)
-	if session.Summary.VMStatus != VMStatusRunning {
-		return LoaderCommandResult{}, fmt.Errorf("session is not running")
+	if session.Summary.VMStatus != domain.VMStatusRunning {
+		return domain.LoaderCommandResult{}, fmt.Errorf("session is not running")
 	}
 	if err := loaders.ValidateCommandRequest(request); err != nil {
-		return LoaderCommandResult{}, err
+		return domain.LoaderCommandResult{}, err
 	}
 
 	ctx, cancel := loaders.CommandContext(ctx, request.TimeoutMs)
@@ -92,27 +80,27 @@ func (e *Executor) ExecuteLoaderCommand(ctx context.Context, session *Session, r
 	cellID := uuid.NewString()
 	hostCellDir := filepath.Join(execution.HostSessionDir(session), "state", "cells", cellID)
 	if err := os.MkdirAll(hostCellDir, 0o755); err != nil {
-		return LoaderCommandResult{}, fmt.Errorf("create loader command cell state dir: %w", err)
+		return domain.LoaderCommandResult{}, fmt.Errorf("create loader command cell state dir: %w", err)
 	}
 	guestCellDir := guestCellStateDir(e.config, cellID)
 	source := loaders.CommandCellSource(request)
 	startedAt := time.Now().UTC()
 	cell := NotebookCell{
 		ID:        cellID,
-		Type:      CellTypeShell,
+		Type:      execution.CellTypeShell,
 		Source:    source,
 		CreatedAt: startedAt,
 		Running:   true,
 	}
 	execSession, facadeToken, err := e.prepareLoaderCommandLLMFacadeEnv(ctx, session, request, cellID)
 	if err != nil {
-		return LoaderCommandResult{}, err
+		return domain.LoaderCommandResult{}, err
 	}
 	if e.configDB != nil && facadeToken != "" {
 		defer func() { _ = e.configDB.DeleteLLMFacadeToken(context.WithoutCancel(ctx), facadeToken) }()
 	}
 	if err := e.store.AddCell(ctx, session, cell); err != nil {
-		return LoaderCommandResult{}, err
+		return domain.LoaderCommandResult{}, err
 	}
 	e.streams.PublishCellStarted(session.Summary.ID, cell)
 
@@ -124,8 +112,8 @@ func (e *Executor) ExecuteLoaderCommand(ctx context.Context, session *Session, r
 		"request": filepath.Join(hostCellDir, "command-request.json"),
 		"result":  filepath.Join(hostCellDir, "command-result.json"),
 	}
-	buildLoaderCommandResult := func(result ExecResult) LoaderCommandResult {
-		return LoaderCommandResult{
+	buildLoaderCommandResult := func(result ExecResult) domain.LoaderCommandResult {
+		return domain.LoaderCommandResult{
 			Stdout:    result.Stdout,
 			Stderr:    result.Stderr,
 			Output:    result.Output,
@@ -152,7 +140,7 @@ func (e *Executor) ExecuteLoaderCommand(ctx context.Context, session *Session, r
 		}
 		streamErrMu.Unlock()
 	}
-	persistFailedCell := func(execResult ExecResult, finalErr error) (LoaderCommandResult, error) {
+	persistFailedCell := func(execResult ExecResult, finalErr error) (domain.LoaderCommandResult, error) {
 		recovered := execution.MergeExecResults(execResult, streamed.result(execution.FirstNonZeroInt(execResult.ExitCode, 1), false))
 		recovered = execution.RecoverExecResultFromCellArtifacts(hostCellDir, recovered)
 		recovered.ExitCode = execution.FirstNonZeroInt(recovered.ExitCode, execResult.ExitCode, 1)
@@ -191,16 +179,16 @@ func (e *Executor) ExecuteLoaderCommand(ctx context.Context, session *Session, r
 	runtimeRequest := runtimeCommandRequestPayload(e.config, request, guestCellDir)
 	hostRequestPath := filepath.Join(hostCellDir, "command-request.json")
 	if err := execution.WriteJSONArtifact(hostRequestPath, runtimeRequest); err != nil {
-		return LoaderCommandResult{}, fmt.Errorf("write loader command request artifact: %w", err)
+		return domain.LoaderCommandResult{}, fmt.Errorf("write loader command request artifact: %w", err)
 	}
 
 	vmState, err := e.store.GetVMState(session.Summary.ID)
 	if err != nil {
-		return LoaderCommandResult{}, err
+		return domain.LoaderCommandResult{}, err
 	}
 	runtime, err := e.runtimes.ForSession(session)
 	if err != nil {
-		return LoaderCommandResult{}, err
+		return domain.LoaderCommandResult{}, err
 	}
 	streamWriter := func(chunk ExecChunk) {
 		if chunk.Text == "" {
@@ -247,7 +235,7 @@ func (e *Executor) ExecuteLoaderCommand(ctx context.Context, session *Session, r
 	cell.Success = commandResult.Success
 	cell.Running = false
 	if err := e.store.AddCell(ctx, session, cell); err != nil {
-		return LoaderCommandResult{}, err
+		return domain.LoaderCommandResult{}, err
 	}
 	e.streams.PublishCellCompleted(session.Summary.ID, cell)
 
@@ -269,7 +257,7 @@ func (e *Executor) ExecuteLoaderCommand(ctx context.Context, session *Session, r
 	_ = e.store.AddEvent(ctx, session.Summary.ID, event)
 	e.streams.PublishEventAdded(session.Summary.ID, event)
 
-	return LoaderCommandResult{
+	return domain.LoaderCommandResult{
 		Stdout:          commandResult.Stdout,
 		Stderr:          commandResult.Stderr,
 		Output:          commandResult.Output,
@@ -284,7 +272,7 @@ func (e *Executor) ExecuteLoaderCommand(ctx context.Context, session *Session, r
 	}, nil
 }
 
-func (e *Executor) prepareLoaderCommandLLMFacadeEnv(ctx context.Context, session *Session, request LoaderCommandRequest, runID string) (*Session, string, error) {
+func (e *Executor) prepareLoaderCommandLLMFacadeEnv(ctx context.Context, session *Session, request domain.LoaderCommandRequest, runID string) (*Session, string, error) {
 	if e == nil || e.config == nil || e.configDB == nil || session == nil {
 		return session, "", nil
 	}
@@ -321,7 +309,7 @@ func loaderCommandLLMFacadeAgentModel(env map[string]string) (string, string) {
 	return llms.LoaderCommandFacadeAgentModel(env)
 }
 
-func (e *Executor) executeCell(ctx context.Context, session *Session, cellType, source string, stream CellExecutionStream) (NotebookCell, error) {
+func (e *Executor) executeCell(ctx context.Context, session *Session, cellType, source string, stream execution.CellExecutionStream) (NotebookCell, error) {
 	appconfig.ApplyDefaultGuestPaths(e.config)
 	source = strings.TrimSpace(source)
 	if source == "" {
@@ -474,7 +462,7 @@ func guestSessionHome(config *appconfig.Config) string {
 	return config.GuestHomePath
 }
 
-func (e *Executor) executeAgent(ctx context.Context, session *Session, request ExecuteAgentRequest) (NotebookCell, SessionEvent, SessionEvent, error) {
+func (e *Executor) executeAgent(ctx context.Context, session *Session, request execution.ExecuteAgentRequest) (NotebookCell, SessionEvent, SessionEvent, error) {
 	agent := request.Agent
 	model := strings.TrimSpace(request.Model)
 	message := request.Message
@@ -514,7 +502,7 @@ func (e *Executor) executeAgent(ctx context.Context, session *Session, request E
 
 	cell := NotebookCell{
 		ID:        cellID,
-		Type:      CellTypeAgent,
+		Type:      execution.CellTypeAgent,
 		Source:    message,
 		CreatedAt: startedAt,
 		Agent:     domain.NormalizeAgentKind(agent),

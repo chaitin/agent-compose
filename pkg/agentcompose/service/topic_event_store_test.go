@@ -31,9 +31,9 @@ func TestConfigStoreCreateAndListTopicEvents(t *testing.T) {
 	store := newTopicEventTestConfigStore(t)
 	createdAt := time.Now().UTC().Add(-time.Second).Truncate(time.Millisecond)
 
-	created, err := store.CreateEvent(ctx, TopicEventRecord{
+	created, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:          "webhook.test.created",
-		Source:         TopicEventSourceWebhook,
+		Source:         domain.TopicEventSourceWebhook,
 		Provider:       "test",
 		Intent:         "notification",
 		CorrelationID:  "corr-1",
@@ -50,7 +50,7 @@ func TestConfigStoreCreateAndListTopicEvents(t *testing.T) {
 	if created.Sequence <= 0 {
 		t.Fatalf("event sequence = %d, want positive", created.Sequence)
 	}
-	if created.DispatchStatus != TopicEventDispatchPending {
+	if created.DispatchStatus != domain.TopicEventDispatchPending {
 		t.Fatalf("dispatch status = %q, want pending", created.DispatchStatus)
 	}
 	if created.PayloadHash != domain.TopicEventPayloadSHA256(`{"value":1}`) {
@@ -68,7 +68,7 @@ func TestConfigStoreCreateAndListTopicEvents(t *testing.T) {
 		t.Fatalf("loaded event = %#v, want id %s sequence %d", loaded, created.ID, created.Sequence)
 	}
 
-	items, err := store.ListEvents(ctx, TopicEventFilter{Topic: "webhook.test.created", AfterSequence: 0, Limit: 10})
+	items, err := store.ListEvents(ctx, domain.TopicEventFilter{Topic: "webhook.test.created", AfterSequence: 0, Limit: 10})
 	if err != nil {
 		t.Fatalf("ListEvents by topic returned error: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestConfigStoreCreateAndListTopicEvents(t *testing.T) {
 		t.Fatalf("ListEvents by topic returned %#v", items)
 	}
 
-	items, err = store.ListEvents(ctx, TopicEventFilter{CorrelationID: "corr-1", Limit: 10})
+	items, err = store.ListEvents(ctx, domain.TopicEventFilter{CorrelationID: "corr-1", Limit: 10})
 	if err != nil {
 		t.Fatalf("ListEvents by correlation returned error: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestConfigStoreCreateAndListTopicEvents(t *testing.T) {
 		t.Fatalf("ListEvents by correlation returned %#v", items)
 	}
 
-	if _, err := store.ListEvents(ctx, TopicEventFilter{Limit: 10}); err == nil {
+	if _, err := store.ListEvents(ctx, domain.TopicEventFilter{Limit: 10}); err == nil {
 		t.Fatalf("ListEvents without topic or correlation id returned nil error")
 	}
 }
@@ -93,9 +93,9 @@ func TestConfigStoreTopicEventIdempotency(t *testing.T) {
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
 
-	first, err := store.CreateEvent(ctx, TopicEventRecord{
+	first, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:          "webhook.test.idempotent",
-		Source:         TopicEventSourceWebhook,
+		Source:         domain.TopicEventSourceWebhook,
 		CorrelationID:  "corr-1",
 		IdempotencyKey: "same-key",
 		PayloadHash:    "sha256:same",
@@ -104,9 +104,9 @@ func TestConfigStoreTopicEventIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first CreateEvent returned error: %v", err)
 	}
-	second, err := store.CreateEvent(ctx, TopicEventRecord{
+	second, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:          "webhook.test.idempotent",
-		Source:         TopicEventSourceWebhook,
+		Source:         domain.TopicEventSourceWebhook,
 		CorrelationID:  "corr-2",
 		IdempotencyKey: "same-key",
 		PayloadHash:    "sha256:same",
@@ -132,9 +132,9 @@ func TestConfigStoreTopicEventIdempotency(t *testing.T) {
 		t.Fatalf("FindEventByIdempotencyKey empty topic = %#v/%t/%v", found, ok, err)
 	}
 
-	_, err = store.CreateEvent(ctx, TopicEventRecord{
+	_, err = store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:          "webhook.test.idempotent",
-		Source:         TopicEventSourceWebhook,
+		Source:         domain.TopicEventSourceWebhook,
 		CorrelationID:  "corr-3",
 		IdempotencyKey: "same-key",
 		PayloadHash:    "sha256:different",
@@ -148,18 +148,18 @@ func TestConfigStoreTopicEventIdempotency(t *testing.T) {
 func TestConfigStorePendingAndPublishedTopicEvents(t *testing.T) {
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	first, err := store.CreateEvent(ctx, TopicEventRecord{
+	first, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:         "runtime.test.requested",
-		Source:        TopicEventSourceLoader,
+		Source:        domain.TopicEventSourceLoader,
 		CorrelationID: "corr-1",
 		PayloadJSON:   `{}`,
 	})
 	if err != nil {
 		t.Fatalf("CreateEvent first returned error: %v", err)
 	}
-	second, err := store.CreateEvent(ctx, TopicEventRecord{
+	second, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:         "runtime.test.requested",
-		Source:        TopicEventSourceLoader,
+		Source:        domain.TopicEventSourceLoader,
 		CorrelationID: "corr-2",
 		PayloadJSON:   `{}`,
 	})
@@ -188,7 +188,7 @@ func TestConfigStorePendingAndPublishedTopicEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEvent returned error: %v", err)
 	}
-	if loaded.DispatchStatus != TopicEventDispatchPublishedToBus {
+	if loaded.DispatchStatus != domain.TopicEventDispatchPublishedToBus {
 		t.Fatalf("dispatch status = %q, want published", loaded.DispatchStatus)
 	}
 	if !loaded.DispatchedAt.Equal(dispatchedAt) {
@@ -208,9 +208,9 @@ func TestConfigStoreMarkEventNoSubscriberRequiresActiveClaim(t *testing.T) {
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
 	now := time.Now().UTC().Truncate(time.Millisecond)
-	created, err := store.CreateEvent(ctx, TopicEventRecord{
+	created, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:         "runtime.test.no-subscriber",
-		Source:        TopicEventSourceLoader,
+		Source:        domain.TopicEventSourceLoader,
 		CorrelationID: "corr-no-subscriber",
 		PayloadJSON:   `{}`,
 	})
@@ -229,7 +229,7 @@ func TestConfigStoreMarkEventNoSubscriberRequiresActiveClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEvent after stale no-subscriber returned error: %v", err)
 	}
-	if loaded.DispatchStatus != TopicEventDispatchPublishing || loaded.ClaimID != "claim-active" {
+	if loaded.DispatchStatus != domain.TopicEventDispatchPublishing || loaded.ClaimID != "claim-active" {
 		t.Fatalf("stale no-subscriber changed claim: %#v", loaded)
 	}
 	if err := store.MarkEventNoSubscriber(ctx, created.ID, "claim-active", now); err != nil {
@@ -239,7 +239,7 @@ func TestConfigStoreMarkEventNoSubscriberRequiresActiveClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEvent after no-subscriber returned error: %v", err)
 	}
-	if loaded.DispatchStatus != TopicEventDispatchNoSubscriber || loaded.ClaimID != "" || !loaded.DispatchedAt.Equal(now) {
+	if loaded.DispatchStatus != domain.TopicEventDispatchNoSubscriber || loaded.ClaimID != "" || !loaded.DispatchedAt.Equal(now) {
 		t.Fatalf("no-subscriber event = %#v", loaded)
 	}
 }
@@ -248,12 +248,12 @@ func TestConfigStoreDispatchableEventsIncludeExpiredPublishingClaims(t *testing.
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
 	now := time.Now().UTC().Truncate(time.Millisecond)
-	created, err := store.CreateEvent(ctx, TopicEventRecord{
+	created, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:          "runtime.test.expired-claim",
-		Source:         TopicEventSourceLoader,
+		Source:         domain.TopicEventSourceLoader,
 		CorrelationID:  "corr-expired-claim",
 		PayloadJSON:    `{}`,
-		DispatchStatus: TopicEventDispatchPublishing,
+		DispatchStatus: domain.TopicEventDispatchPublishing,
 		ClaimID:        "stale-claim",
 		ClaimUntil:     now.Add(-time.Second),
 	})
@@ -288,29 +288,29 @@ func TestConfigStoreDispatchableEventsIncludeExpiredPublishingClaims(t *testing.
 func TestConfigStoreEventDeliveryDoesNotDowngradeRunOnDuplicateMatch(t *testing.T) {
 	ctx := context.Background()
 	store := newTopicEventTestConfigStore(t)
-	created, err := store.CreateEvent(ctx, TopicEventRecord{
+	created, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:         "webhook.delivery.duplicate",
-		Source:        TopicEventSourceWebhook,
+		Source:        domain.TopicEventSourceWebhook,
 		CorrelationID: "corr-delivery-duplicate",
 		PayloadJSON:   `{}`,
 	})
 	if err != nil {
 		t.Fatalf("CreateEvent returned error: %v", err)
 	}
-	if err := store.UpsertEventDelivery(ctx, EventDelivery{
+	if err := store.UpsertEventDelivery(ctx, domain.EventDelivery{
 		EventID:   created.ID,
 		LoaderID:  "loader-1",
 		TriggerID: "trigger-1",
 		RunID:     "run-1",
-		Status:    EventDeliveryStatusRunSucceeded,
+		Status:    domain.EventDeliveryStatusRunSucceeded,
 	}); err != nil {
 		t.Fatalf("UpsertEventDelivery run returned error: %v", err)
 	}
-	if err := store.UpsertEventDelivery(ctx, EventDelivery{
+	if err := store.UpsertEventDelivery(ctx, domain.EventDelivery{
 		EventID:   created.ID,
 		LoaderID:  "loader-1",
 		TriggerID: "trigger-1",
-		Status:    EventDeliveryStatusMatched,
+		Status:    domain.EventDeliveryStatusMatched,
 	}); err != nil {
 		t.Fatalf("UpsertEventDelivery matched returned error: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestConfigStoreEventDeliveryDoesNotDowngradeRunOnDuplicateMatch(t *testing.
 	if len(items) != 1 {
 		t.Fatalf("deliveries = %#v", items)
 	}
-	if items[0].RunID != "run-1" || items[0].Status != EventDeliveryStatusRunSucceeded {
+	if items[0].RunID != "run-1" || items[0].Status != domain.EventDeliveryStatusRunSucceeded {
 		t.Fatalf("delivery was downgraded: %#v", items[0])
 	}
 }
@@ -333,7 +333,7 @@ func TestConfigStoreWebhookSourceCRUDAndTopicMatching(t *testing.T) {
 	if _, err := store.ListEnabledWebhookSourcesForTopic(ctx, " "); err == nil {
 		t.Fatalf("ListEnabledWebhookSourcesForTopic blank topic returned nil error")
 	}
-	source, err := store.UpsertWebhookSource(ctx, WebhookSource{
+	source, err := store.UpsertWebhookSource(ctx, domain.WebhookSource{
 		ID:             "gitlab-main",
 		Enabled:        true,
 		Provider:       "gitlab",
@@ -394,19 +394,19 @@ func TestTopicEventModelAndStoreErrorBranches(t *testing.T) {
 	if err := domain.ValidateTopicEventName("runtime.good-topic_1"); err != nil {
 		t.Fatalf("validateTopicEventName valid returned error: %v", err)
 	}
-	if domain.NormalizeTopicEventSource(" WEBHOOK ") != TopicEventSourceWebhook ||
-		domain.NormalizeTopicEventSource("LOADER") != TopicEventSourceLoader ||
-		domain.NormalizeTopicEventSource("system") != TopicEventSourceSystem ||
+	if domain.NormalizeTopicEventSource(" WEBHOOK ") != domain.TopicEventSourceWebhook ||
+		domain.NormalizeTopicEventSource("LOADER") != domain.TopicEventSourceLoader ||
+		domain.NormalizeTopicEventSource("system") != domain.TopicEventSourceSystem ||
 		domain.NormalizeTopicEventSource("bad") != "" {
 		t.Fatalf("normalizeTopicEventSource returned unexpected values")
 	}
-	if domain.NormalizeTopicEventDispatchStatus("") != TopicEventDispatchPending ||
-		domain.NormalizeTopicEventDispatchStatus("PUBLISHED_TO_BUS") != TopicEventDispatchPublishedToBus ||
+	if domain.NormalizeTopicEventDispatchStatus("") != domain.TopicEventDispatchPending ||
+		domain.NormalizeTopicEventDispatchStatus("PUBLISHED_TO_BUS") != domain.TopicEventDispatchPublishedToBus ||
 		domain.NormalizeTopicEventDispatchStatus("bad") != "" {
 		t.Fatalf("normalizeTopicEventDispatchStatus returned unexpected values")
 	}
 
-	normalized, err := events.NormalizeTopicEventRecord(TopicEventRecord{
+	normalized, err := events.NormalizeTopicEventRecord(domain.TopicEventRecord{
 		ID:             " evt-custom ",
 		Topic:          " runtime.custom ",
 		Source:         " system ",
@@ -428,21 +428,21 @@ func TestTopicEventModelAndStoreErrorBranches(t *testing.T) {
 	if normalized.ID != "evt-custom" || normalized.CorrelationID != "evt-custom" || normalized.PayloadJSON != "{}" || normalized.PayloadHash == "" {
 		t.Fatalf("normalized event = %#v", normalized)
 	}
-	for _, item := range []TopicEventRecord{
-		{Topic: "runtime.missing.id", Source: TopicEventSourceSystem},
-		{ID: "evt", Topic: "", Source: TopicEventSourceSystem},
+	for _, item := range []domain.TopicEventRecord{
+		{Topic: "runtime.missing.id", Source: domain.TopicEventSourceSystem},
+		{ID: "evt", Topic: "", Source: domain.TopicEventSourceSystem},
 		{ID: "evt", Topic: "runtime.bad.source", Source: "bad"},
-		{ID: "evt", Topic: "runtime.bad.status", Source: TopicEventSourceSystem, DispatchStatus: "bad"},
-		{ID: "evt", Topic: "runtime.bad.payload", Source: TopicEventSourceSystem, PayloadJSON: `[`},
+		{ID: "evt", Topic: "runtime.bad.status", Source: domain.TopicEventSourceSystem, DispatchStatus: "bad"},
+		{ID: "evt", Topic: "runtime.bad.payload", Source: domain.TopicEventSourceSystem, PayloadJSON: `[`},
 	} {
 		if _, err := events.NormalizeTopicEventRecord(item, false); err == nil {
 			t.Fatalf("events.NormalizeTopicEventRecord(%#v) returned nil error", item)
 		}
 	}
 
-	first, err := store.CreateEvent(ctx, TopicEventRecord{
+	first, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:          "runtime.branch",
-		Source:         TopicEventSourceSystem,
+		Source:         domain.TopicEventSourceSystem,
 		CorrelationID:  "corr-branch",
 		IdempotencyKey: "branch-key",
 		PayloadJSON:    `{"value":1}`,
@@ -450,22 +450,22 @@ func TestTopicEventModelAndStoreErrorBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEvent returned error: %v", err)
 	}
-	second, err := store.CreateEvent(ctx, TopicEventRecord{
+	second, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:          "runtime.branch",
-		Source:         TopicEventSourceSystem,
+		Source:         domain.TopicEventSourceSystem,
 		CorrelationID:  "corr-branch",
-		DispatchStatus: TopicEventDispatchPublishedToBus,
+		DispatchStatus: domain.TopicEventDispatchPublishedToBus,
 		PayloadJSON:    `{"value":2}`,
 		DispatchedAt:   time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatalf("CreateEvent second returned error: %v", err)
 	}
-	filtered, err := store.ListEvents(ctx, TopicEventFilter{
+	filtered, err := store.ListEvents(ctx, domain.TopicEventFilter{
 		Topic:          "runtime.branch",
 		CorrelationID:  "corr-branch",
 		AfterSequence:  first.Sequence,
-		DispatchStatus: TopicEventDispatchPublishedToBus,
+		DispatchStatus: domain.TopicEventDispatchPublishedToBus,
 		Limit:          999,
 	})
 	if err != nil {
@@ -474,7 +474,7 @@ func TestTopicEventModelAndStoreErrorBranches(t *testing.T) {
 	if len(filtered) != 1 || filtered[0].ID != second.ID {
 		t.Fatalf("filtered events = %#v", filtered)
 	}
-	if _, err := store.ListEvents(ctx, TopicEventFilter{Topic: "bad topic"}); err == nil {
+	if _, err := store.ListEvents(ctx, domain.TopicEventFilter{Topic: "bad topic"}); err == nil {
 		t.Fatalf("ListEvents bad topic returned nil error")
 	}
 	if pending, err := store.ListPendingEvents(ctx, -1); err != nil || len(pending) != 1 || pending[0].ID != first.ID {
@@ -524,13 +524,13 @@ func TestTopicEventModelAndStoreErrorBranches(t *testing.T) {
 
 func TestLoaderBusPublishReportsFullChannel(t *testing.T) {
 	bus := newTestLoaderBus(1)
-	if !bus.Publish(LoaderTopicEvent{Topic: "webhook.test", Payload: map[string]any{}, CreatedAt: time.Now().UTC()}) {
+	if !bus.Publish(domain.LoaderTopicEvent{Topic: "webhook.test", Payload: map[string]any{}, CreatedAt: time.Now().UTC()}) {
 		t.Fatalf("first Publish returned false, want true")
 	}
-	if bus.Publish(LoaderTopicEvent{Topic: "webhook.test", Payload: map[string]any{}, CreatedAt: time.Now().UTC()}) {
+	if bus.Publish(domain.LoaderTopicEvent{Topic: "webhook.test", Payload: map[string]any{}, CreatedAt: time.Now().UTC()}) {
 		t.Fatalf("second Publish returned true for full channel")
 	}
-	if bus.Publish(LoaderTopicEvent{}) {
+	if bus.Publish(domain.LoaderTopicEvent{}) {
 		t.Fatalf("Publish with empty topic returned true")
 	}
 }
@@ -541,8 +541,8 @@ func TestLoaderRunHostPublishEventStoresDerivedEvent(t *testing.T) {
 	manager := &LoaderManager{configDB: store}
 	host := &loaderRunHost{
 		manager: manager,
-		loader:  Loader{Summary: LoaderSummary{ID: "loader-1"}},
-		run:     &LoaderRunSummary{ID: "run-1", LoaderID: "loader-1", TriggerID: "trigger-1"},
+		loader:  Loader{Summary: domain.LoaderSummary{ID: "loader-1"}},
+		run:     &domain.LoaderRunSummary{ID: "run-1", LoaderID: "loader-1", TriggerID: "trigger-1"},
 		triggerEvent: loaderTriggerEventMetadata{
 			EventID:       "evt-parent",
 			CorrelationID: "corr-parent",
@@ -581,13 +581,13 @@ func TestLoaderRunHostLinkedLoaderEventStoresEventSessionLink(t *testing.T) {
 	store := newTopicEventTestConfigStore(t)
 	manager := &LoaderManager{configDB: store}
 	loader := createTestLoader(t, ctx, store)
-	run := LoaderRunSummary{
+	run := domain.LoaderRunSummary{
 		ID:            "run-link",
 		LoaderID:      loader.Summary.ID,
 		TriggerID:     "trigger-link",
-		TriggerKind:   LoaderTriggerKindEvent,
+		TriggerKind:   domain.LoaderTriggerKindEvent,
 		TriggerSource: "event",
-		Status:        LoaderRunStatusRunning,
+		Status:        domain.LoaderRunStatusRunning,
 		StartedAt:     time.Now().UTC(),
 	}
 	if err := store.CreateLoaderRun(ctx, run); err != nil {
@@ -620,13 +620,13 @@ func TestLoaderRunHostLinkedLoaderEventStoresEventSessionLink(t *testing.T) {
 		t.Fatalf("event session link metadata = %#v", link)
 	}
 
-	noEventRun := LoaderRunSummary{
+	noEventRun := domain.LoaderRunSummary{
 		ID:            "run-no-event",
 		LoaderID:      loader.Summary.ID,
 		TriggerID:     "trigger-link",
-		TriggerKind:   LoaderTriggerKindEvent,
+		TriggerKind:   domain.LoaderTriggerKindEvent,
 		TriggerSource: "event",
-		Status:        LoaderRunStatusRunning,
+		Status:        domain.LoaderRunStatusRunning,
 		StartedAt:     time.Now().UTC(),
 	}
 	if err := store.CreateLoaderRun(ctx, noEventRun); err != nil {

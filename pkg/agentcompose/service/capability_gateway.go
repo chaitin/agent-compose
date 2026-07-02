@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/agentcompose/sessions"
 )
 
 // writeCapabilityGuide renders the guide for each bound capset from OctoBus and
@@ -21,7 +22,7 @@ import (
 // is best-effort: failures are logged and recorded as warning events, but never
 // block session/loader startup. Must be called after the session directory
 // exists and before the runtime mounts it.
-func writeCapabilityGuide(ctx context.Context, provider capabilities.Provider, store *Store, streams *SessionStreamBroker, session *Session, capsetIDs []string) {
+func writeCapabilityGuide(ctx context.Context, provider capabilities.Provider, store *Store, streams *sessions.StreamBroker, session *Session, capsetIDs []string) {
 	ids := capabilities.NormalizeCapsetIDs(capsetIDs)
 	if len(ids) == 0 || provider == nil || session == nil {
 		return
@@ -63,7 +64,7 @@ func writeCapabilityGuide(ctx context.Context, provider capabilities.Provider, s
 	}
 }
 
-func recordCapabilityGuideWarning(ctx context.Context, store *Store, streams *SessionStreamBroker, sessionID, message string) {
+func recordCapabilityGuideWarning(ctx context.Context, store *Store, streams *sessions.StreamBroker, sessionID, message string) {
 	if store == nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}

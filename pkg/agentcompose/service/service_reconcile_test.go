@@ -32,7 +32,7 @@ func testServiceReconcilePersistedSessionsMarksStaleProjectRunsFailed(t *testing
 	stalePending, err := coordinator.BeginRun(ctx, runs.StartRequest{
 		ProjectID:       projectID,
 		AgentName:       "reviewer",
-		Source:          ProjectRunSourceManual,
+		Source:          domain.ProjectRunSourceManual,
 		Prompt:          "stale pending",
 		ClientRequestID: "stale-pending",
 	})
@@ -42,7 +42,7 @@ func testServiceReconcilePersistedSessionsMarksStaleProjectRunsFailed(t *testing
 	staleRunning, err := coordinator.BeginRun(ctx, runs.StartRequest{
 		ProjectID:       projectID,
 		AgentName:       "reviewer",
-		Source:          ProjectRunSourceManual,
+		Source:          domain.ProjectRunSourceManual,
 		Prompt:          "stale running",
 		ClientRequestID: "stale-running",
 	})
@@ -56,7 +56,7 @@ func testServiceReconcilePersistedSessionsMarksStaleProjectRunsFailed(t *testing
 	freshPending, err := coordinator.BeginRun(ctx, runs.StartRequest{
 		ProjectID:       projectID,
 		AgentName:       "reviewer",
-		Source:          ProjectRunSourceManual,
+		Source:          domain.ProjectRunSourceManual,
 		Prompt:          "fresh pending",
 		ClientRequestID: "fresh-pending",
 	})
@@ -86,7 +86,7 @@ func testServiceReconcilePersistedSessionsMarksStaleProjectRunsFailed(t *testing
 		if err != nil {
 			t.Fatalf("GetProjectRun(%s) returned error: %v", runID, err)
 		}
-		if run.Status != ProjectRunStatusFailed || run.CompletedAt.IsZero() || run.ExitCode != 1 || run.Error != staleProjectRunError {
+		if run.Status != domain.ProjectRunStatusFailed || run.CompletedAt.IsZero() || run.ExitCode != 1 || run.Error != staleProjectRunError {
 			t.Fatalf("stale run after reconcile = %#v", run)
 		}
 	}
@@ -94,7 +94,7 @@ func testServiceReconcilePersistedSessionsMarksStaleProjectRunsFailed(t *testing
 	if err != nil {
 		t.Fatalf("GetProjectRun(fresh) returned error: %v", err)
 	}
-	if fresh.Status != ProjectRunStatusPending || !fresh.CompletedAt.IsZero() {
+	if fresh.Status != domain.ProjectRunStatusPending || !fresh.CompletedAt.IsZero() {
 		t.Fatalf("fresh run after reconcile = %#v", fresh)
 	}
 }
@@ -113,11 +113,11 @@ func TestServiceAndBridgeReconcileMicrosandboxRuntimeTypeBranches(t *testing.T) 
 		JupyterProxyBasePath:     "/agent-compose/session",
 	}
 	store := &Store{config: config}
-	session, err := store.CreateSession(ctx, "running micro", "", driverpkg.RuntimeDriverMicrosandbox, "devbox:archlinux", "", SessionTypeManual, nil, nil, nil)
+	session, err := store.CreateSession(ctx, "running micro", "", driverpkg.RuntimeDriverMicrosandbox, "devbox:archlinux", "", domain.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	session.Summary.VMStatus = VMStatusRunning
+	session.Summary.VMStatus = domain.VMStatusRunning
 	if err := store.UpdateSession(ctx, session); err != nil {
 		t.Fatalf("UpdateSession returned error: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestServiceAndBridgeReconcileMicrosandboxRuntimeTypeBranches(t *testing.T) 
 	if err != nil {
 		t.Fatalf("service reconcile returned error: %v", err)
 	}
-	if reconciled.Summary.VMStatus != VMStatusRunning {
+	if reconciled.Summary.VMStatus != domain.VMStatusRunning {
 		t.Fatalf("service reconciled status = %q", reconciled.Summary.VMStatus)
 	}
 
@@ -145,15 +145,15 @@ func TestServiceAndBridgeReconcileMicrosandboxRuntimeTypeBranches(t *testing.T) 
 	if err != nil {
 		t.Fatalf("bridge reconcile returned error: %v", err)
 	}
-	if reconciled.Summary.VMStatus != VMStatusRunning {
+	if reconciled.Summary.VMStatus != domain.VMStatusRunning {
 		t.Fatalf("bridge reconciled status = %q", reconciled.Summary.VMStatus)
 	}
 
-	missingProxySession, err := store.CreateSession(ctx, "missing proxy", "", driverpkg.RuntimeDriverMicrosandbox, "devbox:archlinux", "", SessionTypeManual, nil, nil, nil)
+	missingProxySession, err := store.CreateSession(ctx, "missing proxy", "", driverpkg.RuntimeDriverMicrosandbox, "devbox:archlinux", "", domain.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession missing proxy returned error: %v", err)
 	}
-	missingProxySession.Summary.VMStatus = VMStatusRunning
+	missingProxySession.Summary.VMStatus = domain.VMStatusRunning
 	if err := store.UpdateSession(ctx, missingProxySession); err != nil {
 		t.Fatalf("UpdateSession missing proxy returned error: %v", err)
 	}
@@ -183,12 +183,12 @@ func testServiceReconcilePersistedSessionsMarksStalePendingFailed(t *testing.T) 
 		JupyterProxyBasePath:     "/agent-compose/session",
 	}
 	store := &Store{config: config}
-	staleSession, err := store.CreateSession(ctx, "stale", "", driverpkg.RuntimeDriverMicrosandbox, "devbox:archlinux", "", SessionTypeManual, nil, nil, nil)
+	staleSession, err := store.CreateSession(ctx, "stale", "", driverpkg.RuntimeDriverMicrosandbox, "devbox:archlinux", "", domain.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession(stale) returned error: %v", err)
 	}
 	service := &Service{config: config, store: store, startedAt: time.Now().UTC()}
-	freshSession, err := store.CreateSession(ctx, "fresh", "", driverpkg.RuntimeDriverMicrosandbox, "devbox:archlinux", "", SessionTypeManual, nil, nil, nil)
+	freshSession, err := store.CreateSession(ctx, "fresh", "", driverpkg.RuntimeDriverMicrosandbox, "devbox:archlinux", "", domain.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession(fresh) returned error: %v", err)
 	}
@@ -199,7 +199,7 @@ func testServiceReconcilePersistedSessionsMarksStalePendingFailed(t *testing.T) 
 	if err != nil {
 		t.Fatalf("GetSession(stale) returned error: %v", err)
 	}
-	if got, want := staleLoaded.Summary.VMStatus, VMStatusFailed; got != want {
+	if got, want := staleLoaded.Summary.VMStatus, domain.VMStatusFailed; got != want {
 		t.Fatalf("stale session vm status = %q, want %q", got, want)
 	}
 	staleVMState, err := store.GetVMState(staleSession.Summary.ID)
@@ -223,7 +223,7 @@ func testServiceReconcilePersistedSessionsMarksStalePendingFailed(t *testing.T) 
 	if err != nil {
 		t.Fatalf("GetSession(fresh) returned error: %v", err)
 	}
-	if got, want := freshLoaded.Summary.VMStatus, VMStatusPending; got != want {
+	if got, want := freshLoaded.Summary.VMStatus, domain.VMStatusPending; got != want {
 		t.Fatalf("fresh session vm status = %q, want %q", got, want)
 	}
 }

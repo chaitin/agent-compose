@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"agent-compose/pkg/agentcompose/domain"
 	driverpkg "agent-compose/pkg/driver"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
@@ -20,7 +21,7 @@ func TestExecServiceExecStreamResolvesSelectorAndStreamsOutput(t *testing.T) {
 	runtime.commandStdout = "exec stdout\n"
 	runtime.commandStderr = "exec stderr\n"
 	ctx := context.Background()
-	session := createExecServiceProjectSession(t, service, store, projectID, "run-exec", "reviewer", VMStatusRunning)
+	session := createExecServiceProjectSession(t, service, store, projectID, "run-exec", "reviewer", domain.VMStatusRunning)
 	client, closeServer := newExecServiceTestClient(t, service)
 	defer closeServer()
 
@@ -75,8 +76,8 @@ func TestExecServiceExecStreamSelectorErrorsWhenNoRunningSession(t *testing.T) {
 
 func TestExecServiceExecStreamSelectorErrorsWhenAmbiguous(t *testing.T) {
 	store, service, projectID := setupRunPreparationDemoProject(t)
-	createExecServiceProjectSession(t, service, store, projectID, "run-one", "reviewer", VMStatusRunning)
-	createExecServiceProjectSession(t, service, store, projectID, "run-two", "reviewer", VMStatusRunning)
+	createExecServiceProjectSession(t, service, store, projectID, "run-one", "reviewer", domain.VMStatusRunning)
+	createExecServiceProjectSession(t, service, store, projectID, "run-two", "reviewer", domain.VMStatusRunning)
 	client, closeServer := newExecServiceTestClient(t, service)
 	defer closeServer()
 
@@ -94,7 +95,7 @@ func TestExecServiceExecStreamSelectorErrorsWhenAmbiguous(t *testing.T) {
 
 func TestExecServiceExecStreamRunTargetRequiresRunningSession(t *testing.T) {
 	store, service, projectID := setupRunPreparationDemoProject(t)
-	createExecServiceProjectSession(t, service, store, projectID, "run-stopped", "reviewer", VMStatusPending)
+	createExecServiceProjectSession(t, service, store, projectID, "run-stopped", "reviewer", domain.VMStatusPending)
 	client, closeServer := newExecServiceTestClient(t, service)
 	defer closeServer()
 
@@ -115,7 +116,7 @@ func setupRunPreparationDemoProject(t *testing.T) (*ConfigStore, *Service, strin
 func createExecServiceProjectSession(t *testing.T, service *Service, store *ConfigStore, projectID, runID, agentName, vmStatus string) *Session {
 	t.Helper()
 	ctx := context.Background()
-	session, err := service.store.CreateSession(ctx, "Exec Session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil, nil, nil)
+	session, err := service.store.CreateSession(ctx, "Exec Session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
@@ -129,8 +130,8 @@ func createExecServiceProjectSession(t *testing.T, service *Service, store *Conf
 		ProjectName:     "demo",
 		ProjectRevision: 1,
 		AgentName:       agentName,
-		Source:          ProjectRunSourceManual,
-		Status:          ProjectRunStatusRunning,
+		Source:          domain.ProjectRunSourceManual,
+		Status:          domain.ProjectRunStatusRunning,
 		SessionID:       session.Summary.ID,
 		Driver:          driverpkg.RuntimeDriverBoxlite,
 		ImageRef:        "guest:latest",

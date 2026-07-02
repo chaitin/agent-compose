@@ -1,12 +1,14 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/domain"
 	"context"
 	"errors"
 	"log/slog"
 	"strings"
 	"time"
+
+	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/webhooks"
 )
 
 type LoaderEventDispatcher struct {
@@ -17,7 +19,7 @@ func NewLoaderEventDispatcher(manager *LoaderManager) *LoaderEventDispatcher {
 	return &LoaderEventDispatcher{manager: manager}
 }
 
-func (d *LoaderEventDispatcher) Dispatch(event LoaderTopicEvent) {
+func (d *LoaderEventDispatcher) Dispatch(event domain.LoaderTopicEvent) {
 	payloadJSON, err := marshalJSONCompact(map[string]any{
 		"topic":     event.Topic,
 		"createdAt": event.CreatedAt.Format(time.RFC3339Nano),
@@ -42,14 +44,14 @@ func (d *LoaderEventDispatcher) Dispatch(event LoaderTopicEvent) {
 		d.retry(event, "webhook queue is full")
 		return
 	}
-	if event.Source == TopicEventSourceWebhook {
+	if event.Source == domain.TopicEventSourceWebhook {
 		d.dispatchWebhookTargets(event, targets, payloadJSON, reservations)
 		return
 	}
 	d.dispatchTargets(event, targets, payloadJSON, reservations)
 }
 
-func (d *LoaderEventDispatcher) ackNoSubscriber(event LoaderTopicEvent) {
+func (d *LoaderEventDispatcher) ackNoSubscriber(event domain.LoaderTopicEvent) {
 	m := d.manager
 	ack := event.NoSubscriberAck
 	if ack == nil {
@@ -62,17 +64,17 @@ func (d *LoaderEventDispatcher) ackNoSubscriber(event LoaderTopicEvent) {
 	}
 }
 
-func (d *LoaderEventDispatcher) dispatchTargets(event LoaderTopicEvent, targets []eventLoaderTarget, payloadJSON string, reservations []*webhookQueueReservation) {
+func (d *LoaderEventDispatcher) dispatchTargets(event domain.LoaderTopicEvent, targets []eventLoaderTarget, payloadJSON string, reservations []*webhooks.Reservation) {
 	m := d.manager
 	for _, target := range targets {
 		d.recordMatched(event, target)
 		reservation := reservations[0]
 		reservations = reservations[1:]
 		runCtx, cancel := context.WithTimeout(m.rootCtx, m.loaderRunTimeout(0))
-		go func(target eventLoaderTarget, payloadJSON string, topic string, ack func(context.Context) error, release func(), reservation *webhookQueueReservation) {
+		go func(target eventLoaderTarget, payloadJSON string, topic string, ack func(context.Context) error, release func(), reservation *webhooks.Reservation) {
 			defer cancel()
 			defer reservation.Release()
-			if _, err := m.runLoader(runCtx, target.loader, &target.trigger, payloadJSON, topic, true, loaderRunOptions{retryWhenBusy: event.Source == TopicEventSourceWebhook}, ack); err != nil {
+			if _, err := m.runLoader(runCtx, target.loader, &target.trigger, payloadJSON, topic, true, loaderRunOptions{retryWhenBusy: event.Source == domain.TopicEventSourceWebhook}, ack); err != nil {
 				if errors.Is(err, errLoaderRunBusyForRetry) {
 					d.retry(event, "loader is already running")
 					return
@@ -86,7 +88,7 @@ func (d *LoaderEventDispatcher) dispatchTargets(event LoaderTopicEvent, targets 
 	}
 }
 
-func (d *LoaderEventDispatcher) dispatchWebhookTargets(event LoaderTopicEvent, targets []eventLoaderTarget, payloadJSON string, reservations []*webhookQueueReservation) {
+func (d *LoaderEventDispatcher) dispatchWebhookTargets(event domain.LoaderTopicEvent, targets []eventLoaderTarget, payloadJSON string, reservations []*webhooks.Reservation) {
 	m := d.manager
 	acquiredLoaderIDs := make([]string, 0, len(targets))
 	for _, target := range targets {
@@ -130,12 +132,12 @@ func (d *LoaderEventDispatcher) dispatchWebhookTargets(event LoaderTopicEvent, t
 		}
 	}
 	for index, item := range prepared {
-		var reservation *webhookQueueReservation
+		var reservation *webhooks.Reservation
 		if index < len(reservations) {
 			reservation = reservations[index]
 		}
 		runCtx, cancel := context.WithTimeout(m.rootCtx, m.loaderRunTimeout(0))
-		go func(item preparedLoaderRun, reservation *webhookQueueReservation) {
+		go func(item preparedLoaderRun, reservation *webhooks.Reservation) {
 			defer cancel()
 			defer reservation.Release()
 			if _, err := m.executePreparedLoaderRun(runCtx, item); err != nil {
@@ -145,21 +147,21 @@ func (d *LoaderEventDispatcher) dispatchWebhookTargets(event LoaderTopicEvent, t
 	}
 }
 
-func (d *LoaderEventDispatcher) recordMatched(event LoaderTopicEvent, target eventLoaderTarget) {
+func (d *LoaderEventDispatcher) recordMatched(event domain.LoaderTopicEvent, target eventLoaderTarget) {
 	if event.EventID == "" {
 		return
 	}
-	if err := d.manager.configDB.UpsertEventDelivery(d.manager.rootCtx, EventDelivery{
+	if err := d.manager.configDB.UpsertEventDelivery(d.manager.rootCtx, domain.EventDelivery{
 		EventID:   event.EventID,
 		LoaderID:  target.loader.Summary.ID,
 		TriggerID: target.trigger.ID,
-		Status:    EventDeliveryStatusMatched,
+		Status:    domain.EventDeliveryStatusMatched,
 	}); err != nil {
 		slog.Warn("failed to record event delivery match", "event_id", event.EventID, "loader_id", target.loader.Summary.ID, "trigger_id", target.trigger.ID, "error", err)
 	}
 }
 
-func (d *LoaderEventDispatcher) retry(event LoaderTopicEvent, reason string) {
+func (d *LoaderEventDispatcher) retry(event domain.LoaderTopicEvent, reason string) {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		reason = "loader topic event retry requested"
@@ -182,7 +184,7 @@ func (d *LoaderEventDispatcher) collectTargets(topic string) []eventLoaderTarget
 			continue
 		}
 		for _, trigger := range loader.Triggers {
-			if !trigger.Enabled || trigger.Kind != LoaderTriggerKindEvent || !domain.LoaderTriggerTopicMatches(trigger.Topic, topic) {
+			if !trigger.Enabled || trigger.Kind != domain.LoaderTriggerKindEvent || !domain.LoaderTriggerTopicMatches(trigger.Topic, topic) {
 				continue
 			}
 			targets = append(targets, eventLoaderTarget{
@@ -194,8 +196,8 @@ func (d *LoaderEventDispatcher) collectTargets(topic string) []eventLoaderTarget
 	return targets
 }
 
-func (d *LoaderEventDispatcher) shouldRetryForBusy(event LoaderTopicEvent, targets []eventLoaderTarget) bool {
-	if event.Source != TopicEventSourceWebhook || len(targets) == 0 {
+func (d *LoaderEventDispatcher) shouldRetryForBusy(event domain.LoaderTopicEvent, targets []eventLoaderTarget) bool {
+	if event.Source != domain.TopicEventSourceWebhook || len(targets) == 0 {
 		return false
 	}
 	m := d.manager
@@ -203,30 +205,30 @@ func (d *LoaderEventDispatcher) shouldRetryForBusy(event LoaderTopicEvent, targe
 	defer m.mu.RUnlock()
 	for _, target := range targets {
 		loaderID := strings.TrimSpace(target.loader.Summary.ID)
-		if domain.NormalizeLoaderConcurrencyPolicy(target.loader.Summary.ConcurrencyPolicy) != LoaderConcurrencyPolicyParallel && m.running[loaderID] > 0 {
+		if domain.NormalizeLoaderConcurrencyPolicy(target.loader.Summary.ConcurrencyPolicy) != domain.LoaderConcurrencyPolicyParallel && m.running[loaderID] > 0 {
 			return true
 		}
 	}
 	return false
 }
 
-func (d *LoaderEventDispatcher) reserveQueueSlots(event LoaderTopicEvent, count int) ([]*webhookQueueReservation, bool) {
+func (d *LoaderEventDispatcher) reserveQueueSlots(event domain.LoaderTopicEvent, count int) ([]*webhooks.Reservation, bool) {
 	m := d.manager
 	if count <= 0 {
 		return nil, true
 	}
-	if event.Source != TopicEventSourceWebhook {
-		return noopWebhookQueueReservations(count), true
+	if event.Source != domain.TopicEventSourceWebhook {
+		return webhooks.NoopReservations(count), true
 	}
 	if m.eventQueue == nil {
-		queue, err := newWebhookRunQueueFromConfig(m.config)
+		queue, err := webhooks.NewRunQueueFromConfig(m.config)
 		if err != nil {
 			slog.Warn("failed to initialize webhook queue config", "error", err)
-			queue = newWebhookRunQueue(0)
+			queue = webhooks.NewRunQueue(0)
 		}
 		m.eventQueue = queue
 	}
-	reservations := make([]*webhookQueueReservation, 0, count)
+	reservations := make([]*webhooks.Reservation, 0, count)
 	for i := 0; i < count; i++ {
 		reservation, ok := m.eventQueue.Reserve(event)
 		if !ok {

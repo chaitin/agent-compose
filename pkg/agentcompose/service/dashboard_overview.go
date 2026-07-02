@@ -12,27 +12,21 @@ import (
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
-type (
-	DashboardOverviewAggregator = dashboard.Aggregator
-	DashboardOverviewHub        = dashboard.Hub
-	DashboardOverviewEvent      = dashboard.Event
-)
-
-func NewDashboardOverviewAggregator(di do.Injector) (*DashboardOverviewAggregator, error) {
+func NewDashboardOverviewAggregator(di do.Injector) (*dashboard.Aggregator, error) {
 	return newDashboardOverviewAggregator(do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di)), nil
 }
 
-func newDashboardOverviewAggregator(store *Store, configDB *ConfigStore) *DashboardOverviewAggregator {
+func newDashboardOverviewAggregator(store *Store, configDB *ConfigStore) *dashboard.Aggregator {
 	return dashboard.NewAggregator(store, configDB)
 }
 
-func NewDashboardOverviewHub(di do.Injector) (*DashboardOverviewHub, error) {
+func NewDashboardOverviewHub(di do.Injector) (*dashboard.Hub, error) {
 	ctx := do.MustInvoke[context.Context](di)
-	aggregator := do.MustInvoke[*DashboardOverviewAggregator](di)
+	aggregator := do.MustInvoke[*dashboard.Aggregator](di)
 	return newDashboardOverviewHub(ctx, aggregator, 250*time.Millisecond), nil
 }
 
-func newDashboardOverviewHub(ctx context.Context, aggregator *DashboardOverviewAggregator, debounce time.Duration) *DashboardOverviewHub {
+func newDashboardOverviewHub(ctx context.Context, aggregator *dashboard.Aggregator, debounce time.Duration) *dashboard.Hub {
 	return dashboard.NewHub(ctx, aggregator, debounce)
 }
 

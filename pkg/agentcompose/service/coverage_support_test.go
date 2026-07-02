@@ -137,11 +137,11 @@ func testSupportControlPlaneStartAndConfigHelpers(t *testing.T) {
 		scheduleWake: make(chan struct{}, 1),
 	}
 	loader, err := configDB.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{ID: "start-loader", Name: "Start Loader", Runtime: LoaderRuntimeScheduler, Enabled: true},
+		Summary: domain.LoaderSummary{ID: "start-loader", Name: "Start Loader", Runtime: domain.LoaderRuntimeScheduler, Enabled: true},
 		Script:  "function main() { return {}; }",
-		Triggers: []LoaderTrigger{{
+		Triggers: []domain.LoaderTrigger{{
 			ID:      "evt",
-			Kind:    LoaderTriggerKindEvent,
+			Kind:    domain.LoaderTriggerKindEvent,
 			Topic:   "runtime.test",
 			Enabled: true,
 		}},
@@ -158,11 +158,11 @@ func testSupportControlPlaneStartAndConfigHelpers(t *testing.T) {
 	dispatcher := NewEventDispatcher(ctx, configDB, dispatchBus)
 	dispatcher.SetInterval(time.Millisecond)
 	dispatcher.Start()
-	event, err := configDB.CreateEvent(ctx, TopicEventRecord{
-		Source:         TopicEventSourceLoader,
+	event, err := configDB.CreateEvent(ctx, domain.TopicEventRecord{
+		Source:         domain.TopicEventSourceLoader,
 		Topic:          "runtime.dispatch",
 		PayloadJSON:    `{"ok":true}`,
-		DispatchStatus: TopicEventDispatchPending,
+		DispatchStatus: domain.TopicEventDispatchPending,
 		CreatedAt:      time.Now().UTC(),
 	})
 	if err != nil {
@@ -247,7 +247,7 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	do.ProvideValue[capabilityIntegration](di, capProvider)
 	do.ProvideValue(di, bus)
 	do.ProvideValue(di, newTestSessionStreamBroker())
-	do.ProvideValue[LoaderEngine](di, &recordingLoaderEngine{})
+	do.ProvideValue[loaders.LoaderEngine](di, &recordingLoaderEngine{})
 	do.ProvideValue(di, sessions)
 
 	if _, err := NewExecutor(di); err != nil {
@@ -309,15 +309,15 @@ func testSupportAgentAndLoaderHelpers(t *testing.T) {
 		t.Fatalf("summarizeAgentResult display = %q", got)
 	}
 
-	if api.CellTypeFromProto(agentcomposev1.CellType_CELL_TYPE_SHELL) != CellTypeShell ||
-		api.CellTypeFromProto(agentcomposev1.CellType_CELL_TYPE_PYTHON) != CellTypePython ||
-		api.CellTypeFromProto(agentcomposev1.CellType_CELL_TYPE_AGENT) != CellTypeAgent ||
-		api.CellTypeFromProto(agentcomposev1.CellType_CELL_TYPE_UNSPECIFIED) != CellTypeJavaScript {
+	if api.CellTypeFromProto(agentcomposev1.CellType_CELL_TYPE_SHELL) != execution.CellTypeShell ||
+		api.CellTypeFromProto(agentcomposev1.CellType_CELL_TYPE_PYTHON) != execution.CellTypePython ||
+		api.CellTypeFromProto(agentcomposev1.CellType_CELL_TYPE_AGENT) != execution.CellTypeAgent ||
+		api.CellTypeFromProto(agentcomposev1.CellType_CELL_TYPE_UNSPECIFIED) != execution.CellTypeJavaScript {
 		t.Fatalf("fromProtoCellType returned unexpected values")
 	}
-	if api.CellTypeToProto(CellTypeShell) != agentcomposev1.CellType_CELL_TYPE_SHELL ||
-		api.CellTypeToProto(CellTypePython) != agentcomposev1.CellType_CELL_TYPE_PYTHON ||
-		api.CellTypeToProto(CellTypeAgent) != agentcomposev1.CellType_CELL_TYPE_AGENT ||
+	if api.CellTypeToProto(execution.CellTypeShell) != agentcomposev1.CellType_CELL_TYPE_SHELL ||
+		api.CellTypeToProto(execution.CellTypePython) != agentcomposev1.CellType_CELL_TYPE_PYTHON ||
+		api.CellTypeToProto(execution.CellTypeAgent) != agentcomposev1.CellType_CELL_TYPE_AGENT ||
 		api.CellTypeToProto("unknown") != agentcomposev1.CellType_CELL_TYPE_JAVASCRIPT {
 		t.Fatalf("toProtoCellType returned unexpected values")
 	}
@@ -338,7 +338,7 @@ func testSupportAgentAndLoaderHelpers(t *testing.T) {
 	if execution.FirstNonZeroInt(0, 0, 7, 9) != 7 || execution.FirstNonZeroInt(0, 0) != 0 {
 		t.Fatalf("firstNonZeroInt returned unexpected values")
 	}
-	if domain.SessionTypeFromTriggerSource("script:loader-1") != SessionTypeScript || domain.SessionTypeFromTriggerSource("") != SessionTypeManual {
+	if domain.SessionTypeFromTriggerSource("script:loader-1") != domain.SessionTypeScript || domain.SessionTypeFromTriggerSource("") != domain.SessionTypeManual {
 		t.Fatalf("sessionTypeFromTriggerSource returned unexpected values")
 	}
 	if parsed, err := parseOptionalRFC3339("2026-06-02T09:00:00Z", "created_from"); err != nil || !parsed.Equal(time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)) {
@@ -358,7 +358,7 @@ func testSupportLegacyAgentRunMerge(t *testing.T, store *Store) {
 	}
 	older := time.Now().UTC().Add(-2 * time.Minute)
 	newer := time.Now().UTC().Add(-time.Minute)
-	if err := store.saveCells(session.Summary.ID, []NotebookCell{{ID: "cell-1", Type: CellTypeShell, Source: "echo", CreatedAt: newer}}); err != nil {
+	if err := store.saveCells(session.Summary.ID, []NotebookCell{{ID: "cell-1", Type: execution.CellTypeShell, Source: "echo", CreatedAt: newer}}); err != nil {
 		t.Fatalf("saveCells returned error: %v", err)
 	}
 	legacyRuns := []AgentRun{
@@ -379,7 +379,7 @@ func testSupportLegacyAgentRunMerge(t *testing.T, store *Store) {
 	if len(cells) != 2 || cells[0].ID != "run-1" || cells[1].ID != "cell-1" {
 		t.Fatalf("merged cells = %#v", cells)
 	}
-	if cells[0].Type != CellTypeAgent || cells[0].AgentSessionID != "agent-1" {
+	if cells[0].Type != execution.CellTypeAgent || cells[0].AgentSessionID != "agent-1" {
 		t.Fatalf("merged legacy agent cell = %#v", cells[0])
 	}
 }
@@ -427,13 +427,13 @@ func testSupportSessionRPCAndAgentResumeHelpers(t *testing.T, manager *LoaderMan
 	t.Helper()
 	ctx := context.Background()
 	loader, err := manager.configDB.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{ID: "loader-rpc", Name: "Loader RPC", Runtime: LoaderRuntimeScheduler, Enabled: true},
+		Summary: domain.LoaderSummary{ID: "loader-rpc", Name: "Loader RPC", Runtime: domain.LoaderRuntimeScheduler, Enabled: true},
 		Script:  "function main() { return {}; }",
 	})
 	if err != nil {
 		t.Fatalf("CreateLoader returned error: %v", err)
 	}
-	run := LoaderRunSummary{ID: "run-rpc", LoaderID: loader.Summary.ID, Status: LoaderRunStatusRunning, StartedAt: time.Now().UTC()}
+	run := domain.LoaderRunSummary{ID: "run-rpc", LoaderID: loader.Summary.ID, Status: domain.LoaderRunStatusRunning, StartedAt: time.Now().UTC()}
 	if err := manager.configDB.CreateLoaderRun(ctx, run); err != nil {
 		t.Fatalf("CreateLoaderRun returned error: %v", err)
 	}

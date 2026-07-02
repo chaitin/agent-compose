@@ -29,7 +29,7 @@ func (s *Service) ensureProjectRunSession(ctx context.Context, run ProjectRunRec
 		if err != nil {
 			return runs.SessionResult{}, fmt.Errorf("load session %s: %w", sessionID, err)
 		}
-		if session.Summary.VMStatus != VMStatusRunning {
+		if session.Summary.VMStatus != domain.VMStatusRunning {
 			driver, err := driverpkg.ResolveSessionRuntimeDriver(session.Summary.Driver, s.config.RuntimeDriver)
 			if err != nil {
 				return runs.SessionResult{}, err
@@ -75,7 +75,7 @@ func (s *Service) ensureProjectRunSession(ctx context.Context, run ProjectRunRec
 		driver,
 		guestImage,
 		workspaceID,
-		SessionTypeManual,
+		domain.SessionTypeManual,
 		prepared.Workspace,
 		domain.MergeEnvItems(prepared.EnvItems, capabilityVars),
 		tags,
@@ -95,19 +95,19 @@ func (s *Service) startProjectRunSession(ctx context.Context, session *Session, 
 		return fmt.Errorf("session is required")
 	}
 	if err := workspaces.PrepareSessionWorkspace(ctx, s.config, s.configDB, session); err != nil {
-		session.Summary.VMStatus = VMStatusFailed
+		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = s.store.UpdateSession(ctx, session)
 		return err
 	}
 	writeCapabilityGuide(ctx, s.cap, s.store, s.streams, session, capabilities.SessionCapsets(session))
-	if session.Summary.VMStatus != VMStatusRunning {
+	if session.Summary.VMStatus != domain.VMStatusRunning {
 		if err := s.driver.StartSessionVM(ctx, session); err != nil {
-			session.Summary.VMStatus = VMStatusFailed
+			session.Summary.VMStatus = domain.VMStatusFailed
 			_ = s.store.UpdateSession(ctx, session)
 			return err
 		}
 	}
-	session.Summary.VMStatus = VMStatusRunning
+	session.Summary.VMStatus = domain.VMStatusRunning
 	if err := s.store.UpdateSession(ctx, session); err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func (s *Service) publishProjectRunSessionStarted(ctx context.Context, session *
 		if eventType == "session.resumed" {
 			topic = "agent-compose.session.resumed"
 		}
-		s.bus.Publish(LoaderTopicEvent{
+		s.bus.Publish(domain.LoaderTopicEvent{
 			Topic:     topic,
 			Payload:   loaders.SessionTopicPayload(session, "project-run"),
 			CreatedAt: time.Now().UTC(),

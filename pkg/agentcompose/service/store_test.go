@@ -1,6 +1,8 @@
 package agentcompose
 
 import (
+	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/execution"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
@@ -83,7 +85,7 @@ func testStorePersistenceErrorAndUpdateBranches(t *testing.T) {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
-	firstCell := NotebookCell{ID: "cell-1", Type: CellTypeShell, Source: "echo first", Stdout: "first\n", Output: "first\n", Success: true, CreatedAt: time.Now().UTC()}
+	firstCell := NotebookCell{ID: "cell-1", Type: execution.CellTypeShell, Source: "echo first", Stdout: "first\n", Output: "first\n", Success: true, CreatedAt: time.Now().UTC()}
 	if err := store.AddCell(ctx, session, firstCell); err != nil {
 		t.Fatalf("AddCell first returned error: %v", err)
 	}
@@ -100,7 +102,7 @@ func testStorePersistenceErrorAndUpdateBranches(t *testing.T) {
 		t.Fatalf("updated cells = %#v", cells)
 	}
 
-	runningCell := NotebookCell{ID: "cell-running", Type: CellTypeShell, Source: "sleep 1", Running: true, CreatedAt: time.Now().UTC()}
+	runningCell := NotebookCell{ID: "cell-running", Type: execution.CellTypeShell, Source: "sleep 1", Running: true, CreatedAt: time.Now().UTC()}
 	if err := store.AddCell(ctx, session, runningCell); err != nil {
 		t.Fatalf("AddCell running returned error: %v", err)
 	}
@@ -232,7 +234,7 @@ func testStoreAgentRunLegacyVMAndListWorkflows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListCells returned error: %v", err)
 	}
-	if len(cells) != 1 || cells[0].Type != CellTypeAgent || cells[0].AgentSessionID != "agent-session-1" || !cells[0].Running {
+	if len(cells) != 1 || cells[0].Type != execution.CellTypeAgent || cells[0].AgentSessionID != "agent-session-1" || !cells[0].Running {
 		t.Fatalf("agent run cells = %#v", cells)
 	}
 
@@ -276,7 +278,7 @@ func testStoreAgentRunLegacyVMAndListWorkflows(t *testing.T) {
 		t.Fatalf("events = %#v", events)
 	}
 
-	listed, err := store.ListSessions(ctx, SessionListOptions{TitleQuery: "agent-compose", Driver: driverpkg.RuntimeDriverBoxlite, VMStatus: VMStatusPending, Limit: 1})
+	listed, err := store.ListSessions(ctx, SessionListOptions{TitleQuery: "agent-compose", Driver: driverpkg.RuntimeDriverBoxlite, VMStatus: domain.VMStatusPending, Limit: 1})
 	if err != nil {
 		t.Fatalf("ListSessions returned error: %v", err)
 	}

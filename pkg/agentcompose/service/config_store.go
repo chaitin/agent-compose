@@ -379,10 +379,10 @@ func (s *ConfigStore) DeleteWorkspaceConfig(ctx context.Context, id string) erro
 	return nil
 }
 
-func (s *ConfigStore) CreateAgentDefinition(ctx context.Context, item AgentDefinition) (AgentDefinition, error) {
+func (s *ConfigStore) CreateAgentDefinition(ctx context.Context, item domain.AgentDefinition) (domain.AgentDefinition, error) {
 	normalized, err := domain.NormalizeAgentDefinition(item, true)
 	if err != nil {
-		return AgentDefinition{}, err
+		return domain.AgentDefinition{}, err
 	}
 	now := time.Now().UTC()
 	normalized.CreatedAt = now
@@ -390,11 +390,11 @@ func (s *ConfigStore) CreateAgentDefinition(ctx context.Context, item AgentDefin
 	normalized.DeletedAt = time.Time{}
 	envJSON, err := configstore.EncodeAgentEnvJSON(normalized.EnvItems)
 	if err != nil {
-		return AgentDefinition{}, err
+		return domain.AgentDefinition{}, err
 	}
 	capsetIDsJSON, err := capabilities.EncodeCapsetIDs(normalized.CapsetIDs)
 	if err != nil {
-		return AgentDefinition{}, err
+		return domain.AgentDefinition{}, err
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO agent_definition(
 		id, name, description, enabled, deleted_at, provider, model, system_prompt, driver, guest_image, workspace_id, env_json, config_json, capset_ids,
@@ -403,19 +403,19 @@ func (s *ConfigStore) CreateAgentDefinition(ctx context.Context, item AgentDefin
 		normalized.ID, normalized.Name, normalized.Description, configstore.BoolToInt(normalized.Enabled), normalized.Provider, normalized.Model, normalized.SystemPrompt,
 		normalized.Driver, normalized.GuestImage, normalized.WorkspaceID, envJSON, normalized.ConfigJSON, capsetIDsJSON,
 		normalized.ManagedProjectID, normalized.ManagedProjectRevision, normalized.ManagedAgentName, normalized.CreatedAt.Unix(), normalized.UpdatedAt.Unix()); err != nil {
-		return AgentDefinition{}, fmt.Errorf("insert agent definition %s: %w", normalized.ID, err)
+		return domain.AgentDefinition{}, fmt.Errorf("insert agent definition %s: %w", normalized.ID, err)
 	}
 	return normalized, nil
 }
 
-func (s *ConfigStore) UpdateAgentDefinition(ctx context.Context, item AgentDefinition) (AgentDefinition, error) {
+func (s *ConfigStore) UpdateAgentDefinition(ctx context.Context, item domain.AgentDefinition) (domain.AgentDefinition, error) {
 	normalized, err := domain.NormalizeAgentDefinition(item, true)
 	if err != nil {
-		return AgentDefinition{}, err
+		return domain.AgentDefinition{}, err
 	}
 	existing, err := s.GetAgentDefinition(ctx, normalized.ID)
 	if err != nil {
-		return AgentDefinition{}, err
+		return domain.AgentDefinition{}, err
 	}
 	if normalized.ManagedProjectID == "" && normalized.ManagedAgentName == "" && normalized.ManagedProjectRevision == 0 {
 		normalized.ManagedProjectID = existing.ManagedProjectID
@@ -427,11 +427,11 @@ func (s *ConfigStore) UpdateAgentDefinition(ctx context.Context, item AgentDefin
 	normalized.DeletedAt = time.Time{}
 	envJSON, err := configstore.EncodeAgentEnvJSON(normalized.EnvItems)
 	if err != nil {
-		return AgentDefinition{}, err
+		return domain.AgentDefinition{}, err
 	}
 	capsetIDsJSON, err := capabilities.EncodeCapsetIDs(normalized.CapsetIDs)
 	if err != nil {
-		return AgentDefinition{}, err
+		return domain.AgentDefinition{}, err
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE agent_definition SET
 		name = ?, description = ?, enabled = ?, provider = ?, model = ?, system_prompt = ?, driver = ?, guest_image = ?, workspace_id = ?, env_json = ?,
@@ -441,34 +441,34 @@ func (s *ConfigStore) UpdateAgentDefinition(ctx context.Context, item AgentDefin
 		normalized.Driver, normalized.GuestImage, normalized.WorkspaceID, envJSON, normalized.ConfigJSON, capsetIDsJSON,
 		normalized.ManagedProjectID, normalized.ManagedProjectRevision, normalized.ManagedAgentName, normalized.UpdatedAt.Unix(), normalized.ID)
 	if err != nil {
-		return AgentDefinition{}, fmt.Errorf("update agent definition %s: %w", normalized.ID, err)
+		return domain.AgentDefinition{}, fmt.Errorf("update agent definition %s: %w", normalized.ID, err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return AgentDefinition{}, resourceError(ErrNotFound, "agent definition", normalized.ID, fmt.Sprintf("agent definition %s not found", normalized.ID), nil)
+		return domain.AgentDefinition{}, resourceError(ErrNotFound, "agent definition", normalized.ID, fmt.Sprintf("agent definition %s not found", normalized.ID), nil)
 	}
 	return normalized, nil
 }
 
-func (s *ConfigStore) UpsertManagedAgentDefinition(ctx context.Context, item AgentDefinition) (AgentDefinition, error) {
+func (s *ConfigStore) UpsertManagedAgentDefinition(ctx context.Context, item domain.AgentDefinition) (domain.AgentDefinition, error) {
 	normalized, err := domain.NormalizeAgentDefinition(item, true)
 	if err != nil {
-		return AgentDefinition{}, err
+		return domain.AgentDefinition{}, err
 	}
 	if normalized.ManagedProjectID == "" || normalized.ManagedAgentName == "" {
-		return AgentDefinition{}, fmt.Errorf("managed project id and managed agent name are required")
+		return domain.AgentDefinition{}, fmt.Errorf("managed project id and managed agent name are required")
 	}
 	envJSON, err := configstore.EncodeAgentEnvJSON(normalized.EnvItems)
 	if err != nil {
-		return AgentDefinition{}, err
+		return domain.AgentDefinition{}, err
 	}
 	capsetIDsJSON, err := capabilities.EncodeCapsetIDs(normalized.CapsetIDs)
 	if err != nil {
-		return AgentDefinition{}, err
+		return domain.AgentDefinition{}, err
 	}
 	now := time.Now().UTC()
 	existing, found, err := s.getAgentDefinitionIfExists(ctx, normalized.ID, true)
 	if err != nil {
-		return AgentDefinition{}, err
+		return domain.AgentDefinition{}, err
 	}
 	if found {
 		normalized.CreatedAt = existing.CreatedAt
@@ -482,10 +482,10 @@ func (s *ConfigStore) UpsertManagedAgentDefinition(ctx context.Context, item Age
 			normalized.Driver, normalized.GuestImage, normalized.WorkspaceID, envJSON, normalized.ConfigJSON, capsetIDsJSON,
 			normalized.ManagedProjectID, normalized.ManagedProjectRevision, normalized.ManagedAgentName, normalized.UpdatedAt.Unix(), normalized.ID)
 		if err != nil {
-			return AgentDefinition{}, fmt.Errorf("update managed agent definition %s: %w", normalized.ID, err)
+			return domain.AgentDefinition{}, fmt.Errorf("update managed agent definition %s: %w", normalized.ID, err)
 		}
 		if rows, _ := result.RowsAffected(); rows == 0 {
-			return AgentDefinition{}, resourceError(ErrNotFound, "managed agent definition", normalized.ID, fmt.Sprintf("managed agent definition %s not found", normalized.ID), nil)
+			return domain.AgentDefinition{}, resourceError(ErrNotFound, "managed agent definition", normalized.ID, fmt.Sprintf("managed agent definition %s not found", normalized.ID), nil)
 		}
 		return s.GetAgentDefinition(ctx, normalized.ID)
 	}
@@ -500,32 +500,32 @@ func (s *ConfigStore) UpsertManagedAgentDefinition(ctx context.Context, item Age
 		normalized.ID, normalized.Name, normalized.Description, configstore.BoolToInt(normalized.Enabled), normalized.Provider, normalized.Model, normalized.SystemPrompt,
 		normalized.Driver, normalized.GuestImage, normalized.WorkspaceID, envJSON, normalized.ConfigJSON, capsetIDsJSON,
 		normalized.ManagedProjectID, normalized.ManagedProjectRevision, normalized.ManagedAgentName, normalized.CreatedAt.Unix(), normalized.UpdatedAt.Unix()); err != nil {
-		return AgentDefinition{}, fmt.Errorf("insert managed agent definition %s: %w", normalized.ID, err)
+		return domain.AgentDefinition{}, fmt.Errorf("insert managed agent definition %s: %w", normalized.ID, err)
 	}
 	return normalized, nil
 }
 
-func (s *ConfigStore) GetAgentDefinition(ctx context.Context, id string) (AgentDefinition, error) {
+func (s *ConfigStore) GetAgentDefinition(ctx context.Context, id string) (domain.AgentDefinition, error) {
 	return s.getAgentDefinition(ctx, id, false)
 }
 
-func (s *ConfigStore) GetAgentDefinitionIncludingDeleted(ctx context.Context, id string) (AgentDefinition, error) {
+func (s *ConfigStore) GetAgentDefinitionIncludingDeleted(ctx context.Context, id string) (domain.AgentDefinition, error) {
 	return s.getAgentDefinition(ctx, id, true)
 }
 
-func (s *ConfigStore) getAgentDefinition(ctx context.Context, id string, includeDeleted bool) (AgentDefinition, error) {
+func (s *ConfigStore) getAgentDefinition(ctx context.Context, id string, includeDeleted bool) (domain.AgentDefinition, error) {
 	item, found, err := s.getAgentDefinitionIfExists(ctx, id, includeDeleted)
 	if err != nil {
-		return AgentDefinition{}, err
+		return domain.AgentDefinition{}, err
 	}
 	if !found {
 		trimmedID := strings.TrimSpace(id)
-		return AgentDefinition{}, resourceError(ErrNotFound, "agent definition", trimmedID, fmt.Sprintf("agent definition %s not found", trimmedID), sql.ErrNoRows)
+		return domain.AgentDefinition{}, resourceError(ErrNotFound, "agent definition", trimmedID, fmt.Sprintf("agent definition %s not found", trimmedID), sql.ErrNoRows)
 	}
 	return item, nil
 }
 
-func (s *ConfigStore) getAgentDefinitionIfExists(ctx context.Context, id string, includeDeleted bool) (AgentDefinition, bool, error) {
+func (s *ConfigStore) getAgentDefinitionIfExists(ctx context.Context, id string, includeDeleted bool) (domain.AgentDefinition, bool, error) {
 	where := "id = ? AND deleted_at = 0"
 	if includeDeleted {
 		where = "id = ?"
@@ -536,14 +536,14 @@ func (s *ConfigStore) getAgentDefinitionIfExists(ctx context.Context, id string,
 	item, err := configstore.ScanAgentDefinition(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return AgentDefinition{}, false, nil
+			return domain.AgentDefinition{}, false, nil
 		}
-		return AgentDefinition{}, false, err
+		return domain.AgentDefinition{}, false, err
 	}
 	return item, true, nil
 }
 
-func (s *ConfigStore) ListAgentDefinitions(ctx context.Context, options AgentDefinitionListOptions) (AgentDefinitionListResult, error) {
+func (s *ConfigStore) ListAgentDefinitions(ctx context.Context, options domain.AgentDefinitionListOptions) (domain.AgentDefinitionListResult, error) {
 	limit := options.Limit
 	if limit <= 0 {
 		limit = 50
@@ -561,15 +561,15 @@ func (s *ConfigStore) ListAgentDefinitions(ctx context.Context, options AgentDef
 		FROM agent_definition
 		ORDER BY CASE WHEN deleted_at = 0 THEN 0 ELSE 1 END, updated_at DESC, created_at DESC, id ASC`)
 	if err != nil {
-		return AgentDefinitionListResult{}, fmt.Errorf("query agent definitions: %w", err)
+		return domain.AgentDefinitionListResult{}, fmt.Errorf("query agent definitions: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	matched := make([]AgentDefinition, 0)
+	matched := make([]domain.AgentDefinition, 0)
 	for rows.Next() {
 		item, err := configstore.ScanAgentDefinition(rows.Scan)
 		if err != nil {
-			return AgentDefinitionListResult{}, err
+			return domain.AgentDefinitionListResult{}, err
 		}
 		if !options.IncludeDisabled && (!item.Enabled || !item.DeletedAt.IsZero()) {
 			continue
@@ -580,7 +580,7 @@ func (s *ConfigStore) ListAgentDefinitions(ctx context.Context, options AgentDef
 		matched = append(matched, item)
 	}
 	if err := rows.Err(); err != nil {
-		return AgentDefinitionListResult{}, fmt.Errorf("iterate agent definitions: %w", err)
+		return domain.AgentDefinitionListResult{}, fmt.Errorf("iterate agent definitions: %w", err)
 	}
 	total := len(matched)
 	end := offset + limit
@@ -591,7 +591,7 @@ func (s *ConfigStore) ListAgentDefinitions(ctx context.Context, options AgentDef
 		end = total
 	}
 	page := matched[offset:end]
-	return AgentDefinitionListResult{
+	return domain.AgentDefinitionListResult{
 		Agents:     page,
 		TotalCount: total,
 		HasMore:    end < total,
@@ -599,7 +599,7 @@ func (s *ConfigStore) ListAgentDefinitions(ctx context.Context, options AgentDef
 	}, nil
 }
 
-func (s *ConfigStore) ListManagedAgentDefinitions(ctx context.Context, projectID string, includeDeleted bool) ([]AgentDefinition, error) {
+func (s *ConfigStore) ListManagedAgentDefinitions(ctx context.Context, projectID string, includeDeleted bool) ([]domain.AgentDefinition, error) {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
 		return nil, fmt.Errorf("project id is required")
@@ -615,7 +615,7 @@ func (s *ConfigStore) ListManagedAgentDefinitions(ctx context.Context, projectID
 		return nil, fmt.Errorf("query managed agent definitions %s: %w", projectID, err)
 	}
 	defer func() { _ = rows.Close() }()
-	var items []AgentDefinition
+	var items []domain.AgentDefinition
 	for rows.Next() {
 		item, err := configstore.ScanAgentDefinition(rows.Scan)
 		if err != nil {
@@ -645,18 +645,18 @@ func (s *ConfigStore) DeleteAgentDefinition(ctx context.Context, id string) erro
 	return nil
 }
 
-func (s *ConfigStore) SetAgentDefinitionEnabled(ctx context.Context, id string, enabled bool) (AgentDefinition, error) {
+func (s *ConfigStore) SetAgentDefinitionEnabled(ctx context.Context, id string, enabled bool) (domain.AgentDefinition, error) {
 	trimmedID := strings.TrimSpace(id)
 	if trimmedID == "" {
-		return AgentDefinition{}, fmt.Errorf("agent definition id is required")
+		return domain.AgentDefinition{}, fmt.Errorf("agent definition id is required")
 	}
 	now := time.Now().UTC().Unix()
 	result, err := s.db.ExecContext(ctx, `UPDATE agent_definition SET enabled = ?, updated_at = ? WHERE id = ? AND deleted_at = 0`, configstore.BoolToInt(enabled), now, trimmedID)
 	if err != nil {
-		return AgentDefinition{}, fmt.Errorf("set agent definition enabled %s: %w", trimmedID, err)
+		return domain.AgentDefinition{}, fmt.Errorf("set agent definition enabled %s: %w", trimmedID, err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return AgentDefinition{}, resourceError(ErrNotFound, "agent definition", trimmedID, fmt.Sprintf("agent definition %s not found", trimmedID), nil)
+		return domain.AgentDefinition{}, resourceError(ErrNotFound, "agent definition", trimmedID, fmt.Sprintf("agent definition %s not found", trimmedID), nil)
 	}
 	return s.GetAgentDefinition(ctx, trimmedID)
 }

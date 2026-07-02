@@ -30,6 +30,6 @@ func newTestLoaderBus(buffer int) *loaders.Bus {
 	return loaders.NewBusWithBuffer(buffer)
 }
 
-func newTestSessionStreamBroker() *SessionStreamBroker {
+func newTestSessionStreamBroker() *sessions.StreamBroker {
 	return sessions.NewStreamBrokerForTest()
 }

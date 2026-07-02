@@ -22,12 +22,6 @@ type LLMGenerateResult struct {
 	FinishReason string
 }
 
-const (
-	llmAPIProtocolResponses       = llms.APIProtocolResponses
-	llmAPIProtocolChatCompletions = llms.APIProtocolChatCompletions
-	llmAPIProtocolMessages        = llms.APIProtocolMessages
-)
-
 func NewLLMClient(di do.Injector) (*LLMClient, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
 	return &LLMClient{

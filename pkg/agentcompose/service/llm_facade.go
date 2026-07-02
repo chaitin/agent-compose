@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/agentcompose/llms"
 	protocolbridge "github.com/chaitin/ai-api-protocol-bridge"
 	"github.com/labstack/echo/v4"
@@ -48,15 +49,15 @@ func registerRuntimeLLMFacadeRoutes(app *echo.Echo, service *Service) {
 }
 
 func (s *Service) handleRuntimeLLMResponses(c echo.Context) error {
-	return s.handleRuntimeLLM(c, protocolbridge.ProtocolOpenAIResponses, llmAPIProtocolResponses)
+	return s.handleRuntimeLLM(c, protocolbridge.ProtocolOpenAIResponses, llms.APIProtocolResponses)
 }
 
 func (s *Service) handleRuntimeLLMChatCompletions(c echo.Context) error {
-	return s.handleRuntimeLLM(c, protocolbridge.ProtocolOpenAIChat, llmAPIProtocolChatCompletions)
+	return s.handleRuntimeLLM(c, protocolbridge.ProtocolOpenAIChat, llms.APIProtocolChatCompletions)
 }
 
 func (s *Service) handleRuntimeLLMAnthropicMessages(c echo.Context) error {
-	return s.handleRuntimeLLM(c, protocolbridge.ProtocolAnthropicMessages, llmAPIProtocolMessages)
+	return s.handleRuntimeLLM(c, protocolbridge.ProtocolAnthropicMessages, llms.APIProtocolMessages)
 }
 
 func (s *Service) handleRuntimeLLM(c echo.Context, inboundProtocol protocolbridge.Protocol, facadeWireAPI string) error {
@@ -80,7 +81,7 @@ func (s *Service) handleRuntimeLLM(c echo.Context, inboundProtocol protocolbridg
 	if err != nil {
 		return c.JSON(http.StatusForbidden, map[string]string{"error": "session is not available"})
 	}
-	if session.Summary.VMStatus == VMStatusStopped || session.Summary.VMStatus == VMStatusFailed {
+	if session.Summary.VMStatus == domain.VMStatusStopped || session.Summary.VMStatus == domain.VMStatusFailed {
 		return c.JSON(http.StatusForbidden, map[string]string{"error": "session is not running"})
 	}
 	body, err := io.ReadAll(io.LimitReader(c.Request().Body, 64<<20))
@@ -166,7 +167,7 @@ func (s *Service) handleRuntimeLLM(c echo.Context, inboundProtocol protocolbridg
 	return err
 }
 
-func (s *Service) proxyRuntimeLLMTransparent(c echo.Context, upstreamEndpoint string, body []byte, target LLMResolvedTarget, upstreamProtocol protocolbridge.Protocol) error {
+func (s *Service) proxyRuntimeLLMTransparent(c echo.Context, upstreamEndpoint string, body []byte, target llms.ResolvedTarget, upstreamProtocol protocolbridge.Protocol) error {
 	upstreamReq, err := http.NewRequestWithContext(c.Request().Context(), http.MethodPost, upstreamEndpoint, bytes.NewReader(body))
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "create upstream llm request failed"})
@@ -180,7 +181,7 @@ func (s *Service) proxyRuntimeLLMTransparent(c echo.Context, upstreamEndpoint st
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && llms.UseGenericResponsesTextParts(target, upstreamProtocol) {
 		if llms.RuntimeResponseShouldFlush(resp.Header) {
-			return bridgeRuntimeLLMStreamResponse(c, resp, protocolbridge.ProtocolOpenAIResponses, protocolbridge.ProtocolOpenAIResponses, llmProviderFamilyOpenAI, target.Model.Name)
+			return bridgeRuntimeLLMStreamResponse(c, resp, protocolbridge.ProtocolOpenAIResponses, protocolbridge.ProtocolOpenAIResponses, llms.ProviderFamilyOpenAI, target.Model.Name)
 		}
 		upstreamRespBody, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 		if err != nil {
@@ -207,7 +208,7 @@ func (s *Service) proxyRuntimeLLMTransparent(c echo.Context, upstreamEndpoint st
 	return nil
 }
 
-func rewriteRuntimeLLMRequestForUpstream(body []byte, target LLMResolvedTarget, upstreamProtocol protocolbridge.Protocol) ([]byte, error) {
+func rewriteRuntimeLLMRequestForUpstream(body []byte, target llms.ResolvedTarget, upstreamProtocol protocolbridge.Protocol) ([]byte, error) {
 	model := strings.TrimSpace(target.Model.Name)
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -338,7 +339,7 @@ func normalizeRuntimeLLMRawRoleItems(payload map[string]json.RawMessage, field s
 	return true
 }
 
-func encodeRuntimeLLMUpstreamRequest(inboundProtocol, upstreamProtocol protocolbridge.Protocol, target LLMResolvedTarget, req *protocolbridge.LLMRequest) ([]byte, error) {
+func encodeRuntimeLLMUpstreamRequest(inboundProtocol, upstreamProtocol protocolbridge.Protocol, target llms.ResolvedTarget, req *protocolbridge.LLMRequest) ([]byte, error) {
 	if inboundProtocol == upstreamProtocol {
 		adapter, err := llms.ProtocolAdapter(upstreamProtocol)
 		if err != nil {
@@ -381,7 +382,7 @@ func normalizeRuntimeLLMRequestForUpstream(req *protocolbridge.LLMRequest, upstr
 	return &normalized
 }
 
-func encodeRuntimeLLMClientResponse(inboundProtocol, upstreamProtocol protocolbridge.Protocol, target LLMResolvedTarget, upstreamBody []byte) ([]byte, error) {
+func encodeRuntimeLLMClientResponse(inboundProtocol, upstreamProtocol protocolbridge.Protocol, target llms.ResolvedTarget, upstreamBody []byte) ([]byte, error) {
 	inboundAdapter, err := llms.ProtocolAdapter(inboundProtocol)
 	if err != nil {
 		return nil, err

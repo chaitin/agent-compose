@@ -59,7 +59,7 @@ func ensureSessionAgentRuntimeLLMConfig(ctx context.Context, config *appconfig.C
 }
 
 func ensureSessionCodexLLMFacadeConfig(ctx context.Context, config *appconfig.Config, configDB *ConfigStore, session *Session, model, source, runID string) (map[string]string, error) {
-	target, err := resolveRuntimeLLMTargetWithEnv(ctx, config, configDB, session.Summary.ID, llmProviderFamilyOpenAI, model, "", sessionLLMProviderEnvItems(session))
+	target, err := resolveRuntimeLLMTargetWithEnv(ctx, config, configDB, session.Summary.ID, llms.ProviderFamilyOpenAI, model, "", sessionLLMProviderEnvItems(session))
 	if err != nil {
 		if isOptionalLLMFacadeConfigError(err) {
 			return nil, nil
@@ -70,7 +70,7 @@ func ensureSessionCodexLLMFacadeConfig(ctx context.Context, config *appconfig.Co
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, nil
 	}
-	facadeWireAPI := llmAPIProtocolResponses
+	facadeWireAPI := llms.APIProtocolResponses
 	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, target.Model.Name, target.Provider.ID, facadeWireAPI, source, runID)
 	if err != nil {
 		return nil, err
@@ -98,7 +98,7 @@ func ensureSessionClaudeLLMFacadeConfig(ctx context.Context, config *appconfig.C
 		return nil, nil
 	}
 	providerEnv := sessionLLMProviderEnvItems(session)
-	target, err := resolveRuntimeLLMTargetWithEnv(ctx, config, configDB, session.Summary.ID, llmProviderFamilyAnthropic, model, "", providerEnv)
+	target, err := resolveRuntimeLLMTargetWithEnv(ctx, config, configDB, session.Summary.ID, llms.ProviderFamilyAnthropic, model, "", providerEnv)
 	tokenModel := ""
 	tokenProvider := ""
 	if err != nil {
@@ -109,7 +109,7 @@ func ensureSessionClaudeLLMFacadeConfig(ctx context.Context, config *appconfig.C
 		tokenModel = target.Model.Name
 		tokenProvider = target.Provider.ID
 	}
-	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, tokenModel, tokenProvider, llmAPIProtocolMessages, source, runID)
+	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, tokenModel, tokenProvider, llms.APIProtocolMessages, source, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +121,7 @@ func ensureSessionClaudeLLMFacadeConfig(ctx context.Context, config *appconfig.C
 		"AGENT_COMPOSE_SESSION_TOKEN": tokenValue,
 		"LLM_API_ENDPOINT":            anthropicBaseURL,
 		"LLM_API_KEY":                 tokenValue,
-		"LLM_API_PROTOCOL":            llmAPIProtocolMessages,
+		"LLM_API_PROTOCOL":            llms.APIProtocolMessages,
 		"ANTHROPIC_API_KEY":           tokenValue,
 		"ANTHROPIC_BASE_URL":          anthropicBaseURL,
 	}
@@ -159,11 +159,11 @@ func ensureSessionOpenCodeAnthropicFacadeConfig(ctx context.Context, config *app
 		return nil, nil
 	}
 	providerEnv := sessionLLMProviderEnvItems(session)
-	target, err := resolveRuntimeLLMTargetWithEnv(ctx, config, configDB, session.Summary.ID, llmProviderFamilyAnthropic, model, "", providerEnv)
+	target, err := resolveRuntimeLLMTargetWithEnv(ctx, config, configDB, session.Summary.ID, llms.ProviderFamilyAnthropic, model, "", providerEnv)
 	if err != nil {
 		return nil, err
 	}
-	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, target.Model.Name, target.Provider.ID, llmAPIProtocolMessages, source, runID)
+	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, target.Model.Name, target.Provider.ID, llms.APIProtocolMessages, source, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ func ensureSessionOpenCodeAnthropicFacadeConfig(ctx context.Context, config *app
 		"AGENT_COMPOSE_SESSION_TOKEN": tokenValue,
 		"LLM_API_ENDPOINT":            anthropicBaseURL,
 		"LLM_API_KEY":                 tokenValue,
-		"LLM_API_PROTOCOL":            llmAPIProtocolMessages,
+		"LLM_API_PROTOCOL":            llms.APIProtocolMessages,
 		"ANTHROPIC_API_KEY":           tokenValue,
 		"ANTHROPIC_BASE_URL":          anthropicBaseURL,
 		"OPENCODE_CONFIG":             guestOpenCodeLLMConfigPath(config),
@@ -186,7 +186,7 @@ func ensureSessionOpenCodeAnthropicFacadeConfig(ctx context.Context, config *app
 }
 
 func ensureSessionOpenCodeOpenAIFacadeEnv(ctx context.Context, config *appconfig.Config, configDB *ConfigStore, session *Session, model, source, runID string) (map[string]string, error) {
-	target, err := resolveRuntimeLLMTargetWithEnv(ctx, config, configDB, session.Summary.ID, llmProviderFamilyOpenAI, model, "", sessionLLMProviderEnvItems(session))
+	target, err := resolveRuntimeLLMTargetWithEnv(ctx, config, configDB, session.Summary.ID, llms.ProviderFamilyOpenAI, model, "", sessionLLMProviderEnvItems(session))
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +194,7 @@ func ensureSessionOpenCodeOpenAIFacadeEnv(ctx context.Context, config *appconfig
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, nil
 	}
-	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, target.Model.Name, target.Provider.ID, llmAPIProtocolResponses, source, runID)
+	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, target.Model.Name, target.Provider.ID, llms.APIProtocolResponses, source, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func ensureSessionOpenCodeOpenAIFacadeEnv(ctx context.Context, config *appconfig
 		"AGENT_COMPOSE_SESSION_TOKEN": tokenValue,
 		"LLM_API_ENDPOINT":            openAIBaseURL,
 		"LLM_API_KEY":                 tokenValue,
-		"LLM_API_PROTOCOL":            llmAPIProtocolResponses,
+		"LLM_API_PROTOCOL":            llms.APIProtocolResponses,
 		"OPENAI_API_KEY":              tokenValue,
 		"OPENAI_BASE_URL":             openAIBaseURL,
 		"OPENCODE_CONFIG":             guestOpenCodeLLMConfigPath(config),
@@ -225,7 +225,7 @@ func ensureSessionOpenCodeCustomProviderConfig(ctx context.Context, config *appc
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, nil
 	}
-	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, target.Model.Name, target.Provider.ID, llmAPIProtocolChatCompletions, source, runID)
+	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, target.Model.Name, target.Provider.ID, llms.APIProtocolChatCompletions, source, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -240,35 +240,35 @@ func ensureSessionOpenCodeCustomProviderConfig(ctx context.Context, config *appc
 		"AGENT_COMPOSE_SESSION_TOKEN": tokenValue,
 		"LLM_API_ENDPOINT":            openAIBaseURL,
 		"LLM_API_KEY":                 tokenValue,
-		"LLM_API_PROTOCOL":            llmAPIProtocolChatCompletions,
+		"LLM_API_PROTOCOL":            llms.APIProtocolChatCompletions,
 		"OPENAI_API_KEY":              tokenValue,
 		"OPENAI_BASE_URL":             openAIBaseURL,
 		"OPENCODE_CONFIG":             guestOpenCodeLLMConfigPath(config),
 	}, nil
 }
 
-func resolveOpenCodeCustomProviderTarget(ctx context.Context, config *appconfig.Config, configDB *ConfigStore, session *Session, providerID, model string) (LLMResolvedTarget, error) {
+func resolveOpenCodeCustomProviderTarget(ctx context.Context, config *appconfig.Config, configDB *ConfigStore, session *Session, providerID, model string) (llms.ResolvedTarget, error) {
 	envItems := sessionLLMProviderEnvItems(session)
 	sessionID := ""
 	if session != nil {
 		sessionID = session.Summary.ID
 	}
 	if hasEnabledLLMProviderID(ctx, configDB, providerID) {
-		return resolveRuntimeLLMTargetWithEnv(ctx, config, configDB, sessionID, llmProviderFamilyOpenAI, model, providerID, envItems)
+		return resolveRuntimeLLMTargetWithEnv(ctx, config, configDB, sessionID, llms.ProviderFamilyOpenAI, model, providerID, envItems)
 	}
 	if sessionID != "" && llms.HasOpenAIEnvProviderInput(envItems) {
 		sessionProviderID, err := ensureSessionOpenAIEnvProvider(ctx, configDB, sessionID, model, envItems)
 		if err != nil {
-			return LLMResolvedTarget{}, err
+			return llms.ResolvedTarget{}, err
 		}
 		if strings.TrimSpace(sessionProviderID) != "" {
-			return resolveRuntimeLLMTargetWithEnv(ctx, config, configDB, sessionID, llmProviderFamilyOpenAI, model, sessionProviderID, envItems)
+			return resolveRuntimeLLMTargetWithEnv(ctx, config, configDB, sessionID, llms.ProviderFamilyOpenAI, model, sessionProviderID, envItems)
 		}
 	}
-	if _, err := llms.EnsureOpenAIEnvProvider(ctx, configDB, defaultLLMEnvProviderLookup(ctx, config, configDB), providerID, providerID, llmProviderScopeEnvDefault, model, false); err != nil {
-		return LLMResolvedTarget{}, err
+	if _, err := llms.EnsureOpenAIEnvProvider(ctx, configDB, defaultLLMEnvProviderLookup(ctx, config, configDB), providerID, providerID, llms.ProviderScopeEnvDefault, model, false); err != nil {
+		return llms.ResolvedTarget{}, err
 	}
-	return resolveRuntimeLLMTargetWithEnv(ctx, config, configDB, sessionID, llmProviderFamilyOpenAI, model, providerID, envItems)
+	return resolveRuntimeLLMTargetWithEnv(ctx, config, configDB, sessionID, llms.ProviderFamilyOpenAI, model, providerID, envItems)
 }
 
 func isOptionalLLMFacadeConfigError(err error) bool {

@@ -1,19 +1,15 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/domain"
-	"agent-compose/pkg/agentcompose/projects"
 	"context"
 	"fmt"
 	"strings"
+
+	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/projects"
 )
 
-type (
-	ProjectSessionRelationFilter = domain.ProjectSessionRelationFilter
-	ProjectSessionStatus         = domain.ProjectSessionStatus
-)
-
-func (s *ConfigStore) ListProjectSessionRuns(ctx context.Context, filter ProjectSessionRelationFilter) ([]ProjectRunRecord, error) {
+func (s *ConfigStore) ListProjectSessionRuns(ctx context.Context, filter domain.ProjectSessionRelationFilter) ([]ProjectRunRecord, error) {
 	query := projects.SelectProjectRunSQL() + ` WHERE session_id != ''`
 	args := make([]any, 0, 4+len(filter.Statuses))
 	if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" {
@@ -70,7 +66,7 @@ func (s *ConfigStore) ListProjectRunsForSession(ctx context.Context, sessionID s
 	if sessionID == "" {
 		return nil, fmt.Errorf("session id is required")
 	}
-	return s.ListProjectSessionRuns(ctx, ProjectSessionRelationFilter{SessionID: sessionID})
+	return s.ListProjectSessionRuns(ctx, domain.ProjectSessionRelationFilter{SessionID: sessionID})
 }
 
 func placeholders(count int) string {

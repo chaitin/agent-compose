@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	"agent-compose/pkg/agentcompose/domain"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
 	"testing"
@@ -19,34 +20,34 @@ func testDashboardOverviewAggregatorCountsRuns(t *testing.T) {
 	ctx := context.Background()
 	service, _, _ := newTestServiceAPIHarness(t)
 
-	running, err := service.store.CreateSession(ctx, "running", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil, nil, nil)
+	running, err := service.store.CreateSession(ctx, "running", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession running returned error: %v", err)
 	}
-	running.Summary.VMStatus = VMStatusRunning
+	running.Summary.VMStatus = domain.VMStatusRunning
 	if err := service.store.UpdateSession(ctx, running); err != nil {
 		t.Fatalf("UpdateSession running returned error: %v", err)
 	}
-	failed, err := service.store.CreateSession(ctx, "failed", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil, nil, nil)
+	failed, err := service.store.CreateSession(ctx, "failed", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession failed returned error: %v", err)
 	}
-	failed.Summary.VMStatus = VMStatusFailed
+	failed.Summary.VMStatus = domain.VMStatusFailed
 	if err := service.store.UpdateSession(ctx, failed); err != nil {
 		t.Fatalf("UpdateSession failed returned error: %v", err)
 	}
 
 	now := time.Now().UTC()
 	loader, err := service.configDB.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{ID: "loader-a", Name: "loader a", Runtime: LoaderRuntimeScheduler, Enabled: true},
+		Summary: domain.LoaderSummary{ID: "loader-a", Name: "loader a", Runtime: domain.LoaderRuntimeScheduler, Enabled: true},
 		Script:  "export default {}",
 	})
 	if err != nil {
 		t.Fatalf("CreateLoader returned error: %v", err)
 	}
-	for _, run := range []LoaderRunSummary{
-		{ID: "run-running", LoaderID: loader.Summary.ID, Status: LoaderRunStatusRunning, StartedAt: now},
-		{ID: "run-skipped", LoaderID: loader.Summary.ID, Status: LoaderRunStatusSkipped, StartedAt: now.Add(-time.Second)},
+	for _, run := range []domain.LoaderRunSummary{
+		{ID: "run-running", LoaderID: loader.Summary.ID, Status: domain.LoaderRunStatusRunning, StartedAt: now},
+		{ID: "run-skipped", LoaderID: loader.Summary.ID, Status: domain.LoaderRunStatusSkipped, StartedAt: now.Add(-time.Second)},
 	} {
 		if err := service.configDB.CreateLoaderRun(ctx, run); err != nil {
 			t.Fatalf("CreateLoaderRun %s returned error: %v", run.ID, err)

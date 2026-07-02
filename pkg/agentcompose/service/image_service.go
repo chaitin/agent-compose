@@ -11,24 +11,12 @@ import (
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
-type (
-	ImageBackend        = images.Backend
-	ImageListRequest    = images.ListRequest
-	ImageListResult     = images.ListResult
-	ImagePullRequest    = images.PullRequest
-	ImagePullResult     = images.PullResult
-	ImageInspectRequest = images.InspectRequest
-	ImageInspectResult  = images.InspectResult
-	ImageRemoveRequest  = images.RemoveRequest
-	ImageRemoveResult   = images.RemoveResult
-)
-
 func (s *Service) ListImages(ctx context.Context, req *connect.Request[agentcomposev2.ListImagesRequest]) (*connect.Response[agentcomposev2.ListImagesResponse], error) {
 	backend, err := s.imageBackendForStore(req.Msg.GetStore())
 	if err != nil {
 		return nil, err
 	}
-	result, err := backend.ListImages(ctx, ImageListRequest{
+	result, err := backend.ListImages(ctx, images.ListRequest{
 		Query: strings.TrimSpace(req.Msg.GetQuery()),
 		All:   req.Msg.GetAll(),
 	})
@@ -54,7 +42,7 @@ func (s *Service) PullImage(ctx context.Context, req *connect.Request[agentcompo
 	if err != nil {
 		return nil, err
 	}
-	result, err := backend.PullImage(ctx, ImagePullRequest{
+	result, err := backend.PullImage(ctx, images.PullRequest{
 		ImageRef: imageRef,
 		Platform: req.Msg.GetPlatform(),
 	})
@@ -79,7 +67,7 @@ func (s *Service) InspectImage(ctx context.Context, req *connect.Request[agentco
 	if err != nil {
 		return nil, err
 	}
-	result, err := backend.InspectImage(ctx, ImageInspectRequest{ImageRef: imageRef})
+	result, err := backend.InspectImage(ctx, images.InspectRequest{ImageRef: imageRef})
 	if err != nil {
 		return nil, connectErrorForImageBackend("inspect image", imageRef, err)
 	}
@@ -98,7 +86,7 @@ func (s *Service) RemoveImage(ctx context.Context, req *connect.Request[agentcom
 	if err != nil {
 		return nil, err
 	}
-	result, err := backend.RemoveImage(ctx, ImageRemoveRequest{
+	result, err := backend.RemoveImage(ctx, images.RemoveRequest{
 		ImageRef:      imageRef,
 		Force:         req.Msg.GetForce(),
 		PruneChildren: req.Msg.GetPruneChildren(),
@@ -114,7 +102,7 @@ func (s *Service) RemoveImage(ctx context.Context, req *connect.Request[agentcom
 	}), nil
 }
 
-func (s *Service) imageBackendForStore(store agentcomposev2.ImageStoreKind) (ImageBackend, error) {
+func (s *Service) imageBackendForStore(store agentcomposev2.ImageStoreKind) (images.Backend, error) {
 	switch store {
 	case agentcomposev2.ImageStoreKind_IMAGE_STORE_KIND_UNSPECIFIED:
 		if s.autoImages != nil {

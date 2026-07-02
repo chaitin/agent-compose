@@ -17,6 +17,7 @@ import (
 	protocolbridge "github.com/chaitin/ai-api-protocol-bridge"
 	"github.com/labstack/echo/v4"
 
+	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/agentcompose/execution"
 	"agent-compose/pkg/agentcompose/llms"
 	appconfig "agent-compose/pkg/config"
@@ -56,9 +57,9 @@ func TestIsRuntimeLLMFacadeRequestMatchesOnlyRegisteredPOSTRoutes(t *testing.T) 
 }
 
 func TestRuntimeLLMUseGenericResponsesTextPartsRequiresExplicitProviderFlag(t *testing.T) {
-	target := LLMResolvedTarget{
-		Provider: LLMProvider{ID: "not-qwen", Name: "qwen-compatible-v2"},
-		Model:    LLMModel{ID: "alias-qwen", Name: "qwen3.7-max"},
+	target := llms.ResolvedTarget{
+		Provider: llms.Provider{ID: "not-qwen", Name: "qwen-compatible-v2"},
+		Model:    llms.Model{ID: "alias-qwen", Name: "qwen3.7-max"},
 	}
 	if llms.UseGenericResponsesTextParts(target, protocolbridge.ProtocolOpenAIResponses) {
 		t.Fatalf("generic responses text parts should not be enabled by provider/model names")
@@ -91,15 +92,15 @@ func TestRuntimeLLMFacadeForwardsWithSessionToken(t *testing.T) {
 	service.config.LLMAPIEndpoint = upstream.URL
 	service.llm.client = upstream.Client()
 
-	session, err := service.store.CreateSession(ctx, "facade", "", "boxlite", "guest:latest", "", SessionTypeManual, nil, nil, nil)
+	session, err := service.store.CreateSession(ctx, "facade", "", "boxlite", "guest:latest", "", domain.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	session.Summary.VMStatus = VMStatusRunning
+	session.Summary.VMStatus = domain.VMStatusRunning
 	if err := service.store.UpdateSession(ctx, session); err != nil {
 		t.Fatalf("UpdateSession returned error: %v", err)
 	}
-	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, "model-a", "default", llmAPIProtocolResponses, "test", "run-1")
+	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, "model-a", "default", llms.APIProtocolResponses, "test", "run-1")
 	if err != nil {
 		t.Fatalf("llms.NewFacadeToken returned error: %v", err)
 	}
@@ -153,15 +154,15 @@ func TestRuntimeLLMFacadeFlushesSSEResponses(t *testing.T) {
 	service.config.LLMAPIEndpoint = upstream.URL
 	service.llm.client = upstream.Client()
 
-	session, err := service.store.CreateSession(ctx, "facade-sse", "", "boxlite", "guest:latest", "", SessionTypeManual, nil, nil, nil)
+	session, err := service.store.CreateSession(ctx, "facade-sse", "", "boxlite", "guest:latest", "", domain.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	session.Summary.VMStatus = VMStatusRunning
+	session.Summary.VMStatus = domain.VMStatusRunning
 	if err := service.store.UpdateSession(ctx, session); err != nil {
 		t.Fatalf("UpdateSession returned error: %v", err)
 	}
-	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, "model-a", "default", llmAPIProtocolResponses, "test", "run-1")
+	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, "model-a", "default", llms.APIProtocolResponses, "test", "run-1")
 	if err != nil {
 		t.Fatalf("llms.NewFacadeToken returned error: %v", err)
 	}
@@ -210,11 +211,11 @@ func TestRuntimeLLMAnthropicFacadeForwardsWithSessionToken(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 	service.llm.client = upstream.Client()
-	if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+	if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
 		ID:             "anthropic",
 		Name:           "anthropic",
-		ProviderType:   llmProviderFamilyAnthropic,
-		DefaultWireAPI: llmAPIProtocolMessages,
+		ProviderType:   llms.ProviderFamilyAnthropic,
+		DefaultWireAPI: llms.APIProtocolMessages,
 		BaseURL:        upstream.URL,
 		APIKey:         "provider-key",
 		AuthHeader:     "x-api-key",
@@ -222,20 +223,20 @@ func TestRuntimeLLMAnthropicFacadeForwardsWithSessionToken(t *testing.T) {
 		HeadersJSON:    `{"anthropic-version":"2023-06-01"}`,
 		Weight:         10,
 		Enabled:        true,
-		Scope:          llmProviderScopeSystem,
-	}, LLMModel{ID: "claude-test", Name: "claude-test", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+		Scope:          llms.ProviderScopeSystem,
+	}, llms.Model{ID: "claude-test", Name: "claude-test", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 		t.Fatalf("UpsertDefaultLLMConfig returned error: %v", err)
 	}
 
-	session, err := service.store.CreateSession(ctx, "facade-claude", "", "boxlite", "guest:latest", "", SessionTypeManual, nil, nil, nil)
+	session, err := service.store.CreateSession(ctx, "facade-claude", "", "boxlite", "guest:latest", "", domain.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	session.Summary.VMStatus = VMStatusRunning
+	session.Summary.VMStatus = domain.VMStatusRunning
 	if err := service.store.UpdateSession(ctx, session); err != nil {
 		t.Fatalf("UpdateSession returned error: %v", err)
 	}
-	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, "claude-test", "anthropic", llmAPIProtocolMessages, "test", "run-1")
+	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, "claude-test", "anthropic", llms.APIProtocolMessages, "test", "run-1")
 	if err != nil {
 		t.Fatalf("llms.NewFacadeToken returned error: %v", err)
 	}
@@ -286,11 +287,11 @@ func TestRuntimeLLMOpenAIResponsesFacadeBridgesToAnthropicProvider(t *testing.T)
 	}))
 	t.Cleanup(upstream.Close)
 	service.llm.client = upstream.Client()
-	if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+	if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
 		ID:             "anthropic",
 		Name:           "anthropic",
-		ProviderType:   llmProviderFamilyAnthropic,
-		DefaultWireAPI: llmAPIProtocolMessages,
+		ProviderType:   llms.ProviderFamilyAnthropic,
+		DefaultWireAPI: llms.APIProtocolMessages,
 		BaseURL:        upstream.URL,
 		APIKey:         "provider-key",
 		AuthHeader:     "x-api-key",
@@ -298,12 +299,12 @@ func TestRuntimeLLMOpenAIResponsesFacadeBridgesToAnthropicProvider(t *testing.T)
 		HeadersJSON:    `{"anthropic-version":"2023-06-01"}`,
 		Weight:         1,
 		Enabled:        true,
-		Scope:          llmProviderScopeSystem,
-	}, LLMModel{ID: "claude-test", Name: "claude-test", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+		Scope:          llms.ProviderScopeSystem,
+	}, llms.Model{ID: "claude-test", Name: "claude-test", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 		t.Fatalf("UpsertDefaultLLMConfig returned error: %v", err)
 	}
 	session := createRunningLLMFacadeSession(t, ctx, service, "bridge-openai-anthropic")
-	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, "claude-test", "anthropic", llmAPIProtocolResponses, "test", "run-1")
+	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, "claude-test", "anthropic", llms.APIProtocolResponses, "test", "run-1")
 	if err != nil {
 		t.Fatalf("llms.NewFacadeToken returned error: %v", err)
 	}
@@ -354,11 +355,11 @@ func TestRuntimeLLMAnthropicFacadeBridgesToOpenAIResponsesProvider(t *testing.T)
 	}))
 	t.Cleanup(upstream.Close)
 	service.llm.client = upstream.Client()
-	if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+	if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
 		ID:             "default",
 		Name:           "default",
-		ProviderType:   llmProviderFamilyOpenAI,
-		DefaultWireAPI: llmAPIProtocolResponses,
+		ProviderType:   llms.ProviderFamilyOpenAI,
+		DefaultWireAPI: llms.APIProtocolResponses,
 		BaseURL:        upstream.URL,
 		APIKey:         "provider-key",
 		AuthHeader:     "Authorization",
@@ -366,12 +367,12 @@ func TestRuntimeLLMAnthropicFacadeBridgesToOpenAIResponsesProvider(t *testing.T)
 		HeadersJSON:    `{}`,
 		Weight:         1,
 		Enabled:        true,
-		Scope:          llmProviderScopeSystem,
-	}, LLMModel{ID: "gpt-test", Name: "gpt-test", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+		Scope:          llms.ProviderScopeSystem,
+	}, llms.Model{ID: "gpt-test", Name: "gpt-test", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 		t.Fatalf("UpsertDefaultLLMConfig returned error: %v", err)
 	}
 	session := createRunningLLMFacadeSession(t, ctx, service, "bridge-anthropic-openai")
-	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, "gpt-test", "default", llmAPIProtocolMessages, "test", "run-1")
+	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, "gpt-test", "default", llms.APIProtocolMessages, "test", "run-1")
 	if err != nil {
 		t.Fatalf("llms.NewFacadeToken returned error: %v", err)
 	}
@@ -409,7 +410,7 @@ func TestAnthropicProviderCanBootstrapFromGenericLLMAPIKey(t *testing.T) {
 	t.Setenv("LLM_API_KEY", "generic-provider-key")
 	t.Setenv("LLM_API_ENDPOINT", "https://anthropic.example.invalid/v1/messages")
 
-	target, err := resolveLLMTargetForProviderFamily(ctx, service.config, service.configDB, llmProviderFamilyAnthropic, "claude-test")
+	target, err := resolveLLMTargetForProviderFamily(ctx, service.config, service.configDB, llms.ProviderFamilyAnthropic, "claude-test")
 	if err != nil {
 		t.Fatalf("resolveLLMTargetForProviderFamily returned error: %v", err)
 	}
@@ -446,18 +447,18 @@ func TestRuntimeLLMTargetDoesNotTreatGenericOpenAIEndpointAsAnthropic(t *testing
 	if target.Provider.ID != "default" {
 		t.Fatalf("provider id = %q, want default openai provider", target.Provider.ID)
 	}
-	if target.Provider.ProviderType != llmProviderFamilyOpenAI {
+	if target.Provider.ProviderType != llms.ProviderFamilyOpenAI {
 		t.Fatalf("provider type = %q, want openai", target.Provider.ProviderType)
 	}
 }
 
 func createRunningLLMFacadeSession(t *testing.T, ctx context.Context, service *Service, title string) *Session {
 	t.Helper()
-	session, err := service.store.CreateSession(ctx, title, "", "boxlite", "guest:latest", "", SessionTypeManual, nil, nil, nil)
+	session, err := service.store.CreateSession(ctx, title, "", "boxlite", "guest:latest", "", domain.SessionTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	session.Summary.VMStatus = VMStatusRunning
+	session.Summary.VMStatus = domain.VMStatusRunning
 	if err := service.store.UpdateSession(ctx, session); err != nil {
 		t.Fatalf("UpdateSession returned error: %v", err)
 	}
@@ -471,7 +472,7 @@ func TestAnthropicProviderCanBootstrapFromAuthToken(t *testing.T) {
 	t.Setenv("ANTHROPIC_BASE_URL", "https://anthropic.example.invalid")
 	service, _, _ := newTestServiceAPIHarness(t)
 
-	target, err := resolveLLMTargetForProviderFamily(ctx, service.config, service.configDB, llmProviderFamilyAnthropic, "kimi-k2.6")
+	target, err := resolveLLMTargetForProviderFamily(ctx, service.config, service.configDB, llms.ProviderFamilyAnthropic, "kimi-k2.6")
 	if err != nil {
 		t.Fatalf("resolveLLMTargetForProviderFamily returned error: %v", err)
 	}
@@ -487,7 +488,7 @@ func TestAnthropicProviderCanBootstrapFromAuthToken(t *testing.T) {
 }
 
 func TestProviderForwardHeadersFiltersManagedHeaders(t *testing.T) {
-	headers, err := llms.ProviderForwardHeaders(LLMProvider{
+	headers, err := llms.ProviderForwardHeaders(llms.Provider{
 		APIKey:      "provider-key",
 		AuthHeader:  "Authorization",
 		AuthScheme:  "Bearer",
@@ -510,7 +511,7 @@ func TestProviderForwardHeadersFiltersManagedHeaders(t *testing.T) {
 func TestNewLLMFacadeTokenDoesNotExpireByDefault(t *testing.T) {
 	ctx := context.Background()
 	service, _, _ := newTestServiceAPIHarness(t)
-	tokenValue, token, err := llms.NewFacadeToken("session-1", "model-a", "default", llmAPIProtocolResponses, "test", "run-1")
+	tokenValue, token, err := llms.NewFacadeToken("session-1", "model-a", "default", llms.APIProtocolResponses, "test", "run-1")
 	if err != nil {
 		t.Fatalf("llms.NewFacadeToken returned error: %v", err)
 	}
@@ -545,7 +546,7 @@ func TestManagedRuntimeEnvMapKeepsFacadeKeyAliases(t *testing.T) {
 	managedEnv := llms.ManagedRuntimeEnvMap([]SessionEnvVar{
 		{Name: "LLM_API_ENDPOINT", Value: "http://agent-compose.test/api/runtime/sessions/s1/llm/openai/v1"},
 		{Name: "LLM_API_KEY", Value: "facade-token"},
-		{Name: "LLM_API_PROTOCOL", Value: llmAPIProtocolResponses},
+		{Name: "LLM_API_PROTOCOL", Value: llms.APIProtocolResponses},
 		{Name: "OPENAI_API_KEY", Value: "facade-token"},
 	})
 	if managedEnv["OPENAI_API_KEY"] != "facade-token" {
@@ -563,11 +564,11 @@ func TestEnsureSessionLLMFacadeConfigUsesRequestedModel(t *testing.T) {
 	ctx := context.Background()
 	service, _, _ := newTestServiceAPIHarness(t)
 	service.config.RuntimeBaseURL = "http://agent-compose.test"
-	if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+	if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
 		ID:             "default",
 		Name:           "default",
-		ProviderType:   llmProviderFamilyOpenAI,
-		DefaultWireAPI: llmAPIProtocolResponses,
+		ProviderType:   llms.ProviderFamilyOpenAI,
+		DefaultWireAPI: llms.APIProtocolResponses,
 		BaseURL:        "https://llm.example.invalid/v1",
 		APIKey:         "provider-key",
 		AuthHeader:     "Authorization",
@@ -575,15 +576,15 @@ func TestEnsureSessionLLMFacadeConfigUsesRequestedModel(t *testing.T) {
 		HeadersJSON:    "{}",
 		Weight:         1,
 		Enabled:        true,
-		Scope:          llmProviderScopeSystem,
-	}, LLMModel{ID: "model-a", Name: "model-a", DefaultModel: true, Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+		Scope:          llms.ProviderScopeSystem,
+	}, llms.Model{ID: "model-a", Name: "model-a", DefaultModel: true, Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 		t.Fatalf("UpsertDefaultLLMConfig model-a returned error: %v", err)
 	}
-	if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+	if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
 		ID:             "default",
 		Name:           "default",
-		ProviderType:   llmProviderFamilyOpenAI,
-		DefaultWireAPI: llmAPIProtocolResponses,
+		ProviderType:   llms.ProviderFamilyOpenAI,
+		DefaultWireAPI: llms.APIProtocolResponses,
 		BaseURL:        "https://llm.example.invalid/v1",
 		APIKey:         "provider-key",
 		AuthHeader:     "Authorization",
@@ -591,8 +592,8 @@ func TestEnsureSessionLLMFacadeConfigUsesRequestedModel(t *testing.T) {
 		HeadersJSON:    "{}",
 		Weight:         1,
 		Enabled:        true,
-		Scope:          llmProviderScopeSystem,
-	}, LLMModel{ID: "model-b", Name: "model-b", DefaultModel: false, Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+		Scope:          llms.ProviderScopeSystem,
+	}, llms.Model{ID: "model-b", Name: "model-b", DefaultModel: false, Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 		t.Fatalf("UpsertDefaultLLMConfig model-b returned error: %v", err)
 	}
 	session := createRunningLLMFacadeSession(t, ctx, service, "requested-model")
@@ -624,11 +625,11 @@ func TestEnsureSessionOpenCodeCustomProviderWritesConfig(t *testing.T) {
 	ctx := context.Background()
 	service, _, _ := newTestServiceAPIHarness(t)
 	service.config.RuntimeBaseURL = "http://agent-compose.test"
-	if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+	if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
 		ID:             "chaitin",
 		Name:           "chaitin",
-		ProviderType:   llmProviderFamilyOpenAI,
-		DefaultWireAPI: llmAPIProtocolChatCompletions,
+		ProviderType:   llms.ProviderFamilyOpenAI,
+		DefaultWireAPI: llms.APIProtocolChatCompletions,
 		BaseURL:        "https://aiapi.example.invalid/v1",
 		APIKey:         "provider-key",
 		AuthHeader:     "Authorization",
@@ -636,8 +637,8 @@ func TestEnsureSessionOpenCodeCustomProviderWritesConfig(t *testing.T) {
 		HeadersJSON:    "{}",
 		Weight:         1,
 		Enabled:        true,
-		Scope:          llmProviderScopeSystem,
-	}, LLMModel{ID: "kimi-k2.6", Name: "kimi-k2.6", DefaultModel: true, Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+		Scope:          llms.ProviderScopeSystem,
+	}, llms.Model{ID: "kimi-k2.6", Name: "kimi-k2.6", DefaultModel: true, Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 		t.Fatalf("UpsertDefaultLLMConfig returned error: %v", err)
 	}
 	session := createRunningLLMFacadeSession(t, ctx, service, "opencode-custom")
@@ -659,7 +660,7 @@ func TestEnsureSessionOpenCodeCustomProviderWritesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
 	}
-	if token.ProviderID != "chaitin" || token.Model != "kimi-k2.6" || token.WireAPI != llmAPIProtocolChatCompletions {
+	if token.ProviderID != "chaitin" || token.Model != "kimi-k2.6" || token.WireAPI != llms.APIProtocolChatCompletions {
 		t.Fatalf("facade token = %#v, want chaitin/kimi-k2.6 chat facade", token)
 	}
 	configPath := filepath.Join(execution.HostSessionHome(session), ".config", "opencode", "opencode.json")
@@ -698,7 +699,7 @@ func TestEnsureSessionOpenCodeCustomProviderBootstrapsFromDefaultEnv(t *testing.
 	service, _, _ := newTestServiceAPIHarness(t)
 	service.config.RuntimeBaseURL = "http://agent-compose.test"
 	service.config.LLMAPIEndpoint = "https://aiapi.example.invalid"
-	service.config.LLMAPIProtocol = llmAPIProtocolChatCompletions
+	service.config.LLMAPIProtocol = llms.APIProtocolChatCompletions
 	service.config.LLMAPIKey = "default-env-key"
 	service.config.LLMModel = "kimi-k2.6"
 	session := createRunningLLMFacadeSession(t, ctx, service, "opencode-custom-default-env")
@@ -748,11 +749,11 @@ func TestEnsureSessionOpenCodeOpenAIWritesRequestedModelConfig(t *testing.T) {
 	ctx := context.Background()
 	service, _, _ := newTestServiceAPIHarness(t)
 	service.config.RuntimeBaseURL = "http://agent-compose.test"
-	if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+	if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
 		ID:             "default",
 		Name:           "default",
-		ProviderType:   llmProviderFamilyOpenAI,
-		DefaultWireAPI: llmAPIProtocolChatCompletions,
+		ProviderType:   llms.ProviderFamilyOpenAI,
+		DefaultWireAPI: llms.APIProtocolChatCompletions,
 		BaseURL:        "https://aiapi.example.invalid/v1",
 		APIKey:         "provider-key",
 		AuthHeader:     "Authorization",
@@ -760,8 +761,8 @@ func TestEnsureSessionOpenCodeOpenAIWritesRequestedModelConfig(t *testing.T) {
 		HeadersJSON:    "{}",
 		Weight:         1,
 		Enabled:        true,
-		Scope:          llmProviderScopeSystem,
-	}, LLMModel{ID: "kimi-k2.6", Name: "kimi-k2.6", DefaultModel: true, Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+		Scope:          llms.ProviderScopeSystem,
+	}, llms.Model{ID: "kimi-k2.6", Name: "kimi-k2.6", DefaultModel: true, Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 		t.Fatalf("UpsertDefaultLLMConfig returned error: %v", err)
 	}
 	session := createRunningLLMFacadeSession(t, ctx, service, "opencode-openai")
@@ -777,7 +778,7 @@ func TestEnsureSessionOpenCodeOpenAIWritesRequestedModelConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
 	}
-	if token.ProviderID != "default" || token.Model != "kimi-k2.6" || token.WireAPI != llmAPIProtocolResponses {
+	if token.ProviderID != "default" || token.Model != "kimi-k2.6" || token.WireAPI != llms.APIProtocolResponses {
 		t.Fatalf("facade token = %#v, want default/kimi-k2.6 responses facade", token)
 	}
 	payload, err := os.ReadFile(filepath.Join(execution.HostSessionHome(session), ".config", "opencode", "opencode.json"))
@@ -817,19 +818,19 @@ func TestEnsureSessionOpenCodeAnthropicUsesFacadeEnv(t *testing.T) {
 	t.Setenv("LLM_API_KEY", "")
 	service, _, _ := newTestServiceAPIHarness(t)
 	service.config.RuntimeBaseURL = "http://agent-compose.test"
-	if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+	if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
 		ID:             "anthropic",
 		Name:           "anthropic",
-		ProviderType:   llmProviderFamilyAnthropic,
-		DefaultWireAPI: llmAPIProtocolMessages,
+		ProviderType:   llms.ProviderFamilyAnthropic,
+		DefaultWireAPI: llms.APIProtocolMessages,
 		BaseURL:        "https://anthropic.example.invalid",
 		APIKey:         "anthropic-provider-key",
 		AuthHeader:     "x-api-key",
 		HeadersJSON:    `{"anthropic-version":"2023-06-01"}`,
 		Weight:         1,
 		Enabled:        true,
-		Scope:          llmProviderScopeSystem,
-	}, LLMModel{ID: "claude-sonnet-4-5", Name: "claude-sonnet-4-5", DefaultModel: true, Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+		Scope:          llms.ProviderScopeSystem,
+	}, llms.Model{ID: "claude-sonnet-4-5", Name: "claude-sonnet-4-5", DefaultModel: true, Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 		t.Fatalf("UpsertDefaultLLMConfig returned error: %v", err)
 	}
 	session := createRunningLLMFacadeSession(t, ctx, service, "opencode-anthropic")
@@ -874,7 +875,7 @@ func TestEnsureSessionOpenCodeAnthropicUsesFacadeEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
 	}
-	if token.ProviderID != "anthropic" || token.Model != "claude-sonnet-4-5" || token.WireAPI != llmAPIProtocolMessages {
+	if token.ProviderID != "anthropic" || token.Model != "claude-sonnet-4-5" || token.WireAPI != llms.APIProtocolMessages {
 		t.Fatalf("facade token = %#v, want anthropic messages facade", token)
 	}
 }
@@ -933,7 +934,7 @@ func TestEnsureSessionLLMFacadeConfigBootstrapsFromSessionEnvProvider(t *testing
 	if len(providers) != 1 {
 		t.Fatalf("provider count = %d, want 1: %#v", len(providers), providers)
 	}
-	if providers[0].ID != llms.SessionEnvProviderID(session.Summary.ID, llmProviderFamilyOpenAI) || providers[0].Scope != llmProviderScopeSessionEnv {
+	if providers[0].ID != llms.SessionEnvProviderID(session.Summary.ID, llms.ProviderFamilyOpenAI) || providers[0].Scope != llms.ProviderScopeSessionEnv {
 		t.Fatalf("provider identity = %#v, want session env provider", providers[0])
 	}
 	if providers[0].APIKey != "session-provider-key" {
@@ -951,11 +952,11 @@ func TestSessionEnvProviderDoesNotOverrideConfiguredProvider(t *testing.T) {
 	ctx := context.Background()
 	service, _, _ := newTestServiceAPIHarness(t)
 	service.config.RuntimeBaseURL = "http://agent-compose.test"
-	if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+	if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
 		ID:             "default",
 		Name:           "default",
-		ProviderType:   llmProviderFamilyOpenAI,
-		DefaultWireAPI: llmAPIProtocolResponses,
+		ProviderType:   llms.ProviderFamilyOpenAI,
+		DefaultWireAPI: llms.APIProtocolResponses,
 		BaseURL:        "https://configured.example.invalid/v1",
 		APIKey:         "configured-key",
 		AuthHeader:     "Authorization",
@@ -963,8 +964,8 @@ func TestSessionEnvProviderDoesNotOverrideConfiguredProvider(t *testing.T) {
 		HeadersJSON:    "{}",
 		Weight:         1,
 		Enabled:        true,
-		Scope:          llmProviderScopeSystem,
-	}, LLMModel{ID: "configured-model", Name: "configured-model", DefaultModel: true, Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+		Scope:          llms.ProviderScopeSystem,
+	}, llms.Model{ID: "configured-model", Name: "configured-model", DefaultModel: true, Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 		t.Fatalf("UpsertDefaultLLMConfig returned error: %v", err)
 	}
 	session := createRunningLLMFacadeSession(t, ctx, service, "configured-provider")
@@ -1025,7 +1026,7 @@ func TestSessionEnvGenericMessagesEndpointBootstrapsOnlyAnthropicProvider(t *tes
 	if len(providers) != 1 {
 		t.Fatalf("provider count = %d, want only anthropic provider: %#v", len(providers), providers)
 	}
-	if providers[0].ID != llms.SessionEnvProviderID(session.Summary.ID, llmProviderFamilyAnthropic) || providers[0].ProviderType != llmProviderFamilyAnthropic || providers[0].Scope != llmProviderScopeSessionEnv {
+	if providers[0].ID != llms.SessionEnvProviderID(session.Summary.ID, llms.ProviderFamilyAnthropic) || providers[0].ProviderType != llms.ProviderFamilyAnthropic || providers[0].Scope != llms.ProviderScopeSessionEnv {
 		t.Fatalf("provider = %#v, want session-scoped anthropic provider", providers[0])
 	}
 	if providers[0].BaseURL != "https://session-anthropic.example.invalid/v1" {
@@ -1044,13 +1045,13 @@ func TestDockerClaudeFacadeUsesSessionRuntimeBaseURL(t *testing.T) {
 	service.config.LLMAPIEndpoint = ""
 	service.config.LLMAPIKey = ""
 	service.config.LLMModel = ""
-	session, err := service.store.CreateSession(ctx, "docker-session-runtime-base", "", "docker", "guest:latest", "", SessionTypeManual, nil, []SessionEnvVar{
+	session, err := service.store.CreateSession(ctx, "docker-session-runtime-base", "", "docker", "guest:latest", "", domain.SessionTypeManual, nil, []SessionEnvVar{
 		{Name: "AGENT_COMPOSE_RUNTIME_BASE_URL", Value: "http://172.17.0.1:7410"},
 	}, nil)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	session.Summary.VMStatus = VMStatusRunning
+	session.Summary.VMStatus = domain.VMStatusRunning
 	session.ProviderEnvItems = []SessionEnvVar{
 		{Name: "ANTHROPIC_API_KEY", Value: "session-provider-key", Secret: true},
 		{Name: "ANTHROPIC_BASE_URL", Value: "https://anthropic.example.invalid"},
@@ -1105,16 +1106,16 @@ func TestSessionEnvProvidersAreScopedPerSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListEnabledLLMProviders returned error: %v", err)
 	}
-	byID := map[string]LLMProvider{}
+	byID := map[string]llms.Provider{}
 	for _, provider := range providers {
 		byID[provider.ID] = provider
 	}
-	providerA := byID[llms.SessionEnvProviderID(sessionA.Summary.ID, llmProviderFamilyOpenAI)]
-	providerB := byID[llms.SessionEnvProviderID(sessionB.Summary.ID, llmProviderFamilyOpenAI)]
-	if providerA.APIKey != "session-key-a" || providerA.BaseURL != "https://session-a.example.invalid/v1" || providerA.Scope != llmProviderScopeSessionEnv {
+	providerA := byID[llms.SessionEnvProviderID(sessionA.Summary.ID, llms.ProviderFamilyOpenAI)]
+	providerB := byID[llms.SessionEnvProviderID(sessionB.Summary.ID, llms.ProviderFamilyOpenAI)]
+	if providerA.APIKey != "session-key-a" || providerA.BaseURL != "https://session-a.example.invalid/v1" || providerA.Scope != llms.ProviderScopeSessionEnv {
 		t.Fatalf("session A provider = %#v", providerA)
 	}
-	if providerB.APIKey != "session-key-b" || providerB.BaseURL != "https://session-b.example.invalid/v1" || providerB.Scope != llmProviderScopeSessionEnv {
+	if providerB.APIKey != "session-key-b" || providerB.BaseURL != "https://session-b.example.invalid/v1" || providerB.Scope != llms.ProviderScopeSessionEnv {
 		t.Fatalf("session B provider = %#v", providerB)
 	}
 	models, err := service.configDB.ListEnabledLLMModels(ctx)
@@ -1166,7 +1167,7 @@ func TestSessionEnvProviderSelectionUsesAgentFamilyPreference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLLMFacadeToken(claude) returned error: %v", err)
 	}
-	if claudeToken.ProviderID != llms.SessionEnvProviderID(session.Summary.ID, llmProviderFamilyAnthropic) {
+	if claudeToken.ProviderID != llms.SessionEnvProviderID(session.Summary.ID, llms.ProviderFamilyAnthropic) {
 		t.Fatalf("claude provider id = %q, want anthropic session provider", claudeToken.ProviderID)
 	}
 
@@ -1178,7 +1179,7 @@ func TestSessionEnvProviderSelectionUsesAgentFamilyPreference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLLMFacadeToken(codex) returned error: %v", err)
 	}
-	if codexToken.ProviderID != llms.SessionEnvProviderID(session.Summary.ID, llmProviderFamilyOpenAI) {
+	if codexToken.ProviderID != llms.SessionEnvProviderID(session.Summary.ID, llms.ProviderFamilyOpenAI) {
 		t.Fatalf("codex provider id = %q, want openai session provider", codexToken.ProviderID)
 	}
 }
@@ -1209,8 +1210,8 @@ func TestCodexFacadeCanUseAnthropicOnlySessionEnvProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
 	}
-	wantProviderID := llms.SessionEnvProviderID(session.Summary.ID, llmProviderFamilyAnthropic)
-	if token.ProviderID != wantProviderID || token.Model != "kimi-k2.6" || token.WireAPI != llmAPIProtocolResponses {
+	wantProviderID := llms.SessionEnvProviderID(session.Summary.ID, llms.ProviderFamilyAnthropic)
+	if token.ProviderID != wantProviderID || token.Model != "kimi-k2.6" || token.WireAPI != llms.APIProtocolResponses {
 		t.Fatalf("facade token = %#v, want provider %q, model kimi-k2.6, responses facade", token, wantProviderID)
 	}
 }
@@ -1231,7 +1232,7 @@ func TestDaemonEnvProviderSelectionUsesAgentFamilyPreference(t *testing.T) {
 	service.config.RuntimeBaseURL = "http://agent-compose.test"
 	service.config.LLMAPIEndpoint = "https://openai.example.invalid"
 	service.config.LLMAPIKey = "openai-key"
-	service.config.LLMAPIProtocol = llmAPIProtocolChatCompletions
+	service.config.LLMAPIProtocol = llms.APIProtocolChatCompletions
 	service.config.LLMModel = "shared-model"
 
 	session := createRunningLLMFacadeSession(t, ctx, service, "daemon-env-agent-family")
@@ -1239,17 +1240,17 @@ func TestDaemonEnvProviderSelectionUsesAgentFamilyPreference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureSessionLLMFacadeConfig(codex) returned error: %v", err)
 	}
-	if env["LLM_API_PROTOCOL"] != llmAPIProtocolResponses {
+	if env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses {
 		t.Fatalf("LLM_API_PROTOCOL = %q, want responses facade wire API", env["LLM_API_PROTOCOL"])
 	}
 	token, err := service.configDB.GetLLMFacadeToken(ctx, env["AGENT_COMPOSE_SESSION_TOKEN"])
 	if err != nil {
 		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
 	}
-	if token.ProviderID != llmProviderIDDefaultOpenAI {
+	if token.ProviderID != llms.ProviderIDDefaultOpenAI {
 		t.Fatalf("codex provider id = %q, want default OpenAI provider", token.ProviderID)
 	}
-	if token.WireAPI != llmAPIProtocolResponses {
+	if token.WireAPI != llms.APIProtocolResponses {
 		t.Fatalf("codex token wire api = %q, want responses facade wire API", token.WireAPI)
 	}
 }
@@ -1280,10 +1281,10 @@ func TestSessionEnvProviderIsNotSelectedWithoutProviderID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveLLMTarget returned error: %v", err)
 	}
-	if target.Provider.ID == llms.SessionEnvProviderID(session.Summary.ID, llmProviderFamilyOpenAI) || target.Provider.APIKey == "session-only-key" {
+	if target.Provider.ID == llms.SessionEnvProviderID(session.Summary.ID, llms.ProviderFamilyOpenAI) || target.Provider.APIKey == "session-only-key" {
 		t.Fatalf("daemon target selected session env provider: %#v", target.Provider)
 	}
-	if target.Provider.ID != llmProviderIDDefaultOpenAI || target.Provider.Scope != llmProviderScopeEnvDefault {
+	if target.Provider.ID != llms.ProviderIDDefaultOpenAI || target.Provider.Scope != llms.ProviderScopeEnvDefault {
 		t.Fatalf("daemon target = %#v, want default env provider", target.Provider)
 	}
 }
@@ -1310,7 +1311,7 @@ func TestSessionEnvProviderResolutionWithProviderIDDoesNotBootstrapDefault(t *te
 		t.Fatalf("ensureSessionLLMFacadeConfig returned error: %v", err)
 	}
 
-	providerID := llms.SessionEnvProviderID(session.Summary.ID, llmProviderFamilyOpenAI)
+	providerID := llms.SessionEnvProviderID(session.Summary.ID, llms.ProviderFamilyOpenAI)
 	target, err := resolveRuntimeLLMTarget(ctx, service.config, service.configDB, "session-provider-id-model", providerID)
 	if err != nil {
 		t.Fatalf("resolveRuntimeLLMTarget returned error: %v", err)
@@ -1352,7 +1353,7 @@ func TestSessionEnvModelOnlyUsesDefaultEnvProvider(t *testing.T) {
 	if len(providers) != 1 {
 		t.Fatalf("provider count = %d, want 1: %#v", len(providers), providers)
 	}
-	if providers[0].ID != llmProviderIDDefaultOpenAI || providers[0].Scope != llmProviderScopeEnvDefault || providers[0].APIKey != "default-env-key" {
+	if providers[0].ID != llms.ProviderIDDefaultOpenAI || providers[0].Scope != llms.ProviderScopeEnvDefault || providers[0].APIKey != "default-env-key" {
 		t.Fatalf("provider = %#v, want default env provider", providers[0])
 	}
 	models, err := service.configDB.ListEnabledLLMModels(ctx)
@@ -1377,11 +1378,11 @@ func TestConfiguredProviderTakesPriorityOverDefaultEnvProvider(t *testing.T) {
 	if _, err := resolveLLMTarget(ctx, service.config, service.configDB, "shared-model"); err != nil {
 		t.Fatalf("resolveLLMTarget(default env) returned error: %v", err)
 	}
-	if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+	if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
 		ID:             "configured-openai",
 		Name:           "configured-openai",
-		ProviderType:   llmProviderFamilyOpenAI,
-		DefaultWireAPI: llmAPIProtocolResponses,
+		ProviderType:   llms.ProviderFamilyOpenAI,
+		DefaultWireAPI: llms.APIProtocolResponses,
 		BaseURL:        "https://configured-priority.example.invalid/v1",
 		APIKey:         "configured-key",
 		AuthHeader:     "Authorization",
@@ -1389,8 +1390,8 @@ func TestConfiguredProviderTakesPriorityOverDefaultEnvProvider(t *testing.T) {
 		HeadersJSON:    "{}",
 		Weight:         10,
 		Enabled:        true,
-		Scope:          llmProviderScopeSystem,
-	}, LLMModel{ID: "shared-model", Name: "shared-model", DefaultModel: true, Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+		Scope:          llms.ProviderScopeSystem,
+	}, llms.Model{ID: "shared-model", Name: "shared-model", DefaultModel: true, Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 		t.Fatalf("UpsertDefaultLLMConfig returned error: %v", err)
 	}
 
@@ -1522,7 +1523,7 @@ func TestEnsureSessionAnthropicEnvProviderAuthUsesSessionEnvOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListEnabledLLMProviders returned error: %v", err)
 	}
-	var found *LLMProvider
+	var found *llms.Provider
 	for i := range providers {
 		if providers[i].ID == providerID {
 			found = &providers[i]
@@ -1543,7 +1544,7 @@ func TestRevokeLLMFacadeTokensForSessionPrunesDeadRows(t *testing.T) {
 	now := time.Now().UTC()
 
 	// Active token for the target session: revoked by the call, but kept (within retention).
-	activeVal, active, err := llms.NewFacadeToken("sess-x", "m", "default", llmAPIProtocolResponses, "agent", "r-active")
+	activeVal, active, err := llms.NewFacadeToken("sess-x", "m", "default", llms.APIProtocolResponses, "agent", "r-active")
 	if err != nil {
 		t.Fatalf("llms.NewFacadeToken: %v", err)
 	}
@@ -1551,7 +1552,7 @@ func TestRevokeLLMFacadeTokensForSessionPrunesDeadRows(t *testing.T) {
 		t.Fatalf("save active: %v", err)
 	}
 	// Token revoked long ago: should be pruned.
-	oldVal, old, err := llms.NewFacadeToken("sess-y", "m", "default", llmAPIProtocolResponses, "agent", "r-old")
+	oldVal, old, err := llms.NewFacadeToken("sess-y", "m", "default", llms.APIProtocolResponses, "agent", "r-old")
 	if err != nil {
 		t.Fatalf("llms.NewFacadeToken: %v", err)
 	}
@@ -1560,7 +1561,7 @@ func TestRevokeLLMFacadeTokensForSessionPrunesDeadRows(t *testing.T) {
 		t.Fatalf("save old: %v", err)
 	}
 	// Expired token: should be pruned.
-	expVal, exp, err := llms.NewFacadeToken("sess-z", "m", "default", llmAPIProtocolResponses, "agent", "r-exp")
+	expVal, exp, err := llms.NewFacadeToken("sess-z", "m", "default", llms.APIProtocolResponses, "agent", "r-exp")
 	if err != nil {
 		t.Fatalf("llms.NewFacadeToken: %v", err)
 	}
@@ -1591,7 +1592,7 @@ func TestRevokeLLMFacadeTokensForSessionPrunesDeadRows(t *testing.T) {
 func TestDeleteLLMFacadeToken(t *testing.T) {
 	store := newTestConfigStore(t)
 	ctx := context.Background()
-	val, token, err := llms.NewFacadeToken("sess", "m", "default", llmAPIProtocolResponses, "agent", "run-1")
+	val, token, err := llms.NewFacadeToken("sess", "m", "default", llms.APIProtocolResponses, "agent", "run-1")
 	if err != nil {
 		t.Fatalf("llms.NewFacadeToken: %v", err)
 	}
@@ -1619,11 +1620,11 @@ func TestResolveRuntimeLLMTargetByExistingProviderID(t *testing.T) {
 	}
 	store := newTestConfigStore(t)
 	ctx := context.Background()
-	if err := store.UpsertDefaultLLMConfig(ctx, LLMProvider{
-		ID: "p1", Name: "p1", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolResponses,
+	if err := store.UpsertDefaultLLMConfig(ctx, llms.Provider{
+		ID: "p1", Name: "p1", ProviderType: llms.ProviderFamilyOpenAI, DefaultWireAPI: llms.APIProtocolResponses,
 		BaseURL: "https://api.example.com", APIKey: "k", AuthHeader: "Authorization", AuthScheme: "Bearer",
-		Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
-	}, LLMModel{ID: "m1", Name: "m1", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+		Weight: 10, Enabled: true, Scope: llms.ProviderScopeSystem,
+	}, llms.Model{ID: "m1", Name: "m1", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 		t.Fatalf("UpsertDefaultLLMConfig: %v", err)
 	}
 
@@ -1665,11 +1666,11 @@ func testRuntimeLLMFacadeRoundTrips(t *testing.T) {
 
 	upsertProvider := func(t *testing.T, id, family, wireAPI, baseURL, authHeader, authScheme, model string) {
 		t.Helper()
-		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
 			ID: id, Name: id, ProviderType: family, DefaultWireAPI: wireAPI,
 			BaseURL: baseURL, APIKey: "provider-key", AuthHeader: authHeader, AuthScheme: authScheme,
-			HeadersJSON: `{"anthropic-version":"2023-06-01"}`, Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
-		}, LLMModel{ID: model, Name: model, Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			HeadersJSON: `{"anthropic-version":"2023-06-01"}`, Weight: 10, Enabled: true, Scope: llms.ProviderScopeSystem,
+		}, llms.Model{ID: model, Name: model, Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 			t.Fatalf("UpsertDefaultLLMConfig(%s): %v", id, err)
 		}
 	}
@@ -1738,16 +1739,16 @@ func testRuntimeLLMFacadeRoundTrips(t *testing.T) {
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
-		upsertProvider(t, "e2e-openai-resp", llmProviderFamilyOpenAI, llmAPIProtocolResponses, upstream.URL, "Authorization", "Bearer", "alias-resp")
-		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
-			ID: "e2e-openai-resp", Name: "e2e-openai-resp", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolResponses,
+		upsertProvider(t, "e2e-openai-resp", llms.ProviderFamilyOpenAI, llms.APIProtocolResponses, upstream.URL, "Authorization", "Bearer", "alias-resp")
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+			ID: "e2e-openai-resp", Name: "e2e-openai-resp", ProviderType: llms.ProviderFamilyOpenAI, DefaultWireAPI: llms.APIProtocolResponses,
 			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "Authorization", AuthScheme: "Bearer",
-			Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
-		}, LLMModel{ID: "alias-resp", Name: "m-resp", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			Weight: 10, Enabled: true, Scope: llms.ProviderScopeSystem,
+		}, llms.Model{ID: "alias-resp", Name: "m-resp", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 			t.Fatalf("UpsertDefaultLLMConfig(alias-resp): %v", err)
 		}
 		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-openai-resp")
-		token := mintToken(t, session, "alias-resp", "e2e-openai-resp", llmAPIProtocolResponses)
+		token := mintToken(t, session, "alias-resp", "e2e-openai-resp", llms.APIProtocolResponses)
 		rec := post(session.Summary.ID, "/llm/openai/v1/responses", token, requestBody)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -1782,15 +1783,15 @@ func testRuntimeLLMFacadeRoundTrips(t *testing.T) {
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
-		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
-			ID: "e2e-openai-chat", Name: "e2e-openai-chat", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolChatCompletions,
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+			ID: "e2e-openai-chat", Name: "e2e-openai-chat", ProviderType: llms.ProviderFamilyOpenAI, DefaultWireAPI: llms.APIProtocolChatCompletions,
 			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "Authorization", AuthScheme: "Bearer",
-			Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
-		}, LLMModel{ID: "alias-chat", Name: "m-chat", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			Weight: 10, Enabled: true, Scope: llms.ProviderScopeSystem,
+		}, llms.Model{ID: "alias-chat", Name: "m-chat", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 			t.Fatalf("UpsertDefaultLLMConfig(alias-chat): %v", err)
 		}
 		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-openai-chat")
-		token := mintToken(t, session, "alias-chat", "e2e-openai-chat", llmAPIProtocolChatCompletions)
+		token := mintToken(t, session, "alias-chat", "e2e-openai-chat", llms.APIProtocolChatCompletions)
 		rec := post(session.Summary.ID, "/llm/openai/v1/chat/completions", token, requestBody)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -1824,15 +1825,15 @@ func testRuntimeLLMFacadeRoundTrips(t *testing.T) {
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
-		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
-			ID: "e2e-qwen-compatible", Name: "e2e-qwen-compatible", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolResponses,
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+			ID: "e2e-qwen-compatible", Name: "e2e-qwen-compatible", ProviderType: llms.ProviderFamilyOpenAI, DefaultWireAPI: llms.APIProtocolResponses,
 			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "Authorization", AuthScheme: "Bearer",
-			UseGenericResponsesTextParts: true, Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
-		}, LLMModel{ID: "alias-qwen", Name: "qwen-compatible", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			UseGenericResponsesTextParts: true, Weight: 10, Enabled: true, Scope: llms.ProviderScopeSystem,
+		}, llms.Model{ID: "alias-qwen", Name: "qwen-compatible", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 			t.Fatalf("UpsertDefaultLLMConfig(alias-qwen): %v", err)
 		}
 		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-qwen-compatible")
-		token := mintToken(t, session, "alias-qwen", "e2e-qwen-compatible", llmAPIProtocolResponses)
+		token := mintToken(t, session, "alias-qwen", "e2e-qwen-compatible", llms.APIProtocolResponses)
 		rec := post(session.Summary.ID, "/llm/openai/v1/responses", token, requestBody)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -1885,15 +1886,15 @@ func testRuntimeLLMFacadeRoundTrips(t *testing.T) {
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
-		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
-			ID: "e2e-qwen-stream", Name: "e2e-qwen-stream", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolResponses,
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+			ID: "e2e-qwen-stream", Name: "e2e-qwen-stream", ProviderType: llms.ProviderFamilyOpenAI, DefaultWireAPI: llms.APIProtocolResponses,
 			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "Authorization", AuthScheme: "Bearer",
-			UseGenericResponsesTextParts: true, Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
-		}, LLMModel{ID: "alias-qwen-stream", Name: "qwen-compatible-stream", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			UseGenericResponsesTextParts: true, Weight: 10, Enabled: true, Scope: llms.ProviderScopeSystem,
+		}, llms.Model{ID: "alias-qwen-stream", Name: "qwen-compatible-stream", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 			t.Fatalf("UpsertDefaultLLMConfig(alias-qwen-stream): %v", err)
 		}
 		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-qwen-stream")
-		token := mintToken(t, session, "alias-qwen-stream", "e2e-qwen-stream", llmAPIProtocolResponses)
+		token := mintToken(t, session, "alias-qwen-stream", "e2e-qwen-stream", llms.APIProtocolResponses)
 		rec := post(session.Summary.ID, "/llm/openai/v1/responses", token, `{"model":"alias-qwen-stream","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":true}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -1934,15 +1935,15 @@ func testRuntimeLLMFacadeRoundTrips(t *testing.T) {
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
-		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
-			ID: "e2e-anthropic", Name: "e2e-anthropic", ProviderType: llmProviderFamilyAnthropic, DefaultWireAPI: llmAPIProtocolMessages,
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+			ID: "e2e-anthropic", Name: "e2e-anthropic", ProviderType: llms.ProviderFamilyAnthropic, DefaultWireAPI: llms.APIProtocolMessages,
 			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "x-api-key", AuthScheme: "",
-			HeadersJSON: `{"anthropic-version":"2023-06-01"}`, Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
-		}, LLMModel{ID: "alias-claude", Name: "m-claude", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			HeadersJSON: `{"anthropic-version":"2023-06-01"}`, Weight: 10, Enabled: true, Scope: llms.ProviderScopeSystem,
+		}, llms.Model{ID: "alias-claude", Name: "m-claude", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 			t.Fatalf("UpsertDefaultLLMConfig(alias-claude): %v", err)
 		}
 		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-anthropic")
-		token := mintToken(t, session, "alias-claude", "e2e-anthropic", llmAPIProtocolMessages)
+		token := mintToken(t, session, "alias-claude", "e2e-anthropic", llms.APIProtocolMessages)
 		rec := post(session.Summary.ID, "/llm/anthropic/v1/messages", token, requestBody)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -1956,9 +1957,9 @@ func testRuntimeLLMFacadeRoundTrips(t *testing.T) {
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
-		upsertProvider(t, "e2e-bridge", llmProviderFamilyAnthropic, llmAPIProtocolMessages, upstream.URL, "x-api-key", "", "m-bridge")
+		upsertProvider(t, "e2e-bridge", llms.ProviderFamilyAnthropic, llms.APIProtocolMessages, upstream.URL, "x-api-key", "", "m-bridge")
 		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-bridge")
-		token := mintToken(t, session, "m-bridge", "e2e-bridge", llmAPIProtocolResponses)
+		token := mintToken(t, session, "m-bridge", "e2e-bridge", llms.APIProtocolResponses)
 		rec := post(session.Summary.ID, "/llm/openai/v1/responses", token, `{"model":"m-bridge","input":"hi"}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -2007,15 +2008,15 @@ func testRuntimeLLMFacadeRoundTrips(t *testing.T) {
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
-		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
-			ID: "e2e-openai-resp-chat", Name: "e2e-openai-resp-chat", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolChatCompletions,
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+			ID: "e2e-openai-resp-chat", Name: "e2e-openai-resp-chat", ProviderType: llms.ProviderFamilyOpenAI, DefaultWireAPI: llms.APIProtocolChatCompletions,
 			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "Authorization", AuthScheme: "Bearer",
-			Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
-		}, LLMModel{ID: "alias-resp-chat", Name: "m-resp-chat", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			Weight: 10, Enabled: true, Scope: llms.ProviderScopeSystem,
+		}, llms.Model{ID: "alias-resp-chat", Name: "m-resp-chat", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 			t.Fatalf("UpsertDefaultLLMConfig(alias-resp-chat): %v", err)
 		}
 		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-openai-resp-chat")
-		token := mintToken(t, session, "alias-resp-chat", "e2e-openai-resp-chat", llmAPIProtocolResponses)
+		token := mintToken(t, session, "alias-resp-chat", "e2e-openai-resp-chat", llms.APIProtocolResponses)
 		rec := post(session.Summary.ID, "/llm/openai/v1/responses", token, requestBody)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -2057,15 +2058,15 @@ func testRuntimeLLMFacadeRoundTrips(t *testing.T) {
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
-		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
-			ID: "e2e-openai-chat-resp", Name: "e2e-openai-chat-resp", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolResponses,
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+			ID: "e2e-openai-chat-resp", Name: "e2e-openai-chat-resp", ProviderType: llms.ProviderFamilyOpenAI, DefaultWireAPI: llms.APIProtocolResponses,
 			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "Authorization", AuthScheme: "Bearer",
-			Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
-		}, LLMModel{ID: "alias-chat-resp", Name: "m-chat-resp", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			Weight: 10, Enabled: true, Scope: llms.ProviderScopeSystem,
+		}, llms.Model{ID: "alias-chat-resp", Name: "m-chat-resp", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 			t.Fatalf("UpsertDefaultLLMConfig(alias-chat-resp): %v", err)
 		}
 		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-openai-chat-resp")
-		token := mintToken(t, session, "alias-chat-resp", "e2e-openai-chat-resp", llmAPIProtocolChatCompletions)
+		token := mintToken(t, session, "alias-chat-resp", "e2e-openai-chat-resp", llms.APIProtocolChatCompletions)
 		rec := post(session.Summary.ID, "/llm/openai/v1/chat/completions", token, requestBody)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -2097,9 +2098,9 @@ func testRuntimeLLMFacadeRoundTrips(t *testing.T) {
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
-		upsertProvider(t, "e2e-sse", llmProviderFamilyOpenAI, llmAPIProtocolResponses, upstream.URL, "Authorization", "Bearer", "m-sse")
+		upsertProvider(t, "e2e-sse", llms.ProviderFamilyOpenAI, llms.APIProtocolResponses, upstream.URL, "Authorization", "Bearer", "m-sse")
 		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-sse")
-		token := mintToken(t, session, "m-sse", "e2e-sse", llmAPIProtocolResponses)
+		token := mintToken(t, session, "m-sse", "e2e-sse", llms.APIProtocolResponses)
 		rec := post(session.Summary.ID, "/llm/openai/v1/responses", token, `{"model":"m-sse","input":"hi","stream":true}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -2132,15 +2133,15 @@ func testRuntimeLLMFacadeRoundTrips(t *testing.T) {
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
-		if err := service.configDB.UpsertDefaultLLMConfig(ctx, LLMProvider{
-			ID: "e2e-openai-stream-chat", Name: "e2e-openai-stream-chat", ProviderType: llmProviderFamilyOpenAI, DefaultWireAPI: llmAPIProtocolChatCompletions,
+		if err := service.configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+			ID: "e2e-openai-stream-chat", Name: "e2e-openai-stream-chat", ProviderType: llms.ProviderFamilyOpenAI, DefaultWireAPI: llms.APIProtocolChatCompletions,
 			BaseURL: upstream.URL, APIKey: "provider-key", AuthHeader: "Authorization", AuthScheme: "Bearer",
-			Weight: 10, Enabled: true, Scope: llmProviderScopeSystem,
-		}, LLMModel{ID: "alias-stream-chat", Name: "m-stream-chat", Enabled: true, Scope: llmProviderScopeSystem}); err != nil {
+			Weight: 10, Enabled: true, Scope: llms.ProviderScopeSystem,
+		}, llms.Model{ID: "alias-stream-chat", Name: "m-stream-chat", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 			t.Fatalf("UpsertDefaultLLMConfig(alias-stream-chat): %v", err)
 		}
 		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-openai-stream-chat")
-		token := mintToken(t, session, "alias-stream-chat", "e2e-openai-stream-chat", llmAPIProtocolResponses)
+		token := mintToken(t, session, "alias-stream-chat", "e2e-openai-stream-chat", llms.APIProtocolResponses)
 		rec := post(session.Summary.ID, "/llm/openai/v1/responses", token, `{"model":"alias-stream-chat","input":"hi","stream":true}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -2160,9 +2161,9 @@ func testRuntimeLLMFacadeRoundTrips(t *testing.T) {
 		}))
 		t.Cleanup(upstream.Close)
 		service.llm.client = upstream.Client()
-		upsertProvider(t, "e2e-rej", llmProviderFamilyOpenAI, llmAPIProtocolResponses, upstream.URL, "Authorization", "Bearer", "m-rej")
+		upsertProvider(t, "e2e-rej", llms.ProviderFamilyOpenAI, llms.APIProtocolResponses, upstream.URL, "Authorization", "Bearer", "m-rej")
 		session := createRunningLLMFacadeSession(t, ctx, service, "e2e-rej")
-		token := mintToken(t, session, "m-rej", "e2e-rej", llmAPIProtocolResponses)
+		token := mintToken(t, session, "m-rej", "e2e-rej", llms.APIProtocolResponses)
 		path := "/llm/openai/v1/responses"
 
 		if rec := post(session.Summary.ID, path, "", `{"model":"m-rej","input":"hi"}`); rec.Code != http.StatusUnauthorized {
@@ -2239,11 +2240,11 @@ func TestResolveRuntimeLLMTargetReusesSessionProviderAfterResume(t *testing.T) {
 		{Name: "LLM_API_KEY", Value: "session-real-key", Secret: true},
 		{Name: "LLM_MODEL", Value: "m-resume"},
 	}
-	target, err := resolveRuntimeLLMTargetWithEnv(ctx, cfg, store, sessionID, llmProviderFamilyOpenAI, "", "", creationEnv)
+	target, err := resolveRuntimeLLMTargetWithEnv(ctx, cfg, store, sessionID, llms.ProviderFamilyOpenAI, "", "", creationEnv)
 	if err != nil {
 		t.Fatalf("creation resolve: %v", err)
 	}
-	wantID := llms.SessionEnvProviderID(sessionID, llmProviderFamilyOpenAI)
+	wantID := llms.SessionEnvProviderID(sessionID, llms.ProviderFamilyOpenAI)
 	if target.Provider.ID != wantID || target.Provider.APIKey != "session-real-key" {
 		t.Fatalf("creation target = %q/%q, want %q/session-real-key", target.Provider.ID, target.Provider.APIKey, wantID)
 	}
@@ -2253,7 +2254,7 @@ func TestResolveRuntimeLLMTargetReusesSessionProviderAfterResume(t *testing.T) {
 		{Name: "LLM_API_ENDPOINT", Value: "https://session-llm.example.invalid"},
 		{Name: "LLM_MODEL", Value: "m-resume"},
 	}
-	resumed, err := resolveRuntimeLLMTargetWithEnv(ctx, cfg, store, sessionID, llmProviderFamilyOpenAI, "", "", resumeEnv)
+	resumed, err := resolveRuntimeLLMTargetWithEnv(ctx, cfg, store, sessionID, llms.ProviderFamilyOpenAI, "", "", resumeEnv)
 	if err != nil {
 		t.Fatalf("resume resolve: %v", err)
 	}
@@ -2274,7 +2275,7 @@ func TestResolveRuntimeLLMTargetReusesSessionProviderAfterResume(t *testing.T) {
 		{Name: "LLM_API_KEY", Value: "rotated-key", Secret: true},
 		{Name: "LLM_MODEL", Value: "m-resume"},
 	}
-	rotated, err := resolveRuntimeLLMTargetWithEnv(ctx, cfg, store, sessionID, llmProviderFamilyOpenAI, "", "", rotatedEnv)
+	rotated, err := resolveRuntimeLLMTargetWithEnv(ctx, cfg, store, sessionID, llms.ProviderFamilyOpenAI, "", "", rotatedEnv)
 	if err != nil {
 		t.Fatalf("rotation resolve: %v", err)
 	}

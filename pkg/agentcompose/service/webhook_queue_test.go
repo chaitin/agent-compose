@@ -1,11 +1,15 @@
 package agentcompose
 
 import (
-	appconfig "agent-compose/pkg/config"
 	"context"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/loaders"
+	"agent-compose/pkg/agentcompose/webhooks"
+	appconfig "agent-compose/pkg/config"
 )
 
 func TestWebhookRunQueueMatchesPayloadRules(t *testing.T) {
@@ -22,7 +26,7 @@ func TestWebhookQueueE2EMatchesPayloadRules(t *testing.T) {
 
 func testWebhookRunQueueMatchesPayloadRules(t *testing.T) {
 	t.Helper()
-	queue, err := newWebhookRunQueueFromConfig(&appconfig.Config{
+	queue, err := webhooks.NewRunQueueFromConfig(&appconfig.Config{
 		WebhookQueueDefaultWorkers: 8,
 		WebhookQueueRulesJSON: `[
 			{"name":"repo-a","workers":1,"match":{"topic":"webhook.github.push","payload":{"body.repository.full_name":"org/repo-a"}}},
@@ -30,10 +34,10 @@ func testWebhookRunQueueMatchesPayloadRules(t *testing.T) {
 		]`,
 	})
 	if err != nil {
-		t.Fatalf("newWebhookRunQueueFromConfig returned error: %v", err)
+		t.Fatalf("webhooks.NewRunQueueFromConfig returned error: %v", err)
 	}
 
-	name, workers := queue.Match(LoaderTopicEvent{
+	name, workers := queue.Match(domain.LoaderTopicEvent{
 		Topic: "webhook.github.push",
 		Payload: map[string]any{
 			"body": map[string]any{
@@ -45,7 +49,7 @@ func testWebhookRunQueueMatchesPayloadRules(t *testing.T) {
 		t.Fatalf("repo-a queue = %s/%d", name, workers)
 	}
 
-	name, workers = queue.Match(LoaderTopicEvent{
+	name, workers = queue.Match(domain.LoaderTopicEvent{
 		Topic: "webhook.github.push",
 		Payload: map[string]any{
 			"body": map[string]any{
@@ -72,13 +76,13 @@ func TestWebhookQueueE2EReserveAndRelease(t *testing.T) {
 
 func testWebhookRunQueueReserveAndRelease(t *testing.T) {
 	t.Helper()
-	queue, err := newWebhookRunQueueFromConfig(&appconfig.Config{
+	queue, err := webhooks.NewRunQueueFromConfig(&appconfig.Config{
 		WebhookQueueDefaultWorkers: 1,
 	})
 	if err != nil {
-		t.Fatalf("newWebhookRunQueueFromConfig returned error: %v", err)
+		t.Fatalf("webhooks.NewRunQueueFromConfig returned error: %v", err)
 	}
-	event := LoaderTopicEvent{Topic: "webhook.github.push", Payload: map[string]any{}}
+	event := domain.LoaderTopicEvent{Topic: "webhook.github.push", Payload: map[string]any{}}
 	reservation, ok := queue.Reserve(event)
 	if !ok {
 		t.Fatalf("first reserve failed")
@@ -116,19 +120,19 @@ func testLoaderEventLoopRetriesWhenWebhookQueueFull(t *testing.T) {
 		},
 		configDB:     store,
 		bus:          newTestLoaderBus(8),
-		engine:       &QJSLoaderEngine{},
-		eventQueue:   newWebhookRunQueue(1),
+		engine:       &loaders.QJSLoaderEngine{},
+		eventQueue:   webhooks.NewRunQueue(1),
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
 		scheduleWake: make(chan struct{}, 1),
 	}
 	if _, err := manager.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{
+		Summary: domain.LoaderSummary{
 			ID:                "loader-webhook-queue",
 			Name:              "Webhook Queue",
-			Runtime:           LoaderRuntimeScheduler,
+			Runtime:           domain.LoaderRuntimeScheduler,
 			Enabled:           true,
-			ConcurrencyPolicy: LoaderConcurrencyPolicyParallel,
+			ConcurrencyPolicy: domain.LoaderConcurrencyPolicyParallel,
 		},
 		Script: `
 scheduler.on("webhook.queue.test", "on-webhook", function(event) {
@@ -140,7 +144,7 @@ scheduler.on("webhook.queue.test", "on-webhook", function(event) {
 		t.Fatalf("CreateLoader returned error: %v", err)
 	}
 
-	first, ok := manager.eventQueue.Reserve(LoaderTopicEvent{Topic: "webhook.queue.test", Payload: map[string]any{}})
+	first, ok := manager.eventQueue.Reserve(domain.LoaderTopicEvent{Topic: "webhook.queue.test", Payload: map[string]any{}})
 	if !ok {
 		t.Fatalf("failed to fill queue")
 	}
@@ -148,9 +152,9 @@ scheduler.on("webhook.queue.test", "on-webhook", function(event) {
 
 	go manager.eventLoop()
 	dispatcher := NewEventDispatcher(ctx, store, manager.bus)
-	created, err := store.CreateEvent(ctx, TopicEventRecord{
+	created, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:         "webhook.queue.test",
-		Source:        TopicEventSourceWebhook,
+		Source:        domain.TopicEventSourceWebhook,
 		CorrelationID: "corr-queue",
 		PayloadJSON:   `{"eventId":"evt-queue","topic":"webhook.queue.test","body":{"repository":{"full_name":"org/repo"}}}`,
 	})
@@ -165,7 +169,7 @@ scheduler.on("webhook.queue.test", "on-webhook", function(event) {
 		if err != nil {
 			t.Fatalf("GetEvent returned error: %v", err)
 		}
-		if loaded.DispatchStatus == TopicEventDispatchRetrying {
+		if loaded.DispatchStatus == domain.TopicEventDispatchRetrying {
 			if loaded.LastError == "" || loaded.NextAttemptAt.IsZero() {
 				t.Fatalf("retry metadata missing: %#v", loaded)
 			}
@@ -209,17 +213,17 @@ func testLoaderEventLoopRetriesWhenSkipPolicyLoaderBusy(t *testing.T) {
 		},
 		configDB:     store,
 		bus:          newTestLoaderBus(8),
-		engine:       &QJSLoaderEngine{},
-		eventQueue:   newWebhookRunQueue(8),
+		engine:       &loaders.QJSLoaderEngine{},
+		eventQueue:   webhooks.NewRunQueue(8),
 		loaders:      map[string]Loader{},
 		running:      map[string]int{"loader-webhook-busy": 1},
 		scheduleWake: make(chan struct{}, 1),
 	}
 	if _, err := manager.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{
+		Summary: domain.LoaderSummary{
 			ID:      "loader-webhook-busy",
 			Name:    "Webhook Busy",
-			Runtime: LoaderRuntimeScheduler,
+			Runtime: domain.LoaderRuntimeScheduler,
 			Enabled: true,
 		},
 		Script: `
@@ -236,9 +240,9 @@ scheduler.on("webhook.busy.test", "on-webhook", function(event) {
 
 	go manager.eventLoop()
 	dispatcher := NewEventDispatcher(ctx, store, manager.bus)
-	created, err := store.CreateEvent(ctx, TopicEventRecord{
+	created, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:         "webhook.busy.test",
-		Source:        TopicEventSourceWebhook,
+		Source:        domain.TopicEventSourceWebhook,
 		CorrelationID: "corr-busy",
 		PayloadJSON:   `{"eventId":"evt-busy","topic":"webhook.busy.test","body":{"repository":{"full_name":"org/repo"}}}`,
 	})
@@ -253,7 +257,7 @@ scheduler.on("webhook.busy.test", "on-webhook", function(event) {
 		if err != nil {
 			t.Fatalf("GetEvent returned error: %v", err)
 		}
-		if loaded.DispatchStatus == TopicEventDispatchRetrying {
+		if loaded.DispatchStatus == domain.TopicEventDispatchRetrying {
 			if loaded.LastError != "loader is already running" || loaded.NextAttemptAt.IsZero() {
 				t.Fatalf("retry metadata = %#v", loaded)
 			}
@@ -297,19 +301,19 @@ func testLoaderEventLoopDedupesWebhookTargetsByLoader(t *testing.T) {
 		},
 		configDB:     store,
 		bus:          newTestLoaderBus(8),
-		engine:       &QJSLoaderEngine{},
-		eventQueue:   newWebhookRunQueue(8),
+		engine:       &loaders.QJSLoaderEngine{},
+		eventQueue:   webhooks.NewRunQueue(8),
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
 		scheduleWake: make(chan struct{}, 1),
 	}
 	loader, err := manager.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{
+		Summary: domain.LoaderSummary{
 			ID:                "loader-webhook-dedupe",
 			Name:              "Webhook Dedupe",
-			Runtime:           LoaderRuntimeScheduler,
+			Runtime:           domain.LoaderRuntimeScheduler,
 			Enabled:           true,
-			ConcurrencyPolicy: LoaderConcurrencyPolicyParallel,
+			ConcurrencyPolicy: domain.LoaderConcurrencyPolicyParallel,
 		},
 		Script: `
 scheduler.on("webhook.dedupe.test", "exact", function(event) {
@@ -326,9 +330,9 @@ scheduler.on("webhook.dedupe.*", "wildcard", function(event) {
 
 	go manager.eventLoop()
 	dispatcher := NewEventDispatcher(ctx, store, manager.bus)
-	created, err := store.CreateEvent(ctx, TopicEventRecord{
+	created, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:         "webhook.dedupe.test",
-		Source:        TopicEventSourceWebhook,
+		Source:        domain.TopicEventSourceWebhook,
 		CorrelationID: "corr-dedupe",
 		PayloadJSON:   `{"eventId":"evt-dedupe","topic":"webhook.dedupe.test","body":{"repository":{"full_name":"org/repo"}}}`,
 	})
@@ -343,12 +347,12 @@ scheduler.on("webhook.dedupe.*", "wildcard", function(event) {
 		if err != nil {
 			t.Fatalf("ListLoaderRuns returned error: %v", err)
 		}
-		if len(runs) == 1 && runs[0].Status == LoaderRunStatusSucceeded {
+		if len(runs) == 1 && runs[0].Status == domain.LoaderRunStatusSucceeded {
 			loaded, err := store.GetEvent(ctx, created.ID)
 			if err != nil {
 				t.Fatalf("GetEvent returned error: %v", err)
 			}
-			if loaded.DispatchStatus != TopicEventDispatchPublishedToBus {
+			if loaded.DispatchStatus != domain.TopicEventDispatchPublishedToBus {
 				t.Fatalf("dispatch status = %q, want published_to_bus", loaded.DispatchStatus)
 			}
 			return
@@ -387,8 +391,8 @@ func testLoaderEventLoopRunsAllWebhookTargetLoaders(t *testing.T) {
 		},
 		configDB:     store,
 		bus:          newTestLoaderBus(8),
-		engine:       &QJSLoaderEngine{},
-		eventQueue:   newWebhookRunQueue(8),
+		engine:       &loaders.QJSLoaderEngine{},
+		eventQueue:   webhooks.NewRunQueue(8),
 		loaders:      map[string]Loader{},
 		running:      map[string]int{},
 		scheduleWake: make(chan struct{}, 1),
@@ -399,10 +403,10 @@ scheduler.on("webhook.multi.test", "on-webhook", function(event) {
 });
 `
 	first, err := manager.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{
+		Summary: domain.LoaderSummary{
 			ID:      "loader-webhook-multi-a",
 			Name:    "Webhook Multi A",
-			Runtime: LoaderRuntimeScheduler,
+			Runtime: domain.LoaderRuntimeScheduler,
 			Enabled: true,
 		},
 		Script: script,
@@ -411,10 +415,10 @@ scheduler.on("webhook.multi.test", "on-webhook", function(event) {
 		t.Fatalf("CreateLoader first returned error: %v", err)
 	}
 	second, err := manager.CreateLoader(ctx, Loader{
-		Summary: LoaderSummary{
+		Summary: domain.LoaderSummary{
 			ID:      "loader-webhook-multi-b",
 			Name:    "Webhook Multi B",
-			Runtime: LoaderRuntimeScheduler,
+			Runtime: domain.LoaderRuntimeScheduler,
 			Enabled: true,
 		},
 		Script: script,
@@ -425,9 +429,9 @@ scheduler.on("webhook.multi.test", "on-webhook", function(event) {
 
 	go manager.eventLoop()
 	dispatcher := NewEventDispatcher(ctx, store, manager.bus)
-	created, err := store.CreateEvent(ctx, TopicEventRecord{
+	created, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 		Topic:         "webhook.multi.test",
-		Source:        TopicEventSourceWebhook,
+		Source:        domain.TopicEventSourceWebhook,
 		CorrelationID: "corr-multi",
 		PayloadJSON:   `{"eventId":"evt-multi","topic":"webhook.multi.test","body":{"repository":{"full_name":"org/repo"}}}`,
 	})
@@ -447,13 +451,13 @@ scheduler.on("webhook.multi.test", "on-webhook", function(event) {
 			t.Fatalf("ListLoaderRuns second returned error: %v", err)
 		}
 		if len(firstRuns) == 1 && len(secondRuns) == 1 &&
-			firstRuns[0].Status == LoaderRunStatusSucceeded &&
-			secondRuns[0].Status == LoaderRunStatusSucceeded {
+			firstRuns[0].Status == domain.LoaderRunStatusSucceeded &&
+			secondRuns[0].Status == domain.LoaderRunStatusSucceeded {
 			loaded, err := store.GetEvent(ctx, created.ID)
 			if err != nil {
 				t.Fatalf("GetEvent returned error: %v", err)
 			}
-			if loaded.DispatchStatus != TopicEventDispatchPublishedToBus {
+			if loaded.DispatchStatus != domain.TopicEventDispatchPublishedToBus {
 				t.Fatalf("dispatch status = %q, want published_to_bus", loaded.DispatchStatus)
 			}
 			return
@@ -484,10 +488,10 @@ func testLoaderManagerWebhookQueueBypassesNonWebhookEvents(t *testing.T) {
 	t.Helper()
 	manager := &LoaderManager{
 		config:     &appconfig.Config{WebhookQueueDefaultWorkers: 1},
-		eventQueue: newWebhookRunQueue(1),
+		eventQueue: webhooks.NewRunQueue(1),
 	}
-	first, ok := manager.eventQueue.Reserve(LoaderTopicEvent{
-		Source:  TopicEventSourceWebhook,
+	first, ok := manager.eventQueue.Reserve(domain.LoaderTopicEvent{
+		Source:  domain.TopicEventSourceWebhook,
 		Topic:   "webhook.queue.test",
 		Payload: map[string]any{},
 	})
@@ -496,8 +500,8 @@ func testLoaderManagerWebhookQueueBypassesNonWebhookEvents(t *testing.T) {
 	}
 	defer first.Release()
 
-	reservations, ok := manager.reserveEventQueueSlots(LoaderTopicEvent{
-		Source:  TopicEventSourceLoader,
+	reservations, ok := manager.reserveEventQueueSlots(domain.LoaderTopicEvent{
+		Source:  domain.TopicEventSourceLoader,
 		Topic:   "runtime.queue.test",
 		Payload: map[string]any{},
 	}, 2)

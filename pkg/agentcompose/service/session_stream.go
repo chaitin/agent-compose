@@ -6,10 +6,6 @@ import (
 	"github.com/samber/do/v2"
 )
 
-type (
-	SessionStreamBroker = sessions.StreamBroker
-)
-
-func NewSessionStreamBroker(di do.Injector) (*SessionStreamBroker, error) {
+func NewSessionStreamBroker(di do.Injector) (*sessions.StreamBroker, error) {
 	return sessions.NewStreamBroker(di)
 }

@@ -353,7 +353,7 @@ func (s *ConfigStore) DisableLoadersByDefaultAgent(ctx context.Context, agentID 
 	return int(rows), nil
 }
 
-func (s *ConfigStore) ListLoaderSummaries(ctx context.Context) ([]LoaderSummary, error) {
+func (s *ConfigStore) ListLoaderSummaries(ctx context.Context) ([]domain.LoaderSummary, error) {
 	rows, err := s.db.QueryContext(ctx, loaders.SelectLoaderSummarySQL()+`
         ORDER BY l.updated_at DESC, l.created_at DESC, l.id DESC`)
 	if err != nil {
@@ -361,7 +361,7 @@ func (s *ConfigStore) ListLoaderSummaries(ctx context.Context) ([]LoaderSummary,
 	}
 	defer func() { _ = rows.Close() }()
 
-	items := make([]LoaderSummary, 0)
+	items := make([]domain.LoaderSummary, 0)
 	for rows.Next() {
 		item, err := loaders.ScanLoaderSummary(rows.Scan)
 		if err != nil {
@@ -447,7 +447,7 @@ func (s *ConfigStore) ListManagedLoaders(ctx context.Context, projectID string) 
 	return items, nil
 }
 
-func (s *ConfigStore) hydrateLoaderSummaryCounts(ctx context.Context, summary *LoaderSummary) error {
+func (s *ConfigStore) hydrateLoaderSummaryCounts(ctx context.Context, summary *domain.LoaderSummary) error {
 	if summary == nil || strings.TrimSpace(summary.ID) == "" {
 		return nil
 	}
@@ -470,7 +470,7 @@ func (s *ConfigStore) hydrateLoaderSummaryCounts(ctx context.Context, summary *L
 	return nil
 }
 
-func (s *ConfigStore) ReplaceLoaderTriggers(ctx context.Context, loaderID string, triggers []LoaderTrigger) ([]LoaderTrigger, error) {
+func (s *ConfigStore) ReplaceLoaderTriggers(ctx context.Context, loaderID string, triggers []domain.LoaderTrigger) ([]domain.LoaderTrigger, error) {
 	loaderID = strings.TrimSpace(loaderID)
 	if loaderID == "" {
 		return nil, fmt.Errorf("loader id is required")
@@ -479,12 +479,12 @@ func (s *ConfigStore) ReplaceLoaderTriggers(ctx context.Context, loaderID string
 	if err != nil {
 		return nil, err
 	}
-	existingByID := make(map[string]LoaderTrigger, len(existing))
+	existingByID := make(map[string]domain.LoaderTrigger, len(existing))
 	for _, item := range existing {
 		existingByID[item.ID] = item
 	}
 
-	normalized := make([]LoaderTrigger, 0, len(triggers))
+	normalized := make([]domain.LoaderTrigger, 0, len(triggers))
 	seen := make(map[string]struct{}, len(triggers))
 	now := time.Now().UTC()
 	for _, trigger := range triggers {
@@ -509,15 +509,15 @@ func (s *ConfigStore) ReplaceLoaderTriggers(ctx context.Context, loaderID string
 			current.NextFireAt = time.Time{}
 		} else {
 			switch current.Kind {
-			case LoaderTriggerKindInterval:
+			case domain.LoaderTriggerKindInterval:
 				if current.NextFireAt.IsZero() {
 					current.NextFireAt = domain.LoaderTriggerScheduledAt(now, current.IntervalMs)
 				}
-			case LoaderTriggerKindTimeout:
+			case domain.LoaderTriggerKindTimeout:
 				if !sameSchedule {
 					current.NextFireAt = domain.LoaderTriggerScheduledAt(now, current.IntervalMs)
 				}
-			case LoaderTriggerKindCron:
+			case domain.LoaderTriggerKindCron:
 				if !sameSchedule || current.NextFireAt.IsZero() {
 					nextFireAt, err := loaders.LoaderTriggerNextFireAt(now, current, false)
 					if err != nil {
@@ -572,14 +572,14 @@ func (s *ConfigStore) ReplaceLoaderTriggers(ctx context.Context, loaderID string
 	return normalized, nil
 }
 
-func (s *ConfigStore) listLoaderTriggers(ctx context.Context, loaderID string) ([]LoaderTrigger, error) {
+func (s *ConfigStore) listLoaderTriggers(ctx context.Context, loaderID string) ([]domain.LoaderTrigger, error) {
 	rows, err := s.db.QueryContext(ctx, loaders.SelectLoaderTriggerSQL()+` WHERE loader_id = ? ORDER BY kind ASC, trigger_id ASC`, loaderID)
 	if err != nil {
 		return nil, fmt.Errorf("query loader triggers: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	items := make([]LoaderTrigger, 0)
+	items := make([]domain.LoaderTrigger, 0)
 	for rows.Next() {
 		item, err := loaders.ScanLoaderTrigger(rows.Scan)
 		if err != nil {
@@ -599,7 +599,7 @@ func (s *ConfigStore) SetLoaderEnabled(ctx context.Context, loaderID string, ena
 		return fmt.Errorf("loader id is required")
 	}
 	var (
-		triggers []LoaderTrigger
+		triggers []domain.LoaderTrigger
 		err      error
 	)
 	if enabled {
@@ -636,7 +636,7 @@ func (s *ConfigStore) SetLoaderEnabled(ctx context.Context, loaderID string, ena
 			}
 		}
 	} else {
-		if _, err := tx.ExecContext(ctx, `UPDATE loader_trigger SET next_fire_at = 0 WHERE loader_id = ? AND kind IN (?, ?, ?)`, loaderID, LoaderTriggerKindInterval, LoaderTriggerKindTimeout, LoaderTriggerKindCron); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE loader_trigger SET next_fire_at = 0 WHERE loader_id = ? AND kind IN (?, ?, ?)`, loaderID, domain.LoaderTriggerKindInterval, domain.LoaderTriggerKindTimeout, domain.LoaderTriggerKindCron); err != nil {
 			return fmt.Errorf("pause loader scheduled triggers: %w", err)
 		}
 	}
@@ -701,7 +701,7 @@ func (s *ConfigStore) MarkLoaderTriggerFired(ctx context.Context, loaderID, trig
 	return nil
 }
 
-func (s *ConfigStore) CreateLoaderRun(ctx context.Context, run LoaderRunSummary) error {
+func (s *ConfigStore) CreateLoaderRun(ctx context.Context, run domain.LoaderRunSummary) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO loader_run(
         loader_id, run_id, trigger_id, trigger_kind, trigger_source, status, started_at, completed_at, duration_ms, error, result_json, payload_json, source_script_sha256, artifacts_dir
     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -726,7 +726,7 @@ func (s *ConfigStore) CreateLoaderRun(ctx context.Context, run LoaderRunSummary)
 	return nil
 }
 
-func (s *ConfigStore) UpdateLoaderRun(ctx context.Context, run LoaderRunSummary) error {
+func (s *ConfigStore) UpdateLoaderRun(ctx context.Context, run domain.LoaderRunSummary) error {
 	result, err := s.db.ExecContext(ctx, `UPDATE loader_run SET
         trigger_id = ?, trigger_kind = ?, trigger_source = ?, status = ?, started_at = ?, completed_at = ?, duration_ms = ?, error = ?, result_json = ?, payload_json = ?, source_script_sha256 = ?, artifacts_dir = ?
         WHERE loader_id = ? AND run_id = ?`,
@@ -755,20 +755,20 @@ func (s *ConfigStore) UpdateLoaderRun(ctx context.Context, run LoaderRunSummary)
 	return nil
 }
 
-func (s *ConfigStore) GetLoaderRun(ctx context.Context, loaderID, runID string) (LoaderRunSummary, error) {
+func (s *ConfigStore) GetLoaderRun(ctx context.Context, loaderID, runID string) (domain.LoaderRunSummary, error) {
 	row := s.db.QueryRowContext(ctx, loaders.SelectLoaderRunSQL()+` WHERE loader_id = ? AND run_id = ?`, strings.TrimSpace(loaderID), strings.TrimSpace(runID))
 	item, err := loaders.ScanLoaderRun(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			id := strings.TrimSpace(loaderID) + "/" + strings.TrimSpace(runID)
-			return LoaderRunSummary{}, resourceError(ErrNotFound, "loader run", id, fmt.Sprintf("loader run %s not found", id), err)
+			return domain.LoaderRunSummary{}, resourceError(ErrNotFound, "loader run", id, fmt.Sprintf("loader run %s not found", id), err)
 		}
-		return LoaderRunSummary{}, err
+		return domain.LoaderRunSummary{}, err
 	}
 	return item, nil
 }
 
-func (s *ConfigStore) ListLoaderRuns(ctx context.Context, loaderID string, limit int) ([]LoaderRunSummary, error) {
+func (s *ConfigStore) ListLoaderRuns(ctx context.Context, loaderID string, limit int) ([]domain.LoaderRunSummary, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -778,7 +778,7 @@ func (s *ConfigStore) ListLoaderRuns(ctx context.Context, loaderID string, limit
 	}
 	defer func() { _ = rows.Close() }()
 
-	items := make([]LoaderRunSummary, 0)
+	items := make([]domain.LoaderRunSummary, 0)
 	for rows.Next() {
 		item, err := loaders.ScanLoaderRun(rows.Scan)
 		if err != nil {
@@ -792,7 +792,7 @@ func (s *ConfigStore) ListLoaderRuns(ctx context.Context, loaderID string, limit
 	return items, nil
 }
 
-func (s *ConfigStore) ListRecentLoaderRuns(ctx context.Context, limit int) ([]LoaderRunSummary, error) {
+func (s *ConfigStore) ListRecentLoaderRuns(ctx context.Context, limit int) ([]domain.LoaderRunSummary, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -802,7 +802,7 @@ func (s *ConfigStore) ListRecentLoaderRuns(ctx context.Context, limit int) ([]Lo
 	}
 	defer func() { _ = rows.Close() }()
 
-	items := make([]LoaderRunSummary, 0)
+	items := make([]domain.LoaderRunSummary, 0)
 	for rows.Next() {
 		item, err := loaders.ScanLoaderRun(rows.Scan)
 		if err != nil {
@@ -816,7 +816,7 @@ func (s *ConfigStore) ListRecentLoaderRuns(ctx context.Context, limit int) ([]Lo
 	return items, nil
 }
 
-func (s *ConfigStore) AddLoaderEvent(ctx context.Context, event LoaderEvent) error {
+func (s *ConfigStore) AddLoaderEvent(ctx context.Context, event domain.LoaderEvent) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO loader_event(
         loader_id, event_id, run_id, trigger_id, type, level, message, payload_json, linked_session_id, linked_cell_id, linked_agent_session_id, created_at
     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -839,7 +839,7 @@ func (s *ConfigStore) AddLoaderEvent(ctx context.Context, event LoaderEvent) err
 	return nil
 }
 
-func (s *ConfigStore) ListLoaderEvents(ctx context.Context, loaderID string, limit int) ([]LoaderEvent, error) {
+func (s *ConfigStore) ListLoaderEvents(ctx context.Context, loaderID string, limit int) ([]domain.LoaderEvent, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -849,7 +849,7 @@ func (s *ConfigStore) ListLoaderEvents(ctx context.Context, loaderID string, lim
 	}
 	defer func() { _ = rows.Close() }()
 
-	items := make([]LoaderEvent, 0)
+	items := make([]domain.LoaderEvent, 0)
 	for rows.Next() {
 		item, err := loaders.ScanLoaderEvent(rows.Scan)
 		if err != nil {
@@ -897,19 +897,19 @@ func (s *ConfigStore) DeleteLoaderState(ctx context.Context, loaderID, key strin
 	return nil
 }
 
-func (s *ConfigStore) GetLoaderBinding(ctx context.Context, loaderID string) (LoaderBinding, bool, error) {
+func (s *ConfigStore) GetLoaderBinding(ctx context.Context, loaderID string) (domain.LoaderBinding, bool, error) {
 	row := s.db.QueryRowContext(ctx, loaders.SelectLoaderBindingSQL()+` WHERE loader_id = ?`, strings.TrimSpace(loaderID))
 	item, err := loaders.ScanLoaderBinding(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return LoaderBinding{}, false, nil
+			return domain.LoaderBinding{}, false, nil
 		}
-		return LoaderBinding{}, false, err
+		return domain.LoaderBinding{}, false, err
 	}
 	return item, true, nil
 }
 
-func (s *ConfigStore) UpsertLoaderBinding(ctx context.Context, binding LoaderBinding) error {
+func (s *ConfigStore) UpsertLoaderBinding(ctx context.Context, binding domain.LoaderBinding) error {
 	binding.LoaderID = strings.TrimSpace(binding.LoaderID)
 	binding.SessionID = strings.TrimSpace(binding.SessionID)
 	if binding.LoaderID == "" || binding.SessionID == "" {

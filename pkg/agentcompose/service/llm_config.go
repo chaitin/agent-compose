@@ -13,23 +13,6 @@ import (
 	"time"
 )
 
-const (
-	llmProviderFamilyOpenAI       = llms.ProviderFamilyOpenAI
-	llmProviderFamilyAnthropic    = llms.ProviderFamilyAnthropic
-	llmProviderScopeSystem        = llms.ProviderScopeSystem
-	llmProviderScopeEnvDefault    = llms.ProviderScopeEnvDefault
-	llmProviderScopeSessionEnv    = llms.ProviderScopeSessionEnv
-	llmProviderIDDefaultOpenAI    = llms.ProviderIDDefaultOpenAI
-	llmProviderIDDefaultAnthropic = llms.ProviderIDDefaultAnthropic
-)
-
-type (
-	LLMProvider       = llms.Provider
-	LLMModel          = llms.Model
-	LLMResolvedTarget = llms.ResolvedTarget
-	LLMFacadeToken    = llms.FacadeToken
-)
-
 func (s *ConfigStore) ensureLLMSchema(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS llm_provider (
@@ -99,7 +82,7 @@ func (s *ConfigStore) HasLLMProviders(ctx context.Context) (bool, error) {
 	return count > 0, nil
 }
 
-func (s *ConfigStore) UpsertDefaultLLMConfig(ctx context.Context, provider LLMProvider, model LLMModel) error {
+func (s *ConfigStore) UpsertDefaultLLMConfig(ctx context.Context, provider llms.Provider, model llms.Model) error {
 	now := time.Now().UTC().Unix()
 	var ok bool
 	provider, model, ok = llms.NormalizeDefaultConfig(provider, model)
@@ -134,13 +117,13 @@ func (s *ConfigStore) UpsertDefaultLLMConfig(ctx context.Context, provider LLMPr
 	return tx.Commit()
 }
 
-func (s *ConfigStore) ListEnabledLLMProviders(ctx context.Context) ([]LLMProvider, error) {
+func (s *ConfigStore) ListEnabledLLMProviders(ctx context.Context) ([]llms.Provider, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, headers_json, use_generic_responses_text_parts, weight, enabled, scope, created_at, updated_at FROM llm_provider WHERE enabled != 0 ORDER BY weight ASC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query llm providers: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var providers []LLMProvider
+	var providers []llms.Provider
 	for rows.Next() {
 		item, err := llms.ScanProvider(rows.Scan)
 		if err != nil {
@@ -154,13 +137,13 @@ func (s *ConfigStore) ListEnabledLLMProviders(ctx context.Context) ([]LLMProvide
 	return providers, nil
 }
 
-func (s *ConfigStore) ListEnabledLLMModels(ctx context.Context) ([]LLMModel, error) {
+func (s *ConfigStore) ListEnabledLLMModels(ctx context.Context) ([]llms.Model, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, description, default_model, enabled, scope, created_at, updated_at FROM llm_model WHERE enabled != 0 ORDER BY default_model DESC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query llm models: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var models []LLMModel
+	var models []llms.Model
 	for rows.Next() {
 		item, err := llms.ScanModel(rows.Scan)
 		if err != nil {
@@ -190,7 +173,7 @@ func (s *ConfigStore) LLMProviderModelWireAPI(ctx context.Context, providerID, m
 	return llms.NormalizeWireAPI(wireAPI), true, nil
 }
 
-func (s *ConfigStore) SaveLLMFacadeToken(ctx context.Context, token LLMFacadeToken) error {
+func (s *ConfigStore) SaveLLMFacadeToken(ctx context.Context, token llms.FacadeToken) error {
 	if strings.TrimSpace(token.TokenHash) == "" || strings.TrimSpace(token.SessionID) == "" {
 		return fmt.Errorf("llm facade token hash and session id are required")
 	}
@@ -229,15 +212,15 @@ func (s *ConfigStore) DeleteLLMFacadeToken(ctx context.Context, rawToken string)
 	return nil
 }
 
-func (s *ConfigStore) GetLLMFacadeToken(ctx context.Context, rawToken string) (LLMFacadeToken, error) {
+func (s *ConfigStore) GetLLMFacadeToken(ctx context.Context, rawToken string) (llms.FacadeToken, error) {
 	hash, fingerprint := llms.HashFacadeToken(rawToken)
 	row := s.db.QueryRowContext(ctx, `SELECT session_id, token_hash, token_fingerprint, model, provider_id, wire_api, source, run_id, issued_at, expires_at, revoked_at FROM llm_facade_token WHERE token_hash = ?`, hash)
 	token, err := llms.ScanFacadeToken(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return LLMFacadeToken{}, resourceError(ErrNotFound, "llm facade token", fingerprint, fmt.Sprintf("llm facade token %s not found", fingerprint), err)
+			return llms.FacadeToken{}, resourceError(ErrNotFound, "llm facade token", fingerprint, fmt.Sprintf("llm facade token %s not found", fingerprint), err)
 		}
-		return LLMFacadeToken{}, err
+		return llms.FacadeToken{}, err
 	}
 	return token, nil
 }
@@ -263,7 +246,7 @@ func (s *ConfigStore) RevokeLLMFacadeTokensForSession(ctx context.Context, sessi
 }
 
 func bootstrapDefaultLLMConfig(ctx context.Context, config *appconfig.Config, store *ConfigStore, requestedModel string) error {
-	if hasConfiguredLLMProviderForFamily(ctx, store, llmProviderFamilyOpenAI) {
+	if hasConfiguredLLMProviderForFamily(ctx, store, llms.ProviderFamilyOpenAI) {
 		return nil
 	}
 	return ensureDefaultOpenAIEnvProvider(ctx, config, store, requestedModel)
@@ -329,19 +312,19 @@ func configLLMEnvValue(config *appconfig.Config, key string) string {
 }
 
 func ensureDefaultOpenAIEnvProvider(ctx context.Context, config *appconfig.Config, store *ConfigStore, requestedModel string) error {
-	_, err := llms.EnsureOpenAIEnvProvider(ctx, store, defaultLLMEnvProviderLookup(ctx, config, store), llmProviderIDDefaultOpenAI, "default", llmProviderScopeEnvDefault, requestedModel, true)
+	_, err := llms.EnsureOpenAIEnvProvider(ctx, store, defaultLLMEnvProviderLookup(ctx, config, store), llms.ProviderIDDefaultOpenAI, "default", llms.ProviderScopeEnvDefault, requestedModel, true)
 	return err
 }
 
-func resolveLLMTarget(ctx context.Context, config *appconfig.Config, store *ConfigStore, requestedModel string) (LLMResolvedTarget, error) {
-	return resolveLLMTargetForProviderFamily(ctx, config, store, llmProviderFamilyOpenAI, requestedModel)
+func resolveLLMTarget(ctx context.Context, config *appconfig.Config, store *ConfigStore, requestedModel string) (llms.ResolvedTarget, error) {
+	return resolveLLMTargetForProviderFamily(ctx, config, store, llms.ProviderFamilyOpenAI, requestedModel)
 }
 
-func resolveRuntimeLLMTarget(ctx context.Context, config *appconfig.Config, store *ConfigStore, requestedModel, providerID string) (LLMResolvedTarget, error) {
+func resolveRuntimeLLMTarget(ctx context.Context, config *appconfig.Config, store *ConfigStore, requestedModel, providerID string) (llms.ResolvedTarget, error) {
 	return resolveRuntimeLLMTargetWithEnv(ctx, config, store, "", "", requestedModel, providerID, nil)
 }
 
-func resolveRuntimeLLMTargetWithEnv(ctx context.Context, config *appconfig.Config, store *ConfigStore, sessionID, preferredProviderFamily, requestedModel, providerID string, envItems []SessionEnvVar) (LLMResolvedTarget, error) {
+func resolveRuntimeLLMTargetWithEnv(ctx context.Context, config *appconfig.Config, store *ConfigStore, sessionID, preferredProviderFamily, requestedModel, providerID string, envItems []SessionEnvVar) (llms.ResolvedTarget, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	preferredProviderFamily = llms.NormalizeOptionalProviderType(preferredProviderFamily)
 	requestedModel = strings.TrimSpace(requestedModel)
@@ -366,75 +349,75 @@ func resolveRuntimeLLMTargetWithEnv(ctx context.Context, config *appconfig.Confi
 	// provider id from the token scope, so this avoids a redundant pair of
 	// idempotent provider upserts on every LLM request.
 	bootstrapProviders := (providerID == "" || !llms.IsSessionEnvProviderID(providerID)) && !hasEnabledLLMProviderID(ctx, store, providerID)
-	if bootstrapProviders && !hasConfiguredLLMProviderForFamily(ctx, store, llmProviderFamilyOpenAI) {
+	if bootstrapProviders && !hasConfiguredLLMProviderForFamily(ctx, store, llms.ProviderFamilyOpenAI) {
 		openAIModel := firstNonEmpty(requestedModel, llms.EnvItemValue(envItems, "LLM_MODEL"))
 		if sessionID != "" && llms.HasOpenAIEnvProviderInput(envItems) {
 			id, err := ensureSessionOpenAIEnvProvider(ctx, store, sessionID, openAIModel, envItems)
 			if err != nil {
-				return LLMResolvedTarget{}, err
+				return llms.ResolvedTarget{}, err
 			}
-			sessionProviderID = llms.ChooseSessionEnvProviderID(sessionProviderID, id, llmProviderFamilyOpenAI, preferredProviderFamily)
+			sessionProviderID = llms.ChooseSessionEnvProviderID(sessionProviderID, id, llms.ProviderFamilyOpenAI, preferredProviderFamily)
 		} else if !hasSessionEnvProvider {
 			if err := ensureDefaultOpenAIEnvProvider(ctx, config, store, openAIModel); err != nil {
-				return LLMResolvedTarget{}, err
+				return llms.ResolvedTarget{}, err
 			}
 		}
 	}
-	if bootstrapProviders && !hasConfiguredLLMProviderForFamily(ctx, store, llmProviderFamilyAnthropic) {
+	if bootstrapProviders && !hasConfiguredLLMProviderForFamily(ctx, store, llms.ProviderFamilyAnthropic) {
 		anthropicModel := firstNonEmpty(requestedModel, llms.SessionAnthropicEnvModel(envItems))
 		if sessionID != "" && llms.HasAnthropicEnvProviderInput(envItems) {
 			id, err := ensureSessionAnthropicEnvProvider(ctx, store, sessionID, anthropicModel, envItems)
 			if err != nil {
-				return LLMResolvedTarget{}, err
+				return llms.ResolvedTarget{}, err
 			}
-			sessionProviderID = llms.ChooseSessionEnvProviderID(sessionProviderID, id, llmProviderFamilyAnthropic, preferredProviderFamily)
+			sessionProviderID = llms.ChooseSessionEnvProviderID(sessionProviderID, id, llms.ProviderFamilyAnthropic, preferredProviderFamily)
 		} else if !hasSessionEnvProvider {
 			if err := ensureDefaultAnthropicEnvProvider(ctx, config, store, anthropicModel); err != nil {
-				return LLMResolvedTarget{}, err
+				return llms.ResolvedTarget{}, err
 			}
 		}
 	}
 	providerID = firstNonEmpty(providerID, sessionProviderID)
 	models, err := store.ListEnabledLLMModels(ctx)
 	if err != nil {
-		return LLMResolvedTarget{}, err
+		return llms.ResolvedTarget{}, err
 	}
 	if len(models) == 0 {
-		return LLMResolvedTarget{}, classifyError(ErrRequired, "llm model is required", nil)
+		return llms.ResolvedTarget{}, classifyError(ErrRequired, "llm model is required", nil)
 	}
 	providers, err := store.ListEnabledLLMProviders(ctx)
 	if err != nil {
-		return LLMResolvedTarget{}, err
+		return llms.ResolvedTarget{}, err
 	}
 	if len(providers) == 0 {
-		return LLMResolvedTarget{}, classifyError(ErrFailedPrecondition, "llm provider is not configured", nil)
+		return llms.ResolvedTarget{}, classifyError(ErrFailedPrecondition, "llm provider is not configured", nil)
 	}
 	model, provider, wireAPI, ok, err := llms.SelectModelAndProvider(ctx, store, models, providers, requestedModel, preferredProviderFamily, providerID)
 	if err != nil {
-		return LLMResolvedTarget{}, err
+		return llms.ResolvedTarget{}, err
 	}
 	if !ok {
 		if requestedModel != "" && providerID != "" {
-			return LLMResolvedTarget{}, classifyError(ErrFailedPrecondition, fmt.Sprintf("llm model %q is not configured for provider %q", requestedModel, providerID), nil)
+			return llms.ResolvedTarget{}, classifyError(ErrFailedPrecondition, fmt.Sprintf("llm model %q is not configured for provider %q", requestedModel, providerID), nil)
 		}
 		if requestedModel != "" {
-			return LLMResolvedTarget{}, classifyError(ErrFailedPrecondition, fmt.Sprintf("llm model %q is not configured", requestedModel), nil)
+			return llms.ResolvedTarget{}, classifyError(ErrFailedPrecondition, fmt.Sprintf("llm model %q is not configured", requestedModel), nil)
 		}
 		if providerID != "" {
-			return LLMResolvedTarget{}, classifyError(ErrFailedPrecondition, fmt.Sprintf("llm provider %q is not configured", providerID), nil)
+			return llms.ResolvedTarget{}, classifyError(ErrFailedPrecondition, fmt.Sprintf("llm provider %q is not configured", providerID), nil)
 		}
-		return LLMResolvedTarget{}, classifyError(ErrFailedPrecondition, "llm provider is not configured", nil)
+		return llms.ResolvedTarget{}, classifyError(ErrFailedPrecondition, "llm provider is not configured", nil)
 	}
 	endpoint := llms.EndpointForProvider(provider, wireAPI)
 	headers, err := llms.ProviderForwardHeaders(provider)
 	if err != nil {
-		return LLMResolvedTarget{}, err
+		return llms.ResolvedTarget{}, err
 	}
-	return LLMResolvedTarget{Provider: provider, Model: model, WireAPI: wireAPI, Endpoint: endpoint, Headers: headers}, nil
+	return llms.ResolvedTarget{Provider: provider, Model: model, WireAPI: wireAPI, Endpoint: endpoint, Headers: headers}, nil
 }
 
 func bootstrapAnthropicLLMConfig(ctx context.Context, config *appconfig.Config, store *ConfigStore, requestedModel string) error {
-	if hasConfiguredLLMProviderForFamily(ctx, store, llmProviderFamilyAnthropic) {
+	if hasConfiguredLLMProviderForFamily(ctx, store, llms.ProviderFamilyAnthropic) {
 		return nil
 	}
 	return ensureDefaultAnthropicEnvProvider(ctx, config, store, requestedModel)
@@ -443,20 +426,20 @@ func bootstrapAnthropicLLMConfig(ctx context.Context, config *appconfig.Config, 
 func ensureDefaultAnthropicEnvProvider(ctx context.Context, config *appconfig.Config, store *ConfigStore, requestedModel string) error {
 	lookup := defaultLLMEnvProviderLookup(ctx, config, store)
 	authHeader, authScheme := llms.AnthropicProviderAuthFromLookup(lookup)
-	_, err := llms.EnsureAnthropicEnvProvider(ctx, store, lookup, authHeader, authScheme, llmProviderIDDefaultAnthropic, "anthropic", llmProviderScopeEnvDefault, requestedModel, false)
+	_, err := llms.EnsureAnthropicEnvProvider(ctx, store, lookup, authHeader, authScheme, llms.ProviderIDDefaultAnthropic, "anthropic", llms.ProviderScopeEnvDefault, requestedModel, false)
 	return err
 }
 
 func ensureSessionOpenAIEnvProvider(ctx context.Context, store *ConfigStore, sessionID, requestedModel string, envItems []SessionEnvVar) (string, error) {
-	providerID := llms.SessionEnvProviderID(sessionID, llmProviderFamilyOpenAI)
-	return llms.EnsureOpenAIEnvProvider(ctx, store, sessionLLMEnvProviderLookup(envItems), providerID, providerID, llmProviderScopeSessionEnv, requestedModel, false)
+	providerID := llms.SessionEnvProviderID(sessionID, llms.ProviderFamilyOpenAI)
+	return llms.EnsureOpenAIEnvProvider(ctx, store, sessionLLMEnvProviderLookup(envItems), providerID, providerID, llms.ProviderScopeSessionEnv, requestedModel, false)
 }
 
 func ensureSessionAnthropicEnvProvider(ctx context.Context, store *ConfigStore, sessionID, requestedModel string, envItems []SessionEnvVar) (string, error) {
-	providerID := llms.SessionEnvProviderID(sessionID, llmProviderFamilyAnthropic)
+	providerID := llms.SessionEnvProviderID(sessionID, llms.ProviderFamilyAnthropic)
 	lookup := sessionLLMEnvProviderLookup(envItems)
 	authHeader, authScheme := llms.AnthropicProviderAuthFromLookup(lookup)
-	return llms.EnsureAnthropicEnvProvider(ctx, store, lookup, authHeader, authScheme, providerID, providerID, llmProviderScopeSessionEnv, requestedModel, false)
+	return llms.EnsureAnthropicEnvProvider(ctx, store, lookup, authHeader, authScheme, providerID, providerID, llms.ProviderScopeSessionEnv, requestedModel, false)
 }
 
 func hasEnabledLLMProviderID(ctx context.Context, store *ConfigStore, providerID string) bool {
@@ -467,50 +450,50 @@ func hasConfiguredLLMProviderForFamily(ctx context.Context, store *ConfigStore, 
 	return llms.HasConfiguredProviderForFamily(ctx, store, providerFamily)
 }
 
-func resolveLLMTargetForProviderFamily(ctx context.Context, config *appconfig.Config, store *ConfigStore, providerFamily, requestedModel string) (LLMResolvedTarget, error) {
+func resolveLLMTargetForProviderFamily(ctx context.Context, config *appconfig.Config, store *ConfigStore, providerFamily, requestedModel string) (llms.ResolvedTarget, error) {
 	if strings.TrimSpace(providerFamily) != "" {
 		providerFamily = llms.NormalizeProviderType(providerFamily)
 	}
 	switch providerFamily {
-	case llmProviderFamilyAnthropic:
+	case llms.ProviderFamilyAnthropic:
 		if err := bootstrapAnthropicLLMConfig(ctx, config, store, strings.TrimSpace(requestedModel)); err != nil {
-			return LLMResolvedTarget{}, err
+			return llms.ResolvedTarget{}, err
 		}
 	default:
 		if err := bootstrapDefaultLLMConfig(ctx, config, store, strings.TrimSpace(requestedModel)); err != nil {
-			return LLMResolvedTarget{}, err
+			return llms.ResolvedTarget{}, err
 		}
 	}
 	models, err := store.ListEnabledLLMModels(ctx)
 	if err != nil {
-		return LLMResolvedTarget{}, err
+		return llms.ResolvedTarget{}, err
 	}
 	if len(models) == 0 {
-		return LLMResolvedTarget{}, classifyError(ErrRequired, "llm model is required", nil)
+		return llms.ResolvedTarget{}, classifyError(ErrRequired, "llm model is required", nil)
 	}
 	providers, err := store.ListEnabledLLMProviders(ctx)
 	if err != nil {
-		return LLMResolvedTarget{}, err
+		return llms.ResolvedTarget{}, err
 	}
 	if len(providers) == 0 {
-		return LLMResolvedTarget{}, classifyError(ErrFailedPrecondition, "llm provider is not configured", nil)
+		return llms.ResolvedTarget{}, classifyError(ErrFailedPrecondition, "llm provider is not configured", nil)
 	}
 	model, provider, wireAPI, ok, err := llms.SelectModelAndProvider(ctx, store, models, providers, requestedModel, providerFamily, "")
 	if err != nil {
-		return LLMResolvedTarget{}, err
+		return llms.ResolvedTarget{}, err
 	}
 	if !ok {
 		if strings.TrimSpace(requestedModel) != "" {
-			return LLMResolvedTarget{}, classifyError(ErrFailedPrecondition, fmt.Sprintf("llm model %q is not configured for provider family %q", strings.TrimSpace(requestedModel), providerFamily), nil)
+			return llms.ResolvedTarget{}, classifyError(ErrFailedPrecondition, fmt.Sprintf("llm model %q is not configured for provider family %q", strings.TrimSpace(requestedModel), providerFamily), nil)
 		}
-		return LLMResolvedTarget{}, classifyError(ErrFailedPrecondition, fmt.Sprintf("llm provider is not configured for provider family %q", providerFamily), nil)
+		return llms.ResolvedTarget{}, classifyError(ErrFailedPrecondition, fmt.Sprintf("llm provider is not configured for provider family %q", providerFamily), nil)
 	}
 	endpoint := llms.EndpointForProvider(provider, wireAPI)
 	headers, err := llms.ProviderForwardHeaders(provider)
 	if err != nil {
-		return LLMResolvedTarget{}, err
+		return llms.ResolvedTarget{}, err
 	}
-	return LLMResolvedTarget{Provider: provider, Model: model, WireAPI: wireAPI, Endpoint: endpoint, Headers: headers}, nil
+	return llms.ResolvedTarget{Provider: provider, Model: model, WireAPI: wireAPI, Endpoint: endpoint, Headers: headers}, nil
 }
 
 func lookupEnvValue(ctx context.Context, store *ConfigStore, key string) string {

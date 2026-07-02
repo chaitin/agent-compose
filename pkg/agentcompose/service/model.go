@@ -2,16 +2,6 @@ package agentcompose
 
 import "agent-compose/pkg/agentcompose/domain"
 
-const (
-	VMStatusPending = domain.VMStatusPending
-	VMStatusRunning = domain.VMStatusRunning
-	VMStatusStopped = domain.VMStatusStopped
-	VMStatusFailed  = domain.VMStatusFailed
-
-	SessionTypeManual = domain.SessionTypeManual
-	SessionTypeScript = domain.SessionTypeScript
-)
-
 type (
 	SessionTag              = domain.SessionTag
 	SessionEnvVar           = domain.SessionEnvVar

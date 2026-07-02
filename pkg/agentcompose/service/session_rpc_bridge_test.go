@@ -2,6 +2,8 @@ package agentcompose
 
 import (
 	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/loaders"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
@@ -48,10 +50,10 @@ type recordingLoaderHost struct {
 	sessionCalls []string
 	requests     map[string]map[string]any
 	agentPrompts []string
-	agentCalls   []LoaderAgentRequest
-	commandCalls []LoaderCommandRequest
+	agentCalls   []domain.LoaderAgentRequest
+	commandCalls []domain.LoaderCommandRequest
 	llmPrompts   []string
-	llmCalls     []LoaderLLMRequest
+	llmCalls     []domain.LoaderLLMRequest
 	published    []string
 }
 
@@ -63,7 +65,7 @@ type invalidStructuredAgentHost struct {
 	recordingLoaderHost
 }
 
-func (h *invalidStructuredAgentHost) Agent(ctx context.Context, prompt string, request LoaderAgentRequest) (LoaderAgentResult, error) {
+func (h *invalidStructuredAgentHost) Agent(ctx context.Context, prompt string, request domain.LoaderAgentRequest) (domain.LoaderAgentResult, error) {
 	result, err := h.recordingLoaderHost.Agent(ctx, prompt, request)
 	result.Text = `{"summary":"ok","risk":"medium"}`
 	result.Output = result.Text
@@ -75,25 +77,25 @@ type invalidStructuredLLMHost struct {
 	recordingLoaderHost
 }
 
-func (h *invalidStructuredLLMHost) LLM(ctx context.Context, prompt string, request LoaderLLMRequest) (LoaderLLMResult, error) {
+func (h *invalidStructuredLLMHost) LLM(ctx context.Context, prompt string, request domain.LoaderLLMRequest) (domain.LoaderLLMResult, error) {
 	result, err := h.recordingLoaderHost.LLM(ctx, prompt, request)
 	result.Text = `{"summary":"ok","risk":"medium"}`
 	return result, err
 }
 
-func (h *recordingLoaderHost) PublishEvent(_ context.Context, topic string, payloadJSON string) (TopicEventRecord, error) {
+func (h *recordingLoaderHost) PublishEvent(_ context.Context, topic string, payloadJSON string) (domain.TopicEventRecord, error) {
 	h.published = append(h.published, topic+" "+payloadJSON)
-	return TopicEventRecord{ID: "evt-test", Sequence: 1, Topic: topic, CorrelationID: "corr-test"}, nil
+	return domain.TopicEventRecord{ID: "evt-test", Sequence: 1, Topic: topic, CorrelationID: "corr-test"}, nil
 }
 
-func (h *recordingLoaderHost) Agent(_ context.Context, prompt string, request LoaderAgentRequest) (LoaderAgentResult, error) {
+func (h *recordingLoaderHost) Agent(_ context.Context, prompt string, request domain.LoaderAgentRequest) (domain.LoaderAgentResult, error) {
 	h.agentPrompts = append(h.agentPrompts, prompt)
 	h.agentCalls = append(h.agentCalls, request)
 	text := "agent-output"
 	if strings.TrimSpace(request.OutputSchema) != "" {
 		text = `{"summary":"ok","risk":"low"}`
 	}
-	return LoaderAgentResult{
+	return domain.LoaderAgentResult{
 		Text:           text,
 		Output:         text,
 		FinalText:      text,
@@ -107,18 +109,18 @@ func (h *recordingLoaderHost) Agent(_ context.Context, prompt string, request Lo
 	}, nil
 }
 
-func (h *recordingLoaderHost) LLM(_ context.Context, prompt string, request LoaderLLMRequest) (LoaderLLMResult, error) {
+func (h *recordingLoaderHost) LLM(_ context.Context, prompt string, request domain.LoaderLLMRequest) (domain.LoaderLLMResult, error) {
 	h.llmPrompts = append(h.llmPrompts, prompt)
 	h.llmCalls = append(h.llmCalls, request)
 	if strings.TrimSpace(request.OutputSchema) != "" {
-		return LoaderLLMResult{Text: `{"summary":"ok","risk":"low"}`, Model: firstNonEmpty(request.Model, "gpt-5.4"), ResponseID: "resp-1", FinishReason: "completed"}, nil
+		return domain.LoaderLLMResult{Text: `{"summary":"ok","risk":"low"}`, Model: firstNonEmpty(request.Model, "gpt-5.4"), ResponseID: "resp-1", FinishReason: "completed"}, nil
 	}
-	return LoaderLLMResult{Text: "llm-output", Model: firstNonEmpty(request.Model, "gpt-5.4"), ResponseID: "resp-1", FinishReason: "completed"}, nil
+	return domain.LoaderLLMResult{Text: "llm-output", Model: firstNonEmpty(request.Model, "gpt-5.4"), ResponseID: "resp-1", FinishReason: "completed"}, nil
 }
 
-func (h *recordingLoaderHost) Command(_ context.Context, request LoaderCommandRequest) (LoaderCommandResult, error) {
+func (h *recordingLoaderHost) Command(_ context.Context, request domain.LoaderCommandRequest) (domain.LoaderCommandResult, error) {
 	h.commandCalls = append(h.commandCalls, request)
-	return LoaderCommandResult{
+	return domain.LoaderCommandResult{
 		Stdout:    "command-output",
 		Output:    "command-output",
 		ExitCode:  0,
@@ -222,7 +224,7 @@ func testSessionRPCBridgeCallJSONSupportsAllSessionRPCs(t *testing.T) {
 	if created.GetSession().GetSummary().GetSessionId() == "" {
 		t.Fatalf("expected CreateSession to return a session id")
 	}
-	if got, want := created.GetSession().GetSummary().GetVmStatus(), VMStatusRunning; got != want {
+	if got, want := created.GetSession().GetSummary().GetVmStatus(), domain.VMStatusRunning; got != want {
 		t.Fatalf("CreateSession vm status = %q, want %q", got, want)
 	}
 	if len(driver.startCalls) != 1 {
@@ -280,7 +282,7 @@ func testSessionRPCBridgeCallJSONSupportsAllSessionRPCs(t *testing.T) {
 	if err := protojson.Unmarshal([]byte(stopJSON), &stopped); err != nil {
 		t.Fatalf("protojson.Unmarshal(stop) returned error: %v", err)
 	}
-	if got, want := stopped.GetSession().GetSummary().GetVmStatus(), VMStatusStopped; got != want {
+	if got, want := stopped.GetSession().GetSummary().GetVmStatus(), domain.VMStatusStopped; got != want {
 		t.Fatalf("StopSession vm status = %q, want %q", got, want)
 	}
 	if len(driver.stopCalls) != 1 {
@@ -295,7 +297,7 @@ func testSessionRPCBridgeCallJSONSupportsAllSessionRPCs(t *testing.T) {
 	if err := protojson.Unmarshal([]byte(resumeJSON), &resumed); err != nil {
 		t.Fatalf("protojson.Unmarshal(resume) returned error: %v", err)
 	}
-	if got, want := resumed.GetSession().GetSummary().GetVmStatus(), VMStatusRunning; got != want {
+	if got, want := resumed.GetSession().GetSummary().GetVmStatus(), domain.VMStatusRunning; got != want {
 		t.Fatalf("ResumeSession vm status = %q, want %q", got, want)
 	}
 	if len(driver.startCalls) != 3 {
@@ -444,11 +446,11 @@ func TestLoaderEngineExecuteSupportsSessionRPCBindings(t *testing.T) {
 }
 
 func testLoaderEngineExecuteSupportsSessionRPCBindings(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	host := &recordingLoaderHost{}
 
-	result, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
+	result, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script: `function main() {
   const created = scheduler.session.createSession({ title: "alpha" });
   const sessionId = created.session.summary.sessionId;
@@ -511,8 +513,8 @@ func testLoaderEngineExecuteSupportsSessionRPCBindings(t *testing.T) {
 	if payload.Created.Session.Summary.SessionID != "session-from-host" {
 		t.Fatalf("created session id = %q, want %q", payload.Created.Session.Summary.SessionID, "session-from-host")
 	}
-	if payload.Resumed.Session.Summary.VMStatus != VMStatusRunning {
-		t.Fatalf("resumed vm status = %q, want %q", payload.Resumed.Session.Summary.VMStatus, VMStatusRunning)
+	if payload.Resumed.Session.Summary.VMStatus != domain.VMStatusRunning {
+		t.Fatalf("resumed vm status = %q, want %q", payload.Resumed.Session.Summary.VMStatus, domain.VMStatusRunning)
 	}
 	if payload.Proxy.NotebookURL == "" {
 		t.Fatalf("expected proxy notebook url in result")
@@ -527,11 +529,11 @@ func TestLoaderEngineExecuteSupportsAgentAndLLMBindings(t *testing.T) {
 }
 
 func testLoaderEngineExecuteSupportsAgentAndLLMBindings(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	host := &recordingLoaderHost{}
 
-	result, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
+	result, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script: `function main() {
   const agent = scheduler.agent("summarize this event", {
     agent: "claude",
@@ -562,8 +564,8 @@ func testLoaderEngineExecuteSupportsAgentAndLLMBindings(t *testing.T) {
 	if host.agentCalls[0].Agent != "claude" {
 		t.Fatalf("agent request agent = %q, want %q", host.agentCalls[0].Agent, "claude")
 	}
-	if host.agentCalls[0].SessionPolicy != LoaderSessionPolicyNew {
-		t.Fatalf("agent request session policy = %q, want %q", host.agentCalls[0].SessionPolicy, LoaderSessionPolicyNew)
+	if host.agentCalls[0].SessionPolicy != domain.LoaderSessionPolicyNew {
+		t.Fatalf("agent request session policy = %q, want %q", host.agentCalls[0].SessionPolicy, domain.LoaderSessionPolicyNew)
 	}
 	if host.agentCalls[0].Timeout != 45*time.Second {
 		t.Fatalf("agent request timeout = %s, want 45s", host.agentCalls[0].Timeout)
@@ -610,8 +612,8 @@ func testLoaderEngineExecuteSupportsAgentAndLLMBindings(t *testing.T) {
 	}
 
 	var payload struct {
-		Agent LoaderAgentResult `json:"agent"`
-		LLM   LoaderLLMResult   `json:"llm"`
+		Agent domain.LoaderAgentResult `json:"agent"`
+		LLM   domain.LoaderLLMResult   `json:"llm"`
 	}
 	if err := json.Unmarshal([]byte(result.ResultJSON), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(result) returned error: %v", err)
@@ -625,11 +627,11 @@ func testLoaderEngineExecuteSupportsAgentAndLLMBindings(t *testing.T) {
 }
 
 func TestLoaderEngineExecuteSupportsAgentStructuredOutput(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	host := &recordingLoaderHost{}
 
-	result, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
+	result, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script: `function main() {
   const RiskSummary = scheduler.z.object({
     summary: scheduler.z.string(),
@@ -678,11 +680,11 @@ func TestLoaderEngineExecuteSupportsAgentStructuredOutput(t *testing.T) {
 }
 
 func TestLoaderEngineExecuteSupportsAgentPlainJSONSchema(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	host := &recordingLoaderHost{}
 
-	_, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
+	_, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script: `function main() {
   return scheduler.agent("summarize this event", {
     outputSchema: {
@@ -706,11 +708,11 @@ func TestLoaderEngineExecuteSupportsAgentPlainJSONSchema(t *testing.T) {
 }
 
 func TestLoaderEngineExecuteSupportsLLMStructuredOutput(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	host := &recordingLoaderHost{}
 
-	result, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
+	result, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script: `function main() {
   const RiskSummary = scheduler.z.object({
     summary: scheduler.z.string(),
@@ -744,11 +746,11 @@ func TestLoaderEngineExecuteSupportsLLMStructuredOutput(t *testing.T) {
 }
 
 func TestLoaderEngineExecuteSupportsLLMPlainJSONSchema(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	host := &recordingLoaderHost{}
 
-	_, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
+	_, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script: `function main() {
   return scheduler.llm("summarize this event", {
     outputSchema: {
@@ -772,11 +774,11 @@ func TestLoaderEngineExecuteSupportsLLMPlainJSONSchema(t *testing.T) {
 }
 
 func TestLoaderEngineExecuteValidatesAgentStructuredOutput(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	host := &invalidStructuredAgentHost{}
 
-	_, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
+	_, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script: `function main() {
   return scheduler.agent("summarize this event", {
     outputSchema: scheduler.z.object({
@@ -792,11 +794,11 @@ func TestLoaderEngineExecuteValidatesAgentStructuredOutput(t *testing.T) {
 }
 
 func TestLoaderEngineExecuteValidatesLLMStructuredOutput(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	host := &invalidStructuredLLMHost{}
 
-	_, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
+	_, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script: `function main() {
   return scheduler.llm("summarize this event", {
     outputSchema: scheduler.z.object({
@@ -816,11 +818,11 @@ func TestLoaderEngineExecuteSupportsCommandBindings(t *testing.T) {
 }
 
 func testLoaderEngineExecuteSupportsCommandBindings(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	host := &recordingLoaderHost{}
 
-	result, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
+	result, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script: `function main() {
   const execResult = scheduler.exec({
     command: "python3",
@@ -863,7 +865,7 @@ func testLoaderEngineExecuteSupportsCommandBindings(t *testing.T) {
 	if execCall.TimeoutMs != 30000 || execCall.MaxOutputBytes != 128 {
 		t.Fatalf("exec timeout/max = %d/%d, want 30000/128", execCall.TimeoutMs, execCall.MaxOutputBytes)
 	}
-	if execCall.SessionPolicy != LoaderSessionPolicyNew || execCall.Driver != driverpkg.RuntimeDriverMicrosandbox {
+	if execCall.SessionPolicy != domain.LoaderSessionPolicyNew || execCall.Driver != driverpkg.RuntimeDriverMicrosandbox {
 		t.Fatalf("exec session policy/driver = %q/%q", execCall.SessionPolicy, execCall.Driver)
 	}
 	if execCall.Title != "Loader Command Session" || execCall.GuestImage != "command-guest:latest" || execCall.WorkspaceID != "workspace-command" {
@@ -884,8 +886,8 @@ func testLoaderEngineExecuteSupportsCommandBindings(t *testing.T) {
 	}
 
 	var payload struct {
-		ExecResult  LoaderCommandResult `json:"execResult"`
-		ShellResult LoaderCommandResult `json:"shellResult"`
+		ExecResult  domain.LoaderCommandResult `json:"execResult"`
+		ShellResult domain.LoaderCommandResult `json:"shellResult"`
 	}
 	if err := json.Unmarshal([]byte(result.ResultJSON), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(result) returned error: %v", err)
@@ -899,7 +901,7 @@ func testLoaderEngineExecuteSupportsCommandBindings(t *testing.T) {
 }
 
 func TestLoaderEngineCommandBindingsValidateInputs(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	tests := []struct {
 		name    string
 		script  string
@@ -933,8 +935,8 @@ func TestLoaderEngineCommandBindingsValidateInputs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-				Runtime: LoaderRuntimeScheduler,
+			_, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+				Runtime: domain.LoaderRuntimeScheduler,
 				Script:  tt.script,
 			}, &recordingLoaderHost{})
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
@@ -945,10 +947,10 @@ func TestLoaderEngineCommandBindingsValidateInputs(t *testing.T) {
 }
 
 func TestLoaderEngineJSONAndRegistrationBranches(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	host := &statefulRecordingLoaderHost{state: map[string]string{"existing": `{"value":1}`}}
-	result, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime:     LoaderRuntimeScheduler,
+	result, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime:     domain.LoaderRuntimeScheduler,
 		PayloadJSON: `{"input":true}`,
 		Script: `
 const interval = scheduler.interval(function heartbeat() {}, 2500, "interval-auto");
@@ -1000,10 +1002,10 @@ function main(payload) {
 		t.Fatalf("deleted state keys = %#v", host.deleted)
 	}
 
-	triggerResult, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime:     LoaderRuntimeScheduler,
+	triggerResult, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime:     domain.LoaderRuntimeScheduler,
 		PayloadJSON: `{"input":true}`,
-		Trigger:     &LoaderTrigger{ID: "cron-id"},
+		Trigger:     &domain.LoaderTrigger{ID: "cron-id"},
 		Script: `
 scheduler.timeout("timeout-id", 3500, function secondTimeout() {});
 scheduler.cron("cron-id", "*/5 * * * *", function cronHandler(event) { return { cron: event.input }; }, { id: "cron-id", timezone: "UTC" });
@@ -1015,36 +1017,36 @@ scheduler.cron("cron-id", "*/5 * * * *", function cronHandler(event) { return { 
 	if triggerResult.ResultJSON != `{"cron":true}` {
 		t.Fatalf("trigger result json = %s", triggerResult.ResultJSON)
 	}
-	if _, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
-		Trigger: &LoaderTrigger{ID: "missing"},
+	if _, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
+		Trigger: &domain.LoaderTrigger{ID: "missing"},
 		Script:  `scheduler.on("runtime.test", function onEvent() {});`,
 	}, host); err == nil || !strings.Contains(err.Error(), "loader trigger missing not found") {
 		t.Fatalf("missing trigger error = %v", err)
 	}
-	if _, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
+	if _, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script:  `scheduler.on("runtime.one", function first() {}); scheduler.on("runtime.two", function second() {});`,
 	}, host); err == nil || !strings.Contains(err.Error(), "multiple triggers") {
 		t.Fatalf("multiple triggers error = %v", err)
 	}
-	if _, err := engine.Validate(context.Background(), LoaderRuntimeScheduler, `scheduler.cron("*/5 * * * *", function cron() {}, { id: "a" }, { id: "b" });`); err == nil || !strings.Contains(err.Error(), "at most one options") {
+	if _, err := engine.Validate(context.Background(), domain.LoaderRuntimeScheduler, `scheduler.cron("*/5 * * * *", function cron() {}, { id: "a" }, { id: "b" });`); err == nil || !strings.Contains(err.Error(), "at most one options") {
 		t.Fatalf("cron options error = %v", err)
 	}
-	if _, err := engine.Validate(context.Background(), LoaderRuntimeScheduler, `scheduler.on("", function onEvent() {});`); err == nil || !strings.Contains(err.Error(), "non-empty topic") {
+	if _, err := engine.Validate(context.Background(), domain.LoaderRuntimeScheduler, `scheduler.on("", function onEvent() {});`); err == nil || !strings.Contains(err.Error(), "non-empty topic") {
 		t.Fatalf("event topic error = %v", err)
 	}
-	if _, err := engine.Validate(context.Background(), LoaderRuntimeScheduler, `scheduler.timeout(function timeout() {}, 0);`); err == nil || !strings.Contains(err.Error(), "positive delay") {
+	if _, err := engine.Validate(context.Background(), domain.LoaderRuntimeScheduler, `scheduler.timeout(function timeout() {}, 0);`); err == nil || !strings.Contains(err.Error(), "positive delay") {
 		t.Fatalf("timeout delay error = %v", err)
 	}
 }
 
 func TestLoaderEngineExecuteRejectsNonStringAgentTimeout(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	host := &recordingLoaderHost{}
 
-	_, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
+	_, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script: `function main() {
   return scheduler.agent("summarize this event", { timeout: 30000 });
 }`,
@@ -1055,10 +1057,10 @@ func TestLoaderEngineExecuteRejectsNonStringAgentTimeout(t *testing.T) {
 }
 
 func TestLoaderEngineEventPublishHostAPI(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	host := &recordingLoaderHost{}
-	result, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
+	result, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script: `
 function main() {
   const published = scheduler.event.publish("runtime.test.requested", { value: 1 });
@@ -1078,15 +1080,15 @@ function main() {
 }
 
 func TestLoaderEngineCommandBindingsUnavailableDuringValidation(t *testing.T) {
-	engine := &QJSLoaderEngine{}
-	_, err := engine.Validate(context.Background(), LoaderRuntimeScheduler, `
+	engine := &loaders.QJSLoaderEngine{}
+	_, err := engine.Validate(context.Background(), domain.LoaderRuntimeScheduler, `
 scheduler.exec({ command: "python3", args: ["-V"] });
 `)
 	if err == nil || !strings.Contains(err.Error(), "scheduler.exec is unavailable during validation") {
 		t.Fatalf("Validate exec error = %v", err)
 	}
 
-	_, err = engine.Validate(context.Background(), LoaderRuntimeScheduler, `
+	_, err = engine.Validate(context.Background(), domain.LoaderRuntimeScheduler, `
 scheduler.shell("echo hello");
 `)
 	if err == nil || !strings.Contains(err.Error(), "scheduler.shell is unavailable during validation") {
@@ -1095,8 +1097,8 @@ scheduler.shell("echo hello");
 }
 
 func TestLoaderEngineEventPublishUnavailableDuringValidation(t *testing.T) {
-	engine := &QJSLoaderEngine{}
-	_, err := engine.Validate(context.Background(), LoaderRuntimeScheduler, `
+	engine := &loaders.QJSLoaderEngine{}
+	_, err := engine.Validate(context.Background(), domain.LoaderRuntimeScheduler, `
 scheduler.event.publish("runtime.test.requested", { value: 1 });
 `)
 	if err == nil || !strings.Contains(err.Error(), "scheduler.event.publish is unavailable during validation") {
@@ -1105,11 +1107,11 @@ scheduler.event.publish("runtime.test.requested", { value: 1 });
 }
 
 func TestLoaderEngineExecuteLeavesAgentUnsetWhenOptionsOmitProvider(t *testing.T) {
-	engine := &QJSLoaderEngine{}
+	engine := &loaders.QJSLoaderEngine{}
 	host := &recordingLoaderHost{}
 
-	_, err := engine.Execute(context.Background(), LoaderExecutionRequest{
-		Runtime: LoaderRuntimeScheduler,
+	_, err := engine.Execute(context.Background(), loaders.LoaderExecutionRequest{
+		Runtime: domain.LoaderRuntimeScheduler,
 		Script: `function main() {
   return scheduler.agent("summarize this event", {
     title: "Loader Agent Session"

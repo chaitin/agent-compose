@@ -29,7 +29,7 @@ func newTestWebhookService(t *testing.T) (*echo.Echo, *Service, *ConfigStore) {
 
 func addTestWebhookSource(t *testing.T, store *ConfigStore, prefix, token string) {
 	t.Helper()
-	_, err := store.UpsertWebhookSource(context.Background(), WebhookSource{
+	_, err := store.UpsertWebhookSource(context.Background(), domain.WebhookSource{
 		ID:          strings.TrimSuffix(strings.TrimPrefix(prefix, "webhook."), ".") + "-source",
 		Name:        prefix,
 		Enabled:     true,
@@ -64,7 +64,7 @@ func testWebhookHandlerStoresEvent(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	var accepted webhookAcceptedResponse
+	var accepted webhooks.AcceptedResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestWebhookPayloadSanitizesWebhookTokenHeader(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body = %s, want %d", rec.Code, rec.Body.String(), http.StatusAccepted)
 	}
-	var accepted webhookAcceptedResponse
+	var accepted webhooks.AcceptedResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -222,14 +222,14 @@ func TestWebhookPayloadSanitizesWebhookTokenHeader(t *testing.T) {
 func TestWebhookHandlerIdempotency(t *testing.T) {
 	app, _, store := newTestWebhookService(t)
 	addTestWebhookSource(t, store, "webhook.test.", "secret")
-	post := func(body string) (int, webhookAcceptedResponse) {
+	post := func(body string) (int, webhooks.AcceptedResponse) {
 		req := httptest.NewRequest(http.MethodPost, "/api/webhooks/webhook.test.idempotent", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer secret")
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Idempotency-Key", "same-key")
 		rec := httptest.NewRecorder()
 		app.ServeHTTP(rec, req)
-		var accepted webhookAcceptedResponse
+		var accepted webhooks.AcceptedResponse
 		_ = json.Unmarshal(rec.Body.Bytes(), &accepted)
 		return rec.Code, accepted
 	}
@@ -249,7 +249,7 @@ func TestWebhookHandlerIdempotency(t *testing.T) {
 
 func TestWebhookHandlerUsesWebhookSourceToken(t *testing.T) {
 	app, _, store := newTestWebhookService(t)
-	_, err := store.UpsertWebhookSource(context.Background(), WebhookSource{
+	_, err := store.UpsertWebhookSource(context.Background(), domain.WebhookSource{
 		ID:          "github-main",
 		Name:        "GitHub Main",
 		Enabled:     true,
@@ -269,7 +269,7 @@ func TestWebhookHandlerUsesWebhookSourceToken(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	var accepted webhookAcceptedResponse
+	var accepted webhooks.AcceptedResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil {
 		t.Fatalf("decode accepted response: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestWebhookSourceManagementHandlers(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("put status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	var saved webhookSourceResponse
+	var saved webhooks.SourceResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &saved); err != nil {
 		t.Fatalf("decode put response: %v", err)
 	}
@@ -338,7 +338,7 @@ func TestWebhookSourceManagementHandlers(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	var list webhookSourceListResponse
+	var list webhooks.SourceListResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 		t.Fatalf("decode list response: %v", err)
 	}
@@ -383,9 +383,9 @@ func TestEventQueryHandlers(t *testing.T) {
 
 func testEventQueryHandlers(t *testing.T) {
 	app, _, store := newTestWebhookService(t)
-	created, err := store.CreateEvent(context.Background(), TopicEventRecord{
+	created, err := store.CreateEvent(context.Background(), domain.TopicEventRecord{
 		Topic:         "runtime.test.requested",
-		Source:        TopicEventSourceLoader,
+		Source:        domain.TopicEventSourceLoader,
 		CorrelationID: "corr-query",
 		PayloadJSON:   `{"eventId":"manual","correlationId":"corr-query"}`,
 	})
@@ -406,7 +406,7 @@ func testEventQueryHandlers(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	var list topicEventListResponse
+	var list webhooks.TopicEventListResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
@@ -424,18 +424,18 @@ func testEventQueryHandlers(t *testing.T) {
 
 func TestEventSessionsHandler(t *testing.T) {
 	app, _, store := newTestWebhookService(t)
-	root, err := store.CreateEvent(context.Background(), TopicEventRecord{
+	root, err := store.CreateEvent(context.Background(), domain.TopicEventRecord{
 		Topic:         "webhook.test.session",
-		Source:        TopicEventSourceWebhook,
+		Source:        domain.TopicEventSourceWebhook,
 		CorrelationID: "corr-session",
 		PayloadJSON:   `{}`,
 	})
 	if err != nil {
 		t.Fatalf("CreateEvent root returned error: %v", err)
 	}
-	child, err := store.CreateEvent(context.Background(), TopicEventRecord{
+	child, err := store.CreateEvent(context.Background(), domain.TopicEventRecord{
 		Topic:         "runtime.test.session",
-		Source:        TopicEventSourceLoader,
+		Source:        domain.TopicEventSourceLoader,
 		CorrelationID: "corr-session",
 		ParentEventID: root.ID,
 		PayloadJSON:   `{}`,
@@ -443,7 +443,7 @@ func TestEventSessionsHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEvent child returned error: %v", err)
 	}
-	if err := store.AddEventSessionLink(context.Background(), EventSessionLink{
+	if err := store.AddEventSessionLink(context.Background(), domain.EventSessionLink{
 		EventID:       child.ID,
 		SessionID:     "session-1",
 		Relation:      "session_rpc_completed",
@@ -461,7 +461,7 @@ func TestEventSessionsHandler(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	var resp eventSessionsResponse
+	var resp webhooks.EventSessionsResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -475,18 +475,18 @@ func TestEventSessionsHandler(t *testing.T) {
 
 func TestEventRunsHandler(t *testing.T) {
 	app, _, store := newTestWebhookService(t)
-	root, err := store.CreateEvent(context.Background(), TopicEventRecord{
+	root, err := store.CreateEvent(context.Background(), domain.TopicEventRecord{
 		Topic:         "webhook.test.run",
-		Source:        TopicEventSourceWebhook,
+		Source:        domain.TopicEventSourceWebhook,
 		CorrelationID: "corr-run",
 		PayloadJSON:   `{}`,
 	})
 	if err != nil {
 		t.Fatalf("CreateEvent root returned error: %v", err)
 	}
-	child, err := store.CreateEvent(context.Background(), TopicEventRecord{
+	child, err := store.CreateEvent(context.Background(), domain.TopicEventRecord{
 		Topic:         "runtime.test.run",
-		Source:        TopicEventSourceLoader,
+		Source:        domain.TopicEventSourceLoader,
 		CorrelationID: "corr-run",
 		ParentEventID: root.ID,
 		PayloadJSON:   `{}`,
@@ -494,12 +494,12 @@ func TestEventRunsHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEvent child returned error: %v", err)
 	}
-	if err := store.UpsertEventDelivery(context.Background(), EventDelivery{
+	if err := store.UpsertEventDelivery(context.Background(), domain.EventDelivery{
 		EventID:   child.ID,
 		LoaderID:  "loader-1",
 		TriggerID: "trigger-1",
 		RunID:     "run-1",
-		Status:    EventDeliveryStatusRunSucceeded,
+		Status:    domain.EventDeliveryStatusRunSucceeded,
 	}); err != nil {
 		t.Fatalf("UpsertEventDelivery returned error: %v", err)
 	}
@@ -510,14 +510,14 @@ func TestEventRunsHandler(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	var resp eventRunsResponse
+	var resp webhooks.EventRunsResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 	if resp.EventID != root.ID || resp.CorrelationID != "corr-run" || len(resp.Runs) != 1 {
 		t.Fatalf("response = %#v", resp)
 	}
-	if resp.Runs[0].EventID != child.ID || resp.Runs[0].RunID != "run-1" || resp.Runs[0].Status != EventDeliveryStatusRunSucceeded {
+	if resp.Runs[0].EventID != child.ID || resp.Runs[0].RunID != "run-1" || resp.Runs[0].Status != domain.EventDeliveryStatusRunSucceeded {
 		t.Fatalf("run trace = %#v", resp.Runs[0])
 	}
 }

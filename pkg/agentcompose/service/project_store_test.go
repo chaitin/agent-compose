@@ -51,11 +51,11 @@ func TestProjectStableIDHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("domain.StableManagedLoaderID returned error: %v", err)
 	}
-	runID, err := domain.StableProjectRunID(projectID, "reviewer", ProjectRunSourceManual, "client-request-1")
+	runID, err := domain.StableProjectRunID(projectID, "reviewer", domain.ProjectRunSourceManual, "client-request-1")
 	if err != nil {
 		t.Fatalf("domain.StableProjectRunID returned error: %v", err)
 	}
-	otherRunID, err := domain.StableProjectRunID(projectID, "reviewer", ProjectRunSourceManual, "client-request-2")
+	otherRunID, err := domain.StableProjectRunID(projectID, "reviewer", domain.ProjectRunSourceManual, "client-request-2")
 	if err != nil {
 		t.Fatalf("other domain.StableProjectRunID returned error: %v", err)
 	}
@@ -230,7 +230,7 @@ agents:
 	if err != nil {
 		t.Fatalf("SaveProjectRevision returned error: %v", err)
 	}
-	runID, err := domain.StableProjectRunID(project.ID, "reviewer", ProjectRunSourceManual, "request-1")
+	runID, err := domain.StableProjectRunID(project.ID, "reviewer", domain.ProjectRunSourceManual, "request-1")
 	if err != nil {
 		t.Fatalf("domain.StableProjectRunID returned error: %v", err)
 	}
@@ -241,8 +241,8 @@ agents:
 		ProjectName:     project.Name,
 		ProjectRevision: revision.Revision,
 		AgentName:       "reviewer",
-		Source:          ProjectRunSourceManual,
-		Status:          ProjectRunStatusRunning,
+		Source:          domain.ProjectRunSourceManual,
+		Status:          domain.ProjectRunStatusRunning,
 		StartedAt:       startedAt,
 		Prompt:          "review this",
 		Driver:          "boxlite",
@@ -251,11 +251,11 @@ agents:
 	if err != nil {
 		t.Fatalf("CreateProjectRun returned error: %v", err)
 	}
-	if run.Status != ProjectRunStatusRunning || !run.StartedAt.Equal(time.UnixMilli(startedAt.UnixMilli()).UTC()) {
+	if run.Status != domain.ProjectRunStatusRunning || !run.StartedAt.Equal(time.UnixMilli(startedAt.UnixMilli()).UTC()) {
 		t.Fatalf("created run = %#v", run)
 	}
 	completedAt := startedAt.Add(2 * time.Second)
-	run.Status = ProjectRunStatusSucceeded
+	run.Status = domain.ProjectRunStatusSucceeded
 	run.SessionID = "session-1"
 	run.CompletedAt = completedAt
 	run.DurationMs = 2000
@@ -265,7 +265,7 @@ agents:
 	if err != nil {
 		t.Fatalf("UpdateProjectRun returned error: %v", err)
 	}
-	if updated.Status != ProjectRunStatusSucceeded || updated.SessionID != "session-1" || updated.DurationMs != 2000 {
+	if updated.Status != domain.ProjectRunStatusSucceeded || updated.SessionID != "session-1" || updated.DurationMs != 2000 {
 		t.Fatalf("updated run = %#v", updated)
 	}
 	loaded, err := store.GetProjectRun(ctx, runID)
@@ -310,22 +310,22 @@ agents:
 	if err != nil {
 		t.Fatalf("SaveProjectRevision returned error: %v", err)
 	}
-	linkedSession, err := sessionStore.CreateSession(ctx, "Linked without project tags", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil, nil,
+	linkedSession, err := sessionStore.CreateSession(ctx, "Linked without project tags", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SessionTypeManual, nil, nil,
 		[]SessionTag{{Name: "legacy", Value: "true"}})
 	if err != nil {
 		t.Fatalf("CreateSession linked returned error: %v", err)
 	}
-	tagOnlySession, err := sessionStore.CreateSession(ctx, "Tag only", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", SessionTypeManual, nil, nil,
+	tagOnlySession, err := sessionStore.CreateSession(ctx, "Tag only", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SessionTypeManual, nil, nil,
 		[]SessionTag{
 			{Name: "project", Value: project.ID},
 			{Name: "agent", Value: "reviewer"},
 			{Name: "run_id", Value: "tag-only-run"},
-			{Name: "source", Value: ProjectRunSourceManual},
+			{Name: "source", Value: domain.ProjectRunSourceManual},
 		})
 	if err != nil {
 		t.Fatalf("CreateSession tag-only returned error: %v", err)
 	}
-	runID, err := domain.StableProjectRunID(project.ID, "reviewer", ProjectRunSourceManual, "request-sqlite")
+	runID, err := domain.StableProjectRunID(project.ID, "reviewer", domain.ProjectRunSourceManual, "request-sqlite")
 	if err != nil {
 		t.Fatalf("domain.StableProjectRunID returned error: %v", err)
 	}
@@ -335,14 +335,14 @@ agents:
 		ProjectName:     project.Name,
 		ProjectRevision: revision.Revision,
 		AgentName:       "reviewer",
-		Source:          ProjectRunSourceManual,
-		Status:          ProjectRunStatusRunning,
+		Source:          domain.ProjectRunSourceManual,
+		Status:          domain.ProjectRunStatusRunning,
 		SessionID:       linkedSession.Summary.ID,
 	}); err != nil {
 		t.Fatalf("CreateProjectRun returned error: %v", err)
 	}
 
-	runs, err := store.ListProjectSessionRuns(ctx, ProjectSessionRelationFilter{ProjectID: project.ID, Statuses: []string{ProjectRunStatusRunning}})
+	runs, err := store.ListProjectSessionRuns(ctx, domain.ProjectSessionRelationFilter{ProjectID: project.ID, Statuses: []string{domain.ProjectRunStatusRunning}})
 	if err != nil {
 		t.Fatalf("ListProjectSessionRuns returned error: %v", err)
 	}
@@ -356,7 +356,7 @@ agents:
 	if len(tagOnlyRuns) != 0 {
 		t.Fatalf("tag-only session returned SQLite relations: %#v", tagOnlyRuns)
 	}
-	statuses, err := runspkg.ListProjectSessionStatuses(ctx, store, sessionStore, ProjectSessionRelationFilter{ProjectID: project.ID, Statuses: []string{ProjectRunStatusRunning}})
+	statuses, err := runspkg.ListProjectSessionStatuses(ctx, store, sessionStore, domain.ProjectSessionRelationFilter{ProjectID: project.ID, Statuses: []string{domain.ProjectRunStatusRunning}})
 	if err != nil {
 		t.Fatalf("ListProjectSessionStatuses returned error: %v", err)
 	}

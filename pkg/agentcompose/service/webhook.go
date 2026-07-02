@@ -15,19 +15,6 @@ import (
 	"agent-compose/pkg/agentcompose/webhooks"
 )
 
-type (
-	webhookAcceptedResponse   = webhooks.AcceptedResponse
-	topicEventResponse        = webhooks.TopicEventResponse
-	topicEventListResponse    = webhooks.TopicEventListResponse
-	eventSessionsResponse     = webhooks.EventSessionsResponse
-	eventRunsResponse         = webhooks.EventRunsResponse
-	webhookSourceRequest      = webhooks.SourceRequest
-	webhookSourceJSON         = webhooks.SourceJSON
-	webhookSourceListResponse = webhooks.SourceListResponse
-	webhookSourceResponse     = webhooks.SourceResponse
-	topicEventJSON            = webhooks.TopicEventJSON
-)
-
 func registerWebhookRoutes(app *echo.Echo, service *Service) {
 	app.POST("/api/webhooks/:topic", service.handleWebhook)
 	app.GET("/api/webhook-sources", service.handleListWebhookSources)
@@ -69,7 +56,7 @@ func (s *Service) handleWebhook(c echo.Context) error {
 		if webhooks.ExistingBodyHash(existing.PayloadJSON) != domain.TopicEventPayloadSHA256(compactBody) {
 			return c.JSON(http.StatusConflict, map[string]string{"error": "idempotency key conflicts with existing payload"})
 		}
-		return c.JSON(http.StatusAccepted, webhookAcceptedResponse{
+		return c.JSON(http.StatusAccepted, webhooks.AcceptedResponse{
 			Accepted:      true,
 			Topic:         existing.Topic,
 			EventID:       existing.ID,
@@ -89,10 +76,10 @@ func (s *Service) handleWebhook(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to encode webhook payload"})
 	}
 	payloadHash := domain.TopicEventPayloadSHA256(payloadJSON)
-	created, err := s.configDB.CreateEvent(c.Request().Context(), TopicEventRecord{
+	created, err := s.configDB.CreateEvent(c.Request().Context(), domain.TopicEventRecord{
 		ID:             eventID,
 		Topic:          topic,
-		Source:         TopicEventSourceWebhook,
+		Source:         domain.TopicEventSourceWebhook,
 		Provider:       firstNonEmpty(source.Provider, webhooks.ProviderFromTopic(topic)),
 		Intent:         webhooks.IntentFromBody(body),
 		CorrelationID:  correlationID,
@@ -100,8 +87,8 @@ func (s *Service) handleWebhook(c echo.Context) error {
 		DeliveryID:     webhooks.ExtractDeliveryID(c.Request()),
 		PayloadHash:    payloadHash,
 		PayloadJSON:    payloadJSON,
-		DispatchStatus: TopicEventDispatchPending,
-		PublisherType:  TopicEventSourceWebhook,
+		DispatchStatus: domain.TopicEventDispatchPending,
+		PublisherType:  domain.TopicEventSourceWebhook,
 	})
 	if err != nil {
 		if errors.Is(err, ErrConflict) {
@@ -110,7 +97,7 @@ func (s *Service) handleWebhook(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to store webhook event"})
 	}
 	if created.ID != eventID {
-		return c.JSON(http.StatusAccepted, webhookAcceptedResponse{
+		return c.JSON(http.StatusAccepted, webhooks.AcceptedResponse{
 			Accepted:      true,
 			Topic:         created.Topic,
 			EventID:       created.ID,
@@ -128,7 +115,7 @@ func (s *Service) handleWebhook(c echo.Context) error {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to store webhook event payload"})
 		}
 	}
-	return c.JSON(http.StatusAccepted, webhookAcceptedResponse{
+	return c.JSON(http.StatusAccepted, webhooks.AcceptedResponse{
 		Accepted:      true,
 		Topic:         created.Topic,
 		EventID:       created.ID,
@@ -146,7 +133,7 @@ func (s *Service) handleGetEvent(c echo.Context) error {
 		}
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load event"})
 	}
-	return c.JSON(http.StatusOK, topicEventResponse{Event: webhooks.TopicEventToJSON(item)})
+	return c.JSON(http.StatusOK, webhooks.TopicEventResponse{Event: webhooks.TopicEventToJSON(item)})
 }
 
 func (s *Service) handleListEvents(c echo.Context) error {
@@ -168,7 +155,7 @@ func (s *Service) handleListEvents(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "limit is invalid"})
 	}
-	items, err := s.configDB.ListEvents(c.Request().Context(), TopicEventFilter{
+	items, err := s.configDB.ListEvents(c.Request().Context(), domain.TopicEventFilter{
 		Topic:         topic,
 		CorrelationID: correlationID,
 		AfterSequence: afterSequence,
@@ -177,7 +164,7 @@ func (s *Service) handleListEvents(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to list events"})
 	}
-	resp := topicEventListResponse{Items: make([]topicEventJSON, 0, len(items))}
+	resp := webhooks.TopicEventListResponse{Items: make([]webhooks.TopicEventJSON, 0, len(items))}
 	for _, item := range items {
 		resp.Items = append(resp.Items, webhooks.TopicEventToJSON(item))
 		if item.Sequence > resp.NextAfterSequence {
@@ -204,7 +191,7 @@ func (s *Service) handleGetEventSessions(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to list event sessions"})
 	}
-	return c.JSON(http.StatusOK, eventSessionsResponse(webhooks.EventSessionsResponseFor(item, links)))
+	return c.JSON(http.StatusOK, webhooks.EventSessionsResponse(webhooks.EventSessionsResponseFor(item, links)))
 }
 
 func (s *Service) handleGetEventRuns(c echo.Context) error {
@@ -224,7 +211,7 @@ func (s *Service) handleGetEventRuns(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to list event runs"})
 	}
-	return c.JSON(http.StatusOK, eventRunsResponse(webhooks.EventRunsResponseFor(item, deliveries)))
+	return c.JSON(http.StatusOK, webhooks.EventRunsResponse(webhooks.EventRunsResponseFor(item, deliveries)))
 }
 
 func (s *Service) handleListWebhookSources(c echo.Context) error {
@@ -232,7 +219,7 @@ func (s *Service) handleListWebhookSources(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to list webhook sources"})
 	}
-	resp := webhookSourceListResponse{Items: make([]webhookSourceJSON, 0, len(items))}
+	resp := webhooks.SourceListResponse{Items: make([]webhooks.SourceJSON, 0, len(items))}
 	for _, item := range items {
 		resp.Items = append(resp.Items, webhooks.SourceToJSON(item))
 	}
@@ -244,7 +231,7 @@ func (s *Service) handlePutWebhookSource(c echo.Context) error {
 	if sourceID == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "source_id is required"})
 	}
-	var req webhookSourceRequest
+	var req webhooks.SourceRequest
 	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "body must be valid JSON"})
 	}
@@ -273,7 +260,7 @@ func (s *Service) handlePutWebhookSource(c echo.Context) error {
 	if req.ClearSignature {
 		req.SignatureSecret = ""
 	}
-	source, err := s.configDB.UpsertWebhookSource(c.Request().Context(), WebhookSource{
+	source, err := s.configDB.UpsertWebhookSource(c.Request().Context(), domain.WebhookSource{
 		ID:              sourceID,
 		Name:            req.Name,
 		Enabled:         enabled,
@@ -287,7 +274,7 @@ func (s *Service) handlePutWebhookSource(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
-	return c.JSON(http.StatusOK, webhookSourceResponse{Source: webhooks.SourceToJSON(source)})
+	return c.JSON(http.StatusOK, webhooks.SourceResponse{Source: webhooks.SourceToJSON(source)})
 }
 
 func (s *Service) handleDeleteWebhookSource(c echo.Context) error {
@@ -304,26 +291,26 @@ func (s *Service) handleDeleteWebhookSource(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-func (s *Service) authorizeWebhookRequest(c echo.Context, topic string) (WebhookSource, int64, bool, error) {
+func (s *Service) authorizeWebhookRequest(c echo.Context, topic string) (domain.WebhookSource, int64, bool, error) {
 	defaultLimit := s.config.WebhookBodyLimitBytes
 	sources, err := s.configDB.ListEnabledWebhookSourcesForTopic(c.Request().Context(), topic)
 	if err != nil {
-		return WebhookSource{}, 0, true, c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load webhook sources"})
+		return domain.WebhookSource{}, 0, true, c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load webhook sources"})
 	}
 	if len(sources) == 0 {
-		return WebhookSource{}, 0, true, c.JSON(http.StatusNotFound, map[string]string{"error": "webhook source not found"})
+		return domain.WebhookSource{}, 0, true, c.JSON(http.StatusNotFound, map[string]string{"error": "webhook source not found"})
 	}
-	matches := make([]WebhookSource, 0, 1)
+	matches := make([]domain.WebhookSource, 0, 1)
 	for _, source := range sources {
 		if source.TokenHash != "" && webhooks.ValidTokenHash(c.Request(), source.TokenHash) {
 			matches = append(matches, source)
 		}
 	}
 	if len(matches) == 0 {
-		return WebhookSource{}, 0, true, c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid webhook source token"})
+		return domain.WebhookSource{}, 0, true, c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid webhook source token"})
 	}
 	if len(matches) > 1 {
-		return WebhookSource{}, 0, true, c.JSON(http.StatusConflict, map[string]string{"error": "webhook source is ambiguous"})
+		return domain.WebhookSource{}, 0, true, c.JSON(http.StatusConflict, map[string]string{"error": "webhook source is ambiguous"})
 	}
 	limit := matches[0].BodyLimitBytes
 	if limit <= 0 {

@@ -38,7 +38,7 @@ func (s *Service) reconcilePersistedSessions(ctx context.Context) error {
 }
 
 func (s *Service) reconcilePendingSessionState(ctx context.Context, session *Session) (*Session, error) {
-	if session == nil || session.Summary.VMStatus != VMStatusPending {
+	if session == nil || session.Summary.VMStatus != domain.VMStatusPending {
 		return session, nil
 	}
 	if !session.Summary.CreatedAt.Before(s.startedAt) {
@@ -60,7 +60,7 @@ func (s *Service) reconcilePendingSessionState(ctx context.Context, session *Ses
 	if err := s.store.SaveVMState(session.Summary.ID, vmState); err != nil {
 		return nil, err
 	}
-	session.Summary.VMStatus = VMStatusFailed
+	session.Summary.VMStatus = domain.VMStatusFailed
 	if err := s.store.UpdateSession(ctx, session); err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (s *Service) reconcilePersistedProjectRuns(ctx context.Context) error {
 		return nil
 	}
 	coordinator := runs.NewCoordinator(s.configDB, domain.StableProjectRunID)
-	for _, status := range []string{ProjectRunStatusPending, ProjectRunStatusRunning} {
+	for _, status := range []string{domain.ProjectRunStatusPending, domain.ProjectRunStatusRunning} {
 		if err := s.reconcilePersistedProjectRunsWithStatus(ctx, coordinator, status); err != nil {
 			return err
 		}

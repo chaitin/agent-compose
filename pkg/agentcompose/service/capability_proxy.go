@@ -9,6 +9,7 @@ import (
 	"github.com/samber/do/v2"
 
 	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/capproxy"
 	appconfig "agent-compose/pkg/config"
 )
@@ -48,7 +49,7 @@ func (s *Store) ResolveCapabilitySession(ctx context.Context, token string) (cap
 		if capabilities.SessionToken(session) != token {
 			continue
 		}
-		if session.Summary.VMStatus != VMStatusRunning {
+		if session.Summary.VMStatus != domain.VMStatusRunning {
 			return capproxy.SessionBinding{}, fmt.Errorf("capability session token is not active")
 		}
 		capsetIDs := capabilities.SessionCapsets(session)
