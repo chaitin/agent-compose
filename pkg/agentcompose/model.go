@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	execdomain "agent-compose/internal/agentcompose/exec"
+	loaderdomain "agent-compose/internal/agentcompose/loader"
 	agentworkspace "agent-compose/internal/agentcompose/workspace"
 	"strings"
 	"time"
@@ -22,11 +23,7 @@ type SessionTag struct {
 	Value string `json:"value"`
 }
 
-type SessionEnvVar struct {
-	Name   string `json:"name"`
-	Value  string `json:"value,omitempty"`
-	Secret bool   `json:"secret,omitempty"`
-}
+type SessionEnvVar = loaderdomain.EnvVar
 
 func sessionEnvMap(groups ...[]SessionEnvVar) map[string]string {
 	var merged []SessionEnvVar

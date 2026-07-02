@@ -1,252 +1,93 @@
 package agentcompose
 
 import (
-	"context"
 	"strings"
 	"time"
 
-	"agent-compose/pkg/agentcompose/domain"
+	loaderdomain "agent-compose/internal/agentcompose/loader"
 )
 
 const (
-	LoaderRuntimeScheduler = domain.LoaderRuntimeScheduler
+	LoaderRuntimeScheduler = loaderdomain.RuntimeScheduler
 
-	LoaderTriggerKindInterval = domain.LoaderTriggerKindInterval
-	LoaderTriggerKindEvent    = domain.LoaderTriggerKindEvent
-	LoaderTriggerKindTimeout  = domain.LoaderTriggerKindTimeout
-	LoaderTriggerKindCron     = domain.LoaderTriggerKindCron
+	LoaderTriggerKindInterval = loaderdomain.TriggerKindInterval
+	LoaderTriggerKindEvent    = loaderdomain.TriggerKindEvent
+	LoaderTriggerKindTimeout  = loaderdomain.TriggerKindTimeout
+	LoaderTriggerKindCron     = loaderdomain.TriggerKindCron
 
-	LoaderSessionPolicySticky = domain.LoaderSessionPolicySticky
-	LoaderSessionPolicyNew    = domain.LoaderSessionPolicyNew
-	LoaderSessionPolicyReuse  = domain.LoaderSessionPolicyReuse
+	LoaderSessionPolicySticky = loaderdomain.SessionPolicySticky
+	LoaderSessionPolicyNew    = loaderdomain.SessionPolicyNew
+	LoaderSessionPolicyReuse  = loaderdomain.SessionPolicyReuse
 
-	LoaderConcurrencyPolicySkip     = domain.LoaderConcurrencyPolicySkip
-	LoaderConcurrencyPolicyParallel = domain.LoaderConcurrencyPolicyParallel
+	LoaderConcurrencyPolicySkip     = loaderdomain.ConcurrencyPolicySkip
+	LoaderConcurrencyPolicyParallel = loaderdomain.ConcurrencyPolicyParallel
 
-	LoaderRunStatusRunning   = domain.LoaderRunStatusRunning
-	LoaderRunStatusSucceeded = domain.LoaderRunStatusSucceeded
-	LoaderRunStatusFailed    = domain.LoaderRunStatusFailed
-	LoaderRunStatusSkipped   = domain.LoaderRunStatusSkipped
+	LoaderRunStatusRunning   = loaderdomain.RunStatusRunning
+	LoaderRunStatusSucceeded = loaderdomain.RunStatusSucceeded
+	LoaderRunStatusFailed    = loaderdomain.RunStatusFailed
+	LoaderRunStatusSkipped   = loaderdomain.RunStatusSkipped
 )
 
-type LoaderSummary struct {
-	ID                 string    `json:"id"`
-	Name               string    `json:"name"`
-	Description        string    `json:"description,omitempty"`
-	Enabled            bool      `json:"enabled"`
-	Runtime            string    `json:"runtime"`
-	WorkspaceID        string    `json:"workspace_id,omitempty"`
-	AgentID            string    `json:"agent_id,omitempty"`
-	Driver             string    `json:"driver,omitempty"`
-	GuestImage         string    `json:"guest_image,omitempty"`
-	DefaultAgent       string    `json:"default_agent,omitempty"`
-	SessionPolicy      string    `json:"session_policy,omitempty"`
-	ConcurrencyPolicy  string    `json:"concurrency_policy,omitempty"`
-	CapsetIDs          []string  `json:"capset_ids,omitempty"`
-	ManagedProjectID   string    `json:"managed_project_id,omitempty"`
-	ManagedRevision    int64     `json:"managed_project_revision,omitempty"`
-	ManagedAgentName   string    `json:"managed_agent_name,omitempty"`
-	ManagedSchedulerID string    `json:"managed_scheduler_id,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
-	LastError          string    `json:"last_error,omitempty"`
-	TriggerCount       int       `json:"trigger_count"`
-	RunCount           int       `json:"run_count"`
-	EventCount         int       `json:"event_count"`
-	LatestRunAt        time.Time `json:"latest_run_at,omitempty"`
-}
-
-type Loader struct {
-	Summary  LoaderSummary   `json:"summary"`
-	Script   string          `json:"script"`
-	Triggers []LoaderTrigger `json:"triggers,omitempty"`
-	EnvItems []SessionEnvVar `json:"env_items,omitempty"`
-}
-
-type LoaderTrigger struct {
-	LoaderID    string    `json:"loader_id"`
-	ID          string    `json:"id"`
-	Kind        string    `json:"kind"`
-	Topic       string    `json:"topic,omitempty"`
-	IntervalMs  int64     `json:"interval_ms,omitempty"`
-	Enabled     bool      `json:"enabled"`
-	AutoID      bool      `json:"auto_id,omitempty"`
-	SpecJSON    string    `json:"spec_json,omitempty"`
-	NextFireAt  time.Time `json:"next_fire_at,omitempty"`
-	LastFiredAt time.Time `json:"last_fired_at,omitempty"`
-}
-
-type LoaderRunSummary struct {
-	ID               string    `json:"id"`
-	LoaderID         string    `json:"loader_id"`
-	TriggerID        string    `json:"trigger_id,omitempty"`
-	TriggerKind      string    `json:"trigger_kind,omitempty"`
-	TriggerSource    string    `json:"trigger_source,omitempty"`
-	Status           string    `json:"status"`
-	StartedAt        time.Time `json:"started_at"`
-	CompletedAt      time.Time `json:"completed_at,omitempty"`
-	DurationMs       int64     `json:"duration_ms,omitempty"`
-	Error            string    `json:"error,omitempty"`
-	ResultJSON       string    `json:"result_json,omitempty"`
-	PayloadJSON      string    `json:"payload_json,omitempty"`
-	SourceScriptHash string    `json:"source_script_sha256,omitempty"`
-	ArtifactsDir     string    `json:"artifacts_dir,omitempty"`
-}
-
-type LoaderEvent struct {
-	ID                   string    `json:"id"`
-	LoaderID             string    `json:"loader_id"`
-	RunID                string    `json:"run_id,omitempty"`
-	TriggerID            string    `json:"trigger_id,omitempty"`
-	Type                 string    `json:"type"`
-	Level                string    `json:"level"`
-	Message              string    `json:"message"`
-	PayloadJSON          string    `json:"payload_json,omitempty"`
-	LinkedSessionID      string    `json:"linked_session_id,omitempty"`
-	LinkedCellID         string    `json:"linked_cell_id,omitempty"`
-	LinkedAgentSessionID string    `json:"linked_agent_session_id,omitempty"`
-	CreatedAt            time.Time `json:"created_at"`
-}
-
-type LoaderBinding struct {
-	LoaderID  string    `json:"loader_id"`
-	SessionID string    `json:"session_id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-type LoaderAgentRequest struct {
-	Agent         string          `json:"agent,omitempty"`
-	SessionPolicy string          `json:"sessionPolicy,omitempty"`
-	Timeout       time.Duration   `json:"timeout,omitempty"`
-	Title         string          `json:"title,omitempty"`
-	Driver        string          `json:"driver,omitempty"`
-	GuestImage    string          `json:"guestImage,omitempty"`
-	WorkspaceID   string          `json:"workspaceId,omitempty"`
-	SessionEnv    []SessionEnvVar `json:"sessionEnv,omitempty"`
-	OutputSchema  string          `json:"outputSchema,omitempty"`
-}
-
-type LoaderAgentResult struct {
-	Text           string `json:"text,omitempty"`
-	Output         string `json:"output,omitempty"`
-	FinalText      string `json:"finalText,omitempty"`
-	JSON           any    `json:"json"`
-	SessionID      string `json:"sessionId,omitempty"`
-	CellID         string `json:"cellId,omitempty"`
-	Agent          string `json:"agent,omitempty"`
-	AgentSessionID string `json:"agentSessionId,omitempty"`
-	StopReason     string `json:"stopReason,omitempty"`
-	Success        bool   `json:"success"`
-	ExitCode       int    `json:"exitCode"`
-}
-
-type LoaderCommandRequest struct {
-	Mode           string            `json:"mode"`
-	Command        string            `json:"command,omitempty"`
-	Args           []string          `json:"args,omitempty"`
-	Script         string            `json:"script,omitempty"`
-	Cwd            string            `json:"cwd,omitempty"`
-	Env            map[string]string `json:"env,omitempty"`
-	TimeoutMs      int64             `json:"timeoutMs,omitempty"`
-	MaxOutputBytes int64             `json:"maxOutputBytes,omitempty"`
-	SessionPolicy  string            `json:"sessionPolicy,omitempty"`
-	Title          string            `json:"title,omitempty"`
-	Driver         string            `json:"driver,omitempty"`
-	GuestImage     string            `json:"guestImage,omitempty"`
-	WorkspaceID    string            `json:"workspaceId,omitempty"`
-	SessionEnv     []SessionEnvVar   `json:"sessionEnv,omitempty"`
-}
-
-type LoaderCommandResult struct {
-	Stdout          string            `json:"stdout"`
-	Stderr          string            `json:"stderr"`
-	Output          string            `json:"output"`
-	ExitCode        int               `json:"exitCode"`
-	Success         bool              `json:"success"`
-	StdoutTruncated bool              `json:"stdoutTruncated,omitempty"`
-	StderrTruncated bool              `json:"stderrTruncated,omitempty"`
-	OutputTruncated bool              `json:"outputTruncated,omitempty"`
-	SessionID       string            `json:"sessionId,omitempty"`
-	CellID          string            `json:"cellId,omitempty"`
-	Artifacts       map[string]string `json:"artifacts,omitempty"`
-}
-
-type LoaderLLMRequest struct {
-	Model        string `json:"model,omitempty"`
-	OutputSchema string `json:"outputSchema,omitempty"`
-}
-
-type LoaderLLMResult struct {
-	Text         string `json:"text,omitempty"`
-	Model        string `json:"model,omitempty"`
-	ResponseID   string `json:"responseId,omitempty"`
-	FinishReason string `json:"finishReason,omitempty"`
-	JSON         any    `json:"json"`
-}
-
-type LoaderTopicEvent struct {
-	EventID         string                                         `json:"event_id,omitempty"`
-	Topic           string                                         `json:"topic"`
-	Source          string                                         `json:"source,omitempty"`
-	Provider        string                                         `json:"provider,omitempty"`
-	Payload         map[string]any                                 `json:"payload,omitempty"`
-	CreatedAt       time.Time                                      `json:"created_at"`
-	Ack             func(context.Context) error                    `json:"-"`
-	NoSubscriberAck func(context.Context) error                    `json:"-"`
-	Retry           func(context.Context, string, time.Time) error `json:"-"`
-	Release         func()                                         `json:"-"`
-}
+type LoaderSummary = loaderdomain.Summary
+type Loader = loaderdomain.Definition
+type LoaderTrigger = loaderdomain.Trigger
+type LoaderRunSummary = loaderdomain.RunSummary
+type LoaderEvent = loaderdomain.Event
+type LoaderBinding = loaderdomain.Binding
+type LoaderAgentRequest = loaderdomain.AgentRequest
+type LoaderAgentResult = loaderdomain.AgentResult
+type LoaderCommandRequest = loaderdomain.CommandRequest
+type LoaderCommandResult = loaderdomain.CommandResult
+type LoaderLLMRequest = loaderdomain.LLMRequest
+type LoaderLLMResult = loaderdomain.LLMResult
+type LoaderTopicEvent = loaderdomain.TopicEvent
 
 func normalizeLoaderRuntime(runtime string) (string, error) {
-	return domain.NormalizeLoaderRuntime(runtime)
+	return loaderdomain.NormalizeRuntime(runtime)
 }
 
 func normalizeLoaderTriggerKind(kind string) (string, error) {
-	return domain.NormalizeLoaderTriggerKind(kind)
+	return loaderdomain.NormalizeTriggerKind(kind)
 }
 
 func normalizeLoaderSessionPolicy(policy string) string {
-	return domain.NormalizeLoaderSessionPolicy(policy)
+	return loaderdomain.NormalizeSessionPolicy(policy)
 }
 
 func normalizeLoaderConcurrencyPolicy(policy string) string {
-	return domain.NormalizeLoaderConcurrencyPolicy(policy)
+	return loaderdomain.NormalizeConcurrencyPolicy(policy)
 }
 
 func normalizeLoaderRunStatus(status string) string {
-	return domain.NormalizeLoaderRunStatus(status)
+	return loaderdomain.NormalizeRunStatus(status)
 }
 
 func loaderTriggerStableID(kind, topic string, intervalMs int64, callbackSource string, index int) string {
-	return domain.LoaderTriggerStableID(kind, topic, intervalMs, callbackSource, index)
+	return loaderdomain.TriggerStableID(kind, topic, intervalMs, callbackSource, index)
 }
 
 func loaderSourceSHA(script string) string {
-	return domain.LoaderSourceSHA(script)
+	return loaderdomain.SourceSHA(script)
 }
 
 func loaderTriggerTopicMatches(pattern, topic string) bool {
-	return domain.LoaderTriggerTopicMatches(pattern, topic)
+	return loaderdomain.TriggerTopicMatches(pattern, topic)
 }
 
 func timeIsSet(value time.Time) bool {
-	return !value.IsZero()
+	return loaderdomain.TimeIsSet(value)
 }
 
 func nonZeroTimeUnixMilli(value time.Time) int64 {
-	if value.IsZero() {
-		return 0
-	}
-	return value.UTC().UnixMilli()
+	return loaderdomain.NonZeroTimeUnixMilli(value)
 }
 
 func loaderTriggerUsesSchedule(kind string) bool {
-	return domain.LoaderTriggerUsesSchedule(kind)
+	return loaderdomain.TriggerUsesSchedule(kind)
 }
 
 func loaderTriggerScheduledAt(now time.Time, delayMs int64) time.Time {
-	return domain.LoaderTriggerScheduledAt(now, delayMs)
+	return loaderdomain.TriggerScheduledAt(now, delayMs)
 }
 
 func defaultLoaderName(now time.Time) string {

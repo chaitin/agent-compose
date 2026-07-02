@@ -1,132 +1,68 @@
 package domain
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
-	"strings"
 	"time"
+
+	loaderdomain "agent-compose/internal/agentcompose/loader"
 )
 
 const (
-	LoaderRuntimeScheduler = "scheduler"
+	LoaderRuntimeScheduler = loaderdomain.RuntimeScheduler
 
-	LoaderTriggerKindInterval = "interval"
-	LoaderTriggerKindEvent    = "event"
-	LoaderTriggerKindTimeout  = "timeout"
-	LoaderTriggerKindCron     = "cron"
+	LoaderTriggerKindInterval = loaderdomain.TriggerKindInterval
+	LoaderTriggerKindEvent    = loaderdomain.TriggerKindEvent
+	LoaderTriggerKindTimeout  = loaderdomain.TriggerKindTimeout
+	LoaderTriggerKindCron     = loaderdomain.TriggerKindCron
 
-	LoaderSessionPolicySticky = "sticky"
-	LoaderSessionPolicyNew    = "new"
-	LoaderSessionPolicyReuse  = "reuse"
+	LoaderSessionPolicySticky = loaderdomain.SessionPolicySticky
+	LoaderSessionPolicyNew    = loaderdomain.SessionPolicyNew
+	LoaderSessionPolicyReuse  = loaderdomain.SessionPolicyReuse
 
-	LoaderConcurrencyPolicySkip     = "skip"
-	LoaderConcurrencyPolicyParallel = "parallel"
+	LoaderConcurrencyPolicySkip     = loaderdomain.ConcurrencyPolicySkip
+	LoaderConcurrencyPolicyParallel = loaderdomain.ConcurrencyPolicyParallel
 
-	LoaderRunStatusRunning   = "running"
-	LoaderRunStatusSucceeded = "succeeded"
-	LoaderRunStatusFailed    = "failed"
-	LoaderRunStatusSkipped   = "skipped"
+	LoaderRunStatusRunning   = loaderdomain.RunStatusRunning
+	LoaderRunStatusSucceeded = loaderdomain.RunStatusSucceeded
+	LoaderRunStatusFailed    = loaderdomain.RunStatusFailed
+	LoaderRunStatusSkipped   = loaderdomain.RunStatusSkipped
 )
 
 func NormalizeLoaderRuntime(runtime string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(runtime)) {
-	case "", LoaderRuntimeScheduler:
-		return LoaderRuntimeScheduler, nil
-	default:
-		return "", fmt.Errorf("unsupported loader runtime %q", runtime)
-	}
+	return loaderdomain.NormalizeRuntime(runtime)
 }
 
 func NormalizeLoaderTriggerKind(kind string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case LoaderTriggerKindInterval:
-		return LoaderTriggerKindInterval, nil
-	case LoaderTriggerKindEvent:
-		return LoaderTriggerKindEvent, nil
-	case LoaderTriggerKindTimeout:
-		return LoaderTriggerKindTimeout, nil
-	case LoaderTriggerKindCron:
-		return LoaderTriggerKindCron, nil
-	default:
-		return "", fmt.Errorf("unsupported loader trigger kind %q", kind)
-	}
+	return loaderdomain.NormalizeTriggerKind(kind)
 }
 
 func NormalizeLoaderSessionPolicy(policy string) string {
-	switch strings.ToLower(strings.TrimSpace(policy)) {
-	case "", LoaderSessionPolicySticky, LoaderSessionPolicyReuse:
-		return LoaderSessionPolicySticky
-	case LoaderSessionPolicyNew:
-		return LoaderSessionPolicyNew
-	default:
-		return LoaderSessionPolicySticky
-	}
+	return loaderdomain.NormalizeSessionPolicy(policy)
 }
 
 func NormalizeLoaderConcurrencyPolicy(policy string) string {
-	switch strings.ToLower(strings.TrimSpace(policy)) {
-	case "", LoaderConcurrencyPolicySkip:
-		return LoaderConcurrencyPolicySkip
-	case LoaderConcurrencyPolicyParallel, "allow":
-		return LoaderConcurrencyPolicyParallel
-	default:
-		return LoaderConcurrencyPolicySkip
-	}
+	return loaderdomain.NormalizeConcurrencyPolicy(policy)
 }
 
 func NormalizeLoaderRunStatus(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case LoaderRunStatusRunning:
-		return LoaderRunStatusRunning
-	case LoaderRunStatusSucceeded:
-		return LoaderRunStatusSucceeded
-	case LoaderRunStatusFailed:
-		return LoaderRunStatusFailed
-	case LoaderRunStatusSkipped:
-		return LoaderRunStatusSkipped
-	default:
-		return LoaderRunStatusRunning
-	}
+	return loaderdomain.NormalizeRunStatus(status)
 }
 
 func LoaderTriggerStableID(kind, topic string, intervalMs int64, callbackSource string, index int) string {
-	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d|%s|%d", kind, topic, intervalMs, callbackSource, index)))
-	return "auto-" + hex.EncodeToString(h[:6])
+	return loaderdomain.TriggerStableID(kind, topic, intervalMs, callbackSource, index)
 }
 
 func LoaderSourceSHA(script string) string {
-	h := sha256.Sum256([]byte(script))
-	return hex.EncodeToString(h[:])
+	return loaderdomain.SourceSHA(script)
 }
 
 func LoaderTriggerTopicMatches(pattern, topic string) bool {
-	pattern = strings.TrimSpace(pattern)
-	topic = strings.TrimSpace(topic)
-	if pattern == "" || topic == "" {
-		return false
-	}
-	if pattern == topic {
-		return true
-	}
-	if strings.HasSuffix(pattern, "*") {
-		return strings.HasPrefix(topic, strings.TrimSuffix(pattern, "*"))
-	}
-	return false
+	return loaderdomain.TriggerTopicMatches(pattern, topic)
 }
 
 func LoaderTriggerUsesSchedule(kind string) bool {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case LoaderTriggerKindInterval, LoaderTriggerKindTimeout, LoaderTriggerKindCron:
-		return true
-	default:
-		return false
-	}
+	return loaderdomain.TriggerUsesSchedule(kind)
 }
 
 func LoaderTriggerScheduledAt(now time.Time, delayMs int64) time.Time {
-	if delayMs <= 0 {
-		return time.Time{}
-	}
-	return now.UTC().Add(time.Duration(delayMs) * time.Millisecond)
+	return loaderdomain.TriggerScheduledAt(now, delayMs)
 }
