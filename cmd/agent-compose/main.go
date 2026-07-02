@@ -29,6 +29,7 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc/codes"
 
+	agentcomposebootstrap "agent-compose/internal/agentcompose/bootstrap"
 	"agent-compose/pkg/fxgo/echofn"
 	"agent-compose/pkg/fxgo/restful"
 	"agent-compose/pkg/fxgo/utils"
@@ -127,7 +128,7 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 	config.Setup(di)
 	do.Provide(di, NewEcho)
 	health.Setup(di)
-	agentcompose.Register(di)
+	agentcomposebootstrap.Register(di)
 
 	app := do.MustInvoke[*echo.Echo](di)
 	logger := do.MustInvoke[*slog.Logger](di)
@@ -136,7 +137,7 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 
 	startBackground := opts.StartBackground
 	if startBackground == nil {
-		startBackground = agentcompose.StartBackground
+		startBackground = agentcomposebootstrap.StartBackground
 	}
 	return &DaemonApp{
 		DI:              di,

@@ -17,7 +17,6 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
 	"github.com/samber/do/v2"
 	"google.golang.org/protobuf/types/known/emptypb"
 
@@ -114,70 +113,15 @@ func NewService(di do.Injector) (*Service, error) {
 }
 
 func Setup(di do.Injector) {
-	Register(di)
-	if err := StartBackground(di); err != nil {
-		slog.Error("failed to start agent-compose background managers", "error", err)
-	}
+	bootstrapSetup(di)
 }
 
 func Register(di do.Injector) {
-	do.Provide(di, NewStore)
-	do.Provide(di, NewConfigStore)
-	do.Provide(di, NewRuntimeProvider)
-	do.Provide(di, NewDriver)
-	do.Provide(di, NewExecutor)
-	do.Provide(di, NewLLMClient)
-	do.Provide(di, NewCapabilityProvider)
-	do.Provide(di, NewCapProxyServer)
-	do.Provide(di, NewLoaderBus)
-	do.Provide(di, NewSessionStreamBroker)
-	do.Provide(di, NewDashboardOverviewAggregator)
-	do.Provide(di, NewDashboardOverviewHub)
-	do.Provide(di, NewLoaderEngine)
-	do.Provide(di, NewSessionRPCBridge)
-	do.Provide(di, NewLoaderManager)
-	do.Provide(di, NewService)
-
-	app := do.MustInvoke[*echo.Echo](di)
-	service := do.MustInvoke[*Service](di)
-
-	path, handler := agentcomposev1connect.NewSessionServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewKernelServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewAgentServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewAgentDefinitionServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewLLMServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewConfigServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewLoaderServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewDashboardServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev1connect.NewCapabilityServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-
-	path, handler = agentcomposev2connect.NewProjectServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewRunServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewExecServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewImageServiceHandler(service)
-	app.Any(path+"*", echo.WrapHandler(handler))
-
-	registerWebhookRoutes(app, service)
-	registerRuntimeLLMFacadeRoutes(app, service)
-	registerProxyRoutes(app, service)
-	registerWorkspaceRoutes(app, service)
+	bootstrapRegister(di)
 }
 
 func StartBackground(di do.Injector) error {
-	service := do.MustInvoke[*Service](di)
-	return service.StartBackground(do.MustInvoke[context.Context](di), do.MustInvoke[*capproxy.Server](di))
+	return bootstrapStartBackground(di)
 }
 
 func (s *Service) StartBackground(ctx context.Context, capProxy *capproxy.Server) error {
