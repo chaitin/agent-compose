@@ -41,6 +41,14 @@ func NewExecutor(di do.Injector) (*Executor, error) {
 	}, nil
 }
 
+func newExecutorLLMFacadeEnvPreparer(do.Injector) (executorpkg.LLMFacadeEnvPreparer, error) {
+	return executorLLMFacadeEnvPreparer, nil
+}
+
+func newExecutorStreamPublisher(di do.Injector) (executorpkg.StreamPublisher, error) {
+	return do.MustInvoke[*SessionStreamBroker](di).componentBroker(), nil
+}
+
 func (e *Executor) componentExecutor() *executorpkg.Executor {
 	if e == nil {
 		return nil

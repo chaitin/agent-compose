@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"strings"
 
 	"agent-compose/pkg/model"
@@ -28,4 +29,30 @@ func AgentExecutionConfigFromDefinition(agent AgentDefinition, fallbackProvider 
 		Model:             modelName,
 		EnvItems:          append([]SessionEnvVar(nil), agent.EnvItems...),
 	}
+}
+
+func AgentExecutionConfigForSession(ctx context.Context, configDB *ConfigStore, session *Session, requestedProvider string) AgentExecutionConfig {
+	provider := normalizeAgentKind(requestedProvider)
+	config := AgentExecutionConfig{Provider: provider}
+	if session == nil || configDB == nil {
+		return config
+	}
+	agentID := sessionTagValue(session.Summary.Tags, agentSessionTagID)
+	if agentID == "" || !sessionHasAgentTag(session, agentID) {
+		return config
+	}
+	agent, err := configDB.GetAgentDefinition(ctx, agentID)
+	if err != nil {
+		return config
+	}
+	return AgentExecutionConfigFromDefinition(agent, provider)
+}
+
+func sessionTagValue(tags []SessionTag, name string) string {
+	for _, tag := range tags {
+		if strings.TrimSpace(tag.Name) == name {
+			return strings.TrimSpace(tag.Value)
+		}
+	}
+	return ""
 }

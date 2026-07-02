@@ -27,6 +27,7 @@ type AgentCurrentRunSummary = model.AgentCurrentRunSummary
 type AgentLatestRunSummary = model.AgentLatestRunSummary
 type Session = model.Session
 type SessionEnvVar = model.SessionEnvVar
+type SessionTag = model.SessionTag
 type WorkspaceConfig = model.WorkspaceConfig
 
 type AgentValidationResult struct {

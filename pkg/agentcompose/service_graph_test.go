@@ -9,6 +9,8 @@ import (
 
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	executorpkg "agent-compose/pkg/executor"
+	runtimespkg "agent-compose/pkg/runtimes"
 
 	"github.com/labstack/echo/v4"
 	"github.com/samber/do/v2"
@@ -84,6 +86,17 @@ func TestRegisterSharesImageBackendsAcrossServiceGraph(t *testing.T) {
 
 	assertBackendField(t, do.MustInvoke[*LoaderManager](di), "images", backends.docker)
 	assertBackendField(t, do.MustInvoke[*ProjectService](di), "images", backends.docker)
+
+	publisher := do.MustInvoke[executorpkg.StreamPublisher](di)
+	if publisher == nil || publisher != service.streams.componentBroker() {
+		t.Fatalf("executor stream publisher = %T/%p, want service stream broker", publisher, publisher)
+	}
+	if preparer := do.MustInvoke[executorpkg.LLMFacadeEnvPreparer](di); preparer == nil {
+		t.Fatalf("executor LLM facade preparer is nil")
+	}
+	if preparer := do.MustInvoke[runtimespkg.SessionRuntimeEnvPreparer](di); preparer == nil {
+		t.Fatalf("session runtime env preparer is nil")
+	}
 }
 
 func assertBackendField(t *testing.T, owner any, fieldName string, want ImageBackend) {

@@ -4,7 +4,6 @@ import (
 	appconfig "agent-compose/pkg/config"
 	"context"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -20,7 +19,6 @@ import (
 	"agent-compose/pkg/images"
 	llmpkg "agent-compose/pkg/llm"
 	"agent-compose/pkg/loaders"
-	"agent-compose/pkg/model"
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/settings"
 	"agent-compose/pkg/workspaces"
@@ -137,6 +135,8 @@ func Register(di do.Injector) {
 	do.Provide(di, newStore)
 	do.Provide(di, newConfigStore)
 	do.Provide(di, NewRuntimeProvider)
+	do.Provide(di, newSessionRuntimeEnvPreparer)
+	do.Provide(di, newExecutorLLMFacadeEnvPreparer)
 	do.Provide(di, NewDriver)
 	do.Provide(di, NewExecutor)
 	do.Provide(di, newLLMClient)
@@ -144,6 +144,7 @@ func Register(di do.Injector) {
 	do.Provide(di, capabilities.NewCapProxyServer)
 	do.Provide(di, NewLoaderBus)
 	do.Provide(di, NewSessionStreamBroker)
+	do.Provide(di, newExecutorStreamPublisher)
 	do.Provide(di, dashboard.NewDashboardOverviewAggregator)
 	do.Provide(di, dashboard.NewDashboardOverviewHub)
 	do.Provide(di, newLoaderEngine)
@@ -336,20 +337,13 @@ type agentExecutionConfig struct {
 }
 
 func (s *Service) resolveSessionAgentConfig(ctx context.Context, session *Session, requested string) agentExecutionConfig {
-	provider := model.NormalizeAgentProvider(requested)
-	config := agentExecutionConfig{Provider: provider}
-	if session == nil {
-		return config
+	ownerConfig := agents.AgentExecutionConfigForSession(ctx, s.configDB, session, requested)
+	return agentExecutionConfig{
+		Provider:          ownerConfig.Provider,
+		AgentDefinitionID: ownerConfig.AgentDefinitionID,
+		Model:             ownerConfig.Model,
+		EnvItems:          append([]SessionEnvVar(nil), ownerConfig.EnvItems...),
 	}
-	agentID := sessionTagValue(session.Summary.Tags, agentSessionTagID)
-	if agentID == "" || !sessionHasAgentTag(session, agentID) || s.configDB == nil {
-		return config
-	}
-	agent, err := s.configDB.GetAgentDefinition(ctx, agentID)
-	if err != nil {
-		return config
-	}
-	return agentExecutionConfigFromDefinition(agent, provider)
 }
 
 func (s *Service) resolveSessionAgentConfigForSessions(ctx context.Context, session *Session, requested string) sessions.AgentExecutionConfig {
@@ -360,25 +354,6 @@ func (s *Service) resolveSessionAgentConfigForSessions(ctx context.Context, sess
 		Model:             config.Model,
 		EnvItems:          append([]SessionEnvVar(nil), config.EnvItems...),
 	}
-}
-
-func agentExecutionConfigFromDefinition(agent AgentDefinition, fallbackProvider string) agentExecutionConfig {
-	ownerConfig := agents.AgentExecutionConfigFromDefinition(agent, fallbackProvider)
-	return agentExecutionConfig{
-		Provider:          ownerConfig.Provider,
-		AgentDefinitionID: ownerConfig.AgentDefinitionID,
-		Model:             ownerConfig.Model,
-		EnvItems:          append([]SessionEnvVar(nil), ownerConfig.EnvItems...),
-	}
-}
-
-func sessionTagValue(tags []SessionTag, name string) string {
-	for _, tag := range tags {
-		if strings.TrimSpace(tag.Name) == name {
-			return strings.TrimSpace(tag.Value)
-		}
-	}
-	return ""
 }
 
 func (s *Service) ListSessionEvents(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.ListSessionEventsResponse], error) {

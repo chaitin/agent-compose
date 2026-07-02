@@ -31,7 +31,8 @@ type Executor struct {
 }
 
 func NewExecutor(di do.Injector) (*Executor, error) {
-	return New(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[RuntimeProvider](di), do.MustInvoke[StreamPublisher](di), nil), nil
+	preparer, _ := do.Invoke[LLMFacadeEnvPreparer](di)
+	return New(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*Store](di), do.MustInvoke[*ConfigStore](di), do.MustInvoke[RuntimeProvider](di), do.MustInvoke[StreamPublisher](di), preparer), nil
 }
 
 func New(config *appconfig.Config, store *Store, configDB *ConfigStore, runtimes RuntimeProvider, streams StreamPublisher, prepareLLM LLMFacadeEnvPreparer) *Executor {

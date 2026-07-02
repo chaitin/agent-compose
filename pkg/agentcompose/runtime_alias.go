@@ -33,6 +33,14 @@ func NewDriver(di do.Injector) (Driver, error) {
 	), nil
 }
 
+func newSessionRuntimeEnvPreparer(di do.Injector) (runtimes.SessionRuntimeEnvPreparer, error) {
+	config := do.MustInvoke[*appconfig.Config](di)
+	configDB := do.MustInvoke[*ConfigStore](di)
+	return func(ctx context.Context, session *Session) ([]SessionEnvVar, error) {
+		return sessionRuntimeEnvPreparer(ctx, config, configDB, session)
+	}, nil
+}
+
 func sessionRuntimeEnvPreparer(ctx context.Context, config *appconfig.Config, configDB *ConfigStore, session *Session) ([]SessionEnvVar, error) {
 	managedEnv, err := ensureSessionLLMFacadeConfig(ctx, config, configDB, session, "codex", "", "session", "")
 	if err != nil {
