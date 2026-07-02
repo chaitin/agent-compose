@@ -15,6 +15,6 @@ func (f fixedGatewaySource) GetCapabilityGateway(context.Context) (storage.Capab
 	return f.settings, nil
 }
 
-func newTestCapabilityProvider(addr, proxyTarget string) CapabilityProvider {
+func newTestCapabilityProvider(addr, proxyTarget string) capabilities.Provider {
 	return capabilities.NewProvider(fixedGatewaySource{settings: storage.CapabilityGatewaySettings{Addr: addr}}, proxyTarget)
 }

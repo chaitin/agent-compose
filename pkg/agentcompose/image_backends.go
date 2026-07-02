@@ -12,9 +12,9 @@ import (
 )
 
 type imageBackends struct {
-	docker ImageBackend
-	oci    ImageBackend
-	auto   ImageBackend
+	docker images.ImageBackend
+	oci    images.ImageBackend
+	auto   images.ImageBackend
 }
 
 func newImageBackends(di do.Injector) (*imageBackends, error) {

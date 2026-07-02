@@ -468,7 +468,7 @@ func testServiceProtoConversionHelpers(t *testing.T) {
 	if sessionspkg.ToProtoCellType("unknown") != agentcomposev1.CellType_CELL_TYPE_JAVASCRIPT {
 		t.Fatalf("unknown cell type did not map to javascript")
 	}
-	eventProto := sessionspkg.ToProtoEvent(SessionEvent{ID: "event-1", Type: "session.test", Level: "info", Message: "tested", CreatedAt: now})
+	eventProto := sessionspkg.ToProtoEvent(modelpkg.SessionEvent{ID: "event-1", Type: "session.test", Level: "info", Message: "tested", CreatedAt: now})
 	if eventProto.GetId() != "event-1" || eventProto.GetCreatedAt() == "" {
 		t.Fatalf("event proto = %+v", eventProto)
 	}

@@ -102,7 +102,7 @@ func TestRegisterSharesImageBackendsAcrossServiceGraph(t *testing.T) {
 	}
 }
 
-func assertBackendField(t *testing.T, owner any, fieldName string, want ImageBackend) {
+func assertBackendField(t *testing.T, owner any, fieldName string, want imagespkg.ImageBackend) {
 	t.Helper()
 	field := reflect.ValueOf(owner).Elem().FieldByName(fieldName)
 	if !field.IsValid() {
@@ -124,7 +124,7 @@ func interfacePointer(value reflect.Value) uintptr {
 	return elem.Pointer()
 }
 
-func backendPointer(backend ImageBackend) uintptr {
+func backendPointer(backend imagespkg.ImageBackend) uintptr {
 	value := reflect.ValueOf(backend)
 	if value.Kind() != reflect.Ptr {
 		return 0

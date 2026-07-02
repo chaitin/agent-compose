@@ -11,7 +11,7 @@ import (
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
-func (s *Service) loaderService() *LoaderService {
+func (s *Service) loaderService() *loaders.Service {
 	if s.loaderHandlers != nil {
 		return s.loaderHandlers
 	}
@@ -23,7 +23,7 @@ func (s *Service) publishLoaderTopic(topic string, payload map[string]any) {
 	if s == nil || s.bus == nil {
 		return
 	}
-	s.bus.Publish(LoaderTopicEvent{
+	s.bus.Publish(loaders.LoaderTopicEvent{
 		Topic:     topic,
 		Payload:   payload,
 		CreatedAt: time.Now().UTC(),

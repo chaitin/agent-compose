@@ -6,32 +6,24 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	agentspkg "agent-compose/pkg/agents"
-	sessionspkg "agent-compose/pkg/sessions"
+	"agent-compose/pkg/agents"
+	"agent-compose/pkg/sessions"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
-type AgentDefinition = agentspkg.AgentDefinition
-type AgentDefinitionListOptions = agentspkg.AgentDefinitionListOptions
-type AgentDefinitionListResult = agentspkg.AgentDefinitionListResult
-type AgentValidationResult = agentspkg.AgentValidationResult
-type AgentCurrentRunSummary = agentspkg.AgentCurrentRunSummary
-type AgentLatestRunSummary = agentspkg.AgentLatestRunSummary
-type AgentDefinitionService = agentspkg.Service
-
-func (s *Service) agentDefinitionService() *AgentDefinitionService {
+func (s *Service) agentDefinitionService() *agents.Service {
 	if s.agentHandlers != nil {
 		return s.agentHandlers
 	}
-	var sessionHandler agentspkg.SessionHandler
+	var sessionHandler agents.SessionHandler
 	if s.sessions != nil {
 		sessionHandler = s.sessions
 	}
-	var streams *sessionspkg.SessionStreamBroker
+	var streams *sessions.SessionStreamBroker
 	if s.streams != nil {
 		streams = s.streams
 	}
-	s.agentHandlers = agentspkg.NewService(s.config, s.store, s.configDB, sessionHandler, streams)
+	s.agentHandlers = agents.NewService(s.config, s.store, s.configDB, sessionHandler, streams)
 	return s.agentHandlers
 }
 

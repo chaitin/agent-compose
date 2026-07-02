@@ -5,10 +5,11 @@ import (
 
 	"connectrpc.com/connect"
 
+	"agent-compose/pkg/projects"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
-func (s *Service) projectService() *ProjectService {
+func (s *Service) projectService() *projects.Service {
 	if s.projectHandlers != nil {
 		s.projectHandlers.UpdateDeps(projectServiceDeps(s))
 		return s.projectHandlers

@@ -22,6 +22,7 @@ import (
 	"agent-compose/pkg/images"
 	llmpkg "agent-compose/pkg/llm"
 	"agent-compose/pkg/loaders"
+	"agent-compose/pkg/model"
 	"agent-compose/pkg/projects"
 	"agent-compose/pkg/runtimes"
 	"agent-compose/pkg/sessions"
@@ -46,9 +47,9 @@ type Service struct {
 	runtimes           runtimes.RuntimeProvider
 	executor           *executor.Executor
 	loaders            *loaders.LoaderManager
-	images             ImageBackend
-	ociImages          ImageBackend
-	autoImages         ImageBackend
+	images             images.ImageBackend
+	ociImages          images.ImageBackend
+	autoImages         images.ImageBackend
 	llm                *llmpkg.LLMClient
 	cap                capabilities.Integration
 	bus                *bus.LoaderBus
@@ -280,7 +281,7 @@ func (s *Service) ResumeSession(ctx context.Context, req *connect.Request[agentc
 	return s.sessionsService().ResumeSession(ctx, req)
 }
 
-func (s *Service) reconcileSessionRuntimeState(ctx context.Context, session *Session) (*Session, error) {
+func (s *Service) reconcileSessionRuntimeState(ctx context.Context, session *model.Session) (*model.Session, error) {
 	_ = s.sessionsService()
 	return s.sessions.ReconcileSessionRuntimeState(ctx, session)
 }
@@ -297,7 +298,7 @@ func (s *Service) ListSessions(ctx context.Context, req *connect.Request[agentco
 	return s.sessionsService().ListSessions(ctx, req)
 }
 
-func (s *Service) ensureSessionProxyReady(ctx context.Context, sessionID string) (*Session, ProxyState, error) {
+func (s *Service) ensureSessionProxyReady(ctx context.Context, sessionID string) (*model.Session, model.ProxyState, error) {
 	return s.sessionsService().EnsureSessionProxyReady(ctx, sessionID)
 }
 
@@ -329,26 +330,26 @@ type agentExecutionConfig struct {
 	Provider          string
 	AgentDefinitionID string
 	Model             string
-	EnvItems          []SessionEnvVar
+	EnvItems          []model.SessionEnvVar
 }
 
-func (s *Service) resolveSessionAgentConfig(ctx context.Context, session *Session, requested string) agentExecutionConfig {
+func (s *Service) resolveSessionAgentConfig(ctx context.Context, session *model.Session, requested string) agentExecutionConfig {
 	ownerConfig := agents.AgentExecutionConfigForSession(ctx, s.configDB, session, requested)
 	return agentExecutionConfig{
 		Provider:          ownerConfig.Provider,
 		AgentDefinitionID: ownerConfig.AgentDefinitionID,
 		Model:             ownerConfig.Model,
-		EnvItems:          append([]SessionEnvVar(nil), ownerConfig.EnvItems...),
+		EnvItems:          append([]model.SessionEnvVar(nil), ownerConfig.EnvItems...),
 	}
 }
 
-func (s *Service) resolveSessionAgentConfigForSessions(ctx context.Context, session *Session, requested string) sessions.AgentExecutionConfig {
+func (s *Service) resolveSessionAgentConfigForSessions(ctx context.Context, session *model.Session, requested string) sessions.AgentExecutionConfig {
 	config := s.resolveSessionAgentConfig(ctx, session, requested)
 	return sessions.AgentExecutionConfig{
 		Provider:          config.Provider,
 		AgentDefinitionID: config.AgentDefinitionID,
 		Model:             config.Model,
-		EnvItems:          append([]SessionEnvVar(nil), config.EnvItems...),
+		EnvItems:          append([]model.SessionEnvVar(nil), config.EnvItems...),
 	}
 }
 

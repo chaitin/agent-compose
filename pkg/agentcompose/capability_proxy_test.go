@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"agent-compose/pkg/capabilities"
 	driverpkg "agent-compose/pkg/driver"
 	modelpkg "agent-compose/pkg/model"
 )
@@ -13,8 +14,8 @@ func TestResolveCapabilitySession(t *testing.T) {
 	_, _, store := newTestSessionRPCBridgeWithStore(t)
 	// The capset set lives in session tags; only the token lives in env.
 	session, err := store.CreateSession(ctx, "cap", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", modelpkg.SessionTypeManual, nil,
-		[]modelpkg.SessionEnvVar{{Name: capabilitySessionTokenEnvName, Value: "session-token", Secret: true}},
-		[]modelpkg.SessionTag{{Name: capabilityCapsetTagName, Value: "dev"}, {Name: capabilityCapsetTagName, Value: "data"}})
+		[]modelpkg.SessionEnvVar{{Name: capabilities.CapabilitySessionTokenEnvName, Value: "session-token", Secret: true}},
+		[]modelpkg.SessionTag{{Name: capabilities.CapabilityCapsetTagName, Value: "dev"}, {Name: capabilities.CapabilityCapsetTagName, Value: "data"}})
 	if err != nil {
 		t.Fatal(err)
 	}

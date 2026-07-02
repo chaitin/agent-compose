@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	buspkg "agent-compose/pkg/bus"
+	"agent-compose/pkg/capabilities"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	eventspkg "agent-compose/pkg/events"
@@ -246,7 +247,7 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	do.ProvideValue(di, executor)
 	do.ProvideValue(di, manager)
 	do.ProvideValue(di, llmClient)
-	do.ProvideValue[capabilityIntegration](di, capProvider)
+	do.ProvideValue[capabilities.Integration](di, capProvider)
 	do.ProvideValue(di, bus)
 	do.ProvideValue(di, streams)
 	do.ProvideValue[loaderspkg.LoaderEngine](di, &recordingLoaderEngine{})

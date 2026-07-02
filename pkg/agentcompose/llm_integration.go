@@ -9,6 +9,7 @@ import (
 	appconfig "agent-compose/pkg/config"
 	llmpkg "agent-compose/pkg/llm"
 	"agent-compose/pkg/model"
+	"agent-compose/pkg/storage"
 )
 
 const (
@@ -16,8 +17,6 @@ const (
 	llmAPIProtocolChatCompletions = llmpkg.APIProtocolChatCompletions
 	llmAPIProtocolMessages        = llmpkg.APIProtocolMessages
 )
-
-type LLMGenerateResult = model.LLMGenerateResult
 
 func registerRuntimeLLMFacadeRoutes(app *echo.Echo, service *Service) {
 	llmpkg.RegisterRuntimeFacadeRoutes(app, llmpkg.NewService(service.config, service.store, service.configDB, service.llm))
@@ -27,10 +26,10 @@ func IsRuntimeLLMFacadeRequest(r *http.Request) bool {
 	return llmpkg.IsRuntimeFacadeRequest(r)
 }
 
-func ensureSessionLLMFacadeConfig(ctx context.Context, config *appconfig.Config, configDB *ConfigStore, session *Session, agent, modelName, source, runID string) (map[string]string, error) {
+func ensureSessionLLMFacadeConfig(ctx context.Context, config *appconfig.Config, configDB *storage.ConfigStore, session *model.Session, agent, modelName, source, runID string) (map[string]string, error) {
 	return llmpkg.EnsureSessionLLMFacadeConfig(ctx, config, configDB, session, agent, modelName, source, runID)
 }
 
-func envItemsFromMap(values map[string]string, secret bool) []SessionEnvVar {
+func envItemsFromMap(values map[string]string, secret bool) []model.SessionEnvVar {
 	return llmpkg.EnvItemsFromMap(values, secret)
 }

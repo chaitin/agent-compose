@@ -6,7 +6,9 @@ import (
 	"github.com/samber/do/v2"
 
 	"agent-compose/pkg/bus"
+	"agent-compose/pkg/capabilities"
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/dashboard"
 	"agent-compose/pkg/executor"
 	llmpkg "agent-compose/pkg/llm"
 	"agent-compose/pkg/loaders"
@@ -16,11 +18,11 @@ import (
 	"agent-compose/pkg/storage"
 )
 
-func newLoaderEngine(di do.Injector) (LoaderEngine, error) {
+func newLoaderEngine(di do.Injector) (loaders.LoaderEngine, error) {
 	return loaders.NewLoaderEngine(di)
 }
 
-func newLoaderManager(di do.Injector) (*LoaderManager, error) {
+func newLoaderManager(di do.Injector) (*loaders.LoaderManager, error) {
 	imageBackends, err := imageBackendsFromDI(di)
 	if err != nil {
 		return nil, err
@@ -34,10 +36,10 @@ func newLoaderManager(di do.Injector) (*LoaderManager, error) {
 		Executor:           loaders.NewExecutor(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*storage.Store](di), do.MustInvoke[*storage.ConfigStore](di), do.MustInvoke[runtimes.RuntimeProvider](di), do.MustInvoke[*sessions.SessionStreamBroker](di)),
 		Images:             imageBackends.docker,
 		LLM:                do.MustInvoke[*llmpkg.LLMClient](di),
-		CapabilityProvider: do.MustInvoke[capabilityIntegration](di),
+		CapabilityProvider: do.MustInvoke[capabilities.Integration](di),
 		Bus:                do.MustInvoke[*bus.LoaderBus](di),
 		Streams:            do.MustInvoke[*sessions.SessionStreamBroker](di),
-		Engine:             do.MustInvoke[LoaderEngine](di),
+		Engine:             do.MustInvoke[loaders.LoaderEngine](di),
 		Sessions:           do.MustInvoke[*sessions.SessionRPCBridge](di),
 		Dashboard:          mustDashboardHub(di),
 	})
@@ -47,12 +49,12 @@ func newLoaderManager(di do.Injector) (*LoaderManager, error) {
 	return manager, nil
 }
 
-func mustDashboardHub(di do.Injector) *DashboardOverviewHub {
-	dashboard, _ := do.Invoke[*DashboardOverviewHub](di)
+func mustDashboardHub(di do.Injector) *dashboard.DashboardOverviewHub {
+	dashboard, _ := do.Invoke[*dashboard.DashboardOverviewHub](di)
 	return dashboard
 }
 
-func newProjectService(di do.Injector) (*ProjectService, error) {
+func newProjectService(di do.Injector) (*projects.Service, error) {
 	imageBackends, err := imageBackendsFromDI(di)
 	if err != nil {
 		return nil, err
@@ -65,14 +67,14 @@ func newProjectService(di do.Injector) (*ProjectService, error) {
 		executor:  do.MustInvoke[*executor.Executor](di),
 		images:    imageBackends.docker,
 		loaders:   do.MustInvoke[*loaders.LoaderManager](di),
-		cap:       do.MustInvoke[capabilityIntegration](di),
+		cap:       do.MustInvoke[capabilities.Integration](di),
 		bus:       do.MustInvoke[*bus.LoaderBus](di),
 		streams:   do.MustInvoke[*sessions.SessionStreamBroker](di),
 		dashboard: mustDashboardHub(di),
 	}), nil
 }
 
-func newProjectServiceFromDeps(s *Service) *ProjectService {
+func newProjectServiceFromDeps(s *Service) *projects.Service {
 	deps := projectServiceDeps(s)
 	return projects.NewService(deps)
 }

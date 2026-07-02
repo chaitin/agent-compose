@@ -65,7 +65,7 @@ func (s *Service) workspaceService() *workspaces.Service {
 	return s.workspaceHandlers
 }
 
-func (s *Service) settingsService() *SettingsService {
+func (s *Service) settingsService() *settings.Service {
 	if s.settingsHandlers != nil {
 		return s.settingsHandlers
 	}
