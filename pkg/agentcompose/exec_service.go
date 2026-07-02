@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	execdomain "agent-compose/internal/agentcompose/exec"
 	appconfig "agent-compose/pkg/config"
 	"context"
 	"database/sql"
@@ -8,7 +9,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -218,10 +218,7 @@ func (s *Service) sessionForProjectRun(ctx context.Context, run ProjectRunRecord
 }
 
 func execContext(ctx context.Context, timeoutMs uint32) (context.Context, context.CancelFunc) {
-	if timeoutMs == 0 {
-		return context.WithCancel(ctx)
-	}
-	return context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+	return execdomain.ContextWithOptionalTimeout(ctx, timeoutMs)
 }
 
 func execEnvMap(items []*agentcomposev2.EnvVarSpec) map[string]string {
