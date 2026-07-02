@@ -1,0 +1,31 @@
+package executor
+
+import "testing"
+
+func TestIntegrationExecutorWorkflow(t *testing.T) {
+	testExecutorWorkflow(t)
+}
+
+func TestE2EExecutorWorkflow(t *testing.T) {
+	testExecutorWorkflow(t)
+}
+
+func testExecutorWorkflow(t *testing.T) {
+	TestNewExecutorUsesOptionalLLMFacadeEnvPreparer(t)
+	TestNewExecutorAllowsMissingLLMFacadeEnvPreparer(t)
+	TestExecuteAgentRunMergesManagedLLMFacadeEnv(t)
+	TestPrepareLoaderCommandLLMFacadeEnvAddsManagedRuntimeEnv(t)
+	TestExecutorHelperParsingBranches(t)
+	TestResolveAgentSystemPromptReturnsEmptyWhenAgentPromptUnset(t)
+	TestResolveAgentSystemPromptFromProviderAgentID(t)
+	TestResolveAgentSystemPromptPrefersProviderAgentOverSessionTag(t)
+	TestResolveAgentSystemPromptReturnsEmptyWhenAgentMissing(t)
+	TestResolveAgentSystemPromptFromSessionTags(t)
+	TestWriteAgentSystemPromptFileWritesFixedPath(t)
+	TestWriteAgentSystemPromptFileRemovesFileWhenPromptEmpty(t)
+	TestHostAgentSystemPromptPathUsesSessionWorkspace(t)
+	TestHostAgentSystemPromptPathReturnsEmptyWhenWorkspaceMissing(t)
+	TestWriteAgentSystemPromptFileReturnsErrorWhenWorkspaceMissing(t)
+	TestBuildAgentExecSpecPassesStateRootForConventionPathDiscovery(t)
+	TestExecuteAgentRunWritesConventionSystemPromptBeforeExec(t)
+}

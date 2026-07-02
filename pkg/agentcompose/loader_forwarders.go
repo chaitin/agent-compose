@@ -2,7 +2,6 @@ package agentcompose
 
 import (
 	"context"
-	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -17,17 +16,6 @@ func (s *Service) loaderService() *loaders.Service {
 	}
 	s.loaderHandlers = loaders.NewService(s.configDB, s.loaders, s.bus)
 	return s.loaderHandlers
-}
-
-func (s *Service) publishLoaderTopic(topic string, payload map[string]any) {
-	if s == nil || s.bus == nil {
-		return
-	}
-	s.bus.Publish(loaders.LoaderTopicEvent{
-		Topic:     topic,
-		Payload:   payload,
-		CreatedAt: time.Now().UTC(),
-	})
 }
 
 func (s *Service) ValidateLoader(ctx context.Context, req *connect.Request[agentcomposev1.ValidateLoaderRequest]) (*connect.Response[agentcomposev1.ValidateLoaderResponse], error) {
