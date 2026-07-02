@@ -6,6 +6,7 @@ import (
 
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 
+	agentspkg "agent-compose/pkg/agents"
 	"agent-compose/pkg/bus"
 	"agent-compose/pkg/capabilities"
 	appconfig "agent-compose/pkg/config"
@@ -190,38 +191,19 @@ func normalizeAgentKind(kind string) string {
 	return model.NormalizeAgentProvider(kind)
 }
 
-type agentExecutionConfig struct {
-	Provider          string
-	AgentDefinitionID string
-	Model             string
-	EnvItems          []SessionEnvVar
-}
-
-type AgentExecutionConfig = agentExecutionConfig
+type agentExecutionConfig = agentspkg.AgentExecutionConfig
+type AgentExecutionConfig = agentspkg.AgentExecutionConfig
 
 func NormalizeAgentKind(kind string) string {
 	return normalizeAgentKind(kind)
 }
 
 func AgentExecutionConfigFromDefinition(agent AgentDefinition, fallbackProvider string) agentExecutionConfig {
-	return agentExecutionConfigFromDefinition(agent, fallbackProvider)
+	return agentspkg.AgentExecutionConfigFromDefinition(agent, fallbackProvider)
 }
 
 func agentExecutionConfigFromDefinition(agent AgentDefinition, fallbackProvider string) agentExecutionConfig {
-	provider := normalizeAgentKind(agent.Provider)
-	if provider == "" {
-		provider = normalizeAgentKind(fallbackProvider)
-	}
-	modelName := strings.TrimSpace(agent.Model)
-	if provider == "opencode" {
-		modelName = strings.TrimSpace(sessionEnvMap(agent.EnvItems)["OPENCODE_MODEL"])
-	}
-	return agentExecutionConfig{
-		Provider:          provider,
-		AgentDefinitionID: strings.TrimSpace(agent.ID),
-		Model:             modelName,
-		EnvItems:          append([]SessionEnvVar(nil), agent.EnvItems...),
-	}
+	return agentspkg.AgentExecutionConfigFromDefinition(agent, fallbackProvider)
 }
 
 func sessionEnvMap(groups ...[]SessionEnvVar) map[string]string {

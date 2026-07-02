@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	agentspkg "agent-compose/pkg/agents"
 	"agent-compose/pkg/bus"
 	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/compose"
@@ -339,10 +340,10 @@ func normalizeAgentDefinition(item AgentDefinition, assignDefaults bool) (AgentD
 }
 
 func agentExecutionConfigFromDefinition(agent AgentDefinition, fallbackProvider string) agentExecutionConfig {
-	return loaders.AgentExecutionConfigFromDefinition(agent, fallbackProvider)
+	return agentspkg.AgentExecutionConfigFromDefinition(agent, fallbackProvider)
 }
 
-type agentExecutionConfig = loaders.AgentExecutionConfig
+type agentExecutionConfig = agentspkg.AgentExecutionConfig
 
 func loaderCronSpecJSON(expr, timezone string) (string, error) {
 	return loaders.LoaderCronSpecJSON(expr, timezone)
