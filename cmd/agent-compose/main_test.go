@@ -670,11 +670,8 @@ func TestIntegrationCLIUpAppliesInlineSchedulerScriptAndPSJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(psOut), &psDecoded); err != nil {
 		t.Fatalf("ps inline JSON decode failed: %v\n%s", err, psOut)
 	}
-	if psDecoded.Project.Name != "cli-inline-demo" || len(psDecoded.Agents) != 1 {
-		t.Fatalf("ps inline project/agents = %#v", psDecoded)
-	}
-	if psDecoded.Agents[0].AgentName != "reviewer" || !psDecoded.Agents[0].SchedulerEnabled || psDecoded.Agents[0].SchedulerTriggers != 1 {
-		t.Fatalf("ps inline reviewer = %#v, want enabled scheduler with one trigger", psDecoded.Agents[0])
+	if psDecoded.Project.Name != "cli-inline-demo" || len(psDecoded.Sandboxes) != 0 {
+		t.Fatalf("ps inline project/sandboxes = %#v", psDecoded)
 	}
 }
 
@@ -1184,6 +1181,32 @@ agents:
     provider: codex
 `)
 	project := testCLIProject("project-cli-ps", "cli-ps-demo", composePath)
+	sessions := []*agentcomposev1.SessionSummary{
+		testCLISessionSummary("session-running", "RUNNING", "project-cli-ps", "reviewer", "run-running"),
+		testCLISessionSummary("session-stopped", "STOPPED", "project-cli-ps", "worker", "run-stopped"),
+		testCLISessionSummary("session-error", "ERROR", "foreign-project", "", ""),
+		testCLISessionSummary("session-foreign", "RUNNING", "foreign-project", "reviewer", "run-foreign"),
+	}
+	runs := []*agentcomposev2.RunSummary{
+		{
+			RunId:     "run-running",
+			ProjectId: project.GetSummary().GetProjectId(),
+			AgentName: "reviewer",
+			Status:    agentcomposev2.RunStatus_RUN_STATUS_RUNNING,
+			SessionId: "session-running",
+			CreatedAt: "2026-06-11T00:00:00Z",
+			UpdatedAt: "2026-06-11T00:00:01Z",
+		},
+		{
+			RunId:     "run-error",
+			ProjectId: project.GetSummary().GetProjectId(),
+			AgentName: "worker",
+			Status:    agentcomposev2.RunStatus_RUN_STATUS_FAILED,
+			SessionId: "session-error",
+			CreatedAt: "2026-06-11T00:00:02Z",
+			UpdatedAt: "2026-06-11T00:00:03Z",
+		},
+	}
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		project: projectServiceStub{
 			getProject: func(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
@@ -1192,24 +1215,18 @@ agents:
 		},
 		run: runServiceStub{
 			listRuns: func(ctx context.Context, req *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
-				if req.Msg.GetAgentName() != "reviewer" {
-					return connect.NewResponse(&agentcomposev2.ListRunsResponse{}), nil
+				if req.Msg.GetProjectId() != project.GetSummary().GetProjectId() || req.Msg.GetLimit() < 100 {
+					t.Fatalf("ListRuns request = %#v", req.Msg)
 				}
-				return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: []*agentcomposev2.RunSummary{{
-					RunId:     "run-ps",
-					ProjectId: req.Msg.GetProjectId(),
-					AgentName: "reviewer",
-					Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
-					SessionId: "session-ps",
-				}}}), nil
-			},
-			getRun: func(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
-				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), "run-ps", "reviewer", "session-ps", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "ps output\n")}), nil
+				return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: runs}), nil
 			},
 		},
 		session: sessionServiceStub{
-			getSession: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-				return connect.NewResponse(&agentcomposev1.SessionResponse{Session: testCLISessionDetail(req.Msg.GetSessionId(), "RUNNING")}), nil
+			listSessions: func(ctx context.Context, req *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
+				if req.Msg.GetLimit() < 100 {
+					t.Fatalf("ListSessions request = %#v", req.Msg)
+				}
+				return connect.NewResponse(&agentcomposev1.ListSessionsResponse{Sessions: sessions}), nil
 			},
 		},
 	})
@@ -1223,23 +1240,59 @@ agents:
 	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
 		t.Fatalf("ps JSON decode failed: %v\n%s", err, stdout)
 	}
-	if decoded.Project.Name != "cli-ps-demo" || len(decoded.Agents) != 2 {
-		t.Fatalf("ps JSON project/agents = %#v", decoded)
+	if decoded.Project.Name != "cli-ps-demo" || len(decoded.Sandboxes) != 1 {
+		t.Fatalf("ps JSON project/sandboxes = %#v", decoded)
 	}
-	if decoded.Agents[0].AgentName != "reviewer" || decoded.Agents[0].LatestRun.Status != "succeeded" || decoded.Agents[0].RunningSession.SessionID != "session-ps" {
-		t.Fatalf("ps reviewer JSON = %#v", decoded.Agents[0])
+	if decoded.Sandboxes[0].Sandbox != "session-running" || decoded.Sandboxes[0].Agent != "reviewer" || decoded.Sandboxes[0].Status != "running" || decoded.Sandboxes[0].Run != "run-running" {
+		t.Fatalf("ps sandbox JSON = %#v", decoded.Sandboxes[0])
 	}
-	if decoded.Agents[1].AgentName != "worker" || decoded.Agents[1].LatestRun != nil || decoded.Agents[1].RunningSession != nil {
-		t.Fatalf("ps worker JSON = %#v", decoded.Agents[1])
+	if stdout == "" || !strings.Contains(stdout, `"sandbox"`) || strings.Contains(stdout, `"session_id"`) {
+		t.Fatalf("ps JSON sandbox field shape = %q", stdout)
 	}
 
 	textOut, textErr, _, textCode := executeCLICommand("ps", "--host", server.URL, "--file", composePath)
 	if textCode != 0 || textErr != "" {
 		t.Fatalf("ps text code/stderr = %d / %q", textCode, textErr)
 	}
-	for _, want := range []string{"AGENT", "reviewer", "enabled", "run-ps", "succeeded", "session-ps", "worker"} {
+	for _, want := range []string{"SANDBOX", "AGENT", "STATUS", "RUN", "CREATED", "UPDATED", "session-running", "reviewer", "running", "run-running"} {
 		if !strings.Contains(textOut, want) {
 			t.Fatalf("ps text output %q does not contain %q", textOut, want)
+		}
+	}
+	for _, notWant := range []string{"session-stopped", "session-error", "session-foreign"} {
+		if strings.Contains(textOut, notWant) {
+			t.Fatalf("ps default text output %q contains %q", textOut, notWant)
+		}
+	}
+
+	allOut, allErr, _, allCode := executeCLICommand("ps", "--host", server.URL, "--file", composePath, "--all")
+	if allCode != 0 || allErr != "" {
+		t.Fatalf("ps --all code/stderr = %d / %q", allCode, allErr)
+	}
+	for _, want := range []string{"session-running", "session-stopped", "session-error"} {
+		if !strings.Contains(allOut, want) {
+			t.Fatalf("ps --all output %q does not contain %q", allOut, want)
+		}
+	}
+	if strings.Contains(allOut, "session-foreign") {
+		t.Fatalf("ps --all output %q contains foreign sandbox", allOut)
+	}
+
+	statusOut, statusErr, _, statusCode := executeCLICommand("ps", "--host", server.URL, "--file", composePath, "--status", "error")
+	if statusCode != 0 || statusErr != "" {
+		t.Fatalf("ps --status code/stderr = %d / %q", statusCode, statusErr)
+	}
+	if !strings.Contains(statusOut, "session-error") || strings.Contains(statusOut, "session-running") || strings.Contains(statusOut, "session-stopped") {
+		t.Fatalf("ps --status output = %q", statusOut)
+	}
+
+	verboseOut, verboseErr, _, verboseCode := executeCLICommand("ps", "--host", server.URL, "--file", composePath, "--verbose")
+	if verboseCode != 0 || verboseErr != "" {
+		t.Fatalf("ps --verbose code/stderr = %d / %q", verboseCode, verboseErr)
+	}
+	for _, want := range []string{"DRIVER", "IMAGE", "WORKSPACE", "boxlite", "guest:latest", "/workspace/session-running"} {
+		if !strings.Contains(verboseOut, want) {
+			t.Fatalf("ps --verbose output %q does not contain %q", verboseOut, want)
 		}
 	}
 }
@@ -2638,6 +2691,7 @@ func (s imageServiceStub) RemoveImage(ctx context.Context, req *connect.Request[
 
 type sessionServiceStub struct {
 	getSession    func(context.Context, *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error)
+	listSessions  func(context.Context, *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error)
 	resumeSession func(context.Context, *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error)
 	stopSession   func(context.Context, *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error)
 
@@ -2649,6 +2703,13 @@ func (s sessionServiceStub) GetSession(ctx context.Context, req *connect.Request
 		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("GetSession stub is not configured"))
 	}
 	return s.getSession(ctx, req)
+}
+
+func (s sessionServiceStub) ListSessions(ctx context.Context, req *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
+	if s.listSessions == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("ListSessions stub is not configured"))
+	}
+	return s.listSessions(ctx, req)
 }
 
 func (s sessionServiceStub) ResumeSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
@@ -2684,7 +2745,7 @@ func newComposeServiceStubServer(t *testing.T, stubs composeServiceStubs) *httpt
 		path, handler := agentcomposev2connect.NewImageServiceHandler(stubs.image)
 		mux.Handle(path, handler)
 	}
-	if stubs.session.getSession != nil || stubs.session.resumeSession != nil || stubs.session.stopSession != nil {
+	if stubs.session.getSession != nil || stubs.session.listSessions != nil || stubs.session.resumeSession != nil || stubs.session.stopSession != nil {
 		path, handler := agentcomposev1connect.NewSessionServiceHandler(stubs.session)
 		mux.Handle(path, handler)
 	}
@@ -2761,24 +2822,32 @@ func testCLIImage(imageID, imageRef string) *agentcomposev2.Image {
 
 func testCLISessionDetail(sessionID, vmStatus string) *agentcomposev1.SessionDetail {
 	return &agentcomposev1.SessionDetail{
-		Summary: &agentcomposev1.SessionSummary{
-			SessionId:     sessionID,
-			Title:         "CLI Session",
-			Driver:        "boxlite",
-			VmStatus:      vmStatus,
-			WorkspacePath: "/workspace",
-			ProxyPath:     "/agent-compose/session/" + sessionID + "/lab",
-			GuestImage:    "guest:latest",
-			TriggerSource: "manual",
-			CreatedAt:     "2026-06-11T00:00:00Z",
-			UpdatedAt:     "2026-06-11T00:00:01Z",
-			CellCount:     1,
-			EventCount:    2,
-			Tags: []*agentcomposev1.SessionTag{
-				{Name: "project", Value: "project-cli"},
-				{Name: "agent", Value: "reviewer"},
-			},
-		},
+		Summary: testCLISessionSummary(sessionID, vmStatus, "project-cli", "reviewer", ""),
+	}
+}
+
+func testCLISessionSummary(sessionID, vmStatus, projectID, agentName, runID string) *agentcomposev1.SessionSummary {
+	tags := []*agentcomposev1.SessionTag{{Name: "project", Value: projectID}}
+	if agentName != "" {
+		tags = append(tags, &agentcomposev1.SessionTag{Name: "agent", Value: agentName})
+	}
+	if runID != "" {
+		tags = append(tags, &agentcomposev1.SessionTag{Name: "run_id", Value: runID})
+	}
+	return &agentcomposev1.SessionSummary{
+		SessionId:     sessionID,
+		Title:         "CLI Session",
+		Driver:        "boxlite",
+		VmStatus:      vmStatus,
+		WorkspacePath: "/workspace/" + sessionID,
+		ProxyPath:     "/agent-compose/session/" + sessionID + "/lab",
+		GuestImage:    "guest:latest",
+		TriggerSource: "manual",
+		CreatedAt:     "2026-06-11T00:00:00Z",
+		UpdatedAt:     "2026-06-11T00:00:01Z",
+		CellCount:     1,
+		EventCount:    2,
+		Tags:          tags,
 	}
 }
 

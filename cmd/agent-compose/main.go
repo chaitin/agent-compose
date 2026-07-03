@@ -530,14 +530,18 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 	logsCmd.Flags().StringVar(&logsOptions.SessionID, "session-id", "", "Filter logs by session id")
 	logsCmd.Flags().BoolVar(&logsOptions.Follow, "follow", false, "Follow running run output")
 
+	psOptions := composePSOptions{}
 	psCmd := &cobra.Command{
 		Use:   "ps",
-		Short: "List project agents and runtime state",
+		Short: "List project sandboxes",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runComposePSCommand(cmd, options)
+			return runComposePSCommand(cmd, options, psOptions)
 		},
 	}
+	psCmd.Flags().BoolVarP(&psOptions.All, "all", "a", false, "Show all recognizable sandboxes")
+	psCmd.Flags().StringVar(&psOptions.Status, "status", "", "Filter sandboxes by status, comma-separated")
+	psCmd.Flags().BoolVar(&psOptions.Verbose, "verbose", false, "Show more sandbox details")
 
 	stopCmd := &cobra.Command{
 		Use:   "stop <sandbox> [<sandbox N>]",
@@ -709,6 +713,12 @@ type composeLogsOptions struct {
 	SessionID string
 	SandboxID string
 	Follow    bool
+}
+
+type composePSOptions struct {
+	All     bool
+	Status  string
+	Verbose bool
 }
 
 type composeExecOptions struct {
@@ -1075,7 +1085,7 @@ func normalizeComposeLogsOptions(cmd *cobra.Command, options composeLogsOptions,
 	return options, nil
 }
 
-func runComposePSCommand(cmd *cobra.Command, cli cliOptions) error {
+func runComposePSCommand(cmd *cobra.Command, cli cliOptions, options composePSOptions) error {
 	_, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
@@ -1090,7 +1100,7 @@ func runComposePSCommand(cmd *cobra.Command, cli cliOptions) error {
 	if err != nil {
 		return commandExitErrorForConnect(fmt.Errorf("get project %s: %w", normalized.Name, err))
 	}
-	output, err := composePSOutputFromProject(cmd.Context(), clients, project.Msg.GetProject())
+	output, err := composePSOutputFromProject(cmd.Context(), clients, project.Msg.GetProject(), options)
 	if err != nil {
 		return commandExitErrorForConnect(fmt.Errorf("build ps for project %s: %w", normalized.Name, err))
 	}
@@ -1101,7 +1111,7 @@ func runComposePSCommand(cmd *cobra.Command, cli cliOptions) error {
 		}
 		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
 	}
-	return writePSText(cmd.OutOrStdout(), output)
+	return writePSText(cmd.OutOrStdout(), output, options.Verbose)
 }
 
 func runComposeExecCommand(cmd *cobra.Command, cli cliOptions, options composeExecOptions, args []string) error {
@@ -1573,20 +1583,20 @@ type cliServiceClients struct {
 }
 
 type composePSOutput struct {
-	Project composeUpProjectOutput `json:"project"`
-	Agents  []composePSAgentOutput `json:"agents"`
+	Project   composeUpProjectOutput   `json:"project"`
+	Sandboxes []composePSSandboxOutput `json:"sandboxes"`
 }
 
-type composePSAgentOutput struct {
-	AgentName         string                `json:"agent_name"`
-	ManagedAgentID    string                `json:"managed_agent_id"`
-	SchedulerEnabled  bool                  `json:"scheduler_enabled"`
-	SchedulerID       string                `json:"scheduler_id,omitempty"`
-	SchedulerTriggers uint32                `json:"scheduler_triggers"`
-	LatestRun         *composeRunOutput     `json:"latest_run,omitempty"`
-	RunningSession    *composeSessionOutput `json:"running_session,omitempty"`
-	Driver            string                `json:"driver,omitempty"`
-	Image             string                `json:"image,omitempty"`
+type composePSSandboxOutput struct {
+	Sandbox   string `json:"sandbox"`
+	Agent     string `json:"agent,omitempty"`
+	Status    string `json:"status"`
+	Run       string `json:"run,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+	Driver    string `json:"driver,omitempty"`
+	Image     string `json:"image,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
 }
 
 type composeProjectOutput struct {
@@ -1978,43 +1988,170 @@ func newCLIServiceClients(cli cliOptions) (cliServiceClients, error) {
 	}, nil
 }
 
-func composePSOutputFromProject(ctx context.Context, clients cliServiceClients, project *agentcomposev2.Project) (composePSOutput, error) {
+func composePSOutputFromProject(ctx context.Context, clients cliServiceClients, project *agentcomposev2.Project, options composePSOptions) (composePSOutput, error) {
 	output := composePSOutput{Project: composeProjectSummaryOutput(project.GetSummary())}
-	schedulers := schedulersByAgent(project.GetSchedulers())
-	for _, agent := range project.GetAgents() {
-		item := composePSAgentOutput{
-			AgentName:        agent.GetAgentName(),
-			ManagedAgentID:   agent.GetManagedAgentId(),
-			SchedulerEnabled: agent.GetSchedulerEnabled(),
-			Driver:           agent.GetDriver(),
-			Image:            agent.GetImage(),
+	statusFilter, err := composePSStatusFilter(options)
+	if err != nil {
+		return composePSOutput{}, err
+	}
+	projectID := project.GetSummary().GetProjectId()
+	runs, err := listProjectRuns(ctx, clients.run, projectID)
+	if err != nil {
+		return composePSOutput{}, err
+	}
+	runBySession := latestRunsBySession(runs)
+	sessions, err := listAllSessions(ctx, clients.session)
+	if err != nil {
+		return composePSOutput{}, err
+	}
+	for _, session := range sessions {
+		if !composePSSessionBelongsToProject(session, project, runBySession) {
+			continue
 		}
-		if scheduler := schedulers[agent.GetAgentName()]; scheduler != nil {
-			item.SchedulerID = scheduler.GetSchedulerId()
-			item.SchedulerTriggers = scheduler.GetTriggerCount()
-			item.SchedulerEnabled = scheduler.GetEnabled()
+		status := strings.ToLower(strings.TrimSpace(session.GetVmStatus()))
+		if status == "" {
+			status = "unknown"
 		}
-		if latest, err := latestRunOutput(ctx, clients.run, project.GetSummary().GetProjectId(), agent.GetAgentName()); err != nil {
-			return composePSOutput{}, err
-		} else {
-			item.LatestRun = latest
-			if latest != nil {
-				if latest.Driver != "" {
-					item.Driver = latest.Driver
-				}
-				if latest.ImageRef != "" {
-					item.Image = latest.ImageRef
-				}
-			}
+		if statusFilter != nil && !statusFilter[status] {
+			continue
 		}
-		if session, err := firstRunningSessionOutput(ctx, clients, project.GetSummary().GetProjectId(), agent.GetAgentName()); err != nil {
-			return composePSOutput{}, err
-		} else {
-			item.RunningSession = session
-		}
-		output.Agents = append(output.Agents, item)
+		run := runBySession[session.GetSessionId()]
+		tags := sessionTagsMap(session.GetTags())
+		agent := firstNonEmptyString(run.GetAgentName(), tags["agent"])
+		runID := firstNonEmptyString(run.GetRunId(), tags["run_id"])
+		output.Sandboxes = append(output.Sandboxes, composePSSandboxOutput{
+			Sandbox:   session.GetSessionId(),
+			Agent:     agent,
+			Status:    status,
+			Run:       runID,
+			CreatedAt: session.GetCreatedAt(),
+			UpdatedAt: session.GetUpdatedAt(),
+			Driver:    session.GetDriver(),
+			Image:     session.GetGuestImage(),
+			Workspace: session.GetWorkspacePath(),
+		})
 	}
 	return output, nil
+}
+
+func composePSStatusFilter(options composePSOptions) (map[string]bool, error) {
+	values := strings.Split(options.Status, ",")
+	result := map[string]bool{}
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		result[value] = true
+	}
+	if len(result) > 0 {
+		return result, nil
+	}
+	if options.All {
+		return nil, nil
+	}
+	return map[string]bool{"running": true}, nil
+}
+
+func listAllSessions(ctx context.Context, client agentcomposev1connect.SessionServiceClient) ([]*agentcomposev1.SessionSummary, error) {
+	var result []*agentcomposev1.SessionSummary
+	var offset uint32
+	const limit uint32 = 100
+	for {
+		resp, err := client.ListSessions(ctx, connect.NewRequest(&agentcomposev1.ListSessionsRequest{
+			Offset: offset,
+			Limit:  limit,
+		}))
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, resp.Msg.GetSessions()...)
+		if !resp.Msg.GetHasMore() {
+			break
+		}
+		next := resp.Msg.GetNextOffset()
+		if next <= offset {
+			break
+		}
+		offset = next
+	}
+	return result, nil
+}
+
+func listProjectRuns(ctx context.Context, client agentcomposev2connect.RunServiceClient, projectID string) ([]*agentcomposev2.RunSummary, error) {
+	var result []*agentcomposev2.RunSummary
+	var offset uint32
+	const limit uint32 = 100
+	for {
+		resp, err := client.ListRuns(ctx, connect.NewRequest(&agentcomposev2.ListRunsRequest{
+			ProjectId: projectID,
+			Offset:    offset,
+			Limit:     limit,
+		}))
+		if err != nil {
+			return nil, err
+		}
+		runs := resp.Msg.GetRuns()
+		result = append(result, runs...)
+		if uint32(len(runs)) < limit {
+			break
+		}
+		offset += limit
+	}
+	return result, nil
+}
+
+func latestRunsBySession(runs []*agentcomposev2.RunSummary) map[string]*agentcomposev2.RunSummary {
+	result := map[string]*agentcomposev2.RunSummary{}
+	for _, run := range runs {
+		sessionID := strings.TrimSpace(run.GetSessionId())
+		if sessionID == "" {
+			continue
+		}
+		if current := result[sessionID]; current == nil || runSortTime(run) > runSortTime(current) {
+			result[sessionID] = run
+		}
+	}
+	return result
+}
+
+func runSortTime(run *agentcomposev2.RunSummary) string {
+	return firstNonEmptyString(run.GetUpdatedAt(), run.GetCreatedAt(), run.GetStartedAt(), run.GetCompletedAt())
+}
+
+func composePSSessionBelongsToProject(session *agentcomposev1.SessionSummary, project *agentcomposev2.Project, runsBySession map[string]*agentcomposev2.RunSummary) bool {
+	projectID := strings.TrimSpace(project.GetSummary().GetProjectId())
+	projectName := strings.TrimSpace(project.GetSummary().GetName())
+	sourcePath := strings.TrimSpace(project.GetSummary().GetSourcePath())
+	if run := runsBySession[session.GetSessionId()]; run != nil {
+		if strings.TrimSpace(run.GetProjectId()) == projectID {
+			return true
+		}
+	}
+	tags := sessionTagsMap(session.GetTags())
+	for _, key := range []string{"project", "project_id"} {
+		if value := strings.TrimSpace(tags[key]); value != "" && (value == projectID || value == projectName || value == sourcePath) {
+			return true
+		}
+	}
+	if value := strings.TrimSpace(session.GetTriggerSource()); value != "" {
+		value = strings.ToLower(value)
+		return (projectID != "" && strings.Contains(value, strings.ToLower(projectID))) ||
+			(projectName != "" && strings.Contains(value, strings.ToLower(projectName)))
+	}
+	return false
+}
+
+func sessionTagsMap(items []*agentcomposev1.SessionTag) map[string]string {
+	result := make(map[string]string, len(items))
+	for _, item := range items {
+		name := strings.TrimSpace(item.GetName())
+		if name == "" {
+			continue
+		}
+		result[name] = strings.TrimSpace(item.GetValue())
+	}
+	return result
 }
 
 func latestRunOutput(ctx context.Context, client agentcomposev2connect.RunServiceClient, projectID, agentName string) (*composeRunOutput, error) {
@@ -2069,47 +2206,44 @@ func firstRunningSessionOutput(ctx context.Context, clients cliServiceClients, p
 	return nil, nil
 }
 
-func writePSText(out io.Writer, output composePSOutput) error {
+func writePSText(out io.Writer, output composePSOutput, verbose bool) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "AGENT\tSCHEDULER\tLATEST RUN\tRUN STATUS\tSESSION\tDRIVER\tIMAGE"); err != nil {
+	if verbose {
+		if _, err := fmt.Fprintln(tw, "SANDBOX\tAGENT\tSTATUS\tRUN\tCREATED\tUPDATED\tDRIVER\tIMAGE\tWORKSPACE"); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintln(tw, "SANDBOX\tAGENT\tSTATUS\tRUN\tCREATED\tUPDATED"); err != nil {
 		return err
 	}
-	for _, agent := range output.Agents {
-		latestRunID := "-"
-		latestStatus := "-"
-		if agent.LatestRun != nil {
-			latestRunID = agent.LatestRun.RunID
-			latestStatus = agent.LatestRun.Status
+	for _, sandbox := range output.Sandboxes {
+		if verbose {
+			if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				sandbox.Sandbox,
+				firstNonEmptyString(sandbox.Agent, "-"),
+				firstNonEmptyString(sandbox.Status, "-"),
+				firstNonEmptyString(sandbox.Run, "-"),
+				firstNonEmptyString(sandbox.CreatedAt, "-"),
+				firstNonEmptyString(sandbox.UpdatedAt, "-"),
+				firstNonEmptyString(sandbox.Driver, "-"),
+				firstNonEmptyString(sandbox.Image, "-"),
+				firstNonEmptyString(sandbox.Workspace, "-"),
+			); err != nil {
+				return err
+			}
+			continue
 		}
-		sessionID := "-"
-		if agent.RunningSession != nil {
-			sessionID = agent.RunningSession.SessionID
-		}
-		scheduler := "disabled"
-		if agent.SchedulerEnabled {
-			scheduler = "enabled"
-		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			agent.AgentName,
-			scheduler,
-			latestRunID,
-			latestStatus,
-			sessionID,
-			firstNonEmptyString(agent.Driver, "-"),
-			firstNonEmptyString(agent.Image, "-"),
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			sandbox.Sandbox,
+			firstNonEmptyString(sandbox.Agent, "-"),
+			firstNonEmptyString(sandbox.Status, "-"),
+			firstNonEmptyString(sandbox.Run, "-"),
+			firstNonEmptyString(sandbox.CreatedAt, "-"),
+			firstNonEmptyString(sandbox.UpdatedAt, "-"),
 		); err != nil {
 			return err
 		}
 	}
 	return tw.Flush()
-}
-
-func schedulersByAgent(items []*agentcomposev2.ProjectScheduler) map[string]*agentcomposev2.ProjectScheduler {
-	result := make(map[string]*agentcomposev2.ProjectScheduler, len(items))
-	for _, item := range items {
-		result[item.GetAgentName()] = item
-	}
-	return result
 }
 
 func composeProjectOutputFromProject(project *agentcomposev2.Project) composeProjectOutput {
