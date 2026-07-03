@@ -19,7 +19,7 @@ import (
 	"github.com/samber/do/v2"
 )
 
-const defaultLoaderCommandMaxOutputBytes = int64(1024 * 1024)
+const defaultLoaderCommandMaxOutputBytes = execution.DefaultLoaderCommandMaxOutputBytes
 
 type Executor struct {
 	config   *appconfig.Config

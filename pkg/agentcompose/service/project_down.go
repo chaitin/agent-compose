@@ -2,116 +2,55 @@ package agentcompose
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"connectrpc.com/connect"
 
-	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/projects"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
 func (s *Service) downProject(ctx context.Context, project ProjectRecord) ([]*agentcomposev2.ProjectChange, error) {
-	var changes []*agentcomposev2.ProjectChange
-	schedulerChanges, err := s.disableProjectManagedSchedulers(ctx, project)
+	changes, err := projects.DownProject(ctx, project, projects.DownOptions{
+		Store:                s.configDB,
+		Sessions:             s.store,
+		DisableManagedLoader: s.disableManagedLoaderIfOwned,
+		RefreshLoaders:       s.refreshLoaders,
+		StopSession:          s.stopProjectRunSession,
+	})
 	if err != nil {
-		return changes, connect.NewError(connect.CodeInternal, err)
+		return projectDownChangesToProto(changes), connect.NewError(connect.CodeInternal, err)
 	}
-	changes = append(changes, schedulerChanges...)
-	sessionChanges, err := s.stopProjectRunningSessions(ctx, project)
-	if err != nil {
-		return changes, connect.NewError(connect.CodeInternal, err)
-	}
-	changes = append(changes, sessionChanges...)
-	return changes, nil
+	return projectDownChangesToProto(changes), nil
 }
 
-func (s *Service) disableProjectManagedSchedulers(ctx context.Context, project ProjectRecord) ([]*agentcomposev2.ProjectChange, error) {
-	schedulers, err := s.configDB.ListProjectSchedulers(ctx, project.ID)
-	if err != nil {
-		return nil, fmt.Errorf("list project schedulers for down %s: %w", project.Name, err)
+func (s *Service) refreshLoaders(ctx context.Context) error {
+	if s == nil || s.loaders == nil {
+		return nil
 	}
-	var changes []*agentcomposev2.ProjectChange
-	for _, scheduler := range schedulers {
-		if !scheduler.Enabled {
-			continue
-		}
-		disabled, err := s.configDB.SetProjectSchedulerEnabled(ctx, scheduler.ProjectID, scheduler.SchedulerID, false)
-		if err != nil {
-			return changes, fmt.Errorf("disable project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
-		}
-		if err := s.disableManagedLoaderIfOwned(ctx, scheduler.ManagedLoaderID, project.ID, scheduler.SchedulerID); err != nil {
-			return changes, fmt.Errorf("disable managed loader %s: %w", scheduler.ManagedLoaderID, err)
-		}
-		changes = append(changes, &agentcomposev2.ProjectChange{
-			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED,
-			ResourceType: "project_scheduler",
-			ResourceId:   disabled.SchedulerID,
-			Name:         disabled.AgentName,
-			Message:      "disabled by project down",
-		})
-		if scheduler.ManagedLoaderID != "" {
-			changes = append(changes, &agentcomposev2.ProjectChange{
-				Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED,
-				ResourceType: "loader",
-				ResourceId:   scheduler.ManagedLoaderID,
-				Name:         scheduler.AgentName,
-				Message:      "disabled by project down",
-			})
-		}
-	}
-	if len(changes) > 0 && s.loaders != nil {
-		if err := s.loaders.Refresh(ctx); err != nil {
-			return changes, fmt.Errorf("refresh loader manager after project down: %w", err)
-		}
-	}
-	return changes, nil
+	return s.loaders.Refresh(ctx)
 }
 
-func (s *Service) stopProjectRunningSessions(ctx context.Context, project ProjectRecord) ([]*agentcomposev2.ProjectChange, error) {
-	if s.store == nil {
-		return nil, fmt.Errorf("session store is required")
-	}
-	result, err := s.store.ListSessions(ctx, SessionListOptions{VMStatus: domain.VMStatusRunning, Limit: 1 << 30})
-	if err != nil {
-		return nil, fmt.Errorf("list running sessions for project down %s: %w", project.Name, err)
-	}
-	var changes []*agentcomposev2.ProjectChange
-	for _, session := range result.Sessions {
-		if !projectSessionHasTag(session, "project", project.ID) {
-			continue
-		}
-		if err := s.stopProjectRunSession(ctx, session); err != nil {
-			changes = append(changes, &agentcomposev2.ProjectChange{
-				Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED,
-				ResourceType: "session",
-				ResourceId:   session.Summary.ID,
-				Name:         session.Summary.Title,
-				Message:      fmt.Sprintf("failed to stop by project down: %v", err),
-			})
-			continue
-		}
-		changes = append(changes, &agentcomposev2.ProjectChange{
-			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED,
-			ResourceType: "session",
-			ResourceId:   session.Summary.ID,
-			Name:         session.Summary.Title,
-			Message:      "stopped by project down",
+func projectDownChangesToProto(changes []projects.DownChange) []*agentcomposev2.ProjectChange {
+	result := make([]*agentcomposev2.ProjectChange, 0, len(changes))
+	for _, change := range changes {
+		result = append(result, &agentcomposev2.ProjectChange{
+			Action:       projectDownChangeActionToProto(change.Action),
+			ResourceType: change.ResourceType,
+			ResourceId:   change.ResourceID,
+			Name:         change.Name,
+			Message:      change.Message,
 		})
 	}
-	return changes, nil
+	return result
 }
 
-func projectSessionHasTag(session *Session, name, value string) bool {
-	if session == nil {
-		return false
+func projectDownChangeActionToProto(action string) agentcomposev2.ProjectChangeAction {
+	switch action {
+	case projects.DownChangeUpdated:
+		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
+	case projects.DownChangeUnchanged:
+		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED
+	default:
+		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNSPECIFIED
 	}
-	name = strings.TrimSpace(name)
-	value = strings.TrimSpace(value)
-	for _, tag := range session.Summary.Tags {
-		if strings.TrimSpace(tag.Name) == name && strings.TrimSpace(tag.Value) == value {
-			return true
-		}
-	}
-	return false
 }

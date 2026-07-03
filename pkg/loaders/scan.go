@@ -2,11 +2,12 @@ package loaders
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"agent-compose/pkg/capabilities"
 	domain "agent-compose/pkg/model"
-	"agent-compose/pkg/storage/configstore"
 )
 
 func ScanLoaderSummary(scan func(dest ...any) error) (domain.LoaderSummary, error) {
@@ -49,9 +50,9 @@ func ScanLoaderSummary(scan func(dest ...any) error) (domain.LoaderSummary, erro
 	item.ManagedAgentName = strings.TrimSpace(item.ManagedAgentName)
 	item.ManagedSchedulerID = strings.TrimSpace(item.ManagedSchedulerID)
 	item.Enabled = enabled != 0
-	item.CreatedAt = configstore.ParseStoredTime(createdAtRaw)
-	item.UpdatedAt = configstore.ParseStoredTime(updatedAtRaw)
-	item.LatestRunAt = configstore.ParseStoredTime(latestRunAtRaw)
+	item.CreatedAt = parseStoredTime(createdAtRaw)
+	item.UpdatedAt = parseStoredTime(updatedAtRaw)
+	item.LatestRunAt = parseStoredTime(latestRunAtRaw)
 	return item, nil
 }
 
@@ -93,8 +94,8 @@ func ScanLoader(scan func(dest ...any) error) (domain.Loader, error) {
 	item.Summary.ManagedAgentName = strings.TrimSpace(item.Summary.ManagedAgentName)
 	item.Summary.ManagedSchedulerID = strings.TrimSpace(item.Summary.ManagedSchedulerID)
 	item.Summary.Enabled = enabled != 0
-	item.Summary.CreatedAt = configstore.ParseStoredTime(createdAtRaw)
-	item.Summary.UpdatedAt = configstore.ParseStoredTime(updatedAtRaw)
+	item.Summary.CreatedAt = parseStoredTime(createdAtRaw)
+	item.Summary.UpdatedAt = parseStoredTime(updatedAtRaw)
 	envItems, err := DecodeEnvItems(envJSON)
 	if err != nil {
 		return domain.Loader{}, err
@@ -114,8 +115,8 @@ func ScanLoaderTrigger(scan func(dest ...any) error) (domain.LoaderTrigger, erro
 	}
 	item.Enabled = enabled != 0
 	item.AutoID = autoID != 0
-	item.NextFireAt = configstore.ParseStoredLoaderTriggerTime(nextFireAtRaw)
-	item.LastFiredAt = configstore.ParseStoredLoaderTriggerTime(lastFiredAtRaw)
+	item.NextFireAt = parseStoredLoaderTriggerTime(nextFireAtRaw)
+	item.LastFiredAt = parseStoredLoaderTriggerTime(lastFiredAtRaw)
 	return item, nil
 }
 
@@ -126,8 +127,8 @@ func ScanLoaderRun(scan func(dest ...any) error) (domain.LoaderRunSummary, error
 	if err := scan(&item.LoaderID, &item.ID, &item.TriggerID, &item.TriggerKind, &item.TriggerSource, &item.Status, &startedAtRaw, &completedAtRaw, &item.DurationMs, &item.Error, &item.ResultJSON, &item.PayloadJSON, &item.SourceScriptHash, &item.ArtifactsDir); err != nil {
 		return domain.LoaderRunSummary{}, fmt.Errorf("scan loader run: %w", err)
 	}
-	item.StartedAt = configstore.ParseStoredTime(startedAtRaw)
-	item.CompletedAt = configstore.ParseStoredTime(completedAtRaw)
+	item.StartedAt = parseStoredTime(startedAtRaw)
+	item.CompletedAt = parseStoredTime(completedAtRaw)
 	return item, nil
 }
 
@@ -137,7 +138,7 @@ func ScanLoaderEvent(scan func(dest ...any) error) (domain.LoaderEvent, error) {
 	if err := scan(&item.LoaderID, &item.ID, &item.RunID, &item.TriggerID, &item.Type, &item.Level, &item.Message, &item.PayloadJSON, &item.LinkedSessionID, &item.LinkedCellID, &item.LinkedAgentSessionID, &createdAtRaw); err != nil {
 		return domain.LoaderEvent{}, fmt.Errorf("scan loader event: %w", err)
 	}
-	item.CreatedAt = configstore.ParseStoredTime(createdAtRaw)
+	item.CreatedAt = parseStoredTime(createdAtRaw)
 	return item, nil
 }
 
@@ -148,9 +149,74 @@ func ScanLoaderBinding(scan func(dest ...any) error) (domain.LoaderBinding, erro
 	if err := scan(&item.LoaderID, &item.SessionID, &createdAtRaw, &updatedAtRaw); err != nil {
 		return domain.LoaderBinding{}, fmt.Errorf("scan loader binding: %w", err)
 	}
-	item.CreatedAt = configstore.ParseStoredTime(createdAtRaw)
-	item.UpdatedAt = configstore.ParseStoredTime(updatedAtRaw)
+	item.CreatedAt = parseStoredTime(createdAtRaw)
+	item.UpdatedAt = parseStoredTime(updatedAtRaw)
 	return item, nil
+}
+
+func parseStoredLoaderTriggerTime(value any) time.Time {
+	switch typed := value.(type) {
+	case nil:
+		return time.Time{}
+	case int64:
+		return parseStoredUnixTimeAuto(typed)
+	case int:
+		return parseStoredUnixTimeAuto(int64(typed))
+	case float64:
+		return parseStoredUnixTimeAuto(int64(typed))
+	case []byte:
+		return parseStoredLoaderTriggerTime(string(typed))
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return time.Time{}
+		}
+		if unixValue, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+			return parseStoredUnixTimeAuto(unixValue)
+		}
+		return parseStoredTime(trimmed)
+	default:
+		return parseStoredTime(value)
+	}
+}
+
+func parseStoredTime(value any) time.Time {
+	switch typed := value.(type) {
+	case nil:
+		return time.Time{}
+	case int64:
+		return parseStoredUnixTimeAuto(typed)
+	case int:
+		return parseStoredUnixTimeAuto(int64(typed))
+	case float64:
+		return parseStoredUnixTimeAuto(int64(typed))
+	case []byte:
+		return parseStoredTime(string(typed))
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return time.Time{}
+		}
+		if unixValue, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+			return parseStoredUnixTimeAuto(unixValue)
+		}
+		for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000Z"} {
+			if parsed, err := time.Parse(layout, trimmed); err == nil {
+				return parsed.UTC()
+			}
+		}
+	}
+	return time.Time{}
+}
+
+func parseStoredUnixTimeAuto(value int64) time.Time {
+	if value <= 0 {
+		return time.Time{}
+	}
+	if value >= 10_000_000_000 {
+		return time.UnixMilli(value).UTC()
+	}
+	return time.Unix(value, 0).UTC()
 }
 
 func SelectLoaderSummarySQL() string {

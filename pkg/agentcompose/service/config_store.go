@@ -3,100 +3,92 @@ package agentcompose
 import (
 	"context"
 	"database/sql"
-	"fmt"
 
 	"github.com/samber/do/v2"
 
 	domain "agent-compose/pkg/model"
-	"agent-compose/pkg/storage"
 	"agent-compose/pkg/storage/configstore"
 )
 
 const storedUnixMillisecondThreshold int64 = configstore.StoredUnixMillisecondThreshold
 
 type ConfigStore struct {
-	*storage.ConfigStore
+	*configstore.ConfigStore
 	db *sql.DB
 }
 
+type (
+	ProjectRecord          = domain.ProjectRecord
+	ProjectRevisionRecord  = domain.ProjectRevisionRecord
+	ProjectAgentRecord     = domain.ProjectAgentRecord
+	ProjectSchedulerRecord = domain.ProjectSchedulerRecord
+	ProjectRunRecord       = domain.ProjectRunRecord
+	ProjectListOptions     = domain.ProjectListOptions
+	ProjectRunListOptions  = domain.ProjectRunListOptions
+	ProjectListResult      = domain.ProjectListResult
+)
+
 func NewConfigStore(di do.Injector) (*ConfigStore, error) {
-	inner, err := storage.NewConfigStore(di)
+	inner, err := configstore.NewConfigStore(di)
 	if err != nil {
 		return nil, err
 	}
-	store := &ConfigStore{
-		ConfigStore: inner,
-		db:          inner.DB(),
-	}
-	if err := store.initSchema(context.Background()); err != nil {
-		if store.db != nil {
-			_ = store.db.Close()
-		}
-		return nil, err
-	}
-	return store, nil
+	return &ConfigStore{ConfigStore: inner, db: inner.DB()}, nil
 }
 
-func (s *ConfigStore) initSchema(ctx context.Context) error {
+func (s *ConfigStore) inner() *configstore.ConfigStore {
 	if s == nil {
-		return fmt.Errorf("config store is required")
+		return nil
 	}
-	inner := s.coreStore()
-	if err := inner.InitCoreSchema(ctx); err != nil {
-		return err
+	if s.ConfigStore == nil && s.db != nil {
+		s.ConfigStore = configstore.FromDB(s.db)
 	}
-	if err := s.ensureLLMSchema(ctx); err != nil {
-		return err
-	}
-	if err := s.ensureCapabilityGatewaySchema(ctx); err != nil {
-		return err
-	}
-	if err := s.ensureLoaderSchema(ctx); err != nil {
-		return err
-	}
-	if err := s.ensureProjectSchema(ctx); err != nil {
-		return err
-	}
-	if err := s.ensureEventSchema(ctx); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *ConfigStore) coreStore() *storage.ConfigStore {
-	if s.ConfigStore == nil {
-		s.ConfigStore = storage.FromDB(s.db)
-	}
-	if s.db == nil {
+	if s.db == nil && s.ConfigStore != nil {
 		s.db = s.DB()
 	}
 	return s.ConfigStore
 }
 
+func (s *ConfigStore) initSchema(ctx context.Context) error {
+	return s.inner().InitSchema(ctx)
+}
+
 func (s *ConfigStore) tableColumnTypes(ctx context.Context, tableName string) (map[string]string, error) {
-	return s.coreStore().TableColumnTypes(ctx, tableName)
+	return s.inner().TableColumnTypes(ctx, tableName)
 }
 
 func (s *ConfigStore) ensureGlobalEnvSchema(ctx context.Context) error {
-	return s.coreStore().EnsureGlobalEnvSchema(ctx)
+	return s.inner().EnsureGlobalEnvSchema(ctx)
 }
 
 func (s *ConfigStore) ensureWorkspaceConfigSchema(ctx context.Context) error {
-	return s.coreStore().EnsureWorkspaceConfigSchema(ctx)
+	return s.inner().EnsureWorkspaceConfigSchema(ctx)
 }
 
 func (s *ConfigStore) ensureAgentDefinitionSchema(ctx context.Context) error {
-	return s.coreStore().EnsureAgentDefinitionSchema(ctx)
+	return s.inner().EnsureAgentDefinitionSchema(ctx)
+}
+
+func (s *ConfigStore) ensureCapabilityGatewaySchema(ctx context.Context) error {
+	return s.inner().EnsureCapabilityGatewaySchema(ctx)
+}
+
+func (s *ConfigStore) ensureLoaderSchema(ctx context.Context) error {
+	return s.inner().EnsureLoaderSchema(ctx)
+}
+
+func (s *ConfigStore) ensureEventSchema(ctx context.Context) error {
+	return s.inner().EnsureEventSchema(ctx)
 }
 
 func (s *ConfigStore) rebuildGlobalEnvTable(ctx context.Context) error {
-	return s.coreStore().RebuildGlobalEnvTable(ctx)
+	return s.inner().RebuildGlobalEnvTable(ctx)
 }
 
 func (s *ConfigStore) rebuildWorkspaceConfigTable(ctx context.Context) error {
-	return s.coreStore().RebuildWorkspaceConfigTable(ctx)
+	return s.inner().RebuildWorkspaceConfigTable(ctx)
 }
 
-func (s *ConfigStore) getAgentDefinitionIfExists(ctx context.Context, id string, includeDeleted bool) (domain.AgentDefinition, bool, error) {
-	return s.coreStore().GetAgentDefinitionIfExists(ctx, id, includeDeleted)
+func (s *ConfigStore) getProject(ctx context.Context, projectID string, includeRemoved bool) (ProjectRecord, bool, error) {
+	return s.inner().GetProjectIfExists(ctx, projectID, includeRemoved)
 }

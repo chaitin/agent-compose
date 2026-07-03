@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"agent-compose/pkg/events/webhooks"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 )
 
@@ -30,7 +31,7 @@ func (d *LoaderEventDispatcher) Dispatch(event domain.LoaderTopicEvent) {
 		return
 	}
 	targets := d.collectTargets(event.Topic)
-	targets = dedupeWebhookEventTargets(event, targets)
+	targets = loaders.DedupeWebhookEventTargets(event, targets)
 	if len(targets) == 0 {
 		d.ackNoSubscriber(event)
 		return
@@ -64,22 +65,22 @@ func (d *LoaderEventDispatcher) ackNoSubscriber(event domain.LoaderTopicEvent) {
 	}
 }
 
-func (d *LoaderEventDispatcher) dispatchTargets(event domain.LoaderTopicEvent, targets []eventLoaderTarget, payloadJSON string, reservations []*webhooks.Reservation) {
+func (d *LoaderEventDispatcher) dispatchTargets(event domain.LoaderTopicEvent, targets []loaders.EventTarget, payloadJSON string, reservations []*webhooks.Reservation) {
 	m := d.manager
 	for _, target := range targets {
 		d.recordMatched(event, target)
 		reservation := reservations[0]
 		reservations = reservations[1:]
 		runCtx, cancel := context.WithTimeout(m.rootCtx, m.loaderRunTimeout(0))
-		go func(target eventLoaderTarget, payloadJSON string, topic string, ack func(context.Context) error, release func(), reservation *webhooks.Reservation) {
+		go func(target loaders.EventTarget, payloadJSON string, topic string, ack func(context.Context) error, release func(), reservation *webhooks.Reservation) {
 			defer cancel()
 			defer reservation.Release()
-			if _, err := m.runLoader(runCtx, target.loader, &target.trigger, payloadJSON, topic, true, loaderRunOptions{retryWhenBusy: event.Source == domain.TopicEventSourceWebhook}, ack); err != nil {
+			if _, err := m.runLoader(runCtx, target.Loader, &target.Trigger, payloadJSON, topic, true, loaderRunOptions{retryWhenBusy: event.Source == domain.TopicEventSourceWebhook}, ack); err != nil {
 				if errors.Is(err, errLoaderRunBusyForRetry) {
 					d.retry(event, "loader is already running")
 					return
 				}
-				slog.Warn("loader event run failed", "loader_id", target.loader.Summary.ID, "trigger_id", target.trigger.ID, "topic", topic, "error", err)
+				slog.Warn("loader event run failed", "loader_id", target.Loader.Summary.ID, "trigger_id", target.Trigger.ID, "topic", topic, "error", err)
 				if release != nil {
 					release()
 				}
@@ -88,11 +89,11 @@ func (d *LoaderEventDispatcher) dispatchTargets(event domain.LoaderTopicEvent, t
 	}
 }
 
-func (d *LoaderEventDispatcher) dispatchWebhookTargets(event domain.LoaderTopicEvent, targets []eventLoaderTarget, payloadJSON string, reservations []*webhooks.Reservation) {
+func (d *LoaderEventDispatcher) dispatchWebhookTargets(event domain.LoaderTopicEvent, targets []loaders.EventTarget, payloadJSON string, reservations []*webhooks.Reservation) {
 	m := d.manager
 	acquiredLoaderIDs := make([]string, 0, len(targets))
 	for _, target := range targets {
-		if !m.enterRun(target.loader) {
+		if !m.enterRun(target.Loader) {
 			for _, loaderID := range acquiredLoaderIDs {
 				m.leaveRun(loaderID)
 			}
@@ -102,11 +103,11 @@ func (d *LoaderEventDispatcher) dispatchWebhookTargets(event domain.LoaderTopicE
 			d.retry(event, "loader is already running")
 			return
 		}
-		acquiredLoaderIDs = append(acquiredLoaderIDs, target.loader.Summary.ID)
+		acquiredLoaderIDs = append(acquiredLoaderIDs, target.Loader.Summary.ID)
 	}
 	prepared := make([]preparedLoaderRun, 0, len(targets))
 	for index, target := range targets {
-		preparedRun, err := m.prepareLoaderRun(m.rootCtx, target.loader, &target.trigger, payloadJSON, event.Topic, loaderRunOptions{alreadyEntered: true})
+		preparedRun, err := m.prepareLoaderRun(m.rootCtx, target.Loader, &target.Trigger, payloadJSON, event.Topic, loaderRunOptions{alreadyEntered: true})
 		if err != nil {
 			for _, item := range prepared {
 				m.abortPreparedLoaderRun(context.WithoutCancel(m.rootCtx), item, err.Error())
@@ -147,17 +148,17 @@ func (d *LoaderEventDispatcher) dispatchWebhookTargets(event domain.LoaderTopicE
 	}
 }
 
-func (d *LoaderEventDispatcher) recordMatched(event domain.LoaderTopicEvent, target eventLoaderTarget) {
+func (d *LoaderEventDispatcher) recordMatched(event domain.LoaderTopicEvent, target loaders.EventTarget) {
 	if event.EventID == "" {
 		return
 	}
 	if err := d.manager.configDB.UpsertEventDelivery(d.manager.rootCtx, domain.EventDelivery{
 		EventID:   event.EventID,
-		LoaderID:  target.loader.Summary.ID,
-		TriggerID: target.trigger.ID,
+		LoaderID:  target.Loader.Summary.ID,
+		TriggerID: target.Trigger.ID,
 		Status:    domain.EventDeliveryStatusMatched,
 	}); err != nil {
-		slog.Warn("failed to record event delivery match", "event_id", event.EventID, "loader_id", target.loader.Summary.ID, "trigger_id", target.trigger.ID, "error", err)
+		slog.Warn("failed to record event delivery match", "event_id", event.EventID, "loader_id", target.Loader.Summary.ID, "trigger_id", target.Trigger.ID, "error", err)
 	}
 }
 
@@ -177,39 +178,18 @@ func (d *LoaderEventDispatcher) retry(event domain.LoaderTopicEvent, reason stri
 	}
 }
 
-func (d *LoaderEventDispatcher) collectTargets(topic string) []eventLoaderTarget {
-	targets := make([]eventLoaderTarget, 0)
-	for _, loader := range d.manager.snapshotLoaders() {
-		if !loader.Summary.Enabled {
-			continue
-		}
-		for _, trigger := range loader.Triggers {
-			if !trigger.Enabled || trigger.Kind != domain.LoaderTriggerKindEvent || !domain.LoaderTriggerTopicMatches(trigger.Topic, topic) {
-				continue
-			}
-			targets = append(targets, eventLoaderTarget{
-				loader:  loader,
-				trigger: trigger,
-			})
-		}
-	}
-	return targets
+func (d *LoaderEventDispatcher) collectTargets(topic string) []loaders.EventTarget {
+	return loaders.CollectEventTargets(d.manager.snapshotLoaders(), topic)
 }
 
-func (d *LoaderEventDispatcher) shouldRetryForBusy(event domain.LoaderTopicEvent, targets []eventLoaderTarget) bool {
+func (d *LoaderEventDispatcher) shouldRetryForBusy(event domain.LoaderTopicEvent, targets []loaders.EventTarget) bool {
 	if event.Source != domain.TopicEventSourceWebhook || len(targets) == 0 {
 		return false
 	}
 	m := d.manager
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	for _, target := range targets {
-		loaderID := strings.TrimSpace(target.loader.Summary.ID)
-		if domain.NormalizeLoaderConcurrencyPolicy(target.loader.Summary.ConcurrencyPolicy) != domain.LoaderConcurrencyPolicyParallel && m.running[loaderID] > 0 {
-			return true
-		}
-	}
-	return false
+	return loaders.AnyTargetBusy(targets, m.running)
 }
 
 func (d *LoaderEventDispatcher) reserveQueueSlots(event domain.LoaderTopicEvent, count int) ([]*webhooks.Reservation, bool) {

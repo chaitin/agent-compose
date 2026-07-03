@@ -59,23 +59,20 @@ type loaderRunHost struct {
 	manager                *LoaderManager
 	loader                 Loader
 	run                    *domain.LoaderRunSummary
-	triggerEvent           loaderTriggerEventMetadata
+	triggerEvent           loaders.TriggerEventMetadata
 	commandSessionIDs      map[string]struct{}
 	commandSessionIDOrder  []string
 	commandSessionIDsMutex sync.Mutex
 	commandReusableSession *Session
 }
 
+type loaderTriggerEventMetadata = loaders.TriggerEventMetadata
+
 type scheduledLoaderRun struct {
 	loader      Loader
 	trigger     domain.LoaderTrigger
 	payloadJSON string
 	source      string
-}
-
-type eventLoaderTarget struct {
-	loader  Loader
-	trigger domain.LoaderTrigger
 }
 
 type preparedLoaderRun struct {
@@ -386,27 +383,6 @@ func (m *LoaderManager) eventLoop() {
 	}
 }
 
-func dedupeWebhookEventTargets(event domain.LoaderTopicEvent, targets []eventLoaderTarget) []eventLoaderTarget {
-	if event.Source != domain.TopicEventSourceWebhook || len(targets) <= 1 {
-		return targets
-	}
-	seen := map[string]struct{}{}
-	deduped := make([]eventLoaderTarget, 0, len(targets))
-	for _, target := range targets {
-		loaderID := strings.TrimSpace(target.loader.Summary.ID)
-		if loaderID == "" {
-			deduped = append(deduped, target)
-			continue
-		}
-		if _, ok := seen[loaderID]; ok {
-			continue
-		}
-		seen[loaderID] = struct{}{}
-		deduped = append(deduped, target)
-	}
-	return deduped
-}
-
 func (m *LoaderManager) reserveEventQueueSlots(event domain.LoaderTopicEvent, count int) ([]*webhooks.Reservation, bool) {
 	m.initLoaderComponents()
 	return m.eventDispatcher.reserveQueueSlots(event, count)
@@ -416,36 +392,21 @@ func (m *LoaderManager) collectDueScheduledRuns(now time.Time) []scheduledLoader
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	jobs := make([]scheduledLoaderRun, 0)
-	for id, loader := range m.loaders {
-		if !loader.Summary.Enabled {
-			continue
-		}
-		updated := false
-		for index := range loader.Triggers {
-			trigger := &loader.Triggers[index]
-			if !trigger.Enabled || !domain.LoaderTriggerUsesSchedule(trigger.Kind) || trigger.NextFireAt.IsZero() || trigger.NextFireAt.After(now) {
-				continue
-			}
-			nextFireAt, err := loaders.LoaderTriggerNextFireAt(now, *trigger, true)
-			if err != nil {
-				slog.Warn("failed to compute next loader schedule", "loader_id", loader.Summary.ID, "trigger_id", trigger.ID, "trigger_kind", trigger.Kind, "error", err)
-				continue
-			}
-			trigger.LastFiredAt = now
-			trigger.NextFireAt = nextFireAt
-			source := loaders.LoaderTriggerSource(*trigger)
-			jobs = append(jobs, scheduledLoaderRun{
-				loader:      cloneLoader(loader),
-				trigger:     *trigger,
-				payloadJSON: "",
-				source:      source,
-			})
-			updated = true
-		}
-		if updated {
-			m.loaders[id] = cloneLoader(loader)
-		}
+	scheduled, updatedLoaders, scheduleErrs := loaders.CollectDueScheduledRuns(m.loaders, now)
+	for id, item := range updatedLoaders {
+		m.loaders[id] = cloneLoader(item)
+	}
+	for _, item := range scheduleErrs {
+		slog.Warn("failed to compute next loader schedule", "loader_id", item.LoaderID, "trigger_id", item.TriggerID, "trigger_kind", item.TriggerKind, "error", item.Err)
+	}
+	jobs := make([]scheduledLoaderRun, 0, len(scheduled))
+	for _, item := range scheduled {
+		jobs = append(jobs, scheduledLoaderRun{
+			loader:      cloneLoader(item.Loader),
+			trigger:     item.Trigger,
+			payloadJSON: item.PayloadJSON,
+			source:      item.Source,
+		})
 	}
 	for _, job := range jobs {
 		if err := m.configDB.MarkLoaderTriggerFired(m.rootCtx, job.loader.Summary.ID, job.trigger.ID, job.trigger.LastFiredAt, job.trigger.NextFireAt); err != nil {
@@ -472,12 +433,6 @@ func (m *LoaderManager) loadLoaderForRun(ctx context.Context, loaderID, triggerI
 	}
 	id := strings.TrimSpace(loaderID) + "/" + triggerID
 	return Loader{}, nil, resourceError(ErrNotFound, "loader trigger", id, fmt.Sprintf("loader trigger %s not found", id), nil)
-}
-
-type loaderTriggerEventMetadata struct {
-	EventID       string
-	Sequence      int64
-	CorrelationID string
 }
 
 type loaderRunOptions struct {
@@ -590,72 +545,19 @@ func (h *loaderRunHost) PublishEvent(ctx context.Context, topic string, payloadJ
 	if h.manager == nil || h.manager.configDB == nil {
 		return domain.TopicEventRecord{}, fmt.Errorf("event store is unavailable")
 	}
-	topic = strings.TrimSpace(topic)
-	if err := validateLoaderPublishTopic(topic); err != nil {
-		return domain.TopicEventRecord{}, err
-	}
-	payloadJSON, err := normalizeJSONDocument(payloadJSON)
+	published, err := loaders.NewPublishedTopicEvent(topic, payloadJSON, h.triggerEvent, h.loader.Summary.ID, h.run.ID)
 	if err != nil {
 		return domain.TopicEventRecord{}, err
 	}
-	if !jsonObjectDocument(payloadJSON) {
-		return domain.TopicEventRecord{}, fmt.Errorf("scheduler.event.publish payload must be an object")
-	}
-	payload := map[string]any{}
-	_ = json.Unmarshal([]byte(payloadJSON), &payload)
-	eventID := "evt_" + uuid.NewString()
-	correlationID := stringFromMap(payload, "correlationId")
-	if correlationID == "" {
-		correlationID = stringFromMap(payload, "correlation_id")
-	}
-	if correlationID == "" {
-		correlationID = h.triggerEvent.CorrelationID
-	}
-	if correlationID == "" {
-		correlationID = eventID
-	}
-	parentEventID := h.triggerEvent.EventID
-	if explicitParent := stringFromMap(payload, "parentEventId"); explicitParent != "" {
-		parentEventID = explicitParent
-	}
-	envelope := map[string]any{
-		"eventId":       eventID,
-		"sequence":      int64(0),
-		"source":        domain.TopicEventSourceLoader,
-		"provider":      stringFromMap(payload, "provider"),
-		"topic":         topic,
-		"correlationId": correlationID,
-		"body":          payload,
-	}
-	if parentEventID != "" {
-		envelope["parentEventId"] = parentEventID
-	}
-	envelopeJSON, err := marshalJSONCompact(envelope)
+	created, err := h.manager.configDB.CreateEvent(ctx, published.Record)
 	if err != nil {
+		_ = h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, "loader.event.publish.failed", "error", err.Error(), map[string]any{"topic": published.Record.Topic}, "", "", "")
 		return domain.TopicEventRecord{}, err
 	}
-	created, err := h.manager.configDB.CreateEvent(ctx, domain.TopicEventRecord{
-		ID:             eventID,
-		Topic:          topic,
-		Source:         domain.TopicEventSourceLoader,
-		Provider:       stringFromMap(payload, "provider"),
-		CorrelationID:  correlationID,
-		PayloadHash:    domain.TopicEventPayloadSHA256(envelopeJSON),
-		PayloadJSON:    envelopeJSON,
-		DispatchStatus: domain.TopicEventDispatchPending,
-		ParentEventID:  parentEventID,
-		PublisherType:  domain.TopicEventSourceLoader,
-		PublisherID:    h.loader.Summary.ID,
-		PublisherRunID: h.run.ID,
-	})
-	if err != nil {
-		_ = h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, "loader.event.publish.failed", "error", err.Error(), map[string]any{"topic": topic}, "", "", "")
-		return domain.TopicEventRecord{}, err
-	}
-	envelope["sequence"] = created.Sequence
-	if envelopeJSON, err = marshalJSONCompact(envelope); err == nil {
-		_ = h.manager.configDB.UpdateEventPayload(ctx, created.ID, envelopeJSON)
-		created.PayloadJSON = envelopeJSON
+	if sequenced, err := loaders.UpdatePublishedTopicEventSequence(published, created.Sequence); err == nil {
+		_ = h.manager.configDB.UpdateEventPayload(ctx, created.ID, sequenced.PayloadJSON)
+		created.PayloadJSON = sequenced.PayloadJSON
+		created.PayloadHash = sequenced.PayloadHash
 	}
 	_ = h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, "loader.event.published", "info", "loader event published", map[string]any{
 		"eventId":       created.ID,
@@ -894,7 +796,7 @@ func (h *loaderRunHost) ProjectAgent(ctx context.Context, prompt string, request
 	if err != nil {
 		return domain.LoaderAgentResult{}, err
 	}
-	result, jsonErr := loaderAgentResultFromProjectRun(run, request.OutputSchema)
+	result, jsonErr := loaders.AgentResultFromProjectRun(run, request.OutputSchema)
 	if jsonErr != nil && execErr == nil {
 		execErr = jsonErr
 	}
@@ -925,38 +827,6 @@ func (h *loaderRunHost) ProjectAgent(ctx context.Context, prompt string, request
 	return result, nil
 }
 
-func loaderAgentResultFromProjectRun(run ProjectRunRecord, outputSchemaJSON string) (domain.LoaderAgentResult, error) {
-	metadata := projectRunResultMetadata(run.ResultJSON)
-	text := firstNonEmpty(run.Output, run.Error)
-	jsonValue, jsonErr := loaderJSONResult(text, outputSchemaJSON, "project run output")
-	return domain.LoaderAgentResult{
-		Text:           text,
-		Output:         run.Output,
-		FinalText:      run.Output,
-		JSON:           jsonValue,
-		SessionID:      run.SessionID,
-		CellID:         metadata.CellID,
-		Agent:          firstNonEmpty(metadata.Agent, run.AgentName),
-		AgentSessionID: metadata.AgentSessionID,
-		StopReason:     metadata.StopReason,
-		Success:        run.Status == domain.ProjectRunStatusSucceeded,
-		ExitCode:       run.ExitCode,
-	}, jsonErr
-}
-
-type projectRunResultFields struct {
-	CellID         string `json:"cellId"`
-	Agent          string `json:"agent"`
-	AgentSessionID string `json:"agentSessionId"`
-	StopReason     string `json:"stopReason"`
-}
-
-func projectRunResultMetadata(resultJSON string) projectRunResultFields {
-	var metadata projectRunResultFields
-	_ = json.Unmarshal([]byte(resultJSON), &metadata)
-	return metadata
-}
-
 func execErrString(err error) string {
 	if err == nil {
 		return ""
@@ -965,14 +835,7 @@ func execErrString(err error) string {
 }
 
 func loaderJSONResult(text, outputSchemaJSON, sourceName string) (any, error) {
-	if strings.TrimSpace(outputSchemaJSON) == "" {
-		return nil, nil
-	}
-	var parsed any
-	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
-		return nil, fmt.Errorf("%s is not valid JSON for outputSchema: %w", sourceName, err)
-	}
-	return parsed, nil
+	return loaders.JSONResult(text, outputSchemaJSON, sourceName)
 }
 
 func (h *loaderRunHost) Command(ctx context.Context, request domain.LoaderCommandRequest) (domain.LoaderCommandResult, error) {
@@ -1081,14 +944,7 @@ func (m *LoaderManager) writeRunArtifact(dir, name, content string) error {
 }
 
 func cloneLoader(item Loader) Loader {
-	cloned := item
-	if item.Triggers != nil {
-		cloned.Triggers = append([]domain.LoaderTrigger(nil), item.Triggers...)
-	}
-	if item.EnvItems != nil {
-		cloned.EnvItems = append([]SessionEnvVar(nil), item.EnvItems...)
-	}
-	return cloned
+	return loaders.CloneLoader(item)
 }
 
 func (m *LoaderManager) snapshotLoaders() []Loader {
@@ -1109,65 +965,20 @@ func marshalJSONCompact(value any) (string, error) {
 	return domain.MarshalJSONCompact(value)
 }
 
-func parseLoaderTriggerEventMetadata(payloadJSON string) loaderTriggerEventMetadata {
-	payloadJSON = strings.TrimSpace(payloadJSON)
-	if payloadJSON == "" {
-		return loaderTriggerEventMetadata{}
-	}
-	var envelope struct {
-		Payload map[string]any `json:"payload"`
-	}
-	if err := json.Unmarshal([]byte(payloadJSON), &envelope); err != nil {
-		return loaderTriggerEventMetadata{}
-	}
-	return loaderTriggerEventMetadata{
-		EventID:       stringFromMap(envelope.Payload, "eventId"),
-		CorrelationID: stringFromMap(envelope.Payload, "correlationId"),
-		Sequence:      int64FromMap(envelope.Payload, "sequence"),
-	}
+func parseLoaderTriggerEventMetadata(payloadJSON string) loaders.TriggerEventMetadata {
+	return loaders.ParseTriggerEventMetadata(payloadJSON)
 }
 
 func validateLoaderPublishTopic(topic string) error {
-	if err := domain.ValidateTopicEventName(topic); err != nil {
-		return err
-	}
-	if strings.HasPrefix(topic, "runtime.") || strings.HasPrefix(topic, "workflow.") || strings.HasPrefix(topic, "external.") {
-		return nil
-	}
-	return fmt.Errorf("loader event topic must use runtime.*, workflow.*, or external.* prefix")
+	return loaders.ValidatePublishTopic(topic)
 }
 
 func jsonObjectDocument(payloadJSON string) bool {
-	var payload map[string]any
-	return json.Unmarshal([]byte(payloadJSON), &payload) == nil && payload != nil
-}
-
-func stringFromMap(values map[string]any, key string) string {
-	if values == nil {
-		return ""
-	}
-	value, ok := values[key].(string)
-	if !ok {
-		return ""
-	}
-	return strings.TrimSpace(value)
+	return loaders.IsJSONObject(payloadJSON)
 }
 
 func int64FromMap(values map[string]any, key string) int64 {
-	if values == nil {
-		return 0
-	}
-	switch value := values[key].(type) {
-	case float64:
-		return int64(value)
-	case int64:
-		return value
-	case json.Number:
-		parsed, _ := value.Int64()
-		return parsed
-	default:
-		return 0
-	}
+	return loaders.Int64FromMap(values, key)
 }
 
 func loaderSessionRPCLinkedSessionID(method, requestJSON, responseJSON string) string {

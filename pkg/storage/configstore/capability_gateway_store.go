@@ -1,4 +1,4 @@
-package agentcompose
+package configstore
 
 import (
 	"context"
@@ -25,6 +25,10 @@ func (s *ConfigStore) ensureCapabilityGatewaySchema(ctx context.Context) error {
 		return fmt.Errorf("create capability gateway schema: %w", err)
 	}
 	return nil
+}
+
+func (s *ConfigStore) EnsureCapabilityGatewaySchema(ctx context.Context) error {
+	return s.ensureCapabilityGatewaySchema(ctx)
 }
 
 // GetCapabilityGateway returns the stored OctoBus connection. An empty addr

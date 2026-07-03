@@ -1,4 +1,4 @@
-package agentcompose
+package configstore
 
 import (
 	"context"
@@ -107,6 +107,10 @@ func (s *ConfigStore) ensureProjectSchema(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+func (s *ConfigStore) EnsureProjectSchema(ctx context.Context) error {
+	return s.ensureProjectSchema(ctx)
 }
 
 func (s *ConfigStore) ensureManagedResourceColumns(ctx context.Context) error {

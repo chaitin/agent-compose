@@ -15,6 +15,8 @@ import (
 
 const StoredUnixMillisecondThreshold int64 = 10_000_000_000
 
+const storedUnixMillisecondThreshold int64 = StoredUnixMillisecondThreshold
+
 func EnsureColumn(ctx context.Context, db *sql.DB, table, column, definition string) error {
 	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
 	if err != nil {

@@ -1,10 +1,9 @@
-package agentcompose
+package configstore
 
 import (
 	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
-	"agent-compose/pkg/storage/configstore"
 	"context"
 	"database/sql"
 	"errors"
@@ -122,6 +121,10 @@ func (s *ConfigStore) ensureLoaderSchema(ctx context.Context) error {
 	return nil
 }
 
+func (s *ConfigStore) EnsureLoaderSchema(ctx context.Context) error {
+	return s.ensureLoaderSchema(ctx)
+}
+
 func (s *ConfigStore) ensureLoaderManagedColumns(ctx context.Context) error {
 	columns := []struct {
 		name       string
@@ -159,10 +162,6 @@ func (s *ConfigStore) ensureLoaderAgentIDColumn(ctx context.Context) error {
 		return fmt.Errorf("ensure loader agent_id column: %w", err)
 	}
 	return nil
-}
-
-func ensureColumn(ctx context.Context, db *sql.DB, table, column, definition string) error {
-	return configstore.EnsureColumn(ctx, db, table, column, definition)
 }
 
 func (s *ConfigStore) migrateLoaderTimestampPrecision(ctx context.Context) error {
@@ -219,7 +218,7 @@ func (s *ConfigStore) CreateLoader(ctx context.Context, item Loader) (Loader, er
 		normalized.Summary.ManagedRevision,
 		normalized.Summary.ManagedAgentName,
 		normalized.Summary.ManagedSchedulerID,
-		configstore.BoolToInt(normalized.Summary.Enabled),
+		BoolToInt(normalized.Summary.Enabled),
 		normalized.Summary.LastError,
 		normalized.Summary.CreatedAt.Unix(),
 		normalized.Summary.UpdatedAt.Unix(),
@@ -277,7 +276,7 @@ func (s *ConfigStore) UpdateLoader(ctx context.Context, item Loader) (Loader, er
 		normalized.Summary.ManagedRevision,
 		normalized.Summary.ManagedAgentName,
 		normalized.Summary.ManagedSchedulerID,
-		configstore.BoolToInt(normalized.Summary.Enabled),
+		BoolToInt(normalized.Summary.Enabled),
 		normalized.Summary.LastError,
 		normalized.Summary.UpdatedAt.Unix(),
 		normalized.Summary.ID,
@@ -286,7 +285,7 @@ func (s *ConfigStore) UpdateLoader(ctx context.Context, item Loader) (Loader, er
 		return Loader{}, fmt.Errorf("update loader %s: %w", normalized.Summary.ID, err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return Loader{}, resourceError(ErrNotFound, "loader", normalized.Summary.ID, fmt.Sprintf("loader %s not found", normalized.Summary.ID), nil)
+		return Loader{}, domain.ResourceError(domain.ErrNotFound, "loader", normalized.Summary.ID, fmt.Sprintf("loader %s not found", normalized.Summary.ID), nil)
 	}
 	normalized.Summary.TriggerCount = existing.Summary.TriggerCount
 	normalized.Summary.RunCount = existing.Summary.RunCount
@@ -323,6 +322,10 @@ func (s *ConfigStore) getLoaderIfExists(ctx context.Context, loaderID string) (L
 	return item, true, nil
 }
 
+func (s *ConfigStore) GetLoaderIfExists(ctx context.Context, loaderID string) (Loader, bool, error) {
+	return s.getLoaderIfExists(ctx, loaderID)
+}
+
 func (s *ConfigStore) DeleteLoader(ctx context.Context, loaderID string) error {
 	loaderID = strings.TrimSpace(loaderID)
 	if loaderID == "" {
@@ -333,7 +336,7 @@ func (s *ConfigStore) DeleteLoader(ctx context.Context, loaderID string) error {
 		return fmt.Errorf("delete loader %s: %w", loaderID, err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return resourceError(ErrNotFound, "loader", loaderID, fmt.Sprintf("loader %s not found", loaderID), nil)
+		return domain.ResourceError(domain.ErrNotFound, "loader", loaderID, fmt.Sprintf("loader %s not found", loaderID), nil)
 	}
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM loader_binding WHERE loader_id = ?`, loaderID)
 	return nil
@@ -384,7 +387,7 @@ func (s *ConfigStore) GetLoader(ctx context.Context, loaderID string) (Loader, e
 	item, err := loaders.ScanLoader(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return Loader{}, resourceError(ErrNotFound, "loader", loaderID, fmt.Sprintf("loader %s not found", loaderID), err)
+			return Loader{}, domain.ResourceError(domain.ErrNotFound, "loader", loaderID, fmt.Sprintf("loader %s not found", loaderID), err)
 		}
 		return Loader{}, err
 	}
@@ -466,7 +469,7 @@ func (s *ConfigStore) hydrateLoaderSummaryCounts(ctx context.Context, summary *d
 	summary.TriggerCount = triggerCount
 	summary.RunCount = runCount
 	summary.EventCount = eventCount
-	summary.LatestRunAt = configstore.ParseStoredTime(latestRunAtRaw)
+	summary.LatestRunAt = ParseStoredTime(latestRunAtRaw)
 	return nil
 }
 
@@ -548,8 +551,8 @@ func (s *ConfigStore) ReplaceLoaderTriggers(ctx context.Context, loaderID string
 			trigger.Kind,
 			trigger.Topic,
 			trigger.IntervalMs,
-			configstore.BoolToInt(trigger.Enabled),
-			configstore.BoolToInt(trigger.AutoID),
+			BoolToInt(trigger.Enabled),
+			BoolToInt(trigger.AutoID),
 			trigger.SpecJSON,
 			domain.NonZeroTimeUnixMilli(trigger.NextFireAt),
 			domain.NonZeroTimeUnixMilli(trigger.LastFiredAt),
@@ -615,12 +618,12 @@ func (s *ConfigStore) SetLoaderEnabled(ctx context.Context, loaderID string, ena
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	result, err := tx.ExecContext(ctx, `UPDATE loader SET enabled = ?, updated_at = ? WHERE id = ?`, configstore.BoolToInt(enabled), now.Unix(), loaderID)
+	result, err := tx.ExecContext(ctx, `UPDATE loader SET enabled = ?, updated_at = ? WHERE id = ?`, BoolToInt(enabled), now.Unix(), loaderID)
 	if err != nil {
 		return fmt.Errorf("update loader enabled state: %w", err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return resourceError(ErrNotFound, "loader", loaderID, fmt.Sprintf("loader %s not found", loaderID), nil)
+		return domain.ResourceError(domain.ErrNotFound, "loader", loaderID, fmt.Sprintf("loader %s not found", loaderID), nil)
 	}
 	if enabled {
 		for _, trigger := range triggers {
@@ -657,7 +660,7 @@ func (s *ConfigStore) SetLoaderTriggerEnabled(ctx context.Context, loaderID, tri
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			id := loaderID + "/" + triggerID
-			return resourceError(ErrNotFound, "loader trigger", id, fmt.Sprintf("loader trigger %s not found", id), err)
+			return domain.ResourceError(domain.ErrNotFound, "loader trigger", id, fmt.Sprintf("loader trigger %s not found", id), err)
 		}
 		return err
 	}
@@ -669,13 +672,13 @@ func (s *ConfigStore) SetLoaderTriggerEnabled(ctx context.Context, loaderID, tri
 		}
 		nextFireAt = domain.NonZeroTimeUnixMilli(scheduledAt)
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE loader_trigger SET enabled = ?, next_fire_at = ? WHERE loader_id = ? AND trigger_id = ?`, configstore.BoolToInt(enabled), nextFireAt, loaderID, triggerID)
+	result, err := s.db.ExecContext(ctx, `UPDATE loader_trigger SET enabled = ?, next_fire_at = ? WHERE loader_id = ? AND trigger_id = ?`, BoolToInt(enabled), nextFireAt, loaderID, triggerID)
 	if err != nil {
 		return fmt.Errorf("update loader trigger enabled state: %w", err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		id := loaderID + "/" + triggerID
-		return resourceError(ErrNotFound, "loader trigger", id, fmt.Sprintf("loader trigger %s not found", id), nil)
+		return domain.ResourceError(domain.ErrNotFound, "loader trigger", id, fmt.Sprintf("loader trigger %s not found", id), nil)
 	}
 	_, _ = s.db.ExecContext(ctx, `UPDATE loader SET updated_at = ? WHERE id = ?`, time.Now().UTC().Unix(), loaderID)
 	return nil
@@ -750,7 +753,7 @@ func (s *ConfigStore) UpdateLoaderRun(ctx context.Context, run domain.LoaderRunS
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		id := strings.TrimSpace(run.LoaderID) + "/" + strings.TrimSpace(run.ID)
-		return resourceError(ErrNotFound, "loader run", id, fmt.Sprintf("loader run %s not found", id), nil)
+		return domain.ResourceError(domain.ErrNotFound, "loader run", id, fmt.Sprintf("loader run %s not found", id), nil)
 	}
 	return nil
 }
@@ -761,7 +764,7 @@ func (s *ConfigStore) GetLoaderRun(ctx context.Context, loaderID, runID string) 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			id := strings.TrimSpace(loaderID) + "/" + strings.TrimSpace(runID)
-			return domain.LoaderRunSummary{}, resourceError(ErrNotFound, "loader run", id, fmt.Sprintf("loader run %s not found", id), err)
+			return domain.LoaderRunSummary{}, domain.ResourceError(domain.ErrNotFound, "loader run", id, fmt.Sprintf("loader run %s not found", id), err)
 		}
 		return domain.LoaderRunSummary{}, err
 	}

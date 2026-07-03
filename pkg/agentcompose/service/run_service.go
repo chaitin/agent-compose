@@ -170,7 +170,7 @@ func (s *Service) runProjectAgent(ctx context.Context, msg *agentcomposev2.RunAg
 		OutputSchemaJSON:  msg.GetOutputSchemaJson(),
 		Stream:            projectRunAgentExecutionStream(run, stream),
 	})
-	transition := projectRunTransitionFromAgentCell(run, sessionResult.Session, cell, execErr)
+	transition := runs.TransitionFromAgentCell(run, sessionResult.Session, cell, execErr)
 	if execErr != nil || !cell.Success {
 		run, err = coordinator.MarkFailed(transitionCtx, transition)
 		if err != nil {
@@ -311,44 +311,6 @@ func projectRunAgentExecutionStream(run ProjectRunRecord, sink *projectRunStream
 	}
 }
 
-func projectRunTransitionFromAgentCell(run ProjectRunRecord, session *Session, cell NotebookCell, execErr error) runs.TransitionRequest {
-	req := runs.TransitionRequest{
-		RunID:     run.RunID,
-		SessionID: session.Summary.ID,
-		ExitCode:  cell.ExitCode,
-		Output:    cell.Output,
-	}
-	if cell.ID != "" {
-		artifactsDir := filepath.Join(execution.HostSessionDir(session), "state", "cells", cell.ID)
-		req.ArtifactsDir = artifactsDir
-		req.LogsPath = filepath.Join(artifactsDir, "output.txt")
-	}
-	resultJSON, err := json.Marshal(map[string]any{
-		"cellId":         cell.ID,
-		"agent":          cell.Agent,
-		"agentSessionId": cell.AgentSessionID,
-		"stopReason":     cell.StopReason,
-		"success":        cell.Success,
-		"exitCode":       cell.ExitCode,
-	})
-	if err == nil {
-		req.ResultJSON = string(resultJSON)
-	}
-	if execErr != nil {
-		req.ExitCode = execution.FirstNonZeroInt(req.ExitCode, 1)
-		req.Error = fmt.Sprintf("agent execution failed: %v", execErr)
-		return req
-	}
-	if !cell.Success {
-		req.ExitCode = execution.FirstNonZeroInt(req.ExitCode, 1)
-		req.Error = "agent execution failed"
-		if detail := firstNonEmpty(cell.Stderr, cell.Output); strings.TrimSpace(detail) != "" {
-			req.Error += ": " + strings.TrimSpace(detail)
-		}
-	}
-	return req
-}
-
 func projectRunTransitionFromCommandResult(run ProjectRunRecord, session *Session, commandText string, result domain.ExecResult, execErr error) runs.TransitionRequest {
 	artifactsDir := filepath.Join(execution.HostSessionDir(session), "state", "runs", run.RunID)
 	req := runs.TransitionRequest{
@@ -391,7 +353,7 @@ func writeProjectRunCommandArtifacts(artifactsDir, commandText string, result do
 }
 
 func (s *Service) cleanupProjectRunSession(ctx context.Context, coordinator *runs.Coordinator, run ProjectRunRecord, session *Session, policy agentcomposev2.RunSessionCleanupPolicy) ProjectRunRecord {
-	if !projectRunCleanupPolicyStopsSession(policy) || session == nil {
+	if !runs.CleanupPolicyStopsSession(policy) || session == nil {
 		return run
 	}
 	cleanupErr := s.stopProjectRunSession(ctx, session)
@@ -408,10 +370,6 @@ func (s *Service) cleanupProjectRunSession(ctx context.Context, coordinator *run
 		return run
 	}
 	return updated
-}
-
-func projectRunCleanupPolicyStopsSession(policy agentcomposev2.RunSessionCleanupPolicy) bool {
-	return policy != agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING
 }
 
 func (s *Service) stopProjectRunSession(ctx context.Context, session *Session) error {

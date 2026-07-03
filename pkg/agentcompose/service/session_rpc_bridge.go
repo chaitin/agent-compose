@@ -257,94 +257,16 @@ func (b *SessionRPCBridge) resumeSession(ctx context.Context, req *connect.Reque
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
-	if err := workspaces.PrepareSessionWorkspace(ctx, b.config, b.configDB, session); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	writeCapabilityGuide(ctx, b.cap, b.store, b.streams, session, capabilities.SessionCapsets(session))
-	if err := b.driver.StartSessionVM(ctx, session); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	session.Summary.VMStatus = domain.VMStatusRunning
-	if err := b.store.UpdateSession(ctx, session); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	b.streams.PublishSessionUpdated(&session.Summary)
-	b.notifyDashboard("session_updated")
-	event := SessionEvent{ID: uuid.NewString(), Type: "session.resumed", Level: "info", Message: fmt.Sprintf("session resumed with %s driver using guest image %s", session.Summary.Driver, session.Summary.GuestImage), CreatedAt: time.Now().UTC()}
-	_ = b.store.AddEvent(ctx, session.Summary.ID, event)
-	b.streams.PublishEventAdded(session.Summary.ID, event)
-	loaded, err := b.store.GetSession(ctx, session.Summary.ID)
+	loaded, err := b.sessionLifecycle().ResumeLoaded(ctx, session, capabilities.SessionCapsets(session))
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	restoreSessionTransientFields(loaded, session)
 	b.publishLoaderTopic("agent-compose.session.resumed", loaders.SessionTopicPayload(loaded, source))
 	return connect.NewResponse(&agentcomposev1.SessionResponse{Session: api.SessionDetailToProto(loaded)}), nil
 }
 
 func (b *SessionRPCBridge) reconcileSessionRuntimeState(ctx context.Context, session *Session) (*Session, error) {
-	if session == nil || session.Summary.VMStatus != domain.VMStatusRunning {
-		return session, nil
-	}
-	driver, err := driverpkg.ResolveSessionRuntimeDriver(session.Summary.Driver, b.config.RuntimeDriver)
-	if err != nil {
-		return nil, err
-	}
-	if driver != driverpkg.RuntimeDriverMicrosandbox {
-		return session, nil
-	}
-	proxyState, err := b.store.GetProxyState(session.Summary.ID)
-	if err != nil {
-		return nil, err
-	}
-	if jupyterTargetReachable(proxyState, 250*time.Millisecond) {
-		return session, nil
-	}
-	vmState, err := b.store.GetVMState(session.Summary.ID)
-	if err != nil {
-		return nil, err
-	}
-	runtime, err := b.runtimes.ForDriver(driver)
-	if err != nil {
-		return nil, err
-	}
-	microsandboxRuntime, ok := runtime.(sessionAliveRuntime)
-	if !ok {
-		return session, nil
-	}
-	alive, err := microsandboxRuntime.IsSessionAlive(ctx, session, vmState)
-	if err != nil {
-		return nil, err
-	}
-	if alive {
-		return session, nil
-	}
-	now := time.Now().UTC()
-	vmState.StoppedAt = now
-	vmState.LastError = ""
-	vmState.BoxID = ""
-	if err := b.store.SaveVMState(session.Summary.ID, vmState); err != nil {
-		return nil, err
-	}
-	session.Summary.VMStatus = domain.VMStatusStopped
-	if err := b.store.UpdateSession(ctx, session); err != nil {
-		return nil, err
-	}
-	if b.configDB != nil {
-		_ = b.configDB.RevokeLLMFacadeTokensForSession(ctx, session.Summary.ID)
-	}
-	b.streams.PublishSessionUpdated(&session.Summary)
-	b.notifyDashboard("session_updated")
-	event := SessionEvent{
-		ID:        uuid.NewString(),
-		Type:      "session.runtime_lost",
-		Level:     "warn",
-		Message:   "session marked stopped after microsandbox runtime became unreachable",
-		CreatedAt: now,
-	}
-	_ = b.store.AddEvent(ctx, session.Summary.ID, event)
-	b.streams.PublishEventAdded(session.Summary.ID, event)
-	return b.store.GetSession(ctx, session.Summary.ID)
+	return b.sessionLifecycle().ReconcileRuntimeState(ctx, session)
 }
 
 func (b *SessionRPCBridge) StopSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
@@ -364,23 +286,13 @@ func (b *SessionRPCBridge) stopSession(ctx context.Context, req *connect.Request
 	if session.Summary.VMStatus != domain.VMStatusRunning {
 		return connect.NewResponse(&agentcomposev1.SessionResponse{Session: api.SessionDetailToProto(session)}), nil
 	}
-	if err := b.driver.StopSessionVM(ctx, session); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	session.Summary.VMStatus = domain.VMStatusStopped
-	if err := b.store.UpdateSession(ctx, session); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	b.streams.PublishSessionUpdated(&session.Summary)
-	b.notifyDashboard("session_updated")
-	event := SessionEvent{ID: uuid.NewString(), Type: "session.stopped", Level: "info", Message: "session stopped", CreatedAt: time.Now().UTC()}
-	_ = b.store.AddEvent(ctx, session.Summary.ID, event)
-	b.streams.PublishEventAdded(session.Summary.ID, event)
-	loaded, err := b.store.GetSession(ctx, session.Summary.ID)
+	loaded, stopped, err := b.sessionLifecycle().StopLoaded(ctx, session)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	b.publishLoaderTopic("agent-compose.session.stopped", loaders.SessionTopicPayload(loaded, source))
+	if stopped {
+		b.publishLoaderTopic("agent-compose.session.stopped", loaders.SessionTopicPayload(loaded, source))
+	}
 	return connect.NewResponse(&agentcomposev1.SessionResponse{Session: api.SessionDetailToProto(loaded)}), nil
 }
 
@@ -423,42 +335,7 @@ func (b *SessionRPCBridge) ListSessions(ctx context.Context, req *connect.Reques
 }
 
 func (b *SessionRPCBridge) ensureSessionProxyReady(ctx context.Context, sessionID string) (*Session, ProxyState, error) {
-	session, err := b.store.GetSession(ctx, sessionID)
-	if err != nil {
-		return nil, ProxyState{}, err
-	}
-	proxyState, err := b.store.GetProxyState(session.Summary.ID)
-	if err != nil {
-		return nil, ProxyState{}, err
-	}
-	if session.Summary.VMStatus == domain.VMStatusRunning && jupyterTargetReachable(proxyState, 1500*time.Millisecond) {
-		return session, proxyState, nil
-	}
-	startCtx, cancel := context.WithTimeout(ctx, b.config.SessionStartTimeout)
-	defer cancel()
-	if err := workspaces.PrepareSessionWorkspace(startCtx, b.config, b.configDB, session); err != nil {
-		session.Summary.VMStatus = domain.VMStatusFailed
-		_ = b.store.UpdateSession(ctx, session)
-		return nil, ProxyState{}, err
-	}
-	if err := b.driver.StartSessionVM(startCtx, session); err != nil {
-		session.Summary.VMStatus = domain.VMStatusFailed
-		_ = b.store.UpdateSession(ctx, session)
-		return nil, ProxyState{}, err
-	}
-	session.Summary.VMStatus = domain.VMStatusRunning
-	if err := b.store.UpdateSession(ctx, session); err != nil {
-		return nil, ProxyState{}, err
-	}
-	loaded, err := b.store.GetSession(ctx, session.Summary.ID)
-	if err != nil {
-		return nil, ProxyState{}, err
-	}
-	proxyState, err = b.store.GetProxyState(session.Summary.ID)
-	if err != nil {
-		return nil, ProxyState{}, err
-	}
-	return loaded, proxyState, nil
+	return b.sessionLifecycle().EnsureProxyReady(ctx, sessionID)
 }
 
 func (b *SessionRPCBridge) GetSessionProxy(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionProxyResponse], error) {

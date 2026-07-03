@@ -574,182 +574,17 @@ func (s *Service) validateProjectManagedAgentDefinitions(normalized normalizedV2
 }
 
 func (s *Service) reconcileProjectManagedAgentDefinitions(ctx context.Context, project ProjectRecord, current []domain.AgentDefinition) ([]*agentcomposev2.ProjectChange, bool, error) {
-	if s.configDB == nil {
-		return nil, false, fmt.Errorf("config store is required")
-	}
-	currentByID := make(map[string]domain.AgentDefinition, len(current))
-	for _, agent := range current {
-		currentByID[agent.ID] = agent
-	}
-	changes := make([]*agentcomposev2.ProjectChange, 0, len(current))
-	unchanged := true
-	for _, agent := range current {
-		existing, found, err := s.configDB.getAgentDefinitionIfExists(ctx, agent.ID, true)
-		if err != nil {
-			return nil, false, fmt.Errorf("load managed agent definition %s: %w", agent.ID, err)
-		}
-		saved, err := s.configDB.UpsertManagedAgentDefinition(ctx, agent)
-		if err != nil {
-			return nil, false, fmt.Errorf("upsert managed agent definition %s: %w", agent.ID, err)
-		}
-		action := managedAgentDefinitionChangeAction(existing, found, agent)
-		if action != agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED {
-			unchanged = false
-		}
-		changes = append(changes, &agentcomposev2.ProjectChange{
-			Action:       action,
-			ResourceType: "agent_definition",
-			ResourceId:   saved.ID,
-			Name:         saved.Name,
-		})
-	}
-
-	existingManaged, err := s.configDB.ListManagedAgentDefinitions(ctx, project.ID, false)
-	if err != nil {
-		return nil, false, fmt.Errorf("list managed agent definitions: %w", err)
-	}
-	for _, existing := range existingManaged {
-		if _, ok := currentByID[existing.ID]; ok {
-			continue
-		}
-		if !existing.Enabled {
-			continue
-		}
-		disabled, err := s.configDB.SetAgentDefinitionEnabled(ctx, existing.ID, false)
-		if err != nil {
-			return nil, false, fmt.Errorf("disable removed managed agent definition %s: %w", existing.ID, err)
-		}
-		unchanged = false
-		changes = append(changes, &agentcomposev2.ProjectChange{
-			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED,
-			ResourceType: "agent_definition",
-			ResourceId:   disabled.ID,
-			Name:         disabled.Name,
-			Message:      "disabled because the agent is no longer present in the project spec",
-		})
-	}
-	return changes, unchanged, nil
+	changes, unchanged, err := projects.ReconcileManagedAgentDefinitions(ctx, s.configDB, project, current)
+	return projectChangesToProto(changes), unchanged, err
 }
 
 func (s *Service) reconcileProjectManagedSchedulers(ctx context.Context, project ProjectRecord, schedulers []ProjectSchedulerRecord, loaders []Loader) ([]*agentcomposev2.ProjectChange, bool, error) {
-	if s.configDB == nil {
-		return nil, false, fmt.Errorf("config store is required")
-	}
-	currentByID := make(map[string]ProjectSchedulerRecord, len(schedulers))
-	loadersByID := make(map[string]Loader, len(loaders))
-	for _, loader := range loaders {
-		loadersByID[loader.Summary.ID] = loader
-	}
-	changes := make([]*agentcomposev2.ProjectChange, 0, len(schedulers)+len(loaders))
-	unchanged := true
-	for _, scheduler := range schedulers {
-		currentByID[scheduler.SchedulerID] = scheduler
-		existing, found, err := getProjectSchedulerIfExists(ctx, s.configDB, scheduler.ProjectID, scheduler.SchedulerID)
-		if err != nil {
-			return changes, false, fmt.Errorf("load project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
-		}
-		stagedScheduler := scheduler
-		stagedScheduler.Enabled = false
-		saved, err := s.configDB.UpsertProjectScheduler(ctx, stagedScheduler)
-		if err != nil {
-			return changes, false, fmt.Errorf("stage project scheduler %s/%s disabled: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
-		}
-
-		loader, ok := loadersByID[saved.ManagedLoaderID]
-		if !ok {
-			return changes, false, fmt.Errorf("managed loader %s for scheduler %s missing", saved.ManagedLoaderID, saved.SchedulerID)
-		}
-		existingLoader, loaderFound, err := s.configDB.getLoaderIfExists(ctx, loader.Summary.ID)
-		if err != nil {
-			return changes, false, fmt.Errorf("load managed loader %s: %w", loader.Summary.ID, err)
-		}
-		stagedLoader := loader
-		stagedLoader.Summary.Enabled = false
-		savedLoader, err := s.configDB.UpsertManagedLoader(ctx, stagedLoader)
-		if err != nil {
-			return changes, false, fmt.Errorf("stage managed loader %s disabled: %w", loader.Summary.ID, err)
-		}
-		if _, err := s.configDB.ReplaceLoaderTriggers(ctx, savedLoader.Summary.ID, loader.Triggers); err != nil {
-			s.cleanupFailedManagedSchedulerReconcile(ctx, saved, savedLoader.Summary.ID)
-			return changes, false, fmt.Errorf("replace managed loader triggers %s: %w", savedLoader.Summary.ID, err)
-		}
-		if loader.Summary.Enabled {
-			if err := s.configDB.SetLoaderEnabled(ctx, savedLoader.Summary.ID, true); err != nil {
-				s.cleanupFailedManagedSchedulerReconcile(ctx, saved, savedLoader.Summary.ID)
-				return changes, false, fmt.Errorf("enable managed loader %s: %w", savedLoader.Summary.ID, err)
-			}
-		} else if err := s.configDB.SetLoaderEnabled(ctx, savedLoader.Summary.ID, false); err != nil {
-			return changes, false, fmt.Errorf("disable managed loader %s: %w", savedLoader.Summary.ID, err)
-		}
-		if scheduler.Enabled {
-			saved, err = s.configDB.SetProjectSchedulerEnabled(ctx, scheduler.ProjectID, scheduler.SchedulerID, true)
-			if err != nil {
-				s.cleanupFailedManagedSchedulerReconcile(ctx, stagedScheduler, savedLoader.Summary.ID)
-				return changes, false, fmt.Errorf("enable project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
-			}
-		} else {
-			saved = stagedScheduler
-		}
-		action := schedulerChangeAction(existing, found, scheduler)
-		if action != agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED {
-			unchanged = false
-		}
-		changes = append(changes, &agentcomposev2.ProjectChange{
-			Action:       action,
-			ResourceType: "project_scheduler",
-			ResourceId:   saved.SchedulerID,
-			Name:         saved.AgentName,
-		})
-		loaderAction := managedLoaderChangeAction(existingLoader, loaderFound, loader)
-		if loaderAction != agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED {
-			unchanged = false
-		}
-		changes = append(changes, &agentcomposev2.ProjectChange{
-			Action:       loaderAction,
-			ResourceType: "loader",
-			ResourceId:   savedLoader.Summary.ID,
-			Name:         savedLoader.Summary.Name,
-		})
-	}
-	existingSchedulers, err := s.configDB.ListProjectSchedulers(ctx, project.ID)
-	if err != nil {
-		return changes, false, fmt.Errorf("list project schedulers: %w", err)
-	}
-	for _, existing := range existingSchedulers {
-		if _, ok := currentByID[existing.SchedulerID]; ok {
-			continue
-		}
-		if !existing.Enabled {
-			continue
-		}
-		disabled, err := s.configDB.SetProjectSchedulerEnabled(ctx, existing.ProjectID, existing.SchedulerID, false)
-		if err != nil {
-			return changes, false, fmt.Errorf("disable removed project scheduler %s/%s: %w", existing.ProjectID, existing.SchedulerID, err)
-		}
-		if err := s.disableManagedLoaderIfOwned(ctx, existing.ManagedLoaderID, project.ID, existing.SchedulerID); err != nil {
-			return changes, false, fmt.Errorf("disable removed managed loader %s: %w", existing.ManagedLoaderID, err)
-		}
-		unchanged = false
-		changes = append(changes, &agentcomposev2.ProjectChange{
-			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_REMOVED,
-			ResourceType: "project_scheduler",
-			ResourceId:   disabled.SchedulerID,
-			Name:         disabled.AgentName,
-			Message:      "disabled because the scheduler is no longer present in the project spec",
-		}, &agentcomposev2.ProjectChange{
-			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_REMOVED,
-			ResourceType: "loader",
-			ResourceId:   existing.ManagedLoaderID,
-			Name:         existing.AgentName,
-			Message:      "disabled because the scheduler is no longer present in the project spec",
-		})
-	}
-	if s.loaders != nil {
-		if err := s.loaders.Refresh(ctx); err != nil {
-			return changes, false, fmt.Errorf("refresh loader manager: %w", err)
-		}
-	}
-	return changes, unchanged, nil
+	changes, unchanged, err := projects.ReconcileManagedSchedulers(ctx, s.configDB, project, schedulers, loaders, projects.ReconcileSchedulerOptions{
+		CleanupFailedManagedScheduler: s.cleanupFailedManagedSchedulerReconcile,
+		DisableManagedLoaderIfOwned:   s.disableManagedLoaderIfOwned,
+		RefreshLoaders:                s.refreshLoaders,
+	})
+	return projectChangesToProto(changes), unchanged, err
 }
 
 func (s *Service) cleanupFailedManagedSchedulerReconcile(ctx context.Context, scheduler ProjectSchedulerRecord, loaderID string) {
@@ -768,57 +603,7 @@ func (s *Service) cleanupFailedManagedSchedulerReconcile(ctx context.Context, sc
 }
 
 func (s *Service) disableManagedLoaderIfOwned(ctx context.Context, loaderID, projectID, schedulerID string) error {
-	loaderID = strings.TrimSpace(loaderID)
-	if loaderID == "" {
-		return nil
-	}
-	loader, found, err := s.configDB.getLoaderIfExists(ctx, loaderID)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return nil
-	}
-	if loader.Summary.ManagedProjectID != strings.TrimSpace(projectID) || loader.Summary.ManagedSchedulerID != strings.TrimSpace(schedulerID) {
-		return nil
-	}
-	if !loader.Summary.Enabled {
-		return nil
-	}
-	return s.configDB.SetLoaderEnabled(ctx, loaderID, false)
-}
-
-func managedAgentDefinitionChangeAction(existing domain.AgentDefinition, found bool, current domain.AgentDefinition) agentcomposev2.ProjectChangeAction {
-	if !found {
-		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
-	}
-	if !existing.DeletedAt.IsZero() || !existing.Enabled {
-		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
-	}
-	if projects.ManagedAgentDefinitionUnchanged(existing, current) {
-		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED
-	}
-	return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
-}
-
-func schedulerChangeAction(existing ProjectSchedulerRecord, found bool, current ProjectSchedulerRecord) agentcomposev2.ProjectChangeAction {
-	if !found {
-		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
-	}
-	if projects.SchedulerRecordUnchanged(existing, current) {
-		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED
-	}
-	return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
-}
-
-func managedLoaderChangeAction(existing Loader, found bool, current Loader) agentcomposev2.ProjectChangeAction {
-	if !found {
-		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
-	}
-	if projects.ManagedLoaderUnchanged(existing, current) {
-		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED
-	}
-	return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
+	return projects.DisableManagedLoaderIfOwned(ctx, s.configDB, loaderID, projectID, schedulerID)
 }
 
 func getProjectAgentIfExists(ctx context.Context, store *ConfigStore, projectID, agentName string) (ProjectAgentRecord, bool, error) {
@@ -832,25 +617,37 @@ func getProjectAgentIfExists(ctx context.Context, store *ConfigStore, projectID,
 	return ProjectAgentRecord{}, false, err
 }
 
-func getProjectSchedulerIfExists(ctx context.Context, store *ConfigStore, projectID, schedulerID string) (ProjectSchedulerRecord, bool, error) {
-	scheduler, err := store.GetProjectScheduler(ctx, projectID, schedulerID)
-	if err == nil {
-		return scheduler, true, nil
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		return ProjectSchedulerRecord{}, false, nil
-	}
-	return ProjectSchedulerRecord{}, false, err
+func agentChangeAction(existing ProjectAgentRecord, found bool, current ProjectAgentRecord) agentcomposev2.ProjectChangeAction {
+	return projectChangeActionToProto(projects.ProjectAgentChangeAction(existing, found, current))
 }
 
-func agentChangeAction(existing ProjectAgentRecord, found bool, current ProjectAgentRecord) agentcomposev2.ProjectChangeAction {
-	if !found {
+func projectChangesToProto(changes []projects.Change) []*agentcomposev2.ProjectChange {
+	items := make([]*agentcomposev2.ProjectChange, 0, len(changes))
+	for _, change := range changes {
+		items = append(items, &agentcomposev2.ProjectChange{
+			Action:       projectChangeActionToProto(change.Action),
+			ResourceType: change.ResourceType,
+			ResourceId:   change.ResourceID,
+			Name:         change.Name,
+			Message:      change.Message,
+		})
+	}
+	return items
+}
+
+func projectChangeActionToProto(action string) agentcomposev2.ProjectChangeAction {
+	switch action {
+	case projects.ChangeActionCreated:
 		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
-	}
-	if projects.ProjectAgentRecordUnchanged(existing, current) {
+	case projects.ChangeActionUpdated:
+		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
+	case projects.ChangeActionRemoved:
+		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_REMOVED
+	case projects.ChangeActionUnchanged:
 		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED
+	default:
+		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNSPECIFIED
 	}
-	return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
 }
 
 // ProjectSpecResponse converts a normalized compose spec into the v2 ProjectSpec API shape.

@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"net/url"
 	pathpkg "path"
+	"strconv"
 	"strings"
-
-	"agent-compose/pkg/storage/configstore"
+	"time"
 )
 
 func ScanProvider(scan func(dest ...any) error) (Provider, error) {
@@ -22,8 +22,8 @@ func ScanProvider(scan func(dest ...any) error) (Provider, error) {
 	item.Enabled = enabled != 0
 	item.ProviderType = NormalizeProviderType(item.ProviderType)
 	item.DefaultWireAPI = NormalizeWireAPI(item.DefaultWireAPI)
-	item.CreatedAt = configstore.ParseStoredTime(createdAt)
-	item.UpdatedAt = configstore.ParseStoredTime(updatedAt)
+	item.CreatedAt = parseStoredTime(createdAt)
+	item.UpdatedAt = parseStoredTime(updatedAt)
 	return item, nil
 }
 
@@ -36,8 +36,8 @@ func ScanModel(scan func(dest ...any) error) (Model, error) {
 	}
 	item.DefaultModel = defaultModel != 0
 	item.Enabled = enabled != 0
-	item.CreatedAt = configstore.ParseStoredTime(createdAt)
-	item.UpdatedAt = configstore.ParseStoredTime(updatedAt)
+	item.CreatedAt = parseStoredTime(createdAt)
+	item.UpdatedAt = parseStoredTime(updatedAt)
 	return item, nil
 }
 
@@ -47,10 +47,49 @@ func ScanFacadeToken(scan func(dest ...any) error) (FacadeToken, error) {
 	if err := scan(&item.SessionID, &item.TokenHash, &item.TokenFingerprint, &item.Model, &item.ProviderID, &item.WireAPI, &item.Source, &item.RunID, &issuedAt, &expiresAt, &revokedAt); err != nil {
 		return FacadeToken{}, err
 	}
-	item.IssuedAt = configstore.ParseStoredTime(issuedAt)
-	item.ExpiresAt = configstore.ParseStoredTime(expiresAt)
-	item.RevokedAt = configstore.ParseStoredTime(revokedAt)
+	item.IssuedAt = parseStoredTime(issuedAt)
+	item.ExpiresAt = parseStoredTime(expiresAt)
+	item.RevokedAt = parseStoredTime(revokedAt)
 	return item, nil
+}
+
+func parseStoredTime(value any) time.Time {
+	switch typed := value.(type) {
+	case nil:
+		return time.Time{}
+	case int64:
+		return parseStoredUnixTimeAuto(typed)
+	case int:
+		return parseStoredUnixTimeAuto(int64(typed))
+	case float64:
+		return parseStoredUnixTimeAuto(int64(typed))
+	case []byte:
+		return parseStoredTime(string(typed))
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return time.Time{}
+		}
+		if unixValue, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+			return parseStoredUnixTimeAuto(unixValue)
+		}
+		for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000Z"} {
+			if parsed, err := time.Parse(layout, trimmed); err == nil {
+				return parsed.UTC()
+			}
+		}
+	}
+	return time.Time{}
+}
+
+func parseStoredUnixTimeAuto(value int64) time.Time {
+	if value <= 0 {
+		return time.Time{}
+	}
+	if value >= 10_000_000_000 {
+		return time.UnixMilli(value).UTC()
+	}
+	return time.Unix(value, 0).UTC()
 }
 
 func NormalizeDefaultConfig(provider Provider, model Model) (Provider, Model, bool) {

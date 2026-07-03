@@ -1,4 +1,4 @@
-package agentcompose
+package configstore
 
 import (
 	"context"
@@ -12,18 +12,6 @@ import (
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/projects"
 	"agent-compose/pkg/runs"
-	"agent-compose/pkg/storage/configstore"
-)
-
-type (
-	ProjectRecord          = domain.ProjectRecord
-	ProjectRevisionRecord  = domain.ProjectRevisionRecord
-	ProjectAgentRecord     = domain.ProjectAgentRecord
-	ProjectSchedulerRecord = domain.ProjectSchedulerRecord
-	ProjectRunRecord       = domain.ProjectRunRecord
-	ProjectListOptions     = domain.ProjectListOptions
-	ProjectRunListOptions  = domain.ProjectRunListOptions
-	ProjectListResult      = domain.ProjectListResult
 )
 
 func (s *ConfigStore) UpsertProject(ctx context.Context, project ProjectRecord) (ProjectRecord, error) {
@@ -52,7 +40,7 @@ func (s *ConfigStore) UpsertProject(ctx context.Context, project ProjectRecord) 
 			return ProjectRecord{}, fmt.Errorf("update project %s: %w", project.ID, err)
 		}
 		if rows, _ := result.RowsAffected(); rows == 0 {
-			return ProjectRecord{}, resourceError(ErrNotFound, "project", project.ID, fmt.Sprintf("project %s not found", project.ID), nil)
+			return ProjectRecord{}, domain.ResourceError(domain.ErrNotFound, "project", project.ID, fmt.Sprintf("project %s not found", project.ID), nil)
 		}
 		return s.GetProject(ctx, project.ID)
 	}
@@ -112,7 +100,7 @@ func (s *ConfigStore) SaveProjectRevision(ctx context.Context, revision ProjectR
 		return ProjectRevisionRecord{}, false, fmt.Errorf("update project revision pointer %s: %w", revision.ProjectID, err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return ProjectRevisionRecord{}, false, resourceError(ErrNotFound, "project", revision.ProjectID, fmt.Sprintf("project %s not found", revision.ProjectID), nil)
+		return ProjectRevisionRecord{}, false, domain.ResourceError(domain.ErrNotFound, "project", revision.ProjectID, fmt.Sprintf("project %s not found", revision.ProjectID), nil)
 	}
 	if err := tx.Commit(); err != nil {
 		return ProjectRevisionRecord{}, false, fmt.Errorf("commit project revision tx: %w", err)
@@ -127,7 +115,7 @@ func (s *ConfigStore) GetProject(ctx context.Context, projectID string) (Project
 	}
 	if !found {
 		id := strings.TrimSpace(projectID)
-		return ProjectRecord{}, resourceError(ErrNotFound, "project", id, fmt.Sprintf("project %s not found", id), sql.ErrNoRows)
+		return ProjectRecord{}, domain.ResourceError(domain.ErrNotFound, "project", id, fmt.Sprintf("project %s not found", id), sql.ErrNoRows)
 	}
 	return item, nil
 }
@@ -192,7 +180,7 @@ func (s *ConfigStore) GetProjectRevision(ctx context.Context, projectID string, 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			id := fmt.Sprintf("%s/%d", strings.TrimSpace(projectID), revision)
-			return ProjectRevisionRecord{}, resourceError(ErrNotFound, "project revision", id, fmt.Sprintf("project revision %s not found", id), err)
+			return ProjectRevisionRecord{}, domain.ResourceError(domain.ErrNotFound, "project revision", id, fmt.Sprintf("project revision %s not found", id), err)
 		}
 		return ProjectRevisionRecord{}, err
 	}
@@ -208,7 +196,7 @@ func (s *ConfigStore) UpsertProjectAgent(ctx context.Context, agent ProjectAgent
 	result, err := s.db.ExecContext(ctx, `UPDATE project_agent SET
 		managed_agent_id = ?, revision = ?, provider = ?, model = ?, image = ?, driver = ?, scheduler_enabled = ?, spec_json = ?, updated_at = ?
 		WHERE project_id = ? AND agent_name = ?`,
-		agent.ManagedAgentID, agent.Revision, agent.Provider, agent.Model, agent.Image, agent.Driver, configstore.BoolToInt(agent.SchedulerEnabled), agent.SpecJSON, now.Unix(),
+		agent.ManagedAgentID, agent.Revision, agent.Provider, agent.Model, agent.Image, agent.Driver, BoolToInt(agent.SchedulerEnabled), agent.SpecJSON, now.Unix(),
 		agent.ProjectID, agent.AgentName)
 	if err != nil {
 		return ProjectAgentRecord{}, fmt.Errorf("update project agent %s/%s: %w", agent.ProjectID, agent.AgentName, err)
@@ -221,7 +209,7 @@ func (s *ConfigStore) UpsertProjectAgent(ctx context.Context, agent ProjectAgent
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO project_agent(
 		project_id, agent_name, managed_agent_id, revision, provider, model, image, driver, scheduler_enabled, spec_json, created_at, updated_at
 	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		agent.ProjectID, agent.AgentName, agent.ManagedAgentID, agent.Revision, agent.Provider, agent.Model, agent.Image, agent.Driver, configstore.BoolToInt(agent.SchedulerEnabled), agent.SpecJSON,
+		agent.ProjectID, agent.AgentName, agent.ManagedAgentID, agent.Revision, agent.Provider, agent.Model, agent.Image, agent.Driver, BoolToInt(agent.SchedulerEnabled), agent.SpecJSON,
 		agent.CreatedAt.Unix(), agent.UpdatedAt.Unix()); err != nil {
 		return ProjectAgentRecord{}, fmt.Errorf("insert project agent %s/%s: %w", agent.ProjectID, agent.AgentName, err)
 	}
@@ -235,7 +223,7 @@ func (s *ConfigStore) GetProjectAgent(ctx context.Context, projectID, agentName 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			id := strings.TrimSpace(projectID) + "/" + strings.TrimSpace(agentName)
-			return ProjectAgentRecord{}, resourceError(ErrNotFound, "project agent", id, fmt.Sprintf("project agent %s not found", id), err)
+			return ProjectAgentRecord{}, domain.ResourceError(domain.ErrNotFound, "project agent", id, fmt.Sprintf("project agent %s not found", id), err)
 		}
 		return ProjectAgentRecord{}, err
 	}
@@ -272,7 +260,7 @@ func (s *ConfigStore) UpsertProjectScheduler(ctx context.Context, scheduler Proj
 	result, err := s.db.ExecContext(ctx, `UPDATE project_scheduler SET
 		agent_name = ?, managed_loader_id = ?, revision = ?, enabled = ?, trigger_count = ?, spec_json = ?, updated_at = ?
 		WHERE project_id = ? AND scheduler_id = ?`,
-		scheduler.AgentName, scheduler.ManagedLoaderID, scheduler.Revision, configstore.BoolToInt(scheduler.Enabled), scheduler.TriggerCount, scheduler.SpecJSON, now.Unix(),
+		scheduler.AgentName, scheduler.ManagedLoaderID, scheduler.Revision, BoolToInt(scheduler.Enabled), scheduler.TriggerCount, scheduler.SpecJSON, now.Unix(),
 		scheduler.ProjectID, scheduler.SchedulerID)
 	if err != nil {
 		return ProjectSchedulerRecord{}, fmt.Errorf("update project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
@@ -285,7 +273,7 @@ func (s *ConfigStore) UpsertProjectScheduler(ctx context.Context, scheduler Proj
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO project_scheduler(
 		project_id, scheduler_id, agent_name, managed_loader_id, revision, enabled, trigger_count, spec_json, created_at, updated_at
 	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		scheduler.ProjectID, scheduler.SchedulerID, scheduler.AgentName, scheduler.ManagedLoaderID, scheduler.Revision, configstore.BoolToInt(scheduler.Enabled), scheduler.TriggerCount, scheduler.SpecJSON,
+		scheduler.ProjectID, scheduler.SchedulerID, scheduler.AgentName, scheduler.ManagedLoaderID, scheduler.Revision, BoolToInt(scheduler.Enabled), scheduler.TriggerCount, scheduler.SpecJSON,
 		scheduler.CreatedAt.Unix(), scheduler.UpdatedAt.Unix()); err != nil {
 		return ProjectSchedulerRecord{}, fmt.Errorf("insert project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
 	}
@@ -299,7 +287,7 @@ func (s *ConfigStore) GetProjectScheduler(ctx context.Context, projectID, schedu
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			id := strings.TrimSpace(projectID) + "/" + strings.TrimSpace(schedulerID)
-			return ProjectSchedulerRecord{}, resourceError(ErrNotFound, "project scheduler", id, fmt.Sprintf("project scheduler %s not found", id), err)
+			return ProjectSchedulerRecord{}, domain.ResourceError(domain.ErrNotFound, "project scheduler", id, fmt.Sprintf("project scheduler %s not found", id), err)
 		}
 		return ProjectSchedulerRecord{}, err
 	}
@@ -313,13 +301,13 @@ func (s *ConfigStore) SetProjectSchedulerEnabled(ctx context.Context, projectID,
 		return ProjectSchedulerRecord{}, fmt.Errorf("project scheduler id is required")
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE project_scheduler SET enabled = ?, updated_at = ? WHERE project_id = ? AND scheduler_id = ?`,
-		configstore.BoolToInt(enabled), time.Now().UTC().Unix(), projectID, schedulerID)
+		BoolToInt(enabled), time.Now().UTC().Unix(), projectID, schedulerID)
 	if err != nil {
 		return ProjectSchedulerRecord{}, fmt.Errorf("update project scheduler %s/%s enabled state: %w", projectID, schedulerID, err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		id := projectID + "/" + schedulerID
-		return ProjectSchedulerRecord{}, resourceError(ErrNotFound, "project scheduler", id, fmt.Sprintf("project scheduler %s not found", id), nil)
+		return ProjectSchedulerRecord{}, domain.ResourceError(domain.ErrNotFound, "project scheduler", id, fmt.Sprintf("project scheduler %s not found", id), nil)
 	}
 	return s.GetProjectScheduler(ctx, projectID, schedulerID)
 }
@@ -384,7 +372,7 @@ func (s *ConfigStore) UpdateProjectRun(ctx context.Context, run ProjectRunRecord
 		return ProjectRunRecord{}, fmt.Errorf("update project run %s: %w", run.RunID, err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return ProjectRunRecord{}, resourceError(ErrNotFound, "project run", run.RunID, fmt.Sprintf("project run %s not found", run.RunID), nil)
+		return ProjectRunRecord{}, domain.ResourceError(domain.ErrNotFound, "project run", run.RunID, fmt.Sprintf("project run %s not found", run.RunID), nil)
 	}
 	return s.GetProjectRun(ctx, run.RunID)
 }
@@ -395,7 +383,7 @@ func (s *ConfigStore) GetProjectRun(ctx context.Context, runID string) (ProjectR
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			id := strings.TrimSpace(runID)
-			return ProjectRunRecord{}, resourceError(ErrNotFound, "project run", id, fmt.Sprintf("project run %s not found", id), err)
+			return ProjectRunRecord{}, domain.ResourceError(domain.ErrNotFound, "project run", id, fmt.Sprintf("project run %s not found", id), err)
 		}
 		return ProjectRunRecord{}, err
 	}
@@ -488,4 +476,8 @@ func (s *ConfigStore) getProject(ctx context.Context, projectID string, includeR
 		return ProjectRecord{}, false, err
 	}
 	return item, true, nil
+}
+
+func (s *ConfigStore) GetProjectIfExists(ctx context.Context, projectID string, includeRemoved bool) (ProjectRecord, bool, error) {
+	return s.getProject(ctx, projectID, includeRemoved)
 }

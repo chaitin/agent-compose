@@ -134,6 +134,10 @@ func normalizeEnvItems(items []domain.SessionEnvVar) []domain.SessionEnvVar {
 }
 
 func loaderJSONResult(text, outputSchemaJSON, sourceName string) (any, error) {
+	return JSONResult(text, outputSchemaJSON, sourceName)
+}
+
+func JSONResult(text, outputSchemaJSON, sourceName string) (any, error) {
 	if strings.TrimSpace(outputSchemaJSON) == "" {
 		return nil, nil
 	}

@@ -1,16 +1,13 @@
-package agentcompose
+package configstore
 
 import (
+	domain "agent-compose/pkg/model"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
-
-	"agent-compose/pkg/events"
-	domain "agent-compose/pkg/model"
-	"agent-compose/pkg/storage/configstore"
 )
 
 func (s *ConfigStore) ensureEventSchema(ctx context.Context) error {
@@ -117,8 +114,12 @@ func (s *ConfigStore) ensureEventSchema(ctx context.Context) error {
 	return nil
 }
 
+func (s *ConfigStore) EnsureEventSchema(ctx context.Context) error {
+	return s.ensureEventSchema(ctx)
+}
+
 func (s *ConfigStore) CreateEvent(ctx context.Context, item domain.TopicEventRecord) (domain.TopicEventRecord, error) {
-	normalized, err := events.NormalizeTopicEventRecord(item, true)
+	normalized, err := normalizeTopicEventRecord(item, true)
 	if err != nil {
 		return domain.TopicEventRecord{}, err
 	}
@@ -158,7 +159,7 @@ func (s *ConfigStore) CreateEvent(ctx context.Context, item domain.TopicEventRec
 				return domain.TopicEventRecord{}, lookupErr
 			} else if ok {
 				if existing.PayloadHash != normalized.PayloadHash {
-					return domain.TopicEventRecord{}, resourceError(ErrConflict, "event", normalized.Topic, fmt.Sprintf("event idempotency conflict for topic %q", normalized.Topic), nil)
+					return domain.TopicEventRecord{}, domain.ResourceError(domain.ErrConflict, "event", normalized.Topic, fmt.Sprintf("event idempotency conflict for topic %q", normalized.Topic), nil)
 				}
 				return existing, nil
 			}
@@ -178,11 +179,11 @@ func (s *ConfigStore) GetEvent(ctx context.Context, eventID string) (domain.Topi
 	if eventID == "" {
 		return domain.TopicEventRecord{}, fmt.Errorf("event id is required")
 	}
-	row := s.db.QueryRowContext(ctx, events.SelectTopicEventSQL()+` WHERE id = ?`, eventID)
-	item, err := events.ScanTopicEvent(row.Scan)
+	row := s.db.QueryRowContext(ctx, selectTopicEventSQL()+` WHERE id = ?`, eventID)
+	item, err := scanTopicEvent(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.TopicEventRecord{}, resourceError(ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), err)
+			return domain.TopicEventRecord{}, domain.ResourceError(domain.ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), err)
 		}
 		return domain.TopicEventRecord{}, err
 	}
@@ -195,8 +196,8 @@ func (s *ConfigStore) FindEventByIdempotencyKey(ctx context.Context, topic, key 
 	if topic == "" || key == "" {
 		return domain.TopicEventRecord{}, false, nil
 	}
-	row := s.db.QueryRowContext(ctx, events.SelectTopicEventSQL()+` WHERE topic = ? AND idempotency_key = ?`, topic, key)
-	item, err := events.ScanTopicEvent(row.Scan)
+	row := s.db.QueryRowContext(ctx, selectTopicEventSQL()+` WHERE topic = ? AND idempotency_key = ?`, topic, key)
+	item, err := scanTopicEvent(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.TopicEventRecord{}, false, nil
@@ -210,12 +211,12 @@ func (s *ConfigStore) ListPendingEvents(ctx context.Context, limit int) ([]domai
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, events.SelectTopicEventSQL()+` WHERE dispatch_status = ? ORDER BY sequence ASC LIMIT ?`, domain.TopicEventDispatchPending, limit)
+	rows, err := s.db.QueryContext(ctx, selectTopicEventSQL()+` WHERE dispatch_status = ? ORDER BY sequence ASC LIMIT ?`, domain.TopicEventDispatchPending, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query pending events: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	return events.ScanTopicEvents(rows)
+	return scanTopicEvents(rows)
 }
 
 func (s *ConfigStore) ListEvents(ctx context.Context, filter domain.TopicEventFilter) ([]domain.TopicEventRecord, error) {
@@ -251,13 +252,13 @@ func (s *ConfigStore) ListEvents(ctx context.Context, filter domain.TopicEventFi
 		args = append(args, status)
 	}
 	args = append(args, limit)
-	query := events.SelectTopicEventSQL() + ` WHERE ` + strings.Join(clauses, " AND ") + ` ORDER BY sequence ASC LIMIT ?`
+	query := selectTopicEventSQL() + ` WHERE ` + strings.Join(clauses, " AND ") + ` ORDER BY sequence ASC LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query events: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	return events.ScanTopicEvents(rows)
+	return scanTopicEvents(rows)
 }
 
 func (s *ConfigStore) MarkEventPublished(ctx context.Context, eventID, claimID string, dispatchedAt time.Time) error {
@@ -280,7 +281,7 @@ func (s *ConfigStore) MarkEventPublished(ctx context.Context, eventID, claimID s
 	}
 	if affected == 0 {
 		if _, err := s.GetEvent(ctx, eventID); err != nil {
-			return resourceError(ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), err)
+			return domain.ResourceError(domain.ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), err)
 		}
 		return nil
 	}
@@ -296,7 +297,7 @@ func (s *ConfigStore) UpdateEventPayload(ctx context.Context, eventID, payloadJS
 	if payloadJSON == "" {
 		return fmt.Errorf("event payload json is required")
 	}
-	if _, err := normalizeJSONDocument(payloadJSON); err != nil {
+	if _, err := domain.NormalizeJSONDocument(payloadJSON); err != nil {
 		return err
 	}
 	payloadHash := domain.TopicEventPayloadSHA256(payloadJSON)
@@ -309,7 +310,7 @@ func (s *ConfigStore) UpdateEventPayload(ctx context.Context, eventID, payloadJS
 		return fmt.Errorf("read event payload update count: %w", err)
 	}
 	if affected == 0 {
-		return resourceError(ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), nil)
+		return domain.ResourceError(domain.ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), nil)
 	}
 	return nil
 }
@@ -319,7 +320,7 @@ func (s *ConfigStore) ListDispatchableEvents(ctx context.Context, now time.Time,
 		limit = 100
 	}
 	nowMillis := now.UTC().UnixMilli()
-	rows, err := s.db.QueryContext(ctx, events.SelectTopicEventSQL()+` WHERE dispatch_status IN (?, ?, ?) AND (next_attempt_at = 0 OR next_attempt_at <= ?) AND (claim_until = 0 OR claim_until <= ?) ORDER BY sequence ASC LIMIT ?`,
+	rows, err := s.db.QueryContext(ctx, selectTopicEventSQL()+` WHERE dispatch_status IN (?, ?, ?) AND (next_attempt_at = 0 OR next_attempt_at <= ?) AND (claim_until = 0 OR claim_until <= ?) ORDER BY sequence ASC LIMIT ?`,
 		domain.TopicEventDispatchPending,
 		domain.TopicEventDispatchRetrying,
 		domain.TopicEventDispatchPublishing,
@@ -331,7 +332,7 @@ func (s *ConfigStore) ListDispatchableEvents(ctx context.Context, now time.Time,
 		return nil, fmt.Errorf("query dispatchable events: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	return events.ScanTopicEvents(rows)
+	return scanTopicEvents(rows)
 }
 
 func (s *ConfigStore) ClaimEvent(ctx context.Context, eventID, claimID string, now, until time.Time) (bool, error) {
@@ -411,7 +412,7 @@ func (s *ConfigStore) MarkEventNoSubscriber(ctx context.Context, eventID, claimI
 	}
 	if affected == 0 {
 		if _, err := s.GetEvent(ctx, eventID); err != nil {
-			return resourceError(ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), err)
+			return domain.ResourceError(domain.ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), err)
 		}
 		return nil
 	}
@@ -533,8 +534,8 @@ func (s *ConfigStore) ListEventDeliveries(ctx context.Context, eventIDs []string
 		if err := rows.Scan(&item.EventID, &item.LoaderID, &item.TriggerID, &item.RunID, &item.Status, &item.Error, &createdAtRaw, &updatedAtRaw); err != nil {
 			return nil, fmt.Errorf("scan event delivery: %w", err)
 		}
-		item.CreatedAt = configstore.ParseStoredUnixTimeAuto(createdAtRaw)
-		item.UpdatedAt = configstore.ParseStoredUnixTimeAuto(updatedAtRaw)
+		item.CreatedAt = ParseStoredUnixTimeAuto(createdAtRaw)
+		item.UpdatedAt = ParseStoredUnixTimeAuto(updatedAtRaw)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -579,7 +580,7 @@ func (s *ConfigStore) ListEventSessionLinks(ctx context.Context, eventIDs []stri
 		if err := rows.Scan(&item.EventID, &item.SessionID, &item.Relation, &item.LoaderID, &item.RunID, &item.TriggerID, &item.LoaderEventID, &createdAtRaw); err != nil {
 			return nil, fmt.Errorf("scan event session link: %w", err)
 		}
-		item.CreatedAt = configstore.ParseStoredUnixTimeAuto(createdAtRaw)
+		item.CreatedAt = ParseStoredUnixTimeAuto(createdAtRaw)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -653,8 +654,8 @@ func (s *ConfigStore) ListEnabledWebhookSourcesForTopic(ctx context.Context, top
 			return nil, fmt.Errorf("scan webhook source: %w", err)
 		}
 		item.Enabled = enabled != 0
-		item.CreatedAt = configstore.ParseStoredUnixTimeAuto(createdAtRaw)
-		item.UpdatedAt = configstore.ParseStoredUnixTimeAuto(updatedAtRaw)
+		item.CreatedAt = ParseStoredUnixTimeAuto(createdAtRaw)
+		item.UpdatedAt = ParseStoredUnixTimeAuto(updatedAtRaw)
 		if webhookSourceTopicMatches(topic, item.TopicPrefix) {
 			items = append(items, item)
 		}
@@ -677,6 +678,10 @@ func webhookSourceTopicMatches(topic, topicPrefix string) bool {
 	return strings.HasSuffix(topicPrefix, ".") && topic == strings.TrimSuffix(topicPrefix, ".")
 }
 
+func WebhookSourceTopicMatches(topic, topicPrefix string) bool {
+	return webhookSourceTopicMatches(topic, topicPrefix)
+}
+
 func (s *ConfigStore) ListWebhookSources(ctx context.Context) ([]domain.WebhookSource, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, enabled, provider, topic_prefix, token_hash, signature_type, signature_secret, body_limit_bytes, created_at, updated_at
 		FROM webhook_source ORDER BY id ASC`)
@@ -694,8 +699,8 @@ func (s *ConfigStore) ListWebhookSources(ctx context.Context) ([]domain.WebhookS
 			return nil, fmt.Errorf("scan webhook source: %w", err)
 		}
 		item.Enabled = enabled != 0
-		item.CreatedAt = configstore.ParseStoredUnixTimeAuto(createdAtRaw)
-		item.UpdatedAt = configstore.ParseStoredUnixTimeAuto(updatedAtRaw)
+		item.CreatedAt = ParseStoredUnixTimeAuto(createdAtRaw)
+		item.UpdatedAt = ParseStoredUnixTimeAuto(updatedAtRaw)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -722,8 +727,8 @@ func (s *ConfigStore) GetWebhookSource(ctx context.Context, sourceID string) (do
 		return domain.WebhookSource{}, false, fmt.Errorf("get webhook source: %w", err)
 	}
 	item.Enabled = enabled != 0
-	item.CreatedAt = configstore.ParseStoredUnixTimeAuto(createdAtRaw)
-	item.UpdatedAt = configstore.ParseStoredUnixTimeAuto(updatedAtRaw)
+	item.CreatedAt = ParseStoredUnixTimeAuto(createdAtRaw)
+	item.UpdatedAt = ParseStoredUnixTimeAuto(updatedAtRaw)
 	return item, true, nil
 }
 
@@ -792,7 +797,7 @@ func (s *ConfigStore) DeleteWebhookSource(ctx context.Context, sourceID string) 
 		return fmt.Errorf("delete webhook source: %w", err)
 	}
 	if affected, err := result.RowsAffected(); err == nil && affected == 0 {
-		return resourceError(ErrNotFound, "webhook source", sourceID, "webhook source not found", nil)
+		return domain.ResourceError(domain.ErrNotFound, "webhook source", sourceID, "webhook source not found", nil)
 	}
 	return nil
 }

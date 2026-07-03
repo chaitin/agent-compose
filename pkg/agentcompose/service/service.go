@@ -2,13 +2,10 @@ package agentcompose
 
 import (
 	appconfig "agent-compose/pkg/config"
-	driverpkg "agent-compose/pkg/driver"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -523,64 +520,7 @@ func (s *Service) ResumeSession(ctx context.Context, req *connect.Request[agentc
 }
 
 func (s *Service) reconcileSessionRuntimeState(ctx context.Context, session *Session) (*Session, error) {
-	if session == nil || session.Summary.VMStatus != domain.VMStatusRunning {
-		return session, nil
-	}
-	driver, err := driverpkg.ResolveSessionRuntimeDriver(session.Summary.Driver, s.config.RuntimeDriver)
-	if err != nil {
-		return nil, err
-	}
-	if driver != driverpkg.RuntimeDriverMicrosandbox {
-		return session, nil
-	}
-	proxyState, err := s.store.GetProxyState(session.Summary.ID)
-	if err != nil {
-		return nil, err
-	}
-	if jupyterTargetReachable(proxyState, 250*time.Millisecond) {
-		return session, nil
-	}
-	vmState, err := s.store.GetVMState(session.Summary.ID)
-	if err != nil {
-		return nil, err
-	}
-	runtime, err := s.runtimes.ForDriver(driver)
-	if err != nil {
-		return nil, err
-	}
-	microsandboxRuntime, ok := runtime.(sessionAliveRuntime)
-	if !ok {
-		return session, nil
-	}
-	alive, err := microsandboxRuntime.IsSessionAlive(ctx, session, vmState)
-	if err != nil {
-		return nil, err
-	}
-	if alive {
-		return session, nil
-	}
-	now := time.Now().UTC()
-	vmState.StoppedAt = now
-	vmState.LastError = ""
-	vmState.BoxID = ""
-	if err := s.store.SaveVMState(session.Summary.ID, vmState); err != nil {
-		return nil, err
-	}
-	session.Summary.VMStatus = domain.VMStatusStopped
-	if err := s.store.UpdateSession(ctx, session); err != nil {
-		return nil, err
-	}
-	if s.configDB != nil {
-		_ = s.configDB.RevokeLLMFacadeTokensForSession(ctx, session.Summary.ID)
-	}
-	_ = s.store.AddEvent(ctx, session.Summary.ID, SessionEvent{
-		ID:        uuid.NewString(),
-		Type:      "session.runtime_lost",
-		Level:     "warn",
-		Message:   "session marked stopped after microsandbox runtime became unreachable",
-		CreatedAt: now,
-	})
-	return s.store.GetSession(ctx, session.Summary.ID)
+	return s.sessionLifecycle(nil).ReconcileRuntimeState(ctx, session)
 }
 
 func (s *Service) StopSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
@@ -596,55 +536,11 @@ func (s *Service) ListSessions(ctx context.Context, req *connect.Request[agentco
 }
 
 func jupyterTargetReachable(proxyState ProxyState, timeout time.Duration) bool {
-	_, port := driverpkg.JupyterConnectTarget(execution.ToDriverProxyState(proxyState))
-	if port <= 0 {
-		return false
-	}
-	conn, err := net.DialTimeout("tcp", driverpkg.JupyterConnectAddress(execution.ToDriverProxyState(proxyState)), timeout)
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
+	return sessions.JupyterTargetReachable(proxyState, timeout)
 }
 
 func (s *Service) ensureSessionProxyReady(ctx context.Context, sessionID string) (*Session, ProxyState, error) {
-	session, err := s.store.GetSession(ctx, sessionID)
-	if err != nil {
-		return nil, ProxyState{}, err
-	}
-	proxyState, err := s.store.GetProxyState(session.Summary.ID)
-	if err != nil {
-		return nil, ProxyState{}, err
-	}
-	if session.Summary.VMStatus == domain.VMStatusRunning && jupyterTargetReachable(proxyState, 1500*time.Millisecond) {
-		return session, proxyState, nil
-	}
-	startCtx, cancel := context.WithTimeout(ctx, s.config.SessionStartTimeout)
-	defer cancel()
-	if err := workspaces.PrepareSessionWorkspace(startCtx, s.config, s.configDB, session); err != nil {
-		session.Summary.VMStatus = domain.VMStatusFailed
-		_ = s.store.UpdateSession(ctx, session)
-		return nil, ProxyState{}, err
-	}
-	if err := s.driver.StartSessionVM(startCtx, session); err != nil {
-		session.Summary.VMStatus = domain.VMStatusFailed
-		_ = s.store.UpdateSession(ctx, session)
-		return nil, ProxyState{}, err
-	}
-	session.Summary.VMStatus = domain.VMStatusRunning
-	if err := s.store.UpdateSession(ctx, session); err != nil {
-		return nil, ProxyState{}, err
-	}
-	loaded, err := s.store.GetSession(ctx, session.Summary.ID)
-	if err != nil {
-		return nil, ProxyState{}, err
-	}
-	proxyState, err = s.store.GetProxyState(session.Summary.ID)
-	if err != nil {
-		return nil, ProxyState{}, err
-	}
-	return loaded, proxyState, nil
+	return s.sessionLifecycle(nil).EnsureProxyReady(ctx, sessionID)
 }
 
 func (s *Service) GetSessionProxy(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionProxyResponse], error) {
@@ -829,12 +725,7 @@ func (s *Service) SendAgentMessageStream(ctx context.Context, req *connect.Reque
 	}))
 }
 
-type agentExecutionConfig struct {
-	Provider          string
-	AgentDefinitionID string
-	Model             string
-	EnvItems          []SessionEnvVar
-}
+type agentExecutionConfig = execution.AgentConfig
 
 func (s *Service) resolveSessionAgentConfig(ctx context.Context, session *Session, requested string) agentExecutionConfig {
 	provider := domain.NormalizeAgentKind(requested)
@@ -854,40 +745,15 @@ func (s *Service) resolveSessionAgentConfig(ctx context.Context, session *Sessio
 }
 
 func agentExecutionConfigFromDefinition(agent domain.AgentDefinition, fallbackProvider string) agentExecutionConfig {
-	provider := domain.NormalizeAgentKind(agent.Provider)
-	if provider == "" {
-		provider = domain.NormalizeAgentKind(fallbackProvider)
-	}
-	model := strings.TrimSpace(agent.Model)
-	if provider == "opencode" {
-		model = strings.TrimSpace(sessionEnvMap(agent.EnvItems)["OPENCODE_MODEL"])
-	}
-	return agentExecutionConfig{
-		Provider:          provider,
-		AgentDefinitionID: strings.TrimSpace(agent.ID),
-		Model:             model,
-		EnvItems:          append([]SessionEnvVar(nil), agent.EnvItems...),
-	}
+	return execution.AgentConfigFromDefinition(agent, fallbackProvider)
 }
 
 func applyAgentProviderEnv(session *Session, agentEnv []SessionEnvVar) {
-	if session == nil || len(agentEnv) == 0 {
-		return
-	}
-	providerEnv := session.ProviderEnvItems
-	if len(providerEnv) == 0 {
-		providerEnv = session.EnvItems
-	}
-	session.ProviderEnvItems = domain.MergeEnvItems(agentEnv, providerEnv)
+	execution.ApplyAgentProviderEnv(session, agentEnv)
 }
 
 func sessionTagValue(tags []SessionTag, name string) string {
-	for _, tag := range tags {
-		if strings.TrimSpace(tag.Name) == name {
-			return strings.TrimSpace(tag.Value)
-		}
-	}
-	return ""
+	return execution.SessionTagValue(tags, name)
 }
 
 func prepareStreamingHeaders(headers http.Header) {
@@ -947,42 +813,19 @@ type agentExecResponse struct {
 const agentResultPrefix = execution.AgentResultPrefix
 const commandResultPrefix = execution.CommandResultPrefix
 
-type runtimeCommandRequestJSON struct {
-	Mode           string            `json:"mode"`
-	Command        string            `json:"command,omitempty"`
-	Args           []string          `json:"args,omitempty"`
-	Script         string            `json:"script,omitempty"`
-	Cwd            string            `json:"cwd"`
-	Env            map[string]string `json:"env,omitempty"`
-	TimeoutMs      int64             `json:"timeoutMs,omitempty"`
-	MaxOutputBytes int64             `json:"maxOutputBytes"`
-	ArtifactDir    string            `json:"artifactDir"`
-}
+type runtimeCommandRequestJSON = execution.RuntimeCommandRequest
 
-const agentSystemPromptFileName = "system-prompt.txt" // keep in sync with runtime/javascript/src/system-context.ts
+const agentSystemPromptFileName = execution.AgentSystemPromptFileName // keep in sync with runtime/javascript/src/system-context.ts
 
 // hostAgentSystemPromptPath is the session agent identity file the host writes and the
 // guest reads via convention from --state-root (guest /data/state/agents/system-prompts/system-prompt.txt).
 // Returns "" when the session workspace path is unknown.
 func hostAgentSystemPromptPath(session *Session) string {
-	if session == nil || strings.TrimSpace(session.Summary.WorkspacePath) == "" {
-		return ""
-	}
-	return filepath.Join(execution.HostSessionDir(session), "state", "agents", "system-prompts", agentSystemPromptFileName)
+	return execution.HostAgentSystemPromptPath(session)
 }
 
 func writeAgentPromptFile(config *appconfig.Config, session *Session, agent, message string) (string, error) {
-	hostSessionDir := filepath.Dir(session.Summary.WorkspacePath)
-	promptDir := filepath.Join(hostSessionDir, "state", "agents", "prompts")
-	if err := os.MkdirAll(promptDir, 0o755); err != nil {
-		return "", fmt.Errorf("create agent prompt dir: %w", err)
-	}
-	name := fmt.Sprintf("%s-%d.txt", domain.NormalizeAgentKind(agent), time.Now().UTC().UnixNano())
-	hostPath := filepath.Join(promptDir, name)
-	if err := os.WriteFile(hostPath, []byte(message), 0o644); err != nil {
-		return "", fmt.Errorf("write agent prompt file: %w", err)
-	}
-	return filepath.Join(config.GuestStateRoot, "agents", "prompts", name), nil
+	return execution.WriteAgentPromptFile(config, session, agent, message)
 }
 
 // writeAgentSystemPromptFile materializes agent identity for the guest runtime at a
@@ -993,203 +836,32 @@ func writeAgentPromptFile(config *appconfig.Config, session *Session, agent, mes
 // The guest discovers this file from --state-root (no CLI flag). When systemPrompt is
 // empty, the file is removed so later runs in the same session cannot read stale identity.
 func writeAgentSystemPromptFile(session *Session, systemPrompt string) error {
-	systemPrompt = strings.TrimSpace(systemPrompt)
-	hostPath := hostAgentSystemPromptPath(session)
-	if hostPath == "" {
-		if systemPrompt == "" {
-			return nil
-		}
-		return fmt.Errorf("session workspace path is required to write agent system prompt")
-	}
-	if systemPrompt == "" {
-		if err := os.Remove(hostPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove agent system prompt file: %w", err)
-		}
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(hostPath), 0o755); err != nil {
-		return fmt.Errorf("create agent system prompt dir: %w", err)
-	}
-	if err := os.WriteFile(hostPath, []byte(systemPrompt), 0o644); err != nil {
-		return fmt.Errorf("write agent system prompt file: %w", err)
-	}
-	return nil
+	return execution.WriteAgentSystemPromptFile(session, systemPrompt)
 }
 
 func writeAgentOutputSchemaFile(config *appconfig.Config, session *Session, agent, schemaJSON string) (string, error) {
-	schemaJSON = strings.TrimSpace(schemaJSON)
-	if schemaJSON == "" {
-		return "", nil
-	}
-	var decoded any
-	if err := json.Unmarshal([]byte(schemaJSON), &decoded); err != nil {
-		return "", fmt.Errorf("decode agent output schema json: %w", err)
-	}
-	if _, ok := decoded.(map[string]any); !ok {
-		return "", fmt.Errorf("agent output schema must be a JSON object")
-	}
-	hostSessionDir := filepath.Dir(session.Summary.WorkspacePath)
-	schemaDir := filepath.Join(hostSessionDir, "state", "agents", "schemas")
-	if err := os.MkdirAll(schemaDir, 0o755); err != nil {
-		return "", fmt.Errorf("create agent schema dir: %w", err)
-	}
-	name := fmt.Sprintf("%s-%d.json", domain.NormalizeAgentKind(agent), time.Now().UTC().UnixNano())
-	hostPath := filepath.Join(schemaDir, name)
-	if err := os.WriteFile(hostPath, []byte(schemaJSON), 0o644); err != nil {
-		return "", fmt.Errorf("write agent schema file: %w", err)
-	}
-	return filepath.Join(config.GuestStateRoot, "agents", "schemas", name), nil
+	return execution.WriteAgentOutputSchemaFile(config, session, agent, schemaJSON)
 }
 
 func agentTraceEvents(transcript string, createdAt time.Time) []SessionEvent {
-	lines := strings.Split(transcript, "\n")
-	events := make([]SessionEvent, 0)
-	for index := 0; index < len(lines); index++ {
-		line := strings.TrimSpace(lines[index])
-		eventType, name, ok := parseAgentTraceMarker(line)
-		if !ok {
-			continue
-		}
-		details, consumed := collectAgentTraceDetails(eventType, lines[index+1:])
-		index += consumed
-		message := name
-		if strings.TrimSpace(details) != "" {
-			if message == "" {
-				message = strings.TrimSpace(details)
-			} else {
-				message += "\n" + strings.TrimSpace(details)
-			}
-		}
-		events = append(events, SessionEvent{
-			ID:        uuid.NewString(),
-			Type:      eventType,
-			Level:     "info",
-			Message:   message,
-			CreatedAt: createdAt,
-		})
-	}
-	return events
-}
-
-func collectAgentTraceDetails(eventType string, lines []string) (string, int) {
-	details := make([]string, 0, len(lines))
-	for offset, raw := range lines {
-		line := strings.TrimSpace(raw)
-		if _, _, marker := parseAgentTraceMarker(line); marker {
-			return strings.Join(details, "\n"), offset
-		}
-		if eventType != "agent.assistant" && line == "" {
-			return strings.Join(details, "\n"), offset + 1
-		}
-		details = append(details, raw)
-	}
-	return strings.Join(details, "\n"), len(lines)
-}
-
-func parseAgentTraceMarker(line string) (string, string, bool) {
-	if strings.HasPrefix(line, "[tool:") && strings.HasSuffix(line, "]") {
-		name := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "[tool:"), "]"))
-		if name != "" {
-			return "agent.tool", name, true
-		}
-	}
-	if strings.HasPrefix(line, "[hook:") && strings.HasSuffix(line, "]") {
-		name := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "[hook:"), "]"))
-		if name != "" {
-			return "agent.hook", name, true
-		}
-	}
-	return "", "", false
+	return execution.AgentTraceEvents(transcript, createdAt)
 }
 
 func runtimeCommandRequestPayload(config *appconfig.Config, request domain.LoaderCommandRequest, guestCellDir string) runtimeCommandRequestJSON {
-	appconfig.ApplyDefaultGuestPaths(config)
-	maxOutputBytes := request.MaxOutputBytes
-	if maxOutputBytes <= 0 {
-		maxOutputBytes = defaultLoaderCommandMaxOutputBytes
-	}
-	cwd := strings.TrimSpace(request.Cwd)
-	if cwd == "" {
-		cwd = config.GuestWorkspacePath
-	}
-	return runtimeCommandRequestJSON{
-		Mode:           strings.ToLower(strings.TrimSpace(request.Mode)),
-		Command:        request.Command,
-		Args:           append([]string(nil), request.Args...),
-		Script:         request.Script,
-		Cwd:            cwd,
-		Env:            request.Env,
-		TimeoutMs:      request.TimeoutMs,
-		MaxOutputBytes: maxOutputBytes,
-		ArtifactDir:    guestCellDir,
-	}
+	return execution.RuntimeCommandRequestPayload(config, request, guestCellDir)
 }
 
 func buildLoaderCommandExecSpec(config *appconfig.Config, session *Session, guestRequestPath string) ExecSpec {
-	appconfig.ApplyDefaultGuestPaths(config)
 	commandHome := guestSessionHome(config)
-	env := buildSessionExecEnv(config, session, commandHome)
-
-	command := strings.Join([]string{
-		"set -e",
-		"cd " + execution.ShellQuote(config.GuestWorkspacePath),
-		"mkdir -p " + execution.ShellQuote(commandHome),
-		"agent-compose-runtime exec" +
-			" --request-file " + execution.ShellQuote(guestRequestPath) +
-			" --state-root " + execution.ShellQuote(config.GuestStateRoot) +
-			" --workspace " + execution.ShellQuote(config.GuestWorkspacePath) +
-			" --home " + execution.ShellQuote(commandHome),
-	}, " && ")
-
-	return ExecSpec{
-		Command: "sh",
-		Args:    []string{"-lc", command},
-		Env:     env,
-		Cwd:     config.GuestWorkspacePath,
-	}
+	return execution.BuildLoaderCommandExecSpec(config, session, guestRequestPath, commandHome)
 }
 
 func buildSessionExecEnv(config *appconfig.Config, session *Session, home string) map[string]string {
-	appconfig.ApplyDefaultGuestPaths(config)
-	env := llms.RuntimeEnvMap(session.EnvItems)
-	if env == nil {
-		env = map[string]string{}
-	}
-	for key, value := range llms.ManagedRuntimeEnvMap(session.RuntimeEnvItems) {
-		env[key] = value
-	}
-	env["GOPATH"] = "/usr/local/go"
-	env["PATH"] = "/root/.local/bin:/usr/local/go/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-	env["SESSION_ID"] = session.Summary.ID
-	env["WORKSPACE"] = config.GuestWorkspacePath
-	env["STATE_ROOT"] = config.GuestStateRoot
-	env["RUNTIME_ROOT"] = config.GuestRuntimeRoot
-	env["VERSION"] = config.Version
-	return env
+	return execution.BuildSessionExecEnv(config, session, home)
 }
 
 func mirrorRuntimeCommandArtifacts(hostCellDir string, result RuntimeCommandResult) error {
-	files := map[string]string{
-		"stdout.txt": result.Stdout,
-		"stderr.txt": result.Stderr,
-		"output.txt": result.Output,
-	}
-	for name, content := range files {
-		path := filepath.Join(hostCellDir, name)
-		if _, err := os.Stat(path); err == nil {
-			continue
-		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			return fmt.Errorf("write command artifact %s: %w", name, err)
-		}
-	}
-	// command-result.json is written by the guest runtime (agent-compose-runtime exec)
-	// directly into the shared cell dir, so the host must NOT write it again.
-	// Re-writing it here clobbers the guest's file, which fails whenever the host
-	// process and the guest container run as different users (e.g. host=ubuntu,
-	// guest=root with the docker driver): the host cannot truncate/overwrite the
-	// root-owned file, surfacing as "write command result artifact: permission denied".
-	return nil
+	return execution.MirrorRuntimeCommandArtifacts(hostCellDir, result)
 }
 
 func (e *Executor) resolveAgentSystemPrompt(ctx context.Context, session *Session, agentDefinitionID string) (string, error) {
