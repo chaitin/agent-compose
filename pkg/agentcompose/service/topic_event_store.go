@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"agent-compose/pkg/agentcompose/events"
+	"agent-compose/pkg/events"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/configstore"
 )

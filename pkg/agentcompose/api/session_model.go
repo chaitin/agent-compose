@@ -3,9 +3,9 @@ package api
 import (
 	"time"
 
-	"agent-compose/pkg/agentcompose/execution"
-	"agent-compose/pkg/agentcompose/sessions"
+	"agent-compose/pkg/execution"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/sessions"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 

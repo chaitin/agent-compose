@@ -1,8 +1,8 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/loaders"
-	"agent-compose/pkg/agentcompose/sessions"
+	"agent-compose/pkg/loaders"
+	"agent-compose/pkg/sessions"
 	"os"
 	"testing"
 )

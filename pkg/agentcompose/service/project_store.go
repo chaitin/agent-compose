@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"agent-compose/pkg/agentcompose/projects"
-	"agent-compose/pkg/agentcompose/runs"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/projects"
+	"agent-compose/pkg/runs"
 	"agent-compose/pkg/storage/configstore"
 )
 

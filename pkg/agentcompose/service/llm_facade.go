@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"agent-compose/pkg/agentcompose/llms"
+	"agent-compose/pkg/llms"
 	domain "agent-compose/pkg/model"
 	protocolbridge "github.com/chaitin/ai-api-protocol-bridge"
 	"github.com/labstack/echo/v4"

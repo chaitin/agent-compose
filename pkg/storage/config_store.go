@@ -13,7 +13,7 @@ import (
 
 	"github.com/samber/do/v2"
 
-	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/capabilities"
 	appconfig "agent-compose/pkg/config"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/configstore"

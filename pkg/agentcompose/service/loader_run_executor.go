@@ -1,7 +1,7 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/loaders"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 	"context"
 	"fmt"

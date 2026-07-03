@@ -1,8 +1,8 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/capabilities"
-	"agent-compose/pkg/agentcompose/loaders"
+	"agent-compose/pkg/capabilities"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/configstore"
 	"context"

@@ -10,7 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"agent-compose/pkg/agentcompose/api"
-	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/capability"
 	appconfig "agent-compose/pkg/config"
 	domain "agent-compose/pkg/model"

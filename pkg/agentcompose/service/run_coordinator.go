@@ -3,7 +3,7 @@ package agentcompose
 import (
 	"context"
 
-	"agent-compose/pkg/agentcompose/runs"
+	"agent-compose/pkg/runs"
 )
 
 func (s *ConfigStore) GetManagedAgentDefinition(ctx context.Context, id string) (runs.ManagedAgentDefinition, error) {

@@ -1,8 +1,8 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/execution"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/execution"
 	"context"
 	"net"
 	"net/http"

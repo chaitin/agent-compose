@@ -15,12 +15,12 @@ import (
 
 	"connectrpc.com/connect"
 
-	"agent-compose/pkg/agentcompose/capabilities"
-	"agent-compose/pkg/agentcompose/llms"
-	"agent-compose/pkg/agentcompose/loaders"
-	"agent-compose/pkg/agentcompose/runs"
 	"agent-compose/pkg/agentcompose/workspaces"
+	"agent-compose/pkg/capabilities"
+	"agent-compose/pkg/llms"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/runs"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"agent-compose/pkg/agentcompose/webhooks"
+	"agent-compose/pkg/events/webhooks"
 	domain "agent-compose/pkg/model"
 )
 

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"agent-compose/pkg/agentcompose/loaders"
-	"agent-compose/pkg/agentcompose/webhooks"
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/events/webhooks"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 )
 

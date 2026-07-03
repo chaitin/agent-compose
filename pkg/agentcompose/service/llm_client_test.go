@@ -1,8 +1,8 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/llms"
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/llms"
 	domain "agent-compose/pkg/model"
 	"context"
 	"io"

@@ -16,8 +16,8 @@ import (
 	"connectrpc.com/connect"
 	"github.com/labstack/echo/v4"
 
-	"agent-compose/pkg/agentcompose/execution"
-	"agent-compose/pkg/agentcompose/loaders"
+	"agent-compose/pkg/execution"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )

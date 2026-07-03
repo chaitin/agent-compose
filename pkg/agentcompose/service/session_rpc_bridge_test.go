@@ -1,10 +1,10 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/capabilities"
-	"agent-compose/pkg/agentcompose/loaders"
+	"agent-compose/pkg/capabilities"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 	"context"
 	"database/sql"

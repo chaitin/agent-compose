@@ -8,7 +8,7 @@ import (
 	"github.com/samber/do/v2"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"agent-compose/pkg/agentcompose/dashboard"
+	"agent-compose/pkg/dashboard"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"agent-compose/pkg/agentcompose/loaders"
 	"agent-compose/pkg/compose"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 )
 

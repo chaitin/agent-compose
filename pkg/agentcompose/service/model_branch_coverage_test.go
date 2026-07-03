@@ -1,9 +1,9 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/execution"
-	"agent-compose/pkg/agentcompose/loaders"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/execution"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/configstore"
 	"context"

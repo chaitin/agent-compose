@@ -1,8 +1,8 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/llms"
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/llms"
 	"agent-compose/pkg/storage/configstore"
 	"context"
 	"database/sql"

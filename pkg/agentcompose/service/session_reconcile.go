@@ -8,9 +8,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"agent-compose/pkg/agentcompose/execution"
-	"agent-compose/pkg/agentcompose/runs"
+	"agent-compose/pkg/execution"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/runs"
 )
 
 const stalePendingSessionLastError = "session startup interrupted before runtime reached running state"

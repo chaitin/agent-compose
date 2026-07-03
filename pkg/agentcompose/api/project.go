@@ -7,10 +7,10 @@ import (
 	"slices"
 	"strings"
 
-	"agent-compose/pkg/agentcompose/capabilities"
-	"agent-compose/pkg/agentcompose/projects"
+	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/compose"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/projects"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 

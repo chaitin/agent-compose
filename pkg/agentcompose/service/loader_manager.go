@@ -1,15 +1,15 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/capabilities"
-	"agent-compose/pkg/agentcompose/dashboard"
-	"agent-compose/pkg/agentcompose/execution"
-	"agent-compose/pkg/agentcompose/images"
-	"agent-compose/pkg/agentcompose/loaders"
-	"agent-compose/pkg/agentcompose/sessions"
-	"agent-compose/pkg/agentcompose/webhooks"
+	"agent-compose/pkg/capabilities"
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/dashboard"
+	"agent-compose/pkg/events/webhooks"
+	"agent-compose/pkg/execution"
+	"agent-compose/pkg/images"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/sessions"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"context"
 	"encoding/json"

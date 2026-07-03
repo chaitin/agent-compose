@@ -3,8 +3,8 @@ package agentcompose
 import (
 	"context"
 
-	"agent-compose/pkg/agentcompose/events"
-	"agent-compose/pkg/agentcompose/loaders"
+	"agent-compose/pkg/events"
+	"agent-compose/pkg/loaders"
 )
 
 func NewEventDispatcher(rootCtx context.Context, configDB *ConfigStore, bus *loaders.Bus) *events.Dispatcher {

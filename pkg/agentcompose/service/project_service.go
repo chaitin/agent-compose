@@ -11,13 +11,13 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"agent-compose/pkg/agentcompose/api"
-	"agent-compose/pkg/agentcompose/images"
-	"agent-compose/pkg/agentcompose/loaders"
-	"agent-compose/pkg/agentcompose/projects"
-	"agent-compose/pkg/agentcompose/runs"
 	"agent-compose/pkg/compose"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/images"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/projects"
+	"agent-compose/pkg/runs"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"agent-compose/pkg/agentcompose/projects"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/projects"
 )
 
 func (s *ConfigStore) ListProjectSessionRuns(ctx context.Context, filter domain.ProjectSessionRelationFilter) ([]ProjectRunRecord, error) {

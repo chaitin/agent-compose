@@ -7,7 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 
-	"agent-compose/pkg/agentcompose/images"
+	"agent-compose/pkg/images"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/capabilities"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/configstore"
 )

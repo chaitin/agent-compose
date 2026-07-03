@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"agent-compose/pkg/agentcompose/execution"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/execution"
 	domain "agent-compose/pkg/model"
 
 	"github.com/google/uuid"

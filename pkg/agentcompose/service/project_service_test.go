@@ -8,13 +8,13 @@ import (
 
 	"connectrpc.com/connect"
 
-	"agent-compose/pkg/agentcompose/images"
-	"agent-compose/pkg/agentcompose/loaders"
-	"agent-compose/pkg/agentcompose/projects"
 	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/images"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/projects"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 

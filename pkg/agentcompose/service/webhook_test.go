@@ -1,8 +1,8 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/webhooks"
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/events/webhooks"
 	domain "agent-compose/pkg/model"
 	"bytes"
 	"context"

@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"agent-compose/pkg/agentcompose/webhooks"
+	"agent-compose/pkg/events/webhooks"
 	domain "agent-compose/pkg/model"
 )
 

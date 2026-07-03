@@ -11,7 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/capabilities"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 

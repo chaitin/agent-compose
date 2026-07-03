@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"agent-compose/pkg/agentcompose/capabilities"
-	"agent-compose/pkg/agentcompose/sessions"
+	"agent-compose/pkg/capabilities"
+	"agent-compose/pkg/sessions"
 )
 
 // writeCapabilityGuide renders the guide for each bound capset from OctoBus and

@@ -1,10 +1,10 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/projects"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/projects"
 	"context"
 	"encoding/json"
 	"path/filepath"
@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	runspkg "agent-compose/pkg/agentcompose/runs"
 	"agent-compose/pkg/compose"
+	runspkg "agent-compose/pkg/runs"
 )
 
 func TestProjectStableIDHelpers(t *testing.T) {

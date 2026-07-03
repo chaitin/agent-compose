@@ -18,8 +18,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
-	"agent-compose/pkg/agentcompose/images"
 	"agent-compose/pkg/imagecache"
+	"agent-compose/pkg/images"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 

@@ -1,7 +1,7 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/sessions"
+	"agent-compose/pkg/sessions"
 
 	"github.com/samber/do/v2"
 )

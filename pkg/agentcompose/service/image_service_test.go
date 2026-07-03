@@ -14,8 +14,8 @@ import (
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
-	"agent-compose/pkg/agentcompose/images"
 	"agent-compose/pkg/imagecache"
+	"agent-compose/pkg/images"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 

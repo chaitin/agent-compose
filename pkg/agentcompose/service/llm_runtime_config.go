@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"agent-compose/pkg/agentcompose/execution"
-	"agent-compose/pkg/agentcompose/llms"
+	"agent-compose/pkg/execution"
+	"agent-compose/pkg/llms"
 	domain "agent-compose/pkg/model"
 )
 

@@ -1,8 +1,8 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/events"
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/events"
 	domain "agent-compose/pkg/model"
 	"context"
 	"database/sql"

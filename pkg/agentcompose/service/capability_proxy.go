@@ -8,7 +8,7 @@ import (
 
 	"github.com/samber/do/v2"
 
-	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/capproxy"
 	appconfig "agent-compose/pkg/config"
 	domain "agent-compose/pkg/model"

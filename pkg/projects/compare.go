@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/capabilities"
 	domain "agent-compose/pkg/model"
 )
 

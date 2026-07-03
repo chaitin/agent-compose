@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	"agent-compose/pkg/agentcompose/capabilities"
-	"agent-compose/pkg/agentcompose/images"
-	"agent-compose/pkg/agentcompose/loaders"
-	"agent-compose/pkg/agentcompose/runs"
 	"agent-compose/pkg/agentcompose/workspaces"
+	"agent-compose/pkg/capabilities"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/images"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/runs"
 
 	"github.com/google/uuid"
 )

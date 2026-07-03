@@ -1,7 +1,7 @@
 package projects
 
 import (
-	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/compose"
 	domain "agent-compose/pkg/model"
 	"encoding/json"

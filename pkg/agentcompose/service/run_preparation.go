@@ -7,12 +7,12 @@ import (
 	"os"
 	"strings"
 
-	"agent-compose/pkg/agentcompose/capabilities"
-	"agent-compose/pkg/agentcompose/llms"
-	"agent-compose/pkg/agentcompose/runs"
 	"agent-compose/pkg/agentcompose/workspaces"
+	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/llms"
+	"agent-compose/pkg/runs"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 

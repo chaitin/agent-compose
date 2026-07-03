@@ -2,11 +2,11 @@ package agentcompose
 
 import (
 	"agent-compose/pkg/agentcompose/api"
-	"agent-compose/pkg/agentcompose/execution"
-	"agent-compose/pkg/agentcompose/llms"
-	"agent-compose/pkg/agentcompose/loaders"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/execution"
+	"agent-compose/pkg/llms"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 	"context"
 	"database/sql"

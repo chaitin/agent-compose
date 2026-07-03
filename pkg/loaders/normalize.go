@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/capabilities"
 	driverpkg "agent-compose/pkg/driver"
 	domain "agent-compose/pkg/model"
 )

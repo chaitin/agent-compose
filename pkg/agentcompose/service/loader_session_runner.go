@@ -2,11 +2,11 @@ package agentcompose
 
 import (
 	"agent-compose/pkg/agentcompose/api"
-	"agent-compose/pkg/agentcompose/capabilities"
-	"agent-compose/pkg/agentcompose/llms"
-	"agent-compose/pkg/agentcompose/loaders"
 	"agent-compose/pkg/agentcompose/workspaces"
+	"agent-compose/pkg/capabilities"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/llms"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"context"

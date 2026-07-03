@@ -34,12 +34,12 @@ import (
 	"agent-compose/pkg/fxgo/restful"
 	"agent-compose/pkg/fxgo/utils"
 
-	"agent-compose/pkg/agentcompose/projects"
 	agentcompose "agent-compose/pkg/agentcompose/service"
 	"agent-compose/pkg/auth"
 	"agent-compose/pkg/compose"
 	"agent-compose/pkg/config"
 	"agent-compose/pkg/health"
+	"agent-compose/pkg/projects"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
