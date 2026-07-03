@@ -80,7 +80,7 @@ type composeLogsOutput struct {
 	Runs []composeRunOutput `json:"runs"`
 }
 
-type cliServiceClients struct {
+type serviceClients struct {
 	project agentcomposev2connect.ProjectServiceClient
 	run     agentcomposev2connect.RunServiceClient
 	exec    agentcomposev2connect.ExecServiceClient
@@ -398,13 +398,13 @@ func formatProjectValidationIssues(issues []*agentcomposev2.ProjectValidationIss
 	return strings.Join(parts, "; ")
 }
 
-func newCLIServiceClients(cli cliOptions) (cliServiceClients, error) {
+func newCLIServiceClients(cli options) (serviceClients, error) {
 	clientConfig, err := ResolveClientConfig(cli.Host)
 	if err != nil {
-		return cliServiceClients{}, err
+		return serviceClients{}, err
 	}
 	httpClient := newDaemonHTTPClient(clientConfig)
-	return cliServiceClients{
+	return serviceClients{
 		project: agentcomposev2connect.NewProjectServiceClient(httpClient, clientConfig.BaseURL),
 		run:     agentcomposev2connect.NewRunServiceClient(httpClient, clientConfig.BaseURL),
 		exec:    agentcomposev2connect.NewExecServiceClient(httpClient, clientConfig.BaseURL),
@@ -413,7 +413,7 @@ func newCLIServiceClients(cli cliOptions) (cliServiceClients, error) {
 	}, nil
 }
 
-func composePSOutputFromProject(ctx context.Context, clients cliServiceClients, project *agentcomposev2.Project) (composePSOutput, error) {
+func composePSOutputFromProject(ctx context.Context, clients serviceClients, project *agentcomposev2.Project) (composePSOutput, error) {
 	output := composePSOutput{Project: composeProjectSummaryOutput(project.GetSummary())}
 	schedulers := schedulersByAgent(project.GetSchedulers())
 	for _, agent := range project.GetAgents() {
@@ -472,7 +472,7 @@ func latestRunOutput(ctx context.Context, client agentcomposev2connect.RunServic
 	return &output, nil
 }
 
-func firstRunningSessionOutput(ctx context.Context, clients cliServiceClients, projectID, agentName string) (*composeSessionOutput, error) {
+func firstRunningSessionOutput(ctx context.Context, clients serviceClients, projectID, agentName string) (*composeSessionOutput, error) {
 	resp, err := clients.run.ListRuns(ctx, connect.NewRequest(&agentcomposev2.ListRunsRequest{
 		ProjectId: projectID,
 		AgentName: agentName,
@@ -558,7 +558,7 @@ func composeProjectOutputFromProject(project *agentcomposev2.Project) composePro
 	return output
 }
 
-func composeAgentInspectOutputFor(ctx context.Context, clients cliServiceClients, project *agentcomposev2.Project, agentName string) (composeAgentInspectOutput, error) {
+func composeAgentInspectOutputFor(ctx context.Context, clients serviceClients, project *agentcomposev2.Project, agentName string) (composeAgentInspectOutput, error) {
 	var found *agentcomposev2.ProjectAgent
 	for _, agent := range project.GetAgents() {
 		if agent.GetAgentName() == agentName {
@@ -738,7 +738,7 @@ func composeImageOutputFromProto(image *agentcomposev2.Image) composeImageOutput
 		InspectedAt:        image.GetInspectedAt(),
 		Dangling:           image.GetDangling(),
 		ContainerCount:     image.GetContainerCount(),
-		Labels:             cloneStringMapForCLI(image.GetLabels()),
+		Labels:             cloneStringMap(image.GetLabels()),
 	}
 }
 

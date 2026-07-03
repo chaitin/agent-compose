@@ -23,7 +23,7 @@ func Execute(ctx context.Context, out, errOut io.Writer, args []string, runDaemo
 }
 
 func NewRootCommand(out, errOut io.Writer, runDaemon Runner) *cobra.Command {
-	options := cliOptions{}
+	options := options{}
 	root := &cobra.Command{
 		Use:           "agent-compose",
 		Short:         "agent-compose daemon and CLI",
@@ -254,7 +254,7 @@ func NewRootCommand(out, errOut io.Writer, runDaemon Runner) *cobra.Command {
 	return root
 }
 
-type cliOptions struct {
+type options struct {
 	Host        string
 	ComposeFile string
 	ProjectName string

@@ -121,7 +121,7 @@ func shortImageID(id string) string {
 	return id
 }
 
-func cloneStringMapForCLI(values map[string]string) map[string]string {
+func cloneStringMap(values map[string]string) map[string]string {
 	if len(values) == 0 {
 		return nil
 	}

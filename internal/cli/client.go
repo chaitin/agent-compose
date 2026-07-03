@@ -16,7 +16,7 @@ import (
 func ResolveClientConfig(hostFlag string) (ClientConfig, error) {
 	hostFlag = strings.TrimSpace(hostFlag)
 	if hostFlag != "" {
-		baseURL, err := normalizeCLIHost("--host", hostFlag)
+		baseURL, err := normalizeHost("--host", hostFlag)
 		if err != nil {
 			return ClientConfig{}, commandExitError{Code: exitCodeUsage, Err: err}
 		}
@@ -28,7 +28,7 @@ func ResolveClientConfig(hostFlag string) (ClientConfig, error) {
 	}
 
 	if envHost := strings.TrimSpace(os.Getenv("AGENT_COMPOSE_HOST")); envHost != "" {
-		baseURL, err := normalizeCLIHost("AGENT_COMPOSE_HOST", envHost)
+		baseURL, err := normalizeHost("AGENT_COMPOSE_HOST", envHost)
 		if err != nil {
 			return ClientConfig{}, commandExitError{Code: exitCodeUsage, Err: err}
 		}
@@ -39,7 +39,7 @@ func ResolveClientConfig(hostFlag string) (ClientConfig, error) {
 		}, nil
 	}
 
-	socketPath, err := resolveAgentComposeSocketForCLI(os.Getenv("AGENT_COMPOSE_SOCKET"))
+	socketPath, err := resolveSocket(os.Getenv("AGENT_COMPOSE_SOCKET"))
 	if err != nil {
 		return ClientConfig{}, commandExitError{Code: exitCodeUsage, Err: err}
 	}
@@ -52,7 +52,7 @@ func ResolveClientConfig(hostFlag string) (ClientConfig, error) {
 	}, nil
 }
 
-func normalizeCLIHost(name, value string) (string, error) {
+func normalizeHost(name, value string) (string, error) {
 	parsed, err := url.Parse(value)
 	if err != nil {
 		return "", fmt.Errorf("invalid %s %q: %w", name, value, err)
@@ -66,7 +66,7 @@ func normalizeCLIHost(name, value string) (string, error) {
 	return strings.TrimRight(value, "/"), nil
 }
 
-func resolveAgentComposeSocketForCLI(value string) (string, error) {
+func resolveSocket(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		if runtimeDir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); runtimeDir != "" {

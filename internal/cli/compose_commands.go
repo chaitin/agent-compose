@@ -19,7 +19,7 @@ import (
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
 
-func runComposeConfigCommand(cmd *cobra.Command, cli cliOptions, options composeConfigOptions) error {
+func runComposeConfigCommand(cmd *cobra.Command, cli options, options composeConfigOptions) error {
 	_, normalized, err := loadNormalizedCompose(cli)
 	if err != nil {
 		return err
@@ -40,7 +40,7 @@ func runComposeConfigCommand(cmd *cobra.Command, cli cliOptions, options compose
 	return writeCommandOutput(cmd.OutOrStdout(), data)
 }
 
-func runComposeUpCommand(cmd *cobra.Command, cli cliOptions) error {
+func runComposeUpCommand(cmd *cobra.Command, cli options) error {
 	composePath, normalized, err := loadNormalizedCompose(cli)
 	if err != nil {
 		return err
@@ -79,7 +79,7 @@ func runComposeUpCommand(cmd *cobra.Command, cli cliOptions) error {
 	return writeComposeUpText(cmd.OutOrStdout(), msg)
 }
 
-func runComposeDownCommand(cmd *cobra.Command, cli cliOptions) error {
+func runComposeDownCommand(cmd *cobra.Command, cli options) error {
 	_, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
@@ -115,7 +115,7 @@ func runComposeDownCommand(cmd *cobra.Command, cli cliOptions) error {
 	return nil
 }
 
-func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRunOptions, args []string) error {
+func runComposeRunCommand(cmd *cobra.Command, cli options, options composeRunOptions, args []string) error {
 	_, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
@@ -190,7 +190,7 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 	return nil
 }
 
-func runComposeLogsCommand(cmd *cobra.Command, cli cliOptions, options composeLogsOptions) error {
+func runComposeLogsCommand(cmd *cobra.Command, cli options, options composeLogsOptions) error {
 	if cli.JSON && options.Follow {
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --json cannot be combined with --follow")}
 	}
@@ -213,7 +213,7 @@ func runComposeLogsCommand(cmd *cobra.Command, cli cliOptions, options composeLo
 	return followOrPrintProjectLogs(cmd, cli, client, projectID, normalized.Name, options)
 }
 
-func runComposePSCommand(cmd *cobra.Command, cli cliOptions) error {
+func runComposePSCommand(cmd *cobra.Command, cli options) error {
 	_, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
@@ -242,7 +242,7 @@ func runComposePSCommand(cmd *cobra.Command, cli cliOptions) error {
 	return writePSText(cmd.OutOrStdout(), output)
 }
 
-func runComposeExecCommand(cmd *cobra.Command, cli cliOptions, options composeExecOptions, args []string) error {
+func runComposeExecCommand(cmd *cobra.Command, cli options, options composeExecOptions, args []string) error {
 	_, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
@@ -311,7 +311,7 @@ func runComposeExecCommand(cmd *cobra.Command, cli cliOptions, options composeEx
 	return nil
 }
 
-func runComposeImageListCommand(cmd *cobra.Command, cli cliOptions, options composeImageListOptions) error {
+func runComposeImageListCommand(cmd *cobra.Command, cli options, options composeImageListOptions) error {
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
@@ -334,7 +334,7 @@ func runComposeImageListCommand(cmd *cobra.Command, cli cliOptions, options comp
 	return writeImagesText(cmd.OutOrStdout(), output.Images)
 }
 
-func runComposeImagePullCommand(cmd *cobra.Command, cli cliOptions, options composeImagePullOptions, imageRef string) error {
+func runComposeImagePullCommand(cmd *cobra.Command, cli options, options composeImagePullOptions, imageRef string) error {
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
@@ -362,7 +362,7 @@ func runComposeImagePullCommand(cmd *cobra.Command, cli cliOptions, options comp
 	return err
 }
 
-func runComposeImageRemoveCommand(cmd *cobra.Command, cli cliOptions, options composeImageRemoveOptions, imageRef string) error {
+func runComposeImageRemoveCommand(cmd *cobra.Command, cli options, options composeImageRemoveOptions, imageRef string) error {
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
@@ -400,7 +400,7 @@ func runComposeImageRemoveCommand(cmd *cobra.Command, cli cliOptions, options co
 	return nil
 }
 
-func runComposeImageInspectCommand(cmd *cobra.Command, cli cliOptions, imageRef string) error {
+func runComposeImageInspectCommand(cmd *cobra.Command, cli options, imageRef string) error {
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
@@ -419,7 +419,7 @@ func runComposeImageInspectCommand(cmd *cobra.Command, cli cliOptions, imageRef 
 	return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
 }
 
-func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string) error {
+func runComposeInspectCommand(cmd *cobra.Command, cli options, args []string) error {
 	kind := strings.ToLower(strings.TrimSpace(args[0]))
 	target := ""
 	if len(args) > 1 {
@@ -495,7 +495,7 @@ func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string)
 	return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
 }
 
-func resolveComposeProject(cli cliOptions) (string, *compose.NormalizedProjectSpec, string, error) {
+func resolveComposeProject(cli options) (string, *compose.NormalizedProjectSpec, string, error) {
 	composePath, normalized, err := loadNormalizedCompose(cli)
 	if err != nil {
 		return "", nil, "", err
@@ -507,7 +507,7 @@ func resolveComposeProject(cli cliOptions) (string, *compose.NormalizedProjectSp
 	return composePath, normalized, project.ID, nil
 }
 
-func loadNormalizedCompose(cli cliOptions) (string, *compose.NormalizedProjectSpec, error) {
+func loadNormalizedCompose(cli options) (string, *compose.NormalizedProjectSpec, error) {
 	composePath, err := resolveComposePath(cli.ComposeFile)
 	if err != nil {
 		return "", nil, err

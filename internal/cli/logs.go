@@ -15,7 +15,7 @@ import (
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
 
-func followOrPrintProjectLogs(cmd *cobra.Command, cli cliOptions, client agentcomposev2connect.RunServiceClient, projectID, projectName string, options composeLogsOptions) error {
+func followOrPrintProjectLogs(cmd *cobra.Command, cli options, client agentcomposev2connect.RunServiceClient, projectID, projectName string, options composeLogsOptions) error {
 	printed := map[string]int{}
 	for {
 		runs, err := listLogRuns(cmd.Context(), client, projectID, options)
