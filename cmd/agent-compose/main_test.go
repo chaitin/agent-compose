@@ -1456,8 +1456,111 @@ agents:
 	}
 
 	runOut, runErr, _, runCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--run-id", "run-logs")
-	if runCode != 0 || runErr != "" || runOut != "stored log output\n" {
+	if runCode != 0 || runErr != "" || runOut != "reviewer | stored log output\n" {
 		t.Fatalf("logs --run-id code/stdout/stderr = %d / %q / %q", runCode, runOut, runErr)
+	}
+}
+
+func TestIntegrationCLILogsTailTextJSONAndRunID(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-logs-tail
+agents:
+  reviewer:
+    provider: codex
+`)
+	output := "one\ntwo\nthree\n"
+	server := newRunServiceStubServer(t, runServiceStub{
+		listRuns: func(ctx context.Context, req *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
+			return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: []*agentcomposev2.RunSummary{{
+				RunId:     "run-tail",
+				ProjectId: req.Msg.GetProjectId(),
+				AgentName: "reviewer",
+				Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
+				SessionId: "session-tail",
+			}}}), nil
+		},
+		getRun: func(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
+			return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), "run-tail", "reviewer", "session-tail", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, output)}), nil
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--tail", "2")
+	if exitCode != 0 || stderr != "" || stdout != "reviewer | two\nreviewer | three\n" {
+		t.Fatalf("logs --tail text code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
+	}
+
+	jsonOut, jsonErr, _, jsonCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "-n", "2", "--json")
+	if jsonCode != 0 || jsonErr != "" {
+		t.Fatalf("logs --tail --json code/stderr = %d / %q", jsonCode, jsonErr)
+	}
+	var decoded composeLogsOutput
+	if err := json.Unmarshal([]byte(jsonOut), &decoded); err != nil {
+		t.Fatalf("logs --tail JSON decode failed: %v\n%s", err, jsonOut)
+	}
+	if len(decoded.Runs) != 1 || decoded.Runs[0].Output != "two\nthree\n" {
+		t.Fatalf("logs --tail JSON = %#v", decoded)
+	}
+
+	runOut, runErr, _, runCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--run-id", "run-tail", "-n", "1")
+	if runCode != 0 || runErr != "" || runOut != "reviewer | three\n" {
+		t.Fatalf("logs --run-id --tail code/stdout/stderr = %d / %q / %q", runCode, runOut, runErr)
+	}
+}
+
+func TestIntegrationCLILogsTimestampAndMultiRunPrefixes(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-logs-prefix
+agents:
+  reviewer:
+    provider: codex
+  writer:
+    provider: codex
+`)
+	server := newRunServiceStubServer(t, runServiceStub{
+		listRuns: func(ctx context.Context, req *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
+			return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: []*agentcomposev2.RunSummary{
+				{
+					RunId:     "run-reviewer",
+					ProjectId: req.Msg.GetProjectId(),
+					AgentName: "reviewer",
+					Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
+					SessionId: "session-reviewer",
+				},
+				{
+					RunId:     "run-writer",
+					ProjectId: req.Msg.GetProjectId(),
+					AgentName: "writer",
+					Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
+					SessionId: "session-writer",
+				},
+			}}), nil
+		},
+		getRun: func(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
+			switch req.Msg.GetRunId() {
+			case "run-reviewer":
+				run := testRunDetail(req.Msg.GetProjectId(), "run-reviewer", "reviewer", "session-reviewer", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "review one\n")
+				run.Summary.CompletedAt = "2026-06-11T00:00:02Z"
+				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: run}), nil
+			case "run-writer":
+				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), "run-writer", "writer", "session-writer", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "write one\nwrite two\n")}), nil
+			default:
+				t.Fatalf("unexpected run id %q", req.Msg.GetRunId())
+				return nil, nil
+			}
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--timestamp")
+	if exitCode != 0 || stderr != "" {
+		t.Fatalf("logs --timestamp code/stderr = %d / %q", exitCode, stderr)
+	}
+	want := "reviewer | 2026-06-11T00:00:02Z review one\n" +
+		"writer | 2026-06-11T00:00:01Z write one\n" +
+		"writer | 2026-06-11T00:00:01Z write two\n"
+	if stdout != want {
+		t.Fatalf("logs --timestamp stdout = %q, want %q", stdout, want)
 	}
 }
 
@@ -1516,7 +1619,7 @@ agents:
 	if stderr != "" {
 		t.Fatalf("logs follow stderr = %q, want empty", stderr)
 	}
-	if stdout != "first\nsecond\n" {
+	if stdout != "reviewer | first\nreviewer | second\n" {
 		t.Fatalf("logs follow stdout = %q", stdout)
 	}
 	if listCalls < 2 {

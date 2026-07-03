@@ -86,7 +86,6 @@
 
 - `run --command`、`run -d/--detach`、`run -i/--interactive`、`--jupyter`、`--jupyter-expose`：需要明确 v2 Run API、后台运行、交互和 runtime/session 创建参数。
 - 默认前台 attach/Ctrl+C down：需要 project 级日志 attach 和中断处理；当前 `up` 已是 apply 后返回语义，不再新增 `-d/--detach`。
-- `logs -n/--tail`、`logs -t/--timestamp`：需要先明确日志来源、服务端过滤还是 CLI 截断，以及 follow 模式的时间戳语义。
 - `push`：需要扩展 v2 ImageService。
 - `stats` / `stats -w`：需要统一 sandbox stats API 和 runtime driver 指标接入，放在最后阶段。
 
@@ -171,7 +170,7 @@ rmi
 
 | 可并行任务 | 前置条件 | 说明 |
 | --- | --- | --- |
-| `logs --tail`、`--timestamp` | 日志来源和截断/时间戳语义明确 | `logs [agent]` 和 `--sandbox` 已完成；tail/timestamp 暂缓。 |
+| `logs --tail`、`--timestamp` | 已完成 | 当前基于 v2 RunService 的 run output/artifacts；CLI 端对 `RunDetail.output` 按行 tail，文本 timestamp 使用 run 级时间。 |
 | image `push` | ImageService 扩展方案确定 | 与 project/sandbox 命令正交。 |
 | `up` attach | project 级 attach 和中断语义明确 | 当前 `up` 已是 apply 后返回语义；不新增 `-d/--detach`。 |
 
@@ -189,7 +188,7 @@ rmi
 | `resume` | 已实现 | 保持现状 | 复用 v1 ResumeSession | sandbox id 映射 | 已完成 |
 | `rm` | 已实现 | 保持现状，后续可优化批量部分失败 JSON | 已新增 v2 SandboxService 和 store 删除能力 | sandbox 删除 API | 已完成 |
 | `exec` | 已实现 `exec <sandbox>`，旧 flags deprecated | 后续评估 `--prompt`、`--command`、`-d`、`-i` | 现有 ExecRequest 支持 session target；新输入模式可能需扩展 | ps sandbox 发现路径 | 主体已完成 |
-| `logs` | 已支持 positional agent、`--sandbox`、旧 `--session-id` warning | `--tail`、`--timestamp` | 可能需要服务端 tail/filter，或 CLI 层截断 | 日志语义 | 部分完成 |
+| `logs` | 已支持 positional agent、`--sandbox`、旧 `--session-id` warning、`--tail`、`--timestamp` | 后续如需 provider 原生日志需单独设计 | 当前 CLI 层截断 `RunDetail.output`，不读取 provider 私有日志 | 日志语义 | 主体完成 |
 | `inspect` | 已支持 sandbox/image，旧入口 warning | 保持现状 | 无新增 API；复用 GetSession/InspectImage | warning 机制 | 已完成 |
 | `stats` | 缺 CLI/API | running sandbox 当前值和 watch | 新增统一 stats API；driver 接入 | sandbox 输出模型、driver 指标能力 | 最后阶段实现 |
 | `images` | 已实现 | 保留 | 无 | 无 | 无需优先改 |
@@ -298,6 +297,7 @@ rmi
 - 新增 `-n/--tail`。
 - 新增 `-t/--timestamp`。
 - 新增 `--sandbox <sandbox>`，旧 `--session-id` 作为 alias。
+- 当前日志来源限定为 agent-compose v2 RunService 的 run output/artifacts，即 `RunDetail.output`；不默认读取 Codex、Claude、Gemini 等 provider 私有日志文件。
 
 代码入口：
 
@@ -313,13 +313,15 @@ rmi
 - 旧 `--session-id` 输出 deprecated warning，说明后续删除，并提示使用 `--sandbox`。
 - 旧 `--session-id` flag 或兼容分支旁增加 `Deprecated:` 注释。
 - 当前 `--json --follow` 不兼容限制可以保留，直到定义流式 JSON。
-- tail 和 timestamp 应在服务端过滤还是 CLI 端过滤需要结合日志来源确定；优先避免读取无限历史后再截断。
+- tail 当前在 CLI 端对 `RunDetail.output` 按行截取，文本和 JSON 输出保持一致。
+- timestamp 当前只影响文本输出；由于 run output 没有逐 chunk 时间戳，每行使用 run 级代表时间，优先 `completed_at`，否则 `updated_at`，否则 `started_at`。
 
 测试点：
 
 - `logs reviewer` 等价于 `logs --agent reviewer`。
 - `--tail` 对 run detail 和 project logs 都有效。
-- `--timestamp` 文本输出包含时间。
+- `--timestamp` 文本输出包含 run 级时间。
+- 多个 agent/run 和 follow 增量输出每行都有 agent 名前缀。
 - `--sandbox` 与旧 `--session-id` 行为一致。
 
 ### 5. `ps` 转为 sandbox 视图
@@ -539,7 +541,7 @@ rmi
 
 已完成的基础迁移不再重复拆分。后续建议按以下顺序继续：
 
-1. `logs -n/--tail` 与 `logs -t/--timestamp`：先明确 run detail、follow 和未来 project attach 的日志来源，再决定服务端过滤还是 CLI 端截断。
+1. 如需支持 provider 原生日志或逐 chunk 时间戳，需要新增独立日志来源/API 设计；当前 `logs` 保持基于 agent-compose run output/artifacts。
 2. `run --command`：先设计 v2 Run API 或 command 到现有 run 模型的可靠映射，再实现 CLI。
 3. `run -d/--detach`：需要后台 run 语义，不能复用当前同步 `RunAgent` 或 streaming API 伪装。
 4. `run -i/--interactive`、`--jupyter`、`--jupyter-expose`：需要 runtime/session 创建参数支持，建议与 run API 扩展一起设计。

@@ -537,6 +537,8 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 	// Deprecated: use --sandbox instead.
 	logsCmd.Flags().StringVar(&logsOptions.SessionID, "session-id", "", "Filter logs by session id")
 	logsCmd.Flags().BoolVar(&logsOptions.Follow, "follow", false, "Follow running run output")
+	logsCmd.Flags().IntVarP(&logsOptions.TailLines, "tail", "n", -1, "Show the last N lines of run output")
+	logsCmd.Flags().BoolVarP(&logsOptions.Timestamp, "timestamp", "t", false, "Prefix text log lines with a run-level timestamp")
 
 	psOptions := composePSOptions{}
 	psCmd := &cobra.Command{
@@ -743,7 +745,9 @@ type composeLogsOptions struct {
 	RunID     string
 	SessionID string
 	SandboxID string
+	TailLines int
 	Follow    bool
+	Timestamp bool
 }
 
 type composePSOptions struct {
@@ -1216,12 +1220,12 @@ func runComposeLogsCommand(cmd *cobra.Command, cli cliOptions, options composeLo
 		return err
 	}
 	client := agentcomposev2connect.NewRunServiceClient(newDaemonHTTPClient(clientConfig), clientConfig.BaseURL)
-	if strings.TrimSpace(options.RunID) != "" {
-		run, err := getRunDetail(cmd.Context(), client, projectID, options.RunID)
+	if strings.TrimSpace(normalizedOptions.RunID) != "" {
+		run, err := getRunDetail(cmd.Context(), client, projectID, normalizedOptions.RunID)
 		if err != nil {
-			return commandExitErrorForConnect(fmt.Errorf("get run %s for project %s: %w", strings.TrimSpace(options.RunID), normalized.Name, err))
+			return commandExitErrorForConnect(fmt.Errorf("get run %s for project %s: %w", strings.TrimSpace(normalizedOptions.RunID), normalized.Name, err))
 		}
-		return writeLogsForRun(cmd.OutOrStdout(), run.Msg.GetRun(), cli.JSON)
+		return writeLogsForRun(cmd.OutOrStdout(), run.Msg.GetRun(), cli.JSON, normalizedOptions)
 	}
 	return followOrPrintProjectLogs(cmd, cli, client, projectID, normalized.Name, normalizedOptions)
 }
@@ -1243,6 +1247,9 @@ func normalizeComposeLogsOptions(cmd *cobra.Command, options composeLogsOptions,
 	}
 	if strings.TrimSpace(options.SandboxID) != "" {
 		options.SessionID = options.SandboxID
+	}
+	if options.TailLines < -1 {
+		return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --tail must be -1 or greater")}
 	}
 	return options, nil
 }
@@ -2625,6 +2632,10 @@ func composeProjectSchedulerOutputFromProto(scheduler *agentcomposev2.ProjectSch
 }
 
 func composeRunOutputFromDetail(run *agentcomposev2.RunDetail) composeRunOutput {
+	return composeRunOutputFromDetailWithOptions(run, composeLogsOptions{TailLines: -1})
+}
+
+func composeRunOutputFromDetailWithOptions(run *agentcomposev2.RunDetail, options composeLogsOptions) composeRunOutput {
 	summary := run.GetSummary()
 	return composeRunOutput{
 		RunID:        summary.GetRunId(),
@@ -2640,7 +2651,7 @@ func composeRunOutputFromDetail(run *agentcomposev2.RunDetail) composeRunOutput 
 		CompletedAt:  summary.GetCompletedAt(),
 		DurationMs:   summary.GetDurationMs(),
 		Prompt:       run.GetPrompt(),
-		Output:       run.GetOutput(),
+		Output:       tailLogOutput(run.GetOutput(), options.TailLines),
 		ResultJSON:   run.GetResultJson(),
 		LogsPath:     run.GetLogsPath(),
 		ArtifactsDir: run.GetArtifactsDir(),
@@ -2835,7 +2846,7 @@ func followOrPrintProjectLogs(cmd *cobra.Command, cli cliOptions, client agentco
 		if cli.JSON {
 			output := composeLogsOutput{Runs: make([]composeRunOutput, 0, len(details))}
 			for _, detail := range details {
-				output.Runs = append(output.Runs, composeRunOutputFromDetail(detail))
+				output.Runs = append(output.Runs, composeRunOutputFromDetailWithOptions(detail, options))
 			}
 			data, err := json.MarshalIndent(output, "", "  ")
 			if err != nil {
@@ -2847,7 +2858,7 @@ func followOrPrintProjectLogs(cmd *cobra.Command, cli cliOptions, client agentco
 			if !options.Follow || !anyRunning {
 				return nil
 			}
-		} else if err := writeLogDetails(cmd.OutOrStdout(), details, printed, options.Follow); err != nil {
+		} else if err := writeLogDetails(cmd.OutOrStdout(), details, printed, options); err != nil {
 			return err
 		}
 		if !options.Follow || !anyRunning {
@@ -2881,24 +2892,23 @@ func getRunDetail(ctx context.Context, client agentcomposev2connect.RunServiceCl
 	}))
 }
 
-func writeLogsForRun(out io.Writer, run *agentcomposev2.RunDetail, asJSON bool) error {
+func writeLogsForRun(out io.Writer, run *agentcomposev2.RunDetail, asJSON bool, options composeLogsOptions) error {
 	if asJSON {
-		data, err := json.MarshalIndent(composeLogsOutput{Runs: []composeRunOutput{composeRunOutputFromDetail(run)}}, "", "  ")
+		data, err := json.MarshalIndent(composeLogsOutput{Runs: []composeRunOutput{composeRunOutputFromDetailWithOptions(run, options)}}, "", "  ")
 		if err != nil {
 			return err
 		}
 		return writeCommandOutput(out, append(data, '\n'))
 	}
-	return writeCommandOutput(out, []byte(run.GetOutput()))
+	return writeLogDetails(out, []*agentcomposev2.RunDetail{run}, map[string]int{}, options)
 }
 
-func writeLogDetails(out io.Writer, details []*agentcomposev2.RunDetail, printed map[string]int, incremental bool) error {
-	multiple := len(details) > 1
+func writeLogDetails(out io.Writer, details []*agentcomposev2.RunDetail, printed map[string]int, options composeLogsOptions) error {
 	for _, detail := range details {
 		summary := detail.GetSummary()
 		output := detail.GetOutput()
 		start := 0
-		if incremental {
+		if options.Follow {
 			start = printed[summary.GetRunId()]
 			if start > len(output) {
 				start = 0
@@ -2907,17 +2917,76 @@ func writeLogDetails(out io.Writer, details []*agentcomposev2.RunDetail, printed
 		if start == len(output) {
 			continue
 		}
-		if multiple && !incremental {
-			if _, err := fmt.Fprintf(out, "==> run %s agent %s session %s <==\n", summary.GetRunId(), summary.GetAgentName(), summary.GetSessionId()); err != nil {
-				return err
-			}
+		chunk := output[start:]
+		if options.TailLines >= 0 && (!options.Follow || start == 0) {
+			chunk = tailLogOutput(chunk, options.TailLines)
 		}
-		if err := writeCommandOutput(out, []byte(output[start:])); err != nil {
+		if err := writePrefixedRunOutput(out, summary, chunk, options.Timestamp); err != nil {
 			return err
 		}
 		printed[summary.GetRunId()] = len(output)
 	}
 	return nil
+}
+
+func writePrefixedRunOutput(out io.Writer, summary *agentcomposev2.RunSummary, output string, timestamp bool) error {
+	if output == "" {
+		return nil
+	}
+	agentName := firstNonEmptyString(summary.GetAgentName(), summary.GetRunId(), "-")
+	runTime := runLogTimestamp(summary)
+	for len(output) > 0 {
+		line := output
+		rest := ""
+		if idx := strings.IndexByte(output, '\n'); idx >= 0 {
+			line = output[:idx+1]
+			rest = output[idx+1:]
+		}
+		if _, err := fmt.Fprintf(out, "%s | ", agentName); err != nil {
+			return err
+		}
+		if timestamp && runTime != "" {
+			if _, err := fmt.Fprintf(out, "%s ", runTime); err != nil {
+				return err
+			}
+		}
+		if err := writeCommandOutput(out, []byte(line)); err != nil {
+			return err
+		}
+		if !strings.HasSuffix(line, "\n") {
+			if _, err := fmt.Fprintln(out); err != nil {
+				return err
+			}
+		}
+		output = rest
+	}
+	return nil
+}
+
+func tailLogOutput(output string, lines int) string {
+	if lines < 0 || output == "" {
+		return output
+	}
+	if lines == 0 {
+		return ""
+	}
+	trimmed := strings.TrimSuffix(output, "\n")
+	if trimmed == "" {
+		return output
+	}
+	parts := strings.Split(trimmed, "\n")
+	if len(parts) <= lines {
+		return output
+	}
+	result := strings.Join(parts[len(parts)-lines:], "\n")
+	if strings.HasSuffix(output, "\n") {
+		result += "\n"
+	}
+	return result
+}
+
+func runLogTimestamp(summary *agentcomposev2.RunSummary) string {
+	return firstNonEmptyString(summary.GetCompletedAt(), summary.GetUpdatedAt(), summary.GetStartedAt())
 }
 
 func manualRunClientRequestID(projectName, agentName, prompt string) string {

@@ -48,7 +48,7 @@ agent-compose --host http://10.0.0.12:7410 ls --json
 agent-compose up
 agent-compose ps
 agent-compose run reviewer --prompt "Review the current diff"
-agent-compose logs reviewer -f
+agent-compose logs reviewer --follow
 agent-compose down
 ```
 
@@ -57,7 +57,7 @@ agent-compose down
 ```bash
 agent-compose -f /path/to/project/agent-compose.yml up
 agent-compose -f /path/to/project/agent-compose.yml ps --all
-agent-compose -f /path/to/project/agent-compose.yml logs -f
+agent-compose -f /path/to/project/agent-compose.yml logs --follow
 ```
 
 远程 daemon：
@@ -306,13 +306,15 @@ agent-compose exec sandbox_123 --command "git status --short"
 
 查看当前 project 下 agent、sandbox 或 run 的日志。默认展示 project 下所有 agent 日志。
 
+当前 `logs` 基于 agent-compose v2 RunService 返回的 run output/artifacts 展示，也就是 `RunDetail.output` 中持久化的 agent-compose run 输出；不会默认读取 Codex、Claude、Gemini 等 provider 的私有日志文件。
+
 ```bash
 agent-compose logs
 agent-compose logs <agent>
 agent-compose logs --agent reviewer
 agent-compose logs --run-id <run-id>
 agent-compose logs --sandbox <sandbox>
-agent-compose logs -f
+agent-compose logs --follow
 agent-compose logs -n 100
 agent-compose logs -t
 ```
@@ -321,9 +323,9 @@ agent-compose logs -t
 
 | 参数 | 说明 |
 | --- | --- |
-| `-n, --tail <n>` | 只显示最后 N 行。 |
-| `-f, --follow` | 持续跟随日志输出。 |
-| `-t, --timestamp` | 显示时间戳。 |
+| `-n, --tail <n>` | 只显示 run output 的最后 N 行，文本和 JSON 输出一致。 |
+| `--follow` | 持续跟随日志输出。 |
+| `-t, --timestamp` | 文本输出显示 run 级时间戳。当前没有逐 chunk 时间戳，会使用该 run 的 `completed_at`、`updated_at`、`started_at` 中最合适的可用时间。 |
 | `--agent <agent>` | 按 agent 过滤。 |
 | `--run-id <run-id>` | 按 run 过滤。 |
 | `--sandbox <sandbox>` | 按 sandbox 过滤。 |
@@ -334,7 +336,7 @@ agent-compose logs -t
 agent-compose logs
 agent-compose logs reviewer
 agent-compose logs --agent reviewer --tail 200
-agent-compose logs --sandbox sandbox_123 -f -t
+agent-compose logs --sandbox sandbox_123 --follow -t
 agent-compose logs --run-id run_123 --json
 ```
 
