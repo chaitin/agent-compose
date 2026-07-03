@@ -14,17 +14,11 @@ import (
 type daemonRunner = cli.Runner
 type cliClientConfig = cli.ClientConfig
 type composeUpOutput = cli.UpOutput
-type composeDownOutput = cli.DownOutput
-type composeUpProjectOutput = cli.UpProjectOutput
-type composeUpRevisionOutput = cli.UpRevisionOutput
 type composeUpChangeOutput = cli.UpChangeOutput
 type composeRunOutput = cli.RunOutput
 type composeLogsOutput = cli.LogsOutput
 type composePSOutput = cli.PSOutput
-type composePSAgentOutput = cli.PSAgentOutput
 type composeProjectOutput = cli.ProjectOutput
-type composeProjectAgentOutput = cli.ProjectAgentOutput
-type composeProjectSchedulerOutput = cli.ProjectSchedulerOutput
 type composeAgentInspectOutput = cli.AgentInspectOutput
 type composeSessionOutput = cli.SessionOutput
 type composeExecOutput = cli.ExecOutput
@@ -33,8 +27,6 @@ type composeImageInspectOutput = cli.ImageInspectOutput
 type composeImagePullOutput = cli.ImagePullOutput
 type composeImageRemoveOutput = cli.ImageRemoveOutput
 type composeImageOutput = cli.ImageOutput
-type composeImageStoreOutput = cli.ImageStoreOutput
-type composeImageProgressItem = cli.ImageProgressItem
 
 const (
 	exitCodeGeneral     = cli.ExitCodeGeneral
