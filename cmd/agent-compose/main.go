@@ -539,6 +539,24 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		},
 	}
 
+	stopCmd := &cobra.Command{
+		Use:   "stop <sandbox> [<sandbox N>]",
+		Short: "Stop one or more sandboxes",
+		Args:  sandboxActionArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeSandboxActionCommand(cmd, options, "stop", "stopped", args)
+		},
+	}
+
+	resumeCmd := &cobra.Command{
+		Use:   "resume <sandbox> [<sandbox N>]",
+		Short: "Resume one or more sandboxes",
+		Args:  sandboxActionArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeSandboxActionCommand(cmd, options, "resume", "resumed", args)
+		},
+	}
+
 	execOptions := composeExecOptions{}
 	execCmd := &cobra.Command{
 		Use:   "exec [flags] <command> [args...]",
@@ -660,7 +678,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		},
 	}
 
-	root.AddCommand(daemonCmd, versionCmd, statusCmd, configCmd, listCmd, upCmd, downCmd, runCmd, logsCmd, psCmd, execCmd, imagesCmd, imageCmd, pullCmd, rmiCmd, inspectCmd)
+	root.AddCommand(daemonCmd, versionCmd, statusCmd, configCmd, listCmd, upCmd, downCmd, runCmd, logsCmd, psCmd, stopCmd, resumeCmd, execCmd, imagesCmd, imageCmd, pullCmd, rmiCmd, inspectCmd)
 	return root
 }
 
@@ -698,6 +716,15 @@ type composeExecOptions struct {
 	RunID     string
 	SessionID string
 	Cwd       string
+}
+
+type composeSandboxActionOutput struct {
+	Results []composeSandboxActionResult `json:"results"`
+}
+
+type composeSandboxActionResult struct {
+	Sandbox string `json:"sandbox"`
+	Status  string `json:"status"`
 }
 
 type composeImageListOptions struct {
@@ -868,6 +895,58 @@ func runComposeDownCommand(cmd *cobra.Command, cli cliOptions) error {
 		return commandExitError{
 			Code: exitCodeGeneral,
 			Err:  fmt.Errorf("down project %s completed with %d session stop failure(s)", normalized.Name, output.FailedSessionStops),
+		}
+	}
+	return nil
+}
+
+func sandboxActionArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("requires at least 1 sandbox")}
+	}
+	return nil
+}
+
+func runComposeSandboxActionCommand(cmd *cobra.Command, cli cliOptions, action, status string, sandboxes []string) error {
+	clients, err := newCLIServiceClients(cli)
+	if err != nil {
+		return err
+	}
+	output := composeSandboxActionOutput{
+		Results: make([]composeSandboxActionResult, 0, len(sandboxes)),
+	}
+	for _, sandbox := range sandboxes {
+		sandbox = strings.TrimSpace(sandbox)
+		if sandbox == "" {
+			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("%s requires non-empty sandbox", action)}
+		}
+		req := connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sandbox})
+		switch action {
+		case "stop":
+			_, err = clients.session.StopSession(cmd.Context(), req)
+		case "resume":
+			_, err = clients.session.ResumeSession(cmd.Context(), req)
+		default:
+			return fmt.Errorf("unsupported sandbox action %q", action)
+		}
+		if err != nil {
+			return commandExitErrorForConnect(fmt.Errorf("%s sandbox %s: %w", action, sandbox, err))
+		}
+		output.Results = append(output.Results, composeSandboxActionResult{
+			Sandbox: sandbox,
+			Status:  status,
+		})
+	}
+	if cli.JSON {
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	for _, result := range output.Results {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s sandbox %s\n", result.Status, result.Sandbox); err != nil {
+			return err
 		}
 	}
 	return nil

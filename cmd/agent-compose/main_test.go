@@ -1244,6 +1244,88 @@ agents:
 	}
 }
 
+func TestIntegrationCLIStopSandbox(t *testing.T) {
+	var stopped []string
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		session: sessionServiceStub{
+			stopSession: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
+				stopped = append(stopped, req.Msg.GetSessionId())
+				return connect.NewResponse(&agentcomposev1.SessionResponse{}), nil
+			},
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("stop", "--host", server.URL, "sandbox-stop")
+	if exitCode != 0 || stderr != "" {
+		t.Fatalf("stop code/stderr = %d / %q", exitCode, stderr)
+	}
+	if stdout != "stopped sandbox sandbox-stop\n" {
+		t.Fatalf("stop stdout = %q", stdout)
+	}
+	if len(stopped) != 1 || stopped[0] != "sandbox-stop" {
+		t.Fatalf("stopped sandboxes = %#v", stopped)
+	}
+}
+
+func TestIntegrationCLIResumeSandboxesJSON(t *testing.T) {
+	var resumed []string
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		session: sessionServiceStub{
+			resumeSession: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
+				resumed = append(resumed, req.Msg.GetSessionId())
+				return connect.NewResponse(&agentcomposev1.SessionResponse{}), nil
+			},
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("resume", "--host", server.URL, "--json", "sandbox-a", "sandbox-b")
+	if exitCode != 0 || stderr != "" {
+		t.Fatalf("resume --json code/stderr = %d / %q", exitCode, stderr)
+	}
+	var decoded composeSandboxActionOutput
+	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
+		t.Fatalf("resume JSON decode failed: %v\n%s", err, stdout)
+	}
+	if len(decoded.Results) != 2 ||
+		decoded.Results[0].Sandbox != "sandbox-a" ||
+		decoded.Results[0].Status != "resumed" ||
+		decoded.Results[1].Sandbox != "sandbox-b" ||
+		decoded.Results[1].Status != "resumed" {
+		t.Fatalf("resume JSON = %#v", decoded)
+	}
+	if len(resumed) != 2 || resumed[0] != "sandbox-a" || resumed[1] != "sandbox-b" {
+		t.Fatalf("resumed sandboxes = %#v", resumed)
+	}
+}
+
+func TestCLIStopRequiresSandboxUsageError(t *testing.T) {
+	stdout, stderr, _, exitCode := executeCLICommand("stop")
+	if exitCode != exitCodeUsage {
+		t.Fatalf("stop without args exit code = %d, want %d", exitCode, exitCodeUsage)
+	}
+	if stdout != "" {
+		t.Fatalf("stop without args stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "requires at least 1 sandbox") {
+		t.Fatalf("stop without args stderr = %q", stderr)
+	}
+}
+
+func TestCLIResumeRejectsEmptySandboxUsageError(t *testing.T) {
+	stdout, stderr, _, exitCode := executeCLICommand("resume", " ")
+	if exitCode != exitCodeUsage {
+		t.Fatalf("resume empty sandbox exit code = %d, want %d", exitCode, exitCodeUsage)
+	}
+	if stdout != "" {
+		t.Fatalf("resume empty sandbox stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "requires non-empty sandbox") {
+		t.Fatalf("resume empty sandbox stderr = %q", stderr)
+	}
+}
+
 func TestIntegrationCLIExecStreamsAndSupportsJSON(t *testing.T) {
 	composePath := writeComposeFile(t, t.TempDir(), `
 name: cli-exec-demo
@@ -2555,7 +2637,9 @@ func (s imageServiceStub) RemoveImage(ctx context.Context, req *connect.Request[
 }
 
 type sessionServiceStub struct {
-	getSession func(context.Context, *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error)
+	getSession    func(context.Context, *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error)
+	resumeSession func(context.Context, *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error)
+	stopSession   func(context.Context, *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error)
 
 	agentcomposev1connect.UnimplementedSessionServiceHandler
 }
@@ -2565,6 +2649,20 @@ func (s sessionServiceStub) GetSession(ctx context.Context, req *connect.Request
 		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("GetSession stub is not configured"))
 	}
 	return s.getSession(ctx, req)
+}
+
+func (s sessionServiceStub) ResumeSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
+	if s.resumeSession == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("ResumeSession stub is not configured"))
+	}
+	return s.resumeSession(ctx, req)
+}
+
+func (s sessionServiceStub) StopSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
+	if s.stopSession == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("StopSession stub is not configured"))
+	}
+	return s.stopSession(ctx, req)
 }
 
 func newComposeServiceStubServer(t *testing.T, stubs composeServiceStubs) *httptest.Server {
@@ -2586,7 +2684,7 @@ func newComposeServiceStubServer(t *testing.T, stubs composeServiceStubs) *httpt
 		path, handler := agentcomposev2connect.NewImageServiceHandler(stubs.image)
 		mux.Handle(path, handler)
 	}
-	if stubs.session.getSession != nil {
+	if stubs.session.getSession != nil || stubs.session.resumeSession != nil || stubs.session.stopSession != nil {
 		path, handler := agentcomposev1connect.NewSessionServiceHandler(stubs.session)
 		mux.Handle(path, handler)
 	}
