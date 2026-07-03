@@ -576,6 +576,10 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		Short: "List daemon images",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Deprecated: use `agent-compose images` instead.
+			if err := writeDeprecatedWarning(cmd.ErrOrStderr(), "agent-compose image ls", "agent-compose images"); err != nil {
+				return err
+			}
 			return runComposeImageListCommand(cmd, options, imageLSOptions)
 		},
 	}
@@ -597,6 +601,10 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		Short: "Pull an image",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Deprecated: use `agent-compose pull <image>` instead.
+			if err := writeDeprecatedWarning(cmd.ErrOrStderr(), "agent-compose image pull", "agent-compose pull"); err != nil {
+				return err
+			}
 			return runComposeImagePullCommand(cmd, options, imagePullOptions, args[0])
 		},
 	}
@@ -618,6 +626,10 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		Short: "Remove an image",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Deprecated: use `agent-compose rmi <image>` instead.
+			if err := writeDeprecatedWarning(cmd.ErrOrStderr(), "agent-compose image rm", "agent-compose rmi"); err != nil {
+				return err
+			}
 			return runComposeImageRemoveCommand(cmd, options, imageRemoveOptions, args[0])
 		},
 	}

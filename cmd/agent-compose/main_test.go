@@ -1445,9 +1445,10 @@ func TestIntegrationCLIImagesAliasesAndJSON(t *testing.T) {
 	}
 
 	textOut, textErr, _, textCode := executeCLICommand("image", "ls", "--host", server.URL)
-	if textCode != 0 || textErr != "" {
+	if textCode != 0 {
 		t.Fatalf("image ls code/stderr = %d / %q", textCode, textErr)
 	}
+	assertDeprecatedWarning(t, textErr, "agent-compose images")
 	for _, want := range []string{"IMAGE ID", "abc123456789", "agent:latest", "available"} {
 		if !strings.Contains(textOut, want) {
 			t.Fatalf("image ls output %q does not contain %q", textOut, want)
@@ -1499,9 +1500,10 @@ func TestIntegrationCLIImagePullAliasesAndJSON(t *testing.T) {
 	}
 
 	textOut, textErr, _, textCode := executeCLICommand("image", "pull", "--host", server.URL, "agent:latest")
-	if textCode != 0 || textErr != "" {
+	if textCode != 0 {
 		t.Fatalf("image pull code/stderr = %d / %q", textCode, textErr)
 	}
+	assertDeprecatedWarning(t, textErr, "agent-compose pull")
 	if !strings.Contains(textOut, "Pulled agent:latest") || !strings.Contains(textOut, "agent@sha256:def") {
 		t.Fatalf("image pull output = %q", textOut)
 	}
@@ -1548,9 +1550,10 @@ func TestIntegrationCLIImageRemoveAliasesAndJSON(t *testing.T) {
 	}
 
 	textOut, textErr, _, textCode := executeCLICommand("image", "rm", "--host", server.URL, "--prune-children", "agent:old")
-	if textCode != 0 || textErr != "" {
+	if textCode != 0 {
 		t.Fatalf("image rm code/stderr = %d / %q", textCode, textErr)
 	}
+	assertDeprecatedWarning(t, textErr, "agent-compose rmi")
 	if !strings.Contains(textOut, "Untagged: agent:old") || !strings.Contains(textOut, "Deleted: sha256:old") {
 		t.Fatalf("image rm output = %q", textOut)
 	}
@@ -1597,9 +1600,7 @@ func TestIntegrationCLIImageInspectJSON(t *testing.T) {
 	if legacyCode != 0 {
 		t.Fatalf("legacy image inspect code = %d; stderr=%q", legacyCode, legacyErr)
 	}
-	if !strings.Contains(legacyErr, "deprecated") || !strings.Contains(legacyErr, "agent-compose inspect image") {
-		t.Fatalf("legacy image inspect stderr = %q", legacyErr)
-	}
+	assertDeprecatedWarning(t, legacyErr, "agent-compose inspect image")
 	var legacyDecoded composeImageInspectOutput
 	if err := json.Unmarshal([]byte(legacyOut), &legacyDecoded); err != nil {
 		t.Fatalf("legacy image inspect JSON decode failed: %v\n%s", err, legacyOut)
@@ -2319,6 +2320,13 @@ func freeTCPListenAddress(t *testing.T) string {
 		t.Fatalf("close free tcp port: %v", err)
 	}
 	return addr
+}
+
+func assertDeprecatedWarning(t *testing.T, stderr string, replacement string) {
+	t.Helper()
+	if !strings.Contains(stderr, "deprecated") || !strings.Contains(stderr, replacement) {
+		t.Fatalf("deprecated warning stderr = %q, want replacement %q", stderr, replacement)
+	}
 }
 
 func writeComposeFile(t *testing.T, dir string, content string) string {
