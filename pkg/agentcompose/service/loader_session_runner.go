@@ -242,10 +242,6 @@ func (m *LoaderManager) ensureLoaderSession(ctx context.Context, loader Loader, 
 	return m.sessionRunnerComponent().Ensure(ctx, loader, request, true)
 }
 
-func (m *LoaderManager) ensureLoaderCommandSession(ctx context.Context, loader Loader, request domain.LoaderAgentRequest) (*Session, string, error) {
-	return m.sessionRunnerComponent().Ensure(ctx, loader, request, false)
-}
-
 func (m *LoaderManager) loadOrResumeLoaderSession(ctx context.Context, sessionID string) (*Session, string, error) {
 	return m.sessionRunnerComponent().LoadOrResume(ctx, sessionID)
 }

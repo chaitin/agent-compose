@@ -5,15 +5,12 @@ import (
 	appconfig "agent-compose/pkg/config"
 	"agent-compose/pkg/dashboard"
 	"agent-compose/pkg/events/webhooks"
-	"agent-compose/pkg/execution"
 	"agent-compose/pkg/images"
 	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/sessions"
-	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -45,6 +42,7 @@ type LoaderManager struct {
 
 	runExecutor        *LoaderRunExecutor
 	eventDispatcher    *LoaderEventDispatcher
+	scheduler          *loaders.Scheduler
 	sessionRunner      *LoaderSessionRunner
 	projectAgentRunner ProjectAgentRunner
 
@@ -60,10 +58,8 @@ type loaderRunHost struct {
 	loader                 Loader
 	run                    *domain.LoaderRunSummary
 	triggerEvent           loaders.TriggerEventMetadata
-	commandSessionIDs      map[string]struct{}
-	commandSessionIDOrder  []string
 	commandSessionIDsMutex sync.Mutex
-	commandReusableSession *Session
+	runtimeHostCore        *loaders.RuntimeHost
 }
 
 type loaderTriggerEventMetadata = loaders.TriggerEventMetadata
@@ -80,6 +76,42 @@ type preparedLoaderRun struct {
 	trigger     *domain.LoaderTrigger
 	run         domain.LoaderRunSummary
 	payloadJSON string
+}
+
+func scheduledLoaderRunFromCore(item loaders.ScheduledRun) scheduledLoaderRun {
+	return scheduledLoaderRun{
+		loader:      item.Loader,
+		trigger:     item.Trigger,
+		payloadJSON: item.PayloadJSON,
+		source:      item.Source,
+	}
+}
+
+func (r scheduledLoaderRun) toCore() loaders.ScheduledRun {
+	return loaders.ScheduledRun{
+		Loader:      r.loader,
+		Trigger:     r.trigger,
+		PayloadJSON: r.payloadJSON,
+		Source:      r.source,
+	}
+}
+
+func preparedLoaderRunFromCore(item loaders.PreparedRun) preparedLoaderRun {
+	return preparedLoaderRun{
+		loader:      item.Loader,
+		trigger:     item.Trigger,
+		run:         item.Run,
+		payloadJSON: item.PayloadJSON,
+	}
+}
+
+func (r preparedLoaderRun) toCore() loaders.PreparedRun {
+	return loaders.PreparedRun{
+		Loader:      r.loader,
+		Trigger:     r.trigger,
+		Run:         r.run,
+		PayloadJSON: r.payloadJSON,
+	}
 }
 
 func NewLoaderManager(di do.Injector) (*LoaderManager, error) {
@@ -126,6 +158,19 @@ func (m *LoaderManager) initLoaderComponents() {
 	}
 	if m.eventDispatcher == nil {
 		m.eventDispatcher = NewLoaderEventDispatcher(m)
+	}
+	if m.scheduler == nil {
+		m.scheduler = loaders.NewScheduler(loaders.SchedulerDependencies{
+			RootCtx:       m.rootCtx,
+			Wake:          m.scheduleWake,
+			Store:         m.configDB,
+			Snapshot:      m.cachedLoadersMap,
+			ReplaceCached: m.replaceCachedLoaders,
+			Run: func(ctx context.Context, loader domain.Loader, trigger *domain.LoaderTrigger, payloadJSON, source string, options loaders.RunOptions, triggerEventAck ...func(context.Context) error) (domain.LoaderRunSummary, error) {
+				return m.runLoader(ctx, loader, trigger, payloadJSON, source, true, loaderRunOptions{retryWhenBusy: options.RetryWhenBusy, alreadyEntered: options.AlreadyEntered}, triggerEventAck...)
+			},
+			RunTimeout: m.loaderRunTimeout,
+		})
 	}
 	if m.sessionRunner == nil {
 		m.sessionRunner = NewLoaderSessionRunner(m)
@@ -276,74 +321,22 @@ func (m *LoaderManager) notifyDashboard(reason string) {
 }
 
 func (m *LoaderManager) scheduleLoop() {
-	for {
-		jobs := m.collectDueScheduledRuns(time.Now().UTC())
-		if len(jobs) > 0 {
-			m.dispatchScheduledRuns(jobs)
-			continue
-		}
-
-		nextFireAt, ok := m.nextScheduledFireAt()
-		if !ok {
-			select {
-			case <-m.rootCtx.Done():
-				return
-			case <-m.scheduleWake:
-				continue
-			}
-		}
-
-		wait := time.Until(nextFireAt)
-		if wait < 0 {
-			wait = 0
-		}
-		timer := time.NewTimer(wait)
-		select {
-		case <-m.rootCtx.Done():
-			stopTimer(timer)
-			return
-		case <-m.scheduleWake:
-			stopTimer(timer)
-			continue
-		case <-timer.C:
-		}
-	}
+	m.initLoaderComponents()
+	m.scheduler.Loop()
 }
 
 func (m *LoaderManager) dispatchScheduledRuns(jobs []scheduledLoaderRun) {
+	m.initLoaderComponents()
+	coreJobs := make([]loaders.ScheduledRun, 0, len(jobs))
 	for _, job := range jobs {
-		runCtx, cancel := context.WithTimeout(m.rootCtx, m.loaderRunTimeout(0))
-		go func(job scheduledLoaderRun) {
-			defer cancel()
-			if _, err := m.runLoader(runCtx, job.loader, &job.trigger, job.payloadJSON, job.source, true, loaderRunOptions{}); err != nil {
-				slog.Warn("loader scheduled run failed", "loader_id", job.loader.Summary.ID, "trigger_id", job.trigger.ID, "trigger_kind", job.trigger.Kind, "error", err)
-			}
-		}(job)
+		coreJobs = append(coreJobs, job.toCore())
 	}
+	m.scheduler.Dispatch(coreJobs)
 }
 
 func (m *LoaderManager) nextScheduledFireAt() (time.Time, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	var nextFireAt time.Time
-	for _, loader := range m.loaders {
-		if !loader.Summary.Enabled {
-			continue
-		}
-		for _, trigger := range loader.Triggers {
-			if !trigger.Enabled || !domain.LoaderTriggerUsesSchedule(trigger.Kind) || trigger.NextFireAt.IsZero() {
-				continue
-			}
-			if nextFireAt.IsZero() || trigger.NextFireAt.Before(nextFireAt) {
-				nextFireAt = trigger.NextFireAt
-			}
-		}
-	}
-	if nextFireAt.IsZero() {
-		return time.Time{}, false
-	}
-	return nextFireAt, true
+	m.initLoaderComponents()
+	return m.scheduler.NextFireAt()
 }
 
 func (m *LoaderManager) wakeScheduler() {
@@ -357,15 +350,7 @@ func (m *LoaderManager) wakeScheduler() {
 }
 
 func stopTimer(timer *time.Timer) {
-	if timer == nil {
-		return
-	}
-	if !timer.Stop() {
-		select {
-		case <-timer.C:
-		default:
-		}
-	}
+	loaders.StopTimer(timer)
 }
 
 func (m *LoaderManager) eventLoop() {
@@ -389,31 +374,31 @@ func (m *LoaderManager) reserveEventQueueSlots(event domain.LoaderTopicEvent, co
 }
 
 func (m *LoaderManager) collectDueScheduledRuns(now time.Time) []scheduledLoaderRun {
+	m.initLoaderComponents()
+	coreJobs := m.scheduler.CollectDue(now)
+	jobs := make([]scheduledLoaderRun, 0, len(coreJobs))
+	for _, item := range coreJobs {
+		jobs = append(jobs, scheduledLoaderRunFromCore(item))
+	}
+	return jobs
+}
+
+func (m *LoaderManager) cachedLoadersMap() map[string]domain.Loader {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	items := make(map[string]domain.Loader, len(m.loaders))
+	for id, item := range m.loaders {
+		items[id] = cloneLoader(item)
+	}
+	return items
+}
 
-	scheduled, updatedLoaders, scheduleErrs := loaders.CollectDueScheduledRuns(m.loaders, now)
+func (m *LoaderManager) replaceCachedLoaders(updatedLoaders map[string]domain.Loader) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for id, item := range updatedLoaders {
 		m.loaders[id] = cloneLoader(item)
 	}
-	for _, item := range scheduleErrs {
-		slog.Warn("failed to compute next loader schedule", "loader_id", item.LoaderID, "trigger_id", item.TriggerID, "trigger_kind", item.TriggerKind, "error", item.Err)
-	}
-	jobs := make([]scheduledLoaderRun, 0, len(scheduled))
-	for _, item := range scheduled {
-		jobs = append(jobs, scheduledLoaderRun{
-			loader:      cloneLoader(item.Loader),
-			trigger:     item.Trigger,
-			payloadJSON: item.PayloadJSON,
-			source:      item.Source,
-		})
-	}
-	for _, job := range jobs {
-		if err := m.configDB.MarkLoaderTriggerFired(m.rootCtx, job.loader.Summary.ID, job.trigger.ID, job.trigger.LastFiredAt, job.trigger.NextFireAt); err != nil {
-			slog.Warn("failed to persist loader fire state", "loader_id", job.loader.Summary.ID, "trigger_id", job.trigger.ID, "trigger_kind", job.trigger.Kind, "error", err)
-		}
-	}
-	return jobs
 }
 
 func (m *LoaderManager) loadLoaderForRun(ctx context.Context, loaderID, triggerID string) (Loader, *domain.LoaderTrigger, error) {
@@ -439,8 +424,6 @@ type loaderRunOptions struct {
 	retryWhenBusy  bool
 	alreadyEntered bool
 }
-
-var errLoaderRunBusyForRetry = errors.New("loader is already running")
 
 func (m *LoaderManager) updateTriggerEventDelivery(ctx context.Context, run domain.LoaderRunSummary) {
 	if m == nil || m.configDB == nil {
@@ -472,16 +455,6 @@ func (m *LoaderManager) updateTriggerEventDelivery(ctx context.Context, run doma
 	}); err != nil {
 		slog.Warn("failed to update event delivery", "event_id", metadata.EventID, "loader_id", run.LoaderID, "trigger_id", run.TriggerID, "run_id", run.ID, "error", err)
 	}
-}
-
-func (m *LoaderManager) loaderRunTimeout(override time.Duration) time.Duration {
-	if override > 0 {
-		return override
-	}
-	if m != nil && m.config != nil && m.config.LoaderRunTimeout > 0 {
-		return m.config.LoaderRunTimeout
-	}
-	return 20 * time.Minute
 }
 
 func (m *LoaderManager) enterRun(loader Loader) bool {
@@ -538,68 +511,27 @@ func (m *LoaderManager) addLoaderEventRecord(ctx context.Context, loaderID, runI
 }
 
 func (h *loaderRunHost) Log(ctx context.Context, message string, payload any) error {
-	return h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, "loader.log", "info", message, payload, "", "", "")
+	return h.runtimeHost().Log(ctx, message, payload)
 }
 
 func (h *loaderRunHost) PublishEvent(ctx context.Context, topic string, payloadJSON string) (domain.TopicEventRecord, error) {
-	if h.manager == nil || h.manager.configDB == nil {
-		return domain.TopicEventRecord{}, fmt.Errorf("event store is unavailable")
-	}
-	published, err := loaders.NewPublishedTopicEvent(topic, payloadJSON, h.triggerEvent, h.loader.Summary.ID, h.run.ID)
-	if err != nil {
-		return domain.TopicEventRecord{}, err
-	}
-	created, err := h.manager.configDB.CreateEvent(ctx, published.Record)
-	if err != nil {
-		_ = h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, "loader.event.publish.failed", "error", err.Error(), map[string]any{"topic": published.Record.Topic}, "", "", "")
-		return domain.TopicEventRecord{}, err
-	}
-	if sequenced, err := loaders.UpdatePublishedTopicEventSequence(published, created.Sequence); err == nil {
-		_ = h.manager.configDB.UpdateEventPayload(ctx, created.ID, sequenced.PayloadJSON)
-		created.PayloadJSON = sequenced.PayloadJSON
-		created.PayloadHash = sequenced.PayloadHash
-	}
-	_ = h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, "loader.event.published", "info", "loader event published", map[string]any{
-		"eventId":       created.ID,
-		"sequence":      created.Sequence,
-		"topic":         created.Topic,
-		"correlationId": created.CorrelationID,
-	}, "", "", "")
-	return created, nil
+	return h.runtimeHost().PublishEvent(ctx, topic, payloadJSON)
 }
 
 func (h *loaderRunHost) StateGet(ctx context.Context, key string) (string, bool, error) {
-	return h.manager.configDB.GetLoaderState(ctx, h.loader.Summary.ID, key)
+	return h.runtimeHost().StateGet(ctx, key)
 }
 
 func (h *loaderRunHost) StateSet(ctx context.Context, key, valueJSON string) error {
-	return h.manager.configDB.SetLoaderState(ctx, h.loader.Summary.ID, key, valueJSON)
+	return h.runtimeHost().StateSet(ctx, key, valueJSON)
 }
 
 func (h *loaderRunHost) StateDelete(ctx context.Context, key string) error {
-	return h.manager.configDB.DeleteLoaderState(ctx, h.loader.Summary.ID, key)
+	return h.runtimeHost().StateDelete(ctx, key)
 }
 
 func (h *loaderRunHost) CallSessionRPC(ctx context.Context, method, requestJSON string) (string, error) {
-	if h.manager == nil || h.manager.sessions == nil {
-		return "", fmt.Errorf("session rpc bridge is unavailable")
-	}
-	method = strings.TrimSpace(method)
-	requestJSON = strings.TrimSpace(requestJSON)
-	responseJSON, err := h.manager.sessions.CallJSONWithSource(ctx, method, requestJSON, domain.SessionTypeScript+":"+h.loader.Summary.ID)
-	linkedSessionID := loaderSessionRPCLinkedSessionID(method, requestJSON, responseJSON)
-	if err != nil {
-		event, _ := h.manager.addLoaderEventRecord(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID,
-			"loader.session.rpc.failed", "error", firstNonEmpty(err.Error(), fmt.Sprintf("%s failed", method)),
-			map[string]any{"method": method, "requestJson": requestJSON}, linkedSessionID, "", "")
-		h.addEventSessionLink(ctx, event, linkedSessionID, "session_rpc_failed")
-		return "", err
-	}
-	event, _ := h.manager.addLoaderEventRecord(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID,
-		"loader.session.rpc.completed", "info", fmt.Sprintf("%s completed", method),
-		map[string]any{"method": method, "requestJson": requestJSON, "responseJson": responseJSON}, linkedSessionID, "", "")
-	h.addEventSessionLink(ctx, event, linkedSessionID, "session_rpc_completed")
-	return responseJSON, nil
+	return h.runtimeHost().CallSessionRPC(ctx, method, requestJSON)
 }
 
 func (h *loaderRunHost) addLinkedLoaderEvent(ctx context.Context, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
@@ -629,37 +561,8 @@ func (h *loaderRunHost) addEventSessionLink(ctx context.Context, event domain.Lo
 	}
 }
 
-func (h *loaderRunHost) trackCommandSession(sessionID string, cleanup bool) {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" || !cleanup {
-		return
-	}
-	h.commandSessionIDsMutex.Lock()
-	defer h.commandSessionIDsMutex.Unlock()
-	if h.commandSessionIDs == nil {
-		h.commandSessionIDs = map[string]struct{}{}
-	}
-	if _, ok := h.commandSessionIDs[sessionID]; ok {
-		return
-	}
-	h.commandSessionIDs[sessionID] = struct{}{}
-	h.commandSessionIDOrder = append(h.commandSessionIDOrder, sessionID)
-}
-
 func (h *loaderRunHost) cleanupCommandSessions(ctx context.Context) {
-	h.commandSessionIDsMutex.Lock()
-	sessionIDs := append([]string(nil), h.commandSessionIDOrder...)
-	h.commandSessionIDs = nil
-	h.commandSessionIDOrder = nil
-	h.commandSessionIDsMutex.Unlock()
-	for _, sessionID := range sessionIDs {
-		if err := h.manager.shutdownLoaderSession(ctx, sessionID); err != nil {
-			slog.Warn("failed to stop loader command session after run", "loader_id", h.loader.Summary.ID, "session_id", sessionID, "error", err)
-			_ = h.addLinkedLoaderEvent(ctx, "loader.session.stop_failed", "error", err.Error(), map[string]any{"sessionId": sessionID}, sessionID, "", "")
-			continue
-		}
-		_ = h.addLinkedLoaderEvent(ctx, "loader.session.stopped", "info", "loader command session stopped after run", map[string]any{"sessionId": sessionID}, sessionID, "", "")
-	}
+	h.runtimeHost().CleanupCommandSessions(ctx)
 }
 
 func (m *LoaderManager) loaderAgentDefinition(ctx context.Context, loader Loader) (*domain.AgentDefinition, error) {
@@ -678,239 +581,19 @@ func (m *LoaderManager) loaderAgentDefinition(ctx context.Context, loader Loader
 }
 
 func (h *loaderRunHost) Agent(ctx context.Context, prompt string, request domain.LoaderAgentRequest) (domain.LoaderAgentResult, error) {
-	if h.useProjectManagedAgentRun(request) {
-		return h.ProjectAgent(ctx, prompt, request)
-	}
-	session, eventType, err := h.manager.ensureLoaderSession(ctx, h.loader, request)
-	if err != nil {
-		return domain.LoaderAgentResult{}, err
-	}
-	if eventType != "" {
-		_ = h.addLinkedLoaderEvent(ctx, eventType, "info", "loader session ready", map[string]any{"sessionId": session.Summary.ID}, session.Summary.ID, "", "")
-	}
-
-	agentConfig := agentExecutionConfig{Provider: domain.NormalizeAgentKind(request.Agent)}
-	var agentDefinitionID string
-	if agentConfig.Provider == "" {
-		agentDefinition, err := h.manager.loaderAgentDefinition(ctx, h.loader)
-		if err != nil {
-			return domain.LoaderAgentResult{}, err
-		}
-		if agentDefinition != nil {
-			agentConfig = agentExecutionConfigFromDefinition(*agentDefinition, "")
-			agentDefinitionID = strings.TrimSpace(agentDefinition.ID)
-		}
-	}
-	if agentDefinitionID == "" {
-		agentDefinitionID = strings.TrimSpace(h.loader.Summary.AgentID)
-	}
-	if agentConfig.Provider == "" {
-		agentConfig.Provider = domain.NormalizeAgentKind(h.loader.Summary.DefaultAgent)
-	}
-	if agentConfig.Provider == "" {
-		agentConfig.Provider = "codex"
-	}
-
-	cell, _, _, execErr := h.manager.executor.ExecuteAgentRequest(ctx, session, execution.ExecuteAgentRequest{
-		Agent:             agentConfig.Provider,
-		AgentDefinitionID: agentDefinitionID,
-		Model:             agentConfig.Model,
-		RunID:             h.run.ID,
-		Message:           prompt,
-		Timeout:           request.Timeout,
-		OutputSchemaJSON:  request.OutputSchema,
-	})
-	finalText := firstNonEmpty(cell.Output, cell.Stdout, cell.Stderr)
-	jsonValue, jsonErr := loaderJSONResult(finalText, request.OutputSchema, "agent finalText")
-	if jsonErr != nil && execErr == nil {
-		execErr = jsonErr
-	}
-	result := domain.LoaderAgentResult{
-		Text:           finalText,
-		Output:         cell.Output,
-		FinalText:      finalText,
-		JSON:           jsonValue,
-		SessionID:      session.Summary.ID,
-		CellID:         cell.ID,
-		Agent:          firstNonEmpty(cell.Agent, agentConfig.Provider),
-		AgentSessionID: cell.AgentSessionID,
-		StopReason:     cell.StopReason,
-		Success:        cell.Success,
-		ExitCode:       cell.ExitCode,
-	}
-	level := "info"
-	eventName := "loader.agent.completed"
-	if execErr != nil {
-		level = "error"
-		eventName = "loader.agent.failed"
-		result.Text = firstNonEmpty(result.Text, execErr.Error())
-	}
-	_ = h.addLinkedLoaderEvent(ctx, eventName, level, firstNonEmpty(result.Text, fmt.Sprintf("%s completed", result.Agent)), result, result.SessionID, result.CellID, result.AgentSessionID)
-	h.manager.Publish("agent-compose.agent.completed", map[string]any{
-		"sessionId":      result.SessionID,
-		"cellId":         result.CellID,
-		"agent":          result.Agent,
-		"agentSessionId": result.AgentSessionID,
-		"success":        result.Success,
-		"stopReason":     result.StopReason,
-		"source":         "loader",
-		"loaderId":       h.loader.Summary.ID,
-	})
-	shutdownErr := h.manager.shutdownLoaderSession(ctx, session.Summary.ID)
-	if shutdownErr != nil {
-		slog.Warn("failed to stop loader session after agent run", "loader_id", h.loader.Summary.ID, "session_id", session.Summary.ID, "error", shutdownErr)
-		_ = h.addLinkedLoaderEvent(ctx, "loader.session.stop_failed", "error", shutdownErr.Error(), map[string]any{"sessionId": session.Summary.ID}, session.Summary.ID, "", "")
-	} else {
-		_ = h.addLinkedLoaderEvent(ctx, "loader.session.stopped", "info", "loader session stopped after agent run", map[string]any{"sessionId": session.Summary.ID}, session.Summary.ID, "", "")
-	}
-	if execErr != nil {
-		return result, execErr
-	}
-	return result, nil
-}
-
-func (h *loaderRunHost) useProjectManagedAgentRun(request domain.LoaderAgentRequest) bool {
-	if h == nil || h.manager == nil {
-		return false
-	}
-	if strings.TrimSpace(h.loader.Summary.ManagedProjectID) == "" || strings.TrimSpace(h.loader.Summary.ManagedAgentName) == "" {
-		return false
-	}
-	if strings.TrimSpace(request.Agent) != "" || request.Timeout > 0 {
-		return false
-	}
-	return !loaderAgentRequestOverridesSession(request, true)
+	return h.runtimeHost().Agent(ctx, prompt, request)
 }
 
 func (h *loaderRunHost) ProjectAgent(ctx context.Context, prompt string, request domain.LoaderAgentRequest) (domain.LoaderAgentResult, error) {
-	run, execErr, err := h.manager.projectAgentRunnerComponent().RunProjectAgent(ctx, &agentcomposev2.RunAgentRequest{
-		ProjectId:        h.loader.Summary.ManagedProjectID,
-		AgentName:        h.loader.Summary.ManagedAgentName,
-		Prompt:           prompt,
-		Source:           agentcomposev2.RunSource_RUN_SOURCE_SCHEDULER,
-		SchedulerId:      h.loader.Summary.ManagedSchedulerID,
-		TriggerId:        h.run.TriggerID,
-		OutputSchemaJson: request.OutputSchema,
-		ClientRequestId:  firstNonEmpty(h.run.ID, uuid.NewString()),
-	}, nil)
-	if err != nil {
-		return domain.LoaderAgentResult{}, err
-	}
-	result, jsonErr := loaders.AgentResultFromProjectRun(run, request.OutputSchema)
-	if jsonErr != nil && execErr == nil {
-		execErr = jsonErr
-	}
-	level := "info"
-	eventName := "loader.agent.completed"
-	if execErr != nil || run.Status != domain.ProjectRunStatusSucceeded {
-		level = "error"
-		eventName = "loader.agent.failed"
-		result.Text = firstNonEmpty(result.Text, run.Error, execErrString(execErr))
-	}
-	_ = h.addLinkedLoaderEvent(ctx, eventName, level, firstNonEmpty(result.Text, fmt.Sprintf("%s completed", result.Agent)), result, result.SessionID, result.CellID, result.AgentSessionID)
-	h.manager.Publish("agent-compose.agent.completed", map[string]any{
-		"sessionId":      result.SessionID,
-		"cellId":         result.CellID,
-		"agent":          result.Agent,
-		"agentSessionId": result.AgentSessionID,
-		"success":        result.Success,
-		"stopReason":     result.StopReason,
-		"source":         "loader",
-		"loaderId":       h.loader.Summary.ID,
-		"loaderRunId":    h.run.ID,
-		"projectId":      run.ProjectID,
-		"projectRunId":   run.RunID,
-	})
-	if execErr != nil {
-		return result, execErr
-	}
-	return result, nil
-}
-
-func execErrString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
-}
-
-func loaderJSONResult(text, outputSchemaJSON, sourceName string) (any, error) {
-	return loaders.JSONResult(text, outputSchemaJSON, sourceName)
+	return h.runtimeHost().ProjectAgent(ctx, prompt, request)
 }
 
 func (h *loaderRunHost) Command(ctx context.Context, request domain.LoaderCommandRequest) (domain.LoaderCommandResult, error) {
-	cleanupSession := loaderCommandRequestRequiresCleanup(h.loader, request)
-	agentRequest := domain.LoaderAgentRequest{
-		SessionPolicy: request.SessionPolicy,
-		Title:         request.Title,
-		Driver:        request.Driver,
-		GuestImage:    request.GuestImage,
-		WorkspaceID:   request.WorkspaceID,
-		SessionEnv:    request.SessionEnv,
-	}
-	session, eventType, err := h.ensureCommandSession(ctx, agentRequest, cleanupSession)
-	if err != nil {
-		_ = h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, "loader.command.failed", "error", err.Error(), loaders.CommandEventPayload(request, domain.LoaderCommandResult{}), "", "", "")
-		return domain.LoaderCommandResult{}, err
-	}
-	if eventType != "" {
-		_ = h.addLinkedLoaderEvent(ctx, eventType, "info", "loader command session ready", map[string]any{"sessionId": session.Summary.ID}, session.Summary.ID, "", "")
-	}
-	h.trackCommandSession(session.Summary.ID, cleanupSession)
-
-	result, err := h.manager.executor.ExecuteLoaderCommand(ctx, session, request)
-	if err != nil {
-		_ = h.addLinkedLoaderEvent(ctx, "loader.command.failed", "error", err.Error(), loaders.CommandEventPayload(request, result), result.SessionID, result.CellID, "")
-		return result, err
-	}
-	level := "info"
-	if !result.Success {
-		level = "error"
-	}
-	_ = h.addLinkedLoaderEvent(ctx, "loader.command.completed", level, firstNonEmpty(result.Output, result.Stdout, result.Stderr, "loader command completed"), loaders.CommandEventPayload(request, result), result.SessionID, result.CellID, "")
-	return result, nil
-}
-
-func (h *loaderRunHost) ensureCommandSession(ctx context.Context, request domain.LoaderAgentRequest, cleanupSession bool) (*Session, string, error) {
-	if cleanupSession {
-		h.commandSessionIDsMutex.Lock()
-		session := h.commandReusableSession
-		h.commandSessionIDsMutex.Unlock()
-		if session != nil {
-			if loaded, err := h.manager.store.GetSession(ctx, session.Summary.ID); err == nil && loaded.Summary.VMStatus == domain.VMStatusRunning {
-				return loaded, "", nil
-			}
-		}
-	}
-	session, eventType, err := h.manager.ensureLoaderCommandSession(ctx, h.loader, request)
-	if err != nil {
-		return nil, "", err
-	}
-	if cleanupSession {
-		h.commandSessionIDsMutex.Lock()
-		h.commandReusableSession = session
-		h.commandSessionIDsMutex.Unlock()
-	}
-	return session, eventType, nil
+	return h.runtimeHost().Command(ctx, request)
 }
 
 func (h *loaderRunHost) LLM(ctx context.Context, prompt string, request domain.LoaderLLMRequest) (domain.LoaderLLMResult, error) {
-	if h.manager == nil || h.manager.llm == nil {
-		return domain.LoaderLLMResult{}, fmt.Errorf("llm client is unavailable")
-	}
-	result, err := h.manager.llm.Generate(ctx, prompt, request.Model, request.OutputSchema)
-	if err != nil {
-		_ = h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, "loader.llm.failed", "error", err.Error(), map[string]any{"model": strings.TrimSpace(request.Model)}, "", "", "")
-		return domain.LoaderLLMResult{}, err
-	}
-	response := domain.LoaderLLMResult{
-		Text:         result.Text,
-		Model:        result.Model,
-		ResponseID:   result.ResponseID,
-		FinishReason: result.FinishReason,
-	}
-	_ = h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, "loader.llm.completed", "info", firstNonEmpty(response.Text, "llm completed"), response, "", "", "")
-	return response, nil
+	return h.runtimeHost().LLM(ctx, prompt, request)
 }
 
 func loaderAgentRequestOverridesSession(request domain.LoaderAgentRequest, includeTitle bool) bool {
@@ -919,10 +602,6 @@ func loaderAgentRequestOverridesSession(request domain.LoaderAgentRequest, inclu
 		strings.TrimSpace(request.GuestImage) != "" ||
 		strings.TrimSpace(request.WorkspaceID) != "" ||
 		len(domain.NormalizeEnvItems(request.SessionEnv)) > 0
-}
-
-func loaderCommandRequestRequiresCleanup(loader Loader, request domain.LoaderCommandRequest) bool {
-	return loaders.CommandRequestRequiresCleanup(loader, request)
 }
 
 func (m *LoaderManager) runArtifactsDir(loaderID, runID string) string {
@@ -955,10 +634,6 @@ func (m *LoaderManager) snapshotLoaders() []Loader {
 		items = append(items, cloneLoader(item))
 	}
 	return items
-}
-
-func normalizeJSONDocument(raw string) (string, error) {
-	return domain.NormalizeJSONDocument(raw)
 }
 
 func marshalJSONCompact(value any) (string, error) {

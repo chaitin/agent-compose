@@ -1,175 +1,61 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/loaders"
-	domain "agent-compose/pkg/model"
 	"context"
-	"fmt"
-	"log/slog"
-	"os"
-	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"agent-compose/pkg/loaders"
+	domain "agent-compose/pkg/model"
 )
 
 type LoaderRunExecutor struct {
 	manager *LoaderManager
+	core    *loaders.RunExecutor
 }
 
 func NewLoaderRunExecutor(manager *LoaderManager) *LoaderRunExecutor {
-	return &LoaderRunExecutor{manager: manager}
+	executor := &LoaderRunExecutor{manager: manager}
+	executor.core = loaders.NewRunExecutor(loaders.RunExecutorDependencies{
+		Store:         manager.configDB,
+		Engine:        manager.engine,
+		ArtifactsDir:  manager.runArtifactsDir,
+		WriteArtifact: manager.writeRunArtifact,
+		EnterRun:      manager.enterRun,
+		LeaveRun:      manager.leaveRun,
+		AddLoaderEvent: func(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
+			return manager.addLoaderEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
+		},
+		UpdateTriggerEventDelivery: manager.updateTriggerEventDelivery,
+		Notify:                     manager.notifyDashboard,
+		Refresh:                    manager.Refresh,
+		HostFactory: func(loader domain.Loader, run *domain.LoaderRunSummary, triggerEvent loaders.TriggerEventMetadata) loaders.RunHost {
+			return manager.newLoaderRuntimeHost(loader, run, triggerEvent)
+		},
+	})
+	return executor
 }
 
 func (e *LoaderRunExecutor) Run(ctx context.Context, loader Loader, trigger *domain.LoaderTrigger, payloadJSON, source string, options loaderRunOptions, triggerEventAck ...func(context.Context) error) (domain.LoaderRunSummary, error) {
-	prepared, err := e.Prepare(ctx, loader, trigger, payloadJSON, source, options)
-	if err != nil {
-		return domain.LoaderRunSummary{}, err
-	}
-	if len(triggerEventAck) > 0 && triggerEventAck[0] != nil {
-		if err := triggerEventAck[0](ctx); err != nil {
-			slog.Warn("failed to mark loader topic event published", "topic", source, "error", err)
-		}
-	}
-	return e.Execute(ctx, prepared)
+	return e.core.Run(ctx, loader, trigger, payloadJSON, source, loaders.RunOptions{
+		RetryWhenBusy:  options.retryWhenBusy,
+		AlreadyEntered: options.alreadyEntered,
+	}, triggerEventAck...)
 }
 
 func (e *LoaderRunExecutor) Prepare(ctx context.Context, loader Loader, trigger *domain.LoaderTrigger, payloadJSON, source string, options loaderRunOptions) (preparedLoaderRun, error) {
-	m := e.manager
-	payloadJSON, err := normalizeJSONDocument(payloadJSON)
-	if err != nil {
-		if options.alreadyEntered {
-			m.leaveRun(loader.Summary.ID)
-		}
-		return preparedLoaderRun{}, err
-	}
-	now := time.Now().UTC()
-	run := domain.LoaderRunSummary{
-		ID:               uuid.NewString(),
-		LoaderID:         loader.Summary.ID,
-		TriggerSource:    strings.TrimSpace(source),
-		Status:           domain.LoaderRunStatusRunning,
-		StartedAt:        now,
-		PayloadJSON:      payloadJSON,
-		SourceScriptHash: domain.LoaderSourceSHA(loader.Script),
-		ArtifactsDir:     m.runArtifactsDir(loader.Summary.ID, ""),
-	}
-	if trigger != nil {
-		run.TriggerID = trigger.ID
-		run.TriggerKind = trigger.Kind
-	}
-	run.ArtifactsDir = m.runArtifactsDir(loader.Summary.ID, run.ID)
-
-	entered := options.alreadyEntered
-	if !entered && !m.enterRun(loader) {
-		if options.retryWhenBusy {
-			return preparedLoaderRun{}, errLoaderRunBusyForRetry
-		}
-		if err := os.MkdirAll(run.ArtifactsDir, 0o755); err != nil {
-			return preparedLoaderRun{}, fmt.Errorf("create loader run artifacts dir: %w", err)
-		}
-		_ = m.writeRunArtifact(run.ArtifactsDir, "payload.json", payloadJSON)
-		run.Status = domain.LoaderRunStatusSkipped
-		run.CompletedAt = now
-		run.Error = "loader is already running"
-		if err := m.configDB.CreateLoaderRun(ctx, run); err != nil {
-			return preparedLoaderRun{}, err
-		}
-		m.updateTriggerEventDelivery(ctx, run)
-		m.notifyDashboard("loader_run_updated")
-		_ = m.configDB.UpdateLoaderLastError(ctx, loader.Summary.ID, run.Error)
-		_ = m.addLoaderEvent(ctx, loader.Summary.ID, run.ID, run.TriggerID, "loader.run.skipped", "warn", run.Error, nil, "", "", "")
-		_ = m.writeRunArtifact(run.ArtifactsDir, "error.txt", run.Error)
-		return preparedLoaderRun{loader: loader, trigger: trigger, run: run, payloadJSON: payloadJSON}, nil
-	}
-
-	if err := os.MkdirAll(run.ArtifactsDir, 0o755); err != nil {
-		m.leaveRun(loader.Summary.ID)
-		return preparedLoaderRun{}, fmt.Errorf("create loader run artifacts dir: %w", err)
-	}
-	_ = m.writeRunArtifact(run.ArtifactsDir, "payload.json", payloadJSON)
-
-	if err := m.configDB.CreateLoaderRun(ctx, run); err != nil {
-		m.leaveRun(loader.Summary.ID)
-		return preparedLoaderRun{}, err
-	}
-	m.updateTriggerEventDelivery(ctx, run)
-	m.notifyDashboard("loader_run_updated")
-	_ = m.addLoaderEvent(ctx, loader.Summary.ID, run.ID, run.TriggerID, "loader.run.started", "info", "loader run started", map[string]any{"source": run.TriggerSource}, "", "", "")
-	return preparedLoaderRun{loader: loader, trigger: trigger, run: run, payloadJSON: payloadJSON}, nil
+	prepared, err := e.core.Prepare(ctx, loader, trigger, payloadJSON, source, loaders.RunOptions{
+		RetryWhenBusy:  options.retryWhenBusy,
+		AlreadyEntered: options.alreadyEntered,
+	})
+	return preparedLoaderRunFromCore(prepared), err
 }
 
 func (e *LoaderRunExecutor) Execute(ctx context.Context, prepared preparedLoaderRun) (domain.LoaderRunSummary, error) {
-	m := e.manager
-	if prepared.run.Status == domain.LoaderRunStatusSkipped {
-		return prepared.run, nil
-	}
-	defer m.leaveRun(prepared.loader.Summary.ID)
-	run := prepared.run
-	host := &loaderRunHost{manager: m, loader: prepared.loader, run: &run, triggerEvent: parseLoaderTriggerEventMetadata(prepared.payloadJSON)}
-	execution, execErr := m.engine.Execute(ctx, loaders.LoaderExecutionRequest{
-		Runtime:     prepared.loader.Summary.Runtime,
-		Script:      prepared.loader.Script,
-		Trigger:     prepared.trigger,
-		PayloadJSON: prepared.payloadJSON,
-	}, host)
-
-	writeCtx := context.WithoutCancel(ctx)
-	host.cleanupCommandSessions(writeCtx)
-
-	completedAt := time.Now().UTC()
-	run.CompletedAt = completedAt
-	run.DurationMs = completedAt.Sub(run.StartedAt).Milliseconds()
-	if execErr != nil {
-		run.Status = domain.LoaderRunStatusFailed
-		run.Error = execErr.Error()
-		_ = m.writeRunArtifact(run.ArtifactsDir, "error.txt", run.Error)
-		_ = m.configDB.UpdateLoaderLastError(writeCtx, prepared.loader.Summary.ID, run.Error)
-		_ = m.addLoaderEvent(writeCtx, prepared.loader.Summary.ID, run.ID, run.TriggerID, "loader.run.failed", "error", run.Error, nil, "", "", "")
-	} else {
-		run.Status = domain.LoaderRunStatusSucceeded
-		run.ResultJSON = execution.ResultJSON
-		if execution.ResultJSON != "" {
-			_ = m.writeRunArtifact(run.ArtifactsDir, "result.json", execution.ResultJSON)
-		}
-		_ = m.configDB.UpdateLoaderLastError(writeCtx, prepared.loader.Summary.ID, "")
-		_ = m.addLoaderEvent(writeCtx, prepared.loader.Summary.ID, run.ID, run.TriggerID, "loader.run.completed", "info", "loader run completed", map[string]any{"resultJson": execution.ResultJSON}, "", "", "")
-	}
-	if err := m.configDB.UpdateLoaderRun(writeCtx, run); err != nil {
-		return domain.LoaderRunSummary{}, err
-	}
-	m.updateTriggerEventDelivery(writeCtx, run)
-	m.notifyDashboard("loader_run_updated")
-	if err := m.Refresh(writeCtx); err != nil {
-		slog.Warn("failed to refresh loaders after run", "loader_id", prepared.loader.Summary.ID, "error", err)
-	}
-	return run, nil
+	return e.core.Execute(ctx, prepared.toCore())
 }
 
 func (e *LoaderRunExecutor) Abort(ctx context.Context, prepared preparedLoaderRun, reason string) {
-	m := e.manager
-	if prepared.run.Status == domain.LoaderRunStatusSkipped {
-		return
-	}
-	defer m.leaveRun(prepared.loader.Summary.ID)
-	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		reason = "loader run aborted before execution"
-	}
-	run := prepared.run
-	completedAt := time.Now().UTC()
-	run.Status = domain.LoaderRunStatusFailed
-	run.CompletedAt = completedAt
-	run.DurationMs = completedAt.Sub(run.StartedAt).Milliseconds()
-	run.Error = reason
-	_ = m.writeRunArtifact(run.ArtifactsDir, "error.txt", run.Error)
-	_ = m.configDB.UpdateLoaderLastError(ctx, prepared.loader.Summary.ID, run.Error)
-	_ = m.addLoaderEvent(ctx, prepared.loader.Summary.ID, run.ID, run.TriggerID, "loader.run.failed", "error", run.Error, nil, "", "", "")
-	if err := m.configDB.UpdateLoaderRun(ctx, run); err != nil {
-		slog.Warn("failed to abort prepared loader run", "loader_id", prepared.loader.Summary.ID, "run_id", run.ID, "error", err)
-	}
-	m.updateTriggerEventDelivery(ctx, run)
-	m.notifyDashboard("loader_run_updated")
+	e.core.Abort(ctx, prepared.toCore(), reason)
 }
 
 func (m *LoaderManager) runExecutorComponent() *LoaderRunExecutor {
@@ -178,6 +64,7 @@ func (m *LoaderManager) runExecutorComponent() *LoaderRunExecutor {
 }
 
 func (m *LoaderManager) runLoader(ctx context.Context, loader Loader, trigger *domain.LoaderTrigger, payloadJSON, source string, automatic bool, options loaderRunOptions, triggerEventAck ...func(context.Context) error) (domain.LoaderRunSummary, error) {
+	_ = automatic
 	return m.runExecutorComponent().Run(ctx, loader, trigger, payloadJSON, source, options, triggerEventAck...)
 }
 
@@ -191,4 +78,18 @@ func (m *LoaderManager) executePreparedLoaderRun(ctx context.Context, prepared p
 
 func (m *LoaderManager) abortPreparedLoaderRun(ctx context.Context, prepared preparedLoaderRun, reason string) {
 	m.runExecutorComponent().Abort(ctx, prepared, reason)
+}
+
+func (h *loaderRunHost) CleanupCommandSessions(ctx context.Context) {
+	h.cleanupCommandSessions(ctx)
+}
+
+func (m *LoaderManager) loaderRunTimeout(override time.Duration) time.Duration {
+	if override > 0 {
+		return override
+	}
+	if m != nil && m.config != nil && m.config.LoaderRunTimeout > 0 {
+		return m.config.LoaderRunTimeout
+	}
+	return 20 * time.Minute
 }
