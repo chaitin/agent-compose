@@ -1324,7 +1324,7 @@ agents:
 	}
 }
 
-func TestIntegrationCLIInspectProjectAgentRunSessionJSON(t *testing.T) {
+func TestIntegrationCLIInspectProjectAgentRunSandboxSessionJSON(t *testing.T) {
 	composePath := writeComposeFile(t, t.TempDir(), `
 name: cli-inspect-demo
 agents:
@@ -1396,9 +1396,24 @@ agents:
 		t.Fatalf("inspect run JSON = %#v", runDecoded)
 	}
 
+	sandboxOut, sandboxErr, _, sandboxCode := executeCLICommand("inspect", "--host", server.URL, "--file", composePath, "--json", "sandbox", "session-inspect")
+	if sandboxCode != 0 || sandboxErr != "" {
+		t.Fatalf("inspect sandbox code/stderr = %d / %q", sandboxCode, sandboxErr)
+	}
+	var sandboxDecoded composeSessionOutput
+	if err := json.Unmarshal([]byte(sandboxOut), &sandboxDecoded); err != nil {
+		t.Fatalf("inspect sandbox JSON decode failed: %v\n%s", err, sandboxOut)
+	}
+	if sandboxDecoded.SessionID != "session-inspect" || sandboxDecoded.VMStatus != "running" || sandboxDecoded.Tags["project"] == "" {
+		t.Fatalf("inspect sandbox JSON = %#v", sandboxDecoded)
+	}
+
 	sessionOut, sessionErr, _, sessionCode := executeCLICommand("inspect", "--host", server.URL, "--file", composePath, "--json", "session", "session-inspect")
-	if sessionCode != 0 || sessionErr != "" {
-		t.Fatalf("inspect session code/stderr = %d / %q", sessionCode, sessionErr)
+	if sessionCode != 0 {
+		t.Fatalf("inspect session code = %d; stderr = %q", sessionCode, sessionErr)
+	}
+	if !strings.Contains(sessionErr, "deprecated") || !strings.Contains(sessionErr, "will be removed") || !strings.Contains(sessionErr, "agent-compose inspect sandbox") {
+		t.Fatalf("inspect session stderr missing deprecated warning: %q", sessionErr)
 	}
 	var sessionDecoded composeSessionOutput
 	if err := json.Unmarshal([]byte(sessionOut), &sessionDecoded); err != nil {

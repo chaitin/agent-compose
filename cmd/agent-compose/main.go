@@ -650,8 +650,8 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 	imageCmd.AddCommand(imageLSCmd, imagePullCmd, imageRemoveCmd, imageInspectCmd)
 
 	inspectCmd := &cobra.Command{
-		Use:   "inspect <project|agent|run|session|image> [name-or-id]",
-		Short: "Inspect project, agent, run, session, or image details",
+		Use:   "inspect <project|agent|run|sandbox|session|image> [name-or-id]",
+		Short: "Inspect project, agent, run, sandbox, session, or image details",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runComposeInspectCommand(cmd, options, args)
@@ -1235,15 +1235,26 @@ func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string)
 			return commandExitErrorForConnect(fmt.Errorf("inspect run %s in project %s: %w", target, normalized.Name, err))
 		}
 		output = composeRunOutputFromDetail(run.Msg.GetRun())
+	case "sandbox":
+		if target == "" {
+			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect sandbox requires a sandbox")}
+		}
+		output, err = composeSandboxInspectOutputFor(cmd.Context(), clients, target)
+		if err != nil {
+			return commandExitErrorForConnect(fmt.Errorf("inspect sandbox %s: %w", target, err))
+		}
 	case "session":
+		// Deprecated: use `agent-compose inspect sandbox <sandbox>` instead.
+		if err := writeDeprecatedWarning(cmd.ErrOrStderr(), "agent-compose inspect session", "agent-compose inspect sandbox"); err != nil {
+			return err
+		}
 		if target == "" {
 			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect session requires a session id")}
 		}
-		session, err := clients.session.GetSession(cmd.Context(), connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: target}))
+		output, err = composeSandboxInspectOutputFor(cmd.Context(), clients, target)
 		if err != nil {
 			return commandExitErrorForConnect(fmt.Errorf("inspect session %s: %w", target, err))
 		}
-		output = composeSessionOutputFromSummary(session.Msg.GetSession().GetSummary())
 	default:
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("unsupported inspect target %q", kind)}
 	}
@@ -1259,6 +1270,14 @@ func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string)
 		return err
 	}
 	return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+}
+
+func composeSandboxInspectOutputFor(ctx context.Context, clients cliServiceClients, sandbox string) (composeSessionOutput, error) {
+	session, err := clients.session.GetSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sandbox}))
+	if err != nil {
+		return composeSessionOutput{}, err
+	}
+	return composeSessionOutputFromSummary(session.Msg.GetSession().GetSummary()), nil
 }
 
 func resolveComposeProject(cli cliOptions) (string, *compose.NormalizedProjectSpec, string, error) {
