@@ -63,6 +63,28 @@ func TestLoaderServiceConnectErrorClassifiesInternalFailures(t *testing.T) {
 	}
 }
 
+func TestConnectErrorForDomainClassifiesReusableSentinels(t *testing.T) {
+	tests := []struct {
+		err  error
+		code connect.Code
+	}{
+		{err: domain.ClassifyError(domain.ErrUnsupported, "stats are unsupported", nil), code: connect.CodeUnimplemented},
+		{err: domain.ResourceError(domain.ErrNotFound, "sandbox", "missing", "", nil), code: connect.CodeNotFound},
+		{err: domain.ClassifyError(domain.ErrInvalidArgument, "bad request", nil), code: connect.CodeInvalidArgument},
+		{err: domain.ClassifyError(domain.ErrRequired, "project is required", nil), code: connect.CodeInvalidArgument},
+		{err: domain.ClassifyError(domain.ErrFailedPrecondition, "sandbox stopped", nil), code: connect.CodeFailedPrecondition},
+		{err: domain.ClassifyError(domain.ErrAlreadyExists, "project exists", nil), code: connect.CodeAlreadyExists},
+		{err: context.Canceled, code: connect.CodeCanceled},
+		{err: context.DeadlineExceeded, code: connect.CodeDeadlineExceeded},
+		{err: errors.New("boom"), code: connect.CodeInternal},
+	}
+	for _, tc := range tests {
+		if got := connect.CodeOf(ConnectErrorForDomain(tc.err)); got != tc.code {
+			t.Fatalf("ConnectErrorForDomain(%v) = %v, want %v", tc.err, got, tc.code)
+		}
+	}
+}
+
 func TestKernelAndAgentUnaryHandlerWorkflows(t *testing.T) {
 	ctx := context.Background()
 	session := &domain.Session{Summary: domain.SessionSummary{ID: "session-1", VMStatus: domain.VMStatusRunning, CreatedAt: time.Now()}}

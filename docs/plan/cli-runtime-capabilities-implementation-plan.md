@@ -54,7 +54,7 @@
 - 确认 Go proto 生成命令并在实施记录中固定。推荐使用仓库 tool 依赖安装插件后运行：
   - `go install google.golang.org/protobuf/cmd/protoc-gen-go`
   - `go install connectrpc.com/connect/cmd/protoc-gen-connect-go`
-  - `protoc -I proto --go_out=. --go_opt=module=agent-compose --connect-go_out=. --connect-go_opt=module=agent-compose proto/health/v1/health.proto proto/agentcompose/v1/agentcompose.proto proto/agentcompose/v2/agentcompose.proto`
+  - `protoc -I . --go_out=. --go_opt=module=agent-compose --connect-go_out=. --connect-go_opt=module=agent-compose proto/health/v1/health.proto proto/agentcompose/v1/agentcompose.proto proto/agentcompose/v2/agentcompose.proto`
 - TS client 生成使用既有 package script：`cd proto-client && npm ci && npm run gen && npm run build`。
 - 在 API/app delegate 错误处理层统一 typed unsupported 映射，优先复用 `pkg/model/errors.go`、`pkg/images/errors.go`、`pkg/agentcompose/api/image.go` 的 Connect error 映射模式；如果现有错误不足，在 owner package 新增内部 sentinel error，并在 `pkg/agentcompose/api` 或 `pkg/agentcompose/app` delegate 中映射到 Connect `CodeUnimplemented` 或 `CodeFailedPrecondition`。
 - 在 CLI 错误输出中把 unsupported 和 not found 与普通 execution failure 区分。

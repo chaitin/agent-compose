@@ -369,16 +369,19 @@ func TestAPILightweightHandlersCoverageWorkflows(t *testing.T) {
 			_, _ = imageHandler.RemoveImage(ctx, connect.NewRequest(item))
 		}
 	}
-	for _, err := range []error{
-		images.OpError{Op: "inspect", ImageRef: "missing:latest", Err: imagecache.NewError(imagecache.ErrorKindNotFound, "inspect", "missing:latest", errors.New("missing"))},
-		images.OpError{Op: "pull", ImageRef: "bad ref", Err: imagecache.NewError(imagecache.ErrorKindInvalidReference, "pull", "bad ref", errors.New("bad"))},
-		images.OpError{Op: "remove", ImageRef: "busy:latest", Err: imagecache.NewError(imagecache.ErrorKindConflict, "remove", "busy:latest", errors.New("busy"))},
-		images.OpError{Op: "list", Err: imagecache.NewError(imagecache.ErrorKindInternal, "list", "", errors.New("boom"))},
-		images.OpError{Op: "list", Err: imagecache.NewError(imagecache.ErrorKindUnavailable, "list", "", errors.New("down"))},
-		errors.New("other"),
+	for _, tc := range []struct {
+		err  error
+		code connect.Code
+	}{
+		{err: images.OpError{Op: "inspect", ImageRef: "missing:latest", Err: imagecache.NewError(imagecache.ErrorKindNotFound, "inspect", "missing:latest", errors.New("missing"))}, code: connect.CodeNotFound},
+		{err: images.OpError{Op: "pull", ImageRef: "bad ref", Err: imagecache.NewError(imagecache.ErrorKindInvalidReference, "pull", "bad ref", errors.New("bad"))}, code: connect.CodeInvalidArgument},
+		{err: images.OpError{Op: "remove", ImageRef: "busy:latest", Err: imagecache.NewError(imagecache.ErrorKindConflict, "remove", "busy:latest", errors.New("busy"))}, code: connect.CodeFailedPrecondition},
+		{err: images.OpError{Op: "list", Err: imagecache.NewError(imagecache.ErrorKindInternal, "list", "", errors.New("boom"))}, code: connect.CodeInternal},
+		{err: images.OpError{Op: "list", Err: imagecache.NewError(imagecache.ErrorKindUnavailable, "list", "", errors.New("down"))}, code: connect.CodeUnavailable},
+		{err: errors.New("other"), code: connect.CodeUnknown},
 	} {
-		if ConnectErrorForImageBackend("op", "image:latest", err) == nil {
-			t.Fatalf("expected image connect error")
+		if got := connect.CodeOf(ConnectErrorForImageBackend("op", "image:latest", tc.err)); got != tc.code {
+			t.Fatalf("ConnectErrorForImageBackend(%v) = %v, want %v", tc.err, got, tc.code)
 		}
 	}
 	if ConnectErrorForImageBackend("", "", nil) != nil {

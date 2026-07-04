@@ -223,23 +223,18 @@ func (s *LoaderHandler) resolveDefaultAgent(ctx context.Context, agentID, provid
 }
 
 func loaderServiceConnectError(err error) error {
-	if errors.Is(err, domain.ErrNotFound) {
-		return connect.NewError(connect.CodeNotFound, err)
-	}
-	if errors.Is(err, domain.ErrFailedPrecondition) || errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrReferenced) {
-		return connect.NewError(connect.CodeFailedPrecondition, err)
-	}
-	if errors.Is(err, domain.ErrAlreadyExists) {
-		return connect.NewError(connect.CodeAlreadyExists, err)
-	}
-	if errors.Is(err, context.Canceled) {
-		return connect.NewError(connect.CodeCanceled, err)
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return connect.NewError(connect.CodeDeadlineExceeded, err)
-	}
 	if isLoaderInternalError(err) {
 		return connect.NewError(connect.CodeInternal, err)
+	}
+	if errors.Is(err, domain.ErrNotFound) ||
+		errors.Is(err, domain.ErrFailedPrecondition) ||
+		errors.Is(err, domain.ErrConflict) ||
+		errors.Is(err, domain.ErrReferenced) ||
+		errors.Is(err, domain.ErrAlreadyExists) ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, domain.ErrUnsupported) {
+		return ConnectErrorForDomain(err)
 	}
 	return connect.NewError(connect.CodeInvalidArgument, err)
 }

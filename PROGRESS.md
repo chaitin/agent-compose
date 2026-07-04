@@ -28,7 +28,7 @@
 
 ## 阶段 0：协议生成和错误基线
 
-- [ ] 0.1 建立 proto 生成、typed error 和 CLI 错误输出基线
+- [x] 0.1 建立 proto 生成、typed error 和 CLI 错误输出基线
 
   依赖：无。
 
@@ -55,10 +55,24 @@
   - 未引入功能语义变化时，现有相关测试通过。
 
   完成总结：
-  - 状态：待完成。
-  - 变更：待记录。
-  - 验证：待记录。
-  - 审计与例外：待记录。
+  - 状态：已完成。
+  - 变更：
+    - 确认 Go proto/Connect Go 稳定生成命令为 `protoc -I . --go_out=. --go_opt=module=agent-compose --connect-go_out=. --connect-go_opt=module=agent-compose proto/health/v1/health.proto proto/agentcompose/v1/agentcompose.proto proto/agentcompose/v2/agentcompose.proto`，并同步修正 `docs/plan/cli-runtime-capabilities-implementation-plan.md` 中的命令，避免 `-I proto` 造成 generated source path 漂移。
+    - 确认 `proto-client` 命令为 `cd proto-client && npm ci && npm run gen && npm run build`。
+    - 新增 `domain.ErrUnsupported` 和 `pkg/agentcompose/api.ConnectErrorForDomain`，统一 unsupported、not found、invalid argument、failed precondition、already exists、context cancel/deadline 的 Connect code 基线。
+    - 让 loader、run、project 相关映射复用或识别新的 unsupported/domain sentinel；保留 loader 未分类错误默认 invalid argument 的既有语义。
+    - 让 CLI 将 `connect.CodeUnimplemented` 映射到独立 `exitCodeUnsupported`，避免 unsupported 与普通 execution failure 混淆。
+    - 补强 `images.IsNotFound`，同时识别 `imagecache.ErrorKindNotFound`，为后续 image inspect-and-skip 复用。
+    - 补充 API、CLI、domain、image backend 错误分类测试。
+  - 验证：
+    - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs ./pkg/driver`：通过。
+    - `protoc -I . --go_out=. --go_opt=module=agent-compose --connect-go_out=. --connect-go_opt=module=agent-compose proto/health/v1/health.proto proto/agentcompose/v1/agentcompose.proto proto/agentcompose/v2/agentcompose.proto`：通过；除本地 `protoc` 版本注释差异外，生成布局稳定，未提交 generated churn。
+    - `cd proto-client && npm ci && npm run gen && npm run build`：通过。
+    - `task build`：通过。
+  - 审计与例外：
+    - `proto/agentcompose/v2/agentcompose.proto` 当前字段号连续且 append-friendly；后续 `AgentSpec` Jupyter 字段应追加为 `11`，`RunService`/`SandboxService` 新 RPC 和消息应追加新字段号，不复用旧号。
+    - 当前本机 `protoc` 为 `libprotoc 3.21.12`，仓库中 `proto/health/v1/health.pb.go` 头部记录为 `protoc v7.34.1`；该差异只影响版本注释，已避免提交无意义 generated churn。
+    - 未引入 CLI 命令功能语义变化；仅建立 unsupported/not-found/invalid-argument 错误分类和退出码基线。
   - 下一目标：1.1。
 
 ## 阶段 1：OCI image `pull` inspect-and-skip

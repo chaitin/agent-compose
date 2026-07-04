@@ -76,7 +76,7 @@ func IsNotFound(err error) bool {
 	}
 	var backendErr OpError
 	if errors.As(err, &backendErr) {
-		return cerrdefs.IsNotFound(backendErr.Err)
+		return cerrdefs.IsNotFound(backendErr.Err) || imagecache.IsKind(backendErr.Err, imagecache.ErrorKindNotFound)
 	}
-	return cerrdefs.IsNotFound(err)
+	return cerrdefs.IsNotFound(err) || imagecache.IsKind(err, imagecache.ErrorKindNotFound)
 }

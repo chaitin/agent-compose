@@ -290,7 +290,7 @@ func projectConnectError(err error) error {
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	case errors.Is(err, projects.ErrUnavailable):
 		return connect.NewError(connect.CodeUnavailable, err)
-	case errors.Is(err, projects.ErrUnimplemented):
+	case errors.Is(err, projects.ErrUnimplemented), errors.Is(err, domain.ErrUnsupported):
 		return connect.NewError(connect.CodeUnimplemented, err)
 	case errors.Is(err, sql.ErrNoRows), errors.Is(err, domain.ErrNotFound):
 		return connect.NewError(connect.CodeNotFound, err)

@@ -681,6 +681,64 @@ func TestStatusCommandUnavailableWritesStderrAndExitCode(t *testing.T) {
 	}
 }
 
+func TestCommandExitErrorForConnectClassifiesRPCFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		code int
+	}{
+		{name: "invalid argument", err: connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("bad request")), code: exitCodeUsage},
+		{name: "not found", err: connect.NewError(connect.CodeNotFound, fmt.Errorf("missing")), code: exitCodeUsage},
+		{name: "failed precondition", err: connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("stopped")), code: exitCodeUsage},
+		{name: "unavailable", err: connect.NewError(connect.CodeUnavailable, fmt.Errorf("daemon down")), code: exitCodeUnavailable},
+		{name: "unsupported", err: connect.NewError(connect.CodeUnimplemented, fmt.Errorf("stats unsupported")), code: exitCodeUnsupported},
+		{name: "ordinary failure", err: connect.NewError(connect.CodeInternal, fmt.Errorf("boom")), code: exitCodeGeneral},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := commandExitErrorForConnect(fmt.Errorf("operation: %w", tc.err))
+			if got := commandExitCode(err); got != tc.code {
+				t.Fatalf("exit code = %d, want %d; err=%v", got, tc.code, err)
+			}
+		})
+	}
+}
+
+func TestIntegrationCLIListProjectsClassifiesNotFoundAndUnsupported(t *testing.T) {
+	tests := []struct {
+		name    string
+		rpcCode connect.Code
+		exit    int
+		want    string
+	}{
+		{name: "not found", rpcCode: connect.CodeNotFound, exit: exitCodeUsage, want: "not_found"},
+		{name: "unsupported", rpcCode: connect.CodeUnimplemented, exit: exitCodeUnsupported, want: "unimplemented"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newComposeServiceStubServer(t, composeServiceStubs{
+				project: projectServiceStub{
+					listProjects: func(ctx context.Context, req *connect.Request[agentcomposev2.ListProjectsRequest]) (*connect.Response[agentcomposev2.ListProjectsResponse], error) {
+						return nil, connect.NewError(tc.rpcCode, fmt.Errorf("%s list projects", tc.name))
+					},
+				},
+			})
+			defer server.Close()
+
+			stdout, stderr, _, exitCode := executeCLICommand("ls", "--host", server.URL)
+			if exitCode != tc.exit {
+				t.Fatalf("ls %s exit code = %d, want %d; stderr=%q", tc.name, exitCode, tc.exit, stderr)
+			}
+			if stdout != "" {
+				t.Fatalf("ls %s stdout = %q, want empty", tc.name, stdout)
+			}
+			if !strings.Contains(stderr, "list projects") || !strings.Contains(stderr, tc.want) {
+				t.Fatalf("ls %s stderr = %q, want operation context and %q", tc.name, stderr, tc.want)
+			}
+		})
+	}
+}
+
 func TestInvalidHostWritesStderrAndUsageExitCode(t *testing.T) {
 	stdout, stderr, runCount, exitCode := executeCLICommand("status", "--host", "127.0.0.1:7410")
 	if exitCode != exitCodeUsage {

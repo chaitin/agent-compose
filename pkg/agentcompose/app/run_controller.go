@@ -130,5 +130,16 @@ func runConnectError(err error) error {
 	if errors.Is(err, runs.ErrInvalidRequest) {
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	if errors.Is(err, domain.ErrUnsupported) ||
+		errors.Is(err, domain.ErrNotFound) ||
+		errors.Is(err, domain.ErrInvalidArgument) ||
+		errors.Is(err, domain.ErrRequired) ||
+		errors.Is(err, domain.ErrAmbiguous) ||
+		errors.Is(err, domain.ErrFailedPrecondition) ||
+		errors.Is(err, domain.ErrConflict) ||
+		errors.Is(err, domain.ErrReferenced) ||
+		errors.Is(err, domain.ErrAlreadyExists) {
+		return api.ConnectErrorForDomain(err)
+	}
 	return connect.NewError(connect.CodeInternal, fmt.Errorf("%w", err))
 }

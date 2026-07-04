@@ -3213,6 +3213,7 @@ const (
 	exitCodeGeneral     = 1
 	exitCodeUsage       = 2
 	exitCodeUnavailable = 3
+	exitCodeUnsupported = 4
 )
 
 func commandExitCode(err error) int {
@@ -3228,6 +3229,8 @@ func commandExitCode(err error) int {
 
 func commandExitErrorForConnect(err error) error {
 	switch connect.CodeOf(err) {
+	case connect.CodeUnimplemented:
+		return commandExitError{Code: exitCodeUnsupported, Err: err}
 	case connect.CodeUnavailable:
 		return commandExitError{Code: exitCodeUnavailable, Err: err}
 	case connect.CodeInvalidArgument, connect.CodeFailedPrecondition, connect.CodeNotFound:

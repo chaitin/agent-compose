@@ -9,6 +9,7 @@ import (
 var (
 	ErrNotFound           = errors.New("not found")
 	ErrInvalidArgument    = errors.New("invalid argument")
+	ErrUnsupported        = errors.New("unsupported")
 	ErrRequired           = errors.New("required")
 	ErrAmbiguous          = errors.New("ambiguous")
 	ErrConflict           = errors.New("conflict")

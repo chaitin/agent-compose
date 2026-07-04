@@ -161,6 +161,9 @@ func testModelBranchCoverageWorkflows(t *testing.T) {
 	if err := domain.ClassifyError(domain.ErrInvalidArgument, "bad input", errors.New("cause")); !errors.Is(err, domain.ErrInvalidArgument) || !strings.Contains(err.Error(), "bad input: cause") {
 		t.Fatalf("ClassifyError = %v", err)
 	}
+	if err := domain.ClassifyError(domain.ErrUnsupported, "feature unsupported", nil); !errors.Is(err, domain.ErrUnsupported) || !strings.Contains(err.Error(), "feature unsupported") {
+		t.Fatalf("unsupported ClassifyError = %v", err)
+	}
 	workspace, err := configstore.NormalizeWorkspaceConfig(domain.WorkspaceConfig{Name: " Workspace ", Type: "FILE", ConfigJSON: "", Comment: " note "}, true)
 	if err != nil || workspace.ID == "" || workspace.Type != "file" || workspace.ConfigJSON != "{}" || workspace.Comment != "note" {
 		t.Fatalf("NormalizeWorkspaceConfig assign = %#v/%v", workspace, err)
