@@ -39,7 +39,7 @@ func testDaemonListenConfigWorkflow(t *testing.T) {
 	t.Run("cli ps table and json", TestIntegrationCLIPSTableAndJSON)
 	t.Run("cli exec streams and json", TestIntegrationCLIExecStreamsAndSupportsJSON)
 	t.Run("cli exec ambiguous session is usage error", TestIntegrationCLIExecAmbiguousSessionIsUsageError)
-	t.Run("cli inspect project agent run session json", TestIntegrationCLIInspectProjectAgentRunSessionJSON)
+	t.Run("cli inspect project agent run session json", TestIntegrationCLIInspectProjectAgentRunSandboxSessionJSON)
 	t.Run("cli images aliases and json", TestIntegrationCLIImagesAliasesAndJSON)
 	t.Run("cli image pull aliases and json", TestIntegrationCLIImagePullAliasesAndJSON)
 	t.Run("cli image remove aliases and json", TestIntegrationCLIImageRemoveAliasesAndJSON)
