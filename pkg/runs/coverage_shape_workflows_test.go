@@ -3,6 +3,7 @@ package runs
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -410,10 +411,17 @@ func TestRunsControllerRunProjectAgentCommandWorkflow(t *testing.T) {
 	if run.Status != domain.ProjectRunStatusSucceeded || run.Output != "command output\n" || run.ArtifactsDir == "" || run.LogsPath == "" {
 		t.Fatalf("command run = %#v", run)
 	}
-	if data, err := os.ReadFile(run.LogsPath); err != nil || string(data) != "command output\n" {
+	if data, err := os.ReadFile(run.LogsPath); err != nil || !strings.Contains(string(data), "$ bash -lc") || !strings.Contains(string(data), "command output\n") {
 		t.Fatalf("command run logs_path content = %q err=%v", string(data), err)
 	}
-	if !started || len(chunks) != 1 || runtime.spec.Command != "bash" || strings.Join(runtime.spec.Args, " ") != "-lc echo command" {
+	requestData, err := os.ReadFile(filepath.Join(run.ArtifactsDir, "command-request.json"))
+	if err != nil || !strings.Contains(string(requestData), `"mode": "shell"`) || !strings.Contains(string(requestData), `"script": "echo command"`) {
+		t.Fatalf("command request artifact = %q err=%v", string(requestData), err)
+	}
+	if data, err := os.ReadFile(filepath.Join(run.ArtifactsDir, "output.txt")); err != nil || string(data) != "command output\n" {
+		t.Fatalf("command output artifact = %q err=%v", string(data), err)
+	}
+	if !started || len(chunks) != 3 || runtime.spec.Command != "sh" || !strings.Contains(strings.Join(runtime.spec.Args, " "), "agent-compose-runtime exec") {
 		t.Fatalf("started=%v chunks=%#v spec=%#v", started, chunks, runtime.spec)
 	}
 	if _, _, err := controller.RunProjectAgent(ctx, RunAgentRequest{
@@ -993,8 +1001,16 @@ type fakeControllerRuntime struct {
 
 func (r *fakeControllerRuntime) ExecStream(_ context.Context, _ *domain.Session, _ domain.VMState, spec domain.ExecSpec, writer domain.ExecStreamWriter) (domain.ExecResult, error) {
 	r.spec = spec
+	writer(domain.ExecChunk{Text: "$ bash -lc 'echo command'\n"})
 	writer(domain.ExecChunk{Text: "command output\n"})
-	return domain.ExecResult{Stdout: "command output\n", Output: "command output\n", ExitCode: 0, Success: true}, nil
+	payload := fakeRuntimeCommandPayload(domain.RuntimeCommandResult{Stdout: "command output\n", Output: "command output\n", ExitCode: 0, Success: true})
+	writer(domain.ExecChunk{Text: payload})
+	return domain.ExecResult{Stdout: payload, Output: "$ bash -lc 'echo command'\ncommand output\n" + payload, ExitCode: 0, Success: true}, nil
+}
+
+func fakeRuntimeCommandPayload(result domain.RuntimeCommandResult) string {
+	data, _ := json.Marshal(result)
+	return execution.CommandResultPrefix + string(data) + "\n"
 }
 
 type fakeControllerImages struct{}

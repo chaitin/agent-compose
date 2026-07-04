@@ -341,7 +341,7 @@ func markProjectRunTerminalError(ctx context.Context, coordinator *Coordinator, 
 
 func (c *Controller) executeProjectRunCommand(ctx context.Context, run domain.ProjectRunRecord, session *domain.Session, req RunAgentRequest, commandText string, sink *StreamSink) (TransitionRequest, error) {
 	artifactsDir := projectRunCommandArtifactsDir(run, session)
-	logsPath := filepath.Join(artifactsDir, "output.txt")
+	logsPath := filepath.Join(artifactsDir, "transcript.txt")
 	transition := TransitionRequest{
 		RunID:     run.RunID,
 		SessionID: session.Summary.ID,
@@ -373,7 +373,29 @@ func (c *Controller) executeProjectRunCommand(ctx context.Context, run domain.Pr
 		transition.Error = fmt.Sprintf("command execution failed: %v", err)
 		return transition, err
 	}
-	var accumulator execution.ExecStreamAccumulator
+	if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
+		transition.ExitCode = 1
+		transition.Error = fmt.Sprintf("command execution failed: %v", err)
+		return transition, err
+	}
+	guestArtifactsDir := filepath.Join(c.config.GuestStateRoot, "runs", run.RunID)
+	runtimeRequest := execution.RuntimeCommandRequestPayloadFromCommand(
+		c.config,
+		"shell",
+		"",
+		nil,
+		commandText,
+		c.config.GuestWorkspacePath,
+		execEnvMap(req.Env),
+		0,
+		0,
+		guestArtifactsDir,
+	)
+	if err := execution.WriteJSONArtifact(filepath.Join(artifactsDir, "command-request.json"), runtimeRequest); err != nil {
+		transition.ExitCode = 1
+		transition.Error = fmt.Sprintf("command execution failed: %v", err)
+		return transition, err
+	}
 	var sendErr error
 	writer := func(chunk domain.ExecChunk) {
 		if sendErr != nil {
@@ -383,43 +405,42 @@ func (c *Controller) executeProjectRunCommand(ctx context.Context, run domain.Pr
 			sendErr = err
 			return
 		}
-		accumulator.WriteChunk(chunk)
 		if sink != nil && sink.SendChunk != nil {
 			sendErr = sink.SendChunk(run.RunID, chunk, time.Now().UTC())
 		}
 	}
 	execCtx, cancel := execution.ExecContext(ctx, 0)
 	defer cancel()
-	result, execErr := runtime.ExecStream(execCtx, session, vmState, domain.ExecSpec{
-		Command: "bash",
-		Args:    []string{"-lc", commandText},
-		Env:     execEnvMap(req.Env),
-		Cwd:     c.config.GuestWorkspacePath,
-	}, writer)
+	result, execErr := runtime.ExecStream(execCtx, session, vmState, execution.BuildRuntimeCommandExecSpec(c.config, session, filepath.Join(guestArtifactsDir, "command-request.json"), c.config.GuestHomePath), writer)
 	if sendErr != nil {
 		transition.ExitCode = 1
 		transition.Error = fmt.Sprintf("command execution failed: %v", sendErr)
 		return transition, sendErr
 	}
 	if execErr != nil {
-		result = execution.MergeExecResults(result, accumulator.Result(execution.FirstNonZeroInt(result.ExitCode, 1), false))
 		result.ExitCode = execution.FirstNonZeroInt(result.ExitCode, 1)
 		result.Success = false
 		if strings.TrimSpace(result.Output) == "" {
 			result.Output = firstNonEmpty(result.Stderr, result.Stdout, execErr.Error())
 		}
-	} else {
-		result = execution.MergeExecResults(result, accumulator.Result(result.ExitCode, result.Success))
+		transition = transitionFromCommandResult(run, session, commandText, result, execErr)
+		transition.LogsPath = logsPath
+		return transition, execErr
 	}
-	transition = transitionFromCommandResult(run, session, commandText, result, execErr)
-	if err := writeProjectRunCommandArtifacts(transition.ArtifactsDir, commandText, result); err != nil {
-		if execErr == nil {
-			execErr = err
-		}
+	commandResult, err := execution.ParseCommandExecResult(result)
+	if err != nil {
 		transition.ExitCode = execution.FirstNonZeroInt(transition.ExitCode, 1)
 		transition.Error = fmt.Sprintf("command execution failed: %v", err)
+		return transition, err
 	}
-	return transition, execErr
+	if err := execution.MirrorRuntimeCommandArtifacts(artifactsDir, commandResult); err != nil {
+		transition.ExitCode = execution.FirstNonZeroInt(commandResult.ExitCode, 1)
+		transition.Error = fmt.Sprintf("command execution failed: %v", err)
+		return transition, err
+	}
+	transition = transitionFromCommandResult(run, session, commandText, execution.RuntimeCommandResultToExecResult(commandResult), nil)
+	transition.LogsPath = logsPath
+	return transition, nil
 }
 
 func (c *Controller) projectRunAgentConfig(ctx context.Context, run domain.ProjectRunRecord) (execution.AgentConfig, error) {
@@ -517,13 +538,6 @@ func appendProjectRunLogChunk(path string, chunk domain.ExecChunk) error {
 		return fmt.Errorf("append run log %s: %w", path, err)
 	}
 	return nil
-}
-
-func writeProjectRunCommandArtifacts(artifactsDir, commandText string, result domain.ExecResult) error {
-	if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
-		return fmt.Errorf("create command artifacts dir: %w", err)
-	}
-	return execution.WriteCellArtifacts(artifactsDir, commandText, result)
 }
 
 func execEnvMap(items []*agentcomposev2.EnvVarSpec) map[string]string {

@@ -25,29 +25,36 @@ type RuntimeCommandRequest struct {
 }
 
 func RuntimeCommandRequestPayload(config *appconfig.Config, request domain.LoaderCommandRequest, guestCellDir string) RuntimeCommandRequest {
+	return RuntimeCommandRequestPayloadFromCommand(config, request.Mode, request.Command, request.Args, request.Script, request.Cwd, request.Env, request.TimeoutMs, request.MaxOutputBytes, guestCellDir)
+}
+
+func RuntimeCommandRequestPayloadFromCommand(config *appconfig.Config, mode, command string, args []string, script, cwd string, env map[string]string, timeoutMs, maxOutputBytes int64, guestArtifactDir string) RuntimeCommandRequest {
 	appconfig.ApplyDefaultGuestPaths(config)
-	maxOutputBytes := request.MaxOutputBytes
 	if maxOutputBytes <= 0 {
 		maxOutputBytes = DefaultLoaderCommandMaxOutputBytes
 	}
-	cwd := strings.TrimSpace(request.Cwd)
+	cwd = strings.TrimSpace(cwd)
 	if cwd == "" {
 		cwd = config.GuestWorkspacePath
 	}
 	return RuntimeCommandRequest{
-		Mode:           strings.ToLower(strings.TrimSpace(request.Mode)),
-		Command:        request.Command,
-		Args:           append([]string(nil), request.Args...),
-		Script:         request.Script,
+		Mode:           strings.ToLower(strings.TrimSpace(mode)),
+		Command:        command,
+		Args:           append([]string(nil), args...),
+		Script:         script,
 		Cwd:            cwd,
-		Env:            request.Env,
-		TimeoutMs:      request.TimeoutMs,
+		Env:            env,
+		TimeoutMs:      timeoutMs,
 		MaxOutputBytes: maxOutputBytes,
-		ArtifactDir:    guestCellDir,
+		ArtifactDir:    guestArtifactDir,
 	}
 }
 
 func BuildLoaderCommandExecSpec(config *appconfig.Config, session *domain.Session, guestRequestPath, home string) domain.ExecSpec {
+	return BuildRuntimeCommandExecSpec(config, session, guestRequestPath, home)
+}
+
+func BuildRuntimeCommandExecSpec(config *appconfig.Config, session *domain.Session, guestRequestPath, home string) domain.ExecSpec {
 	appconfig.ApplyDefaultGuestPaths(config)
 	env := BuildSessionExecEnv(config, session, home)
 	command := strings.Join([]string{
@@ -65,6 +72,16 @@ func BuildLoaderCommandExecSpec(config *appconfig.Config, session *domain.Sessio
 		Args:    []string{"-lc", command},
 		Env:     env,
 		Cwd:     config.GuestWorkspacePath,
+	}
+}
+
+func RuntimeCommandResultToExecResult(result domain.RuntimeCommandResult) domain.ExecResult {
+	return domain.ExecResult{
+		Stdout:   result.Stdout,
+		Stderr:   result.Stderr,
+		Output:   result.Output,
+		ExitCode: result.ExitCode,
+		Success:  result.Success,
 	}
 }
 

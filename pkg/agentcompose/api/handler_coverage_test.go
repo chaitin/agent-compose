@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -267,7 +269,8 @@ func (b *testImageBackend) RemoveImage(context.Context, images.RemoveRequest) (i
 
 func TestExecHandlerSessionTargetWorkflow(t *testing.T) {
 	ctx := context.Background()
-	session := &domain.Session{Summary: domain.SessionSummary{ID: "session-1", VMStatus: domain.VMStatusRunning}}
+	sessionRoot := t.TempDir()
+	session := &domain.Session{Summary: domain.SessionSummary{ID: "session-1", VMStatus: domain.VMStatusRunning, WorkspacePath: filepath.Join(sessionRoot, "workspace")}}
 	store := &apiExecSessionStore{session: session, vm: domain.VMState{Driver: "docker"}}
 	runtime := &apiExecRuntime{}
 	handler := NewExecHandler(&appconfig.Config{}, store, apiExecProjectStore{}, func(*domain.Session) (ExecRuntime, error) {
@@ -281,8 +284,24 @@ func TestExecHandlerSessionTargetWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Exec returned error: %v", err)
 	}
-	if !resp.Msg.GetResult().GetSuccess() || resp.Msg.GetResult().GetStdout() != "hi\n" || runtime.spec.Env["FOO"] != "bar" {
+	if !resp.Msg.GetResult().GetSuccess() || resp.Msg.GetResult().GetStdout() != "hi\n" || runtime.spec.Command != "sh" || !strings.Contains(strings.Join(runtime.spec.Args, " "), "agent-compose-runtime exec") {
 		t.Fatalf("exec resp=%#v spec=%#v", resp.Msg.GetResult(), runtime.spec)
+	}
+	requestFiles, err := filepath.Glob(filepath.Join(sessionRoot, "state", "exec", "*", "command-request.json"))
+	if err != nil || len(requestFiles) != 1 {
+		t.Fatalf("command request files=%#v err=%v", requestFiles, err)
+	}
+	var commandRequest execution.RuntimeCommandRequest
+	data, err := os.ReadFile(requestFiles[0])
+	if err != nil || json.Unmarshal(data, &commandRequest) != nil {
+		t.Fatalf("read command request data=%q err=%v", string(data), err)
+	}
+	if commandRequest.Env["FOO"] != "bar" || commandRequest.Command != "echo" || len(commandRequest.Args) != 1 || commandRequest.Args[0] != "hi" {
+		t.Fatalf("command request = %#v", commandRequest)
+	}
+	outputData, err := os.ReadFile(filepath.Join(filepath.Dir(requestFiles[0]), "output.txt"))
+	if err != nil || string(outputData) != "hi\n" {
+		t.Fatalf("exec output artifact = %q err=%v", string(outputData), err)
 	}
 	if _, err := handler.Exec(ctx, connect.NewRequest(&agentcomposev2.ExecRequest{Target: &agentcomposev2.ExecRequest_SessionId{SessionId: "session-1"}})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("expected missing command error, got %v", err)
@@ -552,8 +571,16 @@ type apiExecRuntime struct {
 
 func (r *apiExecRuntime) ExecStream(_ context.Context, _ *domain.Session, _ domain.VMState, spec domain.ExecSpec, writer domain.ExecStreamWriter) (domain.ExecResult, error) {
 	r.spec = spec
+	writer(domain.ExecChunk{Text: "$ echo hi\n"})
 	writer(domain.ExecChunk{Text: "hi\n"})
-	return domain.ExecResult{Stdout: "hi\n", Output: "hi\n", ExitCode: 0, Success: true}, nil
+	payload := apiRuntimeCommandPayload(domain.RuntimeCommandResult{Stdout: "hi\n", Output: "hi\n", ExitCode: 0, Success: true})
+	writer(domain.ExecChunk{Text: payload})
+	return domain.ExecResult{Stdout: payload, Output: "$ echo hi\nhi\n" + payload, ExitCode: 0, Success: true}, nil
+}
+
+func apiRuntimeCommandPayload(result domain.RuntimeCommandResult) string {
+	data, _ := json.Marshal(result)
+	return execution.CommandResultPrefix + string(data) + "\n"
 }
 
 type apiSandboxStore struct {

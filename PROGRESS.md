@@ -640,7 +640,7 @@
     - 没有新增 `ExecInteractive`、WebSocket、TTY、PTY、resize 或运行中 stdin。
   - 下一目标：8.2。
 
-- [ ] 8.2 让 `run --command` 和 `ExecStream` 通过 guest `agent-compose-runtime exec` 执行
+- [x] 8.2 让 `run --command` 和 `ExecStream` 通过 guest `agent-compose-runtime exec` 执行
 
   依赖：8.1。
 
@@ -670,10 +670,21 @@
   - command artifacts 由 JS runtime 生成，host 不重复覆盖 `command-result.json`。
 
   完成总结：
-  - 状态：待完成。
-  - 变更：待记录。
-  - 验证：待记录。
-  - 审计与例外：待记录。
+  - 状态：已完成。
+  - 变更：
+    - 新增通用 runtime command request/spec helper，保留 loader command 兼容入口；`run --command` 和 `ExecStream` 均写入 `command-request.json` 后调用 guest `agent-compose-runtime exec`。
+    - `run --command` artifact dir 仍为 `<session>/state/runs/<run_id>/`，guest artifact dir 为 `${GuestStateRoot}/runs/<run_id>`；`ProjectRun.output`、`result_json`、`artifacts_dir` 和 exit code 继续来自 runtime `__COMMAND_RESULT__`。
+    - `ExecStream` 为每次 exec 创建 `<session>/state/exec/<exec_id>/`，写入 request file，流式返回 runtime transcript，并把最终 runtime command result 映射为 `ExecResult`。
+    - run/exec transcript stream 追加到 `transcript.txt`；raw `stdout.txt`、`stderr.txt`、`output.txt` 和 `command-result.json` 由 guest runtime 生成，host 仅在测试/缺失场景镜像 raw artifacts，不覆盖 `command-result.json`。
+    - 补充 run command request/output artifact、transcript log、runtime wrapper spec 测试，以及 ExecStream request/output artifact 和 wrapper spec 测试。
+  - 验证：
+    - `go test ./pkg/execution ./pkg/runs ./pkg/agentcompose/api`：通过。
+    - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs ./pkg/execution`：通过。
+    - `task build`：通过。
+  - 审计与例外：
+    - `ExecStream` 仍是一次性 server streaming；没有新增 `ExecInteractive`、WebSocket、bidi stream、TTY、PTY、resize 或运行中 stdin。
+    - `exec` 不创建 `ProjectRun`；需要 run 审计时仍使用 `run --command`。
+    - 为避免污染 raw command `output.txt`，实时 follow 使用 `transcript.txt` 作为 `logs_path`，而 `ProjectRun.output` 保持 runtime command result 的 raw output。
   - 下一目标：8.3。
 
 - [ ] 8.3 统一 CLI command transcript 输出
