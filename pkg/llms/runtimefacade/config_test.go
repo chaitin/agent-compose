@@ -113,6 +113,14 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 		t.Fatalf("opencode openai env = %#v", openAI.Env)
 	}
 
+	anthropic, err := EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "opencode", "anthropic/claude-test", TokenSourceAgent, "run-anthropic")
+	if err != nil {
+		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode anthropic returned error: %v", err)
+	}
+	if anthropic.Env["LLM_API_PROTOCOL"] != llms.APIProtocolMessages || anthropic.Env["ANTHROPIC_BASE_URL"] == "" || anthropic.Env["OPENCODE_CONFIG"] == "" {
+		t.Fatalf("opencode anthropic env = %#v", anthropic.Env)
+	}
+
 	custom, err := EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "opencode", "custom/gpt-custom", TokenSourceLoaderCommand, "run-custom")
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode custom returned error: %v", err)

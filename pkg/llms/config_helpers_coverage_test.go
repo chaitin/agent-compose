@@ -76,6 +76,15 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if _, _, err := SplitOpenCodeModel("bad"); err == nil {
 		t.Fatalf("expected invalid opencode model error")
 	}
+	if got := NormalizeAPIEndpoint("https://api.example.test/openai"); got != "https://api.example.test/openai/v1/responses" {
+		t.Fatalf("NormalizeAPIEndpoint = %q", got)
+	}
+	if got := NormalizeAPIEndpointForProtocol("https://api.example.test/openai/v1", APIProtocolChatCompletions); got != "https://api.example.test/openai/v1/chat/completions" {
+		t.Fatalf("NormalizeAPIEndpointForProtocol chat = %q", got)
+	}
+	if got := NormalizeAPIEndpointForProtocol("https://api.example.test", APIProtocolChatCompletions); got != "https://api.example.test/v1/chat/completions" {
+		t.Fatalf("NormalizeAPIEndpointForProtocol root = %q", got)
+	}
 	merged := MergeManagedExecEnv(map[string]string{"OPENAI_API_KEY": "secret", "A": "1"}, map[string]string{"B": "2"})
 	if merged["OPENAI_API_KEY"] != "" || merged["A"] != "1" || merged["B"] != "2" {
 		t.Fatalf("merged env = %#v", merged)

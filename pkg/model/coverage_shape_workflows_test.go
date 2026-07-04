@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -148,6 +149,17 @@ func testModelBranchCoverageWorkflows(t *testing.T) {
 	}
 	if domain.MergeEnvItems(nil, nil) != nil {
 		t.Fatalf("MergeEnvItems nil did not return nil")
+	}
+	envMap := domain.SessionEnvMap([]domain.SessionEnvVar{{Name: " A ", Value: "1"}, {Name: " ", Value: "skip"}}, []domain.SessionEnvVar{{Name: "B", Value: "2"}})
+	if envMap["A"] != "1" || envMap["B"] != "2" || domain.SessionEnvMap([]domain.SessionEnvVar{{Name: " "}}) != nil {
+		t.Fatalf("SessionEnvMap = %#v", envMap)
+	}
+	classified := domain.ResourceError(domain.ErrNotFound, "session", "session-1", "", errors.New("missing"))
+	if !errors.Is(classified, domain.ErrNotFound) || !strings.Contains(classified.Error(), "missing") {
+		t.Fatalf("classified error = %v", classified)
+	}
+	if err := domain.ClassifyError(domain.ErrInvalidArgument, "bad input", errors.New("cause")); !errors.Is(err, domain.ErrInvalidArgument) || !strings.Contains(err.Error(), "bad input: cause") {
+		t.Fatalf("ClassifyError = %v", err)
 	}
 	workspace, err := configstore.NormalizeWorkspaceConfig(domain.WorkspaceConfig{Name: " Workspace ", Type: "FILE", ConfigJSON: "", Comment: " note "}, true)
 	if err != nil || workspace.ID == "" || workspace.Type != "file" || workspace.ConfigJSON != "{}" || workspace.Comment != "note" {
