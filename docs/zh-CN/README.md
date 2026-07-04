@@ -116,19 +116,22 @@ openssl rand -base64 24 # 将输出写入 AUTH_PASSWORD
 openssl rand -hex 32    # 将输出写入 AUTH_SECRET
 docker compose pull
 docker compose up -d
+# 如需同时拉取并启动 Web UI：
+docker compose --profile with-ui pull
+docker compose --profile with-ui up -d
 ```
 
-首次启动前编辑 `.env`。至少替换 `AUTH_PASSWORD` 和 `AUTH_SECRET`；如果不能使用宿主机 `80` 端口，修改 `AGENT_COMPOSE_HTTP_PORT`。本地开发时，Docker Compose 会自动加载 `docker-compose.override.yml`，使用本地 Dockerfile 构建后端镜像；需要重建时执行 `docker compose up -d --build`。
+首次启动前编辑 `.env`。至少替换 `AUTH_PASSWORD` 和 `AUTH_SECRET`；需要 Web UI 时启用 `with-ui` profile，如果不能使用宿主机 `80` 端口，修改 `AGENT_COMPOSE_HTTP_PORT`。本地开发时，Docker Compose 会自动加载 `docker-compose.override.yml`，使用本地 Dockerfile 构建后端镜像；需要重建时执行 `docker compose up -d --build`，需要同时启动 Web UI 时执行 `docker compose --profile with-ui up -d --build`。
 
 ## 配置
 
-复制 `.env.example` 为 `.env`，按部署环境修改后执行 `docker compose up -d`。
+复制 `.env.example` 为 `.env`，按部署环境修改后执行 `docker compose up -d`。如需同时启动 Web UI，添加 `--profile with-ui`。
 
 常用环境变量：
 
 - `AUTH_USERNAME`、`AUTH_PASSWORD`、`AUTH_SECRET`、`AUTH_SESSION_TTL`：密码登录设置。对外部署前应替换示例密码和 secret。
-- `AGENT_COMPOSE_HTTP_PORT`：Web UI 和反向代理发布到宿主机的端口。
-- `AGENT_COMPOSE_IMAGE`、`AGENT_COMPOSE_FRONTEND_IMAGE`：Docker Compose 服务镜像。
+- `AGENT_COMPOSE_HTTP_PORT`：启用 `with-ui` profile 时，Web UI 和反向代理发布到宿主机的端口。
+- `AGENT_COMPOSE_IMAGE`、`AGENT_COMPOSE_FRONTEND_IMAGE`：Docker Compose 服务镜像；前端镜像仅在启用 `with-ui` profile 时使用。
 - `DEFAULT_IMAGE`、`DOCKER_DEFAULT_IMAGE`、`MICROSANDBOX_DEFAULT_IMAGE`：guest 镜像默认值。
 - `RUNTIME_DRIVER`：默认 runtime driver。
 - `OAUTH_*`：OAuth 登录设置。

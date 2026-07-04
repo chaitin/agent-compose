@@ -18,6 +18,8 @@ services:
   agent-compose-frontend:
     image: ${AGENT_COMPOSE_FRONTEND_IMAGE:-ghcr.io/chaitin/agent-compose-ui:latest}
     container_name: agent-compose-frontend
+    profiles:
+      - with-ui
     restart: always
     depends_on:
       - agent-compose

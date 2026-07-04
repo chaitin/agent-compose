@@ -222,32 +222,40 @@ openssl rand -base64 24 # use this value for AUTH_PASSWORD
 openssl rand -hex 32    # use this value for AUTH_SECRET
 docker compose pull
 docker compose up -d
+# To also pull and start the web UI:
+docker compose --profile with-ui pull
+docker compose --profile with-ui up -d
 ```
 
 Edit `.env` before the first start. At minimum, replace `AUTH_PASSWORD` and
-`AUTH_SECRET`; set `AGENT_COMPOSE_HTTP_PORT` if port `80` is not suitable.
-Override `AGENT_COMPOSE_IMAGE`, `AGENT_COMPOSE_FRONTEND_IMAGE`, or
-`DEFAULT_IMAGE` to pin release tags or use a mirror/private registry. The
-frontend is released independently by `agent-compose-ui`.
+`AUTH_SECRET`; enable the `with-ui` profile when you want the web UI, and set
+`AGENT_COMPOSE_HTTP_PORT` if port `80` is not suitable. Override
+`AGENT_COMPOSE_IMAGE`, `AGENT_COMPOSE_FRONTEND_IMAGE`, or `DEFAULT_IMAGE` to
+pin release tags or use a mirror/private registry. The frontend is released
+independently by `agent-compose-ui`; `AGENT_COMPOSE_FRONTEND_IMAGE` is used only
+when the `with-ui` profile is enabled.
 
 For local development, Docker Compose automatically loads
 `docker-compose.override.yml`, which builds the backend image from the local
 Dockerfile while keeping the same service topology. Use
-`docker compose up -d --build` when you want to rebuild the local backend image.
+`docker compose up -d --build` when you want to rebuild the local backend image,
+or `docker compose --profile with-ui up -d --build` when you also want the web
+UI.
 
 ## Configuration
 
 Copy `.env.example` to `.env`, edit the values for your environment, then run
-`docker compose up -d`.
+`docker compose up -d`. Add `--profile with-ui` to also start the web UI.
 
 Important variables include:
 
 - `AUTH_USERNAME`, `AUTH_PASSWORD`, `AUTH_SECRET`, `AUTH_SESSION_TTL`: password
   login settings. Replace the example password and secret before exposing a
   deployment.
-- `AGENT_COMPOSE_HTTP_PORT`: host port for the web UI and reverse proxy.
+- `AGENT_COMPOSE_HTTP_PORT`: host port for the web UI and reverse proxy when
+  the `with-ui` profile is enabled.
 - `AGENT_COMPOSE_IMAGE`, `AGENT_COMPOSE_FRONTEND_IMAGE`: Docker Compose service
-  images.
+  images; the frontend image is used only with the `with-ui` profile.
 - `DEFAULT_IMAGE`, `DOCKER_DEFAULT_IMAGE`, `MICROSANDBOX_DEFAULT_IMAGE`: guest
   image defaults.
 - `RUNTIME_DRIVER`: default runtime driver.
