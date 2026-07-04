@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
 	"github.com/samber/do/v2"
 	"gopkg.in/yaml.v3"
 
@@ -18,29 +20,81 @@ import (
 	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/projects"
+	sessionstream "agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
 func NewProjectController(di do.Injector) (*projects.Controller, error) {
 	imageBackends := do.MustInvoke[*adapters.ImageBackends](di)
-	sessions := do.MustInvoke[*adapters.SessionRPCBridge](di)
+	sessionStore := do.MustInvoke[*sessionstore.Store](di)
+	sessionDriver := do.MustInvoke[*adapters.SessionDriver](di)
+	streams := do.MustInvoke[*sessionstream.StreamBroker](di)
 	return projects.NewController(projects.ControllerDependencies{
 		Config:   do.MustInvoke[*appconfig.Config](di),
 		Store:    do.MustInvoke[*configstore.ConfigStore](di),
-		Sessions: do.MustInvoke[*sessionstore.Store](di),
+		Sessions: sessionStore,
 		Images:   imageBackends.Auto,
 		Loaders:  do.MustInvoke[*loaders.Controller](di),
 		StopSession: func(ctx context.Context, session *domain.Session) error {
-			if session == nil {
-				return nil
-			}
-			_, err := sessions.StopSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: session.Summary.ID}))
-			return err
+			return stopProjectSession(ctx, sessionStore, sessionDriver, streams, session)
 		},
 	}), nil
+}
+
+type projectSessionStore interface {
+	GetSession(context.Context, string) (*domain.Session, error)
+	UpdateSession(context.Context, *domain.Session) error
+	AddEvent(context.Context, string, domain.SessionEvent) error
+}
+
+type projectSessionDriver interface {
+	StopSessionVM(context.Context, *domain.Session) error
+}
+
+type projectSessionStreams interface {
+	PublishSessionUpdated(*domain.SessionSummary)
+	PublishEventAdded(string, domain.SessionEvent)
+}
+
+func stopProjectSession(ctx context.Context, store projectSessionStore, driver projectSessionDriver, streams projectSessionStreams, session *domain.Session) error {
+	if session == nil {
+		return nil
+	}
+	if store == nil {
+		return fmt.Errorf("session store is required")
+	}
+	loaded, err := store.GetSession(ctx, session.Summary.ID)
+	if err != nil {
+		return err
+	}
+	if loaded.Summary.VMStatus != domain.VMStatusRunning {
+		return nil
+	}
+	if driver == nil {
+		return fmt.Errorf("session driver is required")
+	}
+	if err := driver.StopSessionVM(ctx, loaded); err != nil {
+		return err
+	}
+	loaded.Summary.VMStatus = domain.VMStatusStopped
+	if err := store.UpdateSession(ctx, loaded); err != nil {
+		return err
+	}
+	event := domain.SessionEvent{
+		ID:        uuid.NewString(),
+		Type:      "session.stopped",
+		Level:     "info",
+		Message:   "session stopped",
+		CreatedAt: time.Now().UTC(),
+	}
+	_ = store.AddEvent(ctx, loaded.Summary.ID, event)
+	if streams != nil {
+		streams.PublishSessionUpdated(&loaded.Summary)
+		streams.PublishEventAdded(loaded.Summary.ID, event)
+	}
+	return nil
 }
 
 type projectControllerDelegate struct {

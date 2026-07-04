@@ -15,6 +15,7 @@ import (
 
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/projects"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
@@ -93,6 +94,78 @@ func TestApplyProjectValidationIssuesOmitProjectAndRevision(t *testing.T) {
 	if resp.Msg.GetProject() != nil || resp.Msg.GetRevision() != nil {
 		t.Fatalf("validation failure project=%#v revision=%#v", resp.Msg.GetProject(), resp.Msg.GetRevision())
 	}
+}
+
+func TestStopProjectSessionUsesInternalStopSemantics(t *testing.T) {
+	sessionID := "session-1"
+	store := &projectStopSessionStore{
+		session: &domain.Session{Summary: domain.SessionSummary{
+			ID:       sessionID,
+			VMStatus: domain.VMStatusRunning,
+		}},
+	}
+	driver := &projectStopSessionDriver{}
+	streams := &projectStopSessionStreams{}
+
+	if err := stopProjectSession(context.Background(), store, driver, streams, store.session); err != nil {
+		t.Fatalf("stopProjectSession returned error: %v", err)
+	}
+	if driver.stopCount != 1 {
+		t.Fatalf("StopSessionVM calls = %d, want 1", driver.stopCount)
+	}
+	if store.updated == nil || store.updated.Summary.VMStatus != domain.VMStatusStopped {
+		t.Fatalf("updated session = %#v, want stopped", store.updated)
+	}
+	if len(store.events) != 1 || store.events[0].Type != "session.stopped" || store.events[0].Message != "session stopped" {
+		t.Fatalf("events = %#v, want one session.stopped event", store.events)
+	}
+	if streams.updatedCount != 1 || streams.eventCount != 1 {
+		t.Fatalf("stream notifications updated=%d events=%d, want 1/1", streams.updatedCount, streams.eventCount)
+	}
+}
+
+type projectStopSessionStore struct {
+	session *domain.Session
+	updated *domain.Session
+	events  []domain.SessionEvent
+}
+
+func (s *projectStopSessionStore) GetSession(context.Context, string) (*domain.Session, error) {
+	copy := *s.session
+	return &copy, nil
+}
+
+func (s *projectStopSessionStore) UpdateSession(_ context.Context, session *domain.Session) error {
+	copy := *session
+	s.updated = &copy
+	return nil
+}
+
+func (s *projectStopSessionStore) AddEvent(_ context.Context, _ string, event domain.SessionEvent) error {
+	s.events = append(s.events, event)
+	return nil
+}
+
+type projectStopSessionDriver struct {
+	stopCount int
+}
+
+func (d *projectStopSessionDriver) StopSessionVM(context.Context, *domain.Session) error {
+	d.stopCount++
+	return nil
+}
+
+type projectStopSessionStreams struct {
+	updatedCount int
+	eventCount   int
+}
+
+func (s *projectStopSessionStreams) PublishSessionUpdated(*domain.SessionSummary) {
+	s.updatedCount++
+}
+
+func (s *projectStopSessionStreams) PublishEventAdded(string, domain.SessionEvent) {
+	s.eventCount++
 }
 
 func hasEchoRoute(app *echo.Echo, method string, path string) bool {
