@@ -68,6 +68,7 @@ func RegisterDependencies(di do.Injector) {
 	do.Provide(di, NewSessionRPCBridge)
 	do.Provide(di, NewLoaderController)
 	do.Provide(di, NewRunController)
+	do.Provide(di, NewRunSupervisor)
 	do.Provide(di, NewProjectController)
 }
 
@@ -128,7 +129,11 @@ func RegisterRoutes(di do.Injector) {
 	projectHandler := api.NewProjectHandler(projectControllerDelegate{controller: do.MustInvoke[*projects.Controller](di)}, do.MustInvoke[*configstore.ConfigStore](di))
 	path, handler = agentcomposev2connect.NewProjectServiceHandler(projectHandler)
 	app.Any(path+"*", echo.WrapHandler(handler))
-	runHandler := api.NewRunHandler(runControllerDelegate{controller: do.MustInvoke[*runs.Controller](di)}, do.MustInvoke[*configstore.ConfigStore](di))
+	runDelegate := runControllerDelegate{
+		controller: do.MustInvoke[*runs.Controller](di),
+		supervisor: do.MustInvoke[*RunSupervisor](di),
+	}
+	runHandler := api.NewRunHandler(runDelegate, do.MustInvoke[*configstore.ConfigStore](di), do.MustInvoke[*RunSupervisor](di))
 	path, handler = agentcomposev2connect.NewRunServiceHandler(runHandler)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	execHandler := api.NewExecHandler(

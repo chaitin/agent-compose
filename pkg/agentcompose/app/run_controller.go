@@ -50,6 +50,7 @@ func NewRunController(di do.Injector) (*runs.Controller, error) {
 
 type runControllerDelegate struct {
 	controller *runs.Controller
+	supervisor *RunSupervisor
 }
 
 func (d runControllerDelegate) RunAgent(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest]) (*connect.Response[agentcomposev2.RunAgentResponse], error) {
@@ -60,6 +61,21 @@ func (d runControllerDelegate) RunAgent(ctx context.Context, req *connect.Reques
 	return connect.NewResponse(&agentcomposev2.RunAgentResponse{
 		Run:      api.ProjectRunDetailToProto(run),
 		Warnings: append([]string(nil), run.Warnings...),
+	}), nil
+}
+
+func (d runControllerDelegate) StartRun(ctx context.Context, req *connect.Request[agentcomposev2.StartRunRequest]) (*connect.Response[agentcomposev2.StartRunResponse], error) {
+	if d.supervisor == nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("run supervisor is required"))
+	}
+	run, err := d.supervisor.StartRun(ctx, runAgentRequestFromProto(req.Msg.GetRun()))
+	if err != nil {
+		return nil, runConnectError(err)
+	}
+	return connect.NewResponse(&agentcomposev2.StartRunResponse{
+		Run:      api.ProjectRunSummaryToProto(run),
+		Warnings: append([]string(nil), run.Warnings...),
+		Started:  !runs.StatusIsTerminal(run.Status),
 	}), nil
 }
 

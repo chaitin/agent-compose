@@ -15,6 +15,7 @@ service ProjectService {
 
 service RunService {
   rpc RunAgent(RunAgentRequest) returns (RunAgentResponse);
+  rpc StartRun(StartRunRequest) returns (StartRunResponse);
   rpc RunAgentStream(RunAgentRequest) returns (stream RunAgentStreamResponse);
   rpc GetRun(GetRunRequest) returns (GetRunResponse);
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
@@ -687,4 +688,14 @@ message RunJupyterSpec {
   bool enabled = 1;
   uint32 guest_port = 2;
   bool expose = 3;
+}
+
+message StartRunRequest {
+  RunAgentRequest run = 1;
+}
+
+message StartRunResponse {
+  RunSummary run = 1;
+  repeated string warnings = 2;
+  bool started = 3;
 }

@@ -143,17 +143,23 @@ func PrepareStreamingHeaders(headers http.Header) {
 	headers.Set("X-Accel-Buffering", "no")
 }
 
-func (c *Controller) RunProjectAgent(ctx context.Context, req RunAgentRequest, stream *StreamSink) (domain.ProjectRunRecord, error, error) {
+type StartedProjectRun struct {
+	Run      domain.ProjectRunRecord
+	Execute  func(context.Context, *StreamSink) (domain.ProjectRunRecord, error, error)
+	Warnings []string
+}
+
+func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (StartedProjectRun, error) {
 	if c.configDB == nil {
-		return domain.ProjectRunRecord{}, nil, fmt.Errorf("config store is required")
+		return StartedProjectRun{}, fmt.Errorf("config store is required")
 	}
 	commandText := strings.TrimSpace(req.Command)
 	if commandText != "" && (strings.TrimSpace(req.Prompt) != "" || strings.TrimSpace(req.TriggerID) != "") {
-		return domain.ProjectRunRecord{}, nil, fmt.Errorf("%w: run requires only one of command, prompt, or trigger", ErrInvalidRequest)
+		return StartedProjectRun{}, fmt.Errorf("%w: run requires only one of command, prompt, or trigger", ErrInvalidRequest)
 	}
 	resolved, err := c.resolveTriggerForManualRun(ctx, req)
 	if err != nil {
-		return domain.ProjectRunRecord{}, nil, err
+		return StartedProjectRun{}, err
 	}
 	req = resolved.Request
 	warnings := resolved.Warnings
@@ -168,16 +174,36 @@ func (c *Controller) RunProjectAgent(ctx context.Context, req RunAgentRequest, s
 		ClientRequestID: req.ClientRequestID,
 	})
 	if err != nil {
-		return domain.ProjectRunRecord{}, nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+		return StartedProjectRun{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
 	run = withRunWarnings(run, warnings)
+	return StartedProjectRun{
+		Run:      run,
+		Warnings: warnings,
+		Execute: func(execCtx context.Context, stream *StreamSink) (domain.ProjectRunRecord, error, error) {
+			return c.executeStartedProjectRun(execCtx, coordinator, run, req, warnings, stream)
+		},
+	}, nil
+}
+
+func (c *Controller) RunProjectAgent(ctx context.Context, req RunAgentRequest, stream *StreamSink) (domain.ProjectRunRecord, error, error) {
+	started, err := c.StartProjectRun(ctx, req)
+	if err != nil {
+		return domain.ProjectRunRecord{}, nil, err
+	}
+	return started.Execute(ctx, stream)
+}
+
+func (c *Controller) executeStartedProjectRun(ctx context.Context, coordinator *Coordinator, run domain.ProjectRunRecord, req RunAgentRequest, warnings []string, stream *StreamSink) (domain.ProjectRunRecord, error, error) {
+	commandText := strings.TrimSpace(req.Command)
 	transitionCtx := context.WithoutCancel(ctx)
 	prepared, err := c.prepareProjectRun(ctx, run, req.Env)
 	if err != nil {
-		run, markErr := coordinator.MarkFailed(transitionCtx, TransitionRequest{
+		transition := TransitionRequest{
 			RunID: run.RunID,
 			Error: fmt.Sprintf("workspace preparation failed: %v", err),
-		})
+		}
+		run, markErr := markProjectRunTerminalError(transitionCtx, coordinator, transition, err)
 		if markErr != nil {
 			return domain.ProjectRunRecord{}, nil, markErr
 		}
@@ -193,13 +219,31 @@ func (c *Controller) RunProjectAgent(ctx context.Context, req RunAgentRequest, s
 		if sessionResult.Session != nil {
 			transition.SessionID = sessionResult.Session.Summary.ID
 		}
-		run, markErr := coordinator.MarkFailed(transitionCtx, transition)
+		run, markErr := markProjectRunTerminalError(transitionCtx, coordinator, transition, err)
 		if markErr != nil {
 			return domain.ProjectRunRecord{}, nil, markErr
 		}
 		run = c.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult, req.CleanupPolicy)
 		run = withRunWarnings(run, warnings)
 		return run, err, nil
+	}
+	if err := ctx.Err(); err != nil {
+		run, markErr := coordinator.MarkCanceled(transitionCtx, TransitionRequest{
+			RunID:     run.RunID,
+			SessionID: sessionResult.Session.Summary.ID,
+			Error:     err.Error(),
+		})
+		if markErr != nil {
+			return domain.ProjectRunRecord{}, nil, markErr
+		}
+		run = c.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult, req.CleanupPolicy)
+		run = withRunWarnings(run, warnings)
+		return run, err, nil
+	}
+	if current, loadErr := c.configDB.GetProjectRun(transitionCtx, run.RunID); loadErr == nil && StatusIsTerminal(current.Status) {
+		run = c.cleanupProjectRunSession(transitionCtx, coordinator, current, sessionResult, req.CleanupPolicy)
+		run = withRunWarnings(run, warnings)
+		return run, context.Canceled, nil
 	}
 	run, err = coordinator.MarkRunning(transitionCtx, run.RunID, sessionResult.Session.Summary.ID)
 	if err != nil {

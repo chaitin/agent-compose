@@ -61,6 +61,8 @@ const (
 	ProjectServiceWatchProjectProcedure = "/agentcompose.v2.ProjectService/WatchProject"
 	// RunServiceRunAgentProcedure is the fully-qualified name of the RunService's RunAgent RPC.
 	RunServiceRunAgentProcedure = "/agentcompose.v2.RunService/RunAgent"
+	// RunServiceStartRunProcedure is the fully-qualified name of the RunService's StartRun RPC.
+	RunServiceStartRunProcedure = "/agentcompose.v2.RunService/StartRun"
 	// RunServiceRunAgentStreamProcedure is the fully-qualified name of the RunService's RunAgentStream
 	// RPC.
 	RunServiceRunAgentStreamProcedure = "/agentcompose.v2.RunService/RunAgentStream"
@@ -298,6 +300,7 @@ func (UnimplementedProjectServiceHandler) WatchProject(context.Context, *connect
 // RunServiceClient is a client for the agentcompose.v2.RunService service.
 type RunServiceClient interface {
 	RunAgent(context.Context, *connect.Request[v2.RunAgentRequest]) (*connect.Response[v2.RunAgentResponse], error)
+	StartRun(context.Context, *connect.Request[v2.StartRunRequest]) (*connect.Response[v2.StartRunResponse], error)
 	RunAgentStream(context.Context, *connect.Request[v2.RunAgentRequest]) (*connect.ServerStreamForClient[v2.RunAgentStreamResponse], error)
 	GetRun(context.Context, *connect.Request[v2.GetRunRequest]) (*connect.Response[v2.GetRunResponse], error)
 	ListRuns(context.Context, *connect.Request[v2.ListRunsRequest]) (*connect.Response[v2.ListRunsResponse], error)
@@ -320,6 +323,12 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			httpClient,
 			baseURL+RunServiceRunAgentProcedure,
 			connect.WithSchema(runServiceMethods.ByName("RunAgent")),
+			connect.WithClientOptions(opts...),
+		),
+		startRun: connect.NewClient[v2.StartRunRequest, v2.StartRunResponse](
+			httpClient,
+			baseURL+RunServiceStartRunProcedure,
+			connect.WithSchema(runServiceMethods.ByName("StartRun")),
 			connect.WithClientOptions(opts...),
 		),
 		runAgentStream: connect.NewClient[v2.RunAgentRequest, v2.RunAgentStreamResponse](
@@ -358,6 +367,7 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 // runServiceClient implements RunServiceClient.
 type runServiceClient struct {
 	runAgent       *connect.Client[v2.RunAgentRequest, v2.RunAgentResponse]
+	startRun       *connect.Client[v2.StartRunRequest, v2.StartRunResponse]
 	runAgentStream *connect.Client[v2.RunAgentRequest, v2.RunAgentStreamResponse]
 	getRun         *connect.Client[v2.GetRunRequest, v2.GetRunResponse]
 	listRuns       *connect.Client[v2.ListRunsRequest, v2.ListRunsResponse]
@@ -368,6 +378,11 @@ type runServiceClient struct {
 // RunAgent calls agentcompose.v2.RunService.RunAgent.
 func (c *runServiceClient) RunAgent(ctx context.Context, req *connect.Request[v2.RunAgentRequest]) (*connect.Response[v2.RunAgentResponse], error) {
 	return c.runAgent.CallUnary(ctx, req)
+}
+
+// StartRun calls agentcompose.v2.RunService.StartRun.
+func (c *runServiceClient) StartRun(ctx context.Context, req *connect.Request[v2.StartRunRequest]) (*connect.Response[v2.StartRunResponse], error) {
+	return c.startRun.CallUnary(ctx, req)
 }
 
 // RunAgentStream calls agentcompose.v2.RunService.RunAgentStream.
@@ -398,6 +413,7 @@ func (c *runServiceClient) StopRun(ctx context.Context, req *connect.Request[v2.
 // RunServiceHandler is an implementation of the agentcompose.v2.RunService service.
 type RunServiceHandler interface {
 	RunAgent(context.Context, *connect.Request[v2.RunAgentRequest]) (*connect.Response[v2.RunAgentResponse], error)
+	StartRun(context.Context, *connect.Request[v2.StartRunRequest]) (*connect.Response[v2.StartRunResponse], error)
 	RunAgentStream(context.Context, *connect.Request[v2.RunAgentRequest], *connect.ServerStream[v2.RunAgentStreamResponse]) error
 	GetRun(context.Context, *connect.Request[v2.GetRunRequest]) (*connect.Response[v2.GetRunResponse], error)
 	ListRuns(context.Context, *connect.Request[v2.ListRunsRequest]) (*connect.Response[v2.ListRunsResponse], error)
@@ -416,6 +432,12 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		RunServiceRunAgentProcedure,
 		svc.RunAgent,
 		connect.WithSchema(runServiceMethods.ByName("RunAgent")),
+		connect.WithHandlerOptions(opts...),
+	)
+	runServiceStartRunHandler := connect.NewUnaryHandler(
+		RunServiceStartRunProcedure,
+		svc.StartRun,
+		connect.WithSchema(runServiceMethods.ByName("StartRun")),
 		connect.WithHandlerOptions(opts...),
 	)
 	runServiceRunAgentStreamHandler := connect.NewServerStreamHandler(
@@ -452,6 +474,8 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		switch r.URL.Path {
 		case RunServiceRunAgentProcedure:
 			runServiceRunAgentHandler.ServeHTTP(w, r)
+		case RunServiceStartRunProcedure:
+			runServiceStartRunHandler.ServeHTTP(w, r)
 		case RunServiceRunAgentStreamProcedure:
 			runServiceRunAgentStreamHandler.ServeHTTP(w, r)
 		case RunServiceGetRunProcedure:
@@ -473,6 +497,10 @@ type UnimplementedRunServiceHandler struct{}
 
 func (UnimplementedRunServiceHandler) RunAgent(context.Context, *connect.Request[v2.RunAgentRequest]) (*connect.Response[v2.RunAgentResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.RunService.RunAgent is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) StartRun(context.Context, *connect.Request[v2.StartRunRequest]) (*connect.Response[v2.StartRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.RunService.StartRun is not implemented"))
 }
 
 func (UnimplementedRunServiceHandler) RunAgentStream(context.Context, *connect.Request[v2.RunAgentRequest], *connect.ServerStream[v2.RunAgentStreamResponse]) error {

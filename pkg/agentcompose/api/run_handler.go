@@ -19,7 +19,12 @@ import (
 
 type RunAgentDelegate interface {
 	RunAgent(context.Context, *connect.Request[agentcomposev2.RunAgentRequest]) (*connect.Response[agentcomposev2.RunAgentResponse], error)
+	StartRun(context.Context, *connect.Request[agentcomposev2.StartRunRequest]) (*connect.Response[agentcomposev2.StartRunResponse], error)
 	RunAgentStream(context.Context, *connect.Request[agentcomposev2.RunAgentRequest], *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error
+}
+
+type ActiveRunStopper interface {
+	StopActiveRun(context.Context, string, string) (bool, error)
 }
 
 type RunStore interface {
@@ -29,15 +34,27 @@ type RunStore interface {
 
 type RunHandler struct {
 	delegate RunAgentDelegate
+	stopper  ActiveRunStopper
 	store    RunStore
 }
 
-func NewRunHandler(delegate RunAgentDelegate, store RunStore) *RunHandler {
-	return &RunHandler{delegate: delegate, store: store}
+func NewRunHandler(delegate RunAgentDelegate, store RunStore, stoppers ...ActiveRunStopper) *RunHandler {
+	handler := &RunHandler{delegate: delegate, store: store}
+	if len(stoppers) > 0 {
+		handler.stopper = stoppers[0]
+	}
+	return handler
 }
 
 func (h *RunHandler) RunAgent(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest]) (*connect.Response[agentcomposev2.RunAgentResponse], error) {
 	return h.delegate.RunAgent(ctx, req)
+}
+
+func (h *RunHandler) StartRun(ctx context.Context, req *connect.Request[agentcomposev2.StartRunRequest]) (*connect.Response[agentcomposev2.StartRunResponse], error) {
+	if h.delegate == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("start run is not configured"))
+	}
+	return h.delegate.StartRun(ctx, req)
 }
 
 func (h *RunHandler) RunAgentStream(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
@@ -227,6 +244,25 @@ func (h *RunHandler) StopRun(ctx context.Context, req *connect.Request[agentcomp
 	runID := strings.TrimSpace(req.Msg.GetRunId())
 	if runID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run id is required"))
+	}
+	if h.stopper != nil {
+		stopped, err := h.stopper.StopActiveRun(ctx, runID, req.Msg.GetReason())
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		if stopped {
+			run, err := h.store.GetProjectRun(ctx, runID)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil, connect.NewError(connect.CodeNotFound, err)
+				}
+				return nil, connect.NewError(connect.CodeInternal, err)
+			}
+			return connect.NewResponse(&agentcomposev2.StopRunResponse{
+				Run:           ProjectRunDetailToProto(run),
+				StopRequested: true,
+			}), nil
+		}
 	}
 	coordinator := runs.NewCoordinator(h.store, domain.StableProjectRunID)
 	current, err := h.store.GetProjectRun(ctx, runID)

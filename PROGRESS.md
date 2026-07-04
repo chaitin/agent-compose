@@ -491,7 +491,7 @@
 
 ## 阶段 7：`run -d/--detach` 和统一取消
 
-- [ ] 7.1 实现 daemon-owned `StartRun`/后台 supervisor 和统一 `StopRun` cancellation
+- [x] 7.1 实现 daemon-owned `StartRun`/后台 supervisor 和统一 `StopRun` cancellation
 
   依赖：4.2。
 
@@ -525,10 +525,24 @@
   - 差异只允许存在于底层 best-effort 终止能力。
 
   完成总结：
-  - 状态：待完成。
-  - 变更：待记录。
-  - 验证：待记录。
-  - 审计与例外：待记录。
+  - 状态：已完成。
+  - 变更：
+    - v2 `RunService` 新增 `StartRun(StartRunRequest) returns (StartRunResponse)`，`StartRunRequest` 复用现有 `RunAgentRequest`，并重新生成 Go proto/Connect Go 与 `proto-client` TS 产物。
+    - `runs.Controller` 将 run 创建拆为 `StartProjectRun` 和 shared execution closure；同步 `RunAgent`/`RunAgentStream` 继续复用同一执行 pipeline。
+    - 新增 app-level in-memory `RunSupervisor`，使用 daemon root context 启动后台 goroutine，维护 active run cancel registry，并在执行结束后 unregister。
+    - `StartRun` 先同步创建 pending run 并立即返回 run summary；后台 goroutine 后续负责 session 创建、执行、terminal transition 和 cleanup。
+    - `StopRun` 对 active supervised run 先取消 run context，再将 run 标记为 canceled；非 active pending/running run 保留既有 DB fallback cancel 语义。
+    - run pipeline 在 session start 后检查已被 `StopRun` 标记 terminal 的 run，避免被取消 run 再进入 running；prompt 和 command 仍沿用传入 execution context。
+  - 验证：
+    - `protoc -I . --go_out=. --go_opt=module=agent-compose --connect-go_out=. --connect-go_opt=module=agent-compose proto/agentcompose/v2/agentcompose.proto`：通过。
+    - `cd proto-client && npm ci && npm run gen && npm run build`：通过。
+    - `go test ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs`：通过。
+    - `task build`：通过。
+  - 审计与例外：
+    - 本阶段只新增 daemon-owned `StartRun` API 和 supervisor；CLI `run -d`、输出提示和 daemon restart reconcile 留到 7.2。
+    - 未实现 durable queue；daemon 进程退出后 active registry 不保留，后续 7.2 负责 restart reconcile。
+    - 对忽略 context cancellation 的 provider/runtime，`StopRun` 会先把 DB 状态标记为 canceled；后台执行若随后返回成功，terminal transition 会被状态机拒绝，最终用户语义仍保持 canceled。
+    - Docker、BoxLite、MicroSandbox 的底层强制终止仍是后续 best-effort cleanup 能力，不暴露为分叉用户语义。
   - 下一目标：7.2。
 
 - [ ] 7.2 接入 CLI `run -d`、日志提示和 daemon restart reconcile
