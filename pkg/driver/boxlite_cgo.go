@@ -414,7 +414,6 @@ func (r *cgoBoxRuntime) EnsureSession(ctx context.Context, session *Session, vmS
 	if err != nil {
 		return SessionVMInfo{}, err
 	}
-	r.cleanupLegacyBoxliteCaches()
 	slog.Info("agent-compose boxlite ensure session complete", "session_id", session.Summary.ID, "box_id", boxID, "elapsed_ms", time.Since(startedAt).Milliseconds())
 	return SessionVMInfo{
 		BoxID:      boxID,
