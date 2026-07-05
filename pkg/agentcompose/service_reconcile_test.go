@@ -225,3 +225,127 @@ func testServiceReconcilePersistedSessionsMarksStalePendingFailed(t *testing.T) 
 		t.Fatalf("fresh session vm status = %q, want %q", got, want)
 	}
 }
+
+func TestServiceReconcileOrphanedRunningCells(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:                 root,
+		SessionRoot:              filepath.Join(root, "sessions"),
+		RuntimeDriver:            driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:             "debian:bookworm-slim",
+		MicrosandboxDefaultImage: "devbox:archlinux",
+		GuestWorkspacePath:       "/data/workspace",
+		JupyterGuestPort:         8888,
+		JupyterProxyBasePath:     "/agent-compose/session",
+	}
+	store := &Store{config: config}
+
+	session, err := store.CreateSession(ctx, "orphaned-cells", "", driverpkg.RuntimeDriverMicrosandbox, "devbox:archlinux", "", SessionTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	// Add a running cell that was created before daemon started (orphaned).
+	orphanedCell := NotebookCell{
+		ID:        "cell-orphaned",
+		Type:      CellTypeShell,
+		Source:    "sleep 60",
+		Running:   true,
+		CreatedAt: time.Now().UTC().Add(-time.Minute),
+	}
+	if err := store.AddCell(ctx, session, orphanedCell); err != nil {
+		t.Fatalf("AddCell(orphaned) returned error: %v", err)
+	}
+
+	// Add a completed cell that should be left untouched.
+	completedCell := NotebookCell{
+		ID:        "cell-completed",
+		Type:      CellTypeShell,
+		Source:    "echo done",
+		Running:   false,
+		Success:   true,
+		ExitCode:  0,
+		CreatedAt: time.Now().UTC().Add(-time.Minute),
+	}
+	if err := store.AddCell(ctx, session, completedCell); err != nil {
+		t.Fatalf("AddCell(completed) returned error: %v", err)
+	}
+
+	// Add a running cell created after daemon started (fresh, should not be converged).
+	startedAt := time.Now().UTC()
+	freshRunningCell := NotebookCell{
+		ID:        "cell-fresh-running",
+		Type:      CellTypeShell,
+		Source:    "sleep 10",
+		Running:   true,
+		CreatedAt: startedAt.Add(time.Minute),
+	}
+	if err := store.AddCell(ctx, session, freshRunningCell); err != nil {
+		t.Fatalf("AddCell(fresh-running) returned error: %v", err)
+	}
+
+	service := &Service{config: config, store: store, startedAt: startedAt}
+	if err := service.reconcileOrphanedRunningCells(ctx, session); err != nil {
+		t.Fatalf("reconcileOrphanedRunningCells returned error: %v", err)
+	}
+
+	// Verify orphaned cell was converged.
+	cells, err := store.ListCells(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("ListCells returned error: %v", err)
+	}
+
+	cellByID := make(map[string]NotebookCell)
+	for _, c := range cells {
+		cellByID[c.ID] = c
+	}
+
+	// Orphaned cell should no longer be running.
+	orphaned, ok := cellByID["cell-orphaned"]
+	if !ok {
+		t.Fatalf("orphaned cell not found in cells")
+	}
+	if orphaned.Running {
+		t.Fatalf("orphaned cell still running, want Running=false")
+	}
+	if orphaned.Success {
+		t.Fatalf("orphaned cell Success=true, want false")
+	}
+	if orphaned.ExitCode != 1 {
+		t.Fatalf("orphaned cell ExitCode=%d, want 1", orphaned.ExitCode)
+	}
+
+	// Completed cell should be unchanged.
+	completed, ok := cellByID["cell-completed"]
+	if !ok {
+		t.Fatalf("completed cell not found in cells")
+	}
+	if !completed.Success || completed.ExitCode != 0 {
+		t.Fatalf("completed cell was modified: Success=%v ExitCode=%d", completed.Success, completed.ExitCode)
+	}
+
+	// Fresh running cell should still be running.
+	fresh, ok := cellByID["cell-fresh-running"]
+	if !ok {
+		t.Fatalf("fresh running cell not found in cells")
+	}
+	if !fresh.Running {
+		t.Fatalf("fresh running cell was converged, want Running=true")
+	}
+
+	// Verify an event was recorded for the converged cell.
+	events, err := store.ListEvents(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("ListEvents returned error: %v", err)
+	}
+	var interruptedCount int
+	for _, e := range events {
+		if e.Type == "cell.execution_interrupted" {
+			interruptedCount++
+		}
+	}
+	if interruptedCount != 1 {
+		t.Fatalf("expected 1 cell.execution_interrupted event, got %d", interruptedCount)
+	}
+}

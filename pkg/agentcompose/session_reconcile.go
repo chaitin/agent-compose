@@ -11,6 +11,7 @@ import (
 
 const stalePendingSessionLastError = "session startup interrupted before runtime reached running state"
 const staleProjectRunError = "project run interrupted before reaching terminal state"
+const orphanedRunningCellError = "cell execution interrupted by daemon restart"
 
 func (s *Service) reconcilePersistedSessions(ctx context.Context) error {
 	result, err := s.store.ListSessions(ctx, SessionListOptions{Limit: 1 << 30})
@@ -25,6 +26,9 @@ func (s *Service) reconcilePersistedSessions(ctx context.Context) error {
 		}
 		if _, err := s.reconcileSessionRuntimeState(ctx, reconciled); err != nil {
 			slog.Warn("failed to reconcile session runtime state", "session_id", session.Summary.ID, "error", err)
+		}
+		if err := s.reconcileOrphanedRunningCells(ctx, session); err != nil {
+			slog.Warn("failed to reconcile orphaned running cells", "session_id", session.Summary.ID, "error", err)
 		}
 	}
 	if err := s.reconcilePersistedProjectRuns(ctx); err != nil {
@@ -116,4 +120,63 @@ func (s *Service) reconcilePersistedProjectRunsWithStatus(ctx context.Context, c
 		}
 	}
 	return nil
+}
+
+// reconcileOrphanedRunningCells converges cells that were marked as Running
+// when the daemon previously stopped. These orphaned cells will otherwise
+// remain in Running state indefinitely, presenting a false view to users
+// and schedulers.
+func (s *Service) reconcileOrphanedRunningCells(ctx context.Context, session *Session) error {
+	if session == nil {
+		return nil
+	}
+	cells, err := s.store.ListCells(ctx, session.Summary.ID)
+	if err != nil {
+		return err
+	}
+	var converged int
+	now := time.Now().UTC()
+	for i := range cells {
+		if !cells[i].Running {
+			continue
+		}
+		// Only converge cells created before this daemon instance started.
+		// Cells created after startedAt belong to the current daemon lifecycle.
+		if !cells[i].CreatedAt.Before(s.startedAt) {
+			continue
+		}
+		cells[i].Running = false
+		cells[i].Success = false
+		cells[i].ExitCode = 1
+		converged++
+		slog.Info("converged orphaned running cell",
+			"session_id", session.Summary.ID,
+			"cell_id", cells[i].ID,
+			"cell_type", cells[i].Type,
+			"cell_source", truncateCellSource(cells[i].Source, 80),
+		)
+		_ = s.store.AddEvent(ctx, session.Summary.ID, SessionEvent{
+			ID:        uuid.NewString(),
+			Type:      "cell.execution_interrupted",
+			Level:     "warn",
+			Message:   orphanedRunningCellError,
+			CreatedAt: now,
+		})
+	}
+	if converged == 0 {
+		return nil
+	}
+	if err := s.store.saveCells(session.Summary.ID, cells); err != nil {
+		return err
+	}
+	slog.Info("converged orphaned running cells", "session_id", session.Summary.ID, "count", converged)
+	return nil
+}
+
+// truncateCellSource returns a truncated version of source for logging.
+func truncateCellSource(source string, maxLen int) string {
+	if len(source) <= maxLen {
+		return source
+	}
+	return source[:maxLen] + "..."
 }
