@@ -1,13 +1,16 @@
 import { existsSync } from "node:fs";
+import process from "node:process";
 import { uniqueDirectories } from "../paths.js";
 import { readStoredSession, writeStoredSession } from "../session-state.js";
 import { jsonString } from "../text.js";
+import { defaultToolDisplayMapper } from "../tool-display.js";
 import { TranscriptWriter } from "../transcript.js";
 import type { AgentResult, RunnerOptions, StoredSession } from "../types.js";
 
 type PendingToolUse = {
   name: string;
   partialJson: string;
+  input?: Record<string, unknown>;
 };
 
 function hasOwn(object: object, key: string): boolean {
@@ -44,8 +47,22 @@ function claudeEnvironment(): NodeJS.ProcessEnv {
 }
 
 export class ClaudeRunner {
-  private readonly writer = new TranscriptWriter();
+  // Raw transcript: preserves [tool:Name] + JSON for daemon event parsing.
+  // Does NOT stream to stderr — only accumulates.
+  private readonly rawWriter = new TranscriptWriter(() => {});
+
+  // Display sink: writes business-friendly text to stderr → cell.Output → UI.
+  private readonly display = {
+    write(text: string): void {
+      process.stderr.write(text);
+    },
+    line(text = ""): void {
+      this.write(text.endsWith("\n") ? text : `${text}\n`);
+    },
+  };
+
   private readonly pendingToolUses = new Map<string, PendingToolUse>();
+  private readonly mapper = defaultToolDisplayMapper;
 
   constructor(private readonly options: RunnerOptions) {}
 
@@ -77,56 +94,95 @@ export class ClaudeRunner {
     };
   }
 
+  /**
+   * Show a tool call on the display channel if the mapper produces a description.
+   * Always writes to the raw transcript regardless of display decision.
+   */
+  private showToolCall(toolName: string, input: Record<string, unknown>, rawText: string): void {
+    this.rawWriter.write(rawText);
+    const entry = this.mapper.mapToolCall(toolName, input);
+    if (entry) {
+      this.display.line(`${entry.icon} ${entry.action}...`);
+    }
+  }
+
   handleStreamEvent(message: Record<string, unknown>): void {
     const event = message.event as Record<string, unknown> | undefined;
     if (!event || typeof event !== "object") {
       return;
     }
+
+    // ── Tool call start ──────────────────────────────────────────────────
     if (event.type === "content_block_start") {
       const block = event.content_block as Record<string, unknown> | undefined;
       if (typeof block?.name === "string" && block.name) {
         const input = block.input;
+
         if (input && typeof input === "object" && Object.keys(input).length > 0) {
-          this.writer.line(`\n[tool:${block.name}]`);
-          this.writer.line(jsonString(input));
-          this.writer.line();
+          this.showToolCall(
+            block.name,
+            input as Record<string, unknown>,
+            `\n[tool:${block.name}]\n${jsonString(input as Record<string, unknown>)}\n`,
+          );
           return;
         }
+
         if (input && typeof input === "object") {
+          // Input will be streamed via deltas — stash for now
           this.pendingToolUses.set(contentBlockKey(event, String(block.id ?? this.pendingToolUses.size)), {
             name: block.name,
             partialJson: "",
+            input: undefined,
           });
+
+          // Show display entry immediately (with empty input — will update at stop)
+          const displayEntry = this.mapper.mapToolCall(block.name, {});
+          if (displayEntry) {
+            this.display.line(`${displayEntry.icon} ${displayEntry.action}...`);
+          }
           return;
         }
-        this.writer.line(`\n[tool:${block.name}]`);
-        this.writer.line();
+
+        // No input at all
+        this.showToolCall(block.name, {}, `\n[tool:${block.name}]\n`);
       }
       return;
     }
+
+    // ── Tool call end (for streamed-input tools) ─────────────────────────
     if (event.type === "content_block_stop") {
       const key = contentBlockKey(event);
       const pending = this.pendingToolUses.get(key);
       if (pending) {
         this.pendingToolUses.delete(key);
-        this.writer.line(`\n[tool:${pending.name}]`);
+
+        // Raw transcript
+        this.rawWriter.line(`\n[tool:${pending.name}]`);
         if (pending.partialJson.trim()) {
           try {
-            this.writer.line(jsonString(JSON.parse(pending.partialJson)));
+            const parsed = JSON.parse(pending.partialJson);
+            this.rawWriter.line(jsonString(parsed));
+            // Update input for potential result mapping
+            pending.input = parsed;
           } catch {
-            this.writer.line(pending.partialJson);
+            this.rawWriter.line(pending.partialJson);
           }
-          this.writer.line();
+          this.rawWriter.line();
         } else {
-          this.writer.line();
+          this.rawWriter.line();
         }
+
+        // Display: no duplicate — the action was already shown at start
       }
       return;
     }
+
+    // ── Streaming JSON deltas for tool input ─────────────────────────────
     if (event.type !== "content_block_delta") {
       return;
     }
     const delta = event.delta as Record<string, unknown> | undefined;
+
     if (delta?.type === "input_json_delta" && typeof delta.partial_json === "string") {
       const pending = this.pendingToolUses.get(contentBlockKey(event));
       if (pending) {
@@ -134,12 +190,20 @@ export class ClaudeRunner {
       }
       return;
     }
+
+    // ── Assistant text ───────────────────────────────────────────────────
     if (delta?.type === "text_delta" && typeof delta.text === "string") {
-      this.writer.write(delta.text);
+      // Both channels: user-facing assistant text, show as-is
+      this.rawWriter.write(delta.text);
+      this.display.write(delta.text);
       return;
     }
+
+    // ── Thinking text ────────────────────────────────────────────────────
     if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") {
-      this.writer.write(delta.thinking);
+      // Raw transcript only — internal reasoning is not for end users
+      this.rawWriter.write(delta.thinking);
+      // Display: skip (users don't need to see internal reasoning)
     }
   }
 
@@ -186,20 +250,33 @@ export class ClaudeRunner {
           }
           case "tool_use_summary":
             if (typeof message.summary === "string" && message.summary.trim()) {
-              this.writer.line(`\n${message.summary}`);
+              // Raw transcript: include summary
+              this.rawWriter.line(`\n${message.summary}`);
+
+              // Display: show result summary if mapper provides one
+              const resultText = this.mapper.mapToolResult("", {}, message.summary);
+              if (resultText) {
+                this.display.line(resultText);
+              }
             }
             break;
           case "auth_status":
             if (Array.isArray(message.output) && message.output.length > 0) {
-              this.writer.line(message.output.join("\n"));
+              const authText = message.output.join("\n");
+              this.rawWriter.line(authText);
+              // Display: auth status is not for end users
             }
             if (message.error) {
-              this.writer.line(String(message.error));
+              const errText = String(message.error);
+              this.rawWriter.line(errText);
+              this.display.line(`❌ Auth error: ${errText}`);
             }
             break;
           case "system":
             if (message.subtype === "local_command_output" && typeof message.content === "string") {
-              this.writer.line(message.content);
+              // Raw transcript: include command output for debugging
+              this.rawWriter.line(message.content);
+              // Display: skip — raw command output is technical detail
             }
             break;
           case "result":
@@ -228,7 +305,8 @@ export class ClaudeRunner {
       stream.close?.();
     }
 
-    result.transcript = this.writer.transcript();
+    // Use raw transcript (preserves [tool:Name] markers for daemon event parsing)
+    result.transcript = this.rawWriter.transcript();
     if (!result.finalText && result.transcript) {
       result.finalText = result.transcript;
     }

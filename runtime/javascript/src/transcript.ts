@@ -26,8 +26,20 @@ export function appendDelta(
   }
 }
 
+/**
+ * A TextWriter that accumulates text and optionally streams it to a sink.
+ *
+ * By default, the sink writes to process.stderr (the original behavior).
+ * Pass a custom sink to redirect output, or `() => {}` to suppress streaming
+ * while still accumulating for transcript retrieval.
+ */
 export class TranscriptWriter implements TextWriter {
   private readonly chunks: string[] = [];
+  private readonly sink: (text: string) => void;
+
+  constructor(sink?: (text: string) => void) {
+    this.sink = sink ?? ((text: string) => process.stderr.write(text));
+  }
 
   write(text: string): void {
     if (!text) {
@@ -35,7 +47,7 @@ export class TranscriptWriter implements TextWriter {
     }
     const normalized = normalizeNewlines(text);
     this.chunks.push(normalized);
-    process.stderr.write(normalized);
+    this.sink(normalized);
   }
 
   line(text = ""): void {
