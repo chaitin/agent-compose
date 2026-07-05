@@ -343,7 +343,7 @@ agent-compose exec sandbox_123 --cwd /workspace --command "pwd"
 
 查看当前 project 下 agent、sandbox 或 run 的日志。默认展示 project 下所有 agent 日志。
 
-当前 `logs` 基于 agent-compose v2 RunService 返回的 run output/artifacts 展示，也就是 `RunDetail.output` 中持久化的 agent-compose run 输出；不会默认读取 Codex、Claude、Gemini 等 provider 的私有日志文件。
+当前 `logs` 基于 agent-compose v2 RunService 返回的 run log artifact 展示。`--follow` 由服务端按 `logs_path` 指向的日志文件增量读取；普通查看会使用 run 记录中的输出和 artifact 汇总。它不会默认读取 Codex、Claude、Gemini 等 provider 的私有日志文件。
 
 ```bash
 agent-compose logs

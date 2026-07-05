@@ -33,7 +33,7 @@
 - `AGENTS.md` 指定支持的 runtime drivers 为 `docker`、`boxlite`、`microsandbox`，默认 driver 为 `docker`。
 - `docs/design/agent-compose_design.md` 明确 daemon 是状态权威，CLI 只读取本地 compose 并调用 daemon v2 APIs；因此 cache lifecycle 的真实判断和删除必须在 daemon service 层执行，CLI 只做参数校验和展示。
 - `docs/design/agent-compose_design.md` 已有 `images`、`pull`、`rmi`、`image inspect` 命令调用 `ImageService` 管理 daemon image store，默认 store 由 `IMAGE_STORE_MODE` 选择。
-- `docs/spec/cli-runtime-capabilities-spec.md` 明确 `pull` 不属于 runtime driver 能力，BoxLite/Microsandbox 只在启动 runtime 时从 OCI image 派生自身可运行 artifact。
+- `docs/zh-CN/design/agent-compose-cli-improvement-plan.md` 明确 `pull` 不属于 runtime driver 能力，BoxLite/Microsandbox 只在启动 runtime 时从 OCI image 派生自身可运行 artifact。
 
 runtime image 和 mount 现状：
 
@@ -443,5 +443,5 @@ cd proto-client && npm ci && npm run gen && npm run build
 - BoxLite 启动热路径清理全局 runtime derived cache 的直接调用已移除；后续工作集中在显式 cache lifecycle API/CLI 和保护规则。
 - 已确认 BoxLite 和 Microsandbox 需要统一设计，但现状不同：BoxLite 后续重点是 runtime derived cache 的显式清理入口；Microsandbox 主要是 session-ephemeral state 的隐藏 startup sweep，需要可观测并显式化。
 - cache lifecycle 是 daemon 权威能力，CLI 不直接读写 daemon 本地 cache 路径。
-- `pull`/`rmi` image domain 与 runtime cache domain 保持分离，符合 `docs/spec/cli-runtime-capabilities-spec.md` 的 driver-independent OCI image 设计。
+- `pull`/`rmi` image domain 与 runtime cache domain 保持分离，符合 `docs/zh-CN/design/agent-compose-cli-improvement-plan.md` 的 driver-independent OCI image 设计。
 - 删除策略保守优先：无法证明可删时视为 `unknown`，默认不可删除。

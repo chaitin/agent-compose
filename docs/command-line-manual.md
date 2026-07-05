@@ -148,7 +148,9 @@ Input modes:
 | --- | --- | --- |
 | trigger | `run <agent> --trigger <trigger>` | Run a trigger defined in the project config. |
 | prompt | `run <agent> --prompt "..."` | Send a prompt to the agent provider. |
-| command | `run <agent> --command "..."` | Start or reuse the agent sandbox and execute a `bash -lc` command. stdout/stderr are streamed and persisted to the run record. |
+| command | `run <agent> --command "..."` | Start or reuse the agent sandbox and execute a shell command through guest `agent-compose-runtime exec`; the command transcript is streamed and persisted to the run record. |
+| prompt REPL | `run <agent> -i --prompt` | Read prompts line by line from stdin. Each non-empty input creates one run and reuses the same sandbox. |
+| command REPL | `run <agent> -i --command` | Read commands line by line from stdin. Each non-empty input creates one run and reuses the same sandbox. |
 | sandbox reuse | `run <agent> --sandbox <sandbox> --prompt "..."` | Continue in a specific sandbox. |
 
 Compatibility:
@@ -160,7 +162,11 @@ Compatibility:
 | `--keep-running` | Keep the sandbox runtime after the run completes. |
 | `--sandbox <sandbox>` | Reuse an existing sandbox. |
 | `--session-id <session-id>` | Deprecated alias for `--sandbox`; prints a warning to stderr. |
-| `--rm` | Remove the sandbox after a successful run. |
+| `--rm` | Remove the sandbox after the run reaches a terminal state. |
+| `--jupyter` | Enable Jupyter for this run. When unset, the agent YAML default is used; when YAML is unset, Jupyter is disabled. |
+| `--jupyter-expose` | Mark the Jupyter agent-compose proxy endpoint for this run as explicitly exposed. This does not request runtime-driver host port exposure and also enables Jupyter. |
+| `-d, --detach` | Submit the run to the daemon and return immediately with the run id, initial status, and a `logs --follow` command. |
+| `-i, --interactive` | Enter prompt or command REPL mode. Must be combined with `--prompt` or `--command`. |
 
 Examples:
 
@@ -169,14 +175,24 @@ agent-compose run reviewer --trigger pr-opened
 agent-compose run reviewer --prompt "Review the staged changes"
 agent-compose run builder --command "task build"
 agent-compose run tester --command "task test" --keep-running
+agent-compose run tester --command "task test" -d
+agent-compose run reviewer -i --prompt
+agent-compose run tester -i --command
 agent-compose run reviewer --sandbox sandbox_123 --prompt "Continue the review"
+agent-compose run reviewer --jupyter --jupyter-expose --prompt "Inspect the notebook state"
 ```
 
 Rules:
 
 - Choose only one of trigger, prompt, or command.
 - Do not combine `--prompt`, `--trigger`, or `--command` with legacy positional prompt arguments.
-- `run -d/--detach`, `run -i/--interactive`, `--jupyter`, and `--jupyter-expose` are not published as stable CLI features yet.
+- `run -d/--detach` and `run -i/--interactive` are mutually exclusive.
+- `run -i/--interactive` must select `--prompt` or `--command`; it cannot be combined with `--trigger` or `--json`.
+- Empty REPL lines do not create runs. Enter `/exit` or press Ctrl+D to exit.
+- REPL mode is not TTY/PTY or running stdin passthrough. Each input is one independent `RunAgentStream` call that reuses the same sandbox.
+- Detached runs can be observed with the printed `agent-compose logs --run-id <run-id> --follow` command, or managed later with `stop` and `logs`.
+- `run -i --prompt` supports providers with reusable provider sessions: Codex, Claude/cc, and OpenCode. Gemini currently returns unsupported.
+- `StopRun` requests cancellation for active in-daemon runs. Pending/running runs left behind after daemon restart are reconciled to failed with a `daemon interrupted` error.
 
 ## `ps`: List Sandboxes
 
@@ -208,6 +224,19 @@ Default columns:
 - `UPDATED`
 
 `--verbose` adds project, driver, image, Jupyter, workspace, and error summary fields.
+
+## `stats`: Show Sandbox Resource Stats
+
+Show a single resource stats snapshot for a running sandbox.
+
+```bash
+agent-compose stats <sandbox>
+agent-compose stats <sandbox> --json
+```
+
+Fields include CPU percent, memory usage/limit/percent, network rx/tx, block read/write, uptime, driver, and sampled_at. Metrics unavailable from a runtime driver are shown as `-` in text tables. JSON keeps stable keys and represents those metrics with `value: null` and `status: unknown` or `status: unavailable`.
+
+When a driver has no stable stats capability, the command returns unsupported instead of a generic execution failure.
 
 ## `stop`: Stop Sandboxes
 
@@ -298,11 +327,13 @@ agent-compose exec sandbox_123 --command "git status --short"
 agent-compose exec sandbox_123 --cwd /workspace --command "pwd"
 ```
 
+`exec` and `run --command` use the same guest `agent-compose-runtime exec` command transcript. Text mode streams the transcript; `--json` suppresses streaming transcript output and prints only the final result. `exec` does not create a `ProjectRun`; use `run --command` when run audit, `logs`, or run artifacts are required.
+
 ## `logs`: Show Logs
 
 Show logs for agents, sandboxes, or runs in the current project. By default, logs for all project agents are shown.
 
-Current `logs` output is based on run output/artifacts returned by the v2 RunService, specifically persisted `RunDetail.output`. It does not automatically read private provider log files from Codex, Claude, Gemini, or other provider CLIs.
+Current `logs` output is based on run log artifacts returned by the v2 RunService. `--follow` is served by the daemon from the log file referenced by `logs_path`; non-follow views use the run record output and artifact summary. It does not automatically read private provider log files from Codex, Claude, Gemini, or other provider CLIs.
 
 ```bash
 agent-compose logs
@@ -373,7 +404,7 @@ Commands:
 
 - `images`: list images.
 - `pull`: pull all agent images referenced by the current project.
-- `pull <image>`: pull a specific image.
+- `pull <image>`: pull a specific image. If the local OCI image backend/store already has the image, the command succeeds directly with a skipped/already exists warning and does not pull again.
 - `rmi <image>`: remove an image.
 - `inspect image <image>`: inspect an image.
 
@@ -415,7 +446,6 @@ agent-compose config --quiet
 
 The following commands or capabilities are not published as stable CLI features yet:
 
-- `stats`: sandbox resource stats require a unified runtime metrics API.
 - `build`: project image build is deferred.
 - `push`: image push is deferred.
 - `up -d/--detach`: current `up` already applies the project and returns; no detach flag is provided.

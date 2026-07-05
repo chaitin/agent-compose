@@ -2,6 +2,8 @@
 
 本文记录 `feature/cli-optimization` 分支上 agent-compose CLI 的人工/自动化组合测试结果。测试目标是覆盖当前已经实现的命令行体系、关键参数、兼容入口和认证行为，并记录延期命令与测试中发现的问题。
 
+> 状态说明：本文是历史复测报告，不作为当前 CLI 能力权威说明。当前命令语义以 [命令行使用手册](command-line-manual.md) 和 [CLI 当前设计](design/agent-compose-cli-improvement-plan.md) 为准。历史报告中当时尚未覆盖的 `stats` 已在后续 CLI runtime capabilities 工作中实现；`build` 和 `push` 仍未作为稳定 CLI 发布。
+
 ## 1. 测试环境与启动方式
 
 测试分支：
@@ -87,7 +89,7 @@ up
 version
 ```
 
-本轮不作为功能实现验收的命令：
+本轮历史报告未作为功能实现验收的命令：
 
 ```text
 stats
@@ -95,7 +97,7 @@ build
 push
 ```
 
-上述三个命令按当前改进计划延期，本轮只验证其当前不可用状态与预期一致。
+其中 `stats` 是当时尚未发布的能力，当前已经实现为 sandbox 资源统计命令；`build` 和 `push` 仍按当前设计暂缓。
 
 ## 3. 服务与认证测试
 
@@ -208,15 +210,15 @@ AUTH_USERNAME=admin AUTH_PASSWORD=... \
 
 说明：该命令会进入真实 provider 执行路径，测试环境没有把 provider 完成结果作为确定性 E2E 断言。本轮验证重点是旧 positional prompt 入口的兼容 warning 行为，以及 warning 不写入 JSON stdout 的约束。
 
-## 10. 延期命令边界测试
+## 10. 历史延期命令边界测试
 
 | 测试项 | 命令结构 | 当前预期 | 结果 |
 | --- | --- | --- | --- |
-| stats | `<prefix> stats` | 当前未实现，返回未知命令/不可用错误 | 符合预期 |
+| stats | `<prefix> stats` | 历史测试时尚未发布，返回未知命令/不可用错误 | 当时符合预期；当前已实现 |
 | build | `<prefix> build` | 当前未实现，返回未知命令/不可用错误 | 符合预期 |
 | push | `<prefix> push` | 当前未实现，返回未知命令/不可用错误 | 符合预期 |
 
-结论：`stats/build/push` 与当前改进计划一致，本轮不作为功能缺陷处理。
+结论：该表只描述历史测试时点。当前 `stats` 已发布为 sandbox stats 命令；`build` 和 `push` 仍不作为稳定 CLI 能力。
 
 ## 11. 测试中发现的问题
 
@@ -269,9 +271,9 @@ timeout 60s <prefix> run reviewer --command 'sleep 300' --keep-running
 | 类型 | 数量 | 说明 |
 | --- | ---: | --- |
 | 确定性通过测试项 | 59 | 已实现命令、关键参数、JSON 输出、deprecated warning、认证、sandbox 生命周期、镜像命令。 |
-| 延期命令边界项 | 3 | `stats`、`build`、`push` 当前未实现，符合计划。 |
+| 历史延期命令边界项 | 3 | 历史测试时 `stats`、`build`、`push` 尚未发布；当前 `stats` 已实现，`build`/`push` 仍暂缓。 |
 | 已修复问题 | 1 | `exec --session-id ... --command` 兼容入口参数校验问题。 |
 | 新发现待跟进问题 | 2 | 本地镜像 `pull` 报错提示可优化；外部 timeout 中断 `run` 后可能遗留 runtime 容器。 |
 | 当前阻塞发布的问题 | 0 | 除已明确延期项和异常中断清理边界外，已实现 CLI 命令通过本轮复测。 |
 
-总体结论：除 `stats/build/push` 按计划延期外，当前已经实现的 agent-compose CLI 命令体系完成了主要路径复测。project、sandbox、exec、logs、image 和远程认证行为符合当前设计；兼容入口保留且 deprecated warning 不污染 JSON stdout。
+总体结论：本文所述测试在历史分支和历史版本上完成。当前已经实现的 agent-compose CLI 命令体系以命令行使用手册和 CLI 当前设计为准；兼容入口仍要求 deprecated warning 不污染 JSON stdout。

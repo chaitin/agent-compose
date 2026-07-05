@@ -207,7 +207,7 @@ task test
 - [英文文档索引](../README.md)
 - [命令行使用手册](command-line-manual.md)
 - [架构说明](design/agent-compose_design.md)
-- [CLI 改进计划](design/agent-compose-cli-improvement-plan.md)
+- [CLI 当前设计](design/agent-compose-cli-improvement-plan.md)
 - [Agent system prompt（Phase 1）](design/agent_system_prompt_design.md)
 - [Runtime contract](design/agent-compose-runtime_contract.md)
 - [OpenCode CLI Provider 支持](design/opencode_cli_support.md)
