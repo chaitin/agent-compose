@@ -10,7 +10,7 @@ Main entrypoints:
 - `pkg/agentcompose/api/`: Connect handlers and protobuf/domain mapping.
 - `pkg/agentcompose/adapters/`: daemon-only runtime, session, loader, capability, and LLM adapters.
 - `pkg/agentcompose/proxy/`: HTTP proxy routes for Jupyter, workspaces, and runtime LLM facade.
-- Owner packages under `pkg/` contain shared domain code: `model`, `storage`, `loaders`, `projects`, `runs`, `sessions`, `execution`, `llms`, `events`, `images`, `dashboard`, `capabilities`, and `bus`.
+- Owner packages under `pkg/` contain shared domain code: `model`, `storage`, `loaders`, `projects`, `runs`, `sessions`, `execution`, `llms`, `events`, `images`, `dashboard`, and `capabilities`. Event bus code lives in `loaders`; small dependency-free storage helpers (e.g. stored-time decoding) live in `pkg/storage/storeutil`.
 - `proto/agentcompose/v1/`: agent-compose Connect API definitions and generated Go code.
 - `proto/agentcompose/v2/`: agent-compose v2 Connect API definitions and generated Go code.
 - `proto/health/v1/`: health Connect API definitions and generated Go code.
