@@ -150,8 +150,8 @@ func findCommandExecPayload(raw string) (domain.RuntimeCommandResult, bool) {
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, CommandResultPrefix) {
-			line = strings.TrimSpace(strings.TrimPrefix(line, CommandResultPrefix))
+		if idx := strings.LastIndex(line, CommandResultPrefix); idx >= 0 {
+			line = strings.TrimSpace(line[idx+len(CommandResultPrefix):])
 		}
 		if !strings.HasPrefix(line, "{") {
 			continue

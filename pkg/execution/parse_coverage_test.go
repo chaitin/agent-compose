@@ -41,6 +41,13 @@ func TestParseAgentAndCommandExecResultWorkflows(t *testing.T) {
 	if command.ExitCode != 7 || command.Stdout != "out" || command.Success {
 		t.Fatalf("command result = %#v", command)
 	}
+	joinedCommand, err := ParseCommandExecResult(domain.ExecResult{Stdout: "no-newline" + commandPayload})
+	if err != nil {
+		t.Fatalf("ParseCommandExecResult joined payload returned error: %v", err)
+	}
+	if joinedCommand.ExitCode != 7 || joinedCommand.Stdout != "out" || joinedCommand.Success {
+		t.Fatalf("joined command result = %#v", joinedCommand)
+	}
 	if _, err := ParseCommandExecResult(domain.ExecResult{Stdout: "noise"}); err == nil {
 		t.Fatalf("expected missing command payload error")
 	}
