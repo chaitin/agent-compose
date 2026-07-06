@@ -14,7 +14,7 @@ func SessionDetailToProto(session *domain.Session) *agentcomposev1.SessionDetail
 	for _, item := range session.EnvItems {
 		value := item.Value
 		if item.Secret && value != "" {
-			value = "********"
+			value = secretRedactedValue
 		}
 		resp.EnvItems = append(resp.EnvItems, &agentcomposev1.SessionEnvVar{Name: item.Name, Value: value, Secret: item.Secret})
 	}
@@ -47,7 +47,7 @@ func GlobalEnvConfigToProto(items []domain.SessionEnvVar) *agentcomposev1.Global
 	for _, item := range items {
 		value := item.Value
 		if item.Secret && value != "" {
-			value = "********"
+			value = secretRedactedValue
 		}
 		resp.EnvItems = append(resp.EnvItems, &agentcomposev1.SessionEnvVar{Name: item.Name, Value: value, Secret: item.Secret})
 	}

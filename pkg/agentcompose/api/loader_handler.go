@@ -112,6 +112,11 @@ func (s *LoaderHandler) UpdateLoader(ctx context.Context, req *connect.Request[a
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	envItems := protoEnvItemsToModel(req.Msg.GetEnvItems())
+	envItems, err = s.preserveUnchangedLoaderEnvSecrets(ctx, req.Msg.GetLoaderId(), envItems)
+	if err != nil {
+		return nil, err
+	}
 	item, err := s.controller.UpdateLoader(ctx, domain.Loader{
 		Summary: domain.LoaderSummary{
 			ID:                req.Msg.GetLoaderId(),
@@ -129,12 +134,39 @@ func (s *LoaderHandler) UpdateLoader(ctx context.Context, req *connect.Request[a
 			CapsetIDs:         req.Msg.GetCapsetIds(),
 		},
 		Script:   req.Msg.GetScript(),
-		EnvItems: protoEnvItemsToModel(req.Msg.GetEnvItems()),
+		EnvItems: envItems,
 	})
 	if err != nil {
 		return nil, loaderServiceConnectError(err)
 	}
 	return connect.NewResponse(&agentcomposev1.LoaderResponse{Loader: LoaderDetailToProto(item)}), nil
+}
+
+func (s *LoaderHandler) preserveUnchangedLoaderEnvSecrets(ctx context.Context, loaderID string, items []domain.SessionEnvVar) ([]domain.SessionEnvVar, error) {
+	existing, err := s.store.GetLoader(ctx, loaderID)
+	if err != nil {
+		return nil, loaderServiceConnectError(err)
+	}
+	existingByName := make(map[string]domain.SessionEnvVar, len(existing.EnvItems))
+	for _, item := range existing.EnvItems {
+		name := strings.TrimSpace(item.Name)
+		if name != "" {
+			existingByName[name] = item
+		}
+	}
+	for index, item := range items {
+		name := strings.TrimSpace(item.Name)
+		value := strings.TrimSpace(item.Value)
+		if name == "" || !item.Secret || (value != "" && value != secretRedactedValue) {
+			continue
+		}
+		existingItem, ok := existingByName[name]
+		if !ok || !existingItem.Secret || existingItem.Value == "" {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("secret env %s requires a value", name))
+		}
+		items[index].Value = existingItem.Value
+	}
+	return items, nil
 }
 
 func (s *LoaderHandler) DeleteLoader(ctx context.Context, req *connect.Request[agentcomposev1.LoaderIDRequest]) (*connect.Response[emptypb.Empty], error) {

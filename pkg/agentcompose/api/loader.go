@@ -45,7 +45,7 @@ func LoaderDetailToProto(item domain.Loader) *agentcomposev1.LoaderDetail {
 	for _, envItem := range item.EnvItems {
 		value := envItem.Value
 		if envItem.Secret && value != "" {
-			value = "********"
+			value = secretRedactedValue
 		}
 		resp.EnvItems = append(resp.EnvItems, &agentcomposev1.SessionEnvVar{Name: envItem.Name, Value: value, Secret: envItem.Secret})
 	}

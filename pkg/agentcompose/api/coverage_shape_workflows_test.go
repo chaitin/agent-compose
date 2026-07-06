@@ -91,10 +91,10 @@ func TestAPIMappingCoverageWorkflows(t *testing.T) {
 		Workspace:   &domain.SessionWorkspace{ID: "workspace-1", Name: "repo", Type: "git", ConfigJSON: "{}"},
 		EnvItems:    []domain.SessionEnvVar{{Name: "SECRET", Value: "value", Secret: true}},
 	}
-	if detail := SessionDetailToProto(session); detail.GetSummary().GetSessionId() != "session-1" || detail.GetEnvItems()[0].GetValue() != "********" {
+	if detail := SessionDetailToProto(session); detail.GetSummary().GetSessionId() != "session-1" || detail.GetEnvItems()[0].GetValue() != secretRedactedValue {
 		t.Fatalf("session detail = %#v", detail)
 	}
-	if env := GlobalEnvConfigToProto(session.EnvItems); env.GetEnvItems()[0].GetValue() != "********" {
+	if env := GlobalEnvConfigToProto(session.EnvItems); env.GetEnvItems()[0].GetValue() != secretRedactedValue {
 		t.Fatalf("global env = %#v", env)
 	}
 	if WorkspaceConfigToProto(workspace).GetId() != workspace.ID || SessionWorkspaceToProto(session.Workspace).GetId() != workspace.ID {
@@ -137,7 +137,7 @@ func TestAPIMappingCoverageWorkflows(t *testing.T) {
 		Triggers: []domain.LoaderTrigger{{LoaderID: "loader-1", ID: "trigger-1", Kind: domain.LoaderTriggerKindCron, Topic: "topic", IntervalMs: 1000, Enabled: true, AutoID: true, NextFireAt: now, LastFiredAt: now}},
 		EnvItems: []domain.SessionEnvVar{{Name: "LOADER_SECRET", Value: "value", Secret: true}},
 	}
-	if detail := LoaderDetailToProto(loader); detail.GetSummary().GetLoaderId() != "loader-1" || detail.GetEnvItems()[0].GetValue() != "********" {
+	if detail := LoaderDetailToProto(loader); detail.GetSummary().GetLoaderId() != "loader-1" || detail.GetEnvItems()[0].GetValue() != secretRedactedValue {
 		t.Fatalf("loader detail = %#v", detail)
 	}
 	for _, kind := range []string{domain.LoaderTriggerKindInterval, domain.LoaderTriggerKindEvent, domain.LoaderTriggerKindTimeout, domain.LoaderTriggerKindCron, "bad"} {
@@ -191,7 +191,7 @@ func TestAPILightweightHandlersCoverageWorkflows(t *testing.T) {
 	if resp, err := configHandler.GetGlobalEnvConfig(ctx, connect.NewRequest(&emptypb.Empty{})); err != nil || len(resp.Msg.GetEnvItems()) != 1 {
 		t.Fatalf("get global env resp=%v err=%v", resp, err)
 	}
-	if resp, err := configHandler.UpdateGlobalEnvConfig(ctx, connect.NewRequest(&agentcomposev1.UpdateGlobalEnvConfigRequest{EnvItems: []*agentcomposev1.SessionEnvVar{{Name: "SECRET", Secret: true}}})); err != nil || resp.Msg.GetEnvItems()[0].GetValue() != "********" {
+	if resp, err := configHandler.UpdateGlobalEnvConfig(ctx, connect.NewRequest(&agentcomposev1.UpdateGlobalEnvConfigRequest{EnvItems: []*agentcomposev1.SessionEnvVar{{Name: "SECRET", Secret: true}}})); err != nil || resp.Msg.GetEnvItems()[0].GetValue() != secretRedactedValue {
 		t.Fatalf("update global env resp=%v err=%v", resp, err)
 	}
 	if resp, err := configHandler.GetCapabilityGatewayConfig(ctx, connect.NewRequest(&emptypb.Empty{})); err != nil || !resp.Msg.GetTokenSet() {
@@ -265,7 +265,8 @@ func TestAPILightweightHandlersCoverageWorkflows(t *testing.T) {
 		t.Fatalf("expected empty agent id error")
 	}
 
-	loaderHandler := NewLoaderHandler(&fakeLoaderController{}, &fakeLoaderStore{})
+	loaderController := &fakeLoaderController{}
+	loaderHandler := NewLoaderHandler(loaderController, &fakeLoaderStore{})
 	if resp, err := loaderHandler.ValidateLoader(ctx, connect.NewRequest(&agentcomposev1.ValidateLoaderRequest{Runtime: domain.LoaderRuntimeScheduler, Script: "function main(){}"})); err != nil || len(resp.Msg.GetTriggers()) != 1 {
 		t.Fatalf("validate loader resp=%v err=%v", resp, err)
 	}
@@ -278,8 +279,26 @@ func TestAPILightweightHandlersCoverageWorkflows(t *testing.T) {
 	if resp, err := loaderHandler.CreateLoader(ctx, connect.NewRequest(&agentcomposev1.CreateLoaderRequest{Name: "Loader", Runtime: domain.LoaderRuntimeScheduler, AgentId: "agent-1", Script: "function main(){}", EnvItems: []*agentcomposev1.SessionEnvVar{{Name: "A", Value: "B"}}})); err != nil || resp.Msg.GetLoader().GetSummary().GetDefaultAgent() != "codex" {
 		t.Fatalf("create loader resp=%v err=%v", resp, err)
 	}
-	if resp, err := loaderHandler.UpdateLoader(ctx, connect.NewRequest(&agentcomposev1.UpdateLoaderRequest{LoaderId: "loader-1", Name: "Loader", Runtime: domain.LoaderRuntimeScheduler, DefaultAgent: "codex", Script: "function main(){}"})); err != nil || resp.Msg.GetLoader().GetSummary().GetLoaderId() != "loader-1" {
+	if resp, err := loaderHandler.UpdateLoader(ctx, connect.NewRequest(&agentcomposev1.UpdateLoaderRequest{LoaderId: "loader-1", Name: "Loader", Runtime: domain.LoaderRuntimeScheduler, DefaultAgent: "codex", Script: "function main(){}", EnvItems: []*agentcomposev1.SessionEnvVar{{Name: "LOADER_SECRET", Value: secretRedactedValue, Secret: true}}})); err != nil || resp.Msg.GetLoader().GetSummary().GetLoaderId() != "loader-1" {
 		t.Fatalf("update loader resp=%v err=%v", resp, err)
+	}
+	if len(loaderController.updated.EnvItems) != 1 || loaderController.updated.EnvItems[0].Value != "loader-secret" {
+		t.Fatalf("update loader env = %#v", loaderController.updated.EnvItems)
+	}
+	for _, tc := range []struct {
+		name     string
+		loaderID string
+		envName  string
+	}{
+		{name: "store error", loaderID: "loader-error", envName: "LOADER_SECRET"},
+		{name: "missing secret", loaderID: "loader-1", envName: "MISSING_SECRET"},
+		{name: "existing non-secret", loaderID: "loader-non-secret", envName: "LOADER_SECRET"},
+		{name: "existing empty secret", loaderID: "loader-empty-secret", envName: "LOADER_SECRET"},
+	} {
+		_, err := loaderHandler.UpdateLoader(ctx, connect.NewRequest(&agentcomposev1.UpdateLoaderRequest{LoaderId: tc.loaderID, Name: "Loader", Runtime: domain.LoaderRuntimeScheduler, DefaultAgent: "codex", Script: "function main(){}", EnvItems: []*agentcomposev1.SessionEnvVar{{Name: tc.envName, Value: secretRedactedValue, Secret: true}}}))
+		if err == nil {
+			t.Fatalf("expected loader secret preservation error for %s", tc.name)
+		}
 	}
 	if _, err := loaderHandler.DeleteLoader(ctx, connect.NewRequest(&agentcomposev1.LoaderIDRequest{LoaderId: "loader-1"})); err != nil {
 		t.Fatalf("delete loader err=%v", err)
@@ -629,7 +648,9 @@ func (d *fakeSessionDelegate) GetSessionProxy(context.Context, *connect.Request[
 	return connect.NewResponse(&agentcomposev1.SessionProxyResponse{}), nil
 }
 
-type fakeLoaderController struct{}
+type fakeLoaderController struct {
+	updated domain.Loader
+}
 
 func (fakeLoaderController) Validate(context.Context, string, string) (loaders.LoaderValidationResult, error) {
 	return loaders.LoaderValidationResult{
@@ -645,10 +666,11 @@ func (fakeLoaderController) CreateLoader(_ context.Context, loader domain.Loader
 	return loader, nil
 }
 
-func (fakeLoaderController) UpdateLoader(_ context.Context, loader domain.Loader) (domain.Loader, error) {
+func (c *fakeLoaderController) UpdateLoader(_ context.Context, loader domain.Loader) (domain.Loader, error) {
 	if loader.Summary.ID == "missing" {
 		return domain.Loader{}, domain.ResourceError(domain.ErrNotFound, "loader", loader.Summary.ID, "not found", nil)
 	}
+	c.updated = loader
 	loader.Triggers = []domain.LoaderTrigger{{LoaderID: loader.Summary.ID, ID: "trigger-1", Kind: domain.LoaderTriggerKindEvent, Enabled: true}}
 	return loader, nil
 }
@@ -681,8 +703,18 @@ func (fakeLoaderStore) ListLoaderSummaries(context.Context) ([]domain.LoaderSumm
 	return []domain.LoaderSummary{testLoaderFixture().Summary}, nil
 }
 
-func (fakeLoaderStore) GetLoader(context.Context, string) (domain.Loader, error) {
-	return testLoaderFixture(), nil
+func (fakeLoaderStore) GetLoader(_ context.Context, loaderID string) (domain.Loader, error) {
+	loader := testLoaderFixture()
+	loader.Summary.ID = loaderID
+	switch loaderID {
+	case "loader-error":
+		return domain.Loader{}, domain.ResourceError(domain.ErrNotFound, "loader", loaderID, "not found", nil)
+	case "loader-non-secret":
+		loader.EnvItems = []domain.SessionEnvVar{{Name: "LOADER_SECRET", Value: "loader-value"}}
+	case "loader-empty-secret":
+		loader.EnvItems = []domain.SessionEnvVar{{Name: "LOADER_SECRET", Secret: true}}
+	}
+	return loader, nil
 }
 
 func (fakeLoaderStore) ListLoaderRuns(context.Context, string, int) ([]domain.LoaderRunSummary, error) {
@@ -709,6 +741,9 @@ func testLoaderFixture() domain.Loader {
 	return domain.Loader{
 		Summary: domain.LoaderSummary{ID: "loader-1", Name: "Loader", Enabled: true, Runtime: domain.LoaderRuntimeScheduler, DefaultAgent: "codex", CreatedAt: now, UpdatedAt: now},
 		Script:  "function main(){}",
+		EnvItems: []domain.SessionEnvVar{
+			{Name: "LOADER_SECRET", Value: "loader-secret", Secret: true},
+		},
 		Triggers: []domain.LoaderTrigger{
 			{LoaderID: "loader-1", ID: "trigger-1", Kind: domain.LoaderTriggerKindEvent, Topic: "topic", Enabled: true},
 		},
