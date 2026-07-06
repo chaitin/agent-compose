@@ -94,7 +94,10 @@ The daemon listens on a Unix socket by default:
 
 A TCP HTTP/Connect listener is enabled only when `HTTP_LISTEN` is explicitly
 set. CLI connection priority is `--host`, then `AGENT_COMPOSE_HOST`, then the
-default Unix socket.
+default Unix socket. `HTTP_LISTEN` is the daemon internal API entrypoint, not
+the public browser entrypoint. When it binds a non-loopback address,
+configuration loading logs a warning that the listener should be exposed only
+on a trusted network or behind the agent-compose-ui server.
 
 ```bash
 HTTP_LISTEN=127.0.0.1:7410 agent-compose daemon
@@ -758,11 +761,36 @@ registers API, Connect, webhook/workspace, and Jupyter proxy routes.
 
 The current Docker deployment provides an independent frontend service:
 
-- The `agent-compose-ui` repository builds the frontend image.
+- The `agent-compose-ui` repository builds and publishes the frontend image.
 - Compose has two services: `agent-compose` daemon and
   `agent-compose-frontend`.
-- The frontend service serves the built UI and reverse proxies the daemon v1/v2
-  Connect APIs, `/api/`, and Jupyter proxy routes.
+- The daemon starts by default; the `agent-compose-frontend` service starts
+  when the `with-ui` profile is enabled.
+- The frontend image runs the agent-compose-ui server behind nginx. Nginx owns
+  static assets, access logs, body size limits, timeouts, and WebSocket upgrade
+  handling. The UI server owns browser authentication, OAuth, cookie sessions,
+  and authenticated reverse proxying.
+- `/api/auth/*` and `/oauth/*` belong to the UI server and are no longer
+  registered by the daemon.
+- The UI server proxies daemon v1/v2 Connect APIs, the health API,
+  workspace/event/webhook HTTP APIs, `/jupyter/*` or the configured
+  `JUPYTER_PROXY_BASE`, and the compatible `/agent-compose/session/*` paths to
+  the daemon.
+- Browser traffic should be exposed through the agent-compose-ui server port.
+  The daemon `HTTP_LISTEN` used by Compose is an internal API reachable from the
+  container network and host loopback; direct external use must be protected by
+  a trusted network, reverse proxy, VPN, mTLS, or upper-layer machine
+  authentication.
+
+The local CLI does not go through the UI server. It uses the daemon Unix socket
+by default with socket peer credential trust, and reaches the TCP/HTTP daemon
+API only when `--host` or `AGENT_COMPOSE_HOST` is set.
+
+Webhook ingress and browser login are separate security boundaries.
+`/api/webhooks/*` business handling, source token checks, and provider signature
+checks remain in the daemon handler. The UI server only forwards webhook paths
+as an HTTP entrypoint and does not convert webhook tokens into browser cookie
+sessions.
 
 For shared playground build, deployment, and verification flow, see
 [playground_setup.md](playground_setup.md).
@@ -780,4 +808,6 @@ For shared playground build, deployment, and verification flow, see
 - The v1 API must remain compatible. The v2 API carries the primary
   project/run/exec/image path.
 - Web/UI is deployed as an independent service and is not included in the daemon
-  Docker image.
+  Docker image; browser auth/OAuth belongs to the agent-compose-ui server.
+- The daemon TCP API should not be used as the public browser entrypoint.
+  Browser cookie/OAuth settings do not protect daemon `HTTP_LISTEN`.
