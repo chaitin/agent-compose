@@ -101,6 +101,9 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 	if claude.Env["LLM_API_PROTOCOL"] != llms.APIProtocolMessages || claude.Env["ANTHROPIC_MODEL"] != "claude-test" {
 		t.Fatalf("claude env = %#v", claude.Env)
 	}
+	if claude.Env["ANTHROPIC_BASE_URL"] == "" || claude.Env["ANTHROPIC_AUTH_TOKEN"] == "" || claude.Env["ANTHROPIC_AUTH_TOKEN"] != claude.Env["ANTHROPIC_API_KEY"] {
+		t.Fatalf("claude anthropic facade env = %#v", claude.Env)
+	}
 	if _, err := store.GetLLMFacadeToken(ctx, claude.Env["AGENT_COMPOSE_SESSION_TOKEN"]); err != nil {
 		t.Fatalf("claude token not stored: %v", err)
 	}
@@ -117,7 +120,7 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode anthropic returned error: %v", err)
 	}
-	if anthropic.Env["LLM_API_PROTOCOL"] != llms.APIProtocolMessages || anthropic.Env["ANTHROPIC_BASE_URL"] == "" || anthropic.Env["OPENCODE_CONFIG"] == "" {
+	if anthropic.Env["LLM_API_PROTOCOL"] != llms.APIProtocolMessages || anthropic.Env["ANTHROPIC_BASE_URL"] == "" || anthropic.Env["ANTHROPIC_AUTH_TOKEN"] == "" || anthropic.Env["OPENCODE_CONFIG"] == "" {
 		t.Fatalf("opencode anthropic env = %#v", anthropic.Env)
 	}
 

@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	appconfig "agent-compose/pkg/config"
@@ -21,6 +22,8 @@ type SessionDriver struct {
 	ConfigDB *configstore.ConfigStore
 	Runtimes RuntimeProvider
 }
+
+var ensureSessionLLMFacadeConfig = runtimefacade.EnsureSessionLLMFacadeConfig
 
 func NewSessionDriver(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, runtimes RuntimeProvider) *SessionDriver {
 	return &SessionDriver{Config: config, Store: store, ConfigDB: configDB, Runtimes: runtimes}
@@ -118,13 +121,41 @@ func (d *SessionDriver) prepareSessionStart(ctx context.Context, driver string, 
 	if err != nil {
 		return err
 	}
-	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, d.Config, d.ConfigDB, session, "codex", "", "session", "")
-	if err != nil {
-		return err
+	managedEnv := map[string]string{}
+	for _, agent := range []string{"codex", "claude"} {
+		agentEnv, err := ensureSessionLLMFacadeConfig(ctx, d.Config, d.ConfigDB, session, agent, "", "session", "")
+		if err != nil {
+			if agent == "claude" && runtimefacade.IsOptionalConfigError(err) {
+				continue
+			}
+			return err
+		}
+		for key, value := range startupFacadeEnv(agent, agentEnv) {
+			managedEnv[key] = value
+		}
 	}
 	if len(managedEnv) > 0 {
 		session.RuntimeEnvItems = llms.EnvItemsFromMap(managedEnv, false)
 	}
 	*vmState = execution.FromDriverVMState(prepared)
 	return nil
+}
+
+func startupFacadeEnv(agent string, env map[string]string) map[string]string {
+	if len(env) == 0 {
+		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(agent), "claude") {
+		filtered := make(map[string]string, len(env))
+		for _, key := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CLAUDE_MODEL"} {
+			if value := strings.TrimSpace(env[key]); value != "" {
+				filtered[key] = value
+			}
+		}
+		if len(filtered) == 0 {
+			return nil
+		}
+		return filtered
+	}
+	return env
 }

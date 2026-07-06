@@ -113,6 +113,7 @@ func ensureSessionClaudeConfig(ctx context.Context, config *appconfig.Config, st
 		"LLM_API_KEY":                 tokenValue,
 		"LLM_API_PROTOCOL":            llms.APIProtocolMessages,
 		"ANTHROPIC_API_KEY":           tokenValue,
+		"ANTHROPIC_AUTH_TOKEN":        tokenValue,
 		"ANTHROPIC_BASE_URL":          anthropicBaseURL,
 	}
 	if tokenModel != "" {
@@ -169,6 +170,7 @@ func ensureOpenCodeAnthropicConfig(ctx context.Context, config *appconfig.Config
 		"LLM_API_KEY":                 tokenValue,
 		"LLM_API_PROTOCOL":            llms.APIProtocolMessages,
 		"ANTHROPIC_API_KEY":           tokenValue,
+		"ANTHROPIC_AUTH_TOKEN":        tokenValue,
 		"ANTHROPIC_BASE_URL":          anthropicBaseURL,
 		"OPENCODE_CONFIG":             llms.GuestOpenCodeConfigPath(config),
 	}, nil
@@ -265,6 +267,10 @@ func isOptionalConfigError(err error) bool {
 		return false
 	}
 	return errors.Is(err, domain.ErrRequired) || errors.Is(err, domain.ErrFailedPrecondition)
+}
+
+func IsOptionalConfigError(err error) bool {
+	return isOptionalConfigError(err)
 }
 
 func HasAnthropicProviderKey(ctx context.Context, config *appconfig.Config, store *configstore.ConfigStore) bool {
