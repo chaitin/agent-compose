@@ -292,19 +292,31 @@
 
 参考文档：[实施计划 阶段 5](docs/plan/runtime-cache-lifecycle-implementation-plan.md#阶段-5daemon-cacheservice-和-route-注册)
 
-- [ ] 5.1 实现 `pkg/agentcompose/api` CacheService handler
+- [x] 5.1 实现 `pkg/agentcompose/api` CacheService handler
   - 依赖：1.2、2.3、3.2、4.1、4.3。
   - 工作内容：新增 `pkg/agentcompose/api/cache.go`；实现 proto/domain 映射、参数校验、Connect code 映射、List/Inspect/Prune/Remove RPC。
   - 可并行子任务：
-    - [ ] 可并行：实现 enum 和 filter 映射 table tests。
-    - [ ] 可并行：实现 fake controller，覆盖四个 RPC 的成功和错误路径。
+    - [x] 可并行：实现 enum 和 filter 映射 table tests。
+    - [x] 可并行：实现 fake controller，覆盖四个 RPC 的成功和错误路径。
   - 测试方案：`go test ./pkg/agentcompose/api ./pkg/runtimecache`，覆盖四个 RPC、invalid argument、not found、active/unknown protected、referenced without include、dry-run、force delete。
   - 验收标准：handler 返回 warnings/blocked reasons；错误码稳定；unknown enum 不导致误删。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - 新增 `pkg/agentcompose/api/cache.go`，实现 `CacheHandler` 和 `CacheController` 接口，提供 `ListCaches`、`InspectCache`、`PruneCaches`、`RemoveCache` 四个 RPC。
+      - 实现 proto/domain mapping：`CacheDomain`、`CacheStatus`、driver/type/status/cache_id/older_than_seconds filter、`CacheItem`、`CacheReference`、prune/remove result。
+      - 实现参数校验：缺失或非法 `cache_id`、未知 enum、未知 driver/type、过大的 `older_than_seconds` 均返回 `InvalidArgument`。
+      - 实现 runtimecache error 到 Connect code 映射：not found、invalid argument、failed precondition、unavailable、internal。
+      - 新增 `pkg/agentcompose/api/cache_test.go`，使用 fake controller 覆盖四个 RPC 的成功和错误路径。
+    - 验证：
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./pkg/runtimecache`
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./pkg/agentcompose/api`
+      - `git diff --check`
+      - `rg -n "connectrpc|connect\\." pkg/runtimecache || true`
+    - 审计与例外：
+      - 覆盖 list filter 映射、inspect not found、prune dry-run/force response、remove active protected skipped response、unknown enum 不进入 controller、runtimecache error code 映射。
+      - 本任务只实现 API handler 和 fake-controller tests；实际 controller 事实源注入、app route 注册和 generated Connect client integration 按 5.2 实现。
+      - `pkg/runtimecache` 仍不导入 Connect。
     - 下一目标：5.2 app 注册和集成。
 
 - [ ] 5.2 注册 daemon CacheService 并接入事实源
