@@ -3066,6 +3066,9 @@ agents:
 				if !strings.Contains(item.Reason, "remove failed") {
 					t.Fatalf("skipped reason = %q", item.Reason)
 				}
+				if item.Sandbox == "session-remove-b" && (item.Agent != "worker" || item.Status != "failed") {
+					t.Fatalf("skipped metadata = %#v, want worker/failed context", item)
+				}
 			}
 			if !reflect.DeepEqual(skipped, tc.wantSkipped) {
 				t.Fatalf("skipped = %#v, want %#v", skipped, tc.wantSkipped)
@@ -3152,7 +3155,7 @@ agents:
 	if !strings.Contains(skippedErr, "sandbox prune skipped 1 sandbox") {
 		t.Fatalf("sandbox prune text skipped stderr = %q", skippedErr)
 	}
-	for _, want := range []string{"Removed 1 sandbox(es); 2 matched, 1 skipped.", "Skipped:", "session-text-b", "remove failed"} {
+	for _, want := range []string{"Removed 1 sandbox(es); 2 matched, 1 skipped.", "Skipped:", "session-text-b", "worker", "failed", "remove failed"} {
 		if !strings.Contains(skippedOut, want) {
 			t.Fatalf("sandbox prune skipped output %q does not contain %q", skippedOut, want)
 		}
@@ -3170,6 +3173,16 @@ func TestIntegrationCLISandboxPruneRejectsUnsafeStatuses(t *testing.T) {
 				t.Fatalf("sandbox prune --status %s stdout/stderr = %q / %q", status, stdout, stderr)
 			}
 		})
+	}
+}
+
+func TestIntegrationCLISandboxPruneRejectsInvalidDriver(t *testing.T) {
+	stdout, stderr, _, exitCode := executeCLICommand("sandbox", "prune", "--driver", "micro-sandbox")
+	if exitCode != exitCodeUsage {
+		t.Fatalf("sandbox prune --driver invalid exit code = %d, want usage; stderr=%q", exitCode, stderr)
+	}
+	if stdout != "" || !strings.Contains(stderr, `invalid --driver "micro-sandbox": expected docker, boxlite, or microsandbox`) {
+		t.Fatalf("sandbox prune --driver invalid stdout/stderr = %q / %q", stdout, stderr)
 	}
 }
 
@@ -4286,8 +4299,12 @@ func TestComposeSandboxPruneOutputJSONShape(t *testing.T) {
 		}},
 		Removed: []string{"sandbox-removed"},
 		Skipped: []composeSandboxPruneSkipped{{
-			Sandbox: "sandbox-skipped",
-			Reason:  "remove failed: denied",
+			Sandbox:   "sandbox-skipped",
+			Agent:     "worker",
+			Status:    "failed",
+			UpdatedAt: "2026-06-11T00:00:00Z",
+			Driver:    "boxlite",
+			Reason:    "remove failed: denied",
 		}},
 		Warnings: []string{"scan warning"},
 	}
@@ -4306,6 +4323,9 @@ func TestComposeSandboxPruneOutputJSONShape(t *testing.T) {
 	}
 	if strings.Contains(string(data), "DryRun") || strings.Contains(string(data), "Sandbox") || strings.Contains(string(data), "Reason") {
 		t.Fatalf("composeSandboxPruneOutput JSON uses Go field names: %s", data)
+	}
+	if !strings.Contains(string(data), `"updated_at"`) {
+		t.Fatalf("composeSandboxPruneOutput JSON missing skipped metadata: %s", data)
 	}
 }
 

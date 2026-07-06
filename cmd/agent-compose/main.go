@@ -1340,6 +1340,11 @@ func runComposeSandboxPruneCommand(cmd *cobra.Command, cli cliOptions, options c
 	if err != nil {
 		return commandExitError{Code: exitCodeUsage, Err: err}
 	}
+	driverFilter, err := sandboxPruneDriverFilterValue(options.Driver)
+	if err != nil {
+		return commandExitError{Code: exitCodeUsage, Err: err}
+	}
+	options.Driver = driverFilter
 	var olderThanSeconds uint64
 	if strings.TrimSpace(options.OlderThan) != "" {
 		olderThanSeconds, err = parseOlderThanSeconds(options.OlderThan)
@@ -1371,8 +1376,12 @@ func runComposeSandboxPruneCommand(cmd *cobra.Command, cli cliOptions, options c
 		for _, sandbox := range output.Matched {
 			if err := removeSandbox(cmd.Context(), clients.sandbox, sandbox.Sandbox, false); err != nil {
 				output.Skipped = append(output.Skipped, composeSandboxPruneSkipped{
-					Sandbox: sandbox.Sandbox,
-					Reason:  fmt.Sprintf("remove failed: %s", err),
+					Sandbox:   sandbox.Sandbox,
+					Agent:     sandbox.Agent,
+					Status:    sandbox.Status,
+					Driver:    sandbox.Driver,
+					UpdatedAt: firstNonEmptyString(sandbox.UpdatedAt, sandbox.CreatedAt),
+					Reason:    fmt.Sprintf("remove failed: %s", err),
 				})
 				continue
 			}
@@ -1444,6 +1453,17 @@ func sandboxPruneStatusFilter(value string) (map[string]bool, error) {
 		result["failed"] = true
 	}
 	return result, nil
+}
+
+func sandboxPruneDriverFilterValue(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return "", nil
+	case "docker", "boxlite", "microsandbox":
+		return strings.ToLower(strings.TrimSpace(value)), nil
+	default:
+		return "", fmt.Errorf("invalid --driver %q: expected docker, boxlite, or microsandbox", value)
+	}
 }
 
 func sandboxPruneTimestamp(sandbox composePSSandboxOutput) (time.Time, string, error) {
@@ -3397,8 +3417,12 @@ type composeSandboxPruneOutput struct {
 }
 
 type composeSandboxPruneSkipped struct {
-	Sandbox string `json:"sandbox"`
-	Reason  string `json:"reason"`
+	Sandbox   string `json:"sandbox"`
+	Agent     string `json:"agent,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Driver    string `json:"driver,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+	Reason    string `json:"reason"`
 }
 
 type composeStatsOutput struct {
@@ -4821,7 +4845,14 @@ func writeSandboxPruneSkippedTable(out io.Writer, skipped []composeSandboxPruneS
 		return err
 	}
 	for _, item := range skipped {
-		if _, err := fmt.Fprintf(tw, "%s\t-\t-\t-\t-\t%s\n", firstNonEmptyString(item.Sandbox, "-"), firstNonEmptyString(item.Reason, "-")); err != nil {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			firstNonEmptyString(item.Sandbox, "-"),
+			firstNonEmptyString(item.Agent, "-"),
+			firstNonEmptyString(item.Status, "-"),
+			firstNonEmptyString(item.Driver, "-"),
+			firstNonEmptyString(item.UpdatedAt, "-"),
+			firstNonEmptyString(item.Reason, "-"),
+		); err != nil {
 			return err
 		}
 	}
