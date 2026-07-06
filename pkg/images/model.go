@@ -13,6 +13,14 @@ type Backend interface {
 	RemoveImage(context.Context, RemoveRequest) (RemoveResult, error)
 }
 
+type BuildBackend interface {
+	BuildImage(context.Context, BuildRequest, BuildEventSink) (BuildResult, error)
+}
+
+type BuildEventSink interface {
+	Send(*agentcomposev2.BuildImageEvent) error
+}
+
 type ListRequest struct {
 	Query string
 	All   bool
@@ -55,4 +63,22 @@ type RemoveResult struct {
 	UntaggedRefs []string
 	DeletedIDs   []string
 	Warnings     []string
+}
+
+type BuildRequest struct {
+	ContextDir string
+	Dockerfile string
+	Tags       []string
+	BuildArgs  map[string]string
+	Target     string
+	Platform   *agentcomposev2.ImagePlatform
+	NoCache    bool
+	Pull       bool
+}
+
+type BuildResult struct {
+	Image       *agentcomposev2.Image
+	ImageRef    string
+	ResolvedRef string
+	Warnings    []string
 }

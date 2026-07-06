@@ -118,6 +118,70 @@ func TestNormalizeSortsAgentsForStableOutput(t *testing.T) {
 	}
 }
 
+func TestNormalizeBuildSpec(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: build-project
+agents:
+  reviewer:
+    provider: codex
+    image: reviewer:dev
+    build:
+      context: agent
+      dockerfile: Dockerfile.agent
+      target: runtime
+      args:
+        NODE_ENV: development
+      platforms:
+        - linux/amd64
+      tags:
+        - reviewer:latest
+      no_cache: true
+      pull: true
+  worker:
+    provider: codex
+    build: .
+`)
+
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	reviewer := normalized.Agents[0]
+	if reviewer.Build == nil || reviewer.Build.Context != "agent" || reviewer.Build.Dockerfile != "Dockerfile.agent" || reviewer.Build.Target != "runtime" {
+		t.Fatalf("reviewer build = %#v", reviewer.Build)
+	}
+	if reviewer.Build.Args["NODE_ENV"] != "development" || reviewer.Build.Platforms[0] != "linux/amd64" || reviewer.Build.Tags[0] != "reviewer:latest" || !reviewer.Build.NoCache || !reviewer.Build.Pull {
+		t.Fatalf("reviewer build fields = %#v", reviewer.Build)
+	}
+	worker := normalized.Agents[1]
+	if worker.Build == nil || worker.Build.Context != "." || worker.Build.Dockerfile != "Dockerfile" {
+		t.Fatalf("worker build = %#v", worker.Build)
+	}
+}
+
+func TestNormalizeBuildRejectsMultiplePlatforms(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: build-project
+agents:
+  reviewer:
+    provider: codex
+    image: reviewer:dev
+    build:
+      context: .
+      platforms:
+        - linux/amd64
+        - linux/arm64
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "multiple build platforms") {
+		t.Fatalf("error = %q, want multiple build platforms", got)
+	}
+}
+
 func TestNormalizeAgentCapsetIDs(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: capsets

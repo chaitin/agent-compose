@@ -21,12 +21,24 @@ type AgentSpec struct {
 	Model        string                `yaml:"model,omitempty" json:"model,omitempty"`
 	SystemPrompt string                `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
 	Image        string                `yaml:"image,omitempty" json:"image,omitempty"`
+	Build        *BuildSpec            `yaml:"build,omitempty" json:"build,omitempty"`
 	Driver       *DriverSpec           `yaml:"driver,omitempty" json:"driver,omitempty"`
 	Env          map[string]EnvVarSpec `yaml:"env,omitempty" json:"env,omitempty"`
 	CapsetIDs    []string              `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
 	Workspace    *WorkspaceSpec        `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Scheduler    *SchedulerSpec        `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
 	Jupyter      *JupyterSpec          `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
+}
+
+type BuildSpec struct {
+	Context    string            `yaml:"context,omitempty" json:"context,omitempty"`
+	Dockerfile string            `yaml:"dockerfile,omitempty" json:"dockerfile,omitempty"`
+	Target     string            `yaml:"target,omitempty" json:"target,omitempty"`
+	Args       map[string]string `yaml:"args,omitempty" json:"args,omitempty"`
+	Platforms  []string          `yaml:"platforms,omitempty" json:"platforms,omitempty"`
+	Tags       []string          `yaml:"tags,omitempty" json:"tags,omitempty"`
+	NoCache    bool              `yaml:"no_cache,omitempty" json:"no_cache,omitempty"`
+	Pull       bool              `yaml:"pull,omitempty" json:"pull,omitempty"`
 }
 
 type JupyterSpec struct {
@@ -116,6 +128,28 @@ func (s *EnvVarSpec) UnmarshalYAML(value *yaml.Node) error {
 			return err
 		}
 		*s = EnvVarSpec(decoded)
+		return nil
+	default:
+		return fmt.Errorf("expected scalar or mapping, got %s", nodeKindName(value.Kind))
+	}
+}
+
+func (s *BuildSpec) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		var contextDir string
+		if err := value.Decode(&contextDir); err != nil {
+			return err
+		}
+		s.Context = contextDir
+		return nil
+	case yaml.MappingNode:
+		type buildSpec BuildSpec
+		var decoded buildSpec
+		if err := value.Decode(&decoded); err != nil {
+			return err
+		}
+		*s = BuildSpec(decoded)
 		return nil
 	default:
 		return fmt.Errorf("expected scalar or mapping, got %s", nodeKindName(value.Kind))
@@ -226,6 +260,7 @@ func validateAgent(node *yaml.Node, path string) error {
 		"model":         validateScalar,
 		"system_prompt": validateScalar,
 		"image":         validateScalar,
+		"build":         validateBuild,
 		"driver":        validateDriver,
 		"env":           validateEnvVarMap,
 		"capset_ids":    validateStringList,
@@ -233,6 +268,30 @@ func validateAgent(node *yaml.Node, path string) error {
 		"scheduler":     validateScheduler,
 		"jupyter":       validateJupyter,
 	})
+}
+
+func validateBuild(node *yaml.Node, path string) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		return validateScalar(node, path)
+	case yaml.MappingNode:
+		return validateMapping(node, path, map[string]nodeValidator{
+			"context":    validateScalar,
+			"dockerfile": validateScalar,
+			"target":     validateScalar,
+			"args":       validateBuildArgMap,
+			"platforms":  validateStringList,
+			"tags":       validateStringList,
+			"no_cache":   validateBool,
+			"pull":       validateBool,
+		})
+	default:
+		return newParseError(node, path, "expected scalar or mapping")
+	}
+}
+
+func validateBuildArgMap(node *yaml.Node, path string) error {
+	return validateNamedMap(node, path, validateScalar)
 }
 
 func validateStringList(node *yaml.Node, path string) error {

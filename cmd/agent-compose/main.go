@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -737,6 +738,30 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 	}
 	addImagePullFlags(imagePullCmd, &imagePullOptions)
 
+	buildOptions := composeImageBuildOptions{}
+	buildCmd := &cobra.Command{
+		Use:   "build [context|agent...]",
+		Short: "Build an image or project agent images",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeBuildCommand(cmd, options, buildOptions, args)
+		},
+	}
+	addImageBuildFlags(buildCmd, &buildOptions)
+	imageBuildOptions := composeImageBuildOptions{}
+	imageBuildCmd := &cobra.Command{
+		Use:   "build [context|agent...]",
+		Short: "Build an image or project agent images",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := writeDeprecatedWarning(cmd.ErrOrStderr(), "agent-compose image build", "agent-compose build"); err != nil {
+				return err
+			}
+			return runComposeBuildCommand(cmd, options, imageBuildOptions, args)
+		},
+	}
+	addImageBuildFlags(imageBuildCmd, &imageBuildOptions)
+
 	removeOptions := composeImageRemoveOptions{}
 	rmiCmd := &cobra.Command{
 		Use:   "rmi <image>",
@@ -774,7 +799,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 			return runComposeImageInspectCommand(cmd, options, args[0])
 		},
 	}
-	imageCmd.AddCommand(imageLSCmd, imagePullCmd, imageRemoveCmd, imageInspectCmd)
+	imageCmd.AddCommand(imageLSCmd, imagePullCmd, imageBuildCmd, imageRemoveCmd, imageInspectCmd)
 
 	inspectCmd := &cobra.Command{
 		Use:   "inspect <project|agent|run|sandbox|session|image|cache> [name-or-id]",
@@ -785,7 +810,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		},
 	}
 
-	root.AddCommand(daemonCmd, versionCmd, statusCmd, configCmd, listCmd, upCmd, downCmd, runCmd, logsCmd, psCmd, statsCmd, stopCmd, resumeCmd, rmCmd, execCmd, imagesCmd, cacheCmd, imageCmd, pullCmd, rmiCmd, inspectCmd)
+	root.AddCommand(daemonCmd, versionCmd, statusCmd, configCmd, listCmd, upCmd, downCmd, runCmd, logsCmd, psCmd, statsCmd, stopCmd, resumeCmd, rmCmd, execCmd, imagesCmd, cacheCmd, imageCmd, pullCmd, buildCmd, rmiCmd, inspectCmd)
 	return root
 }
 
@@ -866,6 +891,16 @@ type composeImagePullOptions struct {
 	Platform string
 }
 
+type composeImageBuildOptions struct {
+	Tags       []string
+	Dockerfile string
+	Target     string
+	BuildArgs  []string
+	Platform   string
+	NoCache    bool
+	Pull       bool
+}
+
 type composeImageRemoveOptions struct {
 	Force         bool
 	PruneChildren bool
@@ -898,6 +933,16 @@ func addImageListFlags(cmd *cobra.Command, options *composeImageListOptions) {
 
 func addImagePullFlags(cmd *cobra.Command, options *composeImagePullOptions) {
 	cmd.Flags().StringVar(&options.Platform, "platform", "", "Pull platform as os/arch[/variant]")
+}
+
+func addImageBuildFlags(cmd *cobra.Command, options *composeImageBuildOptions) {
+	cmd.Flags().StringArrayVarP(&options.Tags, "tag", "t", nil, "Name and optionally tag in name:tag format")
+	cmd.Flags().StringVar(&options.Dockerfile, "dockerfile", "", "Name of the Dockerfile")
+	cmd.Flags().StringVar(&options.Target, "target", "", "Build target stage")
+	cmd.Flags().StringArrayVar(&options.BuildArgs, "build-arg", nil, "Set build-time variables")
+	cmd.Flags().StringVar(&options.Platform, "platform", "", "Build platform as os/arch[/variant]")
+	cmd.Flags().BoolVar(&options.NoCache, "no-cache", false, "Do not use cache when building")
+	cmd.Flags().BoolVar(&options.Pull, "pull", false, "Always attempt to pull a newer base image")
 }
 
 func addImageRemoveFlags(cmd *cobra.Command, options *composeImageRemoveOptions) {
@@ -2254,6 +2299,281 @@ func runComposeImagePullCommand(cmd *cobra.Command, cli cliOptions, options comp
 	return writeImagePullText(cmd.OutOrStdout(), output)
 }
 
+func runComposeBuildCommand(cmd *cobra.Command, cli cliOptions, options composeImageBuildOptions, args []string) error {
+	if len(options.Tags) > 0 {
+		return runComposeDirectBuildCommand(cmd, cli, options, args)
+	}
+	return runComposeProjectBuildCommand(cmd, cli, options, args)
+}
+
+func runComposeDirectBuildCommand(cmd *cobra.Command, cli cliOptions, options composeImageBuildOptions, args []string) error {
+	if len(args) > 1 {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("direct build accepts at most one context argument")}
+	}
+	contextDir := "."
+	if len(args) == 1 {
+		contextDir = args[0]
+	}
+	req, err := buildImageRequestFromOptions(options, contextDir, options.Tags)
+	if err != nil {
+		return commandExitError{Code: exitCodeUsage, Err: err}
+	}
+	clients, err := newCLIServiceClients(cli)
+	if err != nil {
+		return err
+	}
+	output, err := buildImage(cmd.Context(), cmd.OutOrStdout(), cli.JSON, clients.image, req)
+	if err != nil {
+		return commandExitErrorForConnect(fmt.Errorf("build image %s: %w", firstNonEmptyString(output.ImageRef, firstNonEmptyString(req.GetTags()...)), err))
+	}
+	if cli.JSON {
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	return nil
+}
+
+func runComposeProjectBuildCommand(cmd *cobra.Command, cli cliOptions, options composeImageBuildOptions, agentNames []string) error {
+	sourcePath, normalized, err := loadNormalizedCompose(cli)
+	if err != nil {
+		return err
+	}
+	plans, err := projectImageBuildPlans(sourcePath, normalized, options, agentNames)
+	if err != nil {
+		return commandExitError{Code: exitCodeUsage, Err: err}
+	}
+	if len(plans) == 0 {
+		if cli.JSON {
+			data, err := json.MarshalIndent(composeProjectImageBuildOutput{Images: []composeImageBuildOutput{}}, "", "  ")
+			if err != nil {
+				return err
+			}
+			return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+		}
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), "No project images configured for build")
+		return err
+	}
+	clients, err := newCLIServiceClients(cli)
+	if err != nil {
+		return err
+	}
+	output := composeProjectImageBuildOutput{Images: make([]composeImageBuildOutput, 0, len(plans))}
+	for _, plan := range plans {
+		item, err := buildImage(cmd.Context(), cmd.OutOrStdout(), cli.JSON, clients.image, plan)
+		if err != nil {
+			return commandExitErrorForConnect(fmt.Errorf("build image %s: %w", firstNonEmptyString(plan.GetTags()...), err))
+		}
+		output.Images = append(output.Images, item)
+	}
+	if cli.JSON {
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	return nil
+}
+
+func buildImage(ctx context.Context, out io.Writer, jsonOutput bool, client agentcomposev2connect.ImageServiceClient, req *agentcomposev2.BuildImageRequest) (composeImageBuildOutput, error) {
+	stream, err := client.BuildImage(ctx, connect.NewRequest(req))
+	if err != nil {
+		return composeImageBuildOutput{}, err
+	}
+	output := composeImageBuildOutput{
+		ImageRef: firstNonEmptyString(req.GetTags()...),
+		Status:   imageOperationStatusText(agentcomposev2.ImageOperationStatus_IMAGE_OPERATION_STATUS_RUNNING),
+	}
+	for stream.Receive() {
+		event := stream.Msg()
+		if !jsonOutput && strings.TrimSpace(event.GetMessage()) != "" {
+			if _, err := fmt.Fprintln(out, strings.TrimSpace(event.GetMessage())); err != nil {
+				return output, err
+			}
+		}
+		if event.GetImage() != nil {
+			output.Image = composeImageOutputFromProto(event.GetImage())
+		}
+		if strings.TrimSpace(event.GetImageRef()) != "" {
+			output.ImageRef = event.GetImageRef()
+		}
+		if strings.TrimSpace(event.GetResolvedRef()) != "" {
+			output.ResolvedRef = event.GetResolvedRef()
+		}
+		if event.GetStatus() != agentcomposev2.ImageOperationStatus_IMAGE_OPERATION_STATUS_UNSPECIFIED {
+			output.Status = imageOperationStatusText(event.GetStatus())
+		}
+		output.Warnings = appendUniqueStrings(output.Warnings, event.GetWarnings()...)
+	}
+	if err := stream.Err(); err != nil {
+		return output, err
+	}
+	return output, nil
+}
+
+func buildImageRequestFromOptions(options composeImageBuildOptions, contextDir string, tags []string) (*agentcomposev2.BuildImageRequest, error) {
+	buildArgs, err := parseBuildArgs(options.BuildArgs)
+	if err != nil {
+		return nil, err
+	}
+	platform, err := parseImagePlatform(options.Platform)
+	if err != nil {
+		return nil, err
+	}
+	tags = normalizeCLIStringList(tags)
+	if len(tags) == 0 {
+		return nil, fmt.Errorf("at least one --tag is required")
+	}
+	return &agentcomposev2.BuildImageRequest{
+		ContextDir: strings.TrimSpace(contextDir),
+		Dockerfile: strings.TrimSpace(options.Dockerfile),
+		Tags:       tags,
+		BuildArgs:  buildArgs,
+		Target:     strings.TrimSpace(options.Target),
+		Store:      agentcomposev2.ImageStoreKind_IMAGE_STORE_KIND_DOCKER_DAEMON,
+		Platform:   platform,
+		NoCache:    options.NoCache,
+		Pull:       options.Pull,
+	}, nil
+}
+
+func parseBuildArgs(values []string) (map[string]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	result := make(map[string]string, len(values))
+	for _, value := range values {
+		key, argValue, ok := strings.Cut(value, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			return nil, fmt.Errorf("invalid --build-arg %q: expected KEY=VALUE", value)
+		}
+		result[key] = argValue
+	}
+	return result, nil
+}
+
+func projectImageBuildPlans(sourcePath string, project *compose.NormalizedProjectSpec, options composeImageBuildOptions, agentNames []string) ([]*agentcomposev2.BuildImageRequest, error) {
+	selected := map[string]struct{}{}
+	for _, name := range agentNames {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		selected[name] = struct{}{}
+	}
+	composeDir := "."
+	if strings.TrimSpace(sourcePath) != "" {
+		composeDir = filepath.Dir(sourcePath)
+	}
+	var plans []*agentcomposev2.BuildImageRequest
+	for _, agent := range project.Agents {
+		if len(selected) > 0 {
+			if _, ok := selected[agent.Name]; !ok {
+				continue
+			}
+			delete(selected, agent.Name)
+		}
+		if agent.Build == nil {
+			continue
+		}
+		req, err := buildImageRequestFromAgent(composeDir, agent, options)
+		if err != nil {
+			return nil, err
+		}
+		plans = append(plans, req)
+	}
+	if len(selected) > 0 {
+		missing := make([]string, 0, len(selected))
+		for name := range selected {
+			missing = append(missing, name)
+		}
+		sort.Strings(missing)
+		return nil, fmt.Errorf("unknown build agent(s): %s", strings.Join(missing, ", "))
+	}
+	return plans, nil
+}
+
+func buildImageRequestFromAgent(composeDir string, agent compose.NormalizedAgentSpec, options composeImageBuildOptions) (*agentcomposev2.BuildImageRequest, error) {
+	build := agent.Build
+	tags := append([]string{}, agent.Image)
+	tags = append(tags, build.Tags...)
+	tags = append(tags, options.Tags...)
+	contextDir := resolveComposeBuildPath(composeDir, build.Context)
+	dockerfile := build.Dockerfile
+	if strings.TrimSpace(options.Dockerfile) != "" {
+		dockerfile = options.Dockerfile
+	}
+	buildArgs := cloneStringMapForCLI(build.Args)
+	cliArgs, err := parseBuildArgs(options.BuildArgs)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range cliArgs {
+		if buildArgs == nil {
+			buildArgs = map[string]string{}
+		}
+		buildArgs[key] = value
+	}
+	platformValue := ""
+	if len(build.Platforms) == 1 {
+		platformValue = build.Platforms[0]
+	}
+	if strings.TrimSpace(options.Platform) != "" {
+		platformValue = options.Platform
+	}
+	platform, err := parseImagePlatform(platformValue)
+	if err != nil {
+		return nil, err
+	}
+	tags = normalizeCLIStringList(tags)
+	if len(tags) == 0 {
+		return nil, fmt.Errorf("agent %s build requires image or build.tags", agent.Name)
+	}
+	return &agentcomposev2.BuildImageRequest{
+		ContextDir: contextDir,
+		Dockerfile: strings.TrimSpace(dockerfile),
+		Tags:       tags,
+		BuildArgs:  buildArgs,
+		Target:     firstNonEmptyString(options.Target, build.Target),
+		Store:      agentcomposev2.ImageStoreKind_IMAGE_STORE_KIND_DOCKER_DAEMON,
+		Platform:   platform,
+		NoCache:    options.NoCache || build.NoCache,
+		Pull:       options.Pull || build.Pull,
+	}, nil
+}
+
+func resolveComposeBuildPath(composeDir string, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = "."
+	}
+	if filepath.IsAbs(value) {
+		return value
+	}
+	return filepath.Join(composeDir, value)
+}
+
+func normalizeCLIStringList(values []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
 func pullImage(ctx context.Context, client agentcomposev2connect.ImageServiceClient, imageRef string, platform *agentcomposev2.ImagePlatform) (composeImagePullOutput, error) {
 	resp, err := client.PullImage(ctx, connect.NewRequest(&agentcomposev2.PullImageRequest{
 		ImageRef: imageRef,
@@ -2829,6 +3149,18 @@ type composeImagePullOutput struct {
 
 type composeProjectImagePullOutput struct {
 	Images []composeImagePullOutput `json:"images"`
+}
+
+type composeImageBuildOutput struct {
+	ImageRef    string             `json:"image_ref"`
+	ResolvedRef string             `json:"resolved_ref,omitempty"`
+	Status      string             `json:"status"`
+	Image       composeImageOutput `json:"image"`
+	Warnings    []string           `json:"warnings,omitempty"`
+}
+
+type composeProjectImageBuildOutput struct {
+	Images []composeImageBuildOutput `json:"images"`
 }
 
 type composeImageRemoveOutput struct {

@@ -10,6 +10,8 @@ import (
 	"agent-compose/pkg/imagecache"
 )
 
+var ErrBuildUnsupported = errors.New("image build is not supported by selected image backend")
+
 type ErrorKind int
 
 const (

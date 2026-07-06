@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -135,6 +136,38 @@ func (h *ImageHandler) RemoveImage(ctx context.Context, req *connect.Request[age
 	}), nil
 }
 
+func (h *ImageHandler) BuildImage(ctx context.Context, req *connect.Request[agentcomposev2.BuildImageRequest], stream *connect.ServerStream[agentcomposev2.BuildImageEvent]) error {
+	tags := normalizeImageBuildStrings(req.Msg.GetTags())
+	if len(tags) == 0 {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("at least one tag is required"))
+	}
+	backend, err := h.backends.ImageBackendForStore(req.Msg.GetStore())
+	if err != nil {
+		return err
+	}
+	buildBackend, ok := backend.(images.BuildBackend)
+	if !ok {
+		return connect.NewError(connect.CodeUnimplemented, fmt.Errorf("build image: %w", images.ErrBuildUnsupported))
+	}
+	_, err = buildBackend.BuildImage(ctx, images.BuildRequest{
+		ContextDir: strings.TrimSpace(req.Msg.GetContextDir()),
+		Dockerfile: strings.TrimSpace(req.Msg.GetDockerfile()),
+		Tags:       tags,
+		BuildArgs:  cloneImageBuildArgs(req.Msg.GetBuildArgs()),
+		Target:     strings.TrimSpace(req.Msg.GetTarget()),
+		Platform:   req.Msg.GetPlatform(),
+		NoCache:    req.Msg.GetNoCache(),
+		Pull:       req.Msg.GetPull(),
+	}, stream)
+	if err != nil {
+		if errors.Is(err, images.ErrBuildUnsupported) {
+			return connect.NewError(connect.CodeUnimplemented, fmt.Errorf("build image: %w", err))
+		}
+		return ConnectErrorForImageBackend("build image", firstNonEmptyImageRef(tags...), err)
+	}
+	return nil
+}
+
 func ConnectErrorForImageBackend(op, imageRef string, err error) error {
 	if err == nil {
 		return nil
@@ -162,4 +195,36 @@ func ConnectErrorForImageBackend(op, imageRef string, err error) error {
 		return connect.NewError(code, backendErr)
 	}
 	return connect.NewError(connect.CodeUnknown, err)
+}
+
+func normalizeImageBuildStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func cloneImageBuildArgs(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		result[key] = value
+	}
+	return result
 }

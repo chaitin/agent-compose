@@ -31,6 +31,7 @@ type orderedAgentSpec struct {
 	Model        string                   `yaml:"model,omitempty" json:"model,omitempty"`
 	SystemPrompt string                   `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
 	Image        string                   `yaml:"image,omitempty" json:"image,omitempty"`
+	Build        *NormalizedBuildSpec     `yaml:"build,omitempty" json:"build,omitempty"`
 	Driver       *NormalizedDriverSpec    `yaml:"driver" json:"driver"`
 	Env          []orderedEnvVarSpec      `yaml:"env,omitempty" json:"env,omitempty"`
 	CapsetIDs    []string                 `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
@@ -75,6 +76,7 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 			Model:        agent.Model,
 			SystemPrompt: agent.SystemPrompt,
 			Image:        agent.Image,
+			Build:        cloneNormalizedBuildSpec(agent.Build),
 			Driver:       cloneNormalizedDriverSpec(agent.Driver),
 			Env:          orderedEnvVars(agent.Env, redactSecrets),
 			CapsetIDs:    slices.Clone(agent.CapsetIDs),
@@ -110,6 +112,7 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 			Model:        agent.Model,
 			SystemPrompt: agent.SystemPrompt,
 			Image:        agent.Image,
+			Build:        agent.Build,
 			Driver:       agent.Driver,
 			Env:          envVarMapFromOrdered(agent.Env),
 			CapsetIDs:    slices.Clone(agent.CapsetIDs),
@@ -117,6 +120,34 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 			Scheduler:    agent.Scheduler,
 			Jupyter:      agent.Jupyter,
 		})
+	}
+	return cloned
+}
+
+func cloneNormalizedBuildSpec(value *NormalizedBuildSpec) *NormalizedBuildSpec {
+	if value == nil {
+		return nil
+	}
+	cloned := &NormalizedBuildSpec{
+		Context:    value.Context,
+		Dockerfile: value.Dockerfile,
+		Target:     value.Target,
+		Args:       cloneStringMap(value.Args),
+		Platforms:  slices.Clone(value.Platforms),
+		Tags:       slices.Clone(value.Tags),
+		NoCache:    value.NoCache,
+		Pull:       value.Pull,
+	}
+	return cloned
+}
+
+func cloneStringMap(value map[string]string) map[string]string {
+	if len(value) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(value))
+	for key, item := range value {
+		cloned[key] = item
 	}
 	return cloned
 }

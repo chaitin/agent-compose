@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	buildtypes "github.com/docker/docker/api/types/build"
 	typesimage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 
@@ -153,6 +154,10 @@ func (fakeDockerClient) ImageList(context.Context, typesimage.ListOptions) ([]ty
 
 func (fakeDockerClient) ImagePull(context.Context, string, typesimage.PullOptions) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader(`{"id":"layer","status":"done"}` + "\n")), nil
+}
+
+func (fakeDockerClient) ImageBuild(context.Context, io.Reader, buildtypes.ImageBuildOptions) (buildtypes.ImageBuildResponse, error) {
+	return buildtypes.ImageBuildResponse{Body: io.NopCloser(strings.NewReader(`{"stream":"build done"}` + "\n"))}, nil
 }
 
 func (fakeDockerClient) ImageInspect(context.Context, string, ...client.ImageInspectOption) (typesimage.InspectResponse, error) {

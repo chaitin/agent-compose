@@ -108,6 +108,18 @@ func (b *AutoBackend) RemoveImage(ctx context.Context, req RemoveRequest) (Remov
 	return backend.RemoveImage(ctx, req)
 }
 
+func (b *AutoBackend) BuildImage(ctx context.Context, req BuildRequest, sink BuildEventSink) (BuildResult, error) {
+	backend, err := b.backend(ctx)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	buildBackend, ok := backend.(BuildBackend)
+	if !ok {
+		return BuildResult{}, OpError{Op: "build image", ImageRef: FirstString(req.Tags), Err: ErrBuildUnsupported}
+	}
+	return buildBackend.BuildImage(ctx, req, sink)
+}
+
 func (b *AutoBackend) backend(ctx context.Context) (Backend, error) {
 	if b == nil {
 		return nil, OpError{Op: "select image backend", Err: fmt.Errorf("auto image backend is required")}

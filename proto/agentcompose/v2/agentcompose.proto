@@ -33,6 +33,7 @@ service ImageService {
   rpc PullImage(PullImageRequest) returns (PullImageResponse);
   rpc InspectImage(InspectImageRequest) returns (InspectImageResponse);
   rpc RemoveImage(RemoveImageRequest) returns (RemoveImageResponse);
+  rpc BuildImage(BuildImageRequest) returns (stream BuildImageEvent);
 }
 
 service CacheService {
@@ -129,6 +130,7 @@ enum ImageOperationStatus {
   IMAGE_OPERATION_STATUS_UNSPECIFIED = 0;
   IMAGE_OPERATION_STATUS_SUCCEEDED = 1;
   IMAGE_OPERATION_STATUS_FAILED = 2;
+  IMAGE_OPERATION_STATUS_RUNNING = 3;
 }
 
 enum MetricStatus {
@@ -324,6 +326,18 @@ message AgentSpec {
   SchedulerSpec scheduler = 9;
   repeated string capset_ids = 10;
   JupyterSpec jupyter = 11;
+  BuildSpec build = 12;
+}
+
+message BuildSpec {
+  string context = 1;
+  string dockerfile = 2;
+  string target = 3;
+  map<string, string> args = 4;
+  repeated string platforms = 5;
+  repeated string tags = 6;
+  bool no_cache = 7;
+  bool pull = 8;
 }
 
 message EnvVarSpec {
@@ -662,6 +676,28 @@ message RemoveImageResponse {
   repeated string untagged_refs = 2;
   repeated string deleted_ids = 3;
   repeated string warnings = 4;
+}
+
+message BuildImageRequest {
+  string context_dir = 1;
+  string dockerfile = 2;
+  repeated string tags = 3;
+  map<string, string> build_args = 4;
+  string target = 5;
+  ImageStoreKind store = 6;
+  ImagePlatform platform = 7;
+  bool no_cache = 8;
+  bool pull = 9;
+}
+
+message BuildImageEvent {
+  ImageOperationStatus status = 1;
+  string stage = 2;
+  string message = 3;
+  Image image = 4;
+  string image_ref = 5;
+  string resolved_ref = 6;
+  repeated string warnings = 7;
 }
 
 message CacheFilter {

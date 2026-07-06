@@ -172,6 +172,7 @@ func AgentSpecsToProto(agents []compose.NormalizedAgentSpec) []*agentcomposev2.A
 			Model:        agent.Model,
 			SystemPrompt: agent.SystemPrompt,
 			Image:        agent.Image,
+			Build:        BuildSpecToProto(agent.Build),
 			Driver:       DriverSpecToProto(agent.Driver),
 			Env:          EnvVarSpecsToProto(agent.Env),
 			CapsetIds:    capabilities.NormalizeCapsetIDs(agent.CapsetIDs),
@@ -181,6 +182,22 @@ func AgentSpecsToProto(agents []compose.NormalizedAgentSpec) []*agentcomposev2.A
 		})
 	}
 	return items
+}
+
+func BuildSpecToProto(build *compose.NormalizedBuildSpec) *agentcomposev2.BuildSpec {
+	if build == nil {
+		return nil
+	}
+	return &agentcomposev2.BuildSpec{
+		Context:    build.Context,
+		Dockerfile: build.Dockerfile,
+		Target:     build.Target,
+		Args:       cloneProjectStringMap(build.Args),
+		Platforms:  append([]string(nil), build.Platforms...),
+		Tags:       append([]string(nil), build.Tags...),
+		NoCache:    build.NoCache,
+		Pull:       build.Pull,
+	}
 }
 
 func JupyterSpecToProto(jupyter *compose.JupyterSpec) *agentcomposev2.JupyterSpec {
@@ -352,6 +369,9 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		if strings.TrimSpace(agent.GetImage()) != "" {
 			raw["image"] = agent.GetImage()
 		}
+		if build := BuildYAMLShape(agent.GetBuild()); len(build) > 0 {
+			raw["build"] = build
+		}
 		if driver, issues := DriverYAMLShape(fmt.Sprintf("agents[%d].driver", i), agent.GetDriver()); len(issues) > 0 {
 			return nil, issues
 		} else if len(driver) > 0 {
@@ -377,6 +397,49 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		values[name] = raw
 	}
 	return values, nil
+}
+
+func BuildYAMLShape(build *agentcomposev2.BuildSpec) map[string]any {
+	if build == nil {
+		return nil
+	}
+	raw := map[string]any{}
+	if strings.TrimSpace(build.GetContext()) != "" {
+		raw["context"] = build.GetContext()
+	}
+	if strings.TrimSpace(build.GetDockerfile()) != "" {
+		raw["dockerfile"] = build.GetDockerfile()
+	}
+	if strings.TrimSpace(build.GetTarget()) != "" {
+		raw["target"] = build.GetTarget()
+	}
+	if len(build.GetArgs()) > 0 {
+		raw["args"] = cloneProjectStringMap(build.GetArgs())
+	}
+	if len(build.GetPlatforms()) > 0 {
+		raw["platforms"] = append([]string(nil), build.GetPlatforms()...)
+	}
+	if len(build.GetTags()) > 0 {
+		raw["tags"] = append([]string(nil), build.GetTags()...)
+	}
+	if build.GetNoCache() {
+		raw["no_cache"] = true
+	}
+	if build.GetPull() {
+		raw["pull"] = true
+	}
+	return raw
+}
+
+func cloneProjectStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func JupyterYAMLShape(jupyter *agentcomposev2.JupyterSpec) map[string]any {

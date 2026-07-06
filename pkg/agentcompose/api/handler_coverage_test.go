@@ -234,6 +234,56 @@ func TestImagePullInspectAndSkip(t *testing.T) {
 	}
 }
 
+func TestImageBuildStreamsEvents(t *testing.T) {
+	backend := &testImageBackend{}
+	handler := NewImageHandler(fakeImageSelector{backend: backend})
+	client, closeServer := newImageHandlerTestClient(t, handler)
+	defer closeServer()
+
+	stream, err := client.BuildImage(context.Background(), connect.NewRequest(&agentcomposev2.BuildImageRequest{
+		ContextDir: "/tmp/context",
+		Dockerfile: "Dockerfile.agent",
+		Tags:       []string{"agent:dev", "agent:dev"},
+		BuildArgs:  map[string]string{"NODE_ENV": "development"},
+		Target:     "runtime",
+		Platform:   &agentcomposev2.ImagePlatform{Os: "linux", Architecture: "amd64"},
+		NoCache:    true,
+		Pull:       true,
+	}))
+	if err != nil {
+		t.Fatalf("BuildImage setup error: %v", err)
+	}
+	var events []*agentcomposev2.BuildImageEvent
+	for stream.Receive() {
+		events = append(events, stream.Msg())
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("BuildImage stream error: %v", err)
+	}
+	if len(events) != 1 || events[0].GetResolvedRef() != "agent:dev@sha256:built" {
+		t.Fatalf("BuildImage events = %#v", events)
+	}
+	if backend.buildReq.ContextDir != "/tmp/context" || backend.buildReq.Dockerfile != "Dockerfile.agent" || backend.buildReq.Target != "runtime" || !backend.buildReq.NoCache || !backend.buildReq.Pull {
+		t.Fatalf("BuildImage backend request = %#v", backend.buildReq)
+	}
+	if len(backend.buildReq.Tags) != 1 || backend.buildReq.Tags[0] != "agent:dev" {
+		t.Fatalf("BuildImage tags = %#v", backend.buildReq.Tags)
+	}
+	if backend.buildReq.BuildArgs["NODE_ENV"] != "development" || backend.buildReq.Platform.GetArchitecture() != "amd64" {
+		t.Fatalf("BuildImage args/platform = %#v / %#v", backend.buildReq.BuildArgs, backend.buildReq.Platform)
+	}
+
+	empty, err := client.BuildImage(context.Background(), connect.NewRequest(&agentcomposev2.BuildImageRequest{}))
+	if err != nil {
+		t.Fatalf("BuildImage empty setup error: %v", err)
+	}
+	for empty.Receive() {
+	}
+	if code := connect.CodeOf(empty.Err()); code != connect.CodeInvalidArgument {
+		t.Fatalf("BuildImage empty code = %s, want invalid argument (err=%v)", code, empty.Err())
+	}
+}
+
 func TestKernelAndAgentUnaryHandlerWorkflows(t *testing.T) {
 	ctx := context.Background()
 	session := &domain.Session{Summary: domain.SessionSummary{ID: "session-1", VMStatus: domain.VMStatusRunning, CreatedAt: time.Now()}}
@@ -293,6 +343,7 @@ type testImageBackend struct {
 	pull       images.PullResult
 	pullErr    error
 	pullCalls  int
+	buildReq   images.BuildRequest
 }
 
 func (b *testImageBackend) ListImages(context.Context, images.ListRequest) (images.ListResult, error) {
@@ -310,6 +361,29 @@ func (b *testImageBackend) InspectImage(context.Context, images.InspectRequest) 
 
 func (b *testImageBackend) RemoveImage(context.Context, images.RemoveRequest) (images.RemoveResult, error) {
 	return images.RemoveResult{}, nil
+}
+
+func (b *testImageBackend) BuildImage(_ context.Context, req images.BuildRequest, sink images.BuildEventSink) (images.BuildResult, error) {
+	b.buildReq = req
+	image := &agentcomposev2.Image{ImageId: "sha256:built", ImageRef: req.Tags[0], ResolvedRef: req.Tags[0] + "@sha256:built"}
+	if err := sink.Send(&agentcomposev2.BuildImageEvent{
+		Status:      agentcomposev2.ImageOperationStatus_IMAGE_OPERATION_STATUS_SUCCEEDED,
+		ImageRef:    req.Tags[0],
+		ResolvedRef: req.Tags[0] + "@sha256:built",
+		Image:       image,
+	}); err != nil {
+		return images.BuildResult{}, err
+	}
+	return images.BuildResult{Image: image, ImageRef: req.Tags[0], ResolvedRef: req.Tags[0] + "@sha256:built"}, nil
+}
+
+func newImageHandlerTestClient(t *testing.T, handler *ImageHandler) (agentcomposev2connect.ImageServiceClient, func()) {
+	t.Helper()
+	mux := http.NewServeMux()
+	path, serviceHandler := agentcomposev2connect.NewImageServiceHandler(handler)
+	mux.Handle(path, serviceHandler)
+	server := httptest.NewServer(mux)
+	return agentcomposev2connect.NewImageServiceClient(server.Client(), server.URL), server.Close
 }
 
 func TestExecHandlerSessionTargetWorkflow(t *testing.T) {

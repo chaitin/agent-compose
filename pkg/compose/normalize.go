@@ -43,12 +43,24 @@ type NormalizedAgentSpec struct {
 	Model        string                   `yaml:"model,omitempty" json:"model,omitempty"`
 	SystemPrompt string                   `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
 	Image        string                   `yaml:"image,omitempty" json:"image,omitempty"`
+	Build        *NormalizedBuildSpec     `yaml:"build,omitempty" json:"build,omitempty"`
 	Driver       *NormalizedDriverSpec    `yaml:"driver" json:"driver"`
 	Env          map[string]EnvVarSpec    `yaml:"env,omitempty" json:"env,omitempty"`
 	CapsetIDs    []string                 `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
 	Workspace    *WorkspaceSpec           `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Scheduler    *NormalizedSchedulerSpec `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
 	Jupyter      *JupyterSpec             `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
+}
+
+type NormalizedBuildSpec struct {
+	Context    string            `yaml:"context,omitempty" json:"context,omitempty"`
+	Dockerfile string            `yaml:"dockerfile,omitempty" json:"dockerfile,omitempty"`
+	Target     string            `yaml:"target,omitempty" json:"target,omitempty"`
+	Args       map[string]string `yaml:"args,omitempty" json:"args,omitempty"`
+	Platforms  []string          `yaml:"platforms,omitempty" json:"platforms,omitempty"`
+	Tags       []string          `yaml:"tags,omitempty" json:"tags,omitempty"`
+	NoCache    bool              `yaml:"no_cache,omitempty" json:"no_cache,omitempty"`
+	Pull       bool              `yaml:"pull,omitempty" json:"pull,omitempty"`
 }
 
 type NormalizedDriverSpec struct {
@@ -164,6 +176,10 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions) (Nor
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
+	build, err := normalizeBuildSpec(joinPath("agents", name)+".build", agent.Build)
+	if err != nil {
+		return NormalizedAgentSpec{}, err
+	}
 	model, err := interpolateEnvValue(joinPath("agents", name)+".model", strings.TrimSpace(agent.Model), options)
 	if err != nil {
 		return NormalizedAgentSpec{}, err
@@ -174,12 +190,52 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions) (Nor
 		Model:        model,
 		SystemPrompt: agent.SystemPrompt,
 		Image:        strings.TrimSpace(agent.Image),
+		Build:        build,
 		Driver:       driver,
 		Env:          env,
 		CapsetIDs:    normalizeStringList(agent.CapsetIDs),
 		Workspace:    cloneWorkspaceSpec(agent.Workspace),
 		Scheduler:    scheduler,
 		Jupyter:      jupyter,
+	}, nil
+}
+
+func normalizeBuildSpec(path string, build *BuildSpec) (*NormalizedBuildSpec, error) {
+	if build == nil {
+		return nil, nil
+	}
+	contextDir := strings.TrimSpace(build.Context)
+	if contextDir == "" {
+		contextDir = "."
+	}
+	dockerfile := strings.TrimSpace(build.Dockerfile)
+	if dockerfile == "" {
+		dockerfile = "Dockerfile"
+	}
+	platforms := normalizeStringList(build.Platforms)
+	if len(platforms) > 1 {
+		return nil, &ValidationError{Path: path + ".platforms", Message: "multiple build platforms are not supported yet"}
+	}
+	args := make(map[string]string, len(build.Args))
+	for key, value := range build.Args {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil, &ValidationError{Path: path + ".args", Message: "build arg name is required"}
+		}
+		args[key] = value
+	}
+	if len(args) == 0 {
+		args = nil
+	}
+	return &NormalizedBuildSpec{
+		Context:    contextDir,
+		Dockerfile: dockerfile,
+		Target:     strings.TrimSpace(build.Target),
+		Args:       args,
+		Platforms:  platforms,
+		Tags:       normalizeStringList(build.Tags),
+		NoCache:    build.NoCache,
+		Pull:       build.Pull,
 	}, nil
 }
 

@@ -4449,6 +4449,158 @@ agents:
 	}
 }
 
+func TestIntegrationCLIImageBuildDirectAndLegacy(t *testing.T) {
+	tmp := t.TempDir()
+	dockerfile := filepath.Join(tmp, "Dockerfile.agent")
+	if err := os.WriteFile(dockerfile, []byte("FROM scratch\n"), 0o600); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
+	calls := 0
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		image: imageServiceStub{
+			buildImage: func(ctx context.Context, req *connect.Request[agentcomposev2.BuildImageRequest], stream *connect.ServerStream[agentcomposev2.BuildImageEvent]) error {
+				calls++
+				if req.Msg.GetContextDir() != tmp {
+					t.Fatalf("BuildImage context_dir = %q, want %q", req.Msg.GetContextDir(), tmp)
+				}
+				if req.Msg.GetDockerfile() != "Dockerfile.agent" {
+					t.Fatalf("BuildImage dockerfile = %q", req.Msg.GetDockerfile())
+				}
+				if got := req.Msg.GetTags(); len(got) != 1 || got[0] != "agent:dev" {
+					t.Fatalf("BuildImage tags = %#v", got)
+				}
+				if req.Msg.GetBuildArgs()["NODE_ENV"] != "development" {
+					t.Fatalf("BuildImage build_args = %#v", req.Msg.GetBuildArgs())
+				}
+				if req.Msg.GetTarget() != "runtime" || !req.Msg.GetNoCache() || !req.Msg.GetPull() {
+					t.Fatalf("BuildImage flags target=%q no_cache=%v pull=%v", req.Msg.GetTarget(), req.Msg.GetNoCache(), req.Msg.GetPull())
+				}
+				if req.Msg.GetPlatform().GetOs() != "linux" || req.Msg.GetPlatform().GetArchitecture() != "amd64" {
+					t.Fatalf("BuildImage platform = %#v", req.Msg.GetPlatform())
+				}
+				if err := stream.Send(&agentcomposev2.BuildImageEvent{
+					Status:   agentcomposev2.ImageOperationStatus_IMAGE_OPERATION_STATUS_RUNNING,
+					Message:  "build step",
+					ImageRef: "agent:dev",
+				}); err != nil {
+					return err
+				}
+				return stream.Send(&agentcomposev2.BuildImageEvent{
+					Status:      agentcomposev2.ImageOperationStatus_IMAGE_OPERATION_STATUS_SUCCEEDED,
+					Message:     "Built agent:dev",
+					ImageRef:    "agent:dev",
+					ResolvedRef: "agent:dev@sha256:built",
+					Image:       testCLIImage("sha256:built", "agent:dev"),
+				})
+			},
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("build", "--host", server.URL, "--json", "-t", "agent:dev", "--dockerfile", "Dockerfile.agent", "--target", "runtime", "--build-arg", "NODE_ENV=development", "--platform", "linux/amd64", "--no-cache", "--pull", tmp)
+	if exitCode != 0 || stderr != "" {
+		t.Fatalf("build --json code/stderr = %d / %q", exitCode, stderr)
+	}
+	var decoded composeImageBuildOutput
+	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
+		t.Fatalf("build JSON decode failed: %v\n%s", err, stdout)
+	}
+	if decoded.ImageRef != "agent:dev" || decoded.ResolvedRef != "agent:dev@sha256:built" || decoded.Status != "succeeded" {
+		t.Fatalf("build JSON = %#v", decoded)
+	}
+
+	textOut, textErr, _, textCode := executeCLICommand("image", "build", "--host", server.URL, "-t", "agent:dev", "--dockerfile", "Dockerfile.agent", "--target", "runtime", "--build-arg", "NODE_ENV=development", "--platform", "linux/amd64", "--no-cache", "--pull", tmp)
+	if textCode != 0 {
+		t.Fatalf("image build code/stderr = %d / %q", textCode, textErr)
+	}
+	assertDeprecatedWarning(t, textErr, "agent-compose build")
+	if !strings.Contains(textOut, "build step") || !strings.Contains(textOut, "Built agent:dev") {
+		t.Fatalf("image build output = %q", textOut)
+	}
+	if calls != 2 {
+		t.Fatalf("BuildImage calls = %d, want 2", calls)
+	}
+}
+
+func TestIntegrationCLIProjectBuildImages(t *testing.T) {
+	dir := t.TempDir()
+	contextDir := filepath.Join(dir, "agent")
+	if err := os.Mkdir(contextDir, 0o700); err != nil {
+		t.Fatalf("create context: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(contextDir, "Dockerfile.agent"), []byte("FROM scratch\n"), 0o600); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
+	composePath := writeComposeFile(t, dir, `
+name: cli-build-project
+agents:
+  reviewer:
+    provider: codex
+    image: reviewer:dev
+    build:
+      context: agent
+      dockerfile: Dockerfile.agent
+      target: runtime
+      args:
+        NODE_ENV: production
+      platforms:
+        - linux/amd64
+      tags:
+        - reviewer:latest
+      no_cache: true
+      pull: true
+  tester:
+    provider: codex
+    image: tester:dev
+`)
+	var built []string
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		image: imageServiceStub{
+			buildImage: func(ctx context.Context, req *connect.Request[agentcomposev2.BuildImageRequest], stream *connect.ServerStream[agentcomposev2.BuildImageEvent]) error {
+				built = append(built, firstNonEmptyString(req.Msg.GetTags()...))
+				if req.Msg.GetContextDir() != contextDir {
+					t.Fatalf("BuildImage context_dir = %q, want %q", req.Msg.GetContextDir(), contextDir)
+				}
+				if req.Msg.GetDockerfile() != "Dockerfile.agent" || req.Msg.GetTarget() != "runtime" {
+					t.Fatalf("BuildImage dockerfile/target = %q/%q", req.Msg.GetDockerfile(), req.Msg.GetTarget())
+				}
+				if req.Msg.GetBuildArgs()["NODE_ENV"] != "development" {
+					t.Fatalf("CLI build arg did not override compose args: %#v", req.Msg.GetBuildArgs())
+				}
+				if got := req.Msg.GetTags(); len(got) != 2 || got[0] != "reviewer:dev" || got[1] != "reviewer:latest" {
+					t.Fatalf("BuildImage tags = %#v", got)
+				}
+				if !req.Msg.GetNoCache() || !req.Msg.GetPull() {
+					t.Fatalf("BuildImage no_cache/pull = %v/%v", req.Msg.GetNoCache(), req.Msg.GetPull())
+				}
+				return stream.Send(&agentcomposev2.BuildImageEvent{
+					Status:      agentcomposev2.ImageOperationStatus_IMAGE_OPERATION_STATUS_SUCCEEDED,
+					Message:     "Built reviewer:dev",
+					ImageRef:    "reviewer:dev",
+					ResolvedRef: "reviewer:dev@sha256:built",
+					Image:       testCLIImage("sha256:built", "reviewer:dev"),
+				})
+			},
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("build", "--host", server.URL, "--file", composePath, "--json", "--build-arg", "NODE_ENV=development")
+	if exitCode != 0 || stderr != "" {
+		t.Fatalf("project build --json code/stderr = %d / %q", exitCode, stderr)
+	}
+	var decoded composeProjectImageBuildOutput
+	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
+		t.Fatalf("project build JSON decode failed: %v\n%s", err, stdout)
+	}
+	if len(decoded.Images) != 1 || decoded.Images[0].ImageRef != "reviewer:dev" {
+		t.Fatalf("project build JSON = %#v", decoded)
+	}
+	if len(built) != 1 || built[0] != "reviewer:dev" {
+		t.Fatalf("built images = %#v", built)
+	}
+}
+
 func TestIntegrationCLIImageRemoveAliasesAndJSON(t *testing.T) {
 	calls := 0
 	server := newComposeServiceStubServer(t, composeServiceStubs{
@@ -5487,6 +5639,7 @@ type imageServiceStub struct {
 	pullImage    func(context.Context, *connect.Request[agentcomposev2.PullImageRequest]) (*connect.Response[agentcomposev2.PullImageResponse], error)
 	inspectImage func(context.Context, *connect.Request[agentcomposev2.InspectImageRequest]) (*connect.Response[agentcomposev2.InspectImageResponse], error)
 	removeImage  func(context.Context, *connect.Request[agentcomposev2.RemoveImageRequest]) (*connect.Response[agentcomposev2.RemoveImageResponse], error)
+	buildImage   func(context.Context, *connect.Request[agentcomposev2.BuildImageRequest], *connect.ServerStream[agentcomposev2.BuildImageEvent]) error
 
 	agentcomposev2connect.UnimplementedImageServiceHandler
 }
@@ -5517,6 +5670,13 @@ func (s imageServiceStub) RemoveImage(ctx context.Context, req *connect.Request[
 		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("RemoveImage stub is not configured"))
 	}
 	return s.removeImage(ctx, req)
+}
+
+func (s imageServiceStub) BuildImage(ctx context.Context, req *connect.Request[agentcomposev2.BuildImageRequest], stream *connect.ServerStream[agentcomposev2.BuildImageEvent]) error {
+	if s.buildImage == nil {
+		return connect.NewError(connect.CodeUnimplemented, fmt.Errorf("BuildImage stub is not configured"))
+	}
+	return s.buildImage(ctx, req, stream)
 }
 
 type cacheServiceStub struct {
@@ -5629,7 +5789,7 @@ func newComposeServiceStubServer(t *testing.T, stubs composeServiceStubs) *httpt
 		path, handler := agentcomposev2connect.NewExecServiceHandler(stubs.exec)
 		mux.Handle(path, handler)
 	}
-	if stubs.image.listImages != nil || stubs.image.pullImage != nil || stubs.image.inspectImage != nil || stubs.image.removeImage != nil {
+	if stubs.image.listImages != nil || stubs.image.pullImage != nil || stubs.image.inspectImage != nil || stubs.image.removeImage != nil || stubs.image.buildImage != nil {
 		path, handler := agentcomposev2connect.NewImageServiceHandler(stubs.image)
 		mux.Handle(path, handler)
 	}
