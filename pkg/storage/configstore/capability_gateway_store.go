@@ -11,10 +11,15 @@ import (
 	domain "agent-compose/pkg/model"
 )
 
+// CapabilityGatewayStore owns the capability gateway settings row.
+type CapabilityGatewayStore struct {
+	db *sql.DB
+}
+
 // capabilityGatewayRowID pins the settings to a single row.
 const capabilityGatewayRowID = 1
 
-func (s *ConfigStore) ensureCapabilityGatewaySchema(ctx context.Context) error {
+func (s *CapabilityGatewayStore) ensureCapabilityGatewaySchema(ctx context.Context) error {
 	const createStmt = `CREATE TABLE IF NOT EXISTS capability_gateway (
 		id INTEGER PRIMARY KEY CHECK (id = 1),
 		addr TEXT NOT NULL DEFAULT '',
@@ -27,13 +32,13 @@ func (s *ConfigStore) ensureCapabilityGatewaySchema(ctx context.Context) error {
 	return nil
 }
 
-func (s *ConfigStore) EnsureCapabilityGatewaySchema(ctx context.Context) error {
+func (s *CapabilityGatewayStore) EnsureCapabilityGatewaySchema(ctx context.Context) error {
 	return s.ensureCapabilityGatewaySchema(ctx)
 }
 
 // GetCapabilityGateway returns the stored OctoBus connection. An empty addr
 // means the gateway is not configured.
-func (s *ConfigStore) GetCapabilityGateway(ctx context.Context) (domain.CapabilityGatewaySettings, error) {
+func (s *CapabilityGatewayStore) GetCapabilityGateway(ctx context.Context) (domain.CapabilityGatewaySettings, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT addr, token FROM capability_gateway WHERE id = ?`, capabilityGatewayRowID)
 	var settings domain.CapabilityGatewaySettings
 	switch err := row.Scan(&settings.Addr, &settings.Token); {
@@ -46,7 +51,7 @@ func (s *ConfigStore) GetCapabilityGateway(ctx context.Context) (domain.Capabili
 }
 
 // SaveCapabilityGateway upserts the OctoBus connection settings.
-func (s *ConfigStore) SaveCapabilityGateway(ctx context.Context, settings domain.CapabilityGatewaySettings) (domain.CapabilityGatewaySettings, error) {
+func (s *CapabilityGatewayStore) SaveCapabilityGateway(ctx context.Context, settings domain.CapabilityGatewaySettings) (domain.CapabilityGatewaySettings, error) {
 	settings.Addr = strings.TrimSpace(settings.Addr)
 	settings.Token = strings.TrimSpace(settings.Token)
 	if _, err := s.db.ExecContext(ctx,

@@ -11,7 +11,12 @@ import (
 	"time"
 )
 
-func (s *ConfigStore) ensureEventSchema(ctx context.Context) error {
+// EventStore owns topic events, webhook sources, deliveries, and session links.
+type EventStore struct {
+	db *sql.DB
+}
+
+func (s *EventStore) ensureEventSchema(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS event (
 			sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,11 +120,11 @@ func (s *ConfigStore) ensureEventSchema(ctx context.Context) error {
 	return nil
 }
 
-func (s *ConfigStore) EnsureEventSchema(ctx context.Context) error {
+func (s *EventStore) EnsureEventSchema(ctx context.Context) error {
 	return s.ensureEventSchema(ctx)
 }
 
-func (s *ConfigStore) CreateEvent(ctx context.Context, item domain.TopicEventRecord) (domain.TopicEventRecord, error) {
+func (s *EventStore) CreateEvent(ctx context.Context, item domain.TopicEventRecord) (domain.TopicEventRecord, error) {
 	normalized, err := normalizeTopicEventRecord(item, true)
 	if err != nil {
 		return domain.TopicEventRecord{}, err
@@ -175,7 +180,7 @@ func (s *ConfigStore) CreateEvent(ctx context.Context, item domain.TopicEventRec
 	return s.GetEvent(ctx, normalized.ID)
 }
 
-func (s *ConfigStore) GetEvent(ctx context.Context, eventID string) (domain.TopicEventRecord, error) {
+func (s *EventStore) GetEvent(ctx context.Context, eventID string) (domain.TopicEventRecord, error) {
 	eventID = strings.TrimSpace(eventID)
 	if eventID == "" {
 		return domain.TopicEventRecord{}, fmt.Errorf("event id is required")
@@ -191,7 +196,7 @@ func (s *ConfigStore) GetEvent(ctx context.Context, eventID string) (domain.Topi
 	return item, nil
 }
 
-func (s *ConfigStore) FindEventByIdempotencyKey(ctx context.Context, topic, key string) (domain.TopicEventRecord, bool, error) {
+func (s *EventStore) FindEventByIdempotencyKey(ctx context.Context, topic, key string) (domain.TopicEventRecord, bool, error) {
 	topic = strings.TrimSpace(topic)
 	key = strings.TrimSpace(key)
 	if topic == "" || key == "" {
@@ -208,7 +213,7 @@ func (s *ConfigStore) FindEventByIdempotencyKey(ctx context.Context, topic, key 
 	return item, true, nil
 }
 
-func (s *ConfigStore) ListPendingEvents(ctx context.Context, limit int) ([]domain.TopicEventRecord, error) {
+func (s *EventStore) ListPendingEvents(ctx context.Context, limit int) ([]domain.TopicEventRecord, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
@@ -220,7 +225,7 @@ func (s *ConfigStore) ListPendingEvents(ctx context.Context, limit int) ([]domai
 	return scanTopicEvents(rows)
 }
 
-func (s *ConfigStore) ListEvents(ctx context.Context, filter domain.TopicEventFilter) ([]domain.TopicEventRecord, error) {
+func (s *EventStore) ListEvents(ctx context.Context, filter domain.TopicEventFilter) ([]domain.TopicEventRecord, error) {
 	if strings.TrimSpace(filter.Topic) == "" && strings.TrimSpace(filter.CorrelationID) == "" {
 		return nil, fmt.Errorf("topic or correlation id is required")
 	}
@@ -262,7 +267,7 @@ func (s *ConfigStore) ListEvents(ctx context.Context, filter domain.TopicEventFi
 	return scanTopicEvents(rows)
 }
 
-func (s *ConfigStore) MarkEventPublished(ctx context.Context, eventID, claimID string, dispatchedAt time.Time) error {
+func (s *EventStore) MarkEventPublished(ctx context.Context, eventID, claimID string, dispatchedAt time.Time) error {
 	eventID = strings.TrimSpace(eventID)
 	claimID = strings.TrimSpace(claimID)
 	if eventID == "" || claimID == "" {
@@ -289,7 +294,7 @@ func (s *ConfigStore) MarkEventPublished(ctx context.Context, eventID, claimID s
 	return nil
 }
 
-func (s *ConfigStore) UpdateEventPayload(ctx context.Context, eventID, payloadJSON string) error {
+func (s *EventStore) UpdateEventPayload(ctx context.Context, eventID, payloadJSON string) error {
 	eventID = strings.TrimSpace(eventID)
 	if eventID == "" {
 		return fmt.Errorf("event id is required")
@@ -316,7 +321,7 @@ func (s *ConfigStore) UpdateEventPayload(ctx context.Context, eventID, payloadJS
 	return nil
 }
 
-func (s *ConfigStore) ListDispatchableEvents(ctx context.Context, now time.Time, limit int) ([]domain.TopicEventRecord, error) {
+func (s *EventStore) ListDispatchableEvents(ctx context.Context, now time.Time, limit int) ([]domain.TopicEventRecord, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
@@ -336,7 +341,7 @@ func (s *ConfigStore) ListDispatchableEvents(ctx context.Context, now time.Time,
 	return scanTopicEvents(rows)
 }
 
-func (s *ConfigStore) ClaimEvent(ctx context.Context, eventID, claimID string, now, until time.Time) (bool, error) {
+func (s *EventStore) ClaimEvent(ctx context.Context, eventID, claimID string, now, until time.Time) (bool, error) {
 	eventID = strings.TrimSpace(eventID)
 	claimID = strings.TrimSpace(claimID)
 	if eventID == "" || claimID == "" {
@@ -369,7 +374,7 @@ func (s *ConfigStore) ClaimEvent(ctx context.Context, eventID, claimID string, n
 	return affected > 0, nil
 }
 
-func (s *ConfigStore) ReleaseEventClaim(ctx context.Context, eventID, claimID, status, lastError string, nextAttemptAt time.Time) error {
+func (s *EventStore) ReleaseEventClaim(ctx context.Context, eventID, claimID, status, lastError string, nextAttemptAt time.Time) error {
 	eventID = strings.TrimSpace(eventID)
 	claimID = strings.TrimSpace(claimID)
 	status = domain.NormalizeTopicEventDispatchStatus(status)
@@ -389,7 +394,7 @@ func (s *ConfigStore) ReleaseEventClaim(ctx context.Context, eventID, claimID, s
 	return nil
 }
 
-func (s *ConfigStore) MarkEventNoSubscriber(ctx context.Context, eventID, claimID string, dispatchedAt time.Time) error {
+func (s *EventStore) MarkEventNoSubscriber(ctx context.Context, eventID, claimID string, dispatchedAt time.Time) error {
 	eventID = strings.TrimSpace(eventID)
 	claimID = strings.TrimSpace(claimID)
 	if eventID == "" || claimID == "" {
@@ -420,7 +425,7 @@ func (s *ConfigStore) MarkEventNoSubscriber(ctx context.Context, eventID, claimI
 	return nil
 }
 
-func (s *ConfigStore) UpsertEventDelivery(ctx context.Context, delivery domain.EventDelivery) error {
+func (s *EventStore) UpsertEventDelivery(ctx context.Context, delivery domain.EventDelivery) error {
 	delivery.EventID = strings.TrimSpace(delivery.EventID)
 	delivery.LoaderID = strings.TrimSpace(delivery.LoaderID)
 	delivery.TriggerID = strings.TrimSpace(delivery.TriggerID)
@@ -467,7 +472,7 @@ func (s *ConfigStore) UpsertEventDelivery(ctx context.Context, delivery domain.E
 	return nil
 }
 
-func (s *ConfigStore) AddEventSessionLink(ctx context.Context, link domain.EventSessionLink) error {
+func (s *EventStore) AddEventSessionLink(ctx context.Context, link domain.EventSessionLink) error {
 	link.EventID = strings.TrimSpace(link.EventID)
 	link.SessionID = strings.TrimSpace(link.SessionID)
 	link.Relation = strings.TrimSpace(link.Relation)
@@ -498,7 +503,7 @@ func (s *ConfigStore) AddEventSessionLink(ctx context.Context, link domain.Event
 	return nil
 }
 
-func (s *ConfigStore) ListEventDeliveries(ctx context.Context, eventIDs []string) ([]domain.EventDelivery, error) {
+func (s *EventStore) ListEventDeliveries(ctx context.Context, eventIDs []string) ([]domain.EventDelivery, error) {
 	seen := map[string]struct{}{}
 	ids := make([]string, 0, len(eventIDs))
 	for _, id := range eventIDs {
@@ -545,7 +550,7 @@ func (s *ConfigStore) ListEventDeliveries(ctx context.Context, eventIDs []string
 	return items, nil
 }
 
-func (s *ConfigStore) ListEventSessionLinks(ctx context.Context, eventIDs []string) ([]domain.EventSessionTraceItem, error) {
+func (s *EventStore) ListEventSessionLinks(ctx context.Context, eventIDs []string) ([]domain.EventSessionTraceItem, error) {
 	seen := map[string]struct{}{}
 	ids := make([]string, 0, len(eventIDs))
 	for _, id := range eventIDs {
@@ -590,7 +595,7 @@ func (s *ConfigStore) ListEventSessionLinks(ctx context.Context, eventIDs []stri
 	return items, nil
 }
 
-func (s *ConfigStore) ListDescendantEventIDs(ctx context.Context, rootEventID string, limit int) ([]string, error) {
+func (s *EventStore) ListDescendantEventIDs(ctx context.Context, rootEventID string, limit int) ([]string, error) {
 	rootEventID = strings.TrimSpace(rootEventID)
 	if rootEventID == "" {
 		return nil, fmt.Errorf("event id is required")
@@ -634,7 +639,7 @@ func (s *ConfigStore) ListDescendantEventIDs(ctx context.Context, rootEventID st
 	return ids, nil
 }
 
-func (s *ConfigStore) ListEnabledWebhookSourcesForTopic(ctx context.Context, topic string) ([]domain.WebhookSource, error) {
+func (s *EventStore) ListEnabledWebhookSourcesForTopic(ctx context.Context, topic string) ([]domain.WebhookSource, error) {
 	topic = strings.TrimSpace(topic)
 	if topic == "" {
 		return nil, fmt.Errorf("topic is required")
@@ -683,7 +688,7 @@ func WebhookSourceTopicMatches(topic, topicPrefix string) bool {
 	return webhookSourceTopicMatches(topic, topicPrefix)
 }
 
-func (s *ConfigStore) ListWebhookSources(ctx context.Context) ([]domain.WebhookSource, error) {
+func (s *EventStore) ListWebhookSources(ctx context.Context) ([]domain.WebhookSource, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, enabled, provider, topic_prefix, token_hash, signature_type, signature_secret, body_limit_bytes, created_at, updated_at
 		FROM webhook_source ORDER BY id ASC`)
 	if err != nil {
@@ -710,7 +715,7 @@ func (s *ConfigStore) ListWebhookSources(ctx context.Context) ([]domain.WebhookS
 	return items, nil
 }
 
-func (s *ConfigStore) GetWebhookSource(ctx context.Context, sourceID string) (domain.WebhookSource, bool, error) {
+func (s *EventStore) GetWebhookSource(ctx context.Context, sourceID string) (domain.WebhookSource, bool, error) {
 	sourceID = strings.TrimSpace(sourceID)
 	if sourceID == "" {
 		return domain.WebhookSource{}, false, fmt.Errorf("webhook source id is required")
@@ -733,7 +738,7 @@ func (s *ConfigStore) GetWebhookSource(ctx context.Context, sourceID string) (do
 	return item, true, nil
 }
 
-func (s *ConfigStore) UpsertWebhookSource(ctx context.Context, source domain.WebhookSource) (domain.WebhookSource, error) {
+func (s *EventStore) UpsertWebhookSource(ctx context.Context, source domain.WebhookSource) (domain.WebhookSource, error) {
 	source.ID = strings.TrimSpace(source.ID)
 	source.Name = strings.TrimSpace(source.Name)
 	source.Provider = strings.TrimSpace(source.Provider)
@@ -788,7 +793,7 @@ func (s *ConfigStore) UpsertWebhookSource(ctx context.Context, source domain.Web
 	return source, nil
 }
 
-func (s *ConfigStore) DeleteWebhookSource(ctx context.Context, sourceID string) error {
+func (s *EventStore) DeleteWebhookSource(ctx context.Context, sourceID string) error {
 	sourceID = strings.TrimSpace(sourceID)
 	if sourceID == "" {
 		return fmt.Errorf("webhook source id is required")

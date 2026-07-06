@@ -14,7 +14,12 @@ import (
 	"agent-compose/pkg/runs"
 )
 
-func (s *ConfigStore) UpsertProject(ctx context.Context, project ProjectRecord) (ProjectRecord, error) {
+// ProjectStore owns projects, revisions, agents, schedulers, runs, and sessions.
+type ProjectStore struct {
+	db *sql.DB
+}
+
+func (s *ProjectStore) UpsertProject(ctx context.Context, project ProjectRecord) (ProjectRecord, error) {
 	project, err := projects.NormalizeRecord(project)
 	if err != nil {
 		return ProjectRecord{}, err
@@ -56,7 +61,7 @@ func (s *ConfigStore) UpsertProject(ctx context.Context, project ProjectRecord) 
 	return s.GetProject(ctx, project.ID)
 }
 
-func (s *ConfigStore) MarkProjectRemoved(ctx context.Context, projectID string) (ProjectRecord, error) {
+func (s *ProjectStore) MarkProjectRemoved(ctx context.Context, projectID string) (ProjectRecord, error) {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
 		return ProjectRecord{}, fmt.Errorf("project id is required")
@@ -83,7 +88,7 @@ func (s *ConfigStore) MarkProjectRemoved(ctx context.Context, projectID string) 
 	return s.getProjectRequired(ctx, projectID, true)
 }
 
-func (s *ConfigStore) SaveProjectRevision(ctx context.Context, revision ProjectRevisionRecord) (ProjectRevisionRecord, bool, error) {
+func (s *ProjectStore) SaveProjectRevision(ctx context.Context, revision ProjectRevisionRecord) (ProjectRevisionRecord, bool, error) {
 	revision.ProjectID = strings.TrimSpace(revision.ProjectID)
 	revision.SpecHash = strings.TrimSpace(revision.SpecHash)
 	revision.SpecJSON = strings.TrimSpace(revision.SpecJSON)
@@ -135,7 +140,7 @@ func (s *ConfigStore) SaveProjectRevision(ctx context.Context, revision ProjectR
 	return revision, true, nil
 }
 
-func (s *ConfigStore) GetProject(ctx context.Context, projectID string) (ProjectRecord, error) {
+func (s *ProjectStore) GetProject(ctx context.Context, projectID string) (ProjectRecord, error) {
 	item, found, err := s.getProject(ctx, projectID, false)
 	if err != nil {
 		return ProjectRecord{}, err
@@ -147,7 +152,7 @@ func (s *ConfigStore) GetProject(ctx context.Context, projectID string) (Project
 	return item, nil
 }
 
-func (s *ConfigStore) ListProjects(ctx context.Context, options ProjectListOptions) (ProjectListResult, error) {
+func (s *ProjectStore) ListProjects(ctx context.Context, options ProjectListOptions) (ProjectListResult, error) {
 	limit := options.Limit
 	if limit <= 0 {
 		limit = 50
@@ -200,7 +205,7 @@ func (s *ConfigStore) ListProjects(ctx context.Context, options ProjectListOptio
 	}, nil
 }
 
-func (s *ConfigStore) GetProjectRevision(ctx context.Context, projectID string, revision int64) (ProjectRevisionRecord, error) {
+func (s *ProjectStore) GetProjectRevision(ctx context.Context, projectID string, revision int64) (ProjectRevisionRecord, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT project_id, revision, spec_hash, spec_json, created_at
 		FROM project_revision WHERE project_id = ? AND revision = ?`, strings.TrimSpace(projectID), revision)
 	item, err := projects.ScanProjectRevision(row.Scan)
@@ -214,7 +219,7 @@ func (s *ConfigStore) GetProjectRevision(ctx context.Context, projectID string, 
 	return item, nil
 }
 
-func (s *ConfigStore) UpsertProjectAgent(ctx context.Context, agent ProjectAgentRecord) (ProjectAgentRecord, error) {
+func (s *ProjectStore) UpsertProjectAgent(ctx context.Context, agent ProjectAgentRecord) (ProjectAgentRecord, error) {
 	agent, err := projects.NormalizeAgentRecord(agent)
 	if err != nil {
 		return ProjectAgentRecord{}, err
@@ -243,7 +248,7 @@ func (s *ConfigStore) UpsertProjectAgent(ctx context.Context, agent ProjectAgent
 	return s.GetProjectAgent(ctx, agent.ProjectID, agent.AgentName)
 }
 
-func (s *ConfigStore) GetProjectAgent(ctx context.Context, projectID, agentName string) (ProjectAgentRecord, error) {
+func (s *ProjectStore) GetProjectAgent(ctx context.Context, projectID, agentName string) (ProjectAgentRecord, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT project_id, agent_name, managed_agent_id, revision, provider, model, image, driver, scheduler_enabled, spec_json, created_at, updated_at
 		FROM project_agent WHERE project_id = ? AND agent_name = ?`, strings.TrimSpace(projectID), strings.TrimSpace(agentName))
 	item, err := projects.ScanProjectAgent(row.Scan)
@@ -257,7 +262,7 @@ func (s *ConfigStore) GetProjectAgent(ctx context.Context, projectID, agentName 
 	return item, nil
 }
 
-func (s *ConfigStore) ListProjectAgents(ctx context.Context, projectID string) ([]ProjectAgentRecord, error) {
+func (s *ProjectStore) ListProjectAgents(ctx context.Context, projectID string) ([]ProjectAgentRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT project_id, agent_name, managed_agent_id, revision, provider, model, image, driver, scheduler_enabled, spec_json, created_at, updated_at
 		FROM project_agent WHERE project_id = ? ORDER BY agent_name ASC`, strings.TrimSpace(projectID))
 	if err != nil {
@@ -278,7 +283,7 @@ func (s *ConfigStore) ListProjectAgents(ctx context.Context, projectID string) (
 	return items, nil
 }
 
-func (s *ConfigStore) UpsertProjectScheduler(ctx context.Context, scheduler ProjectSchedulerRecord) (ProjectSchedulerRecord, error) {
+func (s *ProjectStore) UpsertProjectScheduler(ctx context.Context, scheduler ProjectSchedulerRecord) (ProjectSchedulerRecord, error) {
 	scheduler, err := projects.NormalizeSchedulerRecord(scheduler)
 	if err != nil {
 		return ProjectSchedulerRecord{}, err
@@ -307,7 +312,7 @@ func (s *ConfigStore) UpsertProjectScheduler(ctx context.Context, scheduler Proj
 	return s.GetProjectScheduler(ctx, scheduler.ProjectID, scheduler.SchedulerID)
 }
 
-func (s *ConfigStore) GetProjectScheduler(ctx context.Context, projectID, schedulerID string) (ProjectSchedulerRecord, error) {
+func (s *ProjectStore) GetProjectScheduler(ctx context.Context, projectID, schedulerID string) (ProjectSchedulerRecord, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT project_id, scheduler_id, agent_name, managed_loader_id, revision, enabled, trigger_count, spec_json, created_at, updated_at
 		FROM project_scheduler WHERE project_id = ? AND scheduler_id = ?`, strings.TrimSpace(projectID), strings.TrimSpace(schedulerID))
 	item, err := projects.ScanProjectScheduler(row.Scan)
@@ -321,7 +326,7 @@ func (s *ConfigStore) GetProjectScheduler(ctx context.Context, projectID, schedu
 	return item, nil
 }
 
-func (s *ConfigStore) SetProjectSchedulerEnabled(ctx context.Context, projectID, schedulerID string, enabled bool) (ProjectSchedulerRecord, error) {
+func (s *ProjectStore) SetProjectSchedulerEnabled(ctx context.Context, projectID, schedulerID string, enabled bool) (ProjectSchedulerRecord, error) {
 	projectID = strings.TrimSpace(projectID)
 	schedulerID = strings.TrimSpace(schedulerID)
 	if projectID == "" || schedulerID == "" {
@@ -339,7 +344,7 @@ func (s *ConfigStore) SetProjectSchedulerEnabled(ctx context.Context, projectID,
 	return s.GetProjectScheduler(ctx, projectID, schedulerID)
 }
 
-func (s *ConfigStore) ListProjectSchedulers(ctx context.Context, projectID string) ([]ProjectSchedulerRecord, error) {
+func (s *ProjectStore) ListProjectSchedulers(ctx context.Context, projectID string) ([]ProjectSchedulerRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT project_id, scheduler_id, agent_name, managed_loader_id, revision, enabled, trigger_count, spec_json, created_at, updated_at
 		FROM project_scheduler WHERE project_id = ? ORDER BY agent_name ASC, scheduler_id ASC`, strings.TrimSpace(projectID))
 	if err != nil {
@@ -360,7 +365,7 @@ func (s *ConfigStore) ListProjectSchedulers(ctx context.Context, projectID strin
 	return items, nil
 }
 
-func (s *ConfigStore) CreateProjectRun(ctx context.Context, run ProjectRunRecord) (ProjectRunRecord, error) {
+func (s *ProjectStore) CreateProjectRun(ctx context.Context, run ProjectRunRecord) (ProjectRunRecord, error) {
 	run, err := projects.NormalizeRunRecord(run)
 	if err != nil {
 		return ProjectRunRecord{}, err
@@ -381,7 +386,7 @@ func (s *ConfigStore) CreateProjectRun(ctx context.Context, run ProjectRunRecord
 	return s.GetProjectRun(ctx, run.RunID)
 }
 
-func (s *ConfigStore) UpdateProjectRun(ctx context.Context, run ProjectRunRecord) (ProjectRunRecord, error) {
+func (s *ProjectStore) UpdateProjectRun(ctx context.Context, run ProjectRunRecord) (ProjectRunRecord, error) {
 	run, err := projects.NormalizeRunRecord(run)
 	if err != nil {
 		return ProjectRunRecord{}, err
@@ -404,7 +409,7 @@ func (s *ConfigStore) UpdateProjectRun(ctx context.Context, run ProjectRunRecord
 	return s.GetProjectRun(ctx, run.RunID)
 }
 
-func (s *ConfigStore) GetProjectRun(ctx context.Context, runID string) (ProjectRunRecord, error) {
+func (s *ProjectStore) GetProjectRun(ctx context.Context, runID string) (ProjectRunRecord, error) {
 	row := s.db.QueryRowContext(ctx, projects.SelectProjectRunSQL()+` WHERE run_id = ?`, strings.TrimSpace(runID))
 	item, err := projects.ScanProjectRun(row.Scan)
 	if err != nil {
@@ -417,11 +422,11 @@ func (s *ConfigStore) GetProjectRun(ctx context.Context, runID string) (ProjectR
 	return item, nil
 }
 
-func (s *ConfigStore) ListProjectRuns(ctx context.Context, projectID string, limit int) ([]ProjectRunRecord, error) {
+func (s *ProjectStore) ListProjectRuns(ctx context.Context, projectID string, limit int) ([]ProjectRunRecord, error) {
 	return s.ListProjectRunsByOptions(ctx, ProjectRunListOptions{ProjectID: projectID, Limit: limit})
 }
 
-func (s *ConfigStore) ListProjectRunsByOptions(ctx context.Context, options ProjectRunListOptions) ([]ProjectRunRecord, error) {
+func (s *ProjectStore) ListProjectRunsByOptions(ctx context.Context, options ProjectRunListOptions) ([]ProjectRunRecord, error) {
 	limit := options.Limit
 	if limit <= 0 {
 		limit = 50
@@ -484,7 +489,7 @@ func (s *ConfigStore) ListProjectRunsByOptions(ctx context.Context, options Proj
 	return items, nil
 }
 
-func (s *ConfigStore) getProject(ctx context.Context, projectID string, includeRemoved bool) (ProjectRecord, bool, error) {
+func (s *ProjectStore) getProject(ctx context.Context, projectID string, includeRemoved bool) (ProjectRecord, bool, error) {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
 		return ProjectRecord{}, false, fmt.Errorf("project id is required")
@@ -505,7 +510,7 @@ func (s *ConfigStore) getProject(ctx context.Context, projectID string, includeR
 	return item, true, nil
 }
 
-func (s *ConfigStore) getProjectRequired(ctx context.Context, projectID string, includeRemoved bool) (ProjectRecord, error) {
+func (s *ProjectStore) getProjectRequired(ctx context.Context, projectID string, includeRemoved bool) (ProjectRecord, error) {
 	item, found, err := s.getProject(ctx, projectID, includeRemoved)
 	if err != nil {
 		return ProjectRecord{}, err
@@ -517,6 +522,6 @@ func (s *ConfigStore) getProjectRequired(ctx context.Context, projectID string, 
 	return item, nil
 }
 
-func (s *ConfigStore) GetProjectIfExists(ctx context.Context, projectID string, includeRemoved bool) (ProjectRecord, bool, error) {
+func (s *ProjectStore) GetProjectIfExists(ctx context.Context, projectID string, includeRemoved bool) (ProjectRecord, bool, error) {
 	return s.getProject(ctx, projectID, includeRemoved)
 }

@@ -79,7 +79,7 @@ func TestE2EConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 func testConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	store := &ConfigStore{db: newMemoryDB(t)}
+	store := FromDB(newMemoryDB(t))
 	if err := store.initSchema(ctx); err != nil {
 		t.Fatalf("initSchema returned error: %v", err)
 	}
@@ -208,7 +208,7 @@ func testConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 func testConfigStoreTopicEventCoverageWorkflows(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	store := &ConfigStore{db: newMemoryDB(t)}
+	store := FromDB(newMemoryDB(t))
 	if err := store.initSchema(ctx); err != nil {
 		t.Fatalf("initSchema returned error: %v", err)
 	}
@@ -351,7 +351,7 @@ func testConfigStoreTopicEventCoverageWorkflows(t *testing.T) {
 func testConfigStoreCRUDCoverageWorkflows(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	store := &ConfigStore{db: newMemoryDB(t)}
+	store := FromDB(newMemoryDB(t))
 	if err := store.initSchema(ctx); err != nil {
 		t.Fatalf("initSchema returned error: %v", err)
 	}
@@ -657,7 +657,7 @@ func testConfigStoreMigrationAndTimeParsingWorkflows(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 	db := newMemoryDB(t)
-	store := &ConfigStore{db: db}
+	store := FromDB(db)
 
 	if _, err := store.tableColumnTypes(ctx, " "); err == nil {
 		t.Fatalf("empty table name returned nil error")
@@ -745,7 +745,7 @@ func testConfigStoreProjectSchemaMigrationWorkflows(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 	db := newMemoryDB(t)
-	store := &ConfigStore{db: db}
+	store := FromDB(db)
 
 	if err := store.initSchema(ctx); err != nil {
 		t.Fatalf("initSchema on empty db returned error: %v", err)
@@ -757,7 +757,7 @@ func testConfigStoreProjectSchemaMigrationWorkflows(t *testing.T) {
 	assertProjectSchema(t, store)
 
 	existingDB := newMemoryDB(t)
-	configDB := &ConfigStore{db: existingDB}
+	configDB := FromDB(existingDB)
 	for _, ensure := range []func(context.Context) error{
 		configDB.ensureGlobalEnvSchema,
 		configDB.ensureCapabilityGatewaySchema,

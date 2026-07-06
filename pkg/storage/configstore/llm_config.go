@@ -11,7 +11,12 @@ import (
 	"time"
 )
 
-func (s *ConfigStore) ensureLLMSchema(ctx context.Context) error {
+// LLMStore owns LLM provider/model configuration and facade tokens.
+type LLMStore struct {
+	db *sql.DB
+}
+
+func (s *LLMStore) ensureLLMSchema(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS llm_provider (
 			id TEXT PRIMARY KEY,
@@ -72,7 +77,7 @@ func (s *ConfigStore) ensureLLMSchema(ctx context.Context) error {
 	return nil
 }
 
-func (s *ConfigStore) HasLLMProviders(ctx context.Context) (bool, error) {
+func (s *LLMStore) HasLLMProviders(ctx context.Context) (bool, error) {
 	var count int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM llm_provider`).Scan(&count); err != nil {
 		return false, fmt.Errorf("count llm providers: %w", err)
@@ -80,7 +85,7 @@ func (s *ConfigStore) HasLLMProviders(ctx context.Context) (bool, error) {
 	return count > 0, nil
 }
 
-func (s *ConfigStore) UpsertDefaultLLMConfig(ctx context.Context, provider llms.Provider, model llms.Model) error {
+func (s *LLMStore) UpsertDefaultLLMConfig(ctx context.Context, provider llms.Provider, model llms.Model) error {
 	now := time.Now().UTC().Unix()
 	var ok bool
 	provider, model, ok = llms.NormalizeDefaultConfig(provider, model)
@@ -115,7 +120,7 @@ func (s *ConfigStore) UpsertDefaultLLMConfig(ctx context.Context, provider llms.
 	return tx.Commit()
 }
 
-func (s *ConfigStore) ListEnabledLLMProviders(ctx context.Context) ([]llms.Provider, error) {
+func (s *LLMStore) ListEnabledLLMProviders(ctx context.Context) ([]llms.Provider, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, headers_json, use_generic_responses_text_parts, weight, enabled, scope, created_at, updated_at FROM llm_provider WHERE enabled != 0 ORDER BY weight ASC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query llm providers: %w", err)
@@ -135,7 +140,7 @@ func (s *ConfigStore) ListEnabledLLMProviders(ctx context.Context) ([]llms.Provi
 	return providers, nil
 }
 
-func (s *ConfigStore) ListEnabledLLMModels(ctx context.Context) ([]llms.Model, error) {
+func (s *LLMStore) ListEnabledLLMModels(ctx context.Context) ([]llms.Model, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, description, default_model, enabled, scope, created_at, updated_at FROM llm_model WHERE enabled != 0 ORDER BY default_model DESC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query llm models: %w", err)
@@ -155,7 +160,7 @@ func (s *ConfigStore) ListEnabledLLMModels(ctx context.Context) ([]llms.Model, e
 	return models, nil
 }
 
-func (s *ConfigStore) LLMProviderModelWireAPI(ctx context.Context, providerID, modelID string) (string, bool, error) {
+func (s *LLMStore) LLMProviderModelWireAPI(ctx context.Context, providerID, modelID string) (string, bool, error) {
 	var wireAPI string
 	err := s.db.QueryRowContext(ctx, `SELECT wire_api FROM llm_provider_model WHERE provider_id = ? AND model_id = ?`, strings.TrimSpace(providerID), strings.TrimSpace(modelID)).Scan(&wireAPI)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -171,7 +176,7 @@ func (s *ConfigStore) LLMProviderModelWireAPI(ctx context.Context, providerID, m
 	return llms.NormalizeWireAPI(wireAPI), true, nil
 }
 
-func (s *ConfigStore) SaveLLMFacadeToken(ctx context.Context, token llms.FacadeToken) error {
+func (s *LLMStore) SaveLLMFacadeToken(ctx context.Context, token llms.FacadeToken) error {
 	if strings.TrimSpace(token.TokenHash) == "" || strings.TrimSpace(token.SessionID) == "" {
 		return fmt.Errorf("llm facade token hash and session id are required")
 	}
@@ -199,7 +204,7 @@ func (s *ConfigStore) SaveLLMFacadeToken(ctx context.Context, token llms.FacadeT
 // DeleteLLMFacadeToken removes a single facade token by its raw value. It is used
 // to retire a per-run agent token as soon as that run completes, so live tokens
 // never accumulate over the lifetime of a long-running session.
-func (s *ConfigStore) DeleteLLMFacadeToken(ctx context.Context, rawToken string) error {
+func (s *LLMStore) DeleteLLMFacadeToken(ctx context.Context, rawToken string) error {
 	if strings.TrimSpace(rawToken) == "" {
 		return nil
 	}
@@ -210,7 +215,7 @@ func (s *ConfigStore) DeleteLLMFacadeToken(ctx context.Context, rawToken string)
 	return nil
 }
 
-func (s *ConfigStore) GetLLMFacadeToken(ctx context.Context, rawToken string) (llms.FacadeToken, error) {
+func (s *LLMStore) GetLLMFacadeToken(ctx context.Context, rawToken string) (llms.FacadeToken, error) {
 	hash, fingerprint := llms.HashFacadeToken(rawToken)
 	row := s.db.QueryRowContext(ctx, `SELECT session_id, token_hash, token_fingerprint, model, provider_id, wire_api, source, run_id, issued_at, expires_at, revoked_at FROM llm_facade_token WHERE token_hash = ?`, hash)
 	token, err := llms.ScanFacadeToken(row.Scan)
@@ -230,7 +235,7 @@ const llmFacadeTokenRetention = time.Hour
 
 const LLMFacadeTokenRetention = llmFacadeTokenRetention
 
-func (s *ConfigStore) RevokeLLMFacadeTokensForSession(ctx context.Context, sessionID string) error {
+func (s *LLMStore) RevokeLLMFacadeTokensForSession(ctx context.Context, sessionID string) error {
 	now := time.Now().UTC()
 	if _, err := s.db.ExecContext(ctx, `UPDATE llm_facade_token SET revoked_at = ? WHERE session_id = ? AND revoked_at = 0`, now.Unix(), strings.TrimSpace(sessionID)); err != nil {
 		return fmt.Errorf("revoke llm facade tokens for session: %w", err)
