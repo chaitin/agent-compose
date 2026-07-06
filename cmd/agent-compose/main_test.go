@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"agent-compose/pkg/config"
+	"agent-compose/pkg/imagecache"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
@@ -4029,6 +4030,159 @@ func TestCLICacheRemoveUsageErrors(t *testing.T) {
 	}
 }
 
+func TestIntegrationCLICacheLifecycleWithInProcessDaemon(t *testing.T) {
+	root := t.TempDir()
+	imageCacheRoot := filepath.Join(root, "images")
+	t.Setenv("DATA_ROOT", root)
+	t.Setenv("SESSION_ROOT", filepath.Join(root, "sessions"))
+	t.Setenv("IMAGE_CACHE_ROOT", imageCacheRoot)
+	t.Setenv("HTTP_LISTEN", "")
+	t.Setenv("AGENT_COMPOSE_SOCKET", "")
+	t.Setenv("AGENT_COMPOSE_HOST", "")
+	t.Setenv("RUNTIME_DRIVER", config.RuntimeDriverDocker)
+	t.Setenv("DOCKER_IMAGE", "guest:latest")
+	t.Setenv("SESSION_START_TIMEOUT", "1s")
+	t.Setenv("SESSION_STOP_TIMEOUT", "1s")
+	t.Setenv("LLM_API_ENDPOINT", "")
+	t.Setenv("BOXLITE_HOME", filepath.Join(root, "boxlite"))
+	t.Setenv("BOXLITE_RUNTIME_DIR", filepath.Join(root, "boxlite-runtime"))
+	t.Setenv("DOCKER_HOME", filepath.Join(root, "docker"))
+	t.Setenv("MICROSANDBOX_HOME", filepath.Join(root, "microsandbox"))
+	t.Setenv("MICROSANDBOX_MSB_PATH", filepath.Join(root, "msb"))
+	t.Setenv("MICROSANDBOX_LIB_PATH", filepath.Join(root, "libmicrosandbox_go_ffi.so"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app, err := NewDaemonApp(ctx, DaemonOptions{StartBackground: func(do.Injector) error { return nil }})
+	if err != nil {
+		t.Fatalf("NewDaemonApp returned error: %v", err)
+	}
+	server := httptest.NewServer(app.Echo)
+	defer server.Close()
+
+	cache, err := imagecache.New(imagecache.Config{Root: imageCacheRoot})
+	if err != nil {
+		t.Fatalf("imagecache.New returned error: %v", err)
+	}
+	referencedImageID := "sha256:cli-ref"
+	referencedRootFS := cache.MaterializedRootFSPath(referencedImageID)
+	referencedReady := filepath.Join(cache.MaterializedImageDir(referencedImageID), ".rootfs.ready")
+	orphanRootFS := filepath.Join(cache.MaterializationRoot(), "cli-orphan", "rootfs")
+	missingRootFS := filepath.Join(cache.MaterializationRoot(), "cli-missing", "rootfs")
+	for _, dir := range []string{
+		filepath.Join(referencedRootFS, "bin"),
+		orphanRootFS,
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	for path, data := range map[string]string{
+		filepath.Join(referencedRootFS, "bin", "tool"): "referenced",
+		referencedReady:                          "ready",
+		filepath.Join(orphanRootFS, "layer.txt"): "orphan",
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	if err := cache.SaveMetadata(imagecache.MetadataFile{Images: []imagecache.ImageMetadata{
+		{
+			CacheKey:        referencedImageID,
+			RequestedRef:    "agent:referenced",
+			NormalizedRef:   "registry.example/agent:referenced",
+			RepoDigests:     []string{"registry.example/agent@sha256:cli-ref"},
+			ManifestDigest:  "sha256:manifest-cli-ref",
+			ConfigDigest:    referencedImageID,
+			RootFSCachePath: referencedRootFS,
+		},
+		{
+			CacheKey:        "sha256:cli-missing",
+			RequestedRef:    "agent:missing",
+			NormalizedRef:   "registry.example/agent:missing",
+			ManifestDigest:  "sha256:manifest-cli-missing",
+			ConfigDigest:    "sha256:cli-missing",
+			RootFSCachePath: missingRootFS,
+		},
+	}}); err != nil {
+		t.Fatalf("SaveMetadata returned error: %v", err)
+	}
+
+	listOut, listErr, listRuns, listCode := executeCLICommand("cache", "ls", "--host", server.URL, "--json", "--type", "materialized")
+	if listCode != 0 || listErr != "" || listRuns != 0 {
+		t.Fatalf("cache ls code/stderr/runs = %d / %q / %d", listCode, listErr, listRuns)
+	}
+	var listed composeCacheListOutput
+	if err := json.Unmarshal([]byte(listOut), &listed); err != nil {
+		t.Fatalf("cache ls JSON decode failed: %v\n%s", err, listOut)
+	}
+	referenced := requireCLICacheByPath(t, listed.Caches, referencedRootFS)
+	orphan := requireCLICacheByPath(t, listed.Caches, orphanRootFS)
+	if referenced.Status != "referenced" || referenced.Removable {
+		t.Fatalf("referenced cache = %#v", referenced)
+	}
+	if orphan.Status != "orphaned" || !orphan.Removable {
+		t.Fatalf("orphan cache = %#v", orphan)
+	}
+	if !stringSliceContainsSubstring(listed.Warnings, "cli-missing") {
+		t.Fatalf("cache ls warnings = %#v, want missing metadata path warning", listed.Warnings)
+	}
+
+	inspectOut, inspectErr, _, inspectCode := executeCLICommand("cache", "inspect", "--host", server.URL, referenced.CacheID)
+	if inspectCode != 0 || inspectErr != "" {
+		t.Fatalf("cache inspect code/stderr = %d / %q", inspectCode, inspectErr)
+	}
+	if !strings.Contains(inspectOut, "References:") || !strings.Contains(inspectOut, "agent:referenced") {
+		t.Fatalf("cache inspect stdout = %q", inspectOut)
+	}
+
+	dryRunOut, dryRunErr, _, dryRunCode := executeCLICommand("cache", "prune", "--host", server.URL, "--type", "materialized", "--orphaned")
+	if dryRunCode != 0 || dryRunErr != "" {
+		t.Fatalf("cache prune dry-run code/stderr = %d / %q", dryRunCode, dryRunErr)
+	}
+	if !strings.Contains(dryRunOut, "Dry-run") || !strings.Contains(dryRunOut, orphan.CacheID) {
+		t.Fatalf("cache prune dry-run stdout = %q", dryRunOut)
+	}
+	assertLocalPathExists(t, orphanRootFS)
+
+	forceOut, forceErr, _, forceCode := executeCLICommand("cache", "prune", "--host", server.URL, "--json", "--type", "materialized", "--orphaned", "--force")
+	if forceCode != 0 || forceErr != "" {
+		t.Fatalf("cache prune force code/stderr = %d / %q", forceCode, forceErr)
+	}
+	var forceResult composeCacheOperationOutput
+	if err := json.Unmarshal([]byte(forceOut), &forceResult); err != nil {
+		t.Fatalf("cache prune force JSON decode failed: %v\n%s", err, forceOut)
+	}
+	if forceResult.DryRun || !stringSliceContains(forceResult.Removed, orphan.CacheID) {
+		t.Fatalf("cache prune force result = %#v", forceResult)
+	}
+	assertLocalPathMissing(t, orphanRootFS)
+	assertLocalPathExists(t, referencedRootFS)
+
+	protectedOut, protectedErr, _, protectedCode := executeCLICommand("cache", "rm", "--host", server.URL, "--force", referenced.CacheID)
+	if protectedCode != exitCodeUsage {
+		t.Fatalf("cache rm referenced exit code = %d, want usage; stderr=%q", protectedCode, protectedErr)
+	}
+	if !strings.Contains(protectedOut, "Skipped") || !strings.Contains(protectedOut, referenced.CacheID) {
+		t.Fatalf("cache rm referenced stdout = %q", protectedOut)
+	}
+	assertLocalPathExists(t, referencedRootFS)
+
+	includeOut, includeErr, _, includeCode := executeCLICommand("cache", "prune", "--host", server.URL, "--json", "--type", "materialized", "--status", "referenced", "--include-referenced", "--force")
+	if includeCode != 0 || includeErr != "" {
+		t.Fatalf("cache prune include referenced code/stderr = %d / %q", includeCode, includeErr)
+	}
+	var includeResult composeCacheOperationOutput
+	if err := json.Unmarshal([]byte(includeOut), &includeResult); err != nil {
+		t.Fatalf("cache prune include referenced JSON decode failed: %v\n%s", err, includeOut)
+	}
+	if includeResult.DryRun || len(includeResult.Removed) == 0 {
+		t.Fatalf("cache prune include referenced result = %#v", includeResult)
+	}
+	assertLocalPathMissing(t, referencedRootFS)
+	assertLocalPathMissing(t, referencedReady)
+}
+
 func TestIntegrationCLIImagePullAliasesAndJSON(t *testing.T) {
 	calls := 0
 	server := newComposeServiceStubServer(t, composeServiceStubs{
@@ -5548,6 +5702,52 @@ func testRunDetail(projectID, runID, agentName, sessionID string, status agentco
 		ResultJson:   "{}",
 		LogsPath:     "/tmp/output.txt",
 		ArtifactsDir: "/tmp/artifacts",
+	}
+}
+
+func requireCLICacheByPath(t *testing.T, caches []composeCacheOutput, path string) composeCacheOutput {
+	t.Helper()
+	for _, cache := range caches {
+		if cache.Path == path {
+			if strings.TrimSpace(cache.CacheID) == "" {
+				t.Fatalf("cache for path %s has empty cache id: %#v", path, cache)
+			}
+			return cache
+		}
+	}
+	t.Fatalf("missing cache for path %s in %#v", path, caches)
+	return composeCacheOutput{}
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func stringSliceContainsSubstring(values []string, want string) bool {
+	for _, value := range values {
+		if strings.Contains(value, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func assertLocalPathExists(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected %s to exist: %v", path, err)
+	}
+}
+
+func assertLocalPathMissing(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected %s to be missing, stat err=%v", path, err)
 	}
 }
 

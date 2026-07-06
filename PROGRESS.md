@@ -424,20 +424,32 @@
 
 参考文档：[实施计划 阶段 7](docs/plan/runtime-cache-lifecycle-implementation-plan.md#阶段-7端到端集成和非回归)
 
-- [ ] 7.1 覆盖完整 cache lifecycle workflow
+- [x] 7.1 覆盖完整 cache lifecycle workflow
   - 依赖：6.2。
   - 工作内容：增加 in-process daemon/Connect/CLI integration tests，使用临时 `DATA_ROOT`、`SESSION_ROOT`、`IMAGE_CACHE_ROOT`、`BOXLITE_HOME`、`MICROSANDBOX_HOME` 构造完整文件树。
   - 可并行子任务：
-    - [ ] 可并行：构造 image metadata + materialized layout/rootfs fixture。
-    - [ ] 可并行：构造 BoxLite legacy dirs fixture。
-    - [ ] 可并行：构造 Microsandbox docker disk/sandbox state fixture。
+    - [x] 可并行：构造 image metadata + materialized layout/rootfs fixture。
+    - [x] 可并行：构造 BoxLite legacy dirs fixture。
+    - [x] 可并行：构造 Microsandbox docker disk/sandbox state fixture。
   - 测试方案：`go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runtimecache ./pkg/driver ./pkg/imagecache`，覆盖 dry-run 不删除、force 仅删除目标、running session active 不可删、stopped referenced 默认不可删但 include-referenced 可删、unknown warning。
   - 验收标准：完整 workflow 能证明 dry-run、force、保护、warnings 和删除边界。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - 新增 CLI in-process daemon workflow test，使用临时 `DATA_ROOT`、`SESSION_ROOT`、`IMAGE_CACHE_ROOT`、`BOXLITE_HOME`、`MICROSANDBOX_HOME` 启动真实 daemon app HTTP handler。
+      - 构造 image metadata、referenced materialized rootfs、ready flag、orphaned materialized rootfs 和缺失 metadata path warning fixture。
+      - 通过真实 CLI `cache ls`、`cache inspect`、`cache prune`、`cache rm` 调用真实 v2 `CacheService`、app route、runtimecache scanner/remover 和本地临时文件树。
+      - 覆盖 dry-run 不删除、force prune 删除 orphaned 目标、referenced 默认 protected skipped、`--include-referenced --force` 删除 referenced rootfs 和 ready flag、JSON clean stdout、warnings 和 inspect references。
+      - BoxLite legacy dirs 和 Microsandbox docker disk/sandbox state 的文件树覆盖复用阶段 4 的 driver/runtimecache tests，并在本任务验证集中重新运行。
+    - 验证：
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./cmd/agent-compose -run '^TestIntegrationCLICacheLifecycleWithInProcessDaemon$' -v`
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runtimecache ./pkg/driver ./pkg/imagecache`
+      - `./scripts/with-go-toolchain.sh go test -count=1 -tags boxlitecgo ./pkg/driver`
+      - `git diff --check`
+    - 审计与例外：
+      - 新增端到端测试不依赖真实 BoxLite/Microsandbox runtime，只使用临时文件树和 in-process daemon HTTP handler。
+      - 默认 `cmd/agent-compose` 测试不直接列出 BoxLite `boxlitecgo` source；BoxLite runtime-derived fixture 由 `-tags boxlitecgo ./pkg/driver` 覆盖。
+      - 真实 BoxLite/Microsandbox smoke 为 opt-in，本任务未运行；补跑命令：`SMOKE_RUNTIME_DRIVERS=all task test:runtime-smoke`。
     - 下一目标：7.2 image/session 非回归。
 
 - [ ] 7.2 覆盖 `rmi` 和 session lifecycle 非回归
