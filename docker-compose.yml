@@ -14,6 +14,8 @@ services:
       - ./data:/data
       - ./.env:/data/work/.env:ro
     working_dir: /data/work
+    ports:
+      - 127.0.0.1:7410:7410
 
   agent-compose-frontend:
     image: ${AGENT_COMPOSE_FRONTEND_IMAGE:-ghcr.io/chaitin/agent-compose-ui:latest}
