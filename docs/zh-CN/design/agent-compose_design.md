@@ -61,7 +61,6 @@ daemon construction 已拆成可测试的 app construction：
 - 加载 `.env` 和环境配置。
 - 初始化 Echo、结构化日志和 DI。
 - 注册 `/api/version`、v1/v2 Connect handlers、webhook/event routes、workspace HTTP routes 和 Jupyter proxy routes。
-- 按 `HTTP_BASIC_AUTH` 注入可选全局 BasicAuth。
 - 通过 `agentcompose.Register(di)` 注册服务图。
 - 通过 `agentcompose.StartBackground(di)` 启动 loader manager、event dispatcher、capability proxy 和启动时 session 校准。
 - graceful shutdown 时关闭所有 listener，并清理 Unix socket 文件。

@@ -402,9 +402,9 @@ settings before exposing the deployment to a network.
 - Set a stable, high-entropy `AUTH_SECRET` when enabling UI server
   authentication.
 - Use HTTPS termination in production deployments.
-- `HTTP_LISTEN=0.0.0.0:7410` is an internal daemon API. Without daemon-side
-  `HTTP_BASIC_AUTH`, startup emits a warning but still proceeds; keep it behind
-  container networking, reverse proxies, VPNs, or equivalent controls.
+- `HTTP_LISTEN=0.0.0.0:7410` is an internal daemon API. Startup emits a warning
+  for non-loopback listeners; keep it behind container networking, reverse
+  proxies, VPNs, or equivalent controls.
 - Jupyter runs inside guest runtimes and is expected to be reached through the
   agent-compose proxy. Do not expose guest Jupyter ports directly.
 - Runtime drivers may allow network access from guest workloads. Check driver

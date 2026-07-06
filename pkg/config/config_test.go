@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/base64"
 	"errors"
 	"log/slog"
 	"os"
@@ -117,7 +116,6 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	t.Setenv("JUPYTER_PROXY_BASE", "/agent-compose/jupyter/")
 	t.Setenv("SESSION_START_TIMEOUT", "9s")
 	t.Setenv("SESSION_STOP_TIMEOUT", "10s")
-	t.Setenv("HTTP_BASIC_AUTH", base64.StdEncoding.EncodeToString([]byte("user:pass")))
 	t.Setenv("WEBHOOK_BODY_LIMIT_BYTES", "1234")
 	t.Setenv("WEBHOOK_QUEUE_RULES_JSON", `[{"name":"repo-a","workers":2,"match":{"topic":"webhook.github.push"}}]`)
 	t.Setenv("WEBHOOK_QUEUE_DEFAULT_WORKERS", "6")
@@ -156,9 +154,6 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	}
 	if config.GuestWorkspacePath != "/workspace" || config.GuestHomePath != "/root" || config.GuestStateRoot != "/state" || config.GuestRuntimeRoot != "/runtime" || config.GuestLogRoot != "/logs" {
 		t.Fatalf("guest paths = %#v", config)
-	}
-	if config.HTTPBasicAuth != "user:pass" {
-		t.Fatalf("auth = %q", config.HTTPBasicAuth)
 	}
 	if config.WebhookBodyLimitBytes != 1234 || config.WorkspaceUploadLimitBytes != 4321 {
 		t.Fatalf("limits = %d/%d", config.WebhookBodyLimitBytes, config.WorkspaceUploadLimitBytes)
@@ -291,11 +286,11 @@ func testNewConfigEnablesTCPOnlyWhenHTTPListenIsExplicit(t *testing.T) {
 	}
 }
 
-func TestNewConfigWarnsForPublicHTTPListenWithoutBasicAuth(t *testing.T) {
-	testNewConfigWarnsForPublicHTTPListenWithoutBasicAuth(t)
+func TestNewConfigWarnsForPublicHTTPListen(t *testing.T) {
+	testNewConfigWarnsForPublicHTTPListen(t)
 }
 
-func testNewConfigWarnsForPublicHTTPListenWithoutBasicAuth(t *testing.T) {
+func testNewConfigWarnsForPublicHTTPListen(t *testing.T) {
 	t.Helper()
 	for _, tc := range []struct {
 		name     string
@@ -338,13 +333,6 @@ func testNewConfigWarnsForPublicHTTPListenWithoutBasicAuth(t *testing.T) {
 				"OAUTH_CALLBACK_URL": "http://localhost:7410/oauth/callback",
 			},
 			wantWarn: true,
-		},
-		{
-			name:   "http basic auth suppresses warning",
-			listen: "0.0.0.0:7410",
-			env: map[string]string{
-				"HTTP_BASIC_AUTH": base64.StdEncoding.EncodeToString([]byte("user:pass")),
-			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

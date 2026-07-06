@@ -160,25 +160,6 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 func installDaemonMiddleware(app *echo.Echo, conf *config.Config) {
 	app.Use(middleware.RequestLogger())
 	app.Use(middleware.Recover())
-
-	if conf.HTTPBasicAuth != "" {
-		username := conf.HTTPBasicAuth
-		password := ""
-		if i := strings.Index(conf.HTTPBasicAuth, ":"); i >= 0 {
-			username = conf.HTTPBasicAuth[:i]
-			password = conf.HTTPBasicAuth[i+1:]
-		}
-		app.Use(middleware.BasicAuthWithConfig(middleware.BasicAuthConfig{
-			// CLI requests over a trusted Unix socket skip daemon HTTP basic auth.
-			Skipper: func(c echo.Context) bool {
-				return isLocalUnixSocketRequest(c.Request()) || agentcomposeapp.IsRuntimeLLMFacadeRequest(c.Request())
-			},
-			Realm: "Password Required",
-			Validator: func(u, p string, c echo.Context) (bool, error) {
-				return u == username && p == password, nil
-			},
-		}))
-	}
 }
 
 func (a *DaemonApp) StartBackground() error {

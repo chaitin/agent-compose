@@ -196,7 +196,7 @@ LLM_MODEL=your-model
 - 浏览器入口应通过启用 `with-ui` profile 后的 agent-compose-ui server 暴露。
 - 启用 UI 登录时设置稳定、高熵的 `AUTH_SECRET`。
 - 生产环境建议使用 HTTPS 终止。
-- `HTTP_LISTEN=0.0.0.0:7410` 是 daemon 内部 TCP API；未配置 daemon 侧 `HTTP_BASIC_AUTH` 时只会输出强警告，仍应依赖容器网络、反向代理或其他网络控制避免公网直连。
+- `HTTP_LISTEN=0.0.0.0:7410` 是 daemon 内部 TCP API；监听非 loopback 地址时会输出强警告，应依赖容器网络、反向代理或其他网络控制避免公网直连。
 - Jupyter 访问应通过 agent-compose proxy，不应直接暴露 guest Jupyter 端口。
 - 对不可信 workload，需要额外审查 runtime driver 的隔离和网络访问行为。
 

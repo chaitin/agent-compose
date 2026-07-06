@@ -46,7 +46,6 @@ Rules:
 - With `-f`, the CLI can operate on a project from any working directory.
 - `--host` only selects the daemon. Sandboxes run in the daemon environment.
 - When connecting to an HTTP(S) daemon through `--host` or `AGENT_COMPOSE_HOST`, the CLI reads Basic Auth credentials from local `AUTH_USERNAME` and `AUTH_PASSWORD`; local Unix socket connections do not use this authentication path.
-- If a deployment also enables the legacy outer `HTTP_BASIC_AUTH`, requests must satisfy that authentication layer as well.
 - Automation should use `--json` and avoid parsing human-readable tables.
 
 ## Common Workflows

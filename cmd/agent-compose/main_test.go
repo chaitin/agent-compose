@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"connectrpc.com/connect"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -4229,10 +4228,6 @@ func TestDaemonAppServesUnixSocketAndOptionalTCP(t *testing.T) {
 	testDaemonAppServesUnixSocketAndOptionalTCP(t)
 }
 
-func TestDaemonAppBypassesAuthForUnixSocketOnly(t *testing.T) {
-	testDaemonAppBypassesAuthForUnixSocketOnly(t)
-}
-
 func testDaemonAppServesUnixSocketAndOptionalTCP(t *testing.T) {
 	t.Helper()
 	socketPath := shortUnixSocketPath(t)
@@ -4267,27 +4262,6 @@ func testDaemonAppServesUnixSocketAndOptionalTCP(t *testing.T) {
 	if err := ln.Close(); err != nil {
 		t.Fatalf("close tcp listener after shutdown: %v", err)
 	}
-}
-
-func testDaemonAppBypassesAuthForUnixSocketOnly(t *testing.T) {
-	t.Helper()
-	socketPath := shortUnixSocketPath(t)
-	tcpListen := freeTCPListenAddress(t)
-	// The daemon's internal HTTP_BASIC_AUTH middleware must honor the
-	// local-socket bypass while still protecting TCP access.
-	t.Setenv("HTTP_BASIC_AUTH", base64.StdEncoding.EncodeToString([]byte("basic-user:basic-pass")))
-	app, cancel := newTestDaemonAppWithSocketAndTCP(t, socketPath, tcpListen, nil)
-	defer cancel()
-
-	runCtx, stop := context.WithCancel(context.Background())
-	errCh := runDaemonAppAsync(app, runCtx)
-
-	unixClient := newUnixHTTPClient(socketPath)
-	waitForHTTPStatus(t, unixClient, "http://agent-compose/api/version", http.StatusOK)
-	waitForHTTPStatus(t, http.DefaultClient, "http://"+tcpListen+"/api/version", http.StatusUnauthorized)
-
-	stop()
-	waitForDaemonExit(t, errCh)
 }
 
 func TestDaemonAppCleansStaleUnixSocket(t *testing.T) {

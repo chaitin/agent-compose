@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net"
@@ -42,8 +41,6 @@ type Config struct {
 	HttpListen                 string
 	AgentComposeSocket         string
 	AgentComposeHost           string
-	HTTPBasicAuth              string
-	HttpBasicAuth              string
 	WebhookBodyLimitBytes      int64
 	WebhookQueueRulesJSON      string
 	WebhookQueueDefaultWorkers int
@@ -293,15 +290,6 @@ func NewConfig(di do.Injector) (*Config, error) {
 		}
 	}
 
-	basicAuth := ""
-	if raw := os.Getenv("HTTP_BASIC_AUTH"); raw != "" {
-		if decoded, err := base64.StdEncoding.DecodeString(raw); err != nil {
-			logger.Warn("failed to decode HTTP_BASIC_AUTH", "error", err)
-		} else {
-			basicAuth = string(decoded)
-		}
-	}
-
 	webhookBodyLimitBytes := int64(1 << 20)
 	if raw := os.Getenv("WEBHOOK_BODY_LIMIT_BYTES"); raw != "" {
 		var parsed int64
@@ -331,7 +319,7 @@ func NewConfig(di do.Injector) (*Config, error) {
 		}
 	}
 
-	warnHTTPListenAuth(logger, httpListen, basicAuth)
+	warnPublicHTTPListen(logger, httpListen)
 
 	jupyterProxyBase := strings.TrimSpace(os.Getenv("JUPYTER_PROXY_BASE"))
 	if jupyterProxyBase == "" {
@@ -385,8 +373,6 @@ func NewConfig(di do.Injector) (*Config, error) {
 		HttpListen:                 httpListen,
 		AgentComposeSocket:         agentComposeSocket,
 		AgentComposeHost:           agentComposeHost,
-		HTTPBasicAuth:              basicAuth,
-		HttpBasicAuth:              basicAuth,
 		WebhookBodyLimitBytes:      webhookBodyLimitBytes,
 		WebhookQueueRulesJSON:      webhookQueueRulesJSON,
 		WebhookQueueDefaultWorkers: webhookQueueDefaultWorkers,
@@ -493,11 +479,11 @@ func validateAgentComposeHost(value string) error {
 	return nil
 }
 
-func warnHTTPListenAuth(logger *slog.Logger, httpListen, basicAuth string) {
-	if httpListen == "" || isLoopbackListenAddress(httpListen) || basicAuth != "" {
+func warnPublicHTTPListen(logger *slog.Logger, httpListen string) {
+	if httpListen == "" || isLoopbackListenAddress(httpListen) {
 		return
 	}
-	logger.Warn("HTTP_LISTEN exposes the daemon on a non-loopback address without daemon HTTP basic auth; expose it only on a trusted network or behind the agent-compose-ui server",
+	logger.Warn("HTTP_LISTEN exposes the daemon on a non-loopback address; expose it only on a trusted network or behind the agent-compose-ui server",
 		"http_listen", httpListen,
 	)
 }

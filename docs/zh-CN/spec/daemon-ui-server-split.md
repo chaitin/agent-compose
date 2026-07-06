@@ -154,7 +154,7 @@ public network
 
 - 只绑定 loopback 或私有网络地址，例如 `HTTP_LISTEN=127.0.0.1:7410`。
 - 配置 daemon internal API token，客户端通过 `Authorization: Bearer <token>` 访问。
-- 配置 daemon basic auth，仅用于非浏览器机器客户端。
+- 通过网络边界、反向代理或上层服务保护 daemon TCP API，仅用于非浏览器机器客户端。
 - 通过 mTLS、反向代理或 VPN 将 daemon TCP API 放在受控网络内。
 
 目标规则：

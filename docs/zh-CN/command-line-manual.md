@@ -46,7 +46,7 @@ agent-compose --host http://10.0.0.12:7410 ls
 - 使用 `-f` 时，不需要切换到 project root。
 - `--host` 只决定 CLI 连接哪个 daemon；sandbox 实际运行在 daemon 所在环境中。
 - 使用 `--host` 或 `AGENT_COMPOSE_HOST` 连接 HTTP(S) daemon 时，CLI 会从本机环境变量 `AUTH_USERNAME` 和 `AUTH_PASSWORD` 读取 Basic Auth 凭据；Unix socket 本地连接不使用该认证。
-- daemon 不再消费浏览器登录用的 `AUTH_*` / `OAUTH_*` 配置。远程 TCP API 如需 Basic Auth 保护，应在 daemon 侧配置 `HTTP_BASIC_AUTH`；UI 浏览器认证由 agent-compose-ui server 处理。
+- daemon 不再消费浏览器登录用的 `AUTH_*` / `OAUTH_*` 配置；UI 浏览器认证由 agent-compose-ui server 处理。
 - 自动化场景应使用 `--json`，不要解析人类可读表格。
 
 ## 常见工作流

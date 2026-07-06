@@ -81,7 +81,6 @@ Daemon construction has been split into testable app construction:
 - Initialize Echo, structured logging, and DI.
 - Register `/api/version`, v1/v2 Connect handlers, webhook/event routes,
   workspace HTTP routes, and Jupyter proxy routes.
-- Inject optional global BasicAuth from `HTTP_BASIC_AUTH`.
 - Register the service graph through `agentcompose.Register(di)`.
 - Start the loader manager, event dispatcher, capability proxy, and startup
   session reconciliation through `agentcompose.StartBackground(di)`.

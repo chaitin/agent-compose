@@ -146,8 +146,6 @@ Current implementation:
 - Source token comparison uses hash + constant-time compare.
 - `/api/events` and `/api/events/*` use normal API/auth path and no longer
   depend on webhook token.
-- If global `HTTP_BASIC_AUTH` is enabled, Echo outer BasicAuth still protects
-  these routes.
 
 Current model is per-source token. Provider signature verification is needed
 before exposing this to the public internet.
@@ -579,7 +577,6 @@ Go internal `agent-compose.*` lifecycle events still use direct
 | Condition | Response |
 | --- | --- |
 | No matching webhook source | `404 Not Found` |
-| Global `HTTP_BASIC_AUTH` failed | `401 Unauthorized` |
 | Missing or invalid token | `401 Unauthorized` |
 | Empty, invalid, or disallowed topic prefix | `400 Bad Request` |
 | `Content-Type` is not JSON | `415 Unsupported Media Type` |
