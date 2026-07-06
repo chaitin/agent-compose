@@ -27,6 +27,18 @@ type AgentRunner struct {
 	runtimes RuntimeProvider
 }
 
+// facadeStoreFor converts a possibly-nil concrete config store into a
+// runtimefacade.FacadeStore. Returning a true nil interface (instead of an
+// interface wrapping a nil pointer) keeps runtimefacade's plain `store == nil`
+// guard working, so a daemon running without an LLM store skips LLM config
+// instead of panicking on a typed-nil dereference.
+func facadeStoreFor(configDB *configstore.ConfigStore) runtimefacade.FacadeStore {
+	if configDB == nil {
+		return nil
+	}
+	return configDB
+}
+
 func NewAgentRunner(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, agents AgentDefinitionStore, runtimes RuntimeProvider) *AgentRunner {
 	return &AgentRunner{config: config, store: store, configDB: configDB, agents: agents, runtimes: runtimes}
 }
@@ -60,7 +72,7 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, session *domain.Sessi
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}
 	spec := BuildAgentExecSpec(r.config, session, agent, model, promptPath, schemaPath)
-	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, r.config, r.configDB, session, agent, model, runtimefacade.TokenSourceAgent, runID)
+	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, r.config, facadeStoreFor(r.configDB), session, agent, model, runtimefacade.TokenSourceAgent, runID)
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}

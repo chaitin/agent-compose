@@ -269,7 +269,7 @@ func (e *LoaderCommandExecutor) prepareLoaderCommandLLMFacadeEnv(ctx context.Con
 		execSession.ProviderEnvItems = providerEnv
 	}
 
-	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, e.Config, e.ConfigDB, &execSession, agent, model, runtimefacade.TokenSourceLoaderCommand, runID)
+	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, e.Config, facadeStoreFor(e.ConfigDB), &execSession, agent, model, runtimefacade.TokenSourceLoaderCommand, runID)
 	if err != nil {
 		return nil, "", err
 	}

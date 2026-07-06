@@ -9,7 +9,7 @@ import (
 	"agent-compose/pkg/projects"
 )
 
-func (s *ProjectStore) ListProjectSessionRuns(ctx context.Context, filter domain.ProjectSessionRelationFilter) ([]ProjectRunRecord, error) {
+func (s *projectStore) ListProjectSessionRuns(ctx context.Context, filter domain.ProjectSessionRelationFilter) ([]ProjectRunRecord, error) {
 	query := projects.SelectProjectRunSQL() + ` WHERE session_id != ''`
 	args := make([]any, 0, 4+len(filter.Statuses))
 	if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" {
@@ -61,7 +61,7 @@ func (s *ProjectStore) ListProjectSessionRuns(ctx context.Context, filter domain
 	return items, nil
 }
 
-func (s *ProjectStore) ListProjectRunsForSession(ctx context.Context, sessionID string) ([]ProjectRunRecord, error) {
+func (s *projectStore) ListProjectRunsForSession(ctx context.Context, sessionID string) ([]ProjectRunRecord, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return nil, fmt.Errorf("session id is required")

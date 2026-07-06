@@ -9,6 +9,7 @@ import (
 
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/llms/runtimefacade"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
@@ -284,7 +285,7 @@ func TestSessionDriverStartSessionVMIgnoresOptionalClaudeConfigError(t *testing.
 	ctx := context.Background()
 	originalEnsure := ensureSessionLLMFacadeConfig
 	defer func() { ensureSessionLLMFacadeConfig = originalEnsure }()
-	ensureSessionLLMFacadeConfig = func(ctx context.Context, config *appconfig.Config, store *configstore.ConfigStore, session *domain.Session, agent, model, source, runID string) (map[string]string, error) {
+	ensureSessionLLMFacadeConfig = func(ctx context.Context, config *appconfig.Config, store runtimefacade.FacadeStore, session *domain.Session, agent, model, source, runID string) (map[string]string, error) {
 		switch agent {
 		case "codex":
 			return map[string]string{

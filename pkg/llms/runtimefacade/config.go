@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"reflect"
 	"strings"
 
 	appconfig "agent-compose/pkg/config"
@@ -12,27 +11,14 @@ import (
 	domain "agent-compose/pkg/model"
 )
 
-// isNilStore reports whether store is absent, treating a nil concrete pointer
-// wrapped in the interface as nil too. Callers such as the adapters hold a
-// *configstore.ConfigStore that can be nil (e.g. in tests without an LLM store);
-// a plain store == nil check would miss that typed-nil and panic on first use.
-func isNilStore(store FacadeStore) bool {
-	if store == nil {
-		return true
-	}
-	rv := reflect.ValueOf(store)
-	switch rv.Kind() {
-	case reflect.Pointer, reflect.Interface:
-		return rv.IsNil()
-	default:
-		return false
-	}
-}
-
 // FacadeStore is the persistence surface the runtime LLM facade needs: the LLM
 // resolution / provider-bootstrap surface plus facade-token persistence.
 // *configstore.ConfigStore satisfies it; depending on this interface keeps the
 // facade off a direct configstore import.
+//
+// Callers that hold a possibly-nil concrete store must pass a true nil
+// interface when the store is absent (see adapters.facadeStoreFor); wrapping a
+// nil pointer in the interface would bypass the `store == nil` guards here.
 type FacadeStore interface {
 	llms.LLMResolverStore
 	SaveLLMFacadeToken(ctx context.Context, token llms.FacadeToken) error
@@ -56,7 +42,7 @@ func EnsureSessionLLMFacadeConfig(ctx context.Context, config *appconfig.Config,
 }
 
 func EnsureSessionAgentRuntimeConfig(ctx context.Context, config *appconfig.Config, store FacadeStore, session *domain.Session, agent, model, source, runID string) (AgentRuntimeConfig, error) {
-	if config == nil || isNilStore(store) || session == nil {
+	if config == nil || store == nil || session == nil {
 		return AgentRuntimeConfig{}, nil
 	}
 	switch domain.NormalizeAgentKind(agent) {

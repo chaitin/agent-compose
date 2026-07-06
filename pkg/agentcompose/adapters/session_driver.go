@@ -123,7 +123,7 @@ func (d *SessionDriver) prepareSessionStart(ctx context.Context, driver string, 
 	}
 	managedEnv := map[string]string{}
 	for _, agent := range []string{"codex", "claude"} {
-		agentEnv, err := ensureSessionLLMFacadeConfig(ctx, d.Config, d.ConfigDB, session, agent, "", "session", "")
+		agentEnv, err := ensureSessionLLMFacadeConfig(ctx, d.Config, facadeStoreFor(d.ConfigDB), session, agent, "", "session", "")
 		if err != nil {
 			if agent == "claude" && runtimefacade.IsOptionalConfigError(err) {
 				continue

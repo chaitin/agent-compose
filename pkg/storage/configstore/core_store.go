@@ -32,9 +32,9 @@ type (
 	ProjectListResult      = domain.ProjectListResult
 )
 
-// CoreStore owns the shared configuration domains: global env vars, workspace
+// coreStore owns the shared configuration domains: global env vars, workspace
 // configs, and agent definitions.
-type CoreStore struct {
+type coreStore struct {
 	db *sql.DB
 }
 
@@ -42,15 +42,20 @@ type CoreStore struct {
 // domain lives on its own sub-store sharing the same *sql.DB; embedding
 // promotes every domain method onto ConfigStore, so callers and the domain
 // packages' consumer interfaces are unaffected by the internal split.
+//
+// ConfigStore must be constructed via NewConfigStore or FromDB, which wire the
+// embedded sub-stores. The zero value (or a struct literal) leaves them nil and
+// every promoted method would panic; the sub-store types are unexported to keep
+// direct construction confined to this package.
 type ConfigStore struct {
 	db *sql.DB
 
-	*CoreStore
-	*LoaderStore
-	*EventStore
-	*ProjectStore
-	*LLMStore
-	*CapabilityGatewayStore
+	*coreStore
+	*loaderStore
+	*eventStore
+	*projectStore
+	*llmStore
+	*capabilityGatewayStore
 }
 
 func NewConfigStore(di do.Injector) (*ConfigStore, error) {
@@ -76,12 +81,12 @@ func NewConfigStore(di do.Injector) (*ConfigStore, error) {
 func FromDB(db *sql.DB) *ConfigStore {
 	return &ConfigStore{
 		db:                     db,
-		CoreStore:              &CoreStore{db: db},
-		LoaderStore:            &LoaderStore{db: db},
-		EventStore:             &EventStore{db: db},
-		ProjectStore:           &ProjectStore{db: db},
-		LLMStore:               &LLMStore{db: db},
-		CapabilityGatewayStore: &CapabilityGatewayStore{db: db},
+		coreStore:              &coreStore{db: db},
+		loaderStore:            &loaderStore{db: db},
+		eventStore:             &eventStore{db: db},
+		projectStore:           &projectStore{db: db},
+		llmStore:               &llmStore{db: db},
+		capabilityGatewayStore: &capabilityGatewayStore{db: db},
 	}
 }
 
@@ -92,7 +97,7 @@ func (s *ConfigStore) DB() *sql.DB {
 	return s.db
 }
 
-func (s *CoreStore) InitCoreSchema(ctx context.Context) error {
+func (s *coreStore) InitCoreSchema(ctx context.Context) error {
 	statements := []string{
 		`PRAGMA journal_mode = WAL;`,
 		`PRAGMA foreign_keys = ON;`,
@@ -143,7 +148,7 @@ func (s *ConfigStore) InitSchema(ctx context.Context) error {
 	return s.initSchema(ctx)
 }
 
-func (s *CoreStore) ensureGlobalEnvSchema(ctx context.Context) error {
+func (s *coreStore) ensureGlobalEnvSchema(ctx context.Context) error {
 	const createStmt = `CREATE TABLE IF NOT EXISTS global_env (
 		name TEXT PRIMARY KEY,
 		value TEXT NOT NULL,
@@ -163,11 +168,11 @@ func (s *CoreStore) ensureGlobalEnvSchema(ctx context.Context) error {
 	return s.rebuildGlobalEnvTable(ctx)
 }
 
-func (s *CoreStore) EnsureGlobalEnvSchema(ctx context.Context) error {
+func (s *coreStore) EnsureGlobalEnvSchema(ctx context.Context) error {
 	return s.ensureGlobalEnvSchema(ctx)
 }
 
-func (s *CoreStore) ensureWorkspaceConfigSchema(ctx context.Context) error {
+func (s *coreStore) ensureWorkspaceConfigSchema(ctx context.Context) error {
 	const createStmt = `CREATE TABLE IF NOT EXISTS workspace_config (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
@@ -190,11 +195,11 @@ func (s *CoreStore) ensureWorkspaceConfigSchema(ctx context.Context) error {
 	return s.rebuildWorkspaceConfigTable(ctx)
 }
 
-func (s *CoreStore) EnsureWorkspaceConfigSchema(ctx context.Context) error {
+func (s *coreStore) EnsureWorkspaceConfigSchema(ctx context.Context) error {
 	return s.ensureWorkspaceConfigSchema(ctx)
 }
 
-func (s *CoreStore) ensureAgentDefinitionSchema(ctx context.Context) error {
+func (s *coreStore) ensureAgentDefinitionSchema(ctx context.Context) error {
 	const createStmt = `CREATE TABLE IF NOT EXISTS agent_definition (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
@@ -244,15 +249,15 @@ func (s *CoreStore) ensureAgentDefinitionSchema(ctx context.Context) error {
 	return nil
 }
 
-func (s *CoreStore) EnsureAgentDefinitionSchema(ctx context.Context) error {
+func (s *coreStore) EnsureAgentDefinitionSchema(ctx context.Context) error {
 	return s.ensureAgentDefinitionSchema(ctx)
 }
 
-func (s *CoreStore) tableColumnTypes(ctx context.Context, tableName string) (map[string]string, error) {
+func (s *coreStore) tableColumnTypes(ctx context.Context, tableName string) (map[string]string, error) {
 	return TableColumnTypes(ctx, s.db, tableName)
 }
 
-func (s *CoreStore) TableColumnTypes(ctx context.Context, tableName string) (map[string]string, error) {
+func (s *coreStore) TableColumnTypes(ctx context.Context, tableName string) (map[string]string, error) {
 	return s.tableColumnTypes(ctx, tableName)
 }
 
@@ -270,7 +275,7 @@ func ensureColumn(ctx context.Context, db *sql.DB, table, column, definition str
 	return nil
 }
 
-func (s *CoreStore) rebuildGlobalEnvTable(ctx context.Context) error {
+func (s *coreStore) rebuildGlobalEnvTable(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin global env migration tx: %w", err)
@@ -302,11 +307,11 @@ func (s *CoreStore) rebuildGlobalEnvTable(ctx context.Context) error {
 	return nil
 }
 
-func (s *CoreStore) RebuildGlobalEnvTable(ctx context.Context) error {
+func (s *coreStore) RebuildGlobalEnvTable(ctx context.Context) error {
 	return s.rebuildGlobalEnvTable(ctx)
 }
 
-func (s *CoreStore) rebuildWorkspaceConfigTable(ctx context.Context) error {
+func (s *coreStore) rebuildWorkspaceConfigTable(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin workspace config migration tx: %w", err)
@@ -342,11 +347,11 @@ func (s *CoreStore) rebuildWorkspaceConfigTable(ctx context.Context) error {
 	return nil
 }
 
-func (s *CoreStore) RebuildWorkspaceConfigTable(ctx context.Context) error {
+func (s *coreStore) RebuildWorkspaceConfigTable(ctx context.Context) error {
 	return s.rebuildWorkspaceConfigTable(ctx)
 }
 
-func (s *CoreStore) ListGlobalEnv(ctx context.Context) ([]SessionEnvVar, error) {
+func (s *coreStore) ListGlobalEnv(ctx context.Context) ([]SessionEnvVar, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT name, value, secret FROM global_env ORDER BY name ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query global env: %w", err)
@@ -369,7 +374,7 @@ func (s *CoreStore) ListGlobalEnv(ctx context.Context) ([]SessionEnvVar, error) 
 	return items, nil
 }
 
-func (s *CoreStore) ReplaceGlobalEnv(ctx context.Context, items []SessionEnvVar) ([]SessionEnvVar, error) {
+func (s *coreStore) ReplaceGlobalEnv(ctx context.Context, items []SessionEnvVar) ([]SessionEnvVar, error) {
 	normalized := domain.NormalizeEnvItems(items)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -391,7 +396,7 @@ func (s *CoreStore) ReplaceGlobalEnv(ctx context.Context, items []SessionEnvVar)
 	return normalized, nil
 }
 
-func (s *CoreStore) ListWorkspaceConfigs(ctx context.Context) ([]WorkspaceConfig, error) {
+func (s *coreStore) ListWorkspaceConfigs(ctx context.Context) ([]WorkspaceConfig, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, type, config_json, comment, created_at, updated_at FROM workspace_config ORDER BY name ASC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query workspace configs: %w", err)
@@ -412,7 +417,7 @@ func (s *CoreStore) ListWorkspaceConfigs(ctx context.Context) ([]WorkspaceConfig
 	return items, nil
 }
 
-func (s *CoreStore) GetWorkspaceConfig(ctx context.Context, id string) (WorkspaceConfig, error) {
+func (s *coreStore) GetWorkspaceConfig(ctx context.Context, id string) (WorkspaceConfig, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id, name, type, config_json, comment, created_at, updated_at FROM workspace_config WHERE id = ?`, strings.TrimSpace(id))
 	item, err := ScanWorkspaceConfig(row.Scan)
 	if err != nil {
@@ -425,7 +430,7 @@ func (s *CoreStore) GetWorkspaceConfig(ctx context.Context, id string) (Workspac
 	return item, nil
 }
 
-func (s *CoreStore) CreateWorkspaceConfig(ctx context.Context, item WorkspaceConfig) (WorkspaceConfig, error) {
+func (s *coreStore) CreateWorkspaceConfig(ctx context.Context, item WorkspaceConfig) (WorkspaceConfig, error) {
 	normalized, err := NormalizeWorkspaceConfig(item, true)
 	if err != nil {
 		return WorkspaceConfig{}, err
@@ -439,7 +444,7 @@ func (s *CoreStore) CreateWorkspaceConfig(ctx context.Context, item WorkspaceCon
 	return normalized, nil
 }
 
-func (s *CoreStore) UpdateWorkspaceConfig(ctx context.Context, item WorkspaceConfig) (WorkspaceConfig, error) {
+func (s *coreStore) UpdateWorkspaceConfig(ctx context.Context, item WorkspaceConfig) (WorkspaceConfig, error) {
 	normalized, err := NormalizeWorkspaceConfig(item, false)
 	if err != nil {
 		return WorkspaceConfig{}, err
@@ -460,7 +465,7 @@ func (s *CoreStore) UpdateWorkspaceConfig(ctx context.Context, item WorkspaceCon
 	return normalized, nil
 }
 
-func (s *CoreStore) DeleteWorkspaceConfig(ctx context.Context, id string) error {
+func (s *coreStore) DeleteWorkspaceConfig(ctx context.Context, id string) error {
 	trimmedID := strings.TrimSpace(id)
 	if trimmedID == "" {
 		return fmt.Errorf("workspace config id is required")
@@ -478,7 +483,7 @@ func (s *CoreStore) DeleteWorkspaceConfig(ctx context.Context, id string) error 
 	return nil
 }
 
-func (s *CoreStore) CreateAgentDefinition(ctx context.Context, item domain.AgentDefinition) (domain.AgentDefinition, error) {
+func (s *coreStore) CreateAgentDefinition(ctx context.Context, item domain.AgentDefinition) (domain.AgentDefinition, error) {
 	normalized, err := domain.NormalizeAgentDefinition(item, true)
 	if err != nil {
 		return domain.AgentDefinition{}, err
@@ -507,7 +512,7 @@ func (s *CoreStore) CreateAgentDefinition(ctx context.Context, item domain.Agent
 	return normalized, nil
 }
 
-func (s *CoreStore) UpdateAgentDefinition(ctx context.Context, item domain.AgentDefinition) (domain.AgentDefinition, error) {
+func (s *coreStore) UpdateAgentDefinition(ctx context.Context, item domain.AgentDefinition) (domain.AgentDefinition, error) {
 	normalized, err := domain.NormalizeAgentDefinition(item, true)
 	if err != nil {
 		return domain.AgentDefinition{}, err
@@ -548,7 +553,7 @@ func (s *CoreStore) UpdateAgentDefinition(ctx context.Context, item domain.Agent
 	return normalized, nil
 }
 
-func (s *CoreStore) UpsertManagedAgentDefinition(ctx context.Context, item domain.AgentDefinition) (domain.AgentDefinition, error) {
+func (s *coreStore) UpsertManagedAgentDefinition(ctx context.Context, item domain.AgentDefinition) (domain.AgentDefinition, error) {
 	normalized, err := domain.NormalizeAgentDefinition(item, true)
 	if err != nil {
 		return domain.AgentDefinition{}, err
@@ -604,15 +609,15 @@ func (s *CoreStore) UpsertManagedAgentDefinition(ctx context.Context, item domai
 	return normalized, nil
 }
 
-func (s *CoreStore) GetAgentDefinition(ctx context.Context, id string) (domain.AgentDefinition, error) {
+func (s *coreStore) GetAgentDefinition(ctx context.Context, id string) (domain.AgentDefinition, error) {
 	return s.getAgentDefinition(ctx, id, false)
 }
 
-func (s *CoreStore) GetAgentDefinitionIncludingDeleted(ctx context.Context, id string) (domain.AgentDefinition, error) {
+func (s *coreStore) GetAgentDefinitionIncludingDeleted(ctx context.Context, id string) (domain.AgentDefinition, error) {
 	return s.getAgentDefinition(ctx, id, true)
 }
 
-func (s *CoreStore) getAgentDefinition(ctx context.Context, id string, includeDeleted bool) (domain.AgentDefinition, error) {
+func (s *coreStore) getAgentDefinition(ctx context.Context, id string, includeDeleted bool) (domain.AgentDefinition, error) {
 	item, found, err := s.getAgentDefinitionIfExists(ctx, id, includeDeleted)
 	if err != nil {
 		return domain.AgentDefinition{}, err
@@ -624,7 +629,7 @@ func (s *CoreStore) getAgentDefinition(ctx context.Context, id string, includeDe
 	return item, nil
 }
 
-func (s *CoreStore) getAgentDefinitionIfExists(ctx context.Context, id string, includeDeleted bool) (domain.AgentDefinition, bool, error) {
+func (s *coreStore) getAgentDefinitionIfExists(ctx context.Context, id string, includeDeleted bool) (domain.AgentDefinition, bool, error) {
 	where := "id = ? AND deleted_at = 0"
 	if includeDeleted {
 		where = "id = ?"
@@ -642,11 +647,11 @@ func (s *CoreStore) getAgentDefinitionIfExists(ctx context.Context, id string, i
 	return item, true, nil
 }
 
-func (s *CoreStore) GetAgentDefinitionIfExists(ctx context.Context, id string, includeDeleted bool) (domain.AgentDefinition, bool, error) {
+func (s *coreStore) GetAgentDefinitionIfExists(ctx context.Context, id string, includeDeleted bool) (domain.AgentDefinition, bool, error) {
 	return s.getAgentDefinitionIfExists(ctx, id, includeDeleted)
 }
 
-func (s *CoreStore) ListAgentDefinitions(ctx context.Context, options domain.AgentDefinitionListOptions) (domain.AgentDefinitionListResult, error) {
+func (s *coreStore) ListAgentDefinitions(ctx context.Context, options domain.AgentDefinitionListOptions) (domain.AgentDefinitionListResult, error) {
 	limit := options.Limit
 	if limit <= 0 {
 		limit = 50
@@ -702,7 +707,7 @@ func (s *CoreStore) ListAgentDefinitions(ctx context.Context, options domain.Age
 	}, nil
 }
 
-func (s *CoreStore) ListManagedAgentDefinitions(ctx context.Context, projectID string, includeDeleted bool) ([]domain.AgentDefinition, error) {
+func (s *coreStore) ListManagedAgentDefinitions(ctx context.Context, projectID string, includeDeleted bool) ([]domain.AgentDefinition, error) {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
 		return nil, fmt.Errorf("project id is required")
@@ -732,7 +737,7 @@ func (s *CoreStore) ListManagedAgentDefinitions(ctx context.Context, projectID s
 	return items, nil
 }
 
-func (s *CoreStore) DeleteAgentDefinition(ctx context.Context, id string) error {
+func (s *coreStore) DeleteAgentDefinition(ctx context.Context, id string) error {
 	trimmedID := strings.TrimSpace(id)
 	if trimmedID == "" {
 		return fmt.Errorf("agent definition id is required")
@@ -748,7 +753,7 @@ func (s *CoreStore) DeleteAgentDefinition(ctx context.Context, id string) error 
 	return nil
 }
 
-func (s *CoreStore) SetAgentDefinitionEnabled(ctx context.Context, id string, enabled bool) (domain.AgentDefinition, error) {
+func (s *coreStore) SetAgentDefinitionEnabled(ctx context.Context, id string, enabled bool) (domain.AgentDefinition, error) {
 	trimmedID := strings.TrimSpace(id)
 	if trimmedID == "" {
 		return domain.AgentDefinition{}, fmt.Errorf("agent definition id is required")
@@ -764,7 +769,7 @@ func (s *CoreStore) SetAgentDefinitionEnabled(ctx context.Context, id string, en
 	return s.GetAgentDefinition(ctx, trimmedID)
 }
 
-func (s *CoreStore) ensureWorkspaceNotReferencedByAgent(ctx context.Context, workspaceID string) error {
+func (s *coreStore) ensureWorkspaceNotReferencedByAgent(ctx context.Context, workspaceID string) error {
 	trimmedID := strings.TrimSpace(workspaceID)
 	if trimmedID == "" {
 		return nil

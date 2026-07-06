@@ -13,12 +13,12 @@ import (
 	"time"
 )
 
-// LoaderStore owns loader definitions, triggers, runs, and loader events.
-type LoaderStore struct {
+// loaderStore owns loader definitions, triggers, runs, and loader events.
+type loaderStore struct {
 	db *sql.DB
 }
 
-func (s *LoaderStore) ensureLoaderSchema(ctx context.Context) error {
+func (s *loaderStore) ensureLoaderSchema(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS loader (
             id TEXT PRIMARY KEY,
@@ -126,11 +126,11 @@ func (s *LoaderStore) ensureLoaderSchema(ctx context.Context) error {
 	return nil
 }
 
-func (s *LoaderStore) EnsureLoaderSchema(ctx context.Context) error {
+func (s *loaderStore) EnsureLoaderSchema(ctx context.Context) error {
 	return s.ensureLoaderSchema(ctx)
 }
 
-func (s *LoaderStore) ensureLoaderManagedColumns(ctx context.Context) error {
+func (s *loaderStore) ensureLoaderManagedColumns(ctx context.Context) error {
 	columns := []struct {
 		name       string
 		definition string
@@ -148,7 +148,7 @@ func (s *LoaderStore) ensureLoaderManagedColumns(ctx context.Context) error {
 	return nil
 }
 
-func (s *LoaderStore) ensureLoaderCapabilityColumn(ctx context.Context) error {
+func (s *loaderStore) ensureLoaderCapabilityColumn(ctx context.Context) error {
 	columnTypes, err := TableColumnTypes(ctx, s.db, "loader")
 	if err != nil {
 		return err
@@ -162,14 +162,14 @@ func (s *LoaderStore) ensureLoaderCapabilityColumn(ctx context.Context) error {
 	return nil
 }
 
-func (s *LoaderStore) ensureLoaderAgentIDColumn(ctx context.Context) error {
+func (s *loaderStore) ensureLoaderAgentIDColumn(ctx context.Context) error {
 	if err := ensureColumn(ctx, s.db, "loader", "agent_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("ensure loader agent_id column: %w", err)
 	}
 	return nil
 }
 
-func (s *LoaderStore) migrateLoaderTimestampPrecision(ctx context.Context) error {
+func (s *loaderStore) migrateLoaderTimestampPrecision(ctx context.Context) error {
 	statements := []string{
 		fmt.Sprintf(`UPDATE loader_trigger SET next_fire_at = next_fire_at * 1000 WHERE next_fire_at > 0 AND next_fire_at < %d`, storedUnixMillisecondThreshold),
 		fmt.Sprintf(`UPDATE loader_trigger SET last_fired_at = last_fired_at * 1000 WHERE last_fired_at > 0 AND last_fired_at < %d`, storedUnixMillisecondThreshold),
@@ -185,7 +185,7 @@ func (s *LoaderStore) migrateLoaderTimestampPrecision(ctx context.Context) error
 	return nil
 }
 
-func (s *LoaderStore) CreateLoader(ctx context.Context, item Loader) (Loader, error) {
+func (s *loaderStore) CreateLoader(ctx context.Context, item Loader) (Loader, error) {
 	normalized, err := loaders.NormalizeLoader(item, true)
 	if err != nil {
 		return Loader{}, err
@@ -234,7 +234,7 @@ func (s *LoaderStore) CreateLoader(ctx context.Context, item Loader) (Loader, er
 	return normalized, nil
 }
 
-func (s *LoaderStore) UpdateLoader(ctx context.Context, item Loader) (Loader, error) {
+func (s *loaderStore) UpdateLoader(ctx context.Context, item Loader) (Loader, error) {
 	normalized, err := loaders.NormalizeLoader(item, false)
 	if err != nil {
 		return Loader{}, err
@@ -299,7 +299,7 @@ func (s *LoaderStore) UpdateLoader(ctx context.Context, item Loader) (Loader, er
 	return normalized, nil
 }
 
-func (s *LoaderStore) UpsertManagedLoader(ctx context.Context, item Loader) (Loader, error) {
+func (s *loaderStore) UpsertManagedLoader(ctx context.Context, item Loader) (Loader, error) {
 	normalized, err := loaders.NormalizeLoader(item, false)
 	if err != nil {
 		return Loader{}, err
@@ -316,7 +316,7 @@ func (s *LoaderStore) UpsertManagedLoader(ctx context.Context, item Loader) (Loa
 	return s.CreateLoader(ctx, normalized)
 }
 
-func (s *LoaderStore) getLoaderIfExists(ctx context.Context, loaderID string) (Loader, bool, error) {
+func (s *loaderStore) getLoaderIfExists(ctx context.Context, loaderID string) (Loader, bool, error) {
 	item, err := s.GetLoader(ctx, loaderID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -327,11 +327,11 @@ func (s *LoaderStore) getLoaderIfExists(ctx context.Context, loaderID string) (L
 	return item, true, nil
 }
 
-func (s *LoaderStore) GetLoaderIfExists(ctx context.Context, loaderID string) (Loader, bool, error) {
+func (s *loaderStore) GetLoaderIfExists(ctx context.Context, loaderID string) (Loader, bool, error) {
 	return s.getLoaderIfExists(ctx, loaderID)
 }
 
-func (s *LoaderStore) DeleteLoader(ctx context.Context, loaderID string) error {
+func (s *loaderStore) DeleteLoader(ctx context.Context, loaderID string) error {
 	loaderID = strings.TrimSpace(loaderID)
 	if loaderID == "" {
 		return fmt.Errorf("loader id is required")
@@ -347,7 +347,7 @@ func (s *LoaderStore) DeleteLoader(ctx context.Context, loaderID string) error {
 	return nil
 }
 
-func (s *LoaderStore) DisableLoadersByDefaultAgent(ctx context.Context, agentID string) (int, error) {
+func (s *loaderStore) DisableLoadersByDefaultAgent(ctx context.Context, agentID string) (int, error) {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return 0, fmt.Errorf("agent id is required")
@@ -361,7 +361,7 @@ func (s *LoaderStore) DisableLoadersByDefaultAgent(ctx context.Context, agentID 
 	return int(rows), nil
 }
 
-func (s *LoaderStore) ListLoaderSummaries(ctx context.Context) ([]domain.LoaderSummary, error) {
+func (s *loaderStore) ListLoaderSummaries(ctx context.Context) ([]domain.LoaderSummary, error) {
 	rows, err := s.db.QueryContext(ctx, loaders.SelectLoaderSummarySQL()+`
         ORDER BY l.updated_at DESC, l.created_at DESC, l.id DESC`)
 	if err != nil {
@@ -383,7 +383,7 @@ func (s *LoaderStore) ListLoaderSummaries(ctx context.Context) ([]domain.LoaderS
 	return items, nil
 }
 
-func (s *LoaderStore) GetLoader(ctx context.Context, loaderID string) (Loader, error) {
+func (s *loaderStore) GetLoader(ctx context.Context, loaderID string) (Loader, error) {
 	loaderID = strings.TrimSpace(loaderID)
 	if loaderID == "" {
 		return Loader{}, fmt.Errorf("loader id is required")
@@ -407,7 +407,7 @@ func (s *LoaderStore) GetLoader(ctx context.Context, loaderID string) (Loader, e
 	return item, nil
 }
 
-func (s *LoaderStore) ListLoaders(ctx context.Context) ([]Loader, error) {
+func (s *loaderStore) ListLoaders(ctx context.Context) ([]Loader, error) {
 	summaries, err := s.ListLoaderSummaries(ctx)
 	if err != nil {
 		return nil, err
@@ -423,7 +423,7 @@ func (s *LoaderStore) ListLoaders(ctx context.Context) ([]Loader, error) {
 	return items, nil
 }
 
-func (s *LoaderStore) ListManagedLoaders(ctx context.Context, projectID string) ([]Loader, error) {
+func (s *loaderStore) ListManagedLoaders(ctx context.Context, projectID string) ([]Loader, error) {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
 		return nil, fmt.Errorf("project id is required")
@@ -455,7 +455,7 @@ func (s *LoaderStore) ListManagedLoaders(ctx context.Context, projectID string) 
 	return items, nil
 }
 
-func (s *LoaderStore) hydrateLoaderSummaryCounts(ctx context.Context, summary *domain.LoaderSummary) error {
+func (s *loaderStore) hydrateLoaderSummaryCounts(ctx context.Context, summary *domain.LoaderSummary) error {
 	if summary == nil || strings.TrimSpace(summary.ID) == "" {
 		return nil
 	}
@@ -478,7 +478,7 @@ func (s *LoaderStore) hydrateLoaderSummaryCounts(ctx context.Context, summary *d
 	return nil
 }
 
-func (s *LoaderStore) ReplaceLoaderTriggers(ctx context.Context, loaderID string, triggers []domain.LoaderTrigger) ([]domain.LoaderTrigger, error) {
+func (s *loaderStore) ReplaceLoaderTriggers(ctx context.Context, loaderID string, triggers []domain.LoaderTrigger) ([]domain.LoaderTrigger, error) {
 	loaderID = strings.TrimSpace(loaderID)
 	if loaderID == "" {
 		return nil, fmt.Errorf("loader id is required")
@@ -580,7 +580,7 @@ func (s *LoaderStore) ReplaceLoaderTriggers(ctx context.Context, loaderID string
 	return normalized, nil
 }
 
-func (s *LoaderStore) listLoaderTriggers(ctx context.Context, loaderID string) ([]domain.LoaderTrigger, error) {
+func (s *loaderStore) listLoaderTriggers(ctx context.Context, loaderID string) ([]domain.LoaderTrigger, error) {
 	rows, err := s.db.QueryContext(ctx, loaders.SelectLoaderTriggerSQL()+` WHERE loader_id = ? ORDER BY kind ASC, trigger_id ASC`, loaderID)
 	if err != nil {
 		return nil, fmt.Errorf("query loader triggers: %w", err)
@@ -601,7 +601,7 @@ func (s *LoaderStore) listLoaderTriggers(ctx context.Context, loaderID string) (
 	return items, nil
 }
 
-func (s *LoaderStore) SetLoaderEnabled(ctx context.Context, loaderID string, enabled bool) error {
+func (s *loaderStore) SetLoaderEnabled(ctx context.Context, loaderID string, enabled bool) error {
 	loaderID = strings.TrimSpace(loaderID)
 	if loaderID == "" {
 		return fmt.Errorf("loader id is required")
@@ -654,7 +654,7 @@ func (s *LoaderStore) SetLoaderEnabled(ctx context.Context, loaderID string, ena
 	return nil
 }
 
-func (s *LoaderStore) SetLoaderTriggerEnabled(ctx context.Context, loaderID, triggerID string, enabled bool) error {
+func (s *loaderStore) SetLoaderTriggerEnabled(ctx context.Context, loaderID, triggerID string, enabled bool) error {
 	loaderID = strings.TrimSpace(loaderID)
 	triggerID = strings.TrimSpace(triggerID)
 	if loaderID == "" || triggerID == "" {
@@ -689,7 +689,7 @@ func (s *LoaderStore) SetLoaderTriggerEnabled(ctx context.Context, loaderID, tri
 	return nil
 }
 
-func (s *LoaderStore) UpdateLoaderLastError(ctx context.Context, loaderID, lastError string) error {
+func (s *loaderStore) UpdateLoaderLastError(ctx context.Context, loaderID, lastError string) error {
 	loaderID = strings.TrimSpace(loaderID)
 	if loaderID == "" {
 		return fmt.Errorf("loader id is required")
@@ -701,7 +701,7 @@ func (s *LoaderStore) UpdateLoaderLastError(ctx context.Context, loaderID, lastE
 	return nil
 }
 
-func (s *LoaderStore) MarkLoaderTriggerFired(ctx context.Context, loaderID, triggerID string, lastFiredAt, nextFireAt time.Time) error {
+func (s *loaderStore) MarkLoaderTriggerFired(ctx context.Context, loaderID, triggerID string, lastFiredAt, nextFireAt time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE loader_trigger SET last_fired_at = ?, next_fire_at = ? WHERE loader_id = ? AND trigger_id = ?`, domain.NonZeroTimeUnixMilli(lastFiredAt), domain.NonZeroTimeUnixMilli(nextFireAt), strings.TrimSpace(loaderID), strings.TrimSpace(triggerID))
 	if err != nil {
 		return fmt.Errorf("update loader trigger fire state: %w", err)
@@ -709,7 +709,7 @@ func (s *LoaderStore) MarkLoaderTriggerFired(ctx context.Context, loaderID, trig
 	return nil
 }
 
-func (s *LoaderStore) CreateLoaderRun(ctx context.Context, run domain.LoaderRunSummary) error {
+func (s *loaderStore) CreateLoaderRun(ctx context.Context, run domain.LoaderRunSummary) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO loader_run(
         loader_id, run_id, trigger_id, trigger_kind, trigger_source, status, started_at, completed_at, duration_ms, error, result_json, payload_json, source_script_sha256, artifacts_dir
     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -734,7 +734,7 @@ func (s *LoaderStore) CreateLoaderRun(ctx context.Context, run domain.LoaderRunS
 	return nil
 }
 
-func (s *LoaderStore) UpdateLoaderRun(ctx context.Context, run domain.LoaderRunSummary) error {
+func (s *loaderStore) UpdateLoaderRun(ctx context.Context, run domain.LoaderRunSummary) error {
 	result, err := s.db.ExecContext(ctx, `UPDATE loader_run SET
         trigger_id = ?, trigger_kind = ?, trigger_source = ?, status = ?, started_at = ?, completed_at = ?, duration_ms = ?, error = ?, result_json = ?, payload_json = ?, source_script_sha256 = ?, artifacts_dir = ?
         WHERE loader_id = ? AND run_id = ?`,
@@ -763,7 +763,7 @@ func (s *LoaderStore) UpdateLoaderRun(ctx context.Context, run domain.LoaderRunS
 	return nil
 }
 
-func (s *LoaderStore) GetLoaderRun(ctx context.Context, loaderID, runID string) (domain.LoaderRunSummary, error) {
+func (s *loaderStore) GetLoaderRun(ctx context.Context, loaderID, runID string) (domain.LoaderRunSummary, error) {
 	row := s.db.QueryRowContext(ctx, loaders.SelectLoaderRunSQL()+` WHERE loader_id = ? AND run_id = ?`, strings.TrimSpace(loaderID), strings.TrimSpace(runID))
 	item, err := loaders.ScanLoaderRun(row.Scan)
 	if err != nil {
@@ -776,7 +776,7 @@ func (s *LoaderStore) GetLoaderRun(ctx context.Context, loaderID, runID string) 
 	return item, nil
 }
 
-func (s *LoaderStore) ListLoaderRuns(ctx context.Context, loaderID string, limit int) ([]domain.LoaderRunSummary, error) {
+func (s *loaderStore) ListLoaderRuns(ctx context.Context, loaderID string, limit int) ([]domain.LoaderRunSummary, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -800,7 +800,7 @@ func (s *LoaderStore) ListLoaderRuns(ctx context.Context, loaderID string, limit
 	return items, nil
 }
 
-func (s *LoaderStore) ListRecentLoaderRuns(ctx context.Context, limit int) ([]domain.LoaderRunSummary, error) {
+func (s *loaderStore) ListRecentLoaderRuns(ctx context.Context, limit int) ([]domain.LoaderRunSummary, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -824,7 +824,7 @@ func (s *LoaderStore) ListRecentLoaderRuns(ctx context.Context, limit int) ([]do
 	return items, nil
 }
 
-func (s *LoaderStore) AddLoaderEvent(ctx context.Context, event domain.LoaderEvent) error {
+func (s *loaderStore) AddLoaderEvent(ctx context.Context, event domain.LoaderEvent) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO loader_event(
         loader_id, event_id, run_id, trigger_id, type, level, message, payload_json, linked_session_id, linked_cell_id, linked_agent_session_id, created_at
     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -847,7 +847,7 @@ func (s *LoaderStore) AddLoaderEvent(ctx context.Context, event domain.LoaderEve
 	return nil
 }
 
-func (s *LoaderStore) ListLoaderEvents(ctx context.Context, loaderID string, limit int) ([]domain.LoaderEvent, error) {
+func (s *loaderStore) ListLoaderEvents(ctx context.Context, loaderID string, limit int) ([]domain.LoaderEvent, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -871,7 +871,7 @@ func (s *LoaderStore) ListLoaderEvents(ctx context.Context, loaderID string, lim
 	return items, nil
 }
 
-func (s *LoaderStore) GetLoaderState(ctx context.Context, loaderID, key string) (string, bool, error) {
+func (s *loaderStore) GetLoaderState(ctx context.Context, loaderID, key string) (string, bool, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT value_json FROM loader_state WHERE loader_id = ? AND key = ?`, strings.TrimSpace(loaderID), strings.TrimSpace(key))
 	var value string
 	if err := row.Scan(&value); err != nil {
@@ -883,7 +883,7 @@ func (s *LoaderStore) GetLoaderState(ctx context.Context, loaderID, key string) 
 	return value, true, nil
 }
 
-func (s *LoaderStore) SetLoaderState(ctx context.Context, loaderID, key, valueJSON string) error {
+func (s *loaderStore) SetLoaderState(ctx context.Context, loaderID, key, valueJSON string) error {
 	loaderID = strings.TrimSpace(loaderID)
 	key = strings.TrimSpace(key)
 	if loaderID == "" || key == "" {
@@ -897,7 +897,7 @@ func (s *LoaderStore) SetLoaderState(ctx context.Context, loaderID, key, valueJS
 	return nil
 }
 
-func (s *LoaderStore) DeleteLoaderState(ctx context.Context, loaderID, key string) error {
+func (s *loaderStore) DeleteLoaderState(ctx context.Context, loaderID, key string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM loader_state WHERE loader_id = ? AND key = ?`, strings.TrimSpace(loaderID), strings.TrimSpace(key))
 	if err != nil {
 		return fmt.Errorf("delete loader state: %w", err)
@@ -905,7 +905,7 @@ func (s *LoaderStore) DeleteLoaderState(ctx context.Context, loaderID, key strin
 	return nil
 }
 
-func (s *LoaderStore) GetLoaderBinding(ctx context.Context, loaderID string) (domain.LoaderBinding, bool, error) {
+func (s *loaderStore) GetLoaderBinding(ctx context.Context, loaderID string) (domain.LoaderBinding, bool, error) {
 	row := s.db.QueryRowContext(ctx, loaders.SelectLoaderBindingSQL()+` WHERE loader_id = ?`, strings.TrimSpace(loaderID))
 	item, err := loaders.ScanLoaderBinding(row.Scan)
 	if err != nil {
@@ -917,7 +917,7 @@ func (s *LoaderStore) GetLoaderBinding(ctx context.Context, loaderID string) (do
 	return item, true, nil
 }
 
-func (s *LoaderStore) UpsertLoaderBinding(ctx context.Context, binding domain.LoaderBinding) error {
+func (s *loaderStore) UpsertLoaderBinding(ctx context.Context, binding domain.LoaderBinding) error {
 	binding.LoaderID = strings.TrimSpace(binding.LoaderID)
 	binding.SessionID = strings.TrimSpace(binding.SessionID)
 	if binding.LoaderID == "" || binding.SessionID == "" {
