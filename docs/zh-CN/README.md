@@ -124,6 +124,13 @@ docker compose --profile with-ui up -d
 
 首次启动前编辑 `.env`。至少替换 `AUTH_PASSWORD` 和 `AUTH_SECRET`；需要 Web UI 时启用 `with-ui` profile，如果不能使用宿主机 `80` 端口，修改 `AGENT_COMPOSE_HTTP_PORT`。本地开发时，Docker Compose 会自动加载 `docker-compose.override.yml`，使用本地 Dockerfile 构建后端镜像；需要重建时执行 `docker compose up -d --build`，需要同时启动 Web UI 时执行 `docker compose --profile with-ui up -d --build`。
 
+本次 UI server 拆分的升级注意事项：
+
+- `agent-compose` 和 `agent-compose-ui` 需要一起升级。daemon 不再提供浏览器 auth/OAuth 路由；新的 UI 镜像内置 Go UI server，由它处理这些路由，并代理 daemon API/Jupyter 流量。
+- 浏览器登录配置（`AUTH_USERNAME`、`AUTH_PASSWORD`、`AUTH_SECRET`、`AUTH_SESSION_TTL`、`OAUTH_*`）归属 UI service 环境。启用 `with-ui` profile 时，Docker Compose 已经把 `.env` 传给 `agent-compose-frontend`。
+- 不要把 daemon TCP API 当作浏览器入口直接暴露。如果远程 daemon HTTP 端点需要脱离 UI 单独保护，应配置 daemon 侧 `HTTP_BASIC_AUTH`；浏览器 cookie/OAuth 配置不再被 daemon 消费。
+- 修改 runtime 内可访问地址或 capability proxy 配置后，例如 `AGENT_COMPOSE_RUNTIME_BASE_URL`、`CAP_GRPC_LISTEN`、`CAP_GRPC_TARGET`，需要重启 daemon 并新建 agent session，让 guest 容器拿到更新后的 facade/capability 环境。
+
 ## 配置
 
 复制 `.env.example` 为 `.env`，按部署环境修改后执行 `docker compose up -d`。如需同时启动 Web UI，添加 `--profile with-ui`。

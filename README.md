@@ -257,6 +257,24 @@ Dockerfile while keeping the same service topology. Use
 or `docker compose --profile with-ui up -d --build` when you also want the web
 UI.
 
+Upgrade notes for the UI server split:
+
+- Upgrade `agent-compose` and `agent-compose-ui` together. The daemon no longer
+  serves browser auth/OAuth routes; the UI image now includes the Go UI server
+  that owns those routes and proxies daemon API/Jupyter traffic.
+- Move browser login settings (`AUTH_USERNAME`, `AUTH_PASSWORD`,
+  `AUTH_SECRET`, `AUTH_SESSION_TTL`, `OAUTH_*`) to the UI service environment.
+  Docker Compose already passes `.env` to `agent-compose-frontend` when the
+  `with-ui` profile is enabled.
+- Do not expose the daemon TCP API as the browser entrypoint. If a remote daemon
+  HTTP endpoint must be protected independently of the UI, configure daemon-side
+  `HTTP_BASIC_AUTH`; browser cookie/OAuth settings are not consumed by the
+  daemon anymore.
+- After changing runtime-reachable URLs or capability proxy settings such as
+  `AGENT_COMPOSE_RUNTIME_BASE_URL`, `CAP_GRPC_LISTEN`, or `CAP_GRPC_TARGET`,
+  restart the daemon and create new agent sessions so guest containers receive
+  the updated facade and capability environment.
+
 ## Configuration
 
 Copy `.env.example` to `.env`, edit the values for your environment, then run
