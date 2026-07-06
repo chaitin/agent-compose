@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,13 +19,16 @@ import (
 	"agent-compose/pkg/capproxy"
 	appconfig "agent-compose/pkg/config"
 	"agent-compose/pkg/dashboard"
+	"agent-compose/pkg/driver"
 	"agent-compose/pkg/events"
 	"agent-compose/pkg/events/webhooks"
+	"agent-compose/pkg/imagecache"
 	"agent-compose/pkg/llms"
 	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/projects"
 	"agent-compose/pkg/runs"
+	"agent-compose/pkg/runtimecache"
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
@@ -52,6 +56,7 @@ func RegisterDependencies(di do.Injector) {
 	do.Provide(di, NewLLMClient)
 	do.Provide(di, NewCapabilityProvider)
 	do.Provide(di, NewImageBackends)
+	do.Provide(di, NewCacheController)
 	do.Provide(di, NewCapProxyServer)
 	do.Provide(di, loaders.NewBus)
 	do.Provide(di, sessions.NewStreamBroker)
@@ -149,6 +154,9 @@ func RegisterRoutes(di do.Injector) {
 	imageHandler := api.NewImageHandler(do.MustInvoke[*adapters.ImageBackends](di))
 	path, handler = agentcomposev2connect.NewImageServiceHandler(imageHandler)
 	app.Any(path+"*", echo.WrapHandler(handler))
+	cacheHandler := api.NewCacheHandler(do.MustInvoke[*runtimecache.Controller](di))
+	path, handler = agentcomposev2connect.NewCacheServiceHandler(cacheHandler)
+	app.Any(path+"*", echo.WrapHandler(handler))
 	sandboxHandler := api.NewSandboxHandler(
 		do.MustInvoke[*adapters.SessionRPCBridge](di),
 		do.MustInvoke[*sessionstore.Store](di),
@@ -196,6 +204,36 @@ func NewCapProxyServer(di do.Injector) (*capproxy.Server, error) {
 
 func NewImageBackends(di do.Injector) (*adapters.ImageBackends, error) {
 	return adapters.NewImageBackends(do.MustInvoke[*appconfig.Config](di))
+}
+
+func NewCacheController(di do.Injector) (*runtimecache.Controller, error) {
+	config := do.MustInvoke[*appconfig.Config](di)
+	_ = do.MustInvoke[*sessionstore.Store](di)
+	_ = do.MustInvoke[*configstore.ConfigStore](di)
+
+	imageCacheRoot := strings.TrimSpace(config.ImageCacheRoot)
+	if imageCacheRoot == "" {
+		imageCacheRoot = filepath.Join(config.DataRoot, "images")
+		config.ImageCacheRoot = imageCacheRoot
+	}
+	cache, err := imagecache.New(imagecache.Config{
+		Root:               imageCacheRoot,
+		DefaultRegistry:    config.ImageRegistry,
+		InsecureRegistries: config.ImageInsecureRegistries,
+	})
+	if err != nil {
+		return nil, err
+	}
+	config.ImageCacheRoot = cache.Root()
+
+	sources := []runtimecache.Source{
+		runtimecache.MaterializedSource{
+			Scanner: runtimecache.MaterializedScanner{Cache: cache},
+			Remover: runtimecache.MaterializedRemover{Cache: cache},
+		},
+	}
+	sources = append(sources, driver.NewRuntimeCacheSources(config)...)
+	return &runtimecache.Controller{Sources: sources}, nil
 }
 
 func NewRuntimeProvider(di do.Injector) (adapters.RuntimeProvider, error) {

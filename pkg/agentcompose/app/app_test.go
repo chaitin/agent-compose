@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/projects"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
+	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
 
 func TestSetupRegistersServiceGraph(t *testing.T) {
@@ -52,6 +54,7 @@ func TestSetupRegistersServiceGraph(t *testing.T) {
 		{method: http.MethodPost, path: "/agentcompose.v2.RunService/*"},
 		{method: http.MethodPost, path: "/agentcompose.v2.ExecService/*"},
 		{method: http.MethodPost, path: "/agentcompose.v2.ImageService/*"},
+		{method: http.MethodPost, path: "/agentcompose.v2.CacheService/*"},
 		{method: http.MethodPost, path: "/agentcompose.v2.SandboxService/*"},
 		{method: http.MethodGet, path: "/agent-compose/jupyter/:sessionID"},
 		{method: http.MethodPost, path: "/agent-compose/jupyter/:sessionID/*"},
@@ -66,6 +69,108 @@ func TestSetupRegistersServiceGraph(t *testing.T) {
 	app.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("proxy route status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+}
+
+func TestCacheServiceRouteUsesRuntimeCacheController(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DATA_ROOT", root)
+	t.Setenv("SESSION_ROOT", filepath.Join(root, "sessions"))
+	t.Setenv("IMAGE_CACHE_ROOT", filepath.Join(root, "images"))
+	t.Setenv("RUNTIME_DRIVER", driverpkg.RuntimeDriverDocker)
+	t.Setenv("DOCKER_IMAGE", "guest:latest")
+	t.Setenv("SESSION_START_TIMEOUT", "1s")
+	t.Setenv("SESSION_STOP_TIMEOUT", "1s")
+	t.Setenv("JUPYTER_PROXY_BASE", "/agent-compose/jupyter/")
+	t.Setenv("LLM_API_ENDPOINT", "")
+
+	materializedRootFS := filepath.Join(root, "image-cache", "sha256-test", "rootfs")
+	if err := os.MkdirAll(materializedRootFS, 0o755); err != nil {
+		t.Fatalf("create materialized rootfs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(materializedRootFS, "layer.txt"), []byte("cache data"), 0o644); err != nil {
+		t.Fatalf("write materialized fixture: %v", err)
+	}
+
+	ctx := context.Background()
+	di := do.New()
+	appconfig.Setup(di)
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, slog.Default())
+	do.ProvideValue(di, echo.New())
+	Register(di)
+
+	server := httptest.NewServer(do.MustInvoke[*echo.Echo](di))
+	defer server.Close()
+
+	client := agentcomposev2connect.NewCacheServiceClient(server.Client(), server.URL)
+	listResp, err := client.ListCaches(ctx, connect.NewRequest(&agentcomposev2.ListCachesRequest{
+		Filter: &agentcomposev2.CacheFilter{
+			Domain: agentcomposev2.CacheDomain_CACHE_DOMAIN_MATERIALIZED_IMAGE_CACHE,
+			Status: agentcomposev2.CacheStatus_CACHE_STATUS_ORPHANED,
+		},
+	}))
+	if err != nil {
+		t.Fatalf("ListCaches returned error: %v", err)
+	}
+	var cacheID string
+	for _, item := range listResp.Msg.GetCaches() {
+		if item.GetPath() == materializedRootFS {
+			cacheID = item.GetCacheId()
+			if item.GetStatus() != agentcomposev2.CacheStatus_CACHE_STATUS_ORPHANED || !item.GetRemovable() {
+				t.Fatalf("listed item status=%s removable=%v, want orphaned removable", item.GetStatus(), item.GetRemovable())
+			}
+			break
+		}
+	}
+	if cacheID == "" {
+		t.Fatalf("materialized rootfs fixture was not listed: %#v", listResp.Msg.GetCaches())
+	}
+
+	inspectResp, err := client.InspectCache(ctx, connect.NewRequest(&agentcomposev2.InspectCacheRequest{CacheId: cacheID}))
+	if err != nil {
+		t.Fatalf("InspectCache returned error: %v", err)
+	}
+	if inspectResp.Msg.GetCache().GetPath() != materializedRootFS {
+		t.Fatalf("InspectCache path = %q, want %q", inspectResp.Msg.GetCache().GetPath(), materializedRootFS)
+	}
+
+	pruneResp, err := client.PruneCaches(ctx, connect.NewRequest(&agentcomposev2.PruneCachesRequest{
+		Filter: &agentcomposev2.CacheFilter{CacheId: cacheID},
+	}))
+	if err != nil {
+		t.Fatalf("PruneCaches dry-run returned error: %v", err)
+	}
+	if !pruneResp.Msg.GetDryRun() || len(pruneResp.Msg.GetMatched()) != 1 || len(pruneResp.Msg.GetRemoved()) != 0 {
+		t.Fatalf("PruneCaches dry-run response = %#v", pruneResp.Msg)
+	}
+	if _, err := os.Stat(materializedRootFS); err != nil {
+		t.Fatalf("dry-run removed materialized rootfs: %v", err)
+	}
+
+	removeDryRunResp, err := client.RemoveCache(ctx, connect.NewRequest(&agentcomposev2.RemoveCacheRequest{CacheId: cacheID}))
+	if err != nil {
+		t.Fatalf("RemoveCache dry-run returned error: %v", err)
+	}
+	if !removeDryRunResp.Msg.GetDryRun() || len(removeDryRunResp.Msg.GetMatched()) != 1 || len(removeDryRunResp.Msg.GetRemoved()) != 0 {
+		t.Fatalf("RemoveCache dry-run response = %#v", removeDryRunResp.Msg)
+	}
+	if _, err := os.Stat(materializedRootFS); err != nil {
+		t.Fatalf("dry-run remove deleted materialized rootfs: %v", err)
+	}
+
+	removeResp, err := client.RemoveCache(ctx, connect.NewRequest(&agentcomposev2.RemoveCacheRequest{
+		CacheId: cacheID,
+		Force:   true,
+	}))
+	if err != nil {
+		t.Fatalf("RemoveCache force returned error: %v", err)
+	}
+	if removeResp.Msg.GetDryRun() || len(removeResp.Msg.GetRemoved()) != 1 || removeResp.Msg.GetRemoved()[0] != cacheID {
+		t.Fatalf("RemoveCache force response = %#v", removeResp.Msg)
+	}
+	if _, err := os.Stat(materializedRootFS); !os.IsNotExist(err) {
+		t.Fatalf("materialized rootfs still exists after force remove, stat err=%v", err)
 	}
 }
 

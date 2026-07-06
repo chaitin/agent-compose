@@ -319,19 +319,42 @@
       - `pkg/runtimecache` 仍不导入 Connect。
     - 下一目标：5.2 app 注册和集成。
 
-- [ ] 5.2 注册 daemon CacheService 并接入事实源
+- [x] 5.2 注册 daemon CacheService 并接入事实源
   - 依赖：5.1。
   - 工作内容：在 `pkg/agentcompose/app/app.go` 构造 runtimecache controller，注入 config、sessionstore、configstore、imagecache、driver adapters；注册 `agentcomposev2connect.NewCacheServiceHandler`。
   - 可并行子任务：
-    - [ ] 可并行：更新 app route test 期望路径。
-    - [ ] 可并行：准备临时 DATA_ROOT/SESSION_ROOT/fake runtime homes 集成 fixture。
+    - [x] 可并行：更新 app route test 期望路径。
+    - [x] 可并行：准备临时 DATA_ROOT/SESSION_ROOT/fake runtime homes 集成 fixture。
   - 测试方案：`go test ./pkg/agentcompose/app ./pkg/agentcompose/api ./pkg/runtimecache`，覆盖 `/agentcompose.v2.CacheService/*` route 注册和 generated Connect client 调用四个 RPC。
   - 验收标准：daemon 是唯一删除执行者；CLI 无需本地路径权限；`ImageService.RemoveImage` 相关测试仍通过。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - 新增 `pkg/runtimecache.Controller` 和 `runtimecache.Source` 组合层，统一 list/inspect/prune/remove inventory，删除只通过 inventory cache id 映射回 source remover。
+      - 新增 `runtimecache.MaterializedSource`，组合阶段 3 的 materialized scanner/remover，daemon 可直接管理 `IMAGE_CACHE_ROOT` 同级 `image-cache` 下的 materialized items。
+      - 新增 `pkg/driver.NewRuntimeCacheSources`，按 build tags 接入 BoxLite runtime-derived source 和 Microsandbox session-ephemeral source，并补齐 non-BoxLite/non-cgo no-op source 文件。
+      - 在 `pkg/agentcompose/app/app.go` 注册 `NewCacheController` DI，构造 imagecache、接入 driver adapters，并注册 `agentcomposev2connect.NewCacheServiceHandler` 到 `/agentcompose.v2.CacheService/*`。
+      - 更新 `pkg/agentcompose/app/app_test.go` route 断言，并新增 generated Connect client 集成测试，使用临时 `DATA_ROOT`、`SESSION_ROOT`、`IMAGE_CACHE_ROOT` 和 materialized rootfs fixture 覆盖 `ListCaches`、`InspectCache`、`PruneCaches` dry-run、`RemoveCache` dry-run 和 `RemoveCache` force 删除。
+    - 验证：
+      - `./scripts/with-go-toolchain.sh gofmt -w pkg/agentcompose/app/app.go pkg/agentcompose/app/app_test.go pkg/runtimecache/controller.go pkg/driver/runtime_cache_sources.go pkg/driver/runtime_cache_sources_boxlite.go pkg/driver/runtime_cache_sources_microsandbox.go pkg/driver/runtime_cache_sources_noboxlite.go pkg/driver/runtime_cache_sources_nomicrosandbox.go`
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./pkg/runtimecache`
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./pkg/agentcompose/api`
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./pkg/agentcompose/app`
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./pkg/driver`
+      - `./scripts/with-go-toolchain.sh go test -count=1 -tags boxlitecgo ./pkg/driver`
+      - `CGO_ENABLED=0 ./scripts/with-go-toolchain.sh go test -count=1 ./pkg/agentcompose/app`
+      - `CGO_ENABLED=0 ./scripts/with-go-toolchain.sh go test -count=1 ./pkg/driver`
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./pkg/imagecache`
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./pkg/images`
+      - `rg -n "connectrpc|connect\\." pkg/runtimecache || true`
+      - `git diff --check`
+    - 审计与例外：
+      - `pkg/runtimecache` 仍不导入 Connect；Connect code 映射只在 `pkg/agentcompose/api/cache.go`。
+      - 真实删除路径仍来自 inventory-generated items：集成测试中 force remove 只删除临时 materialized rootfs fixture，dry-run 不修改文件系统。
+      - BoxLite source 复用阶段 4.1 的 inventory-aware scanner/remover；non-`boxlitecgo` 构建不注册 BoxLite source。
+      - Microsandbox app-level source 复用阶段 4.3 scanner/remover，但当前 session reference state 在 app composition 中保守标记为 unknown，避免引用未完全解析时误删；后续可在 controller 层补充 sessionstore/configstore 到 Microsandbox reference maps 或 SDK-level sandbox removal。
+      - `ImageService.RemoveImage` 边界未接入 CacheService；`pkg/imagecache` 和 `pkg/images` 回归测试已通过。
+      - 真实 BoxLite/Microsandbox smoke 为 opt-in，本任务未运行；补跑命令：`SMOKE_RUNTIME_DRIVERS=boxlite task test:runtime-smoke`、`SMOKE_RUNTIME_DRIVERS=microsandbox task test:runtime-smoke`。
     - 下一目标：6.1 CLI cache ls/inspect。
 
 ## 阶段 6：CLI cache 命令组
