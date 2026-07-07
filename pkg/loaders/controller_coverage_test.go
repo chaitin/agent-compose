@@ -38,31 +38,31 @@ func TestControllerCoverageWorkflow(t *testing.T) {
 		},
 	})
 
-	created, err := controller.CreateLoader(ctx, domain.Loader{Summary: domain.LoaderSummary{ID: "loader-1", Name: "Loader", Enabled: true}, Script: "function main(){}"})
+	created, err := controller.CreateSchedulerExecution(ctx, domain.Loader{Summary: domain.LoaderSummary{ID: "loader-1", Name: "Loader", Enabled: true}, Script: "function main(){}"})
 	if err != nil {
-		t.Fatalf("CreateLoader returned error: %v", err)
+		t.Fatalf("CreateSchedulerExecution returned error: %v", err)
 	}
 	if created.Summary.Runtime != domain.LoaderRuntimeScheduler || len(store.loaders[created.Summary.ID].Triggers) != 1 {
 		t.Fatalf("created loader = %#v", created)
 	}
 	created.Summary.Description = "updated"
-	updated, err := controller.UpdateLoader(ctx, created)
+	updated, err := controller.UpdateSchedulerExecution(ctx, created)
 	if err != nil || updated.Summary.Description != "updated" {
-		t.Fatalf("UpdateLoader updated=%#v err=%v", updated, err)
+		t.Fatalf("UpdateSchedulerExecution updated=%#v err=%v", updated, err)
 	}
-	if _, err := controller.SetLoaderEnabled(ctx, created.Summary.ID, false); err != nil {
-		t.Fatalf("SetLoaderEnabled returned error: %v", err)
+	if _, err := controller.SetSchedulerExecutionEnabled(ctx, created.Summary.ID, false); err != nil {
+		t.Fatalf("SetSchedulerExecutionEnabled returned error: %v", err)
 	}
-	if _, err := controller.SetLoaderTriggerEnabled(ctx, created.Summary.ID, "trigger-1", false); err != nil {
+	if _, err := controller.SetSchedulerExecutionTriggerEnabled(ctx, created.Summary.ID, "trigger-1", false); err != nil {
 		t.Fatalf("SetLoaderTriggerEnabled returned error: %v", err)
 	}
-	if _, trigger, err := controller.LoadLoaderForRun(ctx, created.Summary.ID, "trigger-1"); err != nil || trigger == nil {
+	if _, trigger, err := controller.LoadSchedulerExecutionForRun(ctx, created.Summary.ID, "trigger-1"); err != nil || trigger == nil {
 		t.Fatalf("LoadLoaderForRun trigger=%#v err=%v", trigger, err)
 	}
-	if _, _, err := controller.LoadLoaderForRun(ctx, created.Summary.ID, "missing"); err == nil {
+	if _, _, err := controller.LoadSchedulerExecutionForRun(ctx, created.Summary.ID, "missing"); err == nil {
 		t.Fatalf("expected missing trigger error")
 	}
-	manualRun, err := controller.RunNow(ctx, created.Summary.ID, "trigger-1", `{"manual":true}`, time.Millisecond)
+	manualRun, err := controller.RunSchedulerExecutionNow(ctx, created.Summary.ID, "trigger-1", `{"manual":true}`, time.Millisecond)
 	if err != nil || manualRun.Status != domain.LoaderRunStatusSucceeded || manualRun.ResultJSON == "" {
 		t.Fatalf("RunNow run=%#v err=%v", manualRun, err)
 	}
@@ -101,11 +101,11 @@ func TestControllerCoverageWorkflow(t *testing.T) {
 		t.Fatalf("parallel EnterRun should succeed")
 	}
 	controller.LeaveRun(created.Summary.ID)
-	event, err := controller.AddLoaderEventRecord(ctx, created.Summary.ID, "run-1", "trigger-1", "loader.test", "", "message", map[string]any{"ok": true}, "session-1", "cell-1", "agent-session")
+	event, err := controller.AddSchedulerExecutionEventRecord(ctx, created.Summary.ID, "run-1", "trigger-1", "loader.test", "", "message", map[string]any{"ok": true}, "session-1", "cell-1", "agent-session")
 	if err != nil || event.ID != "event-id" || event.Level != "info" {
 		t.Fatalf("AddLoaderEventRecord event=%#v err=%v", event, err)
 	}
-	if _, err := controller.AddLoaderEventRecord(ctx, created.Summary.ID, "run-1", "trigger-1", "loader.bad", "", "message", func() {}, "", "", ""); err == nil {
+	if _, err := controller.AddSchedulerExecutionEventRecord(ctx, created.Summary.ID, "run-1", "trigger-1", "loader.bad", "", "message", func() {}, "", "", ""); err == nil {
 		t.Fatalf("AddLoaderEventRecord invalid payload returned nil error")
 	}
 	dir := controller.RunArtifactsDir(created.Summary.ID, "run-1")
@@ -145,7 +145,7 @@ func TestControllerCoverageWorkflow(t *testing.T) {
 	if bareController.now().IsZero() || bareController.newID() == "" {
 		t.Fatalf("default now/newID returned empty values")
 	}
-	if err := controller.DeleteLoader(ctx, created.Summary.ID); err != nil {
+	if err := controller.DeleteSchedulerExecution(ctx, created.Summary.ID); err != nil {
 		t.Fatalf("DeleteLoader returned error: %v", err)
 	}
 	if len(notifier.reasons) == 0 {
@@ -155,11 +155,11 @@ func TestControllerCoverageWorkflow(t *testing.T) {
 	replaceErrStore := newControllerTestStore()
 	replaceErrStore.replaceErr = errors.New("replace failed")
 	replaceErrController := NewController(ControllerDependencies{Store: replaceErrStore, Engine: controllerTestEngine{}})
-	if _, err := replaceErrController.CreateLoader(ctx, domain.Loader{Summary: domain.LoaderSummary{ID: "rollback", Name: "Rollback"}, Script: "script"}); err == nil {
-		t.Fatalf("CreateLoader with replace error returned nil error")
+	if _, err := replaceErrController.CreateSchedulerExecution(ctx, domain.Loader{Summary: domain.LoaderSummary{ID: "rollback", Name: "Rollback"}, Script: "script"}); err == nil {
+		t.Fatalf("CreateSchedulerExecution with replace error returned nil error")
 	}
 	if _, ok := replaceErrStore.loaders["rollback"]; ok {
-		t.Fatalf("CreateLoader did not roll back created loader")
+		t.Fatalf("CreateSchedulerExecution did not roll back created loader")
 	}
 }
 

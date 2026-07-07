@@ -19,12 +19,12 @@ import (
 
 type LoaderController interface {
 	Validate(ctx context.Context, runtime, script string) (loaders.LoaderValidationResult, error)
-	CreateLoader(ctx context.Context, loader domain.Loader) (domain.Loader, error)
-	UpdateLoader(ctx context.Context, loader domain.Loader) (domain.Loader, error)
-	DeleteLoader(ctx context.Context, loaderID string) error
-	SetLoaderEnabled(ctx context.Context, loaderID string, enabled bool) (domain.Loader, error)
-	SetLoaderTriggerEnabled(ctx context.Context, loaderID, triggerID string, enabled bool) (domain.Loader, error)
-	RunNow(ctx context.Context, loaderID, triggerID, payloadJSON string, timeout time.Duration) (domain.LoaderRunSummary, error)
+	CreateSchedulerExecution(ctx context.Context, loader domain.Loader) (domain.Loader, error)
+	UpdateSchedulerExecution(ctx context.Context, loader domain.Loader) (domain.Loader, error)
+	DeleteSchedulerExecution(ctx context.Context, loaderID string) error
+	SetSchedulerExecutionEnabled(ctx context.Context, loaderID string, enabled bool) (domain.Loader, error)
+	SetSchedulerExecutionTriggerEnabled(ctx context.Context, loaderID, triggerID string, enabled bool) (domain.Loader, error)
+	RunSchedulerExecutionNow(ctx context.Context, loaderID, triggerID, payloadJSON string, timeout time.Duration) (domain.LoaderRunSummary, error)
 }
 
 type LoaderStore interface {
@@ -83,7 +83,7 @@ func (s *LoaderHandler) CreateLoader(ctx context.Context, req *connect.Request[a
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	item, err := s.controller.CreateLoader(ctx, domain.Loader{
+	item, err := s.controller.CreateSchedulerExecution(ctx, domain.Loader{
 		Summary: domain.LoaderSummary{
 			Name:              req.Msg.GetName(),
 			Description:       req.Msg.GetDescription(),
@@ -117,7 +117,7 @@ func (s *LoaderHandler) UpdateLoader(ctx context.Context, req *connect.Request[a
 	if err != nil {
 		return nil, err
 	}
-	item, err := s.controller.UpdateLoader(ctx, domain.Loader{
+	item, err := s.controller.UpdateSchedulerExecution(ctx, domain.Loader{
 		Summary: domain.LoaderSummary{
 			ID:                req.Msg.GetLoaderId(),
 			Name:              req.Msg.GetName(),
@@ -170,14 +170,14 @@ func (s *LoaderHandler) preserveUnchangedLoaderEnvSecrets(ctx context.Context, l
 }
 
 func (s *LoaderHandler) DeleteLoader(ctx context.Context, req *connect.Request[agentcomposev1.LoaderIDRequest]) (*connect.Response[emptypb.Empty], error) {
-	if err := s.controller.DeleteLoader(ctx, req.Msg.GetLoaderId()); err != nil {
+	if err := s.controller.DeleteSchedulerExecution(ctx, req.Msg.GetLoaderId()); err != nil {
 		return nil, loaderServiceConnectError(err)
 	}
 	return connect.NewResponse(&emptypb.Empty{}), nil
 }
 
 func (s *LoaderHandler) SetLoaderEnabled(ctx context.Context, req *connect.Request[agentcomposev1.SetLoaderEnabledRequest]) (*connect.Response[agentcomposev1.LoaderResponse], error) {
-	item, err := s.controller.SetLoaderEnabled(ctx, req.Msg.GetLoaderId(), req.Msg.GetEnabled())
+	item, err := s.controller.SetSchedulerExecutionEnabled(ctx, req.Msg.GetLoaderId(), req.Msg.GetEnabled())
 	if err != nil {
 		return nil, loaderServiceConnectError(err)
 	}
@@ -185,7 +185,7 @@ func (s *LoaderHandler) SetLoaderEnabled(ctx context.Context, req *connect.Reque
 }
 
 func (s *LoaderHandler) SetLoaderTriggerEnabled(ctx context.Context, req *connect.Request[agentcomposev1.SetLoaderTriggerEnabledRequest]) (*connect.Response[agentcomposev1.LoaderResponse], error) {
-	item, err := s.controller.SetLoaderTriggerEnabled(ctx, req.Msg.GetLoaderId(), req.Msg.GetTriggerId(), req.Msg.GetEnabled())
+	item, err := s.controller.SetSchedulerExecutionTriggerEnabled(ctx, req.Msg.GetLoaderId(), req.Msg.GetTriggerId(), req.Msg.GetEnabled())
 	if err != nil {
 		return nil, loaderServiceConnectError(err)
 	}
@@ -197,7 +197,7 @@ func (s *LoaderHandler) RunLoaderNow(ctx context.Context, req *connect.Request[a
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	run, err := s.controller.RunNow(ctx, req.Msg.GetLoaderId(), req.Msg.GetTriggerId(), req.Msg.GetPayloadJson(), timeout)
+	run, err := s.controller.RunSchedulerExecutionNow(ctx, req.Msg.GetLoaderId(), req.Msg.GetTriggerId(), req.Msg.GetPayloadJson(), timeout)
 	if err != nil {
 		return nil, loaderServiceConnectError(err)
 	}

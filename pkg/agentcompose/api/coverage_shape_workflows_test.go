@@ -890,14 +890,14 @@ func (fakeLoaderController) Validate(context.Context, string, string) (loaders.L
 	}, nil
 }
 
-func (fakeLoaderController) CreateLoader(_ context.Context, loader domain.Loader) (domain.Loader, error) {
+func (fakeLoaderController) CreateSchedulerExecution(_ context.Context, loader domain.Loader) (domain.Loader, error) {
 	loader.Summary.ID = "loader-1"
 	loader.Summary.CreatedAt = time.Now().UTC()
 	loader.Summary.UpdatedAt = loader.Summary.CreatedAt
 	return loader, nil
 }
 
-func (c *fakeLoaderController) UpdateLoader(_ context.Context, loader domain.Loader) (domain.Loader, error) {
+func (c *fakeLoaderController) UpdateSchedulerExecution(_ context.Context, loader domain.Loader) (domain.Loader, error) {
 	if loader.Summary.ID == "missing" {
 		return domain.Loader{}, domain.ResourceError(domain.ErrNotFound, "loader", loader.Summary.ID, "not found", nil)
 	}
@@ -906,25 +906,25 @@ func (c *fakeLoaderController) UpdateLoader(_ context.Context, loader domain.Loa
 	return loader, nil
 }
 
-func (fakeLoaderController) DeleteLoader(context.Context, string) error {
+func (fakeLoaderController) DeleteSchedulerExecution(context.Context, string) error {
 	return nil
 }
 
-func (fakeLoaderController) SetLoaderEnabled(_ context.Context, loaderID string, enabled bool) (domain.Loader, error) {
+func (fakeLoaderController) SetSchedulerExecutionEnabled(_ context.Context, loaderID string, enabled bool) (domain.Loader, error) {
 	loader := testLoaderFixture()
 	loader.Summary.ID = loaderID
 	loader.Summary.Enabled = enabled
 	return loader, nil
 }
 
-func (fakeLoaderController) SetLoaderTriggerEnabled(_ context.Context, _, triggerID string, enabled bool) (domain.Loader, error) {
+func (fakeLoaderController) SetSchedulerExecutionTriggerEnabled(_ context.Context, _, triggerID string, enabled bool) (domain.Loader, error) {
 	loader := testLoaderFixture()
 	loader.Triggers[0].ID = triggerID
 	loader.Triggers[0].Enabled = enabled
 	return loader, nil
 }
 
-func (fakeLoaderController) RunNow(context.Context, string, string, string, time.Duration) (domain.LoaderRunSummary, error) {
+func (fakeLoaderController) RunSchedulerExecutionNow(context.Context, string, string, string, time.Duration) (domain.LoaderRunSummary, error) {
 	return testLoaderRunFixture(), nil
 }
 

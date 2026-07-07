@@ -19,14 +19,14 @@ func (e LoaderHostEvents) Add(ctx context.Context, loaderID, runID, triggerID, e
 	if e.Controller == nil {
 		return fmt.Errorf("loader controller is unavailable")
 	}
-	return e.Controller.AddLoaderEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
+	return e.Controller.AddSchedulerExecutionEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
 }
 
 func (e LoaderHostEvents) AddRecord(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) (domain.LoaderEvent, error) {
 	if e.Controller == nil {
 		return domain.LoaderEvent{}, fmt.Errorf("loader controller is unavailable")
 	}
-	return e.Controller.AddLoaderEventRecord(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
+	return e.Controller.AddSchedulerExecutionEventRecord(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
 }
 
 type LoaderHostAgentExecutor struct {
