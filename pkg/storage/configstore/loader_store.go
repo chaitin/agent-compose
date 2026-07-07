@@ -741,6 +741,10 @@ func (s *loaderStore) UpdateLoaderLastError(ctx context.Context, loaderID, lastE
 	return nil
 }
 
+func (s *loaderStore) UpdateSchedulerExecutionLastError(ctx context.Context, executionID, lastError string) error {
+	return s.UpdateLoaderLastError(ctx, executionID, lastError)
+}
+
 func (s *loaderStore) MarkLoaderTriggerFired(ctx context.Context, loaderID, triggerID string, lastFiredAt, nextFireAt time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE loader_trigger SET last_fired_at = ?, next_fire_at = ? WHERE loader_id = ? AND trigger_id = ?`, domain.NonZeroTimeUnixMilli(lastFiredAt), domain.NonZeroTimeUnixMilli(nextFireAt), strings.TrimSpace(loaderID), strings.TrimSpace(triggerID))
 	if err != nil {

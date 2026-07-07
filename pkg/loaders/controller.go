@@ -133,7 +133,7 @@ func (c *Controller) init() {
 			WriteArtifact: c.WriteRunArtifact,
 			EnterRun:      c.EnterRun,
 			LeaveRun:      c.LeaveRun,
-			AddLoaderEvent: func(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
+			AddSchedulerExecutionEvent: func(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
 				return c.AddSchedulerExecutionEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
 			},
 			UpdateTriggerEventDelivery: c.UpdateTriggerEventDelivery,

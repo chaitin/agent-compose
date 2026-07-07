@@ -17,7 +17,7 @@ import (
 type RunStore interface {
 	CreateLoaderRun(ctx context.Context, run domain.LoaderRunSummary) error
 	UpdateLoaderRun(ctx context.Context, run domain.LoaderRunSummary) error
-	UpdateLoaderLastError(ctx context.Context, loaderID, lastError string) error
+	UpdateSchedulerExecutionLastError(ctx context.Context, loaderID, lastError string) error
 }
 
 type RunHost interface {
@@ -47,7 +47,7 @@ type RunExecutorDependencies struct {
 	WriteArtifact              func(dir, name, content string) error
 	EnterRun                   func(loader domain.Loader) bool
 	LeaveRun                   func(loaderID string)
-	AddLoaderEvent             func(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error
+	AddSchedulerExecutionEvent func(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error
 	UpdateTriggerEventDelivery func(ctx context.Context, run domain.LoaderRunSummary)
 	Notify                     func(reason string)
 	Refresh                    func(ctx context.Context) error
@@ -118,8 +118,8 @@ func (e *RunExecutor) Prepare(ctx context.Context, loader domain.Loader, trigger
 		}
 		e.updateTriggerEventDelivery(ctx, run)
 		e.notify("loader_run_updated")
-		_ = e.deps.Store.UpdateLoaderLastError(ctx, loader.Summary.ID, run.Error)
-		_ = e.addLoaderEvent(ctx, loader.Summary.ID, run.ID, run.TriggerID, "loader.run.skipped", "warn", run.Error, nil, "", "", "")
+		_ = e.deps.Store.UpdateSchedulerExecutionLastError(ctx, loader.Summary.ID, run.Error)
+		_ = e.addSchedulerExecutionEvent(ctx, loader.Summary.ID, run.ID, run.TriggerID, "loader.run.skipped", "warn", run.Error, nil, "", "", "")
 		_ = e.writeArtifact(run.ArtifactsDir, "error.txt", run.Error)
 		return PreparedRun{Loader: loader, Trigger: trigger, Run: run, PayloadJSON: payloadJSON}, nil
 	}
@@ -136,7 +136,7 @@ func (e *RunExecutor) Prepare(ctx context.Context, loader domain.Loader, trigger
 	}
 	e.updateTriggerEventDelivery(ctx, run)
 	e.notify("loader_run_updated")
-	_ = e.addLoaderEvent(ctx, loader.Summary.ID, run.ID, run.TriggerID, "loader.run.started", "info", "loader run started", map[string]any{"source": run.TriggerSource}, "", "", "")
+	_ = e.addSchedulerExecutionEvent(ctx, loader.Summary.ID, run.ID, run.TriggerID, "loader.run.started", "info", "loader run started", map[string]any{"source": run.TriggerSource}, "", "", "")
 	return PreparedRun{Loader: loader, Trigger: trigger, Run: run, PayloadJSON: payloadJSON}, nil
 }
 
@@ -166,16 +166,16 @@ func (e *RunExecutor) Execute(ctx context.Context, prepared PreparedRun) (domain
 		run.Status = domain.LoaderRunStatusFailed
 		run.Error = execErr.Error()
 		_ = e.writeArtifact(run.ArtifactsDir, "error.txt", run.Error)
-		_ = e.deps.Store.UpdateLoaderLastError(writeCtx, prepared.Loader.Summary.ID, run.Error)
-		_ = e.addLoaderEvent(writeCtx, prepared.Loader.Summary.ID, run.ID, run.TriggerID, "loader.run.failed", "error", run.Error, nil, "", "", "")
+		_ = e.deps.Store.UpdateSchedulerExecutionLastError(writeCtx, prepared.Loader.Summary.ID, run.Error)
+		_ = e.addSchedulerExecutionEvent(writeCtx, prepared.Loader.Summary.ID, run.ID, run.TriggerID, "loader.run.failed", "error", run.Error, nil, "", "", "")
 	} else {
 		run.Status = domain.LoaderRunStatusSucceeded
 		run.ResultJSON = execution.ResultJSON
 		if execution.ResultJSON != "" {
 			_ = e.writeArtifact(run.ArtifactsDir, "result.json", execution.ResultJSON)
 		}
-		_ = e.deps.Store.UpdateLoaderLastError(writeCtx, prepared.Loader.Summary.ID, "")
-		_ = e.addLoaderEvent(writeCtx, prepared.Loader.Summary.ID, run.ID, run.TriggerID, "loader.run.completed", "info", "loader run completed", map[string]any{"resultJson": execution.ResultJSON}, "", "", "")
+		_ = e.deps.Store.UpdateSchedulerExecutionLastError(writeCtx, prepared.Loader.Summary.ID, "")
+		_ = e.addSchedulerExecutionEvent(writeCtx, prepared.Loader.Summary.ID, run.ID, run.TriggerID, "loader.run.completed", "info", "loader run completed", map[string]any{"resultJson": execution.ResultJSON}, "", "", "")
 	}
 	if err := e.deps.Store.UpdateLoaderRun(writeCtx, run); err != nil {
 		return domain.LoaderRunSummary{}, err
@@ -206,8 +206,8 @@ func (e *RunExecutor) Abort(ctx context.Context, prepared PreparedRun, reason st
 	run.DurationMs = completedAt.Sub(run.StartedAt).Milliseconds()
 	run.Error = reason
 	_ = e.writeArtifact(run.ArtifactsDir, "error.txt", run.Error)
-	_ = e.deps.Store.UpdateLoaderLastError(ctx, prepared.Loader.Summary.ID, run.Error)
-	_ = e.addLoaderEvent(ctx, prepared.Loader.Summary.ID, run.ID, run.TriggerID, "loader.run.failed", "error", run.Error, nil, "", "", "")
+	_ = e.deps.Store.UpdateSchedulerExecutionLastError(ctx, prepared.Loader.Summary.ID, run.Error)
+	_ = e.addSchedulerExecutionEvent(ctx, prepared.Loader.Summary.ID, run.ID, run.TriggerID, "loader.run.failed", "error", run.Error, nil, "", "", "")
 	if err := e.deps.Store.UpdateLoaderRun(ctx, run); err != nil {
 		slog.Warn("failed to abort prepared loader run", "loader_id", prepared.Loader.Summary.ID, "run_id", run.ID, "error", err)
 	}
@@ -242,11 +242,11 @@ func (e *RunExecutor) leaveRun(loaderID string) {
 	}
 }
 
-func (e *RunExecutor) addLoaderEvent(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
-	if e.deps.AddLoaderEvent == nil {
+func (e *RunExecutor) addSchedulerExecutionEvent(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
+	if e.deps.AddSchedulerExecutionEvent == nil {
 		return nil
 	}
-	return e.deps.AddLoaderEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
+	return e.deps.AddSchedulerExecutionEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
 }
 
 func (e *RunExecutor) updateTriggerEventDelivery(ctx context.Context, run domain.LoaderRunSummary) {

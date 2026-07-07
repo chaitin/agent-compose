@@ -103,10 +103,10 @@ func TestControllerCoverageWorkflow(t *testing.T) {
 	controller.LeaveRun(created.Summary.ID)
 	event, err := controller.AddSchedulerExecutionEventRecord(ctx, created.Summary.ID, "run-1", "trigger-1", "loader.test", "", "message", map[string]any{"ok": true}, "session-1", "cell-1", "agent-session")
 	if err != nil || event.ID != "event-id" || event.Level != "info" {
-		t.Fatalf("AddLoaderEventRecord event=%#v err=%v", event, err)
+		t.Fatalf("AddSchedulerExecutionEventRecord event=%#v err=%v", event, err)
 	}
 	if _, err := controller.AddSchedulerExecutionEventRecord(ctx, created.Summary.ID, "run-1", "trigger-1", "loader.bad", "", "message", func() {}, "", "", ""); err == nil {
-		t.Fatalf("AddLoaderEventRecord invalid payload returned nil error")
+		t.Fatalf("AddSchedulerExecutionEventRecord invalid payload returned nil error")
 	}
 	dir := controller.RunArtifactsDir(created.Summary.ID, "run-1")
 	if err := controller.WriteRunArtifact(dir, "output.txt", "hello"); err != nil {
@@ -265,7 +265,7 @@ func (s *controllerTestStore) UpdateLoaderRun(_ context.Context, run domain.Load
 	return nil
 }
 
-func (s *controllerTestStore) UpdateLoaderLastError(context.Context, string, string) error {
+func (s *controllerTestStore) UpdateSchedulerExecutionLastError(context.Context, string, string) error {
 	return nil
 }
 

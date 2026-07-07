@@ -43,7 +43,7 @@ func TestRunExecutorLifecycleWorkflows(t *testing.T) {
 		LeaveRun: func(loaderID string) {
 			leaves = append(leaves, loaderID)
 		},
-		AddLoaderEvent: func(_ context.Context, _, _, _, eventType, _, _ string, _ any, _, _, _ string) error {
+		AddSchedulerExecutionEvent: func(_ context.Context, _, _, _, eventType, _, _ string, _ any, _, _, _ string) error {
 			events = append(events, eventType)
 			return nil
 		},
@@ -86,7 +86,7 @@ func TestRunExecutorLifecycleWorkflows(t *testing.T) {
 		ArtifactsDir:  func(loaderID, runID string) string { return filepath.Join(t.TempDir(), loaderID, runID) },
 		WriteArtifact: func(string, string, string) error { return nil },
 		EnterRun:      func(domain.Loader) bool { return false },
-		AddLoaderEvent: func(_ context.Context, _, _, _, eventType, _, _ string, _ any, _, _, _ string) error {
+		AddSchedulerExecutionEvent: func(_ context.Context, _, _, _, eventType, _, _ string, _ any, _, _, _ string) error {
 			events = append(events, eventType)
 			return nil
 		},
@@ -370,7 +370,7 @@ func (s *runStoreFake) UpdateLoaderRun(_ context.Context, run domain.LoaderRunSu
 	return nil
 }
 
-func (s *runStoreFake) UpdateLoaderLastError(_ context.Context, loaderID, lastError string) error {
+func (s *runStoreFake) UpdateSchedulerExecutionLastError(_ context.Context, loaderID, lastError string) error {
 	if s.lastError == nil {
 		s.lastError = map[string]string{}
 	}
