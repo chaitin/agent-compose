@@ -31,6 +31,10 @@ func TestAggregatorAndHubWorkflows(t *testing.T) {
 
 	hub := NewHub(ctx, aggregator, time.Millisecond)
 	defer hub.cancel()
+	hub.SetDebounce(0)
+	hub.SetDebounce(time.Millisecond)
+	var nilHub *Hub
+	nilHub.SetDebounce(time.Millisecond)
 	current, err := hub.Current(ctx)
 	if err != nil || current.GetUpdatedAt() == "" {
 		t.Fatalf("Current overview=%#v err=%v", current, err)
@@ -48,6 +52,19 @@ func TestAggregatorAndHubWorkflows(t *testing.T) {
 	}
 	cancel()
 	cancelWatch()
+
+	shutdownCtx, shutdownCancel := context.WithCancel(ctx)
+	shutdownHub := NewHub(shutdownCtx, aggregator, time.Millisecond)
+	shutdownCh, _ := shutdownHub.Watch(context.Background())
+	shutdownCancel()
+	select {
+	case _, ok := <-shutdownCh:
+		if ok {
+			t.Fatalf("shutdown subscriber channel remained open")
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for shutdown subscriber close")
+	}
 }
 
 func TestAggregatorReturnsStoreErrors(t *testing.T) {

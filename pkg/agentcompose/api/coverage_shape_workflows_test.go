@@ -206,6 +206,16 @@ func TestAPIMappingCoverageWorkflows(t *testing.T) {
 		Network:   &compose.NetworkSpec{Mode: "host"},
 		Agents: []compose.NormalizedAgentSpec{{
 			Name: "worker", Provider: "codex", Model: "gpt", SystemPrompt: "system", Image: "guest:latest", CapsetIDs: []string{"dev"},
+			Build: &compose.NormalizedBuildSpec{
+				Context:    "docker",
+				Dockerfile: "Dockerfile.agent",
+				Target:     "runtime",
+				Args:       map[string]string{"A": "1"},
+				Platforms:  []string{"linux/amd64"},
+				Tags:       []string{"worker:latest"},
+				NoCache:    true,
+				Pull:       true,
+			},
 			Driver:    &compose.NormalizedDriverSpec{Name: compose.DriverDocker, Docker: &compose.DockerDriverSpec{Host: "unix:///docker.sock"}},
 			Env:       map[string]compose.EnvVarSpec{"TOKEN": {Value: "secret", Secret: true}},
 			Workspace: &compose.WorkspaceSpec{Provider: "file", Path: "work"},
@@ -222,9 +232,26 @@ func TestAPIMappingCoverageWorkflows(t *testing.T) {
 	if specProto.GetAgents()[0].GetDriver().GetDocker().GetHost() != "unix:///docker.sock" || specProto.GetAgents()[0].GetScheduler().GetTriggers()[3].GetEvent().GetTopic() != "runtime.test" {
 		t.Fatalf("ProjectSpecToProto = %#v", specProto)
 	}
+	if specProto.GetAgents()[0].GetBuild().GetArgs()["A"] != "1" || !specProto.GetAgents()[0].GetBuild().GetNoCache() || !specProto.GetAgents()[0].GetBuild().GetPull() {
+		t.Fatalf("build proto = %#v", specProto.GetAgents()[0].GetBuild())
+	}
 	shape, issues := ProjectSpecYAMLShape(specProto)
 	if len(issues) != 0 || shape["name"] != "Project" {
 		t.Fatalf("ProjectSpecYAMLShape shape=%#v issues=%#v", shape, issues)
+	}
+	if ProjectSpecToProto(nil) != nil || BuildSpecToProto(nil) != nil || JupyterSpecToProto(nil) != nil || WorkspaceSpecToProto(nil) != nil || NetworkSpecToProto(nil) != nil || DriverSpecToProto(nil) != nil || SchedulerSpecToProto(nil) != nil {
+		t.Fatalf("nil proto mapper returned non-nil")
+	}
+	if build := BuildYAMLShape(specProto.GetAgents()[0].GetBuild()); build["context"] != "docker" || build["dockerfile"] != "Dockerfile.agent" || build["target"] != "runtime" || build["no_cache"] != true || build["pull"] != true {
+		t.Fatalf("BuildYAMLShape = %#v", build)
+	}
+	if BuildYAMLShape(nil) != nil || cloneProjectStringMap(nil) != nil {
+		t.Fatalf("empty build helpers returned non-nil")
+	}
+	clonedArgs := cloneProjectStringMap(map[string]string{"A": "1"})
+	clonedArgs["A"] = "changed"
+	if specProto.GetAgents()[0].GetBuild().GetArgs()["A"] != "1" {
+		t.Fatalf("cloneProjectStringMap did not clone args")
 	}
 	if _, issues := EnvVarYAMLMap("env", []*agentcomposev2.EnvVarSpec{{Name: "A"}, {Name: " A "}}); len(issues) != 1 {
 		t.Fatalf("expected duplicate env issue")
@@ -238,8 +265,23 @@ func TestAPIMappingCoverageWorkflows(t *testing.T) {
 	if _, issues := DriverYAMLShape("driver", &agentcomposev2.DriverSpec{Name: "bad"}); len(issues) != 1 {
 		t.Fatalf("expected unsupported driver issue")
 	}
+	if driver, issues := DriverYAMLShape("driver", &agentcomposev2.DriverSpec{Name: "boxlite"}); len(issues) != 0 || driver["boxlite"] == nil {
+		t.Fatalf("named empty boxlite driver=%#v issues=%#v", driver, issues)
+	}
+	if driver, issues := DriverYAMLShape("driver", &agentcomposev2.DriverSpec{Boxlite: &agentcomposev2.BoxliteDriverSpec{Kernel: "vmlinux", Rootfs: "rootfs.ext4"}, Microsandbox: &agentcomposev2.MicrosandboxDriverSpec{Profile: "dev"}}); len(issues) != 0 || len(driver) != 2 {
+		t.Fatalf("multi driver=%#v issues=%#v", driver, issues)
+	}
+	if network := NetworkYAMLShape(nil); network != nil {
+		t.Fatalf("NetworkYAMLShape nil = %#v", network)
+	}
 	if sourcePath := ProjectServiceSourcePath(&agentcomposev2.ProjectSource{ProjectDir: "/repo"}); sourcePath != filepath.Join("/repo", "agent-compose.yml") {
 		t.Fatalf("ProjectServiceSourcePath = %q", sourcePath)
+	}
+	if sourcePath := ProjectServiceSourcePath(&agentcomposev2.ProjectSource{ComposePath: "/repo/custom.yml", ProjectDir: "/repo"}); sourcePath != "/repo/custom.yml" {
+		t.Fatalf("ProjectServiceSourcePath compose path = %q", sourcePath)
+	}
+	if sourcePath := ProjectServiceSourcePath(nil); sourcePath != "" {
+		t.Fatalf("ProjectServiceSourcePath nil = %q", sourcePath)
 	}
 	if issue := IssueFromComposeError(&compose.ValidationError{Path: "agents.worker", Message: "bad"}); issue.GetPath() != "agents.worker" {
 		t.Fatalf("validation issue = %#v", issue)

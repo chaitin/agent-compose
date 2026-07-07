@@ -2,6 +2,7 @@ package loaders
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,8 +18,11 @@ func TestControllerCoverageWorkflow(t *testing.T) {
 	publisher := &controllerTestPublisher{}
 	root := t.TempDir()
 	controller := NewController(ControllerDependencies{
-		Store:     store,
-		Engine:    controllerTestEngine{},
+		Store:  store,
+		Engine: controllerTestEngine{},
+		HostFactory: func(domain.Loader, *domain.LoaderRunSummary, TriggerEventMetadata) RunHost {
+			return nil
+		},
 		Notifier:  notifier,
 		Publisher: publisher,
 		Artifacts: FSArtifacts{DataRoot: root},
@@ -58,6 +62,23 @@ func TestControllerCoverageWorkflow(t *testing.T) {
 	if _, _, err := controller.LoadLoaderForRun(ctx, created.Summary.ID, "missing"); err == nil {
 		t.Fatalf("expected missing trigger error")
 	}
+	manualRun, err := controller.RunNow(ctx, created.Summary.ID, "trigger-1", `{"manual":true}`, time.Millisecond)
+	if err != nil || manualRun.Status != domain.LoaderRunStatusSucceeded || manualRun.ResultJSON == "" {
+		t.Fatalf("RunNow run=%#v err=%v", manualRun, err)
+	}
+	prepared, err := controller.Prepare(ctx, created, &created.Triggers[0], `{"prepared":true}`, "manual", RunOptions{})
+	if err != nil || prepared.Run.Status != domain.LoaderRunStatusRunning {
+		t.Fatalf("Prepare prepared=%#v err=%v", prepared, err)
+	}
+	executed, err := controller.Execute(ctx, prepared)
+	if err != nil || executed.Status != domain.LoaderRunStatusSucceeded {
+		t.Fatalf("Execute run=%#v err=%v", executed, err)
+	}
+	prepared, err = controller.Prepare(ctx, created, &created.Triggers[0], `{"abort":true}`, "manual", RunOptions{})
+	if err != nil {
+		t.Fatalf("Prepare before Abort returned error: %v", err)
+	}
+	controller.Abort(ctx, prepared, "")
 	controller.Publish("topic.test", map[string]any{"ok": true})
 	if len(publisher.events) != 1 {
 		t.Fatalf("publisher events = %#v", publisher.events)
@@ -84,6 +105,9 @@ func TestControllerCoverageWorkflow(t *testing.T) {
 	if err != nil || event.ID != "event-id" || event.Level != "info" {
 		t.Fatalf("AddLoaderEventRecord event=%#v err=%v", event, err)
 	}
+	if _, err := controller.AddLoaderEventRecord(ctx, created.Summary.ID, "run-1", "trigger-1", "loader.bad", "", "message", func() {}, "", "", ""); err == nil {
+		t.Fatalf("AddLoaderEventRecord invalid payload returned nil error")
+	}
 	dir := controller.RunArtifactsDir(created.Summary.ID, "run-1")
 	if err := controller.WriteRunArtifact(dir, "output.txt", "hello"); err != nil {
 		t.Fatalf("WriteRunArtifact returned error: %v", err)
@@ -99,11 +123,43 @@ func TestControllerCoverageWorkflow(t *testing.T) {
 	_ = controller.CollectDueScheduledRuns(time.Now().UTC())
 	_, _ = controller.NextScheduledFireAt()
 	controller.DispatchScheduledRuns(nil)
+	var nilController *Controller
+	nilController.Start()
+	nilController.WakeScheduler()
+	bareController := NewController(ControllerDependencies{
+		Store:  store,
+		Engine: controllerTestEngine{},
+		HostFactory: func(domain.Loader, *domain.LoaderRunSummary, TriggerEventMetadata) RunHost {
+			return nil
+		},
+	})
+	if bareController.RunArtifactsDir("loader", "run") != "" {
+		t.Fatalf("bare RunArtifactsDir returned non-empty path")
+	}
+	if err := bareController.WriteRunArtifact("", "ignored", "ignored"); err != nil {
+		t.Fatalf("bare WriteRunArtifact returned error: %v", err)
+	}
+	if bareController.runTimeout(0) != 20*time.Minute || bareController.runTimeout(time.Second) != time.Second {
+		t.Fatalf("default runTimeout returned unexpected values")
+	}
+	if bareController.now().IsZero() || bareController.newID() == "" {
+		t.Fatalf("default now/newID returned empty values")
+	}
 	if err := controller.DeleteLoader(ctx, created.Summary.ID); err != nil {
 		t.Fatalf("DeleteLoader returned error: %v", err)
 	}
 	if len(notifier.reasons) == 0 {
 		t.Fatalf("expected notifications")
+	}
+
+	replaceErrStore := newControllerTestStore()
+	replaceErrStore.replaceErr = errors.New("replace failed")
+	replaceErrController := NewController(ControllerDependencies{Store: replaceErrStore, Engine: controllerTestEngine{}})
+	if _, err := replaceErrController.CreateLoader(ctx, domain.Loader{Summary: domain.LoaderSummary{ID: "rollback", Name: "Rollback"}, Script: "script"}); err == nil {
+		t.Fatalf("CreateLoader with replace error returned nil error")
+	}
+	if _, ok := replaceErrStore.loaders["rollback"]; ok {
+		t.Fatalf("CreateLoader did not roll back created loader")
 	}
 }
 
@@ -130,6 +186,7 @@ type controllerTestStore struct {
 	runs       []domain.LoaderRunSummary
 	events     []domain.LoaderEvent
 	deliveries []domain.EventDelivery
+	replaceErr error
 }
 
 func newControllerTestStore() *controllerTestStore {
@@ -166,6 +223,9 @@ func (s *controllerTestStore) DeleteLoader(_ context.Context, loaderID string) e
 }
 
 func (s *controllerTestStore) ReplaceLoaderTriggers(_ context.Context, loaderID string, triggers []domain.LoaderTrigger) ([]domain.LoaderTrigger, error) {
+	if s.replaceErr != nil {
+		return nil, s.replaceErr
+	}
 	loader := s.loaders[loaderID]
 	loader.Triggers = append([]domain.LoaderTrigger(nil), triggers...)
 	s.loaders[loaderID] = loader

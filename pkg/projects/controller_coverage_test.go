@@ -123,12 +123,97 @@ func TestControllerRemoveProjectMarksProjectRemovedAndIsIdempotent(t *testing.T)
 	}
 }
 
+func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
+	ctx := context.Background()
+	project := domain.ProjectRecord{ID: "project-1", Name: "Down Project"}
+	schedulerStore := &downCoverageStore{items: []domain.ProjectSchedulerRecord{
+		{ProjectID: project.ID, SchedulerID: "scheduler-disabled", AgentName: "idle", ManagedLoaderID: "loader-idle", Enabled: false},
+		{ProjectID: project.ID, SchedulerID: "scheduler-1", AgentName: "worker", ManagedLoaderID: "loader-1", Enabled: true},
+	}}
+	sessionStore := downCoverageSessions{sessions: []*domain.Session{
+		nil,
+		{Summary: domain.SessionSummary{ID: "other", Title: "Other", Tags: []domain.SessionTag{{Name: "project", Value: "other"}}}},
+		{Summary: domain.SessionSummary{ID: "session-fail", Title: "Fail", Tags: []domain.SessionTag{{Name: " project ", Value: " project-1 "}}}},
+		{Summary: domain.SessionSummary{ID: "session-ok", Title: "OK", Tags: []domain.SessionTag{{Name: "project", Value: "project-1"}}}},
+	}}
+	stopped := make([]string, 0)
+	refreshed := false
+	changes, err := DownProject(ctx, project, DownOptions{
+		Store:    schedulerStore,
+		Sessions: sessionStore,
+		DisableManagedLoader: func(_ context.Context, loaderID, projectID, schedulerID string) error {
+			if loaderID != "loader-1" || projectID != project.ID || schedulerID != "scheduler-1" {
+				t.Fatalf("DisableManagedLoader args = %q/%q/%q", loaderID, projectID, schedulerID)
+			}
+			return nil
+		},
+		RefreshLoaders: func(context.Context) error {
+			refreshed = true
+			return nil
+		},
+		StopSession: func(_ context.Context, session *domain.Session) error {
+			stopped = append(stopped, session.Summary.ID)
+			if session.Summary.ID == "session-fail" {
+				return errors.New("stop failed")
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("DownProject returned error: %v", err)
+	}
+	if !refreshed || len(stopped) != 2 {
+		t.Fatalf("refreshed/stopped = %v/%#v", refreshed, stopped)
+	}
+	assertDownChange(t, changes, DownChangeUpdated, "project_scheduler", "scheduler-1")
+	assertDownChange(t, changes, DownChangeUpdated, "loader", "loader-1")
+	assertDownChange(t, changes, DownChangeUnchanged, "session", "session-fail")
+	assertDownChange(t, changes, DownChangeUpdated, "session", "session-ok")
+	if SessionHasTag(nil, "project", project.ID) || !SessionHasTag(sessionStore.sessions[2], "project", project.ID) {
+		t.Fatalf("SessionHasTag returned unexpected values")
+	}
+
+	if _, err := DisableProjectManagedSchedulers(ctx, project, DownOptions{}); err == nil {
+		t.Fatalf("DisableProjectManagedSchedulers without store returned nil error")
+	}
+	if _, err := DisableProjectManagedSchedulers(ctx, project, DownOptions{Store: &downCoverageStore{listErr: errors.New("list failed")}}); err == nil {
+		t.Fatalf("DisableProjectManagedSchedulers list error returned nil error")
+	}
+	if _, err := DisableProjectManagedSchedulers(ctx, project, DownOptions{
+		Store: &downCoverageStore{items: []domain.ProjectSchedulerRecord{{ProjectID: project.ID, SchedulerID: "scheduler-1", ManagedLoaderID: "loader-1", Enabled: true}}},
+		DisableManagedLoader: func(context.Context, string, string, string) error {
+			return errors.New("disable failed")
+		},
+	}); err == nil {
+		t.Fatalf("DisableProjectManagedSchedulers managed loader error returned nil error")
+	}
+	if _, err := DisableProjectManagedSchedulers(ctx, project, DownOptions{
+		Store: &downCoverageStore{items: []domain.ProjectSchedulerRecord{{ProjectID: project.ID, SchedulerID: "scheduler-1", Enabled: true}}},
+		RefreshLoaders: func(context.Context) error {
+			return errors.New("refresh failed")
+		},
+	}); err == nil {
+		t.Fatalf("DisableProjectManagedSchedulers refresh error returned nil error")
+	}
+	if _, err := StopProjectRunningSessions(ctx, project, DownOptions{}); err == nil {
+		t.Fatalf("StopProjectRunningSessions without sessions returned nil error")
+	}
+	if _, err := StopProjectRunningSessions(ctx, project, DownOptions{Sessions: downCoverageSessions{err: errors.New("list failed")}}); err == nil {
+		t.Fatalf("StopProjectRunningSessions list error returned nil error")
+	}
+	if _, err := StopProjectRunningSessions(ctx, project, DownOptions{Sessions: downCoverageSessions{sessions: []*domain.Session{{Summary: domain.SessionSummary{ID: "session-1", Tags: []domain.SessionTag{{Name: "project", Value: project.ID}}}}}}}); err == nil {
+		t.Fatalf("StopProjectRunningSessions without stopper returned nil error")
+	}
+}
+
 func TestIntegrationControllerValidateApplyDryRunAndResolveWorkflows(t *testing.T) {
 	TestControllerValidateApplyDryRunAndResolveWorkflows(t)
+	TestDownProjectSessionAndSchedulerWorkflows(t)
 }
 
 func TestE2EControllerValidateApplyDryRunAndResolveWorkflows(t *testing.T) {
 	TestControllerValidateApplyDryRunAndResolveWorkflows(t)
+	TestDownProjectSessionAndSchedulerWorkflows(t)
 }
 
 type controllerCoverageLoaderValidator struct{}
@@ -267,6 +352,47 @@ func (controllerCoverageSessionStore) ListSessions(context.Context, domain.Sessi
 }
 
 func assertProjectChange(t *testing.T, changes []Change, action, resourceType, resourceID string) {
+	t.Helper()
+	for _, change := range changes {
+		if change.Action == action && change.ResourceType == resourceType && change.ResourceID == resourceID {
+			return
+		}
+	}
+	t.Fatalf("changes %#v did not contain %s %s %s", changes, action, resourceType, resourceID)
+}
+
+type downCoverageStore struct {
+	items   []domain.ProjectSchedulerRecord
+	listErr error
+}
+
+func (s *downCoverageStore) ListProjectSchedulers(context.Context, string) ([]domain.ProjectSchedulerRecord, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	return append([]domain.ProjectSchedulerRecord(nil), s.items...), nil
+}
+
+func (s *downCoverageStore) SetProjectSchedulerEnabled(_ context.Context, projectID, schedulerID string, enabled bool) (domain.ProjectSchedulerRecord, error) {
+	for index := range s.items {
+		if s.items[index].ProjectID == projectID && s.items[index].SchedulerID == schedulerID {
+			s.items[index].Enabled = enabled
+			return s.items[index], nil
+		}
+	}
+	return domain.ProjectSchedulerRecord{}, sql.ErrNoRows
+}
+
+type downCoverageSessions struct {
+	sessions []*domain.Session
+	err      error
+}
+
+func (s downCoverageSessions) ListSessions(context.Context, domain.SessionListOptions) (domain.SessionListResult, error) {
+	return domain.SessionListResult{Sessions: s.sessions}, s.err
+}
+
+func assertDownChange(t *testing.T, changes []DownChange, action, resourceType, resourceID string) {
 	t.Helper()
 	for _, change := range changes {
 		if change.Action == action && change.ResourceType == resourceType && change.ResourceID == resourceID {
