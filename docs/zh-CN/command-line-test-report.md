@@ -204,10 +204,10 @@ AUTH_USERNAME=admin AUTH_PASSWORD=... \
 | 测试项 | 命令结构 | 关键参数 | 预期 | 结果 |
 | --- | --- | --- | --- | --- |
 | prompt flag | `<prefix> run reviewer --prompt "review current workspace"` | 显式 prompt | prompt 发送给 provider；不输出 deprecated warning | 通过 |
-| positional trigger name | `<prefix> run reviewer nightly-review` | trigger name | CLI 按 trigger name 找到对应配置后提交 run | 通过 |
-| 无 trigger 配置 | `<prefix> run reviewer nightly-review` | 未配置 trigger 的 agent | 返回 usage error，并提示使用 `--prompt` 或 `--command` | 通过 |
+| positional trigger name | `<prefix> run reviewer nightly-review` | trigger name | 返回 usage error；`run` 只接受 `<agent>` 一个位置参数 | 通过 |
+| 无 trigger 配置 | `<prefix> run reviewer nightly-review` | 未配置 trigger 的 agent | 返回 usage error；不执行 trigger 解析 | 通过 |
 
-说明：prompt 输入必须使用 `--prompt`。`run <agent> <trigger-name>` 的第二个位置参数表示 trigger name，不再作为 prompt 兼容入口。
+说明：prompt 输入必须使用 `--prompt`。两个位置参数的 run 形式不再受支持。
 
 ## 10. 历史延期命令边界测试
 

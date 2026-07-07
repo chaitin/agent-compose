@@ -134,8 +134,8 @@ The main commands are:
 
 - `agent-compose daemon`: start the HTTP/Connect daemon.
 - `agent-compose up`: read `agent-compose.yml` and apply the project to the daemon.
-- `agent-compose run <agent> <trigger-name>`: run a configured trigger by name.
-- `agent-compose run <agent> --prompt "..."` / `--command "..."`: run ad hoc prompt or shell command work.
+- `agent-compose run <agent> --prompt "..."` / `--command "..."`: run prompt or shell command work.
+- `agent-compose scheduler ls|trigger|inspect`: list, run, or inspect project scheduler triggers.
 - `agent-compose logs`: inspect project run logs.
 - `agent-compose ps`: list project agents, recent runs, and active sandboxes.
 - `agent-compose down`: disable managed schedulers and stop running sandboxes.

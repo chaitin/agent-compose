@@ -449,25 +449,6 @@ func testComposeRunExecAndLogsEdgeHelpers(t *testing.T) {
 	if agent, ok := composeRunAgentSpec(project, " reviewer "); !ok || agent.Name != "reviewer" {
 		t.Fatalf("composeRunAgentSpec agent=%#v ok=%v", agent, ok)
 	}
-	if _, err := resolveComposeRunTriggerName(project, "project-1", "reviewer", "nightly"); err != nil {
-		t.Fatalf("resolveComposeRunTriggerName returned error: %v", err)
-	}
-	for _, tc := range []struct {
-		name    string
-		project *compose.NormalizedProjectSpec
-		agent   string
-		trigger string
-		want    string
-	}{
-		{name: "empty trigger", project: project, agent: "reviewer", trigger: " ", want: "trigger name cannot be empty"},
-		{name: "missing agent", project: project, agent: "missing", trigger: "nightly", want: "is not configured"},
-		{name: "missing trigger", project: project, agent: "reviewer", trigger: "hourly", want: "is not configured"},
-		{name: "no scheduler", project: &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{{Name: "reviewer"}}}, agent: "reviewer", trigger: "nightly", want: "has no configured triggers"},
-	} {
-		if _, err := resolveComposeRunTriggerName(tc.project, "project-1", tc.agent, tc.trigger); err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Fatalf("%s error = %v, want containing %q", tc.name, err, tc.want)
-		}
-	}
 	if normalizeOptionalRunModeValue(optionalRunModeFlagNoValue) != "" ||
 		normalizeOptionalRunModeValue(" prompt ") != "prompt" {
 		t.Fatalf("normalizeOptionalRunModeValue returned unexpected values")

@@ -139,32 +139,30 @@ agent-compose -f /path/to/project/agent-compose.yml down
 为指定 agent 启动一个 sandbox，或在已有 sandbox 中继续运行。
 
 ```bash
-agent-compose run <agent> <trigger-name>
 agent-compose run <agent> --prompt "..."
 agent-compose run <agent> --command "..."
-agent-compose run <agent> --sandbox <sandbox> --prompt "..."
+agent-compose run <agent> --sandbox-id <sandbox> --prompt "..."
 ```
 
 输入模式：
 
 | 模式 | 用法 | 说明 |
 | --- | --- | --- |
-| trigger | `run <agent> <trigger-name>` | 按名称运行 project 配置中定义的 trigger。 |
 | prompt | `run <agent> --prompt "..."` | 向 agent provider 发送 prompt。 |
 | command | `run <agent> --command "..."` | 启动或复用该 agent 的 sandbox 后通过 guest `agent-compose-runtime exec` 执行 shell 命令；命令 transcript 会实时输出，并写入该次 run 记录。 |
 | prompt REPL | `run <agent> -i --prompt` | 从 stdin 逐行读取 prompt；每条非空输入创建一次 run，并复用同一个 sandbox。 |
 | command REPL | `run <agent> -i --command` | 从 stdin 逐行读取 command；每条非空输入创建一次 run，并复用同一个 sandbox。 |
-| sandbox 复用 | `run <agent> --sandbox <sandbox> --prompt "..."` | 在指定 sandbox 中继续运行。 |
+| sandbox 复用 | `run <agent> --sandbox-id <sandbox> --prompt "..."` | 在指定 sandbox 中继续运行。 |
 
-prompt 输入必须使用 `--prompt`。不再支持 positional prompt 参数。
-如果 agent 没有配置 trigger，`run <agent> <trigger-name>` 会返回 usage error；临时任务请使用 `--prompt` 或 `--command`。
+prompt 输入必须使用 `--prompt`；非交互 run 必须选择 `--prompt` 或 `--command`。不再支持 positional prompt 参数。
+不支持额外的位置参数。
 
 选项：
 
 | 参数 | 说明 |
 | --- | --- |
 | `--keep-running` | 运行结束后保留 sandbox runtime。 |
-| `--sandbox <sandbox>` | 指定已有 sandbox。 |
+| `--sandbox-id <sandbox>` | 指定已有 sandbox。 |
 | `--rm` | 运行结束后删除 sandbox。 |
 | `--jupyter` | 为本次 run 启用 Jupyter；未设置时使用 agent YAML 默认，YAML 未设置时默认关闭。 |
 | `--jupyter-expose` | 标记本次 run 的 Jupyter agent-compose proxy 入口为显式暴露意图；该参数不请求 runtime driver 暴露 host port，并会同时启用 Jupyter。 |
@@ -174,21 +172,19 @@ prompt 输入必须使用 `--prompt`。不再支持 positional prompt 参数。
 示例：
 
 ```bash
-agent-compose run reviewer pr-opened
 agent-compose run reviewer --prompt "Review the staged changes"
 agent-compose run builder --command "task build"
 agent-compose run tester --command "task test" --keep-running
 agent-compose run tester --command "task test" -d
 agent-compose run reviewer -i --prompt
 agent-compose run tester -i --command
-agent-compose run reviewer --sandbox sandbox_123 --prompt "Continue the review"
+agent-compose run reviewer --sandbox-id sandbox_123 --prompt "Continue the review"
 agent-compose run reviewer --jupyter --jupyter-expose --prompt "Inspect the notebook state"
 ```
 
 互斥规则：
 
-- trigger、prompt、command 一次只能选择一种。
-- `run <agent> <trigger-name>` 只接受一个 trigger name 位置参数。
+- prompt、command 一次只能选择一种。
 - 使用 `--prompt` 或 `--command` 时，不能再传额外位置参数。
 - `run -d/--detach` 和 `run -i/--interactive` 互斥。
 - `run -i/--interactive` 必须选择 `--prompt` 或 `--command`，不能与 `--json` 组合。
@@ -197,6 +193,18 @@ agent-compose run reviewer --jupyter --jupyter-expose --prompt "Inspect the note
 - detached run 可通过输出的 `agent-compose logs --run-id <run-id> --follow` 命令观察输出，也可继续使用 `stop`/`logs` 操作该 run。
 - `run -i --prompt` 仅支持可复用 provider conversation 的 Codex、Claude/cc 和 OpenCode；Gemini 当前会返回 unsupported。
 - `StopRun` 会请求 daemon 内当前活动 run 取消；daemon 重启后遗留的 running/pending run 会在启动 reconcile 中标记为 failed，并带 `daemon interrupted` 错误。
+
+## `scheduler`：查看和执行 project scheduler
+
+```bash
+agent-compose scheduler ls [agent]
+agent-compose scheduler trigger <agent> <trigger>
+agent-compose scheduler inspect <agent> <trigger>
+```
+
+- `scheduler ls` 同时列出声明式 scheduler 配置的 trigger 和 scheduler script 注册到系统中的 trigger。
+- `scheduler trigger` 通过现有 project run 流程手动执行指定 trigger。
+- `scheduler inspect` 对声明式 trigger 输出 YAML 中对应 trigger 定义；对 scheduler script trigger 输出系统中注册到 loader trigger 的字段。
 
 ## `ps`：查看 sandbox
 

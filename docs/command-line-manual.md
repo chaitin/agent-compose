@@ -136,31 +136,28 @@ Notes:
 Start a sandbox for an agent, or continue work in an existing sandbox.
 
 ```bash
-agent-compose run <agent> <trigger-name>
 agent-compose run <agent> --prompt "..."
 agent-compose run <agent> --command "..."
-agent-compose run <agent> --sandbox <sandbox> --prompt "..."
+agent-compose run <agent> --sandbox-id <sandbox> --prompt "..."
 ```
 
 Input modes:
 
 | Mode | Usage | Description |
 | --- | --- | --- |
-| trigger | `run <agent> <trigger-name>` | Run a named trigger defined in the project config. |
 | prompt | `run <agent> --prompt "..."` | Send a prompt to the agent provider. |
 | command | `run <agent> --command "..."` | Start or reuse the agent sandbox and execute a shell command through guest `agent-compose-runtime exec`; stdout/stderr transcript is streamed and persisted to the run record without protocol payload markers. |
 | prompt REPL | `run <agent> -i --prompt` | Read prompts line by line from stdin. Each non-empty input creates one run and reuses the same sandbox. |
 | command REPL | `run <agent> -i --command` | Read commands line by line from stdin. Each non-empty input creates one run and reuses the same sandbox. |
-| sandbox reuse | `run <agent> --sandbox <sandbox> --prompt "..."` | Continue in a specific sandbox. |
+| sandbox reuse | `run <agent> --sandbox-id <sandbox> --prompt "..."` | Continue in a specific sandbox. |
 
-Prompt input must use `--prompt`. Positional prompt arguments are not supported.
-If the agent has no configured triggers, `run <agent> <trigger-name>` fails with
-a usage error; use `--prompt` or `--command` for ad hoc work.
+Prompt input must use `--prompt`, and non-interactive runs must choose `--prompt` or `--command`. Positional prompt arguments are not supported.
+Additional positional arguments are not supported.
 
 | Option | Description |
 | --- | --- |
 | `--keep-running` | Keep the sandbox runtime after the run completes. |
-| `--sandbox <sandbox>` | Reuse an existing sandbox. |
+| `--sandbox-id <sandbox>` | Reuse an existing sandbox. |
 | `--rm` | Remove the sandbox after the run reaches a terminal state. |
 | `--jupyter` | Enable Jupyter for this run. When unset, the agent YAML default is used; when YAML is unset, Jupyter is disabled. |
 | `--jupyter-expose` | Mark the Jupyter agent-compose proxy endpoint for this run as explicitly exposed. This does not request runtime-driver host port exposure and also enables Jupyter. |
@@ -170,21 +167,19 @@ a usage error; use `--prompt` or `--command` for ad hoc work.
 Examples:
 
 ```bash
-agent-compose run reviewer pr-opened
 agent-compose run reviewer --prompt "Review the staged changes"
 agent-compose run builder --command "task build"
 agent-compose run tester --command "task test" --keep-running
 agent-compose run tester --command "task test" -d
 agent-compose run reviewer -i --prompt
 agent-compose run tester -i --command
-agent-compose run reviewer --sandbox sandbox_123 --prompt "Continue the review"
+agent-compose run reviewer --sandbox-id sandbox_123 --prompt "Continue the review"
 agent-compose run reviewer --jupyter --jupyter-expose --prompt "Inspect the notebook state"
 ```
 
 Rules:
 
-- Choose only one of trigger, prompt, or command.
-- `run <agent> <trigger-name>` accepts exactly one trigger name positional argument.
+- Choose only one of prompt or command.
 - Do not combine `--prompt` or `--command` with additional positional arguments.
 - `run -d/--detach` and `run -i/--interactive` are mutually exclusive.
 - `run -i/--interactive` must select `--prompt` or `--command`; it cannot be combined with `--json`.
@@ -193,6 +188,18 @@ Rules:
 - Detached runs can be observed with the printed `agent-compose logs --run-id <run-id> --follow` command, or managed later with `stop` and `logs`.
 - `run -i --prompt` supports providers with reusable provider conversations: Codex, Claude/cc, and OpenCode. Gemini currently returns unsupported.
 - `StopRun` requests cancellation for active in-daemon runs. Pending/running runs left behind after daemon restart are reconciled to failed with a `daemon interrupted` error.
+
+## `scheduler`: Inspect and Trigger Project Schedulers
+
+```bash
+agent-compose scheduler ls [agent]
+agent-compose scheduler trigger <agent> <trigger>
+agent-compose scheduler inspect <agent> <trigger>
+```
+
+- `scheduler ls` lists triggers from declarative scheduler config and triggers registered by scheduler scripts.
+- `scheduler trigger` manually runs the selected trigger through the existing project run flow.
+- `scheduler inspect` prints the YAML trigger definition for declarative triggers, or the registered loader trigger fields for scheduler-script triggers.
 
 ## `ps`: List Sandboxes
 

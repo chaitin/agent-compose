@@ -22,7 +22,7 @@ func (c *Controller) resolveTriggerForManualRun(ctx context.Context, req RunAgen
 		return result, nil
 	}
 	if strings.TrimSpace(req.Prompt) != "" || strings.TrimSpace(req.Command) != "" {
-		return result, fmt.Errorf("%w: run --trigger cannot be combined with prompt or command", ErrInvalidRequest)
+		return result, fmt.Errorf("%w: scheduler trigger cannot be combined with prompt or command", ErrInvalidRequest)
 	}
 	if c.configDB == nil {
 		return result, fmt.Errorf("config store is required")

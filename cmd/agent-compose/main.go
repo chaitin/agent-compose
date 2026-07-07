@@ -32,6 +32,7 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
+	"gopkg.in/yaml.v3"
 
 	"agent-compose/pkg/fxgo/echofn"
 	"agent-compose/pkg/fxgo/restful"
@@ -479,9 +480,9 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 
 	runOptions := composeRunOptions{}
 	runCmd := &cobra.Command{
-		Use:   "run <agent> <trigger-name>",
+		Use:   "run <agent>",
 		Short: "Run a project agent",
-		Args:  cobra.MinimumNArgs(1),
+		Args:  composeRunArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runComposeRunCommand(cmd, options, runOptions, args)
 		},
@@ -499,6 +500,48 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 	runCmd.Flags().Lookup("prompt").NoOptDefVal = optionalRunModeFlagNoValue
 	runCmd.Flags().Lookup("command").NoOptDefVal = optionalRunModeFlagNoValue
 	hideOptionalFlagNoValueInUsage(runCmd, "prompt", "command")
+
+	schedulerTriggerOptions := composeSchedulerTriggerOptions{}
+	schedulerCmd := &cobra.Command{
+		Use:   "scheduler",
+		Short: "List, trigger, and inspect project scheduler triggers",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+	}
+	schedulerLSCmd := &cobra.Command{
+		Use:   "ls [agent]",
+		Short: "List project scheduler triggers",
+		Args:  cobra.RangeArgs(0, 1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeSchedulerListCommand(cmd, options, args)
+		},
+	}
+	schedulerTriggerCmd := &cobra.Command{
+		Use:   "trigger <agent> <trigger>",
+		Short: "Manually run a scheduler trigger",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeSchedulerTriggerCommand(cmd, options, schedulerTriggerOptions, args[0], args[1])
+		},
+	}
+	schedulerTriggerCmd.Flags().StringVar(&schedulerTriggerOptions.SandboxID, "sandbox-id", "", "Reuse an existing sandbox")
+	schedulerTriggerCmd.Flags().StringVar(&schedulerTriggerOptions.Driver, "driver", "", "Runtime driver override for a new sandbox")
+	schedulerTriggerCmd.Flags().BoolVar(&schedulerTriggerOptions.KeepRunning, "keep-running", false, "Keep the sandbox runtime running after completion")
+	schedulerTriggerCmd.Flags().BoolVar(&schedulerTriggerOptions.Remove, "rm", false, "Remove the sandbox after a successful run")
+	schedulerTriggerCmd.Flags().BoolVar(&schedulerTriggerOptions.Jupyter, "jupyter", false, "Enable Jupyter for this run")
+	schedulerTriggerCmd.Flags().BoolVar(&schedulerTriggerOptions.JupyterExpose, "jupyter-expose", false, "Mark the Jupyter proxy endpoint for this run as user-accessible")
+	schedulerTriggerCmd.Flags().BoolVarP(&schedulerTriggerOptions.Detach, "detach", "d", false, "Start the run in the daemon and return immediately")
+	schedulerInspectCmd := &cobra.Command{
+		Use:   "inspect <agent> <trigger>",
+		Short: "Inspect a scheduler trigger",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeSchedulerInspectCommand(cmd, options, args[0], args[1])
+		},
+	}
+	schedulerCmd.AddCommand(schedulerLSCmd, schedulerTriggerCmd, schedulerInspectCmd)
 
 	logsOptions := composeLogsOptions{}
 	logsCmd := &cobra.Command{
@@ -767,7 +810,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		},
 	}
 
-	root.AddCommand(daemonCmd, versionCmd, statusCmd, configCmd, listCmd, upCmd, downCmd, runCmd, logsCmd, psCmd, statsCmd, stopCmd, resumeCmd, rmCmd, execCmd, imagesCmd, cacheCmd, imageCmd, pullCmd, buildCmd, rmiCmd, inspectCmd)
+	root.AddCommand(daemonCmd, versionCmd, statusCmd, configCmd, listCmd, upCmd, downCmd, runCmd, schedulerCmd, logsCmd, psCmd, statsCmd, stopCmd, resumeCmd, rmCmd, execCmd, imagesCmd, cacheCmd, imageCmd, pullCmd, buildCmd, rmiCmd, inspectCmd)
 	return root
 }
 
@@ -799,6 +842,16 @@ type composeRunOptions struct {
 	JupyterExpose bool
 	Detach        bool
 	Interactive   bool
+}
+
+type composeSchedulerTriggerOptions struct {
+	SandboxID     string
+	Driver        string
+	KeepRunning   bool
+	Remove        bool
+	Jupyter       bool
+	JupyterExpose bool
+	Detach        bool
 }
 
 type composeLogsOptions struct {
@@ -936,6 +989,13 @@ func cacheInspectArgs(_ *cobra.Command, args []string) error {
 func cacheRemoveArgs(_ *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("cache rm accepts 1 arg(s), received %d", len(args))}
+	}
+	return nil
+}
+
+func composeRunArgs(_ *cobra.Command, args []string) error {
+	if len(args) < 1 {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run requires an agent")}
 	}
 	return nil
 }
@@ -1273,7 +1333,6 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 	commandFlagChanged := cmd.Flags().Changed("command")
 	prompt := normalizeOptionalRunModeValue(normalizedOptions.Prompt)
 	commandText := normalizeOptionalRunModeValue(normalizedOptions.Command)
-	triggerID := ""
 	if promptFlagChanged && normalizedOptions.Prompt == optionalRunModeFlagNoValue && len(args) > 1 {
 		prompt = strings.TrimSpace(args[1])
 		args = append(args[:1], args[2:]...)
@@ -1281,6 +1340,21 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 	if commandFlagChanged && normalizedOptions.Command == optionalRunModeFlagNoValue && len(args) > 1 {
 		commandText = strings.TrimSpace(args[1])
 		args = append(args[:1], args[2:]...)
+	}
+	if normalizedOptions.Interactive && len(args) > 1 {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run -i/--interactive does not accept additional positional arguments")}
+	}
+	if len(args) > 1 {
+		if promptFlagChanged {
+			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run with --prompt does not accept additional positional arguments")}
+		}
+		if commandFlagChanged {
+			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run with --command does not accept additional positional arguments")}
+		}
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run does not accept positional trigger arguments; use scheduler trigger <agent> <trigger>")}
+	}
+	if len(args) == 0 {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run requires an agent")}
 	}
 	if normalizedOptions.Detach && normalizedOptions.Interactive {
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run -d/--detach cannot be combined with -i/--interactive")}
@@ -1296,17 +1370,6 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 		return err
 	}
 	agentName := strings.TrimSpace(args[0])
-	if !normalizedOptions.Interactive && triggerID == "" && prompt == "" && commandText == "" {
-		if len(args) > 2 {
-			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run accepts at most one trigger name positional argument")}
-		}
-		if len(args) == 2 {
-			triggerID, err = resolveComposeRunTriggerName(normalized, projectID, agentName, args[1])
-			if err != nil {
-				return err
-			}
-		}
-	}
 	if normalizedOptions.Interactive && promptFlagChanged {
 		if err := validateInteractivePromptProvider(normalized, agentName); err != nil {
 			return err
@@ -1320,38 +1383,17 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 	}
 	modeCount := 0
 	if !normalizedOptions.Interactive {
-		for _, value := range []string{prompt, triggerID, commandText} {
+		for _, value := range []string{prompt, commandText} {
 			if value != "" {
 				modeCount++
 			}
 		}
 	}
 	if modeCount > 1 {
-		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run requires only one of trigger name, --prompt, or --command")}
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run requires only one of --prompt or --command")}
 	}
-	if !normalizedOptions.Interactive && (triggerID != "" || prompt != "" || commandText != "") && len(args) > 1 {
-		mode := ""
-		if cmd.Flags().Changed("prompt") {
-			mode = "--prompt"
-		} else if cmd.Flags().Changed("command") {
-			mode = "--command"
-		}
-		if mode != "" {
-			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run with %s does not accept additional positional arguments", mode)}
-		}
-	}
-	if normalizedOptions.Interactive && len(args) > 1 {
-		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run -i/--interactive does not accept additional positional arguments")}
-	}
-	if !normalizedOptions.Interactive && triggerID == "" && prompt == "" && commandText == "" {
-		agent, ok := composeRunAgentSpec(normalized, agentName)
-		if !ok {
-			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("agent %q is not configured in this project", agentName)}
-		}
-		if agent.Scheduler == nil || len(agent.Scheduler.Triggers) == 0 {
-			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("agent %q has no configured triggers; use --prompt or --command", agentName)}
-		}
-		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run requires a trigger name, --prompt, or --command")}
+	if !normalizedOptions.Interactive && modeCount == 0 {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run requires --prompt or --command")}
 	}
 	clientConfig, err := resolveCLIClientConfig(cli.Host)
 	if err != nil {
@@ -1379,9 +1421,8 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 		Source:          agentcomposev2.RunSource_RUN_SOURCE_MANUAL,
 		SessionId:       strings.TrimSpace(normalizedOptions.SandboxID),
 		Driver:          strings.TrimSpace(normalizedOptions.Driver),
-		TriggerId:       triggerID,
 		CleanupPolicy:   cleanupPolicy,
-		ClientRequestId: manualRunClientRequestID(normalized.Name, agentName, firstNonEmptyString(prompt, triggerID, commandText)),
+		ClientRequestId: manualRunClientRequestID(normalized.Name, agentName, firstNonEmptyString(prompt, commandText)),
 		Jupyter:         jupyter,
 	}
 	if normalizedOptions.Detach {
@@ -1390,12 +1431,18 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 	if normalizedOptions.Interactive {
 		runReq.Prompt = ""
 		runReq.Command = ""
-		runReq.TriggerId = ""
 		runReq.CleanupPolicy = agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING
 		sandboxClient := agentcomposev2connect.NewSandboxServiceClient(newDaemonHTTPClient(clientConfig), clientConfig.BaseURL)
 		return runInteractiveComposeRun(cmd, normalizedOptions, normalized.Name, client, sandboxClient, runReq, promptFlagChanged, prompt, commandText)
 	}
-	detail, completed, warnings, err := runComposeRunStreamAndDetail(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), client, projectID, normalized.Name, runReq, cli.JSON)
+	return executeComposeRunRequest(cmd, cli, normalized.Name, projectID, client, runReq, normalizedOptions.Detach)
+}
+
+func executeComposeRunRequest(cmd *cobra.Command, cli cliOptions, projectName, projectID string, client agentcomposev2connect.RunServiceClient, runReq *agentcomposev2.RunAgentRequest, detach bool) error {
+	if detach {
+		return startDetachedRun(cmd, cli, projectName, client, runReq)
+	}
+	detail, completed, warnings, err := runComposeRunStreamAndDetail(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), client, projectID, projectName, runReq, cli.JSON)
 	if err != nil {
 		return err
 	}
@@ -1415,7 +1462,303 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 			return err
 		}
 	}
-	return composeRunCompletionError(normalized.Name, agentName, completed, detail)
+	return composeRunCompletionError(projectName, runReq.GetAgentName(), completed, detail)
+}
+
+func runComposeSchedulerListCommand(cmd *cobra.Command, cli cliOptions, args []string) error {
+	_, normalized, projectID, err := resolveComposeProject(cli)
+	if err != nil {
+		return err
+	}
+	clients, err := newCLIServiceClients(cli)
+	if err != nil {
+		return err
+	}
+	agentFilter := ""
+	if len(args) > 0 {
+		agentFilter = strings.TrimSpace(args[0])
+	}
+	triggers, err := listComposeSchedulerTriggers(cmd.Context(), clients, normalized, projectID, agentFilter)
+	if err != nil {
+		return err
+	}
+	output := composeSchedulerListOutput{
+		Project:  composeUpProjectOutput{ID: projectID, Name: normalized.Name},
+		Triggers: triggers,
+	}
+	if cli.JSON {
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	return writeSchedulerListText(cmd.OutOrStdout(), output)
+}
+
+func runComposeSchedulerTriggerCommand(cmd *cobra.Command, cli cliOptions, options composeSchedulerTriggerOptions, agentName, triggerRef string) error {
+	options, err := normalizeComposeSchedulerTriggerOptions(options)
+	if err != nil {
+		return err
+	}
+	_, normalized, projectID, err := resolveComposeProject(cli)
+	if err != nil {
+		return err
+	}
+	clients, err := newCLIServiceClients(cli)
+	if err != nil {
+		return err
+	}
+	trigger, err := resolveComposeSchedulerTrigger(cmd.Context(), clients, normalized, projectID, agentName, triggerRef)
+	if err != nil {
+		return err
+	}
+	cleanupPolicy := agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION
+	if options.KeepRunning {
+		cleanupPolicy = agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING
+	} else if options.Remove {
+		cleanupPolicy = agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_REMOVE_ON_COMPLETION
+	}
+	var jupyter *agentcomposev2.RunJupyterSpec
+	if options.Jupyter || options.JupyterExpose {
+		jupyter = &agentcomposev2.RunJupyterSpec{
+			Enabled: options.Jupyter || options.JupyterExpose,
+			Expose:  options.JupyterExpose,
+		}
+	}
+	runReq := &agentcomposev2.RunAgentRequest{
+		ProjectId:       projectID,
+		AgentName:       trigger.AgentName,
+		Source:          agentcomposev2.RunSource_RUN_SOURCE_MANUAL,
+		SessionId:       strings.TrimSpace(options.SandboxID),
+		Driver:          strings.TrimSpace(options.Driver),
+		SchedulerId:     trigger.SchedulerID,
+		TriggerId:       trigger.TriggerID,
+		CleanupPolicy:   cleanupPolicy,
+		ClientRequestId: manualRunClientRequestID(normalized.Name, trigger.AgentName, trigger.TriggerID),
+		Jupyter:         jupyter,
+	}
+	return executeComposeRunRequest(cmd, cli, normalized.Name, projectID, clients.run, runReq, options.Detach)
+}
+
+func runComposeSchedulerInspectCommand(cmd *cobra.Command, cli cliOptions, agentName, triggerRef string) error {
+	_, normalized, projectID, err := resolveComposeProject(cli)
+	if err != nil {
+		return err
+	}
+	clients, err := newCLIServiceClients(cli)
+	if err != nil {
+		return err
+	}
+	trigger, err := resolveComposeSchedulerTrigger(cmd.Context(), clients, normalized, projectID, agentName, triggerRef)
+	if err != nil {
+		return err
+	}
+	output := composeSchedulerInspectOutput{
+		Project:   composeUpProjectOutput{ID: projectID, Name: normalized.Name},
+		Source:    trigger.Source,
+		AgentName: trigger.AgentName,
+		Trigger:   trigger,
+	}
+	if trigger.Source == "declarative" && trigger.declarative != nil {
+		output.Definition = api.TriggerYAMLShape(trigger.declarative)
+	} else if trigger.registered != nil {
+		output.Registered = loaderTriggerYAMLShape(trigger.registered)
+	}
+	if cli.JSON {
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	return writeSchedulerInspectText(cmd.OutOrStdout(), output)
+}
+
+func normalizeComposeSchedulerTriggerOptions(options composeSchedulerTriggerOptions) (composeSchedulerTriggerOptions, error) {
+	options.SandboxID = strings.TrimSpace(options.SandboxID)
+	options.Driver = strings.TrimSpace(options.Driver)
+	if options.Driver != "" {
+		driver, err := driverpkg.ResolveSessionRuntimeDriver(options.Driver, "")
+		if err != nil {
+			return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler trigger --driver: %w", err)}
+		}
+		options.Driver = driver
+	}
+	if options.SandboxID != "" && options.Driver != "" {
+		return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler trigger --driver cannot be combined with --sandbox-id")}
+	}
+	return options, nil
+}
+
+func listComposeSchedulerTriggers(ctx context.Context, clients cliServiceClients, normalized *compose.NormalizedProjectSpec, projectID, agentFilter string) ([]composeSchedulerTriggerItem, error) {
+	var items []composeSchedulerTriggerItem
+	for _, agent := range normalized.Agents {
+		if agentFilter != "" && agent.Name != agentFilter {
+			continue
+		}
+		if agent.Scheduler == nil {
+			continue
+		}
+		schedulerID, err := domain.StableProjectSchedulerID(projectID, agent.Name, "")
+		if err != nil {
+			return nil, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolve scheduler for agent %q: %w", agent.Name, err)}
+		}
+		managedLoaderID, err := domain.StableManagedLoaderID(projectID, agent.Name, "")
+		if err != nil {
+			return nil, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolve scheduler loader for agent %q: %w", agent.Name, err)}
+		}
+		schedulerEnabled := agent.Scheduler.Enabled
+		if strings.TrimSpace(agent.Scheduler.Script) != "" {
+			loader, err := clients.loader.GetLoader(ctx, connect.NewRequest(&agentcomposev1.LoaderIDRequest{LoaderId: managedLoaderID}))
+			if err != nil {
+				return nil, commandExitErrorForConnect(fmt.Errorf("get scheduler loader %s: %w", managedLoaderID, err))
+			}
+			for _, trigger := range loader.Msg.GetLoader().GetTriggers() {
+				items = append(items, schedulerTriggerItemFromRegistered(agent.Name, schedulerID, managedLoaderID, schedulerEnabled, trigger))
+			}
+			continue
+		}
+		for index, trigger := range agent.Scheduler.Triggers {
+			id, err := domain.StableManagedTriggerID(projectID, agent.Name, "", trigger.Name, index)
+			if err != nil {
+				return nil, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolve trigger for agent %q: %w", agent.Name, err)}
+			}
+			items = append(items, schedulerTriggerItemFromDeclarative(agent.Name, schedulerID, managedLoaderID, schedulerEnabled, id, trigger))
+		}
+	}
+	if agentFilter != "" && len(items) == 0 {
+		if _, ok := composeRunAgentSpec(normalized, agentFilter); !ok {
+			return nil, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("agent %q is not configured in this project", agentFilter)}
+		}
+	}
+	return items, nil
+}
+
+func resolveComposeSchedulerTrigger(ctx context.Context, clients cliServiceClients, normalized *compose.NormalizedProjectSpec, projectID, agentName, triggerRef string) (composeSchedulerTriggerItem, error) {
+	agentName = strings.TrimSpace(agentName)
+	triggerRef = strings.TrimSpace(triggerRef)
+	if agentName == "" || triggerRef == "" {
+		return composeSchedulerTriggerItem{}, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler trigger requires non-empty agent and trigger")}
+	}
+	items, err := listComposeSchedulerTriggers(ctx, clients, normalized, projectID, agentName)
+	if err != nil {
+		return composeSchedulerTriggerItem{}, err
+	}
+	var matches []composeSchedulerTriggerItem
+	for _, item := range items {
+		if item.TriggerID == triggerRef || (item.Name != "" && item.Name == triggerRef) {
+			matches = append(matches, item)
+		}
+	}
+	if len(matches) == 0 {
+		return composeSchedulerTriggerItem{}, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler trigger %q not found for agent %q", triggerRef, agentName)}
+	}
+	if len(matches) > 1 {
+		return composeSchedulerTriggerItem{}, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler trigger %q for agent %q is ambiguous; use the trigger id", triggerRef, agentName)}
+	}
+	return matches[0], nil
+}
+
+func schedulerTriggerItemFromDeclarative(agentName, schedulerID, managedLoaderID string, schedulerEnabled bool, triggerID string, trigger compose.NormalizedTriggerSpec) composeSchedulerTriggerItem {
+	protoTrigger := api.TriggerSpecToProto(trigger)
+	return composeSchedulerTriggerItem{
+		AgentName:        agentName,
+		Name:             strings.TrimSpace(trigger.Name),
+		TriggerID:        triggerID,
+		Kind:             trigger.Kind,
+		Source:           "declarative",
+		SchedulerID:      schedulerID,
+		ManagedLoaderID:  managedLoaderID,
+		SchedulerEnabled: schedulerEnabled,
+		TriggerEnabled:   true,
+		declarative:      protoTrigger,
+	}
+}
+
+func schedulerTriggerItemFromRegistered(agentName, schedulerID, managedLoaderID string, schedulerEnabled bool, trigger *agentcomposev1.LoaderTrigger) composeSchedulerTriggerItem {
+	return composeSchedulerTriggerItem{
+		AgentName:        agentName,
+		TriggerID:        trigger.GetTriggerId(),
+		Kind:             loaderTriggerKindText(trigger.GetKind()),
+		Source:           "script",
+		SchedulerID:      schedulerID,
+		ManagedLoaderID:  managedLoaderID,
+		SchedulerEnabled: schedulerEnabled,
+		TriggerEnabled:   trigger.GetEnabled(),
+		Topic:            trigger.GetTopic(),
+		IntervalMs:       trigger.GetIntervalMs(),
+		SpecJSON:         trigger.GetSpecJson(),
+		NextFireAt:       trigger.GetNextFireAt(),
+		LastFiredAt:      trigger.GetLastFiredAt(),
+		registered:       trigger,
+	}
+}
+
+func writeSchedulerListText(out io.Writer, output composeSchedulerListOutput) error {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "AGENT\tTRIGGER\tKIND\tSOURCE\tSCHEDULER\tENABLED"); err != nil {
+		return err
+	}
+	for _, trigger := range output.Triggers {
+		name := firstNonEmptyString(trigger.Name, trigger.TriggerID)
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%t\n",
+			trigger.AgentName,
+			name,
+			trigger.Kind,
+			trigger.Source,
+			firstNonEmptyString(trigger.SchedulerID, "-"),
+			trigger.TriggerEnabled,
+		); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}
+
+func writeSchedulerInspectText(out io.Writer, output composeSchedulerInspectOutput) error {
+	var target map[string]any
+	if output.Source == "declarative" {
+		target = output.Definition
+	} else {
+		target = output.Registered
+	}
+	data, err := yaml.Marshal(target)
+	if err != nil {
+		return err
+	}
+	return writeCommandOutput(out, data)
+}
+
+func loaderTriggerYAMLShape(trigger *agentcomposev1.LoaderTrigger) map[string]any {
+	raw := map[string]any{
+		"loader_id":     trigger.GetLoaderId(),
+		"trigger_id":    trigger.GetTriggerId(),
+		"kind":          loaderTriggerKindText(trigger.GetKind()),
+		"enabled":       trigger.GetEnabled(),
+		"auto_id":       trigger.GetAutoId(),
+		"interval_ms":   trigger.GetIntervalMs(),
+		"topic":         trigger.GetTopic(),
+		"spec_json":     trigger.GetSpecJson(),
+		"next_fire_at":  trigger.GetNextFireAt(),
+		"last_fired_at": trigger.GetLastFiredAt(),
+	}
+	return raw
+}
+
+func loaderTriggerKindText(kind agentcomposev1.LoaderTriggerKind) string {
+	switch kind {
+	case agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_INTERVAL:
+		return "interval"
+	case agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_TIMEOUT:
+		return "timeout"
+	case agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_CRON:
+		return "cron"
+	case agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_EVENT:
+		return "event"
+	default:
+		return "unspecified"
+	}
 }
 
 func runComposeRunStreamAndDetail(ctx context.Context, stdout, stderr io.Writer, client agentcomposev2connect.RunServiceClient, projectID, projectName string, runReq *agentcomposev2.RunAgentRequest, suppressOutput bool) (*agentcomposev2.RunDetail, *agentcomposev2.RunSummary, []string, error) {
@@ -1651,30 +1994,6 @@ func normalizeComposeRunOptions(cmd *cobra.Command, options composeRunOptions) (
 		return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run --driver cannot be combined with --sandbox-id")}
 	}
 	return options, nil
-}
-
-func resolveComposeRunTriggerName(normalized *compose.NormalizedProjectSpec, projectID, agentName, triggerName string) (string, error) {
-	triggerName = strings.TrimSpace(triggerName)
-	if triggerName == "" {
-		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run trigger name cannot be empty")}
-	}
-	agent, ok := composeRunAgentSpec(normalized, agentName)
-	if !ok {
-		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("agent %q is not configured in this project", agentName)}
-	}
-	if agent.Scheduler == nil || len(agent.Scheduler.Triggers) == 0 {
-		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("agent %q has no configured triggers; use --prompt or --command", agentName)}
-	}
-	for index, trigger := range agent.Scheduler.Triggers {
-		if strings.TrimSpace(trigger.Name) == triggerName {
-			id, err := domain.StableManagedTriggerID(projectID, agent.Name, "", triggerName, index)
-			if err != nil {
-				return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolve trigger %q for agent %q: %w", triggerName, agentName, err)}
-			}
-			return id, nil
-		}
-	}
-	return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("trigger %q is not configured for agent %q", triggerName, agentName)}
 }
 
 func composeRunAgentSpec(normalized *compose.NormalizedProjectSpec, agentName string) (compose.NormalizedAgentSpec, bool) {
@@ -2847,6 +3166,7 @@ type cliServiceClients struct {
 	cache   agentcomposev2connect.CacheServiceClient
 	sandbox agentcomposev2connect.SandboxServiceClient
 	session agentcomposev1connect.SessionServiceClient
+	loader  agentcomposev1connect.LoaderServiceClient
 }
 
 type composePSOutput struct {
@@ -2915,6 +3235,39 @@ type composeProjectSchedulerOutput struct {
 	ManagedLoaderID string `json:"managed_loader_id"`
 	Enabled         bool   `json:"enabled"`
 	TriggerCount    uint32 `json:"trigger_count"`
+}
+
+type composeSchedulerListOutput struct {
+	Project  composeUpProjectOutput        `json:"project"`
+	Triggers []composeSchedulerTriggerItem `json:"triggers"`
+}
+
+type composeSchedulerInspectOutput struct {
+	Project    composeUpProjectOutput      `json:"project"`
+	Source     string                      `json:"source"`
+	AgentName  string                      `json:"agent_name"`
+	Trigger    composeSchedulerTriggerItem `json:"trigger"`
+	Definition map[string]any              `json:"definition,omitempty"`
+	Registered map[string]any              `json:"registered,omitempty"`
+}
+
+type composeSchedulerTriggerItem struct {
+	AgentName        string `json:"agent_name"`
+	Name             string `json:"name,omitempty"`
+	TriggerID        string `json:"trigger_id"`
+	Kind             string `json:"kind"`
+	Source           string `json:"source"`
+	SchedulerID      string `json:"scheduler_id,omitempty"`
+	ManagedLoaderID  string `json:"managed_loader_id,omitempty"`
+	SchedulerEnabled bool   `json:"scheduler_enabled"`
+	TriggerEnabled   bool   `json:"trigger_enabled"`
+	Topic            string `json:"topic,omitempty"`
+	IntervalMs       int64  `json:"interval_ms,omitempty"`
+	SpecJSON         string `json:"spec_json,omitempty"`
+	NextFireAt       string `json:"next_fire_at,omitempty"`
+	LastFiredAt      string `json:"last_fired_at,omitempty"`
+	declarative      *agentcomposev2.TriggerSpec
+	registered       *agentcomposev1.LoaderTrigger
 }
 
 type composeAgentInspectOutput struct {
@@ -3346,6 +3699,7 @@ func newCLIServiceClients(cli cliOptions) (cliServiceClients, error) {
 		cache:   agentcomposev2connect.NewCacheServiceClient(httpClient, clientConfig.BaseURL),
 		sandbox: agentcomposev2connect.NewSandboxServiceClient(httpClient, clientConfig.BaseURL),
 		session: agentcomposev1connect.NewSessionServiceClient(httpClient, clientConfig.BaseURL),
+		loader:  agentcomposev1connect.NewLoaderServiceClient(httpClient, clientConfig.BaseURL),
 	}, nil
 }
 

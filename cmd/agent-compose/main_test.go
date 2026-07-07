@@ -1835,7 +1835,7 @@ agents:
 	}
 }
 
-func TestIntegrationCLIRunTrigger(t *testing.T) {
+func TestIntegrationCLIRunTriggerPositionalRejected(t *testing.T) {
 	composePath := writeComposeFile(t, t.TempDir(), `
 name: cli-run-trigger
 agents:
@@ -1847,43 +1847,23 @@ agents:
           cron: "0 1 * * *"
           prompt: review nightly
 `)
-	var sawRequest bool
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		run: runServiceStub{
 			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
-				sawRequest = true
-				if req.Msg.GetAgentName() != "reviewer" || !strings.HasPrefix(req.Msg.GetTriggerId(), "trigger-nightly-review-") || req.Msg.GetPrompt() != "" {
-					t.Fatalf("RunAgentStream trigger request = %#v", req.Msg)
-				}
-				return stream.Send(&agentcomposev2.RunAgentStreamResponse{
-					EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED,
-					RunId:     "run-trigger",
-					Run: &agentcomposev2.RunSummary{
-						RunId:     "run-trigger",
-						ProjectId: req.Msg.GetProjectId(),
-						AgentName: "reviewer",
-						Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
-						SessionId: "sandbox-trigger",
-					},
-				})
-			},
-			getRun: func(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
-				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), "run-trigger", "reviewer", "sandbox-trigger", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "")}), nil
+				t.Fatalf("RunAgentStream should not be called for positional trigger")
+				return nil
 			},
 		},
 	})
 	defer server.Close()
 
 	stdout, stderr, _, exitCode := executeCLICommand("run", "--host", server.URL, "--file", composePath, "reviewer", "nightly-review")
-	if exitCode != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("run trigger code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
-	}
-	if !sawRequest {
-		t.Fatal("RunAgentStream was not called")
+	if exitCode != exitCodeUsage || stdout != "" || !strings.Contains(stderr, "does not accept positional trigger arguments") {
+		t.Fatalf("run positional trigger code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
 	}
 }
 
-func TestIntegrationCLIRunTriggerWarnings(t *testing.T) {
+func TestIntegrationCLIRunTriggerPositionalJSONRejected(t *testing.T) {
 	composePath := writeComposeFile(t, t.TempDir(), `
 name: cli-run-trigger-warning
 agents:
@@ -1898,35 +1878,190 @@ agents:
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		run: runServiceStub{
 			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
-				return stream.Send(&agentcomposev2.RunAgentStreamResponse{
-					EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED,
-					RunId:     "run-trigger-warning",
-					Warnings:  []string{"trigger trigger-1 is disabled; running because it was requested manually"},
-					Run: &agentcomposev2.RunSummary{
-						RunId:     "run-trigger-warning",
-						ProjectId: req.Msg.GetProjectId(),
-						AgentName: "reviewer",
-						Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
-						SessionId: "sandbox-trigger",
-						Warnings:  []string{"trigger trigger-1 is disabled; running because it was requested manually"},
-					},
-				})
-			},
-			getRun: func(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
-				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), "run-trigger-warning", "reviewer", "sandbox-trigger", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "")}), nil
+				t.Fatalf("RunAgentStream should not be called for positional trigger")
+				return nil
 			},
 		},
 	})
 	defer server.Close()
 
-	stdout, stderr, _, exitCode := executeCLICommand("run", "--host", server.URL, "--file", composePath, "reviewer", "nightly-warning")
-	if exitCode != 0 || stdout != "" || !strings.Contains(stderr, "warning: trigger trigger-1 is disabled") {
-		t.Fatalf("run trigger warning code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
+	jsonOut, jsonErr, _, jsonCode := executeCLICommand("run", "--host", server.URL, "--file", composePath, "--json", "reviewer", "nightly-warning")
+	if jsonCode != exitCodeUsage || jsonOut != "" || !strings.Contains(jsonErr, "does not accept positional trigger arguments") {
+		t.Fatalf("run positional trigger --json code/stdout/stderr = %d / %q / %q", jsonCode, jsonOut, jsonErr)
+	}
+}
+
+func TestIntegrationCLISchedulerList(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-scheduler-list
+agents:
+  reviewer:
+    provider: codex
+    scheduler:
+      triggers:
+        - name: nightly
+          cron: "0 2 * * *"
+          prompt: review nightly
+        - name: events
+          event:
+            topic: repo.updated
+          prompt: review event
+`)
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		project: projectServiceStub{
+			getProject: func(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
+				return connect.NewResponse(&agentcomposev2.GetProjectResponse{Project: testCLIProject(req.Msg.GetProject().GetProjectId(), "cli-scheduler-list", composePath)}), nil
+			},
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "ls", "--host", server.URL, "--file", composePath)
+	if exitCode != 0 || stderr != "" {
+		t.Fatalf("scheduler ls code/stderr = %d / %q", exitCode, stderr)
+	}
+	if !strings.Contains(stdout, "AGENT") || !strings.Contains(stdout, "nightly") || !strings.Contains(stdout, "events") || !strings.Contains(stdout, "declarative") {
+		t.Fatalf("scheduler ls stdout = %q", stdout)
 	}
 
-	jsonOut, jsonErr, _, jsonCode := executeCLICommand("run", "--host", server.URL, "--file", composePath, "--json", "reviewer", "nightly-warning")
-	if jsonCode != 0 || jsonErr != "" || !strings.Contains(jsonOut, `"warnings"`) || !strings.Contains(jsonOut, "trigger trigger-1 is disabled") {
-		t.Fatalf("run trigger --json warning code/stdout/stderr = %d / %q / %q", jsonCode, jsonOut, jsonErr)
+	jsonOut, jsonErr, _, jsonCode := executeCLICommand("scheduler", "ls", "reviewer", "--json", "--host", server.URL, "--file", composePath)
+	if jsonCode != 0 || jsonErr != "" || !strings.Contains(jsonOut, `"agent_name": "reviewer"`) || !strings.Contains(jsonOut, `"source": "declarative"`) {
+		t.Fatalf("scheduler ls --json code/stdout/stderr = %d / %q / %q", jsonCode, jsonOut, jsonErr)
+	}
+}
+
+func TestIntegrationCLISchedulerTriggerUsesRunAgentTriggerID(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-scheduler-trigger
+agents:
+  reviewer:
+    provider: codex
+    scheduler:
+      triggers:
+        - name: nightly
+          cron: "0 2 * * *"
+          prompt: review nightly
+`)
+	var sawRequest bool
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		project: projectServiceStub{
+			getProject: func(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
+				return connect.NewResponse(&agentcomposev2.GetProjectResponse{Project: testCLIProject(req.Msg.GetProject().GetProjectId(), "cli-scheduler-trigger", composePath)}), nil
+			},
+		},
+		run: runServiceStub{
+			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
+				sawRequest = true
+				if req.Msg.GetAgentName() != "reviewer" || !strings.HasPrefix(req.Msg.GetTriggerId(), "trigger-nightly-") || req.Msg.GetPrompt() != "" || req.Msg.GetCommand() != "" {
+					t.Fatalf("RunAgentStream scheduler trigger request = %#v", req.Msg)
+				}
+				return stream.Send(&agentcomposev2.RunAgentStreamResponse{
+					EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED,
+					RunId:     "run-scheduler-trigger",
+					Run: &agentcomposev2.RunSummary{
+						RunId:     "run-scheduler-trigger",
+						ProjectId: req.Msg.GetProjectId(),
+						AgentName: "reviewer",
+						Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
+						SessionId: "sandbox-scheduler-trigger",
+					},
+				})
+			},
+			getRun: func(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
+				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), "run-scheduler-trigger", "reviewer", "sandbox-scheduler-trigger", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "")}), nil
+			},
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "trigger", "--host", server.URL, "--file", composePath, "reviewer", "nightly")
+	if exitCode != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("scheduler trigger code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
+	}
+	if !sawRequest {
+		t.Fatal("RunAgentStream was not called")
+	}
+}
+
+func TestIntegrationCLISchedulerInspectDeclarativeTriggerYAML(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-scheduler-inspect
+agents:
+  reviewer:
+    provider: codex
+    scheduler:
+      triggers:
+        - name: nightly
+          cron: "0 2 * * *"
+          prompt: review nightly
+`)
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		project: projectServiceStub{
+			getProject: func(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
+				return connect.NewResponse(&agentcomposev2.GetProjectResponse{Project: testCLIProject(req.Msg.GetProject().GetProjectId(), "cli-scheduler-inspect", composePath)}), nil
+			},
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "inspect", "--host", server.URL, "--file", composePath, "reviewer", "nightly")
+	if exitCode != 0 || stderr != "" {
+		t.Fatalf("scheduler inspect code/stderr = %d / %q", exitCode, stderr)
+	}
+	if !strings.Contains(stdout, "name: nightly") || !strings.Contains(stdout, "cron: 0 2 * * *") || !strings.Contains(stdout, "prompt: review nightly") {
+		t.Fatalf("scheduler inspect stdout = %q", stdout)
+	}
+}
+
+func TestIntegrationCLISchedulerInspectLoaderRegisteredTrigger(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-scheduler-loader
+agents:
+  reviewer:
+    provider: codex
+    scheduler:
+      script: |
+        scheduler.interval("loader-every-minute", async function() {}, 60000);
+`)
+	var requestedLoader string
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		project: projectServiceStub{
+			getProject: func(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
+				project := testCLIProject(req.Msg.GetProject().GetProjectId(), "cli-scheduler-loader", composePath)
+				project.Schedulers[0].ManagedLoaderId = "loader-reviewer"
+				return connect.NewResponse(&agentcomposev2.GetProjectResponse{Project: project}), nil
+			},
+		},
+		loader: loaderServiceStub{
+			getLoader: func(ctx context.Context, req *connect.Request[agentcomposev1.LoaderIDRequest]) (*connect.Response[agentcomposev1.LoaderResponse], error) {
+				requestedLoader = req.Msg.GetLoaderId()
+				return connect.NewResponse(&agentcomposev1.LoaderResponse{
+					Loader: &agentcomposev1.LoaderDetail{
+						Summary: &agentcomposev1.LoaderSummary{LoaderId: req.Msg.GetLoaderId(), Name: "reviewer-scheduler", Enabled: true},
+						Triggers: []*agentcomposev1.LoaderTrigger{
+							{
+								LoaderId:    req.Msg.GetLoaderId(),
+								TriggerId:   "loader-every-minute",
+								Kind:        agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_INTERVAL,
+								IntervalMs:  60000,
+								Enabled:     true,
+								NextFireAt:  "2026-07-06T12:00:00Z",
+								LastFiredAt: "2026-07-06T11:59:00Z",
+							},
+						},
+					},
+				}), nil
+			},
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "inspect", "--host", server.URL, "--file", composePath, "reviewer", "loader-every-minute")
+	if exitCode != 0 || stderr != "" {
+		t.Fatalf("scheduler inspect loader code/stderr = %d / %q", exitCode, stderr)
+	}
+	if requestedLoader == "" || !strings.Contains(stdout, "trigger_id: loader-every-minute") || !strings.Contains(stdout, "interval_ms: 60000") || !strings.Contains(stdout, "kind: interval") {
+		t.Fatalf("requestedLoader=%q stdout=%q", requestedLoader, stdout)
 	}
 }
 
@@ -1936,17 +2071,6 @@ name: cli-run-input-errors
 agents:
   reviewer:
     provider: codex
-`)
-	composeWithTriggerPath := writeComposeFile(t, t.TempDir(), `
-name: cli-run-input-trigger-errors
-agents:
-  reviewer:
-    provider: codex
-    scheduler:
-      triggers:
-        - name: nightly
-          cron: "0 2 * * *"
-          prompt: review nightly
 `)
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		run: runServiceStub{
@@ -1991,42 +2115,27 @@ agents:
 		{
 			name: "command and prompt flags",
 			args: []string{"run", "--host", server.URL, "--file", composePath, "reviewer", "--command", "echo hi", "--prompt", "check"},
-			want: "only one of trigger name, --prompt, or --command",
+			want: "only one of --prompt or --command",
 		},
 		{
 			name: "prompt flag and positional trigger",
 			args: []string{"run", "--host", server.URL, "--file", composePath, "reviewer", "--prompt", "check", "legacy"},
-			want: "does not accept additional positional arguments",
+			want: "run with --prompt does not accept additional positional arguments",
 		},
 		{
 			name: "command flag and positional trigger",
 			args: []string{"run", "--host", server.URL, "--file", composePath, "reviewer", "--command", "echo hi", "legacy"},
-			want: "does not accept additional positional arguments",
+			want: "run with --command does not accept additional positional arguments",
 		},
 		{
-			name: "positional trigger without configured triggers",
+			name: "positional trigger rejected",
 			args: []string{"run", "--host", server.URL, "--file", composePath, "reviewer", "nightly"},
-			want: "has no configured triggers; use --prompt or --command",
+			want: "does not accept positional trigger arguments",
 		},
 		{
-			name: "one positional arg with configured triggers",
-			args: []string{"run", "--host", server.URL, "--file", composeWithTriggerPath, "reviewer"},
-			want: "run requires a trigger name, --prompt, or --command",
-		},
-		{
-			name: "one positional arg with unknown agent",
-			args: []string{"run", "--host", server.URL, "--file", composeWithTriggerPath, "missing"},
-			want: `agent "missing" is not configured in this project`,
-		},
-		{
-			name: "positional trigger name not configured",
-			args: []string{"run", "--host", server.URL, "--file", composeWithTriggerPath, "reviewer", "missing"},
-			want: `trigger "missing" is not configured for agent "reviewer"`,
-		},
-		{
-			name: "too many positional trigger arguments",
+			name: "multiple extra positional arguments rejected",
 			args: []string{"run", "--host", server.URL, "--file", composePath, "reviewer", "nightly", "extra"},
-			want: "at most one trigger name positional argument",
+			want: "does not accept positional trigger arguments",
 		},
 		{
 			name: "empty command flag",
@@ -5570,6 +5679,7 @@ type composeServiceStubs struct {
 	cache   cacheServiceStub
 	sandbox sandboxServiceStub
 	session sessionServiceStub
+	loader  loaderServiceStub
 }
 
 type projectServiceStub struct {
@@ -5762,6 +5872,19 @@ func (s sessionServiceStub) StopSession(ctx context.Context, req *connect.Reques
 	return s.stopSession(ctx, req)
 }
 
+type loaderServiceStub struct {
+	getLoader func(context.Context, *connect.Request[agentcomposev1.LoaderIDRequest]) (*connect.Response[agentcomposev1.LoaderResponse], error)
+
+	agentcomposev1connect.UnimplementedLoaderServiceHandler
+}
+
+func (s loaderServiceStub) GetLoader(ctx context.Context, req *connect.Request[agentcomposev1.LoaderIDRequest]) (*connect.Response[agentcomposev1.LoaderResponse], error) {
+	if s.getLoader == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("GetLoader stub is not configured"))
+	}
+	return s.getLoader(ctx, req)
+}
+
 func newComposeServiceStubServer(t *testing.T, stubs composeServiceStubs) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -5791,6 +5914,10 @@ func newComposeServiceStubServer(t *testing.T, stubs composeServiceStubs) *httpt
 	}
 	if stubs.session.getSession != nil || stubs.session.listSessions != nil || stubs.session.resumeSession != nil || stubs.session.stopSession != nil {
 		path, handler := agentcomposev1connect.NewSessionServiceHandler(stubs.session)
+		mux.Handle(path, handler)
+	}
+	if stubs.loader.getLoader != nil {
+		path, handler := agentcomposev1connect.NewLoaderServiceHandler(stubs.loader)
 		mux.Handle(path, handler)
 	}
 	return httptest.NewServer(mux)

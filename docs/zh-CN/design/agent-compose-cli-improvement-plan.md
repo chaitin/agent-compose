@@ -117,22 +117,21 @@ agents:
 
 ## Run 输入模式
 
-`agent-compose run <agent>` 当前支持三类单次输入：
+`agent-compose run <agent>` 当前支持两类单次输入；scheduler trigger 由 `agent-compose scheduler trigger <agent> <trigger>` 执行：
 
-- `<trigger-name>`：按名称手动运行 project 中 managed scheduler/loader trigger。
 - `--prompt "..."`：向 provider 发送一轮 prompt。
 - `--command "..."`：在 agent sandbox 中通过 guest `agent-compose-runtime exec` 执行一次 shell command。
 
 互斥规则：
 
-- trigger name、`--prompt`、`--command` 一次只能选择一种。
+- `--prompt`、`--command` 一次只能选择一种。
 - 使用 `--prompt` 或 `--command` 后不能再传额外位置参数。
 - prompt 输入必须使用 `--prompt`；`run <agent> <trigger-name>` 的第二个位置参数不再作为 prompt 处理。
 - 复用 sandbox 使用 `--sandbox-id`。
 
 ### Trigger 解析
 
-`run <agent> <trigger-name>` 会在 CLI 侧基于当前 `agent-compose.yml` 查找 trigger name，并把对应的 trigger 提交给 daemon。`pkg/runs.Controller` 会在 `BeginRun` 前解析当前 project/agent 的 managed scheduler loader：
+两个位置参数的 run 形式不再由 run 命令支持；run 命令不再在 CLI 侧解析 trigger name，也不会把 trigger id 写入 manual run request。`pkg/runs.Controller` 会在 `BeginRun` 前解析当前 project/agent 的 managed scheduler loader：
 
 - trigger 必须属于当前 project 和 agent。
 - disabled scheduler 或 disabled trigger 可由 operator 手动运行，但 run response/summary/detail 会带 warning。
