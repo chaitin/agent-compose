@@ -540,12 +540,12 @@ func (c *Controller) validateManagedAgentDefinitions(normalized NormalizedProjec
 	return issues
 }
 
-func (c *Controller) cleanupFailedManagedSchedulerReconcile(ctx context.Context, scheduler domain.ProjectSchedulerRecord, loaderID string) {
+func (c *Controller) cleanupFailedManagedSchedulerReconcile(ctx context.Context, scheduler domain.ProjectSchedulerRecord, executionID string) {
 	if c == nil || c.store == nil {
 		return
 	}
-	if strings.TrimSpace(loaderID) != "" {
-		_ = c.store.SetSchedulerExecutionEnabled(ctx, loaderID, false)
+	if strings.TrimSpace(executionID) != "" {
+		_ = c.store.SetSchedulerExecutionEnabled(ctx, executionID, false)
 	}
 	if strings.TrimSpace(scheduler.ProjectID) != "" && strings.TrimSpace(scheduler.SchedulerID) != "" {
 		_, _ = c.store.SetProjectSchedulerEnabled(ctx, scheduler.ProjectID, scheduler.SchedulerID, false)
@@ -593,7 +593,7 @@ func applyChanges(project, existing domain.ProjectRecord, found bool, revision d
 	}
 }
 
-func dryRunChanges(project domain.ProjectRecord, agents []domain.ProjectAgentRecord, agentDefinitions []domain.AgentDefinition, schedulers []domain.ProjectSchedulerRecord, loaders []domain.Loader) []Change {
+func dryRunChanges(project domain.ProjectRecord, agents []domain.ProjectAgentRecord, agentDefinitions []domain.AgentDefinition, schedulers []domain.ProjectSchedulerRecord, executions []domain.Loader) []Change {
 	changes := []Change{{Action: ChangeActionCreated, ResourceType: "project", ResourceID: project.ID, Name: project.Name}}
 	for _, agent := range agents {
 		changes = append(changes, Change{Action: ChangeActionCreated, ResourceType: "project_agent", ResourceID: agent.ManagedAgentID, Name: agent.AgentName})
@@ -604,8 +604,8 @@ func dryRunChanges(project domain.ProjectRecord, agents []domain.ProjectAgentRec
 	for _, scheduler := range schedulers {
 		changes = append(changes, Change{Action: ChangeActionCreated, ResourceType: "project_scheduler", ResourceID: scheduler.SchedulerID, Name: scheduler.AgentName})
 	}
-	for _, loader := range loaders {
-		changes = append(changes, Change{Action: ChangeActionCreated, ResourceType: "loader", ResourceID: loader.Summary.ID, Name: loader.Summary.Name})
+	for _, execution := range executions {
+		changes = append(changes, Change{Action: ChangeActionCreated, ResourceType: "loader", ResourceID: execution.Summary.ID, Name: execution.Summary.Name})
 	}
 	return changes
 }
