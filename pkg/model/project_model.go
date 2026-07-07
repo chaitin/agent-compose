@@ -17,6 +17,7 @@ const (
 type ProjectRecord struct {
 	ID              string    `json:"id"`
 	Name            string    `json:"name"`
+	ShortID         string    `json:"short_id,omitempty"`
 	SourcePath      string    `json:"source_path,omitempty"`
 	SourceJSON      string    `json:"source_json"`
 	CurrentRevision int64     `json:"current_revision"`
@@ -35,6 +36,9 @@ type ProjectRevisionRecord struct {
 }
 
 type ProjectAgentRecord struct {
+	ID               string    `json:"id,omitempty"`
+	Name             string    `json:"name,omitempty"`
+	ShortID          string    `json:"short_id,omitempty"`
 	ProjectID        string    `json:"project_id"`
 	AgentName        string    `json:"agent_name"`
 	ManagedAgentID   string    `json:"managed_agent_id,omitempty"`
@@ -50,6 +54,8 @@ type ProjectAgentRecord struct {
 }
 
 type ProjectSchedulerRecord struct {
+	ID              string    `json:"id,omitempty"`
+	ShortID         string    `json:"short_id,omitempty"`
 	ProjectID       string    `json:"project_id"`
 	SchedulerID     string    `json:"scheduler_id"`
 	AgentName       string    `json:"agent_name"`

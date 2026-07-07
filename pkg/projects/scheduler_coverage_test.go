@@ -141,13 +141,14 @@ func TestProjectNormalizeAndScanCoverage(t *testing.T) {
 	scanned, err := ScanProject(func(dest ...any) error {
 		*(dest[0].(*string)) = "project-1"
 		*(dest[1].(*string)) = "Project"
-		*(dest[2].(*string)) = "/repo"
-		*(dest[3].(*string)) = `{}`
-		*(dest[4].(*int64)) = 1
-		*(dest[5].(*string)) = "hash"
-		*(dest[6].(*any)) = int64(1)
-		*(dest[7].(*any)) = "2026-07-03T09:00:00.000Z"
-		*(dest[8].(*any)) = []byte("0")
+		*(dest[2].(*string)) = ""
+		*(dest[3].(*string)) = "/repo"
+		*(dest[4].(*string)) = `{}`
+		*(dest[5].(*int64)) = 1
+		*(dest[6].(*string)) = "hash"
+		*(dest[7].(*any)) = int64(1)
+		*(dest[8].(*any)) = "2026-07-03T09:00:00.000Z"
+		*(dest[9].(*any)) = []byte("0")
 		return nil
 	})
 	if err != nil || scanned.CreatedAt.IsZero() || scanned.UpdatedAt.IsZero() || !scanned.RemovedAt.IsZero() {

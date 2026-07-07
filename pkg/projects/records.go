@@ -3,6 +3,7 @@ package projects
 import (
 	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/compose"
+	"agent-compose/pkg/identity"
 	domain "agent-compose/pkg/model"
 	"encoding/json"
 	"fmt"
@@ -29,6 +30,7 @@ func NewRecordFromSpec(spec *compose.NormalizedProjectSpec, sourcePath string) (
 	return domain.ProjectRecord{
 		ID:         projectID,
 		Name:       strings.TrimSpace(spec.Name),
+		ShortID:    identity.ShortID(projectID),
 		SourcePath: sourcePath,
 		SourceJSON: sourceJSON,
 		SpecHash:   specHash,
@@ -49,6 +51,9 @@ func NewAgentRecordFromSpec(projectID string, revision int64, agent compose.Norm
 		driver = agent.Driver.Name
 	}
 	return domain.ProjectAgentRecord{
+		ID:               managedAgentID,
+		Name:             strings.TrimSpace(agent.Name),
+		ShortID:          identity.ShortID(managedAgentID),
 		ProjectID:        strings.TrimSpace(projectID),
 		AgentName:        strings.TrimSpace(agent.Name),
 		ManagedAgentID:   managedAgentID,
@@ -236,6 +241,8 @@ func NewSchedulerRecordFromSpec(projectID string, revision int64, agent compose.
 		return domain.ProjectSchedulerRecord{}, false, fmt.Errorf("marshal project scheduler %s spec: %w", agent.Name, err)
 	}
 	return domain.ProjectSchedulerRecord{
+		ID:              schedulerID,
+		ShortID:         identity.ShortID(schedulerID),
 		ProjectID:       strings.TrimSpace(projectID),
 		SchedulerID:     schedulerID,
 		AgentName:       strings.TrimSpace(agent.Name),

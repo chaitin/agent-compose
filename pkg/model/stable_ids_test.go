@@ -1,8 +1,8 @@
 package model_test
 
 import (
+	"agent-compose/pkg/identity"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	domain "agent-compose/pkg/model"
@@ -58,11 +58,11 @@ func TestProjectStableIDHelpers(t *testing.T) {
 		"loader":    loaderID,
 		"run":       runID,
 	} {
-		if len(id) > 80 {
-			t.Fatalf("%s id too long: %q", label, id)
+		if !identity.IsID(id) {
+			t.Fatalf("%s id = %q, want sha256 id", label, id)
 		}
-		if !strings.Contains(id, "-reviewer-") && label != "project" {
-			t.Fatalf("%s id missing readable agent name: %q", label, id)
+		if shortID := identity.ShortID(id); !identity.IsShortID(shortID) {
+			t.Fatalf("%s short id = %q, want 12-char hex short id", label, shortID)
 		}
 	}
 	if otherRunID == runID {

@@ -1,6 +1,7 @@
 package projects
 
 import (
+	"agent-compose/pkg/identity"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -11,6 +12,7 @@ import (
 func NormalizeRecord(project domain.ProjectRecord) (domain.ProjectRecord, error) {
 	project.ID = strings.TrimSpace(project.ID)
 	project.Name = strings.TrimSpace(project.Name)
+	project.ShortID = strings.TrimSpace(project.ShortID)
 	project.SourcePath = domain.NormalizeProjectSourcePath(project.SourcePath)
 	project.SourceJSON = strings.TrimSpace(project.SourceJSON)
 	project.SpecHash = strings.TrimSpace(project.SpecHash)
@@ -19,6 +21,9 @@ func NormalizeRecord(project domain.ProjectRecord) (domain.ProjectRecord, error)
 	}
 	if project.Name == "" {
 		return domain.ProjectRecord{}, fmt.Errorf("project name is required")
+	}
+	if project.ShortID == "" {
+		project.ShortID = identity.ShortID(project.ID)
 	}
 	if project.SourceJSON == "" {
 		sourceJSON, err := EncodeSourceJSON(project.SourcePath)
@@ -37,6 +42,9 @@ func NormalizeRecord(project domain.ProjectRecord) (domain.ProjectRecord, error)
 }
 
 func NormalizeAgentRecord(agent domain.ProjectAgentRecord) (domain.ProjectAgentRecord, error) {
+	agent.ID = strings.TrimSpace(agent.ID)
+	agent.Name = strings.TrimSpace(agent.Name)
+	agent.ShortID = strings.TrimSpace(agent.ShortID)
 	agent.ProjectID = strings.TrimSpace(agent.ProjectID)
 	agent.AgentName = strings.TrimSpace(agent.AgentName)
 	agent.ManagedAgentID = strings.TrimSpace(agent.ManagedAgentID)
@@ -48,12 +56,24 @@ func NormalizeAgentRecord(agent domain.ProjectAgentRecord) (domain.ProjectAgentR
 	if agent.ProjectID == "" || agent.AgentName == "" {
 		return domain.ProjectAgentRecord{}, fmt.Errorf("project id and agent name are required")
 	}
+	if agent.Name == "" {
+		agent.Name = agent.AgentName
+	}
 	if agent.ManagedAgentID == "" {
 		managedAgentID, err := domain.StableManagedAgentID(agent.ProjectID, agent.AgentName)
 		if err != nil {
 			return domain.ProjectAgentRecord{}, err
 		}
 		agent.ManagedAgentID = managedAgentID
+	}
+	if agent.ID == "" {
+		agent.ID = agent.ManagedAgentID
+	}
+	if agent.ManagedAgentID == "" {
+		agent.ManagedAgentID = agent.ID
+	}
+	if agent.ShortID == "" {
+		agent.ShortID = identity.ShortID(agent.ID)
 	}
 	if agent.Revision < 0 {
 		return domain.ProjectAgentRecord{}, fmt.Errorf("project agent revision cannot be negative")
@@ -68,6 +88,8 @@ func NormalizeAgentRecord(agent domain.ProjectAgentRecord) (domain.ProjectAgentR
 }
 
 func NormalizeSchedulerRecord(scheduler domain.ProjectSchedulerRecord) (domain.ProjectSchedulerRecord, error) {
+	scheduler.ID = strings.TrimSpace(scheduler.ID)
+	scheduler.ShortID = strings.TrimSpace(scheduler.ShortID)
 	scheduler.ProjectID = strings.TrimSpace(scheduler.ProjectID)
 	scheduler.SchedulerID = strings.TrimSpace(scheduler.SchedulerID)
 	scheduler.AgentName = strings.TrimSpace(scheduler.AgentName)
@@ -82,6 +104,15 @@ func NormalizeSchedulerRecord(scheduler domain.ProjectSchedulerRecord) (domain.P
 			return domain.ProjectSchedulerRecord{}, err
 		}
 		scheduler.SchedulerID = schedulerID
+	}
+	if scheduler.ID == "" {
+		scheduler.ID = scheduler.SchedulerID
+	}
+	if scheduler.SchedulerID == "" {
+		scheduler.SchedulerID = scheduler.ID
+	}
+	if scheduler.ShortID == "" {
+		scheduler.ShortID = identity.ShortID(scheduler.ID)
 	}
 	if scheduler.ManagedLoaderID == "" {
 		loaderID, err := domain.StableManagedLoaderID(scheduler.ProjectID, scheduler.AgentName, "")

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"agent-compose/pkg/config"
+	"agent-compose/pkg/identity"
 	"agent-compose/pkg/imagecache"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
@@ -1952,7 +1953,7 @@ agents:
 		run: runServiceStub{
 			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
 				sawRequest = true
-				if req.Msg.GetAgentName() != "reviewer" || !strings.HasPrefix(req.Msg.GetTriggerId(), "trigger-nightly-") || req.Msg.GetPrompt() != "" || req.Msg.GetCommand() != "" {
+				if req.Msg.GetAgentName() != "reviewer" || !identity.IsID(req.Msg.GetTriggerId()) || req.Msg.GetPrompt() != "" || req.Msg.GetCommand() != "" {
 					t.Fatalf("RunAgentStream scheduler trigger request = %#v", req.Msg)
 				}
 				return stream.Send(&agentcomposev2.RunAgentStreamResponse{
