@@ -1,13 +1,15 @@
 package loaders
 
 import (
-	domain "agent-compose/pkg/model"
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	domain "agent-compose/pkg/model"
 
 	"github.com/fastschema/qjs"
 	"github.com/samber/do/v2"
@@ -1003,6 +1005,10 @@ func parseLoaderAgentRequest(args []*qjs.Value) (domain.LoaderAgentRequest, erro
 	if err != nil {
 		return domain.LoaderAgentRequest{}, err
 	}
+	request.Volumes, err = loaderVolumeMountSpecsOption(options, "scheduler.agent")
+	if err != nil {
+		return domain.LoaderAgentRequest{}, err
+	}
 	return request, nil
 }
 
@@ -1165,7 +1171,90 @@ func loaderCommandRequestFromOptions(options map[string]any, apiName string) (do
 	if err != nil {
 		return domain.LoaderCommandRequest{}, fmt.Errorf("%s", strings.Replace(err.Error(), "scheduler.agent", apiName, 1))
 	}
+	request.Volumes, err = loaderVolumeMountSpecsOption(options, apiName)
+	if err != nil {
+		return domain.LoaderCommandRequest{}, err
+	}
 	return request, nil
+}
+
+func loaderVolumeMountSpecsOption(options map[string]any, apiName string) ([]domain.VolumeMountSpec, error) {
+	value, ok := options["volumes"]
+	if !ok || value == nil {
+		return nil, nil
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("decode %s volumes: must be an array", apiName)
+	}
+	specs := make([]domain.VolumeMountSpec, 0, len(items))
+	for i, item := range items {
+		spec, err := loaderVolumeMountSpec(item)
+		if err != nil {
+			return nil, fmt.Errorf("decode %s volumes[%d]: %w", apiName, i, err)
+		}
+		specs = append(specs, spec)
+	}
+	normalized, err := domain.NormalizeVolumeMountSpecs(specs)
+	if err != nil {
+		return nil, fmt.Errorf("decode %s volumes: %w", apiName, err)
+	}
+	return normalized, nil
+}
+
+func loaderVolumeMountSpec(value any) (domain.VolumeMountSpec, error) {
+	switch typed := value.(type) {
+	case string:
+		return parseLoaderVolumeMountShortSyntax(typed)
+	case map[string]any:
+		spec := domain.VolumeMountSpec{
+			Type:     loaderStringOption(typed, "type"),
+			Source:   loaderStringOption(typed, "source"),
+			Target:   loaderStringOption(typed, "target"),
+			ReadOnly: loaderBoolOption(typed, "readOnly", "read_only"),
+		}
+		if strings.TrimSpace(spec.Type) == "" {
+			spec.Type = inferLoaderVolumeMountType(spec.Source)
+		}
+		return spec, nil
+	default:
+		return domain.VolumeMountSpec{}, fmt.Errorf("must be a string or object")
+	}
+}
+
+func parseLoaderVolumeMountShortSyntax(raw string) (domain.VolumeMountSpec, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return domain.VolumeMountSpec{}, fmt.Errorf("volume short syntax is required")
+	}
+	parts := strings.Split(raw, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return domain.VolumeMountSpec{}, fmt.Errorf("volume short syntax must be source:target[:ro]")
+	}
+	source := strings.TrimSpace(parts[0])
+	target := strings.TrimSpace(parts[1])
+	if source == "" || target == "" {
+		return domain.VolumeMountSpec{}, fmt.Errorf("volume short syntax requires source and target")
+	}
+	readOnly := false
+	if len(parts) == 3 {
+		switch strings.ToLower(strings.TrimSpace(parts[2])) {
+		case "", "rw":
+		case "ro", "readonly", "read_only":
+			readOnly = true
+		default:
+			return domain.VolumeMountSpec{}, fmt.Errorf("unsupported volume short syntax mode %q", parts[2])
+		}
+	}
+	return domain.VolumeMountSpec{Type: inferLoaderVolumeMountType(source), Source: source, Target: target, ReadOnly: readOnly}, nil
+}
+
+func inferLoaderVolumeMountType(source string) string {
+	source = strings.TrimSpace(source)
+	if filepath.IsAbs(source) || strings.HasPrefix(source, ".") {
+		return domain.VolumeMountTypeBind
+	}
+	return domain.VolumeMountTypeVolume
 }
 
 func loaderCommandResultValue(jsctx *qjs.Context, apiName string, response domain.LoaderCommandResult) (*qjs.Value, error) {
@@ -1218,6 +1307,18 @@ func loaderStringOption(options map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func loaderBoolOption(options map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		value, ok := options[key]
+		if !ok || value == nil {
+			continue
+		}
+		raw, ok := value.(bool)
+		return ok && raw
+	}
+	return false
 }
 
 func loaderStringArrayOption(options map[string]any, keys ...string) ([]string, error) {

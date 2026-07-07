@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,8 +20,13 @@ import (
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
+	"agent-compose/pkg/volumes"
 	"agent-compose/pkg/workspaces"
 )
+
+type LoaderVolumeResolver interface {
+	ResolveMounts(ctx context.Context, specs []domain.VolumeMountSpec, options volumes.ResolveOptions) ([]domain.SessionVolumeMount, []string, error)
+}
 
 type LoaderSessionRunner struct {
 	Config    *appconfig.Config
@@ -28,12 +34,13 @@ type LoaderSessionRunner struct {
 	ConfigDB  *configstore.ConfigStore
 	Driver    sessions.SessionDriver
 	Cap       capabilities.Provider
+	Volumes   LoaderVolumeResolver
 	Streams   *sessions.StreamBroker
 	Publisher loaders.ControllerPublisher
 }
 
-func NewLoaderSessionRunner(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, driver sessions.SessionDriver, cap capabilities.Provider, streams *sessions.StreamBroker, publisher loaders.ControllerPublisher) *LoaderSessionRunner {
-	return &LoaderSessionRunner{Config: config, Store: store, ConfigDB: configDB, Driver: driver, Cap: cap, Streams: streams, Publisher: publisher}
+func NewLoaderSessionRunner(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, driver sessions.SessionDriver, cap capabilities.Provider, volumeResolver LoaderVolumeResolver, streams *sessions.StreamBroker, publisher loaders.ControllerPublisher) *LoaderSessionRunner {
+	return &LoaderSessionRunner{Config: config, Store: store, ConfigDB: configDB, Driver: driver, Cap: cap, Volumes: volumeResolver, Streams: streams, Publisher: publisher}
 }
 
 func (r *LoaderSessionRunner) Shutdown(ctx context.Context, sessionID string) error {
@@ -125,11 +132,18 @@ func (r *LoaderSessionRunner) Ensure(ctx context.Context, loader domain.Loader, 
 	if agentDefinition != nil {
 		tags = append(tags, api.SessionTagsFromProto(api.AgentDefinitionTagsToProto(*agentDefinition))...)
 	}
-	session, err := r.Store.CreateSession(ctx, title, "", driver, guestImage, workspaceID, domain.SessionTypeScript+":"+loader.Summary.ID, workspaceSnapshot, envItems, tags)
+	volumeMounts, volumeWarnings, err := r.resolveVolumeMounts(ctx, loader, request, agentDefinition)
+	if err != nil {
+		return nil, "", err
+	}
+	session, err := r.Store.CreateSessionWithOptions(ctx, title, "", driver, guestImage, workspaceID, domain.SessionTypeScript+":"+loader.Summary.ID, workspaceSnapshot, envItems, tags, sessionstore.CreateSessionOptions{
+		VolumeMounts: volumeMounts,
+	})
 	if err != nil {
 		return nil, "", err
 	}
 	session.ProviderEnvItems = providerEnvItems
+	r.recordVolumeWarnings(ctx, session.Summary.ID, volumeWarnings)
 	if err := workspaces.PrepareSessionWorkspace(ctx, r.Config, r.ConfigDB, session); err != nil {
 		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = r.Store.UpdateSession(ctx, session)
@@ -265,6 +279,61 @@ func (r *LoaderSessionRunner) guestImage(request domain.LoaderAgentRequest, load
 		agentGuestImage = agentDefinition.GuestImage
 	}
 	return driverpkg.ResolveSessionGuestImage(request.GuestImage, loader.Summary.GuestImage, agentGuestImage, driverpkg.DefaultGuestImageForDriver(r.Config, driver))
+}
+
+func (r *LoaderSessionRunner) resolveVolumeMounts(ctx context.Context, loader domain.Loader, request domain.LoaderAgentRequest, agentDefinition *domain.AgentDefinition) ([]domain.SessionVolumeMount, []string, error) {
+	specs, err := mergeLoaderVolumeMountSpecs(agentDefinitionVolumes(agentDefinition), loader.Volumes, request.Volumes)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(specs) == 0 {
+		return nil, nil, nil
+	}
+	if r.Volumes == nil {
+		return nil, nil, fmt.Errorf("volume resolver is required")
+	}
+	return r.Volumes.ResolveMounts(ctx, specs, volumes.ResolveOptions{})
+}
+
+func mergeLoaderVolumeMountSpecs(groups ...[]domain.VolumeMountSpec) ([]domain.VolumeMountSpec, error) {
+	var merged []domain.VolumeMountSpec
+	byTarget := make(map[string]int)
+	for _, group := range groups {
+		normalized, err := domain.NormalizeVolumeMountSpecs(group)
+		if err != nil {
+			return nil, err
+		}
+		for _, spec := range normalized {
+			target := filepath.Clean(spec.Target)
+			if index, ok := byTarget[target]; ok {
+				merged[index] = spec
+				continue
+			}
+			byTarget[target] = len(merged)
+			merged = append(merged, spec)
+		}
+	}
+	return merged, nil
+}
+
+func agentDefinitionVolumes(agentDefinition *domain.AgentDefinition) []domain.VolumeMountSpec {
+	if agentDefinition == nil {
+		return nil
+	}
+	return agentDefinition.Volumes
+}
+
+func (r *LoaderSessionRunner) recordVolumeWarnings(ctx context.Context, sessionID string, warnings []string) {
+	if r == nil || r.Store == nil || len(warnings) == 0 {
+		return
+	}
+	for _, warning := range warnings {
+		event := domain.SessionEvent{ID: uuid.NewString(), Type: "session.volume.warning", Level: "warn", Message: warning, CreatedAt: time.Now().UTC()}
+		_ = r.Store.AddEvent(ctx, sessionID, event)
+		if r.Streams != nil {
+			r.Streams.PublishEventAdded(sessionID, event)
+		}
+	}
 }
 
 func (r *LoaderSessionRunner) publish(topic string, payload map[string]any) {

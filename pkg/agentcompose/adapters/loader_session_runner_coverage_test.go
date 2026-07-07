@@ -7,13 +7,14 @@ import (
 	driverpkg "agent-compose/pkg/driver"
 	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/volumes"
 )
 
 func TestLoaderSessionRunnerLoadResumeAndShutdownCoverage(t *testing.T) {
 	ctx := context.Background()
 	bridge, driver := newTestSessionRPCBridge(t)
 	publisher := &loaderSessionPublisherFake{}
-	runner := NewLoaderSessionRunner(bridge.config, bridge.store, bridge.configDB, driver, nil, bridge.streams, publisher)
+	runner := NewLoaderSessionRunner(bridge.config, bridge.store, bridge.configDB, driver, nil, nil, bridge.streams, publisher)
 
 	running, err := bridge.store.CreateSession(ctx, "running", "", driverpkg.RuntimeDriverBoxlite, "", "", "loader", nil, nil, nil)
 	if err != nil {
@@ -83,6 +84,67 @@ func TestLoaderSessionRunnerLoadResumeAndShutdownCoverage(t *testing.T) {
 	}
 }
 
+func TestLoaderSessionRunnerResolvesVolumeMounts(t *testing.T) {
+	ctx := context.Background()
+	bridge, driver := newTestSessionRPCBridge(t)
+	hostPath := t.TempDir()
+	resolver := &loaderVolumeResolverFake{
+		mounts: []domain.SessionVolumeMount{{
+			ID:       "mount-cache",
+			Type:     domain.VolumeMountTypeVolume,
+			Source:   "request-cache",
+			Target:   "/cache",
+			VolumeID: "vol-cache",
+			Driver:   domain.VolumeDriverLocal,
+			HostPath: hostPath,
+		}},
+		warnings: []string{"volume target /cache overlaps test path"},
+	}
+	runner := NewLoaderSessionRunner(bridge.config, bridge.store, bridge.configDB, driver, nil, resolver, bridge.streams, nil)
+	loader := domain.Loader{
+		Summary: domain.LoaderSummary{ID: "loader-1", Name: "Loader", Driver: driverpkg.RuntimeDriverDocker},
+		Volumes: []domain.VolumeMountSpec{{
+			Type:   domain.VolumeMountTypeVolume,
+			Source: "loader-cache",
+			Target: "/cache",
+		}},
+	}
+	request := domain.LoaderAgentRequest{
+		SessionPolicy: domain.LoaderSessionPolicyNew,
+		Volumes: []domain.VolumeMountSpec{{
+			Type:   domain.VolumeMountTypeVolume,
+			Source: "request-cache",
+			Target: "/cache",
+		}},
+	}
+	session, eventType, err := runner.Ensure(ctx, loader, request, false)
+	if err != nil {
+		t.Fatalf("Ensure returned error: %v", err)
+	}
+	if eventType != "loader.session.created" || len(driver.startCalls) != 1 {
+		t.Fatalf("eventType=%q startCalls=%#v", eventType, driver.startCalls)
+	}
+	if len(resolver.specs) != 1 || resolver.specs[0].Source != "request-cache" {
+		t.Fatalf("resolver specs = %#v", resolver.specs)
+	}
+	if len(session.VolumeMounts) != 1 || session.VolumeMounts[0].HostPath != hostPath {
+		t.Fatalf("session volume mounts = %#v", session.VolumeMounts)
+	}
+	events, err := bridge.store.ListEvents(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("ListEvents returned error: %v", err)
+	}
+	var foundWarning bool
+	for _, event := range events {
+		if event.Type == "session.volume.warning" {
+			foundWarning = true
+		}
+	}
+	if !foundWarning {
+		t.Fatalf("expected session.volume.warning event, got %#v", events)
+	}
+}
+
 func TestIntegrationLoaderSessionRunnerLoadResumeAndShutdownCoverage(t *testing.T) {
 	TestLoaderSessionRunnerLoadResumeAndShutdownCoverage(t)
 }
@@ -101,3 +163,20 @@ func (p *loaderSessionPublisherFake) Publish(event domain.LoaderTopicEvent) bool
 }
 
 var _ loaders.ControllerPublisher = (*loaderSessionPublisherFake)(nil)
+
+type loaderVolumeResolverFake struct {
+	specs    []domain.VolumeMountSpec
+	options  volumes.ResolveOptions
+	mounts   []domain.SessionVolumeMount
+	warnings []string
+	err      error
+}
+
+func (r *loaderVolumeResolverFake) ResolveMounts(_ context.Context, specs []domain.VolumeMountSpec, options volumes.ResolveOptions) ([]domain.SessionVolumeMount, []string, error) {
+	r.specs = append([]domain.VolumeMountSpec(nil), specs...)
+	r.options = options
+	if r.err != nil {
+		return nil, nil, r.err
+	}
+	return append([]domain.SessionVolumeMount(nil), r.mounts...), append([]string(nil), r.warnings...), nil
+}

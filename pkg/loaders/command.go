@@ -43,5 +43,6 @@ func CommandRequestOverridesSession(request domain.LoaderCommandRequest) bool {
 	return strings.TrimSpace(request.Driver) != "" ||
 		strings.TrimSpace(request.GuestImage) != "" ||
 		strings.TrimSpace(request.WorkspaceID) != "" ||
-		len(domain.NormalizeEnvItems(request.SessionEnv)) > 0
+		len(domain.NormalizeEnvItems(request.SessionEnv)) > 0 ||
+		len(request.Volumes) > 0
 }

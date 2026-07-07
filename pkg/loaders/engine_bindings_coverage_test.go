@@ -145,11 +145,13 @@ function main(payload) {
   const agent = scheduler.agent("summarize", {
     agent: "claude", sessionPolicy: "new", timeout: "45s", title: "Loader Agent Session",
     driver: "microsandbox", guestImage: "guest:latest", workspaceId: "workspace-1",
-    sessionEnv: { REQUEST_ONLY: "request" }, outputSchema: RiskSummary
+    sessionEnv: { REQUEST_ONLY: "request" },
+    volumes: ["cache:/cache", { type: "bind", source: "./fixtures", target: "/fixtures", readOnly: true }],
+    outputSchema: RiskSummary
   });
   const llm = scheduler.llm("answer", { model: "gpt", outputSchema: RiskSummary });
-  const execResult = scheduler.exec({ command: "python3", args: ["-V"], cwd: "/tmp", env: { FOO: "bar" }, timeoutMs: 30000, maxOutputBytes: 128, sessionPolicy: "new" });
-  const shellResult = scheduler.shell("echo hello", { cwd: "/tmp", env: { SHELL_FOO: "baz" }, maxOutputBytes: 64 });
+  const execResult = scheduler.exec({ command: "python3", args: ["-V"], cwd: "/tmp", env: { FOO: "bar" }, timeoutMs: 30000, maxOutputBytes: 128, sessionPolicy: "new", volumes: ["./bin:/host-bin:ro"] });
+  const shellResult = scheduler.shell("echo hello", { cwd: "/tmp", env: { SHELL_FOO: "baz" }, maxOutputBytes: 64, volumes: [{ source: "shell-cache", target: "/shell-cache" }] });
   scheduler.state.set("nil", null);
   scheduler.state.set("bool", true);
   scheduler.state.set("number", 42);
@@ -170,6 +172,19 @@ function main(payload) {
 	}
 	if host.agentCalls[0].Driver != driverpkg.RuntimeDriverMicrosandbox || host.commandCalls[0].Mode != "exec" || host.commandCalls[1].Mode != "shell" {
 		t.Fatalf("unexpected request mappings: agent=%#v commands=%#v", host.agentCalls[0], host.commandCalls)
+	}
+	if len(host.agentCalls[0].Volumes) != 2 ||
+		host.agentCalls[0].Volumes[0].Type != domain.VolumeMountTypeVolume ||
+		host.agentCalls[0].Volumes[1].Type != domain.VolumeMountTypeBind ||
+		!host.agentCalls[0].Volumes[1].ReadOnly {
+		t.Fatalf("unexpected agent volumes: %#v", host.agentCalls[0].Volumes)
+	}
+	if len(host.commandCalls[0].Volumes) != 1 ||
+		host.commandCalls[0].Volumes[0].Type != domain.VolumeMountTypeBind ||
+		!host.commandCalls[0].Volumes[0].ReadOnly ||
+		len(host.commandCalls[1].Volumes) != 1 ||
+		host.commandCalls[1].Volumes[0].Type != domain.VolumeMountTypeVolume {
+		t.Fatalf("unexpected command volumes: exec=%#v shell=%#v", host.commandCalls[0].Volumes, host.commandCalls[1].Volumes)
 	}
 	if !strings.Contains(result.ResultJSON, `"runtime":"scheduler"`) || !strings.Contains(result.ResultJSON, `"eventId":"evt-test"`) {
 		t.Fatalf("result json = %s", result.ResultJSON)
@@ -269,6 +284,7 @@ func TestQJSLoaderEngineValidationCoverageWorkflow(t *testing.T) {
 		{`function main() { return scheduler.event.publish("runtime.test", []); }`, "payload must be an object"},
 		{`function main() { return scheduler.agent(""); }`, "scheduler.agent requires a non-empty prompt"},
 		{`function main() { return scheduler.agent("summarize", { sessionEnv: "bad" }); }`, "decode scheduler.agent sessionEnv"},
+		{`function main() { return scheduler.agent("summarize", { volumes: "bad" }); }`, "decode scheduler.agent volumes"},
 		{`function main() { return scheduler.llm(""); }`, "scheduler.llm requires a non-empty prompt"},
 		{`function main() { return scheduler.llm("answer", "bad"); }`, "decode scheduler.llm options"},
 		{`function main() { return scheduler.exec("python3"); }`, "scheduler.exec requires a request object"},
@@ -276,9 +292,11 @@ func TestQJSLoaderEngineValidationCoverageWorkflow(t *testing.T) {
 		{`function main() { return scheduler.exec({ command: "python3", args: "bad" }); }`, "decode scheduler.exec args"},
 		{`function main() { return scheduler.exec({ command: "python3", env: { A: 1 } }); }`, "decode scheduler.exec env"},
 		{`function main() { return scheduler.exec({ command: "python3", timeoutMs: "bad" }); }`, "decode scheduler.exec timeoutMs"},
+		{`function main() { return scheduler.exec({ command: "python3", volumes: [":/cache"] }); }`, "decode scheduler.exec volumes"},
 		{`function main() { return scheduler.shell(""); }`, "scheduler.shell requires a non-empty script"},
 		{`function main() { return scheduler.shell("echo ok", "bad"); }`, "scheduler.shell options must be an object"},
 		{`function main() { return scheduler.shell("echo ok", { maxOutputBytes: "bad" }); }`, "decode scheduler.shell maxOutputBytes"},
+		{`function main() { return scheduler.shell("echo ok", { volumes: [{ source: "cache" }] }); }`, "decode scheduler.shell volumes"},
 		{`function main() { return scheduler.agent("summarize", { timeout: 30000 }); }`, "decode scheduler.agent timeout"},
 		{`function main() { return scheduler.state.get(""); }`, "scheduler.state.get requires a non-empty key"},
 		{`function main() { return scheduler.state.set("key"); }`, "scheduler.state.set requires a key and value"},

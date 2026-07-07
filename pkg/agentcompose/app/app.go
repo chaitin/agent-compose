@@ -306,6 +306,7 @@ func NewLoaderSessionRunner(di do.Injector) (*adapters.LoaderSessionRunner, erro
 		do.MustInvoke[*configstore.ConfigStore](di),
 		do.MustInvoke[*adapters.SessionDriver](di),
 		do.MustInvoke[capabilities.Provider](di),
+		do.MustInvoke[*volumes.Manager](di),
 		do.MustInvoke[*sessions.StreamBroker](di),
 		do.MustInvoke[*loaders.Bus](di),
 	), nil

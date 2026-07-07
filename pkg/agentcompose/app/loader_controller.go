@@ -112,6 +112,7 @@ func (r loaderProjectAgentRunner) RunProjectAgent(ctx context.Context, request l
 		TriggerID:        request.TriggerID,
 		OutputSchemaJSON: request.OutputSchemaJSON,
 		ClientRequestID:  request.ClientRequestID,
+		Volumes:          request.Volumes,
 	}, nil)
 	if err != nil {
 		return domain.ProjectRunRecord{}, nil, err
