@@ -160,6 +160,25 @@ message SessionEnvVar {
   bool secret = 3;
 }
 
+message VolumeMountSpec {
+  string type = 1;
+  string source = 2;
+  string target = 3;
+  bool read_only = 4;
+}
+
+message SessionVolumeMount {
+  string id = 1;
+  string type = 2;
+  string source = 3;
+  string target = 4;
+  bool read_only = 5;
+  string volume_id = 6;
+  string driver = 7;
+  string host_path = 8;
+  string project_path = 9;
+}
+
 message CreateSessionRequest {
   string title = 1;
   string base_workspace = 2;
@@ -169,6 +188,7 @@ message CreateSessionRequest {
   string guest_image = 8;
   string driver = 9;
   repeated string capset_ids = 10;
+  repeated VolumeMountSpec volumes = 11;
 }
 
 message WorkspaceConfig {
@@ -251,6 +271,7 @@ message SessionDetail {
   repeated SessionEnvVar env_items = 4;
   string workspace_id = 5;
   SessionWorkspaceSnapshot workspace = 6;
+  repeated SessionVolumeMount volume_mounts = 7;
 }
 
 message SessionResponse {

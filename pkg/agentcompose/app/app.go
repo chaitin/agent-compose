@@ -326,6 +326,7 @@ func NewSessionRPCBridge(di do.Injector) (*adapters.SessionRPCBridge, error) {
 		do.MustInvoke[*loaders.Bus](di),
 		do.MustInvoke[*sessions.StreamBroker](di),
 		do.MustInvoke[capabilities.Provider](di),
+		do.MustInvoke[*volumes.Manager](di),
 		dashboard,
 	), nil
 }

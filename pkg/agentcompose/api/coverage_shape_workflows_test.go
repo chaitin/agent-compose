@@ -92,9 +92,21 @@ func TestAPIMappingCoverageWorkflows(t *testing.T) {
 		WorkspaceID: "workspace-1",
 		Workspace:   &domain.SessionWorkspace{ID: "workspace-1", Name: "repo", Type: "git", ConfigJSON: "{}"},
 		EnvItems:    []domain.SessionEnvVar{{Name: "SECRET", Value: "value", Secret: true}},
+		VolumeMounts: []domain.SessionVolumeMount{{
+			ID:       "mount-1",
+			Type:     domain.VolumeMountTypeVolume,
+			Source:   "cache",
+			Target:   "/cache",
+			VolumeID: "vol-cache",
+			Driver:   domain.VolumeDriverLocal,
+			HostPath: "/tmp/cache",
+		}},
 	}
 	if detail := SessionDetailToProto(session); detail.GetSummary().GetSessionId() != "session-1" || detail.GetEnvItems()[0].GetValue() != secretRedactedValue {
 		t.Fatalf("session detail = %#v", detail)
+	}
+	if mounts := SessionDetailToProto(session).GetVolumeMounts(); len(mounts) != 1 || mounts[0].GetVolumeId() != "vol-cache" {
+		t.Fatalf("session volume mounts = %#v", mounts)
 	}
 	if env := GlobalEnvConfigToProto(session.EnvItems); env.GetEnvItems()[0].GetValue() != secretRedactedValue {
 		t.Fatalf("global env = %#v", env)

@@ -26,6 +26,7 @@ import (
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
+	"agent-compose/pkg/volumes"
 	"agent-compose/pkg/workspaces"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
@@ -39,10 +40,11 @@ type SessionRPCBridge struct {
 	bus       *loaders.Bus
 	streams   *sessions.StreamBroker
 	cap       capabilities.Provider
+	volumes   LoaderVolumeResolver
 	dashboard *dashboard.Hub
 }
 
-func NewSessionRPCBridge(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, driver sessions.SessionDriver, runtimes RuntimeProvider, bus *loaders.Bus, streams *sessions.StreamBroker, cap capabilities.Provider, dashboard *dashboard.Hub) *SessionRPCBridge {
+func NewSessionRPCBridge(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, driver sessions.SessionDriver, runtimes RuntimeProvider, bus *loaders.Bus, streams *sessions.StreamBroker, cap capabilities.Provider, volumeResolver LoaderVolumeResolver, dashboard *dashboard.Hub) *SessionRPCBridge {
 	return &SessionRPCBridge{
 		config:    config,
 		store:     store,
@@ -52,6 +54,7 @@ func NewSessionRPCBridge(config *appconfig.Config, store *sessionstore.Store, co
 		bus:       bus,
 		streams:   streams,
 		cap:       cap,
+		volumes:   volumeResolver,
 		dashboard: dashboard,
 	}
 }
@@ -200,11 +203,18 @@ func (b *SessionRPCBridge) createSession(ctx context.Context, req *connect.Reque
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	guestImage := driverpkg.ResolveSessionGuestImage(req.Msg.GetGuestImage(), driverpkg.DefaultGuestImageForDriver(b.config, driver))
-	session, err := b.store.CreateSession(ctx, req.Msg.GetTitle(), req.Msg.GetBaseWorkspace(), driver, guestImage, workspaceID, source, workspaceSnapshot, envItems, tags)
+	volumeMounts, volumeWarnings, err := b.resolveVolumeMounts(ctx, req.Msg.GetVolumes())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	session, err := b.store.CreateSessionWithOptions(ctx, req.Msg.GetTitle(), req.Msg.GetBaseWorkspace(), driver, guestImage, workspaceID, source, workspaceSnapshot, envItems, tags, sessionstore.CreateSessionOptions{
+		VolumeMounts: volumeMounts,
+	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	session.ProviderEnvItems = providerEnvItems
+	b.recordVolumeWarnings(ctx, session.Summary.ID, volumeWarnings)
 	if err := workspaces.PrepareSessionWorkspace(ctx, b.config, b.configDB, session); err != nil {
 		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = b.store.UpdateSession(ctx, session)
@@ -240,6 +250,30 @@ func (b *SessionRPCBridge) createSession(ctx context.Context, req *connect.Reque
 	domain.RestoreSessionTransientFields(loaded, session)
 	b.publishLoaderTopic("agent-compose.session.created", loaders.SessionTopicPayload(loaded, source))
 	return connect.NewResponse(&agentcomposev1.SessionResponse{Session: api.SessionDetailToProto(loaded)}), nil
+}
+
+func (b *SessionRPCBridge) resolveVolumeMounts(ctx context.Context, items []*agentcomposev1.VolumeMountSpec) ([]domain.SessionVolumeMount, []string, error) {
+	specs := api.VolumeMountSpecsFromProto(items)
+	if len(specs) == 0 {
+		return nil, nil, nil
+	}
+	if b.volumes == nil {
+		return nil, nil, fmt.Errorf("volume resolver is required")
+	}
+	return b.volumes.ResolveMounts(ctx, specs, volumes.ResolveOptions{})
+}
+
+func (b *SessionRPCBridge) recordVolumeWarnings(ctx context.Context, sessionID string, warnings []string) {
+	if b == nil || b.store == nil || len(warnings) == 0 {
+		return
+	}
+	for _, warning := range warnings {
+		event := domain.SessionEvent{ID: uuid.NewString(), Type: "session.volume.warning", Level: "warn", Message: warning, CreatedAt: time.Now().UTC()}
+		_ = b.store.AddEvent(ctx, sessionID, event)
+		if b.streams != nil {
+			b.streams.PublishEventAdded(sessionID, event)
+		}
+	}
 }
 
 func (b *SessionRPCBridge) ResumeSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
