@@ -162,8 +162,10 @@ func buildRuntimeMountManifest(config *appconfig.Config, session *Session, drive
 	if err := validateRuntimeDriver(driver); err != nil {
 		return RuntimeMountManifest{}, err
 	}
-	if driver == RuntimeDriverBoxlite && len(sessionVolumeMountSpecs(session)) > 0 {
-		return RuntimeMountManifest{}, fmt.Errorf("volume mounts are not supported by the boxlite runtime yet")
+	if driver == RuntimeDriverBoxlite {
+		if err := prepareBoxliteVolumeSymlinkBridge(session); err != nil {
+			return RuntimeMountManifest{}, err
+		}
 	}
 	specs := runtimeMountSpecsForDriver(config, session, driver)
 	mounts := make([]RuntimeMount, 0, len(specs))
@@ -193,8 +195,10 @@ func runtimeMountSpecsForDriver(config *appconfig.Config, session *Session, driv
 	switch resolveRuntimeDriver(driver) {
 	case RuntimeDriverDocker:
 		return runtimeMountSpecsForDocker(config, session)
-	case RuntimeDriverBoxlite, RuntimeDriverMicrosandbox:
-		return runtimeMountSpecsForDirectoryOnlyRuntime(config, session)
+	case RuntimeDriverBoxlite:
+		return runtimeMountSpecsForBoxlite(config, session)
+	case RuntimeDriverMicrosandbox:
+		return runtimeMountSpecsForMicrosandbox(config, session)
 	default:
 		return nil
 	}
@@ -238,13 +242,17 @@ func runtimeMountSpecsForDocker(config *appconfig.Config, session *Session) []ru
 	return append(specs, sessionVolumeMountSpecs(session)...)
 }
 
-func runtimeMountSpecsForDirectoryOnlyRuntime(config *appconfig.Config, session *Session) []runtimeMountSpec {
+func runtimeMountSpecsForBoxlite(config *appconfig.Config, session *Session) []runtimeMountSpec {
 	if len(runtimeMountEntries(config)) == 0 {
 		return nil
 	}
-	specs := []runtimeMountSpec{
+	return []runtimeMountSpec{
 		{hostPath: hostSessionDir(session), guestPath: directoryOnlyGuestSessionPath},
 	}
+}
+
+func runtimeMountSpecsForMicrosandbox(config *appconfig.Config, session *Session) []runtimeMountSpec {
+	specs := runtimeMountSpecsForBoxlite(config, session)
 	return append(specs, sessionVolumeMountSpecs(session)...)
 }
 

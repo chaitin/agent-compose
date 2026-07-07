@@ -8,6 +8,10 @@ import (
 )
 
 func directoryOnlyGuestSessionBootstrapCommand(config *appconfig.Config) string {
+	return directoryOnlyGuestSessionBootstrapCommandForSession(config, nil)
+}
+
+func directoryOnlyGuestSessionBootstrapCommandForSession(config *appconfig.Config, session *Session) string {
 	appconfig.ApplyDefaultGuestPaths(config)
 	workspaceSource := filepath.Clean(filepath.Join(directoryOnlyGuestSessionPath, "workspace"))
 	workspaceTarget := filepath.Clean(config.GuestWorkspacePath)
@@ -38,6 +42,7 @@ func directoryOnlyGuestSessionBootstrapCommand(config *appconfig.Config) string 
 		target := filepath.Clean(entry.guestPath)
 		commands = append(commands, directoryOnlySymlinkCommand(source, target, entry.isFile, true))
 	}
+	commands = append(commands, boxliteVolumeGuestSymlinkCommands(session)...)
 	return strings.Join(commands, "; ")
 }
 
@@ -75,9 +80,13 @@ func directoryOnlySymlinkCommand(source, target string, isFile bool, replaceExis
 }
 
 func directoryOnlyGuestSessionBootstrapExecSpec(config *appconfig.Config) ExecSpec {
+	return directoryOnlyGuestSessionBootstrapExecSpecForSession(config, nil)
+}
+
+func directoryOnlyGuestSessionBootstrapExecSpecForSession(config *appconfig.Config, session *Session) ExecSpec {
 	return ExecSpec{
 		Command: "sh",
-		Args:    []string{"-lc", directoryOnlyGuestSessionBootstrapCommand(config)},
+		Args:    []string{"-lc", directoryOnlyGuestSessionBootstrapCommandForSession(config, session)},
 		Cwd:     "/",
 	}
 }

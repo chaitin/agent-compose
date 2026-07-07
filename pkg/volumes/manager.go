@@ -2,6 +2,8 @@ package volumes
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -317,14 +319,14 @@ func ReservedTargetWarning(target string) string {
 }
 
 func stableVolumeMountID(parts ...string) string {
-	joined := strings.Join(parts, "|")
-	replacer := strings.NewReplacer("/", "-", ":", "-", "|", "-", " ", "-")
-	value := strings.Trim(replacer.Replace(strings.ToLower(joined)), "-")
-	if value == "" {
+	normalized := make([]string, 0, len(parts))
+	for _, part := range parts {
+		normalized = append(normalized, strings.TrimSpace(part))
+	}
+	joined := strings.Join(normalized, "\x00")
+	if strings.TrimSpace(joined) == "" {
 		return ""
 	}
-	if len(value) > 64 {
-		value = value[:64]
-	}
-	return "mount-" + value
+	sum := sha256.Sum256([]byte(joined))
+	return "mount-" + hex.EncodeToString(sum[:])[:24]
 }

@@ -169,18 +169,37 @@ func TestPrepareRuntimeMountManifestForMicrosandboxIncludesSessionVolumeMounts(t
 	}
 }
 
-func TestPrepareRuntimeMountManifestForBoxliteRejectsSessionVolumeMounts(t *testing.T) {
+func TestPrepareRuntimeMountManifestForBoxliteUsesVolumeSymlinkBridge(t *testing.T) {
 	root := t.TempDir()
+	volumeSource := t.TempDir()
 	session := testRuntimeMountSession(root)
 	session.VolumeMounts = []SessionVolumeMount{{
-		ID:       "mount-cache",
+		ID:       "mount-a8f37c92e51b4d10",
 		Type:     "bind",
 		Source:   "./cache",
 		Target:   "/cache",
-		HostPath: t.TempDir(),
+		ReadOnly: true,
+		HostPath: volumeSource,
 	}}
-	if _, err := prepareRuntimeMountManifest(testRuntimeMountConfig(), session, RuntimeDriverBoxlite); err == nil || !strings.Contains(err.Error(), "volume mounts are not supported") {
-		t.Fatalf("prepareRuntimeMountManifest err=%v, want unsupported volume mounts", err)
+	manifest, err := prepareRuntimeMountManifest(testRuntimeMountConfig(), session, RuntimeDriverBoxlite)
+	if err != nil {
+		t.Fatalf("prepareRuntimeMountManifest returned error: %v", err)
+	}
+	if len(manifest.Mounts) != 1 || manifest.Mounts[0].GuestPath != directoryOnlyGuestSessionPath || manifest.Mounts[0].HostPath != root {
+		t.Fatalf("boxlite manifest mounts = %+v, want single session dir mount", manifest.Mounts)
+	}
+	bridgePath := filepath.Join(root, "volumes", "mount-a8f37c92e51b4d10")
+	target, err := os.Readlink(bridgePath)
+	if err != nil {
+		t.Fatalf("read boxlite volume bridge symlink: %v", err)
+	}
+	if target != volumeSource {
+		t.Fatalf("boxlite volume bridge target = %q, want %q", target, volumeSource)
+	}
+	for _, mount := range manifest.Mounts {
+		if mount.GuestPath == "/cache" {
+			t.Fatalf("boxlite manifest should not contain direct volume mount: %+v", manifest.Mounts)
+		}
 	}
 }
 
@@ -376,6 +395,30 @@ func TestDirectoryOnlyGuestSessionBootstrapUsesDataMountRoot(t *testing.T) {
 	assertSubstringOrder(t, command, "test -d '/data/home'", "rm -f '/root'")
 	assertSubstringOrder(t, command, "test -d '/data/home'", "ln -s '/data/home/.codex' '/root/.codex'")
 	assertSubstringOrder(t, command, "test -d '/root' ||", "ln -s '/data/home/.codex' '/root/.codex'")
+}
+
+func TestBoxliteDirectoryOnlyGuestSessionBootstrapIncludesVolumeSymlinks(t *testing.T) {
+	root := t.TempDir()
+	session := testRuntimeMountSession(root)
+	session.VolumeMounts = []SessionVolumeMount{{
+		ID:       "mount-a8f37c92e51b4d10",
+		Type:     "volume",
+		Source:   "cache",
+		Target:   "/cache",
+		HostPath: t.TempDir(),
+	}}
+	command := directoryOnlyGuestSessionBootstrapCommandForSession(testRuntimeMountConfig(), session)
+	for _, required := range []string{
+		"ln -s '/data/volumes/mount-a8f37c92e51b4d10' '/cache'",
+		"test \"$(readlink '/cache')\" = '/data/volumes/mount-a8f37c92e51b4d10'",
+	} {
+		if !strings.Contains(command, required) {
+			t.Fatalf("bootstrap command missing volume symlink %q: %s", required, command)
+		}
+	}
+	if strings.Contains(command, "mount --bind") {
+		t.Fatalf("bootstrap command should not use bind mount for boxlite volume symlink: %s", command)
+	}
 }
 
 func TestDirectoryOnlyGuestSessionBootstrapReplacesImageHomeTargets(t *testing.T) {

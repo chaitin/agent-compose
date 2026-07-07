@@ -104,8 +104,14 @@ func TestManagerResolveBindAndNamedVolumeMounts(t *testing.T) {
 	if mounts[0].HostPath != bindDir || !mounts[0].ReadOnly {
 		t.Fatalf("bind mount = %#v", mounts[0])
 	}
+	if !strings.HasPrefix(mounts[0].ID, "mount-") || len(mounts[0].ID) != len("mount-")+24 || strings.Contains(mounts[0].ID, "fixtures") {
+		t.Fatalf("bind mount id = %q, want opaque stable hash id", mounts[0].ID)
+	}
 	if mounts[1].VolumeID != created.ID || mounts[1].Target != "/cache" {
 		t.Fatalf("volume mount = %#v", mounts[1])
+	}
+	if !strings.HasPrefix(mounts[1].ID, "mount-") || len(mounts[1].ID) != len("mount-")+24 || strings.Contains(mounts[1].ID, "cache") {
+		t.Fatalf("volume mount id = %q, want opaque stable hash id", mounts[1].ID)
 	}
 	if _, err := os.Stat(mounts[1].HostPath); err != nil {
 		t.Fatalf("volume host path missing: %v", err)

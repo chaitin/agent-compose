@@ -509,7 +509,7 @@ func (r *cgoBoxRuntime) ensureDirectoryOnlyGuestSessionBootstrap(ctx context.Con
 	if session != nil {
 		sessionID = session.Summary.ID
 	}
-	result, err := r.executeBox(ctx, box, directoryOnlyGuestSessionBootstrapExecSpec(r.config), nil)
+	result, err := r.executeBox(ctx, box, directoryOnlyGuestSessionBootstrapExecSpecForSession(r.config, session), nil)
 	if err != nil {
 		return formatDirectoryOnlyGuestSessionBootstrapError(RuntimeDriverBoxlite, sessionID, boxID, result, err)
 	}
