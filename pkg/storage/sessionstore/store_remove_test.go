@@ -22,12 +22,20 @@ func TestRemoveSessionDeletesSessionDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sessionDir, "state", "events.json"), []byte("[]\n"), 0o644); err != nil {
 		t.Fatalf("write session file: %v", err)
 	}
+	unlock := store.lockSession(sessionID)
+	unlock()
+	if _, ok := store.sessionLocks.Load(sessionID); !ok {
+		t.Fatalf("session lock was not initialized")
+	}
 
 	if err := store.RemoveSession(context.Background(), sessionID); err != nil {
 		t.Fatalf("RemoveSession returned error: %v", err)
 	}
 	if _, err := os.Stat(sessionDir); !os.IsNotExist(err) {
 		t.Fatalf("session dir stat err = %v, want not exist", err)
+	}
+	if _, ok := store.sessionLocks.Load(sessionID); ok {
+		t.Fatalf("session lock was not removed")
 	}
 }
 
@@ -54,12 +62,16 @@ func TestRemoveSessionRejectsUnsafeIDs(t *testing.T) {
 
 func TestRemoveSessionMissingDirectoryReturnsError(t *testing.T) {
 	store := newRemoveSessionTestStore(t)
-	err := store.RemoveSession(context.Background(), "missing-session")
+	sessionID := "missing-session"
+	err := store.RemoveSession(context.Background(), sessionID)
 	if err == nil {
 		t.Fatal("RemoveSession missing session returned nil error")
 	}
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("RemoveSession missing error = %v, want not exist", err)
+	}
+	if _, ok := store.sessionLocks.Load(sessionID); ok {
+		t.Fatalf("missing session created a lock entry")
 	}
 }
 

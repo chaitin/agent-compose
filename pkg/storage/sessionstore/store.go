@@ -1,15 +1,19 @@
 package sessionstore
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	appconfig "agent-compose/pkg/config"
@@ -46,7 +50,8 @@ type (
 )
 
 type Store struct {
-	config *appconfig.Config
+	config       *appconfig.Config
+	sessionLocks sync.Map
 }
 
 func NewStore(di do.Injector) (*Store, error) {
@@ -235,7 +240,9 @@ func (s *Store) ListSessions(_ context.Context, options SessionListOptions) (Ses
 func (s *Store) UpdateSession(_ context.Context, session *Session) error {
 	s.hydrateSessionGuestImage(session)
 	session.Summary.UpdatedAt = time.Now().UTC()
-	return s.saveSession(session)
+	unlock := s.lockSession(session.Summary.ID)
+	defer unlock()
+	return s.saveSessionPreservingCounts(session)
 }
 
 func (s *Store) RemoveSession(_ context.Context, id string) error {
@@ -247,9 +254,14 @@ func (s *Store) RemoveSession(_ context.Context, id string) error {
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("stat session dir %s: %w", id, err)
 	}
+
+	unlock := s.lockSession(id)
+	defer unlock()
+
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("remove session dir %s: %w", id, err)
 	}
+	s.sessionLocks.Delete(id)
 	return nil
 }
 
@@ -320,23 +332,43 @@ func (s *Store) AddAgentRun(_ context.Context, sessionID string, run AgentRun) e
 }
 
 func (s *Store) AddEvent(_ context.Context, sessionID string, event SessionEvent) error {
-	events, err := s.loadEvents(sessionID)
+	unlock := s.lockSession(sessionID)
+	defer unlock()
+
+	jsonlExisted, err := s.eventsJSONLExists(sessionID)
 	if err != nil {
 		return err
 	}
-	events = append(events, event)
-	if err := s.saveEvents(sessionID, events); err != nil {
+	legacyCount := 0
+	if !jsonlExisted {
+		events, err := s.loadLegacyEvents(sessionID)
+		if err != nil {
+			return err
+		}
+		legacyCount = len(events)
+	}
+
+	if err := s.appendEvent(sessionID, event); err != nil {
 		return err
 	}
+
 	session, err := s.loadSession(sessionID)
 	if err == nil {
-		session.Summary.EventCount = len(events)
-		_ = s.UpdateSession(context.Background(), session)
+		nextCount := session.Summary.EventCount + 1
+		if !jsonlExisted && legacyCount >= session.Summary.EventCount {
+			nextCount = legacyCount + 1
+		}
+		session.Summary.EventCount = nextCount
+		s.hydrateSessionGuestImage(session)
+		session.Summary.UpdatedAt = time.Now().UTC()
+		_ = s.saveSessionPreservingCounts(session)
 	}
 	return nil
 }
 
 func (s *Store) ListEvents(_ context.Context, id string) ([]SessionEvent, error) {
+	unlock := s.lockSession(id)
+	defer unlock()
 	return s.loadEvents(id)
 }
 
@@ -356,6 +388,13 @@ func validateSessionIDForRemove(id string) error {
 		return fmt.Errorf("invalid session id %q", id)
 	}
 	return nil
+}
+
+func (s *Store) lockSession(id string) func() {
+	value, _ := s.sessionLocks.LoadOrStore(id, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func (s *Store) hydrateSessionGuestImage(session *Session) {
@@ -430,8 +469,51 @@ func (s *Store) saveSession(session *Session) error {
 	return nil
 }
 
-func (s *Store) SaveSession(session *Session) error {
+func (s *Store) saveSessionPreservingCounts(session *Session) error {
+	existing, err := s.loadSessionCounts(session.Summary.ID)
+	if err != nil {
+		return err
+	}
+	if existing.CellCount > session.Summary.CellCount {
+		session.Summary.CellCount = existing.CellCount
+	}
+	if existing.EventCount > session.Summary.EventCount {
+		session.Summary.EventCount = existing.EventCount
+	}
 	return s.saveSession(session)
+}
+
+func (s *Store) loadSessionCounts(id string) (SessionSummary, error) {
+	path := filepath.Join(s.sessionDir(id), "metadata.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return SessionSummary{}, nil
+		}
+		return SessionSummary{}, fmt.Errorf("read session metadata %s: %w", id, err)
+	}
+	var session Session
+	if err := json.Unmarshal(data, &session); err != nil {
+		return SessionSummary{}, fmt.Errorf("decode session metadata %s: %w", id, err)
+	}
+	return session.Summary, nil
+}
+
+func (s *Store) saveEventCount(id string, eventCount int) error {
+	session, err := s.loadSession(id)
+	if err != nil {
+		return err
+	}
+	session.Summary.EventCount = eventCount
+	s.hydrateSessionGuestImage(session)
+	session.Summary.UpdatedAt = time.Now().UTC()
+	return s.saveSession(session)
+}
+
+func (s *Store) SaveSession(session *Session) error {
+	unlock := s.lockSession(session.Summary.ID)
+	defer unlock()
+	return s.saveSessionPreservingCounts(session)
 }
 
 func (s *Store) loadCells(id string) ([]NotebookCell, error) {
@@ -568,7 +650,38 @@ func (s *Store) mergeLegacyAgentRuns(id string, cells []NotebookCell) ([]Noteboo
 }
 
 func (s *Store) loadEvents(id string) ([]SessionEvent, error) {
-	path := filepath.Join(s.sessionDir(id), "state", "events.json")
+	events, err := s.loadLegacyEvents(id)
+	if err != nil {
+		return nil, err
+	}
+	jsonlEvents, err := s.loadJSONLEvents(id)
+	if err != nil {
+		return nil, err
+	}
+	return append(events, jsonlEvents...), nil
+}
+
+func (s *Store) eventsJSONPath(id string) string {
+	return filepath.Join(s.sessionDir(id), "state", "events.json")
+}
+
+func (s *Store) eventsJSONLPath(id string) string {
+	return filepath.Join(s.sessionDir(id), "state", "events.jsonl")
+}
+
+func (s *Store) eventsJSONLExists(id string) (bool, error) {
+	_, err := os.Stat(s.eventsJSONLPath(id))
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("stat events jsonl: %w", err)
+}
+
+func (s *Store) loadLegacyEvents(id string) ([]SessionEvent, error) {
+	path := s.eventsJSONPath(id)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -586,19 +699,104 @@ func (s *Store) loadEvents(id string) ([]SessionEvent, error) {
 	return events, nil
 }
 
-func (s *Store) saveEvents(id string, events []SessionEvent) error {
-	data, err := json.MarshalIndent(events, "", "  ")
+func (s *Store) loadJSONLEvents(id string) ([]SessionEvent, error) {
+	path := s.eventsJSONLPath(id)
+	file, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("encode events: %w", err)
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read events jsonl: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(s.sessionDir(id), "state", "events.json"), append(data, '\n'), 0o644); err != nil {
-		return fmt.Errorf("write events: %w", err)
+	defer func() { _ = file.Close() }()
+
+	reader := bufio.NewReader(file)
+	var events []SessionEvent
+	lineNumber := 0
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			lineNumber++
+			line = bytes.TrimSpace(line)
+			if len(line) > 0 {
+				var event SessionEvent
+				if err := json.Unmarshal(line, &event); err != nil {
+					return nil, fmt.Errorf("decode events %s line %d: %w", path, lineNumber, err)
+				}
+				events = append(events, event)
+			}
+		}
+		if readErr == nil {
+			continue
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		return nil, fmt.Errorf("read events %s line %d: %w", path, lineNumber+1, readErr)
+	}
+	return events, nil
+}
+
+func (s *Store) appendEvent(id string, event SessionEvent) error {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("encode event: %w", err)
+	}
+	data = append(data, '\n')
+
+	file, err := os.OpenFile(s.eventsJSONLPath(id), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("open events jsonl: %w", err)
+	}
+	if n, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("append events jsonl: %w", err)
+	} else if n != len(data) {
+		_ = file.Close()
+		return fmt.Errorf("append events jsonl: %w", io.ErrShortWrite)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close events jsonl: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) saveEvents(id string, events []SessionEvent) error {
+	file, err := os.OpenFile(s.eventsJSONLPath(id), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("write events jsonl: %w", err)
+	}
+	for _, event := range events {
+		data, err := json.Marshal(event)
+		if err != nil {
+			_ = file.Close()
+			return fmt.Errorf("encode event: %w", err)
+		}
+		data = append(data, '\n')
+		if n, err := file.Write(data); err != nil {
+			_ = file.Close()
+			return fmt.Errorf("write events jsonl: %w", err)
+		} else if n != len(data) {
+			_ = file.Close()
+			return fmt.Errorf("write events jsonl: %w", io.ErrShortWrite)
+		}
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close events jsonl: %w", err)
+	}
+	if err := os.Remove(s.eventsJSONPath(id)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove legacy events: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) SaveEvents(id string, events []SessionEvent) error {
-	return s.saveEvents(id, events)
+	unlock := s.lockSession(id)
+	defer unlock()
+	if err := s.saveEvents(id, events); err != nil {
+		return err
+	}
+	return s.saveEventCount(id, len(events))
 }
 
 func (s *Store) GetVMState(id string) (VMState, error) {
