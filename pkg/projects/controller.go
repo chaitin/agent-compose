@@ -58,28 +58,28 @@ type SessionStore interface {
 	DownSessionStore
 }
 
-type LoaderValidator interface {
+type SchedulerExecutionValidator interface {
 	Validate(ctx context.Context, runtime, script string) (loaders.LoaderValidationResult, error)
 	Refresh(ctx context.Context) error
 }
 
 type Controller struct {
-	config    *appconfig.Config
-	store     ControllerStore
-	sessions  SessionStore
-	images    images.Backend
-	loaders   LoaderValidator
-	stop      func(context.Context, *domain.Session) error
-	defaultDR string
+	config              *appconfig.Config
+	store               ControllerStore
+	sessions            SessionStore
+	images              images.Backend
+	schedulerExecutions SchedulerExecutionValidator
+	stop                func(context.Context, *domain.Session) error
+	defaultDR           string
 }
 
 type ControllerDependencies struct {
-	Config      *appconfig.Config
-	Store       ControllerStore
-	Sessions    SessionStore
-	Images      images.Backend
-	Loaders     LoaderValidator
-	StopSession func(context.Context, *domain.Session) error
+	Config              *appconfig.Config
+	Store               ControllerStore
+	Sessions            SessionStore
+	Images              images.Backend
+	SchedulerExecutions SchedulerExecutionValidator
+	StopSession         func(context.Context, *domain.Session) error
 }
 
 func NewController(deps ControllerDependencies) *Controller {
@@ -88,13 +88,13 @@ func NewController(deps ControllerDependencies) *Controller {
 		defaultDriver = deps.Config.RuntimeDriver
 	}
 	return &Controller{
-		config:    deps.Config,
-		store:     deps.Store,
-		sessions:  deps.Sessions,
-		images:    deps.Images,
-		loaders:   deps.Loaders,
-		stop:      deps.StopSession,
-		defaultDR: defaultDriver,
+		config:              deps.Config,
+		store:               deps.Store,
+		sessions:            deps.Sessions,
+		images:              deps.Images,
+		schedulerExecutions: deps.SchedulerExecutions,
+		stop:                deps.StopSession,
+		defaultDR:           defaultDriver,
 	}
 }
 
@@ -156,7 +156,7 @@ func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyR
 	if issues := c.validateManagedSchedulers(ctx, normalized); len(issues) > 0 {
 		return ApplyResult{Issues: issues, RevisionSpec: normalized.Spec}, nil
 	}
-	agentRecords, agentDefinitions, schedulerRecords, managedLoaders, err := c.projectArtifacts(ctx, project, 0, normalized.Spec)
+	agentRecords, agentDefinitions, schedulerRecords, managedSchedulerExecutions, err := c.projectArtifacts(ctx, project, 0, normalized.Spec)
 	if err != nil {
 		return ApplyResult{}, fmt.Errorf("%w: apply project %s: %w", ErrInvalidRequest, normalized.Spec.Name, err)
 	}
@@ -166,7 +166,7 @@ func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyR
 			Revision:     domain.ProjectRevisionRecord{ProjectID: project.ID, SpecHash: normalized.SpecHash},
 			Agents:       agentRecords,
 			Schedulers:   schedulerRecords,
-			Changes:      dryRunChanges(project, agentRecords, agentDefinitions, schedulerRecords, managedLoaders),
+			Changes:      dryRunChanges(project, agentRecords, agentDefinitions, schedulerRecords, managedSchedulerExecutions),
 			Applied:      false,
 			RevisionSpec: normalized.Spec,
 		}, nil
@@ -200,7 +200,7 @@ func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyR
 		return ApplyResult{}, fmt.Errorf("apply project %s: reload project: %w", normalized.Spec.Name, err)
 	}
 
-	agentRecords, agentDefinitions, schedulerRecords, managedLoaders, err = c.projectArtifacts(ctx, project, revision.Revision, normalized.Spec)
+	agentRecords, agentDefinitions, schedulerRecords, managedSchedulerExecutions, err = c.projectArtifacts(ctx, project, revision.Revision, normalized.Spec)
 	if err != nil {
 		return ApplyResult{}, fmt.Errorf("%w: apply project %s: %w", ErrInvalidRequest, normalized.Spec.Name, err)
 	}
@@ -233,10 +233,10 @@ func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyR
 		agentsUnchanged = false
 	}
 	changes = append(changes, agentDefinitionChanges...)
-	schedulerChanges, schedulersUnchanged, err := ReconcileManagedSchedulers(ctx, c.store, project, schedulerRecords, managedLoaders, ReconcileSchedulerOptions{
+	schedulerChanges, schedulersUnchanged, err := ReconcileManagedSchedulers(ctx, c.store, project, schedulerRecords, managedSchedulerExecutions, ReconcileSchedulerOptions{
 		CleanupFailedManagedScheduler:    c.cleanupFailedManagedSchedulerReconcile,
 		DisableSchedulerExecutionIfOwned: c.disableSchedulerExecutionIfOwned,
-		RefreshLoaders:                   c.refreshLoaders,
+		RefreshSchedulerExecutions:       c.refreshSchedulerExecutions,
 	})
 	if err != nil {
 		changes = append(changes, schedulerChanges...)
@@ -309,11 +309,11 @@ func (c *Controller) RemoveProject(ctx context.Context, req RemoveRequest) (Remo
 		return RemoveResult{}, err
 	}
 	downChanges, err := DownProject(ctx, project, DownOptions{
-		Store:                     c.store,
-		Sessions:                  c.sessions,
-		DisableSchedulerExecution: c.disableSchedulerExecutionIfOwned,
-		RefreshLoaders:            c.refreshLoaders,
-		StopSession:               c.stop,
+		Store:                      c.store,
+		Sessions:                   c.sessions,
+		DisableSchedulerExecution:  c.disableSchedulerExecutionIfOwned,
+		RefreshSchedulerExecutions: c.refreshSchedulerExecutions,
+		StopSession:                c.stop,
 	})
 	changes := downChangesToChanges(downChanges)
 	if err != nil {
@@ -415,11 +415,11 @@ func (c *Controller) projectArtifacts(ctx context.Context, project domain.Projec
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	schedulerRecords, managedLoaders, err := c.projectManagedSchedulersFromSpec(ctx, project, revision, spec)
+	schedulerRecords, managedSchedulerExecutions, err := c.projectManagedSchedulersFromSpec(ctx, project, revision, spec)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	return agentRecords, agentDefinitions, schedulerRecords, managedLoaders, nil
+	return agentRecords, agentDefinitions, schedulerRecords, managedSchedulerExecutions, nil
 }
 
 func (c *Controller) projectManagedSchedulersFromSpec(ctx context.Context, project domain.ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]domain.ProjectSchedulerRecord, []domain.Loader, error) {
@@ -497,10 +497,10 @@ func (e *managedSchedulerBuildError) Error() string {
 
 func (c *Controller) validateInlineSchedulerScript(ctx context.Context, agentName, script string) (loaders.LoaderValidationResult, error) {
 	path := "agents." + agentName + ".scheduler.script"
-	if c == nil || c.loaders == nil {
-		return loaders.LoaderValidationResult{}, &managedSchedulerBuildError{path: path, message: "loader manager is required to validate scheduler script"}
+	if c == nil || c.schedulerExecutions == nil {
+		return loaders.LoaderValidationResult{}, &managedSchedulerBuildError{path: path, message: "scheduler execution manager is required to validate scheduler script"}
 	}
-	validation, err := c.loaders.Validate(ctx, domain.LoaderRuntimeScheduler, script)
+	validation, err := c.schedulerExecutions.Validate(ctx, domain.LoaderRuntimeScheduler, script)
 	if err != nil {
 		return loaders.LoaderValidationResult{}, &managedSchedulerBuildError{path: path, message: err.Error()}
 	}
@@ -550,18 +550,18 @@ func (c *Controller) cleanupFailedManagedSchedulerReconcile(ctx context.Context,
 	if strings.TrimSpace(scheduler.ProjectID) != "" && strings.TrimSpace(scheduler.SchedulerID) != "" {
 		_, _ = c.store.SetProjectSchedulerEnabled(ctx, scheduler.ProjectID, scheduler.SchedulerID, false)
 	}
-	_ = c.refreshLoaders(ctx)
+	_ = c.refreshSchedulerExecutions(ctx)
 }
 
 func (c *Controller) disableSchedulerExecutionIfOwned(ctx context.Context, executionID, projectID, schedulerID string) error {
 	return DisableSchedulerExecutionIfOwned(ctx, c.store, executionID, projectID, schedulerID)
 }
 
-func (c *Controller) refreshLoaders(ctx context.Context) error {
-	if c == nil || c.loaders == nil {
+func (c *Controller) refreshSchedulerExecutions(ctx context.Context) error {
+	if c == nil || c.schedulerExecutions == nil {
 		return nil
 	}
-	return c.loaders.Refresh(ctx)
+	return c.schedulerExecutions.Refresh(ctx)
 }
 
 func (c *Controller) getProjectAgentIfExists(ctx context.Context, projectID, agentName string) (domain.ProjectAgentRecord, bool, error) {

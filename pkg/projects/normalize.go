@@ -84,11 +84,11 @@ func NormalizeSchedulerRecord(scheduler domain.ProjectSchedulerRecord) (domain.P
 		scheduler.SchedulerID = schedulerID
 	}
 	if scheduler.ManagedLoaderID == "" {
-		loaderID, err := domain.StableManagedLoaderID(scheduler.ProjectID, scheduler.AgentName, "")
+		schedulerExecutionID, err := domain.StableManagedLoaderID(scheduler.ProjectID, scheduler.AgentName, "")
 		if err != nil {
 			return domain.ProjectSchedulerRecord{}, err
 		}
-		scheduler.ManagedLoaderID = loaderID
+		scheduler.ManagedLoaderID = schedulerExecutionID
 	}
 	if scheduler.Revision < 0 {
 		return domain.ProjectSchedulerRecord{}, fmt.Errorf("project scheduler revision cannot be negative")

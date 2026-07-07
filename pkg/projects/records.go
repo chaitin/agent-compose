@@ -145,7 +145,7 @@ func NewSchedulerExecutionFromRecord(project domain.ProjectRecord, scheduler dom
 	script := agent.Scheduler.Script
 	if strings.TrimSpace(script) == "" {
 		var err error
-		triggers, script, err = ManagedLoaderTriggersAndScript(project.ID, agent.Name, "", agent.Scheduler)
+		triggers, script, err = SchedulerExecutionTriggersAndScript(project.ID, agent.Name, "", agent.Scheduler)
 		if err != nil {
 			return domain.Loader{}, err
 		}
@@ -227,7 +227,7 @@ func NewSchedulerRecordFromSpec(projectID string, revision int64, agent compose.
 	if err != nil {
 		return domain.ProjectSchedulerRecord{}, false, err
 	}
-	loaderID, err := domain.StableManagedLoaderID(projectID, agent.Name, "")
+	schedulerExecutionID, err := domain.StableManagedLoaderID(projectID, agent.Name, "")
 	if err != nil {
 		return domain.ProjectSchedulerRecord{}, false, err
 	}
@@ -239,7 +239,7 @@ func NewSchedulerRecordFromSpec(projectID string, revision int64, agent compose.
 		ProjectID:       strings.TrimSpace(projectID),
 		SchedulerID:     schedulerID,
 		AgentName:       strings.TrimSpace(agent.Name),
-		ManagedLoaderID: loaderID,
+		ManagedLoaderID: schedulerExecutionID,
 		Revision:        revision,
 		Enabled:         agent.Scheduler.Enabled,
 		TriggerCount:    len(agent.Scheduler.Triggers),

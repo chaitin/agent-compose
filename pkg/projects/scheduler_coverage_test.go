@@ -9,8 +9,8 @@ import (
 	domain "agent-compose/pkg/model"
 )
 
-func TestManagedLoaderTriggerRegistrationCoverage(t *testing.T) {
-	triggers, script, err := ManagedLoaderTriggersAndScript("project-1", "worker", "nightly", &compose.NormalizedSchedulerSpec{
+func TestSchedulerExecutionTriggerRegistrationCoverage(t *testing.T) {
+	triggers, script, err := SchedulerExecutionTriggersAndScript("project-1", "worker", "nightly", &compose.NormalizedSchedulerSpec{
 		Triggers: []compose.NormalizedTriggerSpec{
 			{Name: "cron-main", Kind: "cron", Cron: "*/5 * * * *", Prompt: "Run cron"},
 			{Name: "interval-main", Kind: "interval", Interval: "2s"},
@@ -19,7 +19,7 @@ func TestManagedLoaderTriggerRegistrationCoverage(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("ManagedLoaderTriggersAndScript returned error: %v", err)
+		t.Fatalf("SchedulerExecutionTriggersAndScript returned error: %v", err)
 	}
 	if len(triggers) != 4 {
 		t.Fatalf("triggers = %#v", triggers)
@@ -33,18 +33,18 @@ func TestManagedLoaderTriggerRegistrationCoverage(t *testing.T) {
 		}
 	}
 
-	emptyTriggers, idleScript, err := ManagedLoaderTriggersAndScript("project-1", "worker", "", &compose.NormalizedSchedulerSpec{})
+	emptyTriggers, idleScript, err := SchedulerExecutionTriggersAndScript("project-1", "worker", "", &compose.NormalizedSchedulerSpec{})
 	if err != nil {
-		t.Fatalf("empty ManagedLoaderTriggersAndScript returned error: %v", err)
+		t.Fatalf("empty SchedulerExecutionTriggersAndScript returned error: %v", err)
 	}
 	if len(emptyTriggers) != 0 || !strings.Contains(idleScript, `status: "idle"`) {
 		t.Fatalf("empty triggers/script = %#v/%s", emptyTriggers, idleScript)
 	}
 
-	if _, _, err := ManagedLoaderTriggersAndScript("project-1", "worker", "", nil); err == nil {
+	if _, _, err := SchedulerExecutionTriggersAndScript("project-1", "worker", "", nil); err == nil {
 		t.Fatalf("nil scheduler returned nil error")
 	}
-	if _, _, err := ManagedLoaderTriggersAndScript("project-1", "worker", "", &compose.NormalizedSchedulerSpec{Triggers: []compose.NormalizedTriggerSpec{
+	if _, _, err := SchedulerExecutionTriggersAndScript("project-1", "worker", "", &compose.NormalizedSchedulerSpec{Triggers: []compose.NormalizedTriggerSpec{
 		{Name: "dup", Kind: "interval", Interval: "1s"},
 		{Name: "dup", Kind: "interval", Interval: "2s"},
 	}}); err == nil {
@@ -58,8 +58,8 @@ func TestManagedLoaderTriggerRegistrationCoverage(t *testing.T) {
 		{Kind: "event"},
 		{Kind: "unsupported"},
 	} {
-		if _, _, err := ManagedLoaderTriggerAndRegistration("trigger-id", "worker", item); err == nil {
-			t.Fatalf("ManagedLoaderTriggerAndRegistration(%#v) returned nil error", item)
+		if _, _, err := SchedulerExecutionTriggerAndRegistration("trigger-id", "worker", item); err == nil {
+			t.Fatalf("SchedulerExecutionTriggerAndRegistration(%#v) returned nil error", item)
 		}
 	}
 	if got := JSStringLiteral("line\nquote\""); !strings.Contains(got, `\n`) || !strings.Contains(got, `\"`) {
@@ -174,12 +174,12 @@ func TestProjectNormalizeAndScanCoverage(t *testing.T) {
 	}
 }
 
-func TestIntegrationManagedLoaderTriggerRegistrationCoverage(t *testing.T) {
-	TestManagedLoaderTriggerRegistrationCoverage(t)
+func TestIntegrationSchedulerExecutionTriggerRegistrationCoverage(t *testing.T) {
+	TestSchedulerExecutionTriggerRegistrationCoverage(t)
 	TestProjectNormalizeAndScanCoverage(t)
 }
 
-func TestE2EManagedLoaderTriggerRegistrationCoverage(t *testing.T) {
-	TestManagedLoaderTriggerRegistrationCoverage(t)
+func TestE2ESchedulerExecutionTriggerRegistrationCoverage(t *testing.T) {
+	TestSchedulerExecutionTriggerRegistrationCoverage(t)
 	TestProjectNormalizeAndScanCoverage(t)
 }

@@ -45,7 +45,7 @@ type ReconcileSchedulerStore interface {
 type ReconcileSchedulerOptions struct {
 	CleanupFailedManagedScheduler    func(ctx context.Context, scheduler domain.ProjectSchedulerRecord, executionID string)
 	DisableSchedulerExecutionIfOwned func(ctx context.Context, executionID, projectID, schedulerID string) error
-	RefreshLoaders                   func(ctx context.Context) error
+	RefreshSchedulerExecutions       func(ctx context.Context) error
 }
 
 func ReconcileManagedAgentDefinitions(ctx context.Context, store ReconcileAgentDefinitionStore, project domain.ProjectRecord, current []domain.AgentDefinition) ([]Change, bool, error) {
@@ -132,29 +132,29 @@ func ReconcileManagedSchedulers(ctx context.Context, store ReconcileSchedulerSto
 
 		execution, ok := executionsByID[saved.ManagedLoaderID]
 		if !ok {
-			return changes, false, fmt.Errorf("managed loader %s for scheduler %s missing", saved.ManagedLoaderID, saved.SchedulerID)
+			return changes, false, fmt.Errorf("scheduler execution %s for scheduler %s missing", saved.ManagedLoaderID, saved.SchedulerID)
 		}
 		existingExecution, executionFound, err := store.GetSchedulerExecutionIfExists(ctx, execution.Summary.ID)
 		if err != nil {
-			return changes, false, fmt.Errorf("load managed loader %s: %w", execution.Summary.ID, err)
+			return changes, false, fmt.Errorf("load scheduler execution %s: %w", execution.Summary.ID, err)
 		}
 		stagedExecution := execution
 		stagedExecution.Summary.Enabled = false
 		savedExecution, err := store.UpsertSchedulerExecution(ctx, stagedExecution)
 		if err != nil {
-			return changes, false, fmt.Errorf("stage managed loader %s disabled: %w", execution.Summary.ID, err)
+			return changes, false, fmt.Errorf("stage scheduler execution %s disabled: %w", execution.Summary.ID, err)
 		}
 		if _, err := store.ReplaceSchedulerExecutionTriggers(ctx, savedExecution.Summary.ID, execution.Triggers); err != nil {
 			cleanupFailedManagedScheduler(ctx, options, saved, savedExecution.Summary.ID)
-			return changes, false, fmt.Errorf("replace managed loader triggers %s: %w", savedExecution.Summary.ID, err)
+			return changes, false, fmt.Errorf("replace scheduler execution triggers %s: %w", savedExecution.Summary.ID, err)
 		}
 		if execution.Summary.Enabled {
 			if err := store.SetSchedulerExecutionEnabled(ctx, savedExecution.Summary.ID, true); err != nil {
 				cleanupFailedManagedScheduler(ctx, options, saved, savedExecution.Summary.ID)
-				return changes, false, fmt.Errorf("enable managed loader %s: %w", savedExecution.Summary.ID, err)
+				return changes, false, fmt.Errorf("enable scheduler execution %s: %w", savedExecution.Summary.ID, err)
 			}
 		} else if err := store.SetSchedulerExecutionEnabled(ctx, savedExecution.Summary.ID, false); err != nil {
-			return changes, false, fmt.Errorf("disable managed loader %s: %w", savedExecution.Summary.ID, err)
+			return changes, false, fmt.Errorf("disable scheduler execution %s: %w", savedExecution.Summary.ID, err)
 		}
 		if scheduler.Enabled {
 			saved, err = store.SetProjectSchedulerEnabled(ctx, scheduler.ProjectID, scheduler.SchedulerID, true)
@@ -203,7 +203,7 @@ func ReconcileManagedSchedulers(ctx context.Context, store ReconcileSchedulerSto
 		}
 		if options.DisableSchedulerExecutionIfOwned != nil {
 			if err := options.DisableSchedulerExecutionIfOwned(ctx, existing.ManagedLoaderID, project.ID, existing.SchedulerID); err != nil {
-				return changes, false, fmt.Errorf("disable removed managed loader %s: %w", existing.ManagedLoaderID, err)
+				return changes, false, fmt.Errorf("disable removed scheduler execution %s: %w", existing.ManagedLoaderID, err)
 			}
 		}
 		unchanged = false
@@ -221,9 +221,9 @@ func ReconcileManagedSchedulers(ctx context.Context, store ReconcileSchedulerSto
 			Message:      "disabled because the scheduler is no longer present in the project spec",
 		})
 	}
-	if options.RefreshLoaders != nil {
-		if err := options.RefreshLoaders(ctx); err != nil {
-			return changes, false, fmt.Errorf("refresh loader manager: %w", err)
+	if options.RefreshSchedulerExecutions != nil {
+		if err := options.RefreshSchedulerExecutions(ctx); err != nil {
+			return changes, false, fmt.Errorf("refresh scheduler execution manager: %w", err)
 		}
 	}
 	return changes, unchanged, nil

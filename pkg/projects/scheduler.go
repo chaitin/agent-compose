@@ -11,7 +11,7 @@ import (
 	domain "agent-compose/pkg/model"
 )
 
-func ManagedLoaderTriggersAndScript(projectID, agentName, schedulerName string, scheduler *compose.NormalizedSchedulerSpec) ([]domain.LoaderTrigger, string, error) {
+func SchedulerExecutionTriggersAndScript(projectID, agentName, schedulerName string, scheduler *compose.NormalizedSchedulerSpec) ([]domain.LoaderTrigger, string, error) {
 	if scheduler == nil {
 		return nil, "", fmt.Errorf("scheduler is required")
 	}
@@ -31,7 +31,7 @@ func ManagedLoaderTriggersAndScript(projectID, agentName, schedulerName string, 
 		if err != nil {
 			return nil, "", err
 		}
-		loaderTrigger, registration, err := ManagedLoaderTriggerAndRegistration(id, agentName, trigger)
+		loaderTrigger, registration, err := SchedulerExecutionTriggerAndRegistration(id, agentName, trigger)
 		if err != nil {
 			return nil, "", err
 		}
@@ -44,7 +44,7 @@ func ManagedLoaderTriggersAndScript(projectID, agentName, schedulerName string, 
 	return triggers, script.String(), nil
 }
 
-func ManagedLoaderTriggerAndRegistration(id, agentName string, trigger compose.NormalizedTriggerSpec) (domain.LoaderTrigger, string, error) {
+func SchedulerExecutionTriggerAndRegistration(id, agentName string, trigger compose.NormalizedTriggerSpec) (domain.LoaderTrigger, string, error) {
 	prompt := strings.TrimSpace(trigger.Prompt)
 	if prompt == "" {
 		prompt = fmt.Sprintf("Run agent %s.", agentName)

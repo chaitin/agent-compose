@@ -55,9 +55,9 @@ agents:
 		},
 	}
 	controller := NewController(ControllerDependencies{
-		Config:  &appconfig.Config{RuntimeDriver: "boxlite"},
-		Store:   store,
-		Loaders: controllerCoverageLoaderValidator{},
+		Config:              &appconfig.Config{RuntimeDriver: "boxlite"},
+		Store:               store,
+		SchedulerExecutions: controllerCoverageSchedulerExecutionValidator{},
 	})
 	normalized := NormalizedProject{Spec: normalizedSpec, SpecHash: hash, SourcePath: "/repo/agent-compose.yaml"}
 	validation, err := controller.ValidateProject(ctx, normalized, nil)
@@ -172,7 +172,7 @@ func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
 		DisableSchedulerExecution: func(ctx context.Context, loaderID, _, _ string) error {
 			return schedulerStore.SetSchedulerExecutionEnabled(ctx, loaderID, false)
 		},
-		RefreshLoaders: func(context.Context) error {
+		RefreshSchedulerExecutions: func(context.Context) error {
 			refreshed = true
 			return nil
 		},
@@ -210,11 +210,11 @@ func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
 			return errors.New("disable failed")
 		},
 	}); err == nil {
-		t.Fatalf("DisableProjectManagedSchedulers managed loader error returned nil error")
+		t.Fatalf("DisableProjectManagedSchedulers scheduler execution error returned nil error")
 	}
 	if _, err := DisableProjectManagedSchedulers(ctx, project, DownOptions{
 		Store: &downCoverageStore{items: []domain.ProjectSchedulerRecord{{ProjectID: project.ID, SchedulerID: "scheduler-1", Enabled: true}}},
-		RefreshLoaders: func(context.Context) error {
+		RefreshSchedulerExecutions: func(context.Context) error {
 			return errors.New("refresh failed")
 		},
 	}); err == nil {
@@ -241,13 +241,13 @@ func TestE2EControllerValidateApplyDryRunAndResolveWorkflows(t *testing.T) {
 	TestDownProjectSessionAndSchedulerWorkflows(t)
 }
 
-type controllerCoverageLoaderValidator struct{}
+type controllerCoverageSchedulerExecutionValidator struct{}
 
-func (controllerCoverageLoaderValidator) Validate(context.Context, string, string) (loaders.LoaderValidationResult, error) {
+func (controllerCoverageSchedulerExecutionValidator) Validate(context.Context, string, string) (loaders.LoaderValidationResult, error) {
 	return loaders.LoaderValidationResult{Triggers: []domain.LoaderTrigger{{ID: "daily", Kind: domain.LoaderTriggerKindCron, Enabled: true, SpecJSON: `{"expr":"0 0 * * *"}`}}}, nil
 }
 
-func (controllerCoverageLoaderValidator) Refresh(context.Context) error {
+func (controllerCoverageSchedulerExecutionValidator) Refresh(context.Context) error {
 	return nil
 }
 
@@ -326,7 +326,7 @@ func (s *controllerCoverageStore) ListProjectSchedulers(context.Context, string)
 	return nil, nil
 }
 
-func (s *controllerCoverageStore) ListManagedLoaders(context.Context, string) ([]domain.Loader, error) {
+func (s *controllerCoverageStore) ListManagedSchedulerExecutions(context.Context, string) ([]domain.Loader, error) {
 	return nil, nil
 }
 

@@ -31,11 +31,11 @@ type DownSessionStore interface {
 }
 
 type DownOptions struct {
-	Store                     DownStore
-	Sessions                  DownSessionStore
-	DisableSchedulerExecution func(ctx context.Context, executionID, projectID, schedulerID string) error
-	RefreshLoaders            func(ctx context.Context) error
-	StopSession               func(ctx context.Context, session *domain.Session) error
+	Store                      DownStore
+	Sessions                   DownSessionStore
+	DisableSchedulerExecution  func(ctx context.Context, executionID, projectID, schedulerID string) error
+	RefreshSchedulerExecutions func(ctx context.Context) error
+	StopSession                func(ctx context.Context, session *domain.Session) error
 }
 
 func DownProject(ctx context.Context, project domain.ProjectRecord, options DownOptions) ([]DownChange, error) {
@@ -72,7 +72,7 @@ func DisableProjectManagedSchedulers(ctx context.Context, project domain.Project
 		}
 		if options.DisableSchedulerExecution != nil {
 			if err := options.DisableSchedulerExecution(ctx, scheduler.ManagedLoaderID, project.ID, scheduler.SchedulerID); err != nil {
-				return changes, fmt.Errorf("disable managed loader %s: %w", scheduler.ManagedLoaderID, err)
+				return changes, fmt.Errorf("disable scheduler execution %s: %w", scheduler.ManagedLoaderID, err)
 			}
 		}
 		changes = append(changes, DownChange{
@@ -92,9 +92,9 @@ func DisableProjectManagedSchedulers(ctx context.Context, project domain.Project
 			})
 		}
 	}
-	if len(changes) > 0 && options.RefreshLoaders != nil {
-		if err := options.RefreshLoaders(ctx); err != nil {
-			return changes, fmt.Errorf("refresh loader manager after project down: %w", err)
+	if len(changes) > 0 && options.RefreshSchedulerExecutions != nil {
+		if err := options.RefreshSchedulerExecutions(ctx); err != nil {
+			return changes, fmt.Errorf("refresh scheduler execution manager after project down: %w", err)
 		}
 	}
 	return changes, nil

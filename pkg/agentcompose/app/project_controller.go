@@ -32,11 +32,11 @@ func NewProjectController(di do.Injector) (*projects.Controller, error) {
 	sessionDriver := do.MustInvoke[*adapters.SessionDriver](di)
 	streams := do.MustInvoke[*sessionstream.StreamBroker](di)
 	return projects.NewController(projects.ControllerDependencies{
-		Config:   do.MustInvoke[*appconfig.Config](di),
-		Store:    do.MustInvoke[*configstore.ConfigStore](di),
-		Sessions: sessionStore,
-		Images:   imageBackends.Auto,
-		Loaders:  do.MustInvoke[*loaders.Controller](di),
+		Config:              do.MustInvoke[*appconfig.Config](di),
+		Store:               do.MustInvoke[*configstore.ConfigStore](di),
+		Sessions:            sessionStore,
+		Images:              imageBackends.Auto,
+		SchedulerExecutions: do.MustInvoke[*loaders.Controller](di),
 		StopSession: func(ctx context.Context, session *domain.Session) error {
 			return stopProjectSession(ctx, sessionStore, sessionDriver, streams, session)
 		},
