@@ -65,4 +65,14 @@ func TestVolumeStoreCRUDAndReferences(t *testing.T) {
 	if err := store.RemoveVolume(ctx, created.ID); !errors.Is(err, domain.ErrReferenced) {
 		t.Fatalf("RemoveVolume referenced err = %v, want ErrReferenced", err)
 	}
+	if err := store.RemoveProjectVolumes(ctx, "project-1"); err != nil {
+		t.Fatalf("RemoveProjectVolumes: %v", err)
+	}
+	refs, err = store.FindVolumeConfigReferences(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("FindVolumeConfigReferences after RemoveProjectVolumes: %v", err)
+	}
+	if len(refs) != 0 {
+		t.Fatalf("refs after RemoveProjectVolumes = %#v", refs)
+	}
 }

@@ -254,6 +254,17 @@ func (s *volumeStore) ListProjectVolumes(ctx context.Context, projectID string) 
 	return items, nil
 }
 
+func (s *volumeStore) RemoveProjectVolumes(ctx context.Context, projectID string) error {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return fmt.Errorf("project id is required")
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM project_volumes WHERE project_id = ?`, projectID); err != nil {
+		return fmt.Errorf("remove project volumes %s: %w", projectID, err)
+	}
+	return nil
+}
+
 func (s *volumeStore) FindVolumeConfigReferences(ctx context.Context, volumeID string) ([]domain.VolumeReference, error) {
 	volumeID = strings.TrimSpace(volumeID)
 	if volumeID == "" {

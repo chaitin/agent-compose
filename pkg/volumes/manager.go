@@ -27,6 +27,7 @@ type Store interface {
 type ProjectVolumeStore interface {
 	UpsertProjectVolume(ctx context.Context, projectID, key, volumeID string, external bool) error
 	ListProjectVolumes(ctx context.Context, projectID string) (map[string]domain.VolumeRecord, error)
+	RemoveProjectVolumes(ctx context.Context, projectID string) error
 }
 
 type Manager struct {
@@ -133,6 +134,13 @@ func (m *Manager) UpsertProjectVolume(ctx context.Context, projectID, key, volum
 		return fmt.Errorf("project volume store is required")
 	}
 	return m.Project.UpsertProjectVolume(ctx, projectID, key, volumeID, external)
+}
+
+func (m *Manager) RemoveProjectVolumes(ctx context.Context, projectID string) error {
+	if m == nil || m.Project == nil {
+		return fmt.Errorf("project volume store is required")
+	}
+	return m.Project.RemoveProjectVolumes(ctx, projectID)
 }
 
 func (m *Manager) Remove(ctx context.Context, nameOrID string, force bool) error {

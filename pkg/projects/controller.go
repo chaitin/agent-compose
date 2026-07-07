@@ -67,6 +67,7 @@ type VolumeManager interface {
 	Ensure(ctx context.Context, item domain.VolumeRecord) (domain.VolumeRecord, bool, error)
 	Inspect(ctx context.Context, nameOrID string) (domain.VolumeRecord, error)
 	UpsertProjectVolume(ctx context.Context, projectID, key, volumeID string, external bool) error
+	RemoveProjectVolumes(ctx context.Context, projectID string) error
 }
 
 type Controller struct {
@@ -344,6 +345,11 @@ func (c *Controller) RemoveProject(ctx context.Context, req RemoveRequest) (Remo
 			Name:         project.Name,
 			Message:      "removed by project down",
 		})
+		if c.volumes != nil {
+			if err := c.volumes.RemoveProjectVolumes(ctx, project.ID); err != nil {
+				return RemoveResult{Project: project, Changes: changes}, err
+			}
+		}
 	}
 	agents, err := c.store.ListProjectAgents(ctx, project.ID)
 	if err != nil {

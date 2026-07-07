@@ -98,9 +98,11 @@ func TestControllerRemoveProjectMarksProjectRemovedAndIsIdempotent(t *testing.T)
 	store := &controllerCoverageStore{
 		projects: []domain.ProjectRecord{{ID: "project-1", Name: "down-project", SourcePath: "/repo/agent-compose.yaml"}},
 	}
+	volumeManager := &controllerCoverageVolumeManager{}
 	controller := NewController(ControllerDependencies{
 		Store:    store,
 		Sessions: controllerCoverageSessionStore{},
+		Volumes:  volumeManager,
 	})
 	removed, err := controller.RemoveProject(ctx, RemoveRequest{Project: ProjectRef{ProjectID: "project-1"}})
 	if err != nil {
@@ -112,6 +114,9 @@ func TestControllerRemoveProjectMarksProjectRemovedAndIsIdempotent(t *testing.T)
 	assertProjectChange(t, removed.Changes, ChangeActionRemoved, "project", "project-1")
 	if result, err := store.ListProjects(ctx, domain.ProjectListOptions{}); err != nil || result.TotalCount != 0 {
 		t.Fatalf("ListProjects after remove result=%#v err=%v", result, err)
+	}
+	if len(volumeManager.removedProjects) != 1 || volumeManager.removedProjects[0] != "project-1" {
+		t.Fatalf("RemoveProject volume cleanup = %#v", volumeManager.removedProjects)
 	}
 
 	repeated, err := controller.RemoveProject(ctx, RemoveRequest{Project: ProjectRef{ProjectID: "project-1"}})
@@ -377,6 +382,27 @@ type controllerCoverageSessionStore struct{}
 
 func (controllerCoverageSessionStore) ListSessions(context.Context, domain.SessionListOptions) (domain.SessionListResult, error) {
 	return domain.SessionListResult{}, nil
+}
+
+type controllerCoverageVolumeManager struct {
+	removedProjects []string
+}
+
+func (m *controllerCoverageVolumeManager) Ensure(context.Context, domain.VolumeRecord) (domain.VolumeRecord, bool, error) {
+	return domain.VolumeRecord{}, false, nil
+}
+
+func (m *controllerCoverageVolumeManager) Inspect(context.Context, string) (domain.VolumeRecord, error) {
+	return domain.VolumeRecord{}, nil
+}
+
+func (m *controllerCoverageVolumeManager) UpsertProjectVolume(context.Context, string, string, string, bool) error {
+	return nil
+}
+
+func (m *controllerCoverageVolumeManager) RemoveProjectVolumes(_ context.Context, projectID string) error {
+	m.removedProjects = append(m.removedProjects, projectID)
+	return nil
 }
 
 func assertProjectChange(t *testing.T, changes []Change, action, resourceType, resourceID string) {
