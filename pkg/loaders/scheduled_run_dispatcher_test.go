@@ -8,9 +8,9 @@ import (
 	domain "agent-compose/pkg/model"
 )
 
-func TestTriggerLoopCollectDueAndDispatch(t *testing.T) {
+func TestScheduledRunDispatcherCollectDueAndDispatch(t *testing.T) {
 	now := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
-	store := &triggerLoopStoreFake{}
+	store := &scheduledRunStoreFake{}
 	loader := domain.Loader{Summary: domain.LoaderSummary{ID: "loader-1", Enabled: true}, Triggers: []domain.LoaderTrigger{{
 		ID:         "interval-1",
 		Kind:       domain.LoaderTriggerKindInterval,
@@ -21,7 +21,7 @@ func TestTriggerLoopCollectDueAndDispatch(t *testing.T) {
 	cached := map[string]domain.Loader{loader.Summary.ID: loader}
 	var replaced map[string]domain.Loader
 	runCalled := make(chan string, 1)
-	loop := newTriggerLoop(TriggerLoopDependencies{
+	dispatcher := newScheduledRunDispatcher(scheduledRunDispatcherDeps{
 		RootCtx: context.Background(),
 		Store:   store,
 		Snapshot: func() map[string]domain.Loader {
@@ -40,19 +40,19 @@ func TestTriggerLoopCollectDueAndDispatch(t *testing.T) {
 		},
 	})
 
-	jobs := loop.CollectDue(now)
+	jobs := dispatcher.CollectDue(now)
 	if len(jobs) != 1 || jobs[0].Trigger.ID != "interval-1" || jobs[0].Source != "interval:1000" {
 		t.Fatalf("jobs = %#v", jobs)
 	}
 	if len(replaced) != 1 || len(store.fired) != 1 {
 		t.Fatalf("replaced/fired = %#v/%#v", replaced, store.fired)
 	}
-	next, ok := loop.NextFireAt()
+	next, ok := dispatcher.NextFireAt()
 	if !ok || !next.After(now) {
 		t.Fatalf("next fire = %s/%v", next, ok)
 	}
 
-	loop.Dispatch(jobs)
+	dispatcher.Dispatch(jobs)
 	select {
 	case got := <-runCalled:
 		if got != "loader-1/interval-1/interval:1000" {
@@ -63,11 +63,11 @@ func TestTriggerLoopCollectDueAndDispatch(t *testing.T) {
 	}
 }
 
-type triggerLoopStoreFake struct {
+type scheduledRunStoreFake struct {
 	fired []string
 }
 
-func (s *triggerLoopStoreFake) MarkLoaderTriggerFired(_ context.Context, loaderID, triggerID string, lastFiredAt, nextFireAt time.Time) error {
+func (s *scheduledRunStoreFake) MarkLoaderTriggerFired(_ context.Context, loaderID, triggerID string, lastFiredAt, nextFireAt time.Time) error {
 	s.fired = append(s.fired, loaderID+"/"+triggerID+"/"+lastFiredAt.Format(time.RFC3339)+"/"+nextFireAt.Format(time.RFC3339))
 	return nil
 }

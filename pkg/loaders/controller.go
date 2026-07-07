@@ -17,7 +17,7 @@ import (
 
 type ControllerStore interface {
 	RunStore
-	TriggerLoopStore
+	scheduledTriggerStore
 	EventDeliveryStore
 
 	ListSchedulerExecutions(ctx context.Context) ([]domain.Loader, error)
@@ -91,7 +91,7 @@ type Controller struct {
 	loaders         map[string]domain.Loader
 	running         map[string]int
 	runExecutor     *RunExecutor
-	scheduler       *triggerLoop
+	scheduler       *scheduledRunDispatcher
 	eventDispatcher *EventDispatcher
 }
 
@@ -142,7 +142,7 @@ func (c *Controller) init() {
 		})
 	}
 	if c.scheduler == nil {
-		c.scheduler = newTriggerLoop(TriggerLoopDependencies{
+		c.scheduler = newScheduledRunDispatcher(scheduledRunDispatcherDeps{
 			RootCtx:       c.deps.RootCtx,
 			Wake:          c.deps.Wake,
 			Store:         c.deps.Store,
