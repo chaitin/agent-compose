@@ -12,6 +12,7 @@ type ProjectSpec struct {
 	Name      string                `yaml:"name,omitempty" json:"name,omitempty"`
 	Variables map[string]EnvVarSpec `yaml:"variables,omitempty" json:"variables,omitempty"`
 	Workspace *WorkspaceSpec        `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+	Volumes   map[string]VolumeSpec `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	Agents    map[string]AgentSpec  `yaml:"agents,omitempty" json:"agents,omitempty"`
 	Network   *NetworkSpec          `yaml:"network,omitempty" json:"network,omitempty"`
 }
@@ -25,6 +26,7 @@ type AgentSpec struct {
 	Driver       *DriverSpec           `yaml:"driver,omitempty" json:"driver,omitempty"`
 	Env          map[string]EnvVarSpec `yaml:"env,omitempty" json:"env,omitempty"`
 	CapsetIDs    []string              `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
+	Volumes      []VolumeMountSpec     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	Workspace    *WorkspaceSpec        `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Scheduler    *SchedulerSpec        `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
 	Jupyter      *JupyterSpec          `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
@@ -44,6 +46,21 @@ type BuildSpec struct {
 type JupyterSpec struct {
 	Enabled   bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	GuestPort int  `yaml:"guest_port,omitempty" json:"guest_port,omitempty"`
+}
+
+type VolumeSpec struct {
+	Name     string            `yaml:"name,omitempty" json:"name,omitempty"`
+	Driver   string            `yaml:"driver,omitempty" json:"driver,omitempty"`
+	External bool              `yaml:"external,omitempty" json:"external,omitempty"`
+	Labels   map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Options  map[string]string `yaml:"options,omitempty" json:"options,omitempty"`
+}
+
+type VolumeMountSpec struct {
+	Type     string `yaml:"type,omitempty" json:"type,omitempty"`
+	Source   string `yaml:"source,omitempty" json:"source,omitempty"`
+	Target   string `yaml:"target,omitempty" json:"target,omitempty"`
+	ReadOnly bool   `yaml:"read_only,omitempty" json:"read_only,omitempty"`
 }
 
 type SchedulerSpec struct {
@@ -156,6 +173,32 @@ func (s *BuildSpec) UnmarshalYAML(value *yaml.Node) error {
 	}
 }
 
+func (s *VolumeMountSpec) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		var raw string
+		if err := value.Decode(&raw); err != nil {
+			return err
+		}
+		parsed, err := parseVolumeMountShortSyntax(raw)
+		if err != nil {
+			return err
+		}
+		*s = parsed
+		return nil
+	case yaml.MappingNode:
+		type volumeMountSpec VolumeMountSpec
+		var decoded volumeMountSpec
+		if err := value.Decode(&decoded); err != nil {
+			return err
+		}
+		*s = VolumeMountSpec(decoded)
+		return nil
+	default:
+		return fmt.Errorf("expected scalar or mapping, got %s", nodeKindName(value.Kind))
+	}
+}
+
 func (s *TriggerSpec) UnmarshalYAML(value *yaml.Node) error {
 	type triggerSpec TriggerSpec
 	var decoded triggerSpec
@@ -245,6 +288,7 @@ func validateProjectNode(node *yaml.Node) error {
 		"name":      validateScalar,
 		"variables": validateEnvVarMap,
 		"workspace": validateWorkspace,
+		"volumes":   validateVolumeMap,
 		"agents":    validateAgentMap,
 		"network":   validateNetwork,
 	})
@@ -264,10 +308,56 @@ func validateAgent(node *yaml.Node, path string) error {
 		"driver":        validateDriver,
 		"env":           validateEnvVarMap,
 		"capset_ids":    validateStringList,
+		"volumes":       validateVolumeMountList,
 		"workspace":     validateWorkspace,
 		"scheduler":     validateScheduler,
 		"jupyter":       validateJupyter,
 	})
+}
+
+func validateVolumeMap(node *yaml.Node, path string) error {
+	return validateNamedMap(node, path, validateVolume)
+}
+
+func validateVolume(node *yaml.Node, path string) error {
+	if node.Kind == yaml.ScalarNode && strings.TrimSpace(node.Value) == "" {
+		return nil
+	}
+	return validateMapping(node, path, map[string]nodeValidator{
+		"name":     validateScalar,
+		"driver":   validateScalar,
+		"external": validateBool,
+		"labels":   validateStringMap,
+		"options":  validateStringMap,
+	})
+}
+
+func validateVolumeMountList(node *yaml.Node, path string) error {
+	if err := requireKind(node, path, yaml.SequenceNode, "sequence"); err != nil {
+		return err
+	}
+	for i, item := range node.Content {
+		if err := validateVolumeMount(item, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateVolumeMount(node *yaml.Node, path string) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		return validateScalar(node, path)
+	case yaml.MappingNode:
+		return validateMapping(node, path, map[string]nodeValidator{
+			"type":      validateScalar,
+			"source":    validateScalar,
+			"target":    validateScalar,
+			"read_only": validateBool,
+		})
+	default:
+		return newParseError(node, path, "expected scalar or mapping")
+	}
 }
 
 func validateBuild(node *yaml.Node, path string) error {
@@ -396,6 +486,12 @@ func validateFirecrackerDriver(node *yaml.Node, path string) error {
 
 func validateEnvVarMap(node *yaml.Node, path string) error {
 	return validateNamedMap(node, path, validateEnvVar)
+}
+
+func validateStringMap(node *yaml.Node, path string) error {
+	return validateNamedMap(node, path, func(value *yaml.Node, valuePath string) error {
+		return validateScalar(value, valuePath)
+	})
 }
 
 func validateEnvVar(node *yaml.Node, path string) error {

@@ -211,6 +211,51 @@ agents:
 	}
 }
 
+func TestNormalizeProjectVolumesAndAgentMounts(t *testing.T) {
+	raw := []byte(`
+name: volume-demo
+volumes:
+  cache:
+    driver: local
+    labels:
+      purpose: cache
+agents:
+  reviewer:
+    provider: codex
+    image: reviewer:latest
+    volumes:
+      - cache:/cache
+      - ./fixtures:/fixtures:ro
+      - type: bind
+        source: /tmp/data
+        target: /host-data
+`)
+	spec, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if normalized.Volumes["cache"].Driver != "local" || normalized.Volumes["cache"].Labels["purpose"] != "cache" {
+		t.Fatalf("volume = %#v", normalized.Volumes["cache"])
+	}
+	if len(normalized.Agents) != 1 || len(normalized.Agents[0].Volumes) != 3 {
+		t.Fatalf("agent volumes = %#v", normalized.Agents)
+	}
+	if normalized.Agents[0].Volumes[0].Type != "volume" || normalized.Agents[0].Volumes[1].Type != "bind" || !normalized.Agents[0].Volumes[1].ReadOnly {
+		t.Fatalf("normalized mounts = %#v", normalized.Agents[0].Volumes)
+	}
+	data, err := normalized.MarshalCanonicalJSON(false)
+	if err != nil {
+		t.Fatalf("MarshalCanonicalJSON returned error: %v", err)
+	}
+	if !strings.Contains(string(data), `"volumes"`) || !strings.Contains(string(data), `"cache"`) {
+		t.Fatalf("canonical JSON missing volumes: %s", data)
+	}
+}
+
 func TestNormalizePreservesValidAgentNames(t *testing.T) {
 	spec := &ProjectSpec{
 		Name: "valid-agents",

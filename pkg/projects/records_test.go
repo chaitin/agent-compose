@@ -43,3 +43,35 @@ func TestNewAgentDefinitionFromSpecKeepsEmptyConfigWithoutJupyter(t *testing.T) 
 		t.Fatalf("config json = %s, want empty object", definition.ConfigJSON)
 	}
 }
+
+func TestProjectRecordsCarryVolumeMountSpecs(t *testing.T) {
+	project := domain.ProjectRecord{ID: "project-1", Name: "project"}
+	agent := compose.NormalizedAgentSpec{
+		Name:     "reviewer",
+		Provider: "codex",
+		Image:    "guest:latest",
+		Volumes: []compose.NormalizedVolumeMountSpec{
+			{Type: "volume", Source: "cache", Target: "/cache"},
+			{Type: "bind", Source: "./fixtures", Target: "/fixtures", ReadOnly: true},
+		},
+		Scheduler: &compose.NormalizedSchedulerSpec{Enabled: true, Script: "scheduler.agent('hi')"},
+	}
+	definition, err := NewAgentDefinitionFromSpec(project, 1, agent)
+	if err != nil {
+		t.Fatalf("NewAgentDefinitionFromSpec returned error: %v", err)
+	}
+	if len(definition.Volumes) != 2 || !definition.Volumes[1].ReadOnly {
+		t.Fatalf("agent definition volumes = %#v", definition.Volumes)
+	}
+	scheduler, ok, err := NewSchedulerRecordFromSpec(project.ID, 1, agent)
+	if err != nil || !ok {
+		t.Fatalf("NewSchedulerRecordFromSpec = %#v/%v/%v", scheduler, ok, err)
+	}
+	loader, err := NewManagedLoaderFromScheduler(project, scheduler, agent)
+	if err != nil {
+		t.Fatalf("NewManagedLoaderFromScheduler returned error: %v", err)
+	}
+	if len(loader.Volumes) != 2 || loader.Volumes[0].Source != "cache" {
+		t.Fatalf("loader volumes = %#v", loader.Volumes)
+	}
+}

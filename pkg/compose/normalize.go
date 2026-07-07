@@ -20,6 +20,7 @@ const (
 )
 
 var stableIdentifierPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+var volumeSourceNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 var envReferencePattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 var composeCronParser = cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
@@ -30,26 +31,43 @@ type NormalizeOptions struct {
 }
 
 type NormalizedProjectSpec struct {
-	Name      string                `yaml:"name" json:"name"`
-	Variables map[string]EnvVarSpec `yaml:"variables,omitempty" json:"variables,omitempty"`
-	Workspace *WorkspaceSpec        `yaml:"workspace,omitempty" json:"workspace,omitempty"`
-	Agents    []NormalizedAgentSpec `yaml:"agents,omitempty" json:"agents,omitempty"`
-	Network   *NetworkSpec          `yaml:"network,omitempty" json:"network,omitempty"`
+	Name      string                          `yaml:"name" json:"name"`
+	Variables map[string]EnvVarSpec           `yaml:"variables,omitempty" json:"variables,omitempty"`
+	Workspace *WorkspaceSpec                  `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+	Volumes   map[string]NormalizedVolumeSpec `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Agents    []NormalizedAgentSpec           `yaml:"agents,omitempty" json:"agents,omitempty"`
+	Network   *NetworkSpec                    `yaml:"network,omitempty" json:"network,omitempty"`
 }
 
 type NormalizedAgentSpec struct {
-	Name         string                   `yaml:"name" json:"name"`
-	Provider     string                   `yaml:"provider,omitempty" json:"provider,omitempty"`
-	Model        string                   `yaml:"model,omitempty" json:"model,omitempty"`
-	SystemPrompt string                   `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
-	Image        string                   `yaml:"image,omitempty" json:"image,omitempty"`
-	Build        *NormalizedBuildSpec     `yaml:"build,omitempty" json:"build,omitempty"`
-	Driver       *NormalizedDriverSpec    `yaml:"driver" json:"driver"`
-	Env          map[string]EnvVarSpec    `yaml:"env,omitempty" json:"env,omitempty"`
-	CapsetIDs    []string                 `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
-	Workspace    *WorkspaceSpec           `yaml:"workspace,omitempty" json:"workspace,omitempty"`
-	Scheduler    *NormalizedSchedulerSpec `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
-	Jupyter      *JupyterSpec             `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
+	Name         string                      `yaml:"name" json:"name"`
+	Provider     string                      `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Model        string                      `yaml:"model,omitempty" json:"model,omitempty"`
+	SystemPrompt string                      `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
+	Image        string                      `yaml:"image,omitempty" json:"image,omitempty"`
+	Build        *NormalizedBuildSpec        `yaml:"build,omitempty" json:"build,omitempty"`
+	Driver       *NormalizedDriverSpec       `yaml:"driver" json:"driver"`
+	Env          map[string]EnvVarSpec       `yaml:"env,omitempty" json:"env,omitempty"`
+	CapsetIDs    []string                    `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
+	Volumes      []NormalizedVolumeMountSpec `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Workspace    *WorkspaceSpec              `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+	Scheduler    *NormalizedSchedulerSpec    `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
+	Jupyter      *JupyterSpec                `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
+}
+
+type NormalizedVolumeSpec struct {
+	Name     string            `yaml:"name,omitempty" json:"name,omitempty"`
+	Driver   string            `yaml:"driver,omitempty" json:"driver,omitempty"`
+	External bool              `yaml:"external,omitempty" json:"external,omitempty"`
+	Labels   map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Options  map[string]string `yaml:"options,omitempty" json:"options,omitempty"`
+}
+
+type NormalizedVolumeMountSpec struct {
+	Type     string `yaml:"type" json:"type"`
+	Source   string `yaml:"source" json:"source"`
+	Target   string `yaml:"target" json:"target"`
+	ReadOnly bool   `yaml:"read_only,omitempty" json:"read_only,omitempty"`
 }
 
 type NormalizedBuildSpec struct {
@@ -125,6 +143,11 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 	if err := validateNetworkSpec(normalized.Network); err != nil {
 		return nil, err
 	}
+	volumes, err := normalizeProjectVolumes(spec.Volumes)
+	if err != nil {
+		return nil, err
+	}
+	normalized.Volumes = volumes
 
 	agentNames := make([]string, 0, len(spec.Agents))
 	for name := range spec.Agents {
@@ -137,7 +160,7 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 			return nil, err
 		}
 		agent := spec.Agents[agentName]
-		normalizedAgent, err := normalizeAgent(agentName, agent, options)
+		normalizedAgent, err := normalizeAgent(agentName, agent, options, normalized.Volumes)
 		if err != nil {
 			return nil, err
 		}
@@ -159,7 +182,7 @@ func NormalizeFile(path string) (*NormalizedProjectSpec, error) {
 	return normalized, nil
 }
 
-func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions) (NormalizedAgentSpec, error) {
+func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, projectVolumes map[string]NormalizedVolumeSpec) (NormalizedAgentSpec, error) {
 	driver, err := normalizeDriverSpec(joinPath("agents", name)+".driver", agent.Driver)
 	if err != nil {
 		return NormalizedAgentSpec{}, err
@@ -180,6 +203,10 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions) (Nor
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
+	volumes, err := normalizeVolumeMountSpecs(joinPath("agents", name)+".volumes", agent.Volumes, projectVolumes)
+	if err != nil {
+		return NormalizedAgentSpec{}, err
+	}
 	model, err := interpolateEnvValue(joinPath("agents", name)+".model", strings.TrimSpace(agent.Model), options)
 	if err != nil {
 		return NormalizedAgentSpec{}, err
@@ -194,10 +221,162 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions) (Nor
 		Driver:       driver,
 		Env:          env,
 		CapsetIDs:    normalizeStringList(agent.CapsetIDs),
+		Volumes:      volumes,
 		Workspace:    cloneWorkspaceSpec(agent.Workspace),
 		Scheduler:    scheduler,
 		Jupyter:      jupyter,
 	}, nil
+}
+
+func normalizeProjectVolumes(values map[string]VolumeSpec) (map[string]NormalizedVolumeSpec, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	normalized := make(map[string]NormalizedVolumeSpec, len(values))
+	for _, key := range keys {
+		if err := validateStableIdentifier(joinPath("volumes", key), key, "volume key"); err != nil {
+			return nil, err
+		}
+		value := values[key]
+		driver := strings.ToLower(strings.TrimSpace(value.Driver))
+		if driver == "" {
+			driver = "local"
+		}
+		if driver != "local" {
+			return nil, &ValidationError{Path: joinPath(joinPath("volumes", key), "driver"), Message: "only local volume driver is supported"}
+		}
+		normalized[key] = NormalizedVolumeSpec{
+			Name:     strings.TrimSpace(value.Name),
+			Driver:   driver,
+			External: value.External,
+			Labels:   normalizeStringMap(value.Labels),
+			Options:  normalizeStringMap(value.Options),
+		}
+	}
+	return normalized, nil
+}
+
+func normalizeStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	out := make(map[string]string, len(values))
+	for _, key := range keys {
+		name := strings.TrimSpace(key)
+		if name == "" {
+			continue
+		}
+		out[name] = strings.TrimSpace(values[key])
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func normalizeVolumeMountSpecs(path string, values []VolumeMountSpec, projectVolumes map[string]NormalizedVolumeSpec) ([]NormalizedVolumeMountSpec, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	normalized := make([]NormalizedVolumeMountSpec, 0, len(values))
+	seenTargets := make(map[string]struct{}, len(values))
+	for index, value := range values {
+		itemPath := fmt.Sprintf("%s[%d]", path, index)
+		current, err := normalizeVolumeMountSpec(itemPath, value, projectVolumes)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seenTargets[current.Target]; ok {
+			return nil, &ValidationError{Path: itemPath + ".target", Message: fmt.Sprintf("duplicate volume target %q", current.Target)}
+		}
+		seenTargets[current.Target] = struct{}{}
+		normalized = append(normalized, current)
+	}
+	return normalized, nil
+}
+
+func normalizeVolumeMountSpec(path string, value VolumeMountSpec, projectVolumes map[string]NormalizedVolumeSpec) (NormalizedVolumeMountSpec, error) {
+	source := strings.TrimSpace(value.Source)
+	target := strings.TrimSpace(value.Target)
+	if source == "" {
+		return NormalizedVolumeMountSpec{}, &ValidationError{Path: path + ".source", Message: "volume source is required"}
+	}
+	if target == "" {
+		return NormalizedVolumeMountSpec{}, &ValidationError{Path: path + ".target", Message: "volume target is required"}
+	}
+	if !filepath.IsAbs(target) {
+		return NormalizedVolumeMountSpec{}, &ValidationError{Path: path + ".target", Message: "volume target must be absolute"}
+	}
+	mountType := strings.ToLower(strings.TrimSpace(value.Type))
+	if mountType == "" {
+		mountType = inferVolumeMountType(source, projectVolumes)
+	}
+	switch mountType {
+	case "volume":
+		if !volumeSourceNamePattern.MatchString(source) {
+			return NormalizedVolumeMountSpec{}, &ValidationError{Path: path + ".source", Message: "volume source name is invalid"}
+		}
+	case "bind":
+		if source == "" {
+			return NormalizedVolumeMountSpec{}, &ValidationError{Path: path + ".source", Message: "bind source is required"}
+		}
+	default:
+		return NormalizedVolumeMountSpec{}, &ValidationError{Path: path + ".type", Message: fmt.Sprintf("volume mount type %q is not supported", mountType)}
+	}
+	return NormalizedVolumeMountSpec{
+		Type:     mountType,
+		Source:   source,
+		Target:   filepath.Clean(target),
+		ReadOnly: value.ReadOnly,
+	}, nil
+}
+
+func inferVolumeMountType(source string, projectVolumes map[string]NormalizedVolumeSpec) string {
+	if _, ok := projectVolumes[source]; ok {
+		return "volume"
+	}
+	if filepath.IsAbs(source) || strings.HasPrefix(source, ".") {
+		return "bind"
+	}
+	return "volume"
+}
+
+func parseVolumeMountShortSyntax(raw string) (VolumeMountSpec, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return VolumeMountSpec{}, fmt.Errorf("volume short syntax is required")
+	}
+	parts := strings.Split(raw, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return VolumeMountSpec{}, fmt.Errorf("volume short syntax must be source:target[:ro]")
+	}
+	source := strings.TrimSpace(parts[0])
+	target := strings.TrimSpace(parts[1])
+	if source == "" || target == "" {
+		return VolumeMountSpec{}, fmt.Errorf("volume short syntax requires source and target")
+	}
+	readOnly := false
+	if len(parts) == 3 {
+		mode := strings.ToLower(strings.TrimSpace(parts[2]))
+		switch mode {
+		case "ro", "readonly":
+			readOnly = true
+		case "rw", "":
+		default:
+			return VolumeMountSpec{}, fmt.Errorf("unsupported volume short syntax mode %q", parts[2])
+		}
+	}
+	return VolumeMountSpec{Source: source, Target: target, ReadOnly: readOnly}, nil
 }
 
 func normalizeBuildSpec(path string, build *BuildSpec) (*NormalizedBuildSpec, error) {

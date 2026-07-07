@@ -105,6 +105,13 @@ func (m *Manager) Inspect(ctx context.Context, nameOrID string) (domain.VolumeRe
 	return driver.Inspect(ctx, item)
 }
 
+func (m *Manager) UpsertProjectVolume(ctx context.Context, projectID, key, volumeID string, external bool) error {
+	if m == nil || m.Project == nil {
+		return fmt.Errorf("project volume store is required")
+	}
+	return m.Project.UpsertProjectVolume(ctx, projectID, key, volumeID, external)
+}
+
 func (m *Manager) Remove(ctx context.Context, nameOrID string, force bool) error {
 	if m == nil || m.Store == nil {
 		return fmt.Errorf("volume store is required")

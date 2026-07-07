@@ -109,6 +109,7 @@ func NewAgentDefinitionFromSpec(project domain.ProjectRecord, revision int64, ag
 		Driver:                 driver,
 		GuestImage:             agent.Image,
 		EnvItems:               SessionEnvItemsFromCompose(agent.Env),
+		Volumes:                VolumeMountSpecsFromCompose(agent.Volumes),
 		ConfigJSON:             configJSON,
 		CapsetIDs:              capabilities.NormalizeCapsetIDs(agent.CapsetIDs),
 		ManagedProjectID:       project.ID,
@@ -171,7 +172,24 @@ func NewManagedLoaderFromScheduler(project domain.ProjectRecord, scheduler domai
 		Script:   script,
 		Triggers: triggers,
 		EnvItems: SessionEnvItemsFromCompose(agent.Env),
+		Volumes:  VolumeMountSpecsFromCompose(agent.Volumes),
 	}, nil
+}
+
+func VolumeMountSpecsFromCompose(values []compose.NormalizedVolumeMountSpec) []domain.VolumeMountSpec {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]domain.VolumeMountSpec, 0, len(values))
+	for _, value := range values {
+		out = append(out, domain.VolumeMountSpec{
+			Type:     value.Type,
+			Source:   value.Source,
+			Target:   value.Target,
+			ReadOnly: value.ReadOnly,
+		})
+	}
+	return out
 }
 
 type SchedulerBuild struct {
