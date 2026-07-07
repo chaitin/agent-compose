@@ -744,6 +744,65 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 	addCacheRemoveFlags(cacheRemoveCmd, &cacheRemoveOptions)
 	cacheCmd.AddCommand(cacheLSCmd, cacheInspectCmd, cachePruneCmd, cacheRemoveCmd)
 
+	volumeCmd := &cobra.Command{
+		Use:   "volume",
+		Short: "Manage daemon volumes",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+	}
+	volumeLSOptions := composeVolumeListOptions{}
+	volumeLSCmd := &cobra.Command{
+		Use:   "ls",
+		Short: "List daemon volumes",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeVolumeListCommand(cmd, options, volumeLSOptions)
+		},
+	}
+	addVolumeListFlags(volumeLSCmd, &volumeLSOptions)
+	volumeCreateOptions := composeVolumeCreateOptions{}
+	volumeCreateCmd := &cobra.Command{
+		Use:   "create <name>",
+		Short: "Create a daemon volume",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeVolumeCreateCommand(cmd, options, volumeCreateOptions, args[0])
+		},
+	}
+	addVolumeCreateFlags(volumeCreateCmd, &volumeCreateOptions)
+	volumeInspectCmd := &cobra.Command{
+		Use:   "inspect <name>",
+		Short: "Inspect a daemon volume",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeVolumeInspectCommand(cmd, options, args[0])
+		},
+	}
+	volumeRemoveOptions := composeVolumeRemoveOptions{}
+	volumeRemoveCmd := &cobra.Command{
+		Use:     "rm <name> [<name N>]",
+		Aliases: []string{"remove"},
+		Short:   "Remove one or more daemon volumes",
+		Args:    cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeVolumeRemoveCommand(cmd, options, volumeRemoveOptions, args)
+		},
+	}
+	addVolumeRemoveFlags(volumeRemoveCmd, &volumeRemoveOptions)
+	volumePruneOptions := composeVolumePruneOptions{}
+	volumePruneCmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Prune unused daemon volumes",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeVolumePruneCommand(cmd, options, volumePruneOptions)
+		},
+	}
+	addVolumePruneFlags(volumePruneCmd, &volumePruneOptions)
+	volumeCmd.AddCommand(volumeLSCmd, volumeCreateCmd, volumeInspectCmd, volumeRemoveCmd, volumePruneCmd)
+
 	imageCmd := &cobra.Command{
 		Use:   "image",
 		Short: "Deprecated: use images, pull, rmi, or inspect image",
@@ -860,15 +919,15 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 	imageCmd.AddCommand(imageLSCmd, imagePullCmd, imageBuildCmd, imageRemoveCmd, imageInspectCmd)
 
 	inspectCmd := &cobra.Command{
-		Use:   "inspect <project|agent|run|sandbox|image|cache> [name-or-id]",
-		Short: "Inspect project, agent, run, sandbox, image, or cache details",
+		Use:   "inspect <project|agent|run|sandbox|image|cache|volume> [name-or-id]",
+		Short: "Inspect project, agent, run, sandbox, image, cache, or volume details",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runComposeInspectCommand(cmd, options, args)
 		},
 	}
 
-	root.AddCommand(daemonCmd, versionCmd, statusCmd, configCmd, listCmd, upCmd, downCmd, runCmd, schedulerCmd, logsCmd, psCmd, statsCmd, sandboxCmd, stopCmd, resumeCmd, rmCmd, execCmd, imagesCmd, cacheCmd, imageCmd, pullCmd, buildCmd, rmiCmd, inspectCmd)
+	root.AddCommand(daemonCmd, versionCmd, statusCmd, configCmd, listCmd, upCmd, downCmd, runCmd, schedulerCmd, logsCmd, psCmd, statsCmd, sandboxCmd, stopCmd, resumeCmd, rmCmd, execCmd, imagesCmd, cacheCmd, volumeCmd, imageCmd, pullCmd, buildCmd, rmiCmd, inspectCmd)
 	return root
 }
 
@@ -1001,6 +1060,27 @@ type composeCacheRemoveOptions struct {
 	Force bool
 }
 
+type composeVolumeListOptions struct {
+	Query     string
+	Driver    string
+	ProjectID string
+}
+
+type composeVolumeCreateOptions struct {
+	Driver  string
+	Labels  []string
+	Options []string
+}
+
+type composeVolumeRemoveOptions struct {
+	Force bool
+}
+
+type composeVolumePruneOptions struct {
+	composeVolumeListOptions
+	Force bool
+}
+
 func addImageListFlags(cmd *cobra.Command, options *composeImageListOptions) {
 	cmd.Flags().StringVar(&options.Query, "query", "", "Filter images by reference")
 	cmd.Flags().BoolVarP(&options.All, "all", "a", false, "Show all images")
@@ -1051,6 +1131,27 @@ func addSandboxPruneFlags(cmd *cobra.Command, options *composeSandboxPruneOption
 
 func addCacheRemoveFlags(cmd *cobra.Command, options *composeCacheRemoveOptions) {
 	cmd.Flags().BoolVar(&options.Force, "force", false, "Actually remove the cache item")
+}
+
+func addVolumeListFlags(cmd *cobra.Command, options *composeVolumeListOptions) {
+	cmd.Flags().StringVar(&options.Query, "query", "", "Filter volumes by name or id")
+	cmd.Flags().StringVar(&options.Driver, "driver", "", "Filter volumes by driver")
+	cmd.Flags().StringVar(&options.ProjectID, "project-id", "", "Filter volumes by project id")
+}
+
+func addVolumeCreateFlags(cmd *cobra.Command, options *composeVolumeCreateOptions) {
+	cmd.Flags().StringVar(&options.Driver, "driver", "local", "Volume driver")
+	cmd.Flags().StringArrayVar(&options.Labels, "label", nil, "Set volume label as key=value")
+	cmd.Flags().StringArrayVar(&options.Options, "opt", nil, "Set volume driver option as key=value")
+}
+
+func addVolumeRemoveFlags(cmd *cobra.Command, options *composeVolumeRemoveOptions) {
+	cmd.Flags().BoolVar(&options.Force, "force", false, "Force volume removal")
+}
+
+func addVolumePruneFlags(cmd *cobra.Command, options *composeVolumePruneOptions) {
+	addVolumeListFlags(cmd, &options.composeVolumeListOptions)
+	cmd.Flags().BoolVar(&options.Force, "force", false, "Actually remove matched volumes")
 }
 
 func cacheInspectArgs(_ *cobra.Command, args []string) error {
@@ -2565,6 +2666,147 @@ func runComposeCacheListCommand(cmd *cobra.Command, cli cliOptions, options comp
 	return writeCacheListText(cmd.OutOrStdout(), output)
 }
 
+func runComposeVolumeListCommand(cmd *cobra.Command, cli cliOptions, options composeVolumeListOptions) error {
+	clients, err := newCLIServiceClients(cli)
+	if err != nil {
+		return err
+	}
+	resp, err := clients.volume.ListVolumes(cmd.Context(), connect.NewRequest(&agentcomposev2.ListVolumesRequest{
+		Query:     strings.TrimSpace(options.Query),
+		Driver:    strings.TrimSpace(options.Driver),
+		ProjectId: strings.TrimSpace(options.ProjectID),
+	}))
+	if err != nil {
+		return commandExitErrorForConnect(fmt.Errorf("list volumes: %w", err))
+	}
+	output := composeVolumeListOutputFromResponse(resp.Msg)
+	if cli.JSON {
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	return writeVolumesText(cmd.OutOrStdout(), output.Volumes)
+}
+
+func runComposeVolumeCreateCommand(cmd *cobra.Command, cli cliOptions, options composeVolumeCreateOptions, name string) error {
+	clients, err := newCLIServiceClients(cli)
+	if err != nil {
+		return err
+	}
+	labels, err := parseCLIStringMap(options.Labels, "--label")
+	if err != nil {
+		return commandExitError{Code: exitCodeUsage, Err: err}
+	}
+	driverOptions, err := parseCLIStringMap(options.Options, "--opt")
+	if err != nil {
+		return commandExitError{Code: exitCodeUsage, Err: err}
+	}
+	resp, err := clients.volume.CreateVolume(cmd.Context(), connect.NewRequest(&agentcomposev2.CreateVolumeRequest{
+		Name:    strings.TrimSpace(name),
+		Driver:  strings.TrimSpace(options.Driver),
+		Labels:  labels,
+		Options: driverOptions,
+	}))
+	if err != nil {
+		return commandExitErrorForConnect(fmt.Errorf("create volume %s: %w", strings.TrimSpace(name), err))
+	}
+	output := composeVolumeCreateOutput{Volume: composeVolumeOutputFromProto(resp.Msg.GetVolume()), Created: resp.Msg.GetCreated()}
+	if cli.JSON {
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	_, err = fmt.Fprintln(cmd.OutOrStdout(), output.Volume.Name)
+	return err
+}
+
+func runComposeVolumeInspectCommand(cmd *cobra.Command, cli cliOptions, name string) error {
+	clients, err := newCLIServiceClients(cli)
+	if err != nil {
+		return err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("volume inspect requires a volume name")}
+	}
+	resp, err := clients.volume.InspectVolume(cmd.Context(), connect.NewRequest(&agentcomposev2.InspectVolumeRequest{Name: name}))
+	if err != nil {
+		return commandExitErrorForConnect(fmt.Errorf("inspect volume %s: %w", name, err))
+	}
+	output := composeVolumeInspectOutput{Volume: composeVolumeOutputFromProto(resp.Msg.GetVolume())}
+	if cli.JSON {
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	return writeVolumeInspectText(cmd.OutOrStdout(), output)
+}
+
+func runComposeVolumeRemoveCommand(cmd *cobra.Command, cli cliOptions, options composeVolumeRemoveOptions, names []string) error {
+	clients, err := newCLIServiceClients(cli)
+	if err != nil {
+		return err
+	}
+	output := composeVolumeRemoveOutput{Removed: make([]string, 0, len(names))}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		resp, err := clients.volume.RemoveVolume(cmd.Context(), connect.NewRequest(&agentcomposev2.RemoveVolumeRequest{Name: name, Force: options.Force}))
+		if err != nil {
+			return commandExitErrorForConnect(fmt.Errorf("remove volume %s: %w", name, err))
+		}
+		if resp.Msg.GetRemoved() {
+			output.Removed = append(output.Removed, firstNonEmptyString(resp.Msg.GetName(), name))
+		}
+	}
+	if cli.JSON {
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	for _, name := range output.Removed {
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runComposeVolumePruneCommand(cmd *cobra.Command, cli cliOptions, options composeVolumePruneOptions) error {
+	clients, err := newCLIServiceClients(cli)
+	if err != nil {
+		return err
+	}
+	resp, err := clients.volume.PruneVolumes(cmd.Context(), connect.NewRequest(&agentcomposev2.PruneVolumesRequest{
+		Query:     strings.TrimSpace(options.Query),
+		Driver:    strings.TrimSpace(options.Driver),
+		ProjectId: strings.TrimSpace(options.ProjectID),
+		Force:     options.Force,
+	}))
+	if err != nil {
+		return commandExitErrorForConnect(fmt.Errorf("prune volumes: %w", err))
+	}
+	output := composeVolumePruneOutputFromResponse(resp.Msg)
+	if cli.JSON {
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	return writeVolumePruneOutput(cmd.OutOrStdout(), output)
+}
+
 func runComposeCacheInspectCommand(cmd *cobra.Command, cli cliOptions, cacheID string) error {
 	cacheID = strings.TrimSpace(cacheID)
 	if cacheID == "" {
@@ -2862,6 +3104,10 @@ func buildImage(ctx context.Context, out io.Writer, jsonOutput bool, client agen
 }
 
 func parseBuildArgs(values []string) (map[string]string, error) {
+	return parseCLIStringMap(values, "--build-arg")
+}
+
+func parseCLIStringMap(values []string, flagName string) (map[string]string, error) {
 	if len(values) == 0 {
 		return nil, nil
 	}
@@ -2870,7 +3116,7 @@ func parseBuildArgs(values []string) (map[string]string, error) {
 		key, argValue, ok := strings.Cut(value, "=")
 		key = strings.TrimSpace(key)
 		if !ok || key == "" {
-			return nil, fmt.Errorf("invalid --build-arg %q: expected KEY=VALUE", value)
+			return nil, fmt.Errorf("invalid %s %q: expected KEY=VALUE", flagName, value)
 		}
 		result[key] = argValue
 	}
@@ -3121,6 +3367,12 @@ func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string)
 			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect cache requires a cache id")}
 		}
 		return runComposeCacheInspectCommand(cmd, cli, target)
+	}
+	if kind == "volume" {
+		if target == "" {
+			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect volume requires a volume name")}
+		}
+		return runComposeVolumeInspectCommand(cmd, cli, target)
 	}
 	composePath, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
@@ -3396,6 +3648,7 @@ type cliServiceClients struct {
 	exec    agentcomposev2connect.ExecServiceClient
 	image   agentcomposev2connect.ImageServiceClient
 	cache   agentcomposev2connect.CacheServiceClient
+	volume  agentcomposev2connect.VolumeServiceClient
 	sandbox agentcomposev2connect.SandboxServiceClient
 	session agentcomposev1connect.SessionServiceClient
 	loader  agentcomposev1connect.LoaderServiceClient
@@ -3587,6 +3840,42 @@ type composeCacheOperationOutput struct {
 	Removed  []string             `json:"removed"`
 	Skipped  []composeCacheOutput `json:"skipped"`
 	Warnings []string             `json:"warnings,omitempty"`
+}
+
+type composeVolumeListOutput struct {
+	Volumes []composeVolumeOutput `json:"volumes"`
+}
+
+type composeVolumeInspectOutput struct {
+	Volume composeVolumeOutput `json:"volume"`
+}
+
+type composeVolumeCreateOutput struct {
+	Volume  composeVolumeOutput `json:"volume"`
+	Created bool                `json:"created"`
+}
+
+type composeVolumeRemoveOutput struct {
+	Removed []string `json:"removed"`
+}
+
+type composeVolumePruneOutput struct {
+	DryRun  bool                  `json:"dry_run"`
+	Matched []composeVolumeOutput `json:"matched"`
+	Removed []composeVolumeOutput `json:"removed"`
+	Skipped []composeVolumeOutput `json:"skipped"`
+}
+
+type composeVolumeOutput struct {
+	VolumeID  string            `json:"volume_id"`
+	Name      string            `json:"name"`
+	Driver    string            `json:"driver"`
+	Path      string            `json:"path,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
+	Options   map[string]string `json:"options,omitempty"`
+	ProjectID string            `json:"project_id,omitempty"`
+	CreatedAt string            `json:"created_at,omitempty"`
+	UpdatedAt string            `json:"updated_at,omitempty"`
 }
 
 type composeCacheOutput struct {
@@ -3946,6 +4235,7 @@ func newCLIServiceClients(cli cliOptions) (cliServiceClients, error) {
 		exec:    agentcomposev2connect.NewExecServiceClient(httpClient, clientConfig.BaseURL),
 		image:   agentcomposev2connect.NewImageServiceClient(httpClient, clientConfig.BaseURL),
 		cache:   agentcomposev2connect.NewCacheServiceClient(httpClient, clientConfig.BaseURL),
+		volume:  agentcomposev2connect.NewVolumeServiceClient(httpClient, clientConfig.BaseURL),
 		sandbox: agentcomposev2connect.NewSandboxServiceClient(httpClient, clientConfig.BaseURL),
 		session: agentcomposev1connect.NewSessionServiceClient(httpClient, clientConfig.BaseURL),
 		loader:  agentcomposev1connect.NewLoaderServiceClient(httpClient, clientConfig.BaseURL),
@@ -4560,6 +4850,50 @@ func composeCacheOperationOutputFromRemoveResponse(resp *agentcomposev2.RemoveCa
 	return output
 }
 
+func composeVolumeListOutputFromResponse(resp *agentcomposev2.ListVolumesResponse) composeVolumeListOutput {
+	output := composeVolumeListOutput{Volumes: make([]composeVolumeOutput, 0, len(resp.GetVolumes()))}
+	for _, volume := range resp.GetVolumes() {
+		output.Volumes = append(output.Volumes, composeVolumeOutputFromProto(volume))
+	}
+	return output
+}
+
+func composeVolumePruneOutputFromResponse(resp *agentcomposev2.PruneVolumesResponse) composeVolumePruneOutput {
+	output := composeVolumePruneOutput{
+		DryRun:  resp.GetDryRun(),
+		Matched: make([]composeVolumeOutput, 0, len(resp.GetMatched())),
+		Removed: make([]composeVolumeOutput, 0, len(resp.GetRemoved())),
+		Skipped: make([]composeVolumeOutput, 0, len(resp.GetSkipped())),
+	}
+	for _, volume := range resp.GetMatched() {
+		output.Matched = append(output.Matched, composeVolumeOutputFromProto(volume))
+	}
+	for _, volume := range resp.GetRemoved() {
+		output.Removed = append(output.Removed, composeVolumeOutputFromProto(volume))
+	}
+	for _, volume := range resp.GetSkipped() {
+		output.Skipped = append(output.Skipped, composeVolumeOutputFromProto(volume))
+	}
+	return output
+}
+
+func composeVolumeOutputFromProto(volume *agentcomposev2.Volume) composeVolumeOutput {
+	if volume == nil {
+		return composeVolumeOutput{}
+	}
+	return composeVolumeOutput{
+		VolumeID:  volume.GetVolumeId(),
+		Name:      volume.GetName(),
+		Driver:    volume.GetDriver(),
+		Path:      volume.GetPath(),
+		Labels:    cloneStringMapForCLI(volume.GetLabels()),
+		Options:   cloneStringMapForCLI(volume.GetOptions()),
+		ProjectID: volume.GetProjectId(),
+		CreatedAt: volume.GetCreatedAt(),
+		UpdatedAt: volume.GetUpdatedAt(),
+	}
+}
+
 func composeImageRemoveOutputFromResponse(resp *agentcomposev2.RemoveImageResponse) composeImageRemoveOutput {
 	return composeImageRemoveOutput{
 		ImageRef:     resp.GetImageRef(),
@@ -4737,6 +5071,81 @@ func writeCacheInspectText(out io.Writer, output composeCacheInspectOutput) erro
 	return nil
 }
 
+func writeVolumesText(out io.Writer, volumes []composeVolumeOutput) error {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "VOLUME ID\tNAME\tDRIVER\tPROJECT\tPATH"); err != nil {
+		return err
+	}
+	for _, volume := range volumes {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			firstNonEmptyString(volume.VolumeID, "-"),
+			firstNonEmptyString(volume.Name, "-"),
+			firstNonEmptyString(volume.Driver, "-"),
+			firstNonEmptyString(volume.ProjectID, "-"),
+			firstNonEmptyString(volume.Path, "-"),
+		); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}
+
+func writeVolumeInspectText(out io.Writer, output composeVolumeInspectOutput) error {
+	volume := output.Volume
+	if _, err := fmt.Fprintf(out, "Volume ID: %s\nName: %s\nDriver: %s\nPath: %s\nProject: %s\nCreated: %s\nUpdated: %s\n",
+		firstNonEmptyString(volume.VolumeID, "-"),
+		firstNonEmptyString(volume.Name, "-"),
+		firstNonEmptyString(volume.Driver, "-"),
+		firstNonEmptyString(volume.Path, "-"),
+		firstNonEmptyString(volume.ProjectID, "-"),
+		firstNonEmptyString(volume.CreatedAt, "-"),
+		firstNonEmptyString(volume.UpdatedAt, "-"),
+	); err != nil {
+		return err
+	}
+	if err := writeStringMapSection(out, "Labels", volume.Labels); err != nil {
+		return err
+	}
+	return writeStringMapSection(out, "Options", volume.Options)
+}
+
+func writeVolumePruneOutput(out io.Writer, output composeVolumePruneOutput) error {
+	if output.DryRun {
+		if _, err := fmt.Fprintf(out, "Dry-run: %d matched, %d skipped, %d would be removed.\n", len(output.Matched), len(output.Skipped), len(output.Matched)); err != nil {
+			return err
+		}
+	} else {
+		if _, err := fmt.Fprintf(out, "Removed %d volume(s); %d matched, %d skipped.\n", len(output.Removed), len(output.Matched), len(output.Skipped)); err != nil {
+			return err
+		}
+	}
+	if len(output.Removed) > 0 {
+		if _, err := fmt.Fprintln(out, "Removed:"); err != nil {
+			return err
+		}
+		if err := writeVolumeOperationTable(out, output.Removed); err != nil {
+			return err
+		}
+	}
+	if len(output.Matched) > 0 {
+		if _, err := fmt.Fprintln(out, "Matched:"); err != nil {
+			return err
+		}
+		if err := writeVolumeOperationTable(out, output.Matched); err != nil {
+			return err
+		}
+	}
+	if len(output.Skipped) > 0 {
+		if _, err := fmt.Fprintln(out, "Skipped:"); err != nil {
+			return err
+		}
+		if err := writeVolumeOperationTable(out, output.Skipped); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func writeCacheOperationOutput(out io.Writer, asJSON bool, output composeCacheOperationOutput) error {
 	if asJSON {
 		data, err := json.MarshalIndent(output, "", "  ")
@@ -4889,6 +5298,25 @@ func writeCacheOperationTable(out io.Writer, caches []composeCacheOutput) error 
 	return tw.Flush()
 }
 
+func writeVolumeOperationTable(out io.Writer, volumes []composeVolumeOutput) error {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "VOLUME ID\tNAME\tDRIVER\tPROJECT\tPATH"); err != nil {
+		return err
+	}
+	for _, volume := range volumes {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			firstNonEmptyString(volume.VolumeID, "-"),
+			firstNonEmptyString(volume.Name, "-"),
+			firstNonEmptyString(volume.Driver, "-"),
+			firstNonEmptyString(volume.ProjectID, "-"),
+			firstNonEmptyString(volume.Path, "-"),
+		); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}
+
 func writeStringListSection(out io.Writer, title string, values []string) error {
 	if len(values) == 0 {
 		return nil
@@ -4898,6 +5326,26 @@ func writeStringListSection(out io.Writer, title string, values []string) error 
 	}
 	for _, value := range values {
 		if _, err := fmt.Fprintf(out, "- %s\n", value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeStringMapSection(out io.Writer, title string, values map[string]string) error {
+	if len(values) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if _, err := fmt.Fprintf(out, "%s:\n", title); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if _, err := fmt.Fprintf(out, "- %s=%s\n", key, values[key]); err != nil {
 			return err
 		}
 	}

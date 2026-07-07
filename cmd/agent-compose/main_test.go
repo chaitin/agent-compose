@@ -189,6 +189,8 @@ func TestCLIHelpUsesSandboxTerminology(t *testing.T) {
 		{"inspect", "--help"},
 		{"cache", "ls", "--help"},
 		{"cache", "prune", "--help"},
+		{"volume", "ls", "--help"},
+		{"volume", "prune", "--help"},
 	}
 	for _, args := range commands {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -4057,6 +4059,85 @@ func TestIntegrationCLICacheListTextJSONAndFilters(t *testing.T) {
 	}
 }
 
+func TestIntegrationCLIVolumeCommands(t *testing.T) {
+	var listCalls int
+	var createdLabel string
+	var removed []string
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		volume: volumeServiceStub{
+			listVolumes: func(ctx context.Context, req *connect.Request[agentcomposev2.ListVolumesRequest]) (*connect.Response[agentcomposev2.ListVolumesResponse], error) {
+				listCalls++
+				if req.Msg.GetQuery() != "cac" || req.Msg.GetDriver() != "local" {
+					t.Fatalf("ListVolumes request = %#v", req.Msg)
+				}
+				return connect.NewResponse(&agentcomposev2.ListVolumesResponse{Volumes: []*agentcomposev2.Volume{testCLIVolume("vol-cache", "cache")}}), nil
+			},
+			createVolume: func(ctx context.Context, req *connect.Request[agentcomposev2.CreateVolumeRequest]) (*connect.Response[agentcomposev2.CreateVolumeResponse], error) {
+				if req.Msg.GetName() != "cache" || req.Msg.GetDriver() != "local" || req.Msg.GetLabels()["purpose"] != "cache" || req.Msg.GetOptions()["quota"] != "1g" {
+					t.Fatalf("CreateVolume request = %#v", req.Msg)
+				}
+				createdLabel = req.Msg.GetLabels()["purpose"]
+				return connect.NewResponse(&agentcomposev2.CreateVolumeResponse{Volume: testCLIVolume("vol-cache", "cache"), Created: true}), nil
+			},
+			inspectVolume: func(ctx context.Context, req *connect.Request[agentcomposev2.InspectVolumeRequest]) (*connect.Response[agentcomposev2.InspectVolumeResponse], error) {
+				if req.Msg.GetName() != "cache" {
+					t.Fatalf("InspectVolume request = %#v", req.Msg)
+				}
+				return connect.NewResponse(&agentcomposev2.InspectVolumeResponse{Volume: testCLIVolume("vol-cache", "cache")}), nil
+			},
+			removeVolume: func(ctx context.Context, req *connect.Request[agentcomposev2.RemoveVolumeRequest]) (*connect.Response[agentcomposev2.RemoveVolumeResponse], error) {
+				if !req.Msg.GetForce() {
+					t.Fatalf("RemoveVolume force = false")
+				}
+				removed = append(removed, req.Msg.GetName())
+				return connect.NewResponse(&agentcomposev2.RemoveVolumeResponse{Name: req.Msg.GetName(), Removed: true}), nil
+			},
+			pruneVolumes: func(ctx context.Context, req *connect.Request[agentcomposev2.PruneVolumesRequest]) (*connect.Response[agentcomposev2.PruneVolumesResponse], error) {
+				if !req.Msg.GetForce() || req.Msg.GetDriver() != "local" {
+					t.Fatalf("PruneVolumes request = %#v", req.Msg)
+				}
+				return connect.NewResponse(&agentcomposev2.PruneVolumesResponse{
+					Removed: []*agentcomposev2.Volume{testCLIVolume("vol-cache", "cache")},
+					Matched: []*agentcomposev2.Volume{testCLIVolume("vol-cache", "cache")},
+				}), nil
+			},
+		},
+	})
+	defer server.Close()
+
+	listOut, listErr, _, listCode := executeCLICommand("volume", "ls", "--host", server.URL, "--json", "--query", "cac", "--driver", "local")
+	if listCode != 0 || listErr != "" {
+		t.Fatalf("volume ls code/stderr = %d / %q", listCode, listErr)
+	}
+	var listDecoded composeVolumeListOutput
+	if err := json.Unmarshal([]byte(listOut), &listDecoded); err != nil {
+		t.Fatalf("volume ls JSON decode failed: %v\n%s", err, listOut)
+	}
+	if len(listDecoded.Volumes) != 1 || listDecoded.Volumes[0].Name != "cache" {
+		t.Fatalf("volume ls JSON = %#v", listDecoded)
+	}
+
+	createOut, createErr, _, createCode := executeCLICommand("volume", "create", "--host", server.URL, "--label", "purpose=cache", "--opt", "quota=1g", "cache")
+	if createCode != 0 || createErr != "" || strings.TrimSpace(createOut) != "cache" || createdLabel != "cache" {
+		t.Fatalf("volume create code/stdout/stderr = %d / %q / %q label=%q", createCode, createOut, createErr, createdLabel)
+	}
+
+	inspectOut, inspectErr, _, inspectCode := executeCLICommand("inspect", "volume", "--host", server.URL, "cache")
+	if inspectCode != 0 || inspectErr != "" || !strings.Contains(inspectOut, "Volume ID: vol-cache") || !strings.Contains(inspectOut, "Labels") {
+		t.Fatalf("inspect volume code/stdout/stderr = %d / %q / %q", inspectCode, inspectOut, inspectErr)
+	}
+
+	removeOut, removeErr, _, removeCode := executeCLICommand("volume", "rm", "--host", server.URL, "--force", "cache", "state")
+	if removeCode != 0 || removeErr != "" || !strings.Contains(removeOut, "cache") || !strings.Contains(removeOut, "state") || len(removed) != 2 {
+		t.Fatalf("volume rm code/stdout/stderr removed = %d / %q / %q / %#v", removeCode, removeOut, removeErr, removed)
+	}
+
+	pruneOut, pruneErr, _, pruneCode := executeCLICommand("volume", "prune", "--host", server.URL, "--driver", "local", "--force")
+	if pruneCode != 0 || pruneErr != "" || !strings.Contains(pruneOut, "Removed 1 volume") || listCalls != 1 {
+		t.Fatalf("volume prune code/stdout/stderr/listCalls = %d / %q / %q / %d", pruneCode, pruneOut, pruneErr, listCalls)
+	}
+}
+
 func TestIntegrationCLICacheListFilterValuesAndUsageErrors(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -7167,6 +7248,7 @@ type composeServiceStubs struct {
 	exec    execServiceStub
 	image   imageServiceStub
 	cache   cacheServiceStub
+	volume  volumeServiceStub
 	sandbox sandboxServiceStub
 	session sessionServiceStub
 	loader  loaderServiceStub
@@ -7304,6 +7386,51 @@ func (s cacheServiceStub) RemoveCache(ctx context.Context, req *connect.Request[
 	return s.removeCache(ctx, req)
 }
 
+type volumeServiceStub struct {
+	listVolumes   func(context.Context, *connect.Request[agentcomposev2.ListVolumesRequest]) (*connect.Response[agentcomposev2.ListVolumesResponse], error)
+	createVolume  func(context.Context, *connect.Request[agentcomposev2.CreateVolumeRequest]) (*connect.Response[agentcomposev2.CreateVolumeResponse], error)
+	inspectVolume func(context.Context, *connect.Request[agentcomposev2.InspectVolumeRequest]) (*connect.Response[agentcomposev2.InspectVolumeResponse], error)
+	removeVolume  func(context.Context, *connect.Request[agentcomposev2.RemoveVolumeRequest]) (*connect.Response[agentcomposev2.RemoveVolumeResponse], error)
+	pruneVolumes  func(context.Context, *connect.Request[agentcomposev2.PruneVolumesRequest]) (*connect.Response[agentcomposev2.PruneVolumesResponse], error)
+
+	agentcomposev2connect.UnimplementedVolumeServiceHandler
+}
+
+func (s volumeServiceStub) ListVolumes(ctx context.Context, req *connect.Request[agentcomposev2.ListVolumesRequest]) (*connect.Response[agentcomposev2.ListVolumesResponse], error) {
+	if s.listVolumes == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("ListVolumes stub is not configured"))
+	}
+	return s.listVolumes(ctx, req)
+}
+
+func (s volumeServiceStub) CreateVolume(ctx context.Context, req *connect.Request[agentcomposev2.CreateVolumeRequest]) (*connect.Response[agentcomposev2.CreateVolumeResponse], error) {
+	if s.createVolume == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("CreateVolume stub is not configured"))
+	}
+	return s.createVolume(ctx, req)
+}
+
+func (s volumeServiceStub) InspectVolume(ctx context.Context, req *connect.Request[agentcomposev2.InspectVolumeRequest]) (*connect.Response[agentcomposev2.InspectVolumeResponse], error) {
+	if s.inspectVolume == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("InspectVolume stub is not configured"))
+	}
+	return s.inspectVolume(ctx, req)
+}
+
+func (s volumeServiceStub) RemoveVolume(ctx context.Context, req *connect.Request[agentcomposev2.RemoveVolumeRequest]) (*connect.Response[agentcomposev2.RemoveVolumeResponse], error) {
+	if s.removeVolume == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("RemoveVolume stub is not configured"))
+	}
+	return s.removeVolume(ctx, req)
+}
+
+func (s volumeServiceStub) PruneVolumes(ctx context.Context, req *connect.Request[agentcomposev2.PruneVolumesRequest]) (*connect.Response[agentcomposev2.PruneVolumesResponse], error) {
+	if s.pruneVolumes == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("PruneVolumes stub is not configured"))
+	}
+	return s.pruneVolumes(ctx, req)
+}
+
 type sandboxServiceStub struct {
 	removeSandbox func(context.Context, *connect.Request[agentcomposev2.RemoveSandboxRequest]) (*connect.Response[agentcomposev2.RemoveSandboxResponse], error)
 	getStats      func(context.Context, *connect.Request[agentcomposev2.GetSandboxStatsRequest]) (*connect.Response[agentcomposev2.GetSandboxStatsResponse], error)
@@ -7396,6 +7523,10 @@ func newComposeServiceStubServer(t *testing.T, stubs composeServiceStubs) *httpt
 	}
 	if stubs.cache.listCaches != nil || stubs.cache.inspectCache != nil || stubs.cache.pruneCaches != nil || stubs.cache.removeCache != nil {
 		path, handler := agentcomposev2connect.NewCacheServiceHandler(stubs.cache)
+		mux.Handle(path, handler)
+	}
+	if stubs.volume.listVolumes != nil || stubs.volume.createVolume != nil || stubs.volume.inspectVolume != nil || stubs.volume.removeVolume != nil || stubs.volume.pruneVolumes != nil {
+		path, handler := agentcomposev2connect.NewVolumeServiceHandler(stubs.volume)
 		mux.Handle(path, handler)
 	}
 	if stubs.sandbox.removeSandbox != nil || stubs.sandbox.getStats != nil {
@@ -7506,6 +7637,19 @@ func testCLICache(cacheID string) *agentcomposev2.CacheItem {
 			Description: "agent@sha256:cache",
 		}},
 		Warnings: []string{"item warning"},
+	}
+}
+
+func testCLIVolume(volumeID, name string) *agentcomposev2.Volume {
+	return &agentcomposev2.Volume{
+		VolumeId:  volumeID,
+		Name:      name,
+		Driver:    "local",
+		Path:      "/tmp/agent-compose/volumes/local/" + volumeID + "/data",
+		Labels:    map[string]string{"purpose": "cache"},
+		ProjectId: "project-1",
+		CreatedAt: "2026-07-07T12:00:00Z",
+		UpdatedAt: "2026-07-07T12:00:00Z",
 	}
 }
 
