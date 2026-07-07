@@ -4,7 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 
 	domain "agent-compose/pkg/model"
 )
@@ -81,6 +84,9 @@ func TestManagerResolveBindAndNamedVolumeMounts(t *testing.T) {
 	created, err := manager.Create(ctx, domain.VolumeRecord{Name: "cache"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
+	}
+	if _, err := uuid.Parse(created.ID); err != nil || strings.Contains(created.ID, "cache") {
+		t.Fatalf("volume internal id = %q, want opaque UUID not derived from name", created.ID)
 	}
 	mounts, warnings, err := manager.ResolveMounts(ctx, []domain.VolumeMountSpec{
 		{Type: domain.VolumeMountTypeBind, Source: "./fixtures", Target: "/fixtures", ReadOnly: true},

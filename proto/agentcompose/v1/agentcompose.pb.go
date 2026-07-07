@@ -727,10 +727,9 @@ type SessionVolumeMount struct {
 	Source        string                 `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
 	Target        string                 `protobuf:"bytes,4,opt,name=target,proto3" json:"target,omitempty"`
 	ReadOnly      bool                   `protobuf:"varint,5,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
-	VolumeId      string                 `protobuf:"bytes,6,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Driver        string                 `protobuf:"bytes,7,opt,name=driver,proto3" json:"driver,omitempty"`
-	HostPath      string                 `protobuf:"bytes,8,opt,name=host_path,json=hostPath,proto3" json:"host_path,omitempty"`
-	ProjectPath   string                 `protobuf:"bytes,9,opt,name=project_path,json=projectPath,proto3" json:"project_path,omitempty"`
+	Driver        string                 `protobuf:"bytes,6,opt,name=driver,proto3" json:"driver,omitempty"`
+	HostPath      string                 `protobuf:"bytes,7,opt,name=host_path,json=hostPath,proto3" json:"host_path,omitempty"`
+	ProjectPath   string                 `protobuf:"bytes,8,opt,name=project_path,json=projectPath,proto3" json:"project_path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -798,13 +797,6 @@ func (x *SessionVolumeMount) GetReadOnly() bool {
 		return x.ReadOnly
 	}
 	return false
-}
-
-func (x *SessionVolumeMount) GetVolumeId() string {
-	if x != nil {
-		return x.VolumeId
-	}
-	return ""
 }
 
 func (x *SessionVolumeMount) GetDriver() string {
@@ -6992,17 +6984,16 @@ const file_agentcompose_v1_agentcompose_proto_rawDesc = "" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x16\n" +
 	"\x06target\x18\x03 \x01(\tR\x06target\x12\x1b\n" +
-	"\tread_only\x18\x04 \x01(\bR\breadOnly\"\xfa\x01\n" +
+	"\tread_only\x18\x04 \x01(\bR\breadOnly\"\xdd\x01\n" +
 	"\x12SessionVolumeMount\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x16\n" +
 	"\x06source\x18\x03 \x01(\tR\x06source\x12\x16\n" +
 	"\x06target\x18\x04 \x01(\tR\x06target\x12\x1b\n" +
-	"\tread_only\x18\x05 \x01(\bR\breadOnly\x12\x1b\n" +
-	"\tvolume_id\x18\x06 \x01(\tR\bvolumeId\x12\x16\n" +
-	"\x06driver\x18\a \x01(\tR\x06driver\x12\x1b\n" +
-	"\thost_path\x18\b \x01(\tR\bhostPath\x12!\n" +
-	"\fproject_path\x18\t \x01(\tR\vprojectPath\"\xf8\x02\n" +
+	"\tread_only\x18\x05 \x01(\bR\breadOnly\x12\x16\n" +
+	"\x06driver\x18\x06 \x01(\tR\x06driver\x12\x1b\n" +
+	"\thost_path\x18\a \x01(\tR\bhostPath\x12!\n" +
+	"\fproject_path\x18\b \x01(\tR\vprojectPath\"\xf8\x02\n" +
 	"\x14CreateSessionRequest\x12\x14\n" +
 	"\x05title\x18\x01 \x01(\tR\x05title\x12%\n" +
 	"\x0ebase_workspace\x18\x02 \x01(\tR\rbaseWorkspace\x12/\n" +

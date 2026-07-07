@@ -123,7 +123,6 @@ func VolumesToProto(items []domain.VolumeRecord) []*agentcomposev2.Volume {
 
 func VolumeToProto(item domain.VolumeRecord) *agentcomposev2.Volume {
 	return &agentcomposev2.Volume{
-		VolumeId:  item.ID,
 		Name:      item.Name,
 		Driver:    item.Driver,
 		Path:      item.Path,

@@ -3867,7 +3867,6 @@ type composeVolumePruneOutput struct {
 }
 
 type composeVolumeOutput struct {
-	VolumeID  string            `json:"volume_id"`
 	Name      string            `json:"name"`
 	Driver    string            `json:"driver"`
 	Path      string            `json:"path,omitempty"`
@@ -4882,7 +4881,6 @@ func composeVolumeOutputFromProto(volume *agentcomposev2.Volume) composeVolumeOu
 		return composeVolumeOutput{}
 	}
 	return composeVolumeOutput{
-		VolumeID:  volume.GetVolumeId(),
 		Name:      volume.GetName(),
 		Driver:    volume.GetDriver(),
 		Path:      volume.GetPath(),
@@ -5073,12 +5071,11 @@ func writeCacheInspectText(out io.Writer, output composeCacheInspectOutput) erro
 
 func writeVolumesText(out io.Writer, volumes []composeVolumeOutput) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "VOLUME ID\tNAME\tDRIVER\tPROJECT\tPATH"); err != nil {
+	if _, err := fmt.Fprintln(tw, "NAME\tDRIVER\tPROJECT\tPATH"); err != nil {
 		return err
 	}
 	for _, volume := range volumes {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			firstNonEmptyString(volume.VolumeID, "-"),
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
 			firstNonEmptyString(volume.Name, "-"),
 			firstNonEmptyString(volume.Driver, "-"),
 			firstNonEmptyString(volume.ProjectID, "-"),
@@ -5092,8 +5089,7 @@ func writeVolumesText(out io.Writer, volumes []composeVolumeOutput) error {
 
 func writeVolumeInspectText(out io.Writer, output composeVolumeInspectOutput) error {
 	volume := output.Volume
-	if _, err := fmt.Fprintf(out, "Volume ID: %s\nName: %s\nDriver: %s\nPath: %s\nProject: %s\nCreated: %s\nUpdated: %s\n",
-		firstNonEmptyString(volume.VolumeID, "-"),
+	if _, err := fmt.Fprintf(out, "Name: %s\nDriver: %s\nPath: %s\nProject: %s\nCreated: %s\nUpdated: %s\n",
 		firstNonEmptyString(volume.Name, "-"),
 		firstNonEmptyString(volume.Driver, "-"),
 		firstNonEmptyString(volume.Path, "-"),
@@ -5300,12 +5296,11 @@ func writeCacheOperationTable(out io.Writer, caches []composeCacheOutput) error 
 
 func writeVolumeOperationTable(out io.Writer, volumes []composeVolumeOutput) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "VOLUME ID\tNAME\tDRIVER\tPROJECT\tPATH"); err != nil {
+	if _, err := fmt.Fprintln(tw, "NAME\tDRIVER\tPROJECT\tPATH"); err != nil {
 		return err
 	}
 	for _, volume := range volumes {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			firstNonEmptyString(volume.VolumeID, "-"),
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
 			firstNonEmptyString(volume.Name, "-"),
 			firstNonEmptyString(volume.Driver, "-"),
 			firstNonEmptyString(volume.ProjectID, "-"),

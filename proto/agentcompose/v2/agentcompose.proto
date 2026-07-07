@@ -866,15 +866,14 @@ message PruneVolumesResponse {
 }
 
 message Volume {
-  string volume_id = 1;
-  string name = 2;
-  string driver = 3;
-  string path = 4;
-  map<string, string> labels = 5;
-  map<string, string> options = 6;
-  string project_id = 7;
-  string created_at = 8;
-  string updated_at = 9;
+  string name = 1;
+  string driver = 2;
+  string path = 3;
+  map<string, string> labels = 4;
+  map<string, string> options = 5;
+  string project_id = 6;
+  string created_at = 7;
+  string updated_at = 8;
 }
 
 message Image {

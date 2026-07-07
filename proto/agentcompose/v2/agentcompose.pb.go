@@ -7548,15 +7548,14 @@ func (x *PruneVolumesResponse) GetSkipped() []*Volume {
 
 type Volume struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VolumeId      string                 `protobuf:"bytes,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Driver        string                 `protobuf:"bytes,3,opt,name=driver,proto3" json:"driver,omitempty"`
-	Path          string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
-	Labels        map[string]string      `protobuf:"bytes,5,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Options       map[string]string      `protobuf:"bytes,6,rep,name=options,proto3" json:"options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	ProjectId     string                 `protobuf:"bytes,7,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
-	CreatedAt     string                 `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	UpdatedAt     string                 `protobuf:"bytes,9,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Driver        string                 `protobuf:"bytes,2,opt,name=driver,proto3" json:"driver,omitempty"`
+	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
+	Labels        map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Options       map[string]string      `protobuf:"bytes,5,rep,name=options,proto3" json:"options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ProjectId     string                 `protobuf:"bytes,6,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	CreatedAt     string                 `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt     string                 `protobuf:"bytes,8,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7589,13 +7588,6 @@ func (x *Volume) ProtoReflect() protoreflect.Message {
 // Deprecated: Use Volume.ProtoReflect.Descriptor instead.
 func (*Volume) Descriptor() ([]byte, []int) {
 	return file_agentcompose_v2_agentcompose_proto_rawDescGZIP(), []int{93}
-}
-
-func (x *Volume) GetVolumeId() string {
-	if x != nil {
-		return x.VolumeId
-	}
-	return ""
 }
 
 func (x *Volume) GetName() string {
@@ -9027,20 +9019,19 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\adry_run\x18\x01 \x01(\bR\x06dryRun\x121\n" +
 	"\amatched\x18\x02 \x03(\v2\x17.agentcompose.v2.VolumeR\amatched\x121\n" +
 	"\aremoved\x18\x03 \x03(\v2\x17.agentcompose.v2.VolumeR\aremoved\x121\n" +
-	"\askipped\x18\x04 \x03(\v2\x17.agentcompose.v2.VolumeR\askipped\"\xb6\x03\n" +
-	"\x06Volume\x12\x1b\n" +
-	"\tvolume_id\x18\x01 \x01(\tR\bvolumeId\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
-	"\x06driver\x18\x03 \x01(\tR\x06driver\x12\x12\n" +
-	"\x04path\x18\x04 \x01(\tR\x04path\x12;\n" +
-	"\x06labels\x18\x05 \x03(\v2#.agentcompose.v2.Volume.LabelsEntryR\x06labels\x12>\n" +
-	"\aoptions\x18\x06 \x03(\v2$.agentcompose.v2.Volume.OptionsEntryR\aoptions\x12\x1d\n" +
+	"\askipped\x18\x04 \x03(\v2\x17.agentcompose.v2.VolumeR\askipped\"\x99\x03\n" +
+	"\x06Volume\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
+	"\x06driver\x18\x02 \x01(\tR\x06driver\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x12;\n" +
+	"\x06labels\x18\x04 \x03(\v2#.agentcompose.v2.Volume.LabelsEntryR\x06labels\x12>\n" +
+	"\aoptions\x18\x05 \x03(\v2$.agentcompose.v2.Volume.OptionsEntryR\aoptions\x12\x1d\n" +
 	"\n" +
-	"project_id\x18\a \x01(\tR\tprojectId\x12\x1d\n" +
+	"project_id\x18\x06 \x01(\tR\tprojectId\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\b \x01(\tR\tcreatedAt\x12\x1d\n" +
+	"created_at\x18\a \x01(\tR\tcreatedAt\x12\x1d\n" +
 	"\n" +
-	"updated_at\x18\t \x01(\tR\tupdatedAt\x1a9\n" +
+	"updated_at\x18\b \x01(\tR\tupdatedAt\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a:\n" +

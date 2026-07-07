@@ -173,10 +173,9 @@ message SessionVolumeMount {
   string source = 3;
   string target = 4;
   bool read_only = 5;
-  string volume_id = 6;
-  string driver = 7;
-  string host_path = 8;
-  string project_path = 9;
+  string driver = 6;
+  string host_path = 7;
+  string project_path = 8;
 }
 
 message CreateSessionRequest {

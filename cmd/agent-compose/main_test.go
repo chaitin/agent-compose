@@ -4070,20 +4070,20 @@ func TestIntegrationCLIVolumeCommands(t *testing.T) {
 				if req.Msg.GetQuery() != "cac" || req.Msg.GetDriver() != "local" {
 					t.Fatalf("ListVolumes request = %#v", req.Msg)
 				}
-				return connect.NewResponse(&agentcomposev2.ListVolumesResponse{Volumes: []*agentcomposev2.Volume{testCLIVolume("vol-cache", "cache")}}), nil
+				return connect.NewResponse(&agentcomposev2.ListVolumesResponse{Volumes: []*agentcomposev2.Volume{testCLIVolume("cache")}}), nil
 			},
 			createVolume: func(ctx context.Context, req *connect.Request[agentcomposev2.CreateVolumeRequest]) (*connect.Response[agentcomposev2.CreateVolumeResponse], error) {
 				if req.Msg.GetName() != "cache" || req.Msg.GetDriver() != "local" || req.Msg.GetLabels()["purpose"] != "cache" || req.Msg.GetOptions()["quota"] != "1g" {
 					t.Fatalf("CreateVolume request = %#v", req.Msg)
 				}
 				createdLabel = req.Msg.GetLabels()["purpose"]
-				return connect.NewResponse(&agentcomposev2.CreateVolumeResponse{Volume: testCLIVolume("vol-cache", "cache"), Created: true}), nil
+				return connect.NewResponse(&agentcomposev2.CreateVolumeResponse{Volume: testCLIVolume("cache"), Created: true}), nil
 			},
 			inspectVolume: func(ctx context.Context, req *connect.Request[agentcomposev2.InspectVolumeRequest]) (*connect.Response[agentcomposev2.InspectVolumeResponse], error) {
 				if req.Msg.GetName() != "cache" {
 					t.Fatalf("InspectVolume request = %#v", req.Msg)
 				}
-				return connect.NewResponse(&agentcomposev2.InspectVolumeResponse{Volume: testCLIVolume("vol-cache", "cache")}), nil
+				return connect.NewResponse(&agentcomposev2.InspectVolumeResponse{Volume: testCLIVolume("cache")}), nil
 			},
 			removeVolume: func(ctx context.Context, req *connect.Request[agentcomposev2.RemoveVolumeRequest]) (*connect.Response[agentcomposev2.RemoveVolumeResponse], error) {
 				if !req.Msg.GetForce() {
@@ -4097,8 +4097,8 @@ func TestIntegrationCLIVolumeCommands(t *testing.T) {
 					t.Fatalf("PruneVolumes request = %#v", req.Msg)
 				}
 				return connect.NewResponse(&agentcomposev2.PruneVolumesResponse{
-					Removed: []*agentcomposev2.Volume{testCLIVolume("vol-cache", "cache")},
-					Matched: []*agentcomposev2.Volume{testCLIVolume("vol-cache", "cache")},
+					Removed: []*agentcomposev2.Volume{testCLIVolume("cache")},
+					Matched: []*agentcomposev2.Volume{testCLIVolume("cache")},
 				}), nil
 			},
 		},
@@ -4123,7 +4123,7 @@ func TestIntegrationCLIVolumeCommands(t *testing.T) {
 	}
 
 	inspectOut, inspectErr, _, inspectCode := executeCLICommand("inspect", "volume", "--host", server.URL, "cache")
-	if inspectCode != 0 || inspectErr != "" || !strings.Contains(inspectOut, "Volume ID: vol-cache") || !strings.Contains(inspectOut, "Labels") {
+	if inspectCode != 0 || inspectErr != "" || !strings.Contains(inspectOut, "Name: cache") || strings.Contains(inspectOut, "Volume ID") || !strings.Contains(inspectOut, "Labels") {
 		t.Fatalf("inspect volume code/stdout/stderr = %d / %q / %q", inspectCode, inspectOut, inspectErr)
 	}
 
@@ -7640,12 +7640,11 @@ func testCLICache(cacheID string) *agentcomposev2.CacheItem {
 	}
 }
 
-func testCLIVolume(volumeID, name string) *agentcomposev2.Volume {
+func testCLIVolume(name string) *agentcomposev2.Volume {
 	return &agentcomposev2.Volume{
-		VolumeId:  volumeID,
 		Name:      name,
 		Driver:    "local",
-		Path:      "/tmp/agent-compose/volumes/local/" + volumeID + "/data",
+		Path:      "/tmp/agent-compose/volumes/local/11111111-1111-4111-8111-111111111111/data",
 		Labels:    map[string]string{"purpose": "cache"},
 		ProjectId: "project-1",
 		CreatedAt: "2026-07-07T12:00:00Z",

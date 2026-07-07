@@ -105,7 +105,7 @@ func TestAPIMappingCoverageWorkflows(t *testing.T) {
 	if detail := SessionDetailToProto(session); detail.GetSummary().GetSessionId() != "session-1" || detail.GetEnvItems()[0].GetValue() != secretRedactedValue {
 		t.Fatalf("session detail = %#v", detail)
 	}
-	if mounts := SessionDetailToProto(session).GetVolumeMounts(); len(mounts) != 1 || mounts[0].GetVolumeId() != "vol-cache" {
+	if mounts := SessionDetailToProto(session).GetVolumeMounts(); len(mounts) != 1 || mounts[0].GetSource() != "cache" {
 		t.Fatalf("session volume mounts = %#v", mounts)
 	}
 	if env := GlobalEnvConfigToProto(session.EnvItems); env.GetEnvItems()[0].GetValue() != secretRedactedValue {

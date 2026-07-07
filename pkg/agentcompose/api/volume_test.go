@@ -52,7 +52,7 @@ func TestVolumeHandlerWorkflows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InspectVolume returned error: %v", err)
 	}
-	if inspectResp.Msg.GetVolume().GetVolumeId() != "vol-cache" || inspectResp.Msg.GetVolume().GetCreatedAt() == "" {
+	if inspectResp.Msg.GetVolume().GetName() != "cache" || inspectResp.Msg.GetVolume().GetCreatedAt() == "" {
 		t.Fatalf("inspect response = %#v", inspectResp.Msg)
 	}
 

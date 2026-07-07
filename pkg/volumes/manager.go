@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
+
 	domain "agent-compose/pkg/model"
 )
 
@@ -71,7 +73,7 @@ func (m *Manager) Create(ctx context.Context, item domain.VolumeRecord) (domain.
 		return domain.VolumeRecord{}, err
 	}
 	if strings.TrimSpace(item.ID) == "" {
-		item.ID = stableVolumeID(item.Name)
+		item.ID = uuid.NewString()
 	}
 	prepared, err := driver.Create(ctx, item)
 	if err != nil {
@@ -312,14 +314,6 @@ func ReservedTargetWarning(target string) string {
 		}
 	}
 	return ""
-}
-
-func stableVolumeID(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return ""
-	}
-	return "vol-" + strings.ToLower(strings.ReplaceAll(name, "_", "-"))
 }
 
 func stableVolumeMountID(parts ...string) string {

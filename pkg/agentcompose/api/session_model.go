@@ -51,7 +51,6 @@ func SessionVolumeMountsToProto(items []domain.SessionVolumeMount) []*agentcompo
 			Source:      item.Source,
 			Target:      item.Target,
 			ReadOnly:    item.ReadOnly,
-			VolumeId:    item.VolumeID,
 			Driver:      item.Driver,
 			HostPath:    item.HostPath,
 			ProjectPath: item.ProjectPath,
