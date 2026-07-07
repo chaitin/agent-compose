@@ -354,61 +354,6 @@ func TestEventDispatcherWebhookAndWrapperWorkflows(t *testing.T) {
 	}
 }
 
-func TestSchedulerCollectDueAndDispatch(t *testing.T) {
-	now := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
-	store := &schedulerStoreFake{}
-	loader := domain.Loader{Summary: domain.LoaderSummary{ID: "loader-1", Enabled: true}, Triggers: []domain.LoaderTrigger{{
-		ID:         "interval-1",
-		Kind:       domain.LoaderTriggerKindInterval,
-		Enabled:    true,
-		IntervalMs: 1000,
-		NextFireAt: now.Add(-time.Second),
-	}}}
-	cached := map[string]domain.Loader{loader.Summary.ID: loader}
-	var replaced map[string]domain.Loader
-	runCalled := make(chan string, 1)
-	scheduler := loaders.NewScheduler(loaders.SchedulerDependencies{
-		RootCtx: context.Background(),
-		Store:   store,
-		Snapshot: func() map[string]domain.Loader {
-			return cached
-		},
-		ReplaceCached: func(updated map[string]domain.Loader) {
-			replaced = updated
-			for id, item := range updated {
-				cached[id] = item
-			}
-		},
-		RunTimeout: func(time.Duration) time.Duration { return time.Second },
-		Run: func(_ context.Context, loader domain.Loader, trigger *domain.LoaderTrigger, _ string, source string, _ loaders.RunOptions, _ ...func(context.Context) error) (domain.LoaderRunSummary, error) {
-			runCalled <- loader.Summary.ID + "/" + trigger.ID + "/" + source
-			return domain.LoaderRunSummary{}, nil
-		},
-	})
-
-	jobs := scheduler.CollectDue(now)
-	if len(jobs) != 1 || jobs[0].Trigger.ID != "interval-1" || jobs[0].Source != "interval:1000" {
-		t.Fatalf("jobs = %#v", jobs)
-	}
-	if len(replaced) != 1 || len(store.fired) != 1 {
-		t.Fatalf("replaced/fired = %#v/%#v", replaced, store.fired)
-	}
-	next, ok := scheduler.NextFireAt()
-	if !ok || !next.After(now) {
-		t.Fatalf("next fire = %s/%v", next, ok)
-	}
-
-	scheduler.Dispatch(jobs)
-	select {
-	case got := <-runCalled:
-		if got != "loader-1/interval-1/interval:1000" {
-			t.Fatalf("run call = %q", got)
-		}
-	case <-time.After(time.Second):
-		t.Fatalf("timed out waiting for scheduled run")
-	}
-}
-
 type runStoreFake struct {
 	created   []domain.LoaderRunSummary
 	updated   []domain.LoaderRunSummary
@@ -477,15 +422,6 @@ type eventDeliveryStoreFake struct {
 
 func (s *eventDeliveryStoreFake) UpsertEventDelivery(_ context.Context, delivery domain.EventDelivery) error {
 	s.deliveries = append(s.deliveries, delivery)
-	return nil
-}
-
-type schedulerStoreFake struct {
-	fired []domain.LoaderTrigger
-}
-
-func (s *schedulerStoreFake) MarkLoaderTriggerFired(_ context.Context, loaderID, triggerID string, lastFiredAt, nextFireAt time.Time) error {
-	s.fired = append(s.fired, domain.LoaderTrigger{ID: loaderID + "/" + triggerID, LastFiredAt: lastFiredAt, NextFireAt: nextFireAt})
 	return nil
 }
 

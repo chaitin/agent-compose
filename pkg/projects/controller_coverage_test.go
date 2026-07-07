@@ -169,12 +169,6 @@ func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
 	changes, err := DownProject(ctx, project, DownOptions{
 		Store:    schedulerStore,
 		Sessions: sessionStore,
-		DisableManagedLoader: func(_ context.Context, loaderID, projectID, schedulerID string) error {
-			if loaderID != "loader-1" || projectID != project.ID || schedulerID != "scheduler-1" {
-				t.Fatalf("DisableManagedLoader args = %q/%q/%q", loaderID, projectID, schedulerID)
-			}
-			return nil
-		},
 		RefreshLoaders: func(context.Context) error {
 			refreshed = true
 			return nil
@@ -208,10 +202,7 @@ func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
 		t.Fatalf("DisableProjectManagedSchedulers list error returned nil error")
 	}
 	if _, err := DisableProjectManagedSchedulers(ctx, project, DownOptions{
-		Store: &downCoverageStore{items: []domain.ProjectSchedulerRecord{{ProjectID: project.ID, SchedulerID: "scheduler-1", ManagedLoaderID: "loader-1", Enabled: true}}},
-		DisableManagedLoader: func(context.Context, string, string, string) error {
-			return errors.New("disable failed")
-		},
+		Store: &downCoverageStore{items: []domain.ProjectSchedulerRecord{{ProjectID: project.ID, SchedulerID: "scheduler-1", ManagedLoaderID: "loader-1", Enabled: true}}, setLoaderErr: errors.New("disable failed")},
 	}); err == nil {
 		t.Fatalf("DisableProjectManagedSchedulers managed loader error returned nil error")
 	}
@@ -329,6 +320,10 @@ func (s *controllerCoverageStore) ListProjectSchedulers(context.Context, string)
 	return nil, nil
 }
 
+func (s *controllerCoverageStore) ListManagedLoaders(context.Context, string) ([]domain.Loader, error) {
+	return nil, nil
+}
+
 func (s *controllerCoverageStore) GetAgentDefinitionIfExists(context.Context, string, bool) (domain.AgentDefinition, bool, error) {
 	return domain.AgentDefinition{}, false, nil
 }
@@ -390,15 +385,20 @@ func assertProjectChange(t *testing.T, changes []Change, action, resourceType, r
 }
 
 type downCoverageStore struct {
-	items   []domain.ProjectSchedulerRecord
-	listErr error
+	items        []domain.ProjectSchedulerRecord
+	listErr      error
+	setLoaderErr error
 }
 
-func (s *downCoverageStore) ListProjectSchedulers(context.Context, string) ([]domain.ProjectSchedulerRecord, error) {
+func (s *downCoverageStore) ListManagedLoaders(context.Context, string) ([]domain.Loader, error) {
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
-	return append([]domain.ProjectSchedulerRecord(nil), s.items...), nil
+	loaders := make([]domain.Loader, 0, len(s.items))
+	for _, item := range s.items {
+		loaders = append(loaders, managedLoaderFromScheduler(item))
+	}
+	return loaders, nil
 }
 
 func (s *downCoverageStore) SetProjectSchedulerEnabled(_ context.Context, projectID, schedulerID string, enabled bool) (domain.ProjectSchedulerRecord, error) {
@@ -409,6 +409,42 @@ func (s *downCoverageStore) SetProjectSchedulerEnabled(_ context.Context, projec
 		}
 	}
 	return domain.ProjectSchedulerRecord{}, sql.ErrNoRows
+}
+
+func (s *downCoverageStore) SetLoaderEnabled(_ context.Context, loaderID string, enabled bool) error {
+	if s.setLoaderErr != nil {
+		return s.setLoaderErr
+	}
+	for index := range s.items {
+		if s.items[index].ManagedLoaderID == loaderID {
+			s.items[index].Enabled = enabled
+			return nil
+		}
+	}
+	return sql.ErrNoRows
+}
+
+func managedLoaderFromScheduler(scheduler domain.ProjectSchedulerRecord) domain.Loader {
+	loaderID := scheduler.ManagedLoaderID
+	if loaderID == "" {
+		loaderID = scheduler.SchedulerID
+	}
+	agentName := scheduler.AgentName
+	if agentName == "" {
+		agentName = "worker"
+	}
+	return domain.Loader{
+		Summary: domain.LoaderSummary{
+			ID:                 loaderID,
+			Name:               agentName,
+			Enabled:            scheduler.Enabled,
+			ManagedProjectID:   scheduler.ProjectID,
+			ManagedRevision:    scheduler.Revision,
+			ManagedAgentName:   agentName,
+			ManagedSchedulerID: scheduler.SchedulerID,
+		},
+		Triggers: make([]domain.LoaderTrigger, scheduler.TriggerCount),
+	}
 }
 
 type downCoverageSessions struct {

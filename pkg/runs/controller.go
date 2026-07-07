@@ -63,8 +63,7 @@ type ControllerStore interface {
 }
 
 type TriggerResolverStore interface {
-	ListProjectSchedulers(context.Context, string) ([]domain.ProjectSchedulerRecord, error)
-	GetLoader(context.Context, string) (domain.Loader, error)
+	ListManagedLoaders(context.Context, string) ([]domain.Loader, error)
 }
 
 // SessionRuntimeStore is the subset of session runtime persistence the run

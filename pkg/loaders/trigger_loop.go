@@ -8,32 +8,32 @@ import (
 	domain "agent-compose/pkg/model"
 )
 
-type SchedulerStore interface {
+type TriggerLoopStore interface {
 	MarkLoaderTriggerFired(ctx context.Context, loaderID, triggerID string, lastFiredAt, nextFireAt time.Time) error
 }
 
-type SchedulerDependencies struct {
+type TriggerLoopDependencies struct {
 	RootCtx       context.Context
 	Wake          <-chan struct{}
-	Store         SchedulerStore
+	Store         TriggerLoopStore
 	Snapshot      func() map[string]domain.Loader
 	ReplaceCached func(map[string]domain.Loader)
 	Run           func(ctx context.Context, loader domain.Loader, trigger *domain.LoaderTrigger, payloadJSON, source string, options RunOptions, triggerEventAck ...func(context.Context) error) (domain.LoaderRunSummary, error)
 	RunTimeout    func(time.Duration) time.Duration
 }
 
-type Scheduler struct {
-	deps SchedulerDependencies
+type triggerLoop struct {
+	deps TriggerLoopDependencies
 }
 
-func NewScheduler(deps SchedulerDependencies) *Scheduler {
+func newTriggerLoop(deps TriggerLoopDependencies) *triggerLoop {
 	if deps.RootCtx == nil {
 		deps.RootCtx = context.Background()
 	}
-	return &Scheduler{deps: deps}
+	return &triggerLoop{deps: deps}
 }
 
-func (s *Scheduler) Loop() {
+func (s *triggerLoop) Loop() {
 	for {
 		jobs := s.CollectDue(time.Now().UTC())
 		if len(jobs) > 0 {
@@ -68,7 +68,7 @@ func (s *Scheduler) Loop() {
 	}
 }
 
-func (s *Scheduler) Dispatch(jobs []ScheduledRun) {
+func (s *triggerLoop) Dispatch(jobs []ScheduledRun) {
 	for _, job := range jobs {
 		runCtx, cancel := context.WithTimeout(s.rootCtx(), s.runTimeout(0))
 		go func(job ScheduledRun) {
@@ -80,7 +80,7 @@ func (s *Scheduler) Dispatch(jobs []ScheduledRun) {
 	}
 }
 
-func (s *Scheduler) NextFireAt() (time.Time, bool) {
+func (s *triggerLoop) NextFireAt() (time.Time, bool) {
 	var nextFireAt time.Time
 	for _, loader := range s.snapshot() {
 		if !loader.Summary.Enabled {
@@ -101,7 +101,7 @@ func (s *Scheduler) NextFireAt() (time.Time, bool) {
 	return nextFireAt, true
 }
 
-func (s *Scheduler) CollectDue(now time.Time) []ScheduledRun {
+func (s *triggerLoop) CollectDue(now time.Time) []ScheduledRun {
 	scheduled, updatedLoaders, scheduleErrs := CollectDueScheduledRuns(s.snapshot(), now)
 	if len(updatedLoaders) > 0 && s.deps.ReplaceCached != nil {
 		s.deps.ReplaceCached(updatedLoaders)
@@ -132,21 +132,21 @@ func StopTimer(timer *time.Timer) {
 	}
 }
 
-func (s *Scheduler) snapshot() map[string]domain.Loader {
+func (s *triggerLoop) snapshot() map[string]domain.Loader {
 	if s.deps.Snapshot == nil {
 		return nil
 	}
 	return s.deps.Snapshot()
 }
 
-func (s *Scheduler) rootCtx() context.Context {
+func (s *triggerLoop) rootCtx() context.Context {
 	if s.deps.RootCtx == nil {
 		return context.Background()
 	}
 	return s.deps.RootCtx
 }
 
-func (s *Scheduler) runTimeout(override time.Duration) time.Duration {
+func (s *triggerLoop) runTimeout(override time.Duration) time.Duration {
 	if s.deps.RunTimeout == nil {
 		return 20 * time.Minute
 	}

@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/projects"
 	"agent-compose/pkg/runs"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
@@ -25,7 +26,7 @@ type ProjectStore interface {
 	GetProject(context.Context, string) (domain.ProjectRecord, error)
 	ListProjects(context.Context, domain.ProjectListOptions) (domain.ProjectListResult, error)
 	ListProjectAgents(context.Context, string) ([]domain.ProjectAgentRecord, error)
-	ListProjectSchedulers(context.Context, string) ([]domain.ProjectSchedulerRecord, error)
+	ListManagedLoaders(context.Context, string) ([]domain.Loader, error)
 	GetProjectRevision(context.Context, string, int64) (domain.ProjectRevisionRecord, error)
 }
 
@@ -72,10 +73,11 @@ func (h *ProjectHandler) GetProject(ctx context.Context, req *connect.Request[ag
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	schedulers, err := h.store.ListProjectSchedulers(ctx, project.ID)
+	managedLoaders, err := h.store.ListManagedLoaders(ctx, project.ID)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	schedulers := projects.ProjectSchedulersFromManagedLoaders(managedLoaders)
 	var spec *agentcomposev2.ProjectSpec
 	if req.Msg.GetIncludeSpec() && project.CurrentRevision > 0 {
 		revision, err := h.store.GetProjectRevision(ctx, project.ID, project.CurrentRevision)

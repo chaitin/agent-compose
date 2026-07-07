@@ -907,19 +907,11 @@ func TestRunsControllerRunProjectAgentManualTriggerResolution(t *testing.T) {
 		Enabled:    false,
 		SpecJSON:   `{"kind":"interval","intervalMs":1000}`,
 	}
-	fixture.configDB.schedulers = []domain.ProjectSchedulerRecord{{
-		ProjectID:       "project-1",
-		SchedulerID:     "scheduler-1",
-		AgentName:       "worker",
-		ManagedLoaderID: "loader-1",
-		Enabled:         true,
-		TriggerCount:    1,
-	}}
 	fixture.configDB.loaders = map[string]domain.Loader{
 		"loader-1": {
 			Summary: domain.LoaderSummary{
 				ID:                 "loader-1",
-				Enabled:            true,
+				Enabled:            false,
 				Runtime:            domain.LoaderRuntimeScheduler,
 				ManagedProjectID:   "project-1",
 				ManagedAgentName:   "worker",
@@ -949,7 +941,9 @@ func TestRunsControllerRunProjectAgentManualTriggerResolution(t *testing.T) {
 	if fixture.executor.request.Message != "resolved prompt" || envItemValue(session.EnvItems, "TRIGGER_ENV") != "yes" {
 		t.Fatalf("executor request = %#v", fixture.executor.request)
 	}
-	if len(run.Warnings) != 1 || !strings.Contains(run.Warnings[0], "trigger trigger-1 is disabled") {
+	if len(run.Warnings) != 2 ||
+		!strings.Contains(run.Warnings[0], "scheduler scheduler-1 is disabled") ||
+		!strings.Contains(run.Warnings[1], "trigger trigger-1 is disabled") {
 		t.Fatalf("warnings = %#v", run.Warnings)
 	}
 }
@@ -1391,6 +1385,35 @@ func (s *fakeControllerStore) ListProjectSchedulers(_ context.Context, projectID
 		if scheduler.ProjectID == projectID {
 			items = append(items, scheduler)
 		}
+	}
+	return items, nil
+}
+
+func (s *fakeControllerStore) ListManagedLoaders(_ context.Context, projectID string) ([]domain.Loader, error) {
+	var items []domain.Loader
+	for _, loader := range s.loaders {
+		if loader.Summary.ManagedProjectID == projectID {
+			items = append(items, loader)
+		}
+	}
+	if len(items) > 0 {
+		return items, nil
+	}
+	for _, scheduler := range s.schedulers {
+		if scheduler.ProjectID != projectID {
+			continue
+		}
+		items = append(items, domain.Loader{
+			Summary: domain.LoaderSummary{
+				ID:                 scheduler.ManagedLoaderID,
+				Enabled:            scheduler.Enabled,
+				ManagedProjectID:   scheduler.ProjectID,
+				ManagedRevision:    scheduler.Revision,
+				ManagedAgentName:   scheduler.AgentName,
+				ManagedSchedulerID: scheduler.SchedulerID,
+			},
+			Triggers: make([]domain.LoaderTrigger, scheduler.TriggerCount),
+		})
 	}
 	return items, nil
 }

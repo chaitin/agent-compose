@@ -48,7 +48,7 @@ type ControllerStore interface {
 	GetProjectAgent(context.Context, string, string) (domain.ProjectAgentRecord, error)
 	UpsertProjectAgent(context.Context, domain.ProjectAgentRecord) (domain.ProjectAgentRecord, error)
 	ListProjectAgents(context.Context, string) ([]domain.ProjectAgentRecord, error)
-	ListProjectSchedulers(context.Context, string) ([]domain.ProjectSchedulerRecord, error)
+	ListManagedLoaders(context.Context, string) ([]domain.Loader, error)
 	ReconcileAgentDefinitionStore
 	ReconcileSchedulerStore
 	DownStore
@@ -235,7 +235,6 @@ func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyR
 	changes = append(changes, agentDefinitionChanges...)
 	schedulerChanges, schedulersUnchanged, err := ReconcileManagedSchedulers(ctx, c.store, project, schedulerRecords, managedLoaders, ReconcileSchedulerOptions{
 		CleanupFailedManagedScheduler: c.cleanupFailedManagedSchedulerReconcile,
-		DisableManagedLoaderIfOwned:   c.disableManagedLoaderIfOwned,
 		RefreshLoaders:                c.refreshLoaders,
 	})
 	if err != nil {
@@ -244,9 +243,9 @@ func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyR
 		if listAgentsErr != nil {
 			return ApplyResult{}, fmt.Errorf("apply project %s: %w; list project agents after reconcile failure: %v", normalized.Spec.Name, err, listAgentsErr)
 		}
-		schedulers, listSchedulersErr := c.store.ListProjectSchedulers(ctx, project.ID)
+		schedulers, listSchedulersErr := c.projectSchedulersFromManagedLoaders(ctx, project.ID)
 		if listSchedulersErr != nil {
-			return ApplyResult{}, fmt.Errorf("apply project %s: %w; list project schedulers after reconcile failure: %v", normalized.Spec.Name, err, listSchedulersErr)
+			return ApplyResult{}, fmt.Errorf("apply project %s: %w; list managed schedulers after reconcile failure: %v", normalized.Spec.Name, err, listSchedulersErr)
 		}
 		return ApplyResult{
 			Project:      project,
@@ -269,9 +268,9 @@ func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyR
 	if err != nil {
 		return ApplyResult{}, fmt.Errorf("apply project %s: list project agents: %w", normalized.Spec.Name, err)
 	}
-	schedulers, err := c.store.ListProjectSchedulers(ctx, project.ID)
+	schedulers, err := c.projectSchedulersFromManagedLoaders(ctx, project.ID)
 	if err != nil {
-		return ApplyResult{}, fmt.Errorf("apply project %s: list project schedulers: %w", normalized.Spec.Name, err)
+		return ApplyResult{}, fmt.Errorf("apply project %s: list managed schedulers: %w", normalized.Spec.Name, err)
 	}
 	return ApplyResult{
 		Project:      project,
@@ -309,11 +308,10 @@ func (c *Controller) RemoveProject(ctx context.Context, req RemoveRequest) (Remo
 		return RemoveResult{}, err
 	}
 	downChanges, err := DownProject(ctx, project, DownOptions{
-		Store:                c.store,
-		Sessions:             c.sessions,
-		DisableManagedLoader: c.disableManagedLoaderIfOwned,
-		RefreshLoaders:       c.refreshLoaders,
-		StopSession:          c.stop,
+		Store:          c.store,
+		Sessions:       c.sessions,
+		RefreshLoaders: c.refreshLoaders,
+		StopSession:    c.stop,
 	})
 	changes := downChangesToChanges(downChanges)
 	if err != nil {
@@ -337,7 +335,7 @@ func (c *Controller) RemoveProject(ctx context.Context, req RemoveRequest) (Remo
 	if err != nil {
 		return RemoveResult{}, err
 	}
-	schedulers, err := c.store.ListProjectSchedulers(ctx, project.ID)
+	schedulers, err := c.projectSchedulersFromManagedLoaders(ctx, project.ID)
 	if err != nil {
 		return RemoveResult{}, err
 	}
@@ -420,6 +418,14 @@ func (c *Controller) projectArtifacts(ctx context.Context, project domain.Projec
 		return nil, nil, nil, nil, err
 	}
 	return agentRecords, agentDefinitions, schedulerRecords, managedLoaders, nil
+}
+
+func (c *Controller) projectSchedulersFromManagedLoaders(ctx context.Context, projectID string) ([]domain.ProjectSchedulerRecord, error) {
+	loaders, err := c.store.ListManagedLoaders(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return ProjectSchedulersFromManagedLoaders(loaders), nil
 }
 
 func (c *Controller) projectManagedSchedulersFromSpec(ctx context.Context, project domain.ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]domain.ProjectSchedulerRecord, []domain.Loader, error) {
@@ -551,10 +557,6 @@ func (c *Controller) cleanupFailedManagedSchedulerReconcile(ctx context.Context,
 		_, _ = c.store.SetProjectSchedulerEnabled(ctx, scheduler.ProjectID, scheduler.SchedulerID, false)
 	}
 	_ = c.refreshLoaders(ctx)
-}
-
-func (c *Controller) disableManagedLoaderIfOwned(ctx context.Context, loaderID, projectID, schedulerID string) error {
-	return DisableManagedLoaderIfOwned(ctx, c.store, loaderID, projectID, schedulerID)
 }
 
 func (c *Controller) refreshLoaders(ctx context.Context) error {

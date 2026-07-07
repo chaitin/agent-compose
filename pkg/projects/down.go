@@ -2,6 +2,8 @@ package projects
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -22,8 +24,9 @@ type DownChange struct {
 }
 
 type DownStore interface {
-	ListProjectSchedulers(ctx context.Context, projectID string) ([]domain.ProjectSchedulerRecord, error)
+	ListManagedLoaders(ctx context.Context, projectID string) ([]domain.Loader, error)
 	SetProjectSchedulerEnabled(ctx context.Context, projectID, schedulerID string, enabled bool) (domain.ProjectSchedulerRecord, error)
+	SetLoaderEnabled(ctx context.Context, loaderID string, enabled bool) error
 }
 
 type DownSessionStore interface {
@@ -31,11 +34,10 @@ type DownSessionStore interface {
 }
 
 type DownOptions struct {
-	Store                DownStore
-	Sessions             DownSessionStore
-	DisableManagedLoader func(ctx context.Context, loaderID, projectID, schedulerID string) error
-	RefreshLoaders       func(ctx context.Context) error
-	StopSession          func(ctx context.Context, session *domain.Session) error
+	Store          DownStore
+	Sessions       DownSessionStore
+	RefreshLoaders func(ctx context.Context) error
+	StopSession    func(ctx context.Context, session *domain.Session) error
 }
 
 func DownProject(ctx context.Context, project domain.ProjectRecord, options DownOptions) ([]DownChange, error) {
@@ -57,29 +59,31 @@ func DisableProjectManagedSchedulers(ctx context.Context, project domain.Project
 	if options.Store == nil {
 		return nil, fmt.Errorf("project store is required")
 	}
-	schedulers, err := options.Store.ListProjectSchedulers(ctx, project.ID)
+	managedLoaders, err := options.Store.ListManagedLoaders(ctx, project.ID)
 	if err != nil {
-		return nil, fmt.Errorf("list project schedulers for down %s: %w", project.Name, err)
+		return nil, fmt.Errorf("list managed loaders for down %s: %w", project.Name, err)
 	}
 	var changes []DownChange
-	for _, scheduler := range schedulers {
+	for _, loader := range managedLoaders {
+		projected := ProjectSchedulersFromManagedLoaders([]domain.Loader{loader})
+		if len(projected) == 0 {
+			continue
+		}
+		scheduler := projected[0]
 		if !scheduler.Enabled {
 			continue
 		}
-		disabled, err := options.Store.SetProjectSchedulerEnabled(ctx, scheduler.ProjectID, scheduler.SchedulerID, false)
-		if err != nil {
-			return changes, fmt.Errorf("disable project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
+		if err := options.Store.SetLoaderEnabled(ctx, scheduler.ManagedLoaderID, false); err != nil {
+			return changes, fmt.Errorf("disable managed loader %s: %w", scheduler.ManagedLoaderID, err)
 		}
-		if options.DisableManagedLoader != nil {
-			if err := options.DisableManagedLoader(ctx, scheduler.ManagedLoaderID, project.ID, scheduler.SchedulerID); err != nil {
-				return changes, fmt.Errorf("disable managed loader %s: %w", scheduler.ManagedLoaderID, err)
-			}
+		if _, err := options.Store.SetProjectSchedulerEnabled(ctx, scheduler.ProjectID, scheduler.SchedulerID, false); err != nil && !errors.Is(err, domain.ErrNotFound) && !errors.Is(err, sql.ErrNoRows) {
+			return changes, fmt.Errorf("disable project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
 		}
 		changes = append(changes, DownChange{
 			Action:       DownChangeUpdated,
 			ResourceType: "project_scheduler",
-			ResourceID:   disabled.SchedulerID,
-			Name:         disabled.AgentName,
+			ResourceID:   scheduler.SchedulerID,
+			Name:         scheduler.AgentName,
 			Message:      "disabled by project down",
 		})
 		if scheduler.ManagedLoaderID != "" {
