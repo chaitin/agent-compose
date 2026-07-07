@@ -24,9 +24,21 @@ type SessionSummary struct {
 }
 
 type Session struct {
-	Summary         SessionSummary  `json:"summary"`
-	EnvItems        []SessionEnvVar `json:"env_items,omitempty"`
-	RuntimeEnvItems []SessionEnvVar `json:"-"`
+	Summary         SessionSummary       `json:"summary"`
+	EnvItems        []SessionEnvVar      `json:"env_items,omitempty"`
+	VolumeMounts    []SessionVolumeMount `json:"volume_mounts,omitempty"`
+	RuntimeEnvItems []SessionEnvVar      `json:"-"`
+}
+
+type SessionVolumeMount struct {
+	ID       string `json:"id,omitempty"`
+	Type     string `json:"type"`
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	ReadOnly bool   `json:"read_only,omitempty"`
+	VolumeID string `json:"volume_id,omitempty"`
+	Driver   string `json:"driver,omitempty"`
+	HostPath string `json:"host_path"`
 }
 
 type VMState struct {

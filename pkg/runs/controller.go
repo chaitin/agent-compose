@@ -23,6 +23,7 @@ import (
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/sessionstore"
+	"agent-compose/pkg/volumes"
 	"agent-compose/pkg/workspaces"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
@@ -53,6 +54,10 @@ type TopicPublisher interface {
 
 type DashboardNotifier interface {
 	Notify(reason string)
+}
+
+type VolumeResolver interface {
+	ResolveMounts(ctx context.Context, specs []domain.VolumeMountSpec, options volumes.ResolveOptions) ([]domain.SessionVolumeMount, []string, error)
 }
 
 type ControllerStore interface {
@@ -95,6 +100,7 @@ type Controller struct {
 	images       images.Backend
 	loaderEngine loaders.LoaderEngine
 	cap          capabilities.Provider
+	volumes      VolumeResolver
 	streams      *sessions.StreamBroker
 	bus          TopicPublisher
 	dashboard    DashboardNotifier
@@ -110,6 +116,7 @@ type ControllerDependencies struct {
 	Images       images.Backend
 	LoaderEngine loaders.LoaderEngine
 	Cap          capabilities.Provider
+	Volumes      VolumeResolver
 	Streams      *sessions.StreamBroker
 	Bus          TopicPublisher
 	Dashboard    DashboardNotifier
@@ -126,6 +133,7 @@ func NewController(deps ControllerDependencies) *Controller {
 		images:       deps.Images,
 		loaderEngine: deps.LoaderEngine,
 		cap:          deps.Cap,
+		volumes:      deps.Volumes,
 		streams:      deps.Streams,
 		bus:          deps.Bus,
 		dashboard:    deps.Dashboard,
@@ -142,6 +150,7 @@ type RunAgentRequest struct {
 	TriggerID        string
 	ClientRequestID  string
 	Env              []*agentcomposev2.EnvVarSpec
+	Volumes          []domain.VolumeMountSpec
 	SessionID        string
 	Driver           string
 	OutputSchemaJSON string
@@ -178,6 +187,9 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 	}
 	if strings.TrimSpace(req.SessionID) != "" && strings.TrimSpace(req.Driver) != "" {
 		return StartedProjectRun{}, fmt.Errorf("%w: run driver cannot be combined with an existing sandbox", ErrInvalidRequest)
+	}
+	if strings.TrimSpace(req.SessionID) != "" && len(req.Volumes) > 0 {
+		return StartedProjectRun{}, fmt.Errorf("%w: run volumes cannot be combined with an existing sandbox", ErrInvalidRequest)
 	}
 	resolved, err := c.resolveTriggerForManualRun(ctx, req)
 	if err != nil {
@@ -250,6 +262,7 @@ func (c *Controller) executeStartedProjectRun(ctx context.Context, coordinator *
 		run = withRunWarnings(run, warnings)
 		return run, err, nil
 	}
+	warnings = append(warnings, sessionResult.Warnings...)
 	if err := ctx.Err(); err != nil {
 		run, markErr := coordinator.MarkCanceled(transitionCtx, TransitionRequest{
 			RunID:     run.RunID,
@@ -633,6 +646,9 @@ func (c *Controller) ensureProjectRunSession(ctx context.Context, run domain.Pro
 	capabilityVars, capabilityTags := capabilities.BuildGatewaySessionVars(capabilities.ProxyTarget(c.cap), prepared.CapsetIDs)
 	tags = append(tags, capabilityTags...)
 	if sessionID := strings.TrimSpace(req.SessionID); sessionID != "" {
+		if len(req.Volumes) > 0 {
+			return SessionResult{}, fmt.Errorf("%w: run volumes cannot be combined with an existing sandbox", ErrInvalidRequest)
+		}
 		session, err := c.store.GetSession(ctx, sessionID)
 		if err != nil {
 			return SessionResult{}, fmt.Errorf("load session %s: %w", sessionID, err)
@@ -680,6 +696,11 @@ func (c *Controller) ensureProjectRunSession(ctx context.Context, run domain.Pro
 	}); err != nil {
 		return SessionResult{}, err
 	}
+	volumeMounts, volumeWarnings, err := c.resolveProjectRunVolumeMounts(ctx, prepared, req)
+	if err != nil {
+		return SessionResult{}, err
+	}
+	jupyterOptions.VolumeMounts = volumeMounts
 	session, err := c.store.CreateSessionWithOptions(ctx,
 		SessionTitle(run),
 		"",
@@ -697,9 +718,26 @@ func (c *Controller) ensureProjectRunSession(ctx context.Context, run domain.Pro
 	}
 	session.ProviderEnvItems = prepared.ProviderEnvItems
 	if err := c.startProjectRunSession(ctx, session, "session.created", "session started for project run"); err != nil {
-		return SessionResult{Session: session, Created: true}, err
+		return SessionResult{Session: session, Created: true, Warnings: volumeWarnings}, err
 	}
-	return SessionResult{Session: session, Created: true}, nil
+	return SessionResult{Session: session, Created: true, Warnings: volumeWarnings}, nil
+}
+
+func (c *Controller) resolveProjectRunVolumeMounts(ctx context.Context, prepared Preparation, req RunAgentRequest) ([]domain.SessionVolumeMount, []string, error) {
+	specs := prepared.Volumes
+	if len(req.Volumes) > 0 {
+		specs = req.Volumes
+	}
+	if len(specs) == 0 {
+		return nil, nil, nil
+	}
+	if c.volumes == nil {
+		return nil, nil, fmt.Errorf("volume resolver is required")
+	}
+	return c.volumes.ResolveMounts(ctx, specs, volumes.ResolveOptions{
+		ProjectRoot:    prepared.ProjectRoot,
+		ProjectVolumes: prepared.ProjectVolumes,
+	})
 }
 
 func (c *Controller) applyJupyterOptionsToSession(sessionID string, options sessionstore.CreateSessionOptions) error {

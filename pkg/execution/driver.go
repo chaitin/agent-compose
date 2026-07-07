@@ -17,6 +17,19 @@ func ToDriverSession(session *domain.Session) *driverpkg.Session {
 	for _, item := range session.RuntimeEnvItems {
 		runtimeEnvItems = append(runtimeEnvItems, driverpkg.SessionEnvVar{Name: item.Name, Value: item.Value, Secret: item.Secret})
 	}
+	volumeMounts := make([]driverpkg.SessionVolumeMount, 0, len(session.VolumeMounts))
+	for _, item := range session.VolumeMounts {
+		volumeMounts = append(volumeMounts, driverpkg.SessionVolumeMount{
+			ID:       item.ID,
+			Type:     item.Type,
+			Source:   item.Source,
+			Target:   item.Target,
+			ReadOnly: item.ReadOnly,
+			VolumeID: item.VolumeID,
+			Driver:   item.Driver,
+			HostPath: item.HostPath,
+		})
+	}
 	return &driverpkg.Session{
 		Summary: driverpkg.SessionSummary{
 			ID:            session.Summary.ID,
@@ -28,6 +41,7 @@ func ToDriverSession(session *domain.Session) *driverpkg.Session {
 			UpdatedAt:     session.Summary.UpdatedAt,
 		},
 		EnvItems:        envItems,
+		VolumeMounts:    volumeMounts,
 		RuntimeEnvItems: runtimeEnvItems,
 	}
 }

@@ -21,6 +21,7 @@ type PreparationStore interface {
 	GetProjectRevision(ctx context.Context, projectID string, revision int64) (domain.ProjectRevisionRecord, error)
 	GetAgentDefinition(ctx context.Context, id string) (domain.AgentDefinition, error)
 	ListGlobalEnv(ctx context.Context) ([]domain.SessionEnvVar, error)
+	ListProjectVolumes(ctx context.Context, projectID string) (map[string]domain.VolumeRecord, error)
 }
 
 type WorkspaceResolver interface {
@@ -33,6 +34,9 @@ type Preparation struct {
 	CapsetIDs        []string
 	WorkspaceConfig  *domain.WorkspaceConfig
 	Workspace        *domain.SessionWorkspace
+	Volumes          []domain.VolumeMountSpec
+	ProjectRoot      string
+	ProjectVolumes   map[string]domain.VolumeRecord
 	Jupyter          sessionstore.CreateSessionOptions
 }
 
@@ -76,8 +80,15 @@ func PrepareProjectRun(ctx context.Context, store PreparationStore, resolver Wor
 		EnvItems:         envItems,
 		ProviderEnvItems: providerEnvItems,
 		CapsetIDs:        capabilities.NormalizeCapsetIDs(agent.CapsetIDs),
+		Volumes:          agent.Volumes,
+		ProjectRoot:      ProjectRoot(project),
 		Jupyter:          jupyterOptionsFromAgentSpec(agentSpec),
 	}
+	projectVolumes, err := store.ListProjectVolumes(ctx, project.ID)
+	if err != nil {
+		return Preparation{}, fmt.Errorf("list project volumes %s: %w", project.ID, err)
+	}
+	prepared.ProjectVolumes = projectVolumes
 	if resolver == nil {
 		return prepared, nil
 	}
@@ -90,6 +101,18 @@ func PrepareProjectRun(ctx context.Context, store PreparationStore, resolver Wor
 		prepared.Workspace = workspaceSnapshot
 	}
 	return prepared, nil
+}
+
+func ProjectRoot(project domain.ProjectRecord) string {
+	sourcePath := strings.TrimSpace(project.SourcePath)
+	if sourcePath == "" {
+		return ""
+	}
+	info, err := os.Stat(sourcePath)
+	if err == nil && info.IsDir() {
+		return sourcePath
+	}
+	return filepath.Dir(sourcePath)
 }
 
 func jupyterOptionsFromAgentSpec(agent *agentcomposev2.AgentSpec) sessionstore.CreateSessionOptions {

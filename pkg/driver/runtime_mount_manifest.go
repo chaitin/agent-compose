@@ -34,6 +34,7 @@ type runtimeMountSpec struct {
 	hostPath  string
 	guestPath string
 	isFile    bool
+	readOnly  bool
 }
 
 type directoryOnlyExposure string
@@ -161,6 +162,9 @@ func buildRuntimeMountManifest(config *appconfig.Config, session *Session, drive
 	if err := validateRuntimeDriver(driver); err != nil {
 		return RuntimeMountManifest{}, err
 	}
+	if driver == RuntimeDriverBoxlite && len(sessionVolumeMountSpecs(session)) > 0 {
+		return RuntimeMountManifest{}, fmt.Errorf("volume mounts are not supported by the boxlite runtime yet")
+	}
 	specs := runtimeMountSpecsForDriver(config, session, driver)
 	mounts := make([]RuntimeMount, 0, len(specs))
 	for _, spec := range specs {
@@ -175,7 +179,7 @@ func buildRuntimeMountManifest(config *appconfig.Config, session *Session, drive
 			HostPath:  hostPath,
 			GuestPath: filepath.Clean(spec.guestPath),
 			Type:      "bind",
-			ReadOnly:  false,
+			ReadOnly:  spec.readOnly,
 		})
 	}
 	return RuntimeMountManifest{Version: runtimeMountManifestVersion, Driver: driver, Mounts: mounts}, nil
@@ -231,16 +235,37 @@ func runtimeMountSpecsForDocker(config *appconfig.Config, session *Session) []ru
 			isFile:    entry.isFile,
 		})
 	}
-	return specs
+	return append(specs, sessionVolumeMountSpecs(session)...)
 }
 
 func runtimeMountSpecsForDirectoryOnlyRuntime(config *appconfig.Config, session *Session) []runtimeMountSpec {
 	if len(runtimeMountEntries(config)) == 0 {
 		return nil
 	}
-	return []runtimeMountSpec{
+	specs := []runtimeMountSpec{
 		{hostPath: hostSessionDir(session), guestPath: directoryOnlyGuestSessionPath},
 	}
+	return append(specs, sessionVolumeMountSpecs(session)...)
+}
+
+func sessionVolumeMountSpecs(session *Session) []runtimeMountSpec {
+	if session == nil || len(session.VolumeMounts) == 0 {
+		return nil
+	}
+	specs := make([]runtimeMountSpec, 0, len(session.VolumeMounts))
+	for _, mount := range session.VolumeMounts {
+		hostPath := strings.TrimSpace(mount.HostPath)
+		guestPath := filepath.Clean(strings.TrimSpace(mount.Target))
+		if hostPath == "" || guestPath == "." || guestPath == "" {
+			continue
+		}
+		specs = append(specs, runtimeMountSpec{
+			hostPath:  hostPath,
+			guestPath: guestPath,
+			readOnly:  mount.ReadOnly,
+		})
+	}
+	return specs
 }
 
 func ensureRuntimeMountSource(spec runtimeMountSpec) error {

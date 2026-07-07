@@ -23,6 +23,7 @@ import (
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/sessionstore"
+	"agent-compose/pkg/volumes"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
@@ -383,6 +384,80 @@ func TestRunsControllerRunProjectAgentResolvesJupyterConfig(t *testing.T) {
 	}
 	if !proxyState.Enabled || !proxyState.Exposed || proxyState.GuestPort != 9999 || proxyState.HostPort == 0 || proxyState.Token == "" {
 		t.Fatalf("proxy state = %+v, want YAML guest port with CLI expose", proxyState)
+	}
+}
+
+func TestRunsControllerRunProjectAgentResolvesVolumeMounts(t *testing.T) {
+	fixture := newControllerRunFixture(t)
+	hostPath := t.TempDir()
+	fixture.configDB.agent.Volumes = []domain.VolumeMountSpec{{
+		Type:   domain.VolumeMountTypeVolume,
+		Source: "cache",
+		Target: "/cache",
+	}}
+	fixture.configDB.projectVolumes = map[string]domain.VolumeRecord{
+		"cache": {ID: "vol-cache", Name: "project_cache", Driver: domain.VolumeDriverLocal, Path: hostPath},
+	}
+	resolver := &fakeVolumeResolver{
+		mounts: []domain.SessionVolumeMount{{
+			ID:       "mount-cache",
+			Type:     domain.VolumeMountTypeVolume,
+			Source:   "cache",
+			Target:   "/cache",
+			VolumeID: "vol-cache",
+			Driver:   domain.VolumeDriverLocal,
+			HostPath: hostPath,
+		}},
+		warnings: []string{"volume target /cache overlaps test path"},
+	}
+	fixture.controller.volumes = resolver
+
+	run, execErr, err := fixture.controller.RunProjectAgent(fixture.ctx, RunAgentRequest{
+		ProjectID:       "project-1",
+		AgentName:       "worker",
+		Prompt:          "do work",
+		Source:          domain.ProjectRunSourceAPI,
+		ClientRequestID: "volume-request",
+	}, nil)
+	if err != nil || execErr != nil {
+		t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+	}
+	if len(resolver.specs) != 1 || resolver.specs[0].Source != "cache" || resolver.options.ProjectVolumes["cache"].ID != "vol-cache" {
+		t.Fatalf("resolver specs=%#v options=%#v", resolver.specs, resolver.options)
+	}
+	session, err := fixture.store.GetSession(fixture.ctx, run.SessionID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if len(session.VolumeMounts) != 1 || session.VolumeMounts[0].HostPath != hostPath || session.VolumeMounts[0].Target != "/cache" {
+		t.Fatalf("session volume mounts = %#v", session.VolumeMounts)
+	}
+	if len(run.Warnings) != 1 || !strings.Contains(run.Warnings[0], "volume target /cache") {
+		t.Fatalf("run warnings = %#v", run.Warnings)
+	}
+}
+
+func TestRunsControllerRunProjectAgentRejectsRequestVolumesWithExistingSession(t *testing.T) {
+	fixture := newControllerRunFixture(t)
+	session, err := fixture.store.CreateSession(fixture.ctx, "existing", "", "boxlite", "guest:latest", "", domain.SessionTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	run, execErr, err := fixture.controller.RunProjectAgent(fixture.ctx, RunAgentRequest{
+		ProjectID:       "project-1",
+		AgentName:       "worker",
+		Command:         "echo ok",
+		SessionID:       session.Summary.ID,
+		Source:          domain.ProjectRunSourceAPI,
+		ClientRequestID: "volume-existing-session",
+		Volumes: []domain.VolumeMountSpec{{
+			Type:   domain.VolumeMountTypeBind,
+			Source: ".",
+			Target: "/cache",
+		}},
+	}, nil)
+	if !errors.Is(err, ErrInvalidRequest) || execErr != nil {
+		t.Fatalf("RunProjectAgent run=%#v err=%v execErr=%v", run, err, execErr)
 	}
 }
 
@@ -1093,7 +1168,11 @@ func TestRunsControllerHelperEdgeWorkflows(t *testing.T) {
 	}
 
 	baseJupyter := sessionstore.CreateSessionOptions{JupyterGuestPort: 8888}
-	if options, err := resolveRunJupyterOptions(baseJupyter, nil); err != nil || options != baseJupyter {
+	if options, err := resolveRunJupyterOptions(baseJupyter, nil); err != nil ||
+		options.JupyterEnabled != baseJupyter.JupyterEnabled ||
+		options.JupyterExpose != baseJupyter.JupyterExpose ||
+		options.JupyterGuestPort != baseJupyter.JupyterGuestPort ||
+		len(options.VolumeMounts) != 0 {
 		t.Fatalf("nil jupyter override options=%#v err=%v", options, err)
 	}
 	if _, err := resolveRunJupyterOptions(baseJupyter, &agentcomposev2.RunJupyterSpec{GuestPort: 65536}); !errors.Is(err, ErrInvalidRequest) {
@@ -1279,10 +1358,11 @@ func (s *fakeRunStore) UpdateProjectRun(_ context.Context, run domain.ProjectRun
 }
 
 type fakePreparationStore struct {
-	project  domain.ProjectRecord
-	revision domain.ProjectRevisionRecord
-	agent    domain.AgentDefinition
-	global   []domain.SessionEnvVar
+	project        domain.ProjectRecord
+	revision       domain.ProjectRevisionRecord
+	agent          domain.AgentDefinition
+	global         []domain.SessionEnvVar
+	projectVolumes map[string]domain.VolumeRecord
 }
 
 func (s *fakePreparationStore) GetProject(context.Context, string) (domain.ProjectRecord, error) {
@@ -1299,6 +1379,10 @@ func (s *fakePreparationStore) GetAgentDefinition(context.Context, string) (doma
 
 func (s *fakePreparationStore) ListGlobalEnv(context.Context) ([]domain.SessionEnvVar, error) {
 	return s.global, nil
+}
+
+func (s *fakePreparationStore) ListProjectVolumes(context.Context, string) (map[string]domain.VolumeRecord, error) {
+	return s.projectVolumes, nil
 }
 
 type fakeProjectSessionRunStore struct {
@@ -1322,15 +1406,16 @@ func (s fakeSessionStatusStore) GetSession(_ context.Context, id string) (*domai
 }
 
 type fakeControllerStore struct {
-	project      domain.ProjectRecord
-	projectAgent domain.ProjectAgentRecord
-	managed      ManagedAgentDefinition
-	revision     domain.ProjectRevisionRecord
-	agent        domain.AgentDefinition
-	global       []domain.SessionEnvVar
-	runs         map[string]domain.ProjectRunRecord
-	schedulers   []domain.ProjectSchedulerRecord
-	loaders      map[string]domain.Loader
+	project        domain.ProjectRecord
+	projectAgent   domain.ProjectAgentRecord
+	managed        ManagedAgentDefinition
+	revision       domain.ProjectRevisionRecord
+	agent          domain.AgentDefinition
+	global         []domain.SessionEnvVar
+	projectVolumes map[string]domain.VolumeRecord
+	runs           map[string]domain.ProjectRunRecord
+	schedulers     []domain.ProjectSchedulerRecord
+	loaders        map[string]domain.Loader
 }
 
 func (s *fakeControllerStore) GetProject(context.Context, string) (domain.ProjectRecord, error) {
@@ -1379,6 +1464,10 @@ func (s *fakeControllerStore) GetAgentDefinition(context.Context, string) (domai
 
 func (s *fakeControllerStore) ListGlobalEnv(context.Context) ([]domain.SessionEnvVar, error) {
 	return s.global, nil
+}
+
+func (s *fakeControllerStore) ListProjectVolumes(context.Context, string) (map[string]domain.VolumeRecord, error) {
+	return s.projectVolumes, nil
 }
 
 func (s *fakeControllerStore) GetWorkspaceConfig(context.Context, string) (domain.WorkspaceConfig, error) {
@@ -1511,6 +1600,23 @@ func (fakeControllerImages) InspectImage(context.Context, images.InspectRequest)
 
 func (fakeControllerImages) RemoveImage(context.Context, images.RemoveRequest) (images.RemoveResult, error) {
 	return images.RemoveResult{}, nil
+}
+
+type fakeVolumeResolver struct {
+	specs    []domain.VolumeMountSpec
+	options  volumes.ResolveOptions
+	mounts   []domain.SessionVolumeMount
+	warnings []string
+	err      error
+}
+
+func (r *fakeVolumeResolver) ResolveMounts(_ context.Context, specs []domain.VolumeMountSpec, options volumes.ResolveOptions) ([]domain.SessionVolumeMount, []string, error) {
+	r.specs = append([]domain.VolumeMountSpec(nil), specs...)
+	r.options = options
+	if r.err != nil {
+		return nil, nil, r.err
+	}
+	return append([]domain.SessionVolumeMount(nil), r.mounts...), append([]string(nil), r.warnings...), nil
 }
 
 type fakeControllerPublisher struct {

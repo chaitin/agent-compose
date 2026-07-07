@@ -8,8 +8,9 @@ import (
 )
 
 type SessionResult struct {
-	Session *domain.Session
-	Created bool
+	Session  *domain.Session
+	Created  bool
+	Warnings []string
 }
 
 func SessionTitle(run domain.ProjectRunRecord) string {

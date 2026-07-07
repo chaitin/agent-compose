@@ -109,6 +109,81 @@ func TestPrepareRuntimeMountManifestForDockerIncludesRequiredMountsOnly(t *testi
 	}
 }
 
+func TestPrepareRuntimeMountManifestForDockerIncludesSessionVolumeMounts(t *testing.T) {
+	root := t.TempDir()
+	volumeSource := t.TempDir()
+	session := testRuntimeMountSession(root)
+	session.VolumeMounts = []SessionVolumeMount{{
+		ID:       "mount-cache",
+		Type:     "volume",
+		Source:   "cache",
+		Target:   "/cache",
+		ReadOnly: true,
+		VolumeID: "vol-cache",
+		Driver:   "local",
+		HostPath: volumeSource,
+	}}
+	manifest, err := prepareRuntimeMountManifest(testRuntimeMountConfig(), session, RuntimeDriverDocker)
+	if err != nil {
+		t.Fatalf("prepareRuntimeMountManifest returned error: %v", err)
+	}
+	var found bool
+	for _, mount := range manifest.Mounts {
+		if mount.GuestPath != "/cache" {
+			continue
+		}
+		found = true
+		if mount.HostPath != volumeSource || mount.Type != "bind" || !mount.ReadOnly {
+			t.Fatalf("volume mount = %+v", mount)
+		}
+	}
+	if !found {
+		t.Fatalf("manifest missing /cache volume mount: %+v", manifest.Mounts)
+	}
+}
+
+func TestPrepareRuntimeMountManifestForMicrosandboxIncludesSessionVolumeMounts(t *testing.T) {
+	root := t.TempDir()
+	volumeSource := t.TempDir()
+	session := testRuntimeMountSession(root)
+	session.VolumeMounts = []SessionVolumeMount{{
+		ID:       "mount-cache",
+		Type:     "bind",
+		Source:   "./cache",
+		Target:   "/cache",
+		HostPath: volumeSource,
+	}}
+	manifest, err := prepareRuntimeMountManifest(testRuntimeMountConfig(), session, RuntimeDriverMicrosandbox)
+	if err != nil {
+		t.Fatalf("prepareRuntimeMountManifest returned error: %v", err)
+	}
+	got := map[string]RuntimeMount{}
+	for _, mount := range manifest.Mounts {
+		got[mount.GuestPath] = mount
+	}
+	if got[directoryOnlyGuestSessionPath].HostPath != root {
+		t.Fatalf("microsandbox session mount = %+v", got[directoryOnlyGuestSessionPath])
+	}
+	if got["/cache"].HostPath != volumeSource || got["/cache"].ReadOnly {
+		t.Fatalf("microsandbox volume mount = %+v", got["/cache"])
+	}
+}
+
+func TestPrepareRuntimeMountManifestForBoxliteRejectsSessionVolumeMounts(t *testing.T) {
+	root := t.TempDir()
+	session := testRuntimeMountSession(root)
+	session.VolumeMounts = []SessionVolumeMount{{
+		ID:       "mount-cache",
+		Type:     "bind",
+		Source:   "./cache",
+		Target:   "/cache",
+		HostPath: t.TempDir(),
+	}}
+	if _, err := prepareRuntimeMountManifest(testRuntimeMountConfig(), session, RuntimeDriverBoxlite); err == nil || !strings.Contains(err.Error(), "volume mounts are not supported") {
+		t.Fatalf("prepareRuntimeMountManifest err=%v, want unsupported volume mounts", err)
+	}
+}
+
 func TestPrepareRuntimeMountManifestIgnoresCustomGuestHomePath(t *testing.T) {
 	root := t.TempDir()
 	session := testRuntimeMountSession(root)
