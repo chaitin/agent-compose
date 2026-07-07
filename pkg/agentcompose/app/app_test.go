@@ -18,6 +18,7 @@ import (
 	driverpkg "agent-compose/pkg/driver"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/projects"
+	"agent-compose/pkg/volumes"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
@@ -64,6 +65,10 @@ func TestSetupRegistersServiceGraph(t *testing.T) {
 		}
 	}
 	config := do.MustInvoke[*appconfig.Config](di)
+	volumeManager := do.MustInvoke[*volumes.Manager](di)
+	if volumeManager == nil || volumeManager.Drivers[domain.VolumeDriverLocal] == nil {
+		t.Fatalf("volume manager was not registered with local driver: %#v", volumeManager)
+	}
 	req := httptest.NewRequest(http.MethodGet, strings.TrimRight(config.JupyterProxyBasePath, "/")+"/missing", nil)
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, req)

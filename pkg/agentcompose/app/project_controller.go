@@ -23,6 +23,7 @@ import (
 	sessionstream "agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
+	"agent-compose/pkg/volumes"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
@@ -37,6 +38,7 @@ func NewProjectController(di do.Injector) (*projects.Controller, error) {
 		Sessions: sessionStore,
 		Images:   imageBackends.Auto,
 		Loaders:  do.MustInvoke[*loaders.Controller](di),
+		Volumes:  do.MustInvoke[*volumes.Manager](di),
 		StopSession: func(ctx context.Context, session *domain.Session) error {
 			return stopProjectSession(ctx, sessionStore, sessionDriver, streams, session)
 		},

@@ -32,6 +32,7 @@ import (
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
+	"agent-compose/pkg/volumes"
 	"agent-compose/pkg/workspaces"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
@@ -57,6 +58,7 @@ func RegisterDependencies(di do.Injector) {
 	do.Provide(di, NewCapabilityProvider)
 	do.Provide(di, NewImageBackends)
 	do.Provide(di, NewCacheController)
+	do.Provide(di, NewVolumeManager)
 	do.Provide(di, NewCapProxyServer)
 	do.Provide(di, loaders.NewBus)
 	do.Provide(di, sessions.NewStreamBroker)
@@ -234,6 +236,12 @@ func NewCacheController(di do.Injector) (*runtimecache.Controller, error) {
 	}
 	sources = append(sources, driver.NewRuntimeCacheSources(config)...)
 	return &runtimecache.Controller{Sources: sources}, nil
+}
+
+func NewVolumeManager(di do.Injector) (*volumes.Manager, error) {
+	config := do.MustInvoke[*appconfig.Config](di)
+	store := do.MustInvoke[*configstore.ConfigStore](di)
+	return volumes.NewManager(store, volumes.NewLocalDriver(config)), nil
 }
 
 func NewRuntimeProvider(di do.Injector) (adapters.RuntimeProvider, error) {

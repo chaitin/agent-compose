@@ -20,6 +20,7 @@ import (
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
+	"agent-compose/pkg/volumes"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
@@ -42,6 +43,7 @@ func NewRunController(di do.Injector) (*runs.Controller, error) {
 		Images:       imageBackends.Auto,
 		LoaderEngine: do.MustInvoke[loaders.LoaderEngine](di),
 		Cap:          do.MustInvoke[capabilities.Provider](di),
+		Volumes:      do.MustInvoke[*volumes.Manager](di),
 		Streams:      do.MustInvoke[*sessions.StreamBroker](di),
 		Bus:          do.MustInvoke[*loaders.Bus](di),
 		Dashboard:    dashboardHub,
