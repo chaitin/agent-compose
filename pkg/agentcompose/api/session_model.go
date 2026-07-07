@@ -10,7 +10,12 @@ import (
 )
 
 func SessionDetailToProto(session *domain.Session) *agentcomposev1.SessionDetail {
-	resp := &agentcomposev1.SessionDetail{Summary: SessionSummaryToProto(&session.Summary), WorkspaceId: session.WorkspaceID, Workspace: SessionWorkspaceToProto(session.Workspace)}
+	resp := &agentcomposev1.SessionDetail{
+		Summary:      SessionSummaryToProto(&session.Summary),
+		WorkspaceId:  session.WorkspaceID,
+		Workspace:    SessionWorkspaceToProto(session.Workspace),
+		VolumeMounts: SessionVolumeMountsToProto(session.VolumeMounts),
+	}
 	for _, item := range session.EnvItems {
 		value := item.Value
 		if item.Secret && value != "" {
@@ -19,6 +24,40 @@ func SessionDetailToProto(session *domain.Session) *agentcomposev1.SessionDetail
 		resp.EnvItems = append(resp.EnvItems, &agentcomposev1.SessionEnvVar{Name: item.Name, Value: value, Secret: item.Secret})
 	}
 	return resp
+}
+
+func VolumeMountSpecsFromProto(items []*agentcomposev1.VolumeMountSpec) []domain.VolumeMountSpec {
+	out := make([]domain.VolumeMountSpec, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		out = append(out, domain.VolumeMountSpec{
+			Type:     item.GetType(),
+			Source:   item.GetSource(),
+			Target:   item.GetTarget(),
+			ReadOnly: item.GetReadOnly(),
+		})
+	}
+	return out
+}
+
+func SessionVolumeMountsToProto(items []domain.SessionVolumeMount) []*agentcomposev1.SessionVolumeMount {
+	out := make([]*agentcomposev1.SessionVolumeMount, 0, len(items))
+	for _, item := range items {
+		out = append(out, &agentcomposev1.SessionVolumeMount{
+			Id:          item.ID,
+			Type:        item.Type,
+			Source:      item.Source,
+			Target:      item.Target,
+			ReadOnly:    item.ReadOnly,
+			VolumeId:    item.VolumeID,
+			Driver:      item.Driver,
+			HostPath:    item.HostPath,
+			ProjectPath: item.ProjectPath,
+		})
+	}
+	return out
 }
 
 func SessionSummaryToProto(summary *domain.SessionSummary) *agentcomposev1.SessionSummary {

@@ -23,6 +23,7 @@ import (
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
+	"agent-compose/pkg/volumes"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
@@ -262,6 +263,75 @@ func TestSessionRPCBridgeCapabilityGuideIsBestEffort(t *testing.T) {
 	}
 }
 
+func TestSessionRPCBridgeCreateSessionResolvesVolumeMounts(t *testing.T) {
+	ctx := context.Background()
+	bridge, _ := newTestSessionRPCBridge(t)
+	bindSource := t.TempDir()
+
+	resp, err := bridge.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{
+		Title:  "volumes",
+		Driver: driverpkg.RuntimeDriverDocker,
+		Volumes: []*agentcomposev1.VolumeMountSpec{{
+			Type:     domain.VolumeMountTypeBind,
+			Source:   bindSource,
+			Target:   "/mnt/input",
+			ReadOnly: true,
+		}},
+	}))
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	protoMounts := resp.Msg.GetSession().GetVolumeMounts()
+	if len(protoMounts) != 1 {
+		t.Fatalf("response volume mounts = %#v, want one", protoMounts)
+	}
+	if protoMounts[0].GetType() != domain.VolumeMountTypeBind || protoMounts[0].GetHostPath() != bindSource || !protoMounts[0].GetReadOnly() {
+		t.Fatalf("response volume mount = %#v", protoMounts[0])
+	}
+
+	sessionID := resp.Msg.GetSession().GetSummary().GetSessionId()
+	session, err := bridge.store.GetSession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if len(session.VolumeMounts) != 1 || session.VolumeMounts[0].Target != "/mnt/input" || session.VolumeMounts[0].HostPath != bindSource {
+		t.Fatalf("persisted volume mounts = %#v", session.VolumeMounts)
+	}
+}
+
+func TestSessionRPCBridgeCreateSessionRecordsVolumeWarnings(t *testing.T) {
+	ctx := context.Background()
+	bridge, _ := newTestSessionRPCBridge(t)
+
+	resp, err := bridge.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{
+		Title:  "volume-warning",
+		Driver: driverpkg.RuntimeDriverDocker,
+		Volumes: []*agentcomposev1.VolumeMountSpec{{
+			Type:   domain.VolumeMountTypeBind,
+			Source: t.TempDir(),
+			Target: "/workspace",
+		}},
+	}))
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	sessionID := resp.Msg.GetSession().GetSummary().GetSessionId()
+	events, err := bridge.store.ListEvents(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("ListEvents returned error: %v", err)
+	}
+	found := false
+	for _, event := range events {
+		if event.Type == "session.volume.warning" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected volume warning event, got %#v", events)
+	}
+}
+
 func TestSessionRuntimeLivenessAndNotifierBranches(t *testing.T) {
 	ctx := context.Background()
 	session := &domain.Session{Summary: domain.SessionSummary{ID: "session-1"}}
@@ -338,6 +408,7 @@ func newTestSessionRPCBridge(t *testing.T) (*SessionRPCBridge, *fakeRPCSessionDr
 		nil,
 		sessions.NewStreamBrokerForTest(),
 		testCapabilityProvider{},
+		volumes.NewManager(configDB, volumes.NewLocalDriver(config)),
 		nil,
 	), driver
 }

@@ -609,7 +609,7 @@ func (e *QJSLoaderEngine) installRuntime(jsctx *qjs.Context, state *loaderExecut
 	schedulerObj.SetPropertyStr("state", stateObj)
 
 	sessionObj := jsctx.NewObject()
-	sessionMethods := agentcomposev1.File_proto_agentcompose_v1_agentcompose_proto.Services().ByName("SessionService").Methods()
+	sessionMethods := agentcomposev1.File_agentcompose_v1_agentcompose_proto.Services().ByName("SessionService").Methods()
 	for index := 0; index < sessionMethods.Len(); index++ {
 		methodName := string(sessionMethods.Get(index).Name())
 		jsName := lowerFirstASCII(methodName)
