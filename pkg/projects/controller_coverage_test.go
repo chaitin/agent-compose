@@ -169,7 +169,7 @@ func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
 	changes, err := DownProject(ctx, project, DownOptions{
 		Store:    schedulerStore,
 		Sessions: sessionStore,
-		DisableManagedLoader: func(ctx context.Context, loaderID, _, _ string) error {
+		DisableSchedulerExecution: func(ctx context.Context, loaderID, _, _ string) error {
 			return schedulerStore.SetSchedulerExecutionEnabled(ctx, loaderID, false)
 		},
 		RefreshLoaders: func(context.Context) error {
@@ -206,7 +206,7 @@ func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
 	}
 	if _, err := DisableProjectManagedSchedulers(ctx, project, DownOptions{
 		Store: &downCoverageStore{items: []domain.ProjectSchedulerRecord{{ProjectID: project.ID, SchedulerID: "scheduler-1", ManagedLoaderID: "loader-1", Enabled: true}}},
-		DisableManagedLoader: func(context.Context, string, string, string) error {
+		DisableSchedulerExecution: func(context.Context, string, string, string) error {
 			return errors.New("disable failed")
 		},
 	}); err == nil {
@@ -358,15 +358,15 @@ func (s *controllerCoverageStore) SetProjectSchedulerEnabled(context.Context, st
 	return domain.ProjectSchedulerRecord{}, nil
 }
 
-func (s *controllerCoverageStore) GetLoaderIfExists(context.Context, string) (domain.Loader, bool, error) {
+func (s *controllerCoverageStore) GetSchedulerExecutionIfExists(context.Context, string) (domain.Loader, bool, error) {
 	return domain.Loader{}, false, nil
 }
 
-func (s *controllerCoverageStore) UpsertManagedLoader(context.Context, domain.Loader) (domain.Loader, error) {
+func (s *controllerCoverageStore) UpsertSchedulerExecution(context.Context, domain.Loader) (domain.Loader, error) {
 	return domain.Loader{}, nil
 }
 
-func (s *controllerCoverageStore) ReplaceLoaderTriggers(context.Context, string, []domain.LoaderTrigger) ([]domain.LoaderTrigger, error) {
+func (s *controllerCoverageStore) ReplaceSchedulerExecutionTriggers(context.Context, string, []domain.LoaderTrigger) ([]domain.LoaderTrigger, error) {
 	return nil, nil
 }
 

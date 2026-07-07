@@ -234,9 +234,9 @@ func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyR
 	}
 	changes = append(changes, agentDefinitionChanges...)
 	schedulerChanges, schedulersUnchanged, err := ReconcileManagedSchedulers(ctx, c.store, project, schedulerRecords, managedLoaders, ReconcileSchedulerOptions{
-		CleanupFailedManagedScheduler: c.cleanupFailedManagedSchedulerReconcile,
-		DisableManagedLoaderIfOwned:   c.disableManagedLoaderIfOwned,
-		RefreshLoaders:                c.refreshLoaders,
+		CleanupFailedManagedScheduler:    c.cleanupFailedManagedSchedulerReconcile,
+		DisableSchedulerExecutionIfOwned: c.disableSchedulerExecutionIfOwned,
+		RefreshLoaders:                   c.refreshLoaders,
 	})
 	if err != nil {
 		changes = append(changes, schedulerChanges...)
@@ -309,11 +309,11 @@ func (c *Controller) RemoveProject(ctx context.Context, req RemoveRequest) (Remo
 		return RemoveResult{}, err
 	}
 	downChanges, err := DownProject(ctx, project, DownOptions{
-		Store:                c.store,
-		Sessions:             c.sessions,
-		DisableManagedLoader: c.disableManagedLoaderIfOwned,
-		RefreshLoaders:       c.refreshLoaders,
-		StopSession:          c.stop,
+		Store:                     c.store,
+		Sessions:                  c.sessions,
+		DisableSchedulerExecution: c.disableSchedulerExecutionIfOwned,
+		RefreshLoaders:            c.refreshLoaders,
+		StopSession:               c.stop,
 	})
 	changes := downChangesToChanges(downChanges)
 	if err != nil {
@@ -427,7 +427,7 @@ func (c *Controller) projectManagedSchedulersFromSpec(ctx context.Context, proje
 	if err != nil {
 		return nil, nil, err
 	}
-	return SchedulerRecords(builds), SchedulerLoaders(builds), nil
+	return SchedulerRecords(builds), SchedulerExecutions(builds), nil
 }
 
 func (c *Controller) projectManagedSchedulerBuildsFromSpec(ctx context.Context, project domain.ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]SchedulerBuild, error) {
@@ -454,7 +454,7 @@ func (c *Controller) projectManagedSchedulerBuildsFromSpec(ctx context.Context, 
 			return nil, err
 		}
 		builds[i].ValidationTriggers = validation.Triggers
-		builds[i].Loader.Triggers = validation.Triggers
+		builds[i].Execution.Triggers = validation.Triggers
 		builds[i].Scheduler.TriggerCount = len(validation.Triggers)
 	}
 	return builds, nil
@@ -469,14 +469,14 @@ func (c *Controller) validateManagedSchedulers(ctx context.Context, normalized N
 	if err != nil {
 		return []ValidationIssue{managedSchedulerBuildIssue(err)}
 	}
-	loaderRecords := SchedulerLoaders(builds)
-	for _, loader := range loaderRecords {
-		if _, err := loaders.NormalizeLoader(loader, false); err != nil {
-			return []ValidationIssue{{Path: "schedulers." + loader.Summary.ManagedAgentName, Message: err.Error()}}
+	executionRecords := SchedulerExecutions(builds)
+	for _, execution := range executionRecords {
+		if _, err := loaders.NormalizeLoader(execution, false); err != nil {
+			return []ValidationIssue{{Path: "schedulers." + execution.Summary.ManagedAgentName, Message: err.Error()}}
 		}
-		for _, trigger := range loader.Triggers {
-			if _, err := loaders.NormalizeLoaderTrigger(loader.Summary.ID, trigger); err != nil {
-				return []ValidationIssue{{Path: "schedulers." + loader.Summary.ManagedAgentName + ".triggers", Message: err.Error()}}
+		for _, trigger := range execution.Triggers {
+			if _, err := loaders.NormalizeLoaderTrigger(execution.Summary.ID, trigger); err != nil {
+				return []ValidationIssue{{Path: "schedulers." + execution.Summary.ManagedAgentName + ".triggers", Message: err.Error()}}
 			}
 		}
 	}
@@ -553,8 +553,8 @@ func (c *Controller) cleanupFailedManagedSchedulerReconcile(ctx context.Context,
 	_ = c.refreshLoaders(ctx)
 }
 
-func (c *Controller) disableManagedLoaderIfOwned(ctx context.Context, loaderID, projectID, schedulerID string) error {
-	return DisableManagedLoaderIfOwned(ctx, c.store, loaderID, projectID, schedulerID)
+func (c *Controller) disableSchedulerExecutionIfOwned(ctx context.Context, executionID, projectID, schedulerID string) error {
+	return DisableSchedulerExecutionIfOwned(ctx, c.store, executionID, projectID, schedulerID)
 }
 
 func (c *Controller) refreshLoaders(ctx context.Context) error {

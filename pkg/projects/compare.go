@@ -97,7 +97,7 @@ func SchedulerRecordUnchanged(existing, current domain.ProjectSchedulerRecord) b
 		existing.SpecJSON == current.SpecJSON
 }
 
-func ManagedLoaderUnchanged(existing, current domain.Loader) bool {
+func SchedulerExecutionUnchanged(existing, current domain.Loader) bool {
 	return existing.Summary.Name == current.Summary.Name &&
 		existing.Summary.Description == current.Summary.Description &&
 		existing.Summary.Enabled == current.Summary.Enabled &&

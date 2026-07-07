@@ -1426,7 +1426,7 @@ func (s *fakeControllerStore) ListManagedLoaders(_ context.Context, projectID st
 	return items, nil
 }
 
-func (s *fakeControllerStore) GetLoader(_ context.Context, loaderID string) (domain.Loader, error) {
+func (s *fakeControllerStore) GetSchedulerExecution(_ context.Context, loaderID string) (domain.Loader, error) {
 	if s.loaders == nil {
 		return domain.Loader{}, domain.ErrNotFound
 	}

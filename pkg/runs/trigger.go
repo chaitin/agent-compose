@@ -27,7 +27,7 @@ func (c *Controller) resolveTriggerForManualRun(ctx context.Context, req RunAgen
 	if c.configDB == nil {
 		return result, fmt.Errorf("config store is required")
 	}
-	scheduler, loader, trigger, err := c.manualTriggerLoader(ctx, req.ProjectID, req.AgentName, triggerID)
+	scheduler, execution, trigger, err := c.manualTriggerSchedulerExecution(ctx, req.ProjectID, req.AgentName, triggerID)
 	if err != nil {
 		return result, err
 	}
@@ -38,7 +38,7 @@ func (c *Controller) resolveTriggerForManualRun(ctx context.Context, req RunAgen
 	if !trigger.Enabled {
 		warnings = append(warnings, fmt.Sprintf("trigger %s is disabled; running because it was requested manually", trigger.ID))
 	}
-	captured, err := c.captureManualTriggerAgentRequest(ctx, loader, trigger)
+	captured, err := c.captureManualTriggerAgentRequest(ctx, execution, trigger)
 	if err != nil {
 		return result, err
 	}
@@ -54,7 +54,7 @@ func (c *Controller) resolveTriggerForManualRun(ctx context.Context, req RunAgen
 	return result, nil
 }
 
-func (c *Controller) manualTriggerLoader(ctx context.Context, projectID, agentName, triggerID string) (domain.ProjectSchedulerRecord, domain.Loader, *domain.LoaderTrigger, error) {
+func (c *Controller) manualTriggerSchedulerExecution(ctx context.Context, projectID, agentName, triggerID string) (domain.ProjectSchedulerRecord, domain.Loader, *domain.LoaderTrigger, error) {
 	projectID = strings.TrimSpace(projectID)
 	agentName = strings.TrimSpace(agentName)
 	triggerID = strings.TrimSpace(triggerID)
@@ -66,27 +66,27 @@ func (c *Controller) manualTriggerLoader(ctx context.Context, projectID, agentNa
 		if strings.TrimSpace(scheduler.AgentName) != agentName || strings.TrimSpace(scheduler.ManagedLoaderID) == "" {
 			continue
 		}
-		loader, err := c.configDB.GetLoader(ctx, scheduler.ManagedLoaderID)
+		execution, err := c.configDB.GetSchedulerExecution(ctx, scheduler.ManagedLoaderID)
 		if err != nil {
 			return domain.ProjectSchedulerRecord{}, domain.Loader{}, nil, err
 		}
-		if !managedLoaderMatchesProjectAgent(loader, projectID, agentName, scheduler.SchedulerID) {
+		if !schedulerExecutionMatchesProjectAgent(execution, projectID, agentName, scheduler.SchedulerID) {
 			continue
 		}
-		for index := range loader.Triggers {
-			if loader.Triggers[index].ID != triggerID {
+		for index := range execution.Triggers {
+			if execution.Triggers[index].ID != triggerID {
 				continue
 			}
-			trigger := loader.Triggers[index]
-			return scheduler, loader, &trigger, nil
+			trigger := execution.Triggers[index]
+			return scheduler, execution, &trigger, nil
 		}
 	}
 	id := strings.Join([]string{projectID, agentName, triggerID}, "/")
 	return domain.ProjectSchedulerRecord{}, domain.Loader{}, nil, domain.ResourceError(domain.ErrNotFound, "project trigger", id, fmt.Sprintf("project trigger %s not found", id), nil)
 }
 
-func managedLoaderMatchesProjectAgent(loader domain.Loader, projectID, agentName, schedulerID string) bool {
-	summary := loader.Summary
+func schedulerExecutionMatchesProjectAgent(execution domain.Loader, projectID, agentName, schedulerID string) bool {
+	summary := execution.Summary
 	return strings.TrimSpace(summary.ManagedProjectID) == strings.TrimSpace(projectID) &&
 		strings.TrimSpace(summary.ManagedAgentName) == strings.TrimSpace(agentName) &&
 		strings.TrimSpace(summary.ManagedSchedulerID) == strings.TrimSpace(schedulerID)
@@ -97,14 +97,14 @@ type capturedManualTriggerAgentRequest struct {
 	request domain.LoaderAgentRequest
 }
 
-func (c *Controller) captureManualTriggerAgentRequest(ctx context.Context, loader domain.Loader, trigger *domain.LoaderTrigger) (capturedManualTriggerAgentRequest, error) {
+func (c *Controller) captureManualTriggerAgentRequest(ctx context.Context, execution domain.Loader, trigger *domain.LoaderTrigger) (capturedManualTriggerAgentRequest, error) {
 	if c.loaderEngine == nil {
 		return capturedManualTriggerAgentRequest{}, fmt.Errorf("loader engine is required")
 	}
 	host := &manualTriggerCaptureHost{}
 	_, err := c.loaderEngine.Execute(ctx, loaders.LoaderExecutionRequest{
-		Runtime:     loader.Summary.Runtime,
-		Script:      loader.Script,
+		Runtime:     execution.Summary.Runtime,
+		Script:      execution.Script,
 		Trigger:     trigger,
 		PayloadJSON: `{}`,
 	}, host)

@@ -324,6 +324,10 @@ func (s *loaderStore) UpsertManagedLoader(ctx context.Context, item Loader) (Loa
 	return s.CreateLoader(ctx, normalized)
 }
 
+func (s *loaderStore) UpsertSchedulerExecution(ctx context.Context, item Loader) (Loader, error) {
+	return s.UpsertManagedLoader(ctx, item)
+}
+
 func (s *loaderStore) getLoaderIfExists(ctx context.Context, loaderID string) (Loader, bool, error) {
 	item, err := s.GetLoader(ctx, loaderID)
 	if err != nil {
@@ -337,6 +341,10 @@ func (s *loaderStore) getLoaderIfExists(ctx context.Context, loaderID string) (L
 
 func (s *loaderStore) GetLoaderIfExists(ctx context.Context, loaderID string) (Loader, bool, error) {
 	return s.getLoaderIfExists(ctx, loaderID)
+}
+
+func (s *loaderStore) GetSchedulerExecutionIfExists(ctx context.Context, executionID string) (Loader, bool, error) {
+	return s.getLoaderIfExists(ctx, executionID)
 }
 
 func (s *loaderStore) DeleteLoader(ctx context.Context, loaderID string) error {

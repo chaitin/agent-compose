@@ -31,11 +31,11 @@ type DownSessionStore interface {
 }
 
 type DownOptions struct {
-	Store                DownStore
-	Sessions             DownSessionStore
-	DisableManagedLoader func(ctx context.Context, loaderID, projectID, schedulerID string) error
-	RefreshLoaders       func(ctx context.Context) error
-	StopSession          func(ctx context.Context, session *domain.Session) error
+	Store                     DownStore
+	Sessions                  DownSessionStore
+	DisableSchedulerExecution func(ctx context.Context, executionID, projectID, schedulerID string) error
+	RefreshLoaders            func(ctx context.Context) error
+	StopSession               func(ctx context.Context, session *domain.Session) error
 }
 
 func DownProject(ctx context.Context, project domain.ProjectRecord, options DownOptions) ([]DownChange, error) {
@@ -70,8 +70,8 @@ func DisableProjectManagedSchedulers(ctx context.Context, project domain.Project
 		if err != nil {
 			return changes, fmt.Errorf("disable project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
 		}
-		if options.DisableManagedLoader != nil {
-			if err := options.DisableManagedLoader(ctx, scheduler.ManagedLoaderID, project.ID, scheduler.SchedulerID); err != nil {
+		if options.DisableSchedulerExecution != nil {
+			if err := options.DisableSchedulerExecution(ctx, scheduler.ManagedLoaderID, project.ID, scheduler.SchedulerID); err != nil {
 				return changes, fmt.Errorf("disable managed loader %s: %w", scheduler.ManagedLoaderID, err)
 			}
 		}

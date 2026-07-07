@@ -132,7 +132,7 @@ func agentDefinitionConfigJSON(agent compose.NormalizedAgentSpec) (string, error
 	return string(data), nil
 }
 
-func NewManagedLoaderFromScheduler(project domain.ProjectRecord, scheduler domain.ProjectSchedulerRecord, agent compose.NormalizedAgentSpec) (domain.Loader, error) {
+func NewSchedulerExecutionFromRecord(project domain.ProjectRecord, scheduler domain.ProjectSchedulerRecord, agent compose.NormalizedAgentSpec) (domain.Loader, error) {
 	managedAgentID, err := domain.StableManagedAgentID(project.ID, agent.Name)
 	if err != nil {
 		return domain.Loader{}, err
@@ -176,7 +176,7 @@ func NewManagedLoaderFromScheduler(project domain.ProjectRecord, scheduler domai
 
 type SchedulerBuild struct {
 	Scheduler          domain.ProjectSchedulerRecord
-	Loader             domain.Loader
+	Execution          domain.Loader
 	ValidationTriggers []domain.LoaderTrigger
 }
 
@@ -188,12 +188,12 @@ func SchedulerRecords(builds []SchedulerBuild) []domain.ProjectSchedulerRecord {
 	return schedulers
 }
 
-func SchedulerLoaders(builds []SchedulerBuild) []domain.Loader {
-	loaders := make([]domain.Loader, 0, len(builds))
+func SchedulerExecutions(builds []SchedulerBuild) []domain.Loader {
+	executions := make([]domain.Loader, 0, len(builds))
 	for _, build := range builds {
-		loaders = append(loaders, build.Loader)
+		executions = append(executions, build.Execution)
 	}
-	return loaders
+	return executions
 }
 
 func NewSchedulerBuildsFromSpec(project domain.ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]SchedulerBuild, error) {
@@ -206,14 +206,14 @@ func NewSchedulerBuildsFromSpec(project domain.ProjectRecord, revision int64, sp
 		if !ok {
 			continue
 		}
-		loader, err := NewManagedLoaderFromScheduler(project, record, agent)
+		execution, err := NewSchedulerExecutionFromRecord(project, record, agent)
 		if err != nil {
 			return nil, err
 		}
 		builds = append(builds, SchedulerBuild{
 			Scheduler:          record,
-			Loader:             loader,
-			ValidationTriggers: loader.Triggers,
+			Execution:          execution,
+			ValidationTriggers: execution.Triggers,
 		})
 	}
 	return builds, nil
