@@ -39,7 +39,7 @@ type ReconcileSchedulerStore interface {
 	GetLoaderIfExists(ctx context.Context, loaderID string) (domain.Loader, bool, error)
 	UpsertManagedLoader(ctx context.Context, item domain.Loader) (domain.Loader, error)
 	ReplaceLoaderTriggers(ctx context.Context, loaderID string, triggers []domain.LoaderTrigger) ([]domain.LoaderTrigger, error)
-	SetLoaderEnabled(ctx context.Context, loaderID string, enabled bool) error
+	SetSchedulerExecutionEnabled(ctx context.Context, executionID string, enabled bool) error
 }
 
 type ReconcileSchedulerOptions struct {
@@ -149,11 +149,11 @@ func ReconcileManagedSchedulers(ctx context.Context, store ReconcileSchedulerSto
 			return changes, false, fmt.Errorf("replace managed loader triggers %s: %w", savedLoader.Summary.ID, err)
 		}
 		if loader.Summary.Enabled {
-			if err := store.SetLoaderEnabled(ctx, savedLoader.Summary.ID, true); err != nil {
+			if err := store.SetSchedulerExecutionEnabled(ctx, savedLoader.Summary.ID, true); err != nil {
 				cleanupFailedManagedScheduler(ctx, options, saved, savedLoader.Summary.ID)
 				return changes, false, fmt.Errorf("enable managed loader %s: %w", savedLoader.Summary.ID, err)
 			}
-		} else if err := store.SetLoaderEnabled(ctx, savedLoader.Summary.ID, false); err != nil {
+		} else if err := store.SetSchedulerExecutionEnabled(ctx, savedLoader.Summary.ID, false); err != nil {
 			return changes, false, fmt.Errorf("disable managed loader %s: %w", savedLoader.Summary.ID, err)
 		}
 		if scheduler.Enabled {
@@ -307,5 +307,5 @@ func DisableManagedLoaderIfOwned(ctx context.Context, store ReconcileSchedulerSt
 	if !loader.Summary.Enabled {
 		return nil
 	}
-	return store.SetLoaderEnabled(ctx, loaderID, false)
+	return store.SetSchedulerExecutionEnabled(ctx, loaderID, false)
 }

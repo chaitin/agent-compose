@@ -170,7 +170,7 @@ func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
 		Store:    schedulerStore,
 		Sessions: sessionStore,
 		DisableManagedLoader: func(ctx context.Context, loaderID, _, _ string) error {
-			return schedulerStore.SetLoaderEnabled(ctx, loaderID, false)
+			return schedulerStore.SetSchedulerExecutionEnabled(ctx, loaderID, false)
 		},
 		RefreshLoaders: func(context.Context) error {
 			refreshed = true
@@ -370,7 +370,7 @@ func (s *controllerCoverageStore) ReplaceLoaderTriggers(context.Context, string,
 	return nil, nil
 }
 
-func (s *controllerCoverageStore) SetLoaderEnabled(context.Context, string, bool) error {
+func (s *controllerCoverageStore) SetSchedulerExecutionEnabled(context.Context, string, bool) error {
 	return nil
 }
 
@@ -413,7 +413,7 @@ func (s *downCoverageStore) SetProjectSchedulerEnabled(_ context.Context, projec
 	return domain.ProjectSchedulerRecord{}, sql.ErrNoRows
 }
 
-func (s *downCoverageStore) SetLoaderEnabled(_ context.Context, loaderID string, enabled bool) error {
+func (s *downCoverageStore) SetSchedulerExecutionEnabled(_ context.Context, loaderID string, enabled bool) error {
 	if s.setLoaderErr != nil {
 		return s.setLoaderErr
 	}

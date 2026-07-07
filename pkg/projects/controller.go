@@ -545,7 +545,7 @@ func (c *Controller) cleanupFailedManagedSchedulerReconcile(ctx context.Context,
 		return
 	}
 	if strings.TrimSpace(loaderID) != "" {
-		_ = c.store.SetLoaderEnabled(ctx, loaderID, false)
+		_ = c.store.SetSchedulerExecutionEnabled(ctx, loaderID, false)
 	}
 	if strings.TrimSpace(scheduler.ProjectID) != "" && strings.TrimSpace(scheduler.SchedulerID) != "" {
 		_, _ = c.store.SetProjectSchedulerEnabled(ctx, scheduler.ProjectID, scheduler.SchedulerID, false)
