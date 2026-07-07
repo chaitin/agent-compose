@@ -189,11 +189,11 @@ func TestAPIMappingCoverageWorkflows(t *testing.T) {
 		t.Fatalf("project revision mapping failed")
 	}
 	changes := ProjectApplyChanges(project, domain.ProjectRecord{ID: project.ID, Name: "Old", SourcePath: project.SourcePath}, true, revision, true)
-	if changes[0].GetAction() != agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED || changes[1].GetAction() != agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED {
+	if len(changes) != 1 || changes[0].GetAction() != agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED {
 		t.Fatalf("ProjectApplyChanges updated = %#v", changes)
 	}
 	createdChanges := ProjectApplyChanges(project, domain.ProjectRecord{}, false, revision, false)
-	if createdChanges[0].GetAction() != agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED || createdChanges[1].GetAction() != agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED {
+	if len(createdChanges) != 1 || createdChanges[0].GetAction() != agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED {
 		t.Fatalf("ProjectApplyChanges created = %#v", createdChanges)
 	}
 	dryRun := DryRunProjectChanges(project, []domain.ProjectAgentRecord{projectAgent}, []domain.AgentDefinition{agent}, []domain.ProjectSchedulerRecord{projectScheduler}, []domain.Loader{loader})

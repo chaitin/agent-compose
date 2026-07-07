@@ -166,17 +166,17 @@ func testComposeProjectPureHelpers(t *testing.T) {
 	if err := writeComposeUpText(&out, upResp); err != nil {
 		t.Fatalf("writeComposeUpText returned error: %v", err)
 	}
-	if !strings.Contains(out.String(), "Status: applied") || !strings.Contains(out.String(), "created") {
+	if !strings.Contains(out.String(), "ACTION") || !strings.Contains(out.String(), "created") {
 		t.Fatalf("compose up text = %q", out.String())
 	}
 	out.Reset()
 	upResp.Applied = false
-	if err := writeComposeUpText(&out, upResp); err != nil || !strings.Contains(out.String(), "Status: not-applied") {
+	if err := writeComposeUpText(&out, upResp); err != nil || !strings.Contains(out.String(), "ACTION") {
 		t.Fatalf("compose up not-applied text = %q err=%v", out.String(), err)
 	}
 	out.Reset()
 	upResp.Unchanged = true
-	if err := writeComposeUpText(&out, upResp); err != nil || !strings.Contains(out.String(), "Status: unchanged") {
+	if err := writeComposeUpText(&out, upResp); err != nil || !strings.Contains(out.String(), "ACTION") {
 		t.Fatalf("compose up unchanged text = %q err=%v", out.String(), err)
 	}
 
@@ -305,7 +305,7 @@ func testComposeProjectOutputHelpers(t *testing.T) {
 
 	var out bytes.Buffer
 	psOutput := composePSOutput{Project: output.Project, Sandboxes: []composePSSandboxOutput{{
-		Sandbox: "session-1", Agent: "reviewer", Status: "running", Run: "run-new", CreatedAt: "created", UpdatedAt: "updated", Driver: "docker", Image: "guest", Workspace: "/repo",
+		ID: "session-1", ShortID: "session-1", Agent: "reviewer", Status: "running", RunID: "run-new", RunShortID: "run-new", CreatedAt: "created", UpdatedAt: "updated", Driver: "docker", Image: "guest", Workspace: "/repo",
 	}}}
 	if err := writePSText(&out, psOutput, true); err != nil {
 		t.Fatalf("writePSText verbose returned error: %v", err)
@@ -386,7 +386,7 @@ func testComposeRunLogAndExecHelpers(t *testing.T) {
 	if err := writeLogDetails(&out, []*agentcomposev2.RunDetail{detail}, map[string]int{}, composeLogsOptions{TailLines: 1, Timestamp: true}); err != nil {
 		t.Fatalf("writeLogDetails returned error: %v", err)
 	}
-	if !strings.Contains(out.String(), "reviewer-run-1 | time=completed line3") {
+	if !strings.Contains(out.String(), "reviewer-run-1 [completed]| line3") {
 		t.Fatalf("log details = %q", out.String())
 	}
 	out.Reset()
@@ -605,10 +605,10 @@ func testComposeImageStatsAndSessionHelpers(t *testing.T) {
 		BlockWriteBytes:  metric("bytes", agentcomposev2.MetricStatus_METRIC_STATUS_OK),
 		UptimeSeconds:    metric("seconds", agentcomposev2.MetricStatus_METRIC_STATUS_OK),
 	})
-	if stats.Sandbox != "session-1" || stats.CPUPercent.Status != "ok" || stats.MemoryLimitBytes.Status != "unavailable" || stats.MemoryPercent.Status != "unknown" {
+	if stats.ID != "session-1" || stats.CPUPercent.Status != "ok" || stats.MemoryLimitBytes.Status != "unavailable" || stats.MemoryPercent.Status != "unknown" {
 		t.Fatalf("composeStatsOutputFromProto = %#v", stats)
 	}
-	if nilStats := composeStatsOutputFromProto(nil); nilStats.Sandbox != "" {
+	if nilStats := composeStatsOutputFromProto(nil); nilStats.ID != "" {
 		t.Fatalf("nil stats = %#v", nilStats)
 	}
 	if nilMetric := composeMetricOutputFromProto(nil); nilMetric.Status != "unknown" {
@@ -706,7 +706,7 @@ func testComposeImageStatsAndSessionHelpers(t *testing.T) {
 		t.Fatalf("composeCacheListOutputFromResponse = %#v", cacheList)
 	}
 	cacheInspect := composeCacheInspectOutputFromResponse(&agentcomposev2.InspectCacheResponse{Cache: cacheItem, Warnings: []string{"inspect warn"}})
-	if cacheInspect.Cache.CacheID != "cache-1" || cacheInspect.Cache.Status != "referenced" {
+	if cacheInspect.Cache.ID != "cache-1" || cacheInspect.Cache.Status != "referenced" {
 		t.Fatalf("composeCacheInspectOutputFromResponse = %#v", cacheInspect)
 	}
 	pruneOutput := composeCacheOperationOutputFromPruneResponse(&agentcomposev2.PruneCachesResponse{
@@ -818,7 +818,7 @@ func testComposeImageStatsAndSessionHelpers(t *testing.T) {
 	if err := writeCacheOperationTable(failingWriter{}, []composeCacheOutput{cacheInspect.Cache}); err == nil {
 		t.Fatalf("writeCacheOperationTable failing writer returned nil error")
 	}
-	if err := writeSandboxPruneMatchedTable(failingWriter{}, []composePSSandboxOutput{{Sandbox: "sandbox"}}, "matched"); err == nil {
+	if err := writeSandboxPruneMatchedTable(failingWriter{}, []composePSSandboxOutput{{ID: "sandbox"}}, "matched"); err == nil {
 		t.Fatalf("writeSandboxPruneMatchedTable failing writer returned nil error")
 	}
 	if err := writeSandboxPruneSkippedTable(failingWriter{}, []composeSandboxPruneSkipped{{Sandbox: "sandbox"}}); err == nil {

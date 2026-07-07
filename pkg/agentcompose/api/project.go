@@ -88,22 +88,12 @@ func ProjectApplyChanges(project domain.ProjectRecord, existing domain.ProjectRe
 			projectAction = agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
 		}
 	}
-	revisionAction := agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED
-	if revisionCreated {
-		revisionAction = agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
-	}
 	return []*agentcomposev2.ProjectChange{
 		{
 			Action:       projectAction,
 			ResourceType: "project",
 			ResourceId:   project.ID,
 			Name:         project.Name,
-		},
-		{
-			Action:       revisionAction,
-			ResourceType: "project_revision",
-			ResourceId:   fmt.Sprintf("%s/%d", revision.ProjectID, revision.Revision),
-			Name:         revision.SpecHash,
 		},
 	}
 }
