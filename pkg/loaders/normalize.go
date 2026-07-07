@@ -63,10 +63,10 @@ func NormalizeLoader(item domain.Loader, assignID bool) (domain.Loader, error) {
 		item.Summary.ManagedSchedulerID = ""
 	} else {
 		if item.Summary.ManagedAgentName == "" || item.Summary.ManagedSchedulerID == "" {
-			return domain.Loader{}, fmt.Errorf("managed loader agent name and scheduler id are required")
+			return domain.Loader{}, fmt.Errorf("scheduler execution agent name and scheduler id are required")
 		}
 		if item.Summary.ManagedRevision < 0 {
-			return domain.Loader{}, fmt.Errorf("managed loader project revision cannot be negative")
+			return domain.Loader{}, fmt.Errorf("scheduler execution project revision cannot be negative")
 		}
 	}
 	item.EnvItems = domain.NormalizeEnvItems(item.EnvItems)
