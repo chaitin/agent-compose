@@ -134,7 +134,7 @@ func (c *Controller) init() {
 			EnterRun:      c.EnterRun,
 			LeaveRun:      c.LeaveRun,
 			AddLoaderEvent: func(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
-				return c.AddLoaderEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
+				return c.AddSchedulerExecutionEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
 			},
 			UpdateTriggerEventDelivery: c.UpdateTriggerEventDelivery,
 			Notify:                     c.notify,
@@ -215,6 +215,10 @@ func (c *Controller) Validate(ctx context.Context, runtime, script string) (Load
 }
 
 func (c *Controller) CreateLoader(ctx context.Context, loader domain.Loader) (domain.Loader, error) {
+	return c.CreateSchedulerExecution(ctx, loader)
+}
+
+func (c *Controller) CreateSchedulerExecution(ctx context.Context, loader domain.Loader) (domain.Loader, error) {
 	if strings.TrimSpace(loader.Summary.Runtime) == "" {
 		loader.Summary.Runtime = domain.LoaderRuntimeScheduler
 	}
@@ -241,6 +245,10 @@ func (c *Controller) CreateLoader(ctx context.Context, loader domain.Loader) (do
 }
 
 func (c *Controller) UpdateLoader(ctx context.Context, loader domain.Loader) (domain.Loader, error) {
+	return c.UpdateSchedulerExecution(ctx, loader)
+}
+
+func (c *Controller) UpdateSchedulerExecution(ctx context.Context, loader domain.Loader) (domain.Loader, error) {
 	validation, err := c.deps.Engine.Validate(ctx, loader.Summary.Runtime, loader.Script)
 	if err != nil {
 		return domain.Loader{}, err
@@ -260,6 +268,10 @@ func (c *Controller) UpdateLoader(ctx context.Context, loader domain.Loader) (do
 }
 
 func (c *Controller) DeleteLoader(ctx context.Context, loaderID string) error {
+	return c.DeleteSchedulerExecution(ctx, loaderID)
+}
+
+func (c *Controller) DeleteSchedulerExecution(ctx context.Context, loaderID string) error {
 	if err := c.deps.Store.DeleteSchedulerExecution(ctx, loaderID); err != nil {
 		return err
 	}
@@ -271,6 +283,10 @@ func (c *Controller) DeleteLoader(ctx context.Context, loaderID string) error {
 }
 
 func (c *Controller) SetLoaderEnabled(ctx context.Context, loaderID string, enabled bool) (domain.Loader, error) {
+	return c.SetSchedulerExecutionEnabled(ctx, loaderID, enabled)
+}
+
+func (c *Controller) SetSchedulerExecutionEnabled(ctx context.Context, loaderID string, enabled bool) (domain.Loader, error) {
 	if err := c.deps.Store.SetSchedulerExecutionEnabled(ctx, loaderID, enabled); err != nil {
 		return domain.Loader{}, err
 	}
@@ -282,6 +298,10 @@ func (c *Controller) SetLoaderEnabled(ctx context.Context, loaderID string, enab
 }
 
 func (c *Controller) SetLoaderTriggerEnabled(ctx context.Context, loaderID, triggerID string, enabled bool) (domain.Loader, error) {
+	return c.SetSchedulerExecutionTriggerEnabled(ctx, loaderID, triggerID, enabled)
+}
+
+func (c *Controller) SetSchedulerExecutionTriggerEnabled(ctx context.Context, loaderID, triggerID string, enabled bool) (domain.Loader, error) {
 	if err := c.deps.Store.SetSchedulerExecutionTriggerEnabled(ctx, loaderID, triggerID, enabled); err != nil {
 		return domain.Loader{}, err
 	}
@@ -293,7 +313,11 @@ func (c *Controller) SetLoaderTriggerEnabled(ctx context.Context, loaderID, trig
 }
 
 func (c *Controller) RunNow(ctx context.Context, loaderID, triggerID, payloadJSON string, timeout time.Duration) (domain.LoaderRunSummary, error) {
-	loader, trigger, err := c.LoadLoaderForRun(ctx, loaderID, triggerID)
+	return c.RunSchedulerExecutionNow(ctx, loaderID, triggerID, payloadJSON, timeout)
+}
+
+func (c *Controller) RunSchedulerExecutionNow(ctx context.Context, loaderID, triggerID, payloadJSON string, timeout time.Duration) (domain.LoaderRunSummary, error) {
+	loader, trigger, err := c.LoadSchedulerExecutionForRun(ctx, loaderID, triggerID)
 	if err != nil {
 		return domain.LoaderRunSummary{}, err
 	}
@@ -404,6 +428,10 @@ func (c *Controller) SnapshotLoaders() []domain.Loader {
 }
 
 func (c *Controller) LoadLoaderForRun(ctx context.Context, loaderID, triggerID string) (domain.Loader, *domain.LoaderTrigger, error) {
+	return c.LoadSchedulerExecutionForRun(ctx, loaderID, triggerID)
+}
+
+func (c *Controller) LoadSchedulerExecutionForRun(ctx context.Context, loaderID, triggerID string) (domain.Loader, *domain.LoaderTrigger, error) {
 	loader, err := c.deps.Store.GetSchedulerExecution(ctx, loaderID)
 	if err != nil {
 		return domain.Loader{}, nil, err
@@ -484,11 +512,19 @@ func (c *Controller) AnyTargetBusy(targets []EventTarget) bool {
 }
 
 func (c *Controller) AddLoaderEvent(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
-	_, err := c.AddLoaderEventRecord(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
+	return c.AddSchedulerExecutionEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
+}
+
+func (c *Controller) AddSchedulerExecutionEvent(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
+	_, err := c.AddSchedulerExecutionEventRecord(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
 	return err
 }
 
 func (c *Controller) AddLoaderEventRecord(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) (domain.LoaderEvent, error) {
+	return c.AddSchedulerExecutionEventRecord(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
+}
+
+func (c *Controller) AddSchedulerExecutionEventRecord(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) (domain.LoaderEvent, error) {
 	payloadJSON, err := domain.MarshalJSONCompact(payload)
 	if err != nil {
 		return domain.LoaderEvent{}, err
