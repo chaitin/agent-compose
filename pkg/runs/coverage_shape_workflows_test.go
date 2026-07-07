@@ -907,6 +907,14 @@ func TestRunsControllerRunProjectAgentManualTriggerResolution(t *testing.T) {
 		Enabled:    false,
 		SpecJSON:   `{"kind":"interval","intervalMs":1000}`,
 	}
+	fixture.configDB.schedulers = []domain.ProjectSchedulerRecord{{
+		ProjectID:       "project-1",
+		SchedulerID:     "scheduler-1",
+		AgentName:       "worker",
+		ManagedLoaderID: "loader-1",
+		Enabled:         false,
+		TriggerCount:    1,
+	}}
 	fixture.configDB.loaders = map[string]domain.Loader{
 		"loader-1": {
 			Summary: domain.LoaderSummary{

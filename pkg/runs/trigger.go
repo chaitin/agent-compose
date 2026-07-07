@@ -58,16 +58,19 @@ func (c *Controller) manualTriggerLoader(ctx context.Context, projectID, agentNa
 	projectID = strings.TrimSpace(projectID)
 	agentName = strings.TrimSpace(agentName)
 	triggerID = strings.TrimSpace(triggerID)
-	managedLoaders, err := c.configDB.ListManagedLoaders(ctx, projectID)
+	schedulers, err := c.configDB.ListProjectSchedulers(ctx, projectID)
 	if err != nil {
 		return domain.ProjectSchedulerRecord{}, domain.Loader{}, nil, err
 	}
-	for _, loader := range managedLoaders {
-		summary := loader.Summary
-		if strings.TrimSpace(summary.ManagedAgentName) != agentName || strings.TrimSpace(summary.ManagedSchedulerID) == "" {
+	for _, scheduler := range schedulers {
+		if strings.TrimSpace(scheduler.AgentName) != agentName || strings.TrimSpace(scheduler.ManagedLoaderID) == "" {
 			continue
 		}
-		if !managedLoaderMatchesProjectAgent(loader, projectID, agentName, summary.ManagedSchedulerID) {
+		loader, err := c.configDB.GetLoader(ctx, scheduler.ManagedLoaderID)
+		if err != nil {
+			return domain.ProjectSchedulerRecord{}, domain.Loader{}, nil, err
+		}
+		if !managedLoaderMatchesProjectAgent(loader, projectID, agentName, scheduler.SchedulerID) {
 			continue
 		}
 		for index := range loader.Triggers {
@@ -75,17 +78,6 @@ func (c *Controller) manualTriggerLoader(ctx context.Context, projectID, agentNa
 				continue
 			}
 			trigger := loader.Triggers[index]
-			scheduler := domain.ProjectSchedulerRecord{
-				ProjectID:       summary.ManagedProjectID,
-				AgentName:       summary.ManagedAgentName,
-				SchedulerID:     summary.ManagedSchedulerID,
-				ManagedLoaderID: summary.ID,
-				Revision:        summary.ManagedRevision,
-				Enabled:         summary.Enabled,
-				TriggerCount:    len(loader.Triggers),
-				CreatedAt:       summary.CreatedAt,
-				UpdatedAt:       summary.UpdatedAt,
-			}
 			return scheduler, loader, &trigger, nil
 		}
 	}

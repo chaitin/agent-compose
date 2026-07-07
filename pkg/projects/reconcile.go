@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	domain "agent-compose/pkg/model"
 )
@@ -34,7 +35,7 @@ type ReconcileSchedulerStore interface {
 	GetProjectScheduler(ctx context.Context, projectID, schedulerID string) (domain.ProjectSchedulerRecord, error)
 	UpsertProjectScheduler(ctx context.Context, scheduler domain.ProjectSchedulerRecord) (domain.ProjectSchedulerRecord, error)
 	SetProjectSchedulerEnabled(ctx context.Context, projectID, schedulerID string, enabled bool) (domain.ProjectSchedulerRecord, error)
-	ListManagedLoaders(ctx context.Context, projectID string) ([]domain.Loader, error)
+	ListProjectSchedulers(ctx context.Context, projectID string) ([]domain.ProjectSchedulerRecord, error)
 	GetLoaderIfExists(ctx context.Context, loaderID string) (domain.Loader, bool, error)
 	UpsertManagedLoader(ctx context.Context, item domain.Loader) (domain.Loader, error)
 	ReplaceLoaderTriggers(ctx context.Context, loaderID string, triggers []domain.LoaderTrigger) ([]domain.LoaderTrigger, error)
@@ -43,6 +44,7 @@ type ReconcileSchedulerStore interface {
 
 type ReconcileSchedulerOptions struct {
 	CleanupFailedManagedScheduler func(ctx context.Context, scheduler domain.ProjectSchedulerRecord, loaderID string)
+	DisableManagedLoaderIfOwned   func(ctx context.Context, loaderID, projectID, schedulerID string) error
 	RefreshLoaders                func(ctx context.Context) error
 }
 
@@ -108,17 +110,19 @@ func ReconcileManagedSchedulers(ctx context.Context, store ReconcileSchedulerSto
 	if store == nil {
 		return nil, false, fmt.Errorf("config store is required")
 	}
-	currentBySchedulerID := make(map[string]domain.ProjectSchedulerRecord, len(schedulers))
-	currentLoaderByID := make(map[string]domain.Loader, len(loaders))
+	currentByID := make(map[string]domain.ProjectSchedulerRecord, len(schedulers))
 	loadersByID := make(map[string]domain.Loader, len(loaders))
 	for _, loader := range loaders {
 		loadersByID[loader.Summary.ID] = loader
-		currentLoaderByID[loader.Summary.ID] = loader
 	}
 	changes := make([]Change, 0, len(schedulers)+len(loaders))
 	unchanged := true
 	for _, scheduler := range schedulers {
-		currentBySchedulerID[scheduler.SchedulerID] = scheduler
+		currentByID[scheduler.SchedulerID] = scheduler
+		existing, found, err := projectSchedulerIfExists(ctx, store, scheduler.ProjectID, scheduler.SchedulerID)
+		if err != nil {
+			return changes, false, fmt.Errorf("load project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
+		}
 		stagedScheduler := scheduler
 		stagedScheduler.Enabled = false
 		saved, err := store.UpsertProjectScheduler(ctx, stagedScheduler)
@@ -161,16 +165,20 @@ func ReconcileManagedSchedulers(ctx context.Context, store ReconcileSchedulerSto
 		} else {
 			saved = stagedScheduler
 		}
-		loaderAction := ManagedLoaderChangeAction(existingLoader, loaderFound, loader)
-		if loaderAction != ChangeActionUnchanged {
+		action := SchedulerChangeAction(existing, found, scheduler)
+		if action != ChangeActionUnchanged {
 			unchanged = false
 		}
 		changes = append(changes, Change{
-			Action:       loaderAction,
+			Action:       action,
 			ResourceType: "project_scheduler",
 			ResourceID:   saved.SchedulerID,
 			Name:         saved.AgentName,
 		})
+		loaderAction := ManagedLoaderChangeAction(existingLoader, loaderFound, loader)
+		if loaderAction != ChangeActionUnchanged {
+			unchanged = false
+		}
 		changes = append(changes, Change{
 			Action:       loaderAction,
 			ResourceType: "loader",
@@ -178,38 +186,24 @@ func ReconcileManagedSchedulers(ctx context.Context, store ReconcileSchedulerSto
 			Name:         savedLoader.Summary.Name,
 		})
 	}
-	existingLoaders, err := store.ListManagedLoaders(ctx, project.ID)
+	existingSchedulers, err := store.ListProjectSchedulers(ctx, project.ID)
 	if err != nil {
-		return changes, false, fmt.Errorf("list managed loaders: %w", err)
+		return changes, false, fmt.Errorf("list project schedulers: %w", err)
 	}
-	for _, existing := range existingLoaders {
-		summary := existing.Summary
-		if _, ok := currentLoaderByID[summary.ID]; ok {
+	for _, existing := range existingSchedulers {
+		if _, ok := currentByID[existing.SchedulerID]; ok {
 			continue
 		}
-		if _, ok := currentBySchedulerID[summary.ManagedSchedulerID]; ok {
+		if !existing.Enabled {
 			continue
 		}
-		if !summary.Enabled {
-			continue
-		}
-		if err := store.SetLoaderEnabled(ctx, summary.ID, false); err != nil {
-			return changes, false, fmt.Errorf("disable removed managed loader %s: %w", summary.ID, err)
-		}
-		projected := ProjectSchedulersFromManagedLoaders([]domain.Loader{existing})
-		if len(projected) == 0 {
-			continue
-		}
-		disabled := projected[0]
-		disabled.Enabled = false
-		existingScheduler, found, err := projectSchedulerIfExists(ctx, store, summary.ManagedProjectID, summary.ManagedSchedulerID)
+		disabled, err := store.SetProjectSchedulerEnabled(ctx, existing.ProjectID, existing.SchedulerID, false)
 		if err != nil {
-			return changes, false, fmt.Errorf("load removed project scheduler %s/%s: %w", summary.ManagedProjectID, summary.ManagedSchedulerID, err)
+			return changes, false, fmt.Errorf("disable removed project scheduler %s/%s: %w", existing.ProjectID, existing.SchedulerID, err)
 		}
-		if found && existingScheduler.Enabled {
-			disabled, err = store.SetProjectSchedulerEnabled(ctx, summary.ManagedProjectID, summary.ManagedSchedulerID, false)
-			if err != nil {
-				return changes, false, fmt.Errorf("disable removed project scheduler %s/%s: %w", summary.ManagedProjectID, summary.ManagedSchedulerID, err)
+		if options.DisableManagedLoaderIfOwned != nil {
+			if err := options.DisableManagedLoaderIfOwned(ctx, existing.ManagedLoaderID, project.ID, existing.SchedulerID); err != nil {
+				return changes, false, fmt.Errorf("disable removed managed loader %s: %w", existing.ManagedLoaderID, err)
 			}
 		}
 		unchanged = false
@@ -222,8 +216,8 @@ func ReconcileManagedSchedulers(ctx context.Context, store ReconcileSchedulerSto
 		}, Change{
 			Action:       ChangeActionRemoved,
 			ResourceType: "loader",
-			ResourceID:   summary.ID,
-			Name:         summary.Name,
+			ResourceID:   existing.ManagedLoaderID,
+			Name:         existing.AgentName,
 			Message:      "disabled because the scheduler is no longer present in the project spec",
 		})
 	}
@@ -293,4 +287,25 @@ func ProjectAgentChangeAction(existing domain.ProjectAgentRecord, found bool, cu
 		return ChangeActionUnchanged
 	}
 	return ChangeActionUpdated
+}
+
+func DisableManagedLoaderIfOwned(ctx context.Context, store ReconcileSchedulerStore, loaderID, projectID, schedulerID string) error {
+	loaderID = strings.TrimSpace(loaderID)
+	if loaderID == "" {
+		return nil
+	}
+	loader, found, err := store.GetLoaderIfExists(ctx, loaderID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	if loader.Summary.ManagedProjectID != strings.TrimSpace(projectID) || loader.Summary.ManagedSchedulerID != strings.TrimSpace(schedulerID) {
+		return nil
+	}
+	if !loader.Summary.Enabled {
+		return nil
+	}
+	return store.SetLoaderEnabled(ctx, loaderID, false)
 }
