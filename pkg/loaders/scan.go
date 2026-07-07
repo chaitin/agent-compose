@@ -60,6 +60,7 @@ func ScanLoader(scan func(dest ...any) error) (domain.Loader, error) {
 	var item domain.Loader
 	var enabled int
 	var envJSON string
+	var volumesJSON string
 	var capsetIDsRaw string
 	var createdAtRaw any
 	var updatedAtRaw any
@@ -78,6 +79,7 @@ func ScanLoader(scan func(dest ...any) error) (domain.Loader, error) {
 		&item.Summary.ConcurrencyPolicy,
 		&capsetIDsRaw,
 		&envJSON,
+		&volumesJSON,
 		&item.Summary.ManagedProjectID,
 		&item.Summary.ManagedRevision,
 		&item.Summary.ManagedAgentName,
@@ -101,6 +103,11 @@ func ScanLoader(scan func(dest ...any) error) (domain.Loader, error) {
 		return domain.Loader{}, err
 	}
 	item.EnvItems = envItems
+	volumes, err := DecodeVolumeMountSpecs(volumesJSON)
+	if err != nil {
+		return domain.Loader{}, err
+	}
+	item.Volumes = volumes
 	return item, nil
 }
 
@@ -250,7 +257,7 @@ func SelectLoaderSummarySQL() string {
 
 func SelectLoaderSQL() string {
 	return `SELECT
-        id, name, description, runtime, script, workspace_id, agent_id, driver, guest_image, default_agent, session_policy, concurrency_policy, capset_ids, env_json,
+        id, name, description, runtime, script, workspace_id, agent_id, driver, guest_image, default_agent, session_policy, concurrency_policy, capset_ids, env_json, volumes_json,
         managed_project_id, managed_project_revision, managed_agent_name, managed_scheduler_id, enabled, last_error, created_at, updated_at
         FROM loader`
 }

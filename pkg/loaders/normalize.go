@@ -70,8 +70,40 @@ func NormalizeLoader(item domain.Loader, assignID bool) (domain.Loader, error) {
 		}
 	}
 	item.EnvItems = domain.NormalizeEnvItems(item.EnvItems)
+	volumes, err := domain.NormalizeVolumeMountSpecs(item.Volumes)
+	if err != nil {
+		return domain.Loader{}, fmt.Errorf("loader volumes: %w", err)
+	}
+	item.Volumes = volumes
 	item.Triggers = append([]domain.LoaderTrigger(nil), item.Triggers...)
 	return item, nil
+}
+
+func EncodeVolumeMountSpecs(items []domain.VolumeMountSpec) (string, error) {
+	normalized, err := domain.NormalizeVolumeMountSpecs(items)
+	if err != nil {
+		return "", err
+	}
+	if normalized == nil {
+		normalized = []domain.VolumeMountSpec{}
+	}
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return "", fmt.Errorf("encode loader volumes: %w", err)
+	}
+	return string(data), nil
+}
+
+func DecodeVolumeMountSpecs(raw string) ([]domain.VolumeMountSpec, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var items []domain.VolumeMountSpec
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return nil, fmt.Errorf("decode loader volumes: %w", err)
+	}
+	return domain.NormalizeVolumeMountSpecs(items)
 }
 
 func EncodeEnvItems(items []domain.SessionEnvVar) (string, error) {

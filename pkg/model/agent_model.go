@@ -17,25 +17,26 @@ const (
 )
 
 type AgentDefinition struct {
-	ID                     string          `json:"id"`
-	Name                   string          `json:"name"`
-	Description            string          `json:"description,omitempty"`
-	Enabled                bool            `json:"enabled"`
-	DeletedAt              time.Time       `json:"deleted_at,omitempty"`
-	Provider               string          `json:"provider"`
-	Model                  string          `json:"model,omitempty"`
-	SystemPrompt           string          `json:"system_prompt,omitempty"`
-	Driver                 string          `json:"driver,omitempty"`
-	GuestImage             string          `json:"guest_image,omitempty"`
-	WorkspaceID            string          `json:"workspace_id,omitempty"`
-	EnvItems               []SessionEnvVar `json:"env_items,omitempty"`
-	ConfigJSON             string          `json:"config_json"`
-	CapsetIDs              []string        `json:"capset_ids,omitempty"`
-	ManagedProjectID       string          `json:"managed_project_id,omitempty"`
-	ManagedProjectRevision int64           `json:"managed_project_revision,omitempty"`
-	ManagedAgentName       string          `json:"managed_agent_name,omitempty"`
-	CreatedAt              time.Time       `json:"created_at"`
-	UpdatedAt              time.Time       `json:"updated_at"`
+	ID                     string            `json:"id"`
+	Name                   string            `json:"name"`
+	Description            string            `json:"description,omitempty"`
+	Enabled                bool              `json:"enabled"`
+	DeletedAt              time.Time         `json:"deleted_at,omitempty"`
+	Provider               string            `json:"provider"`
+	Model                  string            `json:"model,omitempty"`
+	SystemPrompt           string            `json:"system_prompt,omitempty"`
+	Driver                 string            `json:"driver,omitempty"`
+	GuestImage             string            `json:"guest_image,omitempty"`
+	WorkspaceID            string            `json:"workspace_id,omitempty"`
+	EnvItems               []SessionEnvVar   `json:"env_items,omitempty"`
+	Volumes                []VolumeMountSpec `json:"volumes,omitempty"`
+	ConfigJSON             string            `json:"config_json"`
+	CapsetIDs              []string          `json:"capset_ids,omitempty"`
+	ManagedProjectID       string            `json:"managed_project_id,omitempty"`
+	ManagedProjectRevision int64             `json:"managed_project_revision,omitempty"`
+	ManagedAgentName       string            `json:"managed_agent_name,omitempty"`
+	CreatedAt              time.Time         `json:"created_at"`
+	UpdatedAt              time.Time         `json:"updated_at"`
 }
 
 type AgentDefinitionListOptions struct {
@@ -129,6 +130,11 @@ func NormalizeAgentDefinition(item AgentDefinition, assignDefaults bool) (AgentD
 		}
 	}
 	item.EnvItems = NormalizeEnvItems(item.EnvItems)
+	volumes, err := NormalizeVolumeMountSpecs(item.Volumes)
+	if err != nil {
+		return AgentDefinition{}, fmt.Errorf("agent definition volumes: %w", err)
+	}
+	item.Volumes = volumes
 	return item, nil
 }
 

@@ -33,16 +33,44 @@ func DecodeAgentEnvJSON(raw string) ([]domain.SessionEnvVar, error) {
 	return domain.NormalizeEnvItems(items), nil
 }
 
+func EncodeAgentVolumesJSON(items []domain.VolumeMountSpec) (string, error) {
+	normalized, err := domain.NormalizeVolumeMountSpecs(items)
+	if err != nil {
+		return "", err
+	}
+	if normalized == nil {
+		normalized = []domain.VolumeMountSpec{}
+	}
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return "", fmt.Errorf("encode agent volumes: %w", err)
+	}
+	return string(data), nil
+}
+
+func DecodeAgentVolumesJSON(raw string) ([]domain.VolumeMountSpec, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var items []domain.VolumeMountSpec
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return nil, fmt.Errorf("decode agent volumes: %w", err)
+	}
+	return domain.NormalizeVolumeMountSpecs(items)
+}
+
 func ScanAgentDefinition(scan func(dest ...any) error) (domain.AgentDefinition, error) {
 	var item domain.AgentDefinition
 	var enabled int
 	var deletedAtRaw any
 	var envJSON string
+	var volumesJSON string
 	var capsetIDsRaw string
 	var createdAtRaw any
 	var updatedAtRaw any
 	if err := scan(&item.ID, &item.Name, &item.Description, &enabled, &deletedAtRaw, &item.Provider, &item.Model, &item.SystemPrompt,
-		&item.Driver, &item.GuestImage, &item.WorkspaceID, &envJSON, &item.ConfigJSON, &capsetIDsRaw,
+		&item.Driver, &item.GuestImage, &item.WorkspaceID, &envJSON, &volumesJSON, &item.ConfigJSON, &capsetIDsRaw,
 		&item.ManagedProjectID, &item.ManagedProjectRevision, &item.ManagedAgentName, &createdAtRaw, &updatedAtRaw); err != nil {
 		return domain.AgentDefinition{}, fmt.Errorf("scan agent definition: %w", err)
 	}
@@ -50,9 +78,14 @@ func ScanAgentDefinition(scan func(dest ...any) error) (domain.AgentDefinition, 
 	if err != nil {
 		return domain.AgentDefinition{}, err
 	}
+	volumes, err := DecodeAgentVolumesJSON(volumesJSON)
+	if err != nil {
+		return domain.AgentDefinition{}, err
+	}
 	item.Enabled = enabled != 0
 	item.DeletedAt = ParseStoredTime(deletedAtRaw)
 	item.EnvItems = envItems
+	item.Volumes = volumes
 	item.CapsetIDs = capabilities.DecodeCapsetIDs(capsetIDsRaw)
 	item.ManagedProjectID = strings.TrimSpace(item.ManagedProjectID)
 	item.ManagedAgentName = strings.TrimSpace(item.ManagedAgentName)

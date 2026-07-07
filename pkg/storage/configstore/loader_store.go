@@ -35,6 +35,7 @@ func (s *loaderStore) ensureLoaderSchema(ctx context.Context) error {
             concurrency_policy TEXT NOT NULL DEFAULT 'skip',
             capset_ids TEXT NOT NULL DEFAULT '[]',
             env_json TEXT NOT NULL DEFAULT '[]',
+            volumes_json TEXT NOT NULL DEFAULT '[]',
             enabled INTEGER NOT NULL DEFAULT 1,
             last_error TEXT NOT NULL DEFAULT '',
             created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
@@ -120,6 +121,9 @@ func (s *loaderStore) ensureLoaderSchema(ctx context.Context) error {
 	if err := s.ensureLoaderCapabilityColumn(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureLoaderVolumesColumn(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureLoaderManagedColumns(ctx); err != nil {
 		return err
 	}
@@ -162,6 +166,13 @@ func (s *loaderStore) ensureLoaderCapabilityColumn(ctx context.Context) error {
 	return nil
 }
 
+func (s *loaderStore) ensureLoaderVolumesColumn(ctx context.Context) error {
+	if err := ensureColumn(ctx, s.db, "loader", "volumes_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return fmt.Errorf("ensure loader volumes_json column: %w", err)
+	}
+	return nil
+}
+
 func (s *loaderStore) ensureLoaderAgentIDColumn(ctx context.Context) error {
 	if err := ensureColumn(ctx, s.db, "loader", "agent_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("ensure loader agent_id column: %w", err)
@@ -194,6 +205,10 @@ func (s *loaderStore) CreateLoader(ctx context.Context, item Loader) (Loader, er
 	if err != nil {
 		return Loader{}, err
 	}
+	volumesJSON, err := loaders.EncodeVolumeMountSpecs(normalized.Volumes)
+	if err != nil {
+		return Loader{}, err
+	}
 	capsetIDsJSON, err := capabilities.EncodeCapsetIDs(normalized.Summary.CapsetIDs)
 	if err != nil {
 		return Loader{}, err
@@ -202,9 +217,9 @@ func (s *loaderStore) CreateLoader(ctx context.Context, item Loader) (Loader, er
 	normalized.Summary.CreatedAt = now
 	normalized.Summary.UpdatedAt = now
 	_, err = s.db.ExecContext(ctx, `INSERT INTO loader(
-        id, name, description, runtime, script, workspace_id, agent_id, driver, guest_image, default_agent, session_policy, concurrency_policy, capset_ids, env_json,
+        id, name, description, runtime, script, workspace_id, agent_id, driver, guest_image, default_agent, session_policy, concurrency_policy, capset_ids, env_json, volumes_json,
         managed_project_id, managed_project_revision, managed_agent_name, managed_scheduler_id, enabled, last_error, created_at, updated_at
-    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		normalized.Summary.ID,
 		normalized.Summary.Name,
 		normalized.Summary.Description,
@@ -219,6 +234,7 @@ func (s *loaderStore) CreateLoader(ctx context.Context, item Loader) (Loader, er
 		normalized.Summary.ConcurrencyPolicy,
 		capsetIDsJSON,
 		envJSON,
+		volumesJSON,
 		normalized.Summary.ManagedProjectID,
 		normalized.Summary.ManagedRevision,
 		normalized.Summary.ManagedAgentName,
@@ -253,6 +269,10 @@ func (s *loaderStore) UpdateLoader(ctx context.Context, item Loader) (Loader, er
 	if err != nil {
 		return Loader{}, err
 	}
+	volumesJSON, err := loaders.EncodeVolumeMountSpecs(normalized.Volumes)
+	if err != nil {
+		return Loader{}, err
+	}
 	capsetIDsJSON, err := capabilities.EncodeCapsetIDs(normalized.Summary.CapsetIDs)
 	if err != nil {
 		return Loader{}, err
@@ -261,7 +281,7 @@ func (s *loaderStore) UpdateLoader(ctx context.Context, item Loader) (Loader, er
 	normalized.Summary.UpdatedAt = time.Now().UTC()
 	result, err := s.db.ExecContext(ctx, `UPDATE loader SET
         name = ?, description = ?, runtime = ?, script = ?, workspace_id = ?, agent_id = ?, driver = ?, guest_image = ?, default_agent = ?, session_policy = ?,
-        concurrency_policy = ?, capset_ids = ?, env_json = ?, managed_project_id = ?, managed_project_revision = ?, managed_agent_name = ?, managed_scheduler_id = ?,
+        concurrency_policy = ?, capset_ids = ?, env_json = ?, volumes_json = ?, managed_project_id = ?, managed_project_revision = ?, managed_agent_name = ?, managed_scheduler_id = ?,
         enabled = ?, last_error = ?, updated_at = ?
         WHERE id = ?`,
 		normalized.Summary.Name,
@@ -277,6 +297,7 @@ func (s *loaderStore) UpdateLoader(ctx context.Context, item Loader) (Loader, er
 		normalized.Summary.ConcurrencyPolicy,
 		capsetIDsJSON,
 		envJSON,
+		volumesJSON,
 		normalized.Summary.ManagedProjectID,
 		normalized.Summary.ManagedRevision,
 		normalized.Summary.ManagedAgentName,

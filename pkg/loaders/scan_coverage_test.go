@@ -21,7 +21,7 @@ func TestLoaderScanFunctionsAndStoredTimeEdges(t *testing.T) {
 	}
 
 	loader, err := ScanLoader(assignScanValues(
-		"loader-1", "Loader", "desc", "scheduler", "script", "workspace-1", "agent-1", "docker", "guest", "codex", "reuse", "wait", `["cap-a"]`, `[]`,
+		"loader-1", "Loader", "desc", "scheduler", "script", "workspace-1", "agent-1", "docker", "guest", "codex", "reuse", "wait", `["cap-a"]`, `[]`, `[]`,
 		" project-1 ", int64(7), " agent-a ", " scheduler-1 ", 1, "", int64(1700000000), float64(1700000000000),
 	))
 	if err != nil {
@@ -31,7 +31,7 @@ func TestLoaderScanFunctionsAndStoredTimeEdges(t *testing.T) {
 		t.Fatalf("loader = %#v", loader)
 	}
 	if _, err := ScanLoader(assignScanValues(
-		"loader-1", "Loader", "desc", "scheduler", "script", "", "", "", "", "", "", "", "", `{bad`,
+		"loader-1", "Loader", "desc", "scheduler", "script", "", "", "", "", "", "", "", "", `{bad`, `[]`,
 		"", int64(0), "", "", 1, "", nil, nil,
 	)); err == nil {
 		t.Fatal("ScanLoader returned nil for invalid env JSON")

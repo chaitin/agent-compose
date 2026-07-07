@@ -147,13 +147,14 @@ type SessionWorkspace struct {
 }
 
 type Session struct {
-	Summary          SessionSummary    `json:"summary"`
-	BaseWorkspace    string            `json:"base_workspace,omitempty"`
-	WorkspaceID      string            `json:"workspace_id,omitempty"`
-	Workspace        *SessionWorkspace `json:"workspace,omitempty"`
-	EnvItems         []SessionEnvVar   `json:"env_items,omitempty"`
-	RuntimeEnvItems  []SessionEnvVar   `json:"-"`
-	ProviderEnvItems []SessionEnvVar   `json:"-"`
+	Summary          SessionSummary       `json:"summary"`
+	BaseWorkspace    string               `json:"base_workspace,omitempty"`
+	WorkspaceID      string               `json:"workspace_id,omitempty"`
+	Workspace        *SessionWorkspace    `json:"workspace,omitempty"`
+	EnvItems         []SessionEnvVar      `json:"env_items,omitempty"`
+	VolumeMounts     []SessionVolumeMount `json:"volume_mounts,omitempty"`
+	RuntimeEnvItems  []SessionEnvVar      `json:"-"`
+	ProviderEnvItems []SessionEnvVar      `json:"-"`
 }
 
 func RestoreSessionTransientFields(dst, src *Session) {
