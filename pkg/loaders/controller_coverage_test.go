@@ -193,7 +193,7 @@ func newControllerTestStore() *controllerTestStore {
 	return &controllerTestStore{loaders: map[string]domain.Loader{}}
 }
 
-func (s *controllerTestStore) ListLoaders(context.Context) ([]domain.Loader, error) {
+func (s *controllerTestStore) ListSchedulerExecutions(context.Context) ([]domain.Loader, error) {
 	items := make([]domain.Loader, 0, len(s.loaders))
 	for _, item := range s.loaders {
 		items = append(items, CloneLoader(item))
@@ -201,56 +201,56 @@ func (s *controllerTestStore) ListLoaders(context.Context) ([]domain.Loader, err
 	return items, nil
 }
 
-func (s *controllerTestStore) GetLoader(_ context.Context, loaderID string) (domain.Loader, error) {
-	return CloneLoader(s.loaders[loaderID]), nil
+func (s *controllerTestStore) GetSchedulerExecution(_ context.Context, executionID string) (domain.Loader, error) {
+	return CloneLoader(s.loaders[executionID]), nil
 }
 
-func (s *controllerTestStore) CreateLoader(_ context.Context, item domain.Loader) (domain.Loader, error) {
+func (s *controllerTestStore) CreateSchedulerExecution(_ context.Context, item domain.Loader) (domain.Loader, error) {
 	s.loaders[item.Summary.ID] = CloneLoader(item)
 	return item, nil
 }
 
-func (s *controllerTestStore) UpdateLoader(_ context.Context, item domain.Loader) (domain.Loader, error) {
+func (s *controllerTestStore) UpdateSchedulerExecution(_ context.Context, item domain.Loader) (domain.Loader, error) {
 	current := CloneLoader(item)
 	current.Triggers = s.loaders[item.Summary.ID].Triggers
 	s.loaders[item.Summary.ID] = current
 	return current, nil
 }
 
-func (s *controllerTestStore) DeleteLoader(_ context.Context, loaderID string) error {
-	delete(s.loaders, loaderID)
+func (s *controllerTestStore) DeleteSchedulerExecution(_ context.Context, executionID string) error {
+	delete(s.loaders, executionID)
 	return nil
 }
 
-func (s *controllerTestStore) ReplaceLoaderTriggers(_ context.Context, loaderID string, triggers []domain.LoaderTrigger) ([]domain.LoaderTrigger, error) {
+func (s *controllerTestStore) ReplaceSchedulerExecutionTriggers(_ context.Context, executionID string, triggers []domain.LoaderTrigger) ([]domain.LoaderTrigger, error) {
 	if s.replaceErr != nil {
 		return nil, s.replaceErr
 	}
-	loader := s.loaders[loaderID]
+	loader := s.loaders[executionID]
 	loader.Triggers = append([]domain.LoaderTrigger(nil), triggers...)
-	s.loaders[loaderID] = loader
+	s.loaders[executionID] = loader
 	return triggers, nil
 }
 
-func (s *controllerTestStore) SetLoaderEnabled(_ context.Context, loaderID string, enabled bool) error {
-	loader := s.loaders[loaderID]
+func (s *controllerTestStore) SetSchedulerExecutionEnabled(_ context.Context, executionID string, enabled bool) error {
+	loader := s.loaders[executionID]
 	loader.Summary.Enabled = enabled
-	s.loaders[loaderID] = loader
+	s.loaders[executionID] = loader
 	return nil
 }
 
-func (s *controllerTestStore) SetLoaderTriggerEnabled(_ context.Context, loaderID, triggerID string, enabled bool) error {
-	loader := s.loaders[loaderID]
+func (s *controllerTestStore) SetSchedulerExecutionTriggerEnabled(_ context.Context, executionID, triggerID string, enabled bool) error {
+	loader := s.loaders[executionID]
 	for i := range loader.Triggers {
 		if loader.Triggers[i].ID == triggerID {
 			loader.Triggers[i].Enabled = enabled
 		}
 	}
-	s.loaders[loaderID] = loader
+	s.loaders[executionID] = loader
 	return nil
 }
 
-func (s *controllerTestStore) AddLoaderEvent(_ context.Context, event domain.LoaderEvent) error {
+func (s *controllerTestStore) AddSchedulerExecutionEvent(_ context.Context, event domain.LoaderEvent) error {
 	s.events = append(s.events, event)
 	return nil
 }

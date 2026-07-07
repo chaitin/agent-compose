@@ -234,6 +234,10 @@ func (s *loaderStore) CreateLoader(ctx context.Context, item Loader) (Loader, er
 	return normalized, nil
 }
 
+func (s *loaderStore) CreateSchedulerExecution(ctx context.Context, item Loader) (Loader, error) {
+	return s.CreateLoader(ctx, item)
+}
+
 func (s *loaderStore) UpdateLoader(ctx context.Context, item Loader) (Loader, error) {
 	normalized, err := loaders.NormalizeLoader(item, false)
 	if err != nil {
@@ -299,6 +303,10 @@ func (s *loaderStore) UpdateLoader(ctx context.Context, item Loader) (Loader, er
 	return normalized, nil
 }
 
+func (s *loaderStore) UpdateSchedulerExecution(ctx context.Context, item Loader) (Loader, error) {
+	return s.UpdateLoader(ctx, item)
+}
+
 func (s *loaderStore) UpsertManagedLoader(ctx context.Context, item Loader) (Loader, error) {
 	normalized, err := loaders.NormalizeLoader(item, false)
 	if err != nil {
@@ -345,6 +353,10 @@ func (s *loaderStore) DeleteLoader(ctx context.Context, loaderID string) error {
 	}
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM loader_binding WHERE loader_id = ?`, loaderID)
 	return nil
+}
+
+func (s *loaderStore) DeleteSchedulerExecution(ctx context.Context, executionID string) error {
+	return s.DeleteLoader(ctx, executionID)
 }
 
 func (s *loaderStore) DisableLoadersByDefaultAgent(ctx context.Context, agentID string) (int, error) {
@@ -407,6 +419,10 @@ func (s *loaderStore) GetLoader(ctx context.Context, loaderID string) (Loader, e
 	return item, nil
 }
 
+func (s *loaderStore) GetSchedulerExecution(ctx context.Context, executionID string) (Loader, error) {
+	return s.GetLoader(ctx, executionID)
+}
+
 func (s *loaderStore) ListLoaders(ctx context.Context) ([]Loader, error) {
 	summaries, err := s.ListLoaderSummaries(ctx)
 	if err != nil {
@@ -421,6 +437,10 @@ func (s *loaderStore) ListLoaders(ctx context.Context) ([]Loader, error) {
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+func (s *loaderStore) ListSchedulerExecutions(ctx context.Context) ([]Loader, error) {
+	return s.ListLoaders(ctx)
 }
 
 func (s *loaderStore) ListManagedLoaders(ctx context.Context, projectID string) ([]Loader, error) {
@@ -580,6 +600,10 @@ func (s *loaderStore) ReplaceLoaderTriggers(ctx context.Context, loaderID string
 	return normalized, nil
 }
 
+func (s *loaderStore) ReplaceSchedulerExecutionTriggers(ctx context.Context, executionID string, triggers []domain.LoaderTrigger) ([]domain.LoaderTrigger, error) {
+	return s.ReplaceLoaderTriggers(ctx, executionID, triggers)
+}
+
 func (s *loaderStore) listLoaderTriggers(ctx context.Context, loaderID string) ([]domain.LoaderTrigger, error) {
 	rows, err := s.db.QueryContext(ctx, loaders.SelectLoaderTriggerSQL()+` WHERE loader_id = ? ORDER BY kind ASC, trigger_id ASC`, loaderID)
 	if err != nil {
@@ -654,6 +678,10 @@ func (s *loaderStore) SetLoaderEnabled(ctx context.Context, loaderID string, ena
 	return nil
 }
 
+func (s *loaderStore) SetSchedulerExecutionEnabled(ctx context.Context, executionID string, enabled bool) error {
+	return s.SetLoaderEnabled(ctx, executionID, enabled)
+}
+
 func (s *loaderStore) SetLoaderTriggerEnabled(ctx context.Context, loaderID, triggerID string, enabled bool) error {
 	loaderID = strings.TrimSpace(loaderID)
 	triggerID = strings.TrimSpace(triggerID)
@@ -687,6 +715,10 @@ func (s *loaderStore) SetLoaderTriggerEnabled(ctx context.Context, loaderID, tri
 	}
 	_, _ = s.db.ExecContext(ctx, `UPDATE loader SET updated_at = ? WHERE id = ?`, time.Now().UTC().Unix(), loaderID)
 	return nil
+}
+
+func (s *loaderStore) SetSchedulerExecutionTriggerEnabled(ctx context.Context, executionID, triggerID string, enabled bool) error {
+	return s.SetLoaderTriggerEnabled(ctx, executionID, triggerID, enabled)
 }
 
 func (s *loaderStore) UpdateLoaderLastError(ctx context.Context, loaderID, lastError string) error {
@@ -845,6 +877,10 @@ func (s *loaderStore) AddLoaderEvent(ctx context.Context, event domain.LoaderEve
 		return fmt.Errorf("insert loader event %s/%s: %w", event.LoaderID, event.ID, err)
 	}
 	return nil
+}
+
+func (s *loaderStore) AddSchedulerExecutionEvent(ctx context.Context, event domain.LoaderEvent) error {
+	return s.AddLoaderEvent(ctx, event)
 }
 
 func (s *loaderStore) ListLoaderEvents(ctx context.Context, loaderID string, limit int) ([]domain.LoaderEvent, error) {

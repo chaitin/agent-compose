@@ -20,15 +20,15 @@ type ControllerStore interface {
 	TriggerLoopStore
 	EventDeliveryStore
 
-	ListLoaders(ctx context.Context) ([]domain.Loader, error)
-	GetLoader(ctx context.Context, loaderID string) (domain.Loader, error)
-	CreateLoader(ctx context.Context, item domain.Loader) (domain.Loader, error)
-	UpdateLoader(ctx context.Context, item domain.Loader) (domain.Loader, error)
-	DeleteLoader(ctx context.Context, loaderID string) error
-	ReplaceLoaderTriggers(ctx context.Context, loaderID string, triggers []domain.LoaderTrigger) ([]domain.LoaderTrigger, error)
-	SetLoaderEnabled(ctx context.Context, loaderID string, enabled bool) error
-	SetLoaderTriggerEnabled(ctx context.Context, loaderID, triggerID string, enabled bool) error
-	AddLoaderEvent(ctx context.Context, event domain.LoaderEvent) error
+	ListSchedulerExecutions(ctx context.Context) ([]domain.Loader, error)
+	GetSchedulerExecution(ctx context.Context, executionID string) (domain.Loader, error)
+	CreateSchedulerExecution(ctx context.Context, item domain.Loader) (domain.Loader, error)
+	UpdateSchedulerExecution(ctx context.Context, item domain.Loader) (domain.Loader, error)
+	DeleteSchedulerExecution(ctx context.Context, executionID string) error
+	ReplaceSchedulerExecutionTriggers(ctx context.Context, executionID string, triggers []domain.LoaderTrigger) ([]domain.LoaderTrigger, error)
+	SetSchedulerExecutionEnabled(ctx context.Context, executionID string, enabled bool) error
+	SetSchedulerExecutionTriggerEnabled(ctx context.Context, executionID, triggerID string, enabled bool) error
+	AddSchedulerExecutionEvent(ctx context.Context, event domain.LoaderEvent) error
 }
 
 type ControllerNotifier interface {
@@ -192,7 +192,7 @@ func (c *Controller) ScheduleLoop() {
 }
 
 func (c *Controller) Refresh(ctx context.Context) error {
-	items, err := c.deps.Store.ListLoaders(ctx)
+	items, err := c.deps.Store.ListSchedulerExecutions(ctx)
 	if err != nil {
 		return err
 	}
@@ -225,19 +225,19 @@ func (c *Controller) CreateLoader(ctx context.Context, loader domain.Loader) (do
 	if err != nil {
 		return domain.Loader{}, err
 	}
-	created, err := c.deps.Store.CreateLoader(ctx, loader)
+	created, err := c.deps.Store.CreateSchedulerExecution(ctx, loader)
 	if err != nil {
 		return domain.Loader{}, err
 	}
-	if _, err := c.deps.Store.ReplaceLoaderTriggers(ctx, created.Summary.ID, validation.Triggers); err != nil {
-		_ = c.deps.Store.DeleteLoader(ctx, created.Summary.ID)
+	if _, err := c.deps.Store.ReplaceSchedulerExecutionTriggers(ctx, created.Summary.ID, validation.Triggers); err != nil {
+		_ = c.deps.Store.DeleteSchedulerExecution(ctx, created.Summary.ID)
 		return domain.Loader{}, err
 	}
 	if err := c.Refresh(ctx); err != nil {
 		return domain.Loader{}, err
 	}
 	c.notify("loader_updated")
-	return c.deps.Store.GetLoader(ctx, created.Summary.ID)
+	return c.deps.Store.GetSchedulerExecution(ctx, created.Summary.ID)
 }
 
 func (c *Controller) UpdateLoader(ctx context.Context, loader domain.Loader) (domain.Loader, error) {
@@ -245,22 +245,22 @@ func (c *Controller) UpdateLoader(ctx context.Context, loader domain.Loader) (do
 	if err != nil {
 		return domain.Loader{}, err
 	}
-	updated, err := c.deps.Store.UpdateLoader(ctx, loader)
+	updated, err := c.deps.Store.UpdateSchedulerExecution(ctx, loader)
 	if err != nil {
 		return domain.Loader{}, err
 	}
-	if _, err := c.deps.Store.ReplaceLoaderTriggers(ctx, updated.Summary.ID, validation.Triggers); err != nil {
+	if _, err := c.deps.Store.ReplaceSchedulerExecutionTriggers(ctx, updated.Summary.ID, validation.Triggers); err != nil {
 		return domain.Loader{}, err
 	}
 	if err := c.Refresh(ctx); err != nil {
 		return domain.Loader{}, err
 	}
 	c.notify("loader_updated")
-	return c.deps.Store.GetLoader(ctx, updated.Summary.ID)
+	return c.deps.Store.GetSchedulerExecution(ctx, updated.Summary.ID)
 }
 
 func (c *Controller) DeleteLoader(ctx context.Context, loaderID string) error {
-	if err := c.deps.Store.DeleteLoader(ctx, loaderID); err != nil {
+	if err := c.deps.Store.DeleteSchedulerExecution(ctx, loaderID); err != nil {
 		return err
 	}
 	if err := c.Refresh(ctx); err != nil {
@@ -271,25 +271,25 @@ func (c *Controller) DeleteLoader(ctx context.Context, loaderID string) error {
 }
 
 func (c *Controller) SetLoaderEnabled(ctx context.Context, loaderID string, enabled bool) (domain.Loader, error) {
-	if err := c.deps.Store.SetLoaderEnabled(ctx, loaderID, enabled); err != nil {
+	if err := c.deps.Store.SetSchedulerExecutionEnabled(ctx, loaderID, enabled); err != nil {
 		return domain.Loader{}, err
 	}
 	if err := c.Refresh(ctx); err != nil {
 		return domain.Loader{}, err
 	}
 	c.notify("loader_updated")
-	return c.deps.Store.GetLoader(ctx, loaderID)
+	return c.deps.Store.GetSchedulerExecution(ctx, loaderID)
 }
 
 func (c *Controller) SetLoaderTriggerEnabled(ctx context.Context, loaderID, triggerID string, enabled bool) (domain.Loader, error) {
-	if err := c.deps.Store.SetLoaderTriggerEnabled(ctx, loaderID, triggerID, enabled); err != nil {
+	if err := c.deps.Store.SetSchedulerExecutionTriggerEnabled(ctx, loaderID, triggerID, enabled); err != nil {
 		return domain.Loader{}, err
 	}
 	if err := c.Refresh(ctx); err != nil {
 		return domain.Loader{}, err
 	}
 	c.notify("loader_updated")
-	return c.deps.Store.GetLoader(ctx, loaderID)
+	return c.deps.Store.GetSchedulerExecution(ctx, loaderID)
 }
 
 func (c *Controller) RunNow(ctx context.Context, loaderID, triggerID, payloadJSON string, timeout time.Duration) (domain.LoaderRunSummary, error) {
@@ -404,7 +404,7 @@ func (c *Controller) SnapshotLoaders() []domain.Loader {
 }
 
 func (c *Controller) LoadLoaderForRun(ctx context.Context, loaderID, triggerID string) (domain.Loader, *domain.LoaderTrigger, error) {
-	loader, err := c.deps.Store.GetLoader(ctx, loaderID)
+	loader, err := c.deps.Store.GetSchedulerExecution(ctx, loaderID)
 	if err != nil {
 		return domain.Loader{}, nil, err
 	}
@@ -507,7 +507,7 @@ func (c *Controller) AddLoaderEventRecord(ctx context.Context, loaderID, runID, 
 		LinkedAgentSessionID: strings.TrimSpace(linkedAgentSessionID),
 		CreatedAt:            c.now(),
 	}
-	if err := c.deps.Store.AddLoaderEvent(ctx, event); err != nil {
+	if err := c.deps.Store.AddSchedulerExecutionEvent(ctx, event); err != nil {
 		return domain.LoaderEvent{}, err
 	}
 	return event, nil
