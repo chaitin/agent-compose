@@ -3,8 +3,11 @@ package sessionstore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -78,6 +81,180 @@ func TestStoreCreateSessionWithJupyterOptions(t *testing.T) {
 	}
 	if !proxyState.Enabled || !proxyState.Exposed || proxyState.GuestPort != 9999 || proxyState.HostPort == 0 || proxyState.Token == "" {
 		t.Fatalf("proxy state = %+v, want enabled/exposed guest port 9999 with host port/token", proxyState)
+	}
+}
+
+func TestStoreCreateSessionInitializesJSONLEvents(t *testing.T) {
+	ctx := context.Background()
+	store := newCoverageStore(t)
+	session, err := store.CreateSession(ctx, "JSONL Events", "", driverpkg.RuntimeDriverBoxlite, "", "", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if _, err := os.Stat(store.eventsJSONLPath(session.Summary.ID)); err != nil {
+		t.Fatalf("events.jsonl stat err = %v, want file", err)
+	}
+	if _, err := os.Stat(store.eventsJSONPath(session.Summary.ID)); !os.IsNotExist(err) {
+		t.Fatalf("legacy events.json stat err = %v, want not exist", err)
+	}
+}
+
+func TestStoreEventJSONLLegacyCompatibility(t *testing.T) {
+	ctx := context.Background()
+	store := newCoverageStore(t)
+	session, err := store.CreateSession(ctx, "Legacy JSON Events", "", driverpkg.RuntimeDriverBoxlite, "", "", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	baseTime := time.Now().UTC().Round(0)
+	if err := os.Remove(store.eventsJSONLPath(session.Summary.ID)); err != nil {
+		t.Fatalf("remove initial events.jsonl: %v", err)
+	}
+	legacyEvents := []SessionEvent{{ID: "legacy-1", Type: "session.legacy", Level: "info", Message: "legacy", CreatedAt: baseTime}}
+	legacyData, err := json.Marshal(legacyEvents)
+	if err != nil {
+		t.Fatalf("Marshal legacy events returned error: %v", err)
+	}
+	if err := os.WriteFile(store.eventsJSONPath(session.Summary.ID), legacyData, 0o644); err != nil {
+		t.Fatalf("write legacy events returned error: %v", err)
+	}
+
+	events, err := store.ListEvents(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("ListEvents legacy returned error: %v", err)
+	}
+	if len(events) != 1 || events[0].ID != "legacy-1" {
+		t.Fatalf("legacy events = %#v", events)
+	}
+
+	if err := store.AddEvent(ctx, session.Summary.ID, SessionEvent{ID: "jsonl-1", Type: "session.jsonl", Level: "info", Message: "jsonl", CreatedAt: baseTime.Add(time.Second)}); err != nil {
+		t.Fatalf("AddEvent returned error: %v", err)
+	}
+	events, err = store.ListEvents(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("ListEvents mixed returned error: %v", err)
+	}
+	if len(events) != 2 || events[0].ID != "legacy-1" || events[1].ID != "jsonl-1" {
+		t.Fatalf("mixed events = %#v", events)
+	}
+	loaded, err := store.GetSession(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if loaded.Summary.EventCount != 2 {
+		t.Fatalf("EventCount = %d, want 2", loaded.Summary.EventCount)
+	}
+}
+
+func TestStoreSaveEventsReplacesWithJSONLAndRemovesLegacy(t *testing.T) {
+	ctx := context.Background()
+	store := newCoverageStore(t)
+	session, err := store.CreateSession(ctx, "Replace Events", "", driverpkg.RuntimeDriverBoxlite, "", "", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := os.WriteFile(store.eventsJSONPath(session.Summary.ID), []byte(`[{"id":"legacy"}]`), 0o644); err != nil {
+		t.Fatalf("write legacy events returned error: %v", err)
+	}
+	events := []SessionEvent{
+		{ID: "replacement-1", Type: "session.replaced", Level: "info", Message: "one", CreatedAt: time.Now().UTC().Round(0)},
+		{ID: "replacement-2", Type: "session.replaced", Level: "info", Message: "two", CreatedAt: time.Now().UTC().Round(0)},
+	}
+	if err := store.SaveEvents(session.Summary.ID, events); err != nil {
+		t.Fatalf("SaveEvents returned error: %v", err)
+	}
+	if _, err := os.Stat(store.eventsJSONPath(session.Summary.ID)); !os.IsNotExist(err) {
+		t.Fatalf("legacy events.json stat err = %v, want not exist", err)
+	}
+	loaded, err := store.ListEvents(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("ListEvents returned error: %v", err)
+	}
+	if len(loaded) != 2 || loaded[0].ID != "replacement-1" || loaded[1].ID != "replacement-2" {
+		t.Fatalf("loaded replacement events = %#v", loaded)
+	}
+	data, err := os.ReadFile(store.eventsJSONLPath(session.Summary.ID))
+	if err != nil {
+		t.Fatalf("read events.jsonl returned error: %v", err)
+	}
+	if strings.Contains(string(data), "[") || strings.Count(string(data), "\n") != 2 {
+		t.Fatalf("events.jsonl data = %q, want two JSONL records", string(data))
+	}
+}
+
+func TestStoreListEventsCorruptJSONLIncludesLineNumber(t *testing.T) {
+	ctx := context.Background()
+	store := newCoverageStore(t)
+	session, err := store.CreateSession(ctx, "Corrupt JSONL", "", driverpkg.RuntimeDriverBoxlite, "", "", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	data := `{"id":"ok","type":"session.ok","level":"info","message":"ok","created_at":"2026-07-07T00:00:00Z"}` + "\n\n{bad json}\n"
+	if err := os.WriteFile(store.eventsJSONLPath(session.Summary.ID), []byte(data), 0o644); err != nil {
+		t.Fatalf("write corrupt events.jsonl returned error: %v", err)
+	}
+	_, err = store.ListEvents(ctx, session.Summary.ID)
+	if err == nil {
+		t.Fatalf("ListEvents corrupt JSONL returned nil error")
+	}
+	if !strings.Contains(err.Error(), store.eventsJSONLPath(session.Summary.ID)) || !strings.Contains(err.Error(), "line 3") {
+		t.Fatalf("ListEvents corrupt JSONL error = %v, want file path and line number", err)
+	}
+}
+
+func TestStoreConcurrentAddEventJSONL(t *testing.T) {
+	ctx := context.Background()
+	store := newCoverageStore(t)
+	session, err := store.CreateSession(ctx, "Concurrent Events", "", driverpkg.RuntimeDriverBoxlite, "", "", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	const eventCount = 200
+	var wg sync.WaitGroup
+	errCh := make(chan error, eventCount)
+	for index := 0; index < eventCount; index++ {
+		index := index
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- store.AddEvent(ctx, session.Summary.ID, SessionEvent{
+				ID:        fmt.Sprintf("event-%03d", index),
+				Type:      "session.concurrent",
+				Level:     "info",
+				Message:   "concurrent",
+				CreatedAt: time.Now().UTC(),
+			})
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("AddEvent concurrent returned error: %v", err)
+		}
+	}
+
+	events, err := store.ListEvents(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("ListEvents returned error: %v", err)
+	}
+	if len(events) != eventCount {
+		t.Fatalf("len(events) = %d, want %d", len(events), eventCount)
+	}
+	loaded, err := store.GetSession(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if loaded.Summary.EventCount != eventCount {
+		t.Fatalf("EventCount = %d, want %d", loaded.Summary.EventCount, eventCount)
+	}
+	lines, err := store.loadJSONLEvents(session.Summary.ID)
+	if err != nil {
+		t.Fatalf("loadJSONLEvents returned error: %v", err)
+	}
+	if len(lines) != eventCount {
+		t.Fatalf("JSONL event count = %d, want %d", len(lines), eventCount)
 	}
 }
 
