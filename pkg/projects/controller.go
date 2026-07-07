@@ -605,7 +605,7 @@ func dryRunChanges(project domain.ProjectRecord, agents []domain.ProjectAgentRec
 		changes = append(changes, Change{Action: ChangeActionCreated, ResourceType: "project_scheduler", ResourceID: scheduler.SchedulerID, Name: scheduler.AgentName})
 	}
 	for _, execution := range executions {
-		changes = append(changes, Change{Action: ChangeActionCreated, ResourceType: "loader", ResourceID: execution.Summary.ID, Name: execution.Summary.Name})
+		changes = append(changes, Change{Action: ChangeActionCreated, ResourceType: "scheduler_execution", ResourceID: execution.Summary.ID, Name: execution.Summary.Name})
 	}
 	return changes
 }

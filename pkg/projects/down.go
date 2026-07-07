@@ -85,7 +85,7 @@ func DisableProjectManagedSchedulers(ctx context.Context, project domain.Project
 		if scheduler.ManagedLoaderID != "" {
 			changes = append(changes, DownChange{
 				Action:       DownChangeUpdated,
-				ResourceType: "loader",
+				ResourceType: "scheduler_execution",
 				ResourceID:   scheduler.ManagedLoaderID,
 				Name:         scheduler.AgentName,
 				Message:      "disabled by project down",

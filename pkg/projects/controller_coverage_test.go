@@ -169,8 +169,8 @@ func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
 	changes, err := DownProject(ctx, project, DownOptions{
 		Store:    schedulerStore,
 		Sessions: sessionStore,
-		DisableSchedulerExecution: func(ctx context.Context, loaderID, _, _ string) error {
-			return schedulerStore.SetSchedulerExecutionEnabled(ctx, loaderID, false)
+		DisableSchedulerExecution: func(ctx context.Context, executionID, _, _ string) error {
+			return schedulerStore.SetSchedulerExecutionEnabled(ctx, executionID, false)
 		},
 		RefreshSchedulerExecutions: func(context.Context) error {
 			refreshed = true
@@ -191,7 +191,7 @@ func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
 		t.Fatalf("refreshed/stopped = %v/%#v", refreshed, stopped)
 	}
 	assertDownChange(t, changes, DownChangeUpdated, "project_scheduler", "scheduler-1")
-	assertDownChange(t, changes, DownChangeUpdated, "loader", "loader-1")
+	assertDownChange(t, changes, DownChangeUpdated, "scheduler_execution", "loader-1")
 	assertDownChange(t, changes, DownChangeUnchanged, "session", "session-fail")
 	assertDownChange(t, changes, DownChangeUpdated, "session", "session-ok")
 	if SessionHasTag(nil, "project", project.ID) || !SessionHasTag(sessionStore.sessions[2], "project", project.ID) {
@@ -391,9 +391,9 @@ func assertProjectChange(t *testing.T, changes []Change, action, resourceType, r
 }
 
 type downCoverageStore struct {
-	items        []domain.ProjectSchedulerRecord
-	listErr      error
-	setLoaderErr error
+	items           []domain.ProjectSchedulerRecord
+	listErr         error
+	setExecutionErr error
 }
 
 func (s *downCoverageStore) ListProjectSchedulers(context.Context, string) ([]domain.ProjectSchedulerRecord, error) {
@@ -413,12 +413,12 @@ func (s *downCoverageStore) SetProjectSchedulerEnabled(_ context.Context, projec
 	return domain.ProjectSchedulerRecord{}, sql.ErrNoRows
 }
 
-func (s *downCoverageStore) SetSchedulerExecutionEnabled(_ context.Context, loaderID string, enabled bool) error {
-	if s.setLoaderErr != nil {
-		return s.setLoaderErr
+func (s *downCoverageStore) SetSchedulerExecutionEnabled(_ context.Context, executionID string, enabled bool) error {
+	if s.setExecutionErr != nil {
+		return s.setExecutionErr
 	}
 	for index := range s.items {
-		if s.items[index].ManagedLoaderID == loaderID {
+		if s.items[index].ManagedLoaderID == executionID {
 			s.items[index].Enabled = enabled
 			return nil
 		}

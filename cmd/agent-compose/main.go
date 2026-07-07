@@ -1826,18 +1826,18 @@ func listComposeSchedulerTriggers(ctx context.Context, clients cliServiceClients
 		if err != nil {
 			return nil, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolve scheduler for agent %q: %w", agent.Name, err)}
 		}
-		managedLoaderID, err := domain.StableManagedLoaderID(projectID, agent.Name, "")
+		schedulerExecutionID, err := domain.StableManagedLoaderID(projectID, agent.Name, "")
 		if err != nil {
-			return nil, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolve scheduler loader for agent %q: %w", agent.Name, err)}
+			return nil, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolve scheduler execution for agent %q: %w", agent.Name, err)}
 		}
 		schedulerEnabled := agent.Scheduler.Enabled
 		if strings.TrimSpace(agent.Scheduler.Script) != "" {
-			loader, err := clients.loader.GetLoader(ctx, connect.NewRequest(&agentcomposev1.LoaderIDRequest{LoaderId: managedLoaderID}))
+			loader, err := clients.loader.GetLoader(ctx, connect.NewRequest(&agentcomposev1.LoaderIDRequest{LoaderId: schedulerExecutionID}))
 			if err != nil {
-				return nil, commandExitErrorForConnect(fmt.Errorf("get scheduler loader %s: %w", managedLoaderID, err))
+				return nil, commandExitErrorForConnect(fmt.Errorf("get scheduler execution %s: %w", schedulerExecutionID, err))
 			}
 			for _, trigger := range loader.Msg.GetLoader().GetTriggers() {
-				items = append(items, schedulerTriggerItemFromRegistered(agent.Name, schedulerID, managedLoaderID, schedulerEnabled, trigger))
+				items = append(items, schedulerTriggerItemFromRegistered(agent.Name, schedulerID, schedulerExecutionID, schedulerEnabled, trigger))
 			}
 			continue
 		}
@@ -1846,7 +1846,7 @@ func listComposeSchedulerTriggers(ctx context.Context, clients cliServiceClients
 			if err != nil {
 				return nil, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolve trigger for agent %q: %w", agent.Name, err)}
 			}
-			items = append(items, schedulerTriggerItemFromDeclarative(agent.Name, schedulerID, managedLoaderID, schedulerEnabled, id, trigger))
+			items = append(items, schedulerTriggerItemFromDeclarative(agent.Name, schedulerID, schedulerExecutionID, schedulerEnabled, id, trigger))
 		}
 	}
 	if agentFilter != "" && len(items) == 0 {
@@ -1882,7 +1882,7 @@ func resolveComposeSchedulerTrigger(ctx context.Context, clients cliServiceClien
 	return matches[0], nil
 }
 
-func schedulerTriggerItemFromDeclarative(agentName, schedulerID, managedLoaderID string, schedulerEnabled bool, triggerID string, trigger compose.NormalizedTriggerSpec) composeSchedulerTriggerItem {
+func schedulerTriggerItemFromDeclarative(agentName, schedulerID, schedulerExecutionID string, schedulerEnabled bool, triggerID string, trigger compose.NormalizedTriggerSpec) composeSchedulerTriggerItem {
 	protoTrigger := api.TriggerSpecToProto(trigger)
 	return composeSchedulerTriggerItem{
 		AgentName:        agentName,
@@ -1891,21 +1891,21 @@ func schedulerTriggerItemFromDeclarative(agentName, schedulerID, managedLoaderID
 		Kind:             trigger.Kind,
 		Source:           "declarative",
 		SchedulerID:      schedulerID,
-		ManagedLoaderID:  managedLoaderID,
+		ManagedLoaderID:  schedulerExecutionID,
 		SchedulerEnabled: schedulerEnabled,
 		TriggerEnabled:   true,
 		declarative:      protoTrigger,
 	}
 }
 
-func schedulerTriggerItemFromRegistered(agentName, schedulerID, managedLoaderID string, schedulerEnabled bool, trigger *agentcomposev1.LoaderTrigger) composeSchedulerTriggerItem {
+func schedulerTriggerItemFromRegistered(agentName, schedulerID, schedulerExecutionID string, schedulerEnabled bool, trigger *agentcomposev1.LoaderTrigger) composeSchedulerTriggerItem {
 	return composeSchedulerTriggerItem{
 		AgentName:        agentName,
 		TriggerID:        trigger.GetTriggerId(),
 		Kind:             loaderTriggerKindText(trigger.GetKind()),
 		Source:           "script",
 		SchedulerID:      schedulerID,
-		ManagedLoaderID:  managedLoaderID,
+		ManagedLoaderID:  schedulerExecutionID,
 		SchedulerEnabled: schedulerEnabled,
 		TriggerEnabled:   trigger.GetEnabled(),
 		Topic:            trigger.GetTopic(),

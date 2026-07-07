@@ -181,7 +181,7 @@ func ReconcileManagedSchedulers(ctx context.Context, store ReconcileSchedulerSto
 		}
 		changes = append(changes, Change{
 			Action:       executionAction,
-			ResourceType: "loader",
+			ResourceType: "scheduler_execution",
 			ResourceID:   savedExecution.Summary.ID,
 			Name:         savedExecution.Summary.Name,
 		})
@@ -215,7 +215,7 @@ func ReconcileManagedSchedulers(ctx context.Context, store ReconcileSchedulerSto
 			Message:      "disabled because the scheduler is no longer present in the project spec",
 		}, Change{
 			Action:       ChangeActionRemoved,
-			ResourceType: "loader",
+			ResourceType: "scheduler_execution",
 			ResourceID:   existing.ManagedLoaderID,
 			Name:         existing.AgentName,
 			Message:      "disabled because the scheduler is no longer present in the project spec",

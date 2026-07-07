@@ -17,7 +17,7 @@ import (
 type RunStore interface {
 	CreateLoaderRun(ctx context.Context, run domain.LoaderRunSummary) error
 	UpdateLoaderRun(ctx context.Context, run domain.LoaderRunSummary) error
-	UpdateSchedulerExecutionLastError(ctx context.Context, loaderID, lastError string) error
+	UpdateSchedulerExecutionLastError(ctx context.Context, executionID, lastError string) error
 }
 
 type RunHost interface {
@@ -47,7 +47,7 @@ type RunExecutorDependencies struct {
 	WriteArtifact              func(dir, name, content string) error
 	EnterRun                   func(loader domain.Loader) bool
 	LeaveRun                   func(loaderID string)
-	AddSchedulerExecutionEvent func(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error
+	AddSchedulerExecutionEvent func(ctx context.Context, executionID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error
 	UpdateTriggerEventDelivery func(ctx context.Context, run domain.LoaderRunSummary)
 	Notify                     func(reason string)
 	Refresh                    func(ctx context.Context) error
@@ -242,11 +242,11 @@ func (e *RunExecutor) leaveRun(loaderID string) {
 	}
 }
 
-func (e *RunExecutor) addSchedulerExecutionEvent(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
+func (e *RunExecutor) addSchedulerExecutionEvent(ctx context.Context, executionID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
 	if e.deps.AddSchedulerExecutionEvent == nil {
 		return nil
 	}
-	return e.deps.AddSchedulerExecutionEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
+	return e.deps.AddSchedulerExecutionEvent(ctx, executionID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
 }
 
 func (e *RunExecutor) updateTriggerEventDelivery(ctx context.Context, run domain.LoaderRunSummary) {

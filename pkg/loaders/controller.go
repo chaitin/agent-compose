@@ -133,8 +133,8 @@ func (c *Controller) init() {
 			WriteArtifact: c.WriteRunArtifact,
 			EnterRun:      c.EnterRun,
 			LeaveRun:      c.LeaveRun,
-			AddSchedulerExecutionEvent: func(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
-				return c.AddSchedulerExecutionEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
+			AddSchedulerExecutionEvent: func(ctx context.Context, executionID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
+				return c.AddSchedulerExecutionEvent(ctx, executionID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
 			},
 			UpdateTriggerEventDelivery: c.UpdateTriggerEventDelivery,
 			Notify:                     c.notify,
@@ -214,18 +214,18 @@ func (c *Controller) Validate(ctx context.Context, runtime, script string) (Load
 	return c.deps.Engine.Validate(ctx, runtime, script)
 }
 
-func (c *Controller) CreateSchedulerExecution(ctx context.Context, loader domain.Loader) (domain.Loader, error) {
-	if strings.TrimSpace(loader.Summary.Runtime) == "" {
-		loader.Summary.Runtime = domain.LoaderRuntimeScheduler
+func (c *Controller) CreateSchedulerExecution(ctx context.Context, execution domain.Loader) (domain.Loader, error) {
+	if strings.TrimSpace(execution.Summary.Runtime) == "" {
+		execution.Summary.Runtime = domain.LoaderRuntimeScheduler
 	}
-	if strings.TrimSpace(loader.Script) == "" {
-		loader.Script = domain.DefaultLoaderScript()
+	if strings.TrimSpace(execution.Script) == "" {
+		execution.Script = domain.DefaultLoaderScript()
 	}
-	validation, err := c.deps.Engine.Validate(ctx, loader.Summary.Runtime, loader.Script)
+	validation, err := c.deps.Engine.Validate(ctx, execution.Summary.Runtime, execution.Script)
 	if err != nil {
 		return domain.Loader{}, err
 	}
-	created, err := c.deps.Store.CreateSchedulerExecution(ctx, loader)
+	created, err := c.deps.Store.CreateSchedulerExecution(ctx, execution)
 	if err != nil {
 		return domain.Loader{}, err
 	}
@@ -240,12 +240,12 @@ func (c *Controller) CreateSchedulerExecution(ctx context.Context, loader domain
 	return c.deps.Store.GetSchedulerExecution(ctx, created.Summary.ID)
 }
 
-func (c *Controller) UpdateSchedulerExecution(ctx context.Context, loader domain.Loader) (domain.Loader, error) {
-	validation, err := c.deps.Engine.Validate(ctx, loader.Summary.Runtime, loader.Script)
+func (c *Controller) UpdateSchedulerExecution(ctx context.Context, execution domain.Loader) (domain.Loader, error) {
+	validation, err := c.deps.Engine.Validate(ctx, execution.Summary.Runtime, execution.Script)
 	if err != nil {
 		return domain.Loader{}, err
 	}
-	updated, err := c.deps.Store.UpdateSchedulerExecution(ctx, loader)
+	updated, err := c.deps.Store.UpdateSchedulerExecution(ctx, execution)
 	if err != nil {
 		return domain.Loader{}, err
 	}
@@ -259,8 +259,8 @@ func (c *Controller) UpdateSchedulerExecution(ctx context.Context, loader domain
 	return c.deps.Store.GetSchedulerExecution(ctx, updated.Summary.ID)
 }
 
-func (c *Controller) DeleteSchedulerExecution(ctx context.Context, loaderID string) error {
-	if err := c.deps.Store.DeleteSchedulerExecution(ctx, loaderID); err != nil {
+func (c *Controller) DeleteSchedulerExecution(ctx context.Context, executionID string) error {
+	if err := c.deps.Store.DeleteSchedulerExecution(ctx, executionID); err != nil {
 		return err
 	}
 	if err := c.Refresh(ctx); err != nil {
@@ -270,36 +270,36 @@ func (c *Controller) DeleteSchedulerExecution(ctx context.Context, loaderID stri
 	return nil
 }
 
-func (c *Controller) SetSchedulerExecutionEnabled(ctx context.Context, loaderID string, enabled bool) (domain.Loader, error) {
-	if err := c.deps.Store.SetSchedulerExecutionEnabled(ctx, loaderID, enabled); err != nil {
+func (c *Controller) SetSchedulerExecutionEnabled(ctx context.Context, executionID string, enabled bool) (domain.Loader, error) {
+	if err := c.deps.Store.SetSchedulerExecutionEnabled(ctx, executionID, enabled); err != nil {
 		return domain.Loader{}, err
 	}
 	if err := c.Refresh(ctx); err != nil {
 		return domain.Loader{}, err
 	}
 	c.notify("loader_updated")
-	return c.deps.Store.GetSchedulerExecution(ctx, loaderID)
+	return c.deps.Store.GetSchedulerExecution(ctx, executionID)
 }
 
-func (c *Controller) SetSchedulerExecutionTriggerEnabled(ctx context.Context, loaderID, triggerID string, enabled bool) (domain.Loader, error) {
-	if err := c.deps.Store.SetSchedulerExecutionTriggerEnabled(ctx, loaderID, triggerID, enabled); err != nil {
+func (c *Controller) SetSchedulerExecutionTriggerEnabled(ctx context.Context, executionID, triggerID string, enabled bool) (domain.Loader, error) {
+	if err := c.deps.Store.SetSchedulerExecutionTriggerEnabled(ctx, executionID, triggerID, enabled); err != nil {
 		return domain.Loader{}, err
 	}
 	if err := c.Refresh(ctx); err != nil {
 		return domain.Loader{}, err
 	}
 	c.notify("loader_updated")
-	return c.deps.Store.GetSchedulerExecution(ctx, loaderID)
+	return c.deps.Store.GetSchedulerExecution(ctx, executionID)
 }
 
-func (c *Controller) RunSchedulerExecutionNow(ctx context.Context, loaderID, triggerID, payloadJSON string, timeout time.Duration) (domain.LoaderRunSummary, error) {
-	loader, trigger, err := c.LoadSchedulerExecutionForRun(ctx, loaderID, triggerID)
+func (c *Controller) RunSchedulerExecutionNow(ctx context.Context, executionID, triggerID, payloadJSON string, timeout time.Duration) (domain.LoaderRunSummary, error) {
+	execution, trigger, err := c.LoadSchedulerExecutionForRun(ctx, executionID, triggerID)
 	if err != nil {
 		return domain.LoaderRunSummary{}, err
 	}
 	runCtx, cancel := context.WithTimeout(c.deps.RootCtx, c.runTimeout(timeout))
 	defer cancel()
-	return c.Run(runCtx, loader, trigger, payloadJSON, "manual", RunOptions{})
+	return c.Run(runCtx, execution, trigger, payloadJSON, "manual", RunOptions{})
 }
 
 func (c *Controller) Run(ctx context.Context, loader domain.Loader, trigger *domain.LoaderTrigger, payloadJSON, source string, options RunOptions, triggerEventAck ...func(context.Context) error) (domain.LoaderRunSummary, error) {
@@ -403,23 +403,23 @@ func (c *Controller) SnapshotLoaders() []domain.Loader {
 	return items
 }
 
-func (c *Controller) LoadSchedulerExecutionForRun(ctx context.Context, loaderID, triggerID string) (domain.Loader, *domain.LoaderTrigger, error) {
-	loader, err := c.deps.Store.GetSchedulerExecution(ctx, loaderID)
+func (c *Controller) LoadSchedulerExecutionForRun(ctx context.Context, executionID, triggerID string) (domain.Loader, *domain.LoaderTrigger, error) {
+	execution, err := c.deps.Store.GetSchedulerExecution(ctx, executionID)
 	if err != nil {
 		return domain.Loader{}, nil, err
 	}
 	if strings.TrimSpace(triggerID) == "" {
-		return loader, nil, nil
+		return execution, nil, nil
 	}
 	triggerID = strings.TrimSpace(triggerID)
-	for _, item := range loader.Triggers {
+	for _, item := range execution.Triggers {
 		if item.ID == triggerID {
 			current := item
-			return loader, &current, nil
+			return execution, &current, nil
 		}
 	}
-	id := strings.TrimSpace(loaderID) + "/" + triggerID
-	return domain.Loader{}, nil, domain.ResourceError(domain.ErrNotFound, "loader trigger", id, fmt.Sprintf("loader trigger %s not found", id), nil)
+	id := strings.TrimSpace(executionID) + "/" + triggerID
+	return domain.Loader{}, nil, domain.ResourceError(domain.ErrNotFound, "scheduler execution trigger", id, fmt.Sprintf("scheduler execution trigger %s not found", id), nil)
 }
 
 func (c *Controller) UpdateTriggerEventDelivery(ctx context.Context, run domain.LoaderRunSummary) {
@@ -483,19 +483,19 @@ func (c *Controller) AnyTargetBusy(targets []EventTarget) bool {
 	return AnyTargetBusy(targets, c.running)
 }
 
-func (c *Controller) AddSchedulerExecutionEvent(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
-	_, err := c.AddSchedulerExecutionEventRecord(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
+func (c *Controller) AddSchedulerExecutionEvent(ctx context.Context, executionID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
+	_, err := c.AddSchedulerExecutionEventRecord(ctx, executionID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
 	return err
 }
 
-func (c *Controller) AddSchedulerExecutionEventRecord(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) (domain.LoaderEvent, error) {
+func (c *Controller) AddSchedulerExecutionEventRecord(ctx context.Context, executionID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) (domain.LoaderEvent, error) {
 	payloadJSON, err := domain.MarshalJSONCompact(payload)
 	if err != nil {
 		return domain.LoaderEvent{}, err
 	}
 	event := domain.LoaderEvent{
 		ID:                   c.newID(),
-		LoaderID:             strings.TrimSpace(loaderID),
+		LoaderID:             strings.TrimSpace(executionID),
 		RunID:                strings.TrimSpace(runID),
 		TriggerID:            strings.TrimSpace(triggerID),
 		Type:                 strings.TrimSpace(eventType),

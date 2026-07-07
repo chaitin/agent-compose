@@ -197,7 +197,7 @@ func TestAPIMappingCoverageWorkflows(t *testing.T) {
 		t.Fatalf("ProjectApplyChanges created = %#v", createdChanges)
 	}
 	dryRun := DryRunProjectChanges(project, []domain.ProjectAgentRecord{projectAgent}, []domain.AgentDefinition{agent}, []domain.ProjectSchedulerRecord{projectScheduler}, []domain.Loader{loader})
-	if len(dryRun) != 5 || dryRun[4].GetResourceType() != "loader" {
+	if len(dryRun) != 5 || dryRun[4].GetResourceType() != "scheduler_execution" {
 		t.Fatalf("DryRunProjectChanges = %#v", dryRun)
 	}
 	normalizedSpec := &compose.NormalizedProjectSpec{
@@ -460,8 +460,8 @@ func TestAPILightweightHandlersCoverageWorkflows(t *testing.T) {
 		t.Fatalf("expected empty agent id error")
 	}
 
-	loaderController := &fakeLoaderController{}
-	loaderHandler := NewLoaderHandler(loaderController, &fakeLoaderStore{})
+	schedulerExecutions := &fakeSchedulerExecutionController{}
+	loaderHandler := NewLoaderHandler(schedulerExecutions, &fakeLoaderStore{})
 	if resp, err := loaderHandler.ValidateLoader(ctx, connect.NewRequest(&agentcomposev1.ValidateLoaderRequest{Runtime: domain.LoaderRuntimeScheduler, Script: "function main(){}"})); err != nil || len(resp.Msg.GetTriggers()) != 1 {
 		t.Fatalf("validate loader resp=%v err=%v", resp, err)
 	}
@@ -477,8 +477,8 @@ func TestAPILightweightHandlersCoverageWorkflows(t *testing.T) {
 	if resp, err := loaderHandler.UpdateLoader(ctx, connect.NewRequest(&agentcomposev1.UpdateLoaderRequest{LoaderId: "loader-1", Name: "Loader", Runtime: domain.LoaderRuntimeScheduler, DefaultAgent: "codex", Script: "function main(){}", EnvItems: []*agentcomposev1.SessionEnvVar{{Name: "LOADER_SECRET", Value: secretRedactedValue, Secret: true}}})); err != nil || resp.Msg.GetLoader().GetSummary().GetLoaderId() != "loader-1" {
 		t.Fatalf("update loader resp=%v err=%v", resp, err)
 	}
-	if len(loaderController.updated.EnvItems) != 1 || loaderController.updated.EnvItems[0].Value != "loader-secret" {
-		t.Fatalf("update loader env = %#v", loaderController.updated.EnvItems)
+	if len(schedulerExecutions.updated.EnvItems) != 1 || schedulerExecutions.updated.EnvItems[0].Value != "loader-secret" {
+		t.Fatalf("update loader env = %#v", schedulerExecutions.updated.EnvItems)
 	}
 	for _, tc := range []struct {
 		name     string
@@ -879,52 +879,52 @@ func (fakeDashboardRunStore) ListRecentLoaderRuns(context.Context, int) ([]domai
 	}, nil
 }
 
-type fakeLoaderController struct {
+type fakeSchedulerExecutionController struct {
 	updated domain.Loader
 }
 
-func (fakeLoaderController) Validate(context.Context, string, string) (loaders.LoaderValidationResult, error) {
+func (fakeSchedulerExecutionController) Validate(context.Context, string, string) (loaders.LoaderValidationResult, error) {
 	return loaders.LoaderValidationResult{
 		Warnings: []string{"warn"},
 		Triggers: []domain.LoaderTrigger{{LoaderID: "loader-1", ID: "trigger-1", Kind: domain.LoaderTriggerKindEvent, Topic: "topic", Enabled: true}},
 	}, nil
 }
 
-func (fakeLoaderController) CreateSchedulerExecution(_ context.Context, loader domain.Loader) (domain.Loader, error) {
-	loader.Summary.ID = "loader-1"
-	loader.Summary.CreatedAt = time.Now().UTC()
-	loader.Summary.UpdatedAt = loader.Summary.CreatedAt
-	return loader, nil
+func (fakeSchedulerExecutionController) CreateSchedulerExecution(_ context.Context, execution domain.Loader) (domain.Loader, error) {
+	execution.Summary.ID = "loader-1"
+	execution.Summary.CreatedAt = time.Now().UTC()
+	execution.Summary.UpdatedAt = execution.Summary.CreatedAt
+	return execution, nil
 }
 
-func (c *fakeLoaderController) UpdateSchedulerExecution(_ context.Context, loader domain.Loader) (domain.Loader, error) {
-	if loader.Summary.ID == "missing" {
-		return domain.Loader{}, domain.ResourceError(domain.ErrNotFound, "loader", loader.Summary.ID, "not found", nil)
+func (c *fakeSchedulerExecutionController) UpdateSchedulerExecution(_ context.Context, execution domain.Loader) (domain.Loader, error) {
+	if execution.Summary.ID == "missing" {
+		return domain.Loader{}, domain.ResourceError(domain.ErrNotFound, "loader", execution.Summary.ID, "not found", nil)
 	}
-	c.updated = loader
-	loader.Triggers = []domain.LoaderTrigger{{LoaderID: loader.Summary.ID, ID: "trigger-1", Kind: domain.LoaderTriggerKindEvent, Enabled: true}}
-	return loader, nil
+	c.updated = execution
+	execution.Triggers = []domain.LoaderTrigger{{LoaderID: execution.Summary.ID, ID: "trigger-1", Kind: domain.LoaderTriggerKindEvent, Enabled: true}}
+	return execution, nil
 }
 
-func (fakeLoaderController) DeleteSchedulerExecution(context.Context, string) error {
+func (fakeSchedulerExecutionController) DeleteSchedulerExecution(context.Context, string) error {
 	return nil
 }
 
-func (fakeLoaderController) SetSchedulerExecutionEnabled(_ context.Context, loaderID string, enabled bool) (domain.Loader, error) {
-	loader := testLoaderFixture()
-	loader.Summary.ID = loaderID
-	loader.Summary.Enabled = enabled
-	return loader, nil
+func (fakeSchedulerExecutionController) SetSchedulerExecutionEnabled(_ context.Context, executionID string, enabled bool) (domain.Loader, error) {
+	execution := testLoaderFixture()
+	execution.Summary.ID = executionID
+	execution.Summary.Enabled = enabled
+	return execution, nil
 }
 
-func (fakeLoaderController) SetSchedulerExecutionTriggerEnabled(_ context.Context, _, triggerID string, enabled bool) (domain.Loader, error) {
-	loader := testLoaderFixture()
-	loader.Triggers[0].ID = triggerID
-	loader.Triggers[0].Enabled = enabled
-	return loader, nil
+func (fakeSchedulerExecutionController) SetSchedulerExecutionTriggerEnabled(_ context.Context, _, triggerID string, enabled bool) (domain.Loader, error) {
+	execution := testLoaderFixture()
+	execution.Triggers[0].ID = triggerID
+	execution.Triggers[0].Enabled = enabled
+	return execution, nil
 }
 
-func (fakeLoaderController) RunSchedulerExecutionNow(context.Context, string, string, string, time.Duration) (domain.LoaderRunSummary, error) {
+func (fakeSchedulerExecutionController) RunSchedulerExecutionNow(context.Context, string, string, string, time.Duration) (domain.LoaderRunSummary, error) {
 	return testLoaderRunFixture(), nil
 }
 

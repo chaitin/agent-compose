@@ -27,7 +27,7 @@ func (c *Controller) resolveTriggerForManualRun(ctx context.Context, req RunAgen
 	if c.configDB == nil {
 		return result, fmt.Errorf("config store is required")
 	}
-	scheduler, execution, trigger, err := c.manualTriggerSchedulerExecution(ctx, req.ProjectID, req.AgentName, triggerID)
+	scheduler, schedulerExecution, trigger, err := c.manualTriggerSchedulerExecution(ctx, req.ProjectID, req.AgentName, triggerID)
 	if err != nil {
 		return result, err
 	}
@@ -38,7 +38,7 @@ func (c *Controller) resolveTriggerForManualRun(ctx context.Context, req RunAgen
 	if !trigger.Enabled {
 		warnings = append(warnings, fmt.Sprintf("trigger %s is disabled; running because it was requested manually", trigger.ID))
 	}
-	captured, err := c.captureManualTriggerAgentRequest(ctx, execution, trigger)
+	captured, err := c.captureManualTriggerAgentRequest(ctx, schedulerExecution, trigger)
 	if err != nil {
 		return result, err
 	}
@@ -66,27 +66,27 @@ func (c *Controller) manualTriggerSchedulerExecution(ctx context.Context, projec
 		if strings.TrimSpace(scheduler.AgentName) != agentName || strings.TrimSpace(scheduler.ManagedLoaderID) == "" {
 			continue
 		}
-		execution, err := c.configDB.GetSchedulerExecution(ctx, scheduler.ManagedLoaderID)
+		schedulerExecution, err := c.configDB.GetSchedulerExecution(ctx, scheduler.ManagedLoaderID)
 		if err != nil {
 			return domain.ProjectSchedulerRecord{}, domain.Loader{}, nil, err
 		}
-		if !schedulerExecutionMatchesProjectAgent(execution, projectID, agentName, scheduler.SchedulerID) {
+		if !schedulerExecutionMatchesProjectAgent(schedulerExecution, projectID, agentName, scheduler.SchedulerID) {
 			continue
 		}
-		for index := range execution.Triggers {
-			if execution.Triggers[index].ID != triggerID {
+		for index := range schedulerExecution.Triggers {
+			if schedulerExecution.Triggers[index].ID != triggerID {
 				continue
 			}
-			trigger := execution.Triggers[index]
-			return scheduler, execution, &trigger, nil
+			trigger := schedulerExecution.Triggers[index]
+			return scheduler, schedulerExecution, &trigger, nil
 		}
 	}
 	id := strings.Join([]string{projectID, agentName, triggerID}, "/")
 	return domain.ProjectSchedulerRecord{}, domain.Loader{}, nil, domain.ResourceError(domain.ErrNotFound, "project trigger", id, fmt.Sprintf("project trigger %s not found", id), nil)
 }
 
-func schedulerExecutionMatchesProjectAgent(execution domain.Loader, projectID, agentName, schedulerID string) bool {
-	summary := execution.Summary
+func schedulerExecutionMatchesProjectAgent(schedulerExecution domain.Loader, projectID, agentName, schedulerID string) bool {
+	summary := schedulerExecution.Summary
 	return strings.TrimSpace(summary.ManagedProjectID) == strings.TrimSpace(projectID) &&
 		strings.TrimSpace(summary.ManagedAgentName) == strings.TrimSpace(agentName) &&
 		strings.TrimSpace(summary.ManagedSchedulerID) == strings.TrimSpace(schedulerID)
@@ -97,14 +97,14 @@ type capturedManualTriggerAgentRequest struct {
 	request domain.LoaderAgentRequest
 }
 
-func (c *Controller) captureManualTriggerAgentRequest(ctx context.Context, execution domain.Loader, trigger *domain.LoaderTrigger) (capturedManualTriggerAgentRequest, error) {
+func (c *Controller) captureManualTriggerAgentRequest(ctx context.Context, schedulerExecution domain.Loader, trigger *domain.LoaderTrigger) (capturedManualTriggerAgentRequest, error) {
 	if c.loaderEngine == nil {
 		return capturedManualTriggerAgentRequest{}, fmt.Errorf("loader engine is required")
 	}
 	host := &manualTriggerCaptureHost{}
 	_, err := c.loaderEngine.Execute(ctx, loaders.LoaderExecutionRequest{
-		Runtime:     execution.Summary.Runtime,
-		Script:      execution.Script,
+		Runtime:     schedulerExecution.Summary.Runtime,
+		Script:      schedulerExecution.Script,
 		Trigger:     trigger,
 		PayloadJSON: `{}`,
 	}, host)

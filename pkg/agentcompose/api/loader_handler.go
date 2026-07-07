@@ -17,14 +17,14 @@ import (
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
-type LoaderController interface {
+type SchedulerExecutionController interface {
 	Validate(ctx context.Context, runtime, script string) (loaders.LoaderValidationResult, error)
-	CreateSchedulerExecution(ctx context.Context, loader domain.Loader) (domain.Loader, error)
-	UpdateSchedulerExecution(ctx context.Context, loader domain.Loader) (domain.Loader, error)
-	DeleteSchedulerExecution(ctx context.Context, loaderID string) error
-	SetSchedulerExecutionEnabled(ctx context.Context, loaderID string, enabled bool) (domain.Loader, error)
-	SetSchedulerExecutionTriggerEnabled(ctx context.Context, loaderID, triggerID string, enabled bool) (domain.Loader, error)
-	RunSchedulerExecutionNow(ctx context.Context, loaderID, triggerID, payloadJSON string, timeout time.Duration) (domain.LoaderRunSummary, error)
+	CreateSchedulerExecution(ctx context.Context, execution domain.Loader) (domain.Loader, error)
+	UpdateSchedulerExecution(ctx context.Context, execution domain.Loader) (domain.Loader, error)
+	DeleteSchedulerExecution(ctx context.Context, executionID string) error
+	SetSchedulerExecutionEnabled(ctx context.Context, executionID string, enabled bool) (domain.Loader, error)
+	SetSchedulerExecutionTriggerEnabled(ctx context.Context, executionID, triggerID string, enabled bool) (domain.Loader, error)
+	RunSchedulerExecutionNow(ctx context.Context, executionID, triggerID, payloadJSON string, timeout time.Duration) (domain.LoaderRunSummary, error)
 }
 
 type LoaderStore interface {
@@ -37,11 +37,11 @@ type LoaderStore interface {
 }
 
 type LoaderHandler struct {
-	controller LoaderController
+	controller SchedulerExecutionController
 	store      LoaderStore
 }
 
-func NewLoaderHandler(controller LoaderController, store LoaderStore) *LoaderHandler {
+func NewLoaderHandler(controller SchedulerExecutionController, store LoaderStore) *LoaderHandler {
 	return &LoaderHandler{controller: controller, store: store}
 }
 

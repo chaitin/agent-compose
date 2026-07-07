@@ -1397,40 +1397,11 @@ func (s *fakeControllerStore) ListProjectSchedulers(_ context.Context, projectID
 	return items, nil
 }
 
-func (s *fakeControllerStore) ListManagedLoaders(_ context.Context, projectID string) ([]domain.Loader, error) {
-	var items []domain.Loader
-	for _, loader := range s.loaders {
-		if loader.Summary.ManagedProjectID == projectID {
-			items = append(items, loader)
-		}
-	}
-	if len(items) > 0 {
-		return items, nil
-	}
-	for _, scheduler := range s.schedulers {
-		if scheduler.ProjectID != projectID {
-			continue
-		}
-		items = append(items, domain.Loader{
-			Summary: domain.LoaderSummary{
-				ID:                 scheduler.ManagedLoaderID,
-				Enabled:            scheduler.Enabled,
-				ManagedProjectID:   scheduler.ProjectID,
-				ManagedRevision:    scheduler.Revision,
-				ManagedAgentName:   scheduler.AgentName,
-				ManagedSchedulerID: scheduler.SchedulerID,
-			},
-			Triggers: make([]domain.LoaderTrigger, scheduler.TriggerCount),
-		})
-	}
-	return items, nil
-}
-
-func (s *fakeControllerStore) GetSchedulerExecution(_ context.Context, loaderID string) (domain.Loader, error) {
+func (s *fakeControllerStore) GetSchedulerExecution(_ context.Context, executionID string) (domain.Loader, error) {
 	if s.loaders == nil {
 		return domain.Loader{}, domain.ErrNotFound
 	}
-	loader, ok := s.loaders[loaderID]
+	loader, ok := s.loaders[executionID]
 	if !ok {
 		return domain.Loader{}, domain.ErrNotFound
 	}

@@ -17,7 +17,7 @@ import (
 	"agent-compose/pkg/storage/configstore"
 )
 
-func NewLoaderController(di do.Injector) (*loaders.Controller, error) {
+func NewSchedulerExecutionController(di do.Injector) (*loaders.Controller, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
 	queue, err := webhooks.NewRunQueueFromConfig(config)
 	if err != nil {

@@ -942,25 +942,6 @@ func (s *apiProjectRunStore) ListProjectSchedulers(context.Context, string) ([]d
 	return s.schedulers, nil
 }
 
-func (s *apiProjectRunStore) ListManagedLoaders(context.Context, string) ([]domain.Loader, error) {
-	loaders := make([]domain.Loader, 0, len(s.schedulers))
-	for _, scheduler := range s.schedulers {
-		loaders = append(loaders, domain.Loader{
-			Summary: domain.LoaderSummary{
-				ID:                 scheduler.ManagedLoaderID,
-				Name:               scheduler.AgentName,
-				Enabled:            scheduler.Enabled,
-				ManagedProjectID:   scheduler.ProjectID,
-				ManagedRevision:    scheduler.Revision,
-				ManagedAgentName:   scheduler.AgentName,
-				ManagedSchedulerID: scheduler.SchedulerID,
-			},
-			Triggers: make([]domain.LoaderTrigger, scheduler.TriggerCount),
-		})
-	}
-	return loaders, nil
-}
-
 func (s *apiProjectRunStore) GetProjectRevision(context.Context, string, int64) (domain.ProjectRevisionRecord, error) {
 	return s.revision, nil
 }

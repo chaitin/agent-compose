@@ -71,7 +71,7 @@ func RegisterDependencies(di do.Injector) {
 	do.Provide(di, NewLoaderCommandExecutor)
 	do.Provide(di, NewLoaderSessionRunner)
 	do.Provide(di, NewSessionRPCBridge)
-	do.Provide(di, NewLoaderController)
+	do.Provide(di, NewSchedulerExecutionController)
 	do.Provide(di, NewRunController)
 	do.Provide(di, NewRunSupervisor)
 	do.Provide(di, NewProjectController)

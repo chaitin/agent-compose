@@ -17,14 +17,14 @@ type LoaderHostEvents struct {
 
 func (e LoaderHostEvents) Add(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) error {
 	if e.Controller == nil {
-		return fmt.Errorf("loader controller is unavailable")
+		return fmt.Errorf("scheduler execution controller is unavailable")
 	}
 	return e.Controller.AddSchedulerExecutionEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
 }
 
 func (e LoaderHostEvents) AddRecord(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentSessionID string) (domain.LoaderEvent, error) {
 	if e.Controller == nil {
-		return domain.LoaderEvent{}, fmt.Errorf("loader controller is unavailable")
+		return domain.LoaderEvent{}, fmt.Errorf("scheduler execution controller is unavailable")
 	}
 	return e.Controller.AddSchedulerExecutionEventRecord(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentSessionID)
 }
