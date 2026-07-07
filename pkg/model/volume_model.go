@@ -55,6 +55,12 @@ type VolumeReference struct {
 	Name         string `json:"name,omitempty"`
 }
 
+type VolumeListOptions struct {
+	Query     string `json:"query,omitempty"`
+	Driver    string `json:"driver,omitempty"`
+	ProjectID string `json:"project_id,omitempty"`
+}
+
 func NormalizeVolumeName(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {

@@ -56,6 +56,7 @@ func TestSetupRegistersServiceGraph(t *testing.T) {
 		{method: http.MethodPost, path: "/agentcompose.v2.ExecService/*"},
 		{method: http.MethodPost, path: "/agentcompose.v2.ImageService/*"},
 		{method: http.MethodPost, path: "/agentcompose.v2.CacheService/*"},
+		{method: http.MethodPost, path: "/agentcompose.v2.VolumeService/*"},
 		{method: http.MethodPost, path: "/agentcompose.v2.SandboxService/*"},
 		{method: http.MethodGet, path: "/agent-compose/jupyter/:sessionID"},
 		{method: http.MethodPost, path: "/agent-compose/jupyter/:sessionID/*"},
@@ -188,12 +189,16 @@ func TestRunAgentRequestFromProtoPreservesCommand(t *testing.T) {
 		TriggerId: "trigger-1",
 		Driver:    "microsandbox",
 		Jupyter:   &agentcomposev2.RunJupyterSpec{Enabled: true, Expose: true},
+		Volumes:   []*agentcomposev2.VolumeMountSpec{{Type: "bind", Source: "./fixtures", Target: "/fixtures", ReadOnly: true}},
 	})
 	if req.ProjectID != "project-1" || req.AgentName != "worker" || req.Prompt != "prompt" || req.Command != "echo hi" || req.TriggerID != "trigger-1" || req.Driver != "microsandbox" {
 		t.Fatalf("mapped request = %#v", req)
 	}
 	if req.Jupyter == nil || !req.Jupyter.GetEnabled() || !req.Jupyter.GetExpose() {
 		t.Fatalf("mapped jupyter request = %#v", req.Jupyter)
+	}
+	if len(req.Volumes) != 1 || req.Volumes[0].Source != "./fixtures" || !req.Volumes[0].ReadOnly {
+		t.Fatalf("mapped volumes = %#v", req.Volumes)
 	}
 }
 

@@ -41,6 +41,22 @@ func (s *fakeStore) GetVolumeIfExists(_ context.Context, key string) (domain.Vol
 	return item, ok, nil
 }
 
+func (s *fakeStore) ListVolumes(context.Context, domain.VolumeListOptions) ([]domain.VolumeRecord, error) {
+	seen := map[string]struct{}{}
+	var items []domain.VolumeRecord
+	for key, item := range s.items {
+		if key != item.ID {
+			continue
+		}
+		if _, ok := seen[item.ID]; ok {
+			continue
+		}
+		seen[item.ID] = struct{}{}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
 func (s *fakeStore) RemoveVolume(_ context.Context, key string) error {
 	item := s.items[key]
 	delete(s.items, item.ID)
@@ -87,6 +103,42 @@ func TestManagerResolveBindAndNamedVolumeMounts(t *testing.T) {
 	}
 	if _, err := os.Stat(mounts[1].HostPath); err != nil {
 		t.Fatalf("volume host path missing: %v", err)
+	}
+}
+
+func TestManagerListAndPruneVolumes(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeStore{}
+	manager := NewManager(store, LocalDriver{DataRoot: t.TempDir()})
+	if _, err := manager.Create(ctx, domain.VolumeRecord{Name: "cache"}); err != nil {
+		t.Fatalf("Create cache: %v", err)
+	}
+	if _, err := manager.Create(ctx, domain.VolumeRecord{Name: "state"}); err != nil {
+		t.Fatalf("Create state: %v", err)
+	}
+	listed, err := manager.List(ctx, domain.VolumeListOptions{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(listed) != 2 {
+		t.Fatalf("listed = %#v", listed)
+	}
+	dryRun, err := manager.Prune(ctx, domain.VolumeListOptions{}, false)
+	if err != nil {
+		t.Fatalf("Prune dry-run: %v", err)
+	}
+	if !dryRun.DryRun || len(dryRun.Matched) != 2 || len(dryRun.Removed) != 0 {
+		t.Fatalf("dry-run prune = %#v", dryRun)
+	}
+	pruned, err := manager.Prune(ctx, domain.VolumeListOptions{}, true)
+	if err != nil {
+		t.Fatalf("Prune force: %v", err)
+	}
+	if pruned.DryRun || len(pruned.Removed) != 2 {
+		t.Fatalf("force prune = %#v", pruned)
+	}
+	if listed, err := manager.List(ctx, domain.VolumeListOptions{}); err != nil || len(listed) != 0 {
+		t.Fatalf("listed after prune = %#v err=%v", listed, err)
 	}
 }
 

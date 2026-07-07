@@ -18,11 +18,7 @@ type volumeStore struct {
 	db *sql.DB
 }
 
-type VolumeListOptions struct {
-	Query     string
-	Driver    string
-	ProjectID string
-}
+type VolumeListOptions = domain.VolumeListOptions
 
 func (s *volumeStore) ensureVolumeSchema(ctx context.Context) error {
 	statements := []string{

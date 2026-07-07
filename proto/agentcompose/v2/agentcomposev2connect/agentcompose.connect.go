@@ -31,6 +31,8 @@ const (
 	ImageServiceName = "agentcompose.v2.ImageService"
 	// CacheServiceName is the fully-qualified name of the CacheService service.
 	CacheServiceName = "agentcompose.v2.CacheService"
+	// VolumeServiceName is the fully-qualified name of the VolumeService service.
+	VolumeServiceName = "agentcompose.v2.VolumeService"
 	// SandboxServiceName is the fully-qualified name of the SandboxService service.
 	SandboxServiceName = "agentcompose.v2.SandboxService"
 )
@@ -104,6 +106,21 @@ const (
 	// CacheServiceRemoveCacheProcedure is the fully-qualified name of the CacheService's RemoveCache
 	// RPC.
 	CacheServiceRemoveCacheProcedure = "/agentcompose.v2.CacheService/RemoveCache"
+	// VolumeServiceListVolumesProcedure is the fully-qualified name of the VolumeService's ListVolumes
+	// RPC.
+	VolumeServiceListVolumesProcedure = "/agentcompose.v2.VolumeService/ListVolumes"
+	// VolumeServiceCreateVolumeProcedure is the fully-qualified name of the VolumeService's
+	// CreateVolume RPC.
+	VolumeServiceCreateVolumeProcedure = "/agentcompose.v2.VolumeService/CreateVolume"
+	// VolumeServiceInspectVolumeProcedure is the fully-qualified name of the VolumeService's
+	// InspectVolume RPC.
+	VolumeServiceInspectVolumeProcedure = "/agentcompose.v2.VolumeService/InspectVolume"
+	// VolumeServiceRemoveVolumeProcedure is the fully-qualified name of the VolumeService's
+	// RemoveVolume RPC.
+	VolumeServiceRemoveVolumeProcedure = "/agentcompose.v2.VolumeService/RemoveVolume"
+	// VolumeServicePruneVolumesProcedure is the fully-qualified name of the VolumeService's
+	// PruneVolumes RPC.
+	VolumeServicePruneVolumesProcedure = "/agentcompose.v2.VolumeService/PruneVolumes"
 	// SandboxServiceRemoveSandboxProcedure is the fully-qualified name of the SandboxService's
 	// RemoveSandbox RPC.
 	SandboxServiceRemoveSandboxProcedure = "/agentcompose.v2.SandboxService/RemoveSandbox"
@@ -954,6 +971,180 @@ func (UnimplementedCacheServiceHandler) PruneCaches(context.Context, *connect.Re
 
 func (UnimplementedCacheServiceHandler) RemoveCache(context.Context, *connect.Request[v2.RemoveCacheRequest]) (*connect.Response[v2.RemoveCacheResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.CacheService.RemoveCache is not implemented"))
+}
+
+// VolumeServiceClient is a client for the agentcompose.v2.VolumeService service.
+type VolumeServiceClient interface {
+	ListVolumes(context.Context, *connect.Request[v2.ListVolumesRequest]) (*connect.Response[v2.ListVolumesResponse], error)
+	CreateVolume(context.Context, *connect.Request[v2.CreateVolumeRequest]) (*connect.Response[v2.CreateVolumeResponse], error)
+	InspectVolume(context.Context, *connect.Request[v2.InspectVolumeRequest]) (*connect.Response[v2.InspectVolumeResponse], error)
+	RemoveVolume(context.Context, *connect.Request[v2.RemoveVolumeRequest]) (*connect.Response[v2.RemoveVolumeResponse], error)
+	PruneVolumes(context.Context, *connect.Request[v2.PruneVolumesRequest]) (*connect.Response[v2.PruneVolumesResponse], error)
+}
+
+// NewVolumeServiceClient constructs a client for the agentcompose.v2.VolumeService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewVolumeServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) VolumeServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	volumeServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("VolumeService").Methods()
+	return &volumeServiceClient{
+		listVolumes: connect.NewClient[v2.ListVolumesRequest, v2.ListVolumesResponse](
+			httpClient,
+			baseURL+VolumeServiceListVolumesProcedure,
+			connect.WithSchema(volumeServiceMethods.ByName("ListVolumes")),
+			connect.WithClientOptions(opts...),
+		),
+		createVolume: connect.NewClient[v2.CreateVolumeRequest, v2.CreateVolumeResponse](
+			httpClient,
+			baseURL+VolumeServiceCreateVolumeProcedure,
+			connect.WithSchema(volumeServiceMethods.ByName("CreateVolume")),
+			connect.WithClientOptions(opts...),
+		),
+		inspectVolume: connect.NewClient[v2.InspectVolumeRequest, v2.InspectVolumeResponse](
+			httpClient,
+			baseURL+VolumeServiceInspectVolumeProcedure,
+			connect.WithSchema(volumeServiceMethods.ByName("InspectVolume")),
+			connect.WithClientOptions(opts...),
+		),
+		removeVolume: connect.NewClient[v2.RemoveVolumeRequest, v2.RemoveVolumeResponse](
+			httpClient,
+			baseURL+VolumeServiceRemoveVolumeProcedure,
+			connect.WithSchema(volumeServiceMethods.ByName("RemoveVolume")),
+			connect.WithClientOptions(opts...),
+		),
+		pruneVolumes: connect.NewClient[v2.PruneVolumesRequest, v2.PruneVolumesResponse](
+			httpClient,
+			baseURL+VolumeServicePruneVolumesProcedure,
+			connect.WithSchema(volumeServiceMethods.ByName("PruneVolumes")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// volumeServiceClient implements VolumeServiceClient.
+type volumeServiceClient struct {
+	listVolumes   *connect.Client[v2.ListVolumesRequest, v2.ListVolumesResponse]
+	createVolume  *connect.Client[v2.CreateVolumeRequest, v2.CreateVolumeResponse]
+	inspectVolume *connect.Client[v2.InspectVolumeRequest, v2.InspectVolumeResponse]
+	removeVolume  *connect.Client[v2.RemoveVolumeRequest, v2.RemoveVolumeResponse]
+	pruneVolumes  *connect.Client[v2.PruneVolumesRequest, v2.PruneVolumesResponse]
+}
+
+// ListVolumes calls agentcompose.v2.VolumeService.ListVolumes.
+func (c *volumeServiceClient) ListVolumes(ctx context.Context, req *connect.Request[v2.ListVolumesRequest]) (*connect.Response[v2.ListVolumesResponse], error) {
+	return c.listVolumes.CallUnary(ctx, req)
+}
+
+// CreateVolume calls agentcompose.v2.VolumeService.CreateVolume.
+func (c *volumeServiceClient) CreateVolume(ctx context.Context, req *connect.Request[v2.CreateVolumeRequest]) (*connect.Response[v2.CreateVolumeResponse], error) {
+	return c.createVolume.CallUnary(ctx, req)
+}
+
+// InspectVolume calls agentcompose.v2.VolumeService.InspectVolume.
+func (c *volumeServiceClient) InspectVolume(ctx context.Context, req *connect.Request[v2.InspectVolumeRequest]) (*connect.Response[v2.InspectVolumeResponse], error) {
+	return c.inspectVolume.CallUnary(ctx, req)
+}
+
+// RemoveVolume calls agentcompose.v2.VolumeService.RemoveVolume.
+func (c *volumeServiceClient) RemoveVolume(ctx context.Context, req *connect.Request[v2.RemoveVolumeRequest]) (*connect.Response[v2.RemoveVolumeResponse], error) {
+	return c.removeVolume.CallUnary(ctx, req)
+}
+
+// PruneVolumes calls agentcompose.v2.VolumeService.PruneVolumes.
+func (c *volumeServiceClient) PruneVolumes(ctx context.Context, req *connect.Request[v2.PruneVolumesRequest]) (*connect.Response[v2.PruneVolumesResponse], error) {
+	return c.pruneVolumes.CallUnary(ctx, req)
+}
+
+// VolumeServiceHandler is an implementation of the agentcompose.v2.VolumeService service.
+type VolumeServiceHandler interface {
+	ListVolumes(context.Context, *connect.Request[v2.ListVolumesRequest]) (*connect.Response[v2.ListVolumesResponse], error)
+	CreateVolume(context.Context, *connect.Request[v2.CreateVolumeRequest]) (*connect.Response[v2.CreateVolumeResponse], error)
+	InspectVolume(context.Context, *connect.Request[v2.InspectVolumeRequest]) (*connect.Response[v2.InspectVolumeResponse], error)
+	RemoveVolume(context.Context, *connect.Request[v2.RemoveVolumeRequest]) (*connect.Response[v2.RemoveVolumeResponse], error)
+	PruneVolumes(context.Context, *connect.Request[v2.PruneVolumesRequest]) (*connect.Response[v2.PruneVolumesResponse], error)
+}
+
+// NewVolumeServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewVolumeServiceHandler(svc VolumeServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	volumeServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("VolumeService").Methods()
+	volumeServiceListVolumesHandler := connect.NewUnaryHandler(
+		VolumeServiceListVolumesProcedure,
+		svc.ListVolumes,
+		connect.WithSchema(volumeServiceMethods.ByName("ListVolumes")),
+		connect.WithHandlerOptions(opts...),
+	)
+	volumeServiceCreateVolumeHandler := connect.NewUnaryHandler(
+		VolumeServiceCreateVolumeProcedure,
+		svc.CreateVolume,
+		connect.WithSchema(volumeServiceMethods.ByName("CreateVolume")),
+		connect.WithHandlerOptions(opts...),
+	)
+	volumeServiceInspectVolumeHandler := connect.NewUnaryHandler(
+		VolumeServiceInspectVolumeProcedure,
+		svc.InspectVolume,
+		connect.WithSchema(volumeServiceMethods.ByName("InspectVolume")),
+		connect.WithHandlerOptions(opts...),
+	)
+	volumeServiceRemoveVolumeHandler := connect.NewUnaryHandler(
+		VolumeServiceRemoveVolumeProcedure,
+		svc.RemoveVolume,
+		connect.WithSchema(volumeServiceMethods.ByName("RemoveVolume")),
+		connect.WithHandlerOptions(opts...),
+	)
+	volumeServicePruneVolumesHandler := connect.NewUnaryHandler(
+		VolumeServicePruneVolumesProcedure,
+		svc.PruneVolumes,
+		connect.WithSchema(volumeServiceMethods.ByName("PruneVolumes")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/agentcompose.v2.VolumeService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case VolumeServiceListVolumesProcedure:
+			volumeServiceListVolumesHandler.ServeHTTP(w, r)
+		case VolumeServiceCreateVolumeProcedure:
+			volumeServiceCreateVolumeHandler.ServeHTTP(w, r)
+		case VolumeServiceInspectVolumeProcedure:
+			volumeServiceInspectVolumeHandler.ServeHTTP(w, r)
+		case VolumeServiceRemoveVolumeProcedure:
+			volumeServiceRemoveVolumeHandler.ServeHTTP(w, r)
+		case VolumeServicePruneVolumesProcedure:
+			volumeServicePruneVolumesHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedVolumeServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedVolumeServiceHandler struct{}
+
+func (UnimplementedVolumeServiceHandler) ListVolumes(context.Context, *connect.Request[v2.ListVolumesRequest]) (*connect.Response[v2.ListVolumesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.VolumeService.ListVolumes is not implemented"))
+}
+
+func (UnimplementedVolumeServiceHandler) CreateVolume(context.Context, *connect.Request[v2.CreateVolumeRequest]) (*connect.Response[v2.CreateVolumeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.VolumeService.CreateVolume is not implemented"))
+}
+
+func (UnimplementedVolumeServiceHandler) InspectVolume(context.Context, *connect.Request[v2.InspectVolumeRequest]) (*connect.Response[v2.InspectVolumeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.VolumeService.InspectVolume is not implemented"))
+}
+
+func (UnimplementedVolumeServiceHandler) RemoveVolume(context.Context, *connect.Request[v2.RemoveVolumeRequest]) (*connect.Response[v2.RemoveVolumeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.VolumeService.RemoveVolume is not implemented"))
+}
+
+func (UnimplementedVolumeServiceHandler) PruneVolumes(context.Context, *connect.Request[v2.PruneVolumesRequest]) (*connect.Response[v2.PruneVolumesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.VolumeService.PruneVolumes is not implemented"))
 }
 
 // SandboxServiceClient is a client for the agentcompose.v2.SandboxService service.

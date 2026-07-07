@@ -43,6 +43,14 @@ service CacheService {
   rpc RemoveCache(RemoveCacheRequest) returns (RemoveCacheResponse);
 }
 
+service VolumeService {
+  rpc ListVolumes(ListVolumesRequest) returns (ListVolumesResponse);
+  rpc CreateVolume(CreateVolumeRequest) returns (CreateVolumeResponse);
+  rpc InspectVolume(InspectVolumeRequest) returns (InspectVolumeResponse);
+  rpc RemoveVolume(RemoveVolumeRequest) returns (RemoveVolumeResponse);
+  rpc PruneVolumes(PruneVolumesRequest) returns (PruneVolumesResponse);
+}
+
 service SandboxService {
   rpc RemoveSandbox(RemoveSandboxRequest) returns (RemoveSandboxResponse);
   rpc GetSandboxStats(GetSandboxStatsRequest) returns (GetSandboxStatsResponse);
@@ -312,6 +320,7 @@ message ProjectSpec {
   WorkspaceSpec workspace = 3;
   repeated AgentSpec agents = 4;
   NetworkSpec network = 5;
+  repeated ProjectVolumeSpec volumes = 6;
 }
 
 message AgentSpec {
@@ -327,6 +336,23 @@ message AgentSpec {
   repeated string capset_ids = 10;
   JupyterSpec jupyter = 11;
   BuildSpec build = 12;
+  repeated VolumeMountSpec volumes = 13;
+}
+
+message ProjectVolumeSpec {
+  string key = 1;
+  string name = 2;
+  string driver = 3;
+  bool external = 4;
+  map<string, string> labels = 5;
+  map<string, string> options = 6;
+}
+
+message VolumeMountSpec {
+  string type = 1;
+  string source = 2;
+  string target = 3;
+  bool read_only = 4;
 }
 
 message BuildSpec {
@@ -412,6 +438,7 @@ message RunAgentRequest {
   string command = 12;
   RunJupyterSpec jupyter = 13;
   string driver = 14;
+  repeated VolumeMountSpec volumes = 15;
 }
 
 message RunAgentResponse {
@@ -782,6 +809,72 @@ message CacheReference {
   string path = 4;
   string status = 5;
   string description = 6;
+}
+
+message ListVolumesRequest {
+  string query = 1;
+  string driver = 2;
+  string project_id = 3;
+}
+
+message ListVolumesResponse {
+  repeated Volume volumes = 1;
+}
+
+message CreateVolumeRequest {
+  string name = 1;
+  string driver = 2;
+  map<string, string> labels = 3;
+  map<string, string> options = 4;
+}
+
+message CreateVolumeResponse {
+  Volume volume = 1;
+  bool created = 2;
+}
+
+message InspectVolumeRequest {
+  string name = 1;
+}
+
+message InspectVolumeResponse {
+  Volume volume = 1;
+}
+
+message RemoveVolumeRequest {
+  string name = 1;
+  bool force = 2;
+}
+
+message RemoveVolumeResponse {
+  string name = 1;
+  bool removed = 2;
+}
+
+message PruneVolumesRequest {
+  string query = 1;
+  string driver = 2;
+  string project_id = 3;
+  bool force = 4;
+}
+
+message PruneVolumesResponse {
+  bool dry_run = 1;
+  repeated Volume matched = 2;
+  repeated Volume removed = 3;
+  repeated Volume skipped = 4;
+}
+
+message Volume {
+  string volume_id = 1;
+  string name = 2;
+  string driver = 3;
+  string path = 4;
+  map<string, string> labels = 5;
+  map<string, string> options = 6;
+  string project_id = 7;
+  string created_at = 8;
+  string updated_at = 9;
 }
 
 message Image {

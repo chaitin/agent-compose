@@ -160,6 +160,7 @@ func ProjectSpecToProto(spec *compose.NormalizedProjectSpec) *agentcomposev2.Pro
 		Workspace: WorkspaceSpecToProto(spec.Workspace),
 		Agents:    AgentSpecsToProto(spec.Agents),
 		Network:   NetworkSpecToProto(spec.Network),
+		Volumes:   ProjectVolumeSpecsToProto(spec.Volumes),
 	}
 }
 
@@ -179,6 +180,41 @@ func AgentSpecsToProto(agents []compose.NormalizedAgentSpec) []*agentcomposev2.A
 			Workspace:    WorkspaceSpecToProto(agent.Workspace),
 			Scheduler:    SchedulerSpecToProto(agent.Scheduler),
 			Jupyter:      JupyterSpecToProto(agent.Jupyter),
+			Volumes:      VolumeMountSpecsToProto(agent.Volumes),
+		})
+	}
+	return items
+}
+
+func ProjectVolumeSpecsToProto(volumes map[string]compose.NormalizedVolumeSpec) []*agentcomposev2.ProjectVolumeSpec {
+	keys := make([]string, 0, len(volumes))
+	for key := range volumes {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	items := make([]*agentcomposev2.ProjectVolumeSpec, 0, len(keys))
+	for _, key := range keys {
+		volume := volumes[key]
+		items = append(items, &agentcomposev2.ProjectVolumeSpec{
+			Key:      key,
+			Name:     volume.Name,
+			Driver:   volume.Driver,
+			External: volume.External,
+			Labels:   cloneProjectStringMap(volume.Labels),
+			Options:  cloneProjectStringMap(volume.Options),
+		})
+	}
+	return items
+}
+
+func VolumeMountSpecsToProto(volumes []compose.NormalizedVolumeMountSpec) []*agentcomposev2.VolumeMountSpec {
+	items := make([]*agentcomposev2.VolumeMountSpec, 0, len(volumes))
+	for _, volume := range volumes {
+		items = append(items, &agentcomposev2.VolumeMountSpec{
+			Type:     volume.Type,
+			Source:   volume.Source,
+			Target:   volume.Target,
+			ReadOnly: volume.ReadOnly,
 		})
 	}
 	return items
@@ -324,10 +360,46 @@ func ProjectSpecYAMLShape(spec *agentcomposev2.ProjectSpec) (map[string]any, []*
 	} else if len(agents) > 0 {
 		root["agents"] = agents
 	}
+	if volumes, issues := ProjectVolumeYAMLMap(spec.GetVolumes()); len(issues) > 0 {
+		return nil, issues
+	} else if len(volumes) > 0 {
+		root["volumes"] = volumes
+	}
 	if network := NetworkYAMLShape(spec.GetNetwork()); len(network) > 0 {
 		root["network"] = network
 	}
 	return root, nil
+}
+
+func ProjectVolumeYAMLMap(volumes []*agentcomposev2.ProjectVolumeSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
+	values := make(map[string]any, len(volumes))
+	for i, volume := range volumes {
+		key := strings.TrimSpace(volume.GetKey())
+		if key == "" {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("volumes[%d].key", i), "volume key is required")}
+		}
+		if _, ok := values[key]; ok {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("volumes[%d].key", i), fmt.Sprintf("duplicate volume %q", key))}
+		}
+		raw := map[string]any{}
+		if strings.TrimSpace(volume.GetName()) != "" {
+			raw["name"] = volume.GetName()
+		}
+		if strings.TrimSpace(volume.GetDriver()) != "" {
+			raw["driver"] = volume.GetDriver()
+		}
+		if volume.GetExternal() {
+			raw["external"] = true
+		}
+		if len(volume.GetLabels()) > 0 {
+			raw["labels"] = cloneProjectStringMap(volume.GetLabels())
+		}
+		if len(volume.GetOptions()) > 0 {
+			raw["options"] = cloneProjectStringMap(volume.GetOptions())
+		}
+		values[key] = raw
+	}
+	return values, nil
 }
 
 func EnvVarYAMLMap(path string, vars []*agentcomposev2.EnvVarSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
@@ -394,9 +466,35 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		if jupyter := JupyterYAMLShape(agent.GetJupyter()); len(jupyter) > 0 {
 			raw["jupyter"] = jupyter
 		}
+		if volumes := VolumeMountYAMLList(agent.GetVolumes()); len(volumes) > 0 {
+			raw["volumes"] = volumes
+		}
 		values[name] = raw
 	}
 	return values, nil
+}
+
+func VolumeMountYAMLList(volumes []*agentcomposev2.VolumeMountSpec) []map[string]any {
+	items := make([]map[string]any, 0, len(volumes))
+	for _, volume := range volumes {
+		raw := map[string]any{}
+		if strings.TrimSpace(volume.GetType()) != "" {
+			raw["type"] = volume.GetType()
+		}
+		if strings.TrimSpace(volume.GetSource()) != "" {
+			raw["source"] = volume.GetSource()
+		}
+		if strings.TrimSpace(volume.GetTarget()) != "" {
+			raw["target"] = volume.GetTarget()
+		}
+		if volume.GetReadOnly() {
+			raw["read_only"] = true
+		}
+		if len(raw) > 0 {
+			items = append(items, raw)
+		}
+	}
+	return items
 }
 
 func BuildYAMLShape(build *agentcomposev2.BuildSpec) map[string]any {

@@ -15,6 +15,7 @@ type Store interface {
 	UpdateVolume(context.Context, domain.VolumeRecord) (domain.VolumeRecord, error)
 	GetVolume(context.Context, string) (domain.VolumeRecord, error)
 	GetVolumeIfExists(context.Context, string) (domain.VolumeRecord, bool, error)
+	ListVolumes(context.Context, domain.VolumeListOptions) ([]domain.VolumeRecord, error)
 	RemoveVolume(context.Context, string) error
 	FindVolumeConfigReferences(context.Context, string) ([]domain.VolumeReference, error)
 }
@@ -37,6 +38,13 @@ type BindResolver struct {
 type ResolveOptions struct {
 	ProjectRoot    string
 	ProjectVolumes map[string]domain.VolumeRecord
+}
+
+type PruneResult struct {
+	DryRun  bool
+	Matched []domain.VolumeRecord
+	Removed []domain.VolumeRecord
+	Skipped []domain.VolumeRecord
 }
 
 func NewManager(store Store, drivers ...Driver) *Manager {
@@ -105,6 +113,17 @@ func (m *Manager) Inspect(ctx context.Context, nameOrID string) (domain.VolumeRe
 	return driver.Inspect(ctx, item)
 }
 
+func (m *Manager) List(ctx context.Context, options domain.VolumeListOptions) ([]domain.VolumeRecord, error) {
+	if m == nil || m.Store == nil {
+		return nil, fmt.Errorf("volume store is required")
+	}
+	options.Driver = domain.NormalizeVolumeDriver(options.Driver)
+	if strings.TrimSpace(options.Driver) == domain.VolumeDriverLocal || strings.TrimSpace(options.Driver) == "" {
+		return m.Store.ListVolumes(ctx, options)
+	}
+	return nil, fmt.Errorf("volume driver %q is not configured", options.Driver)
+}
+
 func (m *Manager) UpsertProjectVolume(ctx context.Context, projectID, key, volumeID string, external bool) error {
 	if m == nil || m.Project == nil {
 		return fmt.Errorf("project volume store is required")
@@ -135,6 +154,33 @@ func (m *Manager) Remove(ctx context.Context, nameOrID string, force bool) error
 		return err
 	}
 	return driver.Remove(ctx, item)
+}
+
+func (m *Manager) Prune(ctx context.Context, options domain.VolumeListOptions, force bool) (PruneResult, error) {
+	items, err := m.List(ctx, options)
+	if err != nil {
+		return PruneResult{}, err
+	}
+	result := PruneResult{DryRun: !force}
+	for _, item := range items {
+		refs, err := m.Store.FindVolumeConfigReferences(ctx, item.ID)
+		if err != nil {
+			return PruneResult{}, err
+		}
+		if len(refs) > 0 {
+			result.Skipped = append(result.Skipped, item)
+			continue
+		}
+		result.Matched = append(result.Matched, item)
+		if !force {
+			continue
+		}
+		if err := m.Remove(ctx, item.ID, false); err != nil {
+			return PruneResult{}, err
+		}
+		result.Removed = append(result.Removed, item)
+	}
+	return result, nil
 }
 
 func (m *Manager) ResolveMounts(ctx context.Context, specs []domain.VolumeMountSpec, options ResolveOptions) ([]domain.SessionVolumeMount, []string, error) {

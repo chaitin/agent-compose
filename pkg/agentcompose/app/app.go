@@ -159,6 +159,9 @@ func RegisterRoutes(di do.Injector) {
 	cacheHandler := api.NewCacheHandler(do.MustInvoke[*runtimecache.Controller](di))
 	path, handler = agentcomposev2connect.NewCacheServiceHandler(cacheHandler)
 	app.Any(path+"*", echo.WrapHandler(handler))
+	volumeHandler := api.NewVolumeHandler(do.MustInvoke[*volumes.Manager](di))
+	path, handler = agentcomposev2connect.NewVolumeServiceHandler(volumeHandler)
+	app.Any(path+"*", echo.WrapHandler(handler))
 	sandboxHandler := api.NewSandboxHandler(
 		do.MustInvoke[*adapters.SessionRPCBridge](di),
 		do.MustInvoke[*sessionstore.Store](di),
