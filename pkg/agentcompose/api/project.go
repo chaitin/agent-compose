@@ -24,6 +24,10 @@ func ProjectToProto(project domain.ProjectRecord, spec *agentcomposev2.ProjectSp
 }
 
 func ProjectSummaryToProto(project domain.ProjectRecord, agents []domain.ProjectAgentRecord, schedulers []domain.ProjectSchedulerRecord) *agentcomposev2.ProjectSummary {
+	triggerCount := 0
+	for _, scheduler := range schedulers {
+		triggerCount += scheduler.TriggerCount
+	}
 	return &agentcomposev2.ProjectSummary{
 		ProjectId:       project.ID,
 		Name:            project.Name,
@@ -32,6 +36,7 @@ func ProjectSummaryToProto(project domain.ProjectRecord, agents []domain.Project
 		SpecHash:        project.SpecHash,
 		AgentCount:      uint32(len(agents)),
 		SchedulerCount:  uint32(len(schedulers)),
+		TriggerCount:    uint32(triggerCount),
 		CreatedAt:       FormatProjectTime(project.CreatedAt),
 		UpdatedAt:       FormatProjectTime(project.UpdatedAt),
 		RemovedAt:       FormatProjectTime(project.RemovedAt),

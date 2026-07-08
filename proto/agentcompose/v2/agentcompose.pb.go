@@ -1738,6 +1738,7 @@ type ProjectSummary struct {
 	CreatedAt       string                 `protobuf:"bytes,10,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt       string                 `protobuf:"bytes,11,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	RemovedAt       string                 `protobuf:"bytes,12,opt,name=removed_at,json=removedAt,proto3" json:"removed_at,omitempty"`
+	TriggerCount    uint32                 `protobuf:"varint,13,opt,name=trigger_count,json=triggerCount,proto3" json:"trigger_count,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -1854,6 +1855,13 @@ func (x *ProjectSummary) GetRemovedAt() string {
 		return x.RemovedAt
 	}
 	return ""
+}
+
+func (x *ProjectSummary) GetTriggerCount() uint32 {
+	if x != nil {
+		return x.TriggerCount
+	}
+	return 0
 }
 
 type ProjectRevision struct {
@@ -7635,7 +7643,7 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\x06agents\x18\x03 \x03(\v2\x1d.agentcompose.v2.ProjectAgentR\x06agents\x12A\n" +
 	"\n" +
 	"schedulers\x18\x04 \x03(\v2!.agentcompose.v2.ProjectSchedulerR\n" +
-	"schedulers\"\xa3\x03\n" +
+	"schedulers\"\xc8\x03\n" +
 	"\x0eProjectSummary\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x12\n" +
@@ -7655,7 +7663,8 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\n" +
 	"updated_at\x18\v \x01(\tR\tupdatedAt\x12\x1d\n" +
 	"\n" +
-	"removed_at\x18\f \x01(\tR\tremovedAt\"\xba\x01\n" +
+	"removed_at\x18\f \x01(\tR\tremovedAt\x12#\n" +
+	"\rtrigger_count\x18\r \x01(\rR\ftriggerCount\"\xba\x01\n" +
 	"\x0fProjectRevision\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x1a\n" +

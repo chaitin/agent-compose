@@ -3322,20 +3322,20 @@ type composeProjectListOutput struct {
 }
 
 type composeProjectListItem struct {
-	ID              string  `json:"id"`
-	Name            string  `json:"name"`
-	ConfigFile      string  `json:"config_file"`
-	ProjectDir      string  `json:"project_dir,omitempty"`
-	Revision        uint64  `json:"revision"`
-	SpecHash        string  `json:"spec_hash,omitempty"`
-	AgentCount      uint32  `json:"agent_count"`
-	SchedulerCount  uint32  `json:"scheduler_count"`
-	ServiceCount    *uint32 `json:"service_count"`
-	RunningRunCount uint32  `json:"running_run_count"`
-	LatestRunID     string  `json:"latest_run_id,omitempty"`
-	CreatedAt       string  `json:"created_at,omitempty"`
-	UpdatedAt       string  `json:"updated_at,omitempty"`
-	RemovedAt       string  `json:"removed_at,omitempty"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	ConfigFile      string `json:"config_file"`
+	ProjectDir      string `json:"project_dir,omitempty"`
+	Revision        uint64 `json:"revision"`
+	SpecHash        string `json:"spec_hash,omitempty"`
+	AgentCount      uint32 `json:"agent_count"`
+	SchedulerCount  uint32 `json:"scheduler_count"`
+	TriggerCount    uint32 `json:"trigger_count"`
+	RunningRunCount uint32 `json:"running_run_count"`
+	LatestRunID     string `json:"latest_run_id,omitempty"`
+	CreatedAt       string `json:"created_at,omitempty"`
+	UpdatedAt       string `json:"updated_at,omitempty"`
+	RemovedAt       string `json:"removed_at,omitempty"`
 }
 
 type composeUpProjectOutput struct {
@@ -3700,7 +3700,7 @@ func composeProjectListItemFromSummary(summary *agentcomposev2.ProjectSummary) c
 		SpecHash:        summary.GetSpecHash(),
 		AgentCount:      summary.GetAgentCount(),
 		SchedulerCount:  summary.GetSchedulerCount(),
-		ServiceCount:    nil,
+		TriggerCount:    summary.GetTriggerCount(),
 		RunningRunCount: summary.GetRunningRunCount(),
 		LatestRunID:     summary.GetLatestRunId(),
 		CreatedAt:       summary.GetCreatedAt(),
@@ -3814,17 +3814,17 @@ func writeComposeUpText(out io.Writer, resp *agentcomposev2.ApplyProjectResponse
 func writeProjectListText(out io.Writer, projects []composeProjectListItem, verbose bool) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	if verbose {
-		if _, err := fmt.Fprintln(tw, "PROJECT\tCONFIG FILE\tREVISION\tAGENTS\tSCHEDULERS\tSERVICES\tPROJECT ID\tPROJECT DIR\tSPEC HASH\tUPDATED\tSTATUS"); err != nil {
+		if _, err := fmt.Fprintln(tw, "PROJECT\tCONFIG FILE\tREVISION\tAGENTS\tSCHEDULERS\tTRIGGERS\tPROJECT ID\tPROJECT DIR\tSPEC HASH\tUPDATED\tSTATUS"); err != nil {
 			return err
 		}
 		for _, project := range projects {
-			if _, err := fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			if _, err := fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n",
 				project.Name,
 				firstNonEmptyString(project.ConfigFile, "-"),
 				project.Revision,
 				project.AgentCount,
 				project.SchedulerCount,
-				projectServiceCountText(project.ServiceCount),
+				project.TriggerCount,
 				firstNonEmptyString(project.ID, "-"),
 				firstNonEmptyString(project.ProjectDir, "-"),
 				firstNonEmptyString(project.SpecHash, "-"),
@@ -3836,29 +3836,22 @@ func writeProjectListText(out io.Writer, projects []composeProjectListItem, verb
 		}
 		return tw.Flush()
 	}
-	if _, err := fmt.Fprintln(tw, "PROJECT\tCONFIG FILE\tREVISION\tAGENTS\tSCHEDULERS\tSERVICES"); err != nil {
+	if _, err := fmt.Fprintln(tw, "PROJECT\tCONFIG FILE\tREVISION\tAGENTS\tSCHEDULERS\tTRIGGERS"); err != nil {
 		return err
 	}
 	for _, project := range projects {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\n",
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\n",
 			project.Name,
 			firstNonEmptyString(project.ConfigFile, "-"),
 			project.Revision,
 			project.AgentCount,
 			project.SchedulerCount,
-			projectServiceCountText(project.ServiceCount),
+			project.TriggerCount,
 		); err != nil {
 			return err
 		}
 	}
 	return tw.Flush()
-}
-
-func projectServiceCountText(count *uint32) string {
-	if count == nil {
-		return "-"
-	}
-	return strconv.FormatUint(uint64(*count), 10)
 }
 
 func projectListStatus(project composeProjectListItem) string {

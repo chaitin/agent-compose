@@ -560,7 +560,7 @@ func TestProjectAndRunHandlersStoreBackedWorkflows(t *testing.T) {
 		agents: []domain.ProjectAgentRecord{{
 			ProjectID: "project-1", AgentName: "worker", ManagedAgentID: "agent-1", Driver: "boxlite", Image: "guest:latest",
 		}},
-		schedulers: []domain.ProjectSchedulerRecord{{ProjectID: "project-1", SchedulerID: "scheduler-1", AgentName: "worker", Enabled: true}},
+		schedulers: []domain.ProjectSchedulerRecord{{ProjectID: "project-1", SchedulerID: "scheduler-1", AgentName: "worker", Enabled: true, TriggerCount: 2}},
 		revision:   domain.ProjectRevisionRecord{ProjectID: "project-1", Revision: 1, SpecJSON: `{"agents":[{"name":"worker"}]}`},
 		runs: map[string]domain.ProjectRunRecord{
 			"run-1": {RunID: "run-1", ProjectID: "project-1", ProjectName: "Project", AgentName: "worker", Status: domain.ProjectRunStatusRunning, Source: domain.ProjectRunSourceAPI, ResultJSON: "{}"},
@@ -577,6 +577,9 @@ func TestProjectAndRunHandlersStoreBackedWorkflows(t *testing.T) {
 	listProjects, err := projectHandler.ListProjects(ctx, connect.NewRequest(&agentcomposev2.ListProjectsRequest{Query: "Project", Limit: 10}))
 	if err != nil || len(listProjects.Msg.GetProjects()) != 1 {
 		t.Fatalf("ListProjects resp=%#v err=%v", listProjects, err)
+	}
+	if summary := listProjects.Msg.GetProjects()[0]; summary.GetAgentCount() != 1 || summary.GetSchedulerCount() != 1 || summary.GetTriggerCount() != 2 {
+		t.Fatalf("ListProjects summary counts = %#v", summary)
 	}
 	store.projects = append(store.projects, domain.ProjectRecord{ID: "project-2", Name: "Project"})
 	if _, err := projectHandler.GetProject(ctx, connect.NewRequest(&agentcomposev2.GetProjectRequest{Project: &agentcomposev2.ProjectRef{Name: "Project"}})); connect.CodeOf(err) != connect.CodeInvalidArgument {

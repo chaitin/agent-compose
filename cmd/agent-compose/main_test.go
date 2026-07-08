@@ -5579,7 +5579,6 @@ func TestCLIOutputHelpersCoverEdgeBranches(t *testing.T) {
 		t.Fatalf("compose down text = %q", text.String())
 	}
 
-	serviceCount := uint32(3)
 	projects := []composeProjectListItem{{
 		ID:             "project-1",
 		Name:           "Project",
@@ -5589,7 +5588,7 @@ func TestCLIOutputHelpersCoverEdgeBranches(t *testing.T) {
 		SpecHash:       "hash",
 		AgentCount:     1,
 		SchedulerCount: 1,
-		ServiceCount:   &serviceCount,
+		TriggerCount:   3,
 		UpdatedAt:      "2026-07-06T00:00:00Z",
 	}, {
 		ID:        "project-removed",
@@ -5600,7 +5599,7 @@ func TestCLIOutputHelpersCoverEdgeBranches(t *testing.T) {
 	if err := writeProjectListText(&text, projects, true); err != nil {
 		t.Fatalf("writeProjectListText verbose returned error: %v", err)
 	}
-	if !strings.Contains(text.String(), "SERVICES") || !strings.Contains(text.String(), "removed") || projectServiceCountText(nil) != "-" {
+	if !strings.Contains(text.String(), "TRIGGERS") || strings.Contains(text.String(), "SERVICES") || !strings.Contains(text.String(), "removed") {
 		t.Fatalf("project list text = %q", text.String())
 	}
 
@@ -6483,6 +6482,7 @@ func TestIntegrationCLIListProjectsTextVerboseAndJSON(t *testing.T) {
 							SpecHash:        "sha256:reviewer",
 							AgentCount:      2,
 							SchedulerCount:  1,
+							TriggerCount:    2,
 							UpdatedAt:       "2026-07-03T10:00:00Z",
 						}},
 						TotalCount: 2,
@@ -6499,6 +6499,7 @@ func TestIntegrationCLIListProjectsTextVerboseAndJSON(t *testing.T) {
 							SpecHash:        "sha256:builder",
 							AgentCount:      1,
 							SchedulerCount:  0,
+							TriggerCount:    0,
 							UpdatedAt:       "2026-07-03T11:00:00Z",
 						}},
 						TotalCount: 2,
@@ -6516,10 +6517,13 @@ func TestIntegrationCLIListProjectsTextVerboseAndJSON(t *testing.T) {
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("ls code/stderr = %d / %q", exitCode, stderr)
 	}
-	for _, want := range []string{"PROJECT", "CONFIG FILE", "SERVICES", "reviewer", "/path/to/reviewer/agent-compose.yml", "builder", "-"} {
+	for _, want := range []string{"PROJECT", "CONFIG FILE", "TRIGGERS", "reviewer", "/path/to/reviewer/agent-compose.yml", "builder"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("ls output %q does not contain %q", stdout, want)
 		}
+	}
+	if strings.Contains(stdout, "SERVICES") {
+		t.Fatalf("ls output still contains SERVICES: %q", stdout)
 	}
 
 	verboseOut, verboseErr, _, verboseCode := executeCLICommand("ls", "--host", server.URL, "--verbose")
@@ -6543,7 +6547,7 @@ func TestIntegrationCLIListProjectsTextVerboseAndJSON(t *testing.T) {
 	if decoded.TotalCount != 2 || len(decoded.Projects) != 2 {
 		t.Fatalf("ls JSON = %#v", decoded)
 	}
-	if decoded.Projects[0].Name != "reviewer" || decoded.Projects[0].AgentCount != 2 || decoded.Projects[0].SchedulerCount != 1 || decoded.Projects[0].ServiceCount != nil {
+	if decoded.Projects[0].Name != "reviewer" || decoded.Projects[0].AgentCount != 2 || decoded.Projects[0].SchedulerCount != 1 || decoded.Projects[0].TriggerCount != 2 {
 		t.Fatalf("ls first project JSON = %#v", decoded.Projects[0])
 	}
 	if requests != 6 {

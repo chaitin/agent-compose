@@ -76,6 +76,7 @@ func testComposeProjectPureHelpers(t *testing.T) {
 		SpecHash:        "hash",
 		AgentCount:      2,
 		SchedulerCount:  1,
+		TriggerCount:    5,
 		RunningRunCount: 4,
 		LatestRunId:     "run-1",
 		UpdatedAt:       "2026-07-04T00:00:00Z",
@@ -84,22 +85,19 @@ func testComposeProjectPureHelpers(t *testing.T) {
 	if item.ProjectDir != "/tmp/project" || projectListStatus(item) != "removed" {
 		t.Fatalf("project list item = %#v", item)
 	}
-	count := uint32(5)
-	item.ServiceCount = &count
 	var out bytes.Buffer
 	if err := writeProjectListText(&out, []composeProjectListItem{item}, true); err != nil {
 		t.Fatalf("writeProjectListText verbose returned error: %v", err)
 	}
-	if !strings.Contains(out.String(), "SERVICES") || !strings.Contains(out.String(), "removed") || projectServiceCountText(item.ServiceCount) != "5" {
+	if !strings.Contains(out.String(), "TRIGGERS") || strings.Contains(out.String(), "SERVICES") || !strings.Contains(out.String(), "removed") || !strings.Contains(out.String(), "5") {
 		t.Fatalf("verbose project list output = %q", out.String())
 	}
 	out.Reset()
 	item.RemovedAt = ""
-	item.ServiceCount = nil
 	if err := writeProjectListText(&out, []composeProjectListItem{item}, false); err != nil {
 		t.Fatalf("writeProjectListText returned error: %v", err)
 	}
-	if !strings.Contains(out.String(), "-") || projectListStatus(item) != "active" || projectServiceCountText(nil) != "-" {
+	if !strings.Contains(out.String(), "5") || projectListStatus(item) != "active" {
 		t.Fatalf("project list output = %q", out.String())
 	}
 
