@@ -26,17 +26,25 @@ func ProjectToProto(project domain.ProjectRecord, spec *agentcomposev2.ProjectSp
 func ProjectSummaryToProto(project domain.ProjectRecord, agents []domain.ProjectAgentRecord, schedulers []domain.ProjectSchedulerRecord) *agentcomposev2.ProjectSummary {
 	triggerCount := 0
 	for _, scheduler := range schedulers {
-		triggerCount += scheduler.TriggerCount
+		triggerCount = addNonNegativeCount(triggerCount, scheduler.TriggerCount)
 	}
+	return ProjectSummaryWithCountsToProto(project, domain.ProjectSummaryCounts{
+		AgentCount:     len(agents),
+		SchedulerCount: len(schedulers),
+		TriggerCount:   triggerCount,
+	})
+}
+
+func ProjectSummaryWithCountsToProto(project domain.ProjectRecord, counts domain.ProjectSummaryCounts) *agentcomposev2.ProjectSummary {
 	return &agentcomposev2.ProjectSummary{
 		ProjectId:       project.ID,
 		Name:            project.Name,
 		SourcePath:      project.SourcePath,
 		CurrentRevision: uint64(project.CurrentRevision),
 		SpecHash:        project.SpecHash,
-		AgentCount:      uint32(len(agents)),
-		SchedulerCount:  uint32(len(schedulers)),
-		TriggerCount:    uint32(triggerCount),
+		AgentCount:      nonNegativeUint32(counts.AgentCount),
+		SchedulerCount:  nonNegativeUint32(counts.SchedulerCount),
+		TriggerCount:    nonNegativeUint32(counts.TriggerCount),
 		CreatedAt:       FormatProjectTime(project.CreatedAt),
 		UpdatedAt:       FormatProjectTime(project.UpdatedAt),
 		RemovedAt:       FormatProjectTime(project.RemovedAt),
@@ -79,10 +87,31 @@ func ProjectSchedulersToProto(schedulers []domain.ProjectSchedulerRecord) []*age
 			SchedulerId:     scheduler.SchedulerID,
 			ManagedLoaderId: scheduler.ManagedLoaderID,
 			Enabled:         scheduler.Enabled,
-			TriggerCount:    uint32(scheduler.TriggerCount),
+			TriggerCount:    nonNegativeUint32(scheduler.TriggerCount),
 		})
 	}
 	return items
+}
+
+func nonNegativeUint32(value int) uint32 {
+	if value <= 0 {
+		return 0
+	}
+	if int64(value) > int64(^uint32(0)) {
+		return ^uint32(0)
+	}
+	return uint32(value)
+}
+
+func addNonNegativeCount(total, value int) int {
+	if value <= 0 {
+		return total
+	}
+	maxUint32 := int(^uint32(0))
+	if total >= maxUint32 || value > maxUint32-total {
+		return maxUint32
+	}
+	return total + value
 }
 
 func ProjectApplyChanges(project domain.ProjectRecord, existing domain.ProjectRecord, found bool, revision domain.ProjectRevisionRecord, revisionCreated bool) []*agentcomposev2.ProjectChange {

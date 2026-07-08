@@ -197,6 +197,20 @@ func testConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 	if schedulers, err := store.ListProjectSchedulers(ctx, project.ID); err != nil || len(schedulers) != 1 {
 		t.Fatalf("ListProjectSchedulers schedulers=%#v err=%v", schedulers, err)
 	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE project_scheduler SET trigger_count = -3 WHERE project_id = ? AND scheduler_id = ?`, project.ID, scheduler.SchedulerID); err != nil {
+		t.Fatalf("set negative scheduler trigger count: %v", err)
+	}
+	counts, err := store.ListProjectSummaryCounts(ctx, []string{project.ID, "project-2", project.ID})
+	if err != nil {
+		t.Fatalf("ListProjectSummaryCounts returned error: %v", err)
+	}
+	if counts[project.ID].AgentCount != 1 || counts[project.ID].SchedulerCount != 1 || counts[project.ID].TriggerCount != 0 {
+		t.Fatalf("ListProjectSummaryCounts project counts=%#v", counts[project.ID])
+	}
+	if counts["project-2"].AgentCount != 0 || counts["project-2"].SchedulerCount != 0 || counts["project-2"].TriggerCount != 0 {
+		t.Fatalf("ListProjectSummaryCounts empty project counts=%#v", counts["project-2"])
+	}
+	scheduler.TriggerCount = 0
 
 	managedAgent, err := store.UpsertManagedAgentDefinition(ctx, domain.AgentDefinition{ID: "managed-agent-1", Name: "Managed", Enabled: true, Provider: "codex", ManagedProjectID: project.ID, ManagedAgentName: "worker", Driver: driverpkg.RuntimeDriverBoxlite, GuestImage: "guest:latest"})
 	if err != nil {

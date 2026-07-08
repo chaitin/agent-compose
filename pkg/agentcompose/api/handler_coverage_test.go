@@ -581,6 +581,12 @@ func TestProjectAndRunHandlersStoreBackedWorkflows(t *testing.T) {
 	if summary := listProjects.Msg.GetProjects()[0]; summary.GetAgentCount() != 1 || summary.GetSchedulerCount() != 1 || summary.GetTriggerCount() != 2 {
 		t.Fatalf("ListProjects summary counts = %#v", summary)
 	}
+	store.summaryCountsErr = errors.New("count query failed")
+	listProjects, err = projectHandler.ListProjects(ctx, connect.NewRequest(&agentcomposev2.ListProjectsRequest{Query: "Project", Limit: 10}))
+	if err != nil || len(listProjects.Msg.GetProjects()) != 1 || listProjects.Msg.GetProjects()[0].GetTriggerCount() != 0 {
+		t.Fatalf("ListProjects degraded counts resp=%#v err=%v", listProjects, err)
+	}
+	store.summaryCountsErr = nil
 	store.projects = append(store.projects, domain.ProjectRecord{ID: "project-2", Name: "Project"})
 	if _, err := projectHandler.GetProject(ctx, connect.NewRequest(&agentcomposev2.GetProjectRequest{Project: &agentcomposev2.ProjectRef{Name: "Project"}})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("expected ambiguous project error, got %v", err)
@@ -917,11 +923,12 @@ func (r *apiStatsRuntime) Stats(_ context.Context, session *domain.Session, vmSt
 }
 
 type apiProjectRunStore struct {
-	projects   []domain.ProjectRecord
-	agents     []domain.ProjectAgentRecord
-	schedulers []domain.ProjectSchedulerRecord
-	revision   domain.ProjectRevisionRecord
-	runs       map[string]domain.ProjectRunRecord
+	projects         []domain.ProjectRecord
+	agents           []domain.ProjectAgentRecord
+	schedulers       []domain.ProjectSchedulerRecord
+	summaryCountsErr error
+	revision         domain.ProjectRevisionRecord
+	runs             map[string]domain.ProjectRunRecord
 }
 
 func (s *apiProjectRunStore) GetProject(_ context.Context, projectID string) (domain.ProjectRecord, error) {
@@ -935,6 +942,27 @@ func (s *apiProjectRunStore) GetProject(_ context.Context, projectID string) (do
 
 func (s *apiProjectRunStore) ListProjects(_ context.Context, _ domain.ProjectListOptions) (domain.ProjectListResult, error) {
 	return domain.ProjectListResult{Projects: s.projects, TotalCount: len(s.projects)}, nil
+}
+
+func (s *apiProjectRunStore) ListProjectSummaryCounts(context.Context, []string) (map[string]domain.ProjectSummaryCounts, error) {
+	if s.summaryCountsErr != nil {
+		return nil, s.summaryCountsErr
+	}
+	counts := map[string]domain.ProjectSummaryCounts{}
+	for _, agent := range s.agents {
+		summary := counts[agent.ProjectID]
+		summary.AgentCount++
+		counts[agent.ProjectID] = summary
+	}
+	for _, scheduler := range s.schedulers {
+		summary := counts[scheduler.ProjectID]
+		summary.SchedulerCount++
+		if scheduler.TriggerCount > 0 {
+			summary.TriggerCount += scheduler.TriggerCount
+		}
+		counts[scheduler.ProjectID] = summary
+	}
+	return counts, nil
 }
 
 func (s *apiProjectRunStore) ListProjectAgents(context.Context, string) ([]domain.ProjectAgentRecord, error) {

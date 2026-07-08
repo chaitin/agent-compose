@@ -234,6 +234,71 @@ func (s *projectStore) ListProjects(ctx context.Context, options ProjectListOpti
 	}, nil
 }
 
+func (s *projectStore) ListProjectSummaryCounts(ctx context.Context, projectIDs []string) (map[string]domain.ProjectSummaryCounts, error) {
+	countsByProject := make(map[string]domain.ProjectSummaryCounts, len(projectIDs))
+	args := make([]any, 0, len(projectIDs))
+	for _, projectID := range projectIDs {
+		projectID = strings.TrimSpace(projectID)
+		if projectID == "" {
+			continue
+		}
+		if _, ok := countsByProject[projectID]; ok {
+			continue
+		}
+		countsByProject[projectID] = domain.ProjectSummaryCounts{}
+		args = append(args, projectID)
+	}
+	if len(args) == 0 {
+		return countsByProject, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `SELECT project_id, COUNT(*)
+		FROM project_agent WHERE project_id IN (`+placeholders(len(args))+`) GROUP BY project_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query project agent counts: %w", err)
+	}
+	for rows.Next() {
+		var projectID string
+		var agentCount int
+		if err := rows.Scan(&projectID, &agentCount); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan project agent counts: %w", err)
+		}
+		counts := countsByProject[projectID]
+		counts.AgentCount = agentCount
+		countsByProject[projectID] = counts
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close project agent counts: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate project agent counts: %w", err)
+	}
+
+	rows, err = s.db.QueryContext(ctx, `SELECT project_id, COUNT(*), COALESCE(SUM(CASE WHEN trigger_count > 0 THEN trigger_count ELSE 0 END), 0)
+		FROM project_scheduler WHERE project_id IN (`+placeholders(len(args))+`) GROUP BY project_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query project scheduler counts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var projectID string
+		var schedulerCount int
+		var triggerCount int
+		if err := rows.Scan(&projectID, &schedulerCount, &triggerCount); err != nil {
+			return nil, fmt.Errorf("scan project scheduler counts: %w", err)
+		}
+		counts := countsByProject[projectID]
+		counts.SchedulerCount = schedulerCount
+		counts.TriggerCount = triggerCount
+		countsByProject[projectID] = counts
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate project scheduler counts: %w", err)
+	}
+	return countsByProject, nil
+}
+
 func (s *projectStore) GetProjectRevision(ctx context.Context, projectID string, revision int64) (ProjectRevisionRecord, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT project_id, revision, spec_hash, spec_json, created_at
 		FROM project_revision WHERE project_id = ? AND revision = ?`, strings.TrimSpace(projectID), revision)

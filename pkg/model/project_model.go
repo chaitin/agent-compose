@@ -62,6 +62,12 @@ type ProjectSchedulerRecord struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+type ProjectSummaryCounts struct {
+	AgentCount     int `json:"agent_count"`
+	SchedulerCount int `json:"scheduler_count"`
+	TriggerCount   int `json:"trigger_count"`
+}
+
 type ProjectRunRecord struct {
 	RunID           string    `json:"run_id"`
 	ProjectID       string    `json:"project_id"`

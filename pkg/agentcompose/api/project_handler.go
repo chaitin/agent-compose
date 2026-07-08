@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -24,6 +25,7 @@ type ProjectDelegate interface {
 type ProjectStore interface {
 	GetProject(context.Context, string) (domain.ProjectRecord, error)
 	ListProjects(context.Context, domain.ProjectListOptions) (domain.ProjectListResult, error)
+	ListProjectSummaryCounts(context.Context, []string) (map[string]domain.ProjectSummaryCounts, error)
 	ListProjectAgents(context.Context, string) ([]domain.ProjectAgentRecord, error)
 	ListProjectSchedulers(context.Context, string) ([]domain.ProjectSchedulerRecord, error)
 	GetProjectRevision(context.Context, string, int64) (domain.ProjectRevisionRecord, error)
@@ -110,16 +112,17 @@ func (h *ProjectHandler) ListProjects(ctx context.Context, req *connect.Request[
 		HasMore:    result.HasMore,
 		NextOffset: uint32(result.NextOffset),
 	}
+	projectIDs := make([]string, 0, len(result.Projects))
 	for _, project := range result.Projects {
-		agents, err := h.store.ListProjectAgents(ctx, project.ID)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("list project agents %s: %w", project.ID, err))
-		}
-		schedulers, err := h.store.ListProjectSchedulers(ctx, project.ID)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("list project schedulers %s: %w", project.ID, err))
-		}
-		resp.Projects = append(resp.Projects, ProjectSummaryToProto(project, agents, schedulers))
+		projectIDs = append(projectIDs, project.ID)
+	}
+	countsByProject, err := h.store.ListProjectSummaryCounts(ctx, projectIDs)
+	if err != nil {
+		slog.Warn("failed to load project summary counts", "error", err)
+		countsByProject = map[string]domain.ProjectSummaryCounts{}
+	}
+	for _, project := range result.Projects {
+		resp.Projects = append(resp.Projects, ProjectSummaryWithCountsToProto(project, countsByProject[project.ID]))
 	}
 	return connect.NewResponse(resp), nil
 }
