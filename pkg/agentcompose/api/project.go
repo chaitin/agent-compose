@@ -107,9 +107,12 @@ func addNonNegativeCount(total, value int) int {
 	if value <= 0 {
 		return total
 	}
-	maxUint32 := int(^uint32(0))
-	if total >= maxUint32 || value > maxUint32-total {
-		return maxUint32
+	if total < 0 {
+		total = 0
+	}
+	maxInt := int(^uint(0) >> 1)
+	if value > maxInt-total {
+		return maxInt
 	}
 	return total + value
 }

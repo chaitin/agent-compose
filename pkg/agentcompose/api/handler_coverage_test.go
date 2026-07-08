@@ -618,6 +618,25 @@ func TestProjectAndRunHandlersStoreBackedWorkflows(t *testing.T) {
 	}
 }
 
+func TestProjectSummaryTriggerCountBounds(t *testing.T) {
+	summary := ProjectSummaryToProto(domain.ProjectRecord{ID: "project-1", Name: "Project"}, nil, []domain.ProjectSchedulerRecord{
+		{TriggerCount: -1},
+		{TriggerCount: 2},
+	})
+	if summary.GetTriggerCount() != 2 {
+		t.Fatalf("negative trigger count should be ignored, got %d", summary.GetTriggerCount())
+	}
+
+	maxInt := int(^uint(0) >> 1)
+	summary = ProjectSummaryToProto(domain.ProjectRecord{ID: "project-1", Name: "Project"}, nil, []domain.ProjectSchedulerRecord{
+		{TriggerCount: maxInt},
+		{TriggerCount: 1},
+	})
+	if summary.GetTriggerCount() != nonNegativeUint32(maxInt) {
+		t.Fatalf("overflow trigger count = %d, want %d", summary.GetTriggerCount(), nonNegativeUint32(maxInt))
+	}
+}
+
 func TestFollowRunLogsStreamsOffsetsTailAndFinal(t *testing.T) {
 	tempDir := t.TempDir()
 	logPath := tempDir + "/output.txt"
