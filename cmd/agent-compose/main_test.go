@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"agent-compose/pkg/identity"
 	"agent-compose/pkg/imagecache"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/storage/configstore"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
@@ -2627,10 +2629,14 @@ agents:
 			switch req.Msg.GetRunId() {
 			case "run-reviewer":
 				run := testRunDetail(req.Msg.GetProjectId(), "run-reviewer", "reviewer", "session-reviewer", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "review one\n")
-				run.Summary.CompletedAt = "2026-06-11T00:00:02Z"
+				run.Summary.StartedAt = "2026-06-11T00:00:02Z"
+				run.Summary.CompletedAt = "2026-06-11T00:00:03Z"
 				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: run}), nil
 			case "run-writer":
-				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), "run-writer", "writer", "session-writer", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "write one\nwrite two\n")}), nil
+				run := testRunDetail(req.Msg.GetProjectId(), "run-writer", "writer", "session-writer", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "write one\nwrite two\n")
+				run.Summary.StartedAt = "2026-06-11T00:00:01Z"
+				run.Summary.CompletedAt = "2026-06-11T00:00:04Z"
+				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: run}), nil
 			default:
 				t.Fatalf("unexpected run id %q", req.Msg.GetRunId())
 				return nil, nil
@@ -2643,11 +2649,23 @@ agents:
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("logs --timestamp code/stderr = %d / %q", exitCode, stderr)
 	}
-	want := "reviewer-run-reviewer [2026-06-11T00:00:02.000Z]| review one\n" +
-		"writer-run-writer [2026-06-11T00:00:01.000Z]| write one\n" +
-		"writer-run-writer [2026-06-11T00:00:01.000Z]| write two\n"
+	want := "writer-run-writer [2026-06-11T00:00:04.000Z]| write one\n" +
+		"writer-run-writer [2026-06-11T00:00:04.000Z]| write two\n" +
+		"reviewer-run-reviewer [2026-06-11T00:00:03.000Z]| review one\n"
 	if stdout != want {
 		t.Fatalf("logs --timestamp stdout = %q, want %q", stdout, want)
+	}
+
+	jsonOut, jsonErr, _, jsonCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--json")
+	if jsonCode != 0 || jsonErr != "" {
+		t.Fatalf("logs --json code/stderr = %d / %q", jsonCode, jsonErr)
+	}
+	var decoded composeLogsOutput
+	if err := json.Unmarshal([]byte(jsonOut), &decoded); err != nil {
+		t.Fatalf("logs --json decode failed: %v\n%s", err, jsonOut)
+	}
+	if len(decoded.Runs) != 2 || decoded.Runs[0].RunID != displayOpaqueID("run-writer") || decoded.Runs[1].RunID != displayOpaqueID("run-reviewer") {
+		t.Fatalf("logs --json order = %#v", decoded.Runs)
 	}
 }
 
@@ -2709,6 +2727,131 @@ agents:
 	}
 	if listCalls != 1 || followCalls != 1 {
 		t.Fatalf("logs follow list/follow calls = %d/%d, want 1/1", listCalls, followCalls)
+	}
+}
+
+func TestRealCLILogsUsesDaemonRunDataWithTimestampsAndChronologicalOrder(t *testing.T) {
+	if os.Getenv("AGENT_COMPOSE_REAL_CLI_TEST") != "1" {
+		t.Skip("set AGENT_COMPOSE_REAL_CLI_TEST=1 to run the real CLI + daemon logs test")
+	}
+	root := t.TempDir()
+	binPath := filepath.Join(root, "agent-compose")
+	buildCtx, cancelBuild := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancelBuild()
+	build := osexec.CommandContext(buildCtx, "go", "build", "-buildvcs=false", "-o", binPath, ".")
+	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOCACHE="+filepath.Join(root, "gocache"))
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build agent-compose CLI failed: %v\n%s", err, output)
+	}
+
+	composePath := writeComposeFile(t, filepath.Join(root, "project"), `
+name: real-cli-logs
+agents:
+  writer:
+    provider: codex
+  reviewer:
+    provider: codex
+`)
+	_, normalized, projectID, err := resolveComposeProject(cliOptions{ComposeFile: composePath})
+	if err != nil {
+		t.Fatalf("resolve compose project: %v", err)
+	}
+
+	dataRoot := filepath.Join(root, "data")
+	di := do.New()
+	storeConfig := &config.Config{DataRoot: dataRoot, DbAddr: filepath.Join(dataRoot, "data.db")}
+	do.ProvideValue(di, storeConfig)
+	store, err := configstore.NewConfigStore(di)
+	if err != nil {
+		t.Fatalf("create config store: %v", err)
+	}
+	if _, err := store.UpsertProject(context.Background(), domain.ProjectRecord{ID: projectID, Name: normalized.Name, SourcePath: composePath, CurrentRevision: 1}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+	earlyStarted := time.Date(2026, 7, 8, 1, 2, 3, 0, time.UTC)
+	lateStarted := earlyStarted.Add(2 * time.Second)
+	if _, err := store.CreateProjectRun(context.Background(), domain.ProjectRunRecord{
+		RunID:           "run-real-late",
+		ProjectID:       projectID,
+		ProjectName:     normalized.Name,
+		ProjectRevision: 1,
+		AgentName:       "reviewer",
+		Source:          domain.ProjectRunSourceAPI,
+		Status:          domain.ProjectRunStatusSucceeded,
+		Output:          "late log\n",
+		ResultJSON:      "{}",
+		StartedAt:       lateStarted,
+		CompletedAt:     lateStarted.Add(time.Second),
+	}); err != nil {
+		t.Fatalf("create late run: %v", err)
+	}
+	if _, err := store.CreateProjectRun(context.Background(), domain.ProjectRunRecord{
+		RunID:           "run-real-early",
+		ProjectID:       projectID,
+		ProjectName:     normalized.Name,
+		ProjectRevision: 1,
+		AgentName:       "writer",
+		Source:          domain.ProjectRunSourceAPI,
+		Status:          domain.ProjectRunStatusSucceeded,
+		Output:          "early log\n",
+		ResultJSON:      "{}",
+		StartedAt:       earlyStarted,
+		CompletedAt:     earlyStarted.Add(time.Second),
+	}); err != nil {
+		t.Fatalf("create early run: %v", err)
+	}
+	if err := store.DB().Close(); err != nil {
+		t.Fatalf("close config store: %v", err)
+	}
+
+	socketPath := shortUnixSocketPath(t)
+	t.Setenv("DATA_ROOT", dataRoot)
+	t.Setenv("HTTP_LISTEN", "")
+	t.Setenv("AGENT_COMPOSE_SOCKET", socketPath)
+	t.Setenv("AGENT_COMPOSE_HOST", "")
+	t.Setenv("RUNTIME_DRIVER", config.RuntimeDriverDocker)
+	t.Setenv("SESSION_START_TIMEOUT", "1s")
+	t.Setenv("SESSION_STOP_TIMEOUT", "1s")
+	t.Setenv("LLM_API_ENDPOINT", "")
+	t.Setenv("BOXLITE_HOME", filepath.Join(root, "boxlite"))
+	t.Setenv("BOXLITE_RUNTIME_DIR", filepath.Join(root, "boxlite-runtime"))
+	t.Setenv("DOCKER_HOME", filepath.Join(root, "docker"))
+	t.Setenv("MICROSANDBOX_HOME", filepath.Join(root, "microsandbox"))
+	t.Setenv("MICROSANDBOX_MSB_PATH", filepath.Join(root, "msb"))
+	t.Setenv("MICROSANDBOX_LIB_PATH", filepath.Join(root, "libmicrosandbox_go_ffi.so"))
+
+	daemonCtx, stopDaemon := context.WithCancel(context.Background())
+	app, err := NewDaemonApp(daemonCtx, DaemonOptions{StartBackground: func(do.Injector) error { return nil }})
+	if err != nil {
+		stopDaemon()
+		t.Fatalf("NewDaemonApp returned error: %v", err)
+	}
+	errCh := runDaemonAppAsync(app, daemonCtx)
+	t.Cleanup(func() {
+		stopDaemon()
+		waitForDaemonExit(t, errCh)
+	})
+	waitForHTTPStatus(t, newUnixHTTPClient(socketPath), "http://agent-compose/api/version", http.StatusOK)
+
+	runCtx, cancelRun := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelRun()
+	logsCmd := osexec.CommandContext(runCtx, binPath, "--file", composePath, "logs")
+	logsCmd.Env = append(os.Environ(),
+		"AGENT_COMPOSE_SOCKET="+socketPath,
+		"AGENT_COMPOSE_HOST=",
+		"DATA_ROOT="+dataRoot,
+	)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	logsCmd.Stdout = &stdout
+	logsCmd.Stderr = &stderr
+	if err := logsCmd.Run(); err != nil {
+		t.Fatalf("real CLI logs failed: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+	}
+	want := "writer-run-real-early [2026-07-08T01:02:04.000Z]| early log\n" +
+		"reviewer-run-real-late [2026-07-08T01:02:06.000Z]| late log\n"
+	if stdout.String() != want || stderr.String() != "" {
+		t.Fatalf("real CLI logs stdout/stderr = %q / %q, want %q / empty", stdout.String(), stderr.String(), want)
 	}
 }
 

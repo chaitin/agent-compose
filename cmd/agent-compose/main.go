@@ -5772,6 +5772,7 @@ func followOrPrintProjectLogs(cmd *cobra.Command, cli cliOptions, client agentco
 				anyRunning = true
 			}
 		}
+		sortLogRunDetails(details)
 		if cli.JSON {
 			output := composeLogsOutput{Runs: make([]composeLogRunOutput, 0, len(details))}
 			for _, detail := range details {
@@ -6165,6 +6166,43 @@ func tailLogOutput(output string, lines int) string {
 
 func runLogTimestamp(summary *agentcomposev2.RunSummary) string {
 	return firstNonEmptyString(summary.GetCompletedAt(), summary.GetUpdatedAt(), summary.GetStartedAt())
+}
+
+func runLogSortTimestamp(summary *agentcomposev2.RunSummary) string {
+	return firstNonEmptyString(summary.GetStartedAt(), summary.GetCreatedAt(), summary.GetUpdatedAt(), summary.GetCompletedAt())
+}
+
+func sortLogRunDetails(details []*agentcomposev2.RunDetail) {
+	sort.SliceStable(details, func(i, j int) bool {
+		return logRunSummaryLess(details[i].GetSummary(), details[j].GetSummary())
+	})
+}
+
+func logRunSummaryLess(left, right *agentcomposev2.RunSummary) bool {
+	leftTime, leftOK := parseComposeLogSortTimestamp(runLogSortTimestamp(left))
+	rightTime, rightOK := parseComposeLogSortTimestamp(runLogSortTimestamp(right))
+	switch {
+	case leftOK && rightOK && !leftTime.Equal(rightTime):
+		return leftTime.Before(rightTime)
+	case leftOK != rightOK:
+		return leftOK
+	}
+	if agent := strings.Compare(left.GetAgentName(), right.GetAgentName()); agent != 0 {
+		return agent < 0
+	}
+	return strings.Compare(left.GetRunId(), right.GetRunId()) < 0
+}
+
+func parseComposeLogSortTimestamp(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed.UTC(), true
 }
 
 func formatComposeLogTimestamp(value string) string {
