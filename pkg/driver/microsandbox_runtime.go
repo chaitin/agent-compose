@@ -101,7 +101,7 @@ func (r *microsandboxRuntime) EnsureSession(ctx context.Context, session *Sessio
 		}
 	}
 	if jupyterEnabled(proxyState) {
-		readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		readyCtx, cancel := context.WithTimeout(ctx, r.config.JupyterReadyTimeout)
 		readyErr := waitForJupyterProxy(readyCtx, proxyState)
 		cancel()
 		if readyErr != nil {

@@ -116,6 +116,7 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	t.Setenv("JUPYTER_PROXY_BASE", "/agent-compose/jupyter/")
 	t.Setenv("SESSION_START_TIMEOUT", "9s")
 	t.Setenv("SESSION_STOP_TIMEOUT", "10s")
+	t.Setenv("JUPYTER_READY_TIMEOUT", "45s")
 	t.Setenv("WEBHOOK_BODY_LIMIT_BYTES", "1234")
 	t.Setenv("WEBHOOK_QUEUE_RULES_JSON", `[{"name":"repo-a","workers":2,"match":{"topic":"webhook.github.push"}}]`)
 	t.Setenv("WEBHOOK_QUEUE_DEFAULT_WORKERS", "6")
@@ -152,6 +153,9 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	if config.JupyterGuestPort != 9999 || config.SessionStartTimeout != 9*time.Second || config.SessionStopTimeout != 10*time.Second {
 		t.Fatalf("session config = %#v", config)
 	}
+	if config.JupyterReadyTimeout != 45*time.Second {
+		t.Fatalf("jupyter ready timeout = %s", config.JupyterReadyTimeout)
+	}
 	if config.GuestWorkspacePath != "/workspace" || config.GuestHomePath != "/root" || config.GuestStateRoot != "/state" || config.GuestRuntimeRoot != "/runtime" || config.GuestLogRoot != "/logs" {
 		t.Fatalf("guest paths = %#v", config)
 	}
@@ -187,6 +191,35 @@ func testNewConfigAllowsDefaultRootsAndRequiresValidDriver(t *testing.T) {
 	t.Setenv("RUNTIME_DRIVER", "bad-driver")
 	if _, err := NewConfig(di); err == nil {
 		t.Fatalf("expected invalid runtime driver to fail")
+	}
+}
+
+func TestNewConfigJupyterReadyTimeoutDefaultAndGuard(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string // "" means unset
+		want  time.Duration
+	}{
+		{"default when unset", "", 30 * time.Second},
+		{"custom value honored", "90s", 90 * time.Second},
+		{"zero falls back to default", "0s", 30 * time.Second},
+		{"negative falls back to default", "-5s", 30 * time.Second},
+		{"invalid falls back to default", "not-a-duration", 30 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DATA_ROOT", filepath.Join(t.TempDir(), "data"))
+			t.Setenv("JUPYTER_READY_TIMEOUT", tc.value)
+			di := do.New()
+			do.ProvideValue(di, slog.Default())
+			config, err := NewConfig(di)
+			if err != nil {
+				t.Fatalf("NewConfig returned error: %v", err)
+			}
+			if config.JupyterReadyTimeout != tc.want {
+				t.Fatalf("JupyterReadyTimeout = %s, want %s", config.JupyterReadyTimeout, tc.want)
+			}
+		})
 	}
 }
 

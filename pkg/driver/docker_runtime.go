@@ -114,7 +114,7 @@ func (r *dockerRuntime) EnsureSession(ctx context.Context, session *Session, vmS
 		return SessionVMInfo{BoxID: containerInfo.ID, ProxyState: &proxyState}, nil
 	}
 
-	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	readyCtx, cancel := context.WithTimeout(ctx, r.config.JupyterReadyTimeout)
 	readyErr := waitForJupyterProxy(readyCtx, proxyState)
 	cancel()
 	if readyErr != nil {

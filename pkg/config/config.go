@@ -82,6 +82,7 @@ type Config struct {
 	JupyterGuestPort           int
 	SessionStartTimeout        time.Duration
 	SessionStopTimeout         time.Duration
+	JupyterReadyTimeout        time.Duration
 	JupyterProxyBasePath       string
 	CapGRPCListen              string
 	CapGRPCTarget              string
@@ -311,6 +312,17 @@ func NewConfig(di do.Injector) (*Config, error) {
 		}
 	}
 
+	jupyterReadyTimeout := 30 * time.Second
+	if raw := os.Getenv("JUPYTER_READY_TIMEOUT"); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err != nil {
+			logger.Warn("failed to parse JUPYTER_READY_TIMEOUT", "value", raw, "error", err)
+		} else if parsed <= 0 {
+			logger.Warn("ignoring non-positive JUPYTER_READY_TIMEOUT, using default", "value", raw, "default", jupyterReadyTimeout)
+		} else {
+			jupyterReadyTimeout = parsed
+		}
+	}
+
 	webhookBodyLimitBytes := int64(1 << 20)
 	if raw := os.Getenv("WEBHOOK_BODY_LIMIT_BYTES"); raw != "" {
 		var parsed int64
@@ -435,6 +447,7 @@ func NewConfig(di do.Injector) (*Config, error) {
 		JupyterGuestPort:           jupyterGuestPort,
 		SessionStartTimeout:        startTimeout,
 		SessionStopTimeout:         stopTimeout,
+		JupyterReadyTimeout:        jupyterReadyTimeout,
 		JupyterProxyBasePath:       jupyterProxyBase,
 		CapGRPCListen:              strings.TrimSpace(os.Getenv("CAP_GRPC_LISTEN")),
 		CapGRPCTarget:              strings.TrimSpace(os.Getenv("CAP_GRPC_TARGET")),
