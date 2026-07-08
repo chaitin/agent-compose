@@ -382,7 +382,7 @@ func testStatusCommandUsesHostFlagBeforeEnvironment(t *testing.T) {
 		if r.URL.Path != "/api/version" {
 			t.Fatalf("request path = %q, want /api/version", r.URL.Path)
 		}
-		_, _ = io.WriteString(w, `{"version":"flag"}`)
+		_, _ = io.WriteString(w, `{"err":null,"msg":"OK","data":{"timestamp":1783501631.2438176,"timezone":"CST","timezone_offset":28800,"version":"flag"}}`)
 	}))
 	defer server.Close()
 	t.Setenv("AGENT_COMPOSE_HOST", "http://127.0.0.1:1")
@@ -391,11 +391,40 @@ func testStatusCommandUsesHostFlagBeforeEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status command returned error: %v", err)
 	}
-	if !strings.Contains(stdout, `"version":"flag"`) {
-		t.Fatalf("status stdout = %q, want flag response", stdout)
+	for _, want := range []string{"STATUS", "UPTIME", "VERSION", "OK", "2026-07-08 17:07:11 CST +0800", "flag"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("status stdout = %q, want %q", stdout, want)
+		}
+	}
+	if strings.Contains(stdout, `"version"`) {
+		t.Fatalf("status stdout = %q, want text output", stdout)
 	}
 	if stderr != "" {
 		t.Fatalf("status stderr = %q, want empty", stderr)
+	}
+	if runCount != 0 {
+		t.Fatalf("daemon runner called %d times, want 0", runCount)
+	}
+}
+
+func TestStatusCommandJSONPrintsRawDaemonResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/version" {
+			t.Fatalf("request path = %q, want /api/version", r.URL.Path)
+		}
+		_, _ = io.WriteString(w, `{"err":null,"msg":"OK","data":{"timestamp":1783501631.2438176,"version":"json"}}`)
+	}))
+	defer server.Close()
+
+	stdout, stderr, runCount, err := executeCommand("status", "--json", "--host", server.URL)
+	if err != nil {
+		t.Fatalf("status --json command returned error: %v", err)
+	}
+	if strings.TrimSpace(stdout) != `{"err":null,"msg":"OK","data":{"timestamp":1783501631.2438176,"version":"json"}}` {
+		t.Fatalf("status --json stdout = %q, want raw daemon response", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("status --json stderr = %q, want empty", stderr)
 	}
 	if runCount != 0 {
 		t.Fatalf("daemon runner called %d times, want 0", runCount)
@@ -410,7 +439,7 @@ func TestStatusCommandUsesRemoteAuthFromEnvironment(t *testing.T) {
 		if !ok || username != "reviewer" || password != "secret" {
 			t.Fatalf("BasicAuth = %q/%q/%v", username, password, ok)
 		}
-		_, _ = w.Write([]byte(`{"version":"test"}`))
+		_, _ = w.Write([]byte(`{"err":null,"msg":"OK","data":{"timestamp":1783501631.2438176,"timezone":"CST","timezone_offset":28800,"version":"test"}}`))
 	}))
 	defer server.Close()
 
@@ -418,8 +447,10 @@ func TestStatusCommandUsesRemoteAuthFromEnvironment(t *testing.T) {
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("status auth code/stderr = %d / %q", exitCode, stderr)
 	}
-	if !strings.Contains(stdout, `"version":"test"`) {
-		t.Fatalf("status auth stdout = %q", stdout)
+	for _, want := range []string{"STATUS", "UPTIME", "VERSION", "OK", "2026-07-08 17:07:11 CST +0800", "test"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("status auth stdout = %q, want %q", stdout, want)
+		}
 	}
 	if runCount != 0 {
 		t.Fatalf("daemon runner called %d times, want 0", runCount)
@@ -436,7 +467,7 @@ func testStatusCommandUsesEnvironmentHost(t *testing.T) {
 		if r.URL.Path != "/api/version" {
 			t.Fatalf("request path = %q, want /api/version", r.URL.Path)
 		}
-		_, _ = io.WriteString(w, `{"version":"env"}`)
+		_, _ = io.WriteString(w, `{"err":null,"msg":"OK","data":{"timestamp":1783501631.2438176,"timezone":"CST","timezone_offset":28800,"version":"env"}}`)
 	}))
 	defer server.Close()
 	t.Setenv("AGENT_COMPOSE_HOST", server.URL)
@@ -445,8 +476,10 @@ func testStatusCommandUsesEnvironmentHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status command returned error: %v", err)
 	}
-	if !strings.Contains(stdout, `"version":"env"`) {
-		t.Fatalf("status stdout = %q, want env response", stdout)
+	for _, want := range []string{"STATUS", "UPTIME", "VERSION", "OK", "2026-07-08 17:07:11 CST +0800", "env"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("status stdout = %q, want %q", stdout, want)
+		}
 	}
 	if runCount != 0 {
 		t.Fatalf("daemon runner called %d times, want 0", runCount)
@@ -477,14 +510,26 @@ func testStatusCommandUsesDefaultUnixSocket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status command returned error: %v", err)
 	}
-	if !strings.Contains(stdout, `"version"`) {
-		t.Fatalf("status stdout = %q, want daemon version response", stdout)
+	for _, want := range []string{"STATUS", "UPTIME", "VERSION", "OK", config.BuildVersion} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("status stdout = %q, want %q", stdout, want)
+		}
 	}
 	if stderr != "" {
 		t.Fatalf("status stderr = %q, want empty", stderr)
 	}
 	if runCount != 0 {
 		t.Fatalf("daemon runner called %d times, want 0", runCount)
+	}
+}
+
+func TestFormatDaemonStatusTime(t *testing.T) {
+	offset := 8 * 60 * 60
+	if got := formatDaemonStatusTime(1783501631.2438176, "CST", &offset); got != "2026-07-08 17:07:11 CST +0800" {
+		t.Fatalf("formatDaemonStatusTime() = %q, want server timezone time", got)
+	}
+	if got := formatDaemonStatusTime(1783501631.2438176, "", nil); got != "2026-07-08 09:07:11 UTC +0000" {
+		t.Fatalf("formatDaemonStatusTime() = %q, want legacy UTC fallback time", got)
 	}
 }
 
@@ -6924,6 +6969,18 @@ func testNewDaemonAppBuildsHandlerWithoutListening(t *testing.T) {
 	app.Echo.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/api/version status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var decoded struct {
+		Data struct {
+			Timezone       string `json:"timezone"`
+			TimezoneOffset *int   `json:"timezone_offset"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("/api/version JSON decode failed: %v", err)
+	}
+	if decoded.Data.Timezone == "" || decoded.Data.TimezoneOffset == nil {
+		t.Fatalf("/api/version timezone fields = %q/%v, want server timezone", decoded.Data.Timezone, decoded.Data.TimezoneOffset)
 	}
 }
 

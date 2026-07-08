@@ -545,6 +545,24 @@ agent-compose cache rm <cache-id> --force
 - `agent-compose image inspect <image>` 已废弃，请使用 `agent-compose inspect image <image>`。
 - 旧 `image` 命令树仍可用，但会在 stderr 输出 deprecated warning，后续版本会评估删除。
 
+## `status`：检查 daemon 状态
+
+检查当前选择的 daemon 状态和版本。
+
+```bash
+agent-compose status
+agent-compose --host http://127.0.0.1:7410 status
+agent-compose status --json
+```
+
+默认输出字段：
+
+- `STATUS`：daemon 响应状态。
+- `UPTIME`：daemon 返回的时间戳；如果 daemon 返回了时区信息，则按 daemon 时区展示。
+- `VERSION`：daemon 构建版本。
+
+自动化场景使用 `--json` 输出 daemon 原始 status 响应。
+
 ## 其他命令
 
 ```bash

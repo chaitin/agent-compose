@@ -532,6 +532,24 @@ Compatibility:
 - `agent-compose image inspect <image>` is deprecated; use `agent-compose inspect image <image>`.
 - The old `image` command tree still works and prints warnings to stderr, but it may be removed in a future release.
 
+## `status`: Query Daemon Status
+
+Check the selected daemon status and version.
+
+```bash
+agent-compose status
+agent-compose --host http://127.0.0.1:7410 status
+agent-compose status --json
+```
+
+Default columns:
+
+- `STATUS`: daemon response status.
+- `UPTIME`: daemon-reported timestamp rendered in the daemon timezone when available.
+- `VERSION`: daemon build version.
+
+Use `--json` to print the raw daemon status response for automation.
+
 ## Other Commands
 
 ```bash

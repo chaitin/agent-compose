@@ -104,9 +104,13 @@ func NewEcho(di do.Injector) (*echo.Echo, error) {
 	conf := do.MustInvoke[*config.Config](di)
 
 	e.GET("/api/version", func(c echo.Context) error {
+		now := time.Now()
+		timezone, timezoneOffset := now.Zone()
 		return c.JSON(http.StatusOK, restful.NewResponse[map[string]any, restful.StrStatusResp[map[string]any]](nil, codes.OK.String(), map[string]any{
-			"version":   conf.Version,
-			"timestamp": float64(time.Now().UnixNano()) / 1e9,
+			"version":         conf.Version,
+			"timestamp":       float64(now.UnixNano()) / 1e9,
+			"timezone":        timezone,
+			"timezone_offset": timezoneOffset,
 		}))
 	})
 	e.GET("/api/null", echofn.EchoWrap(restful.NullHandler[restful.StrStatusResp[any]]))
@@ -427,8 +431,11 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), string(body))
-			return err
+			if options.JSON {
+				_, err = fmt.Fprintln(cmd.OutOrStdout(), string(body))
+				return err
+			}
+			return writeDaemonStatusText(cmd.OutOrStdout(), body)
 		},
 	}
 
@@ -6797,6 +6804,61 @@ func fetchDaemonVersion(ctx context.Context, clientConfig cliClientConfig) ([]by
 		return nil, fmt.Errorf("daemon via %s %q returned HTTP %d: %s", clientConfig.Source, clientConfig.SourceValue, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return body, nil
+}
+
+type daemonStatusResponse struct {
+	Err  json.RawMessage `json:"err"`
+	Msg  string          `json:"msg"`
+	Data struct {
+		Timestamp      float64 `json:"timestamp"`
+		Timezone       string  `json:"timezone"`
+		TimezoneOffset *int    `json:"timezone_offset"`
+		Version        string  `json:"version"`
+	} `json:"data"`
+}
+
+func writeDaemonStatusText(out io.Writer, body []byte) error {
+	var response daemonStatusResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("decode daemon status response: %w", err)
+	}
+
+	status := strings.TrimSpace(response.Msg)
+	if status == "" {
+		status = "unknown"
+	}
+	if len(response.Err) > 0 && string(response.Err) != "null" {
+		status = "error"
+	}
+	uptime := "-"
+	if response.Data.Timestamp > 0 {
+		uptime = formatDaemonStatusTime(response.Data.Timestamp, response.Data.Timezone, response.Data.TimezoneOffset)
+	}
+	version := strings.TrimSpace(response.Data.Version)
+	if version == "" {
+		version = "-"
+	}
+
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "STATUS\tUPTIME\tVERSION"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\n", status, uptime, version); err != nil {
+		return err
+	}
+	return tw.Flush()
+}
+
+func formatDaemonStatusTime(timestamp float64, timezone string, timezoneOffset *int) string {
+	location := time.UTC
+	if timezoneOffset != nil {
+		name := strings.TrimSpace(timezone)
+		if name == "" {
+			name = "UTC"
+		}
+		location = time.FixedZone(name, *timezoneOffset)
+	}
+	return time.Unix(0, int64(timestamp*float64(time.Second))).In(location).Format("2006-01-02 15:04:05 MST -0700")
 }
 
 func newDaemonHTTPClient(clientConfig cliClientConfig) *http.Client {
