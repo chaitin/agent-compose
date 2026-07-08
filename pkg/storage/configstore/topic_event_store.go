@@ -52,6 +52,7 @@ func (s *eventStore) ensureEventSchema(ctx context.Context) error {
 			provider TEXT NOT NULL DEFAULT '',
 			topic_prefix TEXT NOT NULL,
 			token_hash TEXT NOT NULL DEFAULT '',
+			token_header TEXT NOT NULL DEFAULT '',
 			signature_type TEXT NOT NULL DEFAULT '',
 			signature_secret TEXT NOT NULL DEFAULT '',
 			body_limit_bytes INTEGER NOT NULL DEFAULT 0,
@@ -102,6 +103,13 @@ func (s *eventStore) ensureEventSchema(ctx context.Context) error {
 	} {
 		if err := ensureColumn(ctx, s.db, "event", column, definition); err != nil {
 			return fmt.Errorf("ensure event %s column: %w", column, err)
+		}
+	}
+	for column, definition := range map[string]string{
+		"token_header": "TEXT NOT NULL DEFAULT ''",
+	} {
+		if err := ensureColumn(ctx, s.db, "webhook_source", column, definition); err != nil {
+			return fmt.Errorf("ensure webhook source %s column: %w", column, err)
 		}
 	}
 	indexStatements := []string{
@@ -644,7 +652,7 @@ func (s *eventStore) ListEnabledWebhookSourcesForTopic(ctx context.Context, topi
 	if topic == "" {
 		return nil, fmt.Errorf("topic is required")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, enabled, provider, topic_prefix, token_hash, signature_type, signature_secret, body_limit_bytes, created_at, updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, enabled, provider, topic_prefix, token_hash, token_header, signature_type, signature_secret, body_limit_bytes, created_at, updated_at
 		FROM webhook_source WHERE enabled = 1 ORDER BY length(topic_prefix) DESC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query webhook sources: %w", err)
@@ -656,7 +664,7 @@ func (s *eventStore) ListEnabledWebhookSourcesForTopic(ctx context.Context, topi
 		var enabled int
 		var createdAtRaw int64
 		var updatedAtRaw int64
-		if err := rows.Scan(&item.ID, &item.Name, &enabled, &item.Provider, &item.TopicPrefix, &item.TokenHash, &item.SignatureType, &item.SignatureSecret, &item.BodyLimitBytes, &createdAtRaw, &updatedAtRaw); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &enabled, &item.Provider, &item.TopicPrefix, &item.TokenHash, &item.TokenHeader, &item.SignatureType, &item.SignatureSecret, &item.BodyLimitBytes, &createdAtRaw, &updatedAtRaw); err != nil {
 			return nil, fmt.Errorf("scan webhook source: %w", err)
 		}
 		item.Enabled = enabled != 0
@@ -689,7 +697,7 @@ func WebhookSourceTopicMatches(topic, topicPrefix string) bool {
 }
 
 func (s *eventStore) ListWebhookSources(ctx context.Context) ([]domain.WebhookSource, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, enabled, provider, topic_prefix, token_hash, signature_type, signature_secret, body_limit_bytes, created_at, updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, enabled, provider, topic_prefix, token_hash, token_header, signature_type, signature_secret, body_limit_bytes, created_at, updated_at
 		FROM webhook_source ORDER BY id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query webhook sources: %w", err)
@@ -701,7 +709,7 @@ func (s *eventStore) ListWebhookSources(ctx context.Context) ([]domain.WebhookSo
 		var enabled int
 		var createdAtRaw int64
 		var updatedAtRaw int64
-		if err := rows.Scan(&item.ID, &item.Name, &enabled, &item.Provider, &item.TopicPrefix, &item.TokenHash, &item.SignatureType, &item.SignatureSecret, &item.BodyLimitBytes, &createdAtRaw, &updatedAtRaw); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &enabled, &item.Provider, &item.TopicPrefix, &item.TokenHash, &item.TokenHeader, &item.SignatureType, &item.SignatureSecret, &item.BodyLimitBytes, &createdAtRaw, &updatedAtRaw); err != nil {
 			return nil, fmt.Errorf("scan webhook source: %w", err)
 		}
 		item.Enabled = enabled != 0
@@ -720,13 +728,13 @@ func (s *eventStore) GetWebhookSource(ctx context.Context, sourceID string) (dom
 	if sourceID == "" {
 		return domain.WebhookSource{}, false, fmt.Errorf("webhook source id is required")
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, enabled, provider, topic_prefix, token_hash, signature_type, signature_secret, body_limit_bytes, created_at, updated_at
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, enabled, provider, topic_prefix, token_hash, token_header, signature_type, signature_secret, body_limit_bytes, created_at, updated_at
 		FROM webhook_source WHERE id = ?`, sourceID)
 	var item domain.WebhookSource
 	var enabled int
 	var createdAtRaw int64
 	var updatedAtRaw int64
-	if err := row.Scan(&item.ID, &item.Name, &enabled, &item.Provider, &item.TopicPrefix, &item.TokenHash, &item.SignatureType, &item.SignatureSecret, &item.BodyLimitBytes, &createdAtRaw, &updatedAtRaw); err != nil {
+	if err := row.Scan(&item.ID, &item.Name, &enabled, &item.Provider, &item.TopicPrefix, &item.TokenHash, &item.TokenHeader, &item.SignatureType, &item.SignatureSecret, &item.BodyLimitBytes, &createdAtRaw, &updatedAtRaw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.WebhookSource{}, false, nil
 		}
@@ -744,6 +752,11 @@ func (s *eventStore) UpsertWebhookSource(ctx context.Context, source domain.Webh
 	source.Provider = strings.TrimSpace(source.Provider)
 	source.TopicPrefix = strings.TrimSpace(source.TopicPrefix)
 	source.TokenHash = strings.TrimSpace(source.TokenHash)
+	tokenHeader, err := domain.NormalizeHTTPHeaderName(source.TokenHeader)
+	if err != nil {
+		return domain.WebhookSource{}, fmt.Errorf("webhook source token header is invalid: %w", err)
+	}
+	source.TokenHeader = tokenHeader
 	source.SignatureType = strings.TrimSpace(source.SignatureType)
 	source.SignatureSecret = strings.TrimSpace(source.SignatureSecret)
 	if source.ID == "" || source.TopicPrefix == "" {
@@ -770,10 +783,10 @@ func (s *eventStore) UpsertWebhookSource(ctx context.Context, source domain.Webh
 	if source.Enabled {
 		enabled = 1
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO webhook_source(id, name, enabled, provider, topic_prefix, token_hash, signature_type, signature_secret, body_limit_bytes, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO webhook_source(id, name, enabled, provider, topic_prefix, token_hash, token_header, signature_type, signature_secret, body_limit_bytes, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET name = excluded.name, enabled = excluded.enabled, provider = excluded.provider, topic_prefix = excluded.topic_prefix,
-			token_hash = excluded.token_hash, signature_type = excluded.signature_type, signature_secret = excluded.signature_secret,
+			token_hash = excluded.token_hash, token_header = excluded.token_header, signature_type = excluded.signature_type, signature_secret = excluded.signature_secret,
 			body_limit_bytes = excluded.body_limit_bytes, updated_at = excluded.updated_at`,
 		source.ID,
 		source.Name,
@@ -781,6 +794,7 @@ func (s *eventStore) UpsertWebhookSource(ctx context.Context, source domain.Webh
 		source.Provider,
 		source.TopicPrefix,
 		source.TokenHash,
+		source.TokenHeader,
 		source.SignatureType,
 		source.SignatureSecret,
 		source.BodyLimitBytes,

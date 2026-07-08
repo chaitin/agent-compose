@@ -52,17 +52,18 @@ type EventSessionJSON struct {
 }
 
 type SourceRequest struct {
-	Name            string `json:"name"`
-	Enabled         *bool  `json:"enabled,omitempty"`
-	Provider        string `json:"provider"`
-	TopicPrefix     string `json:"topic_prefix"`
-	Token           string `json:"token"`
-	TokenHash       string `json:"token_hash"`
-	ClearToken      bool   `json:"clear_token"`
-	SignatureType   string `json:"signature_type"`
-	SignatureSecret string `json:"signature_secret"`
-	ClearSignature  bool   `json:"clear_signature"`
-	BodyLimitBytes  int64  `json:"body_limit_bytes"`
+	Name            string  `json:"name"`
+	Enabled         *bool   `json:"enabled,omitempty"`
+	Provider        string  `json:"provider"`
+	TopicPrefix     string  `json:"topic_prefix"`
+	Token           string  `json:"token"`
+	TokenHash       string  `json:"token_hash"`
+	TokenHeader     *string `json:"token_header,omitempty"`
+	ClearToken      bool    `json:"clear_token"`
+	SignatureType   string  `json:"signature_type"`
+	SignatureSecret string  `json:"signature_secret"`
+	ClearSignature  bool    `json:"clear_signature"`
+	BodyLimitBytes  int64   `json:"body_limit_bytes"`
 }
 
 type SourceJSON struct {
@@ -72,6 +73,7 @@ type SourceJSON struct {
 	Provider           string `json:"provider"`
 	TopicPrefix        string `json:"topic_prefix"`
 	HasToken           bool   `json:"has_token"`
+	TokenHeader        string `json:"token_header,omitempty"`
 	SignatureType      string `json:"signature_type,omitempty"`
 	HasSignatureSecret bool   `json:"has_signature_secret"`
 	BodyLimitBytes     int64  `json:"body_limit_bytes,omitempty"`

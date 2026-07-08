@@ -289,10 +289,17 @@ func (h routeHandler) handlePutWebhookSource(c echo.Context) error {
 		enabled = *req.Enabled
 	}
 	tokenHash := strings.TrimSpace(req.TokenHash)
+	tokenHeader := ""
+	if req.TokenHeader != nil {
+		tokenHeader = strings.TrimSpace(*req.TokenHeader)
+	}
 	if existing, ok, err := h.store().GetWebhookSource(c.Request().Context(), sourceID); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load webhook source"})
 	} else if ok {
 		tokenHash = existing.TokenHash
+		if req.TokenHeader == nil {
+			tokenHeader = existing.TokenHeader
+		}
 		if strings.TrimSpace(req.SignatureType) == "" {
 			req.SignatureType = existing.SignatureType
 		}
@@ -316,6 +323,7 @@ func (h routeHandler) handlePutWebhookSource(c echo.Context) error {
 		Provider:        req.Provider,
 		TopicPrefix:     req.TopicPrefix,
 		TokenHash:       tokenHash,
+		TokenHeader:     tokenHeader,
 		SignatureType:   req.SignatureType,
 		SignatureSecret: req.SignatureSecret,
 		BodyLimitBytes:  req.BodyLimitBytes,
@@ -350,7 +358,7 @@ func (h routeHandler) authorizeWebhookRequest(c echo.Context, topic string) (dom
 	}
 	matches := make([]domain.WebhookSource, 0, 1)
 	for _, source := range sources {
-		if source.TokenHash != "" && ValidTokenHash(c.Request(), source.TokenHash) {
+		if source.TokenHash != "" && ValidTokenHash(c.Request(), source.TokenHash, source.TokenHeader) {
 			matches = append(matches, source)
 		}
 	}

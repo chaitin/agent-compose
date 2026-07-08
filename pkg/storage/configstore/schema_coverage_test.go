@@ -453,12 +453,12 @@ func testConfigStoreTopicEventCoverageWorkflows(t *testing.T) {
 
 	webhook, err := store.UpsertWebhookSource(ctx, domain.WebhookSource{
 		ID: "github", Name: "GitHub", Enabled: true, Provider: "github", TopicPrefix: "webhook.github.",
-		TokenHash: "hash", SignatureType: "hmac-sha256", SignatureSecret: "secret", BodyLimitBytes: 1024,
+		TokenHash: "hash", TokenHeader: "x-github-token", SignatureType: "hmac-sha256", SignatureSecret: "secret", BodyLimitBytes: 1024,
 	})
 	if err != nil {
 		t.Fatalf("UpsertWebhookSource returned error: %v", err)
 	}
-	if webhook.Name != "GitHub" {
+	if webhook.Name != "GitHub" || webhook.TokenHeader != "x-github-token" {
 		t.Fatalf("webhook source = %#v", webhook)
 	}
 	if !WebhookSourceTopicMatches("webhook.github.push", "webhook.github.") || WebhookSourceTopicMatches("", "webhook.github.") {
@@ -470,8 +470,11 @@ func testConfigStoreTopicEventCoverageWorkflows(t *testing.T) {
 	if sources, err := store.ListWebhookSources(ctx); err != nil || len(sources) != 1 {
 		t.Fatalf("ListWebhookSources sources=%#v err=%v", sources, err)
 	}
-	if got, found, err := store.GetWebhookSource(ctx, webhook.ID); err != nil || !found || got.ID != webhook.ID {
+	if got, found, err := store.GetWebhookSource(ctx, webhook.ID); err != nil || !found || got.ID != webhook.ID || got.TokenHeader != "x-github-token" {
 		t.Fatalf("GetWebhookSource got=%#v found=%v err=%v", got, found, err)
+	}
+	if _, err := store.UpsertWebhookSource(ctx, domain.WebhookSource{ID: "bad", TopicPrefix: "webhook.bad.", TokenHeader: "Bad Header"}); err == nil {
+		t.Fatalf("UpsertWebhookSource with invalid token header returned nil error")
 	}
 	if err := store.DeleteWebhookSource(ctx, webhook.ID); err != nil {
 		t.Fatalf("DeleteWebhookSource returned error: %v", err)

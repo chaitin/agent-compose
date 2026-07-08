@@ -15,7 +15,19 @@ import (
 	domain "agent-compose/pkg/model"
 )
 
-func PresentedToken(r *http.Request) string {
+func PresentedToken(r *http.Request, tokenHeader ...string) string {
+	headerName := ""
+	if len(tokenHeader) > 0 {
+		headerName = strings.TrimSpace(tokenHeader[0])
+	}
+	if headerName != "" {
+		presented := strings.TrimSpace(r.Header.Get(headerName))
+		if strings.EqualFold(headerName, "Authorization") && strings.HasPrefix(strings.ToLower(presented), "bearer ") {
+			return strings.TrimSpace(presented[len("bearer "):])
+		}
+		return presented
+	}
+
 	presented := ""
 	if auth := strings.TrimSpace(r.Header.Get("Authorization")); strings.HasPrefix(strings.ToLower(auth), "bearer ") {
 		presented = strings.TrimSpace(auth[len("bearer "):])
@@ -31,9 +43,9 @@ func TokenHash(token string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func ValidTokenHash(r *http.Request, hash string) bool {
+func ValidTokenHash(r *http.Request, hash string, tokenHeader ...string) bool {
 	hash = strings.TrimSpace(hash)
-	token := PresentedToken(r)
+	token := PresentedToken(r, tokenHeader...)
 	if hash == "" || token == "" {
 		return false
 	}

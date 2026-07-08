@@ -167,6 +167,75 @@ func TestWebhookHTTPRoutesCoverageWorkflow(t *testing.T) {
 	}
 }
 
+func TestWebhookHTTPRoutesCustomTokenHeader(t *testing.T) {
+	store := newWebhookRouteStore()
+	app := echo.New()
+	RegisterRoutes(app, RouteOptions{Store: store, WebhookBodyLimit: 1 << 20, NewEventID: func() string { return "event-custom" }})
+
+	req := httptest.NewRequest(http.MethodPut, "/api/webhook-sources/github", strings.NewReader(`{"name":"GitHub","enabled":true,"provider":"github","topic_prefix":"webhook.github.","token":"custom-token","token_header":"X-GitHub-Token"}`))
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT source status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/webhooks/webhook.github.push", strings.NewReader(`{"intent":"push"}`))
+	req.Header.Set("X-GitHub-Token", "custom-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("webhook with custom token header status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	for _, header := range []string{"Authorization", "X-WEBHOOK-TOKEN"} {
+		req = httptest.NewRequest(http.MethodPost, "/api/webhooks/webhook.github.push", strings.NewReader(`{"intent":"push"}`))
+		req.Header.Set(header, "custom-token")
+		if header == "Authorization" {
+			req.Header.Set(header, "Bearer custom-token")
+		}
+		req.Header.Set("Content-Type", "application/json")
+		rec = httptest.NewRecorder()
+		app.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("webhook with legacy header %s status=%d body=%s", header, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestWebhookHTTPRoutesLegacyTokenHeaderFallbacks(t *testing.T) {
+	for _, header := range []string{"Authorization", "X-WEBHOOK-TOKEN"} {
+		store := newWebhookRouteStore()
+		app := echo.New()
+		RegisterRoutes(app, RouteOptions{Store: store, WebhookBodyLimit: 1 << 20, NewEventID: func() string { return "event-legacy-" + header }})
+
+		req := httptest.NewRequest(http.MethodPost, "/api/webhooks/webhook.github.push", strings.NewReader(`{"intent":"push"}`))
+		req.Header.Set(header, "token")
+		if header == "Authorization" {
+			req.Header.Set(header, "Bearer token")
+		}
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("webhook with legacy header %s status=%d body=%s", header, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestWebhookHTTPRoutesRejectInvalidTokenHeader(t *testing.T) {
+	store := newWebhookRouteStore()
+	app := echo.New()
+	RegisterRoutes(app, RouteOptions{Store: store, WebhookBodyLimit: 1 << 20})
+
+	req := httptest.NewRequest(http.MethodPut, "/api/webhook-sources/github", strings.NewReader(`{"name":"GitHub","enabled":true,"provider":"github","topic_prefix":"webhook.github.","token":"custom-token","token_header":"Bad Header"}`))
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT source with invalid token header status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestIntegrationWebhookHTTPRoutesCoverageWorkflow(t *testing.T) {
 	TestWebhookHTTPRoutesCoverageWorkflow(t)
 }
@@ -260,6 +329,11 @@ func (s *webhookRouteStore) GetWebhookSource(_ context.Context, sourceID string)
 }
 
 func (s *webhookRouteStore) UpsertWebhookSource(_ context.Context, source domain.WebhookSource) (domain.WebhookSource, error) {
+	tokenHeader, err := domain.NormalizeHTTPHeaderName(source.TokenHeader)
+	if err != nil {
+		return domain.WebhookSource{}, err
+	}
+	source.TokenHeader = tokenHeader
 	s.sources[source.ID] = source
 	return source, nil
 }

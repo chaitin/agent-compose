@@ -29,6 +29,7 @@ const (
 )
 
 var topicEventNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+var httpHeaderNamePattern = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 
 type TopicEventRecord struct {
 	ID              string    `json:"event_id"`
@@ -74,6 +75,7 @@ type WebhookSource struct {
 	Provider        string    `json:"provider"`
 	TopicPrefix     string    `json:"topic_prefix"`
 	TokenHash       string    `json:"token_hash,omitempty"`
+	TokenHeader     string    `json:"token_header,omitempty"`
 	SignatureType   string    `json:"signature_type,omitempty"`
 	SignatureSecret string    `json:"signature_secret,omitempty"`
 	BodyLimitBytes  int64     `json:"body_limit_bytes,omitempty"`
@@ -126,6 +128,17 @@ func ValidateTopicEventName(topic string) error {
 		return fmt.Errorf("topic contains invalid characters")
 	}
 	return nil
+}
+
+func NormalizeHTTPHeaderName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+	if !httpHeaderNamePattern.MatchString(name) {
+		return "", fmt.Errorf("header name contains invalid characters")
+	}
+	return name, nil
 }
 
 func NormalizeTopicEventSource(source string) string {

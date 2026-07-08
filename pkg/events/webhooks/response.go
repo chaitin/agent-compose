@@ -16,6 +16,7 @@ func SourceToJSON(source domain.WebhookSource) SourceJSON {
 		Provider:           source.Provider,
 		TopicPrefix:        source.TopicPrefix,
 		HasToken:           strings.TrimSpace(source.TokenHash) != "",
+		TokenHeader:        source.TokenHeader,
 		SignatureType:      source.SignatureType,
 		HasSignatureSecret: strings.TrimSpace(source.SignatureSecret) != "",
 		BodyLimitBytes:     source.BodyLimitBytes,
