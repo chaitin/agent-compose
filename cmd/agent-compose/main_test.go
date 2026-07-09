@@ -1128,7 +1128,7 @@ agents:
 							Changes: []*agentcomposev2.ProjectChange{
 								{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_REMOVED, ResourceType: "project", ResourceId: "project-down", Name: "cli-down-demo", Message: "removed by project down"},
 								{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED, ResourceType: "project_scheduler", ResourceId: "scheduler-reviewer", Name: "reviewer", Message: "disabled by project down"},
-								{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED, ResourceType: "session", ResourceId: "session-1", Name: "reviewer run", Message: "stopped by project down"},
+								{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED, ResourceType: "sandbox", ResourceId: "session-1", Name: "reviewer run", Message: "stopped by project down"},
 							},
 						}), nil
 					}
@@ -1173,7 +1173,7 @@ agents:
 					return connect.NewResponse(&agentcomposev2.RemoveProjectResponse{
 						Project: testCLIProject("project-down", "cli-down-demo", "compose.yml"),
 						Changes: []*agentcomposev2.ProjectChange{
-							{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED, ResourceType: "session", ResourceId: "session-1", Name: "reviewer run", Message: "stopped by project down"},
+							{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED, ResourceType: "sandbox", ResourceId: "session-1", Name: "reviewer run", Message: "stopped by project down"},
 						},
 					}), nil
 				},
@@ -1197,11 +1197,11 @@ agents:
 			"    \"scheduler_count\": 1\n" +
 			"  },\n" +
 			"  \"status\": \"down\",\n" +
-			"  \"failed_session_stops\": 0,\n" +
+			"  \"failed_sandbox_stops\": 0,\n" +
 			"  \"changes\": [\n" +
 			"    {\n" +
 			"      \"action\": \"updated\",\n" +
-			"      \"resource_type\": \"session\",\n" +
+			"      \"resource_type\": \"sandbox\",\n" +
 			"      \"id\": \"session-1\",\n" +
 			"      \"short_id\": \"session-1\",\n" +
 			"      \"name\": \"reviewer run\",\n" +
@@ -1220,8 +1220,8 @@ agents:
 					return connect.NewResponse(&agentcomposev2.RemoveProjectResponse{
 						Project: testCLIProject("project-down", "cli-down-demo", "compose.yml"),
 						Changes: []*agentcomposev2.ProjectChange{
-							{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED, ResourceType: "session", ResourceId: "session-ok", Name: "reviewer ok", Message: "stopped by project down"},
-							{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED, ResourceType: "session", ResourceId: "session-failed", Name: "reviewer failed", Message: "failed to stop by project down: forced stop failure"},
+							{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED, ResourceType: "sandbox", ResourceId: "session-ok", Name: "reviewer ok", Message: "stopped by project down"},
+							{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED, ResourceType: "sandbox", ResourceId: "session-failed", Name: "reviewer failed", Message: "failed to stop by project down: forced stop failure"},
 						},
 					}), nil
 				},
@@ -6207,14 +6207,14 @@ func TestCLIOutputHelpersCoverEdgeBranches(t *testing.T) {
 		Project: project,
 		Changes: []*agentcomposev2.ProjectChange{{
 			Action:       agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED,
-			ResourceType: "session",
+			ResourceType: "sandbox",
 			ResourceId:   "sandbox-1",
 			Name:         "sandbox-1",
 			Message:      "stop failed",
 		}},
 	}
 	down := composeDownOutputFromResponse(removeResp)
-	if down.Status != "partial-failure" || down.FailedSessionStops != 1 {
+	if down.Status != "partial-failure" || down.FailedSandboxStops != 1 {
 		t.Fatalf("composeDownOutputFromResponse = %#v", down)
 	}
 	text.Reset()

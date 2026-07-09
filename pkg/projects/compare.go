@@ -8,7 +8,7 @@ import (
 	domain "agent-compose/pkg/model"
 )
 
-func SameSessionEnvItems(a, b []domain.SandboxEnvVar) bool {
+func SameSandboxEnvItems(a, b []domain.SandboxEnvVar) bool {
 	a = domain.NormalizeEnvItems(a)
 	b = domain.NormalizeEnvItems(b)
 	if len(a) != len(b) {
@@ -82,7 +82,7 @@ func ManagedAgentDefinitionUnchanged(existing, current domain.AgentDefinition) b
 		existing.GuestImage == current.GuestImage &&
 		existing.WorkspaceID == current.WorkspaceID &&
 		existing.ConfigJSON == current.ConfigJSON &&
-		SameSessionEnvItems(existing.EnvItems, current.EnvItems) &&
+		SameSandboxEnvItems(existing.EnvItems, current.EnvItems) &&
 		SameCapsetIDs(existing.CapsetIDs, current.CapsetIDs) &&
 		existing.ManagedProjectID == current.ManagedProjectID &&
 		existing.ManagedProjectRevision == current.ManagedProjectRevision &&
@@ -114,7 +114,7 @@ func ManagedLoaderUnchanged(existing, current domain.Loader) bool {
 		existing.Summary.ManagedAgentName == current.Summary.ManagedAgentName &&
 		existing.Summary.ManagedSchedulerID == current.Summary.ManagedSchedulerID &&
 		existing.Script == current.Script &&
-		SameSessionEnvItems(existing.EnvItems, current.EnvItems) &&
+		SameSandboxEnvItems(existing.EnvItems, current.EnvItems) &&
 		SameCapsetIDs(existing.Summary.CapsetIDs, current.Summary.CapsetIDs) &&
 		SameLoaderTriggerSpecs(existing.Triggers, current.Triggers)
 }

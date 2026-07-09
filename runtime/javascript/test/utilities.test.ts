@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import * as runtimeIndex from "../src/index.js";
-import { COMMAND_RESULT_PREFIX, RESULT_PREFIX, SESSION_ROOT } from "../src/constants.js";
+import { COMMAND_RESULT_PREFIX, RESULT_PREFIX, SANDBOX_ROOT } from "../src/constants.js";
 import { ensureDir, isExecutable, readText } from "../src/fs.js";
 import { formatError } from "../src/errors.js";
 import { stringEnv } from "../src/env.js";
@@ -13,14 +13,14 @@ import { withTempSession } from "./helpers.js";
 describe("utility modules", () => {
   it("exports the public runtime helpers from the package entrypoint", () => {
     expect(runtimeIndex.RESULT_PREFIX).toBe(RESULT_PREFIX);
-    expect(runtimeIndex.SESSION_ROOT).toBe(SESSION_ROOT);
+    expect(runtimeIndex.SANDBOX_ROOT).toBe(SANDBOX_ROOT);
     expect(runtimeIndex.runtimeRootForStateRoot("/tmp/state")).toBe(path.join("/tmp", "runtime"));
     expect(runtimeIndex.uniqueDirectories(["/a", "/a", undefined, "/b"])).toEqual(["/a", "/b"]);
     expect(runtimeIndex.normalizeProvider("claude-code")).toBe("claude");
   });
 
   it("keeps runtime protocol constants stable", () => {
-    expect(SESSION_ROOT).toBe("/srv/agent-compose/session");
+    expect(SANDBOX_ROOT).toBe("/srv/agent-compose/sandbox");
     expect(RESULT_PREFIX).toBe("__AGENT_RESULT__");
     expect(COMMAND_RESULT_PREFIX).toBe("__COMMAND_RESULT__");
   });

@@ -11,7 +11,7 @@ import (
 
 func TestAggregatorAndHubWorkflows(t *testing.T) {
 	ctx := context.Background()
-	store := dashboardSessionStore{sessions: []*domain.Sandbox{
+	store := dashboardSandboxStore{sessions: []*domain.Sandbox{
 		{Summary: domain.SandboxSummary{ID: "pending", VMStatus: domain.VMStatusPending}},
 		{Summary: domain.SandboxSummary{ID: "failed", VMStatus: domain.VMStatusFailed}},
 	}}
@@ -68,11 +68,11 @@ func TestAggregatorAndHubWorkflows(t *testing.T) {
 }
 
 func TestAggregatorReturnsStoreErrors(t *testing.T) {
-	_, err := NewAggregator(dashboardSessionStore{err: errors.New("sessions")}, dashboardRunStore{}).Build(context.Background())
+	_, err := NewAggregator(dashboardSandboxStore{err: errors.New("sessions")}, dashboardRunStore{}).Build(context.Background())
 	if err == nil {
 		t.Fatalf("expected session store error")
 	}
-	_, err = NewAggregator(dashboardSessionStore{}, dashboardRunStore{err: errors.New("runs")}).Build(context.Background())
+	_, err = NewAggregator(dashboardSandboxStore{}, dashboardRunStore{err: errors.New("runs")}).Build(context.Background())
 	if err == nil {
 		t.Fatalf("expected run store error")
 	}
@@ -87,12 +87,12 @@ func TestE2EDashboardOverviewWorkflows(t *testing.T) {
 	TestIntegrationDashboardOverviewWorkflows(t)
 }
 
-type dashboardSessionStore struct {
+type dashboardSandboxStore struct {
 	sessions []*domain.Sandbox
 	err      error
 }
 
-func (s dashboardSessionStore) ListSandboxes(context.Context, domain.SandboxListOptions) (domain.SandboxListResult, error) {
+func (s dashboardSandboxStore) ListSandboxes(context.Context, domain.SandboxListOptions) (domain.SandboxListResult, error) {
 	return domain.SandboxListResult{Sandboxes: s.sessions}, s.err
 }
 

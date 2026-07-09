@@ -384,7 +384,7 @@ func (h *AgentDefinitionHandler) stopAgentSessions(ctx context.Context, agentID 
 				return err
 			}
 		case domain.VMStatusPending:
-			if err := h.markAgentSessionStopped(ctx, session); err != nil {
+			if err := h.markAgentSandboxStopped(ctx, session); err != nil {
 				return connect.NewError(connect.CodeInternal, err)
 			}
 		}
@@ -392,7 +392,7 @@ func (h *AgentDefinitionHandler) stopAgentSessions(ctx context.Context, agentID 
 	return nil
 }
 
-func (h *AgentDefinitionHandler) markAgentSessionStopped(ctx context.Context, session *domain.Sandbox) error {
+func (h *AgentDefinitionHandler) markAgentSandboxStopped(ctx context.Context, session *domain.Sandbox) error {
 	if session == nil {
 		return nil
 	}

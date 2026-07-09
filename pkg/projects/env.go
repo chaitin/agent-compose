@@ -7,7 +7,7 @@ import (
 	domain "agent-compose/pkg/model"
 )
 
-func SessionEnvItemsFromCompose(values map[string]compose.EnvVarSpec) []domain.SandboxEnvVar {
+func SandboxEnvItemsFromCompose(values map[string]compose.EnvVarSpec) []domain.SandboxEnvVar {
 	names := make([]string, 0, len(values))
 	for name := range values {
 		names = append(names, name)

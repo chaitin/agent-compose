@@ -35,7 +35,7 @@ func WriteAgentPromptFile(config *appconfig.Config, session *domain.Sandbox, age
 }
 
 // WriteAgentSystemPromptFile materializes agent identity for the guest runtime at a
-// fixed convention path under the session state tree.
+// fixed convention path under the sandbox state tree.
 func WriteAgentSystemPromptFile(session *domain.Sandbox, systemPrompt string) error {
 	systemPrompt = strings.TrimSpace(systemPrompt)
 	hostPath := HostAgentSystemPromptPath(session)
@@ -43,7 +43,7 @@ func WriteAgentSystemPromptFile(session *domain.Sandbox, systemPrompt string) er
 		if systemPrompt == "" {
 			return nil
 		}
-		return fmt.Errorf("session workspace path is required to write agent system prompt")
+		return fmt.Errorf("sandbox workspace path is required to write agent system prompt")
 	}
 	if systemPrompt == "" {
 		if err := os.Remove(hostPath); err != nil && !os.IsNotExist(err) {

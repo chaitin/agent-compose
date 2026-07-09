@@ -26,16 +26,16 @@ type DownStore interface {
 	SetProjectSchedulerEnabled(ctx context.Context, projectID, schedulerID string, enabled bool) (domain.ProjectSchedulerRecord, error)
 }
 
-type DownSessionStore interface {
+type DownSandboxStore interface {
 	ListSandboxes(ctx context.Context, options domain.SandboxListOptions) (domain.SandboxListResult, error)
 }
 
 type DownOptions struct {
 	Store                DownStore
-	Sessions             DownSessionStore
+	Sandboxes            DownSandboxStore
 	DisableManagedLoader func(ctx context.Context, loaderID, projectID, schedulerID string) error
 	RefreshLoaders       func(ctx context.Context) error
-	StopSession          func(ctx context.Context, session *domain.Sandbox) error
+	StopSandbox          func(ctx context.Context, sandbox *domain.Sandbox) error
 }
 
 func DownProject(ctx context.Context, project domain.ProjectRecord, options DownOptions) ([]DownChange, error) {
@@ -45,11 +45,11 @@ func DownProject(ctx context.Context, project domain.ProjectRecord, options Down
 		return changes, err
 	}
 	changes = append(changes, schedulerChanges...)
-	sessionChanges, err := StopProjectRunningSessions(ctx, project, options)
+	sandboxChanges, err := StopProjectRunningSandboxes(ctx, project, options)
 	if err != nil {
 		return changes, err
 	}
-	changes = append(changes, sessionChanges...)
+	changes = append(changes, sandboxChanges...)
 	return changes, nil
 }
 
@@ -100,50 +100,50 @@ func DisableProjectManagedSchedulers(ctx context.Context, project domain.Project
 	return changes, nil
 }
 
-func StopProjectRunningSessions(ctx context.Context, project domain.ProjectRecord, options DownOptions) ([]DownChange, error) {
-	if options.Sessions == nil {
-		return nil, fmt.Errorf("session store is required")
+func StopProjectRunningSandboxes(ctx context.Context, project domain.ProjectRecord, options DownOptions) ([]DownChange, error) {
+	if options.Sandboxes == nil {
+		return nil, fmt.Errorf("sandbox store is required")
 	}
-	result, err := options.Sessions.ListSandboxes(ctx, domain.SandboxListOptions{VMStatus: domain.VMStatusRunning, Limit: 1 << 30})
+	result, err := options.Sandboxes.ListSandboxes(ctx, domain.SandboxListOptions{VMStatus: domain.VMStatusRunning, Limit: 1 << 30})
 	if err != nil {
-		return nil, fmt.Errorf("list running sessions for project down %s: %w", project.Name, err)
+		return nil, fmt.Errorf("list running sandboxes for project down %s: %w", project.Name, err)
 	}
 	var changes []DownChange
-	for _, session := range result.Sandboxes {
-		if !SessionHasTag(session, "project", project.ID) {
+	for _, sandbox := range result.Sandboxes {
+		if !SandboxHasTag(sandbox, "project", project.ID) {
 			continue
 		}
-		if options.StopSession == nil {
-			return changes, fmt.Errorf("session stopper is required")
+		if options.StopSandbox == nil {
+			return changes, fmt.Errorf("sandbox stopper is required")
 		}
-		if err := options.StopSession(ctx, session); err != nil {
+		if err := options.StopSandbox(ctx, sandbox); err != nil {
 			changes = append(changes, DownChange{
 				Action:       DownChangeUnchanged,
-				ResourceType: "session",
-				ResourceID:   session.Summary.ID,
-				Name:         session.Summary.Title,
+				ResourceType: "sandbox",
+				ResourceID:   sandbox.Summary.ID,
+				Name:         sandbox.Summary.Title,
 				Message:      fmt.Sprintf("failed to stop by project down: %v", err),
 			})
 			continue
 		}
 		changes = append(changes, DownChange{
 			Action:       DownChangeUpdated,
-			ResourceType: "session",
-			ResourceID:   session.Summary.ID,
-			Name:         session.Summary.Title,
+			ResourceType: "sandbox",
+			ResourceID:   sandbox.Summary.ID,
+			Name:         sandbox.Summary.Title,
 			Message:      "stopped by project down",
 		})
 	}
 	return changes, nil
 }
 
-func SessionHasTag(session *domain.Sandbox, name, value string) bool {
-	if session == nil {
+func SandboxHasTag(sandbox *domain.Sandbox, name, value string) bool {
+	if sandbox == nil {
 		return false
 	}
 	name = strings.TrimSpace(name)
 	value = strings.TrimSpace(value)
-	for _, tag := range session.Summary.Tags {
+	for _, tag := range sandbox.Summary.Tags {
 		if strings.TrimSpace(tag.Name) == name && strings.TrimSpace(tag.Value) == value {
 			return true
 		}

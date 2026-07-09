@@ -100,9 +100,9 @@ func TestControllerRemoveProjectMarksProjectRemovedAndIsIdempotent(t *testing.T)
 	}
 	volumeManager := &controllerCoverageVolumeManager{}
 	controller := NewController(ControllerDependencies{
-		Store:    store,
-		Sessions: controllerCoverageSessionStore{},
-		Volumes:  volumeManager,
+		Store:     store,
+		Sandboxes: controllerCoverageSessionStore{},
+		Volumes:   volumeManager,
 	})
 	removed, err := controller.RemoveProject(ctx, RemoveRequest{Project: ProjectRef{ProjectID: "project-1"}})
 	if err != nil {
@@ -156,7 +156,7 @@ func TestManagedSchedulerErrorHelpersCoverage(t *testing.T) {
 	cleanupFailedManagedScheduler(context.Background(), ReconcileSchedulerOptions{}, domain.ProjectSchedulerRecord{}, "")
 }
 
-func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
+func TestDownProjectSandboxAndSchedulerWorkflows(t *testing.T) {
 	ctx := context.Background()
 	project := domain.ProjectRecord{ID: "project-1", Name: "Down Project"}
 	schedulerStore := &downCoverageStore{items: []domain.ProjectSchedulerRecord{
@@ -172,8 +172,8 @@ func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
 	stopped := make([]string, 0)
 	refreshed := false
 	changes, err := DownProject(ctx, project, DownOptions{
-		Store:    schedulerStore,
-		Sessions: sessionStore,
+		Store:     schedulerStore,
+		Sandboxes: sessionStore,
 		DisableManagedLoader: func(_ context.Context, loaderID, projectID, schedulerID string) error {
 			if loaderID != "loader-1" || projectID != project.ID || schedulerID != "scheduler-1" {
 				t.Fatalf("DisableManagedLoader args = %q/%q/%q", loaderID, projectID, schedulerID)
@@ -184,7 +184,7 @@ func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
 			refreshed = true
 			return nil
 		},
-		StopSession: func(_ context.Context, session *domain.Sandbox) error {
+		StopSandbox: func(_ context.Context, session *domain.Sandbox) error {
 			stopped = append(stopped, session.Summary.ID)
 			if session.Summary.ID == "session-fail" {
 				return errors.New("stop failed")
@@ -200,10 +200,10 @@ func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
 	}
 	assertDownChange(t, changes, DownChangeUpdated, "project_scheduler", "scheduler-1")
 	assertDownChange(t, changes, DownChangeUpdated, "loader", "loader-1")
-	assertDownChange(t, changes, DownChangeUnchanged, "session", "session-fail")
-	assertDownChange(t, changes, DownChangeUpdated, "session", "session-ok")
-	if SessionHasTag(nil, "project", project.ID) || !SessionHasTag(sessionStore.sessions[2], "project", project.ID) {
-		t.Fatalf("SessionHasTag returned unexpected values")
+	assertDownChange(t, changes, DownChangeUnchanged, "sandbox", "session-fail")
+	assertDownChange(t, changes, DownChangeUpdated, "sandbox", "session-ok")
+	if SandboxHasTag(nil, "project", project.ID) || !SandboxHasTag(sessionStore.sessions[2], "project", project.ID) {
+		t.Fatalf("SandboxHasTag returned unexpected values")
 	}
 
 	if _, err := DisableProjectManagedSchedulers(ctx, project, DownOptions{}); err == nil {
@@ -228,25 +228,25 @@ func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
 	}); err == nil {
 		t.Fatalf("DisableProjectManagedSchedulers refresh error returned nil error")
 	}
-	if _, err := StopProjectRunningSessions(ctx, project, DownOptions{}); err == nil {
-		t.Fatalf("StopProjectRunningSessions without sessions returned nil error")
+	if _, err := StopProjectRunningSandboxes(ctx, project, DownOptions{}); err == nil {
+		t.Fatalf("StopProjectRunningSandboxes without sandboxes returned nil error")
 	}
-	if _, err := StopProjectRunningSessions(ctx, project, DownOptions{Sessions: downCoverageSessions{err: errors.New("list failed")}}); err == nil {
-		t.Fatalf("StopProjectRunningSessions list error returned nil error")
+	if _, err := StopProjectRunningSandboxes(ctx, project, DownOptions{Sandboxes: downCoverageSessions{err: errors.New("list failed")}}); err == nil {
+		t.Fatalf("StopProjectRunningSandboxes list error returned nil error")
 	}
-	if _, err := StopProjectRunningSessions(ctx, project, DownOptions{Sessions: downCoverageSessions{sessions: []*domain.Sandbox{{Summary: domain.SandboxSummary{ID: "session-1", Tags: []domain.SandboxTag{{Name: "project", Value: project.ID}}}}}}}); err == nil {
-		t.Fatalf("StopProjectRunningSessions without stopper returned nil error")
+	if _, err := StopProjectRunningSandboxes(ctx, project, DownOptions{Sandboxes: downCoverageSessions{sessions: []*domain.Sandbox{{Summary: domain.SandboxSummary{ID: "session-1", Tags: []domain.SandboxTag{{Name: "project", Value: project.ID}}}}}}}); err == nil {
+		t.Fatalf("StopProjectRunningSandboxes without stopper returned nil error")
 	}
 }
 
 func TestIntegrationControllerValidateApplyDryRunAndResolveWorkflows(t *testing.T) {
 	TestControllerValidateApplyDryRunAndResolveWorkflows(t)
-	TestDownProjectSessionAndSchedulerWorkflows(t)
+	TestDownProjectSandboxAndSchedulerWorkflows(t)
 }
 
 func TestE2EControllerValidateApplyDryRunAndResolveWorkflows(t *testing.T) {
 	TestControllerValidateApplyDryRunAndResolveWorkflows(t)
-	TestDownProjectSessionAndSchedulerWorkflows(t)
+	TestDownProjectSandboxAndSchedulerWorkflows(t)
 }
 
 type controllerCoverageLoaderValidator struct{}

@@ -33,13 +33,13 @@ func NewProjectController(di do.Injector) (*projects.Controller, error) {
 	sandboxDriver := do.MustInvoke[*adapters.SandboxDriver](di)
 	streams := do.MustInvoke[*sessionstream.StreamBroker](di)
 	return projects.NewController(projects.ControllerDependencies{
-		Config:   do.MustInvoke[*appconfig.Config](di),
-		Store:    do.MustInvoke[*configstore.ConfigStore](di),
-		Sessions: sessionStore,
-		Images:   imageBackends.Auto,
-		Loaders:  do.MustInvoke[*loaders.Controller](di),
-		Volumes:  do.MustInvoke[*volumes.Manager](di),
-		StopSession: func(ctx context.Context, session *domain.Sandbox) error {
+		Config:    do.MustInvoke[*appconfig.Config](di),
+		Store:     do.MustInvoke[*configstore.ConfigStore](di),
+		Sandboxes: sessionStore,
+		Images:    imageBackends.Auto,
+		Loaders:   do.MustInvoke[*loaders.Controller](di),
+		Volumes:   do.MustInvoke[*volumes.Manager](di),
+		StopSandbox: func(ctx context.Context, session *domain.Sandbox) error {
 			return stopProjectSandbox(ctx, sessionStore, sandboxDriver, streams, session)
 		},
 	}), nil

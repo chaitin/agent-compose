@@ -20,7 +20,7 @@ type RuntimeLLMTokenStore interface {
 	GetLLMFacadeToken(context.Context, string) (llms.FacadeToken, error)
 }
 
-type RuntimeLLMSessionStore interface {
+type RuntimeLLMSandboxStore interface {
 	GetSandbox(context.Context, string) (*domain.Sandbox, error)
 }
 
@@ -32,7 +32,7 @@ type HTTPDoer interface {
 
 type RuntimeLLMOptions struct {
 	Tokens        RuntimeLLMTokenStore
-	Sessions      RuntimeLLMSessionStore
+	Sandboxes     RuntimeLLMSandboxStore
 	ResolveTarget RuntimeLLMTargetResolver
 	Client        HTTPDoer
 }
@@ -61,7 +61,7 @@ func (h runtimeLLMHandler) handleAnthropicMessages(c echo.Context) error {
 }
 
 func (h runtimeLLMHandler) handle(c echo.Context, inboundProtocol protocolbridge.Protocol, facadeWireAPI string) error {
-	if h.opts.Tokens == nil || h.opts.Sessions == nil || h.opts.ResolveTarget == nil {
+	if h.opts.Tokens == nil || h.opts.Sandboxes == nil || h.opts.ResolveTarget == nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "llm facade dependencies are required"})
 	}
 	sandboxID := strings.TrimSpace(c.Param("sandbox_id"))
@@ -80,7 +80,7 @@ func (h runtimeLLMHandler) handle(c echo.Context, inboundProtocol protocolbridge
 	if token.WireAPI != "" && llms.NormalizeWireAPI(token.WireAPI) != llms.NormalizeWireAPI(facadeWireAPI) {
 		return c.JSON(http.StatusForbidden, map[string]string{"error": "llm facade token wire api mismatch"})
 	}
-	session, err := h.opts.Sessions.GetSandbox(c.Request().Context(), sandboxID)
+	session, err := h.opts.Sandboxes.GetSandbox(c.Request().Context(), sandboxID)
 	if err != nil {
 		return c.JSON(http.StatusForbidden, map[string]string{"error": "sandbox is not available"})
 	}

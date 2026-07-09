@@ -35,8 +35,8 @@ func TestCommandAndEventHelperWorkflows(t *testing.T) {
 	if !CommandRequestRequiresCleanup(loader, domain.LoaderCommandRequest{SandboxPolicy: domain.LoaderSandboxPolicyNew}) {
 		t.Fatalf("new policy should require cleanup")
 	}
-	if !CommandRequestOverridesSession(domain.LoaderCommandRequest{Driver: "docker"}) ||
-		!CommandRequestOverridesSession(domain.LoaderCommandRequest{SandboxEnv: []domain.SandboxEnvVar{{Name: "A", Value: "B"}}}) {
+	if !CommandRequestOverridesSandbox(domain.LoaderCommandRequest{Driver: "docker"}) ||
+		!CommandRequestOverridesSandbox(domain.LoaderCommandRequest{SandboxEnv: []domain.SandboxEnvVar{{Name: "A", Value: "B"}}}) {
 		t.Fatalf("expected sandbox override detection")
 	}
 

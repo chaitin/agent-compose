@@ -1350,10 +1350,10 @@ func runComposeDownCommand(cmd *cobra.Command, cli cliOptions) error {
 	} else if err := writeComposeDownText(cmd.OutOrStdout(), composeDownDisplayChanges(resp.Msg, normalized)); err != nil {
 		return err
 	}
-	if output.FailedSessionStops > 0 {
+	if output.FailedSandboxStops > 0 {
 		return commandExitError{
 			Code: exitCodeGeneral,
-			Err:  fmt.Errorf("down project %s completed with %d sandbox stop failure(s)", normalized.Name, output.FailedSessionStops),
+			Err:  fmt.Errorf("down project %s completed with %d sandbox stop failure(s)", normalized.Name, output.FailedSandboxStops),
 		}
 	}
 	return nil
@@ -3824,7 +3824,7 @@ type composeUpOutput struct {
 type composeDownOutput struct {
 	Project            composeUpProjectOutput  `json:"project"`
 	Status             string                  `json:"status"`
-	FailedSessionStops uint32                  `json:"failed_session_stops"`
+	FailedSandboxStops uint32                  `json:"failed_sandbox_stops"`
 	Changes            []composeUpChangeOutput `json:"changes"`
 }
 
@@ -4330,18 +4330,18 @@ func composeUpOutputFromResponse(resp *agentcomposev2.ApplyProjectResponse) comp
 
 func composeDownOutputFromResponse(resp *agentcomposev2.RemoveProjectResponse) composeDownOutput {
 	changes := composeChangeOutputs(resp.GetChanges())
-	failedSessionStops := countProjectDownFailedSessionStops(resp.GetChanges())
+	failedSandboxStops := countProjectDownFailedSandboxStops(resp.GetChanges())
 	status := "down"
 	if len(changes) == 0 {
 		status = "unchanged"
 	}
-	if failedSessionStops > 0 {
+	if failedSandboxStops > 0 {
 		status = "partial-failure"
 	}
 	return composeDownOutput{
 		Project:            composeProjectSummaryOutput(resp.GetProject().GetSummary()),
 		Status:             status,
-		FailedSessionStops: uint32(failedSessionStops),
+		FailedSandboxStops: uint32(failedSandboxStops),
 		Changes:            changes,
 	}
 }
@@ -4651,11 +4651,11 @@ func composeDisplayResourceType(resourceType string) string {
 	}
 }
 
-func countProjectDownFailedSessionStops(changes []*agentcomposev2.ProjectChange) int {
+func countProjectDownFailedSandboxStops(changes []*agentcomposev2.ProjectChange) int {
 	count := 0
 	for _, change := range changes {
 		if change.GetAction() == agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED &&
-			change.GetResourceType() == "session" &&
+			change.GetResourceType() == "sandbox" &&
 			strings.TrimSpace(change.GetMessage()) != "" {
 			count++
 		}

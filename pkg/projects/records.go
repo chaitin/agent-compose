@@ -113,7 +113,7 @@ func NewAgentDefinitionFromSpec(project domain.ProjectRecord, revision int64, ag
 		SystemPrompt:           agent.SystemPrompt,
 		Driver:                 driver,
 		GuestImage:             agent.Image,
-		EnvItems:               SessionEnvItemsFromCompose(agent.Env),
+		EnvItems:               SandboxEnvItemsFromCompose(agent.Env),
 		Volumes:                VolumeMountSpecsFromCompose(agent.Volumes),
 		ConfigJSON:             configJSON,
 		CapsetIDs:              capabilities.NormalizeCapsetIDs(agent.CapsetIDs),
@@ -176,7 +176,7 @@ func NewManagedLoaderFromScheduler(project domain.ProjectRecord, scheduler domai
 		},
 		Script:   script,
 		Triggers: triggers,
-		EnvItems: SessionEnvItemsFromCompose(agent.Env),
+		EnvItems: SandboxEnvItemsFromCompose(agent.Env),
 		Volumes:  VolumeMountSpecsFromCompose(agent.Volumes),
 	}, nil
 }

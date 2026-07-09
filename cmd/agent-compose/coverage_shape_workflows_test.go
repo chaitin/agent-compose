@@ -147,8 +147,8 @@ func testComposeProjectPureHelpers(t *testing.T) {
 		{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED, ResourceType: "agent", ResourceId: "agent-1", Name: "worker"},
 		{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED, ResourceType: "project_scheduler", ResourceId: "scheduler-1", Name: "worker"},
 		{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED, ResourceType: "loader", ResourceId: "loader-1", Name: "worker scheduler"},
-		{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_REMOVED, ResourceType: "session", ResourceId: "session-1", Name: "old"},
-		{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED, ResourceType: "session", ResourceId: "session-2", Message: "stop failed"},
+		{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_REMOVED, ResourceType: "sandbox", ResourceId: "session-1", Name: "old"},
+		{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNCHANGED, ResourceType: "sandbox", ResourceId: "session-2", Message: "stop failed"},
 	}
 	displaySpec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{{
 		Name: "worker",
@@ -192,7 +192,7 @@ func testComposeProjectPureHelpers(t *testing.T) {
 		Changes: changes,
 	}
 	downOutput := composeDownOutputFromResponse(downResp)
-	if downOutput.Status != "partial-failure" || downOutput.FailedSessionStops != 1 || len(composeChangeOutputs(changes)) != len(changes) {
+	if downOutput.Status != "partial-failure" || downOutput.FailedSandboxStops != 1 || len(composeChangeOutputs(changes)) != len(changes) {
 		t.Fatalf("composeDownOutputFromResponse = %#v", downOutput)
 	}
 	out.Reset()
@@ -230,7 +230,7 @@ func testComposeProjectPureHelpers(t *testing.T) {
 		t.Fatalf("unchanged down output = %#v", unchangedDown)
 	}
 	if projectChangeActionText(agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UNSPECIFIED) != "unspecified" ||
-		countProjectDownFailedSessionStops(changes) != 1 {
+		countProjectDownFailedSandboxStops(changes) != 1 {
 		t.Fatalf("project change helpers returned unexpected values")
 	}
 	_ = domain.SandboxSummary{ID: "compile-check"}

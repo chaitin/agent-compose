@@ -247,7 +247,7 @@ func NewVolumeManager(di do.Injector) (*volumes.Manager, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
 	store := do.MustInvoke[*configstore.ConfigStore](di)
 	manager := volumes.NewManager(store, volumes.NewLocalDriver(config))
-	manager.Sessions = do.MustInvoke[*sessionstore.Store](di)
+	manager.Sandboxes = do.MustInvoke[*sessionstore.Store](di)
 	return manager, nil
 }
 
@@ -413,8 +413,8 @@ func registerRuntimeLLMFacadeRoutes(app *echo.Echo, di do.Injector) {
 	config := do.MustInvoke[*appconfig.Config](di)
 	configDB := do.MustInvoke[*configstore.ConfigStore](di)
 	proxy.RegisterRuntimeLLMFacadeRoutes(app, proxy.RuntimeLLMOptions{
-		Tokens:   configDB,
-		Sessions: do.MustInvoke[*sessionstore.Store](di),
+		Tokens:    configDB,
+		Sandboxes: do.MustInvoke[*sessionstore.Store](di),
 		ResolveTarget: func(ctx context.Context, requestedModel, providerID string) (llms.ResolvedTarget, error) {
 			return llms.ResolveRuntimeLLMTarget(ctx, config, configDB, requestedModel, providerID)
 		},

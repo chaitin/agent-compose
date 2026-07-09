@@ -36,10 +36,10 @@ func CommandRequestRequiresCleanup(loader domain.Loader, request domain.LoaderCo
 	if strings.TrimSpace(domain.LoaderCommandSandboxPolicy(request)) != "" {
 		effectivePolicy = domain.NormalizeLoaderSandboxPolicy(domain.LoaderCommandSandboxPolicy(request))
 	}
-	return effectivePolicy == domain.LoaderSandboxPolicyNew || CommandRequestOverridesSession(request)
+	return effectivePolicy == domain.LoaderSandboxPolicyNew || CommandRequestOverridesSandbox(request)
 }
 
-func CommandRequestOverridesSession(request domain.LoaderCommandRequest) bool {
+func CommandRequestOverridesSandbox(request domain.LoaderCommandRequest) bool {
 	return strings.TrimSpace(request.Driver) != "" ||
 		strings.TrimSpace(request.GuestImage) != "" ||
 		strings.TrimSpace(request.WorkspaceID) != "" ||

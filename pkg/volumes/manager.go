@@ -25,7 +25,7 @@ type Store interface {
 	FindVolumeConfigReferences(context.Context, string) ([]domain.VolumeReference, error)
 }
 
-type SessionStore interface {
+type SandboxStore interface {
 	ListSandboxes(context.Context, domain.SandboxListOptions) (domain.SandboxListResult, error)
 }
 
@@ -36,10 +36,10 @@ type ProjectVolumeStore interface {
 }
 
 type Manager struct {
-	Store    Store
-	Sessions SessionStore
-	Project  ProjectVolumeStore
-	Drivers  map[string]Driver
+	Store     Store
+	Sandboxes SandboxStore
+	Project   ProjectVolumeStore
+	Drivers   map[string]Driver
 }
 
 type BindResolver struct {
@@ -225,38 +225,38 @@ func (m *Manager) findReferences(ctx context.Context, volumeID string, options r
 		}
 		refs = append(refs, configRefs...)
 	}
-	sessionRefs, err := m.findSessionReferences(ctx, volumeID)
+	sandboxRefs, err := m.findSandboxReferences(ctx, volumeID)
 	if err != nil {
 		return nil, err
 	}
-	refs = append(refs, sessionRefs...)
+	refs = append(refs, sandboxRefs...)
 	return refs, nil
 }
 
-func (m *Manager) findSessionReferences(ctx context.Context, volumeID string) ([]domain.VolumeReference, error) {
+func (m *Manager) findSandboxReferences(ctx context.Context, volumeID string) ([]domain.VolumeReference, error) {
 	volumeID = strings.TrimSpace(volumeID)
-	if volumeID == "" || m == nil || m.Sessions == nil {
+	if volumeID == "" || m == nil || m.Sandboxes == nil {
 		return nil, nil
 	}
 	const pageSize = 500
 	var refs []domain.VolumeReference
 	for offset := 0; ; {
-		result, err := m.Sessions.ListSandboxes(ctx, domain.SandboxListOptions{Offset: offset, Limit: pageSize})
+		result, err := m.Sandboxes.ListSandboxes(ctx, domain.SandboxListOptions{Offset: offset, Limit: pageSize})
 		if err != nil {
-			return nil, fmt.Errorf("list sessions for volume references: %w", err)
+			return nil, fmt.Errorf("list sandboxes for volume references: %w", err)
 		}
-		for _, session := range result.Sandboxes {
-			if session == nil {
+		for _, sandbox := range result.Sandboxes {
+			if sandbox == nil {
 				continue
 			}
-			for _, mount := range session.VolumeMounts {
+			for _, mount := range sandbox.VolumeMounts {
 				if strings.TrimSpace(mount.VolumeID) != volumeID {
 					continue
 				}
 				refs = append(refs, domain.VolumeReference{
-					ResourceType: "session",
-					ResourceID:   session.Summary.ID,
-					Name:         session.Summary.Title,
+					ResourceType: "sandbox",
+					ResourceID:   sandbox.Summary.ID,
+					Name:         sandbox.Summary.Title,
 				})
 				break
 			}

@@ -265,16 +265,16 @@ func TestApplyProjectValidationIssuesOmitProjectAndRevision(t *testing.T) {
 	}
 }
 
-func TestStopProjectSessionUsesInternalStopSemantics(t *testing.T) {
-	sessionID := "session-1"
-	store := &projectStopSessionStore{
+func TestStopProjectSandboxUsesInternalStopSemantics(t *testing.T) {
+	sandboxID := "sandbox-1"
+	store := &projectStopSandboxStore{
 		session: &domain.Sandbox{Summary: domain.SandboxSummary{
-			ID:       sessionID,
+			ID:       sandboxID,
 			VMStatus: domain.VMStatusRunning,
 		}},
 	}
 	driver := &projectStopSandboxDriver{}
-	streams := &projectStopSessionStreams{}
+	streams := &projectStopSandboxStreams{}
 
 	if err := stopProjectSandbox(context.Background(), store, driver, streams, store.session); err != nil {
 		t.Fatalf("stopProjectSandbox returned error: %v", err)
@@ -283,7 +283,7 @@ func TestStopProjectSessionUsesInternalStopSemantics(t *testing.T) {
 		t.Fatalf("StopSandboxVM calls = %d, want 1", driver.stopCount)
 	}
 	if store.updated == nil || store.updated.Summary.VMStatus != domain.VMStatusStopped {
-		t.Fatalf("updated session = %#v, want stopped", store.updated)
+		t.Fatalf("updated sandbox = %#v, want stopped", store.updated)
 	}
 	if len(store.events) != 1 || store.events[0].Type != "sandbox.stopped" || store.events[0].Message != "sandbox stopped" {
 		t.Fatalf("events = %#v, want one sandbox.stopped event", store.events)
@@ -293,24 +293,24 @@ func TestStopProjectSessionUsesInternalStopSemantics(t *testing.T) {
 	}
 }
 
-type projectStopSessionStore struct {
+type projectStopSandboxStore struct {
 	session *domain.Sandbox
 	updated *domain.Sandbox
 	events  []domain.SandboxEvent
 }
 
-func (s *projectStopSessionStore) GetSandbox(context.Context, string) (*domain.Sandbox, error) {
+func (s *projectStopSandboxStore) GetSandbox(context.Context, string) (*domain.Sandbox, error) {
 	copy := *s.session
 	return &copy, nil
 }
 
-func (s *projectStopSessionStore) UpdateSandbox(_ context.Context, session *domain.Sandbox) error {
+func (s *projectStopSandboxStore) UpdateSandbox(_ context.Context, session *domain.Sandbox) error {
 	copy := *session
 	s.updated = &copy
 	return nil
 }
 
-func (s *projectStopSessionStore) AddEvent(_ context.Context, _ string, event domain.SandboxEvent) error {
+func (s *projectStopSandboxStore) AddEvent(_ context.Context, _ string, event domain.SandboxEvent) error {
 	s.events = append(s.events, event)
 	return nil
 }
@@ -324,16 +324,16 @@ func (d *projectStopSandboxDriver) StopSandboxVM(context.Context, *domain.Sandbo
 	return nil
 }
 
-type projectStopSessionStreams struct {
+type projectStopSandboxStreams struct {
 	updatedCount int
 	eventCount   int
 }
 
-func (s *projectStopSessionStreams) PublishSandboxUpdated(*domain.SandboxSummary) {
+func (s *projectStopSandboxStreams) PublishSandboxUpdated(*domain.SandboxSummary) {
 	s.updatedCount++
 }
 
-func (s *projectStopSessionStreams) PublishEventAdded(string, domain.SandboxEvent) {
+func (s *projectStopSandboxStreams) PublishEventAdded(string, domain.SandboxEvent) {
 	s.eventCount++
 }
 

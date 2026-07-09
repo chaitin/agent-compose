@@ -22,7 +22,7 @@ func TestRuntimeLLMFacadeRoutesCoverageWorkflow(t *testing.T) {
 	client := &fakeRuntimeLLMHTTPClient{status: http.StatusOK, body: `{"id":"resp-1","model":"gpt","output":[]}`}
 	RegisterRuntimeLLMFacadeRoutes(e, RuntimeLLMOptions{
 		Tokens:        fakeRuntimeLLMTokens{token: llms.FacadeToken{SandboxID: "sandbox-1", Model: "gpt", ProviderID: "provider-1", WireAPI: llms.APIProtocolResponses, ExpiresAt: time.Now().Add(time.Hour)}},
-		Sessions:      fakeRuntimeLLMSessions{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}}},
+		Sandboxes:     fakeRuntimeLLMSessions{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}}},
 		ResolveTarget: fakeRuntimeLLMTargetResolver("http://upstream.test/v1"),
 		Client:        client,
 	})
@@ -78,7 +78,7 @@ func TestRuntimeLLMFacadeProtocolAndStreamCoverage(t *testing.T) {
 		}
 		RegisterRuntimeLLMFacadeRoutes(e, RuntimeLLMOptions{
 			Tokens:        fakeRuntimeLLMTokens{token: llms.FacadeToken{SandboxID: "sandbox-1", Model: "claude", ProviderID: "provider-1", WireAPI: llms.APIProtocolMessages, ExpiresAt: time.Now().Add(time.Hour)}},
-			Sessions:      fakeRuntimeLLMSessions{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}}},
+			Sandboxes:     fakeRuntimeLLMSessions{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}}},
 			ResolveTarget: fakeRuntimeLLMAnthropicTargetResolver("http://upstream.test/v1"),
 			Client:        client,
 		})
@@ -100,7 +100,7 @@ func TestRuntimeLLMFacadeProtocolAndStreamCoverage(t *testing.T) {
 		}
 		RegisterRuntimeLLMFacadeRoutes(e, RuntimeLLMOptions{
 			Tokens:        fakeRuntimeLLMTokens{token: llms.FacadeToken{SandboxID: "sandbox-1", Model: "gpt", ProviderID: "provider-1", WireAPI: llms.APIProtocolResponses, ExpiresAt: time.Now().Add(time.Hour)}},
-			Sessions:      fakeRuntimeLLMSessions{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}}},
+			Sandboxes:     fakeRuntimeLLMSessions{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}}},
 			ResolveTarget: fakeRuntimeLLMChatTargetResolver("http://upstream.test/v1"),
 			Client:        client,
 		})
@@ -278,7 +278,7 @@ func TestRuntimeLLMFacadeRejectsInvalidSecurityContext(t *testing.T) {
 			}
 			RegisterRuntimeLLMFacadeRoutes(e, RuntimeLLMOptions{
 				Tokens:        fakeRuntimeLLMTokens{token: tc.token},
-				Sessions:      fakeRuntimeLLMSessions{session: tc.session},
+				Sandboxes:     fakeRuntimeLLMSessions{session: tc.session},
 				ResolveTarget: resolver,
 				Client:        &fakeRuntimeLLMHTTPClient{status: http.StatusOK, body: `{"id":"resp-1","model":"gpt","output":[]}`},
 			})
@@ -447,7 +447,7 @@ func TestRuntimeLLMFacadeHandlerEdgeBranches(t *testing.T) {
 			e := echo.New()
 			RegisterRuntimeLLMFacadeRoutes(e, RuntimeLLMOptions{
 				Tokens:        tc.tokens,
-				Sessions:      tc.sessions,
+				Sandboxes:     tc.sessions,
 				ResolveTarget: tc.resolver,
 				Client:        tc.client,
 			})
@@ -530,8 +530,8 @@ func TestRuntimeLLMFacadeTransparentGenericResponsesTextParts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e := echo.New()
 			RegisterRuntimeLLMFacadeRoutes(e, RuntimeLLMOptions{
-				Tokens:   fakeRuntimeLLMTokens{token: llms.FacadeToken{SandboxID: "sandbox-1", Model: "gpt", ProviderID: "provider-1", WireAPI: llms.APIProtocolResponses, ExpiresAt: time.Now().Add(time.Hour)}},
-				Sessions: fakeRuntimeLLMSessions{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}}},
+				Tokens:    fakeRuntimeLLMTokens{token: llms.FacadeToken{SandboxID: "sandbox-1", Model: "gpt", ProviderID: "provider-1", WireAPI: llms.APIProtocolResponses, ExpiresAt: time.Now().Add(time.Hour)}},
+				Sandboxes: fakeRuntimeLLMSessions{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}}},
 				ResolveTarget: func(context.Context, string, string) (llms.ResolvedTarget, error) {
 					return llms.ResolvedTarget{
 						Provider: llms.Provider{ID: "provider-1", ProviderType: llms.ProviderFamilyOpenAI, BaseURL: "http://upstream.test/v1", UseGenericResponsesTextParts: true},

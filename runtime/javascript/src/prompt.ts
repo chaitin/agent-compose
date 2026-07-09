@@ -1,6 +1,6 @@
 import path from "node:path";
 import process from "node:process";
-import { SESSION_ROOT } from "./constants.js";
+import { SANDBOX_ROOT } from "./constants.js";
 import { readText } from "./fs.js";
 import { readMpiContext } from "./mpi.js";
 import { normalizeProvider } from "./provider.js";
@@ -24,11 +24,11 @@ export interface PromptCommandOptions {
 export async function runPromptCommand(commandOptions: PromptCommandOptions): Promise<AgentResult> {
   const provider = normalizeProvider(commandOptions.provider);
   const messageFile = commandOptions.messageFile;
-  const stateRoot = path.resolve(commandOptions.stateRoot || path.join(SESSION_ROOT, "state"));
+  const stateRoot = path.resolve(commandOptions.stateRoot || path.join(SANDBOX_ROOT, "state"));
   const workspace = path.resolve(
-    commandOptions.workspace || process.env.WORKSPACE || process.env.AGENT_COMPOSE_WORKSPACE || path.join(SESSION_ROOT, "workspace"),
+    commandOptions.workspace || process.env.WORKSPACE || process.env.AGENT_COMPOSE_WORKSPACE || path.join(SANDBOX_ROOT, "workspace"),
   );
-  const home = path.resolve(commandOptions.home || process.env.HOME || path.join(SESSION_ROOT, "home"));
+  const home = path.resolve(commandOptions.home || process.env.HOME || path.join(SANDBOX_ROOT, "home"));
 
   if (!messageFile) {
     throw new Error("--message-file is required");

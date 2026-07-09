@@ -13,7 +13,7 @@ import (
 
 const OverviewPageSize = 20
 
-type SessionStore interface {
+type SandboxStore interface {
 	ListSandboxes(context.Context, domain.SandboxListOptions) (domain.SandboxListResult, error)
 }
 
@@ -22,12 +22,12 @@ type LoaderRunStore interface {
 }
 
 type Aggregator struct {
-	store    SessionStore
+	store    SandboxStore
 	configDB LoaderRunStore
 	clock    func() time.Time
 }
 
-func NewAggregator(store SessionStore, configDB LoaderRunStore) *Aggregator {
+func NewAggregator(store SandboxStore, configDB LoaderRunStore) *Aggregator {
 	return &Aggregator{
 		store:    store,
 		configDB: configDB,

@@ -1,4 +1,4 @@
-export { RESULT_PREFIX, SESSION_ROOT } from "./constants.js";
+export { RESULT_PREFIX, SANDBOX_ROOT } from "./constants.js";
 export { formatError } from "./errors.js";
 export { formatMpiContext, readMpiContext, warn } from "./mpi.js";
 export { runtimeRootForStateRoot, uniqueDirectories } from "./paths.js";

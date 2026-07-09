@@ -921,7 +921,7 @@
       - 本任务仅修改文档；未修改 `proto/agentcompose/v1/*`、generated code、runtime/package code 或 Compose 行为。
     - 下一目标：10.3。
 
-- [ ] 10.3 执行全仓 `session` 残留审计并修复非允许残留
+- [x] 10.3 执行全仓 `session` 残留审计并修复非允许残留
   - 依赖：10.1、10.2。
   - 工作内容：
     - 执行残留审计命令：
@@ -933,9 +933,9 @@
     - 将每个残留归类为 v1 compatibility、deprecated alias、auth/browser session、provider-native protocol、migration/error 文案。
     - 修复无法归类的残留。
   - 可并行子任务：
-    - [ ] 可并行：审计 `cmd pkg proto` 残留。
-    - [ ] 可并行：审计 `runtime` 残留。
-    - [ ] 可并行：审计 `docs README .env Docker Compose` 残留。
+    - [x] 可并行：审计 `cmd pkg proto` 残留。
+    - [x] 可并行：审计 `runtime` 残留。
+    - [x] 可并行：审计 `docs README .env Docker Compose` 残留。
   - 测试方案：
     - 残留审计命令。
     - 对修复涉及代码的模块运行对应 focused tests。
@@ -943,10 +943,30 @@
     - 残留清单可解释。
     - 内部 domain、v2 API、runtime env、SQLite、新文档没有非允许 `session` 命名。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - 修复 project down 的非兼容残留：CLI JSON 输出改为 `failed_sandbox_stops`，失败计数只统计 `ResourceType == "sandbox"`，project down change resource type 从 `session` 改为 `sandbox`。
+      - 将 project down、volume reference、dashboard overview、runtime LLM facade 的内部 store/options/helper 命名收敛到 sandbox。
+      - 将 compose env/compare、loader command override、agent prompt file 错误文案等内部 helper 从 session 命名改为 sandbox 命名。
+      - 将 runtime JavaScript public constant 从 `SESSION_ROOT=/srv/agent-compose/session` 改为 `SANDBOX_ROOT=/srv/agent-compose/sandbox`，并同步 prompt 默认路径和 unit tests。
+      - 清理测试 fixture 中非兼容的 project/volume/app sandbox helper 命名；v1 compatibility 和 deprecated alias 测试保持原 wire 行为。
+    - 验证：
+      - `rg -n "\bsession\b|session_id|sessionId|Session" cmd pkg proto runtime docs README.md .env.example Dockerfile docker-compose.yml docker-compose.override.yml > /tmp/agent-compose-session-audit.txt`
+      - `rg -n 'RunSessionCleanupPolicy|ExecSessionSelector|ProjectSession|LoaderSession|SessionRoot|DockerHostSessionRoot|SessionStart|SessionStop|FailedSessionStops|failed_session_stops|ResourceType: "session"|StopProjectRunningSessions|SessionHasTag|SessionEnvItemsFromCompose|SameSessionEnvItems|CommandRequestOverridesSession|/srv/agent-compose/session|SESSION_ROOT' cmd pkg proto runtime -S -g '!proto/agentcompose/v1/**'`
+      - `go test ./cmd/agent-compose ./pkg/projects ./pkg/volumes ./pkg/loaders ./pkg/execution ./pkg/agentcompose/app`
+      - `go test ./pkg/dashboard ./pkg/agentcompose/proxy ./pkg/agentcompose/app`
+      - `go test ./pkg/agentcompose/api`
+      - `cd runtime/javascript && npm run test:unit`
+      - `cd runtime/javascript && npm run build`
+      - `git diff --check`
+    - 审计与例外：
+      - 最终全仓 audit 命中 `3825` 行：`pkg=2335`、`proto=725`、`docs=314`、`cmd=299`、`runtime=150`、`README.md=2`。
+      - `proto/agentcompose/v1/**`、v1 Connect handler/bridge、`cmd` v1 session client stub、`/agent-compose/session/*` proxy path、`StopSession` RPC method 和 `SessionService` 残留归类为 v1 compatibility。
+      - `pkg/sessions.ApplySessionStartInfo`、`pkg/agentcompose/adapters/session_driver.go` 调用和 `pkg/storage/sessionstore` 包路径归类为保留兼容包/过渡 package name；未暴露新的 v2/runtime env session 语义。
+      - `SESSION_ROOT`、`DOCKER_HOST_SESSION_ROOT`、`SESSION_START_TIMEOUT`、`SESSION_STOP_TIMEOUT`、`/api/runtime/sessions`、旧 SQLite `linked_session_id/event_session_link/llm_facade_token.session_id` 等残留归类为 migration/error copy 或 negative compatibility tests。
+      - runtime provider adapters 的 `sessionId/session_id/sessionID`、OpenCode/Claude/Gemini provider state 和 agent thread 测试值归类为 provider-native protocol。
+      - `scheduler.session.*`、loader RPC `StopSession`/`CallSessionRPC`、CLI `inspect session` 等残留归类为 deprecated alias 或 v1 compatibility。
+      - docs/README/.env/Compose 残留已在 10.2 文档审计中归类；本轮未发现新的当前行为文档使用旧 session 命名。
     - 下一目标：11.1。
 
 ## 11. 阶段 11：完整质量门禁和发布停止条件
