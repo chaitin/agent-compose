@@ -6,10 +6,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/identity"
 	"agent-compose/pkg/runtimecache"
 )
 
@@ -147,6 +149,25 @@ func TestMicrosandboxRemoveDockerDiskOnlyCurrentSession(t *testing.T) {
 	}
 	if _, err := os.Stat(other); err != nil {
 		t.Fatalf("other disk missing after removeDockerDisk: %v", err)
+	}
+}
+
+func TestMicrosandboxDockerDiskPathUsesIdentityHash(t *testing.T) {
+	config := testMicrosandboxConfig(t)
+	runtime := &microsandboxRuntime{config: config}
+	sessionID := identity.NewRandomID(identity.ResourceSandbox)
+	hash, err := identity.Hash(sessionID)
+	if err != nil {
+		t.Fatalf("hash session id: %v", err)
+	}
+
+	got := runtime.dockerDiskPath(sessionID)
+	want := filepath.Join(config.MicrosandboxHome, "docker-disks", hash+".raw")
+	if got != want {
+		t.Fatalf("dockerDiskPath = %q, want %q", got, want)
+	}
+	if strings.ContainsAny(filepath.Base(got), ",:;") {
+		t.Fatalf("docker disk basename = %q, want no runtime-forbidden characters", filepath.Base(got))
 	}
 }
 
