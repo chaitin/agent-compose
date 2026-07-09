@@ -82,7 +82,7 @@ func NewAgentRecordsFromSpec(projectID string, revision int64, spec *compose.Nor
 func NewAgentDefinitionsFromSpec(project domain.ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]domain.AgentDefinition, error) {
 	agents := make([]domain.AgentDefinition, 0, len(spec.Agents))
 	for _, agent := range spec.Agents {
-		record, err := NewAgentDefinitionFromSpec(project, revision, agent)
+		record, err := NewAgentDefinitionFromSpec(project, revision, agent, spec.MCPs)
 		if err != nil {
 			return nil, err
 		}
@@ -91,12 +91,12 @@ func NewAgentDefinitionsFromSpec(project domain.ProjectRecord, revision int64, s
 	return agents, nil
 }
 
-func NewAgentDefinitionFromSpec(project domain.ProjectRecord, revision int64, agent compose.NormalizedAgentSpec) (domain.AgentDefinition, error) {
+func NewAgentDefinitionFromSpec(project domain.ProjectRecord, revision int64, agent compose.NormalizedAgentSpec, projectMCPs map[string]compose.NormalizedMCPServerSpec) (domain.AgentDefinition, error) {
 	managedAgentID, err := domain.StableManagedAgentID(project.ID, agent.Name)
 	if err != nil {
 		return domain.AgentDefinition{}, err
 	}
-	configJSON, err := agentDefinitionConfigJSON(agent)
+	configJSON, err := agentDefinitionConfigJSON(agent, projectMCPs)
 	if err != nil {
 		return domain.AgentDefinition{}, fmt.Errorf("marshal managed agent %s config: %w", agent.Name, err)
 	}
@@ -123,19 +123,49 @@ func NewAgentDefinitionFromSpec(project domain.ProjectRecord, revision int64, ag
 	}, nil
 }
 
-func agentDefinitionConfigJSON(agent compose.NormalizedAgentSpec) (string, error) {
-	if agent.Jupyter == nil {
+
+type agentDefinitionConfigPayload struct {
+	Jupyter *compose.JupyterSpec                         `json:"jupyter,omitempty"`
+	MCPs    map[string]compose.NormalizedMCPServerSpec `json:"mcps,omitempty"`
+}
+
+func agentDefinitionConfigJSON(agent compose.NormalizedAgentSpec, projectMCPs map[string]compose.NormalizedMCPServerSpec) (string, error) {
+	payload := agentDefinitionConfigPayload{
+		Jupyter: agent.Jupyter,
+		MCPs:    selectedAgentMCPs(agent, projectMCPs),
+	}
+	if payload.Jupyter == nil && len(payload.MCPs) == 0 {
 		return "{}", nil
 	}
 	data, err := MarshalCanonicalJSON(struct {
-		Jupyter *compose.JupyterSpec `json:"jupyter,omitempty"`
+		Jupyter *compose.JupyterSpec                         `json:"jupyter,omitempty"`
+		MCPs    map[string]compose.NormalizedMCPServerSpec `json:"mcps,omitempty"`
 	}{
-		Jupyter: agent.Jupyter,
+		Jupyter: payload.Jupyter,
+		MCPs:    payload.MCPs,
 	})
 	if err != nil {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func selectedAgentMCPs(agent compose.NormalizedAgentSpec, projectMCPs map[string]compose.NormalizedMCPServerSpec) map[string]compose.NormalizedMCPServerSpec {
+	if len(agent.MCP) == 0 || len(projectMCPs) == 0 {
+		return nil
+	}
+	result := make(map[string]compose.NormalizedMCPServerSpec, len(agent.MCP))
+	for _, ref := range agent.MCP {
+		server, ok := projectMCPs[ref]
+		if !ok {
+			continue
+		}
+		result[ref] = server
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func NewManagedLoaderFromScheduler(project domain.ProjectRecord, scheduler domain.ProjectSchedulerRecord, agent compose.NormalizedAgentSpec) (domain.Loader, error) {
