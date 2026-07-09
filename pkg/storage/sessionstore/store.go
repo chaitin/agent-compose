@@ -269,7 +269,7 @@ func (s *Store) RemoveSession(_ context.Context, id string) error {
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("remove session dir %s: %w", id, err)
 	}
-	s.sessionLocks.Delete(id)
+	s.sessionLocks.Delete(sessionLockKey(id))
 	return nil
 }
 
@@ -381,7 +381,7 @@ func (s *Store) ListEvents(_ context.Context, id string) ([]SessionEvent, error)
 }
 
 func (s *Store) sessionDir(id string) string {
-	return filepath.Join(s.config.SessionRoot, id)
+	return filepath.Join(s.config.SessionRoot, sessionDirName(id))
 }
 
 func (s *Store) SessionDir(id string) string {
@@ -398,11 +398,22 @@ func validateSessionIDForRemove(id string) error {
 	return nil
 }
 
+func sessionDirName(id string) string {
+	if hash, err := identity.Hash(id); err == nil {
+		return hash
+	}
+	return id
+}
+
 func (s *Store) lockSession(id string) func() {
-	value, _ := s.sessionLocks.LoadOrStore(id, &sync.Mutex{})
+	value, _ := s.sessionLocks.LoadOrStore(sessionLockKey(id), &sync.Mutex{})
 	mu := value.(*sync.Mutex)
 	mu.Lock()
 	return mu.Unlock
+}
+
+func sessionLockKey(id string) string {
+	return sessionDirName(id)
 }
 
 func (s *Store) hydrateSessionGuestImage(session *Session) {

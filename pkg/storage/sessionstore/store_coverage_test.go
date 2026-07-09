@@ -58,6 +58,16 @@ func TestStoreCreateSessionUsesConfiguredJupyterProxyBase(t *testing.T) {
 	if session.Summary.RuntimeRef != "agent-compose-"+session.Summary.ShortID {
 		t.Fatalf("runtime ref = %q, want short-id ref", session.Summary.RuntimeRef)
 	}
+	sessionDir := store.SessionDir(session.Summary.ID)
+	if strings.ContainsAny(filepath.Base(sessionDir), ",:;") {
+		t.Fatalf("session dir basename = %q, want no runtime-forbidden characters", filepath.Base(sessionDir))
+	}
+	if filepath.Base(sessionDir) != strings.TrimPrefix(session.Summary.ID, identity.Prefix) {
+		t.Fatalf("session dir = %q, want hash identity path", sessionDir)
+	}
+	if session.Summary.WorkspacePath != filepath.Join(sessionDir, "workspace") {
+		t.Fatalf("workspace path = %q, want under session dir %q", session.Summary.WorkspacePath, sessionDir)
+	}
 	wantProxyPath := "/agent-compose/session/" + session.Summary.ID + "/lab"
 	if session.Summary.ProxyPath != wantProxyPath {
 		t.Fatalf("session proxy path = %q, want %q", session.Summary.ProxyPath, wantProxyPath)
@@ -71,6 +81,24 @@ func TestStoreCreateSessionUsesConfiguredJupyterProxyBase(t *testing.T) {
 	}
 	if proxyState.Enabled || proxyState.GuestPort != 0 || proxyState.HostPort != 0 || proxyState.Token != "" {
 		t.Fatalf("default proxy state = %+v, want jupyter disabled without ports/token", proxyState)
+	}
+}
+
+func TestSessionLockKeyUsesSessionDirName(t *testing.T) {
+	id := identity.NewID(identity.ResourceSandbox, "lock-key")
+	if got, want := sessionLockKey(id), sessionDirName(id); got != want {
+		t.Fatalf("sessionLockKey(%q) = %q, want %q", id, got, want)
+	}
+	if sessionLockKey(id) != sessionLockKey(strings.TrimPrefix(id, identity.Prefix)) {
+		t.Fatalf("session lock key should match canonical and directory-form ids")
+	}
+}
+
+func TestSessionDirNameFallbackPreservesInvalidInput(t *testing.T) {
+	for _, id := range []string{" . ", " .. ", "   "} {
+		if got := sessionDirName(id); got != id {
+			t.Fatalf("sessionDirName(%q) = %q, want unchanged fallback", id, got)
+		}
 	}
 }
 
