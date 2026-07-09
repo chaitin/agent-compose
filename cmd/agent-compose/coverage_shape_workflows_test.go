@@ -202,6 +202,29 @@ func testComposeProjectPureHelpers(t *testing.T) {
 	if !strings.Contains(out.String(), "MESSAGE") || !strings.Contains(out.String(), "timer") || !strings.Contains(out.String(), "stop failed") || strings.Contains(out.String(), "loader") {
 		t.Fatalf("compose down text = %q", out.String())
 	}
+	sharedTriggerSpec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
+		{
+			Name:      "worker-a",
+			Scheduler: &compose.NormalizedSchedulerSpec{Triggers: []compose.NormalizedTriggerSpec{{Name: "hourly"}}},
+		},
+		{
+			Name:      "worker-b",
+			Scheduler: &compose.NormalizedSchedulerSpec{Triggers: []compose.NormalizedTriggerSpec{{Name: "hourly"}}},
+		},
+	}}
+	sharedTriggerChanges := composeDisplayChangesFromProjectChanges([]*agentcomposev2.ProjectChange{
+		{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED, ResourceType: "project_scheduler", ResourceId: "scheduler-a", Name: "worker-a"},
+		{Action: agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED, ResourceType: "project_scheduler", ResourceId: "scheduler-b", Name: "worker-b"},
+	}, sharedTriggerSpec)
+	sharedTriggerCount := 0
+	for _, change := range sharedTriggerChanges {
+		if change.ResourceType == "trigger" && change.Name == "hourly" {
+			sharedTriggerCount++
+		}
+	}
+	if sharedTriggerCount != 2 {
+		t.Fatalf("shared trigger display changes = %#v, want 2 hourly triggers", sharedTriggerChanges)
+	}
 	unchangedDown := composeDownOutputFromResponse(&agentcomposev2.RemoveProjectResponse{Project: &agentcomposev2.Project{Summary: projectSummary}})
 	if unchangedDown.Status != "unchanged" {
 		t.Fatalf("unchanged down output = %#v", unchangedDown)

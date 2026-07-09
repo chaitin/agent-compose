@@ -3883,6 +3883,7 @@ type composeDisplayChangeOutput struct {
 	ResourceType string
 	ID           string
 	Name         string
+	Owner        string
 	Message      string
 }
 
@@ -4558,6 +4559,7 @@ func (b *composeDisplayChangeBuilder) addTriggerChanges(action, id, agentName, m
 			ResourceType: "trigger",
 			ID:           id,
 			Name:         agentName,
+			Owner:        agentName,
 			Message:      message,
 		})
 		return
@@ -4568,6 +4570,7 @@ func (b *composeDisplayChangeBuilder) addTriggerChanges(action, id, agentName, m
 			ResourceType: "trigger",
 			ID:           id,
 			Name:         triggerName,
+			Owner:        agentName,
 			Message:      message,
 		})
 	}
@@ -4594,7 +4597,10 @@ func composeTriggerNamesForAgent(spec *compose.NormalizedProjectSpec, agentName 
 }
 
 func composeDisplayChangeKey(change composeDisplayChangeOutput) string {
-	if (change.ResourceType == "agent" || change.ResourceType == "trigger") && change.Name != "" {
+	if change.ResourceType == "trigger" && change.Owner != "" && change.Name != "" {
+		return change.ResourceType + "\x00" + change.Owner + "\x00" + change.Name
+	}
+	if change.ResourceType == "agent" && change.Name != "" {
 		return change.ResourceType + "\x00" + change.Name
 	}
 	identity := change.ID
