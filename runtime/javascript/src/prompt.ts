@@ -8,6 +8,7 @@ import { ClaudeRunner } from "./runners/claude.js";
 import { CodexRunner } from "./runners/codex.js";
 import { GeminiRunner } from "./runners/gemini.js";
 import { OpenCodeRunner } from "./runners/opencode.js";
+import { readMCPConfig } from "./mcp-config.js";
 import { agentSystemPromptPath, buildSystemContext, readSystemPromptFile } from "./system-context.js";
 import type { AgentResult, RuntimeJsonSchema } from "./types.js";
 
@@ -40,6 +41,7 @@ export async function runPromptCommand(commandOptions: PromptCommandOptions): Pr
     : undefined;
   const systemPrompt = await readSystemPromptFile(agentSystemPromptPath(stateRoot));
   const mpi = await readMpiContext(stateRoot);
+  const mcpConfig = await readMCPConfig(stateRoot);
   const options = {
     provider,
     model: commandOptions.model,
@@ -48,6 +50,7 @@ export async function runPromptCommand(commandOptions: PromptCommandOptions): Pr
     home,
     runtimeRoot: mpi.runtimeRoot,
     systemContext: buildSystemContext(systemPrompt, mpi.context),
+    mcpConfig: mcpConfig.mcps,
     outputSchema,
   };
   if (provider === "codex") {

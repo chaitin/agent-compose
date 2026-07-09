@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
 	"agent-compose/pkg/execution"
 	domain "agent-compose/pkg/model"
@@ -55,6 +57,67 @@ persistence = "save-all"
 	return nil
 }
 
+func WriteCodexMCPConfig(session *domain.Sandbox, mcps map[string]compose.NormalizedMCPServerSpec) error {
+	if session == nil || len(mcps) == 0 {
+		return nil
+	}
+	path := filepath.Join(execution.HostSandboxHome(session), ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create codex config dir: %w", err)
+	}
+	var b strings.Builder
+	if existing, err := os.ReadFile(path); err == nil {
+		b.Write(existing)
+		if len(existing) > 0 && existing[len(existing)-1] != '\n' {
+			b.WriteByte('\n')
+		}
+	}
+	keys := make([]string, 0, len(mcps))
+	for key := range mcps {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, name := range keys {
+		mcp := mcps[name]
+		fmt.Fprintf(&b, "\n[mcp_servers.%s]\n", name)
+		if mcp.Type == "local" {
+			fmt.Fprintf(&b, "command = %q\n", mcp.Command)
+			if len(mcp.Args) > 0 {
+				args, _ := json.Marshal(mcp.Args)
+				fmt.Fprintf(&b, "args = %s\n", args)
+			}
+			if len(mcp.Env) > 0 {
+				b.WriteString("[mcp_servers." + name + ".env]\n")
+				envKeys := make([]string, 0, len(mcp.Env))
+				for key := range mcp.Env {
+					envKeys = append(envKeys, key)
+				}
+				slices.Sort(envKeys)
+				for _, key := range envKeys {
+					fmt.Fprintf(&b, "%s = %q\n", key, mcp.Env[key].Value)
+				}
+			}
+		} else {
+			fmt.Fprintf(&b, "url = %q\n", mcp.URL)
+			if len(mcp.Headers) > 0 {
+				b.WriteString("[mcp_servers." + name + ".http_headers]\n")
+				headerKeys := make([]string, 0, len(mcp.Headers))
+				for key := range mcp.Headers {
+					headerKeys = append(headerKeys, key)
+				}
+				slices.Sort(headerKeys)
+				for _, key := range headerKeys {
+					fmt.Fprintf(&b, "%s = %q\n", key, mcp.Headers[key].Value)
+				}
+			}
+		}
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return fmt.Errorf("write codex mcp config: %w", err)
+	}
+	return nil
+}
+
 func WriteOpenCodeRuntimeConfig(session *domain.Sandbox, providerID, model, baseURL string) error {
 	if session == nil {
 		return nil
@@ -95,6 +158,46 @@ func WriteOpenCodeRuntimeConfig(session *domain.Sandbox, providerID, model, base
 	}
 	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
 		return fmt.Errorf("write opencode config: %w", err)
+	}
+	return nil
+}
+
+func WriteOpenCodeMCPConfig(session *domain.Sandbox, mcps map[string]compose.NormalizedMCPServerSpec) error {
+	if session == nil || len(mcps) == 0 {
+		return nil
+	}
+	path := filepath.Join(execution.HostSandboxHome(session), ".config", "opencode", "opencode.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create opencode config dir: %w", err)
+	}
+	payload := map[string]any{}
+	if existing, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(existing, &payload)
+	}
+	mcp := map[string]any{}
+	for name, server := range mcps {
+		if server.Type == "local" {
+			command := append([]string{server.Command}, server.Args...)
+			env := map[string]string{}
+			for key, value := range server.Env {
+				env[key] = value.Value
+			}
+			mcp[name] = map[string]any{"type": "local", "command": command, "environment": env}
+		} else {
+			headers := map[string]string{}
+			for key, value := range server.Headers {
+				headers[key] = value.Value
+			}
+			mcp[name] = map[string]any{"type": "remote", "url": server.URL, "headers": headers}
+		}
+	}
+	payload["mcp"] = mcp
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode opencode mcp config: %w", err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write opencode mcp config: %w", err)
 	}
 	return nil
 }

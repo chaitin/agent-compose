@@ -1,14 +1,50 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
+import path from "node:path";
 import readline from "node:readline";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { extractText, jsonString } from "../text.js";
 import { TranscriptWriter } from "../transcript.js";
 import type { AgentResult, RunnerOptions, StoredThread } from "../types.js";
+import { flattenEnvMap } from "../mcp-config.js";
 
 export class OpenCodeRunner {
   private readonly writer = new TranscriptWriter();
 
   constructor(private readonly options: RunnerOptions) {}
+
+  async writeMCPConfig(): Promise<void> {
+    const mcps = this.options.mcpConfig as Record<string, Record<string, unknown>> | undefined;
+    if (!mcps || Object.keys(mcps).length === 0) {
+      return;
+    }
+    const configPath = process.env.OPENCODE_CONFIG || path.join(this.options.home, ".config", "opencode", "opencode.json");
+    await fs.mkdir(path.dirname(configPath), { recursive: true });
+    let config: Record<string, unknown> = {};
+    try {
+      config = JSON.parse(await fs.readFile(configPath, "utf-8"));
+    } catch {
+      config = {};
+    }
+    const mcp: Record<string, unknown> = {};
+    for (const [name, server] of Object.entries(mcps)) {
+      if (server.type === "local") {
+        mcp[name] = {
+          type: "local",
+          command: [server.command, ...(Array.isArray(server.args) ? server.args : [])],
+          environment: flattenEnvMap(server.env as Record<string, { value: string }> | undefined),
+        };
+      } else if (server.type === "remote") {
+        mcp[name] = {
+          type: "remote",
+          url: server.url,
+          headers: flattenEnvMap(server.headers as Record<string, { value: string }> | undefined),
+        };
+      }
+    }
+    config.mcp = mcp;
+    await fs.writeFile(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
+  }
 
   buildArgs(promptText: string, stored: StoredThread | null): string[] {
     const userPrompt = this.options.systemContext
@@ -86,6 +122,7 @@ export class OpenCodeRunner {
   }
 
   async runPrompt(promptText: string): Promise<AgentResult> {
+    await this.writeMCPConfig();
     if (this.options.outputSchema) {
       throw new Error("structured JSON output is not supported by opencode runner");
     }

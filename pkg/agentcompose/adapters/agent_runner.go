@@ -67,6 +67,9 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, session *domain.Sandb
 	if err := execution.WriteAgentSystemPromptFile(session, systemPrompt); err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}
+	if err := r.prepareAgentMCPConfig(ctx, session, agentDefinitionID, agent); err != nil {
+		return domain.ExecResult{}, domain.AgentRunResult{}, err
+	}
 	runtime, err := r.runtimes.ForSession(session)
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
@@ -93,6 +96,32 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, session *domain.Sandb
 		return execution.SanitizeAgentExecResult(result), domain.AgentRunResult{}, err
 	}
 	return execution.SanitizeAgentExecResult(result), parsed, nil
+}
+
+func (r *AgentRunner) prepareAgentMCPConfig(ctx context.Context, session *domain.Sandbox, agentDefinitionID, agent string) error {
+	if r == nil || r.agents == nil || session == nil {
+		return nil
+	}
+	agentID := strings.TrimSpace(agentDefinitionID)
+	if agentID == "" {
+		return nil
+	}
+	definition, err := r.agents.GetAgentDefinition(ctx, agentID)
+	if err != nil {
+		return nil
+	}
+	mcps := llms.AgentMCPConfig(definition)
+	if len(mcps) == 0 {
+		return nil
+	}
+	switch domain.NormalizeAgentKind(agent) {
+	case "codex":
+		return llms.WriteCodexMCPConfig(session, mcps)
+	case "opencode":
+		return llms.WriteOpenCodeMCPConfig(session, mcps)
+	default:
+		return nil
+	}
 }
 
 func (r *AgentRunner) ResolveAgentSystemPrompt(ctx context.Context, session *domain.Sandbox, agentDefinitionID string) (string, error) {

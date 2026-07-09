@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
 	"agent-compose/pkg/execution"
 	domain "agent-compose/pkg/model"
@@ -35,6 +36,24 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	}
 	if err := WriteCodexRuntimeConfig(nil, "gpt", "http://runtime", ""); err != nil {
 		t.Fatalf("nil session codex config returned error: %v", err)
+	}
+	mcps := map[string]compose.NormalizedMCPServerSpec{
+		"filesystem": {Type: "local", Command: "npx", Args: []string{"-y", "server"}, Env: map[string]compose.EnvVarSpec{"TOKEN": {Value: "secret"}}},
+		"docs":       {Type: "remote", Transport: "http", URL: "https://docs.example/mcp", Headers: map[string]compose.EnvVarSpec{"Authorization": {Value: "Bearer token"}}},
+	}
+	if err := WriteCodexMCPConfig(session, mcps); err != nil {
+		t.Fatalf("WriteCodexMCPConfig returned error: %v", err)
+	}
+	codexConfig, err = os.ReadFile(filepath.Join(execution.HostSandboxHome(session), ".codex", "config.toml"))
+	if err != nil || !strings.Contains(string(codexConfig), `[mcp_servers.filesystem]`) || !strings.Contains(string(codexConfig), `[mcp_servers.docs.http_headers]`) {
+		t.Fatalf("codex mcp config=%q err=%v", string(codexConfig), err)
+	}
+	if err := WriteOpenCodeMCPConfig(session, mcps); err != nil {
+		t.Fatalf("WriteOpenCodeMCPConfig returned error: %v", err)
+	}
+	openCodeConfig, err = os.ReadFile(filepath.Join(execution.HostSandboxHome(session), ".config", "opencode", "opencode.json"))
+	if err != nil || !strings.Contains(string(openCodeConfig), `"mcp"`) || !strings.Contains(string(openCodeConfig), `"filesystem"`) {
+		t.Fatalf("opencode mcp config=%q err=%v", string(openCodeConfig), err)
 	}
 	if got := GuestOpenCodeConfigPath(&appconfig.Config{GuestHomePath: "/guest"}); got != "/root/.config/opencode/opencode.json" {
 		t.Fatalf("GuestOpenCodeConfigPath = %q", got)

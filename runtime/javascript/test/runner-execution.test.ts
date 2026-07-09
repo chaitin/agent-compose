@@ -163,6 +163,57 @@ describe("runner execution", () => {
     });
   });
 
+  it("passes MCP servers to Claude SDK options", async () => {
+    const { ClaudeRunner } = await import("../src/runners/claude.js");
+    await withTempSession(async (root) => {
+      claudeState.messages = [{ type: "result", subtype: "success", stop_reason: "end_turn", result: "ok" }];
+      const runner = new ClaudeRunner({
+        ...runnerOptions(root, "catalog body", "claude"),
+        mcpConfig: {
+          filesystem: { type: "stdio", command: "npx", args: ["-y", "server"] },
+        },
+      });
+      await runner.runPrompt("prompt");
+      expect(claudeState.queryCalls.at(-1)?.options).toMatchObject({
+        strictMcpConfig: true,
+        mcpServers: {
+          filesystem: { type: "stdio", command: "npx", args: ["-y", "server"] },
+        },
+      });
+    });
+  });
+
+  it("writes Gemini MCP settings before spawning", async () => {
+    const { GeminiRunner } = await import("../src/runners/gemini.js");
+    await withTempSession(async (root) => {
+      const runner = new GeminiRunner({
+        ...runnerOptions(root, "catalog body", "gemini"),
+        mcpConfig: {
+          docs: { type: "remote", transport: "http", url: "https://docs.example/mcp", headers: { Authorization: { value: "Bearer token" } } },
+        },
+      });
+      await runner.runPrompt("prompt");
+      const settings = JSON.parse(await fs.readFile(path.join(root, "home", ".gemini", "settings.json"), "utf-8"));
+      expect(settings.mcpServers.docs).toMatchObject({ httpUrl: "https://docs.example/mcp", headers: { Authorization: "Bearer token" } });
+    });
+  });
+
+  it("writes OpenCode MCP config before spawning", async () => {
+    const { OpenCodeRunner } = await import("../src/runners/opencode.js");
+    await withTempSession(async (root) => {
+      childProcessState.stdoutLines = [JSON.stringify({ type: "result", result: "done", sessionId: "sess-1" })];
+      const runner = new OpenCodeRunner({
+        ...runnerOptions(root, "catalog body", "opencode"),
+        mcpConfig: {
+          filesystem: { type: "local", command: "npx", args: ["-y", "server"], env: { TOKEN: { value: "secret" } } },
+        },
+      });
+      await runner.runPrompt("prompt");
+      const config = JSON.parse(await fs.readFile(path.join(root, "home", ".config", "opencode", "opencode.json"), "utf-8"));
+      expect(config.mcp.filesystem).toMatchObject({ type: "local", command: ["npx", "-y", "server"], environment: { TOKEN: "secret" } });
+    });
+  });
+
   it("passes Codex output schema to the streamed turn", async () => {
     const { CodexRunner } = await import("../src/runners/codex.js");
     await withTempSession(async (root) => {

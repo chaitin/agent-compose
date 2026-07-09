@@ -61,6 +61,10 @@ export class ClaudeRunner {
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
       resume: stored?.threadId,
+      ...(this.options.mcpConfig ? {
+        mcpServers: this.options.mcpConfig,
+        strictMcpConfig: true,
+      } : {}),
       ...(this.options.outputSchema ? {
         outputFormat: {
           type: "json_schema",

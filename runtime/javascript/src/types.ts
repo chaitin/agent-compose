@@ -18,6 +18,7 @@ export interface RunnerOptions {
   home: string;
   runtimeRoot: string;
   systemContext: string;
+  mcpConfig?: Record<string, unknown>;
   outputSchema?: RuntimeJsonSchema;
 }
 
