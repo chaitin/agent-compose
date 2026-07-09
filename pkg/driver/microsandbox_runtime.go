@@ -4,6 +4,7 @@ package driver
 
 import (
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/identity"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -603,7 +604,14 @@ func (r *microsandboxRuntime) sandboxStateDir(name string) string {
 }
 
 func (r *microsandboxRuntime) dockerDiskPath(sandboxID string) string {
-	return filepath.Join(r.config.MicrosandboxHome, "docker-disks", sandboxID+".raw")
+	return filepath.Join(r.config.MicrosandboxHome, "docker-disks", microsandboxDockerDiskName(sandboxID)+".raw")
+}
+
+func microsandboxDockerDiskName(sandboxID string) string {
+	if hash, err := identity.Hash(sandboxID); err == nil {
+		return hash
+	}
+	return sandboxID
 }
 
 func (r *microsandboxRuntime) ensureDockerDisk(sandboxID string) (string, error) {

@@ -1048,6 +1048,7 @@
       - 本任务为最终发布审计，无代码行为变更。
       - 复核 11.1 完整门禁、coverage baseline、生成检查、部署约束和 runtime smoke 环境阻塞记录。
       - 复核最终停止条件清单，未发现需要回到 spec/plan 的阻塞项。
+      - 创建 PR 后发现 `origin/main` 已前进且 PR 为 dirty；已合并 `origin/main`，保留 main 的 Microsandbox docker disk hash 修复，并将合并的新测试变量/错误文案收敛为 sandbox 命名。
     - 验证：
       - `git diff --exit-code -- proto/agentcompose/v1 proto/agentcompose/v2 proto-client`：通过，当前 worktree 无 proto/proto-client diff。
       - `git diff --name-only $(git merge-base origin/main HEAD)..HEAD -- proto/agentcompose/v1 proto/agentcompose/v1/agentcomposev1connect`：无输出，确认本分支未修改 v1 proto/generated。
@@ -1057,6 +1058,7 @@
       - `rg -n 'Test.*Legacy|legacy sessions data detected|legacy SQLite schema detected|SESSION_ROOT|DOCKER_HOST_SESSION_ROOT|SESSION_START_TIMEOUT|SESSION_STOP_TIMEOUT|event_session_link|linked_session_id|llm_facade_token\.session_id|automatic migration' pkg/config pkg/storage/sessionstore pkg/storage/configstore cmd/agent-compose -S`：确认旧 env、旧目录、旧 SQLite schema 拒绝路径和 negative tests 存在。
       - `docker compose -f docker-compose.yml --env-file .env.example config --services`：通过，仅渲染 `agent-compose` 服务；deployment knob audit 确认 base compose 使用 published images，local `build:` 只在 override。
       - `git diff --check`：通过。
+      - 合并 `origin/main` 后补充验证：`go test ./pkg/driver`、`task lint`、`go test ./cmd/... ./pkg/...`、`task build`、`task test` 均通过；post-merge coverage statements 仍为 Unit `78.56%`、Integration `70.08%`、E2E `66.95%`、Combined `81.31%`。
     - 审计与例外：
       - v1 wire contract：无 branch diff under `proto/agentcompose/v1/**`；v1 `SessionService`、`StopSession`、`session_id`、`agent_session_id` 和 `/agent-compose/session/*` 残留归类为 v1 compatibility。
       - v2/public surface：`RunSandboxCleanupPolicy`、`ExecSandboxSelector`、`sandbox_id`、`agent_thread_id/thread_id` 和 reserved legacy names 已同步到 Go/TS generated code；v2 `session_id` 字符串残留来自 reserve metadata。
