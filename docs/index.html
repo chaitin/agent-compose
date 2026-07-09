@@ -2613,10 +2613,10 @@
             <h1>agent-<span>compose</span></h1>
             <p
               class="hero-desc"
-              data-zh="agent-compose 是一个面向 agent 工作流的控制面：用本地 compose 定义 project、agent 和调度规则，再由常驻 daemon 统一负责执行、状态持久化、日志、session 和运行过程管理。"
-              data-en="agent-compose is a control plane for agent workflows: define projects, agents, and scheduling rules in local compose files, then let the long-running daemon handle execution, persisted state, logs, sessions, and runtime lifecycle management."
+              data-zh="agent-compose 是一个面向 agent 工作流的控制面：用本地 compose 定义 project、agent 和调度规则，再由常驻 daemon 统一负责执行、状态持久化、日志、sandbox 和运行过程管理。"
+              data-en="agent-compose is a control plane for agent workflows: define projects, agents, and scheduling rules in local compose files, then let the long-running daemon handle execution, persisted state, logs, sandboxes, and runtime lifecycle management."
             >
-              agent-compose 是一个面向 agent 工作流的控制面：用本地 compose 定义 project、agent 和调度规则，再由常驻 daemon 统一负责执行、状态持久化、日志、session 和运行过程管理。
+              agent-compose 是一个面向 agent 工作流的控制面：用本地 compose 定义 project、agent 和调度规则，再由常驻 daemon 统一负责执行、状态持久化、日志、sandbox 和运行过程管理。
             </p>
             <div class="hero-actions">
               <a class="button primary" href="#quickstart" data-zh="快速开始" data-en="Get Started">快速开始</a>
@@ -2668,10 +2668,10 @@ agent-compose run reviewer --prompt "review this change"</pre>
             <article class="card">
               <h3 data-zh="把 agent 执行变成可追踪流程" data-en="Make agent execution observable and repeatable">把 agent 执行变成可追踪流程</h3>
               <p
-                data-zh="同一套入口下统一管理执行、日志、session 和历史状态，让团队能稳定复现、排查和持续运行 agent 工作流。"
-                data-en="Manage execution, logs, sessions, and history through one surface so teams can rerun, inspect, and operate agent workflows with less guesswork."
+                data-zh="同一套入口下统一管理执行、日志、sandbox 和历史状态，让团队能稳定复现、排查和持续运行 agent 工作流。"
+                data-en="Manage execution, logs, sandboxes, and history through one surface so teams can rerun, inspect, and operate agent workflows with less guesswork."
               >
-                同一套入口下统一管理执行、日志、session 和历史状态，让团队能稳定复现、排查和持续运行 agent 工作流。
+                同一套入口下统一管理执行、日志、sandbox 和历史状态，让团队能稳定复现、排查和持续运行 agent 工作流。
               </p>
             </article>
             <article class="card">
@@ -2754,10 +2754,10 @@ agent-compose run reviewer --prompt "review this change"</pre>
                   <span class="flow-label">Execution</span>
                   <strong>Runtimes</strong>
                   <p
-                    data-zh="通过 `boxlite`、`docker`、`microsandbox` 拉起 guest，准备 workspace，并维持 session 生命周期。"
-                    data-en="Boots guests through `boxlite`, `docker`, and `microsandbox`, prepares workspaces, and maintains session lifecycle."
+                    data-zh="通过 `boxlite`、`docker`、`microsandbox` 拉起 guest，准备 workspace，并维持 sandbox 生命周期。"
+                    data-en="Boots guests through `boxlite`, `docker`, and `microsandbox`, prepares workspaces, and maintains sandbox lifecycle."
                   >
-                    通过 `boxlite`、`docker`、`microsandbox` 拉起 guest，准备 workspace，并维持 session 生命周期。
+                    通过 `boxlite`、`docker`、`microsandbox` 拉起 guest，准备 workspace，并维持 sandbox 生命周期。
                   </p>
                   <div class="runtime-chip-row">
                     <span>boxlite</span>
@@ -2767,16 +2767,16 @@ agent-compose run reviewer --prompt "review this change"</pre>
                 </article>
                 <article class="flow-card">
                   <span class="flow-label">Access</span>
-                  <strong>Web/UI and Sessions</strong>
+                  <strong>Web/UI and Sandboxes</strong>
                   <p
-                    data-zh="当前 Web/UI 继续使用现有接口；session、logs、workspace、proxy 路由和运行历史都由 daemon 统一协调。"
-                    data-en="The current Web/UI still uses the existing API surface, while sessions, logs, workspaces, proxy routes, and run history are coordinated by the daemon."
+                    data-zh="当前 Web/UI 继续使用现有兼容接口；sandbox、logs、workspace、proxy 路由和运行历史都由 daemon 统一协调。"
+                    data-en="The current Web/UI still uses the existing compatibility API surface, while sandboxes, logs, workspaces, proxy routes, and run history are coordinated by the daemon."
                   >
-                    当前 Web/UI 继续使用现有接口；session、logs、workspace、proxy 路由和运行历史都由 daemon 统一协调。
+                    当前 Web/UI 继续使用现有兼容接口；sandbox、logs、workspace、proxy 路由和运行历史都由 daemon 统一协调。
                   </p>
                   <div class="flow-note">
                     <span>existing API</span>
-                    <span>session</span>
+                    <span>sandbox</span>
                     <span>workspace</span>
                   </div>
                 </article>

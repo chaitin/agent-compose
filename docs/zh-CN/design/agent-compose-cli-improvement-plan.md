@@ -11,7 +11,7 @@ CLI 是 agent-compose daemon 的操作入口。它负责读取本地 project 配
 - `project` 来自 `agent-compose.yml` 或 `agent-compose.yaml`，由 v2 `ProjectService` 管理。
 - `agent` 是 project 中定义的可运行单元，可带 provider、model、image、driver、env、workspace、scheduler、capset 和 Jupyter 默认配置。
 - `run` 是一次可审计的执行记录，包含 prompt/command、状态、输出、日志路径、artifact 路径、cleanup error 和 warning。
-- `sandbox` 是对外统一的运行态隔离环境概念，内部继续复用 session store、runtime state 和 proxy state。
+- `sandbox` 是对外统一的运行态隔离环境概念，内部使用 sandbox store、runtime state 和 proxy state；`pkg/storage/sessionstore` 仅是兼容包名。
 - `image` 由 daemon image backend/store 管理，`pull`/`rmi` 不挂到 runtime driver。
 
 ## CLI 入口和全局行为
@@ -77,7 +77,7 @@ CLI 面向 v2 API 的当前服务边界：
 - `CacheService`：`ListCaches`、`InspectCache`、`PruneCaches`、`RemoveCache`。
 - `SandboxService`：`RemoveSandbox`、`GetSandboxStats`。
 
-CLI 仍复用 v1 `SessionService` 的 `StopSession`、`ResumeSession`、`GetSession`、`ListSessions` 和 `GetSessionProxy` 等 session 能力。对外文案使用 sandbox，内部 ID 当前与 session id 兼容。
+CLI 仍复用 v1 `SessionService` 的 `StopSession`、`ResumeSession`、`GetSession`、`ListSessions` 和 `GetSessionProxy` 等兼容能力。对外文案使用 sandbox，v1 wire 中的 `sessionId` 字段映射 sandbox ID。
 
 ## Project 和 Compose 映射
 
@@ -220,7 +220,7 @@ Jupyter 默认关闭。启用来源包括：
 
 `--jupyter-expose` 会同时启用 Jupyter，并把 sandbox proxy state 标记为 exposed。它只表达“通过 agent-compose proxy 暴露可访问入口”的意图，不要求 Docker、BoxLite 或 Microsandbox runtime driver 做外部 host port bind。
 
-session store 会把 Jupyter options 写入 `proxy/jupyter.json`。driver 启动 runtime 时读取 session proxy state。`GetSessionProxy` 只返回 proxy 入口信息；真实 HTTP/WebSocket 转发由 `pkg/agentcompose/proxy` 的 proxy routes 处理。
+sandbox store 会把 Jupyter options 写入 `proxy/jupyter.json`。driver 启动 runtime 时读取 sandbox proxy state。`GetSessionProxy` 只返回 proxy 入口信息；真实 HTTP/WebSocket 转发由 `pkg/agentcompose/proxy` 的 proxy routes 处理。
 
 ## Image store 和 Pull
 
@@ -242,7 +242,7 @@ Docker daemon 只是可选 image backend；OCI cache 是 daemonless backend。Bo
 
 ## Sandbox lifecycle
 
-`ps`、`sandbox`、`stats`、`inspect sandbox`、`stop`、`resume`、`rm` 都以 sandbox 为对外术语。当前 sandbox ID 与内部 session id 兼容，但 CLI 文案和用户入口统一使用 sandbox。
+`ps`、`sandbox`、`stats`、`inspect sandbox`、`stop`、`resume`、`rm` 都以 sandbox 为对外术语。v1 兼容响应中的 `sessionId` 映射 sandbox ID，但 CLI 文案和用户入口统一使用 sandbox。
 
 `sandbox` 命令组是当前推荐的 sandbox 管理命名空间：
 
@@ -272,7 +272,7 @@ Docker daemon 只是可选 image backend；OCI cache 是 daemonless backend。Bo
 - `running` 和 `pending` 状态不能进入 prune；用户显式传 `--status running` 或 `--status pending` 时返回 usage error，并提示使用 `sandbox rm --force <sandbox>` 处理运行中 sandbox。
 - forced prune 删除时始终调用 `RemoveSandbox(force=false)`，避免批量强删运行中 sandbox。
 - 时间缺失或时间格式无法解析的 sandbox 不进入 matched，会写入 `warnings`。
-- `sandbox prune` 不直接删除 `SESSION_ROOT`、`DATA_ROOT` 或 runtime driver 私有目录，也不清理 runtime cache 文件；cache inventory 仍由 `cache prune` 或 `cache rm` 管理。
+- `sandbox prune` 不直接删除 `SANDBOX_ROOT`、`DATA_ROOT` 或 runtime driver 私有目录，也不清理 runtime cache 文件；cache inventory 仍由 `cache prune` 或 `cache rm` 管理。
 
 输出规则：
 

@@ -879,7 +879,7 @@
       - 本任务未修改 `proto/agentcompose/v1/*`、v2 proto、generated code、Dockerfile 或 Compose 行为。
     - 下一目标：10.2。
 
-- [ ] 10.2 更新设计文档和中文对应文档
+- [x] 10.2 更新设计文档和中文对应文档
   - 依赖：7.3、8.3、9.2。
   - 工作内容：
     - 更新 `docs/design/agent-compose_design.md`。
@@ -891,9 +891,9 @@
     - 更新 `docs/design/webhook_design.md`。
     - 更新对应 `docs/zh-CN/design/*` 文档，包括 runtime LLM facade 中文设计文档。
   - 可并行子任务：
-    - [ ] 可并行：更新 runtime/env/mount 设计文档。
-    - [ ] 可并行：更新 agent-compose/webhook/octobus 设计文档。
-    - [ ] 可并行：更新中文对应文档。
+    - [x] 可并行：更新 runtime/env/mount 设计文档。
+    - [x] 可并行：更新 agent-compose/webhook/octobus 设计文档。
+    - [x] 可并行：更新中文对应文档。
   - 测试方案：
     - 文档人工审阅。
     - `rg -n "\bsession\b|session_id|sessionId|Session" docs README.md .env.example Dockerfile docker-compose.yml docker-compose.override.yml`
@@ -901,10 +901,24 @@
     - 文档中的 `session` 残留全部能归入允许类别。
     - 新文档不描述旧 runtime env、旧 SQLite 字段或旧 v2 public fields 为当前行为。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - 更新 English/中文 runtime contract，当前 runtime env 使用 `SANDBOX_ID`，agent result/provider state 使用 `threadId`，cell artifact 使用 `agent-thread.json`。
+      - 更新 runtime env 和 mount manifest 设计文档，当前路径收敛到 `<SANDBOX_ROOT>/<sandbox_id>`、`<sandbox>` 和 `DOCKER_HOST_SANDBOX_ROOT`；旧 `SESSION_WORKSPACE`、guest-side `SESSION_ROOT` 仅保留为历史/不再注入说明。
+      - 更新中文 Runtime LLM Facade 设计，当前 facade 路由为 `/api/runtime/sandboxes/:sandbox_id/...`，runtime token env 为 `AGENT_COMPOSE_SANDBOX_TOKEN`，token scope/storage 使用 `sandbox_id`。
+      - 更新 agent-compose 总体设计、中英 playground、agent system prompt、OpenCode 支持和 docs landing page，将当前运行实例描述切换为 sandbox，将 provider 续接描述切换为 thread/provider-native session 边界。
+      - 更新 webhook 设计为 event-to-sandbox 查询和 `event_sandbox_link` / `linked_sandbox_id`；`/api/events/:event_id/sessions` 仅作为兼容 alias 说明。
+      - 更新 OctoBus 设计为 sandbox 级 capset 隔离，当前 metadata 使用 `x-capability-sandbox-token`，`x-capability-session-token` 仅作为 deprecated fallback。
+      - 收敛中文 CLI 当前设计中的 sandbox store/proxy state 表述。
+    - 验证：
+      - `rg -n 'AGENT_COMPOSE_SESSION_TOKEN|DOCKER_HOST_SESSION_ROOT|SESSION_ROOT|SESSION_ID|agent-session|sessionId|agentSessionId|linked_session_id|event_session_link|/api/runtime/sessions|/data/sessions|llm_facade_token\.session_id|<session>|/sessions/<session|SESSION_WORKSPACE' docs/design docs/zh-CN/design README.md .env.example Dockerfile docker-compose.yml docker-compose.override.yml -S`
+      - `rg -n "\bsession\b|session_id|sessionId|Session" docs/design docs/zh-CN/design README.md .env.example Dockerfile docker-compose.yml docker-compose.override.yml -S`
+      - `rg -n 'SANDBOX_ID|threadId|agent-thread\.json|/api/runtime/sandboxes|AGENT_COMPOSE_SANDBOX_TOKEN|event_sandbox_link|linked_sandbox_id|x-capability-sandbox-token|SANDBOX_ROOT|DOCKER_HOST_SANDBOX_ROOT' docs/design docs/zh-CN/design docs/index.html -S`
+      - `git diff --check`
+    - 审计与例外：
+      - targeted stale-field audit 剩余项均已归类：`.env.example` breaking-change 注释；runtime env/mount 文档的历史“不再注入”变量；v1 wire `sessionId` 示例；OpenCode provider-native `sessionId/session_id`；residual-audit 分类文档。
+      - broader `session` audit 剩余项属于 v1 compatibility (`SessionService`、`scheduler.session.*`、`CreateSessionRequest`、`GetSessionProxy`、`/agent-compose/session/*`)、deprecated alias (`inspect session`)、auth/browser session、provider-native protocol、或旧 env/迁移诊断说明。
+      - 本任务仅修改文档；未修改 `proto/agentcompose/v1/*`、generated code、runtime/package code 或 Compose 行为。
     - 下一目标：10.3。
 
 - [ ] 10.3 执行全仓 `session` 残留审计并修复非允许残留

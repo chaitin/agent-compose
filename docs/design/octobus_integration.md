@@ -5,7 +5,7 @@ Chinese version: [../zh-CN/design/octobus_integration.md](../zh-CN/design/octobu
 OctoBus repository: [chaitin/OctoBus](https://github.com/chaitin/OctoBus).
 
 agent-compose integrates published OctoBus capability sets, injects selected
-capability sets into work sessions and automation tasks, and provides capability
+capability sets into work sandboxes and automation tasks, and provides capability
 call entry points to guests. agent-compose is the only integration boundary:
 frontend and guest do not connect to OctoBus directly.
 
@@ -59,7 +59,7 @@ message UpdateCapabilityGatewayConfigRequest {
 
 When backend accesses OctoBus, it injects `Authorization: Bearer <token>` if
 token exists. Token stays server-side only; it is not returned to frontend in
-plaintext, written into session metadata, injected into guest env, or logged.
+plaintext, written into sandbox metadata, injected into guest env, or logged.
 
 ### Data-Plane Proxy Entry
 
@@ -67,15 +67,15 @@ Deployment-fixed, bound once at startup, not page-configured:
 
 - Proxy bind address: listen address of agent-compose internal transparent gRPC
   proxy server.
-- Guest-reachable proxy address: `CAP_GRPC_TARGET` injected into sessions,
+- Guest-reachable proxy address: `CAP_GRPC_TARGET` injected into sandboxes,
   determined by container / network mapping.
 - Runtime gRPC capability calls require both `CAP_GRPC_LISTEN` and
   `CAP_GRPC_TARGET` to be set when the daemon starts. `CAP_GRPC_LISTEN` starts
   the local capability gRPC proxy; `CAP_GRPC_TARGET` is the guest-reachable
-  address injected into new sessions. If either is missing, the control plane
-  can still show OctoBus as connected, but sessions with selected capsets will
+  address injected into new sandboxes. If either is missing, the control plane
+  can still show OctoBus as connected, but sandboxes with selected capsets will
   not receive usable runtime capability connection variables. Restart
-  agent-compose and create a new session after changing these values.
+  agent-compose and create a new sandbox after changing these values.
 
 ## Control-Plane CapabilityService
 
@@ -147,9 +147,9 @@ Backend behavior:
 | `GetCapabilityCatalog` | `GET /admin/v1/catalog/{capset_id}?all=true` | Backend performs URL escaping and normalizes the three protocol entries |
 
 The same catalog endpoint also provides `?format=md` (`text/markdown`, rendered
-by OctoBus `RenderCatalogMarkdown`). During session injection, agent-compose
+by OctoBus `RenderCatalogMarkdown`). During sandbox injection, agent-compose
 uses `?format=md&grpc=true` to render capability instructions into the guest
-(see [session / loader injection](#session--loader-injection)).
+(see [sandbox / loader injection](#sandbox--loader-injection)).
 
 OctoBus catalog structure: `?all=true` returns three parallel arrays: `grpc`,
 `mcp`, and `connect_rpc`; each method appears once in each array. gRPC entries
@@ -163,22 +163,25 @@ UI display only and do not include the OctoBus address.
 ## Data-Plane Forwarding: gRPC Only
 
 Guest connects to `CAP_GRPC_TARGET`, makes gRPC calls by `method_full_name`,
-carries session credential metadata, and includes the target instance from the
+carries sandbox credential metadata, and includes the target instance from the
 injected capability guide markdown:
 
 ```text
-x-capability-session-token: <CAP_TOKEN>
+x-capability-sandbox-token: <CAP_TOKEN>
 x-octobus-instance: <instance_id>   # provided by guest
 ```
 
-Boundary: **capset is the session-level isolation boundary enforced by
+The deprecated `x-capability-session-token` metadata key remains accepted only
+as a compatibility fallback.
+
+Boundary: **capset is the sandbox-level isolation boundary enforced by
 capproxy; instance is routing inside the capset and is selected by the guest.**
 OctoBus instance ids are globally unique and already identify the service.
 capproxy handles each stream:
 
 ```text
-1. Look up in-memory index by token -> (session, allowed_capsets)
-2. Validate guest-provided x-octobus-capset is in the session's allowed_capsets
+1. Look up in-memory index by token -> (sandbox, allowed_capsets)
+2. Validate guest-provided x-octobus-capset is in the sandbox's allowed_capsets
 3. Reflection methods (grpc.reflection.*): require only x-octobus-capset and pass through
 4. Business methods:
      - require x-octobus-instance from the guest
@@ -194,43 +197,43 @@ Implementation notes:
 
 - gRPC server uses `UnknownServiceHandler` + raw passthrough codec and streams
   frames bidirectionally to OctoBus daemon (`grpc.NewClient` + raw codec).
-- token -> session binding uses in-memory index
-  `token -> (session_id, capset_ids)`: rebuilt from existing sessions at
-  startup, incrementally maintained on session create/stop.
-- capproxy validates `x-octobus-capset` belongs to the session binding set,
+- token -> sandbox binding uses in-memory index
+  `token -> (sandbox_id, capset_ids)`: rebuilt from existing sandboxes at
+  startup, incrementally maintained on sandbox create/stop.
+- capproxy validates `x-octobus-capset` belongs to the sandbox binding set,
   requires guest `x-octobus-instance` for business calls, and injects the
   OctoBus token.
 - OctoBus addr / token are read from `ConfigStore` during forwarding.
-- Auth and isolation: capset set is bound to the session; guest can choose only
+- Auth and isolation: capset set is bound to the sandbox; guest can choose only
   within the bound set. instance is routing inside a capset and must be
   specified by the guest for business calls. `CAP_TOKEN` is an
-  agent-compose-issued session credential used only to resolve session ->
+  agent-compose-issued sandbox credential used only to resolve sandbox ->
   capset binding. It cannot access OctoBus. OctoBus token stays server-side and
   does not enter the guest.
 
-## Session / Loader Injection
+## Sandbox / Loader Injection
 
 Capability injection has two steps because lifecycle timing differs: env/tags
 must be merged into the create request before DB creation, while capability
-guide markdown (MPI catalog) can be written only after the session directory
-exists. Both steps are driven by `capset_ids` and are used by both work sessions
+guide markdown (MPI catalog) can be written only after the sandbox directory
+exists. Both steps are driven by `capset_ids` and are used by both work sandboxes
 and loader runs.
 
-**Capability injection is best-effort. Any step failure must not block session /
+**Capability injection is best-effort. Any step failure must not block sandbox /
 loader creation or execution.** Capabilities are additive and should not couple
-session/loader survival to OctoBus availability, especially for automatic loader
-scheduling. Failures are recorded as session events + logs, and capability
+sandbox/loader survival to OctoBus availability, especially for automatic loader
+scheduling. Failures are recorded as sandbox events + logs, and capability
 problems are left to runtime where capproxy forwards gRPC errors to the agent.
 Capset validity is checked on the control plane, where frontend uses
 `ListCapabilitySets` for selection, not during creation.
 
-**Step 1: `buildCapabilityGatewaySessionVars(capset_ids)` before DB creation**
+**Step 1: `BuildGatewaySandboxVars(capset_ids)` before DB creation**
 locally generates env items and tags without calling OctoBus or validating
 capsets:
 
 ```text
 CAP_GRPC_TARGET=<deployment-fixed guest-reachable proxy address>
-CAP_TOKEN=<new uuid per session>   # secret
+CAP_TOKEN=<new uuid per sandbox>   # secret
 ```
 
 Tag: one `capset=<capset_id>` per capability set. Preconditions are only that at
@@ -238,33 +241,33 @@ least one capset is selected and `CAP_GRPC_TARGET` is configured. If the latter
 is missing, capability injection is skipped and a warning is recorded; creation
 is not blocked.
 
-**Step 2: `writeCapabilityGuide(session, capset_ids)` after
-`prepareSessionWorkspace` and before `StartSessionVM`, best-effort.** For each
+**Step 2: `writeCapabilityGuide(sandbox, capset_ids)` after
+workspace preparation and before `StartSessionVM`, best-effort.** For each
 capset, call OctoBus
 `GET /admin/v1/catalog/{capset_id}?format=md&grpc=true` to render capability
-guide markdown, then write it to the **session MPI catalog**
-`<sessionDir>/runtime/mpi/catalog.md` (mounted in the guest as
+guide markdown, then write it to the **sandbox MPI catalog**
+`<sandboxDir>/runtime/mpi/catalog.md` (mounted in the guest as
 `/data/runtime/mpi/catalog.md`). `agent-compose-runtime`
 (`runtime/javascript`) `readMpiContext` reads this catalog and injects it as
 **high-priority context** into the agent system prompt: Codex receives it through
 `config.developer_instructions`; Claude receives it through `systemPrompt`
-(preset `claude_code` + `append`). Therefore, once a session is created, the
+(preset `claude_code` + `append`). Therefore, once a sandbox is created, the
 agent knows available capabilities as soon as it starts without having to cat
 the file itself. Rendered content includes each gRPC method, its `x-octobus-*`
 metadata (capset / instance), and guidance to use server reflection to obtain
 descriptors. The guest uses this to include `x-octobus-capset` and
 `x-octobus-instance` when calling. It does not include OctoBus address or token
 and uses only the `grpc` section. **If OctoBus is
-unreachable or rendering fails, record an event and continue; session/loader
+unreachable or rendering fails, record an event and continue; sandbox/loader
 starts normally.**
 
 Coverage: Codex and Claude receive `mpiContext` in system prompt. Gemini runner
 does not currently consume `mpiContext`; this is a known gap and is out of scope
 for this phase.
 
-Timing constraint: env injection runs before `Store.CreateSession` and returns
-values that are merged into the create request, when session directory does not
-exist yet. Markdown writing must wait until after `CreateSession` creates the
+Timing constraint: env injection runs before `Store.CreateSandbox` and returns
+values that are merged into the create request, when sandbox directory does not
+exist yet. Markdown writing must wait until after `CreateSandbox` creates the
 directory and before `StartSessionVM` mounts it; otherwise the path may not
 exist or the file may miss the mount.
 
@@ -276,7 +279,7 @@ message CreateSessionRequest {
 }
 ```
 
-Agent definition, session creation, and loader all save capability set
+Agent definition, sandbox creation, and loader all save capability set
 selection. `capset_ids` is added to `AgentDefinition`,
 `CreateAgentSessionRequest`, `CreateLoaderRequest`, `UpdateLoaderRequest`,
 `LoaderSummary`, and `LoaderDetail`, and is persisted as
@@ -286,12 +289,12 @@ Injection chain:
 
 | Stage | Responsibility |
 | --- | --- |
-| `SessionRPCBridge.createSession` / `loader_manager.go` loader run | Receive `capset_ids`; call step 1 before DB creation and step 2 after DB creation |
-| `buildCapabilityGatewaySessionVars` (step 1) | Locally generate `CAP_GRPC_TARGET` / `CAP_TOKEN` env items + `capset` tags, without calling OctoBus |
-| `Store.CreateSession` | Persist merged `EnvItems` and tags, create session directory |
-| `prepareSessionWorkspace` | Populate workspace with git clone / file copy |
-| `writeCapabilityGuide` (step 2) | Render capability guide markdown into session MPI catalog `runtime/mpi/catalog.md` (guest `/data/runtime/mpi/catalog.md`) |
-| runtime driver | Inject `session.EnvItems` into guest and mount workspace/runtime directories |
+| `SandboxRPCBridge.createSession` / `loader_manager.go` loader run | Receive `capset_ids`; call step 1 before DB creation and step 2 after DB creation |
+| `BuildGatewaySandboxVars` (step 1) | Locally generate `CAP_GRPC_TARGET` / `CAP_TOKEN` env items + `capset` tags, without calling OctoBus |
+| `Store.CreateSandbox` | Persist merged `EnvItems` and tags, create sandbox directory |
+| workspace preparation | Populate workspace with git clone / file copy |
+| `writeCapabilityGuide` (step 2) | Render capability guide markdown into sandbox MPI catalog `runtime/mpi/catalog.md` (guest `/data/runtime/mpi/catalog.md`) |
+| runtime driver | Inject `sandbox.EnvItems` into guest and mount workspace/runtime directories |
 | `agent-compose-runtime` (guest) | `readMpiContext` reads catalog and injects Codex / Claude system prompt |
 
 ## Frontend
@@ -302,7 +305,7 @@ Settings page "Capability Gateway":
   `addr` / `token`.
 - `GetCapabilityStatus` probes connection status and capability count.
 
-Session creation and loader:
+Sandbox creation and loader:
 
 - Use `ListCapabilitySets` to select capability sets and submit `capsetIds`.
 
@@ -314,7 +317,7 @@ Session creation and loader:
 | OctoBus connection failure | Return `ok=false` and error summary |
 | Control-plane OctoBus returns non-2xx | Return Connect error with HTTP status |
 | Control-plane `GetCapabilityCatalog` capset not found | not found / invalid argument |
-| Injection-stage OctoBus unreachable / markdown render failure | **Does not block**: record session event + log; session/loader is still created and runs best-effort |
+| Injection-stage OctoBus unreachable / markdown render failure | **Does not block**: record sandbox event + log; sandbox/loader is still created and runs best-effort |
 | Data-plane business call missing `x-octobus-instance` | gRPC `FailedPrecondition`; guest must include `x-octobus-instance` |
 | Data-plane method / instance not exposed by capset | OctoBus gRPC status is passed through |
 | Data-plane OctoBus returns gRPC status | Status code / message are passed through |
@@ -335,14 +338,14 @@ Backend:
 3. Control-plane provider depends on `ConfigStore` and reads `addr` / `token`
    on every call.
 4. Data-plane capproxy: read OctoBus addr / token from `ConfigStore`; maintain
-   token -> session in-memory index; validate guest `x-octobus-capset` belongs
-   to session binding; require guest `x-octobus-instance` for business calls;
+   token -> sandbox in-memory index; validate guest `x-octobus-capset` belongs
+   to sandbox binding; require guest `x-octobus-instance` for business calls;
    run a dedicated gRPC listener.
-5. Two-step injection shared by work sessions and loader runs:
-   `buildCapabilityGatewaySessionVars` before DB creation to generate
+5. Two-step injection shared by work sandboxes and loader runs:
+   `BuildGatewaySandboxVars` before DB creation to generate
    `CAP_GRPC_TARGET` / `CAP_TOKEN` env + `capset` tags; `writeCapabilityGuide`
    after DB creation and before VM start to render capability guide markdown
-   with `?format=md&grpc=true` into session MPI catalog
+   with `?format=md&grpc=true` into sandbox MPI catalog
    `runtime/mpi/catalog.md`, which `agent-compose-runtime` injects into Codex
    / Claude system prompt.
 
@@ -350,19 +353,19 @@ Frontend:
 
 6. Wire settings page to `GetCapabilityGatewayConfig`,
    `UpdateCapabilityGatewayConfig`, and `GetCapabilityStatus`.
-7. Wire session creation, agent definition, and loader to
+7. Wire sandbox creation, agent definition, and loader to
    `ListCapabilitySets`, submitting `capsetIds`.
 
 Tests:
 
 8. Control plane: unconfigured, connection failure, capsets normalization,
    catalog normalization, capset not found.
-9. Data plane: validate guest capset belongs to session binding; require and
+9. Data plane: validate guest capset belongs to sandbox binding; require and
    pass through guest instance; reflection stream validates capset; inject
    OctoBus token; missing instance ->
    `FailedPrecondition`; OctoBus routing errors are passed through.
-10. Injection consistency and tolerance: loader and work session share the same
+10. Injection consistency and tolerance: loader and work sandbox share the same
     injection result; capability guide markdown is written into MPI catalog
     (`runtime/mpi/catalog.md`, not workspace) and includes method instance
-    routing metadata; **when OctoBus is unreachable or markdown render fails, session
+    routing metadata; **when OctoBus is unreachable or markdown render fails, sandbox
     and loader still create and run successfully (best-effort, non-blocking).**

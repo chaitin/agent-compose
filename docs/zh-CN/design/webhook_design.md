@@ -365,13 +365,13 @@ delivery 在 loader trigger 匹配时写入 `matched`，run 创建后更新为 `
 
 ```http
 GET /api/events/:event_id/trace
-GET /api/events/:event_id/sessions
+GET /api/events/:event_id/sandboxes
 POST /api/events/:event_id/replay
 GET /api/webhook-sources
 GET /api/webhook-sources/:source_id/stats
 ```
 
-`trace` 返回 event、父子 event、delivery、loader run、loader event 和关联 session。`sessions` 只返回由该 event 触发链路创建或操作过的会话，适合外部系统拿 `event_id` 反查会话。
+`trace` 返回 event、父子 event、delivery、loader run、loader event 和关联 sandbox。`sandboxes` 只返回由该 event 触发链路创建或操作过的 sandbox，适合外部系统拿 `event_id` 反查 sandbox。已实现的 `GET /api/events/:event_id/sessions` 路由是同一 sandbox 查询的兼容别名。
 
 `replay` 不应改写原 event，也不应复用原 event id。建议创建一个新 event，payload 继承原 payload，并写入 `replay_of_event_id`、新的 `event_id`、新的 `sequence` 和可选 replay reason。这样幂等键不会和原始 provider delivery 冲突，trace 也能区分原始投递和人工重放。
 
@@ -384,22 +384,22 @@ GET /api/webhook-sources/:source_id/stats
 - event 到 run_started、run_completed 的延迟。
 - dead letter 数量和最近错误。
 
-UI 上建议在自动化/运行记录里增加 “Webhook 事件” 视图：按 source/topic/status 筛选，展示 event id、correlation id、delivery id、匹配 loader、run 状态、关联会话和重放入口。
+UI 上建议在自动化/运行记录里增加 “Webhook 事件” 视图：按 source/topic/status 筛选，展示 event id、correlation id、delivery id、匹配 loader、run 状态、关联 sandbox 和重放入口。
 
-## Event 到会话查询
+## Event 到 sandbox 查询
 
-需要提供 “根据 `event_id` 查到会话” 的能力。当前已有部分链路可复用：
+需要提供 “根据 `event_id` 查到 sandbox” 的能力。当前已有部分链路可复用：
 
 - webhook event payload 带 `eventId` / `correlationId`。
 - event 触发 loader run 时，run 的 `payload_json` 保存了触发事件 envelope。
-- loader 通过 session RPC 创建或操作会话时，会写入 loader event，字段包含 `linked_session_id`。
+- loader 通过 v1-compatible session RPC bridge 创建或操作 sandbox 时，会写入 loader event，字段包含 `linked_sandbox_id`。
 - loader 派生 event 会写 `parent_event_id`、`publisher_run_id`。
-- 会话自身有 `trigger_source=script:<loader_id>`，但缺少直接 event/run 关联。
+- sandbox 自身有 `trigger_source=script:<loader_id>`，但缺少直接 event/run 关联。
 
 建议查询语义：
 
 ```http
-GET /api/events/:event_id/sessions
+GET /api/events/:event_id/sandboxes
 ```
 
 返回：
@@ -408,9 +408,9 @@ GET /api/events/:event_id/sessions
 {
   "event_id": "evt_xxx",
   "correlation_id": "github:push:xxx",
-  "sessions": [
+  "sandboxes": [
     {
-      "session_id": "sess_xxx",
+      "sandbox_id": "sandbox_xxx",
       "relation": "created_by_loader_run",
       "loader_id": "loader-1",
       "run_id": "run-1",
@@ -425,35 +425,35 @@ GET /api/events/:event_id/sessions
 现有表可用于人工排障，但不适合作为正式 API 的主查询路径：
 
 - `loader_run.payload_json` 里有触发事件 envelope，但没有 event id 索引。
-- `loader_event.linked_session_id` 能找到会话，但需要先知道相关 run。
+- `loader_event.linked_sandbox_id` 能找到 sandbox，但需要先知道相关 run。
 - `correlation_id` 可能覆盖多个派生事件和 run，只能作为 trace 辅助条件，不能单独作为精确关联。
-- 因此 `GET /api/events/:event_id/sessions` 不应依赖全表 JSON 扫描作为主实现。
+- 因此 `GET /api/events/:event_id/sandboxes` 不应依赖全表 JSON 扫描作为主实现。
 
-正式实现需要增加显式关联表。event 到 run 的关系由 `event_delivery` 保存；event 到 session 的关系由 `event_session_link` 保存：
+正式实现需要增加显式关联表。event 到 run 的关系由 `event_delivery` 保存；event 到 sandbox 的关系由 `event_sandbox_link` 保存：
 
 ```sql
-CREATE TABLE event_session_link (
+CREATE TABLE event_sandbox_link (
   event_id TEXT NOT NULL,
-  session_id TEXT NOT NULL,
+  sandbox_id TEXT NOT NULL,
   relation TEXT NOT NULL,
   loader_id TEXT NOT NULL DEFAULT '',
   run_id TEXT NOT NULL DEFAULT '',
   trigger_id TEXT NOT NULL DEFAULT '',
   loader_event_id TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
-  PRIMARY KEY(event_id, session_id, relation, run_id)
+  PRIMARY KEY(event_id, sandbox_id, relation, run_id)
 );
 
-CREATE INDEX idx_event_session_link_session ON event_session_link(session_id, created_at);
-CREATE INDEX idx_event_session_link_run ON event_session_link(run_id);
+CREATE INDEX idx_event_sandbox_link_sandbox ON event_sandbox_link(sandbox_id, created_at);
+CREATE INDEX idx_event_sandbox_link_run ON event_sandbox_link(run_id);
 ```
 
 写入时机：
 
 - loader event trigger 匹配并创建 run 时，写入 `event_delivery(event_id, loader_id, trigger_id, run_id, status=run_started)`。
-- `loaderRunHost.CallSessionRPC` 识别到 `linked_session_id` 时，同时写 `event_id -> session_id`。
-- loader 派生 event 时，写入 `parent_event_id`。查询 `GET /api/events/:event_id/sessions` 时需要先按 `parent_event_id` 展开 descendant event，再汇总这些 event 的 `event_session_link`。
-- 如果业务希望原始 webhook event 直接查到派生 event 创建的会话，查询层负责 descendant 展开，不要求每个 descendant 写多份 ancestor link。
+- `loaderRunHost.CallSessionRPC` 识别到 `linked_sandbox_id` 时，同时写 `event_id -> sandbox_id`。
+- loader 派生 event 时，写入 `parent_event_id`。查询 `GET /api/events/:event_id/sandboxes` 时需要先按 `parent_event_id` 展开 descendant event，再汇总这些 event 的 `event_sandbox_link`。
+- 如果业务希望原始 webhook event 直接查到派生 event 创建的 sandbox，查询层负责 descendant 展开，不要求每个 descendant 写多份 ancestor link。
 - 手动 run 没有 event_id 时不写该表。
 
 ## Loader API

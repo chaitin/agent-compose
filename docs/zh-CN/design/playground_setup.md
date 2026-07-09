@@ -25,8 +25,8 @@
 
 - 监听端口：`7410`
 - `DATA_ROOT=/data`
-- `SESSION_ROOT=/data/sessions`
-- `DOCKER_HOST_SESSION_ROOT=/data/playground/data/agent-compose/sessions`
+- `SANDBOX_ROOT=/data/sandboxes`
+- `DOCKER_HOST_SANDBOX_ROOT=/data/playground/data/agent-compose/sandboxes`
 - `RUNTIME_DRIVER=docker`
 - `DEFAULT_IMAGE=${DEFAULT_IMAGE:-debian:bookworm-slim}`
 - 数据挂载：`./data/agent-compose:/data`
@@ -43,7 +43,7 @@
 
 - `/data/playground/data/agent-compose`
 
-如果 agent-compose 通过 `/var/run/docker.sock` 创建 Docker runtime session，Docker bind mount 的 source 必须是宿主机路径。此时 `DOCKER_HOST_SESSION_ROOT` 需要指向宿主机上实际 backing `SESSION_ROOT` 的 sessions 目录。
+如果 agent-compose 通过 `/var/run/docker.sock` 创建 Docker runtime sandbox，Docker bind mount 的 source 必须是宿主机路径。此时 `DOCKER_HOST_SANDBOX_ROOT` 需要指向宿主机上实际 backing `SANDBOX_ROOT` 的 sandboxes 目录。
 
 Web/UI 不应再作为 daemon 容器的内嵌静态资源职责来验证。前端可以由 nginx、静态文件服务器或独立容器提供，并反向代理到 daemon 的 v1/v2 Connect API 和 Jupyter proxy 路由。现有前端继续使用 v1 API；CLI 和新客户端优先使用 v2 API。
 
@@ -156,9 +156,9 @@ agent-compose --host http://127.0.0.1:7410 -f /tmp/agent-compose-smoke.yml ps
 agent-compose --host http://127.0.0.1:7410 -f /tmp/agent-compose-smoke.yml down
 ```
 
-### 6. 创建一个 v1 验证 session
+### 6. 创建一个 v1 验证 sandbox
 
-这里用最小请求即可，不需要额外传 `baseWorkspace`：
+这里用 v1 兼容 API 的最小请求即可，不需要额外传 `baseWorkspace`：
 
 ```bash
 curl -sS -X POST \
@@ -173,7 +173,7 @@ curl -sS -X POST \
 - `base_workspace` 不是当前 playground 烟雾验证的必要参数。
 - 如果你要准备真实 workspace，优先使用 `ConfigService` 管理 `workspace_id`，当前支持的 workspace 类型是 `git`。
 
-### 7. 查询 session 状态
+### 7. 通过 v1 兼容 API 查询 sandbox 状态
 
 ```bash
 curl -sS -X POST \
@@ -185,20 +185,20 @@ curl -sS -X POST \
 
 ### 8. 获取 notebook 代理入口
 
-先从上一步响应里拿到 `sessionId`，然后执行：
+先从上一步响应里拿到 v1 `sessionId` 字段，然后执行：
 
 ```bash
 curl -sS -X POST \
   http://127.0.0.1:7410/agentcompose.v1.SessionService/GetSessionProxy \
   -H 'Content-Type: application/json' \
   -H 'Connect-Protocol-Version: 1' \
-  -d '{"sessionId":"<session_id>"}'
+  -d '{"sessionId":"<sandbox_id>"}'
 ```
 
 期望返回：
 
-- `proxyPath`，例如 `/jupyter/<session_id>/lab`
-- `notebookUrl`，例如 `/jupyter/<session_id>/lab?token=...`
+- `proxyPath`，例如 `/jupyter/<sandbox_id>/lab`
+- `notebookUrl`，例如 `/jupyter/<sandbox_id>/lab?token=...`
 - `driver`
 - `vmStatus`
 
@@ -210,7 +210,7 @@ curl -sS -X POST \
 - 清空过 `/data/playground/data/agent-compose`
 - 删除过 `image-cache` 或 `boxlite` 缓存目录
 
-那么第一次 `CreateSession` 可能会明显变慢。这通常是正常预热，不代表 RPC 层已经卡死。
+那么第一次 v1-compatible `CreateSession` 可能会明显变慢。这通常是正常预热，不代表 RPC 层已经卡死。
 
 当前重点缓存目录：
 
@@ -237,7 +237,7 @@ docker logs -f agent-compose
 如果你刚清过数据目录，建议部署完成后做一次预热：
 
 1. 更新并启动 `agent-compose` 容器。
-2. 创建一个临时 session，例如 `playground-prewarm`。
+2. 创建一个临时 sandbox，例如 `playground-prewarm`。
 3. 轮询 `ListSessions`，等它进入 `RUNNING`。
 4. 再开始正式功能验证。
 
@@ -276,13 +276,13 @@ docker logs --tail 200 agent-compose
 
 - `ListSessions` 里的 `vmStatus`
 - `docker logs --tail 200 agent-compose`
-- session 对应目录下的 proxy / VM 状态文件
+- sandbox 对应目录下的 proxy / VM 状态文件
 
 常用文件位置：
 
-- `/data/playground/data/agent-compose/sessions/<session_id>/metadata.json`
-- `/data/playground/data/agent-compose/sessions/<session_id>/vm/runtime.json`
-- `/data/playground/data/agent-compose/sessions/<session_id>/proxy/jupyter.json`
+- `/data/playground/data/agent-compose/sandboxes/<sandbox_id>/metadata.json`
+- `/data/playground/data/agent-compose/sandboxes/<sandbox_id>/vm/runtime.json`
+- `/data/playground/data/agent-compose/sandboxes/<sandbox_id>/proxy/jupyter.json`
 
 ### 4. guest 镜像更新后没有生效
 

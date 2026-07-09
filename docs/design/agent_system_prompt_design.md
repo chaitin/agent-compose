@@ -144,12 +144,12 @@ The guest runtime discovers agent identity from a **fixed convention path** unde
 `--state-root` (same pattern as MPI catalog discovery under `runtime/mpi/catalog.md`):
 
 ```text
-host:  <session>/state/agents/system-prompts/system-prompt.txt
+host:  <sandbox>/state/agents/system-prompts/system-prompt.txt
 guest: /data/state/agents/system-prompts/system-prompt.txt
 ```
 
 When `system_prompt` is empty, the host **removes** `system-prompt.txt` so a later
-run in the same session cannot read stale identity text.
+run in the same sandbox cannot read stale identity text.
 
 ## Host (Go) Implementation
 
@@ -159,13 +159,13 @@ Primary files: `pkg/agentcompose/adapters/agent_runner.go`,
 
 ### Resolve agent system prompt
 
-**Function:** `Executor.resolveAgentSystemPrompt(ctx, session, agentDefinitionID string) (string, error)`
+**Function:** `AgentRunner.resolveAgentSystemPrompt(ctx, sandbox, agentDefinitionID string) (string, error)`
 
 Resolution order:
 
 1. If `agentDefinitionID` (`ExecuteAgentRequest.AgentDefinitionID`) is non-empty,
    load that agent definition directly.
-2. Else, if the session has tags `source=agent` and `agent_id=<uuid>`, load by
+2. Else, if the sandbox has tags `source=agent` and `agent_id=<uuid>`, load by
    tagged agent id.
 3. Else return `""` (not an error).
 
@@ -174,11 +174,11 @@ On DB lookup failure, the host logs a warning and runs without agent identity
 
 ### Write system prompt file
 
-**Function:** `writeAgentSystemPromptFile(session, systemPrompt string) error`
+**Function:** `execution.WriteAgentSystemPromptFile(sandbox, systemPrompt string) error`
 
 | Property | Value |
 | --- | --- |
-| Host path | `{hostSessionDir}/state/agents/system-prompts/system-prompt.txt` |
+| Host path | `{hostSandboxDir}/state/agents/system-prompts/system-prompt.txt` |
 | Guest path | `{GuestStateRoot}/agents/system-prompts/system-prompt.txt` (convention path under `--state-root`) |
 | Content | UTF-8 raw `systemPrompt` bytes (section headers added by guest runtime) |
 | Non-empty prompt | `MkdirAll` + write fixed filename |
@@ -195,17 +195,18 @@ runtime provider normalization. Discovery mirrors MPI convention-based lookup un
 - **Loader runs** (`loader_manager.go`): set from resolved agent definition id
   or `loader.Summary.AgentID` fallback.
 - **Managed project runs** (`run_service.go`): set from `run.ManagedAgentID`.
-- **Session chat runs**: rely on session tags when no explicit id is passed.
+- **v1 session chat compatibility runs**: rely on sandbox tags when no explicit
+  id is passed.
 
 `buildAgentExecSpec` passes `--state-root` only; the guest discovers agent identity
 from the convention path under that root.
 
 ### Concurrency assumption
 
-The fixed filename assumes agent runs in the same session do not concurrently write
-different agent identities. Current UI/API paths serialize chat cells per session.
+The fixed filename assumes agent runs in the same sandbox do not concurrently write
+different agent identities. Current UI/API paths serialize chat cells per sandbox.
 If concurrent agent runs with different identities become a requirement, revisit
-per-run filenames or session-level locking.
+per-run filenames or sandbox-level locking.
 
 ### Error handling summary
 
@@ -306,7 +307,7 @@ the system prompt wiring scope.
 
 | Run type | How agent identity is resolved |
 | --- | --- |
-| Agent session chat | Session tags `source=agent` + `agent_id` |
+| v1 agent session chat compatibility | Sandbox tags `source=agent` + `agent_id` |
 | Loader script `agent()` call | `AgentDefinitionID` from loader-bound agent |
 | Managed project run (v2) | `run.ManagedAgentID` |
 | Bare provider string, no agent | No agent identity; MPI-only if catalog exists |
@@ -316,7 +317,7 @@ the system prompt wiring scope.
 ### Go (`pkg/agentcompose/adapters/agent_runner_test.go`)
 
 - Empty `system_prompt` resolves to `""`
-- Session-tagged agent resolves trimmed prompt text
+- Sandbox-tagged agent resolves trimmed prompt text
 - `writeAgentSystemPromptFile` writes/removes fixed `system-prompt.txt`
 - Empty prompt removes file (no stale identity)
 - `buildAgentExecSpec` passes `--state-root` for convention-path discovery
@@ -335,8 +336,8 @@ Runner tests (`runners.test.ts`, `runner-execution.test.ts`) were updated to use
 
 - `system_prompt` is workspace-owner controlled (same trust boundary as existing
   agent admin APIs). No new injection surface beyond current agent configuration.
-- System prompt files live in the session state tree alongside per-turn prompt
-  files. They are subject to the same session lifecycle and cleanup.
+- System prompt files live in the sandbox state tree alongside per-turn prompt
+  files. They are subject to the same sandbox lifecycle and cleanup.
 - Paths are passed through `shellQuote` in the exec spec; no shell interpolation
   of prompt content.
 - Phase 1 does not introduce a hard size limit. Follow existing practical limits
@@ -375,7 +376,7 @@ Runner tests (`runners.test.ts`, `runner-execution.test.ts`) were updated to use
 
 1. Agent with `system_prompt: "Reply only in Chinese"` obeys after Codex/Claude chat run.
 2. Empty `system_prompt` → identical to pre-change MPI-only behavior.
-3. Codex session resume after prompt edit uses new instructions.
+3. Codex provider thread resume after prompt edit uses new instructions.
 4. Loader bound to an agent definition inherits `system_prompt`.
 5. `task test`, runtime JS tests, and `task lint` pass on touched packages.
 

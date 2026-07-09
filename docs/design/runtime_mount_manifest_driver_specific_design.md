@@ -19,21 +19,21 @@ Early manifests contained both directory sources and file sources:
 BoxLite reports an error for file sources:
 
 ```text
-[internal] boxlite async operation: configuration error: Volume host path is not a directory: /data/sessions/<session_id>/home/.claude.json
+[internal] boxlite async operation: configuration error: Volume host path is not a directory: /data/sandboxes/<sandbox_id>/home/.claude.json
 ```
 
 The implementation therefore applies one logical list by driver:
 
 - `docker`: turn logical entries into fine-grained directory and file binds.
-- `boxlite`: mount only `<session> -> /data`, then expose logical entries in
+- `boxlite`: mount only `<sandbox> -> /data`, then expose logical entries in
   guest bootstrap.
-- `microsandbox`: mount only `<session> -> /data`, then expose logical entries
+- `microsandbox`: mount only `<sandbox> -> /data`, then expose logical entries
   in guest bootstrap.
 
 The manifest is always written to:
 
 ```text
-<session>/vm/mount-manifest.json
+<sandbox>/vm/mount-manifest.json
 ```
 
 The manifest contains a `driver` field. Runtime consumers validate that the
@@ -49,7 +49,7 @@ The persisted manifest is driver-specific applied mount data:
   "driver": "boxlite",
   "mounts": [
     {
-      "hostPath": "/abs/path/to/session",
+      "hostPath": "/abs/path/to/sandbox",
       "guestPath": "/data",
       "type": "bind",
       "readOnly": false
@@ -73,7 +73,7 @@ is a directory. BoxLite and Microsandbox use this loader.
 
 The logical list is the source of truth for all drivers:
 
-| Session source | Guest path | Type |
+| Sandbox source | Guest path | Type |
 | --- | --- | --- |
 | `workspace` | `/workspace` | dir |
 | `state` | `/data/state` | dir |
@@ -100,23 +100,23 @@ Docker manifest keeps fine-grained sources derived from the logical list:
 
 | Host path | Guest path |
 | --- | --- |
-| `<session>/workspace` | `/workspace` |
-| `<session>/state` | `/data/state` |
-| `<session>/runtime` | `/data/runtime` |
-| `<session>/logs` | `/data/logs` |
-| `<session>/home/.codex` | `/root/.codex` |
-| `<session>/home/.claude` | `/root/.claude` |
-| `<session>/home/.opencode` | `/root/.opencode` |
-| `<session>/home/.claude.json` | `/root/.claude.json` |
-| `<session>/home/.gitconfig` | `/root/.gitconfig` |
-| `<session>/home/.gemini` | `/root/.gemini` |
-| `<session>/home/.config/claude` | `/root/.config/claude` |
-| `<session>/home/.config/Claude` | `/root/.config/Claude` |
-| `<session>/home/.config/gemini` | `/root/.config/gemini` |
-| `<session>/home/.config/opencode` | `/root/.config/opencode` |
-| `<session>/home/.local/share/gemini` | `/root/.local/share/gemini` |
+| `<sandbox>/workspace` | `/workspace` |
+| `<sandbox>/state` | `/data/state` |
+| `<sandbox>/runtime` | `/data/runtime` |
+| `<sandbox>/logs` | `/data/logs` |
+| `<sandbox>/home/.codex` | `/root/.codex` |
+| `<sandbox>/home/.claude` | `/root/.claude` |
+| `<sandbox>/home/.opencode` | `/root/.opencode` |
+| `<sandbox>/home/.claude.json` | `/root/.claude.json` |
+| `<sandbox>/home/.gitconfig` | `/root/.gitconfig` |
+| `<sandbox>/home/.gemini` | `/root/.gemini` |
+| `<sandbox>/home/.config/claude` | `/root/.config/claude` |
+| `<sandbox>/home/.config/Claude` | `/root/.config/Claude` |
+| `<sandbox>/home/.config/gemini` | `/root/.config/gemini` |
+| `<sandbox>/home/.config/opencode` | `/root/.config/opencode` |
+| `<sandbox>/home/.local/share/gemini` | `/root/.local/share/gemini` |
 
-Docker runtime applies `DOCKER_HOST_SESSION_ROOT` rebase to each source. File
+Docker runtime applies `DOCKER_HOST_SANDBOX_ROOT` rebase to each source. File
 entries such as `.claude.json` and `.gitconfig` remain file bind sources.
 
 ## BoxLite Layout
@@ -125,7 +125,7 @@ BoxLite manifest contains one directory source only:
 
 | Host path | Guest path |
 | --- | --- |
-| `<session>` | `/data` |
+| `<sandbox>` | `/data` |
 
 The BoxLite consumer reads this manifest with the directory-only loader before
 passing sources to `boxlite_options_add_volume`.
@@ -140,7 +140,7 @@ entries, for example:
 ```
 
 Default `/data/state`, `/data/runtime`, and `/data/logs` are already inside the
-session mount and do not need symlinks.
+sandbox mount and do not need symlinks.
 
 ## Microsandbox Layout
 
@@ -149,7 +149,7 @@ only:
 
 | Host path | Guest path |
 | --- | --- |
-| `<session>` | `/data` |
+| `<sandbox>` | `/data` |
 
 The Microsandbox consumer reads this manifest with the directory-only loader
 before constructing `microsandbox.Mount.Bind`. Guest bootstrap uses the same
@@ -157,11 +157,11 @@ logical-entry symlink behavior as BoxLite.
 
 ## BoxLite / Microsandbox Host Layout
 
-Under BoxLite and Microsandbox, a fresh session host layout includes the logical
+Under BoxLite and Microsandbox, a fresh sandbox host layout includes the logical
 sources:
 
 ```text
-<session>/
+<sandbox>/
   workspace/
   state/
   runtime/
@@ -185,7 +185,7 @@ sources:
     mount-manifest.json
 ```
 
-The directory mount `<session> -> /data` overrides the final visible content of
+The directory mount `<sandbox> -> /data` overrides the final visible content of
 the guest image's native `/data`. `/workspace` is recreated as a symlink.
 `/root` stays a real image directory, and only declared home entries under
 `/root` are symlinked into `/data/home`. This avoids requiring guest
@@ -206,20 +206,20 @@ non-symlink targets under `/root`, refuses mounted `/root` targets, does not run
 `/root -> /data/home` symlink.
 
 Bootstrap stdout/stderr is kept out of user command streams. If bootstrap fails,
-the driver returns a diagnostic error with driver, session, runtime id,
+the driver returns a diagnostic error with driver, sandbox, runtime id,
 exit-code, stdout, and stderr context where available, and the original user
 command is not executed.
 
 ## Driver Switch Behavior
 
 Before start/resume, the manifest is always rewritten according to the currently
-resolved driver. If the same session first generated a Docker manifest and is
+resolved driver. If the same sandbox first generated a Docker manifest and is
 later started with BoxLite or Microsandbox, the final manifest becomes the
 directory-only layout and does not reuse old Docker file source mounts.
 
 ## Runtime Image Source Order
 
-The mount manifest describes only how session data directories are mounted. It
+The mount manifest describes only how sandbox data directories are mounted. It
 does not describe the guest rootfs source. BoxLite and Microsandbox rootfs/image
 resolution follows a Docker-first strategy:
 
@@ -249,7 +249,7 @@ The test suite covers:
   `.gitconfig`.
 - Docker mount rebase covers file sources.
 - BoxLite/Microsandbox manifests do not contain file sources.
-- BoxLite/Microsandbox manifests contain only `<session> -> /data`.
+- BoxLite/Microsandbox manifests contain only `<sandbox> -> /data`.
 - All host sources in BoxLite/Microsandbox manifests are directories.
 - Directory-only loader rejects file sources.
 - Docker and directory-only bootstrap are derived from the same logical mount
@@ -282,12 +282,12 @@ Smoke tests create and start the real runtime and validate startup markers:
 - BoxLite/Microsandbox manifests can be consumed by the directory-only loader.
 - Manifest does not contain independent file sources for `/root/.claude.json` or
   `/root/.gitconfig`.
-- `<session>` is mounted at `/data`.
+- `<sandbox>` is mounted at `/data`.
 - Guest `/root` is a real directory, not an overall symlink to `/data/home`.
 - Guest declared home entries such as `/root/.claude.json`, `/root/.gitconfig`,
   and `/root/.codex` resolve to `/data/home/...`.
 - Guest writes to `/data/state` and declared home entries persist to host
-  `<session>/state` and `<session>/home`.
+  `<sandbox>/state` and `<sandbox>/home`.
 - When `SMOKE_OCI_IMAGE_REF` is set, BoxLite uses OCI cache materialized layout
   and Microsandbox uses OCI cache rootfs. The test forces Docker daemon to be
   unavailable to avoid fallback to local Docker materialization.

@@ -428,16 +428,18 @@ Suggested HTTP APIs or Connect APIs for UI and troubleshooting:
 
 ```http
 GET /api/events/:event_id/trace
-GET /api/events/:event_id/sessions
+GET /api/events/:event_id/sandboxes
 POST /api/events/:event_id/replay
 GET /api/webhook-sources
 GET /api/webhook-sources/:source_id/stats
 ```
 
 `trace` returns event, parent/child events, delivery, loader run, loader event,
-and related session. `sessions` returns only sessions created or operated by the
-flow triggered by the event, suitable for external systems to look up sessions
-by `event_id`.
+and related sandbox. `sandboxes` returns only sandboxes created or operated by
+the flow triggered by the event, suitable for external systems to look up
+sandboxes by `event_id`. The implemented
+`GET /api/events/:event_id/sessions` route is a compatibility alias for the
+same sandbox query.
 
 `replay` should not rewrite the original event or reuse the original event id.
 It should create a new event, inherit original payload, and write
@@ -456,26 +458,26 @@ Metrics to expose:
 
 UI should add a "Webhook Events" view under automation/runs: filter by
 source/topic/status and display event id, correlation id, delivery id, matched
-loader, run status, related session, and replay entry.
+loader, run status, related sandbox, and replay entry.
 
-## Event To Session Query
+## Event To Sandbox Query
 
-The system needs the ability to find sessions by `event_id`. Some existing paths
+The system needs the ability to find sandboxes by `event_id`. Some existing paths
 can be reused:
 
 - Webhook event payload contains `eventId` / `correlationId`.
 - When event triggers a loader run, run `payload_json` stores the triggering
   event envelope.
-- When loader creates or operates sessions through session RPC, it writes loader
-  events with `linked_session_id`.
+- When loader creates or operates sandboxes through the v1-compatible session
+  RPC bridge, it writes loader events with `linked_sandbox_id`.
 - Loader-derived events write `parent_event_id` and `publisher_run_id`.
-- Session itself has `trigger_source=script:<loader_id>`, but lacks direct
+- Sandbox itself has `trigger_source=script:<loader_id>`, but lacks direct
   event/run relation.
 
 Suggested query semantics:
 
 ```http
-GET /api/events/:event_id/sessions
+GET /api/events/:event_id/sandboxes
 ```
 
 Response:
@@ -484,9 +486,9 @@ Response:
 {
   "event_id": "evt_xxx",
   "correlation_id": "github:push:xxx",
-  "sessions": [
+  "sandboxes": [
     {
-      "session_id": "sess_xxx",
+      "sandbox_id": "sandbox_xxx",
       "relation": "created_by_loader_run",
       "loader_id": "loader-1",
       "run_id": "run-1",
@@ -503,44 +505,44 @@ main implementation path for a formal API:
 
 - `loader_run.payload_json` contains the triggering event envelope, but has no
   event id index.
-- `loader_event.linked_session_id` can find sessions, but the related run must
+- `loader_event.linked_sandbox_id` can find sandboxes, but the related run must
   be known first.
 - `correlation_id` may cover multiple derived events and runs; it is only a
   trace helper and cannot be used alone as an exact relation.
-- Therefore `GET /api/events/:event_id/sessions` should not rely on full-table
+- Therefore `GET /api/events/:event_id/sandboxes` should not rely on full-table
   JSON scan as the main implementation.
 
 Formal implementation needs explicit relation tables. Event-to-run relation is
-stored in `event_delivery`; event-to-session relation is stored in
-`event_session_link`:
+stored in `event_delivery`; event-to-sandbox relation is stored in
+`event_sandbox_link`:
 
 ```sql
-CREATE TABLE event_session_link (
+CREATE TABLE event_sandbox_link (
   event_id TEXT NOT NULL,
-  session_id TEXT NOT NULL,
+  sandbox_id TEXT NOT NULL,
   relation TEXT NOT NULL,
   loader_id TEXT NOT NULL DEFAULT '',
   run_id TEXT NOT NULL DEFAULT '',
   trigger_id TEXT NOT NULL DEFAULT '',
   loader_event_id TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
-  PRIMARY KEY(event_id, session_id, relation, run_id)
+  PRIMARY KEY(event_id, sandbox_id, relation, run_id)
 );
 
-CREATE INDEX idx_event_session_link_session ON event_session_link(session_id, created_at);
-CREATE INDEX idx_event_session_link_run ON event_session_link(run_id);
+CREATE INDEX idx_event_sandbox_link_sandbox ON event_sandbox_link(sandbox_id, created_at);
+CREATE INDEX idx_event_sandbox_link_run ON event_sandbox_link(run_id);
 ```
 
 Write timing:
 
 - When loader event trigger matches and creates a run, write
   `event_delivery(event_id, loader_id, trigger_id, run_id, status=run_started)`.
-- When `loaderRunHost.CallSessionRPC` sees `linked_session_id`, also write
-  `event_id -> session_id`.
+- When `loaderRunHost.CallSessionRPC` sees `linked_sandbox_id`, also write
+  `event_id -> sandbox_id`.
 - When loader derives events, write `parent_event_id`. Query
-  `GET /api/events/:event_id/sessions` should expand descendant events by
-  `parent_event_id`, then aggregate `event_session_link` for those events.
-- If business wants the original webhook event to find sessions created by
+  `GET /api/events/:event_id/sandboxes` should expand descendant events by
+  `parent_event_id`, then aggregate `event_sandbox_link` for those events.
+- If business wants the original webhook event to find sandboxes created by
   derived events, query layer expands descendants; descendants do not need to
   write duplicate ancestor links.
 - Manual runs without `event_id` do not write this table.

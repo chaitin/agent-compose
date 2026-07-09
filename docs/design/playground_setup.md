@@ -33,8 +33,8 @@ service:
 
 - Listen port: `7410`
 - `DATA_ROOT=/data`
-- `SESSION_ROOT=/data/sessions`
-- `DOCKER_HOST_SESSION_ROOT=/data/playground/data/agent-compose/sessions`
+- `SANDBOX_ROOT=/data/sandboxes`
+- `DOCKER_HOST_SANDBOX_ROOT=/data/playground/data/agent-compose/sandboxes`
 - `RUNTIME_DRIVER=docker`
 - `DEFAULT_IMAGE=${DEFAULT_IMAGE:-debian:bookworm-slim}`
 - Data mount: `./data/agent-compose:/data`
@@ -52,10 +52,10 @@ The corresponding host data directory is:
 
 - `/data/playground/data/agent-compose`
 
-If agent-compose creates Docker runtime sessions through `/var/run/docker.sock`,
+If agent-compose creates Docker runtime sandboxes through `/var/run/docker.sock`,
 Docker bind mount sources must be host paths. In that case,
-`DOCKER_HOST_SESSION_ROOT` must point to the actual host-side `sessions`
-directory backing `SESSION_ROOT`.
+`DOCKER_HOST_SANDBOX_ROOT` must point to the actual host-side `sandboxes`
+directory backing `SANDBOX_ROOT`.
 
 Web/UI should no longer be validated as embedded static assets inside the daemon
 container. The frontend may be served by nginx, a static file server, or an
@@ -173,9 +173,10 @@ agent-compose --host http://127.0.0.1:7410 -f /tmp/agent-compose-smoke.yml ps
 agent-compose --host http://127.0.0.1:7410 -f /tmp/agent-compose-smoke.yml down
 ```
 
-### 6. Create A v1 Verification Session
+### 6. Create A v1 Verification Sandbox
 
-A minimal request is enough; no extra `baseWorkspace` is required:
+A minimal v1 compatibility request is enough; no extra `baseWorkspace` is
+required:
 
 ```bash
 curl -sS -X POST \
@@ -192,7 +193,7 @@ Notes:
 - If you need a real workspace, prefer managing `workspace_id` through
   `ConfigService`. The currently supported workspace type is `git`.
 
-### 7. Query Session State
+### 7. Query Sandbox State Through v1 Compatibility API
 
 ```bash
 curl -sS -X POST \
@@ -204,20 +205,20 @@ curl -sS -X POST \
 
 ### 8. Get Notebook Proxy Entry
 
-Take `sessionId` from the previous response, then run:
+Take the v1 `sessionId` field from the previous response, then run:
 
 ```bash
 curl -sS -X POST \
   http://127.0.0.1:7410/agentcompose.v1.SessionService/GetSessionProxy \
   -H 'Content-Type: application/json' \
   -H 'Connect-Protocol-Version: 1' \
-  -d '{"sessionId":"<session_id>"}'
+  -d '{"sessionId":"<sandbox_id>"}'
 ```
 
 Expected fields:
 
-- `proxyPath`, for example `/jupyter/<session_id>/lab`
-- `notebookUrl`, for example `/jupyter/<session_id>/lab?token=...`
+- `proxyPath`, for example `/jupyter/<sandbox_id>/lab`
+- `notebookUrl`, for example `/jupyter/<sandbox_id>/lab?token=...`
 - `driver`
 - `vmStatus`
 
@@ -229,7 +230,7 @@ If any of these happened:
 - `/data/playground/data/agent-compose` was cleared
 - `image-cache` or `boxlite` cache directories were deleted
 
-then the first `CreateSession` may be noticeably slower. This is usually normal
+then the first v1-compatible `CreateSession` may be noticeably slower. This is usually normal
 warmup and does not mean the RPC layer is stuck.
 
 Important cache directories:
@@ -257,7 +258,7 @@ Common progress logs include:
 After clearing the data directory, prewarm after deployment:
 
 1. Update and start the `agent-compose` container.
-2. Create a temporary session, for example `playground-prewarm`.
+2. Create a temporary sandbox, for example `playground-prewarm`.
 3. Poll `ListSessions` until it becomes `RUNNING`.
 4. Start formal feature verification.
 
@@ -301,13 +302,13 @@ Check:
 
 - `vmStatus` in `ListSessions`
 - `docker logs --tail 200 agent-compose`
-- proxy / VM state files under the corresponding session directory
+- proxy / VM state files under the corresponding sandbox directory
 
 Common file locations:
 
-- `/data/playground/data/agent-compose/sessions/<session_id>/metadata.json`
-- `/data/playground/data/agent-compose/sessions/<session_id>/vm/runtime.json`
-- `/data/playground/data/agent-compose/sessions/<session_id>/proxy/jupyter.json`
+- `/data/playground/data/agent-compose/sandboxes/<sandbox_id>/metadata.json`
+- `/data/playground/data/agent-compose/sandboxes/<sandbox_id>/vm/runtime.json`
+- `/data/playground/data/agent-compose/sandboxes/<sandbox_id>/proxy/jupyter.json`
 
 ### 4. Guest Image Update Does Not Take Effect
 

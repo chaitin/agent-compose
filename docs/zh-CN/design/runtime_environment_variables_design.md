@@ -4,7 +4,7 @@
 
 ## 设计原则
 
-runtime mount manifest 已经把 session 子目录挂到 guest 惯用路径，因此 guest 内不再需要 agent-compose 自定义的 session root，也不需要通过 agent-compose 覆盖 `HOME`。
+runtime mount manifest 已经把 sandbox 子目录挂到 guest 惯用路径，因此 guest 内不再需要 agent-compose 自定义的 sandbox root，也不需要通过 agent-compose 覆盖 `HOME`。
 
 当前原则：
 
@@ -22,7 +22,7 @@ agent-compose 注入的 guest runtime 变量：
 | `WORKSPACE` | `/workspace` | workspace 位置 |
 | `STATE_ROOT` | `/data/state` | cell artifacts、agent prompt/schema/provider state |
 | `RUNTIME_ROOT` | `/data/runtime` | runtime JS resource/cache/MPI 等 |
-| `SESSION_ID` | 当前 session id | 日志、调试、工具上下文 |
+| `SANDBOX_ID` | 当前 sandbox id | 日志、调试、工具上下文 |
 | `VERSION` | 当前 agent-compose version | 调试和兼容判断 |
 | `JUPYTER_TOKEN` | 当前 proxy token | Jupyter 启动和代理 |
 
@@ -50,19 +50,19 @@ Home 持久化由 mount manifest 完成：
 
 | Host path | Docker guest path | BoxLite/Microsandbox guest path |
 | --- | --- | --- |
-| `<session>/home/.codex` | `/root/.codex` | Symlink `/root/.codex -> /data/home/.codex` |
-| `<session>/home/.claude` | `/root/.claude` | Symlink `/root/.claude -> /data/home/.claude` |
-| `<session>/home/.opencode` | `/root/.opencode` | Symlink `/root/.opencode -> /data/home/.opencode` |
-| `<session>/home/.claude.json` | `/root/.claude.json` | Symlink `/root/.claude.json -> /data/home/.claude.json` |
-| `<session>/home/.gitconfig` | `/root/.gitconfig` | Symlink `/root/.gitconfig -> /data/home/.gitconfig` |
-| `<session>/home/.gemini` | `/root/.gemini` | Symlink `/root/.gemini -> /data/home/.gemini` |
-| `<session>/home/.config/claude` | `/root/.config/claude` | Symlink |
-| `<session>/home/.config/Claude` | `/root/.config/Claude` | Symlink |
-| `<session>/home/.config/gemini` | `/root/.config/gemini` | Symlink |
-| `<session>/home/.config/opencode` | `/root/.config/opencode` | Symlink |
-| `<session>/home/.local/share/gemini` | `/root/.local/share/gemini` | Symlink |
+| `<sandbox>/home/.codex` | `/root/.codex` | Symlink `/root/.codex -> /data/home/.codex` |
+| `<sandbox>/home/.claude` | `/root/.claude` | Symlink `/root/.claude -> /data/home/.claude` |
+| `<sandbox>/home/.opencode` | `/root/.opencode` | Symlink `/root/.opencode -> /data/home/.opencode` |
+| `<sandbox>/home/.claude.json` | `/root/.claude.json` | Symlink `/root/.claude.json -> /data/home/.claude.json` |
+| `<sandbox>/home/.gitconfig` | `/root/.gitconfig` | Symlink `/root/.gitconfig -> /data/home/.gitconfig` |
+| `<sandbox>/home/.gemini` | `/root/.gemini` | Symlink `/root/.gemini -> /data/home/.gemini` |
+| `<sandbox>/home/.config/claude` | `/root/.config/claude` | Symlink |
+| `<sandbox>/home/.config/Claude` | `/root/.config/Claude` | Symlink |
+| `<sandbox>/home/.config/gemini` | `/root/.config/gemini` | Symlink |
+| `<sandbox>/home/.config/opencode` | `/root/.config/opencode` | Symlink |
+| `<sandbox>/home/.local/share/gemini` | `/root/.local/share/gemini` | Symlink |
 
-Docker 会直接细粒度挂载这些 home 子路径。BoxLite/Microsandbox 只把整个 `<session>` 目录挂到 `/data`；guest bootstrap 保持 `/root` 为真实目录，只为上表声明的 home 条目创建 symlink。其他 `/root` 子路径不保证持久化。
+Docker 会直接细粒度挂载这些 home 子路径。BoxLite/Microsandbox 只把整个 `<sandbox>` 目录挂到 `/data`；guest bootstrap 保持 `/root` 为真实目录，只为上表声明的 home 条目创建 symlink。其他 `/root` 子路径不保证持久化。
 
 ## Host Configuration Variables
 
@@ -122,7 +122,7 @@ runtime JS 不注入：
 
 artifact dir 是 command/request 范围内的路径：
 
-- host 侧 cell 和 loader command artifacts 位于 `<session>/state/cells/...`。
+- host 侧 cell 和 loader command artifacts 位于 `<sandbox>/state/cells/...`。
 - guest 侧对应路径位于 `/data/state/cells/...`。
 - runtime JS 仍可通过 request 或 CLI 参数接收 artifact dir。
 - `ARTIFACT_DIR` 不作为全局 env 暴露。

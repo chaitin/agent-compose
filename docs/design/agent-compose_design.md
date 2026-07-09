@@ -23,12 +23,13 @@ The current code facts are anchored by these entry points:
   `pkg/agentcompose/adapters/loader_session_runner.go`
 - Domain model helpers: `pkg/model/`
 - Project/run owner helpers: `pkg/projects/` and `pkg/runs/`
-- Session/execution owner helpers: `pkg/sessions/` and `pkg/execution/`
+- Sandbox execution owner helpers: `pkg/sessions/` compatibility lifecycle
+  package and `pkg/execution/`
 - Standalone frontend image: `agent-compose-ui` repository
 
 ## Architecture Goals
 
-agent-compose is an agent/session control plane. Its shape is similar to Docker
+agent-compose is an agent/sandbox control plane. Its shape is similar to Docker
 Engine + CLI + Compose, while keeping its own domain model for agents,
 scheduler, workspaces, runtime drivers, and notebook proxying.
 
@@ -39,7 +40,7 @@ Core boundaries:
 - The CLI is a daemon client. It reads local `agent-compose.yml`, performs local
   syntax validation and normalization, calls daemon APIs, and renders output.
 - `agent-compose.yml` describes projects and agent definitions. It does not
-  describe an already running session.
+  describe an already running sandbox.
 - Web/UI is no longer built into the daemon image or hosted by the daemon
   process. It is deployed as an independent frontend service.
 - The v1 session-centric API remains available for the existing Web/UI and
@@ -55,7 +56,7 @@ agent-compose daemon
   |
   | v1/v2 Connect handlers, HTTP routes, scheduler, store
   v
-project / run / loader / session control plane
+project / run / loader / sandbox control plane
   |
   | runtime driver
   v
@@ -83,7 +84,7 @@ Daemon construction has been split into testable app construction:
   workspace HTTP routes, and Jupyter proxy routes.
 - Register the service graph through `agentcompose.Register(di)`.
 - Start the loader manager, event dispatcher, capability proxy, and startup
-  session reconciliation through `agentcompose.StartBackground(di)`.
+  sandbox reconciliation through `agentcompose.StartBackground(di)`.
 - On graceful shutdown, close all listeners and remove the Unix socket file.
 
 The daemon listens on a Unix socket by default:
@@ -106,7 +107,7 @@ agent-compose --host http://127.0.0.1:7410 status
 
 ## CLI Semantics
 
-The CLI does not directly manipulate runtime state, session files, or SQLite
+The CLI does not directly manipulate runtime state, sandbox files, or SQLite
 reconciliation logic. It reads and normalizes the local compose file, then calls
 daemon v2 APIs.
 
@@ -116,7 +117,7 @@ Current main commands:
   and `--quiet`; does not connect to the daemon.
 - `up`: call `ProjectService.ApplyProject`; create or update the project,
   revision, managed agent definitions, and scheduler/loader; does not directly
-  create a run or session.
+  create a run or sandbox.
 - `down`: call `ProjectService.RemoveProject`; disable managed
   scheduler/loader and stop running sandboxes for the project; preserves project,
   run, and sandbox history by default.
@@ -135,7 +136,8 @@ Current main commands:
 - `cache ls`, `cache inspect`, `cache prune`, `cache rm`: call `CacheService`
   to list, inspect, dry-run, and explicitly remove daemon runtime cache items.
   The CLI never reads or deletes daemon cache paths directly.
-- `inspect <project|agent|run|session>`: inspect project-related objects.
+- `inspect <project|agent|run|sandbox>`: inspect project-related objects.
+  `inspect session` remains a deprecated compatibility alias.
 
 ## `agent-compose.yml` Model
 
@@ -287,7 +289,7 @@ default `down` semantics preserve history. `ImageService` supports both Docker
 daemon store and OCI cache store; when request store is `UNSPECIFIED`, the
 daemon image store mode selects the backend. `CacheService` is the explicit
 runtime cache lifecycle boundary for materialized image cache, runtime-derived
-driver cache, and session-ephemeral state.
+driver cache, and sandbox-ephemeral state.
 
 v2 `ProjectSpec` is the wire shape used by CLI and API clients to pass the
 current compose state. `AgentSpec.scheduler` contains:
@@ -316,7 +318,8 @@ Besides Connect APIs, the daemon registers these HTTP routes:
 
 The Jupyter proxy implementation lives in `pkg/agentcompose/proxy/proxy.go`.
 `GetSessionProxy` returns only proxy entry information; actual HTTP/WebSocket
-forwarding is handled by the HTTP routes above. When a session is created,
+forwarding is handled by the HTTP routes above. When a sandbox is created
+through the v1-compatible API,
 `Config.JupyterProxyBasePath` is written into `proxyPath`; the current code
 default is `/jupyter`.
 
@@ -344,7 +347,7 @@ Current `ApplyProject` behavior:
   `ProjectScheduler.trigger_count`.
 - Delete or disable schedulers removed from the spec, then refresh the loader
   manager.
-- Do not directly create runs or sessions.
+- Do not directly create runs or sandboxes.
 - Return `issues` on reconcile failure and avoid leaving half-created enabled
   schedulers that would continue triggering broken agents.
 
@@ -387,13 +390,13 @@ scheduler trigger, or future API clients.
 7. Mark run as running and call the existing agent executor.
 8. Stream start/output/completed events for streaming requests.
 9. Persist terminal run state for success, failure, cancellation, workspace
-   preparation failure, session startup failure, agent execution failure, and
+  preparation failure, sandbox startup failure, agent execution failure, and
    stream send failure.
-10. Stop the runtime by default while preserving session/run history. The
-    `KEEP_RUNNING` cleanup policy keeps the session running.
+10. Stop the runtime by default while preserving sandbox/run history. The
+    `KEEP_RUNNING` cleanup policy keeps the sandbox running.
 
-State queries primarily use project/run relationships in SQLite. Session tags
-are used for compatibility queries, `down` stopping project sessions, and
+State queries primarily use project/run relationships in SQLite. Sandbox tags
+are used for compatibility queries, `down` stopping project sandboxes, and
 file-level debugging.
 
 ### Agent system prompt (Phase 1)
@@ -408,10 +411,10 @@ Layered prompt model:
 2. **Capabilities (MPI)** — OctoBus capset catalog under `runtime/mpi/catalog.md`
 3. **Per-turn task** — user message in `--message-file` (never mixed with identity)
 
-Transport uses a **fixed convention path** under the session state tree:
+Transport uses a **fixed convention path** under the sandbox state tree:
 
 ```text
-<session>/state/agents/system-prompts/system-prompt.txt  →  guest /data/state/agents/system-prompts/system-prompt.txt
+<sandbox>/state/agents/system-prompts/system-prompt.txt  ->  guest /data/state/agents/system-prompts/system-prompt.txt
 ```
 
 Resolution paths:
@@ -419,7 +422,7 @@ Resolution paths:
 - Managed project runs: `RunService` passes `run.ManagedAgentID` into
   `ExecuteAgentRequest`
 - Loader runs: `loaderRunHost.Agent` passes the loader-bound agent definition id
-- Session chat: session tags `source=agent` and `agent_id`
+- v1 session chat compatibility path: sandbox tags `source=agent` and `agent_id`
 
 The guest JS runtime (`runtime/javascript`) reads the convention file from
 `--state-root`, composes identity + MPI via `buildSystemContext`, and injects the
@@ -432,12 +435,12 @@ the full contract.
 
 ## Command Execution And Images
 
-`ExecService` does not create sessions. It executes commands only inside an
-existing running session. Target lookup can use:
+`ExecService` does not create sandboxes. It executes commands only inside an
+existing running sandbox. Target lookup can use:
 
-- explicit `session_id`
-- explicit `run_id`, then the associated run session
-- project/agent selector, which must uniquely match a running session
+- explicit `sandbox_id`
+- explicit `run_id`, then the associated run sandbox
+- project/agent selector, which must uniquely match a running sandbox
 
 The default cwd is the guest workspace path `/workspace`, and requests may
 override it.
@@ -479,7 +482,7 @@ Docker backend, but status comes from cache metadata:
   not remove blobs in OCI cache and returns a warning. Blob cleanup is left to a
   dedicated future mechanism; current deletion is conservative metadata deletion.
   `RemoveImage` and CLI `rmi` do not delete materialized image cache,
-  runtime-derived driver cache, or session-ephemeral state.
+  runtime-derived driver cache, or sandbox-ephemeral state.
 - Not found, invalid reference, conflict, internal, and unavailable errors map
   to stable Connect codes. Error messages retain operation, image ref, and cache
   endpoint.
@@ -497,8 +500,8 @@ implementations. The always-registered source scans materialized image cache via
 `pkg/imagecache` metadata and `<DATA_ROOT>/image-cache`. Driver sources are
 added by `pkg/driver.NewRuntimeCacheSources`: BoxLite contributes
 runtime-derived cache items when the `boxlitecgo` build tag is enabled, and
-Microsandbox contributes session-ephemeral items for cgo builds. The
-Microsandbox app-level source marks references as unknown until full session or
+Microsandbox contributes sandbox-ephemeral items for cgo builds. The
+Microsandbox app-level source marks references as unknown until full sandbox or
 SDK state is resolved, so those items are listed but protected from removal by
 default.
 
@@ -510,13 +513,13 @@ Cache domains:
   `<DATA_ROOT>/image-cache`.
 - `runtime-derived-cache`: runtime-driver artifacts under driver homes, such as
   BoxLite image artifacts.
-- `session-ephemeral-state`: per-session runtime state, such as Microsandbox
+- `sandbox-ephemeral-state`: per-sandbox runtime state, such as Microsandbox
   docker disks and sandbox state.
 
 `oci-image-store` exists in the shared model for domain filtering and future
 inventory expansion, but the current deletion owner for OCI image metadata and
 refs is still `ImageService`. `CacheService` currently manages materialized
-image cache, driver runtime-derived cache, and session-ephemeral state; `rmi`
+image cache, driver runtime-derived cache, and sandbox-ephemeral state; `rmi`
 continues to leave those domains untouched.
 
 Protection is conservative:
@@ -548,7 +551,7 @@ Default data root:
 
 - If `DATA_ROOT` is empty, `$XDG_DATA_HOME/agent-compose` is used.
 - If `XDG_DATA_HOME` is empty, `$HOME/.local/share/agent-compose` is used.
-- `SESSION_ROOT` is `<DATA_ROOT>/sessions`.
+- `SANDBOX_ROOT` is `<DATA_ROOT>/sandboxes`.
 - If `IMAGE_CACHE_ROOT` is empty, it is `<DATA_ROOT>/images`.
 
 Image store configuration:
@@ -571,7 +574,7 @@ data/agent-compose/
 ├── image-cache/<image-id>/
 │   ├── oci/
 │   └── rootfs/
-└── sessions/<session_id>/
+└── sandboxes/<sandbox_id>/
     ├── metadata.json
     ├── workspace/
     ├── context/
@@ -587,7 +590,7 @@ data/agent-compose/
         └── jupyter.json
 ```
 
-The session directory stores session metadata, workspace, home backing, runtime
+The sandbox directory stores sandbox metadata, workspace, home backing, runtime
 shared directory, cell/event timeline, VM state, and proxy state. By default,
 `images/` is the OCI cache root; `image-cache/<image-id>/oci` is the BoxLite
 materialized OCI layout, and `image-cache/<image-id>/rootfs` is the Microsandbox
@@ -622,9 +625,9 @@ columns on existing tables:
 - `managed_agent_name`
 - `managed_scheduler_id`, loader only
 
-## Session And Runtime
+## Sandbox And Runtime
 
-Session is the low-level runtime lifecycle unit. Three runtime drivers are
+Sandbox is the low-level runtime lifecycle unit. Three runtime drivers are
 currently supported:
 
 - `boxlite`
@@ -634,35 +637,36 @@ currently supported:
 The default driver is controlled by `RUNTIME_DRIVER`; when empty, it is
 `docker`. The default guest image is `debian:bookworm-slim`.
 
-Current `CreateSession` flow:
+Current sandbox creation flow (v1-compatible `CreateSession` delegates to this):
 
 1. Resolve env, tags, workspace id, driver, and guest image from the request.
 2. Merge global env and request env.
-3. Create the session directory and initialize metadata, VM state, and proxy
+3. Create the sandbox directory and initialize metadata, VM state, and proxy
    state.
 4. If workspace id is set, prepare that workspace.
 5. Start runtime through the driver.
-6. Mark session as `RUNNING`.
-7. Record `session.created` event and publish `agent-compose.session.created`
-   topic event.
+6. Mark sandbox as `RUNNING`.
+7. Record sandbox-created state. Loader lifecycle events use
+   `loader.sandbox.*`; the historical `agent-compose.session.*` topic prefix is
+   retained only where the v1 compatibility event bus still emits it.
 
-`ResumeSession` prepares workspace again and starts runtime. On success, it
-records `session.resumed` and publishes the corresponding topic event.
-`StopSession` stops runtime, marks the session `STOPPED`, records
-`session.stopped`, and publishes the corresponding topic event.
+`ResumeSession` is the v1-compatible resume method; internally it prepares the
+workspace again and starts the sandbox runtime. `StopSession` is the
+v1-compatible stop method; internally it stops runtime and marks the sandbox
+`STOPPED`.
 
-Startup reconciles persisted session runtime state. `GetSession`,
+Startup reconciles persisted sandbox runtime state. `GetSession`,
 `ListSessions`, and `StopSession` also trigger reconciliation logic.
 
 Default guest paths:
 
 | Host path | Guest path | Purpose |
 | --- | --- | --- |
-| `<session>/workspace` | `/workspace` | Jupyter root, cell/agent/command cwd |
-| `<session>/state` | `/data/state` | Cell artifacts, agent prompt, provider state |
-| `<session>/runtime` | `/data/runtime` | Runtime shared resources |
-| `<session>/logs` | `/data/logs` | Jupyter logs |
-| `<session>/home` or child paths | `/root` or child paths | Tool config and state for Codex, Claude, Gemini, git, and related tools |
+| `<sandbox>/workspace` | `/workspace` | Jupyter root, cell/agent/command cwd |
+| `<sandbox>/state` | `/data/state` | Cell artifacts, agent prompt, provider state |
+| `<sandbox>/runtime` | `/data/runtime` | Runtime shared resources |
+| `<sandbox>/logs` | `/data/logs` | Jupyter logs |
+| `<sandbox>/home` or child paths | `/root` or child paths | Tool config and state for Codex, Claude, Gemini, git, and related tools |
 
 For the more detailed mount manifest design, see
 [runtime_mount_manifest_design.md](runtime_mount_manifest_design.md) and
@@ -680,17 +684,18 @@ The current loader runtime is `scheduler`, supporting:
 Project compose `scheduler.script` uses the same runtime. Scripts are evaluated
 during validate/apply to collect triggers. APIs with side effects or host
 dependencies, such as `scheduler.agent`, `scheduler.llm`, `scheduler.exec`,
-`scheduler.shell`, `scheduler.event.publish`, and session RPC, should be used in
+`scheduler.shell`, `scheduler.event.publish`, and the v1-compatible session RPC
+bridge, should be used in
 `main()` or trigger callbacks.
 
 `scheduler` is the only product-level global object in the loader QJS
 environment. Its responsibilities are trigger registration, lightweight state,
 event publishing, and delegating work that needs sandbox capabilities to runtime
-sessions. The QJS layer is not intended to host complex Node.js workflows, npm
+sandboxes. The QJS layer is not intended to host complex Node.js workflows, npm
 dependencies, or long-running business logic.
 
 When full Node.js capabilities are needed, the current implementation calls
-workspace scripts inside the loader session through `scheduler.exec` /
+workspace scripts inside the loader sandbox through `scheduler.exec` /
 `scheduler.shell`, or uses existing agent and LLM capabilities through
 `scheduler.agent` / `scheduler.llm`. Standalone `scheduler.run(file, input,
 options)`, runtime workflow context, workflow bridge token, and an
@@ -734,12 +739,13 @@ locally. Passing plain JSON Schema performs JSON parsing.
 
 Global env from the UI/database overrides process environment for these keys.
 The `chat_completions` protocol is for unary text generation only. It does not
-create workspace-capable agent sessions or grant file, command, or MCP tool
+create workspace-capable agent sandboxes or grant file, command, or MCP tool
 access. With `outputSchema`, it uses prompt guidance and `json_object` instead
 of Responses API strict JSON Schema.
 
 Guest agent providers (`codex`, `claude`, `gemini`, `opencode`) remain separate CLI runners
-inside guest containers with their own API keys and session state.
+inside guest containers with their own API keys and provider-native session
+state.
 
 The loader also exposes a unary RPC bridge for v1 `SessionService`:
 
@@ -798,12 +804,12 @@ For shared playground build, deployment, and verification flow, see
 ## Key Constraints
 
 - The daemon is the state and reconciliation authority. The CLI does not write
-  SQLite or session files directly.
+  SQLite or sandbox files directly.
 - `agents.<name>` is an agent definition, not a resident runtime.
 - `up` manages definitions and scheduler. It is not the same as running an
   agent.
 - `run` is a one-shot execution. It stops runtime by default after completion.
-- `down` disables managed scheduler/loader and stops running project sessions.
+- `down` disables managed scheduler/loader and stops running project sandboxes.
   It does not delete history by default.
 - The v1 API must remain compatible. The v2 API carries the primary
   project/run/exec/image path.

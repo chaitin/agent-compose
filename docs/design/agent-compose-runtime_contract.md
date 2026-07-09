@@ -24,7 +24,7 @@ Related code:
 
 ## 1. Runtime Location
 
-`agent-compose` is the host-side Go service. It owns session lifecycle,
+`agent-compose` is the host-side Go service. It owns sandbox lifecycle,
 directory preparation, runtime driver scheduling, proxying, and persistence.
 
 `agent-compose-runtime` is installed inside the guest image. During image
@@ -52,35 +52,35 @@ tarball:
 
 ## 2. Mount And Path Conventions
 
-After session creation, the host generates a mount manifest and mounts session
+After sandbox creation, the host generates a mount manifest and mounts sandbox
 subdirectories to guest target paths one by one:
 
 ```text
-host:  <SESSION_ROOT>/<session_id>/workspace
+host:  <SANDBOX_ROOT>/<sandbox_id>/workspace
 guest: /workspace
 ```
 
 With default configuration:
 
 ```text
-host:  ./data/agent-compose/sessions/<session_id>
+host:  <DATA_ROOT>/sandboxes/<sandbox_id>
 ```
 
 Therefore these paths correspond:
 
 | Host path | Guest path | Purpose |
 | --- | --- | --- |
-| `<session>/workspace` | `/workspace` | Workspace and agent cwd |
-| `<session>/home/.codex` | `/root/.codex` | Codex config and state |
-| `<session>/home/.claude` | `/root/.claude` | Claude config and state |
-| `<session>/home/.claude.json` | `/root/.claude.json` | Claude root config |
-| `<session>/home/.gitconfig` | `/root/.gitconfig` | Git config |
-| `<session>/state` | `/data/state` | agent-compose state, cell artifacts, agent prompts |
-| `<session>/runtime` | `/data/runtime` | Reserved runtime resource and extension directory |
-| `<session>/logs` | `/data/logs` | Jupyter and related logs |
+| `<sandbox>/workspace` | `/workspace` | Workspace and agent cwd |
+| `<sandbox>/home/.codex` | `/root/.codex` | Codex config and state |
+| `<sandbox>/home/.claude` | `/root/.claude` | Claude config and state |
+| `<sandbox>/home/.claude.json` | `/root/.claude.json` | Claude root config |
+| `<sandbox>/home/.gitconfig` | `/root/.gitconfig` | Git config |
+| `<sandbox>/state` | `/data/state` | agent-compose state, cell artifacts, agent prompts |
+| `<sandbox>/runtime` | `/data/runtime` | Reserved runtime resource and extension directory |
+| `<sandbox>/logs` | `/data/logs` | Jupyter and related logs |
 
 The `boxlite`, `docker`, and `microsandbox` drivers all consume
-`<session>/vm/mount-manifest.json`, but manifest content is generated per
+`<sandbox>/vm/mount-manifest.json`, but manifest content is generated per
 driver from the same logical runtime mount list. Docker keeps fine-grained home
 subpath mounts, including file sources such as `.claude.json` and `.gitconfig`.
 BoxLite and Microsandbox use directory sources only. They expose
@@ -91,12 +91,12 @@ real image directory, while declared home entries such as `/root/.codex` and
 
 ## 3. Host Resource Preparation
 
-### 3.1 Session Directory
+### 3.1 Sandbox Directory
 
-During `Store.CreateSession`, the host creates:
+During `Store.CreateSandbox`, the host creates:
 
 ```text
-<session>/
+<sandbox>/
   context/
   home/
   runtime/
@@ -112,8 +112,8 @@ During `Store.CreateSession`, the host creates:
   state/events.json
 ```
 
-If the session is bound to a Git workspace, the host clones the repository into
-`<session>/workspace` before starting runtime.
+If the sandbox is bound to a Git workspace, the host clones the repository into
+`<sandbox>/workspace` before starting runtime.
 
 ### 3.2 Agent Prompt File
 
@@ -121,7 +121,7 @@ When sending an agent message, the host does not pass the prompt through stdin.
 It first writes a prompt file:
 
 ```text
-host:  <session>/state/agents/prompts/<provider>-<unix_nano>.txt
+host:  <sandbox>/state/agents/prompts/<provider>-<unix_nano>.txt
 guest: /data/state/agents/prompts/<provider>-<unix_nano>.txt
 ```
 
@@ -131,7 +131,7 @@ When a run is bound to an agent definition with non-empty `system_prompt`, the
 host writes the trimmed text to a fixed convention path:
 
 ```text
-host:  <session>/state/agents/system-prompts/system-prompt.txt
+host:  <sandbox>/state/agents/system-prompts/system-prompt.txt
 guest: /data/state/agents/system-prompts/system-prompt.txt
 ```
 
@@ -139,7 +139,7 @@ The guest runtime reads this path via `agentSystemPromptPath(stateRoot)` in
 `prompt.ts`. If the file is missing or empty, `readSystemPromptFile` returns
 `""` and the run composes MPI-only context. When `system_prompt` becomes empty,
 the host removes `system-prompt.txt` to avoid stale identity on later runs in
-the same session.
+the same sandbox.
 
 ### 3.3 Agent HOME And Initial Config
 
@@ -154,7 +154,7 @@ RUNTIME_ROOT=/data/runtime
 
 agent-compose no longer overrides `HOME`; guest tools use the image default
 `HOME=/root`. Default Codex, Claude, and Git config is initialized by the host in
-session home and exposed to the corresponding paths under `/root` through the
+sandbox home and exposed to the corresponding paths under `/root` through the
 mount manifest or directory-only bootstrap.
 
 ## 4. Entry Command
@@ -189,7 +189,7 @@ Command arguments:
 | --- | ---: | --- |
 | `--provider` | yes | `codex`, `claude`, `gemini`, `opencode`, with a small set of aliases |
 | `--message-file` | yes | Prompt file path |
-| `--state-root` | no | agent-compose runtime state root; default `/srv/agent-compose/session/state`. Guest discovers agent identity at `agents/system-prompts/system-prompt.txt` and MPI catalog from this root |
+| `--state-root` | no | agent-compose runtime state root; default `/srv/agent-compose/sandbox/state`. Guest discovers agent identity at `agents/system-prompts/system-prompt.txt` and MPI catalog from this root |
 | `--workspace` | no | Agent working directory; default `WORKSPACE` or `/workspace` |
 | `--home` | no | Agent HOME; default `HOME` or `/root` |
 | `--model` | no | Agent model; consumed by providers that support explicit model selection |
@@ -197,7 +197,7 @@ Command arguments:
 
 Agent identity uses the fixed convention path documented in §3.2.
 
-Inside an agent-compose session, the host always passes `--state-root`,
+Inside an agent-compose sandbox, the host always passes `--state-root`,
 `--workspace`, and `--home` explicitly.
 
 ### 4.1 `exec` Subcommand
@@ -269,19 +269,19 @@ Runtime behavior:
 ## 5. Environment Variable Conventions
 
 When the host invokes the JavaScript runtime, it merges environment variables
-from session env and overrides/adds:
+from sandbox env and overrides/adds:
 
 ```text
 GOPATH=/usr/local/go
 PATH=/root/.local/bin:/usr/local/go/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-SESSION_ID=<session_id>
+SANDBOX_ID=<sandbox_id>
 WORKSPACE=/workspace
 STATE_ROOT=/data/state
 RUNTIME_ROOT=/data/runtime
 VERSION=<version>
 ```
 
-The environment used to start Jupyter during session creation also contains:
+The environment used to start Jupyter during sandbox creation also contains:
 
 ```text
 JUPYTER_TOKEN=<token>
@@ -363,7 +363,7 @@ After the `prompt` subcommand completes successfully, stdout contains one
 structured result line:
 
 ```text
-__AGENT_RESULT__{"provider":"codex","sessionId":"...","stopReason":"completed","finalText":"...","transcript":"...","stderr":""}
+__AGENT_RESULT__{"provider":"codex","threadId":"...","stopReason":"completed","finalText":"...","transcript":"...","stderr":""}
 ```
 
 Fixed prefix:
@@ -377,7 +377,7 @@ JSON fields:
 | Field | Type | Description |
 | --- | --- | --- |
 | `provider` | string | Normalized provider |
-| `sessionId` | string | Provider-native resume id |
+| `threadId` | string | agent-compose thread id; adapters map provider-native resume ids into this field |
 | `stopReason` | string | Stop reason, usually `completed` |
 | `finalText` | string | Final response text |
 | `transcript` | string | Aggregated human-readable transcript |
@@ -454,7 +454,7 @@ Loader command host parsing flow:
 
 ```text
 LoaderHost.Command
-  -> ensureLoaderSession
+  -> ensure loader sandbox
   -> Executor.ExecuteLoaderCommand
   -> Store.AddCell(running SHELL)
   -> write command-request.json
@@ -472,9 +472,9 @@ missing. The host uses stdout/stderr/output from the command result payload to
 update the cell, rather than saving the protocol payload as cell output.
 Artifact paths returned to the loader script are host-side paths.
 
-Multiple command/shell calls in the same loader run reuse the loader session for
-that run. After the run ends, the host stops command sessions used by that run
-and records `loader.session.stopped`. `scheduler.agent` session stop behavior
+Multiple command/shell calls in the same loader run reuse the loader sandbox for
+that run. After the run ends, the host stops command sandboxes used by that run
+and records `loader.sandbox.stopped`. `scheduler.agent` sandbox stop behavior
 still follows the agent path.
 
 ## 8. Resume State Convention
@@ -490,29 +490,29 @@ Content:
 ```json
 {
   "provider": "codex",
-  "sessionId": "<provider-session-id>",
+  "threadId": "<provider-thread-id>",
   "updatedAt": "2026-01-01T00:00:00.000Z"
 }
 ```
 
 Codex and Claude read this file on the next call and resume:
 
-- Codex: `codex.resumeThread(sessionId, ...)`
-- Claude: `resume: sessionId`
+- Codex: `codex.resumeThread(threadId, ...)`
+- Claude: `resume: threadId`
 
 Gemini currently does not write provider state.
 
 After agent execution completes, the host also generates a cell-level manifest:
 
 ```text
-/data/state/cells/<cell_id>/agent-session.json
+/data/state/cells/<cell_id>/agent-thread.json
 ```
 
 The host writes this file to record:
 
 - provider
-- provider state file path
-- provider session id
+- provider thread state file path
+- provider thread id
 - provider-native log paths, such as Codex
   `/data/home/.codex/sessions/.../*.jsonl`
 
@@ -527,8 +527,8 @@ the provider runner throws, this can happen:
 - provider-native logs already exist, such as
   `/data/home/.codex/sessions/.../*.jsonl`
 - `/data/state/agents/providers/codex.json` has not yet been generated
-- the host can record discovered native log paths in `agent-session.json`, but
-  cannot obtain a definite `sessionId`
+- the host can record discovered native log paths in `agent-thread.json`, but
+  cannot obtain a definite `threadId`
 
 This means automatic resume after cancellation/failure depends on whether
 provider state has already been written successfully.
@@ -536,11 +536,11 @@ provider state has already been written successfully.
 ## 9. Runtime Resource Directory
 
 `/data/runtime` is currently reserved for runtime resources and extension
-capabilities. The mount manifest maps it to the host session runtime directory,
+capabilities. The mount manifest maps it to the host sandbox runtime directory,
 so both host and guest can read and write it:
 
 ```text
-host:  <session>/runtime
+host:  <sandbox>/runtime
 guest: /data/runtime
 ```
 
@@ -619,7 +619,7 @@ includePartialMessages=true
 forwardSubagentText=true
 permissionMode=bypassPermissions
 allowDangerouslySkipPermissions=true
-resume=<stored session id>
+resume=<stored thread id>
 ```
 
 If `/data/state/agents/system-prompts/system-prompt.txt` and/or
@@ -648,13 +648,14 @@ opencode run <prompt> --format json --dir /workspace --dangerously-skip-permissi
 ```
 
 When a model is provided by the host, the runner appends `--model <model>`.
-When a stored provider session exists, the runner appends
-`--session <stored session id>`. The runner sets
+When a stored provider thread exists, the runner appends
+`--session <stored thread id>`. The `--session` flag is OpenCode's provider-native
+resume flag. The runner sets
 `OPENCODE_DISABLE_AUTOUPDATE=true` unless the environment already defines it.
 
 OpenCode raw JSON events are converted into a human-readable transcript. The
 runner writes `/data/state/agents/providers/opencode.json` after a successful
-run with a non-empty provider session id.
+run with a non-empty provider thread id.
 
 ## 11. Error Semantics
 
@@ -683,7 +684,7 @@ Failed cells write:
 /data/state/cells/<cell_id>/stderr.txt
 /data/state/cells/<cell_id>/output.txt
 /data/state/cells/<cell_id>/exitcode.txt
-/data/state/cells/<cell_id>/agent-session.json
+/data/state/cells/<cell_id>/agent-thread.json
 ```
 
 and write an `agent.assistant.failed` event.

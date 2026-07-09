@@ -5,7 +5,7 @@ Chinese version: [../zh-CN/design/opencode_cli_support.md](../zh-CN/design/openc
 This document records the implementation for adding `opencode` as a guest agent
 provider. It follows the current runtime contract in
 [agent-compose-runtime_contract.md](agent-compose-runtime_contract.md):
-the Go control plane creates sessions and executes one unified runtime command
+the Go control plane creates sandboxes and executes one unified runtime command
 inside the guest, while `runtime/javascript` adapts provider-specific CLIs.
 
 ## Current Code Shape
@@ -14,7 +14,7 @@ Provider handling is split across four layers:
 
 - Go control plane: `NormalizeAgentKind` and `NormalizeAgentDefinition` in
   `pkg/model/agent_model.go`, loader
-  default-agent validation, and run/session orchestration currently pass a
+  default-agent validation, and run/sandbox orchestration currently pass a
   provider string to the guest runtime.
 - JavaScript runtime: `runtime/javascript/src/provider.ts` normalizes provider
   aliases, `runtime/javascript/src/prompt.ts` selects a runner, and
@@ -45,15 +45,15 @@ opencode run [message..]
 Relevant flags for the agent-compose runner are:
 
 - `--format json`: emit raw JSON events.
-- `--session <id>` and `--continue`: resume a session.
+- `--session <id>` and `--continue`: resume an OpenCode-native session.
 - `--model <provider/model>`: select the model.
 - `--agent <agent>`: select an OpenCode agent profile.
 - `--dir <path>`: run in a working directory.
 - `--dangerously-skip-permissions`: auto-approve permissions not explicitly
   denied.
 - `--attach <url>`: attach to an already running OpenCode server. This is not
-  part of the first integration because agent-compose already owns session
-  lifecycle and does not start a persistent OpenCode server per session.
+  part of the first integration because agent-compose already owns sandbox
+  lifecycle and does not start a persistent OpenCode server per sandbox.
 
 The package install command in OpenCode docs is `npm install -g opencode-ai`.
 
@@ -74,7 +74,7 @@ Agent execution should:
 
 - call `agent-compose-runtime prompt --provider opencode ...`;
 - run `opencode run` inside `/workspace`;
-- persist and reuse the OpenCode session id in
+- persist and reuse the OpenCode provider thread id in
   `/data/state/agents/providers/opencode.json`;
 - stream human-readable transcript text back through stderr, consistent with
   other runners;
@@ -107,21 +107,22 @@ Agent execution should:
    opencode run <prompt> --format json --dir <workspace>
      --dangerously-skip-permissions
      [--model <model>]
-     [--session <stored-session-id>]
+     [--session <stored-thread-id>]
    ```
 
    Implementation details:
 
-   - read the previous session with `readStoredSession(stateRoot, "opencode")`;
+   - read the previous provider thread with `readStoredThread(stateRoot, "opencode")`;
    - include `OPENCODE_DISABLE_AUTOUPDATE=true` in the child environment unless
      the user already set it;
    - pass the model only when `RunnerOptions.model` exists;
    - parse line-delimited JSON events when possible, and tolerate non-JSON lines
      by writing them to the transcript;
-   - extract session id from common event fields such as `sessionID`,
+   - extract the provider-native session id from common event fields such as `sessionID`,
      `sessionId`, or `session_id`;
    - extract final text from common message/result fields with `extractText`;
-   - write session state only after a non-empty session id is observed.
+   - write provider thread state only after a non-empty provider-native session
+     id is observed.
 
 3. Wire runner selection.
 
@@ -135,11 +136,11 @@ Agent execution should:
    model and system prompt explicitly instead of relying on stored metadata:
 
    - a small execution-config helper resolves provider, model, and
-     system prompt from an agent definition when a session has agent tags;
+     system prompt from an agent definition when a sandbox has agent tags;
    - `ExecuteAgentRequest` includes `Model` and `SystemPrompt`;
    - managed project agent definitions set those fields in
      `runProjectAgent`;
-   - v1 agent definition sessions set those fields when executing via
+   - v1 agent definition sandbox compatibility paths set those fields when executing via
      `SendAgentMessage` / `SendAgentMessageStream`;
    - loaders linked to an agent definition set those fields when using
      `scheduler.agent`;
@@ -169,9 +170,10 @@ Agent execution should:
    Runtime JS tests:
 
    - provider normalization accepts `opencode`, `open-code`, `open_code`;
-   - `OpenCodeRunner` builds expected args for fresh and resumed sessions;
+   - `OpenCodeRunner` builds expected args for fresh and resumed provider
+     threads;
    - event parsing records transcript, final text, stderr, exit failures, and
-     session id.
+     provider-native session id.
 
    Go tests:
 
@@ -198,15 +200,15 @@ provider-specific contract and tests.
 
 ## Compatibility And Migration
 
-No data migration is needed. Provider session state is stored per provider name,
+No data migration is needed. Provider thread state is stored per provider name,
 so OpenCode will use a new file:
 
 ```text
 /data/state/agents/providers/opencode.json
 ```
 
-Existing `codex`, `claude`, and `gemini` sessions continue using their current
-state files and command paths.
+Existing `codex`, `claude`, and `gemini` provider thread state continues using
+the current state files and command paths.
 
 ## Remaining Follow-Up Checks
 

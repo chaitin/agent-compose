@@ -7,9 +7,9 @@ currently injects into and reads from guests, containers, and sandboxes.
 
 ## Design Principles
 
-The runtime mount manifest already maps session subdirectories to conventional
+The runtime mount manifest already maps sandbox subdirectories to conventional
 guest paths. Therefore guest code no longer needs an agent-compose-specific
-session root, and agent-compose does not need to override `HOME`.
+sandbox root, and agent-compose does not need to override `HOME`.
 
 Current principles:
 
@@ -29,7 +29,7 @@ agent-compose injects these guest runtime variables:
 | `WORKSPACE` | `/workspace` | Workspace location |
 | `STATE_ROOT` | `/data/state` | Cell artifacts, agent prompt/schema/provider state |
 | `RUNTIME_ROOT` | `/data/runtime` | Runtime JS resources/cache/MPI and related data |
-| `SESSION_ID` | current session id | Logging, debugging, tool context |
+| `SANDBOX_ID` | current sandbox id | Logging, debugging, tool context |
 | `VERSION` | current agent-compose version | Debugging and compatibility checks |
 | `JUPYTER_TOKEN` | current proxy token | Jupyter startup and proxy access |
 
@@ -58,20 +58,20 @@ Home persistence is handled by the mount manifest:
 
 | Host path | Docker guest path | BoxLite/Microsandbox guest path |
 | --- | --- | --- |
-| `<session>/home/.codex` | `/root/.codex` | Symlink `/root/.codex -> /data/home/.codex` |
-| `<session>/home/.claude` | `/root/.claude` | Symlink `/root/.claude -> /data/home/.claude` |
-| `<session>/home/.opencode` | `/root/.opencode` | Symlink `/root/.opencode -> /data/home/.opencode` |
-| `<session>/home/.claude.json` | `/root/.claude.json` | Symlink `/root/.claude.json -> /data/home/.claude.json` |
-| `<session>/home/.gitconfig` | `/root/.gitconfig` | Symlink `/root/.gitconfig -> /data/home/.gitconfig` |
-| `<session>/home/.gemini` | `/root/.gemini` | Symlink `/root/.gemini -> /data/home/.gemini` |
-| `<session>/home/.config/claude` | `/root/.config/claude` | Symlink |
-| `<session>/home/.config/Claude` | `/root/.config/Claude` | Symlink |
-| `<session>/home/.config/gemini` | `/root/.config/gemini` | Symlink |
-| `<session>/home/.config/opencode` | `/root/.config/opencode` | Symlink |
-| `<session>/home/.local/share/gemini` | `/root/.local/share/gemini` | Symlink |
+| `<sandbox>/home/.codex` | `/root/.codex` | Symlink `/root/.codex -> /data/home/.codex` |
+| `<sandbox>/home/.claude` | `/root/.claude` | Symlink `/root/.claude -> /data/home/.claude` |
+| `<sandbox>/home/.opencode` | `/root/.opencode` | Symlink `/root/.opencode -> /data/home/.opencode` |
+| `<sandbox>/home/.claude.json` | `/root/.claude.json` | Symlink `/root/.claude.json -> /data/home/.claude.json` |
+| `<sandbox>/home/.gitconfig` | `/root/.gitconfig` | Symlink `/root/.gitconfig -> /data/home/.gitconfig` |
+| `<sandbox>/home/.gemini` | `/root/.gemini` | Symlink `/root/.gemini -> /data/home/.gemini` |
+| `<sandbox>/home/.config/claude` | `/root/.config/claude` | Symlink |
+| `<sandbox>/home/.config/Claude` | `/root/.config/Claude` | Symlink |
+| `<sandbox>/home/.config/gemini` | `/root/.config/gemini` | Symlink |
+| `<sandbox>/home/.config/opencode` | `/root/.config/opencode` | Symlink |
+| `<sandbox>/home/.local/share/gemini` | `/root/.local/share/gemini` | Symlink |
 
 Docker fine-grain mounts these home subpaths directly. BoxLite and Microsandbox
-mount only the whole `<session>` directory at `/data`; guest bootstrap keeps
+mount only the whole `<sandbox>` directory at `/data`; guest bootstrap keeps
 `/root` as a real directory and creates symlinks only for the declared home
 entries above. Other `/root` subpaths are not guaranteed to persist.
 
@@ -137,7 +137,7 @@ Child processes inherit the runtime process's native `HOME`.
 Artifact dir is a command/request-scoped path:
 
 - Host-side cell and loader command artifacts live under
-  `<session>/state/cells/...`.
+  `<sandbox>/state/cells/...`.
 - The corresponding guest-side path is `/data/state/cells/...`.
 - Runtime JS can still receive artifact dir through request or CLI argument.
 - `ARTIFACT_DIR` is not exposed as a global env var.
