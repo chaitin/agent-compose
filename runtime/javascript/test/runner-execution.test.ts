@@ -179,7 +179,7 @@ describe("runner execution", () => {
         strictMcpConfig: true,
         mcpServers: {
           filesystem: { type: "stdio", command: "npx", args: ["-y", "server"] },
-          docs: { type: "http", url: "https://docs.example/mcp", headers: { Authorization: { value: "Bearer token" } } },
+          docs: { type: "http", url: "https://docs.example/mcp", headers: { Authorization: "Bearer token" } },
         },
       });
     });

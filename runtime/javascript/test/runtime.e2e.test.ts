@@ -364,12 +364,12 @@ describe("runtime JavaScript E2E", () => {
       expect(stdio.stderr).toContain("claude partial");
       expect(stdio.stderr).toContain("auth warning");
       expect(stdio.stderr).toContain("local command output");
-      expect(claudeMockState.lastArgs).toMatchObject({
+	  expect(claudeMockState.lastArgs).toMatchObject({
 		options: {
 			strictMcpConfig: true,
 			mcpServers: {
 				filesystem: { type: "stdio", command: "npx", args: ["-y", "server"] },
-				docs: { type: "sse", url: "https://docs.example/sse", headers: { Authorization: { value: "Bearer token" } } },
+				docs: { type: "sse", url: "https://docs.example/sse", headers: { Authorization: "Bearer token" } },
 			},
 		},
 	  });
