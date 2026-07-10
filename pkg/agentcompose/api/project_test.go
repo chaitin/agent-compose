@@ -120,3 +120,73 @@ func TestIntegrationProjectSpecYAMLShapeIncludesWorkspaceRegistry(t *testing.T) 
 		t.Fatalf("reviewer workspace = %#v", reviewer["workspace"])
 	}
 }
+
+func TestProjectSpecToProtoIncludesMCPs(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{
+		Name: "mcp",
+		MCPs: map[string]compose.NormalizedMCPServerSpec{
+			"docs": {Type: "remote", Transport: "http", URL: "https://docs.example.com/mcp"},
+		},
+		Agents: []compose.NormalizedAgentSpec{{
+			Name:     "reviewer",
+			Provider: "codex",
+			Driver: &compose.NormalizedDriverSpec{
+				Name:   compose.DriverDocker,
+				Docker: &compose.DockerDriverSpec{},
+			},
+			MCPs: map[string]compose.NormalizedMCPServerSpec{
+				"docs": {Type: "remote", Transport: "http", URL: "https://docs.example.com/mcp"},
+			},
+		}},
+	}
+
+	response := ProjectSpecToProto(spec)
+	if response == nil || len(response.GetMcps()) != 1 {
+		t.Fatalf("project mcps missing: %#v", response)
+	}
+	if response.GetMcps()[0].GetName() != "docs" || response.GetMcps()[0].GetUrl() != "https://docs.example.com/mcp" {
+		t.Fatalf("project mcps = %#v", response.GetMcps())
+	}
+	if len(response.GetAgents()) != 1 || len(response.GetAgents()[0].GetMcps()) != 1 {
+		t.Fatalf("agent mcps missing: %#v", response.GetAgents())
+	}
+}
+
+func TestProjectSpecYAMLShapeIncludesMCPs(t *testing.T) {
+	raw, issues := ProjectSpecYAMLShape(ProjectSpecToProto(&compose.NormalizedProjectSpec{
+		Name: "mcp",
+		MCPs: map[string]compose.NormalizedMCPServerSpec{
+			"filesystem": {Type: "local", Command: "npx", Args: []string{"server"}},
+		},
+		Agents: []compose.NormalizedAgentSpec{{
+			Name:     "reviewer",
+			Provider: "claude",
+			Driver: &compose.NormalizedDriverSpec{
+				Name:   compose.DriverDocker,
+				Docker: &compose.DockerDriverSpec{},
+			},
+			MCPs: map[string]compose.NormalizedMCPServerSpec{
+				"filesystem": {Type: "local", Command: "npx", Args: []string{"server"}},
+			},
+		}},
+	}))
+	if len(issues) > 0 {
+		t.Fatalf("issues = %#v", issues)
+	}
+	projectMCPs, ok := raw["mcps"].(map[string]any)
+	if !ok || len(projectMCPs) != 1 {
+		t.Fatalf("project mcps = %#v", raw["mcps"])
+	}
+	agents, ok := raw["agents"].(map[string]any)
+	if !ok {
+		t.Fatalf("agents = %#v", raw["agents"])
+	}
+	reviewer, ok := agents["reviewer"].(map[string]any)
+	if !ok {
+		t.Fatalf("reviewer = %#v", agents["reviewer"])
+	}
+	agentMCPs, ok := reviewer["mcps"].([]map[string]any)
+	if !ok || len(agentMCPs) != 1 || agentMCPs[0]["name"] != "filesystem" {
+		t.Fatalf("agent mcps = %#v", reviewer["mcps"])
+	}
+}

@@ -151,6 +151,7 @@ func ProjectSpecToProto(spec *compose.NormalizedProjectSpec) *agentcomposev2.Pro
 		Agents:     AgentSpecsToProto(spec.Agents),
 		Network:    NetworkSpecToProto(spec.Network),
 		Volumes:    ProjectVolumeSpecsToProto(spec.Volumes),
+		Mcps:       MCPServerSpecsToProto(spec.MCPs),
 	}
 }
 
@@ -189,6 +190,30 @@ func AgentSpecsToProto(agents []compose.NormalizedAgentSpec) []*agentcomposev2.A
 			Scheduler:    SchedulerSpecToProto(agent.Scheduler),
 			Jupyter:      JupyterSpecToProto(agent.Jupyter),
 			Volumes:      VolumeMountSpecsToProto(agent.Volumes),
+			Mcps:         MCPServerSpecsToProto(agent.MCPs),
+		})
+	}
+	return items
+}
+
+func MCPServerSpecsToProto(values map[string]compose.NormalizedMCPServerSpec) []*agentcomposev2.MCPServerSpec {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	items := make([]*agentcomposev2.MCPServerSpec, 0, len(keys))
+	for _, key := range keys {
+		value := values[key]
+		items = append(items, &agentcomposev2.MCPServerSpec{
+			Name:      key,
+			Type:      value.Type,
+			Transport: value.Transport,
+			Command:   value.Command,
+			Args:      append([]string(nil), value.Args...),
+			Env:       EnvVarSpecsToProto(value.Env),
+			Url:       value.URL,
+			Headers:   EnvVarSpecsToProto(value.Headers),
 		})
 	}
 	return items
@@ -376,6 +401,11 @@ func ProjectSpecYAMLShape(spec *agentcomposev2.ProjectSpec) (map[string]any, []*
 	} else if len(volumes) > 0 {
 		root["volumes"] = volumes
 	}
+	if mcps, issues := MCPServerYAMLMap("mcps", spec.GetMcps()); len(issues) > 0 {
+		return nil, issues
+	} else if len(mcps) > 0 {
+		root["mcps"] = mcps
+	}
 	if network := NetworkYAMLShape(spec.GetNetwork()); len(network) > 0 {
 		root["network"] = network
 	}
@@ -480,9 +510,77 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		if volumes := VolumeMountYAMLList(agent.GetVolumes()); len(volumes) > 0 {
 			raw["volumes"] = volumes
 		}
+		if mcps, issues := AgentMCPYAMLList(fmt.Sprintf("agents[%d].mcps", i), agent.GetMcps()); len(issues) > 0 {
+			return nil, issues
+		} else if len(mcps) > 0 {
+			raw["mcps"] = mcps
+		}
 		values[name] = raw
 	}
 	return values, nil
+}
+
+func MCPServerYAMLMap(path string, mcps []*agentcomposev2.MCPServerSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
+	values := make(map[string]any, len(mcps))
+	for i, mcp := range mcps {
+		name := strings.TrimSpace(mcp.GetName())
+		if name == "" {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("%s[%d].name", path, i), "mcp name is required")}
+		}
+		if _, ok := values[name]; ok {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("%s[%d].name", path, i), fmt.Sprintf("duplicate mcp %q", name))}
+		}
+		values[name] = mcpServerYAMLShape(mcp)
+	}
+	return values, nil
+}
+
+func AgentMCPYAMLList(path string, mcps []*agentcomposev2.MCPServerSpec) ([]map[string]any, []*agentcomposev2.ProjectValidationIssue) {
+	values := make([]map[string]any, 0, len(mcps))
+	seen := make(map[string]struct{}, len(mcps))
+	for i, mcp := range mcps {
+		name := strings.TrimSpace(mcp.GetName())
+		if name == "" {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("%s[%d].name", path, i), "mcp name is required")}
+		}
+		if _, ok := seen[name]; ok {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("%s[%d].name", path, i), fmt.Sprintf("duplicate mcp %q", name))}
+		}
+		seen[name] = struct{}{}
+		shape := mcpServerYAMLShape(mcp)
+		shape["name"] = name
+		values = append(values, shape)
+	}
+	return values, nil
+}
+
+func mcpServerYAMLShape(mcp *agentcomposev2.MCPServerSpec) map[string]any {
+	raw := map[string]any{}
+	if mcp == nil {
+		return raw
+	}
+	if strings.TrimSpace(mcp.GetType()) != "" {
+		raw["type"] = mcp.GetType()
+	}
+	if strings.TrimSpace(mcp.GetTransport()) != "" {
+		raw["transport"] = mcp.GetTransport()
+	}
+	if strings.TrimSpace(mcp.GetCommand()) != "" {
+		raw["command"] = mcp.GetCommand()
+	}
+	if len(mcp.GetArgs()) > 0 {
+		raw["args"] = append([]string(nil), mcp.GetArgs()...)
+	}
+	if env, issues := EnvVarYAMLMap("env", mcp.GetEnv()); len(issues) == 0 && len(env) > 0 {
+		raw["env"] = env
+	}
+	if strings.TrimSpace(mcp.GetUrl()) != "" {
+		raw["url"] = mcp.GetUrl()
+	}
+	if headers, issues := EnvVarYAMLMap("headers", mcp.GetHeaders()); len(issues) == 0 && len(headers) > 0 {
+		raw["headers"] = headers
+	}
+	return raw
 }
 
 func VolumeMountYAMLList(volumes []*agentcomposev2.VolumeMountSpec) []map[string]any {
