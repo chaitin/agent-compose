@@ -171,6 +171,7 @@ agents:
       REVIEW_MODE: strict
     scheduler:
       enabled: true
+      sandbox_policy: sticky
       triggers:
         - name: hourly
           cron: "0 * * * *"
@@ -178,6 +179,7 @@ agents:
         - event:
             topic: git.push
           prompt: "Review changes from the incoming event."
+          sandbox_policy: new
 
 network:
   mode: default
@@ -213,6 +215,13 @@ Normalization rules:
   unsupported.
 - Triggers support `cron`, `interval`, `timeout`, and `event`. Each trigger must
   specify exactly one type.
+- `scheduler.sandbox_policy` accepts `new` or `sticky` and defaults to `new`.
+  A trigger may set `sandbox_policy` to override the scheduler default.
+- Sticky scheduler runs are scoped by loader and trigger. Repeated runs of one
+  trigger reuse its sandbox, while different triggers do not share sandboxes.
+  Scheduler script calls outside a trigger callback use the loader-level sticky
+  sandbox. Inline scripts may continue to override individual calls with
+  `scheduler.agent(prompt, { sandboxPolicy: "..." })`.
 - `scheduler.script` is an inline QJS scalar saved into the managed loader
   `script` field. Blank scripts are treated as unset.
 - `scheduler.script` and non-empty `scheduler.triggers` are mutually exclusive.

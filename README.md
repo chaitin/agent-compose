@@ -112,10 +112,15 @@ agents:
     model: gpt-test
     image: debian:bookworm-slim
     scheduler:
+      sandbox_policy: sticky
       triggers:
         - name: hourly
           cron: "0 * * * *"
           prompt: "Review the current workspace state."
+        - name: clean-review
+          cron: "0 0 * * *"
+          prompt: "Review in a fresh sandbox."
+          sandbox_policy: new
 ```
 
 Apply and run it:

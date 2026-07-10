@@ -48,6 +48,10 @@ func TestConfigStoreMigratesLegacySQLiteSessionSchema(t *testing.T) {
 	testConfigStoreMigratesLegacySQLiteSessionSchema(t)
 }
 
+func TestConfigStoreRecoversInterruptedLoaderBindingTriggerMigration(t *testing.T) {
+	testConfigStoreRecoversInterruptedLoaderBindingTriggerMigration(t)
+}
+
 func TestIntegrationConfigStoreProjectSchemaMigrationWorkflows(t *testing.T) {
 	testConfigStoreProjectSchemaMigrationWorkflows(t)
 }
@@ -142,10 +146,10 @@ func testConfigStoreMigratesLegacySQLiteSessionSchema(t *testing.T) {
 	}
 	assertTableColumns(t, store, "loader", "sandbox_policy")
 	assertTableMissingColumns(t, store, "loader", "session_policy")
-	assertTableColumns(t, store, "loader_binding", "sandbox_id")
+	assertTableColumns(t, store, "loader_binding", "trigger_id", "sandbox_id")
 	assertTableColumns(t, store, "loader_event", "linked_sandbox_id", "linked_agent_thread_id")
 	assertTableColumns(t, store, "llm_facade_token", "sandbox_id")
-	if binding, found, err := store.GetLoaderBinding(ctx, "loader-1"); err != nil || !found || binding.SandboxID != "sandbox-1" {
+	if binding, found, err := store.GetLoaderBinding(ctx, "loader-1", ""); err != nil || !found || binding.SandboxID != "sandbox-1" {
 		t.Fatalf("migrated binding=%#v found=%v err=%v", binding, found, err)
 	}
 	if events, err := store.ListLoaderEvents(ctx, "loader-1", 10); err != nil || len(events) != 1 || events[0].LinkedSandboxID != "sandbox-1" || events[0].LinkedAgentThreadID != "thread-1" {
@@ -158,6 +162,33 @@ func testConfigStoreMigratesLegacySQLiteSessionSchema(t *testing.T) {
 		t.Fatalf("migrated event links=%#v err=%v", links, err)
 	}
 	assertTableColumns(t, store, "event_session_link", "session_id")
+}
+
+func testConfigStoreRecoversInterruptedLoaderBindingTriggerMigration(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	db := newMemoryDB(t)
+	if _, err := db.ExecContext(ctx, `CREATE TABLE loader_binding_legacy(
+		loader_id TEXT PRIMARY KEY,
+		sandbox_id TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	)`); err != nil {
+		t.Fatalf("create interrupted migration fixture: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO loader_binding_legacy(loader_id, sandbox_id, created_at, updated_at)
+		VALUES('loader-1', 'sandbox-1', 1, 2)`); err != nil {
+		t.Fatalf("insert interrupted migration fixture: %v", err)
+	}
+	store := FromDB(db)
+	if err := store.initSchema(ctx); err != nil {
+		t.Fatalf("initSchema interrupted migration recovery returned error: %v", err)
+	}
+	assertTableColumns(t, store, "loader_binding", "trigger_id", "sandbox_id")
+	assertTableDoesNotExist(t, store, "loader_binding_legacy")
+	if binding, found, err := store.GetLoaderBinding(ctx, "loader-1", ""); err != nil || !found || binding.SandboxID != "sandbox-1" {
+		t.Fatalf("recovered binding=%#v found=%v err=%v", binding, found, err)
+	}
 }
 
 func testConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
@@ -781,10 +812,19 @@ func testConfigStoreCRUDCoverageWorkflows(t *testing.T) {
 	if err := store.UpsertLoaderBinding(ctx, domain.LoaderBinding{LoaderID: loader.Summary.ID, SandboxID: "sandbox-1"}); err != nil {
 		t.Fatalf("UpsertLoaderBinding returned error: %v", err)
 	}
-	if binding, found, err := store.GetLoaderBinding(ctx, loader.Summary.ID); err != nil || !found || binding.SandboxID != "sandbox-1" {
+	if binding, found, err := store.GetLoaderBinding(ctx, loader.Summary.ID, ""); err != nil || !found || binding.SandboxID != "sandbox-1" {
 		t.Fatalf("GetLoaderBinding binding=%#v found=%v err=%v", binding, found, err)
 	}
-	if binding, found, err := store.GetLoaderBinding(ctx, "missing"); err != nil || found || binding.LoaderID != "" {
+	if err := store.UpsertLoaderBinding(ctx, domain.LoaderBinding{LoaderID: loader.Summary.ID, TriggerID: "trigger-1", SandboxID: "sandbox-2"}); err != nil {
+		t.Fatalf("UpsertLoaderBinding trigger scope returned error: %v", err)
+	}
+	if binding, found, err := store.GetLoaderBinding(ctx, loader.Summary.ID, "trigger-1"); err != nil || !found || binding.SandboxID != "sandbox-2" {
+		t.Fatalf("GetLoaderBinding trigger binding=%#v found=%v err=%v", binding, found, err)
+	}
+	if binding, found, err := store.GetLoaderBinding(ctx, loader.Summary.ID, ""); err != nil || !found || binding.SandboxID != "sandbox-1" {
+		t.Fatalf("loader-level binding changed: binding=%#v found=%v err=%v", binding, found, err)
+	}
+	if binding, found, err := store.GetLoaderBinding(ctx, "missing", ""); err != nil || found || binding.LoaderID != "" {
 		t.Fatalf("GetLoaderBinding missing binding=%#v found=%v err=%v", binding, found, err)
 	}
 	if err := store.UpsertLoaderBinding(ctx, domain.LoaderBinding{}); err == nil {

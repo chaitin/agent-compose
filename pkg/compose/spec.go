@@ -90,18 +90,20 @@ type VolumeMountSpec struct {
 }
 
 type SchedulerSpec struct {
-	Enabled  *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Triggers []TriggerSpec `yaml:"triggers,omitempty" json:"triggers,omitempty"`
-	Script   string        `yaml:"script,omitempty" json:"script,omitempty"`
+	Enabled       *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	SandboxPolicy *string       `yaml:"sandbox_policy,omitempty" json:"sandbox_policy,omitempty"`
+	Triggers      []TriggerSpec `yaml:"triggers,omitempty" json:"triggers,omitempty"`
+	Script        string        `yaml:"script,omitempty" json:"script,omitempty"`
 }
 
 type TriggerSpec struct {
-	Name     string            `yaml:"name,omitempty" json:"name,omitempty"`
-	Cron     string            `yaml:"cron,omitempty" json:"cron,omitempty"`
-	Interval string            `yaml:"interval,omitempty" json:"interval,omitempty"`
-	Timeout  string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
-	Event    *EventTriggerSpec `yaml:"event,omitempty" json:"event,omitempty"`
-	Prompt   string            `yaml:"prompt,omitempty" json:"prompt,omitempty"`
+	Name          string            `yaml:"name,omitempty" json:"name,omitempty"`
+	Cron          string            `yaml:"cron,omitempty" json:"cron,omitempty"`
+	Interval      string            `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Timeout       string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Event         *EventTriggerSpec `yaml:"event,omitempty" json:"event,omitempty"`
+	Prompt        string            `yaml:"prompt,omitempty" json:"prompt,omitempty"`
+	SandboxPolicy *string           `yaml:"sandbox_policy,omitempty" json:"sandbox_policy,omitempty"`
 
 	cronSet     bool
 	intervalSet bool
@@ -536,9 +538,10 @@ func validateStringList(node *yaml.Node, path string) error {
 
 func validateScheduler(node *yaml.Node, path string) error {
 	return validateMapping(node, path, map[string]nodeValidator{
-		"enabled":  validateBool,
-		"triggers": validateTriggerList,
-		"script":   validateScalar,
+		"enabled":        validateBool,
+		"sandbox_policy": validateScalar,
+		"triggers":       validateTriggerList,
+		"script":         validateScalar,
 	})
 }
 
@@ -563,12 +566,13 @@ func validateTriggerList(node *yaml.Node, path string) error {
 
 func validateTrigger(node *yaml.Node, path string) error {
 	return validateMapping(node, path, map[string]nodeValidator{
-		"name":     validateScalar,
-		"cron":     validateScalar,
-		"interval": validateScalar,
-		"timeout":  validateScalar,
-		"event":    validateEventTrigger,
-		"prompt":   validateScalar,
+		"name":           validateScalar,
+		"cron":           validateScalar,
+		"interval":       validateScalar,
+		"timeout":        validateScalar,
+		"event":          validateEventTrigger,
+		"prompt":         validateScalar,
+		"sandbox_policy": validateScalar,
 	})
 }
 

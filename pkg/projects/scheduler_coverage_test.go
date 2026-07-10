@@ -32,6 +32,10 @@ func TestManagedLoaderTriggerRegistrationCoverage(t *testing.T) {
 			t.Fatalf("script missing %q: %s", want, script)
 		}
 	}
+	_, policyRegistration, err := ManagedLoaderTriggerAndRegistration("sticky-trigger", "worker", compose.NormalizedTriggerSpec{Kind: "interval", Interval: "1s", SandboxPolicy: "sticky"})
+	if err != nil || !strings.Contains(policyRegistration, `sandboxPolicy: "sticky"`) {
+		t.Fatalf("sticky registration = %q, err=%v", policyRegistration, err)
+	}
 
 	emptyTriggers, idleScript, err := ManagedLoaderTriggersAndScript("project-1", "worker", "", &compose.NormalizedSchedulerSpec{})
 	if err != nil {

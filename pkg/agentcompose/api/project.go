@@ -348,17 +348,19 @@ func SchedulerSpecToProto(scheduler *compose.NormalizedSchedulerSpec) *agentcomp
 		triggers = append(triggers, TriggerSpecToProto(trigger))
 	}
 	return &agentcomposev2.SchedulerSpec{
-		Enabled:  scheduler.Enabled,
-		Triggers: triggers,
-		Script:   scheduler.Script,
+		Enabled:       scheduler.Enabled,
+		Triggers:      triggers,
+		Script:        scheduler.Script,
+		SandboxPolicy: scheduler.SandboxPolicy,
 	}
 }
 
 func TriggerSpecToProto(trigger compose.NormalizedTriggerSpec) *agentcomposev2.TriggerSpec {
 	result := &agentcomposev2.TriggerSpec{
-		Name:   trigger.Name,
-		Kind:   trigger.Kind,
-		Prompt: trigger.Prompt,
+		Name:          trigger.Name,
+		Kind:          trigger.Kind,
+		Prompt:        trigger.Prompt,
+		SandboxPolicy: trigger.SandboxPolicy,
 	}
 	switch trigger.Kind {
 	case "cron":
@@ -704,6 +706,9 @@ func SchedulerYAMLShape(scheduler *agentcomposev2.SchedulerSpec) map[string]any 
 		return nil
 	}
 	raw := map[string]any{"enabled": scheduler.GetEnabled()}
+	if scheduler.GetSandboxPolicy() != "" {
+		raw["sandbox_policy"] = scheduler.GetSandboxPolicy()
+	}
 	triggers := make([]map[string]any, 0, len(scheduler.GetTriggers()))
 	for _, trigger := range scheduler.GetTriggers() {
 		triggers = append(triggers, TriggerYAMLShape(trigger))
@@ -724,6 +729,9 @@ func TriggerYAMLShape(trigger *agentcomposev2.TriggerSpec) map[string]any {
 	}
 	if trigger.GetPrompt() != "" {
 		raw["prompt"] = trigger.GetPrompt()
+	}
+	if trigger.GetSandboxPolicy() != "" {
+		raw["sandbox_policy"] = trigger.GetSandboxPolicy()
 	}
 	kind := strings.ToLower(strings.TrimSpace(trigger.GetKind()))
 	if kind == "" || kind == "cron" {

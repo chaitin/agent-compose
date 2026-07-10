@@ -1332,6 +1332,51 @@ func TestRunsControllerRunProjectAgentManualTriggerMissingDoesNotCreateRun(t *te
 	}
 }
 
+func TestRunsControllerStickyBindingsAreScopedByTrigger(t *testing.T) {
+	fixture := newControllerRunFixture(t)
+	runSticky := func(triggerID, requestID string) domain.ProjectRunRecord {
+		t.Helper()
+		run, execErr, err := fixture.controller.RunProjectAgent(fixture.ctx, RunAgentRequest{
+			ProjectID:              "project-1",
+			AgentName:              "worker",
+			Prompt:                 "do sticky work",
+			Source:                 domain.ProjectRunSourceScheduler,
+			SchedulerID:            "scheduler-1",
+			TriggerID:              triggerID,
+			ClientRequestID:        requestID,
+			CleanupPolicy:          agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_KEEP_RUNNING,
+			StickyBindingLoaderID:  "loader-1",
+			StickyBindingTriggerID: triggerID,
+		}, nil)
+		if err != nil || execErr != nil {
+			t.Fatalf("RunProjectAgent(%s) err=%v execErr=%v run=%#v", triggerID, err, execErr, run)
+		}
+		return run
+	}
+
+	first := runSticky("trigger-a", "sticky-a-1")
+	second := runSticky("trigger-a", "sticky-a-2")
+	other := runSticky("trigger-b", "sticky-b-1")
+	if first.SandboxID == "" || second.SandboxID != first.SandboxID {
+		t.Fatalf("same trigger sandbox ids = %q, %q", first.SandboxID, second.SandboxID)
+	}
+	if other.SandboxID == first.SandboxID {
+		t.Fatalf("different triggers shared sandbox %q", other.SandboxID)
+	}
+	if fixture.configDB.bindings["loader-1/trigger-a"].SandboxID != first.SandboxID || fixture.configDB.bindings["loader-1/trigger-b"].SandboxID != other.SandboxID {
+		t.Fatalf("bindings = %#v", fixture.configDB.bindings)
+	}
+
+	fixture.configDB.bindings["loader-1/stale"] = domain.LoaderBinding{LoaderID: "loader-1", TriggerID: "stale", SandboxID: "missing-sandbox"}
+	replacement := runSticky("stale", "sticky-stale-1")
+	if replacement.SandboxID == "missing-sandbox" || fixture.configDB.bindings["loader-1/stale"].SandboxID != replacement.SandboxID {
+		t.Fatalf("stale replacement run=%#v bindings=%#v", replacement, fixture.configDB.bindings)
+	}
+	if len(replacement.Warnings) == 0 || !strings.Contains(replacement.Warnings[0], "unavailable") {
+		t.Fatalf("stale replacement warnings = %#v", replacement.Warnings)
+	}
+}
+
 func TestManualTriggerCaptureHostUnavailableMethodsAndEnvSpecs(t *testing.T) {
 	ctx := context.Background()
 	host := &manualTriggerCaptureHost{}
@@ -1681,6 +1726,7 @@ type fakeControllerStore struct {
 	runs           map[string]domain.ProjectRunRecord
 	schedulers     []domain.ProjectSchedulerRecord
 	loaders        map[string]domain.Loader
+	bindings       map[string]domain.LoaderBinding
 }
 
 func (s *fakeControllerStore) GetProject(context.Context, string) (domain.ProjectRecord, error) {
@@ -1758,6 +1804,19 @@ func (s *fakeControllerStore) GetLoader(_ context.Context, loaderID string) (dom
 		return domain.Loader{}, domain.ErrNotFound
 	}
 	return loader, nil
+}
+
+func (s *fakeControllerStore) GetLoaderBinding(_ context.Context, loaderID, triggerID string) (domain.LoaderBinding, bool, error) {
+	binding, ok := s.bindings[loaderID+"/"+triggerID]
+	return binding, ok, nil
+}
+
+func (s *fakeControllerStore) UpsertLoaderBinding(_ context.Context, binding domain.LoaderBinding) error {
+	if s.bindings == nil {
+		s.bindings = map[string]domain.LoaderBinding{}
+	}
+	s.bindings[binding.LoaderID+"/"+binding.TriggerID] = binding
+	return nil
 }
 
 type fakeControllerDriver struct {

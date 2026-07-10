@@ -49,7 +49,11 @@ func ManagedLoaderTriggerAndRegistration(id, agentName string, trigger compose.N
 	if prompt == "" {
 		prompt = fmt.Sprintf("Run agent %s.", agentName)
 	}
-	callback := fmt.Sprintf("async function(event) { return scheduler.agent(%s); }", JSStringLiteral(prompt))
+	agentCall := fmt.Sprintf("scheduler.agent(%s)", JSStringLiteral(prompt))
+	if trigger.SandboxPolicy != "" {
+		agentCall = fmt.Sprintf("scheduler.agent(%s, { sandboxPolicy: %s })", JSStringLiteral(prompt), JSStringLiteral(trigger.SandboxPolicy))
+	}
+	callback := fmt.Sprintf("async function(event) { return %s; }", agentCall)
 	switch trigger.Kind {
 	case "cron":
 		specJSON, err := loaders.LoaderCronSpecJSON(trigger.Cron, "")

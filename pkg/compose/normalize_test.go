@@ -108,6 +108,57 @@ agents:
 	}
 }
 
+func TestNormalizeSchedulerSandboxPolicies(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: policy-project
+agents:
+  reviewer:
+    provider: codex
+    scheduler:
+      sandbox_policy: sticky
+      triggers:
+        - name: inherited
+          interval: 1m
+        - name: fresh
+          interval: 2m
+          sandbox_policy: new
+`)
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	scheduler := normalized.Agents[0].Scheduler
+	if scheduler.SandboxPolicy != "sticky" || scheduler.Triggers[0].SandboxPolicy != "" || scheduler.Triggers[1].SandboxPolicy != "new" {
+		t.Fatalf("scheduler policies = %#v", scheduler)
+	}
+
+	defaultSpec := mustParseCompose(t, `
+name: default-policy
+agents:
+  reviewer:
+    scheduler:
+      triggers:
+        - interval: 1m
+`)
+	defaultNormalized, err := Normalize(defaultSpec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize default returned error: %v", err)
+	}
+	if got := defaultNormalized.Agents[0].Scheduler.SandboxPolicy; got != "new" {
+		t.Fatalf("default sandbox policy = %q, want new", got)
+	}
+
+	for _, input := range []string{
+		"sandbox_policy: reuse\n      triggers:\n        - interval: 1m",
+		"sandbox_policy: new\n      triggers:\n        - interval: 1m\n          sandbox_policy: ''",
+	} {
+		invalid := mustParseCompose(t, "name: invalid-policy\nagents:\n  reviewer:\n    scheduler:\n      "+input+"\n")
+		if _, err := Normalize(invalid, NormalizeOptions{}); err == nil || !strings.Contains(err.Error(), "sandbox_policy") {
+			t.Fatalf("Normalize invalid policy error = %v", err)
+		}
+	}
+}
+
 func TestNormalizeSortsAgentsForStableOutput(t *testing.T) {
 	spec := &ProjectSpec{
 		Name:       "stable",

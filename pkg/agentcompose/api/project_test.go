@@ -19,8 +19,9 @@ func TestProjectSpecToProtoIncludesSchedulerScript(t *testing.T) {
 				Boxlite: &compose.BoxliteDriverSpec{},
 			},
 			Scheduler: &compose.NormalizedSchedulerSpec{
-				Enabled: true,
-				Script:  script,
+				Enabled:       true,
+				SandboxPolicy: "sticky",
+				Script:        script,
 			},
 		}},
 	}
@@ -32,6 +33,13 @@ func TestProjectSpecToProtoIncludesSchedulerScript(t *testing.T) {
 	scheduler := response.GetAgents()[0].GetScheduler()
 	if scheduler.GetScript() != script {
 		t.Fatalf("scheduler script = %q, want %q", scheduler.GetScript(), script)
+	}
+	if scheduler.GetSandboxPolicy() != "sticky" {
+		t.Fatalf("scheduler sandbox policy = %q, want sticky", scheduler.GetSandboxPolicy())
+	}
+	shape := SchedulerYAMLShape(scheduler)
+	if shape["sandbox_policy"] != "sticky" {
+		t.Fatalf("scheduler YAML shape = %#v", shape)
 	}
 	if got := len(scheduler.GetTriggers()); got != 0 {
 		t.Fatalf("scheduler triggers = %d, want 0", got)

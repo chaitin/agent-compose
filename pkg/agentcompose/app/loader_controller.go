@@ -15,6 +15,7 @@ import (
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/runs"
 	"agent-compose/pkg/storage/configstore"
+	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
 func NewLoaderController(di do.Injector) (*loaders.Controller, error) {
@@ -103,16 +104,27 @@ type loaderProjectAgentRunner struct {
 }
 
 func (r loaderProjectAgentRunner) RunProjectAgent(ctx context.Context, request loaders.HostProjectAgentRequest) (domain.ProjectRunRecord, error, error) {
+	cleanupPolicy := agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_UNSPECIFIED
+	stickyLoaderID := ""
+	stickyTriggerID := ""
+	if domain.NormalizeLoaderSandboxPolicy(request.SandboxPolicy) == domain.LoaderSandboxPolicySticky {
+		cleanupPolicy = agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_KEEP_RUNNING
+		stickyLoaderID = request.LoaderID
+		stickyTriggerID = request.TriggerID
+	}
 	run, execErr, err := r.controller.RunProjectAgent(ctx, runs.RunAgentRequest{
-		ProjectID:        request.ProjectID,
-		AgentName:        request.AgentName,
-		Prompt:           request.Prompt,
-		Source:           domain.ProjectRunSourceScheduler,
-		SchedulerID:      request.SchedulerID,
-		TriggerID:        request.TriggerID,
-		OutputSchemaJSON: request.OutputSchemaJSON,
-		ClientRequestID:  request.ClientRequestID,
-		Volumes:          request.Volumes,
+		ProjectID:              request.ProjectID,
+		AgentName:              request.AgentName,
+		Prompt:                 request.Prompt,
+		Source:                 domain.ProjectRunSourceScheduler,
+		SchedulerID:            request.SchedulerID,
+		TriggerID:              request.TriggerID,
+		OutputSchemaJSON:       request.OutputSchemaJSON,
+		ClientRequestID:        request.ClientRequestID,
+		Volumes:                request.Volumes,
+		CleanupPolicy:          cleanupPolicy,
+		StickyBindingLoaderID:  stickyLoaderID,
+		StickyBindingTriggerID: stickyTriggerID,
 	}, nil)
 	if err != nil {
 		return domain.ProjectRunRecord{}, nil, err

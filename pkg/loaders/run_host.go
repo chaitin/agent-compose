@@ -56,6 +56,7 @@ type HostCommandExecutor interface {
 }
 
 type HostProjectAgentRequest struct {
+	LoaderID         string
 	ProjectID        string
 	AgentName        string
 	Prompt           string
@@ -64,6 +65,7 @@ type HostProjectAgentRequest struct {
 	OutputSchemaJSON string
 	ClientRequestID  string
 	Volumes          []domain.VolumeMountSpec
+	SandboxPolicy    string
 }
 
 type HostProjectAgentRunner interface {
@@ -174,6 +176,7 @@ func (h *RuntimeHost) CallSessionRPC(ctx context.Context, method, requestJSON st
 }
 
 func (h *RuntimeHost) Agent(ctx context.Context, prompt string, request domain.LoaderAgentRequest) (domain.LoaderAgentResult, error) {
+	request.BindingTriggerID = h.run.TriggerID
 	if h.useProjectManagedAgentRun(request) {
 		return h.ProjectAgent(ctx, prompt, request)
 	}
@@ -256,7 +259,15 @@ func (h *RuntimeHost) Agent(ctx context.Context, prompt string, request domain.L
 }
 
 func (h *RuntimeHost) ProjectAgent(ctx context.Context, prompt string, request domain.LoaderAgentRequest) (domain.LoaderAgentResult, error) {
+	sandboxPolicy := domain.LoaderSandboxPolicyNew
+	if strings.TrimSpace(h.loader.Summary.SandboxPolicy) != "" {
+		sandboxPolicy = domain.NormalizeLoaderSandboxPolicy(h.loader.Summary.SandboxPolicy)
+	}
+	if strings.TrimSpace(domain.LoaderAgentSandboxPolicy(request)) != "" {
+		sandboxPolicy = domain.NormalizeLoaderSandboxPolicy(domain.LoaderAgentSandboxPolicy(request))
+	}
 	run, execErr, err := h.deps.ProjectAgentRunner.RunProjectAgent(ctx, HostProjectAgentRequest{
+		LoaderID:         h.loader.Summary.ID,
 		ProjectID:        h.loader.Summary.ManagedProjectID,
 		AgentName:        h.loader.Summary.ManagedAgentName,
 		Prompt:           prompt,
@@ -265,6 +276,7 @@ func (h *RuntimeHost) ProjectAgent(ctx context.Context, prompt string, request d
 		OutputSchemaJSON: request.OutputSchema,
 		ClientRequestID:  firstHostNonEmpty(h.run.ID, uuid.NewString()),
 		Volumes:          request.Volumes,
+		SandboxPolicy:    sandboxPolicy,
 	})
 	if err != nil {
 		return domain.LoaderAgentResult{}, err
@@ -291,15 +303,16 @@ func (h *RuntimeHost) ProjectAgent(ctx context.Context, prompt string, request d
 func (h *RuntimeHost) Command(ctx context.Context, request domain.LoaderCommandRequest) (domain.LoaderCommandResult, error) {
 	cleanupSession := h.commandRequiresCleanup(request)
 	agentRequest := domain.LoaderAgentRequest{
-		SandboxPolicy:  domain.LoaderCommandSandboxPolicy(request),
-		Title:          request.Title,
-		Driver:         request.Driver,
-		GuestImage:     request.GuestImage,
-		PullPolicy:     request.PullPolicy,
-		WorkspaceID:    request.WorkspaceID,
-		JupyterEnabled: request.JupyterEnabled,
-		SandboxEnv:     domain.LoaderCommandSandboxEnv(request),
-		Volumes:        request.Volumes,
+		SandboxPolicy:    domain.LoaderCommandSandboxPolicy(request),
+		Title:            request.Title,
+		Driver:           request.Driver,
+		GuestImage:       request.GuestImage,
+		PullPolicy:       request.PullPolicy,
+		WorkspaceID:      request.WorkspaceID,
+		JupyterEnabled:   request.JupyterEnabled,
+		SandboxEnv:       domain.LoaderCommandSandboxEnv(request),
+		Volumes:          request.Volumes,
+		BindingTriggerID: h.run.TriggerID,
 	}
 	session, eventType, err := h.ensureCommandSession(ctx, agentRequest, cleanupSession)
 	if err != nil {

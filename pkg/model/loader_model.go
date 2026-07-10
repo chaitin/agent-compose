@@ -112,26 +112,28 @@ type LoaderEvent struct {
 
 type LoaderBinding struct {
 	LoaderID  string    `json:"loader_id"`
+	TriggerID string    `json:"trigger_id,omitempty"`
 	SandboxID string    `json:"sandbox_id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type LoaderAgentRequest struct {
-	Agent          string            `json:"agent,omitempty"`
-	SandboxPolicy  string            `json:"sandboxPolicy,omitempty"`
-	SessionPolicy  string            `json:"sessionPolicy,omitempty"`
-	Timeout        time.Duration     `json:"timeout,omitempty"`
-	Title          string            `json:"title,omitempty"`
-	Driver         string            `json:"driver,omitempty"`
-	GuestImage     string            `json:"guestImage,omitempty"`
-	PullPolicy     string            `json:"pullPolicy,omitempty"`
-	WorkspaceID    string            `json:"workspaceId,omitempty"`
-	JupyterEnabled bool              `json:"jupyter,omitempty"`
-	SandboxEnv     []SandboxEnvVar   `json:"sandboxEnv,omitempty"`
-	SessionEnv     []SandboxEnvVar   `json:"sessionEnv,omitempty"`
-	Volumes        []VolumeMountSpec `json:"volumes,omitempty"`
-	OutputSchema   string            `json:"outputSchema,omitempty"`
+	Agent            string            `json:"agent,omitempty"`
+	SandboxPolicy    string            `json:"sandboxPolicy,omitempty"`
+	SessionPolicy    string            `json:"sessionPolicy,omitempty"`
+	Timeout          time.Duration     `json:"timeout,omitempty"`
+	Title            string            `json:"title,omitempty"`
+	Driver           string            `json:"driver,omitempty"`
+	GuestImage       string            `json:"guestImage,omitempty"`
+	PullPolicy       string            `json:"pullPolicy,omitempty"`
+	WorkspaceID      string            `json:"workspaceId,omitempty"`
+	JupyterEnabled   bool              `json:"jupyter,omitempty"`
+	SandboxEnv       []SandboxEnvVar   `json:"sandboxEnv,omitempty"`
+	SessionEnv       []SandboxEnvVar   `json:"sessionEnv,omitempty"`
+	Volumes          []VolumeMountSpec `json:"volumes,omitempty"`
+	OutputSchema     string            `json:"outputSchema,omitempty"`
+	BindingTriggerID string            `json:"-"`
 }
 
 type LoaderAgentResult struct {

@@ -50,6 +50,18 @@ func (c *Controller) resolveTriggerForManualRun(ctx context.Context, req RunAgen
 		result.Request.OutputSchemaJSON = captured.request.OutputSchema
 	}
 	result.Request.Env = append(result.Request.Env, envVarSpecsFromSandboxEnv(domain.LoaderAgentSandboxEnv(captured.request))...)
+	effectivePolicy := domain.LoaderSandboxPolicyNew
+	if strings.TrimSpace(loader.Summary.SandboxPolicy) != "" {
+		effectivePolicy = domain.NormalizeLoaderSandboxPolicy(loader.Summary.SandboxPolicy)
+	}
+	if strings.TrimSpace(domain.LoaderAgentSandboxPolicy(captured.request)) != "" {
+		effectivePolicy = domain.NormalizeLoaderSandboxPolicy(domain.LoaderAgentSandboxPolicy(captured.request))
+	}
+	if effectivePolicy == domain.LoaderSandboxPolicySticky {
+		result.Request.StickyBindingLoaderID = loader.Summary.ID
+		result.Request.StickyBindingTriggerID = trigger.ID
+		result.Request.CleanupPolicy = agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_KEEP_RUNNING
+	}
 	result.Warnings = warnings
 	return result, nil
 }

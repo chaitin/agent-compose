@@ -101,19 +101,21 @@ type NormalizedDriverSpec struct {
 }
 
 type NormalizedSchedulerSpec struct {
-	Enabled  bool                    `yaml:"enabled" json:"enabled"`
-	Script   string                  `yaml:"script,omitempty" json:"script,omitempty"`
-	Triggers []NormalizedTriggerSpec `yaml:"triggers,omitempty" json:"triggers,omitempty"`
+	Enabled       bool                    `yaml:"enabled" json:"enabled"`
+	SandboxPolicy string                  `yaml:"sandbox_policy" json:"sandbox_policy"`
+	Script        string                  `yaml:"script,omitempty" json:"script,omitempty"`
+	Triggers      []NormalizedTriggerSpec `yaml:"triggers,omitempty" json:"triggers,omitempty"`
 }
 
 type NormalizedTriggerSpec struct {
-	Name     string            `yaml:"name,omitempty" json:"name,omitempty"`
-	Kind     string            `yaml:"kind" json:"kind"`
-	Cron     string            `yaml:"cron,omitempty" json:"cron,omitempty"`
-	Interval string            `yaml:"interval,omitempty" json:"interval,omitempty"`
-	Timeout  string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
-	Event    *EventTriggerSpec `yaml:"event,omitempty" json:"event,omitempty"`
-	Prompt   string            `yaml:"prompt,omitempty" json:"prompt,omitempty"`
+	Name          string            `yaml:"name,omitempty" json:"name,omitempty"`
+	Kind          string            `yaml:"kind" json:"kind"`
+	Cron          string            `yaml:"cron,omitempty" json:"cron,omitempty"`
+	Interval      string            `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Timeout       string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Event         *EventTriggerSpec `yaml:"event,omitempty" json:"event,omitempty"`
+	Prompt        string            `yaml:"prompt,omitempty" json:"prompt,omitempty"`
+	SandboxPolicy string            `yaml:"sandbox_policy,omitempty" json:"sandbox_policy,omitempty"`
 }
 
 type ValidationError struct {
@@ -783,7 +785,11 @@ func normalizeSchedulerSpec(path string, scheduler *SchedulerSpec) (*NormalizedS
 	if script != "" && len(scheduler.Triggers) > 0 {
 		return nil, &ValidationError{Path: path, Message: "scheduler script and triggers are mutually exclusive"}
 	}
-	normalized := &NormalizedSchedulerSpec{Enabled: enabled, Script: script}
+	sandboxPolicy, err := normalizeSandboxPolicy(path+".sandbox_policy", scheduler.SandboxPolicy, "new")
+	if err != nil {
+		return nil, err
+	}
+	normalized := &NormalizedSchedulerSpec{Enabled: enabled, SandboxPolicy: sandboxPolicy, Script: script}
 	for i, trigger := range scheduler.Triggers {
 		normalizedTrigger, err := normalizeTriggerSpec(fmt.Sprintf("%s.triggers[%d]", path, i), trigger)
 		if err != nil {
@@ -820,6 +826,11 @@ func normalizeTriggerSpec(path string, trigger TriggerSpec) (NormalizedTriggerSp
 		Kind:   kinds[0],
 		Prompt: trigger.Prompt,
 	}
+	var err error
+	normalized.SandboxPolicy, err = normalizeSandboxPolicy(path+".sandbox_policy", trigger.SandboxPolicy, "")
+	if err != nil {
+		return NormalizedTriggerSpec{}, err
+	}
 	switch kinds[0] {
 	case "cron":
 		normalized.Cron = strings.TrimSpace(trigger.Cron)
@@ -851,6 +862,19 @@ func normalizeTriggerSpec(path string, trigger TriggerSpec) (NormalizedTriggerSp
 	}
 
 	return normalized, nil
+}
+
+func normalizeSandboxPolicy(path string, value *string, fallback string) (string, error) {
+	if value == nil {
+		return fallback, nil
+	}
+	policy := strings.ToLower(strings.TrimSpace(*value))
+	switch policy {
+	case "sticky", "new":
+		return policy, nil
+	default:
+		return "", &ValidationError{Path: path, Message: fmt.Sprintf("sandbox_policy must be sticky or new, got %q", policy)}
+	}
 }
 
 func validatePositiveDuration(path string, value string) error {

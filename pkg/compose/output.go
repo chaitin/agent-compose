@@ -379,7 +379,7 @@ func cloneNormalizedSchedulerSpec(value *NormalizedSchedulerSpec) *NormalizedSch
 	if value == nil {
 		return nil
 	}
-	cloned := &NormalizedSchedulerSpec{Enabled: value.Enabled, Script: value.Script}
+	cloned := &NormalizedSchedulerSpec{Enabled: value.Enabled, SandboxPolicy: value.SandboxPolicy, Script: value.Script}
 	for _, trigger := range value.Triggers {
 		cloned.Triggers = append(cloned.Triggers, cloneNormalizedTriggerSpec(trigger))
 	}

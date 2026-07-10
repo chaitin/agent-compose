@@ -94,7 +94,7 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 	hasOverrides := loaders.AgentRequestOverridesSession(request, titleOverridesSession)
 	forceNew := effectivePolicy == domain.LoaderSandboxPolicyNew || hasOverrides
 	if !forceNew {
-		if binding, ok, err := r.ConfigDB.GetLoaderBinding(ctx, loader.Summary.ID); err != nil {
+		if binding, ok, err := r.ConfigDB.GetLoaderBinding(ctx, loader.Summary.ID, request.BindingTriggerID); err != nil {
 			return nil, "", err
 		} else if ok {
 			session, eventType, err := r.LoadOrResume(ctx, binding.SandboxID)
@@ -178,7 +178,7 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 		r.Streams.PublishEventAdded(session.Summary.ID, event)
 	}
 	if effectivePolicy == domain.LoaderSandboxPolicySticky {
-		_ = r.ConfigDB.UpsertLoaderBinding(ctx, domain.LoaderBinding{LoaderID: loader.Summary.ID, SandboxID: session.Summary.ID})
+		_ = r.ConfigDB.UpsertLoaderBinding(ctx, domain.LoaderBinding{LoaderID: loader.Summary.ID, TriggerID: request.BindingTriggerID, SandboxID: session.Summary.ID})
 	}
 	loaded, err := r.Store.GetSandbox(ctx, session.Summary.ID)
 	if err != nil {

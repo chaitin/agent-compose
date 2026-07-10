@@ -431,6 +431,7 @@ message SchedulerSpec {
   bool enabled = 1;
   repeated TriggerSpec triggers = 2;
   string script = 3;
+  string sandbox_policy = 4;
 }
 
 message TriggerSpec {
@@ -441,6 +442,7 @@ message TriggerSpec {
   string timeout = 5;
   EventTriggerSpec event = 6;
   string prompt = 7;
+  string sandbox_policy = 8;
 }
 
 message EventTriggerSpec {
