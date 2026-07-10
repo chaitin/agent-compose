@@ -3570,6 +3570,7 @@ type RunAgentRequest struct {
 	Driver           string                  `protobuf:"bytes,14,opt,name=driver,proto3" json:"driver,omitempty"`
 	SandboxId        string                  `protobuf:"bytes,15,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
 	Volumes          []*VolumeMountSpec      `protobuf:"bytes,16,rep,name=volumes,proto3" json:"volumes,omitempty"`
+	PayloadJson      string                  `protobuf:"bytes,17,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -3707,6 +3708,13 @@ func (x *RunAgentRequest) GetVolumes() []*VolumeMountSpec {
 		return x.Volumes
 	}
 	return nil
+}
+
+func (x *RunAgentRequest) GetPayloadJson() string {
+	if x != nil {
+		return x.PayloadJson
+	}
+	return ""
 }
 
 type RunAgentResponse struct {
@@ -10573,7 +10581,7 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\x10DockerDriverSpec\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\"2\n" +
 	"\x16MicrosandboxDriverSpec\x12\x18\n" +
-	"\aprofile\x18\x01 \x01(\tR\aprofile\"\x91\x05\n" +
+	"\aprofile\x18\x01 \x01(\tR\aprofile\"\xb4\x05\n" +
 	"\x0fRunAgentRequest\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x1d\n" +
@@ -10594,7 +10602,8 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\x06driver\x18\x0e \x01(\tR\x06driver\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x0f \x01(\tR\tsandboxId\x12:\n" +
-	"\avolumes\x18\x10 \x03(\v2 .agentcompose.v2.VolumeMountSpecR\avolumesJ\x04\b\x05\x10\x06R\n" +
+	"\avolumes\x18\x10 \x03(\v2 .agentcompose.v2.VolumeMountSpecR\avolumes\x12!\n" +
+	"\fpayload_json\x18\x11 \x01(\tR\vpayloadJsonJ\x04\b\x05\x10\x06R\n" +
 	"session_id\"\\\n" +
 	"\x10RunAgentResponse\x12,\n" +
 	"\x03run\x18\x01 \x01(\v2\x1a.agentcompose.v2.RunDetailR\x03run\x12\x1a\n" +

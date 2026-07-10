@@ -1294,6 +1294,110 @@ func TestRunsControllerRunProjectAgentManualTriggerResolution(t *testing.T) {
 	}
 }
 
+func TestRunsControllerRunProjectAgentManualTriggerPayload(t *testing.T) {
+	fixture := newControllerRunFixture(t)
+	trigger := domain.LoaderTrigger{
+		LoaderID:   "loader-1",
+		ID:         "trigger-1",
+		Kind:       domain.LoaderTriggerKindInterval,
+		IntervalMs: 1000,
+		Enabled:    true,
+		SpecJSON:   `{"kind":"interval","intervalMs":1000}`,
+	}
+	fixture.configDB.schedulers = []domain.ProjectSchedulerRecord{{
+		ProjectID:       "project-1",
+		SchedulerID:     "scheduler-1",
+		AgentName:       "worker",
+		ManagedLoaderID: "loader-1",
+		Enabled:         true,
+		TriggerCount:    1,
+	}}
+	fixture.configDB.loaders = map[string]domain.Loader{
+		"loader-1": {
+			Summary: domain.LoaderSummary{
+				ID:                 "loader-1",
+				Enabled:            true,
+				Runtime:            domain.LoaderRuntimeScheduler,
+				ManagedProjectID:   "project-1",
+				ManagedAgentName:   "worker",
+				ManagedSchedulerID: "scheduler-1",
+			},
+			Script:   `scheduler.interval("trigger-1", async function(payload) { return scheduler.agent("review " + payload.topic, { sandboxEnv: [{ name: "TRIGGER_TOPIC", value: payload.topic }] }); }, 1000);`,
+			Triggers: []domain.LoaderTrigger{trigger},
+		},
+	}
+	run, execErr, err := fixture.controller.RunProjectAgent(fixture.ctx, RunAgentRequest{
+		ProjectID:       "project-1",
+		AgentName:       "worker",
+		Source:          domain.ProjectRunSourceManual,
+		TriggerID:       "trigger-1",
+		PayloadJSON:     `{"topic":"nightly"}`,
+		ClientRequestID: "manual-trigger-payload",
+	}, nil)
+	if err != nil || execErr != nil {
+		t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+	}
+	session, err := fixture.store.GetSandbox(fixture.ctx, run.SandboxID)
+	if err != nil {
+		t.Fatalf("GetSandbox returned error: %v", err)
+	}
+	if run.Prompt != "review nightly" || fixture.executor.request.Message != "review nightly" || envItemValue(session.EnvItems, "TRIGGER_TOPIC") != "nightly" {
+		t.Fatalf("run=%#v executor=%#v env=%#v", run, fixture.executor.request, session.EnvItems)
+	}
+}
+
+func TestRunsControllerRunProjectAgentManualTriggerPromptOverride(t *testing.T) {
+	fixture := newControllerRunFixture(t)
+	trigger := domain.LoaderTrigger{
+		LoaderID:   "loader-1",
+		ID:         "trigger-1",
+		Kind:       domain.LoaderTriggerKindInterval,
+		IntervalMs: 1000,
+		Enabled:    true,
+		SpecJSON:   `{"kind":"interval","intervalMs":1000}`,
+	}
+	fixture.configDB.schedulers = []domain.ProjectSchedulerRecord{{
+		ProjectID:       "project-1",
+		SchedulerID:     "scheduler-1",
+		AgentName:       "worker",
+		ManagedLoaderID: "loader-1",
+		Enabled:         true,
+		TriggerCount:    1,
+	}}
+	fixture.configDB.loaders = map[string]domain.Loader{
+		"loader-1": {
+			Summary: domain.LoaderSummary{
+				ID:                 "loader-1",
+				Enabled:            true,
+				Runtime:            domain.LoaderRuntimeScheduler,
+				ManagedProjectID:   "project-1",
+				ManagedAgentName:   "worker",
+				ManagedSchedulerID: "scheduler-1",
+			},
+			Script:   `scheduler.interval("trigger-1", async function() { return scheduler.agent("captured prompt", { sandboxEnv: [{ name: "TRIGGER_ENV", value: "yes" }] }); }, 1000);`,
+			Triggers: []domain.LoaderTrigger{trigger},
+		},
+	}
+	run, execErr, err := fixture.controller.RunProjectAgent(fixture.ctx, RunAgentRequest{
+		ProjectID:       "project-1",
+		AgentName:       "worker",
+		Prompt:          "override prompt",
+		Source:          domain.ProjectRunSourceManual,
+		TriggerID:       "trigger-1",
+		ClientRequestID: "manual-trigger-prompt",
+	}, nil)
+	if err != nil || execErr != nil {
+		t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+	}
+	session, err := fixture.store.GetSandbox(fixture.ctx, run.SandboxID)
+	if err != nil {
+		t.Fatalf("GetSandbox returned error: %v", err)
+	}
+	if run.Prompt != "override prompt" || fixture.executor.request.Message != "override prompt" || envItemValue(session.EnvItems, "TRIGGER_ENV") != "yes" {
+		t.Fatalf("run=%#v executor=%#v env=%#v", run, fixture.executor.request, session.EnvItems)
+	}
+}
+
 func TestRunsControllerRunProjectAgentManualTriggerMissingDoesNotCreateRun(t *testing.T) {
 	fixture := newControllerRunFixture(t)
 	fixture.configDB.schedulers = []domain.ProjectSchedulerRecord{{

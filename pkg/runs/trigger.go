@@ -21,8 +21,8 @@ func (c *Controller) resolveTriggerForManualRun(ctx context.Context, req RunAgen
 	if triggerID == "" || NormalizeSource(req.Source) != domain.ProjectRunSourceManual {
 		return result, nil
 	}
-	if strings.TrimSpace(req.Prompt) != "" || strings.TrimSpace(req.Command) != "" {
-		return result, fmt.Errorf("%w: scheduler trigger cannot be combined with prompt or command", ErrInvalidRequest)
+	if strings.TrimSpace(req.Command) != "" {
+		return result, fmt.Errorf("%w: scheduler trigger cannot be combined with command", ErrInvalidRequest)
 	}
 	if c.configDB == nil {
 		return result, fmt.Errorf("config store is required")
@@ -38,11 +38,15 @@ func (c *Controller) resolveTriggerForManualRun(ctx context.Context, req RunAgen
 	if !trigger.Enabled {
 		warnings = append(warnings, fmt.Sprintf("trigger %s is disabled; running because it was requested manually", trigger.ID))
 	}
-	captured, err := c.captureManualTriggerAgentRequest(ctx, loader, trigger)
+	captured, err := c.captureManualTriggerAgentRequest(ctx, loader, trigger, req.PayloadJSON)
 	if err != nil {
 		return result, err
 	}
-	result.Request.Prompt = captured.prompt
+	if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
+		result.Request.Prompt = prompt
+	} else {
+		result.Request.Prompt = captured.prompt
+	}
 	if strings.TrimSpace(result.Request.SchedulerID) == "" {
 		result.Request.SchedulerID = scheduler.SchedulerID
 	}
@@ -109,16 +113,20 @@ type capturedManualTriggerAgentRequest struct {
 	request domain.LoaderAgentRequest
 }
 
-func (c *Controller) captureManualTriggerAgentRequest(ctx context.Context, loader domain.Loader, trigger *domain.LoaderTrigger) (capturedManualTriggerAgentRequest, error) {
+func (c *Controller) captureManualTriggerAgentRequest(ctx context.Context, loader domain.Loader, trigger *domain.LoaderTrigger, payloadJSON string) (capturedManualTriggerAgentRequest, error) {
 	if c.loaderEngine == nil {
 		return capturedManualTriggerAgentRequest{}, fmt.Errorf("loader engine is required")
+	}
+	payloadJSON = strings.TrimSpace(payloadJSON)
+	if payloadJSON == "" {
+		payloadJSON = `{}`
 	}
 	host := &manualTriggerCaptureHost{}
 	_, err := c.loaderEngine.Execute(ctx, loaders.LoaderExecutionRequest{
 		Runtime:     loader.Summary.Runtime,
 		Script:      loader.Script,
 		Trigger:     trigger,
-		PayloadJSON: `{}`,
+		PayloadJSON: payloadJSON,
 	}, host)
 	if err != nil {
 		return capturedManualTriggerAgentRequest{}, fmt.Errorf("%w: resolve trigger %s prompt: %v", domain.ErrInvalidArgument, trigger.ID, err)

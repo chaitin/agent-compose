@@ -556,6 +556,8 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 	}
 	schedulerTriggerCmd.Flags().StringVar(&schedulerTriggerOptions.SandboxID, "sandbox", "", "Reuse an existing sandbox")
 	schedulerTriggerCmd.Flags().StringVar(&schedulerTriggerOptions.Driver, "driver", "", "Runtime driver override for a new sandbox")
+	schedulerTriggerCmd.Flags().StringVar(&schedulerTriggerOptions.Prompt, "prompt", "", "Prompt override for this manual trigger run")
+	schedulerTriggerCmd.Flags().StringVar(&schedulerTriggerOptions.PayloadJSON, "payload", "", "JSON payload passed to the scheduler trigger handler")
 	schedulerTriggerCmd.Flags().BoolVar(&schedulerTriggerOptions.KeepRunning, "keep-running", false, "Keep the sandbox runtime running after completion")
 	schedulerTriggerCmd.Flags().BoolVar(&schedulerTriggerOptions.Remove, "rm", false, "Remove the sandbox after a successful run")
 	schedulerTriggerCmd.Flags().BoolVar(&schedulerTriggerOptions.Jupyter, "jupyter", false, "Enable Jupyter for this run")
@@ -999,6 +1001,8 @@ type composeRunOptions struct {
 type composeSchedulerTriggerOptions struct {
 	SandboxID     string
 	Driver        string
+	Prompt        string
+	PayloadJSON   string
 	KeepRunning   bool
 	Remove        bool
 	Jupyter       bool
@@ -1919,6 +1923,9 @@ func runComposeSchedulerTriggerCommand(cmd *cobra.Command, cli cliOptions, optio
 	if err != nil {
 		return err
 	}
+	if cmd.Flags().Changed("prompt") && strings.TrimSpace(options.Prompt) == "" {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler trigger --prompt requires a non-empty prompt")}
+	}
 	_, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
@@ -1948,10 +1955,12 @@ func runComposeSchedulerTriggerCommand(cmd *cobra.Command, cli cliOptions, optio
 		ProjectId:       projectID,
 		AgentName:       trigger.AgentName,
 		Source:          agentcomposev2.RunSource_RUN_SOURCE_MANUAL,
+		Prompt:          options.Prompt,
 		SandboxId:       strings.TrimSpace(options.SandboxID),
 		Driver:          strings.TrimSpace(options.Driver),
 		SchedulerId:     firstNonEmptyString(trigger.RawSchedulerID, trigger.SchedulerID),
 		TriggerId:       firstNonEmptyString(trigger.RawTriggerID, trigger.TriggerID),
+		PayloadJson:     options.PayloadJSON,
 		CleanupPolicy:   cleanupPolicy,
 		ClientRequestId: manualRunClientRequestID(normalized.Name, trigger.AgentName, firstNonEmptyString(trigger.RawTriggerID, trigger.TriggerID)),
 		Jupyter:         jupyter,
@@ -1996,6 +2005,15 @@ func runComposeSchedulerInspectCommand(cmd *cobra.Command, cli cliOptions, agent
 func normalizeComposeSchedulerTriggerOptions(options composeSchedulerTriggerOptions) (composeSchedulerTriggerOptions, error) {
 	options.SandboxID = strings.TrimSpace(options.SandboxID)
 	options.Driver = strings.TrimSpace(options.Driver)
+	options.Prompt = strings.TrimSpace(options.Prompt)
+	options.PayloadJSON = strings.TrimSpace(options.PayloadJSON)
+	if options.PayloadJSON != "" {
+		payloadJSON, err := domain.NormalizeJSONDocument(options.PayloadJSON)
+		if err != nil {
+			return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler trigger --payload: %w", err)}
+		}
+		options.PayloadJSON = payloadJSON
+	}
 	if options.Driver != "" {
 		driver, err := driverpkg.ResolveSandboxRuntimeDriver(options.Driver, "")
 		if err != nil {

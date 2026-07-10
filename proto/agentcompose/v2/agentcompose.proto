@@ -489,6 +489,7 @@ message RunAgentRequest {
   string driver = 14;
   string sandbox_id = 15;
   repeated VolumeMountSpec volumes = 16;
+  string payload_json = 17;
 }
 
 message RunAgentResponse {

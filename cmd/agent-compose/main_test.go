@@ -2580,6 +2580,25 @@ func TestComposeUpUsesDistinctStableTriggerIDs(t *testing.T) {
 	}
 }
 
+func TestNormalizeComposeSchedulerTriggerOptionsPayload(t *testing.T) {
+	options, err := normalizeComposeSchedulerTriggerOptions(composeSchedulerTriggerOptions{
+		Prompt:      " override prompt ",
+		PayloadJSON: " { \"topic\" : \"nightly\" } ",
+	})
+	if err != nil {
+		t.Fatalf("normalize payload returned error: %v", err)
+	}
+	if options.Prompt != "override prompt" {
+		t.Fatalf("prompt = %q", options.Prompt)
+	}
+	if options.PayloadJSON != `{"topic":"nightly"}` {
+		t.Fatalf("payload = %q", options.PayloadJSON)
+	}
+	if _, err := normalizeComposeSchedulerTriggerOptions(composeSchedulerTriggerOptions{PayloadJSON: "{bad"}); err == nil {
+		t.Fatalf("invalid payload returned nil error")
+	}
+}
+
 func TestIntegrationCLISchedulerTriggerUsesRunAgentTriggerID(t *testing.T) {
 	composePath := writeComposeFile(t, t.TempDir(), `
 name: cli-scheduler-trigger
@@ -2593,6 +2612,8 @@ agents:
           prompt: review nightly
 `)
 	var requestedSandboxIDs []string
+	var requestedPayloads []string
+	var requestedPrompts []string
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		project: projectServiceStub{
 			getProject: func(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
@@ -2602,7 +2623,9 @@ agents:
 		run: runServiceStub{
 			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
 				requestedSandboxIDs = append(requestedSandboxIDs, req.Msg.GetSandboxId())
-				if req.Msg.GetAgentName() != "reviewer" || !identity.IsID(req.Msg.GetTriggerId()) || req.Msg.GetPrompt() != "" || req.Msg.GetCommand() != "" {
+				requestedPayloads = append(requestedPayloads, req.Msg.GetPayloadJson())
+				requestedPrompts = append(requestedPrompts, req.Msg.GetPrompt())
+				if req.Msg.GetAgentName() != "reviewer" || !identity.IsID(req.Msg.GetTriggerId()) || req.Msg.GetCommand() != "" {
 					t.Fatalf("RunAgentStream scheduler trigger request = %#v", req.Msg)
 				}
 				return stream.Send(&agentcomposev2.RunAgentStreamResponse{
@@ -2630,6 +2653,8 @@ agents:
 	}{
 		{name: "creates sandbox"},
 		{name: "reuses sandbox", extraArgs: []string{"--sandbox", "sandbox-existing"}},
+		{name: "passes payload", extraArgs: []string{"--payload", `{"topic":"nightly"}`}},
+		{name: "passes prompt", extraArgs: []string{"--prompt", "review override"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := []string{"scheduler", "trigger", "--host", server.URL, "--file", composePath}
@@ -2641,8 +2666,27 @@ agents:
 			}
 		})
 	}
-	if !reflect.DeepEqual(requestedSandboxIDs, []string{"", "sandbox-existing"}) {
+	if !reflect.DeepEqual(requestedSandboxIDs, []string{"", "sandbox-existing", "", ""}) {
 		t.Fatalf("scheduler trigger sandbox IDs = %#v", requestedSandboxIDs)
+	}
+	if !reflect.DeepEqual(requestedPayloads, []string{"", "", `{"topic":"nightly"}`, ""}) {
+		t.Fatalf("scheduler trigger payloads = %#v", requestedPayloads)
+	}
+	if !reflect.DeepEqual(requestedPrompts, []string{"", "", "", "review override"}) {
+		t.Fatalf("scheduler trigger prompts = %#v", requestedPrompts)
+	}
+}
+
+func TestRunComposeSchedulerTriggerPromptRequiresValue(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("prompt", "", "")
+	if err := cmd.Flags().Set("prompt", " "); err != nil {
+		t.Fatalf("set prompt flag: %v", err)
+	}
+	err := runComposeSchedulerTriggerCommand(cmd, cliOptions{}, composeSchedulerTriggerOptions{Prompt: " "}, "reviewer", "nightly")
+	var exitErr commandExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != exitCodeUsage || !strings.Contains(err.Error(), "--prompt requires a non-empty prompt") {
+		t.Fatalf("prompt error = %#v", err)
 	}
 }
 

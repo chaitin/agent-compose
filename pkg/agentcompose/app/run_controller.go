@@ -178,6 +178,7 @@ func runAgentRequestFromProto(msg *agentcomposev2.RunAgentRequest) runs.RunAgent
 		Source:           api.ProjectRunSourceFromProto(msg.GetSource()),
 		SchedulerID:      msg.GetSchedulerId(),
 		TriggerID:        msg.GetTriggerId(),
+		PayloadJSON:      msg.GetPayloadJson(),
 		ClientRequestID:  msg.GetClientRequestId(),
 		Env:              msg.GetEnv(),
 		SandboxID:        msg.GetSandboxId(),

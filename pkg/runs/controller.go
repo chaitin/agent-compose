@@ -180,6 +180,7 @@ type RunAgentRequest struct {
 	Source                 string
 	SchedulerID            string
 	TriggerID              string
+	PayloadJSON            string
 	ClientRequestID        string
 	Env                    []*agentcomposev2.EnvVarSpec
 	SandboxID              string
@@ -1163,6 +1164,7 @@ func runAgentRequestFromAttachStart(start *agentcomposev2.RunAttachStart) RunAge
 		Source:           projectRunSourceFromAttachProto(msg.GetSource()),
 		SchedulerID:      msg.GetSchedulerId(),
 		TriggerID:        msg.GetTriggerId(),
+		PayloadJSON:      msg.GetPayloadJson(),
 		ClientRequestID:  msg.GetClientRequestId(),
 		Env:              msg.GetEnv(),
 		SandboxID:        msg.GetSandboxId(),
