@@ -9,6 +9,9 @@ import (
 
 func TestNewIDAndShortID(t *testing.T) {
 	id := identity.NewID(identity.ResourceProject, "demo", "/repo/agent-compose.yml")
+	if strings.HasPrefix(id, identity.Prefix) || len(id) != 64 {
+		t.Fatalf("NewID = %q, want bare SHA-256 hex", id)
+	}
 	if !identity.IsID(id) {
 		t.Fatalf("NewID = %q, want sha256 id", id)
 	}
@@ -50,5 +53,19 @@ func TestIDValidationRejectsInvalidForms(t *testing.T) {
 		if identity.IsShortID(value) {
 			t.Fatalf("IsShortID(%q) = true, want false", value)
 		}
+	}
+}
+
+func TestLegacyPrefixedIDRemainsReadable(t *testing.T) {
+	id := identity.NewID(identity.ResourceProject, "legacy")
+	legacyID := identity.Prefix + id
+	if !identity.IsID(legacyID) {
+		t.Fatalf("IsID(%q) = false, want legacy compatibility", legacyID)
+	}
+	if got := identity.ShortID(legacyID); got != id[:12] {
+		t.Fatalf("ShortID(%q) = %q, want %q", legacyID, got, id[:12])
+	}
+	if got, err := identity.Hash(legacyID); err != nil || got != id {
+		t.Fatalf("Hash(%q) = %q, %v, want %q", legacyID, got, err, id)
 	}
 }

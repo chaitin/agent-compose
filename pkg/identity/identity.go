@@ -10,12 +10,15 @@ import (
 )
 
 const (
-	idPrefix      = "sha256:"
-	hashHexLength = sha256.Size * 2
-	shortIDLength = 12
+	legacyIDPrefix = "sha256:"
+	hashHexLength  = sha256.Size * 2
+	shortIDLength  = 12
 )
 
-const Prefix = idPrefix
+// Prefix is retained for callers that need to recognize identities written by
+// releases that included the digest algorithm in the ID. New IDs are bare
+// SHA-256 hex values.
+const Prefix = legacyIDPrefix
 
 type ResourceKind string
 
@@ -37,7 +40,7 @@ func NewID(kind ResourceKind, parts ...string) string {
 	for _, part := range parts {
 		writePart(h, part)
 	}
-	return idPrefix + hex.EncodeToString(h.Sum(nil))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func NewRandomID(kind ResourceKind) string {
@@ -49,16 +52,16 @@ func NewRandomID(kind ResourceKind) string {
 }
 
 func ShortID(id string) string {
-	id = strings.TrimSpace(id)
-	if !IsID(id) {
+	hash, err := Hash(id)
+	if err != nil {
 		return ""
 	}
-	return id[len(idPrefix) : len(idPrefix)+shortIDLength]
+	return hash[:shortIDLength]
 }
 
 func Hash(id string) (string, error) {
 	id = strings.TrimSpace(strings.ToLower(id))
-	id = strings.TrimPrefix(id, idPrefix)
+	id = strings.TrimPrefix(id, legacyIDPrefix)
 	if len(id) != hashHexLength || !isLowerHex(id) {
 		return "", fmt.Errorf("invalid sha256 identity")
 	}
@@ -67,15 +70,13 @@ func Hash(id string) (string, error) {
 
 func IsID(id string) bool {
 	id = strings.TrimSpace(id)
-	if len(id) != len(idPrefix)+hashHexLength || !strings.HasPrefix(id, idPrefix) {
-		return false
-	}
-	return isLowerHex(id[len(idPrefix):])
+	id = strings.TrimPrefix(id, legacyIDPrefix)
+	return len(id) == hashHexLength && isLowerHex(id)
 }
 
 func IsIDPrefix(id string) bool {
 	id = strings.TrimSpace(strings.ToLower(id))
-	id = strings.TrimPrefix(id, idPrefix)
+	id = strings.TrimPrefix(id, legacyIDPrefix)
 	return len(id) >= shortIDLength && len(id) <= hashHexLength && isLowerHex(id)
 }
 

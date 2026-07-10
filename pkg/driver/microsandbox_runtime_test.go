@@ -139,7 +139,7 @@ func TestMicrosandboxPrepareEnvironmentPreservesDockerDisks(t *testing.T) {
 func TestMicrosandboxRemoveDockerDiskOnlyCurrentSession(t *testing.T) {
 	config := testMicrosandboxConfig(t)
 	runtime := &microsandboxRuntime{config: config}
-	currentID := identity.NewRandomID(identity.ResourceSandbox)
+	currentID := identity.Prefix + identity.NewRandomID(identity.ResourceSandbox)
 	otherID := identity.NewRandomID(identity.ResourceSandbox)
 	current := writeMicrosandboxFile(t, config.MicrosandboxHome, "docker-disks", microsandboxDockerDiskName(currentID)+".raw")
 	legacyCurrent := writeMicrosandboxFile(t, config.MicrosandboxHome, "docker-disks", currentID+".raw")
@@ -161,7 +161,7 @@ func TestMicrosandboxRemoveDockerDiskOnlyCurrentSession(t *testing.T) {
 func TestMicrosandboxEnsureDockerDiskMigratesLegacyPath(t *testing.T) {
 	config := testMicrosandboxConfig(t)
 	runtime := &microsandboxRuntime{config: config}
-	sandboxID := identity.NewRandomID(identity.ResourceSandbox)
+	sandboxID := identity.Prefix + identity.NewRandomID(identity.ResourceSandbox)
 	legacy := writeMicrosandboxFile(t, config.MicrosandboxHome, "docker-disks", sandboxID+".raw")
 
 	got, err := runtime.ensureDockerDisk(sandboxID)

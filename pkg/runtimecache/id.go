@@ -49,7 +49,7 @@ func ParseCacheID(cacheID string) (ParsedCacheID, error) {
 	if err != nil {
 		return ParsedCacheID{}, fmt.Errorf("%w: %v", ErrInvalidCacheID, err)
 	}
-	return ParsedCacheID{ID: identity.Prefix + hash, Hash: hash}, nil
+	return ParsedCacheID{ID: hash, Hash: hash}, nil
 }
 
 func ShortCacheID(cacheID string) string {
@@ -71,7 +71,8 @@ func ResolveCacheID(items []Item, ref string) (string, error) {
 	ref = strings.TrimSpace(strings.ToLower(ref))
 	if parsed, err := ParseCacheID(ref); err == nil {
 		for _, item := range items {
-			if strings.EqualFold(item.CacheID, parsed.ID) {
+			itemHash, hashErr := identity.Hash(item.CacheID)
+			if hashErr == nil && itemHash == parsed.Hash {
 				return item.CacheID, nil
 			}
 		}

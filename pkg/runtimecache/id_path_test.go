@@ -11,7 +11,7 @@ import (
 	"agent-compose/pkg/identity"
 )
 
-var testCacheIDRE = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+var testCacheIDRE = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 func TestGenerateCacheIDIsStableAndDistinct(t *testing.T) {
 	item := Item{
@@ -46,7 +46,7 @@ func TestGenerateCacheIDIsStableAndDistinct(t *testing.T) {
 	if !testCacheIDRE.MatchString(first) {
 		t.Fatalf("GenerateCacheID = %q, want full sha256 id", first)
 	}
-	if got := ShortCacheID(first); got != strings.TrimPrefix(first, "sha256:")[:12] {
+	if got := ShortCacheID(first); got != first[:12] {
 		t.Fatalf("ShortCacheID = %q", got)
 	}
 
@@ -54,7 +54,7 @@ func TestGenerateCacheIDIsStableAndDistinct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseCacheID returned error: %v", err)
 	}
-	if parsed.ID != first || parsed.Hash != strings.TrimPrefix(first, "sha256:") {
+	if parsed.ID != first || parsed.Hash != first {
 		t.Fatalf("ParseCacheID = %#v", parsed)
 	}
 }
@@ -114,13 +114,17 @@ func TestResolveCacheIDExactAndPrefix(t *testing.T) {
 		t.Fatalf("ResolveCacheID exact = %q, want %q", resolved, first.CacheID)
 	}
 
-	bareFirst := strings.TrimPrefix(first.CacheID, identity.Prefix)
-	resolved, err = ResolveCacheID(items, bareFirst)
+	legacyFirst := identity.Prefix + first.CacheID
+	resolved, err = ResolveCacheID(items, legacyFirst)
 	if err != nil {
-		t.Fatalf("ResolveCacheID bare exact returned error: %v", err)
+		t.Fatalf("ResolveCacheID legacy exact returned error: %v", err)
 	}
 	if resolved != first.CacheID {
-		t.Fatalf("ResolveCacheID bare exact = %q, want %q", resolved, first.CacheID)
+		t.Fatalf("ResolveCacheID legacy exact = %q, want %q", resolved, first.CacheID)
+	}
+	parsedLegacy, err := ParseCacheID(legacyFirst)
+	if err != nil || parsedLegacy.ID != first.CacheID {
+		t.Fatalf("ParseCacheID legacy = %#v, %v", parsedLegacy, err)
 	}
 
 	prefix := ShortCacheID(second.CacheID)
@@ -136,7 +140,7 @@ func TestResolveCacheIDExactAndPrefix(t *testing.T) {
 func TestResolveCacheIDRejectsInvalidMissingAndAmbiguous(t *testing.T) {
 	first := mustCacheIDItemForResolve(t, "/tmp/runtime-cache-test/first")
 	second := first
-	second.CacheID = "sha256:" + strings.TrimPrefix(first.CacheID, "sha256:")[:12] + strings.Repeat("0", 52)
+	second.CacheID = first.CacheID[:12] + strings.Repeat("0", 52)
 
 	if _, err := ResolveCacheID([]Item{first}, "../bad"); !errors.Is(err, ErrInvalidCacheID) {
 		t.Fatalf("invalid error = %v, want ErrInvalidCacheID", err)
