@@ -14,9 +14,6 @@ export class GeminiRunner {
 
   async writeSettingsFile(): Promise<void> {
     const mcps = this.options.mcpConfig as Record<string, Record<string, unknown>> | undefined;
-    if (!mcps || Object.keys(mcps).length === 0) {
-      return;
-    }
     const geminiDir = path.join(this.options.home, ".gemini");
     await fs.mkdir(geminiDir, { recursive: true });
     const settingsPath = path.join(geminiDir, "settings.json");
@@ -25,6 +22,13 @@ export class GeminiRunner {
       settings = JSON.parse(await fs.readFile(settingsPath, "utf-8"));
     } catch {
       settings = {};
+    }
+    if (!mcps || Object.keys(mcps).length === 0) {
+      if (Object.prototype.hasOwnProperty.call(settings, "mcpServers")) {
+        delete settings.mcpServers;
+        await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+      }
+      return;
     }
     const mcpServers: Record<string, unknown> = {};
     for (const [name, server] of Object.entries(mcps)) {

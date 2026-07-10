@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { flattenEnvMap } from "../mcp-config.js";
 import { uniqueDirectories } from "../paths.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { jsonString } from "../text.js";
@@ -58,7 +59,7 @@ function toClaudeMCPConfig(config: Record<string, unknown> | undefined): Record<
 				type: "stdio",
 				command: record.command,
 				args: Array.isArray(record.args) ? record.args : [],
-				env: record.env,
+				env: flattenEnvMap(record.env as Record<string, { value: string }> | undefined),
 			};
 			continue;
 		}
@@ -66,7 +67,7 @@ function toClaudeMCPConfig(config: Record<string, unknown> | undefined): Record<
 			mapped[name] = {
 				type: record.transport === "sse" ? "sse" : "http",
 				url: record.url,
-				headers: record.headers,
+				headers: flattenEnvMap(record.headers as Record<string, { value: string }> | undefined),
 			};
 		}
 	}

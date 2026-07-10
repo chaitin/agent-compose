@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { ClaudeRunner } from "../src/runners/claude.js";
 import { CodexRunner } from "../src/runners/codex.js";
 import { GeminiRunner } from "../src/runners/gemini.js";
@@ -258,6 +260,53 @@ describe("ClaudeRunner", () => {
     });
   });
 
+  it("flattens Claude MCP env and headers for SDK options", async () => {
+    await withTempSession(async (root) => {
+      const runner = new ClaudeRunner({
+        ...runnerOptions(root, "", "claude"),
+        mcpConfig: {
+          localFs: {
+            type: "local",
+            command: "npx",
+            args: ["-y", "server"],
+            env: {
+              TOKEN: { value: "secret", secret: true },
+            },
+          },
+          docs: {
+            type: "remote",
+            transport: "http",
+            url: "https://docs.example.invalid/mcp",
+            headers: {
+              Authorization: { value: "Bearer token", secret: true },
+            },
+          },
+        },
+      });
+
+      expect(runner.queryOptions(null)).toMatchObject({
+        strictMcpConfig: true,
+        mcpServers: {
+          localFs: {
+            type: "stdio",
+            command: "npx",
+            args: ["-y", "server"],
+            env: {
+              TOKEN: "secret",
+            },
+          },
+          docs: {
+            type: "http",
+            url: "https://docs.example.invalid/mcp",
+            headers: {
+              Authorization: "Bearer token",
+            },
+          },
+        },
+      });
+    });
+  });
+
   it("handles stream text and tool starts", async () => {
     await withTempSession(async (root) => {
       const runner = new ClaudeRunner(runnerOptions(root));
@@ -330,6 +379,25 @@ describe("GeminiRunner", () => {
     await withTempSession(async (root) => {
       const runner = new GeminiRunner(runnerOptions(root, "", "gemini"));
       expect(runner).toBeInstanceOf(GeminiRunner);
+    });
+  });
+
+  it("removes stale Gemini MCP settings when current config is empty", async () => {
+    await withTempSession(async (root) => {
+      const settingsDir = path.join(root, "home", ".gemini");
+      await fs.mkdir(settingsDir, { recursive: true });
+      const settingsPath = path.join(settingsDir, "settings.json");
+      await fs.writeFile(settingsPath, JSON.stringify({ theme: "dark", mcpServers: { stale: { url: "http://stale" } } }, null, 2) + "\n", "utf-8");
+
+      const runner = new GeminiRunner({
+        ...runnerOptions(root, "", "gemini"),
+        mcpConfig: {},
+      });
+      await runner.writeSettingsFile();
+
+      const settings = JSON.parse(await fs.readFile(settingsPath, "utf-8")) as Record<string, unknown>;
+      expect(settings.theme).toBe("dark");
+      expect(settings).not.toHaveProperty("mcpServers");
     });
   });
 });

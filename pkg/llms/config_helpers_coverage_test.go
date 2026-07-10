@@ -47,8 +47,15 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if err := WriteCodexMCPConfig(session, mcps); err != nil {
 		t.Fatalf("second WriteCodexMCPConfig returned error: %v", err)
 	}
+	configPath := filepath.Join(execution.HostSandboxHome(session), ".codex", "config.toml")
+	if err := os.WriteFile(configPath, []byte("model = \"gpt\"\n\n"+codexManagedMCPStart+"\n[mcp_servers.stale]\ncommand = \"old\"\n"), 0o644); err != nil {
+		t.Fatalf("seed malformed codex mcp config: %v", err)
+	}
+	if err := WriteCodexMCPConfig(session, mcps); err != nil {
+		t.Fatalf("rewrite malformed WriteCodexMCPConfig returned error: %v", err)
+	}
 	codexConfig, err = os.ReadFile(filepath.Join(execution.HostSandboxHome(session), ".codex", "config.toml"))
-	if err != nil || strings.Count(string(codexConfig), `[mcp_servers.filesystem]`) != 1 || !strings.Contains(string(codexConfig), `[mcp_servers.docs.http_headers]`) {
+	if err != nil || strings.Count(string(codexConfig), `[mcp_servers.filesystem]`) != 1 || !strings.Contains(string(codexConfig), `[mcp_servers.docs.http_headers]`) || strings.Contains(string(codexConfig), `[mcp_servers.stale]`) {
 		t.Fatalf("codex mcp config=%q err=%v", string(codexConfig), err)
 	}
 	if err := WriteOpenCodeMCPConfig(session, mcps); err != nil {

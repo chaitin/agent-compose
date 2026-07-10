@@ -238,6 +238,8 @@ func replaceManagedTextBlock(existing, startMarker, endMarker, managed string) s
 				end++
 			}
 			existing = existing[:start] + existing[end:]
+		} else {
+			existing = existing[:start]
 		}
 	}
 	existing = strings.TrimRight(existing, "\n")
