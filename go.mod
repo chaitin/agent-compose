@@ -21,7 +21,7 @@ require (
 	github.com/samber/mo v1.16.0
 	github.com/samber/oops v1.21.0
 	github.com/spf13/cobra v1.10.1
-	github.com/superradcompany/microsandbox/sdk/go v0.6.4
+	github.com/superradcompany/microsandbox/sdk/go v0.5.8
 	go.mongodb.org/mongo-driver/v2 v2.5.0
 	golang.org/x/sys v0.45.0
 	golang.org/x/text v0.37.0

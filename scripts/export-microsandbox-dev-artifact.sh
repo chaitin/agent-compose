@@ -14,7 +14,7 @@ mkdir -p "$OUT_DIR"
 
 if [ -x "$OUT_DIR/bin/msb" ] &&
   [ -x "$OUT_DIR/bin/agentd" ] &&
-  [ -s "$OUT_DIR/lib/libkrunfw.so" ] &&
+  [ -s "$OUT_DIR/lib/libkrunfw.so.5.2.1" ] &&
   [ -s "$OUT_DIR/lib/libmicrosandbox_go_ffi.so" ]; then
   echo "Microsandbox dev artifacts already exist in $OUT_DIR"
   exit 0

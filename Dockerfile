@@ -26,7 +26,7 @@ RUN set -e;     target_arch="${TARGETARCH:-$(dpkg --print-architecture)}";     c
 # published checksums. This keeps the FFI lib in lockstep with the
 # microsandbox/sdk/go module pinned in go.mod.
 FROM ${REGISTRY_MIRROR}/library/debian:bookworm AS microsandbox-fetch
-ARG MICROSANDBOX_VERSION=v0.6.4
+ARG MICROSANDBOX_VERSION=v0.5.8
 ARG TARGETARCH
 ARG HTTP_PROXY
 ARG HTTPS_PROXY

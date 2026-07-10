@@ -188,7 +188,7 @@ tasks:
     generates:
       - build/microsandbox/bin/msb
       - build/microsandbox/bin/agentd
-      - build/microsandbox/lib/libkrunfw.so
+      - build/microsandbox/lib/libkrunfw.so.5.2.1
       - build/microsandbox/lib/libmicrosandbox_go_ffi.so
     cmds:
       - HTTP_PROXY={{.BUILD_HTTP_PROXY}} HTTPS_PROXY={{.BUILD_HTTPS_PROXY}} ALL_PROXY={{.BUILD_ALL_PROXY}} REGISTRY_MIRROR={{.BUILD_REGISTRY_MIRROR}} ./scripts/export-microsandbox-dev-artifact.sh ./build/microsandbox
