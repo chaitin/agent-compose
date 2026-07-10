@@ -17,23 +17,20 @@ type projectRunWorkspaceResolver struct {
 	controller *Controller
 }
 
-func (r projectRunWorkspaceResolver) ResolveProjectRunWorkspace(ctx context.Context, run domain.ProjectRunRecord, project domain.ProjectRecord, projectWorkspace, agentWorkspace *compose.WorkspaceSpec) (*domain.WorkspaceConfig, *domain.SessionWorkspace, error) {
-	workspace, err := r.controller.prepareProjectRunWorkspace(ctx, run, project, projectWorkspace, agentWorkspace)
+func (r projectRunWorkspaceResolver) ResolveProjectRunWorkspace(ctx context.Context, run domain.ProjectRunRecord, project domain.ProjectRecord, agentWorkspace *compose.WorkspaceSpec) (*domain.WorkspaceConfig, *domain.SessionWorkspace, error) {
+	workspace, err := r.controller.prepareProjectRunWorkspace(ctx, run, project, agentWorkspace)
 	if err != nil || workspace == nil {
 		return workspace, nil, err
 	}
 	return workspace, toSessionWorkspaceSnapshot(*workspace), nil
 }
 
-func (c *Controller) prepareProjectRunWorkspace(ctx context.Context, run domain.ProjectRunRecord, project domain.ProjectRecord, projectWorkspace, agentWorkspace *compose.WorkspaceSpec) (*domain.WorkspaceConfig, error) {
+func (c *Controller) prepareProjectRunWorkspace(ctx context.Context, run domain.ProjectRunRecord, project domain.ProjectRecord, agentWorkspace *compose.WorkspaceSpec) (*domain.WorkspaceConfig, error) {
 	_ = ctx
-	workspace := projectWorkspace
-	if agentWorkspace != nil {
-		workspace = agentWorkspace
-	}
-	if workspace == nil {
+	if agentWorkspace == nil {
 		return nil, nil
 	}
+	workspace := agentWorkspace
 	provider := strings.ToLower(strings.TrimSpace(workspace.Provider))
 	switch provider {
 	case "local":

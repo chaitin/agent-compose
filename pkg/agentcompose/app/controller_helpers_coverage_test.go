@@ -27,6 +27,10 @@ func TestAppProjectControllerHelperCoverage(t *testing.T) {
 	}
 	validSpec := &agentcomposev2.ProjectSpec{
 		Name: "app-project",
+		Workspaces: []*agentcomposev2.NamedWorkspaceSpec{{
+			Name:      "default",
+			Workspace: &agentcomposev2.WorkspaceSpec{Provider: "local", Path: "."},
+		}},
 		Agents: []*agentcomposev2.AgentSpec{{
 			Name:     "worker",
 			Provider: "codex",

@@ -562,6 +562,10 @@ func testStatusCommandReportsUnreadableDaemon(t *testing.T) {
 func TestConfigCommandPrintsNormalizedYAMLWithoutStartingDaemon(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "review-project")
 	writeComposeFile(t, dir, `
+workspaces:
+  default:
+    provider: local
+    path: .
 variables:
   API_KEY:
     value: ${API_KEY}
@@ -606,6 +610,10 @@ variables:
   TOKEN:
     value: ${TOKEN}
     secret: true
+workspaces:
+  default:
+    provider: local
+    path: .
 agents:
   reviewer:
     provider: codex
@@ -907,6 +915,14 @@ func TestIntegrationCLIUpAppliesProjectFirstRepeatedModifiedAndJSON(t *testing.T
 	testCLIUpAppliesProjectFirstRepeatedModifiedAndJSON(t)
 }
 
+func TestIntegrationCLIWorkspaceRegistryConfigAndApply(t *testing.T) {
+	testCLIWorkspaceRegistryConfigAndApply(t)
+}
+
+func TestE2ECLIWorkspaceRegistryConfigAndApply(t *testing.T) {
+	testCLIWorkspaceRegistryConfigAndApply(t)
+}
+
 func TestIntegrationCLIUpAppliesInlineSchedulerScriptAndPSJSON(t *testing.T) {
 	composePath := writeComposeFile(t, filepath.Join(t.TempDir(), "cli-inline-project"), inlineSchedulerComposeYAML("cli-inline-demo", 60000))
 	configOut, configErr, configRunCount, err := executeCommand("config", "--file", composePath)
@@ -1052,6 +1068,10 @@ agents:
 
 	if err := os.WriteFile(composePath, []byte(`
 name: cli-up-demo
+workspaces:
+  default:
+    provider: local
+    path: .
 agents:
   reviewer:
     provider: codex
@@ -1083,6 +1103,179 @@ agents:
 	}
 	assertComposeUpChange(t, changed.Changes, "updated", "project_agent", "reviewer")
 	assertComposeUpChange(t, changed.Changes, "updated", "agent_definition", "reviewer")
+}
+
+func testCLIWorkspaceRegistryConfigAndApply(t *testing.T) {
+	t.Helper()
+	socketPath := shortUnixSocketPath(t)
+	app, cancel := newTestDaemonAppWithSocketAndTCP(t, socketPath, "", nil)
+	defer cancel()
+	runCtx, stop := context.WithCancel(context.Background())
+	errCh := runDaemonAppAsync(app, runCtx)
+	t.Cleanup(func() {
+		stop()
+		waitForDaemonExit(t, errCh)
+	})
+	waitForHTTPStatus(t, newUnixHTTPClient(socketPath), "http://agent-compose/api/version", http.StatusOK)
+	t.Setenv("AGENT_COMPOSE_SOCKET", socketPath)
+	t.Setenv("AGENT_COMPOSE_HOST", "")
+
+	t.Run("single global workspace becomes default", func(t *testing.T) {
+		composePath := writeComposeFile(t, filepath.Join(t.TempDir(), "workspace-default"), `
+name: workspace-default
+workspaces:
+  repo-root:
+    provider: local
+    path: .
+agents:
+  reviewer:
+    provider: codex
+    image: guest:v1
+    driver:
+      boxlite: {}
+`)
+
+		stdout, stderr, _, exitCode := executeCLICommand("config", "--file", composePath, "--json")
+		if exitCode != 0 || stderr != "" {
+			t.Fatalf("config code/stderr = %d / %q", exitCode, stderr)
+		}
+		var decoded struct {
+			Workspaces []struct {
+				Key      string `json:"key"`
+				Provider string `json:"provider"`
+				Path     string `json:"path"`
+			} `json:"workspaces"`
+			Agents []struct {
+				Name      string `json:"name"`
+				Workspace struct {
+					Provider string `json:"provider"`
+					Path     string `json:"path"`
+				} `json:"workspace"`
+			} `json:"agents"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
+			t.Fatalf("config json decode failed: %v\n%s", err, stdout)
+		}
+		if len(decoded.Workspaces) != 1 || decoded.Workspaces[0].Key != "repo-root" || decoded.Workspaces[0].Provider != "local" {
+			t.Fatalf("decoded workspaces = %#v", decoded.Workspaces)
+		}
+		if len(decoded.Agents) != 1 || decoded.Agents[0].Workspace.Provider != "local" || decoded.Agents[0].Workspace.Path != "." {
+			t.Fatalf("decoded agents = %#v", decoded.Agents)
+		}
+
+		upOut, upErr, _, upCode := executeCLICommand("up", "--file", composePath, "--json")
+		if upCode != 0 || upErr != "" {
+			t.Fatalf("up code/stderr = %d / %q", upCode, upErr)
+		}
+		up := decodeComposeUpOutput(t, upOut)
+		if up.Project.Name != "workspace-default" || !up.Applied {
+			t.Fatalf("up output = %#v", up)
+		}
+	})
+
+	t.Run("agent workspace name resolves global reference", func(t *testing.T) {
+		composePath := writeComposeFile(t, filepath.Join(t.TempDir(), "workspace-reference"), `
+name: workspace-reference
+workspaces:
+  repo-root:
+    provider: local
+    path: .
+  docs-repo:
+    provider: git
+    url: https://example.test/docs.git
+    path: docs
+agents:
+  reviewer:
+    provider: codex
+    image: guest:v1
+    driver:
+      boxlite: {}
+    workspace:
+      name: repo-root
+`)
+
+		stdout, stderr, _, exitCode := executeCLICommand("config", "--file", composePath, "--json")
+		if exitCode != 0 || stderr != "" {
+			t.Fatalf("config code/stderr = %d / %q", exitCode, stderr)
+		}
+		var decoded struct {
+			Workspaces []struct {
+				Key string `json:"key"`
+			} `json:"workspaces"`
+			Agents []struct {
+				Workspace struct {
+					Provider string `json:"provider"`
+					Path     string `json:"path"`
+					Name     string `json:"name"`
+				} `json:"workspace"`
+			} `json:"agents"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
+			t.Fatalf("config json decode failed: %v\n%s", err, stdout)
+		}
+		if len(decoded.Workspaces) != 2 || decoded.Workspaces[0].Key != "docs-repo" || decoded.Workspaces[1].Key != "repo-root" {
+			t.Fatalf("decoded workspaces = %#v", decoded.Workspaces)
+		}
+		if len(decoded.Agents) != 1 || decoded.Agents[0].Workspace.Provider != "local" || decoded.Agents[0].Workspace.Path != "." || decoded.Agents[0].Workspace.Name != "" {
+			t.Fatalf("decoded agents = %#v", decoded.Agents)
+		}
+
+		upOut, upErr, _, upCode := executeCLICommand("up", "--file", composePath, "--json")
+		if upCode != 0 || upErr != "" {
+			t.Fatalf("up code/stderr = %d / %q", upCode, upErr)
+		}
+		up := decodeComposeUpOutput(t, upOut)
+		if up.Project.Name != "workspace-reference" || !up.Applied {
+			t.Fatalf("up output = %#v", up)
+		}
+	})
+
+	t.Run("multiple globals without agent workspace fails", func(t *testing.T) {
+		composePath := writeComposeFile(t, filepath.Join(t.TempDir(), "workspace-ambiguous"), `
+name: workspace-ambiguous
+workspaces:
+  repo-root:
+    provider: local
+    path: .
+  docs-repo:
+    provider: git
+    url: https://example.test/docs.git
+agents:
+  reviewer:
+    provider: codex
+`)
+
+		_, stderr, _, exitCode := executeCLICommand("config", "--file", composePath, "--json")
+		if exitCode == 0 {
+			t.Fatalf("expected config to fail")
+		}
+		if !strings.Contains(stderr, "project workspaces has multiple entries") {
+			t.Fatalf("stderr = %q", stderr)
+		}
+	})
+
+	t.Run("missing named workspace fails", func(t *testing.T) {
+		composePath := writeComposeFile(t, filepath.Join(t.TempDir(), "workspace-missing-ref"), `
+name: workspace-missing-ref
+workspaces:
+  repo-root:
+    provider: local
+    path: .
+agents:
+  reviewer:
+    provider: codex
+    workspace:
+      name: missing
+`)
+
+		_, stderr, _, exitCode := executeCLICommand("config", "--file", composePath, "--json")
+		if exitCode == 0 {
+			t.Fatalf("expected config to fail")
+		}
+		if !strings.Contains(stderr, `workspace "missing" is not defined`) {
+			t.Fatalf("stderr = %q", stderr)
+		}
+	})
 }
 
 func TestCLIDownFirstRepeatedPartialAndJSON(t *testing.T) {
@@ -7732,6 +7925,10 @@ func writeComposeFileNamed(t *testing.T, dir string, name string, content string
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("create compose dir: %v", err)
+	}
+	trimmed := strings.TrimSpace(content)
+	if strings.HasPrefix(name, "agent-compose.") && !strings.Contains(trimmed, "\nworkspaces:") && !strings.HasPrefix(trimmed, "workspaces:") {
+		content = "workspaces:\n  default:\n    provider: local\n    path: .\n" + content
 	}
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {

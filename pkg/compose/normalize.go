@@ -31,12 +31,12 @@ type NormalizeOptions struct {
 }
 
 type NormalizedProjectSpec struct {
-	Name      string                          `yaml:"name" json:"name"`
-	Variables map[string]EnvVarSpec           `yaml:"variables,omitempty" json:"variables,omitempty"`
-	Workspace *WorkspaceSpec                  `yaml:"workspace,omitempty" json:"workspace,omitempty"`
-	Volumes   map[string]NormalizedVolumeSpec `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	Agents    []NormalizedAgentSpec           `yaml:"agents,omitempty" json:"agents,omitempty"`
-	Network   *NetworkSpec                    `yaml:"network,omitempty" json:"network,omitempty"`
+	Name       string                          `yaml:"name" json:"name"`
+	Variables  map[string]EnvVarSpec           `yaml:"variables,omitempty" json:"variables,omitempty"`
+	Workspaces map[string]WorkspaceSpec        `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
+	Volumes    map[string]NormalizedVolumeSpec `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Agents     []NormalizedAgentSpec           `yaml:"agents,omitempty" json:"agents,omitempty"`
+	Network    *NetworkSpec                    `yaml:"network,omitempty" json:"network,omitempty"`
 }
 
 type NormalizedAgentSpec struct {
@@ -132,7 +132,6 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 	normalized := &NormalizedProjectSpec{
 		Name:      name,
 		Variables: nil,
-		Workspace: cloneWorkspaceSpec(spec.Workspace),
 		Network:   normalizeNetworkDefault(spec.Network),
 	}
 	variables, err := normalizeEnvVarMap("variables", spec.Variables, options)
@@ -140,6 +139,11 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 		return nil, err
 	}
 	normalized.Variables = variables
+	workspaces, err := normalizeProjectWorkspaces(spec.Workspaces)
+	if err != nil {
+		return nil, err
+	}
+	normalized.Workspaces = workspaces
 	if err := validateNetworkSpec(normalized.Network); err != nil {
 		return nil, err
 	}
@@ -160,7 +164,7 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 			return nil, err
 		}
 		agent := spec.Agents[agentName]
-		normalizedAgent, err := normalizeAgent(agentName, agent, options, normalized.Volumes)
+		normalizedAgent, err := normalizeAgent(agentName, agent, options, normalized.Volumes, normalized.Workspaces)
 		if err != nil {
 			return nil, err
 		}
@@ -182,7 +186,7 @@ func NormalizeFile(path string) (*NormalizedProjectSpec, error) {
 	return normalized, nil
 }
 
-func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, projectVolumes map[string]NormalizedVolumeSpec) (NormalizedAgentSpec, error) {
+func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, projectVolumes map[string]NormalizedVolumeSpec, projectWorkspaces map[string]WorkspaceSpec) (NormalizedAgentSpec, error) {
 	driver, err := normalizeDriverSpec(joinPath("agents", name)+".driver", agent.Driver)
 	if err != nil {
 		return NormalizedAgentSpec{}, err
@@ -211,6 +215,10 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
+	workspace, err := resolveAgentWorkspace(joinPath("agents", name)+".workspace", agent.Workspace, projectWorkspaces)
+	if err != nil {
+		return NormalizedAgentSpec{}, err
+	}
 	return NormalizedAgentSpec{
 		Name:         name,
 		Provider:     strings.TrimSpace(agent.Provider),
@@ -222,10 +230,134 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 		Env:          env,
 		CapsetIDs:    normalizeStringList(agent.CapsetIDs),
 		Volumes:      volumes,
-		Workspace:    cloneWorkspaceSpec(agent.Workspace),
+		Workspace:    workspace,
 		Scheduler:    scheduler,
 		Jupyter:      jupyter,
 	}, nil
+}
+
+func normalizeProjectWorkspaces(values map[string]WorkspaceSpec) (map[string]WorkspaceSpec, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	normalized := make(map[string]WorkspaceSpec, len(values))
+	for _, rawKey := range keys {
+		key := strings.TrimSpace(rawKey)
+		if err := validateStableIdentifier(joinPath("workspaces", rawKey), key, "workspace name"); err != nil {
+			return nil, err
+		}
+		if _, exists := normalized[key]; exists {
+			return nil, &ValidationError{Path: joinPath("workspaces", rawKey), Message: fmt.Sprintf("duplicate workspace %q", key)}
+		}
+		item := values[rawKey]
+		workspace, err := normalizeInlineWorkspaceSpec(joinPath("workspaces", key), &item, key)
+		if err != nil {
+			return nil, err
+		}
+		normalized[key] = *workspace
+	}
+	return normalized, nil
+}
+
+func resolveAgentWorkspace(path string, spec *WorkspaceSpec, globals map[string]WorkspaceSpec) (*WorkspaceSpec, error) {
+	if spec == nil {
+		switch len(globals) {
+		case 1:
+			for _, workspace := range globals {
+				resolved := cloneWorkspaceSpec(&workspace)
+				resolved.Name = ""
+				return resolved, nil
+			}
+		case 0:
+			return nil, &ValidationError{Path: path, Message: "workspace is required when project workspaces is empty"}
+		default:
+			return nil, &ValidationError{Path: path, Message: "workspace is required when project workspaces has multiple entries"}
+		}
+	}
+	trimmed := cloneWorkspaceSpec(spec)
+	hasName := trimmed.Name != ""
+	hasInline := trimmed.Provider != "" || trimmed.URL != "" || trimmed.Branch != "" || trimmed.Path != ""
+	switch {
+	case hasName && hasInline:
+		return nil, &ValidationError{Path: path, Message: "workspace reference cannot set name together with provider, url, branch, or path"}
+	case hasName:
+		workspace, ok := globals[trimmed.Name]
+		if !ok {
+			return nil, &ValidationError{Path: path + ".name", Message: fmt.Sprintf("workspace %q is not defined", trimmed.Name)}
+		}
+		resolved := cloneWorkspaceSpec(&workspace)
+		resolved.Name = ""
+		return resolved, nil
+	case hasInline:
+		return normalizeInlineWorkspaceSpec(path, trimmed, "")
+	default:
+		return nil, &ValidationError{Path: path, Message: "workspace is required"}
+	}
+}
+
+func normalizeInlineWorkspaceSpec(path string, spec *WorkspaceSpec, defaultName string) (*WorkspaceSpec, error) {
+	if spec == nil {
+		return nil, &ValidationError{Path: path, Message: "workspace is required"}
+	}
+	workspace := cloneWorkspaceSpec(spec)
+	if workspace.Name != "" {
+		return nil, &ValidationError{Path: path + ".name", Message: "inline workspace cannot set name"}
+	}
+	provider := strings.ToLower(strings.TrimSpace(workspace.Provider))
+	if provider == "" {
+		return nil, &ValidationError{Path: path + ".provider", Message: "workspace provider is required"}
+	}
+	workspace.Provider = provider
+	workspace.Name = defaultName
+	switch provider {
+	case "local":
+		if strings.TrimSpace(workspace.URL) != "" {
+			return nil, &ValidationError{Path: path + ".url", Message: "local workspace does not support url"}
+		}
+		if strings.TrimSpace(workspace.Branch) != "" {
+			return nil, &ValidationError{Path: path + ".branch", Message: "local workspace does not support branch"}
+		}
+		if _, err := cleanComposeLocalWorkspacePath(workspace.Path); err != nil {
+			return nil, &ValidationError{Path: path + ".path", Message: err.Error()}
+		}
+	case "git":
+		if strings.TrimSpace(workspace.URL) == "" {
+			return nil, &ValidationError{Path: path + ".url", Message: "git workspace url is required"}
+		}
+		if strings.TrimSpace(workspace.Path) != "" {
+			cleanPath := filepath.Clean(workspace.Path)
+			if filepath.IsAbs(workspace.Path) || cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
+				return nil, &ValidationError{Path: path + ".path", Message: fmt.Sprintf("git workspace path %q must stay within workspace root", workspace.Path)}
+			}
+			workspace.Path = cleanPath
+		} else {
+			workspace.Path = "."
+		}
+		workspace.URL = strings.TrimSpace(workspace.URL)
+	default:
+		return nil, &ValidationError{Path: path + ".provider", Message: fmt.Sprintf("unsupported workspace provider %q", workspace.Provider)}
+	}
+	return workspace, nil
+}
+
+func cleanComposeLocalWorkspacePath(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("local workspace path is required")
+	}
+	if filepath.IsAbs(trimmed) {
+		return "", fmt.Errorf("local workspace path %q must be relative", trimmed)
+	}
+	clean := filepath.Clean(trimmed)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("local workspace path %q escapes project root", trimmed)
+	}
+	return clean, nil
 }
 
 func normalizeProjectVolumes(values map[string]VolumeSpec) (map[string]NormalizedVolumeSpec, error) {
@@ -689,6 +821,7 @@ func cloneWorkspaceSpec(value *WorkspaceSpec) *WorkspaceSpec {
 		return nil
 	}
 	cloned := *value
+	cloned.Name = strings.TrimSpace(cloned.Name)
 	cloned.Provider = strings.TrimSpace(cloned.Provider)
 	cloned.URL = strings.TrimSpace(cloned.URL)
 	cloned.Branch = strings.TrimSpace(cloned.Branch)

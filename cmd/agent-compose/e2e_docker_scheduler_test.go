@@ -69,6 +69,10 @@ func TestE2EDockerSchedulerScriptHelloWorldFlow(t *testing.T) {
 	t.Setenv("AGENT_COMPOSE_SOCKET", socketPath)
 	composePath := writeComposeFile(t, filepath.Join(root, "project"), fmt.Sprintf(`
 name: e2e-docker-script
+workspaces:
+  default:
+    provider: local
+    path: .
 agents:
   hello:
     provider: codex

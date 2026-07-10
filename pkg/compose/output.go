@@ -18,12 +18,21 @@ type orderedEnvVarSpec struct {
 }
 
 type orderedProjectSpec struct {
-	Name      string              `yaml:"name" json:"name"`
-	Variables []orderedEnvVarSpec `yaml:"variables,omitempty" json:"variables,omitempty"`
-	Workspace *WorkspaceSpec      `yaml:"workspace,omitempty" json:"workspace,omitempty"`
-	Volumes   []orderedVolumeSpec `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	Agents    []orderedAgentSpec  `yaml:"agents,omitempty" json:"agents,omitempty"`
-	Network   *NetworkSpec        `yaml:"network,omitempty" json:"network,omitempty"`
+	Name       string                  `yaml:"name" json:"name"`
+	Variables  []orderedEnvVarSpec     `yaml:"variables,omitempty" json:"variables,omitempty"`
+	Workspaces []orderedNamedWorkspace `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
+	Volumes    []orderedVolumeSpec     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Agents     []orderedAgentSpec      `yaml:"agents,omitempty" json:"agents,omitempty"`
+	Network    *NetworkSpec            `yaml:"network,omitempty" json:"network,omitempty"`
+}
+
+type orderedNamedWorkspace struct {
+	Key      string `yaml:"key" json:"key"`
+	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
+	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
+	URL      string `yaml:"url,omitempty" json:"url,omitempty"`
+	Branch   string `yaml:"branch,omitempty" json:"branch,omitempty"`
+	Path     string `yaml:"path,omitempty" json:"path,omitempty"`
 }
 
 type orderedAgentSpec struct {
@@ -101,23 +110,23 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 		return compareString(a.Name, b.Name)
 	})
 	return orderedProjectSpec{
-		Name:      s.Name,
-		Variables: orderedEnvVars(s.Variables, redactSecrets),
-		Workspace: cloneWorkspaceSpec(s.Workspace),
-		Volumes:   orderedVolumes(s.Volumes),
-		Agents:    agents,
-		Network:   cloneNetworkSpecForOutput(s.Network),
+		Name:       s.Name,
+		Variables:  orderedEnvVars(s.Variables, redactSecrets),
+		Workspaces: orderedWorkspaces(s.Workspaces),
+		Volumes:    orderedVolumes(s.Volumes),
+		Agents:     agents,
+		Network:    cloneNetworkSpecForOutput(s.Network),
 	}
 }
 
 func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec {
 	ordered := s.ordered(redactSecrets)
 	cloned := &NormalizedProjectSpec{
-		Name:      ordered.Name,
-		Variables: envVarMapFromOrdered(ordered.Variables),
-		Workspace: ordered.Workspace,
-		Volumes:   volumeMapFromOrdered(ordered.Volumes),
-		Network:   ordered.Network,
+		Name:       ordered.Name,
+		Variables:  envVarMapFromOrdered(ordered.Variables),
+		Workspaces: workspaceMapFromOrdered(ordered.Workspaces),
+		Volumes:    volumeMapFromOrdered(ordered.Volumes),
+		Network:    ordered.Network,
 	}
 	for _, agent := range ordered.Agents {
 		cloned.Agents = append(cloned.Agents, NormalizedAgentSpec{
@@ -137,6 +146,47 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 		})
 	}
 	return cloned
+}
+
+func orderedWorkspaces(values map[string]WorkspaceSpec) []orderedNamedWorkspace {
+	if len(values) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	out := make([]orderedNamedWorkspace, 0, len(keys))
+	for _, key := range keys {
+		value := values[key]
+		out = append(out, orderedNamedWorkspace{
+			Key:      key,
+			Name:     value.Name,
+			Provider: value.Provider,
+			URL:      value.URL,
+			Branch:   value.Branch,
+			Path:     value.Path,
+		})
+	}
+	return out
+}
+
+func workspaceMapFromOrdered(values []orderedNamedWorkspace) map[string]WorkspaceSpec {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]WorkspaceSpec, len(values))
+	for _, value := range values {
+		out[value.Key] = WorkspaceSpec{
+			Name:     value.Name,
+			Provider: value.Provider,
+			URL:      value.URL,
+			Branch:   value.Branch,
+			Path:     value.Path,
+		}
+	}
+	return out
 }
 
 func orderedVolumes(values map[string]NormalizedVolumeSpec) []orderedVolumeSpec {

@@ -9,12 +9,12 @@ import (
 )
 
 type ProjectSpec struct {
-	Name      string                `yaml:"name,omitempty" json:"name,omitempty"`
-	Variables map[string]EnvVarSpec `yaml:"variables,omitempty" json:"variables,omitempty"`
-	Workspace *WorkspaceSpec        `yaml:"workspace,omitempty" json:"workspace,omitempty"`
-	Volumes   map[string]VolumeSpec `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	Agents    map[string]AgentSpec  `yaml:"agents,omitempty" json:"agents,omitempty"`
-	Network   *NetworkSpec          `yaml:"network,omitempty" json:"network,omitempty"`
+	Name       string                   `yaml:"name,omitempty" json:"name,omitempty"`
+	Variables  map[string]EnvVarSpec    `yaml:"variables,omitempty" json:"variables,omitempty"`
+	Workspaces map[string]WorkspaceSpec `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
+	Volumes    map[string]VolumeSpec    `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Agents     map[string]AgentSpec     `yaml:"agents,omitempty" json:"agents,omitempty"`
+	Network    *NetworkSpec             `yaml:"network,omitempty" json:"network,omitempty"`
 }
 
 type AgentSpec struct {
@@ -88,6 +88,7 @@ type EventTriggerSpec struct {
 }
 
 type WorkspaceSpec struct {
+	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
 	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 	URL      string `yaml:"url,omitempty" json:"url,omitempty"`
 	Branch   string `yaml:"branch,omitempty" json:"branch,omitempty"`
@@ -285,13 +286,17 @@ type nodeValidator func(node *yaml.Node, path string) error
 
 func validateProjectNode(node *yaml.Node) error {
 	return validateMapping(node, "", map[string]nodeValidator{
-		"name":      validateScalar,
-		"variables": validateEnvVarMap,
-		"workspace": validateWorkspace,
-		"volumes":   validateVolumeMap,
-		"agents":    validateAgentMap,
-		"network":   validateNetwork,
+		"name":       validateScalar,
+		"variables":  validateEnvVarMap,
+		"workspaces": validateWorkspaceMap,
+		"volumes":    validateVolumeMap,
+		"agents":     validateAgentMap,
+		"network":    validateNetwork,
 	})
+}
+
+func validateWorkspaceMap(node *yaml.Node, path string) error {
+	return validateNamedMap(node, path, validateWorkspace)
 }
 
 func validateAgentMap(node *yaml.Node, path string) error {
@@ -442,6 +447,7 @@ func validateEventTrigger(node *yaml.Node, path string) error {
 
 func validateWorkspace(node *yaml.Node, path string) error {
 	return validateMapping(node, path, map[string]nodeValidator{
+		"name":     validateScalar,
 		"provider": validateScalar,
 		"url":      validateScalar,
 		"branch":   validateScalar,

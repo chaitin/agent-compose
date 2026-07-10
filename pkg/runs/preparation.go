@@ -25,7 +25,7 @@ type PreparationStore interface {
 }
 
 type WorkspaceResolver interface {
-	ResolveProjectRunWorkspace(ctx context.Context, run domain.ProjectRunRecord, project domain.ProjectRecord, projectWorkspace, agentWorkspace *compose.WorkspaceSpec) (*domain.WorkspaceConfig, *domain.SessionWorkspace, error)
+	ResolveProjectRunWorkspace(ctx context.Context, run domain.ProjectRunRecord, project domain.ProjectRecord, agentWorkspace *compose.WorkspaceSpec) (*domain.WorkspaceConfig, *domain.SessionWorkspace, error)
 }
 
 type Preparation struct {
@@ -92,7 +92,7 @@ func PrepareProjectRun(ctx context.Context, store PreparationStore, resolver Wor
 	if resolver == nil {
 		return prepared, nil
 	}
-	workspaceConfig, workspaceSnapshot, err := resolver.ResolveProjectRunWorkspace(ctx, run, project, ComposeWorkspaceSpecFromV2(spec.GetWorkspace()), ComposeWorkspaceSpecFromV2(agentSpec.GetWorkspace()))
+	workspaceConfig, workspaceSnapshot, err := resolver.ResolveProjectRunWorkspace(ctx, run, project, ComposeWorkspaceSpecFromV2(agentSpec.GetWorkspace()))
 	if err != nil {
 		return Preparation{}, err
 	}
@@ -167,6 +167,7 @@ func ComposeWorkspaceSpecFromV2(workspace *agentcomposev2.WorkspaceSpec) *compos
 		return nil
 	}
 	return &compose.WorkspaceSpec{
+		Name:     workspace.GetName(),
 		Provider: workspace.GetProvider(),
 		URL:      workspace.GetUrl(),
 		Branch:   workspace.GetBranch(),

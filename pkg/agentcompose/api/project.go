@@ -145,13 +145,31 @@ func ProjectSpecToProto(spec *compose.NormalizedProjectSpec) *agentcomposev2.Pro
 		return nil
 	}
 	return &agentcomposev2.ProjectSpec{
-		Name:      spec.Name,
-		Variables: EnvVarSpecsToProto(spec.Variables),
-		Workspace: WorkspaceSpecToProto(spec.Workspace),
-		Agents:    AgentSpecsToProto(spec.Agents),
-		Network:   NetworkSpecToProto(spec.Network),
-		Volumes:   ProjectVolumeSpecsToProto(spec.Volumes),
+		Name:       spec.Name,
+		Variables:  EnvVarSpecsToProto(spec.Variables),
+		Workspaces: NamedWorkspaceSpecsToProto(spec.Workspaces),
+		Agents:     AgentSpecsToProto(spec.Agents),
+		Network:    NetworkSpecToProto(spec.Network),
+		Volumes:    ProjectVolumeSpecsToProto(spec.Volumes),
 	}
+}
+
+func NamedWorkspaceSpecsToProto(workspaces map[string]compose.WorkspaceSpec) []*agentcomposev2.NamedWorkspaceSpec {
+	keys := make([]string, 0, len(workspaces))
+	for key := range workspaces {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	items := make([]*agentcomposev2.NamedWorkspaceSpec, 0, len(keys))
+	for _, key := range keys {
+		workspace := workspaces[key]
+		workspace.Name = ""
+		items = append(items, &agentcomposev2.NamedWorkspaceSpec{
+			Name:      key,
+			Workspace: WorkspaceSpecToProto(&workspace),
+		})
+	}
+	return items
 }
 
 func AgentSpecsToProto(agents []compose.NormalizedAgentSpec) []*agentcomposev2.AgentSpec {
@@ -255,6 +273,7 @@ func WorkspaceSpecToProto(workspace *compose.WorkspaceSpec) *agentcomposev2.Work
 		return nil
 	}
 	return &agentcomposev2.WorkspaceSpec{
+		Name:     workspace.Name,
 		Provider: workspace.Provider,
 		Url:      workspace.URL,
 		Branch:   workspace.Branch,
@@ -342,8 +361,10 @@ func ProjectSpecYAMLShape(spec *agentcomposev2.ProjectSpec) (map[string]any, []*
 	} else if len(variables) > 0 {
 		root["variables"] = variables
 	}
-	if workspace := WorkspaceYAMLShape(spec.GetWorkspace()); len(workspace) > 0 {
-		root["workspace"] = workspace
+	if workspaces, issues := NamedWorkspaceYAMLMap(spec.GetWorkspaces()); len(issues) > 0 {
+		return nil, issues
+	} else if len(workspaces) > 0 {
+		root["workspaces"] = workspaces
 	}
 	if agents, issues := AgentYAMLMap(spec.GetAgents()); len(issues) > 0 {
 		return nil, issues
@@ -638,6 +659,9 @@ func WorkspaceYAMLShape(workspace *agentcomposev2.WorkspaceSpec) map[string]any 
 		return nil
 	}
 	raw := map[string]any{}
+	if strings.TrimSpace(workspace.GetName()) != "" {
+		raw["name"] = workspace.GetName()
+	}
 	if strings.TrimSpace(workspace.GetProvider()) != "" {
 		raw["provider"] = workspace.GetProvider()
 	}
@@ -651,6 +675,23 @@ func WorkspaceYAMLShape(workspace *agentcomposev2.WorkspaceSpec) map[string]any 
 		raw["path"] = workspace.GetPath()
 	}
 	return raw
+}
+
+func NamedWorkspaceYAMLMap(workspaces []*agentcomposev2.NamedWorkspaceSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
+	values := make(map[string]any, len(workspaces))
+	for i, item := range workspaces {
+		name := strings.TrimSpace(item.GetName())
+		if name == "" {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("workspaces[%d].name", i), "workspace name is required")}
+		}
+		if _, ok := values[name]; ok {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("workspaces[%d].name", i), fmt.Sprintf("duplicate workspace %q", name))}
+		}
+		workspace := WorkspaceYAMLShape(item.GetWorkspace())
+		delete(workspace, "name")
+		values[name] = workspace
+	}
+	return values, nil
 }
 
 func NetworkYAMLShape(network *agentcomposev2.NetworkSpec) map[string]any {

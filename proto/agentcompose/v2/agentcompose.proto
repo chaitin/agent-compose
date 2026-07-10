@@ -317,10 +317,17 @@ message ProjectChange {
 message ProjectSpec {
   string name = 1;
   repeated EnvVarSpec variables = 2;
-  WorkspaceSpec workspace = 3;
+  reserved 3;
+  reserved "workspace";
   repeated AgentSpec agents = 4;
   NetworkSpec network = 5;
   repeated ProjectVolumeSpec volumes = 6;
+  repeated NamedWorkspaceSpec workspaces = 7;
+}
+
+message NamedWorkspaceSpec {
+  string name = 1;
+  WorkspaceSpec workspace = 2;
 }
 
 message AgentSpec {
@@ -377,6 +384,7 @@ message WorkspaceSpec {
   string url = 2;
   string branch = 3;
   string path = 4;
+  string name = 5;
 }
 
 message NetworkSpec {

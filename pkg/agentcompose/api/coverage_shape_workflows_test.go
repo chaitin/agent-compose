@@ -201,10 +201,10 @@ func TestAPIMappingCoverageWorkflows(t *testing.T) {
 		t.Fatalf("DryRunProjectChanges = %#v", dryRun)
 	}
 	normalizedSpec := &compose.NormalizedProjectSpec{
-		Name:      "Project",
-		Variables: map[string]compose.EnvVarSpec{"B": {Value: "2"}, "A": {Value: "1", Secret: true}},
-		Workspace: &compose.WorkspaceSpec{Provider: "git", URL: "https://example.test/repo.git", Branch: "main", Path: "src"},
-		Network:   &compose.NetworkSpec{Mode: "host"},
+		Name:       "Project",
+		Variables:  map[string]compose.EnvVarSpec{"B": {Value: "2"}, "A": {Value: "1", Secret: true}},
+		Workspaces: map[string]compose.WorkspaceSpec{"repo": {Name: "repo", Provider: "git", URL: "https://example.test/repo.git", Branch: "main", Path: "src"}},
+		Network:    &compose.NetworkSpec{Mode: "host"},
 		Agents: []compose.NormalizedAgentSpec{{
 			Name: "worker", Provider: "codex", Model: "gpt", SystemPrompt: "system", Image: "guest:latest", CapsetIDs: []string{"dev"},
 			Build: &compose.NormalizedBuildSpec{

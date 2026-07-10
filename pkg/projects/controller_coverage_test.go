@@ -20,6 +20,10 @@ func TestControllerValidateApplyDryRunAndResolveWorkflows(t *testing.T) {
 name: coverage-project
 variables:
   SHARED: value
+workspaces:
+  default:
+    provider: local
+    path: .
 agents:
   worker:
     provider: codex

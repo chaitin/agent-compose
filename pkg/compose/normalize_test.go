@@ -14,6 +14,10 @@ func TestNormalizeDefaultsProjectNameFromComposeDirectory(t *testing.T) {
 	}
 	path := filepath.Join(dir, "agent-compose.yml")
 	if err := os.WriteFile(path, []byte(`
+workspaces:
+  default:
+    provider: local
+    path: .
 agents:
   reviewer:
     provider: codex
@@ -38,6 +42,10 @@ func TestNormalizeDefaultsProjectNameFromRelativeComposePath(t *testing.T) {
 	}
 	path := filepath.Join(dir, "custom.yml")
 	if err := os.WriteFile(path, []byte(`
+workspaces:
+  default:
+    provider: local
+    path: .
 agents:
   reviewer:
     provider: codex
@@ -102,7 +110,8 @@ agents:
 
 func TestNormalizeSortsAgentsForStableOutput(t *testing.T) {
 	spec := &ProjectSpec{
-		Name: "stable",
+		Name:       "stable",
+		Workspaces: map[string]WorkspaceSpec{"default": {Provider: "local", Path: "."}},
 		Agents: map[string]AgentSpec{
 			"worker":   {Provider: "codex"},
 			"reviewer": {Provider: "codex"},
@@ -230,10 +239,7 @@ agents:
         source: /tmp/data
         target: /host-data
 `)
-	spec, err := Parse(raw)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
+	spec := mustParseCompose(t, string(raw))
 	normalized, err := Normalize(spec, NormalizeOptions{})
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
@@ -258,7 +264,8 @@ agents:
 
 func TestNormalizePreservesValidAgentNames(t *testing.T) {
 	spec := &ProjectSpec{
-		Name: "valid-agents",
+		Name:       "valid-agents",
+		Workspaces: map[string]WorkspaceSpec{"default": {Provider: "local", Path: "."}},
 		Agents: map[string]AgentSpec{
 			"a1":          {Provider: "codex"},
 			"agent_1":     {Provider: "codex"},
@@ -294,7 +301,8 @@ func TestNormalizeRejectsInvalidAgentName(t *testing.T) {
 	for _, name := range tests {
 		t.Run(name, func(t *testing.T) {
 			spec := &ProjectSpec{
-				Name: "invalid-agent",
+				Name:       "invalid-agent",
+				Workspaces: map[string]WorkspaceSpec{"default": {Provider: "local", Path: "."}},
 				Agents: map[string]AgentSpec{
 					name: {Provider: "codex"},
 				},
@@ -515,7 +523,8 @@ func TestNormalizeRejectsInvalidJupyterGuestPort(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			spec := &ProjectSpec{
-				Name: "invalid-jupyter",
+				Name:       "invalid-jupyter",
+				Workspaces: map[string]WorkspaceSpec{"default": {Provider: "local", Path: "."}},
 				Agents: map[string]AgentSpec{
 					"reviewer": {
 						Provider: "codex",
@@ -772,11 +781,107 @@ agents:
 	}
 }
 
+func TestNormalizeResolvesAgentWorkspaceReference(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: reference-workspace
+workspaces:
+  repo-root:
+    provider: local
+    path: .
+agents:
+  reviewer:
+    provider: codex
+    workspace:
+      name: repo-root
+`)
+
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if normalized.Agents[0].Workspace == nil || normalized.Agents[0].Workspace.Provider != "local" || normalized.Agents[0].Workspace.Path != "." || normalized.Agents[0].Workspace.Name != "" {
+		t.Fatalf("workspace = %#v", normalized.Agents[0].Workspace)
+	}
+}
+
+func TestNormalizeUsesOnlyGlobalWorkspaceByDefault(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: default-workspace
+workspaces:
+  repo-root:
+    provider: local
+    path: .
+agents:
+  reviewer:
+    provider: codex
+`)
+
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if normalized.Agents[0].Workspace == nil || normalized.Agents[0].Workspace.Provider != "local" || normalized.Agents[0].Workspace.Path != "." || normalized.Agents[0].Workspace.Name != "" {
+		t.Fatalf("workspace = %#v", normalized.Agents[0].Workspace)
+	}
+}
+
+func TestNormalizeRejectsMixedAgentWorkspaceDefinition(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: mixed-workspace
+workspaces:
+  repo-root:
+    provider: local
+    path: .
+agents:
+  reviewer:
+    provider: codex
+    workspace:
+      name: repo-root
+      provider: local
+      path: .
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "agents.reviewer.workspace") || !strings.Contains(got, "name") {
+		t.Fatalf("error = %q, want mixed workspace error", got)
+	}
+}
+
+func TestNormalizeRejectsAmbiguousDefaultWorkspace(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: ambiguous-workspace
+workspaces:
+  repo-root:
+    provider: local
+    path: .
+  docs-repo:
+    provider: git
+    url: https://example.test/docs.git
+agents:
+  reviewer:
+    provider: codex
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "agents.reviewer.workspace") || !strings.Contains(got, "multiple") {
+		t.Fatalf("error = %q, want ambiguous default workspace error", got)
+	}
+}
+
 func mustParseCompose(t *testing.T, raw string) *ProjectSpec {
 	t.Helper()
 	spec, err := Parse([]byte(raw))
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
+	}
+	if len(spec.Workspaces) == 0 {
+		spec.Workspaces = map[string]WorkspaceSpec{"default": {Provider: "local", Path: "."}}
 	}
 	return spec
 }

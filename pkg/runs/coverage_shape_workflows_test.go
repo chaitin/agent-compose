@@ -137,7 +137,7 @@ func TestRunsPreparationWorkspaceAndStatusWorkflows(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sourceDir, "README.md"), []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	spec := `{"variables":[{"name":"PROJECT_VAR","value":"project"}],"workspace":{"provider":"git","url":"https://example.test/repo.git","branch":"main","path":"."},"agents":[{"name":"worker","workspace":{"provider":"local","path":"."}}]}`
+	spec := `{"variables":[{"name":"PROJECT_VAR","value":"project"}],"agents":[{"name":"worker","workspace":{"provider":"local","path":"."}}]}`
 	store := &fakePreparationStore{
 		project:  domain.ProjectRecord{ID: "project-1", Name: "Project", SourcePath: sourceDir},
 		revision: domain.ProjectRevisionRecord{ProjectID: "project-1", Revision: 1, SpecJSON: spec},
@@ -189,16 +189,16 @@ func TestRunsPreparationWorkspaceAndStatusWorkflows(t *testing.T) {
 	if _, err := projectRunGitWorkspaceConfig(run, &compose.WorkspaceSpec{Provider: "git"}); err == nil {
 		t.Fatalf("expected git workspace url error")
 	}
-	if workspace, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, nil, nil); err != nil || workspace != nil {
+	if workspace, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, nil); err != nil || workspace != nil {
 		t.Fatalf("nil workspace = %#v/%v", workspace, err)
 	}
-	if _, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, &compose.WorkspaceSpec{}, nil); err == nil || !strings.Contains(err.Error(), "provider is required") {
+	if _, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, &compose.WorkspaceSpec{}); err == nil || !strings.Contains(err.Error(), "provider is required") {
 		t.Fatalf("missing provider err=%v", err)
 	}
-	if _, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, &compose.WorkspaceSpec{Provider: "s3"}, nil); err == nil || !strings.Contains(err.Error(), "unsupported") {
+	if _, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, &compose.WorkspaceSpec{Provider: "s3"}); err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("unsupported provider err=%v", err)
 	}
-	localWorkspace, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, &compose.WorkspaceSpec{Provider: "git", URL: "https://example.test/project.git", Path: "."}, &compose.WorkspaceSpec{Provider: "local", Path: "."})
+	localWorkspace, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, &compose.WorkspaceSpec{Provider: "local", Path: "."})
 	if err != nil || localWorkspace == nil || localWorkspace.Type != "file" {
 		t.Fatalf("agent local workspace = %#v/%v", localWorkspace, err)
 	}

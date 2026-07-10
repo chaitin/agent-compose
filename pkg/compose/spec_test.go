@@ -36,10 +36,11 @@ variables:
   OPENAI_API_KEY:
     value: ${OPENAI_API_KEY}
     secret: true
-workspace:
-  provider: git
-  url: https://github.com/org/repo.git
-  branch: main
+workspaces:
+  repo:
+    provider: git
+    url: https://github.com/org/repo.git
+    branch: main
 agents:
   reviewer:
     provider: codex
@@ -74,8 +75,8 @@ network:
 	if got := spec.Variables["OPENAI_API_KEY"]; got.Value != "${OPENAI_API_KEY}" || !got.Secret {
 		t.Fatalf("OPENAI_API_KEY = %#v", got)
 	}
-	if spec.Workspace == nil || spec.Workspace.Provider != "git" || spec.Workspace.Branch != "main" {
-		t.Fatalf("workspace = %#v", spec.Workspace)
+	if spec.Workspaces["repo"].Provider != "git" || spec.Workspaces["repo"].Branch != "main" {
+		t.Fatalf("workspaces = %#v", spec.Workspaces)
 	}
 	agent := spec.Agents["reviewer"]
 	if agent.Driver == nil || agent.Driver.Boxlite == nil || agent.Driver.Boxlite.Kernel != "s3://bucket/kernel" {
