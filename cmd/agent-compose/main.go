@@ -794,6 +794,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		},
 	}
 	addVolumeListFlags(volumeLSCmd, &volumeLSOptions)
+	volumeLSCmd.Flags().BoolVar(&volumeLSOptions.Verbose, "verbose", false, "Show the full project id")
 	volumeCreateOptions := composeVolumeCreateOptions{}
 	volumeCreateCmd := &cobra.Command{
 		Use:   "create <name>",
@@ -1102,6 +1103,7 @@ type composeVolumeListOptions struct {
 	Query     string
 	Driver    string
 	ProjectID string
+	Verbose   bool
 }
 
 type composeVolumeCreateOptions struct {
@@ -3646,6 +3648,11 @@ func runComposeVolumeListCommand(cmd *cobra.Command, cli cliOptions, options com
 		return commandExitErrorForConnect(fmt.Errorf("list volumes: %w", err))
 	}
 	output := composeVolumeListOutputFromResponse(resp.Msg)
+	projects, err := listAllProjects(cmd.Context(), clients.project)
+	if err != nil {
+		return commandExitErrorForConnect(fmt.Errorf("list projects for volumes: %w", err))
+	}
+	setComposeVolumeProjectNames(output.Volumes, projects.Projects)
 	if cli.JSON {
 		data, err := json.MarshalIndent(output, "", "  ")
 		if err != nil {
@@ -3653,7 +3660,7 @@ func runComposeVolumeListCommand(cmd *cobra.Command, cli cliOptions, options com
 		}
 		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
 	}
-	return writeVolumesText(cmd.OutOrStdout(), output.Volumes)
+	return writeVolumesText(cmd.OutOrStdout(), output.Volumes, options.Verbose)
 }
 
 func runComposeVolumeCreateCommand(cmd *cobra.Command, cli cliOptions, options composeVolumeCreateOptions, name string) error {
@@ -4883,14 +4890,15 @@ type composeVolumePruneOutput struct {
 }
 
 type composeVolumeOutput struct {
-	Name      string            `json:"name"`
-	Driver    string            `json:"driver"`
-	Path      string            `json:"path,omitempty"`
-	Labels    map[string]string `json:"labels,omitempty"`
-	Options   map[string]string `json:"options,omitempty"`
-	ProjectID string            `json:"project_id,omitempty"`
-	CreatedAt string            `json:"created_at,omitempty"`
-	UpdatedAt string            `json:"updated_at,omitempty"`
+	Name        string            `json:"name"`
+	Driver      string            `json:"driver"`
+	Path        string            `json:"path,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Options     map[string]string `json:"options,omitempty"`
+	ProjectID   string            `json:"project_id,omitempty"`
+	ProjectName string            `json:"project_name,omitempty"`
+	CreatedAt   string            `json:"created_at,omitempty"`
+	UpdatedAt   string            `json:"updated_at,omitempty"`
 }
 
 type composeCacheOutput struct {
@@ -6097,6 +6105,16 @@ func composeVolumeListOutputFromResponse(resp *agentcomposev2.ListVolumesRespons
 	return output
 }
 
+func setComposeVolumeProjectNames(volumes []composeVolumeOutput, projects []composeProjectListItem) {
+	projectNames := make(map[string]string, len(projects))
+	for _, project := range projects {
+		projectNames[project.ID] = project.Name
+	}
+	for index := range volumes {
+		volumes[index].ProjectName = projectNames[displayOpaqueID(volumes[index].ProjectID)]
+	}
+}
+
 func composeVolumePruneOutputFromResponse(resp *agentcomposev2.PruneVolumesResponse) composeVolumePruneOutput {
 	output := composeVolumePruneOutput{
 		DryRun:  resp.GetDryRun(),
@@ -6417,18 +6435,28 @@ func writeCacheInspectText(out io.Writer, output composeCacheInspectOutput) erro
 	return nil
 }
 
-func writeVolumesText(out io.Writer, volumes []composeVolumeOutput) error {
+func writeVolumesText(out io.Writer, volumes []composeVolumeOutput, verbose bool) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "NAME\tDRIVER\tPROJECT\tPATH"); err != nil {
+	header := "NAME\tDRIVER\tPROJECT\tPATH"
+	if verbose {
+		header = "NAME\tDRIVER\tPROJECT\tPROJECT ID\tPATH"
+	}
+	if _, err := fmt.Fprintln(tw, header); err != nil {
 		return err
 	}
 	for _, volume := range volumes {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
-			firstNonEmptyString(volume.Name, "-"),
-			firstNonEmptyString(volume.Driver, "-"),
-			firstNonEmptyString(volume.ProjectID, "-"),
-			firstNonEmptyString(volume.Path, "-"),
-		); err != nil {
+		project := firstNonEmptyString(volume.ProjectName, shortOpaqueID(volume.ProjectID), "-")
+		var err error
+		if verbose {
+			_, err = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+				firstNonEmptyString(volume.Name, "-"), firstNonEmptyString(volume.Driver, "-"), project,
+				firstNonEmptyString(volume.ProjectID, "-"), firstNonEmptyString(volume.Path, "-"))
+		} else {
+			_, err = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
+				firstNonEmptyString(volume.Name, "-"), firstNonEmptyString(volume.Driver, "-"), project,
+				firstNonEmptyString(volume.Path, "-"))
+		}
+		if err != nil {
 			return err
 		}
 	}

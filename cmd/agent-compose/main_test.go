@@ -5510,6 +5510,14 @@ func TestIntegrationCLIVolumeCommands(t *testing.T) {
 	var createdLabel string
 	var removed []string
 	server := newComposeServiceStubServer(t, composeServiceStubs{
+		project: projectServiceStub{
+			listProjects: func(context.Context, *connect.Request[agentcomposev2.ListProjectsRequest]) (*connect.Response[agentcomposev2.ListProjectsResponse], error) {
+				return connect.NewResponse(&agentcomposev2.ListProjectsResponse{Projects: []*agentcomposev2.ProjectSummary{{
+					ProjectId: "project-1",
+					Name:      "volume-sharing",
+				}}}), nil
+			},
+		},
 		volume: volumeServiceStub{
 			listVolumes: func(ctx context.Context, req *connect.Request[agentcomposev2.ListVolumesRequest]) (*connect.Response[agentcomposev2.ListVolumesResponse], error) {
 				listCalls++
@@ -5551,6 +5559,16 @@ func TestIntegrationCLIVolumeCommands(t *testing.T) {
 	})
 	defer server.Close()
 
+	textOut, textErr, _, textCode := executeCLICommand("volume", "ls", "--host", server.URL, "--query", "cac", "--driver", "local")
+	if textCode != 0 || textErr != "" || !strings.Contains(textOut, "volume-sharing") || strings.Contains(textOut, "project-1") {
+		t.Fatalf("volume ls text code/stdout/stderr = %d / %q / %q", textCode, textOut, textErr)
+	}
+
+	verboseOut, verboseErr, _, verboseCode := executeCLICommand("volume", "ls", "--host", server.URL, "--verbose", "--query", "cac", "--driver", "local")
+	if verboseCode != 0 || verboseErr != "" || !strings.Contains(verboseOut, "PROJECT ID") || !strings.Contains(verboseOut, "volume-sharing") || !strings.Contains(verboseOut, "project-1") {
+		t.Fatalf("volume ls --verbose code/stdout/stderr = %d / %q / %q", verboseCode, verboseOut, verboseErr)
+	}
+
 	listOut, listErr, _, listCode := executeCLICommand("volume", "ls", "--host", server.URL, "--json", "--query", "cac", "--driver", "local")
 	if listCode != 0 || listErr != "" {
 		t.Fatalf("volume ls code/stderr = %d / %q", listCode, listErr)
@@ -5559,7 +5577,7 @@ func TestIntegrationCLIVolumeCommands(t *testing.T) {
 	if err := json.Unmarshal([]byte(listOut), &listDecoded); err != nil {
 		t.Fatalf("volume ls JSON decode failed: %v\n%s", err, listOut)
 	}
-	if len(listDecoded.Volumes) != 1 || listDecoded.Volumes[0].Name != "cache" {
+	if len(listDecoded.Volumes) != 1 || listDecoded.Volumes[0].Name != "cache" || listDecoded.Volumes[0].ProjectName != "volume-sharing" || listDecoded.Volumes[0].ProjectID != "project-1" {
 		t.Fatalf("volume ls JSON = %#v", listDecoded)
 	}
 
@@ -5579,7 +5597,7 @@ func TestIntegrationCLIVolumeCommands(t *testing.T) {
 	}
 
 	pruneOut, pruneErr, _, pruneCode := executeCLICommand("volume", "prune", "--host", server.URL, "--driver", "local", "--force")
-	if pruneCode != 0 || pruneErr != "" || !strings.Contains(pruneOut, "Removed 1 volume") || listCalls != 1 {
+	if pruneCode != 0 || pruneErr != "" || !strings.Contains(pruneOut, "Removed 1 volume") || listCalls != 3 {
 		t.Fatalf("volume prune code/stdout/stderr/listCalls = %d / %q / %q / %d", pruneCode, pruneOut, pruneErr, listCalls)
 	}
 }
