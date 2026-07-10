@@ -560,7 +560,9 @@ Default data root:
 
 - If `DATA_ROOT` is empty, `$XDG_DATA_HOME/agent-compose` is used.
 - If `XDG_DATA_HOME` is empty, `$HOME/.local/share/agent-compose` is used.
-- `SANDBOX_ROOT` is `<DATA_ROOT>/sandboxes`.
+- `SANDBOX_ROOT` defaults to `<DATA_ROOT>/sandboxes`. For compatibility, when
+  neither root environment variable is set and `<DATA_ROOT>/sessions` is a
+  non-empty directory, the daemon uses that directory and emits a warning.
 - If `IMAGE_CACHE_ROOT` is empty, it is `<DATA_ROOT>/images`.
 
 Image store configuration:
@@ -591,7 +593,7 @@ data/agent-compose/
     ├── runtime/
     ├── state/
     │   ├── cells.json
-    │   └── events.json
+    │   └── events.jsonl
     ├── logs/
     ├── vm/
     │   └── runtime.json
@@ -756,7 +758,18 @@ Guest agent providers (`codex`, `claude`, `gemini`, `opencode`) remain separate 
 inside guest containers with their own API keys and provider-native session
 state.
 
-The loader also exposes a unary RPC bridge for v1 `SessionService`:
+The loader's primary sandbox lifecycle API is:
+
+- `scheduler.sandbox.createSandbox(request)`
+- `scheduler.sandbox.resumeSandbox(request)`
+- `scheduler.sandbox.stopSandbox(request)`
+- `scheduler.sandbox.getSandbox(request)`
+- `scheduler.sandbox.listSandboxes()`
+- `scheduler.sandbox.getSandboxProxy(request)`
+
+These methods expose sandbox-shaped request and response JSON while currently
+bridging to the v1 lifecycle service internally. The loader also retains these
+deprecated v1 `SessionService` aliases:
 
 - `scheduler.session.createSession(request)`
 - `scheduler.session.resumeSession(request)`
@@ -765,8 +778,9 @@ The loader also exposes a unary RPC bridge for v1 `SessionService`:
 - `scheduler.session.listSessions()`
 - `scheduler.session.getSessionProxy(request)`
 
-Method names use lower camel case and also retain original proto method aliases,
-for example `scheduler.session.ResumeSession(...)`.
+Method names use lower camel case and also retain PascalCase aliases. New
+scripts should use `scheduler.sandbox.*`; calls through `scheduler.session.*`
+emit deprecation warnings.
 
 ## Frontend Service
 

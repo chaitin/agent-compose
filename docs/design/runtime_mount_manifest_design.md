@@ -42,7 +42,7 @@ The host sandbox directory created by `Store.CreateSandbox` includes:
   vm/runtime.json
   proxy/jupyter.json
   state/cells.json
-  state/events.json
+  state/events.jsonl
 ```
 
 Guest/runtime actually uses:

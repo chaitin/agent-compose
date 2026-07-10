@@ -30,7 +30,7 @@ host 侧 sandbox 状态仍保存在 `<sandbox>` 下。Docker 不暴露 `context`
   vm/runtime.json
   proxy/jupyter.json
   state/cells.json
-  state/events.json
+  state/events.jsonl
 ```
 
 guest/runtime 实际使用：

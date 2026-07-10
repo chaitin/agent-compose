@@ -90,7 +90,7 @@ host 在 `Store.CreateSandbox` 阶段创建：
   vm/runtime.json
   proxy/jupyter.json
   state/cells.json
-  state/events.json
+  state/events.jsonl
 ```
 
 如果 sandbox 绑定了 git workspace，host 会在启动 runtime 前把仓库 clone 到 `<sandbox>/workspace`。

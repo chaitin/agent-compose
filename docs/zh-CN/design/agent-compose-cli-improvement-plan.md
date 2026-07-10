@@ -141,7 +141,7 @@ agents:
 
 ### Cleanup policy
 
-v2 `RunSessionCleanupPolicy` 当前包括：
+v2 `RunSandboxCleanupPolicy` 当前包括：
 
 - `STOP_ON_COMPLETION`：默认策略，run terminal 后停止 sandbox runtime。
 - `KEEP_RUNNING`：`--keep-running`，run 完成后保留 runtime。

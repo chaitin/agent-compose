@@ -109,7 +109,7 @@ During `Store.CreateSandbox`, the host creates:
   vm/runtime.json
   proxy/jupyter.json
   state/cells.json
-  state/events.json
+  state/events.jsonl
 ```
 
 If the sandbox is bound to a Git workspace, the host clones the repository into
