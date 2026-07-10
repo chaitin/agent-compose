@@ -48,6 +48,19 @@ E2E tests should cover critical workflows such as:
 E2E tests should be isolated, repeatable, and explicit about required runtime
 dependencies.
 
+The real host-daemon Docker Jupyter lifecycle E2E is opt-in because it requires
+a local Docker Engine and a guest image containing JupyterLab. Run it with:
+
+```bash
+task test:e2e:docker-jupyter
+```
+
+The task uses `agent-compose-guest:latest` by default. Set
+`AGENT_COMPOSE_E2E_DOCKER_JUPYTER_IMAGE` to test another compatible image. The
+test starts an isolated host daemon, creates a Docker sandbox through the public
+API, verifies the unified Jupyter endpoint, then stops and resumes the sandbox
+with deliberately stale persisted port state to verify inspect-based recovery.
+
 ## Quality Gate
 
 `task test` is the project quality gate for tests.

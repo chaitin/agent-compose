@@ -115,6 +115,22 @@ tasks:
       - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} ./scripts/run-go-test-shape.sh e2e
       - cd runtime/javascript && TEST_SHAPE=e2e npm run test:unit
 
+  test:e2e:docker-jupyter:
+    desc: Run the opt-in host-daemon Docker Jupyter stop/resume E2E test
+    dir: '{{.TASKFILE_DIR}}'
+    deps: ['build:agent-compose']
+    cmds:
+      - |
+        image="${AGENT_COMPOSE_E2E_DOCKER_JUPYTER_IMAGE:-agent-compose-guest:latest}"
+        if ! docker image inspect "$image" >/dev/null 2>&1; then
+          echo "Docker Jupyter image $image is unavailable; run 'task image:agent-compose-guest' or set AGENT_COMPOSE_E2E_DOCKER_JUPYTER_IMAGE" >&2
+          exit 1
+        fi
+        AGENT_COMPOSE_E2E_BINARY="$PWD/build/agent-compose" \
+          AGENT_COMPOSE_E2E_DOCKER_JUPYTER_IMAGE="$image" \
+          GOCACHE={{.GO_BUILD_CACHE_DIR}} \
+          {{.GO_TOOLCHAIN_ENV}} go test ./test/e2e -run '^TestE2EDockerJupyterHostDaemonStopResume$' -count=1 -v
+
   test:runtime-smoke:
     desc: Run opt-in real BoxLite/Microsandbox runtime smoke tests
     dir: '{{.TASKFILE_DIR}}'
