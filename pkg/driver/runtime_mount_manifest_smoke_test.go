@@ -203,6 +203,69 @@ func assertRuntimeSmokeHomeFiles(t *testing.T, ctx context.Context, runtime Sand
 	}
 }
 
+func assertRuntimeStopResumePreservesWritableLayer(t *testing.T, ctx context.Context, config *appconfig.Config, runtime SandboxRuntime, session *Sandbox, vmState VMState, proxyState ProxyState) {
+	t.Helper()
+	proxyState.Enabled = false
+	info, err := runtime.EnsureSandbox(ctx, session, vmState, proxyState)
+	if err != nil {
+		t.Fatalf("EnsureSandbox() error = %v", err)
+	}
+	vmState.BoxID = info.BoxID
+	originalBoxID := info.BoxID
+	statePath := "/tmp/regression-sandbox-state.txt"
+	if session.Summary.Driver != RuntimeDriverDocker {
+		// BoxLite mounts /tmp as tmpfs, so use a path on the guest root disk
+		// when checking writable-layer persistence across a VM power cycle.
+		statePath = "/var/tmp/regression-sandbox-state.txt"
+	}
+	t.Cleanup(func() {
+		removeCtx, removeCancel := context.WithTimeout(context.Background(), SandboxStopContextTimeout(session.Summary.Driver, config.SandboxStopTimeout))
+		defer removeCancel()
+		_ = runtime.RemoveSandbox(removeCtx, session, vmState)
+	})
+
+	writeResult, err := runtime.Exec(ctx, session, vmState, ExecSpec{
+		Command: "sh",
+		Args:    []string{"-lc", "printf %s sandbox-exec-before-stop-ok > " + statePath},
+		Cwd:     "/",
+	})
+	if err != nil || !writeResult.Success {
+		t.Fatalf("write state result = %#v, err=%v", writeResult, err)
+	}
+
+	for round := 1; round <= 2; round++ {
+		missing, err := runtime.StopSandbox(ctx, session, vmState)
+		if err != nil || missing {
+			t.Fatalf("round %d StopSandbox() missing=%v error=%v", round, missing, err)
+		}
+		vmState.StoppedAt = time.Now().UTC()
+		info, err := runtime.EnsureSandbox(ctx, session, vmState, proxyState)
+		if err != nil {
+			t.Fatalf("round %d EnsureSandbox() error = %v", round, err)
+		}
+		if info.BoxID != originalBoxID {
+			t.Fatalf("round %d resumed runtime = %q, want original %q", round, info.BoxID, originalBoxID)
+		}
+		vmState.StoppedAt = time.Time{}
+		readResult, err := runtime.Exec(ctx, session, vmState, ExecSpec{
+			Command: "cat",
+			Args:    []string{statePath},
+			Cwd:     "/",
+		})
+		if err != nil || !readResult.Success || strings.TrimSpace(readResult.Stdout) != "sandbox-exec-before-stop-ok" {
+			t.Fatalf("round %d read state result = %#v, err=%v", round, readResult, err)
+		}
+	}
+
+	if err := runtime.RemoveSandbox(ctx, session, vmState); err != nil {
+		t.Fatalf("RemoveSandbox() error = %v", err)
+	}
+	vmState.StoppedAt = time.Now().UTC()
+	if _, err := runtime.EnsureSandbox(ctx, session, vmState, proxyState); err == nil || !strings.Contains(err.Error(), "refusing to recreate") {
+		t.Fatalf("resume after runtime removal error = %v, want refusal to recreate", err)
+	}
+}
+
 func runtimeSmokeGuestPathAssertionScript() string {
 	return `
 set -eu

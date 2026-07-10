@@ -9,6 +9,7 @@ import (
 
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/llms"
 	"agent-compose/pkg/llms/runtimefacade"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/configstore"
@@ -20,6 +21,8 @@ import (
 type fakeSessionRuntime struct {
 	info       domain.SandboxVMInfo
 	ensureHook func(*domain.Sandbox)
+	removeHook func(*domain.Sandbox)
+	removeErr  error
 }
 
 func (r fakeSessionRuntime) EnsureSandbox(_ context.Context, session *domain.Sandbox, _ domain.VMState, _ domain.ProxyState) (domain.SandboxVMInfo, error) {
@@ -31,6 +34,13 @@ func (r fakeSessionRuntime) EnsureSandbox(_ context.Context, session *domain.San
 
 func (r fakeSessionRuntime) StopSandbox(context.Context, *domain.Sandbox, domain.VMState) (bool, error) {
 	return false, nil
+}
+
+func (r fakeSessionRuntime) RemoveSandbox(_ context.Context, session *domain.Sandbox, _ domain.VMState) error {
+	if r.removeHook != nil {
+		r.removeHook(session)
+	}
+	return r.removeErr
 }
 
 func (r fakeSessionRuntime) Exec(context.Context, *domain.Sandbox, domain.VMState, domain.ExecSpec) (domain.ExecResult, error) {
@@ -57,6 +67,10 @@ func (r *fakeStopDeadlineRuntime) StopSandbox(ctx context.Context, _ *domain.San
 	return false, nil
 }
 
+func (r *fakeStopDeadlineRuntime) RemoveSandbox(context.Context, *domain.Sandbox, domain.VMState) error {
+	return nil
+}
+
 func (r *fakeStopDeadlineRuntime) Exec(context.Context, *domain.Sandbox, domain.VMState, domain.ExecSpec) (domain.ExecResult, error) {
 	return domain.ExecResult{}, nil
 }
@@ -75,6 +89,10 @@ func (r fakeDriverRuntime) EnsureSandbox(context.Context, *driverpkg.Sandbox, dr
 
 func (r fakeDriverRuntime) StopSandbox(context.Context, *driverpkg.Sandbox, driverpkg.VMState) (bool, error) {
 	return false, nil
+}
+
+func (r fakeDriverRuntime) RemoveSandbox(context.Context, *driverpkg.Sandbox, driverpkg.VMState) error {
+	return nil
 }
 
 func (r fakeDriverRuntime) Exec(context.Context, *driverpkg.Sandbox, driverpkg.VMState, driverpkg.ExecSpec) (driverpkg.ExecResult, error) {
@@ -191,6 +209,134 @@ func TestSandboxDriverStopSandboxVMAddsDockerStopContextMargin(t *testing.T) {
 	}
 	if vmState.StoppedAt.IsZero() || vmState.LastError != "" {
 		t.Fatalf("vm state after stop = %+v", vmState)
+	}
+}
+
+func TestSandboxDriverStopPreservesFacadeTokensUntilRemove(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:            root,
+		DbAddr:              filepath.Join(root, "data.db"),
+		SandboxRoot:         filepath.Join(root, "sandboxes"),
+		RuntimeDriver:       driverpkg.RuntimeDriverDocker,
+		DefaultImage:        "guest:latest",
+		GuestWorkspacePath:  "/workspace",
+		SandboxStartTimeout: 2 * time.Second,
+		SandboxStopTimeout:  2 * time.Second,
+	}
+	store, err := sessionstore.NewWithConfig(config)
+	if err != nil {
+		t.Fatalf("NewWithConfig returned error: %v", err)
+	}
+	di := do.New()
+	do.ProvideValue(di, config)
+	configDB, err := configstore.NewConfigStore(di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	session, err := store.CreateSandbox(ctx, "adapter session", "", driverpkg.RuntimeDriverDocker, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	if err := store.SaveVMState(session.Summary.ID, domain.VMState{Driver: driverpkg.RuntimeDriverDocker, BoxID: "container-1"}); err != nil {
+		t.Fatalf("SaveVMState returned error: %v", err)
+	}
+	rawToken, token, err := llms.NewFacadeToken(session.Summary.ID, "model-1", "provider-1", llms.APIProtocolResponses, "test", "")
+	if err != nil {
+		t.Fatalf("NewFacadeToken returned error: %v", err)
+	}
+	if err := configDB.SaveLLMFacadeToken(ctx, token); err != nil {
+		t.Fatalf("SaveLLMFacadeToken returned error: %v", err)
+	}
+	removed := false
+	runtime := fakeSessionRuntime{removeHook: func(removedSession *domain.Sandbox) {
+		removed = removedSession != nil && removedSession.Summary.ID == session.Summary.ID
+	}}
+	driver := NewSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: runtime})
+
+	if err := driver.StopSandboxVM(ctx, session); err != nil {
+		t.Fatalf("StopSandboxVM returned error: %v", err)
+	}
+	storedToken, err := configDB.GetLLMFacadeToken(ctx, rawToken)
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken after stop returned error: %v", err)
+	}
+	if !storedToken.RevokedAt.IsZero() {
+		t.Fatalf("facade token revoked during resumable stop: %+v", storedToken)
+	}
+
+	if err := driver.RemoveSandboxVM(ctx, session); err != nil {
+		t.Fatalf("RemoveSandboxVM returned error: %v", err)
+	}
+	if !removed {
+		t.Fatal("runtime RemoveSandbox was not called")
+	}
+	storedToken, err = configDB.GetLLMFacadeToken(ctx, rawToken)
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken after remove returned error: %v", err)
+	}
+	if storedToken.RevokedAt.IsZero() {
+		t.Fatalf("facade token remains active after remove: %+v", storedToken)
+	}
+}
+
+func TestSandboxDriverResumeReusesRuntimeWithoutRefreshingStartupEnv(t *testing.T) {
+	ctx := context.Background()
+	originalEnsure := ensureSandboxLLMFacadeConfig
+	defer func() { ensureSandboxLLMFacadeConfig = originalEnsure }()
+	ensureCalls := 0
+	ensureSandboxLLMFacadeConfig = func(context.Context, *appconfig.Config, runtimefacade.FacadeStore, *domain.Sandbox, string, string, string, string) (map[string]string, error) {
+		ensureCalls++
+		return map[string]string{"OPENAI_API_KEY": "new-token"}, nil
+	}
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:            root,
+		SandboxRoot:         filepath.Join(root, "sandboxes"),
+		RuntimeDriver:       driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:        "guest:latest",
+		GuestWorkspacePath:  "/workspace",
+		SandboxStartTimeout: 2 * time.Second,
+		SandboxStopTimeout:  2 * time.Second,
+	}
+	store, err := sessionstore.NewWithConfig(config)
+	if err != nil {
+		t.Fatalf("NewWithConfig returned error: %v", err)
+	}
+	session, err := store.CreateSandbox(ctx, "adapter session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	if err := store.SaveVMState(session.Summary.ID, domain.VMState{
+		Driver:    driverpkg.RuntimeDriverBoxlite,
+		BoxID:     "container-1",
+		StoppedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveVMState returned error: %v", err)
+	}
+	runtime := fakeSessionRuntime{
+		info: domain.SandboxVMInfo{BoxID: "container-1"},
+		ensureHook: func(resumed *domain.Sandbox) {
+			if len(resumed.RuntimeEnvItems) != 0 {
+				t.Fatalf("resume injected replacement startup env: %#v", resumed.RuntimeEnvItems)
+			}
+		},
+	}
+	driver := NewSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: runtime})
+
+	if err := driver.StartSandboxVM(ctx, session); err != nil {
+		t.Fatalf("StartSandboxVM returned error: %v", err)
+	}
+	if ensureCalls != 0 {
+		t.Fatalf("startup facade refresh calls during resume = %d, want 0", ensureCalls)
+	}
+	vmState, err := store.GetVMState(session.Summary.ID)
+	if err != nil {
+		t.Fatalf("GetVMState returned error: %v", err)
+	}
+	if vmState.BoxID != "container-1" || !vmState.StoppedAt.IsZero() {
+		t.Fatalf("vm state after resume = %+v", vmState)
 	}
 }
 

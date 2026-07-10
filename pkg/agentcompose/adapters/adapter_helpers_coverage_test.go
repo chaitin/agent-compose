@@ -135,6 +135,10 @@ func (r *fakeDriverAdapterRuntime) StopSandbox(context.Context, *driverpkg.Sandb
 	return false, nil
 }
 
+func (r *fakeDriverAdapterRuntime) RemoveSandbox(context.Context, *driverpkg.Sandbox, driverpkg.VMState) error {
+	return nil
+}
+
 func (r *fakeDriverAdapterRuntime) Exec(_ context.Context, _ *driverpkg.Sandbox, _ driverpkg.VMState, spec driverpkg.ExecSpec) (driverpkg.ExecResult, error) {
 	r.execSpec = spec
 	return r.execResult, nil
@@ -160,6 +164,10 @@ func (fakeDriverNoStatsRuntime) EnsureSandbox(context.Context, *driverpkg.Sandbo
 
 func (fakeDriverNoStatsRuntime) StopSandbox(context.Context, *driverpkg.Sandbox, driverpkg.VMState) (bool, error) {
 	return false, nil
+}
+
+func (fakeDriverNoStatsRuntime) RemoveSandbox(context.Context, *driverpkg.Sandbox, driverpkg.VMState) error {
+	return nil
 }
 
 func (fakeDriverNoStatsRuntime) Exec(context.Context, *driverpkg.Sandbox, driverpkg.VMState, driverpkg.ExecSpec) (driverpkg.ExecResult, error) {

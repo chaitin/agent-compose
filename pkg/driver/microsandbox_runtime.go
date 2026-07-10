@@ -134,13 +134,7 @@ func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox,
 		return false, err
 	}
 	if handle.Status() != microsandbox.SandboxStatusRunning && handle.Status() != microsandbox.SandboxStatusDraining {
-		// Already stopped, but the sandbox metadata still persists in the
-		// daemon. Destroy it (and its docker disk) so a restart rebuilds
-		// from scratch instead of remounting the deleted disk. See
-		// removeSandboxState.
 		r.discardLifecycleHandle(name)
-		r.removeDockerDisk(session.Summary.ID)
-		r.removeSandboxState(ctx, name)
 		return false, nil
 	}
 
@@ -152,15 +146,12 @@ func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox,
 		}()
 		if err := sandbox.Stop(ctx); err != nil {
 			if microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
-				r.removeDockerDisk(session.Summary.ID)
 				return true, nil
 			}
 			r.trackLifecycleHandle(name, sandbox)
 			sandbox = nil
 			return false, err
 		}
-		r.removeDockerDisk(session.Summary.ID)
-		r.removeSandboxState(ctx, name)
 		return false, nil
 	}
 
@@ -170,21 +161,32 @@ func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox,
 	}
 	if stale || sandbox == nil {
 		r.discardLifecycleHandle(name)
-		r.removeDockerDisk(session.Summary.ID)
-		r.removeSandboxState(ctx, name)
 		return true, nil
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
 	if err := sandbox.Stop(ctx); err != nil {
 		if microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
-			r.removeDockerDisk(session.Summary.ID)
 			return true, nil
 		}
 		return false, err
 	}
-	r.removeDockerDisk(session.Summary.ID)
-	r.removeSandboxState(ctx, name)
 	return false, nil
+}
+
+func (r *microsandboxRuntime) RemoveSandbox(ctx context.Context, session *Sandbox, vmState VMState) error {
+	if _, err := r.StopSandbox(ctx, session, vmState); err != nil {
+		return err
+	}
+	name := r.sandboxName(session, vmState)
+	r.discardLifecycleHandle(name)
+	if err := microsandbox.RemoveSandbox(ctx, name); err != nil &&
+		!microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
+		return fmt.Errorf("remove microsandbox %s: %w", name, err)
+	}
+	if err := r.removeDockerDiskFiles(session.Summary.ID); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *microsandboxRuntime) Exec(ctx context.Context, session *Sandbox, vmState VMState, spec ExecSpec) (ExecResult, error) {
@@ -666,32 +668,22 @@ func (r *microsandboxRuntime) ensureDockerDisk(sandboxID string) (string, error)
 }
 
 func (r *microsandboxRuntime) removeDockerDisk(sandboxID string) {
+	if err := r.removeDockerDiskFiles(sandboxID); err != nil {
+		slog.Warn("agent-compose microsandbox: failed to remove docker disk image", "sandbox_id", sandboxID, "error", err)
+	}
+}
+
+func (r *microsandboxRuntime) removeDockerDiskFiles(sandboxID string) error {
 	paths := []string{r.dockerDiskPath(sandboxID)}
 	if legacyPath := r.legacyDockerDiskPath(sandboxID); legacyPath != paths[0] {
 		paths = append(paths, legacyPath)
 	}
 	for _, path := range paths {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			slog.Warn("agent-compose microsandbox: failed to remove docker disk image", "path", path, "error", err)
+			return fmt.Errorf("remove microsandbox docker disk image %s: %w", path, err)
 		}
 	}
-}
-
-// removeSandboxState purges a stopped sandbox's persisted metadata from the
-// microsandbox daemon so a later GetSandbox(name) returns ErrSandboxNotFound.
-// This matches the docker driver, which fully removes the container on stop:
-// without it, a restart would take the getOrCreateSandbox handle.Start() path
-// and remount the per-sandbox docker disk that StopSandbox already deleted,
-// failing with "host path not found". Best-effort — a purge failure must not
-// mask the stop result; the daemon's gc reclaims any residue on restart.
-func (r *microsandboxRuntime) removeSandboxState(ctx context.Context, name string) {
-	if strings.TrimSpace(name) == "" {
-		return
-	}
-	if err := microsandbox.RemoveSandbox(ctx, name); err != nil &&
-		!microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
-		slog.Warn("agent-compose microsandbox: failed to remove sandbox state", "name", name, "error", err)
-	}
+	return nil
 }
 
 func (r *microsandboxRuntime) sandboxAgentSockPath(name string) string {
@@ -783,6 +775,9 @@ func (r *microsandboxRuntime) getOrCreateSandbox(ctx context.Context, session *S
 	if err != nil {
 		if !microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
 			return nil, false, false, err
+		}
+		if !vmState.StoppedAt.IsZero() {
+			return nil, false, false, fmt.Errorf("microsandbox runtime state for stopped sandbox %s is missing; refusing to recreate it during resume", session.Summary.ID)
 		}
 		sandbox, err := r.createSandbox(ctx, session, vmState, proxyState, name)
 		if err == nil {

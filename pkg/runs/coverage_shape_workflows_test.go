@@ -1121,7 +1121,7 @@ func TestRunsControllerRunProjectAgentRemoveOnCompletionCleanup(t *testing.T) {
 		if _, statErr := os.Stat(fixture.store.SandboxDir(run.SandboxID)); !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("created sandbox dir still exists or stat error mismatch: %v", statErr)
 		}
-		if !fixture.driver.stopped || !containsString(fixture.dashboard.reasons, "sandbox_removed") {
+		if !fixture.driver.stopped || !fixture.driver.removed || !containsString(fixture.dashboard.reasons, "sandbox_removed") {
 			t.Fatalf("driver=%#v dashboard=%#v", fixture.driver, fixture.dashboard.reasons)
 		}
 	})
@@ -1207,6 +1207,21 @@ func TestRunsControllerRunProjectAgentCleanupErrorRecording(t *testing.T) {
 		}
 	})
 
+	t.Run("runtime remove failure keeps sandbox metadata", func(t *testing.T) {
+		fixture := newControllerRunFixture(t)
+		fixture.driver.removeErr = errors.New("runtime remove failed")
+		run, execErr, err := runAgentWithRemoveOnCompletion(t, fixture, nil)
+		if err != nil || execErr != nil {
+			t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+		}
+		if !strings.Contains(run.CleanupError, "runtime remove failed") {
+			t.Fatalf("cleanup error = %q", run.CleanupError)
+		}
+		if _, statErr := os.Stat(fixture.store.SandboxDir(run.SandboxID)); statErr != nil {
+			t.Fatalf("sandbox dir should remain when runtime removal fails: %v", statErr)
+		}
+	})
+
 	t.Run("failed run keeps original error and records cleanup error", func(t *testing.T) {
 		fixture := newControllerRunFixture(t)
 		fixture.driver.stopErr = errors.New("stop failed")
@@ -1235,6 +1250,15 @@ func TestRunsControllerRunProjectAgentCleanupErrorRecording(t *testing.T) {
 			t.Fatalf("created sandbox dir still exists or stat error mismatch: %v", statErr)
 		}
 	})
+}
+
+func TestIntegrationRunsControllerRemoveOnCompletionWorkflows(t *testing.T) {
+	t.Run("cleanup", TestRunsControllerRunProjectAgentRemoveOnCompletionCleanup)
+	t.Run("cleanup error recording", TestRunsControllerRunProjectAgentCleanupErrorRecording)
+}
+
+func TestE2ERunsControllerRemoveOnCompletionWorkflows(t *testing.T) {
+	TestIntegrationRunsControllerRemoveOnCompletionWorkflows(t)
 }
 
 func TestRunsControllerRunProjectAgentManualTriggerResolution(t *testing.T) {
@@ -1820,11 +1844,13 @@ func (s *fakeControllerStore) UpsertLoaderBinding(_ context.Context, binding dom
 }
 
 type fakeControllerDriver struct {
-	started  bool
-	stopped  bool
-	startErr error
-	stopErr  error
-	store    *sessionstore.Store
+	started   bool
+	stopped   bool
+	removed   bool
+	startErr  error
+	stopErr   error
+	removeErr error
+	store     *sessionstore.Store
 }
 
 func (d *fakeControllerDriver) StartSandboxVM(_ context.Context, session *domain.Sandbox) error {
@@ -1844,6 +1870,11 @@ func (d *fakeControllerDriver) StopSandboxVM(context.Context, *domain.Sandbox) e
 		return d.stopErr
 	}
 	return nil
+}
+
+func (d *fakeControllerDriver) RemoveSandboxVM(context.Context, *domain.Sandbox) error {
+	d.removed = true
+	return d.removeErr
 }
 
 type fakeControllerExecutor struct {

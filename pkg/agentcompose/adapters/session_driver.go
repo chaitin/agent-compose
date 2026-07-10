@@ -54,7 +54,8 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 	vmState.Mode = driver
 	vmState.BoxName = firstNonEmpty(vmState.BoxName, session.Summary.RuntimeRef)
 	vmState.RuntimeHome = firstNonEmpty(vmState.RuntimeHome, driverpkg.RuntimeHomeForDriver(d.Config, driver))
-	if err := d.prepareSandboxStart(ctx, driver, session, &vmState); err != nil {
+	resuming := !vmState.StoppedAt.IsZero()
+	if err := d.prepareSandboxStart(ctx, driver, session, &vmState, !resuming); err != nil {
 		vmState.LastError = err.Error()
 		_ = d.Store.SaveVMState(session.Summary.ID, vmState)
 		return err
@@ -63,7 +64,6 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 	info, err := runtime.EnsureSandbox(ctx, session, vmState, proxyState)
 	if err != nil {
 		vmState.LastError = err.Error()
-		vmState.StoppedAt = time.Time{}
 		_ = d.Store.SaveVMState(session.Summary.ID, vmState)
 		return err
 	}
@@ -108,18 +108,48 @@ func (d *SandboxDriver) StopSandboxVM(ctx context.Context, session *domain.Sandb
 	if missing {
 		vmState.BoxID = ""
 	}
-	if d.ConfigDB != nil {
-		if err := d.ConfigDB.RevokeLLMFacadeTokensForSandbox(ctx, session.Summary.ID); err != nil {
-			return err
-		}
-	}
 	return d.Store.SaveVMState(session.Summary.ID, vmState)
 }
 
-func (d *SandboxDriver) prepareSandboxStart(ctx context.Context, driver string, session *domain.Sandbox, vmState *domain.VMState) error {
+func (d *SandboxDriver) RemoveSandboxVM(ctx context.Context, session *domain.Sandbox) error {
+	driver, err := driverpkg.ResolveSandboxRuntimeDriver(session.Summary.Driver, d.Config.RuntimeDriver)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, driverpkg.SandboxStopContextTimeout(driver, d.Config.SandboxStopTimeout))
+	defer cancel()
+
+	runtime, err := d.Runtimes.ForDriver(driver)
+	if err != nil {
+		return err
+	}
+	vmState, err := d.Store.GetVMState(session.Summary.ID)
+	if err != nil {
+		return err
+	}
+	if err := runtime.RemoveSandbox(ctx, session, vmState); err != nil {
+		vmState.LastError = err.Error()
+		_ = d.Store.SaveVMState(session.Summary.ID, vmState)
+		return err
+	}
+	if d.ConfigDB != nil {
+		if err := d.ConfigDB.RevokeLLMFacadeTokensForSandbox(ctx, session.Summary.ID); err != nil {
+			vmState.LastError = err.Error()
+			_ = d.Store.SaveVMState(session.Summary.ID, vmState)
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *SandboxDriver) prepareSandboxStart(ctx context.Context, driver string, session *domain.Sandbox, vmState *domain.VMState, refreshRuntimeEnv bool) error {
 	prepared, err := driverpkg.PrepareSandboxStart(ctx, d.Config, driver, execution.ToDriverSandbox(session), execution.ToDriverVMState(*vmState))
 	if err != nil {
 		return err
+	}
+	*vmState = execution.FromDriverVMState(prepared)
+	if !refreshRuntimeEnv {
+		return nil
 	}
 	managedEnv := map[string]string{}
 	for _, agent := range []string{"codex", "claude"} {
@@ -137,7 +167,6 @@ func (d *SandboxDriver) prepareSandboxStart(ctx context.Context, driver string, 
 	if len(managedEnv) > 0 {
 		session.RuntimeEnvItems = llms.EnvItemsFromMap(managedEnv, false)
 	}
-	*vmState = execution.FromDriverVMState(prepared)
 	return nil
 }
 

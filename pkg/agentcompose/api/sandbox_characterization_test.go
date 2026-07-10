@@ -19,8 +19,9 @@ func TestV2SandboxRemoveUsesSandboxIDAndSessionCompatibilityDelegate(t *testing.
 	store := &characterizationSandboxStore{
 		session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: sandboxID, VMStatus: domain.VMStatusRunning}},
 	}
+	remover := &characterizationSandboxRemover{}
 	dashboard := &characterizationDashboard{}
-	handler := NewSandboxHandler(delegate, store, dashboard)
+	handler := NewSandboxHandler(delegate, store, remover, dashboard)
 
 	resp, err := handler.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{
 		SandboxId: " " + sandboxID + " ",
@@ -38,6 +39,9 @@ func TestV2SandboxRemoveUsesSandboxIDAndSessionCompatibilityDelegate(t *testing.
 	if len(delegate.stopSessionIDs) != 1 || delegate.stopSessionIDs[0] != sandboxID {
 		t.Fatalf("compatibility StopSession calls = %#v, want [%q]", delegate.stopSessionIDs, sandboxID)
 	}
+	if len(remover.sandboxIDs) != 1 || remover.sandboxIDs[0] != sandboxID {
+		t.Fatalf("runtime remove calls = %#v, want [%q]", remover.sandboxIDs, sandboxID)
+	}
 	if len(dashboard.events) != 1 || dashboard.events[0] != "sandbox_removed" {
 		t.Fatalf("dashboard events = %#v", dashboard.events)
 	}
@@ -48,7 +52,7 @@ func TestV2SandboxRemoveRejectsRunningWithoutForce(t *testing.T) {
 	store := &characterizationSandboxStore{
 		session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: sandboxID, VMStatus: domain.VMStatusRunning}},
 	}
-	handler := NewSandboxHandler(&characterizationSessionDelegate{}, store, nil)
+	handler := NewSandboxHandler(&characterizationSessionDelegate{}, store, &characterizationSandboxRemover{}, nil)
 
 	_, err := handler.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: sandboxID}))
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
@@ -59,8 +63,29 @@ func TestV2SandboxRemoveRejectsRunningWithoutForce(t *testing.T) {
 	}
 }
 
+func TestV2SandboxRemoveKeepsMetadataWhenRuntimeRemovalFails(t *testing.T) {
+	sandboxID := identity.NewID(identity.ResourceSandbox, "characterization", "runtime-remove-error")
+	store := &characterizationSandboxStore{
+		session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: sandboxID, VMStatus: domain.VMStatusStopped}},
+	}
+	removeErr := errors.New("runtime remove failed")
+	remover := &characterizationSandboxRemover{err: removeErr}
+	handler := NewSandboxHandler(&characterizationSessionDelegate{}, store, remover, nil)
+
+	_, err := handler.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: sandboxID}))
+	if connect.CodeOf(err) != connect.CodeInternal || !errors.Is(err, removeErr) {
+		t.Fatalf("RemoveSandbox runtime error = %v, code=%v", err, connect.CodeOf(err))
+	}
+	if len(remover.sandboxIDs) != 1 || remover.sandboxIDs[0] != sandboxID {
+		t.Fatalf("runtime remove calls = %#v, want [%q]", remover.sandboxIDs, sandboxID)
+	}
+	if store.removeID != "" {
+		t.Fatalf("metadata removed after runtime removal failed: %q", store.removeID)
+	}
+}
+
 func TestV2SandboxRemoveValidationAndStoreErrors(t *testing.T) {
-	handler := NewSandboxHandler(&characterizationSessionDelegate{}, &characterizationSandboxStore{}, nil)
+	handler := NewSandboxHandler(&characterizationSessionDelegate{}, &characterizationSandboxStore{}, &characterizationSandboxRemover{}, nil)
 	for _, sandboxID := range []string{"", "not an id", "../bad"} {
 		_, err := handler.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: sandboxID}))
 		if connect.CodeOf(err) != connect.CodeInvalidArgument {
@@ -69,7 +94,7 @@ func TestV2SandboxRemoveValidationAndStoreErrors(t *testing.T) {
 	}
 
 	missingID := identity.NewID(identity.ResourceSandbox, "characterization", "missing")
-	missing := NewSandboxHandler(&characterizationSessionDelegate{}, &characterizationSandboxStore{getErr: errors.New("missing")}, nil)
+	missing := NewSandboxHandler(&characterizationSessionDelegate{}, &characterizationSandboxStore{getErr: errors.New("missing")}, &characterizationSandboxRemover{}, nil)
 	if _, err := missing.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: missingID})); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("RemoveSandbox missing code = %v, want not found (err=%v)", connect.CodeOf(err), err)
 	}
@@ -79,7 +104,7 @@ func TestV2SandboxRemoveValidationAndStoreErrors(t *testing.T) {
 	failing := NewSandboxHandler(&characterizationSessionDelegate{}, &characterizationSandboxStore{
 		session:   &domain.Sandbox{Summary: domain.SandboxSummary{ID: removeID, VMStatus: domain.VMStatusStopped}},
 		removeErr: removeErr,
-	}, nil)
+	}, &characterizationSandboxRemover{}, nil)
 	if _, err := failing.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: removeID})); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("RemoveSandbox remove error code = %v, want internal (err=%v)", connect.CodeOf(err), err)
 	}
@@ -129,6 +154,16 @@ func (s *characterizationSandboxStore) RemoveSandbox(_ context.Context, id strin
 
 type characterizationDashboard struct {
 	events []string
+}
+
+type characterizationSandboxRemover struct {
+	sandboxIDs []string
+	err        error
+}
+
+func (r *characterizationSandboxRemover) RemoveSandboxVM(_ context.Context, sandbox *domain.Sandbox) error {
+	r.sandboxIDs = append(r.sandboxIDs, sandbox.Summary.ID)
+	return r.err
 }
 
 func (d *characterizationDashboard) Notify(event string) {

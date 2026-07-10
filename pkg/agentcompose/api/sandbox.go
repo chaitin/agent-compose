@@ -32,6 +32,10 @@ type SandboxStatsRuntime interface {
 
 type SandboxStatsRuntimeResolver func(*domain.Sandbox) (SandboxStatsRuntime, error)
 
+type SandboxRuntimeRemover interface {
+	RemoveSandboxVM(context.Context, *domain.Sandbox) error
+}
+
 type SandboxDashboardNotifier interface {
 	Notify(string)
 }
@@ -39,13 +43,14 @@ type SandboxDashboardNotifier interface {
 type SandboxHandler struct {
 	delegate   SessionDelegate
 	store      SandboxStore
+	remover    SandboxRuntimeRemover
 	reconciler SessionRuntimeReconciler
 	dashboard  SandboxDashboardNotifier
 	stats      SandboxStatsRuntimeResolver
 }
 
-func NewSandboxHandler(delegate SessionDelegate, store SandboxStore, dashboard SandboxDashboardNotifier, stats ...SandboxStatsRuntimeResolver) *SandboxHandler {
-	handler := &SandboxHandler{delegate: delegate, store: store, dashboard: dashboard}
+func NewSandboxHandler(delegate SessionDelegate, store SandboxStore, remover SandboxRuntimeRemover, dashboard SandboxDashboardNotifier, stats ...SandboxStatsRuntimeResolver) *SandboxHandler {
+	handler := &SandboxHandler{delegate: delegate, store: store, remover: remover, dashboard: dashboard}
 	if reconciler, ok := delegate.(SessionRuntimeReconciler); ok {
 		handler.reconciler = reconciler
 	}
@@ -81,6 +86,12 @@ func (h *SandboxHandler) RemoveSandbox(ctx context.Context, req *connect.Request
 			return nil, err
 		}
 		stopped = true
+	}
+	if h.remover == nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("sandbox runtime remover is required"))
+	}
+	if err := h.remover.RemoveSandboxVM(ctx, session); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	if err := h.store.RemoveSandbox(ctx, sandboxID); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)

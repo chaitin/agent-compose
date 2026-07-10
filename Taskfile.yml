@@ -128,13 +128,13 @@ tasks:
           SMOKE_RUNTIME_DRIVERS=boxlite \
             LD_LIBRARY_PATH="$PWD/build/boxlite/lib:${LD_LIBRARY_PATH:-}" \
             GOCACHE={{.GO_BUILD_CACHE_DIR}} \
-            {{.GO_TOOLCHAIN_ENV}} go test -tags boxlitecgo ./pkg/driver -run '^TestSmokeBoxLite(RuntimeMountManifestDirectoryOnlyStarts|UsesGoContainerRegistryOCIImage)$' -count=1 -v
+            {{.GO_TOOLCHAIN_ENV}} go test -tags boxlitecgo ./pkg/driver -run '^TestSmokeBoxLite(RuntimeMountManifestDirectoryOnlyStarts|UsesGoContainerRegistryOCIImage|StopResumePreservesWritableLayer)$' -count=1 -v
         fi
         if [[ ",$drivers," == *",all,"* || ",$drivers," == *",microsandbox,"* ]]; then
           SMOKE_RUNTIME_DRIVERS=microsandbox \
             LD_LIBRARY_PATH="$PWD/build/microsandbox/lib:${LD_LIBRARY_PATH:-}" \
             GOCACHE={{.GO_BUILD_CACHE_DIR}} \
-            {{.GO_TOOLCHAIN_ENV}} go test ./pkg/driver -run '^TestSmokeMicrosandbox(RuntimeMountManifestDirectoryOnlyStarts|UsesGoContainerRegistryOCIImage)$' -count=1 -v
+            {{.GO_TOOLCHAIN_ENV}} go test ./pkg/driver -run '^TestSmokeMicrosandbox(RuntimeMountManifestDirectoryOnlyStarts|UsesGoContainerRegistryOCIImage|StopResumePreservesWritableLayer)$' -count=1 -v
         fi
 
   test:boxlite-mount-repro:

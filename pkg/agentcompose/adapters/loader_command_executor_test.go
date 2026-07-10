@@ -26,6 +26,10 @@ func (r fakeLoaderCommandRuntime) StopSandbox(context.Context, *domain.Sandbox, 
 	return false, nil
 }
 
+func (r fakeLoaderCommandRuntime) RemoveSandbox(context.Context, *domain.Sandbox, domain.VMState) error {
+	return nil
+}
+
 func (r fakeLoaderCommandRuntime) Exec(context.Context, *domain.Sandbox, domain.VMState, domain.ExecSpec) (domain.ExecResult, error) {
 	return domain.ExecResult{}, nil
 }

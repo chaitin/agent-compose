@@ -453,15 +453,30 @@ func (r *cgoSandboxRuntime) StopSandbox(ctx context.Context, sandbox *Sandbox, v
 	if err := r.stopBox(ctx, box); err != nil && !isStoppedBox(err) && !isBoxNotFound(err) {
 		return false, err
 	}
-	if err := r.removeBox(ctx, vmState.BoxID, true); err != nil && !isBoxNotFound(err) {
-		return false, err
-	}
 	if sandbox != nil {
 		if err := CleanupBoxliteVolumeBridgeMounts(hostSandboxDir(sandbox)); err != nil {
 			return false, err
 		}
 	}
-	return true, nil
+	return false, nil
+}
+
+func (r *cgoSandboxRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState) error {
+	lookup := firstNonEmpty(strings.TrimSpace(vmState.BoxID), strings.TrimSpace(vmState.BoxName))
+	if sandbox != nil {
+		lookup = firstNonEmpty(lookup, strings.TrimSpace(sandbox.Summary.RuntimeRef))
+	}
+	if lookup != "" {
+		if err := r.removeBox(ctx, lookup, true); err != nil && !isBoxNotFound(err) {
+			return err
+		}
+	}
+	if sandbox != nil {
+		if err := CleanupBoxliteVolumeBridgeMounts(hostSandboxDir(sandbox)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *cgoSandboxRuntime) Exec(ctx context.Context, sandbox *Sandbox, vmState VMState, spec ExecSpec) (ExecResult, error) {
@@ -707,6 +722,9 @@ func (r *cgoSandboxRuntime) getOrCreateBox(ctx context.Context, sandbox *Sandbox
 				status := normalizeBoxliteStatus(info.State.Status)
 				if shouldRecreateBoxForStatus(status) {
 					box.free()
+					if !vmState.StoppedAt.IsZero() {
+						return nil, false, fmt.Errorf("boxlite runtime state for stopped sandbox %s is not resumable from status %s", sandbox.Summary.ID, status)
+					}
 					if err := r.removeBox(ctx, existingID, true); err != nil && !isBoxNotFound(err) {
 						return nil, false, err
 					}
@@ -726,6 +744,9 @@ func (r *cgoSandboxRuntime) getOrCreateBox(ctx context.Context, sandbox *Sandbox
 		if !isBoxNotFound(err) {
 			return nil, false, err
 		}
+	}
+	if !vmState.StoppedAt.IsZero() {
+		return nil, false, fmt.Errorf("boxlite runtime state for stopped sandbox %s is missing; refusing to recreate it during resume", sandbox.Summary.ID)
 	}
 
 	box, err := r.createBox(ctx, sandbox, vmState, proxyState)
@@ -747,7 +768,7 @@ func normalizeBoxliteStatus(status string) string {
 
 func shouldRecreateBoxForStatus(status string) bool {
 	switch status {
-	case "stopped", "failed", "dead", "removed", "exited":
+	case "failed", "dead", "removed", "exited":
 		return true
 	default:
 		return false

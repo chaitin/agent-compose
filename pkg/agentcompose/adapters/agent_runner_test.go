@@ -43,6 +43,10 @@ func (r *fakeAgentRuntime) StopSandbox(context.Context, *domain.Sandbox, domain.
 	return false, nil
 }
 
+func (r *fakeAgentRuntime) RemoveSandbox(context.Context, *domain.Sandbox, domain.VMState) error {
+	return nil
+}
+
 func (r *fakeAgentRuntime) Exec(context.Context, *domain.Sandbox, domain.VMState, domain.ExecSpec) (domain.ExecResult, error) {
 	return domain.ExecResult{}, nil
 }

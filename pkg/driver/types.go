@@ -140,6 +140,7 @@ type SandboxVMInfo struct {
 type SandboxRuntime interface {
 	EnsureSandbox(context.Context, *Sandbox, VMState, ProxyState) (SandboxVMInfo, error)
 	StopSandbox(context.Context, *Sandbox, VMState) (bool, error)
+	RemoveSandbox(context.Context, *Sandbox, VMState) error
 	Exec(context.Context, *Sandbox, VMState, ExecSpec) (ExecResult, error)
 	ExecStream(context.Context, *Sandbox, VMState, ExecSpec, ExecStreamWriter) (ExecResult, error)
 }

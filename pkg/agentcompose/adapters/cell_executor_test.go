@@ -26,6 +26,10 @@ func (r fakeCellRuntime) StopSandbox(context.Context, *domain.Sandbox, domain.VM
 	return false, nil
 }
 
+func (r fakeCellRuntime) RemoveSandbox(context.Context, *domain.Sandbox, domain.VMState) error {
+	return nil
+}
+
 func (r fakeCellRuntime) Exec(context.Context, *domain.Sandbox, domain.VMState, domain.ExecSpec) (domain.ExecResult, error) {
 	return r.result, nil
 }

@@ -159,6 +159,10 @@ func (fakeInteractionRuntime) StopSandbox(context.Context, *Sandbox, VMState) (b
 	return true, nil
 }
 
+func (fakeInteractionRuntime) RemoveSandbox(context.Context, *Sandbox, VMState) error {
+	return nil
+}
+
 func (fakeInteractionRuntime) Exec(context.Context, *Sandbox, VMState, ExecSpec) (ExecResult, error) {
 	return ExecResult{}, nil
 }

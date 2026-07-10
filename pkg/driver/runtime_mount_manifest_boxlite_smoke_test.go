@@ -8,6 +8,27 @@ import (
 	"time"
 )
 
+func TestBoxLiteStoppedStatusIsResumable(t *testing.T) {
+	if shouldRecreateBoxForStatus("stopped") {
+		t.Fatal("stopped box should be restarted instead of recreated")
+	}
+	for _, status := range []string{"failed", "dead", "removed", "exited"} {
+		if !shouldRecreateBoxForStatus(status) {
+			t.Fatalf("box status %q should be recreated", status)
+		}
+	}
+}
+
+func TestSmokeBoxLiteStopResumePreservesWritableLayer(t *testing.T) {
+	runtimeSmokeEnabled(t, RuntimeDriverBoxlite)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	config := newRuntimeSmokeConfig(t, RuntimeDriverBoxlite)
+	session, vmState, proxyState := newRuntimeSmokeSandbox(t, ctx, config, RuntimeDriverBoxlite)
+	runtime := &cgoSandboxRuntime{config: config}
+	assertRuntimeStopResumePreservesWritableLayer(t, ctx, config, runtime, session, vmState, proxyState)
+}
+
 func TestSmokeBoxLiteRuntimeMountManifestDirectoryOnlyStarts(t *testing.T) {
 	runtimeSmokeEnabled(t, RuntimeDriverBoxlite)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)

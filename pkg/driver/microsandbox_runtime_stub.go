@@ -22,6 +22,10 @@ func (r *microsandboxRuntime) StopSandbox(context.Context, *Sandbox, VMState) (b
 	return false, fmt.Errorf("agent-compose was built without cgo support; microsandbox runtime is unavailable")
 }
 
+func (r *microsandboxRuntime) RemoveSandbox(context.Context, *Sandbox, VMState) error {
+	return fmt.Errorf("agent-compose was built without cgo support; microsandbox runtime is unavailable")
+}
+
 func (r *microsandboxRuntime) Exec(context.Context, *Sandbox, VMState, ExecSpec) (ExecResult, error) {
 	return ExecResult{}, fmt.Errorf("agent-compose was built without cgo support; microsandbox runtime is unavailable")
 }

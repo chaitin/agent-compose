@@ -65,6 +65,10 @@ func TestPrepareStreamingHeadersPreservesNoTransform(t *testing.T) {
 func TestIntegrationAPIHandlerRuntimeWorkflows(t *testing.T) {
 	t.Run("streaming headers", TestPrepareStreamingHeadersPreservesNoTransform)
 	t.Run("sandbox remove race", TestRemoveSandboxRemoveRaceRemainsInternal)
+	t.Run("sandbox remove lifecycle", TestV2SandboxRemoveUsesSandboxIDAndSessionCompatibilityDelegate)
+	t.Run("sandbox remove running guard", TestV2SandboxRemoveRejectsRunningWithoutForce)
+	t.Run("sandbox remove preserves metadata on runtime failure", TestV2SandboxRemoveKeepsMetadataWhenRuntimeRemovalFails)
+	t.Run("sandbox remove validation and storage failures", TestV2SandboxRemoveValidationAndStoreErrors)
 	t.Run("sandbox stats runtime metrics", TestGetSandboxStatsReturnsRuntimeMetrics)
 	t.Run("sandbox stats stopped sandbox", TestGetSandboxStatsRejectsStoppedSandbox)
 	t.Run("sandbox stats unsupported runtime", TestGetSandboxStatsUnsupportedRuntimeIsUnimplemented)
@@ -91,7 +95,7 @@ func TestRemoveSandboxRemoveRaceRemainsInternal(t *testing.T) {
 		session:   &domain.Sandbox{Summary: domain.SandboxSummary{ID: sandboxID, VMStatus: domain.VMStatusStopped}},
 		removeErr: os.ErrNotExist,
 	}
-	handler := NewSandboxHandler(&fakeSessionDelegate{}, store, nil)
+	handler := NewSandboxHandler(&fakeSessionDelegate{}, store, &characterizationSandboxRemover{}, nil)
 	_, err := handler.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: sandboxID}))
 	if connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("RemoveSandbox error code = %v, want %v; err=%v", connect.CodeOf(err), connect.CodeInternal, err)
@@ -115,7 +119,7 @@ func TestGetSandboxStatsReturnsRuntimeMetrics(t *testing.T) {
 		CPUPercent:       domain.MetricValue{Value: &value, Unit: "percent", Status: domain.MetricStatusOK},
 		MemoryUsageBytes: domain.MetricValue{Unit: "bytes", Status: domain.MetricStatusUnknown},
 	}}
-	handler := NewSandboxHandler(&fakeSessionDelegate{}, store, nil, func(*domain.Sandbox) (SandboxStatsRuntime, error) {
+	handler := NewSandboxHandler(&fakeSessionDelegate{}, store, nil, nil, func(*domain.Sandbox) (SandboxStatsRuntime, error) {
 		return runtime, nil
 	})
 	resp, err := handler.GetSandboxStats(context.Background(), connect.NewRequest(&agentcomposev2.GetSandboxStatsRequest{SandboxId: sandboxID}))
@@ -138,7 +142,7 @@ func TestGetSandboxStatsRejectsStoppedSandbox(t *testing.T) {
 	store := &apiSandboxStore{
 		session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: sandboxID, VMStatus: domain.VMStatusStopped}},
 	}
-	handler := NewSandboxHandler(&fakeSessionDelegate{}, store, nil, func(*domain.Sandbox) (SandboxStatsRuntime, error) {
+	handler := NewSandboxHandler(&fakeSessionDelegate{}, store, nil, nil, func(*domain.Sandbox) (SandboxStatsRuntime, error) {
 		return &apiStatsRuntime{}, nil
 	})
 	_, err := handler.GetSandboxStats(context.Background(), connect.NewRequest(&agentcomposev2.GetSandboxStatsRequest{SandboxId: sandboxID}))
@@ -152,7 +156,7 @@ func TestGetSandboxStatsUnsupportedRuntimeIsUnimplemented(t *testing.T) {
 	store := &apiSandboxStore{
 		session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: sandboxID, VMStatus: domain.VMStatusRunning}},
 	}
-	handler := NewSandboxHandler(&fakeSessionDelegate{}, store, nil)
+	handler := NewSandboxHandler(&fakeSessionDelegate{}, store, nil, nil)
 	_, err := handler.GetSandboxStats(context.Background(), connect.NewRequest(&agentcomposev2.GetSandboxStatsRequest{SandboxId: sandboxID}))
 	if connect.CodeOf(err) != connect.CodeUnimplemented {
 		t.Fatalf("GetSandboxStats unsupported code = %v, err=%v", connect.CodeOf(err), err)

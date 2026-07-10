@@ -53,6 +53,7 @@ type RuntimeProvider func(*domain.Sandbox) (Runtime, error)
 type SandboxDriver interface {
 	StartSandboxVM(context.Context, *domain.Sandbox) error
 	StopSandboxVM(context.Context, *domain.Sandbox) error
+	RemoveSandboxVM(context.Context, *domain.Sandbox) error
 }
 
 type TopicPublisher interface {
@@ -2081,6 +2082,12 @@ func (c *Controller) cleanupProjectRunSandboxByPolicy(ctx context.Context, sandb
 		}
 		if c.store == nil {
 			return fmt.Errorf("sandbox store is required")
+		}
+		if c.driver == nil {
+			return fmt.Errorf("sandbox driver is required")
+		}
+		if err := c.driver.RemoveSandboxVM(ctx, sandbox); err != nil {
+			return err
 		}
 		if err := c.store.RemoveSandbox(ctx, sandbox.Summary.ID); err != nil {
 			return err

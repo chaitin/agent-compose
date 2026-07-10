@@ -181,7 +181,10 @@ func (r *dockerRuntime) StopSandbox(ctx context.Context, sandbox *Sandbox, vmSta
 		if timeoutSeconds < 0 {
 			timeoutSeconds = 0
 		}
-		if err := dockerClient.ContainerStop(ctx, containerInfo.ID, containerapi.StopOptions{Timeout: &timeoutSeconds}); err != nil && !isDockerNotFound(err) {
+		if err := dockerClient.ContainerStop(ctx, containerInfo.ID, containerapi.StopOptions{Timeout: &timeoutSeconds}); err != nil {
+			if isDockerNotFound(err) {
+				return true, nil
+			}
 			if stopped, inspectErr := r.containerStoppedAfterStopError(containerInfo.ID); inspectErr != nil {
 				return false, fmt.Errorf("stop docker container %s: %w; inspect after stop failure: %v", containerInfo.ID, err, inspectErr)
 			} else if !stopped {
@@ -189,12 +192,29 @@ func (r *dockerRuntime) StopSandbox(ctx context.Context, sandbox *Sandbox, vmSta
 			}
 		}
 	}
+	return false, nil
+}
+
+func (r *dockerRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState) error {
+	dockerClient, err := r.newClient()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dockerClient.Close() }()
+
+	containerInfo, ok, err := r.findContainer(ctx, dockerClient, sandbox, vmState)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
 	removeCtx, cancel := dockerFallbackContextIfDone(ctx)
 	defer cancel()
 	if err := dockerClient.ContainerRemove(removeCtx, containerInfo.ID, containerapi.RemoveOptions{Force: true}); err != nil && !isDockerNotFound(err) {
-		return false, fmt.Errorf("remove docker container %s: %w", containerInfo.ID, err)
+		return fmt.Errorf("remove docker container %s: %w", containerInfo.ID, err)
 	}
-	return false, nil
+	return nil
 }
 
 func (r *dockerRuntime) Exec(ctx context.Context, sandbox *Sandbox, vmState VMState, spec ExecSpec) (ExecResult, error) {
@@ -609,6 +629,9 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 		return containerapi.InspectResponse{}, false, err
 	} else if ok {
 		return containerInfo, false, nil
+	}
+	if !vmState.StoppedAt.IsZero() {
+		return containerapi.InspectResponse{}, false, fmt.Errorf("docker runtime state for stopped sandbox %s is missing; refusing to recreate it during resume", sandbox.Summary.ID)
 	}
 
 	name := r.containerName(sandbox, vmState)

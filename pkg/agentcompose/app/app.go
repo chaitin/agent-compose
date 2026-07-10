@@ -168,6 +168,7 @@ func RegisterRoutes(di do.Injector) {
 	sandboxHandler := api.NewSandboxHandler(
 		do.MustInvoke[*adapters.SandboxRPCBridge](di),
 		do.MustInvoke[*sessionstore.Store](di),
+		do.MustInvoke[*adapters.SandboxDriver](di),
 		do.MustInvoke[*dashboard.Hub](di),
 		func(session *domain.Sandbox) (api.SandboxStatsRuntime, error) {
 			runtime, err := do.MustInvoke[adapters.RuntimeProvider](di).ForSession(session)

@@ -10,6 +10,17 @@ import (
 	"time"
 )
 
+func TestDockerStopResumePreservesWritableLayerSmoke(t *testing.T) {
+	runtimeSmokeEnabled(t, RuntimeDriverDocker)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	config := newRuntimeSmokeConfig(t, RuntimeDriverDocker)
+	runtime := &dockerRuntime{config: config}
+	session, vmState, proxyState := newRuntimeSmokeSandbox(t, ctx, config, RuntimeDriverDocker)
+	assertRuntimeStopResumePreservesWritableLayer(t, ctx, config, runtime, session, vmState, proxyState)
+}
+
 func TestDockerCommandInteractionSmokeCatStdinEOF(t *testing.T) {
 	runtimeSmokeEnabled(t, RuntimeDriverDocker)
 
