@@ -48,6 +48,7 @@ func TestRuntimeMountEntriesDefineSharedLogicalMountList(t *testing.T) {
 		"/data/runtime":             {sandboxPath: "runtime", exposure: directoryOnlyExposureAlreadyInData},
 		"/data/logs":                {sandboxPath: "logs", exposure: directoryOnlyExposureAlreadyInData},
 		"/root/.codex":              {sandboxPath: "home/.codex", exposure: directoryOnlyExposureSymlink},
+		"/root/.agents":             {sandboxPath: "home/.agents", exposure: directoryOnlyExposureSymlink},
 		"/root/.claude":             {sandboxPath: "home/.claude", exposure: directoryOnlyExposureSymlink},
 		"/root/.opencode":           {sandboxPath: "home/.opencode", exposure: directoryOnlyExposureSymlink},
 		"/root/.claude.json":        {sandboxPath: "home/.claude.json", isFile: true, exposure: directoryOnlyExposureSymlink},
@@ -511,6 +512,7 @@ func TestDirectoryOnlyGuestSandboxBootstrapUsesDataMountRoot(t *testing.T) {
 		"test -d '/root' || { echo \"directory-only home target is not a directory /root\" >&2; exit 1; }",
 		"rm -rf '/root/.codex'; ln -s '/data/home/.codex' '/root/.codex'",
 		"ln -s '/data/home/.codex' '/root/.codex'",
+		"ln -s '/data/home/.agents' '/root/.agents'",
 		"ln -s '/data/home/.claude' '/root/.claude'",
 		"ln -s '/data/home/.opencode' '/root/.opencode'",
 		"ln -s '/data/home/.claude.json' '/root/.claude.json'",
@@ -573,6 +575,7 @@ func TestDirectoryOnlyGuestSandboxBootstrapReplacesImageHomeTargets(t *testing.T
 	command := directoryOnlyGuestSandboxBootstrapCommand(testRuntimeMountConfig())
 	for _, required := range []string{
 		"rm -rf '/root/.codex'; ln -s '/data/home/.codex' '/root/.codex'",
+		"rm -rf '/root/.agents'; ln -s '/data/home/.agents' '/root/.agents'",
 		"rm -rf '/root/.claude'; ln -s '/data/home/.claude' '/root/.claude'",
 		"rm -rf '/root/.opencode'; ln -s '/data/home/.opencode' '/root/.opencode'",
 		"rm -rf '/root/.claude.json'; ln -s '/data/home/.claude.json' '/root/.claude.json'",

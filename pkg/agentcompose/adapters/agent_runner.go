@@ -11,6 +11,7 @@ import (
 	"agent-compose/pkg/llms"
 	"agent-compose/pkg/llms/runtimefacade"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/skills"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
 )
@@ -60,19 +61,45 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, session *domain.Sandb
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}
-	systemPrompt, err := r.resolveAgentSystemPrompt(ctx, session, agentDefinitionID)
+	agentDef, err := r.resolveAgentDefinition(ctx, session, agentDefinitionID)
 	if err != nil {
-		return domain.ExecResult{}, domain.AgentRunResult{}, err
+		slog.Warn("resolve agent definition failed", "agent_id", strings.TrimSpace(agentDefinitionID), "error", err)
+		agentDef = nil
+	}
+	systemPrompt := ""
+	effectiveModel := strings.TrimSpace(model)
+	if agentDef != nil {
+		systemPrompt = strings.TrimSpace(agentDef.SystemPrompt)
+		if effectiveModel == "" {
+			effectiveModel = strings.TrimSpace(agentDef.Model)
+		}
 	}
 	if err := execution.WriteAgentSystemPromptFile(session, systemPrompt); err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
+	}
+	var skillNames []string
+	if agentDef != nil && len(agentDef.Skills) > 0 {
+		resolver := skills.NewResolver(r.config)
+		resolver.Env = agentSkillEnv(agentDef.EnvItems)
+		resolvedSkills, err := resolver.Resolve(ctx, agentDef.Skills)
+		if err != nil {
+			return domain.ExecResult{}, domain.AgentRunResult{}, err
+		}
+		skillNames, err = execution.WriteAgentSkills(session, resolver.Projected(resolvedSkills))
+		if err != nil {
+			return domain.ExecResult{}, domain.AgentRunResult{}, err
+		}
+	} else {
+		if _, err := execution.WriteAgentSkills(session, nil); err != nil {
+			return domain.ExecResult{}, domain.AgentRunResult{}, err
+		}
 	}
 	runtime, err := r.runtimes.ForSession(session)
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}
-	spec := BuildAgentExecSpec(r.config, session, agent, model, promptPath, schemaPath)
-	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, r.config, facadeStoreFor(r.configDB), session, agent, model, runtimefacade.TokenSourceAgent, runID)
+	spec := BuildAgentExecSpec(r.config, session, agent, effectiveModel, promptPath, schemaPath, skillNames)
+	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, r.config, facadeStoreFor(r.configDB), session, agent, effectiveModel, runtimefacade.TokenSourceAgent, runID)
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}
@@ -96,6 +123,14 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, session *domain.Sandb
 		return execution.SanitizeAgentExecResult(result), domain.AgentRunResult{}, err
 	}
 	return execution.SanitizeAgentExecResult(result), parsed, nil
+}
+
+func agentSkillEnv(items []domain.SandboxEnvVar) map[string]string {
+	env := domain.SandboxEnvMap(items)
+	if env == nil {
+		return map[string]string{}
+	}
+	return env
 }
 
 func (r *AgentRunner) prepareAgentMCPConfig(ctx context.Context, session *domain.Sandbox, agentDefinitionID, agent string) error {
@@ -146,29 +181,40 @@ func (r *AgentRunner) ResolveAgentSystemPrompt(ctx context.Context, session *dom
 }
 
 func (r *AgentRunner) resolveAgentSystemPrompt(ctx context.Context, session *domain.Sandbox, agentDefinitionID string) (string, error) {
-	if r == nil || r.agents == nil || session == nil {
-		return "", nil
-	}
-	agentID := strings.TrimSpace(agentDefinitionID)
-	if agentID == "" {
-		taggedAgentID := execution.SessionTagValue(session.Summary.Tags, domain.AgentSandboxTagID)
-		if !domain.SandboxHasAgentTag(session, taggedAgentID) {
-			return "", nil
-		}
-		agentID = taggedAgentID
-	}
-	if agentID == "" {
-		return "", nil
-	}
-	agentDef, err := r.agents.GetAgentDefinition(ctx, agentID)
+	agentDef, err := r.resolveAgentDefinition(ctx, session, agentDefinitionID)
 	if err != nil {
-		slog.Warn("resolve agent system prompt failed", "agent_id", agentID, "error", err)
+		slog.Warn("resolve agent system prompt failed", "agent_id", strings.TrimSpace(agentDefinitionID), "error", err)
+		return "", nil
+	}
+	if agentDef == nil {
 		return "", nil
 	}
 	return strings.TrimSpace(agentDef.SystemPrompt), nil
 }
 
-func BuildAgentExecSpec(config *appconfig.Config, session *domain.Sandbox, agent, model, promptPath, schemaPath string) domain.ExecSpec {
+func (r *AgentRunner) resolveAgentDefinition(ctx context.Context, session *domain.Sandbox, agentDefinitionID string) (*domain.AgentDefinition, error) {
+	if r == nil || r.agents == nil || session == nil {
+		return nil, nil
+	}
+	agentID := strings.TrimSpace(agentDefinitionID)
+	if agentID == "" {
+		taggedAgentID := execution.SessionTagValue(session.Summary.Tags, domain.AgentSandboxTagID)
+		if !domain.SandboxHasAgentTag(session, taggedAgentID) {
+			return nil, nil
+		}
+		agentID = taggedAgentID
+	}
+	if agentID == "" {
+		return nil, nil
+	}
+	agentDef, err := r.agents.GetAgentDefinition(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	return &agentDef, nil
+}
+
+func BuildAgentExecSpec(config *appconfig.Config, session *domain.Sandbox, agent, model, promptPath, schemaPath string, skillNames []string) domain.ExecSpec {
 	appconfig.ApplyDefaultGuestPaths(config)
 	agentHome := config.GuestHomePath
 	env := execution.BuildSandboxExecEnv(config, session, agentHome)
@@ -184,6 +230,11 @@ func BuildAgentExecSpec(config *appconfig.Config, session *domain.Sandbox, agent
 	}
 	if strings.TrimSpace(schemaPath) != "" {
 		promptCommand += " --output-schema-file " + execution.ShellQuote(schemaPath)
+	}
+	for _, skillName := range skillNames {
+		if strings.TrimSpace(skillName) != "" {
+			promptCommand += " --skill " + execution.ShellQuote(strings.TrimSpace(skillName))
+		}
 	}
 	command := strings.Join([]string{
 		"set -e",

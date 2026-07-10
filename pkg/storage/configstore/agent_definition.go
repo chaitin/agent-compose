@@ -60,6 +60,30 @@ func DecodeAgentVolumesJSON(raw string) ([]domain.VolumeMountSpec, error) {
 	return domain.NormalizeVolumeMountSpecs(items)
 }
 
+func EncodeAgentSkillsJSON(items []domain.AgentSkill) (string, error) {
+	normalized := domain.NormalizeAgentSkills(items)
+	if normalized == nil {
+		normalized = []domain.AgentSkill{}
+	}
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return "", fmt.Errorf("encode agent skills: %w", err)
+	}
+	return string(data), nil
+}
+
+func DecodeAgentSkillsJSON(raw string) ([]domain.AgentSkill, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var items []domain.AgentSkill
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return nil, fmt.Errorf("decode agent skills: %w", err)
+	}
+	return domain.NormalizeAgentSkills(items), nil
+}
+
 func ScanAgentDefinition(scan func(dest ...any) error) (domain.AgentDefinition, error) {
 	var item domain.AgentDefinition
 	var enabled int
@@ -67,10 +91,11 @@ func ScanAgentDefinition(scan func(dest ...any) error) (domain.AgentDefinition, 
 	var envJSON string
 	var volumesJSON string
 	var capsetIDsRaw string
+	var skillsJSON string
 	var createdAtRaw any
 	var updatedAtRaw any
 	if err := scan(&item.ID, &item.Name, &item.Description, &enabled, &deletedAtRaw, &item.Provider, &item.Model, &item.SystemPrompt,
-		&item.Driver, &item.GuestImage, &item.WorkspaceID, &envJSON, &volumesJSON, &item.ConfigJSON, &capsetIDsRaw,
+		&item.Driver, &item.GuestImage, &item.WorkspaceID, &envJSON, &volumesJSON, &item.ConfigJSON, &capsetIDsRaw, &skillsJSON,
 		&item.ManagedProjectID, &item.ManagedProjectRevision, &item.ManagedAgentName, &createdAtRaw, &updatedAtRaw); err != nil {
 		return domain.AgentDefinition{}, fmt.Errorf("scan agent definition: %w", err)
 	}
@@ -82,11 +107,16 @@ func ScanAgentDefinition(scan func(dest ...any) error) (domain.AgentDefinition, 
 	if err != nil {
 		return domain.AgentDefinition{}, err
 	}
+	skills, err := DecodeAgentSkillsJSON(skillsJSON)
+	if err != nil {
+		return domain.AgentDefinition{}, err
+	}
 	item.Enabled = enabled != 0
 	item.DeletedAt = ParseStoredTime(deletedAtRaw)
 	item.EnvItems = envItems
 	item.Volumes = volumes
 	item.CapsetIDs = capabilities.DecodeCapsetIDs(capsetIDsRaw)
+	item.Skills = skills
 	item.ManagedProjectID = strings.TrimSpace(item.ManagedProjectID)
 	item.ManagedAgentName = strings.TrimSpace(item.ManagedAgentName)
 	item.CreatedAt = ParseStoredTime(createdAtRaw)

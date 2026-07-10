@@ -54,6 +54,7 @@ func prepareRuntimeSmokeGoContainerRegistryOCIImage(t *testing.T, ctx context.Co
 	}
 	if config == nil {
 		t.Fatal("runtime smoke config is required")
+		return ""
 	}
 	prepareRuntimeSmokeOCIImageConfig(t, config)
 	disableRuntimeSmokeDockerDaemon(t, config)

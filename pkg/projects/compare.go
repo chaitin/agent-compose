@@ -36,6 +36,20 @@ func SameCapsetIDs(a, b []string) bool {
 	return true
 }
 
+func SameSkills(a, b []domain.AgentSkill) bool {
+	a = domain.NormalizeAgentSkills(a)
+	b = domain.NormalizeAgentSkills(b)
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func SameLoaderTriggerSpecs(a, b []domain.LoaderTrigger) bool {
 	a = NormalizeComparableLoaderTriggers(a)
 	b = NormalizeComparableLoaderTriggers(b)
@@ -84,6 +98,7 @@ func ManagedAgentDefinitionUnchanged(existing, current domain.AgentDefinition) b
 		existing.ConfigJSON == current.ConfigJSON &&
 		SameSandboxEnvItems(existing.EnvItems, current.EnvItems) &&
 		SameCapsetIDs(existing.CapsetIDs, current.CapsetIDs) &&
+		SameSkills(existing.Skills, current.Skills) &&
 		existing.ManagedProjectID == current.ManagedProjectID &&
 		existing.ManagedProjectRevision == current.ManagedProjectRevision &&
 		existing.ManagedAgentName == current.ManagedAgentName

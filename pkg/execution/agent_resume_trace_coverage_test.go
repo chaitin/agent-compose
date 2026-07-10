@@ -99,6 +99,7 @@ func TestAgentThreadLogSelectionAndResumeInfo(t *testing.T) {
 	info := CollectAgentResumeInfo(session, "codex", "", "/guest/agent-thread.json")
 	if info == nil {
 		t.Fatal("CollectAgentResumeInfo returned nil")
+		return
 	}
 	if info.Provider != "codex" || info.ThreadID != "thread-1" || info.ThreadStatePath != statePath || info.ThreadManifestPath != "/guest/agent-thread.json" {
 		t.Fatalf("resume info = %#v", info)

@@ -161,6 +161,7 @@ CLI 使用 `commander` 解析命令和参数。`@chaitin-ai/agent-compose-runtim
 | `--home` | 否 | agent HOME，默认 `HOME` 或 `/root` |
 | `--model` | 否 | agent model；由支持显式模型选择的 provider 使用 |
 | `--system-prompt-file` | 否 | system prompt 文件路径；当前由需要 prompt 级 system instructions 的 provider 使用 |
+| `--skill <name>` | 否 | 可重复的启用 skill 名称。host 调用 runtime 前会把本次启用集合投影到 `/root/.agents/skills` |
 
 Agent identity 使用 §3.2 文档中的固定约定路径。
 

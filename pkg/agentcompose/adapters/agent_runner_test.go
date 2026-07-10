@@ -88,9 +88,17 @@ func TestAgentRunnerExecuteAgentRunWritesSystemPromptAndParsesResult(t *testing.
 		t.Fatalf("UpdateSession returned error: %v", err)
 	}
 	runtime := &fakeAgentRuntime{}
+	skillSource := filepath.Join(root, "skill-source", "pdf")
+	if err := os.MkdirAll(skillSource, 0o755); err != nil {
+		t.Fatalf("create skill source: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillSource, "SKILL.md"), []byte("---\nname: pdf\ndescription: PDF skill\n---\n"), 0o644); err != nil {
+		t.Fatalf("write skill source: %v", err)
+	}
 	runner := NewAgentRunner(config, store, nil, fakeAgentDefinitionStore{agent: domain.AgentDefinition{
 		ID:           "agent-1",
 		SystemPrompt: "Reply only in Chinese",
+		Skills:       []domain.AgentSkill{{Name: "pdf", Source: "file", Path: skillSource}},
 	}}, fakeRuntimeProvider{runtime: runtime})
 
 	result, parsed, err := runner.ExecuteAgentRun(ctx, session, "codex", "agent-1", "", "", "hello", "", nil)
@@ -110,6 +118,118 @@ func TestAgentRunnerExecuteAgentRunWritesSystemPromptAndParsesResult(t *testing.
 	}
 	if len(runtime.specs) != 1 || !strings.Contains(runtime.specs[0].Args[1], "agent-compose-runtime prompt") {
 		t.Fatalf("runtime specs = %#v", runtime.specs)
+	}
+	if !strings.Contains(runtime.specs[0].Args[1], " --skill 'pdf'") {
+		t.Fatalf("runtime command missing skill flag: %s", runtime.specs[0].Args[1])
+	}
+	if _, err := os.Stat(filepath.Join(execution.HostAgentSkillsDir(session), "pdf", "SKILL.md")); err != nil {
+		t.Fatalf("projected skill missing: %v", err)
+	}
+}
+
+func TestAgentRunnerExecuteAgentRunFallsBackToDefinitionModel(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:             root,
+		SandboxRoot:          filepath.Join(root, "sandboxes"),
+		RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:         "guest:latest",
+		GuestWorkspacePath:   "/workspace",
+		GuestStateRoot:       "/data/state",
+		GuestHomePath:        "/root",
+		JupyterProxyBasePath: "/agent-compose/session",
+		SandboxStartTimeout:  2 * time.Second,
+	}
+	store, err := sessionstore.NewWithConfig(config)
+	if err != nil {
+		t.Fatalf("NewWithConfig returned error: %v", err)
+	}
+	session, err := store.CreateSandbox(ctx, "agent session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	session.Summary.VMStatus = domain.VMStatusRunning
+	if err := store.UpdateSandbox(ctx, session); err != nil {
+		t.Fatalf("UpdateSession returned error: %v", err)
+	}
+	runtime := &fakeAgentRuntime{}
+	runner := NewAgentRunner(config, store, nil, fakeAgentDefinitionStore{agent: domain.AgentDefinition{
+		ID:       "agent-1",
+		Provider: "opencode",
+		Model:    "openai/qwen3-coder-plus",
+	}}, fakeRuntimeProvider{runtime: runtime})
+
+	if _, _, err := runner.ExecuteAgentRun(ctx, session, "opencode", "agent-1", "", "", "hello", "", nil); err != nil {
+		t.Fatalf("ExecuteAgentRun returned error: %v", err)
+	}
+	if len(runtime.specs) != 1 {
+		t.Fatalf("runtime specs = %#v", runtime.specs)
+	}
+	if !strings.Contains(runtime.specs[0].Args[1], " --model 'openai/qwen3-coder-plus'") {
+		t.Fatalf("runtime command missing definition model: %s", runtime.specs[0].Args[1])
+	}
+}
+
+func TestAgentRunnerExecuteAgentRunContinuesWhenDefinitionLookupFails(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:             root,
+		SandboxRoot:          filepath.Join(root, "sandboxes"),
+		RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:         "guest:latest",
+		GuestWorkspacePath:   "/workspace",
+		GuestStateRoot:       "/data/state",
+		GuestHomePath:        "/root",
+		JupyterProxyBasePath: "/agent-compose/session",
+		SandboxStartTimeout:  2 * time.Second,
+	}
+	store, err := sessionstore.NewWithConfig(config)
+	if err != nil {
+		t.Fatalf("NewWithConfig returned error: %v", err)
+	}
+	session, err := store.CreateSandbox(ctx, "agent session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	session.Summary.VMStatus = domain.VMStatusRunning
+	if err := store.UpdateSandbox(ctx, session); err != nil {
+		t.Fatalf("UpdateSession returned error: %v", err)
+	}
+	runtime := &fakeAgentRuntime{}
+	runner := NewAgentRunner(config, store, nil, fakeAgentDefinitionStore{err: errors.New("store unavailable")}, fakeRuntimeProvider{runtime: runtime})
+
+	result, parsed, err := runner.ExecuteAgentRun(ctx, session, "codex", "agent-1", "", "", "hello", "", nil)
+	if err != nil {
+		t.Fatalf("ExecuteAgentRun returned error: %v", err)
+	}
+	if !result.Success || !parsed.Success || parsed.FinalText != "done" {
+		t.Fatalf("result = %#v parsed = %#v", result, parsed)
+	}
+	if len(runtime.specs) != 1 {
+		t.Fatalf("runtime specs = %#v", runtime.specs)
+	}
+	contentBytes, err := os.ReadFile(execution.HostAgentSystemPromptPath(session))
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("ReadFile(system prompt) returned error: %v", err)
+	}
+	if string(contentBytes) != "" {
+		t.Fatalf("system prompt = %q, want empty", string(contentBytes))
+	}
+}
+
+func TestAgentSkillEnvReturnsScopedMap(t *testing.T) {
+	env := agentSkillEnv([]domain.SandboxEnvVar{{Name: "GIT_TOKEN", Value: "agent-token"}})
+	if env["GIT_TOKEN"] != "agent-token" {
+		t.Fatalf("agentSkillEnv = %#v", env)
+	}
+	empty := agentSkillEnv(nil)
+	if empty == nil {
+		t.Fatalf("agentSkillEnv(nil) returned nil")
 	}
 }
 

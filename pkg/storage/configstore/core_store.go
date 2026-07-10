@@ -284,6 +284,7 @@ func (s *coreStore) ensureAgentDefinitionSchema(ctx context.Context) error {
 		volumes_json TEXT NOT NULL DEFAULT '[]',
 		config_json TEXT NOT NULL DEFAULT '{}',
 		capset_ids TEXT NOT NULL DEFAULT '[]',
+		skills TEXT NOT NULL DEFAULT '[]',
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL
 	);`
@@ -295,6 +296,9 @@ func (s *coreStore) ensureAgentDefinitionSchema(ctx context.Context) error {
 	}
 	if err := ensureColumn(ctx, s.db, "agent_definition", "volumes_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return fmt.Errorf("ensure agent definition volumes_json column: %w", err)
+	}
+	if err := ensureColumn(ctx, s.db, "agent_definition", "skills", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return fmt.Errorf("ensure agent definition skills column: %w", err)
 	}
 	managedColumns := []struct {
 		name       string
@@ -588,12 +592,16 @@ func (s *coreStore) CreateAgentDefinition(ctx context.Context, item domain.Agent
 	if err != nil {
 		return domain.AgentDefinition{}, err
 	}
+	skillsJSON, err := EncodeAgentSkillsJSON(normalized.Skills)
+	if err != nil {
+		return domain.AgentDefinition{}, err
+	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO agent_definition(
-		id, name, description, enabled, deleted_at, provider, model, system_prompt, driver, guest_image, workspace_id, env_json, volumes_json, config_json, capset_ids,
+		id, name, description, enabled, deleted_at, provider, model, system_prompt, driver, guest_image, workspace_id, env_json, volumes_json, config_json, capset_ids, skills,
 		managed_project_id, managed_project_revision, managed_agent_name, created_at, updated_at
-	) VALUES(?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES(?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		normalized.ID, normalized.Name, normalized.Description, BoolToInt(normalized.Enabled), normalized.Provider, normalized.Model, normalized.SystemPrompt,
-		normalized.Driver, normalized.GuestImage, normalized.WorkspaceID, envJSON, volumesJSON, normalized.ConfigJSON, capsetIDsJSON,
+		normalized.Driver, normalized.GuestImage, normalized.WorkspaceID, envJSON, volumesJSON, normalized.ConfigJSON, capsetIDsJSON, skillsJSON,
 		normalized.ManagedProjectID, normalized.ManagedProjectRevision, normalized.ManagedAgentName, normalized.CreatedAt.Unix(), normalized.UpdatedAt.Unix()); err != nil {
 		return domain.AgentDefinition{}, fmt.Errorf("insert agent definition %s: %w", normalized.ID, err)
 	}
@@ -629,6 +637,7 @@ func (s *coreStore) UpdateAgentDefinition(ctx context.Context, item domain.Agent
 	if err != nil {
 		return domain.AgentDefinition{}, err
 	}
+	normalized.Skills = existing.Skills
 	result, err := s.db.ExecContext(ctx, `UPDATE agent_definition SET
 		name = ?, description = ?, enabled = ?, provider = ?, model = ?, system_prompt = ?, driver = ?, guest_image = ?, workspace_id = ?, env_json = ?,
 		volumes_json = ?, config_json = ?, capset_ids = ?, managed_project_id = ?, managed_project_revision = ?, managed_agent_name = ?, updated_at = ?
@@ -665,6 +674,10 @@ func (s *coreStore) UpsertManagedAgentDefinition(ctx context.Context, item domai
 	if err != nil {
 		return domain.AgentDefinition{}, err
 	}
+	skillsJSON, err := EncodeAgentSkillsJSON(normalized.Skills)
+	if err != nil {
+		return domain.AgentDefinition{}, err
+	}
 	now := time.Now().UTC()
 	existing, found, err := s.getAgentDefinitionIfExists(ctx, normalized.ID, true)
 	if err != nil {
@@ -676,11 +689,11 @@ func (s *coreStore) UpsertManagedAgentDefinition(ctx context.Context, item domai
 		normalized.DeletedAt = time.Time{}
 		result, err := s.db.ExecContext(ctx, `UPDATE agent_definition SET
 			name = ?, description = ?, enabled = ?, deleted_at = 0, provider = ?, model = ?, system_prompt = ?, driver = ?, guest_image = ?, workspace_id = ?,
-			env_json = ?, volumes_json = ?, config_json = ?, capset_ids = ?, managed_project_id = ?, managed_project_revision = ?, managed_agent_name = ?, updated_at = ?
+			env_json = ?, volumes_json = ?, config_json = ?, capset_ids = ?, skills = ?, managed_project_id = ?, managed_project_revision = ?, managed_agent_name = ?, updated_at = ?
 			WHERE id = ?`,
 			normalized.Name, normalized.Description, BoolToInt(normalized.Enabled), normalized.Provider, normalized.Model, normalized.SystemPrompt,
 			normalized.Driver, normalized.GuestImage, normalized.WorkspaceID, envJSON, volumesJSON, normalized.ConfigJSON, capsetIDsJSON,
-			normalized.ManagedProjectID, normalized.ManagedProjectRevision, normalized.ManagedAgentName, normalized.UpdatedAt.Unix(), normalized.ID)
+			skillsJSON, normalized.ManagedProjectID, normalized.ManagedProjectRevision, normalized.ManagedAgentName, normalized.UpdatedAt.Unix(), normalized.ID)
 		if err != nil {
 			return domain.AgentDefinition{}, fmt.Errorf("update managed agent definition %s: %w", normalized.ID, err)
 		}
@@ -694,11 +707,11 @@ func (s *coreStore) UpsertManagedAgentDefinition(ctx context.Context, item domai
 	normalized.UpdatedAt = now
 	normalized.DeletedAt = time.Time{}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO agent_definition(
-		id, name, description, enabled, deleted_at, provider, model, system_prompt, driver, guest_image, workspace_id, env_json, volumes_json, config_json, capset_ids,
+		id, name, description, enabled, deleted_at, provider, model, system_prompt, driver, guest_image, workspace_id, env_json, volumes_json, config_json, capset_ids, skills,
 		managed_project_id, managed_project_revision, managed_agent_name, created_at, updated_at
-	) VALUES(?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES(?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		normalized.ID, normalized.Name, normalized.Description, BoolToInt(normalized.Enabled), normalized.Provider, normalized.Model, normalized.SystemPrompt,
-		normalized.Driver, normalized.GuestImage, normalized.WorkspaceID, envJSON, volumesJSON, normalized.ConfigJSON, capsetIDsJSON,
+		normalized.Driver, normalized.GuestImage, normalized.WorkspaceID, envJSON, volumesJSON, normalized.ConfigJSON, capsetIDsJSON, skillsJSON,
 		normalized.ManagedProjectID, normalized.ManagedProjectRevision, normalized.ManagedAgentName, normalized.CreatedAt.Unix(), normalized.UpdatedAt.Unix()); err != nil {
 		return domain.AgentDefinition{}, fmt.Errorf("insert managed agent definition %s: %w", normalized.ID, err)
 	}
@@ -730,7 +743,7 @@ func (s *coreStore) getAgentDefinitionIfExists(ctx context.Context, id string, i
 	if includeDeleted {
 		where = "id = ?"
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, description, enabled, deleted_at, provider, model, system_prompt, driver, guest_image, workspace_id, env_json, volumes_json, config_json, capset_ids,
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, description, enabled, deleted_at, provider, model, system_prompt, driver, guest_image, workspace_id, env_json, volumes_json, config_json, capset_ids, skills,
 		managed_project_id, managed_project_revision, managed_agent_name, created_at, updated_at
 		FROM agent_definition WHERE `+where, strings.TrimSpace(id))
 	item, err := ScanAgentDefinition(row.Scan)
@@ -760,7 +773,7 @@ func (s *coreStore) ListAgentDefinitions(ctx context.Context, options domain.Age
 		offset = 0
 	}
 	query := strings.ToLower(strings.TrimSpace(options.Query))
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, description, enabled, deleted_at, provider, model, system_prompt, driver, guest_image, workspace_id, env_json, volumes_json, config_json, capset_ids,
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, description, enabled, deleted_at, provider, model, system_prompt, driver, guest_image, workspace_id, env_json, volumes_json, config_json, capset_ids, skills,
 		managed_project_id, managed_project_revision, managed_agent_name, created_at, updated_at
 		FROM agent_definition
 		ORDER BY CASE WHEN deleted_at = 0 THEN 0 ELSE 1 END, updated_at DESC, created_at DESC, id ASC`)
@@ -812,7 +825,7 @@ func (s *coreStore) ListManagedAgentDefinitions(ctx context.Context, projectID s
 	if includeDeleted {
 		where = "managed_project_id = ?"
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, description, enabled, deleted_at, provider, model, system_prompt, driver, guest_image, workspace_id, env_json, volumes_json, config_json, capset_ids,
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, description, enabled, deleted_at, provider, model, system_prompt, driver, guest_image, workspace_id, env_json, volumes_json, config_json, capset_ids, skills,
 		managed_project_id, managed_project_revision, managed_agent_name, created_at, updated_at
 		FROM agent_definition WHERE `+where+` ORDER BY managed_agent_name ASC, id ASC`, projectID)
 	if err != nil {

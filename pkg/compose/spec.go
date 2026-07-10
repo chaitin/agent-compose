@@ -28,6 +28,7 @@ type AgentSpec struct {
 	Env          map[string]EnvVarSpec `yaml:"env,omitempty" json:"env,omitempty"`
 	MCPs         AgentMCPEntriesSpec   `yaml:"mcps,omitempty" json:"mcps,omitempty"`
 	CapsetIDs    []string              `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
+	Skills       []SkillSpec           `yaml:"skills,omitempty" json:"skills,omitempty"`
 	Volumes      []VolumeMountSpec     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	Workspace    *WorkspaceSpec        `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Scheduler    *SchedulerSpec        `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
@@ -87,6 +88,17 @@ type VolumeMountSpec struct {
 	Source   string `yaml:"source,omitempty" json:"source,omitempty"`
 	Target   string `yaml:"target,omitempty" json:"target,omitempty"`
 	ReadOnly bool   `yaml:"read_only,omitempty" json:"read_only,omitempty"`
+}
+
+type SkillSpec struct {
+	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
+	Source   string `yaml:"source,omitempty" json:"source,omitempty"`
+	URL      string `yaml:"url,omitempty" json:"url,omitempty"`
+	Path     string `yaml:"path,omitempty" json:"path,omitempty"`
+	Ref      string `yaml:"ref,omitempty" json:"ref,omitempty"`
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	Password string `yaml:"password,omitempty" json:"password,omitempty"`
+	Token    string `yaml:"token,omitempty" json:"token,omitempty"`
 }
 
 type SchedulerSpec struct {
@@ -222,6 +234,28 @@ func (s *VolumeMountSpec) UnmarshalYAML(value *yaml.Node) error {
 			return err
 		}
 		*s = VolumeMountSpec(decoded)
+		return nil
+	default:
+		return fmt.Errorf("expected scalar or mapping, got %s", nodeKindName(value.Kind))
+	}
+}
+
+func (s *SkillSpec) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		var raw string
+		if err := value.Decode(&raw); err != nil {
+			return err
+		}
+		s.Path = raw
+		return nil
+	case yaml.MappingNode:
+		type skillSpec SkillSpec
+		var decoded skillSpec
+		if err := value.Decode(&decoded); err != nil {
+			return err
+		}
+		*s = SkillSpec(decoded)
 		return nil
 	default:
 		return fmt.Errorf("expected scalar or mapping, got %s", nodeKindName(value.Kind))
@@ -391,6 +425,7 @@ func validateAgent(node *yaml.Node, path string) error {
 		"env":           validateEnvVarMap,
 		"mcps":          validateAgentMCPEntries,
 		"capset_ids":    validateStringList,
+		"skills":        validateSkillList,
 		"volumes":       validateVolumeMountList,
 		"workspace":     validateWorkspace,
 		"scheduler":     validateScheduler,
@@ -494,6 +529,38 @@ func validateVolumeMount(node *yaml.Node, path string) error {
 			"source":    validateScalar,
 			"target":    validateScalar,
 			"read_only": validateBool,
+		})
+	default:
+		return newParseError(node, path, "expected scalar or mapping")
+	}
+}
+
+func validateSkillList(node *yaml.Node, path string) error {
+	if err := requireKind(node, path, yaml.SequenceNode, "sequence"); err != nil {
+		return err
+	}
+	for i, item := range node.Content {
+		if err := validateSkill(item, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSkill(node *yaml.Node, path string) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		return validateScalar(node, path)
+	case yaml.MappingNode:
+		return validateMapping(node, path, map[string]nodeValidator{
+			"name":     validateScalar,
+			"source":   validateScalar,
+			"url":      validateScalar,
+			"path":     validateScalar,
+			"ref":      validateScalar,
+			"username": validateScalar,
+			"password": validateScalar,
+			"token":    validateScalar,
 		})
 	default:
 		return newParseError(node, path, "expected scalar or mapping")

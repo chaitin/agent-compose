@@ -194,6 +194,7 @@ Command arguments:
 | `--home` | no | Agent HOME; default `HOME` or `/root` |
 | `--model` | no | Agent model; consumed by providers that support explicit model selection |
 | `--system-prompt-file` | no | System prompt file path; currently consumed by providers that need prompt-level system instructions |
+| `--skill <name>` | no | Repeatable enabled skill name. Host projects the active set into `/root/.agents/skills` before invoking runtime |
 
 Agent identity uses the fixed convention path documented in §3.2.
 

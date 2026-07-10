@@ -212,6 +212,7 @@ func runtimeMountEntries(config *appconfig.Config) []logicalRuntimeMountEntry {
 		{sandboxPath: "runtime", guestPath: config.GuestRuntimeRoot, directoryOnlyExposure: directoryOnlyExposureAlreadyInData},
 		{sandboxPath: "logs", guestPath: config.GuestLogRoot, directoryOnlyExposure: directoryOnlyExposureAlreadyInData},
 		{sandboxPath: "home/.codex", guestPath: filepath.Join(config.GuestHomePath, ".codex"), directoryOnlyExposure: directoryOnlyExposureSymlink},
+		{sandboxPath: "home/.agents", guestPath: filepath.Join(config.GuestHomePath, ".agents"), directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.claude", guestPath: filepath.Join(config.GuestHomePath, ".claude"), directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.opencode", guestPath: filepath.Join(config.GuestHomePath, ".opencode"), directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.claude.json", guestPath: filepath.Join(config.GuestHomePath, ".claude.json"), isFile: true, directoryOnlyExposure: directoryOnlyExposureSymlink},

@@ -271,6 +271,122 @@ agents:
 	}
 }
 
+func TestNormalizeAgentSkills(t *testing.T) {
+	dir := t.TempDir()
+	composePath := filepath.Join(dir, "agent-compose.yml")
+	spec := mustParseCompose(t, `
+name: skills-project
+agents:
+  reviewer:
+    provider: codex
+    skills:
+      - ./skills/local-review
+      - name: pdf
+        source: git
+        url: https://github.com/anthropics/skills.git
+        path: skills/pdf
+        token: ${GIT_TOKEN}
+      - name: report
+        source: zip
+        url: https://example.com/report.zip
+        path: report
+      - name: local-report
+        source: zip
+        url: ./archives/report.zip
+        path: report
+`)
+
+	normalized, err := Normalize(spec, NormalizeOptions{ComposePath: composePath})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	skills := normalized.Agents[0].Skills
+	if len(skills) != 4 {
+		t.Fatalf("skills = %#v, want 4", skills)
+	}
+	if skills[0].Name != "local-review" || skills[0].Source != "file" || skills[0].Path != filepath.Join(dir, "skills", "local-review") {
+		t.Fatalf("local skill = %#v", skills[0])
+	}
+	if skills[1].Name != "pdf" || skills[1].Source != "git" || skills[1].Token != "${GIT_TOKEN}" {
+		t.Fatalf("git skill = %#v", skills[1])
+	}
+	if skills[2].Source != "zip" || skills[2].URL != "https://example.com/report.zip" || skills[2].Path != "report" {
+		t.Fatalf("zip skill = %#v", skills[2])
+	}
+	if skills[3].Source != "zip" || skills[3].URL != filepath.Join(dir, "archives", "report.zip") || skills[3].Path != "report" {
+		t.Fatalf("local zip skill = %#v", skills[3])
+	}
+}
+
+func TestNormalizeAgentSkillsInterpolatesSourceBeforeLowercase(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: skills-project
+agents:
+  reviewer:
+    provider: codex
+    skills:
+      - name: pdf
+        source: ${SKILL_SOURCE}
+        url: https://github.com/anthropics/skills.git
+        path: skills/pdf
+`)
+
+	normalized, err := Normalize(spec, NormalizeOptions{Env: map[string]string{"SKILL_SOURCE": "GIT"}})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if got := normalized.Agents[0].Skills[0].Source; got != "git" {
+		t.Fatalf("source = %q, want git", got)
+	}
+}
+
+func TestNormalizeAgentSkillsRejectsPlaintextSecret(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: skills-project
+agents:
+  reviewer:
+    provider: codex
+    skills:
+      - name: private
+        source: git
+        url: https://git.example/skills.git
+        token: plaintext
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "agents.reviewer.skills[0].token") || !strings.Contains(got, "environment reference") {
+		t.Fatalf("error = %q, want token environment reference validation", got)
+	}
+}
+
+func TestNormalizeAgentSkillsRejectsDuplicateNames(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: skills-project
+agents:
+  reviewer:
+    provider: codex
+    skills:
+      - name: pdf
+        source: git
+        url: https://github.com/anthropics/skills.git
+        path: skills/pdf
+      - name: pdf
+        source: file
+        path: ./skills/pdf
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{ComposePath: filepath.Join(t.TempDir(), "agent-compose.yml")})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, `duplicate skill name "pdf"`) {
+		t.Fatalf("error = %q, want duplicate skill name", got)
+	}
+}
+
 func TestNormalizeProjectVolumesAndAgentMounts(t *testing.T) {
 	raw := []byte(`
 name: volume-demo
@@ -654,6 +770,7 @@ agents:
 	scheduler := normalized.Agents[0].Scheduler
 	if scheduler == nil {
 		t.Fatalf("scheduler is nil")
+		return
 	}
 	if !strings.Contains(scheduler.Script, `scheduler.interval("hourly-review"`) {
 		t.Fatalf("scheduler script = %q, want inline qjs", scheduler.Script)
@@ -682,6 +799,7 @@ agents:
 	scheduler := normalized.Agents[0].Scheduler
 	if scheduler == nil {
 		t.Fatalf("scheduler is nil")
+		return
 	}
 	if scheduler.Script != "" {
 		t.Fatalf("scheduler script = %q, want empty", scheduler.Script)
@@ -731,6 +849,7 @@ agents:
 	scheduler := normalized.Agents[0].Scheduler
 	if scheduler == nil {
 		t.Fatalf("scheduler is nil")
+		return
 	}
 	if scheduler.Script != "" {
 		t.Fatalf("scheduler script = %q, want empty", scheduler.Script)

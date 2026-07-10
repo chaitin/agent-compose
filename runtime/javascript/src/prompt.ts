@@ -20,6 +20,7 @@ export interface PromptCommandOptions {
   home?: string;
   model?: string;
   outputSchemaFile?: string;
+  skills?: string[];
 }
 
 export async function buildPromptRuntimeOptions(commandOptions: Omit<PromptCommandOptions, "messageFile">) {
@@ -35,6 +36,8 @@ export async function buildPromptRuntimeOptions(commandOptions: Omit<PromptComma
   const systemPrompt = await readSystemPromptFile(agentSystemPromptPath(stateRoot));
   const mpi = await readMpiContext(stateRoot);
   const mcpConfig = await readMCPConfig(stateRoot);
+  const skills = normalizeSkills(commandOptions.skills);
+  const baseSystemContext = buildSystemContext(systemPrompt, mpi.context);
   return {
     provider,
     model: commandOptions.model,
@@ -42,8 +45,11 @@ export async function buildPromptRuntimeOptions(commandOptions: Omit<PromptComma
     workspace,
     home,
     runtimeRoot: mpi.runtimeRoot,
-    systemContext: buildSystemContext(systemPrompt, mpi.context),
+    systemContext: provider === "gemini" || provider === "codex"
+      ? await appendSkillCatalogContext(baseSystemContext, home, skills)
+      : baseSystemContext,
     mcpConfig: mcpConfig.mcps,
+    skills,
     outputSchema,
   };
 }
@@ -68,6 +74,74 @@ export async function runPromptCommand(commandOptions: PromptCommandOptions): Pr
     return await new OpenCodeRunner(options).runPrompt(promptText);
   }
   return await new GeminiRunner(options).runPrompt(promptText);
+}
+
+function normalizeSkills(skills: string[] | undefined): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const skill of skills || []) {
+    const name = String(skill || "").trim();
+    if (!name || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    normalized.push(name);
+  }
+  return normalized;
+}
+
+async function appendSkillCatalogContext(systemContext: string, home: string, skills: string[]): Promise<string> {
+  if (skills.length === 0) {
+    return systemContext;
+  }
+  const lines = ["## Agent Skills", ""];
+  for (const skill of skills) {
+    const skillDir = path.join(home, ".agents", "skills", skill);
+    const meta = await readSkillMetadata(path.join(skillDir, "SKILL.md"));
+    if (!meta) {
+      process.stderr.write(`[agent-compose-runtime] warning: skill metadata missing for ${skill}\n`);
+      continue;
+    }
+    lines.push(`- ${meta.name}: ${truncate(meta.description, 200)} (${skillDir})`);
+  }
+  if (lines.length <= 2) {
+    return systemContext;
+  }
+  const skillsContext = lines.join("\n");
+  return systemContext ? `${systemContext}\n\n${skillsContext}` : skillsContext;
+}
+
+async function readSkillMetadata(skillPath: string): Promise<{ name: string; description: string } | null> {
+  try {
+    const raw = await readText(skillPath);
+    const frontmatter = raw.trimStart().match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (!frontmatter) {
+      return null;
+    }
+    let name = "";
+    let description = "";
+    for (const line of frontmatter[1].split(/\r?\n/)) {
+      const index = line.indexOf(":");
+      if (index < 0) {
+        continue;
+      }
+      const key = line.slice(0, index).trim();
+      const value = line.slice(index + 1).trim().replace(/^['"]|['"]$/g, "");
+      if (key === "name") {
+        name = value;
+      }
+      if (key === "description") {
+        description = value;
+      }
+    }
+    return name && description ? { name, description } : null;
+  } catch {
+    return null;
+  }
+}
+
+function truncate(value: string, max: number): string {
+  return value.length <= max ? value : `${value.slice(0, max)}...`;
 }
 
 function parseOutputSchema(raw: string): RuntimeJsonSchema {

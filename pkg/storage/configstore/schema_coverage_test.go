@@ -665,31 +665,46 @@ func testConfigStoreCRUDCoverageWorkflows(t *testing.T) {
 		ID: "agent-1", Name: "Agent", Enabled: true, Provider: "codex", Model: "gpt", SystemPrompt: "prompt",
 		Driver: driverpkg.RuntimeDriverBoxlite, GuestImage: "guest:latest", WorkspaceID: workspace.ID,
 		EnvItems: []domain.SandboxEnvVar{{Name: "TOKEN", Value: "secret", Secret: true}}, CapsetIDs: []string{"dev"},
+		Skills: []domain.AgentSkill{{Name: "pdf", Source: "git", URL: "https://github.com/anthropics/skills.git", Path: "skills/pdf", Token: "${GIT_TOKEN}"}},
 	})
 	if err != nil {
 		t.Fatalf("CreateAgentDefinition returned error: %v", err)
 	}
+	if len(agent.Skills) != 1 || agent.Skills[0].Name != "pdf" {
+		t.Fatalf("agent skills = %#v", agent.Skills)
+	}
 	if !AgentMatchesQuery(agent, "agent") || !AgentMatchesQuery(agent, "codex") {
 		t.Fatalf("AgentMatchesQuery failed")
 	}
-	agent.Description = "updated"
-	if _, err := store.UpdateAgentDefinition(ctx, agent); err != nil {
+	update := agent
+	update.Description = "updated"
+	update.Skills = nil
+	updatedAgent, err := store.UpdateAgentDefinition(ctx, update)
+	if err != nil {
 		t.Fatalf("UpdateAgentDefinition returned error: %v", err)
 	}
-	if _, err := store.GetAgentDefinitionIncludingDeleted(ctx, agent.ID); err != nil {
+	if len(updatedAgent.Skills) != 1 || updatedAgent.Skills[0].Name != "pdf" {
+		t.Fatalf("updated agent skills = %#v", updatedAgent.Skills)
+	}
+	if loadedAgent, err := store.GetAgentDefinitionIncludingDeleted(ctx, agent.ID); err != nil {
 		t.Fatalf("GetAgentDefinitionIncludingDeleted returned error: %v", err)
+	} else if len(loadedAgent.Skills) != 1 || loadedAgent.Skills[0].Name != "pdf" {
+		t.Fatalf("loaded agent skills = %#v", loadedAgent.Skills)
 	}
 	if result, err := store.ListAgentDefinitions(ctx, domain.AgentDefinitionListOptions{Query: "agent", IncludeDisabled: true, Limit: 10}); err != nil || result.TotalCount != 1 {
 		t.Fatalf("ListAgentDefinitions result=%#v err=%v", result, err)
 	}
 	managedAgent, err := store.UpsertManagedAgentDefinition(ctx, domain.AgentDefinition{
 		ID: "managed-agent-1", Name: "Managed", Enabled: true, Provider: "codex", ManagedProjectID: "project-1", ManagedAgentName: "worker", ManagedProjectRevision: 1,
+		Skills: []domain.AgentSkill{{Name: "local-review", Source: "file", Path: "/tmp/skills/local-review"}},
 	})
 	if err != nil {
 		t.Fatalf("UpsertManagedAgentDefinition returned error: %v", err)
 	}
 	if managedAgents, err := store.ListManagedAgentDefinitions(ctx, "project-1", true); err != nil || len(managedAgents) != 1 || managedAgents[0].ID != managedAgent.ID {
 		t.Fatalf("ListManagedAgentDefinitions agents=%#v err=%v", managedAgents, err)
+	} else if len(managedAgents[0].Skills) != 1 || managedAgents[0].Skills[0].Name != "local-review" {
+		t.Fatalf("managed agent skills = %#v", managedAgents[0].Skills)
 	}
 	if _, err := store.SetAgentDefinitionEnabled(ctx, agent.ID, false); err != nil {
 		t.Fatalf("SetAgentDefinitionEnabled returned error: %v", err)
@@ -1161,7 +1176,7 @@ func assertProjectSchema(t *testing.T, store *ConfigStore) {
 		"project_run": {"run_id", "project_id", "project_name", "project_revision", "agent_name", "managed_agent_id", "source", "scheduler_id", "trigger_id", "status",
 			"sandbox_id", "exit_code", "error", "prompt", "output", "result_json", "logs_path", "artifacts_dir", "cleanup_error", "driver", "image_ref", "started_at",
 			"completed_at", "duration_ms", "created_at", "updated_at"},
-		"agent_definition": {"managed_project_id", "managed_project_revision", "managed_agent_name"},
+		"agent_definition": {"skills", "managed_project_id", "managed_project_revision", "managed_agent_name"},
 		"loader":           {"managed_project_id", "managed_project_revision", "managed_agent_name", "managed_scheduler_id"},
 	} {
 		assertTableColumns(t, store, table, columns...)

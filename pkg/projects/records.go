@@ -7,6 +7,8 @@ import (
 	domain "agent-compose/pkg/model"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -117,6 +119,7 @@ func NewAgentDefinitionFromSpec(project domain.ProjectRecord, revision int64, ag
 		Volumes:                VolumeMountSpecsFromCompose(agent.Volumes),
 		ConfigJSON:             configJSON,
 		CapsetIDs:              capabilities.NormalizeCapsetIDs(agent.CapsetIDs),
+		Skills:                 AgentSkillsFromCompose(agent.Skills, project.SourcePath),
 		ManagedProjectID:       project.ID,
 		ManagedProjectRevision: revision,
 		ManagedAgentName:       agent.Name,
@@ -217,6 +220,43 @@ func VolumeMountSpecsFromCompose(values []compose.NormalizedVolumeMountSpec) []d
 		})
 	}
 	return out
+}
+
+func AgentSkillsFromCompose(values []compose.NormalizedSkillSpec, sourcePath string) []domain.AgentSkill {
+	if len(values) == 0 {
+		return nil
+	}
+	sourceRoot := composeSourceRoot(sourcePath)
+	out := make([]domain.AgentSkill, 0, len(values))
+	for _, value := range values {
+		out = append(out, domain.AgentSkill{
+			Name:       value.Name,
+			Source:     value.Source,
+			URL:        value.URL,
+			Path:       value.Path,
+			Ref:        value.Ref,
+			Username:   value.Username,
+			Password:   value.Password,
+			Token:      value.Token,
+			SourceRoot: sourceRoot,
+		})
+	}
+	return domain.NormalizeAgentSkills(out)
+}
+
+func composeSourceRoot(sourcePath string) string {
+	sourcePath = domain.NormalizeProjectSourcePath(sourcePath)
+	if sourcePath == "" {
+		return ""
+	}
+	info, err := filepath.Abs(sourcePath)
+	if err != nil {
+		info = sourcePath
+	}
+	if stat, err := os.Stat(info); err == nil && stat.IsDir() {
+		return filepath.Clean(info)
+	}
+	return filepath.Dir(filepath.Clean(info))
 }
 
 type SchedulerBuild struct {

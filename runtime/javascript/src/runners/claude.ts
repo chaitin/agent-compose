@@ -97,6 +97,10 @@ export class ClaudeRunner {
         mcpServers,
         strictMcpConfig: true,
       } : {}),
+      ...(this.options.skills && this.options.skills.length > 0 ? {
+        settingSources: ["user"],
+        skills: this.options.skills,
+      } : {}),
       ...(this.options.outputSchema ? {
         outputFormat: {
           type: "json_schema",

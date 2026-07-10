@@ -22,6 +22,7 @@ const (
 var stableIdentifierPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 var volumeSourceNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 var envReferencePattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+var exactEnvReferencePattern = regexp.MustCompile(`^\$\{[A-Za-z_][A-Za-z0-9_]*\}$`)
 var composeCronParser = cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
 type NormalizeOptions struct {
@@ -51,6 +52,7 @@ type NormalizedAgentSpec struct {
 	Env          map[string]EnvVarSpec              `yaml:"env,omitempty" json:"env,omitempty"`
 	MCPs         map[string]NormalizedMCPServerSpec `yaml:"mcps,omitempty" json:"mcps,omitempty"`
 	CapsetIDs    []string                           `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
+	Skills       []NormalizedSkillSpec              `yaml:"skills,omitempty" json:"skills,omitempty"`
 	Volumes      []NormalizedVolumeMountSpec        `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	Workspace    *WorkspaceSpec                     `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Scheduler    *NormalizedSchedulerSpec           `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
@@ -65,6 +67,17 @@ type NormalizedMCPServerSpec struct {
 	Env       map[string]EnvVarSpec `yaml:"env,omitempty" json:"env,omitempty"`
 	URL       string                `yaml:"url,omitempty" json:"url,omitempty"`
 	Headers   map[string]EnvVarSpec `yaml:"headers,omitempty" json:"headers,omitempty"`
+}
+
+type NormalizedSkillSpec struct {
+	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
+	Source   string `yaml:"source,omitempty" json:"source,omitempty"`
+	URL      string `yaml:"url,omitempty" json:"url,omitempty"`
+	Path     string `yaml:"path,omitempty" json:"path,omitempty"`
+	Ref      string `yaml:"ref,omitempty" json:"ref,omitempty"`
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	Password string `yaml:"password,omitempty" json:"password,omitempty"`
+	Token    string `yaml:"token,omitempty" json:"token,omitempty"`
 }
 
 type NormalizedVolumeSpec struct {
@@ -234,6 +247,10 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
+	skills, err := normalizeSkillSpecs(joinPath("agents", name)+".skills", agent.Skills, options)
+	if err != nil {
+		return NormalizedAgentSpec{}, err
+	}
 	model, err := interpolateEnvValue(joinPath("agents", name)+".model", strings.TrimSpace(agent.Model), options)
 	if err != nil {
 		return NormalizedAgentSpec{}, err
@@ -253,6 +270,7 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 		Env:          env,
 		MCPs:         agentMCPs,
 		CapsetIDs:    normalizeStringList(agent.CapsetIDs),
+		Skills:       skills,
 		Volumes:      volumes,
 		Workspace:    workspace,
 		Scheduler:    scheduler,
@@ -503,6 +521,257 @@ func normalizeAgentMCPEntries(path string, entries AgentMCPEntriesSpec, projectM
 		return nil, nil
 	}
 	return result, nil
+}
+
+func normalizeSkillSpecs(path string, values []SkillSpec, options NormalizeOptions) ([]NormalizedSkillSpec, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	normalized := make([]NormalizedSkillSpec, 0, len(values))
+	seenNames := make(map[string]struct{}, len(values))
+	for index, value := range values {
+		itemPath := fmt.Sprintf("%s[%d]", path, index)
+		current, err := normalizeSkillSpec(itemPath, value, options)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seenNames[current.Name]; ok {
+			return nil, &ValidationError{Path: itemPath + ".name", Message: fmt.Sprintf("duplicate skill name %q", current.Name)}
+		}
+		seenNames[current.Name] = struct{}{}
+		normalized = append(normalized, current)
+	}
+	return normalized, nil
+}
+
+func normalizeSkillSpec(path string, value SkillSpec, options NormalizeOptions) (NormalizedSkillSpec, error) {
+	name, err := interpolateEnvValue(path+".name", strings.TrimSpace(value.Name), options)
+	if err != nil {
+		return NormalizedSkillSpec{}, err
+	}
+	source, err := interpolateEnvValue(path+".source", strings.TrimSpace(value.Source), options)
+	if err != nil {
+		return NormalizedSkillSpec{}, err
+	}
+	source = strings.ToLower(strings.TrimSpace(source))
+	urlValue, err := interpolateEnvValue(path+".url", strings.TrimSpace(value.URL), options)
+	if err != nil {
+		return NormalizedSkillSpec{}, err
+	}
+	pathValue, err := interpolateEnvValue(path+".path", strings.TrimSpace(value.Path), options)
+	if err != nil {
+		return NormalizedSkillSpec{}, err
+	}
+	ref, err := interpolateEnvValue(path+".ref", strings.TrimSpace(value.Ref), options)
+	if err != nil {
+		return NormalizedSkillSpec{}, err
+	}
+	username := strings.TrimSpace(value.Username)
+	if username != "" {
+		username, err = interpolateEnvValue(path+".username", username, options)
+		if err != nil {
+			return NormalizedSkillSpec{}, err
+		}
+	}
+	password := strings.TrimSpace(value.Password)
+	token := strings.TrimSpace(value.Token)
+	if err := validateSecretReference(path+".password", password); err != nil {
+		return NormalizedSkillSpec{}, err
+	}
+	if err := validateSecretReference(path+".token", token); err != nil {
+		return NormalizedSkillSpec{}, err
+	}
+	if source == "" {
+		source = inferSkillSource(pathValue, urlValue)
+	}
+	if source == "" {
+		return NormalizedSkillSpec{}, &ValidationError{Path: path + ".source", Message: "skill source is required"}
+	}
+	if source == "zip" && urlValue != "" {
+		urlValue = normalizeLocalSkillArchivePath(urlValue, options)
+	}
+	if pathValue != "" {
+		pathValue, err = normalizeSkillPath(path+".path", source, urlValue, pathValue, options)
+		if err != nil {
+			return NormalizedSkillSpec{}, err
+		}
+	}
+	switch source {
+	case "git":
+		if parsedURL, parsedPath, parsedRef, ok := parseGitHubSkillShorthand(urlValue, pathValue, ref); ok {
+			urlValue, pathValue, ref = parsedURL, parsedPath, parsedRef
+		} else if parsedURL, parsedPath, parsedRef, ok := parseGitHubSkillShorthand(pathValue, "", ref); ok {
+			urlValue, pathValue, ref = parsedURL, parsedPath, parsedRef
+		}
+		if urlValue == "" {
+			urlValue = pathValue
+			pathValue = ""
+		}
+		if strings.TrimSpace(urlValue) == "" {
+			return NormalizedSkillSpec{}, &ValidationError{Path: path + ".url", Message: "git skill url is required"}
+		}
+	case "file":
+		if strings.TrimSpace(pathValue) == "" {
+			return NormalizedSkillSpec{}, &ValidationError{Path: path + ".path", Message: "file skill path is required"}
+		}
+	case "zip":
+		if strings.TrimSpace(urlValue) == "" && strings.TrimSpace(pathValue) == "" {
+			return NormalizedSkillSpec{}, &ValidationError{Path: path + ".url", Message: "zip skill url or path is required"}
+		}
+	default:
+		return NormalizedSkillSpec{}, &ValidationError{Path: path + ".source", Message: fmt.Sprintf("skill source %q is not supported", source)}
+	}
+	if name == "" {
+		name = inferSkillName(source, urlValue, pathValue)
+	}
+	if err := validateStableIdentifier(path+".name", name, "skill name"); err != nil {
+		return NormalizedSkillSpec{}, err
+	}
+	return NormalizedSkillSpec{
+		Name:     name,
+		Source:   source,
+		URL:      urlValue,
+		Path:     pathValue,
+		Ref:      ref,
+		Username: username,
+		Password: password,
+		Token:    token,
+	}, nil
+}
+
+func inferSkillSource(pathValue, urlValue string) string {
+	candidate := strings.ToLower(strings.TrimSpace(urlValue))
+	if candidate == "" {
+		candidate = strings.ToLower(strings.TrimSpace(pathValue))
+	}
+	switch {
+	case strings.HasPrefix(candidate, "github:"):
+		return "git"
+	case strings.HasSuffix(candidate, ".git"):
+		return "git"
+	case strings.HasSuffix(candidate, ".zip"):
+		return "zip"
+	case strings.HasPrefix(candidate, "http://"), strings.HasPrefix(candidate, "https://"):
+		return ""
+	default:
+		return "file"
+	}
+}
+
+func validateSecretReference(path, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	if !exactEnvReferencePattern.MatchString(strings.TrimSpace(value)) {
+		return &ValidationError{Path: path, Message: "secret value must be an environment reference like ${NAME}"}
+	}
+	return nil
+}
+
+func normalizeLocalSkillArchivePath(value string, options NormalizeOptions) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(value), "http://") || strings.HasPrefix(strings.ToLower(value), "https://") {
+		return value
+	}
+	if filepath.IsAbs(value) {
+		return filepath.Clean(value)
+	}
+	base := composeBaseDir(options)
+	if base == "" {
+		return filepath.Clean(value)
+	}
+	return filepath.Clean(filepath.Join(base, value))
+}
+
+func normalizeSkillPath(path, source, urlValue, value string, options NormalizeOptions) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", nil
+	}
+	if source != "file" && source != "zip" {
+		return value, nil
+	}
+	if source == "zip" && strings.TrimSpace(urlValue) != "" {
+		return value, nil
+	}
+	if strings.HasPrefix(strings.ToLower(value), "http://") || strings.HasPrefix(strings.ToLower(value), "https://") {
+		return value, nil
+	}
+	if filepath.IsAbs(value) {
+		return filepath.Clean(value), nil
+	}
+	base := composeBaseDir(options)
+	if base == "" {
+		return filepath.Clean(value), nil
+	}
+	return filepath.Clean(filepath.Join(base, value)), nil
+}
+
+func composeBaseDir(options NormalizeOptions) string {
+	if strings.TrimSpace(options.ComposePath) != "" {
+		if abs, err := filepath.Abs(strings.TrimSpace(options.ComposePath)); err == nil {
+			return filepath.Dir(abs)
+		}
+		return filepath.Dir(strings.TrimSpace(options.ComposePath))
+	}
+	if strings.TrimSpace(options.ProjectDir) != "" {
+		if abs, err := filepath.Abs(strings.TrimSpace(options.ProjectDir)); err == nil {
+			return abs
+		}
+		return strings.TrimSpace(options.ProjectDir)
+	}
+	return ""
+}
+
+func inferSkillName(source, urlValue, pathValue string) string {
+	candidate := strings.TrimSpace(pathValue)
+	if candidate == "" {
+		candidate = strings.TrimSpace(urlValue)
+	}
+	if source == "git" {
+		if _, parsedPath, _, ok := parseGitHubSkillShorthand(candidate, "", ""); ok && parsedPath != "" {
+			candidate = parsedPath
+		}
+	}
+	candidate = strings.TrimSuffix(candidate, "/")
+	candidate = strings.TrimSuffix(candidate, ".zip")
+	candidate = strings.TrimSuffix(candidate, ".git")
+	name := filepath.Base(candidate)
+	name = strings.ToLower(strings.TrimSpace(name))
+	var b strings.Builder
+	for _, r := range name {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	return strings.Trim(b.String(), "-_")
+}
+
+func parseGitHubSkillShorthand(value, fallbackPath, fallbackRef string) (string, string, string, bool) {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "github:") {
+		return "", "", "", false
+	}
+	raw := strings.TrimPrefix(value, "github:")
+	ref := strings.TrimSpace(fallbackRef)
+	if before, after, ok := strings.Cut(raw, "@"); ok {
+		raw = before
+		ref = strings.TrimSpace(after)
+	}
+	repo := raw
+	pathValue := strings.TrimSpace(fallbackPath)
+	if before, after, ok := strings.Cut(raw, "//"); ok {
+		repo = before
+		pathValue = strings.TrimSpace(after)
+	}
+	repo = strings.Trim(repo, "/")
+	if strings.Count(repo, "/") != 1 {
+		return "", "", "", false
+	}
+	return "https://github.com/" + repo + ".git", pathValue, ref, true
 }
 
 func normalizeProjectVolumes(values map[string]VolumeSpec) (map[string]NormalizedVolumeSpec, error) {

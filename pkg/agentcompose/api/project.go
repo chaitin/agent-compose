@@ -186,6 +186,7 @@ func AgentSpecsToProto(agents []compose.NormalizedAgentSpec) []*agentcomposev2.A
 			Driver:       DriverSpecToProto(agent.Driver),
 			Env:          EnvVarSpecsToProto(agent.Env),
 			CapsetIds:    capabilities.NormalizeCapsetIDs(agent.CapsetIDs),
+			Skills:       SkillSpecsToProto(agent.Skills),
 			Workspace:    WorkspaceSpecToProto(agent.Workspace),
 			Scheduler:    SchedulerSpecToProto(agent.Scheduler),
 			Jupyter:      JupyterSpecToProto(agent.Jupyter),
@@ -214,6 +215,23 @@ func MCPServerSpecsToProto(values map[string]compose.NormalizedMCPServerSpec) []
 			Env:       EnvVarSpecsToProto(value.Env),
 			Url:       value.URL,
 			Headers:   EnvVarSpecsToProto(value.Headers),
+		})
+	}
+	return items
+}
+
+func SkillSpecsToProto(skills []compose.NormalizedSkillSpec) []*agentcomposev2.SkillSpec {
+	items := make([]*agentcomposev2.SkillSpec, 0, len(skills))
+	for _, skill := range skills {
+		items = append(items, &agentcomposev2.SkillSpec{
+			Name:     skill.Name,
+			Source:   skill.Source,
+			Url:      skill.URL,
+			Path:     skill.Path,
+			Ref:      skill.Ref,
+			Username: skill.Username,
+			Password: skill.Password,
+			Token:    skill.Token,
 		})
 	}
 	return items
@@ -500,6 +518,11 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		if capsetIDs := capabilities.NormalizeCapsetIDs(agent.GetCapsetIds()); len(capsetIDs) > 0 {
 			raw["capset_ids"] = capsetIDs
 		}
+		if skills, issues := SkillYAMLList(fmt.Sprintf("agents[%d].skills", i), agent.GetSkills()); len(issues) > 0 {
+			return nil, issues
+		} else if len(skills) > 0 {
+			raw["skills"] = skills
+		}
 		if workspace := WorkspaceYAMLShape(agent.GetWorkspace()); len(workspace) > 0 {
 			raw["workspace"] = workspace
 		}
@@ -583,6 +606,49 @@ func mcpServerYAMLShape(mcp *agentcomposev2.MCPServerSpec) map[string]any {
 		raw["headers"] = headers
 	}
 	return raw
+}
+
+func SkillYAMLList(path string, skills []*agentcomposev2.SkillSpec) ([]map[string]any, []*agentcomposev2.ProjectValidationIssue) {
+	items := make([]map[string]any, 0, len(skills))
+	seen := make(map[string]struct{}, len(skills))
+	for i, skill := range skills {
+		name := strings.TrimSpace(skill.GetName())
+		if name != "" {
+			if _, ok := seen[name]; ok {
+				return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("%s[%d].name", path, i), fmt.Sprintf("duplicate skill %q", name))}
+			}
+			seen[name] = struct{}{}
+		}
+		raw := map[string]any{}
+		if name != "" {
+			raw["name"] = name
+		}
+		if strings.TrimSpace(skill.GetSource()) != "" {
+			raw["source"] = skill.GetSource()
+		}
+		if strings.TrimSpace(skill.GetUrl()) != "" {
+			raw["url"] = skill.GetUrl()
+		}
+		if strings.TrimSpace(skill.GetPath()) != "" {
+			raw["path"] = skill.GetPath()
+		}
+		if strings.TrimSpace(skill.GetRef()) != "" {
+			raw["ref"] = skill.GetRef()
+		}
+		if strings.TrimSpace(skill.GetUsername()) != "" {
+			raw["username"] = skill.GetUsername()
+		}
+		if strings.TrimSpace(skill.GetPassword()) != "" {
+			raw["password"] = skill.GetPassword()
+		}
+		if strings.TrimSpace(skill.GetToken()) != "" {
+			raw["token"] = skill.GetToken()
+		}
+		if len(raw) > 0 {
+			items = append(items, raw)
+		}
+	}
+	return items, nil
 }
 
 func VolumeMountYAMLList(volumes []*agentcomposev2.VolumeMountSpec) []map[string]any {

@@ -369,6 +369,7 @@ message AgentSpec {
   BuildSpec build = 12;
   repeated VolumeMountSpec volumes = 13;
   repeated MCPServerSpec mcps = 14;
+  repeated SkillSpec skills = 15;
 }
 
 message MCPServerSpec {
@@ -1165,4 +1166,15 @@ message StartRunResponse {
   RunSummary run = 1;
   repeated string warnings = 2;
   bool started = 3;
+}
+
+message SkillSpec {
+  string name = 1;
+  string source = 2;
+  string url = 3;
+  string path = 4;
+  string ref = 5;
+  string username = 6;
+  string password = 7;
+  string token = 8;
 }

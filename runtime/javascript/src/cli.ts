@@ -10,6 +10,10 @@ import { formatError } from "./errors.js";
 import { runPromptCommand } from "./prompt.js";
 import { runStreamCommand } from "./stream.js";
 
+function collectRepeated(value: string, previous: string[] = []): string[] {
+  return [...previous, value];
+}
+
 export function createProgram(options: { exitOverride?: boolean } = {}): Command {
   const program = new Command();
   program
@@ -28,6 +32,7 @@ export function createProgram(options: { exitOverride?: boolean } = {}): Command
     .option("--home <path>", "agent HOME directory")
     .option("--model <model>", "agent model")
     .option("--output-schema-file <path>", "JSON schema file for structured output")
+    .option("--skill <name>", "enabled agent skill name", collectRepeated, [])
     .action(async (options: {
       provider: string;
       messageFile: string;
@@ -36,8 +41,10 @@ export function createProgram(options: { exitOverride?: boolean } = {}): Command
       home?: string;
       model?: string;
       outputSchemaFile?: string;
+      skill?: string[];
     }) => {
-      const result = await runPromptCommand(options);
+      const { skill, ...promptOptions } = options;
+      const result = await runPromptCommand({ ...promptOptions, skills: skill });
       process.stdout.write(`${RESULT_PREFIX}${JSON.stringify(result)}\n`);
     });
 

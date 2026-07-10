@@ -44,6 +44,10 @@ describe("commander CLI", () => {
         "anthropic/claude-sonnet-4-5",
         "--output-schema-file",
         "/tmp/schema.json",
+        "--skill",
+        "pdf",
+        "--skill",
+        "docx",
       ]);
     } finally {
       stdio.restore();
@@ -57,6 +61,7 @@ describe("commander CLI", () => {
       home: "/data/home",
       model: "anthropic/claude-sonnet-4-5",
       outputSchemaFile: "/tmp/schema.json",
+      skills: ["pdf", "docx"],
     });
     expect(stdio.stdout).toBe(`${RESULT_PREFIX}{"provider":"codex","threadId":"s1","stopReason":"completed","finalText":"done","json":null,"transcript":"done","stderr":""}\n`);
     expect(stdio.stderr).toBe("");
@@ -325,6 +330,80 @@ describe("commander CLI", () => {
       expect(options.systemContext).toContain("Reply only in Chinese");
       expect(options.systemContext).toContain("## MPI Catalog");
       expect(options.systemContext).toContain("# Email tools");
+    });
+  });
+
+  it("runPromptCommand appends compact Gemini skill catalog", async () => {
+    await withTempSession(async (root) => {
+      const messageFile = path.join(root, "message.txt");
+      const home = path.join(root, "home");
+      const skillDir = path.join(home, ".agents", "skills", "pdf");
+      await fs.mkdir(skillDir, { recursive: true });
+      await fs.writeFile(messageFile, "task body", "utf8");
+      await fs.writeFile(path.join(skillDir, "SKILL.md"), "---\nname: pdf\ndescription: Read PDF files\n---\nFULL BODY SHOULD NOT APPEAR\n", "utf8");
+      const runPrompt = vi.fn().mockResolvedValue({
+        provider: "gemini",
+        sessionId: "",
+        stopReason: "completed",
+        finalText: "ok",
+        transcript: "ok",
+        stderr: "",
+      });
+      const geminiSpy = vi.spyOn(await import("../src/runners/gemini.js"), "GeminiRunner").mockImplementation(function mockGemini(this: unknown, options: unknown) {
+        Object.assign(this as object, { options, runPrompt });
+      } as never);
+      const { runPromptCommand } = await import("../src/prompt.js");
+
+      await runPromptCommand({
+        provider: "gemini",
+        messageFile,
+        home,
+        skills: ["pdf"],
+      });
+
+      const options = geminiSpy.mock.calls.at(-1)?.[0] as { systemContext: string; skills: string[] };
+      expect(options.skills).toEqual(["pdf"]);
+      expect(options.systemContext).toContain("## Agent Skills");
+      expect(options.systemContext).toContain("pdf: Read PDF files");
+      expect(options.systemContext).toContain(path.join(home, ".agents", "skills", "pdf"));
+      expect(options.systemContext).not.toContain("FULL BODY SHOULD NOT APPEAR");
+    });
+  });
+
+  it("runPromptCommand appends compact Codex skill catalog", async () => {
+    await withTempSession(async (root) => {
+      const messageFile = path.join(root, "message.txt");
+      const home = path.join(root, "home");
+      const skillDir = path.join(home, ".agents", "skills", "pdf");
+      await fs.mkdir(skillDir, { recursive: true });
+      await fs.writeFile(messageFile, "task body", "utf8");
+      await fs.writeFile(path.join(skillDir, "SKILL.md"), "---\nname: pdf\ndescription: Read PDF files\n---\nFULL BODY SHOULD NOT APPEAR\n", "utf8");
+      const runPrompt = vi.fn().mockResolvedValue({
+        provider: "codex",
+        threadId: "",
+        stopReason: "completed",
+        finalText: "ok",
+        transcript: "ok",
+        stderr: "",
+      });
+      const codexSpy = vi.spyOn(await import("../src/runners/codex.js"), "CodexRunner").mockImplementation(function mockCodex(this: unknown, options: unknown) {
+        Object.assign(this as object, { options, runPrompt });
+      } as never);
+      const { runPromptCommand } = await import("../src/prompt.js");
+
+      await runPromptCommand({
+        provider: "codex",
+        messageFile,
+        home,
+        skills: ["pdf"],
+      });
+
+      const options = codexSpy.mock.calls.at(-1)?.[0] as { systemContext: string; skills: string[] };
+      expect(options.skills).toEqual(["pdf"]);
+      expect(options.systemContext).toContain("## Agent Skills");
+      expect(options.systemContext).toContain("pdf: Read PDF files");
+      expect(options.systemContext).toContain(path.join(home, ".agents", "skills", "pdf"));
+      expect(options.systemContext).not.toContain("FULL BODY SHOULD NOT APPEAR");
     });
   });
 

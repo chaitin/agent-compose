@@ -47,6 +47,7 @@ type orderedAgentSpec struct {
 	Env          []orderedEnvVarSpec         `yaml:"env,omitempty" json:"env,omitempty"`
 	MCPs         []orderedMCPServerSpec      `yaml:"mcps,omitempty" json:"mcps,omitempty"`
 	CapsetIDs    []string                    `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
+	Skills       []NormalizedSkillSpec       `yaml:"skills,omitempty" json:"skills,omitempty"`
 	Volumes      []NormalizedVolumeMountSpec `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	Workspace    *WorkspaceSpec              `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Scheduler    *NormalizedSchedulerSpec    `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
@@ -115,6 +116,7 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 			Env:          orderedEnvVars(agent.Env, redactSecrets),
 			MCPs:         orderedMCPServers(agent.MCPs, redactSecrets),
 			CapsetIDs:    slices.Clone(agent.CapsetIDs),
+			Skills:       cloneNormalizedSkillSpecs(agent.Skills),
 			Volumes:      cloneNormalizedVolumeMountSpecs(agent.Volumes),
 			Workspace:    cloneWorkspaceSpec(agent.Workspace),
 			Scheduler:    cloneNormalizedSchedulerSpec(agent.Scheduler),
@@ -157,6 +159,7 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 			Env:          envVarMapFromOrdered(agent.Env),
 			MCPs:         mcpMapFromOrdered(agent.MCPs),
 			CapsetIDs:    slices.Clone(agent.CapsetIDs),
+			Skills:       cloneNormalizedSkillSpecs(agent.Skills),
 			Volumes:      cloneNormalizedVolumeMountSpecs(agent.Volumes),
 			Workspace:    agent.Workspace,
 			Scheduler:    agent.Scheduler,
@@ -246,6 +249,13 @@ func volumeMapFromOrdered(values []orderedVolumeSpec) map[string]NormalizedVolum
 		}
 	}
 	return out
+}
+
+func cloneNormalizedSkillSpecs(values []NormalizedSkillSpec) []NormalizedSkillSpec {
+	if len(values) == 0 {
+		return nil
+	}
+	return slices.Clone(values)
 }
 
 func cloneNormalizedVolumeMountSpecs(values []NormalizedVolumeMountSpec) []NormalizedVolumeMountSpec {

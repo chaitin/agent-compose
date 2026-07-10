@@ -19,6 +19,7 @@ export interface RunnerOptions {
   runtimeRoot: string;
   systemContext: string;
   mcpConfig?: Record<string, unknown>;
+  skills?: string[];
   outputSchema?: RuntimeJsonSchema;
 }
 

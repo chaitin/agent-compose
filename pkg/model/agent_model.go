@@ -32,11 +32,26 @@ type AgentDefinition struct {
 	Volumes                []VolumeMountSpec `json:"volumes,omitempty"`
 	ConfigJSON             string            `json:"config_json"`
 	CapsetIDs              []string          `json:"capset_ids,omitempty"`
+	Skills                 []AgentSkill      `json:"skills,omitempty"`
 	ManagedProjectID       string            `json:"managed_project_id,omitempty"`
 	ManagedProjectRevision int64             `json:"managed_project_revision,omitempty"`
 	ManagedAgentName       string            `json:"managed_agent_name,omitempty"`
 	CreatedAt              time.Time         `json:"created_at"`
 	UpdatedAt              time.Time         `json:"updated_at"`
+}
+
+type AgentSkill struct {
+	Name     string `json:"name,omitempty"`
+	Source   string `json:"source,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Ref      string `json:"ref,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	Token    string `json:"token,omitempty"`
+	// SourceRoot is an internal host-side boundary for local file and zip
+	// sources. It is not part of the compose schema.
+	SourceRoot string `json:"source_root,omitempty"`
 }
 
 type AgentDefinitionListOptions struct {
@@ -103,6 +118,7 @@ func NormalizeAgentDefinition(item AgentDefinition, assignDefaults bool) (AgentD
 	if item.ConfigJSON == "" {
 		item.ConfigJSON = "{}"
 	}
+	item.Skills = NormalizeAgentSkills(item.Skills)
 	if item.ID == "" {
 		return AgentDefinition{}, fmt.Errorf("agent definition id is required")
 	}
@@ -136,6 +152,37 @@ func NormalizeAgentDefinition(item AgentDefinition, assignDefaults bool) (AgentD
 	}
 	item.Volumes = volumes
 	return item, nil
+}
+
+func NormalizeAgentSkills(skills []AgentSkill) []AgentSkill {
+	if len(skills) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(skills))
+	out := make([]AgentSkill, 0, len(skills))
+	for _, skill := range skills {
+		skill.Name = strings.TrimSpace(skill.Name)
+		skill.Source = strings.ToLower(strings.TrimSpace(skill.Source))
+		skill.URL = strings.TrimSpace(skill.URL)
+		skill.Path = strings.TrimSpace(skill.Path)
+		skill.Ref = strings.TrimSpace(skill.Ref)
+		skill.Username = strings.TrimSpace(skill.Username)
+		skill.Password = strings.TrimSpace(skill.Password)
+		skill.Token = strings.TrimSpace(skill.Token)
+		skill.SourceRoot = strings.TrimSpace(skill.SourceRoot)
+		if skill.Name == "" {
+			continue
+		}
+		if _, ok := seen[skill.Name]; ok {
+			continue
+		}
+		seen[skill.Name] = struct{}{}
+		out = append(out, skill)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func normalizeCapsetIDs(ids []string) []string {

@@ -146,6 +146,7 @@ func TestDockerBuildContextPreservesSymlinks(t *testing.T) {
 	link := entries["link.txt"]
 	if link == nil {
 		t.Fatalf("link.txt not found in build context: %#v", entries)
+		return
 	}
 	if link.Typeflag != tar.TypeSymlink || link.Linkname != "target.txt" {
 		t.Fatalf("link header type/link = %v/%q", link.Typeflag, link.Linkname)

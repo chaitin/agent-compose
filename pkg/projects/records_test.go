@@ -113,3 +113,44 @@ func TestNewAgentDefinitionFromSpecPreservesMCPConfig(t *testing.T) {
 		t.Fatalf("config json = %s, want mcps preserved", definition.ConfigJSON)
 	}
 }
+
+func TestNewAgentDefinitionFromSpecCarriesSkills(t *testing.T) {
+	project := domain.ProjectRecord{ID: "project-1", Name: "project", SourcePath: "/repo/agent-compose.yml"}
+	agent := compose.NormalizedAgentSpec{
+		Name:     "reviewer",
+		Provider: "codex",
+		Skills: []compose.NormalizedSkillSpec{
+			{Name: "pdf", Source: "git", URL: "https://github.com/anthropics/skills.git", Path: "skills/pdf", Ref: "main", Token: "${GIT_TOKEN}"},
+			{Name: "local-review", Source: "file", Path: "/tmp/skills/local-review"},
+		},
+	}
+
+	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil)
+	if err != nil {
+		t.Fatalf("NewAgentDefinitionFromSpec returned error: %v", err)
+	}
+	if len(definition.Skills) != 2 {
+		t.Fatalf("skills = %#v, want 2", definition.Skills)
+	}
+	if definition.Skills[0].Name != "pdf" || definition.Skills[0].Token != "${GIT_TOKEN}" {
+		t.Fatalf("first skill = %#v", definition.Skills[0])
+	}
+	if definition.Skills[1].SourceRoot != "/repo" {
+		t.Fatalf("second skill source root = %q, want /repo", definition.Skills[1].SourceRoot)
+	}
+}
+
+func TestManagedAgentDefinitionUnchangedComparesSkills(t *testing.T) {
+	existing := domain.AgentDefinition{
+		ID: "agent-1", Name: "Agent", Enabled: true, Provider: "codex", ConfigJSON: "{}",
+		Skills: []domain.AgentSkill{{Name: "pdf", Source: "git", URL: "https://github.com/anthropics/skills.git", Path: "skills/pdf"}},
+	}
+	current := existing
+	if !ManagedAgentDefinitionUnchanged(existing, current) {
+		t.Fatalf("matching skills should be unchanged")
+	}
+	current.Skills = []domain.AgentSkill{{Name: "docx", Source: "git", URL: "https://github.com/anthropics/skills.git", Path: "skills/docx"}}
+	if ManagedAgentDefinitionUnchanged(existing, current) {
+		t.Fatalf("different skills should mark managed agent changed")
+	}
+}

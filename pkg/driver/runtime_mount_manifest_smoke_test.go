@@ -210,6 +210,7 @@ test -d /root
 test ! -L /root
 test "$(readlink /workspace)" = "/data/workspace"
 test "$(readlink /root/.codex)" = "/data/home/.codex"
+test "$(readlink /root/.agents)" = "/data/home/.agents"
 test "$(readlink /root/.claude)" = "/data/home/.claude"
 test "$(readlink /root/.opencode)" = "/data/home/.opencode"
 test "$(readlink /root/.gitconfig)" = "/data/home/.gitconfig"

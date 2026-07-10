@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { formatError } from "../errors.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { extractText, jsonString } from "../text.js";
 import { TranscriptWriter } from "../transcript.js";
@@ -10,6 +12,7 @@ import { flattenEnvMap } from "../mcp-config.js";
 
 export class OpenCodeRunner {
   private readonly writer = new TranscriptWriter();
+  private skillsConfigDir?: string;
 
   constructor(private readonly options: RunnerOptions) {}
 
@@ -67,12 +70,55 @@ export class OpenCodeRunner {
     return args;
   }
 
-  environment(): NodeJS.ProcessEnv {
-    return {
+  async environment(): Promise<NodeJS.ProcessEnv> {
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
       OPENCODE_DISABLE_AUTOUPDATE: process.env.OPENCODE_DISABLE_AUTOUPDATE || "true",
       OPENCODE_DISABLE_MODELS_FETCH: process.env.OPENCODE_DISABLE_MODELS_FETCH || "1",
     };
+    if (this.options.skills && this.options.skills.length > 0) {
+      const configPath = await this.writeSkillsConfig(this.baseConfigPath(process.env.OPENCODE_CONFIG));
+      env.OPENCODE_CONFIG = configPath;
+      env.AGENT_COMPOSE_OPENCODE_CONFIG = configPath;
+    }
+    return env;
+  }
+
+  baseConfigPath(configPath?: string): string {
+    const trimmed = String(configPath || "").trim();
+    return trimmed || path.join(this.options.home, ".config", "opencode", "opencode.json");
+  }
+
+  async writeSkillsConfig(baseConfigPath?: string): Promise<string> {
+    await this.cleanupSkillsConfig();
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-compose-opencode-"));
+    this.skillsConfigDir = dir;
+    const configPath = path.join(dir, "opencode.json");
+    const skillsRoot = path.join(this.options.home, ".agents", "skills");
+    const config = await readOpenCodeConfig(baseConfigPath);
+    const existingSkills = isRecord(config.skills) ? config.skills : {};
+    const existingPaths = Array.isArray(existingSkills.paths)
+      ? existingSkills.paths.filter((value): value is string => typeof value === "string" && value.trim() !== "")
+      : [];
+    config.skills = {
+      ...existingSkills,
+      paths: uniqueStrings([...existingPaths, skillsRoot]),
+    };
+    await fs.writeFile(configPath, JSON.stringify(config, null, 2) + "\n", "utf8");
+    return configPath;
+  }
+
+  async cleanupSkillsConfig(): Promise<void> {
+    const dir = this.skillsConfigDir;
+    this.skillsConfigDir = undefined;
+    if (!dir) {
+      return;
+    }
+    try {
+      await fs.rm(dir, { recursive: true, force: true });
+    } catch (error) {
+      this.writer.line(`[opencode cleanup] ${formatError(error)}`);
+    }
   }
 
   handleEvent(event: Record<string, unknown>, result: AgentResult): void {
@@ -137,45 +183,49 @@ export class OpenCodeRunner {
       stderr: "",
     };
 
-    const child = spawn("opencode", this.buildArgs(promptText, stored), {
-      cwd: this.options.workspace,
-      env: this.environment(),
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const stderrChunks: string[] = [];
-    child.stderr?.on("data", (chunk) => {
-      const text = String(chunk || "");
-      stderrChunks.push(text);
-      this.writer.write(text);
-    });
-
-    const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
     try {
-      for await (const line of rl) {
-        if (!line.trim()) {
-          continue;
-        }
-        let event: Record<string, unknown>;
-        try {
-          event = JSON.parse(line) as Record<string, unknown>;
-        } catch {
-          this.writer.line(line);
-          continue;
-        }
-        this.handleEvent(event, result);
-      }
-    } catch (error) {
-      child.kill("SIGTERM");
-      throw error;
-    }
+      const child = spawn("opencode", this.buildArgs(promptText, stored), {
+        cwd: this.options.workspace,
+        env: await this.environment(),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
 
-    const exitCode = await new Promise<number>((resolve, reject) => {
-      child.once("error", reject);
-      child.once("exit", (code) => resolve(code ?? 1));
-    });
-    if (exitCode !== 0) {
-      throw new Error(`opencode exited with code ${exitCode}: ${stderrChunks.join("")}`);
+      const stderrChunks: string[] = [];
+      child.stderr?.on("data", (chunk) => {
+        const text = String(chunk || "");
+        stderrChunks.push(text);
+        this.writer.write(text);
+      });
+
+      const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
+      try {
+        for await (const line of rl) {
+          if (!line.trim()) {
+            continue;
+          }
+          let event: Record<string, unknown>;
+          try {
+            event = JSON.parse(line) as Record<string, unknown>;
+          } catch {
+            this.writer.line(line);
+            continue;
+          }
+          this.handleEvent(event, result);
+        }
+      } catch (error) {
+        child.kill("SIGTERM");
+        throw error;
+      }
+
+      const exitCode = await new Promise<number>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("exit", (code) => resolve(code ?? 1));
+      });
+      if (exitCode !== 0) {
+        throw new Error(`opencode exited with code ${exitCode}: ${stderrChunks.join("")}`);
+      }
+    } finally {
+      await this.cleanupSkillsConfig();
     }
 
     result.transcript = this.writer.transcript();
@@ -195,4 +245,30 @@ function stringField(record: Record<string, unknown>, ...keys: string[]): string
     }
   }
   return "";
+}
+
+async function readOpenCodeConfig(configPath?: string): Promise<Record<string, unknown>> {
+  const trimmed = String(configPath || "").trim();
+  if (!trimmed) {
+    return {};
+  }
+  try {
+    const content = await fs.readFile(trimmed, "utf8");
+    const parsed = JSON.parse(content) as unknown;
+    return isRecord(parsed) ? parsed : {};
+  } catch (error) {
+    const cause = error as NodeJS.ErrnoException;
+    if (cause.code === "ENOENT") {
+      return {};
+    }
+    throw error;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values));
 }

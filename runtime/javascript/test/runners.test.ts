@@ -239,7 +239,7 @@ describe("ClaudeRunner", () => {
   it("appends system context and exposes runtime directory", async () => {
     await withTempSession(async (root) => {
       const systemContext = "## MPI Catalog\n\ncatalog body";
-      const runner = new ClaudeRunner(runnerOptions(root, systemContext));
+      const runner = new ClaudeRunner({ ...runnerOptions(root, systemContext), skills: ["pdf"] });
 
       const queryOptions = runner.queryOptions({
         provider: "claude",
@@ -257,6 +257,8 @@ describe("ClaudeRunner", () => {
         append: systemContext,
       });
       expect(queryOptions.resume).toBe("existing-session");
+      expect(queryOptions.settingSources).toEqual(["user"]);
+      expect(queryOptions.skills).toEqual(["pdf"]);
     });
   });
 
@@ -430,7 +432,7 @@ describe("OpenCodeRunner", () => {
       vi.stubEnv("OPENCODE_DISABLE_AUTOUPDATE", "false");
       const runner = new OpenCodeRunner(runnerOptions(root, "", "opencode"));
 
-      expect(runner.environment().OPENCODE_DISABLE_AUTOUPDATE).toBe("false");
+      await expect(runner.environment()).resolves.toMatchObject({ OPENCODE_DISABLE_AUTOUPDATE: "false" });
     });
   });
 
@@ -438,10 +440,102 @@ describe("OpenCodeRunner", () => {
     await withTempSession(async (root) => {
       const runner = new OpenCodeRunner(runnerOptions(root, "", "opencode"));
 
-      expect(runner.environment().OPENCODE_DISABLE_MODELS_FETCH).toBe("1");
+      await expect(runner.environment()).resolves.toMatchObject({ OPENCODE_DISABLE_MODELS_FETCH: "1" });
 
       vi.stubEnv("OPENCODE_DISABLE_MODELS_FETCH", "0");
-      expect(runner.environment().OPENCODE_DISABLE_MODELS_FETCH).toBe("0");
+      await expect(runner.environment()).resolves.toMatchObject({ OPENCODE_DISABLE_MODELS_FETCH: "0" });
+    });
+  });
+
+  it("writes run-scoped OpenCode skills config", async () => {
+    await withTempSession(async (root) => {
+      const runner = new OpenCodeRunner({ ...runnerOptions(root, "", "opencode"), skills: ["pdf"] });
+
+      const env = await runner.environment();
+
+      expect(env.OPENCODE_CONFIG).toBeTruthy();
+      const config = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(String(env.OPENCODE_CONFIG), "utf8")));
+      expect(config.skills.paths).toEqual([`${root}/home/.agents/skills`]);
+    });
+  });
+
+  it("cleans temporary OpenCode skills config", async () => {
+    await withTempSession(async (root) => {
+      const runner = new OpenCodeRunner({ ...runnerOptions(root, "", "opencode"), skills: ["pdf"] });
+
+      const env = await runner.environment();
+      const configPath = String(env.OPENCODE_CONFIG);
+      await expect(fs.stat(configPath)).resolves.toBeTruthy();
+
+      await runner.cleanupSkillsConfig();
+
+      await expect(fs.stat(path.dirname(configPath))).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it("does not throw when OpenCode skills cleanup fails", async () => {
+    await withTempSession(async (root) => {
+      const runner = new OpenCodeRunner({ ...runnerOptions(root, "", "opencode"), skills: ["pdf"] });
+      await runner.environment();
+      const rmSpy = vi.spyOn(fs, "rm").mockRejectedValueOnce(new Error("busy"));
+      const stdio = captureStdio();
+      try {
+        await expect(runner.cleanupSkillsConfig()).resolves.toBeUndefined();
+      } finally {
+        stdio.restore();
+        rmSpy.mockRestore();
+      }
+      expect(stdio.stderr).toContain("[opencode cleanup]");
+      expect(stdio.stderr).toContain("busy");
+    });
+  });
+
+  it("merges OpenCode skills config with an existing config file", async () => {
+    await withTempSession(async (root) => {
+      const fs = await import("node:fs/promises");
+      const path = await import("node:path");
+      const baseConfigPath = path.join(root, "home", ".config", "opencode", "opencode.json");
+      await fs.mkdir(path.dirname(baseConfigPath), { recursive: true });
+      await fs.writeFile(baseConfigPath, JSON.stringify({
+        "$schema": "https://opencode.ai/config.json",
+        provider: { local: { npm: "@ai-sdk/openai-compatible" } },
+        model: "local/test",
+        skills: { paths: ["/existing/skills"] },
+      }), "utf8");
+      vi.stubEnv("OPENCODE_CONFIG", baseConfigPath);
+      const runner = new OpenCodeRunner({ ...runnerOptions(root, "", "opencode"), skills: ["pdf"] });
+
+      const env = await runner.environment();
+
+      expect(env.OPENCODE_CONFIG).not.toBe(baseConfigPath);
+      const config = JSON.parse(await fs.readFile(String(env.OPENCODE_CONFIG), "utf8"));
+      expect(config.provider).toEqual({ local: { npm: "@ai-sdk/openai-compatible" } });
+      expect(config.model).toBe("local/test");
+      expect(config.skills.paths).toEqual(["/existing/skills", `${root}/home/.agents/skills`]);
+    });
+  });
+
+  it("merges OpenCode skills config with the default home config", async () => {
+    await withTempSession(async (root) => {
+      const fs = await import("node:fs/promises");
+      const path = await import("node:path");
+      const baseConfigPath = path.join(root, "home", ".config", "opencode", "opencode.json");
+      await fs.mkdir(path.dirname(baseConfigPath), { recursive: true });
+      await fs.writeFile(baseConfigPath, JSON.stringify({
+        "$schema": "https://opencode.ai/config.json",
+        provider: { openai: { npm: "@ai-sdk/openai" } },
+        model: "openai/gpt-test",
+      }), "utf8");
+      vi.stubEnv("OPENCODE_CONFIG", "");
+      const runner = new OpenCodeRunner({ ...runnerOptions(root, "", "opencode"), skills: ["pdf"] });
+
+      const env = await runner.environment();
+
+      expect(env.OPENCODE_CONFIG).not.toBe(baseConfigPath);
+      const config = JSON.parse(await fs.readFile(String(env.OPENCODE_CONFIG), "utf8"));
+      expect(config.provider).toEqual({ openai: { npm: "@ai-sdk/openai" } });
+      expect(config.model).toBe("openai/gpt-test");
+      expect(config.skills.paths).toEqual([`${root}/home/.agents/skills`]);
     });
   });
 
