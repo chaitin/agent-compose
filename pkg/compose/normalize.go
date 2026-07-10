@@ -274,7 +274,7 @@ func resolveAgentWorkspace(path string, spec *WorkspaceSpec, globals map[string]
 				return resolved, nil
 			}
 		case 0:
-			return nil, &ValidationError{Path: path, Message: "workspace is required when project workspaces is empty"}
+			return nil, nil
 		default:
 			return nil, &ValidationError{Path: path, Message: "workspace is required when project workspaces has multiple entries"}
 		}
@@ -283,9 +283,7 @@ func resolveAgentWorkspace(path string, spec *WorkspaceSpec, globals map[string]
 	hasName := trimmed.Name != ""
 	hasInline := trimmed.Provider != "" || trimmed.URL != "" || trimmed.Branch != "" || trimmed.Path != ""
 	switch {
-	case hasName && hasInline:
-		return nil, &ValidationError{Path: path, Message: "workspace reference cannot set name together with provider, url, branch, or path"}
-	case hasName:
+	case hasName && !hasInline:
 		workspace, ok := globals[trimmed.Name]
 		if !ok {
 			return nil, &ValidationError{Path: path + ".name", Message: fmt.Sprintf("workspace %q is not defined", trimmed.Name)}
@@ -294,7 +292,7 @@ func resolveAgentWorkspace(path string, spec *WorkspaceSpec, globals map[string]
 		resolved.Name = ""
 		return resolved, nil
 	case hasInline:
-		return normalizeInlineWorkspaceSpec(path, trimmed, "")
+		return normalizeInlineWorkspaceSpec(path, trimmed, trimmed.Name)
 	default:
 		return nil, &ValidationError{Path: path, Message: "workspace is required"}
 	}
@@ -305,9 +303,7 @@ func normalizeInlineWorkspaceSpec(path string, spec *WorkspaceSpec, defaultName 
 		return nil, &ValidationError{Path: path, Message: "workspace is required"}
 	}
 	workspace := cloneWorkspaceSpec(spec)
-	if workspace.Name != "" {
-		return nil, &ValidationError{Path: path + ".name", Message: "inline workspace cannot set name"}
-	}
+	workspace.Name = strings.TrimSpace(workspace.Name)
 	provider := strings.ToLower(strings.TrimSpace(workspace.Provider))
 	if provider == "" {
 		return nil, &ValidationError{Path: path + ".provider", Message: "workspace provider is required"}

@@ -825,7 +825,70 @@ agents:
 	}
 }
 
-func TestNormalizeRejectsMixedAgentWorkspaceDefinition(t *testing.T) {
+func TestNormalizeAllowsOmittedAgentWorkspaceWithoutGlobals(t *testing.T) {
+	spec, err := Parse([]byte(`
+name: no-workspace
+agents:
+  reviewer:
+    provider: codex
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if normalized.Agents[0].Workspace != nil {
+		t.Fatalf("workspace = %#v, want nil", normalized.Agents[0].Workspace)
+	}
+}
+
+func TestNormalizeRejectsEmptyAgentWorkspaceObject(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: empty-workspace
+workspaces:
+  repo-root:
+    provider: local
+    path: .
+agents:
+  reviewer:
+    provider: codex
+    workspace: {}
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "agents.reviewer.workspace") || !strings.Contains(got, "required") {
+		t.Fatalf("error = %q, want empty workspace validation error", got)
+	}
+}
+
+func TestNormalizeRejectsEmptyAgentWorkspaceObjectWithoutGlobals(t *testing.T) {
+	spec, err := Parse([]byte(`
+name: empty-workspace-no-globals
+agents:
+  reviewer:
+    provider: codex
+    workspace: {}
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	_, err = Normalize(spec, NormalizeOptions{})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "agents.reviewer.workspace") || !strings.Contains(got, "required") {
+		t.Fatalf("error = %q, want empty workspace validation error", got)
+	}
+}
+
+func TestNormalizeAllowsNamedInlineAgentWorkspaceDefinition(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: mixed-workspace
 workspaces:
@@ -841,12 +904,12 @@ agents:
       path: .
 `)
 
-	_, err := Normalize(spec, NormalizeOptions{})
-	if err == nil {
-		t.Fatalf("expected Normalize to fail")
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
 	}
-	if got := err.Error(); !strings.Contains(got, "agents.reviewer.workspace") || !strings.Contains(got, "name") {
-		t.Fatalf("error = %q, want mixed workspace error", got)
+	if normalized.Agents[0].Workspace == nil || normalized.Agents[0].Workspace.Name != "repo-root" || normalized.Agents[0].Workspace.Provider != "local" || normalized.Agents[0].Workspace.Path != "." {
+		t.Fatalf("workspace = %#v", normalized.Agents[0].Workspace)
 	}
 }
 
