@@ -199,6 +199,8 @@ agent-compose scheduler inspect <agent> <trigger>
 
 - `scheduler ls` lists triggers from declarative scheduler config and triggers registered by scheduler scripts.
 - `scheduler trigger` manually runs the selected trigger through the existing project run flow.
+- `scheduler trigger --prompt "..."` overrides the trigger's agent prompt for this manual run.
+- `scheduler trigger --payload '{"key":"value"}'` passes a JSON payload to the scheduler trigger handler.
 - `scheduler inspect` prints the YAML trigger definition for declarative triggers, or the registered loader trigger fields for scheduler-script triggers.
 
 ## `ps`: List Sandboxes

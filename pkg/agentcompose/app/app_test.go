@@ -213,16 +213,17 @@ func TestCacheServiceRouteUsesRuntimeCacheController(t *testing.T) {
 
 func TestRunAgentRequestFromProtoPreservesCommand(t *testing.T) {
 	req := runAgentRequestFromProto(&agentcomposev2.RunAgentRequest{
-		ProjectId: "project-1",
-		AgentName: "worker",
-		Prompt:    "prompt",
-		Command:   "echo hi",
-		TriggerId: "trigger-1",
-		Driver:    "microsandbox",
-		Jupyter:   &agentcomposev2.RunJupyterSpec{Enabled: true, Expose: true},
-		Volumes:   []*agentcomposev2.VolumeMountSpec{{Type: "bind", Source: "./fixtures", Target: "/fixtures", ReadOnly: true}},
+		ProjectId:   "project-1",
+		AgentName:   "worker",
+		Prompt:      "prompt",
+		Command:     "echo hi",
+		TriggerId:   "trigger-1",
+		PayloadJson: `{"input":true}`,
+		Driver:      "microsandbox",
+		Jupyter:     &agentcomposev2.RunJupyterSpec{Enabled: true, Expose: true},
+		Volumes:     []*agentcomposev2.VolumeMountSpec{{Type: "bind", Source: "./fixtures", Target: "/fixtures", ReadOnly: true}},
 	})
-	if req.ProjectID != "project-1" || req.AgentName != "worker" || req.Prompt != "prompt" || req.Command != "echo hi" || req.TriggerID != "trigger-1" || req.Driver != "microsandbox" {
+	if req.ProjectID != "project-1" || req.AgentName != "worker" || req.Prompt != "prompt" || req.Command != "echo hi" || req.TriggerID != "trigger-1" || req.PayloadJSON != `{"input":true}` || req.Driver != "microsandbox" {
 		t.Fatalf("mapped request = %#v", req)
 	}
 	if req.Jupyter == nil || !req.Jupyter.GetEnabled() || !req.Jupyter.GetExpose() {
