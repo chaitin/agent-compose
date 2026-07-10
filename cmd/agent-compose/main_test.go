@@ -9038,16 +9038,86 @@ func (s sessionServiceStub) StopSession(ctx context.Context, req *connect.Reques
 }
 
 func TestResolveComposeSandboxRefFromSessions(t *testing.T) {
-	const sandboxID = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	client := sessionServiceStub{listSessions: func(context.Context, *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
-		return connect.NewResponse(&agentcomposev1.ListSessionsResponse{Sessions: []*agentcomposev1.SessionSummary{{SessionId: sandboxID}}}), nil
-	}}
-	got, err := resolveComposeSandboxRefFromSessions(context.Background(), client, sandboxID[:12])
-	if err != nil {
-		t.Fatalf("resolve short sandbox id: %v", err)
+	const (
+		sandboxID      = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		otherSandboxID = "0123456789abffff0123456789abcdef0123456789abcdef0123456789abcdef"
+	)
+	tests := []struct {
+		name       string
+		ref        string
+		sessions   []*agentcomposev1.SessionSummary
+		listErr    error
+		want       string
+		wantCode   int
+		wantErrors []string
+	}{
+		{
+			name:     "short id",
+			ref:      sandboxID[:12],
+			sessions: []*agentcomposev1.SessionSummary{{SessionId: sandboxID}},
+			want:     sandboxID,
+		},
+		{
+			name:     "full id with empty sessions ignored",
+			ref:      sandboxID,
+			sessions: []*agentcomposev1.SessionSummary{nil, {}, {SessionId: "   "}, {SessionId: " " + sandboxID + " "}},
+			want:     sandboxID,
+		},
+		{
+			name:       "not found",
+			ref:        "deadbeef",
+			sessions:   []*agentcomposev1.SessionSummary{{SessionId: sandboxID}},
+			wantCode:   exitCodeUsage,
+			wantErrors: []string{`sandbox "deadbeef" not found in daemon sessions`},
+		},
+		{
+			name:       "ambiguous short id",
+			ref:        sandboxID[:12],
+			sessions:   []*agentcomposev1.SessionSummary{{SessionId: otherSandboxID}, {SessionId: sandboxID}},
+			wantCode:   exitCodeUsage,
+			wantErrors: []string{"is ambiguous", sandboxID[:12] + ", " + otherSandboxID[:12]},
+		},
+		{
+			name:       "list error",
+			ref:        sandboxID[:12],
+			listErr:    connect.NewError(connect.CodeUnavailable, fmt.Errorf("daemon unavailable")),
+			wantCode:   exitCodeUnavailable,
+			wantErrors: []string{"resolve sandbox " + sandboxID[:12] + " from daemon sessions", "daemon unavailable"},
+		},
 	}
-	if got != sandboxID {
-		t.Fatalf("resolved sandbox id = %q, want %q", got, sandboxID)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := sessionServiceStub{listSessions: func(context.Context, *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
+				if tc.listErr != nil {
+					return nil, tc.listErr
+				}
+				return connect.NewResponse(&agentcomposev1.ListSessionsResponse{Sessions: tc.sessions}), nil
+			}}
+			got, err := resolveComposeSandboxRefFromSessions(context.Background(), client, tc.ref)
+			if tc.wantCode == 0 {
+				if err != nil {
+					t.Fatalf("resolve sandbox ref: %v", err)
+				}
+				if got != tc.want {
+					t.Fatalf("resolved sandbox id = %q, want %q", got, tc.want)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("resolve sandbox ref returned nil error")
+			}
+			if got != "" {
+				t.Fatalf("resolved sandbox id = %q, want empty", got)
+			}
+			if code := commandExitCode(err); code != tc.wantCode {
+				t.Fatalf("exit code = %d, want %d; err=%v", code, tc.wantCode, err)
+			}
+			for _, want := range tc.wantErrors {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %q, want substring %q", err, want)
+				}
+			}
+		})
 	}
 }
 
