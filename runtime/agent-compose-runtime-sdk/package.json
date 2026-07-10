@@ -1,6 +1,6 @@
 {
   "name": "@chaitin-ai/agent-compose-runtime-sdk",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "description": "Node.js SDK for scripts running inside an agent-compose guest runtime.",
   "license": "LGPL-3.0-only",
   "type": "module",
