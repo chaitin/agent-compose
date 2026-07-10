@@ -1859,9 +1859,10 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 			}
 			warnings = append(warnings, fmt.Sprintf("sticky sandbox %s is unavailable; creating a replacement", sandboxID))
 		} else {
+			wasRunning := sandbox.Summary.VMStatus == domain.VMStatusRunning
 			if sandbox.Summary.VMStatus != domain.VMStatusRunning {
 				if err := c.applyJupyterOptionsToSandbox(sandbox.Summary.ID, jupyterOptions); err != nil {
-					return SandboxResult{Sandbox: sandbox}, err
+					return SandboxResult{Sandbox: sandbox, WasRunning: wasRunning}, err
 				}
 				driver, err := driverpkg.ResolveSandboxRuntimeDriver(sandbox.Summary.Driver, c.config.RuntimeDriver)
 				if err != nil {
@@ -1874,15 +1875,15 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 					ProjectName: run.ProjectName,
 					AgentName:   run.AgentName,
 				}); err != nil {
-					return SandboxResult{Sandbox: sandbox}, err
+					return SandboxResult{Sandbox: sandbox, WasRunning: wasRunning}, err
 				}
 			}
 			sandbox.EnvItems = domain.MergeEnvItems(sandbox.EnvItems, capabilityVars)
 			sandbox.Summary.Tags = MergeSandboxTags(sandbox.Summary.Tags, tags)
 			if err := c.startProjectRunSandbox(ctx, sandbox, "sandbox.resumed", "sandbox resumed for project run"); err != nil {
-				return SandboxResult{Sandbox: sandbox}, err
+				return SandboxResult{Sandbox: sandbox, WasRunning: wasRunning}, err
 			}
-			return SandboxResult{Sandbox: sandbox, Warnings: warnings}, nil
+			return SandboxResult{Sandbox: sandbox, WasRunning: wasRunning, Warnings: warnings}, nil
 		}
 	}
 
@@ -2075,6 +2076,9 @@ func (c *Controller) cleanupProjectRunSandbox(ctx context.Context, coordinator *
 
 func (c *Controller) cleanupProjectRunSandboxByPolicy(ctx context.Context, sandboxResult SandboxResult, policy agentcomposev2.RunSandboxCleanupPolicy) error {
 	sandbox := sandboxResult.Sandbox
+	if sandboxResult.WasRunning && !CleanupPolicyRemovesSandbox(policy) {
+		return nil
+	}
 	if CleanupPolicyRemovesSandbox(policy) && sandboxResult.Created {
 		if err := c.stopProjectRunSandbox(ctx, sandbox); err != nil {
 			return err

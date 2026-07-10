@@ -124,8 +124,9 @@ Current main commands:
 - `ps`: query project, agent, latest run, and running sandbox state.
 - `run <agent>`: call `RunService.RunAgentStream` for a manual agent run;
   creates a new sandbox by default, supports reusing an existing sandbox with
-  `--sandbox`, stops the runtime after completion by default, and can keep it
-  running with `--keep-running`.
+  `--sandbox`, stops sandboxes created or started by the run after completion
+  by default, preserves reused sandboxes that were already running, and can keep
+  newly created or resumed sandboxes running with `--keep-running`.
 - `logs`: inspect run output by project, agent, run id, or sandbox id; supports
   `--follow`.
 - `exec`: call `ExecService.ExecStream` inside a running sandbox; target the

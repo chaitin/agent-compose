@@ -88,7 +88,7 @@ CLI 不直接操作 runtime、sandbox 文件或 SQLite reconcile 逻辑。它读
 - `up`：调用 `ProjectService.ApplyProject`，创建或更新 project、revision、受管 agent definition 和 scheduler/loader；不会直接创建 run/sandbox。
 - `down`：调用 `ProjectService.RemoveProject`，禁用受管 scheduler/loader，并停止该 project 的 running sandboxes；默认保留 project、run 和 sandbox 历史。
 - `ps`：查询 project、agent、latest run 和 running sandbox 状态。
-- `run <agent>`：调用 `RunService.RunAgentStream` 手动执行一次 agent；默认创建新 sandbox，支持 `--sandbox` 复用已有 sandbox，默认完成后停止 runtime，`--keep-running` 可保留。
+- `run <agent>`：调用 `RunService.RunAgentStream` 手动执行一次 agent；默认创建新 sandbox，支持 `--sandbox` 复用已有 sandbox。默认在完成后停止本次创建或启动的 runtime；若复用调用前已 running 的 sandbox，则保留其运行状态。`--keep-running` 可让本次新建或恢复的 sandbox 继续运行。
 - `logs`：按 project、agent、run id 或 sandbox id 查看 run 输出，支持 `--follow`。
 - `exec`：调用 `ExecService.ExecStream` 在 running sandbox 内执行命令；用 positional `<sandbox>` 定位目标。
 - `images`、`image ls`、`pull`、`image pull`、`rmi`、`image rm`、`image inspect`：调用 `ImageService` 管理 daemon image store。默认 store 由 daemon 的 `IMAGE_STORE_MODE` 决定。

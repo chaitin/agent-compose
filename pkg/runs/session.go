@@ -8,9 +8,10 @@ import (
 )
 
 type SandboxResult struct {
-	Sandbox  *domain.Sandbox
-	Created  bool
-	Warnings []string
+	Sandbox    *domain.Sandbox
+	Created    bool
+	WasRunning bool
+	Warnings   []string
 }
 
 func SandboxTitle(run domain.ProjectRunRecord) string {

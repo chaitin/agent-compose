@@ -169,6 +169,10 @@ prompt 输入必须使用 `--prompt`；非交互 run 必须选择 `--prompt` 或
 | `-d, --detach` | 将 run 提交给 daemon 后立即返回；输出 run id、初始状态和 `logs --follow` 查看命令。 |
 | `-i, --interactive` | 进入 prompt 或 command REPL；必须与 `--prompt` 或 `--command` 组合。 |
 
+默认情况下，本次 run 创建或启动的 sandbox 会在运行结束后停止。通过
+`--sandbox` 复用调用前已经处于 running 状态的 sandbox 时，run 会保留其
+运行状态。若要让本次新建或恢复的 sandbox 也继续运行，请使用 `--keep-running`。
+
 示例：
 
 ```bash

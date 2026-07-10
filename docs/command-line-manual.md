@@ -164,6 +164,11 @@ Additional positional arguments are not supported.
 | `-d, --detach` | Submit the run to the daemon and return immediately with the run id, initial status, and a `logs --follow` command. |
 | `-i, --interactive` | Enter prompt or command REPL mode. Must be combined with `--prompt` or `--command`. |
 
+By default, a sandbox created or started by the run is stopped when the run
+finishes. When `--sandbox` reuses a sandbox that was already running, the
+run leaves it running. Use `--keep-running` to keep a newly created or resumed
+sandbox running as well.
+
 Examples:
 
 ```bash

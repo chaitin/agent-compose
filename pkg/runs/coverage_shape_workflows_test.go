@@ -1108,6 +1108,38 @@ func uuidForTest(name string) string {
 	return strings.NewReplacer("/", "-", " ", "-").Replace(name)
 }
 
+func TestRunsControllerRunProjectAgentStopOnCompletionPreservesRunningSandbox(t *testing.T) {
+	fixture := newControllerRunFixture(t)
+	sandbox, err := fixture.store.CreateSandbox(fixture.ctx, "existing", "", "boxlite", "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	sandbox.Summary.VMStatus = domain.VMStatusRunning
+	if err := fixture.store.UpdateSandbox(fixture.ctx, sandbox); err != nil {
+		t.Fatalf("UpdateSandbox returned error: %v", err)
+	}
+
+	run, execErr, err := fixture.controller.RunProjectAgent(fixture.ctx, RunAgentRequest{
+		ProjectID:       "project-1",
+		AgentName:       "worker",
+		Prompt:          "do work",
+		SandboxID:       sandbox.Summary.ID,
+		Source:          domain.ProjectRunSourceAPI,
+		ClientRequestID: uuidForTest(t.Name()),
+		CleanupPolicy:   agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_STOP_ON_COMPLETION,
+	}, nil)
+	if err != nil || execErr != nil {
+		t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+	}
+	loaded, err := fixture.store.GetSandbox(fixture.ctx, sandbox.Summary.ID)
+	if err != nil {
+		t.Fatalf("GetSandbox returned error: %v", err)
+	}
+	if loaded.Summary.VMStatus != domain.VMStatusRunning || fixture.driver.started || fixture.driver.stopped {
+		t.Fatalf("sandbox status=%s driver=%#v", loaded.Summary.VMStatus, fixture.driver)
+	}
+}
+
 func TestRunsControllerRunProjectAgentRemoveOnCompletionCleanup(t *testing.T) {
 	t.Run("success removes created sandbox", func(t *testing.T) {
 		fixture := newControllerRunFixture(t)
