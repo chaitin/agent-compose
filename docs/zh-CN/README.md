@@ -1,232 +1,252 @@
 # agent-compose 中文文档
 
-agent-compose 是一个 daemon + CLI 形态的 agent/sandbox 控制面。daemon 负责持久化状态、scheduler、runtime 生命周期、Connect API 和 Jupyter 代理；CLI 负责读取本地 `agent-compose.yml`，连接 daemon，并执行 `up`、`run`、`logs`、`ps`、`down`、`image` 等操作。
+**agent-compose 是一个 daemon + CLI 形态的控制面，用于在隔离 sandbox 中运行 AI coding agent。** 你在 `agent-compose.yml` 里声明 agent，一个常驻 daemon 负责为每个 agent 构建、运行、调度并代理一个隔离的 runtime。
 
-当前项目正在准备首次公开发布，建议按 preview/experimental 项目使用。API、运行时打包、部署默认值和生产环境建议后续仍可能调整。
+> 公开预览阶段。API、运行时打包和部署默认值仍可能调整。适合实验、本地开发和预览部署，尚未达到稳定生产平台。
 
-英文首页见 [README.md](../../README.md)。
+英文首页见 [../../README.md](../../README.md)。
+
+## agent-compose 是什么？
+
+如果你了解 Docker Compose，这里的心智模型很类似：你声明的不是容器，而是 **agent**。每个 agent 选择一个 provider CLI —— `codex`、`claude`（Claude Code）、`gemini` 或 `opencode` —— daemon 给它一个带 workspace 的隔离 sandbox，然后按 prompt、shell 命令、定时或事件来运行它。真实的 provider API key 留在 daemon 上，不会进入 guest。
+
+你用 Compose 风格的 CLI（`up`、`run`、`ps`、`logs`、`down`）管理整个生命周期，一切由一个声明式文件驱动。
+
+具体能力：
+
+- **声明式 compose 模型**（`agent-compose.yml`），支持 `${ENV}` 插值。
+- **多 provider guest agent**：Codex、Claude Code、Gemini、OpenCode CLI。
+- **三种 runtime driver**：`docker`（默认）、`boxlite`（microVM）、`microsandbox`。
+- **scheduler**：`cron`、`interval`、`timeout`、`event` 四种 trigger，或内联 JavaScript scheduler 脚本。
+- **事件触发与 webhook**，支持事件驱动的 agent run。
+- **workspace** 从本地目录或 Git 仓库拉取。
+- **Runtime LLM Facade**，托管 LLM 凭据，使 provider key 不进入 guest 容器。
+- 每个 agent 可配 **MCP server、可复用 skill、具名 volume**。
+- **Jupyter 代理**，支持 notebook 风格的 guest runtime。
+- **v1/v2 Connect API** 与生成的 TypeScript client。
+
+## 工作原理
+
+**daemon** 是唯一的状态权威：负责持久化、scheduler 执行、runtime 生命周期、Connect/HTTP API 和 Jupyter 代理。**CLI** 是一个轻客户端 —— 读取本地 `agent-compose.yml`，做本地校验，再调用 daemon。compose 文件描述的是 *project 和 agent*，不是已经在跑的 sandbox。**Web UI** 是独立服务（[agent-compose-ui](https://github.com/chaitin/agent-compose-ui)），不由 daemon 托管。
+
+完整架构见 [design/agent-compose_design.md](design/agent-compose_design.md)。
 
 ## 快速开始
 
-完整 CLI 说明见 [agent-compose 命令行使用手册](command-line-manual.md)。
+### 方式 A —— 部署服务器（推荐）
 
-构建：
+一行安装脚本会用 Docker Compose 部署 agent-compose（含 Web UI），支持 Linux amd64/arm64：
 
 ```bash
-task build
+curl -fsSL https://github.com/chaitin/agent-compose/releases/latest/download/install.sh | bash
 ```
 
-启动 daemon：
+首次运行会生成 `admin` 密码并打印一次，之后通过打印出的 URL 使用 Web UI。安装选项（`--dir`、`--port`、`--upgrade`、使用镜像/私有 registry 等）见 [../../deploy/README.md](../../deploy/README.md)。
+
+### 方式 B —— 从源码构建（用于 CLI 工作流）
 
 ```bash
+task build                       # 产物在 ./build/agent-compose
+export PATH="$PWD/build:$PATH"   # 让 `agent-compose` 进入 PATH
 agent-compose daemon
 ```
 
-daemon 默认使用本地 Unix socket。需要本地 TCP 访问时可以设置：
+daemon 默认监听本地 Unix socket。需要本地 HTTP endpoint 时：
 
 ```bash
 HTTP_LISTEN=127.0.0.1:7410 agent-compose daemon
-```
-
-检查状态：
-
-```bash
-agent-compose status
 agent-compose --host http://127.0.0.1:7410 status
 ```
 
-准备 `agent-compose.yml`：
+### 运行第一个 agent
+
+在本地 daemon 运行的前提下（方式 B），创建 `agent-compose.yml`：
 
 ```yaml
 name: demo
+
 agents:
   reviewer:
     provider: codex
-    model: gpt-test
-    image: debian:bookworm-slim
-    scheduler:
-      triggers:
-        - name: hourly
-          cron: "0 * * * *"
-          prompt: "Review the current workspace state."
+    image: ghcr.io/chaitin/agent-compose-guest:latest
+    driver:
+      docker: {}
 ```
 
-应用并运行：
+然后驱动生命周期：
 
 ```bash
-agent-compose up
-agent-compose ps
+agent-compose up                                  # 把 project 应用到 daemon
+agent-compose ps                                  # 列出 project sandbox
 agent-compose run reviewer --prompt "Review this change"
 agent-compose logs --agent reviewer
-agent-compose down
+agent-compose down                                # 停止 sandbox、禁用 scheduler
 ```
 
-## 当前入口
-
-- `agent-compose daemon`：启动长期运行的 HTTP/Connect daemon。
-- `agent-compose up`：读取本地 `agent-compose.yml`，把 project 定义和 scheduler 应用到 daemon。
-- `agent-compose run <agent> --prompt "..."` / `--command "..."`：手动执行 prompt 或 shell command。
-- `agent-compose scheduler ls|trigger|inspect`：查看、执行或检查 project scheduler trigger。
-- `agent-compose logs`：查看 project run 日志。
-- `agent-compose ps`：查看 project agent、latest run 和 running sandbox 状态。
-- `agent-compose down`：禁用 daemon 管理的 scheduler，并停止该 project 的 running sandboxes。
-- `agent-compose images|pull|rmi|image inspect`：管理 daemon 侧 image store。
-- `agent-compose cache ls|inspect|prune|rm`：查看并显式清理 daemon runtime cache；`prune` 和 `rm` 默认 dry-run，只有传 `--force` 才会删除。
+更多可运行示例（cron、timeout、scheduler 脚本）见 [../../examples/agent-compose/](../../examples/agent-compose/)。
 
 ## Compose 配置
 
-顶层字段：
+**顶层字段：** `name`、`variables`、`agents`、`mcps`、`volumes`、`network`。
 
-- `name`：project 名称；未设置时使用 compose 文件所在目录名。
-- `variables`：project 级变量，支持 `${ENV_NAME}` 环境变量插值。
-- `workspace`：project 默认 workspace，当前支持 `local` 和 `git` provider。
-- `agents`：agent 定义 map，key 是 agent 名称。
-- `network.mode`：当前只支持 `default`。
+**agent 常用字段：** `provider`、`model`、`system_prompt`、`image`、`driver`、
+`env`（scalar 或 `{ value, secret }`）、`workspace`、`scheduler`、`mcps`、`skills`、`volumes`。
 
-agent 常用字段：
+为 agent 从本地路径（`provider: local`）或 Git 仓库（`provider: git`）配置 workspace：
 
-- `provider` / `model` / `system_prompt`：guest agent 配置（`provider` 选择 guest CLI runner；`model` 会传给支持显式模型选择的 provider runtime）。非空 `system_prompt` 在运行时生效，并作为 Agent Identity 层注入 provider system/developer 指令。目前支持 `codex`、`claude`、`gemini`、`opencode`。daemon 侧 LLM 调用（`LLMService`、`scheduler.llm`）使用 `LLM_MODEL`，不是 compose 里的 agent `model`。
-- `image`：guest 镜像引用；为空时使用 driver 对应默认镜像。
-- `driver`：每个 agent 可选择一个 runtime，支持 `boxlite`、`docker`、`microsandbox`。
-- `env`：agent 级环境变量，支持 scalar 或 `{ value, secret }` 形状。
-- `workspace`：覆盖 project 默认 workspace。
-- `scheduler.enabled`：默认 `true`。
-- `scheduler.triggers`：支持 `cron`、`interval`、`timeout`、`event` 四种 trigger。
-- `scheduler.script`：内联 JavaScript scheduler 脚本。`scheduler.script` 和 `scheduler.triggers` 二选一。
+```yaml
+agents:
+  reviewer:
+    workspace:
+      provider: git
+      url: https://github.com/example/repo.git
+      branch: main
+```
+
+添加定时或事件驱动的 run。`scheduler.triggers` 与内联 `scheduler.script` 在同一 scheduler 中二选一：
+
+```yaml
+agents:
+  reviewer:
+    scheduler:
+      enabled: true
+      triggers:
+        - name: hourly-review
+          cron: "0 * * * *"
+          prompt: "Review the current project state and summarize changes."
+```
+
+完整字段说明见[命令行使用手册](command-line-manual.md)。
+
+## CLI 概览
+
+| 命令 | 用途 |
+| --- | --- |
+| `agent-compose daemon` | 启动 HTTP/Connect daemon。 |
+| `agent-compose up` | 读取 `agent-compose.yml` 并应用 project。 |
+| `agent-compose run <agent> --prompt/--command` | 以 agent 身份执行 prompt 或 shell 命令。 |
+| `agent-compose exec <sandbox>` | 在运行中的 sandbox 内执行命令或 prompt。 |
+| `agent-compose ps` / `stats` | 列出 project sandbox / 查看 sandbox 资源统计。 |
+| `agent-compose logs` | 查看 project run 日志。 |
+| `agent-compose scheduler ls\|trigger\|inspect` | 查看、执行或检查 scheduler trigger。 |
+| `agent-compose sandbox ls\|stop\|resume\|rm\|prune` | 管理 project sandbox。 |
+| `agent-compose images\|pull\|build\|rmi\|inspect` | 管理 daemon 镜像并构建 agent 镜像。 |
+| `agent-compose volume ls\|create\|inspect\|rm\|prune` | 管理 daemon volume。 |
+| `agent-compose cache ls\|inspect\|prune\|rm` | 查看并清理 daemon runtime cache。 |
+| `agent-compose down` | 禁用受管 scheduler 并停止 sandbox。 |
+| `agent-compose status` | 查看 daemon 状态。 |
+
+常用全局参数：`--file, -f`（指定 compose 文件）、`--project-name`、`--json`
+（脚本用的稳定 JSON 输出）、`--host` / `AGENT_COMPOSE_HOST`（连接 TCP daemon）、
+`AGENT_COMPOSE_SOCKET`（Unix socket 路径）。完整参考见[命令行使用手册](command-line-manual.md)。
 
 ## Runtime Driver
 
-支持的 runtime driver：
+- **`docker`**（默认）：使用 Docker 容器运行 guest，需要可用的 Docker daemon。
+- **`boxlite`**：使用 BoxLite runtime artifact 以 microVM 运行 guest。
+- **`microsandbox`**：使用 Microsandbox VM runtime 运行 guest。
 
-- `docker`：默认 driver，使用 Docker daemon。
-- `boxlite`：使用本仓库准备的 BoxLite runtime artifact 和 guest image。
-- `microsandbox`：使用 Microsandbox runtime。
+镜像处理由 `IMAGE_STORE_MODE` 选择（`auto` / `docker` / `oci`，其中 `oci` 使用无 daemon 的镜像缓存）。新 sandbox 使用 `DEFAULT_IMAGE` 指定的镜像；自带的 `.env.example` 和安装脚本将其设为 `ghcr.io/chaitin/agent-compose-guest:latest`，该镜像内置 agent runtime 和各 provider CLI。
 
-默认镜像为 `debian:bookworm-slim`，可通过 `DEFAULT_IMAGE`、`DOCKER_DEFAULT_IMAGE`、`MICROSANDBOX_DEFAULT_IMAGE` 覆盖。
+## Agent Provider
 
-## 前端
+每个 agent 设置一个 `provider`，决定 sandbox 内运行的 CLI：
 
-Web UI 在独立仓库 [agent-compose-ui](https://github.com/chaitin/agent-compose-ui)。它通过已发布的 [`@chaitin-ai/agent-compose-client`](https://www.npmjs.com/package/@chaitin-ai/agent-compose-client) 包消费 API 客户端——该包由本仓库的 `proto/` 经 `proto-client/` 生成发布。
+| Provider | 运行 |
+| --- | --- |
+| `codex` | Codex CLI |
+| `claude` | Claude Code CLI |
+| `gemini` | Gemini CLI |
+| `opencode` | OpenCode CLI |
 
-daemon 不托管 Web UI 或浏览器登录流程。前端仓库构建一个镜像（`ghcr.io/chaitin/agent-compose-ui`），在 nginx 前置后运行 agent-compose-ui server：nginx 托管构建后的前端，UI server 处理浏览器认证/OAuth，并把 API、Jupyter proxy 路由反向代理到 daemon。仓库根目录的 `docker-compose.yml` 直接引用该已发布镜像，并作为默认部署入口。
+LLM 凭据只在 daemon（`.env`）配置一次，而不是每个 guest 各配。对 Codex、Claude 和 OpenCode，daemon 的 **Runtime LLM Facade** 给每个 sandbox 一个受限的 scoped token，而不是你的真实 API key，因此 provider key 不会进入 guest。
 
-使用已发布容器镜像部署到服务器：
+按你的 agent 使用的后端家族设置变量。**OpenAI 家族**（Codex，以及 daemon 自身的 `LLMService` 和 scheduler LLM 调用）：
+
+```env
+LLM_API_ENDPOINT=https://api.openai.com
+LLM_API_PROTOCOL=responses    # DeepSeek / vLLM / Ollama 用 chat_completions
+LLM_API_KEY=sk-...
+LLM_MODEL=gpt-...
+```
+
+**Anthropic 家族**（Claude）：
+
+```env
+ANTHROPIC_BASE_URL=https://api.anthropic.com
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-...
+```
+
+设置 `LLM_API_PROTOCOL=chat_completions` 可对接任意 OpenAI 兼容 endpoint（DeepSeek、vLLM、Ollama）。
+
+**各 provider 说明。** OpenCode 从 agent 的 `model`（`provider/model`，如 `anthropic/…` 或 `openai/…`）选择上游家族并获得对应的 facade token；只有 OpenCode 自带的原生 provider 才走 OpenCode 自身登录。**Gemini 是例外** —— 它不会拿到任何 LLM key（`GEMINI_API_KEY` / `GOOGLE_API_KEY` 会从 guest 中过滤），而是通过 Gemini CLI 自身登录，凭据持久化在 sandbox home（`~/.gemini`）。
+
+完整变量（超时、endpoint 别名、`OPENAI_API_KEY` / `ANTHROPIC_AUTH_TOKEN` 等）见 [../../.env.example](../../.env.example)；facade 的托管机制见 [design/agent-compose-runtime-llm-facade.md](design/agent-compose-runtime-llm-facade.md)。
+
+## 部署与配置
+
+使用已发布镜像部署到服务器：
 
 ```bash
 cp .env.example .env
-openssl rand -base64 24 # 将输出写入 AUTH_PASSWORD
-openssl rand -hex 32    # 将输出写入 AUTH_SECRET
-docker compose pull
-docker compose up -d
-# 如需同时拉取并启动 Web UI：
-docker compose --profile with-ui pull
-docker compose --profile with-ui up -d
+openssl rand -base64 24   # 用于 AUTH_PASSWORD
+openssl rand -hex 32      # 用于 AUTH_SECRET
+docker compose pull && docker compose up -d
+docker compose --profile with-ui up -d   # 同时启动 Web UI
 ```
 
-首次启动前编辑 `.env`。至少替换 `AUTH_PASSWORD` 和 `AUTH_SECRET`；需要 Web UI 时启用 `with-ui` profile，如果不能使用宿主机 `80` 端口，修改 `AGENT_COMPOSE_HTTP_PORT`。本地开发时，Docker Compose 会自动加载 `docker-compose.override.yml`，使用本地 Dockerfile 构建后端镜像；需要重建时执行 `docker compose up -d --build`，需要同时启动 Web UI 时执行 `docker compose --profile with-ui up -d --build`。
+**[../../.env.example](../../.env.example) 是权威的、带完整注释的配置参考。** 对外部署前至少检查这些：
 
-本次 UI server 拆分的升级注意事项：
+- `AUTH_PASSWORD`、`AUTH_SECRET` —— UI server 登录 secret（务必替换示例值）。
+- `AGENT_COMPOSE_HTTP_PORT` —— 启用 `with-ui` 时 Web UI / 反向代理的宿主机端口。
+- `AGENT_COMPOSE_RUNTIME_BASE_URL` —— guest 可达的 daemon URL，用于 LLM facade。
+- `RUNTIME_DRIVER` —— 默认 runtime driver。
 
-- `agent-compose` 和 `agent-compose-ui` 需要一起升级。daemon 不再提供浏览器 auth/OAuth 路由；新的 UI 镜像内置 Go UI server，由它处理这些路由，并代理 daemon API/Jupyter 流量。
-- 浏览器登录配置（`AUTH_USERNAME`、`AUTH_PASSWORD`、`AUTH_SECRET`、`AUTH_SESSION_TTL`、`OAUTH_*`）归属 UI service 环境。启用 `with-ui` profile 时，Docker Compose 已经把 `.env` 传给 `agent-compose-frontend`。
-- 不要把 daemon TCP API 当作浏览器入口直接暴露。浏览器 cookie/OAuth 配置不再被 daemon 消费；直接访问 daemon TCP 只适用于可信网络或机器客户端，启用时应独立做好访问保护。
-- 修改 runtime 内可访问地址或 capability proxy 配置后，例如 `AGENT_COMPOSE_RUNTIME_BASE_URL`、`CAP_GRPC_LISTEN`、`CAP_GRPC_TARGET`，需要重启 daemon 并新建 agent sandbox，让 guest 容器拿到更新后的 facade/capability 环境。
+## Web UI
 
-## 配置
-
-复制 `.env.example` 为 `.env`，按部署环境修改后执行 `docker compose up -d`。如需同时启动 Web UI，添加 `--profile with-ui`。
-
-常用环境变量：
-
-- `AUTH_USERNAME`、`AUTH_PASSWORD`、`AUTH_SECRET`、`AUTH_SESSION_TTL`：UI server 密码登录设置。对外部署前应替换示例密码和 secret。
-- `AGENT_COMPOSE_HTTP_PORT`：启用 `with-ui` profile 时，Web UI 和反向代理发布到宿主机的端口。
-- `AGENT_COMPOSE_IMAGE`、`AGENT_COMPOSE_FRONTEND_IMAGE`：Docker Compose 服务镜像；前端镜像仅在启用 `with-ui` profile 时使用。
-- `DEFAULT_IMAGE`、`DOCKER_DEFAULT_IMAGE`、`MICROSANDBOX_DEFAULT_IMAGE`：guest 镜像默认值。
-- `RUNTIME_DRIVER`：默认 runtime driver。
-- `OAUTH_*`：UI server OAuth 登录设置。
-- `LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`LLM_API_KEY`、`OPENAI_API_KEY`、`LLM_MODEL`、`LLM_TIMEOUT`：daemon 侧 OpenAI family LLM 配置，供 `LLMService`、`scheduler.llm` 和 runtime agent LLM facade bootstrap 使用。这些值不会作为 provider key 注入 guest agent runtime。对接 OpenAI 兼容 Chat Completions 后端时设置 `LLM_API_PROTOCOL=chat_completions`。
-- `ANTHROPIC_BASE_URL`、`ANTHROPIC_API_ENDPOINT`、`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_MODEL`、`CLAUDE_MODEL`：daemon 侧 Anthropic family LLM facade bootstrap 配置。
-- `AGENT_COMPOSE_RUNTIME_BASE_URL`：可选的 runtime 内可访问 daemon base URL，用于生成 Runtime LLM Facade 配置。Docker Compose 默认使用 `http://agent-compose:7410`；宿主机 Docker 场景应配置具体的宿主机 IP/名称和端口。
-- `SANDBOX_ROOT`：容器内 sandbox metadata、state、workspace 和 runtime 文件路径。发布镜像默认使用 `/data/sandboxes`。
-- `DOCKER_HOST_SANDBOX_ROOT`：guest 容器 bind mount 使用的宿主机 sandbox 数据路径。Docker Compose 默认使用 `${PWD}/data/sandboxes`。
-- `CAP_GRPC_LISTEN`、`CAP_GRPC_TARGET`：仅在 Agent 需要调用 OctoBus gRPC capability 时必须配置。`CAP_GRPC_LISTEN` 启动 agent-compose capability proxy；`CAP_GRPC_TARGET` 是注入新 sandbox 的 guest 可达地址。修改后需要重启 daemon 并新建 sandbox。
-
-### Agent Provider
-
-Guest agent sandbox 在 guest 容器内通过 `agent-compose-runtime` CLI 运行 provider CLI；该 CLI 由 `@chaitin-ai/agent-compose-runtime` npm 包提供。Codex 和 Claude 通过 Runtime LLM Facade 调用：真实 provider key 保存在 daemon 侧 LLM provider 配置中，runtime 只拿 sandbox-scoped facade token 和 facade base URL。`LLM_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`GOOGLE_API_KEY`、`GEMINI_API_KEY` 等 provider key 名称会从用户提供的 runtime env 中过滤。兼容别名 `LLM_API_KEY`、`LLM_API_ENDPOINT` 仍可能出现在 runtime 中，但它们是 daemon 写入的 facade 值，不是上游 provider 凭据。Gemini 和 OpenCode 仍直接使用各自 provider CLI；OpenCode 凭据取决于所选 OpenCode model provider。
-
-| Provider | 典型环境变量 | 说明 |
-| --- | --- | --- |
-| `codex` | daemon LLM provider 配置；runtime 获取 `AGENT_COMPOSE_SANDBOX_TOKEN`、`LLM_API_KEY`、`LLM_API_ENDPOINT`、`OPENAI_BASE_URL` 和 facade-token API key aliases | 使用 guest 镜像中的 Codex CLI/SDK |
-| `claude` | daemon Anthropic family provider 配置；runtime 获取 `AGENT_COMPOSE_SANDBOX_TOKEN`、`LLM_API_KEY`、`LLM_API_ENDPOINT`、`ANTHROPIC_BASE_URL` 和 facade-token API key aliases | 使用 guest 镜像中的 Claude Code CLI |
-| `gemini` | 暂未接入 LLM facade | 使用 guest 镜像中的 Gemini CLI |
-| `opencode` | 取决于所选 OpenCode model provider，例如 `ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY` | 使用 guest 镜像中的 OpenCode CLI |
-
-修改 guest runtime 代码或 provider 支持后，需重建 guest 镜像：
-
-```bash
-task image:agent-compose-guest
-```
-
-创建新 sandbox（或 resume 已有 sandbox）以加载更新后的镜像和环境变量。
-
-> **升级注意（部分 Docker 部署存在破坏性变更）：** provider key 不再透传进 guest runtime，Codex/Claude 改为通过 daemon facade 访问上游 LLM，需要一个 runtime 内可达的 daemon URL。自带的 `docker-compose.yml` 已默认设置 `AGENT_COMPOSE_RUNTIME_BASE_URL=http://agent-compose:7410`。如果你在宿主机上直接运行 daemon（Docker driver）且 `HTTP_LISTEN=127.0.0.1:...`，容器无法访问该 loopback 地址，facade 配置会被跳过，agent run 将没有可用的 LLM 凭据。此时需要把 `AGENT_COMPOSE_RUNTIME_BASE_URL` 设为宿主机可达的具体 IP/名称和端口（例如 `http://host.docker.internal:7410`）。
-
-Runtime LLM Facade 设计见 [design/agent-compose-runtime-llm-facade.md](design/agent-compose-runtime-llm-facade.md)。
-
-### Chat Completions LLM 协议
-
-设置 `LLM_API_PROTOCOL=chat_completions`（别名 `chat`、`chat_completion`）后，daemon 侧单次文本生成（`LLMService.Generate`、`scheduler.llm`）可走 OpenAI 兼容 Chat Completions 后端：
-
-```env
-LLM_API_PROTOCOL=chat_completions
-LLM_API_ENDPOINT=https://api.example.com
-LLM_API_KEY=...
-LLM_MODEL=your-model
-```
-
-兼容后端包括 DeepSeek、本地 OpenAI 兼容代理（vLLM/Ollama）等 Chat Completions endpoint。
-
-该路径不会创建具备 workspace 能力的 agent sandbox，也不提供文件、命令或 MCP 工具访问。
-
-使用 `outputSchema` 时，`chat_completions` 通过 prompt 引导并设置 `response_format: json_object`，不等价于 Responses API 的 strict JSON Schema。
+Web UI 在独立仓库 [agent-compose-ui](https://github.com/chaitin/agent-compose-ui)。它消费已发布的 API client [`@chaitin-ai/agent-compose-client`](https://www.npmjs.com/package/@chaitin-ai/agent-compose-client)（由本仓库 `proto/` 生成）。daemon 不托管 UI 或浏览器登录流程；UI 镜像用 nginx 前置一个 Go UI server，由后者处理 auth/OAuth 并把 API、Jupyter 路由代理到 daemon。
 
 ## 安全提醒
 
-默认配置面向本地开发。公开部署前需要审查并加固：
+默认配置面向本地开发。对外部署前请加固：
 
-- 浏览器入口应通过启用 `with-ui` profile 后的 agent-compose-ui server 暴露。
-- 启用 UI 登录时设置稳定、高熵的 `AUTH_SECRET`。
-- 生产环境建议使用 HTTPS 终止。
-- `HTTP_LISTEN=0.0.0.0:7410` 是 daemon 内部 TCP API；监听非 loopback 地址时会输出强警告，应依赖容器网络、反向代理或其他网络控制避免公网直连。
-- Jupyter 访问应通过 agent-compose proxy，不应直接暴露 guest Jupyter 端口。
-- 对不可信 workload，需要额外审查 runtime driver 的隔离和网络访问行为。
+- 浏览器入口通过 agent-compose-ui server 暴露，不要直连 daemon。
+- 设置稳定、高熵的 `AUTH_SECRET`；生产环境使用 HTTPS 终止。
+- daemon TCP API（`HTTP_LISTEN`）应置于容器网络、反向代理或 VPN 之后。
+- 不要直接暴露 guest Jupyter 端口 —— 通过 agent-compose proxy 访问。
+- 把 Git 凭据、上传的 workspace、环境变量和 LLM API key 都当作 secret。
 
-更多说明见 [SECURITY.md](../../SECURITY.md)。
+更多说明见 [../../SECURITY.md](../../SECURITY.md)。
 
-## 构建和测试
+## 构建与测试
 
 ```bash
 task lint
 task build
-task test
+task test          # 或：task test:unit / task test:integration / task test:e2e
 ```
 
-相关文档：
+用 `task image:agent-compose-guest` 和 `task image:agent-compose` 构建 guest 和 daemon 镜像。启用 BoxLite 的二进制（`task build:agent-compose:boxlite`）为可选，需要 BoxLite runtime artifact。JavaScript runtime 组件在 `runtime/` 下。
+
+## 文档
 
 - [英文文档索引](../README.md)
 - [命令行使用手册](command-line-manual.md)
 - [架构说明](design/agent-compose_design.md)
-- [CLI 当前设计](design/agent-compose-cli-improvement-plan.md)
-- [Agent system prompt（Phase 1）](design/agent_system_prompt_design.md)
-- [Runtime contract](design/agent-compose-runtime_contract.md)
-- [OpenCode CLI Provider 支持](design/opencode_cli_support.md)
-- [Webhook design](design/webhook_design.md)
-- [Webhook queue design](design/webhook_queue_design.md)
-- [Loader script API](../../examples/scheduler-script/README.md)
 
-##  社区与支持
-欢迎加入技术社区，与更多开发者交流 Agent-copose 的使用、部署和开发经验。
+## 贡献
+
+欢迎贡献 —— 见 [../../CONTRIBUTING.md](../../CONTRIBUTING.md)。
+
+## 许可
+
+agent-compose 使用 [GNU Affero General Public License v3.0](../../LICENSE.txt) 授权。
+
+## 社区与支持
+
+欢迎加入技术社区，与更多开发者交流 agent-compose 的使用、部署和开发经验。
+
 <table>
   <tr>
     <td align="center"><img src="https://github.com/user-attachments/assets/fcdbb42b-2e06-409e-b116-60544461fbc1" width="160" /><br/>微信交流群</td>

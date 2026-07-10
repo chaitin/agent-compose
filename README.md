@@ -2,496 +2,305 @@
 
 [![CI](https://github.com/chaitin/agent-compose/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/chaitin/agent-compose/actions/workflows/ci.yml)
 [![Images & Release](https://github.com/chaitin/agent-compose/actions/workflows/images.yml/badge.svg?branch=main)](https://github.com/chaitin/agent-compose/actions/workflows/images.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE.txt)
 
-agent-compose is an experimental control plane for running isolated agent
-sandboxes. It provides a daemon, CLI, Connect APIs, runtime drivers, workspace
-provisioning, scheduler automation, event history, and a Jupyter proxy for
-notebook-style guest runtimes.
+**agent-compose is a daemon + CLI control plane that runs AI coding agents in isolated sandboxes.** You describe your agents in an `agent-compose.yml` file, and a long-lived daemon builds, runs, schedules, and proxies an isolated runtime for each one.
 
-agent-compose is a public preview project: APIs, runtime packaging, deployment
-defaults, and operational guidance may still change.
+> Public preview. APIs, runtime packaging, and deployment defaults may still change. It is suitable for experimentation, local development, and preview deployments — not yet a stable production platform.
 
-Chinese documentation is available at [docs/zh-CN/README.md](docs/zh-CN/README.md).
+📖 中文文档：[docs/zh-CN/README.md](docs/zh-CN/README.md)
 
-## What It Does
+## What is agent-compose?
 
-- Runs a long-lived daemon that owns state, scheduler execution, runtime
-  lifecycle, Connect APIs, and Jupyter proxying.
-- Provides a CLI for `up`, `run`, `logs`, `ps`, `down`, and image operations.
-- Supports project definitions in `agent-compose.yml`.
-- Starts isolated guest runtimes with Docker, BoxLite, or Microsandbox.
-- Provisions workspaces from local directories or Git repositories.
-- Exposes v1 compatibility session APIs and v2 project/run/sandbox/image APIs.
-- Includes JavaScript runtime components under `runtime/`.
+If you know Docker Compose, the mental model is familiar: instead of declaring
+containers, you declare **agents**. Each agent picks a provider CLI — `codex`,
+`claude` (Claude Code), `gemini`, or `opencode` — and the daemon gives it its own
+isolated sandbox with a workspace, then runs it on a prompt, a shell command, a
+schedule, or an event. Provider API keys stay on the daemon and are never exposed
+inside the guest.
 
-The web UI lives in a separate repository,
-[agent-compose-ui](https://github.com/chaitin/agent-compose-ui).
+You manage the whole lifecycle with a Compose-style CLI (`up`, `run`, `ps`,
+`logs`, `down`), and everything is driven by one declarative file.
 
-## Maturity
+Concretely, agent-compose provides:
 
-agent-compose is currently suitable for experimentation, local development, and
-preview deployments. It is not yet a stable production platform.
+- A **declarative compose model** (`agent-compose.yml`) with `${ENV}` interpolation.
+- **Multi-provider guest agents**: Codex, Claude Code, Gemini, and OpenCode CLIs.
+- **Three runtime drivers**: `docker` (default), `boxlite` (microVM), and `microsandbox`.
+- A **scheduler** with `cron`, `interval`, `timeout`, and `event` triggers — or full inline JavaScript scheduler scripts.
+- **Event triggers and webhooks** for event-driven agent runs.
+- **Workspaces** provisioned from a local directory or a Git repository.
+- A **Runtime LLM Facade** that brokers LLM credentials so provider keys never enter guest containers.
+- **MCP servers, reusable skills, and named volumes** per agent.
+- A **Jupyter proxy** for notebook-style guest runtimes.
+- **v1/v2 Connect APIs** and a generated TypeScript client.
 
-Before using it with untrusted workloads, review the runtime driver behavior,
-network access, authentication settings, workspace upload limits, and Jupyter
-proxy assumptions.
+## How it works
 
-## Repository Layout
+The **daemon** is the single source of truth: it owns persistence, scheduler
+execution, runtime lifecycle, the Connect/HTTP APIs, and Jupyter proxying. The
+**CLI** is a thin client — it reads your local `agent-compose.yml`, validates it,
+and calls the daemon. The compose file describes *projects and agents*, not
+already-running sandboxes. The **web UI** is a separate service
+([agent-compose-ui](https://github.com/chaitin/agent-compose-ui)) and is not
+hosted by the daemon.
 
-```text
-cmd/agent-compose/             daemon and CLI entrypoint
-pkg/agentcompose/app/          service graph, route registration, background managers
-pkg/agentcompose/api/          Connect handlers and API/protobuf conversion helpers
-pkg/agentcompose/adapters/     daemon runtime/sandbox/loader/capability adapters
-pkg/agentcompose/proxy/        Jupyter, workspace, and runtime LLM HTTP proxy routes
-pkg/model/                     domain records, validation, stable IDs, JSON helpers
-pkg/storage/                   sandbox and config persistence helpers
-pkg/loaders/                   loader engine, scheduling, command, and payload helpers
-pkg/projects/                  project normalization and managed-resource builders
-pkg/runs/                      project run coordinator and run/sandbox helpers
-pkg/sessions/                  v1-compatible stream broker and sandbox state helpers
-pkg/execution/                 cell, agent execution, artifact, and driver conversion helpers
-pkg/llms/                      daemon LLM client and runtime facade helpers
-pkg/events/                    event/webhook helpers
-pkg/images/                    daemon image store service helpers
-pkg/driver/                    Docker, BoxLite, and Microsandbox runtime drivers
-pkg/config/                    environment configuration
-pkg/imagecache/                OCI image cache helpers
-proto/                         Connect API definitions and generated Go code
-proto-client/                  npm package config for the generated TypeScript client
-runtime/                       guest runtime SDKs and JavaScript scheduler runtime
-guest-images/                  guest image Dockerfiles
-examples/scheduler-script/      scheduler script examples and API notes
-docs/design/                   design notes
-```
+For the full architecture, see [docs/design/agent-compose_design.md](docs/design/agent-compose_design.md).
 
-## Requirements
+## Quick start
 
-- Go toolchain compatible with the version declared in `go.mod`
-- Node.js and npm
-- Task, for the documented `task ...` commands
-- Docker, when using Docker runtime or building Docker images
-- Runtime-specific dependencies for BoxLite or Microsandbox when using those
-  drivers directly
+### Option A — Run a server (recommended)
 
-## Quick Start
-
-Build the CLI and daemon:
+The one-line installer sets up agent-compose with Docker Compose (including the
+web UI) on Linux amd64/arm64:
 
 ```bash
-task build
+curl -fsSL https://github.com/chaitin/agent-compose/releases/latest/download/install.sh | bash
 ```
 
-Start the daemon:
+On first run it generates an `admin` password and prints it once, then you work
+through the web UI at the printed URL. See [deploy/README.md](deploy/README.md)
+for options such as `--dir`, `--port`, `--upgrade`, and pulling from a
+mirror/private registry.
+
+### Option B — Build from source (for the CLI workflow)
 
 ```bash
+task build                       # builds ./build/agent-compose
+export PATH="$PWD/build:$PATH"   # so `agent-compose` is on your PATH
 agent-compose daemon
 ```
 
-By default, the daemon listens on a local Unix socket. To expose an HTTP endpoint
-for local development:
+The daemon listens on a local Unix socket by default. To expose a local HTTP
+endpoint instead:
 
 ```bash
 HTTP_LISTEN=127.0.0.1:7410 agent-compose daemon
-```
-
-Check daemon status:
-
-```bash
-agent-compose status
 agent-compose --host http://127.0.0.1:7410 status
 ```
 
-Create an `agent-compose.yml`:
+### Run your first agent
+
+With a local daemon running (Option B), create an `agent-compose.yml`:
 
 ```yaml
 name: demo
+
 agents:
   reviewer:
     provider: codex
-    model: gpt-test
-    image: debian:bookworm-slim
-    scheduler:
-      sandbox_policy: sticky
-      triggers:
-        - name: hourly
-          cron: "0 * * * *"
-          prompt: "Review the current workspace state."
-        - name: clean-review
-          cron: "0 0 * * *"
-          prompt: "Review in a fresh sandbox."
-          sandbox_policy: new
+    image: ghcr.io/chaitin/agent-compose-guest:latest
+    driver:
+      docker: {}
 ```
 
-Apply and run it:
+Then drive the lifecycle:
 
 ```bash
-agent-compose up
-agent-compose ps
+agent-compose up                                  # apply the project to the daemon
+agent-compose ps                                  # list project sandboxes
 agent-compose run reviewer --prompt "Review this change"
 agent-compose logs --agent reviewer
-agent-compose down
+agent-compose down                                # stop sandboxes, disable schedulers
 ```
 
-## CLI
+More runnable examples (cron, timeout, scheduler scripts) live in
+[examples/agent-compose/](examples/agent-compose/).
 
-The main commands are:
+## The compose file
 
-- `agent-compose daemon`: start the HTTP/Connect daemon.
-- `agent-compose up`: read `agent-compose.yml` and apply the project to the daemon.
-- `agent-compose run <agent> --prompt "..."` / `--command "..."`: run prompt or shell command work.
-- `agent-compose scheduler ls|trigger|inspect`: list, run, or inspect project scheduler triggers.
-- `agent-compose logs`: inspect project run logs.
-- `agent-compose ps`: list project agents, recent runs, and active sandboxes.
-- `agent-compose sandbox ls|stop|resume|rm|prune`: manage project sandboxes; `sandbox prune` cleans stopped/failed sandbox records and is dry-run unless `--force` is set.
-- `agent-compose down`: disable managed schedulers and stop running sandboxes.
-- `agent-compose images`, `pull`, `rmi`, `image inspect`: manage daemon-side images.
-- `agent-compose cache ls|inspect|prune|rm`: inspect and explicitly clean daemon runtime caches. `prune` and `rm` are dry-run unless `--force` is set; `sandbox prune` does not delete runtime cache files.
+**Top-level fields:** `name`, `variables`, `agents`, `mcps`, `volumes`, `network`.
 
-Useful flags and environment variables:
+**Common agent fields:** `provider`, `model`, `system_prompt`, `image`,
+`driver`, `env` (scalars or `{ value, secret }`), `workspace`, `scheduler`,
+`mcps`, `skills`, and `volumes`.
 
-- `--file, -f`: choose a compose file.
-- `--project-name`: override the compose project name.
-- `--json`: emit stable JSON for scripts.
-- `--host` or `AGENT_COMPOSE_HOST`: connect to a TCP daemon.
-- `AGENT_COMPOSE_SOCKET`: choose the local Unix socket path.
-
-## Compose File
-
-Top-level fields:
-
-- `name`: project name. If omitted, the compose file directory name is used.
-- `variables`: project variables with `${ENV_NAME}` interpolation.
-- `workspace`: default project workspace.
-- `agents`: agent definitions keyed by agent name.
-- `network.mode`: currently supports `default`.
-
-Common agent fields:
-
-- `provider`, `model`, `system_prompt`: guest agent settings (`provider` selects
-  the guest CLI runner; `model` is passed to provider runtimes that support
-  explicit model selection). Supported guest providers are `codex`, `claude`,
-  `gemini`, and `opencode`. Daemon-side LLM calls
-  (`LLMService`, `scheduler.llm`) use `LLM_MODEL` instead.
-- `image`: guest image reference.
-- `driver`: runtime driver override. Supported drivers are `boxlite`, `docker`,
-  and `microsandbox`.
-- `env`: agent environment variables. Values may be scalars or
-  `{ value, secret }` objects.
-- `workspace`: agent workspace override.
-- `scheduler.enabled`: defaults to `true`.
-- `scheduler.triggers`: supports `cron`, `interval`, `timeout`, and `event`
-  triggers.
-- `scheduler.script`: inline JavaScript scheduler runtime code. Use either
-  `scheduler.script` or `scheduler.triggers`, not both in the same scheduler.
-
-Workspace providers:
+Provision an agent's workspace from a local path (`provider: local`) or a Git
+repository (`provider: git`):
 
 ```yaml
-workspace:
-  provider: git
-  url: https://github.com/example/repo.git
-  branch: main
-
 agents:
   reviewer:
     workspace:
-      provider: local
-      path: .
+      provider: git
+      url: https://github.com/example/repo.git
+      branch: main
 ```
 
-## Runtime Drivers
+Add scheduled or event-driven runs. Use either `scheduler.triggers` **or** an
+inline `scheduler.script`, not both in the same scheduler:
 
-agent-compose supports three runtime drivers:
+```yaml
+agents:
+  reviewer:
+    scheduler:
+      enabled: true
+      triggers:
+        - name: hourly-review
+          cron: "0 * * * *"
+          prompt: "Review the current project state and summarize changes."
+```
 
-- `docker`: the default driver. It uses Docker containers and requires a
-  working Docker daemon.
-- `boxlite`: uses BoxLite runtime artifacts and guest images prepared by this
-  repository.
-- `microsandbox`: uses Microsandbox runtime artifacts.
+See the [command line manual](docs/command-line-manual.md) for the full field reference.
 
-Image handling is selected by `IMAGE_STORE_MODE`:
+## CLI overview
 
-- `auto`: use Docker image store when Docker is available, otherwise use the OCI
-  cache.
-- `docker`: require Docker image store.
-- `oci`: use daemonless OCI image cache.
+| Command | Purpose |
+| --- | --- |
+| `agent-compose daemon` | Start the HTTP/Connect daemon. |
+| `agent-compose up` | Read `agent-compose.yml` and apply the project. |
+| `agent-compose run <agent> --prompt/--command` | Run a prompt or shell command as an agent. |
+| `agent-compose exec <sandbox>` | Execute a command or prompt in a running sandbox. |
+| `agent-compose ps` / `stats` | List project sandboxes / show sandbox resource stats. |
+| `agent-compose logs` | Print project run logs. |
+| `agent-compose scheduler ls\|trigger\|inspect` | List, run, or inspect scheduler triggers. |
+| `agent-compose sandbox ls\|stop\|resume\|rm\|prune` | Manage project sandboxes. |
+| `agent-compose images\|pull\|build\|rmi\|inspect` | Manage daemon images and build agent images. |
+| `agent-compose volume ls\|create\|inspect\|rm\|prune` | Manage daemon volumes. |
+| `agent-compose cache ls\|inspect\|prune\|rm` | Inspect and clean daemon runtime caches. |
+| `agent-compose down` | Disable managed schedulers and stop sandboxes. |
+| `agent-compose status` | Check daemon status. |
 
-The default guest image is `debian:bookworm-slim` unless overridden by
-`DEFAULT_IMAGE`, `DOCKER_DEFAULT_IMAGE`, or `MICROSANDBOX_DEFAULT_IMAGE`.
+Useful global flags: `--file, -f` (choose a compose file), `--project-name`,
+`--json` (stable JSON for scripts), `--host` / `AGENT_COMPOSE_HOST` (connect to a
+TCP daemon), and `AGENT_COMPOSE_SOCKET` (Unix socket path). Full reference:
+[docs/command-line-manual.md](docs/command-line-manual.md).
 
-## Frontend
+## Runtime drivers
 
-The web UI lives in a separate repository,
-[agent-compose-ui](https://github.com/chaitin/agent-compose-ui). It consumes the
-generated API client from the published
-[`@chaitin-ai/agent-compose-client`](https://www.npmjs.com/package/@chaitin-ai/agent-compose-client)
-package, which is built from this repository's `proto/` via `proto-client/`.
+- **`docker`** (default): runs guests in Docker containers; requires a working Docker daemon.
+- **`boxlite`**: runs guests as microVMs using BoxLite runtime artifacts.
+- **`microsandbox`**: runs guests using the Microsandbox VM runtime.
 
-The daemon does not host the Web UI or browser login flows. The frontend
-repository builds an image (`ghcr.io/chaitin/agent-compose-ui`) that runs nginx
-in front of the agent-compose-ui server: nginx serves the built UI, and the UI
-server handles browser auth/OAuth before proxying API and Jupyter routes to the
-daemon. The root
-`docker-compose.yml` references that published image and is the default
-deployment entrypoint.
+Image handling is selected by `IMAGE_STORE_MODE` (`auto` / `docker` / `oci`,
+where `oci` uses a daemonless image cache). New sandboxes use the image set by
+`DEFAULT_IMAGE`; the bundled `.env.example` and installer set this to
+`ghcr.io/chaitin/agent-compose-guest:latest`, which ships the agent runtime and
+provider CLIs.
 
-For a server deployment that uses published container images:
+## Agent providers
+
+Each agent sets a `provider`, which selects the CLI it runs inside the sandbox:
+
+| Provider | Runs |
+| --- | --- |
+| `codex` | Codex CLI |
+| `claude` | Claude Code CLI |
+| `gemini` | Gemini CLI |
+| `opencode` | OpenCode CLI |
+
+You configure LLM credentials once, on the daemon (in `.env`) — not per guest.
+For Codex, Claude, and OpenCode, the daemon's **Runtime LLM Facade** hands each
+sandbox a scoped token instead of your real API key, so provider keys never enter
+the guest.
+
+Set the variables for the backend family your agents use. **OpenAI-family**
+(Codex, plus the daemon's own `LLMService` and scheduler LLM calls):
+
+```env
+LLM_API_ENDPOINT=https://api.openai.com
+LLM_API_PROTOCOL=responses    # or chat_completions for DeepSeek / vLLM / Ollama
+LLM_API_KEY=sk-...
+LLM_MODEL=gpt-...
+```
+
+**Anthropic-family** (Claude):
+
+```env
+ANTHROPIC_BASE_URL=https://api.anthropic.com
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-...
+```
+
+Set `LLM_API_PROTOCOL=chat_completions` to target any OpenAI-compatible endpoint
+(DeepSeek, vLLM, Ollama).
+
+**Per-provider notes.** OpenCode picks its upstream family from the agent's
+`model` (`provider/model`, e.g. `anthropic/…` or `openai/…`) and gets a facade
+token for it; only OpenCode's own native provider uses OpenCode's login instead.
+**Gemini is the exception** — it is never handed an LLM key (`GEMINI_API_KEY` /
+`GOOGLE_API_KEY` are filtered out of the guest) and authenticates through the
+Gemini CLI's own login, persisted under the sandbox home (`~/.gemini`).
+
+See [`.env.example`](.env.example) for the full list (timeouts, endpoint aliases,
+`OPENAI_API_KEY` / `ANTHROPIC_AUTH_TOKEN`) and the
+[Runtime LLM Facade design](docs/zh-CN/design/agent-compose-runtime-llm-facade.md)
+for how brokering works.
+
+## Deployment & configuration
+
+For a server deployment with published images:
 
 ```bash
 cp .env.example .env
-openssl rand -base64 24 # use this value for AUTH_PASSWORD
-openssl rand -hex 32    # use this value for AUTH_SECRET
-docker compose pull
-docker compose up -d
-# To also pull and start the web UI:
-docker compose --profile with-ui pull
-docker compose --profile with-ui up -d
+openssl rand -base64 24   # use for AUTH_PASSWORD
+openssl rand -hex 32      # use for AUTH_SECRET
+docker compose pull && docker compose up -d
+docker compose --profile with-ui up -d   # also start the web UI
 ```
 
-Edit `.env` before the first start. At minimum, replace `AUTH_PASSWORD` and
-`AUTH_SECRET`; enable the `with-ui` profile when you want the web UI, and set
-`AGENT_COMPOSE_HTTP_PORT` if port `80` is not suitable. Override
-`AGENT_COMPOSE_IMAGE`, `AGENT_COMPOSE_FRONTEND_IMAGE`, or `DEFAULT_IMAGE` to
-pin release tags or use a mirror/private registry. The frontend is released
-independently by `agent-compose-ui`; `AGENT_COMPOSE_FRONTEND_IMAGE` is used only
-when the `with-ui` profile is enabled.
+**[`.env.example`](.env.example) is the authoritative, fully commented
+configuration reference.** At minimum, review these before exposing a deployment:
 
-For local development, Docker Compose automatically loads
-`docker-compose.override.yml`, which builds the backend image from the local
-Dockerfile while keeping the same service topology. Use
-`docker compose up -d --build` when you want to rebuild the local backend image,
-or `docker compose --profile with-ui up -d --build` when you also want the web
-UI.
+- `AUTH_PASSWORD`, `AUTH_SECRET` — UI server login secrets (replace the examples).
+- `AGENT_COMPOSE_HTTP_PORT` — host port for the web UI / reverse proxy (`with-ui`).
+- `AGENT_COMPOSE_RUNTIME_BASE_URL` — guest-reachable daemon URL used for the LLM facade.
+- `RUNTIME_DRIVER` — default runtime driver.
 
-Upgrade notes for the UI server split:
+## Web UI
 
-- Upgrade `agent-compose` and `agent-compose-ui` together. The daemon no longer
-  serves browser auth/OAuth routes; the UI image now includes the Go UI server
-  that owns those routes and proxies daemon API/Jupyter traffic.
-- Move browser login settings (`AUTH_USERNAME`, `AUTH_PASSWORD`,
-  `AUTH_SECRET`, `AUTH_SESSION_TTL`, `OAUTH_*`) to the UI service environment.
-  Docker Compose already passes `.env` to `agent-compose-frontend` when the
-  `with-ui` profile is enabled.
-- Do not expose the daemon TCP API as the browser entrypoint. Browser
-  cookie/OAuth settings are not consumed by the daemon anymore; direct daemon
-  TCP access is for trusted networks or machine clients and should be protected
-  separately if enabled.
-- After changing runtime-reachable URLs or capability proxy settings such as
-  `AGENT_COMPOSE_RUNTIME_BASE_URL`, `CAP_GRPC_LISTEN`, or `CAP_GRPC_TARGET`,
-  restart the daemon and create new sandboxes so guest containers receive
-  the updated facade and capability environment.
+The web UI lives in a separate repository,
+[agent-compose-ui](https://github.com/chaitin/agent-compose-ui). It consumes the
+generated API client published as
+[`@chaitin-ai/agent-compose-client`](https://www.npmjs.com/package/@chaitin-ai/agent-compose-client),
+built from this repository's `proto/`. The daemon does not host the UI or browser
+login flows; the UI image runs nginx in front of a Go UI server that owns
+auth/OAuth and proxies API and Jupyter routes to the daemon.
 
-## Configuration
+## Security
 
-Copy `.env.example` to `.env`, edit the values for your environment, then run
-`docker compose up -d`. Add `--profile with-ui` to also start the web UI.
+The default configuration targets local development. Harden it before exposing a
+deployment to a network:
 
-Important variables include:
-
-- `AUTH_USERNAME`, `AUTH_PASSWORD`, `AUTH_SECRET`, `AUTH_SESSION_TTL`: UI server
-  password login settings. Replace the example password and secret before
-  exposing a deployment.
-- `AGENT_COMPOSE_HTTP_PORT`: host port for the web UI and reverse proxy when
-  the `with-ui` profile is enabled.
-- `AGENT_COMPOSE_IMAGE`, `AGENT_COMPOSE_FRONTEND_IMAGE`: Docker Compose service
-  images; the frontend image is used only with the `with-ui` profile.
-- `DEFAULT_IMAGE`, `DOCKER_DEFAULT_IMAGE`, `MICROSANDBOX_DEFAULT_IMAGE`: guest
-  image defaults.
-- `RUNTIME_DRIVER`: default runtime driver.
-- `OAUTH_*`: UI server OAuth login settings.
-- `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, `LLM_API_KEY`, `OPENAI_API_KEY`,
-  `LLM_MODEL`, `LLM_TIMEOUT`: daemon-side OpenAI-family LLM settings for
-  `LLMService`, `scheduler.llm`, and runtime agent LLM facade bootstrap. These
-  values are not injected as provider keys into guest agent runtimes. Set
-  `LLM_API_PROTOCOL=chat_completions` for OpenAI-compatible chat completions
-  backends (aliases: `chat`, `chat_completion`).
-- `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_ENDPOINT`, `ANTHROPIC_API_KEY`,
-  `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, `CLAUDE_MODEL`: daemon-side
-  Anthropic-family LLM facade bootstrap settings.
-- `AGENT_COMPOSE_RUNTIME_BASE_URL`: optional guest-reachable daemon base URL
-  used when generating runtime LLM facade configuration. Docker Compose
-  defaults this to `http://agent-compose:7410`; host-based Docker setups should
-  set it to a concrete host IP/name and port.
-- `SANDBOX_ROOT`: container path for sandbox metadata, state, workspaces, and
-  runtime files. The published image defaults this to `/data/sandboxes`.
-- `DOCKER_HOST_SANDBOX_ROOT`: host path for sandbox data bind-mounted into guest
-  containers. Docker Compose defaults this to `${PWD}/data/sandboxes`.
-- `CAP_GRPC_LISTEN`, `CAP_GRPC_TARGET`: required only when agents need to call
-  OctoBus gRPC capabilities. `CAP_GRPC_LISTEN` starts the agent-compose
-  capability proxy; `CAP_GRPC_TARGET` is the guest-reachable address injected
-  into new sandboxes. After changing either value, restart the daemon and create
-  a new sandbox.
-- `IMAGE_STORE_MODE`, `IMAGE_CACHE_ROOT`, `IMAGE_REGISTRY`,
-  `IMAGE_INSECURE_REGISTRIES`: image store and OCI cache settings.
-- `BOXLITE_HOME`, `BOXLITE_RUNTIME_DIR`, `BOX_ROOTFS_PATH`, `BOX_CACHE_TTL`:
-  BoxLite settings. `BOX_CACHE_TTL` no longer runs hidden startup GC; use
-  explicit `agent-compose cache prune --older-than ... --force` for cache
-  cleanup.
-- `BOX_DISK_SIZE_GB`: shared guest disk size for VM-type drivers (the boxlite
-  box disk and the microsandbox docker disk). It also defaults the microsandbox
-  bind mount quota. Default 6 GiB.
-- `DOCKER_HOME`: Docker runtime state directory.
-- `MICROSANDBOX_HOME`, `MICROSANDBOX_MSB_PATH`, `MICROSANDBOX_LIB_PATH`,
-  `MICROSANDBOX_BIND_QUOTA_GB`, `MICROSANDBOX_INSECURE_REGISTRIES`:
-  Microsandbox settings.
-- `GUEST_WORKSPACE`, `GUEST_STATE_ROOT`, `GUEST_RUNTIME_ROOT`,
-  `GUEST_LOG_ROOT`, `JUPYTER_GUEST_PORT`: guest paths and Jupyter port.
-- `WEBHOOK_BODY_LIMIT_BYTES`, `WORKSPACE_UPLOAD_LIMIT_BYTES`: request limits.
-
-### Agent providers
-
-Guest agent sandboxes run provider CLIs through the `agent-compose-runtime` CLI,
-provided by the `@chaitin-ai/agent-compose-runtime` npm package. Codex and Claude calls use the Runtime LLM Facade:
-provider keys stay in the daemon-side LLM provider configuration, while guest
-runtimes receive sandbox-scoped facade tokens and facade base URLs. LLM provider
-key names such as `LLM_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-`ANTHROPIC_AUTH_TOKEN`, `GOOGLE_API_KEY`, and `GEMINI_API_KEY` are filtered from
-user-supplied runtime environment variables. Compatibility aliases such as
-`LLM_API_KEY` and `LLM_API_ENDPOINT` may still appear in the runtime, but they
-are daemon-managed facade values, not upstream provider credentials. Gemini and
-OpenCode still use their provider CLIs directly; OpenCode credentials depend on
-the selected OpenCode model provider.
-
-| Provider | Typical env vars | Notes |
-| --- | --- | --- |
-| `codex` | daemon LLM provider config; runtime receives `AGENT_COMPOSE_SANDBOX_TOKEN`, `LLM_API_KEY`, `LLM_API_ENDPOINT`, `OPENAI_BASE_URL`, and facade-token API key aliases | Uses Codex CLI/SDK in the guest image |
-| `claude` | daemon Anthropic-family provider config; runtime receives `AGENT_COMPOSE_SANDBOX_TOKEN`, `LLM_API_KEY`, `LLM_API_ENDPOINT`, `ANTHROPIC_BASE_URL`, and facade-token API key aliases | Uses Claude Code CLI in the guest image |
-| `gemini` | not yet routed through the LLM facade | Uses Gemini CLI in the guest image |
-| `opencode` | Provider-specific keys for the selected OpenCode model, for example `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` | Uses OpenCode CLI in the guest image |
-
-After changing guest runtime code or provider support, rebuild the guest image:
-
-```bash
-task image:agent-compose-guest
-```
-
-Create a new sandbox (or resume one) so the updated image and environment
-variables are picked up.
-
-> **Upgrade note (breaking for some Docker setups):** Because provider keys are
-> no longer passed through to guest runtimes, Codex/Claude now reach their LLM
-> upstream through the daemon facade and need a guest-reachable daemon URL. The
-> bundled `docker-compose.yml` sets
-> `AGENT_COMPOSE_RUNTIME_BASE_URL=http://agent-compose:7410` for you. If you run
-> the daemon directly on a host with the Docker driver and an
-> `HTTP_LISTEN=127.0.0.1:...` bind, the container cannot reach that loopback
-> address, so facade config is skipped and agent runs will have no working LLM
-> credentials. Set `AGENT_COMPOSE_RUNTIME_BASE_URL` to a concrete
-> host-reachable IP/name and port (for example `http://host.docker.internal:7410`).
-
-The Runtime LLM Facade design is documented in
-[`docs/zh-CN/design/agent-compose-runtime-llm-facade.md`](docs/zh-CN/design/agent-compose-runtime-llm-facade.md).
-
-### Chat Completions LLM Protocol
-
-Set `LLM_API_PROTOCOL=chat_completions` to use an OpenAI-compatible Chat
-Completions backend for daemon-side unary text generation. This path is used by
-`LLMService.Generate` and loader `scheduler.llm` calls.
-
-```env
-LLM_API_PROTOCOL=chat_completions
-LLM_API_ENDPOINT=https://api.example.com
-LLM_API_KEY=...
-LLM_MODEL=your-model
-```
-
-Compatible backends include DeepSeek, local OpenAI-compatible proxies
-(vLLM/Ollama), and similar Chat Completions endpoints.
-
-This does not create a workspace-capable agent sandbox and does not grant file,
-command, or MCP tool access.
-
-With `outputSchema`, `chat_completions` uses prompt guidance and
-`response_format: json_object` (not Responses API strict JSON Schema).
-
-## Security Notes
-
-The default configuration is designed for local development. Review and harden
-settings before exposing the deployment to a network.
-
-- Expose browser access through the agent-compose-ui server, not directly
-  through the daemon.
-- Set a stable, high-entropy `AUTH_SECRET` when enabling UI server
-  authentication.
-- Use HTTPS termination in production deployments.
-- `HTTP_LISTEN=0.0.0.0:7410` is an internal daemon API. Startup emits a warning
-  for non-loopback listeners; keep it behind container networking, reverse
-  proxies, VPNs, or equivalent controls.
-- Jupyter runs inside guest runtimes and is expected to be reached through the
-  agent-compose proxy. Do not expose guest Jupyter ports directly.
-- Runtime drivers may allow network access from guest workloads. Check driver
-  behavior before running untrusted code.
-- Treat Git credentials, uploaded workspaces, environment variables, and LLM API
-  keys as secrets.
+- Expose browser access through the agent-compose-ui server, not the daemon directly.
+- Set a stable, high-entropy `AUTH_SECRET`, and terminate HTTPS in production.
+- Keep the daemon TCP API (`HTTP_LISTEN`) behind container networking, a reverse proxy, or a VPN.
+- Do not expose guest Jupyter ports directly — reach them through the agent-compose proxy.
+- Treat Git credentials, uploaded workspaces, environment variables, and LLM API keys as secrets.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and hardening notes.
 
-## Build And Test
+## Build & test
 
 ```bash
 task lint
 task build
-task test
+task test          # or: task test:unit / task test:integration / task test:e2e
 ```
 
-Useful subcommands:
+Build guest and daemon images with `task image:agent-compose-guest` and
+`task image:agent-compose`. A BoxLite-enabled binary
+(`task build:agent-compose:boxlite`) is optional and requires BoxLite runtime
+artifacts. The JavaScript runtime components live under `runtime/`.
 
-```bash
-task test:unit
-task test:integration
-task test:e2e
-task image:agent-compose-guest
-task image:agent-compose
-```
-
-Runtime SDK:
-
-```bash
-cd runtime/agent-compose-runtime-sdk
-npm ci
-npm test
-```
-
-BoxLite-enabled binary builds are optional and require BoxLite runtime artifacts:
-
-```bash
-task build:agent-compose:boxlite
-```
-
-Scheduler runtime:
-
-```bash
-cd runtime/javascript
-npm ci
-npm run test:unit
-```
-
-## API Compatibility
-
-The daemon exposes both v1 and v2 Connect APIs.
-
-- v1 is the compatibility API for existing UI and clients and retains its
-  session-oriented wire shape.
-- v2 is the preferred path for newer CLI and project/run/sandbox/image
-  workflows.
-
-Protocol definitions live under `proto/`.
-
-## Related Documentation
+## Documentation
 
 - [Documentation index](docs/README.md)
-- [Chinese documentation](docs/zh-CN/README.md)
+- [Command line manual](docs/command-line-manual.md)
+- [Chinese documentation (中文文档)](docs/zh-CN/README.md)
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
 agent-compose is licensed under the [GNU Affero General Public License v3.0](LICENSE.txt).
+
 ## Community and Support
-Join the community to discuss Agent-compose usage, deployment, and development with other developers.
+
+Join the community to discuss agent-compose usage, deployment, and development with other developers.
+
 <table>
   <tr>
     <td align="center"><img src="https://github.com/user-attachments/assets/fcdbb42b-2e06-409e-b116-60544461fbc1" width="160" /><br/>WeChat Group</td>
