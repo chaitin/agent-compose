@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,6 +13,9 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	containerapi "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/client"
 	"github.com/samber/do/v2"
 
 	agentcomposeapp "agent-compose/pkg/agentcompose/app"
@@ -121,8 +125,35 @@ agents:
 		t.Logf("resolved trigger %s enabled=%t next_fire_at=%v", trigger.GetTriggerId(), trigger.GetEnabled(), trigger.GetNextFireAt().AsTime())
 	}
 	runID, event := waitForScheduledHelloRun(t, projectClient, scheduler, helloText)
-	if !strings.Contains(event.GetPayloadJson(), "sandboxId") || !strings.Contains(event.GetPayloadJson(), "cellId") {
-		t.Fatalf("scheduler command event payload does not contain sandbox and cell links: %s", event.GetPayloadJson())
+	var links struct {
+		SandboxID string `json:"sandboxId"`
+		CellID    string `json:"cellId"`
+	}
+	if err := json.Unmarshal([]byte(event.GetPayloadJson()), &links); err != nil {
+		t.Fatalf("decode scheduler command event payload %q: %v", event.GetPayloadJson(), err)
+	}
+	sandboxID := links.SandboxID
+	if sandboxID == "" {
+		t.Fatalf("scheduler command event sandbox link is empty; cell %q", links.CellID)
+	}
+	sandboxClient := agentcomposev2connect.NewSandboxServiceClient(client, "http://agent-compose")
+	sandboxRemoved := false
+	t.Cleanup(func() {
+		if !sandboxRemoved {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := removeE2EDockerSchedulerSandboxPublic(cleanupCtx, sandboxClient, sandboxID); err != nil {
+				t.Errorf("public scheduler sandbox cleanup failed for %s: %v", sandboxID, err)
+			}
+			cleanupCancel()
+		}
+		fallbackCtx, fallbackCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer fallbackCancel()
+		if err := removeE2EDockerSchedulerSandboxFallback(fallbackCtx, sandboxID); err != nil {
+			t.Errorf("fallback scheduler sandbox cleanup failed for %s: %v", sandboxID, err)
+		}
+	})
+	if links.CellID == "" {
+		t.Fatalf("scheduler command event links = sandbox %q cell %q, want both set", sandboxID, links.CellID)
 	}
 
 	downOut, downErr, _, downCode := executeCLICommand("down", "--file", composePath)
@@ -132,7 +163,66 @@ agents:
 	if downErr != "" {
 		t.Fatalf("compose down stderr = %q, want empty", downErr)
 	}
+	removeCtx, removeCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := removeE2EDockerSchedulerSandboxPublic(removeCtx, sandboxClient, sandboxID); err != nil {
+		removeCancel()
+		t.Fatalf("remove scheduler sandbox %s: %v", sandboxID, err)
+	}
+	removeCancel()
+	sandboxRemoved = true
+	verifyCtx, verifyCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer verifyCancel()
+	if err := removeE2EDockerSchedulerSandboxFallback(verifyCtx, sandboxID); err != nil {
+		t.Fatalf("verify scheduler sandbox %s cleanup: %v", sandboxID, err)
+	}
 	t.Logf("scheduled run %s completed through scheduler %s with docker command output", runID, scheduler.GetSchedulerId())
+}
+
+func removeE2EDockerSchedulerSandboxPublic(
+	ctx context.Context,
+	sandboxClient agentcomposev2connect.SandboxServiceClient,
+	sandboxID string,
+) error {
+	response, err := sandboxClient.RemoveSandbox(ctx, connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{
+		SandboxId: sandboxID,
+		Force:     true,
+	}))
+	if err != nil {
+		return err
+	}
+	if response.Msg.GetSandboxId() != sandboxID || !response.Msg.GetRemoved() {
+		return fmt.Errorf("RemoveSandbox response = %#v, want removed sandbox %s", response.Msg, sandboxID)
+	}
+	return nil
+}
+
+func removeE2EDockerSchedulerSandboxFallback(ctx context.Context, sandboxID string) error {
+	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("create Docker client: %w", err)
+	}
+	defer func() { _ = dockerClient.Close() }()
+	args := filters.NewArgs(
+		filters.Arg("label", "agent-compose.sandbox_id="+sandboxID),
+		filters.Arg("label", "agent-compose.driver=docker"),
+	)
+	containers, err := dockerClient.ContainerList(ctx, containerapi.ListOptions{All: true, Filters: args})
+	if err != nil {
+		return fmt.Errorf("list Docker sandbox containers: %w", err)
+	}
+	for _, item := range containers {
+		if err := dockerClient.ContainerRemove(ctx, item.ID, containerapi.RemoveOptions{Force: true}); err != nil {
+			return fmt.Errorf("remove Docker sandbox container %s: %w", item.ID, err)
+		}
+	}
+	remaining, err := dockerClient.ContainerList(ctx, containerapi.ListOptions{All: true, Filters: args})
+	if err != nil {
+		return fmt.Errorf("verify Docker sandbox container cleanup: %w", err)
+	}
+	if len(remaining) != 0 {
+		return fmt.Errorf("Docker sandbox container count = %d after cleanup, want 0", len(remaining))
+	}
+	return nil
 }
 
 func requireDockerGuestImage(t *testing.T, image string) {

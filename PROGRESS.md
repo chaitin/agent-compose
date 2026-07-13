@@ -20,8 +20,8 @@
 
 - 已确认：resume 严格保持 sandbox workspace；旧 sandbox 原样迁移；首版无 reset API；真实 runtime 使用 Docker E2E。
 - 已完成文档：技术规格、实施计划。
-- 代码任务：16/20 完成。
-- 当前下一目标：5.4 运行 E2E 阶段门禁并审计资源清理。
+- 代码任务：17/20 完成。
+- 当前下一目标：6.1 审计依赖、调用点和范围边界。
 
 ## 执行规则
 
@@ -630,27 +630,42 @@
       - 最终审计未重复运行真实 Docker test；root 已通过新 Task 取得直接运行证据，5.4 仍会按依赖再次执行 E2E 阶段门禁和资源审计。无其他例外或未运行的 5.3 门禁。
     - 下一目标：5.4 运行 E2E 阶段门禁并审计资源清理。
 
-- [ ] 5.4 运行 E2E 阶段门禁并审计资源清理
+- [x] 5.4 运行 E2E 阶段门禁并审计资源清理
   - 依赖：5.2、5.3。
   - 工作内容：
     - 运行默认 E2E shape，确认真实 Docker test 在无显式环境时按约定 skip、focused task 强制真实执行。
     - 运行 workspace focused Docker E2E；具备 Jupyter 前置条件时同时运行现有 Jupyter focused E2E。
     - 失败后审计 daemon log、Docker label、临时目录和清理路径；不得泄露 secret/token。
   - 可并行子任务：
-    - [ ] 可并行：默认 `task test:e2e`。
-    - [ ] 可并行：Docker workspace focused E2E。
-    - [ ] 可并行：Jupyter focused E2E（环境具备时）。
+    - [x] 可并行：默认 `task test:e2e`。
+    - [x] 可并行：Docker workspace focused E2E。
+    - [x] 可并行：Jupyter focused E2E（环境具备时）。
   - 测试方案：
     - `task test:e2e`
     - `task test:e2e:docker-workspace-resume`
     - `task test:e2e:docker-jupyter`（具备前置条件时）
   - 验收标准：workspace focused E2E 必须真实通过，不能以 skip 代替；无资源泄漏；Jupyter 不能运行时完成编译验证并记录原因。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
-    - 下一目标：6.1。
+    - 状态：已完成。
+    - 变更：
+      - 首次默认 E2E gate 功能断言通过，但资源审计发现既有 `TestE2EDockerSchedulerScriptHelloWorldFlow` 遗留一个 exited Docker container；`compose down` 按产品合同只停止并保留 sandbox history，Docker runtime 又使用 `AutoRemove: false`，原测试缺少后续 public remove，故该轮不计为 clean gate pass。
+      - 在 scheduler Docker E2E 获得非空 linked sandbox ID 后立即注册 cleanup，先用全新 context 调用 v2 `SandboxService.RemoveSandbox(force=true)`，再用独立 fresh context 和 `agent-compose.sandbox_id=<id>` + `agent-compose.driver=docker` 精确双 label、`All:true` Docker fallback 删除并复查零 container。
+      - success path 在 `compose down` 后、daemon 与 temp root 仍存活时显式 public remove，校验 response ID/`removed`，再运行精确 label 零残留验证；linked cell 后续断言失败、public remove 失败和普通测试失败均保留 cleanup/fallback。
+      - 未修改 production；5.4 的唯一代码变更是修复真实 E2E 自身的资源生命周期。
+    - 验证：
+      - 修复后 `env -u AGENT_COMPOSE_E2E_DOCKER_WORKSPACE_IMAGE -u AGENT_COMPOSE_E2E_DOCKER_JUPYTER_IMAGE task test:e2e`：通过，耗时 `16.92s`；Go `cmd/agent-compose` E2E、全部其他 Go package 及 runtime JavaScript `4 files / 47 tests` 全部通过。
+      - 同样 unset 两个 opt-in env 的 exact verbose package 命令：两个 focused test 均编译/被发现并只因各自命名环境变量缺失而 skip，package `PASS`；workspace 提示设置 `AGENT_COMPOSE_E2E_DOCKER_WORKSPACE_IMAGE`，Jupyter 提示设置 `AGENT_COMPOSE_E2E_DOCKER_JUPYTER_IMAGE`。
+      - `task test:e2e:docker-workspace-resume`：真实非 skip 通过，focused test `3.34s`；Docker event 证明 sandbox A 的同一 container 经 stop→restart→最终 destroy，sandbox B 独立 create→stop→destroy，两个精确 sandbox label 最终均为零。
+      - `task test:e2e:docker-jupyter`：真实非 skip 通过，focused test `8.29s`；同一 container stop/start 后最终 destroy，stale port 修复日志为 `127.0.0.1:32785`，该 port 随后可重新 bind。
+      - `AGENT_COMPOSE_E2E_GUEST_IMAGE=agent-compose-guest:latest ./scripts/with-go-toolchain.sh go test ./cmd/agent-compose -run '^TestE2EDockerSchedulerScriptHelloWorldFlow$' -count=1 -timeout=3m`：修复后直接通过，`3.855s`；default gate 独立复跑的 scheduler container 同样出现 create/destroy 完整事件。
+      - `./scripts/with-go-toolchain.sh go test ./cmd/agent-compose -run '^$' -count=1`、`golangci-lint fmt --no-config --diff ./cmd/agent-compose`、`golangci-lint run --no-config --allow-parallel-runners ./cmd/agent-compose` 与 `git diff --check`：全部通过，lint `0 issues`。
+    - 审计与例外：
+      - 首轮泄漏的 exited container `88e6aebe4e59` 通过 sandbox `6f03be...`、精确 label 和 `/tmp/TestE2EDockerSchedulerScriptHelloWorldFlow...` mount 归因后单独删除；未 broad remove 或触碰用户容器。修复后 default rerun 创建的 container `9d13c5cc...` 已由测试自行 destroy。
+      - 全部 gate 后 Docker label baseline 仍精确为 `38` 个既存 container，排序 ID 集 SHA-256 与运行前相同：`0bebb07b677f66638675bb7f40894045cd5b289123069a1d12d18099e2b34822`；最新既存 container 创建于本任务前。四个 `/app/agent-compose daemon` PID 也在运行前已存在并保持不变。
+      - Workspace/Jupyter test 自身分别断言 public/fallback cleanup、daemon exit、socket/port/temp root 释放；root 复核没有本任务时间范围内新增的匹配 daemon、socket、listener、Go/test temp root 或 labeled container。测试输出未包含 API key、Authorization、facade/Jupyter token 或 secret env 明文。
+      - 独立只读最终审计确认 default/focused gate、skip 合同、scheduler public remove/fresh exact fallback/LIFO 顺序和资源 baseline 均无 finding；残余风险仅为宿主机或 test process 灾难性终止可绕过 Go cleanup callback，这是所有进程内 E2E 的通用风险。
+      - 变更范围仅为 `cmd/agent-compose/e2e_docker_scheduler_test.go` 和本账本；未修改 production、proto/generated、SQLite schema、公开 CLI/API、产品环境变量、compose、runtime mount、Task/TESTING/design 或 CI。无其他例外或未运行的 5.4 门禁。
+    - 下一目标：6.1 审计依赖、调用点和范围边界。
 
 ## 6. 全量门禁和交付收口
 
