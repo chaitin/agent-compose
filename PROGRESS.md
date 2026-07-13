@@ -20,8 +20,8 @@
 
 - 已确认：resume 严格保持 sandbox workspace；旧 sandbox 原样迁移；首版无 reset API；真实 runtime 使用 Docker E2E。
 - 已完成文档：技术规格、实施计划。
-- 代码任务：14/20 完成。
-- 当前下一目标：5.2 与 5.3 可并行。
+- 代码任务：15/20 完成。
+- 当前下一目标：5.3 更新 Task、Testing 和设计文档。
 
 ## 执行规则
 
@@ -553,7 +553,7 @@
       - 变更范围仅为共享 E2E helper、原 Jupyter E2E 调用点和本账本；未修改 production、cmd、proto/generated client、SQLite schema、公开 CLI/API、产品环境变量、compose、runtime mount、Task/TESTING、design 或 CI。无未运行的任务内门禁或其他 blocker。
     - 下一目标：5.2 与 5.3 可并行，避免并发修改 Taskfile/文档与共享 E2E helper。
 
-- [ ] 5.2 实现 Docker workspace restart/resume E2E
+- [x] 5.2 实现 Docker workspace restart/resume E2E
   - 依赖：5.1。
   - 可并行关系：可与 5.3 并行，避免修改 Taskfile/文档。
   - 工作内容：
@@ -563,17 +563,34 @@
     - 创建第二个 sandbox，断言获取新 source 且无旧 sandbox 生成文件。
     - 通过 workspace list/download 验证无反向同步，并注册公开 remove 与 Docker fallback cleanup。
   - 可并行子任务：
-    - [ ] 可并行：workspace upload/download client helper。
-    - [ ] 可并行：sandbox manifest/exec assertion helper。
-    - [ ] 可并行：daemon restart 与 leak cleanup 断言。
+    - [x] 可并行：workspace upload/download client helper。
+    - [x] 可并行：sandbox manifest/exec assertion helper。
+    - [x] 可并行：daemon restart 与 leak cleanup 断言。
   - 测试方案：`AGENT_COMPOSE_E2E_DOCKER_WORKSPACE_IMAGE=<local-image> ./scripts/with-go-toolchain.sh go test ./test/e2e -run '^TestE2EDockerFileWorkspaceResumePreservesState$' -count=1 -v`。
   - 验收标准：真实 daemon restart 后原 sandbox 保持修改/删除/新增，新 sandbox 获取最新模板；无残留容器、进程、socket、端口或临时目录。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
-    - 下一目标：5.4（等待 5.3）。
+    - 状态：已完成。
+    - 变更：
+      - 新增 `TestE2EDockerFileWorkspaceResumePreservesState`，通过编译后的 host daemon、v1 Config/Session Connect API、workspace HTTP API、v2 Exec/Sandbox Connect API 和真实 Docker guest 完成 file workspace 创建、首次 seed、sandbox 内修改/删除/新增、stop、source 更新、daemon restart、原 sandbox resume 和 sandbox B 创建。
+      - daemon #1 与 #2 使用相同 `DATA_ROOT`、`SANDBOX_ROOT` 和 Unix socket 路径、不同 loopback 端口；restart 后重建全部 HTTP/Connect client，并通过 public Get/List API 证明 sandbox、workspace snapshot 和 workspace config 来自持久化数据。
+      - 使用精确 `agent-compose.sandbox_id` 与 `agent-compose.driver=docker` 双 label、`All:true` 列表和 Docker inspect 记录完整 container ID、running state 与 `/workspace` bind source，证明 stop 后 runtime handle 保留且 restart/resume 复用同一 container；sandbox B 获得不同 ID、workspace path 和 container。
+      - 新增 workspace HTTP test helper，使用正式 multipart archive upload、严格排序的 list 响应和带下载 metadata/content 的 download 请求；新增 v2 Exec helper，使用正式 unary Exec、固定 `/workspace` cwd、位置参数传值、相对路径校验和不暴露内容的有界诊断。
+      - 资源创建后立即注册 public remove 与精确 label fallback；成功路径在 daemon #2 存活时依次公开删除 sandbox B、sandbox A 和 workspace config，再显式停止 daemon 并断言 container、process、Unix socket、两个 TCP port 和临时 root 均已释放。
+    - 验证：
+      - `./scripts/with-go-toolchain.sh go test ./test/e2e -run '^$' -count=1`：通过，E2E package 与新增 helper/main test 编译成功。
+      - `./scripts/with-go-toolchain.sh go test ./test/e2e -count=1`：通过；未设置 opt-in Docker 环境时真实 runtime tests 按约定 skip，daemon-free helper tests 执行成功。
+      - `./scripts/with-go-toolchain.sh go test ./test/e2e -run '^TestWorkspaceExecHelpersUseFormalConnectContract$' -count=10`：通过；workspace HTTP/Exec helper focused test 与 race test 同时通过。
+      - `AGENT_COMPOSE_E2E_DOCKER_WORKSPACE_IMAGE=agent-compose-guest:latest ./scripts/with-go-toolchain.sh go test ./test/e2e -run '^TestE2EDockerFileWorkspaceResumePreservesState$' -count=1 -v`：真实连续执行三次均通过，最终审计修复后的运行耗时 `6.41s`。
+      - `./scripts/with-go-toolchain.sh golangci-lint fmt --no-config --diff ./test/e2e`：通过，无格式 diff。
+      - `./scripts/with-go-toolchain.sh golangci-lint run --no-config --allow-parallel-runners ./test/e2e`：通过，`0 issues`。
+      - `git diff --check`：通过。
+    - 审计与例外：
+      - list/download 在 sandbox A 变更后仍精确返回 source v1 的两个模板文件且无 generated artifact；source 更新后及 sandbox B 创建后仍精确返回 source v2、原 deleted 模板且无 sandbox A artifact，直接证明无反向同步。
+      - 独立只读最终审计发现 cleanup 注册晚于 post-create 断言、public remove 与 fallback 共用可能过期 context 两项失败路径问题；已把 A/B cleanup 提前到 ID 提取后，并为 Docker fallback 使用独立 fresh timeout；复审确认两项已解决且无剩余 blocker。
+      - 每次真实运行内部均断言 A/B 精确 label container 数为零、两个 daemon exit code 为零、socket/port/root 不存在；外部复核没有 `/tmp/agent-compose-docker-workspace-e2e-*` root、对应 daemon process 或当日新建的 Docker label container。既存 label container 均早于本任务且未触碰。
+      - cleanup 仅按测试生成的 sandbox ID 使用精确双 label，不执行 broad label remove；Exec 失败摘要只记录状态和 byte count，daemon 环境中的 LLM/auth secret 均为空。
+      - 变更范围仅为三个 `test/e2e/*_test.go` 文件和本账本；未修改 proto/generated code、SQLite schema、公开 CLI/API、产品环境变量、compose、runtime mount、Taskfile、TESTING/design 文档或 CI。Task/文档属于 5.3，无未运行的 5.2 门禁或其他例外。
+    - 下一目标：5.3 更新 Task、Testing 和设计文档。
 
 - [ ] 5.3 更新 Task、Testing 和设计文档
   - 依赖：5.1。
