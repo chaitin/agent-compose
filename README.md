@@ -284,9 +284,12 @@ task test          # or: task test:unit / task test:integration / task test:e2e
 ```
 
 Build guest and daemon images with `task image:agent-compose-guest` and
-`task image:agent-compose`. A BoxLite-enabled binary
-(`task build:agent-compose:boxlite`) is optional and requires BoxLite runtime
-artifacts. The JavaScript runtime components live under `runtime/`.
+`task image:agent-compose`. `task build:agent-compose` builds the native host
+profile: Docker-only on Darwin and the full Docker, BoxLite, and Microsandbox
+profile on Linux. Use `task build:agent-compose:darwin` or
+`task build:agent-compose:linux` to select one explicitly. The old
+`build:agent-compose:boxlite` task is a deprecated alias for the Linux full
+profile. The JavaScript runtime components live under `runtime/`.
 
 ## Documentation
 

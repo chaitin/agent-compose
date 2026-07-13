@@ -232,7 +232,7 @@ task build
 task test          # 或：task test:unit / task test:integration / task test:e2e
 ```
 
-用 `task image:agent-compose-guest` 和 `task image:agent-compose` 构建 guest 和 daemon 镜像。启用 BoxLite 的二进制（`task build:agent-compose:boxlite`）为可选，需要 BoxLite runtime artifact。JavaScript runtime 组件在 `runtime/` 下。
+用 `task image:agent-compose-guest` 和 `task image:agent-compose` 构建 guest 和 daemon 镜像。`task build:agent-compose` 按当前宿主选择原生 profile：Darwin 构建仅支持 Docker 的二进制，Linux 构建同时支持 Docker、BoxLite 和 Microsandbox；也可通过 `task build:agent-compose:darwin` 或 `task build:agent-compose:linux` 显式选择。旧任务 `build:agent-compose:boxlite` 已废弃，仅作为 Linux full profile 的兼容 alias。JavaScript runtime 组件在 `runtime/` 下。
 
 ## 文档
 

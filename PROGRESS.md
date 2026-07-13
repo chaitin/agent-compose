@@ -9,8 +9,8 @@
 - 当前变更：platform-runtime-build。
 - 已确认产物：macOS Docker-only binary、Linux 三 Driver binary、Linux 三 Driver multi-arch Docker image。
 - 发布边界：binary 只用于本地和 CI 验证，不进入 GitHub Release。
-- 当前进度：8/18 个父任务完成。
-- 当前下一目标：3.3 完成平台 Binary Build 阶段门禁。
+- 当前进度：9/18 个父任务完成。
+- 当前下一目标：4.1 让两个Dockerfile复用Linux full helper。
 
 ## 文档索引
 
@@ -362,7 +362,7 @@
       - README中旧BoxLite alias说明按账本阶段7统一更新；本任务未提前修改Dockerfile、发布/部署文档或CI。未修改proto内容、SQLite schema、guest protocol、coverage threshold/exclusion、默认Driver或暂停的Workspace Resume账本；按计划未检查远端CI。
     - 下一目标：3.3 完成平台 Binary Build 阶段门禁。
 
-- [ ] 3.3 完成平台 Binary Build 阶段门禁
+- [x] 3.3 完成平台 Binary Build 阶段门禁
   - 依赖：3.2。
   - 工作内容：
     - 修复Task重构引起的E2E binary路径、coverage-shape和脚本调用回归。
@@ -370,9 +370,9 @@
     - 验证Linux host full binary信息为三driver，且两套artifact完整。
     - 审计Taskfile、helper和文档示例，不保留第二套profile参数。
   - 可并行子任务：
-    - [ ] 可并行：Darwin双arch构建审计。
-    - [ ] 可并行：Linux full构建和artifact审计。
-    - [ ] 可并行：Task/脚本静态重复参数审计。
+    - [x] 可并行：Darwin双arch构建审计。
+    - [x] 可并行：Linux full构建和artifact审计。
+    - [x] 可并行：Task/脚本静态重复参数审计。
   - 测试方案：
     - task lint
     - task build
@@ -381,11 +381,25 @@
     - rg审计Taskfile中的CGO_ENABLED和boxlitecgo/microsandboxcgo。
   - 验收标准：权威门禁通过；host产物能力正确；重复构建参数清除；不存在静默降级。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
-    - 下一目标：4.1。
+    - 状态：已完成。
+    - 变更：
+      - 修正英文/中文README的旧BoxLite-only build说明，明确host dispatch、Darwin Docker-only、Linux full及deprecated alias；修正`CONTRIBUTING.md`，说明Linux `task build`在两套artifact未准备时需要Docker，lint/test和Darwin binary build不需要。
+      - Task的target architecture fallback复用唯一`GOHOSTARCH` owner，保持显式`GOARCH`覆盖；E2E继续依赖host task并使用兼容路径`build/agent-compose`，coverage shape入口未改变。
+      - 两个artifact exporter增加source/architecture stamp，绑定target arch、Dockerfile、统一binary helper与exporter自身；Task将stamp纳入generates/status并显式传`TARGETARCH`。source/version/arch不匹配时不再因旧文件存在而静默跳过，匹配时保持快速复用。
+      - exporter在成功Docker export后才原子写stamp，支持显式采用已独立验证的legacy artifact；hash工具兼容Linux `sha256sum`与macOS `shasum -a 256`。确定性fake-toolchain suite新增两套exporter的adopt、match、arch mismatch与source invalidation覆盖，fake Docker保证不访问网络。
+    - 验证：
+      - `task build:agent-compose:darwin`分别构建amd64、arm64：通过；`file`确认为Mach-O x86_64/arm64，`go version -m`确认`GOOS=darwin`、对应arch、`CGO_ENABLED=0`、`netgo,osusergo`及version ldflag；helper config均报告仅`docker`。
+      - Darwin双arch `go list`均选择BoxLite/Microsandbox stub及两个compiled-false文件；CGO-off compiled capability focused tests通过。当前Linux不能原生执行Mach-O，macOS原生JSON/daemon smoke仍由阶段6提供，未用Linux证据替代。
+      - 逐项验证BoxLite header/static/shared library/guest/shim和Microsandbox msb/agentd/libkrunfw/FFI存在、非空且权限正确；当前均为amd64，libkrunfw symlink chain有效。
+      - `GOPROXY=off task build:agent-compose:linux GOARCH=amd64`及最终`task build`：通过；ELF JSON精确报告Linux/amd64和`docker,boxlite,microsandbox`，与helper config一致。`ldd`/`readelf`仅包含系统library，native runtime仍lazy且无静默Docker-only退化。
+      - 两套stamp在amd64匹配、arm64不匹配；source fixture变化使status失败。`bash -n`覆盖helper/test/两个exporter，`./scripts/test-build-agent-compose-binary.sh`通过；CGO-off与双tag compiled capability focused tests均通过。
+      - `task lint`：通过，`0 issues`；`task build`：通过；`task test`：通过，Unit `77.25%`、Integration `65.96%`、E2E `61.84%`、Combined `79.54%`。
+    - 审计与例外：
+      - 首次验证“source变化强制refresh”时两个Docker stage确实重新进入下载路径，但当前Docker网络无法连接GitHub release（curl 28）；等待重试后主动中断，旧artifact因成功build前不删除而完整保留。随后对已逐项确认版本形态/amd64架构的现有artifact显式adopt当前stamp，最终Task重复运行准确up to date且全部门禁通过；clean环境无stamp时仍必须真实export，不会静默采用未知artifact。
+      - Task/helper/README构建示例只有两个正式profile；Task build区域无内联CGO、tags、ldflags或直接binary `go build`。Taskfile剩余driver tags仅属于显式smoke/repro测试。两个Dockerfile的旧内联build留给依赖已满足的4.1，不在本任务跨阶段修改。
+      - 显式Darwin/Linux task共享兼容输出`build/agent-compose`，并行手工执行会由最后完成者覆盖；Task默认/顶层build只选择一个host profile，本次审计对显式产物使用独立路径或顺序验证。
+      - 双语design中旧Microsandbox普通CGO描述按阶段7统一更新；未修改proto、SQLite schema、guest protocol、coverage threshold/exclusion、默认Driver、CI、Compose或暂停的Workspace Resume账本；按计划未检查远端CI。
+    - 下一目标：4.1 让两个Dockerfile复用Linux full helper。
 
 ## 4. 完整 Docker Image
 

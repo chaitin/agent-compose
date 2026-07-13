@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 SOURCE_HELPER="$ROOT_DIR/scripts/build-agent-compose-binary.sh"
+SOURCE_BOXLITE_EXPORTER="$ROOT_DIR/scripts/export-boxlite-dev-artifact.sh"
+SOURCE_MICROSANDBOX_EXPORTER="$ROOT_DIR/scripts/export-microsandbox-dev-artifact.sh"
 
 fail() {
   printf 'test-build-agent-compose-binary: %s\n' "$*" >&2
@@ -79,9 +81,12 @@ trap 'rm -rf -- "$TMP_DIR"' EXIT
 TEST_ROOT="$TMP_DIR/repo"
 mkdir -p "$TEST_ROOT/scripts"
 cp "$SOURCE_HELPER" "$TEST_ROOT/scripts/build-agent-compose-binary.sh"
+cp "$SOURCE_BOXLITE_EXPORTER" "$TEST_ROOT/scripts/export-boxlite-dev-artifact.sh"
+cp "$SOURCE_MICROSANDBOX_EXPORTER" "$TEST_ROOT/scripts/export-microsandbox-dev-artifact.sh"
 cp "$ROOT_DIR/scripts/with-go-toolchain.sh" "$TEST_ROOT/scripts/with-go-toolchain.sh"
 chmod +x "$TEST_ROOT/scripts/with-go-toolchain.sh"
 HELPER="$TEST_ROOT/scripts/build-agent-compose-binary.sh"
+printf 'FROM scratch\n' >"$TEST_ROOT/Dockerfile"
 
 FAKE_BIN="$TMP_DIR/fake-bin"
 FAKE_GOROOT="$TMP_DIR/fake-goroot"
@@ -481,5 +486,64 @@ assert_success
 [[ -x "$literal_output" ]] || fail "literal metacharacter output was not created"
 [[ ! -e "$injection_marker" ]] || fail "version text was executed as shell input"
 assert_build_arg "-X 'agent-compose/pkg/config.BuildVersion=$injection_version'"
+
+# Artifact exporter stamps bind complete fixtures to source inputs and target
+# architecture without invoking Docker. A source or architecture change must
+# invalidate the cached set.
+for exporter_and_dir in \
+  'export-boxlite-dev-artifact.sh build/boxlite' \
+  'export-microsandbox-dev-artifact.sh build/microsandbox'; do
+  exporter=${exporter_and_dir%% *}
+  artifact_dir=${exporter_and_dir#* }
+  env \
+    PATH="$FAKE_BIN:$PATH" \
+    GO="$FAKE_GO" \
+    FAKE_GOROOT="$FAKE_GOROOT" \
+    TARGETARCH=amd64 \
+    AGENT_COMPOSE_ADOPT_EXISTING_ARTIFACTS=1 \
+    "$TEST_ROOT/scripts/$exporter" "$TEST_ROOT/$artifact_dir" >/dev/null
+
+  env \
+    PATH="$FAKE_BIN:$PATH" \
+    GO="$FAKE_GO" \
+    FAKE_GOROOT="$FAKE_GOROOT" \
+    TARGETARCH=amd64 \
+    AGENT_COMPOSE_ARTIFACT_STATUS_ONLY=1 \
+    "$TEST_ROOT/scripts/$exporter" "$TEST_ROOT/$artifact_dir"
+
+  env \
+    PATH="$FAKE_BIN:$PATH" \
+    GO="$FAKE_GO" \
+    FAKE_GOROOT="$FAKE_GOROOT" \
+    TARGETARCH=amd64 \
+    "$TEST_ROOT/scripts/$exporter" "$TEST_ROOT/$artifact_dir" >/dev/null
+
+  if env \
+    PATH="$FAKE_BIN:$PATH" \
+    GO="$FAKE_GO" \
+    FAKE_GOROOT="$FAKE_GOROOT" \
+    TARGETARCH=arm64 \
+    AGENT_COMPOSE_ARTIFACT_STATUS_ONLY=1 \
+    "$TEST_ROOT/scripts/$exporter" "$TEST_ROOT/$artifact_dir"; then
+    fail "$exporter accepted an artifact stamp for the wrong architecture"
+  fi
+done
+
+printf '# fingerprint change\n' >>"$TEST_ROOT/Dockerfile"
+for exporter_and_dir in \
+  'export-boxlite-dev-artifact.sh build/boxlite' \
+  'export-microsandbox-dev-artifact.sh build/microsandbox'; do
+  exporter=${exporter_and_dir%% *}
+  artifact_dir=${exporter_and_dir#* }
+  if env \
+    PATH="$FAKE_BIN:$PATH" \
+    GO="$FAKE_GO" \
+    FAKE_GOROOT="$FAKE_GOROOT" \
+    TARGETARCH=amd64 \
+    AGENT_COMPOSE_ARTIFACT_STATUS_ONLY=1 \
+    "$TEST_ROOT/scripts/$exporter" "$TEST_ROOT/$artifact_dir"; then
+    fail "$exporter accepted an artifact stamp after its source changed"
+  fi
+done
 
 printf 'test-build-agent-compose-binary: all checks passed\n'

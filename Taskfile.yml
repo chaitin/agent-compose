@@ -22,7 +22,7 @@ vars:
       if [ -n "${GOARCH:-}" ]; then
         printf '%s\n' "$GOARCH"
       else
-        ./scripts/with-go-toolchain.sh go env GOHOSTARCH
+        printf '%s\n' '{{.GOHOSTARCH}}'
       fi
 
 tasks:
@@ -230,8 +230,11 @@ tasks:
       - build/boxlite/lib/libboxlite.so
       - build/boxlite/runtime/boxlite-guest
       - build/boxlite/runtime/boxlite-shim
+      - build/boxlite/.agent-compose-artifact-source
+    status:
+      - TARGETARCH={{.GOARCH}} AGENT_COMPOSE_ARTIFACT_STATUS_ONLY=1 ./scripts/export-boxlite-dev-artifact.sh ./build/boxlite
     cmds:
-      - HTTP_PROXY={{.BUILD_HTTP_PROXY}} HTTPS_PROXY={{.BUILD_HTTPS_PROXY}} ALL_PROXY={{.BUILD_ALL_PROXY}} REGISTRY_MIRROR={{.BUILD_REGISTRY_MIRROR}} ./scripts/export-boxlite-dev-artifact.sh ./build/boxlite
+      - TARGETARCH={{.GOARCH}} HTTP_PROXY={{.BUILD_HTTP_PROXY}} HTTPS_PROXY={{.BUILD_HTTPS_PROXY}} ALL_PROXY={{.BUILD_ALL_PROXY}} REGISTRY_MIRROR={{.BUILD_REGISTRY_MIRROR}} ./scripts/export-boxlite-dev-artifact.sh ./build/boxlite
 
   prepare:microsandbox-dev:
     internal: true
@@ -246,8 +249,11 @@ tasks:
       - build/microsandbox/bin/agentd
       - build/microsandbox/lib/libkrunfw.so
       - build/microsandbox/lib/libmicrosandbox_go_ffi.so
+      - build/microsandbox/.agent-compose-artifact-source
+    status:
+      - TARGETARCH={{.GOARCH}} AGENT_COMPOSE_ARTIFACT_STATUS_ONLY=1 ./scripts/export-microsandbox-dev-artifact.sh ./build/microsandbox
     cmds:
-      - HTTP_PROXY={{.BUILD_HTTP_PROXY}} HTTPS_PROXY={{.BUILD_HTTPS_PROXY}} ALL_PROXY={{.BUILD_ALL_PROXY}} REGISTRY_MIRROR={{.BUILD_REGISTRY_MIRROR}} ./scripts/export-microsandbox-dev-artifact.sh ./build/microsandbox
+      - TARGETARCH={{.GOARCH}} HTTP_PROXY={{.BUILD_HTTP_PROXY}} HTTPS_PROXY={{.BUILD_HTTPS_PROXY}} ALL_PROXY={{.BUILD_ALL_PROXY}} REGISTRY_MIRROR={{.BUILD_REGISTRY_MIRROR}} ./scripts/export-microsandbox-dev-artifact.sh ./build/microsandbox
 
   build:agent-compose:
     desc: Build the host agent-compose binary using the platform profile
