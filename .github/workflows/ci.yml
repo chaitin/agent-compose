@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
 
 permissions:
   contents: read
@@ -97,3 +99,188 @@ jobs:
           cache-dependency-path: runtime/javascript/package-lock.json
       - run: npm ci
       - run: npm run test:unit
+
+  binary-matrix:
+    name: Configure binary matrix
+    runs-on: ubuntu-latest
+    outputs:
+      linux_platforms: ${{ steps.platforms.outputs.json }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate binary CI contract
+        run: ./scripts/test-binary-ci-contract.sh
+      - id: platforms
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          amd64='{"arch":"amd64","runner":"ubuntu-latest"}'
+          arm64='{"arch":"arm64","runner":"ubuntu-24.04-arm"}'
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "json=[$amd64]" >> "$GITHUB_OUTPUT"
+          else
+            echo "json=[$amd64,$arm64]" >> "$GITHUB_OUTPUT"
+          fi
+
+  binary-darwin:
+    name: Darwin binary (${{ matrix.arch }})
+    needs: binary-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Assert Darwin Docker-only profile
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          actual=$(./scripts/build-agent-compose-binary.sh \
+            --profile darwin-docker \
+            --goarch "$TARGET_ARCH" \
+            --output "$RUNNER_TEMP/agent-compose" \
+            --version "ci-${GITHUB_SHA}" \
+            --print-config)
+          expected=$(printf '%s\n' \
+            'profile=darwin-docker' \
+            'goos=darwin' \
+            "goarch=$TARGET_ARCH" \
+            'cgo_enabled=0' \
+            'tags=netgo,osusergo' \
+            'compiled_drivers=docker' \
+            "version=ci-${GITHUB_SHA}")
+          [ "$actual" = "$expected" ]
+      - name: Build Darwin binary
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          ./scripts/build-agent-compose-binary.sh \
+            --profile darwin-docker \
+            --goarch "$TARGET_ARCH" \
+            --output "build/agent-compose-darwin-$TARGET_ARCH" \
+            --version "ci-${GITHUB_SHA}"
+      - name: Inspect Darwin target
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          file "build/agent-compose-darwin-$TARGET_ARCH" | grep -F 'Mach-O 64-bit'
+          case "$TARGET_ARCH" in
+            amd64) file "build/agent-compose-darwin-$TARGET_ARCH" | grep -F 'x86_64' ;;
+            arm64) file "build/agent-compose-darwin-$TARGET_ARCH" | grep -F 'arm64' ;;
+          esac
+
+  binary-darwin-native:
+    name: Darwin native binary smoke
+    needs: binary-matrix
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build native Darwin binary
+        id: build
+        run: |
+          set -euo pipefail
+          arch=$(go env GOHOSTARCH)
+          echo "arch=$arch" >> "$GITHUB_OUTPUT"
+          ./scripts/build-agent-compose-binary.sh \
+            --profile darwin-docker \
+            --goarch "$arch" \
+            --output build/agent-compose-darwin-native \
+            --version "ci-${GITHUB_SHA}"
+      - name: Verify native Darwin metadata
+        run: |
+          ./scripts/verify-agent-compose-binary.sh \
+            --binary ./build/agent-compose-darwin-native \
+            --os darwin \
+            --arch "${{ steps.build.outputs.arch }}" \
+            --drivers docker
+      - name: Smoke native Darwin daemon
+        run: |
+          ./scripts/test-agent-compose-daemon-startup.sh \
+            --binary ./build/agent-compose-darwin-native \
+            --expected-os darwin \
+            --expected-arch "${{ steps.build.outputs.arch }}" \
+            --expected-drivers docker
+
+  binary-linux:
+    name: Linux full binary (${{ matrix.platform.arch }})
+    needs: binary-matrix
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.binary-matrix.outputs.linux_platforms) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Task
+        run: go install github.com/go-task/task/v3/cmd/task@v3.40.1
+      - name: Assert Linux full profile
+        env:
+          TARGET_ARCH: ${{ matrix.platform.arch }}
+        run: |
+          set -euo pipefail
+          actual=$(./scripts/build-agent-compose-binary.sh \
+            --profile linux-full \
+            --goarch "$TARGET_ARCH" \
+            --output "$RUNNER_TEMP/agent-compose" \
+            --version "ci-${GITHUB_SHA}" \
+            --print-config)
+          expected=$(printf '%s\n' \
+            'profile=linux-full' \
+            'goos=linux' \
+            "goarch=$TARGET_ARCH" \
+            'cgo_enabled=1' \
+            'tags=netgo,osusergo,boxlitecgo,microsandboxcgo' \
+            'compiled_drivers=docker,boxlite,microsandbox' \
+            "version=ci-${GITHUB_SHA}")
+          [ "$actual" = "$expected" ]
+      - name: Build Linux full binary
+        env:
+          TARGET_ARCH: ${{ matrix.platform.arch }}
+          VERSION: ci-${{ github.sha }}
+        run: task build:agent-compose:linux GOARCH="$TARGET_ARCH" VERSION="$VERSION"
+      - name: Verify native artifacts
+        env:
+          TARGET_ARCH: ${{ matrix.platform.arch }}
+        run: |
+          set -euo pipefail
+          test -s build/boxlite/include/boxlite.h
+          test -s build/boxlite/lib/libboxlite.a
+          test -s build/boxlite/lib/libboxlite.so
+          test -x build/boxlite/runtime/boxlite-guest
+          test -x build/boxlite/runtime/boxlite-shim
+          test -x build/microsandbox/bin/msb
+          test -x build/microsandbox/bin/agentd
+          test -s build/microsandbox/lib/libkrunfw.so
+          test -s build/microsandbox/lib/libmicrosandbox_go_ffi.so
+          grep -Fx "target_arch=$TARGET_ARCH" build/boxlite/.agent-compose-artifact-source
+          grep -Fx "target_arch=$TARGET_ARCH" build/microsandbox/.agent-compose-artifact-source
+      - name: Verify Linux full metadata
+        env:
+          TARGET_ARCH: ${{ matrix.platform.arch }}
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build/microsandbox/lib:${{ github.workspace }}/build/boxlite/lib
+        run: |
+          ./scripts/verify-agent-compose-binary.sh \
+            --binary ./build/agent-compose \
+            --os linux \
+            --arch "$TARGET_ARCH" \
+            --drivers docker,boxlite,microsandbox

@@ -9,8 +9,8 @@
 - 当前变更：platform-runtime-build。
 - 已确认产物：macOS Docker-only binary、Linux 三 Driver binary、Linux 三 Driver multi-arch Docker image。
 - 发布边界：binary 只用于本地和 CI 验证，不进入 GitHub Release。
-- 当前进度：14/18 个父任务完成。
-- 当前下一目标：6.1 增加Darwin与Linux Binary CI矩阵。
+- 当前进度：15/18 个父任务完成。
+- 当前下一目标：6.2 增加完整Image CI Smoke并保持发布合同。
 
 ## 文档索引
 
@@ -599,7 +599,7 @@
 
 参考：[实施计划阶段 6](docs/plan/platform-runtime-build-implementation-plan.md#阶段-6建立平台-binary-与完整-image-ci-矩阵)
 
-- [ ] 6.1 增加 Darwin 与 Linux Binary CI 矩阵
+- [x] 6.1 增加 Darwin 与 Linux Binary CI 矩阵
   - 依赖：5.3。
   - 工作内容：
     - CI构建darwin/amd64、darwin/arm64并断言仅Docker。
@@ -608,20 +608,35 @@
     - PR至少覆盖Darwin双arch、一个native macOS、Linux amd64；main/tag覆盖Linux双arch。
     - binary只留job workspace或短期传递artifact，不进入Release。
   - 可并行子任务：
-    - [ ] 可并行：Darwin build/native smoke jobs。
-    - [ ] 可并行：Linux amd64/arm64 full jobs。
-    - [ ] 可并行：matrix触发、cache和artifact retention审计。
+    - [x] 可并行：Darwin build/native smoke jobs。
+    - [x] 可并行：Linux amd64/arm64 full jobs。
+    - [x] 可并行：matrix触发、cache和artifact retention审计。
   - 测试方案：
     - 本地执行各job核心helper/Task命令。
     - YAML/workflow lint。
     - PR dry run确认matrix、runner、权限和cache key。
   - 验收标准：四种binary target有build证据，至少一个Darwin target有原生执行证据；binary不出现在release job。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
-    - 下一目标：6.2。
+    - 状态：已完成。
+    - 变更：
+      - `.github/workflows/ci.yml`新增`binary-matrix`：PR只输出`amd64/ubuntu-latest`，main和`v*` tag push输出amd64及`arm64/ubuntu-24.04-arm`；CI push触发同步加入`v*` tags，matrix job先执行本地合同测试。
+      - `binary-darwin`在Linux runner以`darwin-docker`分别构建amd64/arm64，逐字段断言CGO关闭、tags和仅Docker compiled capability，并用`file`验证Mach-O target；`binary-darwin-native`在`macos-14`重新构建当前host arch，真实执行JSON metadata verifier和无Docker/KVM daemon `/api/version` smoke。
+      - `binary-linux`在动态选择的native amd64/arm64 runner通过`task build:agent-compose:linux`构建，先断言`linux-full` profile，再验证两套artifact文件、architecture stamp和binary精确三Driver metadata；未使用QEMU或host CGO交叉构建。
+      - 新增`scripts/verify-agent-compose-binary.sh`及确定性fake-binary测试，严格验证单一JSON对象、非空version、OS/arch及有序`compiled_drivers`；新增`scripts/test-agent-compose-daemon-startup.sh`，隔离cwd/data/home/runtime/socket并以不可达Docker socket证明daemon startup/version不依赖Docker daemon或KVM。
+      - 新增`scripts/test-binary-ci-contract.sh`，静态审计job/profile/runner/cache/release边界，并直接提取执行workflow matrix shell：PR精确为amd64，push精确为amd64+arm64；binary始终只留job workspace，不上传workflow artifact且不进入installer Release。
+    - 验证：
+      - `bash -n`覆盖build helper及四个新增binary CI脚本：通过；`./scripts/test-build-agent-compose-binary.sh`、`./scripts/test-verify-agent-compose-binary.sh`、`./scripts/test-binary-ci-contract.sh`：通过。
+      - 本地真实构建`darwin-docker` amd64和arm64：通过；`--print-config`均报告CGO `0`和`compiled_drivers=docker`，`file`分别报告Mach-O x86_64和arm64。
+      - `task build:agent-compose:linux GOARCH=amd64 VERSION=ci-local-6.1`：通过；两套artifact stamp均为amd64，metadata verifier报告`linux/amd64`及`docker,boxlite,microsandbox`，隔离daemon startup `/api/version` smoke通过。
+      - `linux-full --goarch arm64 --print-config`：通过，报告CGO `1`、两个显式native tags和三Driver；合同测试真实dry-run workflow matrix并确认arm64使用native `ubuntu-24.04-arm`。
+      - PyYAML解析`.github/workflows/ci.yml`：通过；`git diff --check`：通过。
+      - `task lint`：通过，`0 issues`；`task build`：通过；`task test`：通过，coverage为unit `77.25%`、integration `65.96%`、E2E `61.84%`、combined `79.54%`。
+    - 审计与例外：
+      - 三个read-only subagent分别复核Darwin/native smoke、Linux full执行和matrix/cache/release/scope边界，最终均PASS；CI workflow无binary upload/download，images workflow的digest artifacts与tag-only installer release保持原合同。
+      - 当前Linux/amd64宿主无法原生执行Darwin或Linux/arm64 binary；本任务以两个真实Darwin cross build、Linux amd64真实执行、共享smoke/verifier和native runner矩阵提供本地证据，macOS native及Linux arm64真实执行留待18项完成后的远端CI统一验证。按用户要求本轮未检查远端CI。
+      - 当前环境无`actionlint`和`act`，workflow验证使用PyYAML、真实matrix step dry-run及精确contract审计。未修改images workflow、release assets、proto、SQLite schema、guest protocol、默认Docker driver、coverage baseline/exclusion、文档或暂停的Workspace Resume账本。
+      - focused/gate验证未创建Docker资源，label审计无container、network或volume残留；host smoke无残留进程/临时目录。系统中已有`/app/agent-compose daemon`容器进程保持不动，未纳入或改动用户状态。
+    - 下一目标：6.2 增加完整Image CI Smoke并保持发布合同。
 
 - [ ] 6.2 增加完整 Image CI Smoke 并保持发布合同
   - 依赖：6.1。
