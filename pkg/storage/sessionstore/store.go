@@ -92,6 +92,7 @@ func (s *Store) CreateSandbox(ctx context.Context, title, baseWorkspace, driver,
 
 func (s *Store) CreateSandboxWithOptions(_ context.Context, title, baseWorkspace, driver, guestImage, workspaceID, triggerSource string, workspace *SandboxWorkspace, envItems []SandboxEnvVar, tags []SandboxTag, options CreateSandboxOptions) (*Sandbox, error) {
 	now := time.Now().UTC()
+	workspaceID = strings.TrimSpace(workspaceID)
 	id := identity.NewRandomID(identity.ResourceSandbox)
 	shortID := identity.ShortID(id)
 	sandboxDir := s.sandboxDir(id)
@@ -102,6 +103,14 @@ func (s *Store) CreateSandboxWithOptions(_ context.Context, title, baseWorkspace
 		return nil, err
 	}
 	guestImage = driverpkg.ResolveSandboxGuestImage(guestImage, "", driverpkg.DefaultGuestImageForDriver(s.config, driver))
+	var workspaceProvisioning *domain.SandboxWorkspaceProvisioning
+	if workspace != nil || workspaceID != "" {
+		workspaceProvisioning = &domain.SandboxWorkspaceProvisioning{
+			Version:   domain.SandboxWorkspaceProvisioningVersion,
+			Status:    domain.SandboxWorkspaceProvisioningStatusPending,
+			UpdatedAt: now,
+		}
+	}
 
 	for _, dir := range []string{
 		sandboxDir,
@@ -135,11 +144,12 @@ func (s *Store) CreateSandboxWithOptions(_ context.Context, title, baseWorkspace
 			UpdatedAt:     now,
 			Tags:          append([]SandboxTag(nil), tags...),
 		},
-		BaseWorkspace: strings.TrimSpace(baseWorkspace),
-		WorkspaceID:   strings.TrimSpace(workspaceID),
-		Workspace:     cloneSandboxWorkspace(workspace),
-		EnvItems:      append([]SandboxEnvVar(nil), envItems...),
-		VolumeMounts:  domain.NormalizeSandboxVolumeMounts(options.VolumeMounts),
+		BaseWorkspace:         strings.TrimSpace(baseWorkspace),
+		WorkspaceID:           workspaceID,
+		Workspace:             cloneSandboxWorkspace(workspace),
+		WorkspaceProvisioning: workspaceProvisioning,
+		EnvItems:              append([]SandboxEnvVar(nil), envItems...),
+		VolumeMounts:          domain.NormalizeSandboxVolumeMounts(options.VolumeMounts),
 	}
 
 	if session.Summary.Title == "" {

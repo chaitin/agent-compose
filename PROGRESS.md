@@ -20,8 +20,8 @@
 
 - 已确认：resume 严格保持 sandbox workspace；旧 sandbox 原样迁移；首版无 reset API；真实 runtime 使用 Docker E2E。
 - 已完成文档：技术规格、实施计划。
-- 代码任务：1/20 完成。
-- 当前下一目标：1.2 在 sessionstore 创建和持久化 pending 状态。
+- 代码任务：2/20 完成。
+- 当前下一目标：2.1 实现 Provisioner 状态编排和并发控制。
 
 ## 执行规则
 
@@ -73,23 +73,35 @@
       - 无例外或未运行的任务内门禁。
     - 下一目标：1.2 在 sessionstore 创建和持久化 pending 状态。
 
-- [ ] 1.2 在 sessionstore 创建和持久化 pending 状态
+- [x] 1.2 在 sessionstore 创建和持久化 pending 状态
   - 依赖：1.1。
   - 工作内容：
     - 修改 `CreateSandboxWithOptions`：workspace snapshot、snapshot ID 或 workspace ID 存在时首次保存 `pending`。
     - 无 workspace 时保持字段缺省；Store load 不做 legacy 猜测或迁移。
     - 验证 save/load、Store 重建和 RemoveSandbox 对新状态的兼容。
   - 可并行子任务：
-    - [ ] 可并行：workspace snapshot/ID/empty 三种创建分支测试。
-    - [ ] 可并行：旧 metadata、Store 重建和 remove 测试。
+    - [x] 可并行：workspace snapshot/ID/empty 三种创建分支测试。
+    - [x] 可并行：旧 metadata、Store 重建和 remove 测试。
   - 测试方案：`./scripts/with-go-toolchain.sh go test ./pkg/storage/sessionstore ./pkg/model -count=1`。
   - 验收标准：带 workspace 的 metadata 在任何 runtime 操作前已是 pending；旧数据无自动改写；无 workspace JSON 无新增字段。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
-    - 下一目标：2.1。
+    - 状态：已完成。
+    - 变更：
+      - `CreateSandbox`/`CreateSandboxWithOptions` 在 workspace snapshot 指针存在或 workspace ID 非空时，于首次 metadata 保存前初始化 version 1 `pending` 状态和 UTC `updated_at`。
+      - 无 workspace 的 sandbox 保持 provisioning 字段缺省；`loadSandbox` 不执行 legacy 猜测、迁移或写回。
+      - 增加创建分支、原始 JSON、Save/Get、Store 重建、legacy 不改写和 remove/staging 清理测试。
+    - 验证：
+      - `./scripts/with-go-toolchain.sh go test ./pkg/model ./pkg/storage/sessionstore -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh go test ./pkg/... -run 'Test.*Workspace.*Provision|Test.*Sandbox.*Persistence' -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh golangci-lint fmt --no-config --diff ./pkg/model ./pkg/storage/sessionstore`：通过。
+      - `./scripts/with-go-toolchain.sh golangci-lint run --no-config --allow-parallel-runners ./pkg/model ./pkg/storage/sessionstore`：通过，`0 issues`。
+      - `git diff --check`：通过。
+    - 审计与例外：
+      - 非 nil 空 snapshot、带 snapshot ID、仅 workspace ID 和无 workspace 分支均有直接 metadata 断言。
+      - legacy metadata 经 `GetSandbox`/`LoadSandbox` 后字段仍为 nil，文件字节和 mtime 均不变。
+      - `RemoveSandbox` 继续递归删除 sandbox root，测试包含未来 provisioning staging sentinel。
+      - 未修改 proto、SQLite、公开 CLI、环境变量、compose、runtime mount 或 workspace materialization 路径；无例外或未运行的任务内门禁。
+    - 下一目标：2.1 实现 Provisioner 状态编排和并发控制。
 
 ## 2. 一次性 Workspace Provisioner
 
