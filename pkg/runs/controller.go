@@ -898,14 +898,19 @@ func (c *Controller) runPromptInteraction(ctx context.Context, coordinator *Coor
 		transition.Error = fmt.Sprintf("agent execution failed: %v", err)
 		return transition, err
 	}
+	inputCtx, cancelInput := context.WithCancel(ctx)
+	defer cancelInput()
+	turnReady := make(chan struct{}, 1)
 	if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
 		if err := input.HumanMessage(prompt); err != nil {
 			transition.ExitCode = 1
 			transition.Error = fmt.Sprintf("agent execution failed: %v", err)
 			return transition, err
 		}
+	} else {
+		releasePromptTurn(turnReady)
 	}
-	go pumpRunPromptAttachInput(receive, input, projector.AppendHumanMessage)
+	go pumpRunPromptAttachInput(inputCtx, receive, input, turnReady, projector.AppendHumanMessage)
 	var promptTransition *TransitionRequest
 	for {
 		frame, err := interaction.Recv()
@@ -955,6 +960,9 @@ func (c *Controller) runPromptInteraction(ctx context.Context, coordinator *Coor
 					transition.ExitCode = 1
 					transition.Error = fmt.Sprintf("agent execution failed: %v", err)
 					return transition, err
+				}
+				if resp.GetAgentTurnCompleted() != nil {
+					releasePromptTurn(turnReady)
 				}
 			}
 			if nextTransition != nil {
@@ -1337,7 +1345,7 @@ func (w *promptWrapperInput) send(frame map[string]any) error {
 	return w.interaction.Send(driverpkg.RuntimeInputFrame{Type: driverpkg.RuntimeInputStdin, Data: data})
 }
 
-func pumpRunPromptAttachInput(receive RunAttachReceiver, input *promptWrapperInput, onHumanMessage func(string) error) {
+func pumpRunPromptAttachInput(ctx context.Context, receive RunAttachReceiver, input *promptWrapperInput, turnReady <-chan struct{}, onHumanMessage func(string) error) {
 	defer func() { _ = input.interaction.CloseSend() }()
 	for {
 		req, err := receive()
@@ -1348,23 +1356,13 @@ func pumpRunPromptAttachInput(receive RunAttachReceiver, input *promptWrapperInp
 		switch frame := req.GetFrame().(type) {
 		case *agentcomposev2.RunAttachRequest_HumanMessage:
 			text := frame.HumanMessage.GetText()
-			if err := input.HumanMessage(text); err != nil {
+			if !forwardPromptHumanMessage(ctx, input, turnReady, text, onHumanMessage) {
 				return
-			}
-			if onHumanMessage != nil {
-				if err := onHumanMessage(text); err != nil {
-					return
-				}
 			}
 		case *agentcomposev2.RunAttachRequest_Stdin:
 			text := string(frame.Stdin.GetData())
-			if err := input.HumanMessage(text); err != nil {
+			if !forwardPromptHumanMessage(ctx, input, turnReady, text, onHumanMessage) {
 				return
-			}
-			if onHumanMessage != nil {
-				if err := onHumanMessage(text); err != nil {
-					return
-				}
 			}
 		case *agentcomposev2.RunAttachRequest_StdinEof:
 			_ = input.EOF()
@@ -1376,6 +1374,29 @@ func pumpRunPromptAttachInput(receive RunAttachReceiver, input *promptWrapperInp
 			_ = input.Cancel("invalid run prompt attach frame")
 			return
 		}
+	}
+}
+
+func forwardPromptHumanMessage(ctx context.Context, input *promptWrapperInput, turnReady <-chan struct{}, text string, onHumanMessage func(string) error) bool {
+	if turnReady != nil {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-turnReady:
+		}
+	}
+	if onHumanMessage != nil {
+		if err := onHumanMessage(text); err != nil {
+			return false
+		}
+	}
+	return input.HumanMessage(text) == nil
+}
+
+func releasePromptTurn(turnReady chan<- struct{}) {
+	select {
+	case turnReady <- struct{}{}:
+	default:
 	}
 }
 
