@@ -9,8 +9,8 @@
 - 当前变更：platform-runtime-build。
 - 已确认产物：macOS Docker-only binary、Linux 三 Driver binary、Linux 三 Driver multi-arch Docker image。
 - 发布边界：binary 只用于本地和 CI 验证，不进入 GitHub Release。
-- 当前进度：7/18 个父任务完成。
-- 当前下一目标：3.2 重构 Taskfile 平台分发、Proto任务与兼容 Alias。
+- 当前进度：8/18 个父任务完成。
+- 当前下一目标：3.3 完成平台 Binary Build 阶段门禁。
 
 ## 文档索引
 
@@ -321,7 +321,7 @@
       - 未修改Taskfile、Dockerfile、proto、SQLite schema、guest protocol、coverage threshold/exclusion、默认Driver或暂停的Workspace Resume账本；按计划未检查远端CI。
     - 下一目标：3.2 重构 Taskfile 平台分发、Proto任务与兼容 Alias。
 
-- [ ] 3.2 重构 Taskfile 平台分发、Proto任务与兼容 Alias
+- [x] 3.2 重构 Taskfile 平台分发、Proto任务与兼容 Alias
   - 依赖：3.1。
   - 工作内容：
     - 增加GOHOSTOS/GOHOSTARCH。
@@ -332,9 +332,9 @@
     - build:agent-compose:boxlite保留deprecated alias并指向Linux full。
     - 更新prepare task sources/generates，避免helper或版本变化错误命中cache。
   - 可并行子任务：
-    - [ ] 可并行：Task平台分发与alias。
-    - [ ] 可并行：build:proto和顶层依赖。
-    - [ ] 可并行：prepare cache输入/产物审计。
+    - [x] 可并行：Task平台分发与alias。
+    - [x] 可并行：build:proto和顶层依赖。
+    - [x] 可并行：prepare cache输入/产物审计。
   - 测试方案：
     - task --list-all
     - task build:proto
@@ -342,11 +342,25 @@
     - Linux运行task build:agent-compose:linux；Darwin运行task build:agent-compose:darwin。
   - 验收标准：输出仍为build/agent-compose；Taskfile不拼装CGO/tags/ldflags；Linux默认full、Darwin默认Docker-only；alias提示准确。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
-    - 下一目标：3.3。
+    - 状态：已完成。
+    - 变更：
+      - Task全局host识别改为Go `GOHOSTOS`/`GOHOSTARCH`；`build:agent-compose`按真实host只委派`build:agent-compose:darwin`或`build:agent-compose:linux`，不受target `GOOS`污染，未知host fail closed。两个显式task仅选择helper profile、architecture、version与兼容output，不再拼装CGO、tags或ldflags。
+      - Darwin显式task无native依赖并生成`build/agent-compose` Docker-only binary；Linux显式task同时依赖BoxLite、Microsandbox artifact owner并生成同路径full binary。
+      - 新增唯一`build:proto`承接原来两个binary task重复的v2 protobuf Go package build；顶层`build`现在并列依赖host binary、proto验证和runtime SDK。
+      - `build:agent-compose:boxlite`保留为deprecated alias，先输出迁移提示，再委派Linux full task；不再表示或生成BoxLite-only产物。
+      - 两个prepare task的sources纳入统一helper与各自Dockerfile/export owner；BoxLite generates补齐helper要求的guest/shim。Binary task故意不声明共享`build/agent-compose` cache output，每次调用均按当前profile/version重建，避免跨profile或版本误命中。
+    - 验证：
+      - `task --list-all`：通过并显示host、Darwin、Linux full、deprecated alias及proto准确描述；`task --dry --force`验证Darwin无prepare、Linux及alias包含两套prepare、proto命令只出现一次、顶层build包含三类依赖。
+      - `task build:proto`：通过；Taskfile静态审计确认只有`build:proto`包含protobuf `go build`，binary区域无`CGO_ENABLED`、`-tags`、`-ldflags`、`boxlitecgo`或`microsandboxcgo`第二套参数。
+      - `task build:agent-compose:darwin GOARCH=arm64 VERSION=task-darwin-arm64`：通过；产物为Mach-O arm64，`go version -m`确认Darwin/arm64与注入version。
+      - `task build:agent-compose:linux GOARCH=amd64 VERSION=task-linux-full`、当前Linux host默认`task build:agent-compose`：通过；ELF JSON精确报告Linux/amd64、指定version及三Driver。
+      - 使用`GOOS=darwin`污染target环境执行默认host task仍生成Linux full三Driver binary；`GOHOSTOS=windows`验证返回非零且不构建。deprecated alias先打印准确迁移提示，随后产物JSON为Linux full三Driver。
+      - `./scripts/test-build-agent-compose-binary.sh`：通过；`task lint`：通过，`0 issues`；`task build`：通过；`task test`：通过，Unit `77.25%`、Integration `65.96%`、E2E `61.84%`、Combined `79.54%`。
+    - 审计与例外：
+      - 首次Linux task因新增source/generate合同重新评估两个prepare task；export owner检测到完整现有artifact后直接返回，无下载、Docker build或KVM访问，后续均准确报告up to date。
+      - 当前Task v3.44.1对host dispatch的outer dry-run不会展开shell内子task，因此同时使用显式task dry-run与真实default执行证明依赖和变量传播；alias使用Task原生子task，warning顺序和两套依赖可由dry-run直接观察。
+      - README中旧BoxLite alias说明按账本阶段7统一更新；本任务未提前修改Dockerfile、发布/部署文档或CI。未修改proto内容、SQLite schema、guest protocol、coverage threshold/exclusion、默认Driver或暂停的Workspace Resume账本；按计划未检查远端CI。
+    - 下一目标：3.3 完成平台 Binary Build 阶段门禁。
 
 - [ ] 3.3 完成平台 Binary Build 阶段门禁
   - 依赖：3.2。

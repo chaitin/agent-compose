@@ -4,7 +4,6 @@ version: '3'
 vars:
   VERSION:
     sh: git describe --always --tags --long 2>/dev/null || git rev-parse --short=12 HEAD 2>/dev/null || echo 'unknown'
-  GO_LDFLAGS: -X agent-compose/pkg/config.BuildVersion={{.VERSION}}
   GO_TOOLCHAIN_ENV: '{{.TASKFILE_DIR}}/scripts/with-go-toolchain.sh'
   GOLANGCI_LINT_CACHE_DIR: '{{.TASKFILE_DIR}}/.cache/golangci-lint'
   GO_BUILD_CACHE_DIR: '{{.TASKFILE_DIR}}/.cache/go-build'
@@ -14,19 +13,16 @@ vars:
   BUILD_ALL_PROXY: '{{default "" .ALL_PROXY}}'
   BUILD_REGISTRY_MIRROR: '{{default "docker.io" .REGISTRY_MIRROR}}'
   BUILD_GOPROXY: '{{default "https://goproxy.cn,direct" .GOPROXY}}'
-  GOOS:
-    sh: |
-      if [ -n "${GOOS:-}" ]; then
-        printf '%s\n' "$GOOS"
-      else
-        ./scripts/with-go-toolchain.sh go env GOOS
-      fi
+  GOHOSTOS:
+    sh: ./scripts/with-go-toolchain.sh go env GOHOSTOS
+  GOHOSTARCH:
+    sh: ./scripts/with-go-toolchain.sh go env GOHOSTARCH
   GOARCH:
     sh: |
       if [ -n "${GOARCH:-}" ]; then
         printf '%s\n' "$GOARCH"
       else
-        ./scripts/with-go-toolchain.sh go env GOARCH
+        ./scripts/with-go-toolchain.sh go env GOHOSTARCH
       fi
 
 tasks:
@@ -208,7 +204,7 @@ tasks:
 
   build:
     desc: Build project binaries
-    deps: ['build:agent-compose', 'build:runtime-sdk']
+    deps: ['build:agent-compose', 'build:proto', 'build:runtime-sdk']
     cmds:
       - echo "build all done"
 
@@ -222,15 +218,18 @@ tasks:
 
   prepare:boxlite-dev:
     internal: true
-    desc: Export BoxLite cgo headers/libs from Dockerfile when needed
+    desc: Export BoxLite cgo headers, libraries, and runtime from Dockerfile when needed
     dir: '{{.TASKFILE_DIR}}'
     sources:
       - Dockerfile
+      - scripts/build-agent-compose-binary.sh
       - scripts/export-boxlite-dev-artifact.sh
     generates:
       - build/boxlite/include/boxlite.h
       - build/boxlite/lib/libboxlite.a
       - build/boxlite/lib/libboxlite.so
+      - build/boxlite/runtime/boxlite-guest
+      - build/boxlite/runtime/boxlite-shim
     cmds:
       - HTTP_PROXY={{.BUILD_HTTP_PROXY}} HTTPS_PROXY={{.BUILD_HTTPS_PROXY}} ALL_PROXY={{.BUILD_ALL_PROXY}} REGISTRY_MIRROR={{.BUILD_REGISTRY_MIRROR}} ./scripts/export-boxlite-dev-artifact.sh ./build/boxlite
 
@@ -240,6 +239,7 @@ tasks:
     dir: '{{.TASKFILE_DIR}}'
     sources:
       - Dockerfile
+      - scripts/build-agent-compose-binary.sh
       - scripts/export-microsandbox-dev-artifact.sh
     generates:
       - build/microsandbox/bin/msb
@@ -250,21 +250,59 @@ tasks:
       - HTTP_PROXY={{.BUILD_HTTP_PROXY}} HTTPS_PROXY={{.BUILD_HTTPS_PROXY}} ALL_PROXY={{.BUILD_ALL_PROXY}} REGISTRY_MIRROR={{.BUILD_REGISTRY_MIRROR}} ./scripts/export-microsandbox-dev-artifact.sh ./build/microsandbox
 
   build:agent-compose:
-    desc: Build the agent-compose binary without optional BoxLite cgo support
+    desc: Build the host agent-compose binary using the platform profile
+    dir: '{{.TASKFILE_DIR}}'
+    env:
+      AGENT_COMPOSE_BUILD_HOST_OS: '{{.GOHOSTOS}}'
+      AGENT_COMPOSE_BUILD_TARGET_ARCH: '{{.GOARCH}}'
+      AGENT_COMPOSE_BUILD_VERSION: '{{.VERSION}}'
+    cmds:
+      - |
+        case "$AGENT_COMPOSE_BUILD_HOST_OS" in
+          darwin|linux)
+            task "build:agent-compose:$AGENT_COMPOSE_BUILD_HOST_OS" \
+              GOARCH="$AGENT_COMPOSE_BUILD_TARGET_ARCH" \
+              VERSION="$AGENT_COMPOSE_BUILD_VERSION"
+            ;;
+          *)
+            echo "unsupported agent-compose build host OS: $AGENT_COMPOSE_BUILD_HOST_OS" >&2
+            exit 1
+            ;;
+        esac
+
+  build:agent-compose:darwin:
+    desc: Build the Darwin Docker-only agent-compose binary
+    dir: '{{.TASKFILE_DIR}}'
+    env:
+      AGENT_COMPOSE_BUILD_TARGET_ARCH: '{{.GOARCH}}'
+      AGENT_COMPOSE_BUILD_VERSION: '{{.VERSION}}'
+    cmds:
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} ./scripts/build-agent-compose-binary.sh --profile darwin-docker --goarch "$AGENT_COMPOSE_BUILD_TARGET_ARCH" --output ./build/agent-compose --version "$AGENT_COMPOSE_BUILD_VERSION"
+
+  build:agent-compose:linux:
+    desc: Build the Linux full agent-compose binary
+    dir: '{{.TASKFILE_DIR}}'
+    deps: ['prepare:boxlite-dev', 'prepare:microsandbox-dev']
+    env:
+      AGENT_COMPOSE_BUILD_TARGET_ARCH: '{{.GOARCH}}'
+      AGENT_COMPOSE_BUILD_VERSION: '{{.VERSION}}'
+    cmds:
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} ./scripts/build-agent-compose-binary.sh --profile linux-full --goarch "$AGENT_COMPOSE_BUILD_TARGET_ARCH" --output ./build/agent-compose --version "$AGENT_COMPOSE_BUILD_VERSION"
+
+  build:proto:
+    desc: Verify maintained agent-compose protobuf Go packages build
     dir: '{{.TASKFILE_DIR}}'
     cmds:
-      - mkdir -p ./build/
-      - GOCACHE={{.GO_BUILD_CACHE_DIR}} CGO_ENABLED=0 GOOS={{.GOOS}} GOARCH={{.GOARCH}} {{.GO_TOOLCHAIN_ENV}} go build -v -ldflags '{{.GO_LDFLAGS}}' -tags netgo,osusergo -o ./build/agent-compose ./cmd/agent-compose/
       - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} go build ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect
 
   build:agent-compose:boxlite:
-    desc: Build the agent-compose binary with BoxLite cgo support
-    dir: '{{.TASKFILE_DIR}}'
-    deps: ['prepare:boxlite-dev']
+    desc: Deprecated alias for the Linux full agent-compose binary
     cmds:
-      - mkdir -p ./build/
-      - GOCACHE={{.GO_BUILD_CACHE_DIR}} CGO_ENABLED=1 GOOS=linux GOARCH={{.GOARCH}} {{.GO_TOOLCHAIN_ENV}} go build -v -x -ldflags '{{.GO_LDFLAGS}}' -tags netgo,osusergo,boxlitecgo -o ./build/agent-compose ./cmd/agent-compose/
-      - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} go build ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect
+      - echo "build:agent-compose:boxlite is deprecated; use build:agent-compose:linux (Docker, BoxLite, and Microsandbox)"
+      - task: build:agent-compose:linux
+        vars:
+          GOARCH: '{{.GOARCH}}'
+          VERSION: '{{.VERSION}}'
 
   image:agent-compose:
     desc: Build the agent-compose daemon image
