@@ -20,8 +20,8 @@
 
 - 已确认：resume 严格保持 sandbox workspace；旧 sandbox 原样迁移；首版无 reset API；真实 runtime 使用 Docker E2E。
 - 已完成文档：技术规格、实施计划。
-- 代码任务：11/20 完成。
-- 当前下一目标：4.3。
+- 代码任务：12/20 完成。
+- 当前下一目标：4.4。
 
 ## 执行规则
 
@@ -440,7 +440,7 @@
       - 独立只读审计未发现 blocker；无未运行的任务内门禁或其他例外。
     - 下一目标：4.4（等待 4.3）。
 
-- [ ] 4.3 增加 Store 重建、legacy 和首次失败重试 integration
+- [x] 4.3 增加 Store 重建、legacy 和首次失败重试 integration
   - 依赖：4.1。
   - 可并行关系：可与 4.2 并行。
   - 工作内容：
@@ -449,17 +449,36 @@
     - 构造 file/Git source 错误，断言 driver start 为零；修复后重试成功且只启动一次。
     - 覆盖 runtime start 失败后 workspace 仍 ready、后续 resume 不 materialize。
   - 可并行子任务：
-    - [ ] 可并行：Store/Provisioner 重建测试。
-    - [ ] 可并行：legacy migration 测试。
-    - [ ] 可并行：provision/runtime failure ordering 测试。
+    - [x] 可并行：Store/Provisioner 重建测试。
+    - [x] 可并行：legacy migration 测试。
+    - [x] 可并行：provision/runtime failure ordering 测试。
   - 测试方案：`./scripts/with-go-toolchain.sh go test ./pkg/workspaces ./pkg/sessions ./pkg/agentcompose/adapters -run 'TestIntegration.*(Persistence|Legacy|Retry|Failure)' -count=1`。
   - 验收标准：持久化而非进程内缓存决定 resume；legacy 不访问 config；首次失败和 runtime 失败具有不同重试语义。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
-    - 下一目标：4.4（等待 4.2）。
+    - 状态：已完成。
+    - 变更：
+      - 新增 Store/Provisioner 重建 integration：首次 provisioning/start/stop 后关闭原 configstore 并释放原 sessionstore、Provisioner、Lifecycle 作用域，再用相同 DataRoot/SandboxRoot 和全新实例 resume；sandbox ID、workspace path/ID/snapshot、ready timestamp 与用户 manifest 均来自持久化数据并保持不变。
+      - 重建测试在 resume 前通过公开 API 删除 workspace config，并把精确 source root 替换为 poison regular file；fresh Provisioner 的 config guard 零调用，driver start 前和返回后的 manifest 一致，证明不依赖进程内 singleflight/cache 或当前 source。
+      - 新增 legacy migration integration：正常状态通过真实 configstore/sessionstore 和 production Provisioner 构造，仅按故障注入要求从 `metadata.json` 删除 `workspace_provisioning`；随后删除关联 config/source并重建 sessionstore，首次 resume 在唯一 driver start 前持久化 version-1 ready，修改/删除/新增/mode/symlink manifest 完全不变。
+      - 新增正式 v1 bridge 的 file 与本地 Git 首次失败重试 integration：unsupported file source symlink 和不存在的 `file://` Git repo 均持久化 failed、driver start 为零；在相同 immutable source path/URL 原地修复后均记录 `failed -> pending -> ready` 并只启动一次。
+      - 新增 runtime start failure integration：首次 driver error 发生时 workspace 已持久化 ready；删除 config 并把 source 变为 hostile 后 resume 只重试 runtime，ready timestamp、workspace snapshot、manifest 和 Provisioner write history 均不变。
+    - 验证：
+      - `./scripts/with-go-toolchain.sh go test ./pkg/workspaces ./pkg/sessions ./pkg/agentcompose/adapters -list 'TestIntegration.*(Persistence|Legacy|Retry|Failure)'`：通过并发现本任务五个 integration tests。
+      - `./scripts/with-go-toolchain.sh go test ./pkg/workspaces ./pkg/sessions ./pkg/agentcompose/adapters -run 'TestIntegration.*(Persistence|Legacy|Retry|Failure)' -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh go test -race ./pkg/workspaces ./pkg/sessions ./pkg/agentcompose/adapters -run 'TestIntegration.*(Persistence|Legacy|Retry|Failure)' -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh go test ./pkg/workspaces ./pkg/sessions ./pkg/agentcompose/adapters -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh go test ./pkg/... -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh golangci-lint fmt --no-config --diff ./pkg/workspaces ./pkg/sessions ./pkg/agentcompose/adapters`：通过，无格式 diff。
+      - `./scripts/with-go-toolchain.sh golangci-lint run --no-config --allow-parallel-runners ./pkg/workspaces ./pkg/sessions ./pkg/agentcompose/adapters`：通过，`0 issues`。
+      - `git diff --check`：通过。
+    - 审计与例外：
+      - 五个测试名均包含 `Integration` 并匹配任务 selector；未新增 `TestE2E` wrapper。测试只使用 temp roots、受控本地 `file://` Git fixture 和 fake driver，不使用 Docker、外部网络、共享目录或执行顺序。
+      - 正常业务状态通过真实 configstore/sessionstore 公共 API、production Provisioner/Lifecycle 或正式 v1 bridge 构造；未直接写 SQLite。唯一持久化故障注入只删除 sandbox JSON 的新字段，用于构造规格明确要求的 legacy metadata。
+      - 每次成功 driver start 都检查 authoritative metadata 已是 ready；provision failure 两条路径均直接证明零 start，runtime failure 路径则证明 ready 后只重试 runtime。
+      - 静态审计继续确认 production `WorkspaceMaterializer.Materialize` 只有 Provisioner staging 调用，六处 lifecycle driver start 均先经过 `WorkspaceEnsurer`；`PrepareSessionWorkspace` 与 `HostWorkspaceInitialized` 保持零命中。
+      - 独立只读审计未发现 blocker；Git retry 仅依赖本机 `git` executable 和 `t.TempDir` 下隔离的 `file://` repo，属于现有 harness 允许的受控本地依赖。
+      - 变更范围仅为三个 integration test 文件和本账本；未修改 production code、cmd、proto/generated client、SQLite schema、公开 CLI/API shape、环境变量、compose、runtime mount、Task/TESTING 或 CI。无未运行的任务内门禁或其他例外。
+    - 下一目标：4.4 运行默认 Unit/Integration 阶段门禁。
 
 - [ ] 4.4 运行默认 Unit/Integration 阶段门禁
   - 依赖：4.2、4.3。
