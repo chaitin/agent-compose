@@ -935,11 +935,15 @@ func (s *Store) SaveProxyState(id string, state ProxyState) error {
 }
 
 func (s *Store) AllocateHostPortForJupyter() (int, error) {
+	return s.AllocateHostPort()
+}
+
+func (s *Store) AllocateHostPort() (int, error) {
 	return s.allocateHostPort()
 }
 
 func (s *Store) allocateHostPort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		return 0, fmt.Errorf("allocate host port: %w", err)
 	}

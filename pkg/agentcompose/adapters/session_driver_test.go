@@ -25,6 +25,30 @@ type fakeSessionRuntime struct {
 	removeErr  error
 }
 
+type fakeSandboxNetworkPreparer struct {
+	err   error
+	calls int
+}
+
+func (p *fakeSandboxNetworkPreparer) PrepareSandbox(_ context.Context, sandbox *domain.Sandbox) error {
+	p.calls++
+	if p.err != nil {
+		return p.err
+	}
+	sandbox.NetworkState = &domain.SandboxNetworkState{
+		Deployment:  "native",
+		ServiceCIDR: "10.254.0.0/16",
+		Attachments: []domain.SandboxNetworkEndpoint{{
+			Name: "frontend", RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1",
+		}},
+		Bindings: []domain.SandboxPortBinding{{
+			Network: "frontend", HostIP: "10.254.1.1", HostPort: 32000, GuestPort: 8080,
+			Protocol: "tcp", Visibility: "internal", Publisher: "direct",
+		}},
+	}
+	return nil
+}
+
 func (r fakeSessionRuntime) EnsureSandbox(_ context.Context, session *domain.Sandbox, _ domain.VMState, _ domain.ProxyState) (domain.SandboxVMInfo, error) {
 	if r.ensureHook != nil {
 		r.ensureHook(session)
@@ -178,6 +202,76 @@ func TestSandboxDriverStartSandboxVMSavesRuntimeState(t *testing.T) {
 	}
 	if vmState.BoxID != "container-1" || vmState.BootstrapRef != updatedProxyState.JupyterURL {
 		t.Fatalf("vm state = %+v, want box id and bootstrap ref from runtime", vmState)
+	}
+}
+
+func TestSandboxDriverPreparesAndPersistsNetworkBeforeRuntimeStart(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot: root, SandboxRoot: filepath.Join(root, "sandboxes"), RuntimeDriver: driverpkg.RuntimeDriverBoxlite,
+		BoxliteHome: filepath.Join(root, "boxlite"), DefaultImage: "guest:latest", GuestWorkspacePath: "/workspace",
+		JupyterProxyBasePath: "/agent-compose/session", SandboxStartTimeout: 2 * time.Second,
+	}
+	store, err := sessionstore.NewWithConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sandbox, err := store.CreateSandboxWithOptions(ctx, "network", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil, sessionstore.CreateSandboxOptions{
+		NetworkIntent: &domain.SandboxNetworkIntent{
+			ProjectID: "project-1", Attachments: []domain.SandboxNetworkAttachment{{Name: "frontend", Driver: "port_mapping"}},
+			Expose: []domain.SandboxNetworkPort{{Target: 8080, Protocol: "tcp"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparer := &fakeSandboxNetworkPreparer{}
+	runtimeCalled := false
+	driver := NewSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: fakeSessionRuntime{ensureHook: func(started *domain.Sandbox) {
+		runtimeCalled = true
+		if started.NetworkState == nil || len(started.NetworkState.Bindings) != 1 {
+			t.Fatalf("runtime received network state %#v", started.NetworkState)
+		}
+	}}})
+	driver.NetworkPreparer = preparer
+	if err := driver.StartSandboxVM(ctx, sandbox); err != nil {
+		t.Fatalf("StartSandboxVM() error = %v", err)
+	}
+	if preparer.calls != 1 || !runtimeCalled {
+		t.Fatalf("preparer calls = %d, runtime called = %v", preparer.calls, runtimeCalled)
+	}
+	loaded, err := store.GetSandbox(ctx, sandbox.Summary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.NetworkState == nil || loaded.NetworkState.Bindings[0].HostPort != 32000 {
+		t.Fatalf("persisted network state = %#v", loaded.NetworkState)
+	}
+}
+
+func TestSandboxDriverFailsClosedWithoutNetworkPreparer(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot: root, SandboxRoot: filepath.Join(root, "sandboxes"), RuntimeDriver: driverpkg.RuntimeDriverDocker,
+		DefaultImage: "guest:latest", GuestWorkspacePath: "/workspace", JupyterProxyBasePath: "/jupyter", SandboxStartTimeout: time.Second,
+	}
+	store, err := sessionstore.NewWithConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sandbox, err := store.CreateSandboxWithOptions(ctx, "network", "", driverpkg.RuntimeDriverDocker, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil, sessionstore.CreateSandboxOptions{
+		NetworkIntent: &domain.SandboxNetworkIntent{Ports: []domain.SandboxPublishedPort{{Published: 19000, Target: 8080, Protocol: "tcp"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeCalled := false
+	driver := NewSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: fakeSessionRuntime{ensureHook: func(*domain.Sandbox) { runtimeCalled = true }}})
+	err = driver.StartSandboxVM(ctx, sandbox)
+	if err == nil || err.Error() != "sandbox network preparer is required" || runtimeCalled {
+		t.Fatalf("StartSandboxVM() error = %v, runtime called = %v", err, runtimeCalled)
 	}
 }
 

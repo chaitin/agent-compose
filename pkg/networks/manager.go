@@ -40,6 +40,7 @@ type NetworkRequest struct {
 	ProjectID   string
 	ProjectName string
 	NetworkName string
+	ServiceCIDR string
 }
 
 type NetworkAccess struct {
@@ -85,6 +86,7 @@ func (m *Manager) PrepareSandbox(ctx context.Context, sandbox *domain.Sandbox) e
 			ProjectID:   intent.ProjectID,
 			ProjectName: intent.ProjectName,
 			NetworkName: attachment.Name,
+			ServiceCIDR: state.ServiceCIDR,
 		})
 		if err != nil {
 			return fmt.Errorf("ensure network %s: %w", attachment.Name, err)

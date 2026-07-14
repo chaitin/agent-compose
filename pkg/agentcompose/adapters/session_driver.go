@@ -2,6 +2,8 @@ package adapters
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -11,16 +13,22 @@ import (
 	"agent-compose/pkg/llms"
 	"agent-compose/pkg/llms/runtimefacade"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/networks"
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
 )
 
 type SandboxDriver struct {
-	Config   *appconfig.Config
-	Store    *sessionstore.Store
-	ConfigDB *configstore.ConfigStore
-	Runtimes RuntimeProvider
+	Config          *appconfig.Config
+	Store           *sessionstore.Store
+	ConfigDB        *configstore.ConfigStore
+	Runtimes        RuntimeProvider
+	NetworkPreparer SandboxNetworkPreparer
+}
+
+type SandboxNetworkPreparer interface {
+	PrepareSandbox(context.Context, *domain.Sandbox) error
 }
 
 var ensureSandboxLLMFacadeConfig = runtimefacade.EnsureSessionLLMFacadeConfig
@@ -63,6 +71,25 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 	if err != nil {
 		return err
 	}
+	if sandboxHasNetworkIntent(session) {
+		if d.NetworkPreparer == nil {
+			err := fmt.Errorf("sandbox network preparer is required")
+			vmState.LastError = err.Error()
+			_ = d.Store.SaveVMState(session.Summary.ID, vmState)
+			return err
+		}
+		if err := d.NetworkPreparer.PrepareSandbox(ctx, session); err != nil {
+			if errors.Is(err, networks.ErrUnsupported) {
+				err = domain.ClassifyError(domain.ErrUnsupported, "", err)
+			}
+			vmState.LastError = err.Error()
+			_ = d.Store.SaveVMState(session.Summary.ID, vmState)
+			return err
+		}
+		if err := d.Store.UpdateSandbox(ctx, session); err != nil {
+			return fmt.Errorf("persist sandbox network plan: %w", err)
+		}
+	}
 	vmState.Driver = driver
 	vmState.Mode = driver
 	vmState.BoxName = firstNonEmpty(vmState.BoxName, session.Summary.RuntimeRef)
@@ -82,6 +109,14 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 	}
 
 	return d.saveSandboxStartInfo(session, vmState, proxyState, info)
+}
+
+func sandboxHasNetworkIntent(sandbox *domain.Sandbox) bool {
+	if sandbox == nil || sandbox.NetworkIntent == nil {
+		return false
+	}
+	intent := sandbox.NetworkIntent
+	return len(intent.Attachments) > 0 || len(intent.Expose) > 0 || len(intent.Ports) > 0
 }
 
 func (d *SandboxDriver) saveSandboxStartInfo(session *domain.Sandbox, vmState domain.VMState, proxyState domain.ProxyState, info domain.SandboxVMInfo) error {

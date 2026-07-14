@@ -26,6 +26,7 @@ import (
 	"agent-compose/pkg/llms"
 	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/networks"
 	"agent-compose/pkg/projects"
 	"agent-compose/pkg/resources"
 	"agent-compose/pkg/runs"
@@ -56,6 +57,7 @@ func RegisterDependencies(di do.Injector) {
 	do.Provide(di, NewWorkspaceProvisioner)
 	do.MustAs[*workspaces.Provisioner, workspaces.WorkspaceEnsurer](di)
 	do.Provide(di, NewRuntimeProvider)
+	do.Provide(di, NewSandboxNetworkManager)
 	do.Provide(di, NewLLMClient)
 	do.Provide(di, NewCapabilityProvider)
 	do.Provide(di, NewCapabilitySandboxResolver)
@@ -244,12 +246,23 @@ func NewLLMClient(di do.Injector) (*adapters.LLMClient, error) {
 }
 
 func NewSandboxDriver(di do.Injector) (*adapters.SandboxDriver, error) {
-	return adapters.NewSandboxDriver(
+	driver := adapters.NewSandboxDriver(
 		do.MustInvoke[*appconfig.Config](di),
 		do.MustInvoke[*sessionstore.Store](di),
 		do.MustInvoke[*configstore.ConfigStore](di),
 		do.MustInvoke[adapters.RuntimeProvider](di),
-	), nil
+	)
+	driver.NetworkPreparer = do.MustInvoke[*networks.Manager](di)
+	return driver, nil
+}
+
+func NewSandboxNetworkManager(di do.Injector) (*networks.Manager, error) {
+	return &networks.Manager{
+		Infrastructure: adapters.NewDockerNetworkInfrastructure(),
+		Ports: adapters.StorePortAllocator{
+			Store: do.MustInvoke[*sessionstore.Store](di),
+		},
+	}, nil
 }
 
 func NewCellExecutor(di do.Injector) (*adapters.CellExecutor, error) {
