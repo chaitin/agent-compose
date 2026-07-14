@@ -29,6 +29,7 @@ type SandboxPublishedPort struct {
 type SandboxNetworkState struct {
 	Deployment       string                   `json:"deployment"`
 	ServiceCIDR      string                   `json:"service_cidr,omitempty"`
+	Isolation        string                   `json:"isolation,omitempty"`
 	Attachments      []SandboxNetworkEndpoint `json:"attachments,omitempty"`
 	Bindings         []SandboxPortBinding     `json:"bindings,omitempty"`
 	AllowedAddresses []string                 `json:"allowed_addresses,omitempty"`

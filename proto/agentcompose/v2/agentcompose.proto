@@ -904,6 +904,33 @@ message Sandbox {
   uint32 cell_count = 14;
   uint32 event_count = 15;
   string notebook_url = 16;
+  SandboxNetworkState network = 17;
+}
+
+message SandboxNetworkState {
+  string deployment = 1;
+  string service_cidr = 2;
+  repeated SandboxNetworkEndpoint attachments = 3;
+  repeated SandboxPortBinding bindings = 4;
+  repeated string allowed_addresses = 5;
+  string isolation = 6;
+}
+
+message SandboxNetworkEndpoint {
+  string name = 1;
+  string runtime_network_name = 2;
+  string host_gateway = 3;
+  string daemon_address = 4;
+}
+
+message SandboxPortBinding {
+  string network = 1;
+  string host_ip = 2;
+  uint32 host_port = 3;
+  uint32 guest_port = 4;
+  string protocol = 5;
+  string visibility = 6;
+  string publisher = 7;
 }
 
 message SandboxTag {

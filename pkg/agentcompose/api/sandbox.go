@@ -379,9 +379,42 @@ func sandboxToV2WithTarget(sandbox *domain.Sandbox, target runs.SandboxRunTarget
 		EventCount:    uint32(sandbox.Summary.EventCount),
 		ProjectId:     target.ProjectID,
 		AgentName:     target.AgentName,
+		Network:       SandboxNetworkStateToProto(sandbox.NetworkState),
 	}
 	for _, tag := range sandbox.Summary.Tags {
 		result.Tags = append(result.Tags, &agentcomposev2.SandboxTag{Name: tag.Name, Value: tag.Value})
+	}
+	return result
+}
+
+func SandboxNetworkStateToProto(state *domain.SandboxNetworkState) *agentcomposev2.SandboxNetworkState {
+	if state == nil {
+		return nil
+	}
+	result := &agentcomposev2.SandboxNetworkState{
+		Deployment:       state.Deployment,
+		ServiceCidr:      state.ServiceCIDR,
+		Isolation:        state.Isolation,
+		AllowedAddresses: append([]string(nil), state.AllowedAddresses...),
+	}
+	for _, attachment := range state.Attachments {
+		result.Attachments = append(result.Attachments, &agentcomposev2.SandboxNetworkEndpoint{
+			Name:               attachment.Name,
+			RuntimeNetworkName: attachment.RuntimeNetworkName,
+			HostGateway:        attachment.HostGateway,
+			DaemonAddress:      attachment.DaemonAddress,
+		})
+	}
+	for _, binding := range state.Bindings {
+		result.Bindings = append(result.Bindings, &agentcomposev2.SandboxPortBinding{
+			Network:    binding.Network,
+			HostIp:     binding.HostIP,
+			HostPort:   uint32(binding.HostPort),
+			GuestPort:  uint32(binding.GuestPort),
+			Protocol:   binding.Protocol,
+			Visibility: binding.Visibility,
+			Publisher:  binding.Publisher,
+		})
 	}
 	return result
 }

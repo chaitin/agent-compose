@@ -78,6 +78,31 @@ func TestV2GetSandboxIncludesSavedExposedNotebookURL(t *testing.T) {
 	}
 }
 
+func TestV2GetSandboxIncludesNetworkEndpoints(t *testing.T) {
+	const sandboxID = "28fed243-4d9d-4e56-96cf-8b2baa8643c8"
+	store := &characterizationSandboxStore{session: &domain.Sandbox{
+		Summary: domain.SandboxSummary{ID: sandboxID},
+		NetworkState: &domain.SandboxNetworkState{
+			Deployment: "container_bridge", ServiceCIDR: "10.254.0.0/16", Isolation: "unprotected",
+			Attachments:      []domain.SandboxNetworkEndpoint{{Name: "frontend", RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1", DaemonAddress: "10.254.1.2"}},
+			Bindings:         []domain.SandboxPortBinding{{Network: "frontend", HostIP: "10.254.1.1", HostPort: 32000, GuestPort: 8080, Protocol: "tcp", Visibility: "internal", Publisher: "docker"}},
+			AllowedAddresses: []string{"10.254.1.1", "10.254.1.2"},
+		},
+	}}
+	handler := NewSandboxHandler(&characterizationSessionDelegate{}, store, &characterizationSandboxRemover{}, nil)
+	response, err := handler.GetSandbox(context.Background(), connect.NewRequest(&agentcomposev2.GetSandboxRequest{SandboxId: sandboxID}))
+	if err != nil {
+		t.Fatalf("GetSandbox() error = %v", err)
+	}
+	network := response.Msg.GetSandbox().GetNetwork()
+	if network == nil || network.GetDeployment() != "container_bridge" || network.GetIsolation() != "unprotected" || len(network.GetAttachments()) != 1 || len(network.GetBindings()) != 1 {
+		t.Fatalf("sandbox network = %#v", network)
+	}
+	if got := network.GetBindings()[0]; got.GetHostIp() != "10.254.1.1" || got.GetHostPort() != 32000 || got.GetGuestPort() != 8080 {
+		t.Fatalf("sandbox binding = %#v", got)
+	}
+}
+
 func TestGetSandboxDoesNotPrepareProxyForStoppedSandbox(t *testing.T) {
 	const sandboxID = "28fed243-4d9d-4e56-96cf-8b2baa8643c8"
 	delegate := &characterizationSessionDelegate{}
