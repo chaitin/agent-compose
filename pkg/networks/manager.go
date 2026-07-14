@@ -44,7 +44,7 @@ func (m *Manager) PrepareSandbox(ctx context.Context, sandbox *domain.Sandbox) e
 	if m == nil {
 		return fmt.Errorf("network manager is required")
 	}
-	if m.Ports == nil && ((len(intent.Attachments) > 0 && len(intent.Expose) > 0) || hasDynamicPublishedPort(intent.Ports)) {
+	if m.Ports == nil && (hasDynamicExposedPort(intent.Expose) || hasDynamicPublishedPort(intent.Ports)) {
 		return fmt.Errorf("network port allocator is required")
 	}
 
@@ -108,12 +108,15 @@ func (m *Manager) internalBinding(ctx context.Context, sandboxID string, network
 	binding := domain.SandboxPortBinding{
 		Networks:   append([]string(nil), networks...),
 		HostIP:     hostIP,
+		HostPort:   port.HostPort,
 		GuestPort:  port.Target,
 		Protocol:   normalizeProtocol(port.Protocol),
 		Visibility: VisibilityInternal,
 		Publisher:  publisherForRuntime(runtimeDriver),
 	}
-	binding.HostPort = existing[bindingKey(binding)]
+	if binding.HostPort == 0 {
+		binding.HostPort = existing[bindingKey(binding)]
+	}
 	if binding.HostPort == 0 {
 		allocated, err := m.Ports.AllocateHostPort(ctx, sandboxID)
 		if err != nil {
@@ -122,6 +125,15 @@ func (m *Manager) internalBinding(ctx context.Context, sandboxID string, network
 		binding.HostPort = allocated
 	}
 	return binding, nil
+}
+
+func hasDynamicExposedPort(ports []domain.SandboxNetworkPort) bool {
+	for _, port := range ports {
+		if port.HostPort == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) externalBinding(ctx context.Context, sandboxID, runtimeDriver string, port domain.SandboxPublishedPort, existing map[string]int) (domain.SandboxPortBinding, error) {

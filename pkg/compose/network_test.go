@@ -15,7 +15,10 @@ networks:
 agents:
   api:
     networks: [frontend, backend]
-    expose: ["9000"]
+    expose:
+      - target: 9000
+        host_port: 18000
+        protocol: tcp
     ports:
       - "127.0.0.1:19000:9000"
       - "9001"
@@ -34,7 +37,7 @@ agents:
 	if api.Name != "api" || strings.Join(api.Networks, ",") != "frontend,backend" {
 		t.Fatalf("api networks = %#v", api.Networks)
 	}
-	if len(api.Expose) != 1 || api.Expose[0] != (ExposedPortSpec{Target: 9000, Protocol: "tcp"}) {
+	if len(api.Expose) != 1 || api.Expose[0] != (ExposedPortSpec{Target: 9000, HostPort: 18000, Protocol: "tcp"}) {
 		t.Fatalf("api expose = %#v", api.Expose)
 	}
 	if len(api.Ports) != 2 {
@@ -108,6 +111,21 @@ func TestNormalizeComposeNetworkValidation(t *testing.T) {
 			want: "only TCP ports are supported",
 		},
 		{
+			name: "invalid expose host port",
+			raw:  "name: demo\nagents:\n  api:\n    expose:\n      - target: 8080\n        host_port: 70000\n",
+			want: "port must be between 1 and 65535 or omitted",
+		},
+		{
+			name: "duplicate expose listener port",
+			raw:  "name: demo\nagents:\n  api:\n    expose:\n      - target: 8080\n        host_port: 18080\n      - target: 9090\n        host_port: 18080\n",
+			want: "duplicate listener TCP port 18080",
+		},
+		{
+			name: "unknown expose field",
+			raw:  "name: demo\nagents:\n  api:\n    expose:\n      - target: 8080\n        published: 18080\n",
+			want: "unknown field",
+		},
+		{
 			name: "invalid host IP",
 			raw:  "name: demo\nagents:\n  api:\n    ports: [\"localhost:19000:9000\"]\n",
 			want: "host IP must be a valid IPv4 address",
@@ -134,7 +152,9 @@ networks:
 agents:
   api:
     networks: [backend]
-    expose: ["9000"]
+    expose:
+      - target: 9000
+        host_port: 18000
     ports: ["0.0.0.0:19000:9000"]
 `)
 	normalized, err := Normalize(spec, NormalizeOptions{})
@@ -147,6 +167,9 @@ agents:
 	}
 	if !strings.Contains(string(data), `"networks":[{"name":"backend","driver":"port_mapping"}]`) {
 		t.Fatalf("canonical JSON missing ordered networks: %s", data)
+	}
+	if !strings.Contains(string(data), `"expose":[{"target":9000,"host_port":18000,"protocol":"tcp"}]`) {
+		t.Fatalf("canonical JSON missing fixed expose listener: %s", data)
 	}
 	if !strings.Contains(string(data), `"ports":[{"host_ip":"0.0.0.0","published":19000,"target":9000,"protocol":"tcp"}]`) {
 		t.Fatalf("canonical JSON missing port mapping: %s", data)

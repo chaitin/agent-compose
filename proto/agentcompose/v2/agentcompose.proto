@@ -637,6 +637,7 @@ message NamedNetworkSpec {
 message ExposedPortSpec {
   uint32 target = 1;
   string protocol = 2;
+  uint32 host_port = 3;
 }
 
 message PublishedPortSpec {

@@ -14,24 +14,39 @@ const NetworkDriverPortMapping = "port_mapping"
 
 type ExposedPortSpec struct {
 	Target   int    `yaml:"target" json:"target"`
+	HostPort int    `yaml:"host_port,omitempty" json:"host_port,omitempty"`
 	Protocol string `yaml:"protocol" json:"protocol"`
 }
 
 func (s *ExposedPortSpec) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind != yaml.ScalarNode {
-		return fmt.Errorf("expose entry must use short syntax")
+	switch value.Kind {
+	case yaml.ScalarNode:
+		parsed, err := parseExposedPort(value.Value)
+		if err != nil {
+			return err
+		}
+		*s = parsed
+		return nil
+	case yaml.MappingNode:
+		type exposedPortSpec ExposedPortSpec
+		var decoded exposedPortSpec
+		if err := value.Decode(&decoded); err != nil {
+			return err
+		}
+		*s = ExposedPortSpec(decoded)
+		return nil
+	default:
+		return fmt.Errorf("expose entry must use short or long syntax")
 	}
-	parsed, err := parseExposedPort(value.Value)
-	if err != nil {
-		return err
-	}
-	*s = parsed
-	return nil
 }
 
 func (s ExposedPortSpec) MarshalYAML() (any, error) {
-	if s.Protocol == "" || s.Protocol == "tcp" {
+	if s.HostPort == 0 && (s.Protocol == "" || s.Protocol == "tcp") {
 		return strconv.Itoa(s.Target), nil
+	}
+	if s.HostPort != 0 {
+		type exposedPortSpec ExposedPortSpec
+		return exposedPortSpec(s), nil
 	}
 	return fmt.Sprintf("%d/%s", s.Target, s.Protocol), nil
 }
@@ -125,7 +140,8 @@ func normalizeAgentNetworkConfig(path string, agent AgentSpec, available map[str
 
 func normalizeExposedPorts(path string, values []ExposedPortSpec) ([]ExposedPortSpec, error) {
 	result := make([]ExposedPortSpec, 0, len(values))
-	seen := make(map[int]struct{}, len(values))
+	seenTargets := make(map[int]struct{}, len(values))
+	seenHostPorts := make(map[int]struct{}, len(values))
 	for index, value := range values {
 		protocol, err := normalizeTCPProtocol(value.Protocol)
 		if err != nil {
@@ -134,11 +150,20 @@ func normalizeExposedPorts(path string, values []ExposedPortSpec) ([]ExposedPort
 		if err := validatePort(value.Target); err != nil {
 			return nil, &ValidationError{Path: fmt.Sprintf("%s[%d].target", path, index), Message: err.Error()}
 		}
-		if _, ok := seen[value.Target]; ok {
+		if value.HostPort < 0 || value.HostPort > 65535 {
+			return nil, &ValidationError{Path: fmt.Sprintf("%s[%d].host_port", path, index), Message: "port must be between 1 and 65535 or omitted"}
+		}
+		if _, ok := seenTargets[value.Target]; ok {
 			return nil, &ValidationError{Path: fmt.Sprintf("%s[%d]", path, index), Message: fmt.Sprintf("duplicate exposed TCP port %d", value.Target)}
 		}
-		seen[value.Target] = struct{}{}
-		result = append(result, ExposedPortSpec{Target: value.Target, Protocol: protocol})
+		seenTargets[value.Target] = struct{}{}
+		if value.HostPort != 0 {
+			if _, ok := seenHostPorts[value.HostPort]; ok {
+				return nil, &ValidationError{Path: fmt.Sprintf("%s[%d].host_port", path, index), Message: fmt.Sprintf("duplicate listener TCP port %d", value.HostPort)}
+			}
+			seenHostPorts[value.HostPort] = struct{}{}
+		}
+		result = append(result, ExposedPortSpec{Target: value.Target, HostPort: value.HostPort, Protocol: protocol})
 	}
 	slices.SortFunc(result, func(a, b ExposedPortSpec) int { return a.Target - b.Target })
 	return result, nil

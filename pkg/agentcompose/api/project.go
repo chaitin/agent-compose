@@ -301,7 +301,11 @@ func ProjectNetworkSpecsToProto(networks map[string]compose.ProjectNetworkSpec) 
 func ExposedPortSpecsToProto(ports []compose.ExposedPortSpec) []*agentcomposev2.ExposedPortSpec {
 	items := make([]*agentcomposev2.ExposedPortSpec, 0, len(ports))
 	for _, port := range ports {
-		items = append(items, &agentcomposev2.ExposedPortSpec{Target: uint32(port.Target), Protocol: port.Protocol})
+		items = append(items, &agentcomposev2.ExposedPortSpec{
+			Target:   uint32(port.Target),
+			Protocol: port.Protocol,
+			HostPort: uint32(port.HostPort),
+		})
 	}
 	return items
 }
@@ -727,17 +731,25 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 	return values, nil
 }
 
-func ExposedPortYAMLList(path string, ports []*agentcomposev2.ExposedPortSpec) ([]string, []*agentcomposev2.ProjectValidationIssue) {
-	result := make([]string, 0, len(ports))
+func ExposedPortYAMLList(path string, ports []*agentcomposev2.ExposedPortSpec) ([]any, []*agentcomposev2.ProjectValidationIssue) {
+	result := make([]any, 0, len(ports))
 	for index, port := range ports {
-		if port.GetTarget() == 0 || port.GetTarget() > 65535 {
-			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("%s[%d].target", path, index), "target must be a valid TCP port")}
+		if port.GetTarget() == 0 || port.GetTarget() > 65535 || port.GetHostPort() > 65535 {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("%s[%d]", path, index), "target and host_port must be valid TCP ports")}
 		}
 		protocol := strings.ToLower(strings.TrimSpace(port.GetProtocol()))
 		if protocol != "" && protocol != "tcp" {
 			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("%s[%d].protocol", path, index), "only TCP ports are supported")}
 		}
-		result = append(result, strconv.FormatUint(uint64(port.GetTarget()), 10))
+		if port.GetHostPort() == 0 {
+			result = append(result, strconv.FormatUint(uint64(port.GetTarget()), 10))
+			continue
+		}
+		result = append(result, map[string]any{
+			"target":    port.GetTarget(),
+			"host_port": port.GetHostPort(),
+			"protocol":  "tcp",
+		})
 	}
 	return result, nil
 }

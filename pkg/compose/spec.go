@@ -526,9 +526,35 @@ func validateAgent(node *yaml.Node, path string) error {
 		"scheduler":     validateScheduler,
 		"jupyter":       validateJupyter,
 		"networks":      validateStringList,
-		"expose":        validateStringList,
+		"expose":        validateExposedPortList,
 		"ports":         validateStringList,
 	})
+}
+
+func validateExposedPortList(node *yaml.Node, path string) error {
+	if err := requireKind(node, path, yaml.SequenceNode, "sequence"); err != nil {
+		return err
+	}
+	for index, item := range node.Content {
+		itemPath := fmt.Sprintf("%s[%d]", path, index)
+		switch item.Kind {
+		case yaml.ScalarNode:
+			if err := validateScalar(item, itemPath); err != nil {
+				return err
+			}
+		case yaml.MappingNode:
+			if err := validateMapping(item, itemPath, map[string]nodeValidator{
+				"target":    validateInt,
+				"host_port": validateInt,
+				"protocol":  validateScalar,
+			}); err != nil {
+				return err
+			}
+		default:
+			return newParseError(item, itemPath, "expected scalar or mapping")
+		}
+	}
+	return nil
 }
 
 func validateMCPMap(node *yaml.Node, path string) error {

@@ -156,7 +156,11 @@ func SandboxNetworkIntentFromV2(run domain.ProjectRunRecord, projectNetworks []*
 		if err != nil {
 			return nil, fmt.Errorf("agent expose %d: %w", i, err)
 		}
-		intent.Expose = append(intent.Expose, domain.SandboxNetworkPort{Target: target, Protocol: protocol})
+		hostPort := int(port.GetHostPort())
+		if hostPort < 0 || hostPort > 65535 {
+			return nil, fmt.Errorf("agent expose %d: host port must be between 1 and 65535 or omitted", i)
+		}
+		intent.Expose = append(intent.Expose, domain.SandboxNetworkPort{Target: target, HostPort: hostPort, Protocol: protocol})
 	}
 	for i, port := range agent.GetPorts() {
 		target, protocol, err := sandboxTCPPort(int(port.GetTarget()), port.GetProtocol())

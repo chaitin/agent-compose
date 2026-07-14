@@ -104,6 +104,41 @@ func TestManagerAllowsFixedExternalPortWithoutPublishAddressProviderOrAllocator(
 	}
 }
 
+func TestManagerUsesFixedInternalListenerPortWithoutAllocator(t *testing.T) {
+	manager := &Manager{RuntimePublishAddress: "172.23.0.2"}
+	sandbox := networkTestSandbox(driverpkg.RuntimeDriverBoxlite)
+	sandbox.NetworkIntent.Expose[0].HostPort = 18080
+
+	if err := manager.PrepareSandbox(context.Background(), sandbox); err != nil {
+		t.Fatalf("PrepareSandbox() error = %v", err)
+	}
+	binding := bindingWithVisibility(t, sandbox.NetworkState.Bindings, VisibilityInternal)
+	if binding.HostIP != "172.23.0.2" || binding.HostPort != 18080 || binding.GuestPort != 8080 {
+		t.Fatalf("binding = %#v", binding)
+	}
+}
+
+func TestManagerFixedInternalListenerPortOverridesPreviousDynamicPort(t *testing.T) {
+	manager := &Manager{DockerPublishAddress: "172.23.0.1"}
+	sandbox := networkTestSandbox(driverpkg.RuntimeDriverDocker)
+	sandbox.NetworkIntent.Expose[0].HostPort = 18080
+	sandbox.NetworkState = &domain.SandboxNetworkState{Bindings: []domain.SandboxPortBinding{{
+		Networks:   []string{"frontend"},
+		HostIP:     "172.23.0.1",
+		HostPort:   32000,
+		GuestPort:  8080,
+		Protocol:   "tcp",
+		Visibility: VisibilityInternal,
+	}}}
+
+	if err := manager.PrepareSandbox(context.Background(), sandbox); err != nil {
+		t.Fatalf("PrepareSandbox() error = %v", err)
+	}
+	if got := sandbox.NetworkState.Bindings[0].HostPort; got != 18080 {
+		t.Fatalf("fixed listener port = %d, want 18080", got)
+	}
+}
+
 func TestManagerReturnsDefaultPublishAddressError(t *testing.T) {
 	manager := &Manager{
 		PublishAddresses: &publishAddressProviderStub{

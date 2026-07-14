@@ -14,7 +14,7 @@ func TestSandboxNetworkIntentFromV2(t *testing.T) {
 		[]*agentcomposev2.NamedNetworkSpec{{Name: "frontend", Driver: "port_mapping"}},
 		&agentcomposev2.AgentSpec{
 			Networks: []string{"frontend"},
-			Expose:   []*agentcomposev2.ExposedPortSpec{{Target: 8080, Protocol: "tcp"}},
+			Expose:   []*agentcomposev2.ExposedPortSpec{{Target: 8080, HostPort: 18080, Protocol: "tcp"}},
 			Ports:    []*agentcomposev2.PublishedPortSpec{{HostIp: "127.0.0.1", Published: 19000, Target: 9000, Protocol: "tcp"}},
 		},
 	)
@@ -27,7 +27,7 @@ func TestSandboxNetworkIntentFromV2(t *testing.T) {
 	if len(intent.Attachments) != 1 || intent.Attachments[0].Name != "frontend" || intent.Attachments[0].Driver != "port_mapping" {
 		t.Fatalf("attachments = %#v", intent.Attachments)
 	}
-	if len(intent.Expose) != 1 || intent.Expose[0].Target != 8080 || len(intent.Ports) != 1 || intent.Ports[0].Published != 19000 {
+	if len(intent.Expose) != 1 || intent.Expose[0].Target != 8080 || intent.Expose[0].HostPort != 18080 || len(intent.Ports) != 1 || intent.Ports[0].Published != 19000 {
 		t.Fatalf("ports = expose %#v published %#v", intent.Expose, intent.Ports)
 	}
 }

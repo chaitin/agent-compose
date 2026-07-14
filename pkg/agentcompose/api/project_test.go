@@ -153,6 +153,34 @@ func TestProjectSpecToProtoIncludesJupyter(t *testing.T) {
 	}
 }
 
+func TestProjectSpecNetworkExposeFixedListenerRoundTrip(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{
+		Name:     "network",
+		Networks: map[string]compose.ProjectNetworkSpec{"default": {Driver: compose.NetworkDriverPortMapping}},
+		Agents: []compose.NormalizedAgentSpec{{
+			Name:     "api",
+			Networks: []string{"default"},
+			Expose:   []compose.ExposedPortSpec{{Target: 8080, HostPort: 18080, Protocol: "tcp"}},
+		}},
+	}
+
+	protoSpec := ProjectSpecToProto(spec)
+	port := protoSpec.GetAgents()[0].GetExpose()[0]
+	if port.GetTarget() != 8080 || port.GetHostPort() != 18080 || port.GetProtocol() != "tcp" {
+		t.Fatalf("proto expose = %#v", port)
+	}
+	raw, issues := ProjectSpecYAMLShape(protoSpec)
+	if len(issues) != 0 {
+		t.Fatalf("ProjectSpecYAMLShape() issues = %#v", issues)
+	}
+	agents := raw["agents"].(map[string]any)
+	expose := agents["api"].(map[string]any)["expose"].([]any)
+	listener := expose[0].(map[string]any)
+	if listener["target"] != uint32(8080) || listener["host_port"] != uint32(18080) {
+		t.Fatalf("YAML expose = %#v", expose)
+	}
+}
+
 func TestIntegrationProjectSpecToProtoIncludesWorkspaceRegistry(t *testing.T) {
 	spec := &compose.NormalizedProjectSpec{
 		Name: "workspace-registry",

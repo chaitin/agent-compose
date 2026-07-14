@@ -16,6 +16,7 @@ type SandboxNetworkAttachment struct {
 
 type SandboxNetworkPort struct {
 	Target   int    `json:"target"`
+	HostPort int    `json:"host_port,omitempty"`
 	Protocol string `json:"protocol"`
 }
 
