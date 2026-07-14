@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -35,62 +34,63 @@ const (
 var BuildVersion = "0"
 
 type Config struct {
-	DbAddr                     string
-	DbName                     string
-	DbTimeout                  time.Duration
-	DataRoot                   string
-	SandboxRoot                string
-	SandboxRootExplicit        bool
-	HttpListen                 string
-	AgentComposeSocket         string
-	AgentComposeHost           string
-	WebhookBodyLimitBytes      int64
-	WebhookQueueRulesJSON      string
-	WebhookQueueDefaultWorkers int
-	WorkspaceUploadLimitBytes  int64
-	LLMAPIEndpoint             string
-	LLMAPIProtocol             string
-	LLMAPIKey                  string
-	LLMModel                   string
-	LLMTimeout                 time.Duration
-	RuntimeBaseURL             string
-	AgentTimeout               time.Duration
-	LoaderRunTimeout           time.Duration
-	RuntimeDriver              string
-	NetworkEnforceIsolation    bool
-	BoxliteHome                string
-	BoxliteRuntimeDir          string
-	DockerHome                 string
-	DockerHostSandboxRoot      string
-	DockerDefaultImage         string
-	MicrosandboxHome           string
-	MicrosandboxMSBPath        string
-	MicrosandboxLibPath        string
-	MicrosandboxDefaultImage   string
-	MicrosandboxInsecure       []string
-	MicrosandboxBindQuotaGB    int
-	DefaultImage               string
-	BoxRootfsPath              string
-	ImageRegistry              string
-	ImageStoreMode             string
-	ImageCacheRoot             string
-	ImageInsecureRegistries    []string
-	BoxDiskSizeGB              int
-	BoxCacheTTL                time.Duration
-	ImagePullTimeout           time.Duration
-	GuestWorkspacePath         string
-	GuestHomePath              string
-	GuestStateRoot             string
-	GuestRuntimeRoot           string
-	GuestLogRoot               string
-	JupyterGuestPort           int
-	SandboxStartTimeout        time.Duration
-	SandboxStopTimeout         time.Duration
-	JupyterReadyTimeout        time.Duration
-	JupyterProxyBasePath       string
-	CapGRPCListen              string
-	CapGRPCTarget              string
-	Version                    string
+	DbAddr                       string
+	DbName                       string
+	DbTimeout                    time.Duration
+	DataRoot                     string
+	SandboxRoot                  string
+	SandboxRootExplicit          bool
+	HttpListen                   string
+	AgentComposeSocket           string
+	AgentComposeHost             string
+	WebhookBodyLimitBytes        int64
+	WebhookQueueRulesJSON        string
+	WebhookQueueDefaultWorkers   int
+	WorkspaceUploadLimitBytes    int64
+	LLMAPIEndpoint               string
+	LLMAPIProtocol               string
+	LLMAPIKey                    string
+	LLMModel                     string
+	LLMTimeout                   time.Duration
+	RuntimeBaseURL               string
+	AgentTimeout                 time.Duration
+	LoaderRunTimeout             time.Duration
+	RuntimeDriver                string
+	NetworkDockerPublishAddress  string
+	NetworkRuntimePublishAddress string
+	BoxliteHome                  string
+	BoxliteRuntimeDir            string
+	DockerHome                   string
+	DockerHostSandboxRoot        string
+	DockerDefaultImage           string
+	MicrosandboxHome             string
+	MicrosandboxMSBPath          string
+	MicrosandboxLibPath          string
+	MicrosandboxDefaultImage     string
+	MicrosandboxInsecure         []string
+	MicrosandboxBindQuotaGB      int
+	DefaultImage                 string
+	BoxRootfsPath                string
+	ImageRegistry                string
+	ImageStoreMode               string
+	ImageCacheRoot               string
+	ImageInsecureRegistries      []string
+	BoxDiskSizeGB                int
+	BoxCacheTTL                  time.Duration
+	ImagePullTimeout             time.Duration
+	GuestWorkspacePath           string
+	GuestHomePath                string
+	GuestStateRoot               string
+	GuestRuntimeRoot             string
+	GuestLogRoot                 string
+	JupyterGuestPort             int
+	SandboxStartTimeout          time.Duration
+	SandboxStopTimeout           time.Duration
+	JupyterReadyTimeout          time.Duration
+	JupyterProxyBasePath         string
+	CapGRPCListen                string
+	CapGRPCTarget                string
+	Version                      string
 }
 
 func NewConfig(di do.Injector) (*Config, error) {
@@ -202,13 +202,13 @@ func NewConfig(di do.Injector) (*Config, error) {
 	if err := validateRuntimeDriver(runtimeDriver); err != nil {
 		return nil, err
 	}
-	networkEnforceIsolation := false
-	if raw := strings.TrimSpace(os.Getenv("NETWORK_ENFORCE_ISOLATION")); raw != "" {
-		parsed, err := strconv.ParseBool(raw)
-		if err != nil {
-			return nil, fmt.Errorf("parse NETWORK_ENFORCE_ISOLATION: %w", err)
-		}
-		networkEnforceIsolation = parsed
+	networkDockerPublishAddress, err := optionalIPv4Env("NETWORK_DOCKER_PUBLISH_ADDRESS")
+	if err != nil {
+		return nil, err
+	}
+	networkRuntimePublishAddress, err := optionalIPv4Env("NETWORK_RUNTIME_PUBLISH_ADDRESS")
+	if err != nil {
+		return nil, err
 	}
 
 	boxliteHome := os.Getenv("BOXLITE_HOME")
@@ -432,62 +432,63 @@ func NewConfig(di do.Injector) (*Config, error) {
 	}
 
 	return &Config{
-		DbAddr:                     dbPath,
-		DbName:                     dbName,
-		DbTimeout:                  dbTimeout,
-		DataRoot:                   dataRoot,
-		SandboxRoot:                sandboxRoot,
-		SandboxRootExplicit:        sandboxRootExplicit,
-		HttpListen:                 httpListen,
-		AgentComposeSocket:         agentComposeSocket,
-		AgentComposeHost:           agentComposeHost,
-		WebhookBodyLimitBytes:      webhookBodyLimitBytes,
-		WebhookQueueRulesJSON:      webhookQueueRulesJSON,
-		WebhookQueueDefaultWorkers: webhookQueueDefaultWorkers,
-		WorkspaceUploadLimitBytes:  workspaceUploadLimitBytes,
-		LLMAPIEndpoint:             llmAPIEndpoint,
-		LLMAPIProtocol:             llmAPIProtocol,
-		LLMAPIKey:                  llmAPIKey,
-		LLMModel:                   llmModel,
-		LLMTimeout:                 llmTimeout,
-		RuntimeBaseURL:             runtimeBaseURL,
-		AgentTimeout:               agentTimeout,
-		LoaderRunTimeout:           loaderRunTimeout,
-		RuntimeDriver:              runtimeDriver,
-		NetworkEnforceIsolation:    networkEnforceIsolation,
-		BoxliteHome:                boxliteHome,
-		BoxliteRuntimeDir:          boxliteRuntimeDir,
-		DockerHome:                 dockerHome,
-		DockerHostSandboxRoot:      dockerHostSandboxRoot,
-		DockerDefaultImage:         dockerDefaultImage,
-		MicrosandboxHome:           microsandboxHome,
-		MicrosandboxMSBPath:        microsandboxMSBPath,
-		MicrosandboxLibPath:        microsandboxLibPath,
-		MicrosandboxDefaultImage:   microsandboxDefaultImage,
-		MicrosandboxInsecure:       microsandboxInsecure,
-		MicrosandboxBindQuotaGB:    microsandboxBindQuotaGB,
-		DefaultImage:               defaultImage,
-		BoxRootfsPath:              boxRootfsPath,
-		ImageRegistry:              imageRegistry,
-		ImageStoreMode:             imageStoreMode,
-		ImageCacheRoot:             imageCacheRoot,
-		ImageInsecureRegistries:    imageInsecureRegistries,
-		BoxDiskSizeGB:              boxDiskSizeGB,
-		BoxCacheTTL:                boxCacheTTL,
-		ImagePullTimeout:           imagePullTimeout,
-		GuestWorkspacePath:         guestPaths.GuestWorkspacePath,
-		GuestHomePath:              guestPaths.GuestHomePath,
-		GuestStateRoot:             guestPaths.GuestStateRoot,
-		GuestRuntimeRoot:           guestPaths.GuestRuntimeRoot,
-		GuestLogRoot:               guestPaths.GuestLogRoot,
-		JupyterGuestPort:           jupyterGuestPort,
-		SandboxStartTimeout:        startTimeout,
-		SandboxStopTimeout:         stopTimeout,
-		JupyterReadyTimeout:        jupyterReadyTimeout,
-		JupyterProxyBasePath:       jupyterProxyBase,
-		CapGRPCListen:              strings.TrimSpace(os.Getenv("CAP_GRPC_LISTEN")),
-		CapGRPCTarget:              strings.TrimSpace(os.Getenv("CAP_GRPC_TARGET")),
-		Version:                    BuildVersion,
+		DbAddr:                       dbPath,
+		DbName:                       dbName,
+		DbTimeout:                    dbTimeout,
+		DataRoot:                     dataRoot,
+		SandboxRoot:                  sandboxRoot,
+		SandboxRootExplicit:          sandboxRootExplicit,
+		HttpListen:                   httpListen,
+		AgentComposeSocket:           agentComposeSocket,
+		AgentComposeHost:             agentComposeHost,
+		WebhookBodyLimitBytes:        webhookBodyLimitBytes,
+		WebhookQueueRulesJSON:        webhookQueueRulesJSON,
+		WebhookQueueDefaultWorkers:   webhookQueueDefaultWorkers,
+		WorkspaceUploadLimitBytes:    workspaceUploadLimitBytes,
+		LLMAPIEndpoint:               llmAPIEndpoint,
+		LLMAPIProtocol:               llmAPIProtocol,
+		LLMAPIKey:                    llmAPIKey,
+		LLMModel:                     llmModel,
+		LLMTimeout:                   llmTimeout,
+		RuntimeBaseURL:               runtimeBaseURL,
+		AgentTimeout:                 agentTimeout,
+		LoaderRunTimeout:             loaderRunTimeout,
+		RuntimeDriver:                runtimeDriver,
+		NetworkDockerPublishAddress:  networkDockerPublishAddress,
+		NetworkRuntimePublishAddress: networkRuntimePublishAddress,
+		BoxliteHome:                  boxliteHome,
+		BoxliteRuntimeDir:            boxliteRuntimeDir,
+		DockerHome:                   dockerHome,
+		DockerHostSandboxRoot:        dockerHostSandboxRoot,
+		DockerDefaultImage:           dockerDefaultImage,
+		MicrosandboxHome:             microsandboxHome,
+		MicrosandboxMSBPath:          microsandboxMSBPath,
+		MicrosandboxLibPath:          microsandboxLibPath,
+		MicrosandboxDefaultImage:     microsandboxDefaultImage,
+		MicrosandboxInsecure:         microsandboxInsecure,
+		MicrosandboxBindQuotaGB:      microsandboxBindQuotaGB,
+		DefaultImage:                 defaultImage,
+		BoxRootfsPath:                boxRootfsPath,
+		ImageRegistry:                imageRegistry,
+		ImageStoreMode:               imageStoreMode,
+		ImageCacheRoot:               imageCacheRoot,
+		ImageInsecureRegistries:      imageInsecureRegistries,
+		BoxDiskSizeGB:                boxDiskSizeGB,
+		BoxCacheTTL:                  boxCacheTTL,
+		ImagePullTimeout:             imagePullTimeout,
+		GuestWorkspacePath:           guestPaths.GuestWorkspacePath,
+		GuestHomePath:                guestPaths.GuestHomePath,
+		GuestStateRoot:               guestPaths.GuestStateRoot,
+		GuestRuntimeRoot:             guestPaths.GuestRuntimeRoot,
+		GuestLogRoot:                 guestPaths.GuestLogRoot,
+		JupyterGuestPort:             jupyterGuestPort,
+		SandboxStartTimeout:          startTimeout,
+		SandboxStopTimeout:           stopTimeout,
+		JupyterReadyTimeout:          jupyterReadyTimeout,
+		JupyterProxyBasePath:         jupyterProxyBase,
+		CapGRPCListen:                strings.TrimSpace(os.Getenv("CAP_GRPC_LISTEN")),
+		CapGRPCTarget:                strings.TrimSpace(os.Getenv("CAP_GRPC_TARGET")),
+		Version:                      BuildVersion,
 	}, nil
 }
 
@@ -535,6 +536,18 @@ func validateTCPListenAddress(name, value string) error {
 		return fmt.Errorf("invalid %s %q: host must not contain a path", name, value)
 	}
 	return nil
+}
+
+func optionalIPv4Env(name string) (string, error) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return "", nil
+	}
+	ip := net.ParseIP(value)
+	if ip == nil || ip.To4() == nil {
+		return "", fmt.Errorf("%s must be a valid IPv4 address: %q", name, value)
+	}
+	return ip.To4().String(), nil
 }
 
 func validateAgentComposeHost(value string) error {

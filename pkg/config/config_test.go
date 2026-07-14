@@ -86,21 +86,33 @@ func TestNewConfigNormalizesJupyterProxyBase(t *testing.T) {
 	}
 }
 
-func TestNewConfigParsesNetworkEnforceIsolation(t *testing.T) {
-	newConfig := func(t *testing.T, value string) (*Config, error) {
-		t.Helper()
-		t.Setenv("DATA_ROOT", filepath.Join(t.TempDir(), "data"))
-		t.Setenv("NETWORK_ENFORCE_ISOLATION", value)
-		di := do.New()
-		do.ProvideValue(di, slog.Default())
-		return NewConfig(di)
+func TestNewConfigParsesNetworkPublishAddresses(t *testing.T) {
+	t.Setenv("DATA_ROOT", filepath.Join(t.TempDir(), "data"))
+	t.Setenv("NETWORK_DOCKER_PUBLISH_ADDRESS", " 172.23.0.1 ")
+	t.Setenv("NETWORK_RUNTIME_PUBLISH_ADDRESS", "172.23.0.2")
+	di := do.New()
+	do.ProvideValue(di, slog.Default())
+	config, err := NewConfig(di)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
 	}
-	config, err := newConfig(t, "true")
-	if err != nil || !config.NetworkEnforceIsolation {
-		t.Fatalf("NewConfig() isolation = %v, error = %v", config.NetworkEnforceIsolation, err)
+	if config.NetworkDockerPublishAddress != "172.23.0.1" || config.NetworkRuntimePublishAddress != "172.23.0.2" {
+		t.Fatalf("network publish addresses = %q/%q", config.NetworkDockerPublishAddress, config.NetworkRuntimePublishAddress)
 	}
-	if _, err := newConfig(t, "not-a-bool"); err == nil || !strings.Contains(err.Error(), "NETWORK_ENFORCE_ISOLATION") {
-		t.Fatalf("NewConfig() invalid isolation error = %v", err)
+}
+
+func TestNewConfigRejectsInvalidNetworkPublishAddresses(t *testing.T) {
+	for _, name := range []string{"NETWORK_DOCKER_PUBLISH_ADDRESS", "NETWORK_RUNTIME_PUBLISH_ADDRESS"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("DATA_ROOT", filepath.Join(t.TempDir(), "data"))
+			t.Setenv(name, "localhost")
+			di := do.New()
+			do.ProvideValue(di, slog.Default())
+			_, err := NewConfig(di)
+			if err == nil || !strings.Contains(err.Error(), name+" must be a valid IPv4 address") {
+				t.Fatalf("NewConfig() error = %v", err)
+			}
+		})
 	}
 }
 
