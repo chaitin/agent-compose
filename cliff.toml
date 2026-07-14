@@ -1,0 +1,23 @@
+[git]
+conventional_commits = true
+filter_unconventional = false
+protect_breaking_commits = true
+
+tag_pattern = '^v[0-9].*'
+
+commit_parsers = [
+  { message = '^[a-z]+(\([^)]*\))?!:', group = 'Breaking Changes' },
+  { message = '^feat', group = 'Features' },
+  { message = '^fix', group = 'Bug Fixes' },
+  { message = '^docs', group = 'Documentation' },
+  { message = '^refactor', group = 'Refactoring' },
+  { message = '^perf', group = 'Performance' },
+  { message = '^test', skip = true },
+  { message = '^chore', skip = true },
+  { message = '^Merge', skip = true },
+  { message = '.*', group = 'Other Changes' },
+]
+
+[remote.github]
+owner = 'chaitin'
+repo = 'agent-compose'
