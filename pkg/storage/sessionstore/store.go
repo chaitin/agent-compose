@@ -224,9 +224,15 @@ func (s *Store) ListSandboxes(_ context.Context, options SandboxListOptions) (Sa
 		if !domain.SandboxMatchesListOptions(session, options) {
 			continue
 		}
+		if !options.BeforeUpdatedAt.IsZero() && (session.Summary.UpdatedAt.After(options.BeforeUpdatedAt) || (session.Summary.UpdatedAt.Equal(options.BeforeUpdatedAt) && session.Summary.ID >= options.BeforeID)) {
+			continue
+		}
 		sessions = append(sessions, session)
 	}
 	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].Summary.UpdatedAt.Equal(sessions[j].Summary.UpdatedAt) {
+			return sessions[i].Summary.ID > sessions[j].Summary.ID
+		}
 		return sessions[i].Summary.UpdatedAt.After(sessions[j].Summary.UpdatedAt)
 	})
 	totalCount := len(sessions)
@@ -466,6 +472,9 @@ func (s *Store) loadSandbox(id string) (*Sandbox, error) {
 	if err := json.Unmarshal(data, &session); err != nil {
 		return nil, fmt.Errorf("decode session metadata %s: %w", id, err)
 	}
+	// WorkspacePath is derived from the active sandbox root. Persisted absolute
+	// paths may refer to the filesystem namespace of an older daemon process.
+	session.Summary.WorkspacePath = filepath.Join(s.sandboxDir(id), "workspace")
 	session.Summary.TriggerSource = domain.NormalizeSandboxTriggerSource(session.Summary.TriggerSource, session.Summary.Tags)
 	if strings.TrimSpace(session.Summary.ShortID) == "" {
 		session.Summary.ShortID = identity.ShortID(session.Summary.ID)

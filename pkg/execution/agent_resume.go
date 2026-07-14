@@ -28,7 +28,8 @@ func WriteAgentThreadArtifact(path string, info *domain.AgentResumeInfo) error {
 }
 
 type storedAgentThreadState struct {
-	ThreadID string `json:"threadId"`
+	ThreadID        string `json:"threadId"`
+	LegacySessionID string `json:"sessionId"`
 }
 
 func LoadStoredAgentThreadID(path string) string {
@@ -40,7 +41,10 @@ func LoadStoredAgentThreadID(path string) string {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return ""
 	}
-	return strings.TrimSpace(state.ThreadID)
+	if threadID := strings.TrimSpace(state.ThreadID); threadID != "" {
+		return threadID
+	}
+	return strings.TrimSpace(state.LegacySessionID)
 }
 
 func CollectAgentResumeInfo(session *domain.Sandbox, agent, threadID, manifestPath string) *domain.AgentResumeInfo {

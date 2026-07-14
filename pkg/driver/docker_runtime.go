@@ -26,6 +26,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
+	"github.com/google/uuid"
 )
 
 const (
@@ -179,6 +180,20 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	}
 
 	return SandboxVMInfo{BoxID: containerInfo.ID, JupyterURL: jupyterDirectURL(proxyState), ProxyState: &proxyState}, nil
+}
+
+func (r *dockerRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox, vmState VMState) (bool, error) {
+	dockerClient, err := r.newClient()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = dockerClient.Close() }()
+
+	containerInfo, ok, err := r.findContainer(ctx, dockerClient, sandbox, vmState)
+	if err != nil || !ok {
+		return false, err
+	}
+	return containerInfo.State != nil && containerInfo.State.Running, nil
 }
 
 func (r *dockerRuntime) StopSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState) (bool, error) {
@@ -650,7 +665,10 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 		return containerInfo, false, nil
 	}
 	if !vmState.StoppedAt.IsZero() {
-		return containerapi.InspectResponse{}, false, fmt.Errorf("docker runtime state for stopped sandbox %s is missing; refusing to recreate it during resume", sandbox.Summary.ID)
+		if err := r.validateLegacyDockerRecreate(sandbox, vmState); err != nil {
+			return containerapi.InspectResponse{}, false, fmt.Errorf("docker runtime state for stopped sandbox %s is missing; refusing to recreate it during resume: %w", sandbox.Summary.ID, err)
+		}
+		slog.Warn("recreating missing legacy docker runtime from persisted mounts; container writable layer is not recoverable", "sandbox_id", sandbox.Summary.ID, "image", firstNonEmpty(vmState.Image, sandbox.Summary.GuestImage))
 	}
 
 	name := r.containerName(sandbox, vmState)
@@ -687,6 +705,44 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 		return containerapi.InspectResponse{}, false, fmt.Errorf("inspect docker container %s: %w", createResp.ID, err)
 	}
 	return containerInfo, true, nil
+}
+
+func (r *dockerRuntime) validateLegacyDockerRecreate(sandbox *Sandbox, vmState VMState) error {
+	if sandbox == nil {
+		return fmt.Errorf("sandbox is required")
+	}
+	appconfig.ApplyDefaultGuestPaths(r.config)
+	id, err := uuid.Parse(strings.TrimSpace(sandbox.Summary.ID))
+	if err != nil || id.String() != strings.ToLower(strings.TrimSpace(sandbox.Summary.ID)) {
+		return fmt.Errorf("only canonical legacy UUID sandboxes may be reconstructed")
+	}
+	if resolveRuntimeDriver(firstNonEmpty(vmState.Driver, sandbox.Summary.Driver)) != RuntimeDriverDocker {
+		return fmt.Errorf("legacy sandbox driver is not docker")
+	}
+	if strings.TrimSpace(firstNonEmpty(vmState.Image, sandbox.Summary.GuestImage)) == "" {
+		return fmt.Errorf("legacy sandbox image is missing")
+	}
+	manifest, err := loadRuntimeMountManifest(sandbox, RuntimeDriverDocker)
+	if err != nil {
+		return err
+	}
+	required := map[string]bool{
+		r.config.GuestWorkspacePath: false,
+		r.config.GuestStateRoot:     false,
+		r.config.GuestRuntimeRoot:   false,
+		r.config.GuestLogRoot:       false,
+	}
+	for _, mount := range manifest.Mounts {
+		if _, ok := required[mount.GuestPath]; ok {
+			required[mount.GuestPath] = true
+		}
+	}
+	for guestPath, present := range required {
+		if !present {
+			return fmt.Errorf("legacy runtime mount %s is missing", guestPath)
+		}
+	}
+	return nil
 }
 
 func (r *dockerRuntime) containerStoppedAfterStopError(containerID string) (bool, error) {

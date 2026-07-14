@@ -582,3 +582,26 @@ func dockerInspectWithJupyterBindings(id, name string, guestPort int, bindings [
 		NetworkSettings:   networkSettings,
 	}
 }
+
+func TestValidateLegacyDockerRecreateRequiresUUIDAndPersistedMounts(t *testing.T) {
+	root := t.TempDir()
+	config := &appconfig.Config{SandboxRoot: root}
+	runtime := &dockerRuntime{config: config}
+	sandbox := &Sandbox{Summary: SandboxSummary{
+		ID:            "04c587f2-01c3-487b-b933-524ce4332235",
+		Driver:        RuntimeDriverDocker,
+		GuestImage:    "guest:latest",
+		WorkspacePath: filepath.Join(root, "04c587f2-01c3-487b-b933-524ce4332235", "workspace"),
+	}}
+	if _, err := prepareRuntimeMountManifest(config, sandbox, RuntimeDriverDocker); err != nil {
+		t.Fatalf("prepare manifest: %v", err)
+	}
+	state := VMState{Driver: RuntimeDriverDocker, Image: "guest:latest", StoppedAt: time.Now()}
+	if err := runtime.validateLegacyDockerRecreate(sandbox, state); err != nil {
+		t.Fatalf("legacy recreate validation: %v", err)
+	}
+	sandbox.Summary.ID = strings.Repeat("a", 64)
+	if err := runtime.validateLegacyDockerRecreate(sandbox, state); err == nil || !strings.Contains(err.Error(), "legacy UUID") {
+		t.Fatalf("new sandbox validation error = %v", err)
+	}
+}

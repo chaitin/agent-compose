@@ -63,17 +63,16 @@ func (l Lifecycle) ReconcileRuntimeState(ctx context.Context, session *domain.Sa
 	if err != nil {
 		return nil, err
 	}
-	if driver != driverpkg.RuntimeDriverMicrosandbox {
-		return session, nil
+	if driver == driverpkg.RuntimeDriverMicrosandbox {
+		proxyState, err := l.Store.GetProxyState(session.Summary.ID)
+		if err != nil {
+			return nil, err
+		}
+		if proxyState.Enabled && JupyterTargetReachable(proxyState, 250*time.Millisecond) {
+			return session, nil
+		}
 	}
-	proxyState, err := l.Store.GetProxyState(session.Summary.ID)
-	if err != nil {
-		return nil, err
-	}
-	if !proxyState.Enabled {
-		return session, nil
-	}
-	if JupyterTargetReachable(proxyState, 250*time.Millisecond) {
+	if l.Liveness == nil {
 		return session, nil
 	}
 	vmState, err := l.Store.GetVMState(session.Summary.ID)
@@ -105,7 +104,7 @@ func (l Lifecycle) ReconcileRuntimeState(ctx context.Context, session *domain.Sa
 		ID:        uuid.NewString(),
 		Type:      "sandbox.runtime_lost",
 		Level:     "warn",
-		Message:   "sandbox marked stopped after microsandbox runtime became unreachable",
+		Message:   "sandbox marked stopped after runtime became unreachable",
 		CreatedAt: now,
 	}
 	_ = l.Store.AddEvent(ctx, session.Summary.ID, event)

@@ -61,6 +61,37 @@ func (s *projectStore) ListProjectSandboxRuns(ctx context.Context, filter domain
 	return items, nil
 }
 
+func (s *projectStore) ListLatestProjectRunsForSandboxes(ctx context.Context, sandboxIDs []string) (map[string]ProjectRunRecord, error) {
+	ids := normalizedNonEmptyStrings(sandboxIDs)
+	if len(ids) == 0 {
+		return map[string]ProjectRunRecord{}, nil
+	}
+	query := projects.SelectProjectRunSQL() + ` WHERE sandbox_id IN (` + placeholders(len(ids)) + `) ORDER BY updated_at DESC, created_at DESC, run_id DESC`
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query latest project runs for sandboxes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := make(map[string]ProjectRunRecord, len(ids))
+	for rows.Next() {
+		item, err := projects.ScanProjectRun(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := result[item.SandboxID]; !exists {
+			result[item.SandboxID] = item
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate latest project runs for sandboxes: %w", err)
+	}
+	return result, nil
+}
+
 func (s *projectStore) ListProjectRunsForSandbox(ctx context.Context, sandboxID string) ([]ProjectRunRecord, error) {
 	sandboxID = strings.TrimSpace(sandboxID)
 	if sandboxID == "" {
@@ -78,4 +109,21 @@ func placeholders(count int) string {
 		values[i] = "?"
 	}
 	return strings.Join(values, ",")
+}
+
+func normalizedNonEmptyStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }

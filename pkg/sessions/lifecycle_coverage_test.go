@@ -45,6 +45,24 @@ func TestLifecycleReconcileRuntimeStateMicrosandboxLost(t *testing.T) {
 	}
 }
 
+func TestLifecycleReconcileRuntimeStateDockerLost(t *testing.T) {
+	session := lifecycleTestSession("session-docker-lost", driverpkg.RuntimeDriverDocker, domain.VMStatusRunning)
+	store := &fakeLifecycleStore{session: session, vmState: domain.VMState{BoxID: "container-1"}}
+	lifecycle := Lifecycle{
+		Config:   &appconfig.Config{RuntimeDriver: driverpkg.RuntimeDriverDocker},
+		Store:    store,
+		Liveness: fakeRuntimeLiveness{alive: false, ok: true},
+	}
+
+	loaded, err := lifecycle.ReconcileRuntimeState(context.Background(), session)
+	if err != nil {
+		t.Fatalf("ReconcileRuntimeState returned error: %v", err)
+	}
+	if loaded.Summary.VMStatus != domain.VMStatusStopped || store.savedVM.BoxID != "" || !domain.TimeIsSet(store.savedVM.StoppedAt) {
+		t.Fatalf("loaded=%#v savedVM=%#v", loaded, store.savedVM)
+	}
+}
+
 func TestLifecycleReconcileRuntimeStateEarlyReturns(t *testing.T) {
 	lifecycle := Lifecycle{Config: &appconfig.Config{RuntimeDriver: driverpkg.RuntimeDriverDocker}, Store: &fakeLifecycleStore{}}
 	if got, err := lifecycle.ReconcileRuntimeState(context.Background(), nil); err != nil || got != nil {

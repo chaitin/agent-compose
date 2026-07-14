@@ -40,6 +40,27 @@ func TestLoadStoredAgentThreadIDHandlesMissingInvalidAndValidFiles(t *testing.T)
 	if got := LoadStoredAgentThreadID(validPath); got != "thread-123" {
 		t.Fatalf("valid thread id = %q, want thread-123", got)
 	}
+
+	testLoadStoredAgentThreadIDReadsLegacySessionID(t)
+}
+
+func TestIntegrationLoadStoredAgentThreadIDReadsLegacySessionID(t *testing.T) {
+	testLoadStoredAgentThreadIDReadsLegacySessionID(t)
+}
+
+func TestE2ELoadStoredAgentThreadIDReadsLegacySessionID(t *testing.T) {
+	testLoadStoredAgentThreadIDReadsLegacySessionID(t)
+}
+
+func testLoadStoredAgentThreadIDReadsLegacySessionID(t *testing.T) {
+	t.Helper()
+	legacyPath := filepath.Join(t.TempDir(), "legacy.json")
+	if err := os.WriteFile(legacyPath, []byte(`{"sessionId":" legacy-thread "}`), 0o644); err != nil {
+		t.Fatalf("write legacy state: %v", err)
+	}
+	if got := LoadStoredAgentThreadID(legacyPath); got != "legacy-thread" {
+		t.Fatalf("legacy thread id = %q, want legacy-thread", got)
+	}
 }
 
 func TestAgentThreadLogSelectionAndResumeInfo(t *testing.T) {
