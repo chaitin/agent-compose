@@ -1337,6 +1337,8 @@ agents:
   reviewer:
     provider: codex
     model: gpt-initial
+    system_prompt: |
+      Review the proposed changes carefully.
     image: guest:v1
     driver:
       boxlite: {}
@@ -1383,6 +1385,7 @@ agents:
 	}
 	assertComposeUpChange(t, repeated.Changes, "unchanged", "project", "cli-up-demo")
 	assertComposeUpChange(t, repeated.Changes, "unchanged", "project_agent", "reviewer")
+	assertComposeUpChange(t, repeated.Changes, "unchanged", "agent_definition", "reviewer")
 	assertComposeUpChange(t, repeated.Changes, "unchanged", "project_scheduler", "reviewer")
 
 	if err := os.WriteFile(composePath, []byte(`
@@ -1395,6 +1398,8 @@ agents:
   reviewer:
     provider: codex
     model: gpt-updated
+    system_prompt: |
+      Review the proposed changes carefully.
     image: guest:v1
     driver:
       boxlite: {}

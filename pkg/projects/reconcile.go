@@ -67,7 +67,7 @@ func ReconcileManagedAgentDefinitions(ctx context.Context, store ReconcileAgentD
 		if err != nil {
 			return nil, false, fmt.Errorf("upsert managed agent definition %s: %w", agent.ID, err)
 		}
-		action := ManagedAgentDefinitionChangeAction(existing, found, agent)
+		action := ManagedAgentDefinitionChangeAction(existing, found, saved)
 		if action != ChangeActionUnchanged {
 			unchanged = false
 		}
