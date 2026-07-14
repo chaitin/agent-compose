@@ -44,14 +44,3 @@ func TestSandboxNetworkBindingsRejectsInvalidBinding(t *testing.T) {
 		})
 	}
 }
-
-func TestSandboxNetworkNamesDeduplicatesAndSorts(t *testing.T) {
-	names, err := sandboxNetworkNames(&Sandbox{
-		Network: &SandboxNetwork{Attachments: []SandboxNetworkEndpoint{
-			{RuntimeNetworkName: "project_b"}, {RuntimeNetworkName: "project_a"}, {RuntimeNetworkName: "project_b"},
-		}},
-	})
-	if err != nil || len(names) != 2 || names[0] != "project_a" || names[1] != "project_b" {
-		t.Fatalf("sandboxNetworkNames() = %#v, %v", names, err)
-	}
-}

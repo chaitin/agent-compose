@@ -83,7 +83,7 @@ func TestV2GetSandboxIncludesNetworkEndpoints(t *testing.T) {
 	store := &characterizationSandboxStore{session: &domain.Sandbox{
 		Summary: domain.SandboxSummary{ID: sandboxID},
 		NetworkState: &domain.SandboxNetworkState{
-			Attachments: []domain.SandboxNetworkEndpoint{{Name: "frontend", RuntimeNetworkName: "project_frontend"}},
+			Attachments: []domain.SandboxNetworkEndpoint{{Name: "frontend"}},
 			Bindings:    []domain.SandboxPortBinding{{Networks: []string{"frontend"}, HostIP: "10.254.1.1", HostPort: 32000, GuestPort: 8080, Protocol: "tcp", Visibility: "internal", Publisher: "docker"}},
 		},
 	}}

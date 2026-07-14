@@ -35,8 +35,7 @@ func ToDriverSandbox(session *domain.Sandbox) *driverpkg.Sandbox {
 		network = &driverpkg.SandboxNetwork{}
 		for _, attachment := range session.NetworkState.Attachments {
 			network.Attachments = append(network.Attachments, driverpkg.SandboxNetworkEndpoint{
-				Name:               attachment.Name,
-				RuntimeNetworkName: attachment.RuntimeNetworkName,
+				Name: attachment.Name,
 			})
 		}
 		for _, binding := range session.NetworkState.Bindings {

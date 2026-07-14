@@ -7323,11 +7323,10 @@ func (x *SandboxNetworkState) GetBindings() []*SandboxPortBinding {
 }
 
 type SandboxNetworkEndpoint struct {
-	state              protoimpl.MessageState `protogen:"open.v1"`
-	Name               string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	RuntimeNetworkName string                 `protobuf:"bytes,2,opt,name=runtime_network_name,json=runtimeNetworkName,proto3" json:"runtime_network_name,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SandboxNetworkEndpoint) Reset() {
@@ -7363,13 +7362,6 @@ func (*SandboxNetworkEndpoint) Descriptor() ([]byte, []int) {
 func (x *SandboxNetworkEndpoint) GetName() string {
 	if x != nil {
 		return x.Name
-	}
-	return ""
-}
-
-func (x *SandboxNetworkEndpoint) GetRuntimeNetworkName() string {
-	if x != nil {
-		return x.RuntimeNetworkName
 	}
 	return ""
 }
@@ -16174,10 +16166,9 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\anetwork\x18\x11 \x01(\v2$.agentcompose.v2.SandboxNetworkStateR\anetwork\"\xa1\x01\n" +
 	"\x13SandboxNetworkState\x12I\n" +
 	"\vattachments\x18\x01 \x03(\v2'.agentcompose.v2.SandboxNetworkEndpointR\vattachments\x12?\n" +
-	"\bbindings\x18\x02 \x03(\v2#.agentcompose.v2.SandboxPortBindingR\bbindings\"^\n" +
+	"\bbindings\x18\x02 \x03(\v2#.agentcompose.v2.SandboxPortBindingR\bbindings\",\n" +
 	"\x16SandboxNetworkEndpoint\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x120\n" +
-	"\x14runtime_network_name\x18\x02 \x01(\tR\x12runtimeNetworkName\"\xdf\x01\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"\xdf\x01\n" +
 	"\x12SandboxPortBinding\x12\x1a\n" +
 	"\bnetworks\x18\x01 \x03(\tR\bnetworks\x12\x17\n" +
 	"\ahost_ip\x18\x02 \x01(\tR\x06hostIp\x12\x1b\n" +

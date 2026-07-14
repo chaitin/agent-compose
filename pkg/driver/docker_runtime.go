@@ -141,20 +141,15 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	if err != nil {
 		return SandboxVMInfo{}, err
 	}
-	networkNames, err := sandboxNetworkNames(sandbox)
-	if err != nil {
-		return SandboxVMInfo{}, err
-	}
 	if containerInfo.State == nil || !containerInfo.State.Running {
 		if err := dockerClient.ContainerStart(ctx, containerInfo.ID, containerapi.StartOptions{}); err != nil {
 			return SandboxVMInfo{}, fmt.Errorf("start docker container %s: %w", containerInfo.ID, err)
 		}
 	}
 	if topology.containerized {
-		networkNames = append(networkNames, string(topology.networkMode))
-	}
-	if err := ensureDockerContainerNetworks(ctx, dockerClient, containerInfo, networkNames); err != nil {
-		return SandboxVMInfo{}, err
+		if err := ensureDockerContainerNetworks(ctx, dockerClient, containerInfo, []string{string(topology.networkMode)}); err != nil {
+			return SandboxVMInfo{}, err
+		}
 	}
 	containerInfo, err = dockerClient.ContainerInspect(ctx, containerInfo.ID)
 	if err != nil {

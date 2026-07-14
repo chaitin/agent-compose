@@ -61,21 +61,3 @@ func sandboxNetworkBindings(sandbox *Sandbox, publisher string) ([]SandboxPortBi
 	})
 	return bindings, nil
 }
-
-func sandboxNetworkNames(sandbox *Sandbox) ([]string, error) {
-	if sandbox == nil || sandbox.Network == nil {
-		return nil, nil
-	}
-	result := make([]string, 0, len(sandbox.Network.Attachments))
-	for i, attachment := range sandbox.Network.Attachments {
-		name := strings.TrimSpace(attachment.RuntimeNetworkName)
-		if name == "" {
-			return nil, fmt.Errorf("network attachment %d has no runtime network name", i)
-		}
-		if !slices.Contains(result, name) {
-			result = append(result, name)
-		}
-	}
-	slices.Sort(result)
-	return result, nil
-}

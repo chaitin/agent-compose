@@ -394,8 +394,7 @@ func SandboxNetworkStateToProto(state *domain.SandboxNetworkState) *agentcompose
 	result := &agentcomposev2.SandboxNetworkState{}
 	for _, attachment := range state.Attachments {
 		result.Attachments = append(result.Attachments, &agentcomposev2.SandboxNetworkEndpoint{
-			Name:               attachment.Name,
-			RuntimeNetworkName: attachment.RuntimeNetworkName,
+			Name: attachment.Name,
 		})
 	}
 	for _, binding := range state.Bindings {

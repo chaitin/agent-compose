@@ -11,9 +11,9 @@ import (
 )
 
 func TestManagerUsesConfiguredRuntimePublishAddress(t *testing.T) {
-	infra := &infrastructureStub{networks: map[string]string{"frontend": "project_frontend"}}
+	provider := &publishAddressProviderStub{}
 	manager := &Manager{
-		Infrastructure:        infra,
+		PublishAddresses:      provider,
 		Ports:                 &portAllocatorStub{next: 32000},
 		DockerPublishAddress:  "172.23.0.1",
 		RuntimePublishAddress: "172.23.0.2",
@@ -23,8 +23,8 @@ func TestManagerUsesConfiguredRuntimePublishAddress(t *testing.T) {
 	if err := manager.PrepareSandbox(context.Background(), sandbox); err != nil {
 		t.Fatalf("PrepareSandbox() error = %v", err)
 	}
-	if infra.defaultCalls != 0 {
-		t.Fatalf("DefaultPublishAddress() calls = %d", infra.defaultCalls)
+	if provider.defaultCalls != 0 {
+		t.Fatalf("DefaultPublishAddress() calls = %d", provider.defaultCalls)
 	}
 	binding := sandbox.NetworkState.Bindings[0]
 	if binding.HostIP != "172.23.0.2" || binding.HostPort != 32000 || binding.GuestPort != 8080 || binding.Publisher != PublisherDirect {
@@ -37,7 +37,6 @@ func TestManagerUsesConfiguredRuntimePublishAddress(t *testing.T) {
 
 func TestManagerUsesConfiguredDockerPublishAddress(t *testing.T) {
 	manager := &Manager{
-		Infrastructure:        &infrastructureStub{networks: map[string]string{"frontend": "project_frontend"}},
 		Ports:                 &portAllocatorStub{next: 32000},
 		DockerPublishAddress:  "172.23.0.1",
 		RuntimePublishAddress: "172.23.0.2",
@@ -59,26 +58,21 @@ func TestManagerUsesConfiguredDockerPublishAddress(t *testing.T) {
 }
 
 func TestManagerFallsBackToDefaultBridgeGateway(t *testing.T) {
-	infra := &infrastructureStub{
+	provider := &publishAddressProviderStub{
 		defaultAddress: "172.17.0.1",
-		networks:       map[string]string{"frontend": "project_frontend"},
 	}
-	manager := &Manager{Infrastructure: infra, Ports: &portAllocatorStub{next: 32000}}
+	manager := &Manager{PublishAddresses: provider, Ports: &portAllocatorStub{next: 32000}}
 
 	if err := manager.PrepareSandbox(context.Background(), networkTestSandbox(driverpkg.RuntimeDriverBoxlite)); err != nil {
 		t.Fatalf("PrepareSandbox() error = %v", err)
 	}
-	if infra.defaultCalls != 1 {
-		t.Fatalf("DefaultPublishAddress() calls = %d", infra.defaultCalls)
+	if provider.defaultCalls != 1 {
+		t.Fatalf("DefaultPublishAddress() calls = %d", provider.defaultCalls)
 	}
 }
 
 func TestManagerCreatesOneListenerForMultipleNetworks(t *testing.T) {
-	infra := &infrastructureStub{networks: map[string]string{
-		"frontend": "project_frontend",
-		"backend":  "project_backend",
-	}}
-	manager := &Manager{Infrastructure: infra, Ports: &portAllocatorStub{next: 32000}, DockerPublishAddress: "172.17.0.1"}
+	manager := &Manager{Ports: &portAllocatorStub{next: 32000}, DockerPublishAddress: "172.17.0.1"}
 	sandbox := networkTestSandbox(driverpkg.RuntimeDriverDocker)
 	sandbox.NetworkIntent.Attachments = append(sandbox.NetworkIntent.Attachments,
 		domain.SandboxNetworkAttachment{Name: "backend", Driver: "port_mapping"})
@@ -94,7 +88,7 @@ func TestManagerCreatesOneListenerForMultipleNetworks(t *testing.T) {
 	}
 }
 
-func TestManagerAllowsFixedExternalPortWithoutInfrastructureOrAllocator(t *testing.T) {
+func TestManagerAllowsFixedExternalPortWithoutPublishAddressProviderOrAllocator(t *testing.T) {
 	manager := &Manager{}
 	sandbox := networkTestSandbox(driverpkg.RuntimeDriverBoxlite)
 	sandbox.NetworkIntent.Attachments = nil
@@ -112,9 +106,8 @@ func TestManagerAllowsFixedExternalPortWithoutInfrastructureOrAllocator(t *testi
 
 func TestManagerReturnsDefaultPublishAddressError(t *testing.T) {
 	manager := &Manager{
-		Infrastructure: &infrastructureStub{
+		PublishAddresses: &publishAddressProviderStub{
 			defaultErr: errors.New("Docker unavailable"),
-			networks:   map[string]string{"frontend": "project_frontend"},
 		},
 		Ports: &portAllocatorStub{next: 32000},
 	}
@@ -126,7 +119,6 @@ func TestManagerReturnsDefaultPublishAddressError(t *testing.T) {
 
 func TestManagerReturnsPortAllocationError(t *testing.T) {
 	manager := &Manager{
-		Infrastructure:       &infrastructureStub{networks: map[string]string{"frontend": "project_frontend"}},
 		Ports:                &portAllocatorStub{err: errors.New("no ports")},
 		DockerPublishAddress: "172.17.0.1",
 	}
@@ -138,7 +130,6 @@ func TestManagerReturnsPortAllocationError(t *testing.T) {
 
 func TestManagerPreservesAllocatedPortsAcrossResume(t *testing.T) {
 	manager := &Manager{
-		Infrastructure:       &infrastructureStub{networks: map[string]string{"frontend": "project_frontend"}},
 		Ports:                &portAllocatorStub{next: 32000},
 		DockerPublishAddress: "172.17.0.1",
 	}
@@ -179,24 +170,15 @@ func bindingWithVisibility(t *testing.T, bindings []domain.SandboxPortBinding, v
 	return domain.SandboxPortBinding{}
 }
 
-type infrastructureStub struct {
+type publishAddressProviderStub struct {
 	defaultAddress string
 	defaultErr     error
 	defaultCalls   int
-	networks       map[string]string
 }
 
-func (s *infrastructureStub) DefaultPublishAddress(context.Context) (string, error) {
+func (s *publishAddressProviderStub) DefaultPublishAddress(context.Context) (string, error) {
 	s.defaultCalls++
 	return s.defaultAddress, s.defaultErr
-}
-
-func (s *infrastructureStub) EnsureNetwork(_ context.Context, request NetworkRequest) (string, error) {
-	name, ok := s.networks[request.NetworkName]
-	if !ok {
-		return "", errors.New("network not found")
-	}
-	return name, nil
 }
 
 type portAllocatorStub struct {

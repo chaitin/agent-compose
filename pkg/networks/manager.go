@@ -16,28 +16,18 @@ const (
 
 	PublisherDocker = "docker"
 	PublisherDirect = "direct"
-
-	defaultServiceCIDR = "10.254.0.0/16"
 )
 
-type Infrastructure interface {
+type PublishAddressProvider interface {
 	DefaultPublishAddress(context.Context) (string, error)
-	EnsureNetwork(context.Context, NetworkRequest) (string, error)
 }
 
 type PortAllocator interface {
 	AllocateHostPort(context.Context, string) (int, error)
 }
 
-type NetworkRequest struct {
-	ProjectID   string
-	ProjectName string
-	NetworkName string
-	ServiceCIDR string
-}
-
 type Manager struct {
-	Infrastructure        Infrastructure
+	PublishAddresses      PublishAddressProvider
 	Ports                 PortAllocator
 	DockerPublishAddress  string
 	RuntimePublishAddress string
@@ -54,9 +44,6 @@ func (m *Manager) PrepareSandbox(ctx context.Context, sandbox *domain.Sandbox) e
 	if m == nil {
 		return fmt.Errorf("network manager is required")
 	}
-	if len(intent.Attachments) > 0 && m.Infrastructure == nil {
-		return fmt.Errorf("network infrastructure is required")
-	}
 	if m.Ports == nil && ((len(intent.Attachments) > 0 && len(intent.Expose) > 0) || hasDynamicPublishedPort(intent.Ports)) {
 		return fmt.Errorf("network port allocator is required")
 	}
@@ -64,22 +51,8 @@ func (m *Manager) PrepareSandbox(ctx context.Context, sandbox *domain.Sandbox) e
 	state := &domain.SandboxNetworkState{}
 	networkNames := make([]string, 0, len(intent.Attachments))
 	for _, attachment := range intent.Attachments {
-		runtimeNetworkName, err := m.Infrastructure.EnsureNetwork(ctx, NetworkRequest{
-			ProjectID:   intent.ProjectID,
-			ProjectName: intent.ProjectName,
-			NetworkName: attachment.Name,
-			ServiceCIDR: defaultServiceCIDR,
-		})
-		if err != nil {
-			return fmt.Errorf("ensure network %s: %w", attachment.Name, err)
-		}
-		runtimeNetworkName = strings.TrimSpace(runtimeNetworkName)
-		if runtimeNetworkName == "" {
-			return fmt.Errorf("network %s returned no runtime network name", attachment.Name)
-		}
 		state.Attachments = append(state.Attachments, domain.SandboxNetworkEndpoint{
-			Name:               attachment.Name,
-			RuntimeNetworkName: runtimeNetworkName,
+			Name: attachment.Name,
 		})
 		networkNames = append(networkNames, attachment.Name)
 	}
@@ -118,7 +91,10 @@ func (m *Manager) internalPublishAddress(ctx context.Context, runtimeDriver stri
 	if address != "" {
 		return address, nil
 	}
-	address, err := m.Infrastructure.DefaultPublishAddress(ctx)
+	if m.PublishAddresses == nil {
+		return "", fmt.Errorf("network publish address provider is required")
+	}
+	address, err := m.PublishAddresses.DefaultPublishAddress(ctx)
 	if err != nil {
 		return "", fmt.Errorf("resolve default network publish address: %w", err)
 	}

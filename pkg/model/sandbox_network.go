@@ -32,8 +32,7 @@ type SandboxNetworkState struct {
 }
 
 type SandboxNetworkEndpoint struct {
-	Name               string `json:"name"`
-	RuntimeNetworkName string `json:"runtime_network_name"`
+	Name string `json:"name"`
 }
 
 type SandboxPortBinding struct {

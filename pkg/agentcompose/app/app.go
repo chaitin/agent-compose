@@ -259,7 +259,7 @@ func NewSandboxDriver(di do.Injector) (*adapters.SandboxDriver, error) {
 func NewSandboxNetworkManager(di do.Injector) (*networks.Manager, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
 	return &networks.Manager{
-		Infrastructure: adapters.NewDockerNetworkInfrastructure(),
+		PublishAddresses: adapters.NewDockerPublishAddressProvider(),
 		Ports: adapters.StorePortAllocator{
 			Store: do.MustInvoke[*sessionstore.Store](di),
 		},

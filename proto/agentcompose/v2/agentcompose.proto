@@ -914,7 +914,6 @@ message SandboxNetworkState {
 
 message SandboxNetworkEndpoint {
   string name = 1;
-  string runtime_network_name = 2;
 }
 
 message SandboxPortBinding {
