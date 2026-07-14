@@ -133,7 +133,7 @@ func TestLoaderSandboxRunnerRejectsUncompiledDriverBeforePersistence(t *testing.
 			ctx := context.Background()
 			bridge, sandboxDriver := newTestSandboxRPCBridge(t)
 			publisher := &loaderSessionPublisherFake{}
-			runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, sandboxDriver, nil, nil, bridge.streams, publisher, nil)
+			runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, bridge.workspaceEnsurer, sandboxDriver, nil, nil, bridge.streams, publisher, nil)
 			loader := domain.Loader{Summary: domain.LoaderSummary{
 				ID:            "loader-uncompiled-" + runtimeDriver,
 				Name:          "Uncompiled " + runtimeDriver,

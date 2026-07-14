@@ -52,7 +52,7 @@ func TestIntegrationLoaderStickyResumePreservesReadyFileWorkspace(t *testing.T) 
 		ID:            loaderID,
 		Name:          "Loader Sticky Resume",
 		WorkspaceID:   workspaceID,
-		Driver:        driverpkg.RuntimeDriverBoxlite,
+		Driver:        driverpkg.RuntimeDriverDocker,
 		SandboxPolicy: domain.LoaderSandboxPolicySticky,
 	}}
 	request := domain.LoaderAgentRequest{BindingTriggerID: triggerID}

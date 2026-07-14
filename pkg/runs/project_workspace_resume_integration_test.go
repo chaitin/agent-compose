@@ -16,6 +16,7 @@ import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"agent-compose/pkg/execution"
+	"agent-compose/pkg/images"
 	"agent-compose/pkg/internal/testutil"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/runs"
@@ -40,7 +41,7 @@ func TestIntegrationProjectLocalWorkspaceExistingAndNewSandboxState(t *testing.T
 		DataRoot:      filepath.Join(root, "data"),
 		DbAddr:        filepath.Join(root, "data", "data.db"),
 		SandboxRoot:   filepath.Join(root, "sandboxes"),
-		RuntimeDriver: driverpkg.RuntimeDriverBoxlite,
+		RuntimeDriver: driverpkg.RuntimeDriverDocker,
 		DefaultImage:  "guest:latest",
 	}
 	di := do.New()
@@ -82,6 +83,7 @@ func TestIntegrationProjectLocalWorkspaceExistingAndNewSandboxState(t *testing.T
 		WorkspaceEnsurer: workspaces.NewProvisioner(config, configDB, sandboxStore),
 		Driver:           driver,
 		Executor:         projectWorkspaceExecutor{},
+		Images:           projectWorkspaceImages{},
 	})
 
 	runA, execErr, err := controller.RunProjectAgent(ctx, runs.RunAgentRequest{
@@ -295,7 +297,7 @@ func upsertProjectWorkspaceAgent(t *testing.T, ctx context.Context, store *confi
 		Revision:       revision,
 		Provider:       "codex",
 		Image:          "guest:latest",
-		Driver:         driverpkg.RuntimeDriverBoxlite,
+		Driver:         driverpkg.RuntimeDriverDocker,
 		SpecJSON:       `{"name":"worker"}`,
 	}); err != nil {
 		t.Fatalf("upsert project agent revision %d: %v", revision, err)
@@ -305,7 +307,7 @@ func upsertProjectWorkspaceAgent(t *testing.T, ctx context.Context, store *confi
 		Name:                   "worker",
 		Enabled:                true,
 		Provider:               "codex",
-		Driver:                 driverpkg.RuntimeDriverBoxlite,
+		Driver:                 driverpkg.RuntimeDriverDocker,
 		GuestImage:             "guest:latest",
 		ConfigJSON:             "{}",
 		ManagedProjectID:       project.ID,
@@ -317,6 +319,24 @@ func upsertProjectWorkspaceAgent(t *testing.T, ctx context.Context, store *confi
 }
 
 type projectWorkspaceExecutor struct{}
+
+type projectWorkspaceImages struct{}
+
+func (projectWorkspaceImages) ListImages(context.Context, images.ListRequest) (images.ListResult, error) {
+	return images.ListResult{}, nil
+}
+
+func (projectWorkspaceImages) PullImage(context.Context, images.PullRequest) (images.PullResult, error) {
+	return images.PullResult{}, nil
+}
+
+func (projectWorkspaceImages) InspectImage(context.Context, images.InspectRequest) (images.InspectResult, error) {
+	return images.InspectResult{}, nil
+}
+
+func (projectWorkspaceImages) RemoveImage(context.Context, images.RemoveRequest) (images.RemoveResult, error) {
+	return images.RemoveResult{}, nil
+}
 
 func (projectWorkspaceExecutor) ExecuteAgentRequest(_ context.Context, _ *domain.Sandbox, _ execution.ExecuteAgentRequest) (domain.NotebookCell, domain.SandboxEvent, domain.SandboxEvent, error) {
 	return domain.NotebookCell{ID: "cell", Type: execution.CellTypeAgent, Output: "done", Success: true}, domain.SandboxEvent{}, domain.SandboxEvent{}, nil

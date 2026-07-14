@@ -288,7 +288,7 @@ func projectRunEnsurerRecord(runID string) domain.ProjectRunRecord {
 		ProjectName: "Project",
 		AgentName:   "worker",
 		Source:      domain.ProjectRunSourceAPI,
-		Driver:      "boxlite",
+		Driver:      "docker",
 		ImageRef:    "guest:latest",
 	}
 }
@@ -308,7 +308,7 @@ func createProjectRunWorkspaceSandbox(t *testing.T, fixture *controllerRunFixtur
 		fixture.ctx,
 		"existing",
 		"",
-		"boxlite",
+		"docker",
 		"guest:latest",
 		workspace.ID,
 		domain.SandboxTypeManual,

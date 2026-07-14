@@ -87,7 +87,7 @@ func TestLoaderSandboxRunnerEnsureUsesWorkspaceEnsurerBeforeGuideAndDriver(t *te
 		ID:            "loader-create",
 		Name:          "Loader Create",
 		WorkspaceID:   workspace.ID,
-		Driver:        driverpkg.RuntimeDriverBoxlite,
+		Driver:        driverpkg.RuntimeDriverDocker,
 		SandboxPolicy: domain.LoaderSandboxPolicySticky,
 		CapsetIDs:     []string{"dev"},
 	}}
@@ -140,7 +140,7 @@ func TestLoaderSandboxRunnerEnsureWorkspaceEnsurerErrorShortCircuitsDriver(t *te
 	loader := domain.Loader{Summary: domain.LoaderSummary{
 		ID:            "loader-ensure-error",
 		Name:          "Loader Ensure Error",
-		Driver:        driverpkg.RuntimeDriverBoxlite,
+		Driver:        driverpkg.RuntimeDriverDocker,
 		SandboxPolicy: domain.LoaderSandboxPolicyNew,
 		CapsetIDs:     []string{"dev"},
 	}}
@@ -196,7 +196,7 @@ func TestLoaderSandboxRunnerEnsureRuntimeFailurePreservesReadyProvisioning(t *te
 		ID:            "loader-runtime-error",
 		Name:          "Loader Runtime Error",
 		WorkspaceID:   workspace.ID,
-		Driver:        driverpkg.RuntimeDriverBoxlite,
+		Driver:        driverpkg.RuntimeDriverDocker,
 		SandboxPolicy: domain.LoaderSandboxPolicyNew,
 	}}
 
