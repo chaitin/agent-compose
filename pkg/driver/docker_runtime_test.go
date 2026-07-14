@@ -500,6 +500,37 @@ func TestDockerJupyterPortConfigRequestsAutomaticLoopbackBinding(t *testing.T) {
 	}
 }
 
+func TestDockerSandboxPortConfigCombinesJupyterAndNetworkBindings(t *testing.T) {
+	sandbox := &Sandbox{Network: &SandboxNetwork{Bindings: []SandboxPortBinding{
+		{HostIP: "10.254.1.1", HostPort: 32000, GuestPort: 8080, Protocol: "tcp", Publisher: NetworkPublisherDocker},
+		{HostIP: "10.254.2.1", HostPort: 32001, GuestPort: 8080, Protocol: "tcp", Publisher: NetworkPublisherDocker},
+	}}}
+	exposedPorts, portBindings, err := dockerSandboxPortConfig(sandbox, ProxyState{Enabled: true, GuestPort: 9999})
+	if err != nil {
+		t.Fatalf("dockerSandboxPortConfig() error = %v", err)
+	}
+	if len(exposedPorts) != 2 {
+		t.Fatalf("exposed ports = %#v", exposedPorts)
+	}
+	bindings := portBindings[nat.Port("8080/tcp")]
+	if len(bindings) != 2 || bindings[0].HostIP != "10.254.1.1" || bindings[1].HostPort != "32001" {
+		t.Fatalf("network port bindings = %#v", bindings)
+	}
+	jupyter := portBindings[nat.Port("9999/tcp")]
+	if len(jupyter) != 1 || jupyter[0].HostIP != "127.0.0.1" || jupyter[0].HostPort != "" {
+		t.Fatalf("jupyter port binding = %#v", jupyter)
+	}
+}
+
+func TestDockerSandboxPrimaryNetworkModeDoesNotInheritHost(t *testing.T) {
+	if got := dockerSandboxPrimaryNetworkMode("host"); got != containerapi.NetworkMode("default") {
+		t.Fatalf("dockerSandboxPrimaryNetworkMode(host) = %q", got)
+	}
+	if got := dockerSandboxPrimaryNetworkMode("project_default"); got != containerapi.NetworkMode("project_default") {
+		t.Fatalf("dockerSandboxPrimaryNetworkMode(project_default) = %q", got)
+	}
+}
+
 func TestDockerJupyterHostPortSelectsValidLoopbackBinding(t *testing.T) {
 	containerInfo := dockerInspectWithJupyterBindings("container-1", "/runtime-ref", 9999, []nat.PortBinding{
 		{HostIP: "0.0.0.0", HostPort: "41000"},

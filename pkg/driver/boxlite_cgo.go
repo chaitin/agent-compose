@@ -1041,6 +1041,24 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 			return nil, err
 		}
 	}
+	bindings, err := sandboxNetworkBindings(sandbox, NetworkPublisherDirect)
+	if err != nil {
+		return nil, err
+	}
+	for _, binding := range bindings {
+		hostIP := C.CString(binding.HostIP)
+		code := C.boxlite_options_add_port(
+			options,
+			C.uint16_t(binding.HostPort),
+			C.uint16_t(binding.GuestPort),
+			C.BoxlitePortProtocolTcp,
+			hostIP,
+		)
+		C.free(unsafe.Pointer(hostIP))
+		if err := boxliteStatusError(code, nil, "add sandbox network port forwarding"); err != nil {
+			return nil, err
+		}
+	}
 
 	entrypoint, entrypointLen, freeEntrypoint := cStringArray([]string{"sh", "-lc"})
 	defer freeEntrypoint()

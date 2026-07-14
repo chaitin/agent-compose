@@ -983,6 +983,28 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	// private/internal IPs (e.g. an internal container registry).
 	rebindDisabled := false
 	network := microsandbox.NetworkPolicy.AllowAll()
+	allowedAddresses, serviceCIDR, policyEnabled, err := sandboxNetworkEgressPolicy(session)
+	if err != nil {
+		return nil, err
+	}
+	if policyEnabled {
+		network = &microsandbox.NetworkConfig{
+			DefaultEgress:  microsandbox.PolicyActionAllow,
+			DefaultIngress: microsandbox.PolicyActionAllow,
+		}
+		for _, address := range allowedAddresses {
+			network.Rules = append(network.Rules, microsandbox.PolicyRule{
+				Action:      microsandbox.PolicyActionAllow,
+				Direction:   microsandbox.PolicyDirectionEgress,
+				Destination: address,
+			})
+		}
+		network.Rules = append(network.Rules, microsandbox.PolicyRule{
+			Action:      microsandbox.PolicyActionDeny,
+			Direction:   microsandbox.PolicyDirectionEgress,
+			Destination: serviceCIDR,
+		})
+	}
 	network.DNS = &microsandbox.DNSConfig{RebindProtection: &rebindDisabled}
 	options := []microsandbox.SandboxOption{
 		microsandbox.WithImage(imageRef),
@@ -1000,6 +1022,22 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	}
 	if jupyterEnabled(proxyState) && proxyState.HostPort > 0 {
 		options = append(options, microsandbox.WithPorts(map[uint16]uint16{uint16(proxyState.HostPort): uint16(proxyState.GuestPort)}))
+	}
+	bindings, err := sandboxNetworkBindings(session, NetworkPublisherDirect)
+	if err != nil {
+		return nil, err
+	}
+	if len(bindings) > 0 {
+		portBindings := make([]microsandbox.PortBinding, 0, len(bindings))
+		for _, binding := range bindings {
+			portBindings = append(portBindings, microsandbox.PortBinding{
+				Bind:      binding.HostIP,
+				HostPort:  uint16(binding.HostPort),
+				GuestPort: uint16(binding.GuestPort),
+				Protocol:  microsandbox.PortProtocolTCP,
+			})
+		}
+		options = append(options, microsandbox.WithPortBindings(portBindings...))
 	}
 	sandbox, err := microsandbox.CreateSandbox(ctx, name, options...)
 	if err != nil {

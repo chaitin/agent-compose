@@ -141,15 +141,20 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	if err != nil {
 		return SandboxVMInfo{}, err
 	}
+	networkNames, err := sandboxNetworkNames(sandbox)
+	if err != nil {
+		return SandboxVMInfo{}, err
+	}
 	if containerInfo.State == nil || !containerInfo.State.Running {
 		if err := dockerClient.ContainerStart(ctx, containerInfo.ID, containerapi.StartOptions{}); err != nil {
 			return SandboxVMInfo{}, fmt.Errorf("start docker container %s: %w", containerInfo.ID, err)
 		}
 	}
 	if topology.containerized {
-		if err := ensureDockerContainerNetwork(ctx, dockerClient, containerInfo, string(topology.networkMode)); err != nil {
-			return SandboxVMInfo{}, err
-		}
+		networkNames = append(networkNames, string(topology.networkMode))
+	}
+	if err := ensureDockerContainerNetworks(ctx, dockerClient, containerInfo, networkNames); err != nil {
+		return SandboxVMInfo{}, err
 	}
 	containerInfo, err = dockerClient.ContainerInspect(ctx, containerInfo.ID)
 	if err != nil {
@@ -676,11 +681,12 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 	if err != nil {
 		return containerapi.InspectResponse{}, false, err
 	}
-	var exposedPorts nat.PortSet
-	var portBindings nat.PortMap
+	exposedPorts, portBindings, err := dockerSandboxPortConfig(sandbox, proxyState)
+	if err != nil {
+		return containerapi.InspectResponse{}, false, err
+	}
 	cmdText := "tail -f /dev/null"
 	if jupyterEnabled(proxyState) {
-		exposedPorts, portBindings = dockerJupyterPortConfig(proxyState.GuestPort)
 		cmdText = jupyterLaunchCommand(r.config, proxyState, false)
 	}
 	containerConfig := &containerapi.Config{
@@ -799,6 +805,33 @@ func dockerJupyterPortConfig(guestPort int) (nat.PortSet, nat.PortMap) {
 	}
 }
 
+func dockerSandboxPortConfig(sandbox *Sandbox, proxyState ProxyState) (nat.PortSet, nat.PortMap, error) {
+	var exposedPorts nat.PortSet
+	var portBindings nat.PortMap
+	if jupyterEnabled(proxyState) {
+		exposedPorts, portBindings = dockerJupyterPortConfig(proxyState.GuestPort)
+	}
+	bindings, err := sandboxNetworkBindings(sandbox, NetworkPublisherDocker)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, binding := range bindings {
+		if exposedPorts == nil {
+			exposedPorts = make(nat.PortSet)
+		}
+		if portBindings == nil {
+			portBindings = make(nat.PortMap)
+		}
+		port := nat.Port(strconv.Itoa(binding.GuestPort) + "/tcp")
+		exposedPorts[port] = struct{}{}
+		portBindings[port] = append(portBindings[port], nat.PortBinding{
+			HostIP:   binding.HostIP,
+			HostPort: strconv.Itoa(binding.HostPort),
+		})
+	}
+	return exposedPorts, portBindings, nil
+}
+
 func SandboxStopContextTimeout(driver string, stopTimeout time.Duration) time.Duration {
 	if driver != RuntimeDriverDocker || stopTimeout <= 0 {
 		return stopTimeout
@@ -816,7 +849,15 @@ func (r *dockerRuntime) dockerDaemonTopology(ctx context.Context, dockerClient *
 		slog.Warn("current process is not running in an inspectable docker container; falling back to default docker network")
 		return dockerDaemonTopology{networkMode: containerapi.NetworkMode("default")}
 	}
-	return dockerDaemonTopology{networkMode: containerapi.NetworkMode(networkName), containerized: true}
+	return dockerDaemonTopology{networkMode: dockerSandboxPrimaryNetworkMode(networkName), containerized: true}
+}
+
+func dockerSandboxPrimaryNetworkMode(daemonNetwork string) containerapi.NetworkMode {
+	daemonNetwork = strings.TrimSpace(daemonNetwork)
+	if daemonNetwork == "" || daemonNetwork == "host" {
+		return containerapi.NetworkMode("default")
+	}
+	return containerapi.NetworkMode(daemonNetwork)
 }
 
 func (r *dockerRuntime) dockerNetworkNameFromSelfContainer(ctx context.Context, dockerClient *client.Client) (string, bool, error) {
@@ -1089,18 +1130,25 @@ func dockerJupyterHostPort(containerInfo containerapi.InspectResponse, guestPort
 	return 0, fmt.Errorf("docker container %s has no valid loopback binding for jupyter port %s", containerInfo.ID, port)
 }
 
-func ensureDockerContainerNetwork(ctx context.Context, dockerClient *client.Client, containerInfo containerapi.InspectResponse, networkName string) error {
-	networkName = strings.TrimSpace(networkName)
-	if networkName == "" || networkName == "default" {
-		return nil
-	}
+func ensureDockerContainerNetworks(ctx context.Context, dockerClient *client.Client, containerInfo containerapi.InspectResponse, networkNames []string) error {
+	connected := make(map[string]struct{}, len(networkNames))
 	if containerInfo.NetworkSettings != nil {
-		if _, ok := containerInfo.NetworkSettings.Networks[networkName]; ok {
-			return nil
+		for name := range containerInfo.NetworkSettings.Networks {
+			connected[name] = struct{}{}
 		}
 	}
-	if err := dockerClient.NetworkConnect(ctx, networkName, containerInfo.ID, nil); err != nil {
-		return fmt.Errorf("connect docker container %s to daemon network %s: %w", containerInfo.ID, networkName, err)
+	for _, rawName := range networkNames {
+		name := strings.TrimSpace(rawName)
+		if name == "" || name == "default" || name == "host" {
+			continue
+		}
+		if _, ok := connected[name]; ok {
+			continue
+		}
+		if err := dockerClient.NetworkConnect(ctx, name, containerInfo.ID, nil); err != nil {
+			return fmt.Errorf("connect docker container %s to network %s: %w", containerInfo.ID, name, err)
+		}
+		connected[name] = struct{}{}
 	}
 	return nil
 }
