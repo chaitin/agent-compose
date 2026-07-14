@@ -22,6 +22,10 @@ const (
 	PublisherDocker = "docker"
 	PublisherDirect = "direct"
 
+	IsolationNotApplicable = "not_applicable"
+	IsolationUnprotected   = "unprotected"
+	IsolationEnforced      = "enforced"
+
 	DefaultServiceCIDR = "10.254.0.0/16"
 )
 
@@ -34,6 +38,10 @@ type Infrastructure interface {
 
 type PortAllocator interface {
 	AllocateHostPort(context.Context) (int, error)
+}
+
+type IsolationPolicy interface {
+	Evaluate(context.Context, *domain.Sandbox, *domain.SandboxNetworkState) (string, error)
 }
 
 type NetworkRequest struct {
@@ -52,6 +60,7 @@ type NetworkAccess struct {
 type Manager struct {
 	Infrastructure Infrastructure
 	Ports          PortAllocator
+	Isolation      IsolationPolicy
 	ServiceCIDR    string
 }
 
@@ -120,6 +129,20 @@ func (m *Manager) PrepareSandbox(ctx context.Context, sandbox *domain.Sandbox) e
 	}
 	slices.Sort(state.AllowedAddresses)
 	slices.SortFunc(state.Bindings, compareBindings)
+	state.Isolation = IsolationNotApplicable
+	if len(state.Attachments) > 0 {
+		state.Isolation = IsolationUnprotected
+		if m.Isolation != nil {
+			isolation, err := m.Isolation.Evaluate(ctx, sandbox, state)
+			if err != nil {
+				return fmt.Errorf("apply sandbox network isolation: %w", err)
+			}
+			if isolation != IsolationEnforced && isolation != IsolationUnprotected {
+				return fmt.Errorf("network isolation policy returned invalid status %q", isolation)
+			}
+			state.Isolation = isolation
+		}
+	}
 	sandbox.NetworkState = state
 	return nil
 }

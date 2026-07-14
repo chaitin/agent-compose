@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +57,7 @@ type Config struct {
 	AgentTimeout               time.Duration
 	LoaderRunTimeout           time.Duration
 	RuntimeDriver              string
+	NetworkEnforceIsolation    bool
 	BoxliteHome                string
 	BoxliteRuntimeDir          string
 	DockerHome                 string
@@ -199,6 +201,14 @@ func NewConfig(di do.Injector) (*Config, error) {
 	runtimeDriver = resolveRuntimeDriver(runtimeDriver)
 	if err := validateRuntimeDriver(runtimeDriver); err != nil {
 		return nil, err
+	}
+	networkEnforceIsolation := false
+	if raw := strings.TrimSpace(os.Getenv("NETWORK_ENFORCE_ISOLATION")); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("parse NETWORK_ENFORCE_ISOLATION: %w", err)
+		}
+		networkEnforceIsolation = parsed
 	}
 
 	boxliteHome := os.Getenv("BOXLITE_HOME")
@@ -444,6 +454,7 @@ func NewConfig(di do.Injector) (*Config, error) {
 		AgentTimeout:               agentTimeout,
 		LoaderRunTimeout:           loaderRunTimeout,
 		RuntimeDriver:              runtimeDriver,
+		NetworkEnforceIsolation:    networkEnforceIsolation,
 		BoxliteHome:                boxliteHome,
 		BoxliteRuntimeDir:          boxliteRuntimeDir,
 		DockerHome:                 dockerHome,

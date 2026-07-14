@@ -154,6 +154,46 @@ func TestManagerPreservesAllocatedPortsAcrossResume(t *testing.T) {
 	}
 }
 
+func TestManagerRecordsIsolationPolicyResult(t *testing.T) {
+	manager := &Manager{
+		Infrastructure: &infrastructureStub{
+			deployment: DeploymentNative,
+			access: map[string]NetworkAccess{
+				"frontend": {RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1"},
+			},
+		},
+		Ports:     &portAllocatorStub{next: 32000},
+		Isolation: isolationPolicyStub{status: IsolationEnforced},
+	}
+	sandbox := networkTestSandbox(driverpkg.RuntimeDriverMicrosandbox)
+	if err := manager.PrepareSandbox(context.Background(), sandbox); err != nil {
+		t.Fatalf("PrepareSandbox() error = %v", err)
+	}
+	if sandbox.NetworkState.Isolation != IsolationEnforced {
+		t.Fatalf("isolation = %q", sandbox.NetworkState.Isolation)
+	}
+}
+
+func TestManagerDoesNotPersistPlanWhenIsolationFails(t *testing.T) {
+	manager := &Manager{
+		Infrastructure: &infrastructureStub{
+			deployment: DeploymentNative,
+			access: map[string]NetworkAccess{
+				"frontend": {RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1"},
+			},
+		},
+		Ports:     &portAllocatorStub{next: 32000},
+		Isolation: isolationPolicyStub{err: ErrUnsupported},
+	}
+	sandbox := networkTestSandbox(driverpkg.RuntimeDriverDocker)
+	if err := manager.PrepareSandbox(context.Background(), sandbox); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("PrepareSandbox() error = %v", err)
+	}
+	if sandbox.NetworkState != nil {
+		t.Fatalf("failed plan was persisted in memory: %#v", sandbox.NetworkState)
+	}
+}
+
 func networkTestSandbox(driver string) *domain.Sandbox {
 	return &domain.Sandbox{
 		Summary: domain.SandboxSummary{ID: "sandbox-1", Driver: driver},
@@ -198,6 +238,15 @@ func (s *infrastructureStub) EnsureNetwork(_ context.Context, request NetworkReq
 type portAllocatorStub struct {
 	next int
 	err  error
+}
+
+type isolationPolicyStub struct {
+	status string
+	err    error
+}
+
+func (s isolationPolicyStub) Evaluate(context.Context, *domain.Sandbox, *domain.SandboxNetworkState) (string, error) {
+	return s.status, s.err
 }
 
 func (s *portAllocatorStub) AllocateHostPort(context.Context) (int, error) {

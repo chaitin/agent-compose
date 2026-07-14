@@ -259,6 +259,9 @@ func NewSandboxDriver(di do.Injector) (*adapters.SandboxDriver, error) {
 func NewSandboxNetworkManager(di do.Injector) (*networks.Manager, error) {
 	return &networks.Manager{
 		Infrastructure: adapters.NewDockerNetworkInfrastructure(),
+		Isolation: adapters.RuntimeIsolationPolicy{
+			Enforce: do.MustInvoke[*appconfig.Config](di).NetworkEnforceIsolation,
+		},
 		Ports: adapters.StorePortAllocator{
 			Store: do.MustInvoke[*sessionstore.Store](di),
 		},

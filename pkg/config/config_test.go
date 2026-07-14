@@ -86,6 +86,24 @@ func TestNewConfigNormalizesJupyterProxyBase(t *testing.T) {
 	}
 }
 
+func TestNewConfigParsesNetworkEnforceIsolation(t *testing.T) {
+	newConfig := func(t *testing.T, value string) (*Config, error) {
+		t.Helper()
+		t.Setenv("DATA_ROOT", filepath.Join(t.TempDir(), "data"))
+		t.Setenv("NETWORK_ENFORCE_ISOLATION", value)
+		di := do.New()
+		do.ProvideValue(di, slog.Default())
+		return NewConfig(di)
+	}
+	config, err := newConfig(t, "true")
+	if err != nil || !config.NetworkEnforceIsolation {
+		t.Fatalf("NewConfig() isolation = %v, error = %v", config.NetworkEnforceIsolation, err)
+	}
+	if _, err := newConfig(t, "not-a-bool"); err == nil || !strings.Contains(err.Error(), "NETWORK_ENFORCE_ISOLATION") {
+		t.Fatalf("NewConfig() invalid isolation error = %v", err)
+	}
+}
+
 func testNewConfigParsesEnvironment(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DATA_ROOT", filepath.Join(root, "data"))
