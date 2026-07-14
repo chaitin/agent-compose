@@ -197,6 +197,38 @@ func TestLifecycleEnsureProxyReadyWorkspaceEnsurerFailureMarksFailedBeforeDriver
 	}
 }
 
+func TestLifecycleMissingWorkspaceEnsurerReturnsError(t *testing.T) {
+	t.Run("ensure proxy ready", func(t *testing.T) {
+		session := lifecycleTestSession("session-missing-ensurer", driverpkg.RuntimeDriverDocker, domain.VMStatusStopped)
+		store := &fakeLifecycleStore{
+			session:    session,
+			proxyState: domain.ProxyState{Enabled: true, HostPort: unusedTCPPort(t), GuestPort: 8888},
+		}
+		lifecycle := Lifecycle{
+			Config: &appconfig.Config{SandboxStartTimeout: time.Second},
+			Store:  store,
+		}
+
+		_, _, err := lifecycle.EnsureProxyReady(context.Background(), session.Summary.ID)
+		if err == nil || !stringsContains(err.Error(), "workspace ensurer is not configured") {
+			t.Fatalf("EnsureProxyReady error = %v, want missing workspace ensurer error", err)
+		}
+		if store.updated != 1 || session.Summary.VMStatus != domain.VMStatusFailed {
+			t.Fatalf("store updates/status = %d/%q, want 1/%q", store.updated, session.Summary.VMStatus, domain.VMStatusFailed)
+		}
+	})
+
+	t.Run("resume loaded", func(t *testing.T) {
+		session := lifecycleTestSession("session-resume-missing-ensurer", driverpkg.RuntimeDriverDocker, domain.VMStatusStopped)
+		lifecycle := Lifecycle{}
+
+		_, err := lifecycle.ResumeLoaded(context.Background(), session, nil)
+		if err == nil || !stringsContains(err.Error(), "workspace ensurer is not configured") {
+			t.Fatalf("ResumeLoaded error = %v, want missing workspace ensurer error", err)
+		}
+	})
+}
+
 func TestLifecycleEnsureProxyReadyRuntimeFailurePreservesReadyProvisioning(t *testing.T) {
 	session := lifecycleTestSession("session-runtime-fail", driverpkg.RuntimeDriverDocker, domain.VMStatusStopped)
 	session.Workspace = &domain.SandboxWorkspace{ID: "workspace-1"}

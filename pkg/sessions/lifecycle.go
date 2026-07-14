@@ -134,7 +134,7 @@ func (l Lifecycle) EnsureProxyReady(ctx context.Context, sessionID string) (*dom
 	}
 	startCtx, cancel := context.WithTimeout(ctx, l.Config.SandboxStartTimeout)
 	defer cancel()
-	if err := l.WorkspaceEnsurer.Ensure(startCtx, session); err != nil {
+	if err := l.ensureWorkspace(startCtx, session); err != nil {
 		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = l.Store.UpdateSandbox(ctx, session)
 		return nil, domain.ProxyState{}, err
@@ -160,7 +160,7 @@ func (l Lifecycle) EnsureProxyReady(ctx context.Context, sessionID string) (*dom
 }
 
 func (l Lifecycle) ResumeLoaded(ctx context.Context, session *domain.Sandbox, capsetIDs []string) (*domain.Sandbox, error) {
-	if err := l.WorkspaceEnsurer.Ensure(ctx, session); err != nil {
+	if err := l.ensureWorkspace(ctx, session); err != nil {
 		return nil, err
 	}
 	if l.GuideWriter != nil {
@@ -189,6 +189,13 @@ func (l Lifecycle) ResumeLoaded(ctx context.Context, session *domain.Sandbox, ca
 	}
 	domain.RestoreSandboxTransientFields(loaded, session)
 	return loaded, nil
+}
+
+func (l Lifecycle) ensureWorkspace(ctx context.Context, session *domain.Sandbox) error {
+	if l.WorkspaceEnsurer == nil {
+		return fmt.Errorf("workspace ensurer is not configured")
+	}
+	return l.WorkspaceEnsurer.Ensure(ctx, session)
 }
 
 func (l Lifecycle) StopLoaded(ctx context.Context, session *domain.Sandbox) (*domain.Sandbox, bool, error) {
