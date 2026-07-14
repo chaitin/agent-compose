@@ -109,7 +109,7 @@ async function startLLMServer(handler: (body: Record<string, string>) => Promise
   close: () => Promise<void>;
 }> {
   const server = http.createServer(async (req, res) => {
-    if (req.method !== "POST" || req.url !== "/agentcompose.v1.LLMService/Generate") {
+    if (req.method !== "POST" || req.url !== "/agentcompose.v2.LLMService/Generate") {
       res.writeHead(404);
       res.end();
       return;

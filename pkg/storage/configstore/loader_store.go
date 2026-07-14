@@ -963,10 +963,23 @@ func (s *loaderStore) AddLoaderEvent(ctx context.Context, event domain.LoaderEve
 }
 
 func (s *loaderStore) ListLoaderEvents(ctx context.Context, loaderID string, limit int) ([]domain.LoaderEvent, error) {
+	return s.ListLoaderEventsBefore(ctx, loaderID, time.Time{}, "", limit)
+}
+
+func (s *loaderStore) ListLoaderEventsBefore(ctx context.Context, loaderID string, before time.Time, beforeID string, limit int) ([]domain.LoaderEvent, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, loaders.SelectLoaderEventSQL()+` WHERE loader_id = ? ORDER BY created_at DESC, event_id DESC LIMIT ?`, strings.TrimSpace(loaderID), limit)
+	query := loaders.SelectLoaderEventSQL() + ` WHERE loader_id = ?`
+	args := []any{strings.TrimSpace(loaderID)}
+	if !before.IsZero() {
+		query += ` AND (created_at < ? OR (created_at = ? AND event_id < ?))`
+		millis := before.UTC().UnixMilli()
+		args = append(args, millis, millis, strings.TrimSpace(beforeID))
+	}
+	query += ` ORDER BY created_at DESC, event_id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query loader events: %w", err)
 	}

@@ -13,12 +13,11 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/samber/do/v2"
-	"google.golang.org/protobuf/types/known/emptypb"
 
 	agentcomposeapp "agent-compose/pkg/agentcompose/app"
 	"agent-compose/pkg/config"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
-	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
+	agentcomposev2 "agent-compose/proto/agentcompose/v2"
+	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
 
 func TestE2EDockerSchedulerScriptHelloWorldFlow(t *testing.T) {
@@ -109,11 +108,21 @@ agents:
 		t.Fatalf("compose up stderr = %q, want empty", stderr)
 	}
 
-	loaderClient := agentcomposev1connect.NewLoaderServiceClient(client, "http://agent-compose")
-	loaderID := waitForManagedHelloLoader(t, loaderClient)
-	runID, event := waitForScheduledHelloRun(t, loaderClient, loaderID, helloText)
-	if event.GetLinkedSessionId() == "" || event.GetLinkedCellId() == "" {
-		t.Fatalf("loader command event links = session %q cell %q, want both set", event.GetLinkedSessionId(), event.GetLinkedCellId())
+	projectClient := agentcomposev2connect.NewProjectServiceClient(client, "http://agent-compose")
+	scheduler := waitForManagedHelloScheduler(t, projectClient)
+	detail, err := projectClient.GetScheduler(context.Background(), connect.NewRequest(&agentcomposev2.GetSchedulerRequest{
+		Project:   &agentcomposev2.ProjectRef{ProjectId: scheduler.GetProjectId()},
+		AgentName: scheduler.GetAgentName(),
+	}))
+	if err != nil {
+		t.Fatalf("GetScheduler returned error: %v", err)
+	}
+	for _, trigger := range detail.Msg.GetTriggers() {
+		t.Logf("resolved trigger %s enabled=%t next_fire_at=%v", trigger.GetTriggerId(), trigger.GetEnabled(), trigger.GetNextFireAt().AsTime())
+	}
+	runID, event := waitForScheduledHelloRun(t, projectClient, scheduler, helloText)
+	if !strings.Contains(event.GetPayloadJson(), "sandboxId") || !strings.Contains(event.GetPayloadJson(), "cellId") {
+		t.Fatalf("scheduler command event payload does not contain sandbox and cell links: %s", event.GetPayloadJson())
 	}
 
 	downOut, downErr, _, downCode := executeCLICommand("down", "--file", composePath)
@@ -123,7 +132,7 @@ agents:
 	if downErr != "" {
 		t.Fatalf("compose down stderr = %q, want empty", downErr)
 	}
-	t.Logf("scheduled run %s completed through loader %s with docker command output", runID, loaderID)
+	t.Logf("scheduled run %s completed through scheduler %s with docker command output", runID, scheduler.GetSchedulerId())
 }
 
 func requireDockerGuestImage(t *testing.T, image string) {
@@ -150,33 +159,30 @@ func firstNonEmptyEnv(name, fallback string) string {
 	return fallback
 }
 
-func waitForManagedHelloLoader(t *testing.T, client agentcomposev1connect.LoaderServiceClient) string {
+func waitForManagedHelloScheduler(t *testing.T, client agentcomposev2connect.ProjectServiceClient) *agentcomposev2.SchedulerSummary {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		resp, err := client.ListLoaders(context.Background(), connect.NewRequest(&emptypb.Empty{}))
+		resp, err := client.ListSchedulers(context.Background(), connect.NewRequest(&agentcomposev2.ListSchedulersRequest{Limit: 100}))
 		if err != nil {
 			lastErr = err
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		for _, loader := range resp.Msg.GetLoaders() {
-			if strings.Contains(loader.GetName(), "e2e-docker-script/hello scheduler") &&
-				loader.GetDriver() == config.RuntimeDriverDocker &&
-				loader.GetTriggerCount() == 1 &&
-				loader.GetEnabled() {
-				return loader.GetLoaderId()
+		for _, scheduler := range resp.Msg.GetSchedulers() {
+			if scheduler.GetAgentName() == "hello" && scheduler.GetTriggerCount() == 1 && scheduler.GetEnabled() {
+				return scheduler
 			}
 		}
-		lastErr = fmt.Errorf("managed hello loader not found in %d loaders", len(resp.Msg.GetLoaders()))
+		lastErr = fmt.Errorf("managed hello scheduler not found in %d schedulers", len(resp.Msg.GetSchedulers()))
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("loader was not created: %v", lastErr)
-	return ""
+	t.Fatalf("scheduler was not created: %v", lastErr)
+	return nil
 }
 
-func waitForScheduledHelloRun(t *testing.T, client agentcomposev1connect.LoaderServiceClient, loaderID string, helloText string) (string, *agentcomposev1.LoaderEvent) {
+func waitForScheduledHelloRun(t *testing.T, projectClient agentcomposev2connect.ProjectServiceClient, scheduler *agentcomposev2.SchedulerSummary, helloText string) (string, *agentcomposev2.SchedulerEvent) {
 	t.Helper()
 	timeout := time.Until(time.Now().Truncate(time.Minute).Add(time.Minute)) + 90*time.Second
 	if timeout < 90*time.Second {
@@ -185,53 +191,27 @@ func waitForScheduledHelloRun(t *testing.T, client agentcomposev1connect.LoaderS
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		runsResp, err := client.ListLoaderRuns(context.Background(), connect.NewRequest(&agentcomposev1.ListLoaderRunsRequest{
-			LoaderId: loaderID,
-			Limit:    10,
+		eventsResp, err := projectClient.ListSchedulerEvents(context.Background(), connect.NewRequest(&agentcomposev2.ListSchedulerEventsRequest{
+			Project:   &agentcomposev2.ProjectRef{ProjectId: scheduler.GetProjectId()},
+			AgentName: scheduler.GetAgentName(),
+			Limit:     100,
 		}))
 		if err != nil {
 			lastErr = err
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
-		for _, run := range runsResp.Msg.GetRuns() {
-			if run.GetStatus() == "failed" {
-				lastErr = fmt.Errorf("loader run %s failed: %s", run.GetRunId(), run.GetError())
+		for _, event := range eventsResp.Msg.GetEvents() {
+			if event.GetType() == "loader.run.failed" {
+				lastErr = fmt.Errorf("loader run %s failed: %s", event.GetRunId(), event.GetMessage())
 				continue
 			}
-			if run.GetStatus() != "succeeded" ||
-				run.GetTriggerKind() != agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_CRON ||
-				!strings.Contains(run.GetTriggerSource(), "cron:") {
-				continue
+			if event.GetRunId() != "" && event.GetType() == "loader.command.completed" && event.GetLevel() == "info" && strings.Contains(event.GetMessage(), helloText) {
+				return event.GetRunId(), event
 			}
-			event, ok := findHelloCommandEvent(t, client, loaderID, run.GetRunId(), helloText)
-			if ok {
-				return run.GetRunId(), event
-			}
-			lastErr = fmt.Errorf("succeeded run %s has no hello command event yet", run.GetRunId())
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	t.Fatalf("scheduled hello run did not complete before %s: %v", deadline.Format(time.RFC3339), lastErr)
 	return "", nil
-}
-
-func findHelloCommandEvent(t *testing.T, client agentcomposev1connect.LoaderServiceClient, loaderID, runID, helloText string) (*agentcomposev1.LoaderEvent, bool) {
-	t.Helper()
-	eventsResp, err := client.ListLoaderEvents(context.Background(), connect.NewRequest(&agentcomposev1.ListLoaderEventsRequest{
-		LoaderId: loaderID,
-		Limit:    50,
-	}))
-	if err != nil {
-		t.Fatalf("ListLoaderEvents returned error: %v", err)
-	}
-	for _, event := range eventsResp.Msg.GetEvents() {
-		if event.GetRunId() == runID &&
-			event.GetType() == "loader.command.completed" &&
-			event.GetLevel() == "info" &&
-			strings.Contains(event.GetMessage(), helloText) {
-			return event, true
-		}
-	}
-	return nil, false
 }

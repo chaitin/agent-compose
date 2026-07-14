@@ -312,6 +312,37 @@ func (s *projectStore) ListProjectAgents(ctx context.Context, projectID string) 
 	return items, nil
 }
 
+func (s *projectStore) ListProjectAgentsByManagedAgentIDs(ctx context.Context, managedAgentIDs []string) (map[string]ProjectAgentRecord, error) {
+	ids := normalizedNonEmptyStrings(managedAgentIDs)
+	if len(ids) == 0 {
+		return map[string]ProjectAgentRecord{}, nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, short_id, project_id, agent_name, managed_agent_id, revision, provider, model, image, driver, scheduler_enabled, spec_json, created_at, updated_at
+		FROM project_agent WHERE managed_agent_id IN (`+placeholders(len(ids))+`) ORDER BY updated_at DESC, project_id ASC, agent_name ASC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query project agents by managed agent ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := make(map[string]ProjectAgentRecord, len(ids))
+	for rows.Next() {
+		item, err := projects.ScanProjectAgent(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := result[item.ManagedAgentID]; !exists {
+			result[item.ManagedAgentID] = item
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate project agents by managed agent ids: %w", err)
+	}
+	return result, nil
+}
+
 func (s *projectStore) UpsertProjectScheduler(ctx context.Context, scheduler ProjectSchedulerRecord) (ProjectSchedulerRecord, error) {
 	scheduler, err := projects.NormalizeSchedulerRecord(scheduler)
 	if err != nil {
@@ -390,6 +421,45 @@ func (s *projectStore) ListProjectSchedulers(ctx context.Context, projectID stri
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate project schedulers %s: %w", strings.TrimSpace(projectID), err)
+	}
+	return items, nil
+}
+
+func (s *projectStore) ListProjectSchedulersPage(ctx context.Context, query, afterKey string, limit int) ([]ProjectSchedulerRecord, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	likeQuery := "%" + query + "%"
+	rows, err := s.db.QueryContext(ctx, `WITH page AS (
+		SELECT s.id, s.short_id, s.project_id, s.scheduler_id, s.agent_name, s.managed_loader_id, s.revision, s.enabled, s.trigger_count, s.spec_json, s.created_at, s.updated_at
+		FROM project_scheduler s JOIN project p ON p.id = s.project_id
+		WHERE p.removed_at = 0
+		AND s.revision = p.current_revision
+		AND (? = '' OR lower(p.id) LIKE ? OR lower(p.name) LIKE ? OR lower(p.source_path) LIKE ?)
+		AND (s.project_id || char(0) || s.agent_name || char(0) || s.scheduler_id) > ?
+		ORDER BY s.project_id ASC, s.agent_name ASC, s.scheduler_id ASC LIMIT ?
+	)
+	SELECT page.id, page.short_id, page.project_id, page.scheduler_id, page.agent_name, page.managed_loader_id, page.revision, page.enabled, page.trigger_count, page.spec_json, page.created_at, page.updated_at,
+		(SELECT COUNT(*) FROM loader_run lr WHERE lr.loader_id = page.managed_loader_id),
+		(SELECT MAX(started_at) FROM loader_run lr WHERE lr.loader_id = page.managed_loader_id),
+		COALESCE(l.last_error, '')
+	FROM page LEFT JOIN loader l ON l.id = page.managed_loader_id
+	ORDER BY page.project_id ASC, page.agent_name ASC, page.scheduler_id ASC`, query, likeQuery, likeQuery, likeQuery, afterKey, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query project scheduler page: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var items []ProjectSchedulerRecord
+	for rows.Next() {
+		item, scanErr := projects.ScanProjectSchedulerPage(rows.Scan)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate project scheduler page: %w", err)
 	}
 	return items, nil
 }

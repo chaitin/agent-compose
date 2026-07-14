@@ -35,6 +35,14 @@ const (
 	VolumeServiceName = "agentcompose.v2.VolumeService"
 	// SandboxServiceName is the fully-qualified name of the SandboxService service.
 	SandboxServiceName = "agentcompose.v2.SandboxService"
+	// DashboardServiceName is the fully-qualified name of the DashboardService service.
+	DashboardServiceName = "agentcompose.v2.DashboardService"
+	// SettingsServiceName is the fully-qualified name of the SettingsService service.
+	SettingsServiceName = "agentcompose.v2.SettingsService"
+	// CapabilityServiceName is the fully-qualified name of the CapabilityService service.
+	CapabilityServiceName = "agentcompose.v2.CapabilityService"
+	// LLMServiceName is the fully-qualified name of the LLMService service.
+	LLMServiceName = "agentcompose.v2.LLMService"
 	// ResourceServiceName is the fully-qualified name of the ResourceService service.
 	ResourceServiceName = "agentcompose.v2.ResourceService"
 )
@@ -65,6 +73,21 @@ const (
 	// ProjectServiceWatchProjectProcedure is the fully-qualified name of the ProjectService's
 	// WatchProject RPC.
 	ProjectServiceWatchProjectProcedure = "/agentcompose.v2.ProjectService/WatchProject"
+	// ProjectServiceGetSchedulerProcedure is the fully-qualified name of the ProjectService's
+	// GetScheduler RPC.
+	ProjectServiceGetSchedulerProcedure = "/agentcompose.v2.ProjectService/GetScheduler"
+	// ProjectServiceListSchedulersProcedure is the fully-qualified name of the ProjectService's
+	// ListSchedulers RPC.
+	ProjectServiceListSchedulersProcedure = "/agentcompose.v2.ProjectService/ListSchedulers"
+	// ProjectServiceListSchedulerEventsProcedure is the fully-qualified name of the ProjectService's
+	// ListSchedulerEvents RPC.
+	ProjectServiceListSchedulerEventsProcedure = "/agentcompose.v2.ProjectService/ListSchedulerEvents"
+	// ProjectServiceSetSchedulerEnabledProcedure is the fully-qualified name of the ProjectService's
+	// SetSchedulerEnabled RPC.
+	ProjectServiceSetSchedulerEnabledProcedure = "/agentcompose.v2.ProjectService/SetSchedulerEnabled"
+	// ProjectServiceSetSchedulerTriggerEnabledProcedure is the fully-qualified name of the
+	// ProjectService's SetSchedulerTriggerEnabled RPC.
+	ProjectServiceSetSchedulerTriggerEnabledProcedure = "/agentcompose.v2.ProjectService/SetSchedulerTriggerEnabled"
 	// RunServiceRunAgentProcedure is the fully-qualified name of the RunService's RunAgent RPC.
 	RunServiceRunAgentProcedure = "/agentcompose.v2.RunService/RunAgent"
 	// RunServiceStartRunProcedure is the fully-qualified name of the RunService's StartRun RPC.
@@ -83,6 +106,12 @@ const (
 	RunServiceFollowRunLogsProcedure = "/agentcompose.v2.RunService/FollowRunLogs"
 	// RunServiceStopRunProcedure is the fully-qualified name of the RunService's StopRun RPC.
 	RunServiceStopRunProcedure = "/agentcompose.v2.RunService/StopRun"
+	// RunServiceListRunEventsProcedure is the fully-qualified name of the RunService's ListRunEvents
+	// RPC.
+	RunServiceListRunEventsProcedure = "/agentcompose.v2.RunService/ListRunEvents"
+	// RunServiceListSandboxRunEventsProcedure is the fully-qualified name of the RunService's
+	// ListSandboxRunEvents RPC.
+	RunServiceListSandboxRunEventsProcedure = "/agentcompose.v2.RunService/ListSandboxRunEvents"
 	// ExecServiceExecProcedure is the fully-qualified name of the ExecService's Exec RPC.
 	ExecServiceExecProcedure = "/agentcompose.v2.ExecService/Exec"
 	// ExecServiceExecStreamProcedure is the fully-qualified name of the ExecService's ExecStream RPC.
@@ -133,6 +162,65 @@ const (
 	// SandboxServiceGetSandboxStatsProcedure is the fully-qualified name of the SandboxService's
 	// GetSandboxStats RPC.
 	SandboxServiceGetSandboxStatsProcedure = "/agentcompose.v2.SandboxService/GetSandboxStats"
+	// SandboxServiceGetSandboxProcedure is the fully-qualified name of the SandboxService's GetSandbox
+	// RPC.
+	SandboxServiceGetSandboxProcedure = "/agentcompose.v2.SandboxService/GetSandbox"
+	// SandboxServiceStopSandboxProcedure is the fully-qualified name of the SandboxService's
+	// StopSandbox RPC.
+	SandboxServiceStopSandboxProcedure = "/agentcompose.v2.SandboxService/StopSandbox"
+	// SandboxServiceResumeSandboxProcedure is the fully-qualified name of the SandboxService's
+	// ResumeSandbox RPC.
+	SandboxServiceResumeSandboxProcedure = "/agentcompose.v2.SandboxService/ResumeSandbox"
+	// SandboxServiceListSandboxesProcedure is the fully-qualified name of the SandboxService's
+	// ListSandboxes RPC.
+	SandboxServiceListSandboxesProcedure = "/agentcompose.v2.SandboxService/ListSandboxes"
+	// SandboxServiceListSandboxHistoryProcedure is the fully-qualified name of the SandboxService's
+	// ListSandboxHistory RPC.
+	SandboxServiceListSandboxHistoryProcedure = "/agentcompose.v2.SandboxService/ListSandboxHistory"
+	// SandboxServiceWatchSandboxProcedure is the fully-qualified name of the SandboxService's
+	// WatchSandbox RPC.
+	SandboxServiceWatchSandboxProcedure = "/agentcompose.v2.SandboxService/WatchSandbox"
+	// DashboardServiceGetDashboardOverviewProcedure is the fully-qualified name of the
+	// DashboardService's GetDashboardOverview RPC.
+	DashboardServiceGetDashboardOverviewProcedure = "/agentcompose.v2.DashboardService/GetDashboardOverview"
+	// DashboardServiceWatchDashboardOverviewProcedure is the fully-qualified name of the
+	// DashboardService's WatchDashboardOverview RPC.
+	DashboardServiceWatchDashboardOverviewProcedure = "/agentcompose.v2.DashboardService/WatchDashboardOverview"
+	// SettingsServiceGetGlobalEnvProcedure is the fully-qualified name of the SettingsService's
+	// GetGlobalEnv RPC.
+	SettingsServiceGetGlobalEnvProcedure = "/agentcompose.v2.SettingsService/GetGlobalEnv"
+	// SettingsServiceUpdateGlobalEnvProcedure is the fully-qualified name of the SettingsService's
+	// UpdateGlobalEnv RPC.
+	SettingsServiceUpdateGlobalEnvProcedure = "/agentcompose.v2.SettingsService/UpdateGlobalEnv"
+	// SettingsServiceGetCapabilityGatewayConfigProcedure is the fully-qualified name of the
+	// SettingsService's GetCapabilityGatewayConfig RPC.
+	SettingsServiceGetCapabilityGatewayConfigProcedure = "/agentcompose.v2.SettingsService/GetCapabilityGatewayConfig"
+	// SettingsServiceUpdateCapabilityGatewayConfigProcedure is the fully-qualified name of the
+	// SettingsService's UpdateCapabilityGatewayConfig RPC.
+	SettingsServiceUpdateCapabilityGatewayConfigProcedure = "/agentcompose.v2.SettingsService/UpdateCapabilityGatewayConfig"
+	// SettingsServiceListWorkspacePresetsProcedure is the fully-qualified name of the SettingsService's
+	// ListWorkspacePresets RPC.
+	SettingsServiceListWorkspacePresetsProcedure = "/agentcompose.v2.SettingsService/ListWorkspacePresets"
+	// SettingsServiceCreateWorkspacePresetProcedure is the fully-qualified name of the
+	// SettingsService's CreateWorkspacePreset RPC.
+	SettingsServiceCreateWorkspacePresetProcedure = "/agentcompose.v2.SettingsService/CreateWorkspacePreset"
+	// SettingsServiceUpdateWorkspacePresetProcedure is the fully-qualified name of the
+	// SettingsService's UpdateWorkspacePreset RPC.
+	SettingsServiceUpdateWorkspacePresetProcedure = "/agentcompose.v2.SettingsService/UpdateWorkspacePreset"
+	// SettingsServiceDeleteWorkspacePresetProcedure is the fully-qualified name of the
+	// SettingsService's DeleteWorkspacePreset RPC.
+	SettingsServiceDeleteWorkspacePresetProcedure = "/agentcompose.v2.SettingsService/DeleteWorkspacePreset"
+	// CapabilityServiceGetCapabilityStatusProcedure is the fully-qualified name of the
+	// CapabilityService's GetCapabilityStatus RPC.
+	CapabilityServiceGetCapabilityStatusProcedure = "/agentcompose.v2.CapabilityService/GetCapabilityStatus"
+	// CapabilityServiceListCapabilitySetsProcedure is the fully-qualified name of the
+	// CapabilityService's ListCapabilitySets RPC.
+	CapabilityServiceListCapabilitySetsProcedure = "/agentcompose.v2.CapabilityService/ListCapabilitySets"
+	// CapabilityServiceGetCapabilityCatalogProcedure is the fully-qualified name of the
+	// CapabilityService's GetCapabilityCatalog RPC.
+	CapabilityServiceGetCapabilityCatalogProcedure = "/agentcompose.v2.CapabilityService/GetCapabilityCatalog"
+	// LLMServiceGenerateProcedure is the fully-qualified name of the LLMService's Generate RPC.
+	LLMServiceGenerateProcedure = "/agentcompose.v2.LLMService/Generate"
 	// ResourceServiceResolveResourceProcedure is the fully-qualified name of the ResourceService's
 	// ResolveResource RPC.
 	ResourceServiceResolveResourceProcedure = "/agentcompose.v2.ResourceService/ResolveResource"
@@ -146,6 +234,11 @@ type ProjectServiceClient interface {
 	ListProjects(context.Context, *connect.Request[v2.ListProjectsRequest]) (*connect.Response[v2.ListProjectsResponse], error)
 	RemoveProject(context.Context, *connect.Request[v2.RemoveProjectRequest]) (*connect.Response[v2.RemoveProjectResponse], error)
 	WatchProject(context.Context, *connect.Request[v2.WatchProjectRequest]) (*connect.ServerStreamForClient[v2.WatchProjectResponse], error)
+	GetScheduler(context.Context, *connect.Request[v2.GetSchedulerRequest]) (*connect.Response[v2.GetSchedulerResponse], error)
+	ListSchedulers(context.Context, *connect.Request[v2.ListSchedulersRequest]) (*connect.Response[v2.ListSchedulersResponse], error)
+	ListSchedulerEvents(context.Context, *connect.Request[v2.ListSchedulerEventsRequest]) (*connect.Response[v2.ListSchedulerEventsResponse], error)
+	SetSchedulerEnabled(context.Context, *connect.Request[v2.SetSchedulerEnabledRequest]) (*connect.Response[v2.SetSchedulerEnabledResponse], error)
+	SetSchedulerTriggerEnabled(context.Context, *connect.Request[v2.SetSchedulerTriggerEnabledRequest]) (*connect.Response[v2.SetSchedulerTriggerEnabledResponse], error)
 }
 
 // NewProjectServiceClient constructs a client for the agentcompose.v2.ProjectService service. By
@@ -195,17 +288,52 @@ func NewProjectServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(projectServiceMethods.ByName("WatchProject")),
 			connect.WithClientOptions(opts...),
 		),
+		getScheduler: connect.NewClient[v2.GetSchedulerRequest, v2.GetSchedulerResponse](
+			httpClient,
+			baseURL+ProjectServiceGetSchedulerProcedure,
+			connect.WithSchema(projectServiceMethods.ByName("GetScheduler")),
+			connect.WithClientOptions(opts...),
+		),
+		listSchedulers: connect.NewClient[v2.ListSchedulersRequest, v2.ListSchedulersResponse](
+			httpClient,
+			baseURL+ProjectServiceListSchedulersProcedure,
+			connect.WithSchema(projectServiceMethods.ByName("ListSchedulers")),
+			connect.WithClientOptions(opts...),
+		),
+		listSchedulerEvents: connect.NewClient[v2.ListSchedulerEventsRequest, v2.ListSchedulerEventsResponse](
+			httpClient,
+			baseURL+ProjectServiceListSchedulerEventsProcedure,
+			connect.WithSchema(projectServiceMethods.ByName("ListSchedulerEvents")),
+			connect.WithClientOptions(opts...),
+		),
+		setSchedulerEnabled: connect.NewClient[v2.SetSchedulerEnabledRequest, v2.SetSchedulerEnabledResponse](
+			httpClient,
+			baseURL+ProjectServiceSetSchedulerEnabledProcedure,
+			connect.WithSchema(projectServiceMethods.ByName("SetSchedulerEnabled")),
+			connect.WithClientOptions(opts...),
+		),
+		setSchedulerTriggerEnabled: connect.NewClient[v2.SetSchedulerTriggerEnabledRequest, v2.SetSchedulerTriggerEnabledResponse](
+			httpClient,
+			baseURL+ProjectServiceSetSchedulerTriggerEnabledProcedure,
+			connect.WithSchema(projectServiceMethods.ByName("SetSchedulerTriggerEnabled")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // projectServiceClient implements ProjectServiceClient.
 type projectServiceClient struct {
-	validateProject *connect.Client[v2.ValidateProjectRequest, v2.ValidateProjectResponse]
-	applyProject    *connect.Client[v2.ApplyProjectRequest, v2.ApplyProjectResponse]
-	getProject      *connect.Client[v2.GetProjectRequest, v2.GetProjectResponse]
-	listProjects    *connect.Client[v2.ListProjectsRequest, v2.ListProjectsResponse]
-	removeProject   *connect.Client[v2.RemoveProjectRequest, v2.RemoveProjectResponse]
-	watchProject    *connect.Client[v2.WatchProjectRequest, v2.WatchProjectResponse]
+	validateProject            *connect.Client[v2.ValidateProjectRequest, v2.ValidateProjectResponse]
+	applyProject               *connect.Client[v2.ApplyProjectRequest, v2.ApplyProjectResponse]
+	getProject                 *connect.Client[v2.GetProjectRequest, v2.GetProjectResponse]
+	listProjects               *connect.Client[v2.ListProjectsRequest, v2.ListProjectsResponse]
+	removeProject              *connect.Client[v2.RemoveProjectRequest, v2.RemoveProjectResponse]
+	watchProject               *connect.Client[v2.WatchProjectRequest, v2.WatchProjectResponse]
+	getScheduler               *connect.Client[v2.GetSchedulerRequest, v2.GetSchedulerResponse]
+	listSchedulers             *connect.Client[v2.ListSchedulersRequest, v2.ListSchedulersResponse]
+	listSchedulerEvents        *connect.Client[v2.ListSchedulerEventsRequest, v2.ListSchedulerEventsResponse]
+	setSchedulerEnabled        *connect.Client[v2.SetSchedulerEnabledRequest, v2.SetSchedulerEnabledResponse]
+	setSchedulerTriggerEnabled *connect.Client[v2.SetSchedulerTriggerEnabledRequest, v2.SetSchedulerTriggerEnabledResponse]
 }
 
 // ValidateProject calls agentcompose.v2.ProjectService.ValidateProject.
@@ -238,6 +366,31 @@ func (c *projectServiceClient) WatchProject(ctx context.Context, req *connect.Re
 	return c.watchProject.CallServerStream(ctx, req)
 }
 
+// GetScheduler calls agentcompose.v2.ProjectService.GetScheduler.
+func (c *projectServiceClient) GetScheduler(ctx context.Context, req *connect.Request[v2.GetSchedulerRequest]) (*connect.Response[v2.GetSchedulerResponse], error) {
+	return c.getScheduler.CallUnary(ctx, req)
+}
+
+// ListSchedulers calls agentcompose.v2.ProjectService.ListSchedulers.
+func (c *projectServiceClient) ListSchedulers(ctx context.Context, req *connect.Request[v2.ListSchedulersRequest]) (*connect.Response[v2.ListSchedulersResponse], error) {
+	return c.listSchedulers.CallUnary(ctx, req)
+}
+
+// ListSchedulerEvents calls agentcompose.v2.ProjectService.ListSchedulerEvents.
+func (c *projectServiceClient) ListSchedulerEvents(ctx context.Context, req *connect.Request[v2.ListSchedulerEventsRequest]) (*connect.Response[v2.ListSchedulerEventsResponse], error) {
+	return c.listSchedulerEvents.CallUnary(ctx, req)
+}
+
+// SetSchedulerEnabled calls agentcompose.v2.ProjectService.SetSchedulerEnabled.
+func (c *projectServiceClient) SetSchedulerEnabled(ctx context.Context, req *connect.Request[v2.SetSchedulerEnabledRequest]) (*connect.Response[v2.SetSchedulerEnabledResponse], error) {
+	return c.setSchedulerEnabled.CallUnary(ctx, req)
+}
+
+// SetSchedulerTriggerEnabled calls agentcompose.v2.ProjectService.SetSchedulerTriggerEnabled.
+func (c *projectServiceClient) SetSchedulerTriggerEnabled(ctx context.Context, req *connect.Request[v2.SetSchedulerTriggerEnabledRequest]) (*connect.Response[v2.SetSchedulerTriggerEnabledResponse], error) {
+	return c.setSchedulerTriggerEnabled.CallUnary(ctx, req)
+}
+
 // ProjectServiceHandler is an implementation of the agentcompose.v2.ProjectService service.
 type ProjectServiceHandler interface {
 	ValidateProject(context.Context, *connect.Request[v2.ValidateProjectRequest]) (*connect.Response[v2.ValidateProjectResponse], error)
@@ -246,6 +399,11 @@ type ProjectServiceHandler interface {
 	ListProjects(context.Context, *connect.Request[v2.ListProjectsRequest]) (*connect.Response[v2.ListProjectsResponse], error)
 	RemoveProject(context.Context, *connect.Request[v2.RemoveProjectRequest]) (*connect.Response[v2.RemoveProjectResponse], error)
 	WatchProject(context.Context, *connect.Request[v2.WatchProjectRequest], *connect.ServerStream[v2.WatchProjectResponse]) error
+	GetScheduler(context.Context, *connect.Request[v2.GetSchedulerRequest]) (*connect.Response[v2.GetSchedulerResponse], error)
+	ListSchedulers(context.Context, *connect.Request[v2.ListSchedulersRequest]) (*connect.Response[v2.ListSchedulersResponse], error)
+	ListSchedulerEvents(context.Context, *connect.Request[v2.ListSchedulerEventsRequest]) (*connect.Response[v2.ListSchedulerEventsResponse], error)
+	SetSchedulerEnabled(context.Context, *connect.Request[v2.SetSchedulerEnabledRequest]) (*connect.Response[v2.SetSchedulerEnabledResponse], error)
+	SetSchedulerTriggerEnabled(context.Context, *connect.Request[v2.SetSchedulerTriggerEnabledRequest]) (*connect.Response[v2.SetSchedulerTriggerEnabledResponse], error)
 }
 
 // NewProjectServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -291,6 +449,36 @@ func NewProjectServiceHandler(svc ProjectServiceHandler, opts ...connect.Handler
 		connect.WithSchema(projectServiceMethods.ByName("WatchProject")),
 		connect.WithHandlerOptions(opts...),
 	)
+	projectServiceGetSchedulerHandler := connect.NewUnaryHandler(
+		ProjectServiceGetSchedulerProcedure,
+		svc.GetScheduler,
+		connect.WithSchema(projectServiceMethods.ByName("GetScheduler")),
+		connect.WithHandlerOptions(opts...),
+	)
+	projectServiceListSchedulersHandler := connect.NewUnaryHandler(
+		ProjectServiceListSchedulersProcedure,
+		svc.ListSchedulers,
+		connect.WithSchema(projectServiceMethods.ByName("ListSchedulers")),
+		connect.WithHandlerOptions(opts...),
+	)
+	projectServiceListSchedulerEventsHandler := connect.NewUnaryHandler(
+		ProjectServiceListSchedulerEventsProcedure,
+		svc.ListSchedulerEvents,
+		connect.WithSchema(projectServiceMethods.ByName("ListSchedulerEvents")),
+		connect.WithHandlerOptions(opts...),
+	)
+	projectServiceSetSchedulerEnabledHandler := connect.NewUnaryHandler(
+		ProjectServiceSetSchedulerEnabledProcedure,
+		svc.SetSchedulerEnabled,
+		connect.WithSchema(projectServiceMethods.ByName("SetSchedulerEnabled")),
+		connect.WithHandlerOptions(opts...),
+	)
+	projectServiceSetSchedulerTriggerEnabledHandler := connect.NewUnaryHandler(
+		ProjectServiceSetSchedulerTriggerEnabledProcedure,
+		svc.SetSchedulerTriggerEnabled,
+		connect.WithSchema(projectServiceMethods.ByName("SetSchedulerTriggerEnabled")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/agentcompose.v2.ProjectService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ProjectServiceValidateProjectProcedure:
@@ -305,6 +493,16 @@ func NewProjectServiceHandler(svc ProjectServiceHandler, opts ...connect.Handler
 			projectServiceRemoveProjectHandler.ServeHTTP(w, r)
 		case ProjectServiceWatchProjectProcedure:
 			projectServiceWatchProjectHandler.ServeHTTP(w, r)
+		case ProjectServiceGetSchedulerProcedure:
+			projectServiceGetSchedulerHandler.ServeHTTP(w, r)
+		case ProjectServiceListSchedulersProcedure:
+			projectServiceListSchedulersHandler.ServeHTTP(w, r)
+		case ProjectServiceListSchedulerEventsProcedure:
+			projectServiceListSchedulerEventsHandler.ServeHTTP(w, r)
+		case ProjectServiceSetSchedulerEnabledProcedure:
+			projectServiceSetSchedulerEnabledHandler.ServeHTTP(w, r)
+		case ProjectServiceSetSchedulerTriggerEnabledProcedure:
+			projectServiceSetSchedulerTriggerEnabledHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -338,6 +536,26 @@ func (UnimplementedProjectServiceHandler) WatchProject(context.Context, *connect
 	return connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ProjectService.WatchProject is not implemented"))
 }
 
+func (UnimplementedProjectServiceHandler) GetScheduler(context.Context, *connect.Request[v2.GetSchedulerRequest]) (*connect.Response[v2.GetSchedulerResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ProjectService.GetScheduler is not implemented"))
+}
+
+func (UnimplementedProjectServiceHandler) ListSchedulers(context.Context, *connect.Request[v2.ListSchedulersRequest]) (*connect.Response[v2.ListSchedulersResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ProjectService.ListSchedulers is not implemented"))
+}
+
+func (UnimplementedProjectServiceHandler) ListSchedulerEvents(context.Context, *connect.Request[v2.ListSchedulerEventsRequest]) (*connect.Response[v2.ListSchedulerEventsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ProjectService.ListSchedulerEvents is not implemented"))
+}
+
+func (UnimplementedProjectServiceHandler) SetSchedulerEnabled(context.Context, *connect.Request[v2.SetSchedulerEnabledRequest]) (*connect.Response[v2.SetSchedulerEnabledResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ProjectService.SetSchedulerEnabled is not implemented"))
+}
+
+func (UnimplementedProjectServiceHandler) SetSchedulerTriggerEnabled(context.Context, *connect.Request[v2.SetSchedulerTriggerEnabledRequest]) (*connect.Response[v2.SetSchedulerTriggerEnabledResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ProjectService.SetSchedulerTriggerEnabled is not implemented"))
+}
+
 // RunServiceClient is a client for the agentcompose.v2.RunService service.
 type RunServiceClient interface {
 	RunAgent(context.Context, *connect.Request[v2.RunAgentRequest]) (*connect.Response[v2.RunAgentResponse], error)
@@ -351,6 +569,8 @@ type RunServiceClient interface {
 	ListRuns(context.Context, *connect.Request[v2.ListRunsRequest]) (*connect.Response[v2.ListRunsResponse], error)
 	FollowRunLogs(context.Context, *connect.Request[v2.FollowRunLogsRequest]) (*connect.ServerStreamForClient[v2.RunLogChunk], error)
 	StopRun(context.Context, *connect.Request[v2.StopRunRequest]) (*connect.Response[v2.StopRunResponse], error)
+	ListRunEvents(context.Context, *connect.Request[v2.ListRunEventsRequest]) (*connect.Response[v2.ListRunEventsResponse], error)
+	ListSandboxRunEvents(context.Context, *connect.Request[v2.ListSandboxRunEventsRequest]) (*connect.Response[v2.ListSandboxRunEventsResponse], error)
 }
 
 // NewRunServiceClient constructs a client for the agentcompose.v2.RunService service. By default,
@@ -412,19 +632,33 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("StopRun")),
 			connect.WithClientOptions(opts...),
 		),
+		listRunEvents: connect.NewClient[v2.ListRunEventsRequest, v2.ListRunEventsResponse](
+			httpClient,
+			baseURL+RunServiceListRunEventsProcedure,
+			connect.WithSchema(runServiceMethods.ByName("ListRunEvents")),
+			connect.WithClientOptions(opts...),
+		),
+		listSandboxRunEvents: connect.NewClient[v2.ListSandboxRunEventsRequest, v2.ListSandboxRunEventsResponse](
+			httpClient,
+			baseURL+RunServiceListSandboxRunEventsProcedure,
+			connect.WithSchema(runServiceMethods.ByName("ListSandboxRunEvents")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // runServiceClient implements RunServiceClient.
 type runServiceClient struct {
-	runAgent       *connect.Client[v2.RunAgentRequest, v2.RunAgentResponse]
-	startRun       *connect.Client[v2.StartRunRequest, v2.StartRunResponse]
-	runAgentStream *connect.Client[v2.RunAgentRequest, v2.RunAgentStreamResponse]
-	runAttach      *connect.Client[v2.RunAttachRequest, v2.RunAttachResponse]
-	getRun         *connect.Client[v2.GetRunRequest, v2.GetRunResponse]
-	listRuns       *connect.Client[v2.ListRunsRequest, v2.ListRunsResponse]
-	followRunLogs  *connect.Client[v2.FollowRunLogsRequest, v2.RunLogChunk]
-	stopRun        *connect.Client[v2.StopRunRequest, v2.StopRunResponse]
+	runAgent             *connect.Client[v2.RunAgentRequest, v2.RunAgentResponse]
+	startRun             *connect.Client[v2.StartRunRequest, v2.StartRunResponse]
+	runAgentStream       *connect.Client[v2.RunAgentRequest, v2.RunAgentStreamResponse]
+	runAttach            *connect.Client[v2.RunAttachRequest, v2.RunAttachResponse]
+	getRun               *connect.Client[v2.GetRunRequest, v2.GetRunResponse]
+	listRuns             *connect.Client[v2.ListRunsRequest, v2.ListRunsResponse]
+	followRunLogs        *connect.Client[v2.FollowRunLogsRequest, v2.RunLogChunk]
+	stopRun              *connect.Client[v2.StopRunRequest, v2.StopRunResponse]
+	listRunEvents        *connect.Client[v2.ListRunEventsRequest, v2.ListRunEventsResponse]
+	listSandboxRunEvents *connect.Client[v2.ListSandboxRunEventsRequest, v2.ListSandboxRunEventsResponse]
 }
 
 // RunAgent calls agentcompose.v2.RunService.RunAgent.
@@ -467,6 +701,16 @@ func (c *runServiceClient) StopRun(ctx context.Context, req *connect.Request[v2.
 	return c.stopRun.CallUnary(ctx, req)
 }
 
+// ListRunEvents calls agentcompose.v2.RunService.ListRunEvents.
+func (c *runServiceClient) ListRunEvents(ctx context.Context, req *connect.Request[v2.ListRunEventsRequest]) (*connect.Response[v2.ListRunEventsResponse], error) {
+	return c.listRunEvents.CallUnary(ctx, req)
+}
+
+// ListSandboxRunEvents calls agentcompose.v2.RunService.ListSandboxRunEvents.
+func (c *runServiceClient) ListSandboxRunEvents(ctx context.Context, req *connect.Request[v2.ListSandboxRunEventsRequest]) (*connect.Response[v2.ListSandboxRunEventsResponse], error) {
+	return c.listSandboxRunEvents.CallUnary(ctx, req)
+}
+
 // RunServiceHandler is an implementation of the agentcompose.v2.RunService service.
 type RunServiceHandler interface {
 	RunAgent(context.Context, *connect.Request[v2.RunAgentRequest]) (*connect.Response[v2.RunAgentResponse], error)
@@ -480,6 +724,8 @@ type RunServiceHandler interface {
 	ListRuns(context.Context, *connect.Request[v2.ListRunsRequest]) (*connect.Response[v2.ListRunsResponse], error)
 	FollowRunLogs(context.Context, *connect.Request[v2.FollowRunLogsRequest], *connect.ServerStream[v2.RunLogChunk]) error
 	StopRun(context.Context, *connect.Request[v2.StopRunRequest]) (*connect.Response[v2.StopRunResponse], error)
+	ListRunEvents(context.Context, *connect.Request[v2.ListRunEventsRequest]) (*connect.Response[v2.ListRunEventsResponse], error)
+	ListSandboxRunEvents(context.Context, *connect.Request[v2.ListSandboxRunEventsRequest]) (*connect.Response[v2.ListSandboxRunEventsResponse], error)
 }
 
 // NewRunServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -537,6 +783,18 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("StopRun")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceListRunEventsHandler := connect.NewUnaryHandler(
+		RunServiceListRunEventsProcedure,
+		svc.ListRunEvents,
+		connect.WithSchema(runServiceMethods.ByName("ListRunEvents")),
+		connect.WithHandlerOptions(opts...),
+	)
+	runServiceListSandboxRunEventsHandler := connect.NewUnaryHandler(
+		RunServiceListSandboxRunEventsProcedure,
+		svc.ListSandboxRunEvents,
+		connect.WithSchema(runServiceMethods.ByName("ListSandboxRunEvents")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/agentcompose.v2.RunService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case RunServiceRunAgentProcedure:
@@ -555,6 +813,10 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceFollowRunLogsHandler.ServeHTTP(w, r)
 		case RunServiceStopRunProcedure:
 			runServiceStopRunHandler.ServeHTTP(w, r)
+		case RunServiceListRunEventsProcedure:
+			runServiceListRunEventsHandler.ServeHTTP(w, r)
+		case RunServiceListSandboxRunEventsProcedure:
+			runServiceListSandboxRunEventsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -594,6 +856,14 @@ func (UnimplementedRunServiceHandler) FollowRunLogs(context.Context, *connect.Re
 
 func (UnimplementedRunServiceHandler) StopRun(context.Context, *connect.Request[v2.StopRunRequest]) (*connect.Response[v2.StopRunResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.RunService.StopRun is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) ListRunEvents(context.Context, *connect.Request[v2.ListRunEventsRequest]) (*connect.Response[v2.ListRunEventsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.RunService.ListRunEvents is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) ListSandboxRunEvents(context.Context, *connect.Request[v2.ListSandboxRunEventsRequest]) (*connect.Response[v2.ListSandboxRunEventsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.RunService.ListSandboxRunEvents is not implemented"))
 }
 
 // ExecServiceClient is a client for the agentcompose.v2.ExecService service.
@@ -1224,6 +1494,12 @@ func (UnimplementedVolumeServiceHandler) PruneVolumes(context.Context, *connect.
 type SandboxServiceClient interface {
 	RemoveSandbox(context.Context, *connect.Request[v2.RemoveSandboxRequest]) (*connect.Response[v2.RemoveSandboxResponse], error)
 	GetSandboxStats(context.Context, *connect.Request[v2.GetSandboxStatsRequest]) (*connect.Response[v2.GetSandboxStatsResponse], error)
+	GetSandbox(context.Context, *connect.Request[v2.GetSandboxRequest]) (*connect.Response[v2.GetSandboxResponse], error)
+	StopSandbox(context.Context, *connect.Request[v2.StopSandboxRequest]) (*connect.Response[v2.StopSandboxResponse], error)
+	ResumeSandbox(context.Context, *connect.Request[v2.ResumeSandboxRequest]) (*connect.Response[v2.ResumeSandboxResponse], error)
+	ListSandboxes(context.Context, *connect.Request[v2.ListSandboxesRequest]) (*connect.Response[v2.ListSandboxesResponse], error)
+	ListSandboxHistory(context.Context, *connect.Request[v2.ListSandboxHistoryRequest]) (*connect.Response[v2.ListSandboxHistoryResponse], error)
+	WatchSandbox(context.Context, *connect.Request[v2.WatchSandboxRequest]) (*connect.ServerStreamForClient[v2.WatchSandboxResponse], error)
 }
 
 // NewSandboxServiceClient constructs a client for the agentcompose.v2.SandboxService service. By
@@ -1249,13 +1525,55 @@ func NewSandboxServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sandboxServiceMethods.ByName("GetSandboxStats")),
 			connect.WithClientOptions(opts...),
 		),
+		getSandbox: connect.NewClient[v2.GetSandboxRequest, v2.GetSandboxResponse](
+			httpClient,
+			baseURL+SandboxServiceGetSandboxProcedure,
+			connect.WithSchema(sandboxServiceMethods.ByName("GetSandbox")),
+			connect.WithClientOptions(opts...),
+		),
+		stopSandbox: connect.NewClient[v2.StopSandboxRequest, v2.StopSandboxResponse](
+			httpClient,
+			baseURL+SandboxServiceStopSandboxProcedure,
+			connect.WithSchema(sandboxServiceMethods.ByName("StopSandbox")),
+			connect.WithClientOptions(opts...),
+		),
+		resumeSandbox: connect.NewClient[v2.ResumeSandboxRequest, v2.ResumeSandboxResponse](
+			httpClient,
+			baseURL+SandboxServiceResumeSandboxProcedure,
+			connect.WithSchema(sandboxServiceMethods.ByName("ResumeSandbox")),
+			connect.WithClientOptions(opts...),
+		),
+		listSandboxes: connect.NewClient[v2.ListSandboxesRequest, v2.ListSandboxesResponse](
+			httpClient,
+			baseURL+SandboxServiceListSandboxesProcedure,
+			connect.WithSchema(sandboxServiceMethods.ByName("ListSandboxes")),
+			connect.WithClientOptions(opts...),
+		),
+		listSandboxHistory: connect.NewClient[v2.ListSandboxHistoryRequest, v2.ListSandboxHistoryResponse](
+			httpClient,
+			baseURL+SandboxServiceListSandboxHistoryProcedure,
+			connect.WithSchema(sandboxServiceMethods.ByName("ListSandboxHistory")),
+			connect.WithClientOptions(opts...),
+		),
+		watchSandbox: connect.NewClient[v2.WatchSandboxRequest, v2.WatchSandboxResponse](
+			httpClient,
+			baseURL+SandboxServiceWatchSandboxProcedure,
+			connect.WithSchema(sandboxServiceMethods.ByName("WatchSandbox")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // sandboxServiceClient implements SandboxServiceClient.
 type sandboxServiceClient struct {
-	removeSandbox   *connect.Client[v2.RemoveSandboxRequest, v2.RemoveSandboxResponse]
-	getSandboxStats *connect.Client[v2.GetSandboxStatsRequest, v2.GetSandboxStatsResponse]
+	removeSandbox      *connect.Client[v2.RemoveSandboxRequest, v2.RemoveSandboxResponse]
+	getSandboxStats    *connect.Client[v2.GetSandboxStatsRequest, v2.GetSandboxStatsResponse]
+	getSandbox         *connect.Client[v2.GetSandboxRequest, v2.GetSandboxResponse]
+	stopSandbox        *connect.Client[v2.StopSandboxRequest, v2.StopSandboxResponse]
+	resumeSandbox      *connect.Client[v2.ResumeSandboxRequest, v2.ResumeSandboxResponse]
+	listSandboxes      *connect.Client[v2.ListSandboxesRequest, v2.ListSandboxesResponse]
+	listSandboxHistory *connect.Client[v2.ListSandboxHistoryRequest, v2.ListSandboxHistoryResponse]
+	watchSandbox       *connect.Client[v2.WatchSandboxRequest, v2.WatchSandboxResponse]
 }
 
 // RemoveSandbox calls agentcompose.v2.SandboxService.RemoveSandbox.
@@ -1268,10 +1586,46 @@ func (c *sandboxServiceClient) GetSandboxStats(ctx context.Context, req *connect
 	return c.getSandboxStats.CallUnary(ctx, req)
 }
 
+// GetSandbox calls agentcompose.v2.SandboxService.GetSandbox.
+func (c *sandboxServiceClient) GetSandbox(ctx context.Context, req *connect.Request[v2.GetSandboxRequest]) (*connect.Response[v2.GetSandboxResponse], error) {
+	return c.getSandbox.CallUnary(ctx, req)
+}
+
+// StopSandbox calls agentcompose.v2.SandboxService.StopSandbox.
+func (c *sandboxServiceClient) StopSandbox(ctx context.Context, req *connect.Request[v2.StopSandboxRequest]) (*connect.Response[v2.StopSandboxResponse], error) {
+	return c.stopSandbox.CallUnary(ctx, req)
+}
+
+// ResumeSandbox calls agentcompose.v2.SandboxService.ResumeSandbox.
+func (c *sandboxServiceClient) ResumeSandbox(ctx context.Context, req *connect.Request[v2.ResumeSandboxRequest]) (*connect.Response[v2.ResumeSandboxResponse], error) {
+	return c.resumeSandbox.CallUnary(ctx, req)
+}
+
+// ListSandboxes calls agentcompose.v2.SandboxService.ListSandboxes.
+func (c *sandboxServiceClient) ListSandboxes(ctx context.Context, req *connect.Request[v2.ListSandboxesRequest]) (*connect.Response[v2.ListSandboxesResponse], error) {
+	return c.listSandboxes.CallUnary(ctx, req)
+}
+
+// ListSandboxHistory calls agentcompose.v2.SandboxService.ListSandboxHistory.
+func (c *sandboxServiceClient) ListSandboxHistory(ctx context.Context, req *connect.Request[v2.ListSandboxHistoryRequest]) (*connect.Response[v2.ListSandboxHistoryResponse], error) {
+	return c.listSandboxHistory.CallUnary(ctx, req)
+}
+
+// WatchSandbox calls agentcompose.v2.SandboxService.WatchSandbox.
+func (c *sandboxServiceClient) WatchSandbox(ctx context.Context, req *connect.Request[v2.WatchSandboxRequest]) (*connect.ServerStreamForClient[v2.WatchSandboxResponse], error) {
+	return c.watchSandbox.CallServerStream(ctx, req)
+}
+
 // SandboxServiceHandler is an implementation of the agentcompose.v2.SandboxService service.
 type SandboxServiceHandler interface {
 	RemoveSandbox(context.Context, *connect.Request[v2.RemoveSandboxRequest]) (*connect.Response[v2.RemoveSandboxResponse], error)
 	GetSandboxStats(context.Context, *connect.Request[v2.GetSandboxStatsRequest]) (*connect.Response[v2.GetSandboxStatsResponse], error)
+	GetSandbox(context.Context, *connect.Request[v2.GetSandboxRequest]) (*connect.Response[v2.GetSandboxResponse], error)
+	StopSandbox(context.Context, *connect.Request[v2.StopSandboxRequest]) (*connect.Response[v2.StopSandboxResponse], error)
+	ResumeSandbox(context.Context, *connect.Request[v2.ResumeSandboxRequest]) (*connect.Response[v2.ResumeSandboxResponse], error)
+	ListSandboxes(context.Context, *connect.Request[v2.ListSandboxesRequest]) (*connect.Response[v2.ListSandboxesResponse], error)
+	ListSandboxHistory(context.Context, *connect.Request[v2.ListSandboxHistoryRequest]) (*connect.Response[v2.ListSandboxHistoryResponse], error)
+	WatchSandbox(context.Context, *connect.Request[v2.WatchSandboxRequest], *connect.ServerStream[v2.WatchSandboxResponse]) error
 }
 
 // NewSandboxServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1293,12 +1647,60 @@ func NewSandboxServiceHandler(svc SandboxServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sandboxServiceMethods.ByName("GetSandboxStats")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sandboxServiceGetSandboxHandler := connect.NewUnaryHandler(
+		SandboxServiceGetSandboxProcedure,
+		svc.GetSandbox,
+		connect.WithSchema(sandboxServiceMethods.ByName("GetSandbox")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sandboxServiceStopSandboxHandler := connect.NewUnaryHandler(
+		SandboxServiceStopSandboxProcedure,
+		svc.StopSandbox,
+		connect.WithSchema(sandboxServiceMethods.ByName("StopSandbox")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sandboxServiceResumeSandboxHandler := connect.NewUnaryHandler(
+		SandboxServiceResumeSandboxProcedure,
+		svc.ResumeSandbox,
+		connect.WithSchema(sandboxServiceMethods.ByName("ResumeSandbox")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sandboxServiceListSandboxesHandler := connect.NewUnaryHandler(
+		SandboxServiceListSandboxesProcedure,
+		svc.ListSandboxes,
+		connect.WithSchema(sandboxServiceMethods.ByName("ListSandboxes")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sandboxServiceListSandboxHistoryHandler := connect.NewUnaryHandler(
+		SandboxServiceListSandboxHistoryProcedure,
+		svc.ListSandboxHistory,
+		connect.WithSchema(sandboxServiceMethods.ByName("ListSandboxHistory")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sandboxServiceWatchSandboxHandler := connect.NewServerStreamHandler(
+		SandboxServiceWatchSandboxProcedure,
+		svc.WatchSandbox,
+		connect.WithSchema(sandboxServiceMethods.ByName("WatchSandbox")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/agentcompose.v2.SandboxService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SandboxServiceRemoveSandboxProcedure:
 			sandboxServiceRemoveSandboxHandler.ServeHTTP(w, r)
 		case SandboxServiceGetSandboxStatsProcedure:
 			sandboxServiceGetSandboxStatsHandler.ServeHTTP(w, r)
+		case SandboxServiceGetSandboxProcedure:
+			sandboxServiceGetSandboxHandler.ServeHTTP(w, r)
+		case SandboxServiceStopSandboxProcedure:
+			sandboxServiceStopSandboxHandler.ServeHTTP(w, r)
+		case SandboxServiceResumeSandboxProcedure:
+			sandboxServiceResumeSandboxHandler.ServeHTTP(w, r)
+		case SandboxServiceListSandboxesProcedure:
+			sandboxServiceListSandboxesHandler.ServeHTTP(w, r)
+		case SandboxServiceListSandboxHistoryProcedure:
+			sandboxServiceListSandboxHistoryHandler.ServeHTTP(w, r)
+		case SandboxServiceWatchSandboxProcedure:
+			sandboxServiceWatchSandboxHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1314,6 +1716,571 @@ func (UnimplementedSandboxServiceHandler) RemoveSandbox(context.Context, *connec
 
 func (UnimplementedSandboxServiceHandler) GetSandboxStats(context.Context, *connect.Request[v2.GetSandboxStatsRequest]) (*connect.Response[v2.GetSandboxStatsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SandboxService.GetSandboxStats is not implemented"))
+}
+
+func (UnimplementedSandboxServiceHandler) GetSandbox(context.Context, *connect.Request[v2.GetSandboxRequest]) (*connect.Response[v2.GetSandboxResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SandboxService.GetSandbox is not implemented"))
+}
+
+func (UnimplementedSandboxServiceHandler) StopSandbox(context.Context, *connect.Request[v2.StopSandboxRequest]) (*connect.Response[v2.StopSandboxResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SandboxService.StopSandbox is not implemented"))
+}
+
+func (UnimplementedSandboxServiceHandler) ResumeSandbox(context.Context, *connect.Request[v2.ResumeSandboxRequest]) (*connect.Response[v2.ResumeSandboxResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SandboxService.ResumeSandbox is not implemented"))
+}
+
+func (UnimplementedSandboxServiceHandler) ListSandboxes(context.Context, *connect.Request[v2.ListSandboxesRequest]) (*connect.Response[v2.ListSandboxesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SandboxService.ListSandboxes is not implemented"))
+}
+
+func (UnimplementedSandboxServiceHandler) ListSandboxHistory(context.Context, *connect.Request[v2.ListSandboxHistoryRequest]) (*connect.Response[v2.ListSandboxHistoryResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SandboxService.ListSandboxHistory is not implemented"))
+}
+
+func (UnimplementedSandboxServiceHandler) WatchSandbox(context.Context, *connect.Request[v2.WatchSandboxRequest], *connect.ServerStream[v2.WatchSandboxResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SandboxService.WatchSandbox is not implemented"))
+}
+
+// DashboardServiceClient is a client for the agentcompose.v2.DashboardService service.
+type DashboardServiceClient interface {
+	GetDashboardOverview(context.Context, *connect.Request[v2.GetDashboardOverviewRequest]) (*connect.Response[v2.GetDashboardOverviewResponse], error)
+	WatchDashboardOverview(context.Context, *connect.Request[v2.WatchDashboardOverviewRequest]) (*connect.ServerStreamForClient[v2.WatchDashboardOverviewResponse], error)
+}
+
+// NewDashboardServiceClient constructs a client for the agentcompose.v2.DashboardService service.
+// By default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped
+// responses, and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewDashboardServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) DashboardServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	dashboardServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("DashboardService").Methods()
+	return &dashboardServiceClient{
+		getDashboardOverview: connect.NewClient[v2.GetDashboardOverviewRequest, v2.GetDashboardOverviewResponse](
+			httpClient,
+			baseURL+DashboardServiceGetDashboardOverviewProcedure,
+			connect.WithSchema(dashboardServiceMethods.ByName("GetDashboardOverview")),
+			connect.WithClientOptions(opts...),
+		),
+		watchDashboardOverview: connect.NewClient[v2.WatchDashboardOverviewRequest, v2.WatchDashboardOverviewResponse](
+			httpClient,
+			baseURL+DashboardServiceWatchDashboardOverviewProcedure,
+			connect.WithSchema(dashboardServiceMethods.ByName("WatchDashboardOverview")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// dashboardServiceClient implements DashboardServiceClient.
+type dashboardServiceClient struct {
+	getDashboardOverview   *connect.Client[v2.GetDashboardOverviewRequest, v2.GetDashboardOverviewResponse]
+	watchDashboardOverview *connect.Client[v2.WatchDashboardOverviewRequest, v2.WatchDashboardOverviewResponse]
+}
+
+// GetDashboardOverview calls agentcompose.v2.DashboardService.GetDashboardOverview.
+func (c *dashboardServiceClient) GetDashboardOverview(ctx context.Context, req *connect.Request[v2.GetDashboardOverviewRequest]) (*connect.Response[v2.GetDashboardOverviewResponse], error) {
+	return c.getDashboardOverview.CallUnary(ctx, req)
+}
+
+// WatchDashboardOverview calls agentcompose.v2.DashboardService.WatchDashboardOverview.
+func (c *dashboardServiceClient) WatchDashboardOverview(ctx context.Context, req *connect.Request[v2.WatchDashboardOverviewRequest]) (*connect.ServerStreamForClient[v2.WatchDashboardOverviewResponse], error) {
+	return c.watchDashboardOverview.CallServerStream(ctx, req)
+}
+
+// DashboardServiceHandler is an implementation of the agentcompose.v2.DashboardService service.
+type DashboardServiceHandler interface {
+	GetDashboardOverview(context.Context, *connect.Request[v2.GetDashboardOverviewRequest]) (*connect.Response[v2.GetDashboardOverviewResponse], error)
+	WatchDashboardOverview(context.Context, *connect.Request[v2.WatchDashboardOverviewRequest], *connect.ServerStream[v2.WatchDashboardOverviewResponse]) error
+}
+
+// NewDashboardServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewDashboardServiceHandler(svc DashboardServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	dashboardServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("DashboardService").Methods()
+	dashboardServiceGetDashboardOverviewHandler := connect.NewUnaryHandler(
+		DashboardServiceGetDashboardOverviewProcedure,
+		svc.GetDashboardOverview,
+		connect.WithSchema(dashboardServiceMethods.ByName("GetDashboardOverview")),
+		connect.WithHandlerOptions(opts...),
+	)
+	dashboardServiceWatchDashboardOverviewHandler := connect.NewServerStreamHandler(
+		DashboardServiceWatchDashboardOverviewProcedure,
+		svc.WatchDashboardOverview,
+		connect.WithSchema(dashboardServiceMethods.ByName("WatchDashboardOverview")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/agentcompose.v2.DashboardService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case DashboardServiceGetDashboardOverviewProcedure:
+			dashboardServiceGetDashboardOverviewHandler.ServeHTTP(w, r)
+		case DashboardServiceWatchDashboardOverviewProcedure:
+			dashboardServiceWatchDashboardOverviewHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedDashboardServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedDashboardServiceHandler struct{}
+
+func (UnimplementedDashboardServiceHandler) GetDashboardOverview(context.Context, *connect.Request[v2.GetDashboardOverviewRequest]) (*connect.Response[v2.GetDashboardOverviewResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.DashboardService.GetDashboardOverview is not implemented"))
+}
+
+func (UnimplementedDashboardServiceHandler) WatchDashboardOverview(context.Context, *connect.Request[v2.WatchDashboardOverviewRequest], *connect.ServerStream[v2.WatchDashboardOverviewResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.DashboardService.WatchDashboardOverview is not implemented"))
+}
+
+// SettingsServiceClient is a client for the agentcompose.v2.SettingsService service.
+type SettingsServiceClient interface {
+	GetGlobalEnv(context.Context, *connect.Request[v2.GetGlobalEnvRequest]) (*connect.Response[v2.GetGlobalEnvResponse], error)
+	UpdateGlobalEnv(context.Context, *connect.Request[v2.UpdateGlobalEnvRequest]) (*connect.Response[v2.UpdateGlobalEnvResponse], error)
+	GetCapabilityGatewayConfig(context.Context, *connect.Request[v2.GetCapabilityGatewayConfigRequest]) (*connect.Response[v2.GetCapabilityGatewayConfigResponse], error)
+	UpdateCapabilityGatewayConfig(context.Context, *connect.Request[v2.UpdateCapabilityGatewayConfigRequest]) (*connect.Response[v2.UpdateCapabilityGatewayConfigResponse], error)
+	ListWorkspacePresets(context.Context, *connect.Request[v2.ListWorkspacePresetsRequest]) (*connect.Response[v2.ListWorkspacePresetsResponse], error)
+	CreateWorkspacePreset(context.Context, *connect.Request[v2.CreateWorkspacePresetRequest]) (*connect.Response[v2.WorkspacePresetResponse], error)
+	UpdateWorkspacePreset(context.Context, *connect.Request[v2.UpdateWorkspacePresetRequest]) (*connect.Response[v2.WorkspacePresetResponse], error)
+	DeleteWorkspacePreset(context.Context, *connect.Request[v2.DeleteWorkspacePresetRequest]) (*connect.Response[v2.DeleteWorkspacePresetResponse], error)
+}
+
+// NewSettingsServiceClient constructs a client for the agentcompose.v2.SettingsService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewSettingsServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) SettingsServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	settingsServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("SettingsService").Methods()
+	return &settingsServiceClient{
+		getGlobalEnv: connect.NewClient[v2.GetGlobalEnvRequest, v2.GetGlobalEnvResponse](
+			httpClient,
+			baseURL+SettingsServiceGetGlobalEnvProcedure,
+			connect.WithSchema(settingsServiceMethods.ByName("GetGlobalEnv")),
+			connect.WithClientOptions(opts...),
+		),
+		updateGlobalEnv: connect.NewClient[v2.UpdateGlobalEnvRequest, v2.UpdateGlobalEnvResponse](
+			httpClient,
+			baseURL+SettingsServiceUpdateGlobalEnvProcedure,
+			connect.WithSchema(settingsServiceMethods.ByName("UpdateGlobalEnv")),
+			connect.WithClientOptions(opts...),
+		),
+		getCapabilityGatewayConfig: connect.NewClient[v2.GetCapabilityGatewayConfigRequest, v2.GetCapabilityGatewayConfigResponse](
+			httpClient,
+			baseURL+SettingsServiceGetCapabilityGatewayConfigProcedure,
+			connect.WithSchema(settingsServiceMethods.ByName("GetCapabilityGatewayConfig")),
+			connect.WithClientOptions(opts...),
+		),
+		updateCapabilityGatewayConfig: connect.NewClient[v2.UpdateCapabilityGatewayConfigRequest, v2.UpdateCapabilityGatewayConfigResponse](
+			httpClient,
+			baseURL+SettingsServiceUpdateCapabilityGatewayConfigProcedure,
+			connect.WithSchema(settingsServiceMethods.ByName("UpdateCapabilityGatewayConfig")),
+			connect.WithClientOptions(opts...),
+		),
+		listWorkspacePresets: connect.NewClient[v2.ListWorkspacePresetsRequest, v2.ListWorkspacePresetsResponse](
+			httpClient,
+			baseURL+SettingsServiceListWorkspacePresetsProcedure,
+			connect.WithSchema(settingsServiceMethods.ByName("ListWorkspacePresets")),
+			connect.WithClientOptions(opts...),
+		),
+		createWorkspacePreset: connect.NewClient[v2.CreateWorkspacePresetRequest, v2.WorkspacePresetResponse](
+			httpClient,
+			baseURL+SettingsServiceCreateWorkspacePresetProcedure,
+			connect.WithSchema(settingsServiceMethods.ByName("CreateWorkspacePreset")),
+			connect.WithClientOptions(opts...),
+		),
+		updateWorkspacePreset: connect.NewClient[v2.UpdateWorkspacePresetRequest, v2.WorkspacePresetResponse](
+			httpClient,
+			baseURL+SettingsServiceUpdateWorkspacePresetProcedure,
+			connect.WithSchema(settingsServiceMethods.ByName("UpdateWorkspacePreset")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteWorkspacePreset: connect.NewClient[v2.DeleteWorkspacePresetRequest, v2.DeleteWorkspacePresetResponse](
+			httpClient,
+			baseURL+SettingsServiceDeleteWorkspacePresetProcedure,
+			connect.WithSchema(settingsServiceMethods.ByName("DeleteWorkspacePreset")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// settingsServiceClient implements SettingsServiceClient.
+type settingsServiceClient struct {
+	getGlobalEnv                  *connect.Client[v2.GetGlobalEnvRequest, v2.GetGlobalEnvResponse]
+	updateGlobalEnv               *connect.Client[v2.UpdateGlobalEnvRequest, v2.UpdateGlobalEnvResponse]
+	getCapabilityGatewayConfig    *connect.Client[v2.GetCapabilityGatewayConfigRequest, v2.GetCapabilityGatewayConfigResponse]
+	updateCapabilityGatewayConfig *connect.Client[v2.UpdateCapabilityGatewayConfigRequest, v2.UpdateCapabilityGatewayConfigResponse]
+	listWorkspacePresets          *connect.Client[v2.ListWorkspacePresetsRequest, v2.ListWorkspacePresetsResponse]
+	createWorkspacePreset         *connect.Client[v2.CreateWorkspacePresetRequest, v2.WorkspacePresetResponse]
+	updateWorkspacePreset         *connect.Client[v2.UpdateWorkspacePresetRequest, v2.WorkspacePresetResponse]
+	deleteWorkspacePreset         *connect.Client[v2.DeleteWorkspacePresetRequest, v2.DeleteWorkspacePresetResponse]
+}
+
+// GetGlobalEnv calls agentcompose.v2.SettingsService.GetGlobalEnv.
+func (c *settingsServiceClient) GetGlobalEnv(ctx context.Context, req *connect.Request[v2.GetGlobalEnvRequest]) (*connect.Response[v2.GetGlobalEnvResponse], error) {
+	return c.getGlobalEnv.CallUnary(ctx, req)
+}
+
+// UpdateGlobalEnv calls agentcompose.v2.SettingsService.UpdateGlobalEnv.
+func (c *settingsServiceClient) UpdateGlobalEnv(ctx context.Context, req *connect.Request[v2.UpdateGlobalEnvRequest]) (*connect.Response[v2.UpdateGlobalEnvResponse], error) {
+	return c.updateGlobalEnv.CallUnary(ctx, req)
+}
+
+// GetCapabilityGatewayConfig calls agentcompose.v2.SettingsService.GetCapabilityGatewayConfig.
+func (c *settingsServiceClient) GetCapabilityGatewayConfig(ctx context.Context, req *connect.Request[v2.GetCapabilityGatewayConfigRequest]) (*connect.Response[v2.GetCapabilityGatewayConfigResponse], error) {
+	return c.getCapabilityGatewayConfig.CallUnary(ctx, req)
+}
+
+// UpdateCapabilityGatewayConfig calls
+// agentcompose.v2.SettingsService.UpdateCapabilityGatewayConfig.
+func (c *settingsServiceClient) UpdateCapabilityGatewayConfig(ctx context.Context, req *connect.Request[v2.UpdateCapabilityGatewayConfigRequest]) (*connect.Response[v2.UpdateCapabilityGatewayConfigResponse], error) {
+	return c.updateCapabilityGatewayConfig.CallUnary(ctx, req)
+}
+
+// ListWorkspacePresets calls agentcompose.v2.SettingsService.ListWorkspacePresets.
+func (c *settingsServiceClient) ListWorkspacePresets(ctx context.Context, req *connect.Request[v2.ListWorkspacePresetsRequest]) (*connect.Response[v2.ListWorkspacePresetsResponse], error) {
+	return c.listWorkspacePresets.CallUnary(ctx, req)
+}
+
+// CreateWorkspacePreset calls agentcompose.v2.SettingsService.CreateWorkspacePreset.
+func (c *settingsServiceClient) CreateWorkspacePreset(ctx context.Context, req *connect.Request[v2.CreateWorkspacePresetRequest]) (*connect.Response[v2.WorkspacePresetResponse], error) {
+	return c.createWorkspacePreset.CallUnary(ctx, req)
+}
+
+// UpdateWorkspacePreset calls agentcompose.v2.SettingsService.UpdateWorkspacePreset.
+func (c *settingsServiceClient) UpdateWorkspacePreset(ctx context.Context, req *connect.Request[v2.UpdateWorkspacePresetRequest]) (*connect.Response[v2.WorkspacePresetResponse], error) {
+	return c.updateWorkspacePreset.CallUnary(ctx, req)
+}
+
+// DeleteWorkspacePreset calls agentcompose.v2.SettingsService.DeleteWorkspacePreset.
+func (c *settingsServiceClient) DeleteWorkspacePreset(ctx context.Context, req *connect.Request[v2.DeleteWorkspacePresetRequest]) (*connect.Response[v2.DeleteWorkspacePresetResponse], error) {
+	return c.deleteWorkspacePreset.CallUnary(ctx, req)
+}
+
+// SettingsServiceHandler is an implementation of the agentcompose.v2.SettingsService service.
+type SettingsServiceHandler interface {
+	GetGlobalEnv(context.Context, *connect.Request[v2.GetGlobalEnvRequest]) (*connect.Response[v2.GetGlobalEnvResponse], error)
+	UpdateGlobalEnv(context.Context, *connect.Request[v2.UpdateGlobalEnvRequest]) (*connect.Response[v2.UpdateGlobalEnvResponse], error)
+	GetCapabilityGatewayConfig(context.Context, *connect.Request[v2.GetCapabilityGatewayConfigRequest]) (*connect.Response[v2.GetCapabilityGatewayConfigResponse], error)
+	UpdateCapabilityGatewayConfig(context.Context, *connect.Request[v2.UpdateCapabilityGatewayConfigRequest]) (*connect.Response[v2.UpdateCapabilityGatewayConfigResponse], error)
+	ListWorkspacePresets(context.Context, *connect.Request[v2.ListWorkspacePresetsRequest]) (*connect.Response[v2.ListWorkspacePresetsResponse], error)
+	CreateWorkspacePreset(context.Context, *connect.Request[v2.CreateWorkspacePresetRequest]) (*connect.Response[v2.WorkspacePresetResponse], error)
+	UpdateWorkspacePreset(context.Context, *connect.Request[v2.UpdateWorkspacePresetRequest]) (*connect.Response[v2.WorkspacePresetResponse], error)
+	DeleteWorkspacePreset(context.Context, *connect.Request[v2.DeleteWorkspacePresetRequest]) (*connect.Response[v2.DeleteWorkspacePresetResponse], error)
+}
+
+// NewSettingsServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewSettingsServiceHandler(svc SettingsServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	settingsServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("SettingsService").Methods()
+	settingsServiceGetGlobalEnvHandler := connect.NewUnaryHandler(
+		SettingsServiceGetGlobalEnvProcedure,
+		svc.GetGlobalEnv,
+		connect.WithSchema(settingsServiceMethods.ByName("GetGlobalEnv")),
+		connect.WithHandlerOptions(opts...),
+	)
+	settingsServiceUpdateGlobalEnvHandler := connect.NewUnaryHandler(
+		SettingsServiceUpdateGlobalEnvProcedure,
+		svc.UpdateGlobalEnv,
+		connect.WithSchema(settingsServiceMethods.ByName("UpdateGlobalEnv")),
+		connect.WithHandlerOptions(opts...),
+	)
+	settingsServiceGetCapabilityGatewayConfigHandler := connect.NewUnaryHandler(
+		SettingsServiceGetCapabilityGatewayConfigProcedure,
+		svc.GetCapabilityGatewayConfig,
+		connect.WithSchema(settingsServiceMethods.ByName("GetCapabilityGatewayConfig")),
+		connect.WithHandlerOptions(opts...),
+	)
+	settingsServiceUpdateCapabilityGatewayConfigHandler := connect.NewUnaryHandler(
+		SettingsServiceUpdateCapabilityGatewayConfigProcedure,
+		svc.UpdateCapabilityGatewayConfig,
+		connect.WithSchema(settingsServiceMethods.ByName("UpdateCapabilityGatewayConfig")),
+		connect.WithHandlerOptions(opts...),
+	)
+	settingsServiceListWorkspacePresetsHandler := connect.NewUnaryHandler(
+		SettingsServiceListWorkspacePresetsProcedure,
+		svc.ListWorkspacePresets,
+		connect.WithSchema(settingsServiceMethods.ByName("ListWorkspacePresets")),
+		connect.WithHandlerOptions(opts...),
+	)
+	settingsServiceCreateWorkspacePresetHandler := connect.NewUnaryHandler(
+		SettingsServiceCreateWorkspacePresetProcedure,
+		svc.CreateWorkspacePreset,
+		connect.WithSchema(settingsServiceMethods.ByName("CreateWorkspacePreset")),
+		connect.WithHandlerOptions(opts...),
+	)
+	settingsServiceUpdateWorkspacePresetHandler := connect.NewUnaryHandler(
+		SettingsServiceUpdateWorkspacePresetProcedure,
+		svc.UpdateWorkspacePreset,
+		connect.WithSchema(settingsServiceMethods.ByName("UpdateWorkspacePreset")),
+		connect.WithHandlerOptions(opts...),
+	)
+	settingsServiceDeleteWorkspacePresetHandler := connect.NewUnaryHandler(
+		SettingsServiceDeleteWorkspacePresetProcedure,
+		svc.DeleteWorkspacePreset,
+		connect.WithSchema(settingsServiceMethods.ByName("DeleteWorkspacePreset")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/agentcompose.v2.SettingsService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case SettingsServiceGetGlobalEnvProcedure:
+			settingsServiceGetGlobalEnvHandler.ServeHTTP(w, r)
+		case SettingsServiceUpdateGlobalEnvProcedure:
+			settingsServiceUpdateGlobalEnvHandler.ServeHTTP(w, r)
+		case SettingsServiceGetCapabilityGatewayConfigProcedure:
+			settingsServiceGetCapabilityGatewayConfigHandler.ServeHTTP(w, r)
+		case SettingsServiceUpdateCapabilityGatewayConfigProcedure:
+			settingsServiceUpdateCapabilityGatewayConfigHandler.ServeHTTP(w, r)
+		case SettingsServiceListWorkspacePresetsProcedure:
+			settingsServiceListWorkspacePresetsHandler.ServeHTTP(w, r)
+		case SettingsServiceCreateWorkspacePresetProcedure:
+			settingsServiceCreateWorkspacePresetHandler.ServeHTTP(w, r)
+		case SettingsServiceUpdateWorkspacePresetProcedure:
+			settingsServiceUpdateWorkspacePresetHandler.ServeHTTP(w, r)
+		case SettingsServiceDeleteWorkspacePresetProcedure:
+			settingsServiceDeleteWorkspacePresetHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedSettingsServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedSettingsServiceHandler struct{}
+
+func (UnimplementedSettingsServiceHandler) GetGlobalEnv(context.Context, *connect.Request[v2.GetGlobalEnvRequest]) (*connect.Response[v2.GetGlobalEnvResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SettingsService.GetGlobalEnv is not implemented"))
+}
+
+func (UnimplementedSettingsServiceHandler) UpdateGlobalEnv(context.Context, *connect.Request[v2.UpdateGlobalEnvRequest]) (*connect.Response[v2.UpdateGlobalEnvResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SettingsService.UpdateGlobalEnv is not implemented"))
+}
+
+func (UnimplementedSettingsServiceHandler) GetCapabilityGatewayConfig(context.Context, *connect.Request[v2.GetCapabilityGatewayConfigRequest]) (*connect.Response[v2.GetCapabilityGatewayConfigResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SettingsService.GetCapabilityGatewayConfig is not implemented"))
+}
+
+func (UnimplementedSettingsServiceHandler) UpdateCapabilityGatewayConfig(context.Context, *connect.Request[v2.UpdateCapabilityGatewayConfigRequest]) (*connect.Response[v2.UpdateCapabilityGatewayConfigResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SettingsService.UpdateCapabilityGatewayConfig is not implemented"))
+}
+
+func (UnimplementedSettingsServiceHandler) ListWorkspacePresets(context.Context, *connect.Request[v2.ListWorkspacePresetsRequest]) (*connect.Response[v2.ListWorkspacePresetsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SettingsService.ListWorkspacePresets is not implemented"))
+}
+
+func (UnimplementedSettingsServiceHandler) CreateWorkspacePreset(context.Context, *connect.Request[v2.CreateWorkspacePresetRequest]) (*connect.Response[v2.WorkspacePresetResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SettingsService.CreateWorkspacePreset is not implemented"))
+}
+
+func (UnimplementedSettingsServiceHandler) UpdateWorkspacePreset(context.Context, *connect.Request[v2.UpdateWorkspacePresetRequest]) (*connect.Response[v2.WorkspacePresetResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SettingsService.UpdateWorkspacePreset is not implemented"))
+}
+
+func (UnimplementedSettingsServiceHandler) DeleteWorkspacePreset(context.Context, *connect.Request[v2.DeleteWorkspacePresetRequest]) (*connect.Response[v2.DeleteWorkspacePresetResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SettingsService.DeleteWorkspacePreset is not implemented"))
+}
+
+// CapabilityServiceClient is a client for the agentcompose.v2.CapabilityService service.
+type CapabilityServiceClient interface {
+	GetCapabilityStatus(context.Context, *connect.Request[v2.GetCapabilityStatusRequest]) (*connect.Response[v2.CapabilityStatusResponse], error)
+	ListCapabilitySets(context.Context, *connect.Request[v2.ListCapabilitySetsRequest]) (*connect.Response[v2.ListCapabilitySetsResponse], error)
+	GetCapabilityCatalog(context.Context, *connect.Request[v2.GetCapabilityCatalogRequest]) (*connect.Response[v2.GetCapabilityCatalogResponse], error)
+}
+
+// NewCapabilityServiceClient constructs a client for the agentcompose.v2.CapabilityService service.
+// By default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped
+// responses, and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewCapabilityServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) CapabilityServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	capabilityServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("CapabilityService").Methods()
+	return &capabilityServiceClient{
+		getCapabilityStatus: connect.NewClient[v2.GetCapabilityStatusRequest, v2.CapabilityStatusResponse](
+			httpClient,
+			baseURL+CapabilityServiceGetCapabilityStatusProcedure,
+			connect.WithSchema(capabilityServiceMethods.ByName("GetCapabilityStatus")),
+			connect.WithClientOptions(opts...),
+		),
+		listCapabilitySets: connect.NewClient[v2.ListCapabilitySetsRequest, v2.ListCapabilitySetsResponse](
+			httpClient,
+			baseURL+CapabilityServiceListCapabilitySetsProcedure,
+			connect.WithSchema(capabilityServiceMethods.ByName("ListCapabilitySets")),
+			connect.WithClientOptions(opts...),
+		),
+		getCapabilityCatalog: connect.NewClient[v2.GetCapabilityCatalogRequest, v2.GetCapabilityCatalogResponse](
+			httpClient,
+			baseURL+CapabilityServiceGetCapabilityCatalogProcedure,
+			connect.WithSchema(capabilityServiceMethods.ByName("GetCapabilityCatalog")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// capabilityServiceClient implements CapabilityServiceClient.
+type capabilityServiceClient struct {
+	getCapabilityStatus  *connect.Client[v2.GetCapabilityStatusRequest, v2.CapabilityStatusResponse]
+	listCapabilitySets   *connect.Client[v2.ListCapabilitySetsRequest, v2.ListCapabilitySetsResponse]
+	getCapabilityCatalog *connect.Client[v2.GetCapabilityCatalogRequest, v2.GetCapabilityCatalogResponse]
+}
+
+// GetCapabilityStatus calls agentcompose.v2.CapabilityService.GetCapabilityStatus.
+func (c *capabilityServiceClient) GetCapabilityStatus(ctx context.Context, req *connect.Request[v2.GetCapabilityStatusRequest]) (*connect.Response[v2.CapabilityStatusResponse], error) {
+	return c.getCapabilityStatus.CallUnary(ctx, req)
+}
+
+// ListCapabilitySets calls agentcompose.v2.CapabilityService.ListCapabilitySets.
+func (c *capabilityServiceClient) ListCapabilitySets(ctx context.Context, req *connect.Request[v2.ListCapabilitySetsRequest]) (*connect.Response[v2.ListCapabilitySetsResponse], error) {
+	return c.listCapabilitySets.CallUnary(ctx, req)
+}
+
+// GetCapabilityCatalog calls agentcompose.v2.CapabilityService.GetCapabilityCatalog.
+func (c *capabilityServiceClient) GetCapabilityCatalog(ctx context.Context, req *connect.Request[v2.GetCapabilityCatalogRequest]) (*connect.Response[v2.GetCapabilityCatalogResponse], error) {
+	return c.getCapabilityCatalog.CallUnary(ctx, req)
+}
+
+// CapabilityServiceHandler is an implementation of the agentcompose.v2.CapabilityService service.
+type CapabilityServiceHandler interface {
+	GetCapabilityStatus(context.Context, *connect.Request[v2.GetCapabilityStatusRequest]) (*connect.Response[v2.CapabilityStatusResponse], error)
+	ListCapabilitySets(context.Context, *connect.Request[v2.ListCapabilitySetsRequest]) (*connect.Response[v2.ListCapabilitySetsResponse], error)
+	GetCapabilityCatalog(context.Context, *connect.Request[v2.GetCapabilityCatalogRequest]) (*connect.Response[v2.GetCapabilityCatalogResponse], error)
+}
+
+// NewCapabilityServiceHandler builds an HTTP handler from the service implementation. It returns
+// the path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewCapabilityServiceHandler(svc CapabilityServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	capabilityServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("CapabilityService").Methods()
+	capabilityServiceGetCapabilityStatusHandler := connect.NewUnaryHandler(
+		CapabilityServiceGetCapabilityStatusProcedure,
+		svc.GetCapabilityStatus,
+		connect.WithSchema(capabilityServiceMethods.ByName("GetCapabilityStatus")),
+		connect.WithHandlerOptions(opts...),
+	)
+	capabilityServiceListCapabilitySetsHandler := connect.NewUnaryHandler(
+		CapabilityServiceListCapabilitySetsProcedure,
+		svc.ListCapabilitySets,
+		connect.WithSchema(capabilityServiceMethods.ByName("ListCapabilitySets")),
+		connect.WithHandlerOptions(opts...),
+	)
+	capabilityServiceGetCapabilityCatalogHandler := connect.NewUnaryHandler(
+		CapabilityServiceGetCapabilityCatalogProcedure,
+		svc.GetCapabilityCatalog,
+		connect.WithSchema(capabilityServiceMethods.ByName("GetCapabilityCatalog")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/agentcompose.v2.CapabilityService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case CapabilityServiceGetCapabilityStatusProcedure:
+			capabilityServiceGetCapabilityStatusHandler.ServeHTTP(w, r)
+		case CapabilityServiceListCapabilitySetsProcedure:
+			capabilityServiceListCapabilitySetsHandler.ServeHTTP(w, r)
+		case CapabilityServiceGetCapabilityCatalogProcedure:
+			capabilityServiceGetCapabilityCatalogHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedCapabilityServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedCapabilityServiceHandler struct{}
+
+func (UnimplementedCapabilityServiceHandler) GetCapabilityStatus(context.Context, *connect.Request[v2.GetCapabilityStatusRequest]) (*connect.Response[v2.CapabilityStatusResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.CapabilityService.GetCapabilityStatus is not implemented"))
+}
+
+func (UnimplementedCapabilityServiceHandler) ListCapabilitySets(context.Context, *connect.Request[v2.ListCapabilitySetsRequest]) (*connect.Response[v2.ListCapabilitySetsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.CapabilityService.ListCapabilitySets is not implemented"))
+}
+
+func (UnimplementedCapabilityServiceHandler) GetCapabilityCatalog(context.Context, *connect.Request[v2.GetCapabilityCatalogRequest]) (*connect.Response[v2.GetCapabilityCatalogResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.CapabilityService.GetCapabilityCatalog is not implemented"))
+}
+
+// LLMServiceClient is a client for the agentcompose.v2.LLMService service.
+type LLMServiceClient interface {
+	Generate(context.Context, *connect.Request[v2.GenerateLLMRequest]) (*connect.Response[v2.GenerateLLMResponse], error)
+}
+
+// NewLLMServiceClient constructs a client for the agentcompose.v2.LLMService service. By default,
+// it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and
+// sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC()
+// or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewLLMServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) LLMServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	lLMServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("LLMService").Methods()
+	return &lLMServiceClient{
+		generate: connect.NewClient[v2.GenerateLLMRequest, v2.GenerateLLMResponse](
+			httpClient,
+			baseURL+LLMServiceGenerateProcedure,
+			connect.WithSchema(lLMServiceMethods.ByName("Generate")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// lLMServiceClient implements LLMServiceClient.
+type lLMServiceClient struct {
+	generate *connect.Client[v2.GenerateLLMRequest, v2.GenerateLLMResponse]
+}
+
+// Generate calls agentcompose.v2.LLMService.Generate.
+func (c *lLMServiceClient) Generate(ctx context.Context, req *connect.Request[v2.GenerateLLMRequest]) (*connect.Response[v2.GenerateLLMResponse], error) {
+	return c.generate.CallUnary(ctx, req)
+}
+
+// LLMServiceHandler is an implementation of the agentcompose.v2.LLMService service.
+type LLMServiceHandler interface {
+	Generate(context.Context, *connect.Request[v2.GenerateLLMRequest]) (*connect.Response[v2.GenerateLLMResponse], error)
+}
+
+// NewLLMServiceHandler builds an HTTP handler from the service implementation. It returns the path
+// on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewLLMServiceHandler(svc LLMServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	lLMServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("LLMService").Methods()
+	lLMServiceGenerateHandler := connect.NewUnaryHandler(
+		LLMServiceGenerateProcedure,
+		svc.Generate,
+		connect.WithSchema(lLMServiceMethods.ByName("Generate")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/agentcompose.v2.LLMService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case LLMServiceGenerateProcedure:
+			lLMServiceGenerateHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedLLMServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedLLMServiceHandler struct{}
+
+func (UnimplementedLLMServiceHandler) Generate(context.Context, *connect.Request[v2.GenerateLLMRequest]) (*connect.Response[v2.GenerateLLMResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.LLMService.Generate is not implemented"))
 }
 
 // ResourceServiceClient is a client for the agentcompose.v2.ResourceService service.

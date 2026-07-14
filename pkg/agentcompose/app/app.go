@@ -35,7 +35,6 @@ import (
 	"agent-compose/pkg/storage/sessionstore"
 	"agent-compose/pkg/volumes"
 	"agent-compose/pkg/workspaces"
-	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
 
@@ -79,6 +78,7 @@ func RegisterDependencies(di do.Injector) {
 	do.Provide(di, NewSandboxRPCBridge)
 	do.Provide(di, NewLoaderController)
 	do.Provide(di, NewRunController)
+	do.Provide(di, NewSandboxRunTargetResolver)
 	do.Provide(di, NewRunSupervisor)
 	do.Provide(di, NewProjectController)
 }
@@ -86,59 +86,8 @@ func RegisterDependencies(di do.Injector) {
 func RegisterRoutes(di do.Injector) {
 	app := do.MustInvoke[*echo.Echo](di)
 
-	sessionHandler := api.NewSessionHandler(
-		do.MustInvoke[*adapters.SandboxRPCBridge](di),
-		do.MustInvoke[*sessionstore.Store](di),
-		do.MustInvoke[*sessions.StreamBroker](di),
-	)
-	path, handler := agentcomposev1connect.NewSessionServiceHandler(sessionHandler)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	kernelHandler := api.NewKernelHandler(
-		do.MustInvoke[*sessionstore.Store](di),
-		do.MustInvoke[*adapters.CellExecutor](di),
-		do.MustInvoke[*loaders.Bus](di),
-	)
-	path, handler = agentcomposev1connect.NewKernelServiceHandler(kernelHandler)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	agentHandler := api.NewAgentHandler(
-		do.MustInvoke[*sessionstore.Store](di),
-		do.MustInvoke[*configstore.ConfigStore](di),
-		do.MustInvoke[*adapters.AgentExecutor](di),
-		do.MustInvoke[*loaders.Bus](di),
-	)
-	path, handler = agentcomposev1connect.NewAgentServiceHandler(agentHandler)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	agentDefinitionHandler := api.NewAgentDefinitionHandler(
-		do.MustInvoke[*appconfig.Config](di),
-		do.MustInvoke[*sessionstore.Store](di),
-		do.MustInvoke[*configstore.ConfigStore](di),
-		do.MustInvoke[*adapters.SandboxRPCBridge](di),
-		do.MustInvoke[*sessions.StreamBroker](di),
-	)
-	path, handler = agentcomposev1connect.NewAgentDefinitionServiceHandler(agentDefinitionHandler)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	llmHandler := api.NewLLMHandler(do.MustInvoke[*adapters.LLMClient](di))
-	path, handler = agentcomposev1connect.NewLLMServiceHandler(llmHandler)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	configHandler := api.NewConfigHandler(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*configstore.ConfigStore](di))
-	path, handler = agentcomposev1connect.NewConfigServiceHandler(configHandler)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	loaderHandler := api.NewLoaderHandler(do.MustInvoke[*loaders.Controller](di), do.MustInvoke[*configstore.ConfigStore](di))
-	path, handler = agentcomposev1connect.NewLoaderServiceHandler(loaderHandler)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	dashboardHandler := api.NewDashboardHandler(do.MustInvoke[*dashboard.Hub](di))
-	path, handler = agentcomposev1connect.NewDashboardServiceHandler(dashboardHandler)
-	app.Any(path+"*", echo.WrapHandler(handler))
-	capabilityHandler := api.NewCapabilityHandler(
-		do.MustInvoke[capabilities.Provider](di),
-		do.MustInvoke[*configstore.ConfigStore](di),
-		capabilityRuntimeConfig{config: do.MustInvoke[*appconfig.Config](di)},
-	)
-	path, handler = agentcomposev1connect.NewCapabilityServiceHandler(capabilityHandler)
-	app.Any(path+"*", echo.WrapHandler(handler))
-
 	projectHandler := api.NewProjectHandler(projectControllerDelegate{controller: do.MustInvoke[*projects.Controller](di)}, do.MustInvoke[*configstore.ConfigStore](di))
-	path, handler = agentcomposev2connect.NewProjectServiceHandler(projectHandler)
+	path, handler := agentcomposev2connect.NewProjectServiceHandler(projectHandler)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	runDelegate := runControllerDelegate{
 		controller: do.MustInvoke[*runs.Controller](di),
@@ -183,11 +132,19 @@ func RegisterRoutes(di do.Injector) {
 			}
 			return statsRuntime, nil
 		},
-	)
+	).WithRunTargetResolver(do.MustInvoke[*runs.SandboxRunTargetResolver](di))
 	path, handler = agentcomposev2connect.NewSandboxServiceHandler(sandboxHandler)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	resourceHandler := api.NewResourceHandler(do.MustInvoke[*resources.Resolver](di))
 	path, handler = agentcomposev2connect.NewResourceServiceHandler(resourceHandler)
+	app.Any(path+"*", echo.WrapHandler(handler))
+	path, handler = agentcomposev2connect.NewSettingsServiceHandler(api.NewSettingsV2Handler(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*configstore.ConfigStore](di)))
+	app.Any(path+"*", echo.WrapHandler(handler))
+	path, handler = agentcomposev2connect.NewDashboardServiceHandler(api.NewDashboardV2Handler(do.MustInvoke[*dashboard.Hub](di)))
+	app.Any(path+"*", echo.WrapHandler(handler))
+	path, handler = agentcomposev2connect.NewCapabilityServiceHandler(api.NewCapabilityV2Handler(do.MustInvoke[capabilities.Provider](di), capabilityRuntimeConfig{config: do.MustInvoke[*appconfig.Config](di)}))
+	app.Any(path+"*", echo.WrapHandler(handler))
+	path, handler = agentcomposev2connect.NewLLMServiceHandler(api.NewLLMHandler(do.MustInvoke[*adapters.LLMClient](di)))
 	app.Any(path+"*", echo.WrapHandler(handler))
 
 	registerProxyRoutes(app, di)
@@ -196,7 +153,14 @@ func RegisterRoutes(di do.Injector) {
 	registerWebhookRoutes(app, di)
 }
 
+func NewSandboxRunTargetResolver(di do.Injector) (*runs.SandboxRunTargetResolver, error) {
+	return runs.NewSandboxRunTargetResolver(do.MustInvoke[*configstore.ConfigStore](di))
+}
+
 func StartBackground(di do.Injector) error {
+	if err := syncLegacyDefaultProject(do.MustInvoke[context.Context](di), do.MustInvoke[*projects.Controller](di)); err != nil {
+		slog.Warn("failed to sync legacy v1 agents into the default project", "error", err)
+	}
 	return startBackgroundManagers(
 		do.MustInvoke[context.Context](di),
 		do.MustInvoke[*sessionstore.Store](di),

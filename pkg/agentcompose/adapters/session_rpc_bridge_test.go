@@ -3,6 +3,7 @@ package adapters
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,9 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
-	"google.golang.org/protobuf/encoding/protojson"
-
 	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/capability"
 	appconfig "agent-compose/pkg/config"
@@ -23,7 +21,6 @@ import (
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
 type fakeRPCSandboxDriver struct {
@@ -77,15 +74,15 @@ func TestSandboxRPCBridgeCallJSONSupportsSessionRPCs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	var created agentcomposev1.SessionResponse
-	if err := protojson.Unmarshal([]byte(createJSON), &created); err != nil {
+	var created sandboxRPCResponse
+	if err := json.Unmarshal([]byte(createJSON), &created); err != nil {
 		t.Fatalf("unmarshal create response: %v", err)
 	}
-	sessionID := created.GetSession().GetSummary().GetSessionId()
+	sessionID := created.Session.Summary.SessionID
 	if sessionID == "" {
 		t.Fatalf("expected CreateSession to return a session id")
 	}
-	if got, want := created.GetSession().GetSummary().GetVmStatus(), domain.VMStatusRunning; got != want {
+	if got, want := created.Session.Summary.VMStatus, domain.VMStatusRunning; got != want {
 		t.Fatalf("CreateSession vm status = %q, want %q", got, want)
 	}
 	if len(driver.startCalls) != 1 {
@@ -96,24 +93,24 @@ func TestSandboxRPCBridgeCallJSONSupportsSessionRPCs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
-	var gotSession agentcomposev1.SessionResponse
-	if err := protojson.Unmarshal([]byte(getJSON), &gotSession); err != nil {
+	var gotSession sandboxRPCResponse
+	if err := json.Unmarshal([]byte(getJSON), &gotSession); err != nil {
 		t.Fatalf("unmarshal get response: %v", err)
 	}
-	if gotSession.GetSession().GetSummary().GetSessionId() != sessionID {
-		t.Fatalf("GetSession session id = %q, want %q", gotSession.GetSession().GetSummary().GetSessionId(), sessionID)
+	if gotSession.Session.Summary.SessionID != sessionID {
+		t.Fatalf("GetSession session id = %q, want %q", gotSession.Session.Summary.SessionID, sessionID)
 	}
 
 	listJSON, err := bridge.CallJSON(ctx, "ListSessions", ``)
 	if err != nil {
 		t.Fatalf("ListSessions returned error: %v", err)
 	}
-	var listed agentcomposev1.ListSessionsResponse
-	if err := protojson.Unmarshal([]byte(listJSON), &listed); err != nil {
+	var listed sandboxRPCListResponse
+	if err := json.Unmarshal([]byte(listJSON), &listed); err != nil {
 		t.Fatalf("unmarshal list response: %v", err)
 	}
-	if len(listed.GetSessions()) != 1 || listed.GetSessions()[0].GetSessionId() != sessionID {
-		t.Fatalf("listed sessions = %#v, want one session %s", listed.GetSessions(), sessionID)
+	if len(listed.Sessions) != 1 || listed.Sessions[0].SessionID != sessionID {
+		t.Fatalf("listed sessions = %#v, want one session %s", listed.Sessions, sessionID)
 	}
 
 	if _, err := bridge.CallJSON(ctx, "GetSessionProxy", `{"sessionId":"`+sessionID+`"}`); err == nil || !strings.Contains(err.Error(), "jupyter is not enabled") {
@@ -124,11 +121,11 @@ func TestSandboxRPCBridgeCallJSONSupportsSessionRPCs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StopSession returned error: %v", err)
 	}
-	var stopped agentcomposev1.SessionResponse
-	if err := protojson.Unmarshal([]byte(stopJSON), &stopped); err != nil {
+	var stopped sandboxRPCResponse
+	if err := json.Unmarshal([]byte(stopJSON), &stopped); err != nil {
 		t.Fatalf("unmarshal stop response: %v", err)
 	}
-	if got, want := stopped.GetSession().GetSummary().GetVmStatus(), domain.VMStatusStopped; got != want {
+	if got, want := stopped.Session.Summary.VMStatus, domain.VMStatusStopped; got != want {
 		t.Fatalf("StopSession vm status = %q, want %q", got, want)
 	}
 	if len(driver.stopCalls) != 1 {
@@ -139,11 +136,11 @@ func TestSandboxRPCBridgeCallJSONSupportsSessionRPCs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResumeSession returned error: %v", err)
 	}
-	var resumed agentcomposev1.SessionResponse
-	if err := protojson.Unmarshal([]byte(resumeJSON), &resumed); err != nil {
+	var resumed sandboxRPCResponse
+	if err := json.Unmarshal([]byte(resumeJSON), &resumed); err != nil {
 		t.Fatalf("unmarshal resume response: %v", err)
 	}
-	if got, want := resumed.GetSession().GetSummary().GetVmStatus(), domain.VMStatusRunning; got != want {
+	if got, want := resumed.Session.Summary.VMStatus, domain.VMStatusRunning; got != want {
 		t.Fatalf("ResumeSession vm status = %q, want %q", got, want)
 	}
 	if len(driver.startCalls) != 2 {
@@ -170,21 +167,18 @@ func TestSandboxRPCBridgeCapabilityGuideLifecycle(t *testing.T) {
 	}
 	bridge.capTokens = NewCapabilitySandboxResolver(bridge.store)
 
-	resp, err := bridge.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{
-		Title:     "capability",
-		CapsetIds: []string{"dev"},
-	}))
+	sandbox, err := bridge.createSandbox(ctx, sandboxRPCCreateRequest{Title: "capability", CapsetIDs: []string{"dev"}}, domain.SandboxTypeManual)
 	if err != nil {
 		t.Fatal(err)
 	}
 	env := map[string]string{}
-	for _, item := range resp.Msg.GetSession().GetEnvItems() {
-		env[item.GetName()] = item.GetValue()
+	for _, item := range sandbox.EnvItems {
+		env[item.Name] = item.Value
 	}
 	if env[capabilities.ProxyTargetEnvName] != "agent-compose:9100" || env[capabilities.SandboxTokenEnvName] == "" {
 		t.Fatalf("capability gateway vars not injected: %+v", env)
 	}
-	sessionID := resp.Msg.GetSession().GetSummary().GetSessionId()
+	sessionID := sandbox.Summary.ID
 	session, err := bridge.store.GetSandbox(ctx, sessionID)
 	if err != nil {
 		t.Fatal(err)
@@ -213,13 +207,13 @@ func TestSandboxRPCBridgeCapabilityGuideLifecycle(t *testing.T) {
 		t.Fatalf("remove capability guide: %v", err)
 	}
 	catalog = "# Catalog: dev\n\nrefreshed"
-	if _, err := bridge.StopSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sessionID})); err != nil {
+	if _, err := bridge.StopSandbox(ctx, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := bridge.capTokens.ResolveCapabilitySandbox(ctx, capabilityToken); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("stopped sandbox token resolve error = %v", err)
 	}
-	if _, err := bridge.ResumeSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sessionID})); err != nil {
+	if _, err := bridge.ResumeSandbox(ctx, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	if binding, err := bridge.capTokens.ResolveCapabilitySandbox(ctx, capabilityToken); err != nil || binding.SandboxID != sessionID {
@@ -244,14 +238,11 @@ func TestSandboxRPCBridgeCapabilityGuideIsBestEffort(t *testing.T) {
 		},
 	}
 
-	resp, err := bridge.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{
-		Title:     "best-effort",
-		CapsetIds: []string{"dev"},
-	}))
+	sandbox, err := bridge.createSandbox(ctx, sandboxRPCCreateRequest{Title: "best-effort", CapsetIDs: []string{"dev"}}, domain.SandboxTypeManual)
 	if err != nil {
 		t.Fatalf("create session must not fail when guide rendering fails: %v", err)
 	}
-	session, err := bridge.store.GetSandbox(ctx, resp.Msg.GetSession().GetSummary().GetSessionId())
+	session, err := bridge.store.GetSandbox(ctx, sandbox.Summary.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,14 +360,11 @@ func TestSandboxRPCBridgeCapabilityGuideFromHTTPProvider(t *testing.T) {
 	defer server.Close()
 	bridge.cap = capabilities.NewDynamicProvider(staticGatewaySource{addr: server.URL}, "agent-compose:9100")
 
-	resp, err := bridge.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{
-		Title:     "http-capability",
-		CapsetIds: []string{"dev"},
-	}))
+	sandbox, err := bridge.createSandbox(ctx, sandboxRPCCreateRequest{Title: "http-capability", CapsetIDs: []string{"dev"}}, domain.SandboxTypeManual)
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := bridge.store.GetSandbox(ctx, resp.Msg.GetSession().GetSummary().GetSessionId())
+	session, err := bridge.store.GetSandbox(ctx, sandbox.Summary.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

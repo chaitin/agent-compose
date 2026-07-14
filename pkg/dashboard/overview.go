@@ -8,7 +8,6 @@ import (
 	"time"
 
 	domain "agent-compose/pkg/model"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
 const OverviewPageSize = 20
@@ -42,7 +41,18 @@ func (a *Aggregator) SetClock(clock func() time.Time) {
 	a.clock = clock
 }
 
-func (a *Aggregator) Build(ctx context.Context) (*agentcomposev1.DashboardOverview, error) {
+type RunOverview struct {
+	RunningCount   uint32
+	RecentCount    uint32
+	AttentionCount uint32
+}
+
+type Overview struct {
+	Runs      RunOverview
+	UpdatedAt time.Time
+}
+
+func (a *Aggregator) Build(ctx context.Context) (*Overview, error) {
 	sessions, err := a.store.ListSandboxes(ctx, domain.SandboxListOptions{Limit: OverviewPageSize})
 	if err != nil {
 		return nil, err
@@ -56,10 +66,7 @@ func (a *Aggregator) Build(ctx context.Context) (*agentcomposev1.DashboardOvervi
 	if a.clock != nil {
 		now = a.clock
 	}
-	overview := &agentcomposev1.DashboardOverview{
-		Runs:      &agentcomposev1.RunOverview{},
-		UpdatedAt: now().Format(time.RFC3339Nano),
-	}
+	overview := &Overview{UpdatedAt: now()}
 	overview.Runs.RecentCount = uint32(len(sessions.Sandboxes) + len(runs))
 	for _, session := range sessions.Sandboxes {
 		status := ""
@@ -92,12 +99,12 @@ type Hub struct {
 	notifyCh   chan string
 
 	mu          sync.RWMutex
-	current     *agentcomposev1.DashboardOverview
+	current     *Overview
 	subscribers map[chan Event]struct{}
 }
 
 type Event struct {
-	Overview *agentcomposev1.DashboardOverview
+	Overview *Overview
 	Reason   string
 }
 
@@ -130,7 +137,7 @@ func (h *Hub) SetDebounce(debounce time.Duration) {
 	h.mu.Unlock()
 }
 
-func (h *Hub) Current(ctx context.Context) (*agentcomposev1.DashboardOverview, error) {
+func (h *Hub) Current(ctx context.Context) (*Overview, error) {
 	h.mu.RLock()
 	current := h.current
 	h.mu.RUnlock()
@@ -212,7 +219,7 @@ func (h *Hub) run() {
 	}
 }
 
-func (h *Hub) setCurrent(overview *agentcomposev1.DashboardOverview) {
+func (h *Hub) setCurrent(overview *Overview) {
 	h.mu.Lock()
 	h.current = CloneOverview(overview)
 	h.mu.Unlock()
@@ -257,17 +264,10 @@ func IsAttentionStatus(status string) bool {
 	}
 }
 
-func CloneOverview(item *agentcomposev1.DashboardOverview) *agentcomposev1.DashboardOverview {
+func CloneOverview(item *Overview) *Overview {
 	if item == nil {
 		return nil
 	}
-	clone := &agentcomposev1.DashboardOverview{UpdatedAt: item.GetUpdatedAt()}
-	if item.GetRuns() != nil {
-		clone.Runs = &agentcomposev1.RunOverview{
-			RunningCount:   item.GetRuns().GetRunningCount(),
-			RecentCount:    item.GetRuns().GetRecentCount(),
-			AttentionCount: item.GetRuns().GetAttentionCount(),
-		}
-	}
-	return clone
+	clone := *item
+	return &clone
 }

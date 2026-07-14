@@ -8,7 +8,7 @@ import (
 	"connectrpc.com/connect"
 
 	"agent-compose/pkg/llms"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
+	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
 type LLMGenerator interface {
@@ -23,7 +23,7 @@ func NewLLMHandler(generator LLMGenerator) *LLMHandler {
 	return &LLMHandler{generator: generator}
 }
 
-func (h *LLMHandler) Generate(ctx context.Context, req *connect.Request[agentcomposev1.GenerateLLMRequest]) (*connect.Response[agentcomposev1.GenerateLLMResponse], error) {
+func (h *LLMHandler) Generate(ctx context.Context, req *connect.Request[agentcomposev2.GenerateLLMRequest]) (*connect.Response[agentcomposev2.GenerateLLMResponse], error) {
 	if h == nil || h.generator == nil {
 		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("llm client is unavailable"))
 	}
@@ -31,7 +31,7 @@ func (h *LLMHandler) Generate(ctx context.Context, req *connect.Request[agentcom
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&agentcomposev1.GenerateLLMResponse{
+	return connect.NewResponse(&agentcomposev2.GenerateLLMResponse{
 		Text:         result.Text,
 		Model:        result.Model,
 		ResponseId:   result.ResponseID,

@@ -96,6 +96,16 @@ func testWorkspaceFileAndPathWorkflows(t *testing.T) {
 	if _, err := ValidateFileWorkspaceConfig(config, "ws-ok", DefaultFileConfigJSON(config, "ws-ok")); err != nil {
 		t.Fatalf("ValidateFileWorkspaceConfig returned error: %v", err)
 	}
+	legacyWorkspaceID := "workspace-coder-local-edeef51e1788"
+	legacyConfig := encodeFileWorkspaceConfigForTest(t, legacyContainerFileWorkspaceContentRoot(legacyWorkspaceID))
+	gotLegacyRoot, err := ValidateFileWorkspaceConfig(config, legacyWorkspaceID, legacyConfig)
+	if err != nil {
+		t.Fatalf("ValidateFileWorkspaceConfig legacy container root returned error: %v", err)
+	}
+	wantLegacyRoot := mustDefaultFileWorkspaceContentRoot(t, config, legacyWorkspaceID)
+	if gotLegacyRoot != wantLegacyRoot {
+		t.Fatalf("legacy container root = %q, want %q", gotLegacyRoot, wantLegacyRoot)
+	}
 
 	dataRoot, err := OpenFileWorkspaceDataRoot(config)
 	if err != nil {

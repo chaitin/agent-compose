@@ -4,10 +4,41 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"agent-compose/pkg/compose"
+	domain "agent-compose/pkg/model"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
+
+func TestProjectToProtoOnlyIncludesCurrentRevisionArtifacts(t *testing.T) {
+	project := domain.ProjectRecord{ID: "project", CurrentRevision: 2}
+	agents := []domain.ProjectAgentRecord{{ProjectID: "project", AgentName: "old", Revision: 1}, {ProjectID: "project", AgentName: "current", Revision: 2}}
+	schedulers := []domain.ProjectSchedulerRecord{{ProjectID: "project", SchedulerID: "old", Revision: 1}, {ProjectID: "project", SchedulerID: "current", Revision: 2}}
+	result := ProjectToProto(project, nil, agents, schedulers)
+	if len(result.GetAgents()) != 1 || result.GetAgents()[0].GetAgentName() != "current" {
+		t.Fatalf("agents = %#v", result.GetAgents())
+	}
+	if len(result.GetSchedulers()) != 1 || result.GetSchedulers()[0].GetSchedulerId() != "current" {
+		t.Fatalf("schedulers = %#v", result.GetSchedulers())
+	}
+	if result.GetSummary().GetAgentCount() != 1 || result.GetSummary().GetSchedulerCount() != 1 {
+		t.Fatalf("summary = %#v", result.GetSummary())
+	}
+}
+
+func TestResolvedTriggerPreservesDeclaredSpec(t *testing.T) {
+	declared := &agentcomposev2.TriggerSpec{Name: "later", Kind: "timeout", Timeout: "2s", Prompt: "continue", SandboxPolicy: "sticky"}
+	trigger := domain.LoaderTrigger{ID: "trigger-id", Kind: domain.LoaderTriggerKindTimeout, IntervalMs: 2000, Enabled: true, NextFireAt: time.Unix(10, 0)}
+	resolved := resolvedTriggerToProto(trigger, declared)
+	if resolved.GetTriggerId() != "trigger-id" || resolved.GetSpec().GetName() != "later" || resolved.GetSpec().GetTimeout() != "2s" || resolved.GetSpec().GetPrompt() != "continue" || resolved.GetSpec().GetInterval() != "" {
+		t.Fatalf("resolved = %#v", resolved)
+	}
+	declared.Prompt = "changed"
+	if resolved.GetSpec().GetPrompt() != "continue" {
+		t.Fatal("resolved trigger aliases declared spec")
+	}
+}
 
 func TestProjectSpecToProtoRejectsUnresolvedSchedulerScriptURL(t *testing.T) {
 	raw, err := compose.Parse([]byte("name: unresolved-url\nagents:\n  reviewer:\n    scheduler:\n      script:\n        url: ./scheduler.js\n"))

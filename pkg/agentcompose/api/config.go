@@ -8,15 +8,18 @@ import (
 	"path/filepath"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/emptypb"
 
 	appconfig "agent-compose/pkg/config"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/workspaces"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
+
+var errWorkspaceContent = errors.New("workspace content operation failed")
+
+func workspaceContentError(err error) error {
+	return fmt.Errorf("%w: %v", errWorkspaceContent, err)
+}
 
 type ConfigStore interface {
 	ListGlobalEnv(ctx context.Context) ([]domain.SandboxEnvVar, error)
@@ -30,223 +33,130 @@ type ConfigStore interface {
 	SaveCapabilityGateway(ctx context.Context, settings domain.CapabilityGatewaySettings) (domain.CapabilityGatewaySettings, error)
 }
 
-type ConfigHandler struct {
+type workspaceSettings struct {
 	config *appconfig.Config
 	store  ConfigStore
 }
 
-func NewConfigHandler(config *appconfig.Config, store ConfigStore) *ConfigHandler {
-	return &ConfigHandler{config: config, store: store}
+func newWorkspaceSettings(config *appconfig.Config, store ConfigStore) *workspaceSettings {
+	return &workspaceSettings{config: config, store: store}
 }
 
-func (h *ConfigHandler) GetRuntimeConfig(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[agentcomposev1.RuntimeConfigResponse], error) {
-	_ = ctx
-	_ = req
-	return connect.NewResponse(&agentcomposev1.RuntimeConfigResponse{
-		AgentComposeHost: strings.TrimRight(strings.TrimSpace(h.config.AgentComposeHost), "/"),
-	}), nil
-}
-
-func (h *ConfigHandler) GetGlobalEnvConfig(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[agentcomposev1.GlobalEnvConfigResponse], error) {
-	_ = req
-	items, err := h.store.ListGlobalEnv(ctx)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	return connect.NewResponse(GlobalEnvConfigToProto(items)), nil
-}
-
-func (h *ConfigHandler) UpdateGlobalEnvConfig(ctx context.Context, req *connect.Request[agentcomposev1.UpdateGlobalEnvConfigRequest]) (*connect.Response[agentcomposev1.GlobalEnvConfigResponse], error) {
-	items := domain.NormalizeEnvItems(EnvItemsFromProto(req.Msg.GetEnvItems()))
-	items, err := h.preserveUnchangedGlobalEnvSecrets(ctx, items)
-	if err != nil {
-		return nil, err
-	}
-	saved, err := h.store.ReplaceGlobalEnv(ctx, items)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	return connect.NewResponse(GlobalEnvConfigToProto(saved)), nil
-}
-
-func (h *ConfigHandler) GetCapabilityGatewayConfig(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[agentcomposev1.CapabilityGatewayConfig], error) {
-	_ = req
-	settings, err := h.store.GetCapabilityGateway(ctx)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	return connect.NewResponse(CapabilityGatewayConfigToProto(settings)), nil
-}
-
-func (h *ConfigHandler) UpdateCapabilityGatewayConfig(ctx context.Context, req *connect.Request[agentcomposev1.UpdateCapabilityGatewayConfigRequest]) (*connect.Response[agentcomposev1.CapabilityGatewayConfig], error) {
-	token := strings.TrimSpace(req.Msg.GetToken())
-	saved, err := h.store.SaveCapabilityGateway(ctx, domain.CapabilityGatewaySettings{
-		Addr:  req.Msg.GetAddr(),
-		Token: token,
-	})
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	return connect.NewResponse(CapabilityGatewayConfigToProto(saved)), nil
-}
-
-func (h *ConfigHandler) preserveUnchangedGlobalEnvSecrets(ctx context.Context, items []domain.SandboxEnvVar) ([]domain.SandboxEnvVar, error) {
-	existingItems, err := h.store.ListGlobalEnv(ctx)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	existingByName := make(map[string]domain.SandboxEnvVar, len(existingItems))
-	for _, item := range existingItems {
-		name := strings.TrimSpace(item.Name)
-		if name != "" {
-			existingByName[name] = item
-		}
-	}
-	for index, item := range items {
-		name := strings.TrimSpace(item.Name)
-		if name == "" || !item.Secret || strings.TrimSpace(item.Value) != "" {
-			continue
-		}
-		existing, ok := existingByName[name]
-		if !ok || !existing.Secret || existing.Value == "" {
-			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("secret env %s requires a value", name))
-		}
-		items[index].Value = existing.Value
-	}
-	return items, nil
-}
-
-func (h *ConfigHandler) ListWorkspaceConfigs(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[agentcomposev1.ListWorkspaceConfigsResponse], error) {
-	_ = req
-	items, err := h.store.ListWorkspaceConfigs(ctx)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	resp := &agentcomposev1.ListWorkspaceConfigsResponse{}
-	for _, item := range items {
-		resp.Workspaces = append(resp.Workspaces, WorkspaceConfigToProto(item))
-	}
-	return connect.NewResponse(resp), nil
-}
-
-func (h *ConfigHandler) CreateWorkspaceConfig(ctx context.Context, req *connect.Request[agentcomposev1.CreateWorkspaceConfigRequest]) (*connect.Response[agentcomposev1.WorkspaceConfigResponse], error) {
-	configJSON := strings.TrimSpace(req.Msg.GetConfigJson())
-	workspaceType := strings.ToLower(strings.TrimSpace(req.Msg.GetType()))
+func (h *workspaceSettings) createWorkspaceConfig(ctx context.Context, item domain.WorkspaceConfig) (domain.WorkspaceConfig, error) {
+	configJSON := strings.TrimSpace(item.ConfigJSON)
+	workspaceType := strings.ToLower(strings.TrimSpace(item.Type))
 	workspaceID := ""
 	if workspaceType == "file" {
 		workspaceID = uuid.NewString()
 		configJSON = workspaces.DefaultFileConfigJSON(h.config, workspaceID)
 		if _, err := workspaces.ValidateFileWorkspaceConfig(h.config, workspaceID, configJSON); err != nil {
-			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+			return domain.WorkspaceConfig{}, err
 		}
 		if err := h.checkFileWorkspaceContentCreatable(workspaceID); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
+			return domain.WorkspaceConfig{}, workspaceContentError(err)
 		}
 	}
 	item, err := h.store.CreateWorkspaceConfig(ctx, domain.WorkspaceConfig{
 		ID:         workspaceID,
-		Name:       req.Msg.GetName(),
+		Name:       item.Name,
 		Type:       workspaceType,
 		ConfigJSON: configJSON,
-		Comment:    req.Msg.GetComment(),
+		Comment:    item.Comment,
 	})
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return domain.WorkspaceConfig{}, err
 	}
 	if workspaceType == "file" {
 		if err := h.createFileWorkspaceContent(item.ID, item.ConfigJSON); err != nil {
 			deleteErr := h.store.DeleteWorkspaceConfig(ctx, item.ID)
 			if deleteErr != nil {
-				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create file workspace content: %w; rollback workspace config: %v", err, deleteErr))
+				return domain.WorkspaceConfig{}, workspaceContentError(fmt.Errorf("create file workspace content: %w; rollback workspace config: %v", err, deleteErr))
 			}
-			return nil, connect.NewError(connect.CodeInternal, err)
+			return domain.WorkspaceConfig{}, workspaceContentError(err)
 		}
 	}
-	return connect.NewResponse(&agentcomposev1.WorkspaceConfigResponse{Workspace: WorkspaceConfigToProto(item)}), nil
+	return item, nil
 }
 
-func (h *ConfigHandler) UpdateWorkspaceConfig(ctx context.Context, req *connect.Request[agentcomposev1.UpdateWorkspaceConfigRequest]) (*connect.Response[agentcomposev1.WorkspaceConfigResponse], error) {
-	configJSON := strings.TrimSpace(req.Msg.GetConfigJson())
-	workspaceType := strings.ToLower(strings.TrimSpace(req.Msg.GetType()))
-	previous, err := h.store.GetWorkspaceConfig(ctx, req.Msg.GetWorkspaceId())
+func (h *workspaceSettings) updateWorkspaceConfig(ctx context.Context, requested domain.WorkspaceConfig) (domain.WorkspaceConfig, error) {
+	configJSON := strings.TrimSpace(requested.ConfigJSON)
+	workspaceType := strings.ToLower(strings.TrimSpace(requested.Type))
+	previous, err := h.store.GetWorkspaceConfig(ctx, requested.ID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return domain.WorkspaceConfig{}, err
 	}
 	if workspaceType == "file" {
-		configJSON = workspaces.DefaultFileConfigJSON(h.config, req.Msg.GetWorkspaceId())
-		if _, err := workspaces.ValidateFileWorkspaceConfig(h.config, req.Msg.GetWorkspaceId(), configJSON); err != nil {
-			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		configJSON = workspaces.DefaultFileConfigJSON(h.config, requested.ID)
+		if _, err := workspaces.ValidateFileWorkspaceConfig(h.config, requested.ID, configJSON); err != nil {
+			return domain.WorkspaceConfig{}, err
 		}
 	}
 	wasFile := strings.EqualFold(strings.TrimSpace(previous.Type), "file")
 	if workspaceType == "file" {
-		if err := h.checkFileWorkspaceContentCreatable(req.Msg.GetWorkspaceId()); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
+		if err := h.checkFileWorkspaceContentCreatable(requested.ID); err != nil {
+			return domain.WorkspaceConfig{}, workspaceContentError(err)
 		}
 	} else if wasFile {
 		if err := h.checkFileWorkspaceContentRemovable(previous); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
+			return domain.WorkspaceConfig{}, workspaceContentError(err)
 		}
 	}
 	item, err := h.store.UpdateWorkspaceConfig(ctx, domain.WorkspaceConfig{
-		ID:         req.Msg.GetWorkspaceId(),
-		Name:       req.Msg.GetName(),
+		ID:         requested.ID,
+		Name:       requested.Name,
 		Type:       workspaceType,
 		ConfigJSON: configJSON,
-		Comment:    req.Msg.GetComment(),
+		Comment:    requested.Comment,
 	})
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return domain.WorkspaceConfig{}, err
 	}
 	if workspaceType == "file" {
 		if err := h.createFileWorkspaceContent(item.ID, item.ConfigJSON); err != nil {
 			_, rollbackErr := h.store.UpdateWorkspaceConfig(ctx, previous)
 			if rollbackErr != nil {
-				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create file workspace content: %w; rollback workspace config: %v", err, rollbackErr))
+				return domain.WorkspaceConfig{}, workspaceContentError(fmt.Errorf("create file workspace content: %w; rollback workspace config: %v", err, rollbackErr))
 			}
-			return nil, connect.NewError(connect.CodeInternal, err)
+			return domain.WorkspaceConfig{}, workspaceContentError(err)
 		}
 	} else if wasFile {
 		if err := h.removeFileWorkspaceContent(previous); err != nil {
 			_, rollbackErr := h.store.UpdateWorkspaceConfig(ctx, previous)
 			if rollbackErr != nil {
-				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("remove file workspace content: %w; rollback workspace config: %v", err, rollbackErr))
+				return domain.WorkspaceConfig{}, workspaceContentError(fmt.Errorf("remove file workspace content: %w; rollback workspace config: %v", err, rollbackErr))
 			}
-			return nil, connect.NewError(connect.CodeInternal, err)
+			return domain.WorkspaceConfig{}, workspaceContentError(err)
 		}
 	}
-	return connect.NewResponse(&agentcomposev1.WorkspaceConfigResponse{Workspace: WorkspaceConfigToProto(item)}), nil
+	return item, nil
 }
 
-func (h *ConfigHandler) DeleteWorkspaceConfig(ctx context.Context, req *connect.Request[agentcomposev1.WorkspaceConfigIDRequest]) (*connect.Response[emptypb.Empty], error) {
-	workspace, err := h.store.GetWorkspaceConfig(ctx, req.Msg.GetWorkspaceId())
+func (h *workspaceSettings) deleteWorkspaceConfig(ctx context.Context, workspaceID string) error {
+	workspace, err := h.store.GetWorkspaceConfig(ctx, workspaceID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return err
 	}
 	if strings.EqualFold(strings.TrimSpace(workspace.Type), "file") {
 		if err := h.checkFileWorkspaceContentRemovable(workspace); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
+			return workspaceContentError(err)
 		}
 	}
-	if err := h.store.DeleteWorkspaceConfig(ctx, req.Msg.GetWorkspaceId()); err != nil {
-		if errors.Is(err, domain.ErrReferenced) {
-			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
-		}
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	if err := h.store.DeleteWorkspaceConfig(ctx, workspaceID); err != nil {
+		return err
 	}
 	if strings.EqualFold(strings.TrimSpace(workspace.Type), "file") {
 		if err := h.removeFileWorkspaceContent(workspace); err != nil {
 			_, rollbackErr := h.store.CreateWorkspaceConfig(ctx, workspace)
 			if rollbackErr != nil {
-				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("remove file workspace content: %w; rollback workspace config: %v", err, rollbackErr))
+				return workspaceContentError(fmt.Errorf("remove file workspace content: %w; rollback workspace config: %v", err, rollbackErr))
 			}
-			return nil, connect.NewError(connect.CodeInternal, err)
+			return workspaceContentError(err)
 		}
 	}
-	return connect.NewResponse(&emptypb.Empty{}), nil
+	return nil
 }
 
-func (h *ConfigHandler) createFileWorkspaceContent(workspaceID, configJSON string) error {
+func (h *workspaceSettings) createFileWorkspaceContent(workspaceID, configJSON string) error {
 	content, err := workspaces.OpenFileWorkspaceContent(h.config, domain.WorkspaceConfig{
 		ID:         workspaceID,
 		Type:       "file",
@@ -258,7 +168,7 @@ func (h *ConfigHandler) createFileWorkspaceContent(workspaceID, configJSON strin
 	return content.Root.Close()
 }
 
-func (h *ConfigHandler) checkFileWorkspaceContentCreatable(workspaceID string) error {
+func (h *workspaceSettings) checkFileWorkspaceContentCreatable(workspaceID string) error {
 	relRoot, err := workspaces.FileWorkspaceContentRelRoot(workspaceID)
 	if err != nil {
 		return err
@@ -286,7 +196,7 @@ func (h *ConfigHandler) checkFileWorkspaceContentCreatable(workspaceID string) e
 	return nil
 }
 
-func (h *ConfigHandler) checkFileWorkspaceContentRemovable(workspace domain.WorkspaceConfig) error {
+func (h *workspaceSettings) checkFileWorkspaceContentRemovable(workspace domain.WorkspaceConfig) error {
 	dataRoot, _, err := h.fileWorkspaceContentRemovalTarget(workspace)
 	if err != nil {
 		return err
@@ -294,7 +204,7 @@ func (h *ConfigHandler) checkFileWorkspaceContentRemovable(workspace domain.Work
 	return dataRoot.Close()
 }
 
-func (h *ConfigHandler) removeFileWorkspaceContent(workspace domain.WorkspaceConfig) error {
+func (h *workspaceSettings) removeFileWorkspaceContent(workspace domain.WorkspaceConfig) error {
 	dataRoot, relRoot, err := h.fileWorkspaceContentRemovalTarget(workspace)
 	if err != nil {
 		return err
@@ -303,7 +213,7 @@ func (h *ConfigHandler) removeFileWorkspaceContent(workspace domain.WorkspaceCon
 	return dataRoot.RemoveAll(relRoot)
 }
 
-func (h *ConfigHandler) fileWorkspaceContentRemovalTarget(workspace domain.WorkspaceConfig) (*os.Root, string, error) {
+func (h *workspaceSettings) fileWorkspaceContentRemovalTarget(workspace domain.WorkspaceConfig) (*os.Root, string, error) {
 	dataRoot, err := workspaces.OpenFileWorkspaceDataRoot(h.config)
 	if err != nil {
 		return nil, "", err

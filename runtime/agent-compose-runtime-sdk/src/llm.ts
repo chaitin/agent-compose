@@ -35,7 +35,7 @@ export async function llm<T = unknown>(prompt: string, options: RuntimeLLMOption
     timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   }
   try {
-    const response = await fetch(connectProcedureURL(options.baseUrl, "/agentcompose.v1.LLMService/Generate"), {
+    const response = await fetch(connectProcedureURL(options.baseUrl, "/agentcompose.v2.LLMService/Generate"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

@@ -27,6 +27,7 @@ type (
 	ProjectAgentRecord     = domain.ProjectAgentRecord
 	ProjectSchedulerRecord = domain.ProjectSchedulerRecord
 	ProjectRunRecord       = domain.ProjectRunRecord
+	ProjectRunEventRecord  = domain.ProjectRunEventRecord
 	ProjectListOptions     = domain.ProjectListOptions
 	ProjectRunListOptions  = domain.ProjectRunListOptions
 	ProjectListResult      = domain.ProjectListResult

@@ -13,8 +13,6 @@ import (
 
 	"github.com/fastschema/qjs"
 	"github.com/samber/do/v2"
-
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
 type LoaderHost interface {
@@ -613,9 +611,15 @@ func (e *QJSLoaderEngine) installRuntime(jsctx *qjs.Context, state *loaderExecut
 	schedulerObj.SetPropertyStr("state", stateObj)
 
 	sessionObj := jsctx.NewObject()
-	sessionMethods := agentcomposev1.File_proto_agentcompose_v1_agentcompose_proto.Services().ByName("SessionService").Methods()
-	for index := 0; index < sessionMethods.Len(); index++ {
-		methodName := string(sessionMethods.Get(index).Name())
+	for _, methodName := range []string{
+		"CreateSession",
+		"ResumeSession",
+		"StopSession",
+		"GetSession",
+		"ListSessions",
+		"GetSessionProxy",
+		"WatchSession",
+	} {
 		jsName := lowerFirstASCII(methodName)
 		apiName := "scheduler.session." + jsName
 		methodNameCopy := methodName

@@ -48,6 +48,7 @@ type NormalizedProjectSpec struct {
 
 type NormalizedAgentSpec struct {
 	Name         string                             `yaml:"name" json:"name"`
+	Status       string                             `yaml:"status,omitempty" json:"status,omitempty"`
 	Provider     string                             `yaml:"provider,omitempty" json:"provider,omitempty"`
 	Model        string                             `yaml:"model,omitempty" json:"model,omitempty"`
 	SystemPrompt string                             `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
@@ -236,6 +237,10 @@ func NormalizeFile(path string) (*NormalizedProjectSpec, error) {
 }
 
 func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, projectVolumes map[string]NormalizedVolumeSpec, projectWorkspaces map[string]WorkspaceSpec, projectMCPs map[string]NormalizedMCPServerSpec) (NormalizedAgentSpec, error) {
+	status := strings.ToLower(strings.TrimSpace(agent.Status))
+	if status != "" && status != "enabled" && status != "disabled" {
+		return NormalizedAgentSpec{}, fmt.Errorf("%s.status must be enabled or disabled", joinPath("agents", name))
+	}
 	driver, err := normalizeDriverSpec(joinPath("agents", name)+".driver", agent.Driver)
 	if err != nil {
 		return NormalizedAgentSpec{}, err
@@ -278,6 +283,7 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 	}
 	return NormalizedAgentSpec{
 		Name:         name,
+		Status:       status,
 		Provider:     strings.TrimSpace(agent.Provider),
 		Model:        model,
 		SystemPrompt: agent.SystemPrompt,

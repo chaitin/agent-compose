@@ -29,6 +29,24 @@ agents:
 	}
 }
 
+func TestParseAgentStatus(t *testing.T) {
+	spec, err := Parse([]byte("name: status\nagents:\n  worker:\n    status: disabled\n    provider: codex\n"))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if got := normalized.Agents[0].Status; got != "disabled" {
+		t.Fatalf("status = %q, want disabled", got)
+	}
+	spec.Agents["worker"] = AgentSpec{Status: "paused", Provider: "codex"}
+	if _, err := Normalize(spec, NormalizeOptions{}); err == nil || !strings.Contains(err.Error(), "must be enabled or disabled") {
+		t.Fatalf("invalid status error = %v", err)
+	}
+}
+
 func TestParseFullSpec(t *testing.T) {
 	spec, err := Parse([]byte(`
 name: review-project

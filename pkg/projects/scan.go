@@ -80,6 +80,28 @@ func ScanProjectScheduler(scan func(dest ...any) error) (domain.ProjectScheduler
 	return item, nil
 }
 
+func ScanProjectSchedulerPage(scan func(dest ...any) error) (domain.ProjectSchedulerRecord, error) {
+	var item domain.ProjectSchedulerRecord
+	var enabled int
+	var createdAtRaw any
+	var updatedAtRaw any
+	var latestRunAtRaw any
+	if err := scan(&item.ID, &item.ShortID, &item.ProjectID, &item.SchedulerID, &item.AgentName, &item.ManagedLoaderID, &item.Revision, &enabled, &item.TriggerCount, &item.SpecJSON, &createdAtRaw, &updatedAtRaw, &item.RunCount, &latestRunAtRaw, &item.LastError); err != nil {
+		return domain.ProjectSchedulerRecord{}, fmt.Errorf("scan project scheduler page: %w", err)
+	}
+	if item.ID == "" {
+		item.ID = item.SchedulerID
+	}
+	if item.ShortID == "" {
+		item.ShortID = identity.ShortID(item.ID)
+	}
+	item.Enabled = enabled != 0
+	item.CreatedAt = parseStoredTime(createdAtRaw)
+	item.UpdatedAt = parseStoredTime(updatedAtRaw)
+	item.LatestRunAt = parseStoredTime(latestRunAtRaw)
+	return item, nil
+}
+
 func ScanProjectRun(scan func(dest ...any) error) (domain.ProjectRunRecord, error) {
 	var item domain.ProjectRunRecord
 	var startedAtRaw any
@@ -97,6 +119,20 @@ func ScanProjectRun(scan func(dest ...any) error) (domain.ProjectRunRecord, erro
 	item.CompletedAt = parseStoredUnixTimeAuto(AsInt64Time(completedAtRaw))
 	item.CreatedAt = parseStoredTime(createdAtRaw)
 	item.UpdatedAt = parseStoredTime(updatedAtRaw)
+	return item, nil
+}
+
+func ScanProjectAgentRunState(scan func(dest ...any) error) (domain.ProjectAgentRunState, error) {
+	var item domain.ProjectAgentRunState
+	var runningCount int64
+	var runningSchedulerCount int64
+	var latestAtRaw any
+	if err := scan(&item.AgentName, &runningCount, &runningSchedulerCount, &item.LatestRunID, &item.LatestStatus, &item.LatestSource, &latestAtRaw); err != nil {
+		return domain.ProjectAgentRunState{}, fmt.Errorf("scan project agent run state: %w", err)
+	}
+	item.RunningRunCount = uint32(runningCount)
+	item.RunningSchedulerRunCount = uint32(runningSchedulerCount)
+	item.LatestAt = parseStoredTime(latestAtRaw)
 	return item, nil
 }
 

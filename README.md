@@ -33,7 +33,7 @@ Concretely, agent-compose provides:
 - A **Runtime LLM Facade** that brokers LLM credentials so provider keys never enter guest containers.
 - **MCP servers, reusable skills, and named volumes** per agent.
 - A **Jupyter proxy** for notebook-style guest runtimes.
-- **v1/v2 Connect APIs** and a generated TypeScript client.
+- **v2 Connect APIs**; the separate web UI repository tracks generated TypeScript clients.
 
 ## How it works
 
@@ -255,10 +255,10 @@ configuration reference.** At minimum, review these before exposing a deployment
 ## Web UI
 
 The web UI lives in a separate repository,
-[agent-compose-ui](https://github.com/chaitin/agent-compose-ui). It consumes the
-generated API client published as
-[`@chaitin-ai/agent-compose-client`](https://www.npmjs.com/package/@chaitin-ai/agent-compose-client),
-built from this repository's `proto/`. The daemon does not host the UI or browser
+[agent-compose-ui](https://github.com/chaitin/agent-compose-ui). It directly tracks
+the generated `agentcompose/v2` and `health/v1` TypeScript clients built from this
+repository's `proto/`; the generated files are reviewed together with protocol
+changes. The daemon does not host the UI or browser
 login flows; the UI image runs nginx in front of a Go UI server that owns
 auth/OAuth and proxies API and Jupyter routes to the daemon.
 

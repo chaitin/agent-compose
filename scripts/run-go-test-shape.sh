@@ -11,7 +11,7 @@ shape="${1:?usage: run-go-test-shape.sh <unit|integration|e2e> [go-test-args...]
 shift || true
 
 extra_packages=()
-base_packages=(./cmd/... ./pkg/... ./proto/health/v1 ./proto/health/v1/healthv1connect ./proto/agentcompose/v1 ./proto/agentcompose/v1/agentcomposev1connect ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect)
+base_packages=(./cmd/... ./pkg/... ./proto/health/v1 ./proto/health/v1/healthv1connect ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect)
 case "$shape" in
   unit)
     packages=("${base_packages[@]}")

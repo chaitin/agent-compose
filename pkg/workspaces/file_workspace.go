@@ -86,9 +86,16 @@ func FileWorkspaceContentRoot(config *appconfig.Config, workspace domain.Workspa
 		return "", err
 	}
 	if cleanRoot != expectedRoot {
+		if cleanRoot == legacyContainerFileWorkspaceContentRoot(workspaceID) {
+			return expectedRoot, nil
+		}
 		return "", fmt.Errorf("workspace config %s has file workspace root %q, want %q", workspace.ID, cleanRoot, expectedRoot)
 	}
 	return cleanRoot, nil
+}
+
+func legacyContainerFileWorkspaceContentRoot(workspaceID string) string {
+	return filepath.Join(string(filepath.Separator), "data", "workspaces", workspaceID, FileWorkspaceContentDirName)
 }
 
 func ValidateFileWorkspaceConfig(config *appconfig.Config, workspaceID, configJSON string) (string, error) {

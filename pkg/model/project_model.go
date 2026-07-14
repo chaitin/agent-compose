@@ -66,6 +66,9 @@ type ProjectSchedulerRecord struct {
 	SpecJSON        string    `json:"spec_json"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+	RunCount        int       `json:"run_count,omitempty"`
+	LatestRunAt     time.Time `json:"latest_run_at,omitempty"`
+	LastError       string    `json:"last_error,omitempty"`
 }
 
 type ProjectRunRecord struct {
@@ -98,6 +101,30 @@ type ProjectRunRecord struct {
 	Warnings        []string  `json:"warnings,omitempty"`
 }
 
+type ProjectRunEventKind string
+
+const (
+	ProjectRunEventKindUserMessage   ProjectRunEventKind = "user_message"
+	ProjectRunEventKindAgentMessage  ProjectRunEventKind = "agent_message"
+	ProjectRunEventKindAgentActivity ProjectRunEventKind = "agent_activity"
+	ProjectRunEventKindStatus        ProjectRunEventKind = "status"
+)
+
+type ProjectRunEventRecord struct {
+	ID          string              `json:"id"`
+	RunID       string              `json:"run_id"`
+	Sequence    uint64              `json:"sequence"`
+	Kind        ProjectRunEventKind `json:"kind"`
+	Text        string              `json:"text,omitempty"`
+	Agent       string              `json:"agent,omitempty"`
+	Name        string              `json:"name,omitempty"`
+	PayloadJSON string              `json:"payload_json,omitempty"`
+	Success     bool                `json:"success"`
+	ExitCode    int                 `json:"exit_code,omitempty"`
+	StopReason  string              `json:"stop_reason,omitempty"`
+	CreatedAt   time.Time           `json:"created_at"`
+}
+
 type ProjectListOptions struct {
 	Query          string
 	IncludeRemoved bool
@@ -114,6 +141,16 @@ type ProjectRunListOptions struct {
 	Source      string
 	Offset      int
 	Limit       int
+}
+
+type ProjectAgentRunState struct {
+	AgentName                string
+	RunningRunCount          uint32
+	RunningSchedulerRunCount uint32
+	LatestRunID              string
+	LatestStatus             string
+	LatestSource             string
+	LatestAt                 time.Time
 }
 
 type ProjectListResult struct {

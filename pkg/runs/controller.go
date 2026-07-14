@@ -891,7 +891,7 @@ func (c *Controller) runPromptInteraction(ctx context.Context, coordinator *Coor
 	}
 	interaction = driverpkg.GuardRuntimeInteractionInput(interaction)
 	defer func() { _ = interaction.CloseSend() }()
-	projector := newPromptAttachProjector(run, sandbox, logsPath, c.runLogs)
+	projector := newPersistentPromptAttachProjector(context.WithoutCancel(ctx), run, sandbox, logsPath, c.runLogs, c.configDB)
 	input := &promptWrapperInput{interaction: interaction}
 	if err := input.Start(agentConfig, c.config, schemaPath); err != nil {
 		transition.ExitCode = 1
@@ -910,7 +910,7 @@ func (c *Controller) runPromptInteraction(ctx context.Context, coordinator *Coor
 	} else {
 		releasePromptTurn(turnReady)
 	}
-	go pumpRunPromptAttachInput(inputCtx, receive, input, turnReady, projector.AppendHumanMessage)
+	go pumpRunPromptAttachInput(inputCtx, receive, input, turnReady, projector.AppendHumanMessageFrame)
 	var promptTransition *TransitionRequest
 	for {
 		frame, err := interaction.Recv()
@@ -1342,7 +1342,7 @@ func (w *promptWrapperInput) send(frame map[string]any) error {
 	return w.interaction.Send(driverpkg.RuntimeInputFrame{Type: driverpkg.RuntimeInputStdin, Data: data})
 }
 
-func pumpRunPromptAttachInput(ctx context.Context, receive RunAttachReceiver, input *promptWrapperInput, turnReady <-chan struct{}, onHumanMessage func(string) error) {
+func pumpRunPromptAttachInput(ctx context.Context, receive RunAttachReceiver, input *promptWrapperInput, turnReady <-chan struct{}, onHumanMessage func(string, string) error) {
 	defer func() { _ = input.interaction.CloseSend() }()
 	for {
 		req, err := receive()
@@ -1353,12 +1353,12 @@ func pumpRunPromptAttachInput(ctx context.Context, receive RunAttachReceiver, in
 		switch frame := req.GetFrame().(type) {
 		case *agentcomposev2.RunAttachRequest_HumanMessage:
 			text := frame.HumanMessage.GetText()
-			if !forwardPromptHumanMessage(ctx, input, turnReady, text, onHumanMessage) {
+			if !forwardPromptHumanMessage(ctx, input, turnReady, text, req.GetClientFrameId(), onHumanMessage) {
 				return
 			}
 		case *agentcomposev2.RunAttachRequest_Stdin:
 			text := string(frame.Stdin.GetData())
-			if !forwardPromptHumanMessage(ctx, input, turnReady, text, onHumanMessage) {
+			if !forwardPromptHumanMessage(ctx, input, turnReady, text, req.GetClientFrameId(), onHumanMessage) {
 				return
 			}
 		case *agentcomposev2.RunAttachRequest_StdinEof:
@@ -1374,7 +1374,7 @@ func pumpRunPromptAttachInput(ctx context.Context, receive RunAttachReceiver, in
 	}
 }
 
-func forwardPromptHumanMessage(ctx context.Context, input *promptWrapperInput, turnReady <-chan struct{}, text string, onHumanMessage func(string) error) bool {
+func forwardPromptHumanMessage(ctx context.Context, input *promptWrapperInput, turnReady <-chan struct{}, text, clientFrameID string, onHumanMessage func(string, string) error) bool {
 	if turnReady != nil {
 		select {
 		case <-ctx.Done():
@@ -1383,7 +1383,7 @@ func forwardPromptHumanMessage(ctx context.Context, input *promptWrapperInput, t
 		}
 	}
 	if onHumanMessage != nil {
-		if err := onHumanMessage(text); err != nil {
+		if err := onHumanMessage(text, clientFrameID); err != nil {
 			return false
 		}
 	}
@@ -1398,16 +1398,27 @@ func releasePromptTurn(turnReady chan<- struct{}) {
 }
 
 type promptAttachProjector struct {
-	run                domain.ProjectRunRecord
-	sandbox            *domain.Sandbox
-	logsPath           string
-	runLogs            *RunLogHub
-	mu                 sync.Mutex
-	buffer             []byte
-	itemTexts          map[string]string
-	loggedText         string
-	hasLoggedText      bool
-	logEndsWithNewline bool
+	run                    domain.ProjectRunRecord
+	sandbox                *domain.Sandbox
+	logsPath               string
+	runLogs                *RunLogHub
+	mu                     sync.Mutex
+	buffer                 []byte
+	itemTexts              map[string]string
+	loggedText             string
+	hasLoggedText          bool
+	logEndsWithNewline     bool
+	persistedAssistantTurn bool
+	eventCtx               context.Context
+	events                 structuredEventStore
+	humanIndex             uint64
+}
+
+func newPersistentPromptAttachProjector(ctx context.Context, run domain.ProjectRunRecord, sandbox *domain.Sandbox, logsPath string, hub *RunLogHub, store any) *promptAttachProjector {
+	projector := newPromptAttachProjector(run, sandbox, logsPath, hub)
+	projector.eventCtx = ctx
+	projector.events, _ = store.(structuredEventStore)
+	return projector
 }
 
 func newPromptAttachProjector(run domain.ProjectRunRecord, sandbox *domain.Sandbox, logsPath string, hub *RunLogHub) *promptAttachProjector {
@@ -1459,6 +1470,7 @@ func (p *promptAttachProjector) projectLine(line []byte) ([]*agentcomposev2.RunA
 		Code       string          `json:"code"`
 		Message    string          `json:"message"`
 		Provider   string          `json:"provider"`
+		Seq        uint64          `json:"seq"`
 	}
 	if err := json.Unmarshal(line, &frame); err != nil {
 		return nil, nil, err
@@ -1476,12 +1488,16 @@ func (p *promptAttachProjector) projectLine(line []byte) ([]*agentcomposev2.RunA
 		if err := p.appendLogFinalText(frame.FinalText); err != nil {
 			return nil, nil, err
 		}
+		if err := p.appendAssistantEvent(line, frame.Seq, frame.FinalText, frame.Provider, frame.StopReason); err != nil {
+			return nil, nil, err
+		}
 		return []*agentcomposev2.RunAttachResponse{runAttachAgentTurnCompletedResponse(p.run, string(line), warningsFromRun(p.run))}, nil, nil
 	case "result":
 		if err := p.appendLogFinalText(frame.FinalText); err != nil {
 			return nil, nil, err
 		}
 		transition := transitionFromPromptWrapperResult(p.run, p.sandbox, p.logsPath, line, frame.FinalText, frame.StopReason, "")
+		transition.SkipTerminalAgentEvent = p.persistedAssistantTurn
 		return nil, &transition, nil
 	case "error":
 		message := firstNonEmpty(frame.Message, "runtime stream error")
@@ -1578,6 +1594,10 @@ func (p *promptAttachProjector) appendLogFinalText(finalText string) error {
 }
 
 func (p *promptAttachProjector) AppendHumanMessage(message string) error {
+	return p.AppendHumanMessageFrame(message, "")
+}
+
+func (p *promptAttachProjector) AppendHumanMessageFrame(message, clientFrameID string) error {
 	text := promptAttachHumanLogText(message)
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -1589,7 +1609,14 @@ func (p *promptAttachProjector) AppendHumanMessage(message string) error {
 			return err
 		}
 	}
-	return nil
+	if p.events == nil || strings.TrimSpace(message) == "" {
+		return nil
+	}
+	p.humanIndex++
+	_, _, err := p.events.AppendProjectRunEvent(p.eventContext(), domain.ProjectRunEventRecord{
+		ID: attachedHumanEventID(p.run.RunID, clientFrameID, uint64(p.humanIndex), message), RunID: p.run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: message, Agent: p.run.AgentName,
+	})
+	return err
 }
 
 func (p *promptAttachProjector) AppendStderr(text string) error {
@@ -1599,6 +1626,28 @@ func (p *promptAttachProjector) AppendStderr(text string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.appendLogChunkLocked(domain.ExecChunk{Text: text, Stream: domain.StdioStderr})
+}
+
+func (p *promptAttachProjector) appendAssistantEvent(line []byte, seq uint64, text, provider, stopReason string) error {
+	if p.events == nil || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, _, err := p.events.AppendProjectRunEvent(p.eventContext(), domain.ProjectRunEventRecord{
+		ID: attachedAgentEventID(p.run.RunID, seq, line), RunID: p.run.RunID, Kind: domain.ProjectRunEventKindAgentMessage, Text: text, Agent: firstNonEmpty(provider, p.run.AgentName), StopReason: stopReason, Success: true,
+	})
+	if err == nil {
+		p.persistedAssistantTurn = true
+	}
+	return err
+}
+
+func (p *promptAttachProjector) eventContext() context.Context {
+	if p.eventCtx != nil {
+		return p.eventCtx
+	}
+	return context.Background()
 }
 
 func (p *promptAttachProjector) appendLogChunkLocked(chunk domain.ExecChunk) error {

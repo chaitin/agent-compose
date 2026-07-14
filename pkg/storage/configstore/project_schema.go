@@ -103,6 +103,22 @@ func (s *projectStore) ensureProjectSchema(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_project_run_project_status ON project_run(project_id, status, created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_run_agent ON project_run(project_id, agent_name, created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_run_scheduler ON project_run(project_id, scheduler_id, trigger_id);`,
+		`CREATE TABLE IF NOT EXISTS project_run_event (
+			id TEXT PRIMARY KEY,
+			run_id TEXT NOT NULL,
+			seq INTEGER NOT NULL,
+			kind TEXT NOT NULL,
+			text TEXT NOT NULL DEFAULT '',
+			agent TEXT NOT NULL DEFAULT '',
+			name TEXT NOT NULL DEFAULT '',
+			payload_json TEXT NOT NULL DEFAULT '',
+			success INTEGER NOT NULL DEFAULT 0,
+			exit_code INTEGER NOT NULL DEFAULT 0,
+			stop_reason TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+			UNIQUE(run_id, seq),
+			FOREIGN KEY(run_id) REFERENCES project_run(run_id) ON DELETE CASCADE
+		);`,
 	}
 	for _, stmt := range statements {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -118,6 +134,7 @@ func (s *projectStore) ensureProjectSchema(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_project_agent_name ON project_agent(agent_name, project_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_scheduler_id ON project_scheduler(id);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_run_sandbox ON project_run(sandbox_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_project_run_event_sequence ON project_run_event(run_id, seq);`,
 	}
 	for _, stmt := range indexStatements {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {

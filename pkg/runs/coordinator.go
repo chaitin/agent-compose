@@ -25,16 +25,17 @@ type StartRequest struct {
 }
 
 type TransitionRequest struct {
-	RunID        string
-	Status       string
-	SandboxID    string
-	ExitCode     int
-	Error        string
-	Output       string
-	ResultJSON   string
-	LogsPath     string
-	ArtifactsDir string
-	CleanupError string
+	RunID                  string
+	Status                 string
+	SandboxID              string
+	ExitCode               int
+	Error                  string
+	Output                 string
+	ResultJSON             string
+	LogsPath               string
+	ArtifactsDir           string
+	CleanupError           string
+	SkipTerminalAgentEvent bool
 }
 
 type ManagedAgentDefinition struct {
@@ -52,8 +53,15 @@ type Store interface {
 	GetProjectAgent(context.Context, string, string) (domain.ProjectAgentRecord, error)
 	GetManagedAgentDefinition(context.Context, string) (ManagedAgentDefinition, error)
 	CreateProjectRun(context.Context, domain.ProjectRunRecord) (domain.ProjectRunRecord, error)
+	CreateProjectRunWithEvents(context.Context, domain.ProjectRunRecord, []domain.ProjectRunEventRecord) (domain.ProjectRunRecord, error)
 	GetProjectRun(context.Context, string) (domain.ProjectRunRecord, error)
 	UpdateProjectRun(context.Context, domain.ProjectRunRecord) (domain.ProjectRunRecord, error)
+	UpdateProjectRunWithEvents(context.Context, domain.ProjectRunRecord, []domain.ProjectRunEventRecord) (domain.ProjectRunRecord, error)
+}
+
+type structuredEventStore interface {
+	AppendProjectRunEvent(context.Context, domain.ProjectRunEventRecord) (domain.ProjectRunEventRecord, bool, error)
+	AppendProjectRunEvents(context.Context, []domain.ProjectRunEventRecord) ([]domain.ProjectRunEventRecord, []bool, error)
 }
 
 type StableRunIDFunc func(projectID, agentName, source, idempotencyKey string) (string, error)
@@ -146,14 +154,15 @@ func (c *Coordinator) BeginRun(ctx context.Context, req StartRequest) (domain.Pr
 		ImageRef:        firstNonEmpty(agent.GuestImage, projectAgent.Image),
 		ResultJSON:      "{}",
 	}
-	created, err := c.store.CreateProjectRun(ctx, run)
-	if err == nil {
-		return created, nil
+	var initialEvents []domain.ProjectRunEventRecord
+	if strings.TrimSpace(run.Prompt) != "" {
+		initialEvents = append(initialEvents, domain.ProjectRunEventRecord{ID: initialPromptEventID(run.RunID), RunID: run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: run.Prompt, Agent: run.AgentName})
 	}
-	if existing, loadErr := c.store.GetProjectRun(ctx, runID); loadErr == nil {
-		return existing, nil
+	created, err := c.store.CreateProjectRunWithEvents(ctx, run, initialEvents)
+	if err != nil {
+		return domain.ProjectRunRecord{}, err
 	}
-	return domain.ProjectRunRecord{}, err
+	return created, nil
 }
 
 func (c *Coordinator) MarkRunning(ctx context.Context, runID, sessionID string) (domain.ProjectRunRecord, error) {
@@ -216,7 +225,18 @@ func (c *Coordinator) TransitionRun(ctx context.Context, req TransitionRequest) 
 		}
 		next.DurationMs = max(0, next.CompletedAt.Sub(next.StartedAt).Milliseconds())
 	}
-	return c.store.UpdateProjectRun(ctx, next)
+	batch := make([]domain.ProjectRunEventRecord, 0, 2)
+	if StatusIsTerminal(next.Status) {
+		if next.Output != "" && !req.SkipTerminalAgentEvent {
+			batch = append(batch, domain.ProjectRunEventRecord{ID: terminalAgentEventID(next.RunID), RunID: next.RunID, Kind: domain.ProjectRunEventKindAgentMessage, Text: next.Output, Agent: next.AgentName, Success: next.Status == domain.ProjectRunStatusSucceeded, ExitCode: next.ExitCode, StopReason: next.Error})
+		}
+		batch = append(batch, domain.ProjectRunEventRecord{ID: terminalStatusEventID(next.RunID), RunID: next.RunID, Kind: domain.ProjectRunEventKindStatus, PayloadJSON: next.ResultJSON, Success: next.Status == domain.ProjectRunStatusSucceeded, ExitCode: next.ExitCode, StopReason: next.Error})
+	}
+	updated, err := c.store.UpdateProjectRunWithEvents(ctx, next, batch)
+	if err != nil {
+		return domain.ProjectRunRecord{}, err
+	}
+	return updated, nil
 }
 
 func (c *Coordinator) nowUTC() time.Time {

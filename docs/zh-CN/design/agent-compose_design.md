@@ -7,7 +7,6 @@
 - CLI 和 daemon 入口：`cmd/agent-compose/main.go`
 - daemon 服务注册：`pkg/agentcompose/app/app.go`
 - compose 解析和规范化：`pkg/compose/`
-- v1 API：`proto/agentcompose/v1/agentcompose.proto`
 - v2 API：`proto/agentcompose/v2/agentcompose.proto`
 - project/run 持久化：`pkg/storage/configstore/project_store.go`、`pkg/storage/configstore/run_coordinator_store.go`
 - Jupyter 代理：`pkg/agentcompose/proxy/proxy.go`

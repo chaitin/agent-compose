@@ -24,7 +24,6 @@ import (
 	"agent-compose/pkg/images"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/runs"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
@@ -72,10 +71,10 @@ func TestIntegrationAPIHandlerRuntimeWorkflows(t *testing.T) {
 	t.Run("sandbox stats runtime metrics", TestGetSandboxStatsReturnsRuntimeMetrics)
 	t.Run("sandbox stats stopped sandbox", TestGetSandboxStatsRejectsStoppedSandbox)
 	t.Run("sandbox stats unsupported runtime", TestGetSandboxStatsUnsupportedRuntimeIsUnimplemented)
-	t.Run("loader connect error", TestLoaderServiceConnectErrorClassifiesInternalFailures)
+	t.Run("sandbox legacy history", TestV2ListSandboxHistoryReturnsLegacyCellsAndEvents)
+	t.Run("sandbox watch projection", TestV2SandboxWatchEventProjection)
 	t.Run("domain connect error", TestConnectErrorForDomainClassifiesReusableSentinels)
 	t.Run("image pull inspect and skip", TestImagePullInspectAndSkip)
-	t.Run("kernel and agent unary handlers", TestKernelAndAgentUnaryHandlerWorkflows)
 	t.Run("exec sandbox target", TestExecHandlerSandboxTargetWorkflow)
 	t.Run("exec run selector and stream sender", TestExecHandlerRunSelectorAndStreamSenderWorkflow)
 	t.Run("exec selector errors", TestExecHandlerSelectorErrors)
@@ -95,7 +94,7 @@ func TestRemoveSandboxRemoveRaceRemainsInternal(t *testing.T) {
 		session:   &domain.Sandbox{Summary: domain.SandboxSummary{ID: sandboxID, VMStatus: domain.VMStatusStopped}},
 		removeErr: os.ErrNotExist,
 	}
-	handler := NewSandboxHandler(&fakeSessionDelegate{}, store, &characterizationSandboxRemover{}, nil)
+	handler := NewSandboxHandler(&characterizationSessionDelegate{}, store, &characterizationSandboxRemover{}, nil)
 	_, err := handler.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: sandboxID}))
 	if connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("RemoveSandbox error code = %v, want %v; err=%v", connect.CodeOf(err), connect.CodeInternal, err)
@@ -119,7 +118,7 @@ func TestGetSandboxStatsReturnsRuntimeMetrics(t *testing.T) {
 		CPUPercent:       domain.MetricValue{Value: &value, Unit: "percent", Status: domain.MetricStatusOK},
 		MemoryUsageBytes: domain.MetricValue{Unit: "bytes", Status: domain.MetricStatusUnknown},
 	}}
-	handler := NewSandboxHandler(&fakeSessionDelegate{}, store, nil, nil, func(*domain.Sandbox) (SandboxStatsRuntime, error) {
+	handler := NewSandboxHandler(&characterizationSessionDelegate{}, store, nil, nil, func(*domain.Sandbox) (SandboxStatsRuntime, error) {
 		return runtime, nil
 	})
 	resp, err := handler.GetSandboxStats(context.Background(), connect.NewRequest(&agentcomposev2.GetSandboxStatsRequest{SandboxId: sandboxID}))
@@ -142,7 +141,7 @@ func TestGetSandboxStatsRejectsStoppedSandbox(t *testing.T) {
 	store := &apiSandboxStore{
 		session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: sandboxID, VMStatus: domain.VMStatusStopped}},
 	}
-	handler := NewSandboxHandler(&fakeSessionDelegate{}, store, nil, nil, func(*domain.Sandbox) (SandboxStatsRuntime, error) {
+	handler := NewSandboxHandler(&characterizationSessionDelegate{}, store, nil, nil, func(*domain.Sandbox) (SandboxStatsRuntime, error) {
 		return &apiStatsRuntime{}, nil
 	})
 	_, err := handler.GetSandboxStats(context.Background(), connect.NewRequest(&agentcomposev2.GetSandboxStatsRequest{SandboxId: sandboxID}))
@@ -156,30 +155,10 @@ func TestGetSandboxStatsUnsupportedRuntimeIsUnimplemented(t *testing.T) {
 	store := &apiSandboxStore{
 		session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: sandboxID, VMStatus: domain.VMStatusRunning}},
 	}
-	handler := NewSandboxHandler(&fakeSessionDelegate{}, store, nil, nil)
+	handler := NewSandboxHandler(&characterizationSessionDelegate{}, store, nil, nil)
 	_, err := handler.GetSandboxStats(context.Background(), connect.NewRequest(&agentcomposev2.GetSandboxStatsRequest{SandboxId: sandboxID}))
 	if connect.CodeOf(err) != connect.CodeUnimplemented {
 		t.Fatalf("GetSandboxStats unsupported code = %v, err=%v", connect.CodeOf(err), err)
-	}
-}
-
-func TestLoaderServiceConnectErrorClassifiesInternalFailures(t *testing.T) {
-	tests := []struct {
-		err  error
-		code connect.Code
-	}{
-		{err: domain.ResourceError(domain.ErrNotFound, "loader", "missing", "", nil), code: connect.CodeNotFound},
-		{err: domain.ClassifyError(domain.ErrFailedPrecondition, "loader is running", nil), code: connect.CodeFailedPrecondition},
-		{err: domain.ClassifyError(domain.ErrAlreadyExists, "loader exists", nil), code: connect.CodeAlreadyExists},
-		{err: context.DeadlineExceeded, code: connect.CodeDeadlineExceeded},
-		{err: sql.ErrConnDone, code: connect.CodeInternal},
-		{err: os.ErrPermission, code: connect.CodeInternal},
-		{err: errors.New("loader script is required"), code: connect.CodeInvalidArgument},
-	}
-	for _, tc := range tests {
-		if got := connect.CodeOf(loaderServiceConnectError(tc.err)); got != tc.code {
-			t.Fatalf("loaderServiceConnectError(%v) = %v, want %v", tc.err, got, tc.code)
-		}
 	}
 }
 
@@ -245,6 +224,12 @@ func TestImagePullInspectAndSkip(t *testing.T) {
 	}
 }
 
+type fakeImageSelector struct{ backend images.Backend }
+
+func (s fakeImageSelector) ImageBackendForStore(agentcomposev2.ImageStoreKind) (images.Backend, error) {
+	return s.backend, nil
+}
+
 func TestImageBuildStreamsEvents(t *testing.T) {
 	backend := &testImageBackend{}
 	handler := NewImageHandler(fakeImageSelector{backend: backend})
@@ -292,59 +277,6 @@ func TestImageBuildStreamsEvents(t *testing.T) {
 	}
 	if code := connect.CodeOf(empty.Err()); code != connect.CodeInvalidArgument {
 		t.Fatalf("BuildImage empty code = %s, want invalid argument (err=%v)", code, empty.Err())
-	}
-}
-
-func TestKernelAndAgentUnaryHandlerWorkflows(t *testing.T) {
-	ctx := context.Background()
-	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-1", VMStatus: domain.VMStatusRunning, CreatedAt: time.Now()}}
-	cell := domain.NotebookCell{ID: "cell-1", Type: execution.CellTypeJavaScript, Source: "print(1)", Output: "ok", Success: true}
-	store := &apiHandlerSessionStore{
-		session: session,
-		cells:   []domain.NotebookCell{cell},
-		events:  []domain.SandboxEvent{{ID: "event-1", Type: "assistant", Message: "done", CreatedAt: time.Now()}},
-	}
-	publisher := &apiHandlerPublisher{}
-
-	kernel := NewKernelHandler(store, apiHandlerCellExecutor{cell: cell}, publisher)
-	resp, err := kernel.ExecuteCell(ctx, connect.NewRequest(&agentcomposev1.ExecuteCellRequest{SessionId: "session-1", Type: agentcomposev1.CellType_CELL_TYPE_JAVASCRIPT, Source: "print(1)"}))
-	if err != nil {
-		t.Fatalf("ExecuteCell returned error: %v", err)
-	}
-	if resp.Msg.GetCell().GetId() != "cell-1" || len(publisher.events) == 0 {
-		t.Fatalf("kernel resp=%#v publisher=%#v", resp.Msg, publisher.events)
-	}
-	if publisher.events[0].CreatedAt.IsZero() || publisher.events[0].CreatedAt.Location() != time.UTC {
-		t.Fatalf("kernel loader topic CreatedAt = %v", publisher.events[0].CreatedAt)
-	}
-	listResp, err := kernel.ListCells(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: "session-1"}))
-	if err != nil || len(listResp.Msg.GetCells()) != 1 {
-		t.Fatalf("ListCells resp=%#v err=%v", listResp, err)
-	}
-	store.session = &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-1", VMStatus: domain.VMStatusStopped}}
-	if _, err := kernel.ExecuteCell(ctx, connect.NewRequest(&agentcomposev1.ExecuteCellRequest{SessionId: "session-1"})); connect.CodeOf(err) != connect.CodeFailedPrecondition {
-		t.Fatalf("expected stopped sandbox error, got %v", err)
-	}
-	store.session = session
-
-	agent := NewAgentHandler(store, apiHandlerAgentDefinitions{agent: domain.AgentDefinition{ID: "agent-1", Provider: "codex", Model: "gpt", EnvItems: []domain.SandboxEnvVar{{Name: "A", Value: "B"}}}}, apiHandlerAgentExecutor{cell: cell}, publisher)
-	session.Summary.Tags = []domain.SandboxTag{{Name: domain.AgentSandboxTagID, Value: "agent-1"}, {Name: domain.AgentSandboxTagName, Value: "Agent"}}
-	sendResp, err := agent.SendAgentMessage(ctx, connect.NewRequest(&agentcomposev1.SendAgentMessageRequest{SessionId: "session-1", Agent: "codex", Message: "hello"}))
-	if err != nil {
-		t.Fatalf("SendAgentMessage returned error: %v", err)
-	}
-	if sendResp.Msg.GetAssistantEvent().GetMessage() == "" {
-		t.Fatalf("send response = %#v", sendResp.Msg)
-	}
-	if len(publisher.events) < 2 || publisher.events[1].CreatedAt.IsZero() || publisher.events[1].CreatedAt.Location() != time.UTC {
-		t.Fatalf("agent loader topic events = %#v", publisher.events)
-	}
-	if _, err := agent.SendAgentMessage(ctx, connect.NewRequest(&agentcomposev1.SendAgentMessageRequest{SessionId: "session-1", Message: " "})); connect.CodeOf(err) != connect.CodeInvalidArgument {
-		t.Fatalf("expected empty message error, got %v", err)
-	}
-	eventsResp, err := agent.ListSessionEvents(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: "session-1"}))
-	if err != nil || len(eventsResp.Msg.GetEvents()) != 1 {
-		t.Fatalf("ListSessionEvents resp=%#v err=%v", eventsResp, err)
 	}
 }
 
@@ -763,14 +695,27 @@ func TestProjectAndRunHandlersStoreBackedWorkflows(t *testing.T) {
 	ctx := context.Background()
 	store := &apiProjectRunStore{
 		projects: []domain.ProjectRecord{{ID: "project-1", Name: "Project", CurrentRevision: 1}},
-		agents: []domain.ProjectAgentRecord{{
-			ProjectID: "project-1", AgentName: "worker", ManagedAgentID: "agent-1", Driver: "boxlite", Image: "guest:latest",
-		}},
-		schedulers: []domain.ProjectSchedulerRecord{{ProjectID: "project-1", SchedulerID: "scheduler-1", AgentName: "worker", Enabled: true}},
-		revision:   domain.ProjectRevisionRecord{ProjectID: "project-1", Revision: 1, SpecJSON: `{"agents":[{"name":"worker"}]}`},
-		runs: map[string]domain.ProjectRunRecord{
-			"run-1": {RunID: "run-1", ProjectID: "project-1", ProjectName: "Project", AgentName: "worker", Status: domain.ProjectRunStatusRunning, Source: domain.ProjectRunSourceAPI, ResultJSON: "{}"},
+		agents: []domain.ProjectAgentRecord{
+			{ProjectID: "project-1", AgentName: "worker", ManagedAgentID: "agent-1", Revision: 1, Driver: "boxlite", Image: "guest:latest"},
+			{ProjectID: "project-1", AgentName: "worker-2", ManagedAgentID: "agent-2", Revision: 1, Driver: "boxlite", Image: "guest:latest"},
 		},
+		schedulers: []domain.ProjectSchedulerRecord{
+			{ProjectID: "project-1", SchedulerID: "scheduler-1", AgentName: "worker", ManagedLoaderID: "loader-1", Revision: 1, Enabled: true, SpecJSON: `{"enabled":true,"script":"run()"}`, RunCount: 3, LatestRunAt: time.Unix(10, 0), LastError: "failed"},
+			{ProjectID: "project-1", SchedulerID: "scheduler-2", AgentName: "worker-2", ManagedLoaderID: "loader-2", Revision: 1, Enabled: true, SpecJSON: `{"enabled":true,"script":"run()"}`},
+		},
+		loaders: map[string]domain.Loader{
+			"loader-1": {Summary: domain.LoaderSummary{ID: "loader-1", Enabled: false}},
+			"loader-2": {Summary: domain.LoaderSummary{ID: "loader-2", Enabled: true}},
+		},
+		revision: domain.ProjectRevisionRecord{ProjectID: "project-1", Revision: 1, SpecJSON: `{"agents":[{"name":"worker"},{"name":"worker-2"}]}`},
+		agentRunStates: []domain.ProjectAgentRunState{
+			{AgentName: "worker", RunningRunCount: 1, RunningSchedulerRunCount: 2, LatestRunID: "run-1", LatestStatus: domain.ProjectRunStatusFailed, LatestSource: domain.ProjectRunSourceAPI, LatestAt: time.Unix(20, 0)},
+			{AgentName: "worker-2", LatestRunID: "run-2", LatestStatus: domain.ProjectRunStatusSucceeded, LatestSource: domain.ProjectRunSourceScheduler, LatestAt: time.Unix(10, 0)},
+		},
+		runs: map[string]domain.ProjectRunRecord{
+			"run-1": {RunID: "run-1", ProjectID: "project-1", ProjectName: "Project", AgentName: "worker", SandboxID: strings.Repeat("a", 64), Status: domain.ProjectRunStatusRunning, Source: domain.ProjectRunSourceAPI, ResultJSON: "{}"},
+		},
+		runEvents: []domain.ProjectRunEventRecord{{ID: "event-1", RunID: "run-1", Sequence: 1, Kind: domain.ProjectRunEventKindUserMessage, Text: "hello", CreatedAt: time.Unix(1, 0)}},
 	}
 	projectHandler := NewProjectHandler(nil, store)
 	projectResp, err := projectHandler.GetProject(ctx, connect.NewRequest(&agentcomposev2.GetProjectRequest{Project: &agentcomposev2.ProjectRef{Name: "Project"}, IncludeSpec: true}))
@@ -780,13 +725,38 @@ func TestProjectAndRunHandlersStoreBackedWorkflows(t *testing.T) {
 	if projectResp.Msg.GetProject().GetSummary().GetProjectId() != "project-1" || projectResp.Msg.GetProject().GetSpec() == nil {
 		t.Fatalf("project response = %#v", projectResp.Msg.GetProject())
 	}
+	projectAgent := projectResp.Msg.GetProject().GetAgents()[0]
+	if store.agentRunStateCalls != 1 || projectAgent.GetCurrentRun().GetRunningRunCount() != 1 || projectAgent.GetCurrentRun().GetRunningSchedulerRunCount() != 2 || projectAgent.GetLatestRun().GetRunId() != "run-1" || projectAgent.GetHealth() != agentcomposev2.ProjectAgentHealth_PROJECT_AGENT_HEALTH_AT_RISK {
+		t.Fatalf("project agent run enrichment calls=%d agent=%#v", store.agentRunStateCalls, projectAgent)
+	}
 	listProjects, err := projectHandler.ListProjects(ctx, connect.NewRequest(&agentcomposev2.ListProjectsRequest{Query: "Project", Limit: 10}))
 	if err != nil || len(listProjects.Msg.GetProjects()) != 1 {
 		t.Fatalf("ListProjects resp=%#v err=%v", listProjects, err)
 	}
-	if summary := listProjects.Msg.GetProjects()[0]; summary.GetAgentCount() != 1 || summary.GetSchedulerCount() != 1 {
+	if summary := listProjects.Msg.GetProjects()[0]; summary.GetAgentCount() != 2 || summary.GetSchedulerCount() != 2 {
 		t.Fatalf("ListProjects summary counts = agents %d schedulers %d", summary.GetAgentCount(), summary.GetSchedulerCount())
 	}
+	scheduler, err := projectHandler.GetScheduler(ctx, connect.NewRequest(&agentcomposev2.GetSchedulerRequest{Project: &agentcomposev2.ProjectRef{ProjectId: "project-1"}, AgentName: "worker"}))
+	if err != nil || scheduler.Msg.GetScheduler().GetSchedulerId() != "scheduler-1" || scheduler.Msg.GetSpec().GetScript() != "run()" {
+		t.Fatalf("GetScheduler resp=%#v err=%v", scheduler, err)
+	}
+	firstSchedulers, err := projectHandler.ListSchedulers(ctx, connect.NewRequest(&agentcomposev2.ListSchedulersRequest{Limit: 1}))
+	if err != nil || len(firstSchedulers.Msg.GetSchedulers()) != 1 || firstSchedulers.Msg.GetNextCursor() == "" {
+		t.Fatalf("ListSchedulers first page=%#v err=%v", firstSchedulers, err)
+	}
+	if summary := firstSchedulers.Msg.GetSchedulers()[0]; summary.GetEnabled() || summary.GetRunCount() != 3 || !summary.GetLatestRunAt().AsTime().Equal(time.Unix(10, 0)) || summary.GetLastError() != "failed" {
+		t.Fatalf("ListSchedulers summary=%#v", summary)
+	}
+	secondSchedulers, err := projectHandler.ListSchedulers(ctx, connect.NewRequest(&agentcomposev2.ListSchedulersRequest{Limit: 1, Cursor: firstSchedulers.Msg.GetNextCursor()}))
+	if err != nil || len(secondSchedulers.Msg.GetSchedulers()) != 1 || secondSchedulers.Msg.GetSchedulers()[0].GetSchedulerId() != "scheduler-2" {
+		t.Fatalf("ListSchedulers second page=%#v err=%v", secondSchedulers, err)
+	}
+	delete(store.loaders, "loader-2")
+	missingLoaderSchedulers, err := projectHandler.ListSchedulers(ctx, connect.NewRequest(&agentcomposev2.ListSchedulersRequest{Limit: 10}))
+	if err != nil || len(missingLoaderSchedulers.Msg.GetSchedulers()) != 2 || !missingLoaderSchedulers.Msg.GetSchedulers()[1].GetEnabled() {
+		t.Fatalf("ListSchedulers missing loader fallback=%#v err=%v", missingLoaderSchedulers, err)
+	}
+	store.loaders["loader-2"] = domain.Loader{Summary: domain.LoaderSummary{ID: "loader-2", Enabled: true}}
 	store.projects = append(store.projects, domain.ProjectRecord{ID: "project-2", Name: "Project"})
 	if _, err := projectHandler.GetProject(ctx, connect.NewRequest(&agentcomposev2.GetProjectRequest{Project: &agentcomposev2.ProjectRef{Name: "Project"}})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("expected ambiguous project error, got %v", err)
@@ -804,6 +774,14 @@ func TestProjectAndRunHandlersStoreBackedWorkflows(t *testing.T) {
 	listRuns, err := runHandler.ListRuns(ctx, connect.NewRequest(&agentcomposev2.ListRunsRequest{ProjectId: "project-1", Limit: 10}))
 	if err != nil || len(listRuns.Msg.GetRuns()) != 1 {
 		t.Fatalf("ListRuns resp=%#v err=%v", listRuns, err)
+	}
+	runEvents, err := runHandler.ListRunEvents(ctx, connect.NewRequest(&agentcomposev2.ListRunEventsRequest{RunId: "run-1", Limit: 10}))
+	if err != nil || !runEvents.Msg.GetHistoryAvailable() || len(runEvents.Msg.GetEvents()) != 1 {
+		t.Fatalf("ListRunEvents resp=%#v err=%v", runEvents, err)
+	}
+	batchEvents, err := runHandler.ListSandboxRunEvents(ctx, connect.NewRequest(&agentcomposev2.ListSandboxRunEventsRequest{SandboxId: strings.Repeat("a", 64), Limit: 10}))
+	if err != nil || len(batchEvents.Msg.GetEvents()) != 1 || len(batchEvents.Msg.GetHistoryAvailableRunIds()) != 1 {
+		t.Fatalf("ListSandboxRunEvents resp=%#v err=%v", batchEvents, err)
 	}
 	stopResp, err := runHandler.StopRun(ctx, connect.NewRequest(&agentcomposev2.StopRunRequest{RunId: "run-1", Reason: "stop"}))
 	if err != nil || !stopResp.Msg.GetStopRequested() || stopResp.Msg.GetRun().GetSummary().GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_CANCELED {
@@ -1014,83 +992,6 @@ func collectRunLogChunks(t *testing.T, client agentcomposev2connect.RunServiceCl
 		t.Fatalf("FollowRunLogs stream error: %v", err)
 	}
 	return chunks
-}
-
-type apiHandlerSessionStore struct {
-	session       *domain.Sandbox
-	cells         []domain.NotebookCell
-	events        []domain.SandboxEvent
-	getSandboxIDs []string
-	listCellsIDs  []string
-	listEventsIDs []string
-}
-
-func (s *apiHandlerSessionStore) GetSandbox(_ context.Context, id string) (*domain.Sandbox, error) {
-	s.getSandboxIDs = append(s.getSandboxIDs, id)
-	if s.session == nil {
-		return nil, errors.New("missing")
-	}
-	return s.session, nil
-}
-
-func (s *apiHandlerSessionStore) ListSandboxes(context.Context, domain.SandboxListOptions) (domain.SandboxListResult, error) {
-	if s.session == nil {
-		return domain.SandboxListResult{}, errors.New("missing")
-	}
-	return domain.SandboxListResult{Sandboxes: []*domain.Sandbox{s.session}, TotalCount: 1}, nil
-}
-
-func (s *apiHandlerSessionStore) ListCells(_ context.Context, id string) ([]domain.NotebookCell, error) {
-	s.listCellsIDs = append(s.listCellsIDs, id)
-	return s.cells, nil
-}
-
-func (s *apiHandlerSessionStore) ListEvents(_ context.Context, id string) ([]domain.SandboxEvent, error) {
-	s.listEventsIDs = append(s.listEventsIDs, id)
-	return s.events, nil
-}
-
-type apiHandlerCellExecutor struct {
-	cell domain.NotebookCell
-}
-
-func (e apiHandlerCellExecutor) ExecuteCell(context.Context, *domain.Sandbox, string, string) (domain.NotebookCell, error) {
-	return e.cell, nil
-}
-
-func (e apiHandlerCellExecutor) ExecuteCellStream(context.Context, *domain.Sandbox, string, string, execution.CellExecutionStream) (domain.NotebookCell, error) {
-	return e.cell, nil
-}
-
-type apiHandlerAgentDefinitions struct {
-	agent domain.AgentDefinition
-}
-
-func (s apiHandlerAgentDefinitions) GetAgentDefinition(context.Context, string) (domain.AgentDefinition, error) {
-	return s.agent, nil
-}
-
-type apiHandlerAgentExecutor struct {
-	cell domain.NotebookCell
-}
-
-func (e apiHandlerAgentExecutor) ExecuteAgentRequest(_ context.Context, _ *domain.Sandbox, req execution.ExecuteAgentRequest) (domain.NotebookCell, domain.SandboxEvent, domain.SandboxEvent, error) {
-	if strings.TrimSpace(req.Message) == "" {
-		return domain.NotebookCell{}, domain.SandboxEvent{}, domain.SandboxEvent{}, errors.New("message")
-	}
-	return e.cell,
-		domain.SandboxEvent{ID: "user", Type: "user", Message: req.Message, CreatedAt: time.Now()},
-		domain.SandboxEvent{ID: "assistant", Type: "assistant", Message: "done", CreatedAt: time.Now()},
-		nil
-}
-
-type apiHandlerPublisher struct {
-	events []domain.LoaderTopicEvent
-}
-
-func (p *apiHandlerPublisher) Publish(event domain.LoaderTopicEvent) bool {
-	p.events = append(p.events, event)
-	return true
 }
 
 type apiExecSandboxStore struct {
@@ -1353,12 +1254,16 @@ func (r *apiStatsRuntime) Stats(_ context.Context, session *domain.Sandbox, vmSt
 }
 
 type apiProjectRunStore struct {
-	mu         sync.Mutex
-	projects   []domain.ProjectRecord
-	agents     []domain.ProjectAgentRecord
-	schedulers []domain.ProjectSchedulerRecord
-	revision   domain.ProjectRevisionRecord
-	runs       map[string]domain.ProjectRunRecord
+	mu                 sync.Mutex
+	projects           []domain.ProjectRecord
+	agents             []domain.ProjectAgentRecord
+	schedulers         []domain.ProjectSchedulerRecord
+	revision           domain.ProjectRevisionRecord
+	agentRunStates     []domain.ProjectAgentRunState
+	agentRunStateCalls int
+	runs               map[string]domain.ProjectRunRecord
+	runEvents          []domain.ProjectRunEventRecord
+	loaders            map[string]domain.Loader
 }
 
 func (s *apiProjectRunStore) GetProject(_ context.Context, projectID string) (domain.ProjectRecord, error) {
@@ -1382,6 +1287,20 @@ func (s *apiProjectRunStore) ListProjectSchedulers(context.Context, string) ([]d
 	return s.schedulers, nil
 }
 
+func (s *apiProjectRunStore) ListProjectSchedulersPage(_ context.Context, query, afterKey string, limit int) ([]domain.ProjectSchedulerRecord, error) {
+	var items []domain.ProjectSchedulerRecord
+	for _, scheduler := range s.schedulers {
+		key := scheduler.ProjectID + "\x00" + scheduler.AgentName + "\x00" + scheduler.SchedulerID
+		if key > afterKey {
+			items = append(items, scheduler)
+		}
+	}
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
 func (s *apiProjectRunStore) GetProjectRevision(context.Context, string, int64) (domain.ProjectRevisionRecord, error) {
 	return s.revision, nil
 }
@@ -1397,11 +1316,48 @@ func (s *apiProjectRunStore) GetManagedAgentDefinition(context.Context, string) 
 	return runs.ManagedAgentDefinition{ID: "agent-1", Enabled: true, ManagedProjectID: "project-1", ManagedAgentName: "worker"}, nil
 }
 
+func (s *apiProjectRunStore) GetLoader(_ context.Context, loaderID string) (domain.Loader, error) {
+	loader, ok := s.loaders[loaderID]
+	if !ok {
+		return domain.Loader{}, sql.ErrNoRows
+	}
+	return loader, nil
+}
+
+func (s *apiProjectRunStore) SetLoaderEnabled(_ context.Context, loaderID string, enabled bool) error {
+	loader, ok := s.loaders[loaderID]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	loader.Summary.Enabled = enabled
+	s.loaders[loaderID] = loader
+	return nil
+}
+
+func (s *apiProjectRunStore) SetLoaderTriggerEnabled(context.Context, string, string, bool) error {
+	return nil
+}
+
+func (s *apiProjectRunStore) ListLoaderEvents(context.Context, string, int) ([]domain.LoaderEvent, error) {
+	return nil, nil
+}
+
 func (s *apiProjectRunStore) CreateProjectRun(_ context.Context, run domain.ProjectRunRecord) (domain.ProjectRunRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.runs[run.RunID] = run
 	return run, nil
+}
+
+func (s *apiProjectRunStore) CreateProjectRunWithEvents(ctx context.Context, run domain.ProjectRunRecord, events []domain.ProjectRunEventRecord) (domain.ProjectRunRecord, error) {
+	created, err := s.CreateProjectRun(ctx, run)
+	if err != nil {
+		return domain.ProjectRunRecord{}, err
+	}
+	s.mu.Lock()
+	s.runEvents = append(s.runEvents, events...)
+	s.mu.Unlock()
+	return created, nil
 }
 
 func (s *apiProjectRunStore) GetProjectRun(_ context.Context, runID string) (domain.ProjectRunRecord, error) {
@@ -1421,12 +1377,99 @@ func (s *apiProjectRunStore) UpdateProjectRun(_ context.Context, run domain.Proj
 	return run, nil
 }
 
+func (s *apiProjectRunStore) UpdateProjectRunWithEvents(ctx context.Context, run domain.ProjectRunRecord, events []domain.ProjectRunEventRecord) (domain.ProjectRunRecord, error) {
+	updated, err := s.UpdateProjectRun(ctx, run)
+	if err != nil {
+		return domain.ProjectRunRecord{}, err
+	}
+	s.mu.Lock()
+	s.runEvents = append(s.runEvents, events...)
+	s.mu.Unlock()
+	return updated, nil
+}
+
 func (s *apiProjectRunStore) ListProjectRunsByOptions(_ context.Context, _ domain.ProjectRunListOptions) ([]domain.ProjectRunRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	items := make([]domain.ProjectRunRecord, 0, len(s.runs))
 	for _, run := range s.runs {
 		items = append(items, run)
+	}
+	return items, nil
+}
+
+func (s *apiProjectRunStore) ListProjectAgentRunStates(_ context.Context, _ string) ([]domain.ProjectAgentRunState, error) {
+	s.agentRunStateCalls++
+	return s.agentRunStates, nil
+}
+
+func (s *apiProjectRunStore) ListProjectRunsForSandbox(_ context.Context, sandboxID string) ([]domain.ProjectRunRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var items []domain.ProjectRunRecord
+	for _, run := range s.runs {
+		if run.SandboxID == sandboxID {
+			items = append(items, run)
+		}
+	}
+	return items, nil
+}
+
+func (s *apiProjectRunStore) ListProjectRunEvents(_ context.Context, runID string, after uint64, limit int) ([]domain.ProjectRunEventRecord, error) {
+	var items []domain.ProjectRunEventRecord
+	for _, event := range s.runEvents {
+		if event.RunID == runID && event.Sequence > after {
+			items = append(items, event)
+		}
+	}
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
+func (s *apiProjectRunStore) HasProjectRunEvents(_ context.Context, runID string) (bool, error) {
+	for _, event := range s.runEvents {
+		if event.RunID == runID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *apiProjectRunStore) ListProjectRunEventRunIDsForSandbox(_ context.Context, sandboxID string) ([]string, error) {
+	allowed := map[string]bool{}
+	for _, run := range s.runs {
+		if run.SandboxID == sandboxID {
+			allowed[run.RunID] = true
+		}
+	}
+	seen := map[string]bool{}
+	var runIDs []string
+	for _, event := range s.runEvents {
+		if allowed[event.RunID] && !seen[event.RunID] {
+			seen[event.RunID] = true
+			runIDs = append(runIDs, event.RunID)
+		}
+	}
+	return runIDs, nil
+}
+
+func (s *apiProjectRunStore) ListProjectRunEventsForSandbox(_ context.Context, sandboxID string, _ time.Time, _ string, _ uint64, limit int) ([]domain.ProjectRunEventRecord, error) {
+	allowed := map[string]bool{}
+	for _, run := range s.runs {
+		if run.SandboxID == sandboxID {
+			allowed[run.RunID] = true
+		}
+	}
+	var items []domain.ProjectRunEventRecord
+	for _, event := range s.runEvents {
+		if allowed[event.RunID] {
+			items = append(items, event)
+		}
+	}
+	if len(items) > limit {
+		items = items[:limit]
 	}
 	return items, nil
 }

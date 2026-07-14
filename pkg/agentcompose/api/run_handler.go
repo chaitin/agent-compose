@@ -3,10 +3,13 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +18,8 @@ import (
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/runs"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
+	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type RunAgentDelegate interface {
@@ -31,9 +36,18 @@ type ActiveRunStopper interface {
 type RunStore interface {
 	runs.Store
 	ListProjectRunsByOptions(context.Context, domain.ProjectRunListOptions) ([]domain.ProjectRunRecord, error)
+	ListProjectRunsForSandbox(context.Context, string) ([]domain.ProjectRunRecord, error)
+}
+
+type RunEventStore interface {
+	HasProjectRunEvents(context.Context, string) (bool, error)
+	ListProjectRunEventRunIDsForSandbox(context.Context, string) ([]string, error)
+	ListProjectRunEvents(context.Context, string, uint64, int) ([]domain.ProjectRunEventRecord, error)
+	ListProjectRunEventsForSandbox(context.Context, string, time.Time, string, uint64, int) ([]domain.ProjectRunEventRecord, error)
 }
 
 type RunHandler struct {
+	agentcomposev2connect.UnimplementedRunServiceHandler
 	delegate RunAgentDelegate
 	stopper  ActiveRunStopper
 	store    RunStore
@@ -81,6 +95,155 @@ func (h *RunHandler) RunAttach(ctx context.Context, stream *connect.BidiStream[a
 		return ConnectErrorForDomain(err)
 	}
 	return nil
+}
+
+func (h *RunHandler) ListRunEvents(ctx context.Context, req *connect.Request[agentcomposev2.ListRunEventsRequest]) (*connect.Response[agentcomposev2.ListRunEventsResponse], error) {
+	runID := strings.TrimSpace(req.Msg.GetRunId())
+	if runID == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run id is required"))
+	}
+	_, err := h.store.GetProjectRun(ctx, runID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	limit := int(req.Msg.GetLimit())
+	if limit == 0 {
+		limit = 100
+	}
+	if limit < 1 || limit > 500 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("limit must be between 1 and 500"))
+	}
+	after, err := decodeRunEventCursor(runID, req.Msg.GetCursor())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	store, ok := h.store.(RunEventStore)
+	if !ok {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("run event store is required"))
+	}
+	events, err := store.ListProjectRunEvents(ctx, runID, after, limit+1)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	historyAvailable, err := store.HasProjectRunEvents(ctx, runID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	response := &agentcomposev2.ListRunEventsResponse{HistoryAvailable: historyAvailable}
+	if len(events) > limit {
+		response.NextCursor = encodeRunEventCursor(runID, events[limit-1].Sequence)
+		events = events[:limit]
+	}
+	for _, event := range events {
+		response.Events = append(response.Events, runEventToProto(event))
+	}
+	return connect.NewResponse(response), nil
+}
+
+type sandboxRunEventCursor struct {
+	SandboxID       string `json:"sandboxId"`
+	CreatedAtMillis int64  `json:"createdAtMillis"`
+	RunID           string `json:"runId"`
+	Sequence        uint64 `json:"sequence"`
+}
+
+func (h *RunHandler) ListSandboxRunEvents(ctx context.Context, req *connect.Request[agentcomposev2.ListSandboxRunEventsRequest]) (*connect.Response[agentcomposev2.ListSandboxRunEventsResponse], error) {
+	sandboxID := strings.TrimSpace(req.Msg.GetSandboxId())
+	if err := validateSandboxID(sandboxID); err != nil {
+		return nil, err
+	}
+	limit := int(req.Msg.GetLimit())
+	if limit == 0 {
+		limit = 100
+	}
+	if limit < 1 || limit > 500 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("limit must be between 1 and 500"))
+	}
+	cursor, err := decodeSandboxRunEventCursor(sandboxID, req.Msg.GetCursor())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	store, ok := h.store.(RunEventStore)
+	if !ok {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("run event store is required"))
+	}
+	events, err := store.ListProjectRunEventsForSandbox(ctx, sandboxID, time.UnixMilli(cursor.CreatedAtMillis).UTC(), cursor.RunID, cursor.Sequence, limit+1)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	historyAvailableRunIDs, err := store.ListProjectRunEventRunIDsForSandbox(ctx, sandboxID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	response := &agentcomposev2.ListSandboxRunEventsResponse{HistoryAvailableRunIds: historyAvailableRunIDs}
+	if len(events) > limit {
+		last := events[limit-1]
+		response.NextCursor = encodeSandboxRunEventCursor(sandboxID, last.CreatedAt, last.RunID, last.Sequence)
+		events = events[:limit]
+	}
+	for _, event := range events {
+		response.Events = append(response.Events, runEventToProto(event))
+	}
+	return connect.NewResponse(response), nil
+}
+
+func encodeSandboxRunEventCursor(sandboxID string, createdAt time.Time, runID string, sequence uint64) string {
+	payload, _ := json.Marshal(sandboxRunEventCursor{SandboxID: sandboxID, CreatedAtMillis: createdAt.UTC().UnixMilli(), RunID: runID, Sequence: sequence})
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeSandboxRunEventCursor(sandboxID, value string) (sandboxRunEventCursor, error) {
+	if strings.TrimSpace(value) == "" {
+		return sandboxRunEventCursor{SandboxID: sandboxID, CreatedAtMillis: time.Time{}.UnixMilli()}, nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return sandboxRunEventCursor{}, fmt.Errorf("invalid cursor")
+	}
+	var cursor sandboxRunEventCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil || cursor.SandboxID != sandboxID || cursor.RunID == "" || cursor.Sequence == 0 {
+		return sandboxRunEventCursor{}, fmt.Errorf("invalid cursor")
+	}
+	return cursor, nil
+}
+
+func encodeRunEventCursor(runID string, sequence uint64) string {
+	return base64.RawURLEncoding.EncodeToString([]byte("v1:" + runID + ":" + strconv.FormatUint(sequence, 10)))
+}
+func decodeRunEventCursor(runID, token string) (uint64, error) {
+	if strings.TrimSpace(token) == "" {
+		return 0, nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return 0, fmt.Errorf("invalid cursor")
+	}
+	prefix := "v1:" + runID + ":"
+	if !strings.HasPrefix(string(decoded), prefix) {
+		return 0, fmt.Errorf("invalid cursor")
+	}
+	sequence, err := strconv.ParseUint(strings.TrimPrefix(string(decoded), prefix), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid cursor")
+	}
+	return sequence, nil
+}
+func runEventToProto(event domain.ProjectRunEventRecord) *agentcomposev2.RunEvent {
+	kind := agentcomposev2.RunEventKind_RUN_EVENT_KIND_UNSPECIFIED
+	switch event.Kind {
+	case domain.ProjectRunEventKindUserMessage:
+		kind = agentcomposev2.RunEventKind_RUN_EVENT_KIND_USER_MESSAGE
+	case domain.ProjectRunEventKindAgentMessage:
+		kind = agentcomposev2.RunEventKind_RUN_EVENT_KIND_AGENT_MESSAGE
+	case domain.ProjectRunEventKindAgentActivity:
+		kind = agentcomposev2.RunEventKind_RUN_EVENT_KIND_AGENT_ACTIVITY
+	case domain.ProjectRunEventKindStatus:
+		kind = agentcomposev2.RunEventKind_RUN_EVENT_KIND_STATUS
+	}
+	return &agentcomposev2.RunEvent{Id: event.ID, RunId: event.RunID, Seq: event.Sequence, Kind: kind, Text: event.Text, Agent: event.Agent, Name: event.Name, PayloadJson: event.PayloadJSON, Success: event.Success, ExitCode: int32(event.ExitCode), StopReason: event.StopReason, CreatedAt: timestamppb.New(event.CreatedAt)}
 }
 
 func (h *RunHandler) GetRun(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {

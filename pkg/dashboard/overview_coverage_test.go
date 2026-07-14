@@ -22,8 +22,8 @@ func TestAggregatorAndHubWorkflows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build returned error: %v", err)
 	}
-	if overview.GetRuns().GetRecentCount() != 4 || overview.GetRuns().GetRunningCount() != 2 || overview.GetRuns().GetAttentionCount() != 2 {
-		t.Fatalf("overview = %#v", overview.GetRuns())
+	if overview.Runs.RecentCount != 4 || overview.Runs.RunningCount != 2 || overview.Runs.AttentionCount != 2 {
+		t.Fatalf("overview = %#v", overview.Runs)
 	}
 	if CloneOverview(nil) != nil || !IsRunningStatus(" pending ") || !IsAttentionStatus("cancelled") {
 		t.Fatalf("status helpers failed")
@@ -36,7 +36,7 @@ func TestAggregatorAndHubWorkflows(t *testing.T) {
 	var nilHub *Hub
 	nilHub.SetDebounce(time.Millisecond)
 	current, err := hub.Current(ctx)
-	if err != nil || current.GetUpdatedAt() == "" {
+	if err != nil || current.UpdatedAt.IsZero() {
 		t.Fatalf("Current overview=%#v err=%v", current, err)
 	}
 	watchCtx, cancelWatch := context.WithCancel(ctx)
@@ -44,7 +44,7 @@ func TestAggregatorAndHubWorkflows(t *testing.T) {
 	hub.Notify("")
 	select {
 	case event := <-ch:
-		if event.Reason != "updated" || event.Overview.GetRuns().GetRecentCount() != 4 {
+		if event.Reason != "updated" || event.Overview.Runs.RecentCount != 4 {
 			t.Fatalf("event = %#v", event)
 		}
 	case <-time.After(time.Second):

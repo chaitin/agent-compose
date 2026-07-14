@@ -38,6 +38,7 @@ type orderedNamedWorkspace struct {
 
 type orderedAgentSpec struct {
 	Name         string                      `yaml:"name" json:"name"`
+	Status       string                      `yaml:"status,omitempty" json:"status,omitempty"`
 	Provider     string                      `yaml:"provider,omitempty" json:"provider,omitempty"`
 	Model        string                      `yaml:"model,omitempty" json:"model,omitempty"`
 	SystemPrompt string                      `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
@@ -130,6 +131,7 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 	for _, agent := range s.Agents {
 		agents = append(agents, orderedAgentSpec{
 			Name:         agent.Name,
+			Status:       agent.Status,
 			Provider:     agent.Provider,
 			Model:        agent.Model,
 			SystemPrompt: agent.SystemPrompt,
@@ -173,6 +175,7 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 	for _, agent := range ordered.Agents {
 		cloned.Agents = append(cloned.Agents, NormalizedAgentSpec{
 			Name:         agent.Name,
+			Status:       agent.Status,
 			Provider:     agent.Provider,
 			Model:        agent.Model,
 			SystemPrompt: agent.SystemPrompt,

@@ -131,6 +131,8 @@ type SandboxListOptions struct {
 	CreatedTo          time.Time
 	UpdatedFrom        time.Time
 	UpdatedTo          time.Time
+	BeforeUpdatedAt    time.Time
+	BeforeID           string
 	Offset             int
 	Limit              int
 }

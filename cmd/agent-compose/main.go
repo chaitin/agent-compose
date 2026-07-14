@@ -52,8 +52,6 @@ import (
 	"agent-compose/pkg/health"
 	"agent-compose/pkg/identity"
 	domain "agent-compose/pkg/model"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
-	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
@@ -1422,12 +1420,11 @@ func runComposeSandboxActionCommand(cmd *cobra.Command, cli cliOptions, action, 
 		if sandbox == "" {
 			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("%s requires non-empty sandbox", action)}
 		}
-		req := connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sandbox})
 		switch action {
 		case "stop":
-			_, err = clients.session.StopSession(cmd.Context(), req)
+			_, err = clients.sandbox.StopSandbox(cmd.Context(), connect.NewRequest(&agentcomposev2.StopSandboxRequest{SandboxId: sandbox}))
 		case "resume":
-			_, err = clients.session.ResumeSession(cmd.Context(), req)
+			_, err = clients.sandbox.ResumeSandbox(cmd.Context(), connect.NewRequest(&agentcomposev2.ResumeSandboxRequest{SandboxId: sandbox}))
 		default:
 			return fmt.Errorf("unsupported sandbox action %q", action)
 		}
@@ -2011,7 +2008,7 @@ func runComposeSchedulerInspectCommand(cmd *cobra.Command, cli cliOptions, agent
 	if trigger.Source == "declarative" && trigger.declarative != nil {
 		output.Definition = api.TriggerYAMLShape(trigger.declarative)
 	} else if trigger.registered != nil {
-		output.Registered = loaderTriggerYAMLShape(trigger.registered)
+		output.Registered = trigger.registered
 	}
 	if cli.JSON {
 		data, err := json.MarshalIndent(output, "", "  ")
@@ -2061,18 +2058,14 @@ func listComposeSchedulerTriggers(ctx context.Context, clients cliServiceClients
 		if err != nil {
 			return nil, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolve scheduler for agent %q: %w", agent.Name, err)}
 		}
-		managedLoaderID, err := domain.StableManagedLoaderID(projectID, agent.Name, "")
-		if err != nil {
-			return nil, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolve scheduler loader for agent %q: %w", agent.Name, err)}
-		}
 		schedulerEnabled := agent.Scheduler.Enabled
 		if agent.Scheduler.HasScript() {
-			loader, err := clients.loader.GetLoader(ctx, connect.NewRequest(&agentcomposev1.LoaderIDRequest{LoaderId: managedLoaderID}))
+			scheduler, err := clients.project.GetScheduler(ctx, connect.NewRequest(&agentcomposev2.GetSchedulerRequest{Project: &agentcomposev2.ProjectRef{ProjectId: projectID}, AgentName: agent.Name}))
 			if err != nil {
-				return nil, commandExitErrorForConnect(fmt.Errorf("get scheduler loader %s: %w", managedLoaderID, err))
+				return nil, commandExitErrorForConnect(fmt.Errorf("get scheduler %s: %w", schedulerID, err))
 			}
-			for _, trigger := range loader.Msg.GetLoader().GetTriggers() {
-				items = append(items, schedulerTriggerItemFromRegistered(agent.Name, schedulerID, managedLoaderID, schedulerEnabled, trigger))
+			for _, trigger := range scheduler.Msg.GetTriggers() {
+				items = append(items, schedulerTriggerItemFromResolved(agent.Name, schedulerID, schedulerEnabled, trigger))
 			}
 			continue
 		}
@@ -2081,7 +2074,7 @@ func listComposeSchedulerTriggers(ctx context.Context, clients cliServiceClients
 			if err != nil {
 				return nil, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolve trigger for agent %q: %w", agent.Name, err)}
 			}
-			items = append(items, schedulerTriggerItemFromDeclarative(agent.Name, schedulerID, managedLoaderID, schedulerEnabled, id, trigger))
+			items = append(items, schedulerTriggerItemFromDeclarative(agent.Name, schedulerID, schedulerEnabled, id, trigger))
 		}
 	}
 	if agentFilter != "" && len(items) == 0 {
@@ -2121,7 +2114,7 @@ func resolveComposeSchedulerTrigger(ctx context.Context, clients cliServiceClien
 	return matches[0], nil
 }
 
-func schedulerTriggerItemFromDeclarative(agentName, schedulerID, managedLoaderID string, schedulerEnabled bool, triggerID string, trigger compose.NormalizedTriggerSpec) composeSchedulerTriggerItem {
+func schedulerTriggerItemFromDeclarative(agentName, schedulerID string, schedulerEnabled bool, triggerID string, trigger compose.NormalizedTriggerSpec) composeSchedulerTriggerItem {
 	protoTrigger := api.TriggerSpecToProto(trigger)
 	return composeSchedulerTriggerItem{
 		AgentName:        agentName,
@@ -2134,35 +2127,27 @@ func schedulerTriggerItemFromDeclarative(agentName, schedulerID, managedLoaderID
 		SchedulerID:      displayOpaqueID(schedulerID),
 		SchedulerShortID: shortOpaqueID(schedulerID),
 		RawSchedulerID:   schedulerID,
-		ManagedLoaderID:  displayOpaqueID(managedLoaderID),
-		RawManagedLoader: managedLoaderID,
 		SchedulerEnabled: schedulerEnabled,
 		TriggerEnabled:   true,
 		declarative:      protoTrigger,
 	}
 }
 
-func schedulerTriggerItemFromRegistered(agentName, schedulerID, managedLoaderID string, schedulerEnabled bool, trigger *agentcomposev1.LoaderTrigger) composeSchedulerTriggerItem {
+func schedulerTriggerItemFromResolved(agentName, schedulerID string, schedulerEnabled bool, trigger *agentcomposev2.ResolvedTrigger) composeSchedulerTriggerItem {
+	interval, _ := time.ParseDuration(trigger.GetSpec().GetInterval())
+	registered := map[string]any{"loader_id": "", "trigger_id": trigger.GetTriggerId(), "kind": trigger.GetSpec().GetKind(), "enabled": trigger.GetEnabled(), "auto_id": false, "interval_ms": interval.Milliseconds(), "topic": trigger.GetSpec().GetEvent().GetTopic(), "spec_json": "", "next_fire_at": formatProtoTimestamp(trigger.GetNextFireAt()), "last_fired_at": formatProtoTimestamp(trigger.GetLastFiredAt())}
 	return composeSchedulerTriggerItem{
 		AgentName:        agentName,
 		TriggerID:        displayOpaqueID(trigger.GetTriggerId()),
 		TriggerShortID:   shortOpaqueID(trigger.GetTriggerId()),
 		RawTriggerID:     trigger.GetTriggerId(),
-		Kind:             loaderTriggerKindText(trigger.GetKind()),
+		Kind:             trigger.GetSpec().GetKind(),
 		Source:           "script",
 		SchedulerID:      displayOpaqueID(schedulerID),
 		SchedulerShortID: shortOpaqueID(schedulerID),
 		RawSchedulerID:   schedulerID,
-		ManagedLoaderID:  displayOpaqueID(managedLoaderID),
-		RawManagedLoader: managedLoaderID,
 		SchedulerEnabled: schedulerEnabled,
-		TriggerEnabled:   trigger.GetEnabled(),
-		Topic:            trigger.GetTopic(),
-		IntervalMs:       trigger.GetIntervalMs(),
-		SpecJSON:         trigger.GetSpecJson(),
-		NextFireAt:       trigger.GetNextFireAt(),
-		LastFiredAt:      trigger.GetLastFiredAt(),
-		registered:       trigger,
+		TriggerEnabled:   trigger.GetEnabled(), Topic: trigger.GetSpec().GetEvent().GetTopic(), IntervalMs: interval.Milliseconds(), NextFireAt: formatProtoTimestamp(trigger.GetNextFireAt()), LastFiredAt: formatProtoTimestamp(trigger.GetLastFiredAt()), registered: registered,
 	}
 }
 
@@ -2214,37 +2199,6 @@ func writeSchedulerInspectText(out io.Writer, output composeSchedulerInspectOutp
 		return err
 	}
 	return writeCommandOutput(out, data)
-}
-
-func loaderTriggerYAMLShape(trigger *agentcomposev1.LoaderTrigger) map[string]any {
-	raw := map[string]any{
-		"loader_id":     displayOpaqueID(trigger.GetLoaderId()),
-		"trigger_id":    displayOpaqueID(trigger.GetTriggerId()),
-		"kind":          loaderTriggerKindText(trigger.GetKind()),
-		"enabled":       trigger.GetEnabled(),
-		"auto_id":       trigger.GetAutoId(),
-		"interval_ms":   trigger.GetIntervalMs(),
-		"topic":         trigger.GetTopic(),
-		"spec_json":     trigger.GetSpecJson(),
-		"next_fire_at":  trigger.GetNextFireAt(),
-		"last_fired_at": trigger.GetLastFiredAt(),
-	}
-	return raw
-}
-
-func loaderTriggerKindText(kind agentcomposev1.LoaderTriggerKind) string {
-	switch kind {
-	case agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_INTERVAL:
-		return "interval"
-	case agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_TIMEOUT:
-		return "timeout"
-	case agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_CRON:
-		return "cron"
-	case agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_EVENT:
-		return "event"
-	default:
-		return "unspecified"
-	}
 }
 
 func runComposeRunStreamAndDetail(ctx context.Context, stdout, stderr io.Writer, client agentcomposev2connect.RunServiceClient, projectID, projectName string, runReq *agentcomposev2.RunAgentRequest, suppressOutput bool) (*agentcomposev2.RunDetail, *agentcomposev2.RunSummary, []string, error) {
@@ -2779,21 +2733,6 @@ func runComposeLogsCommand(cmd *cobra.Command, cli cliOptions, options composeLo
 	return runComposeLogsForScope(cmd, cli, clients.run, projectID, normalized.Name, normalizedOptions)
 }
 
-func runComposeLogsForScope(cmd *cobra.Command, cli cliOptions, client agentcomposev2connect.RunServiceClient, projectID, projectName string, options composeLogsOptions) error {
-	if strings.TrimSpace(options.RunID) != "" {
-		run, err := getRunDetail(cmd.Context(), client, projectID, options.RunID)
-		if err != nil {
-			project := firstNonEmptyString(projectName, shortOpaqueID(projectID), "-")
-			return commandExitErrorForConnect(fmt.Errorf("get run %s for project %s: %w", strings.TrimSpace(options.RunID), project, err))
-		}
-		if options.Follow {
-			return followRunLogStream(cmd.Context(), cmd.OutOrStdout(), client, projectID, run.Msg.GetRun().GetSummary(), options)
-		}
-		return writeLogsForRun(cmd.OutOrStdout(), run.Msg.GetRun(), cli.JSON, options)
-	}
-	return followOrPrintProjectLogs(cmd, cli, client, projectID, projectName, options)
-}
-
 func normalizeComposeLogsOptions(cmd *cobra.Command, options composeLogsOptions, args []string) (composeLogsOptions, error) {
 	if len(args) > 0 {
 		if cmd.Flags().Changed("agent") {
@@ -2805,88 +2744,6 @@ func normalizeComposeLogsOptions(cmd *cobra.Command, options composeLogsOptions,
 		return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --tail must be -1 or greater")}
 	}
 	return options, nil
-}
-
-func resolveComposeLogRefs(ctx context.Context, client agentcomposev2connect.RunServiceClient, normalized *compose.NormalizedProjectSpec, projectID string, options composeLogsOptions) (composeLogsOptions, error) {
-	if strings.TrimSpace(options.AgentName) != "" {
-		agentName, err := resolveComposeAgentNameFromSpec(normalized, projectID, options.AgentName)
-		if err != nil {
-			return options, err
-		}
-		options.AgentName = agentName
-	}
-	return resolveComposeLogIDRefs(ctx, client, projectID, options)
-}
-
-func resolveComposeLogIDRefs(ctx context.Context, client agentcomposev2connect.RunServiceClient, projectID string, options composeLogsOptions) (composeLogsOptions, error) {
-	if shouldResolveComposeLogResourceRef(options.RunID) {
-		runID, err := resolveComposeRunIDRef(ctx, client, projectID, options.AgentName, options.RunID)
-		if err != nil {
-			return options, err
-		}
-		options.RunID = runID
-	}
-	if shouldResolveComposeLogResourceRef(options.SandboxID) {
-		sandboxID, err := resolveComposeSandboxIDRefFromRuns(ctx, client, projectID, options.AgentName, options.SandboxID)
-		if err != nil {
-			return options, err
-		}
-		options.SandboxID = sandboxID
-	}
-	return options, nil
-}
-
-func resolveComposeLogResourceRef(cmd *cobra.Command, client agentcomposev2connect.ResourceServiceClient, options composeLogsOptions) (string, string, composeLogsOptions, error) {
-	ref := strings.TrimSpace(options.ResourceRef)
-	resource, err := resolveCLIResourceRef(cmd, client, ref, []agentcomposev2.ResourceKind{
-		agentcomposev2.ResourceKind_RESOURCE_KIND_PROJECT,
-		agentcomposev2.ResourceKind_RESOURCE_KIND_AGENT,
-		agentcomposev2.ResourceKind_RESOURCE_KIND_RUN,
-		agentcomposev2.ResourceKind_RESOURCE_KIND_SANDBOX,
-	}, "use a full ID or an explicit logs filter to select one")
-	if err != nil {
-		return "", "", options, err
-	}
-
-	projectID := strings.TrimSpace(resource.GetProjectId())
-	projectName := strings.TrimSpace(resource.GetProjectName())
-	switch resource.GetKind() {
-	case agentcomposev2.ResourceKind_RESOURCE_KIND_PROJECT:
-		projectID = firstNonEmptyString(resource.GetId(), resource.GetProjectId())
-		projectName = firstNonEmptyString(resource.GetName(), resource.GetProjectName())
-		if projectID == "" {
-			return "", "", options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolved project %q has no id", ref)}
-		}
-	case agentcomposev2.ResourceKind_RESOURCE_KIND_AGENT:
-		options.AgentName = firstNonEmptyString(resource.GetName(), resource.GetInspectRef())
-		if projectID == "" || options.AgentName == "" {
-			return "", "", options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolved agent %q is missing its project or name", ref)}
-		}
-	case agentcomposev2.ResourceKind_RESOURCE_KIND_RUN:
-		if options.RunID != "" || options.SandboxID != "" {
-			return "", "", options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs run ref cannot be combined with --run or --sandbox")}
-		}
-		options.RunID = firstNonEmptyString(resource.GetId(), resource.GetInspectRef())
-		if options.RunID == "" {
-			return "", "", options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolved run %q has no id", ref)}
-		}
-	case agentcomposev2.ResourceKind_RESOURCE_KIND_SANDBOX:
-		if options.RunID != "" || options.SandboxID != "" {
-			return "", "", options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs sandbox ref cannot be combined with --run or --sandbox")}
-		}
-		options.SandboxID = firstNonEmptyString(resource.GetId(), resource.GetInspectRef())
-		if options.SandboxID == "" {
-			return "", "", options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolved sandbox %q has no id", ref)}
-		}
-	default:
-		return "", "", options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resource %q cannot be used with logs", ref)}
-	}
-	return projectID, projectName, options, nil
-}
-
-func shouldResolveComposeLogResourceRef(ref string) bool {
-	ref = strings.TrimSpace(ref)
-	return identity.IsID(ref) || identity.IsIDPrefix(ref)
 }
 
 func composeExecArgs(cmd *cobra.Command, args []string) error {
@@ -4690,127 +4547,12 @@ func writeComposeInspectOutput(cmd *cobra.Command, output any) error {
 	return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
 }
 
-func isComposeInspectResourceKind(kind string) bool {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "project", "agent", "run", "sandbox", "session", "image", "cache", "volume":
-		return true
-	default:
-		return false
-	}
-}
-
-func runComposeResolvedInspectCommand(cmd *cobra.Command, cli cliOptions, ref string) error {
-	clients, err := newCLIServiceClients(cli)
-	if err != nil {
-		return err
-	}
-	ref = strings.TrimSpace(ref)
-	resource, err := resolveCLIResourceRef(cmd, clients.resource, ref, nil, fmt.Sprintf("use inspect <type> %s to select one", ref))
-	if err != nil {
-		return err
-	}
-	return runComposeResolvedResourceInspectCommand(cmd, cli, clients, resource)
-}
-
-func resolveCLIResourceRef(cmd *cobra.Command, client agentcomposev2connect.ResourceServiceClient, ref string, kinds []agentcomposev2.ResourceKind, ambiguityHint string) (*agentcomposev2.ResolvedResource, error) {
-	ref = strings.TrimSpace(ref)
-	response, err := client.ResolveResource(cmd.Context(), connect.NewRequest(&agentcomposev2.ResolveResourceRequest{Ref: ref, Kinds: kinds}))
-	if err != nil {
-		return nil, commandExitErrorForConnect(fmt.Errorf("resolve resource %s: %w", ref, err))
-	}
-	for _, warning := range response.Msg.GetWarnings() {
-		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", warning); err != nil {
-			return nil, err
-		}
-	}
-	resolved := response.Msg.GetResources()
-	if len(resolved) == 0 {
-		return nil, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resource %q not found", ref)}
-	}
-	if len(resolved) > 1 {
-		matches := make([]string, 0, len(resolved))
-		for _, resource := range resolved {
-			matches = append(matches, composeResolvedResourceDescription(resource))
-		}
-		message := fmt.Sprintf("resource ref %q is ambiguous; matches: %s", ref, strings.Join(matches, ", "))
-		if ambiguityHint = strings.TrimSpace(ambiguityHint); ambiguityHint != "" {
-			message += "; " + ambiguityHint
-		}
-		return nil, commandExitError{Code: exitCodeUsage, Err: errors.New(message)}
-	}
-	return resolved[0], nil
-}
-
-func runComposeResolvedResourceInspectCommand(cmd *cobra.Command, cli cliOptions, clients cliServiceClients, resource *agentcomposev2.ResolvedResource) error {
-	if resource == nil {
-		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolved resource is empty")}
-	}
-	inspectRef := firstNonEmptyString(resource.GetInspectRef(), resource.GetId(), resource.GetName())
-	switch resource.GetKind() {
-	case agentcomposev2.ResourceKind_RESOURCE_KIND_PROJECT:
-		project, err := clients.project.GetProject(cmd.Context(), connect.NewRequest(&agentcomposev2.GetProjectRequest{
-			Project:     &agentcomposev2.ProjectRef{ProjectId: resource.GetId()},
-			IncludeSpec: true,
-		}))
-		if err != nil {
-			return commandExitErrorForConnect(fmt.Errorf("inspect project %s: %w", inspectRef, err))
-		}
-		return writeComposeInspectOutput(cmd, composeProjectOutputFromProject(project.Msg.GetProject()))
-	case agentcomposev2.ResourceKind_RESOURCE_KIND_AGENT:
-		project, err := clients.project.GetProject(cmd.Context(), connect.NewRequest(&agentcomposev2.GetProjectRequest{
-			Project:     &agentcomposev2.ProjectRef{ProjectId: resource.GetProjectId()},
-			IncludeSpec: true,
-		}))
-		if err != nil {
-			return commandExitErrorForConnect(fmt.Errorf("inspect agent %s in project %s: %w", resource.GetName(), resource.GetProjectName(), err))
-		}
-		agent, err := composeAgentInspectOutputFor(cmd.Context(), clients, project.Msg.GetProject(), resource.GetName())
-		if err != nil {
-			return err
-		}
-		return writeComposeInspectOutput(cmd, agent)
-	case agentcomposev2.ResourceKind_RESOURCE_KIND_RUN:
-		run, err := getRunDetail(cmd.Context(), clients.run, resource.GetProjectId(), resource.GetId())
-		if err != nil {
-			return commandExitErrorForConnect(fmt.Errorf("inspect run %s: %w", inspectRef, err))
-		}
-		return writeComposeInspectOutput(cmd, composeRunOutputFromDetail(run.Msg.GetRun()))
-	case agentcomposev2.ResourceKind_RESOURCE_KIND_SANDBOX:
-		output, err := composeSandboxInspectOutputFor(cmd.Context(), clients, resource.GetId())
-		if err != nil {
-			return commandExitErrorForConnect(fmt.Errorf("inspect sandbox %s: %w", inspectRef, err))
-		}
-		return writeComposeInspectOutput(cmd, output)
-	case agentcomposev2.ResourceKind_RESOURCE_KIND_IMAGE:
-		return runComposeImageInspectCommand(cmd, cli, inspectRef)
-	case agentcomposev2.ResourceKind_RESOURCE_KIND_CACHE:
-		return runComposeCacheInspectCommand(cmd, cli, inspectRef)
-	case agentcomposev2.ResourceKind_RESOURCE_KIND_VOLUME:
-		return runComposeVolumeInspectCommand(cmd, cli, inspectRef)
-	default:
-		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("unsupported resolved resource type %s", resource.GetKind().String())}
-	}
-}
-
-func composeResolvedResourceDescription(resource *agentcomposev2.ResolvedResource) string {
-	if resource == nil {
-		return "unknown"
-	}
-	kind := strings.TrimPrefix(strings.ToLower(resource.GetKind().String()), "resource_kind_")
-	target := firstNonEmptyString(resource.GetName(), resource.GetShortId(), shortOpaqueID(resource.GetId()), resource.GetInspectRef(), "-")
-	project := firstNonEmptyString(resource.GetProjectName(), shortOpaqueID(resource.GetProjectId()))
-	if project != "" && resource.GetKind() != agentcomposev2.ResourceKind_RESOURCE_KIND_PROJECT {
-		return fmt.Sprintf("%s %s (project %s)", kind, target, project)
-	}
-	return fmt.Sprintf("%s %s", kind, target)
-}
-
 func composeSandboxInspectOutputFor(ctx context.Context, clients cliServiceClients, sandbox string) (composeSandboxOutput, error) {
-	session, err := clients.session.GetSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sandbox}))
+	response, err := clients.sandbox.GetSandbox(ctx, connect.NewRequest(&agentcomposev2.GetSandboxRequest{SandboxId: sandbox}))
 	if err != nil {
 		return composeSandboxOutput{}, err
 	}
-	return composeSandboxOutputFromSummary(session.Msg.GetSession().GetSummary()), nil
+	return composeSandboxOutputFromSummary(response.Msg.GetSandbox()), nil
 }
 
 func resolveComposeProject(cli cliOptions) (string, *compose.NormalizedProjectSpec, string, error) {
@@ -5038,9 +4780,6 @@ type cliServiceClients struct {
 	cache    agentcomposev2connect.CacheServiceClient
 	volume   agentcomposev2connect.VolumeServiceClient
 	sandbox  agentcomposev2connect.SandboxServiceClient
-	session  agentcomposev1connect.SessionServiceClient
-	config   agentcomposev1connect.ConfigServiceClient
-	loader   agentcomposev1connect.LoaderServiceClient
 }
 
 type composePSOutput struct {
@@ -5126,11 +4865,10 @@ type composeProjectAgentOutput struct {
 }
 
 type composeProjectSchedulerOutput struct {
-	AgentName       string `json:"agent_name"`
-	SchedulerID     string `json:"scheduler_id"`
-	ManagedLoaderID string `json:"managed_loader_id"`
-	Enabled         bool   `json:"enabled"`
-	TriggerCount    uint32 `json:"trigger_count"`
+	AgentName    string `json:"agent_name"`
+	SchedulerID  string `json:"scheduler_id"`
+	Enabled      bool   `json:"enabled"`
+	TriggerCount uint32 `json:"trigger_count"`
 }
 
 type composeSchedulerListOutput struct {
@@ -5158,8 +4896,6 @@ type composeSchedulerTriggerItem struct {
 	SchedulerID      string `json:"scheduler_id,omitempty"`
 	SchedulerShortID string `json:"scheduler_short_id,omitempty"`
 	RawSchedulerID   string `json:"-"`
-	ManagedLoaderID  string `json:"managed_loader_id,omitempty"`
-	RawManagedLoader string `json:"-"`
 	SchedulerEnabled bool   `json:"scheduler_enabled"`
 	TriggerEnabled   bool   `json:"trigger_enabled"`
 	Topic            string `json:"topic,omitempty"`
@@ -5168,7 +4904,7 @@ type composeSchedulerTriggerItem struct {
 	NextFireAt       string `json:"next_fire_at,omitempty"`
 	LastFiredAt      string `json:"last_fired_at,omitempty"`
 	declarative      *agentcomposev2.TriggerSpec
-	registered       *agentcomposev1.LoaderTrigger
+	registered       map[string]any
 }
 
 type composeAgentInspectOutput struct {
@@ -5826,9 +5562,6 @@ func newCLIServiceClients(cli cliOptions) (cliServiceClients, error) {
 		cache:    agentcomposev2connect.NewCacheServiceClient(httpClient, clientConfig.BaseURL),
 		volume:   agentcomposev2connect.NewVolumeServiceClient(httpClient, clientConfig.BaseURL),
 		sandbox:  agentcomposev2connect.NewSandboxServiceClient(httpClient, clientConfig.BaseURL),
-		session:  agentcomposev1connect.NewSessionServiceClient(httpClient, clientConfig.BaseURL),
-		config:   agentcomposev1connect.NewConfigServiceClient(httpClient, clientConfig.BaseURL),
-		loader:   agentcomposev1connect.NewLoaderServiceClient(httpClient, clientConfig.BaseURL),
 	}, nil
 }
 
@@ -5860,7 +5593,7 @@ func composePSOutputFromProject(ctx context.Context, clients cliServiceClients, 
 		return composePSOutput{}, err
 	}
 	runBySandbox := latestRunsBySandbox(runs)
-	sessions, err := listAllSessions(ctx, clients.session)
+	sessions, err := listAllSandboxes(ctx, clients.sandbox)
 	if err != nil {
 		return composePSOutput{}, err
 	}
@@ -5868,29 +5601,29 @@ func composePSOutputFromProject(ctx context.Context, clients cliServiceClients, 
 		if !composePSSessionBelongsToProject(session, project, runBySandbox) {
 			continue
 		}
-		status := strings.ToLower(strings.TrimSpace(session.GetVmStatus()))
+		status := strings.ToLower(strings.TrimSpace(session.GetStatus()))
 		if status == "" {
 			status = "unknown"
 		}
 		if statusFilter != nil && !statusFilter[status] {
 			continue
 		}
-		run := runBySandbox[session.GetSessionId()]
+		run := runBySandbox[session.GetSandboxId()]
 		tags := sessionTagsMap(session.GetTags())
 		agent := firstNonEmptyString(run.GetAgentName(), tags["agent"])
 		runID := firstNonEmptyString(run.GetRunId(), tags["run_id"])
 		output.Sandboxes = append(output.Sandboxes, composePSSandboxOutput{
-			SandboxID:      displayOpaqueID(session.GetSessionId()),
-			RawID:          session.GetSessionId(),
-			SandboxShortID: shortOpaqueID(session.GetSessionId()),
+			SandboxID:      displayOpaqueID(session.GetSandboxId()),
+			RawID:          session.GetSandboxId(),
+			SandboxShortID: shortOpaqueID(session.GetSandboxId()),
 			Agent:          agent,
 			Status:         status,
 			RunID:          displayOpaqueID(runID),
 			RunShortID:     shortOpaqueID(runID),
-			CreatedAt:      session.GetCreatedAt(),
-			UpdatedAt:      session.GetUpdatedAt(),
+			CreatedAt:      formatProtoTimestamp(session.GetCreatedAt()),
+			UpdatedAt:      formatProtoTimestamp(session.GetUpdatedAt()),
 			Driver:         session.GetDriver(),
-			Image:          session.GetGuestImage(),
+			Image:          session.GetImage(),
 			Workspace:      session.GetWorkspacePath(),
 		})
 	}
@@ -5916,27 +5649,24 @@ func composePSStatusFilter(options composePSOptions) (map[string]bool, error) {
 	return map[string]bool{"running": true}, nil
 }
 
-func listAllSessions(ctx context.Context, client agentcomposev1connect.SessionServiceClient) ([]*agentcomposev1.SessionSummary, error) {
-	var result []*agentcomposev1.SessionSummary
-	var offset uint32
+func listAllSandboxes(ctx context.Context, client agentcomposev2connect.SandboxServiceClient) ([]*agentcomposev2.Sandbox, error) {
+	var result []*agentcomposev2.Sandbox
+	var cursor string
 	const limit uint32 = 100
 	for {
-		resp, err := client.ListSessions(ctx, connect.NewRequest(&agentcomposev1.ListSessionsRequest{
-			Offset: offset,
+		resp, err := client.ListSandboxes(ctx, connect.NewRequest(&agentcomposev2.ListSandboxesRequest{
+			Cursor: cursor,
 			Limit:  limit,
 		}))
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, resp.Msg.GetSessions()...)
-		if !resp.Msg.GetHasMore() {
+		result = append(result, resp.Msg.GetSandboxes()...)
+		next := resp.Msg.GetNextCursor()
+		if next == "" || next == cursor {
 			break
 		}
-		next := resp.Msg.GetNextOffset()
-		if next <= offset {
-			break
-		}
-		offset = next
+		cursor = next
 	}
 	return result, nil
 }
@@ -5989,11 +5719,11 @@ func runSummarySandboxID(run *agentcomposev2.RunSummary) string {
 	return strings.TrimSpace(run.GetSandboxId())
 }
 
-func composePSSessionBelongsToProject(session *agentcomposev1.SessionSummary, project *agentcomposev2.Project, runsBySandbox map[string]*agentcomposev2.RunSummary) bool {
+func composePSSessionBelongsToProject(session *agentcomposev2.Sandbox, project *agentcomposev2.Project, runsBySandbox map[string]*agentcomposev2.RunSummary) bool {
 	projectID := strings.TrimSpace(project.GetSummary().GetProjectId())
 	projectName := strings.TrimSpace(project.GetSummary().GetName())
 	sourcePath := strings.TrimSpace(project.GetSummary().GetSourcePath())
-	if run := runsBySandbox[session.GetSessionId()]; run != nil {
+	if run := runsBySandbox[session.GetSandboxId()]; run != nil {
 		if strings.TrimSpace(run.GetProjectId()) == projectID {
 			return true
 		}
@@ -6012,7 +5742,7 @@ func composePSSessionBelongsToProject(session *agentcomposev1.SessionSummary, pr
 	return false
 }
 
-func sessionTagsMap(items []*agentcomposev1.SessionTag) map[string]string {
+func sessionTagsMap(items []*agentcomposev2.SandboxTag) map[string]string {
 	result := make(map[string]string, len(items))
 	for _, item := range items {
 		name := strings.TrimSpace(item.GetName())
@@ -6063,12 +5793,12 @@ func firstRunningSandboxOutput(ctx context.Context, clients cliServiceClients, p
 			continue
 		}
 		seen[sandboxID] = struct{}{}
-		session, err := clients.session.GetSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sandboxID}))
+		session, err := clients.sandbox.GetSandbox(ctx, connect.NewRequest(&agentcomposev2.GetSandboxRequest{SandboxId: sandboxID}))
 		if err != nil {
 			continue
 		}
-		summary := session.Msg.GetSession().GetSummary()
-		if strings.EqualFold(summary.GetVmStatus(), "running") {
+		summary := session.Msg.GetSandbox()
+		if strings.EqualFold(summary.GetStatus(), "running") {
 			output := composeSandboxOutputFromSummary(summary)
 			return &output, nil
 		}
@@ -6301,11 +6031,10 @@ func composeProjectAgentOutputFromProto(agent *agentcomposev2.ProjectAgent) comp
 
 func composeProjectSchedulerOutputFromProto(scheduler *agentcomposev2.ProjectScheduler) composeProjectSchedulerOutput {
 	return composeProjectSchedulerOutput{
-		AgentName:       scheduler.GetAgentName(),
-		SchedulerID:     displayOpaqueID(scheduler.GetSchedulerId()),
-		ManagedLoaderID: displayOpaqueID(scheduler.GetManagedLoaderId()),
-		Enabled:         scheduler.GetEnabled(),
-		TriggerCount:    scheduler.GetTriggerCount(),
+		AgentName:    scheduler.GetAgentName(),
+		SchedulerID:  displayOpaqueID(scheduler.GetSchedulerId()),
+		Enabled:      scheduler.GetEnabled(),
+		TriggerCount: scheduler.GetTriggerCount(),
 	}
 }
 
@@ -7128,7 +6857,7 @@ func writeCacheReferencesSection(out io.Writer, refs []composeCacheReferenceOutp
 	return tw.Flush()
 }
 
-func composeSandboxOutputFromSummary(summary *agentcomposev1.SessionSummary) composeSandboxOutput {
+func composeSandboxOutputFromSummary(summary *agentcomposev2.Sandbox) composeSandboxOutput {
 	tags := make(map[string]string, len(summary.GetTags()))
 	for _, tag := range summary.GetTags() {
 		name := strings.TrimSpace(tag.GetName())
@@ -7141,21 +6870,32 @@ func composeSandboxOutputFromSummary(summary *agentcomposev1.SessionSummary) com
 		tags = nil
 	}
 	return composeSandboxOutput{
-		SandboxID:      displayOpaqueID(summary.GetSessionId()),
-		SandboxShortID: identity.ShortID(summary.GetSessionId()),
+		SandboxID:      displayOpaqueID(summary.GetSandboxId()),
+		SandboxShortID: identity.ShortID(summary.GetSandboxId()),
 		Title:          summary.GetTitle(),
 		Driver:         summary.GetDriver(),
-		VMStatus:       strings.ToLower(strings.TrimSpace(summary.GetVmStatus())),
+		VMStatus:       strings.ToLower(strings.TrimSpace(summary.GetStatus())),
 		WorkspacePath:  summary.GetWorkspacePath(),
 		ProxyPath:      summary.GetProxyPath(),
-		GuestImage:     summary.GetGuestImage(),
+		GuestImage:     summary.GetImage(),
 		TriggerSource:  summary.GetTriggerSource(),
-		CreatedAt:      summary.GetCreatedAt(),
-		UpdatedAt:      summary.GetUpdatedAt(),
+		CreatedAt:      formatProtoTimestamp(summary.GetCreatedAt()),
+		UpdatedAt:      formatProtoTimestamp(summary.GetUpdatedAt()),
 		CellCount:      summary.GetCellCount(),
 		EventCount:     summary.GetEventCount(),
 		Tags:           tags,
 	}
+}
+
+func formatProtoTimestamp(value interface{ AsTime() time.Time }) string {
+	if value == nil {
+		return ""
+	}
+	parsed := value.AsTime()
+	if parsed.IsZero() {
+		return "invalid"
+	}
+	return parsed.UTC().Format(time.RFC3339Nano)
 }
 
 func followOrPrintProjectLogs(cmd *cobra.Command, cli cliOptions, client agentcomposev2connect.RunServiceClient, projectID, projectName string, options composeLogsOptions) error {
@@ -7343,21 +7083,21 @@ func resolveComposeSandboxRefWithProject(ctx context.Context, clients cliService
 	}))
 	if err != nil {
 		if connect.CodeOf(err) == connect.CodeNotFound {
-			return resolveComposeSandboxRefFromSessions(ctx, clients.session, ref)
+			return resolveComposeSandboxRefFromSessions(ctx, clients.sandbox, ref)
 		}
 		return "", commandExitErrorForConnect(fmt.Errorf("resolve sandbox %s: %w", ref, err))
 	}
 	return resolveComposeSandboxRefFromProject(ctx, clients, project.Msg.GetProject(), ref)
 }
 
-func resolveComposeSandboxRefFromSessions(ctx context.Context, client agentcomposev1connect.SessionServiceClient, ref string) (string, error) {
-	sessions, err := listAllSessions(ctx, client)
+func resolveComposeSandboxRefFromSessions(ctx context.Context, client agentcomposev2connect.SandboxServiceClient, ref string) (string, error) {
+	sessions, err := listAllSandboxes(ctx, client)
 	if err != nil {
 		return "", commandExitErrorForConnect(fmt.Errorf("resolve sandbox %s from daemon sessions: %w", ref, err))
 	}
 	matches := map[string]struct{}{}
 	for _, session := range sessions {
-		id := strings.TrimSpace(session.GetSessionId())
+		id := strings.TrimSpace(session.GetSandboxId())
 		if id != "" && resourceIDMatchesRef(id, shortOpaqueID(id), ref) {
 			matches[id] = struct{}{}
 		}

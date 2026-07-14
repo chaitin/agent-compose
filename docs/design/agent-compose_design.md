@@ -12,7 +12,6 @@ The current code facts are anchored by these entry points:
 - CLI and daemon entrypoint: `cmd/agent-compose/main.go`
 - Daemon service registration: `pkg/agentcompose/app/app.go`
 - Compose parsing and normalization: `pkg/compose/`
-- v1 API: `proto/agentcompose/v1/agentcompose.proto`
 - v2 API: `proto/agentcompose/v2/agentcompose.proto`
 - Project/run persistence: `pkg/storage/configstore/project_store.go`,
   `pkg/storage/configstore/run_coordinator_store.go`; shared storage helpers in

@@ -46,6 +46,19 @@ func TestDecodeRevisionSpecPreservesNestedWorkspaceShape(t *testing.T) {
 	}
 }
 
+func TestDecodeRevisionSpecSupportsCanonicalAgentStatus(t *testing.T) {
+	decoded, err := DecodeRevisionSpec(`{"name":"status-project","agents":[{"name":"worker","status":"disabled"}]}`)
+	if err != nil {
+		t.Fatalf("DecodeRevisionSpec returned error: %v", err)
+	}
+	if len(decoded.GetAgents()) != 1 || decoded.GetAgents()[0].GetStatus() != 2 {
+		t.Fatalf("agents = %#v", decoded.GetAgents())
+	}
+	if _, err := DecodeRevisionSpec(`{"agents":[{"name":"worker","status":"paused"}]}`); err == nil {
+		t.Fatal("unknown status returned nil error")
+	}
+}
+
 func TestIntegrationProjectRevisionWorkspaceRoundTrip(t *testing.T) {
 	normalized, err := compose.Normalize(&compose.ProjectSpec{
 		Name: "workspace-project",

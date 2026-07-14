@@ -1023,6 +1023,110 @@ func TestPromptAttachProjectorSeparatesHumanMessageFromStderrTail(t *testing.T) 
 	}
 }
 
+func TestPromptAttachProjectorPersistsEachFrameIdempotently(t *testing.T) {
+	store := &projectorEventStore{keys: map[string]struct{}{}}
+	projector := newPersistentPromptAttachProjector(context.Background(), domain.ProjectRunRecord{RunID: "run-events", AgentName: "worker"}, &domain.Sandbox{}, filepath.Join(t.TempDir(), "transcript.txt"), nil, store)
+	if err := projector.AppendHumanMessageFrame("question", "client-frame-1"); err != nil {
+		t.Fatalf("append human frame: %v", err)
+	}
+	if err := projector.AppendHumanMessageFrame("question", "client-frame-1"); err != nil {
+		t.Fatalf("retry human frame: %v", err)
+	}
+	turn := []byte(`{"seq":42,"type":"agent_turn_completed","provider":"codex","finalText":"answer","stopReason":"end_turn"}` + "\n")
+	if _, _, err := projector.Project(turn); err != nil {
+		t.Fatalf("project assistant turn: %v", err)
+	}
+	if _, _, err := projector.Project(turn); err != nil {
+		t.Fatalf("retry assistant turn: %v", err)
+	}
+	_, transition, err := projector.Project([]byte(`{"seq":43,"type":"result","finalText":"answer","stopReason":"end_turn"}` + "\n"))
+	if err != nil || transition == nil || !transition.SkipTerminalAgentEvent {
+		t.Fatalf("result transition = %#v err=%v", transition, err)
+	}
+	if len(store.events) != 2 {
+		t.Fatalf("persisted events = %#v", store.events)
+	}
+	if store.events[0].Kind != domain.ProjectRunEventKindUserMessage || store.events[0].ID != attachedHumanEventID("run-events", "client-frame-1", 1, "question") {
+		t.Fatalf("human event = %#v", store.events[0])
+	}
+	if store.events[1].Kind != domain.ProjectRunEventKindAgentMessage || store.events[1].ID != attachedAgentEventID("run-events", 42, turn) || store.events[1].Text != "answer" {
+		t.Fatalf("assistant event = %#v", store.events[1])
+	}
+}
+
+func TestPromptAttachProjectorDoesNotSkipTerminalAgentEventAfterOnlyHumanMessage(t *testing.T) {
+	store := &projectorEventStore{keys: map[string]struct{}{}}
+	projector := newPersistentPromptAttachProjector(context.Background(), domain.ProjectRunRecord{RunID: "run-result-only", AgentName: "worker"}, &domain.Sandbox{}, filepath.Join(t.TempDir(), "transcript.txt"), nil, store)
+	if err := projector.AppendHumanMessageFrame("question", "client-frame-1"); err != nil {
+		t.Fatalf("append human frame: %v", err)
+	}
+	_, transition, err := projector.Project([]byte(`{"seq":43,"type":"result","finalText":"answer","stopReason":"end_turn"}` + "\n"))
+	if err != nil {
+		t.Fatalf("project result: %v", err)
+	}
+	if transition == nil || transition.SkipTerminalAgentEvent {
+		t.Fatalf("result transition = %#v", transition)
+	}
+	if len(store.events) != 1 || store.events[0].Kind != domain.ProjectRunEventKindUserMessage {
+		t.Fatalf("persisted events = %#v", store.events)
+	}
+}
+
+func TestIntegrationPromptAttachProjectorPersistsAssistantTurnBeforeSkippingTerminalEvent(t *testing.T) {
+	store := &projectorEventStore{keys: map[string]struct{}{}}
+	projector := newPersistentPromptAttachProjector(context.Background(), domain.ProjectRunRecord{RunID: "run-integration-events", AgentName: "worker"}, &domain.Sandbox{}, filepath.Join(t.TempDir(), "transcript.txt"), nil, store)
+	if err := projector.AppendHumanMessageFrame("question", "client-frame-1"); err != nil {
+		t.Fatalf("append human frame: %v", err)
+	}
+	_, transition, err := projector.Project([]byte(`{"seq":43,"type":"result","finalText":"answer","stopReason":"end_turn"}` + "\n"))
+	if err != nil {
+		t.Fatalf("project result without assistant turn: %v", err)
+	}
+	if transition == nil || transition.SkipTerminalAgentEvent {
+		t.Fatalf("result-only transition = %#v", transition)
+	}
+	turn := []byte(`{"seq":44,"type":"agent_turn_completed","provider":"codex","finalText":"answer","stopReason":"end_turn"}` + "\n")
+	if _, _, err := projector.Project(turn); err != nil {
+		t.Fatalf("project assistant turn: %v", err)
+	}
+	_, transition, err = projector.Project([]byte(`{"seq":45,"type":"result","finalText":"answer","stopReason":"end_turn"}` + "\n"))
+	if err != nil {
+		t.Fatalf("project result after assistant turn: %v", err)
+	}
+	if transition == nil || !transition.SkipTerminalAgentEvent {
+		t.Fatalf("assistant transition = %#v", transition)
+	}
+	if len(store.events) != 2 || store.events[0].Kind != domain.ProjectRunEventKindUserMessage || store.events[1].Kind != domain.ProjectRunEventKindAgentMessage {
+		t.Fatalf("persisted events = %#v", store.events)
+	}
+}
+
+type projectorEventStore struct {
+	keys   map[string]struct{}
+	events []domain.ProjectRunEventRecord
+}
+
+func (s *projectorEventStore) AppendProjectRunEvent(_ context.Context, event domain.ProjectRunEventRecord) (domain.ProjectRunEventRecord, bool, error) {
+	if _, exists := s.keys[event.ID]; exists {
+		return event, false, nil
+	}
+	s.keys[event.ID] = struct{}{}
+	s.events = append(s.events, event)
+	return event, true, nil
+}
+
+func (s *projectorEventStore) AppendProjectRunEvents(ctx context.Context, events []domain.ProjectRunEventRecord) ([]domain.ProjectRunEventRecord, []bool, error) {
+	created := make([]bool, 0, len(events))
+	for _, event := range events {
+		_, wasCreated, err := s.AppendProjectRunEvent(ctx, event)
+		if err != nil {
+			return nil, nil, err
+		}
+		created = append(created, wasCreated)
+	}
+	return events, created, nil
+}
+
 func receiveProjectorRunLogEvent(t *testing.T, sub *RunLogSubscription) RunLogEvent {
 	t.Helper()
 	select {
@@ -1958,6 +2062,14 @@ func (s *fakeRunStore) CreateProjectRun(_ context.Context, run domain.ProjectRun
 	return run, nil
 }
 
+func (s *fakeRunStore) CreateProjectRunWithEvents(ctx context.Context, run domain.ProjectRunRecord, _ []domain.ProjectRunEventRecord) (domain.ProjectRunRecord, error) {
+	created, err := s.CreateProjectRun(ctx, run)
+	if err != nil {
+		return s.GetProjectRun(ctx, run.RunID)
+	}
+	return created, nil
+}
+
 func (s *fakeRunStore) GetProjectRun(_ context.Context, runID string) (domain.ProjectRunRecord, error) {
 	run, ok := s.runs[runID]
 	if !ok {
@@ -1969,6 +2081,10 @@ func (s *fakeRunStore) GetProjectRun(_ context.Context, runID string) (domain.Pr
 func (s *fakeRunStore) UpdateProjectRun(_ context.Context, run domain.ProjectRunRecord) (domain.ProjectRunRecord, error) {
 	s.runs[run.RunID] = run
 	return run, nil
+}
+
+func (s *fakeRunStore) UpdateProjectRunWithEvents(ctx context.Context, run domain.ProjectRunRecord, _ []domain.ProjectRunEventRecord) (domain.ProjectRunRecord, error) {
+	return s.UpdateProjectRun(ctx, run)
 }
 
 type fakePreparationStore struct {
@@ -2056,6 +2172,14 @@ func (s *fakeControllerStore) CreateProjectRun(_ context.Context, run domain.Pro
 	return run, nil
 }
 
+func (s *fakeControllerStore) CreateProjectRunWithEvents(ctx context.Context, run domain.ProjectRunRecord, _ []domain.ProjectRunEventRecord) (domain.ProjectRunRecord, error) {
+	created, err := s.CreateProjectRun(ctx, run)
+	if err != nil {
+		return s.GetProjectRun(ctx, run.RunID)
+	}
+	return created, nil
+}
+
 func (s *fakeControllerStore) GetProjectRun(_ context.Context, runID string) (domain.ProjectRunRecord, error) {
 	run, ok := s.runs[runID]
 	if !ok {
@@ -2067,6 +2191,10 @@ func (s *fakeControllerStore) GetProjectRun(_ context.Context, runID string) (do
 func (s *fakeControllerStore) UpdateProjectRun(_ context.Context, run domain.ProjectRunRecord) (domain.ProjectRunRecord, error) {
 	s.runs[run.RunID] = run
 	return run, nil
+}
+
+func (s *fakeControllerStore) UpdateProjectRunWithEvents(ctx context.Context, run domain.ProjectRunRecord, _ []domain.ProjectRunEventRecord) (domain.ProjectRunRecord, error) {
+	return s.UpdateProjectRun(ctx, run)
 }
 
 func (s *fakeControllerStore) GetProjectRevision(context.Context, string, int64) (domain.ProjectRevisionRecord, error) {

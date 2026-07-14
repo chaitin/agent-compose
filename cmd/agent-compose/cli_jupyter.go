@@ -7,13 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"google.golang.org/protobuf/types/known/emptypb"
-
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
-	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
+	"connectrpc.com/connect"
 )
 
 const detachedRunJupyterSandboxWait = 30 * time.Second
@@ -44,22 +40,21 @@ func resolveRunJupyterOutput(ctx context.Context, cli cliOptions, sandboxID stri
 	if err != nil {
 		return composeRunJupyterOutput{}, err
 	}
-	proxy, err := clients.session.GetSessionProxy(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sandboxID}))
+	sandbox, err := clients.sandbox.GetSandbox(ctx, connect.NewRequest(&agentcomposev2.GetSandboxRequest{SandboxId: sandboxID}))
 	if err != nil {
 		return composeRunJupyterOutput{}, commandExitErrorForConnect(fmt.Errorf("load sandbox %s jupyter proxy: %w", sandboxID, err))
 	}
-	proxyPath := strings.TrimSpace(proxy.Msg.GetProxyPath())
-	notebookURL := strings.TrimSpace(proxy.Msg.GetNotebookUrl())
+	proxyPath := strings.TrimSpace(sandbox.Msg.GetSandbox().GetProxyPath())
+	notebookURL := strings.TrimSpace(sandbox.Msg.GetSandbox().GetNotebookUrl())
 	if proxyPath == "" && notebookURL == "" {
 		return composeRunJupyterOutput{}, fmt.Errorf("jupyter URL unavailable: sandbox %s did not report a proxy path", sandboxID)
 	}
-	baseURL, err := browserBaseURLForCLI(ctx, cli, clients.config)
+	baseURL, err := browserBaseURLForCLI(cli)
 	if err != nil {
 		return composeRunJupyterOutput{}, err
 	}
-	urlPath := firstNonEmptyString(notebookURL, proxyPath)
 	return composeRunJupyterOutput{
-		URL:  joinBaseURLAndPath(baseURL, urlPath),
+		URL:  joinBaseURLAndPath(baseURL, firstNonEmptyString(notebookURL, proxyPath)),
 		Path: proxyPath,
 	}, nil
 }
@@ -125,7 +120,7 @@ func waitForDetachedRunSandbox(ctx context.Context, client runDetailGetter, proj
 	}
 }
 
-func browserBaseURLForCLI(ctx context.Context, cli cliOptions, configClient agentcomposev1connect.ConfigServiceClient) (string, error) {
+func browserBaseURLForCLI(cli cliOptions) (string, error) {
 	clientConfig, err := resolveCLIClientConfig(cli.Host)
 	if err != nil {
 		return "", err
@@ -133,24 +128,24 @@ func browserBaseURLForCLI(ctx context.Context, cli cliOptions, configClient agen
 	if !clientConfig.UseUnixSocket {
 		return strings.TrimRight(strings.TrimSpace(clientConfig.BaseURL), "/"), nil
 	}
-	resp, err := configClient.GetRuntimeConfig(ctx, connect.NewRequest(&emptypb.Empty{}))
-	if err != nil {
-		return "", commandExitErrorForConnect(fmt.Errorf("load daemon runtime config for jupyter URL: %w", err))
-	}
-	return strings.TrimRight(strings.TrimSpace(resp.Msg.GetAgentComposeHost()), "/"), nil
+	return "", nil
 }
 
 func joinBaseURLAndPath(baseURL, path string) string {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	path = strings.TrimSpace(path)
-	if baseURL == "" || path == "" {
+	if path == "" {
 		return ""
 	}
-	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+	lowerPath := strings.ToLower(path)
+	if strings.HasPrefix(lowerPath, "http://") || strings.HasPrefix(lowerPath, "https://") {
 		return path
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
+	}
+	if baseURL == "" {
+		return path
 	}
 	return baseURL + path
 }

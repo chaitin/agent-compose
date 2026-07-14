@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"agent-compose/pkg/agentcompose/api"
 	"agent-compose/pkg/capabilities"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
@@ -133,7 +132,11 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 	guestImage := r.guestImage(request, loader, agentDefinition, driver)
 	title := firstNonEmpty(strings.TrimSpace(request.Title), strings.TrimSpace(loader.Summary.Name), domain.DefaultLoaderName(time.Now().UTC()))
 	if agentDefinition != nil {
-		tags = append(tags, api.SessionTagsFromProto(api.AgentDefinitionTagsToProto(*agentDefinition))...)
+		tags = append(tags,
+			domain.SandboxTag{Name: domain.AgentSandboxTagSource, Value: domain.AgentSandboxTagSourceVal},
+			domain.SandboxTag{Name: domain.AgentSandboxTagID, Value: agentDefinition.ID},
+			domain.SandboxTag{Name: domain.AgentSandboxTagName, Value: agentDefinition.Name},
+		)
 	}
 	volumeMounts, volumeWarnings, err := r.resolveVolumeMounts(ctx, loader, request, agentDefinition)
 	if err != nil {

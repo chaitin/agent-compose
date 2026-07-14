@@ -22,18 +22,12 @@ import (
 	"testing"
 	"time"
 
-	agentcomposeapi "agent-compose/pkg/agentcompose/api"
 	"agent-compose/pkg/compose"
 	"agent-compose/pkg/config"
 	"agent-compose/pkg/identity"
 	"agent-compose/pkg/imagecache"
-	"agent-compose/pkg/images"
 	domain "agent-compose/pkg/model"
-	"agent-compose/pkg/resources"
-	"agent-compose/pkg/runtimecache"
 	"agent-compose/pkg/storage/configstore"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
-	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 	"agent-compose/proto/health/v1/healthv1connect"
@@ -43,6 +37,7 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c" //nolint:staticcheck // h2c is required to assert unencrypted HTTP/2 behavior in attach client tests.
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestMain(m *testing.M) {
@@ -1316,6 +1311,9 @@ func TestIntegrationCLIUpAppliesInlineSchedulerScriptAndPSJSON(t *testing.T) {
 	if psDecoded.Project.Name != "cli-inline-demo" || len(psDecoded.Sandboxes) != 0 {
 		t.Fatalf("ps inline project/sandboxes = %#v", psDecoded)
 	}
+	if strings.Contains(psOut, "managed_loader") {
+		t.Fatalf("ps inline JSON exposes internal loader identity: %s", psOut)
+	}
 }
 
 func testCLIUpAppliesProjectFirstRepeatedModifiedAndJSON(t *testing.T) {
@@ -1939,8 +1937,8 @@ agents:
 			},
 		},
 		session: sessionServiceStub{
-			getSessionProxy: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionProxyResponse], error) {
-				return connect.NewResponse(testCLISessionProxyResponse(req.Msg.GetSessionId(), "detached-token")), nil
+			getSessionProxy: func(ctx context.Context, req *connect.Request[agentcomposev2.GetSandboxRequest]) (*connect.Response[agentcomposev2.GetSandboxResponse], error) {
+				return connect.NewResponse(&agentcomposev2.GetSandboxResponse{Sandbox: testCLISandboxProxy(req.Msg.GetSandboxId(), "detached-token")}), nil
 			},
 		},
 	})
@@ -2157,11 +2155,11 @@ agents:
 			},
 		},
 		session: sessionServiceStub{
-			getSessionProxy: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionProxyResponse], error) {
-				if req.Msg.GetSessionId() != "sandbox-jupyter" {
-					t.Fatalf("GetSessionProxy id = %q", req.Msg.GetSessionId())
+			getSessionProxy: func(ctx context.Context, req *connect.Request[agentcomposev2.GetSandboxRequest]) (*connect.Response[agentcomposev2.GetSandboxResponse], error) {
+				if req.Msg.GetSandboxId() != "sandbox-jupyter" {
+					t.Fatalf("GetSandbox id = %q", req.Msg.GetSandboxId())
 				}
-				return connect.NewResponse(testCLISessionProxyResponse("sandbox-jupyter", "sync-token")), nil
+				return connect.NewResponse(&agentcomposev2.GetSandboxResponse{Sandbox: testCLISandboxProxy("sandbox-jupyter", "sync-token")}), nil
 			},
 		},
 	})
@@ -2176,6 +2174,25 @@ agents:
 	}
 	if !sawRequest {
 		t.Fatal("RunAgentStream was not called")
+	}
+}
+
+func TestBrowserBaseURLForCLIUnixSocketDoesNotGuessHTTPAddress(t *testing.T) {
+	t.Setenv("AGENT_COMPOSE_HOST", "")
+	t.Setenv("AGENT_COMPOSE_SOCKET", filepath.Join(t.TempDir(), "agent-compose.sock"))
+	baseURL, err := browserBaseURLForCLI(cliOptions{})
+	if err != nil || baseURL != "" {
+		t.Fatalf("browser base URL = %q, err = %v; want empty Unix socket fallback", baseURL, err)
+	}
+	if got := joinBaseURLAndPath(baseURL, "/agent-compose/session/sandbox/lab?token=socket-token"); got != "/agent-compose/session/sandbox/lab?token=socket-token" {
+		t.Fatalf("Unix socket notebook URL = %q, want relative URL with token", got)
+	}
+}
+
+func TestJoinBaseURLAndPathPreservesAbsoluteNotebookURLWithoutHTTPTransport(t *testing.T) {
+	want := "https://notebooks.example/agent-compose/session/sandbox/lab?token=absolute-token"
+	if got := joinBaseURLAndPath("", want); got != want {
+		t.Fatalf("absolute notebook URL = %q, want %q", got, want)
 	}
 }
 
@@ -2212,7 +2229,7 @@ agents:
 			},
 		},
 		session: sessionServiceStub{
-			getSessionProxy: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionProxyResponse], error) {
+			getSessionProxy: func(ctx context.Context, req *connect.Request[agentcomposev2.GetSandboxRequest]) (*connect.Response[agentcomposev2.GetSandboxResponse], error) {
 				t.Fatalf("GetSessionProxy should not be called for stopped jupyter run")
 				return nil, nil
 			},
@@ -2256,8 +2273,8 @@ agents:
 			},
 		},
 		session: sessionServiceStub{
-			getSessionProxy: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionProxyResponse], error) {
-				return connect.NewResponse(testCLISessionProxyResponse(req.Msg.GetSessionId(), "json-token")), nil
+			getSessionProxy: func(ctx context.Context, req *connect.Request[agentcomposev2.GetSandboxRequest]) (*connect.Response[agentcomposev2.GetSandboxResponse], error) {
+				return connect.NewResponse(&agentcomposev2.GetSandboxResponse{Sandbox: testCLISandboxProxy(req.Msg.GetSandboxId(), "json-token")}), nil
 			},
 		},
 	})
@@ -2303,7 +2320,7 @@ agents:
 			},
 		},
 		session: sessionServiceStub{
-			getSessionProxy: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionProxyResponse], error) {
+			getSessionProxy: func(ctx context.Context, req *connect.Request[agentcomposev2.GetSandboxRequest]) (*connect.Response[agentcomposev2.GetSandboxResponse], error) {
 				t.Fatalf("GetSessionProxy should not be called for stopped jupyter JSON run")
 				return nil, nil
 			},
@@ -2929,7 +2946,7 @@ agents:
 	jsonOut, jsonErr, _, jsonCode := executeCLICommand("scheduler", "ls", identity.ShortID(agentID), "--json", "--host", server.URL, "--file", composePath)
 	if jsonCode != 0 || jsonErr != "" || !strings.Contains(jsonOut, `"agent_name": "reviewer"`) || !strings.Contains(jsonOut, `"source": "declarative"`) ||
 		!strings.Contains(jsonOut, `"scheduler_id": "`+displayOpaqueID(schedulerID)+`"`) || !strings.Contains(jsonOut, `"scheduler_short_id": "`+shortOpaqueID(schedulerID)+`"`) ||
-		!strings.Contains(jsonOut, `"trigger_short_id": "`) {
+		!strings.Contains(jsonOut, `"trigger_short_id": "`) || strings.Contains(jsonOut, "managed_loader") {
 		t.Fatalf("scheduler ls --json code/stdout/stderr = %d / %q / %q", jsonCode, jsonOut, jsonErr)
 	}
 }
@@ -3119,34 +3136,16 @@ agents:
       script: |
         scheduler.interval("loader-every-minute", async function() {}, 60000);
 `)
-	var requestedLoader string
+	var requestedAgent string
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		project: projectServiceStub{
 			getProject: func(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
 				project := testCLIProject(req.Msg.GetProject().GetProjectId(), "cli-scheduler-loader", composePath)
-				project.Schedulers[0].ManagedLoaderId = "loader-reviewer"
 				return connect.NewResponse(&agentcomposev2.GetProjectResponse{Project: project}), nil
 			},
-		},
-		loader: loaderServiceStub{
-			getLoader: func(ctx context.Context, req *connect.Request[agentcomposev1.LoaderIDRequest]) (*connect.Response[agentcomposev1.LoaderResponse], error) {
-				requestedLoader = req.Msg.GetLoaderId()
-				return connect.NewResponse(&agentcomposev1.LoaderResponse{
-					Loader: &agentcomposev1.LoaderDetail{
-						Summary: &agentcomposev1.LoaderSummary{LoaderId: req.Msg.GetLoaderId(), Name: "reviewer-scheduler", Enabled: true},
-						Triggers: []*agentcomposev1.LoaderTrigger{
-							{
-								LoaderId:    req.Msg.GetLoaderId(),
-								TriggerId:   "loader-every-minute",
-								Kind:        agentcomposev1.LoaderTriggerKind_LOADER_TRIGGER_KIND_INTERVAL,
-								IntervalMs:  60000,
-								Enabled:     true,
-								NextFireAt:  "2026-07-06T12:00:00Z",
-								LastFiredAt: "2026-07-06T11:59:00Z",
-							},
-						},
-					},
-				}), nil
+			getScheduler: func(_ context.Context, req *connect.Request[agentcomposev2.GetSchedulerRequest]) (*connect.Response[agentcomposev2.GetSchedulerResponse], error) {
+				requestedAgent = req.Msg.GetAgentName()
+				return connect.NewResponse(&agentcomposev2.GetSchedulerResponse{Triggers: []*agentcomposev2.ResolvedTrigger{{TriggerId: "loader-every-minute", Enabled: true, Spec: &agentcomposev2.TriggerSpec{Kind: "interval", Interval: "1m"}, NextFireAt: timestamppb.New(time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)), LastFiredAt: timestamppb.New(time.Date(2026, 7, 6, 11, 59, 0, 0, time.UTC))}}}), nil
 			},
 		},
 	})
@@ -3156,8 +3155,8 @@ agents:
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("scheduler inspect loader code/stderr = %d / %q", exitCode, stderr)
 	}
-	if requestedLoader == "" || !strings.Contains(stdout, "trigger_id: loader-every-minute") || !strings.Contains(stdout, "interval_ms: 60000") || !strings.Contains(stdout, "kind: interval") {
-		t.Fatalf("requestedLoader=%q stdout=%q", requestedLoader, stdout)
+	if requestedAgent != "reviewer" || !strings.Contains(stdout, "trigger_id: loader-every-minute") || !strings.Contains(stdout, "interval_ms: 60000") || !strings.Contains(stdout, "kind: interval") {
+		t.Fatalf("requestedAgent=%q stdout=%q", requestedAgent, stdout)
 	}
 }
 
@@ -3610,126 +3609,6 @@ agents:
 		"reviewer-run-" + identity.ShortID(runID) + " | stored log output\n"
 	if runCode != 0 || runErr != "" || runOut != wantRunOut {
 		t.Fatalf("logs --run code/stdout/stderr = %d / %q / %q", runCode, runOut, runErr)
-	}
-}
-
-func TestIntegrationCLILogsResolvesResourceRefsWithoutComposeFile(t *testing.T) {
-	testCLILogsResolvesResourceRefsWithoutComposeFile(t)
-}
-
-func TestE2ECLILogsResolvesResourceRefsWithoutComposeFile(t *testing.T) {
-	testCLILogsResolvesResourceRefsWithoutComposeFile(t)
-}
-
-func testCLILogsResolvesResourceRefsWithoutComposeFile(t *testing.T) {
-	t.Helper()
-	projectID := identity.NewID(identity.ResourceProject, "resolved-logs")
-	agentID := identity.NewID(identity.ResourceAgent, "resolved-logs", "reviewer")
-	runID := identity.NewID(identity.ResourceRun, "resolved-logs", "run")
-	sandboxID := identity.NewID(identity.ResourceSandbox, "resolved-logs", "sandbox")
-	resolved := map[string]*agentcomposev2.ResolvedResource{
-		"resolved-logs": {
-			Kind: agentcomposev2.ResourceKind_RESOURCE_KIND_PROJECT, Id: projectID, Name: "resolved-logs", ProjectId: projectID, ProjectName: "resolved-logs", InspectRef: projectID,
-		},
-		"reviewer": {
-			Kind: agentcomposev2.ResourceKind_RESOURCE_KIND_AGENT, Id: agentID, Name: "reviewer", ProjectId: projectID, ProjectName: "resolved-logs", InspectRef: "reviewer",
-		},
-		identity.ShortID(runID): {
-			Kind: agentcomposev2.ResourceKind_RESOURCE_KIND_RUN, Id: runID, ProjectId: projectID, ProjectName: "resolved-logs", InspectRef: runID,
-		},
-		identity.ShortID(sandboxID): {
-			Kind: agentcomposev2.ResourceKind_RESOURCE_KIND_SANDBOX, Id: sandboxID, InspectRef: sandboxID,
-		},
-	}
-	wantKinds := []agentcomposev2.ResourceKind{
-		agentcomposev2.ResourceKind_RESOURCE_KIND_PROJECT,
-		agentcomposev2.ResourceKind_RESOURCE_KIND_AGENT,
-		agentcomposev2.ResourceKind_RESOURCE_KIND_RUN,
-		agentcomposev2.ResourceKind_RESOURCE_KIND_SANDBOX,
-	}
-	var listRequest *agentcomposev2.ListRunsRequest
-	var getRequest *agentcomposev2.GetRunRequest
-	server := newComposeServiceStubServer(t, composeServiceStubs{
-		resource: resourceServiceStub{resolveResource: func(_ context.Context, req *connect.Request[agentcomposev2.ResolveResourceRequest]) (*connect.Response[agentcomposev2.ResolveResourceResponse], error) {
-			if !reflect.DeepEqual(req.Msg.GetKinds(), wantKinds) {
-				t.Fatalf("ResolveResource kinds = %v, want %v", req.Msg.GetKinds(), wantKinds)
-			}
-			if req.Msg.GetRef() == "ambiguous" {
-				return connect.NewResponse(&agentcomposev2.ResolveResourceResponse{Resources: []*agentcomposev2.ResolvedResource{
-					resolved["resolved-logs"], resolved["reviewer"],
-				}}), nil
-			}
-			resource := resolved[req.Msg.GetRef()]
-			if resource == nil {
-				return connect.NewResponse(&agentcomposev2.ResolveResourceResponse{}), nil
-			}
-			return connect.NewResponse(&agentcomposev2.ResolveResourceResponse{Resources: []*agentcomposev2.ResolvedResource{resource}}), nil
-		}},
-		run: runServiceStub{
-			listRuns: func(_ context.Context, req *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
-				listRequest = req.Msg
-				return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: []*agentcomposev2.RunSummary{{
-					RunId: runID, ProjectId: projectID, ProjectName: "resolved-logs", AgentName: "reviewer", SandboxId: sandboxID, Status: agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
-				}}}), nil
-			},
-			getRun: func(_ context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
-				getRequest = req.Msg
-				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), runID, "reviewer", sandboxID, agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "resolved log output\n")}), nil
-			},
-		},
-	})
-	defer server.Close()
-
-	for _, tc := range []struct {
-		name         string
-		ref          string
-		wantList     bool
-		projectID    string
-		agentName    string
-		sandboxID    string
-		getProjectID string
-	}{
-		{name: "project name", ref: "resolved-logs", wantList: true, projectID: projectID, getProjectID: projectID},
-		{name: "agent name", ref: "reviewer", wantList: true, projectID: projectID, agentName: "reviewer", getProjectID: projectID},
-		{name: "run short id", ref: identity.ShortID(runID), projectID: projectID, getProjectID: projectID},
-		{name: "sandbox short id", ref: identity.ShortID(sandboxID), wantList: true, sandboxID: sandboxID},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			listRequest = nil
-			getRequest = nil
-			stdout, stderr, _, exitCode := executeCLICommand("logs", "--host", server.URL, "--json", tc.ref)
-			if exitCode != 0 || stderr != "" || !strings.Contains(stdout, "resolved log output") {
-				t.Fatalf("logs %q code/stdout/stderr = %d/%q/%q", tc.ref, exitCode, stdout, stderr)
-			}
-			if (listRequest != nil) != tc.wantList {
-				t.Fatalf("logs %q ListRuns request = %#v, wantList=%t", tc.ref, listRequest, tc.wantList)
-			}
-			if listRequest != nil && (listRequest.GetProjectId() != tc.projectID || listRequest.GetAgentName() != tc.agentName || listRequest.GetSandboxId() != tc.sandboxID) {
-				t.Fatalf("logs %q ListRuns request = %#v", tc.ref, listRequest)
-			}
-			if getRequest == nil || getRequest.GetRunId() != runID || getRequest.GetProjectId() != tc.getProjectID {
-				t.Fatalf("logs %q GetRun request = %#v", tc.ref, getRequest)
-			}
-		})
-	}
-
-	for _, tc := range []struct {
-		name string
-		args []string
-		want string
-	}{
-		{name: "not found", args: []string{"missing"}, want: `resource "missing" not found`},
-		{name: "ambiguous", args: []string{"ambiguous"}, want: "resource ref \"ambiguous\" is ambiguous"},
-		{name: "run and sandbox conflict", args: []string{identity.ShortID(runID), "--sandbox", sandboxID}, want: "logs run ref cannot be combined"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			args := []string{"logs", "--host", server.URL}
-			args = append(args, tc.args...)
-			stdout, stderr, _, exitCode := executeCLICommand(args...)
-			if exitCode != exitCodeUsage || stdout != "" || !strings.Contains(stderr, tc.want) {
-				t.Fatalf("logs %v code/stdout/stderr = %d/%q/%q, want %q", tc.args, exitCode, stdout, stderr, tc.want)
-			}
-		})
 	}
 }
 
@@ -4200,7 +4079,7 @@ agents:
     provider: codex
 `)
 	project := testCLIProject("project-cli-ps", "cli-ps-demo", composePath)
-	sessions := []*agentcomposev1.SessionSummary{
+	sessions := []*agentcomposev2.Sandbox{
 		testCLISessionSummary("session-running", "RUNNING", "project-cli-ps", "reviewer", "run-running"),
 		testCLISessionSummary("session-stopped", "STOPPED", "project-cli-ps", "worker", "run-stopped"),
 		testCLISessionSummary("session-error", "ERROR", "foreign-project", "", ""),
@@ -4241,11 +4120,11 @@ agents:
 			},
 		},
 		session: sessionServiceStub{
-			listSessions: func(ctx context.Context, req *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
+			listSessions: func(ctx context.Context, req *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error) {
 				if req.Msg.GetLimit() < 100 {
 					t.Fatalf("ListSessions request = %#v", req.Msg)
 				}
-				return connect.NewResponse(&agentcomposev1.ListSessionsResponse{Sessions: sessions}), nil
+				return connect.NewResponse(&agentcomposev2.ListSandboxesResponse{Sandboxes: sessions}), nil
 			},
 		},
 	})
@@ -4374,15 +4253,21 @@ agents:
 	oldTime := time.Now().UTC().Add(-48 * time.Hour).Format(time.RFC3339Nano)
 	newTime := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339Nano)
 
-	session := func(id, status, projectID, agent, driver, updatedAt string) *agentcomposev1.SessionSummary {
+	session := func(id, status, projectID, agent, driver, updatedAt string) *agentcomposev2.Sandbox {
 		item := testCLISessionSummary(id, status, projectID, agent, "")
 		item.Driver = driver
-		item.UpdatedAt = updatedAt
+		if parsed, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil {
+			item.UpdatedAt = timestamppb.New(parsed)
+		} else if updatedAt != "" {
+			item.UpdatedAt = timestamppb.New(time.Time{})
+		} else {
+			item.UpdatedAt = nil
+		}
 		return item
 	}
 	createdFallback := session("session-created-fallback", "STOPPED", "project-cli-prune", "reviewer", "docker", "")
-	createdFallback.CreatedAt = oldTime
-	sessions := []*agentcomposev1.SessionSummary{
+	createdFallback.CreatedAt = timestamppb.New(time.Now().UTC().Add(-48 * time.Hour))
+	sessions := []*agentcomposev2.Sandbox{
 		session("session-stopped", "STOPPED", "project-cli-prune", "reviewer", "docker", oldTime),
 		session("session-failed", "FAILED", "project-cli-prune", "worker", "boxlite", oldTime),
 		session("session-running", "RUNNING", "project-cli-prune", "reviewer", "docker", oldTime),
@@ -4407,8 +4292,8 @@ agents:
 			},
 		},
 		session: sessionServiceStub{
-			listSessions: func(ctx context.Context, req *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
-				return connect.NewResponse(&agentcomposev1.ListSessionsResponse{Sessions: sessions}), nil
+			listSessions: func(ctx context.Context, req *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error) {
+				return connect.NewResponse(&agentcomposev2.ListSandboxesResponse{Sandboxes: sessions}), nil
 			},
 		},
 		sandbox: sandboxServiceStub{
@@ -4540,7 +4425,7 @@ agents:
     provider: codex
 `)
 			project := testCLIProject("project-cli-prune-force", "cli-prune-force", composePath)
-			sessions := []*agentcomposev1.SessionSummary{
+			sessions := []*agentcomposev2.Sandbox{
 				testCLISessionSummary("session-remove-a", "STOPPED", "project-cli-prune-force", "reviewer", ""),
 				testCLISessionSummary("session-remove-b", "FAILED", "project-cli-prune-force", "worker", ""),
 				testCLISessionSummary("session-running", "RUNNING", "project-cli-prune-force", "reviewer", ""),
@@ -4560,8 +4445,8 @@ agents:
 					},
 				},
 				session: sessionServiceStub{
-					listSessions: func(ctx context.Context, req *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
-						return connect.NewResponse(&agentcomposev1.ListSessionsResponse{Sessions: sessions}), nil
+					listSessions: func(ctx context.Context, req *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error) {
+						return connect.NewResponse(&agentcomposev2.ListSandboxesResponse{Sandboxes: sessions}), nil
 					},
 				},
 				sandbox: sandboxServiceStub{
@@ -4634,7 +4519,7 @@ agents:
     provider: codex
 `)
 	project := testCLIProject("project-cli-prune-text", "cli-prune-text", composePath)
-	sessions := []*agentcomposev1.SessionSummary{
+	sessions := []*agentcomposev2.Sandbox{
 		testCLISessionSummary("session-text-a", "STOPPED", "project-cli-prune-text", "reviewer", ""),
 		testCLISessionSummary("session-text-b", "FAILED", "project-cli-prune-text", "worker", ""),
 	}
@@ -4651,8 +4536,8 @@ agents:
 			},
 		},
 		session: sessionServiceStub{
-			listSessions: func(ctx context.Context, req *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
-				return connect.NewResponse(&agentcomposev1.ListSessionsResponse{Sessions: sessions}), nil
+			listSessions: func(ctx context.Context, req *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error) {
+				return connect.NewResponse(&agentcomposev2.ListSandboxesResponse{Sandboxes: sessions}), nil
 			},
 		},
 		sandbox: sandboxServiceStub{
@@ -4785,9 +4670,9 @@ func TestIntegrationCLIStopSandbox(t *testing.T) {
 	var stopped []string
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		session: sessionServiceStub{
-			stopSession: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-				stopped = append(stopped, req.Msg.GetSessionId())
-				return connect.NewResponse(&agentcomposev1.SessionResponse{}), nil
+			stopSession: func(ctx context.Context, req *connect.Request[agentcomposev2.StopSandboxRequest]) (*connect.Response[agentcomposev2.StopSandboxResponse], error) {
+				stopped = append(stopped, req.Msg.GetSandboxId())
+				return connect.NewResponse(&agentcomposev2.StopSandboxResponse{}), nil
 			},
 		},
 	})
@@ -4854,16 +4739,16 @@ agents:
 			},
 		},
 		session: sessionServiceStub{
-			listSessions: func(ctx context.Context, req *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
-				return connect.NewResponse(&agentcomposev1.ListSessionsResponse{Sessions: []*agentcomposev1.SessionSummary{session}}), nil
+			listSessions: func(ctx context.Context, req *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error) {
+				return connect.NewResponse(&agentcomposev2.ListSandboxesResponse{Sandboxes: []*agentcomposev2.Sandbox{session}}), nil
 			},
-			stopSession: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-				stopped = append(stopped, req.Msg.GetSessionId())
-				return connect.NewResponse(&agentcomposev1.SessionResponse{}), nil
+			stopSession: func(ctx context.Context, req *connect.Request[agentcomposev2.StopSandboxRequest]) (*connect.Response[agentcomposev2.StopSandboxResponse], error) {
+				stopped = append(stopped, req.Msg.GetSandboxId())
+				return connect.NewResponse(&agentcomposev2.StopSandboxResponse{}), nil
 			},
-			resumeSession: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-				resumed = append(resumed, req.Msg.GetSessionId())
-				return connect.NewResponse(&agentcomposev1.SessionResponse{}), nil
+			resumeSession: func(ctx context.Context, req *connect.Request[agentcomposev2.ResumeSandboxRequest]) (*connect.Response[agentcomposev2.ResumeSandboxResponse], error) {
+				resumed = append(resumed, req.Msg.GetSandboxId())
+				return connect.NewResponse(&agentcomposev2.ResumeSandboxResponse{}), nil
 			},
 		},
 		exec: execServiceStub{
@@ -4909,9 +4794,9 @@ func TestIntegrationCLIResumeSandboxesJSON(t *testing.T) {
 	var resumed []string
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		session: sessionServiceStub{
-			resumeSession: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-				resumed = append(resumed, req.Msg.GetSessionId())
-				return connect.NewResponse(&agentcomposev1.SessionResponse{}), nil
+			resumeSession: func(ctx context.Context, req *connect.Request[agentcomposev2.ResumeSandboxRequest]) (*connect.Response[agentcomposev2.ResumeSandboxResponse], error) {
+				resumed = append(resumed, req.Msg.GetSandboxId())
+				return connect.NewResponse(&agentcomposev2.ResumeSandboxResponse{}), nil
 			},
 		},
 	})
@@ -5004,7 +4889,7 @@ agents:
     provider: codex
 `)
 	project := testCLIProject("project-cli-stats", "cli-stats-demo", composePath)
-	sessions := []*agentcomposev1.SessionSummary{
+	sessions := []*agentcomposev2.Sandbox{
 		testCLISessionSummary("session-one", "RUNNING", "project-cli-stats", "reviewer", "run-one"),
 		testCLISessionSummary("session-two", "RUNNING", "project-cli-stats", "worker", "run-two"),
 		testCLISessionSummary("session-stopped", "STOPPED", "project-cli-stats", "reviewer", "run-stopped"),
@@ -5031,11 +4916,11 @@ agents:
 			},
 		},
 		session: sessionServiceStub{
-			listSessions: func(ctx context.Context, req *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
+			listSessions: func(ctx context.Context, req *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error) {
 				if req.Msg.GetLimit() < 100 {
 					t.Fatalf("ListSessions request = %#v", req.Msg)
 				}
-				return connect.NewResponse(&agentcomposev1.ListSessionsResponse{Sessions: sessions}), nil
+				return connect.NewResponse(&agentcomposev2.ListSandboxesResponse{Sandboxes: sessions}), nil
 			},
 		},
 		sandbox: sandboxServiceStub{
@@ -5101,7 +4986,7 @@ agents:
     provider: codex
 `)
 	project := testCLIProject("project-cli-stats-empty", "cli-stats-empty", composePath)
-	sessions := []*agentcomposev1.SessionSummary{
+	sessions := []*agentcomposev2.Sandbox{
 		testCLISessionSummary("session-stopped", "STOPPED", "project-cli-stats-empty", "reviewer", "run-stopped"),
 		testCLISessionSummary("session-foreign", "RUNNING", "foreign-project", "reviewer", "run-foreign"),
 	}
@@ -5117,8 +5002,8 @@ agents:
 			},
 		},
 		session: sessionServiceStub{
-			listSessions: func(ctx context.Context, req *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
-				return connect.NewResponse(&agentcomposev1.ListSessionsResponse{Sessions: sessions}), nil
+			listSessions: func(ctx context.Context, req *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error) {
+				return connect.NewResponse(&agentcomposev2.ListSandboxesResponse{Sandboxes: sessions}), nil
 			},
 		},
 	})
@@ -6014,8 +5899,8 @@ agents:
 			},
 		},
 		session: sessionServiceStub{
-			getSession: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-				return connect.NewResponse(&agentcomposev1.SessionResponse{Session: testCLISessionDetail(req.Msg.GetSessionId(), "RUNNING")}), nil
+			getSession: func(ctx context.Context, req *connect.Request[agentcomposev2.GetSandboxRequest]) (*connect.Response[agentcomposev2.GetSandboxResponse], error) {
+				return connect.NewResponse(&agentcomposev2.GetSandboxResponse{Sandbox: testCLISessionDetail(req.Msg.GetSandboxId(), "RUNNING")}), nil
 			},
 		},
 	})
@@ -6031,6 +5916,9 @@ agents:
 	}
 	if projectDecoded.Project.Name != "cli-inspect-demo" || len(projectDecoded.Agents) != 2 || len(projectDecoded.Schedulers) != 1 {
 		t.Fatalf("inspect project JSON = %#v", projectDecoded)
+	}
+	if strings.Contains(projectOut, "managed_loader") {
+		t.Fatalf("inspect project JSON exposes internal loader identity: %s", projectOut)
 	}
 
 	agentOut, agentErr, _, agentCode := executeCLICommand("inspect", "--host", server.URL, "--file", composePath, "--json", "agent", identity.ShortID(reviewerID))
@@ -8507,123 +8395,6 @@ agents:
 	})
 }
 
-func TestIntegrationCLIInspectResolvesUntypedResourceRefs(t *testing.T) {
-	testCLIInspectResolvesUntypedResourceRefs(t)
-}
-
-func TestE2ECLIInspectResolvesUntypedResourceRefs(t *testing.T) {
-	testCLIInspectResolvesUntypedResourceRefs(t)
-}
-
-func testCLIInspectResolvesUntypedResourceRefs(t *testing.T) {
-	t.Helper()
-	projectID := identity.NewID(identity.ResourceProject, "resolved-project")
-	runID := identity.NewID(identity.ResourceRun, "resolved-run")
-	sandboxID := identity.NewID(identity.ResourceSandbox, "resolved-sandbox")
-	cacheID := identity.NewID(identity.ResourceCache, "resolved-cache")
-	imageID := identity.NewID(identity.ResourceKind("image"), "resolved-image")
-	project := testCLIProject(projectID, "resolved-project", "/tmp/resolved-project/agent-compose.yml")
-	resourceResolver := resources.NewResolver(
-		&cliResolverStoredSource{resourcesByRef: map[string][]domain.ResolvedResource{
-			"resolved-project":      {{Kind: domain.ResourceKindProject, MatchType: domain.ResourceMatchName, ID: projectID, ShortID: identity.ShortID(projectID), Name: "resolved-project", ProjectID: projectID, ProjectName: "resolved-project", InspectRef: projectID}},
-			"reviewer":              {{Kind: domain.ResourceKindAgent, MatchType: domain.ResourceMatchName, ID: project.GetAgents()[0].GetManagedAgentId(), ShortID: identity.ShortID(project.GetAgents()[0].GetManagedAgentId()), Name: "reviewer", ProjectID: projectID, ProjectName: "resolved-project", InspectRef: "reviewer"}},
-			identity.ShortID(runID): {{Kind: domain.ResourceKindRun, MatchType: domain.ResourceMatchIDPrefix, ID: runID, ShortID: identity.ShortID(runID), ProjectID: projectID, ProjectName: "resolved-project", InspectRef: runID}},
-			"resolved-volume":       {{Kind: domain.ResourceKindVolume, MatchType: domain.ResourceMatchName, Name: "resolved-volume", InspectRef: "resolved-volume"}},
-		}},
-		&cliResolverSandboxSource{sandbox: &domain.Sandbox{Summary: domain.SandboxSummary{ID: sandboxID, ShortID: identity.ShortID(sandboxID)}}},
-		cliResolverImageBackend{image: &agentcomposev2.Image{ImageId: imageID, ImageRef: "resolved:latest"}},
-		&cliResolverCacheSource{cacheID: cacheID},
-	)
-
-	server := newComposeServiceStubServer(t, composeServiceStubs{
-		resourceHandler: agentcomposeapi.NewResourceHandler(resourceResolver),
-		project: projectServiceStub{getProject: func(context.Context, *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
-			return connect.NewResponse(&agentcomposev2.GetProjectResponse{Project: project}), nil
-		}},
-		run: runServiceStub{
-			getRun: func(context.Context, *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
-				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: &agentcomposev2.RunDetail{Summary: &agentcomposev2.RunSummary{
-					RunId: runID, ProjectId: projectID, ProjectName: "resolved-project", AgentName: "reviewer",
-				}}}), nil
-			},
-			listRuns: func(context.Context, *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
-				return connect.NewResponse(&agentcomposev2.ListRunsResponse{}), nil
-			},
-		},
-		session: sessionServiceStub{
-			getSession: func(context.Context, *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-				return connect.NewResponse(&agentcomposev1.SessionResponse{Session: &agentcomposev1.SessionDetail{Summary: &agentcomposev1.SessionSummary{SessionId: sandboxID}}}), nil
-			},
-			listSessions: func(context.Context, *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
-				return connect.NewResponse(&agentcomposev1.ListSessionsResponse{}), nil
-			},
-		},
-		image: imageServiceStub{inspectImage: func(context.Context, *connect.Request[agentcomposev2.InspectImageRequest]) (*connect.Response[agentcomposev2.InspectImageResponse], error) {
-			return connect.NewResponse(&agentcomposev2.InspectImageResponse{Image: &agentcomposev2.Image{ImageId: imageID, ImageRef: "resolved:latest"}}), nil
-		}},
-		cache: cacheServiceStub{inspectCache: func(context.Context, *connect.Request[agentcomposev2.InspectCacheRequest]) (*connect.Response[agentcomposev2.InspectCacheResponse], error) {
-			return connect.NewResponse(&agentcomposev2.InspectCacheResponse{Cache: &agentcomposev2.CacheItem{CacheId: cacheID}}), nil
-		}},
-		volume: volumeServiceStub{inspectVolume: func(context.Context, *connect.Request[agentcomposev2.InspectVolumeRequest]) (*connect.Response[agentcomposev2.InspectVolumeResponse], error) {
-			return connect.NewResponse(&agentcomposev2.InspectVolumeResponse{Volume: &agentcomposev2.Volume{Name: "resolved-volume"}}), nil
-		}},
-	})
-	defer server.Close()
-
-	for _, tc := range []struct {
-		ref  string
-		want string
-	}{
-		{ref: "resolved-project", want: "resolved-project"},
-		{ref: "reviewer", want: "reviewer"},
-		{ref: identity.ShortID(runID), want: displayOpaqueID(runID)},
-		{ref: identity.ShortID(sandboxID), want: displayOpaqueID(sandboxID)},
-		{ref: "resolved:latest", want: "resolved:latest"},
-		{ref: identity.ShortID(cacheID), want: shortOpaqueID(cacheID)},
-		{ref: "resolved-volume", want: "resolved-volume"},
-	} {
-		t.Run(tc.ref, func(t *testing.T) {
-			stdout, stderr, _, exitCode := executeCLICommand("inspect", "--host", server.URL, tc.ref)
-			if exitCode != 0 || stderr != "" || !strings.Contains(stdout, tc.want) {
-				t.Fatalf("inspect %s code/stdout/stderr = %d/%q/%q, want output containing %q", tc.ref, exitCode, stdout, stderr, tc.want)
-			}
-		})
-	}
-}
-
-func TestIntegrationCLIInspectUntypedRefReportsAmbiguityAndNotFound(t *testing.T) {
-	testCLIInspectUntypedRefReportsAmbiguityAndNotFound(t)
-}
-
-func TestE2ECLIInspectUntypedRefReportsAmbiguityAndNotFound(t *testing.T) {
-	testCLIInspectUntypedRefReportsAmbiguityAndNotFound(t)
-}
-
-func testCLIInspectUntypedRefReportsAmbiguityAndNotFound(t *testing.T) {
-	t.Helper()
-	server := newComposeServiceStubServer(t, composeServiceStubs{resource: resourceServiceStub{
-		resolveResource: func(_ context.Context, req *connect.Request[agentcomposev2.ResolveResourceRequest]) (*connect.Response[agentcomposev2.ResolveResourceResponse], error) {
-			if req.Msg.GetRef() == "ambiguous" {
-				return connect.NewResponse(&agentcomposev2.ResolveResourceResponse{Resources: []*agentcomposev2.ResolvedResource{
-					{Kind: agentcomposev2.ResourceKind_RESOURCE_KIND_PROJECT, Name: "ambiguous", Id: strings.Repeat("a", 64)},
-					{Kind: agentcomposev2.ResourceKind_RESOURCE_KIND_VOLUME, Name: "ambiguous", InspectRef: "ambiguous"},
-				}}), nil
-			}
-			return connect.NewResponse(&agentcomposev2.ResolveResourceResponse{}), nil
-		},
-	}})
-	defer server.Close()
-
-	stdout, stderr, _, exitCode := executeCLICommand("inspect", "--host", server.URL, "ambiguous")
-	if exitCode != exitCodeUsage || stdout != "" || !strings.Contains(stderr, "project ambiguous") || !strings.Contains(stderr, "volume ambiguous") {
-		t.Fatalf("ambiguous inspect code/stdout/stderr = %d/%q/%q", exitCode, stdout, stderr)
-	}
-	stdout, stderr, _, exitCode = executeCLICommand("inspect", "--host", server.URL, "missing")
-	if exitCode != exitCodeUsage || stdout != "" || !strings.Contains(stderr, `resource "missing" not found`) {
-		t.Fatalf("missing inspect code/stdout/stderr = %d/%q/%q", exitCode, stdout, stderr)
-	}
-}
-
 func TestCLICommandBranchSweepWorkflows(t *testing.T) {
 	t.Run("project pull and build empty or invalid", func(t *testing.T) {
 		noImageCompose := writeComposeFile(t, t.TempDir(), `
@@ -8810,7 +8581,7 @@ agents:
 				},
 			},
 			session: sessionServiceStub{
-				getSession: func(context.Context, *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
+				getSession: func(context.Context, *connect.Request[agentcomposev2.GetSandboxRequest]) (*connect.Response[agentcomposev2.GetSandboxResponse], error) {
 					return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("sandbox unavailable"))
 				},
 			},
@@ -9101,10 +8872,18 @@ func testDaemonAppRegistersCoreRoutes(t *testing.T) {
 		t.Fatalf("health version = %q, want %q", healthResp.Msg.GetVersion(), config.BuildVersion)
 	}
 
-	sessionClient := agentcomposev1connect.NewSessionServiceClient(server.Client(), server.URL)
-	_, err = sessionClient.GetSession(context.Background(), connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: "missing"}))
-	if connect.CodeOf(err) != connect.CodeNotFound {
-		t.Fatalf("GetSession error code = %v, want %v (err=%v)", connect.CodeOf(err), connect.CodeNotFound, err)
+	legacyReq, err := http.NewRequest(http.MethodPost, server.URL+"/agentcompose.v1.SessionService/GetSession", strings.NewReader(`{"sessionId":"missing"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyReq.Header.Set("Content-Type", "application/json")
+	legacyResp, err := server.Client().Do(legacyReq)
+	if err != nil {
+		t.Fatalf("removed v1 GetSession request: %v", err)
+	}
+	defer func() { _ = legacyResp.Body.Close() }()
+	if legacyResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("removed v1 GetSession HTTP status = %d, want %d", legacyResp.StatusCode, http.StatusNotFound)
 	}
 
 	projectClient := agentcomposev2connect.NewProjectServiceClient(server.Client(), server.URL)
@@ -9602,8 +9381,6 @@ type composeServiceStubs struct {
 	volume          volumeServiceStub
 	sandbox         sandboxServiceStub
 	session         sessionServiceStub
-	config          configServiceStub
-	loader          loaderServiceStub
 }
 
 type resourceServiceStub struct {
@@ -9619,62 +9396,12 @@ func (s resourceServiceStub) ResolveResource(ctx context.Context, req *connect.R
 	return s.resolveResource(ctx, req)
 }
 
-type cliResolverStoredSource struct {
-	resourcesByRef map[string][]domain.ResolvedResource
-}
-
-func (s *cliResolverStoredSource) ResolveStoredResources(_ context.Context, options domain.ResourceResolveOptions) ([]domain.ResolvedResource, error) {
-	return append([]domain.ResolvedResource(nil), s.resourcesByRef[options.Ref]...), nil
-}
-
-type cliResolverSandboxSource struct {
-	sandbox *domain.Sandbox
-}
-
-func (s *cliResolverSandboxSource) GetSandbox(context.Context, string) (*domain.Sandbox, error) {
-	return s.sandbox, nil
-}
-
-func (s *cliResolverSandboxSource) ListSandboxes(context.Context, domain.SandboxListOptions) (domain.SandboxListResult, error) {
-	return domain.SandboxListResult{Sandboxes: []*domain.Sandbox{s.sandbox}}, nil
-}
-
-type cliResolverCacheSource struct {
-	cacheID string
-}
-
-func (s *cliResolverCacheSource) ListCaches(context.Context, runtimecache.ListRequest) (runtimecache.ListResult, error) {
-	return runtimecache.ListResult{Items: []runtimecache.Item{{CacheID: s.cacheID}}}, nil
-}
-
-type cliResolverImageBackend struct {
-	image *agentcomposev2.Image
-}
-
-func (b cliResolverImageBackend) ListImages(context.Context, images.ListRequest) (images.ListResult, error) {
-	return images.ListResult{Images: []*agentcomposev2.Image{b.image}}, nil
-}
-
-func (cliResolverImageBackend) PullImage(context.Context, images.PullRequest) (images.PullResult, error) {
-	return images.PullResult{}, nil
-}
-
-func (b cliResolverImageBackend) InspectImage(_ context.Context, request images.InspectRequest) (images.InspectResult, error) {
-	if request.ImageRef == b.image.GetImageRef() || request.ImageRef == b.image.GetImageId() {
-		return images.InspectResult{Image: b.image}, nil
-	}
-	return images.InspectResult{}, nil
-}
-
-func (cliResolverImageBackend) RemoveImage(context.Context, images.RemoveRequest) (images.RemoveResult, error) {
-	return images.RemoveResult{}, nil
-}
-
 type projectServiceStub struct {
 	applyProject  func(context.Context, *connect.Request[agentcomposev2.ApplyProjectRequest]) (*connect.Response[agentcomposev2.ApplyProjectResponse], error)
 	getProject    func(context.Context, *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error)
 	listProjects  func(context.Context, *connect.Request[agentcomposev2.ListProjectsRequest]) (*connect.Response[agentcomposev2.ListProjectsResponse], error)
 	removeProject func(context.Context, *connect.Request[agentcomposev2.RemoveProjectRequest]) (*connect.Response[agentcomposev2.RemoveProjectResponse], error)
+	getScheduler  func(context.Context, *connect.Request[agentcomposev2.GetSchedulerRequest]) (*connect.Response[agentcomposev2.GetSchedulerResponse], error)
 
 	agentcomposev2connect.UnimplementedProjectServiceHandler
 }
@@ -9684,6 +9411,13 @@ func (s projectServiceStub) ApplyProject(ctx context.Context, req *connect.Reque
 		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("ApplyProject stub is not configured"))
 	}
 	return s.applyProject(ctx, req)
+}
+
+func (s projectServiceStub) GetScheduler(ctx context.Context, req *connect.Request[agentcomposev2.GetSchedulerRequest]) (*connect.Response[agentcomposev2.GetSchedulerResponse], error) {
+	if s.getScheduler == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("GetScheduler stub is not configured"))
+	}
+	return s.getScheduler(ctx, req)
 }
 
 func (s projectServiceStub) GetProject(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
@@ -9866,8 +9600,40 @@ func (s volumeServiceStub) PruneVolumes(ctx context.Context, req *connect.Reques
 type sandboxServiceStub struct {
 	removeSandbox func(context.Context, *connect.Request[agentcomposev2.RemoveSandboxRequest]) (*connect.Response[agentcomposev2.RemoveSandboxResponse], error)
 	getStats      func(context.Context, *connect.Request[agentcomposev2.GetSandboxStatsRequest]) (*connect.Response[agentcomposev2.GetSandboxStatsResponse], error)
+	getSandbox    func(context.Context, *connect.Request[agentcomposev2.GetSandboxRequest]) (*connect.Response[agentcomposev2.GetSandboxResponse], error)
+	listSandboxes func(context.Context, *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error)
+	stopSandbox   func(context.Context, *connect.Request[agentcomposev2.StopSandboxRequest]) (*connect.Response[agentcomposev2.StopSandboxResponse], error)
+	resumeSandbox func(context.Context, *connect.Request[agentcomposev2.ResumeSandboxRequest]) (*connect.Response[agentcomposev2.ResumeSandboxResponse], error)
 
 	agentcomposev2connect.UnimplementedSandboxServiceHandler
+}
+
+func (s sandboxServiceStub) StopSandbox(ctx context.Context, req *connect.Request[agentcomposev2.StopSandboxRequest]) (*connect.Response[agentcomposev2.StopSandboxResponse], error) {
+	if s.stopSandbox == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("StopSandbox stub is not configured"))
+	}
+	return s.stopSandbox(ctx, req)
+}
+
+func (s sandboxServiceStub) ResumeSandbox(ctx context.Context, req *connect.Request[agentcomposev2.ResumeSandboxRequest]) (*connect.Response[agentcomposev2.ResumeSandboxResponse], error) {
+	if s.resumeSandbox == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("ResumeSandbox stub is not configured"))
+	}
+	return s.resumeSandbox(ctx, req)
+}
+
+func (s sandboxServiceStub) GetSandbox(ctx context.Context, req *connect.Request[agentcomposev2.GetSandboxRequest]) (*connect.Response[agentcomposev2.GetSandboxResponse], error) {
+	if s.getSandbox == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("GetSandbox stub is not configured"))
+	}
+	return s.getSandbox(ctx, req)
+}
+
+func (s sandboxServiceStub) ListSandboxes(ctx context.Context, req *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error) {
+	if s.listSandboxes == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("ListSandboxes stub is not configured"))
+	}
+	return s.listSandboxes(ctx, req)
 }
 
 func (s sandboxServiceStub) RemoveSandbox(ctx context.Context, req *connect.Request[agentcomposev2.RemoveSandboxRequest]) (*connect.Response[agentcomposev2.RemoveSandboxResponse], error) {
@@ -9885,61 +9651,11 @@ func (s sandboxServiceStub) GetSandboxStats(ctx context.Context, req *connect.Re
 }
 
 type sessionServiceStub struct {
-	getSession      func(context.Context, *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error)
-	getSessionProxy func(context.Context, *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionProxyResponse], error)
-	listSessions    func(context.Context, *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error)
-	resumeSession   func(context.Context, *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error)
-	stopSession     func(context.Context, *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error)
-
-	agentcomposev1connect.UnimplementedSessionServiceHandler
-}
-
-func (s sessionServiceStub) GetSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-	if s.getSession == nil {
-		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("GetSession stub is not configured"))
-	}
-	return s.getSession(ctx, req)
-}
-
-func (s sessionServiceStub) GetSessionProxy(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionProxyResponse], error) {
-	if s.getSessionProxy == nil {
-		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("GetSessionProxy stub is not configured"))
-	}
-	return s.getSessionProxy(ctx, req)
-}
-
-func (s sessionServiceStub) ListSessions(ctx context.Context, req *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
-	if s.listSessions == nil {
-		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("ListSessions stub is not configured"))
-	}
-	return s.listSessions(ctx, req)
-}
-
-func (s sessionServiceStub) ResumeSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-	if s.resumeSession == nil {
-		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("ResumeSession stub is not configured"))
-	}
-	return s.resumeSession(ctx, req)
-}
-
-func (s sessionServiceStub) StopSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
-	if s.stopSession == nil {
-		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("StopSession stub is not configured"))
-	}
-	return s.stopSession(ctx, req)
-}
-
-type configServiceStub struct {
-	getRuntimeConfig func(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[agentcomposev1.RuntimeConfigResponse], error)
-
-	agentcomposev1connect.UnimplementedConfigServiceHandler
-}
-
-func (s configServiceStub) GetRuntimeConfig(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[agentcomposev1.RuntimeConfigResponse], error) {
-	if s.getRuntimeConfig == nil {
-		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("GetRuntimeConfig stub is not configured"))
-	}
-	return s.getRuntimeConfig(ctx, req)
+	getSession      func(context.Context, *connect.Request[agentcomposev2.GetSandboxRequest]) (*connect.Response[agentcomposev2.GetSandboxResponse], error)
+	getSessionProxy func(context.Context, *connect.Request[agentcomposev2.GetSandboxRequest]) (*connect.Response[agentcomposev2.GetSandboxResponse], error)
+	listSessions    func(context.Context, *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error)
+	resumeSession   func(context.Context, *connect.Request[agentcomposev2.ResumeSandboxRequest]) (*connect.Response[agentcomposev2.ResumeSandboxResponse], error)
+	stopSession     func(context.Context, *connect.Request[agentcomposev2.StopSandboxRequest]) (*connect.Response[agentcomposev2.StopSandboxResponse], error)
 }
 
 func TestResolveComposeSandboxRefFromSessions(t *testing.T) {
@@ -9958,7 +9674,7 @@ func testResolveComposeSandboxRefFromSessions(t *testing.T) {
 	tests := []struct {
 		name       string
 		ref        string
-		sessions   []*agentcomposev1.SessionSummary
+		sessions   []*agentcomposev2.Sandbox
 		listErr    error
 		want       string
 		wantCode   int
@@ -9967,26 +9683,26 @@ func testResolveComposeSandboxRefFromSessions(t *testing.T) {
 		{
 			name:     "short id",
 			ref:      sandboxID[:12],
-			sessions: []*agentcomposev1.SessionSummary{{SessionId: sandboxID}},
+			sessions: []*agentcomposev2.Sandbox{{SandboxId: sandboxID}},
 			want:     sandboxID,
 		},
 		{
 			name:     "full id with empty sessions ignored",
 			ref:      sandboxID,
-			sessions: []*agentcomposev1.SessionSummary{nil, {}, {SessionId: "   "}, {SessionId: " " + sandboxID + " "}},
+			sessions: []*agentcomposev2.Sandbox{nil, {}, {SandboxId: "   "}, {SandboxId: " " + sandboxID + " "}},
 			want:     sandboxID,
 		},
 		{
 			name:       "not found",
 			ref:        "deadbeef",
-			sessions:   []*agentcomposev1.SessionSummary{{SessionId: sandboxID}},
+			sessions:   []*agentcomposev2.Sandbox{{SandboxId: sandboxID}},
 			wantCode:   exitCodeUsage,
 			wantErrors: []string{`sandbox "deadbeef" not found in daemon sessions`},
 		},
 		{
 			name:       "ambiguous short id",
 			ref:        sandboxID[:12],
-			sessions:   []*agentcomposev1.SessionSummary{{SessionId: otherSandboxID}, {SessionId: sandboxID}},
+			sessions:   []*agentcomposev2.Sandbox{{SandboxId: otherSandboxID}, {SandboxId: sandboxID}},
 			wantCode:   exitCodeUsage,
 			wantErrors: []string{"is ambiguous", sandboxID[:12] + ", " + otherSandboxID[:12]},
 		},
@@ -10000,16 +9716,16 @@ func testResolveComposeSandboxRefFromSessions(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			server := newComposeServiceStubServer(t, composeServiceStubs{session: sessionServiceStub{
-				listSessions: func(context.Context, *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
+			server := newComposeServiceStubServer(t, composeServiceStubs{sandbox: sandboxServiceStub{
+				listSandboxes: func(context.Context, *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error) {
 					if tc.listErr != nil {
 						return nil, tc.listErr
 					}
-					return connect.NewResponse(&agentcomposev1.ListSessionsResponse{Sessions: tc.sessions}), nil
+					return connect.NewResponse(&agentcomposev2.ListSandboxesResponse{Sandboxes: tc.sessions}), nil
 				},
 			}})
 			defer server.Close()
-			client := agentcomposev1connect.NewSessionServiceClient(server.Client(), server.URL)
+			client := agentcomposev2connect.NewSandboxServiceClient(server.Client(), server.URL)
 			got, err := resolveComposeSandboxRefFromSessions(context.Background(), client, tc.ref)
 			if tc.wantCode == 0 {
 				if err != nil {
@@ -10038,23 +9754,49 @@ func testResolveComposeSandboxRefFromSessions(t *testing.T) {
 	}
 }
 
-type loaderServiceStub struct {
-	getLoader func(context.Context, *connect.Request[agentcomposev1.LoaderIDRequest]) (*connect.Response[agentcomposev1.LoaderResponse], error)
-
-	agentcomposev1connect.UnimplementedLoaderServiceHandler
-}
-
-func (s loaderServiceStub) GetLoader(ctx context.Context, req *connect.Request[agentcomposev1.LoaderIDRequest]) (*connect.Response[agentcomposev1.LoaderResponse], error) {
-	if s.getLoader == nil {
-		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("GetLoader stub is not configured"))
+func sandboxStubWithSessionCompatibility(sandbox sandboxServiceStub, session sessionServiceStub) sandboxServiceStub {
+	if sandbox.getSandbox == nil && (session.getSession != nil || session.getSessionProxy != nil) {
+		sandbox.getSandbox = func(ctx context.Context, req *connect.Request[agentcomposev2.GetSandboxRequest]) (*connect.Response[agentcomposev2.GetSandboxResponse], error) {
+			if session.getSession != nil {
+				resp, err := session.getSession(ctx, connect.NewRequest(&agentcomposev2.GetSandboxRequest{SandboxId: req.Msg.GetSandboxId()}))
+				if err != nil {
+					return nil, err
+				}
+				return resp, nil
+			}
+			resp, err := session.getSessionProxy(ctx, connect.NewRequest(&agentcomposev2.GetSandboxRequest{SandboxId: req.Msg.GetSandboxId()}))
+			if err != nil {
+				return nil, err
+			}
+			return resp, nil
+		}
 	}
-	return s.getLoader(ctx, req)
+	if sandbox.listSandboxes == nil && session.listSessions != nil {
+		sandbox.listSandboxes = func(ctx context.Context, _ *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error) {
+			resp, err := session.listSessions(ctx, connect.NewRequest(&agentcomposev2.ListSandboxesRequest{Limit: 100}))
+			if err != nil {
+				return nil, err
+			}
+			return resp, nil
+		}
+	}
+	if sandbox.stopSandbox == nil && session.stopSession != nil {
+		sandbox.stopSandbox = func(ctx context.Context, req *connect.Request[agentcomposev2.StopSandboxRequest]) (*connect.Response[agentcomposev2.StopSandboxResponse], error) {
+			return session.stopSession(ctx, req)
+		}
+	}
+	if sandbox.resumeSandbox == nil && session.resumeSession != nil {
+		sandbox.resumeSandbox = func(ctx context.Context, req *connect.Request[agentcomposev2.ResumeSandboxRequest]) (*connect.Response[agentcomposev2.ResumeSandboxResponse], error) {
+			return session.resumeSession(ctx, req)
+		}
+	}
+	return sandbox
 }
 
 func newComposeServiceStubServer(t *testing.T, stubs composeServiceStubs) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	if stubs.project.applyProject != nil || stubs.project.getProject != nil || stubs.project.listProjects != nil || stubs.project.removeProject != nil {
+	if stubs.project.applyProject != nil || stubs.project.getProject != nil || stubs.project.listProjects != nil || stubs.project.removeProject != nil || stubs.project.getScheduler != nil {
 		path, handler := agentcomposev2connect.NewProjectServiceHandler(stubs.project)
 		mux.Handle(path, handler)
 	}
@@ -10085,20 +9827,9 @@ func newComposeServiceStubServer(t *testing.T, stubs composeServiceStubs) *httpt
 		path, handler := agentcomposev2connect.NewVolumeServiceHandler(stubs.volume)
 		mux.Handle(path, handler)
 	}
-	if stubs.sandbox.removeSandbox != nil || stubs.sandbox.getStats != nil {
-		path, handler := agentcomposev2connect.NewSandboxServiceHandler(stubs.sandbox)
-		mux.Handle(path, handler)
-	}
-	if stubs.session.getSession != nil || stubs.session.getSessionProxy != nil || stubs.session.listSessions != nil || stubs.session.resumeSession != nil || stubs.session.stopSession != nil {
-		path, handler := agentcomposev1connect.NewSessionServiceHandler(stubs.session)
-		mux.Handle(path, handler)
-	}
-	if stubs.config.getRuntimeConfig != nil {
-		path, handler := agentcomposev1connect.NewConfigServiceHandler(stubs.config)
-		mux.Handle(path, handler)
-	}
-	if stubs.loader.getLoader != nil {
-		path, handler := agentcomposev1connect.NewLoaderServiceHandler(stubs.loader)
+	effectiveSandbox := sandboxStubWithSessionCompatibility(stubs.sandbox, stubs.session)
+	if effectiveSandbox.removeSandbox != nil || effectiveSandbox.getStats != nil || effectiveSandbox.getSandbox != nil || effectiveSandbox.listSandboxes != nil || effectiveSandbox.stopSandbox != nil || effectiveSandbox.resumeSandbox != nil {
+		path, handler := agentcomposev2connect.NewSandboxServiceHandler(effectiveSandbox)
 		mux.Handle(path, handler)
 	}
 	return httptest.NewServer(mux)
@@ -10139,12 +9870,11 @@ func testCLIProject(projectID, name, sourcePath string) *agentcomposev2.Project 
 		},
 		Schedulers: []*agentcomposev2.ProjectScheduler{
 			{
-				ProjectId:       projectID,
-				AgentName:       "reviewer",
-				SchedulerId:     "scheduler-reviewer",
-				ManagedLoaderId: "loader-reviewer",
-				Enabled:         true,
-				TriggerCount:    1,
+				ProjectId:    projectID,
+				AgentName:    "reviewer",
+				SchedulerId:  "scheduler-reviewer",
+				Enabled:      true,
+				TriggerCount: 1,
 			},
 		},
 	}
@@ -10212,42 +9942,40 @@ func testCLIVolume(name string) *agentcomposev2.Volume {
 	}
 }
 
-func testCLISessionDetail(sessionID, vmStatus string) *agentcomposev1.SessionDetail {
-	return &agentcomposev1.SessionDetail{
-		Summary: testCLISessionSummary(sessionID, vmStatus, "project-cli", "reviewer", ""),
-	}
+func testCLISessionDetail(sessionID, vmStatus string) *agentcomposev2.Sandbox {
+	return testCLISessionSummary(sessionID, vmStatus, "project-cli", "reviewer", "")
 }
 
-func testCLISessionProxyResponse(sessionID, token string) *agentcomposev1.SessionProxyResponse {
+func testCLISandboxProxy(sessionID, token string) *agentcomposev2.Sandbox {
 	proxyPath := "/agent-compose/session/" + sessionID + "/lab"
-	return &agentcomposev1.SessionProxyResponse{
-		SessionId:   sessionID,
+	return &agentcomposev2.Sandbox{
+		SandboxId:   sessionID,
 		ProxyPath:   proxyPath,
 		NotebookUrl: proxyPath + "?token=" + token,
 		Driver:      "boxlite",
-		VmStatus:    "RUNNING",
+		Status:      "RUNNING",
 	}
 }
 
-func testCLISessionSummary(sessionID, vmStatus, projectID, agentName, runID string) *agentcomposev1.SessionSummary {
-	tags := []*agentcomposev1.SessionTag{{Name: "project", Value: projectID}}
+func testCLISessionSummary(sessionID, vmStatus, projectID, agentName, runID string) *agentcomposev2.Sandbox {
+	tags := []*agentcomposev2.SandboxTag{{Name: "project", Value: projectID}}
 	if agentName != "" {
-		tags = append(tags, &agentcomposev1.SessionTag{Name: "agent", Value: agentName})
+		tags = append(tags, &agentcomposev2.SandboxTag{Name: "agent", Value: agentName})
 	}
 	if runID != "" {
-		tags = append(tags, &agentcomposev1.SessionTag{Name: "run_id", Value: runID})
+		tags = append(tags, &agentcomposev2.SandboxTag{Name: "run_id", Value: runID})
 	}
-	return &agentcomposev1.SessionSummary{
-		SessionId:     sessionID,
+	return &agentcomposev2.Sandbox{
+		SandboxId:     sessionID,
 		Title:         "CLI Session",
 		Driver:        "boxlite",
-		VmStatus:      vmStatus,
+		Status:        vmStatus,
 		WorkspacePath: "/workspace/" + sessionID,
 		ProxyPath:     "/agent-compose/session/" + sessionID + "/lab",
-		GuestImage:    "guest:latest",
+		Image:         "guest:latest",
 		TriggerSource: "manual",
-		CreatedAt:     "2026-06-11T00:00:00Z",
-		UpdatedAt:     "2026-06-11T00:00:01Z",
+		CreatedAt:     timestamppb.New(time.Date(2026, 6, 11, 0, 0, 0, 0, time.UTC)),
+		UpdatedAt:     timestamppb.New(time.Date(2026, 6, 11, 0, 0, 1, 0, time.UTC)),
 		CellCount:     1,
 		EventCount:    2,
 		Tags:          tags,

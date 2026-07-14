@@ -76,6 +76,44 @@ func TestProjectRecordsCarryVolumeMountSpecs(t *testing.T) {
 	}
 }
 
+func TestDisabledAgentDisablesManagedAgentAndSchedulerRecords(t *testing.T) {
+	project := domain.ProjectRecord{ID: "project-1", Name: "project"}
+	agent := compose.NormalizedAgentSpec{
+		Name:      "reviewer",
+		Provider:  "codex",
+		Status:    "disabled",
+		Scheduler: &compose.NormalizedSchedulerSpec{Enabled: true, Script: "scheduler.agent('hi')"},
+	}
+	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil)
+	if err != nil {
+		t.Fatalf("NewAgentDefinitionFromSpec returned error: %v", err)
+	}
+	if definition.Enabled {
+		t.Fatalf("definition enabled = true, want false")
+	}
+	record, err := NewAgentRecordFromSpec(project.ID, 1, agent)
+	if err != nil {
+		t.Fatalf("NewAgentRecordFromSpec returned error: %v", err)
+	}
+	if record.SchedulerEnabled {
+		t.Fatalf("agent scheduler enabled = true, want false")
+	}
+	scheduler, ok, err := NewSchedulerRecordFromSpec(project.ID, 1, agent)
+	if err != nil || !ok {
+		t.Fatalf("NewSchedulerRecordFromSpec = %#v/%v/%v", scheduler, ok, err)
+	}
+	if scheduler.Enabled {
+		t.Fatalf("scheduler enabled = true, want false")
+	}
+	loader, err := NewManagedLoaderFromScheduler(project, scheduler, agent)
+	if err != nil {
+		t.Fatalf("NewManagedLoaderFromScheduler returned error: %v", err)
+	}
+	if loader.Summary.Enabled {
+		t.Fatalf("loader enabled = true, want false")
+	}
+}
+
 func TestNewAgentDefinitionFromSpecPreservesMCPConfig(t *testing.T) {
 	project := domain.ProjectRecord{ID: "project-1", Name: "project"}
 	agent := compose.NormalizedAgentSpec{

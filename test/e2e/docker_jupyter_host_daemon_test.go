@@ -24,8 +24,6 @@ import (
 	"github.com/docker/go-connections/nat"
 
 	domain "agent-compose/pkg/model"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
-	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
@@ -41,9 +39,18 @@ func TestE2EDockerJupyterHostDaemonStopResume(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	repoRoot := e2eRepoRoot(t)
-	testRoot := t.TempDir()
+	testRoot, err := os.MkdirTemp(repoRoot, ".docker-jupyter-e2e-")
+	if err != nil {
+		t.Fatalf("create Docker-visible test root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(testRoot) })
 	dockerClient := newE2EDockerClient(t, ctx, image)
 	t.Cleanup(func() { _ = dockerClient.Close() })
+	if hostname, hostErr := os.Hostname(); hostErr == nil {
+		if _, inspectErr := dockerClient.ContainerInspect(ctx, hostname); inspectErr == nil {
+			t.Skip("host-daemon Jupyter E2E requires the test runner to run outside Docker")
+		}
+	}
 
 	binary := e2eDaemonBinary(t, ctx, repoRoot, testRoot)
 	listenAddress := unusedLoopbackAddress(t)
@@ -53,7 +60,7 @@ func TestE2EDockerJupyterHostDaemonStopResume(t *testing.T) {
 	waitForE2EDaemon(t, ctx, daemon, baseURL)
 
 	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 3 * time.Minute,
 		Transport: func() *http.Transport {
 			transport := http.DefaultTransport.(*http.Transport).Clone()
 			transport.Proxy = nil
@@ -63,7 +70,6 @@ func TestE2EDockerJupyterHostDaemonStopResume(t *testing.T) {
 	projectClient := agentcomposev2connect.NewProjectServiceClient(httpClient, baseURL)
 	runClient := agentcomposev2connect.NewRunServiceClient(httpClient, baseURL)
 	sandboxClient := agentcomposev2connect.NewSandboxServiceClient(httpClient, baseURL)
-	sessionClient := agentcomposev1connect.NewSessionServiceClient(httpClient, baseURL)
 
 	projectResp, err := projectClient.ApplyProject(ctx, connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
 		Spec: &agentcomposev2.ProjectSpec{
@@ -112,7 +118,7 @@ func TestE2EDockerJupyterHostDaemonStopResume(t *testing.T) {
 	run := runResp.Msg.GetRun()
 	sandboxID := run.GetSummary().GetSandboxId()
 	if sandboxID == "" || run.GetSummary().GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED || run.GetOutput() != "docker-jupyter-e2e-ok" {
-		t.Fatalf("RunAgent result = %#v", run)
+		t.Fatalf("RunAgent sandbox_id=%q status=%s error=%q output_matches=%t", sandboxID, run.GetSummary().GetStatus(), run.GetSummary().GetError(), run.GetOutput() == "docker-jupyter-e2e-ok")
 	}
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -131,15 +137,15 @@ func TestE2EDockerJupyterHostDaemonStopResume(t *testing.T) {
 	assertE2EJupyterReady(t, ctx, httpClient, baseURL, sandboxID, initialState)
 	assertE2EJupyterReady(t, ctx, httpClient, "http://127.0.0.1:"+strconv.Itoa(initialState.HostPort), sandboxID, initialState)
 
-	if _, err := sessionClient.StopSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sandboxID})); err != nil {
-		t.Fatalf("StopSession returned error: %v", err)
+	if _, err := sandboxClient.StopSandbox(ctx, connect.NewRequest(&agentcomposev2.StopSandboxRequest{SandboxId: sandboxID})); err != nil {
+		t.Fatalf("StopSandbox returned error: %v", err)
 	}
 	staleState := readE2EProxyState(t, proxyPath)
 	staleState.HostPort = 1
 	writeE2EProxyState(t, proxyPath, staleState)
 
-	if _, err := sessionClient.ResumeSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sandboxID})); err != nil {
-		t.Fatalf("ResumeSession returned error: %v\ndaemon log:\n%s", err, daemon.logs.String())
+	if _, err := sandboxClient.ResumeSandbox(ctx, connect.NewRequest(&agentcomposev2.ResumeSandboxRequest{SandboxId: sandboxID})); err != nil {
+		t.Fatalf("ResumeSandbox returned error: %v\ndaemon log:\n%s", err, daemon.logs.String())
 	}
 	resumedState := readE2EProxyState(t, proxyPath)
 	assertE2EHostProxyState(t, resumedState)
@@ -186,22 +192,24 @@ func startE2EDaemon(t *testing.T, binary, repoRoot, testRoot, listenAddress, ima
 	process.cmd = exec.Command(binary, "daemon")
 	process.cmd.Dir = repoRoot
 	process.cmd.Env = overrideE2EEnv(os.Environ(), map[string]string{
-		"AGENT_COMPOSE_SOCKET":  filepath.Join(testRoot, "agent-compose.sock"),
-		"AUTH_PASSWORD":         "",
-		"AUTH_USERNAME":         "",
-		"DATA_ROOT":             testRoot,
-		"DEFAULT_IMAGE":         image,
-		"DOCKER_DEFAULT_IMAGE":  image,
-		"HTTP_BASIC_AUTH":       "",
-		"HTTP_LISTEN":           listenAddress,
-		"JUPYTER_PROXY_BASE":    "/jupyter",
-		"JUPYTER_READY_TIMEOUT": "2m",
-		"LLM_API_ENDPOINT":      "",
-		"LLM_API_KEY":           "",
-		"OPENAI_API_KEY":        "",
-		"RUNTIME_DRIVER":        "docker",
-		"SANDBOX_ROOT":          filepath.Join(testRoot, "sandboxes"),
-		"SANDBOX_START_TIMEOUT": "3m",
+		"AGENT_COMPOSE_SOCKET":     filepath.Join(testRoot, "agent-compose.sock"),
+		"AUTH_PASSWORD":            "",
+		"AUTH_USERNAME":            "",
+		"DATA_ROOT":                testRoot,
+		"DEFAULT_IMAGE":            image,
+		"DOCKER_DEFAULT_IMAGE":     image,
+		"DOCKER_HOST_SANDBOX_ROOT": filepath.Join(testRoot, "sandboxes"),
+		"DOCKER_HOST_SESSION_ROOT": "",
+		"HTTP_BASIC_AUTH":          "",
+		"HTTP_LISTEN":              listenAddress,
+		"JUPYTER_PROXY_BASE":       "/jupyter",
+		"JUPYTER_READY_TIMEOUT":    "2m",
+		"LLM_API_ENDPOINT":         "",
+		"LLM_API_KEY":              "",
+		"OPENAI_API_KEY":           "",
+		"RUNTIME_DRIVER":           "docker",
+		"SANDBOX_ROOT":             filepath.Join(testRoot, "sandboxes"),
+		"SANDBOX_START_TIMEOUT":    "3m",
 	})
 	process.cmd.Stdout = &process.logs
 	process.cmd.Stderr = &process.logs
@@ -351,7 +359,8 @@ func assertE2EJupyterReady(t *testing.T, ctx context.Context, client *http.Clien
 func assertE2EHostProxyState(t *testing.T, state domain.ProxyState) {
 	t.Helper()
 	if !state.Enabled || !state.Exposed || state.GuestHost != "127.0.0.1" || state.HostPort <= 0 || state.GuestPort <= 0 || state.Token == "" {
-		t.Fatalf("host daemon proxy state = %+v", state)
+		t.Fatalf("host daemon proxy state enabled=%t exposed=%t guest_host_present=%t host_port=%d guest_port=%d token_present=%t",
+			state.Enabled, state.Exposed, strings.TrimSpace(state.GuestHost) != "", state.HostPort, state.GuestPort, state.Token != "")
 	}
 }
 

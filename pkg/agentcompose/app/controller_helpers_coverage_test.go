@@ -13,7 +13,6 @@ import (
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/projects"
 	"agent-compose/pkg/runs"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
@@ -271,4 +270,3 @@ func (s *projectSessionStreamsFake) PublishEventAdded(string, domain.SandboxEven
 var _ projectSandboxStore = (*projectSessionStoreFake)(nil)
 var _ projectSandboxDriver = (*projectSandboxDriverFake)(nil)
 var _ projectSandboxStreams = (*projectSessionStreamsFake)(nil)
-var _ = agentcomposev1.SessionResponse{}

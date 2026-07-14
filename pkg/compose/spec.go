@@ -19,6 +19,7 @@ type ProjectSpec struct {
 }
 
 type AgentSpec struct {
+	Status       string                `yaml:"status,omitempty" json:"status,omitempty"`
 	Provider     string                `yaml:"provider,omitempty" json:"provider,omitempty"`
 	Model        string                `yaml:"model,omitempty" json:"model,omitempty"`
 	SystemPrompt string                `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
@@ -459,6 +460,7 @@ func validateAgentMap(node *yaml.Node, path string) error {
 
 func validateAgent(node *yaml.Node, path string) error {
 	return validateMapping(node, path, map[string]nodeValidator{
+		"status":        validateScalar,
 		"provider":      validateScalar,
 		"model":         validateScalar,
 		"system_prompt": validateScalar,

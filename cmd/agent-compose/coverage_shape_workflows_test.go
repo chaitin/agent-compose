@@ -9,7 +9,6 @@ import (
 
 	"agent-compose/pkg/compose"
 	domain "agent-compose/pkg/model"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 
 	"github.com/spf13/cobra"
@@ -25,6 +24,99 @@ func TestIntegrationCLIConfigAndOutputWorkflow(t *testing.T) {
 
 func TestE2ECLIConfigAndOutputWorkflow(t *testing.T) {
 	testCLIConfigAndOutputWorkflow(t)
+}
+
+func TestE2ECLISchedulerPublicContractWorkflow(t *testing.T) {
+	TestIntegrationCLIUpAppliesInlineSchedulerScriptAndPSJSON(t)
+	TestIntegrationCLISchedulerList(t)
+	TestIntegrationCLISchedulerTriggerUsesRunAgentTriggerID(t)
+	TestIntegrationCLISchedulerInspectDeclarativeTriggerYAML(t)
+	TestIntegrationCLISchedulerInspectLoaderRegisteredTrigger(t)
+	TestIntegrationCLIInspectProjectAgentRunSandboxSessionJSON(t)
+}
+
+func TestE2ECLICacheAndVolumePublicContractWorkflow(t *testing.T) {
+	TestIntegrationCLIVolumeCommands(t)
+	TestIntegrationCLICacheListTextJSONAndFilters(t)
+	TestIntegrationCLICacheInspectTextJSONAndNotFound(t)
+	TestIntegrationCLICachePruneDryRunForceAndJSON(t)
+	TestIntegrationCLICacheRemoveDryRunForceProtectedAndJSON(t)
+	TestIntegrationCLICacheLifecycleWithInProcessDaemon(t)
+	TestIntegrationCLIRemoveImageDoesNotDeleteRuntimeCachesWithInProcessDaemon(t)
+}
+
+func TestE2ECLIImagePublicContractWorkflow(t *testing.T) {
+	TestIntegrationCLIImagesAliasesAndJSON(t)
+	TestIntegrationCLIImagePullAliasesAndJSON(t)
+	TestIntegrationCLIPullProjectImages(t)
+	TestIntegrationCLIPullProjectImagesJSON(t)
+	TestIntegrationCLIImageBuildLegacyProject(t)
+	TestIntegrationCLIProjectBuildImages(t)
+	TestIntegrationCLIImageRemoveAliasesAndJSON(t)
+	TestIntegrationCLIImageInspectJSON(t)
+	TestIntegrationCLIImagePullSkippedWarnings(t)
+	TestIntegrationCLIImageRemoveMissingImageMessage(t)
+	TestIntegrationCLIImageInspectMissingImageMessage(t)
+	TestIntegrationCLIImagesJSONAcceptsOCIStoreStatus(t)
+	TestIntegrationCLIImageDockerErrorIsClear(t)
+}
+
+func TestE2ECLISandboxOperationsPublicContractWorkflow(t *testing.T) {
+	TestIntegrationCLIStopSandbox(t)
+	TestIntegrationCLIResumeSandboxesJSON(t)
+	TestIntegrationCLIStatsTableAndJSON(t)
+	TestIntegrationCLIStatsWithoutSandboxUsesProjectRunningSandboxes(t)
+	TestIntegrationCLIStatsWithoutSandboxAllowsNoRunningSandboxes(t)
+	TestIntegrationCLIRemoveSandboxes(t)
+	TestIntegrationCLIExecStreamsAndSupportsJSON(t)
+}
+
+func TestE2ECLIProjectAndRunPublicContractWorkflow(t *testing.T) {
+	TestIntegrationCLIUpAppliesProjectFirstRepeatedModifiedAndJSON(t)
+	TestIntegrationCLIDownFirstRepeatedPartialAndJSON(t)
+	TestIntegrationCLIListProjectsTextVerboseAndJSON(t)
+	TestIntegrationCLIListProjectsPaginationFlags(t)
+	TestIntegrationCLIRunStreamsOutputAndSupportsSandboxReuse(t)
+	TestIntegrationCLIRunDetachJSON(t)
+	TestIntegrationCLILogsTailTextJSONAndRunID(t)
+	TestIntegrationCLILogsFollowUsesServerStream(t)
+	TestIntegrationCLIProjectCommandsMissingProjectAreFriendly(t)
+	TestIntegrationCLIRunCommandSendsCommandAndStreamsOutput(t)
+	TestIntegrationCLIRunDetachStartsBackgroundRun(t)
+	TestIntegrationCLIRunDetachCommandCanBeFollowedByLogs(t)
+	TestIntegrationCLIRunFailureReturnsStableExitCode(t)
+	TestIntegrationCLIRunRemoveSandboxOnSuccess(t)
+	TestIntegrationCLIRunRemoveSandboxJSONDoesNotPrintCleanupText(t)
+	TestIntegrationCLIRunRemoveSandboxSkipsFailedRun(t)
+	TestIntegrationCLIRunRemoveSandboxError(t)
+	TestIntegrationCLILogsFiltersRunAgentSessionAndJSON(t)
+	TestIntegrationCLILogsTimestampAndMultiRunPrefixes(t)
+	TestIntegrationCLILogsFollowPrintsDelayedPromptWithoutOutput(t)
+}
+
+func TestE2ECLISandboxPrunePublicContractWorkflow(t *testing.T) {
+	TestIntegrationCLISandboxPruneDryRunFiltersAndSafety(t)
+	TestIntegrationCLISandboxPruneForceRemovesMatchedAndReportsSkipped(t)
+	TestIntegrationCLISandboxPruneTextOutput(t)
+	TestIntegrationCLISandboxPruneRejectsUnsafeStatuses(t)
+	TestIntegrationCLISandboxPruneRejectsInvalidDriver(t)
+}
+
+func TestE2ECLIInteractiveAndJupyterPublicContractWorkflow(t *testing.T) {
+	TestIntegrationCLIRunDetachJupyterExposePrintsURL(t)
+	TestIntegrationCLIRunSendsJupyterExpose(t)
+	TestIntegrationCLIRunJupyterExposeDefaultCleanupDoesNotPrintURL(t)
+	TestIntegrationCLIRunJupyterExposeJSONIncludesURL(t)
+	TestIntegrationCLIRunJupyterExposeJSONDefaultCleanupOmitsURL(t)
+	TestIntegrationCLIRunInteractivePromptReusesSession(t)
+	TestIntegrationCLIRunPromptTTYUsesRunAttach(t)
+	TestIntegrationCLIRunInteractiveDriverOnlySentForInitialSandbox(t)
+	TestIntegrationCLIRunInteractiveCommandReusesSession(t)
+	TestIntegrationCLIRunInteractiveRemoveCreatedSandboxOnExit(t)
+	TestIntegrationCLIRunInteractiveRemoveSkipsExistingSandbox(t)
+	TestIntegrationCLIRunInteractivePromptDefaultProviderAllowed(t)
+	TestIntegrationCLIRunTriggerPositionalRejected(t)
+	TestIntegrationCLIRunTriggerPositionalJSONRejected(t)
 }
 
 func testCLIConfigAndOutputWorkflow(t *testing.T) {
@@ -262,7 +354,7 @@ func testComposeProjectOutputHelpers(t *testing.T) {
 			{AgentName: "runner", ManagedAgentId: "agent-2"},
 		},
 		Schedulers: []*agentcomposev2.ProjectScheduler{
-			{AgentName: "reviewer", SchedulerId: "scheduler-1", ManagedLoaderId: "loader-1", Enabled: true, TriggerCount: 2},
+			{AgentName: "reviewer", SchedulerId: "scheduler-1", Enabled: true, TriggerCount: 2},
 		},
 	}
 	output := composeProjectOutputFromProject(project)
@@ -275,7 +367,7 @@ func testComposeProjectOutputHelpers(t *testing.T) {
 	if agent := composeProjectAgentOutputFromProto(project.GetAgents()[0]); agent.Provider != "codex" || agent.Driver != "docker" {
 		t.Fatalf("composeProjectAgentOutputFromProto = %#v", agent)
 	}
-	if scheduler := composeProjectSchedulerOutputFromProto(project.GetSchedulers()[0]); scheduler.ManagedLoaderID != "loader-1" || scheduler.TriggerCount != 2 {
+	if scheduler := composeProjectSchedulerOutputFromProto(project.GetSchedulers()[0]); scheduler.SchedulerID != "scheduler-1" || scheduler.TriggerCount != 2 {
 		t.Fatalf("composeProjectSchedulerOutputFromProto = %#v", scheduler)
 	}
 
@@ -302,10 +394,10 @@ func testComposeProjectOutputHelpers(t *testing.T) {
 	if bySandbox["sandbox-1"].GetRunId() != "run-new" {
 		t.Fatalf("latestRunsBySandbox = %#v", bySandbox)
 	}
-	session := &agentcomposev1.SessionSummary{
-		SessionId:     "sandbox-1",
+	session := &agentcomposev2.Sandbox{
+		SandboxId:     "sandbox-1",
 		TriggerSource: "manual project-1 run",
-		Tags: []*agentcomposev1.SessionTag{
+		Tags: []*agentcomposev2.SandboxTag{
 			{Name: " project_id ", Value: " project-1 "},
 			{Name: "", Value: "ignored"},
 		},
@@ -317,21 +409,21 @@ func testComposeProjectOutputHelpers(t *testing.T) {
 		t.Fatalf("sessionTagsMap = %#v", tags)
 	}
 	if composePSSessionBelongsToProject(
-		&agentcomposev1.SessionSummary{SessionId: "session-by-name", Tags: []*agentcomposev1.SessionTag{{Name: "project", Value: "Project"}}},
+		&agentcomposev2.Sandbox{SandboxId: "session-by-name", Tags: []*agentcomposev2.SandboxTag{{Name: "project", Value: "Project"}}},
 		project,
 		map[string]*agentcomposev2.RunSummary{},
 	) != true {
 		t.Fatalf("expected project-name tag to match project")
 	}
 	if composePSSessionBelongsToProject(
-		&agentcomposev1.SessionSummary{SessionId: "session-by-source", TriggerSource: "started from /repo/agent-compose.yml"},
+		&agentcomposev2.Sandbox{SandboxId: "session-by-source", TriggerSource: "started from /repo/agent-compose.yml"},
 		project,
 		map[string]*agentcomposev2.RunSummary{},
 	) != false {
 		t.Fatalf("source-path-only trigger source should not match project")
 	}
 	if composePSSessionBelongsToProject(
-		&agentcomposev1.SessionSummary{SessionId: "session-no-match", Tags: []*agentcomposev1.SessionTag{{Name: "project_id", Value: "other"}}},
+		&agentcomposev2.Sandbox{SandboxId: "session-no-match", Tags: []*agentcomposev2.SandboxTag{{Name: "project_id", Value: "other"}}},
 		project,
 		map[string]*agentcomposev2.RunSummary{},
 	) {
@@ -878,20 +970,18 @@ func testComposeImageStatsAndSessionHelpers(t *testing.T) {
 		t.Fatalf("writeSandboxPruneSkippedTable failing writer returned nil error")
 	}
 
-	session := composeSandboxOutputFromSummary(&agentcomposev1.SessionSummary{
-		SessionId:     "session-1",
+	session := composeSandboxOutputFromSummary(&agentcomposev2.Sandbox{
+		SandboxId:     "session-1",
 		Title:         "title",
 		Driver:        "docker",
-		VmStatus:      " RUNNING ",
+		Status:        " RUNNING ",
 		WorkspacePath: "/repo",
 		ProxyPath:     "/proxy",
-		GuestImage:    "guest",
+		Image:         "guest",
 		TriggerSource: "manual",
-		CreatedAt:     "created",
-		UpdatedAt:     "updated",
 		CellCount:     3,
 		EventCount:    4,
-		Tags: []*agentcomposev1.SessionTag{
+		Tags: []*agentcomposev2.SandboxTag{
 			{Name: "agent", Value: "reviewer"},
 			{Name: " ", Value: "ignored"},
 		},

@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package agentcompose.v2;
 
+import "google/protobuf/timestamp.proto";
+
 option go_package = "agent-compose/proto/agentcompose/v2;agentcomposev2";
 
 service ProjectService {
@@ -11,6 +13,11 @@ service ProjectService {
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
   rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
   rpc WatchProject(WatchProjectRequest) returns (stream WatchProjectResponse);
+  rpc GetScheduler(GetSchedulerRequest) returns (GetSchedulerResponse);
+  rpc ListSchedulers(ListSchedulersRequest) returns (ListSchedulersResponse);
+  rpc ListSchedulerEvents(ListSchedulerEventsRequest) returns (ListSchedulerEventsResponse);
+  rpc SetSchedulerEnabled(SetSchedulerEnabledRequest) returns (SetSchedulerEnabledResponse);
+  rpc SetSchedulerTriggerEnabled(SetSchedulerTriggerEnabledRequest) returns (SetSchedulerTriggerEnabledResponse);
 }
 
 service RunService {
@@ -25,6 +32,8 @@ service RunService {
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
   rpc FollowRunLogs(FollowRunLogsRequest) returns (stream RunLogChunk);
   rpc StopRun(StopRunRequest) returns (StopRunResponse);
+  rpc ListRunEvents(ListRunEventsRequest) returns (ListRunEventsResponse);
+  rpc ListSandboxRunEvents(ListSandboxRunEventsRequest) returns (ListSandboxRunEventsResponse);
 }
 
 service ExecService {
@@ -62,6 +71,38 @@ service VolumeService {
 service SandboxService {
   rpc RemoveSandbox(RemoveSandboxRequest) returns (RemoveSandboxResponse);
   rpc GetSandboxStats(GetSandboxStatsRequest) returns (GetSandboxStatsResponse);
+  rpc GetSandbox(GetSandboxRequest) returns (GetSandboxResponse);
+  rpc StopSandbox(StopSandboxRequest) returns (StopSandboxResponse);
+  rpc ResumeSandbox(ResumeSandboxRequest) returns (ResumeSandboxResponse);
+  rpc ListSandboxes(ListSandboxesRequest) returns (ListSandboxesResponse);
+  rpc ListSandboxHistory(ListSandboxHistoryRequest) returns (ListSandboxHistoryResponse);
+  rpc WatchSandbox(WatchSandboxRequest) returns (stream WatchSandboxResponse);
+}
+
+service DashboardService {
+  rpc GetDashboardOverview(GetDashboardOverviewRequest) returns (GetDashboardOverviewResponse);
+  rpc WatchDashboardOverview(WatchDashboardOverviewRequest) returns (stream WatchDashboardOverviewResponse);
+}
+
+service SettingsService {
+  rpc GetGlobalEnv(GetGlobalEnvRequest) returns (GetGlobalEnvResponse);
+  rpc UpdateGlobalEnv(UpdateGlobalEnvRequest) returns (UpdateGlobalEnvResponse);
+  rpc GetCapabilityGatewayConfig(GetCapabilityGatewayConfigRequest) returns (GetCapabilityGatewayConfigResponse);
+  rpc UpdateCapabilityGatewayConfig(UpdateCapabilityGatewayConfigRequest) returns (UpdateCapabilityGatewayConfigResponse);
+  rpc ListWorkspacePresets(ListWorkspacePresetsRequest) returns (ListWorkspacePresetsResponse);
+  rpc CreateWorkspacePreset(CreateWorkspacePresetRequest) returns (WorkspacePresetResponse);
+  rpc UpdateWorkspacePreset(UpdateWorkspacePresetRequest) returns (WorkspacePresetResponse);
+  rpc DeleteWorkspacePreset(DeleteWorkspacePresetRequest) returns (DeleteWorkspacePresetResponse);
+}
+
+service CapabilityService {
+  rpc GetCapabilityStatus(GetCapabilityStatusRequest) returns (CapabilityStatusResponse);
+  rpc ListCapabilitySets(ListCapabilitySetsRequest) returns (ListCapabilitySetsResponse);
+  rpc GetCapabilityCatalog(GetCapabilityCatalogRequest) returns (GetCapabilityCatalogResponse);
+}
+
+service LLMService {
+  rpc Generate(GenerateLLMRequest) returns (GenerateLLMResponse);
 }
 
 service ResourceService {
@@ -103,6 +144,33 @@ enum RunSource {
   RUN_SOURCE_MANUAL = 1;
   RUN_SOURCE_SCHEDULER = 2;
   RUN_SOURCE_API = 3;
+}
+
+enum AgentStatus {
+  AGENT_STATUS_UNSPECIFIED = 0;
+  AGENT_STATUS_ENABLED = 1;
+  AGENT_STATUS_DISABLED = 2;
+}
+
+enum ProjectAgentAvailability {
+  PROJECT_AGENT_AVAILABILITY_UNSPECIFIED = 0;
+  PROJECT_AGENT_AVAILABILITY_AVAILABLE = 1;
+  PROJECT_AGENT_AVAILABILITY_UNAVAILABLE = 2;
+  PROJECT_AGENT_AVAILABILITY_VALIDATION_FAILED = 3;
+}
+
+enum ProjectAgentHealth {
+  PROJECT_AGENT_HEALTH_UNSPECIFIED = 0;
+  PROJECT_AGENT_HEALTH_HEALTHY = 1;
+  PROJECT_AGENT_HEALTH_AT_RISK = 2;
+}
+
+enum RunEventKind {
+  RUN_EVENT_KIND_UNSPECIFIED = 0;
+  RUN_EVENT_KIND_USER_MESSAGE = 1;
+  RUN_EVENT_KIND_AGENT_MESSAGE = 2;
+  RUN_EVENT_KIND_AGENT_ACTIVITY = 3;
+  RUN_EVENT_KIND_STATUS = 4;
 }
 
 enum RunAgentStreamEventType {
@@ -334,15 +402,123 @@ message ProjectAgent {
   string image = 6;
   string driver = 7;
   bool scheduler_enabled = 8;
+  bool enabled = 9;
+  ProjectAgentAvailability availability = 10;
+  ProjectAgentHealth health = 11;
+  ProjectAgentCurrentRun current_run = 12;
+  ProjectAgentLatestRun latest_run = 13;
+}
+
+message ProjectAgentCurrentRun {
+  string text = 1;
+  uint32 running_run_count = 2;
+  uint32 running_scheduler_run_count = 3;
+}
+
+message ProjectAgentLatestRun {
+  string run_id = 1;
+  RunStatus status = 2;
+  RunSource source = 3;
+  google.protobuf.Timestamp at = 4;
 }
 
 message ProjectScheduler {
+  reserved 4;
+  reserved "managed_loader_id";
+
   string project_id = 1;
   string agent_name = 2;
   string scheduler_id = 3;
-  string managed_loader_id = 4;
   bool enabled = 5;
   uint32 trigger_count = 6;
+}
+
+message GetSchedulerRequest {
+  ProjectRef project = 1;
+  string agent_name = 2;
+}
+
+message GetSchedulerResponse {
+  ProjectScheduler scheduler = 1;
+  SchedulerSpec spec = 2;
+  repeated ResolvedTrigger triggers = 3;
+  bool overridden = 4;
+}
+
+message ResolvedTrigger {
+  TriggerSpec spec = 1;
+  string trigger_id = 2;
+  bool enabled = 3;
+  bool overridden = 4;
+  google.protobuf.Timestamp next_fire_at = 5;
+  google.protobuf.Timestamp last_fired_at = 6;
+}
+
+message ListSchedulersRequest {
+  string query = 1;
+  uint32 limit = 2;
+  string cursor = 3;
+}
+
+message SchedulerSummary {
+  string project_id = 1;
+  string agent_name = 2;
+  string scheduler_id = 3;
+  bool enabled = 4;
+  uint32 trigger_count = 5;
+  uint32 run_count = 6;
+  google.protobuf.Timestamp latest_run_at = 7;
+  string last_error = 8;
+}
+
+message ListSchedulersResponse {
+  repeated SchedulerSummary schedulers = 1;
+  string next_cursor = 2;
+}
+
+message ListSchedulerEventsRequest {
+  ProjectRef project = 1;
+  string agent_name = 2;
+  uint32 limit = 3;
+  string cursor = 4;
+}
+
+message SchedulerEvent {
+  string id = 1;
+  string type = 2;
+  string level = 3;
+  string message = 4;
+  string payload_json = 5;
+  string run_id = 6;
+  string trigger_id = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+message ListSchedulerEventsResponse {
+  repeated SchedulerEvent events = 1;
+  string next_cursor = 2;
+}
+
+message SetSchedulerEnabledRequest {
+  ProjectRef project = 1;
+  string agent_name = 2;
+  bool enabled = 3;
+}
+
+message SetSchedulerEnabledResponse {
+  ProjectScheduler scheduler = 1;
+  bool overridden = 2;
+}
+
+message SetSchedulerTriggerEnabledRequest {
+  ProjectRef project = 1;
+  string agent_name = 2;
+  string trigger_id = 3;
+  bool enabled = 4;
+}
+
+message SetSchedulerTriggerEnabledResponse {
+  ResolvedTrigger trigger = 1;
 }
 
 message ProjectValidationIssue {
@@ -392,6 +568,7 @@ message AgentSpec {
   repeated VolumeMountSpec volumes = 13;
   repeated MCPServerSpec mcps = 14;
   repeated SkillSpec skills = 15;
+  AgentStatus status = 16;
 }
 
 message MCPServerSpec {
@@ -435,6 +612,12 @@ message BuildSpec {
 message EnvVarSpec {
   string name = 1;
   string value = 2;
+  bool secret = 3;
+}
+
+message EnvVarUpdateSpec {
+  string name = 1;
+  optional string value = 2;
   bool secret = 3;
 }
 
@@ -629,6 +812,45 @@ message StopRunResponse {
   bool stop_requested = 2;
 }
 
+message ListRunEventsRequest {
+  string run_id = 1;
+  uint32 limit = 2;
+  string cursor = 3;
+}
+
+message RunEvent {
+  string id = 1;
+  string run_id = 2;
+  uint64 seq = 3;
+  RunEventKind kind = 4;
+  string text = 5;
+  string agent = 6;
+  string name = 7;
+  string payload_json = 8;
+  bool success = 9;
+  int32 exit_code = 10;
+  string stop_reason = 11;
+  google.protobuf.Timestamp created_at = 12;
+}
+
+message ListRunEventsResponse {
+  repeated RunEvent events = 1;
+  string next_cursor = 2;
+  bool history_available = 3;
+}
+
+message ListSandboxRunEventsRequest {
+  string sandbox_id = 1;
+  uint32 limit = 2;
+  string cursor = 3;
+}
+
+message ListSandboxRunEventsResponse {
+  repeated RunEvent events = 1;
+  string next_cursor = 2;
+  repeated string history_available_run_ids = 3;
+}
+
 message RemoveSandboxRequest {
   string sandbox_id = 1;
   bool force = 2;
@@ -646,6 +868,64 @@ message GetSandboxStatsRequest {
 
 message GetSandboxStatsResponse {
   SandboxStats stats = 1;
+}
+
+message GetSandboxRequest {
+  string sandbox_id = 1;
+}
+
+message Sandbox {
+  string sandbox_id = 1;
+  string status = 2;
+  string driver = 3;
+  string project_id = 4;
+  string agent_name = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  string image = 8;
+  string workspace_path = 9;
+  repeated SandboxTag tags = 10;
+  string title = 11;
+  string proxy_path = 12;
+  string trigger_source = 13;
+  uint32 cell_count = 14;
+  uint32 event_count = 15;
+  string notebook_url = 16;
+}
+
+message SandboxTag {
+  string name = 1;
+  string value = 2;
+}
+
+message ListSandboxesRequest {
+  uint32 limit = 1;
+  string cursor = 2;
+}
+
+message ListSandboxesResponse {
+  repeated Sandbox sandboxes = 1;
+  string next_cursor = 2;
+}
+
+message GetSandboxResponse {
+  Sandbox sandbox = 1;
+}
+
+message StopSandboxRequest {
+  string sandbox_id = 1;
+}
+
+message StopSandboxResponse {
+  Sandbox sandbox = 1;
+}
+
+message ResumeSandboxRequest {
+  string sandbox_id = 1;
+}
+
+message ResumeSandboxResponse {
+  Sandbox sandbox = 1;
 }
 
 message MetricValue {
@@ -1221,4 +1501,187 @@ message ResolvedResource {
   string project_id = 6;
   string project_name = 7;
   string inspect_ref = 8;
+}
+
+message GetDashboardOverviewRequest {}
+message WatchDashboardOverviewRequest {}
+
+message RunOverview {
+  uint32 running_count = 1;
+  uint32 recent_count = 2;
+  uint32 attention_count = 3;
+}
+
+message DashboardOverview {
+  RunOverview runs = 1;
+  google.protobuf.Timestamp updated_at = 2;
+}
+
+message GetDashboardOverviewResponse { DashboardOverview overview = 1; }
+message WatchDashboardOverviewResponse {
+  DashboardOverview overview = 1;
+  string reason = 2;
+}
+
+message GetGlobalEnvRequest {}
+message GetGlobalEnvResponse { repeated EnvVarSpec env = 1; }
+message UpdateGlobalEnvRequest { repeated EnvVarUpdateSpec env = 1; }
+message UpdateGlobalEnvResponse { repeated EnvVarSpec env = 1; }
+
+message GetCapabilityGatewayConfigRequest {}
+message CapabilityGatewayConfig {
+  string addr = 1;
+  bool token_set = 2;
+}
+message GetCapabilityGatewayConfigResponse { CapabilityGatewayConfig config = 1; }
+message UpdateCapabilityGatewayConfigRequest {
+  optional string addr = 1;
+  optional string token = 2;
+}
+message UpdateCapabilityGatewayConfigResponse { CapabilityGatewayConfig config = 1; }
+
+message WorkspacePreset {
+  string id = 1;
+  string name = 2;
+  string type = 3;
+  string config_json = 4;
+  string comment = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+message ListWorkspacePresetsRequest {}
+message ListWorkspacePresetsResponse { repeated WorkspacePreset presets = 1; }
+message CreateWorkspacePresetRequest {
+  string name = 1;
+  string type = 2;
+  string config_json = 3;
+  string comment = 4;
+}
+message UpdateWorkspacePresetRequest {
+  string preset_id = 1;
+  string name = 2;
+  string type = 3;
+  string config_json = 4;
+  string comment = 5;
+}
+message DeleteWorkspacePresetRequest { string preset_id = 1; }
+message DeleteWorkspacePresetResponse {}
+message WorkspacePresetResponse { WorkspacePreset preset = 1; }
+
+message GetCapabilityStatusRequest {}
+message CapabilityStatusResponse {
+  bool configured = 1;
+  bool ok = 2;
+  string status = 3;
+  uint32 service_count = 4;
+  string error = 5;
+  bool runtime_configured = 6;
+  bool proxy_listen_configured = 7;
+  bool proxy_target_configured = 8;
+}
+message ListCapabilitySetsRequest {}
+message CapabilitySet {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  bool enabled = 4;
+}
+message ListCapabilitySetsResponse { repeated CapabilitySet capsets = 1; }
+message GetCapabilityCatalogRequest { string capset_id = 1; }
+message CapabilityEndpoint {
+  string protocol = 1;
+  string endpoint = 2;
+  string method_path = 3;
+  map<string, string> metadata = 4;
+  string tool_name = 5;
+  string procedure = 6;
+  string http_method = 7;
+  repeated string content_types = 8;
+}
+message CapabilityMethod {
+  string service_id = 1;
+  string instance_id = 2;
+  string runtime_mode = 3;
+  string method_full_name = 4;
+  string request_message_full_name = 5;
+  string response_message_full_name = 6;
+  string backend_instance_status = 7;
+  repeated CapabilityEndpoint endpoints = 8;
+}
+message GetCapabilityCatalogResponse {
+  string capset_id = 1;
+  string name = 2;
+  string description = 3;
+  repeated CapabilityMethod methods = 4;
+}
+
+message ListSandboxHistoryRequest {
+  string sandbox_id = 1;
+}
+
+message SandboxHistoryCell {
+  string id = 1;
+  string type = 2;
+  string source = 3;
+  string stdout = 4;
+  string stderr = 5;
+  string output = 6;
+  int32 exit_code = 7;
+  bool success = 8;
+  bool running = 9;
+  google.protobuf.Timestamp created_at = 10;
+  string agent = 11;
+  string agent_thread_id = 12;
+  string stop_reason = 13;
+}
+
+message SandboxHistoryEvent {
+  string id = 1;
+  string type = 2;
+  string level = 3;
+  string message = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message ListSandboxHistoryResponse {
+  repeated SandboxHistoryCell cells = 1;
+  repeated SandboxHistoryEvent events = 2;
+  bool legacy_history = 3;
+}
+
+message WatchSandboxRequest {
+  string sandbox_id = 1;
+}
+
+enum SandboxWatchEventType {
+  SANDBOX_WATCH_EVENT_TYPE_UNSPECIFIED = 0;
+  SANDBOX_WATCH_EVENT_TYPE_SANDBOX_UPDATED = 1;
+  SANDBOX_WATCH_EVENT_TYPE_CELL_STARTED = 2;
+  SANDBOX_WATCH_EVENT_TYPE_CELL_OUTPUT = 3;
+  SANDBOX_WATCH_EVENT_TYPE_CELL_COMPLETED = 4;
+  SANDBOX_WATCH_EVENT_TYPE_EVENT_ADDED = 5;
+}
+
+message WatchSandboxResponse {
+  SandboxWatchEventType event_type = 1;
+  Sandbox sandbox = 2;
+  SandboxHistoryCell cell = 3;
+  SandboxHistoryEvent event = 4;
+  string cell_id = 5;
+  string chunk = 6;
+  StdioStream stream = 7;
+}
+
+message GenerateLLMRequest {
+  string prompt = 1;
+  string model = 2;
+  string output_schema = 3;
+}
+
+message GenerateLLMResponse {
+  string text = 1;
+  string model = 2;
+  string response_id = 3;
+  string finish_reason = 4;
+  string json = 5;
 }

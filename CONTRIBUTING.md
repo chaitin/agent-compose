@@ -57,7 +57,7 @@ task --version   # Task v3
 ```
 
 From the repository root, install the Go development tools and dependencies for
-all three npm packages (`proto-client`, `runtime/agent-compose-runtime-sdk`, and
+both runtime npm packages (`runtime/agent-compose-runtime-sdk` and
 `runtime/javascript`):
 
 ```bash
