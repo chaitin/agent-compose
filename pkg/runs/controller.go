@@ -105,7 +105,7 @@ type SandboxRuntimeStore interface {
 	GetVMState(id string) (sessionstore.VMState, error)
 	GetProxyState(id string) (sessionstore.ProxyState, error)
 	SaveProxyState(id string, state sessionstore.ProxyState) error
-	AllocateHostPortForJupyter() (int, error)
+	AllocateHostPortForSandbox(string) (int, error)
 }
 
 type Controller struct {
@@ -2087,7 +2087,7 @@ func (c *Controller) applyJupyterOptionsToSandbox(sandbox *domain.Sandbox, optio
 			return err
 		}
 		if driver != driverpkg.RuntimeDriverDocker && proxyState.HostPort == 0 {
-			hostPort, err := c.store.AllocateHostPortForJupyter()
+			hostPort, err := c.store.AllocateHostPortForSandbox(sandbox.Summary.ID)
 			if err != nil {
 				return err
 			}

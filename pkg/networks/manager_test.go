@@ -249,7 +249,7 @@ func (s isolationPolicyStub) Evaluate(context.Context, *domain.Sandbox, *domain.
 	return s.status, s.err
 }
 
-func (s *portAllocatorStub) AllocateHostPort(context.Context) (int, error) {
+func (s *portAllocatorStub) AllocateHostPort(context.Context, string) (int, error) {
 	if s.err != nil {
 		return 0, s.err
 	}

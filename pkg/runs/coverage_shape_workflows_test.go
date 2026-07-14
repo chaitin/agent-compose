@@ -2768,6 +2768,6 @@ func (s *fakeGuideSandboxStore) SaveProxyState(string, sessionstore.ProxyState) 
 	return errors.New("not implemented")
 }
 
-func (s *fakeGuideSandboxStore) AllocateHostPortForJupyter() (int, error) {
+func (s *fakeGuideSandboxStore) AllocateHostPortForSandbox(string) (int, error) {
 	return 0, errors.New("not implemented")
 }

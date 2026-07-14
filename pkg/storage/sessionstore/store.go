@@ -52,8 +52,10 @@ type (
 )
 
 type Store struct {
-	config       *appconfig.Config
-	sandboxLocks sync.Map
+	config            *appconfig.Config
+	sandboxLocks      sync.Map
+	hostPortMu        sync.Mutex
+	reservedHostPorts map[int]string
 }
 
 func NewStore(di do.Injector) (*Store, error) {
@@ -184,7 +186,7 @@ func (s *Store) CreateSandboxWithOptions(_ context.Context, title, baseWorkspace
 			guestPort = s.config.JupyterGuestPort
 		}
 		if driver != driverpkg.RuntimeDriverDocker {
-			hostPort, err := s.allocateHostPort()
+			hostPort, err := s.allocateHostPort(id)
 			if err != nil {
 				return nil, err
 			}
@@ -290,6 +292,7 @@ func (s *Store) RemoveSandbox(_ context.Context, id string) error {
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("remove sandbox dir %s: %w", id, err)
 	}
+	s.releaseHostPorts(id)
 	s.sandboxLocks.Delete(sandboxLockKey(id))
 	return nil
 }
@@ -939,20 +942,110 @@ func (s *Store) AllocateHostPortForJupyter() (int, error) {
 }
 
 func (s *Store) AllocateHostPort() (int, error) {
-	return s.allocateHostPort()
+	return s.allocateHostPort("")
 }
 
-func (s *Store) allocateHostPort() (int, error) {
-	listener, err := net.Listen("tcp", "0.0.0.0:0")
+func (s *Store) AllocateHostPortForSandbox(sandboxID string) (int, error) {
+	return s.allocateHostPort(strings.TrimSpace(sandboxID))
+}
+
+func (s *Store) allocateHostPort(owner string) (int, error) {
+	s.hostPortMu.Lock()
+	defer s.hostPortMu.Unlock()
+	used, err := s.persistedHostPorts()
 	if err != nil {
-		return 0, fmt.Errorf("allocate host port: %w", err)
+		return 0, err
 	}
-	defer func() { _ = listener.Close() }()
-	addr, ok := listener.Addr().(*net.TCPAddr)
-	if !ok {
-		return 0, fmt.Errorf("allocate host port: unexpected addr %T", listener.Addr())
+	if s.reservedHostPorts == nil {
+		s.reservedHostPorts = make(map[int]string)
 	}
-	return addr.Port, nil
+	for port := range s.reservedHostPorts {
+		used[port] = struct{}{}
+	}
+	var held []net.Listener
+	defer func() {
+		for _, listener := range held {
+			_ = listener.Close()
+		}
+	}()
+	for range 1024 {
+		listener, err := net.Listen("tcp", "0.0.0.0:0")
+		if err != nil {
+			return 0, fmt.Errorf("allocate host port: %w", err)
+		}
+		held = append(held, listener)
+		addr, ok := listener.Addr().(*net.TCPAddr)
+		if !ok {
+			return 0, fmt.Errorf("allocate host port: unexpected addr %T", listener.Addr())
+		}
+		if _, exists := used[addr.Port]; exists {
+			continue
+		}
+		s.reservedHostPorts[addr.Port] = owner
+		return addr.Port, nil
+	}
+	return 0, fmt.Errorf("allocate host port: no unreserved port found")
+}
+
+func (s *Store) releaseHostPorts(owner string) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return
+	}
+	s.hostPortMu.Lock()
+	defer s.hostPortMu.Unlock()
+	for port, reservedOwner := range s.reservedHostPorts {
+		if reservedOwner == owner {
+			delete(s.reservedHostPorts, port)
+		}
+	}
+}
+
+func (s *Store) persistedHostPorts() (map[int]struct{}, error) {
+	result := make(map[int]struct{})
+	entries, err := os.ReadDir(s.config.SandboxRoot)
+	if err != nil {
+		return nil, fmt.Errorf("scan persisted host ports: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(s.config.SandboxRoot, entry.Name())
+		metadata, err := os.ReadFile(filepath.Join(dir, "metadata.json"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("scan persisted host ports in %s: %w", entry.Name(), err)
+		}
+		var sandbox Sandbox
+		if err := json.Unmarshal(metadata, &sandbox); err != nil {
+			return nil, fmt.Errorf("scan persisted host ports in %s: %w", entry.Name(), err)
+		}
+		if sandbox.NetworkState != nil {
+			for _, binding := range sandbox.NetworkState.Bindings {
+				if binding.HostPort > 0 {
+					result[binding.HostPort] = struct{}{}
+				}
+			}
+		}
+		proxyData, err := os.ReadFile(filepath.Join(dir, "proxy", "jupyter.json"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("scan persisted proxy host port in %s: %w", entry.Name(), err)
+		}
+		var proxy ProxyState
+		if err := json.Unmarshal(proxyData, &proxy); err != nil {
+			return nil, fmt.Errorf("scan persisted proxy host port in %s: %w", entry.Name(), err)
+		}
+		if proxy.HostPort > 0 {
+			result[proxy.HostPort] = struct{}{}
+		}
+	}
+	return result, nil
 }
 
 func (s *Store) readJSONFile(path string, target any) error {

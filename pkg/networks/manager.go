@@ -37,7 +37,7 @@ type Infrastructure interface {
 }
 
 type PortAllocator interface {
-	AllocateHostPort(context.Context) (int, error)
+	AllocateHostPort(context.Context, string) (int, error)
 }
 
 type IsolationPolicy interface {
@@ -113,7 +113,7 @@ func (m *Manager) PrepareSandbox(ctx context.Context, sandbox *domain.Sandbox) e
 		state.AllowedAddresses = appendAddress(state.AllowedAddresses, endpoint.HostGateway)
 		state.AllowedAddresses = appendAddress(state.AllowedAddresses, endpoint.DaemonAddress)
 		for _, port := range intent.Expose {
-			binding, err := m.internalBinding(ctx, sandbox.Summary.Driver, deployment, endpoint, port, existing)
+			binding, err := m.internalBinding(ctx, sandbox.Summary.ID, sandbox.Summary.Driver, deployment, endpoint, port, existing)
 			if err != nil {
 				return err
 			}
@@ -121,7 +121,7 @@ func (m *Manager) PrepareSandbox(ctx context.Context, sandbox *domain.Sandbox) e
 		}
 	}
 	for _, port := range intent.Ports {
-		binding, err := m.externalBinding(ctx, sandbox.Summary.Driver, deployment, port, existing)
+		binding, err := m.externalBinding(ctx, sandbox.Summary.ID, sandbox.Summary.Driver, deployment, port, existing)
 		if err != nil {
 			return err
 		}
@@ -147,7 +147,7 @@ func (m *Manager) PrepareSandbox(ctx context.Context, sandbox *domain.Sandbox) e
 	return nil
 }
 
-func (m *Manager) internalBinding(ctx context.Context, runtimeDriver, deployment string, endpoint domain.SandboxNetworkEndpoint, port domain.SandboxNetworkPort, existing map[string]int) (domain.SandboxPortBinding, error) {
+func (m *Manager) internalBinding(ctx context.Context, sandboxID, runtimeDriver, deployment string, endpoint domain.SandboxNetworkEndpoint, port domain.SandboxNetworkPort, existing map[string]int) (domain.SandboxPortBinding, error) {
 	hostIP := endpoint.HostGateway
 	if runtimeDriver != driverpkg.RuntimeDriverDocker && deployment == DeploymentContainerBridge {
 		hostIP = endpoint.DaemonAddress
@@ -165,7 +165,7 @@ func (m *Manager) internalBinding(ctx context.Context, runtimeDriver, deployment
 	}
 	binding.HostPort = existing[bindingKey(binding)]
 	if binding.HostPort == 0 {
-		allocated, err := m.Ports.AllocateHostPort(ctx)
+		allocated, err := m.Ports.AllocateHostPort(ctx, sandboxID)
 		if err != nil {
 			return domain.SandboxPortBinding{}, fmt.Errorf("allocate internal host port: %w", err)
 		}
@@ -174,7 +174,7 @@ func (m *Manager) internalBinding(ctx context.Context, runtimeDriver, deployment
 	return binding, nil
 }
 
-func (m *Manager) externalBinding(ctx context.Context, runtimeDriver, deployment string, port domain.SandboxPublishedPort, existing map[string]int) (domain.SandboxPortBinding, error) {
+func (m *Manager) externalBinding(ctx context.Context, sandboxID, runtimeDriver, deployment string, port domain.SandboxPublishedPort, existing map[string]int) (domain.SandboxPortBinding, error) {
 	if deployment == DeploymentContainerBridge && runtimeDriver != driverpkg.RuntimeDriverDocker {
 		return domain.SandboxPortBinding{}, fmt.Errorf("%w: %s ports require a native or host-network daemon", ErrUnsupported, runtimeDriver)
 	}
@@ -190,7 +190,7 @@ func (m *Manager) externalBinding(ctx context.Context, runtimeDriver, deployment
 		binding.HostPort = existing[bindingKey(binding)]
 	}
 	if binding.HostPort == 0 {
-		allocated, err := m.Ports.AllocateHostPort(ctx)
+		allocated, err := m.Ports.AllocateHostPort(ctx, sandboxID)
 		if err != nil {
 			return domain.SandboxPortBinding{}, fmt.Errorf("allocate published host port: %w", err)
 		}

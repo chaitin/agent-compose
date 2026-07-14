@@ -34,3 +34,60 @@ func TestCreateSandboxPersistsIndependentNetworkIntent(t *testing.T) {
 		t.Fatalf("persisted network intent = %#v", loaded.NetworkIntent)
 	}
 }
+
+func TestAllocateHostPortDoesNotReuseStoppedSandboxAllocationAfterRestart(t *testing.T) {
+	store := newCoverageStore(t)
+	ctx := context.Background()
+	sandbox, err := store.CreateSandbox(ctx, "network", "", driverpkg.RuntimeDriverDocker, "", "", "", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allocated, err := store.AllocateHostPortForSandbox(sandbox.Summary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sandbox.NetworkState = &domain.SandboxNetworkState{Bindings: []domain.SandboxPortBinding{{HostIP: "127.0.0.1", HostPort: allocated, GuestPort: 8080, Protocol: "tcp"}}}
+	if err := store.UpdateSandbox(ctx, sandbox); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewWithConfig(store.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	used, err := restarted.persistedHostPorts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := used[allocated]; !ok {
+		t.Fatalf("persisted host ports do not include %d: %#v", allocated, used)
+	}
+	next, err := restarted.AllocateHostPort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next == allocated {
+		t.Fatalf("reused persisted host port %d", allocated)
+	}
+}
+
+func TestRemoveSandboxReleasesOwnedHostPortReservations(t *testing.T) {
+	store := newCoverageStore(t)
+	ctx := context.Background()
+	sandbox, err := store.CreateSandbox(ctx, "network", "", driverpkg.RuntimeDriverDocker, "", "", "", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := store.AllocateHostPortForSandbox(sandbox.Summary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner := store.reservedHostPorts[port]; owner != sandbox.Summary.ID {
+		t.Fatalf("reservation owner = %q", owner)
+	}
+	if err := store.RemoveSandbox(ctx, sandbox.Summary.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.reservedHostPorts[port]; exists {
+		t.Fatalf("host port %d reservation was not released", port)
+	}
+}
