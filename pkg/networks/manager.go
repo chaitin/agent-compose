@@ -44,6 +44,10 @@ type IsolationPolicy interface {
 	Evaluate(context.Context, *domain.Sandbox, *domain.SandboxNetworkState) (string, error)
 }
 
+type IsolationPreflight interface {
+	Validate(context.Context, *domain.Sandbox) error
+}
+
 type NetworkRequest struct {
 	ProjectID   string
 	ProjectName string
@@ -84,6 +88,14 @@ func (m *Manager) PrepareSandbox(ctx context.Context, sandbox *domain.Sandbox) e
 	}
 	if err := validateDeployment(deployment); err != nil {
 		return err
+	}
+	if deployment == DeploymentContainerBridge && sandbox.Summary.Driver != driverpkg.RuntimeDriverDocker && len(intent.Ports) > 0 {
+		return fmt.Errorf("%w: %s ports require a native or host-network daemon", ErrUnsupported, sandbox.Summary.Driver)
+	}
+	if preflight, ok := m.Isolation.(IsolationPreflight); ok && len(intent.Attachments) > 0 {
+		if err := preflight.Validate(ctx, sandbox); err != nil {
+			return fmt.Errorf("validate sandbox network isolation: %w", err)
+		}
 	}
 	state := &domain.SandboxNetworkState{
 		Deployment:  deployment,

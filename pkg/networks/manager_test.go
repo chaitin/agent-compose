@@ -78,6 +78,9 @@ func TestManagerRejectsBridgeVMExternalPorts(t *testing.T) {
 	if !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("PrepareSandbox() error = %v, want unsupported", err)
 	}
+	if manager.Ports.(*portAllocatorStub).calls != 0 {
+		t.Fatalf("port allocator called before unsupported result")
+	}
 }
 
 func TestManagerAllowsFixedExternalPortWithoutAllocator(t *testing.T) {
@@ -194,6 +197,24 @@ func TestManagerDoesNotPersistPlanWhenIsolationFails(t *testing.T) {
 	}
 }
 
+func TestManagerRunsIsolationPreflightBeforeInfrastructureSideEffects(t *testing.T) {
+	infra := &infrastructureStub{
+		deployment: DeploymentNative,
+		access: map[string]NetworkAccess{
+			"frontend": {RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1"},
+		},
+	}
+	ports := &portAllocatorStub{next: 32000}
+	manager := &Manager{Infrastructure: infra, Ports: ports, Isolation: isolationPreflightStub{err: ErrUnsupported}}
+	err := manager.PrepareSandbox(context.Background(), networkTestSandbox(driverpkg.RuntimeDriverDocker))
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("PrepareSandbox() error = %v", err)
+	}
+	if infra.ensureCalls != 0 || ports.calls != 0 {
+		t.Fatalf("preflight side effects: ensure calls = %d, allocator calls = %d", infra.ensureCalls, ports.calls)
+	}
+}
+
 func networkTestSandbox(driver string) *domain.Sandbox {
 	return &domain.Sandbox{
 		Summary: domain.SandboxSummary{ID: "sandbox-1", Driver: driver},
@@ -219,8 +240,9 @@ func bindingWithVisibility(t *testing.T, bindings []domain.SandboxPortBinding, v
 }
 
 type infrastructureStub struct {
-	deployment string
-	access     map[string]NetworkAccess
+	deployment  string
+	access      map[string]NetworkAccess
+	ensureCalls int
 }
 
 func (s *infrastructureStub) Deployment(context.Context) (string, error) {
@@ -228,6 +250,7 @@ func (s *infrastructureStub) Deployment(context.Context) (string, error) {
 }
 
 func (s *infrastructureStub) EnsureNetwork(_ context.Context, request NetworkRequest) (NetworkAccess, error) {
+	s.ensureCalls++
 	access, ok := s.access[request.NetworkName]
 	if !ok {
 		return NetworkAccess{}, errors.New("network not found")
@@ -236,8 +259,9 @@ func (s *infrastructureStub) EnsureNetwork(_ context.Context, request NetworkReq
 }
 
 type portAllocatorStub struct {
-	next int
-	err  error
+	next  int
+	err   error
+	calls int
 }
 
 type isolationPolicyStub struct {
@@ -245,11 +269,24 @@ type isolationPolicyStub struct {
 	err    error
 }
 
+type isolationPreflightStub struct {
+	err error
+}
+
+func (s isolationPreflightStub) Validate(context.Context, *domain.Sandbox) error {
+	return s.err
+}
+
+func (s isolationPreflightStub) Evaluate(context.Context, *domain.Sandbox, *domain.SandboxNetworkState) (string, error) {
+	return IsolationEnforced, nil
+}
+
 func (s isolationPolicyStub) Evaluate(context.Context, *domain.Sandbox, *domain.SandboxNetworkState) (string, error) {
 	return s.status, s.err
 }
 
 func (s *portAllocatorStub) AllocateHostPort(context.Context, string) (int, error) {
+	s.calls++
 	if s.err != nil {
 		return 0, s.err
 	}

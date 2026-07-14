@@ -27,12 +27,20 @@ func TestRuntimeIsolationPolicy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := (RuntimeIsolationPolicy{Enforce: tt.enforce}).Evaluate(context.Background(), &domain.Sandbox{Summary: domain.SandboxSummary{Driver: tt.driver}}, state)
-			if tt.wantErr {
-				if !errors.Is(err, networks.ErrUnsupported) {
-					t.Fatalf("Evaluate() error = %v", err)
+			sandbox := &domain.Sandbox{
+				Summary:       domain.SandboxSummary{Driver: tt.driver},
+				NetworkIntent: &domain.SandboxNetworkIntent{Attachments: []domain.SandboxNetworkAttachment{{Name: "frontend"}}},
+			}
+			policy := RuntimeIsolationPolicy{Enforce: tt.enforce}
+			if err := policy.Validate(context.Background(), sandbox); err != nil {
+				if tt.wantErr && errors.Is(err, networks.ErrUnsupported) {
+					return
 				}
-				return
+				t.Fatalf("Validate() error = %v", err)
+			}
+			got, err := policy.Evaluate(context.Background(), sandbox, state)
+			if tt.wantErr {
+				t.Fatal("Validate() accepted unsupported strict isolation")
 			}
 			if err != nil || got != tt.want {
 				t.Fatalf("Evaluate() = %q, %v, want %q", got, err, tt.want)
