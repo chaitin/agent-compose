@@ -22,11 +22,15 @@ import (
 	"testing"
 	"time"
 
+	agentcomposeapi "agent-compose/pkg/agentcompose/api"
 	"agent-compose/pkg/compose"
 	"agent-compose/pkg/config"
 	"agent-compose/pkg/identity"
 	"agent-compose/pkg/imagecache"
+	"agent-compose/pkg/images"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/resources"
+	"agent-compose/pkg/runtimecache"
 	"agent-compose/pkg/storage/configstore"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
@@ -5832,6 +5836,15 @@ func TestCLIExecAgentFlagIsRemoved(t *testing.T) {
 }
 
 func TestIntegrationCLIInspectProjectAgentRunSandboxSessionJSON(t *testing.T) {
+	testCLIInspectProjectAgentRunSandboxSessionJSON(t)
+}
+
+func TestE2ECLIInspectProjectAgentRunSandboxSessionJSON(t *testing.T) {
+	testCLIInspectProjectAgentRunSandboxSessionJSON(t)
+}
+
+func testCLIInspectProjectAgentRunSandboxSessionJSON(t *testing.T) {
+	t.Helper()
 	composePath := writeComposeFile(t, t.TempDir(), `
 name: cli-inspect-demo
 agents:
@@ -8379,21 +8392,20 @@ func testCLIInspectResolvesUntypedResourceRefs(t *testing.T) {
 	cacheID := identity.NewID(identity.ResourceCache, "resolved-cache")
 	imageID := identity.NewID(identity.ResourceKind("image"), "resolved-image")
 	project := testCLIProject(projectID, "resolved-project", "/tmp/resolved-project/agent-compose.yml")
+	resourceResolver := resources.NewResolver(
+		&cliResolverStoredSource{resourcesByRef: map[string][]domain.ResolvedResource{
+			"resolved-project":      {{Kind: domain.ResourceKindProject, MatchType: domain.ResourceMatchName, ID: projectID, ShortID: identity.ShortID(projectID), Name: "resolved-project", ProjectID: projectID, ProjectName: "resolved-project", InspectRef: projectID}},
+			"reviewer":              {{Kind: domain.ResourceKindAgent, MatchType: domain.ResourceMatchName, ID: project.GetAgents()[0].GetManagedAgentId(), ShortID: identity.ShortID(project.GetAgents()[0].GetManagedAgentId()), Name: "reviewer", ProjectID: projectID, ProjectName: "resolved-project", InspectRef: "reviewer"}},
+			identity.ShortID(runID): {{Kind: domain.ResourceKindRun, MatchType: domain.ResourceMatchIDPrefix, ID: runID, ShortID: identity.ShortID(runID), ProjectID: projectID, ProjectName: "resolved-project", InspectRef: runID}},
+			"resolved-volume":       {{Kind: domain.ResourceKindVolume, MatchType: domain.ResourceMatchName, Name: "resolved-volume", InspectRef: "resolved-volume"}},
+		}},
+		&cliResolverSandboxSource{sandbox: &domain.Sandbox{Summary: domain.SandboxSummary{ID: sandboxID, ShortID: identity.ShortID(sandboxID)}}},
+		cliResolverImageBackend{image: &agentcomposev2.Image{ImageId: imageID, ImageRef: "resolved:latest"}},
+		&cliResolverCacheSource{cacheID: cacheID},
+	)
 
 	server := newComposeServiceStubServer(t, composeServiceStubs{
-		resource: resourceServiceStub{resolveResource: func(_ context.Context, req *connect.Request[agentcomposev2.ResolveResourceRequest]) (*connect.Response[agentcomposev2.ResolveResourceResponse], error) {
-			resources := map[string]*agentcomposev2.ResolvedResource{
-				"project-ref": {Kind: agentcomposev2.ResourceKind_RESOURCE_KIND_PROJECT, Id: projectID, Name: "resolved-project", InspectRef: projectID},
-				"agent-ref":   {Kind: agentcomposev2.ResourceKind_RESOURCE_KIND_AGENT, Id: project.GetAgents()[0].GetManagedAgentId(), Name: "reviewer", ProjectId: projectID, ProjectName: "resolved-project", InspectRef: "reviewer"},
-				"run-ref":     {Kind: agentcomposev2.ResourceKind_RESOURCE_KIND_RUN, Id: runID, ProjectId: projectID, ProjectName: "resolved-project", InspectRef: runID},
-				"sandbox-ref": {Kind: agentcomposev2.ResourceKind_RESOURCE_KIND_SANDBOX, Id: sandboxID, InspectRef: sandboxID},
-				"image-ref":   {Kind: agentcomposev2.ResourceKind_RESOURCE_KIND_IMAGE, Id: imageID, Name: "resolved:latest", InspectRef: "resolved:latest"},
-				"cache-ref":   {Kind: agentcomposev2.ResourceKind_RESOURCE_KIND_CACHE, Id: cacheID, InspectRef: cacheID},
-				"volume-ref":  {Kind: agentcomposev2.ResourceKind_RESOURCE_KIND_VOLUME, Name: "resolved-volume", InspectRef: "resolved-volume"},
-			}
-			resource := resources[req.Msg.GetRef()]
-			return connect.NewResponse(&agentcomposev2.ResolveResourceResponse{Resources: []*agentcomposev2.ResolvedResource{resource}}), nil
-		}},
+		resourceHandler: agentcomposeapi.NewResourceHandler(resourceResolver),
 		project: projectServiceStub{getProject: func(context.Context, *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
 			return connect.NewResponse(&agentcomposev2.GetProjectResponse{Project: project}), nil
 		}},
@@ -8431,13 +8443,13 @@ func testCLIInspectResolvesUntypedResourceRefs(t *testing.T) {
 		ref  string
 		want string
 	}{
-		{ref: "project-ref", want: "resolved-project"},
-		{ref: "agent-ref", want: "reviewer"},
-		{ref: "run-ref", want: displayOpaqueID(runID)},
-		{ref: "sandbox-ref", want: displayOpaqueID(sandboxID)},
-		{ref: "image-ref", want: "resolved:latest"},
-		{ref: "cache-ref", want: shortOpaqueID(cacheID)},
-		{ref: "volume-ref", want: "resolved-volume"},
+		{ref: "resolved-project", want: "resolved-project"},
+		{ref: "reviewer", want: "reviewer"},
+		{ref: identity.ShortID(runID), want: displayOpaqueID(runID)},
+		{ref: identity.ShortID(sandboxID), want: displayOpaqueID(sandboxID)},
+		{ref: "resolved:latest", want: "resolved:latest"},
+		{ref: identity.ShortID(cacheID), want: shortOpaqueID(cacheID)},
+		{ref: "resolved-volume", want: "resolved-volume"},
 	} {
 		t.Run(tc.ref, func(t *testing.T) {
 			stdout, stderr, _, exitCode := executeCLICommand("inspect", "--host", server.URL, tc.ref)
@@ -9449,17 +9461,18 @@ func newRunServiceStubServer(t *testing.T, stub runServiceStub) *httptest.Server
 }
 
 type composeServiceStubs struct {
-	project  projectServiceStub
-	run      runServiceStub
-	exec     execServiceStub
-	resource resourceServiceStub
-	image    imageServiceStub
-	cache    cacheServiceStub
-	volume   volumeServiceStub
-	sandbox  sandboxServiceStub
-	session  sessionServiceStub
-	config   configServiceStub
-	loader   loaderServiceStub
+	project         projectServiceStub
+	run             runServiceStub
+	exec            execServiceStub
+	resource        resourceServiceStub
+	resourceHandler agentcomposev2connect.ResourceServiceHandler
+	image           imageServiceStub
+	cache           cacheServiceStub
+	volume          volumeServiceStub
+	sandbox         sandboxServiceStub
+	session         sessionServiceStub
+	config          configServiceStub
+	loader          loaderServiceStub
 }
 
 type resourceServiceStub struct {
@@ -9473,6 +9486,57 @@ func (s resourceServiceStub) ResolveResource(ctx context.Context, req *connect.R
 		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("ResolveResource stub is not configured"))
 	}
 	return s.resolveResource(ctx, req)
+}
+
+type cliResolverStoredSource struct {
+	resourcesByRef map[string][]domain.ResolvedResource
+}
+
+func (s *cliResolverStoredSource) ResolveStoredResources(_ context.Context, options domain.ResourceResolveOptions) ([]domain.ResolvedResource, error) {
+	return append([]domain.ResolvedResource(nil), s.resourcesByRef[options.Ref]...), nil
+}
+
+type cliResolverSandboxSource struct {
+	sandbox *domain.Sandbox
+}
+
+func (s *cliResolverSandboxSource) GetSandbox(context.Context, string) (*domain.Sandbox, error) {
+	return s.sandbox, nil
+}
+
+func (s *cliResolverSandboxSource) ListSandboxes(context.Context, domain.SandboxListOptions) (domain.SandboxListResult, error) {
+	return domain.SandboxListResult{Sandboxes: []*domain.Sandbox{s.sandbox}}, nil
+}
+
+type cliResolverCacheSource struct {
+	cacheID string
+}
+
+func (s *cliResolverCacheSource) ListCaches(context.Context, runtimecache.ListRequest) (runtimecache.ListResult, error) {
+	return runtimecache.ListResult{Items: []runtimecache.Item{{CacheID: s.cacheID}}}, nil
+}
+
+type cliResolverImageBackend struct {
+	image *agentcomposev2.Image
+}
+
+func (b cliResolverImageBackend) ListImages(context.Context, images.ListRequest) (images.ListResult, error) {
+	return images.ListResult{Images: []*agentcomposev2.Image{b.image}}, nil
+}
+
+func (cliResolverImageBackend) PullImage(context.Context, images.PullRequest) (images.PullResult, error) {
+	return images.PullResult{}, nil
+}
+
+func (b cliResolverImageBackend) InspectImage(_ context.Context, request images.InspectRequest) (images.InspectResult, error) {
+	if request.ImageRef == b.image.GetImageRef() || request.ImageRef == b.image.GetImageId() {
+		return images.InspectResult{Image: b.image}, nil
+	}
+	return images.InspectResult{}, nil
+}
+
+func (cliResolverImageBackend) RemoveImage(context.Context, images.RemoveRequest) (images.RemoveResult, error) {
+	return images.RemoveResult{}, nil
 }
 
 type projectServiceStub struct {
@@ -9871,7 +9935,10 @@ func newComposeServiceStubServer(t *testing.T, stubs composeServiceStubs) *httpt
 		path, handler := agentcomposev2connect.NewExecServiceHandler(stubs.exec)
 		mux.Handle(path, handler)
 	}
-	if stubs.resource.resolveResource != nil {
+	if stubs.resourceHandler != nil {
+		path, handler := agentcomposev2connect.NewResourceServiceHandler(stubs.resourceHandler)
+		mux.Handle(path, handler)
+	} else if stubs.resource.resolveResource != nil {
 		path, handler := agentcomposev2connect.NewResourceServiceHandler(stubs.resource)
 		mux.Handle(path, handler)
 	}
