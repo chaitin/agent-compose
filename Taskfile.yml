@@ -4,6 +4,7 @@ version: '3'
 vars:
   VERSION:
     sh: git describe --always --tags --long 2>/dev/null || git rev-parse --short=12 HEAD 2>/dev/null || echo 'unknown'
+  BUF_VERSION: v1.68.1
   GO_TOOLCHAIN_ENV: '{{.TASKFILE_DIR}}/scripts/with-go-toolchain.sh'
   GOLANGCI_LINT_CACHE_DIR: '{{.TASKFILE_DIR}}/.cache/golangci-lint'
   GO_BUILD_CACHE_DIR: '{{.TASKFILE_DIR}}/.cache/go-build'
@@ -44,6 +45,11 @@ tasks:
     desc: Install local dev dependencies
     cmds:
       - |
+        if ! command -v buf >/dev/null 2>&1; then
+          echo "Installing buf {{.BUF_VERSION}}..."
+          {{.GO_TOOLCHAIN_ENV}} go install github.com/bufbuild/buf/cmd/buf@{{.BUF_VERSION}}
+        fi
+
         if ! command -v golangci-lint >/dev/null 2>&1; then
           echo "Installing golangci-lint..."
           {{.GO_TOOLCHAIN_ENV}} go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 || true
@@ -59,6 +65,20 @@ tasks:
           (cd "${dir}" && npm ci --no-audit --no-fund)
         done
       - echo "Deps ready"
+
+  generate:
+    desc: Generate all committed source artifacts
+    cmds:
+      - task: generate:proto
+
+  generate:proto:
+    desc: Generate Go protobuf and Connect sources with buf
+    dir: '{{.TASKFILE_DIR}}'
+    preconditions:
+      - sh: command -v buf >/dev/null 2>&1
+        msg: "buf is required; run 'task prepare' first"
+    cmds:
+      - buf generate
 
   clean:
     desc: Remove generated build, test, and cache artifacts
