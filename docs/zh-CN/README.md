@@ -210,7 +210,7 @@ docker compose --profile with-ui up -d   # 同时启动 Web UI
 
 ## Web UI
 
-Web UI 在独立仓库 [agent-compose-ui](https://github.com/chaitin/agent-compose-ui)。它消费已发布的 API client [`@chaitin-ai/agent-compose-client`](https://www.npmjs.com/package/@chaitin-ai/agent-compose-client)（由本仓库 `proto/` 生成）。daemon 不托管 UI 或浏览器登录流程；UI 镜像用 nginx 前置一个 Go UI server，由后者处理 auth/OAuth 并把 API、Jupyter 路由代理到 daemon。
+Web UI 在独立仓库 [agent-compose-ui](https://github.com/chaitin/agent-compose-ui)。它直接跟踪由本仓库 `proto/` 生成的 `agentcompose/v2` 和 `health/v1` TypeScript 客户端，协议与生成文件同步评审。daemon 不托管 UI 或浏览器登录流程；UI 镜像用 nginx 前置一个 Go UI server，由后者处理 auth/OAuth 并把 API、Jupyter 路由代理到 daemon。
 
 ## 安全提醒
 

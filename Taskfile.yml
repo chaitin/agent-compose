@@ -8,7 +8,7 @@ vars:
   GO_TOOLCHAIN_ENV: '{{.TASKFILE_DIR}}/scripts/with-go-toolchain.sh'
   GOLANGCI_LINT_CACHE_DIR: '{{.TASKFILE_DIR}}/.cache/golangci-lint'
   GO_BUILD_CACHE_DIR: '{{.TASKFILE_DIR}}/.cache/go-build'
-  GO_LINT_PACKAGES: ./cmd/... ./pkg/... ./proto/health/v1 ./proto/health/v1/healthv1connect ./proto/agentcompose/v1 ./proto/agentcompose/v1/agentcomposev1connect ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect
+  GO_LINT_PACKAGES: ./cmd/... ./pkg/... ./proto/health/v1 ./proto/health/v1/healthv1connect ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect
   BUILD_HTTP_PROXY: '{{default "" .HTTP_PROXY}}'
   BUILD_HTTPS_PROXY: '{{default "" .HTTPS_PROXY}}'
   BUILD_ALL_PROXY: '{{default "" .ALL_PROXY}}'
