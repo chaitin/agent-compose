@@ -44,6 +44,7 @@ type NormalizedProjectSpec struct {
 	Volumes    map[string]NormalizedVolumeSpec    `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	Agents     []NormalizedAgentSpec              `yaml:"agents,omitempty" json:"agents,omitempty"`
 	Network    *NetworkSpec                       `yaml:"network,omitempty" json:"network,omitempty"`
+	Networks   map[string]ProjectNetworkSpec      `yaml:"networks,omitempty" json:"networks,omitempty"`
 }
 
 type NormalizedAgentSpec struct {
@@ -63,6 +64,9 @@ type NormalizedAgentSpec struct {
 	Workspace    *WorkspaceSpec                     `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Scheduler    *NormalizedSchedulerSpec           `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
 	Jupyter      *JupyterSpec                       `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
+	Networks     []string                           `yaml:"networks,omitempty" json:"networks,omitempty"`
+	Expose       []ExposedPortSpec                  `yaml:"expose,omitempty" json:"expose,omitempty"`
+	Ports        []PublishedPortSpec                `yaml:"ports,omitempty" json:"ports,omitempty"`
 }
 
 type NormalizedMCPServerSpec struct {
@@ -179,6 +183,35 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 		Variables: nil,
 		Network:   normalizeNetworkDefault(spec.Network),
 	}
+	networkingEnabled := len(spec.Networks) > 0
+	for _, agent := range spec.Agents {
+		if len(agent.Networks) > 0 || len(agent.Expose) > 0 {
+			networkingEnabled = true
+			break
+		}
+	}
+	networks, err := normalizeProjectNetworks(spec.Networks)
+	if err != nil {
+		return nil, err
+	}
+	if networkingEnabled {
+		needsDefault := len(networks) == 0
+		for _, agent := range spec.Agents {
+			if len(agent.Networks) == 0 {
+				needsDefault = true
+				break
+			}
+		}
+		if networks == nil {
+			networks = make(map[string]ProjectNetworkSpec)
+		}
+		if needsDefault {
+			if _, ok := networks["default"]; !ok {
+				networks["default"] = ProjectNetworkSpec{Driver: NetworkDriverPortMapping}
+			}
+		}
+	}
+	normalized.Networks = networks
 	variables, err := normalizeEnvVarMap("variables", spec.Variables, options)
 	if err != nil {
 		return nil, err
@@ -214,7 +247,7 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 			return nil, err
 		}
 		agent := spec.Agents[agentName]
-		normalizedAgent, err := normalizeAgent(agentName, agent, options, normalized.Volumes, normalized.Workspaces, normalized.MCPs)
+		normalizedAgent, err := normalizeAgent(agentName, agent, options, normalized.Volumes, normalized.Workspaces, normalized.MCPs, normalized.Networks, networkingEnabled)
 		if err != nil {
 			return nil, err
 		}
@@ -236,7 +269,7 @@ func NormalizeFile(path string) (*NormalizedProjectSpec, error) {
 	return normalized, nil
 }
 
-func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, projectVolumes map[string]NormalizedVolumeSpec, projectWorkspaces map[string]WorkspaceSpec, projectMCPs map[string]NormalizedMCPServerSpec) (NormalizedAgentSpec, error) {
+func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, projectVolumes map[string]NormalizedVolumeSpec, projectWorkspaces map[string]WorkspaceSpec, projectMCPs map[string]NormalizedMCPServerSpec, projectNetworks map[string]ProjectNetworkSpec, networkingEnabled bool) (NormalizedAgentSpec, error) {
 	status := strings.ToLower(strings.TrimSpace(agent.Status))
 	if status != "" && status != "enabled" && status != "disabled" {
 		return NormalizedAgentSpec{}, fmt.Errorf("%s.status must be enabled or disabled", joinPath("agents", name))
@@ -281,6 +314,10 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
+	networks, expose, ports, err := normalizeAgentNetworkConfig(joinPath("agents", name), agent, projectNetworks, networkingEnabled)
+	if err != nil {
+		return NormalizedAgentSpec{}, err
+	}
 	return NormalizedAgentSpec{
 		Name:         name,
 		Status:       status,
@@ -298,6 +335,9 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 		Workspace:    workspace,
 		Scheduler:    scheduler,
 		Jupyter:      jupyter,
+		Networks:     networks,
+		Expose:       expose,
+		Ports:        ports,
 	}, nil
 }
 

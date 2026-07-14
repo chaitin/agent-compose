@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"agent-compose/pkg/capabilities"
@@ -234,6 +235,7 @@ func ProjectSpecToProtoChecked(spec *compose.NormalizedProjectSpec) (*agentcompo
 		Network:    NetworkSpecToProto(spec.Network),
 		Volumes:    ProjectVolumeSpecsToProto(spec.Volumes),
 		Mcps:       MCPServerSpecsToProto(spec.MCPs),
+		Networks:   ProjectNetworkSpecsToProto(spec.Networks),
 	}, nil
 }
 
@@ -275,6 +277,43 @@ func AgentSpecsToProto(agents []compose.NormalizedAgentSpec) []*agentcomposev2.A
 			Volumes:      VolumeMountSpecsToProto(agent.Volumes),
 			Mcps:         MCPServerSpecsToProto(agent.MCPs),
 			Status:       agentStatusToProto(agent.Status),
+			Networks:     append([]string(nil), agent.Networks...),
+			Expose:       ExposedPortSpecsToProto(agent.Expose),
+			Ports:        PublishedPortSpecsToProto(agent.Ports),
+		})
+	}
+	return items
+}
+
+func ProjectNetworkSpecsToProto(networks map[string]compose.ProjectNetworkSpec) []*agentcomposev2.NamedNetworkSpec {
+	keys := make([]string, 0, len(networks))
+	for key := range networks {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	items := make([]*agentcomposev2.NamedNetworkSpec, 0, len(keys))
+	for _, key := range keys {
+		items = append(items, &agentcomposev2.NamedNetworkSpec{Name: key, Driver: networks[key].Driver})
+	}
+	return items
+}
+
+func ExposedPortSpecsToProto(ports []compose.ExposedPortSpec) []*agentcomposev2.ExposedPortSpec {
+	items := make([]*agentcomposev2.ExposedPortSpec, 0, len(ports))
+	for _, port := range ports {
+		items = append(items, &agentcomposev2.ExposedPortSpec{Target: uint32(port.Target), Protocol: port.Protocol})
+	}
+	return items
+}
+
+func PublishedPortSpecsToProto(ports []compose.PublishedPortSpec) []*agentcomposev2.PublishedPortSpec {
+	items := make([]*agentcomposev2.PublishedPortSpec, 0, len(ports))
+	for _, port := range ports {
+		items = append(items, &agentcomposev2.PublishedPortSpec{
+			HostIp:    port.HostIP,
+			Published: uint32(port.Published),
+			Target:    uint32(port.Target),
+			Protocol:  port.Protocol,
 		})
 	}
 	return items
@@ -526,7 +565,31 @@ func ProjectSpecYAMLShape(spec *agentcomposev2.ProjectSpec) (map[string]any, []*
 	if network := NetworkYAMLShape(spec.GetNetwork()); len(network) > 0 {
 		root["network"] = network
 	}
+	if networks, issues := ProjectNetworkYAMLMap(spec.GetNetworks()); len(issues) > 0 {
+		return nil, issues
+	} else if len(networks) > 0 {
+		root["networks"] = networks
+	}
 	return root, nil
+}
+
+func ProjectNetworkYAMLMap(networks []*agentcomposev2.NamedNetworkSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
+	values := make(map[string]any, len(networks))
+	for index, network := range networks {
+		name := strings.TrimSpace(network.GetName())
+		if name == "" {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("networks[%d].name", index), "network name is required")}
+		}
+		if _, exists := values[name]; exists {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("networks[%d].name", index), fmt.Sprintf("duplicate network %q", name))}
+		}
+		raw := map[string]any{}
+		if driver := strings.TrimSpace(network.GetDriver()); driver != "" {
+			raw["driver"] = driver
+		}
+		values[name] = raw
+	}
+	return values, nil
 }
 
 func ProjectVolumeYAMLMap(volumes []*agentcomposev2.ProjectVolumeSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
@@ -638,6 +701,19 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		if jupyter := JupyterYAMLShape(agent.GetJupyter()); len(jupyter) > 0 {
 			raw["jupyter"] = jupyter
 		}
+		if len(agent.GetNetworks()) > 0 {
+			raw["networks"] = append([]string(nil), agent.GetNetworks()...)
+		}
+		if expose, issues := ExposedPortYAMLList(fmt.Sprintf("agents[%d].expose", i), agent.GetExpose()); len(issues) > 0 {
+			return nil, issues
+		} else if len(expose) > 0 {
+			raw["expose"] = expose
+		}
+		if ports, issues := PublishedPortYAMLList(fmt.Sprintf("agents[%d].ports", i), agent.GetPorts()); len(issues) > 0 {
+			return nil, issues
+		} else if len(ports) > 0 {
+			raw["ports"] = ports
+		}
 		if volumes := VolumeMountYAMLList(agent.GetVolumes()); len(volumes) > 0 {
 			raw["volumes"] = volumes
 		}
@@ -649,6 +725,47 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		values[name] = raw
 	}
 	return values, nil
+}
+
+func ExposedPortYAMLList(path string, ports []*agentcomposev2.ExposedPortSpec) ([]string, []*agentcomposev2.ProjectValidationIssue) {
+	result := make([]string, 0, len(ports))
+	for index, port := range ports {
+		if port.GetTarget() == 0 || port.GetTarget() > 65535 {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("%s[%d].target", path, index), "target must be a valid TCP port")}
+		}
+		protocol := strings.ToLower(strings.TrimSpace(port.GetProtocol()))
+		if protocol != "" && protocol != "tcp" {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("%s[%d].protocol", path, index), "only TCP ports are supported")}
+		}
+		result = append(result, strconv.FormatUint(uint64(port.GetTarget()), 10))
+	}
+	return result, nil
+}
+
+func PublishedPortYAMLList(path string, ports []*agentcomposev2.PublishedPortSpec) ([]string, []*agentcomposev2.ProjectValidationIssue) {
+	result := make([]string, 0, len(ports))
+	for index, port := range ports {
+		if port.GetTarget() == 0 || port.GetTarget() > 65535 || port.GetPublished() > 65535 {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("%s[%d]", path, index), "published and target must be valid TCP ports")}
+		}
+		protocol := strings.ToLower(strings.TrimSpace(port.GetProtocol()))
+		if protocol != "" && protocol != "tcp" {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("%s[%d].protocol", path, index), "only TCP ports are supported")}
+		}
+		hostIP := strings.TrimSpace(port.GetHostIp())
+		target := strconv.FormatUint(uint64(port.GetTarget()), 10)
+		if port.GetPublished() == 0 {
+			result = append(result, target)
+			continue
+		}
+		published := strconv.FormatUint(uint64(port.GetPublished()), 10)
+		if hostIP == "" || hostIP == "127.0.0.1" {
+			result = append(result, published+":"+target)
+			continue
+		}
+		result = append(result, hostIP+":"+published+":"+target)
+	}
+	return result, nil
 }
 
 func MCPServerYAMLMap(path string, mcps []*agentcomposev2.MCPServerSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {

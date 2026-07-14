@@ -25,6 +25,12 @@ type orderedProjectSpec struct {
 	Volumes    []orderedVolumeSpec     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	Agents     []orderedAgentSpec      `yaml:"agents,omitempty" json:"agents,omitempty"`
 	Network    *NetworkSpec            `yaml:"network,omitempty" json:"network,omitempty"`
+	Networks   []orderedNetworkSpec    `yaml:"networks,omitempty" json:"networks,omitempty"`
+}
+
+type orderedNetworkSpec struct {
+	Name   string `yaml:"name" json:"name"`
+	Driver string `yaml:"driver" json:"driver"`
 }
 
 type orderedNamedWorkspace struct {
@@ -53,6 +59,9 @@ type orderedAgentSpec struct {
 	Workspace    *WorkspaceSpec              `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Scheduler    *NormalizedSchedulerSpec    `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
 	Jupyter      *JupyterSpec                `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
+	Networks     []string                    `yaml:"networks,omitempty" json:"networks,omitempty"`
+	Expose       []ExposedPortSpec           `yaml:"expose,omitempty" json:"expose,omitempty"`
+	Ports        []PublishedPortSpec         `yaml:"ports,omitempty" json:"ports,omitempty"`
 }
 
 type orderedMCPServerSpec struct {
@@ -146,6 +155,9 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 			Workspace:    cloneWorkspaceSpec(agent.Workspace),
 			Scheduler:    cloneNormalizedSchedulerSpec(agent.Scheduler),
 			Jupyter:      cloneJupyterSpec(agent.Jupyter),
+			Networks:     slices.Clone(agent.Networks),
+			Expose:       slices.Clone(agent.Expose),
+			Ports:        slices.Clone(agent.Ports),
 		})
 	}
 	slices.SortFunc(agents, func(a, b orderedAgentSpec) int {
@@ -159,6 +171,7 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 		Volumes:    orderedVolumes(s.Volumes),
 		Agents:     agents,
 		Network:    cloneNetworkSpecForOutput(s.Network),
+		Networks:   orderedNetworks(s.Networks),
 	}
 }
 
@@ -171,6 +184,7 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 		MCPs:       mcpMapFromOrdered(ordered.MCPs),
 		Volumes:    volumeMapFromOrdered(ordered.Volumes),
 		Network:    ordered.Network,
+		Networks:   networkMapFromOrdered(ordered.Networks),
 	}
 	for _, agent := range ordered.Agents {
 		cloned.Agents = append(cloned.Agents, NormalizedAgentSpec{
@@ -190,9 +204,39 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 			Workspace:    agent.Workspace,
 			Scheduler:    agent.Scheduler,
 			Jupyter:      agent.Jupyter,
+			Networks:     slices.Clone(agent.Networks),
+			Expose:       slices.Clone(agent.Expose),
+			Ports:        slices.Clone(agent.Ports),
 		})
 	}
 	return cloned
+}
+
+func orderedNetworks(values map[string]ProjectNetworkSpec) []orderedNetworkSpec {
+	if len(values) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	result := make([]orderedNetworkSpec, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, orderedNetworkSpec{Name: key, Driver: values[key].Driver})
+	}
+	return result
+}
+
+func networkMapFromOrdered(values []orderedNetworkSpec) map[string]ProjectNetworkSpec {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make(map[string]ProjectNetworkSpec, len(values))
+	for _, value := range values {
+		result[value.Name] = ProjectNetworkSpec{Driver: value.Driver}
+	}
+	return result
 }
 
 func orderedWorkspaces(values map[string]WorkspaceSpec) []orderedNamedWorkspace {

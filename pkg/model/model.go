@@ -171,6 +171,8 @@ type Sandbox struct {
 	WorkspaceProvisioning *SandboxWorkspaceProvisioning `json:"workspace_provisioning,omitempty"`
 	EnvItems              []SandboxEnvVar               `json:"env_items,omitempty"`
 	VolumeMounts          []SandboxVolumeMount          `json:"volume_mounts,omitempty"`
+	NetworkIntent         *SandboxNetworkIntent         `json:"network_intent,omitempty"`
+	NetworkState          *SandboxNetworkState          `json:"network_state,omitempty"`
 	RuntimeEnvItems       []SandboxEnvVar               `json:"-"`
 	ProviderEnvItems      []SandboxEnvVar               `json:"-"`
 }

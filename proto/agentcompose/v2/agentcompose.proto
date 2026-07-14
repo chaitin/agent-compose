@@ -537,6 +537,7 @@ message ProjectSpec {
   repeated ProjectVolumeSpec volumes = 6;
   repeated NamedWorkspaceSpec workspaces = 7;
   repeated MCPServerSpec mcps = 8;
+  repeated NamedNetworkSpec networks = 9;
 }
 
 message NamedWorkspaceSpec {
@@ -561,6 +562,9 @@ message AgentSpec {
   repeated MCPServerSpec mcps = 14;
   repeated SkillSpec skills = 15;
   AgentStatus status = 16;
+  repeated string networks = 17;
+  repeated ExposedPortSpec expose = 18;
+  repeated PublishedPortSpec ports = 19;
 }
 
 message MCPServerSpec {
@@ -623,6 +627,23 @@ message WorkspaceSpec {
 
 message NetworkSpec {
   string mode = 1;
+}
+
+message NamedNetworkSpec {
+  string name = 1;
+  string driver = 2;
+}
+
+message ExposedPortSpec {
+  uint32 target = 1;
+  string protocol = 2;
+}
+
+message PublishedPortSpec {
+  string host_ip = 1;
+  uint32 published = 2;
+  uint32 target = 3;
+  string protocol = 4;
 }
 
 message SchedulerSpec {
