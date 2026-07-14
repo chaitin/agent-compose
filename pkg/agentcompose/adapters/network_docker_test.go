@@ -19,57 +19,34 @@ import (
 	"agent-compose/pkg/networks"
 )
 
-func TestDockerNetworkInfrastructureDeployment(t *testing.T) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		t.Fatal(err)
-	}
-	tests := []struct {
-		name string
-		mode containerapi.NetworkMode
-		want string
-	}{
-		{name: "bridge container", mode: "bridge", want: networks.DeploymentContainerBridge},
-		{name: "host container", mode: "host", want: networks.DeploymentContainerHost},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fake := &fakeDockerNetworkAPI{container: containerapi.InspectResponse{ContainerJSONBase: &containerapi.ContainerJSONBase{
-				ID: hostname + "-full-id", HostConfig: &containerapi.HostConfig{NetworkMode: tt.mode},
-			}}}
-			infrastructure := &DockerNetworkInfrastructure{client: func() (dockerNetworkAPI, error) { return fake, nil }}
-			got, err := infrastructure.Deployment(context.Background())
-			if err != nil || got != tt.want {
-				t.Fatalf("Deployment() = %q, %v, want %q", got, err, tt.want)
-			}
-		})
+func TestDockerNetworkInfrastructureDefaultPublishAddress(t *testing.T) {
+	fake := &fakeDockerNetworkAPI{network: networkapi.Inspect{
+		Name: "bridge",
+		IPAM: networkapi.IPAM{Config: []networkapi.IPAMConfig{{Subnet: "172.17.0.0/16", Gateway: "172.17.0.1"}}},
+	}}
+	infrastructure := &DockerNetworkInfrastructure{client: func() (dockerNetworkAPI, error) { return fake, nil }}
+	got, err := infrastructure.DefaultPublishAddress(context.Background())
+	if err != nil || got != "172.17.0.1" {
+		t.Fatalf("DefaultPublishAddress() = %q, %v", got, err)
 	}
 }
 
-func TestDockerNetworkInfrastructureEnsureNetworkConnectsBridgeDaemon(t *testing.T) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestDockerNetworkInfrastructureEnsureNetworkReturnsRuntimeName(t *testing.T) {
 	fake := &fakeDockerNetworkAPI{
-		container: containerapi.InspectResponse{ContainerJSONBase: &containerapi.ContainerJSONBase{
-			ID: hostname + "-full-id", HostConfig: &containerapi.HostConfig{NetworkMode: "bridge"},
-		}},
 		network: networkapi.Inspect{
 			ID: "network-id", Name: "agent-compose-demo-frontend", Driver: "bridge",
-			IPAM:       networkapi.IPAM{Config: []networkapi.IPAMConfig{{Subnet: "10.254.1.0/24", Gateway: "10.254.1.1"}}},
-			Containers: map[string]networkapi.EndpointResource{},
+			IPAM: networkapi.IPAM{Config: []networkapi.IPAMConfig{{Subnet: "10.254.1.0/24", Gateway: "10.254.1.1"}}},
 		},
 	}
 	infrastructure := &DockerNetworkInfrastructure{client: func() (dockerNetworkAPI, error) { return fake, nil }}
-	access, err := infrastructure.EnsureNetwork(context.Background(), networks.NetworkRequest{
+	runtimeName, err := infrastructure.EnsureNetwork(context.Background(), networks.NetworkRequest{
 		ProjectID: "project-1", NetworkName: "frontend", ServiceCIDR: "10.254.0.0/16",
 	})
 	if err != nil {
 		t.Fatalf("EnsureNetwork() error = %v", err)
 	}
-	if fake.connects != 1 || access.RuntimeNetworkName != fake.network.Name || access.HostGateway != "10.254.1.1" || access.DaemonAddress != "10.254.1.2" {
-		t.Fatalf("access = %#v, connects = %d", access, fake.connects)
+	if runtimeName != fake.network.Name {
+		t.Fatalf("runtime network name = %q", runtimeName)
 	}
 }
 
@@ -105,9 +82,13 @@ func TestIntegrationDockerNetworkInfrastructurePublishesReachableGatewayPort(t *
 	request := networks.NetworkRequest{
 		ProjectID: "integration-" + fmt.Sprint(time.Now().UnixNano()), NetworkName: "frontend", ServiceCIDR: "10.254.0.0/16",
 	}
-	access, err := infrastructure.EnsureNetwork(ctx, request)
+	runtimeNetworkName, err := infrastructure.EnsureNetwork(ctx, request)
 	if err != nil {
 		t.Fatalf("EnsureNetwork() error = %v", err)
+	}
+	publishAddress, err := infrastructure.DefaultPublishAddress(ctx)
+	if err != nil {
+		t.Fatalf("DefaultPublishAddress() error = %v", err)
 	}
 	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -117,17 +98,17 @@ func TestIntegrationDockerNetworkInfrastructurePublishesReachableGatewayPort(t *
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cleanupCancel()
-		_ = dockerClient.NetworkRemove(cleanupCtx, access.RuntimeNetworkName)
+		_ = dockerClient.NetworkRemove(cleanupCtx, runtimeNetworkName)
 	})
 
 	guestPort := nat.Port("80/tcp")
 	target, err := dockerClient.ContainerCreate(ctx,
 		&containerapi.Config{Image: "nginx:alpine", ExposedPorts: nat.PortSet{guestPort: struct{}{}}},
 		&containerapi.HostConfig{
-			NetworkMode:  containerapi.NetworkMode(access.RuntimeNetworkName),
-			PortBindings: nat.PortMap{guestPort: []nat.PortBinding{{HostIP: access.HostGateway, HostPort: ""}}},
+			NetworkMode:  containerapi.NetworkMode(runtimeNetworkName),
+			PortBindings: nat.PortMap{guestPort: []nat.PortBinding{{HostIP: publishAddress, HostPort: ""}}},
 		},
-		&networkapi.NetworkingConfig{EndpointsConfig: map[string]*networkapi.EndpointSettings{access.RuntimeNetworkName: {}}}, nil, "",
+		&networkapi.NetworkingConfig{EndpointsConfig: map[string]*networkapi.EndpointSettings{runtimeNetworkName: {}}}, nil, "",
 	)
 	if err != nil {
 		t.Fatalf("create target container: %v", err)
@@ -146,14 +127,14 @@ func TestIntegrationDockerNetworkInfrastructurePublishesReachableGatewayPort(t *
 	if len(published) == 0 || strings.TrimSpace(published[0].HostPort) == "" {
 		t.Fatalf("target published ports = %#v", published)
 	}
-	url := fmt.Sprintf("http://%s:%s", access.HostGateway, published[0].HostPort)
+	url := fmt.Sprintf("http://%s:%s", publishAddress, published[0].HostPort)
 	source, err := dockerClient.ContainerCreate(ctx,
 		&containerapi.Config{
 			Image: "curlimages/curl:latest", Tty: true,
 			Cmd: []string{"-fsS", "--retry", "10", "--retry-connrefused", "--retry-delay", "1", url},
 		},
-		&containerapi.HostConfig{NetworkMode: containerapi.NetworkMode(access.RuntimeNetworkName)},
-		&networkapi.NetworkingConfig{EndpointsConfig: map[string]*networkapi.EndpointSettings{access.RuntimeNetworkName: {}}}, nil, "",
+		&containerapi.HostConfig{NetworkMode: containerapi.NetworkMode(runtimeNetworkName)},
+		&networkapi.NetworkingConfig{EndpointsConfig: map[string]*networkapi.EndpointSettings{runtimeNetworkName: {}}}, nil, "",
 	)
 	if err != nil {
 		t.Fatalf("create source container: %v", err)
@@ -192,16 +173,7 @@ func TestIntegrationDockerNetworkInfrastructurePublishesReachableGatewayPort(t *
 }
 
 type fakeDockerNetworkAPI struct {
-	container containerapi.InspectResponse
-	network   networkapi.Inspect
-	connects  int
-}
-
-func (f *fakeDockerNetworkAPI) ContainerInspect(context.Context, string) (containerapi.InspectResponse, error) {
-	if f.container.ContainerJSONBase == nil {
-		return containerapi.InspectResponse{}, errors.New("container unavailable")
-	}
-	return f.container, nil
+	network networkapi.Inspect
 }
 
 func (f *fakeDockerNetworkAPI) NetworkList(context.Context, networkapi.ListOptions) ([]networkapi.Summary, error) {
@@ -214,15 +186,6 @@ func (f *fakeDockerNetworkAPI) NetworkInspect(context.Context, string, networkap
 
 func (f *fakeDockerNetworkAPI) NetworkCreate(context.Context, string, networkapi.CreateOptions) (networkapi.CreateResponse, error) {
 	return networkapi.CreateResponse{}, errors.New("unexpected network create")
-}
-
-func (f *fakeDockerNetworkAPI) NetworkConnect(_ context.Context, _, containerID string, _ *networkapi.EndpointSettings) error {
-	f.connects++
-	if f.network.Containers == nil {
-		f.network.Containers = map[string]networkapi.EndpointResource{}
-	}
-	f.network.Containers[containerID] = networkapi.EndpointResource{IPv4Address: "10.254.1.2/24"}
-	return nil
 }
 
 func (f *fakeDockerNetworkAPI) Close() error { return nil }

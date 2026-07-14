@@ -55,19 +55,3 @@ func TestSandboxNetworkNamesDeduplicatesAndSorts(t *testing.T) {
 		t.Fatalf("sandboxNetworkNames() = %#v, %v", names, err)
 	}
 }
-
-func TestSandboxNetworkEgressPolicy(t *testing.T) {
-	allowed, serviceCIDR, enabled, err := sandboxNetworkEgressPolicy(&Sandbox{
-		Network: &SandboxNetwork{
-			ServiceCIDR:      "10.254.0.1/16",
-			Attachments:      []SandboxNetworkEndpoint{{Name: "frontend"}},
-			AllowedAddresses: []string{"10.254.2.2", "10.254.1.1", "10.254.2.2"},
-		},
-	})
-	if err != nil || !enabled || serviceCIDR != "10.254.0.0/16" || len(allowed) != 2 || allowed[0] != "10.254.1.1" {
-		t.Fatalf("sandboxNetworkEgressPolicy() = %#v, %q, %v, %v", allowed, serviceCIDR, enabled, err)
-	}
-	if _, _, _, err := sandboxNetworkEgressPolicy(&Sandbox{Network: &SandboxNetwork{ServiceCIDR: "bad", Attachments: []SandboxNetworkEndpoint{{Name: "frontend"}}}}); err == nil {
-		t.Fatal("sandboxNetworkEgressPolicy() accepted invalid service CIDR")
-	}
-}

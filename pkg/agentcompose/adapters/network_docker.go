@@ -6,12 +6,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net/netip"
-	"os"
 	"slices"
 	"strings"
 	"sync"
 
-	containerapi "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	networkapi "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -26,11 +24,9 @@ const (
 )
 
 type dockerNetworkAPI interface {
-	ContainerInspect(context.Context, string) (containerapi.InspectResponse, error)
 	NetworkList(context.Context, networkapi.ListOptions) ([]networkapi.Summary, error)
 	NetworkInspect(context.Context, string, networkapi.InspectOptions) (networkapi.Inspect, error)
 	NetworkCreate(context.Context, string, networkapi.CreateOptions) (networkapi.CreateResponse, error)
-	NetworkConnect(context.Context, string, string, *networkapi.EndpointSettings) error
 	Close() error
 }
 
@@ -53,79 +49,47 @@ func newDockerNetworkAPI() (dockerNetworkAPI, error) {
 	return dockerClient, nil
 }
 
-func (i *DockerNetworkInfrastructure) Deployment(ctx context.Context) (string, error) {
+func (i *DockerNetworkInfrastructure) DefaultPublishAddress(ctx context.Context) (string, error) {
 	dockerClient, err := i.openClient()
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = dockerClient.Close() }()
-	self, ok, err := inspectDaemonContainer(ctx, dockerClient)
+	network, err := dockerClient.NetworkInspect(ctx, "bridge", networkapi.InspectOptions{})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("inspect Docker default bridge network: %w", err)
 	}
-	if !ok {
-		return networks.DeploymentNative, nil
-	}
-	if self.HostConfig != nil && self.HostConfig.NetworkMode.IsHost() {
-		return networks.DeploymentContainerHost, nil
-	}
-	return networks.DeploymentContainerBridge, nil
+	return ipv4Gateway(network, "Docker default bridge")
 }
 
-func (i *DockerNetworkInfrastructure) EnsureNetwork(ctx context.Context, request networks.NetworkRequest) (networks.NetworkAccess, error) {
+func (i *DockerNetworkInfrastructure) EnsureNetwork(ctx context.Context, request networks.NetworkRequest) (string, error) {
 	if strings.TrimSpace(request.ProjectID) == "" {
-		return networks.NetworkAccess{}, fmt.Errorf("project ID is required")
+		return "", fmt.Errorf("project ID is required")
 	}
 	if strings.TrimSpace(request.NetworkName) == "" {
-		return networks.NetworkAccess{}, fmt.Errorf("network name is required")
+		return "", fmt.Errorf("network name is required")
 	}
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	dockerClient, err := i.openClient()
 	if err != nil {
-		return networks.NetworkAccess{}, err
+		return "", err
 	}
 	defer func() { _ = dockerClient.Close() }()
 	network, found, err := findAgentComposeNetwork(ctx, dockerClient, request)
 	if err != nil {
-		return networks.NetworkAccess{}, err
+		return "", err
 	}
 	if !found {
 		network, err = createAgentComposeNetwork(ctx, dockerClient, request)
 		if err != nil {
-			return networks.NetworkAccess{}, err
+			return "", err
 		}
 	}
-	access, err := networkAccess(network)
-	if err != nil {
-		return networks.NetworkAccess{}, err
+	if strings.TrimSpace(network.Name) == "" {
+		return "", fmt.Errorf("project network has no name")
 	}
-	self, containerized, err := inspectDaemonContainer(ctx, dockerClient)
-	if err != nil {
-		return networks.NetworkAccess{}, err
-	}
-	if !containerized || (self.HostConfig != nil && self.HostConfig.NetworkMode.IsHost()) {
-		return access, nil
-	}
-	if _, connected := network.Containers[self.ID]; !connected {
-		if err := dockerClient.NetworkConnect(ctx, network.ID, self.ID, nil); err != nil {
-			return networks.NetworkAccess{}, fmt.Errorf("connect daemon container %s to network %s: %w", self.ID, network.Name, err)
-		}
-		network, err = dockerClient.NetworkInspect(ctx, network.ID, networkapi.InspectOptions{})
-		if err != nil {
-			return networks.NetworkAccess{}, fmt.Errorf("inspect network %s after connecting daemon: %w", network.Name, err)
-		}
-	}
-	endpoint, ok := network.Containers[self.ID]
-	if !ok {
-		return networks.NetworkAccess{}, fmt.Errorf("network %s has no daemon container endpoint", network.Name)
-	}
-	daemonAddress, err := addressWithoutPrefix(endpoint.IPv4Address)
-	if err != nil {
-		return networks.NetworkAccess{}, fmt.Errorf("network %s daemon endpoint: %w", network.Name, err)
-	}
-	access.DaemonAddress = daemonAddress
-	return access, nil
+	return network.Name, nil
 }
 
 func (i *DockerNetworkInfrastructure) openClient() (dockerNetworkAPI, error) {
@@ -133,24 +97,6 @@ func (i *DockerNetworkInfrastructure) openClient() (dockerNetworkAPI, error) {
 		return nil, fmt.Errorf("docker network client is required")
 	}
 	return i.client()
-}
-
-func inspectDaemonContainer(ctx context.Context, dockerClient dockerNetworkAPI) (containerapi.InspectResponse, bool, error) {
-	hostname, err := os.Hostname()
-	if err != nil || strings.TrimSpace(hostname) == "" {
-		return containerapi.InspectResponse{}, false, nil
-	}
-	info, err := dockerClient.ContainerInspect(ctx, hostname)
-	if client.IsErrNotFound(err) {
-		return containerapi.InspectResponse{}, false, nil
-	}
-	if err != nil {
-		return containerapi.InspectResponse{}, false, fmt.Errorf("inspect daemon container %q: %w", hostname, err)
-	}
-	if !strings.HasPrefix(info.ID, hostname) {
-		return containerapi.InspectResponse{}, false, nil
-	}
-	return info, true, nil
 }
 
 func findAgentComposeNetwork(ctx context.Context, dockerClient dockerNetworkAPI, request networks.NetworkRequest) (networkapi.Inspect, bool, error) {
@@ -218,15 +164,15 @@ func createAgentComposeNetwork(ctx context.Context, dockerClient dockerNetworkAP
 	return networkapi.Inspect{}, fmt.Errorf("service address pool %s has no available /24 subnet", servicePrefix)
 }
 
-func networkAccess(network networkapi.Inspect) (networks.NetworkAccess, error) {
+func ipv4Gateway(network networkapi.Inspect, description string) (string, error) {
 	if len(network.IPAM.Config) != 1 {
-		return networks.NetworkAccess{}, fmt.Errorf("project network %s must have exactly one IPv4 subnet", network.Name)
+		return "", fmt.Errorf("%s network must have exactly one IPv4 subnet", description)
 	}
 	gateway := strings.TrimSpace(network.IPAM.Config[0].Gateway)
 	if addr, err := netip.ParseAddr(gateway); err != nil || !addr.Is4() {
-		return networks.NetworkAccess{}, fmt.Errorf("project network %s has invalid IPv4 gateway %q", network.Name, gateway)
+		return "", fmt.Errorf("%s network has invalid IPv4 gateway %q", description, gateway)
 	}
-	return networks.NetworkAccess{RuntimeNetworkName: network.Name, HostGateway: gateway}, nil
+	return gateway, nil
 }
 
 func parseServicePrefix(value string) (netip.Prefix, error) {
@@ -294,12 +240,4 @@ func sanitizeNetworkName(value string) string {
 		return "default"
 	}
 	return result.String()
-}
-
-func addressWithoutPrefix(value string) (string, error) {
-	prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
-	if err != nil || !prefix.Addr().Is4() {
-		return "", fmt.Errorf("invalid IPv4 endpoint address %q", value)
-	}
-	return prefix.Addr().String(), nil
 }

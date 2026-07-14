@@ -908,23 +908,17 @@ message Sandbox {
 }
 
 message SandboxNetworkState {
-  string deployment = 1;
-  string service_cidr = 2;
-  repeated SandboxNetworkEndpoint attachments = 3;
-  repeated SandboxPortBinding bindings = 4;
-  repeated string allowed_addresses = 5;
-  string isolation = 6;
+  repeated SandboxNetworkEndpoint attachments = 1;
+  repeated SandboxPortBinding bindings = 2;
 }
 
 message SandboxNetworkEndpoint {
   string name = 1;
   string runtime_network_name = 2;
-  string host_gateway = 3;
-  string daemon_address = 4;
 }
 
 message SandboxPortBinding {
-  string network = 1;
+  repeated string networks = 1;
   string host_ip = 2;
   uint32 host_port = 3;
   uint32 guest_port = 4;

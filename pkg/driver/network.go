@@ -79,30 +79,3 @@ func sandboxNetworkNames(sandbox *Sandbox) ([]string, error) {
 	slices.Sort(result)
 	return result, nil
 }
-
-func sandboxNetworkEgressPolicy(sandbox *Sandbox) ([]string, string, bool, error) {
-	if sandbox == nil || sandbox.Network == nil || len(sandbox.Network.Attachments) == 0 {
-		return nil, "", false, nil
-	}
-	serviceCIDR := strings.TrimSpace(sandbox.Network.ServiceCIDR)
-	prefix, err := netip.ParsePrefix(serviceCIDR)
-	if err != nil || !prefix.Addr().Is4() {
-		return nil, "", false, fmt.Errorf("sandbox network has invalid IPv4 service CIDR %q", sandbox.Network.ServiceCIDR)
-	}
-	allowed := make([]string, 0, len(sandbox.Network.AllowedAddresses))
-	for i, value := range sandbox.Network.AllowedAddresses {
-		address := strings.TrimSpace(value)
-		addr, err := netip.ParseAddr(address)
-		if err != nil || !addr.Is4() {
-			return nil, "", false, fmt.Errorf("sandbox network allowed address %d is not a valid IPv4 address: %q", i, value)
-		}
-		if !slices.Contains(allowed, address) {
-			allowed = append(allowed, address)
-		}
-	}
-	if len(allowed) == 0 {
-		return nil, "", false, fmt.Errorf("sandbox network has attachments but no allowed service addresses")
-	}
-	slices.Sort(allowed)
-	return allowed, prefix.Masked().String(), true, nil
-}

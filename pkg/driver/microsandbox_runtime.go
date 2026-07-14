@@ -983,28 +983,6 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	// private/internal IPs (e.g. an internal container registry).
 	rebindDisabled := false
 	network := microsandbox.NetworkPolicy.AllowAll()
-	allowedAddresses, serviceCIDR, policyEnabled, err := sandboxNetworkEgressPolicy(session)
-	if err != nil {
-		return nil, err
-	}
-	if policyEnabled {
-		network = &microsandbox.NetworkConfig{
-			DefaultEgress:  microsandbox.PolicyActionAllow,
-			DefaultIngress: microsandbox.PolicyActionAllow,
-		}
-		for _, address := range allowedAddresses {
-			network.Rules = append(network.Rules, microsandbox.PolicyRule{
-				Action:      microsandbox.PolicyActionAllow,
-				Direction:   microsandbox.PolicyDirectionEgress,
-				Destination: address,
-			})
-		}
-		network.Rules = append(network.Rules, microsandbox.PolicyRule{
-			Action:      microsandbox.PolicyActionDeny,
-			Direction:   microsandbox.PolicyDirectionEgress,
-			Destination: serviceCIDR,
-		})
-	}
 	network.DNS = &microsandbox.DNSConfig{RebindProtection: &rebindDisabled}
 	options := []microsandbox.SandboxOption{
 		microsandbox.WithImage(imageRef),

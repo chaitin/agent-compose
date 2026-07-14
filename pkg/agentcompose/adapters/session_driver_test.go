@@ -36,13 +36,11 @@ func (p *fakeSandboxNetworkPreparer) PrepareSandbox(_ context.Context, sandbox *
 		return p.err
 	}
 	sandbox.NetworkState = &domain.SandboxNetworkState{
-		Deployment:  "native",
-		ServiceCIDR: "10.254.0.0/16",
 		Attachments: []domain.SandboxNetworkEndpoint{{
-			Name: "frontend", RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1",
+			Name: "frontend", RuntimeNetworkName: "project_frontend",
 		}},
 		Bindings: []domain.SandboxPortBinding{{
-			Network: "frontend", HostIP: "10.254.1.1", HostPort: 32000, GuestPort: 8080,
+			Networks: []string{"frontend"}, HostIP: "10.254.1.1", HostPort: 32000, GuestPort: 8080,
 			Protocol: "tcp", Visibility: "internal", Publisher: "direct",
 		}},
 	}

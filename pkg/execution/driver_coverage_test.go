@@ -25,11 +25,8 @@ func TestDriverConversionWorkflows(t *testing.T) {
 		EnvItems:        []domain.SandboxEnvVar{{Name: "A", Value: "B", Secret: true}},
 		RuntimeEnvItems: []domain.SandboxEnvVar{{Name: "R", Value: "V"}},
 		NetworkState: &domain.SandboxNetworkState{
-			Deployment:       "native",
-			ServiceCIDR:      "10.254.0.0/16",
-			Attachments:      []domain.SandboxNetworkEndpoint{{Name: "frontend", RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1"}},
-			Bindings:         []domain.SandboxPortBinding{{Network: "frontend", HostIP: "10.254.1.1", HostPort: 32000, GuestPort: 8080, Protocol: "tcp", Visibility: "internal", Publisher: "docker"}},
-			AllowedAddresses: []string{"10.254.1.1"},
+			Attachments: []domain.SandboxNetworkEndpoint{{Name: "frontend", RuntimeNetworkName: "project_frontend"}},
+			Bindings:    []domain.SandboxPortBinding{{Networks: []string{"frontend"}, HostIP: "10.254.1.1", HostPort: 32000, GuestPort: 8080, Protocol: "tcp", Visibility: "internal", Publisher: "docker"}},
 		},
 	}
 	driverSession := ToDriverSandbox(session)

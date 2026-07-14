@@ -2,7 +2,6 @@ package adapters
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,7 +12,6 @@ import (
 	"agent-compose/pkg/llms"
 	"agent-compose/pkg/llms/runtimefacade"
 	domain "agent-compose/pkg/model"
-	"agent-compose/pkg/networks"
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
@@ -79,9 +77,6 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 			return err
 		}
 		if err := d.NetworkPreparer.PrepareSandbox(ctx, session); err != nil {
-			if errors.Is(err, networks.ErrUnsupported) {
-				err = domain.ClassifyError(domain.ErrUnsupported, "", err)
-			}
 			vmState.LastError = err.Error()
 			_ = d.Store.SaveVMState(session.Summary.ID, vmState)
 			return err

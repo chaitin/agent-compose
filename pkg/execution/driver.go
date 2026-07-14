@@ -32,23 +32,16 @@ func ToDriverSandbox(session *domain.Sandbox) *driverpkg.Sandbox {
 	}
 	var network *driverpkg.SandboxNetwork
 	if session.NetworkState != nil {
-		network = &driverpkg.SandboxNetwork{
-			Deployment:       session.NetworkState.Deployment,
-			ServiceCIDR:      session.NetworkState.ServiceCIDR,
-			Isolation:        session.NetworkState.Isolation,
-			AllowedAddresses: append([]string(nil), session.NetworkState.AllowedAddresses...),
-		}
+		network = &driverpkg.SandboxNetwork{}
 		for _, attachment := range session.NetworkState.Attachments {
 			network.Attachments = append(network.Attachments, driverpkg.SandboxNetworkEndpoint{
 				Name:               attachment.Name,
 				RuntimeNetworkName: attachment.RuntimeNetworkName,
-				HostGateway:        attachment.HostGateway,
-				DaemonAddress:      attachment.DaemonAddress,
 			})
 		}
 		for _, binding := range session.NetworkState.Bindings {
 			network.Bindings = append(network.Bindings, driverpkg.SandboxPortBinding{
-				Network:    binding.Network,
+				Networks:   append([]string(nil), binding.Networks...),
 				HostIP:     binding.HostIP,
 				HostPort:   binding.HostPort,
 				GuestPort:  binding.GuestPort,

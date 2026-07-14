@@ -391,23 +391,16 @@ func SandboxNetworkStateToProto(state *domain.SandboxNetworkState) *agentcompose
 	if state == nil {
 		return nil
 	}
-	result := &agentcomposev2.SandboxNetworkState{
-		Deployment:       state.Deployment,
-		ServiceCidr:      state.ServiceCIDR,
-		Isolation:        state.Isolation,
-		AllowedAddresses: append([]string(nil), state.AllowedAddresses...),
-	}
+	result := &agentcomposev2.SandboxNetworkState{}
 	for _, attachment := range state.Attachments {
 		result.Attachments = append(result.Attachments, &agentcomposev2.SandboxNetworkEndpoint{
 			Name:               attachment.Name,
 			RuntimeNetworkName: attachment.RuntimeNetworkName,
-			HostGateway:        attachment.HostGateway,
-			DaemonAddress:      attachment.DaemonAddress,
 		})
 	}
 	for _, binding := range state.Bindings {
 		result.Bindings = append(result.Bindings, &agentcomposev2.SandboxPortBinding{
-			Network:    binding.Network,
+			Networks:   append([]string(nil), binding.Networks...),
 			HostIp:     binding.HostIP,
 			HostPort:   uint32(binding.HostPort),
 			GuestPort:  uint32(binding.GuestPort),

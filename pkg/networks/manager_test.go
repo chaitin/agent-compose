@@ -3,88 +3,99 @@ package networks
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	driverpkg "agent-compose/pkg/driver"
 	domain "agent-compose/pkg/model"
 )
 
-func TestManagerPrepareSandboxCompilesRuntimeNeutralPlan(t *testing.T) {
-	infra := &infrastructureStub{
-		deployment: DeploymentContainerBridge,
-		access: map[string]NetworkAccess{
-			"frontend": {RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1", DaemonAddress: "10.254.1.2"},
-		},
+func TestManagerUsesConfiguredRuntimePublishAddress(t *testing.T) {
+	infra := &infrastructureStub{networks: map[string]string{"frontend": "project_frontend"}}
+	manager := &Manager{
+		Infrastructure:        infra,
+		Ports:                 &portAllocatorStub{next: 32000},
+		DockerPublishAddress:  "172.23.0.1",
+		RuntimePublishAddress: "172.23.0.2",
 	}
-	allocator := &portAllocatorStub{next: 32000}
-	manager := &Manager{Infrastructure: infra, Ports: allocator}
 	sandbox := networkTestSandbox(driverpkg.RuntimeDriverMicrosandbox)
 
 	if err := manager.PrepareSandbox(context.Background(), sandbox); err != nil {
 		t.Fatalf("PrepareSandbox() error = %v", err)
 	}
-	if sandbox.NetworkState.Deployment != DeploymentContainerBridge {
-		t.Fatalf("deployment = %q", sandbox.NetworkState.Deployment)
-	}
-	if len(sandbox.NetworkState.Bindings) != 1 {
-		t.Fatalf("bindings = %#v", sandbox.NetworkState.Bindings)
+	if infra.defaultCalls != 0 {
+		t.Fatalf("DefaultPublishAddress() calls = %d", infra.defaultCalls)
 	}
 	binding := sandbox.NetworkState.Bindings[0]
-	if binding.HostIP != "10.254.1.2" || binding.HostPort != 32000 || binding.GuestPort != 8080 || binding.Publisher != PublisherDirect {
+	if binding.HostIP != "172.23.0.2" || binding.HostPort != 32000 || binding.GuestPort != 8080 || binding.Publisher != PublisherDirect {
 		t.Fatalf("binding = %#v", binding)
 	}
-	if got := sandbox.NetworkState.AllowedAddresses; len(got) != 2 || got[0] != "10.254.1.1" || got[1] != "10.254.1.2" {
-		t.Fatalf("allowed addresses = %#v", got)
+	if !slices.Equal(binding.Networks, []string{"frontend"}) {
+		t.Fatalf("binding networks = %#v", binding.Networks)
 	}
 }
 
-func TestManagerPrepareSandboxUsesGatewayForDocker(t *testing.T) {
+func TestManagerUsesConfiguredDockerPublishAddress(t *testing.T) {
 	manager := &Manager{
-		Infrastructure: &infrastructureStub{
-			deployment: DeploymentContainerBridge,
-			access: map[string]NetworkAccess{
-				"frontend": {RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1", DaemonAddress: "10.254.1.2"},
-			},
-		},
-		Ports: &portAllocatorStub{next: 32000},
+		Infrastructure:        &infrastructureStub{networks: map[string]string{"frontend": "project_frontend"}},
+		Ports:                 &portAllocatorStub{next: 32000},
+		DockerPublishAddress:  "172.23.0.1",
+		RuntimePublishAddress: "172.23.0.2",
 	}
 	sandbox := networkTestSandbox(driverpkg.RuntimeDriverDocker)
-	sandbox.NetworkIntent.Ports = []domain.SandboxPublishedPort{{HostIP: "127.0.0.1", Published: 19000, Target: 9000, Protocol: "tcp"}}
+	sandbox.NetworkIntent.Ports = []domain.SandboxPublishedPort{{HostIP: "192.0.2.10", Published: 19000, Target: 9000, Protocol: "tcp"}}
 
 	if err := manager.PrepareSandbox(context.Background(), sandbox); err != nil {
 		t.Fatalf("PrepareSandbox() error = %v", err)
 	}
 	internal := bindingWithVisibility(t, sandbox.NetworkState.Bindings, VisibilityInternal)
-	if got := internal.HostIP; got != "10.254.1.1" {
-		t.Fatalf("internal host IP = %q", got)
+	if internal.HostIP != "172.23.0.1" || internal.Publisher != PublisherDocker {
+		t.Fatalf("internal binding = %#v", internal)
 	}
 	external := bindingWithVisibility(t, sandbox.NetworkState.Bindings, VisibilityExternal)
-	if got := external; got.HostIP != "127.0.0.1" || got.HostPort != 19000 || got.Publisher != PublisherDocker {
-		t.Fatalf("external binding = %#v", got)
+	if external.HostIP != "192.0.2.10" || external.HostPort != 19000 || external.Publisher != PublisherDocker {
+		t.Fatalf("external binding = %#v", external)
 	}
 }
 
-func TestManagerRejectsBridgeVMExternalPorts(t *testing.T) {
-	manager := &Manager{
-		Infrastructure: &infrastructureStub{deployment: DeploymentContainerBridge},
-		Ports:          &portAllocatorStub{next: 32000},
+func TestManagerFallsBackToDefaultBridgeGateway(t *testing.T) {
+	infra := &infrastructureStub{
+		defaultAddress: "172.17.0.1",
+		networks:       map[string]string{"frontend": "project_frontend"},
 	}
-	sandbox := networkTestSandbox(driverpkg.RuntimeDriverBoxlite)
-	sandbox.NetworkIntent.Attachments = nil
-	sandbox.NetworkIntent.Expose = nil
-	sandbox.NetworkIntent.Ports = []domain.SandboxPublishedPort{{HostIP: "127.0.0.1", Published: 19000, Target: 9000, Protocol: "tcp"}}
+	manager := &Manager{Infrastructure: infra, Ports: &portAllocatorStub{next: 32000}}
 
-	err := manager.PrepareSandbox(context.Background(), sandbox)
-	if !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("PrepareSandbox() error = %v, want unsupported", err)
+	if err := manager.PrepareSandbox(context.Background(), networkTestSandbox(driverpkg.RuntimeDriverBoxlite)); err != nil {
+		t.Fatalf("PrepareSandbox() error = %v", err)
 	}
-	if manager.Ports.(*portAllocatorStub).calls != 0 {
-		t.Fatalf("port allocator called before unsupported result")
+	if infra.defaultCalls != 1 {
+		t.Fatalf("DefaultPublishAddress() calls = %d", infra.defaultCalls)
 	}
 }
 
-func TestManagerAllowsFixedExternalPortWithoutAllocator(t *testing.T) {
-	manager := &Manager{Infrastructure: &infrastructureStub{deployment: DeploymentNative}}
+func TestManagerCreatesOneListenerForMultipleNetworks(t *testing.T) {
+	infra := &infrastructureStub{networks: map[string]string{
+		"frontend": "project_frontend",
+		"backend":  "project_backend",
+	}}
+	manager := &Manager{Infrastructure: infra, Ports: &portAllocatorStub{next: 32000}, DockerPublishAddress: "172.17.0.1"}
+	sandbox := networkTestSandbox(driverpkg.RuntimeDriverDocker)
+	sandbox.NetworkIntent.Attachments = append(sandbox.NetworkIntent.Attachments,
+		domain.SandboxNetworkAttachment{Name: "backend", Driver: "port_mapping"})
+
+	if err := manager.PrepareSandbox(context.Background(), sandbox); err != nil {
+		t.Fatalf("PrepareSandbox() error = %v", err)
+	}
+	if len(sandbox.NetworkState.Attachments) != 2 || len(sandbox.NetworkState.Bindings) != 1 {
+		t.Fatalf("network state = %#v", sandbox.NetworkState)
+	}
+	if !slices.Equal(sandbox.NetworkState.Bindings[0].Networks, []string{"frontend", "backend"}) {
+		t.Fatalf("binding networks = %#v", sandbox.NetworkState.Bindings[0].Networks)
+	}
+}
+
+func TestManagerAllowsFixedExternalPortWithoutInfrastructureOrAllocator(t *testing.T) {
+	manager := &Manager{}
 	sandbox := networkTestSandbox(driverpkg.RuntimeDriverBoxlite)
 	sandbox.NetworkIntent.Attachments = nil
 	sandbox.NetworkIntent.Expose = nil
@@ -99,34 +110,25 @@ func TestManagerAllowsFixedExternalPortWithoutAllocator(t *testing.T) {
 	}
 }
 
-func TestManagerRequiresInfrastructureForNetworkIntent(t *testing.T) {
-	sandbox := networkTestSandbox(driverpkg.RuntimeDriverDocker)
-	err := (&Manager{}).PrepareSandbox(context.Background(), sandbox)
-	if err == nil || err.Error() != "network infrastructure is required" {
-		t.Fatalf("PrepareSandbox() error = %v", err)
-	}
-}
-
-func TestManagerRejectsUnknownDeployment(t *testing.T) {
+func TestManagerReturnsDefaultPublishAddressError(t *testing.T) {
 	manager := &Manager{
-		Infrastructure: &infrastructureStub{deployment: "unknown"},
-		Ports:          &portAllocatorStub{next: 32000},
+		Infrastructure: &infrastructureStub{
+			defaultErr: errors.New("Docker unavailable"),
+			networks:   map[string]string{"frontend": "project_frontend"},
+		},
+		Ports: &portAllocatorStub{next: 32000},
 	}
 	err := manager.PrepareSandbox(context.Background(), networkTestSandbox(driverpkg.RuntimeDriverDocker))
-	if err == nil || err.Error() != `unknown daemon network deployment "unknown"` {
+	if err == nil || err.Error() != "resolve default network publish address: Docker unavailable" {
 		t.Fatalf("PrepareSandbox() error = %v", err)
 	}
 }
 
 func TestManagerReturnsPortAllocationError(t *testing.T) {
 	manager := &Manager{
-		Infrastructure: &infrastructureStub{
-			deployment: DeploymentNative,
-			access: map[string]NetworkAccess{
-				"frontend": {RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1"},
-			},
-		},
-		Ports: &portAllocatorStub{err: errors.New("no ports")},
+		Infrastructure:       &infrastructureStub{networks: map[string]string{"frontend": "project_frontend"}},
+		Ports:                &portAllocatorStub{err: errors.New("no ports")},
+		DockerPublishAddress: "172.17.0.1",
 	}
 	err := manager.PrepareSandbox(context.Background(), networkTestSandbox(driverpkg.RuntimeDriverDocker))
 	if err == nil || err.Error() != "allocate internal host port: no ports" {
@@ -136,13 +138,9 @@ func TestManagerReturnsPortAllocationError(t *testing.T) {
 
 func TestManagerPreservesAllocatedPortsAcrossResume(t *testing.T) {
 	manager := &Manager{
-		Infrastructure: &infrastructureStub{
-			deployment: DeploymentNative,
-			access: map[string]NetworkAccess{
-				"frontend": {RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1"},
-			},
-		},
-		Ports: &portAllocatorStub{next: 32000},
+		Infrastructure:       &infrastructureStub{networks: map[string]string{"frontend": "project_frontend"}},
+		Ports:                &portAllocatorStub{next: 32000},
+		DockerPublishAddress: "172.17.0.1",
 	}
 	sandbox := networkTestSandbox(driverpkg.RuntimeDriverDocker)
 	if err := manager.PrepareSandbox(context.Background(), sandbox); err != nil {
@@ -157,67 +155,9 @@ func TestManagerPreservesAllocatedPortsAcrossResume(t *testing.T) {
 	}
 }
 
-func TestManagerRecordsIsolationPolicyResult(t *testing.T) {
-	manager := &Manager{
-		Infrastructure: &infrastructureStub{
-			deployment: DeploymentNative,
-			access: map[string]NetworkAccess{
-				"frontend": {RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1"},
-			},
-		},
-		Ports:     &portAllocatorStub{next: 32000},
-		Isolation: isolationPolicyStub{status: IsolationEnforced},
-	}
-	sandbox := networkTestSandbox(driverpkg.RuntimeDriverMicrosandbox)
-	if err := manager.PrepareSandbox(context.Background(), sandbox); err != nil {
-		t.Fatalf("PrepareSandbox() error = %v", err)
-	}
-	if sandbox.NetworkState.Isolation != IsolationEnforced {
-		t.Fatalf("isolation = %q", sandbox.NetworkState.Isolation)
-	}
-}
-
-func TestManagerDoesNotPersistPlanWhenIsolationFails(t *testing.T) {
-	manager := &Manager{
-		Infrastructure: &infrastructureStub{
-			deployment: DeploymentNative,
-			access: map[string]NetworkAccess{
-				"frontend": {RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1"},
-			},
-		},
-		Ports:     &portAllocatorStub{next: 32000},
-		Isolation: isolationPolicyStub{err: ErrUnsupported},
-	}
-	sandbox := networkTestSandbox(driverpkg.RuntimeDriverDocker)
-	if err := manager.PrepareSandbox(context.Background(), sandbox); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("PrepareSandbox() error = %v", err)
-	}
-	if sandbox.NetworkState != nil {
-		t.Fatalf("failed plan was persisted in memory: %#v", sandbox.NetworkState)
-	}
-}
-
-func TestManagerRunsIsolationPreflightBeforeInfrastructureSideEffects(t *testing.T) {
-	infra := &infrastructureStub{
-		deployment: DeploymentNative,
-		access: map[string]NetworkAccess{
-			"frontend": {RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1"},
-		},
-	}
-	ports := &portAllocatorStub{next: 32000}
-	manager := &Manager{Infrastructure: infra, Ports: ports, Isolation: isolationPreflightStub{err: ErrUnsupported}}
-	err := manager.PrepareSandbox(context.Background(), networkTestSandbox(driverpkg.RuntimeDriverDocker))
-	if !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("PrepareSandbox() error = %v", err)
-	}
-	if infra.ensureCalls != 0 || ports.calls != 0 {
-		t.Fatalf("preflight side effects: ensure calls = %d, allocator calls = %d", infra.ensureCalls, ports.calls)
-	}
-}
-
-func networkTestSandbox(driver string) *domain.Sandbox {
+func networkTestSandbox(runtimeDriver string) *domain.Sandbox {
 	return &domain.Sandbox{
-		Summary: domain.SandboxSummary{ID: "sandbox-1", Driver: driver},
+		Summary: domain.SandboxSummary{ID: "sandbox-1", Driver: runtimeDriver},
 		NetworkIntent: &domain.SandboxNetworkIntent{
 			ProjectID:   "project-1",
 			ProjectName: "demo",
@@ -240,49 +180,29 @@ func bindingWithVisibility(t *testing.T, bindings []domain.SandboxPortBinding, v
 }
 
 type infrastructureStub struct {
-	deployment  string
-	access      map[string]NetworkAccess
-	ensureCalls int
+	defaultAddress string
+	defaultErr     error
+	defaultCalls   int
+	networks       map[string]string
 }
 
-func (s *infrastructureStub) Deployment(context.Context) (string, error) {
-	return s.deployment, nil
+func (s *infrastructureStub) DefaultPublishAddress(context.Context) (string, error) {
+	s.defaultCalls++
+	return s.defaultAddress, s.defaultErr
 }
 
-func (s *infrastructureStub) EnsureNetwork(_ context.Context, request NetworkRequest) (NetworkAccess, error) {
-	s.ensureCalls++
-	access, ok := s.access[request.NetworkName]
+func (s *infrastructureStub) EnsureNetwork(_ context.Context, request NetworkRequest) (string, error) {
+	name, ok := s.networks[request.NetworkName]
 	if !ok {
-		return NetworkAccess{}, errors.New("network not found")
+		return "", errors.New("network not found")
 	}
-	return access, nil
+	return name, nil
 }
 
 type portAllocatorStub struct {
 	next  int
 	err   error
 	calls int
-}
-
-type isolationPolicyStub struct {
-	status string
-	err    error
-}
-
-type isolationPreflightStub struct {
-	err error
-}
-
-func (s isolationPreflightStub) Validate(context.Context, *domain.Sandbox) error {
-	return s.err
-}
-
-func (s isolationPreflightStub) Evaluate(context.Context, *domain.Sandbox, *domain.SandboxNetworkState) (string, error) {
-	return IsolationEnforced, nil
-}
-
-func (s isolationPolicyStub) Evaluate(context.Context, *domain.Sandbox, *domain.SandboxNetworkState) (string, error) {
-	return s.status, s.err
 }
 
 func (s *portAllocatorStub) AllocateHostPort(context.Context, string) (int, error) {

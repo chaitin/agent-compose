@@ -27,29 +27,23 @@ type SandboxPublishedPort struct {
 }
 
 type SandboxNetworkState struct {
-	Deployment       string                   `json:"deployment"`
-	ServiceCIDR      string                   `json:"service_cidr,omitempty"`
-	Isolation        string                   `json:"isolation,omitempty"`
-	Attachments      []SandboxNetworkEndpoint `json:"attachments,omitempty"`
-	Bindings         []SandboxPortBinding     `json:"bindings,omitempty"`
-	AllowedAddresses []string                 `json:"allowed_addresses,omitempty"`
+	Attachments []SandboxNetworkEndpoint `json:"attachments,omitempty"`
+	Bindings    []SandboxPortBinding     `json:"bindings,omitempty"`
 }
 
 type SandboxNetworkEndpoint struct {
 	Name               string `json:"name"`
 	RuntimeNetworkName string `json:"runtime_network_name"`
-	HostGateway        string `json:"host_gateway"`
-	DaemonAddress      string `json:"daemon_address,omitempty"`
 }
 
 type SandboxPortBinding struct {
-	Network    string `json:"network,omitempty"`
-	HostIP     string `json:"host_ip"`
-	HostPort   int    `json:"host_port"`
-	GuestPort  int    `json:"guest_port"`
-	Protocol   string `json:"protocol"`
-	Visibility string `json:"visibility"`
-	Publisher  string `json:"publisher"`
+	Networks   []string `json:"networks,omitempty"`
+	HostIP     string   `json:"host_ip"`
+	HostPort   int      `json:"host_port"`
+	GuestPort  int      `json:"guest_port"`
+	Protocol   string   `json:"protocol"`
+	Visibility string   `json:"visibility"`
+	Publisher  string   `json:"publisher"`
 }
 
 func CloneSandboxNetworkIntent(intent *SandboxNetworkIntent) *SandboxNetworkIntent {
@@ -70,6 +64,8 @@ func CloneSandboxNetworkState(state *SandboxNetworkState) *SandboxNetworkState {
 	clone := *state
 	clone.Attachments = append([]SandboxNetworkEndpoint(nil), state.Attachments...)
 	clone.Bindings = append([]SandboxPortBinding(nil), state.Bindings...)
-	clone.AllowedAddresses = append([]string(nil), state.AllowedAddresses...)
+	for index := range clone.Bindings {
+		clone.Bindings[index].Networks = append([]string(nil), state.Bindings[index].Networks...)
+	}
 	return &clone
 }

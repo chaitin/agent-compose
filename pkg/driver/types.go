@@ -33,29 +33,23 @@ type Sandbox struct {
 }
 
 type SandboxNetwork struct {
-	Deployment       string                   `json:"deployment"`
-	ServiceCIDR      string                   `json:"service_cidr,omitempty"`
-	Isolation        string                   `json:"isolation,omitempty"`
-	Attachments      []SandboxNetworkEndpoint `json:"attachments,omitempty"`
-	Bindings         []SandboxPortBinding     `json:"bindings,omitempty"`
-	AllowedAddresses []string                 `json:"allowed_addresses,omitempty"`
+	Attachments []SandboxNetworkEndpoint `json:"attachments,omitempty"`
+	Bindings    []SandboxPortBinding     `json:"bindings,omitempty"`
 }
 
 type SandboxNetworkEndpoint struct {
 	Name               string `json:"name"`
 	RuntimeNetworkName string `json:"runtime_network_name"`
-	HostGateway        string `json:"host_gateway"`
-	DaemonAddress      string `json:"daemon_address,omitempty"`
 }
 
 type SandboxPortBinding struct {
-	Network    string `json:"network,omitempty"`
-	HostIP     string `json:"host_ip"`
-	HostPort   int    `json:"host_port"`
-	GuestPort  int    `json:"guest_port"`
-	Protocol   string `json:"protocol"`
-	Visibility string `json:"visibility"`
-	Publisher  string `json:"publisher"`
+	Networks   []string `json:"networks,omitempty"`
+	HostIP     string   `json:"host_ip"`
+	HostPort   int      `json:"host_port"`
+	GuestPort  int      `json:"guest_port"`
+	Protocol   string   `json:"protocol"`
+	Visibility string   `json:"visibility"`
+	Publisher  string   `json:"publisher"`
 }
 
 type SandboxVolumeMount struct {
