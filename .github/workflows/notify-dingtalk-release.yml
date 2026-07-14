@@ -34,8 +34,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           WORKFLOW_RUN_TAG: ${{ github.event.workflow_run.head_branch }}
           MANUAL_RELEASE_TAG: ${{ inputs.release_tag }}
+          DINGTALK_TARGETS: |
+            [
+              {
+                "name": "release-primary",
+                "webhook_env": "DINGTALK_WEBHOOK",
+                "secret_env": "DINGTALK_SECRET"
+              },
+              {
+                "name": "release-secondary",
+                "webhook_env": "DINGTALK_WEBHOOK_2",
+                "secret_env": "DINGTALK_SECRET_2"
+              }
+            ]
           DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
           DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+          DINGTALK_WEBHOOK_2: ${{ secrets.DINGTALK_WEBHOOK_2 }}
+          DINGTALK_SECRET_2: ${{ secrets.DINGTALK_SECRET_2 }}
           RELEASE_LLM_API_URL: ${{ secrets.RELEASE_LLM_API_URL }}
           RELEASE_LLM_API_KEY: ${{ secrets.RELEASE_LLM_API_KEY }}
           RELEASE_LLM_MODEL: ${{ secrets.RELEASE_LLM_MODEL }}
@@ -43,14 +58,42 @@ jobs:
           set -euo pipefail
 
           for variable in \
-            DINGTALK_WEBHOOK \
-            DINGTALK_SECRET \
             RELEASE_LLM_API_URL \
             RELEASE_LLM_API_KEY \
             RELEASE_LLM_MODEL
           do
             if [[ -z "${!variable}" ]]; then
               echo "::error::GitHub Actions secret '$variable' is not configured"
+              exit 1
+            fi
+          done
+
+          if ! jq -e '
+            type == "array" and
+            length > 0 and
+            all(.[]; (
+              (.name | type == "string" and length > 0) and
+              (.webhook_env | type == "string" and test("^[A-Za-z_][A-Za-z0-9_]*$")) and
+              (.secret_env | type == "string" and test("^[A-Za-z_][A-Za-z0-9_]*$"))
+            ))
+          ' <<<"$DINGTALK_TARGETS" >/dev/null
+          then
+            echo "::error::DINGTALK_TARGETS must be a non-empty JSON array with name, webhook_env, and secret_env"
+            exit 1
+          fi
+
+          target_count="$(jq 'length' <<<"$DINGTALK_TARGETS")"
+          for ((target_index = 0; target_index < target_count; target_index++)); do
+            target_name="$(jq -er --argjson index "$target_index" '.[$index].name' <<<"$DINGTALK_TARGETS")"
+            webhook_variable="$(jq -er --argjson index "$target_index" '.[$index].webhook_env' <<<"$DINGTALK_TARGETS")"
+            secret_variable="$(jq -er --argjson index "$target_index" '.[$index].secret_env' <<<"$DINGTALK_TARGETS")"
+
+            if [[ -z "${!webhook_variable:-}" ]]; then
+              echo "::error::DingTalk target '$target_name' references empty secret '$webhook_variable'"
+              exit 1
+            fi
+            if [[ -z "${!secret_variable:-}" ]]; then
+              echo "::error::DingTalk target '$target_name' references empty secret '$secret_variable'"
               exit 1
             fi
           done
@@ -126,38 +169,45 @@ jobs:
             --arg text "$dingtalk_text" \
             '{msgtype: "markdown", markdown: {title: $title, text: $text}}')"
 
-          timestamp="$(date +%s)000"
-          string_to_sign="${timestamp}
-          ${DINGTALK_SECRET}"
-          sign="$(printf '%s' "$string_to_sign" \
-            | openssl dgst -sha256 -hmac "$DINGTALK_SECRET" -binary \
-            | base64 \
-            | tr -d '\r\n')"
-          encoded_sign="$(jq -rn --arg sign "$sign" '$sign | @uri')"
+          for ((target_index = 0; target_index < target_count; target_index++)); do
+            target_name="$(jq -er --argjson index "$target_index" '.[$index].name' <<<"$DINGTALK_TARGETS")"
+            webhook_variable="$(jq -er --argjson index "$target_index" '.[$index].webhook_env' <<<"$DINGTALK_TARGETS")"
+            secret_variable="$(jq -er --argjson index "$target_index" '.[$index].secret_env' <<<"$DINGTALK_TARGETS")"
+            dingtalk_webhook="${!webhook_variable}"
+            dingtalk_secret="${!secret_variable}"
 
-          separator='?'
-          if [[ "$DINGTALK_WEBHOOK" == *\?* ]]; then
-            separator='&'
-          fi
-          signed_webhook="${DINGTALK_WEBHOOK}${separator}timestamp=${timestamp}&sign=${encoded_sign}"
+            timestamp="$(date +%s)000"
+            string_to_sign="$(printf '%s\n%s' "$timestamp" "$dingtalk_secret")"
+            sign="$(printf '%s' "$string_to_sign" \
+              | openssl dgst -sha256 -hmac "$dingtalk_secret" -binary \
+              | base64 \
+              | tr -d '\r\n')"
+            encoded_sign="$(jq -rn --arg sign "$sign" '$sign | @uri')"
 
-          if ! dingtalk_response="$(curl -fsS \
-            --retry 3 \
-            --connect-timeout 10 \
-            --max-time 30 \
-            -X POST \
-            -H 'Content-Type: application/json' \
-            --data "$dingtalk_payload" \
-            "$signed_webhook")"
-          then
-            echo "::error::DingTalk HTTP request failed; check DINGTALK_WEBHOOK and DINGTALK_SECRET"
-            exit 1
-          fi
+            separator='?'
+            if [[ "$dingtalk_webhook" == *\?* ]]; then
+              separator='&'
+            fi
+            signed_webhook="${dingtalk_webhook}${separator}timestamp=${timestamp}&sign=${encoded_sign}"
 
-          dingtalk_error="$(jq -r 'if (.errcode // 0) == 0 then empty else (.errmsg // "unknown error") end' <<<"$dingtalk_response")"
-          if [[ -n "$dingtalk_error" ]]; then
-            echo "::error::DingTalk notification failed: $dingtalk_error"
-            exit 1
-          fi
+            if ! dingtalk_response="$(curl -fsS \
+              --retry 3 \
+              --connect-timeout 10 \
+              --max-time 30 \
+              -X POST \
+              -H 'Content-Type: application/json' \
+              --data "$dingtalk_payload" \
+              "$signed_webhook")"
+            then
+              echo "::error::DingTalk HTTP request failed for target '$target_name'; check $webhook_variable and $secret_variable"
+              exit 1
+            fi
 
-          echo "DingTalk notification sent for ${release_name:-$release_tag}."
+            dingtalk_error="$(jq -r 'if (.errcode // 0) == 0 then empty else (.errmsg // "unknown error") end' <<<"$dingtalk_response")"
+            if [[ -n "$dingtalk_error" ]]; then
+              echo "::error::DingTalk notification failed for target '$target_name': $dingtalk_error"
+              exit 1
+            fi
+
+            echo "DingTalk notification sent to ${target_name} for ${release_name:-$release_tag}."
+          done
