@@ -165,12 +165,20 @@ func createAgentComposeNetwork(ctx context.Context, dockerClient dockerNetworkAP
 }
 
 func ipv4Gateway(network networkapi.Inspect, description string) (string, error) {
-	if len(network.IPAM.Config) != 1 {
-		return "", fmt.Errorf("%s network must have exactly one IPv4 subnet", description)
+	var gateway string
+	for _, config := range network.IPAM.Config {
+		candidate := strings.TrimSpace(config.Gateway)
+		address, err := netip.ParseAddr(candidate)
+		if err != nil || !address.Is4() {
+			continue
+		}
+		if gateway != "" {
+			return "", fmt.Errorf("%s network has multiple IPv4 gateways", description)
+		}
+		gateway = address.String()
 	}
-	gateway := strings.TrimSpace(network.IPAM.Config[0].Gateway)
-	if addr, err := netip.ParseAddr(gateway); err != nil || !addr.Is4() {
-		return "", fmt.Errorf("%s network has invalid IPv4 gateway %q", description, gateway)
+	if gateway == "" {
+		return "", fmt.Errorf("%s network has no IPv4 gateway", description)
 	}
 	return gateway, nil
 }

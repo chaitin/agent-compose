@@ -22,12 +22,27 @@ import (
 func TestDockerNetworkInfrastructureDefaultPublishAddress(t *testing.T) {
 	fake := &fakeDockerNetworkAPI{network: networkapi.Inspect{
 		Name: "bridge",
-		IPAM: networkapi.IPAM{Config: []networkapi.IPAMConfig{{Subnet: "172.17.0.0/16", Gateway: "172.17.0.1"}}},
+		IPAM: networkapi.IPAM{Config: []networkapi.IPAMConfig{
+			{Subnet: "172.17.0.0/16", Gateway: "172.17.0.1"},
+			{Subnet: "fd00::/64", Gateway: "fd00::1"},
+		}},
 	}}
 	infrastructure := &DockerNetworkInfrastructure{client: func() (dockerNetworkAPI, error) { return fake, nil }}
 	got, err := infrastructure.DefaultPublishAddress(context.Background())
 	if err != nil || got != "172.17.0.1" {
 		t.Fatalf("DefaultPublishAddress() = %q, %v", got, err)
+	}
+}
+
+func TestDockerNetworkInfrastructureRejectsMissingIPv4Gateway(t *testing.T) {
+	fake := &fakeDockerNetworkAPI{network: networkapi.Inspect{
+		Name: "bridge",
+		IPAM: networkapi.IPAM{Config: []networkapi.IPAMConfig{{Subnet: "fd00::/64", Gateway: "fd00::1"}}},
+	}}
+	infrastructure := &DockerNetworkInfrastructure{client: func() (dockerNetworkAPI, error) { return fake, nil }}
+	_, err := infrastructure.DefaultPublishAddress(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "has no IPv4 gateway") {
+		t.Fatalf("DefaultPublishAddress() error = %v", err)
 	}
 }
 
