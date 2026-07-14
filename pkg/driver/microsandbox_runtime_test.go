@@ -13,6 +13,8 @@ import (
 	appconfig "agent-compose/pkg/config"
 	"agent-compose/pkg/identity"
 	"agent-compose/pkg/runtimecache"
+
+	microsandbox "github.com/superradcompany/microsandbox/sdk/go"
 )
 
 func TestMicrosandboxExecCollectorMapsStdioStreams(t *testing.T) {
@@ -40,6 +42,50 @@ func TestMicrosandboxExecCollectorMapsStdioStreams(t *testing.T) {
 		if streamed[i] != want[i] {
 			t.Fatalf("streamed[%d] = %#v, want %#v", i, streamed[i], want[i])
 		}
+	}
+}
+
+func TestMicrosandboxExecStreamReturnsAfterExitWithoutDone(t *testing.T) {
+	events := []*microsandbox.ExecEvent{
+		{Kind: microsandbox.ExecEventStarted},
+		{Kind: microsandbox.ExecEventStdout, Data: []byte("finished\n")},
+		{Kind: microsandbox.ExecEventExited, ExitCode: 7},
+	}
+	var closeCalls int
+	recv := func(ctx context.Context) (*microsandbox.ExecEvent, error) {
+		if len(events) > 0 {
+			event := events[0]
+			events = events[1:]
+			return event, nil
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	closeHandle := func() error {
+		closeCalls++
+		return nil
+	}
+	collector := &microsandboxExecCollector{filter: newExecOutputFilter()}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	grace := 25 * time.Millisecond
+	startedAt := time.Now()
+
+	result, err := consumeMicrosandboxExecStream(ctx, recv, closeHandle, collector, grace)
+	if err != nil {
+		t.Fatalf("consumeMicrosandboxExecStream returned error: %v", err)
+	}
+	if result.ExitCode != 7 || result.Success {
+		t.Fatalf("result = %#v, want exit code 7 and failure", result)
+	}
+	if result.Output != "finished\n" {
+		t.Fatalf("output = %q, want %q", result.Output, "finished\n")
+	}
+	if closeCalls != 1 {
+		t.Fatalf("close calls = %d, want 1", closeCalls)
+	}
+	if elapsed := time.Since(startedAt); elapsed < grace {
+		t.Fatalf("returned before drain grace period: %s", elapsed)
 	}
 }
 

@@ -42,6 +42,99 @@ type microsandboxExecCollector struct {
 	output bytes.Buffer
 }
 
+const microsandboxExecExitIdleGracePeriod = 2 * time.Second
+
+type microsandboxExecEventReceiver func(context.Context) (*microsandbox.ExecEvent, error)
+type microsandboxExecHandleCloser func() error
+
+func consumeMicrosandboxExecStream(
+	ctx context.Context,
+	recv microsandboxExecEventReceiver,
+	closeHandle microsandboxExecHandleCloser,
+	collector *microsandboxExecCollector,
+	idleGrace time.Duration,
+) (ExecResult, error) {
+	exitCode := 0
+	sawExit := false
+	var idleDeadline time.Time
+
+	closeAfterDrainTimeout := func() {
+		slog.Warn(
+			"microsandbox exec stream timed out waiting for done after process exit; closing handle",
+			"exit_code", exitCode,
+			"drain_window", idleGrace,
+		)
+		if err := closeHandle(); err != nil {
+			slog.Warn("failed to close microsandbox exec handle after drain timeout", "error", err)
+		}
+	}
+
+	for {
+		recvCtx := ctx
+		var recvCancel context.CancelFunc
+		if sawExit {
+			remaining := time.Until(idleDeadline)
+			if remaining <= 0 {
+				closeAfterDrainTimeout()
+				break
+			}
+			recvCtx, recvCancel = context.WithTimeout(ctx, remaining)
+		}
+
+		event, err := recv(recvCtx)
+		if recvCancel != nil {
+			recvCancel()
+		}
+		if err != nil {
+			if sawExit && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+				closeAfterDrainTimeout()
+				break
+			}
+			collector.finish()
+			return ExecResult{}, err
+		}
+		if event == nil || event.Kind == microsandbox.ExecEventDone {
+			break
+		}
+
+		switch event.Kind {
+		case microsandbox.ExecEventStdout:
+			collector.writeChunk(ExecChunk{Text: string(event.Data)})
+			if sawExit {
+				idleDeadline = time.Now().Add(idleGrace)
+			}
+		case microsandbox.ExecEventStderr:
+			collector.writeChunk(ExecChunk{Text: string(event.Data), Stream: StdioStderr})
+			if sawExit {
+				idleDeadline = time.Now().Add(idleGrace)
+			}
+		case microsandbox.ExecEventExited:
+			exitCode = event.ExitCode
+			sawExit = true
+			idleDeadline = time.Now().Add(idleGrace)
+		case microsandbox.ExecEventFailed:
+			collector.finish()
+			return ExecResult{}, formatMicrosandboxExecFailure(event.Failure)
+		case microsandbox.ExecEventStdinError:
+			collector.writeChunk(ExecChunk{Text: formatMicrosandboxExecFailure(event.Failure).Error() + "\n", Stream: StdioStderr})
+		}
+	}
+
+	collector.finish()
+	if !sawExit {
+		exitCode = 0
+	}
+
+	result := ExecResult{
+		ExitCode: exitCode,
+		Stdout:   collector.stdout.String(),
+		Stderr:   collector.stderr.String(),
+		Output:   collector.output.String(),
+	}
+	result.Success = result.ExitCode == 0
+	return result, nil
+}
+
 func newMicrosandboxRuntime(config *appconfig.Config) (SandboxRuntime, error) {
 	return &microsandboxRuntime{config: config, lifecycleHandles: map[string]*microsandbox.Sandbox{}}, nil
 }
@@ -240,48 +333,22 @@ func (r *microsandboxRuntime) ExecStream(ctx context.Context, session *Sandbox, 
 			if err != nil {
 				return ExecResult{}, err
 			}
-			defer func() { _ = handle.Close() }()
+			handleClosed := false
+			closeHandle := func() error {
+				if handleClosed {
+					return nil
+				}
+				handleClosed = true
+				return handle.Close()
+			}
+			defer func() {
+				if err := closeHandle(); err != nil {
+					slog.Warn("failed to close microsandbox exec handle", "error", err)
+				}
+			}()
 
 			collector := &microsandboxExecCollector{stream: stream, filter: newExecOutputFilter()}
-			exitCode := 0
-			sawExit := false
-			for {
-				event, err := handle.Recv(ctx)
-				if err != nil {
-					collector.finish()
-					return ExecResult{}, err
-				}
-				if event == nil || event.Kind == microsandbox.ExecEventDone {
-					break
-				}
-				switch event.Kind {
-				case microsandbox.ExecEventStdout:
-					collector.writeChunk(ExecChunk{Text: string(event.Data)})
-				case microsandbox.ExecEventStderr:
-					collector.writeChunk(ExecChunk{Text: string(event.Data), Stream: StdioStderr})
-				case microsandbox.ExecEventExited:
-					exitCode = event.ExitCode
-					sawExit = true
-				case microsandbox.ExecEventFailed:
-					collector.finish()
-					return ExecResult{}, formatMicrosandboxExecFailure(event.Failure)
-				case microsandbox.ExecEventStdinError:
-					collector.writeChunk(ExecChunk{Text: formatMicrosandboxExecFailure(event.Failure).Error() + "\n", Stream: StdioStderr})
-				}
-			}
-			collector.finish()
-			if !sawExit {
-				exitCode = 0
-			}
-
-			result := ExecResult{
-				ExitCode: exitCode,
-				Stdout:   collector.stdout.String(),
-				Stderr:   collector.stderr.String(),
-				Output:   collector.output.String(),
-			}
-			result.Success = result.ExitCode == 0
-			return result, nil
+			return consumeMicrosandboxExecStream(ctx, handle.Recv, closeHandle, collector, microsandboxExecExitIdleGracePeriod)
 		},
 	)
 }
