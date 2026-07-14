@@ -8,6 +8,7 @@ Chinese documentation is available at [zh-CN/README.md](zh-CN/README.md).
 
 - [Project overview and quick start](../README.md)
 - [Command line manual](command-line-manual.md)
+- [Sandbox networks](sandbox-networks.md)
 - [Configuration example](../.env.example)
 - [Loader script API](../examples/scheduler-script/README.md)
 - [Security policy](../SECURITY.md)

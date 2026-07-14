@@ -127,7 +127,8 @@ agents:
           prompt: "Review the current project state and summarize changes."
 ```
 
-完整字段说明见[命令行使用手册](command-line-manual.md)。
+完整字段说明见[命令行使用手册](command-line-manual.md)。Sandbox 互通配置见
+[Sandbox 网络](sandbox-networks.md)。
 
 ## CLI 概览
 
