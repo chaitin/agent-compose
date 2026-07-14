@@ -85,6 +85,7 @@ type CreateSandboxOptions struct {
 	JupyterGuestPort int
 	JupyterExpose    bool
 	VolumeMounts     []domain.SandboxVolumeMount
+	NetworkIntent    *domain.SandboxNetworkIntent
 }
 
 func (s *Store) CreateSandbox(ctx context.Context, title, baseWorkspace, driver, guestImage, workspaceID, triggerSource string, workspace *SandboxWorkspace, envItems []SandboxEnvVar, tags []SandboxTag) (*Sandbox, error) {
@@ -151,6 +152,7 @@ func (s *Store) CreateSandboxWithOptions(_ context.Context, title, baseWorkspace
 		WorkspaceProvisioning: workspaceProvisioning,
 		EnvItems:              append([]SandboxEnvVar(nil), envItems...),
 		VolumeMounts:          domain.NormalizeSandboxVolumeMounts(options.VolumeMounts),
+		NetworkIntent:         domain.CloneSandboxNetworkIntent(options.NetworkIntent),
 	}
 
 	if session.Summary.Title == "" {

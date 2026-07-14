@@ -50,3 +50,25 @@ type SandboxPortBinding struct {
 	Visibility string `json:"visibility"`
 	Publisher  string `json:"publisher"`
 }
+
+func CloneSandboxNetworkIntent(intent *SandboxNetworkIntent) *SandboxNetworkIntent {
+	if intent == nil {
+		return nil
+	}
+	clone := *intent
+	clone.Attachments = append([]SandboxNetworkAttachment(nil), intent.Attachments...)
+	clone.Expose = append([]SandboxNetworkPort(nil), intent.Expose...)
+	clone.Ports = append([]SandboxPublishedPort(nil), intent.Ports...)
+	return &clone
+}
+
+func CloneSandboxNetworkState(state *SandboxNetworkState) *SandboxNetworkState {
+	if state == nil {
+		return nil
+	}
+	clone := *state
+	clone.Attachments = append([]SandboxNetworkEndpoint(nil), state.Attachments...)
+	clone.Bindings = append([]SandboxPortBinding(nil), state.Bindings...)
+	clone.AllowedAddresses = append([]string(nil), state.AllowedAddresses...)
+	return &clone
+}

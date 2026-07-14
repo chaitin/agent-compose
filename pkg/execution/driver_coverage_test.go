@@ -24,10 +24,20 @@ func TestDriverConversionWorkflows(t *testing.T) {
 		},
 		EnvItems:        []domain.SandboxEnvVar{{Name: "A", Value: "B", Secret: true}},
 		RuntimeEnvItems: []domain.SandboxEnvVar{{Name: "R", Value: "V"}},
+		NetworkState: &domain.SandboxNetworkState{
+			Deployment:       "native",
+			ServiceCIDR:      "10.254.0.0/16",
+			Attachments:      []domain.SandboxNetworkEndpoint{{Name: "frontend", RuntimeNetworkName: "project_frontend", HostGateway: "10.254.1.1"}},
+			Bindings:         []domain.SandboxPortBinding{{Network: "frontend", HostIP: "10.254.1.1", HostPort: 32000, GuestPort: 8080, Protocol: "tcp", Visibility: "internal", Publisher: "docker"}},
+			AllowedAddresses: []string{"10.254.1.1"},
+		},
 	}
 	driverSession := ToDriverSandbox(session)
 	if driverSession.Summary.ID != "sandbox-1" || len(driverSession.EnvItems) != 1 || !driverSession.EnvItems[0].Secret || len(driverSession.RuntimeEnvItems) != 1 {
 		t.Fatalf("driver sandbox = %#v", driverSession)
+	}
+	if driverSession.Network == nil || len(driverSession.Network.Attachments) != 1 || len(driverSession.Network.Bindings) != 1 || driverSession.Network.Bindings[0].HostPort != 32000 {
+		t.Fatalf("driver network = %#v", driverSession.Network)
 	}
 	vmState := domain.VMState{Driver: "docker", Mode: "runtime", BoxName: "box", BoxID: "box-id", Image: "image", Registry: "registry", RuntimeHome: "/root", StartedAt: now, StoppedAt: now, LastError: "none", BootstrapRef: "boot"}
 	driverVMState := ToDriverVMState(vmState)

@@ -38,6 +38,7 @@ type Preparation struct {
 	ProjectRoot      string
 	ProjectVolumes   map[string]domain.VolumeRecord
 	Jupyter          sessionstore.CreateSandboxOptions
+	NetworkIntent    *domain.SandboxNetworkIntent
 }
 
 func PrepareProjectRun(ctx context.Context, store PreparationStore, resolver WorkspaceResolver, run domain.ProjectRunRecord, requestEnv []*agentcomposev2.EnvVarSpec) (Preparation, error) {
@@ -76,6 +77,10 @@ func PrepareProjectRun(ctx context.Context, store PreparationStore, resolver Wor
 	)
 	providerEnvItems := envItems
 	envItems = llms.FilterPersistedRuntimeEnv(envItems)
+	networkIntent, err := SandboxNetworkIntentFromV2(run, spec.GetNetworks(), agentSpec)
+	if err != nil {
+		return Preparation{}, err
+	}
 	prepared := Preparation{
 		EnvItems:         envItems,
 		ProviderEnvItems: providerEnvItems,
@@ -83,6 +88,7 @@ func PrepareProjectRun(ctx context.Context, store PreparationStore, resolver Wor
 		Volumes:          agent.Volumes,
 		ProjectRoot:      ProjectRoot(project),
 		Jupyter:          jupyterOptionsFromAgentSpec(agentSpec),
+		NetworkIntent:    networkIntent,
 	}
 	projectVolumes, err := store.ListProjectVolumes(ctx, project.ID)
 	if err != nil {
@@ -105,6 +111,84 @@ func PrepareProjectRun(ctx context.Context, store PreparationStore, resolver Wor
 		prepared.Workspace = workspaceSnapshot
 	}
 	return prepared, nil
+}
+
+func SandboxNetworkIntentFromV2(run domain.ProjectRunRecord, projectNetworks []*agentcomposev2.NamedNetworkSpec, agent *agentcomposev2.AgentSpec) (*domain.SandboxNetworkIntent, error) {
+	if agent == nil || (len(agent.GetNetworks()) == 0 && len(agent.GetExpose()) == 0 && len(agent.GetPorts()) == 0) {
+		return nil, nil
+	}
+	available := make(map[string]string, len(projectNetworks))
+	for i, network := range projectNetworks {
+		name := strings.TrimSpace(network.GetName())
+		if name == "" {
+			return nil, fmt.Errorf("project network %d name is required", i)
+		}
+		if _, exists := available[name]; exists {
+			return nil, fmt.Errorf("duplicate project network %q", name)
+		}
+		driver := strings.ToLower(strings.TrimSpace(network.GetDriver()))
+		if driver == "" {
+			driver = compose.NetworkDriverPortMapping
+		}
+		if driver != compose.NetworkDriverPortMapping {
+			return nil, fmt.Errorf("project network %q uses unsupported driver %q", name, driver)
+		}
+		available[name] = driver
+	}
+	intent := &domain.SandboxNetworkIntent{
+		ProjectID:   strings.TrimSpace(run.ProjectID),
+		ProjectName: strings.TrimSpace(run.ProjectName),
+		AgentName:   strings.TrimSpace(run.AgentName),
+	}
+	for i, rawName := range agent.GetNetworks() {
+		name := strings.TrimSpace(rawName)
+		driver, ok := available[name]
+		if !ok {
+			return nil, fmt.Errorf("agent network %d references unknown project network %q", i, name)
+		}
+		intent.Attachments = append(intent.Attachments, domain.SandboxNetworkAttachment{Name: name, Driver: driver})
+	}
+	if len(agent.GetExpose()) > 0 && len(intent.Attachments) == 0 {
+		return nil, fmt.Errorf("agent expose requires at least one network attachment")
+	}
+	for i, port := range agent.GetExpose() {
+		target, protocol, err := sandboxTCPPort(int(port.GetTarget()), port.GetProtocol())
+		if err != nil {
+			return nil, fmt.Errorf("agent expose %d: %w", i, err)
+		}
+		intent.Expose = append(intent.Expose, domain.SandboxNetworkPort{Target: target, Protocol: protocol})
+	}
+	for i, port := range agent.GetPorts() {
+		target, protocol, err := sandboxTCPPort(int(port.GetTarget()), port.GetProtocol())
+		if err != nil {
+			return nil, fmt.Errorf("agent ports %d: %w", i, err)
+		}
+		published := int(port.GetPublished())
+		if published < 0 || published > 65535 {
+			return nil, fmt.Errorf("agent ports %d: published port must be between 1 and 65535 or omitted", i)
+		}
+		intent.Ports = append(intent.Ports, domain.SandboxPublishedPort{
+			HostIP:    strings.TrimSpace(port.GetHostIp()),
+			Published: published,
+			Target:    target,
+			Protocol:  protocol,
+		})
+	}
+	return intent, nil
+}
+
+func sandboxTCPPort(target int, rawProtocol string) (int, string, error) {
+	if target < 1 || target > 65535 {
+		return 0, "", fmt.Errorf("target port must be between 1 and 65535")
+	}
+	protocol := strings.ToLower(strings.TrimSpace(rawProtocol))
+	if protocol == "" {
+		protocol = "tcp"
+	}
+	if protocol != "tcp" {
+		return 0, "", fmt.Errorf("only TCP ports are supported")
+	}
+	return target, protocol, nil
 }
 
 func ProjectRoot(project domain.ProjectRecord) string {

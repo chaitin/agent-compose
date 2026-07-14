@@ -2005,6 +2005,7 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 		return SandboxResult{}, err
 	}
 	jupyterOptions.VolumeMounts = volumeMounts
+	jupyterOptions.NetworkIntent = prepared.NetworkIntent
 	sandbox, err := c.store.CreateSandboxWithOptions(ctx,
 		SandboxTitle(run),
 		"",

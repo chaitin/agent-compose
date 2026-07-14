@@ -30,6 +30,33 @@ func ToDriverSandbox(session *domain.Sandbox) *driverpkg.Sandbox {
 			HostPath: item.HostPath,
 		})
 	}
+	var network *driverpkg.SandboxNetwork
+	if session.NetworkState != nil {
+		network = &driverpkg.SandboxNetwork{
+			Deployment:       session.NetworkState.Deployment,
+			ServiceCIDR:      session.NetworkState.ServiceCIDR,
+			AllowedAddresses: append([]string(nil), session.NetworkState.AllowedAddresses...),
+		}
+		for _, attachment := range session.NetworkState.Attachments {
+			network.Attachments = append(network.Attachments, driverpkg.SandboxNetworkEndpoint{
+				Name:               attachment.Name,
+				RuntimeNetworkName: attachment.RuntimeNetworkName,
+				HostGateway:        attachment.HostGateway,
+				DaemonAddress:      attachment.DaemonAddress,
+			})
+		}
+		for _, binding := range session.NetworkState.Bindings {
+			network.Bindings = append(network.Bindings, driverpkg.SandboxPortBinding{
+				Network:    binding.Network,
+				HostIP:     binding.HostIP,
+				HostPort:   binding.HostPort,
+				GuestPort:  binding.GuestPort,
+				Protocol:   binding.Protocol,
+				Visibility: binding.Visibility,
+				Publisher:  binding.Publisher,
+			})
+		}
+	}
 	return &driverpkg.Sandbox{
 		Summary: driverpkg.SandboxSummary{
 			ID:            session.Summary.ID,
@@ -43,6 +70,7 @@ func ToDriverSandbox(session *domain.Sandbox) *driverpkg.Sandbox {
 		},
 		EnvItems:        envItems,
 		VolumeMounts:    volumeMounts,
+		Network:         network,
 		RuntimeEnvItems: runtimeEnvItems,
 	}
 }
