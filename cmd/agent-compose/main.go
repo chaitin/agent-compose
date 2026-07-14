@@ -574,8 +574,8 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 
 	logsOptions := composeLogsOptions{}
 	logsCmd := &cobra.Command{
-		Use:   "logs [agent]",
-		Short: "Print project run logs",
+		Use:   "logs [ref]",
+		Short: "Print logs for a project, agent, run, or sandbox",
 		Args:  cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runComposeLogsCommand(cmd, options, logsOptions, args)
@@ -1014,12 +1014,13 @@ type composeSchedulerListOptions struct {
 }
 
 type composeLogsOptions struct {
-	AgentName string
-	RunID     string
-	SandboxID string
-	TailLines int
-	Follow    bool
-	Timestamp bool
+	ResourceRef string
+	AgentName   string
+	RunID       string
+	SandboxID   string
+	TailLines   int
+	Follow      bool
+	Timestamp   bool
 }
 
 type composePSOptions struct {
@@ -2748,38 +2749,57 @@ func runComposeLogsCommand(cmd *cobra.Command, cli cliOptions, options composeLo
 	if err != nil {
 		return err
 	}
+	if normalizedOptions.ResourceRef != "" {
+		clients, err := newCLIServiceClients(cli)
+		if err != nil {
+			return err
+		}
+		projectID, projectName, resolvedOptions, err := resolveComposeLogResourceRef(cmd, clients.resource, normalizedOptions)
+		if err != nil {
+			return err
+		}
+		resolvedOptions, err = resolveComposeLogIDRefs(cmd.Context(), clients.run, projectID, resolvedOptions)
+		if err != nil {
+			return err
+		}
+		return runComposeLogsForScope(cmd, cli, clients.run, projectID, projectName, resolvedOptions)
+	}
 	_, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
 	}
-	clientConfig, err := resolveCLIClientConfig(cli.Host)
+	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
-	client := agentcomposev2connect.NewRunServiceClient(newDaemonHTTPClient(clientConfig), clientConfig.BaseURL)
-	normalizedOptions, err = resolveComposeLogRefs(cmd.Context(), client, normalized, projectID, normalizedOptions)
+	normalizedOptions, err = resolveComposeLogRefs(cmd.Context(), clients.run, normalized, projectID, normalizedOptions)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(normalizedOptions.RunID) != "" {
-		run, err := getRunDetail(cmd.Context(), client, projectID, normalizedOptions.RunID)
+	return runComposeLogsForScope(cmd, cli, clients.run, projectID, normalized.Name, normalizedOptions)
+}
+
+func runComposeLogsForScope(cmd *cobra.Command, cli cliOptions, client agentcomposev2connect.RunServiceClient, projectID, projectName string, options composeLogsOptions) error {
+	if strings.TrimSpace(options.RunID) != "" {
+		run, err := getRunDetail(cmd.Context(), client, projectID, options.RunID)
 		if err != nil {
-			return commandExitErrorForConnect(fmt.Errorf("get run %s for project %s: %w", strings.TrimSpace(normalizedOptions.RunID), normalized.Name, err))
+			project := firstNonEmptyString(projectName, shortOpaqueID(projectID), "-")
+			return commandExitErrorForConnect(fmt.Errorf("get run %s for project %s: %w", strings.TrimSpace(options.RunID), project, err))
 		}
-		if normalizedOptions.Follow {
-			return followRunLogStream(cmd.Context(), cmd.OutOrStdout(), client, projectID, run.Msg.GetRun().GetSummary(), normalizedOptions)
+		if options.Follow {
+			return followRunLogStream(cmd.Context(), cmd.OutOrStdout(), client, projectID, run.Msg.GetRun().GetSummary(), options)
 		}
-		return writeLogsForRun(cmd.OutOrStdout(), run.Msg.GetRun(), cli.JSON, normalizedOptions)
+		return writeLogsForRun(cmd.OutOrStdout(), run.Msg.GetRun(), cli.JSON, options)
 	}
-	return followOrPrintProjectLogs(cmd, cli, client, projectID, normalized.Name, normalizedOptions)
+	return followOrPrintProjectLogs(cmd, cli, client, projectID, projectName, options)
 }
 
 func normalizeComposeLogsOptions(cmd *cobra.Command, options composeLogsOptions, args []string) (composeLogsOptions, error) {
 	if len(args) > 0 {
 		if cmd.Flags().Changed("agent") {
-			return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs agent can be specified either positionally or with --agent, not both")}
+			return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs reference cannot be combined with --agent")}
 		}
-		options.AgentName = args[0]
+		options.ResourceRef = strings.TrimSpace(args[0])
 	}
 	if options.TailLines < -1 {
 		return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --tail must be -1 or greater")}
@@ -2795,6 +2815,10 @@ func resolveComposeLogRefs(ctx context.Context, client agentcomposev2connect.Run
 		}
 		options.AgentName = agentName
 	}
+	return resolveComposeLogIDRefs(ctx, client, projectID, options)
+}
+
+func resolveComposeLogIDRefs(ctx context.Context, client agentcomposev2connect.RunServiceClient, projectID string, options composeLogsOptions) (composeLogsOptions, error) {
 	if shouldResolveComposeLogResourceRef(options.RunID) {
 		runID, err := resolveComposeRunIDRef(ctx, client, projectID, options.AgentName, options.RunID)
 		if err != nil {
@@ -2810,6 +2834,54 @@ func resolveComposeLogRefs(ctx context.Context, client agentcomposev2connect.Run
 		options.SandboxID = sandboxID
 	}
 	return options, nil
+}
+
+func resolveComposeLogResourceRef(cmd *cobra.Command, client agentcomposev2connect.ResourceServiceClient, options composeLogsOptions) (string, string, composeLogsOptions, error) {
+	ref := strings.TrimSpace(options.ResourceRef)
+	resource, err := resolveCLIResourceRef(cmd, client, ref, []agentcomposev2.ResourceKind{
+		agentcomposev2.ResourceKind_RESOURCE_KIND_PROJECT,
+		agentcomposev2.ResourceKind_RESOURCE_KIND_AGENT,
+		agentcomposev2.ResourceKind_RESOURCE_KIND_RUN,
+		agentcomposev2.ResourceKind_RESOURCE_KIND_SANDBOX,
+	}, "use a full ID or an explicit logs filter to select one")
+	if err != nil {
+		return "", "", options, err
+	}
+
+	projectID := strings.TrimSpace(resource.GetProjectId())
+	projectName := strings.TrimSpace(resource.GetProjectName())
+	switch resource.GetKind() {
+	case agentcomposev2.ResourceKind_RESOURCE_KIND_PROJECT:
+		projectID = firstNonEmptyString(resource.GetId(), resource.GetProjectId())
+		projectName = firstNonEmptyString(resource.GetName(), resource.GetProjectName())
+		if projectID == "" {
+			return "", "", options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolved project %q has no id", ref)}
+		}
+	case agentcomposev2.ResourceKind_RESOURCE_KIND_AGENT:
+		options.AgentName = firstNonEmptyString(resource.GetName(), resource.GetInspectRef())
+		if projectID == "" || options.AgentName == "" {
+			return "", "", options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolved agent %q is missing its project or name", ref)}
+		}
+	case agentcomposev2.ResourceKind_RESOURCE_KIND_RUN:
+		if options.RunID != "" || options.SandboxID != "" {
+			return "", "", options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs run ref cannot be combined with --run or --sandbox")}
+		}
+		options.RunID = firstNonEmptyString(resource.GetId(), resource.GetInspectRef())
+		if options.RunID == "" {
+			return "", "", options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolved run %q has no id", ref)}
+		}
+	case agentcomposev2.ResourceKind_RESOURCE_KIND_SANDBOX:
+		if options.RunID != "" || options.SandboxID != "" {
+			return "", "", options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs sandbox ref cannot be combined with --run or --sandbox")}
+		}
+		options.SandboxID = firstNonEmptyString(resource.GetId(), resource.GetInspectRef())
+		if options.SandboxID == "" {
+			return "", "", options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolved sandbox %q has no id", ref)}
+		}
+	default:
+		return "", "", options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resource %q cannot be used with logs", ref)}
+	}
+	return projectID, projectName, options, nil
 }
 
 func shouldResolveComposeLogResourceRef(ref string) bool {
@@ -4633,30 +4705,40 @@ func runComposeResolvedInspectCommand(cmd *cobra.Command, cli cliOptions, ref st
 		return err
 	}
 	ref = strings.TrimSpace(ref)
-	response, err := clients.resource.ResolveResource(cmd.Context(), connect.NewRequest(&agentcomposev2.ResolveResourceRequest{Ref: ref}))
+	resource, err := resolveCLIResourceRef(cmd, clients.resource, ref, nil, fmt.Sprintf("use inspect <type> %s to select one", ref))
 	if err != nil {
-		return commandExitErrorForConnect(fmt.Errorf("resolve resource %s: %w", ref, err))
+		return err
+	}
+	return runComposeResolvedResourceInspectCommand(cmd, cli, clients, resource)
+}
+
+func resolveCLIResourceRef(cmd *cobra.Command, client agentcomposev2connect.ResourceServiceClient, ref string, kinds []agentcomposev2.ResourceKind, ambiguityHint string) (*agentcomposev2.ResolvedResource, error) {
+	ref = strings.TrimSpace(ref)
+	response, err := client.ResolveResource(cmd.Context(), connect.NewRequest(&agentcomposev2.ResolveResourceRequest{Ref: ref, Kinds: kinds}))
+	if err != nil {
+		return nil, commandExitErrorForConnect(fmt.Errorf("resolve resource %s: %w", ref, err))
 	}
 	for _, warning := range response.Msg.GetWarnings() {
 		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", warning); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	resolved := response.Msg.GetResources()
 	if len(resolved) == 0 {
-		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resource %q not found", ref)}
+		return nil, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resource %q not found", ref)}
 	}
 	if len(resolved) > 1 {
 		matches := make([]string, 0, len(resolved))
 		for _, resource := range resolved {
 			matches = append(matches, composeResolvedResourceDescription(resource))
 		}
-		return commandExitError{
-			Code: exitCodeUsage,
-			Err:  fmt.Errorf("resource ref %q is ambiguous; matches: %s; use inspect <type> %s to select one", ref, strings.Join(matches, ", "), ref),
+		message := fmt.Sprintf("resource ref %q is ambiguous; matches: %s", ref, strings.Join(matches, ", "))
+		if ambiguityHint = strings.TrimSpace(ambiguityHint); ambiguityHint != "" {
+			message += "; " + ambiguityHint
 		}
+		return nil, commandExitError{Code: exitCodeUsage, Err: errors.New(message)}
 	}
-	return runComposeResolvedResourceInspectCommand(cmd, cli, clients, resolved[0])
+	return resolved[0], nil
 }
 
 func runComposeResolvedResourceInspectCommand(cmd *cobra.Command, cli cliOptions, clients cliServiceClients, resource *agentcomposev2.ResolvedResource) error {

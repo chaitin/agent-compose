@@ -389,13 +389,13 @@ agent-compose exec sandbox_123 --cwd /workspace --command "pwd"
 
 ## `logs`: Show Logs
 
-Show logs for agents, sandboxes, or runs in the current project. By default, logs for all project agents are shown.
+Show logs for a project, agent, run, or sandbox. With no positional reference, logs for all agents in the current project are shown. With `logs <ref>`, the daemon resolves an exact project or agent name, an exact ID, or a unique ID prefix across the loggable resource types; this form does not require a local Compose file. Ambiguous references fail and list their matches.
 
 Current `logs` output is based on run log artifacts returned by the v2 RunService. `--follow` is served by the daemon from the log file referenced by `logs_path`; non-follow views use the run record output and artifact summary. It does not automatically read private provider log files from Codex, Claude, Gemini, or other provider CLIs.
 
 ```bash
 agent-compose logs
-agent-compose logs <agent>
+agent-compose logs <ref>
 agent-compose logs --agent reviewer
 agent-compose logs --run <run-id>
 agent-compose logs --sandbox <sandbox>
@@ -406,6 +406,7 @@ agent-compose logs -t
 
 | Option | Description |
 | --- | --- |
+| `<ref>` | Resolve a project, agent, run, or sandbox by name (when available), ID, or unique ID prefix. |
 | `-n, --tail <n>` | Show only the last `n` lines of run output. Text and JSON output use the same truncation. |
 | `--follow` | Follow log output. |
 | `-t, --timestamp` | Prefix text log lines with a run-level timestamp. Current output does not have per-chunk timestamps; the CLI uses the best available run timestamp. |
@@ -418,6 +419,7 @@ Examples:
 ```bash
 agent-compose logs
 agent-compose logs reviewer
+agent-compose logs 103f88fea811 --follow
 agent-compose logs --agent reviewer --tail 200
 agent-compose logs --sandbox sandbox_123 --follow -t
 agent-compose logs --run run_123 --json

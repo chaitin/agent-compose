@@ -44,7 +44,7 @@ func TestE2ECLIHelpCoversUserWorkflowCommandSurface(t *testing.T) {
 		{
 			name: "logs",
 			args: []string{"logs", "--help"},
-			want: []string{"Print project run logs", "--agent", "--run", "--sandbox", "--follow", "--tail", "--timestamp"},
+			want: []string{"Print logs for a project, agent, run, or sandbox", "logs [ref]", "--agent", "--run", "--sandbox", "--follow", "--tail", "--timestamp"},
 		},
 		{
 			name: "ps",

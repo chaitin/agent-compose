@@ -157,7 +157,7 @@ See the [command line manual](docs/command-line-manual.md) for the full field re
 | `agent-compose run <agent> --prompt/--command` | Run a prompt or shell command as an agent. |
 | `agent-compose exec <sandbox>` | Execute a command or prompt in a running sandbox. |
 | `agent-compose ps` / `stats` | List project sandboxes / show sandbox resource stats. |
-| `agent-compose logs` | Print project run logs. |
+| `agent-compose logs [ref]` | Print logs for a project, agent, run, or sandbox. |
 | `agent-compose scheduler ls\|trigger\|inspect` | List, run, or inspect scheduler triggers. |
 | `agent-compose sandbox ls\|stop\|resume\|rm\|prune` | Manage project sandboxes. |
 | `agent-compose images\|pull\|build\|rmi\|inspect` | Manage daemon images and build agent images. |

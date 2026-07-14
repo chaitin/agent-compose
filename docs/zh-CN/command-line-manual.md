@@ -400,13 +400,13 @@ agent-compose exec sandbox_123 --cwd /workspace --command "pwd"
 
 ## `logs`：查看日志
 
-查看当前 project 下 agent、sandbox 或 run 的日志。默认展示 project 下所有 agent 日志。
+查看 project、agent、run 或 sandbox 的日志。未提供位置引用时，默认展示当前 project 下所有 agent 日志。使用 `logs <ref>` 时，daemon 会在可查看日志的资源类型中按 project/agent 精确名称、精确 ID 或唯一 ID 前缀解析；该形式不要求本地存在 Compose 文件。存在歧义时命令会失败并列出匹配项。
 
 当前 `logs` 基于 agent-compose v2 RunService 返回的 run log artifact 展示。`--follow` 由服务端按 `logs_path` 指向的日志文件增量读取；普通查看会使用 run 记录中的输出和 artifact 汇总。它不会默认读取 Codex、Claude、Gemini 等 provider 的私有日志文件。
 
 ```bash
 agent-compose logs
-agent-compose logs <agent>
+agent-compose logs <ref>
 agent-compose logs --agent reviewer
 agent-compose logs --run <run-id>
 agent-compose logs --sandbox <sandbox>
@@ -419,6 +419,7 @@ agent-compose logs -t
 
 | 参数 | 说明 |
 | --- | --- |
+| `<ref>` | 按名称（资源支持时）、ID 或唯一 ID 前缀解析 project、agent、run 或 sandbox。 |
 | `-n, --tail <n>` | 只显示 run output 的最后 N 行，文本和 JSON 输出一致。 |
 | `--follow` | 持续跟随日志输出。 |
 | `-t, --timestamp` | 文本输出显示 run 级时间戳。当前没有逐 chunk 时间戳，会使用该 run 的 `completed_at`、`updated_at`、`started_at` 中最合适的可用时间。 |
@@ -431,6 +432,7 @@ agent-compose logs -t
 ```bash
 agent-compose logs
 agent-compose logs reviewer
+agent-compose logs 103f88fea811 --follow
 agent-compose logs --agent reviewer --tail 200
 agent-compose logs --sandbox sandbox_123 --follow -t
 agent-compose logs --run run_123 --json
