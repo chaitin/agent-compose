@@ -33,9 +33,9 @@ system prompt。
 fixture、输出各自 marker，并具有不同 run/sandbox ID。只有 daemon 配置了 provider
 后才运行 `--prompt`。`down` 清理两个 agent 的项目 sandbox。
 
-## 真实验证输出
+## 成功输出示例
 
-以下结果采集自 2026-07-15 的真实 daemon Docker E2E：
+两个 agent 都成功运行后，输出示例如下：
 
 ```console
 reviewer status=succeeded sandbox=56dc449f3f6c47169bda2ca943a7681b847e0005c5b24aca3294aa5a5cb1a78e

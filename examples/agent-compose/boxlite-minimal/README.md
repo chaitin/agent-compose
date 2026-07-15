@@ -31,9 +31,9 @@ On a prepared host, continue with `run reviewer --command "uname -a"`, inspect
 the returned sandbox, and finish with `down`. Runtime success is deliberately
 not claimed by this repository-local validation.
 
-## Real local config output
+## Normalized config output
 
-Captured with the current CLI on 2026-07-15:
+`agent-compose config` produces:
 
 ```yaml
 name: boxlite-minimal

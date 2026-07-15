@@ -33,9 +33,9 @@ cache 值在 sandbox stop/resume 后仍存在。`down` 会移除 project-managed
 `/cache/value`；stop/resume 后 `cat` 必须返回 `persistent`。`touch` 检查必须因只读
 挂载而失败。最后显式 stop、rm，再执行 `down`。
 
-## 真实验证输出
+## 成功输出示例
 
-以下结果采集自 2026-07-15 真实 Docker sandbox 的 stop/resume：
+sandbox 成功 stop/resume 后，持久化值和只读检查如下：
 
 ```console
 $ agent-compose exec <sandbox-id> -- cat /cache/value

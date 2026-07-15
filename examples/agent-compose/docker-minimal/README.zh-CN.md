@@ -169,10 +169,9 @@ NAMES                                                IMAGE                      
 agent-compose-8aa2625d-db67-4428-82ae-8bef1a137a2f   agent-compose-guest:latest   Up 14 seconds
 ```
 
-### 5. 当前真实 provider 验证
+### 5. Provider 成功输出
 
-以下字段采集于 2026-07-15，链路为当前源码、发布版 guest 镜像、真实 daemon
-facade、guest Codex CLI，以及本地 `.env` 配置的 provider：
+daemon 配置可用 provider 后，prompt run 成功输出如下：
 
 ```json
 {

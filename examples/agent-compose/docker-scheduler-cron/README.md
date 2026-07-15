@@ -203,11 +203,10 @@ updated  project_scheduler  reviewer  scheduler-reviewer-default-ed0b5bed0daa  d
 updated  loader             reviewer  loader-reviewer-default-ed0b5bed0daa     disabled by project down
 ```
 
-### 6. Current provider-path verification
+### 6. Successful manual trigger
 
-On 2026-07-15 the E2E manually triggered the cron entry through a real daemon,
-Docker guest, and guest Codex CLI. Its provider endpoint was a controlled local
-fixture so the result remains deterministic:
+With a working provider, manually triggering the cron entry returns fields
+like:
 
 ```json
 {

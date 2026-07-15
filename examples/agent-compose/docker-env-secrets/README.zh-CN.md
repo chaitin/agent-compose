@@ -29,9 +29,9 @@ env 只属于该 agent。启动 CLI 时的进程环境变量优先于 `example.e
 `safe-example-secret`。command run 必须输出 `environment ok`，证明真实 guest 收到
 两个作用域的变量。该值只是非敏感 fixture；不要提交生产 secret。
 
-## 真实验证输出
+## 成功输出示例
 
-以下结果采集自 2026-07-15 的真实 daemon Docker E2E：
+环境检查成功后，输出示例如下：
 
 ```console
 status=succeeded
@@ -40,4 +40,4 @@ sandbox=9fffd2978773c87708dc46facb8bf5ba8b1edf275382afb56380b0294a497939
 environment ok
 ```
 
-E2E 同时断言渲染配置包含 `********` 且不包含 fixture secret。动态 ID 会不同。
+渲染配置必须包含 `********` 且不能包含 fixture secret。动态 ID 会不同。

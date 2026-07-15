@@ -34,9 +34,9 @@ agent-compose down
 使用 `run` 返回的 sandbox ID，在 stop/resume 前后读取文件，并确认 host 上不存在
 `workspace/generated.txt`。`rm` 删除已停止 sandbox，`down` 清理剩余项目状态。
 
-## 真实验证输出
+## 成功输出示例
 
-以下结果采集自 2026-07-15 的真实 daemon Docker E2E：
+成功完成 run 和 stop/resume 后，输出示例如下：
 
 ```console
 status=succeeded

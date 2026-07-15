@@ -34,9 +34,9 @@ prompts apply when the agents are run with `--prompt`.
 run/sandbox IDs. Use `--prompt` only when the daemon has a configured provider.
 `down` cleans both agents' project sandboxes.
 
-## Real verification output
+## Example successful output
 
-Captured from the real-daemon Docker E2E on 2026-07-15:
+Successful runs from both agents produce output like:
 
 ```console
 reviewer status=succeeded sandbox=56dc449f3f6c47169bda2ca943a7681b847e0005c5b24aca3294aa5a5cb1a78e

@@ -198,10 +198,9 @@ updated  project_scheduler  reviewer  scheduler-reviewer-default-ed0b5bed0daa  d
 updated  loader             reviewer  loader-reviewer-default-ed0b5bed0daa     disabled by project down
 ```
 
-### 6. 当前 provider 路径验证
+### 6. 手动 trigger 成功输出
 
-2026-07-15 的 E2E 通过真实 daemon、Docker guest 和 guest Codex CLI 手动触发 cron
-条目。provider endpoint 使用受控本地 fixture，以保持结果可重复：
+配置可用 provider 后，手动触发 cron 条目的输出如下：
 
 ```json
 {

@@ -171,11 +171,9 @@ NAMES                                                IMAGE                      
 agent-compose-8aa2625d-db67-4428-82ae-8bef1a137a2f   agent-compose-guest:latest   Up 14 seconds
 ```
 
-### 5. Current live-provider verification
+### 5. Successful provider run
 
-The following fields were captured on 2026-07-15 from the current source,
-published guest image, real daemon facade, guest Codex CLI, and the provider
-configured in the local `.env`:
+With a working daemon provider, a successful prompt run returns fields like:
 
 ```json
 {

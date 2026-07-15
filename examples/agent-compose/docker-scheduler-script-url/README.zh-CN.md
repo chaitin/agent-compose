@@ -36,9 +36,9 @@ runtime 和 daemon provider 配置。`source-loaded` shell callback 不调用模
 4. `daily-review` 仍按 `0 9 * * *` 调度，并在日历时间到达时调用 agent。
 5. `down` 禁用 scheduler 并清理项目 sandbox。
 
-## 真实验证输出
+## 成功输出示例
 
-以下结果采集自 2026-07-15 的真实 scheduler runtime：
+`source-loaded` callback 成功后，event 如下：
 
 ```console
 type=loader.command.completed
@@ -46,5 +46,5 @@ message="scheduler script URL ok"
 payload={"exitCode":0,"mode":"shell","stderrTruncated":false,"stdoutTruncated":false,"success":true}
 ```
 
-原 event 还包含动态 cell 和 sandbox ID，此处为可读性省略。E2E 会断言 message 和
-shell 成功结果。
+完整 event 还包含动态 cell 和 sandbox ID，此处为可读性省略。message 和 success
+字段可以确认脚本已运行。

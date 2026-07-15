@@ -192,10 +192,9 @@ updated  project_scheduler  reviewer  scheduler-reviewer-default-181247660dc1  d
 updated  loader             reviewer  loader-reviewer-default-181247660dc1     disabled by project down
 ```
 
-### 7. Current automatic-timeout verification
+### 7. Successful automatic timeout run
 
-The 2026-07-15 E2E observed the automatic trigger through a real daemon,
-Docker guest, and guest Codex CLI, with a controlled provider fixture:
+After the automatic timeout trigger succeeds, the run reports:
 
 ```console
 status=RUN_STATUS_SUCCEEDED

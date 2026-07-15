@@ -40,9 +40,9 @@ Use the sandbox id returned by `run`. Confirm the file before and after
 stop/resume, then check that `workspace/generated.txt` does not exist on the
 host. `rm` deletes the stopped sandbox; `down` cleans remaining project state.
 
-## Real verification output
+## Example successful output
 
-Captured from the real-daemon Docker E2E on 2026-07-15:
+A successful run and stop/resume cycle produces output like:
 
 ```console
 status=succeeded

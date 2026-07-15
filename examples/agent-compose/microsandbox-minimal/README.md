@@ -31,9 +31,9 @@ and a binary whose `compiled_drivers` includes `microsandbox`.
 `run reviewer --command "uname -a"`, inspect the returned sandbox, and finish
 with `down`. Runtime success is deliberately not claimed locally.
 
-## Real local config output
+## Normalized config output
 
-Captured with the current CLI on 2026-07-15:
+`agent-compose config` produces:
 
 ```yaml
 name: microsandbox-minimal

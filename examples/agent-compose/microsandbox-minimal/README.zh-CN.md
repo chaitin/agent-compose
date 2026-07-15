@@ -30,9 +30,9 @@ compose 文件会进入常规测试，但本地未验证 runtime 执行。运行
 host 上继续执行 `run reviewer --command "uname -a"`、检查返回的 sandbox，最后
 执行 `down`。本地不会声称 Microsandbox runtime 已成功运行。
 
-## 本地真实 config 输出
+## Config 归一化输出
 
-以下输出由当前 CLI 于 2026-07-15 采集：
+`agent-compose config` 输出如下：
 
 ```yaml
 name: microsandbox-minimal

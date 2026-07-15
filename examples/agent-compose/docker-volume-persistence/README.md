@@ -35,9 +35,10 @@ fixture and write `/cache/value`; after stop/resume, `cat` must return
 `persistent`. The `touch` check must fail inside the read-only mount. Stop and
 remove the sandbox before `down` for an explicit lifecycle cleanup.
 
-## Real verification output
+## Example successful output
 
-Captured after a real Docker sandbox stop/resume on 2026-07-15:
+After a successful sandbox stop/resume, the persisted value and read-only check
+look like:
 
 ```console
 $ agent-compose exec <sandbox-id> -- cat /cache/value

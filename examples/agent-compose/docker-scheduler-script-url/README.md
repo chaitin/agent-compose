@@ -41,9 +41,9 @@ Expected checks:
    calendar time arrives.
 5. `down` disables the scheduler and cleans project sandboxes.
 
-## Real verification output
+## Example successful output
 
-Captured from the real scheduler runtime on 2026-07-15:
+When the `source-loaded` callback succeeds, its event looks like:
 
 ```console
 type=loader.command.completed
@@ -51,5 +51,5 @@ message="scheduler script URL ok"
 payload={"exitCode":0,"mode":"shell","stderrTruncated":false,"stdoutTruncated":false,"success":true}
 ```
 
-The original event also contained generated cell and sandbox IDs, omitted here
-for readability. The E2E asserts the message and successful shell result.
+The full event also contains generated cell and sandbox IDs, omitted here for
+readability. The message and success fields confirm the script ran.

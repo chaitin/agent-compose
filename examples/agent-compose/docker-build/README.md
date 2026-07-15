@@ -31,11 +31,11 @@ clarity; automation should copy the example and substitute unique tags.
 `build` must complete and create both local tags. The worker command reads the
 file written during the image build and must print `built-by-agent-compose`.
 After `down`, both `rmi` commands remove the tutorial images. Avoid these fixed
-tags in concurrent automation; the E2E creates unique tags for that reason.
+tags in concurrent automation; use a unique tag for each build.
 
-## Real verification output
+## Example successful output
 
-Captured from a real Docker build and guest run on 2026-07-15:
+A successful image build and guest run produces output like:
 
 ```console
 status=succeeded
@@ -44,4 +44,5 @@ sandbox=78459590803602e1945bdac9e3c74a1d9a656c29f57b6169bab757d1779b1d7e
 built-by-agent-compose
 ```
 
-The E2E substituted a unique image tag; generated run and sandbox IDs differ.
+Generated run and sandbox IDs differ. Concurrent automation should substitute
+a unique image tag.

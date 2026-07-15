@@ -189,10 +189,9 @@ updated  project_scheduler  reviewer  scheduler-reviewer-default-181247660dc1  d
 updated  loader             reviewer  loader-reviewer-default-181247660dc1     disabled by project down
 ```
 
-### 7. 当前自动 timeout 验证
+### 7. 自动 timeout 成功输出
 
-2026-07-15 的 E2E 通过真实 daemon、Docker guest 和 guest Codex CLI 观察自动
-trigger，provider 使用受控 fixture：
+自动 timeout trigger 成功后，run 输出如下：
 
 ```console
 status=RUN_STATUS_SUCCEEDED

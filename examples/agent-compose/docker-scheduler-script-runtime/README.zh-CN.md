@@ -31,9 +31,9 @@ state 会在 run 之间持久化；interval 保留为长期调度。该流程不
 timeout trigger，直到 event 分别包含 `heartbeat 1` 和 `heartbeat 2`；有序输出证明
 state 在不同 loader callback 间持久化。`down` 禁用 interval 并清理 sandbox。
 
-## 真实验证输出
+## 成功输出示例
 
-以下结果采集自 2026-07-15 的真实 scheduler runtime：
+第二个 callback 成功后，scheduler event 如下：
 
 ```console
 type=loader.log
@@ -41,5 +41,5 @@ message="heartbeat completed"
 payload={"count":2,"output":"heartbeat 2\n"}
 ```
 
-E2E 先观察到 `heartbeat 1`，再观察到上面的 event，证明 loader state 跨 callback
-保留。
+第一个 callback 输出 `heartbeat 1`，随后出现上面的 event，证明 loader state 跨
+callback 保留。
