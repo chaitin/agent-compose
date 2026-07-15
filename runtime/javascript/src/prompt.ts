@@ -48,7 +48,7 @@ export async function buildPromptRuntimeOptions(commandOptions: Omit<PromptComma
     systemContext: provider === "gemini" || provider === "codex"
       ? await appendSkillCatalogContext(baseSystemContext, home, skills)
       : baseSystemContext,
-    mcpConfig: mcpConfig.mcps,
+    mcpConfig: mcpConfig.mcp_servers,
     skills,
     outputSchema,
   };

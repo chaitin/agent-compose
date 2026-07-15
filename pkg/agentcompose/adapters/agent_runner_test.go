@@ -271,7 +271,7 @@ func TestAgentRunnerPrepareManagedMCPConfigForProviders(t *testing.T) {
 		root := t.TempDir()
 		session := &domain.Sandbox{Summary: domain.SandboxSummary{WorkspacePath: filepath.Join(root, "workspace")}}
 		payload, err := json.Marshal(map[string]any{
-			"mcps": map[string]any{
+			"mcp_servers": map[string]any{
 				"filesystem": map[string]any{"type": "local", "command": "npx", "args": []string{"-y", "server"}},
 				"docs":       map[string]any{"type": "remote", "transport": "http", "url": "https://docs.example/mcp"},
 			},
@@ -297,7 +297,7 @@ func TestAgentRunnerPrepareManagedMCPConfigForProviders(t *testing.T) {
 		root := t.TempDir()
 		session := &domain.Sandbox{Summary: domain.SandboxSummary{WorkspacePath: filepath.Join(root, "workspace")}}
 		payload, err := json.Marshal(map[string]any{
-			"mcps": map[string]any{
+			"mcp_servers": map[string]any{
 				"filesystem": map[string]any{"type": "local", "command": "npx", "args": []string{"-y", "server"}, "env": map[string]any{"TOKEN": map[string]any{"value": "secret"}}},
 			},
 		})
@@ -318,7 +318,7 @@ func TestAgentRunnerPrepareManagedMCPConfigForProviders(t *testing.T) {
 		root := t.TempDir()
 		session := &domain.Sandbox{Summary: domain.SandboxSummary{WorkspacePath: filepath.Join(root, "workspace")}}
 		payload, err := json.Marshal(map[string]any{
-			"mcps": map[string]any{
+			"mcp_servers": map[string]any{
 				"docs": map[string]any{"type": "remote", "transport": "sse", "url": "https://docs.example/sse"},
 			},
 		})
@@ -343,7 +343,7 @@ func TestAgentRunnerPrepareManagedMCPConfigForProviders(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(execution.HostSandboxHome(session), ".codex"), 0o755); err != nil {
 			t.Fatalf("MkdirAll returned error: %v", err)
 		}
-		_ = os.WriteFile(execution.HostAgentMCPConfigPath(session), []byte(`{"mcps":{"old":{}}}`), 0o644)
+		_ = os.WriteFile(execution.HostAgentMCPConfigPath(session), []byte(`{"mcp_servers":{"old":{}}}`), 0o644)
 		if err := os.WriteFile(filepath.Join(execution.HostSandboxHome(session), ".codex", "config.toml"), []byte("# agent-compose managed mcp start\n[mcp_servers.old]\ncommand = \"old\"\n# agent-compose managed mcp end\n"), 0o644); err != nil {
 			t.Fatalf("WriteFile returned error: %v", err)
 		}

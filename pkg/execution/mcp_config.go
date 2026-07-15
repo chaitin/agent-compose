@@ -11,7 +11,7 @@ import (
 )
 
 type AgentMCPConfigPayload struct {
-	MCPs map[string]compose.NormalizedMCPServerSpec `json:"mcps,omitempty"`
+	MCPServers map[string]compose.NormalizedMCPServerSpec `json:"mcp_servers,omitempty"`
 }
 
 func HostAgentMCPConfigPath(session *domain.Sandbox) string {
@@ -38,7 +38,7 @@ func WriteAgentMCPConfigFile(session *domain.Sandbox, mcps map[string]compose.No
 	if err := os.MkdirAll(filepath.Dir(hostPath), 0o755); err != nil {
 		return fmt.Errorf("create agent mcp config dir: %w", err)
 	}
-	if err := WriteJSONArtifact(hostPath, AgentMCPConfigPayload{MCPs: mcps}); err != nil {
+	if err := WriteJSONArtifact(hostPath, AgentMCPConfigPayload{MCPServers: mcps}); err != nil {
 		return fmt.Errorf("write agent mcp config file: %w", err)
 	}
 	return nil

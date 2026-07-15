@@ -133,11 +133,11 @@ More runnable examples (cron, timeout, scheduler scripts) live in
 
 ## The compose file
 
-**Top-level fields:** `name`, `variables`, `agents`, `mcps`, `volumes`, `network`.
+**Top-level fields:** `name`, `variables`, `agents`, `mcp_servers`, `volumes`, `network`.
 
 **Common agent fields:** `provider`, `model`, `system_prompt`, `image`,
 `driver`, `env` (scalars or `{ value, secret }`), `workspace`, `scheduler`,
-`mcps`, `skills`, and `volumes`.
+`mcp_servers`, `skills`, and `volumes`.
 
 Provision an agent's workspace from a local path (`provider: local`) or a Git
 repository (`provider: git`):

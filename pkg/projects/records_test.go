@@ -119,7 +119,7 @@ func TestNewAgentDefinitionFromSpecPreservesMCPConfig(t *testing.T) {
 	agent := compose.NormalizedAgentSpec{
 		Name:     "reviewer",
 		Provider: "codex",
-		MCPs: map[string]compose.NormalizedMCPServerSpec{
+		MCPServers: map[string]compose.NormalizedMCPServerSpec{
 			"filesystem": {
 				Type:    "local",
 				Command: "npx",
@@ -135,20 +135,20 @@ func TestNewAgentDefinitionFromSpecPreservesMCPConfig(t *testing.T) {
 			},
 		},
 	}
-	projectMCPs := map[string]compose.NormalizedMCPServerSpec{}
+	projectMCPServers := map[string]compose.NormalizedMCPServerSpec{}
 
-	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, projectMCPs)
+	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, projectMCPServers)
 	if err != nil {
 		t.Fatalf("NewAgentDefinitionFromSpec returned error: %v", err)
 	}
 	var config struct {
-		MCPs map[string]compose.NormalizedMCPServerSpec `json:"mcps"`
+		MCPServers map[string]compose.NormalizedMCPServerSpec `json:"mcp_servers"`
 	}
 	if err := json.Unmarshal([]byte(definition.ConfigJSON), &config); err != nil {
 		t.Fatalf("unmarshal config json: %v", err)
 	}
-	if len(config.MCPs) != 2 || config.MCPs["filesystem"].Command != "npx" || config.MCPs["docs"].Transport != "http" {
-		t.Fatalf("config json = %s, want mcps preserved", definition.ConfigJSON)
+	if len(config.MCPServers) != 2 || config.MCPServers["filesystem"].Command != "npx" || config.MCPServers["docs"].Transport != "http" {
+		t.Fatalf("config json = %s, want mcp_servers preserved", definition.ConfigJSON)
 	}
 }
 

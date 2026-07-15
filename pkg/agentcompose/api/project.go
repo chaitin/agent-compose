@@ -233,7 +233,7 @@ func ProjectSpecToProtoChecked(spec *compose.NormalizedProjectSpec) (*agentcompo
 		Agents:     AgentSpecsToProto(spec.Agents),
 		Network:    NetworkSpecToProto(spec.Network),
 		Volumes:    ProjectVolumeSpecsToProto(spec.Volumes),
-		Mcps:       MCPServerSpecsToProto(spec.MCPs),
+		McpServers: MCPServerSpecsToProto(spec.MCPServers),
 	}, nil
 }
 
@@ -273,7 +273,7 @@ func AgentSpecsToProto(agents []compose.NormalizedAgentSpec) []*agentcomposev2.A
 			Scheduler:    SchedulerSpecToProto(agent.Scheduler),
 			Jupyter:      JupyterSpecToProto(agent.Jupyter),
 			Volumes:      VolumeMountSpecsToProto(agent.Volumes),
-			Mcps:         MCPServerSpecsToProto(agent.MCPs),
+			McpServers:   MCPServerSpecsToProto(agent.MCPServers),
 			Status:       agentStatusToProto(agent.Status),
 		})
 	}
@@ -518,10 +518,10 @@ func ProjectSpecYAMLShape(spec *agentcomposev2.ProjectSpec) (map[string]any, []*
 	} else if len(volumes) > 0 {
 		root["volumes"] = volumes
 	}
-	if mcps, issues := MCPServerYAMLMap("mcps", spec.GetMcps()); len(issues) > 0 {
+	if mcps, issues := MCPServerYAMLMap("mcp_servers", spec.GetMcpServers()); len(issues) > 0 {
 		return nil, issues
 	} else if len(mcps) > 0 {
-		root["mcps"] = mcps
+		root["mcp_servers"] = mcps
 	}
 	if network := NetworkYAMLShape(spec.GetNetwork()); len(network) > 0 {
 		root["network"] = network
@@ -641,10 +641,10 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		if volumes := VolumeMountYAMLList(agent.GetVolumes()); len(volumes) > 0 {
 			raw["volumes"] = volumes
 		}
-		if mcps, issues := AgentMCPYAMLList(fmt.Sprintf("agents[%d].mcps", i), agent.GetMcps()); len(issues) > 0 {
+		if mcps, issues := AgentMCPYAMLList(fmt.Sprintf("agents[%d].mcp_servers", i), agent.GetMcpServers()); len(issues) > 0 {
 			return nil, issues
 		} else if len(mcps) > 0 {
-			raw["mcps"] = mcps
+			raw["mcp_servers"] = mcps
 		}
 		values[name] = raw
 	}

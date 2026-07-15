@@ -550,7 +550,7 @@ message ProjectSpec {
   NetworkSpec network = 5;
   repeated ProjectVolumeSpec volumes = 6;
   repeated NamedWorkspaceSpec workspaces = 7;
-  repeated MCPServerSpec mcps = 8;
+  repeated MCPServerSpec mcp_servers = 8;
 }
 
 message NamedWorkspaceSpec {
@@ -572,7 +572,7 @@ message AgentSpec {
   JupyterSpec jupyter = 11;
   BuildSpec build = 12;
   repeated VolumeMountSpec volumes = 13;
-  repeated MCPServerSpec mcps = 14;
+  repeated MCPServerSpec mcp_servers = 14;
   repeated SkillSpec skills = 15;
   AgentStatus status = 16;
 }

@@ -8,7 +8,7 @@ import (
 func TestParseMCPConfig(t *testing.T) {
 	spec, err := Parse([]byte(`
 name: mcp-demo
-mcps:
+mcp_servers:
   filesystem:
     type: local
     command: npx
@@ -28,10 +28,10 @@ mcps:
 agents:
   reviewer:
     provider: codex
-    mcps: [filesystem, docs]
+    mcp_servers: [filesystem, docs]
   writer:
     provider: claude
-    mcps:
+    mcp_servers:
       - filesystem
       - name: notes
         type: local
@@ -41,17 +41,60 @@ agents:
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	if len(spec.MCPs) != 2 {
-		t.Fatalf("mcps = %#v", spec.MCPs)
+	if len(spec.MCPServers) != 2 {
+		t.Fatalf("mcp servers = %#v", spec.MCPServers)
 	}
-	if got := spec.MCPs["filesystem"].Command; got != "npx" {
+	if got := spec.MCPServers["filesystem"].Command; got != "npx" {
 		t.Fatalf("filesystem command = %q", got)
 	}
-	if got := spec.Agents["reviewer"].MCPs; len(got) != 2 || got[0].Ref != "filesystem" || got[1].Ref != "docs" {
-		t.Fatalf("reviewer mcps = %#v", got)
+	if got := spec.Agents["reviewer"].MCPServers; len(got) != 2 || got[0].Ref != "filesystem" || got[1].Ref != "docs" {
+		t.Fatalf("reviewer mcp servers = %#v", got)
 	}
-	if got := spec.Agents["writer"].MCPs; len(got) != 2 || got[0].Ref != "filesystem" || got[1].Name != "notes" || got[1].Command != "uvx" {
-		t.Fatalf("writer mcps = %#v", got)
+	if got := spec.Agents["writer"].MCPServers; len(got) != 2 || got[0].Ref != "filesystem" || got[1].Name != "notes" || got[1].Command != "uvx" {
+		t.Fatalf("writer mcp servers = %#v", got)
+	}
+}
+
+func TestParseRejectsLegacyMCPKey(t *testing.T) {
+	tests := []struct {
+		name      string
+		raw       string
+		wantField string
+	}{
+		{
+			name: "project",
+			raw: `
+name: legacy-project-mcp
+mcps:
+  filesystem:
+    type: local
+    command: npx
+`,
+			wantField: "mcps",
+		},
+		{
+			name: "agent",
+			raw: `
+name: legacy-agent-mcp
+agents:
+  reviewer:
+    provider: codex
+    mcps: [filesystem]
+`,
+			wantField: "agents.reviewer.mcps",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.raw))
+			if err == nil {
+				t.Fatalf("expected Parse to reject legacy mcps field")
+			}
+			if got := err.Error(); !strings.Contains(got, tt.wantField) || !strings.Contains(got, "unknown field") {
+				t.Fatalf("error = %q, want unknown field %s", got, tt.wantField)
+			}
+		})
 	}
 }
 
@@ -61,7 +104,7 @@ name: invalid-mcp-ref
 agents:
   reviewer:
     provider: codex
-    mcps:
+    mcp_servers:
       name: docs
 `))
 	if err != nil {
@@ -71,7 +114,7 @@ agents:
 	if err == nil {
 		t.Fatalf("expected Normalize to fail")
 	}
-	if got := err.Error(); !strings.Contains(got, "agents.reviewer.mcps[0].type") {
+	if got := err.Error(); !strings.Contains(got, "agents.reviewer.mcp_servers[0].type") {
 		t.Fatalf("error = %q, want mcp path", got)
 	}
 }
@@ -79,7 +122,7 @@ agents:
 func TestNormalizeMCPConfig(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: mcp-demo
-mcps:
+mcp_servers:
   filesystem:
     type: local
     command: npx
@@ -99,7 +142,7 @@ mcps:
 agents:
   reviewer:
     provider: codex
-    mcps:
+    mcp_servers:
       - filesystem
       - docs
       - filesystem
@@ -117,28 +160,28 @@ agents:
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
 	}
-	if got := normalized.MCPs["filesystem"].Env["TOKEN"]; got.Value != "mcp-secret" || !got.Secret {
+	if got := normalized.MCPServers["filesystem"].Env["TOKEN"]; got.Value != "mcp-secret" || !got.Secret {
 		t.Fatalf("filesystem env = %#v", got)
 	}
-	if got := normalized.MCPs["docs"].URL; got != "https://docs.example.com/mcp" {
+	if got := normalized.MCPServers["docs"].URL; got != "https://docs.example.com/mcp" {
 		t.Fatalf("docs url = %q", got)
 	}
-	if got := normalized.Agents[0].MCPs; len(got) != 3 || got["filesystem"].Command != "npx" || got["notes"].Command != "uvx" {
-		t.Fatalf("agent mcps = %#v", got)
+	if got := normalized.Agents[0].MCPServers; len(got) != 3 || got["filesystem"].Command != "npx" || got["notes"].Command != "uvx" {
+		t.Fatalf("agent mcp servers = %#v", got)
 	}
 }
 
 func TestNormalizeRejectsUndefinedMCPRef(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: undefined-mcp
-mcps:
+mcp_servers:
   filesystem:
     type: local
     command: npx
 agents:
   reviewer:
     provider: codex
-    mcps: [filesystem, missing]
+    mcp_servers: [filesystem, missing]
 `)
 
 	_, err := Normalize(spec, NormalizeOptions{})
@@ -160,20 +203,20 @@ func TestNormalizeRejectsInvalidMCPShape(t *testing.T) {
 			name: "local requires command",
 			raw: `
 name: bad-local
-mcps:
+mcp_servers:
   filesystem:
     type: local
 agents:
   reviewer:
     provider: codex
 `,
-			wantField: "mcps.filesystem.command",
+			wantField: "mcp_servers.filesystem.command",
 		},
 		{
 			name: "remote requires transport",
 			raw: `
 name: bad-remote
-mcps:
+mcp_servers:
   docs:
     type: remote
     url: https://docs.example.com/mcp
@@ -181,13 +224,13 @@ agents:
   reviewer:
     provider: codex
 `,
-			wantField: "mcps.docs.transport",
+			wantField: "mcp_servers.docs.transport",
 		},
 		{
 			name: "remote forbids env",
 			raw: `
 name: bad-remote-env
-mcps:
+mcp_servers:
   docs:
     type: remote
     transport: http
@@ -198,7 +241,7 @@ agents:
   reviewer:
     provider: codex
 `,
-			wantField: "mcps.docs.env",
+			wantField: "mcp_servers.docs.env",
 		},
 	}
 
@@ -219,7 +262,7 @@ agents:
 func TestRedactedOutputDoesNotLeakMCPSecrets(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: redacted-mcp
-mcps:
+mcp_servers:
   docs:
     type: remote
     transport: http
@@ -231,7 +274,7 @@ mcps:
 agents:
   reviewer:
     provider: codex
-    mcps: docs
+    mcp_servers: docs
 `)
 	normalized, err := Normalize(spec, NormalizeOptions{Env: map[string]string{"DOCS_TOKEN": "super-secret"}})
 	if err != nil {
@@ -245,7 +288,33 @@ agents:
 	if strings.Contains(text, "super-secret") {
 		t.Fatalf("redacted yaml leaked secret: %s", text)
 	}
-	if !strings.Contains(text, redactedEnvValue) || !strings.Contains(text, "mcps:") {
+	if !strings.Contains(text, redactedEnvValue) || !strings.Contains(text, "mcp_servers:") {
 		t.Fatalf("redacted yaml = %s", text)
+	}
+}
+
+func TestCanonicalMCPJSONUsesMCPServersKey(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: canonical-mcp
+mcp_servers:
+  filesystem:
+    type: local
+    command: npx
+agents:
+  reviewer:
+    provider: codex
+    mcp_servers: filesystem
+`)
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	data, err := normalized.MarshalCanonicalJSON(false)
+	if err != nil {
+		t.Fatalf("MarshalCanonicalJSON returned error: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"mcp_servers"`) || strings.Contains(text, `"mcps"`) {
+		t.Fatalf("canonical json = %s", text)
 	}
 }

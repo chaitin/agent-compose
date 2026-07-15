@@ -302,7 +302,7 @@ describe("runtime JavaScript E2E", () => {
       await fs.writeFile(messageFile, "gemini prompt", "utf8");
       await fs.mkdir(path.join(stateRoot, "agents", "mcp"), { recursive: true });
       await fs.writeFile(path.join(stateRoot, "agents", "mcp", "config.json"), JSON.stringify({
-		mcps: {
+		mcp_servers: {
 			docs: {
 				type: "remote",
 				transport: "http",
@@ -356,7 +356,7 @@ describe("runtime JavaScript E2E", () => {
       }), "utf8");
       await fs.mkdir(path.join(stateRoot, "agents", "mcp"), { recursive: true });
       await fs.writeFile(path.join(stateRoot, "agents", "mcp", "config.json"), JSON.stringify({
-		mcps: {
+		mcp_servers: {
 			filesystem: { type: "local", command: "npx", args: ["-y", "server"] },
 			docs: {
 				type: "remote",
@@ -416,7 +416,7 @@ describe("runtime JavaScript E2E", () => {
 			await fs.writeFile(messageFile, "opencode prompt", "utf8");
 			await fs.mkdir(path.join(stateRoot, "agents", "mcp"), { recursive: true });
 			await fs.writeFile(path.join(stateRoot, "agents", "mcp", "config.json"), JSON.stringify({
-				mcps: {
+				mcp_servers: {
 					filesystem: {
 						type: "local",
 						command: "npx",

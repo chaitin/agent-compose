@@ -21,7 +21,7 @@ type orderedProjectSpec struct {
 	Name       string                  `yaml:"name" json:"name"`
 	Variables  []orderedEnvVarSpec     `yaml:"variables,omitempty" json:"variables,omitempty"`
 	Workspaces []orderedNamedWorkspace `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
-	MCPs       []orderedMCPServerSpec  `yaml:"mcps,omitempty" json:"mcps,omitempty"`
+	MCPServers []orderedMCPServerSpec  `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 	Volumes    []orderedVolumeSpec     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	Agents     []orderedAgentSpec      `yaml:"agents,omitempty" json:"agents,omitempty"`
 	Network    *NetworkSpec            `yaml:"network,omitempty" json:"network,omitempty"`
@@ -46,7 +46,7 @@ type orderedAgentSpec struct {
 	Build        *NormalizedBuildSpec        `yaml:"build,omitempty" json:"build,omitempty"`
 	Driver       *NormalizedDriverSpec       `yaml:"driver" json:"driver"`
 	Env          []orderedEnvVarSpec         `yaml:"env,omitempty" json:"env,omitempty"`
-	MCPs         []orderedMCPServerSpec      `yaml:"mcps,omitempty" json:"mcps,omitempty"`
+	MCPServers   []orderedMCPServerSpec      `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 	CapsetIDs    []string                    `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
 	Skills       []NormalizedSkillSpec       `yaml:"skills,omitempty" json:"skills,omitempty"`
 	Volumes      []NormalizedVolumeMountSpec `yaml:"volumes,omitempty" json:"volumes,omitempty"`
@@ -126,7 +126,7 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 	if s == nil {
 		return orderedProjectSpec{}
 	}
-	mcps := orderedMCPServers(s.MCPs, redactSecrets)
+	mcps := orderedMCPServers(s.MCPServers, redactSecrets)
 	agents := make([]orderedAgentSpec, 0, len(s.Agents))
 	for _, agent := range s.Agents {
 		agents = append(agents, orderedAgentSpec{
@@ -139,7 +139,7 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 			Build:        cloneNormalizedBuildSpec(agent.Build),
 			Driver:       cloneNormalizedDriverSpec(agent.Driver),
 			Env:          orderedEnvVars(agent.Env, redactSecrets),
-			MCPs:         orderedMCPServers(agent.MCPs, redactSecrets),
+			MCPServers:   orderedMCPServers(agent.MCPServers, redactSecrets),
 			CapsetIDs:    slices.Clone(agent.CapsetIDs),
 			Skills:       cloneNormalizedSkillSpecs(agent.Skills),
 			Volumes:      cloneNormalizedVolumeMountSpecs(agent.Volumes),
@@ -155,7 +155,7 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 		Name:       s.Name,
 		Variables:  orderedEnvVars(s.Variables, redactSecrets),
 		Workspaces: orderedWorkspaces(s.Workspaces),
-		MCPs:       mcps,
+		MCPServers: mcps,
 		Volumes:    orderedVolumes(s.Volumes),
 		Agents:     agents,
 		Network:    cloneNetworkSpecForOutput(s.Network),
@@ -168,7 +168,7 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 		Name:       ordered.Name,
 		Variables:  envVarMapFromOrdered(ordered.Variables),
 		Workspaces: workspaceMapFromOrdered(ordered.Workspaces),
-		MCPs:       mcpMapFromOrdered(ordered.MCPs),
+		MCPServers: mcpMapFromOrdered(ordered.MCPServers),
 		Volumes:    volumeMapFromOrdered(ordered.Volumes),
 		Network:    ordered.Network,
 	}
@@ -183,7 +183,7 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 			Build:        agent.Build,
 			Driver:       agent.Driver,
 			Env:          envVarMapFromOrdered(agent.Env),
-			MCPs:         mcpMapFromOrdered(agent.MCPs),
+			MCPServers:   mcpMapFromOrdered(agent.MCPServers),
 			CapsetIDs:    slices.Clone(agent.CapsetIDs),
 			Skills:       cloneNormalizedSkillSpecs(agent.Skills),
 			Volumes:      cloneNormalizedVolumeMountSpecs(agent.Volumes),

@@ -212,10 +212,10 @@ func TestIntegrationProjectSpecYAMLShapeIncludesWorkspaceRegistry(t *testing.T) 
 	}
 }
 
-func TestProjectSpecToProtoIncludesMCPs(t *testing.T) {
+func TestProjectSpecToProtoIncludesMCPServers(t *testing.T) {
 	spec := &compose.NormalizedProjectSpec{
 		Name: "mcp",
-		MCPs: map[string]compose.NormalizedMCPServerSpec{
+		MCPServers: map[string]compose.NormalizedMCPServerSpec{
 			"docs": {Type: "remote", Transport: "http", URL: "https://docs.example.com/mcp"},
 		},
 		Agents: []compose.NormalizedAgentSpec{{
@@ -225,28 +225,28 @@ func TestProjectSpecToProtoIncludesMCPs(t *testing.T) {
 				Name:   compose.DriverDocker,
 				Docker: &compose.DockerDriverSpec{},
 			},
-			MCPs: map[string]compose.NormalizedMCPServerSpec{
+			MCPServers: map[string]compose.NormalizedMCPServerSpec{
 				"docs": {Type: "remote", Transport: "http", URL: "https://docs.example.com/mcp"},
 			},
 		}},
 	}
 
 	response := ProjectSpecToProto(spec)
-	if response == nil || len(response.GetMcps()) != 1 {
-		t.Fatalf("project mcps missing: %#v", response)
+	if response == nil || len(response.GetMcpServers()) != 1 {
+		t.Fatalf("project mcp servers missing: %#v", response)
 	}
-	if response.GetMcps()[0].GetName() != "docs" || response.GetMcps()[0].GetUrl() != "https://docs.example.com/mcp" {
-		t.Fatalf("project mcps = %#v", response.GetMcps())
+	if response.GetMcpServers()[0].GetName() != "docs" || response.GetMcpServers()[0].GetUrl() != "https://docs.example.com/mcp" {
+		t.Fatalf("project mcp servers = %#v", response.GetMcpServers())
 	}
-	if len(response.GetAgents()) != 1 || len(response.GetAgents()[0].GetMcps()) != 1 {
-		t.Fatalf("agent mcps missing: %#v", response.GetAgents())
+	if len(response.GetAgents()) != 1 || len(response.GetAgents()[0].GetMcpServers()) != 1 {
+		t.Fatalf("agent mcp servers missing: %#v", response.GetAgents())
 	}
 }
 
-func TestProjectSpecYAMLShapeIncludesMCPs(t *testing.T) {
+func TestProjectSpecYAMLShapeIncludesMCPServers(t *testing.T) {
 	raw, issues := ProjectSpecYAMLShape(ProjectSpecToProto(&compose.NormalizedProjectSpec{
 		Name: "mcp",
-		MCPs: map[string]compose.NormalizedMCPServerSpec{
+		MCPServers: map[string]compose.NormalizedMCPServerSpec{
 			"filesystem": {Type: "local", Command: "npx", Args: []string{"server"}},
 		},
 		Agents: []compose.NormalizedAgentSpec{{
@@ -256,7 +256,7 @@ func TestProjectSpecYAMLShapeIncludesMCPs(t *testing.T) {
 				Name:   compose.DriverDocker,
 				Docker: &compose.DockerDriverSpec{},
 			},
-			MCPs: map[string]compose.NormalizedMCPServerSpec{
+			MCPServers: map[string]compose.NormalizedMCPServerSpec{
 				"filesystem": {Type: "local", Command: "npx", Args: []string{"server"}},
 			},
 		}},
@@ -264,9 +264,9 @@ func TestProjectSpecYAMLShapeIncludesMCPs(t *testing.T) {
 	if len(issues) > 0 {
 		t.Fatalf("issues = %#v", issues)
 	}
-	projectMCPs, ok := raw["mcps"].(map[string]any)
-	if !ok || len(projectMCPs) != 1 {
-		t.Fatalf("project mcps = %#v", raw["mcps"])
+	projectMCPServers, ok := raw["mcp_servers"].(map[string]any)
+	if !ok || len(projectMCPServers) != 1 {
+		t.Fatalf("project mcp servers = %#v", raw["mcp_servers"])
 	}
 	agents, ok := raw["agents"].(map[string]any)
 	if !ok {
@@ -276,8 +276,8 @@ func TestProjectSpecYAMLShapeIncludesMCPs(t *testing.T) {
 	if !ok {
 		t.Fatalf("reviewer = %#v", agents["reviewer"])
 	}
-	agentMCPs, ok := reviewer["mcps"].([]map[string]any)
-	if !ok || len(agentMCPs) != 1 || agentMCPs[0]["name"] != "filesystem" {
-		t.Fatalf("agent mcps = %#v", reviewer["mcps"])
+	agentMCPServers, ok := reviewer["mcp_servers"].([]map[string]any)
+	if !ok || len(agentMCPServers) != 1 || agentMCPServers[0]["name"] != "filesystem" {
+		t.Fatalf("agent mcp servers = %#v", reviewer["mcp_servers"])
 	}
 }

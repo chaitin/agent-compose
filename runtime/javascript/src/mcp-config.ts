@@ -17,7 +17,7 @@ export type RuntimeMCPServer = {
 };
 
 export type RuntimeMCPConfig = {
-  mcps?: Record<string, RuntimeMCPServer>;
+  mcp_servers?: Record<string, RuntimeMCPServer>;
 };
 
 const mcpConfigRelativePath = path.join("agents", "mcp", "config.json");

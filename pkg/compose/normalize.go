@@ -40,7 +40,7 @@ type NormalizedProjectSpec struct {
 	Name       string                             `yaml:"name" json:"name"`
 	Variables  map[string]EnvVarSpec              `yaml:"variables,omitempty" json:"variables,omitempty"`
 	Workspaces map[string]WorkspaceSpec           `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
-	MCPs       map[string]NormalizedMCPServerSpec `yaml:"mcps,omitempty" json:"mcps,omitempty"`
+	MCPServers map[string]NormalizedMCPServerSpec `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 	Volumes    map[string]NormalizedVolumeSpec    `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	Agents     []NormalizedAgentSpec              `yaml:"agents,omitempty" json:"agents,omitempty"`
 	Network    *NetworkSpec                       `yaml:"network,omitempty" json:"network,omitempty"`
@@ -56,7 +56,7 @@ type NormalizedAgentSpec struct {
 	Build        *NormalizedBuildSpec               `yaml:"build,omitempty" json:"build,omitempty"`
 	Driver       *NormalizedDriverSpec              `yaml:"driver" json:"driver"`
 	Env          map[string]EnvVarSpec              `yaml:"env,omitempty" json:"env,omitempty"`
-	MCPs         map[string]NormalizedMCPServerSpec `yaml:"mcps,omitempty" json:"mcps,omitempty"`
+	MCPServers   map[string]NormalizedMCPServerSpec `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 	CapsetIDs    []string                           `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
 	Skills       []NormalizedSkillSpec              `yaml:"skills,omitempty" json:"skills,omitempty"`
 	Volumes      []NormalizedVolumeMountSpec        `yaml:"volumes,omitempty" json:"volumes,omitempty"`
@@ -189,11 +189,11 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 		return nil, err
 	}
 	normalized.Workspaces = workspaces
-	mcps, err := normalizeMCPMap("mcps", spec.MCPs, options)
+	mcps, err := normalizeMCPMap("mcp_servers", spec.MCPServers, options)
 	if err != nil {
 		return nil, err
 	}
-	normalized.MCPs = mcps
+	normalized.MCPServers = mcps
 	if err := validateNetworkSpec(normalized.Network); err != nil {
 		return nil, err
 	}
@@ -214,7 +214,7 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 			return nil, err
 		}
 		agent := spec.Agents[agentName]
-		normalizedAgent, err := normalizeAgent(agentName, agent, options, normalized.Volumes, normalized.Workspaces, normalized.MCPs)
+		normalizedAgent, err := normalizeAgent(agentName, agent, options, normalized.Volumes, normalized.Workspaces, normalized.MCPServers)
 		if err != nil {
 			return nil, err
 		}
@@ -236,7 +236,7 @@ func NormalizeFile(path string) (*NormalizedProjectSpec, error) {
 	return normalized, nil
 }
 
-func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, projectVolumes map[string]NormalizedVolumeSpec, projectWorkspaces map[string]WorkspaceSpec, projectMCPs map[string]NormalizedMCPServerSpec) (NormalizedAgentSpec, error) {
+func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, projectVolumes map[string]NormalizedVolumeSpec, projectWorkspaces map[string]WorkspaceSpec, projectMCPServers map[string]NormalizedMCPServerSpec) (NormalizedAgentSpec, error) {
 	status := strings.ToLower(strings.TrimSpace(agent.Status))
 	if status != "" && status != "enabled" && status != "disabled" {
 		return NormalizedAgentSpec{}, fmt.Errorf("%s.status must be enabled or disabled", joinPath("agents", name))
@@ -257,7 +257,7 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
-	agentMCPs, err := normalizeAgentMCPEntries(joinPath("agents", name), agent.MCPs, projectMCPs, options)
+	agentMCPServers, err := normalizeAgentMCPEntries(joinPath("agents", name), agent.MCPServers, projectMCPServers, options)
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
@@ -291,7 +291,7 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 		Build:        build,
 		Driver:       driver,
 		Env:          env,
-		MCPs:         agentMCPs,
+		MCPServers:   agentMCPServers,
 		CapsetIDs:    normalizeStringList(agent.CapsetIDs),
 		Skills:       skills,
 		Volumes:      volumes,
@@ -498,16 +498,16 @@ func normalizeMCPServer(path string, server MCPServerSpec, options NormalizeOpti
 	}
 }
 
-func normalizeAgentMCPEntries(path string, entries AgentMCPEntriesSpec, projectMCPs map[string]NormalizedMCPServerSpec, options NormalizeOptions) (map[string]NormalizedMCPServerSpec, error) {
+func normalizeAgentMCPEntries(path string, entries AgentMCPEntriesSpec, projectMCPServers map[string]NormalizedMCPServerSpec, options NormalizeOptions) (map[string]NormalizedMCPServerSpec, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
 	result := make(map[string]NormalizedMCPServerSpec, len(entries))
 	seenNames := make(map[string]string, len(entries))
 	for index, entry := range entries {
-		itemPath := fmt.Sprintf("%s.mcps[%d]", path, index)
+		itemPath := fmt.Sprintf("%s.mcp_servers[%d]", path, index)
 		if ref := strings.TrimSpace(entry.Ref); ref != "" {
-			server, ok := projectMCPs[ref]
+			server, ok := projectMCPServers[ref]
 			if !ok {
 				return nil, &ValidationError{Path: itemPath, Message: fmt.Sprintf("mcp %q is not defined", ref)}
 			}

@@ -136,14 +136,14 @@ func normalizedAgentFromLegacy(definition domain.AgentDefinition) (compose.Norma
 		Skills:       legacySkills(definition.Skills),
 		Volumes:      legacyVolumes(definition.Volumes),
 		Jupyter:      config.Jupyter,
-		MCPs:         config.MCPs,
+		MCPServers:   config.MCPServers,
 	}
 	return agent, nil
 }
 
 type legacyAgentConfig struct {
-	Jupyter *compose.JupyterSpec                       `json:"jupyter,omitempty"`
-	MCPs    map[string]compose.NormalizedMCPServerSpec `json:"mcps,omitempty"`
+	Jupyter    *compose.JupyterSpec                       `json:"jupyter,omitempty"`
+	MCPServers map[string]compose.NormalizedMCPServerSpec `json:"mcp_servers,omitempty"`
 }
 
 func decodeLegacyAgentConfig(raw string) (legacyAgentConfig, error) {

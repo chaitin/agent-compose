@@ -3752,7 +3752,7 @@ type ProjectSpec struct {
 	Network       *NetworkSpec           `protobuf:"bytes,5,opt,name=network,proto3" json:"network,omitempty"`
 	Volumes       []*ProjectVolumeSpec   `protobuf:"bytes,6,rep,name=volumes,proto3" json:"volumes,omitempty"`
 	Workspaces    []*NamedWorkspaceSpec  `protobuf:"bytes,7,rep,name=workspaces,proto3" json:"workspaces,omitempty"`
-	Mcps          []*MCPServerSpec       `protobuf:"bytes,8,rep,name=mcps,proto3" json:"mcps,omitempty"`
+	McpServers    []*MCPServerSpec       `protobuf:"bytes,8,rep,name=mcp_servers,json=mcpServers,proto3" json:"mcp_servers,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3829,9 +3829,9 @@ func (x *ProjectSpec) GetWorkspaces() []*NamedWorkspaceSpec {
 	return nil
 }
 
-func (x *ProjectSpec) GetMcps() []*MCPServerSpec {
+func (x *ProjectSpec) GetMcpServers() []*MCPServerSpec {
 	if x != nil {
-		return x.Mcps
+		return x.McpServers
 	}
 	return nil
 }
@@ -3903,7 +3903,7 @@ type AgentSpec struct {
 	Jupyter       *JupyterSpec           `protobuf:"bytes,11,opt,name=jupyter,proto3" json:"jupyter,omitempty"`
 	Build         *BuildSpec             `protobuf:"bytes,12,opt,name=build,proto3" json:"build,omitempty"`
 	Volumes       []*VolumeMountSpec     `protobuf:"bytes,13,rep,name=volumes,proto3" json:"volumes,omitempty"`
-	Mcps          []*MCPServerSpec       `protobuf:"bytes,14,rep,name=mcps,proto3" json:"mcps,omitempty"`
+	McpServers    []*MCPServerSpec       `protobuf:"bytes,14,rep,name=mcp_servers,json=mcpServers,proto3" json:"mcp_servers,omitempty"`
 	Skills        []*SkillSpec           `protobuf:"bytes,15,rep,name=skills,proto3" json:"skills,omitempty"`
 	Status        AgentStatus            `protobuf:"varint,16,opt,name=status,proto3,enum=agentcompose.v2.AgentStatus" json:"status,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -4031,9 +4031,9 @@ func (x *AgentSpec) GetVolumes() []*VolumeMountSpec {
 	return nil
 }
 
-func (x *AgentSpec) GetMcps() []*MCPServerSpec {
+func (x *AgentSpec) GetMcpServers() []*MCPServerSpec {
 	if x != nil {
-		return x.Mcps
+		return x.McpServers
 	}
 	return nil
 }
@@ -15802,7 +15802,7 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\vresource_id\x18\x03 \x01(\tR\n" +
 	"resourceId\x12\x12\n" +
 	"\x04name\x18\x04 \x01(\tR\x04name\x12\x18\n" +
-	"\amessage\x18\x05 \x01(\tR\amessage\"\x90\x03\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage\"\x9d\x03\n" +
 	"\vProjectSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\tvariables\x18\x02 \x03(\v2\x1b.agentcompose.v2.EnvVarSpecR\tvariables\x122\n" +
@@ -15811,11 +15811,12 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\avolumes\x18\x06 \x03(\v2\".agentcompose.v2.ProjectVolumeSpecR\avolumes\x12C\n" +
 	"\n" +
 	"workspaces\x18\a \x03(\v2#.agentcompose.v2.NamedWorkspaceSpecR\n" +
-	"workspaces\x122\n" +
-	"\x04mcps\x18\b \x03(\v2\x1e.agentcompose.v2.MCPServerSpecR\x04mcpsJ\x04\b\x03\x10\x04R\tworkspace\"f\n" +
+	"workspaces\x12?\n" +
+	"\vmcp_servers\x18\b \x03(\v2\x1e.agentcompose.v2.MCPServerSpecR\n" +
+	"mcpServersJ\x04\b\x03\x10\x04R\tworkspace\"f\n" +
 	"\x12NamedWorkspaceSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12<\n" +
-	"\tworkspace\x18\x02 \x01(\v2\x1e.agentcompose.v2.WorkspaceSpecR\tworkspace\"\xcf\x05\n" +
+	"\tworkspace\x18\x02 \x01(\v2\x1e.agentcompose.v2.WorkspaceSpecR\tworkspace\"\xdc\x05\n" +
 	"\tAgentSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x14\n" +
@@ -15831,8 +15832,9 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	" \x03(\tR\tcapsetIds\x126\n" +
 	"\ajupyter\x18\v \x01(\v2\x1c.agentcompose.v2.JupyterSpecR\ajupyter\x120\n" +
 	"\x05build\x18\f \x01(\v2\x1a.agentcompose.v2.BuildSpecR\x05build\x12:\n" +
-	"\avolumes\x18\r \x03(\v2 .agentcompose.v2.VolumeMountSpecR\avolumes\x122\n" +
-	"\x04mcps\x18\x0e \x03(\v2\x1e.agentcompose.v2.MCPServerSpecR\x04mcps\x122\n" +
+	"\avolumes\x18\r \x03(\v2 .agentcompose.v2.VolumeMountSpecR\avolumes\x12?\n" +
+	"\vmcp_servers\x18\x0e \x03(\v2\x1e.agentcompose.v2.MCPServerSpecR\n" +
+	"mcpServers\x122\n" +
 	"\x06skills\x18\x0f \x03(\v2\x1a.agentcompose.v2.SkillSpecR\x06skills\x124\n" +
 	"\x06status\x18\x10 \x01(\x0e2\x1c.agentcompose.v2.AgentStatusR\x06status\"\xfb\x01\n" +
 	"\rMCPServerSpec\x12\x12\n" +
@@ -17378,7 +17380,7 @@ var file_agentcompose_v2_agentcompose_proto_depIdxs = []int32{
 	70,  // 52: agentcompose.v2.ProjectSpec.network:type_name -> agentcompose.v2.NetworkSpec
 	64,  // 53: agentcompose.v2.ProjectSpec.volumes:type_name -> agentcompose.v2.ProjectVolumeSpec
 	61,  // 54: agentcompose.v2.ProjectSpec.workspaces:type_name -> agentcompose.v2.NamedWorkspaceSpec
-	63,  // 55: agentcompose.v2.ProjectSpec.mcps:type_name -> agentcompose.v2.MCPServerSpec
+	63,  // 55: agentcompose.v2.ProjectSpec.mcp_servers:type_name -> agentcompose.v2.MCPServerSpec
 	69,  // 56: agentcompose.v2.NamedWorkspaceSpec.workspace:type_name -> agentcompose.v2.WorkspaceSpec
 	74,  // 57: agentcompose.v2.AgentSpec.driver:type_name -> agentcompose.v2.DriverSpec
 	67,  // 58: agentcompose.v2.AgentSpec.env:type_name -> agentcompose.v2.EnvVarSpec
@@ -17387,7 +17389,7 @@ var file_agentcompose_v2_agentcompose_proto_depIdxs = []int32{
 	179, // 61: agentcompose.v2.AgentSpec.jupyter:type_name -> agentcompose.v2.JupyterSpec
 	66,  // 62: agentcompose.v2.AgentSpec.build:type_name -> agentcompose.v2.BuildSpec
 	65,  // 63: agentcompose.v2.AgentSpec.volumes:type_name -> agentcompose.v2.VolumeMountSpec
-	63,  // 64: agentcompose.v2.AgentSpec.mcps:type_name -> agentcompose.v2.MCPServerSpec
+	63,  // 64: agentcompose.v2.AgentSpec.mcp_servers:type_name -> agentcompose.v2.MCPServerSpec
 	183, // 65: agentcompose.v2.AgentSpec.skills:type_name -> agentcompose.v2.SkillSpec
 	5,   // 66: agentcompose.v2.AgentSpec.status:type_name -> agentcompose.v2.AgentStatus
 	67,  // 67: agentcompose.v2.MCPServerSpec.env:type_name -> agentcompose.v2.EnvVarSpec

@@ -24,7 +24,7 @@ func TestWriteAgentMCPConfigFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile returned error: %v", err)
 	}
-	if !strings.Contains(string(data), `"mcps"`) || !strings.Contains(string(data), `"filesystem"`) {
+	if !strings.Contains(string(data), `"mcp_servers"`) || !strings.Contains(string(data), `"filesystem"`) {
 		t.Fatalf("config = %q", string(data))
 	}
 	if err := WriteAgentMCPConfigFile(session, nil); err != nil {

@@ -13,7 +13,7 @@ type ProjectSpec struct {
 	EnvFiles   EnvFileSpec              `yaml:"env_file,omitempty" json:"env_file,omitempty"`
 	Variables  map[string]EnvVarSpec    `yaml:"variables,omitempty" json:"variables,omitempty"`
 	Workspaces map[string]WorkspaceSpec `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
-	MCPs       map[string]MCPServerSpec `yaml:"mcps,omitempty" json:"mcps,omitempty"`
+	MCPServers map[string]MCPServerSpec `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 	Volumes    map[string]VolumeSpec    `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	Agents     map[string]AgentSpec     `yaml:"agents,omitempty" json:"agents,omitempty"`
 	Network    *NetworkSpec             `yaml:"network,omitempty" json:"network,omitempty"`
@@ -52,7 +52,7 @@ type AgentSpec struct {
 	Build        *BuildSpec            `yaml:"build,omitempty" json:"build,omitempty"`
 	Driver       *DriverSpec           `yaml:"driver,omitempty" json:"driver,omitempty"`
 	Env          map[string]EnvVarSpec `yaml:"env,omitempty" json:"env,omitempty"`
-	MCPs         AgentMCPEntriesSpec   `yaml:"mcps,omitempty" json:"mcps,omitempty"`
+	MCPServers   AgentMCPEntriesSpec   `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 	CapsetIDs    []string              `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
 	Skills       []SkillSpec           `yaml:"skills,omitempty" json:"skills,omitempty"`
 	Volumes      []VolumeMountSpec     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
@@ -465,14 +465,14 @@ type nodeValidator func(node *yaml.Node, path string) error
 
 func validateProjectNode(node *yaml.Node) error {
 	return validateMapping(node, "", map[string]nodeValidator{
-		"name":       validateScalar,
-		"env_file":   validateScalarOrStringList,
-		"variables":  validateEnvVarMap,
-		"workspaces": validateWorkspaceMap,
-		"mcps":       validateMCPMap,
-		"volumes":    validateVolumeMap,
-		"agents":     validateAgentMap,
-		"network":    validateNetwork,
+		"name":        validateScalar,
+		"env_file":    validateScalarOrStringList,
+		"variables":   validateEnvVarMap,
+		"workspaces":  validateWorkspaceMap,
+		"mcp_servers": validateMCPMap,
+		"volumes":     validateVolumeMap,
+		"agents":      validateAgentMap,
+		"network":     validateNetwork,
 	})
 }
 
@@ -501,7 +501,7 @@ func validateAgent(node *yaml.Node, path string) error {
 		"build":         validateBuild,
 		"driver":        validateDriver,
 		"env":           validateEnvVarMap,
-		"mcps":          validateAgentMCPEntries,
+		"mcp_servers":   validateAgentMCPEntries,
 		"capset_ids":    validateStringList,
 		"skills":        validateSkillList,
 		"volumes":       validateVolumeMountList,
