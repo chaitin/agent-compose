@@ -18,6 +18,23 @@ type recordingProjectRunWorkspaceEnsurer struct {
 	workspaceCopies []*domain.SandboxWorkspace
 }
 
+type recordingCapabilitySandboxIndexer struct {
+	indexed []string
+	revoked []string
+}
+
+func (i *recordingCapabilitySandboxIndexer) IndexSandbox(sandbox *domain.Sandbox) {
+	if sandbox == nil {
+		i.indexed = append(i.indexed, "")
+		return
+	}
+	i.indexed = append(i.indexed, sandbox.Summary.ID)
+}
+
+func (i *recordingCapabilitySandboxIndexer) RevokeSandbox(sandboxID string) {
+	i.revoked = append(i.revoked, sandboxID)
+}
+
 func (e *recordingProjectRunWorkspaceEnsurer) Ensure(_ context.Context, sandbox *domain.Sandbox) error {
 	if e.beforeEnsure != nil {
 		e.beforeEnsure(sandbox)
@@ -157,6 +174,49 @@ func TestRunsControllerProjectRunWorkspaceEnsurerPaths(t *testing.T) {
 		assertProjectRunEnsurerCall(t, ensurer, sandbox.Summary.ID, original)
 		assertProjectRunWorkspaceSnapshot(t, "running sandbox", result.Sandbox.Workspace, original)
 		assertProjectRunReadyUnchanged(t, "running sandbox", result.Sandbox, readyAt)
+	})
+}
+
+func TestRunsControllerProjectRunIndexesCapabilitySandbox(t *testing.T) {
+	t.Run("created sandbox", func(t *testing.T) {
+		fixture := newControllerRunFixture(t)
+		indexer := &recordingCapabilitySandboxIndexer{}
+		fixture.controller.capTokens = indexer
+
+		result, err := fixture.controller.ensureProjectRunSandbox(
+			fixture.ctx,
+			projectRunEnsurerRecord("run-created-capability"),
+			Preparation{},
+			RunAgentRequest{},
+		)
+		if err != nil {
+			t.Fatalf("ensureProjectRunSandbox returned error: %v", err)
+		}
+		if result.Sandbox == nil || result.Sandbox.Summary.ID == "" {
+			t.Fatalf("sandbox result = %#v", result)
+		}
+		assertIndexedCapabilitySandbox(t, indexer, result.Sandbox.Summary.ID)
+	})
+
+	t.Run("reused sandbox", func(t *testing.T) {
+		fixture := newControllerRunFixture(t)
+		indexer := &recordingCapabilitySandboxIndexer{}
+		fixture.controller.capTokens = indexer
+		sandbox := createProjectRunWorkspaceSandbox(t, fixture, projectRunWorkspaceSnapshot("existing-capability"))
+
+		result, err := fixture.controller.ensureProjectRunSandbox(
+			fixture.ctx,
+			projectRunEnsurerRecord("run-reused-capability"),
+			Preparation{},
+			RunAgentRequest{SandboxID: sandbox.Summary.ID},
+		)
+		if err != nil {
+			t.Fatalf("ensureProjectRunSandbox returned error: %v", err)
+		}
+		if result.Sandbox == nil || result.Sandbox.Summary.ID != sandbox.Summary.ID {
+			t.Fatalf("sandbox result = %#v, want reused sandbox %q", result, sandbox.Summary.ID)
+		}
+		assertIndexedCapabilitySandbox(t, indexer, sandbox.Summary.ID)
 	})
 }
 
@@ -367,5 +427,15 @@ func assertProjectRunReadyUnchanged(t *testing.T, label string, sandbox *domain.
 	}
 	if !sandbox.WorkspaceProvisioning.UpdatedAt.Equal(readyAt) {
 		t.Fatalf("%s workspace ready timestamp = %v, want unchanged %v", label, sandbox.WorkspaceProvisioning.UpdatedAt, readyAt)
+	}
+}
+
+func assertIndexedCapabilitySandbox(t *testing.T, indexer *recordingCapabilitySandboxIndexer, sandboxID string) {
+	t.Helper()
+	if len(indexer.indexed) != 1 || indexer.indexed[0] != sandboxID {
+		t.Fatalf("indexed capability sandboxes = %#v, want [%q]", indexer.indexed, sandboxID)
+	}
+	if len(indexer.revoked) != 0 {
+		t.Fatalf("revoked capability sandboxes = %#v, want none", indexer.revoked)
 	}
 }

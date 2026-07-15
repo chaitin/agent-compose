@@ -2148,7 +2148,14 @@ func (c *Controller) startProjectRunSandbox(ctx context.Context, sandbox *domain
 	}
 	domain.RestoreSandboxTransientFields(loaded, sandbox)
 	*sandbox = *loaded
+	c.indexCapabilitySandbox(sandbox)
 	return nil
+}
+
+func (c *Controller) indexCapabilitySandbox(sandbox *domain.Sandbox) {
+	if c != nil && c.capTokens != nil {
+		c.capTokens.IndexSandbox(sandbox)
+	}
 }
 
 func (c *Controller) publishProjectRunSandboxStarted(ctx context.Context, sandbox *domain.Sandbox, eventType, message string) {
