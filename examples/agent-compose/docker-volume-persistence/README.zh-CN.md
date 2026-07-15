@@ -5,6 +5,13 @@
 该 project 把 managed named volume 挂载到 `/cache`，并把只读 bind fixture
 挂载到 `/fixtures`。
 
+## 前置条件与配置
+
+Docker 和 daemon 必须已启动。顶层 `cache` volume 由项目管理并以读写方式挂载；
+`./fixtures:/fixtures:ro` 相对 compose 目录解析并只读挂载。
+
+## 运行教程
+
 ```bash
 agent-compose up
 agent-compose run worker --command "cat /fixtures/readonly.txt && printf 'persistent\\n' > /cache/value" --keep-running
@@ -19,3 +26,9 @@ agent-compose down
 
 cache 值在 sandbox stop/resume 后仍存在。`down` 会移除 project-managed volume
 的归属，不应把该示例当作备份机制。
+
+## 验证要点
+
+使用保留 run 返回的 sandbox ID。第一次命令必须读取 fixture 并写入
+`/cache/value`；stop/resume 后 `cat` 必须返回 `persistent`。`touch` 检查必须因只读
+挂载而失败。最后显式 stop、rm，再执行 `down`。
