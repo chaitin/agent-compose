@@ -9,9 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"agent-compose/pkg/identity"
 	domain "agent-compose/pkg/model"
-
-	"github.com/google/uuid"
 )
 
 type RunStore interface {
@@ -86,7 +85,7 @@ func (e *RunExecutor) Prepare(ctx context.Context, loader domain.Loader, trigger
 	}
 	now := time.Now().UTC()
 	run := domain.LoaderRunSummary{
-		ID:               uuid.NewString(),
+		ID:               identity.NewRandomID(identity.ResourceRun),
 		LoaderID:         loader.Summary.ID,
 		TriggerSource:    strings.TrimSpace(source),
 		Status:           domain.LoaderRunStatusRunning,

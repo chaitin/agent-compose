@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"agent-compose/pkg/identity"
 	domain "agent-compose/pkg/model"
 )
 
@@ -66,9 +67,15 @@ func TestControllerCoverageWorkflow(t *testing.T) {
 	if err != nil || manualRun.Status != domain.LoaderRunStatusSucceeded || manualRun.ResultJSON == "" {
 		t.Fatalf("RunNow run=%#v err=%v", manualRun, err)
 	}
+	if !identity.IsID(manualRun.ID) || identity.ShortID(manualRun.ID) == "" {
+		t.Fatalf("RunNow run id = %q, want SHA-256 resource id", manualRun.ID)
+	}
 	prepared, err := controller.Prepare(ctx, created, &created.Triggers[0], `{"prepared":true}`, "manual", RunOptions{})
 	if err != nil || prepared.Run.Status != domain.LoaderRunStatusRunning {
 		t.Fatalf("Prepare prepared=%#v err=%v", prepared, err)
+	}
+	if !identity.IsID(prepared.Run.ID) || prepared.Run.ID == manualRun.ID {
+		t.Fatalf("Prepare run id = %q, want a distinct SHA-256 resource id", prepared.Run.ID)
 	}
 	executed, err := controller.Execute(ctx, prepared)
 	if err != nil || executed.Status != domain.LoaderRunStatusSucceeded {
