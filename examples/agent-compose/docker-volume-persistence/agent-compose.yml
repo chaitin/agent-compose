@@ -1,0 +1,17 @@
+name: docker-volume-persistence
+
+volumes:
+  cache:
+    driver: local
+    labels:
+      purpose: agent-compose-example
+
+agents:
+  worker:
+    provider: codex
+    image: ghcr.io/chaitin/agent-compose-guest:latest
+    driver:
+      docker: {}
+    volumes:
+      - cache:/cache
+      - ./fixtures:/fixtures:ro

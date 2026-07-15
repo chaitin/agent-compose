@@ -1,8 +1,8 @@
-name: docker-minimal
+name: microsandbox-minimal
 
 agents:
   reviewer:
     provider: codex
     image: ghcr.io/chaitin/agent-compose-guest:latest
     driver:
-      docker: {}
+      microsandbox: {}

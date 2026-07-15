@@ -3,10 +3,11 @@ name: docker-scheduler-script-url
 agents:
   reviewer:
     provider: codex
-    image: agent-compose-guest:latest
+    image: ghcr.io/chaitin/agent-compose-guest:latest
     driver:
       docker: {}
     scheduler:
       enabled: true
+      sandbox_policy: new
       script:
         url: ./scheduler.js

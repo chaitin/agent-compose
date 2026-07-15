@@ -1,20 +1,20 @@
-# Scheduler 脚本 URL 示例
+# Scheduler 脚本 URL
 
 语言：[English](README.md) | 中文
 
-本示例把 QJS 保存在 `scheduler.js`，并在 `agent-compose.yml` 中通过
-`scheduler.script.url` 引用。
+QJS scheduler 保存在 `scheduler.js`，通过 `scheduler.script.url` 引用。
 
 ```bash
 agent-compose config
 agent-compose up
-agent-compose ps
+agent-compose scheduler ls reviewer
+agent-compose scheduler inspect reviewer source-loaded
+# 等待 scheduler inspect 显示 source-loaded 已触发。
 agent-compose down
 ```
 
-`config` 会把获取到的脚本以内联形式输出。`up` 再获取一次，基于内容快照计算
-hash，并且只把脚本文本发送给 daemon。修改 `scheduler.js` 后需再次执行 `up`
-才会生效。相对路径以 `agent-compose.yml` 所在目录为基准。
+`config` 和 `up` 以 compose 目录为基准解析相对路径，并把内容快照内联发送给
+daemon。修改 `scheduler.js` 后需要再次 `up`；它不是运行时 import，也不会后台刷新。
 
-控制面命令不要求 provider 凭证；实际定时运行仍需要可用的 guest runtime 和
-provider 凭证。
+两秒 timeout trigger 执行本地 shell 命令，因此不需要 provider 认证。它由
+scheduler runtime 驱动；`scheduler trigger` 的 project-run 路径用于 agent prompt。

@@ -44,11 +44,15 @@ type e2eDaemonProcess struct {
 }
 
 func startE2EDaemon(t *testing.T, binary, repoRoot, testRoot, listenAddress, image string) *e2eDaemonProcess {
+	return startE2EDaemonWithOverrides(t, binary, repoRoot, testRoot, listenAddress, image, nil)
+}
+
+func startE2EDaemonWithOverrides(t *testing.T, binary, repoRoot, testRoot, listenAddress, image string, overrides map[string]string) *e2eDaemonProcess {
 	t.Helper()
 	process := &e2eDaemonProcess{done: make(chan error, 1)}
 	process.cmd = exec.Command(binary, "daemon")
 	process.cmd.Dir = repoRoot
-	process.cmd.Env = overrideE2EEnv(os.Environ(), map[string]string{
+	env := map[string]string{
 		"AGENT_COMPOSE_SOCKET":     filepath.Join(testRoot, "agent-compose.sock"),
 		"AUTH_PASSWORD":            "",
 		"AUTH_USERNAME":            "",
@@ -67,7 +71,11 @@ func startE2EDaemon(t *testing.T, binary, repoRoot, testRoot, listenAddress, ima
 		"RUNTIME_DRIVER":           "docker",
 		"SANDBOX_ROOT":             filepath.Join(testRoot, "sandboxes"),
 		"SANDBOX_START_TIMEOUT":    "3m",
-	})
+	}
+	for name, value := range overrides {
+		env[name] = value
+	}
+	process.cmd.Env = overrideE2EEnv(os.Environ(), env)
 	process.cmd.Stdout = &process.logs
 	process.cmd.Stderr = &process.logs
 	if err := process.cmd.Start(); err != nil {
@@ -206,6 +214,38 @@ func removeE2EDockerSandboxFallback(t *testing.T, ctx context.Context, dockerCli
 	for _, item := range containers {
 		if err := dockerClient.ContainerRemove(ctx, item.ID, containerapi.RemoveOptions{Force: true}); err != nil {
 			t.Logf("fallback Docker sandbox removal failed for %s: %v", item.ID, err)
+		}
+	}
+}
+
+func removeE2EDockerContainersUnderRoot(t *testing.T, dockerClient *client.Client, root string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	args := filters.NewArgs(filters.Arg("label", "agent-compose.driver=docker"))
+	containers, err := dockerClient.ContainerList(ctx, containerapi.ListOptions{All: true, Filters: args})
+	if err != nil {
+		t.Errorf("list Docker containers for root cleanup: %v", err)
+		return
+	}
+	root = filepath.Clean(root) + string(filepath.Separator)
+	for _, item := range containers {
+		info, err := dockerClient.ContainerInspect(ctx, item.ID)
+		if err != nil {
+			t.Errorf("inspect Docker container %s for root cleanup: %v", item.ID, err)
+			continue
+		}
+		owned := false
+		for _, mount := range info.Mounts {
+			if strings.HasPrefix(filepath.Clean(mount.Source)+string(filepath.Separator), root) {
+				owned = true
+				break
+			}
+		}
+		if owned {
+			if err := dockerClient.ContainerRemove(ctx, item.ID, containerapi.RemoveOptions{Force: true}); err != nil {
+				t.Errorf("remove Docker container %s for root cleanup: %v", item.ID, err)
+			}
 		}
 	}
 }

@@ -1,0 +1,15 @@
+name: docker-build
+
+agents:
+  worker:
+    provider: codex
+    image: agent-compose-example-build:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        EXAMPLE_MARKER: built-by-agent-compose
+      tags:
+        - agent-compose-example-build:latest
+    driver:
+      docker: {}

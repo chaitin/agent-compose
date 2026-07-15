@@ -128,6 +128,12 @@ tasks:
       - cd runtime/agent-compose-runtime-sdk && npm test
       - cd runtime/javascript && TEST_SHAPE=unit npm run test:unit
 
+  test:examples:
+    desc: Validate all committed compose and scheduler script examples
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} go test ./cmd/agent-compose -run '^TestExampleFilesContract$' -count=1
+
   test:integration:
     desc: Run integration tests
     cmds:
@@ -185,6 +191,57 @@ tasks:
         AGENT_COMPOSE_E2E_GUEST_IMAGE="$image" \
           GOCACHE={{.GO_BUILD_CACHE_DIR}} \
           {{.GO_TOOLCHAIN_ENV}} go test -tags docker_e2e ./cmd/agent-compose -run '^TestE2EDockerSchedulerScriptHelloWorldFlow$' -count=1 -v
+
+  test:e2e:examples-docker:
+    desc: Run committed Docker examples through an isolated local daemon
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - |
+        image="${AGENT_COMPOSE_E2E_EXAMPLES_IMAGE:-ghcr.io/chaitin/agent-compose-guest:latest}"
+        if ! docker image inspect "$image" >/dev/null 2>&1; then
+          echo "Docker examples image $image is unavailable locally; pull it before running this task" >&2
+          exit 1
+        fi
+        AGENT_COMPOSE_E2E_EXAMPLES_IMAGE="$image" \
+          GOCACHE={{.GO_BUILD_CACHE_DIR}} \
+          {{.GO_TOOLCHAIN_ENV}} go test ./test/e2e -run '^TestE2EExamplesDocker$' -count=1 -v
+
+  test:e2e:examples-docker-provider:
+    desc: Run cron and timeout through Codex with a controlled local provider
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - |
+        image="${AGENT_COMPOSE_E2E_EXAMPLES_IMAGE:-ghcr.io/chaitin/agent-compose-guest:latest}"
+        if ! docker image inspect "$image" >/dev/null 2>&1; then
+          echo "Docker examples image $image is unavailable locally" >&2
+          exit 1
+        fi
+        AGENT_COMPOSE_E2E_EXAMPLES_IMAGE="$image" \
+          AGENT_COMPOSE_E2E_EXAMPLES_PROVIDER=1 \
+          GOCACHE={{.GO_BUILD_CACHE_DIR}} \
+          {{.GO_TOOLCHAIN_ENV}} go test ./test/e2e -run '^TestE2EExamplesDockerProvider$' -count=1 -v
+
+  test:e2e:examples-docker-live-provider:
+    desc: Run docker-minimal through Codex with the live provider configured in .env
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - |
+        if [ ! -f .env ]; then
+          echo "A configured .env is required for the live-provider examples E2E" >&2
+          exit 1
+        fi
+        set -a
+        . ./.env
+        set +a
+        image="${AGENT_COMPOSE_E2E_EXAMPLES_IMAGE:-ghcr.io/chaitin/agent-compose-guest:latest}"
+        if ! docker image inspect "$image" >/dev/null 2>&1; then
+          echo "Docker examples image $image is unavailable locally" >&2
+          exit 1
+        fi
+        AGENT_COMPOSE_E2E_EXAMPLES_IMAGE="$image" \
+          AGENT_COMPOSE_E2E_EXAMPLES_LIVE_PROVIDER=1 \
+          GOCACHE={{.GO_BUILD_CACHE_DIR}} \
+          {{.GO_TOOLCHAIN_ENV}} go test ./test/e2e -run '^TestE2EExamplesDockerLiveProvider$' -count=1 -v
 
   test:e2e:image-docker:
     desc: Run the full daemon image without KVM and exercise a Docker sandbox lifecycle

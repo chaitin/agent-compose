@@ -100,6 +100,51 @@ compiled only with the `docker_e2e` build tag, so the ordinary `task test`
 coverage gate does not include this scheduler Docker E2E or create its runtime
 containers.
 
+Committed examples have two verification layers. The deterministic contract
+test parses every compose file, resolves scheduler script URLs, validates all
+QJS scripts, checks secret redaction, and is included in `task test`. Run it
+directly with:
+
+```bash
+task test:examples
+```
+
+The opt-in Docker examples lifecycle starts an isolated host daemon and runs
+the committed Docker examples through the real CLI and guest image:
+
+```bash
+task test:e2e:examples-docker
+```
+
+It covers command runs, workspace isolation, stop/resume, multiple agents,
+environment and secret propagation, managed volumes, read-only bind mounts,
+image builds, and scheduler shell scripts. A second task drives the declarative
+cron and timeout examples through the guest Codex CLI and daemon LLM facade,
+using a controlled local Chat Completions fixture instead of a public model:
+
+```bash
+task test:e2e:examples-docker-provider
+```
+
+To verify the actual provider configured in the repository-local `.env`, run
+the separate live-provider task. It requires non-empty `LLM_API_ENDPOINT`,
+`LLM_API_KEY`, and `LLM_MODEL`, then sends a real prompt through the daemon,
+Docker guest, runtime facade, and Codex CLI:
+
+```bash
+task test:e2e:examples-docker-live-provider
+```
+
+This task is intentionally not part of deterministic test gates because it
+uses external credentials, network access, and model quota.
+
+All three Docker example E2E tasks require the Docker daemon and
+`ghcr.io/chaitin/agent-compose-guest:latest` locally. They use temporary daemon
+state and unique build tags and remove owned containers, volumes, and images on
+exit. BoxLite and Microsandbox example manifests receive deterministic config
+validation only; runtime validation remains `task test:runtime-smoke` on a
+prepared Linux/KVM host.
+
 The full daemon image Docker lifecycle E2E is opt-in because it starts the
 daemon image and Docker sandbox containers through a local Docker socket. Run
 it after building both local images:

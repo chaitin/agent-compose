@@ -1,0 +1,15 @@
+name: docker-workspace-lifecycle
+
+workspaces:
+  source:
+    provider: local
+    path: ./workspace
+
+agents:
+  worker:
+    provider: codex
+    image: ghcr.io/chaitin/agent-compose-guest:latest
+    driver:
+      docker: {}
+    workspace:
+      name: source

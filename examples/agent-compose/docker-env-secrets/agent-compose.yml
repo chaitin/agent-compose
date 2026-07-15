@@ -1,0 +1,21 @@
+name: docker-env-secrets
+
+env_file: example.env
+
+variables:
+  PROJECT_VALUE: project-level
+  PROJECT_SECRET:
+    value: ${EXAMPLE_SECRET}
+    secret: true
+
+agents:
+  inspector:
+    provider: codex
+    image: ghcr.io/chaitin/agent-compose-guest:latest
+    driver:
+      docker: {}
+    env:
+      AGENT_VALUE: agent-level
+      AGENT_SECRET:
+        value: ${EXAMPLE_SECRET}
+        secret: true

@@ -3,11 +3,12 @@ name: docker-scheduler-timeout
 agents:
   reviewer:
     provider: codex
-    image: agent-compose-guest:latest
+    image: ghcr.io/chaitin/agent-compose-guest:latest
     driver:
       docker: {}
     scheduler:
       enabled: true
+      sandbox_policy: new
       triggers:
         - name: run-once-after-15-seconds
           timeout: 15s

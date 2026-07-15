@@ -1,0 +1,36 @@
+name: docker-scheduler-script-runtime
+
+agents:
+  heartbeat:
+    provider: codex
+    image: ghcr.io/chaitin/agent-compose-guest:latest
+    driver:
+      docker: {}
+    scheduler:
+      enabled: true
+      sandbox_policy: new
+      script: |
+        function runHeartbeat() {
+          const previous = scheduler.state.get("heartbeat-count") ?? 0;
+          const count = Number(previous) + 1;
+          scheduler.state.set("heartbeat-count", count);
+          const command = scheduler.shell("printf 'heartbeat %s\\n' " + count);
+          scheduler.log("heartbeat completed", { count, output: command.output });
+          return { count, output: command.output, success: command.success };
+        }
+
+        scheduler.timeout("warmup", function warmup() {
+          return runHeartbeat();
+        }, 1000);
+
+        scheduler.timeout("follow-up", function followUp() {
+          return runHeartbeat();
+        }, 3000);
+
+        scheduler.interval("heartbeat", function heartbeat() {
+          return runHeartbeat();
+        }, 60000);
+
+        function main() {
+          return runHeartbeat();
+        }

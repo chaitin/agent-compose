@@ -2,25 +2,28 @@
 
 语言：[English](README.md) | 中文
 
-`agent-compose` Docker runtime driver 的可运行示例，按从简单到完整的顺序排列。
+## 已在本地验证的 Docker 示例
 
-| 示例 | 演示内容 | 是否需要 provider 凭证 |
+| 示例 | 能力 | Provider 认证 |
 | --- | --- | --- |
-| [docker-minimal](docker-minimal/) | 最小的 Docker project：一个 agent，不启用 scheduler。 | `config`/`up`/`ps` 不需要 |
-| [docker-scheduler-cron](docker-scheduler-cron/) | managed cron scheduler 的控制面流程。 | `config`/`up`/`ps`/`down` 不需要 |
-| [docker-scheduler-script-url](docker-scheduler-script-url/) | 从相对文件 URL 来源加载 scheduler 脚本。 | `config`/`up`/`ps`/`down` 不需要 |
-| [docker-scheduler-timeout](docker-scheduler-timeout/) | 端到端的定时运行：触发、执行 agent 并持久化日志。 | 定时运行需要 |
+| [docker-minimal](docker-minimal/) | 最小 project 和当前 sandbox CLI | 不需要 |
+| [docker-workspace-lifecycle](docker-workspace-lifecycle/) | Local workspace、exec、stop、resume 和隔离 | 不需要 |
+| [docker-multi-agent](docker-multi-agent/) | 多个 agent 共享 workspace 声明 | command run 不需要 |
+| [docker-env-secrets](docker-env-secrets/) | Dotenv、project variables、agent env 和隐藏 secret | 不需要 |
+| [docker-volume-persistence](docker-volume-persistence/) | Managed volume 和只读 bind mount | 不需要 |
+| [docker-build](docker-build/) | Compose 驱动的 guest image 构建 | 不需要 |
+| [docker-scheduler-cron](docker-scheduler-cron/) | 声明式 cron 控制面 | 运行 trigger 时需要 |
+| [docker-scheduler-timeout](docker-scheduler-timeout/) | 自动调度的 provider run | 需要 |
+| [docker-scheduler-script-url](docker-scheduler-script-url/) | 相对 scheduler script URL 快照 | 不需要 |
+| [docker-scheduler-script-runtime](docker-scheduler-script-runtime/) | State、日志、interval 和 scheduler shell | 不需要 |
 
-## 通用前置条件
+Docker 示例需要运行中的 agent-compose daemon、Docker daemon，以及本地已有
+发布版 guest image。README 描述稳定行为，不保存动态 ID 或完整输出快照。
 
-- Docker daemon 正在运行。
-- `agent-compose` daemon 已经启动。
-- 本地存在 `agent-compose-guest:latest` 镜像。
+## 仅做配置验证的 KVM 模板
 
-如需构建 guest 镜像，在仓库根目录执行：
+- [boxlite-minimal](boxlite-minimal/)
+- [microsandbox-minimal](microsandbox-minimal/)
 
-```bash
-task image:agent-compose-guest
-```
-
-每个示例都有自己的 `README.md`，包含完整命令和预期输出。
+自动化测试会解析这些 manifest，但 runtime 执行需要准备好的 Linux/KVM 主机，
+本地未做运行验证。
