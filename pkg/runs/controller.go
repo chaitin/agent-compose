@@ -2158,6 +2158,12 @@ func (c *Controller) indexCapabilitySandbox(sandbox *domain.Sandbox) {
 	}
 }
 
+func (c *Controller) revokeCapabilitySandbox(sandboxID string) {
+	if c != nil && c.capTokens != nil {
+		c.capTokens.RevokeSandbox(sandboxID)
+	}
+}
+
 func (c *Controller) publishProjectRunSandboxStarted(ctx context.Context, sandbox *domain.Sandbox, eventType, message string) {
 	if c.streams != nil {
 		c.streams.PublishSandboxUpdated(&sandbox.Summary)
@@ -2214,8 +2220,11 @@ func (c *Controller) cleanupProjectRunSandboxByPolicy(ctx context.Context, sandb
 	sandbox := sandboxResult.Sandbox
 	if CleanupPolicyRemovesSandbox(policy) && sandboxResult.Created {
 		if c.removal != nil {
-			_, err := c.removal.Remove(ctx, sandbox.Summary.ID, true)
-			return err
+			if _, err := c.removal.Remove(ctx, sandbox.Summary.ID, true); err != nil {
+				return err
+			}
+			c.revokeCapabilitySandbox(sandbox.Summary.ID)
+			return nil
 		}
 		if err := c.stopProjectRunSandbox(ctx, sandbox); err != nil {
 			return err
@@ -2232,6 +2241,7 @@ func (c *Controller) cleanupProjectRunSandboxByPolicy(ctx context.Context, sandb
 		if err := c.store.RemoveSandbox(ctx, sandbox.Summary.ID); err != nil {
 			return err
 		}
+		c.revokeCapabilitySandbox(sandbox.Summary.ID)
 		if c.dashboard != nil {
 			c.dashboard.Notify("sandbox_removed")
 		}
@@ -2249,6 +2259,7 @@ func (c *Controller) stopProjectRunSandbox(ctx context.Context, sandbox *domain.
 		return err
 	}
 	if loaded.Summary.VMStatus != domain.VMStatusRunning {
+		c.revokeCapabilitySandbox(loaded.Summary.ID)
 		return nil
 	}
 	if c.driver == nil {
@@ -2261,6 +2272,7 @@ func (c *Controller) stopProjectRunSandbox(ctx context.Context, sandbox *domain.
 	if err := c.store.UpdateSandbox(ctx, loaded); err != nil {
 		return err
 	}
+	c.revokeCapabilitySandbox(loaded.Summary.ID)
 	event := domain.SandboxEvent{ID: uuid.NewString(), Type: "sandbox.stopped", Level: "info", Message: "sandbox stopped", CreatedAt: time.Now().UTC()}
 	_ = c.store.AddEvent(ctx, loaded.Summary.ID, event)
 	if c.streams != nil {

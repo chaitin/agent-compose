@@ -7,6 +7,7 @@ import (
 	"time"
 
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/sessions"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
@@ -23,6 +24,13 @@ type recordingCapabilitySandboxIndexer struct {
 	revoked []string
 }
 
+type recordingSandboxRemoval struct {
+	calls  []string
+	forces []bool
+	err    error
+	remove func(context.Context, string) error
+}
+
 func (i *recordingCapabilitySandboxIndexer) IndexSandbox(sandbox *domain.Sandbox) {
 	if sandbox == nil {
 		i.indexed = append(i.indexed, "")
@@ -33,6 +41,20 @@ func (i *recordingCapabilitySandboxIndexer) IndexSandbox(sandbox *domain.Sandbox
 
 func (i *recordingCapabilitySandboxIndexer) RevokeSandbox(sandboxID string) {
 	i.revoked = append(i.revoked, sandboxID)
+}
+
+func (r *recordingSandboxRemoval) Remove(ctx context.Context, sandboxID string, force bool) (sessions.RemovalResult, error) {
+	r.calls = append(r.calls, sandboxID)
+	r.forces = append(r.forces, force)
+	if r.err != nil {
+		return sessions.RemovalResult{}, r.err
+	}
+	if r.remove != nil {
+		if err := r.remove(ctx, sandboxID); err != nil {
+			return sessions.RemovalResult{}, err
+		}
+	}
+	return sessions.RemovalResult{SandboxID: sandboxID, Stopped: true, Removed: true}, nil
 }
 
 func (e *recordingProjectRunWorkspaceEnsurer) Ensure(_ context.Context, sandbox *domain.Sandbox) error {
@@ -217,6 +239,96 @@ func TestRunsControllerProjectRunIndexesCapabilitySandbox(t *testing.T) {
 			t.Fatalf("sandbox result = %#v, want reused sandbox %q", result, sandbox.Summary.ID)
 		}
 		assertIndexedCapabilitySandbox(t, indexer, sandbox.Summary.ID)
+	})
+}
+
+func TestRunsControllerProjectRunRevokesCapabilitySandbox(t *testing.T) {
+	t.Run("stop cleanup", func(t *testing.T) {
+		fixture := newControllerRunFixture(t)
+		indexer := &recordingCapabilitySandboxIndexer{}
+		fixture.controller.capTokens = indexer
+
+		run, execErr, err := fixture.controller.RunProjectAgent(fixture.ctx, RunAgentRequest{
+			ProjectID:       "project-1",
+			AgentName:       "worker",
+			Prompt:          "do work",
+			Source:          domain.ProjectRunSourceAPI,
+			ClientRequestID: "capability-stop-cleanup",
+			CleanupPolicy:   agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_STOP_ON_COMPLETION,
+		}, nil)
+		if err != nil || execErr != nil {
+			t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+		}
+		if run.Status != domain.ProjectRunStatusSucceeded || run.SandboxID == "" {
+			t.Fatalf("run = %#v", run)
+		}
+		assertCapabilitySandboxTokenCalls(t, indexer, []string{run.SandboxID}, []string{run.SandboxID})
+		persisted, err := fixture.store.GetSandbox(fixture.ctx, run.SandboxID)
+		if err != nil {
+			t.Fatalf("GetSandbox returned error: %v", err)
+		}
+		if persisted.Summary.VMStatus != domain.VMStatusStopped {
+			t.Fatalf("sandbox VM status = %q, want stopped", persisted.Summary.VMStatus)
+		}
+	})
+
+	t.Run("remove cleanup fallback", func(t *testing.T) {
+		fixture := newControllerRunFixture(t)
+		indexer := &recordingCapabilitySandboxIndexer{}
+		fixture.controller.capTokens = indexer
+
+		run, execErr, err := fixture.controller.RunProjectAgent(fixture.ctx, RunAgentRequest{
+			ProjectID:       "project-1",
+			AgentName:       "worker",
+			Prompt:          "do work",
+			Source:          domain.ProjectRunSourceAPI,
+			ClientRequestID: "capability-remove-cleanup-fallback",
+			CleanupPolicy:   agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_REMOVE_ON_COMPLETION,
+		}, nil)
+		if err != nil || execErr != nil {
+			t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+		}
+		if run.Status != domain.ProjectRunStatusSucceeded || run.SandboxID == "" {
+			t.Fatalf("run = %#v", run)
+		}
+		assertCapabilitySandboxTokenCalls(t, indexer, []string{run.SandboxID}, []string{run.SandboxID, run.SandboxID})
+		if _, loadErr := fixture.store.GetSandbox(fixture.ctx, run.SandboxID); loadErr == nil {
+			t.Fatalf("created sandbox %q was not removed", run.SandboxID)
+		}
+	})
+
+	t.Run("remove cleanup coordinator", func(t *testing.T) {
+		fixture := newControllerRunFixture(t)
+		indexer := &recordingCapabilitySandboxIndexer{}
+		fixture.controller.capTokens = indexer
+		removal := &recordingSandboxRemoval{
+			remove: func(ctx context.Context, sandboxID string) error {
+				return fixture.store.RemoveSandbox(ctx, sandboxID)
+			},
+		}
+		fixture.controller.removal = removal
+
+		run, execErr, err := fixture.controller.RunProjectAgent(fixture.ctx, RunAgentRequest{
+			ProjectID:       "project-1",
+			AgentName:       "worker",
+			Prompt:          "do work",
+			Source:          domain.ProjectRunSourceAPI,
+			ClientRequestID: "capability-remove-cleanup-coordinator",
+			CleanupPolicy:   agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_REMOVE_ON_COMPLETION,
+		}, nil)
+		if err != nil || execErr != nil {
+			t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+		}
+		if run.Status != domain.ProjectRunStatusSucceeded || run.SandboxID == "" {
+			t.Fatalf("run = %#v", run)
+		}
+		assertCapabilitySandboxTokenCalls(t, indexer, []string{run.SandboxID}, []string{run.SandboxID})
+		if len(removal.calls) != 1 || removal.calls[0] != run.SandboxID || len(removal.forces) != 1 || !removal.forces[0] {
+			t.Fatalf("removal calls=%#v forces=%#v, want forced removal for %q", removal.calls, removal.forces, run.SandboxID)
+		}
+		if _, loadErr := fixture.store.GetSandbox(fixture.ctx, run.SandboxID); loadErr == nil {
+			t.Fatalf("created sandbox %q was not removed", run.SandboxID)
+		}
 	})
 }
 
@@ -432,10 +544,27 @@ func assertProjectRunReadyUnchanged(t *testing.T, label string, sandbox *domain.
 
 func assertIndexedCapabilitySandbox(t *testing.T, indexer *recordingCapabilitySandboxIndexer, sandboxID string) {
 	t.Helper()
-	if len(indexer.indexed) != 1 || indexer.indexed[0] != sandboxID {
-		t.Fatalf("indexed capability sandboxes = %#v, want [%q]", indexer.indexed, sandboxID)
+	assertCapabilitySandboxTokenCalls(t, indexer, []string{sandboxID}, nil)
+}
+
+func assertCapabilitySandboxTokenCalls(t *testing.T, indexer *recordingCapabilitySandboxIndexer, indexed, revoked []string) {
+	t.Helper()
+	if !stringSlicesEqual(indexer.indexed, indexed) {
+		t.Fatalf("indexed capability sandboxes = %#v, want %#v", indexer.indexed, indexed)
 	}
-	if len(indexer.revoked) != 0 {
-		t.Fatalf("revoked capability sandboxes = %#v, want none", indexer.revoked)
+	if !stringSlicesEqual(indexer.revoked, revoked) {
+		t.Fatalf("revoked capability sandboxes = %#v, want %#v", indexer.revoked, revoked)
 	}
+}
+
+func stringSlicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
