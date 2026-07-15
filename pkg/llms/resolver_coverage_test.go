@@ -46,6 +46,13 @@ func TestResolverBootstrapAndRuntimeTargetWorkflows(t *testing.T) {
 	if target.Model.ID != "gpt-default" || target.Provider.ID != ProviderIDDefaultOpenAI || !strings.Contains(target.Endpoint, "chat/completions") || target.Headers.Get("Authorization") == "" {
 		t.Fatalf("default target = %#v", target)
 	}
+	providerless, err := ResolveRuntimeLLMTarget(ctx, config, store, "gpt-default", "")
+	if err != nil {
+		t.Fatalf("ResolveRuntimeLLMTarget providerless returned error: %v", err)
+	}
+	if providerless.Model.ID != "gpt-default" || providerless.Provider.ID != ProviderIDDefaultOpenAI {
+		t.Fatalf("providerless target = %#v", providerless)
+	}
 
 	store.global = []domain.SandboxEnvVar{
 		{Name: "ANTHROPIC_AUTH_TOKEN", Value: "anthropic-token"},

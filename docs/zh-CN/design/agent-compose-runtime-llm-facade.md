@@ -120,7 +120,7 @@ ANTHROPIC_BASE_URL, ANTHROPIC_API_ENDPOINT, ANTHROPIC_API_KEY,
 ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL, CLAUDE_MODEL, LLM_API_ENDPOINT, LLM_API_KEY
 ```
 
-当数据库已有对应 family 的 enabled provider 时，不再用 bootstrap 覆盖数据库 provider。provider/model 表是运行时权威。
+当数据库已有对应 family 的 enabled provider 时，不再用 bootstrap 覆盖数据库 provider。provider/model 表是默认模型选择、严格 LLM 调用和已登记模型 wire API 覆盖的运行时权威，但不作为 provider-bound Runtime LLM Facade 的请求模型白名单。
 
 ## HTTP Facade
 
@@ -151,7 +151,7 @@ runtime request
   -> validate sandbox-scoped facade token
   -> validate sandbox is available
   -> decode inbound request with inbound adapter
-  -> resolve model/provider from token scope and request model
+  -> pin provider from token scope and resolve wire API for request model
   -> encode upstream request with adapter or cross-family bridge
   -> inject real provider auth and provider headers
   -> call upstream
@@ -195,6 +195,8 @@ expires_at
 revoked_at
 ```
 
+当 token 包含 `provider_id` 时，`model` 记录签发时选择的默认模型，供 runtime 初始配置和审计使用，不限制请求模型。既有 Claude/generic provider 兼容路径可以签发空 `provider_id` token；这类 token 保持原有的严格 model/provider 解析和 model scope 行为。
+
 `expires_at` 为 0 表示 token 随 sandbox 生命周期有效，不使用固定 24h 过期时间；sandbox 停止或需要失效时通过 `revoked_at` 撤销。
 
 校验规则：
@@ -202,9 +204,12 @@ revoked_at
 - token 必须属于 path 中的 `sandbox_id`。
 - token 未撤销且未过期。
 - sandbox 存在且未停止。
-- 请求 body 中的 `model` 必须与 token scope model 一致。
-- token scope 中有 `provider_id` 时，只能使用该 provider。
+- 请求 body 必须包含非空 `model`。
+- token scope 包含 `provider_id` 时，模型名不需要与 token 默认模型一致，请求模型始终发送给该 provider，不能根据模型切换 provider。
+- token scope 不包含 `provider_id` 时，保持既有 model scope 与已配置 model/provider 解析规则。
 - token scope 中有 `wire_api` 时，请求路径必须与入口 wire API 一致。
+
+对于包含 `provider_id` 的 token，请求模型命中该 provider 的显式 provider/model 绑定时，使用绑定的上游 `wire_api`；模型未登记、未绑定当前 provider 或只绑定其他 provider 时，使用 token provider 的默认 `wire_api`。上游是否支持该模型及其权限、配额由 provider 决定，非 2xx 状态和错误 body 按现有规则透传。
 
 ## Runtime Env
 
@@ -291,6 +296,8 @@ explicit request model
 > LLM_MODEL env
 ```
 
+该优先级用于 token 签发、默认 runtime config、scheduler、`LLMService` 和未绑定 provider 的兼容 token 等严格解析路径。Runtime LLM Facade 收到已绑定 provider 的 token 后直接使用请求 body 中的非空 model；token 中记录的默认 model 不覆盖请求值。
+
 provider 解析优先级：
 
 ```text
@@ -300,10 +307,12 @@ token scope provider_id
 > 默认 enabled provider 按 weight 选择
 ```
 
+Runtime LLM Facade 收到已绑定 provider 的 token 后只能使用 token scope provider，不按请求模型重新选择。未绑定 provider 的兼容 token 保持既有 provider 解析优先级。
+
 入口 wire API 和上游 wire API 分开处理：
 
 - token `wire_api` 约束 runtime 请求路径，也就是入口 facade wire API。
-- provider/model `wire_api` 决定上游 OpenAI family operation。
+- token provider 对请求模型存在显式 provider/model 绑定时，该绑定的 `wire_api` 决定上游 OpenAI family operation；否则使用 provider 默认 `wire_api`。
 - 当 Codex 入口使用 OpenAI facade 且上游 provider 是 Anthropic family 时，token `wire_api` 仍是 `responses`，上游协议由 provider family 解析为 Anthropic Messages。
 
 ## Header And Log Rules

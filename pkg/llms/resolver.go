@@ -124,6 +124,18 @@ func ResolveLLMTarget(ctx context.Context, config *appconfig.Config, store LLMRe
 }
 
 func resolveRuntimeLLMTarget(ctx context.Context, config *appconfig.Config, store LLMResolverStore, requestedModel, providerID string) (ResolvedTarget, error) {
+	// Preserve strict model/provider resolution for legacy providerless tokens
+	// and callers that need the configured default. Only a concrete provider and
+	// requested model opt into runtime facade model passthrough.
+	if strings.TrimSpace(providerID) != "" && strings.TrimSpace(requestedModel) != "" {
+		target, ok, err := resolveRuntimeLLMProviderTarget(ctx, store, requestedModel, providerID)
+		if err != nil {
+			return ResolvedTarget{}, err
+		}
+		if ok {
+			return target, nil
+		}
+	}
 	return resolveRuntimeLLMTargetWithEnv(ctx, config, store, "", "", requestedModel, providerID, nil)
 }
 

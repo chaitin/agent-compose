@@ -398,7 +398,7 @@ BoxLite、Microsandbox 的 runtime path、library path 和 image registry 继续
 | `AGT-002` | system prompt、capability guide 和 per-turn prompt 按 runtime contract 分层注入 | 三 driver |
 | `LLM-001` | `LLMService.Generate` 与 scheduler LLM 支持 Responses 和 Chat Completions | 控制面一次 |
 | `LLM-002` | structured output 成功、schema 不匹配、非法 JSON、upstream timeout/error 语义稳定 | 控制面一次 |
-| `LLM-003` | runtime facade 支持 OpenAI responses/chat 和 Anthropic messages，模型与 wire scope 正确 | 三 driver |
+| `LLM-003` | runtime facade 支持 OpenAI responses/chat 和 Anthropic messages；provider-bound token 可透传请求模型和上游模型错误，providerless 兼容 token 保持原解析行为，provider 与入口 wire scope 仍受 token 约束 | 三 driver |
 | `LLM-004` | facade token 不能跨 sandbox 使用，并在 stop/remove 后撤销 | 三 driver |
 | `CAP-001` | capability catalog/status、sandbox guide 和 capability proxy 使用本地 mock 正确工作 | 三 driver |
 

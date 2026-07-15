@@ -47,8 +47,8 @@ func TestRuntimeLLMFacadeRoutesCoverageWorkflow(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer raw-token")
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("model mismatch status=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || client.calls != 3 || !strings.Contains(client.requestBody, `"model":"other"`) {
+		t.Fatalf("alternate model status=%d body=%s calls=%d upstream_body=%s", rec.Code, rec.Body.String(), client.calls, client.requestBody)
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/runtime/sandboxes/sandbox-1/llm/openai/v1/responses", strings.NewReader(`{"model":"gpt","input":"hi"}`))
@@ -221,6 +221,14 @@ func TestRuntimeLLMFacadeRejectsInvalidSecurityContext(t *testing.T) {
 		resolver RuntimeLLMTargetResolver
 		want     int
 	}{
+		{
+			name:    "providerless token model mismatch",
+			path:    "/api/runtime/sandboxes/sandbox-1/llm/openai/v1/responses",
+			body:    `{"model":"other","input":"hi"}`,
+			token:   llms.FacadeToken{SandboxID: "sandbox-1", Model: "gpt", WireAPI: llms.APIProtocolResponses, ExpiresAt: time.Now().Add(time.Hour)},
+			session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}},
+			want:    http.StatusForbidden,
+		},
 		{
 			name:    "expired token",
 			path:    "/api/runtime/sandboxes/sandbox-1/llm/openai/v1/responses",
@@ -410,13 +418,13 @@ func TestRuntimeLLMFacadeHandlerEdgeBranches(t *testing.T) {
 		{
 			name:     "transparent upstream non success",
 			path:     "/api/runtime/sandboxes/sandbox-1/llm/openai/v1/responses",
-			body:     `{"model":"gpt","input":"hi"}`,
+			body:     `{"model":"upstream-only-model","input":"hi"}`,
 			tokens:   fakeRuntimeLLMTokens{token: validToken},
 			sessions: fakeRuntimeLLMSessions{session: runningSession},
 			resolver: fakeRuntimeLLMTargetResolver("http://upstream.test/v1"),
-			client:   &fakeRuntimeLLMHTTPClient{status: http.StatusTooManyRequests, body: `{"error":"slow down"}`},
-			want:     http.StatusTooManyRequests,
-			contains: "slow down",
+			client:   &fakeRuntimeLLMHTTPClient{status: http.StatusNotFound, body: `{"error":"model not found"}`},
+			want:     http.StatusNotFound,
+			contains: "model not found",
 		},
 		{
 			name:     "translated upstream non success",
@@ -590,10 +598,10 @@ func (s fakeRuntimeLLMSessions) GetSandbox(context.Context, string) (*domain.San
 }
 
 func fakeRuntimeLLMTargetResolver(baseURL string) RuntimeLLMTargetResolver {
-	return func(context.Context, string, string) (llms.ResolvedTarget, error) {
+	return func(_ context.Context, model, _ string) (llms.ResolvedTarget, error) {
 		return llms.ResolvedTarget{
 			Provider: llms.Provider{ID: "provider-1", ProviderType: llms.ProviderFamilyOpenAI, BaseURL: baseURL},
-			Model:    llms.Model{Name: "gpt"},
+			Model:    llms.Model{Name: model},
 			WireAPI:  llms.APIProtocolResponses,
 		}, nil
 	}
@@ -620,12 +628,13 @@ func fakeRuntimeLLMAnthropicTargetResolver(baseURL string) RuntimeLLMTargetResol
 }
 
 type fakeRuntimeLLMHTTPClient struct {
-	status     int
-	body       string
-	bodyReader io.Reader
-	header     http.Header
-	err        error
-	calls      int
+	status      int
+	body        string
+	bodyReader  io.Reader
+	header      http.Header
+	err         error
+	calls       int
+	requestBody string
 }
 
 func (c *fakeRuntimeLLMHTTPClient) Do(req *http.Request) (*http.Response, error) {
@@ -633,6 +642,11 @@ func (c *fakeRuntimeLLMHTTPClient) Do(req *http.Request) (*http.Response, error)
 	if c.err != nil {
 		return nil, c.err
 	}
+	requestBody, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	c.requestBody = string(requestBody)
 	header := c.header
 	if header == nil {
 		header = http.Header{"Content-Type": []string{"application/json"}}

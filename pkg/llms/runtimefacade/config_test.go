@@ -163,6 +163,42 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 	}
 }
 
+func TestEnsureSessionAgentRuntimeConfigClaudePreservesProviderlessCompatibilityToken(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:       root,
+		DbAddr:         filepath.Join(root, "data.db"),
+		LLMAPIKey:      "generic-provider-key",
+		RuntimeBaseURL: "http://agent-compose.test:7410",
+	}
+	di := do.New()
+	do.ProvideValue(di, config)
+	store, err := configstore.NewConfigStore(di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-claude-compat", Driver: driverpkg.RuntimeDriverDocker}}
+
+	runtimeConfig, err := EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "claude", "", "test", "run-compat")
+	if err != nil {
+		t.Fatalf("EnsureSessionAgentRuntimeConfig returned error: %v", err)
+	}
+	rawToken := runtimeConfig.Env["AGENT_COMPOSE_SANDBOX_TOKEN"]
+	if rawToken == "" {
+		t.Fatal("AGENT_COMPOSE_SANDBOX_TOKEN is empty")
+	}
+	token, err := store.GetLLMFacadeToken(ctx, rawToken)
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
+	}
+	if token.ProviderID != "" || token.Model != "" {
+		t.Fatalf("compatibility token = %#v", token)
+	}
+}
+
 func isolateLLMEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
