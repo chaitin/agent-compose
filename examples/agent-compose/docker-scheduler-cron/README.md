@@ -102,13 +102,10 @@ scheduler:
 Use cron when you want calendar-based scheduling. Use interval when you want
 short local feedback while testing.
 
-## Verification output
+## Example output
 
-Output from a local verification run.
-
-The recorded output below used the equivalent locally built
-`agent-compose-guest:latest` image. The committed compose file now uses the
-published image; generated IDs, hashes, and timestamps will also differ.
+A successful run produces output like the following. Generated IDs, hashes,
+and timestamps will differ.
 
 ### 1. Config normalization
 
@@ -118,7 +115,7 @@ name: docker-scheduler-cron
 agents:
     - name: reviewer
       provider: codex
-      image: agent-compose-guest:latest
+      image: ghcr.io/chaitin/agent-compose-guest:latest
       driver:
         name: docker
         docker: {}
@@ -159,7 +156,7 @@ created  loader             docker-scheduler-cron/reviewer scheduler            
 ```console
 $ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml ps
 AGENT     SCHEDULER  LATEST RUN  RUN STATUS  SESSION  DRIVER  IMAGE
-reviewer  enabled    -           -           -        docker  agent-compose-guest:latest
+reviewer  enabled    -           -           -        docker  ghcr.io/chaitin/agent-compose-guest:latest
 ```
 
 ### 4. Inspect project
@@ -178,7 +175,7 @@ $ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron
     {
       "agent_name": "reviewer",
       "provider": "codex",
-      "image": "agent-compose-guest:latest",
+      "image": "ghcr.io/chaitin/agent-compose-guest:latest",
       "driver": "docker",
       "scheduler_enabled": true
     }

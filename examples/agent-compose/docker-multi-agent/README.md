@@ -11,7 +11,8 @@ Docker and the daemon must be running. Both agents refer to the same local
 workspace source, but each run creates an independent sandbox copy. Their
 different `system_prompt` values apply to model prompts, not shell commands.
 
-## Run the tutorial
+## Run the example
+From this example directory:
 
 ```bash
 agent-compose up
@@ -27,14 +28,14 @@ agent-compose down
 The command path does not invoke the configured provider. The distinct system
 prompts apply when the agents are run with `--prompt`.
 
-## What to verify
+## Expected result
 
 `inspect agent` should show two definitions. Both command runs should read
 `workspace/project.txt`, return their respective marker, and have different
 run/sandbox IDs. Use `--prompt` only when the daemon has a configured provider.
 `down` cleans both agents' project sandboxes.
 
-## Example successful output
+## Example output
 
 Successful runs from both agents produce output like:
 

@@ -2,7 +2,7 @@
 
 Languages: English | [中文](README.zh-CN.md)
 
-This is a configuration template for a Microsandbox-backed agent.
+This example defines a single Codex agent backed by the Microsandbox driver.
 
 ## Requirements
 
@@ -14,22 +14,29 @@ agent-compose --json version
 test -r /dev/kvm && test -w /dev/kvm
 ```
 
-## Run the tutorial
+## Inspect the configuration
 
 ```bash
 agent-compose config
-# On a prepared Linux/KVM host with a Microsandbox-enabled binary:
-agent-compose up
 ```
 
-The compose file is validated in normal tests. Runtime execution was not
-verified locally and requires Linux, `/dev/kvm`, Microsandbox runtime artifacts,
-and a binary whose `compiled_drivers` includes `microsandbox`.
+The normalized output should contain `driver.name: microsandbox`.
 
-`config` is safe on any platform and should normalize
-`driver.name: microsandbox`. On a prepared host, continue with
-`run reviewer --command "uname -a"`, inspect the returned sandbox, and finish
-with `down`. Runtime success is deliberately not claimed locally.
+## Run on a Microsandbox host
+
+After the requirements above are satisfied:
+
+```bash
+agent-compose up
+agent-compose run reviewer --command "uname -a"
+agent-compose ps --all
+agent-compose down
+```
+
+`run` should return `status: succeeded`, a non-empty sandbox ID, and the guest
+kernel information. If the binary does not include Microsandbox, the command
+reports the driver as unsupported. Missing KVM access or runtime artifacts
+cause Microsandbox initialization to fail.
 
 ## Normalized config output
 
@@ -48,4 +55,5 @@ network:
     mode: default
 ```
 
-This is config validation only; no Microsandbox runtime output is claimed.
+This output confirms that the project selects Microsandbox. Runtime output
+depends on the Microsandbox artifacts and KVM environment on the host.

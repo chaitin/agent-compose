@@ -33,5 +33,5 @@ docker pull ghcr.io/chaitin/agent-compose-guest:latest
 
 每个示例都有自己的 `README.md`，包含完整命令和预期输出。
 
-BoxLite 和 Microsandbox 还要求 Linux、KVM 权限、对应 runtime artifacts，以及包含
-所选 compiled driver 的二进制。未在准备好的 host 上运行时，它们只是配置模板。
+运行 BoxLite 和 Microsandbox 示例还要求 Linux、KVM 权限、对应 runtime
+artifacts，以及包含所选 compiled driver 的二进制。

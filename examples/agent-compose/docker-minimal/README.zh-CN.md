@@ -87,7 +87,7 @@ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-co
 - `up` 创建或更新 project 和 managed agent definition。
 - `ps` 显示 `reviewer` agent 使用 Docker 和发布版 guest 镜像。
 
-## 可选运行测试
+## 运行 agent
 
 启动一次 runtime session，并在运行结束后保留 session：
 
@@ -111,12 +111,9 @@ agent-compose exec <sandbox-id> -- env
 agent-compose down
 ```
 
-## 验证输出
+## 输出示例
 
-以下为一次本地验证运行的输出。
-
-下面记录的输出使用等价的本地构建镜像 `agent-compose-guest:latest`。当前 compose
-文件使用发布版镜像；动态生成的 ID、hash 和时间戳也会不同。
+成功运行后的输出示例如下。动态生成的 ID、hash 和时间戳会不同。
 
 ### 1. 配置标准化
 
@@ -126,7 +123,7 @@ name: docker-minimal
 agents:
     - name: reviewer
       provider: codex
-      image: agent-compose-guest:latest
+      image: ghcr.io/chaitin/agent-compose-guest:latest
       driver:
         name: docker
         docker: {}
@@ -158,7 +155,7 @@ created  agent_definition  reviewer                                             
 ```console
 $ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml ps
 AGENT     SCHEDULER  LATEST RUN  RUN STATUS  SESSION  DRIVER  IMAGE
-reviewer  disabled   -           -           -        docker  agent-compose-guest:latest
+reviewer  disabled   -           -           -        docker  ghcr.io/chaitin/agent-compose-guest:latest
 ```
 
 ### 4. Docker runtime 容器
@@ -166,7 +163,7 @@ reviewer  disabled   -           -           -        docker  agent-compose-gues
 ```console
 $ docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
 NAMES                                                IMAGE                        STATUS
-agent-compose-8aa2625d-db67-4428-82ae-8bef1a137a2f   agent-compose-guest:latest   Up 14 seconds
+agent-compose-8aa2625d-db67-4428-82ae-8bef1a137a2f   ghcr.io/chaitin/agent-compose-guest:latest   Up 14 seconds
 ```
 
 ### 5. Provider 成功输出

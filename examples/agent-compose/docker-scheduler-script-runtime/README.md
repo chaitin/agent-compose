@@ -11,7 +11,8 @@ Docker and the daemon must be running. The scheduler uses `sandbox_policy: new`
 and inline QJS. `scheduler.state` belongs to the loader and persists across
 callbacks; `scheduler.shell` runs in a Docker sandbox. No provider call occurs.
 
-## Run the tutorial
+## Run the example
+From this example directory:
 
 ```bash
 agent-compose up
@@ -26,14 +27,14 @@ The two automatic timeout runs produce `heartbeat 1` and `heartbeat 2`,
 demonstrating that loader state persists between runs. The interval remains as
 the long-running schedule. No model provider is called.
 
-## What to verify
+## Expected result
 
 `scheduler ls heartbeat` should list `warmup`, `follow-up`, and `heartbeat`.
 Inspect the two timeout triggers until their events contain `heartbeat 1` and
 `heartbeat 2`. That ordered output proves state persisted between distinct
 loader callbacks. `down` disables the interval and cleans project sandboxes.
 
-## Example successful output
+## Example output
 
 After the second callback succeeds, the scheduler event looks like:
 

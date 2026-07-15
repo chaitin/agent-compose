@@ -16,7 +16,8 @@ The `source` workspace uses the local provider and `path: ./workspace`. The
 `worker` agent refers to it by name. A new sandbox receives a copy; the host
 source directory is not mounted as a writable working tree.
 
-## Run the tutorial
+## Run the example
+From this example directory:
 
 ```bash
 agent-compose up
@@ -34,13 +35,13 @@ agent-compose down
 `generated.txt` survives stop/resume but is not written into the committed
 `workspace/` source. A second new sandbox receives a fresh source copy.
 
-## Verification and cleanup
+## Check and clean up
 
 Use the sandbox id returned by `run`. Confirm the file before and after
 stop/resume, then check that `workspace/generated.txt` does not exist on the
 host. `rm` deletes the stopped sandbox; `down` cleans remaining project state.
 
-## Example successful output
+## Example output
 
 A successful run and stop/resume cycle produces output like:
 

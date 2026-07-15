@@ -98,12 +98,9 @@ scheduler:
 
 需要基于日历时间调度时使用 cron；需要本地快速反馈时使用 interval。
 
-## 验证输出
+## 输出示例
 
-以下为一次本地验证运行的输出。
-
-下面记录的输出使用等价的本地构建镜像 `agent-compose-guest:latest`。当前 compose
-文件使用发布版镜像；动态生成的 ID、hash 和时间戳也会不同。
+成功运行后的输出示例如下。动态生成的 ID、hash 和时间戳会不同。
 
 ### 1. 配置标准化
 
@@ -113,7 +110,7 @@ name: docker-scheduler-cron
 agents:
     - name: reviewer
       provider: codex
-      image: agent-compose-guest:latest
+      image: ghcr.io/chaitin/agent-compose-guest:latest
       driver:
         name: docker
         docker: {}
@@ -154,7 +151,7 @@ created  loader             docker-scheduler-cron/reviewer scheduler            
 ```console
 $ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml ps
 AGENT     SCHEDULER  LATEST RUN  RUN STATUS  SESSION  DRIVER  IMAGE
-reviewer  enabled    -           -           -        docker  agent-compose-guest:latest
+reviewer  enabled    -           -           -        docker  ghcr.io/chaitin/agent-compose-guest:latest
 ```
 
 ### 4. 查看 project
@@ -173,7 +170,7 @@ $ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron
     {
       "agent_name": "reviewer",
       "provider": "codex",
-      "image": "agent-compose-guest:latest",
+      "image": "ghcr.io/chaitin/agent-compose-guest:latest",
       "driver": "docker",
       "scheduler_enabled": true
     }

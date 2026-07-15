@@ -11,7 +11,8 @@ published guest base image. `build.context` is this directory, `dockerfile`
 selects `Dockerfile`, `args` supplies the marker, and `tags` adds a second local
 tag to the primary `image` reference.
 
-## Run the tutorial
+## Run the example
+From this example directory:
 
 ```bash
 agent-compose build
@@ -26,14 +27,14 @@ The expected marker is `built-by-agent-compose`. The build requires Docker and
 access to the published guest base image. The example uses fixed local tags for
 clarity; automation should copy the example and substitute unique tags.
 
-## What to verify
+## Expected result
 
 `build` must complete and create both local tags. The worker command reads the
 file written during the image build and must print `built-by-agent-compose`.
 After `down`, both `rmi` commands remove the tutorial images. Avoid these fixed
 tags in concurrent automation; use a unique tag for each build.
 
-## Example successful output
+## Example output
 
 A successful image build and guest run produces output like:
 

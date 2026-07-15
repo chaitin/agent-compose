@@ -10,7 +10,8 @@
 Docker 和 daemon 必须已启动。顶层 `cache` volume 由项目管理并以读写方式挂载；
 `./fixtures:/fixtures:ro` 相对 compose 目录解析并只读挂载。
 
-## 运行教程
+## 运行示例
+在示例目录中执行：
 
 ```bash
 agent-compose up
@@ -27,13 +28,13 @@ agent-compose down
 cache 值在 sandbox stop/resume 后仍存在。`down` 会移除 project-managed volume
 的归属，不应把该示例当作备份机制。
 
-## 验证要点
+## 预期结果
 
 使用保留 run 返回的 sandbox ID。第一次命令必须读取 fixture 并写入
 `/cache/value`；stop/resume 后 `cat` 必须返回 `persistent`。`touch` 检查必须因只读
 挂载而失败。最后显式 stop、rm，再执行 `down`。
 
-## 成功输出示例
+## 输出示例
 
 sandbox 成功 stop/resume 后，持久化值和只读检查如下：
 

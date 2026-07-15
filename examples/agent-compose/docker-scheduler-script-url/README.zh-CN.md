@@ -9,7 +9,8 @@
 `scheduler.timeout(...)` shell callback。timeout 用于快速验证外部文件已加载，不会
 替代 cron 教程。
 
-## 分步运行
+## 运行示例
+在示例目录中执行：
 
 ```bash
 agent-compose config
@@ -36,7 +37,7 @@ runtime 和 daemon provider 配置。`source-loaded` shell callback 不调用模
 4. `daily-review` 仍按 `0 9 * * *` 调度，并在日历时间到达时调用 agent。
 5. `down` 禁用 scheduler 并清理项目 sandbox。
 
-## 成功输出示例
+## 输出示例
 
 `source-loaded` callback 成功后，event 如下：
 

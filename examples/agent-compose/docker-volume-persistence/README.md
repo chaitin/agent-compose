@@ -11,7 +11,8 @@ Docker and the daemon must be running. The top-level `cache` volume is managed
 by the project and mounted read-write. `./fixtures:/fixtures:ro` resolves from
 the compose directory and is mounted read-only.
 
-## Run the tutorial
+## Run the example
+From this example directory:
 
 ```bash
 agent-compose up
@@ -28,14 +29,14 @@ agent-compose down
 The cache value survives sandbox stop/resume. `down` removes project-managed
 volume ownership, so do not use this example as a backup mechanism.
 
-## What to verify
+## Expected result
 
 Use the sandbox id returned by the kept run. The first command must read the
 fixture and write `/cache/value`; after stop/resume, `cat` must return
 `persistent`. The `touch` check must fail inside the read-only mount. Stop and
 remove the sandbox before `down` for an explicit lifecycle cleanup.
 
-## Example successful output
+## Example output
 
 After a successful sandbox stop/resume, the persisted value and read-only check
 look like:

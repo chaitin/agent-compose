@@ -88,12 +88,9 @@ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-timeou
 - `logs --run <run-id>` 输出 agent 日志。
 - `down` 禁用 managed scheduler 和 loader。
 
-## 验证输出
+## 输出示例
 
-以下为一次本地验证运行的输出。其中的 run id 来自该次运行，你本地的会不同。
-
-下面记录的输出使用等价的本地构建镜像 `agent-compose-guest:latest`。当前 compose
-文件使用发布版镜像；动态生成的 ID、hash、时间戳和耗时也会不同。
+scheduled run 成功后的输出示例如下。动态生成的 ID、hash、时间戳和耗时会不同。
 
 ### 1. 配置标准化
 
@@ -103,7 +100,7 @@ name: docker-scheduler-timeout
 agents:
     - name: reviewer
       provider: codex
-      image: agent-compose-guest:latest
+      image: ghcr.io/chaitin/agent-compose-guest:latest
       driver:
         name: docker
         docker: {}
@@ -144,7 +141,7 @@ created  loader             docker-scheduler-timeout/reviewer scheduler         
 ```console
 $ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-timeout/agent-compose.yml ps
 AGENT     SCHEDULER  LATEST RUN                 RUN STATUS  SESSION  DRIVER  IMAGE
-reviewer  enabled    run-reviewer-28c0ef985c8d  succeeded   -        docker  agent-compose-guest:latest
+reviewer  enabled    run-reviewer-28c0ef985c8d  succeeded   -        docker  ghcr.io/chaitin/agent-compose-guest:latest
 ```
 
 ### 4. 查看成功 run
@@ -164,7 +161,7 @@ $ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-time
   "output": "timeout scheduler ok",
   "result_json": "{\"agent\":\"codex\",\"exitCode\":0,\"stopReason\":\"completed\",\"success\":true}",
   "driver": "docker",
-  "image_ref": "agent-compose-guest:latest"
+  "image_ref": "ghcr.io/chaitin/agent-compose-guest:latest"
 }
 ```
 

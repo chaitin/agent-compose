@@ -10,7 +10,8 @@ also defines a two-second `scheduler.timeout(...)` shell callback. The timeout
 provides a quick way to verify that the external file was loaded; it does not
 replace the cron tutorial.
 
-## Run step by step
+## Run the example
+From this example directory:
 
 ```bash
 agent-compose config
@@ -41,7 +42,7 @@ Expected checks:
    calendar time arrives.
 5. `down` disables the scheduler and cleans project sandboxes.
 
-## Example successful output
+## Example output
 
 When the `source-loaded` callback succeeds, its event looks like:
 

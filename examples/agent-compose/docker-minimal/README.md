@@ -87,7 +87,7 @@ Expected result:
 - `up` creates or updates the project and managed agent definition.
 - `ps` shows the `reviewer` agent using Docker and the published guest image.
 
-## Optional run test
+## Run the agent
 
 To start a runtime session and keep it alive:
 
@@ -112,13 +112,10 @@ Clean up running project sessions:
 agent-compose down
 ```
 
-## Verification output
+## Example output
 
-Output from a local verification run.
-
-The recorded output below used the equivalent locally built
-`agent-compose-guest:latest` image. The committed compose file now uses the
-published image; generated IDs, hashes, and timestamps will also differ.
+A successful run produces output like the following. Generated IDs, hashes,
+and timestamps will differ.
 
 ### 1. Config normalization
 
@@ -128,7 +125,7 @@ name: docker-minimal
 agents:
     - name: reviewer
       provider: codex
-      image: agent-compose-guest:latest
+      image: ghcr.io/chaitin/agent-compose-guest:latest
       driver:
         name: docker
         docker: {}
@@ -160,7 +157,7 @@ created  agent_definition  reviewer                                             
 ```console
 $ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml ps
 AGENT     SCHEDULER  LATEST RUN  RUN STATUS  SESSION  DRIVER  IMAGE
-reviewer  disabled   -           -           -        docker  agent-compose-guest:latest
+reviewer  disabled   -           -           -        docker  ghcr.io/chaitin/agent-compose-guest:latest
 ```
 
 ### 4. Docker runtime container
@@ -168,7 +165,7 @@ reviewer  disabled   -           -           -        docker  agent-compose-gues
 ```console
 $ docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
 NAMES                                                IMAGE                        STATUS
-agent-compose-8aa2625d-db67-4428-82ae-8bef1a137a2f   agent-compose-guest:latest   Up 14 seconds
+agent-compose-8aa2625d-db67-4428-82ae-8bef1a137a2f   ghcr.io/chaitin/agent-compose-guest:latest   Up 14 seconds
 ```
 
 ### 5. Successful provider run

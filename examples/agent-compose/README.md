@@ -35,6 +35,6 @@ docker pull ghcr.io/chaitin/agent-compose-guest:latest
 Each example has its own `README.md` with the exact commands and expected
 output.
 
-BoxLite and Microsandbox additionally require Linux, KVM access, their runtime
-artifacts, and a binary that includes the selected compiled driver. Their
-examples are configuration templates unless run on a prepared host.
+Running the BoxLite and Microsandbox examples additionally requires Linux, KVM
+access, their runtime artifacts, and a binary that includes the selected
+compiled driver.

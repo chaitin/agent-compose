@@ -2,7 +2,7 @@
 
 语言：[English](README.md) | 中文
 
-这是一个使用 BoxLite driver 的配置模板。
+本示例定义一个使用 BoxLite driver 的 Codex agent。
 
 ## 环境要求
 
@@ -14,21 +14,28 @@ agent-compose --json version
 test -r /dev/kvm && test -w /dev/kvm
 ```
 
-## 运行教程
+## 查看配置
 
 ```bash
 agent-compose config
-# 在准备好的 Linux/KVM 主机和包含 BoxLite 的二进制上：
-agent-compose up
 ```
 
-compose 文件会进入常规测试，但本地未验证 runtime 执行。运行需要 Linux、
-`/dev/kvm`、BoxLite runtime artifacts，并且二进制的 `compiled_drivers` 包含
-`boxlite`。
+归一化输出应包含 `driver.name: boxlite`。
 
-`config` 可在任意平台安全执行，应归一化出 `driver.name: boxlite`。在准备好的 host
-上继续执行 `run reviewer --command "uname -a"`、检查返回的 sandbox，最后执行
-`down`。仓库本地验证不会声称 BoxLite runtime 已成功运行。
+## 在 BoxLite host 上运行
+
+满足上述环境要求后执行：
+
+```bash
+agent-compose up
+agent-compose run reviewer --command "uname -a"
+agent-compose ps --all
+agent-compose down
+```
+
+`run` 应返回 `status: succeeded`、非空 sandbox ID 和 guest kernel 信息。如果二进制
+未包含 BoxLite，命令会报告 driver 不受支持；缺少 KVM 权限或 runtime artifacts
+会导致 BoxLite 初始化失败。
 
 ## Config 归一化输出
 
@@ -47,4 +54,5 @@ network:
     mode: default
 ```
 
-这里只验证 config，不声称 BoxLite runtime 已运行成功。
+该输出表明 project 已选择 BoxLite；runtime 输出取决于 host 上的 BoxLite artifacts
+和 KVM 环境。

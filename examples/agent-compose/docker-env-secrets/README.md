@@ -11,12 +11,19 @@ Docker and the daemon must be running. `env_file: example.env` supplies
 `EXAMPLE_SECRET`; project `variables` apply to every agent, while `agents.*.env`
 is agent-scoped. `secret: true` marks values for redaction in rendered config.
 
-## Run the tutorial
+## Run the example
+From this example directory:
 
 ```bash
 agent-compose config
 agent-compose up
-agent-compose run inspector --command 'test "$PROJECT_VALUE" = project-level && test "$AGENT_VALUE" = agent-level && test "$PROJECT_SECRET" = safe-example-secret && test "$AGENT_SECRET" = safe-example-secret && echo "environment ok"'
+agent-compose run inspector --command '
+  test "$PROJECT_VALUE" = project-level &&
+  test "$AGENT_VALUE" = agent-level &&
+  test "$PROJECT_SECRET" = safe-example-secret &&
+  test "$AGENT_SECRET" = safe-example-secret &&
+  echo "environment ok"
+'
 agent-compose down
 ```
 
@@ -24,14 +31,14 @@ agent-compose down
 runs, while agent env is scoped to that agent. Process environment values passed
 to the CLI take precedence over `example.env`.
 
-## What to verify
+## Expected result
 
 Before `up`, confirm `agent-compose config` contains `********` and never prints
 `safe-example-secret`. The command run must print `environment ok`, proving the
 real guest received both scopes. The value is a non-sensitive fixture; do not
 commit production secrets or use this pattern as a secret manager.
 
-## Example successful output
+## Example output
 
 A successful environment check produces output like:
 

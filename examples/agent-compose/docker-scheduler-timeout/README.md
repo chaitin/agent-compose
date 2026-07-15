@@ -89,14 +89,10 @@ Expected result:
 - `logs --run <run-id>` prints the agent output.
 - `down` disables the managed scheduler and loader.
 
-## Verification output
+## Example output
 
-Output from a local verification run. The run id below is from that run; yours
-will differ.
-
-The recorded output used the equivalent locally built
-`agent-compose-guest:latest` image. The committed compose file now uses the
-published image; generated IDs, hashes, timestamps, and durations will differ.
+A successful scheduled run produces output like the following. Generated IDs,
+hashes, timestamps, and durations will differ.
 
 ### 1. Config normalization
 
@@ -106,7 +102,7 @@ name: docker-scheduler-timeout
 agents:
     - name: reviewer
       provider: codex
-      image: agent-compose-guest:latest
+      image: ghcr.io/chaitin/agent-compose-guest:latest
       driver:
         name: docker
         docker: {}
@@ -147,7 +143,7 @@ created  loader             docker-scheduler-timeout/reviewer scheduler         
 ```console
 $ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-timeout/agent-compose.yml ps
 AGENT     SCHEDULER  LATEST RUN                 RUN STATUS  SESSION  DRIVER  IMAGE
-reviewer  enabled    run-reviewer-28c0ef985c8d  succeeded   -        docker  agent-compose-guest:latest
+reviewer  enabled    run-reviewer-28c0ef985c8d  succeeded   -        docker  ghcr.io/chaitin/agent-compose-guest:latest
 ```
 
 ### 4. Inspect successful run
@@ -167,7 +163,7 @@ $ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-time
   "output": "timeout scheduler ok",
   "result_json": "{\"agent\":\"codex\",\"exitCode\":0,\"stopReason\":\"completed\",\"success\":true}",
   "driver": "docker",
-  "image_ref": "agent-compose-guest:latest"
+  "image_ref": "ghcr.io/chaitin/agent-compose-guest:latest"
 }
 ```
 
