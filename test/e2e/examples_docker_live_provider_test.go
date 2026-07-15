@@ -56,6 +56,7 @@ func TestE2EExamplesDockerLiveProvider(t *testing.T) {
 	defer downExampleProject(t, ctx, binary, root, baseURL, file)
 	const marker = "agent-compose live provider ok"
 	out := exampleCLI(t, ctx, binary, root, baseURL, "--file", file, "--json", "run", "reviewer", "--prompt", "Reply with exactly: "+marker)
+	t.Logf("verified live-provider output: %s", strings.TrimSpace(out))
 	var run exampleRunOutput
 	if err := json.Unmarshal([]byte(out), &run); err != nil {
 		t.Fatalf("decode live-provider run output %q: %v", out, err)

@@ -32,3 +32,16 @@ the long-running schedule. No model provider is called.
 Inspect the two timeout triggers until their events contain `heartbeat 1` and
 `heartbeat 2`. That ordered output proves state persisted between distinct
 loader callbacks. `down` disables the interval and cleans project sandboxes.
+
+## Real verification output
+
+Captured from the real scheduler runtime on 2026-07-15:
+
+```console
+type=loader.log
+message="heartbeat completed"
+payload={"count":2,"output":"heartbeat 2\n"}
+```
+
+The E2E first observed `heartbeat 1`, then the event above. This proves the
+loader state survived between callbacks.

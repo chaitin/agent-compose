@@ -39,3 +39,17 @@ agent-compose down
 Use the sandbox id returned by `run`. Confirm the file before and after
 stop/resume, then check that `workspace/generated.txt` does not exist on the
 host. `rm` deletes the stopped sandbox; `down` cleans remaining project state.
+
+## Real verification output
+
+Captured from the real-daemon Docker E2E on 2026-07-15:
+
+```console
+status=succeeded
+run=7f1f9aaf0cd1d1c125c51bac9f915cdcf57aa9d531353beb9e77faa4ed4109d7
+sandbox=8eac6735af343c91804590c5329d57e274a1e395c6a3ecb41f4c0c62c1ff4629
+$ agent-compose exec <sandbox-id> -- cat generated.txt
+sandbox-only
+```
+
+Run and sandbox IDs are generated and will differ.

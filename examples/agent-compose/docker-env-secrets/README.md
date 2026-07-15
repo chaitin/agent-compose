@@ -30,3 +30,17 @@ Before `up`, confirm `agent-compose config` contains `********` and never prints
 `safe-example-secret`. The command run must print `environment ok`, proving the
 real guest received both scopes. The value is a non-sensitive fixture; do not
 commit production secrets or use this pattern as a secret manager.
+
+## Real verification output
+
+Captured from the real-daemon Docker E2E on 2026-07-15:
+
+```console
+status=succeeded
+run=f1d22000463b950c2251f72c77477d42fbe9a39b2663bbce39b0b20c04be05e8
+sandbox=9fffd2978773c87708dc46facb8bf5ba8b1edf275382afb56380b0294a497939
+environment ok
+```
+
+The E2E also asserted that rendered config contained `********` and did not
+contain the fixture secret. Generated IDs will differ.

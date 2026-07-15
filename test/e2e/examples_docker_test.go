@@ -67,6 +67,7 @@ func TestE2EExamplesDocker(t *testing.T) {
 		applyExampleProject(t, ctx, binary, root, baseURL, file)
 		defer downExampleProject(t, ctx, binary, root, baseURL, file)
 		run := runExampleCommand(t, ctx, binary, root, baseURL, file, "reviewer", "printf 'docker minimal ok\\n'", true)
+		t.Logf("verified run: id=%s sandbox=%s status=%s output=%q", run.ID, run.SandboxID, run.Status, run.Output)
 		if run.Status != "succeeded" || !strings.Contains(run.Output, "docker minimal ok") || run.SandboxID == "" {
 			t.Fatalf("minimal run = %#v", run)
 		}
@@ -82,12 +83,14 @@ func TestE2EExamplesDocker(t *testing.T) {
 		applyExampleProject(t, ctx, binary, root, baseURL, file)
 		defer downExampleProject(t, ctx, binary, root, baseURL, file)
 		run := runExampleCommand(t, ctx, binary, root, baseURL, file, "worker", "test -f README.md && printf 'sandbox-only\\n' > generated.txt", true)
+		t.Logf("verified run: id=%s sandbox=%s status=%s", run.ID, run.SandboxID, run.Status)
 		exampleCLI(t, ctx, binary, root, baseURL, "--file", file, "stop", run.SandboxID)
 		exampleCLI(t, ctx, binary, root, baseURL, "--file", file, "resume", run.SandboxID)
 		out := exampleCLI(t, ctx, binary, root, baseURL, "--file", file, "exec", run.SandboxID, "--", "cat", "generated.txt")
 		if strings.TrimSpace(out) != "sandbox-only" {
 			t.Fatalf("resumed workspace output = %q", out)
 		}
+		t.Logf("verified resumed output: %q", strings.TrimSpace(out))
 		if _, err := os.Stat(filepath.Join(dir, "workspace", "generated.txt")); !os.IsNotExist(err) {
 			t.Fatalf("sandbox change leaked to source: %v", err)
 		}
@@ -101,6 +104,7 @@ func TestE2EExamplesDocker(t *testing.T) {
 		defer downExampleProject(t, ctx, binary, root, baseURL, file)
 		for _, agent := range []string{"reviewer", "tester"} {
 			run := runExampleCommand(t, ctx, binary, root, baseURL, file, agent, "test -f project.txt && printf '"+agent+" ok\\n'", false)
+			t.Logf("verified %s run: id=%s sandbox=%s status=%s output=%q", agent, run.ID, run.SandboxID, run.Status, run.Output)
 			if run.AgentName != agent || !strings.Contains(run.Output, agent+" ok") {
 				t.Fatalf("%s run = %#v", agent, run)
 			}
@@ -117,6 +121,7 @@ func TestE2EExamplesDocker(t *testing.T) {
 		defer downExampleProject(t, ctx, binary, root, baseURL, file)
 		command := `test "$PROJECT_VALUE" = project-level && test "$AGENT_VALUE" = agent-level && test "$PROJECT_SECRET" = safe-example-secret && test "$AGENT_SECRET" = safe-example-secret && printf 'environment ok\n'`
 		run := runExampleCommand(t, ctx, binary, root, baseURL, file, "inspector", command, false)
+		t.Logf("verified run: id=%s sandbox=%s status=%s output=%q", run.ID, run.SandboxID, run.Status, run.Output)
 		if !strings.Contains(run.Output, "environment ok") {
 			t.Fatalf("environment run = %#v", run)
 		}
@@ -134,6 +139,7 @@ func TestE2EExamplesDocker(t *testing.T) {
 		if strings.TrimSpace(out) != "persistent" {
 			t.Fatalf("persistent volume output = %q", out)
 		}
+		t.Logf("verified resumed volume output: %q", strings.TrimSpace(out))
 		exampleCLI(t, ctx, binary, root, baseURL, "--file", file, "exec", run.SandboxID, "--", "sh", "-c", "if touch /fixtures/unexpected 2>/dev/null; then exit 1; fi")
 		exampleCLI(t, ctx, binary, root, baseURL, "--file", file, "stop", run.SandboxID)
 		exampleCLI(t, ctx, binary, root, baseURL, "--file", file, "rm", run.SandboxID)
@@ -163,6 +169,7 @@ func TestE2EExamplesDocker(t *testing.T) {
 		applyExampleProject(t, ctx, binary, root, baseURL, file)
 		defer downExampleProject(t, ctx, binary, root, baseURL, file)
 		out := exampleCLI(t, ctx, binary, root, baseURL, "--file", file, "scheduler", "ls", "reviewer")
+		t.Logf("verified scheduler list:\n%s", strings.TrimSpace(out))
 		if !strings.Contains(out, "hourly-review") || !strings.Contains(out, "cron") {
 			t.Fatalf("cron scheduler list = %q", out)
 		}
@@ -177,6 +184,7 @@ func TestE2EExamplesDocker(t *testing.T) {
 		applyExampleProject(t, ctx, binary, root, baseURL, file)
 		defer downExampleProject(t, ctx, binary, root, baseURL, file)
 		run := runExampleCommand(t, ctx, binary, root, baseURL, file, "worker", "cat /opt/agent-compose-example.txt", false)
+		t.Logf("verified run: id=%s sandbox=%s status=%s output=%q", run.ID, run.SandboxID, run.Status, run.Output)
 		if !strings.Contains(run.Output, "built-by-agent-compose") {
 			t.Fatalf("build run = %#v", run)
 		}
@@ -283,6 +291,7 @@ func waitForExampleSchedulerEvent(t *testing.T, ctx context.Context, baseURL, pr
 					t.Fatalf("scheduler run failed: %s", event.GetMessage())
 				}
 				if strings.Contains(event.GetMessage(), want) || strings.Contains(event.GetPayloadJson(), want) {
+					t.Logf("verified scheduler event: type=%s message=%q payload=%s", event.GetType(), event.GetMessage(), event.GetPayloadJson())
 					return
 				}
 			}

@@ -30,3 +30,22 @@ a binary whose `compiled_drivers` includes `boxlite`.
 On a prepared host, continue with `run reviewer --command "uname -a"`, inspect
 the returned sandbox, and finish with `down`. Runtime success is deliberately
 not claimed by this repository-local validation.
+
+## Real local config output
+
+Captured with the current CLI on 2026-07-15:
+
+```yaml
+name: boxlite-minimal
+agents:
+    - name: reviewer
+      provider: codex
+      image: ghcr.io/chaitin/agent-compose-guest:latest
+      driver:
+        name: boxlite
+        boxlite: {}
+network:
+    mode: default
+```
+
+This is config validation only; no BoxLite runtime output is claimed.

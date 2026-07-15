@@ -64,6 +64,7 @@ func TestE2EExamplesDockerProvider(t *testing.T) {
 		applyExampleProject(t, ctx, binary, root, baseURL, file)
 		defer downExampleProject(t, ctx, binary, root, baseURL, file)
 		out := exampleCLI(t, ctx, binary, root, baseURL, "--file", file, "--json", "scheduler", "trigger", "reviewer", "hourly-review", "--prompt", "Reply with exactly: cron scheduler ok")
+		t.Logf("verified manual cron output: %s", strings.TrimSpace(out))
 		if !strings.Contains(out, `"status": "succeeded"`) || !strings.Contains(out, "cron scheduler ok") {
 			t.Fatalf("cron trigger output = %q", out)
 		}
@@ -93,6 +94,7 @@ func TestE2EExamplesDockerProvider(t *testing.T) {
 			if err == nil {
 				for _, run := range resp.Msg.GetRuns() {
 					if run.GetStatus() == agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED {
+						t.Logf("verified timeout run: id=%s sandbox=%s status=%s", run.GetRunId(), run.GetSandboxId(), run.GetStatus())
 						return
 					}
 					if run.GetStatus() == agentcomposev2.RunStatus_RUN_STATUS_FAILED {

@@ -30,3 +30,22 @@ and a binary whose `compiled_drivers` includes `microsandbox`.
 `driver.name: microsandbox`. On a prepared host, continue with
 `run reviewer --command "uname -a"`, inspect the returned sandbox, and finish
 with `down`. Runtime success is deliberately not claimed locally.
+
+## Real local config output
+
+Captured with the current CLI on 2026-07-15:
+
+```yaml
+name: microsandbox-minimal
+agents:
+    - name: reviewer
+      provider: codex
+      image: ghcr.io/chaitin/agent-compose-guest:latest
+      driver:
+        name: microsandbox
+        microsandbox: {}
+network:
+    mode: default
+```
+
+This is config validation only; no Microsandbox runtime output is claimed.

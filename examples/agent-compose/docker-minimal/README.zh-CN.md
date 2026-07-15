@@ -18,9 +18,9 @@
 
 - Docker daemon 正在运行。
 - `agent-compose` daemon 已经启动。
-- Docker 能拉取 `ghcr.io/chaitin/agent-compose-guest:latest`，或本地已有该镜像。
+- Docker 能访问 `ghcr.io/chaitin/agent-compose-guest:latest`。
 
-如果还没有 guest image，可拉取本示例实际引用的镜像：
+如有需要，拉取 compose 文件引用的镜像：
 
 ```bash
 docker pull ghcr.io/chaitin/agent-compose-guest:latest
@@ -85,7 +85,7 @@ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-co
 
 - `config` 输出标准化后的 project，并显示 `driver.name: docker`。
 - `up` 创建或更新 project 和 managed agent definition。
-- `ps` 显示 `reviewer` agent 使用 Docker 和 `ghcr.io/chaitin/agent-compose-guest:latest`。
+- `ps` 显示 `reviewer` agent 使用 Docker 和发布版 guest 镜像。
 
 ## 可选运行测试
 
@@ -95,9 +95,8 @@ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-co
 agent-compose run reviewer --keep-running --prompt "hello from docker minimal example"
 ```
 
-真正执行 agent 需要 guest runtime 可用，并在 daemon 中配置 provider。长期凭据
-保留在 daemon；guest Codex CLI 使用 agent-compose 注入的 sandbox 范围 LLM facade
-变量。
+真正执行 agent 需要 guest runtime 可用，并在 daemon 中配置 provider。guest 使用
+sandbox 范围的 LLM facade，不会获得长期 provider 凭据。
 
 如果 runtime session 仍在运行，可以在其中执行命令：
 
@@ -112,19 +111,79 @@ agent-compose exec <sandbox-id> -- env
 agent-compose down
 ```
 
-将 `<sandbox-id>` 替换为 `run` 返回或 `agent-compose ps --all` 显示的 sandbox
-ID。`down` 会停止项目 sandbox；如果还要删除它，请使用
-`agent-compose rm <sandbox-id>`。
+## 验证输出
 
-## 验证要点
+以下为一次本地验证运行的输出。
 
-真实 daemon Docker E2E 会运行本示例。手工检查时应确认：
+下面记录的输出使用等价的本地构建镜像 `agent-compose-guest:latest`。当前 compose
+文件使用发布版镜像；动态生成的 ID、hash 和时间戳也会不同。
 
-- `config` 显示 `driver.name: docker` 和发布版 guest 镜像。
-- `up` 显示一个已应用项目和一个 agent。
-- `run reviewer --command "printf 'docker minimal ok\\n'"` 无需 provider 凭证即可成功。
-- prompt run 只有在 daemon 配置了可用 LLM provider 时才会成功。
-- 保留运行后，`ps --all` 显示非空 sandbox ID。
-- `exec <sandbox-id> -- pwd` 返回 guest 工作目录。
+### 1. 配置标准化
 
-project、revision、run 和 sandbox ID 均由环境动态生成，因此本文不写死这些值。
+```console
+$ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml config
+name: docker-minimal
+agents:
+    - name: reviewer
+      provider: codex
+      image: agent-compose-guest:latest
+      driver:
+        name: docker
+        docker: {}
+network:
+    mode: default
+```
+
+### 2. 应用 project
+
+```console
+$ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml up
+Project: docker-minimal
+ID: project-docker-minimal-ad604c8bf8d3
+Revision: 1
+Spec: sha256:0e351a523ae793f780fc0933f3b88920501f20dfd4d855654fe711a8a3cb4edd
+Status: applied
+Agents: 1
+Schedulers: 0
+
+ACTION   TYPE              NAME                                                                     ID
+created  project           docker-minimal                                                           project-docker-minimal-ad604c8bf8d3
+created  project_revision  sha256:0e351a523ae793f780fc0933f3b88920501f20dfd4d855654fe711a8a3cb4edd  project-docker-minimal-ad604c8bf8d3/1
+created  project_agent     reviewer                                                                 agent-reviewer-a9f84de36227
+created  agent_definition  reviewer                                                                 agent-reviewer-a9f84de36227
+```
+
+### 3. Project 状态
+
+```console
+$ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml ps
+AGENT     SCHEDULER  LATEST RUN  RUN STATUS  SESSION  DRIVER  IMAGE
+reviewer  disabled   -           -           -        docker  agent-compose-guest:latest
+```
+
+### 4. Docker runtime 容器
+
+```console
+$ docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+NAMES                                                IMAGE                        STATUS
+agent-compose-8aa2625d-db67-4428-82ae-8bef1a137a2f   agent-compose-guest:latest   Up 14 seconds
+```
+
+### 5. 当前真实 provider 验证
+
+以下字段采集于 2026-07-15，链路为当前源码、发布版 guest 镜像、真实 daemon
+facade、guest Codex CLI，以及本地 `.env` 配置的 provider：
+
+```json
+{
+  "id": "8363e8c144f6ab0124054c11a6ff06e67f74fe561c2af46e7b06dd2ffb420027",
+  "status": "succeeded",
+  "sandbox_id": "9f060d2ea52b1a4bedc740715ac8f745274820df03f5b551e01841315b006fb7",
+  "duration_ms": 15435,
+  "output": "agent-compose live provider ok",
+  "driver": "docker",
+  "image_ref": "ghcr.io/chaitin/agent-compose-guest:latest"
+}
+```
+
+ID 和耗时是动态值，本地运行会不同。

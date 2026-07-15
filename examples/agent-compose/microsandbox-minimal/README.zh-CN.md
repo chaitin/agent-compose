@@ -29,3 +29,22 @@ compose 文件会进入常规测试，但本地未验证 runtime 执行。运行
 `config` 可在任意平台安全执行，应归一化出 `driver.name: microsandbox`。在准备好的
 host 上继续执行 `run reviewer --command "uname -a"`、检查返回的 sandbox，最后
 执行 `down`。本地不会声称 Microsandbox runtime 已成功运行。
+
+## 本地真实 config 输出
+
+以下输出由当前 CLI 于 2026-07-15 采集：
+
+```yaml
+name: microsandbox-minimal
+agents:
+    - name: reviewer
+      provider: codex
+      image: ghcr.io/chaitin/agent-compose-guest:latest
+      driver:
+        name: microsandbox
+        microsandbox: {}
+network:
+    mode: default
+```
+
+这里只验证 config，不声称 Microsandbox runtime 已运行成功。

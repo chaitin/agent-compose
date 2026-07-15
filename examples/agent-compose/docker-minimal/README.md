@@ -18,9 +18,9 @@ It is intentionally minimal:
 
 - Docker daemon is running.
 - The `agent-compose` daemon is already running.
-- Docker can pull `ghcr.io/chaitin/agent-compose-guest:latest`, or it already exists locally.
+- Docker can access `ghcr.io/chaitin/agent-compose-guest:latest`.
 
-Pull the exact image referenced by this example if needed:
+Pull the image referenced by the compose file if needed:
 
 ```bash
 docker pull ghcr.io/chaitin/agent-compose-guest:latest
@@ -85,7 +85,7 @@ Expected result:
 
 - `config` prints a normalized project with `driver.name: docker`.
 - `up` creates or updates the project and managed agent definition.
-- `ps` shows the `reviewer` agent using Docker and `ghcr.io/chaitin/agent-compose-guest:latest`.
+- `ps` shows the `reviewer` agent using Docker and the published guest image.
 
 ## Optional run test
 
@@ -96,8 +96,8 @@ agent-compose run reviewer --keep-running --prompt "hello from docker minimal ex
 ```
 
 A real agent run requires a working guest runtime and provider configuration in
-the daemon. Long-lived credentials stay in the daemon; the guest Codex CLI uses
-the sandbox-scoped LLM facade variables injected by agent-compose.
+the daemon. The guest uses the sandbox-scoped LLM facade; long-lived provider
+credentials are not copied into it.
 
 If the runtime session is alive, you can run commands in it:
 
@@ -112,21 +112,81 @@ Clean up running project sessions:
 agent-compose down
 ```
 
-Replace `<sandbox-id>` with the sandbox id returned by `run` or shown by
-`agent-compose ps --all`. `down` stops project sandboxes; use
-`agent-compose rm <sandbox-id>` when you also want to delete one.
+## Verification output
 
-## What to verify
+Output from a local verification run.
 
-The real-daemon Docker E2E runs this example. For a manual check, verify:
+The recorded output below used the equivalent locally built
+`agent-compose-guest:latest` image. The committed compose file now uses the
+published image; generated IDs, hashes, and timestamps will also differ.
 
-- `config` reports `driver.name: docker` and the published guest image.
-- `up` reports one applied project and one agent.
-- `run reviewer --command "printf 'docker minimal ok\\n'"` succeeds without
-  provider credentials.
-- a prompt run succeeds only when the daemon has a working LLM provider.
-- a kept run has a non-empty sandbox id in `ps --all`.
-- `exec <sandbox-id> -- pwd` returns the guest working directory.
+### 1. Config normalization
 
-Project, revision, run, and sandbox IDs are generated per environment and are
-intentionally not hard-coded.
+```console
+$ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml config
+name: docker-minimal
+agents:
+    - name: reviewer
+      provider: codex
+      image: agent-compose-guest:latest
+      driver:
+        name: docker
+        docker: {}
+network:
+    mode: default
+```
+
+### 2. Apply project
+
+```console
+$ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml up
+Project: docker-minimal
+ID: project-docker-minimal-ad604c8bf8d3
+Revision: 1
+Spec: sha256:0e351a523ae793f780fc0933f3b88920501f20dfd4d855654fe711a8a3cb4edd
+Status: applied
+Agents: 1
+Schedulers: 0
+
+ACTION   TYPE              NAME                                                                     ID
+created  project           docker-minimal                                                           project-docker-minimal-ad604c8bf8d3
+created  project_revision  sha256:0e351a523ae793f780fc0933f3b88920501f20dfd4d855654fe711a8a3cb4edd  project-docker-minimal-ad604c8bf8d3/1
+created  project_agent     reviewer                                                                 agent-reviewer-a9f84de36227
+created  agent_definition  reviewer                                                                 agent-reviewer-a9f84de36227
+```
+
+### 3. Project status
+
+```console
+$ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml ps
+AGENT     SCHEDULER  LATEST RUN  RUN STATUS  SESSION  DRIVER  IMAGE
+reviewer  disabled   -           -           -        docker  agent-compose-guest:latest
+```
+
+### 4. Docker runtime container
+
+```console
+$ docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+NAMES                                                IMAGE                        STATUS
+agent-compose-8aa2625d-db67-4428-82ae-8bef1a137a2f   agent-compose-guest:latest   Up 14 seconds
+```
+
+### 5. Current live-provider verification
+
+The following fields were captured on 2026-07-15 from the current source,
+published guest image, real daemon facade, guest Codex CLI, and the provider
+configured in the local `.env`:
+
+```json
+{
+  "id": "8363e8c144f6ab0124054c11a6ff06e67f74fe561c2af46e7b06dd2ffb420027",
+  "status": "succeeded",
+  "sandbox_id": "9f060d2ea52b1a4bedc740715ac8f745274820df03f5b551e01841315b006fb7",
+  "duration_ms": 15435,
+  "output": "agent-compose live provider ok",
+  "driver": "docker",
+  "image_ref": "ghcr.io/chaitin/agent-compose-guest:latest"
+}
+```
+
+IDs and duration are generated values and will differ.

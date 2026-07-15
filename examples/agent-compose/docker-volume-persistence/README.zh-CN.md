@@ -32,3 +32,14 @@ cache 值在 sandbox stop/resume 后仍存在。`down` 会移除 project-managed
 使用保留 run 返回的 sandbox ID。第一次命令必须读取 fixture 并写入
 `/cache/value`；stop/resume 后 `cat` 必须返回 `persistent`。`touch` 检查必须因只读
 挂载而失败。最后显式 stop、rm，再执行 `down`。
+
+## 真实验证输出
+
+以下结果采集自 2026-07-15 真实 Docker sandbox 的 stop/resume：
+
+```console
+$ agent-compose exec <sandbox-id> -- cat /cache/value
+persistent
+$ agent-compose exec <sandbox-id> -- sh -c 'if touch /fixtures/unexpected 2>/dev/null; then exit 1; fi'
+# exit status 0：只读挂载拒绝写入
+```

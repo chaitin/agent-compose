@@ -34,3 +34,14 @@ Use the sandbox id returned by the kept run. The first command must read the
 fixture and write `/cache/value`; after stop/resume, `cat` must return
 `persistent`. The `touch` check must fail inside the read-only mount. Stop and
 remove the sandbox before `down` for an explicit lifecycle cleanup.
+
+## Real verification output
+
+Captured after a real Docker sandbox stop/resume on 2026-07-15:
+
+```console
+$ agent-compose exec <sandbox-id> -- cat /cache/value
+persistent
+$ agent-compose exec <sandbox-id> -- sh -c 'if touch /fixtures/unexpected 2>/dev/null; then exit 1; fi'
+# exit status 0: writing to the read-only mount was rejected
+```

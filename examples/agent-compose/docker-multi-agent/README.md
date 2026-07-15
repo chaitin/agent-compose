@@ -33,3 +33,16 @@ prompts apply when the agents are run with `--prompt`.
 `workspace/project.txt`, return their respective marker, and have different
 run/sandbox IDs. Use `--prompt` only when the daemon has a configured provider.
 `down` cleans both agents' project sandboxes.
+
+## Real verification output
+
+Captured from the real-daemon Docker E2E on 2026-07-15:
+
+```console
+reviewer status=succeeded sandbox=56dc449f3f6c47169bda2ca943a7681b847e0005c5b24aca3294aa5a5cb1a78e
+reviewer ok
+tester status=succeeded sandbox=4151fb772c909e76d9b07a6d2d86045037eece1548ea6e83380609c73ce01d4b
+tester ok
+```
+
+The distinct generated sandbox IDs confirm the runs were isolated.

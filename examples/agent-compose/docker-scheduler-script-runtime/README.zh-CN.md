@@ -30,3 +30,16 @@ state 会在 run 之间持久化；interval 保留为长期调度。该流程不
 `scheduler ls heartbeat` 应列出 `warmup`、`follow-up` 和 `heartbeat`。检查两个
 timeout trigger，直到 event 分别包含 `heartbeat 1` 和 `heartbeat 2`；有序输出证明
 state 在不同 loader callback 间持久化。`down` 禁用 interval 并清理 sandbox。
+
+## 真实验证输出
+
+以下结果采集自 2026-07-15 的真实 scheduler runtime：
+
+```console
+type=loader.log
+message="heartbeat completed"
+payload={"count":2,"output":"heartbeat 2\n"}
+```
+
+E2E 先观察到 `heartbeat 1`，再观察到上面的 event，证明 loader state 跨 callback
+保留。

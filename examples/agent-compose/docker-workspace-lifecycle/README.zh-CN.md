@@ -33,3 +33,17 @@ agent-compose down
 
 使用 `run` 返回的 sandbox ID，在 stop/resume 前后读取文件，并确认 host 上不存在
 `workspace/generated.txt`。`rm` 删除已停止 sandbox，`down` 清理剩余项目状态。
+
+## 真实验证输出
+
+以下结果采集自 2026-07-15 的真实 daemon Docker E2E：
+
+```console
+status=succeeded
+run=7f1f9aaf0cd1d1c125c51bac9f915cdcf57aa9d531353beb9e77faa4ed4109d7
+sandbox=8eac6735af343c91804590c5329d57e274a1e395c6a3ecb41f4c0c62c1ff4629
+$ agent-compose exec <sandbox-id> -- cat generated.txt
+sandbox-only
+```
+
+run 和 sandbox ID 每次动态生成，本地结果会不同。

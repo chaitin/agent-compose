@@ -2,28 +2,36 @@
 
 语言：[English](README.md) | 中文
 
-## 已在本地验证的 Docker 示例
+`agent-compose` Docker runtime driver 的可运行示例，按从简单到完整的顺序排列。
 
-| 示例 | 能力 | Provider 认证 |
+| 示例 | 演示内容 | 是否需要 provider 凭证 |
 | --- | --- | --- |
-| [docker-minimal](docker-minimal/) | 最小 project 和当前 sandbox CLI | 不需要 |
-| [docker-workspace-lifecycle](docker-workspace-lifecycle/) | Local workspace、exec、stop、resume 和隔离 | 不需要 |
-| [docker-multi-agent](docker-multi-agent/) | 多个 agent 共享 workspace 声明 | command run 不需要 |
-| [docker-env-secrets](docker-env-secrets/) | Dotenv、project variables、agent env 和隐藏 secret | 不需要 |
-| [docker-volume-persistence](docker-volume-persistence/) | Managed volume 和只读 bind mount | 不需要 |
-| [docker-build](docker-build/) | Compose 驱动的 guest image 构建 | 不需要 |
-| [docker-scheduler-cron](docker-scheduler-cron/) | 声明式 cron 控制面 | 运行 trigger 时需要 |
-| [docker-scheduler-timeout](docker-scheduler-timeout/) | 自动调度的 provider run | 需要 |
-| [docker-scheduler-script-url](docker-scheduler-script-url/) | 相对 scheduler script URL 快照 | 不需要 |
-| [docker-scheduler-script-runtime](docker-scheduler-script-runtime/) | State、日志、interval 和 scheduler shell | 不需要 |
+| [docker-minimal](docker-minimal/) | 最小的 Docker project：一个 agent，不启用 scheduler。 | `config`/`up`/`ps` 不需要 |
+| [docker-scheduler-cron](docker-scheduler-cron/) | managed cron scheduler 的控制面流程。 | `config`/`up`/`ps`/`down` 不需要 |
+| [docker-scheduler-script-url](docker-scheduler-script-url/) | 从相对文件 URL 来源加载 scheduler 脚本。 | `config`/`up`/`ps`/`down` 不需要 |
+| [docker-scheduler-timeout](docker-scheduler-timeout/) | 端到端的定时运行：触发、执行 agent 并持久化日志。 | 定时运行需要 |
+| [docker-workspace-lifecycle](docker-workspace-lifecycle/) | 本地 workspace 副本及 sandbox stop、resume、exec、rm。 | 不需要 |
+| [docker-multi-agent](docker-multi-agent/) | 两个独立 agent 使用同一 workspace source。 | command 不需要；prompt 需要 |
+| [docker-env-secrets](docker-env-secrets/) | Dotenv、project/agent variables 和 secret 隐藏。 | 不需要 |
+| [docker-volume-persistence](docker-volume-persistence/) | 托管 volume 和只读 bind mount。 | 不需要 |
+| [docker-build](docker-build/) | 构建并运行基于 guest 的 Docker 镜像。 | 不需要 |
+| [docker-scheduler-script-runtime](docker-scheduler-script-runtime/) | Inline QJS、持久 scheduler state 和 shell callback。 | 不需要 |
+| [boxlite-minimal](boxlite-minimal/) | 最小 BoxLite 配置模板。 | prompt run 需要 |
+| [microsandbox-minimal](microsandbox-minimal/) | 最小 Microsandbox 配置模板。 | prompt run 需要 |
 
-Docker 示例需要运行中的 agent-compose daemon、Docker daemon，以及本地已有
-发布版 guest image。README 描述稳定行为，不保存动态 ID 或完整输出快照。
+## 通用前置条件
 
-## 仅做配置验证的 KVM 模板
+- Docker daemon 正在运行。
+- `agent-compose` daemon 已经启动。
+- Docker 能访问 `ghcr.io/chaitin/agent-compose-guest:latest`。
 
-- [boxlite-minimal](boxlite-minimal/)
-- [microsandbox-minimal](microsandbox-minimal/)
+如需获取示例使用的镜像，执行：
 
-自动化测试会解析这些 manifest，但 runtime 执行需要准备好的 Linux/KVM 主机，
-本地未做运行验证。
+```bash
+docker pull ghcr.io/chaitin/agent-compose-guest:latest
+```
+
+每个示例都有自己的 `README.md`，包含完整命令和预期输出。
+
+BoxLite 和 Microsandbox 还要求 Linux、KVM 权限、对应 runtime artifacts，以及包含
+所选 compiled driver 的二进制。未在准备好的 host 上运行时，它们只是配置模板。

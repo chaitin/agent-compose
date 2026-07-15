@@ -5,70 +5,51 @@ Languages: English | [中文](README.zh-CN.md)
 This example keeps QJS in `scheduler.js` and references it from
 `agent-compose.yml` with `scheduler.script.url`.
 
-It demonstrates two independent concerns:
+The script keeps the original daily `scheduler.cron(...)` agent callback and
+also defines a two-second `scheduler.timeout(...)` shell callback. The timeout
+provides a quick way to verify that the external file was loaded; it does not
+replace the cron tutorial.
 
-- `daily-review` keeps the tutorial's calendar-based
-  `scheduler.cron(...) + scheduler.agent(...)` flow.
-- `source-loaded` is a two-second `scheduler.timeout(...)` shell callback used
-  to prove, with a real daemon, that the external script was loaded and run.
-
-## Prerequisites
-
-- Docker daemon and the `agent-compose` daemon are running.
-- Docker can pull the published guest image, or it already exists locally.
-- The cron agent callback requires a configured LLM provider when it fires.
-  The timeout shell callback does not use a model.
-
-## Compose and script
-
-The compose file enables the scheduler and points to a path relative to the
-compose directory:
-
-```yaml
-scheduler:
-  enabled: true
-  sandbox_policy: new
-  script:
-    url: ./scheduler.js
-```
-
-The script preserves the real cron agent example and adds a fast verification
-trigger:
-
-```js
-scheduler.cron("daily-review", "0 9 * * *", function dailyReview() {
-  return scheduler.agent("Review the current project state.");
-});
-
-scheduler.timeout("source-loaded", function sourceLoaded() {
-  return scheduler.shell("printf 'scheduler script URL ok\\n'");
-}, 2000);
-```
-
-## Run the example
+## Run step by step
 
 ```bash
 agent-compose config
 agent-compose up
+agent-compose ps
 agent-compose scheduler ls reviewer
 agent-compose scheduler inspect reviewer daily-review
 agent-compose scheduler inspect reviewer source-loaded
 agent-compose down
 ```
 
-`config` and `up` resolve the relative URL, read the script, and send an inline
-content snapshot to the daemon. Editing `scheduler.js` takes effect on the next
-`up`; it is not a runtime import or background refresh.
+`config` prints the fetched script inline. `up` fetches it once more, hashes the
+content snapshot, and sends only script text to the daemon. Editing
+`scheduler.js` takes effect on the next `up`. The relative path is resolved from
+the directory containing `agent-compose.yml`.
 
-## What to verify
+The control-plane commands do not require provider authentication. A scheduled
+agent callback requires a working guest runtime and daemon provider
+configuration. The `source-loaded` shell callback does not call a model.
 
-- `config` includes the resolved script content.
-- `scheduler ls reviewer` lists both `daily-review` and `source-loaded`.
-- after about two seconds, inspecting `source-loaded` shows that it fired and
-  its event contains `scheduler script URL ok`.
-- `daily-review` remains scheduled for `0 9 * * *` and invokes the agent when
-  its calendar time arrives.
-- `down` disables the scheduler and removes project sandboxes.
+Expected checks:
 
-Generated loader IDs and timestamps vary by environment. The real-daemon E2E
-asserts the event message instead of hard-coding those values.
+1. `config` contains the resolved QJS content.
+2. `scheduler ls reviewer` lists `daily-review` and `source-loaded`.
+3. After about two seconds, `source-loaded` has fired and its event contains
+   `scheduler script URL ok`.
+4. `daily-review` remains scheduled for `0 9 * * *` and calls the agent when its
+   calendar time arrives.
+5. `down` disables the scheduler and cleans project sandboxes.
+
+## Real verification output
+
+Captured from the real scheduler runtime on 2026-07-15:
+
+```console
+type=loader.command.completed
+message="scheduler script URL ok"
+payload={"exitCode":0,"mode":"shell","stderrTruncated":false,"stdoutTruncated":false,"success":true}
+```
+
+The original event also contained generated cell and sandbox IDs, omitted here
+for readability. The E2E asserts the message and successful shell result.

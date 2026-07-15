@@ -19,11 +19,11 @@
 
 - Docker daemon 正在运行。
 - `agent-compose` daemon 已经启动。
-- Docker 能拉取 `ghcr.io/chaitin/agent-compose-guest:latest`，或本地已有该镜像。
-- daemon 配置了可用的 Codex/LLM provider。长期 provider 凭证保留在 daemon 中；
-  guest 通过 sandbox 范围的 LLM facade 调用模型。
+- Docker 能访问 `ghcr.io/chaitin/agent-compose-guest:latest`。
+- daemon 已配置可用的 Codex/LLM provider。guest 使用 sandbox 范围的 LLM facade，
+  不会获得长期 provider key。
 
-如果还没有 guest image，可拉取本示例实际引用的镜像：
+如有需要，拉取 compose 文件引用的镜像：
 
 ```bash
 docker pull ghcr.io/chaitin/agent-compose-guest:latest
@@ -88,20 +88,116 @@ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-timeou
 - `logs --run <run-id>` 输出 agent 日志。
 - `down` 禁用 managed scheduler 和 loader。
 
-`sandbox_policy: new` 会为 scheduled run 创建全新 sandbox。guest 获得 facade token
-和可访问的 daemon URL，而不是长期 provider key。
+## 验证输出
 
-## 验证要点
+以下为一次本地验证运行的输出。其中的 run id 来自该次运行，你本地的会不同。
 
-provider E2E 会通过真实 daemon、Docker guest 和 Codex CLI 运行该流程。手工运行时
-应确认：
+下面记录的输出使用等价的本地构建镜像 `agent-compose-guest:latest`。当前 compose
+文件使用发布版镜像；动态生成的 ID、hash、时间戳和耗时也会不同。
 
-- `config` 显示 `kind: timeout`、`timeout: 15s` 和 `sandbox_policy: new`。
-- `scheduler inspect reviewer run-once-after-15-seconds` 最终显示 trigger 已触发。
-- `ps` 显示一个来自 scheduler 且 `status: succeeded` 的 run。
-- `inspect run <run-id>` 显示 `source: scheduler`、`driver: docker`、非空 sandbox
-  ID，且输出包含 `timeout scheduler ok`。
-- `logs --run <run-id>` 输出相同的模型结果。
-- `down` 禁用 scheduler 并清理项目 sandbox。
+### 1. 配置标准化
 
-动态 ID 和实际耗时因环境而异，因此本文不写死这些值。
+```console
+$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-timeout/agent-compose.yml config
+name: docker-scheduler-timeout
+agents:
+    - name: reviewer
+      provider: codex
+      image: agent-compose-guest:latest
+      driver:
+        name: docker
+        docker: {}
+      scheduler:
+        enabled: true
+        triggers:
+            - name: run-once-after-15-seconds
+              kind: timeout
+              timeout: 15s
+              prompt: 'Reply with exactly: timeout scheduler ok'
+network:
+    mode: default
+```
+
+### 2. 应用 project
+
+```console
+$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-timeout/agent-compose.yml up
+Project: docker-scheduler-timeout
+ID: project-docker-scheduler-timeout-3a00cafbae27
+Revision: 1
+Spec: sha256:283623fe82f0f04270f27a0ec9da4809fc45b4a45c3f15df3f688aba074990b2
+Status: applied
+Agents: 1
+Schedulers: 1
+
+ACTION   TYPE               NAME                                                                     ID
+created  project            docker-scheduler-timeout                                                 project-docker-scheduler-timeout-3a00cafbae27
+created  project_revision   sha256:283623fe82f0f04270f27a0ec9da4809fc45b4a45c3f15df3f688aba074990b2  project-docker-scheduler-timeout-3a00cafbae27/1
+created  project_agent      reviewer                                                                 agent-reviewer-a0befcb745b8
+created  agent_definition   reviewer                                                                 agent-reviewer-a0befcb745b8
+created  project_scheduler  reviewer                                                                 scheduler-reviewer-default-181247660dc1
+created  loader             docker-scheduler-timeout/reviewer scheduler                              loader-reviewer-default-181247660dc1
+```
+
+### 3. 成功的 scheduled run
+
+```console
+$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-timeout/agent-compose.yml ps
+AGENT     SCHEDULER  LATEST RUN                 RUN STATUS  SESSION  DRIVER  IMAGE
+reviewer  enabled    run-reviewer-28c0ef985c8d  succeeded   -        docker  agent-compose-guest:latest
+```
+
+### 4. 查看成功 run
+
+```console
+$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-timeout/agent-compose.yml inspect run run-reviewer-28c0ef985c8d
+{
+  "run_id": "run-reviewer-28c0ef985c8d",
+  "project_name": "docker-scheduler-timeout",
+  "agent_name": "reviewer",
+  "source": "scheduler",
+  "status": "succeeded",
+  "session_id": "23a1ede4-3325-470d-99db-377e3296e7a2",
+  "exit_code": 0,
+  "duration_ms": 10917,
+  "prompt": "Reply with exactly: timeout scheduler ok",
+  "output": "timeout scheduler ok",
+  "result_json": "{\"agent\":\"codex\",\"exitCode\":0,\"stopReason\":\"completed\",\"success\":true}",
+  "driver": "docker",
+  "image_ref": "agent-compose-guest:latest"
+}
+```
+
+### 5. Run 日志
+
+```console
+$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-timeout/agent-compose.yml logs --run run-reviewer-28c0ef985c8d
+timeout scheduler ok
+```
+
+### 6. 禁用 scheduler
+
+```console
+$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-timeout/agent-compose.yml down
+Project: docker-scheduler-timeout
+ID: project-docker-scheduler-timeout-3a00cafbae27
+Status: down
+Failed session stops: 0
+
+ACTION   TYPE               NAME      ID                                       MESSAGE
+updated  project_scheduler  reviewer  scheduler-reviewer-default-181247660dc1  disabled by project down
+updated  loader             reviewer  loader-reviewer-default-181247660dc1     disabled by project down
+```
+
+### 7. 当前自动 timeout 验证
+
+2026-07-15 的 E2E 通过真实 daemon、Docker guest 和 guest Codex CLI 观察自动
+trigger，provider 使用受控 fixture：
+
+```console
+status=RUN_STATUS_SUCCEEDED
+run=236f8ab07988370527571cd40eaf38e9ced83afb22651e2c8b0f4b6e15d4b960
+sandbox=825642e2863644eac04f63e4bec17af025379ce8a050561abe58a178a3443c0e
+```
+
+run 和 sandbox ID 每次动态生成，本地结果会不同。

@@ -32,3 +32,16 @@ system prompt。
 `inspect agent` 应显示两个 definition。两个 command run 都应能读取 workspace
 fixture、输出各自 marker，并具有不同 run/sandbox ID。只有 daemon 配置了 provider
 后才运行 `--prompt`。`down` 清理两个 agent 的项目 sandbox。
+
+## 真实验证输出
+
+以下结果采集自 2026-07-15 的真实 daemon Docker E2E：
+
+```console
+reviewer status=succeeded sandbox=56dc449f3f6c47169bda2ca943a7681b847e0005c5b24aca3294aa5a5cb1a78e
+reviewer ok
+tester status=succeeded sandbox=4151fb772c909e76d9b07a6d2d86045037eece1548ea6e83380609c73ce01d4b
+tester ok
+```
+
+两个动态 sandbox ID 不同，证明 run 相互隔离。

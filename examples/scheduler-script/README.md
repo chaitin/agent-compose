@@ -111,8 +111,7 @@ scheduler.schedule(triggerId, expression, callback, options);
 
 手动运行时，agent-compose 会优先调用全局 `main(payload)`。如果没有 `main()` 且脚本只注册了一个触发器，则会调用这个触发器的 callback；如果有多个触发器，必须显式选择触发器或定义 `main()`。
 
-- 手动运行的 `payload` 来自统一 run 请求的 `payload_json`；CLI 对应
-  `agent-compose scheduler trigger <agent> <trigger> --payload '{...}'`。
+- 手动运行的 `payload` 来自 `RunLoaderNow.payloadJson`。
 - `scheduler.on(...)` handler 收到事件 envelope：`{ topic, createdAt, payload }`。
 - interval、timeout、cron handler 默认收到 `undefined`，除非你在脚本里自己转发自定义上下文。
 
