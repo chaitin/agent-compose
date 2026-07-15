@@ -133,6 +133,106 @@ func TestControllerRemoveProjectMarksProjectRemovedAndIsIdempotent(t *testing.T)
 	}
 }
 
+func TestProjectNetworkCleanupUsesNamedNetworkRevisionHistory(t *testing.T) {
+	ctx := context.Background()
+	store := &controllerCoverageStore{revisions: []domain.ProjectRevisionRecord{
+		{ProjectID: "project-1", Revision: 1, SpecJSON: `{"networks":[{"name":"frontend","driver":"bridge"}]}`},
+		{ProjectID: "project-1", Revision: 2, SpecJSON: `{"networks":[{"name":"backend","driver":"bridge"}]}`},
+	}}
+	cleaner := &controllerCoverageNetworkCleaner{}
+	controller := NewController(ControllerDependencies{Store: store, Networks: cleaner})
+	project := domain.ProjectRecord{ID: "project-1", CurrentRevision: 2}
+	cleanup := controller.projectNetworkCleanup(project)
+	if cleanup == nil {
+		t.Fatal("projectNetworkCleanup returned nil for named-network project")
+	}
+	if err := cleanup(ctx, project.ID); err != nil {
+		t.Fatalf("network cleanup returned error: %v", err)
+	}
+	if len(cleaner.projectIDs) != 1 || cleaner.projectIDs[0] != project.ID {
+		t.Fatalf("network cleanup project IDs = %#v", cleaner.projectIDs)
+	}
+
+	store.revisions[1].SpecJSON = `{"networks":[]}`
+	if err := cleanup(ctx, project.ID); err != nil {
+		t.Fatalf("historical network cleanup returned error: %v", err)
+	}
+	if len(cleaner.projectIDs) != 2 {
+		t.Fatalf("historical network cleanup project IDs = %#v", cleaner.projectIDs)
+	}
+
+	store.revisions[0].SpecJSON = `{"networks":[]}`
+	if err := cleanup(ctx, project.ID); err != nil {
+		t.Fatalf("baseline history cleanup returned error: %v", err)
+	}
+	if len(cleaner.projectIDs) != 2 {
+		t.Fatalf("baseline history unexpectedly cleaned networks: %#v", cleaner.projectIDs)
+	}
+
+	store.revisions[0].SpecJSON = `{`
+	if err := cleanup(ctx, project.ID); err == nil || !strings.Contains(err.Error(), "decode project network spec") {
+		t.Fatalf("invalid revision cleanup error = %v", err)
+	}
+	store.revisions = store.revisions[1:]
+	if err := cleanup(ctx, project.ID); err == nil || !strings.Contains(err.Error(), "load project revision 1") {
+		t.Fatalf("missing historical revision cleanup error = %v", err)
+	}
+	if controller.projectNetworkCleanup(domain.ProjectRecord{ID: project.ID}) != nil {
+		t.Fatal("zero-revision project returned network cleanup")
+	}
+	if (&Controller{}).projectNetworkCleanup(project) != nil {
+		t.Fatal("controller without network cleaner returned cleanup")
+	}
+}
+
+func TestControllerRemoveProjectCleansHistoricalNetworksBeforeRemoval(t *testing.T) {
+	ctx := context.Background()
+	newStore := func() *controllerCoverageStore {
+		return &controllerCoverageStore{
+			projects: []domain.ProjectRecord{{ID: "project-1", Name: "networked-project", CurrentRevision: 2}},
+			revisions: []domain.ProjectRevisionRecord{
+				{ProjectID: "project-1", Revision: 1, SpecJSON: `{"networks":[{"name":"frontend","driver":"bridge"}]}`},
+				{ProjectID: "project-1", Revision: 2, SpecJSON: `{"networks":[]}`},
+			},
+		}
+	}
+
+	t.Run("cleanup succeeds", func(t *testing.T) {
+		store := newStore()
+		cleaner := &controllerCoverageNetworkCleaner{}
+		controller := NewController(ControllerDependencies{
+			Store:     store,
+			Sandboxes: controllerCoverageSessionStore{},
+			Networks:  cleaner,
+		})
+		result, err := controller.RemoveProject(ctx, RemoveRequest{Project: ProjectRef{ProjectID: "project-1"}})
+		if err != nil {
+			t.Fatalf("RemoveProject returned error: %v", err)
+		}
+		if result.Project.RemovedAt.IsZero() || len(cleaner.projectIDs) != 1 || cleaner.projectIDs[0] != "project-1" {
+			t.Fatalf("RemoveProject result=%#v cleanup=%#v", result.Project, cleaner.projectIDs)
+		}
+	})
+
+	t.Run("cleanup failure leaves project active", func(t *testing.T) {
+		store := newStore()
+		cleaner := &controllerCoverageNetworkCleaner{err: errors.New("docker network cleanup failed")}
+		controller := NewController(ControllerDependencies{
+			Store:     store,
+			Sandboxes: controllerCoverageSessionStore{},
+			Networks:  cleaner,
+		})
+		result, err := controller.RemoveProject(ctx, RemoveRequest{Project: ProjectRef{ProjectID: "project-1"}})
+		if !errors.Is(err, cleaner.err) || !result.Project.RemovedAt.IsZero() {
+			t.Fatalf("RemoveProject result=%#v err=%v", result.Project, err)
+		}
+		project, loadErr := store.GetProject(ctx, "project-1")
+		if loadErr != nil || !project.RemovedAt.IsZero() {
+			t.Fatalf("project after cleanup failure=%#v err=%v", project, loadErr)
+		}
+	})
+}
+
 func TestManagedSchedulerErrorHelpersCoverage(t *testing.T) {
 	plain := &managedSchedulerBuildError{message: "missing script"}
 	if plain.Error() != "missing script" {
@@ -248,12 +348,18 @@ func TestIntegrationControllerValidateApplyDryRunAndResolveWorkflows(t *testing.
 	TestControllerValidateApplyDryRunAndResolveWorkflows(t)
 	TestControllerRejectsUncompiledDriversBeforePersistence(t)
 	TestDownProjectSandboxAndSchedulerWorkflows(t)
+	TestControllerRemoveProjectMarksProjectRemovedAndIsIdempotent(t)
+	TestProjectNetworkCleanupUsesNamedNetworkRevisionHistory(t)
+	TestControllerRemoveProjectCleansHistoricalNetworksBeforeRemoval(t)
 }
 
 func TestE2EControllerValidateApplyDryRunAndResolveWorkflows(t *testing.T) {
 	TestControllerValidateApplyDryRunAndResolveWorkflows(t)
 	TestControllerRejectsUncompiledDriversBeforePersistence(t)
 	TestDownProjectSandboxAndSchedulerWorkflows(t)
+	TestControllerRemoveProjectMarksProjectRemovedAndIsIdempotent(t)
+	TestProjectNetworkCleanupUsesNamedNetworkRevisionHistory(t)
+	TestControllerRemoveProjectCleansHistoricalNetworksBeforeRemoval(t)
 }
 
 type controllerCoverageLoaderValidator struct{}
@@ -267,7 +373,8 @@ func (controllerCoverageLoaderValidator) Refresh(context.Context) error {
 }
 
 type controllerCoverageStore struct {
-	projects []domain.ProjectRecord
+	projects  []domain.ProjectRecord
+	revisions []domain.ProjectRevisionRecord
 }
 
 func (s *controllerCoverageStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, error) {
@@ -323,6 +430,15 @@ func (s *controllerCoverageStore) MarkProjectRemoved(_ context.Context, projectI
 
 func (s *controllerCoverageStore) SaveProjectRevision(context.Context, domain.ProjectRevisionRecord) (domain.ProjectRevisionRecord, bool, error) {
 	return domain.ProjectRevisionRecord{}, false, nil
+}
+
+func (s *controllerCoverageStore) GetProjectRevision(_ context.Context, projectID string, revision int64) (domain.ProjectRevisionRecord, error) {
+	for _, item := range s.revisions {
+		if item.ProjectID == projectID && item.Revision == revision {
+			return item, nil
+		}
+	}
+	return domain.ProjectRevisionRecord{}, sql.ErrNoRows
 }
 
 func (s *controllerCoverageStore) GetProjectAgent(context.Context, string, string) (domain.ProjectAgentRecord, error) {
@@ -393,6 +509,16 @@ func (controllerCoverageSessionStore) ListSandboxes(context.Context, domain.Sand
 
 type controllerCoverageVolumeManager struct {
 	removedProjects []string
+}
+
+type controllerCoverageNetworkCleaner struct {
+	projectIDs []string
+	err        error
+}
+
+func (c *controllerCoverageNetworkCleaner) CleanupProjectNetworks(_ context.Context, projectID string) error {
+	c.projectIDs = append(c.projectIDs, projectID)
+	return c.err
 }
 
 func (m *controllerCoverageVolumeManager) Ensure(context.Context, domain.VolumeRecord) (domain.VolumeRecord, bool, error) {

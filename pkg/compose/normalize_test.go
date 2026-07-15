@@ -487,7 +487,7 @@ func TestNormalizeRejectsInvalidAgentName(t *testing.T) {
 	}
 }
 
-func TestNormalizeDefaultsDriverAndNetwork(t *testing.T) {
+func TestNormalizeDefaultsDriver(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: defaults
 agents:
@@ -498,9 +498,6 @@ agents:
 	normalized, err := Normalize(spec, NormalizeOptions{})
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
-	}
-	if normalized.Network == nil || normalized.Network.Mode != "default" {
-		t.Fatalf("network = %#v, want default", normalized.Network)
 	}
 	if got := normalized.Agents[0].Driver; got == nil || got.Name != DriverDocker || got.Docker == nil {
 		t.Fatalf("driver = %#v, want default docker", got)
@@ -598,11 +595,9 @@ agents:
 	}
 }
 
-func TestNormalizeAcceptsSupportedDriverAndDefaultNetwork(t *testing.T) {
+func TestNormalizeAcceptsSupportedDriver(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: supported-driver
-network:
-  mode: default
 agents:
   reviewer:
     driver:
@@ -614,29 +609,8 @@ agents:
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
 	}
-	if normalized.Network == nil || normalized.Network.Mode != "default" {
-		t.Fatalf("network = %#v, want default", normalized.Network)
-	}
 	if got := normalized.Agents[0].Driver; got == nil || got.Name != DriverMicrosandbox || got.Microsandbox.Profile != "secure" {
 		t.Fatalf("driver = %#v", got)
-	}
-}
-
-func TestNormalizeAcceptsEmptyNetworkAsDefault(t *testing.T) {
-	spec := mustParseCompose(t, `
-name: empty-network
-network: {}
-agents:
-  reviewer:
-    provider: codex
-`)
-
-	normalized, err := Normalize(spec, NormalizeOptions{})
-	if err != nil {
-		t.Fatalf("Normalize returned error: %v", err)
-	}
-	if normalized.Network == nil || normalized.Network.Mode != "default" {
-		t.Fatalf("network = %#v, want default", normalized.Network)
 	}
 }
 
@@ -709,25 +683,6 @@ func TestNormalizeRejectsInvalidJupyterGuestPort(t *testing.T) {
 				t.Fatalf("error = %q, want jupyter guest_port path", got)
 			}
 		})
-	}
-}
-
-func TestNormalizeRejectsUnsupportedNetwork(t *testing.T) {
-	spec := mustParseCompose(t, `
-name: unsupported-network
-network:
-  mode: bridge
-agents:
-  reviewer:
-    provider: codex
-`)
-
-	_, err := Normalize(spec, NormalizeOptions{})
-	if err == nil {
-		t.Fatalf("expected Normalize to fail")
-	}
-	if got := err.Error(); !strings.Contains(got, "network.mode") || !strings.Contains(got, "unsupported") {
-		t.Fatalf("error = %q, want network mode error", got)
 	}
 }
 

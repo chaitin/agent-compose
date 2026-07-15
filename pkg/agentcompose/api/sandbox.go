@@ -34,6 +34,10 @@ type SandboxStatsStore interface {
 	GetVMState(string) (domain.VMState, error)
 }
 
+type SandboxVMStateStore interface {
+	GetVMState(string) (domain.VMState, error)
+}
+
 type SandboxListStore interface {
 	ListSandboxes(context.Context, domain.SandboxListOptions) (domain.SandboxListResult, error)
 }
@@ -178,7 +182,9 @@ func (h *SandboxHandler) ListSandboxes(ctx context.Context, req *connect.Request
 	response := &agentcomposev2.ListSandboxesResponse{Sandboxes: make([]*agentcomposev2.Sandbox, 0, len(result.Sandboxes))}
 	targets := h.resolveSandboxTargets(ctx, result.Sandboxes)
 	for _, sandbox := range result.Sandboxes {
-		response.Sandboxes = append(response.Sandboxes, sandboxToV2WithTarget(sandbox, targets[sandbox.Summary.ID]))
+		item := sandboxToV2WithTarget(sandbox, targets[sandbox.Summary.ID])
+		h.populateSandboxNetworkState(sandbox, item)
+		response.Sandboxes = append(response.Sandboxes, item)
 	}
 	if result.HasMore {
 		last := result.Sandboxes[len(result.Sandboxes)-1]
@@ -399,15 +405,55 @@ func sandboxToV2WithTarget(sandbox *domain.Sandbox, target runs.SandboxRunTarget
 }
 
 func (h *SandboxHandler) sandboxToV2(ctx context.Context, sandbox *domain.Sandbox) *agentcomposev2.Sandbox {
-	if h.runTargets == nil || sandbox == nil {
-		return sandboxToV2(sandbox)
+	if sandbox == nil {
+		return nil
 	}
-	target, err := h.runTargets.Resolve(ctx, sandbox)
-	if err != nil {
-		slog.Warn("failed to resolve sandbox run target", "sandbox_id", sandbox.Summary.ID, "error", err)
-		return sandboxToV2(sandbox)
+	result := sandboxToV2(sandbox)
+	if h.runTargets != nil {
+		target, err := h.runTargets.Resolve(ctx, sandbox)
+		if err != nil {
+			slog.Warn("failed to resolve sandbox run target", "sandbox_id", sandbox.Summary.ID, "error", err)
+		} else {
+			result = sandboxToV2WithTarget(sandbox, target)
+		}
 	}
-	return sandboxToV2WithTarget(sandbox, target)
+	h.populateSandboxNetworkState(sandbox, result)
+	return result
+}
+
+func (h *SandboxHandler) populateSandboxNetworkState(sandbox *domain.Sandbox, result *agentcomposev2.Sandbox) {
+	store, ok := h.store.(SandboxVMStateStore)
+	if !ok || sandbox == nil || result == nil {
+		return
+	}
+	if vmState, err := store.GetVMState(sandbox.Summary.ID); err == nil {
+		result.NetworkState = SandboxNetworkStateToProto(vmState.NetworkState)
+	}
+}
+
+func SandboxNetworkStateToProto(state *domain.SandboxNetworkState) *agentcomposev2.SandboxNetworkState {
+	if state == nil {
+		return nil
+	}
+	result := &agentcomposev2.SandboxNetworkState{Mode: state.Mode, ReconciledAt: timestamppb.New(state.ReconciledAt)}
+	for _, item := range state.Attachments {
+		result.Attachments = append(result.Attachments, &agentcomposev2.SandboxNetworkAttachment{
+			LogicalName: item.LogicalName,
+			RuntimeName: item.RuntimeName,
+			NetworkId:   item.NetworkID,
+			Aliases:     append([]string(nil), item.Aliases...),
+			Ipv4Address: item.IPv4Address,
+			Primary:     item.Primary,
+		})
+	}
+	for _, item := range state.PortBindings {
+		result.PortBindings = append(result.PortBindings, &agentcomposev2.SandboxPortBinding{
+			ContainerPort: item.ContainerPort,
+			HostIp:        item.HostIP,
+			HostPort:      item.HostPort,
+		})
+	}
+	return result
 }
 
 func (h *SandboxHandler) resolveSandboxTargets(ctx context.Context, sandboxes []*domain.Sandbox) map[string]runs.SandboxRunTarget {

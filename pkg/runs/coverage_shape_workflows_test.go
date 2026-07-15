@@ -494,6 +494,9 @@ func testRunsControllerPersistenceBoundaryWorkflows(t *testing.T) {
 	t.Run("manual trigger prompt", TestRunsControllerRunProjectAgentManualTriggerPromptOverride)
 	t.Run("manual trigger missing", TestRunsControllerRunProjectAgentManualTriggerMissingDoesNotCreateRun)
 	t.Run("sticky binding scope", TestRunsControllerStickyBindingsAreScopedByTrigger)
+	t.Run("sticky reuse across project revisions", TestRunsControllerStickyNetworkIntentReusesAcrossProjectRevisions)
+	t.Run("failed sticky replacement preserves binding", TestRunsControllerFailedStickyNetworkReplacementPreservesBinding)
+	t.Run("network intent revision equality", TestSandboxNetworkIntentsEqualIgnoresProjectRevision)
 	t.Run("unsupported persistence boundary", TestRunsControllerRejectsUncompiledScheduledSandboxBeforePersistence)
 	t.Run("apply jupyter", TestRunsControllerApplyJupyterOptionsToSandbox)
 	t.Run("docker host port", TestRunsControllerApplyJupyterOptionsLeavesDockerHostPortForRuntime)
@@ -1784,6 +1787,46 @@ func TestRunsControllerStickyBindingsAreScopedByTrigger(t *testing.T) {
 	if fixture.configDB.bindings["loader-1/trigger-a"].SandboxID != first.SandboxID || fixture.configDB.bindings["loader-1/trigger-b"].SandboxID != other.SandboxID {
 		t.Fatalf("bindings = %#v", fixture.configDB.bindings)
 	}
+	oldSticky, err := fixture.store.GetSandbox(fixture.ctx, first.SandboxID)
+	if err != nil {
+		t.Fatalf("load sticky sandbox: %v", err)
+	}
+	oldSticky.NetworkIntent = &domain.SandboxNetworkIntent{
+		Version:         1,
+		ProjectID:       "project-1",
+		ProjectRevision: 1,
+		AgentName:       "worker",
+		Definitions:     []domain.SandboxNetworkDefinition{{Name: "frontend", Driver: "bridge"}},
+		Attachments:     []string{"frontend"},
+	}
+	if err := fixture.store.SaveSandbox(oldSticky); err != nil {
+		t.Fatalf("save mismatched sticky sandbox: %v", err)
+	}
+	_, explicitExecErr, explicitErr := fixture.controller.RunProjectAgent(fixture.ctx, RunAgentRequest{
+		ProjectID:       "project-1",
+		AgentName:       "worker",
+		Prompt:          "explicit reuse must fail",
+		SandboxID:       first.SandboxID,
+		Source:          domain.ProjectRunSourceAPI,
+		ClientRequestID: "explicit-network-mismatch",
+		CleanupPolicy:   agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_KEEP_RUNNING,
+	}, nil)
+	if explicitErr != nil || !errors.Is(explicitExecErr, ErrInvalidRequest) {
+		t.Fatalf("explicit mismatched reuse err=%v execErr=%v", explicitErr, explicitExecErr)
+	}
+	if got := fixture.configDB.bindings["loader-1/trigger-a"].SandboxID; got != first.SandboxID {
+		t.Fatalf("explicit mismatch changed sticky binding to %q", got)
+	}
+	intentReplacement := runSticky("trigger-a", "sticky-a-intent-replacement")
+	if intentReplacement.SandboxID == first.SandboxID || fixture.configDB.bindings["loader-1/trigger-a"].SandboxID != intentReplacement.SandboxID {
+		t.Fatalf("intent replacement run=%#v bindings=%#v", intentReplacement, fixture.configDB.bindings)
+	}
+	if len(intentReplacement.Warnings) == 0 || !strings.Contains(intentReplacement.Warnings[0], "network intent") {
+		t.Fatalf("intent replacement warnings = %#v", intentReplacement.Warnings)
+	}
+	if reusedReplacement := runSticky("trigger-a", "sticky-a-replacement-reuse"); reusedReplacement.SandboxID != intentReplacement.SandboxID {
+		t.Fatalf("replacement was not reused: first=%q second=%q", intentReplacement.SandboxID, reusedReplacement.SandboxID)
+	}
 
 	fixture.configDB.bindings["loader-1/stale"] = domain.LoaderBinding{LoaderID: "loader-1", TriggerID: "stale", SandboxID: "missing-sandbox"}
 	replacement := runSticky("stale", "sticky-stale-1")
@@ -1792,6 +1835,129 @@ func TestRunsControllerStickyBindingsAreScopedByTrigger(t *testing.T) {
 	}
 	if len(replacement.Warnings) == 0 || !strings.Contains(replacement.Warnings[0], "unavailable") {
 		t.Fatalf("stale replacement warnings = %#v", replacement.Warnings)
+	}
+}
+
+func TestRunsControllerStickyNetworkIntentReusesAcrossProjectRevisions(t *testing.T) {
+	fixture := newControllerRunFixture(t)
+	const specJSON = `{"networks":[{"name":"frontend","driver":"bridge"}],"agents":[{"name":"worker","networks":["frontend"],"expose":["8080/tcp"],"ports":["127.0.0.1:0:8080/tcp"]}]}`
+	fixture.configDB.revision.SpecJSON = specJSON
+
+	runSticky := func(requestID string) domain.ProjectRunRecord {
+		t.Helper()
+		run, execErr, err := fixture.controller.RunProjectAgent(fixture.ctx, RunAgentRequest{
+			ProjectID:              "project-1",
+			AgentName:              "worker",
+			Prompt:                 "reuse networked sandbox",
+			Source:                 domain.ProjectRunSourceScheduler,
+			SchedulerID:            "scheduler-1",
+			TriggerID:              "trigger-revision",
+			ClientRequestID:        requestID,
+			CleanupPolicy:          agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_KEEP_RUNNING,
+			StickyBindingLoaderID:  "loader-1",
+			StickyBindingTriggerID: "trigger-revision",
+		}, nil)
+		if err != nil || execErr != nil {
+			t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+		}
+		return run
+	}
+
+	first := runSticky("sticky-network-revision-1")
+	firstSandbox, err := fixture.store.GetSandbox(fixture.ctx, first.SandboxID)
+	if err != nil {
+		t.Fatalf("load first sticky sandbox: %v", err)
+	}
+	if firstSandbox.NetworkIntent == nil || firstSandbox.NetworkIntent.ProjectRevision != 1 {
+		t.Fatalf("first network intent = %#v", firstSandbox.NetworkIntent)
+	}
+
+	fixture.configDB.project.CurrentRevision = 2
+	fixture.configDB.revision.Revision = 2
+	second := runSticky("sticky-network-revision-2")
+	if second.SandboxID != first.SandboxID {
+		t.Fatalf("revision-only project update replaced sandbox: first=%q second=%q", first.SandboxID, second.SandboxID)
+	}
+	if len(second.Warnings) != 0 {
+		t.Fatalf("revision-only reuse warnings = %#v", second.Warnings)
+	}
+	if got := fixture.configDB.bindings["loader-1/trigger-revision"].SandboxID; got != first.SandboxID {
+		t.Fatalf("revision-only reuse binding = %q, want %q", got, first.SandboxID)
+	}
+}
+
+func TestRunsControllerFailedStickyNetworkReplacementPreservesBinding(t *testing.T) {
+	fixture := newControllerRunFixture(t)
+	runSticky := func(requestID string) (domain.ProjectRunRecord, error, error) {
+		t.Helper()
+		return fixture.controller.RunProjectAgent(fixture.ctx, RunAgentRequest{
+			ProjectID:              "project-1",
+			AgentName:              "worker",
+			Prompt:                 "replace networked sandbox",
+			Source:                 domain.ProjectRunSourceScheduler,
+			SchedulerID:            "scheduler-1",
+			TriggerID:              "trigger-failed-replacement",
+			ClientRequestID:        requestID,
+			CleanupPolicy:          agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_KEEP_RUNNING,
+			StickyBindingLoaderID:  "loader-1",
+			StickyBindingTriggerID: "trigger-failed-replacement",
+		}, nil)
+	}
+
+	first, execErr, err := runSticky("sticky-network-before-failure")
+	if err != nil || execErr != nil {
+		t.Fatalf("first RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, first)
+	}
+	oldSandbox, err := fixture.store.GetSandbox(fixture.ctx, first.SandboxID)
+	if err != nil {
+		t.Fatalf("load first sticky sandbox: %v", err)
+	}
+	oldSandbox.NetworkIntent = &domain.SandboxNetworkIntent{
+		Version:     1,
+		ProjectID:   "project-1",
+		AgentName:   "worker",
+		Definitions: []domain.SandboxNetworkDefinition{{Name: "frontend", Driver: "bridge"}},
+		Attachments: []string{"frontend"},
+	}
+	if err := fixture.store.SaveSandbox(oldSandbox); err != nil {
+		t.Fatalf("save mismatched sticky sandbox: %v", err)
+	}
+
+	fixture.driver.startErr = errors.New("replacement runtime start failed")
+	failed, execErr, err := runSticky("sticky-network-failed-replacement")
+	if err != nil || !errors.Is(execErr, fixture.driver.startErr) {
+		t.Fatalf("replacement RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, failed)
+	}
+	if failed.SandboxID == "" || failed.SandboxID == first.SandboxID {
+		t.Fatalf("failed replacement sandbox ID = %q, old = %q", failed.SandboxID, first.SandboxID)
+	}
+	if got := fixture.configDB.bindings["loader-1/trigger-failed-replacement"].SandboxID; got != first.SandboxID {
+		t.Fatalf("failed replacement changed binding to %q, want %q", got, first.SandboxID)
+	}
+}
+
+func TestSandboxNetworkIntentsEqualIgnoresProjectRevision(t *testing.T) {
+	left := &domain.SandboxNetworkIntent{
+		Version:         1,
+		ProjectID:       "project-1",
+		ProjectRevision: 1,
+		AgentName:       "worker",
+		Definitions:     []domain.SandboxNetworkDefinition{{Name: "frontend", Driver: "bridge"}},
+		Attachments:     []string{"frontend"},
+		Expose:          []string{"8080/tcp"},
+		Ports:           []string{"127.0.0.1:0:8080/tcp"},
+	}
+	right := domain.CloneSandboxNetworkIntent(left)
+	right.ProjectRevision = 9
+	if !sandboxNetworkIntentsEqual(left, right) {
+		t.Fatal("equal effective network intents differed only by project revision")
+	}
+	right.Attachments = []string{"backend"}
+	if sandboxNetworkIntentsEqual(left, right) {
+		t.Fatal("different network attachments compared equal")
+	}
+	if sandboxNetworkIntentsEqual(nil, left) || !sandboxNetworkIntentsEqual(nil, nil) {
+		t.Fatal("nil intent equality returned unexpected result")
 	}
 }
 

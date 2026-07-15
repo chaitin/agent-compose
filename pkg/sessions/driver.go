@@ -13,6 +13,9 @@ func ApplySessionStartInfo(vmState domain.VMState, proxyState domain.ProxyState,
 	vmState.StoppedAt = time.Time{}
 	vmState.LastError = ""
 	vmState.BootstrapRef = firstNonEmpty(info.JupyterURL, vmState.BootstrapRef)
+	if info.NetworkState != nil {
+		vmState.NetworkState = info.NetworkState
+	}
 	if info.ProxyState != nil {
 		proxyState = *info.ProxyState
 	}

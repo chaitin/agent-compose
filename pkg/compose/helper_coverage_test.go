@@ -46,13 +46,6 @@ func TestComposePrivateHelperCoverage(t *testing.T) {
 		t.Fatalf("cloneNormalizedBuildSpec nil returned non-nil")
 	}
 
-	if cloneNetworkSpecForOutput(nil) != nil {
-		t.Fatalf("cloneNetworkSpecForOutput nil returned non-nil")
-	}
-	network := cloneNetworkSpecForOutput(&NetworkSpec{Mode: "bridge"})
-	if network.Mode != "bridge" {
-		t.Fatalf("cloneNetworkSpecForOutput = %#v", network)
-	}
 	if compareString("a", "b") >= 0 || compareString("b", "a") <= 0 || compareString("a", "a") != 0 {
 		t.Fatalf("compareString returned unexpected ordering")
 	}

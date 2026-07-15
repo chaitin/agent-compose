@@ -118,8 +118,6 @@ agents:
         - event:
             topic: git.push
           prompt: "Review changes from the incoming event."
-network:
-  mode: default
 `))
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
@@ -149,8 +147,12 @@ network:
 	if agent.Scheduler.Triggers[1].Event == nil || agent.Scheduler.Triggers[1].Event.Topic != "git.push" {
 		t.Fatalf("event trigger = %#v", agent.Scheduler.Triggers[1])
 	}
-	if spec.Network == nil || spec.Network.Mode != "default" {
-		t.Fatalf("network = %#v", spec.Network)
+}
+
+func TestParseRejectsLegacyNetworkField(t *testing.T) {
+	_, err := Parse([]byte("name: legacy-network\nnetwork:\n  mode: default\n"))
+	if err == nil || !strings.Contains(err.Error(), "network") || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("Parse error = %v, want legacy network unknown-field error", err)
 	}
 }
 

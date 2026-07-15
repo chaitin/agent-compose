@@ -38,6 +38,7 @@ type Preparation struct {
 	ProjectRoot      string
 	ProjectVolumes   map[string]domain.VolumeRecord
 	Jupyter          sessionstore.CreateSandboxOptions
+	NetworkIntent    *domain.SandboxNetworkIntent
 }
 
 func PrepareProjectRun(ctx context.Context, store PreparationStore, resolver WorkspaceResolver, run domain.ProjectRunRecord, requestEnv []*agentcomposev2.EnvVarSpec) (Preparation, error) {
@@ -83,6 +84,7 @@ func PrepareProjectRun(ctx context.Context, store PreparationStore, resolver Wor
 		Volumes:          agent.Volumes,
 		ProjectRoot:      ProjectRoot(project),
 		Jupyter:          jupyterOptionsFromAgentSpec(agentSpec),
+		NetworkIntent:    networkIntentFromProjectSpec(run.ProjectID, run.ProjectRevision, run.AgentName, spec, agentSpec),
 	}
 	projectVolumes, err := store.ListProjectVolumes(ctx, project.ID)
 	if err != nil {
@@ -105,6 +107,32 @@ func PrepareProjectRun(ctx context.Context, store PreparationStore, resolver Wor
 		prepared.Workspace = workspaceSnapshot
 	}
 	return prepared, nil
+}
+
+func networkIntentFromProjectSpec(projectID string, projectRevision int64, agentName string, project *agentcomposev2.ProjectSpec, agent *agentcomposev2.AgentSpec) *domain.SandboxNetworkIntent {
+	if project == nil || agent == nil {
+		return nil
+	}
+	if len(project.GetNetworks()) == 0 && len(agent.GetExpose()) == 0 && len(agent.GetPorts()) == 0 {
+		return nil
+	}
+	definitions := make([]domain.SandboxNetworkDefinition, 0, len(project.GetNetworks()))
+	for _, network := range project.GetNetworks() {
+		if network == nil {
+			continue
+		}
+		definitions = append(definitions, domain.SandboxNetworkDefinition{Name: network.GetName(), Driver: network.GetDriver()})
+	}
+	return &domain.SandboxNetworkIntent{
+		Version:         1,
+		ProjectID:       strings.TrimSpace(projectID),
+		ProjectRevision: projectRevision,
+		AgentName:       strings.TrimSpace(agentName),
+		Definitions:     definitions,
+		Attachments:     append([]string(nil), agent.GetNetworks()...),
+		Expose:          append([]string(nil), agent.GetExpose()...),
+		Ports:           append([]string(nil), agent.GetPorts()...),
+	}
 }
 
 func ProjectRoot(project domain.ProjectRecord) string {

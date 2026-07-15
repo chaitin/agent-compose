@@ -9,14 +9,14 @@ import (
 )
 
 type ProjectSpec struct {
-	Name       string                   `yaml:"name,omitempty" json:"name,omitempty"`
-	EnvFiles   EnvFileSpec              `yaml:"env_file,omitempty" json:"env_file,omitempty"`
-	Variables  map[string]EnvVarSpec    `yaml:"variables,omitempty" json:"variables,omitempty"`
-	Workspaces map[string]WorkspaceSpec `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
-	MCPServers map[string]MCPServerSpec `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
-	Volumes    map[string]VolumeSpec    `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	Agents     map[string]AgentSpec     `yaml:"agents,omitempty" json:"agents,omitempty"`
-	Network    *NetworkSpec             `yaml:"network,omitempty" json:"network,omitempty"`
+	Name       string                      `yaml:"name,omitempty" json:"name,omitempty"`
+	EnvFiles   EnvFileSpec                 `yaml:"env_file,omitempty" json:"env_file,omitempty"`
+	Variables  map[string]EnvVarSpec       `yaml:"variables,omitempty" json:"variables,omitempty"`
+	Workspaces map[string]WorkspaceSpec    `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
+	MCPServers map[string]MCPServerSpec    `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
+	Volumes    map[string]VolumeSpec       `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Agents     map[string]AgentSpec        `yaml:"agents,omitempty" json:"agents,omitempty"`
+	Networks   map[string]NamedNetworkSpec `yaml:"networks,omitempty" json:"networks,omitempty"`
 }
 
 // EnvFileSpec lists dotenv files used while loading a project configuration.
@@ -59,6 +59,9 @@ type AgentSpec struct {
 	Workspace    *WorkspaceSpec        `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Scheduler    *SchedulerSpec        `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
 	Jupyter      *JupyterSpec          `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
+	Networks     []string              `yaml:"networks,omitempty" json:"networks,omitempty"`
+	Expose       []string              `yaml:"expose,omitempty" json:"expose,omitempty"`
+	Ports        []string              `yaml:"ports,omitempty" json:"ports,omitempty"`
 }
 
 type AgentMCPEntriesSpec []AgentMCPEntrySpec
@@ -204,8 +207,8 @@ type WorkspaceSpec struct {
 	Path     string `yaml:"path,omitempty" json:"path,omitempty"`
 }
 
-type NetworkSpec struct {
-	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+type NamedNetworkSpec struct {
+	Driver string `yaml:"driver,omitempty" json:"driver,omitempty"`
 }
 
 type DriverSpec struct {
@@ -472,7 +475,7 @@ func validateProjectNode(node *yaml.Node) error {
 		"mcp_servers": validateMCPMap,
 		"volumes":     validateVolumeMap,
 		"agents":      validateAgentMap,
-		"network":     validateNetwork,
+		"networks":    validateNamedNetworkMap,
 	})
 }
 
@@ -508,6 +511,19 @@ func validateAgent(node *yaml.Node, path string) error {
 		"workspace":     validateWorkspace,
 		"scheduler":     validateScheduler,
 		"jupyter":       validateJupyter,
+		"networks":      validateStringList,
+		"expose":        validateStringList,
+		"ports":         validateStringList,
+	})
+}
+
+func validateNamedNetworkMap(node *yaml.Node, path string) error {
+	return validateNamedMap(node, path, validateNamedNetwork)
+}
+
+func validateNamedNetwork(node *yaml.Node, path string) error {
+	return validateMapping(node, path, map[string]nodeValidator{
+		"driver": validateScalar,
 	})
 }
 
@@ -818,12 +834,6 @@ func validateEnvVar(node *yaml.Node, path string) error {
 	default:
 		return newParseError(node, path, "expected scalar or mapping")
 	}
-}
-
-func validateNetwork(node *yaml.Node, path string) error {
-	return validateMapping(node, path, map[string]nodeValidator{
-		"mode": validateScalar,
-	})
 }
 
 func validateNamedMap(node *yaml.Node, path string, validateValue nodeValidator) error {

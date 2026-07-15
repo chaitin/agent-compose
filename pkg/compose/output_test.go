@@ -377,11 +377,8 @@ agents:
         - cron: "@hourly"
   reviewer:
     provider: codex
-network: {}
 `, nil)
 	second := mustNormalizeCompose(t, `
-network:
-  mode: default
 agents:
   reviewer:
     provider: codex
@@ -580,8 +577,6 @@ agents:
 `, nil)
 	explicit := mustNormalizeCompose(t, `
 name: defaults-hash
-network:
-  mode: default
 agents:
   reviewer:
     provider: codex

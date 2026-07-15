@@ -231,7 +231,7 @@ func ProjectSpecToProtoChecked(spec *compose.NormalizedProjectSpec) (*agentcompo
 		Variables:  EnvVarSpecsToProto(spec.Variables),
 		Workspaces: NamedWorkspaceSpecsToProto(spec.Workspaces),
 		Agents:     AgentSpecsToProto(spec.Agents),
-		Network:    NetworkSpecToProto(spec.Network),
+		Networks:   NamedNetworkSpecsToProto(spec.Networks),
 		Volumes:    ProjectVolumeSpecsToProto(spec.Volumes),
 		McpServers: MCPServerSpecsToProto(spec.MCPServers),
 	}, nil
@@ -275,7 +275,26 @@ func AgentSpecsToProto(agents []compose.NormalizedAgentSpec) []*agentcomposev2.A
 			Volumes:      VolumeMountSpecsToProto(agent.Volumes),
 			McpServers:   MCPServerSpecsToProto(agent.MCPServers),
 			Status:       agentStatusToProto(agent.Status),
+			Networks:     slices.Clone(agent.Networks),
+			Expose:       slices.Clone(agent.Expose),
+			Ports:        slices.Clone(agent.Ports),
 		})
+	}
+	return items
+}
+
+func NamedNetworkSpecsToProto(networks map[string]compose.NamedNetworkSpec) []*agentcomposev2.NamedNetworkSpec {
+	if len(networks) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(networks))
+	for key := range networks {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	items := make([]*agentcomposev2.NamedNetworkSpec, 0, len(keys))
+	for _, key := range keys {
+		items = append(items, &agentcomposev2.NamedNetworkSpec{Name: key, Driver: networks[key].Driver})
 	}
 	return items
 }
@@ -418,13 +437,6 @@ func WorkspaceSpecToProto(workspace *compose.WorkspaceSpec) *agentcomposev2.Work
 	}
 }
 
-func NetworkSpecToProto(network *compose.NetworkSpec) *agentcomposev2.NetworkSpec {
-	if network == nil {
-		return nil
-	}
-	return &agentcomposev2.NetworkSpec{Mode: network.Mode}
-}
-
 func DriverSpecToProto(driver *compose.NormalizedDriverSpec) *agentcomposev2.DriverSpec {
 	if driver == nil {
 		return nil
@@ -523,10 +535,31 @@ func ProjectSpecYAMLShape(spec *agentcomposev2.ProjectSpec) (map[string]any, []*
 	} else if len(mcps) > 0 {
 		root["mcp_servers"] = mcps
 	}
-	if network := NetworkYAMLShape(spec.GetNetwork()); len(network) > 0 {
-		root["network"] = network
+	if networks, issues := NamedNetworkYAMLMap(spec.GetNetworks()); len(issues) > 0 {
+		return nil, issues
+	} else if len(networks) > 0 {
+		root["networks"] = networks
 	}
 	return root, nil
+}
+
+func NamedNetworkYAMLMap(items []*agentcomposev2.NamedNetworkSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
+	values := make(map[string]any, len(items))
+	for index, item := range items {
+		name := strings.TrimSpace(item.GetName())
+		if name == "" {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("networks[%d].name", index), "network name is required")}
+		}
+		if _, exists := values[name]; exists {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("networks[%d].name", index), fmt.Sprintf("duplicate network %q", name))}
+		}
+		raw := map[string]any{}
+		if driver := strings.TrimSpace(item.GetDriver()); driver != "" {
+			raw["driver"] = driver
+		}
+		values[name] = raw
+	}
+	return values, nil
 }
 
 func ProjectVolumeYAMLMap(volumes []*agentcomposev2.ProjectVolumeSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
@@ -645,6 +678,15 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 			return nil, issues
 		} else if len(mcps) > 0 {
 			raw["mcp_servers"] = mcps
+		}
+		if len(agent.GetNetworks()) > 0 {
+			raw["networks"] = append([]string(nil), agent.GetNetworks()...)
+		}
+		if len(agent.GetExpose()) > 0 {
+			raw["expose"] = append([]string(nil), agent.GetExpose()...)
+		}
+		if len(agent.GetPorts()) > 0 {
+			raw["ports"] = append([]string(nil), agent.GetPorts()...)
 		}
 		values[name] = raw
 	}
@@ -970,13 +1012,6 @@ func NamedWorkspaceYAMLMap(workspaces []*agentcomposev2.NamedWorkspaceSpec) (map
 		values[name] = workspace
 	}
 	return values, nil
-}
-
-func NetworkYAMLShape(network *agentcomposev2.NetworkSpec) map[string]any {
-	if network == nil {
-		return nil
-	}
-	return map[string]any{"mode": network.GetMode()}
 }
 
 func ProjectServiceSourcePath(source *agentcomposev2.ProjectSource) string {

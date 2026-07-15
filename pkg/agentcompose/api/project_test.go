@@ -93,8 +93,7 @@ func TestProjectSpecToProtoURLSnapshotMatchesInline(t *testing.T) {
 func TestProjectSpecToProtoIncludesSchedulerScript(t *testing.T) {
 	const script = `scheduler.interval("hourly-review", "1h");`
 	spec := &compose.NormalizedProjectSpec{
-		Name:    "inline-script",
-		Network: &compose.NetworkSpec{Mode: "default"},
+		Name: "inline-script",
 		Agents: []compose.NormalizedAgentSpec{{
 			Name: "reviewer",
 			Driver: &compose.NormalizedDriverSpec{
@@ -131,8 +130,7 @@ func TestProjectSpecToProtoIncludesSchedulerScript(t *testing.T) {
 
 func TestProjectSpecToProtoIncludesJupyter(t *testing.T) {
 	spec := &compose.NormalizedProjectSpec{
-		Name:    "jupyter",
-		Network: &compose.NetworkSpec{Mode: "default"},
+		Name: "jupyter",
 		Agents: []compose.NormalizedAgentSpec{{
 			Name: "reviewer",
 			Driver: &compose.NormalizedDriverSpec{

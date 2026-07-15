@@ -43,7 +43,7 @@ type NormalizedProjectSpec struct {
 	MCPServers map[string]NormalizedMCPServerSpec `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 	Volumes    map[string]NormalizedVolumeSpec    `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	Agents     []NormalizedAgentSpec              `yaml:"agents,omitempty" json:"agents,omitempty"`
-	Network    *NetworkSpec                       `yaml:"network,omitempty" json:"network,omitempty"`
+	Networks   map[string]NamedNetworkSpec        `yaml:"networks,omitempty" json:"networks,omitempty"`
 }
 
 type NormalizedAgentSpec struct {
@@ -63,6 +63,9 @@ type NormalizedAgentSpec struct {
 	Workspace    *WorkspaceSpec                     `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Scheduler    *NormalizedSchedulerSpec           `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
 	Jupyter      *JupyterSpec                       `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
+	Networks     []string                           `yaml:"networks,omitempty" json:"networks,omitempty"`
+	Expose       []string                           `yaml:"expose,omitempty" json:"expose,omitempty"`
+	Ports        []string                           `yaml:"ports,omitempty" json:"ports,omitempty"`
 }
 
 type NormalizedMCPServerSpec struct {
@@ -165,7 +168,6 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 	if spec == nil {
 		return nil, &ValidationError{Message: "spec is required"}
 	}
-
 	name := strings.TrimSpace(spec.Name)
 	if name == "" {
 		name = defaultProjectName(options)
@@ -177,8 +179,12 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 	normalized := &NormalizedProjectSpec{
 		Name:      name,
 		Variables: nil,
-		Network:   normalizeNetworkDefault(spec.Network),
 	}
+	networks, err := normalizeNamedNetworkSpecs(spec.Networks)
+	if err != nil {
+		return nil, err
+	}
+	normalized.Networks = networks
 	variables, err := normalizeEnvVarMap("variables", spec.Variables, options)
 	if err != nil {
 		return nil, err
@@ -194,9 +200,6 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 		return nil, err
 	}
 	normalized.MCPServers = mcps
-	if err := validateNetworkSpec(normalized.Network); err != nil {
-		return nil, err
-	}
 	volumes, err := normalizeProjectVolumes(spec.Volumes)
 	if err != nil {
 		return nil, err
@@ -219,6 +222,9 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 			return nil, err
 		}
 		normalized.Agents = append(normalized.Agents, normalizedAgent)
+	}
+	if err := validateProjectNetworkUsage(normalized); err != nil {
+		return nil, err
 	}
 
 	return normalized, nil
@@ -281,6 +287,18 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
+	networks, err := normalizeNetworkAttachments(joinPath("agents", name)+".networks", agent.Networks)
+	if err != nil {
+		return NormalizedAgentSpec{}, err
+	}
+	expose, err := normalizeExposedPorts(joinPath("agents", name)+".expose", agent.Expose)
+	if err != nil {
+		return NormalizedAgentSpec{}, err
+	}
+	ports, err := normalizePublishedPorts(joinPath("agents", name)+".ports", agent.Ports)
+	if err != nil {
+		return NormalizedAgentSpec{}, err
+	}
 	return NormalizedAgentSpec{
 		Name:         name,
 		Status:       status,
@@ -298,6 +316,9 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 		Workspace:    workspace,
 		Scheduler:    scheduler,
 		Jupyter:      jupyter,
+		Networks:     networks,
+		Expose:       expose,
+		Ports:        ports,
 	}, nil
 }
 
@@ -1220,19 +1241,6 @@ func validatePositiveDuration(path string, value string) error {
 	return nil
 }
 
-func validateNetworkSpec(network *NetworkSpec) error {
-	if network == nil {
-		return nil
-	}
-	mode := strings.TrimSpace(network.Mode)
-	network.Mode = mode
-	if mode == "" || mode == "default" {
-		network.Mode = "default"
-		return nil
-	}
-	return &ValidationError{Path: "network.mode", Message: fmt.Sprintf("unsupported network mode %q; only default is supported", mode)}
-}
-
 func validateStableIdentifier(path string, value string, label string) error {
 	if value == "" {
 		return &ValidationError{Path: path, Message: label + " is required"}
@@ -1259,14 +1267,6 @@ func defaultProjectName(options NormalizeOptions) string {
 		dir = abs
 	}
 	return filepath.Base(filepath.Clean(dir))
-}
-
-func normalizeNetworkDefault(value *NetworkSpec) *NetworkSpec {
-	if value == nil {
-		return &NetworkSpec{Mode: "default"}
-	}
-	cloned := *value
-	return &cloned
 }
 
 func normalizeEnvVarMap(path string, values map[string]EnvVarSpec, options NormalizeOptions) (map[string]EnvVarSpec, error) {

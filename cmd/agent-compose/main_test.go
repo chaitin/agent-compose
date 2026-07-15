@@ -651,7 +651,7 @@ agents:
 	if runCount != 0 {
 		t.Fatalf("daemon runner called %d times, want 0", runCount)
 	}
-	for _, want := range []string{"name: review-project", "variables:", "agents:", "network:", "mode: default", "secret: true", "********", "visible", "strict"} {
+	for _, want := range []string{"name: review-project", "variables:", "agents:", "secret: true", "********", "visible", "strict"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("config YAML missing %q:\n%s", want, stdout)
 		}
@@ -708,14 +708,11 @@ agents:
 				Name string `json:"name"`
 			} `json:"driver"`
 		} `json:"agents"`
-		Network struct {
-			Mode string `json:"mode"`
-		} `json:"network"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
 		t.Fatalf("config --json output is not JSON: %v\n%s", err, stdout)
 	}
-	if decoded.Name != "json-project" || decoded.Network.Mode != "default" {
+	if decoded.Name != "json-project" {
 		t.Fatalf("decoded config = %#v", decoded)
 	}
 	if len(decoded.Variables) != 1 || decoded.Variables[0].Name != "TOKEN" || decoded.Variables[0].Value != "********" || !decoded.Variables[0].Secret {
@@ -7764,7 +7761,7 @@ agents:
 	if err == nil {
 		t.Fatalf("config --quiet returned nil error, want validation error")
 	}
-	for _, want := range []string{composePath, "network.mode", "unsupported"} {
+	for _, want := range []string{composePath, "network", "unknown field"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error %q does not contain %q", err.Error(), want)
 		}

@@ -36,6 +36,7 @@ type DownOptions struct {
 	DisableManagedLoader func(ctx context.Context, loaderID, projectID, schedulerID string) error
 	RefreshLoaders       func(ctx context.Context) error
 	StopSandbox          func(ctx context.Context, sandbox *domain.Sandbox) error
+	CleanupNetworks      func(ctx context.Context, projectID string) error
 }
 
 func DownProject(ctx context.Context, project domain.ProjectRecord, options DownOptions) ([]DownChange, error) {
@@ -50,6 +51,11 @@ func DownProject(ctx context.Context, project domain.ProjectRecord, options Down
 		return changes, err
 	}
 	changes = append(changes, sandboxChanges...)
+	if options.CleanupNetworks != nil {
+		if err := options.CleanupNetworks(ctx, project.ID); err != nil {
+			return changes, fmt.Errorf("clean project networks for down %s: %w", project.Name, err)
+		}
+	}
 	return changes, nil
 }
 

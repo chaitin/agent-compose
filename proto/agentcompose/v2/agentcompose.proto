@@ -547,10 +547,10 @@ message ProjectSpec {
   reserved 3;
   reserved "workspace";
   repeated AgentSpec agents = 4;
-  NetworkSpec network = 5;
   repeated ProjectVolumeSpec volumes = 6;
   repeated NamedWorkspaceSpec workspaces = 7;
   repeated MCPServerSpec mcp_servers = 8;
+  repeated NamedNetworkSpec networks = 9;
 }
 
 message NamedWorkspaceSpec {
@@ -575,6 +575,9 @@ message AgentSpec {
   repeated MCPServerSpec mcp_servers = 14;
   repeated SkillSpec skills = 15;
   AgentStatus status = 16;
+  repeated string networks = 17;
+  repeated string expose = 18;
+  repeated string ports = 19;
 }
 
 message MCPServerSpec {
@@ -635,8 +638,9 @@ message WorkspaceSpec {
   string name = 5;
 }
 
-message NetworkSpec {
-  string mode = 1;
+message NamedNetworkSpec {
+  string name = 1;
+  string driver = 2;
 }
 
 message SchedulerSpec {
@@ -928,6 +932,29 @@ message Sandbox {
   uint32 cell_count = 14;
   uint32 event_count = 15;
   string notebook_url = 16;
+  SandboxNetworkState network_state = 17;
+}
+
+message SandboxNetworkState {
+  string mode = 1;
+  repeated SandboxNetworkAttachment attachments = 2;
+  repeated SandboxPortBinding port_bindings = 3;
+  google.protobuf.Timestamp reconciled_at = 4;
+}
+
+message SandboxNetworkAttachment {
+  string logical_name = 1;
+  string runtime_name = 2;
+  string network_id = 3;
+  repeated string aliases = 4;
+  string ipv4_address = 5;
+  bool primary = 6;
+}
+
+message SandboxPortBinding {
+  string container_port = 1;
+  string host_ip = 2;
+  string host_port = 3;
 }
 
 message SandboxTag {

@@ -174,6 +174,7 @@ type Sandbox struct {
 	VolumeMounts          []SandboxVolumeMount          `json:"volume_mounts,omitempty"`
 	RuntimeEnvItems       []SandboxEnvVar               `json:"-"`
 	ProviderEnvItems      []SandboxEnvVar               `json:"-"`
+	NetworkIntent         *SandboxNetworkIntent         `json:"network_intent,omitempty"`
 }
 
 func ValidateSandboxWorkspaceProvisioning(provisioning *SandboxWorkspaceProvisioning) error {
@@ -451,17 +452,18 @@ type RuntimeCommandResult struct {
 type ExecStreamWriter func(ExecChunk)
 
 type VMState struct {
-	Driver       string    `json:"driver"`
-	Mode         string    `json:"mode,omitempty"`
-	BoxName      string    `json:"box_name,omitempty"`
-	BoxID        string    `json:"box_id,omitempty"`
-	Image        string    `json:"image,omitempty"`
-	Registry     string    `json:"registry,omitempty"`
-	RuntimeHome  string    `json:"runtime_home,omitempty"`
-	StartedAt    time.Time `json:"started_at,omitempty"`
-	StoppedAt    time.Time `json:"stopped_at,omitempty"`
-	LastError    string    `json:"last_error,omitempty"`
-	BootstrapRef string    `json:"bootstrap_ref,omitempty"`
+	Driver       string               `json:"driver"`
+	Mode         string               `json:"mode,omitempty"`
+	BoxName      string               `json:"box_name,omitempty"`
+	BoxID        string               `json:"box_id,omitempty"`
+	Image        string               `json:"image,omitempty"`
+	Registry     string               `json:"registry,omitempty"`
+	RuntimeHome  string               `json:"runtime_home,omitempty"`
+	StartedAt    time.Time            `json:"started_at,omitempty"`
+	StoppedAt    time.Time            `json:"stopped_at,omitempty"`
+	LastError    string               `json:"last_error,omitempty"`
+	BootstrapRef string               `json:"bootstrap_ref,omitempty"`
+	NetworkState *SandboxNetworkState `json:"network_state,omitempty"`
 }
 
 type ProxyState struct {
@@ -476,9 +478,10 @@ type ProxyState struct {
 }
 
 type SandboxVMInfo struct {
-	BoxID      string
-	JupyterURL string
-	ProxyState *ProxyState
+	BoxID        string
+	JupyterURL   string
+	ProxyState   *ProxyState
+	NetworkState *SandboxNetworkState
 }
 
 type ExecSpec struct {

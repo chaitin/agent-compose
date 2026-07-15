@@ -30,6 +30,23 @@ func ToDriverSandbox(session *domain.Sandbox) *driverpkg.Sandbox {
 			HostPath: item.HostPath,
 		})
 	}
+	var networkIntent *driverpkg.SandboxNetworkIntent
+	if session.NetworkIntent != nil {
+		definitions := make([]driverpkg.SandboxNetworkDefinition, 0, len(session.NetworkIntent.Definitions))
+		for _, definition := range session.NetworkIntent.Definitions {
+			definitions = append(definitions, driverpkg.SandboxNetworkDefinition{Name: definition.Name, Driver: definition.Driver})
+		}
+		networkIntent = &driverpkg.SandboxNetworkIntent{
+			Version:         session.NetworkIntent.Version,
+			ProjectID:       session.NetworkIntent.ProjectID,
+			ProjectRevision: session.NetworkIntent.ProjectRevision,
+			AgentName:       session.NetworkIntent.AgentName,
+			Definitions:     definitions,
+			Attachments:     append([]string(nil), session.NetworkIntent.Attachments...),
+			Expose:          append([]string(nil), session.NetworkIntent.Expose...),
+			Ports:           append([]string(nil), session.NetworkIntent.Ports...),
+		}
+	}
 	return &driverpkg.Sandbox{
 		Summary: driverpkg.SandboxSummary{
 			ID:            session.Summary.ID,
@@ -44,6 +61,7 @@ func ToDriverSandbox(session *domain.Sandbox) *driverpkg.Sandbox {
 		EnvItems:        envItems,
 		VolumeMounts:    volumeMounts,
 		RuntimeEnvItems: runtimeEnvItems,
+		NetworkIntent:   networkIntent,
 	}
 }
 
@@ -60,6 +78,7 @@ func ToDriverVMState(state domain.VMState) driverpkg.VMState {
 		StoppedAt:    state.StoppedAt,
 		LastError:    state.LastError,
 		BootstrapRef: state.BootstrapRef,
+		NetworkState: toDriverNetworkState(state.NetworkState),
 	}
 }
 
@@ -76,6 +95,7 @@ func FromDriverVMState(state driverpkg.VMState) domain.VMState {
 		StoppedAt:    state.StoppedAt,
 		LastError:    state.LastError,
 		BootstrapRef: state.BootstrapRef,
+		NetworkState: fromDriverNetworkState(state.NetworkState),
 	}
 }
 
@@ -102,10 +122,44 @@ func ToDriverExecSpec(spec domain.ExecSpec) driverpkg.ExecSpec {
 }
 
 func FromDriverSandboxVMInfo(info driverpkg.SandboxVMInfo) domain.SandboxVMInfo {
-	result := domain.SandboxVMInfo{BoxID: info.BoxID, JupyterURL: info.JupyterURL}
+	result := domain.SandboxVMInfo{BoxID: info.BoxID, JupyterURL: info.JupyterURL, NetworkState: fromDriverNetworkState(info.NetworkState)}
 	if info.ProxyState != nil {
 		proxyState := FromDriverProxyState(*info.ProxyState)
 		result.ProxyState = &proxyState
+	}
+	return result
+}
+
+func toDriverNetworkState(state *domain.SandboxNetworkState) *driverpkg.SandboxNetworkState {
+	if state == nil {
+		return nil
+	}
+	result := &driverpkg.SandboxNetworkState{Mode: state.Mode, ReconciledAt: state.ReconciledAt}
+	for _, item := range state.Attachments {
+		result.Attachments = append(result.Attachments, driverpkg.SandboxNetworkAttachmentState{
+			LogicalName: item.LogicalName, RuntimeName: item.RuntimeName, NetworkID: item.NetworkID,
+			Aliases: append([]string(nil), item.Aliases...), IPv4Address: item.IPv4Address, Primary: item.Primary,
+		})
+	}
+	for _, item := range state.PortBindings {
+		result.PortBindings = append(result.PortBindings, driverpkg.SandboxPortBindingState{ContainerPort: item.ContainerPort, HostIP: item.HostIP, HostPort: item.HostPort})
+	}
+	return result
+}
+
+func fromDriverNetworkState(state *driverpkg.SandboxNetworkState) *domain.SandboxNetworkState {
+	if state == nil {
+		return nil
+	}
+	result := &domain.SandboxNetworkState{Mode: state.Mode, ReconciledAt: state.ReconciledAt}
+	for _, item := range state.Attachments {
+		result.Attachments = append(result.Attachments, domain.SandboxNetworkAttachmentState{
+			LogicalName: item.LogicalName, RuntimeName: item.RuntimeName, NetworkID: item.NetworkID,
+			Aliases: append([]string(nil), item.Aliases...), IPv4Address: item.IPv4Address, Primary: item.Primary,
+		})
+	}
+	for _, item := range state.PortBindings {
+		result.PortBindings = append(result.PortBindings, domain.SandboxPortBindingState{ContainerPort: item.ContainerPort, HostIP: item.HostIP, HostPort: item.HostPort})
 	}
 	return result
 }

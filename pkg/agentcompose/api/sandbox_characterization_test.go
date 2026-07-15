@@ -172,11 +172,16 @@ func TestV2ListSandboxesUsesOpaquePagination(t *testing.T) {
 	store := &characterizationSandboxStore{listResults: []domain.SandboxListResult{
 		{Sandboxes: []*domain.Sandbox{{Summary: domain.SandboxSummary{ID: firstID, UpdatedAt: firstUpdatedAt}}}, HasMore: true},
 		{Sandboxes: []*domain.Sandbox{{Summary: domain.SandboxSummary{ID: secondID, UpdatedAt: firstUpdatedAt.Add(-time.Second)}}}},
+	}, vmStates: map[string]domain.VMState{
+		firstID: {NetworkState: &domain.SandboxNetworkState{Mode: "multi-network"}},
 	}}
 	handler := NewSandboxHandler(&characterizationSessionDelegate{}, store, &characterizationSandboxRemover{}, nil)
 	first, err := handler.ListSandboxes(context.Background(), connect.NewRequest(&agentcomposev2.ListSandboxesRequest{Limit: 1}))
 	if err != nil || first.Msg.GetSandboxes()[0].GetSandboxId() != firstID || first.Msg.GetNextCursor() == "" {
 		t.Fatalf("first ListSandboxes() = %#v, err=%v", first, err)
+	}
+	if first.Msg.GetSandboxes()[0].GetNetworkState().GetMode() != "multi-network" {
+		t.Fatalf("first sandbox network state = %#v", first.Msg.GetSandboxes()[0].GetNetworkState())
 	}
 	second, err := handler.ListSandboxes(context.Background(), connect.NewRequest(&agentcomposev2.ListSandboxesRequest{Limit: 1, Cursor: first.Msg.GetNextCursor()}))
 	if err != nil || second.Msg.GetSandboxes()[0].GetSandboxId() != secondID || second.Msg.GetNextCursor() != "" {
@@ -319,6 +324,11 @@ type characterizationSandboxStore struct {
 	cells       []domain.NotebookCell
 	events      []domain.SandboxEvent
 	proxyState  domain.ProxyState
+	vmStates    map[string]domain.VMState
+}
+
+func (s *characterizationSandboxStore) GetVMState(id string) (domain.VMState, error) {
+	return s.vmStates[id], nil
 }
 
 func (s *characterizationSandboxStore) GetProxyState(string) (domain.ProxyState, error) {

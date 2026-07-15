@@ -150,9 +150,45 @@ agents:
             topic: git.push
           prompt: "Review changes from the incoming event."
 
-network:
-  mode: default
 ```
+
+Docker project 可以显式启用相互隔离的命名 bridge 网络：
+
+```yaml
+name: networked-project
+
+networks:
+  frontend: {}
+  backend:
+    driver: bridge
+
+agents:
+  api:
+    networks: [frontend, backend]
+    expose: ["8080"]
+  web:
+    networks: [frontend]
+    ports: ["127.0.0.1:18080:8080"]
+  worker:
+    networks: [backend]
+```
+
+命名网络只支持 Docker agent，当前仅支持 `bridge` driver。agent 可以通过
+agent 名或唯一的 `<agent>-<sandbox-short-id>` alias 解析同一网络中的 peer。
+没有显式 attachment 的 agent 会加入隐式的 project `default` 网络；第一项
+attachment 是 primary network，并提供默认网关。
+
+`expose` 只写入 Docker 端口元数据，它不是防火墙规则，也不会发布宿主机端口。
+`ports` 显式发布 TCP 端口，短格式默认绑定 `127.0.0.1`；省略 host port 时由
+Docker 动态分配。只配置端口而不配置 named networks 时仍使用现有单 bridge。
+
+任何有效的 named-network attachment 都会在 daemon/sandbox baseline bridge
+之外增加 project bridge，因此进入多网络模式。该模式要求通过 Unix socket
+访问本机 Linux Docker Engine，并要求 agent-compose daemon 是 native 进程，
+或者使用 `network_mode: host` 的容器。默认 bridge-mode Compose 部署仍可校验
+和保存这类 project，但启动 sandbox 时会在创建 project network/container
+之前失败。未配置 named networks 的 project 保持现有共享单 bridge 行为。
+旧的单数 `network` 字段已经删除；`networks` 是唯一的 project 网络配置入口。
 
 同一个 scheduler 也可以用 inline QJS 直接声明 loader 脚本：
 
@@ -193,7 +229,6 @@ daemon、v2 API、持久化 revision 和 loader runtime 仍只接收脚本文本
 - agent map key 必须是稳定标识，输出按 agent name 排序。
 - driver 采用 one-of：`boxlite`、`docker`、`microsandbox`。省略时默认 `docker`。
 - `firecracker` 可出现在 schema 中，但当前规范化直接返回 unsupported。
-- `network` 为空或 `mode: default` 可接受，其他网络模式返回 unsupported。
 - trigger 支持 `cron`、`interval`、`timeout`、`event`，每个 trigger 必须恰好指定一种类型。
 - `scheduler.script` 可以是 inline QJS scalar，也可以是仅含非空 `url` 字段的
   mapping。URL 内容会规范化成相同的受管 loader 内联 `script` 快照。空白 inline

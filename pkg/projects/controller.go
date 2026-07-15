@@ -3,6 +3,7 @@ package projects
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -75,6 +76,10 @@ type VolumeManager interface {
 	RemoveProjectVolumes(ctx context.Context, projectID string) error
 }
 
+type ProjectNetworkCleaner interface {
+	CleanupProjectNetworks(context.Context, string) error
+}
+
 type Controller struct {
 	config    *appconfig.Config
 	store     ControllerStore
@@ -82,6 +87,7 @@ type Controller struct {
 	images    images.Backend
 	loaders   LoaderValidator
 	volumes   VolumeManager
+	networks  ProjectNetworkCleaner
 	stop      func(context.Context, *domain.Sandbox) error
 	defaultDR string
 }
@@ -93,6 +99,7 @@ type ControllerDependencies struct {
 	Images      images.Backend
 	Loaders     LoaderValidator
 	Volumes     VolumeManager
+	Networks    ProjectNetworkCleaner
 	StopSandbox func(context.Context, *domain.Sandbox) error
 }
 
@@ -108,6 +115,7 @@ func NewController(deps ControllerDependencies) *Controller {
 		images:    deps.Images,
 		loaders:   deps.Loaders,
 		volumes:   deps.Volumes,
+		networks:  deps.Networks,
 		stop:      deps.StopSandbox,
 		defaultDR: defaultDriver,
 	}
@@ -332,6 +340,7 @@ func (c *Controller) RemoveProject(ctx context.Context, req RemoveRequest) (Remo
 		DisableManagedLoader: c.disableManagedLoaderIfOwned,
 		RefreshLoaders:       c.refreshLoaders,
 		StopSandbox:          c.stop,
+		CleanupNetworks:      c.projectNetworkCleanup(project),
 	})
 	changes := downChangesToChanges(downChanges)
 	if err != nil {
@@ -365,6 +374,57 @@ func (c *Controller) RemoveProject(ctx context.Context, req RemoveRequest) (Remo
 		return RemoveResult{}, err
 	}
 	return RemoveResult{Project: project, Agents: agents, Schedulers: schedulers, Changes: changes}, nil
+}
+
+type projectRevisionReader interface {
+	GetProjectRevision(context.Context, string, int64) (domain.ProjectRevisionRecord, error)
+}
+
+func (c *Controller) projectNetworkCleanup(project domain.ProjectRecord) func(context.Context, string) error {
+	if c == nil || c.networks == nil || project.CurrentRevision <= 0 {
+		return nil
+	}
+	revisions, ok := c.store.(projectRevisionReader)
+	if !ok {
+		return nil
+	}
+	return func(ctx context.Context, projectID string) error {
+		hasNamedNetworks, err := projectRevisionHistoryHasNamedNetworks(ctx, revisions, projectID, project.CurrentRevision)
+		if err != nil {
+			return err
+		}
+		if !hasNamedNetworks {
+			return nil
+		}
+		return c.networks.CleanupProjectNetworks(ctx, projectID)
+	}
+}
+
+func projectRevisionHistoryHasNamedNetworks(ctx context.Context, revisions projectRevisionReader, projectID string, currentRevision int64) (bool, error) {
+	for revisionNumber := currentRevision; revisionNumber > 0; revisionNumber-- {
+		revision, err := revisions.GetProjectRevision(ctx, projectID, revisionNumber)
+		if err != nil {
+			return false, fmt.Errorf("load project revision %d: %w", revisionNumber, err)
+		}
+		hasNamedNetworks, err := decodeProjectRevisionNetworkSpec(revision.SpecJSON)
+		if err != nil {
+			return false, fmt.Errorf("inspect project revision %d: %w", revisionNumber, err)
+		}
+		if hasNamedNetworks {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func decodeProjectRevisionNetworkSpec(raw string) (bool, error) {
+	var spec struct {
+		Networks []json.RawMessage `json:"networks"`
+	}
+	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
+		return false, fmt.Errorf("decode project network spec: %w", err)
+	}
+	return len(spec.Networks) > 0, nil
 }
 
 func (c *Controller) ResolveProjectRef(ctx context.Context, ref ProjectRef) (domain.ProjectRecord, error) {

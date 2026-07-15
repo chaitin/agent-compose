@@ -39,6 +39,7 @@ func NewProjectController(di do.Injector) (*projects.Controller, error) {
 		Images:    imageBackends.Auto,
 		Loaders:   do.MustInvoke[*loaders.Controller](di),
 		Volumes:   do.MustInvoke[*volumes.Manager](di),
+		Networks:  adapters.NewDockerProjectNetworkCleaner(),
 		StopSandbox: func(ctx context.Context, session *domain.Sandbox) error {
 			return stopProjectSandbox(ctx, sessionStore, sandboxDriver, streams, session)
 		},

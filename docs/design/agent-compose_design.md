@@ -180,9 +180,50 @@ agents:
           prompt: "Review changes from the incoming event."
           sandbox_policy: new
 
-network:
-  mode: default
 ```
+
+Docker projects can opt into isolated named bridge networks:
+
+```yaml
+name: networked-project
+
+networks:
+  frontend: {}
+  backend:
+    driver: bridge
+
+agents:
+  api:
+    networks: [frontend, backend]
+    expose: ["8080"]
+  web:
+    networks: [frontend]
+    ports: ["127.0.0.1:18080:8080"]
+  worker:
+    networks: [backend]
+```
+
+Named networks are supported only by Docker agents and currently use the
+`bridge` driver. Agents can resolve peers by agent name or by the unique
+`<agent>-<sandbox-short-id>` alias. An agent without an explicit attachment is
+placed on an implicit project `default` network. The first attachment is the
+primary network and supplies the default gateway.
+
+`expose` writes Docker port metadata; it is not a firewall rule and does not
+publish a host port. `ports` explicitly publishes TCP ports and defaults
+short-form bindings to `127.0.0.1`; an omitted host port asks Docker to allocate
+one dynamically. Port-only configuration without named networks continues to
+use the existing single bridge.
+
+Any effective named-network attachment adds a project bridge beyond the
+daemon/sandbox baseline. This multi-network mode requires a local Linux Docker
+Engine over a Unix socket and an agent-compose daemon running natively or in a
+container with `network_mode: host`. The default bridge-mode Compose deployment
+can still validate and store such a project, but starting its sandbox fails
+before any project network or container is created. Projects without named
+networks preserve the existing shared single-bridge behavior. The legacy
+singular `network` field has been removed; `networks` is the only project
+network configuration entry point.
 
 The same scheduler can also declare a loader script directly with inline QJS:
 
@@ -226,8 +267,6 @@ Normalization rules:
 - Driver is a one-of shape: `boxlite`, `docker`, or `microsandbox`. When
   omitted, the default is `docker`.
 - `firecracker` may appear in the schema, but current normalization returns
-  unsupported.
-- Empty `network` or `mode: default` is accepted. Other network modes return
   unsupported.
 - Triggers support `cron`, `interval`, `timeout`, and `event`. Each trigger must
   specify exactly one type.

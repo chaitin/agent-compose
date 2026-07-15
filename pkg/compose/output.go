@@ -24,7 +24,12 @@ type orderedProjectSpec struct {
 	MCPServers []orderedMCPServerSpec  `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 	Volumes    []orderedVolumeSpec     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	Agents     []orderedAgentSpec      `yaml:"agents,omitempty" json:"agents,omitempty"`
-	Network    *NetworkSpec            `yaml:"network,omitempty" json:"network,omitempty"`
+	Networks   []orderedNamedNetwork   `yaml:"networks,omitempty" json:"networks,omitempty"`
+}
+
+type orderedNamedNetwork struct {
+	Name   string `yaml:"name" json:"name"`
+	Driver string `yaml:"driver" json:"driver"`
 }
 
 type orderedNamedWorkspace struct {
@@ -53,6 +58,9 @@ type orderedAgentSpec struct {
 	Workspace    *WorkspaceSpec              `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Scheduler    *NormalizedSchedulerSpec    `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
 	Jupyter      *JupyterSpec                `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
+	Networks     []string                    `yaml:"networks,omitempty" json:"networks,omitempty"`
+	Expose       []string                    `yaml:"expose,omitempty" json:"expose,omitempty"`
+	Ports        []string                    `yaml:"ports,omitempty" json:"ports,omitempty"`
 }
 
 type orderedMCPServerSpec struct {
@@ -146,6 +154,9 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 			Workspace:    cloneWorkspaceSpec(agent.Workspace),
 			Scheduler:    cloneNormalizedSchedulerSpec(agent.Scheduler),
 			Jupyter:      cloneJupyterSpec(agent.Jupyter),
+			Networks:     slices.Clone(agent.Networks),
+			Expose:       slices.Clone(agent.Expose),
+			Ports:        slices.Clone(agent.Ports),
 		})
 	}
 	slices.SortFunc(agents, func(a, b orderedAgentSpec) int {
@@ -158,7 +169,7 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 		MCPServers: mcps,
 		Volumes:    orderedVolumes(s.Volumes),
 		Agents:     agents,
-		Network:    cloneNetworkSpecForOutput(s.Network),
+		Networks:   orderedNamedNetworks(s.Networks),
 	}
 }
 
@@ -170,7 +181,7 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 		Workspaces: workspaceMapFromOrdered(ordered.Workspaces),
 		MCPServers: mcpMapFromOrdered(ordered.MCPServers),
 		Volumes:    volumeMapFromOrdered(ordered.Volumes),
-		Network:    ordered.Network,
+		Networks:   namedNetworkMapFromOrdered(ordered.Networks),
 	}
 	for _, agent := range ordered.Agents {
 		cloned.Agents = append(cloned.Agents, NormalizedAgentSpec{
@@ -190,9 +201,39 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 			Workspace:    agent.Workspace,
 			Scheduler:    agent.Scheduler,
 			Jupyter:      agent.Jupyter,
+			Networks:     slices.Clone(agent.Networks),
+			Expose:       slices.Clone(agent.Expose),
+			Ports:        slices.Clone(agent.Ports),
 		})
 	}
 	return cloned
+}
+
+func orderedNamedNetworks(values map[string]NamedNetworkSpec) []orderedNamedNetwork {
+	if len(values) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	items := make([]orderedNamedNetwork, 0, len(keys))
+	for _, key := range keys {
+		items = append(items, orderedNamedNetwork{Name: key, Driver: values[key].Driver})
+	}
+	return items
+}
+
+func namedNetworkMapFromOrdered(values []orderedNamedNetwork) map[string]NamedNetworkSpec {
+	if len(values) == 0 {
+		return nil
+	}
+	items := make(map[string]NamedNetworkSpec, len(values))
+	for _, value := range values {
+		items[value.Name] = NamedNetworkSpec{Driver: value.Driver}
+	}
+	return items
 }
 
 func orderedWorkspaces(values map[string]WorkspaceSpec) []orderedNamedWorkspace {
@@ -434,14 +475,6 @@ func cloneNormalizedTriggerSpec(value NormalizedTriggerSpec) NormalizedTriggerSp
 		cloned.Event = &event
 	}
 	return cloned
-}
-
-func cloneNetworkSpecForOutput(value *NetworkSpec) *NetworkSpec {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
 }
 
 func cloneJupyterSpec(value *JupyterSpec) *JupyterSpec {

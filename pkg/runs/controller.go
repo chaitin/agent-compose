@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -1961,6 +1962,11 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 				return SandboxResult{}, fmt.Errorf("load sandbox %s: %w", sandboxID, err)
 			}
 			warnings = append(warnings, fmt.Sprintf("sticky sandbox %s is unavailable; creating a replacement", sandboxID))
+		} else if !sandboxNetworkIntentsEqual(sandbox.NetworkIntent, prepared.NetworkIntent) {
+			if !boundSandbox {
+				return SandboxResult{Sandbox: sandbox}, fmt.Errorf("%w: sandbox %s network intent does not match project run", ErrInvalidRequest, sandboxID)
+			}
+			warnings = append(warnings, fmt.Sprintf("sticky sandbox %s network intent no longer matches; creating a replacement", sandboxID))
 		} else {
 			if sandbox.Summary.VMStatus == domain.VMStatusDeleting {
 				return SandboxResult{Sandbox: sandbox}, fmt.Errorf("sandbox %s is being deleted", sandboxID)
@@ -2006,6 +2012,9 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 	if err := c.validateSandboxRuntimeDriver(driver); err != nil {
 		return SandboxResult{}, err
 	}
+	if prepared.NetworkIntent != nil && driver != driverpkg.RuntimeDriverDocker {
+		return SandboxResult{}, fmt.Errorf("%w: project named networks require the docker driver", ErrInvalidRequest)
+	}
 	guestImage := driverpkg.ResolveSandboxGuestImage(run.ImageRef, driverpkg.DefaultGuestImageForDriver(c.config, driver))
 	if err := images.EnsureDriverImage(ctx, c.config, c.images, images.EnsureRequest{
 		Driver:      driver,
@@ -2020,6 +2029,7 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 		return SandboxResult{}, err
 	}
 	jupyterOptions.VolumeMounts = volumeMounts
+	jupyterOptions.NetworkIntent = prepared.NetworkIntent
 	sandbox, err := c.store.CreateSandboxWithOptions(ctx,
 		SandboxTitle(run),
 		"",
@@ -2049,6 +2059,17 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 	}
 	volumeWarnings = append(warnings, volumeWarnings...)
 	return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, nil
+}
+
+func sandboxNetworkIntentsEqual(left, right *domain.SandboxNetworkIntent) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	leftEffective := *left
+	rightEffective := *right
+	leftEffective.ProjectRevision = 0
+	rightEffective.ProjectRevision = 0
+	return reflect.DeepEqual(leftEffective, rightEffective)
 }
 
 func (c *Controller) validateSandboxRuntimeDriver(driver string) error {

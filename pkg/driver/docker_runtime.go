@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"agent-compose/pkg/networks"
+
 	cerrdefs "github.com/containerd/errdefs"
 	dockertypes "github.com/docker/docker/api/types"
 	containerapi "github.com/docker/docker/api/types/container"
@@ -30,9 +32,10 @@ import (
 )
 
 const (
-	dockerSandboxLabelPrefix = "agent-compose"
-	dockerSandboxLabelID     = dockerSandboxLabelPrefix + ".sandbox_id"
-	dockerSandboxLabelDriver = dockerSandboxLabelPrefix + ".driver"
+	dockerSandboxLabelPrefix  = "agent-compose"
+	dockerSandboxLabelID      = dockerSandboxLabelPrefix + ".sandbox_id"
+	dockerSandboxLabelDriver  = dockerSandboxLabelPrefix + ".driver"
+	dockerSandboxLabelProject = dockerSandboxLabelPrefix + ".project_id"
 
 	dockerStopAPIMargin             = 5 * time.Second
 	dockerStopFallbackActionTimeout = 5 * time.Second
@@ -45,7 +48,18 @@ type dockerRuntime struct {
 type dockerDaemonTopology struct {
 	networkMode   containerapi.NetworkMode
 	containerized bool
+	kind          dockerDaemonTopologyKind
+	detail        string
 }
+
+type dockerDaemonTopologyKind string
+
+const (
+	dockerDaemonNative          dockerDaemonTopologyKind = "native-host"
+	dockerDaemonContainerHost   dockerDaemonTopologyKind = "container-host-network"
+	dockerDaemonContainerBridge dockerDaemonTopologyKind = "container-bridge-network"
+	dockerDaemonUnknown         dockerDaemonTopologyKind = "remote-or-unknown"
+)
 
 type dockerExecCollector struct {
 	stream ExecStreamWriter
@@ -137,8 +151,22 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	defer func() { _ = dockerClient.Close() }()
 
 	topology := r.dockerDaemonTopology(ctx, dockerClient)
-	containerInfo, _, err := r.getOrCreateContainer(ctx, dockerClient, sandbox, vmState, proxyState, topology.networkMode)
+	networkPlan, err := r.networkPlanForSandbox(sandbox, topology, dockerClient)
 	if err != nil {
+		return SandboxVMInfo{}, err
+	}
+	if err := ensureDockerManagedNetworks(ctx, dockerClient, networkPlan); err != nil {
+		return SandboxVMInfo{}, err
+	}
+	networkMode := topology.networkMode
+	if networkPlan.Mode == networks.ModeMultiNetwork {
+		networkMode = containerapi.NetworkMode(networkPlan.Attachments[0].RuntimeName)
+	}
+	containerInfo, _, err := r.getOrCreateContainer(ctx, dockerClient, sandbox, vmState, proxyState, networkMode, networkPlan)
+	if err != nil {
+		return SandboxVMInfo{}, err
+	}
+	if err := ensureDockerContainerAttachments(ctx, dockerClient, containerInfo, networkPlan); err != nil {
 		return SandboxVMInfo{}, err
 	}
 	if containerInfo.State == nil || !containerInfo.State.Running {
@@ -159,8 +187,9 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	if err != nil {
 		return SandboxVMInfo{}, err
 	}
+	networkState := dockerSandboxNetworkState(containerInfo, networkPlan, sandbox.NetworkIntent != nil)
 	if !jupyterEnabled(proxyState) {
-		return SandboxVMInfo{BoxID: containerInfo.ID, ProxyState: &proxyState}, nil
+		return SandboxVMInfo{BoxID: containerInfo.ID, ProxyState: &proxyState, NetworkState: networkState}, nil
 	}
 
 	readyCtx, cancel := context.WithTimeout(ctx, r.config.JupyterReadyTimeout)
@@ -168,7 +197,7 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	cancel()
 	if readyErr != nil {
 		if logText := readSandboxJupyterLog(sandbox); jupyterLogIndicatesReady(logText) {
-			return SandboxVMInfo{BoxID: containerInfo.ID, JupyterURL: jupyterDirectURL(proxyState), ProxyState: &proxyState}, nil
+			return SandboxVMInfo{BoxID: containerInfo.ID, JupyterURL: jupyterDirectURL(proxyState), ProxyState: &proxyState, NetworkState: networkState}, nil
 		}
 		if logText := readSandboxJupyterLog(sandbox); logText != "" {
 			return SandboxVMInfo{}, fmt.Errorf("%w\nGuest log:\n%s", readyErr, logText)
@@ -179,7 +208,7 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 		return SandboxVMInfo{}, readyErr
 	}
 
-	return SandboxVMInfo{BoxID: containerInfo.ID, JupyterURL: jupyterDirectURL(proxyState), ProxyState: &proxyState}, nil
+	return SandboxVMInfo{BoxID: containerInfo.ID, JupyterURL: jupyterDirectURL(proxyState), ProxyState: &proxyState, NetworkState: networkState}, nil
 }
 
 func (r *dockerRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox, vmState VMState) (bool, error) {
@@ -657,7 +686,7 @@ func (r *dockerRuntime) newClient() (*client.Client, error) {
 	return dockerClient, nil
 }
 
-func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *client.Client, sandbox *Sandbox, vmState VMState, proxyState ProxyState, networkMode containerapi.NetworkMode) (containerapi.InspectResponse, bool, error) {
+func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *client.Client, sandbox *Sandbox, vmState VMState, proxyState ProxyState, networkMode containerapi.NetworkMode, networkPlan networks.Plan) (containerapi.InspectResponse, bool, error) {
 	appconfig.ApplyDefaultGuestPaths(r.config)
 	if containerInfo, ok, err := r.findContainer(ctx, dockerClient, sandbox, vmState); err != nil {
 		return containerapi.InspectResponse{}, false, err
@@ -683,6 +712,10 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 		exposedPorts, portBindings = dockerJupyterPortConfig(proxyState.GuestPort)
 		cmdText = jupyterLaunchCommand(r.config, proxyState, false)
 	}
+	exposedPorts, portBindings, err = mergeDockerNetworkPortConfig(exposedPorts, portBindings, sandbox.NetworkIntent)
+	if err != nil {
+		return containerapi.InspectResponse{}, false, fmt.Errorf("configure docker ports for sandbox %s: %w", sandbox.Summary.ID, err)
+	}
 	containerConfig := &containerapi.Config{
 		Image:        resolveSandboxGuestImage(vmState.Image, sandbox.Summary.GuestImage, defaultGuestImageForDriver(r.config, RuntimeDriverDocker)),
 		WorkingDir:   r.config.GuestWorkspacePath,
@@ -695,8 +728,11 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 			dockerSandboxLabelDriver: RuntimeDriverDocker,
 		},
 	}
+	if sandbox.NetworkIntent != nil {
+		containerConfig.Labels[dockerSandboxLabelProject] = strings.TrimSpace(sandbox.NetworkIntent.ProjectID)
+	}
 	hostConfig := dockerSandboxHostConfig(mounts, portBindings, networkMode)
-	createResp, err := dockerClient.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, name)
+	createResp, err := dockerClient.ContainerCreate(ctx, containerConfig, hostConfig, dockerContainerNetworkingConfig(networkPlan), nil, name)
 	if err != nil {
 		return containerapi.InspectResponse{}, false, fmt.Errorf("create docker container for sandbox %s: %w", sandbox.Summary.ID, err)
 	}
@@ -807,37 +843,86 @@ func SandboxStopContextTimeout(driver string, stopTimeout time.Duration) time.Du
 }
 
 func (r *dockerRuntime) dockerDaemonTopology(ctx context.Context, dockerClient *client.Client) dockerDaemonTopology {
-	networkName, ok, err := r.dockerNetworkNameFromSelfContainer(ctx, dockerClient)
+	containerInfo, ok, err := r.dockerSelfContainer(ctx, dockerClient)
 	if err != nil {
 		slog.Warn("failed to inspect current docker container network; falling back to default docker network", "error", err)
-		return dockerDaemonTopology{networkMode: containerapi.NetworkMode("default")}
+		return dockerDaemonTopology{networkMode: containerapi.NetworkMode("default"), kind: dockerDaemonUnknown, detail: err.Error()}
 	}
 	if !ok {
 		slog.Warn("current process is not running in an inspectable docker container; falling back to default docker network")
-		return dockerDaemonTopology{networkMode: containerapi.NetworkMode("default")}
+		if _, markerErr := os.Stat("/.dockerenv"); markerErr == nil {
+			return dockerDaemonTopology{networkMode: containerapi.NetworkMode("default"), kind: dockerDaemonUnknown, detail: "process is containerized but its Docker container cannot be inspected"}
+		}
+		return dockerDaemonTopology{networkMode: containerapi.NetworkMode("default"), kind: dockerDaemonNative}
 	}
-	return dockerDaemonTopology{networkMode: containerapi.NetworkMode(networkName), containerized: true}
+	if containerInfo.HostConfig != nil && containerInfo.HostConfig.NetworkMode.IsHost() {
+		return dockerDaemonTopology{networkMode: containerapi.NetworkMode("default"), kind: dockerDaemonContainerHost}
+	}
+	networkName, ok := selectDockerNetworkName(containerInfo)
+	if !ok {
+		return dockerDaemonTopology{networkMode: containerapi.NetworkMode("default"), containerized: true, kind: dockerDaemonUnknown, detail: "daemon container has no usable bridge network"}
+	}
+	return dockerDaemonTopology{networkMode: containerapi.NetworkMode(networkName), containerized: true, kind: dockerDaemonContainerBridge}
 }
 
-func (r *dockerRuntime) dockerNetworkNameFromSelfContainer(ctx context.Context, dockerClient *client.Client) (string, bool, error) {
+func (r *dockerRuntime) dockerSelfContainer(ctx context.Context, dockerClient *client.Client) (containerapi.InspectResponse, bool, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
-		return "", false, nil
+		return containerapi.InspectResponse{}, false, nil
 	}
 	hostname = strings.TrimSpace(hostname)
 	if hostname == "" {
-		return "", false, nil
+		return containerapi.InspectResponse{}, false, nil
 	}
 
 	containerInfo, err := dockerClient.ContainerInspect(ctx, hostname)
 	if err != nil {
-		if isDockerNotFound(err) {
-			return "", false, nil
+		if !isDockerNotFound(err) {
+			return containerapi.InspectResponse{}, false, fmt.Errorf("inspect current docker container %s: %w", hostname, err)
 		}
-		return "", false, fmt.Errorf("inspect current docker container %s: %w", hostname, err)
+		mountInfo, readErr := os.ReadFile("/proc/self/mountinfo")
+		if readErr != nil {
+			return containerapi.InspectResponse{}, false, nil
+		}
+		containerID := dockerContainerIDFromMountInfo(mountInfo)
+		if containerID == "" || containerID == hostname {
+			return containerapi.InspectResponse{}, false, nil
+		}
+		containerInfo, err = dockerClient.ContainerInspect(ctx, containerID)
+		if err != nil {
+			if isDockerNotFound(err) {
+				return containerapi.InspectResponse{}, false, nil
+			}
+			return containerapi.InspectResponse{}, false, fmt.Errorf("inspect current docker container %s from mountinfo: %w", containerID, err)
+		}
 	}
-	networkName, ok := selectDockerNetworkName(containerInfo)
-	return networkName, ok, nil
+	return containerInfo, true, nil
+}
+
+func dockerContainerIDFromMountInfo(data []byte) string {
+	const marker = "/containers/"
+	for _, field := range strings.Fields(string(data)) {
+		markerIndex := strings.Index(field, marker)
+		if markerIndex < 0 {
+			continue
+		}
+		remainder := field[markerIndex+len(marker):]
+		containerID, _, _ := strings.Cut(remainder, "/")
+		if len(containerID) != 64 {
+			continue
+		}
+		valid := true
+		for _, char := range containerID {
+			if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			return containerID
+		}
+	}
+	return ""
 }
 
 func selectDockerNetworkName(containerInfo containerapi.InspectResponse) (string, bool) {
@@ -910,21 +995,12 @@ func (r *dockerRuntime) bindRuntimeMountSource(ctx context.Context, dockerClient
 }
 
 func (r *dockerRuntime) bindRuntimeMountSourceFromSelfContainer(ctx context.Context, dockerClient *client.Client, hostPath string) (string, bool, error) {
-	hostname, err := os.Hostname()
+	containerInfo, ok, err := r.dockerSelfContainer(ctx, dockerClient)
 	if err != nil {
-		return "", false, nil
+		return "", false, err
 	}
-	hostname = strings.TrimSpace(hostname)
-	if hostname == "" {
+	if !ok {
 		return "", false, nil
-	}
-
-	containerInfo, err := dockerClient.ContainerInspect(ctx, hostname)
-	if err != nil {
-		if isDockerNotFound(err) {
-			return "", false, nil
-		}
-		return "", false, fmt.Errorf("inspect current docker container %s: %w", hostname, err)
 	}
 
 	var bestSource string

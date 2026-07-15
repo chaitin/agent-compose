@@ -488,6 +488,23 @@ func TestSelectDockerNetworkNameReturnsFalseWithoutNetworks(t *testing.T) {
 	}
 }
 
+func TestDockerContainerIDFromMountInfo(t *testing.T) {
+	const containerID = "237ef17be5165bad266b37817772506de92550696c0c6a4526579ca7da24ce70"
+	mountInfo := []byte("4792 4782 252:3 /var/lib/docker/containers/" + containerID + "/hostname /etc/hostname rw,relatime - ext4 /dev/vda3 rw\n")
+	if got := dockerContainerIDFromMountInfo(mountInfo); got != containerID {
+		t.Fatalf("dockerContainerIDFromMountInfo = %q, want %q", got, containerID)
+	}
+	for _, invalid := range [][]byte{
+		[]byte("no docker container mount"),
+		[]byte("/var/lib/docker/containers/short/hostname"),
+		[]byte("/var/lib/docker/containers/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/hostname"),
+	} {
+		if got := dockerContainerIDFromMountInfo(invalid); got != "" {
+			t.Fatalf("dockerContainerIDFromMountInfo(%q) = %q, want empty", invalid, got)
+		}
+	}
+}
+
 func TestDockerJupyterPortConfigRequestsAutomaticLoopbackBinding(t *testing.T) {
 	exposedPorts, portBindings := dockerJupyterPortConfig(9999)
 	port := nat.Port("9999/tcp")
