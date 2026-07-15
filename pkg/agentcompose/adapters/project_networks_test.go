@@ -17,12 +17,15 @@ import (
 )
 
 type projectNetworkClientFake struct {
-	networks     []networkapi.Summary
-	inspect      networkapi.Inspect
-	container    containerapi.InspectResponse
-	containerErr error
-	disconnected []string
-	removed      []string
+	networks      []networkapi.Summary
+	inspect       networkapi.Inspect
+	inspectErr    error
+	container     containerapi.InspectResponse
+	containerErr  error
+	disconnectErr error
+	removeErr     error
+	disconnected  []string
+	removed       []string
 }
 
 func (f *projectNetworkClientFake) NetworkList(context.Context, networkapi.ListOptions) ([]networkapi.Summary, error) {
@@ -30,7 +33,7 @@ func (f *projectNetworkClientFake) NetworkList(context.Context, networkapi.ListO
 }
 
 func (f *projectNetworkClientFake) NetworkInspect(context.Context, string, networkapi.InspectOptions) (networkapi.Inspect, error) {
-	return f.inspect, nil
+	return f.inspect, f.inspectErr
 }
 
 func (f *projectNetworkClientFake) ContainerInspect(context.Context, string) (containerapi.InspectResponse, error) {
@@ -39,12 +42,12 @@ func (f *projectNetworkClientFake) ContainerInspect(context.Context, string) (co
 
 func (f *projectNetworkClientFake) NetworkDisconnect(_ context.Context, networkID, containerID string, _ bool) error {
 	f.disconnected = append(f.disconnected, networkID+":"+containerID)
-	return nil
+	return f.disconnectErr
 }
 
 func (f *projectNetworkClientFake) NetworkRemove(_ context.Context, networkID string) error {
 	f.removed = append(f.removed, networkID)
-	return nil
+	return f.removeErr
 }
 
 func (*projectNetworkClientFake) Close() error { return nil }
@@ -107,10 +110,57 @@ func TestDockerProjectNetworkCleanerReportsClientFailure(t *testing.T) {
 	}
 }
 
+func TestDockerProjectNetworkCleanerIgnoresConcurrentNotFound(t *testing.T) {
+	newFake := func() *projectNetworkClientFake {
+		return &projectNetworkClientFake{
+			networks: []networkapi.Summary{{ID: "network-1"}},
+			inspect: networkapi.Inspect{
+				ID:   "network-1",
+				Name: "project_frontend",
+				Labels: map[string]string{
+					networks.ManagedLabel:   "true",
+					networks.ResourceLabel:  networks.ProjectNetworkResource,
+					networks.ProjectIDLabel: "project-1",
+				},
+				Containers: map[string]networkapi.EndpointResource{"container-1": {}},
+			},
+			container: containerapi.InspectResponse{Config: &containerapi.Config{Labels: map[string]string{
+				dockerSandboxProjectLabel: "project-1",
+				dockerSandboxDriverLabel:  "docker",
+			}}},
+		}
+	}
+	tests := []struct {
+		name             string
+		configure        func(*projectNetworkClientFake)
+		wantDisconnected int
+		wantRemoved      int
+	}{
+		{name: "network already removed", configure: func(fake *projectNetworkClientFake) { fake.inspectErr = cerrdefs.ErrNotFound }},
+		{name: "container already removed", configure: func(fake *projectNetworkClientFake) { fake.containerErr = cerrdefs.ErrNotFound }, wantRemoved: 1},
+		{name: "endpoint already disconnected", configure: func(fake *projectNetworkClientFake) { fake.disconnectErr = cerrdefs.ErrNotFound }, wantDisconnected: 1, wantRemoved: 1},
+		{name: "network removed after inspect", configure: func(fake *projectNetworkClientFake) { fake.removeErr = cerrdefs.ErrNotFound }, wantDisconnected: 1, wantRemoved: 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFake()
+			tc.configure(fake)
+			cleaner := &DockerProjectNetworkCleaner{newClient: func() (dockerProjectNetworkClient, error) { return fake, nil }}
+			if err := cleaner.CleanupProjectNetworks(context.Background(), "project-1"); err != nil {
+				t.Fatalf("CleanupProjectNetworks returned error: %v", err)
+			}
+			if len(fake.disconnected) != tc.wantDisconnected || len(fake.removed) != tc.wantRemoved {
+				t.Fatalf("cleanup calls = disconnected %#v removed %#v", fake.disconnected, fake.removed)
+			}
+		})
+	}
+}
+
 func TestIntegrationDockerProjectNetworkCleanerWorkflow(t *testing.T) {
 	TestDockerProjectNetworkCleanerRemovesOwnedEndpoints(t)
 	TestDockerProjectNetworkCleanerRefusesUnknownEndpoint(t)
 	TestDockerProjectNetworkCleanerReportsClientFailure(t)
+	TestDockerProjectNetworkCleanerIgnoresConcurrentNotFound(t)
 }
 
 func TestE2EDockerProjectNetworkCleanerWorkflow(t *testing.T) {

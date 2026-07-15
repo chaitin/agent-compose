@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	cerrdefs "github.com/containerd/errdefs"
 	containerapi "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	networkapi "github.com/docker/docker/api/types/network"
@@ -57,6 +58,9 @@ func (c *DockerProjectNetworkCleaner) CleanupProjectNetworks(ctx context.Context
 	for _, summary := range summaries {
 		inspect, err := dockerClient.NetworkInspect(ctx, summary.ID, networkapi.InspectOptions{})
 		if err != nil {
+			if cerrdefs.IsNotFound(err) {
+				continue
+			}
 			return fmt.Errorf("inspect Docker network %s: %w", summary.ID, err)
 		}
 		if inspect.Labels[networks.ManagedLabel] != "true" || inspect.Labels[networks.ResourceLabel] != networks.ProjectNetworkResource || inspect.Labels[networks.ProjectIDLabel] != projectID {
@@ -65,6 +69,9 @@ func (c *DockerProjectNetworkCleaner) CleanupProjectNetworks(ctx context.Context
 		for containerID := range inspect.Containers {
 			containerInfo, err := dockerClient.ContainerInspect(ctx, containerID)
 			if err != nil {
+				if cerrdefs.IsNotFound(err) {
+					continue
+				}
 				return fmt.Errorf("inspect endpoint container %s on network %s: %w", containerID, inspect.Name, err)
 			}
 			labels := map[string]string(nil)
@@ -74,11 +81,11 @@ func (c *DockerProjectNetworkCleaner) CleanupProjectNetworks(ctx context.Context
 			if labels[dockerSandboxProjectLabel] != projectID || labels[dockerSandboxDriverLabel] != "docker" {
 				return fmt.Errorf("refuse to disconnect unknown endpoint container %s from project network %s", containerID, inspect.Name)
 			}
-			if err := dockerClient.NetworkDisconnect(ctx, inspect.ID, containerID, false); err != nil {
+			if err := dockerClient.NetworkDisconnect(ctx, inspect.ID, containerID, false); err != nil && !cerrdefs.IsNotFound(err) {
 				return fmt.Errorf("disconnect container %s from project network %s: %w", containerID, inspect.Name, err)
 			}
 		}
-		if err := dockerClient.NetworkRemove(ctx, inspect.ID); err != nil {
+		if err := dockerClient.NetworkRemove(ctx, inspect.ID); err != nil && !cerrdefs.IsNotFound(err) {
 			return fmt.Errorf("remove project network %s: %w", inspect.Name, err)
 		}
 	}

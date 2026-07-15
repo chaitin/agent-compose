@@ -147,6 +147,16 @@ func TestNormalizeNetworkValidation(t *testing.T) {
 			spec: &ProjectSpec{Name: "demo", Agents: map[string]AgentSpec{"worker": {Ports: []string{"localhost:8080:80"}}}},
 			want: `host IP "localhost" is invalid`,
 		},
+		{
+			name: "unbracketed IPv6 published host",
+			spec: &ProjectSpec{Name: "demo", Agents: map[string]AgentSpec{"worker": {Ports: []string{"::1:8080:80"}}}},
+			want: "published port must be container, host:container, or host_ip:host:container",
+		},
+		{
+			name: "bracketed IPv6 published host",
+			spec: &ProjectSpec{Name: "demo", Agents: map[string]AgentSpec{"worker": {Ports: []string{"[::1]:8080:80"}}}},
+			want: "published port must be container, host:container, or host_ip:host:container",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
