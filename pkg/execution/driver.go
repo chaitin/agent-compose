@@ -49,33 +49,35 @@ func ToDriverSandbox(session *domain.Sandbox) *driverpkg.Sandbox {
 
 func ToDriverVMState(state domain.VMState) driverpkg.VMState {
 	return driverpkg.VMState{
-		Driver:       state.Driver,
-		Mode:         state.Mode,
-		BoxName:      state.BoxName,
-		BoxID:        state.BoxID,
-		Image:        state.Image,
-		Registry:     state.Registry,
-		RuntimeHome:  state.RuntimeHome,
-		StartedAt:    state.StartedAt,
-		StoppedAt:    state.StoppedAt,
-		LastError:    state.LastError,
-		BootstrapRef: state.BootstrapRef,
+		Driver:           state.Driver,
+		Mode:             state.Mode,
+		BoxName:          state.BoxName,
+		BoxID:            state.BoxID,
+		Image:            state.Image,
+		Registry:         state.Registry,
+		RuntimeHome:      state.RuntimeHome,
+		StartedAt:        state.StartedAt,
+		StartAttemptedAt: state.StartAttemptedAt,
+		StoppedAt:        state.StoppedAt,
+		LastError:        state.LastError,
+		BootstrapRef:     state.BootstrapRef,
 	}
 }
 
 func FromDriverVMState(state driverpkg.VMState) domain.VMState {
 	return domain.VMState{
-		Driver:       state.Driver,
-		Mode:         state.Mode,
-		BoxName:      state.BoxName,
-		BoxID:        state.BoxID,
-		Image:        state.Image,
-		Registry:     state.Registry,
-		RuntimeHome:  state.RuntimeHome,
-		StartedAt:    state.StartedAt,
-		StoppedAt:    state.StoppedAt,
-		LastError:    state.LastError,
-		BootstrapRef: state.BootstrapRef,
+		Driver:           state.Driver,
+		Mode:             state.Mode,
+		BoxName:          state.BoxName,
+		BoxID:            state.BoxID,
+		Image:            state.Image,
+		Registry:         state.Registry,
+		RuntimeHome:      state.RuntimeHome,
+		StartedAt:        state.StartedAt,
+		StartAttemptedAt: state.StartAttemptedAt,
+		StoppedAt:        state.StoppedAt,
+		LastError:        state.LastError,
+		BootstrapRef:     state.BootstrapRef,
 	}
 }
 

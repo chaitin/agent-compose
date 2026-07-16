@@ -106,6 +106,9 @@ func (p *Provisioner) Ensure(ctx context.Context, sandbox *domain.Sandbox) error
 }
 
 func (p *Provisioner) ensureLoaded(ctx context.Context, sandbox *domain.Sandbox) error {
+	if domain.SandboxWorkspaceUnavailable(sandbox) {
+		return domain.ClassifyError(domain.ErrFailedPrecondition, "sandbox workspace was reclaimed and cannot be provisioned", nil)
+	}
 	if !sandboxHasWorkspace(sandbox) {
 		return nil
 	}

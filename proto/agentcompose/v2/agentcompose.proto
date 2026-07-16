@@ -1026,6 +1026,10 @@ message Sandbox {
   uint32 cell_count = 14;
   uint32 event_count = 15;
   string notebook_url = 16;
+  string workspace_reclamation_state = 17;
+  google.protobuf.Timestamp workspace_reclamation_started_at = 18;
+  google.protobuf.Timestamp workspace_reclamation_completed_at = 19;
+  string workspace_reclamation_last_error = 20;
 }
 
 message SandboxTag {

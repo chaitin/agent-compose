@@ -232,6 +232,9 @@ func (l Lifecycle) ResumeLoaded(ctx context.Context, session *domain.Sandbox, ca
 }
 
 func (l Lifecycle) ensureWorkspace(ctx context.Context, session *domain.Sandbox) error {
+	if domain.SandboxWorkspaceUnavailable(session) {
+		return domain.ClassifyError(domain.ErrFailedPrecondition, "sandbox workspace was reclaimed and cannot be resumed", nil)
+	}
 	if l.WorkspaceEnsurer == nil {
 		return fmt.Errorf("workspace ensurer is not configured")
 	}

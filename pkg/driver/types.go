@@ -43,17 +43,18 @@ type SandboxVolumeMount struct {
 }
 
 type VMState struct {
-	Driver       string    `json:"driver"`
-	Mode         string    `json:"mode,omitempty"`
-	BoxName      string    `json:"box_name,omitempty"`
-	BoxID        string    `json:"box_id,omitempty"`
-	Image        string    `json:"image,omitempty"`
-	Registry     string    `json:"registry,omitempty"`
-	RuntimeHome  string    `json:"runtime_home,omitempty"`
-	StartedAt    time.Time `json:"started_at,omitempty"`
-	StoppedAt    time.Time `json:"stopped_at,omitempty"`
-	LastError    string    `json:"last_error,omitempty"`
-	BootstrapRef string    `json:"bootstrap_ref,omitempty"`
+	Driver           string    `json:"driver"`
+	Mode             string    `json:"mode,omitempty"`
+	BoxName          string    `json:"box_name,omitempty"`
+	BoxID            string    `json:"box_id,omitempty"`
+	Image            string    `json:"image,omitempty"`
+	Registry         string    `json:"registry,omitempty"`
+	RuntimeHome      string    `json:"runtime_home,omitempty"`
+	StartedAt        time.Time `json:"started_at,omitempty"`
+	StartAttemptedAt time.Time `json:"start_attempted_at,omitempty"`
+	StoppedAt        time.Time `json:"stopped_at,omitempty"`
+	LastError        string    `json:"last_error,omitempty"`
+	BootstrapRef     string    `json:"bootstrap_ref,omitempty"`
 }
 
 type ProxyState struct {

@@ -342,6 +342,9 @@ func (h *SandboxHandler) ResumeSandbox(ctx context.Context, req *connect.Request
 	if sandbox.Summary.VMStatus != domain.VMStatusStopped {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("sandbox %s cannot be resumed from state %s", sandbox.Summary.ID, sandbox.Summary.VMStatus))
 	}
+	if domain.SandboxWorkspaceUnavailable(sandbox) {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("sandbox %s workspace was reclaimed and cannot be resumed", sandbox.Summary.ID))
+	}
 	resumed, err := h.delegate.ResumeSandbox(ctx, sandbox.Summary.ID)
 	if err != nil {
 		return nil, err
@@ -394,6 +397,12 @@ func sandboxToV2WithTarget(sandbox *domain.Sandbox, target runs.SandboxRunTarget
 	}
 	for _, tag := range sandbox.Summary.Tags {
 		result.Tags = append(result.Tags, &agentcomposev2.SandboxTag{Name: tag.Name, Value: tag.Value})
+	}
+	if reclamation := sandbox.WorkspaceReclamation; reclamation != nil {
+		result.WorkspaceReclamationState = reclamation.State
+		result.WorkspaceReclamationStartedAt = sandboxHistoryTimestamp(reclamation.StartedAt)
+		result.WorkspaceReclamationCompletedAt = sandboxHistoryTimestamp(reclamation.CompletedAt)
+		result.WorkspaceReclamationLastError = reclamation.LastError
 	}
 	return result
 }

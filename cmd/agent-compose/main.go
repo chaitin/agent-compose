@@ -5809,20 +5809,28 @@ type composeAgentInspectOutput struct {
 }
 
 type composeSandboxOutput struct {
-	SandboxID      string            `json:"sandbox_id"`
-	SandboxShortID string            `json:"sandbox_short_id,omitempty"`
-	Title          string            `json:"title,omitempty"`
-	Driver         string            `json:"driver,omitempty"`
-	VMStatus       string            `json:"vm_status,omitempty"`
-	WorkspacePath  string            `json:"workspace_path,omitempty"`
-	ProxyPath      string            `json:"proxy_path,omitempty"`
-	GuestImage     string            `json:"guest_image,omitempty"`
-	TriggerSource  string            `json:"trigger_source,omitempty"`
-	CreatedAt      string            `json:"created_at,omitempty"`
-	UpdatedAt      string            `json:"updated_at,omitempty"`
-	CellCount      uint32            `json:"cell_count"`
-	EventCount     uint32            `json:"event_count"`
-	Tags           map[string]string `json:"tags,omitempty"`
+	SandboxID            string                             `json:"sandbox_id"`
+	SandboxShortID       string                             `json:"sandbox_short_id,omitempty"`
+	Title                string                             `json:"title,omitempty"`
+	Driver               string                             `json:"driver,omitempty"`
+	VMStatus             string                             `json:"vm_status,omitempty"`
+	WorkspacePath        string                             `json:"workspace_path,omitempty"`
+	ProxyPath            string                             `json:"proxy_path,omitempty"`
+	GuestImage           string                             `json:"guest_image,omitempty"`
+	TriggerSource        string                             `json:"trigger_source,omitempty"`
+	CreatedAt            string                             `json:"created_at,omitempty"`
+	UpdatedAt            string                             `json:"updated_at,omitempty"`
+	CellCount            uint32                             `json:"cell_count"`
+	EventCount           uint32                             `json:"event_count"`
+	Tags                 map[string]string                  `json:"tags,omitempty"`
+	WorkspaceReclamation *composeWorkspaceReclamationOutput `json:"workspace_reclamation,omitempty"`
+}
+
+type composeWorkspaceReclamationOutput struct {
+	State       string `json:"state"`
+	StartedAt   string `json:"started_at,omitempty"`
+	CompletedAt string `json:"completed_at,omitempty"`
+	LastError   string `json:"last_error,omitempty"`
 }
 
 type composeExecOutput struct {
@@ -7764,7 +7772,7 @@ func composeSandboxOutputFromSummary(summary *agentcomposev2.Sandbox) composeSan
 	if len(tags) == 0 {
 		tags = nil
 	}
-	return composeSandboxOutput{
+	result := composeSandboxOutput{
 		SandboxID:      displayOpaqueID(summary.GetSandboxId()),
 		SandboxShortID: identity.ShortID(summary.GetSandboxId()),
 		Title:          summary.GetTitle(),
@@ -7780,6 +7788,13 @@ func composeSandboxOutputFromSummary(summary *agentcomposev2.Sandbox) composeSan
 		EventCount:     summary.GetEventCount(),
 		Tags:           tags,
 	}
+	if summary.GetWorkspaceReclamationState() != "" {
+		result.WorkspaceReclamation = &composeWorkspaceReclamationOutput{
+			State: summary.GetWorkspaceReclamationState(), StartedAt: formatProtoTimestamp(summary.GetWorkspaceReclamationStartedAt()),
+			CompletedAt: formatProtoTimestamp(summary.GetWorkspaceReclamationCompletedAt()), LastError: summary.GetWorkspaceReclamationLastError(),
+		}
+	}
+	return result
 }
 
 func formatProtoTimestamp(value interface{ AsTime() time.Time }) string {

@@ -76,6 +76,14 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 		_ = d.Store.SaveVMState(session.Summary.ID, vmState)
 		return err
 	}
+	// Persist a start-attempt fence before asking the runtime to start. Runtime
+	// creation can partially succeed before returning an error; retaining the
+	// stop timestamp preserves resume semantics, while the newer attempt time
+	// prevents destructive cleanup until another stop is confirmed.
+	vmState.StartAttemptedAt = time.Now().UTC()
+	if err := d.Store.SaveVMState(session.Summary.ID, vmState); err != nil {
+		return err
+	}
 
 	info, err := runtime.EnsureSandbox(ctx, session, vmState, proxyState)
 	if err != nil {

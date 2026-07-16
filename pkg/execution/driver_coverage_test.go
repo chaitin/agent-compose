@@ -29,7 +29,7 @@ func TestDriverConversionWorkflows(t *testing.T) {
 	if driverSession.Summary.ID != "sandbox-1" || len(driverSession.EnvItems) != 1 || !driverSession.EnvItems[0].Secret || len(driverSession.RuntimeEnvItems) != 1 {
 		t.Fatalf("driver sandbox = %#v", driverSession)
 	}
-	vmState := domain.VMState{Driver: "docker", Mode: "runtime", BoxName: "box", BoxID: "box-id", Image: "image", Registry: "registry", RuntimeHome: "/root", StartedAt: now, StoppedAt: now, LastError: "none", BootstrapRef: "boot"}
+	vmState := domain.VMState{Driver: "docker", Mode: "runtime", BoxName: "box", BoxID: "box-id", Image: "image", Registry: "registry", RuntimeHome: "/root", StartedAt: now, StartAttemptedAt: now, StoppedAt: now, LastError: "none", BootstrapRef: "boot"}
 	driverVMState := ToDriverVMState(vmState)
 	if got := FromDriverVMState(driverVMState); got != vmState {
 		t.Fatalf("vm state round trip = %#v", got)

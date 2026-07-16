@@ -22,6 +22,9 @@ const (
 	SandboxWorkspaceProvisioningStatusPending = "pending"
 	SandboxWorkspaceProvisioningStatusReady   = "ready"
 	SandboxWorkspaceProvisioningStatusFailed  = "failed"
+
+	SandboxWorkspaceReclamationStateReclaiming = "reclaiming"
+	SandboxWorkspaceReclamationStateReclaimed  = "reclaimed"
 )
 
 type SandboxTag struct {
@@ -164,16 +167,35 @@ type SandboxWorkspaceProvisioning struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type SandboxWorkspaceReclamation struct {
+	State       string    `json:"state"`
+	StartedAt   time.Time `json:"started_at"`
+	CompletedAt time.Time `json:"completed_at,omitempty"`
+	LastError   string    `json:"last_error,omitempty"`
+}
+
 type Sandbox struct {
 	Summary               SandboxSummary                `json:"summary"`
 	BaseWorkspace         string                        `json:"base_workspace,omitempty"`
 	WorkspaceID           string                        `json:"workspace_id,omitempty"`
 	Workspace             *SandboxWorkspace             `json:"workspace,omitempty"`
 	WorkspaceProvisioning *SandboxWorkspaceProvisioning `json:"workspace_provisioning,omitempty"`
+	WorkspaceReclamation  *SandboxWorkspaceReclamation  `json:"workspace_reclamation,omitempty"`
 	EnvItems              []SandboxEnvVar               `json:"env_items,omitempty"`
 	VolumeMounts          []SandboxVolumeMount          `json:"volume_mounts,omitempty"`
 	RuntimeEnvItems       []SandboxEnvVar               `json:"-"`
 	ProviderEnvItems      []SandboxEnvVar               `json:"-"`
+}
+
+func SandboxWorkspaceReclaimed(sandbox *Sandbox) bool {
+	if sandbox == nil || sandbox.WorkspaceReclamation == nil {
+		return false
+	}
+	return sandbox.WorkspaceReclamation.State == SandboxWorkspaceReclamationStateReclaimed
+}
+
+func SandboxWorkspaceUnavailable(sandbox *Sandbox) bool {
+	return sandbox != nil && sandbox.WorkspaceReclamation != nil
 }
 
 func ValidateSandboxWorkspaceProvisioning(provisioning *SandboxWorkspaceProvisioning) error {
@@ -451,17 +473,18 @@ type RuntimeCommandResult struct {
 type ExecStreamWriter func(ExecChunk)
 
 type VMState struct {
-	Driver       string    `json:"driver"`
-	Mode         string    `json:"mode,omitempty"`
-	BoxName      string    `json:"box_name,omitempty"`
-	BoxID        string    `json:"box_id,omitempty"`
-	Image        string    `json:"image,omitempty"`
-	Registry     string    `json:"registry,omitempty"`
-	RuntimeHome  string    `json:"runtime_home,omitempty"`
-	StartedAt    time.Time `json:"started_at,omitempty"`
-	StoppedAt    time.Time `json:"stopped_at,omitempty"`
-	LastError    string    `json:"last_error,omitempty"`
-	BootstrapRef string    `json:"bootstrap_ref,omitempty"`
+	Driver           string    `json:"driver"`
+	Mode             string    `json:"mode,omitempty"`
+	BoxName          string    `json:"box_name,omitempty"`
+	BoxID            string    `json:"box_id,omitempty"`
+	Image            string    `json:"image,omitempty"`
+	Registry         string    `json:"registry,omitempty"`
+	RuntimeHome      string    `json:"runtime_home,omitempty"`
+	StartedAt        time.Time `json:"started_at,omitempty"`
+	StartAttemptedAt time.Time `json:"start_attempted_at,omitempty"`
+	StoppedAt        time.Time `json:"stopped_at,omitempty"`
+	LastError        string    `json:"last_error,omitempty"`
+	BootstrapRef     string    `json:"bootstrap_ref,omitempty"`
 }
 
 type ProxyState struct {

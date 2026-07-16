@@ -19,17 +19,22 @@ import (
 )
 
 type fakeSessionRuntime struct {
-	info       domain.SandboxVMInfo
-	ensureHook func(*domain.Sandbox)
-	removeHook func(*domain.Sandbox)
-	removeErr  error
+	info            domain.SandboxVMInfo
+	ensureHook      func(*domain.Sandbox)
+	ensureStateHook func(domain.VMState)
+	ensureErr       error
+	removeHook      func(*domain.Sandbox)
+	removeErr       error
 }
 
-func (r fakeSessionRuntime) EnsureSandbox(_ context.Context, session *domain.Sandbox, _ domain.VMState, _ domain.ProxyState) (domain.SandboxVMInfo, error) {
+func (r fakeSessionRuntime) EnsureSandbox(_ context.Context, session *domain.Sandbox, vmState domain.VMState, _ domain.ProxyState) (domain.SandboxVMInfo, error) {
 	if r.ensureHook != nil {
 		r.ensureHook(session)
 	}
-	return r.info, nil
+	if r.ensureStateHook != nil {
+		r.ensureStateHook(vmState)
+	}
+	return r.info, r.ensureErr
 }
 
 func (r fakeSessionRuntime) StopSandbox(context.Context, *domain.Sandbox, domain.VMState) (bool, error) {
@@ -344,6 +349,49 @@ func TestSandboxDriverResumeReusesRuntimeWithoutRefreshingStartupEnv(t *testing.
 	}
 	if vmState.BoxID != "container-1" || !vmState.StoppedAt.IsZero() {
 		t.Fatalf("vm state after resume = %+v", vmState)
+	}
+}
+
+func TestSandboxDriverResumeRecordsAttemptBeforeRuntimeFailure(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot: root, SandboxRoot: filepath.Join(root, "sandboxes"),
+		RuntimeDriver: driverpkg.RuntimeDriverBoxlite, BoxliteHome: filepath.Join(root, "boxlite"), DefaultImage: "guest:latest",
+		GuestWorkspacePath: "/workspace", SandboxStartTimeout: 2 * time.Second,
+	}
+	store, err := sessionstore.NewWithConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.CreateSandbox(ctx, "resume failure", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stoppedAt := time.Now().UTC().Add(-48 * time.Hour)
+	if err := store.SaveVMState(session.Summary.ID, domain.VMState{
+		Driver: driverpkg.RuntimeDriverBoxlite, BoxID: "container-1", StoppedAt: stoppedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	startErr := errors.New("runtime partially started")
+	var runtimeState domain.VMState
+	driver := NewSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: fakeSessionRuntime{
+		ensureErr: startErr, ensureStateHook: func(state domain.VMState) { runtimeState = state },
+	}})
+
+	if err := driver.StartSandboxVM(ctx, session); !errors.Is(err, startErr) {
+		t.Fatalf("StartSandboxVM error = %v, want %v", err, startErr)
+	}
+	vmState, err := store.GetVMState(session.Summary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !vmState.StoppedAt.Equal(stoppedAt) || !runtimeState.StoppedAt.Equal(stoppedAt) {
+		t.Fatalf("failed resume lost stopped state: persisted=%#v runtime=%#v", vmState, runtimeState)
+	}
+	if !vmState.StartAttemptedAt.After(stoppedAt) || !runtimeState.StartAttemptedAt.Equal(vmState.StartAttemptedAt) || vmState.LastError != startErr.Error() {
+		t.Fatalf("vm state after failed resume = %#v, runtime state = %#v", vmState, runtimeState)
 	}
 }
 
