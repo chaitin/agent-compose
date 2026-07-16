@@ -59,7 +59,7 @@ func TestDecodeRevisionSpecSupportsCanonicalAgentStatus(t *testing.T) {
 	}
 }
 
-func TestIntegrationProjectRevisionWorkspaceRoundTrip(t *testing.T) {
+func TestIntegrationProjectRevisionDoesNotSelectOmittedAgentWorkspace(t *testing.T) {
 	normalized, err := compose.Normalize(&compose.ProjectSpec{
 		Name: "workspace-project",
 		Workspaces: map[string]compose.WorkspaceSpec{
@@ -87,16 +87,15 @@ func TestIntegrationProjectRevisionWorkspaceRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatalf("reviewer missing from decoded revision: %#v", decoded.GetAgents())
 	}
+	if agent.GetWorkspace() != nil {
+		t.Fatalf("decoded agent workspace = %#v, want nil", agent.GetWorkspace())
+	}
 	projectWorkspace, agentWorkspace, err := ProjectRunWorkspaceSpecsFromV2(decoded.GetWorkspaces(), agent.GetWorkspace())
 	if err != nil {
 		t.Fatalf("ProjectRunWorkspaceSpecsFromV2 returned error: %v", err)
 	}
-	resolved := agentWorkspace
-	if resolved == nil {
-		resolved = projectWorkspace
-	}
-	if resolved == nil || resolved.Provider != "local" || resolved.Path != "workspaces/local-repo" {
-		t.Fatalf("resolved workspace = %#v", resolved)
+	if projectWorkspace != nil || agentWorkspace != nil {
+		t.Fatalf("resolved workspaces = (%#v, %#v), want nil, nil", projectWorkspace, agentWorkspace)
 	}
 }
 

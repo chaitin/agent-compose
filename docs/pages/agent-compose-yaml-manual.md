@@ -279,9 +279,10 @@ workspaces:
 
 Workspace selection follows these rules:
 
-- With no project workspace and no agent `workspace`, the run has no configured workspace.
-- With exactly one project workspace and no agent `workspace`, the agent automatically uses that entry.
-- With multiple project workspaces, each agent must select one with `workspace.name` or define an inline workspace.
+- Top-level `workspaces` entries are named definitions only; they are never assigned to an agent automatically.
+- When an agent omits `workspace`, the run has no configured workspace, regardless of how many project workspaces exist.
+- To use a project workspace, the agent must explicitly select it with `workspace.name`, or define an inline workspace.
+- An explicit empty `workspace: {}` is invalid; omit the key to configure no workspace.
 
 ## `mcp_servers`: project MCP servers
 
@@ -385,7 +386,7 @@ agents:
 | `capset_ids` | string[] | Empty | OctoBus capability set IDs allowed for this agent's sandboxes. |
 | `skills` | list | Empty | Skill sources projected into the agent runtime. |
 | `volumes` | list | Empty | Volume and bind mounts. |
-| `workspace` | object | Automatic/none | Selects a project `workspaces` entry or defines an inline workspace. |
+| `workspace` | object | None | Explicitly selects a project `workspaces` entry or defines an inline workspace. |
 | `scheduler` | object | None | Automatic trigger configuration. |
 | `jupyter` | object | Disabled | Default Jupyter behavior for agent runs. |
 
@@ -839,9 +840,9 @@ agents:
 
 To reuse deployment environment values, both locations may contain `${API_URL}`, supplied through `env_file` or the CLI process environment.
 
-### Defining multiple `workspaces` without selecting one
+### Expecting a project `workspace` to be selected automatically
 
-When the project contains multiple workspace entries, each agent must set `workspace.name` or define an inline workspace.
+Top-level `workspaces` are never selected automatically. An agent that omits `workspace` has no configured workspace, even when the project defines exactly one entry. Set `workspace.name` or define an inline workspace when the agent needs one. Use omission, not `workspace: {}`, to configure no workspace.
 
 ### Selecting an unavailable runtime driver
 

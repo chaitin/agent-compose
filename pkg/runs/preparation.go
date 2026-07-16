@@ -272,7 +272,6 @@ func ComposeWorkspaceSpecFromV2(workspace *agentcomposev2.WorkspaceSpec) *compos
 
 func ProjectRunWorkspaceSpecsFromV2(projectWorkspaces []*agentcomposev2.NamedWorkspaceSpec, agentWorkspace *agentcomposev2.WorkspaceSpec) (*compose.WorkspaceSpec, *compose.WorkspaceSpec, error) {
 	globals := make(map[string]compose.WorkspaceSpec, len(projectWorkspaces))
-	keys := make([]string, 0, len(projectWorkspaces))
 	for i, item := range projectWorkspaces {
 		name := strings.TrimSpace(item.GetName())
 		if name == "" {
@@ -287,7 +286,6 @@ func ProjectRunWorkspaceSpecsFromV2(projectWorkspaces []*agentcomposev2.NamedWor
 		}
 		workspace.Name = ""
 		globals[name] = *workspace
-		keys = append(keys, name)
 	}
 
 	agent := ComposeWorkspaceSpecFromV2(agentWorkspace)
@@ -306,10 +304,6 @@ func ProjectRunWorkspaceSpecsFromV2(projectWorkspaces []*agentcomposev2.NamedWor
 		}
 	}
 
-	if len(globals) == 1 {
-		workspace := globals[keys[0]]
-		return &workspace, nil, nil
-	}
 	return nil, nil, nil
 }
 

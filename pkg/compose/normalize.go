@@ -354,18 +354,7 @@ func normalizeMCPMap(path string, values map[string]MCPServerSpec, options Norma
 
 func resolveAgentWorkspace(path string, spec *WorkspaceSpec, globals map[string]WorkspaceSpec) (*WorkspaceSpec, error) {
 	if spec == nil {
-		switch len(globals) {
-		case 1:
-			for _, workspace := range globals {
-				resolved := cloneWorkspaceSpec(&workspace)
-				resolved.Name = ""
-				return resolved, nil
-			}
-		case 0:
-			return nil, nil
-		default:
-			return nil, &ValidationError{Path: path, Message: "workspace is required when project workspaces has multiple entries"}
-		}
+		return nil, nil
 	}
 	trimmed := cloneWorkspaceSpec(spec)
 	hasName := trimmed.Name != ""

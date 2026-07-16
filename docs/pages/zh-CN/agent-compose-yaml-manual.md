@@ -278,9 +278,10 @@ workspaces:
 
 Workspace 选择规则：
 
-- 没有顶层 Workspace 且 Agent 未写 `workspace`：不配置 Workspace。
-- 只有一个顶层 Workspace 且 Agent 未写 `workspace`：该 Agent 自动使用唯一条目。
-- 有多个顶层 Workspace：每个 Agent 必须通过 `workspace.name` 引用一个条目，或写内联 Workspace。
+- 顶层 `workspaces` 只是命名定义，不会自动分配给任何 Agent。
+- Agent 省略 `workspace` 时，无论顶层定义了多少个 Workspace，该次 run 都不配置 Workspace。
+- Agent 需要使用顶层 Workspace 时，必须通过 `workspace.name` 显式引用，或定义内联 Workspace。
+- 显式的空对象 `workspace: {}` 非法；不使用 Workspace 时应省略该 key。
 
 ## `mcp_servers`：项目级 MCP
 
@@ -386,7 +387,7 @@ agents:
 | `capset_ids` | string[] | 空 | 允许该 Agent sandbox 使用的 OctoBus capability set ID。 |
 | `skills` | list | 空 | 注入 Agent 的 Skill 来源。 |
 | `volumes` | list | 空 | Volume 或 bind mount 列表。 |
-| `workspace` | object | 自动/无 | 引用一个顶层 `workspaces` 条目，或定义 Agent 内联 Workspace。 |
+| `workspace` | object | 无 | 显式引用一个顶层 `workspaces` 条目，或定义 Agent 内联 Workspace。 |
 | `scheduler` | object | 无 | 自动触发 Agent 的 Scheduler。 |
 | `jupyter` | object | disabled | Agent run 的 Jupyter 默认配置。 |
 
@@ -844,9 +845,9 @@ agents:
 
 如果目标是复用部署环境值，可在两个位置都写 `${API_URL}`，并通过 `env_file` 或 CLI 进程环境提供。
 
-### 多个 `workspaces` 但 Agent 未选择
+### 以为项目 Workspace 会被自动选择
 
-顶层有多个条目时，每个 Agent 必须写 `workspace.name` 或内联 Workspace，否则校验失败。
+顶层 `workspaces` 不会被自动选择。Agent 省略 `workspace` 时，即使项目只定义了一个条目，也不会配置 Workspace。需要使用时应设置 `workspace.name` 或内联 Workspace；不使用时应省略该 key，而不是写 `workspace: {}`。
 
 ### 选择未编译或运行条件不满足的 driver
 

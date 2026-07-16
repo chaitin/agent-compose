@@ -1070,7 +1070,7 @@ agents:
 	}
 }
 
-func TestNormalizeUsesOnlyGlobalWorkspaceByDefault(t *testing.T) {
+func TestNormalizeDoesNotUseOnlyGlobalWorkspaceByDefault(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: default-workspace
 workspaces:
@@ -1086,8 +1086,8 @@ agents:
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
 	}
-	if normalized.Agents[0].Workspace == nil || normalized.Agents[0].Workspace.Provider != "local" || normalized.Agents[0].Workspace.Path != "." || normalized.Agents[0].Workspace.Name != "" {
-		t.Fatalf("workspace = %#v", normalized.Agents[0].Workspace)
+	if normalized.Agents[0].Workspace != nil {
+		t.Fatalf("workspace = %#v, want nil", normalized.Agents[0].Workspace)
 	}
 }
 
@@ -1179,7 +1179,7 @@ agents:
 	}
 }
 
-func TestNormalizeRejectsAmbiguousDefaultWorkspace(t *testing.T) {
+func TestNormalizeAllowsOmittedAgentWorkspaceWithMultipleGlobals(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: ambiguous-workspace
 workspaces:
@@ -1194,12 +1194,12 @@ agents:
     provider: codex
 `)
 
-	_, err := Normalize(spec, NormalizeOptions{})
-	if err == nil {
-		t.Fatalf("expected Normalize to fail")
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
 	}
-	if got := err.Error(); !strings.Contains(got, "agents.reviewer.workspace") || !strings.Contains(got, "multiple") {
-		t.Fatalf("error = %q, want ambiguous default workspace error", got)
+	if normalized.Agents[0].Workspace != nil {
+		t.Fatalf("workspace = %#v, want nil", normalized.Agents[0].Workspace)
 	}
 }
 

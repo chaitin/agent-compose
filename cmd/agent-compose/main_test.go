@@ -1510,7 +1510,7 @@ func testCLIWorkspaceRegistryConfigAndApply(t *testing.T) {
 	t.Setenv("AGENT_COMPOSE_SOCKET", socketPath)
 	t.Setenv("AGENT_COMPOSE_HOST", "")
 
-	t.Run("single global workspace becomes default", func(t *testing.T) {
+	t.Run("single global workspace is not selected implicitly", func(t *testing.T) {
 		composePath := writeComposeFile(t, filepath.Join(t.TempDir(), "workspace-default"), `
 name: workspace-default
 workspaces:
@@ -1537,7 +1537,7 @@ agents:
 			} `json:"workspaces"`
 			Agents []struct {
 				Name      string `json:"name"`
-				Workspace struct {
+				Workspace *struct {
 					Provider string `json:"provider"`
 					Path     string `json:"path"`
 				} `json:"workspace"`
@@ -1549,7 +1549,7 @@ agents:
 		if len(decoded.Workspaces) != 1 || decoded.Workspaces[0].Key != "repo-root" || decoded.Workspaces[0].Provider != "local" {
 			t.Fatalf("decoded workspaces = %#v", decoded.Workspaces)
 		}
-		if len(decoded.Agents) != 1 || decoded.Agents[0].Workspace.Provider != "local" || decoded.Agents[0].Workspace.Path != "." {
+		if len(decoded.Agents) != 1 || decoded.Agents[0].Workspace != nil {
 			t.Fatalf("decoded agents = %#v", decoded.Agents)
 		}
 
@@ -1620,7 +1620,7 @@ agents:
 		}
 	})
 
-	t.Run("multiple globals without agent workspace fails", func(t *testing.T) {
+	t.Run("multiple globals are not selected implicitly", func(t *testing.T) {
 		composePath := writeComposeFile(t, filepath.Join(t.TempDir(), "workspace-ambiguous"), `
 name: workspace-ambiguous
 workspaces:
@@ -1633,14 +1633,42 @@ workspaces:
 agents:
   reviewer:
     provider: codex
+    image: guest:v1
+    driver:
+      docker: {}
 `)
 
-		_, stderr, _, exitCode := executeCLICommand("config", "--file", composePath, "--json")
-		if exitCode == 0 {
-			t.Fatalf("expected config to fail")
+		stdout, stderr, _, exitCode := executeCLICommand("config", "--file", composePath, "--json")
+		if exitCode != 0 || stderr != "" {
+			t.Fatalf("config code/stderr = %d / %q", exitCode, stderr)
 		}
-		if !strings.Contains(stderr, "project workspaces has multiple entries") {
-			t.Fatalf("stderr = %q", stderr)
+		var decoded struct {
+			Workspaces []struct {
+				Key string `json:"key"`
+			} `json:"workspaces"`
+			Agents []struct {
+				Workspace *struct {
+					Provider string `json:"provider"`
+				} `json:"workspace"`
+			} `json:"agents"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
+			t.Fatalf("config json decode failed: %v\n%s", err, stdout)
+		}
+		if len(decoded.Workspaces) != 2 || decoded.Workspaces[0].Key != "docs-repo" || decoded.Workspaces[1].Key != "repo-root" {
+			t.Fatalf("decoded workspaces = %#v", decoded.Workspaces)
+		}
+		if len(decoded.Agents) != 1 || decoded.Agents[0].Workspace != nil {
+			t.Fatalf("decoded agents = %#v", decoded.Agents)
+		}
+
+		upOut, upErr, _, upCode := executeCLICommand("up", "--file", composePath, "--json")
+		if upCode != 0 || upErr != "" {
+			t.Fatalf("up code/stderr = %d / %q", upCode, upErr)
+		}
+		up := decodeComposeUpOutput(t, upOut)
+		if up.Project.Name != "workspace-ambiguous" || !up.Applied {
+			t.Fatalf("up output = %#v", up)
 		}
 	})
 
