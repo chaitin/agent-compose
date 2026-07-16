@@ -364,7 +364,7 @@ func resolveAgentWorkspace(path string, spec *WorkspaceSpec, globals map[string]
 	}
 	trimmed := cloneWorkspaceSpec(spec)
 	hasName := trimmed.Name != ""
-	hasInline := trimmed.Provider != "" || trimmed.URL != "" || trimmed.Branch != "" || trimmed.Path != ""
+	hasInline := trimmed.Provider != "" || trimmed.URL != "" || trimmed.Branch != "" || trimmed.Commit != "" || trimmed.Path != ""
 	switch {
 	case hasName && !hasInline:
 		workspace, ok := globals[trimmed.Name]
@@ -401,6 +401,9 @@ func normalizeInlineWorkspaceSpec(path string, spec *WorkspaceSpec, defaultName 
 		if strings.TrimSpace(workspace.Branch) != "" {
 			return nil, &ValidationError{Path: path + ".branch", Message: "local workspace does not support branch"}
 		}
+		if strings.TrimSpace(workspace.Commit) != "" {
+			return nil, &ValidationError{Path: path + ".commit", Message: "local workspace does not support commit"}
+		}
 		if _, err := cleanComposeLocalWorkspacePath(workspace.Path); err != nil {
 			return nil, &ValidationError{Path: path + ".path", Message: err.Error()}
 		}
@@ -418,6 +421,8 @@ func normalizeInlineWorkspaceSpec(path string, spec *WorkspaceSpec, defaultName 
 			workspace.Path = "."
 		}
 		workspace.URL = strings.TrimSpace(workspace.URL)
+		workspace.Branch = strings.TrimSpace(workspace.Branch)
+		workspace.Commit = strings.TrimSpace(workspace.Commit)
 	default:
 		return nil, &ValidationError{Path: path + ".provider", Message: fmt.Sprintf("unsupported workspace provider %q", workspace.Provider)}
 	}
@@ -1325,6 +1330,7 @@ func cloneWorkspaceSpec(value *WorkspaceSpec) *WorkspaceSpec {
 	cloned.Provider = strings.TrimSpace(cloned.Provider)
 	cloned.URL = strings.TrimSpace(cloned.URL)
 	cloned.Branch = strings.TrimSpace(cloned.Branch)
+	cloned.Commit = strings.TrimSpace(cloned.Commit)
 	cloned.Path = strings.TrimSpace(cloned.Path)
 	return &cloned
 }

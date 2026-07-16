@@ -2,7 +2,6 @@ package projects
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"agent-compose/pkg/compose"
@@ -19,6 +18,7 @@ func TestMapLegacyWorkspaceConfigToExistingV2Shapes(t *testing.T) {
 			ConfigJSON: `{
 				"url":"https://example.test/team/repo.git",
 				"branch":"main",
+				"commit":"abc123",
 				"credential":"user:token",
 				"path":"source"
 			}`,
@@ -26,7 +26,7 @@ func TestMapLegacyWorkspaceConfigToExistingV2Shapes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("mapLegacyWorkspaceConfig returned error: %v", err)
 		}
-		if workspace.Provider != "git" || workspace.URL != "https://user:token@example.test/team/repo.git" || workspace.Branch != "main" || workspace.Path != "source" {
+		if workspace.Provider != "git" || workspace.URL != "https://user:token@example.test/team/repo.git" || workspace.Branch != "main" || workspace.Commit != "abc123" || workspace.Path != "source" {
 			t.Fatalf("mapped git workspace = %#v", workspace)
 		}
 	})
@@ -50,14 +50,17 @@ func TestMapLegacyWorkspaceConfigToExistingV2Shapes(t *testing.T) {
 	})
 }
 
-func TestMapLegacyWorkspaceConfigRejectsUnrepresentableCommit(t *testing.T) {
-	_, err := mapLegacyWorkspaceConfig(nil, domain.WorkspaceConfig{
+func TestMapLegacyWorkspaceConfigPreservesCommitPin(t *testing.T) {
+	workspace, err := mapLegacyWorkspaceConfig(nil, domain.WorkspaceConfig{
 		ID:         "git-workspace",
 		Type:       "git",
 		ConfigJSON: `{"url":"https://example.test/repo.git","commit":"abc123"}`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "pins commit") {
-		t.Fatalf("mapLegacyWorkspaceConfig error = %v", err)
+	if err != nil {
+		t.Fatalf("mapLegacyWorkspaceConfig returned error: %v", err)
+	}
+	if workspace.Commit != "abc123" {
+		t.Fatalf("mapped commit = %q, want abc123", workspace.Commit)
 	}
 }
 

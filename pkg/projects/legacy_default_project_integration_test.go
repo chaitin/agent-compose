@@ -218,6 +218,28 @@ scheduler.on("news.ready", "on-news", function onNews() {});
 	if err != nil || !repeated.Applied || repeated.Revision.Revision != project.CurrentRevision {
 		t.Fatalf("repeated upgraded sync = %#v, err = %v", repeated, err)
 	}
+
+	editedSpec := *repeated.RevisionSpec
+	editedSpec.Agents = append([]compose.NormalizedAgentSpec(nil), repeated.RevisionSpec.Agents...)
+	editedScheduler := *editedSpec.Agents[0].Scheduler
+	editedScheduler.Description = "Edited through v2 project apply"
+	editedSpec.Agents[0].Scheduler = &editedScheduler
+	editedHash, err := editedSpec.Hash()
+	if err != nil {
+		t.Fatalf("hash edited synthetic project: %v", err)
+	}
+	edited, err := controller.ApplyProject(ctx, projects.ApplyRequest{Normalized: projects.NormalizedProject{Spec: &editedSpec, SpecHash: editedHash}})
+	if err != nil || !edited.Applied {
+		t.Fatalf("apply edited synthetic project = %#v, err = %v", edited, err)
+	}
+	page, err = store.ListProjectSchedulersPage(ctx, "", "", 10)
+	if err != nil || len(page) != 1 || page[0].ManagedLoaderID != loader.Summary.ID {
+		t.Fatalf("edited scheduler lost adopted loader identity: %#v, err = %v", page, err)
+	}
+	editedLoader, err := store.GetLoader(ctx, loader.Summary.ID)
+	if err != nil || editedLoader.Summary.Description != editedScheduler.Description {
+		t.Fatalf("edited adopted loader = %#v, err = %v", editedLoader.Summary, err)
+	}
 }
 
 func emulateLegacyRevisionWithoutPresentation(t *testing.T, ctx context.Context, store *configstore.ConfigStore, project domain.ProjectRecord, spec *compose.NormalizedProjectSpec, agent domain.ProjectAgentRecord) {

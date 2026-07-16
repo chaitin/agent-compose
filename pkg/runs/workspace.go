@@ -106,6 +106,7 @@ func projectRunGitWorkspaceConfig(run domain.ProjectRunRecord, workspace *compos
 	payload, err := json.Marshal(workspaces.GitWorkspaceConfig{
 		URL:         strings.TrimSpace(workspace.URL),
 		Branch:      strings.TrimSpace(workspace.Branch),
+		Commit:      strings.TrimSpace(workspace.Commit),
 		CloneTarget: strings.TrimSpace(workspace.Path),
 	})
 	if err != nil {

@@ -436,6 +436,7 @@ func WorkspaceSpecToProto(workspace *compose.WorkspaceSpec) *agentcomposev2.Work
 		Provider: workspace.Provider,
 		Url:      workspace.URL,
 		Branch:   workspace.Branch,
+		Commit:   workspace.Commit,
 		Path:     workspace.Path,
 	}
 }
@@ -984,6 +985,9 @@ func WorkspaceYAMLShape(workspace *agentcomposev2.WorkspaceSpec) map[string]any 
 	}
 	if strings.TrimSpace(workspace.GetBranch()) != "" {
 		raw["branch"] = workspace.GetBranch()
+	}
+	if strings.TrimSpace(workspace.GetCommit()) != "" {
+		raw["commit"] = workspace.GetCommit()
 	}
 	if strings.TrimSpace(workspace.GetPath()) != "" {
 		raw["path"] = workspace.GetPath()

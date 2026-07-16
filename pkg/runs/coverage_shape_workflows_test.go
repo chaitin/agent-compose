@@ -187,8 +187,12 @@ func TestRunsPreparationWorkspaceAndStatusWorkflows(t *testing.T) {
 	if path, err := ResolveLocalProjectWorkspacePath(store.project, "."); err != nil || path == "" {
 		t.Fatalf("ResolveLocalProjectWorkspacePath path=%q err=%v", path, err)
 	}
-	if _, err := projectRunGitWorkspaceConfig(run, &compose.WorkspaceSpec{Provider: "git", URL: "https://example.test/repo.git", Branch: "main", Path: "."}); err != nil {
+	gitConfig, err := projectRunGitWorkspaceConfig(run, &compose.WorkspaceSpec{Provider: "git", URL: "https://example.test/repo.git", Branch: "main", Commit: "abc123", Path: "."})
+	if err != nil {
 		t.Fatalf("projectRunGitWorkspaceConfig returned error: %v", err)
+	}
+	if !strings.Contains(gitConfig.ConfigJSON, `"branch":"main"`) || !strings.Contains(gitConfig.ConfigJSON, `"commit":"abc123"`) {
+		t.Fatalf("git workspace config lost revision fields: %s", gitConfig.ConfigJSON)
 	}
 	if _, err := projectRunGitWorkspaceConfig(run, &compose.WorkspaceSpec{Provider: "git"}); err == nil {
 		t.Fatalf("expected git workspace url error")

@@ -4595,6 +4595,7 @@ type WorkspaceSpec struct {
 	Branch        string                 `protobuf:"bytes,3,opt,name=branch,proto3" json:"branch,omitempty"`
 	Path          string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
 	Name          string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
+	Commit        string                 `protobuf:"bytes,6,opt,name=commit,proto3" json:"commit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4660,6 +4661,13 @@ func (x *WorkspaceSpec) GetPath() string {
 func (x *WorkspaceSpec) GetName() string {
 	if x != nil {
 		return x.Name
+	}
+	return ""
+}
+
+func (x *WorkspaceSpec) GetCommit() string {
+	if x != nil {
+		return x.Commit
 	}
 	return ""
 }
@@ -15976,13 +15984,14 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x19\n" +
 	"\x05value\x18\x02 \x01(\tH\x00R\x05value\x88\x01\x01\x12\x16\n" +
 	"\x06secret\x18\x03 \x01(\bR\x06secretB\b\n" +
-	"\x06_value\"}\n" +
+	"\x06_value\"\x95\x01\n" +
 	"\rWorkspaceSpec\x12\x1a\n" +
 	"\bprovider\x18\x01 \x01(\tR\bprovider\x12\x10\n" +
 	"\x03url\x18\x02 \x01(\tR\x03url\x12\x16\n" +
 	"\x06branch\x18\x03 \x01(\tR\x06branch\x12\x12\n" +
 	"\x04path\x18\x04 \x01(\tR\x04path\x12\x12\n" +
-	"\x04name\x18\x05 \x01(\tR\x04name\"!\n" +
+	"\x04name\x18\x05 \x01(\tR\x04name\x12\x16\n" +
+	"\x06commit\x18\x06 \x01(\tR\x06commit\"!\n" +
 	"\vNetworkSpec\x12\x12\n" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\"\xe7\x01\n" +
 	"\rSchedulerSpec\x12\x18\n" +

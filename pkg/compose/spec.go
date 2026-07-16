@@ -205,6 +205,7 @@ type WorkspaceSpec struct {
 	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 	URL      string `yaml:"url,omitempty" json:"url,omitempty"`
 	Branch   string `yaml:"branch,omitempty" json:"branch,omitempty"`
+	Commit   string `yaml:"commit,omitempty" json:"commit,omitempty"`
 	Path     string `yaml:"path,omitempty" json:"path,omitempty"`
 }
 
@@ -765,6 +766,7 @@ func validateWorkspace(node *yaml.Node, path string) error {
 		"provider": validateScalar,
 		"url":      validateScalar,
 		"branch":   validateScalar,
+		"commit":   validateScalar,
 		"path":     validateScalar,
 	})
 }

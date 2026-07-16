@@ -17,8 +17,8 @@ func TestComposePrivateHelperCoverage(t *testing.T) {
 		t.Fatalf("cloneStringMap aliased input: %#v", values)
 	}
 
-	workspace := cloneWorkspaceSpec(&WorkspaceSpec{Provider: " git ", URL: " https://example.test/repo.git ", Branch: " main ", Path: " app "})
-	if workspace.Provider != "git" || workspace.URL != "https://example.test/repo.git" || workspace.Branch != "main" || workspace.Path != "app" {
+	workspace := cloneWorkspaceSpec(&WorkspaceSpec{Provider: " git ", URL: " https://example.test/repo.git ", Branch: " main ", Commit: " abc123 ", Path: " app "})
+	if workspace.Provider != "git" || workspace.URL != "https://example.test/repo.git" || workspace.Branch != "main" || workspace.Commit != "abc123" || workspace.Path != "app" {
 		t.Fatalf("cloneWorkspaceSpec = %#v", workspace)
 	}
 	if cloneWorkspaceSpec(nil) != nil {

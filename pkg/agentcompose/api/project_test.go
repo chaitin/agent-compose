@@ -198,7 +198,7 @@ func TestIntegrationProjectSpecToProtoIncludesWorkspaceRegistry(t *testing.T) {
 	spec := &compose.NormalizedProjectSpec{
 		Name: "workspace-registry",
 		Workspaces: map[string]compose.WorkspaceSpec{
-			"docs": {Name: "docs", Provider: "git", URL: "https://example.test/docs.git", Path: "docs"},
+			"docs": {Name: "docs", Provider: "git", URL: "https://example.test/docs.git", Branch: "main", Commit: "abc123", Path: "docs"},
 			"repo": {Name: "repo", Provider: "local", Path: "."},
 		},
 		Agents: []compose.NormalizedAgentSpec{{
@@ -212,7 +212,7 @@ func TestIntegrationProjectSpecToProtoIncludesWorkspaceRegistry(t *testing.T) {
 	if response == nil || len(response.GetWorkspaces()) != 2 {
 		t.Fatalf("ProjectSpecToProto workspaces = %#v", response)
 	}
-	if response.GetWorkspaces()[0].GetName() != "docs" || response.GetWorkspaces()[0].GetWorkspace().GetProvider() != "git" {
+	if response.GetWorkspaces()[0].GetName() != "docs" || response.GetWorkspaces()[0].GetWorkspace().GetProvider() != "git" || response.GetWorkspaces()[0].GetWorkspace().GetBranch() != "main" || response.GetWorkspaces()[0].GetWorkspace().GetCommit() != "abc123" {
 		t.Fatalf("first workspace = %#v", response.GetWorkspaces()[0])
 	}
 	if response.GetWorkspaces()[1].GetName() != "repo" || response.GetWorkspaces()[1].GetWorkspace().GetName() != "" {
@@ -225,7 +225,7 @@ func TestIntegrationProjectSpecYAMLShapeIncludesWorkspaceRegistry(t *testing.T) 
 		Name: "workspace-shape",
 		Workspaces: []*agentcomposev2.NamedWorkspaceSpec{{
 			Name:      "repo",
-			Workspace: &agentcomposev2.WorkspaceSpec{Provider: "local", Path: "."},
+			Workspace: &agentcomposev2.WorkspaceSpec{Provider: "git", Url: "https://example.test/repo.git", Branch: "main", Commit: "abc123", Path: "."},
 		}},
 		Agents: []*agentcomposev2.AgentSpec{{
 			Name:      "reviewer",
@@ -238,6 +238,10 @@ func TestIntegrationProjectSpecYAMLShapeIncludesWorkspaceRegistry(t *testing.T) 
 	workspaces, ok := shape["workspaces"].(map[string]any)
 	if !ok || len(workspaces) != 1 {
 		t.Fatalf("workspaces shape = %#v", shape["workspaces"])
+	}
+	repo, ok := workspaces["repo"].(map[string]any)
+	if !ok || repo["branch"] != "main" || repo["commit"] != "abc123" {
+		t.Fatalf("repo workspace shape = %#v", workspaces["repo"])
 	}
 	agents, ok := shape["agents"].(map[string]any)
 	if !ok {

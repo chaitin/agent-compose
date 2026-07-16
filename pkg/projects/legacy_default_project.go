@@ -114,7 +114,11 @@ func legacyDefaultNormalizedProject(agents []domain.AgentDefinition, legacyLoade
 }
 
 func legacyDefaultNormalizedProjectWithWorkspaces(agents []domain.AgentDefinition, legacyLoaders []domain.Loader, workspaceProjection legacyWorkspaceProjection) (NormalizedProject, error) {
-	spec := &compose.NormalizedProjectSpec{Name: LegacyDefaultProjectName, Workspaces: workspaceProjection.workspaces}
+	spec := &compose.NormalizedProjectSpec{
+		Name:       LegacyDefaultProjectName,
+		Workspaces: workspaceProjection.workspaces,
+		Network:    &compose.NetworkSpec{Mode: "default"},
+	}
 	agents = append([]domain.AgentDefinition(nil), agents...)
 	sort.Slice(agents, func(i, j int) bool {
 		if agents[i].Name == agents[j].Name {
@@ -299,6 +303,9 @@ func projectLegacyLoaderWorkspace(spec *compose.NormalizedProjectSpec, loader do
 		return targetIndex, nil
 	}
 
+	// A loader-specific workspace cannot be assigned to a workspace-less source
+	// agent without changing that agent's manual-run behavior. Preserve both v1
+	// meanings by creating a dedicated compatibility scheduler agent.
 	source := spec.Agents[targetIndex]
 	name := reserveLegacyStableName(source.Name+"-loader", identity.ResourceLoader, loader.Summary.ID, loader.Summary.Name, usedNames)
 	targetIndex = appendLegacyLoaderAgent(spec, loader, name, targetIndex, true, true)
@@ -314,7 +321,7 @@ func appendLegacyLoaderAgent(spec *compose.NormalizedProjectSpec, loader domain.
 		agent.Scheduler = nil
 	} else {
 		status := "disabled"
-		if associated {
+		if associated && loader.Summary.Enabled {
 			status = "enabled"
 		}
 		agent = compose.NormalizedAgentSpec{
@@ -430,7 +437,16 @@ func legacyDriver(name string) *compose.NormalizedDriverSpec {
 	if name == "" {
 		return nil
 	}
-	return &compose.NormalizedDriverSpec{Name: name}
+	driver := &compose.NormalizedDriverSpec{Name: name}
+	switch name {
+	case compose.DriverDocker:
+		driver.Docker = &compose.DockerDriverSpec{}
+	case compose.DriverBoxlite:
+		driver.Boxlite = &compose.BoxliteDriverSpec{}
+	case compose.DriverMicrosandbox:
+		driver.Microsandbox = &compose.MicrosandboxDriverSpec{}
+	}
+	return driver
 }
 
 func legacyEnv(items []domain.SandboxEnvVar) map[string]compose.EnvVarSpec {

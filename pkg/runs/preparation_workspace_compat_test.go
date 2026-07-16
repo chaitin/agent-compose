@@ -29,19 +29,41 @@ func TestDecodeRevisionSpecSupportsCanonicalWorkspaceShape(t *testing.T) {
 	}
 }
 
+func TestDecodeRevisionSpecSupportsCanonicalGitCommitShape(t *testing.T) {
+	decoded, err := DecodeRevisionSpec(`{
+		"name":"workspace-project",
+		"workspaces":[{
+			"key":"repo-root",
+			"provider":"git",
+			"url":"https://example.test/repo.git",
+			"branch":"main",
+			"commit":"abc123",
+			"path":"."
+		}],
+		"agents":[{"name":"reviewer"}]
+	}`)
+	if err != nil {
+		t.Fatalf("DecodeRevisionSpec returned error: %v", err)
+	}
+	workspace := decoded.GetWorkspaces()[0].GetWorkspace()
+	if workspace.GetBranch() != "main" || workspace.GetCommit() != "abc123" {
+		t.Fatalf("canonical git workspace = %#v", workspace)
+	}
+}
+
 func TestDecodeRevisionSpecPreservesNestedWorkspaceShape(t *testing.T) {
 	decoded, err := DecodeRevisionSpec(`{
 		"name":"workspace-project",
 		"workspaces":[{
 			"name":"repo-root",
-			"workspace":{"provider":"git","url":"https://example.test/repo.git","branch":"main"}
+			"workspace":{"provider":"git","url":"https://example.test/repo.git","branch":"main","commit":"abc123"}
 		}]
 	}`)
 	if err != nil {
 		t.Fatalf("DecodeRevisionSpec returned error: %v", err)
 	}
 	workspace := decoded.GetWorkspaces()[0]
-	if workspace.GetName() != "repo-root" || workspace.GetWorkspace().GetProvider() != "git" || workspace.GetWorkspace().GetUrl() != "https://example.test/repo.git" || workspace.GetWorkspace().GetBranch() != "main" {
+	if workspace.GetName() != "repo-root" || workspace.GetWorkspace().GetProvider() != "git" || workspace.GetWorkspace().GetUrl() != "https://example.test/repo.git" || workspace.GetWorkspace().GetBranch() != "main" || workspace.GetWorkspace().GetCommit() != "abc123" {
 		t.Fatalf("workspace = %#v", workspace)
 	}
 }

@@ -165,6 +165,10 @@ func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyR
 	if err != nil {
 		return ApplyResult{}, fmt.Errorf("%w: apply project: %w", ErrInvalidRequest, err)
 	}
+	normalized, err = c.preserveLegacyManagedLoaderIdentities(ctx, project, normalized)
+	if err != nil {
+		return ApplyResult{}, fmt.Errorf("apply project %s: preserve legacy scheduler identities: %w", normalized.Spec.Name, err)
+	}
 	if issues := c.validateManagedAgentDefinitions(normalized); len(issues) > 0 {
 		return ApplyResult{Issues: issues, RevisionSpec: normalized.Spec}, nil
 	}

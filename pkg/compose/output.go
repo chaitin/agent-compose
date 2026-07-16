@@ -33,6 +33,7 @@ type orderedNamedWorkspace struct {
 	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 	URL      string `yaml:"url,omitempty" json:"url,omitempty"`
 	Branch   string `yaml:"branch,omitempty" json:"branch,omitempty"`
+	Commit   string `yaml:"commit,omitempty" json:"commit,omitempty"`
 	Path     string `yaml:"path,omitempty" json:"path,omitempty"`
 }
 
@@ -219,6 +220,7 @@ func orderedWorkspaces(values map[string]WorkspaceSpec) []orderedNamedWorkspace 
 			Provider: value.Provider,
 			URL:      value.URL,
 			Branch:   value.Branch,
+			Commit:   value.Commit,
 			Path:     value.Path,
 		})
 	}
@@ -236,6 +238,7 @@ func workspaceMapFromOrdered(values []orderedNamedWorkspace) map[string]Workspac
 			Provider: value.Provider,
 			URL:      value.URL,
 			Branch:   value.Branch,
+			Commit:   value.Commit,
 			Path:     value.Path,
 		}
 	}

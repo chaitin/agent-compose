@@ -246,6 +246,16 @@ func TestLegacyDefaultNormalizedProjectKeepsUnboundLoaderVisibleButDisabled(t *t
 	if adopted := project.managedLoaderOverrides[agent.Name]; adopted.Summary.ID != loader.Summary.ID || adopted.Summary.Enabled {
 		t.Fatalf("unbound loader override = %#v", adopted)
 	}
+
+	loader.Summary.Enabled = false
+	loader.Summary.ManagedAgentName = agent.Name
+	reprojected, err := legacyDefaultNormalizedProject(nil, []domain.Loader{loader})
+	if err != nil {
+		t.Fatalf("reproject adopted unbound loader: %v", err)
+	}
+	if len(reprojected.Spec.Agents) != 1 || reprojected.Spec.Agents[0].Status != "disabled" || reprojected.Spec.Agents[0].Scheduler.Enabled {
+		t.Fatalf("reprojected unbound compatibility agent = %#v", reprojected.Spec.Agents)
+	}
 }
 
 func findLegacyProjectAgent(t *testing.T, project NormalizedProject, name string) compose.NormalizedAgentSpec {

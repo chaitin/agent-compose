@@ -641,6 +641,7 @@ message WorkspaceSpec {
   string branch = 3;
   string path = 4;
   string name = 5;
+  string commit = 6;
 }
 
 message NetworkSpec {

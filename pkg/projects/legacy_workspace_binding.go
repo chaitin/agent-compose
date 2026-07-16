@@ -117,7 +117,7 @@ func resolvedLegacyWorkspace(spec *compose.NormalizedProjectSpec, reference *com
 			return &resolved
 		}
 	}
-	if strings.TrimSpace(reference.Provider) != "" || strings.TrimSpace(reference.URL) != "" || strings.TrimSpace(reference.Branch) != "" || strings.TrimSpace(reference.Path) != "" {
+	if strings.TrimSpace(reference.Provider) != "" || strings.TrimSpace(reference.URL) != "" || strings.TrimSpace(reference.Branch) != "" || strings.TrimSpace(reference.Commit) != "" || strings.TrimSpace(reference.Path) != "" {
 		return reference
 	}
 	workspace, ok := spec.Workspaces[strings.TrimSpace(reference.Name)]

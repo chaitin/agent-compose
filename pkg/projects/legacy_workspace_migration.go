@@ -126,9 +126,6 @@ func mapLegacyWorkspaceConfig(config *appconfig.Config, workspace domain.Workspa
 		if err := json.Unmarshal([]byte(workspace.ConfigJSON), &legacy); err != nil {
 			return compose.WorkspaceSpec{}, fmt.Errorf("decode legacy git workspace preset %s: %w", workspace.ID, err)
 		}
-		if strings.TrimSpace(legacy.Commit) != "" {
-			return compose.WorkspaceSpec{}, fmt.Errorf("legacy git workspace preset %s pins commit %s, which cannot be mapped to a v2 workspace branch", workspace.ID, legacy.Commit)
-		}
 		cloneTarget, err := workspaces.NormalizeGitCloneTarget(workspace.ID, legacy.CloneTarget)
 		if err != nil {
 			return compose.WorkspaceSpec{}, err
@@ -141,6 +138,7 @@ func mapLegacyWorkspaceConfig(config *appconfig.Config, workspace domain.Workspa
 			Provider: "git",
 			URL:      cloneURL,
 			Branch:   strings.TrimSpace(legacy.Branch),
+			Commit:   strings.TrimSpace(legacy.Commit),
 			Path:     cloneTarget,
 		}, nil
 	case "file":
