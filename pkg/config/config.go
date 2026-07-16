@@ -76,6 +76,9 @@ type Config struct {
 	ImageInsecureRegistries    []string
 	BoxDiskSizeGB              int
 	CacheTTL                   time.Duration
+	CleanupInterval            time.Duration
+	WorkspaceCleanupTTL        time.Duration
+	ImageCacheCleanupTTL       time.Duration
 	ImagePullTimeout           time.Duration
 	GuestWorkspacePath         string
 	GuestHomePath              string
@@ -305,6 +308,22 @@ func NewConfig(di do.Injector) (*Config, error) {
 		cacheTTL = parsed
 	}
 
+	cleanupInterval, err := cleanupDurationEnv("CLEANUP_INTERVAL", time.Hour)
+	if err != nil {
+		return nil, err
+	}
+	workspaceCleanupTTL, err := cleanupDurationEnv("WORKSPACE_CLEANUP_TTL", 0)
+	if err != nil {
+		return nil, err
+	}
+	imageCacheCleanupTTL, err := cleanupDurationEnv("IMAGE_CACHE_CLEANUP_TTL", 0)
+	if err != nil {
+		return nil, err
+	}
+	if (workspaceCleanupTTL > 0 || imageCacheCleanupTTL > 0) && cleanupInterval <= 0 {
+		return nil, fmt.Errorf("CLEANUP_INTERVAL must be positive when automatic cleanup is enabled")
+	}
+
 	guestPaths := &Config{
 		GuestWorkspacePath: os.Getenv("GUEST_WORKSPACE"),
 		GuestStateRoot:     os.Getenv("GUEST_STATE_ROOT"),
@@ -473,6 +492,9 @@ func NewConfig(di do.Injector) (*Config, error) {
 		ImageInsecureRegistries:    imageInsecureRegistries,
 		BoxDiskSizeGB:              boxDiskSizeGB,
 		CacheTTL:                   cacheTTL,
+		CleanupInterval:            cleanupInterval,
+		WorkspaceCleanupTTL:        workspaceCleanupTTL,
+		ImageCacheCleanupTTL:       imageCacheCleanupTTL,
 		ImagePullTimeout:           imagePullTimeout,
 		GuestWorkspacePath:         guestPaths.GuestWorkspacePath,
 		GuestHomePath:              guestPaths.GuestHomePath,
@@ -488,6 +510,21 @@ func NewConfig(di do.Injector) (*Config, error) {
 		CapGRPCTarget:              strings.TrimSpace(os.Getenv("CAP_GRPC_TARGET")),
 		Version:                    BuildVersion,
 	}, nil
+}
+
+func cleanupDurationEnv(name string, defaultValue time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return defaultValue, nil
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s %q: %w", name, raw, err)
+	}
+	if parsed < 0 {
+		return 0, fmt.Errorf("%s must not be negative", name)
+	}
+	return parsed, nil
 }
 
 func Setup(di do.Injector) {

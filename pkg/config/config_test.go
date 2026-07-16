@@ -86,6 +86,31 @@ func TestNewConfigNormalizesJupyterProxyBase(t *testing.T) {
 	}
 }
 
+func TestNewConfigRejectsInvalidCleanupDurations(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		interval  string
+		workspace string
+		image     string
+	}{
+		{name: "negative workspace TTL", workspace: "-1h"},
+		{name: "invalid image TTL", image: "tomorrow"},
+		{name: "zero interval while enabled", interval: "0", workspace: "1h"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("DATA_ROOT", filepath.Join(t.TempDir(), "data"))
+			t.Setenv("CLEANUP_INTERVAL", test.interval)
+			t.Setenv("WORKSPACE_CLEANUP_TTL", test.workspace)
+			t.Setenv("IMAGE_CACHE_CLEANUP_TTL", test.image)
+			di := do.New()
+			do.ProvideValue(di, slog.Default())
+			if _, err := NewConfig(di); err == nil {
+				t.Fatal("NewConfig returned nil error")
+			}
+		})
+	}
+}
+
 func testNewConfigParsesEnvironment(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DATA_ROOT", filepath.Join(root, "data"))
@@ -108,6 +133,9 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	t.Setenv("IMAGE_INSECURE_REGISTRIES", "oci-one.example; oci-two.example\noci-three.example")
 	t.Setenv("BOX_DISK_SIZE_GB", "11")
 	t.Setenv("CACHE_TTL", "2h")
+	t.Setenv("CLEANUP_INTERVAL", "30m")
+	t.Setenv("WORKSPACE_CLEANUP_TTL", "24h")
+	t.Setenv("IMAGE_CACHE_CLEANUP_TTL", "48h")
 	t.Setenv("GUEST_WORKSPACE", "/workspace")
 	t.Setenv("GUEST_HOME", "/home/test")
 	t.Setenv("GUEST_STATE_ROOT", "/state")
@@ -147,6 +175,9 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	}
 	if config.BoxDiskSizeGB != 11 || config.CacheTTL != 2*time.Hour {
 		t.Fatalf("box disk/cache = %d/%s", config.BoxDiskSizeGB, config.CacheTTL)
+	}
+	if config.CleanupInterval != 30*time.Minute || config.WorkspaceCleanupTTL != 24*time.Hour || config.ImageCacheCleanupTTL != 48*time.Hour {
+		t.Fatalf("cleanup config = %s/%s/%s", config.CleanupInterval, config.WorkspaceCleanupTTL, config.ImageCacheCleanupTTL)
 	}
 	if config.DefaultImage != "box:latest" || config.DockerDefaultImage != "docker:latest" || config.MicrosandboxDefaultImage != "box:latest" {
 		t.Fatalf("image config = %#v", config)
