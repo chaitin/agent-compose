@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 
+	"agent-compose/pkg/sources"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -120,10 +122,11 @@ type VolumeMountSpec struct {
 
 type SkillSpec struct {
 	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
-	Source   string `yaml:"source,omitempty" json:"source,omitempty"`
+	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 	URL      string `yaml:"url,omitempty" json:"url,omitempty"`
-	Path     string `yaml:"path,omitempty" json:"path,omitempty"`
 	Ref      string `yaml:"ref,omitempty" json:"ref,omitempty"`
+	Path     string `yaml:"path,omitempty" json:"path,omitempty"`
+	Format   string `yaml:"format,omitempty" json:"format,omitempty"`
 	Username string `yaml:"username,omitempty" json:"username,omitempty"`
 	Password string `yaml:"password,omitempty" json:"password,omitempty"`
 	Token    string `yaml:"token,omitempty" json:"token,omitempty"`
@@ -139,16 +142,16 @@ type SchedulerSpec struct {
 }
 
 // ScriptSource is the authoring shape accepted by scheduler.script. Inline is
-// populated for the scalar form and URL for the explicit {url: ...} form.
-// The two forms are mutually exclusive.
+// populated for the scalar form and Source for a flat provider mapping. The
+// two forms are mutually exclusive.
 type ScriptSource struct {
 	Inline string
-	URL    string
+	Source sources.Source
 }
 
 // IsZero reports whether neither authoring form is set.
 func (s ScriptSource) IsZero() bool {
-	return s.Inline == "" && s.URL == ""
+	return s.Inline == "" && !s.Source.HasContent()
 }
 
 func (s *ScriptSource) UnmarshalYAML(value *yaml.Node) error {
@@ -161,13 +164,11 @@ func (s *ScriptSource) UnmarshalYAML(value *yaml.Node) error {
 		*s = ScriptSource{Inline: inline}
 		return nil
 	case yaml.MappingNode:
-		var source struct {
-			URL string `yaml:"url"`
-		}
+		var source sources.Source
 		if err := value.Decode(&source); err != nil {
 			return err
 		}
-		*s = ScriptSource{URL: source.URL}
+		*s = ScriptSource{Source: source}
 		return nil
 	default:
 		return fmt.Errorf("expected scalar or mapping, got %s", nodeKindName(value.Kind))
@@ -175,8 +176,8 @@ func (s *ScriptSource) UnmarshalYAML(value *yaml.Node) error {
 }
 
 func (s ScriptSource) MarshalYAML() (any, error) {
-	if s.URL != "" {
-		return map[string]string{"url": s.URL}, nil
+	if s.Source.HasContent() {
+		return s.Source, nil
 	}
 	return s.Inline, nil
 }
@@ -204,9 +205,26 @@ type WorkspaceSpec struct {
 	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
 	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 	URL      string `yaml:"url,omitempty" json:"url,omitempty"`
-	Branch   string `yaml:"branch,omitempty" json:"branch,omitempty"`
-	Commit   string `yaml:"commit,omitempty" json:"commit,omitempty"`
+	Ref      string `yaml:"ref,omitempty" json:"ref,omitempty"`
 	Path     string `yaml:"path,omitempty" json:"path,omitempty"`
+	Format   string `yaml:"format,omitempty" json:"format,omitempty"`
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	Password string `yaml:"password,omitempty" json:"password,omitempty"`
+	Token    string `yaml:"token,omitempty" json:"token,omitempty"`
+	Target   string `yaml:"target,omitempty" json:"target,omitempty"`
+}
+
+func (s WorkspaceSpec) ContentSource() sources.Source {
+	return sources.Source{
+		Provider: s.Provider,
+		URL:      s.URL,
+		Ref:      s.Ref,
+		Path:     s.Path,
+		Format:   s.Format,
+		Username: s.Username,
+		Password: s.Password,
+		Token:    s.Token,
+	}.Normalized()
 }
 
 type NetworkSpec struct {
@@ -308,28 +326,6 @@ func (s *VolumeMountSpec) UnmarshalYAML(value *yaml.Node) error {
 			return err
 		}
 		*s = VolumeMountSpec(decoded)
-		return nil
-	default:
-		return fmt.Errorf("expected scalar or mapping, got %s", nodeKindName(value.Kind))
-	}
-}
-
-func (s *SkillSpec) UnmarshalYAML(value *yaml.Node) error {
-	switch value.Kind {
-	case yaml.ScalarNode:
-		var raw string
-		if err := value.Decode(&raw); err != nil {
-			return err
-		}
-		s.Path = raw
-		return nil
-	case yaml.MappingNode:
-		type skillSpec SkillSpec
-		var decoded skillSpec
-		if err := value.Decode(&decoded); err != nil {
-			return err
-		}
-		*s = SkillSpec(decoded)
 		return nil
 	default:
 		return fmt.Errorf("expected scalar or mapping, got %s", nodeKindName(value.Kind))
@@ -633,23 +629,9 @@ func validateSkillList(node *yaml.Node, path string) error {
 }
 
 func validateSkill(node *yaml.Node, path string) error {
-	switch node.Kind {
-	case yaml.ScalarNode:
-		return validateScalar(node, path)
-	case yaml.MappingNode:
-		return validateMapping(node, path, map[string]nodeValidator{
-			"name":     validateScalar,
-			"source":   validateScalar,
-			"url":      validateScalar,
-			"path":     validateScalar,
-			"ref":      validateScalar,
-			"username": validateScalar,
-			"password": validateScalar,
-			"token":    validateScalar,
-		})
-	default:
-		return newParseError(node, path, "expected scalar or mapping")
-	}
+	return validateMapping(node, path, sourceFieldValidators(map[string]nodeValidator{
+		"name": validateScalar,
+	}))
 }
 
 func validateBuild(node *yaml.Node, path string) error {
@@ -704,20 +686,7 @@ func validateScriptSource(node *yaml.Node, path string) error {
 	case yaml.ScalarNode:
 		return validateScalar(node, path)
 	case yaml.MappingNode:
-		if err := validateMapping(node, path, map[string]nodeValidator{
-			"url": validateScalar,
-		}); err != nil {
-			return err
-		}
-		if len(node.Content) == 0 {
-			return newParseError(node, path+".url", "script URL is required")
-		}
-		for i := 0; i < len(node.Content); i += 2 {
-			if node.Content[i].Value == "url" && strings.TrimSpace(node.Content[i+1].Value) == "" {
-				return newParseError(node.Content[i+1], path+".url", "script URL is required")
-			}
-		}
-		return nil
+		return validateMapping(node, path, sourceFieldValidators(nil))
 	default:
 		return newParseError(node, path, "expected scalar or mapping")
 	}
@@ -761,14 +730,27 @@ func validateEventTrigger(node *yaml.Node, path string) error {
 }
 
 func validateWorkspace(node *yaml.Node, path string) error {
-	return validateMapping(node, path, map[string]nodeValidator{
-		"name":     validateScalar,
+	return validateMapping(node, path, sourceFieldValidators(map[string]nodeValidator{
+		"name":   validateScalar,
+		"target": validateScalar,
+	}))
+}
+
+func sourceFieldValidators(extra map[string]nodeValidator) map[string]nodeValidator {
+	fields := map[string]nodeValidator{
 		"provider": validateScalar,
 		"url":      validateScalar,
-		"branch":   validateScalar,
-		"commit":   validateScalar,
+		"ref":      validateScalar,
 		"path":     validateScalar,
-	})
+		"format":   validateScalar,
+		"username": validateScalar,
+		"password": validateScalar,
+		"token":    validateScalar,
+	}
+	for name, validator := range extra {
+		fields[name] = validator
+	}
+	return fields
 }
 
 func validateDriver(node *yaml.Node, path string) error {

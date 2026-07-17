@@ -126,20 +126,21 @@ func mapLegacyWorkspaceConfig(config *appconfig.Config, workspace domain.Workspa
 		if err := json.Unmarshal([]byte(workspace.ConfigJSON), &legacy); err != nil {
 			return compose.WorkspaceSpec{}, fmt.Errorf("decode legacy git workspace preset %s: %w", workspace.ID, err)
 		}
-		cloneTarget, err := workspaces.NormalizeGitCloneTarget(workspace.ID, legacy.CloneTarget)
+		target, err := workspaces.NormalizeWorkspaceTarget(workspace.ID, legacy.Target)
 		if err != nil {
 			return compose.WorkspaceSpec{}, err
 		}
-		cloneURL := workspaces.ApplyGitCredentials(legacy.URL, legacy)
-		if strings.TrimSpace(cloneURL) == "" {
+		if strings.TrimSpace(legacy.URL) == "" {
 			return compose.WorkspaceSpec{}, fmt.Errorf("legacy git workspace preset %s has no url", workspace.ID)
 		}
 		return compose.WorkspaceSpec{
 			Provider: "git",
-			URL:      cloneURL,
-			Branch:   strings.TrimSpace(legacy.Branch),
-			Commit:   strings.TrimSpace(legacy.Commit),
-			Path:     cloneTarget,
+			URL:      legacy.URL,
+			Ref:      legacy.Ref,
+			Username: legacy.Username,
+			Password: legacy.Password,
+			Token:    legacy.Token,
+			Target:   target,
 		}, nil
 	case "file":
 		// Keep a valid v2 shape in the returned spec. The synthetic-project
@@ -163,7 +164,7 @@ func mapLegacyWorkspaceConfig(config *appconfig.Config, workspace domain.Workspa
 		if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 			return compose.WorkspaceSpec{}, fmt.Errorf("legacy file workspace preset %s content is outside the data root", workspace.ID)
 		}
-		return compose.WorkspaceSpec{Provider: "local", Path: filepath.ToSlash(relative)}, nil
+		return compose.WorkspaceSpec{Provider: "file", Path: filepath.ToSlash(relative), Target: "."}, nil
 	default:
 		return compose.WorkspaceSpec{}, fmt.Errorf("legacy workspace preset %s has unsupported type %q", workspace.ID, workspace.Type)
 	}

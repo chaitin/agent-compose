@@ -93,7 +93,7 @@ scheduler.cron("hello-every-minute", "*/1 * * * *", async function() {
 name: e2e-docker-script
 workspaces:
   default:
-    provider: local
+    provider: file
     path: .
 agents:
   hello:
@@ -103,7 +103,8 @@ agents:
       docker: {}
     scheduler:
       script:
-        url: ./scripts/hello-scheduler.js
+        provider: file
+        path: ./scripts/hello-scheduler.js
 `, guestImage))
 
 	stdout, stderr, _, exitCode := executeCLICommand("up", "--file", composePath)

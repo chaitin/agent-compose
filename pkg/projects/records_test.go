@@ -179,8 +179,8 @@ func TestNewAgentDefinitionFromSpecCarriesSkills(t *testing.T) {
 		Name:     "reviewer",
 		Provider: "codex",
 		Skills: []compose.NormalizedSkillSpec{
-			{Name: "pdf", Source: "git", URL: "https://github.com/anthropics/skills.git", Path: "skills/pdf", Ref: "main", Token: "${GIT_TOKEN}"},
-			{Name: "local-review", Source: "file", Path: "/tmp/skills/local-review"},
+			{Name: "pdf", Provider: "git", URL: "https://github.com/anthropics/skills.git", Path: "skills/pdf", Ref: "main", Token: "${GIT_TOKEN}"},
+			{Name: "local-review", Provider: "file", Path: "/tmp/skills/local-review"},
 		},
 	}
 
@@ -202,13 +202,13 @@ func TestNewAgentDefinitionFromSpecCarriesSkills(t *testing.T) {
 func TestManagedAgentDefinitionUnchangedComparesSkills(t *testing.T) {
 	existing := domain.AgentDefinition{
 		ID: "agent-1", Name: "Agent", Enabled: true, Provider: "codex", ConfigJSON: "{}",
-		Skills: []domain.AgentSkill{{Name: "pdf", Source: "git", URL: "https://github.com/anthropics/skills.git", Path: "skills/pdf"}},
+		Skills: []domain.AgentSkill{{Name: "pdf", Provider: "git", URL: "https://github.com/anthropics/skills.git", Path: "skills/pdf"}},
 	}
 	current := existing
 	if !ManagedAgentDefinitionUnchanged(existing, current) {
 		t.Fatalf("matching skills should be unchanged")
 	}
-	current.Skills = []domain.AgentSkill{{Name: "docx", Source: "git", URL: "https://github.com/anthropics/skills.git", Path: "skills/docx"}}
+	current.Skills = []domain.AgentSkill{{Name: "docx", Provider: "git", URL: "https://github.com/anthropics/skills.git", Path: "skills/docx"}}
 	if ManagedAgentDefinitionUnchanged(existing, current) {
 		t.Fatalf("different skills should mark managed agent changed")
 	}

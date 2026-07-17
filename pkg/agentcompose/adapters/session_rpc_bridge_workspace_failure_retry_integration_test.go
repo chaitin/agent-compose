@@ -16,6 +16,7 @@ import (
 
 	testutil "agent-compose/pkg/internal/testutil"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/sources"
 	"agent-compose/pkg/storage/sessionstore"
 	"agent-compose/pkg/workspaces"
 )
@@ -104,8 +105,7 @@ func TestIntegrationSandboxRPCBridgeGitWorkspaceProvisioningFailureRetry(t *test
 	const workspaceID = "git-provisioning-failure-retry"
 	sourceRepo := filepath.Join(t.TempDir(), "source.git")
 	configJSON, err := json.Marshal(workspaces.GitWorkspaceConfig{
-		URL:    "file://" + filepath.ToSlash(sourceRepo),
-		Branch: "main",
+		Source: sources.Source{Provider: sources.ProviderGit, URL: "file://" + filepath.ToSlash(sourceRepo), Ref: "main"},
 	})
 	if err != nil {
 		t.Fatalf("marshal Git workspace config: %v", err)

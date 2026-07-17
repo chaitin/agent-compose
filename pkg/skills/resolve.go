@@ -12,9 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -22,12 +20,8 @@ import (
 	appconfig "agent-compose/pkg/config"
 	"agent-compose/pkg/execution"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/sources"
 	"agent-compose/pkg/workspaces"
-)
-
-var (
-	credentialURLPattern      = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*:)//[^@\s]+@`)
-	gitRemoteHelperURLPattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*::`)
 )
 
 const (
@@ -111,16 +105,22 @@ func (r Resolver) Projected(skills []ResolvedSkill) []execution.ResolvedAgentSki
 }
 
 func (r Resolver) resolveOne(ctx context.Context, spec domain.AgentSkill) (ResolvedSkill, error) {
-	source := strings.ToLower(strings.TrimSpace(spec.Source))
-	switch source {
-	case "file":
+	provider := strings.ToLower(strings.TrimSpace(spec.Provider))
+	switch provider {
+	case sources.ProviderFile:
+		if spec.Format == sources.FormatZIP {
+			return r.resolveZip(ctx, spec)
+		}
 		return r.resolveFile(spec)
-	case "git":
+	case sources.ProviderGit:
 		return r.resolveGit(ctx, spec)
-	case "zip":
+	case sources.ProviderHTTP:
+		if spec.Format != sources.FormatZIP {
+			return ResolvedSkill{}, fmt.Errorf("skill %s http format %q is not supported", spec.Name, spec.Format)
+		}
 		return r.resolveZip(ctx, spec)
 	default:
-		return ResolvedSkill{}, fmt.Errorf("skill %s source %q is not supported", spec.Name, spec.Source)
+		return ResolvedSkill{}, fmt.Errorf("skill %s provider %q is not supported", spec.Name, spec.Provider)
 	}
 }
 
@@ -165,32 +165,21 @@ func (r Resolver) resolveGit(ctx context.Context, spec domain.AgentSkill) (Resol
 			return ResolvedSkill{}, fmt.Errorf("validate git skill %s url: %w", spec.Name, err)
 		}
 	}
-	urlValue := gitURLWithCredentials(rawURL, spec, r.Env)
-	if urlValue == "" {
+	if rawURL == "" {
 		return ResolvedSkill{}, fmt.Errorf("skill %s git url is required", spec.Name)
 	}
-	if err := validateGitOperand("git url", urlValue); err != nil {
-		return ResolvedSkill{}, fmt.Errorf("validate git skill %s url: %w", spec.Name, err)
-	}
-	if err := validateGitURLScheme(urlValue); err != nil {
-		return ResolvedSkill{}, fmt.Errorf("validate git skill %s url: %w", spec.Name, err)
-	}
-	ref := strings.TrimSpace(spec.Ref)
-	if err := validateGitOperand("git ref", ref); err != nil {
-		return ResolvedSkill{}, fmt.Errorf("validate git skill %s ref: %w", spec.Name, err)
-	}
-	commit, err := gitResolve(ctx, urlValue, ref)
+	source := domain.AgentSkillSource(spec)
+	source.URL = rawURL
+	gitClient := sources.GitClient{Env: r.Env}
+	resolved, err := gitClient.Resolve(ctx, source)
 	if err != nil {
 		return ResolvedSkill{}, fmt.Errorf("resolve git skill %s ref: %w", spec.Name, err)
 	}
-	key := cacheKey("git", gitCacheURL(rawURL), commit, spec.Path)
+	key := cacheKey("git", gitCacheURL(rawURL), resolved.Commit, spec.Path)
 	dst := filepath.Join(r.CacheRoot, key)
 	if err := ensureCachedDir(dst, func(tmp string) error {
 		cloneDir := filepath.Join(tmp, "repo")
-		if err := runGit(ctx, "", "clone", "--no-checkout", "--", urlValue, cloneDir); err != nil {
-			return err
-		}
-		if err := runGit(ctx, cloneDir, "checkout", commit); err != nil {
+		if err := gitClient.CheckoutCommit(ctx, source, resolved.Commit, cloneDir); err != nil {
 			return err
 		}
 		subdir := strings.TrimSpace(spec.Path)
@@ -211,7 +200,7 @@ func (r Resolver) resolveGit(ctx context.Context, spec domain.AgentSkill) (Resol
 	if err := validateSkillDir(spec.Name, content); err != nil {
 		return ResolvedSkill{}, err
 	}
-	if err := touchArtifactManifest(dst, "git", commit); err != nil {
+	if err := touchArtifactManifest(dst, "git", resolved.Commit); err != nil {
 		return ResolvedSkill{}, err
 	}
 	return ResolvedSkill{Name: spec.Name, LocalDir: content}, nil
@@ -252,7 +241,7 @@ func (r Resolver) resolveZip(ctx context.Context, spec domain.AgentSkill) (Resol
 	if archivePath == "" {
 		archivePath = strings.TrimSpace(spec.Path)
 	} else if strings.HasPrefix(strings.ToLower(archivePath), "http://") || strings.HasPrefix(strings.ToLower(archivePath), "https://") {
-		path, done, err := r.download(ctx, archivePath)
+		path, done, err := r.download(ctx, archivePath, domain.AgentSkillSource(spec))
 		if err != nil {
 			return ResolvedSkill{}, fmt.Errorf("download skill %s zip: %w", spec.Name, err)
 		}
@@ -322,7 +311,7 @@ func safeArtifactSubdir(root, subdir string) (string, error) {
 	return target, nil
 }
 
-func (r Resolver) download(ctx context.Context, rawURL string) (string, func(), error) {
+func (r Resolver) download(ctx context.Context, rawURL string, source sources.Source) (string, func(), error) {
 	if err := validateDownloadURL(rawURL); err != nil {
 		return "", nil, err
 	}
@@ -350,6 +339,7 @@ func (r Resolver) download(ctx context.Context, rawURL string) (string, func(), 
 	if err != nil {
 		return "", nil, err
 	}
+	sources.ApplyHTTPAuthentication(req, source, r.Env)
 	resp, err := clientCopy.Do(req)
 	if err != nil {
 		return "", nil, err
@@ -780,84 +770,6 @@ func cacheKey(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func runGit(ctx context.Context, dir string, args ...string) error {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	if strings.TrimSpace(dir) != "" {
-		cmd.Dir = dir
-	}
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		return nil
-	}
-	message := strings.TrimSpace(string(output))
-	if message == "" {
-		message = err.Error()
-	}
-	return fmt.Errorf("git %s failed: %s", redactGitArgs(args), redactSecrets(message))
-}
-
-func gitResolve(ctx context.Context, urlValue, ref string) (string, error) {
-	if err := validateGitOperand("git url", urlValue); err != nil {
-		return "", err
-	}
-	target := strings.TrimSpace(ref)
-	if target == "" {
-		target = "HEAD"
-	}
-	if err := validateGitOperand("git ref", target); err != nil {
-		return "", err
-	}
-	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--", urlValue, target)
-	output, err := cmd.Output()
-	if err != nil || strings.TrimSpace(string(output)) == "" {
-		if target == "HEAD" {
-			cmd = exec.CommandContext(ctx, "git", "ls-remote", "--symref", "--", urlValue, "HEAD")
-			output, err = cmd.Output()
-		}
-	}
-	if err != nil {
-		return "", err
-	}
-	for _, line := range strings.Split(string(output), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 2 && len(fields[0]) == 40 {
-			return fields[0], nil
-		}
-	}
-	return "", fmt.Errorf("could not resolve ref %q", target)
-}
-
-func validateGitOperand(label, value string) error {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return nil
-	}
-	if strings.HasPrefix(trimmed, "-") {
-		return fmt.Errorf("%s must not start with '-'", label)
-	}
-	return nil
-}
-
-func validateGitURLScheme(value string) error {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return nil
-	}
-	if gitRemoteHelperURLPattern.MatchString(trimmed) {
-		return fmt.Errorf("git remote helper URLs are not supported")
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil || parsed.Scheme == "" {
-		return nil
-	}
-	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https", "ssh", "git", "file":
-		return nil
-	default:
-		return fmt.Errorf("git url scheme %q is not supported", parsed.Scheme)
-	}
-}
-
 func gitCacheURL(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	parsed, err := url.Parse(trimmed)
@@ -956,18 +868,6 @@ func copyWithExpandedLimit(dst io.Writer, src io.Reader, expanded *uint64, limit
 	return nil
 }
 
-func redactGitArgs(args []string) string {
-	redacted := make([]string, 0, len(args))
-	for _, arg := range args {
-		redacted = append(redacted, redactSecrets(arg))
-	}
-	return strings.Join(redacted, " ")
-}
-
-func redactSecrets(value string) string {
-	return credentialURLPattern.ReplaceAllString(value, "$1//xxxxx@")
-}
-
 func resolveSecretRefs(value string, env map[string]string) string {
 	if !strings.HasPrefix(value, "${") || !strings.HasSuffix(value, "}") {
 		return value
@@ -977,29 +877,4 @@ func resolveSecretRefs(value string, env map[string]string) string {
 		return env[name]
 	}
 	return os.Getenv(name)
-}
-
-func gitURLWithCredentials(raw string, spec domain.AgentSkill, env map[string]string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return raw
-	}
-	username := resolveSecretRefs(strings.TrimSpace(spec.Username), env)
-	password := resolveSecretRefs(strings.TrimSpace(spec.Password), env)
-	token := resolveSecretRefs(strings.TrimSpace(spec.Token), env)
-	if token != "" {
-		if username == "" {
-			username = "oauth2"
-		}
-		parsed.User = url.UserPassword(username, token)
-		return parsed.String()
-	}
-	if username != "" || password != "" {
-		if password != "" {
-			parsed.User = url.UserPassword(username, password)
-		} else {
-			parsed.User = url.User(username)
-		}
-	}
-	return parsed.String()
 }

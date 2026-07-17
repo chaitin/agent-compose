@@ -32,13 +32,13 @@ variables:
 
 workspaces:
   source:
-    provider: local
+    provider: file
     path: .
   upstream:
     provider: git
     url: https://github.com/example/project.git
-    branch: main
-    path: .
+    ref: main
+    target: .
 
 mcp_servers:
   local-tools:
@@ -106,7 +106,7 @@ agents:
     skills:
       - ./skills/review
       - name: release-check
-        source: git
+        provider: git
         url: https://github.com/example/agent-skills.git
         path: skills/release-check
         ref: main
@@ -239,7 +239,7 @@ variables:
 ```yaml
 workspaces:
   source:
-    provider: local
+    provider: file
     path: .
 ```
 
@@ -248,7 +248,7 @@ workspaces:
 ```yaml
 # 错误：顶层 workspace 会被严格解析器拒绝
 workspace:
-  provider: local
+  provider: file
   path: .
 ```
 
@@ -257,23 +257,27 @@ workspace:
 | 字段 | 类型 | 适用范围 | 作用 |
 | --- | --- | --- | --- |
 | `name` | string | 兼容字段 | 顶层条目的实际名称由 map key 决定；通常不要重复填写。 |
-| `provider` | string | 必填 | `local` 或 `git`。 |
-| `url` | string | `git` 必填 | Git clone URL；`local` 不允许设置。 |
-| `branch` | string | `git` 可选 | 要检出的分支；`local` 不允许设置。 |
-| `path` | string | 必填/可选 | `local` 时是配置文件目录下的相对源目录且不可逃逸；`git` 时是仓库内 clone target/subpath，默认 `.`。 |
+| `provider` | string | 必填 | `file` 或 `git`。 |
+| `url` | string | `git` 必填 | Git clone URL；`file` 不允许设置。 |
+| `ref` | string | `git` 可选 | Git branch、tag 或 commit。 |
+| `path` | string | `file` 必填 | 相对于 compose 文件目录的来源路径，不可逃逸项目根目录；Git Workspace 不支持仓库内子目录。 |
+| `target` | string | 可选 | sandbox workspace 根目录下的目标目录，默认 `.`。 |
+| `username` | string | `git` 可选 | Git HTTP 用户名。 |
+| `password` | string | `git` 可选 | Git 密码，只允许完整环境引用 `${NAME}`。 |
+| `token` | string | `git` 可选 | Git token，只允许完整环境引用 `${NAME}`。 |
 
 本地 Workspace 在每次项目 run 创建时被复制为隔离快照，Agent 对快照的修改不会写回源目录。
 
 ```yaml
 workspaces:
   source:
-    provider: local
+    provider: file
     path: ./src
   release-branch:
     provider: git
     url: https://github.com/example/service.git
-    branch: release
-    path: .
+    ref: release
+    target: .
 ```
 
 Workspace 选择规则：
@@ -376,6 +380,8 @@ agents:
 | 字段 | 类型 | 默认值 | 作用 |
 | --- | --- | --- | --- |
 | `status` | string | enabled 语义 | `enabled` 或 `disabled`。空值等同启用；禁用后定义保留但不可按正常流程运行，Scheduler 也不会启用。 |
+| `display_name` | string | 空 | Agent 的可读显示名称。 |
+| `description` | string | 空 | Agent 职责的可读说明。 |
 | `provider` | string | `codex` | Agent CLI/provider：`codex`、`claude`、`gemini` 或 `opencode`。兼容别名会在持久化边界归一化。 |
 | `model` | string | provider/daemon 默认 | 模型名；支持 `${NAME}` 插值。 |
 | `system_prompt` | string | 空 | 附加的系统提示，适合使用 YAML `|` 多行标量。 |
@@ -567,21 +573,14 @@ capset_ids:
 
 ### `skills`
 
-Skill 目录必须包含有效的 `SKILL.md`。支持 `file`、`git` 和 `zip` 来源；同一 Agent 的最终 Skill 名不可重复。
+Skill 目录必须包含有效的 `SKILL.md`。provider 支持 `file`、`http` 和 `git`；同一 Agent 的最终 Skill 名不可重复。ZIP 是内容格式，不是 provider。
 
-本地目录短写：
-
-```yaml
-skills:
-  - ./skills/review
-```
-
-等价完整写法：
+本地目录：
 
 ```yaml
 skills:
   - name: review
-    source: file
+    provider: file
     path: ./skills/review
 ```
 
@@ -590,7 +589,7 @@ Git 来源：
 ```yaml
 skills:
   - name: review
-    source: git
+    provider: git
     url: https://github.com/example/skills.git
     path: review
     ref: v1.0.0
@@ -598,36 +597,32 @@ skills:
     token: ${GIT_TOKEN}
 ```
 
-GitHub shorthand：
-
-```yaml
-skills:
-  - source: git
-    url: github:example/skills//review@v1.0.0
-```
-
-ZIP 来源：
+远程 ZIP：
 
 ```yaml
 skills:
   - name: review
-    source: zip
+    provider: http
     url: https://downloads.example.com/review.zip
+    format: zip
     path: review
 ```
 
 | 字段 | 类型 | 作用 |
 | --- | --- | --- |
 | `name` | string | Skill 名；省略时从 path/URL 推导，最终必须符合稳定标识符格式。 |
-| `source` | string | `file`、`git` 或 `zip`；多数本地路径、`.git`、`.zip` 可自动推断。普通 HTTP URL 无法唯一推断，建议显式填写。 |
-| `url` | string | Git remote 或 ZIP URL/本地归档位置。 |
-| `path` | string | `file` 的本地目录；Git/远程 ZIP 的制品内子目录。相对本地路径以 compose 文件目录为基准。 |
-| `ref` | string | Git branch、tag 或 ref。 |
-| `username` | string | Git HTTP 用户名，可插值。 |
-| `password` | string | Git 密码，只允许完整环境引用 `${NAME}`。 |
-| `token` | string | Git token，只允许完整环境引用 `${NAME}`。 |
+| `provider` | string | 必填，支持 `file`、`http` 或 `git`。 |
+| `url` | string | `http` 和 `git` 必填。 |
+| `path` | string | `file` 的本地路径；Git 或 ZIP 内容内的子目录。相对 file 路径以 compose 文件目录为基准。 |
+| `ref` | string | Git branch、tag 或 commit。 |
+| `format` | string | 可选内容格式，目前只支持 `zip`；HTTP Skill 必须设置。 |
+| `username` | string | HTTP/Git 用户名，可插值。 |
+| `password` | string | HTTP/Git 密码，只允许完整环境引用 `${NAME}`。 |
+| `token` | string | HTTP/Git token，只允许完整环境引用 `${NAME}`。 |
 
 `password` 和 `token` 不允许明文。它们在 Skill 解析阶段通过 daemon 环境解析，避免把凭证展开后写入项目规范。远程 ZIP 下载限制为 HTTP(S)，并执行大小、压缩包和网络地址安全检查。
+
+Git ref 会在各自业务生命周期中解析：Skill 在 Agent run 时解析，Workspace 在 sandbox provisioning 时解析，Scheduler 来源在 `config`/`up` 时解析并保存脚本快照。因此 moving branch 在三处可能得到不同 commit；需要严格一致时，应在 `ref` 中直接填写 commit SHA。
 
 ### `volumes`
 
@@ -677,7 +672,7 @@ workspace:
 
 ```yaml
 workspace:
-  provider: local
+  provider: file
   path: ./src
 ```
 
@@ -687,11 +682,11 @@ workspace:
 workspace:
   provider: git
   url: https://github.com/example/project.git
-  branch: main
-  path: .
+  ref: main
+  target: .
 ```
 
-若 `name` 与 `provider`/`url`/`branch`/`path` 同时出现，该对象按内联 Workspace 处理，而不是从顶层继承后局部覆盖。需要复用时只写 `name`。
+若 `name` 与任一来源字段或 `target` 同时出现，该对象按内联 Workspace 处理，而不是从顶层继承后局部覆盖。需要复用时只写 `name`。
 
 ### `scheduler`
 
@@ -702,7 +697,7 @@ Scheduler 可以使用声明式 `triggers`，也可以使用 JavaScript `script`
 | `enabled` | bool | `true` | 是否启用该 Agent 的 Scheduler。Agent `status: disabled` 也会使其无效。 |
 | `sandbox_policy` | string | `new` | Scheduler 默认 sandbox 策略：`new` 或 `sticky`。 |
 | `triggers` | list | 空 | 声明式触发器。 |
-| `script` | string/object | 空 | 内联 JavaScript，或 `{url: ...}` 外部脚本来源。不能和 `triggers` 同时使用。 |
+| `script` | string/object | 空 | 内联 JavaScript，或扁平的 `file`/`http`/`git` 来源配置。不能和 `triggers` 同时使用。 |
 
 `new` 为每次调用创建新 sandbox；`sticky` 允许 Scheduler 绑定并复用 sandbox。单个 Trigger 的 `sandbox_policy` 可覆盖执行 Agent 时的策略。
 
@@ -760,16 +755,17 @@ scheduler:
 scheduler:
   enabled: true
   script:
-    url: ./scheduler.js
+    provider: file
+    path: ./scheduler.js
 ```
 
-`url` 支持：
+外部脚本 mapping 使用与 Skill、Workspace 相同的来源字段：
 
-- 相对或绝对本地路径；相对路径以 compose 文件目录为基准。
-- `file:///absolute/path/scheduler.js`。
-- `http://` 或 `https://` URL。
+- File：`provider: file` 配合 `path`，相对路径以 compose 文件目录为基准。
+- HTTP：`provider: http` 配合 `url`，可选认证字段。
+- Git：`provider: git` 配合 `url`、可选 `ref` 和必填的仓库内 `path`。
 
-应用项目时 CLI 会读取脚本并将内容快照保存到项目规范，而不是让 daemon 以后重新读取来源。读取限制包括 10 秒超时、最大 1 MiB、最多 5 次 HTTP redirect、UTF-8 校验；HTTPS 不允许降级 redirect 到 HTTP，URL userinfo 不允许使用。
+应用项目时 CLI 会读取脚本并将内容快照保存到项目规范，而不是让 daemon 以后重新读取来源。HTTP 读取限制包括 10 秒超时、最大 1 MiB、最多 5 次 redirect、UTF-8 校验；HTTPS 不允许降级 redirect 到 HTTP，URL userinfo 不允许使用。
 
 ### `jupyter`
 
@@ -807,7 +803,7 @@ network:
 
 ```yaml
 workspace:
-  provider: local
+  provider: file
   path: .
 ```
 
@@ -816,7 +812,7 @@ workspace:
 ```yaml
 workspaces:
   source:
-    provider: local
+    provider: file
     path: .
 
 agents:

@@ -192,9 +192,13 @@ type canonicalRevisionWorkspace struct {
 	Name      string                        `json:"name"`
 	Provider  string                        `json:"provider"`
 	URL       string                        `json:"url"`
-	Branch    string                        `json:"branch"`
-	Commit    string                        `json:"commit"`
+	Ref       string                        `json:"ref"`
 	Path      string                        `json:"path"`
+	Format    string                        `json:"format"`
+	Target    string                        `json:"target"`
+	Username  string                        `json:"username"`
+	Password  string                        `json:"password"`
+	Token     string                        `json:"token"`
 	Workspace *agentcomposev2.WorkspaceSpec `json:"workspace"`
 }
 
@@ -220,9 +224,9 @@ func restoreCanonicalProjectWorkspaces(data []byte, spec *agentcomposev2.Project
 		}
 		if strings.TrimSpace(workspace.Provider) == "" &&
 			strings.TrimSpace(workspace.URL) == "" &&
-			strings.TrimSpace(workspace.Branch) == "" &&
-			strings.TrimSpace(workspace.Commit) == "" &&
-			strings.TrimSpace(workspace.Path) == "" {
+			strings.TrimSpace(workspace.Ref) == "" &&
+			strings.TrimSpace(workspace.Path) == "" &&
+			strings.TrimSpace(workspace.Target) == "" {
 			continue
 		}
 		if key := strings.TrimSpace(workspace.Key); key != "" {
@@ -233,9 +237,13 @@ func restoreCanonicalProjectWorkspaces(data []byte, spec *agentcomposev2.Project
 		spec.Workspaces[i].Workspace = &agentcomposev2.WorkspaceSpec{
 			Provider: workspace.Provider,
 			Url:      workspace.URL,
-			Branch:   workspace.Branch,
-			Commit:   workspace.Commit,
+			Ref:      workspace.Ref,
 			Path:     workspace.Path,
+			Format:   workspace.Format,
+			Target:   workspace.Target,
+			Username: workspace.Username,
+			Password: workspace.Password,
+			Token:    workspace.Token,
 		}
 	}
 	return nil
@@ -277,9 +285,13 @@ func ComposeWorkspaceSpecFromV2(workspace *agentcomposev2.WorkspaceSpec) *compos
 		Name:     workspace.GetName(),
 		Provider: workspace.GetProvider(),
 		URL:      workspace.GetUrl(),
-		Branch:   workspace.GetBranch(),
-		Commit:   workspace.GetCommit(),
+		Ref:      workspace.GetRef(),
 		Path:     workspace.GetPath(),
+		Format:   workspace.GetFormat(),
+		Target:   workspace.GetTarget(),
+		Username: workspace.GetUsername(),
+		Password: workspace.GetPassword(),
+		Token:    workspace.GetToken(),
 	}
 }
 
@@ -304,7 +316,7 @@ func ProjectRunWorkspaceSpecsFromV2(projectWorkspaces []*agentcomposev2.NamedWor
 	agent := ComposeWorkspaceSpecFromV2(agentWorkspace)
 	if agent != nil {
 		hasName := strings.TrimSpace(agent.Name) != ""
-		hasInline := strings.TrimSpace(agent.Provider) != "" || strings.TrimSpace(agent.URL) != "" || strings.TrimSpace(agent.Branch) != "" || strings.TrimSpace(agent.Commit) != "" || strings.TrimSpace(agent.Path) != ""
+		hasInline := agent.ContentSource().HasContent() || strings.TrimSpace(agent.Target) != ""
 		switch {
 		case hasInline:
 			return nil, agent, nil

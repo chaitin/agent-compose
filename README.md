@@ -133,13 +133,13 @@ More runnable examples (cron, timeout, scheduler scripts) live in
 
 ## The compose file
 
-**Top-level fields:** `name`, `variables`, `agents`, `mcp_servers`, `volumes`, `network`.
+**Top-level fields:** `name`, `env_file`, `variables`, `workspaces`, `agents`, `mcp_servers`, `volumes`, `network`.
 
 **Common agent fields:** `provider`, `model`, `system_prompt`, `image`,
 `driver`, `env` (scalars or `{ value, secret }`), `workspace`, `scheduler`,
 `mcp_servers`, `skills`, and `volumes`.
 
-Provision an agent's workspace from a local path (`provider: local`) or a Git
+Provision an agent's workspace from a local path (`provider: file`) or a Git
 repository (`provider: git`):
 
 ```yaml
@@ -148,12 +148,13 @@ agents:
     workspace:
       provider: git
       url: https://github.com/example/repo.git
-      branch: main
+      ref: main
+      target: .
 ```
 
-Scheduler scripts may be inline JavaScript or an explicit `{ url: ... }`
-source using a local path, `file://`, `http://`, or `https://`. `config` and
-`up` fetch URL sources locally and send an inline snapshot to the daemon. Use
+Scheduler scripts may be inline JavaScript or a flat source mapping using
+`provider: file`, `provider: http`, or `provider: git`. `config` and `up`
+fetch mapped sources locally and send an inline snapshot to the daemon. Use
 either `scheduler.script` or `scheduler.triggers` in one scheduler.
 
 Add scheduled or event-driven runs. Use either `scheduler.triggers` **or** an

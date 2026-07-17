@@ -155,7 +155,8 @@ workspaces:
   default:
     provider: git
     url: https://github.com/org/repo.git
-    branch: main
+    ref: main
+    target: .
 
 agents:
   reviewer:

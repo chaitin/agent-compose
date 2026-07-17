@@ -28,6 +28,7 @@ import (
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/sessionstore"
 	"agent-compose/pkg/volumes"
+	"agent-compose/pkg/workspaces"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
@@ -141,7 +142,7 @@ func TestRunsPreparationWorkspaceAndStatusWorkflows(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sourceDir, "README.md"), []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	spec := `{"variables":[{"name":"PROJECT_VAR","value":"project"}],"agents":[{"name":"worker","workspace":{"provider":"local","path":"."}}]}`
+	spec := `{"variables":[{"name":"PROJECT_VAR","value":"project"}],"agents":[{"name":"worker","workspace":{"provider":"file","path":"."}}]}`
 	store := &fakePreparationStore{
 		project:  domain.ProjectRecord{ID: "project-1", Name: "Project", SourcePath: sourceDir},
 		revision: domain.ProjectRevisionRecord{ProjectID: "project-1", Revision: 1, SpecJSON: spec},
@@ -187,11 +188,11 @@ func TestRunsPreparationWorkspaceAndStatusWorkflows(t *testing.T) {
 	if path, err := ResolveLocalProjectWorkspacePath(store.project, "."); err != nil || path == "" {
 		t.Fatalf("ResolveLocalProjectWorkspacePath path=%q err=%v", path, err)
 	}
-	gitConfig, err := projectRunGitWorkspaceConfig(run, &compose.WorkspaceSpec{Provider: "git", URL: "https://example.test/repo.git", Branch: "main", Commit: "abc123", Path: "."})
+	gitConfig, err := projectRunGitWorkspaceConfig(run, &compose.WorkspaceSpec{Provider: "git", URL: "https://example.test/repo.git", Ref: "abc123", Target: "."})
 	if err != nil {
 		t.Fatalf("projectRunGitWorkspaceConfig returned error: %v", err)
 	}
-	if !strings.Contains(gitConfig.ConfigJSON, `"branch":"main"`) || !strings.Contains(gitConfig.ConfigJSON, `"commit":"abc123"`) {
+	if !strings.Contains(gitConfig.ConfigJSON, `"ref":"abc123"`) || !strings.Contains(gitConfig.ConfigJSON, `"target":"."`) {
 		t.Fatalf("git workspace config lost revision fields: %s", gitConfig.ConfigJSON)
 	}
 	if _, err := projectRunGitWorkspaceConfig(run, &compose.WorkspaceSpec{Provider: "git"}); err == nil {
@@ -206,14 +207,28 @@ func TestRunsPreparationWorkspaceAndStatusWorkflows(t *testing.T) {
 	if _, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, nil, &compose.WorkspaceSpec{Provider: "s3"}); err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("unsupported provider err=%v", err)
 	}
-	localWorkspace, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, nil, &compose.WorkspaceSpec{Provider: "local", Path: "."})
+	localWorkspace, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, nil, &compose.WorkspaceSpec{Provider: "file", Path: "."})
 	if err != nil || localWorkspace == nil || localWorkspace.Type != "file" {
 		t.Fatalf("agent local workspace = %#v/%v", localWorkspace, err)
 	}
-	if _, err := (&Controller{}).materializeLocalProjectRunWorkspace(run, store.project, &compose.WorkspaceSpec{Provider: "local", Path: "."}); err == nil {
+	targetedWorkspace, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, nil, &compose.WorkspaceSpec{Provider: "file", Path: ".", Target: "nested"})
+	if err != nil || targetedWorkspace == nil {
+		t.Fatalf("targeted local workspace = %#v/%v", targetedWorkspace, err)
+	}
+	targetedRoot, err := workspaces.FileWorkspaceContentRoot(controller.config, *targetedWorkspace)
+	if err != nil {
+		t.Fatalf("targeted workspace root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(targetedRoot, "nested", "README.md")); err != nil {
+		t.Fatalf("targeted workspace file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(targetedRoot, "README.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("workspace source was copied outside target: %v", err)
+	}
+	if _, err := (&Controller{}).materializeLocalProjectRunWorkspace(run, store.project, &compose.WorkspaceSpec{Provider: "file", Path: "."}); err == nil {
 		t.Fatalf("materialize without config returned nil error")
 	}
-	if _, err := controller.materializeLocalProjectRunWorkspace(run, store.project, &compose.WorkspaceSpec{Provider: "local", Path: "missing"}); err == nil {
+	if _, err := controller.materializeLocalProjectRunWorkspace(run, store.project, &compose.WorkspaceSpec{Provider: "file", Path: "missing"}); err == nil {
 		t.Fatalf("materialize missing local path returned nil error")
 	}
 	if snapshot := toSandboxWorkspaceSnapshot(domain.WorkspaceConfig{ID: "workspace", Name: "Workspace", Type: "file", ConfigJSON: "{}"}); snapshot.ID != "workspace" {

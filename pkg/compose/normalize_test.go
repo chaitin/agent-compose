@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"agent-compose/pkg/sources"
 )
 
 func TestNormalizeDefaultsProjectNameFromComposeDirectory(t *testing.T) {
@@ -17,7 +19,7 @@ func TestNormalizeDefaultsProjectNameFromComposeDirectory(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`
 workspaces:
   default:
-    provider: local
+    provider: file
     path: .
 agents:
   reviewer:
@@ -45,7 +47,7 @@ func TestNormalizeDefaultsProjectNameFromRelativeComposePath(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`
 workspaces:
   default:
-    provider: local
+    provider: file
     path: .
 agents:
   reviewer:
@@ -163,7 +165,7 @@ agents:
 func TestNormalizeSortsAgentsForStableOutput(t *testing.T) {
 	spec := &ProjectSpec{
 		Name:       "stable",
-		Workspaces: map[string]WorkspaceSpec{"default": {Provider: "local", Path: "."}},
+		Workspaces: map[string]WorkspaceSpec{"default": {Provider: "file", Path: "."}},
 		Agents: map[string]AgentSpec{
 			"worker":   {Provider: "codex"},
 			"reviewer": {Provider: "codex"},
@@ -281,20 +283,23 @@ agents:
   reviewer:
     provider: codex
     skills:
-      - ./skills/local-review
+      - name: local-review
+        provider: file
+        path: ./skills/local-review
       - name: pdf
-        source: git
+        provider: git
         url: https://github.com/anthropics/skills.git
         path: skills/pdf
         token: ${GIT_TOKEN}
       - name: report
-        source: zip
+        provider: http
         url: https://example.com/report.zip
+        format: zip
         path: report
       - name: local-report
-        source: zip
-        url: ./archives/report.zip
-        path: report
+        provider: file
+        path: ./archives/report.zip
+        format: zip
 `)
 
 	normalized, err := Normalize(spec, NormalizeOptions{ComposePath: composePath})
@@ -305,21 +310,21 @@ agents:
 	if len(skills) != 4 {
 		t.Fatalf("skills = %#v, want 4", skills)
 	}
-	if skills[0].Name != "local-review" || skills[0].Source != "file" || skills[0].Path != filepath.Join(dir, "skills", "local-review") {
+	if skills[0].Name != "local-review" || skills[0].Provider != "file" || skills[0].Path != filepath.Join(dir, "skills", "local-review") {
 		t.Fatalf("local skill = %#v", skills[0])
 	}
-	if skills[1].Name != "pdf" || skills[1].Source != "git" || skills[1].Token != "${GIT_TOKEN}" {
+	if skills[1].Name != "pdf" || skills[1].Provider != "git" || skills[1].Token != "${GIT_TOKEN}" {
 		t.Fatalf("git skill = %#v", skills[1])
 	}
-	if skills[2].Source != "zip" || skills[2].URL != "https://example.com/report.zip" || skills[2].Path != "report" {
+	if skills[2].Provider != "http" || skills[2].Format != "zip" || skills[2].URL != "https://example.com/report.zip" || skills[2].Path != "report" {
 		t.Fatalf("zip skill = %#v", skills[2])
 	}
-	if skills[3].Source != "zip" || skills[3].URL != filepath.Join(dir, "archives", "report.zip") || skills[3].Path != "report" {
+	if skills[3].Provider != "file" || skills[3].Format != "zip" || skills[3].Path != filepath.Join(dir, "archives", "report.zip") {
 		t.Fatalf("local zip skill = %#v", skills[3])
 	}
 }
 
-func TestNormalizeAgentSkillsInterpolatesSourceBeforeLowercase(t *testing.T) {
+func TestNormalizeAgentSkillsInterpolatesProviderBeforeLowercase(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: skills-project
 agents:
@@ -327,17 +332,35 @@ agents:
     provider: codex
     skills:
       - name: pdf
-        source: ${SKILL_SOURCE}
+        provider: ${SKILL_PROVIDER}
         url: https://github.com/anthropics/skills.git
         path: skills/pdf
 `)
 
-	normalized, err := Normalize(spec, NormalizeOptions{Env: map[string]string{"SKILL_SOURCE": "GIT"}})
+	normalized, err := Normalize(spec, NormalizeOptions{Env: map[string]string{"SKILL_PROVIDER": "GIT"}})
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
 	}
-	if got := normalized.Agents[0].Skills[0].Source; got != "git" {
-		t.Fatalf("source = %q, want git", got)
+	if got := normalized.Agents[0].Skills[0].Provider; got != "git" {
+		t.Fatalf("provider = %q, want git", got)
+	}
+}
+
+func TestNormalizeAgentSkillsRejectsZipProvider(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: skills-project
+agents:
+  reviewer:
+    provider: codex
+    skills:
+      - name: report
+        provider: zip
+        url: https://example.com/report.zip
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{})
+	if err == nil || !strings.Contains(err.Error(), `skill provider "zip" is not supported`) {
+		t.Fatalf("Normalize error = %v", err)
 	}
 }
 
@@ -349,7 +372,7 @@ agents:
     provider: codex
     skills:
       - name: private
-        source: git
+        provider: git
         url: https://git.example/skills.git
         token: plaintext
 `)
@@ -371,11 +394,11 @@ agents:
     provider: codex
     skills:
       - name: pdf
-        source: git
+        provider: git
         url: https://github.com/anthropics/skills.git
         path: skills/pdf
       - name: pdf
-        source: file
+        provider: file
         path: ./skills/pdf
 `)
 
@@ -433,7 +456,7 @@ agents:
 func TestNormalizePreservesValidAgentNames(t *testing.T) {
 	spec := &ProjectSpec{
 		Name:       "valid-agents",
-		Workspaces: map[string]WorkspaceSpec{"default": {Provider: "local", Path: "."}},
+		Workspaces: map[string]WorkspaceSpec{"default": {Provider: "file", Path: "."}},
 		Agents: map[string]AgentSpec{
 			"a1":          {Provider: "codex"},
 			"agent_1":     {Provider: "codex"},
@@ -470,7 +493,7 @@ func TestNormalizeRejectsInvalidAgentName(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			spec := &ProjectSpec{
 				Name:       "invalid-agent",
-				Workspaces: map[string]WorkspaceSpec{"default": {Provider: "local", Path: "."}},
+				Workspaces: map[string]WorkspaceSpec{"default": {Provider: "file", Path: "."}},
 				Agents: map[string]AgentSpec{
 					name: {Provider: "codex"},
 				},
@@ -692,7 +715,7 @@ func TestNormalizeRejectsInvalidJupyterGuestPort(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			spec := &ProjectSpec{
 				Name:       "invalid-jupyter",
-				Workspaces: map[string]WorkspaceSpec{"default": {Provider: "local", Path: "."}},
+				Workspaces: map[string]WorkspaceSpec{"default": {Provider: "file", Path: "."}},
 				Agents: map[string]AgentSpec{
 					"reviewer": {
 						Provider: "codex",
@@ -792,14 +815,15 @@ agents:
   reviewer:
     scheduler:
       script:
-        url: ./scripts/scheduler.js
+        provider: file
+        path: ./scripts/scheduler.js
 `)
 	var gotLocation string
 	normalized, err := Normalize(spec, NormalizeOptions{
 		ComposePath:       composePath,
 		ResolveScriptURLs: true,
-		ScriptSourceResolver: ScriptSourceResolverFunc(func(_ context.Context, location string) ([]byte, error) {
-			gotLocation = location
+		ScriptSourceResolver: ScriptSourceResolverFunc(func(_ context.Context, source sources.Source) ([]byte, error) {
+			gotLocation = source.Path
 			return []byte("\xef\xbb\xbf  scheduler.timeout('once', 1000, main);  \n"), nil
 		}),
 	})
@@ -828,10 +852,30 @@ func TestNormalizeSchedulerScriptURLValidation(t *testing.T) {
 		{name: "remote file authority", url: "file://server/scheduler.js", want: "authority"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			spec := mustParseCompose(t, "name: invalid-url\nagents:\n  reviewer:\n    scheduler:\n      script:\n        url: "+tc.url+"\n")
+			spec := mustParseCompose(t, "name: invalid-url\nagents:\n  reviewer:\n    scheduler:\n      script:\n        provider: http\n        url: "+tc.url+"\n")
 			_, err := Normalize(spec, NormalizeOptions{})
 			if err == nil || !strings.Contains(err.Error(), "agents.reviewer.scheduler.script.url") || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Normalize error = %v, want URL path and %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeSchedulerScriptProviderMatchesLocation(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "http provider with file URL", body: "provider: http\n        url: file:///tmp/scheduler.js", want: "must use http or https"},
+		{name: "file provider with HTTP URL", body: "provider: file\n        path: https://example.test/scheduler.js", want: "must use a local path or file URL"},
+		{name: "file provider with auth", body: "provider: file\n        path: ./scheduler.js\n        token: ${TOKEN}", want: "only supports path"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			spec := mustParseCompose(t, "name: invalid-provider-location\nagents:\n  reviewer:\n    scheduler:\n      script:\n        "+test.body+"\n")
+			_, err := Normalize(spec, NormalizeOptions{})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Normalize error = %v, want %q", err, test.want)
 			}
 		})
 	}
@@ -844,7 +888,8 @@ agents:
   reviewer:
     scheduler:
       script:
-        url: ./scheduler.js
+        provider: file
+        path: ./scheduler.js
       triggers:
         - interval: 1h
 `)
@@ -864,15 +909,15 @@ func TestNormalizeRejectsInvalidResolvedSchedulerScriptContent(t *testing.T) {
 		{name: "empty", content: []byte(" \n\t"), want: "content is empty"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			spec := mustParseCompose(t, "name: invalid-content\nagents:\n  reviewer:\n    scheduler:\n      script:\n        url: ./scheduler.js\n")
+			spec := mustParseCompose(t, "name: invalid-content\nagents:\n  reviewer:\n    scheduler:\n      script:\n        provider: file\n        path: ./scheduler.js\n")
 			_, err := Normalize(spec, NormalizeOptions{
 				ComposePath:       "/project/agent-compose.yml",
 				ResolveScriptURLs: true,
-				ScriptSourceResolver: ScriptSourceResolverFunc(func(context.Context, string) ([]byte, error) {
+				ScriptSourceResolver: ScriptSourceResolverFunc(func(context.Context, sources.Source) ([]byte, error) {
 					return tc.content, nil
 				}),
 			})
-			if err == nil || !strings.Contains(err.Error(), "scheduler.script.url") || !strings.Contains(err.Error(), tc.want) {
+			if err == nil || !strings.Contains(err.Error(), "scheduler.script") || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Normalize error = %v", err)
 			}
 		})
@@ -1052,7 +1097,7 @@ func TestNormalizeResolvesAgentWorkspaceReference(t *testing.T) {
 name: reference-workspace
 workspaces:
   repo-root:
-    provider: local
+    provider: file
     path: .
 agents:
   reviewer:
@@ -1065,7 +1110,7 @@ agents:
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
 	}
-	if normalized.Agents[0].Workspace == nil || normalized.Agents[0].Workspace.Provider != "local" || normalized.Agents[0].Workspace.Path != "." || normalized.Agents[0].Workspace.Name != "" {
+	if normalized.Agents[0].Workspace == nil || normalized.Agents[0].Workspace.Provider != "file" || normalized.Agents[0].Workspace.Path != "." || normalized.Agents[0].Workspace.Name != "" {
 		t.Fatalf("workspace = %#v", normalized.Agents[0].Workspace)
 	}
 }
@@ -1075,7 +1120,7 @@ func TestNormalizeDoesNotUseOnlyGlobalWorkspaceByDefault(t *testing.T) {
 name: default-workspace
 workspaces:
   repo-root:
-    provider: local
+    provider: file
     path: .
 agents:
   reviewer:
@@ -1116,7 +1161,7 @@ func TestNormalizeRejectsEmptyAgentWorkspaceObject(t *testing.T) {
 name: empty-workspace
 workspaces:
   repo-root:
-    provider: local
+    provider: file
     path: .
 agents:
   reviewer:
@@ -1159,14 +1204,14 @@ func TestNormalizeAllowsNamedInlineAgentWorkspaceDefinition(t *testing.T) {
 name: mixed-workspace
 workspaces:
   repo-root:
-    provider: local
+    provider: file
     path: .
 agents:
   reviewer:
     provider: codex
     workspace:
       name: repo-root
-      provider: local
+      provider: file
       path: .
 `)
 
@@ -1174,7 +1219,7 @@ agents:
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
 	}
-	if normalized.Agents[0].Workspace == nil || normalized.Agents[0].Workspace.Name != "repo-root" || normalized.Agents[0].Workspace.Provider != "local" || normalized.Agents[0].Workspace.Path != "." {
+	if normalized.Agents[0].Workspace == nil || normalized.Agents[0].Workspace.Name != "repo-root" || normalized.Agents[0].Workspace.Provider != "file" || normalized.Agents[0].Workspace.Path != "." {
 		t.Fatalf("workspace = %#v", normalized.Agents[0].Workspace)
 	}
 }
@@ -1184,7 +1229,7 @@ func TestNormalizeAllowsOmittedAgentWorkspaceWithMultipleGlobals(t *testing.T) {
 name: ambiguous-workspace
 workspaces:
   repo-root:
-    provider: local
+    provider: file
     path: .
   docs-repo:
     provider: git
@@ -1210,7 +1255,7 @@ func mustParseCompose(t *testing.T, raw string) *ProjectSpec {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 	if len(spec.Workspaces) == 0 {
-		spec.Workspaces = map[string]WorkspaceSpec{"default": {Provider: "local", Path: "."}}
+		spec.Workspaces = map[string]WorkspaceSpec{"default": {Provider: "file", Path: "."}}
 	}
 	return spec
 }

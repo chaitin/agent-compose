@@ -98,12 +98,12 @@ agent-compose down                                # 停止 sandbox、禁用 sche
 
 ## Compose 配置
 
-**顶层字段：** `name`、`variables`、`agents`、`mcp_servers`、`volumes`、`network`。
+**顶层字段：** `name`、`env_file`、`variables`、`workspaces`、`agents`、`mcp_servers`、`volumes`、`network`。
 
 **agent 常用字段：** `provider`、`model`、`system_prompt`、`image`、`driver`、
 `env`（scalar 或 `{ value, secret }`）、`workspace`、`scheduler`、`mcp_servers`、`skills`、`volumes`。
 
-为 agent 从本地路径（`provider: local`）或 Git 仓库（`provider: git`）配置 workspace：
+为 agent 从本地路径（`provider: file`）或 Git 仓库（`provider: git`）配置 workspace：
 
 ```yaml
 agents:
@@ -111,7 +111,8 @@ agents:
     workspace:
       provider: git
       url: https://github.com/example/repo.git
-      branch: main
+      ref: main
+      target: .
 ```
 
 添加定时或事件驱动的 run。`scheduler.triggers` 与内联 `scheduler.script` 在同一 scheduler 中二选一：

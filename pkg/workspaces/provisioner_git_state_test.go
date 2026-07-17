@@ -17,6 +17,7 @@ import (
 
 	appconfig "agent-compose/pkg/config"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/sources"
 )
 
 func TestProvisionerGitWorkspaceReadyPreservesState(t *testing.T) {
@@ -141,9 +142,7 @@ func newProvisionerGitStateFixture(t *testing.T) *provisionerGitStateFixture {
 	sourceTip := strings.TrimSpace(runProvisionerGitStateCommand(t, sourcePath, "rev-parse", "HEAD"))
 
 	configJSON, err := json.Marshal(GitWorkspaceConfig{
-		URL:    "file://" + filepath.ToSlash(sourcePath),
-		Branch: branch,
-		Commit: commit,
+		Source: sources.Source{Provider: sources.ProviderGit, URL: "file://" + filepath.ToSlash(sourcePath), Ref: commit},
 	})
 	if err != nil {
 		t.Fatalf("marshal Git workspace config: %v", err)

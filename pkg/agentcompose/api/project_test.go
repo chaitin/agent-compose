@@ -8,6 +8,7 @@ import (
 
 	"agent-compose/pkg/compose"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/sources"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"gopkg.in/yaml.v3"
 )
@@ -42,7 +43,7 @@ func TestResolvedTriggerPreservesDeclaredSpec(t *testing.T) {
 }
 
 func TestProjectSpecToProtoRejectsUnresolvedSchedulerScriptURL(t *testing.T) {
-	raw, err := compose.Parse([]byte("name: unresolved-url\nagents:\n  reviewer:\n    scheduler:\n      script:\n        url: ./scheduler.js\n"))
+	raw, err := compose.Parse([]byte("name: unresolved-url\nagents:\n  reviewer:\n    scheduler:\n      script:\n        provider: file\n        path: ./scheduler.js\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,10 +69,10 @@ func TestProjectSpecToProtoURLSnapshotMatchesInline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	urlRaw, _ := compose.Parse([]byte("name: proto-snapshot\nagents:\n  reviewer:\n    scheduler:\n      script:\n        url: https://example.test/scheduler.js\n"))
+	urlRaw, _ := compose.Parse([]byte("name: proto-snapshot\nagents:\n  reviewer:\n    scheduler:\n      script:\n        provider: http\n        url: https://example.test/scheduler.js\n"))
 	fromURL, err := compose.Normalize(urlRaw, compose.NormalizeOptions{
 		ResolveScriptURLs: true,
-		ScriptSourceResolver: compose.ScriptSourceResolverFunc(func(context.Context, string) ([]byte, error) {
+		ScriptSourceResolver: compose.ScriptSourceResolverFunc(func(context.Context, sources.Source) ([]byte, error) {
 			return []byte(script), nil
 		}),
 	})
@@ -198,12 +199,12 @@ func TestIntegrationProjectSpecToProtoIncludesWorkspaceRegistry(t *testing.T) {
 	spec := &compose.NormalizedProjectSpec{
 		Name: "workspace-registry",
 		Workspaces: map[string]compose.WorkspaceSpec{
-			"docs": {Name: "docs", Provider: "git", URL: "https://example.test/docs.git", Branch: "main", Commit: "abc123", Path: "docs"},
-			"repo": {Name: "repo", Provider: "local", Path: "."},
+			"docs": {Name: "docs", Provider: "git", URL: "https://example.test/docs.git", Ref: "abc123", Target: "docs"},
+			"repo": {Name: "repo", Provider: "file", Path: "."},
 		},
 		Agents: []compose.NormalizedAgentSpec{{
 			Name:      "reviewer",
-			Workspace: &compose.WorkspaceSpec{Provider: "local", Path: "."},
+			Workspace: &compose.WorkspaceSpec{Provider: "file", Path: "."},
 			Driver:    &compose.NormalizedDriverSpec{Name: compose.DriverDocker, Docker: &compose.DockerDriverSpec{}},
 		}},
 	}
@@ -212,7 +213,7 @@ func TestIntegrationProjectSpecToProtoIncludesWorkspaceRegistry(t *testing.T) {
 	if response == nil || len(response.GetWorkspaces()) != 2 {
 		t.Fatalf("ProjectSpecToProto workspaces = %#v", response)
 	}
-	if response.GetWorkspaces()[0].GetName() != "docs" || response.GetWorkspaces()[0].GetWorkspace().GetProvider() != "git" || response.GetWorkspaces()[0].GetWorkspace().GetBranch() != "main" || response.GetWorkspaces()[0].GetWorkspace().GetCommit() != "abc123" {
+	if response.GetWorkspaces()[0].GetName() != "docs" || response.GetWorkspaces()[0].GetWorkspace().GetProvider() != "git" || response.GetWorkspaces()[0].GetWorkspace().GetRef() != "abc123" {
 		t.Fatalf("first workspace = %#v", response.GetWorkspaces()[0])
 	}
 	if response.GetWorkspaces()[1].GetName() != "repo" || response.GetWorkspaces()[1].GetWorkspace().GetName() != "" {
@@ -225,7 +226,7 @@ func TestIntegrationProjectSpecYAMLShapeIncludesWorkspaceRegistry(t *testing.T) 
 		Name: "workspace-shape",
 		Workspaces: []*agentcomposev2.NamedWorkspaceSpec{{
 			Name:      "repo",
-			Workspace: &agentcomposev2.WorkspaceSpec{Provider: "git", Url: "https://example.test/repo.git", Branch: "main", Commit: "abc123", Path: "."},
+			Workspace: &agentcomposev2.WorkspaceSpec{Provider: "git", Url: "https://example.test/repo.git", Ref: "abc123", Target: "."},
 		}},
 		Agents: []*agentcomposev2.AgentSpec{{
 			Name:      "reviewer",
@@ -240,7 +241,7 @@ func TestIntegrationProjectSpecYAMLShapeIncludesWorkspaceRegistry(t *testing.T) 
 		t.Fatalf("workspaces shape = %#v", shape["workspaces"])
 	}
 	repo, ok := workspaces["repo"].(map[string]any)
-	if !ok || repo["branch"] != "main" || repo["commit"] != "abc123" {
+	if !ok || repo["ref"] != "abc123" || repo["target"] != "." {
 		t.Fatalf("repo workspace shape = %#v", workspaces["repo"])
 	}
 	agents, ok := shape["agents"].(map[string]any)

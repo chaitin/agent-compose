@@ -90,7 +90,7 @@ func legacyFileWorkspaceID(spec *compose.NormalizedProjectSpec, agent compose.No
 // LegacyFileWorkspacePresetID returns the original v1 file-workspace preset ID
 // encoded by the canonical migration-only local workspace path.
 func LegacyFileWorkspacePresetID(workspace *compose.WorkspaceSpec) (string, bool) {
-	if workspace == nil || strings.ToLower(strings.TrimSpace(workspace.Provider)) != "local" {
+	if workspace == nil || strings.ToLower(strings.TrimSpace(workspace.Provider)) != "file" {
 		return "", false
 	}
 	path := filepath.ToSlash(filepath.Clean(strings.TrimSpace(workspace.Path)))
@@ -117,7 +117,7 @@ func resolvedLegacyWorkspace(spec *compose.NormalizedProjectSpec, reference *com
 			return &resolved
 		}
 	}
-	if strings.TrimSpace(reference.Provider) != "" || strings.TrimSpace(reference.URL) != "" || strings.TrimSpace(reference.Branch) != "" || strings.TrimSpace(reference.Commit) != "" || strings.TrimSpace(reference.Path) != "" {
+	if reference.ContentSource().HasContent() || strings.TrimSpace(reference.Target) != "" {
 		return reference
 	}
 	workspace, ok := spec.Workspaces[strings.TrimSpace(reference.Name)]

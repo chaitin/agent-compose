@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/sources"
 	"agent-compose/pkg/workspaces"
 )
 
@@ -36,13 +38,13 @@ func (c *Controller) prepareProjectRunWorkspace(ctx context.Context, run domain.
 	}
 	provider := strings.ToLower(strings.TrimSpace(workspace.Provider))
 	switch provider {
-	case "local":
+	case sources.ProviderFile:
 		config, err := c.materializeLocalProjectRunWorkspace(run, project, workspace)
 		if err != nil {
 			return nil, err
 		}
 		return &config, nil
-	case "git":
+	case sources.ProviderGit:
 		config, err := projectRunGitWorkspaceConfig(run, workspace)
 		if err != nil {
 			return nil, err
@@ -89,7 +91,18 @@ func (c *Controller) materializeLocalProjectRunWorkspace(run domain.ProjectRunRe
 		return domain.WorkspaceConfig{}, fmt.Errorf("open local workspace source %s: %w", sourceDir, err)
 	}
 	defer func() { _ = sourceRoot.Close() }()
-	if err := workspaces.CopyRootDirectoryContents(sourceRoot, content.AbsRoot); err != nil {
+	target, err := workspaces.NormalizeWorkspaceTarget(workspaceID, workspace.Target)
+	if err != nil {
+		return domain.WorkspaceConfig{}, err
+	}
+	destination := content.AbsRoot
+	if target != "." {
+		destination = filepath.Join(content.AbsRoot, target)
+		if err := os.MkdirAll(destination, 0o755); err != nil {
+			return domain.WorkspaceConfig{}, fmt.Errorf("create local workspace target %s: %w", target, err)
+		}
+	}
+	if err := workspaces.CopyRootDirectoryContents(sourceRoot, destination); err != nil {
 		return domain.WorkspaceConfig{}, fmt.Errorf("materialize local workspace snapshot: %w", err)
 	}
 	return config, nil
@@ -100,14 +113,12 @@ func projectRunGitWorkspaceConfig(run domain.ProjectRunRecord, workspace *compos
 	if strings.TrimSpace(workspace.URL) == "" {
 		return domain.WorkspaceConfig{}, fmt.Errorf("git workspace url is required")
 	}
-	if _, err := workspaces.NormalizeGitCloneTarget(workspaceID, workspace.Path); err != nil {
+	if _, err := workspaces.NormalizeWorkspaceTarget(workspaceID, workspace.Target); err != nil {
 		return domain.WorkspaceConfig{}, err
 	}
 	payload, err := json.Marshal(workspaces.GitWorkspaceConfig{
-		URL:         strings.TrimSpace(workspace.URL),
-		Branch:      strings.TrimSpace(workspace.Branch),
-		Commit:      strings.TrimSpace(workspace.Commit),
-		CloneTarget: strings.TrimSpace(workspace.Path),
+		Source: workspace.ContentSource(),
+		Target: strings.TrimSpace(workspace.Target),
 	})
 	if err != nil {
 		return domain.WorkspaceConfig{}, fmt.Errorf("encode git workspace config: %w", err)

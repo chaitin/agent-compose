@@ -266,7 +266,7 @@ const projectWorkspaceRevisionSpec = `{
   "name": "Project Local Resume",
   "variables": [{"name": "SOURCE_VERSION", "value": %q}],
   "workspaces": [
-    {"name": "local-source", "workspace": {"provider": "local", "path": "workspace"}}
+    {"name": "local-source", "workspace": {"provider": "file", "path": "workspace"}}
   ],
   "agents": [
     {"name": "worker", "provider": "codex", "workspace": {"name": "local-source"}}

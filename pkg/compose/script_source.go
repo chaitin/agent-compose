@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"agent-compose/pkg/sources"
 )
 
 const (
@@ -22,24 +24,25 @@ const (
 // ScriptSourceResolver fetches a structurally validated, normalized script
 // location. Plain paths are absolute; URL locations use file/http/https.
 type ScriptSourceResolver interface {
-	Resolve(ctx context.Context, location string) ([]byte, error)
+	Resolve(ctx context.Context, source sources.Source) ([]byte, error)
 }
 
 // ScriptSourceResolverFunc adapts a function into a ScriptSourceResolver.
-type ScriptSourceResolverFunc func(context.Context, string) ([]byte, error)
+type ScriptSourceResolverFunc func(context.Context, sources.Source) ([]byte, error)
 
-func (f ScriptSourceResolverFunc) Resolve(ctx context.Context, location string) ([]byte, error) {
-	return f(ctx, location)
+func (f ScriptSourceResolverFunc) Resolve(ctx context.Context, source sources.Source) ([]byte, error) {
+	return f(ctx, source)
 }
 
 type defaultScriptSourceResolver struct {
 	client *http.Client
+	env    map[string]string
 }
 
 // NewDefaultScriptSourceResolver returns the bounded file and HTTP(S) resolver
 // used by CLI compose loading.
-func NewDefaultScriptSourceResolver() ScriptSourceResolver {
-	resolver := &defaultScriptSourceResolver{}
+func NewDefaultScriptSourceResolver(env map[string]string) ScriptSourceResolver {
+	resolver := &defaultScriptSourceResolver{env: env}
 	resolver.client = &http.Client{
 		Timeout: defaultScriptSourceTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -125,7 +128,7 @@ func scriptSourceBaseDir(options NormalizeOptions) string {
 	return "."
 }
 
-func (r *defaultScriptSourceResolver) Resolve(ctx context.Context, location string) ([]byte, error) {
+func (r *defaultScriptSourceResolver) Resolve(ctx context.Context, source sources.Source) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -134,25 +137,45 @@ func (r *defaultScriptSourceResolver) Resolve(ctx context.Context, location stri
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	parsed, err := url.Parse(location)
-	if err != nil {
-		return nil, errors.New("invalid script URL")
-	}
-	switch strings.ToLower(parsed.Scheme) {
-	case "":
-		return readScriptFileWithContext(ctx, location)
-	case "file":
-		path, err := url.PathUnescape(parsed.Path)
+	source = source.Normalized()
+	switch source.Provider {
+	case sources.ProviderFile:
+		parsed, err := url.Parse(source.Path)
 		if err != nil {
-			return nil, errors.New("invalid file URL path")
+			return nil, errors.New("invalid script path")
+		}
+		path := source.Path
+		if parsed.Scheme == "file" {
+			path, err = url.PathUnescape(parsed.Path)
+			if err != nil {
+				return nil, errors.New("invalid file URL path")
+			}
 		}
 		return readScriptFileWithContext(ctx, path)
-	case "http", "https":
-		parsed.Scheme = strings.ToLower(parsed.Scheme)
-		return r.readHTTP(ctx, parsed)
+	case sources.ProviderHTTP:
+		parsed, err := url.Parse(source.URL)
+		if err != nil {
+			return nil, errors.New("invalid script URL")
+		}
+		return r.readHTTP(ctx, parsed, source)
+	case sources.ProviderGit:
+		return r.readGit(ctx, source)
 	default:
-		return nil, fmt.Errorf("script URL scheme %q is not supported", parsed.Scheme)
+		return nil, fmt.Errorf("script provider %q is not supported", source.Provider)
 	}
+}
+
+func (r *defaultScriptSourceResolver) readGit(ctx context.Context, source sources.Source) ([]byte, error) {
+	tempDir, err := os.MkdirTemp("", "agent-compose-script-git-*")
+	if err != nil {
+		return nil, fmt.Errorf("create git script temp dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+	checkoutDir := filepath.Join(tempDir, "repository")
+	if _, err := (sources.GitClient{Env: r.env}).Checkout(ctx, source, checkoutDir); err != nil {
+		return nil, err
+	}
+	return readScriptFileWithContext(ctx, filepath.Join(checkoutDir, filepath.FromSlash(source.Path)))
 }
 
 func readScriptFileWithContext(ctx context.Context, path string) ([]byte, error) {
@@ -186,11 +209,12 @@ func readScriptFile(path string) ([]byte, error) {
 	return readLimitedScript(file)
 }
 
-func (r *defaultScriptSourceResolver) readHTTP(ctx context.Context, location *url.URL) ([]byte, error) {
+func (r *defaultScriptSourceResolver) readHTTP(ctx context.Context, location *url.URL, source sources.Source) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, location.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("create script request for %s", redactedScriptURL(location))
 	}
+	sources.ApplyHTTPAuthentication(req, source, r.env)
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch script from %s: %s", redactedScriptURL(location), sanitizeScriptFetchError(err))

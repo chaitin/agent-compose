@@ -92,7 +92,7 @@ workspaces:
   repo:
     provider: git
     url: https://github.com/org/repo.git
-    branch: main
+    ref: main
 agents:
   reviewer:
     provider: codex
@@ -105,7 +105,7 @@ agents:
     env:
       REVIEW_MODE: strict
     workspace:
-      provider: local
+      provider: file
       path: ./repo
     jupyter:
       enabled: true
@@ -127,7 +127,7 @@ network:
 	if got := spec.Variables["OPENAI_API_KEY"]; got.Value != "${OPENAI_API_KEY}" || !got.Secret {
 		t.Fatalf("OPENAI_API_KEY = %#v", got)
 	}
-	if spec.Workspaces["repo"].Provider != "git" || spec.Workspaces["repo"].Branch != "main" {
+	if spec.Workspaces["repo"].Provider != "git" || spec.Workspaces["repo"].Ref != "main" {
 		t.Fatalf("workspaces = %#v", spec.Workspaces)
 	}
 	agent := spec.Agents["reviewer"]
@@ -182,33 +182,68 @@ agents:
 	}
 }
 
-func TestParseSchedulerScriptURL(t *testing.T) {
+func TestParseSchedulerScriptProvider(t *testing.T) {
 	spec, err := Parse([]byte(`
 name: url-project
 agents:
   reviewer:
     scheduler:
       script:
-        url: ./scripts/scheduler.js
+        provider: file
+        path: ./scripts/scheduler.js
 `))
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 	source := spec.Agents["reviewer"].Scheduler.Script
-	if source.Inline != "" || source.URL != "./scripts/scheduler.js" {
+	if source.Inline != "" || source.Source.Provider != "file" || source.Source.Path != "./scripts/scheduler.js" {
 		t.Fatalf("scheduler script source = %#v", source)
 	}
 }
 
-func TestParseRejectsInvalidSchedulerScriptURLObject(t *testing.T) {
+func TestParseRejectsLegacyResourceSourceSyntax(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			name: "skill source discriminator",
+			yaml: "agents:\n  reviewer:\n    skills:\n      - source: git\n        url: https://example.test/skills.git\n",
+			want: "agents.reviewer.skills[0].source",
+		},
+		{
+			name: "skill scalar shorthand",
+			yaml: "agents:\n  reviewer:\n    skills:\n      - ./skills/review\n",
+			want: "agents.reviewer.skills[0]",
+		},
+		{
+			name: "workspace branch",
+			yaml: "workspaces:\n  repo:\n    provider: git\n    url: https://example.test/repo.git\n    branch: main\n",
+			want: "workspaces.repo.branch",
+		},
+		{
+			name: "workspace commit",
+			yaml: "workspaces:\n  repo:\n    provider: git\n    url: https://example.test/repo.git\n    commit: abc123\n",
+			want: "workspaces.repo.commit",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Parse([]byte(test.yaml))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Parse error = %v, want path %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestParseRejectsInvalidSchedulerScriptProviderObject(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		body string
 		want string
 	}{
-		{name: "unknown field", body: "url: ./scheduler.js\n        extra: true", want: "scheduler.script.extra"},
-		{name: "empty URL", body: `url: ""`, want: "scheduler.script.url"},
-		{name: "missing URL", body: `{}`, want: "scheduler.script.url"},
+		{name: "unknown field", body: "provider: file\n        path: ./scheduler.js\n        extra: true", want: "scheduler.script.extra"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Parse([]byte("agents:\n  reviewer:\n    scheduler:\n      script:\n        " + tc.body + "\n"))

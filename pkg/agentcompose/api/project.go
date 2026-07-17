@@ -341,10 +341,11 @@ func SkillSpecsToProto(skills []compose.NormalizedSkillSpec) []*agentcomposev2.S
 	for _, skill := range skills {
 		items = append(items, &agentcomposev2.SkillSpec{
 			Name:     skill.Name,
-			Source:   skill.Source,
+			Provider: skill.Provider,
 			Url:      skill.URL,
 			Path:     skill.Path,
 			Ref:      skill.Ref,
+			Format:   skill.Format,
 			Username: skill.Username,
 			Password: skill.Password,
 			Token:    skill.Token,
@@ -435,9 +436,13 @@ func WorkspaceSpecToProto(workspace *compose.WorkspaceSpec) *agentcomposev2.Work
 		Name:     workspace.Name,
 		Provider: workspace.Provider,
 		Url:      workspace.URL,
-		Branch:   workspace.Branch,
-		Commit:   workspace.Commit,
+		Ref:      workspace.Ref,
 		Path:     workspace.Path,
+		Format:   workspace.Format,
+		Target:   workspace.Target,
+		Username: workspace.Username,
+		Password: workspace.Password,
+		Token:    workspace.Token,
 	}
 }
 
@@ -760,8 +765,8 @@ func SkillYAMLList(path string, skills []*agentcomposev2.SkillSpec) ([]map[strin
 		if name != "" {
 			raw["name"] = name
 		}
-		if strings.TrimSpace(skill.GetSource()) != "" {
-			raw["source"] = skill.GetSource()
+		if strings.TrimSpace(skill.GetProvider()) != "" {
+			raw["provider"] = skill.GetProvider()
 		}
 		if strings.TrimSpace(skill.GetUrl()) != "" {
 			raw["url"] = skill.GetUrl()
@@ -771,6 +776,9 @@ func SkillYAMLList(path string, skills []*agentcomposev2.SkillSpec) ([]map[strin
 		}
 		if strings.TrimSpace(skill.GetRef()) != "" {
 			raw["ref"] = skill.GetRef()
+		}
+		if strings.TrimSpace(skill.GetFormat()) != "" {
+			raw["format"] = skill.GetFormat()
 		}
 		if strings.TrimSpace(skill.GetUsername()) != "" {
 			raw["username"] = skill.GetUsername()
@@ -983,14 +991,26 @@ func WorkspaceYAMLShape(workspace *agentcomposev2.WorkspaceSpec) map[string]any 
 	if strings.TrimSpace(workspace.GetUrl()) != "" {
 		raw["url"] = workspace.GetUrl()
 	}
-	if strings.TrimSpace(workspace.GetBranch()) != "" {
-		raw["branch"] = workspace.GetBranch()
-	}
-	if strings.TrimSpace(workspace.GetCommit()) != "" {
-		raw["commit"] = workspace.GetCommit()
+	if strings.TrimSpace(workspace.GetRef()) != "" {
+		raw["ref"] = workspace.GetRef()
 	}
 	if strings.TrimSpace(workspace.GetPath()) != "" {
 		raw["path"] = workspace.GetPath()
+	}
+	if strings.TrimSpace(workspace.GetFormat()) != "" {
+		raw["format"] = workspace.GetFormat()
+	}
+	if strings.TrimSpace(workspace.GetTarget()) != "" {
+		raw["target"] = workspace.GetTarget()
+	}
+	if strings.TrimSpace(workspace.GetUsername()) != "" {
+		raw["username"] = workspace.GetUsername()
+	}
+	if strings.TrimSpace(workspace.GetPassword()) != "" {
+		raw["password"] = workspace.GetPassword()
+	}
+	if strings.TrimSpace(workspace.GetToken()) != "" {
+		raw["token"] = workspace.GetToken()
 	}
 	return raw
 }

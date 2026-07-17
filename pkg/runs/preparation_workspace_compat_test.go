@@ -12,7 +12,7 @@ func TestDecodeRevisionSpecSupportsCanonicalWorkspaceShape(t *testing.T) {
 		"workspaces":[{
 			"key":"repo-root",
 			"name":"repo-root",
-			"provider":"local",
+			"provider":"file",
 			"path":"workspaces/local-repo"
 		}],
 		"agents":[{"name":"reviewer"}]
@@ -24,7 +24,7 @@ func TestDecodeRevisionSpecSupportsCanonicalWorkspaceShape(t *testing.T) {
 		t.Fatalf("workspaces = %#v", decoded.GetWorkspaces())
 	}
 	workspace := decoded.GetWorkspaces()[0]
-	if workspace.GetName() != "repo-root" || workspace.GetWorkspace().GetProvider() != "local" || workspace.GetWorkspace().GetPath() != "workspaces/local-repo" {
+	if workspace.GetName() != "repo-root" || workspace.GetWorkspace().GetProvider() != "file" || workspace.GetWorkspace().GetPath() != "workspaces/local-repo" {
 		t.Fatalf("workspace = %#v", workspace)
 	}
 }
@@ -36,9 +36,8 @@ func TestDecodeRevisionSpecSupportsCanonicalGitCommitShape(t *testing.T) {
 			"key":"repo-root",
 			"provider":"git",
 			"url":"https://example.test/repo.git",
-			"branch":"main",
-			"commit":"abc123",
-			"path":"."
+			"ref":"abc123",
+			"target":"."
 		}],
 		"agents":[{"name":"reviewer"}]
 	}`)
@@ -46,7 +45,7 @@ func TestDecodeRevisionSpecSupportsCanonicalGitCommitShape(t *testing.T) {
 		t.Fatalf("DecodeRevisionSpec returned error: %v", err)
 	}
 	workspace := decoded.GetWorkspaces()[0].GetWorkspace()
-	if workspace.GetBranch() != "main" || workspace.GetCommit() != "abc123" {
+	if workspace.GetRef() != "abc123" || workspace.GetTarget() != "." {
 		t.Fatalf("canonical git workspace = %#v", workspace)
 	}
 }
@@ -56,14 +55,14 @@ func TestDecodeRevisionSpecPreservesNestedWorkspaceShape(t *testing.T) {
 		"name":"workspace-project",
 		"workspaces":[{
 			"name":"repo-root",
-			"workspace":{"provider":"git","url":"https://example.test/repo.git","branch":"main","commit":"abc123"}
+			"workspace":{"provider":"git","url":"https://example.test/repo.git","ref":"abc123","target":"."}
 		}]
 	}`)
 	if err != nil {
 		t.Fatalf("DecodeRevisionSpec returned error: %v", err)
 	}
 	workspace := decoded.GetWorkspaces()[0]
-	if workspace.GetName() != "repo-root" || workspace.GetWorkspace().GetProvider() != "git" || workspace.GetWorkspace().GetUrl() != "https://example.test/repo.git" || workspace.GetWorkspace().GetBranch() != "main" || workspace.GetWorkspace().GetCommit() != "abc123" {
+	if workspace.GetName() != "repo-root" || workspace.GetWorkspace().GetProvider() != "git" || workspace.GetWorkspace().GetUrl() != "https://example.test/repo.git" || workspace.GetWorkspace().GetRef() != "abc123" || workspace.GetWorkspace().GetTarget() != "." {
 		t.Fatalf("workspace = %#v", workspace)
 	}
 }
@@ -85,7 +84,7 @@ func TestIntegrationProjectRevisionDoesNotSelectOmittedAgentWorkspace(t *testing
 	normalized, err := compose.Normalize(&compose.ProjectSpec{
 		Name: "workspace-project",
 		Workspaces: map[string]compose.WorkspaceSpec{
-			"repo-root": {Provider: "local", Path: "workspaces/local-repo"},
+			"repo-root": {Provider: "file", Path: "workspaces/local-repo"},
 		},
 		Agents: map[string]compose.AgentSpec{
 			"reviewer": {
@@ -125,7 +124,7 @@ func TestIntegrationProjectRevisionNamedInlineWorkspaceRoundTrip(t *testing.T) {
 	normalized, err := compose.Normalize(&compose.ProjectSpec{
 		Name: "workspace-project",
 		Workspaces: map[string]compose.WorkspaceSpec{
-			"docs-repo": {Provider: "local", Path: "workspaces/local-docs"},
+			"docs-repo": {Provider: "file", Path: "workspaces/local-docs"},
 		},
 		Agents: map[string]compose.AgentSpec{
 			"reviewer": {
@@ -133,7 +132,7 @@ func TestIntegrationProjectRevisionNamedInlineWorkspaceRoundTrip(t *testing.T) {
 				Driver:   &compose.DriverSpec{Docker: &compose.DockerDriverSpec{}},
 				Workspace: &compose.WorkspaceSpec{
 					Name:     "repo-root",
-					Provider: "local",
+					Provider: "file",
 					Path:     "workspaces/local-repo",
 				},
 			},
@@ -161,7 +160,7 @@ func TestIntegrationProjectRevisionNamedInlineWorkspaceRoundTrip(t *testing.T) {
 	if projectWorkspace != nil {
 		t.Fatalf("project workspace = %#v, want nil for inline override", projectWorkspace)
 	}
-	if agentWorkspace == nil || agentWorkspace.Name != "repo-root" || agentWorkspace.Provider != "local" || agentWorkspace.Path != "workspaces/local-repo" {
+	if agentWorkspace == nil || agentWorkspace.Name != "repo-root" || agentWorkspace.Provider != "file" || agentWorkspace.Path != "workspaces/local-repo" {
 		t.Fatalf("agent workspace = %#v", agentWorkspace)
 	}
 }

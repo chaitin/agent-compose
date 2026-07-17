@@ -9,4 +9,5 @@ agents:
     scheduler:
       enabled: true
       script:
-        url: ./scheduler.js
+        provider: file
+        path: ./scheduler.js

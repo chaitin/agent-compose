@@ -78,7 +78,7 @@ func TestE2EDockerFileWorkspaceResumePreservesState(t *testing.T) {
 			Workspaces: []*agentcomposev2.NamedWorkspaceSpec{{
 				Name: "source",
 				Workspace: &agentcomposev2.WorkspaceSpec{
-					Provider: "local",
+					Provider: "file",
 					Path:     ".",
 				},
 			}},

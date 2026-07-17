@@ -471,7 +471,7 @@ func legacyVolumes(items []domain.VolumeMountSpec) []compose.NormalizedVolumeMou
 func legacySkills(items []domain.AgentSkill) []compose.NormalizedSkillSpec {
 	result := make([]compose.NormalizedSkillSpec, 0, len(items))
 	for _, item := range items {
-		result = append(result, compose.NormalizedSkillSpec{Name: item.Name, Source: item.Source, URL: item.URL, Path: item.Path, Ref: item.Ref, Username: item.Username, Password: item.Password, Token: item.Token})
+		result = append(result, compose.NormalizedSkillSpec{Name: item.Name, Provider: item.Provider, URL: item.URL, Path: item.Path, Ref: item.Ref, Format: item.Format, Username: item.Username, Password: item.Password, Token: item.Token})
 	}
 	return result
 }

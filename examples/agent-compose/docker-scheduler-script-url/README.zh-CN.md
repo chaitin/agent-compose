@@ -1,9 +1,9 @@
-# Scheduler 脚本 URL 示例
+# Scheduler 脚本 file 来源示例
 
 语言：[English](README.md) | 中文
 
 本示例把 QJS 保存在 `scheduler.js`，并在 `agent-compose.yml` 中通过
-`scheduler.script.url` 引用。
+`scheduler.script.provider: file` 和 `path` 引用。
 
 ```bash
 agent-compose config

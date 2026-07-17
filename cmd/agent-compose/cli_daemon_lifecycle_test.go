@@ -142,7 +142,7 @@ func TestConfigCommandPrintsNormalizedYAMLWithoutStartingDaemon(t *testing.T) {
 	writeComposeFile(t, dir, `
 workspaces:
   default:
-    provider: local
+    provider: file
     path: .
 variables:
   API_KEY:
@@ -190,7 +190,7 @@ variables:
     secret: true
 workspaces:
   default:
-    provider: local
+    provider: file
     path: .
 agents:
   reviewer:
