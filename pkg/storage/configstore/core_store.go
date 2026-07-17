@@ -55,6 +55,7 @@ type ConfigStore struct {
 	*loaderStore
 	*eventStore
 	*projectStore
+	*sandboxStore
 	*llmStore
 	*capabilityGatewayStore
 	*volumeStore
@@ -87,6 +88,7 @@ func FromDB(db *sql.DB) *ConfigStore {
 		loaderStore:            &loaderStore{db: db},
 		eventStore:             &eventStore{db: db},
 		projectStore:           &projectStore{db: db},
+		sandboxStore:           &sandboxStore{db: db},
 		llmStore:               &llmStore{db: db},
 		capabilityGatewayStore: &capabilityGatewayStore{db: db},
 		volumeStore:            &volumeStore{db: db},
@@ -145,6 +147,9 @@ func (s *ConfigStore) initSchema(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureProjectSchema(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureSandboxSchema(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureEventSchema(ctx); err != nil {

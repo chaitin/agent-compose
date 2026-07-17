@@ -53,8 +53,9 @@ func Register(di do.Injector) {
 
 func RegisterDependencies(di do.Injector) {
 	do.Provide(di, func(do.Injector) (*sessions.LifecycleLocks, error) { return sessions.NewLifecycleLocks(), nil })
-	do.Provide(di, sessionstore.NewStore)
 	do.Provide(di, NewConfigStore)
+	do.MustAs[*configstore.ConfigStore, sessionstore.SandboxRecorder](di)
+	do.Provide(di, sessionstore.NewStore)
 	do.Provide(di, NewWorkspaceProvisioner)
 	do.MustAs[*workspaces.Provisioner, workspaces.WorkspaceEnsurer](di)
 	do.Provide(di, NewRuntimeProvider)

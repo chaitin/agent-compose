@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -54,6 +55,7 @@ type (
 
 type Store struct {
 	config                *appconfig.Config
+	recorder              SandboxRecorder
 	sandboxLocks          sync.Map
 	cacheDependencyMu     sync.RWMutex
 	cacheDependencyLocker CacheDependencyLocker
@@ -63,17 +65,32 @@ type CacheDependencyLocker interface {
 	WithLockContext(context.Context, func() error) error
 }
 
+// SandboxRecorder stores the queryable record for a persisted Sandbox.
+type SandboxRecorder interface {
+	UpsertSandbox(context.Context, *domain.Sandbox) error
+}
+
 func NewStore(di do.Injector) (*Store, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
-	return NewWithConfig(config)
+	recorder := do.MustInvoke[SandboxRecorder](di)
+	return NewWithConfigAndRecorder(config, recorder)
 }
 
 func NewWithConfig(config *appconfig.Config) (*Store, error) {
+	return NewWithConfigAndRecorder(config, nil)
+}
+
+// NewWithConfigAndRecorder constructs a filesystem store that also records
+// persisted Sandboxes for database queries.
+func NewWithConfigAndRecorder(config *appconfig.Config, recorder SandboxRecorder) (*Store, error) {
 	if err := os.MkdirAll(config.SandboxRoot, 0o755); err != nil {
 		return nil, fmt.Errorf("create sandbox root: %w", err)
 	}
-	store := &Store{config: config}
+	store := &Store{config: config, recorder: recorder}
 	if err := store.backfillOwnershipRecords(); err != nil {
+		return nil, err
+	}
+	if err := store.MigrateSandboxRecords(context.Background()); err != nil {
 		return nil, err
 	}
 	return store, nil
@@ -111,18 +128,18 @@ func (s *Store) createSandboxWithCacheDependencyLock(ctx context.Context, title,
 	locker := s.cacheDependencyLocker
 	s.cacheDependencyMu.RUnlock()
 	if locker == nil {
-		return s.createSandboxWithOptions(title, baseWorkspace, driver, guestImage, workspaceID, triggerSource, workspace, envItems, tags, options)
+		return s.createSandboxWithOptions(ctx, title, baseWorkspace, driver, guestImage, workspaceID, triggerSource, workspace, envItems, tags, options)
 	}
 	var sandbox *Sandbox
 	err := locker.WithLockContext(ctx, func() error {
 		var err error
-		sandbox, err = s.createSandboxWithOptions(title, baseWorkspace, driver, guestImage, workspaceID, triggerSource, workspace, envItems, tags, options)
+		sandbox, err = s.createSandboxWithOptions(ctx, title, baseWorkspace, driver, guestImage, workspaceID, triggerSource, workspace, envItems, tags, options)
 		return err
 	})
 	return sandbox, err
 }
 
-func (s *Store) createSandboxWithOptions(title, baseWorkspace, driver, guestImage, workspaceID, triggerSource string, workspace *SandboxWorkspace, envItems []SandboxEnvVar, tags []SandboxTag, options CreateSandboxOptions) (*Sandbox, error) {
+func (s *Store) createSandboxWithOptions(ctx context.Context, title, baseWorkspace, driver, guestImage, workspaceID, triggerSource string, workspace *SandboxWorkspace, envItems []SandboxEnvVar, tags []SandboxTag, options CreateSandboxOptions) (*Sandbox, error) {
 	now := time.Now().UTC()
 	workspaceID = strings.TrimSpace(workspaceID)
 	id := identity.NewRandomID(identity.ResourceSandbox)
@@ -250,6 +267,11 @@ func (s *Store) createSandboxWithOptions(title, baseWorkspace, driver, guestImag
 	}); err != nil {
 		return nil, fmt.Errorf("write sandbox ownership record: %w", err)
 	}
+	if s.recorder != nil {
+		if err := s.recorder.UpsertSandbox(ctx, session); err != nil {
+			return nil, fmt.Errorf("record sandbox: %w", err)
+		}
+	}
 
 	return session, nil
 }
@@ -258,6 +280,33 @@ func (s *Store) SetCacheDependencyLocker(locker CacheDependencyLocker) {
 	s.cacheDependencyMu.Lock()
 	defer s.cacheDependencyMu.Unlock()
 	s.cacheDependencyLocker = locker
+}
+
+// MigrateSandboxRecords records existing filesystem Sandboxes in the database.
+// It is safe to run repeatedly because the recorder performs an upsert.
+func (s *Store) MigrateSandboxRecords(ctx context.Context) error {
+	if s.recorder == nil {
+		return nil
+	}
+	entries, err := os.ReadDir(s.config.SandboxRoot)
+	if err != nil {
+		return fmt.Errorf("read sandbox root for database migration: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == ".lifecycle" {
+			continue
+		}
+		sandbox, err := s.loadSandbox(entry.Name())
+		if err != nil {
+			slog.Warn("skip unrecognized sandbox during database migration", "directory", entry.Name(), "error", err)
+			continue
+		}
+		s.hydrateSandboxGuestImage(sandbox)
+		if err := s.recorder.UpsertSandbox(ctx, sandbox); err != nil {
+			return fmt.Errorf("migrate sandbox %s: %w", sandbox.Summary.ID, err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) GetSandbox(_ context.Context, id string) (*Sandbox, error) {
@@ -313,12 +362,21 @@ func (s *Store) ListSandboxes(_ context.Context, options SandboxListOptions) (Sa
 	return result, nil
 }
 
-func (s *Store) UpdateSandbox(_ context.Context, session *Sandbox) error {
+func (s *Store) UpdateSandbox(ctx context.Context, session *Sandbox) error {
 	s.hydrateSandboxGuestImage(session)
 	session.Summary.UpdatedAt = time.Now().UTC()
 	unlock := s.lockSandbox(session.Summary.ID)
-	defer unlock()
-	return s.saveSandboxPreservingCounts(session)
+	err := s.saveSandboxPreservingCounts(session)
+	unlock()
+	if err != nil {
+		return err
+	}
+	if s.recorder != nil {
+		if err := s.recorder.UpsertSandbox(ctx, session); err != nil {
+			return fmt.Errorf("record sandbox update: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) RemoveSandbox(_ context.Context, id string) error {
@@ -443,29 +501,33 @@ func (s *Store) AddAgentRun(_ context.Context, sessionID string, run AgentRun) e
 	return nil
 }
 
-func (s *Store) AddEvent(_ context.Context, sessionID string, event SandboxEvent) error {
-	unlock := s.lockSandbox(sessionID)
-	defer unlock()
+func (s *Store) AddEvent(ctx context.Context, sessionID string, event SandboxEvent) error {
+	var sandboxToRecord *Sandbox
+	if err := func() error {
+		unlock := s.lockSandbox(sessionID)
+		defer unlock()
 
-	jsonlExisted, err := s.eventsJSONLExists(sessionID)
-	if err != nil {
-		return err
-	}
-	legacyCount := 0
-	if !jsonlExisted {
-		events, err := s.loadLegacyEvents(sessionID)
+		jsonlExisted, err := s.eventsJSONLExists(sessionID)
 		if err != nil {
 			return err
 		}
-		legacyCount = len(events)
-	}
+		legacyCount := 0
+		if !jsonlExisted {
+			events, err := s.loadLegacyEvents(sessionID)
+			if err != nil {
+				return err
+			}
+			legacyCount = len(events)
+		}
 
-	if err := s.appendEvent(sessionID, event); err != nil {
-		return err
-	}
+		if err := s.appendEvent(sessionID, event); err != nil {
+			return err
+		}
 
-	session, err := s.loadSandbox(sessionID)
-	if err == nil {
+		session, err := s.loadSandbox(sessionID)
+		if err != nil {
+			return err
+		}
 		nextCount := session.Summary.EventCount + 1
 		if !jsonlExisted && legacyCount >= session.Summary.EventCount {
 			nextCount = legacyCount + 1
@@ -473,7 +535,18 @@ func (s *Store) AddEvent(_ context.Context, sessionID string, event SandboxEvent
 		session.Summary.EventCount = nextCount
 		s.hydrateSandboxGuestImage(session)
 		session.Summary.UpdatedAt = time.Now().UTC()
-		_ = s.saveSandboxPreservingCounts(session)
+		if err := s.saveSandboxPreservingCounts(session); err != nil {
+			return err
+		}
+		sandboxToRecord = session
+		return nil
+	}(); err != nil {
+		return err
+	}
+	if s.recorder != nil {
+		if err := s.recorder.UpsertSandbox(ctx, sandboxToRecord); err != nil {
+			return fmt.Errorf("record sandbox event count: %w", err)
+		}
 	}
 	return nil
 }
