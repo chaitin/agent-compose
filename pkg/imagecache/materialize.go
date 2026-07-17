@@ -48,6 +48,7 @@ func (c *Cache) MaterializeOCILayout(ctx context.Context, ref string) (Materiali
 		ImageID:     imageID,
 		ResolvedRef: resolvedRef,
 		LayoutPath:  layoutPath,
+		Env:         image.Env,
 	}
 	if ReadyFlagExists(readyFlag) && isValidOCILayoutPath(layoutPath) {
 		return result, nil

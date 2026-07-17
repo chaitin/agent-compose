@@ -94,7 +94,7 @@ func TestMaterializeRootFSHandlesSymlinkHardlinkAndReadyHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second MaterializeRootFS returned error: %v", err)
 	}
-	if second != first {
+	if second.ImageID != first.ImageID || second.ResolvedRef != first.ResolvedRef || second.LayoutPath != first.LayoutPath || second.RootFSPath != first.RootFSPath {
 		t.Fatalf("second result = %#v, want %#v", second, first)
 	}
 	assertFileContent(t, sentinelPath, "keep\n")

@@ -68,7 +68,7 @@ func TestMaterializeOCILayoutReadyCacheHitDoesNotOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second MaterializeOCILayout returned error: %v", err)
 	}
-	if second != first {
+	if second.ImageID != first.ImageID || second.ResolvedRef != first.ResolvedRef || second.LayoutPath != first.LayoutPath || second.RootFSPath != first.RootFSPath {
 		t.Fatalf("second result = %#v, want %#v", second, first)
 	}
 	if _, err := os.Stat(sentinelPath); err != nil {

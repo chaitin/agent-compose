@@ -22,6 +22,7 @@ type MetadataInput struct {
 	Platform          Platform
 	MediaType         string
 	Labels            map[string]string
+	Env               []string
 	SizeBytes         int64
 	CreatedAt         time.Time
 	PulledAt          time.Time
@@ -85,6 +86,7 @@ func NewImageMetadata(input MetadataInput) (ImageMetadata, error) {
 		Platform:        input.Platform,
 		MediaType:       input.MediaType,
 		Labels:          cloneStringMap(input.Labels),
+		Env:             cloneStringSlice(input.Env),
 		SizeBytes:       input.SizeBytes,
 		CreatedAt:       input.CreatedAt,
 		PulledAt:        pulledAt,
@@ -121,6 +123,15 @@ func cloneStringMap(values map[string]string) map[string]string {
 	for key, value := range values {
 		clone[key] = value
 	}
+	return clone
+}
+
+func cloneStringSlice(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	clone := make([]string, len(values))
+	copy(clone, values)
 	return clone
 }
 

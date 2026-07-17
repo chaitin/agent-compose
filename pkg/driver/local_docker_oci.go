@@ -28,6 +28,7 @@ type localDockerImageRootfs struct {
 	ImageID     string
 	ResolvedRef string
 	RootfsPath  string
+	Env         []string
 }
 
 type localDockerImageLayout struct {
@@ -76,6 +77,8 @@ func materializeLocalDockerImageRootfsWithClient(ctx context.Context, dataRoot s
 		return localDockerImageRootfs{}, false, nil
 	}
 
+	imageEnv := inspectEnv(inspect)
+
 	imageID := strings.TrimPrefix(inspect.ID, "sha256:")
 	if imageID == "" {
 		imageID = sanitizeRuntimeName(resolvedRef)
@@ -85,7 +88,8 @@ func materializeLocalDockerImageRootfsWithClient(ctx context.Context, dataRoot s
 	readyFlag := filepath.Join(cacheDir, ".rootfs.ready")
 	if _, err := os.Stat(readyFlag); err == nil {
 		if info, statErr := os.Stat(rootfsDir); statErr == nil && info.IsDir() {
-			return localDockerImageRootfs{ImageID: imageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir}, true, nil
+			env := loadImageEnvCache(cacheDir, imageEnv)
+			return localDockerImageRootfs{ImageID: imageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir, Env: env}, true, nil
 		}
 	}
 	_ = os.Remove(readyFlag)
@@ -114,7 +118,8 @@ func materializeLocalDockerImageRootfsWithClient(ctx context.Context, dataRoot s
 
 	if _, err := os.Stat(readyFlag); err == nil {
 		if info, statErr := os.Stat(rootfsDir); statErr == nil && info.IsDir() {
-			return localDockerImageRootfs{ImageID: imageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir}, true, nil
+			env := loadImageEnvCache(cacheDir, imageEnv)
+			return localDockerImageRootfs{ImageID: imageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir, Env: env}, true, nil
 		}
 	}
 	_ = os.Remove(readyFlag)
@@ -156,7 +161,10 @@ func materializeLocalDockerImageRootfsWithClient(ctx context.Context, dataRoot s
 	if err := os.WriteFile(readyFlag, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 		return localDockerImageRootfs{}, false, fmt.Errorf("write image cache ready flag: %w", err)
 	}
-	return localDockerImageRootfs{ImageID: imageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir}, true, nil
+	if err := writeImageEnvCache(cacheDir, imageEnv); err != nil {
+		return localDockerImageRootfs{}, false, fmt.Errorf("write image env cache: %w", err)
+	}
+	return localDockerImageRootfs{ImageID: imageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir, Env: imageEnv}, true, nil
 }
 
 func materializeRootfsFromReadyLayout(cacheDir, rootfsDir, readyFlag string, layout localDockerImageLayout, resolvedRef string) (localDockerImageRootfs, bool, error) {
@@ -176,7 +184,8 @@ func materializeRootfsFromReadyLayout(cacheDir, rootfsDir, readyFlag string, lay
 
 	if _, err := os.Stat(readyFlag); err == nil {
 		if info, statErr := os.Stat(rootfsDir); statErr == nil && info.IsDir() {
-			return localDockerImageRootfs{ImageID: layout.ImageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir}, true, nil
+			env := loadImageEnvCache(cacheDir, nil)
+			return localDockerImageRootfs{ImageID: layout.ImageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir, Env: env}, true, nil
 		}
 	}
 	_ = os.Remove(readyFlag)
@@ -204,7 +213,8 @@ func materializeRootfsFromReadyLayout(cacheDir, rootfsDir, readyFlag string, lay
 	if err := os.WriteFile(readyFlag, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 		return localDockerImageRootfs{}, false, fmt.Errorf("write image cache ready flag: %w", err)
 	}
-	return localDockerImageRootfs{ImageID: layout.ImageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir}, true, nil
+	env := loadImageEnvCache(cacheDir, nil)
+	return localDockerImageRootfs{ImageID: layout.ImageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir, Env: env}, true, nil
 }
 
 func materializeLocalDockerImageLayout(ctx context.Context, dataRoot, imageRef string) (localDockerImageLayout, bool, error) {
@@ -870,4 +880,51 @@ func sanitizeRuntimeName(value string) string {
 		return "image"
 	}
 	return result
+}
+
+// imageEnvCacheFileName is the basename of the file that stores the image's ENV
+// list alongside the rootfs cache.
+const imageEnvCacheFileName = ".env.json"
+
+func inspectEnv(inspect typesimage.InspectResponse) []string {
+	if inspect.Config == nil || len(inspect.Config.Env) == 0 {
+		return nil
+	}
+	env := make([]string, len(inspect.Config.Env))
+	copy(env, inspect.Config.Env)
+	return env
+}
+
+// writeImageEnvCache writes the image environment variables to cacheDir.
+func writeImageEnvCache(cacheDir string, env []string) error {
+	if len(env) == 0 {
+		return nil
+	}
+	path := filepath.Join(cacheDir, imageEnvCacheFileName)
+	data, err := json.Marshal(env)
+	if err != nil {
+		return fmt.Errorf("encode env cache: %w", err)
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+// loadImageEnvCache reads the cached image environment variables from cacheDir.
+// When fresh is non-nil and the cache file does not exist, it writes fresh first.
+func loadImageEnvCache(cacheDir string, fresh []string) []string {
+	path := filepath.Join(cacheDir, imageEnvCacheFileName)
+	if fresh != nil {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			_ = writeImageEnvCache(cacheDir, fresh)
+			return fresh
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var env []string
+	if err := json.Unmarshal(data, &env); err != nil {
+		return nil
+	}
+	return env
 }

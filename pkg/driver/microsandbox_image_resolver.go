@@ -15,6 +15,7 @@ type microsandboxRootFSResult struct {
 	ImageID     string
 	ResolvedRef string
 	RootFSPath  string
+	Env         []string
 }
 
 type microsandboxImageResolverOps struct {
@@ -78,7 +79,7 @@ func materializeMicrosandboxOCIRootFS(ctx context.Context, config *appconfig.Con
 		if _, pullErr := cache.Pull(pullCtx, imagecache.PullRequest{Reference: imageRef}); pullErr != nil {
 			result, matErr := cache.MaterializeRootFS(ctx, imageRef)
 			if matErr == nil {
-				return microsandboxRootFSResult{ImageID: result.ImageID, ResolvedRef: result.ResolvedRef, RootFSPath: result.RootFSPath}, true, nil
+				return microsandboxRootFSResult{ImageID: result.ImageID, ResolvedRef: result.ResolvedRef, RootFSPath: result.RootFSPath, Env: result.Env}, true, nil
 			}
 			return microsandboxRootFSResult{}, false, fmt.Errorf("guest image %s: pull failed (%w) and not found locally", imageRef, pullErr)
 		}
@@ -86,7 +87,7 @@ func materializeMicrosandboxOCIRootFS(ctx context.Context, config *appconfig.Con
 		if matErr != nil {
 			return microsandboxRootFSResult{}, false, matErr
 		}
-		return microsandboxRootFSResult{ImageID: result.ImageID, ResolvedRef: result.ResolvedRef, RootFSPath: result.RootFSPath}, true, nil
+		return microsandboxRootFSResult{ImageID: result.ImageID, ResolvedRef: result.ResolvedRef, RootFSPath: result.RootFSPath, Env: result.Env}, true, nil
 	}
 
 	result, err := cache.MaterializeRootFS(ctx, imageRef)
@@ -108,5 +109,6 @@ func materializeMicrosandboxOCIRootFS(ctx context.Context, config *appconfig.Con
 		ImageID:     result.ImageID,
 		ResolvedRef: result.ResolvedRef,
 		RootFSPath:  result.RootFSPath,
+		Env:         result.Env,
 	}, true, nil
 }

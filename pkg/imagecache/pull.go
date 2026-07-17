@@ -101,6 +101,7 @@ func (c *Cache) Pull(ctx context.Context, req PullRequest) (PullResult, error) {
 		Platform:        metadataPlatform,
 		MediaType:       string(mediaType),
 		Labels:          configFile.Config.Labels,
+		Env:             configFile.Config.Env,
 		SizeBytes:       sizeBytes,
 		CreatedAt:       configFile.Created.Time,
 		PulledAt:        time.Now().UTC(),

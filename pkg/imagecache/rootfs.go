@@ -50,6 +50,7 @@ func (c *Cache) MaterializeRootFS(ctx context.Context, ref string) (Materializat
 		ResolvedRef: firstImageRef(image.RepoDigests, image.NormalizedRef, image.ManifestDigest, image.CacheKey),
 		LayoutPath:  c.MaterializedOCILayoutPath(imageID),
 		RootFSPath:  rootfsPath,
+		Env:         image.Env,
 	}
 	if ReadyFlagExists(readyFlag) && isUsableRootFS(rootfsPath) {
 		return result, nil

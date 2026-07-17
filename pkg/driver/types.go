@@ -186,6 +186,20 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// parseEnvEntry splits a "KEY=VALUE" environment entry. Returns false when the
+// entry is malformed (no "=") or the key is empty after trimming.
+func parseEnvEntry(entry string) (string, string, bool) {
+	idx := strings.Index(entry, "=")
+	if idx < 0 {
+		return "", "", false
+	}
+	key := strings.TrimSpace(entry[:idx])
+	if key == "" {
+		return "", "", false
+	}
+	return key, entry[idx+1:], true
+}
+
 func hostSandboxDir(session *Sandbox) string {
 	if session == nil {
 		return ""

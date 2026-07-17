@@ -981,14 +981,25 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	if imagePullTimeout <= 0 {
 		imagePullTimeout = defaultImagePullTimeout
 	}
-	if resolvedRef, ok, err := r.resolveMicrosandboxImageRef(ctx, imageRef, session.Summary.PullPolicy, imagePullTimeout); err != nil {
+	var imageEnv []string
+	if resolvedRef, envList, ok, err := r.resolveMicrosandboxImageRef(ctx, imageRef, session.Summary.PullPolicy, imagePullTimeout); err != nil {
 		return nil, err
 	} else if ok {
 		imageRef = resolvedRef
+		imageEnv = envList
 	}
 	env := sandboxEnvMap(session.EnvItems, session.RuntimeEnvItems)
 	if env == nil {
 		env = map[string]string{}
+	}
+	// Merge image ENV as baseline — user/session env vars and agent-compose
+	// defaults override image-defined values (matching Docker daemon behavior).
+	for _, e := range imageEnv {
+		if key, value, ok := parseEnvEntry(e); ok && !LLMProviderKeyName(key) {
+			if _, exists := env[key]; !exists {
+				env[key] = value
+			}
+		}
 	}
 	env["GOPATH"] = "/usr/local/go"
 	env["PATH"] = "/root/.local/bin:/usr/local/go/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -1047,7 +1058,7 @@ func (r *microsandboxRuntime) microsandboxBindQuotaGB() int {
 	return r.config.BoxDiskSizeGB
 }
 
-func (r *microsandboxRuntime) resolveMicrosandboxImageRef(ctx context.Context, imageRef, pullPolicy string, pullTimeout time.Duration) (string, bool, error) {
+func (r *microsandboxRuntime) resolveMicrosandboxImageRef(ctx context.Context, imageRef, pullPolicy string, pullTimeout time.Duration) (string, []string, bool, error) {
 	rootfs, ok, err := resolveMicrosandboxRootFS(ctx, imageRef, microsandboxImageResolverOps{
 		dockerAvailable: dockerDaemonAvailable,
 		applyDockerPullPolicy: func(ctx context.Context, imageRef string) error {
@@ -1058,20 +1069,20 @@ func (r *microsandboxRuntime) resolveMicrosandboxImageRef(ctx context.Context, i
 			if err != nil || !ok {
 				return microsandboxRootFSResult{}, ok, err
 			}
-			return microsandboxRootFSResult{ImageID: rootfs.ImageID, ResolvedRef: rootfs.ResolvedRef, RootFSPath: rootfs.RootfsPath}, true, nil
+			return microsandboxRootFSResult{ImageID: rootfs.ImageID, ResolvedRef: rootfs.ResolvedRef, RootFSPath: rootfs.RootfsPath, Env: rootfs.Env}, true, nil
 		},
 		ociMaterialize: func(ctx context.Context, imageRef string) (microsandboxRootFSResult, bool, error) {
 			return materializeMicrosandboxOCIRootFS(ctx, r.config, imageRef, pullPolicy)
 		},
 	})
 	if err != nil {
-		return "", false, err
+		return "", nil, false, err
 	}
 	if ok {
 		slog.Info("agent-compose microsandbox using materialized image rootfs", "image", imageRef, "resolved_ref", rootfs.ResolvedRef, "rootfs_path", rootfs.RootFSPath)
-		return rootfs.RootFSPath, true, nil
+		return rootfs.RootFSPath, rootfs.Env, true, nil
 	}
-	return "", false, nil
+	return "", nil, false, nil
 }
 
 func microsandboxPullPolicyForImageRef(imageRef string, perCallPolicy string) microsandbox.PullPolicy {
