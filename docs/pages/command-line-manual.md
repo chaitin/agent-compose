@@ -519,30 +519,49 @@ Details:
 Manage images known to the daemon or referenced by the current project.
 
 ```bash
-agent-compose images
-agent-compose pull
-agent-compose pull <image>
-agent-compose rmi <image>
-agent-compose inspect image <image>
+agent-compose image ls
+agent-compose image pull
+agent-compose image pull <image>
+agent-compose image build [agent...]
+agent-compose image rm <image>
+agent-compose image inspect <image>
 ```
 
 Commands:
 
-- `images`: list images.
-- `pull`: pull all agent images referenced by the current project.
-- `pull <image>`: pull a specific image. If the local OCI image backend/store already has the image, the command succeeds directly with a skipped/already exists warning and does not pull again.
-- `rmi <image>`: remove an image metadata/store entry. For OCI storage this removes the logical metadata reference only; physical manifests/blobs are reclaimed explicitly by CacheService once unreferenced. It does not delete materialized or runtime-derived cache.
-- `inspect image <image>`: inspect an image.
+- `image ls`: list images.
+- `image pull`: pull all agent images referenced by the current project.
+- `image pull <image>`: pull a specific image. If the local OCI image backend/store already has the image, the command succeeds directly with a skipped/already exists warning and does not pull again.
+- `image build [agent...]`: build images configured for all project agents, or only the named agents when names are provided.
+- `image rm <image>`: remove an image metadata/store entry. For OCI storage this removes the logical metadata reference only; physical manifests/blobs are reclaimed explicitly by CacheService once unreferenced. It does not delete materialized or runtime-derived cache.
+- `image inspect <image>`: inspect an image.
+
+The following top-level commands are shortcuts for the corresponding `image` subcommands:
+
+| Top-level shortcut | Image command |
+| --- | --- |
+| `images` | `image ls` |
+| `pull [image]` | `image pull [image]` |
+| `build [agent...]` | `image build [agent...]` |
+| `rmi <image>` | `image rm <image>` |
+| `inspect image <image>` | `image inspect <image>` |
 
 Common options:
 
 | Command | Option | Description |
 | --- | --- | --- |
-| `images` | `-a, --all` | Show all images. |
-| `images` | `--query <text>` | Filter by image reference. |
-| `pull` | `--platform <os/arch[/variant]>` | Pull for a specific platform. |
-| `rmi` | `--force` | Force image removal. |
-| `rmi` | `--prune-children` | Request child-image pruning from the image backend. OCI cache currently returns a warning and does not remove blobs or runtime/materialized cache. |
+| `image ls` | `-a, --all` | Show all images. |
+| `image ls` | `--query <text>` | Filter by image reference. |
+| `image pull` | `--platform <os/arch[/variant]>` | Pull for a specific platform. |
+| `image build` | `-t, --tag <name[:tag]>` | Add an output image tag. |
+| `image build` | `--dockerfile <path>` | Override the configured Dockerfile. |
+| `image build` | `--target <stage>` | Select a Dockerfile target stage. |
+| `image build` | `--build-arg <key=value>` | Set a build-time variable; may be repeated. |
+| `image build` | `--platform <os/arch[/variant]>` | Build for a specific platform. |
+| `image build` | `--no-cache` | Disable the build cache. |
+| `image build` | `--pull` | Always attempt to pull newer base images. |
+| `image rm` | `--force` | Force image removal. |
+| `image rm` | `--prune-children` | Request child-image pruning from the image backend. OCI cache currently returns a warning and does not remove blobs or runtime/materialized cache. |
 
 ## Cache Commands
 
@@ -595,14 +614,6 @@ agent-compose cache rm <cache-id> --force
 
 `CACHE_TTL` defaults to `168h`; `0` disables expiration classification. TTL never triggers background/startup deletion. Use `cache prune --expired --force` explicitly. `--older-than` remains an independent filter. `cache prune` and `cache rm` default to dry-run; `--force` authorizes execution but never bypasses `active`, `referenced`, or `unknown` protection. BoxLite v0.9.7 runtime image inventory is read-only because its ABI has no safe image remove/prune operation; Microsandbox shared images use the SDK inventory/remove APIs. `sandbox prune` does not delete cache artifacts.
 
-Compatibility:
-
-- `agent-compose image ls` is deprecated; use `agent-compose images`.
-- `agent-compose image pull <image>` is deprecated; use `agent-compose pull <image>`.
-- `agent-compose image rm <image>` is deprecated; use `agent-compose rmi <image>`.
-- `agent-compose image inspect <image>` is deprecated; use `agent-compose inspect image <image>`.
-- The old `image` command tree still works and prints warnings to stderr, but it may be removed in a future release.
-
 ## `status`: Query Daemon Status
 
 Check the selected daemon status and version.
@@ -641,7 +652,6 @@ agent-compose config --quiet
 
 The following commands or capabilities are not published as stable CLI features yet:
 
-- `build`: project image build is deferred.
 - `push`: image push is deferred.
 - `up -d/--detach`: current `up` already applies the project and returns; no detach flag is provided.
 - Foreground `up` attach and Ctrl+C project shutdown are deferred.

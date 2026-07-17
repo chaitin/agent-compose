@@ -527,30 +527,49 @@ agent-compose inspect cache <cache-id>
 管理 daemon 或当前 project 相关的镜像。
 
 ```bash
-agent-compose images
-agent-compose pull
-agent-compose pull <image>
-agent-compose rmi <image>
-agent-compose inspect image <image>
+agent-compose image ls
+agent-compose image pull
+agent-compose image pull <image>
+agent-compose image build [agent...]
+agent-compose image rm <image>
+agent-compose image inspect <image>
 ```
 
 命令说明：
 
-- `images`：列出镜像。
-- `pull`：拉取当前 project 中所有 agent 引用的镜像。
-- `pull <image>`：拉取指定镜像；如果本地 OCI image backend/store 已存在该镜像，会直接成功并输出 skipped/already exists warning，不会再次 pull。
-- `rmi <image>`：删除镜像 metadata/store entry。OCI 模式下只删除逻辑 metadata ref；无引用的物理 manifest/blob 由 CacheService 显式回收。该命令不删除 materialized 或 runtime-derived cache。
-- `inspect image <image>`：查看镜像详情。
+- `image ls`：列出镜像。
+- `image pull`：拉取当前 project 中所有 agent 引用的镜像。
+- `image pull <image>`：拉取指定镜像；如果本地 OCI image backend/store 已存在该镜像，会直接成功并输出 skipped/already exists warning，不会再次 pull。
+- `image build [agent...]`：构建所有 project agent 配置的镜像；提供 agent 名称时只构建指定 agent 的镜像。
+- `image rm <image>`：删除镜像 metadata/store entry。OCI 模式下只删除逻辑 metadata ref；无引用的物理 manifest/blob 由 CacheService 显式回收。该命令不删除 materialized 或 runtime-derived cache。
+- `image inspect <image>`：查看镜像详情。
+
+以下顶层命令是对应 `image` 子命令的快捷别名：
+
+| 顶层快捷别名 | Image 命令 |
+| --- | --- |
+| `images` | `image ls` |
+| `pull [image]` | `image pull [image]` |
+| `build [agent...]` | `image build [agent...]` |
+| `rmi <image>` | `image rm <image>` |
+| `inspect image <image>` | `image inspect <image>` |
 
 常用选项：
 
 | 命令 | 参数 | 说明 |
 | --- | --- | --- |
-| `images` | `-a, --all` | 显示全部镜像。 |
-| `images` | `--query <text>` | 按镜像引用过滤。 |
-| `pull` | `--platform <os/arch[/variant]>` | 指定拉取平台。 |
-| `rmi` | `--force` | 强制删除镜像。 |
-| `rmi` | `--prune-children` | 请求 image backend 清理 child images。OCI cache 当前会返回 warning，不删除 blobs，也不删除 runtime/materialized cache。 |
+| `image ls` | `-a, --all` | 显示全部镜像。 |
+| `image ls` | `--query <text>` | 按镜像引用过滤。 |
+| `image pull` | `--platform <os/arch[/variant]>` | 指定拉取平台。 |
+| `image build` | `-t, --tag <name[:tag]>` | 添加输出镜像 tag。 |
+| `image build` | `--dockerfile <path>` | 覆盖配置中的 Dockerfile。 |
+| `image build` | `--target <stage>` | 指定 Dockerfile target stage。 |
+| `image build` | `--build-arg <key=value>` | 设置构建变量，可重复提供。 |
+| `image build` | `--platform <os/arch[/variant]>` | 指定构建平台。 |
+| `image build` | `--no-cache` | 禁用构建缓存。 |
+| `image build` | `--pull` | 始终尝试拉取更新的基础镜像。 |
+| `image rm` | `--force` | 强制删除镜像。 |
+| `image rm` | `--prune-children` | 请求 image backend 清理 child images。OCI cache 当前会返回 warning，不删除 blobs，也不删除 runtime/materialized cache。 |
 
 ## Cache 命令
 
@@ -603,14 +622,6 @@ agent-compose cache rm <cache-id> --force
 
 `CACHE_TTL` 默认 `168h`，设为 `0` 会禁用 expired 判定；TTL 不会触发后台或启动时删除，必须显式执行 `cache prune --expired --force`。`--older-than` 仍是独立过滤条件。`cache prune` 和 `cache rm` 默认 dry-run；`--force` 只授权执行，不能绕过 `active`、`referenced` 或 `unknown` 保护。BoxLite v0.9.7 ABI 不提供安全 image remove/prune，因此 runtime image inventory 只读；Microsandbox 共享 image 使用 SDK inventory/remove API。`sandbox prune` 不删除 cache artifact。
 
-兼容说明：
-
-- `agent-compose image ls` 已废弃，请使用 `agent-compose images`。
-- `agent-compose image pull <image>` 已废弃，请使用 `agent-compose pull <image>`。
-- `agent-compose image rm <image>` 已废弃，请使用 `agent-compose rmi <image>`。
-- `agent-compose image inspect <image>` 已废弃，请使用 `agent-compose inspect image <image>`。
-- 旧 `image` 命令树仍可用，但会在 stderr 输出 deprecated warning，后续版本会评估删除。
-
 ## `status`：检查 daemon 状态
 
 检查当前选择的 daemon 状态和版本。
@@ -649,7 +660,6 @@ agent-compose config --quiet
 
 以下命令或能力尚未作为稳定 CLI 发布：
 
-- `build`：project image build 暂缓。
 - `push`：image push 暂缓。
 - `up -d/--detach`：当前 `up` 本身就是 apply project 后返回，不提供 detach 参数。
 - `up` 前台 attach 和 Ctrl+C 停止整个 project：暂缓。

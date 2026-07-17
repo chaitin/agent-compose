@@ -107,9 +107,14 @@ func TestE2ECLIHelpCoversUserWorkflowCommandSurface(t *testing.T) {
 			want: []string{"Remove an image", "--force", "--prune-children"},
 		},
 		{
-			name: "deprecated image command",
+			name: "image command",
 			args: []string{"image", "--help"},
-			want: []string{"Deprecated: use images, pull, rmi, or inspect image", "pull", "build", "inspect"},
+			want: []string{"Manage daemon images", "ls", "pull", "build", "rm", "inspect"},
+		},
+		{
+			name: "image pull",
+			args: []string{"image", "pull", "--help"},
+			want: []string{"Pull an image or all project images", "pull [image]", "--platform"},
 		},
 		{
 			name: "inspect",
@@ -127,8 +132,8 @@ func TestE2ECLIHelpCoversUserWorkflowCommandSurface(t *testing.T) {
 			if runCount != 0 {
 				t.Fatalf("%v started daemon %d time(s)", tc.args, runCount)
 			}
-			if stderr != "" && !strings.Contains(stderr, "deprecated") {
-				t.Fatalf("%v stderr = %q, want empty or deprecation warning", tc.args, stderr)
+			if stderr != "" {
+				t.Fatalf("%v stderr = %q, want empty", tc.args, stderr)
 			}
 			for _, want := range tc.want {
 				if !strings.Contains(stdout, want) {

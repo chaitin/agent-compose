@@ -184,7 +184,7 @@ See the [command line manual](docs/pages/command-line-manual.md) for the full fi
 | `agent-compose logs` | Print project run logs; a project, agent, run, or sandbox ID can be passed without its resource type. |
 | `agent-compose scheduler ls\|runs\|logs\|trigger\|inspect` | List triggers and runs, read scheduler logs, manually run triggers, or inspect scheduler resources. |
 | `agent-compose sandbox ls\|stop\|resume\|rm\|prune` | Manage project sandboxes. |
-| `agent-compose images\|pull\|build\|rmi\|inspect` | Manage daemon images and build agent images. |
+| `agent-compose image ls\|pull\|build\|rm\|inspect` | Manage daemon images and build agent images; top-level shortcuts remain available. |
 | `agent-compose volume ls\|create\|inspect\|rm\|prune` | Manage daemon volumes. |
 | `agent-compose cache ls\|inspect\|prune\|rm` | Inspect and clean daemon runtime caches. |
 | `agent-compose down` | Disable managed schedulers and stop sandboxes. |

@@ -82,5 +82,5 @@ func testDaemonListenConfigWorkflow(t *testing.T) {
 	t.Run("cli image inspect json", TestIntegrationCLIImageInspectJSON)
 	t.Run("cli images json accepts OCI store status", TestIntegrationCLIImagesJSONAcceptsOCIStoreStatus)
 	t.Run("cli image Docker error is clear", TestIntegrationCLIImageDockerErrorIsClear)
-	t.Run("cli image root command warns deprecated", TestCLIImageRootCommandWarnsDeprecated)
+	t.Run("cli image root command shows help", TestCLIImageRootCommandShowsHelp)
 }
