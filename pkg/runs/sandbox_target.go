@@ -76,7 +76,11 @@ func (r *SandboxRunTargetResolver) ResolveBatch(ctx context.Context, sandboxes [
 			result[id] = SandboxRunTarget{ProjectID: run.ProjectID, AgentName: run.AgentName}
 			continue
 		}
-		if projectID, agentName := sandboxTagValue(sandbox, "project"), sandboxTagValue(sandbox, "agent"); projectID != "" && agentName != "" {
+		projectID := sandboxTagValue(sandbox, "project")
+		if projectID == "" {
+			projectID = sandboxTagValue(sandbox, "project_id")
+		}
+		if agentName := sandboxTagValue(sandbox, "agent"); projectID != "" && agentName != "" {
 			result[id] = SandboxRunTarget{ProjectID: projectID, AgentName: agentName}
 			continue
 		}

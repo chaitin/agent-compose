@@ -33,6 +33,7 @@ func TestSandboxRunTargetResolverResolveBatch(t *testing.T) {
 	sandboxes := []*domain.Sandbox{
 		sandboxWithTags("run-sandbox", domain.SandboxTag{Name: "project", Value: "ignored-project"}),
 		sandboxWithTags("tag-sandbox", domain.SandboxTag{Name: "project", Value: "tag-project"}, domain.SandboxTag{Name: "agent", Value: "tag-agent"}),
+		sandboxWithTags("legacy-tag-sandbox", domain.SandboxTag{Name: "project_id", Value: "legacy-tag-project"}, domain.SandboxTag{Name: "agent", Value: "legacy-tag-agent"}),
 		sandboxWithTags("managed-sandbox", domain.SandboxTag{Name: domain.AgentSandboxTagID, Value: "managed-id"}),
 		sandboxWithTags("legacy-sandbox", domain.SandboxTag{Name: domain.AgentSandboxTagID, Value: "old-uuid"}, domain.SandboxTag{Name: domain.AgentSandboxTagName, Value: "Legacy-Agent"}),
 		sandboxWithTags("unknown-sandbox", domain.SandboxTag{Name: domain.AgentSandboxTagID, Value: "unknown"}),
@@ -43,10 +44,11 @@ func TestSandboxRunTargetResolverResolveBatch(t *testing.T) {
 		t.Fatalf("ResolveBatch returned error: %v", err)
 	}
 	wants := map[string]SandboxRunTarget{
-		"run-sandbox":     {ProjectID: "run-project", AgentName: "run-agent"},
-		"tag-sandbox":     {ProjectID: "tag-project", AgentName: "tag-agent"},
-		"managed-sandbox": {ProjectID: "managed-project", AgentName: "managed-agent"},
-		"legacy-sandbox":  {ProjectID: legacyProjectID, AgentName: "legacy-agent"},
+		"run-sandbox":        {ProjectID: "run-project", AgentName: "run-agent"},
+		"tag-sandbox":        {ProjectID: "tag-project", AgentName: "tag-agent"},
+		"legacy-tag-sandbox": {ProjectID: "legacy-tag-project", AgentName: "legacy-tag-agent"},
+		"managed-sandbox":    {ProjectID: "managed-project", AgentName: "managed-agent"},
+		"legacy-sandbox":     {ProjectID: legacyProjectID, AgentName: "legacy-agent"},
 	}
 	for sandboxID, want := range wants {
 		if got := targets[sandboxID]; got != want {

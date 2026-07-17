@@ -53,5 +53,5 @@ func runComposeLogsForResourceID(cmd *cobra.Command, cli cliOptions, options com
 		}
 		return writeLogsForRun(cmd.OutOrStdout(), run.Msg.GetRun(), cli.JSON, options)
 	}
-	return followOrPrintProjectLogs(cmd, cli, clients.run, projectID, projectName, options)
+	return followOrPrintProjectLogs(cmd, cli, clients, projectID, projectName, options)
 }

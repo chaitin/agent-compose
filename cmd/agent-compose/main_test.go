@@ -9911,10 +9911,18 @@ type sandboxServiceStub struct {
 	getStats      func(context.Context, *connect.Request[agentcomposev2.GetSandboxStatsRequest]) (*connect.Response[agentcomposev2.GetSandboxStatsResponse], error)
 	getSandbox    func(context.Context, *connect.Request[agentcomposev2.GetSandboxRequest]) (*connect.Response[agentcomposev2.GetSandboxResponse], error)
 	listSandboxes func(context.Context, *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error)
+	listHistory   func(context.Context, *connect.Request[agentcomposev2.ListSandboxHistoryRequest]) (*connect.Response[agentcomposev2.ListSandboxHistoryResponse], error)
 	stopSandbox   func(context.Context, *connect.Request[agentcomposev2.StopSandboxRequest]) (*connect.Response[agentcomposev2.StopSandboxResponse], error)
 	resumeSandbox func(context.Context, *connect.Request[agentcomposev2.ResumeSandboxRequest]) (*connect.Response[agentcomposev2.ResumeSandboxResponse], error)
 
 	agentcomposev2connect.UnimplementedSandboxServiceHandler
+}
+
+func (s sandboxServiceStub) ListSandboxHistory(ctx context.Context, req *connect.Request[agentcomposev2.ListSandboxHistoryRequest]) (*connect.Response[agentcomposev2.ListSandboxHistoryResponse], error) {
+	if s.listHistory == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("ListSandboxHistory stub is not configured"))
+	}
+	return s.listHistory(ctx, req)
 }
 
 func (s sandboxServiceStub) StopSandbox(ctx context.Context, req *connect.Request[agentcomposev2.StopSandboxRequest]) (*connect.Response[agentcomposev2.StopSandboxResponse], error) {

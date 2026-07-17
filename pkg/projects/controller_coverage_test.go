@@ -173,6 +173,8 @@ func TestDownProjectSandboxAndSchedulerWorkflows(t *testing.T) {
 		{Summary: domain.SandboxSummary{ID: "other", Title: "Other", Tags: []domain.SandboxTag{{Name: "project", Value: "other"}}}},
 		{Summary: domain.SandboxSummary{ID: "session-fail", Title: "Fail", Tags: []domain.SandboxTag{{Name: " project ", Value: " project-1 "}}}},
 		{Summary: domain.SandboxSummary{ID: "session-ok", Title: "OK", Tags: []domain.SandboxTag{{Name: "project", Value: "project-1"}}}},
+		{Summary: domain.SandboxSummary{ID: "session-legacy", Title: "Legacy", Tags: []domain.SandboxTag{{Name: "project_id", Value: "project-1"}}}},
+		{Summary: domain.SandboxSummary{ID: "session-conflict", Title: "Conflict", Tags: []domain.SandboxTag{{Name: "project", Value: "other"}, {Name: "project_id", Value: "project-1"}}}},
 	}}
 	stopped := make([]string, 0)
 	refreshed := false
@@ -200,13 +202,14 @@ func TestDownProjectSandboxAndSchedulerWorkflows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DownProject returned error: %v", err)
 	}
-	if !refreshed || len(stopped) != 2 {
+	if !refreshed || len(stopped) != 3 {
 		t.Fatalf("refreshed/stopped = %v/%#v", refreshed, stopped)
 	}
 	assertDownChange(t, changes, DownChangeUpdated, "project_scheduler", "scheduler-1")
 	assertDownChange(t, changes, DownChangeUpdated, "loader", "loader-1")
 	assertDownChange(t, changes, DownChangeUnchanged, "sandbox", "session-fail")
 	assertDownChange(t, changes, DownChangeUpdated, "sandbox", "session-ok")
+	assertDownChange(t, changes, DownChangeUpdated, "sandbox", "session-legacy")
 	if SandboxHasTag(nil, "project", project.ID) || !SandboxHasTag(sessionStore.sessions[2], "project", project.ID) {
 		t.Fatalf("SandboxHasTag returned unexpected values")
 	}

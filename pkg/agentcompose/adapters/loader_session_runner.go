@@ -132,8 +132,10 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 	}
 	tags := []domain.SandboxTag{{Name: "origin", Value: origin}, {Name: "loader_id", Value: loader.Summary.ID}, {Name: "loader_name", Value: loader.Summary.Name}}
 	if origin == "scheduler" {
+		projectID := strings.TrimSpace(loader.Summary.ManagedProjectID)
 		tags = append(tags,
-			domain.SandboxTag{Name: "project_id", Value: loader.Summary.ManagedProjectID},
+			domain.SandboxTag{Name: "project", Value: projectID},
+			domain.SandboxTag{Name: "project_id", Value: projectID},
 			domain.SandboxTag{Name: "agent", Value: loader.Summary.ManagedAgentName},
 			domain.SandboxTag{Name: "scheduler_id", Value: loader.Summary.ManagedSchedulerID},
 		)

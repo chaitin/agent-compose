@@ -110,7 +110,7 @@ func StopProjectRunningSandboxes(ctx context.Context, project domain.ProjectReco
 	}
 	var changes []DownChange
 	for _, sandbox := range result.Sandboxes {
-		if !SandboxHasTag(sandbox, "project", project.ID) {
+		if !SandboxBelongsToProject(sandbox, project.ID) {
 			continue
 		}
 		if options.StopSandbox == nil {
@@ -135,6 +135,28 @@ func StopProjectRunningSandboxes(ctx context.Context, project domain.ProjectReco
 		})
 	}
 	return changes, nil
+}
+
+func SandboxBelongsToProject(sandbox *domain.Sandbox, projectID string) bool {
+	if sandbox == nil {
+		return false
+	}
+	if canonical := sandboxTagValue(sandbox, "project"); canonical != "" {
+		return canonical == strings.TrimSpace(projectID)
+	}
+	return sandboxTagValue(sandbox, "project_id") == strings.TrimSpace(projectID)
+}
+
+func sandboxTagValue(sandbox *domain.Sandbox, name string) string {
+	if sandbox == nil {
+		return ""
+	}
+	for _, tag := range sandbox.Summary.Tags {
+		if strings.TrimSpace(tag.Name) == strings.TrimSpace(name) {
+			return strings.TrimSpace(tag.Value)
+		}
+	}
+	return ""
 }
 
 func SandboxHasTag(sandbox *domain.Sandbox, name, value string) bool {

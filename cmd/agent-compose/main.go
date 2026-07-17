@@ -3505,26 +3505,25 @@ func runComposeLogsCommand(cmd *cobra.Command, cli cliOptions, options composeLo
 	if err != nil {
 		return err
 	}
-	clientConfig, err := resolveCLIClientConfig(cli.Host)
+	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
-	client := agentcomposev2connect.NewRunServiceClient(newDaemonHTTPClient(clientConfig), clientConfig.BaseURL)
-	normalizedOptions, err = resolveComposeLogRefs(cmd.Context(), client, normalized, projectID, normalizedOptions)
+	normalizedOptions, err = resolveComposeLogRefs(cmd.Context(), clients.run, clients.sandbox, normalized, projectID, normalizedOptions)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(normalizedOptions.RunID) != "" {
-		run, err := getRunDetail(cmd.Context(), client, projectID, normalizedOptions.RunID)
+		run, err := getRunDetail(cmd.Context(), clients.run, projectID, normalizedOptions.RunID)
 		if err != nil {
 			return commandExitErrorForConnect(fmt.Errorf("get run %s for project %s: %w", strings.TrimSpace(normalizedOptions.RunID), normalized.Name, err))
 		}
 		if normalizedOptions.Follow {
-			return followRunLogStream(cmd.Context(), cmd.OutOrStdout(), client, projectID, run.Msg.GetRun().GetSummary(), normalizedOptions)
+			return followRunLogStream(cmd.Context(), cmd.OutOrStdout(), clients.run, projectID, run.Msg.GetRun().GetSummary(), normalizedOptions)
 		}
 		return writeLogsForRun(cmd.OutOrStdout(), run.Msg.GetRun(), cli.JSON, normalizedOptions)
 	}
-	return followOrPrintProjectLogs(cmd, cli, client, projectID, normalized.Name, normalizedOptions)
+	return followOrPrintProjectLogs(cmd, cli, clients, projectID, normalized.Name, normalizedOptions)
 }
 
 func normalizeComposeLogsOptions(cmd *cobra.Command, options composeLogsOptions, args []string) (composeLogsOptions, error) {
@@ -3544,7 +3543,7 @@ func normalizeComposeLogsOptions(cmd *cobra.Command, options composeLogsOptions,
 	return options, nil
 }
 
-func resolveComposeLogRefs(ctx context.Context, client agentcomposev2connect.RunServiceClient, normalized *compose.NormalizedProjectSpec, projectID string, options composeLogsOptions) (composeLogsOptions, error) {
+func resolveComposeLogRefs(ctx context.Context, runClient agentcomposev2connect.RunServiceClient, sandboxClient agentcomposev2connect.SandboxServiceClient, normalized *compose.NormalizedProjectSpec, projectID string, options composeLogsOptions) (composeLogsOptions, error) {
 	if strings.TrimSpace(options.AgentName) != "" {
 		agentName, err := resolveComposeAgentNameFromSpec(normalized, projectID, options.AgentName)
 		if err != nil {
@@ -3553,16 +3552,20 @@ func resolveComposeLogRefs(ctx context.Context, client agentcomposev2connect.Run
 		options.AgentName = agentName
 	}
 	if shouldResolveComposeLogResourceRef(options.RunID) {
-		runID, err := resolveComposeRunIDRef(ctx, client, projectID, options.AgentName, options.RunID)
+		runID, err := resolveComposeRunIDRef(ctx, runClient, projectID, options.AgentName, options.RunID)
 		if err != nil {
 			return options, err
 		}
 		options.RunID = runID
 	}
 	if shouldResolveComposeLogResourceRef(options.SandboxID) {
-		sandboxID, err := resolveComposeSandboxIDRefFromRuns(ctx, client, projectID, options.AgentName, options.SandboxID)
-		if err != nil {
-			return options, err
+		sandboxID, runErr := resolveComposeSandboxIDRefFromRuns(ctx, runClient, projectID, options.AgentName, options.SandboxID)
+		if runErr != nil {
+			var err error
+			sandboxID, err = resolveProjectSandboxIDRef(ctx, sandboxClient, projectID, options.SandboxID)
+			if err != nil {
+				return options, err
+			}
 		}
 		options.SandboxID = sandboxID
 	}
@@ -7793,11 +7796,15 @@ func formatProtoTimestamp(value interface{ AsTime() time.Time }) string {
 	return parsed.UTC().Format(time.RFC3339Nano)
 }
 
-func followOrPrintProjectLogs(cmd *cobra.Command, cli cliOptions, client agentcomposev2connect.RunServiceClient, projectID, projectName string, options composeLogsOptions) error {
+func followOrPrintProjectLogs(cmd *cobra.Command, cli cliOptions, clients cliServiceClients, projectID, projectName string, options composeLogsOptions) error {
+	client := clients.run
 	if options.Follow && !cli.JSON {
 		runs, err := listLogRuns(cmd.Context(), client, projectID, options)
 		if err != nil {
 			return commandExitErrorForConnect(fmt.Errorf("list logs for project %s: %w", projectName, err))
+		}
+		if len(runs) == 0 && options.SandboxID != "" {
+			return writeSandboxHistoryLogs(cmd, cli, clients.sandbox, projectID, options)
 		}
 		for _, summary := range runs {
 			if err := followRunLogStream(cmd.Context(), cmd.OutOrStdout(), client, projectID, summary, options); err != nil {
@@ -7813,6 +7820,9 @@ func followOrPrintProjectLogs(cmd *cobra.Command, cli cliOptions, client agentco
 			return commandExitErrorForConnect(fmt.Errorf("list logs for project %s: %w", projectName, err))
 		}
 		if len(runs) == 0 {
+			if options.SandboxID != "" {
+				return writeSandboxHistoryLogs(cmd, cli, clients.sandbox, projectID, options)
+			}
 			if cli.JSON {
 				data, err := json.MarshalIndent(composeLogsOutput{}, "", "  ")
 				if err != nil {

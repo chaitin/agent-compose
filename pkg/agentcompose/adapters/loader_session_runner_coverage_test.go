@@ -265,7 +265,7 @@ func TestLoaderSandboxRunnerResolvesVolumeMounts(t *testing.T) {
 	for _, tag := range session.Summary.Tags {
 		tags[tag.Name] = tag.Value
 	}
-	if tags["origin"] != "scheduler" || tags["project_id"] != "project-1" || tags["agent"] != "reviewer" || tags["scheduler_id"] != "scheduler-1" {
+	if tags["origin"] != "scheduler" || tags["project"] != "project-1" || tags["project_id"] != "project-1" || tags["agent"] != "reviewer" || tags["scheduler_id"] != "scheduler-1" {
 		t.Fatalf("managed scheduler sandbox tags = %#v", tags)
 	}
 	events, err := bridge.store.ListEvents(ctx, session.Summary.ID)
