@@ -158,3 +158,21 @@ func TestSandboxStoreListsAndDeletesSummaries(t *testing.T) {
 		t.Fatalf("get deleted sandbox error = %v, want sql.ErrNoRows", err)
 	}
 }
+
+func TestSandboxStoreListRejectsIncompleteCursor(t *testing.T) {
+	store := FromDB(newMemoryDB(t))
+	if err := store.initSchema(context.Background()); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+
+	for name, options := range map[string]domain.SandboxSummaryListOptions{
+		"missing id":        {BeforeUpdatedAt: time.Now().UTC()},
+		"missing timestamp": {BeforeID: "sandbox-cursor"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := store.ListSandboxSummaries(context.Background(), options); err == nil {
+				t.Fatal("list sandboxes accepted an incomplete cursor")
+			}
+		})
+	}
+}

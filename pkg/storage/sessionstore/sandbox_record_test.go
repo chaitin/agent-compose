@@ -167,14 +167,21 @@ func TestMigrateSandboxRecordsContinuesAfterUpsertFailure(t *testing.T) {
 	}
 }
 
-func TestCreateSandboxReturnsRecorderFailure(t *testing.T) {
+func TestCreateSandboxSucceedsWhenRecorderFails(t *testing.T) {
 	recorder := &sandboxRecorderStub{recorded: make(map[string]*domain.Sandbox), err: fmt.Errorf("database unavailable")}
 	store, err := NewWithConfigAndRecorder(sandboxRecordTestConfig(t), recorder)
 	if err != nil {
 		t.Fatalf("create store: %v", err)
 	}
-	if _, err := store.CreateSandbox(context.Background(), "record failure", "", driverpkg.RuntimeDriverBoxlite, "", "", "api", nil, nil, nil); err == nil {
-		t.Fatal("create sandbox succeeded despite recorder failure")
+	created, err := store.CreateSandbox(context.Background(), "record failure", "", driverpkg.RuntimeDriverBoxlite, "", "", "api", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+	if _, err := store.GetSandbox(context.Background(), created.Summary.ID); err != nil {
+		t.Fatalf("load filesystem sandbox after recorder failure: %v", err)
+	}
+	if recorder.recorded[created.Summary.ID] != nil {
+		t.Fatal("failed recorder unexpectedly stored sandbox")
 	}
 }
 

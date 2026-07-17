@@ -128,6 +128,13 @@ func (s *sandboxStore) GetSandboxSummary(ctx context.Context, id string) (domain
 }
 
 func (s *sandboxStore) ListSandboxSummaries(ctx context.Context, options domain.SandboxSummaryListOptions) (domain.SandboxSummaryListResult, error) {
+	beforeID := strings.TrimSpace(options.BeforeID)
+	if !options.BeforeUpdatedAt.IsZero() && beforeID == "" {
+		return domain.SandboxSummaryListResult{}, fmt.Errorf("sandbox before id is required when before updated at is set")
+	}
+	if options.BeforeUpdatedAt.IsZero() && beforeID != "" {
+		return domain.SandboxSummaryListResult{}, fmt.Errorf("sandbox before updated at is required when before id is set")
+	}
 	where := make([]string, 0, 3)
 	args := make([]any, 0, 6)
 	if driver := strings.ToLower(strings.TrimSpace(options.Driver)); driver != "" {
@@ -141,7 +148,7 @@ func (s *sandboxStore) ListSandboxSummaries(ctx context.Context, options domain.
 	if !options.BeforeUpdatedAt.IsZero() {
 		where = append(where, "(updated_at < ? OR (updated_at = ? AND id < ?))")
 		updatedAt := sandboxTimestampValue(options.BeforeUpdatedAt)
-		args = append(args, updatedAt, updatedAt, strings.TrimSpace(options.BeforeID))
+		args = append(args, updatedAt, updatedAt, beforeID)
 	}
 	query := `SELECT ` + sandboxSummaryColumns + ` FROM sandboxes`
 	if len(where) > 0 {

@@ -270,7 +270,7 @@ func (s *Store) createSandboxWithOptions(ctx context.Context, title, baseWorkspa
 	}
 	if s.recorder != nil {
 		if err := s.recorder.UpsertSandbox(ctx, session); err != nil {
-			return nil, fmt.Errorf("record sandbox: %w", err)
+			slog.Warn("sandbox created but database record could not be written", "sandbox_id", session.Summary.ID, "error", err)
 		}
 	}
 
