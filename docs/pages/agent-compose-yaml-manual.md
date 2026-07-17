@@ -261,6 +261,7 @@ Each `workspaces.<key>` accepts:
 | `provider` | string | Required | `local` or `git`. |
 | `url` | string | Required for `git` | Git clone URL. It is forbidden for `local`. |
 | `branch` | string | Optional for `git` | Branch to check out. It is forbidden for `local`. |
+| `commit` | string | Optional for `git` | Commit to check out. It is forbidden for `local`. |
 | `path` | string | Provider-specific | For `local`, a required path relative to the compose directory that cannot escape the project root. For `git`, a clone target/subpath that defaults to `.` and cannot escape the workspace root. |
 
 A local workspace is copied into an isolated snapshot for each project run. Agent changes to that snapshot do not modify the source directory.
@@ -686,7 +687,7 @@ workspace:
   path: .
 ```
 
-If `name` is combined with any of `provider`, `url`, `branch`, or `path`, the object is treated as an inline workspace rather than an inherited project workspace with overrides. To reuse a project entry, set only `name`.
+If `name` is combined with any of `provider`, `url`, `branch`, `commit`, or `path`, the object is treated as an inline workspace rather than an inherited project workspace with overrides. To reuse a project entry, set only `name`.
 
 ### `scheduler`
 

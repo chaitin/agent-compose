@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node render-pages.mjs && node check-pages.mjs",
-    "test": "node render-pages.mjs && node check-pages.mjs"
+    "build": "node --test && node render-pages.mjs && node check-pages.mjs",
+    "test": "node --test"
   },
   "dependencies": {
     "marked": "15.0.12"

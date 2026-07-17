@@ -81,6 +81,8 @@ tasks:
       - '../../pkg/compose/spec.go'
       - 'check-pages.mjs'
       - 'render-pages.mjs'
+      - 'schema-coverage.mjs'
+      - 'schema-coverage.test.mjs'
       - 'package.json'
       - 'package-lock.json'
     generates:

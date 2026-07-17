@@ -2,6 +2,8 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { documentedYAMLSchemaFields } from "./schema-coverage.mjs";
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDir, "../..");
 const pagesDir = path.join(repositoryRoot, "docs", "pages");
@@ -62,11 +64,7 @@ async function checkEnglishManuals() {
 
 async function checkYAMLSchemaCoverage() {
   const schema = await readFile(schemaPath, "utf8");
-  const fields = new Set(
-    [...schema.matchAll(/yaml:"([^",]+)/g)]
-      .map((match) => match[1])
-      .filter((field) => field !== "-"),
-  );
+  const fields = documentedYAMLSchemaFields(schema);
 
   for (const relativePath of [
     "agent-compose-yaml-manual.md",

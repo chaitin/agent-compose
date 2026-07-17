@@ -260,6 +260,7 @@ workspace:
 | `provider` | string | 必填 | `local` 或 `git`。 |
 | `url` | string | `git` 必填 | Git clone URL；`local` 不允许设置。 |
 | `branch` | string | `git` 可选 | 要检出的分支；`local` 不允许设置。 |
+| `commit` | string | `git` 可选 | 要检出的提交；`local` 不允许设置。 |
 | `path` | string | 必填/可选 | `local` 时是配置文件目录下的相对源目录且不可逃逸；`git` 时是仓库内 clone target/subpath，默认 `.`。 |
 
 本地 Workspace 在每次项目 run 创建时被复制为隔离快照，Agent 对快照的修改不会写回源目录。
@@ -691,7 +692,7 @@ workspace:
   path: .
 ```
 
-若 `name` 与 `provider`/`url`/`branch`/`path` 同时出现，该对象按内联 Workspace 处理，而不是从顶层继承后局部覆盖。需要复用时只写 `name`。
+若 `name` 与 `provider`/`url`/`branch`/`commit`/`path` 同时出现，该对象按内联 Workspace 处理，而不是从顶层继承后局部覆盖。需要复用时只写 `name`。
 
 ### `scheduler`
 
