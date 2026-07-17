@@ -40,6 +40,7 @@ func materializeBoxliteOCIImageLayout(ctx context.Context, config *appconfig.Con
 					ImageID:     result.ImageID,
 					ResolvedRef: result.ResolvedRef,
 					RootfsPath:  result.LayoutPath,
+					Env:         result.Env,
 				}, true, nil
 			}
 			return boxliteImageLayoutResult{}, false, fmt.Errorf("guest image %s: pull failed (%w) and not found locally: %v", imageRef, pullErr, localErr)
@@ -52,6 +53,7 @@ func materializeBoxliteOCIImageLayout(ctx context.Context, config *appconfig.Con
 			ImageID:     result.ImageID,
 			ResolvedRef: result.ResolvedRef,
 			RootfsPath:  result.LayoutPath,
+			Env:         result.Env,
 		}, true, nil
 
 	case "never":
@@ -66,6 +68,7 @@ func materializeBoxliteOCIImageLayout(ctx context.Context, config *appconfig.Con
 			ImageID:     result.ImageID,
 			ResolvedRef: result.ResolvedRef,
 			RootfsPath:  result.LayoutPath,
+			Env:         result.Env,
 		}, true, nil
 
 	default:
@@ -84,6 +87,7 @@ func materializeBoxliteOCIImageLayout(ctx context.Context, config *appconfig.Con
 			ImageID:     result.ImageID,
 			ResolvedRef: result.ResolvedRef,
 			RootfsPath:  result.LayoutPath,
+			Env:         result.Env,
 		}, true, nil
 	}
 }

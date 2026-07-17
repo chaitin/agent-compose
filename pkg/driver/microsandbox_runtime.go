@@ -995,7 +995,7 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	// Merge image ENV as baseline — user/session env vars and agent-compose
 	// defaults override image-defined values (matching Docker daemon behavior).
 	for _, e := range imageEnv {
-		if key, value, ok := parseEnvEntry(e); ok && !LLMProviderKeyName(key) {
+		if key, value, ok := parseEnvEntry(e); ok {
 			if _, exists := env[key]; !exists {
 				env[key] = value
 			}

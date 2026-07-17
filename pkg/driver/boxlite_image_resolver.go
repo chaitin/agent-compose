@@ -11,6 +11,7 @@ type boxliteImageLayoutResult struct {
 	ImageID     string
 	ResolvedRef string
 	RootfsPath  string
+	Env         []string
 }
 
 type boxliteImageResolverOps struct {

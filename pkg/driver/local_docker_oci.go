@@ -36,6 +36,7 @@ type localDockerImageLayout struct {
 	ImageID     string
 	ResolvedRef string
 	RootfsPath  string
+	Env         []string
 }
 
 func init() {
@@ -250,6 +251,8 @@ func materializeLocalDockerImageLayoutWithClient(ctx context.Context, dataRoot s
 		return localDockerImageLayout{}, false, nil
 	}
 
+	imageEnv := inspectEnv(inspect)
+
 	imageID := strings.TrimPrefix(inspect.ID, "sha256:")
 	if imageID == "" {
 		imageID = sanitizeRuntimeName(resolvedRef)
@@ -258,7 +261,8 @@ func materializeLocalDockerImageLayoutWithClient(ctx context.Context, dataRoot s
 	rootfsDir := filepath.Join(cacheDir, "oci")
 	readyFlag := filepath.Join(cacheDir, ".ready")
 	if _, err := os.Stat(readyFlag); err == nil && isValidOCILayout(rootfsDir) {
-		return localDockerImageLayout{ImageID: imageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir}, true, nil
+		env := loadImageEnvCache(cacheDir, imageEnv)
+		return localDockerImageLayout{ImageID: imageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir, Env: env}, true, nil
 	}
 	_ = os.Remove(readyFlag)
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
@@ -276,7 +280,8 @@ func materializeLocalDockerImageLayoutWithClient(ctx context.Context, dataRoot s
 	defer func() { _ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN) }()
 
 	if _, err := os.Stat(readyFlag); err == nil && isValidOCILayout(rootfsDir) {
-		return localDockerImageLayout{ImageID: imageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir}, true, nil
+		env := loadImageEnvCache(cacheDir, imageEnv)
+		return localDockerImageLayout{ImageID: imageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir, Env: env}, true, nil
 	}
 	_ = os.Remove(readyFlag)
 
@@ -299,7 +304,10 @@ func materializeLocalDockerImageLayoutWithClient(ctx context.Context, dataRoot s
 	if err := os.WriteFile(readyFlag, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 		return localDockerImageLayout{}, false, fmt.Errorf("write image cache ready flag: %w", err)
 	}
-	return localDockerImageLayout{ImageID: imageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir}, true, nil
+	if err := writeImageEnvCache(cacheDir, imageEnv); err != nil {
+		return localDockerImageLayout{}, false, fmt.Errorf("write image env cache: %w", err)
+	}
+	return localDockerImageLayout{ImageID: imageID, ResolvedRef: resolvedRef, RootfsPath: rootfsDir, Env: imageEnv}, true, nil
 }
 
 func isValidOCILayout(rootfsDir string) bool {

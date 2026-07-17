@@ -598,23 +598,23 @@ func parseBoxliteRegistry(value string) (string, C.enum_BoxliteRegistryTransport
 	return cleaned, transport
 }
 
-func (r *cgoSandboxRuntime) resolveRootfsPath(ctx context.Context, imageRef string, pullPolicy string, pullTimeout time.Duration) (string, error) {
+func (r *cgoSandboxRuntime) resolveRootfsPath(ctx context.Context, imageRef string, pullPolicy string, pullTimeout time.Duration) (string, []string, error) {
 	if strings.TrimSpace(r.config.BoxRootfsPath) != "" {
-		return r.config.BoxRootfsPath, nil
+		return r.config.BoxRootfsPath, nil, nil
 	}
 	imageRef = strings.TrimSpace(imageRef)
 	if imageRef == "" {
-		return "", nil
+		return "", nil, nil
 	}
 	layout, ok, err := r.materializeLocalImageRootfs(ctx, imageRef, pullPolicy, pullTimeout)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if ok {
 		slog.Info("agent-compose boxlite using materialized local image rootfs", "image", imageRef, "resolved_ref", layout.ResolvedRef, "rootfs_path", layout.RootfsPath)
-		return layout.RootfsPath, nil
+		return layout.RootfsPath, layout.Env, nil
 	}
-	return "", nil
+	return "", nil, nil
 }
 
 func (r *cgoSandboxRuntime) materializeLocalImageRootfs(ctx context.Context, imageRef string, pullPolicy string, pullTimeout time.Duration) (localDockerImageLayout, bool, error) {
@@ -628,7 +628,7 @@ func (r *cgoSandboxRuntime) materializeLocalImageRootfs(ctx context.Context, ima
 			if err != nil || !ok {
 				return boxliteImageLayoutResult{}, ok, err
 			}
-			return boxliteImageLayoutResult{ImageID: layout.ImageID, ResolvedRef: layout.ResolvedRef, RootfsPath: layout.RootfsPath}, true, nil
+			return boxliteImageLayoutResult{ImageID: layout.ImageID, ResolvedRef: layout.ResolvedRef, RootfsPath: layout.RootfsPath, Env: layout.Env}, true, nil
 		},
 		ociMaterialize: func(ctx context.Context, imageRef string) (boxliteImageLayoutResult, bool, error) {
 			return materializeBoxliteOCIImageLayout(ctx, r.config, imageRef, pullPolicy)
@@ -637,7 +637,7 @@ func (r *cgoSandboxRuntime) materializeLocalImageRootfs(ctx context.Context, ima
 	if err != nil || !ok {
 		return localDockerImageLayout{}, ok, err
 	}
-	return localDockerImageLayout{ImageID: layout.ImageID, ResolvedRef: layout.ResolvedRef, RootfsPath: layout.RootfsPath}, true, nil
+	return localDockerImageLayout{ImageID: layout.ImageID, ResolvedRef: layout.ResolvedRef, RootfsPath: layout.RootfsPath, Env: layout.Env}, true, nil
 }
 
 func untarInto(dst string, src io.Reader) error {
@@ -975,7 +975,7 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 	if imagePullTimeout <= 0 {
 		imagePullTimeout = defaultImagePullTimeout
 	}
-	rootfsPath, err := r.resolveRootfsPath(ctx, imageRef, sandbox.Summary.PullPolicy, imagePullTimeout)
+	rootfsPath, imageEnv, err := r.resolveRootfsPath(ctx, imageRef, sandbox.Summary.PullPolicy, imagePullTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -1046,6 +1046,15 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 	baseEnv := sandboxEnvMap(sandbox.EnvItems, sandbox.RuntimeEnvItems)
 	if baseEnv == nil {
 		baseEnv = map[string]string{}
+	}
+	// Merge image ENV as baseline — user/session env vars and agent-compose
+	// defaults override image-defined values (matching Docker daemon behavior).
+	for _, e := range imageEnv {
+		if key, value, ok := parseEnvEntry(e); ok {
+			if _, exists := baseEnv[key]; !exists {
+				baseEnv[key] = value
+			}
+		}
 	}
 	baseEnv["GOPATH"] = "/usr/local/go"
 	baseEnv["PATH"] = "/root/.local/bin:/usr/local/go/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
