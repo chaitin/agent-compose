@@ -41,10 +41,11 @@ Rules:
 
 ### Daemon authentication
 
-Set `AGENT_COMPOSE_AUTH_TOKEN` in the daemon environment to require a shared
-Bearer token for HTTP(S) control-plane requests. Leaving it empty keeps
-authentication disabled. Trusted local Unix socket connections do not use this
-authentication path.
+Set `AGENT_COMPOSE_AUTH_TOKEN` in the daemon environment to bootstrap the
+environment-managed `default-admin` Bearer token. Trusted local Unix socket
+connections use a local admin identity. After authentication has been
+initialized, removing the environment variable revokes that bootstrap token
+but does not reopen the daemon anonymously.
 
 Verify and save a token for a daemon site:
 
@@ -53,12 +54,31 @@ agent-compose --host https://compose.example.com auth login --token '<token>'
 agent-compose --host https://compose.example.com status
 ```
 
-The first command verifies the token against the daemon before saving it under
+The first command verifies the token with `WhoAmI` before saving it under
 `~/.config/agent-compose/config.yml` (or the platform user configuration
 directory). Later commands automatically load the token associated with the
 normalized `--host` or `AGENT_COMPOSE_HOST` value. The file is written with
 owner-only permissions. Use `agent-compose auth ls` to list saved sites and
 `agent-compose --host <site> auth logout` to remove one.
+
+The daemon provides two built-in roles. `admin` can perform all operations;
+`read-only-admin` can query all entity metadata, events, audit records, and run
+logs, but cannot create, start, stop, update, upload, revoke, or delete. Manage
+identities and audit records with:
+
+```bash
+agent-compose --host <site> auth whoami
+agent-compose --host <site> auth role ls
+agent-compose --host <site> auth token ls
+agent-compose --host <site> auth token create --name ci-reader --role read-only-admin
+agent-compose --host <site> auth token revoke ci-reader
+agent-compose --host <site> audit ls
+```
+
+`auth token create` generates the secret in the CLI, sends it to the daemon,
+and prints the CLI's in-memory value once after success. Token APIs never return
+the plaintext secret or its hash; the daemon stores only a hash and metadata.
+Save the one-time output immediately.
 
 HTTP remains supported, including loopback container port mappings, but a
 Bearer token sent over plain HTTP can be observed and replayed. Use HTTPS, an

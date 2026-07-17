@@ -42,9 +42,10 @@ agent-compose --host http://10.0.0.12:7410 ls --json
 
 ### Daemon 认证
 
-在 daemon 环境中设置 `AGENT_COMPOSE_AUTH_TOKEN` 后，HTTP(S) 控制面请求必须
-携带共享 Bearer Token；配置为空时认证默认关闭。受信任的本地 Unix Socket
-连接不走此认证路径。
+在 daemon 环境中设置 `AGENT_COMPOSE_AUTH_TOKEN`，可初始化由环境管理的
+`default-admin` Bearer Token。受信任的本地 Unix Socket 使用本地管理员身份。
+认证一旦初始化，后续删除环境变量只会撤销该启动 Token，不会让 daemon 重新
+退回匿名开放状态。
 
 为 daemon 站点验证并保存 Token：
 
@@ -53,11 +54,28 @@ agent-compose --host https://compose.example.com auth login --token '<token>'
 agent-compose --host https://compose.example.com status
 ```
 
-第一条命令会先向 daemon 验证 Token，成功后写入
+第一条命令会先通过 `WhoAmI` 向 daemon 验证 Token，成功后写入
 `~/.config/agent-compose/config.yml`（或当前平台的用户配置目录）。后续命令会
 根据规范化后的 `--host` 或 `AGENT_COMPOSE_HOST` 自动加载对应 Token。配置文件
 仅允许当前用户读写。可通过 `agent-compose auth ls` 查看已保存的站点，通过
 `agent-compose --host <site> auth logout` 删除站点凭据。
+
+daemon 内置两个角色：`admin` 可执行全部操作；`read-only-admin` 可查询所有实体
+元数据、事件、审计记录和运行日志，但不能创建、启动、停止、更新、上传、撤销
+或删除资源。相关命令如下：
+
+```bash
+agent-compose --host <site> auth whoami
+agent-compose --host <site> auth role ls
+agent-compose --host <site> auth token ls
+agent-compose --host <site> auth token create --name ci-reader --role read-only-admin
+agent-compose --host <site> auth token revoke ci-reader
+agent-compose --host <site> audit ls
+```
+
+`auth token create` 在 CLI 本地生成 Secret，发送给 daemon，并在创建成功后从
+CLI 内存中仅回显一次。Token API 绝不返回明文 Secret 或其哈希；daemon 只保存
+哈希和元数据。请立即安全保存这次输出。
 
 当前仍支持 HTTP，包括宿主机访问容器回环映射的场景；但明文 HTTP 中的 Bearer
 Token 可能被监听并重放。CLI 与 daemon 位于不同机器时，应使用 HTTPS、SSH
