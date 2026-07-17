@@ -58,6 +58,7 @@ type ConfigStore struct {
 	*llmStore
 	*capabilityGatewayStore
 	*volumeStore
+	*authStore
 }
 
 func NewConfigStore(di do.Injector) (*ConfigStore, error) {
@@ -90,6 +91,7 @@ func FromDB(db *sql.DB) *ConfigStore {
 		llmStore:               &llmStore{db: db},
 		capabilityGatewayStore: &capabilityGatewayStore{db: db},
 		volumeStore:            &volumeStore{db: db},
+		authStore:              &authStore{db: db},
 	}
 }
 
@@ -148,6 +150,9 @@ func (s *ConfigStore) initSchema(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureEventSchema(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureAuthSchema(ctx); err != nil {
 		return err
 	}
 	if err := s.copyLegacyEventSessionLinks(ctx); err != nil {

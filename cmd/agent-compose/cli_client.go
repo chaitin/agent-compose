@@ -24,6 +24,7 @@ type cliServiceClients struct {
 	cache    agentcomposev2connect.CacheServiceClient
 	volume   agentcomposev2connect.VolumeServiceClient
 	sandbox  agentcomposev2connect.SandboxServiceClient
+	auth     agentcomposev2connect.AuthServiceClient
 }
 
 func newCLIServiceClients(cli cliOptions) (cliServiceClients, error) {
@@ -41,6 +42,7 @@ func newCLIServiceClients(cli cliOptions) (cliServiceClients, error) {
 		cache:    agentcomposev2connect.NewCacheServiceClient(httpClient, clientConfig.BaseURL),
 		volume:   agentcomposev2connect.NewVolumeServiceClient(httpClient, clientConfig.BaseURL),
 		sandbox:  agentcomposev2connect.NewSandboxServiceClient(httpClient, clientConfig.BaseURL),
+		auth:     agentcomposev2connect.NewAuthServiceClient(httpClient, clientConfig.BaseURL),
 	}, nil
 }
 

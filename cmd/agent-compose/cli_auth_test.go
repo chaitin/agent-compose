@@ -8,6 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	agentcomposev2 "agent-compose/proto/agentcompose/v2"
+	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestCLIAuthLoginPersistsAndReusesToken(t *testing.T) {
@@ -16,6 +20,17 @@ func TestCLIAuthLoginPersistsAndReusesToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer secret-token" {
 			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == agentcomposev2connect.AuthServiceWhoAmIProcedure {
+			body, err := proto.Marshal(&agentcomposev2.WhoAmIResponse{
+				Token: &agentcomposev2.AuthToken{Name: "test-admin"}, Role: "admin", Origin: "issued", AuthenticationInitialized: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.Header().Set("Content-Type", "application/proto")
+			_, _ = w.Write(body)
 			return
 		}
 		_, _ = io.WriteString(w, `{"err":null,"msg":"OK","data":{"timestamp":1783501631,"version":"test"}}`)
@@ -74,7 +89,7 @@ func TestCLIAuthLoginFailureDoesNotPersistToken(t *testing.T) {
 	if exitCode == 0 {
 		t.Fatal("login exit code = 0, want failure")
 	}
-	wantError := "authentication failed for " + server.URL + ": token was rejected (HTTP 401)\n"
+	wantError := "authentication failed for " + server.URL + ": token was rejected\n"
 	if stderr != wantError {
 		t.Fatalf("login stderr = %q, want %q", stderr, wantError)
 	}

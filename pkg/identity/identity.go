@@ -32,6 +32,8 @@ const (
 	ResourceSandbox   ResourceKind = "sandbox"
 	ResourceCache     ResourceKind = "cache"
 	ResourceWorkspace ResourceKind = "workspace"
+	ResourceAuthToken ResourceKind = "auth-token"
+	ResourceAudit     ResourceKind = "operation-audit"
 )
 
 func NewID(kind ResourceKind, parts ...string) string {

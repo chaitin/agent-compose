@@ -152,6 +152,13 @@ tasks:
       - ./scripts/tests/test-binary-ci-contract.sh
       - ./scripts/tests/test-image-ci-contract.sh
 
+  test:rbac:
+    desc: Build a local daemon and run the CLI RBAC and audit workflow
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - task: build:agent-compose
+      - ./scripts/test-agent-compose-rbac.sh --binary ./build/agent-compose
+
   test:deploy:
     desc: Run deterministic installer, Compose, and release-asset deployment checks
     dir: '{{.TASKFILE_DIR}}'

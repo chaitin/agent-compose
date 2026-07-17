@@ -236,7 +236,7 @@ api_retry_response=$(curl --fail --silent --show-error \
   --data "$api_request" \
   "$host/agentcompose.v2.AuthService/CreateToken")
 jq -e --arg id "$(jq -r '.item.id' <<<"$api_response")" \
-  '.created == false and .idempotentReplay == true and .item.id == $id and (has("token") | not)' \
+  '(.created // false) == false and .idempotentReplay == true and .item.id == $id and (has("token") | not)' \
   >/dev/null <<<"$api_retry_response" || fail 'CreateToken idempotent replay did not return the same metadata'
 
 token_list=$(AGENT_COMPOSE_CONFIG=$admin_config "$binary" --host "$host" --json auth token ls)

@@ -45,6 +45,8 @@ const (
 	LLMServiceName = "agentcompose.v2.LLMService"
 	// ResourceServiceName is the fully-qualified name of the ResourceService service.
 	ResourceServiceName = "agentcompose.v2.ResourceService"
+	// AuthServiceName is the fully-qualified name of the AuthService service.
+	AuthServiceName = "agentcompose.v2.AuthService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -242,6 +244,19 @@ const (
 	// ResourceServiceResolveIDProcedure is the fully-qualified name of the ResourceService's ResolveID
 	// RPC.
 	ResourceServiceResolveIDProcedure = "/agentcompose.v2.ResourceService/ResolveID"
+	// AuthServiceWhoAmIProcedure is the fully-qualified name of the AuthService's WhoAmI RPC.
+	AuthServiceWhoAmIProcedure = "/agentcompose.v2.AuthService/WhoAmI"
+	// AuthServiceListRolesProcedure is the fully-qualified name of the AuthService's ListRoles RPC.
+	AuthServiceListRolesProcedure = "/agentcompose.v2.AuthService/ListRoles"
+	// AuthServiceListTokensProcedure is the fully-qualified name of the AuthService's ListTokens RPC.
+	AuthServiceListTokensProcedure = "/agentcompose.v2.AuthService/ListTokens"
+	// AuthServiceCreateTokenProcedure is the fully-qualified name of the AuthService's CreateToken RPC.
+	AuthServiceCreateTokenProcedure = "/agentcompose.v2.AuthService/CreateToken"
+	// AuthServiceRevokeTokenProcedure is the fully-qualified name of the AuthService's RevokeToken RPC.
+	AuthServiceRevokeTokenProcedure = "/agentcompose.v2.AuthService/RevokeToken"
+	// AuthServiceListOperationAuditsProcedure is the fully-qualified name of the AuthService's
+	// ListOperationAudits RPC.
+	AuthServiceListOperationAuditsProcedure = "/agentcompose.v2.AuthService/ListOperationAudits"
 )
 
 // ProjectServiceClient is a client for the agentcompose.v2.ProjectService service.
@@ -2525,4 +2540,204 @@ type UnimplementedResourceServiceHandler struct{}
 
 func (UnimplementedResourceServiceHandler) ResolveID(context.Context, *connect.Request[v2.ResolveResourceIDRequest]) (*connect.Response[v2.ResolveResourceIDResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ResourceService.ResolveID is not implemented"))
+}
+
+// AuthServiceClient is a client for the agentcompose.v2.AuthService service.
+type AuthServiceClient interface {
+	WhoAmI(context.Context, *connect.Request[v2.WhoAmIRequest]) (*connect.Response[v2.WhoAmIResponse], error)
+	ListRoles(context.Context, *connect.Request[v2.ListRolesRequest]) (*connect.Response[v2.ListRolesResponse], error)
+	ListTokens(context.Context, *connect.Request[v2.ListTokensRequest]) (*connect.Response[v2.ListTokensResponse], error)
+	CreateToken(context.Context, *connect.Request[v2.CreateTokenRequest]) (*connect.Response[v2.CreateTokenResponse], error)
+	RevokeToken(context.Context, *connect.Request[v2.RevokeTokenRequest]) (*connect.Response[v2.RevokeTokenResponse], error)
+	ListOperationAudits(context.Context, *connect.Request[v2.ListOperationAuditsRequest]) (*connect.Response[v2.ListOperationAuditsResponse], error)
+}
+
+// NewAuthServiceClient constructs a client for the agentcompose.v2.AuthService service. By default,
+// it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and
+// sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC()
+// or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewAuthServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) AuthServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	authServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("AuthService").Methods()
+	return &authServiceClient{
+		whoAmI: connect.NewClient[v2.WhoAmIRequest, v2.WhoAmIResponse](
+			httpClient,
+			baseURL+AuthServiceWhoAmIProcedure,
+			connect.WithSchema(authServiceMethods.ByName("WhoAmI")),
+			connect.WithClientOptions(opts...),
+		),
+		listRoles: connect.NewClient[v2.ListRolesRequest, v2.ListRolesResponse](
+			httpClient,
+			baseURL+AuthServiceListRolesProcedure,
+			connect.WithSchema(authServiceMethods.ByName("ListRoles")),
+			connect.WithClientOptions(opts...),
+		),
+		listTokens: connect.NewClient[v2.ListTokensRequest, v2.ListTokensResponse](
+			httpClient,
+			baseURL+AuthServiceListTokensProcedure,
+			connect.WithSchema(authServiceMethods.ByName("ListTokens")),
+			connect.WithClientOptions(opts...),
+		),
+		createToken: connect.NewClient[v2.CreateTokenRequest, v2.CreateTokenResponse](
+			httpClient,
+			baseURL+AuthServiceCreateTokenProcedure,
+			connect.WithSchema(authServiceMethods.ByName("CreateToken")),
+			connect.WithClientOptions(opts...),
+		),
+		revokeToken: connect.NewClient[v2.RevokeTokenRequest, v2.RevokeTokenResponse](
+			httpClient,
+			baseURL+AuthServiceRevokeTokenProcedure,
+			connect.WithSchema(authServiceMethods.ByName("RevokeToken")),
+			connect.WithClientOptions(opts...),
+		),
+		listOperationAudits: connect.NewClient[v2.ListOperationAuditsRequest, v2.ListOperationAuditsResponse](
+			httpClient,
+			baseURL+AuthServiceListOperationAuditsProcedure,
+			connect.WithSchema(authServiceMethods.ByName("ListOperationAudits")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// authServiceClient implements AuthServiceClient.
+type authServiceClient struct {
+	whoAmI              *connect.Client[v2.WhoAmIRequest, v2.WhoAmIResponse]
+	listRoles           *connect.Client[v2.ListRolesRequest, v2.ListRolesResponse]
+	listTokens          *connect.Client[v2.ListTokensRequest, v2.ListTokensResponse]
+	createToken         *connect.Client[v2.CreateTokenRequest, v2.CreateTokenResponse]
+	revokeToken         *connect.Client[v2.RevokeTokenRequest, v2.RevokeTokenResponse]
+	listOperationAudits *connect.Client[v2.ListOperationAuditsRequest, v2.ListOperationAuditsResponse]
+}
+
+// WhoAmI calls agentcompose.v2.AuthService.WhoAmI.
+func (c *authServiceClient) WhoAmI(ctx context.Context, req *connect.Request[v2.WhoAmIRequest]) (*connect.Response[v2.WhoAmIResponse], error) {
+	return c.whoAmI.CallUnary(ctx, req)
+}
+
+// ListRoles calls agentcompose.v2.AuthService.ListRoles.
+func (c *authServiceClient) ListRoles(ctx context.Context, req *connect.Request[v2.ListRolesRequest]) (*connect.Response[v2.ListRolesResponse], error) {
+	return c.listRoles.CallUnary(ctx, req)
+}
+
+// ListTokens calls agentcompose.v2.AuthService.ListTokens.
+func (c *authServiceClient) ListTokens(ctx context.Context, req *connect.Request[v2.ListTokensRequest]) (*connect.Response[v2.ListTokensResponse], error) {
+	return c.listTokens.CallUnary(ctx, req)
+}
+
+// CreateToken calls agentcompose.v2.AuthService.CreateToken.
+func (c *authServiceClient) CreateToken(ctx context.Context, req *connect.Request[v2.CreateTokenRequest]) (*connect.Response[v2.CreateTokenResponse], error) {
+	return c.createToken.CallUnary(ctx, req)
+}
+
+// RevokeToken calls agentcompose.v2.AuthService.RevokeToken.
+func (c *authServiceClient) RevokeToken(ctx context.Context, req *connect.Request[v2.RevokeTokenRequest]) (*connect.Response[v2.RevokeTokenResponse], error) {
+	return c.revokeToken.CallUnary(ctx, req)
+}
+
+// ListOperationAudits calls agentcompose.v2.AuthService.ListOperationAudits.
+func (c *authServiceClient) ListOperationAudits(ctx context.Context, req *connect.Request[v2.ListOperationAuditsRequest]) (*connect.Response[v2.ListOperationAuditsResponse], error) {
+	return c.listOperationAudits.CallUnary(ctx, req)
+}
+
+// AuthServiceHandler is an implementation of the agentcompose.v2.AuthService service.
+type AuthServiceHandler interface {
+	WhoAmI(context.Context, *connect.Request[v2.WhoAmIRequest]) (*connect.Response[v2.WhoAmIResponse], error)
+	ListRoles(context.Context, *connect.Request[v2.ListRolesRequest]) (*connect.Response[v2.ListRolesResponse], error)
+	ListTokens(context.Context, *connect.Request[v2.ListTokensRequest]) (*connect.Response[v2.ListTokensResponse], error)
+	CreateToken(context.Context, *connect.Request[v2.CreateTokenRequest]) (*connect.Response[v2.CreateTokenResponse], error)
+	RevokeToken(context.Context, *connect.Request[v2.RevokeTokenRequest]) (*connect.Response[v2.RevokeTokenResponse], error)
+	ListOperationAudits(context.Context, *connect.Request[v2.ListOperationAuditsRequest]) (*connect.Response[v2.ListOperationAuditsResponse], error)
+}
+
+// NewAuthServiceHandler builds an HTTP handler from the service implementation. It returns the path
+// on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewAuthServiceHandler(svc AuthServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	authServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("AuthService").Methods()
+	authServiceWhoAmIHandler := connect.NewUnaryHandler(
+		AuthServiceWhoAmIProcedure,
+		svc.WhoAmI,
+		connect.WithSchema(authServiceMethods.ByName("WhoAmI")),
+		connect.WithHandlerOptions(opts...),
+	)
+	authServiceListRolesHandler := connect.NewUnaryHandler(
+		AuthServiceListRolesProcedure,
+		svc.ListRoles,
+		connect.WithSchema(authServiceMethods.ByName("ListRoles")),
+		connect.WithHandlerOptions(opts...),
+	)
+	authServiceListTokensHandler := connect.NewUnaryHandler(
+		AuthServiceListTokensProcedure,
+		svc.ListTokens,
+		connect.WithSchema(authServiceMethods.ByName("ListTokens")),
+		connect.WithHandlerOptions(opts...),
+	)
+	authServiceCreateTokenHandler := connect.NewUnaryHandler(
+		AuthServiceCreateTokenProcedure,
+		svc.CreateToken,
+		connect.WithSchema(authServiceMethods.ByName("CreateToken")),
+		connect.WithHandlerOptions(opts...),
+	)
+	authServiceRevokeTokenHandler := connect.NewUnaryHandler(
+		AuthServiceRevokeTokenProcedure,
+		svc.RevokeToken,
+		connect.WithSchema(authServiceMethods.ByName("RevokeToken")),
+		connect.WithHandlerOptions(opts...),
+	)
+	authServiceListOperationAuditsHandler := connect.NewUnaryHandler(
+		AuthServiceListOperationAuditsProcedure,
+		svc.ListOperationAudits,
+		connect.WithSchema(authServiceMethods.ByName("ListOperationAudits")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/agentcompose.v2.AuthService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case AuthServiceWhoAmIProcedure:
+			authServiceWhoAmIHandler.ServeHTTP(w, r)
+		case AuthServiceListRolesProcedure:
+			authServiceListRolesHandler.ServeHTTP(w, r)
+		case AuthServiceListTokensProcedure:
+			authServiceListTokensHandler.ServeHTTP(w, r)
+		case AuthServiceCreateTokenProcedure:
+			authServiceCreateTokenHandler.ServeHTTP(w, r)
+		case AuthServiceRevokeTokenProcedure:
+			authServiceRevokeTokenHandler.ServeHTTP(w, r)
+		case AuthServiceListOperationAuditsProcedure:
+			authServiceListOperationAuditsHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedAuthServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedAuthServiceHandler struct{}
+
+func (UnimplementedAuthServiceHandler) WhoAmI(context.Context, *connect.Request[v2.WhoAmIRequest]) (*connect.Response[v2.WhoAmIResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.AuthService.WhoAmI is not implemented"))
+}
+
+func (UnimplementedAuthServiceHandler) ListRoles(context.Context, *connect.Request[v2.ListRolesRequest]) (*connect.Response[v2.ListRolesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.AuthService.ListRoles is not implemented"))
+}
+
+func (UnimplementedAuthServiceHandler) ListTokens(context.Context, *connect.Request[v2.ListTokensRequest]) (*connect.Response[v2.ListTokensResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.AuthService.ListTokens is not implemented"))
+}
+
+func (UnimplementedAuthServiceHandler) CreateToken(context.Context, *connect.Request[v2.CreateTokenRequest]) (*connect.Response[v2.CreateTokenResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.AuthService.CreateToken is not implemented"))
+}
+
+func (UnimplementedAuthServiceHandler) RevokeToken(context.Context, *connect.Request[v2.RevokeTokenRequest]) (*connect.Response[v2.RevokeTokenResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.AuthService.RevokeToken is not implemented"))
+}
+
+func (UnimplementedAuthServiceHandler) ListOperationAudits(context.Context, *connect.Request[v2.ListOperationAuditsRequest]) (*connect.Response[v2.ListOperationAuditsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.AuthService.ListOperationAudits is not implemented"))
 }

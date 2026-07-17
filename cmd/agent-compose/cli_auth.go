@@ -9,6 +9,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"agent-compose/pkg/clientconfig"
+	agentcomposev2 "agent-compose/proto/agentcompose/v2"
+	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
+	"connectrpc.com/connect"
 )
 
 type cliAuthLoginOptions struct {
@@ -51,7 +54,15 @@ func newCLIAuthCommand(options *cliOptions) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE:  runCLIAuthList,
 	}
-	authCmd.AddCommand(loginCmd, logoutCmd, listCmd)
+	whoAmICmd := &cobra.Command{
+		Use:   "whoami",
+		Short: "Show the current daemon token identity",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runCLIAuthWhoAmI(cmd, *options)
+		},
+	}
+	authCmd.AddCommand(loginCmd, logoutCmd, listCmd, whoAmICmd, newCLIAuthRoleCommand(options), newCLIAuthTokenCommand(options))
 	return authCmd
 }
 
@@ -68,10 +79,15 @@ func runCLIAuthLogin(cmd *cobra.Command, hostFlag string, options cliAuthLoginOp
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("auth login requires --host or AGENT_COMPOSE_HOST")}
 	}
 	clientConfig.AuthToken = token
-	if _, err := fetchDaemonVersion(cmd.Context(), clientConfig); err != nil {
+	client := agentcomposev2connect.NewAuthServiceClient(newDaemonHTTPClient(clientConfig), clientConfig.BaseURL)
+	identity, err := client.WhoAmI(cmd.Context(), connect.NewRequest(&agentcomposev2.WhoAmIRequest{}))
+	if err != nil {
 		var statusErr daemonHTTPStatusError
 		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("authentication failed for %s: token was rejected (HTTP %d)", clientConfig.BaseURL, statusErr.StatusCode)
+		}
+		if connect.CodeOf(err) == connect.CodeUnauthenticated {
+			return fmt.Errorf("authentication failed for %s: token was rejected", clientConfig.BaseURL)
 		}
 		return fmt.Errorf("authenticate daemon %s: %w", clientConfig.BaseURL, err)
 	}
@@ -82,7 +98,23 @@ func runCLIAuthLogin(cmd *cobra.Command, hostFlag string, options cliAuthLoginOp
 	if err := clientconfig.SaveToken(path, clientConfig.BaseURL, token); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Authenticated %s\n", clientConfig.BaseURL)
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Authenticated %s as %s (%s)\n", clientConfig.BaseURL, identity.Msg.GetToken().GetName(), identity.Msg.GetRole())
+	return err
+}
+
+func runCLIAuthWhoAmI(cmd *cobra.Command, options cliOptions) error {
+	clients, err := newCLIServiceClients(options)
+	if err != nil {
+		return err
+	}
+	response, err := clients.auth.WhoAmI(cmd.Context(), connect.NewRequest(&agentcomposev2.WhoAmIRequest{}))
+	if err != nil {
+		return fmt.Errorf("query daemon identity: %w", err)
+	}
+	if options.JSON {
+		return writeProtoJSON(cmd.OutOrStdout(), response.Msg)
+	}
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "TOKEN\tROLE\tORIGIN\n%s\t%s\t%s\n", firstNonEmptyString(response.Msg.GetToken().GetName(), "-"), response.Msg.GetRole(), response.Msg.GetOrigin())
 	return err
 }
 

@@ -115,6 +115,15 @@ service ResourceService {
   rpc ResolveID(ResolveResourceIDRequest) returns (ResolveResourceIDResponse);
 }
 
+service AuthService {
+  rpc WhoAmI(WhoAmIRequest) returns (WhoAmIResponse);
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
+  rpc ListTokens(ListTokensRequest) returns (ListTokensResponse);
+  rpc CreateToken(CreateTokenRequest) returns (CreateTokenResponse);
+  rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
+  rpc ListOperationAudits(ListOperationAuditsRequest) returns (ListOperationAuditsResponse);
+}
+
 enum ProjectValidationSeverity {
   PROJECT_VALIDATION_SEVERITY_UNSPECIFIED = 0;
   PROJECT_VALIDATION_SEVERITY_WARNING = 1;
@@ -1820,4 +1829,109 @@ message GenerateLLMResponse {
   string response_id = 3;
   string finish_reason = 4;
   string json = 5;
+}
+
+message AuthToken {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string role = 4;
+  string origin = 5;
+  reserved 6;
+  reserved "fingerprint";
+  string created_by_token_id = 7;
+  google.protobuf.Timestamp created_at = 8;
+  string revoked_by_token_id = 9;
+  google.protobuf.Timestamp revoked_at = 10;
+}
+
+message WhoAmIRequest {}
+
+message WhoAmIResponse {
+  AuthToken token = 1;
+  string role = 2;
+  string origin = 3;
+  bool authentication_initialized = 4;
+}
+
+message AuthRole {
+  string name = 1;
+  string description = 2;
+  bool read_only = 3;
+  bool builtin = 4;
+}
+
+message ListRolesRequest {}
+message ListRolesResponse { repeated AuthRole roles = 1; }
+
+message ListTokensRequest {
+  bool include_revoked = 1;
+  uint32 limit = 2;
+  string cursor = 3;
+}
+
+message ListTokensResponse {
+  repeated AuthToken tokens = 1;
+  string next_cursor = 2;
+}
+
+message CreateTokenRequest {
+  string name = 1;
+  string description = 2;
+  string role = 3;
+  string token = 4;
+  string client_request_id = 5;
+}
+
+message CreateTokenResponse {
+  AuthToken item = 1;
+  bool created = 2;
+  bool idempotent_replay = 3;
+}
+
+message RevokeTokenRequest { string token = 1; }
+
+message RevokeTokenResponse {
+  AuthToken item = 1;
+  bool revoked = 2;
+  bool already_revoked = 3;
+}
+
+message OperationAudit {
+  string id = 1;
+  uint64 sequence = 2;
+  string request_id = 3;
+  string token_id = 4;
+  string token_name = 5;
+  string role = 6;
+  string origin = 7;
+  string action = 8;
+  string resource_type = 9;
+  string resource_id = 10;
+  string project_id = 11;
+  string status = 12;
+  string params_json = 13;
+  string changes_json = 14;
+  string error_code = 15;
+  string error_message = 16;
+  google.protobuf.Timestamp started_at = 17;
+  google.protobuf.Timestamp completed_at = 18;
+}
+
+message ListOperationAuditsRequest {
+  string token = 1;
+  string action = 2;
+  string resource_type = 3;
+  string resource_id = 4;
+  string project_id = 5;
+  string status = 6;
+  google.protobuf.Timestamp started_after = 7;
+  google.protobuf.Timestamp started_before = 8;
+  uint32 limit = 9;
+  string cursor = 10;
+}
+
+message ListOperationAuditsResponse {
+  repeated OperationAudit audits = 1;
+  string next_cursor = 2;
 }

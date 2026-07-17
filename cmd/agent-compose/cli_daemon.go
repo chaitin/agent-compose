@@ -2,6 +2,7 @@ package main
 
 import (
 	agentcomposeapp "agent-compose/pkg/agentcompose/app"
+	controlauth "agent-compose/pkg/auth"
 	"agent-compose/pkg/config"
 	"agent-compose/pkg/fxgo/echofn"
 	"agent-compose/pkg/fxgo/restful"
@@ -125,7 +126,7 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 	app := do.MustInvoke[*echo.Echo](di)
 	logger := do.MustInvoke[*slog.Logger](di)
 	conf := do.MustInvoke[*config.Config](di)
-	installDaemonMiddleware(app, conf)
+	installDaemonMiddleware(app, conf, do.MustInvoke[*controlauth.Service](di))
 
 	startBackground := opts.StartBackground
 	stopBackground := opts.StopBackground
@@ -148,10 +149,14 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 	}, nil
 }
 
-func installDaemonMiddleware(app *echo.Echo, conf *config.Config) {
+func installDaemonMiddleware(app *echo.Echo, conf *config.Config, authenticator daemonAuthenticator) {
 	app.Use(middleware.RequestLogger())
 	app.Use(middleware.Recover())
-	app.Use(newDaemonAuthMiddleware(conf))
+	app.Use(newDaemonRequestIDMiddleware())
+	app.Use(newDaemonAuthMiddleware(conf, authenticator))
+	if service, ok := authenticator.(*controlauth.Service); ok {
+		app.Use(newDaemonHTTPSecurityMiddleware(service, conf.JupyterProxyBasePath))
+	}
 }
 
 func (a *DaemonApp) StartBackground() error {

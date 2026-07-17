@@ -2,14 +2,29 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/labstack/echo/v4"
 
+	controlauth "agent-compose/pkg/auth"
 	"agent-compose/pkg/config"
 )
+
+type daemonAuthenticatorFake struct{ token string }
+
+func (f daemonAuthenticatorFake) Initialized() bool { return f.token != "" }
+
+func (f daemonAuthenticatorFake) Authenticate(_ context.Context, token string) (controlauth.Identity, error) {
+	if token != f.token {
+		return controlauth.Identity{}, errors.New("invalid token")
+	}
+	return controlauth.Identity{TokenID: "token-1", TokenName: "test", Role: controlauth.RoleAdmin, Origin: controlauth.OriginIssued}, nil
+}
+
+func (daemonAuthenticatorFake) RegisterRequest(string, context.CancelFunc) func() { return func() {} }
 
 func TestDaemonAuthMiddleware(t *testing.T) {
 	tests := []struct {
@@ -35,7 +50,7 @@ func TestDaemonAuthMiddleware(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			app := echo.New()
-			app.Use(newDaemonAuthMiddleware(&config.Config{DaemonAuthToken: test.token, JupyterProxyBasePath: "/jupyter"}))
+			app.Use(newDaemonAuthMiddleware(&config.Config{DaemonAuthToken: test.token, JupyterProxyBasePath: "/jupyter"}, daemonAuthenticatorFake{token: test.token}))
 			app.Any("/*", func(c echo.Context) error { return c.NoContent(http.StatusNoContent) })
 			req := httptest.NewRequest(test.method, test.path, nil)
 			if test.header != "" {

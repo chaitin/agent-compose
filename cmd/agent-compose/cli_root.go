@@ -61,6 +61,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		newCLIVersionCommand(&options),
 		newCLIStatusCommand(&options),
 		newCLIAuthCommand(&options),
+		newCLIAuditCommand(&options),
 		newCLIConfigCommand(&options),
 		newCLIProjectCommand(&options),
 		newCLIAgentCommand(&options),

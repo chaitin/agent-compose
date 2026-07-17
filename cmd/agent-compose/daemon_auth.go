@@ -1,37 +1,71 @@
 package main
 
 import (
-	"crypto/sha256"
-	"crypto/subtle"
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/labstack/echo/v4"
 
 	agentcomposeapp "agent-compose/pkg/agentcompose/app"
+	controlauth "agent-compose/pkg/auth"
 	"agent-compose/pkg/config"
 	"agent-compose/proto/health/v1/healthv1connect"
 )
 
 const bearerScheme = "Bearer "
 
-func newDaemonAuthMiddleware(conf *config.Config) echo.MiddlewareFunc {
-	tokenHash := sha256.Sum256([]byte(conf.DaemonAuthToken))
+type daemonAuthenticator interface {
+	Initialized() bool
+	Authenticate(context.Context, string) (controlauth.Identity, error)
+	RegisterRequest(string, context.CancelFunc) func()
+}
+
+func newDaemonAuthMiddleware(conf *config.Config, authenticator daemonAuthenticator) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			if conf.DaemonAuthToken == "" || trustedLocalSocketRequest(c.Request()) || daemonAuthExemptRequest(c.Request(), conf.JupyterProxyBasePath) {
+			request := c.Request()
+			if daemonAuthExemptRequest(request, conf.JupyterProxyBasePath) {
 				return next(c)
 			}
-			presented, ok := requestBearerToken(c.Request())
-			presentedHash := sha256.Sum256([]byte(presented))
-			if !ok || subtle.ConstantTimeCompare(tokenHash[:], presentedHash[:]) != 1 {
-				c.Response().Header().Set("WWW-Authenticate", `Bearer realm="agent-compose"`)
-				c.Response().Header().Set("Cache-Control", "no-store")
-				return echo.NewHTTPError(http.StatusUnauthorized, "daemon authentication required")
+			if trustedLocalSocketRequest(request) {
+				c.SetRequest(request.WithContext(controlauth.WithIdentity(request.Context(), controlauth.Identity{
+					TokenName: "local-admin", Role: controlauth.RoleAdmin, Origin: controlauth.OriginLocal,
+				})))
+				return next(c)
 			}
+
+			values := request.Header.Values(echo.HeaderAuthorization)
+			if len(values) == 0 && !authenticator.Initialized() {
+				c.SetRequest(request.WithContext(controlauth.WithIdentity(request.Context(), controlauth.Identity{
+					TokenName: "anonymous-admin", Role: controlauth.RoleAdmin, Origin: controlauth.OriginAnonymous,
+				})))
+				return next(c)
+			}
+			presented, ok := requestBearerToken(request)
+			if !ok {
+				return daemonUnauthorized(c)
+			}
+			identity, err := authenticator.Authenticate(request.Context(), presented)
+			if err != nil {
+				return daemonUnauthorized(c)
+			}
+			requestCtx, cancel := context.WithCancel(controlauth.WithIdentity(request.Context(), identity))
+			unregister := authenticator.RegisterRequest(identity.TokenID, cancel)
+			defer func() {
+				unregister()
+				cancel()
+			}()
+			c.SetRequest(request.WithContext(requestCtx))
 			return next(c)
 		}
 	}
+}
+
+func daemonUnauthorized(c echo.Context) error {
+	c.Response().Header().Set("WWW-Authenticate", `Bearer realm="agent-compose"`)
+	c.Response().Header().Set("Cache-Control", "no-store")
+	return echo.NewHTTPError(http.StatusUnauthorized, "daemon authentication required")
 }
 
 func trustedLocalSocketRequest(r *http.Request) bool {
