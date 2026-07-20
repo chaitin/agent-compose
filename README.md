@@ -157,6 +157,18 @@ Scheduler scripts may be inline JavaScript or a flat source mapping using
 fetch mapped sources locally and send an inline snapshot to the daemon. Use
 either `scheduler.script` or `scheduler.triggers` in one scheduler.
 
+For example, load a scheduler script over HTTP:
+
+```yaml
+agents:
+  reviewer:
+    scheduler:
+      enabled: true
+      script:
+        provider: http
+        url: https://example.com/scheduler.js
+```
+
 Add scheduled or event-driven runs. Use either `scheduler.triggers` **or** an
 inline `scheduler.script`, not both in the same scheduler:
 

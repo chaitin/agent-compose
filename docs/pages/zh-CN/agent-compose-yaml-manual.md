@@ -751,12 +751,24 @@ scheduler:
 
 #### 外部脚本
 
+本地文件：
+
 ```yaml
 scheduler:
   enabled: true
   script:
     provider: file
     path: ./scheduler.js
+```
+
+HTTP URL：
+
+```yaml
+scheduler:
+  enabled: true
+  script:
+    provider: http
+    url: https://example.com/scheduler.js
 ```
 
 外部脚本 mapping 使用与 Skill、Workspace 相同的来源字段：

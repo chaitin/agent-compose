@@ -746,12 +746,24 @@ The scheduler runtime validates the script and derives registered triggers from 
 
 #### External script
 
+Local file:
+
 ```yaml
 scheduler:
   enabled: true
   script:
     provider: file
     path: ./scheduler.js
+```
+
+HTTP URL:
+
+```yaml
+scheduler:
+  enabled: true
+  script:
+    provider: http
+    url: https://example.com/scheduler.js
 ```
 
 External script mappings use the same source keys as skills and workspaces:

@@ -115,6 +115,20 @@ agents:
       target: .
 ```
 
+Scheduler 脚本可以是内联 JavaScript，也可以通过 `provider: file`、
+`provider: http` 或 `provider: git` 配置外部来源。`config` 和 `up` 会在本地
+读取外部脚本，并把内联内容快照发送给 daemon。例如，通过 HTTP 加载脚本：
+
+```yaml
+agents:
+  reviewer:
+    scheduler:
+      enabled: true
+      script:
+        provider: http
+        url: https://example.com/scheduler.js
+```
+
 添加定时或事件驱动的 run。`scheduler.triggers` 与内联 `scheduler.script` 在同一 scheduler 中二选一：
 
 ```yaml
