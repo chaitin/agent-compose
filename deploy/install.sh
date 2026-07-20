@@ -40,7 +40,18 @@ printf 'Downloading agent-compose installer for linux/%s...\n' "$ARCH"
 curl -fsSL -o "$TEMP_DIR/$ASSET" "$BASE_URL/$ASSET"
 curl -fsSL -o "$TEMP_DIR/SHASUMS256.txt" "$BASE_URL/SHASUMS256.txt"
 
-checksum_line=$(awk -v asset="$ASSET" '$2 == asset || $2 == "*" asset { print; found=1 } END { if (!found) exit 1 }' "$TEMP_DIR/SHASUMS256.txt") \
+checksum_line=$(awk -v asset="$ASSET" '
+  {
+    name = $2
+    sub(/^\*/, "", name)
+    sub(/^\.\//, "", name)
+    if (name == asset) {
+      print
+      found = 1
+    }
+  }
+  END { if (!found) exit 1 }
+' "$TEMP_DIR/SHASUMS256.txt") \
   || die "checksum entry is missing for $ASSET"
 printf '%s\n' "$checksum_line" | (cd "$TEMP_DIR" && sha256sum -c - >/dev/null) \
   || die "checksum verification failed for $ASSET"

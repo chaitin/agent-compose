@@ -66,6 +66,13 @@ run_bootstrap aarch64 uninstall --purge --yes
 grep -Fxq 'uninstall --purge --yes' "$EXEC_LOG" || fail 'arm64 arguments were not forwarded'
 grep -Fq '/installer-test/agent-compose-installer-linux-arm64' "$CURL_LOG" || fail 'arm64 asset was not downloaded'
 
+cp "$FAKE_RELEASE/SHASUMS256.txt" "$FAKE_RELEASE/SHASUMS256.txt.canonical"
+sed -i 's#  agent-compose-installer#  ./agent-compose-installer#' "$FAKE_RELEASE/SHASUMS256.txt"
+run_bootstrap x86_64 install --yes
+sed -i 's#  \./agent-compose-installer# *./agent-compose-installer#' "$FAKE_RELEASE/SHASUMS256.txt"
+run_bootstrap aarch64 install --yes
+mv "$FAKE_RELEASE/SHASUMS256.txt.canonical" "$FAKE_RELEASE/SHASUMS256.txt"
+
 if AGENT_COMPOSE_UNAME_S=Darwin AGENT_COMPOSE_UNAME_M=arm64 "$INSTALL_SH" >/dev/null 2>&1; then
   fail 'unsupported operating system was accepted'
 fi
