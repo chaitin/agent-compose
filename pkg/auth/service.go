@@ -17,8 +17,10 @@ import (
 )
 
 var (
-	tokenNamePattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
-	issuedTokenPattern = regexp.MustCompile(`^ac_[A-Za-z0-9_-]{43}$`)
+	tokenNamePattern               = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
+	issuedTokenPattern             = regexp.MustCompile(`^ac_[A-Za-z0-9_-]{43}$`)
+	authorizationCredentialPattern = regexp.MustCompile(`(?i)\bauthorization:[ \t]*(?:"[^"\r\n]*"|'[^'\r\n]*'|\[[^\r\n]*\]|[^,;\r\n()\[\]{}]+)`)
+	bearerCredentialPattern        = regexp.MustCompile(`(?i)\bbearer[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|\[[^\r\n]*\]|[^[:space:],;'"()\[\]{}]+)`)
 )
 
 type Service struct {
@@ -208,18 +210,8 @@ func SanitizeError(value string) string {
 	if value == "" {
 		return ""
 	}
-	lowerValue := strings.ToLower(value)
-	cutoff := len(value)
-	markerLength := 0
-	for _, marker := range []string{"bearer ", "authorization:"} {
-		if index := strings.Index(lowerValue, marker); index >= 0 && index < cutoff {
-			cutoff = index
-			markerLength = len(marker)
-		}
-	}
-	if markerLength > 0 {
-		value = value[:cutoff] + value[cutoff:cutoff+markerLength] + "[REDACTED]"
-	}
+	value = authorizationCredentialPattern.ReplaceAllString(value, "Authorization: [REDACTED]")
+	value = bearerCredentialPattern.ReplaceAllString(value, "Bearer [REDACTED]")
 	if len(value) > 2048 {
 		value = value[:2048] + "…"
 	}

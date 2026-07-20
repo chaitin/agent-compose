@@ -75,21 +75,39 @@ func TestRequestRegistryCancelsOnlyMatchingToken(t *testing.T) {
 	unregister()
 }
 
-func TestSanitizeErrorRedactsFromEarliestCredentialMarker(t *testing.T) {
+func TestSanitizeErrorRedactsCredentialValues(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
+		want    string
 		secrets []string
 	}{
-		{name: "repeated bearer", input: "failed: Bearer first-secret, retry with bearer second-secret", secrets: []string{"first-secret", "second-secret"}},
-		{name: "authorization before bearer", input: "proxy Authorization: Bearer auth-secret; upstream Bearer upstream-secret", secrets: []string{"auth-secret", "upstream-secret"}},
-		{name: "mixed case", input: "failed: bEaReR mixed-secret", secrets: []string{"mixed-secret"}},
+		{
+			name: "repeated bearer", input: "failed: Bearer first-secret, retry with bearer second-secret",
+			want: "failed: Bearer [REDACTED], retry with Bearer [REDACTED]", secrets: []string{"first-secret", "second-secret"},
+		},
+		{
+			name: "authorization before bearer", input: "proxy Authorization: Bearer auth-secret; upstream Bearer upstream-secret",
+			want: "proxy Authorization: [REDACTED]; upstream Bearer [REDACTED]", secrets: []string{"auth-secret", "upstream-secret"},
+		},
+		{
+			name: "mixed case", input: "failed: bEaReR mixed-secret, retry later",
+			want: "failed: Bearer [REDACTED], retry later", secrets: []string{"mixed-secret"},
+		},
+		{
+			name: "quoted authorization", input: `proxy authorization: "Bearer quoted-secret", retry later`,
+			want: "proxy Authorization: [REDACTED], retry later", secrets: []string{"quoted-secret"},
+		},
+		{
+			name: "already redacted", input: "proxy Authorization: [REDACTED], retry later",
+			want: "proxy Authorization: [REDACTED], retry later",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			got := SanitizeError(test.input)
-			if !strings.Contains(got, "[REDACTED]") {
-				t.Fatalf("SanitizeError(%q) = %q, want redaction marker", test.input, got)
+			if got != test.want {
+				t.Fatalf("SanitizeError(%q) = %q, want %q", test.input, got, test.want)
 			}
 			for _, secret := range test.secrets {
 				if strings.Contains(got, secret) {

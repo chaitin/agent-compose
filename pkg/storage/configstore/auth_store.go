@@ -8,13 +8,17 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	controlauth "agent-compose/pkg/auth"
 	"agent-compose/pkg/identity"
 )
 
-type authStore struct{ db *sql.DB }
+type authStore struct {
+	db            *sql.DB
+	tokenCreateMu sync.Mutex
+}
 
 func (s *authStore) ensureAuthSchema(ctx context.Context) error {
 	statements := []string{
@@ -213,6 +217,9 @@ func (s *authStore) ListTokens(ctx context.Context, options controlauth.TokenLis
 }
 
 func (s *authStore) CreateToken(ctx context.Context, actor controlauth.Identity, input controlauth.CreateTokenInput, requestID, paramsJSON string, now time.Time) (controlauth.Token, bool, bool, error) {
+	s.tokenCreateMu.Lock()
+	defer s.tokenCreateMu.Unlock()
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return controlauth.Token{}, false, false, fmt.Errorf("begin token create: %w", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -85,5 +86,67 @@ func TestAuthStoreCreateIdempotencyAndRevocationRules(t *testing.T) {
 	audits, err := store.ListAudits(ctx, controlauth.AuditFilter{Action: "auth.token.create", Limit: 10})
 	if err != nil || len(audits.Audits) != 1 {
 		t.Fatalf("create audits = %#v, %v", audits, err)
+	}
+}
+
+func TestAuthStoreConcurrentCreateReturnsIdempotentReplays(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "auth.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(8)
+	t.Cleanup(func() { _ = db.Close() })
+	store := FromDB(db)
+	if err := store.ensureAuthSchema(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_000, 0).UTC()
+	environment, _, err := store.ReconcileEnvironmentToken(t.Context(), "bootstrap", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor := controlauth.Identity{TokenID: environment.ID, TokenName: environment.Name, Role: controlauth.RoleAdmin, Origin: controlauth.OriginEnvironment}
+	input := controlauth.CreateTokenInput{
+		Name: "concurrent-reader", Role: controlauth.RoleReadOnlyAdmin,
+		Plaintext: "ac_0123456789012345678901234567890123456789012", ClientRequestID: "concurrent-create-1",
+	}
+	type result struct {
+		item            controlauth.Token
+		created, replay bool
+		err             error
+	}
+	const requests = 16
+	start := make(chan struct{})
+	results := make(chan result, requests)
+	for range requests {
+		go func() {
+			<-start
+			item, created, replay, err := store.CreateToken(t.Context(), actor, input, "request", `{}`, now)
+			results <- result{item: item, created: created, replay: replay, err: err}
+		}()
+	}
+	close(start)
+
+	createdCount, replayCount := 0, 0
+	var tokenID string
+	for range requests {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("concurrent create error = %v", result.err)
+		}
+		if tokenID == "" {
+			tokenID = result.item.ID
+		} else if result.item.ID != tokenID {
+			t.Fatalf("concurrent token id = %q, want %q", result.item.ID, tokenID)
+		}
+		if result.created {
+			createdCount++
+		}
+		if result.replay {
+			replayCount++
+		}
+	}
+	if createdCount != 1 || replayCount != requests-1 {
+		t.Fatalf("created/replayed = %d/%d, want 1/%d", createdCount, replayCount, requests-1)
 	}
 }
