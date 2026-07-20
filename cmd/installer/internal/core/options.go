@@ -25,6 +25,7 @@ const (
 type Options struct {
 	InstallDir      string
 	Repository      string
+	ReleaseBaseURL  string
 	Version         string
 	ImagePrefix     string
 	FrontendVersion string

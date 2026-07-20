@@ -4,8 +4,11 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,6 +57,59 @@ func TestOpenBundleRejectsUnknownPayloadVersion(t *testing.T) {
 	if _, err := openBundle(dir, nil); err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("openBundle error = %v", err)
 	}
+}
+
+func TestBundleLoaderUsesReleaseBaseURL(t *testing.T) {
+	archive := makeTestBundleArchive(t)
+	sum := sha256.Sum256(archive)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/mirror/" + bundleAsset:
+			_, _ = response.Write(archive)
+		case "/mirror/SHASUMS256.txt":
+			_, _ = fmt.Fprintf(response, "%x  %s\n", sum, bundleAsset)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	options := DefaultOptions()
+	options.ReleaseBaseURL = server.URL + "/mirror"
+	loaded, err := (bundleLoader{client: server.Client()}).Load(context.Background(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer loaded.Close()
+	if !regularFile(filepath.Join(loaded.Dir, "docker-compose.yml")) {
+		t.Fatal("release bundle was not extracted")
+	}
+}
+
+func makeTestBundleArchive(t *testing.T) []byte {
+	t.Helper()
+	files := map[string]string{
+		"agent-compose-installer/docker-compose.yml":  "services: {}\n",
+		"agent-compose-installer/.env.example":        "AUTH_PASSWORD=\nAUTH_SECRET=\n",
+		"agent-compose-installer/images/manifest.env": "INSTALLER_PAYLOAD_VERSION=1\n",
+	}
+	var archive bytes.Buffer
+	gzipWriter := gzip.NewWriter(&archive)
+	tarWriter := tar.NewWriter(gzipWriter)
+	for name, content := range files {
+		if err := tarWriter.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(content))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tarWriter.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return archive.Bytes()
 }
 
 func writeTestFile(t *testing.T, path, content string, mode os.FileMode) {

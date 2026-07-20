@@ -24,6 +24,7 @@ func newRootCommand(out, errOut io.Writer) *cobra.Command {
 	defaults := core.DefaultOptions()
 	defaults.InstallDir = envOrDefault("AGENT_COMPOSE_INSTALL_DIR", defaults.InstallDir)
 	defaults.Repository = envOrDefault("AGENT_COMPOSE_REPO", defaults.Repository)
+	defaults.ReleaseBaseURL = strings.TrimSpace(os.Getenv("AGENT_COMPOSE_RELEASE_BASE_URL"))
 	defaults.FrontendVersion = envOrDefault("AGENT_COMPOSE_FRONTEND_VERSION", defaults.FrontendVersion)
 	defaults.KVMPath = envOrDefault("AGENT_COMPOSE_KVM_DETECT_PATH", defaults.KVMPath)
 	options := &commandOptions{Options: defaults, yes: truthy(os.Getenv("AGENT_COMPOSE_YES"))}

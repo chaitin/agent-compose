@@ -5,6 +5,7 @@ set -euo pipefail
 
 REPOSITORY="${AGENT_COMPOSE_REPO:-chaitin/agent-compose}"
 RELEASE_TAG="${AGENT_COMPOSE_INSTALLER_RELEASE:-installer-latest}"
+INSTALLER_BASE_URL="${AGENT_COMPOSE_INSTALLER_BASE_URL:-}"
 OS_NAME="${AGENT_COMPOSE_UNAME_S:-$(uname -s)}"
 MACHINE="${AGENT_COMPOSE_UNAME_M:-$(uname -m)}"
 
@@ -25,7 +26,10 @@ for command_name in curl sha256sum mktemp; do
 done
 
 ASSET="agent-compose-installer-linux-$ARCH"
-BASE_URL="https://github.com/$REPOSITORY/releases/download/$RELEASE_TAG"
+if [[ -z "$INSTALLER_BASE_URL" ]]; then
+  INSTALLER_BASE_URL="https://github.com/$REPOSITORY/releases/download/$RELEASE_TAG"
+fi
+BASE_URL="${INSTALLER_BASE_URL%/}"
 TEMP_DIR=$(mktemp -d)
 cleanup() {
   rm -rf -- "$TEMP_DIR"

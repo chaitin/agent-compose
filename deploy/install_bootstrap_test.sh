@@ -51,11 +51,11 @@ run_bootstrap() {
   local machine=$1
   shift
   : >"$CURL_LOG"
-  PATH="$FAKE_BIN:$PATH" \
-    FAKE_RELEASE="$FAKE_RELEASE" CURL_LOG="$CURL_LOG" EXEC_LOG="$EXEC_LOG" \
-    AGENT_COMPOSE_UNAME_S=Linux AGENT_COMPOSE_UNAME_M="$machine" \
-    AGENT_COMPOSE_REPO=example/repository AGENT_COMPOSE_INSTALLER_RELEASE=installer-test \
-    "$INSTALL_SH" "$@"
+	PATH="$FAKE_BIN:$PATH" \
+	FAKE_RELEASE="$FAKE_RELEASE" CURL_LOG="$CURL_LOG" EXEC_LOG="$EXEC_LOG" \
+	AGENT_COMPOSE_UNAME_S=Linux AGENT_COMPOSE_UNAME_M="$machine" \
+	AGENT_COMPOSE_INSTALLER_BASE_URL=https://release.example/installer-test \
+	"$INSTALL_SH" "$@"
 }
 
 run_bootstrap x86_64 install --dir /opt/agent-compose --yes

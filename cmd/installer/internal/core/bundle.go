@@ -42,11 +42,16 @@ func (l bundleLoader) Load(ctx context.Context, options Options) (*bundle, error
 	if client == nil {
 		client = http.DefaultClient
 	}
-	base := "https://github.com/" + options.Repository + "/releases/"
-	if options.Version == DefaultVersion {
-		base += "latest/download/"
+	base := strings.TrimSpace(options.ReleaseBaseURL)
+	if base != "" {
+		base = strings.TrimRight(base, "/") + "/"
 	} else {
-		base += "download/" + options.Version + "/"
+		base = "https://github.com/" + options.Repository + "/releases/"
+		if options.Version == DefaultVersion {
+			base += "latest/download/"
+		} else {
+			base += "download/" + options.Version + "/"
+		}
 	}
 	archive, err := download(ctx, client, base+bundleAsset)
 	if err != nil {
