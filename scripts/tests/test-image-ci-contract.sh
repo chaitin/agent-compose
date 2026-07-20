@@ -8,6 +8,7 @@ INSTALLER_TEST="$ROOT_DIR/scripts/tests/test-installer-assets.sh"
 IMAGE_E2E="$ROOT_DIR/scripts/test-image-docker-e2e.sh"
 DAEMON_BUILDER="$ROOT_DIR/scripts/build-agent-compose.sh"
 GUEST_BUILDER="$ROOT_DIR/scripts/build-agent-compose-guest.sh"
+GUEST_DOCKERFILE="$ROOT_DIR/guest-images/Dockerfile.agent-compose-guest"
 
 failures=0
 TEST_ROOT=$(mktemp -d)
@@ -280,6 +281,7 @@ fi
 [[ -x $IMAGE_E2E ]] || fail 'executable scripts/test-image-docker-e2e.sh'
 [[ -x $DAEMON_BUILDER ]] || fail 'executable scripts/build-agent-compose.sh'
 [[ -x $GUEST_BUILDER ]] || fail 'executable scripts/build-agent-compose-guest.sh'
+[[ -f $GUEST_DOCKERFILE ]] || fail 'default guest Dockerfile'
 if [[ -f $DAEMON_BUILDER ]]; then
   daemon_builder_source=$(<"$DAEMON_BUILDER")
   require_regex "$daemon_builder_source" 'docker[[:space:]]+build' \
@@ -293,6 +295,38 @@ if [[ -f $GUEST_BUILDER ]]; then
     'loadable Docker build in guest image helper'
   require_regex "$guest_builder_source" 'Dockerfile\.agent-compose-guest' \
     'guest Dockerfile selection in image helper'
+fi
+if [[ -f $GUEST_DOCKERFILE ]]; then
+  guest_dockerfile_source=$(<"$GUEST_DOCKERFILE")
+  forbid_regex "$guest_dockerfile_source" 'golang|go-tools|go[[:space:]]+install|grpcurl|protoc-gen-go' \
+    'Go toolchain or Go-built tools in default guest image'
+  forbid_regex "$guest_dockerfile_source" 'GOPATH=' \
+    'Go workspace environment in default guest image'
+  forbid_regex "$guest_dockerfile_source" 'PATH=[^[:space:]]*/usr/local/go/bin' \
+    'Go toolchain path in default guest image'
+
+  npm_install_run_count=0
+  run_block=''
+  while IFS= read -r dockerfile_line || [[ -n $dockerfile_line ]]; do
+    if [[ -z $run_block ]]; then
+      [[ $dockerfile_line == RUN\ * ]] || continue
+      run_block=$dockerfile_line
+    else
+      run_block+=" $dockerfile_line"
+    fi
+    if [[ $dockerfile_line == *\\ ]]; then
+      continue
+    fi
+    if grep -Eq 'npm[[:space:]]+(ci|install)' <<<"$run_block"; then
+      npm_install_run_count=$((npm_install_run_count + 1))
+      require_regex "$run_block" 'npm[[:space:]]+cache[[:space:]]+clean[[:space:]]+--force' \
+        "npm cache cleanup in guest install layer $npm_install_run_count"
+      require_regex "$run_block" 'rm[[:space:]]+-rf[[:space:]]+/root/\.npm' \
+        "npm cache directory removal in guest install layer $npm_install_run_count"
+    fi
+    run_block=''
+  done <"$GUEST_DOCKERFILE"
+  [[ $npm_install_run_count -gt 0 ]] || fail 'npm install layers in default guest Dockerfile'
 fi
 
 FAKE_BIN="$TEST_ROOT/fake-bin"
@@ -329,8 +363,7 @@ run_guest_builder() { # remaining arguments are environment overrides
     FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \
     GUEST_IMAGE_DOCKERFILE="$ROOT_DIR/guest-images/Dockerfile.agent-compose-guest" \
     IMAGE_TAG=agent-compose-guest:contract \
-    REGISTRY_MIRROR= PYPI_INDEX_URL= PYPI_TRUSTED_HOST= GOPROXY= \
-    GO_VERSION= GRPCURL_VERSION= PROTOC_GEN_GO_VERSION= PROTOC_GEN_GO_GRPC_VERSION= \
+    REGISTRY_MIRROR= PYPI_INDEX_URL= PYPI_TRUSTED_HOST= \
     "$@" \
     "$GUEST_BUILDER" >/dev/null
 }
@@ -369,9 +402,7 @@ if ! run_guest_builder; then
   fail 'guest image helper default build invocation'
 else
   guest_log=$(<"$FAKE_DOCKER_LOG")
-  for omitted in \
-    REGISTRY_MIRROR PYPI_INDEX_URL PYPI_TRUSTED_HOST GOPROXY GO_VERSION \
-    GRPCURL_VERSION PROTOC_GEN_GO_VERSION PROTOC_GEN_GO_GRPC_VERSION; do
+  for omitted in REGISTRY_MIRROR PYPI_INDEX_URL PYPI_TRUSTED_HOST; do
     forbid_regex "$guest_log" "^$omitted=" "empty guest $omitted build argument"
   done
 fi
@@ -379,24 +410,14 @@ fi
 if ! run_guest_builder \
   REGISTRY_MIRROR=registry.example.invalid \
   PYPI_INDEX_URL=https://python.example.invalid/simple \
-  PYPI_TRUSTED_HOST=python.example.invalid \
-  GOPROXY=https://go-proxy.example.invalid,direct \
-  GO_VERSION=1.99.0 \
-  GRPCURL_VERSION=v9.9.1 \
-  PROTOC_GEN_GO_VERSION=v9.9.2 \
-  PROTOC_GEN_GO_GRPC_VERSION=v9.9.3; then
+  PYPI_TRUSTED_HOST=python.example.invalid; then
   fail 'guest image helper override build invocation'
 else
   guest_log=$(<"$FAKE_DOCKER_LOG")
   for forwarded in \
     'REGISTRY_MIRROR=registry.example.invalid' \
     'PYPI_INDEX_URL=https://python.example.invalid/simple' \
-    'PYPI_TRUSTED_HOST=python.example.invalid' \
-    'GOPROXY=https://go-proxy.example.invalid,direct' \
-    'GO_VERSION=1.99.0' \
-    'GRPCURL_VERSION=v9.9.1' \
-    'PROTOC_GEN_GO_VERSION=v9.9.2' \
-    'PROTOC_GEN_GO_GRPC_VERSION=v9.9.3'; do
+    'PYPI_TRUSTED_HOST=python.example.invalid'; do
     require_regex "$guest_log" "^$forwarded$" "guest $forwarded build argument"
   done
 fi

@@ -257,16 +257,25 @@ release-matched tarball only when workspace Node.js code needs to install
 
 ## 6. What Is Not Required
 
-The published image is a broad development environment. The baseline ABI does
-not require a particular Linux distribution, `apt`, Go, a C/C++ compiler,
-`grpcurl`, protobuf compilers, Git, curl, `tini`, every provider CLI, Jupyter,
-extra kernels, or the offline runtime SDK.
+The published default guest is a broad runtime environment, but it intentionally
+does not include the Go toolchain or Go-built utilities such as `grpcurl`,
+`protoc-gen-go`, and `protoc-gen-go-grpc`. The baseline ABI does not require a
+particular Linux distribution, `apt`, Go, a C/C++ compiler, those Go utilities,
+Git, curl, `tini`, every provider CLI, Jupyter, extra kernels, or the offline
+runtime SDK.
 
 Some of these become workload requirements. For example, Git is usually useful
 to coding agents, CA certificates are needed for normal TLS access, and build
 tools may be needed by a repository. Git workspace provisioning itself is
 performed by the control plane before first runtime start and does not make Git
 a baseline image requirement.
+
+A project that compiles or tests Go code **MUST** select a development or custom
+guest image that installs Go. The repository's
+`guest-images/Dockerfile.devbox-archlinux` is an x86_64-oriented development
+image example with Go and other build tools; it is not the default guest image.
+Production deployments should build and publish an immutable, architecture-
+appropriate development image and select it explicitly in the agent spec.
 
 ## 7. Recommended Build: Extend the Published Guest
 

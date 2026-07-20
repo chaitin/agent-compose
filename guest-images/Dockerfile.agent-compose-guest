@@ -1,26 +1,15 @@
 ARG REGISTRY_MIRROR=docker.io
 ARG PYPI_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 ARG PYPI_TRUSTED_HOST=mirrors.tuna.tsinghua.edu.cn
-ARG GOPROXY=https://goproxy.cn,direct
-ARG GO_VERSION=1.26.4
-ARG GRPCURL_VERSION=v1.9.3
-ARG PROTOC_GEN_GO_VERSION=v1.36.11
-ARG PROTOC_GEN_GO_GRPC_VERSION=v1.6.2
 ARG NODE_MAJOR=22
 ARG CODEX_VERSION=0.144.1
 ARG CLAUDE_CODE_VERSION=2.1.206
 ARG GEMINI_CLI_VERSION=0.50.0
 ARG OPENCODE_VERSION=1.17.18
 
-FROM ${REGISTRY_MIRROR}/library/golang:${GO_VERSION}-alpine AS golang-toolchain
-
 FROM ${REGISTRY_MIRROR}/library/debian:bookworm-slim
 ARG PYPI_INDEX_URL
 ARG PYPI_TRUSTED_HOST
-ARG GOPROXY
-ARG GRPCURL_VERSION
-ARG PROTOC_GEN_GO_VERSION
-ARG PROTOC_GEN_GO_GRPC_VERSION
 ARG NODE_MAJOR
 ARG CODEX_VERSION
 ARG CLAUDE_CODE_VERSION
@@ -51,21 +40,6 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /root/.npm /root/.cache
 
-COPY --from=golang-toolchain /usr/local/go /usr/local/go
-
-ENV GOPATH=/root/go \
-    GOPROXY=${GOPROXY} \
-    PATH=/usr/local/go/bin:${PATH}
-
-RUN go env -w GOPROXY="${GOPROXY}" && \
-    go install github.com/fullstorydev/grpcurl/cmd/grpcurl@"${GRPCURL_VERSION}" && \
-    go install google.golang.org/protobuf/cmd/protoc-gen-go@"${PROTOC_GEN_GO_VERSION}" && \
-    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@"${PROTOC_GEN_GO_GRPC_VERSION}" && \
-    install -m755 /root/go/bin/grpcurl /usr/local/bin/grpcurl && \
-    install -m755 /root/go/bin/protoc-gen-go /usr/local/bin/protoc-gen-go && \
-    install -m755 /root/go/bin/protoc-gen-go-grpc /usr/local/bin/protoc-gen-go-grpc && \
-    go clean -cache -modcache -testcache -fuzzcache
-
 ENV PIP_INDEX_URL=${PYPI_INDEX_URL}
 ENV PIP_TRUSTED_HOST=${PYPI_TRUSTED_HOST}
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -88,9 +62,11 @@ RUN set -e; \
       "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
       "${CLAUDE_CODE_PLATFORM_PACKAGE}@${CLAUDE_CODE_VERSION}" \
       "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
-      "opencode-ai@${OPENCODE_VERSION}"
+      "opencode-ai@${OPENCODE_VERSION}" && \
+    npm cache clean --force && \
+    rm -rf /root/.npm
 
-RUN mkdir -p /usr/local/share/jupyter/kernels/javascript /root/.codex /root/.opencode /root/.local/bin /root/.cargo/bin /root/go/bin /workspace /data/state /data/runtime /data/logs
+RUN mkdir -p /usr/local/share/jupyter/kernels/javascript /root/.codex /root/.opencode /root/.local/bin /root/.cargo/bin /workspace /data/state /data/runtime /data/logs
 
 COPY ./assets/.codex/ /root/.codex/
 COPY ./assets/.claude/ /root/.claude/
@@ -105,6 +81,8 @@ RUN cd /tmp/agent-compose-runtime && \
     npm ci && \
     RUNTIME_TARBALL="$(npm pack --silent | tail -n 1)" && \
     npm install -g "./${RUNTIME_TARBALL}" && \
+    npm cache clean --force && \
+    rm -rf /root/.npm && \
     rm -rf /tmp/agent-compose-runtime && \
     ln -sfv ../lib/node_modules/@chaitin-ai/agent-compose-runtime/dist/cli.js /usr/bin/agent-compose-runtime && \
     ln -sf ../lib/node_modules/@openai/codex/bin/codex.js /usr/bin/codex && \
@@ -119,25 +97,23 @@ RUN mkdir -p /opt/agent-compose/npm && \
     mkdir -p /tmp/agent-compose-runtime-sdk-empty-cache && \
     npm install --offline --cache /tmp/agent-compose-runtime-sdk-empty-cache /opt/agent-compose/npm/agent-compose-runtime-sdk.tgz --prefix /tmp/agent-compose-runtime-sdk-offline-check && \
     node -e "const { runtime } = require('/tmp/agent-compose-runtime-sdk-offline-check/node_modules/@chaitin-ai/agent-compose-runtime-sdk'); if (typeof runtime.shell !== 'function') process.exit(1)" && \
+    npm cache clean --force && \
+    rm -rf /root/.npm && \
     rm -rf /tmp/agent-compose-runtime-sdk /tmp/agent-compose-runtime-sdk-offline-check /tmp/agent-compose-runtime-sdk-empty-cache
 
 ENV HOME=/root \
-    GOPATH=/root/go \
-    GOPROXY=${GOPROXY} \
     OPENCODE_DISABLE_AUTOUPDATE=true \
     OPENCODE_DISABLE_MODELS_FETCH=1 \
-    PATH=/root/.local/bin:/usr/local/go/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    PATH=/root/.local/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
-  'mkdir -p /root/.codex /root/.opencode /root/.local/bin /root/.cargo/bin /root/go/bin /workspace /data/state /data/runtime /data/logs' \
+  'mkdir -p /root/.codex /root/.opencode /root/.local/bin /root/.cargo/bin /workspace /data/state /data/runtime /data/logs' \
   'export HOME=${HOME:-/root}' \
-  'export GOPATH=${GOPATH:-/root/go}' \
-  'export GOPROXY=${GOPROXY:-https://goproxy.cn,direct}' \
   'export OPENCODE_DISABLE_AUTOUPDATE=${OPENCODE_DISABLE_AUTOUPDATE:-true}' \
   'export OPENCODE_DISABLE_MODELS_FETCH=${OPENCODE_DISABLE_MODELS_FETCH:-1}' \
-  'export PATH=/root/.local/bin:/usr/local/go/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
+  'export PATH=/root/.local/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
   'exec "$@"' > /usr/local/bin/agent-compose-env && chmod +x /usr/local/bin/agent-compose-env
 
 ENTRYPOINT ["/usr/bin/tini", "--"]

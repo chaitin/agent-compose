@@ -91,6 +91,19 @@ trap cleanup_image_docker_e2e_resources EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+docker_cmd run --rm \
+  --label agent-compose.e2e=image-docker \
+  --label "agent-compose.e2e.task_run=${task_run_id}" \
+  --entrypoint sh \
+  "$guest_image" -lc '
+    set -eu
+    ! command -v go >/dev/null 2>&1
+    test ! -e /usr/local/go/bin/go
+    ! command -v grpcurl >/dev/null 2>&1
+    ! command -v protoc-gen-go >/dev/null 2>&1
+    ! command -v protoc-gen-go-grpc >/dev/null 2>&1
+  '
+
 test_status=0
 DOCKER_HOST="$docker_host" \
   AGENT_COMPOSE_E2E_DAEMON_IMAGE="$daemon_image" \
