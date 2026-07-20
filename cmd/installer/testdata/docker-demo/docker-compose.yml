@@ -1,0 +1,8 @@
+services:
+  agent-compose:
+    image: ${AGENT_COMPOSE_IMAGE}
+    restart: unless-stopped
+    volumes:
+      - ${AGENT_COMPOSE_DATA_DIR:-./data}:/data
+    ports:
+      - "127.0.0.1::7410"

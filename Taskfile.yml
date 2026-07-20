@@ -163,6 +163,12 @@ tasks:
       - ./scripts/tests/test-installer-assets.sh
       - ./scripts/tests/test-installer-binaries.sh
 
+  demo:installer-docker:
+    desc: Run and retain an isolated real-Docker installer lifecycle demo
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - ./scripts/demo-installer-docker.sh
+
   test:unit:
     desc: Run unit tests
     cmds:

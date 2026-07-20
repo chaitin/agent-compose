@@ -61,6 +61,10 @@ Environment overrides retained for automation are:
 - `AGENT_COMPOSE_YES=1`: skip confirmation;
 - `AGENT_COMPOSE_INSTALLER_RELEASE`: bootstrap release tag, primarily for
   mirrors and release verification.
+- `AGENT_COMPOSE_INSTALLER_BASE_URL`: complete bootstrap asset base URL for a
+  mirror or controlled test release.
+- `AGENT_COMPOSE_RELEASE_BASE_URL`: complete application bundle base URL for a
+  mirror or controlled test release.
 
 ## Installation and upgrade behavior
 
@@ -159,3 +163,19 @@ task lint
 
 The deterministic installer checks use fake command/network boundaries and do
 not require a running Docker daemon, KVM, network access, or runtime sandboxes.
+
+For an isolated real-Docker demonstration, including local HTTP releases, a
+local OCI registry, install, upgrade, uninstall with data preservation, and
+reinstall, run:
+
+```bash
+task demo:installer-docker
+```
+
+The command prints a state file and leaves the final v2 container, registry,
+installation directory, and logs running for manual inspection. Use the
+printed `cleanup-installer-docker-demo.sh` command when finished. Sourcing the
+state file exports the local installer/application Release URLs and the demo
+installation directory. It also exports a unique Compose project name so
+retained demos can run side by side and the ordinary bootstrap can be rerun
+directly.
