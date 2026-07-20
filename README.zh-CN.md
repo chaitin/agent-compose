@@ -42,8 +42,12 @@
 一行安装脚本会用 Docker Compose 部署并启动 agent-compose daemon，支持 Linux amd64/arm64。Web UI 位于可选的 `with-ui` profile，不会由安装脚本的普通 `docker compose up -d` 自动启动：
 
 ```bash
-curl -fsSL https://github.com/chaitin/agent-compose/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/chaitin/agent-compose/releases/download/installer-latest/install.sh | bash
 ```
+
+bootstrap 会自动选择 Linux amd64/arm64 installer 并打开中英文 TUI。默认安装目录固定为
+`/opt/agent-compose`；当前用户无写权限时请使用 `sudo`。自动化场景使用
+`install --yes` 并显式传入所需参数。
 
 首次运行会生成 `admin` 密码并打印一次，同时打印安装目录和浏览器 URL。使用浏览器前，先在该安装目录显式启动 Web UI：
 
@@ -52,7 +56,7 @@ cd <安装脚本打印的目录>
 docker compose --profile with-ui up -d
 ```
 
-然后访问安装脚本打印的 URL。基础 `docker-compose.yml` 不启用 `privileged`，也不映射 `/dev/kvm`；installer 在新安装时检测 KVM，并在可用时把 `COMPOSE_FILE=docker-compose.yml:docker-compose.kvm.yml` 持久化到安装目录的 `.env`。没有 KVM 时仍可使用默认 Docker driver。安装选项（`--dir`、`--port`、`--upgrade`、使用镜像/私有 registry 等）见 [deploy/README.md](deploy/README.md)。
+然后访问 installer 打印的 URL。基础 `docker-compose.yml` 不启用 `privileged`，也不映射 `/dev/kvm`；installer 在新安装时检测 KVM，并在可用时把 `COMPOSE_FILE=docker-compose.yml:docker-compose.kvm.yml` 持久化到安装目录的 `.env`。没有 KVM 时仍可使用默认 Docker driver。安装、升级、卸载、数据保留以及镜像/私有 registry 选项见 [deploy/README.md](deploy/README.md)。
 
 ### 方式 B —— 从源码构建（用于 CLI 工作流）
 
@@ -288,7 +292,7 @@ task test          # 或：task test:unit / task test:integration / task test:e2
 
 用 `task image:agent-compose-guest` 和 `task image:agent-compose` 构建 guest 和 daemon 镜像。`task build:agent-compose` 按当前宿主选择原生 profile：Darwin 构建仅支持 Docker 的二进制，Linux 构建同时支持 Docker、BoxLite 和 Microsandbox；Linux full 构建会通过 Docker 准备两种 native runtime artifact。也可通过 `task build:agent-compose:darwin` 或 `task build:agent-compose:linux` 显式选择。旧任务 `build:agent-compose:boxlite` 已废弃，仅作为 Linux full profile 的兼容 alias。JavaScript runtime 组件在 `runtime/` 下。
 
-macOS/Linux 原生二进制只用于本地开发和 CI 验证，不作为 GitHub Release 资产。正式发布载体仍是 GHCR 中 `linux/amd64`、`linux/arm64` 的 multi-arch daemon/guest 镜像；GitHub Release 只包含 standalone installer、installer bundle 和校验和，不包含平台二进制。
+macOS/Linux daemon 原生二进制只用于本地开发和 CI 验证。独立的 Go installer 以 Linux amd64/arm64 二进制发布在固定的 `installer-latest` prerelease，并读取普通应用 Release 中的部署 bundle；正式部署载体仍是 GHCR 中的 multi-arch daemon/guest 镜像加该 installer。
 
 ## 文档
 

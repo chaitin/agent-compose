@@ -64,8 +64,13 @@ The one-line installer sets up the agent-compose daemon with Docker Compose on
 Linux amd64/arm64:
 
 ```bash
-curl -fsSL https://github.com/chaitin/agent-compose/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/chaitin/agent-compose/releases/download/installer-latest/install.sh | bash
 ```
+
+The bootstrap selects the Linux amd64/arm64 installer and opens its bilingual
+TUI. The default installation directory is `/opt/agent-compose`; use `sudo`
+when the current user cannot write there. For automation, run
+`install --yes` and pass options explicitly.
 
 The base stack starts the daemon. The frontend is defined under the `with-ui`
 profile; enable it from the installation directory printed by the installer:
@@ -77,8 +82,8 @@ docker compose --profile with-ui up -d
 
 On first run the installer generates an `admin` password and prints it once;
 use it at the printed URL after enabling the UI profile. See
-[deploy/README.md](deploy/README.md) for options such as `--dir`, `--port`,
-`--upgrade`, and pulling from a mirror/private registry.
+[deploy/README.md](deploy/README.md) for install, upgrade, uninstall, data
+preservation, and mirror/private-registry options.
 
 ### Option B — Build from source (for the CLI workflow)
 
@@ -379,10 +384,12 @@ The image smoke runs the full three-driver Linux image through its Docker path
 without privilege or KVM. Real BoxLite/Microsandbox smoke remains an explicit
 Linux/KVM operation via `task test:runtime-smoke`.
 
-Native binaries are retained only for local and CI verification. GitHub Release
-continues to ship installer assets; the supported deployment payload is the
-published multi-architecture image plus that installer, not standalone macOS or
-Linux binaries. The JavaScript runtime components live under `runtime/`.
+Native daemon binaries are retained only for local and CI verification. The
+architecture-specific Go installer is published separately under the fixed
+`installer-latest` prerelease and consumes the deployment bundle from normal
+application releases. The supported deployment remains the published
+multi-architecture images plus that installer. The JavaScript runtime
+components live under `runtime/`.
 
 ## Documentation
 

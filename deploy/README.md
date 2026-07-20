@@ -1,175 +1,161 @@
-# agent-compose deployment bundle
+# agent-compose installer
 
-Installer and manual Docker Compose guidance for Linux **x86_64 (amd64)** and
-**arm64**. The published daemon image is a full Linux image with Docker,
-BoxLite, and Microsandbox compiled in. It defaults to the Docker driver, and
-Docker selects the matching image architecture when pulling.
-
-## Release assets
-
-| Asset | Purpose |
-|-------|---------|
-| `agent-compose-installer.tar.gz` | Docker Compose installer bundle |
-| `install.sh` | Standalone installer for `curl \| bash` |
-| `SHASUMS256.txt` | Checksums |
-
-GitHub Release does not contain standalone macOS or Linux daemon binaries.
-Native binaries are local/CI verification artifacts; supported deployments use
-the published multi-architecture images and these installer assets.
+The installer deploys agent-compose with Docker Compose on Linux amd64 and
+arm64. A small Bash bootstrap downloads the matching Go binary; the Go program
+owns installation, upgrade, uninstall, validation, and rollback.
 
 ## Quick start
 
-### One-line install
+Interactive installation opens a bilingual TUI:
 
 ```bash
-curl -fsSL https://github.com/chaitin/agent-compose/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/chaitin/agent-compose/releases/download/installer-latest/install.sh | bash
 ```
 
-### From the installer archive
+The default installation directory is `/opt/agent-compose`. Run the bootstrap
+with `sudo` when the current user cannot write there. The installer is retained
+as `/opt/agent-compose/installer`, so later operations can run directly:
 
 ```bash
-tar -xzf agent-compose-installer.tar.gz
-cd agent-compose-installer
-./install.sh
+sudo /opt/agent-compose/installer upgrade
+sudo /opt/agent-compose/installer uninstall
 ```
 
-### Specific install directory
+Docker Engine and the Docker Compose v2 plugin must already be installed. The
+installer detects missing prerequisites and prints guidance; it does not modify
+the host package manager or install Docker automatically.
+
+## Non-interactive CLI
+
+The bootstrap forwards all arguments to the downloaded binary:
 
 ```bash
-curl -fsSL https://github.com/chaitin/agent-compose/releases/latest/download/install.sh | \
-  bash -s -- --dir /opt/agent-compose --port 8080
+# Install the latest application release.
+curl -fsSL https://github.com/chaitin/agent-compose/releases/download/installer-latest/install.sh | \
+  sudo bash -s -- install --yes
+
+# Select a release, directory, UI port, or image mirror.
+sudo /opt/agent-compose/installer install \
+  --version v1.2.3 \
+  --dir /srv/agent-compose \
+  --port 8080 \
+  --image-prefix registry.example.com/agent-compose \
+  --yes
+
+# Update installer-managed image references to the latest application release.
+sudo /opt/agent-compose/installer upgrade --yes
+
+# Prepare and validate files without pulling images or starting services.
+sudo /opt/agent-compose/installer install --no-start --yes
 ```
 
-The installer starts the base daemon service. The frontend service is defined
-under the `with-ui` profile; start it from the installation directory when you
-want browser access:
+The legacy top-level form, including `--upgrade`, `--dir`, `--version`,
+`--image-prefix`, `--no-start`, and `--yes`, remains accepted. New automation
+should use the explicit `install`, `upgrade`, and `uninstall` subcommands.
+
+Environment overrides retained for automation are:
+
+- `AGENT_COMPOSE_REPO`: GitHub repository used for downloads;
+- `AGENT_COMPOSE_INSTALL_DIR`: default installation directory;
+- `AGENT_COMPOSE_FRONTEND_VERSION`: frontend tag used with an image prefix;
+- `AGENT_COMPOSE_YES=1`: skip confirmation;
+- `AGENT_COMPOSE_INSTALLER_RELEASE`: bootstrap release tag, primarily for
+  mirrors and release verification.
+
+## Installation and upgrade behavior
+
+The installer downloads `agent-compose-installer.tar.gz` and its checksum from
+the selected application Release. It requires a matching SHA-256 entry and
+accepts only the expected regular files from the archive.
+
+Before changing the target, it validates paths, rejects symlinked managed
+targets, creates candidate configuration in a temporary directory, and prints
+the plan in interactive mode. Managed files are replaced atomically. If Compose
+validation, image pulling, or startup fails, the previous files and modes are
+restored; an existing deployment is restarted after restoration.
+
+On first installation the installer generates `AUTH_SECRET` and an `admin`
+password. The password is printed once and stored in `.env`. Existing settings
+are preserved. During upgrade, image references advance only when their current
+value still matches `.installer-state.env`; user overrides are never replaced.
+
+New installations persist `AGENT_COMPOSE_DATA_DIR=./data`. If an older database
+exists only under `./data/agent-compose`, that path is retained. When databases
+exist in both layouts, installation stops until the operator sets
+`AGENT_COMPOSE_DATA_DIR` to the authoritative location.
+
+The installer checks `/dev/kvm` only on first selection:
+
+- without KVM, `COMPOSE_FILE=docker-compose.yml` is persisted;
+- with KVM, `COMPOSE_FILE=docker-compose.yml:docker-compose.kvm.yml` is
+  persisted.
+
+An existing explicit `COMPOSE_FILE` is preserved. This chooses deployment
+topology; it does not prove KVM permissions or BoxLite/Microsandbox health.
+
+## Uninstall
+
+Ordinary uninstall stops the Compose project and removes installer-managed
+Compose files, state, and the retained installer binary. It deliberately keeps
+`.env` and persistent `data` so a later installation can recover them:
 
 ```bash
-cd <install-dir>
+sudo /opt/agent-compose/installer uninstall
+```
+
+Permanent removal requires the explicit purge option and confirmation:
+
+```bash
+sudo /opt/agent-compose/installer uninstall --purge
+```
+
+Purge removes only recognized installer configuration and data. Unknown files
+keep the installation directory in place and are reported as leftovers. Neither
+uninstall form removes shared Docker image caches or Compose volumes.
+
+## Operating the deployment
+
+The base installation starts the daemon. The web UI remains in the optional
+`with-ui` profile:
+
+```bash
+cd /opt/agent-compose
 docker compose --profile with-ui up -d
-```
-
-On first run the installer generates the frontend admin password and prints it
-once. Its summary includes the URL to use after the UI profile is enabled:
-
-```
-================ agent-compose is ready ================
-  URL:        http://localhost:80
-  Login credentials (generated, shown only once):
-    Username: admin
-    Password: <random>
-========================================================
-```
-
-## Options
-
-```
-./install.sh --dir /opt/agent-compose --port 8080
-./install.sh --version v1.2.3         # specific release (remote mode)
-./install.sh --image-prefix registry.example.com/agent-compose   # mirror / private registry
-./install.sh --upgrade                # update an existing install to the latest release
-./install.sh --upgrade --version v1.2.3  # update to a specific release
-./install.sh --no-start               # write files but don't pull images or start
-./install.sh --yes                    # skip the confirmation prompt
-```
-
-## Requirements
-
-- Docker Engine + Docker Compose v2
-- Network access to the image registry (ghcr.io by default; use
-  `--image-prefix` to pull from a mirror or private registry)
-- `/dev/kvm` only if you enable the BoxLite or Microsandbox runtime drivers
-  (the default `docker` driver does not need it)
-
-The base `docker-compose.yml` mounts the Docker socket but has no privileged
-mode or KVM device. `docker-compose.kvm.yml` is the explicit overlay that adds
-those capabilities for BoxLite and Microsandbox.
-
-## Compose selection
-
-For a new installation, the installer checks whether `/dev/kvm` exists:
-
-- when absent, it persists `COMPOSE_FILE=docker-compose.yml` and reports a
-  Docker-only deployment topology;
-- when present, it persists
-  `COMPOSE_FILE=docker-compose.yml:docker-compose.kvm.yml`.
-
-The selected value is stored in `<install-dir>/.env`, so ordinary
-`docker compose` management commands keep using the same file set. An existing
-explicit `COMPOSE_FILE` is preserved across installer runs. This detection does
-not verify KVM permissions, runtime artifacts, or driver health; validate the
-host separately before selecting BoxLite or Microsandbox.
-
-For a manual checkout-based deployment, create `.env`, then select the topology
-explicitly:
-
-```bash
-# Docker-only base topology
-docker compose -f docker-compose.yml up -d
-
-# BoxLite/Microsandbox topology on a prepared Linux/KVM host
-docker compose -f docker-compose.yml -f docker-compose.kvm.yml up -d
-```
-
-To make the second selection persistent for subsequent bare `docker compose`
-commands, set this active assignment in `.env`:
-
-```env
-COMPOSE_FILE=docker-compose.yml:docker-compose.kvm.yml
-```
-
-## Manage
-
-```bash
-cd <install-dir>
 docker compose ps
 docker compose logs -f
-docker compose --profile with-ui up -d   # start/update the web UI
 docker compose down
 ```
 
-Configuration lives in `<install-dir>/.env`; edit and re-run
-`docker compose up -d` to apply changes. See `SECURITY.md` in the repository
-before exposing the daemon beyond a trusted network.
+The base topology mounts the Docker socket without privilege or KVM. Use the
+persisted KVM overlay only on a prepared host when selecting BoxLite or
+Microsandbox.
 
-Re-running the installer refreshes the Compose files and fills missing secrets
-or image refs. `--upgrade` downloads the latest release bundle by default, even
-when invoked from an older extracted bundle. Add `--version vX.Y.Z` to select a
-specific release. Upgrade updates image refs only when they still match values
-recorded as installer-managed; custom or otherwise user-managed refs in `.env`
-remain unchanged.
+## Release model
 
-The host data mount is persisted as `AGENT_COMPOSE_DATA_DIR` in the installed
-`.env`. New installations use `./data`. When upgrading an installation whose
-database exists only under the earlier `./data/agent-compose` layout, the
-installer preserves that path instead of moving data. If databases exist in
-both locations, the installer stops before changing files; set
-`AGENT_COMPOSE_DATA_DIR=./data` or `./data/agent-compose` after identifying the
-authoritative database, then retry the upgrade.
+The fixed `installer-latest` prerelease contains:
 
-Before changing the installation directory, the installer prints a deployment
-plan and asks for confirmation. Use `--yes` or `AGENT_COMPOSE_YES=1` for
-non-interactive automation.
+| Asset | Purpose |
+| --- | --- |
+| `install.sh` | Linux OS/architecture bootstrap |
+| `agent-compose-installer-linux-amd64` | amd64 Go installer |
+| `agent-compose-installer-linux-arm64` | arm64 Go installer |
+| `SHASUMS256.txt` | installer binary checksums |
 
-## Verification
+It is updated only by manually dispatching the `Publish Installer` workflow.
+Because the release is marked prerelease, it does not replace the latest normal
+application Release.
 
-Repository contributors can validate the installer, both Compose topologies,
-and the exact release asset set without a running Docker daemon, KVM, network
-access, or runtime sandboxes. The check invokes the Docker Compose parser and
-also requires `jq`:
+Normal application releases contain the architecture-independent deployment
+bundle, bootstrap copy, and bundle checksum. The installer binary need not be
+rebuilt for ordinary application releases unless the payload protocol changes.
+
+## Contributor verification
 
 ```bash
 task test:deploy
+task test:scripts
+task lint
 ```
 
-After building the local daemon and guest images, verify the full image's
-Docker path without privilege or KVM:
-
-```bash
-task image:agent-compose
-task image:agent-compose-guest
-task test:e2e:image-docker
-```
-
-Real BoxLite or Microsandbox verification is separate and requires a prepared
-Linux/KVM host: `task test:runtime-smoke`.
+The deterministic installer checks use fake command/network boundaries and do
+not require a running Docker daemon, KVM, network access, or runtime sandboxes.

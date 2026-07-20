@@ -726,9 +726,11 @@ the Go build does not start after a preflight failure. The legacy
 `build:agent-compose:boxlite` task remains only as a deprecated alias of the
 Linux full build.
 
-Native binaries are local and CI verification artifacts; GitHub Release does
-not publish standalone per-platform binaries and continues to publish the
-installer assets that refer to the multi-architecture images.
+Native daemon binaries are local and CI verification artifacts. A separate Go
+installer is published for Linux amd64/arm64 under the fixed
+`installer-latest` prerelease; it consumes the architecture-independent
+deployment bundle from normal application releases and deploys the published
+multi-architecture images.
 
 `agent-compose --json version` has the stable shape `version`, `os`, `arch`, and
 `compiled_drivers`; `/api/version` adds the same build fields to its legacy

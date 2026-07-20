@@ -142,11 +142,12 @@ environment-gated runtime cases without contacting the Docker daemon.
 
 `task test` is the project quality gate for tests.
 
-Before coverage collection, it runs `task test:deploy` to validate the
-installer state machine, base and KVM Compose rendering, and the exact installer
-release-asset set. These deterministic checks require the Docker CLI with
-Compose v2 and `jq`, but do not require a running Docker daemon, KVM, network
-access, or runtime sandboxes. They do not change or contribute to the coverage
+Before coverage collection, it runs `task test:deploy` to validate the Go
+installer workflows, bootstrap architecture selection, base and KVM Compose
+rendering, deployment bundles, and the exact standalone-installer asset set.
+These deterministic checks require the Docker CLI with Compose v2, `jq`, Go,
+and `readelf`, but do not require a running Docker daemon, KVM, network access,
+or runtime sandboxes. They do not change or contribute to the coverage
 baselines below.
 
 The `test` task in `Taskfile.yml` must calculate and print:
