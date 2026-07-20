@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -72,4 +73,29 @@ func TestRequestRegistryCancelsOnlyMatchingToken(t *testing.T) {
 		t.Fatalf("cancellation state = %v/%v", first, second)
 	}
 	unregister()
+}
+
+func TestSanitizeErrorRedactsFromEarliestCredentialMarker(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		secrets []string
+	}{
+		{name: "repeated bearer", input: "failed: Bearer first-secret, retry with bearer second-secret", secrets: []string{"first-secret", "second-secret"}},
+		{name: "authorization before bearer", input: "proxy Authorization: Bearer auth-secret; upstream Bearer upstream-secret", secrets: []string{"auth-secret", "upstream-secret"}},
+		{name: "mixed case", input: "failed: bEaReR mixed-secret", secrets: []string{"mixed-secret"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := SanitizeError(test.input)
+			if !strings.Contains(got, "[REDACTED]") {
+				t.Fatalf("SanitizeError(%q) = %q, want redaction marker", test.input, got)
+			}
+			for _, secret := range test.secrets {
+				if strings.Contains(got, secret) {
+					t.Fatalf("SanitizeError(%q) leaked %q in %q", test.input, secret, got)
+				}
+			}
+		})
+	}
 }

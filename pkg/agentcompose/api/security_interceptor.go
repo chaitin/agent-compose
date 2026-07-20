@@ -32,7 +32,7 @@ func NewSecurityInterceptor(service *controlauth.Service) *SecurityInterceptor {
 
 func (i *SecurityInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, request connect.AnyRequest) (connect.AnyResponse, error) {
-		policy, identity, err := i.authorize(ctx, request.Spec().Procedure)
+		policy, identity, err := i.authorize(ctx, request.Spec().Procedure, request.Header().Get("X-Request-ID"))
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +75,7 @@ func (i *SecurityInterceptor) WrapStreamingClient(next connect.StreamingClientFu
 
 func (i *SecurityInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
 	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
-		policy, identity, err := i.authorize(ctx, conn.Spec().Procedure)
+		policy, identity, err := i.authorize(ctx, conn.Spec().Procedure, conn.RequestHeader().Get("X-Request-ID"))
 		if err != nil {
 			return err
 		}
@@ -107,7 +107,7 @@ func (i *SecurityInterceptor) WrapStreamingHandler(next connect.StreamingHandler
 	}
 }
 
-func (i *SecurityInterceptor) authorize(ctx context.Context, procedure string) (procedurePolicy, controlauth.Identity, error) {
+func (i *SecurityInterceptor) authorize(ctx context.Context, procedure, requestID string) (procedurePolicy, controlauth.Identity, error) {
 	policy, ok := procedurePolicies[procedure]
 	if !ok {
 		return procedurePolicy{}, controlauth.Identity{}, connect.NewError(connect.CodeInternal, fmt.Errorf("%w: %s", controlauth.ErrPolicyMissing, procedure))
@@ -123,7 +123,7 @@ func (i *SecurityInterceptor) authorize(ctx context.Context, procedure string) (
 		return policy, identity, nil
 	}
 	if policy.Access == controlauth.AccessOperation {
-		_ = i.service.DenyAudit(context.WithoutCancel(ctx), identity, "", policy.Action)
+		_ = i.service.DenyAudit(context.WithoutCancel(ctx), identity, requestID, policy.Action)
 	}
 	return procedurePolicy{}, controlauth.Identity{}, connect.NewError(connect.CodePermissionDenied, controlauth.ErrPermissionDenied)
 }

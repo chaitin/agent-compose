@@ -208,10 +208,17 @@ func SanitizeError(value string) string {
 	if value == "" {
 		return ""
 	}
-	for _, prefix := range []string{"Bearer ", "bearer ", "Authorization:", "authorization:"} {
-		if index := strings.Index(value, prefix); index >= 0 {
-			value = value[:index] + prefix + "[REDACTED]"
+	lowerValue := strings.ToLower(value)
+	cutoff := len(value)
+	markerLength := 0
+	for _, marker := range []string{"bearer ", "authorization:"} {
+		if index := strings.Index(lowerValue, marker); index >= 0 && index < cutoff {
+			cutoff = index
+			markerLength = len(marker)
 		}
+	}
+	if markerLength > 0 {
+		value = value[:cutoff] + value[cutoff:cutoff+markerLength] + "[REDACTED]"
 	}
 	if len(value) > 2048 {
 		value = value[:2048] + "…"
