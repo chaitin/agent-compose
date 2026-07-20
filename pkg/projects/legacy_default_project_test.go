@@ -21,7 +21,7 @@ func TestLegacyDefaultNormalizedProjectPreservesAgentConfiguration(t *testing.T)
 			EnvItems:     []domain.SandboxEnvVar{{Name: "TOKEN", Value: "secret", Secret: true}},
 			Volumes:      []domain.VolumeMountSpec{{Type: "bind", Source: "/host", Target: "/guest", ReadOnly: true}},
 			CapsetIDs:    []string{"tools"},
-			Skills:       []domain.AgentSkill{{Name: "review", Source: "local", Path: "skills/review"}},
+			Skills:       []domain.AgentSkill{{Name: "review", Provider: "file", Path: "skills/review"}},
 			SystemPrompt: "review carefully",
 		},
 		{ID: "agent-a", Name: "worker-a-Z", Enabled: true, Provider: "codex", ConfigJSON: "{}"},

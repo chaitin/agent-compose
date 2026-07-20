@@ -665,7 +665,7 @@ func testConfigStoreCRUDCoverageWorkflows(t *testing.T) {
 		ID: "agent-1", Name: "Agent", Enabled: true, Provider: "codex", Model: "gpt", SystemPrompt: "prompt",
 		Driver: driverpkg.RuntimeDriverBoxlite, GuestImage: "guest:latest", WorkspaceID: workspace.ID,
 		EnvItems: []domain.SandboxEnvVar{{Name: "TOKEN", Value: "secret", Secret: true}}, CapsetIDs: []string{"dev"},
-		Skills: []domain.AgentSkill{{Name: "pdf", Source: "git", URL: "https://github.com/anthropics/skills.git", Path: "skills/pdf", Token: "${GIT_TOKEN}"}},
+		Skills: []domain.AgentSkill{{Name: "pdf", Provider: "git", URL: "https://github.com/anthropics/skills.git", Path: "skills/pdf", Token: "${GIT_TOKEN}"}},
 	})
 	if err != nil {
 		t.Fatalf("CreateAgentDefinition returned error: %v", err)
@@ -696,7 +696,7 @@ func testConfigStoreCRUDCoverageWorkflows(t *testing.T) {
 	}
 	managedAgent, err := store.UpsertManagedAgentDefinition(ctx, domain.AgentDefinition{
 		ID: "managed-agent-1", Name: "Managed", Enabled: true, Provider: "codex", ManagedProjectID: "project-1", ManagedAgentName: "worker", ManagedProjectRevision: 1,
-		Skills: []domain.AgentSkill{{Name: "local-review", Source: "file", Path: "/tmp/skills/local-review"}},
+		Skills: []domain.AgentSkill{{Name: "local-review", Provider: "file", Path: "/tmp/skills/local-review"}},
 	})
 	if err != nil {
 		t.Fatalf("UpsertManagedAgentDefinition returned error: %v", err)

@@ -725,10 +725,14 @@ message EnvVarUpdateSpec {
 message WorkspaceSpec {
   string provider = 1;
   string url = 2;
-  string branch = 3;
+  string ref = 3;
   string path = 4;
   string name = 5;
-  string commit = 6;
+  string format = 6;
+  string target = 7;
+  string username = 8;
+  string password = 9;
+  string token = 10;
 }
 
 message NetworkSpec {
@@ -1611,13 +1615,14 @@ message StartRunResponse {
 
 message SkillSpec {
   string name = 1;
-  string source = 2;
+  string provider = 2;
   string url = 3;
   string path = 4;
   string ref = 5;
   string username = 6;
   string password = 7;
   string token = 8;
+  string format = 9;
 }
 
 message ResolveResourceIDRequest {

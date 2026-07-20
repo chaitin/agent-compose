@@ -3,6 +3,7 @@ package compose
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"agent-compose/pkg/sources"
 
 	"github.com/robfig/cron/v3"
 )
@@ -24,7 +27,6 @@ const (
 var stableIdentifierPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 var volumeSourceNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 var envReferencePattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
-var exactEnvReferencePattern = regexp.MustCompile(`^\$\{[A-Za-z_][A-Za-z0-9_]*\}$`)
 var composeCronParser = cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
 type NormalizeOptions struct {
@@ -79,10 +81,11 @@ type NormalizedMCPServerSpec struct {
 
 type NormalizedSkillSpec struct {
 	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
-	Source   string `yaml:"source,omitempty" json:"source,omitempty"`
+	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 	URL      string `yaml:"url,omitempty" json:"url,omitempty"`
-	Path     string `yaml:"path,omitempty" json:"path,omitempty"`
 	Ref      string `yaml:"ref,omitempty" json:"ref,omitempty"`
+	Path     string `yaml:"path,omitempty" json:"path,omitempty"`
+	Format   string `yaml:"format,omitempty" json:"format,omitempty"`
 	Username string `yaml:"username,omitempty" json:"username,omitempty"`
 	Password string `yaml:"password,omitempty" json:"password,omitempty"`
 	Token    string `yaml:"token,omitempty" json:"token,omitempty"`
@@ -129,17 +132,17 @@ type NormalizedSchedulerSpec struct {
 	Script        string                  `yaml:"script,omitempty" json:"script,omitempty"`
 	Triggers      []NormalizedTriggerSpec `yaml:"triggers,omitempty" json:"triggers,omitempty"`
 
-	scriptURL string
+	scriptSource *sources.Source
 }
 
 // HasScript reports whether a scheduler has either an inline script snapshot
 // or an unresolved URL source.
 func (s *NormalizedSchedulerSpec) HasScript() bool {
-	return s != nil && (strings.TrimSpace(s.Script) != "" || s.scriptURL != "")
+	return s != nil && (strings.TrimSpace(s.Script) != "" || s.scriptSource != nil)
 }
 
-func (s *NormalizedSchedulerSpec) hasUnresolvedScriptURL() bool {
-	return s != nil && s.scriptURL != ""
+func (s *NormalizedSchedulerSpec) hasUnresolvedScriptSource() bool {
+	return s != nil && s.scriptSource != nil
 }
 
 type NormalizedTriggerSpec struct {
@@ -364,7 +367,7 @@ func resolveAgentWorkspace(path string, spec *WorkspaceSpec, globals map[string]
 	}
 	trimmed := cloneWorkspaceSpec(spec)
 	hasName := trimmed.Name != ""
-	hasInline := trimmed.Provider != "" || trimmed.URL != "" || trimmed.Branch != "" || trimmed.Commit != "" || trimmed.Path != ""
+	hasInline := workspaceSource(*trimmed).HasContent() || trimmed.Target != ""
 	switch {
 	case hasName && !hasInline:
 		workspace, ok := globals[trimmed.Name]
@@ -391,42 +394,67 @@ func normalizeInlineWorkspaceSpec(path string, spec *WorkspaceSpec, defaultName 
 	if provider == "" {
 		return nil, &ValidationError{Path: path + ".provider", Message: "workspace provider is required"}
 	}
+	normalizedSource := workspaceSource(*workspace).Normalized()
+	applyWorkspaceSource(workspace, normalizedSource)
 	workspace.Provider = provider
 	workspace.Name = defaultName
+	if err := validateSourceSecrets(path, normalizedSource); err != nil {
+		return nil, err
+	}
 	switch provider {
-	case "local":
+	case sources.ProviderFile:
 		if strings.TrimSpace(workspace.URL) != "" {
-			return nil, &ValidationError{Path: path + ".url", Message: "local workspace does not support url"}
+			return nil, &ValidationError{Path: path + ".url", Message: "file workspace does not support url"}
 		}
-		if strings.TrimSpace(workspace.Branch) != "" {
-			return nil, &ValidationError{Path: path + ".branch", Message: "local workspace does not support branch"}
+		if strings.TrimSpace(workspace.Ref) != "" {
+			return nil, &ValidationError{Path: path + ".ref", Message: "file workspace does not support ref"}
 		}
-		if strings.TrimSpace(workspace.Commit) != "" {
-			return nil, &ValidationError{Path: path + ".commit", Message: "local workspace does not support commit"}
+		if strings.TrimSpace(workspace.Format) != "" {
+			return nil, &ValidationError{Path: path + ".format", Message: "file workspace does not support format"}
 		}
-		if _, err := cleanComposeLocalWorkspacePath(workspace.Path); err != nil {
+		if normalizedSource.HasAuthentication() {
+			return nil, &ValidationError{Path: path, Message: "file workspace does not support authentication"}
+		}
+		cleanPath, err := cleanComposeLocalWorkspacePath(workspace.Path)
+		if err != nil {
 			return nil, &ValidationError{Path: path + ".path", Message: err.Error()}
 		}
-	case "git":
+		workspace.Path = cleanPath
+	case sources.ProviderGit:
 		if strings.TrimSpace(workspace.URL) == "" {
 			return nil, &ValidationError{Path: path + ".url", Message: "git workspace url is required"}
 		}
 		if strings.TrimSpace(workspace.Path) != "" {
-			cleanPath := filepath.Clean(workspace.Path)
-			if filepath.IsAbs(workspace.Path) || cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
-				return nil, &ValidationError{Path: path + ".path", Message: fmt.Sprintf("git workspace path %q must stay within workspace root", workspace.Path)}
-			}
-			workspace.Path = cleanPath
-		} else {
-			workspace.Path = "."
+			return nil, &ValidationError{Path: path + ".path", Message: "git workspace does not support a source path"}
+		}
+		if strings.TrimSpace(workspace.Format) != "" {
+			return nil, &ValidationError{Path: path + ".format", Message: "git workspace does not support format"}
 		}
 		workspace.URL = strings.TrimSpace(workspace.URL)
-		workspace.Branch = strings.TrimSpace(workspace.Branch)
-		workspace.Commit = strings.TrimSpace(workspace.Commit)
 	default:
 		return nil, &ValidationError{Path: path + ".provider", Message: fmt.Sprintf("unsupported workspace provider %q", workspace.Provider)}
 	}
+	target, err := cleanWorkspaceTarget(workspace.Target)
+	if err != nil {
+		return nil, &ValidationError{Path: path + ".target", Message: err.Error()}
+	}
+	workspace.Target = target
 	return workspace, nil
+}
+
+func cleanWorkspaceTarget(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ".", nil
+	}
+	if filepath.IsAbs(trimmed) {
+		return "", fmt.Errorf("workspace target %q must be relative", trimmed)
+	}
+	clean := filepath.Clean(trimmed)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("workspace target %q must stay within workspace root", trimmed)
+	}
+	return clean, nil
 }
 
 func cleanComposeLocalWorkspacePath(raw string) (string, error) {
@@ -572,11 +600,11 @@ func normalizeSkillSpec(path string, value SkillSpec, options NormalizeOptions) 
 	if err != nil {
 		return NormalizedSkillSpec{}, err
 	}
-	source, err := interpolateEnvValue(path+".source", strings.TrimSpace(value.Source), options)
+	provider, err := interpolateEnvValue(path+".provider", strings.TrimSpace(value.Provider), options)
 	if err != nil {
 		return NormalizedSkillSpec{}, err
 	}
-	source = strings.ToLower(strings.TrimSpace(source))
+	provider = strings.ToLower(strings.TrimSpace(provider))
 	urlValue, err := interpolateEnvValue(path+".url", strings.TrimSpace(value.URL), options)
 	if err != nil {
 		return NormalizedSkillSpec{}, err
@@ -589,6 +617,11 @@ func normalizeSkillSpec(path string, value SkillSpec, options NormalizeOptions) 
 	if err != nil {
 		return NormalizedSkillSpec{}, err
 	}
+	format, err := interpolateEnvValue(path+".format", strings.TrimSpace(value.Format), options)
+	if err != nil {
+		return NormalizedSkillSpec{}, err
+	}
+	format = strings.ToLower(strings.TrimSpace(format))
 	username := strings.TrimSpace(value.Username)
 	if username != "" {
 		username, err = interpolateEnvValue(path+".username", username, options)
@@ -598,105 +631,116 @@ func normalizeSkillSpec(path string, value SkillSpec, options NormalizeOptions) 
 	}
 	password := strings.TrimSpace(value.Password)
 	token := strings.TrimSpace(value.Token)
-	if err := validateSecretReference(path+".password", password); err != nil {
+	commonSource := sources.Source{
+		Provider: provider,
+		URL:      urlValue,
+		Ref:      ref,
+		Path:     pathValue,
+		Format:   format,
+		Username: username,
+		Password: password,
+		Token:    token,
+	}.Normalized()
+	if err := validateSourceSecrets(path, commonSource); err != nil {
 		return NormalizedSkillSpec{}, err
 	}
-	if err := validateSecretReference(path+".token", token); err != nil {
-		return NormalizedSkillSpec{}, err
+	if commonSource.Provider == "" {
+		return NormalizedSkillSpec{}, &ValidationError{Path: path + ".provider", Message: "skill provider is required"}
 	}
-	if source == "" {
-		source = inferSkillSource(pathValue, urlValue)
-	}
-	if source == "" {
-		return NormalizedSkillSpec{}, &ValidationError{Path: path + ".source", Message: "skill source is required"}
-	}
-	if source == "zip" && urlValue != "" {
-		urlValue = normalizeLocalSkillArchivePath(urlValue, options)
-	}
-	if pathValue != "" {
-		pathValue, err = normalizeSkillPath(path+".path", source, urlValue, pathValue, options)
-		if err != nil {
-			return NormalizedSkillSpec{}, err
-		}
-	}
-	switch source {
-	case "git":
-		if parsedURL, parsedPath, parsedRef, ok := parseGitHubSkillShorthand(urlValue, pathValue, ref); ok {
-			urlValue, pathValue, ref = parsedURL, parsedPath, parsedRef
-		} else if parsedURL, parsedPath, parsedRef, ok := parseGitHubSkillShorthand(pathValue, "", ref); ok {
-			urlValue, pathValue, ref = parsedURL, parsedPath, parsedRef
-		}
-		if urlValue == "" {
-			urlValue = pathValue
-			pathValue = ""
-		}
+	switch commonSource.Provider {
+	case sources.ProviderGit:
 		if strings.TrimSpace(urlValue) == "" {
 			return NormalizedSkillSpec{}, &ValidationError{Path: path + ".url", Message: "git skill url is required"}
 		}
-	case "file":
+		if commonSource.Format != "" {
+			return NormalizedSkillSpec{}, &ValidationError{Path: path + ".format", Message: "git skill does not support format"}
+		}
+	case sources.ProviderFile:
+		if commonSource.URL != "" {
+			return NormalizedSkillSpec{}, &ValidationError{Path: path + ".url", Message: "file skill does not support url"}
+		}
 		if strings.TrimSpace(pathValue) == "" {
 			return NormalizedSkillSpec{}, &ValidationError{Path: path + ".path", Message: "file skill path is required"}
 		}
-	case "zip":
-		if strings.TrimSpace(urlValue) == "" && strings.TrimSpace(pathValue) == "" {
-			return NormalizedSkillSpec{}, &ValidationError{Path: path + ".url", Message: "zip skill url or path is required"}
+		if commonSource.Ref != "" {
+			return NormalizedSkillSpec{}, &ValidationError{Path: path + ".ref", Message: "file skill does not support ref"}
+		}
+		if commonSource.Format != "" && commonSource.Format != sources.FormatZIP {
+			return NormalizedSkillSpec{}, &ValidationError{Path: path + ".format", Message: fmt.Sprintf("file skill format %q is not supported", commonSource.Format)}
+		}
+		if commonSource.HasAuthentication() {
+			return NormalizedSkillSpec{}, &ValidationError{Path: path, Message: "file skill does not support authentication"}
+		}
+		commonSource.Path = normalizeFileSkillPath(commonSource.Path, options)
+	case sources.ProviderHTTP:
+		if commonSource.URL == "" {
+			return NormalizedSkillSpec{}, &ValidationError{Path: path + ".url", Message: "http skill url is required"}
+		}
+		if commonSource.Ref != "" {
+			return NormalizedSkillSpec{}, &ValidationError{Path: path + ".ref", Message: "http skill does not support ref"}
+		}
+		if commonSource.Format != sources.FormatZIP {
+			return NormalizedSkillSpec{}, &ValidationError{Path: path + ".format", Message: "http skill format must be zip"}
 		}
 	default:
-		return NormalizedSkillSpec{}, &ValidationError{Path: path + ".source", Message: fmt.Sprintf("skill source %q is not supported", source)}
+		return NormalizedSkillSpec{}, &ValidationError{Path: path + ".provider", Message: fmt.Sprintf("skill provider %q is not supported", commonSource.Provider)}
 	}
 	if name == "" {
-		name = inferSkillName(source, urlValue, pathValue)
+		name = inferSkillName(commonSource.URL, commonSource.Path)
 	}
 	if err := validateStableIdentifier(path+".name", name, "skill name"); err != nil {
 		return NormalizedSkillSpec{}, err
 	}
 	return NormalizedSkillSpec{
 		Name:     name,
-		Source:   source,
-		URL:      urlValue,
-		Path:     pathValue,
-		Ref:      ref,
-		Username: username,
-		Password: password,
-		Token:    token,
+		Provider: commonSource.Provider,
+		URL:      commonSource.URL,
+		Ref:      commonSource.Ref,
+		Path:     commonSource.Path,
+		Format:   commonSource.Format,
+		Username: commonSource.Username,
+		Password: commonSource.Password,
+		Token:    commonSource.Token,
 	}, nil
 }
 
-func inferSkillSource(pathValue, urlValue string) string {
-	candidate := strings.ToLower(strings.TrimSpace(urlValue))
-	if candidate == "" {
-		candidate = strings.ToLower(strings.TrimSpace(pathValue))
-	}
-	switch {
-	case strings.HasPrefix(candidate, "github:"):
-		return "git"
-	case strings.HasSuffix(candidate, ".git"):
-		return "git"
-	case strings.HasSuffix(candidate, ".zip"):
-		return "zip"
-	case strings.HasPrefix(candidate, "http://"), strings.HasPrefix(candidate, "https://"):
-		return ""
-	default:
-		return "file"
-	}
+func workspaceSource(value WorkspaceSpec) sources.Source {
+	return sources.Source{
+		Provider: value.Provider,
+		URL:      value.URL,
+		Ref:      value.Ref,
+		Path:     value.Path,
+		Format:   value.Format,
+		Username: value.Username,
+		Password: value.Password,
+		Token:    value.Token,
+	}.Normalized()
 }
 
-func validateSecretReference(path, value string) error {
-	if strings.TrimSpace(value) == "" {
-		return nil
+func applyWorkspaceSource(value *WorkspaceSpec, source sources.Source) {
+	value.Provider = source.Provider
+	value.URL = source.URL
+	value.Ref = source.Ref
+	value.Path = source.Path
+	value.Format = source.Format
+	value.Username = source.Username
+	value.Password = source.Password
+	value.Token = source.Token
+}
+
+func validateSourceSecrets(path string, source sources.Source) error {
+	if err := sources.ValidateSecretReference("password", source.Password); err != nil {
+		return &ValidationError{Path: path + ".password", Message: err.Error()}
 	}
-	if !exactEnvReferencePattern.MatchString(strings.TrimSpace(value)) {
-		return &ValidationError{Path: path, Message: "secret value must be an environment reference like ${NAME}"}
+	if err := sources.ValidateSecretReference("token", source.Token); err != nil {
+		return &ValidationError{Path: path + ".token", Message: err.Error()}
 	}
 	return nil
 }
 
-func normalizeLocalSkillArchivePath(value string, options NormalizeOptions) string {
+func normalizeFileSkillPath(value string, options NormalizeOptions) string {
 	if strings.TrimSpace(value) == "" {
 		return ""
-	}
-	if strings.HasPrefix(strings.ToLower(value), "http://") || strings.HasPrefix(strings.ToLower(value), "https://") {
-		return value
 	}
 	if filepath.IsAbs(value) {
 		return filepath.Clean(value)
@@ -706,29 +750,6 @@ func normalizeLocalSkillArchivePath(value string, options NormalizeOptions) stri
 		return filepath.Clean(value)
 	}
 	return filepath.Clean(filepath.Join(base, value))
-}
-
-func normalizeSkillPath(path, source, urlValue, value string, options NormalizeOptions) (string, error) {
-	if strings.TrimSpace(value) == "" {
-		return "", nil
-	}
-	if source != "file" && source != "zip" {
-		return value, nil
-	}
-	if source == "zip" && strings.TrimSpace(urlValue) != "" {
-		return value, nil
-	}
-	if strings.HasPrefix(strings.ToLower(value), "http://") || strings.HasPrefix(strings.ToLower(value), "https://") {
-		return value, nil
-	}
-	if filepath.IsAbs(value) {
-		return filepath.Clean(value), nil
-	}
-	base := composeBaseDir(options)
-	if base == "" {
-		return filepath.Clean(value), nil
-	}
-	return filepath.Clean(filepath.Join(base, value)), nil
 }
 
 func composeBaseDir(options NormalizeOptions) string {
@@ -747,15 +768,10 @@ func composeBaseDir(options NormalizeOptions) string {
 	return ""
 }
 
-func inferSkillName(source, urlValue, pathValue string) string {
+func inferSkillName(urlValue, pathValue string) string {
 	candidate := strings.TrimSpace(pathValue)
 	if candidate == "" {
 		candidate = strings.TrimSpace(urlValue)
-	}
-	if source == "git" {
-		if _, parsedPath, _, ok := parseGitHubSkillShorthand(candidate, "", ""); ok && parsedPath != "" {
-			candidate = parsedPath
-		}
 	}
 	candidate = strings.TrimSuffix(candidate, "/")
 	candidate = strings.TrimSuffix(candidate, ".zip")
@@ -771,30 +787,6 @@ func inferSkillName(source, urlValue, pathValue string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-_")
-}
-
-func parseGitHubSkillShorthand(value, fallbackPath, fallbackRef string) (string, string, string, bool) {
-	value = strings.TrimSpace(value)
-	if !strings.HasPrefix(value, "github:") {
-		return "", "", "", false
-	}
-	raw := strings.TrimPrefix(value, "github:")
-	ref := strings.TrimSpace(fallbackRef)
-	if before, after, ok := strings.Cut(raw, "@"); ok {
-		raw = before
-		ref = strings.TrimSpace(after)
-	}
-	repo := raw
-	pathValue := strings.TrimSpace(fallbackPath)
-	if before, after, ok := strings.Cut(raw, "//"); ok {
-		repo = before
-		pathValue = strings.TrimSpace(after)
-	}
-	repo = strings.Trim(repo, "/")
-	if strings.Count(repo, "/") != 1 {
-		return "", "", "", false
-	}
-	return "https://github.com/" + repo + ".git", pathValue, ref, true
 }
 
 func normalizeProjectVolumes(values map[string]VolumeSpec) (map[string]NormalizedVolumeSpec, error) {
@@ -1074,21 +1066,18 @@ func normalizeSchedulerSpec(path string, scheduler *SchedulerSpec, options Norma
 		enabled = *scheduler.Enabled
 	}
 	script := strings.TrimSpace(scheduler.Script.Inline)
-	scriptURL := strings.TrimSpace(scheduler.Script.URL)
-	if scheduler.Script.Inline != "" && scriptURL != "" {
-		return nil, &ValidationError{Path: path + ".script", Message: "script must use exactly one of inline content or url"}
+	scriptSource := scheduler.Script.Source.Normalized()
+	if scheduler.Script.Inline != "" && scriptSource.HasContent() {
+		return nil, &ValidationError{Path: path + ".script", Message: "script must use exactly one of inline content or a provider"}
 	}
-	if scheduler.Script.URL != "" && scriptURL == "" {
-		return nil, &ValidationError{Path: path + ".script.url", Message: "script URL is required"}
-	}
-	if scriptURL != "" {
+	if scriptSource.HasContent() {
 		var err error
-		scriptURL, err = normalizeScriptSourceURL(scriptURL, options)
+		scriptSource, err = normalizeSchedulerScriptSource(path+".script", scriptSource, options)
 		if err != nil {
-			return nil, &ValidationError{Path: path + ".script.url", Message: err.Error()}
+			return nil, err
 		}
 	}
-	if (script != "" || scriptURL != "") && len(scheduler.Triggers) > 0 {
+	if (script != "" || scriptSource.HasContent()) && len(scheduler.Triggers) > 0 {
 		return nil, &ValidationError{Path: path, Message: "scheduler script and triggers are mutually exclusive"}
 	}
 	sandboxPolicy, err := normalizeSandboxPolicy(path+".sandbox_policy", scheduler.SandboxPolicy, "new")
@@ -1102,29 +1091,29 @@ func normalizeSchedulerSpec(path string, scheduler *SchedulerSpec, options Norma
 		Description:   strings.TrimSpace(scheduler.Description),
 		Script:        script,
 	}
-	if scriptURL != "" {
+	if scriptSource.HasContent() {
 		if !options.ResolveScriptURLs {
-			normalized.scriptURL = scriptURL
+			normalized.scriptSource = &scriptSource
 		} else {
 			resolver := options.ScriptSourceResolver
 			if resolver == nil {
-				resolver = NewDefaultScriptSourceResolver()
+				resolver = NewDefaultScriptSourceResolver(options.Env)
 			}
 			ctx := options.Context
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			content, err := resolver.Resolve(ctx, scriptURL)
+			content, err := resolver.Resolve(ctx, scriptSource)
 			if err != nil {
-				return nil, &ValidationError{Path: path + ".script.url", Message: err.Error()}
+				return nil, &ValidationError{Path: path + ".script", Message: err.Error()}
 			}
 			if !utf8.Valid(content) {
-				return nil, &ValidationError{Path: path + ".script.url", Message: "script content must be valid UTF-8"}
+				return nil, &ValidationError{Path: path + ".script", Message: "script content must be valid UTF-8"}
 			}
 			text := strings.TrimPrefix(string(content), "\ufeff")
 			normalized.Script = strings.TrimSpace(text)
 			if normalized.Script == "" {
-				return nil, &ValidationError{Path: path + ".script.url", Message: "script content is empty"}
+				return nil, &ValidationError{Path: path + ".script", Message: "script content is empty"}
 			}
 		}
 	}
@@ -1136,6 +1125,64 @@ func normalizeSchedulerSpec(path string, scheduler *SchedulerSpec, options Norma
 		normalized.Triggers = append(normalized.Triggers, normalizedTrigger)
 	}
 	return normalized, nil
+}
+
+func normalizeSchedulerScriptSource(path string, source sources.Source, options NormalizeOptions) (sources.Source, error) {
+	if err := validateSourceSecrets(path, source); err != nil {
+		return sources.Source{}, err
+	}
+	if source.Format != "" {
+		return sources.Source{}, &ValidationError{Path: path + ".format", Message: "scheduler script does not support format"}
+	}
+	switch source.Provider {
+	case sources.ProviderFile:
+		if source.Path == "" {
+			return sources.Source{}, &ValidationError{Path: path + ".path", Message: "file script path is required"}
+		}
+		if source.URL != "" || source.Ref != "" || source.HasAuthentication() {
+			return sources.Source{}, &ValidationError{Path: path, Message: "file script only supports path"}
+		}
+		location, err := normalizeScriptSourceURL(source.Path, options)
+		if err != nil {
+			return sources.Source{}, &ValidationError{Path: path + ".path", Message: err.Error()}
+		}
+		parsed, _ := url.Parse(location)
+		if parsed.Scheme != "" && parsed.Scheme != "file" {
+			return sources.Source{}, &ValidationError{Path: path + ".path", Message: "file script path must use a local path or file URL"}
+		}
+		source.Path = location
+	case sources.ProviderHTTP:
+		if source.URL == "" {
+			return sources.Source{}, &ValidationError{Path: path + ".url", Message: "http script url is required"}
+		}
+		if source.Path != "" || source.Ref != "" {
+			return sources.Source{}, &ValidationError{Path: path, Message: "http script only supports url and authentication"}
+		}
+		location, err := normalizeScriptSourceURL(source.URL, options)
+		if err != nil {
+			return sources.Source{}, &ValidationError{Path: path + ".url", Message: err.Error()}
+		}
+		parsed, _ := url.Parse(location)
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return sources.Source{}, &ValidationError{Path: path + ".url", Message: "http script url must use http or https"}
+		}
+		source.URL = location
+	case sources.ProviderGit:
+		if source.URL == "" {
+			return sources.Source{}, &ValidationError{Path: path + ".url", Message: "git script url is required"}
+		}
+		if source.Path == "" {
+			return sources.Source{}, &ValidationError{Path: path + ".path", Message: "git script path is required"}
+		}
+		clean := filepath.Clean(filepath.FromSlash(source.Path))
+		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return sources.Source{}, &ValidationError{Path: path + ".path", Message: "git script path must stay within the repository"}
+		}
+		source.Path = filepath.ToSlash(clean)
+	default:
+		return sources.Source{}, &ValidationError{Path: path + ".provider", Message: fmt.Sprintf("scheduler script provider %q is not supported", source.Provider)}
+	}
+	return source, nil
 }
 
 func normalizeTriggerSpec(path string, trigger TriggerSpec) (NormalizedTriggerSpec, error) {
@@ -1327,11 +1374,8 @@ func cloneWorkspaceSpec(value *WorkspaceSpec) *WorkspaceSpec {
 	}
 	cloned := *value
 	cloned.Name = strings.TrimSpace(cloned.Name)
-	cloned.Provider = strings.TrimSpace(cloned.Provider)
-	cloned.URL = strings.TrimSpace(cloned.URL)
-	cloned.Branch = strings.TrimSpace(cloned.Branch)
-	cloned.Commit = strings.TrimSpace(cloned.Commit)
-	cloned.Path = strings.TrimSpace(cloned.Path)
+	applyWorkspaceSource(&cloned, workspaceSource(cloned))
+	cloned.Target = strings.TrimSpace(cloned.Target)
 	return &cloned
 }
 

@@ -59,6 +59,7 @@ agents:
   reviewer:
     scheduler:
       script:
+        provider: http
         url: %s/scheduler.js
 `, sourceServer.URL))
 	_, stderr, _, exitCode := executeCLICommand("up", "--file", composePath, "--host", daemon.URL)
@@ -95,7 +96,7 @@ func testCLIWorkspaceRegistryConfigAndApply(t *testing.T) {
 name: workspace-default
 workspaces:
   repo-root:
-    provider: local
+    provider: file
     path: .
 agents:
   reviewer:
@@ -126,7 +127,7 @@ agents:
 		if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
 			t.Fatalf("config json decode failed: %v\n%s", err, stdout)
 		}
-		if len(decoded.Workspaces) != 1 || decoded.Workspaces[0].Key != "repo-root" || decoded.Workspaces[0].Provider != "local" {
+		if len(decoded.Workspaces) != 1 || decoded.Workspaces[0].Key != "repo-root" || decoded.Workspaces[0].Provider != "file" {
 			t.Fatalf("decoded workspaces = %#v", decoded.Workspaces)
 		}
 		if len(decoded.Agents) != 1 || decoded.Agents[0].Workspace != nil {
@@ -148,12 +149,12 @@ agents:
 name: workspace-reference
 workspaces:
   repo-root:
-    provider: local
+    provider: file
     path: .
   docs-repo:
     provider: git
     url: https://example.test/docs.git
-    path: docs
+    target: docs
 agents:
   reviewer:
     provider: codex
@@ -186,7 +187,7 @@ agents:
 		if len(decoded.Workspaces) != 2 || decoded.Workspaces[0].Key != "docs-repo" || decoded.Workspaces[1].Key != "repo-root" {
 			t.Fatalf("decoded workspaces = %#v", decoded.Workspaces)
 		}
-		if len(decoded.Agents) != 1 || decoded.Agents[0].Workspace.Provider != "local" || decoded.Agents[0].Workspace.Path != "." || decoded.Agents[0].Workspace.Name != "" {
+		if len(decoded.Agents) != 1 || decoded.Agents[0].Workspace.Provider != "file" || decoded.Agents[0].Workspace.Path != "." || decoded.Agents[0].Workspace.Name != "" {
 			t.Fatalf("decoded agents = %#v", decoded.Agents)
 		}
 
@@ -205,7 +206,7 @@ agents:
 name: workspace-ambiguous
 workspaces:
   repo-root:
-    provider: local
+    provider: file
     path: .
   docs-repo:
     provider: git
@@ -257,7 +258,7 @@ agents:
 name: workspace-missing-ref
 workspaces:
   repo-root:
-    provider: local
+    provider: file
     path: .
 agents:
   reviewer:
@@ -464,7 +465,7 @@ func writeComposeFileNamed(t *testing.T, dir string, name string, content string
 	}
 	trimmed := strings.TrimSpace(content)
 	if strings.HasPrefix(name, "agent-compose.") && !strings.Contains(trimmed, "\nworkspaces:") && !strings.HasPrefix(trimmed, "workspaces:") {
-		content = "workspaces:\n  default:\n    provider: local\n    path: .\n" + content
+		content = "workspaces:\n  default:\n    provider: file\n    path: .\n" + content
 	}
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {

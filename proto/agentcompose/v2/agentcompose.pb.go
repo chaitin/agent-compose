@@ -5366,10 +5366,14 @@ type WorkspaceSpec struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Provider      string                 `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
 	Url           string                 `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
-	Branch        string                 `protobuf:"bytes,3,opt,name=branch,proto3" json:"branch,omitempty"`
+	Ref           string                 `protobuf:"bytes,3,opt,name=ref,proto3" json:"ref,omitempty"`
 	Path          string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
 	Name          string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
-	Commit        string                 `protobuf:"bytes,6,opt,name=commit,proto3" json:"commit,omitempty"`
+	Format        string                 `protobuf:"bytes,6,opt,name=format,proto3" json:"format,omitempty"`
+	Target        string                 `protobuf:"bytes,7,opt,name=target,proto3" json:"target,omitempty"`
+	Username      string                 `protobuf:"bytes,8,opt,name=username,proto3" json:"username,omitempty"`
+	Password      string                 `protobuf:"bytes,9,opt,name=password,proto3" json:"password,omitempty"`
+	Token         string                 `protobuf:"bytes,10,opt,name=token,proto3" json:"token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5418,9 +5422,9 @@ func (x *WorkspaceSpec) GetUrl() string {
 	return ""
 }
 
-func (x *WorkspaceSpec) GetBranch() string {
+func (x *WorkspaceSpec) GetRef() string {
 	if x != nil {
-		return x.Branch
+		return x.Ref
 	}
 	return ""
 }
@@ -5439,9 +5443,37 @@ func (x *WorkspaceSpec) GetName() string {
 	return ""
 }
 
-func (x *WorkspaceSpec) GetCommit() string {
+func (x *WorkspaceSpec) GetFormat() string {
 	if x != nil {
-		return x.Commit
+		return x.Format
+	}
+	return ""
+}
+
+func (x *WorkspaceSpec) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
+func (x *WorkspaceSpec) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *WorkspaceSpec) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+func (x *WorkspaceSpec) GetToken() string {
+	if x != nil {
+		return x.Token
 	}
 	return ""
 }
@@ -13875,13 +13907,14 @@ func (x *StartRunResponse) GetStarted() bool {
 type SkillSpec struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Source        string                 `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
+	Provider      string                 `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
 	Url           string                 `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
 	Path          string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
 	Ref           string                 `protobuf:"bytes,5,opt,name=ref,proto3" json:"ref,omitempty"`
 	Username      string                 `protobuf:"bytes,6,opt,name=username,proto3" json:"username,omitempty"`
 	Password      string                 `protobuf:"bytes,7,opt,name=password,proto3" json:"password,omitempty"`
 	Token         string                 `protobuf:"bytes,8,opt,name=token,proto3" json:"token,omitempty"`
+	Format        string                 `protobuf:"bytes,9,opt,name=format,proto3" json:"format,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -13923,9 +13956,9 @@ func (x *SkillSpec) GetName() string {
 	return ""
 }
 
-func (x *SkillSpec) GetSource() string {
+func (x *SkillSpec) GetProvider() string {
 	if x != nil {
-		return x.Source
+		return x.Provider
 	}
 	return ""
 }
@@ -13968,6 +14001,13 @@ func (x *SkillSpec) GetPassword() string {
 func (x *SkillSpec) GetToken() string {
 	if x != nil {
 		return x.Token
+	}
+	return ""
+}
+
+func (x *SkillSpec) GetFormat() string {
+	if x != nil {
+		return x.Format
 	}
 	return ""
 }
@@ -16854,14 +16894,19 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x19\n" +
 	"\x05value\x18\x02 \x01(\tH\x00R\x05value\x88\x01\x01\x12\x16\n" +
 	"\x06secret\x18\x03 \x01(\bR\x06secretB\b\n" +
-	"\x06_value\"\x95\x01\n" +
+	"\x06_value\"\xf5\x01\n" +
 	"\rWorkspaceSpec\x12\x1a\n" +
 	"\bprovider\x18\x01 \x01(\tR\bprovider\x12\x10\n" +
-	"\x03url\x18\x02 \x01(\tR\x03url\x12\x16\n" +
-	"\x06branch\x18\x03 \x01(\tR\x06branch\x12\x12\n" +
+	"\x03url\x18\x02 \x01(\tR\x03url\x12\x10\n" +
+	"\x03ref\x18\x03 \x01(\tR\x03ref\x12\x12\n" +
 	"\x04path\x18\x04 \x01(\tR\x04path\x12\x12\n" +
 	"\x04name\x18\x05 \x01(\tR\x04name\x12\x16\n" +
-	"\x06commit\x18\x06 \x01(\tR\x06commit\"!\n" +
+	"\x06format\x18\x06 \x01(\tR\x06format\x12\x16\n" +
+	"\x06target\x18\a \x01(\tR\x06target\x12\x1a\n" +
+	"\busername\x18\b \x01(\tR\busername\x12\x1a\n" +
+	"\bpassword\x18\t \x01(\tR\bpassword\x12\x14\n" +
+	"\x05token\x18\n" +
+	" \x01(\tR\x05token\"!\n" +
 	"\vNetworkSpec\x12\x12\n" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\"\xe7\x01\n" +
 	"\rSchedulerSpec\x12\x18\n" +
@@ -17634,16 +17679,17 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\x10StartRunResponse\x12-\n" +
 	"\x03run\x18\x01 \x01(\v2\x1b.agentcompose.v2.RunSummaryR\x03run\x12\x1a\n" +
 	"\bwarnings\x18\x02 \x03(\tR\bwarnings\x12\x18\n" +
-	"\astarted\x18\x03 \x01(\bR\astarted\"\xbd\x01\n" +
+	"\astarted\x18\x03 \x01(\bR\astarted\"\xd9\x01\n" +
 	"\tSkillSpec\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
-	"\x06source\x18\x02 \x01(\tR\x06source\x12\x10\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
+	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x10\n" +
 	"\x03url\x18\x03 \x01(\tR\x03url\x12\x12\n" +
 	"\x04path\x18\x04 \x01(\tR\x04path\x12\x10\n" +
 	"\x03ref\x18\x05 \x01(\tR\x03ref\x12\x1a\n" +
 	"\busername\x18\x06 \x01(\tR\busername\x12\x1a\n" +
 	"\bpassword\x18\a \x01(\tR\bpassword\x12\x14\n" +
-	"\x05token\x18\b \x01(\tR\x05token\"_\n" +
+	"\x05token\x18\b \x01(\tR\x05token\x12\x16\n" +
+	"\x06format\x18\t \x01(\tR\x06format\"_\n" +
 	"\x18ResolveResourceIDRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x123\n" +
 	"\x05kinds\x18\x02 \x03(\x0e2\x1d.agentcompose.v2.ResourceKindR\x05kinds\"r\n" +

@@ -279,7 +279,7 @@ agents:
 name: cli-up-demo
 workspaces:
   default:
-    provider: local
+    provider: file
     path: .
 agents:
   reviewer:

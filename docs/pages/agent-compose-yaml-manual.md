@@ -32,13 +32,13 @@ variables:
 
 workspaces:
   source:
-    provider: local
+    provider: file
     path: .
   upstream:
     provider: git
     url: https://github.com/example/project.git
-    branch: main
-    path: .
+    ref: main
+    target: .
 
 mcp_servers:
   local-tools:
@@ -107,7 +107,7 @@ agents:
     skills:
       - ./skills/review
       - name: release-check
-        source: git
+        provider: git
         url: https://github.com/example/agent-skills.git
         path: skills/release-check
         ref: main
@@ -240,7 +240,7 @@ The top-level key must be plural:
 ```yaml
 workspaces:
   source:
-    provider: local
+    provider: file
     path: .
 ```
 
@@ -249,7 +249,7 @@ The old singular top-level form is invalid:
 ```yaml
 # Invalid: strict parsing rejects top-level workspace.
 workspace:
-  provider: local
+  provider: file
   path: .
 ```
 
@@ -258,23 +258,27 @@ Each `workspaces.<key>` accepts:
 | Field | Type | Applicability | Purpose |
 | --- | --- | --- | --- |
 | `name` | string | Compatibility field | The map key is the effective project workspace name. Normally omit this redundant field. |
-| `provider` | string | Required | `local` or `git`. |
-| `url` | string | Required for `git` | Git clone URL. It is forbidden for `local`. |
-| `branch` | string | Optional for `git` | Branch to check out. It is forbidden for `local`. |
-| `path` | string | Provider-specific | For `local`, a required path relative to the compose directory that cannot escape the project root. For `git`, a clone target/subpath that defaults to `.` and cannot escape the workspace root. |
+| `provider` | string | Required | `file` or `git`. |
+| `url` | string | Required for `git` | Git clone URL. It is forbidden for `file`. |
+| `ref` | string | Optional for `git` | Git branch, tag, or commit. |
+| `path` | string | Required for `file` | Source path relative to the compose directory; it cannot escape the project root. Git workspaces do not support a repository subpath. |
+| `target` | string | Optional | Destination below the sandbox workspace root. Defaults to `.`. |
+| `username` | string | Optional for `git` | Git HTTP username. |
+| `password` | string | Optional for `git` | Git password as an exact environment reference such as `${NAME}`. |
+| `token` | string | Optional for `git` | Git token as an exact environment reference such as `${NAME}`. |
 
 A local workspace is copied into an isolated snapshot for each project run. Agent changes to that snapshot do not modify the source directory.
 
 ```yaml
 workspaces:
   source:
-    provider: local
+    provider: file
     path: ./src
   release-branch:
     provider: git
     url: https://github.com/example/service.git
-    branch: release
-    path: .
+    ref: release
+    target: .
 ```
 
 Workspace selection follows these rules:
@@ -375,6 +379,8 @@ agents:
 | Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
 | `status` | string | Enabled semantics | `enabled` or `disabled`. An empty value is treated as enabled. A disabled definition remains stored but cannot run normally, and its scheduler is not enabled. |
+| `display_name` | string | Empty | Human-readable agent label. |
+| `description` | string | Empty | Human-readable explanation of the agent's role. |
 | `provider` | string | `codex` | Agent provider: `codex`, `claude`, `gemini`, or `opencode`. Compatibility aliases are normalized at persistence boundaries. |
 | `model` | string | Provider/daemon default | Model name. Supports `${NAME}` interpolation. |
 | `system_prompt` | string | Empty | Additional system instructions; YAML block scalars are recommended for multiline text. |
@@ -562,21 +568,14 @@ Empty and duplicate entries are removed. When the capability gateway is configur
 
 ### `skills`
 
-A resolved skill directory must contain a valid `SKILL.md`. Sources can be `file`, `git`, or `zip`; final skill names must be unique within an agent.
+A resolved skill directory must contain a valid `SKILL.md`. Providers can be `file`, `http`, or `git`; final skill names must be unique within an agent. ZIP is a content format, not a provider.
 
-Local directory shorthand:
-
-```yaml
-skills:
-  - ./skills/review
-```
-
-Equivalent full form:
+Local directory:
 
 ```yaml
 skills:
   - name: review
-    source: file
+    provider: file
     path: ./skills/review
 ```
 
@@ -585,7 +584,7 @@ Git source:
 ```yaml
 skills:
   - name: review
-    source: git
+    provider: git
     url: https://github.com/example/skills.git
     path: review
     ref: v1.0.0
@@ -593,36 +592,32 @@ skills:
     token: ${GIT_TOKEN}
 ```
 
-GitHub shorthand:
-
-```yaml
-skills:
-  - source: git
-    url: github:example/skills//review@v1.0.0
-```
-
-ZIP source:
+Remote ZIP:
 
 ```yaml
 skills:
   - name: review
-    source: zip
+    provider: http
     url: https://downloads.example.com/review.zip
+    format: zip
     path: review
 ```
 
 | Field | Type | Purpose |
 | --- | --- | --- |
 | `name` | string | Skill name. If omitted, it is inferred from path/URL and must end as a stable identifier. |
-| `source` | string | `file`, `git`, or `zip`. Most local paths, `.git` URLs, and `.zip` locations can be inferred. Plain HTTP URLs are ambiguous, so set it explicitly. |
-| `url` | string | Git remote or ZIP URL/local archive location. |
-| `path` | string | Local directory for `file`; artifact subdirectory for Git or remote ZIP. Relative local paths use the compose directory. |
-| `ref` | string | Git branch, tag, or ref. |
-| `username` | string | Git HTTP username; interpolation is supported. |
-| `password` | string | Git password. Only an exact environment reference such as `${NAME}` is allowed. |
-| `token` | string | Git token. Only an exact environment reference such as `${NAME}` is allowed. |
+| `provider` | string | Required source provider: `file`, `http`, or `git`. |
+| `url` | string | Required for `http` and `git`. |
+| `path` | string | Local path for `file`; content subdirectory for Git or ZIP. Relative file paths use the compose directory. |
+| `ref` | string | Git branch, tag, or commit. |
+| `format` | string | Optional content format. Currently only `zip` is supported; HTTP skills require it. |
+| `username` | string | HTTP/Git username; interpolation is supported. |
+| `password` | string | HTTP/Git password. Only an exact environment reference such as `${NAME}` is allowed. |
+| `token` | string | HTTP/Git token. Only an exact environment reference such as `${NAME}` is allowed. |
 
 `password` and `token` cannot contain plaintext. They are resolved against the daemon environment during skill resolution, avoiding expanded credentials in the project specification. Remote ZIP downloads are restricted to HTTP(S) and are subject to size, archive, and network-address safety checks.
+
+Git refs are resolved at each business lifecycle: skills during an agent run, workspaces during sandbox provisioning, and scheduler sources during `config`/`up` before the script snapshot is stored. A moving branch can therefore resolve to different commits across those operations. Use a commit SHA in `ref` when all consumers must use the exact same revision.
 
 ### `volumes`
 
@@ -672,7 +667,7 @@ Define an inline local workspace:
 
 ```yaml
 workspace:
-  provider: local
+  provider: file
   path: ./src
 ```
 
@@ -682,11 +677,11 @@ Define an inline Git workspace:
 workspace:
   provider: git
   url: https://github.com/example/project.git
-  branch: main
-  path: .
+  ref: main
+  target: .
 ```
 
-If `name` is combined with any of `provider`, `url`, `branch`, or `path`, the object is treated as an inline workspace rather than an inherited project workspace with overrides. To reuse a project entry, set only `name`.
+If `name` is combined with any source field or `target`, the object is treated as an inline workspace rather than an inherited project workspace with overrides. To reuse a project entry, set only `name`.
 
 ### `scheduler`
 
@@ -697,7 +692,7 @@ A scheduler uses either declarative `triggers` or JavaScript `script`; the two f
 | `enabled` | bool | `true` | Enables this agent's scheduler. `status: disabled` also prevents it from being enabled. |
 | `sandbox_policy` | string | `new` | Scheduler default sandbox policy: `new` or `sticky`. |
 | `triggers` | list | Empty | Declarative triggers. |
-| `script` | string/object | Empty | Inline JavaScript or an external `{url: ...}` source. Cannot coexist with `triggers`. |
+| `script` | string/object | Empty | Inline JavaScript or a flat `file`/`http`/`git` source mapping. Cannot coexist with `triggers`. |
 
 `new` creates a new sandbox for scheduler calls. `sticky` allows the scheduler to bind and reuse a sandbox. A trigger-level `sandbox_policy` controls the generated agent call for that trigger.
 
@@ -751,20 +746,33 @@ The scheduler runtime validates the script and derives registered triggers from 
 
 #### External script
 
+Local file:
+
 ```yaml
 scheduler:
   enabled: true
   script:
-    url: ./scheduler.js
+    provider: file
+    path: ./scheduler.js
 ```
 
-`url` accepts:
+HTTP URL:
 
-- A relative or absolute local path. Relative paths use the compose directory.
-- A `file:///absolute/path/scheduler.js` URL.
-- An `http://` or `https://` URL.
+```yaml
+scheduler:
+  enabled: true
+  script:
+    provider: http
+    url: https://example.com/scheduler.js
+```
 
-When a project is applied, the CLI reads the script and stores a content snapshot in the project specification; the daemon does not fetch the source again later. Fetching uses a 10-second timeout, a 1 MiB limit, no more than five HTTP redirects, and UTF-8 validation. URL userinfo and HTTPS-to-HTTP redirect downgrades are rejected.
+External script mappings use the same source keys as skills and workspaces:
+
+- File: `provider: file` with `path`. Relative paths use the compose directory.
+- HTTP: `provider: http` with `url` and optional authentication.
+- Git: `provider: git` with `url`, optional `ref`, and the required repository-internal `path`.
+
+When a project is applied, the CLI reads the script and stores a content snapshot in the project specification; the daemon does not fetch the source again later. HTTP fetching uses a 10-second timeout, a 1 MiB limit, no more than five redirects, and UTF-8 validation. URL userinfo and HTTPS-to-HTTP redirect downgrades are rejected.
 
 ### `jupyter`
 
@@ -802,7 +810,7 @@ Invalid:
 
 ```yaml
 workspace:
-  provider: local
+  provider: file
   path: .
 ```
 
@@ -811,7 +819,7 @@ Valid:
 ```yaml
 workspaces:
   source:
-    provider: local
+    provider: file
     path: .
 
 agents:

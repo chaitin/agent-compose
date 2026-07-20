@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"agent-compose/pkg/sources"
 )
 
 const (
@@ -42,10 +44,11 @@ type AgentDefinition struct {
 
 type AgentSkill struct {
 	Name     string `json:"name,omitempty"`
-	Source   string `json:"source,omitempty"`
+	Provider string `json:"provider,omitempty"`
 	URL      string `json:"url,omitempty"`
-	Path     string `json:"path,omitempty"`
 	Ref      string `json:"ref,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Format   string `json:"format,omitempty"`
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
 	Token    string `json:"token,omitempty"`
@@ -162,13 +165,15 @@ func NormalizeAgentSkills(skills []AgentSkill) []AgentSkill {
 	out := make([]AgentSkill, 0, len(skills))
 	for _, skill := range skills {
 		skill.Name = strings.TrimSpace(skill.Name)
-		skill.Source = strings.ToLower(strings.TrimSpace(skill.Source))
-		skill.URL = strings.TrimSpace(skill.URL)
-		skill.Path = strings.TrimSpace(skill.Path)
-		skill.Ref = strings.TrimSpace(skill.Ref)
-		skill.Username = strings.TrimSpace(skill.Username)
-		skill.Password = strings.TrimSpace(skill.Password)
-		skill.Token = strings.TrimSpace(skill.Token)
+		source := AgentSkillSource(skill)
+		skill.Provider = source.Provider
+		skill.URL = source.URL
+		skill.Ref = source.Ref
+		skill.Path = source.Path
+		skill.Format = source.Format
+		skill.Username = source.Username
+		skill.Password = source.Password
+		skill.Token = source.Token
 		skill.SourceRoot = strings.TrimSpace(skill.SourceRoot)
 		if skill.Name == "" {
 			continue
@@ -183,6 +188,19 @@ func NormalizeAgentSkills(skills []AgentSkill) []AgentSkill {
 		return nil
 	}
 	return out
+}
+
+func AgentSkillSource(skill AgentSkill) sources.Source {
+	return sources.Source{
+		Provider: skill.Provider,
+		URL:      skill.URL,
+		Ref:      skill.Ref,
+		Path:     skill.Path,
+		Format:   skill.Format,
+		Username: skill.Username,
+		Password: skill.Password,
+		Token:    skill.Token,
+	}.Normalized()
 }
 
 func normalizeCapsetIDs(ids []string) []string {

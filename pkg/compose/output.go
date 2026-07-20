@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"slices"
 
+	"agent-compose/pkg/sources"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,9 +34,13 @@ type orderedNamedWorkspace struct {
 	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
 	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 	URL      string `yaml:"url,omitempty" json:"url,omitempty"`
-	Branch   string `yaml:"branch,omitempty" json:"branch,omitempty"`
-	Commit   string `yaml:"commit,omitempty" json:"commit,omitempty"`
+	Ref      string `yaml:"ref,omitempty" json:"ref,omitempty"`
 	Path     string `yaml:"path,omitempty" json:"path,omitempty"`
+	Format   string `yaml:"format,omitempty" json:"format,omitempty"`
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	Password string `yaml:"password,omitempty" json:"password,omitempty"`
+	Token    string `yaml:"token,omitempty" json:"token,omitempty"`
+	Target   string `yaml:"target,omitempty" json:"target,omitempty"`
 }
 
 type orderedAgentSpec struct {
@@ -115,10 +121,10 @@ func (s *NormalizedProjectSpec) ValidateResolvedScriptURLs() error {
 		return nil
 	}
 	for _, agent := range s.Agents {
-		if agent.Scheduler.hasUnresolvedScriptURL() {
+		if agent.Scheduler.hasUnresolvedScriptSource() {
 			return &ValidationError{
-				Path:    joinPath("agents", agent.Name) + ".scheduler.script.url",
-				Message: "script URL source is unresolved",
+				Path:    joinPath("agents", agent.Name) + ".scheduler.script",
+				Message: "script source is unresolved",
 			}
 		}
 	}
@@ -219,9 +225,13 @@ func orderedWorkspaces(values map[string]WorkspaceSpec) []orderedNamedWorkspace 
 			Name:     value.Name,
 			Provider: value.Provider,
 			URL:      value.URL,
-			Branch:   value.Branch,
-			Commit:   value.Commit,
+			Ref:      value.Ref,
 			Path:     value.Path,
+			Format:   value.Format,
+			Username: value.Username,
+			Password: value.Password,
+			Token:    value.Token,
+			Target:   value.Target,
 		})
 	}
 	return out
@@ -237,9 +247,13 @@ func workspaceMapFromOrdered(values []orderedNamedWorkspace) map[string]Workspac
 			Name:     value.Name,
 			Provider: value.Provider,
 			URL:      value.URL,
-			Branch:   value.Branch,
-			Commit:   value.Commit,
+			Ref:      value.Ref,
 			Path:     value.Path,
+			Format:   value.Format,
+			Username: value.Username,
+			Password: value.Password,
+			Token:    value.Token,
+			Target:   value.Target,
 		}
 	}
 	return out
@@ -430,12 +444,20 @@ func cloneNormalizedSchedulerSpec(value *NormalizedSchedulerSpec) *NormalizedSch
 		DisplayName:   value.DisplayName,
 		Description:   value.Description,
 		Script:        value.Script,
-		scriptURL:     value.scriptURL,
+		scriptSource:  cloneSourcePointer(value.scriptSource),
 	}
 	for _, trigger := range value.Triggers {
 		cloned.Triggers = append(cloned.Triggers, cloneNormalizedTriggerSpec(trigger))
 	}
 	return cloned
+}
+
+func cloneSourcePointer(value *sources.Source) *sources.Source {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func cloneNormalizedTriggerSpec(value NormalizedTriggerSpec) NormalizedTriggerSpec {

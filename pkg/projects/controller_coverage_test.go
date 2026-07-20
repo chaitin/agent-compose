@@ -23,7 +23,7 @@ variables:
   SHARED: value
 workspaces:
   default:
-    provider: local
+    provider: file
     path: .
 agents:
   worker:

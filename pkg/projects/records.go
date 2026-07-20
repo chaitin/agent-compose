@@ -251,10 +251,11 @@ func AgentSkillsFromCompose(values []compose.NormalizedSkillSpec, sourcePath str
 	for _, value := range values {
 		out = append(out, domain.AgentSkill{
 			Name:       value.Name,
-			Source:     value.Source,
+			Provider:   value.Provider,
 			URL:        value.URL,
-			Path:       value.Path,
 			Ref:        value.Ref,
+			Path:       value.Path,
+			Format:     value.Format,
 			Username:   value.Username,
 			Password:   value.Password,
 			Token:      value.Token,

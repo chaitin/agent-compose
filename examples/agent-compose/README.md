@@ -9,7 +9,7 @@ simplest to most complete.
 | --- | --- | --- |
 | [docker-minimal](docker-minimal/) | Smallest Docker-backed project: one agent, no scheduler. | No, for `config`/`up`/`ps` |
 | [docker-scheduler-cron](docker-scheduler-cron/) | Managed cron scheduler control plane. | No, for `config`/`up`/`ps`/`down` |
-| [docker-scheduler-script-url](docker-scheduler-script-url/) | A scheduler script loaded from a relative file URL source. | No, for `config`/`up`/`ps`/`down` |
+| [docker-scheduler-script-url](docker-scheduler-script-url/) | A scheduler script loaded from a relative `file` source, with an HTTP source alternative. | No, for `config`/`up`/`ps`/`down` |
 | [docker-scheduler-timeout](docker-scheduler-timeout/) | End-to-end scheduled run that fires, executes the agent, and persists logs. | Yes, for the scheduled run |
 
 ## Common prerequisites

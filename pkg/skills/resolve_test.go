@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/sources"
 )
 
 func TestResolverResolvesFileSkill(t *testing.T) {
@@ -21,7 +23,7 @@ func TestResolverResolvesFileSkill(t *testing.T) {
 	writeSkill(t, source, "pdf")
 	resolver := Resolver{CacheRoot: filepath.Join(root, "cache"), LocalSourceRoots: []string{root}}
 
-	resolved, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Source: "file", Path: source}})
+	resolved, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Provider: "file", Path: source}})
 	if err != nil {
 		t.Fatalf("Resolve returned error: %v", err)
 	}
@@ -40,7 +42,7 @@ func TestResolverArtifactManifestOmitsSourcePathAndCredentials(t *testing.T) {
 	writeSkill(t, source, "pdf")
 	resolver := Resolver{CacheRoot: filepath.Join(root, "cache"), LocalSourceRoots: []string{root}, Env: map[string]string{"TOKEN": secret}}
 
-	resolved, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Source: "file", Path: source, Token: "${TOKEN}"}})
+	resolved, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Provider: "file", Path: source, Token: "${TOKEN}"}})
 	if err != nil {
 		t.Fatalf("Resolve returned error: %v", err)
 	}
@@ -63,10 +65,10 @@ func TestResolverArtifactManifestOmitsSourcePathAndCredentials(t *testing.T) {
 func TestResolverResolvesZipSkillSubdir(t *testing.T) {
 	root := t.TempDir()
 	archivePath := filepath.Join(root, "skills.zip")
-	writeZipSkill(t, archivePath, "skills/pdf", "pdf")
+	writeZipSkill(t, archivePath, "", "pdf")
 	resolver := Resolver{CacheRoot: filepath.Join(root, "cache"), LocalSourceRoots: []string{root}}
 
-	resolved, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Source: "zip", URL: archivePath, Path: "skills/pdf"}})
+	resolved, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Provider: "file", Format: "zip", Path: archivePath}})
 	if err != nil {
 		t.Fatalf("Resolve returned error: %v", err)
 	}
@@ -75,6 +77,31 @@ func TestResolverResolvesZipSkillSubdir(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(resolved[0].LocalDir, "SKILL.md")); err != nil {
 		t.Fatalf("resolved SKILL.md missing: %v", err)
+	}
+}
+
+func TestResolverResolvesGitSkillWithSharedClient(t *testing.T) {
+	root := t.TempDir()
+	repository := filepath.Join(root, "repository")
+	writeSkill(t, filepath.Join(repository, "skills", "pdf"), "pdf")
+	runTestGit(t, repository, "init", "-b", "main")
+	runTestGit(t, repository, "config", "user.email", "agent-compose@example.test")
+	runTestGit(t, repository, "config", "user.name", "Agent Compose")
+	runTestGit(t, repository, "add", ".")
+	runTestGit(t, repository, "commit", "-m", "add skill")
+	resolver := Resolver{CacheRoot: filepath.Join(root, "cache"), LocalSourceRoots: []string{root}}
+
+	resolved, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{
+		Name: "pdf", Provider: "git", URL: repository, Ref: "main", Path: "skills/pdf",
+	}})
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("resolved = %#v", resolved)
+	}
+	if _, err := os.Stat(filepath.Join(resolved[0].LocalDir, "SKILL.md")); err != nil {
+		t.Fatalf("resolved Git SKILL.md: %v", err)
 	}
 }
 
@@ -89,7 +116,7 @@ func TestResolverRejectsGitSubdirTraversal(t *testing.T) {
 	runTestGit(t, repo, "commit", "-m", "add skill")
 	resolver := Resolver{CacheRoot: filepath.Join(root, "cache"), LocalSourceRoots: []string{root}}
 
-	_, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Source: "git", URL: repo, Path: "../../.."}})
+	_, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Provider: "git", URL: repo, Path: "../../.."}})
 	if err == nil {
 		t.Fatalf("expected Resolve to reject git subdir traversal")
 	}
@@ -109,7 +136,7 @@ func TestResolverRejectsLocalGitOutsideAllowedRoots(t *testing.T) {
 
 	for _, rawURL := range []string{outside, "file://" + filepath.ToSlash(outside)} {
 		t.Run(rawURL, func(t *testing.T) {
-			_, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Source: "git", URL: rawURL}})
+			_, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Provider: "git", URL: rawURL}})
 			if err == nil {
 				t.Fatalf("expected Resolve to reject local git outside allowed roots")
 			}
@@ -128,7 +155,7 @@ func TestResolverRejectsRemoteGitPrivateHosts(t *testing.T) {
 		"http://169.254.169.254/repo.git",
 	} {
 		t.Run(rawURL, func(t *testing.T) {
-			_, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Source: "git", URL: rawURL}})
+			_, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Provider: "git", URL: rawURL}})
 			if err == nil {
 				t.Fatalf("expected Resolve to reject private git host")
 			}
@@ -143,9 +170,8 @@ func TestResolverRejectsZipSubdirTraversal(t *testing.T) {
 	root := t.TempDir()
 	archivePath := filepath.Join(root, "skills.zip")
 	writeZipSkill(t, archivePath, "skills/pdf", "pdf")
-	resolver := Resolver{CacheRoot: filepath.Join(root, "cache"), LocalSourceRoots: []string{root}}
 
-	_, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Source: "zip", URL: archivePath, Path: "../../.."}})
+	_, err := safeArtifactSubdir(archivePath, "../../..")
 	if err == nil {
 		t.Fatalf("expected Resolve to reject zip subdir traversal")
 	}
@@ -160,7 +186,7 @@ func TestResolverRejectsSkillNameMismatch(t *testing.T) {
 	writeSkill(t, source, "pdf")
 	resolver := Resolver{CacheRoot: filepath.Join(root, "cache"), LocalSourceRoots: []string{root}}
 
-	if _, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "docx", Source: "file", Path: source}}); err == nil {
+	if _, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "docx", Provider: "file", Path: source}}); err == nil {
 		t.Fatalf("expected Resolve to reject mismatched skill name")
 	}
 }
@@ -172,7 +198,7 @@ func TestResolverRejectsLocalSourceOutsideAllowedRoots(t *testing.T) {
 	writeSkill(t, outside, "pdf")
 	resolver := Resolver{CacheRoot: filepath.Join(root, "cache"), LocalSourceRoots: []string{allowed}}
 
-	if _, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Source: "file", Path: outside}}); err == nil {
+	if _, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Provider: "file", Path: outside}}); err == nil {
 		t.Fatalf("expected Resolve to reject outside local source")
 	}
 }
@@ -184,22 +210,12 @@ func TestResolverAllowsComposeSourceRoot(t *testing.T) {
 	writeSkill(t, source, "pdf")
 	resolver := Resolver{CacheRoot: filepath.Join(root, "cache")}
 
-	resolved, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Source: "file", Path: source, SourceRoot: sourceRoot}})
+	resolved, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Provider: "file", Path: source, SourceRoot: sourceRoot}})
 	if err != nil {
 		t.Fatalf("Resolve returned error: %v", err)
 	}
 	if len(resolved) != 1 || resolved[0].Name != "pdf" {
 		t.Fatalf("resolved = %#v", resolved)
-	}
-}
-
-func TestGitURLWithCredentials(t *testing.T) {
-	got := gitURLWithCredentials("https://git.example/repo.git", domain.AgentSkill{
-		Username: "user",
-		Token:    "${GIT_TOKEN}",
-	}, map[string]string{"GIT_TOKEN": "secret"})
-	if got != "https://user:secret@git.example/repo.git" {
-		t.Fatalf("git url = %q", got)
 	}
 }
 
@@ -220,47 +236,6 @@ func TestGitCacheURLStripsCredentials(t *testing.T) {
 	got := gitCacheURL("https://user:secret@git.example/repo.git")
 	if got != "https://git.example/repo.git" {
 		t.Fatalf("git cache url = %q", got)
-	}
-}
-
-func TestValidateGitOperandRejectsOptionLikeValue(t *testing.T) {
-	for _, value := range []string{"--upload-pack=touch /tmp/pwned", "-c core.sshCommand=bad"} {
-		t.Run(value, func(t *testing.T) {
-			if err := validateGitOperand("git url", value); err == nil {
-				t.Fatalf("expected option-like git operand to be rejected")
-			}
-		})
-	}
-}
-
-func TestValidateGitURLSchemeRejectsRemoteHelpers(t *testing.T) {
-	for _, value := range []string{"ext::sh -c id", "hg::https://example.invalid/repo"} {
-		t.Run(value, func(t *testing.T) {
-			if err := validateGitURLScheme(value); err == nil {
-				t.Fatalf("expected git remote helper URL to be rejected")
-			}
-		})
-	}
-}
-
-func TestValidateGitURLSchemeRejectsUnsupportedSchemes(t *testing.T) {
-	if err := validateGitURLScheme("ftp://example.invalid/repo.git"); err == nil {
-		t.Fatalf("expected unsupported git URL scheme to be rejected")
-	}
-	for _, value := range []string{
-		"https://example.invalid/repo.git",
-		"https://[2001:db8::1]/repo.git",
-		"ssh://user@[2001:db8::1]/repo.git",
-		"https://example.invalid/repo.git?note=a::b",
-		"ssh://git@example.invalid/repo.git",
-		"git@example.invalid:org/repo.git",
-		"/tmp/repo.git",
-	} {
-		t.Run(value, func(t *testing.T) {
-			if err := validateGitURLScheme(value); err != nil {
-				t.Fatalf("validateGitURLScheme returned error: %v", err)
-			}
-		})
 	}
 }
 
@@ -301,8 +276,32 @@ func TestDownloadRejectsRedirectToPrivateHost(t *testing.T) {
 		}, nil
 	})}
 	resolver := Resolver{HTTPClient: client}
-	if _, _, err := resolver.download(context.Background(), "http://93.184.216.34/skill.zip"); err == nil {
+	if _, _, err := resolver.download(context.Background(), "http://93.184.216.34/skill.zip", sources.Source{}); err == nil {
 		t.Fatalf("expected redirect to private host to be rejected")
+	}
+}
+
+func TestDownloadAppliesSourceAuthentication(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if got := request.Header.Get("Authorization"); got != "Bearer skill-secret" {
+			t.Errorf("Authorization = %q", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/zip"}},
+			Body:       io.NopCloser(strings.NewReader("not-a-zip")),
+			Request:    request,
+		}, nil
+	})}
+	resolver := Resolver{HTTPClient: client, Env: map[string]string{"TOKEN": "skill-secret"}}
+	path, cleanup, err := resolver.download(context.Background(), "https://example.com/skill.zip", sources.Source{Token: "${TOKEN}"})
+	if err != nil {
+		t.Fatalf("download returned error: %v", err)
+	}
+	cleanup()
+	if path == "" {
+		t.Fatal("download path is empty")
 	}
 }
 
@@ -419,13 +418,6 @@ func TestCopyWithExpandedLimitTracksActualBytes(t *testing.T) {
 	}
 	if expanded != 6 {
 		t.Fatalf("expanded = %d, want 6", expanded)
-	}
-}
-
-func TestRedactSecrets(t *testing.T) {
-	got := redactSecrets("fatal: https://user:secret@git.example/repo.git failed")
-	if strings.Contains(got, "secret") || !strings.Contains(got, "https://xxxxx@git.example") {
-		t.Fatalf("redacted = %q", got)
 	}
 }
 

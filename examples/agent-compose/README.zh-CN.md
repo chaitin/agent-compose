@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | [docker-minimal](docker-minimal/) | 最小的 Docker project：一个 agent，不启用 scheduler。 | `config`/`up`/`ps` 不需要 |
 | [docker-scheduler-cron](docker-scheduler-cron/) | managed cron scheduler 的控制面流程。 | `config`/`up`/`ps`/`down` 不需要 |
-| [docker-scheduler-script-url](docker-scheduler-script-url/) | 从相对文件 URL 来源加载 scheduler 脚本。 | `config`/`up`/`ps`/`down` 不需要 |
+| [docker-scheduler-script-url](docker-scheduler-script-url/) | 从相对 `file` 来源加载 scheduler 脚本，并给出 HTTP 来源的替代配置。 | `config`/`up`/`ps`/`down` 不需要 |
 | [docker-scheduler-timeout](docker-scheduler-timeout/) | 端到端的定时运行：触发、执行 agent 并持久化日志。 | 定时运行需要 |
 
 ## 通用前置条件

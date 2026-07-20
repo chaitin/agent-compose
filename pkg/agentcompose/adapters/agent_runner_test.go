@@ -102,7 +102,7 @@ func TestAgentRunnerExecuteAgentRunWritesSystemPromptAndParsesResult(t *testing.
 	runner := NewAgentRunner(config, store, nil, fakeAgentDefinitionStore{agent: domain.AgentDefinition{
 		ID:           "agent-1",
 		SystemPrompt: "Reply only in Chinese",
-		Skills:       []domain.AgentSkill{{Name: "pdf", Source: "file", Path: skillSource}},
+		Skills:       []domain.AgentSkill{{Name: "pdf", Provider: "file", Path: skillSource}},
 	}}, fakeRuntimeProvider{runtime: runtime})
 
 	result, parsed, err := runner.ExecuteAgentRun(ctx, session, "codex", "agent-1", "", "", "hello", "", nil)

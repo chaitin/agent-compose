@@ -5,6 +5,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"agent-compose/pkg/sources"
 )
 
 func TestNormalizeInterpolatesEnvValues(t *testing.T) {
@@ -578,11 +580,11 @@ agents:
       script: scheduler.interval("hourly-review", "1h");
 `, nil)
 	resolve := func(location, content string) *NormalizedProjectSpec {
-		spec := mustParseCompose(t, "name: script-url-hash\nagents:\n  reviewer:\n    scheduler:\n      script:\n        url: "+location+"\n")
+		spec := mustParseCompose(t, "name: script-url-hash\nagents:\n  reviewer:\n    scheduler:\n      script:\n        provider: http\n        url: "+location+"\n")
 		normalized, err := Normalize(spec, NormalizeOptions{
 			ComposePath:       "/project/agent-compose.yml",
 			ResolveScriptURLs: true,
-			ScriptSourceResolver: ScriptSourceResolverFunc(func(context.Context, string) ([]byte, error) {
+			ScriptSourceResolver: ScriptSourceResolverFunc(func(context.Context, sources.Source) ([]byte, error) {
 				return []byte(content), nil
 			}),
 		})
@@ -608,7 +610,7 @@ agents:
 }
 
 func TestUnresolvedSchedulerScriptURLFailsCanonicalOutputAndHash(t *testing.T) {
-	spec := mustParseCompose(t, "name: unresolved-url\nagents:\n  reviewer:\n    scheduler:\n      script:\n        url: ./scheduler.js\n")
+	spec := mustParseCompose(t, "name: unresolved-url\nagents:\n  reviewer:\n    scheduler:\n      script:\n        provider: file\n        path: ./scheduler.js\n")
 	normalized, err := Normalize(spec, NormalizeOptions{ComposePath: "/project/agent-compose.yml"})
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
@@ -619,7 +621,7 @@ func TestUnresolvedSchedulerScriptURLFailsCanonicalOutputAndHash(t *testing.T) {
 	if _, err := normalized.Hash(); err == nil || !strings.Contains(err.Error(), "unresolved") {
 		t.Fatalf("Hash error = %v", err)
 	}
-	if _, err := normalized.MarshalCanonicalYAML(false); err == nil || !strings.Contains(err.Error(), "scheduler.script.url") {
+	if _, err := normalized.MarshalCanonicalYAML(false); err == nil || !strings.Contains(err.Error(), "scheduler.script") {
 		t.Fatalf("MarshalCanonicalYAML error = %v", err)
 	}
 }

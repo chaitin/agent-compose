@@ -16,18 +16,39 @@ func TestMapLegacyWorkspaceConfigToExistingV2Shapes(t *testing.T) {
 			ID:   "git-workspace",
 			Type: "git",
 			ConfigJSON: `{
+				"provider":"git",
 				"url":"https://example.test/team/repo.git",
-				"branch":"main",
-				"commit":"abc123",
-				"credential":"user:token",
-				"path":"source"
+				"ref":"abc123",
+				"target":"source",
+				"username":"user",
+				"token":"${TOKEN}"
 			}`,
 		})
 		if err != nil {
 			t.Fatalf("mapLegacyWorkspaceConfig returned error: %v", err)
 		}
-		if workspace.Provider != "git" || workspace.URL != "https://user:token@example.test/team/repo.git" || workspace.Branch != "main" || workspace.Commit != "abc123" || workspace.Path != "source" {
+		if workspace.Provider != "git" || workspace.URL != "https://example.test/team/repo.git" || workspace.Ref != "abc123" || workspace.Target != "source" || workspace.Username != "user" || workspace.Token != "${TOKEN}" {
 			t.Fatalf("mapped git workspace = %#v", workspace)
+		}
+	})
+
+	t.Run("git legacy persistence aliases", func(t *testing.T) {
+		workspace, err := mapLegacyWorkspaceConfig(nil, domain.WorkspaceConfig{
+			ID:   "legacy-git-workspace",
+			Type: "git",
+			ConfigJSON: `{
+				"url":"https://example.test/team/repo.git",
+				"branch":"main",
+				"commit":"abc123",
+				"path":"source",
+				"credential":"legacy-user:legacy-password"
+			}`,
+		})
+		if err != nil {
+			t.Fatalf("mapLegacyWorkspaceConfig returned error: %v", err)
+		}
+		if workspace.Provider != "git" || workspace.Ref != "abc123" || workspace.Target != "source" || workspace.Username != "legacy-user" || workspace.Password != "legacy-password" {
+			t.Fatalf("mapped legacy git workspace = %#v", workspace)
 		}
 	})
 
@@ -44,7 +65,7 @@ func TestMapLegacyWorkspaceConfigToExistingV2Shapes(t *testing.T) {
 			t.Fatalf("mapLegacyWorkspaceConfig returned error: %v", err)
 		}
 		wantPath := filepath.ToSlash(filepath.Join("workspaces", workspaceID, workspaces.FileWorkspaceContentDirName))
-		if workspace.Provider != "local" || workspace.Path != wantPath {
+		if workspace.Provider != "file" || workspace.Path != wantPath {
 			t.Fatalf("mapped file workspace = %#v, want path %q", workspace, wantPath)
 		}
 	})
@@ -54,21 +75,21 @@ func TestMapLegacyWorkspaceConfigPreservesCommitPin(t *testing.T) {
 	workspace, err := mapLegacyWorkspaceConfig(nil, domain.WorkspaceConfig{
 		ID:         "git-workspace",
 		Type:       "git",
-		ConfigJSON: `{"url":"https://example.test/repo.git","commit":"abc123"}`,
+		ConfigJSON: `{"provider":"git","url":"https://example.test/repo.git","ref":"abc123"}`,
 	})
 	if err != nil {
 		t.Fatalf("mapLegacyWorkspaceConfig returned error: %v", err)
 	}
-	if workspace.Commit != "abc123" {
-		t.Fatalf("mapped commit = %q, want abc123", workspace.Commit)
+	if workspace.Ref != "abc123" {
+		t.Fatalf("mapped ref = %q, want abc123", workspace.Ref)
 	}
 }
 
 func TestLegacyDefaultNormalizedProjectMapsNamedWorkspaces(t *testing.T) {
 	projection := legacyWorkspaceProjection{
 		workspaces: map[string]compose.WorkspaceSpec{
-			"source": {Provider: "git", URL: "https://example.test/source.git", Path: "."},
-			"tasks":  {Provider: "git", URL: "https://example.test/tasks.git", Path: "."},
+			"source": {Provider: "git", URL: "https://example.test/source.git", Target: "."},
+			"tasks":  {Provider: "git", URL: "https://example.test/tasks.git", Target: "."},
 		},
 		nameByID: map[string]string{
 			"workspace-source": "source",
@@ -150,7 +171,7 @@ func TestLegacyProjectWorkspaceNamesAreStableAndValid(t *testing.T) {
 func TestLegacySingleWorkspaceDoesNotBecomeDefaultForUnassignedAgents(t *testing.T) {
 	projection := legacyWorkspaceProjection{
 		workspaces: map[string]compose.WorkspaceSpec{
-			"source": {Provider: "git", URL: "https://example.test/source.git", Path: "."},
+			"source": {Provider: "git", URL: "https://example.test/source.git", Target: "."},
 		},
 		nameByID: map[string]string{"workspace-source": "source"},
 	}
@@ -176,8 +197,8 @@ func TestLegacySingleWorkspaceDoesNotBecomeDefaultForUnassignedAgents(t *testing
 func TestLegacyMultipleWorkspacesRemainReapplicableWithUnassignedAgent(t *testing.T) {
 	projection := legacyWorkspaceProjection{
 		workspaces: map[string]compose.WorkspaceSpec{
-			"source": {Provider: "git", URL: "https://example.test/source.git", Path: "."},
-			"tasks":  {Provider: "git", URL: "https://example.test/tasks.git", Path: "."},
+			"source": {Provider: "git", URL: "https://example.test/source.git", Target: "."},
+			"tasks":  {Provider: "git", URL: "https://example.test/tasks.git", Target: "."},
 		},
 		nameByID: map[string]string{
 			"workspace-source": "source",
@@ -223,7 +244,7 @@ func TestLegacyMultipleWorkspacesRemainReapplicableWithUnassignedAgent(t *testin
 func TestLegacyLoaderWorkspaceDoesNotOverwriteWorkspaceLessSourceAgent(t *testing.T) {
 	projection := legacyWorkspaceProjection{
 		workspaces: map[string]compose.WorkspaceSpec{
-			"tasks": {Provider: "git", URL: "https://example.test/tasks.git", Path: "."},
+			"tasks": {Provider: "git", URL: "https://example.test/tasks.git", Target: "."},
 		},
 		nameByID: map[string]string{"workspace-tasks": "tasks"},
 	}
@@ -253,7 +274,7 @@ func TestLegacyLoaderWorkspaceDoesNotOverwriteWorkspaceLessSourceAgent(t *testin
 			scheduled = agent
 		}
 	}
-	if scheduled.Workspace == nil || scheduled.Workspace.Provider != "git" || scheduled.Workspace.Path != "." {
+	if scheduled.Workspace == nil || scheduled.Workspace.Provider != "git" || scheduled.Workspace.Target != "." {
 		t.Fatalf("compatibility loader agent workspace = %#v", scheduled.Workspace)
 	}
 }

@@ -15,6 +15,7 @@ import (
 
 	appconfig "agent-compose/pkg/config"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/sources"
 )
 
 func TestWorkspaceFileAndPathWorkflows(t *testing.T) {
@@ -303,33 +304,17 @@ func TestWorkspaceGitHelpers(t *testing.T) {
 		{raw: "../repo", wantErr: true},
 		{raw: "repo/../../escape", wantErr: true},
 	} {
-		got, err := NormalizeGitCloneTarget("ws-1", tc.raw)
+		got, err := NormalizeWorkspaceTarget("ws-1", tc.raw)
 		if tc.wantErr {
 			if err == nil {
-				t.Fatalf("NormalizeGitCloneTarget(%q) returned nil error", tc.raw)
+				t.Fatalf("NormalizeWorkspaceTarget(%q) returned nil error", tc.raw)
 			}
 			continue
 		}
 		if err != nil || got != tc.want {
-			t.Fatalf("NormalizeGitCloneTarget(%q) = %q/%v, want %q", tc.raw, got, err, tc.want)
+			t.Fatalf("NormalizeWorkspaceTarget(%q) = %q/%v, want %q", tc.raw, got, err, tc.want)
 		}
 	}
-	if got := GitCloneArgs("https://example.test/repo.git", GitWorkspaceConfig{Branch: "main"}, "/tmp/workspace"); strings.Join(got, "\x00") != strings.Join([]string{"clone", "--depth", "1", "--branch", "main", "https://example.test/repo.git", "/tmp/workspace"}, "\x00") {
-		t.Fatalf("GitCloneArgs = %#v", got)
-	}
-	if got := GitCommitFetchArgs("e413509"); strings.Join(got, "\x00") != strings.Join([]string{"fetch", "--depth", "1", "origin", "e413509"}, "\x00") {
-		t.Fatalf("GitCommitFetchArgs = %#v", got)
-	}
-	if !strings.Contains(strings.Join(GitDeepenFetchArgs(true), " "), "--unshallow") || strings.Contains(strings.Join(GitDeepenFetchArgs(false), " "), "--unshallow") {
-		t.Fatalf("GitDeepenFetchArgs returned unexpected values")
-	}
-	if got := ApplyGitCredentials("https://example.test/repo.git", GitWorkspaceConfig{Username: "u ser", Password: "p@ss"}); !strings.Contains(got, "u+ser:p%40ss@") {
-		t.Fatalf("ApplyGitCredentials username/password = %q", got)
-	}
-	if got := ApplyGitCredentials("ssh://example.test/repo.git", GitWorkspaceConfig{Credential: "token"}); got != "ssh://example.test/repo.git" {
-		t.Fatalf("ApplyGitCredentials ssh = %q", got)
-	}
-
 	src := filepath.Join(t.TempDir(), "src")
 	dst := filepath.Join(t.TempDir(), "dst")
 	if err := os.MkdirAll(filepath.Join(src, "nested"), 0o755); err != nil {
@@ -366,9 +351,7 @@ func testWorkspaceGitPrepareWorkflow(t *testing.T) {
 
 	rootWorkspace := t.TempDir()
 	rootWorkspaceConfig := encodeGitWorkspaceConfigForTest(t, GitWorkspaceConfig{
-		URL:    cloneURL,
-		Branch: "main",
-		Commit: sourceRepo.firstCommit,
+		Source: sources.Source{Provider: sources.ProviderGit, URL: cloneURL, Ref: sourceRepo.firstCommit},
 	})
 	if err := PrepareGitWorkspace(context.Background(), &domain.Sandbox{
 		Summary: domain.SandboxSummary{ID: "session-git-root", WorkspacePath: rootWorkspace},
@@ -393,9 +376,8 @@ func testWorkspaceGitPrepareWorkflow(t *testing.T) {
 		Name: "Git Nested Workspace",
 		Type: "git",
 		ConfigJSON: encodeGitWorkspaceConfigForTest(t, GitWorkspaceConfig{
-			URL:         cloneURL,
-			Branch:      "main",
-			CloneTarget: "nested/repo",
+			Source: sources.Source{Provider: sources.ProviderGit, URL: cloneURL, Ref: "main"},
+			Target: "nested/repo",
 		}),
 	}); err != nil {
 		t.Fatalf("PrepareGitWorkspace nested returned error: %v", err)

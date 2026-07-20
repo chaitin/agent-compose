@@ -43,9 +43,9 @@ func TestConfigCommandExpandsSchedulerScriptURLs(t *testing.T) {
 			if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			return "./scripts/scheduler.js"
+			return "provider: file\n        path: ./scripts/scheduler.js"
 		}},
-		{name: "HTTP", location: func(string) string { return httpServer.URL + "/scheduler.js" }},
+		{name: "HTTP", location: func(string) string { return "provider: http\n        url: " + httpServer.URL + "/scheduler.js" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -55,7 +55,7 @@ agents:
   reviewer:
     scheduler:
       script:
-        url: %s
+        %s
 `, tc.location(dir)))
 			stdout, stderr, runCount, err := executeCommand("config", "--file", composePath)
 			if err != nil || stderr != "" || runCount != 0 {
@@ -90,6 +90,7 @@ agents:
   reviewer:
     scheduler:
       script:
+        provider: http
         url: %s/scheduler.js
 `, sourceServer.URL))
 	_, expected, err := loadResolvedNormalizedCompose(context.Background(), cliOptions{ComposeFile: composePath})
@@ -129,6 +130,7 @@ agents:
   reviewer:
     scheduler:
       script:
+        provider: http
         url: http://127.0.0.1:1/unreachable.js
 `)
 	_, stderr, _, exitCode := executeCLICommand("down", "--file", composePath, "--host", daemon.URL, "--json")

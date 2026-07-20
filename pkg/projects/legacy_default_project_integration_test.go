@@ -145,7 +145,7 @@ scheduler.on("news.ready", "on-news", function onNews() {});
 	}
 	projectedWorkspace := result.RevisionSpec.Workspaces["news-source"]
 	wantWorkspacePath := filepath.ToSlash(filepath.Join("workspaces", workspace.ID, workspaces.FileWorkspaceContentDirName))
-	if projectedWorkspace.Provider != "local" || projectedWorkspace.Path != wantWorkspacePath {
+	if projectedWorkspace.Provider != "file" || projectedWorkspace.Path != wantWorkspacePath {
 		t.Fatalf("projected workspace = %#v, want path %q", projectedWorkspace, wantWorkspacePath)
 	}
 

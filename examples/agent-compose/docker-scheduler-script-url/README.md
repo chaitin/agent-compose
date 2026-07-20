@@ -1,9 +1,20 @@
-# Scheduler script URL example
+# Scheduler script file-source example
 
 Languages: English | [中文](README.zh-CN.md)
 
 This example keeps QJS in `scheduler.js` and references it from
-`agent-compose.yml` with `scheduler.script.url`.
+`agent-compose.yml` with `scheduler.script.provider: file` and `path`.
+
+To load the script over HTTP instead, replace the `script` mapping with:
+
+```yaml
+script:
+  provider: http
+  url: https://example.com/scheduler.js
+```
+
+`agent-compose config` and `agent-compose up` fetch the URL and send a content
+snapshot to the daemon. The daemon does not refresh the URL at runtime.
 
 ```bash
 agent-compose config

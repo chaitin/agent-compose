@@ -10,7 +10,7 @@ import (
 func TestLegacyFileWorkspaceIDSupportsNamedAndReappliedInlineSpecs(t *testing.T) {
 	spec := &compose.NormalizedProjectSpec{
 		Workspaces: map[string]compose.WorkspaceSpec{
-			"uploads": {Provider: "local", Path: "workspaces/legacy-file/content"},
+			"uploads": {Provider: "file", Path: "workspaces/legacy-file/content"},
 		},
 	}
 
@@ -22,14 +22,14 @@ func TestLegacyFileWorkspaceIDSupportsNamedAndReappliedInlineSpecs(t *testing.T)
 	}
 
 	workspaceID, ok = legacyFileWorkspaceID(spec, compose.NormalizedAgentSpec{
-		Workspace: &compose.WorkspaceSpec{Provider: "local", Path: "workspaces/legacy-file/content"},
+		Workspace: &compose.WorkspaceSpec{Provider: "file", Path: "workspaces/legacy-file/content"},
 	})
 	if !ok || workspaceID != "legacy-file" {
 		t.Fatalf("inline legacy workspace = %q, %v", workspaceID, ok)
 	}
 
 	if workspaceID, ok := legacyFileWorkspaceID(spec, compose.NormalizedAgentSpec{
-		Workspace: &compose.WorkspaceSpec{Provider: "local", Path: "source"},
+		Workspace: &compose.WorkspaceSpec{Provider: "file", Path: "source"},
 	}); ok || workspaceID != "" {
 		t.Fatalf("ordinary local workspace was treated as legacy = %q, %v", workspaceID, ok)
 	}

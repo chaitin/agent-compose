@@ -26,7 +26,7 @@ func TestPrepareProjectRunReusesManagedAgentWorkspacePreset(t *testing.T) {
 		revision: domain.ProjectRevisionRecord{
 			ProjectID: projectID,
 			Revision:  1,
-			SpecJSON:  `{"name":"legacy-v1-default","agents":[{"name":"worker","workspace":{"provider":"local","path":"workspaces/legacy-file/content"}}]}`,
+			SpecJSON:  `{"name":"legacy-v1-default","agents":[{"name":"worker","workspace":{"provider":"file","path":"workspaces/legacy-file/content"}}]}`,
 		},
 		agent:     domain.AgentDefinition{ID: "managed-agent", WorkspaceID: workspace.ID},
 		workspace: workspace,
@@ -70,13 +70,13 @@ func TestPrepareProjectRunKeepsGitAndOrdinaryV2OnWorkspaceResolver(t *testing.T)
 		{
 			name:      "legacy git workspace",
 			project:   domain.ProjectRecord{ID: legacyProjectID, Name: projects.LegacyDefaultProjectName},
-			specJSON:  `{"name":"legacy-v1-default","agents":[{"name":"worker","workspace":{"provider":"git","url":"https://example.test/repo.git","branch":"main","path":"."}}]}`,
+			specJSON:  `{"name":"legacy-v1-default","agents":[{"name":"worker","workspace":{"provider":"git","url":"https://example.test/repo.git","ref":"main","target":"."}}]}`,
 			workspace: domain.WorkspaceConfig{ID: "legacy-git", Type: "git", ConfigJSON: `{"url":"https://example.test/repo.git"}`},
 		},
 		{
 			name:      "ordinary v2 local workspace",
 			project:   domain.ProjectRecord{ID: "project-1", Name: "project", SourcePath: "/project/source"},
-			specJSON:  `{"name":"project","agents":[{"name":"worker","workspace":{"provider":"local","path":"workspaces/legacy-file/content"}}]}`,
+			specJSON:  `{"name":"project","agents":[{"name":"worker","workspace":{"provider":"file","path":"workspaces/legacy-file/content"}}]}`,
 			workspace: domain.WorkspaceConfig{ID: "legacy-file", Type: "file", ConfigJSON: `{}`},
 		},
 	}
