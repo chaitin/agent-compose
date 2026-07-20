@@ -69,7 +69,7 @@ volumes:
 
 agents:
   reviewer:
-    status: enabled
+    enabled: true
     provider: codex
     model: ${REVIEW_MODEL}
     system_prompt: |
@@ -375,7 +375,7 @@ agents:
 
 | Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `status` | string | Enabled semantics | `enabled` or `disabled`. An empty value is treated as enabled. A disabled definition remains stored but cannot run normally, and its scheduler is not enabled. |
+| `enabled` | bool | `true` | Whether the Agent is enabled. A disabled definition remains stored but cannot run normally, and its scheduler is not enabled. |
 | `display_name` | string | Empty | Human-readable agent label. |
 | `description` | string | Empty | Human-readable explanation of the agent's role. |
 | `provider` | string | `codex` | Agent provider: `codex`, `claude`, `gemini`, or `opencode`. Compatibility aliases are normalized at persistence boundaries. |
@@ -393,12 +393,12 @@ agents:
 | `scheduler` | object | None | Automatic trigger configuration. |
 | `jupyter` | object | Disabled | Default Jupyter behavior for agent runs. |
 
-### `status`, `provider`, `model`, and `system_prompt`
+### `enabled`, `provider`, `model`, and `system_prompt`
 
 ```yaml
 agents:
   reviewer:
-    status: enabled
+    enabled: true
     provider: claude
     model: ${CLAUDE_MODEL}
     system_prompt: |
@@ -686,7 +686,7 @@ A scheduler uses either declarative `triggers` or JavaScript `script`; the two f
 
 | Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `enabled` | bool | `true` | Enables this agent's scheduler. `status: disabled` also prevents it from being enabled. |
+| `enabled` | bool | `true` | Enables this agent's scheduler. Disabling the Agent also prevents its scheduler from being enabled. |
 | `sandbox_policy` | string | `new` | Scheduler default sandbox policy: `new` or `sticky`. |
 | `triggers` | list | Empty | Declarative triggers. |
 | `script` | string/object | Empty | Inline JavaScript or a flat `file`/`http`/`git` source mapping. Cannot coexist with `triggers`. |

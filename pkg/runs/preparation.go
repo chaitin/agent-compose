@@ -142,45 +142,13 @@ func jupyterOptionsFromAgentSpec(agent *agentcomposev2.AgentSpec) sessionstore.C
 func DecodeRevisionSpec(raw string) (*agentcomposev2.ProjectSpec, error) {
 	var spec agentcomposev2.ProjectSpec
 	data := []byte(strings.TrimSpace(raw))
-	protoData, err := normalizeCanonicalAgentStatuses(data)
-	if err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(protoData, &spec); err != nil {
+	if err := json.Unmarshal(data, &spec); err != nil {
 		return nil, fmt.Errorf("decode project revision spec: %w", err)
 	}
 	if err := restoreCanonicalRevisionWorkspaces(data, &spec); err != nil {
 		return nil, err
 	}
 	return &spec, nil
-}
-
-func normalizeCanonicalAgentStatuses(data []byte) ([]byte, error) {
-	var document map[string]any
-	if err := json.Unmarshal(data, &document); err != nil {
-		return nil, fmt.Errorf("decode project revision spec: %w", err)
-	}
-	agents, _ := document["agents"].([]any)
-	for _, value := range agents {
-		agent, _ := value.(map[string]any)
-		status, ok := agent["status"].(string)
-		if !ok {
-			continue
-		}
-		switch strings.ToLower(strings.TrimSpace(status)) {
-		case "", "enabled":
-			agent["status"] = int(agentcomposev2.AgentStatus_AGENT_STATUS_ENABLED)
-		case "disabled":
-			agent["status"] = int(agentcomposev2.AgentStatus_AGENT_STATUS_DISABLED)
-		default:
-			return nil, fmt.Errorf("decode project revision spec: unknown agent status %q", status)
-		}
-	}
-	encoded, err := json.Marshal(document)
-	if err != nil {
-		return nil, fmt.Errorf("encode project revision compatibility shape: %w", err)
-	}
-	return encoded, nil
 }
 
 func AgentSpecByName(spec *agentcomposev2.ProjectSpec, name string) (*agentcomposev2.AgentSpec, bool) {

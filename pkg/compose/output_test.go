@@ -90,6 +90,31 @@ agents:
 	}
 }
 
+func TestAgentEnablementUsesCanonicalBooleanOutput(t *testing.T) {
+	normalized := mustNormalizeCompose(t, `
+name: enablement
+agents:
+  reviewer:
+    enabled: false
+    provider: codex
+`, nil)
+
+	jsonData, err := normalized.MarshalCanonicalJSON(false)
+	if err != nil {
+		t.Fatalf("MarshalCanonicalJSON returned error: %v", err)
+	}
+	yamlData, err := normalized.MarshalCanonicalYAML(false)
+	if err != nil {
+		t.Fatalf("MarshalCanonicalYAML returned error: %v", err)
+	}
+	if !bytes.Contains(jsonData, []byte(`"enabled":false`)) || bytes.Contains(jsonData, []byte(`"status"`)) {
+		t.Fatalf("canonical JSON = %s", jsonData)
+	}
+	if !bytes.Contains(yamlData, []byte("enabled: false")) || bytes.Contains(yamlData, []byte("status:")) {
+		t.Fatalf("canonical YAML = %s", yamlData)
+	}
+}
+
 func TestAgentDisplayNameDoesNotRelaxStableAgentNameValidation(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: presentation

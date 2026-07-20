@@ -319,12 +319,8 @@ func appendLegacyLoaderAgent(spec *compose.NormalizedProjectSpec, loader domain.
 		agent = spec.Agents[sourceIndex]
 		agent.Scheduler = nil
 	} else {
-		status := "disabled"
-		if associated && loader.Summary.Enabled {
-			status = "enabled"
-		}
 		agent = compose.NormalizedAgentSpec{
-			Status:    status,
+			Enabled:   associated && loader.Summary.Enabled,
 			Provider:  legacyLoaderProvider(loader.Summary.DefaultAgent),
 			Image:     strings.TrimSpace(loader.Summary.GuestImage),
 			Driver:    legacyDriver(loader.Summary.Driver),
@@ -390,7 +386,7 @@ func normalizedAgentFromLegacy(definition domain.AgentDefinition) (compose.Norma
 		Name:         strings.TrimSpace(definition.Name),
 		DisplayName:  strings.TrimSpace(definition.Name),
 		Description:  strings.TrimSpace(definition.Description),
-		Status:       map[bool]string{true: "enabled", false: "disabled"}[definition.Enabled],
+		Enabled:      definition.Enabled,
 		Provider:     strings.TrimSpace(definition.Provider),
 		Model:        strings.TrimSpace(definition.Model),
 		SystemPrompt: definition.SystemPrompt,

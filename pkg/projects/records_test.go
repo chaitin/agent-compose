@@ -12,6 +12,7 @@ func TestNewAgentDefinitionFromSpecPreservesJupyterConfig(t *testing.T) {
 	project := domain.ProjectRecord{ID: "project-1", Name: "project"}
 	agent := compose.NormalizedAgentSpec{
 		Name:     "reviewer",
+		Enabled:  true,
 		Provider: "codex",
 		Jupyter:  &compose.JupyterSpec{Enabled: true, GuestPort: 8888},
 	}
@@ -33,7 +34,7 @@ func TestNewAgentDefinitionFromSpecPreservesJupyterConfig(t *testing.T) {
 
 func TestNewAgentDefinitionFromSpecKeepsEmptyConfigWithoutJupyter(t *testing.T) {
 	project := domain.ProjectRecord{ID: "project-1", Name: "project"}
-	agent := compose.NormalizedAgentSpec{Name: "reviewer", Provider: "codex"}
+	agent := compose.NormalizedAgentSpec{Name: "reviewer", Enabled: true, Provider: "codex"}
 
 	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil)
 	if err != nil {
@@ -48,6 +49,7 @@ func TestNewAgentDefinitionFromSpecKeepsStableNameWithPresentationMetadata(t *te
 	project := domain.ProjectRecord{ID: "project-1", Name: "project"}
 	agent := compose.NormalizedAgentSpec{
 		Name:        "legacy-agent-bfe5286dc77f",
+		Enabled:     true,
 		DisplayName: "通用助手",
 		Description: "处理日常通用任务",
 		Provider:    "codex",
@@ -66,6 +68,7 @@ func TestProjectRecordsCarryVolumeMountSpecs(t *testing.T) {
 	project := domain.ProjectRecord{ID: "project-1", Name: "project"}
 	agent := compose.NormalizedAgentSpec{
 		Name:     "reviewer",
+		Enabled:  true,
 		Provider: "codex",
 		Image:    "guest:latest",
 		Volumes: []compose.NormalizedVolumeMountSpec{
@@ -102,7 +105,7 @@ func TestDisabledAgentDisablesManagedAgentAndSchedulerRecords(t *testing.T) {
 	agent := compose.NormalizedAgentSpec{
 		Name:      "reviewer",
 		Provider:  "codex",
-		Status:    "disabled",
+		Enabled:   false,
 		Scheduler: &compose.NormalizedSchedulerSpec{Enabled: true, Script: "scheduler.agent('hi')"},
 	}
 	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil)
@@ -139,6 +142,7 @@ func TestNewAgentDefinitionFromSpecPreservesMCPConfig(t *testing.T) {
 	project := domain.ProjectRecord{ID: "project-1", Name: "project"}
 	agent := compose.NormalizedAgentSpec{
 		Name:     "reviewer",
+		Enabled:  true,
 		Provider: "codex",
 		MCPServers: map[string]compose.NormalizedMCPServerSpec{
 			"filesystem": {
@@ -177,6 +181,7 @@ func TestNewAgentDefinitionFromSpecCarriesSkills(t *testing.T) {
 	project := domain.ProjectRecord{ID: "project-1", Name: "project", SourcePath: "/repo/agent-compose.yml"}
 	agent := compose.NormalizedAgentSpec{
 		Name:     "reviewer",
+		Enabled:  true,
 		Provider: "codex",
 		Skills: []compose.NormalizedSkillSpec{
 			{Name: "pdf", Provider: "git", URL: "https://github.com/anthropics/skills.git", Path: "skills/pdf", Ref: "main", Token: "${GIT_TOKEN}"},

@@ -82,15 +82,14 @@ func ProjectRevisionToProto(revision domain.ProjectRevisionRecord, spec *agentco
 func ProjectAgentsToProto(agents []domain.ProjectAgentRecord) []*agentcomposev2.ProjectAgent {
 	items := make([]*agentcomposev2.ProjectAgent, 0, len(agents))
 	for _, agent := range agents {
-		status, displayName, description, specErr := projectAgentSpecMetadata(agent.SpecJSON)
-		enabled := status != agentcomposev2.AgentStatus_AGENT_STATUS_DISABLED
+		enabled, displayName, description, specErr := projectAgentSpecMetadata(agent.SpecJSON)
 		availability := agentcomposev2.ProjectAgentAvailability_PROJECT_AGENT_AVAILABILITY_AVAILABLE
 		health := agentcomposev2.ProjectAgentHealth_PROJECT_AGENT_HEALTH_HEALTHY
-		if !enabled {
-			availability = agentcomposev2.ProjectAgentAvailability_PROJECT_AGENT_AVAILABILITY_UNAVAILABLE
-		} else if specErr != nil || strings.TrimSpace(agent.ManagedAgentID) == "" || strings.TrimSpace(agent.AgentName) == "" || strings.TrimSpace(agent.Provider) == "" {
+		if specErr != nil || strings.TrimSpace(agent.ManagedAgentID) == "" || strings.TrimSpace(agent.AgentName) == "" || strings.TrimSpace(agent.Provider) == "" {
 			availability = agentcomposev2.ProjectAgentAvailability_PROJECT_AGENT_AVAILABILITY_VALIDATION_FAILED
 			health = agentcomposev2.ProjectAgentHealth_PROJECT_AGENT_HEALTH_AT_RISK
+		} else if !enabled {
+			availability = agentcomposev2.ProjectAgentAvailability_PROJECT_AGENT_AVAILABILITY_UNAVAILABLE
 		}
 		items = append(items, &agentcomposev2.ProjectAgent{
 			ProjectId:        agent.ProjectID,
@@ -109,36 +108,21 @@ func ProjectAgentsToProto(agents []domain.ProjectAgentRecord) []*agentcomposev2.
 	return items
 }
 
-func projectAgentSpecMetadata(specJSON string) (agentcomposev2.AgentStatus, string, string, error) {
+func projectAgentSpecMetadata(specJSON string) (bool, string, string, error) {
 	var raw struct {
-		Status      json.RawMessage `json:"status"`
-		DisplayName string          `json:"display_name"`
-		Description string          `json:"description"`
+		Enabled     *bool  `json:"enabled"`
+		DisplayName string `json:"display_name"`
+		Description string `json:"description"`
 	}
 	if err := json.Unmarshal([]byte(specJSON), &raw); err != nil {
-		return agentcomposev2.AgentStatus_AGENT_STATUS_UNSPECIFIED, "", "", err
+		return false, "", "", err
 	}
 	displayName := strings.TrimSpace(raw.DisplayName)
 	description := strings.TrimSpace(raw.Description)
-	if len(raw.Status) == 0 || string(raw.Status) == "null" {
-		return agentcomposev2.AgentStatus_AGENT_STATUS_UNSPECIFIED, displayName, description, nil
+	if raw.Enabled == nil {
+		return true, displayName, description, nil
 	}
-	var status string
-	if err := json.Unmarshal(raw.Status, &status); err == nil {
-		switch strings.ToLower(strings.TrimSpace(status)) {
-		case "", "enabled":
-			return agentcomposev2.AgentStatus_AGENT_STATUS_ENABLED, displayName, description, nil
-		case "disabled":
-			return agentcomposev2.AgentStatus_AGENT_STATUS_DISABLED, displayName, description, nil
-		default:
-			return agentcomposev2.AgentStatus_AGENT_STATUS_UNSPECIFIED, displayName, description, fmt.Errorf("decode project agent spec: unknown agent status %q", status)
-		}
-	}
-	var spec agentcomposev2.AgentSpec
-	if err := json.Unmarshal([]byte(specJSON), &spec); err != nil {
-		return agentcomposev2.AgentStatus_AGENT_STATUS_UNSPECIFIED, displayName, description, err
-	}
-	return spec.GetStatus(), displayName, description, nil
+	return *raw.Enabled, displayName, description, nil
 }
 
 func ProjectSchedulersToProto(schedulers []domain.ProjectSchedulerRecord) []*agentcomposev2.ProjectScheduler {
@@ -295,21 +279,10 @@ func AgentSpecsToProto(agents []compose.NormalizedAgentSpec) []*agentcomposev2.A
 			Jupyter:      JupyterSpecToProto(agent.Jupyter),
 			Volumes:      VolumeMountSpecsToProto(agent.Volumes),
 			McpServers:   MCPServerSpecsToProto(agent.MCPServers),
-			Status:       agentStatusToProto(agent.Status),
+			Enabled:      &agent.Enabled,
 		})
 	}
 	return items
-}
-
-func agentStatusToProto(status string) agentcomposev2.AgentStatus {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "enabled":
-		return agentcomposev2.AgentStatus_AGENT_STATUS_ENABLED
-	case "disabled":
-		return agentcomposev2.AgentStatus_AGENT_STATUS_DISABLED
-	default:
-		return agentcomposev2.AgentStatus_AGENT_STATUS_UNSPECIFIED
-	}
 }
 
 func MCPServerSpecsToProto(values map[string]compose.NormalizedMCPServerSpec) []*agentcomposev2.MCPServerSpec {
@@ -612,14 +585,8 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		if strings.TrimSpace(agent.GetDescription()) != "" {
 			raw["description"] = agent.GetDescription()
 		}
-		switch agent.GetStatus() {
-		case agentcomposev2.AgentStatus_AGENT_STATUS_ENABLED:
-			raw["status"] = "enabled"
-		case agentcomposev2.AgentStatus_AGENT_STATUS_DISABLED:
-			raw["status"] = "disabled"
-		case agentcomposev2.AgentStatus_AGENT_STATUS_UNSPECIFIED:
-		default:
-			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("agents[%d].status", i), "unknown agent status")}
+		if agent.Enabled != nil {
+			raw["enabled"] = agent.GetEnabled()
 		}
 		if strings.TrimSpace(agent.GetProvider()) != "" {
 			raw["provider"] = agent.GetProvider()

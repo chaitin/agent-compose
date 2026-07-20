@@ -68,7 +68,7 @@ volumes:
 
 agents:
   reviewer:
-    status: enabled
+    enabled: true
     provider: codex
     model: ${REVIEW_MODEL}
     system_prompt: |
@@ -376,7 +376,7 @@ agents:
 
 | 字段 | 类型 | 默认值 | 作用 |
 | --- | --- | --- | --- |
-| `status` | string | enabled 语义 | `enabled` 或 `disabled`。空值等同启用；禁用后定义保留但不可按正常流程运行，Scheduler 也不会启用。 |
+| `enabled` | bool | `true` | 是否启用 Agent。禁用后定义保留但不可按正常流程运行，Scheduler 也不会启用。 |
 | `display_name` | string | 空 | Agent 的可读显示名称。 |
 | `description` | string | 空 | Agent 职责的可读说明。 |
 | `provider` | string | `codex` | Agent CLI/provider：`codex`、`claude`、`gemini` 或 `opencode`。兼容别名会在持久化边界归一化。 |
@@ -394,12 +394,12 @@ agents:
 | `scheduler` | object | 无 | 自动触发 Agent 的 Scheduler。 |
 | `jupyter` | object | disabled | Agent run 的 Jupyter 默认配置。 |
 
-### `status`、`provider`、`model` 和 `system_prompt`
+### `enabled`、`provider`、`model` 和 `system_prompt`
 
 ```yaml
 agents:
   reviewer:
-    status: enabled
+    enabled: true
     provider: claude
     model: ${CLAUDE_MODEL}
     system_prompt: |
@@ -691,7 +691,7 @@ Scheduler 可以使用声明式 `triggers`，也可以使用 JavaScript `script`
 
 | 字段 | 类型 | 默认值 | 作用 |
 | --- | --- | --- | --- |
-| `enabled` | bool | `true` | 是否启用该 Agent 的 Scheduler。Agent `status: disabled` 也会使其无效。 |
+| `enabled` | bool | `true` | 是否启用该 Agent 的 Scheduler。禁用 Agent 也会使其 Scheduler 无效。 |
 | `sandbox_policy` | string | `new` | Scheduler 默认 sandbox 策略：`new` 或 `sticky`。 |
 | `triggers` | list | 空 | 声明式触发器。 |
 | `script` | string/object | 空 | 内联 JavaScript，或扁平的 `file`/`http`/`git` 来源配置。不能和 `triggers` 同时使用。 |

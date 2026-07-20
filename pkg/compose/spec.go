@@ -45,7 +45,7 @@ func (s *EnvFileSpec) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type AgentSpec struct {
-	Status       string                `yaml:"status,omitempty" json:"status,omitempty"`
+	Enabled      *bool                 `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	DisplayName  string                `yaml:"display_name,omitempty" json:"display_name,omitempty"`
 	Description  string                `yaml:"description,omitempty" json:"description,omitempty"`
 	Provider     string                `yaml:"provider,omitempty" json:"provider,omitempty"`
@@ -488,7 +488,7 @@ func validateAgentMap(node *yaml.Node, path string) error {
 
 func validateAgent(node *yaml.Node, path string) error {
 	return validateMapping(node, path, map[string]nodeValidator{
-		"status":        validateScalar,
+		"enabled":       validateBool,
 		"display_name":  validateScalar,
 		"description":   validateScalar,
 		"provider":      validateScalar,

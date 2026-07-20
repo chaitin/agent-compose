@@ -152,16 +152,13 @@ func assertLegacyRevisionGitWorkspace(t *testing.T, workspace *agentcomposev2.Wo
 	}
 }
 
-func TestDecodeRevisionSpecSupportsCanonicalAgentStatus(t *testing.T) {
-	decoded, err := DecodeRevisionSpec(`{"name":"status-project","agents":[{"name":"worker","status":"disabled"}]}`)
+func TestDecodeRevisionSpecUsesCanonicalAgentEnabled(t *testing.T) {
+	decoded, err := DecodeRevisionSpec(`{"name":"enablement-project","agents":[{"name":"worker","enabled":false}]}`)
 	if err != nil {
 		t.Fatalf("DecodeRevisionSpec returned error: %v", err)
 	}
-	if len(decoded.GetAgents()) != 1 || decoded.GetAgents()[0].GetStatus() != 2 {
+	if len(decoded.GetAgents()) != 1 || decoded.GetAgents()[0].GetEnabled() {
 		t.Fatalf("agents = %#v", decoded.GetAgents())
-	}
-	if _, err := DecodeRevisionSpec(`{"agents":[{"name":"worker","status":"paused"}]}`); err == nil {
-		t.Fatal("unknown status returned nil error")
 	}
 }
 

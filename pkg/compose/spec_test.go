@@ -63,8 +63,8 @@ func TestParseRejectsInvalidEnvFile(t *testing.T) {
 	}
 }
 
-func TestParseAgentStatus(t *testing.T) {
-	spec, err := Parse([]byte("name: status\nagents:\n  worker:\n    status: disabled\n    provider: codex\n"))
+func TestParseAgentEnabled(t *testing.T) {
+	spec, err := Parse([]byte("name: enablement\nagents:\n  worker:\n    enabled: false\n    provider: codex\n"))
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
@@ -72,12 +72,22 @@ func TestParseAgentStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
 	}
-	if got := normalized.Agents[0].Status; got != "disabled" {
-		t.Fatalf("status = %q, want disabled", got)
+	if normalized.Agents[0].Enabled {
+		t.Fatal("enabled = true, want false")
 	}
-	spec.Agents["worker"] = AgentSpec{Status: "paused", Provider: "codex"}
-	if _, err := Normalize(spec, NormalizeOptions{}); err == nil || !strings.Contains(err.Error(), "must be enabled or disabled") {
-		t.Fatalf("invalid status error = %v", err)
+	defaultSpec, err := Parse([]byte("name: defaults\nagents:\n  worker:\n    provider: codex\n"))
+	if err != nil {
+		t.Fatalf("Parse default returned error: %v", err)
+	}
+	defaultNormalized, err := Normalize(defaultSpec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize default returned error: %v", err)
+	}
+	if !defaultNormalized.Agents[0].Enabled {
+		t.Fatal("omitted enabled = false, want true")
+	}
+	if _, err := Parse([]byte("agents:\n  worker:\n    status: disabled\n")); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("legacy status error = %v", err)
 	}
 }
 

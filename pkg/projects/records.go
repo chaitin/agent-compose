@@ -64,7 +64,7 @@ func NewAgentRecordFromSpec(projectID string, revision int64, agent compose.Norm
 		Model:            strings.TrimSpace(agent.Model),
 		Image:            strings.TrimSpace(agent.Image),
 		Driver:           strings.TrimSpace(driver),
-		SchedulerEnabled: agentEnabled(agent) && agent.Scheduler != nil && agent.Scheduler.Enabled,
+		SchedulerEnabled: agent.Enabled && agent.Scheduler != nil && agent.Scheduler.Enabled,
 		SpecJSON:         string(specJSON),
 	}, nil
 }
@@ -110,7 +110,7 @@ func NewAgentDefinitionFromSpec(project domain.ProjectRecord, revision int64, ag
 		ID:                     managedAgentID,
 		Name:                   agent.Name,
 		Description:            agent.Description,
-		Enabled:                agentEnabled(agent),
+		Enabled:                agent.Enabled,
 		Provider:               agent.Provider,
 		Model:                  agent.Model,
 		SystemPrompt:           agent.SystemPrompt,
@@ -132,10 +132,6 @@ func projectAgentDisplayName(agent compose.NormalizedAgentSpec) string {
 		return displayName
 	}
 	return strings.TrimSpace(agent.Name)
-}
-
-func agentEnabled(agent compose.NormalizedAgentSpec) bool {
-	return strings.ToLower(strings.TrimSpace(agent.Status)) != "disabled"
 }
 
 type agentDefinitionConfigPayload struct {
@@ -349,7 +345,7 @@ func NewSchedulerRecordFromSpec(projectID string, revision int64, agent compose.
 		AgentName:       strings.TrimSpace(agent.Name),
 		ManagedLoaderID: loaderID,
 		Revision:        revision,
-		Enabled:         agentEnabled(agent) && agent.Scheduler.Enabled,
+		Enabled:         agent.Enabled && agent.Scheduler.Enabled,
 		TriggerCount:    len(agent.Scheduler.Triggers),
 		SpecJSON:        string(specJSON),
 	}, true, nil

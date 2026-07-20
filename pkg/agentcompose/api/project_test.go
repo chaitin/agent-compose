@@ -158,6 +158,67 @@ func TestProjectSpecToProtoIncludesJupyter(t *testing.T) {
 	}
 }
 
+func TestAgentEnablementRoundTripsThroughAPIShape(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{
+		Name: "enablement",
+		Agents: []compose.NormalizedAgentSpec{{
+			Name:     "reviewer",
+			Enabled:  false,
+			Provider: "codex",
+		}},
+	}
+
+	protoSpec := ProjectSpecToProto(spec)
+	if protoSpec == nil || len(protoSpec.GetAgents()) != 1 || protoSpec.GetAgents()[0].GetEnabled() {
+		t.Fatalf("ProjectSpecToProto enablement = %#v", protoSpec)
+	}
+	yamlAgents, issues := AgentYAMLMap(protoSpec.GetAgents())
+	if len(issues) != 0 {
+		t.Fatalf("AgentYAMLMap issues = %#v", issues)
+	}
+	reviewer, ok := yamlAgents["reviewer"].(map[string]any)
+	if !ok || reviewer["enabled"] != false {
+		t.Fatalf("AgentYAMLMap = %#v", yamlAgents)
+	}
+	if _, exists := reviewer["status"]; exists {
+		t.Fatalf("AgentYAMLMap contains status = %#v", reviewer)
+	}
+}
+
+func TestAgentYAMLMapPreservesOmittedEnablement(t *testing.T) {
+	yamlAgents, issues := AgentYAMLMap([]*agentcomposev2.AgentSpec{{
+		Name:     "reviewer",
+		Provider: "codex",
+	}})
+	if len(issues) != 0 {
+		t.Fatalf("AgentYAMLMap issues = %#v", issues)
+	}
+	reviewer, ok := yamlAgents["reviewer"].(map[string]any)
+	if !ok {
+		t.Fatalf("AgentYAMLMap = %#v", yamlAgents)
+	}
+	if _, exists := reviewer["enabled"]; exists {
+		t.Fatalf("AgentYAMLMap materialized omitted enabled = %#v", reviewer)
+	}
+
+	root := map[string]any{"name": "enablement", "agents": yamlAgents}
+	data, err := yaml.Marshal(root)
+	if err != nil {
+		t.Fatalf("marshal YAML shape: %v", err)
+	}
+	parsed, err := compose.Parse(data)
+	if err != nil {
+		t.Fatalf("parse YAML shape: %v", err)
+	}
+	normalized, err := compose.Normalize(parsed, compose.NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("normalize YAML shape: %v", err)
+	}
+	if len(normalized.Agents) != 1 || !normalized.Agents[0].Enabled {
+		t.Fatalf("omitted API enablement normalized as disabled: %#v", normalized.Agents)
+	}
+}
+
 func TestIntegrationAgentPresentationMetadataRoundTripsThroughProtoAndCompose(t *testing.T) {
 	shape, issues := ProjectSpecYAMLShape(&agentcomposev2.ProjectSpec{
 		Name: "presentation",

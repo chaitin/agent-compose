@@ -49,7 +49,7 @@ type NormalizedProjectSpec struct {
 
 type NormalizedAgentSpec struct {
 	Name         string                             `yaml:"name" json:"name"`
-	Status       string                             `yaml:"status,omitempty" json:"status,omitempty"`
+	Enabled      bool                               `yaml:"enabled" json:"enabled"`
 	DisplayName  string                             `yaml:"display_name,omitempty" json:"display_name,omitempty"`
 	Description  string                             `yaml:"description,omitempty" json:"description,omitempty"`
 	Provider     string                             `yaml:"provider,omitempty" json:"provider,omitempty"`
@@ -236,9 +236,9 @@ func NormalizeFile(path string) (*NormalizedProjectSpec, error) {
 }
 
 func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, projectVolumes map[string]NormalizedVolumeSpec, projectWorkspaces map[string]WorkspaceSpec, projectMCPServers map[string]NormalizedMCPServerSpec) (NormalizedAgentSpec, error) {
-	status := strings.ToLower(strings.TrimSpace(agent.Status))
-	if status != "" && status != "enabled" && status != "disabled" {
-		return NormalizedAgentSpec{}, fmt.Errorf("%s.status must be enabled or disabled", joinPath("agents", name))
+	enabled := true
+	if agent.Enabled != nil {
+		enabled = *agent.Enabled
 	}
 	driver, err := normalizeDriverSpec(joinPath("agents", name)+".driver", agent.Driver)
 	if err != nil {
@@ -282,7 +282,7 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 	}
 	return NormalizedAgentSpec{
 		Name:         name,
-		Status:       status,
+		Enabled:      enabled,
 		DisplayName:  strings.TrimSpace(agent.DisplayName),
 		Description:  strings.TrimSpace(agent.Description),
 		Provider:     strings.TrimSpace(agent.Provider),

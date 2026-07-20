@@ -161,12 +161,6 @@ enum SchedulerRunStatus {
   SCHEDULER_RUN_STATUS_SKIPPED = 5;
 }
 
-enum AgentStatus {
-  AGENT_STATUS_UNSPECIFIED = 0;
-  AGENT_STATUS_ENABLED = 1;
-  AGENT_STATUS_DISABLED = 2;
-}
-
 enum ProjectAgentAvailability {
   PROJECT_AGENT_AVAILABILITY_UNSPECIFIED = 0;
   PROJECT_AGENT_AVAILABILITY_AVAILABLE = 1;
@@ -668,7 +662,7 @@ message AgentSpec {
   repeated VolumeMountSpec volumes = 13;
   repeated MCPServerSpec mcp_servers = 14;
   repeated SkillSpec skills = 15;
-  AgentStatus status = 16;
+  optional bool enabled = 16;
   string display_name = 17;
   string description = 18;
 }

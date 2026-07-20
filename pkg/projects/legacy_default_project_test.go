@@ -35,7 +35,7 @@ func TestLegacyDefaultNormalizedProjectPreservesAgentConfiguration(t *testing.T)
 		t.Fatalf("project = %#v", project.Spec)
 	}
 	worker := project.Spec.Agents[1]
-	if worker.Name != "worker-b" || worker.Status != "disabled" || worker.Provider != "claude" || worker.Driver.Name != "docker" || worker.Image != "guest:b" {
+	if worker.Name != "worker-b" || worker.Enabled || worker.Provider != "claude" || worker.Driver.Name != "docker" || worker.Image != "guest:b" {
 		t.Fatalf("worker identity/runtime = %#v", worker)
 	}
 	if !worker.Env["TOKEN"].Secret || worker.Env["TOKEN"].Value != "secret" || worker.Jupyter == nil || !worker.Jupyter.Enabled || worker.Jupyter.GuestPort != 9999 {
@@ -234,7 +234,7 @@ func TestLegacyDefaultNormalizedProjectKeepsUnboundLoaderVisibleButDisabled(t *t
 		t.Fatalf("compatibility agent = %#v", project.Spec.Agents)
 	}
 	agent := project.Spec.Agents[0]
-	if agent.Status != "disabled" || agent.Scheduler == nil || agent.Scheduler.Enabled {
+	if agent.Enabled || agent.Scheduler == nil || agent.Scheduler.Enabled {
 		t.Fatalf("unbound compatibility agent = %#v", agent)
 	}
 	if agent.DisplayName != "未绑定任务" || agent.Description != "迁移后保持可见但禁用" {
@@ -253,7 +253,7 @@ func TestLegacyDefaultNormalizedProjectKeepsUnboundLoaderVisibleButDisabled(t *t
 	if err != nil {
 		t.Fatalf("reproject adopted unbound loader: %v", err)
 	}
-	if len(reprojected.Spec.Agents) != 1 || reprojected.Spec.Agents[0].Status != "disabled" || reprojected.Spec.Agents[0].Scheduler.Enabled {
+	if len(reprojected.Spec.Agents) != 1 || reprojected.Spec.Agents[0].Enabled || reprojected.Spec.Agents[0].Scheduler.Enabled {
 		t.Fatalf("reprojected unbound compatibility agent = %#v", reprojected.Spec.Agents)
 	}
 }
