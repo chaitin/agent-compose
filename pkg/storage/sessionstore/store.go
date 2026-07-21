@@ -508,7 +508,7 @@ func (s *Store) ListSandboxes(ctx context.Context, options SandboxListOptions) (
 	offset, limit := domain.NormalizeSandboxListBounds(options.Offset, options.Limit)
 	queryOffset := 0
 	skipped := 0
-	page := make([]*Sandbox, 0, limit)
+	var page []*Sandbox
 	total := 0
 	for len(page) < limit {
 		query := options

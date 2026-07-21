@@ -105,6 +105,20 @@ func TestIndexedListMatchesFilesystemContract(t *testing.T) {
 	}
 }
 
+func TestIndexedListDoesNotPreallocateRequestedLimit(t *testing.T) {
+	store := newTestStore(t)
+	sandbox := seedSandboxDir(t, store, "large-limit", time.Unix(100, 0).UTC())
+	store.recordIndex(sandbox)
+
+	result, err := store.ListSandboxes(context.Background(), domain.SandboxListOptions{Limit: 1 << 30})
+	if err != nil {
+		t.Fatalf("ListSandboxes: %v", err)
+	}
+	if got := ids(result.Sandboxes); len(got) != 1 || got[0] != sandbox.Summary.ID {
+		t.Fatalf("sandboxes = %v, want [%s]", got, sandbox.Summary.ID)
+	}
+}
+
 func TestListSandboxesClampsOffsetBeyondEndAfterGhostPruning(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
