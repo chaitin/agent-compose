@@ -123,6 +123,9 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	t.Setenv("LLM_API_KEY", "llm-key")
 	t.Setenv("LLM_MODEL", "model-x")
 	t.Setenv("LLM_TIMEOUT", "7s")
+	t.Setenv("CODEX_REQUEST_MAX_RETRIES", "0")
+	t.Setenv("CODEX_STREAM_MAX_RETRIES", "7")
+	t.Setenv("CODEX_STREAM_IDLE_TIMEOUT", "250ms")
 	t.Setenv("AGENT_TIMEOUT", "8s")
 	t.Setenv("RUNTIME_DRIVER", "docker-engine")
 	t.Setenv("DEFAULT_IMAGE", "box:latest")
@@ -172,6 +175,9 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	}
 	if config.LLMTimeout != 7*time.Second || config.AgentTimeout != 8*time.Second {
 		t.Fatalf("timeouts = %s/%s", config.LLMTimeout, config.AgentTimeout)
+	}
+	if config.CodexRequestMaxRetries != 0 || config.CodexStreamMaxRetries != 7 || config.CodexStreamIdleTimeout != 250*time.Millisecond {
+		t.Fatalf("Codex runtime config = %d/%d/%s", config.CodexRequestMaxRetries, config.CodexStreamMaxRetries, config.CodexStreamIdleTimeout)
 	}
 	if config.SandboxDiskSizeGB != 11 || config.CacheTTL != 2*time.Hour {
 		t.Fatalf("sandbox disk/cache = %d/%s", config.SandboxDiskSizeGB, config.CacheTTL)

@@ -1071,7 +1071,7 @@ func (c *Controller) ensurePromptAttachLLMFacadeEnv(ctx context.Context, sandbox
 		return nil, err
 	}
 	openAIBaseURL := strings.TrimRight(baseURL, "/") + "/api/runtime/sandboxes/" + sandbox.Summary.ID + "/llm/openai/v1"
-	if err := llms.WriteCodexRuntimeConfig(sandbox, target.Model.Name, openAIBaseURL, llms.APIProtocolResponses); err != nil {
+	if err := llms.WriteCodexRuntimeConfig(sandbox, target.Model.Name, openAIBaseURL, llms.APIProtocolResponses, llms.CodexRuntimePolicyFromConfig(c.config)); err != nil {
 		return nil, err
 	}
 	return map[string]string{

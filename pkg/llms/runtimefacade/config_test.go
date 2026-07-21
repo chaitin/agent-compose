@@ -2,13 +2,17 @@ package runtimefacade
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/samber/do/v2"
 
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/execution"
 	"agent-compose/pkg/llms"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/configstore"
@@ -20,14 +24,17 @@ func TestEnsureSessionLLMFacadeConfigCreatesCodexEnvAndToken(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	config := &appconfig.Config{
-		DataRoot:       root,
-		DbAddr:         filepath.Join(root, "data.db"),
-		LLMAPIEndpoint: "https://llm.example.test/v1",
-		LLMAPIKey:      "test-key",
-		LLMModel:       "gpt-test",
-		LLMAPIProtocol: "responses",
-		RuntimeBaseURL: "http://agent-compose.test:7410",
-		GuestHomePath:  "/root",
+		DataRoot:               root,
+		DbAddr:                 filepath.Join(root, "data.db"),
+		LLMAPIEndpoint:         "https://llm.example.test/v1",
+		LLMAPIKey:              "test-key",
+		LLMModel:               "gpt-test",
+		LLMAPIProtocol:         "responses",
+		RuntimeBaseURL:         "http://agent-compose.test:7410",
+		GuestHomePath:          "/root",
+		CodexRequestMaxRetries: 2,
+		CodexStreamMaxRetries:  3,
+		CodexStreamIdleTimeout: 4 * time.Second,
 	}
 	di := do.New()
 	do.ProvideValue(di, config)
@@ -65,6 +72,15 @@ func TestEnsureSessionLLMFacadeConfigCreatesCodexEnvAndToken(t *testing.T) {
 	}
 	if token.SandboxID != session.Summary.ID || token.Model != "gpt-test" || token.Source != "test" || token.RunID != "run-1" {
 		t.Fatalf("stored token = %#v", token)
+	}
+	codexConfig, err := os.ReadFile(filepath.Join(execution.HostSandboxHome(session), ".codex", "config.toml"))
+	if err != nil {
+		t.Fatalf("read Codex runtime config: %v", err)
+	}
+	for _, want := range []string{"request_max_retries = 2", "stream_max_retries = 3", "stream_idle_timeout_ms = 4000"} {
+		if !strings.Contains(string(codexConfig), want) {
+			t.Fatalf("Codex runtime config %q does not contain %q", string(codexConfig), want)
+		}
 	}
 }
 

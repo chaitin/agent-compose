@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
@@ -19,7 +20,44 @@ const (
 	codexManagedMCPEnd   = "# agent-compose managed mcp end"
 )
 
-func WriteCodexRuntimeConfig(session *domain.Sandbox, model, baseURL, wireAPI string) error {
+type CodexRuntimePolicy struct {
+	RequestMaxRetries uint64
+	StreamMaxRetries  uint64
+	StreamIdleTimeout time.Duration
+}
+
+func CodexRuntimePolicyFromConfig(config *appconfig.Config) CodexRuntimePolicy {
+	if config == nil {
+		return CodexRuntimePolicy{
+			RequestMaxRetries: appconfig.DefaultCodexRequestMaxRetries,
+			StreamMaxRetries:  appconfig.DefaultCodexStreamMaxRetries,
+			StreamIdleTimeout: appconfig.DefaultCodexStreamIdleTimeout,
+		}
+	}
+	idleTimeout := config.CodexStreamIdleTimeout
+	if idleTimeout < time.Millisecond {
+		idleTimeout = config.LLMTimeout
+	}
+	if idleTimeout < time.Millisecond {
+		idleTimeout = appconfig.DefaultCodexStreamIdleTimeout
+	}
+	return normalizeCodexRuntimePolicy(CodexRuntimePolicy{
+		RequestMaxRetries: min(config.CodexRequestMaxRetries, appconfig.MaxCodexRetries),
+		StreamMaxRetries:  min(config.CodexStreamMaxRetries, appconfig.MaxCodexRetries),
+		StreamIdleTimeout: idleTimeout,
+	})
+}
+
+func normalizeCodexRuntimePolicy(policy CodexRuntimePolicy) CodexRuntimePolicy {
+	policy.RequestMaxRetries = min(policy.RequestMaxRetries, appconfig.MaxCodexRetries)
+	policy.StreamMaxRetries = min(policy.StreamMaxRetries, appconfig.MaxCodexRetries)
+	if policy.StreamIdleTimeout < time.Millisecond {
+		policy.StreamIdleTimeout = appconfig.DefaultCodexStreamIdleTimeout
+	}
+	return policy
+}
+
+func WriteCodexRuntimeConfig(session *domain.Sandbox, model, baseURL, wireAPI string, policy CodexRuntimePolicy) error {
 	if session == nil {
 		return nil
 	}
@@ -28,6 +66,7 @@ func WriteCodexRuntimeConfig(session *domain.Sandbox, model, baseURL, wireAPI st
 	if model == "" || baseURL == "" {
 		return nil
 	}
+	policy = normalizeCodexRuntimePolicy(policy)
 	path := filepath.Join(execution.HostSandboxHome(session), ".codex", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create codex config dir: %w", err)
@@ -41,9 +80,9 @@ name = "agent-compose"
 base_url = %q
 env_key = "AGENT_COMPOSE_SANDBOX_TOKEN"
 wire_api = %q
-request_max_retries = 30
-stream_max_retries = 50
-stream_idle_timeout_ms = 120000
+request_max_retries = %d
+stream_max_retries = %d
+stream_idle_timeout_ms = %d
 
 # Codex otherwise clones the official curated plugin marketplace on startup, and
 # a fresh sandbox has no ~/.codex/plugins cache to hit. Keep in sync with
@@ -65,7 +104,7 @@ ignore_default_excludes = false
 
 [history]
 persistence = "save-all"
-`, model, baseURL, NormalizeWireAPI(wireAPI))
+`, model, baseURL, NormalizeWireAPI(wireAPI), policy.RequestMaxRetries, policy.StreamMaxRetries, policy.StreamIdleTimeout.Milliseconds())
 	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
 		return fmt.Errorf("write codex config: %w", err)
 	}

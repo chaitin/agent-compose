@@ -934,6 +934,10 @@ locally. Passing plain JSON Schema performs JSON parsing.
 
 - `LLM_API_ENDPOINT`, `LLM_API_KEY`, `OPENAI_API_KEY`, `LLM_MODEL`,
   `LLM_TIMEOUT`
+- `CODEX_REQUEST_MAX_RETRIES`, `CODEX_STREAM_MAX_RETRIES`, and
+  `CODEX_STREAM_IDLE_TIMEOUT` bound guest Codex retries and stream stalls. The
+  retry limits default to one and accept zero to disable that retry layer; the
+  idle timeout defaults to `LLM_TIMEOUT`.
 - `LLM_API_PROTOCOL`: `responses` (default, OpenAI Responses API) or
   `chat_completions` (OpenAI-compatible Chat Completions; aliases: `chat`,
   `chat_completion`)

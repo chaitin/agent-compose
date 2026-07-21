@@ -239,6 +239,20 @@ describe("runner execution", () => {
     });
   });
 
+  it("surfaces a failed Codex turn with its upstream error", async () => {
+    const { CodexRunner } = await import("../src/runners/codex.js");
+    await withTempSession(async (root) => {
+      codexState.events = [{
+        type: "turn.failed",
+        error: { message: "unexpected status 503 Service Unavailable: upstream down" },
+      }];
+
+      await expect(new CodexRunner(runnerOptions(root)).runPrompt("prompt")).rejects.toThrow(
+        "unexpected status 503 Service Unavailable: upstream down",
+      );
+    });
+  });
+
   it("resumes a stored Codex thread", async () => {
     const { CodexRunner } = await import("../src/runners/codex.js");
     await withTempSession(async (root) => {

@@ -60,6 +60,9 @@ type Config struct {
 	LLMAPIKey                  string
 	LLMModel                   string
 	LLMTimeout                 time.Duration
+	CodexRequestMaxRetries     uint64
+	CodexStreamMaxRetries      uint64
+	CodexStreamIdleTimeout     time.Duration
 	RuntimeBaseURL             string
 	AgentTimeout               time.Duration
 	LoaderRunTimeout           time.Duration
@@ -175,6 +178,7 @@ func NewConfig(di do.Injector) (*Config, error) {
 			llmTimeout = parsed
 		}
 	}
+	codexRuntime := loadCodexRuntimeConfig(logger, llmTimeout)
 	agentTimeout := DefaultAgentTimeout
 	if raw := os.Getenv("AGENT_TIMEOUT"); raw != "" {
 		if parsed, err := time.ParseDuration(raw); err != nil {
@@ -461,6 +465,9 @@ func NewConfig(di do.Injector) (*Config, error) {
 		LLMAPIKey:                  llmAPIKey,
 		LLMModel:                   llmModel,
 		LLMTimeout:                 llmTimeout,
+		CodexRequestMaxRetries:     codexRuntime.requestMaxRetries,
+		CodexStreamMaxRetries:      codexRuntime.streamMaxRetries,
+		CodexStreamIdleTimeout:     codexRuntime.streamIdleTimeout,
 		RuntimeBaseURL:             runtimeBaseURL,
 		AgentTimeout:               agentTimeout,
 		LoaderRunTimeout:           loaderRunTimeout,

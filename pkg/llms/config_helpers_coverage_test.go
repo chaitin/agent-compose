@@ -17,7 +17,7 @@ import (
 func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	root := t.TempDir()
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", WorkspacePath: filepath.Join(root, "workspace")}}
-	if err := WriteCodexRuntimeConfig(session, "gpt", "http://runtime/openai/v1/", APIProtocolChatCompletions); err != nil {
+	if err := WriteCodexRuntimeConfig(session, "gpt", "http://runtime/openai/v1/", APIProtocolChatCompletions, CodexRuntimePolicyFromConfig(nil)); err != nil {
 		t.Fatalf("WriteCodexRuntimeConfig returned error: %v", err)
 	}
 	codexConfig, err := os.ReadFile(filepath.Join(execution.HostSandboxHome(session), ".codex", "config.toml"))
@@ -34,7 +34,7 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if err != nil || !strings.Contains(string(openCodeConfig), "@ai-sdk/anthropic") || !strings.Contains(string(openCodeConfig), "AGENT_COMPOSE_SANDBOX_TOKEN") {
 		t.Fatalf("opencode config=%q err=%v", string(openCodeConfig), err)
 	}
-	if err := WriteCodexRuntimeConfig(nil, "gpt", "http://runtime", ""); err != nil {
+	if err := WriteCodexRuntimeConfig(nil, "gpt", "http://runtime", "", CodexRuntimePolicyFromConfig(nil)); err != nil {
 		t.Fatalf("nil session codex config returned error: %v", err)
 	}
 	mcps := map[string]compose.NormalizedMCPServerSpec{

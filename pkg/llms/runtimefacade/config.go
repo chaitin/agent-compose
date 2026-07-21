@@ -81,7 +81,7 @@ func ensureSessionCodexConfig(ctx context.Context, config *appconfig.Config, sto
 		return nil, err
 	}
 	openAIBaseURL := strings.TrimRight(baseURL, "/") + "/api/runtime/sandboxes/" + session.Summary.ID + "/llm/openai/v1"
-	if err := llms.WriteCodexRuntimeConfig(session, target.Model.Name, openAIBaseURL, facadeWireAPI); err != nil {
+	if err := llms.WriteCodexRuntimeConfig(session, target.Model.Name, openAIBaseURL, facadeWireAPI, llms.CodexRuntimePolicyFromConfig(config)); err != nil {
 		return nil, err
 	}
 	return map[string]string{
