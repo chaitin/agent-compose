@@ -73,7 +73,10 @@ when the current user cannot write there. For automation, run
 `install --yes` and pass options explicitly.
 
 The base stack starts the daemon. The frontend is defined under the `with-ui`
-profile; enable it from the installation directory printed by the installer:
+profile, which the installer leaves off unless you answer yes to **Install web
+UI** (or pass `--with-ui`). Enabling it there persists `COMPOSE_PROFILES` in
+`.env`, so later `docker compose up -d` runs keep the frontend. To turn it on
+afterwards, from the installation directory printed by the installer:
 
 ```bash
 cd <directory printed by the installer>
@@ -81,7 +84,7 @@ docker compose --profile with-ui up -d
 ```
 
 On first run the installer generates an `admin` password and prints it once;
-use it at the printed URL after enabling the UI profile. See
+use it at the URL the installer prints when the UI is enabled. See
 [deploy/README.md](deploy/README.md) for install, upgrade, uninstall, data
 preservation, and mirror/private-registry options.
 

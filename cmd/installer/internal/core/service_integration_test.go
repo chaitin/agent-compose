@@ -89,6 +89,9 @@ func TestIntegrationUpgradePreservesPortUnlessExplicitlySet(t *testing.T) {
 	options.BundleDir = makeTestBundle(t, "v1")
 	options.KVMPath = filepath.Join(root, "missing-kvm")
 	options.NoStart = true
+	// A URL is only reported when the frontend publishes the port.
+	options.WithUI = true
+	options.WithUISet = true
 	service := Service{Runner: &fakeRunner{}}
 
 	if _, err := service.Apply(context.Background(), OperationInstall, options); err != nil {
@@ -109,7 +112,7 @@ func TestIntegrationUpgradePreservesPortUnlessExplicitlySet(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertTestEnv(t, readTestEnv(t, envPath), "AGENT_COMPOSE_HTTP_PORT", "8080")
-	if preserved.URL != "http://localhost:8080" {
+	if !strings.HasSuffix(preserved.URL, ":8080") {
 		t.Fatalf("preserved URL = %q", preserved.URL)
 	}
 
@@ -120,7 +123,7 @@ func TestIntegrationUpgradePreservesPortUnlessExplicitlySet(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertTestEnv(t, readTestEnv(t, envPath), "AGENT_COMPOSE_HTTP_PORT", "9090")
-	if overridden.URL != "http://localhost:9090" {
+	if !strings.HasSuffix(overridden.URL, ":9090") {
 		t.Fatalf("overridden URL = %q", overridden.URL)
 	}
 }

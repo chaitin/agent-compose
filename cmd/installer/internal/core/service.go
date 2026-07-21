@@ -29,6 +29,11 @@ type Service struct {
 	Reporter   Reporter
 }
 
+// uiProfile gates the frontend service in docker-compose.yml. Compose reads
+// COMPOSE_PROFILES from the project .env, so persisting it there keeps a later
+// manual `docker compose up -d` consistent with the installed selection.
+const uiProfile = "with-ui"
+
 type Result struct {
 	InstallDir        string
 	URL               string
@@ -36,8 +41,12 @@ type Result struct {
 	GeneratedPassword string
 	DataDir           string
 	ComposeFiles      string
+	ComposeProfiles   string
 	RetainedFiles     []string
 }
+
+// WithUI reports whether the installation published the web frontend.
+func (r Result) WithUI() bool { return r.ComposeProfiles == uiProfile }
 
 func (s Service) Apply(ctx context.Context, operation Operation, options Options) (Result, error) {
 	if operation == OperationUninstall {
@@ -113,6 +122,11 @@ func (s Service) installOrUpgrade(ctx context.Context, operation Operation, opti
 	}
 	defer plan.Close()
 	result = plan.result
+	// The port is only published by the frontend, so an explicit port without
+	// the UI would otherwise be accepted and then quietly do nothing.
+	if options.PortSet && !result.WithUI() {
+		s.report(EventWarning, "the requested port is unused because the web UI is not installed; pass --with-ui to publish it")
+	}
 
 	tx, err := beginInstallTransaction(options.InstallDir, plan.dataDir)
 	if err != nil {
@@ -170,10 +184,11 @@ func (s Service) installOrUpgrade(ctx context.Context, operation Operation, opti
 	return result, nil
 }
 
-// compose deliberately passes no --progress flag. Forcing plain output kept the
-// TUI from having to cope with docker's cursor-driven redraws, but the flag
-// only exists on newer Compose plugins: on older ones every install and upgrade
-// failed outright at the pull step with "unknown flag: --progress".
+// compose deliberately passes no --progress flag. It was once forced to plain
+// so the TUI would not have to cope with docker's cursor-driven redraws, but
+// the flag only exists on newer Compose plugins and made pull fail outright on
+// older ones. The log now merges per-layer progress by itself, so accepting
+// whatever format Compose emits costs nothing.
 func (s Service) compose(ctx context.Context, dir string, args ...string) error {
 	return s.runner().Run(ctx, dir, "docker", append([]string{"compose"}, args...)...)
 }
@@ -280,6 +295,10 @@ func prepareInstallPlan(operation Operation, options Options, source *bundle) (*
 	if err != nil {
 		return fail(err)
 	}
+	composeProfiles, err := selectComposeProfiles(env, envExists, options)
+	if err != nil {
+		return fail(err)
+	}
 	if err := os.WriteFile(filepath.Join(workDir, ".env"), env.Bytes(), 0o600); err != nil {
 		return fail(err)
 	}
@@ -299,10 +318,27 @@ func prepareInstallPlan(operation Operation, options Options, source *bundle) (*
 		username = "admin"
 	}
 	plan.result = Result{
-		InstallDir: options.InstallDir, URL: fmt.Sprintf("http://localhost:%d", effectivePort),
-		Username: username, GeneratedPassword: password, DataDir: dataDir, ComposeFiles: composeFiles,
+		InstallDir: options.InstallDir, Username: username, GeneratedPassword: password,
+		DataDir: dataDir, ComposeFiles: composeFiles, ComposeProfiles: composeProfiles,
+	}
+	// Without the frontend nothing listens on the published port, so reporting a
+	// URL would send the operator to a dead address.
+	if plan.result.WithUI() {
+		plan.result.URL = httpURL(hostAddress(), effectivePort)
 	}
 	return plan, nil
+}
+
+func selectComposeProfiles(env *envFile, envExists bool, options Options) (string, error) {
+	configured, ok := env.Get("COMPOSE_PROFILES")
+	if envExists && !options.WithUISet && ok {
+		return strings.TrimSpace(configured), nil
+	}
+	value := ""
+	if options.WithUI {
+		value = uiProfile
+	}
+	return value, env.Set("COMPOSE_PROFILES", value)
 }
 
 func applyHTTPPort(env *envFile, envExists bool, options Options) (int, error) {

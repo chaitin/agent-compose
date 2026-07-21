@@ -20,11 +20,11 @@ func TestModelSelectsLanguageAndInstallFlow(t *testing.T) {
 		t.Fatalf("language screen = %q, %d", m.language, m.screen)
 	}
 	press(t, m, "enter")
-	if m.operation != core.OperationInstall || m.screen != screenForm || len(m.inputs) != 3 {
-		t.Fatalf("install form = %q, %d, %d inputs", m.operation, m.screen, len(m.inputs))
+	if m.operation != core.OperationInstall || m.screen != screenForm || len(m.fields) != 4 {
+		t.Fatalf("install form = %q, %d, %d fields", m.operation, m.screen, len(m.fields))
 	}
 	form := m.View()
-	for _, expected := range []string{"Configure installation", "Install directory", "Application version", "Web UI port", "╭", "Tab / ↑↓ move"} {
+	for _, expected := range []string{"Configure installation", "Install directory", "Application version", "Install web UI", "Web UI port", "╭", "Tab / ↑↓ move"} {
 		if !strings.Contains(form, expected) {
 			t.Fatalf("install form missing %q:\n%s", expected, form)
 		}
@@ -32,22 +32,86 @@ func TestModelSelectsLanguageAndInstallFlow(t *testing.T) {
 	if strings.Contains(form, "Image prefix") {
 		t.Fatalf("advanced image prefix rendered in TUI:\n%s", form)
 	}
-	m.inputs[0].SetValue("relative")
+	m.fields[0].input.SetValue("relative")
 	press(t, m, "enter")
 	if m.err == nil || !strings.Contains(m.View(), "absolute") {
 		t.Fatalf("expected path validation in view: %v\n%s", m.err, m.View())
 	}
-	m.inputs[0].SetValue("/opt/agent-compose")
+	m.fields[0].input.SetValue("/opt/agent-compose")
 	press(t, m, "enter")
 	if m.screen != screenConfirm {
 		t.Fatalf("screen = %d, want confirmation", m.screen)
 	}
 	confirmation := m.View()
-	for _, expected := range []string{"/opt/agent-compose", "latest", "80"} {
+	for _, expected := range []string{"/opt/agent-compose", "latest", "Install web UI: No"} {
 		if !strings.Contains(confirmation, expected) {
 			t.Fatalf("confirmation missing %q:\n%s", expected, confirmation)
 		}
 	}
+	if strings.Contains(confirmation, "Web UI port") {
+		t.Fatalf("confirmation offered a port without the web UI:\n%s", confirmation)
+	}
+}
+
+func TestModelPortFollowsWebUIToggle(t *testing.T) {
+	m := installForm(t)
+	port := indexOfField(t, m, fieldPort)
+
+	if !m.fieldDisabled(port) {
+		t.Fatal("port is editable while the web UI is disabled")
+	}
+	form := m.View()
+	if !strings.Contains(form, "(not enabled)") {
+		t.Fatalf("disabled port is not marked in the form:\n%s", form)
+	}
+
+	// Tab from the UI toggle must land past the disabled port.
+	m.focus = indexOfField(t, m, fieldWithUI)
+	m.moveFocus(1)
+	if m.fields[m.focus].id != fieldInstallDir {
+		t.Fatalf("focus stopped on field %d, want the wrap past the disabled port", m.fields[m.focus].id)
+	}
+
+	m.focus = indexOfField(t, m, fieldWithUI)
+	press(t, m, "right")
+	if m.fieldDisabled(port) {
+		t.Fatal("port stayed disabled after enabling the web UI")
+	}
+	m.moveFocus(1)
+	if m.fields[m.focus].id != fieldPort {
+		t.Fatalf("focus skipped the re-enabled port, landed on %d", m.fields[m.focus].id)
+	}
+
+	press(t, m, "enter")
+	if !m.options.WithUI || !m.options.WithUISet {
+		t.Fatalf("WithUI = %t, WithUISet = %t", m.options.WithUI, m.options.WithUISet)
+	}
+	if confirmation := m.View(); !strings.Contains(confirmation, "Web UI port") {
+		t.Fatalf("confirmation hid the port with the web UI enabled:\n%s", confirmation)
+	}
+}
+
+func installForm(t *testing.T) *model {
+	t.Helper()
+	m := newModel(core.Service{}, core.DefaultOptions(), "/tmp/installer")
+	press(t, m, "down")
+	press(t, m, "enter")
+	press(t, m, "enter")
+	if m.screen != screenForm {
+		t.Fatalf("screen = %d, want the install form", m.screen)
+	}
+	return m
+}
+
+func indexOfField(t *testing.T, m *model, id fieldID) int {
+	t.Helper()
+	for i := range m.fields {
+		if m.fields[i].id == id {
+			return i
+		}
+	}
+	t.Fatalf("field %d is missing from the form", id)
+	return -1
 }
 
 func TestModelUsesCompactBrandOnNarrowTerminal(t *testing.T) {
@@ -69,8 +133,8 @@ func TestModelUninstallPurgeChoice(t *testing.T) {
 	press(t, m, "down")
 	press(t, m, "down")
 	press(t, m, "enter")
-	if m.operation != core.OperationUninstall || len(m.inputs) != 1 {
-		t.Fatalf("uninstall form = %q, %d inputs", m.operation, len(m.inputs))
+	if m.operation != core.OperationUninstall || len(m.fields) != 1 {
+		t.Fatalf("uninstall form = %q, %d fields", m.operation, len(m.fields))
 	}
 	press(t, m, "enter")
 	if m.screen != screenPurge {
@@ -176,6 +240,12 @@ func press(t *testing.T, m *model, key string) {
 		keyType, runes = tea.KeyUp, nil
 	case "down":
 		keyType, runes = tea.KeyDown, nil
+	case "left":
+		keyType, runes = tea.KeyLeft, nil
+	case "right":
+		keyType, runes = tea.KeyRight, nil
+	case " ":
+		keyType, runes = tea.KeyRunes, []rune{' '}
 	}
 	updated, _ := m.Update(tea.KeyMsg{Type: keyType, Runes: runes})
 	if updated != m {

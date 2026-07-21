@@ -38,6 +38,7 @@ curl -fsSL https://github.com/chaitin/agent-compose/releases/download/installer-
 sudo /opt/agent-compose/installer install \
   --version v1.2.3 \
   --dir /srv/agent-compose \
+  --with-ui \
   --port 8080 \
   --image-prefix registry.example.com/agent-compose \
   --yes
@@ -119,8 +120,10 @@ uninstall form removes shared Docker image caches or Compose volumes.
 
 ## Operating the deployment
 
-The base installation starts the daemon. The web UI remains in the optional
-`with-ui` profile:
+The base installation starts the daemon. The web UI stays in the optional
+`with-ui` profile unless the installer was told to include it (`--with-ui`, or
+the **Install web UI** form field), which persists `COMPOSE_PROFILES=with-ui`
+in `.env`. To enable it afterwards:
 
 ```bash
 cd /opt/agent-compose

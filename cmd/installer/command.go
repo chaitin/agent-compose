@@ -36,6 +36,7 @@ func newRootCommand(out, errOut io.Writer) *cobra.Command {
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			options.PortSet = cmd.Flags().Changed("port")
+			options.WithUISet = cmd.Flags().Changed("with-ui")
 			if options.legacyUpgrade || options.yes || hasInstallerFlags(cmd) {
 				operation := core.OperationInstall
 				if options.legacyUpgrade {
@@ -59,6 +60,7 @@ func newRootCommand(out, errOut io.Writer) *cobra.Command {
 	flags := root.PersistentFlags()
 	flags.StringVar(&options.InstallDir, "dir", options.InstallDir, "installation directory")
 	flags.IntVar(&options.Port, "port", options.Port, "web UI host port")
+	flags.BoolVar(&options.WithUI, "with-ui", options.WithUI, "also publish the web UI")
 	flags.StringVar(&options.Version, "version", options.Version, "application release version")
 	flags.StringVar(&options.ImagePrefix, "image-prefix", "", "image registry prefix")
 	flags.BoolVar(&options.NoStart, "no-start", false, "prepare files without starting services")
@@ -90,6 +92,7 @@ func newOperationCommand(operation core.Operation, options *commandOptions, out,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			options.PortSet = cmd.Flags().Changed("port")
+			options.WithUISet = cmd.Flags().Changed("with-ui")
 			return executeOperation(cmd.Context(), operation, options, out, errOut)
 		},
 	}
@@ -176,11 +179,21 @@ func writeResult(out io.Writer, operation core.Operation, result core.Result, pu
 	if _, err := fmt.Fprintf(out, "agent-compose %s complete\n", operation); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(out, "Directory: %s\nURL: %s\nCompose: %s\n", result.InstallDir, result.URL, result.ComposeFiles); err != nil {
+	if _, err := fmt.Fprintf(out, "Directory: %s\nCompose: %s\n", result.InstallDir, result.ComposeFiles); err != nil {
 		return err
+	}
+	if result.URL != "" {
+		if _, err := fmt.Fprintf(out, "URL: %s\n", result.URL); err != nil {
+			return err
+		}
 	}
 	if result.GeneratedPassword != "" {
 		if _, err := fmt.Fprintf(out, "Username: %s\nPassword: %s\n", result.Username, result.GeneratedPassword); err != nil {
+			return err
+		}
+	}
+	if !result.WithUI() {
+		if _, err := fmt.Fprintf(out, "Web UI not installed. Enable it with:\n  cd %s && docker compose --profile %s up -d\n", result.InstallDir, "with-ui"); err != nil {
 			return err
 		}
 	}
@@ -188,7 +201,7 @@ func writeResult(out io.Writer, operation core.Operation, result core.Result, pu
 }
 
 func hasInstallerFlags(cmd *cobra.Command) bool {
-	for _, name := range []string{"dir", "port", "version", "image-prefix", "no-start", "yes"} {
+	for _, name := range []string{"dir", "port", "version", "image-prefix", "no-start", "yes", "with-ui"} {
 		if cmd.Flags().Changed(name) {
 			return true
 		}
