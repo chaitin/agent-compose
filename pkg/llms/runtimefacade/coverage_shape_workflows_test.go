@@ -1,4 +1,4 @@
-package runtimefacade
+package runtimefacade_test
 
 import "testing"
 

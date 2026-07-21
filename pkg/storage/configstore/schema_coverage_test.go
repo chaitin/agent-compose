@@ -901,7 +901,11 @@ func testConfigStoreLLMBootstrapResolveCoverage(t *testing.T, ctx context.Contex
 		t.Fatalf("initSchema for LLM bootstrap returned error: %v", err)
 	}
 	config := &appconfig.Config{LLMAPIEndpoint: "https://config.example/v1", LLMAPIProtocol: "chat_completions", LLMAPIKey: "config-key", LLMModel: "config-model"}
-	if lookup := llms.DefaultLLMEnvProviderLookup(ctx, config, store); lookup("LLM_API_ENDPOINT") != "https://config.example/v1" {
+	lookup, err := llms.DefaultLLMEnvProviderLookup(ctx, config, store)
+	if err != nil {
+		t.Fatalf("DefaultLLMEnvProviderLookup returned error: %v", err)
+	}
+	if lookup("LLM_API_ENDPOINT") != "https://config.example/v1" {
 		t.Fatalf("config LLM lookup failed")
 	}
 	if _, err := store.ReplaceGlobalEnv(ctx, []domain.SandboxEnvVar{
@@ -927,15 +931,18 @@ func testConfigStoreLLMBootstrapResolveCoverage(t *testing.T, ctx context.Contex
 	if err != nil {
 		t.Fatalf("ResolveRuntimeLLMTargetWithEnv OpenAI returned error: %v", err)
 	}
-	if runtimeTarget.Provider.ID == target.Provider.ID || runtimeTarget.Provider.Scope != llms.ProviderScopeSessionEnv || runtimeTarget.Model.ID != "session-model" {
+	if runtimeTarget.Provider.ID == target.Provider.ID || runtimeTarget.Provider.Scope != llms.ProviderScopeSessionEnv || runtimeTarget.Model.ID != "session-model" || runtimeTarget.Provider.APIKey != "session-key" || runtimeTarget.WireAPI != llms.APIProtocolChatCompletions {
 		t.Fatalf("session OpenAI target = %#v", runtimeTarget)
 	}
 	if llms.HasEnabledLLMProviderID(ctx, store, runtimeTarget.Provider.ID) != true {
 		t.Fatalf("expected session provider to be enabled")
 	}
-	reusedRuntimeTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, "sandbox-1", llms.ProviderFamilyOpenAI, "session-model", "", nil)
-	if err != nil || reusedRuntimeTarget.Provider.ID != runtimeTarget.Provider.ID {
-		t.Fatalf("reused session OpenAI target=%#v err=%v", reusedRuntimeTarget, err)
+	inheritedRuntimeTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, "sandbox-1", llms.ProviderFamilyOpenAI, "global-model", "", nil)
+	if err != nil {
+		t.Fatalf("inherited session OpenAI target error: %v", err)
+	}
+	if inheritedRuntimeTarget.Provider.ID != llms.ProviderIDDefaultOpenAI || inheritedRuntimeTarget.Provider.BaseURL != "https://global.example/v1" || inheritedRuntimeTarget.Provider.APIKey != "global-key" {
+		t.Fatalf("inherited session OpenAI target=%#v", inheritedRuntimeTarget)
 	}
 	if _, err := llms.ResolveRuntimeLLMTarget(ctx, config, store, "missing-model", "missing-provider"); err == nil {
 		t.Fatalf("expected missing runtime LLM target error")

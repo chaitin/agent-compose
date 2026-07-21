@@ -102,14 +102,15 @@ func (s *llmStore) UpsertDefaultLLMConfig(ctx context.Context, provider llms.Pro
 		ON CONFLICT(id) DO UPDATE SET name = excluded.name, provider_type = excluded.provider_type, default_wire_api = excluded.default_wire_api, base_url = excluded.base_url, api_key = excluded.api_key, auth_header = excluded.auth_header, auth_scheme = excluded.auth_scheme, headers_json = excluded.headers_json, use_generic_responses_text_parts = excluded.use_generic_responses_text_parts, weight = excluded.weight, enabled = excluded.enabled, scope = excluded.scope, updated_at = excluded.updated_at`, provider.ID, provider.Name, provider.ProviderType, provider.DefaultWireAPI, provider.BaseURL, provider.APIKey, provider.AuthHeader, provider.AuthScheme, provider.HeadersJSON, BoolToInt(provider.UseGenericResponsesTextParts), provider.Weight, provider.Scope, now, now); err != nil {
 		return fmt.Errorf("insert default llm provider: %w", err)
 	}
-	if model.DefaultModel {
+	if model.DefaultModel && model.Scope != llms.ProviderScopeSessionEnv {
 		if _, err := tx.ExecContext(ctx, `UPDATE llm_model SET default_model = 0 WHERE default_model != 0`); err != nil {
 			return fmt.Errorf("reset default llm models: %w", err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_model(id, name, description, default_model, enabled, scope, created_at, updated_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, default_model = excluded.default_model, enabled = excluded.enabled, scope = excluded.scope, updated_at = excluded.updated_at`, model.ID, model.Name, model.Description, BoolToInt(model.DefaultModel), BoolToInt(model.Enabled), model.Scope, now, now); err != nil {
+		ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, default_model = excluded.default_model, enabled = excluded.enabled, scope = excluded.scope, updated_at = excluded.updated_at
+		WHERE excluded.scope != ? OR llm_model.scope = ?`, model.ID, model.Name, model.Description, BoolToInt(model.DefaultModel), BoolToInt(model.Enabled), model.Scope, now, now, llms.ProviderScopeSessionEnv, llms.ProviderScopeSessionEnv); err != nil {
 		return fmt.Errorf("insert default llm model: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_provider_model(provider_id, model_id, wire_api, weight)

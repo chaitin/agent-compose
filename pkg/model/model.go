@@ -182,9 +182,13 @@ type Sandbox struct {
 	WorkspaceProvisioning *SandboxWorkspaceProvisioning `json:"workspace_provisioning,omitempty"`
 	WorkspaceReclamation  *SandboxWorkspaceReclamation  `json:"workspace_reclamation,omitempty"`
 	EnvItems              []SandboxEnvVar               `json:"env_items,omitempty"`
-	VolumeMounts          []SandboxVolumeMount          `json:"volume_mounts,omitempty"`
-	RuntimeEnvItems       []SandboxEnvVar               `json:"-"`
-	ProviderEnvItems      []SandboxEnvVar               `json:"-"`
+	// ProviderEnvOverrideNames records source provenance without persisting
+	// provider credentials. Values remain transient in ProviderEnvItems or in
+	// the session-scoped provider row created by the LLM resolver.
+	ProviderEnvOverrideNames []string             `json:"provider_env_override_names,omitempty"`
+	VolumeMounts             []SandboxVolumeMount `json:"volume_mounts,omitempty"`
+	RuntimeEnvItems          []SandboxEnvVar      `json:"-"`
+	ProviderEnvItems         []SandboxEnvVar      `json:"-"`
 }
 
 func SandboxWorkspaceReclaimed(sandbox *Sandbox) bool {

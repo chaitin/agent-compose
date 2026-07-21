@@ -8,6 +8,8 @@ import (
 type EnvProviderLookup func(keys ...string) string
 
 type DefaultConfigStore interface {
+	// UpsertDefaultLLMConfig persists a provider/model binding. A session-scoped
+	// model must not replace metadata owned by an existing non-session model.
 	UpsertDefaultLLMConfig(ctx context.Context, provider Provider, model Model) error
 }
 
@@ -52,13 +54,19 @@ func HasConfiguredProviderForFamily(ctx context.Context, store ProviderListStore
 }
 
 func EnsureOpenAIEnvProvider(ctx context.Context, store DefaultConfigStore, lookup EnvProviderLookup, providerID, name, scope, requestedModel string, defaultModel bool) (string, error) {
-	endpoint := firstNonEmpty(lookup("LLM_API_ENDPOINT"), "https://api.openai.com")
-	if LooksLikeAnthropicMessagesEndpoint(endpoint) {
-		return "", nil
+	environment := providerEnvironment{
+		endpoint: lookup("LLM_API_ENDPOINT"),
+		protocol: lookup("LLM_API_PROTOCOL"),
+		apiKey:   lookup("LLM_API_KEY", "OPENAI_API_KEY"),
+		model:    lookup("LLM_MODEL"),
 	}
-	protocol := NormalizeWireAPI(lookup("LLM_API_PROTOCOL"))
-	apiKey := lookup("LLM_API_KEY", "OPENAI_API_KEY")
-	model := strings.TrimSpace(firstNonEmpty(requestedModel, lookup("LLM_MODEL")))
+	return ensureOpenAIProviderEnvironment(ctx, store, environment, providerID, name, scope, requestedModel, defaultModel)
+}
+
+func ensureOpenAIProviderEnvironment(ctx context.Context, store DefaultConfigStore, environment providerEnvironment, providerID, name, scope, requestedModel string, defaultModel bool) (string, error) {
+	endpoint := firstNonEmpty(environment.endpoint, "https://api.openai.com")
+	protocol := NormalizeWireAPI(environment.protocol)
+	model := strings.TrimSpace(firstNonEmpty(requestedModel, environment.model))
 	if providerID == "" || model == "" {
 		return "", nil
 	}
@@ -68,7 +76,7 @@ func EnsureOpenAIEnvProvider(ctx context.Context, store DefaultConfigStore, look
 		ProviderType:   ProviderFamilyOpenAI,
 		DefaultWireAPI: protocol,
 		BaseURL:        endpoint,
-		APIKey:         apiKey,
+		APIKey:         environment.apiKey,
 		AuthHeader:     "Authorization",
 		AuthScheme:     "Bearer",
 		HeadersJSON:    "{}",
@@ -78,25 +86,12 @@ func EnsureOpenAIEnvProvider(ctx context.Context, store DefaultConfigStore, look
 	}, Model{ID: model, Name: model, DefaultModel: defaultModel, Enabled: true, Scope: scope})
 }
 
-func EnsureAnthropicEnvProvider(ctx context.Context, store DefaultConfigStore, lookup EnvProviderLookup, authHeader, authScheme, providerID, name, scope, requestedModel string, defaultModel bool) (string, error) {
-	anthropicEndpoint := lookup("ANTHROPIC_BASE_URL", "ANTHROPIC_API_ENDPOINT")
-	genericEndpoint := lookup("LLM_API_ENDPOINT")
-	anthropicKey := lookup("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
-	anthropicModel := lookup("ANTHROPIC_MODEL", "CLAUDE_MODEL")
-	genericModel := lookup("LLM_MODEL")
-	useGenericEndpoint := anthropicEndpoint == "" && LooksLikeAnthropicMessagesEndpoint(genericEndpoint)
-	if useGenericEndpoint {
-		anthropicEndpoint = genericEndpoint
-	}
-	if genericModel != "" && (useGenericEndpoint || anthropicEndpoint != "" || anthropicKey != "" || anthropicModel != "") {
-		anthropicModel = firstNonEmpty(anthropicModel, genericModel)
-	}
-	if anthropicEndpoint == "" && strings.TrimSpace(anthropicKey) == "" && strings.TrimSpace(anthropicModel) == "" {
+func ensureAnthropicProviderEnvironment(ctx context.Context, store DefaultConfigStore, environment providerEnvironment, providerID, name, scope, requestedModel string, defaultModel bool) (string, error) {
+	if !environment.configured {
 		return "", nil
 	}
-	endpoint := firstNonEmpty(anthropicEndpoint, "https://api.anthropic.com")
-	apiKey := firstNonEmpty(anthropicKey, lookup("LLM_API_KEY"))
-	model := strings.TrimSpace(firstNonEmpty(requestedModel, anthropicModel))
+	endpoint := firstNonEmpty(environment.endpoint, "https://api.anthropic.com")
+	model := strings.TrimSpace(firstNonEmpty(requestedModel, environment.model))
 	if providerID == "" || model == "" {
 		return "", nil
 	}
@@ -106,22 +101,12 @@ func EnsureAnthropicEnvProvider(ctx context.Context, store DefaultConfigStore, l
 		ProviderType:   ProviderFamilyAnthropic,
 		DefaultWireAPI: APIProtocolMessages,
 		BaseURL:        endpoint,
-		APIKey:         apiKey,
-		AuthHeader:     authHeader,
-		AuthScheme:     authScheme,
+		APIKey:         environment.apiKey,
+		AuthHeader:     environment.authHeader,
+		AuthScheme:     environment.authScheme,
 		HeadersJSON:    `{"anthropic-version":"2023-06-01"}`,
 		Weight:         10,
 		Enabled:        true,
 		Scope:          scope,
 	}, Model{ID: model, Name: model, DefaultModel: defaultModel, Enabled: true, Scope: scope})
-}
-
-func AnthropicProviderAuthFromLookup(lookup EnvProviderLookup) (string, string) {
-	if strings.TrimSpace(lookup("ANTHROPIC_API_KEY")) != "" {
-		return "x-api-key", ""
-	}
-	if strings.TrimSpace(lookup("ANTHROPIC_AUTH_TOKEN")) != "" {
-		return "Authorization", "Bearer"
-	}
-	return "x-api-key", ""
 }

@@ -1,4 +1,4 @@
-package runtimefacade
+package runtimefacade_test
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	driverpkg "agent-compose/pkg/driver"
 	"agent-compose/pkg/execution"
 	"agent-compose/pkg/llms"
+	"agent-compose/pkg/llms/runtimefacade"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/configstore"
 )
@@ -50,7 +51,7 @@ func TestEnsureSessionLLMFacadeConfigCreatesCodexEnvAndToken(t *testing.T) {
 		},
 	}
 
-	env, err := EnsureSessionLLMFacadeConfig(ctx, config, store, session, "codex", "", "test", "run-1")
+	env, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, config, store, session, "codex", "", "test", "run-1")
 	if err != nil {
 		t.Fatalf("EnsureSessionLLMFacadeConfig returned error: %v", err)
 	}
@@ -84,6 +85,65 @@ func TestEnsureSessionLLMFacadeConfigCreatesCodexEnvAndToken(t *testing.T) {
 	}
 }
 
+func TestEnsureSessionCodexConfigBridgesResponsesIngressToChatUpstream(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:       root,
+		DbAddr:         filepath.Join(root, "data.db"),
+		LLMAPIEndpoint: "https://chat.example.test/v1",
+		LLMAPIProtocol: llms.APIProtocolChatCompletions,
+		LLMAPIKey:      "chat-key",
+		LLMModel:       "chat-model",
+		RuntimeBaseURL: "http://agent-compose.test:7410",
+		GuestHomePath:  "/root",
+	}
+	di := do.New()
+	do.ProvideValue(di, config)
+	store, err := configstore.NewConfigStore(di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	session := &domain.Sandbox{
+		Summary: domain.SandboxSummary{
+			ID:            "sandbox-codex-chat",
+			Driver:        driverpkg.RuntimeDriverDocker,
+			WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-codex-chat", "workspace"),
+		},
+	}
+
+	env, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, config, store, session, "codex", "", runtimefacade.TokenSourceAgent, "run-chat")
+	if err != nil {
+		t.Fatalf("EnsureSessionLLMFacadeConfig returned error: %v", err)
+	}
+	if env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses {
+		t.Fatalf("LLM_API_PROTOCOL = %q, want responses", env["LLM_API_PROTOCOL"])
+	}
+	token, err := store.GetLLMFacadeToken(ctx, env["AGENT_COMPOSE_SANDBOX_TOKEN"])
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
+	}
+	if token.WireAPI != llms.APIProtocolResponses || token.ProviderID == "" || token.Model != "chat-model" {
+		t.Fatalf("stored token = %#v", token)
+	}
+	target, err := llms.ResolveRuntimeLLMTarget(ctx, config, store, "chat-model", token.ProviderID)
+	if err != nil {
+		t.Fatalf("ResolveRuntimeLLMTarget returned error: %v", err)
+	}
+	if target.WireAPI != llms.APIProtocolChatCompletions {
+		t.Fatalf("upstream wire API = %q, want chat_completions", target.WireAPI)
+	}
+	configBytes, err := os.ReadFile(filepath.Join(execution.HostSandboxHome(session), ".codex", "config.toml"))
+	if err != nil {
+		t.Fatalf("read Codex config: %v", err)
+	}
+	if !strings.Contains(string(configBytes), `wire_api = "responses"`) {
+		t.Fatalf("Codex config = %s", configBytes)
+	}
+}
+
 func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T) {
 	isolateLLMEnv(t)
 
@@ -113,11 +173,12 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 			{Name: "ANTHROPIC_API_KEY", Value: "anthropic-key"},
 			{Name: "ANTHROPIC_MODEL", Value: "claude-test"},
 			{Name: "LLM_API_ENDPOINT", Value: "https://openai.example.test/v1"},
+			{Name: "LLM_API_PROTOCOL", Value: llms.APIProtocolChatCompletions},
 			{Name: "LLM_API_KEY", Value: "openai-key"},
 			{Name: "LLM_MODEL", Value: "gpt-test"},
 		},
 	}
-	claude, err := EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "claude", "", "agent", "run-claude")
+	claude, err := runtimefacade.EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "claude", "", "agent", "run-claude")
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig claude returned error: %v", err)
 	}
@@ -134,15 +195,26 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 		t.Fatalf("claude emitted deprecated session token env")
 	}
 
-	openAI, err := EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "opencode", "openai/gpt-test", TokenSourceAgent, "run-openai")
+	openAI, err := runtimefacade.EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "opencode", "openai/gpt-test", runtimefacade.TokenSourceAgent, "run-openai")
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode openai returned error: %v", err)
 	}
 	if openAI.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses || openAI.Env["OPENCODE_CONFIG"] == "" {
 		t.Fatalf("opencode openai env = %#v", openAI.Env)
 	}
+	openAIToken, err := store.GetLLMFacadeToken(ctx, openAI.Env["AGENT_COMPOSE_SANDBOX_TOKEN"])
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken opencode openai returned error: %v", err)
+	}
+	openAITarget, err := llms.ResolveRuntimeLLMTarget(ctx, config, store, "gpt-test", openAIToken.ProviderID)
+	if err != nil {
+		t.Fatalf("ResolveRuntimeLLMTarget opencode openai returned error: %v", err)
+	}
+	if openAIToken.WireAPI != llms.APIProtocolResponses || openAITarget.WireAPI != llms.APIProtocolChatCompletions {
+		t.Fatalf("opencode token wire api = %q, upstream wire api = %q", openAIToken.WireAPI, openAITarget.WireAPI)
+	}
 
-	anthropic, err := EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "opencode", "anthropic/claude-test", TokenSourceAgent, "run-anthropic")
+	anthropic, err := runtimefacade.EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "opencode", "anthropic/claude-test", runtimefacade.TokenSourceAgent, "run-anthropic")
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode anthropic returned error: %v", err)
 	}
@@ -150,7 +222,7 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 		t.Fatalf("opencode anthropic env = %#v", anthropic.Env)
 	}
 
-	custom, err := EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "opencode", "custom/gpt-custom", TokenSourceLoaderCommand, "run-custom")
+	custom, err := runtimefacade.EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "opencode", "custom/gpt-custom", runtimefacade.TokenSourceLoaderCommand, "run-custom")
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode custom returned error: %v", err)
 	}
@@ -158,28 +230,22 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 		t.Fatalf("opencode custom env = %#v", custom.Env)
 	}
 
-	noop, err := EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "opencode", "opencode/local", "", "")
+	noop, err := runtimefacade.EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "opencode", "opencode/local", "", "")
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode local returned error: %v", err)
 	}
 	if len(noop.Env) != 0 {
 		t.Fatalf("opencode local env = %#v", noop.Env)
 	}
-	if _, err := EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "opencode", "bad-model", "", ""); err == nil {
+	if _, err := runtimefacade.EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "opencode", "bad-model", "", ""); err == nil {
 		t.Fatalf("expected invalid opencode model error")
 	}
-	if env, err := EnsureSessionLLMFacadeConfig(ctx, nil, store, session, "codex", "", "", ""); err != nil || env != nil {
+	if env, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, nil, store, session, "codex", "", "", ""); err != nil || env != nil {
 		t.Fatalf("nil config env=%#v err=%v", env, err)
-	}
-	if !HasAnthropicProviderKey(ctx, config, store) {
-		t.Fatalf("expected anthropic provider key")
-	}
-	if got := firstNonEmpty(" \t", "value"); got != "value" {
-		t.Fatalf("firstNonEmpty = %q, want value", got)
 	}
 }
 
-func TestEnsureSessionAgentRuntimeConfigClaudePreservesProviderlessCompatibilityToken(t *testing.T) {
+func TestEnsureSessionAgentRuntimeConfigClaudeRejectsGenericOpenAIConfig(t *testing.T) {
 	isolateLLMEnv(t)
 
 	ctx := context.Background()
@@ -198,20 +264,68 @@ func TestEnsureSessionAgentRuntimeConfigClaudePreservesProviderlessCompatibility
 	}
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-claude-compat", Driver: driverpkg.RuntimeDriverDocker}}
 
-	runtimeConfig, err := EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "claude", "", "test", "run-compat")
+	runtimeConfig, err := runtimefacade.EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "claude", "", "test", "run-compat")
+	if err == nil {
+		t.Fatal("EnsureSessionAgentRuntimeConfig returned nil error for generic OpenAI config")
+	}
+	if len(runtimeConfig.Env) != 0 {
+		t.Fatalf("runtime config = %#v, want no facade environment", runtimeConfig)
+	}
+	providers, listErr := store.ListEnabledLLMProviders(ctx)
+	if listErr != nil {
+		t.Fatalf("ListEnabledLLMProviders returned error: %v", listErr)
+	}
+	if len(providers) != 0 {
+		t.Fatalf("generic OpenAI config created Anthropic providers: %#v", providers)
+	}
+}
+
+func TestEnsureSessionOpenCodeCustomProviderInheritsDaemonConfig(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:       root,
+		DbAddr:         filepath.Join(root, "data.db"),
+		LLMAPIEndpoint: "https://daemon.example.test/v1",
+		LLMAPIProtocol: llms.APIProtocolChatCompletions,
+		LLMAPIKey:      "daemon-key",
+		RuntimeBaseURL: "http://agent-compose.test:7410",
+		GuestHomePath:  "/root",
+	}
+	di := do.New()
+	do.ProvideValue(di, config)
+	store, err := configstore.NewConfigStore(di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	session := &domain.Sandbox{
+		Summary: domain.SandboxSummary{
+			ID:            "sandbox-custom-layered",
+			Driver:        driverpkg.RuntimeDriverDocker,
+			WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-custom-layered", "workspace"),
+		},
+		ProviderEnvItems: []domain.SandboxEnvVar{{Name: "LLM_API_ENDPOINT", Value: "https://sandbox.example.test/v1"}},
+	}
+
+	runtimeConfig, err := runtimefacade.EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "opencode", "custom/custom-model", runtimefacade.TokenSourceAgent, "run-custom-layered")
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig returned error: %v", err)
 	}
-	rawToken := runtimeConfig.Env["AGENT_COMPOSE_SANDBOX_TOKEN"]
-	if rawToken == "" {
-		t.Fatal("AGENT_COMPOSE_SANDBOX_TOKEN is empty")
-	}
-	token, err := store.GetLLMFacadeToken(ctx, rawToken)
+	token, err := store.GetLLMFacadeToken(ctx, runtimeConfig.Env["AGENT_COMPOSE_SANDBOX_TOKEN"])
 	if err != nil {
 		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
 	}
-	if token.ProviderID != "" || token.Model != "" {
-		t.Fatalf("compatibility token = %#v", token)
+	target, err := llms.ResolveRuntimeLLMTarget(ctx, config, store, "custom-model", token.ProviderID)
+	if err != nil {
+		t.Fatalf("ResolveRuntimeLLMTarget returned error: %v", err)
+	}
+	if target.Provider.BaseURL != "https://sandbox.example.test/v1" || target.Provider.APIKey != "daemon-key" || target.WireAPI != llms.APIProtocolChatCompletions {
+		t.Fatalf("custom provider target = %#v", target)
+	}
+	if token.WireAPI != llms.APIProtocolChatCompletions || runtimeConfig.Env["LLM_API_PROTOCOL"] != llms.APIProtocolChatCompletions {
+		t.Fatalf("custom ingress token=%q env=%q", token.WireAPI, runtimeConfig.Env["LLM_API_PROTOCOL"])
 	}
 }
 

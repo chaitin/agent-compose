@@ -32,11 +32,12 @@ func TestResolverBootstrapAndRuntimeTargetWorkflows(t *testing.T) {
 	if len(store.providers) != 1 {
 		t.Fatalf("default bootstrap did not skip configured provider: %#v", store.providers)
 	}
-	if value := DefaultLLMEnvProviderLookup(ctx, config, store)("LLM_API_KEY"); value != "openai-key" {
-		t.Fatalf("default lookup config value = %q", value)
+	lookup, err := DefaultLLMEnvProviderLookup(ctx, config, store)
+	if err != nil {
+		t.Fatalf("DefaultLLMEnvProviderLookup returned error: %v", err)
 	}
-	if value := LookupEnvValue(ctx, store, "missing"); value != "" {
-		t.Fatalf("missing env lookup = %q", value)
+	if value := lookup("LLM_API_KEY"); value != "openai-key" {
+		t.Fatalf("default lookup config value = %q", value)
 	}
 
 	target, err := ResolveLLMTarget(ctx, config, store, "")
@@ -120,6 +121,7 @@ type resolverCoverageStore struct {
 	models    []Model
 	wire      map[string]string
 	global    []domain.SandboxEnvVar
+	globalErr error
 }
 
 func newResolverCoverageStore() *resolverCoverageStore {
@@ -142,7 +144,9 @@ func (s *resolverCoverageStore) UpsertDefaultLLMConfig(_ context.Context, provid
 	replacedModel := false
 	for i := range s.models {
 		if s.models[i].ID == model.ID {
-			s.models[i] = model
+			if model.Scope != ProviderScopeSessionEnv || s.models[i].Scope == ProviderScopeSessionEnv {
+				s.models[i] = model
+			}
 			replacedModel = true
 		}
 	}
@@ -179,5 +183,5 @@ func (s *resolverCoverageStore) LLMProviderModelWireAPI(_ context.Context, provi
 }
 
 func (s *resolverCoverageStore) ListGlobalEnv(context.Context) ([]domain.SandboxEnvVar, error) {
-	return s.global, nil
+	return s.global, s.globalErr
 }
