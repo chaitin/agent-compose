@@ -187,3 +187,32 @@ func removeMicrosandboxRootfsDiskPair(home, path string, requireOwnership bool) 
 	}
 	return nil
 }
+
+func (r *microsandboxRuntime) removeRootfsDiskFiles(sandboxID string) error {
+	path := r.rootfsDiskPath(sandboxID)
+	manifestPath := path + ".owner.json"
+	_, diskErr := os.Lstat(path)
+	_, manifestErr := os.Lstat(manifestPath)
+	switch {
+	case os.IsNotExist(diskErr) && os.IsNotExist(manifestErr):
+		return nil
+	case diskErr == nil && os.IsNotExist(manifestErr):
+		slog.Warn("agent-compose microsandbox removing rootfs disk without ownership sidecar", "sandbox_id", sandboxID, "disk_path", path)
+		return removeMicrosandboxRootfsDiskPair(r.config.MicrosandboxHome, path, false)
+	case os.IsNotExist(diskErr) && manifestErr == nil:
+		slog.Warn("agent-compose microsandbox removing rootfs ownership sidecar without disk", "sandbox_id", sandboxID, "sidecar_path", manifestPath)
+		return removeMicrosandboxRootfsDiskPair(r.config.MicrosandboxHome, path, false)
+	case diskErr != nil:
+		return fmt.Errorf("inspect microsandbox rootfs disk %s: %w", path, diskErr)
+	case manifestErr != nil:
+		return fmt.Errorf("inspect microsandbox rootfs sidecar %s: %w", manifestPath, manifestErr)
+	}
+	ownership, err := readMicrosandboxRootfsDiskOwnership(r.config.MicrosandboxHome, manifestPath)
+	if err != nil {
+		return err
+	}
+	if ownership.SandboxID != sandboxID {
+		return fmt.Errorf("microsandbox rootfs disk %s is owned by sandbox %s, not %s", path, ownership.SandboxID, sandboxID)
+	}
+	return removeMicrosandboxRootfsDiskPair(r.config.MicrosandboxHome, path, false)
+}

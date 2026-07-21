@@ -304,6 +304,8 @@ func exportDockerImageFilesystem(ctx context.Context, dockerClient *client.Clien
 }
 
 func validateMicrosandboxBaseDisk(ctx context.Context, base microsandboxBaseDisk) (bool, error) {
+	// Incomplete-pair cleanup must run only inside the per-identity baseBuilds
+	// singleflight (or after it has completed), never alongside publication.
 	diskInfo, diskErr := os.Lstat(base.Path)
 	manifestInfo, manifestErr := os.Lstat(base.Manifest)
 	if os.IsNotExist(diskErr) && os.IsNotExist(manifestErr) {
@@ -313,6 +315,12 @@ func validateMicrosandboxBaseDisk(ctx context.Context, base microsandboxBaseDisk
 		if diskErr == nil && manifestErr != nil && os.IsNotExist(manifestErr) {
 			if err := os.Remove(base.Path); err != nil {
 				return false, fmt.Errorf("remove incomplete microsandbox base disk: %w", err)
+			}
+			return false, nil
+		}
+		if manifestErr == nil && diskErr != nil && os.IsNotExist(diskErr) {
+			if err := os.Remove(base.Manifest); err != nil {
+				return false, fmt.Errorf("remove incomplete microsandbox base disk manifest: %w", err)
 			}
 			return false, nil
 		}

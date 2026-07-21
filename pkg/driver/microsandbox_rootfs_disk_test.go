@@ -76,6 +76,24 @@ func TestMicrosandboxBaseDiskRejectsSymlinkedManifest(t *testing.T) {
 	}
 }
 
+func TestMicrosandboxBaseDiskRemovesManifestWithoutDisk(t *testing.T) {
+	root := t.TempDir()
+	base := microsandboxBaseDisk{
+		Path:     filepath.Join(root, "missing-base.qcow2"),
+		Manifest: filepath.Join(root, "missing-base.json"),
+	}
+	if err := os.WriteFile(base.Manifest, []byte("{}\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	valid, err := validateMicrosandboxBaseDisk(context.Background(), base)
+	if err != nil || valid {
+		t.Fatalf("manifest-only validation = %v, %v; want cache miss", valid, err)
+	}
+	if _, err := os.Lstat(base.Manifest); !os.IsNotExist(err) {
+		t.Fatalf("orphan manifest remains after validation: %v", err)
+	}
+}
+
 func TestMicrosandboxBaseDiskRejectsBackingFile(t *testing.T) {
 	requireMicrosandboxQemuTools(t)
 	root := t.TempDir()
@@ -256,6 +274,44 @@ func TestMicrosandboxRootfsDiskRemovesIncompletePair(t *testing.T) {
 	}
 	if !result.Created {
 		t.Fatalf("result = %#v, want recreated disk", result)
+	}
+}
+
+func TestMicrosandboxRemoveRootfsDiskFilesCleansIncompletePairs(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		disk    bool
+		sidecar bool
+	}{
+		{name: "disk only", disk: true},
+		{name: "sidecar only", sidecar: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			runtimeDriver := &microsandboxRuntime{config: &appconfig.Config{MicrosandboxHome: home}}
+			path := runtimeDriver.rootfsDiskPath("incomplete")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if test.disk {
+				if err := os.WriteFile(path, []byte("partial disk"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.sidecar {
+				if err := os.WriteFile(path+".owner.json", []byte("partial sidecar"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := runtimeDriver.removeRootfsDiskFiles("incomplete"); err != nil {
+				t.Fatal(err)
+			}
+			for _, candidate := range []string{path, path + ".owner.json"} {
+				if _, err := os.Lstat(candidate); !os.IsNotExist(err) {
+					t.Fatalf("incomplete rootfs resource %s remains: %v", candidate, err)
+				}
+			}
+		})
 	}
 }
 

@@ -289,26 +289,8 @@ func (r *microsandboxRuntime) RemoveSandbox(ctx context.Context, session *Sandbo
 	if err := r.removeDockerDiskFiles(session.Summary.ID); err != nil {
 		return err
 	}
-	rootfsPath := r.rootfsDiskPath(session.Summary.ID)
-	if _, err := os.Lstat(rootfsPath); err == nil {
-		ownership, ownershipErr := readMicrosandboxRootfsDiskOwnership(r.config.MicrosandboxHome, rootfsPath+".owner.json")
-		if ownershipErr != nil {
-			return ownershipErr
-		}
-		if ownership.SandboxID != session.Summary.ID {
-			return fmt.Errorf("microsandbox rootfs disk %s is owned by sandbox %s, not %s", rootfsPath, ownership.SandboxID, session.Summary.ID)
-		}
-		if err := removeMicrosandboxRootfsDiskPair(r.config.MicrosandboxHome, rootfsPath, false); err != nil {
-			return err
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("inspect microsandbox rootfs disk %s: %w", rootfsPath, err)
-	} else if _, sidecarErr := os.Lstat(rootfsPath + ".owner.json"); sidecarErr == nil {
-		if err := removeMicrosandboxRootfsDiskPair(r.config.MicrosandboxHome, rootfsPath, false); err != nil {
-			return err
-		}
-	} else if !os.IsNotExist(sidecarErr) {
-		return fmt.Errorf("inspect microsandbox rootfs sidecar %s: %w", rootfsPath+".owner.json", sidecarErr)
+	if err := r.removeRootfsDiskFiles(session.Summary.ID); err != nil {
+		return err
 	}
 	return nil
 }
