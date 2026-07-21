@@ -117,11 +117,12 @@ func isolateLLMEnv(t *testing.T) {
 }
 
 type resolverCoverageStore struct {
-	providers []Provider
-	models    []Model
-	wire      map[string]string
-	global    []domain.SandboxEnvVar
-	globalErr error
+	providers          []Provider
+	models             []Model
+	wire               map[string]string
+	global             []domain.SandboxEnvVar
+	globalErr          error
+	facadeEnvironments map[string]FacadeEnvironment
 }
 
 func newResolverCoverageStore() *resolverCoverageStore {
@@ -184,4 +185,9 @@ func (s *resolverCoverageStore) LLMProviderModelWireAPI(_ context.Context, provi
 
 func (s *resolverCoverageStore) ListGlobalEnv(context.Context) ([]domain.SandboxEnvVar, error) {
 	return s.global, s.globalErr
+}
+
+func (s *resolverCoverageStore) GetLLMFacadeEnvironment(_ context.Context, providerID string) (FacadeEnvironment, bool, error) {
+	environment, ok := s.facadeEnvironments[providerID]
+	return environment, ok, nil
 }

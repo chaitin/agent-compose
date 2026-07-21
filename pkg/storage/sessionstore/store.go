@@ -595,7 +595,7 @@ func (s *Store) saveSandbox(session *Sandbox) error {
 	if err := writeFileAtomically(
 		filepath.Join(s.sandboxDir(session.Summary.ID), "metadata.json"),
 		append(data, '\n'),
-		0o644,
+		0o600,
 	); err != nil {
 		return fmt.Errorf("write session metadata: %w", err)
 	}

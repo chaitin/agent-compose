@@ -82,6 +82,7 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, session *domain.Sandb
 		if effectiveModel == "" {
 			effectiveModel = strings.TrimSpace(agentDef.Model)
 		}
+		execution.ApplyAgentProviderEnv(session, agentDef.EnvItems)
 	}
 	if err := execution.WriteAgentSystemPromptFile(session, systemPrompt); err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err

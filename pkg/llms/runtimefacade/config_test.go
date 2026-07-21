@@ -85,6 +85,61 @@ func TestEnsureSessionLLMFacadeConfigCreatesCodexEnvAndToken(t *testing.T) {
 	}
 }
 
+func TestEnsureSessionLLMFacadeConfigUsesGlobalRuntimeBaseURL(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:      root,
+		DbAddr:        filepath.Join(root, "data.db"),
+		HttpListen:    "daemon.example.test:7410",
+		GuestHomePath: "/root",
+	}
+	di := do.New()
+	do.ProvideValue(di, config)
+	store, err := configstore.NewConfigStore(di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	if _, err := store.ReplaceGlobalEnv(ctx, []domain.SandboxEnvVar{
+		{Name: llms.RuntimeBaseURLEnvName, Value: "http://global-runtime.example.test:7410/"},
+		{Name: "LLM_API_ENDPOINT", Value: "https://global-provider.example.test/v1"},
+		{Name: "LLM_API_PROTOCOL", Value: llms.APIProtocolChatCompletions},
+		{Name: "LLM_API_KEY", Value: "global-provider-key", Secret: true},
+		{Name: "LLM_MODEL", Value: "global-model"},
+	}); err != nil {
+		t.Fatalf("ReplaceGlobalEnv returned error: %v", err)
+	}
+	session := &domain.Sandbox{
+		Summary: domain.SandboxSummary{
+			ID:            "sandbox-global-runtime-url",
+			Driver:        driverpkg.RuntimeDriverDocker,
+			WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-global-runtime-url", "workspace"),
+		},
+	}
+
+	env, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, config, store, session, "codex", "", "test", "run-global-runtime-url")
+	if err != nil {
+		t.Fatalf("EnsureSessionLLMFacadeConfig returned error: %v", err)
+	}
+	wantBaseURL := "http://global-runtime.example.test:7410/api/runtime/sandboxes/sandbox-global-runtime-url/llm/openai/v1"
+	if env["LLM_API_ENDPOINT"] != wantBaseURL || env["OPENAI_BASE_URL"] != wantBaseURL {
+		t.Fatalf("facade URLs = LLM_API_ENDPOINT %q, OPENAI_BASE_URL %q; want %q", env["LLM_API_ENDPOINT"], env["OPENAI_BASE_URL"], wantBaseURL)
+	}
+	tokenValue := env["AGENT_COMPOSE_SANDBOX_TOKEN"]
+	if tokenValue == "" {
+		t.Fatal("AGENT_COMPOSE_SANDBOX_TOKEN is empty")
+	}
+	token, err := store.GetLLMFacadeToken(ctx, tokenValue)
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
+	}
+	if token.SandboxID != session.Summary.ID || token.Model != "global-model" || token.WireAPI != llms.APIProtocolResponses {
+		t.Fatalf("stored token = %#v", token)
+	}
+}
+
 func TestEnsureSessionCodexConfigBridgesResponsesIngressToChatUpstream(t *testing.T) {
 	isolateLLMEnv(t)
 
@@ -128,9 +183,9 @@ func TestEnsureSessionCodexConfigBridgesResponsesIngressToChatUpstream(t *testin
 	if token.WireAPI != llms.APIProtocolResponses || token.ProviderID == "" || token.Model != "chat-model" {
 		t.Fatalf("stored token = %#v", token)
 	}
-	target, err := llms.ResolveRuntimeLLMTarget(ctx, config, store, "chat-model", token.ProviderID)
+	target, err := llms.ResolveFacadeRuntimeTarget(ctx, config, store, "chat-model", token.ProviderID)
 	if err != nil {
-		t.Fatalf("ResolveRuntimeLLMTarget returned error: %v", err)
+		t.Fatalf("ResolveFacadeRuntimeTarget returned error: %v", err)
 	}
 	if target.WireAPI != llms.APIProtocolChatCompletions {
 		t.Fatalf("upstream wire API = %q, want chat_completions", target.WireAPI)
@@ -206,9 +261,9 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 	if err != nil {
 		t.Fatalf("GetLLMFacadeToken opencode openai returned error: %v", err)
 	}
-	openAITarget, err := llms.ResolveRuntimeLLMTarget(ctx, config, store, "gpt-test", openAIToken.ProviderID)
+	openAITarget, err := llms.ResolveFacadeRuntimeTarget(ctx, config, store, "gpt-test", openAIToken.ProviderID)
 	if err != nil {
-		t.Fatalf("ResolveRuntimeLLMTarget opencode openai returned error: %v", err)
+		t.Fatalf("ResolveFacadeRuntimeTarget opencode openai returned error: %v", err)
 	}
 	if openAIToken.WireAPI != llms.APIProtocolResponses || openAITarget.WireAPI != llms.APIProtocolChatCompletions {
 		t.Fatalf("opencode token wire api = %q, upstream wire api = %q", openAIToken.WireAPI, openAITarget.WireAPI)
@@ -317,9 +372,9 @@ func TestEnsureSessionOpenCodeCustomProviderInheritsDaemonConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
 	}
-	target, err := llms.ResolveRuntimeLLMTarget(ctx, config, store, "custom-model", token.ProviderID)
+	target, err := llms.ResolveFacadeRuntimeTarget(ctx, config, store, "custom-model", token.ProviderID)
 	if err != nil {
-		t.Fatalf("ResolveRuntimeLLMTarget returned error: %v", err)
+		t.Fatalf("ResolveFacadeRuntimeTarget returned error: %v", err)
 	}
 	if target.Provider.BaseURL != "https://sandbox.example.test/v1" || target.Provider.APIKey != "daemon-key" || target.WireAPI != llms.APIProtocolChatCompletions {
 		t.Fatalf("custom provider target = %#v", target)

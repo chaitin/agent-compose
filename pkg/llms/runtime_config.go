@@ -382,7 +382,7 @@ func LookupRuntimeBaseURLEnv(session *domain.Sandbox) string {
 	if session == nil {
 		return ""
 	}
-	for _, items := range [][]domain.SandboxEnvVar{session.ProviderEnvItems, session.RuntimeEnvItems, session.EnvItems} {
+	for _, items := range [][]domain.SandboxEnvVar{session.ExecutionProviderEnvItems, session.ProviderEnvItems, session.RuntimeEnvItems, session.EnvItems} {
 		if value := EnvItemValue(items, RuntimeBaseURLEnvName); strings.TrimSpace(value) != "" {
 			return value
 		}

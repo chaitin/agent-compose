@@ -269,6 +269,7 @@ func cloneSessionForAgentExecution(session *domain.Sandbox, providerEnvItems []d
 	execSession.EnvItems = append([]domain.SandboxEnvVar(nil), session.EnvItems...)
 	execSession.RuntimeEnvItems = append([]domain.SandboxEnvVar(nil), session.RuntimeEnvItems...)
 	execSession.ProviderEnvItems = append([]domain.SandboxEnvVar(nil), session.ProviderEnvItems...)
+	execSession.ExecutionProviderEnvItems = append([]domain.SandboxEnvVar(nil), session.ExecutionProviderEnvItems...)
 	execution.ApplyAgentProviderEnv(&execSession, providerEnvItems)
 	return &execSession
 }

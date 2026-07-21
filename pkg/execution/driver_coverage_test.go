@@ -79,6 +79,8 @@ func TestDriverConversionWorkflows(t *testing.T) {
 	}
 	session.EnvItems = []domain.SandboxEnvVar{{Name: "USER_VAR", Value: "ok"}, {Name: "LLM_API_KEY", Value: "secret"}}
 	session.RuntimeEnvItems = []domain.SandboxEnvVar{{Name: "MANAGED", Value: "yes"}}
+	session.ProviderEnvItems = []domain.SandboxEnvVar{{Name: "LLM_API_KEY", Value: "sandbox-provider-key", Secret: true}}
+	session.ExecutionProviderEnvItems = []domain.SandboxEnvVar{{Name: "LLM_API_KEY", Value: "execution-provider-key", Secret: true}}
 	env := BuildSandboxExecEnv(config, session, "/home/agent")
 	if env["USER_VAR"] != "ok" || env["LLM_API_KEY"] != "" || env["MANAGED"] != "yes" || env["SANDBOX_ID"] != "sandbox-1" {
 		t.Fatalf("sandbox exec env = %#v", env)

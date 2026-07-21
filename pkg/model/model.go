@@ -182,13 +182,14 @@ type Sandbox struct {
 	WorkspaceProvisioning *SandboxWorkspaceProvisioning `json:"workspace_provisioning,omitempty"`
 	WorkspaceReclamation  *SandboxWorkspaceReclamation  `json:"workspace_reclamation,omitempty"`
 	EnvItems              []SandboxEnvVar               `json:"env_items,omitempty"`
-	// ProviderEnvOverrideNames records source provenance without persisting
-	// provider credentials. Values remain transient in ProviderEnvItems or in
-	// the session-scoped provider row created by the LLM resolver.
-	ProviderEnvOverrideNames []string             `json:"provider_env_override_names,omitempty"`
-	VolumeMounts             []SandboxVolumeMount `json:"volume_mounts,omitempty"`
-	RuntimeEnvItems          []SandboxEnvVar      `json:"-"`
-	ProviderEnvItems         []SandboxEnvVar      `json:"-"`
+	// ProviderEnvItems is the daemon-only, sandbox-owned LLM provider layer. It
+	// is persisted separately from EnvItems and is never projected to a guest.
+	ProviderEnvItems []SandboxEnvVar      `json:"provider_env_items,omitempty"`
+	VolumeMounts     []SandboxVolumeMount `json:"volume_mounts,omitempty"`
+	RuntimeEnvItems  []SandboxEnvVar      `json:"-"`
+	// ExecutionProviderEnvItems is a transient overlay owned by one execution.
+	// It must never be persisted back to the sandbox or shared between runs.
+	ExecutionProviderEnvItems []SandboxEnvVar `json:"-"`
 }
 
 func SandboxWorkspaceReclaimed(sandbox *Sandbox) bool {
@@ -277,8 +278,8 @@ func RestoreSandboxTransientFields(dst, src *Sandbox) {
 	if len(src.RuntimeEnvItems) > 0 {
 		dst.RuntimeEnvItems = append([]SandboxEnvVar(nil), src.RuntimeEnvItems...)
 	}
-	if len(src.ProviderEnvItems) > 0 {
-		dst.ProviderEnvItems = append([]SandboxEnvVar(nil), src.ProviderEnvItems...)
+	if len(src.ExecutionProviderEnvItems) > 0 {
+		dst.ExecutionProviderEnvItems = append([]SandboxEnvVar(nil), src.ExecutionProviderEnvItems...)
 	}
 }
 

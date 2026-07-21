@@ -64,6 +64,14 @@ func TestSandboxRPCBridgeCreateSessionUsesWorkspaceEnsurer(t *testing.T) {
 	ensurer := &recordingBridgeWorkspaceEnsurer{}
 	ensurer.ensure = func(ctx context.Context, sandbox *domain.Sandbox) error {
 		order = append(order, "ensure")
+		persisted, err := bridge.store.GetSandbox(ctx, sandbox.Summary.ID)
+		if err != nil {
+			return err
+		}
+		providerEnv := domain.SandboxEnvMap(persisted.ProviderEnvItems)
+		if providerEnv["LLM_API_ENDPOINT"] != "https://sandbox.example/v1" || providerEnv["LLM_API_PROTOCOL"] != "chat_completions" {
+			t.Fatalf("provider env before workspace Ensure = %#v", providerEnv)
+		}
 		if err := domain.TransitionSandboxWorkspaceProvisioning(sandbox, domain.SandboxWorkspaceProvisioningStatusReady); err != nil {
 			return err
 		}
@@ -82,6 +90,10 @@ func TestSandboxRPCBridgeCreateSessionUsesWorkspaceEnsurer(t *testing.T) {
 		Title:       "workspace ensurer",
 		WorkspaceID: workspace.ID,
 		CapsetIDs:   []string{"dev"},
+		EnvItems: []domain.SandboxEnvVar{
+			{Name: "LLM_API_ENDPOINT", Value: "https://sandbox.example/v1"},
+			{Name: "LLM_API_PROTOCOL", Value: "chat_completions"},
+		},
 	}, domain.SandboxTypeManual)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)

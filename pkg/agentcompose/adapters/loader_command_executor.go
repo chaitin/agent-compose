@@ -71,13 +71,15 @@ func (e *LoaderCommandExecutor) ExecuteLoaderCommand(ctx context.Context, sessio
 		CreatedAt: startedAt,
 		Running:   true,
 	}
-	execSession, facadeToken, err := e.prepareLoaderCommandLLMFacadeEnv(ctx, session, request, cellID)
+	execSession, managedEnv, err := e.prepareLoaderCommandLLMFacadeEnv(ctx, session, request, cellID)
 	if err != nil {
 		return domain.LoaderCommandResult{}, err
 	}
+	facadeToken := managedEnv["AGENT_COMPOSE_SANDBOX_TOKEN"]
 	if e.ConfigDB != nil && facadeToken != "" {
 		defer func() { _ = e.ConfigDB.DeleteLLMFacadeToken(context.WithoutCancel(ctx), facadeToken) }()
 	}
+	request.Env = llms.MergeManagedExecEnv(request.Env, managedEnv)
 	if err := e.Store.AddCell(ctx, session, cell); err != nil {
 		return domain.LoaderCommandResult{}, err
 	}
@@ -246,35 +248,28 @@ func (e *LoaderCommandExecutor) ExecuteLoaderCommand(ctx context.Context, sessio
 	}, nil
 }
 
-func (e *LoaderCommandExecutor) prepareLoaderCommandLLMFacadeEnv(ctx context.Context, session *domain.Sandbox, request domain.LoaderCommandRequest, runID string) (*domain.Sandbox, string, error) {
+func (e *LoaderCommandExecutor) prepareLoaderCommandLLMFacadeEnv(ctx context.Context, session *domain.Sandbox, request domain.LoaderCommandRequest, runID string) (*domain.Sandbox, map[string]string, error) {
 	if e == nil || e.Config == nil || e.ConfigDB == nil || session == nil {
-		return session, "", nil
+		return session, nil, nil
 	}
 	agent, model := llms.LoaderCommandFacadeAgentModel(request.Env)
 	if agent == "" {
-		return session, "", nil
+		return session, nil, nil
 	}
 
 	execSession := *session
 	execSession.EnvItems = append([]domain.SandboxEnvVar(nil), session.EnvItems...)
 	execSession.RuntimeEnvItems = append([]domain.SandboxEnvVar(nil), session.RuntimeEnvItems...)
 	execSession.ProviderEnvItems = append([]domain.SandboxEnvVar(nil), session.ProviderEnvItems...)
-	if len(execSession.ProviderEnvItems) == 0 {
-		globalEnv, err := e.ConfigDB.ListGlobalEnv(ctx)
-		if err != nil {
-			return nil, "", err
-		}
-		providerEnv := domain.MergeEnvItems(globalEnv, session.EnvItems)
-		providerEnv = domain.MergeEnvItems(providerEnv, domain.LoaderCommandSandboxEnv(request))
-		execSession.ProviderEnvItems = providerEnv
-	}
+	execSession.ExecutionProviderEnvItems = append([]domain.SandboxEnvVar(nil), session.ExecutionProviderEnvItems...)
+	execSession.ExecutionProviderEnvItems = domain.MergeEnvItems(execSession.ExecutionProviderEnvItems, domain.LoaderCommandSandboxEnv(request))
 
 	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, e.Config, facadeStoreFor(e.ConfigDB), &execSession, agent, model, runtimefacade.TokenSourceLoaderCommand, runID)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	if len(managedEnv) > 0 {
 		execSession.RuntimeEnvItems = domain.MergeEnvItems(execSession.RuntimeEnvItems, llms.EnvItemsFromMap(managedEnv, false))
 	}
-	return &execSession, managedEnv["AGENT_COMPOSE_SANDBOX_TOKEN"], nil
+	return &execSession, managedEnv, nil
 }

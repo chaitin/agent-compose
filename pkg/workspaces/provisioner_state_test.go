@@ -132,7 +132,7 @@ func TestProvisionerReadyReloadsMetadataWithoutSideEffects(t *testing.T) {
 	caller.Summary.Title = "stale caller title"
 	caller.Summary.WorkspacePath = ""
 	caller.RuntimeEnvItems = []domain.SandboxEnvVar{{Name: "RUNTIME_ONLY", Value: "runtime"}}
-	caller.ProviderEnvItems = []domain.SandboxEnvVar{{Name: "PROVIDER_ONLY", Value: "provider", Secret: true}}
+	caller.ExecutionProviderEnvItems = []domain.SandboxEnvVar{{Name: "PROVIDER_ONLY", Value: "provider", Secret: true}}
 	if err := provisioner.Ensure(context.Background(), caller); err != nil {
 		t.Fatalf("Ensure returned error: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestProvisionerPendingAndFailedMaterializeToReady(t *testing.T) {
 
 			caller := cloneProvisionerStateSandbox(stored)
 			caller.RuntimeEnvItems = []domain.SandboxEnvVar{{Name: "RUNTIME_ONLY", Value: "runtime"}}
-			caller.ProviderEnvItems = []domain.SandboxEnvVar{{Name: "PROVIDER_ONLY", Value: "provider", Secret: true}}
+			caller.ExecutionProviderEnvItems = []domain.SandboxEnvVar{{Name: "PROVIDER_ONLY", Value: "provider", Secret: true}}
 			if err := provisioner.Ensure(context.Background(), caller); err != nil {
 				t.Fatalf("Ensure returned error: %v", err)
 			}
@@ -286,7 +286,7 @@ func TestProvisionerMaterializerErrorStillReloadsCaller(t *testing.T) {
 	caller := cloneProvisionerStateSandbox(stored)
 	caller.Summary.Title = "stale caller"
 	caller.RuntimeEnvItems = []domain.SandboxEnvVar{{Name: "RUNTIME_ONLY", Value: "runtime"}}
-	caller.ProviderEnvItems = []domain.SandboxEnvVar{{Name: "PROVIDER_ONLY", Value: "provider", Secret: true}}
+	caller.ExecutionProviderEnvItems = []domain.SandboxEnvVar{{Name: "PROVIDER_ONLY", Value: "provider", Secret: true}}
 	err := provisioner.Ensure(context.Background(), caller)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Ensure error = %v, want %v", err, wantErr)
@@ -411,7 +411,7 @@ func (s *provisionerStateStore) UpdateSandbox(_ context.Context, sandbox *domain
 		persisted.Summary.Title = s.persistedTitleOnUpdate
 	}
 	persisted.RuntimeEnvItems = nil
-	persisted.ProviderEnvItems = nil
+	persisted.ExecutionProviderEnvItems = nil
 	s.sandboxes[sandbox.Summary.ID] = persisted
 	return nil
 }
@@ -511,6 +511,7 @@ func cloneProvisionerStateSandbox(sandbox *domain.Sandbox) *domain.Sandbox {
 	clone.VolumeMounts = append([]domain.SandboxVolumeMount(nil), sandbox.VolumeMounts...)
 	clone.RuntimeEnvItems = append([]domain.SandboxEnvVar(nil), sandbox.RuntimeEnvItems...)
 	clone.ProviderEnvItems = append([]domain.SandboxEnvVar(nil), sandbox.ProviderEnvItems...)
+	clone.ExecutionProviderEnvItems = append([]domain.SandboxEnvVar(nil), sandbox.ExecutionProviderEnvItems...)
 	return &clone
 }
 
@@ -545,7 +546,7 @@ func assertProvisionerTransientEnv(t *testing.T, sandbox *domain.Sandbox) {
 	if !reflect.DeepEqual(sandbox.RuntimeEnvItems, wantRuntime) {
 		t.Errorf("RuntimeEnvItems = %#v, want %#v", sandbox.RuntimeEnvItems, wantRuntime)
 	}
-	if !reflect.DeepEqual(sandbox.ProviderEnvItems, wantProvider) {
-		t.Errorf("ProviderEnvItems = %#v, want %#v", sandbox.ProviderEnvItems, wantProvider)
+	if !reflect.DeepEqual(sandbox.ExecutionProviderEnvItems, wantProvider) {
+		t.Errorf("ExecutionProviderEnvItems = %#v, want %#v", sandbox.ExecutionProviderEnvItems, wantProvider)
 	}
 }

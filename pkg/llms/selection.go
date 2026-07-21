@@ -74,7 +74,7 @@ func SelectProviderForModel(ctx context.Context, store ProviderModelWireAPIStore
 		if providerID != "" && provider.ID != providerID {
 			continue
 		}
-		if providerID == "" && strings.TrimSpace(provider.Scope) == ProviderScopeSessionEnv {
+		if providerID == "" && (strings.TrimSpace(provider.Scope) == ProviderScopeSessionEnv || strings.TrimSpace(provider.Scope) == ProviderScopeFacadeEnv) {
 			continue
 		}
 		wireAPI, ok, err := store.LLMProviderModelWireAPI(ctx, provider.ID, modelID)
@@ -103,6 +103,8 @@ func SelectProviderForModel(ctx context.Context, store ProviderModelWireAPIStore
 
 func ProviderSelectionPriority(scope string) int {
 	switch strings.TrimSpace(scope) {
+	case ProviderScopeFacadeEnv:
+		return 3
 	case ProviderScopeSessionEnv:
 		return 2
 	case ProviderScopeEnvDefault:

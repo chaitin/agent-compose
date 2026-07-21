@@ -92,7 +92,9 @@ func parseStoredUnixTimeAuto(value int64) time.Time {
 	return time.Unix(value, 0).UTC()
 }
 
-func NormalizeDefaultConfig(provider Provider, model Model) (Provider, Model, bool) {
+// NormalizeProviderConfig applies the persisted defaults and URL normalization
+// shared by provider creation and provider-only refreshes.
+func NormalizeProviderConfig(provider Provider) Provider {
 	provider.ID = firstNonEmpty(strings.TrimSpace(provider.ID), ProviderIDDefaultOpenAI)
 	provider.Name = firstNonEmpty(strings.TrimSpace(provider.Name), "default")
 	provider.ProviderType = NormalizeProviderType(provider.ProviderType)
@@ -112,6 +114,11 @@ func NormalizeDefaultConfig(provider Provider, model Model) (Provider, Model, bo
 		provider.Weight = 10
 	}
 	provider.Scope = firstNonEmpty(strings.TrimSpace(provider.Scope), ProviderScopeSystem)
+	return provider
+}
+
+func NormalizeDefaultConfig(provider Provider, model Model) (Provider, Model, bool) {
+	provider = NormalizeProviderConfig(provider)
 
 	model.ID = firstNonEmpty(strings.TrimSpace(model.ID), strings.TrimSpace(model.Name))
 	model.Name = firstNonEmpty(strings.TrimSpace(model.Name), model.ID)
@@ -253,7 +260,7 @@ func EndpointForProvider(provider Provider, wireAPI string) string {
 
 func ProviderScopeIsConfigured(scope string) bool {
 	switch strings.TrimSpace(scope) {
-	case ProviderScopeEnvDefault, ProviderScopeSessionEnv:
+	case ProviderScopeEnvDefault, ProviderScopeSessionEnv, ProviderScopeFacadeEnv:
 		return false
 	default:
 		return true

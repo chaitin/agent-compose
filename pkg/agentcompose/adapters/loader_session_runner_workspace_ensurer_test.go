@@ -63,6 +63,13 @@ func TestLoaderSandboxRunnerEnsureUsesWorkspaceEnsurerBeforeGuideAndDriver(t *te
 		if len(driver.startCalls) != 0 {
 			t.Fatalf("driver starts before workspace ready = %#v", driver.startCalls)
 		}
+		persisted, err := bridge.store.GetSandbox(ctx, sandbox.Summary.ID)
+		if err != nil {
+			return err
+		}
+		if got := domain.SandboxEnvMap(persisted.ProviderEnvItems)["LLM_API_ENDPOINT"]; got != "https://loader.example/v1" {
+			t.Fatalf("provider env before workspace Ensure = %q", got)
+		}
 		if err := domain.TransitionSandboxWorkspaceProvisioning(sandbox, domain.SandboxWorkspaceProvisioningStatusReady); err != nil {
 			return err
 		}
@@ -90,7 +97,7 @@ func TestLoaderSandboxRunnerEnsureUsesWorkspaceEnsurerBeforeGuideAndDriver(t *te
 		Driver:        driverpkg.RuntimeDriverDocker,
 		SandboxPolicy: domain.LoaderSandboxPolicySticky,
 		CapsetIDs:     []string{"dev"},
-	}}
+	}, EnvItems: []domain.SandboxEnvVar{{Name: "LLM_API_ENDPOINT", Value: "https://loader.example/v1"}}}
 
 	sandbox, eventType, err := runner.Ensure(ctx, loader, domain.LoaderAgentRequest{BindingTriggerID: "trigger-create"}, false)
 	if err != nil {

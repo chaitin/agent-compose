@@ -113,16 +113,17 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 		}
 	}
 
-	envItems, err := r.ConfigDB.ListGlobalEnv(ctx)
+	globalEnvItems, err := r.ConfigDB.ListGlobalEnv(ctx)
 	if err != nil {
 		return nil, "", err
 	}
+	var providerEnvItems []domain.SandboxEnvVar
 	if agentDefinition != nil {
-		envItems = domain.MergeEnvItems(envItems, agentDefinition.EnvItems)
+		providerEnvItems = domain.MergeEnvItems(providerEnvItems, agentDefinition.EnvItems)
 	}
-	envItems = domain.MergeEnvItems(envItems, loader.EnvItems)
-	envItems = domain.MergeEnvItems(envItems, domain.LoaderAgentSandboxEnv(request))
-	providerEnvItems := envItems
+	providerEnvItems = domain.MergeEnvItems(providerEnvItems, loader.EnvItems)
+	providerEnvItems = domain.MergeEnvItems(providerEnvItems, domain.LoaderAgentSandboxEnv(request))
+	envItems := domain.MergeEnvItems(globalEnvItems, providerEnvItems)
 	envItems = llms.FilterPersistedRuntimeEnv(envItems)
 	capabilityVars, capabilityTags := capabilities.BuildGatewaySandboxVars(capabilities.ProxyTarget(r.Cap), loader.Summary.CapsetIDs)
 	envItems = domain.MergeEnvItems(envItems, capabilityVars)
@@ -174,12 +175,12 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 	if err != nil {
 		return nil, "", err
 	}
-	session.ProviderEnvItems = providerEnvItems
+	llms.SetSandboxProviderEnvItems(session, providerEnvItems)
 	if request.PullPolicy != "" {
 		session.Summary.PullPolicy = request.PullPolicy
-		if err := r.Store.UpdateSandbox(ctx, session); err != nil {
-			return nil, "", fmt.Errorf("persist sandbox pull policy: %w", err)
-		}
+	}
+	if err := r.Store.UpdateSandbox(ctx, session); err != nil {
+		return nil, "", fmt.Errorf("persist sandbox creation metadata: %w", err)
 	}
 	r.recordVolumeWarnings(ctx, session.Summary.ID, volumeWarnings)
 	if err := r.workspaceEnsurer.Ensure(ctx, session); err != nil {

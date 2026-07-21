@@ -37,7 +37,7 @@ func TestProvisionerConcurrentEnsureSameSandboxSingleMaterialization(t *testing.
 			t.Fatalf("load caller %d: %v", index, err)
 		}
 		caller.RuntimeEnvItems = []domain.SandboxEnvVar{{Name: "RUNTIME_CALLER", Value: fmt.Sprintf("%d", index)}}
-		caller.ProviderEnvItems = []domain.SandboxEnvVar{{Name: "PROVIDER_CALLER", Value: fmt.Sprintf("%d", index)}}
+		caller.ExecutionProviderEnvItems = []domain.SandboxEnvVar{{Name: "PROVIDER_CALLER", Value: fmt.Sprintf("%d", index)}}
 		callers[index] = caller
 
 		go func(index int, sandbox *domain.Sandbox) {
@@ -358,6 +358,7 @@ func cloneConcurrentProvisionerSandbox(src *domain.Sandbox) *domain.Sandbox {
 	dst.VolumeMounts = append([]domain.SandboxVolumeMount(nil), src.VolumeMounts...)
 	dst.RuntimeEnvItems = append([]domain.SandboxEnvVar(nil), src.RuntimeEnvItems...)
 	dst.ProviderEnvItems = append([]domain.SandboxEnvVar(nil), src.ProviderEnvItems...)
+	dst.ExecutionProviderEnvItems = append([]domain.SandboxEnvVar(nil), src.ExecutionProviderEnvItems...)
 	return &dst
 }
 
@@ -379,8 +380,8 @@ func assertConcurrentProvisionerCallerReady(t *testing.T, sandbox *domain.Sandbo
 	if len(sandbox.RuntimeEnvItems) != 1 || sandbox.RuntimeEnvItems[0].Name != "RUNTIME_CALLER" || sandbox.RuntimeEnvItems[0].Value != wantValue {
 		t.Errorf("caller %d runtime env = %#v, want its transient value", callerIndex, sandbox.RuntimeEnvItems)
 	}
-	if len(sandbox.ProviderEnvItems) != 1 || sandbox.ProviderEnvItems[0].Name != "PROVIDER_CALLER" || sandbox.ProviderEnvItems[0].Value != wantValue {
-		t.Errorf("caller %d provider env = %#v, want its transient value", callerIndex, sandbox.ProviderEnvItems)
+	if len(sandbox.ExecutionProviderEnvItems) != 1 || sandbox.ExecutionProviderEnvItems[0].Name != "PROVIDER_CALLER" || sandbox.ExecutionProviderEnvItems[0].Value != wantValue {
+		t.Errorf("caller %d provider env = %#v, want its transient value", callerIndex, sandbox.ExecutionProviderEnvItems)
 	}
 }
 

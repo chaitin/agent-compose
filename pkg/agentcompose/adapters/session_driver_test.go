@@ -261,6 +261,17 @@ func TestSandboxDriverStopPreservesFacadeTokensUntilRemove(t *testing.T) {
 	if err := configDB.SaveLLMFacadeToken(ctx, token); err != nil {
 		t.Fatalf("SaveLLMFacadeToken returned error: %v", err)
 	}
+	sessionProviderID := llms.SessionEnvProviderID(session.Summary.ID, llms.ProviderFamilyOpenAI)
+	if err := configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+		ID:             sessionProviderID,
+		ProviderType:   llms.ProviderFamilyOpenAI,
+		DefaultWireAPI: llms.APIProtocolResponses,
+		BaseURL:        "https://provider.example/v1",
+		APIKey:         "provider-key",
+		Scope:          llms.ProviderScopeSessionEnv,
+	}, llms.Model{ID: "model-1", Name: "model-1", Scope: llms.ProviderScopeSessionEnv}); err != nil {
+		t.Fatalf("UpsertDefaultLLMConfig returned error: %v", err)
+	}
 	removed := false
 	runtime := fakeSessionRuntime{removeHook: func(removedSession *domain.Sandbox) {
 		removed = removedSession != nil && removedSession.Summary.ID == session.Summary.ID
@@ -277,6 +288,10 @@ func TestSandboxDriverStopPreservesFacadeTokensUntilRemove(t *testing.T) {
 	if !storedToken.RevokedAt.IsZero() {
 		t.Fatalf("facade token revoked during resumable stop: %+v", storedToken)
 	}
+	providers, err := configDB.ListEnabledLLMProviders(ctx)
+	if err != nil || len(providers) != 1 || providers[0].ID != sessionProviderID {
+		t.Fatalf("session provider changed during resumable stop: providers=%#v err=%v", providers, err)
+	}
 
 	if err := driver.RemoveSandboxVM(ctx, session); err != nil {
 		t.Fatalf("RemoveSandboxVM returned error: %v", err)
@@ -290,6 +305,13 @@ func TestSandboxDriverStopPreservesFacadeTokensUntilRemove(t *testing.T) {
 	}
 	if storedToken.RevokedAt.IsZero() {
 		t.Fatalf("facade token remains active after remove: %+v", storedToken)
+	}
+	providers, err = configDB.ListEnabledLLMProviders(ctx)
+	if err != nil {
+		t.Fatalf("ListEnabledLLMProviders after remove returned error: %v", err)
+	}
+	if len(providers) != 0 {
+		t.Fatalf("session provider remains after remove: %#v", providers)
 	}
 }
 

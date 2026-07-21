@@ -64,49 +64,52 @@ func EnsureOpenAIEnvProvider(ctx context.Context, store DefaultConfigStore, look
 }
 
 func ensureOpenAIProviderEnvironment(ctx context.Context, store DefaultConfigStore, environment providerEnvironment, providerID, name, scope, requestedModel string, defaultModel bool) (string, error) {
-	endpoint := firstNonEmpty(environment.endpoint, "https://api.openai.com")
-	protocol := NormalizeWireAPI(environment.protocol)
 	model := strings.TrimSpace(firstNonEmpty(requestedModel, environment.model))
 	if providerID == "" || model == "" {
 		return "", nil
 	}
-	return providerID, store.UpsertDefaultLLMConfig(ctx, Provider{
-		ID:             providerID,
-		Name:           name,
-		ProviderType:   ProviderFamilyOpenAI,
-		DefaultWireAPI: protocol,
-		BaseURL:        endpoint,
-		APIKey:         environment.apiKey,
-		AuthHeader:     "Authorization",
-		AuthScheme:     "Bearer",
-		HeadersJSON:    "{}",
-		Weight:         10,
-		Enabled:        true,
-		Scope:          scope,
-	}, Model{ID: model, Name: model, DefaultModel: defaultModel, Enabled: true, Scope: scope})
+	provider := applyOpenAIProviderEnvironment(Provider{ID: providerID, Name: name, Scope: scope}, environment)
+	return providerID, store.UpsertDefaultLLMConfig(ctx, provider, Model{ID: model, Name: model, DefaultModel: defaultModel, Enabled: true, Scope: scope})
 }
 
 func ensureAnthropicProviderEnvironment(ctx context.Context, store DefaultConfigStore, environment providerEnvironment, providerID, name, scope, requestedModel string, defaultModel bool) (string, error) {
 	if !environment.configured {
 		return "", nil
 	}
-	endpoint := firstNonEmpty(environment.endpoint, "https://api.anthropic.com")
 	model := strings.TrimSpace(firstNonEmpty(requestedModel, environment.model))
 	if providerID == "" || model == "" {
 		return "", nil
 	}
-	return providerID, store.UpsertDefaultLLMConfig(ctx, Provider{
-		ID:             providerID,
-		Name:           name,
-		ProviderType:   ProviderFamilyAnthropic,
-		DefaultWireAPI: APIProtocolMessages,
-		BaseURL:        endpoint,
-		APIKey:         environment.apiKey,
-		AuthHeader:     environment.authHeader,
-		AuthScheme:     environment.authScheme,
-		HeadersJSON:    `{"anthropic-version":"2023-06-01"}`,
-		Weight:         10,
-		Enabled:        true,
-		Scope:          scope,
-	}, Model{ID: model, Name: model, DefaultModel: defaultModel, Enabled: true, Scope: scope})
+	provider := applyAnthropicProviderEnvironment(Provider{ID: providerID, Name: name, Scope: scope}, environment)
+	return providerID, store.UpsertDefaultLLMConfig(ctx, provider, Model{ID: model, Name: model, DefaultModel: defaultModel, Enabled: true, Scope: scope})
+}
+
+func applyOpenAIProviderEnvironment(provider Provider, environment providerEnvironment) Provider {
+	provider.ProviderType = ProviderFamilyOpenAI
+	provider.DefaultWireAPI = NormalizeWireAPI(environment.protocol)
+	provider.BaseURL = firstNonEmpty(environment.endpoint, "https://api.openai.com")
+	provider.APIKey = environment.apiKey
+	provider.AuthHeader = "Authorization"
+	provider.AuthScheme = "Bearer"
+	provider.HeadersJSON = firstNonEmpty(provider.HeadersJSON, "{}")
+	if provider.Weight == 0 {
+		provider.Weight = 10
+	}
+	provider.Enabled = true
+	return provider
+}
+
+func applyAnthropicProviderEnvironment(provider Provider, environment providerEnvironment) Provider {
+	provider.ProviderType = ProviderFamilyAnthropic
+	provider.DefaultWireAPI = APIProtocolMessages
+	provider.BaseURL = firstNonEmpty(environment.endpoint, "https://api.anthropic.com")
+	provider.APIKey = environment.apiKey
+	provider.AuthHeader = environment.authHeader
+	provider.AuthScheme = environment.authScheme
+	provider.HeadersJSON = firstNonEmpty(provider.HeadersJSON, `{"anthropic-version":"2023-06-01"}`)
+	if provider.Weight == 0 {
+		provider.Weight = 10
+	}
+	provider.Enabled = true
+	return provider
 }

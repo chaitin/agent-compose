@@ -45,8 +45,21 @@ func TestRunsControllerProjectRunWorkspaceEnsurerPaths(t *testing.T) {
 	t.Run("new sandbox", func(t *testing.T) {
 		fixture := newControllerRunFixture(t)
 		ensurer := projectRunEnsurerBeforeDriver(t, fixture)
+		ensurer.beforeEnsure = func(sandbox *domain.Sandbox) {
+			if fixture.driver.started {
+				t.Fatal("driver started before workspace Ensurer")
+			}
+			persisted, err := fixture.store.GetSandbox(fixture.ctx, sandbox.Summary.ID)
+			if err != nil {
+				t.Fatalf("GetSandbox before workspace Ensure: %v", err)
+			}
+			if got := domain.SandboxEnvMap(persisted.ProviderEnvItems)["LLM_API_ENDPOINT"]; got != "https://project.example/v1" {
+				t.Fatalf("provider env before workspace Ensure = %q", got)
+			}
+		}
 		fixture.controller.workspaceEnsurer = ensurer
-		prepared := Preparation{Workspace: projectRunWorkspaceSnapshot("prepared")}
+		providerEnv := []domain.SandboxEnvVar{{Name: "LLM_API_ENDPOINT", Value: "https://project.example/v1"}}
+		prepared := Preparation{EnvItems: providerEnv, ProviderEnvItems: providerEnv, Workspace: projectRunWorkspaceSnapshot("prepared")}
 
 		result, err := fixture.controller.ensureProjectRunSandbox(
 			fixture.ctx,

@@ -34,11 +34,9 @@ func ApplyAgentProviderEnv(session *domain.Sandbox, agentEnv []domain.SandboxEnv
 	if session == nil || len(agentEnv) == 0 {
 		return
 	}
-	providerEnv := session.ProviderEnvItems
-	if len(providerEnv) == 0 {
-		providerEnv = session.EnvItems
-	}
-	session.ProviderEnvItems = domain.MergeEnvItems(agentEnv, providerEnv)
+	// A caller-supplied execution overlay already on the sandbox wins over the
+	// agent definition. Both are above the persisted sandbox provider layer.
+	session.ExecutionProviderEnvItems = domain.MergeEnvItems(agentEnv, session.ExecutionProviderEnvItems)
 }
 
 func SessionTagValue(tags []domain.SandboxTag, name string) string {

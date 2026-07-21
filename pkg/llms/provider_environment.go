@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 
 	appconfig "agent-compose/pkg/config"
@@ -130,95 +129,76 @@ func daemonProviderEnvSource(config *appconfig.Config) providerEnvSource {
 	}
 }
 
-// SetSandboxProviderEnvItems keeps provider values transient while persisting
-// the names of non-empty sandbox overrides. Names are sufficient to distinguish
-// explicit values from the Global Env values merged into Sandbox.EnvItems.
+// SetSandboxProviderEnvItems stores only daemon-side LLM provider controls on
+// the sandbox. The driver boundary never projects this field into a guest.
 func SetSandboxProviderEnvItems(sandbox *domain.Sandbox, items []domain.SandboxEnvVar) {
 	if sandbox == nil {
 		return
 	}
-	sandbox.ProviderEnvItems = append([]domain.SandboxEnvVar(nil), items...)
-	sandbox.ProviderEnvOverrideNames = providerEnvOverrideNames(items)
+	sandbox.ProviderEnvItems = filterSandboxProviderEnvItems(items)
 }
 
-func providerEnvOverrideNames(items []domain.SandboxEnvVar) []string {
-	names := make([]string, 0, len(items))
-	seen := make(map[string]struct{}, len(items))
+func filterSandboxProviderEnvItems(items []domain.SandboxEnvVar) []domain.SandboxEnvVar {
+	filtered := make([]domain.SandboxEnvVar, 0, len(items))
 	for _, item := range domain.NormalizeEnvItems(items) {
-		name := strings.ToUpper(strings.TrimSpace(item.Name))
-		if name == "" || strings.TrimSpace(item.Value) == "" {
+		if !sandboxProviderEnvName(item.Name) || strings.TrimSpace(item.Value) == "" {
 			continue
 		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		names = append(names, name)
+		filtered = append(filtered, item)
 	}
-	slices.Sort(names)
-	if len(names) == 0 {
+	if len(filtered) == 0 {
 		return nil
 	}
-	return names
+	return filtered
 }
 
-// SandboxProviderEnvItems reconstructs only the sandbox-owned provider layer.
-// Persisted EnvItems also contain the Global Env snapshot from sandbox creation,
-// so values are selected by recorded name provenance rather than equality with
-// today's mutable Global Env. Explicit provider keys are recovered from the
-// session provider row because their values are deliberately absent from
-// sandbox metadata.
-func SandboxProviderEnvItems(sandbox *domain.Sandbox, providerFamily string, providers []Provider) []domain.SandboxEnvVar {
+func sandboxProviderEnvName(name string) bool {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "LLM_API_ENDPOINT", "LLM_API_PROTOCOL", "LLM_API_KEY", "OPENAI_API_KEY", "LLM_MODEL",
+		"ANTHROPIC_BASE_URL", "ANTHROPIC_API_ENDPOINT", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "CLAUDE_MODEL",
+		RuntimeBaseURLEnvName:
+		return true
+	default:
+		return false
+	}
+}
+
+// SandboxProviderEnvItems returns the effective explicit provider layer for one
+// execution. Execution values override the persisted sandbox layer; Global Env
+// and daemon configuration are deliberately not included here.
+func SandboxProviderEnvItems(sandbox *domain.Sandbox, providerFamily string) []domain.SandboxEnvVar {
 	if sandbox == nil {
 		return nil
 	}
 	providerFamily = NormalizeOptionalProviderType(providerFamily)
-	persisted := make([]domain.SandboxEnvVar, 0, len(sandbox.ProviderEnvOverrideNames))
-	providerKey := sessionProviderAPIKey(sandbox.Summary.ID, providerFamily, providers)
-	for _, name := range sandbox.ProviderEnvOverrideNames {
-		name = strings.ToUpper(strings.TrimSpace(name))
-		if name == "" {
-			continue
-		}
-		if item, ok := envItemByName(sandbox.EnvItems, name); ok && strings.TrimSpace(item.Value) != "" {
-			persisted = append(persisted, item)
-			continue
-		}
-		if providerKey != "" && providerKeyOverrideName(name, providerFamily) {
-			persisted = append(persisted, domain.SandboxEnvVar{Name: name, Value: providerKey, Secret: true})
-		}
-	}
-	return domain.MergeEnvItems(persisted, sandbox.ProviderEnvItems)
-}
-
-func envItemByName(items []domain.SandboxEnvVar, name string) (domain.SandboxEnvVar, bool) {
+	items := domain.MergeEnvItems(sandbox.ProviderEnvItems, sandbox.ExecutionProviderEnvItems)
+	filtered := make([]domain.SandboxEnvVar, 0, len(items))
 	for _, item := range domain.NormalizeEnvItems(items) {
-		if strings.EqualFold(strings.TrimSpace(item.Name), strings.TrimSpace(name)) {
-			return item, true
+		if providerEnvNameForFamily(item.Name, providerFamily) && strings.TrimSpace(item.Value) != "" {
+			filtered = append(filtered, item)
 		}
 	}
-	return domain.SandboxEnvVar{}, false
-}
-
-func sessionProviderAPIKey(sessionID, providerFamily string, providers []Provider) string {
-	providerID := SessionEnvProviderID(sessionID, providerFamily)
-	for _, provider := range providers {
-		if provider.ID == providerID {
-			return strings.TrimSpace(provider.APIKey)
-		}
+	if len(filtered) == 0 {
+		return nil
 	}
-	return ""
+	return filtered
 }
 
-func providerKeyOverrideName(name, providerFamily string) bool {
+func providerEnvNameForFamily(name, providerFamily string) bool {
+	name = strings.ToUpper(strings.TrimSpace(name))
 	switch NormalizeOptionalProviderType(providerFamily) {
 	case ProviderFamilyOpenAI:
-		return name == "LLM_API_KEY" || name == "OPENAI_API_KEY"
+		switch name {
+		case "LLM_API_ENDPOINT", "LLM_API_PROTOCOL", "LLM_API_KEY", "OPENAI_API_KEY", "LLM_MODEL":
+			return true
+		}
 	case ProviderFamilyAnthropic:
-		return name == "ANTHROPIC_API_KEY" || name == "ANTHROPIC_AUTH_TOKEN"
-	default:
-		return false
+		switch name {
+		case "ANTHROPIC_BASE_URL", "ANTHROPIC_API_ENDPOINT", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "CLAUDE_MODEL":
+			return true
+		}
 	}
+	return false
 }
 
 func providerEnvironmentLookup(sources providerEnvSources) EnvProviderLookup {

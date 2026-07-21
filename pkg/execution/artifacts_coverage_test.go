@@ -50,13 +50,13 @@ func TestCellArtifactsAndAgentFilesWorkflows(t *testing.T) {
 	ApplyAgentProviderEnv(nil, []domain.SandboxEnvVar{{Name: "A", Value: "1"}})
 	sessionEnvTarget := &domain.Sandbox{EnvItems: []domain.SandboxEnvVar{{Name: "A", Value: "session"}}}
 	ApplyAgentProviderEnv(sessionEnvTarget, []domain.SandboxEnvVar{{Name: "A", Value: "agent"}, {Name: "B", Value: "agent"}})
-	if env := domain.SandboxEnvMap(sessionEnvTarget.ProviderEnvItems); env["A"] != "session" || env["B"] != "agent" {
-		t.Fatalf("ApplyAgentProviderEnv session env = %#v", sessionEnvTarget.ProviderEnvItems)
+	if env := domain.SandboxEnvMap(sessionEnvTarget.ExecutionProviderEnvItems); env["A"] != "agent" || env["B"] != "agent" {
+		t.Fatalf("ApplyAgentProviderEnv session env = %#v", sessionEnvTarget.ExecutionProviderEnvItems)
 	}
-	providerEnvTarget := &domain.Sandbox{EnvItems: []domain.SandboxEnvVar{{Name: "A", Value: "session"}}, ProviderEnvItems: []domain.SandboxEnvVar{{Name: "A", Value: "provider"}}}
+	providerEnvTarget := &domain.Sandbox{EnvItems: []domain.SandboxEnvVar{{Name: "A", Value: "session"}}, ExecutionProviderEnvItems: []domain.SandboxEnvVar{{Name: "A", Value: "provider"}}}
 	ApplyAgentProviderEnv(providerEnvTarget, []domain.SandboxEnvVar{{Name: "A", Value: "agent"}})
-	if env := domain.SandboxEnvMap(providerEnvTarget.ProviderEnvItems); env["A"] != "provider" {
-		t.Fatalf("ApplyAgentProviderEnv provider env = %#v", providerEnvTarget.ProviderEnvItems)
+	if env := domain.SandboxEnvMap(providerEnvTarget.ExecutionProviderEnvItems); env["A"] != "provider" {
+		t.Fatalf("ApplyAgentProviderEnv provider env = %#v", providerEnvTarget.ExecutionProviderEnvItems)
 	}
 	if SessionTagValue([]domain.SandboxTag{{Name: " agent ", Value: " codex "}}, " agent ") != "" || SessionTagValue([]domain.SandboxTag{{Name: "agent", Value: " codex "}}, "agent") != "codex" {
 		t.Fatalf("SessionTagValue returned unexpected value")

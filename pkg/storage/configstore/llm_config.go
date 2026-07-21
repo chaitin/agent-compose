@@ -2,7 +2,6 @@ package configstore
 
 import (
 	"agent-compose/pkg/llms"
-	domain "agent-compose/pkg/model"
 	"context"
 	"database/sql"
 	"errors"
@@ -79,7 +78,7 @@ func (s *llmStore) ensureLLMSchema(ctx context.Context) error {
 
 func (s *llmStore) HasLLMProviders(ctx context.Context) (bool, error) {
 	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM llm_provider`).Scan(&count); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM llm_provider WHERE scope != ?`, llms.ProviderScopeFacadeEnv).Scan(&count); err != nil {
 		return false, fmt.Errorf("count llm providers: %w", err)
 	}
 	return count > 0, nil
@@ -119,6 +118,75 @@ func (s *llmStore) UpsertDefaultLLMConfig(ctx context.Context, provider llms.Pro
 		return fmt.Errorf("insert default llm provider model: %w", err)
 	}
 	return tx.Commit()
+}
+
+// DeleteSandboxLLMResources removes session-scoped providers and bindings, then
+// prunes session models that became unreferenced.
+func (s *llmStore) DeleteSandboxLLMResources(ctx context.Context, sandboxID string) error {
+	sandboxID = strings.TrimSpace(sandboxID)
+	if sandboxID == "" {
+		return fmt.Errorf("delete sandbox llm resources: sandbox id is required")
+	}
+	providerIDs := []string{
+		llms.SessionEnvProviderID(sandboxID, llms.ProviderFamilyOpenAI),
+		llms.SessionEnvProviderID(sandboxID, llms.ProviderFamilyAnthropic),
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin sandbox llm resource cleanup: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT pm.model_id
+		FROM llm_provider_model pm
+		JOIN llm_provider p ON p.id = pm.provider_id
+		WHERE p.scope = ? AND (p.id = ? OR p.id = ?)`, llms.ProviderScopeSessionEnv, providerIDs[0], providerIDs[1])
+	if err != nil {
+		return fmt.Errorf("list sandbox llm models: %w", err)
+	}
+	var modelIDs []string
+	var scanErr error
+	for rows.Next() {
+		var modelID string
+		if err := rows.Scan(&modelID); err != nil {
+			scanErr = err
+			break
+		}
+		modelIDs = append(modelIDs, modelID)
+	}
+	iterateErr := rows.Err()
+	closeErr := rows.Close()
+	if scanErr != nil {
+		return fmt.Errorf("scan sandbox llm model: %w", scanErr)
+	}
+	if iterateErr != nil {
+		return fmt.Errorf("iterate sandbox llm models: %w", iterateErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close sandbox llm models: %w", closeErr)
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM llm_provider_model
+		WHERE provider_id IN (
+			SELECT id FROM llm_provider WHERE scope = ? AND (id = ? OR id = ?)
+		)`, llms.ProviderScopeSessionEnv, providerIDs[0], providerIDs[1]); err != nil {
+		return fmt.Errorf("delete sandbox llm provider bindings: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM llm_provider
+		WHERE scope = ? AND (id = ? OR id = ?)`, llms.ProviderScopeSessionEnv, providerIDs[0], providerIDs[1]); err != nil {
+		return fmt.Errorf("delete sandbox llm providers: %w", err)
+	}
+	for _, modelID := range modelIDs {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM llm_model
+			WHERE id = ? AND scope = ?
+			AND NOT EXISTS (SELECT 1 FROM llm_provider_model WHERE model_id = llm_model.id)`, modelID, llms.ProviderScopeSessionEnv); err != nil {
+			return fmt.Errorf("delete orphaned sandbox llm model %q: %w", modelID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit sandbox llm resource cleanup: %w", err)
+	}
+	return nil
 }
 
 func (s *llmStore) ListEnabledLLMProviders(ctx context.Context) ([]llms.Provider, error) {
@@ -175,78 +243,4 @@ func (s *llmStore) LLMProviderModelWireAPI(ctx context.Context, providerID, mode
 		return "", true, nil
 	}
 	return llms.NormalizeWireAPI(wireAPI), true, nil
-}
-
-func (s *llmStore) SaveLLMFacadeToken(ctx context.Context, token llms.FacadeToken) error {
-	if strings.TrimSpace(token.TokenHash) == "" || strings.TrimSpace(token.SandboxID) == "" {
-		return fmt.Errorf("llm facade token hash and sandbox id are required")
-	}
-	if token.IssuedAt.IsZero() {
-		token.IssuedAt = time.Now().UTC()
-	}
-	revokedAt := int64(0)
-	if !token.RevokedAt.IsZero() {
-		revokedAt = token.RevokedAt.Unix()
-	}
-	expiresAt := int64(0)
-	if !token.ExpiresAt.IsZero() {
-		expiresAt = token.ExpiresAt.Unix()
-	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO llm_facade_token(token_hash, sandbox_id, token_fingerprint, model, provider_id, wire_api, source, run_id, issued_at, expires_at, revoked_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(token_hash) DO UPDATE SET sandbox_id = excluded.sandbox_id, token_fingerprint = excluded.token_fingerprint, model = excluded.model, provider_id = excluded.provider_id, wire_api = excluded.wire_api, source = excluded.source, run_id = excluded.run_id, issued_at = excluded.issued_at, expires_at = excluded.expires_at, revoked_at = excluded.revoked_at`,
-		token.TokenHash, token.SandboxID, token.TokenFingerprint, token.Model, token.ProviderID, token.WireAPI, token.Source, token.RunID, token.IssuedAt.Unix(), expiresAt, revokedAt)
-	if err != nil {
-		return fmt.Errorf("save llm facade token: %w", err)
-	}
-	return nil
-}
-
-// DeleteLLMFacadeToken removes a single facade token by its raw value. It is used
-// to retire a per-run agent token as soon as that run completes, so live tokens
-// never accumulate over the lifetime of a long-running session.
-func (s *llmStore) DeleteLLMFacadeToken(ctx context.Context, rawToken string) error {
-	if strings.TrimSpace(rawToken) == "" {
-		return nil
-	}
-	hash, _ := llms.HashFacadeToken(rawToken)
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM llm_facade_token WHERE token_hash = ?`, hash); err != nil {
-		return fmt.Errorf("delete llm facade token: %w", err)
-	}
-	return nil
-}
-
-func (s *llmStore) GetLLMFacadeToken(ctx context.Context, rawToken string) (llms.FacadeToken, error) {
-	hash, fingerprint := llms.HashFacadeToken(rawToken)
-	row := s.db.QueryRowContext(ctx, `SELECT sandbox_id, token_hash, token_fingerprint, model, provider_id, wire_api, source, run_id, issued_at, expires_at, revoked_at FROM llm_facade_token WHERE token_hash = ?`, hash)
-	token, err := llms.ScanFacadeToken(row.Scan)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return llms.FacadeToken{}, domain.ResourceError(domain.ErrNotFound, "llm facade token", fingerprint, fmt.Sprintf("llm facade token %s not found", fingerprint), err)
-		}
-		return llms.FacadeToken{}, err
-	}
-	return token, nil
-}
-
-// llmFacadeTokenRetention is how long a revoked facade token row is kept before
-// it is physically pruned. The grace window keeps recently-revoked tokens around
-// for debugging while bounding table growth from completed sessions.
-const llmFacadeTokenRetention = time.Hour
-
-const LLMFacadeTokenRetention = llmFacadeTokenRetention
-
-func (s *llmStore) RevokeLLMFacadeTokensForSandbox(ctx context.Context, sandboxID string) error {
-	now := time.Now().UTC()
-	if _, err := s.db.ExecContext(ctx, `UPDATE llm_facade_token SET revoked_at = ? WHERE sandbox_id = ? AND revoked_at = 0`, now.Unix(), strings.TrimSpace(sandboxID)); err != nil {
-		return fmt.Errorf("revoke llm facade tokens for sandbox: %w", err)
-	}
-	// Opportunistically prune long-dead rows (revoked beyond the retention grace,
-	// or expired) so the table stays bounded across sessions. Both states already
-	// fail closed at the handler, so deleting them changes nothing observable.
-	cutoff := now.Add(-llmFacadeTokenRetention).Unix()
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM llm_facade_token WHERE (revoked_at != 0 AND revoked_at < ?) OR (expires_at != 0 AND expires_at < ?)`, cutoff, now.Unix()); err != nil {
-		return fmt.Errorf("prune llm facade tokens: %w", err)
-	}
-	return nil
 }

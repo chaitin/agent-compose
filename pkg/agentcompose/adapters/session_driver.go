@@ -152,6 +152,11 @@ func (d *SandboxDriver) RemoveSandboxVM(ctx context.Context, session *domain.San
 			_ = d.Store.SaveVMState(session.Summary.ID, vmState)
 			return err
 		}
+		if err := d.ConfigDB.DeleteSandboxLLMResources(ctx, session.Summary.ID); err != nil {
+			vmState.LastError = err.Error()
+			_ = d.Store.SaveVMState(session.Summary.ID, vmState)
+			return err
+		}
 	}
 	return nil
 }

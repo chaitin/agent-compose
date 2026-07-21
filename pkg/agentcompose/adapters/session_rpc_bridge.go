@@ -159,13 +159,12 @@ func (b *SandboxRPCBridge) publishLoaderTopic(topic string, payload map[string]a
 
 func (b *SandboxRPCBridge) createSandbox(ctx context.Context, req sandboxRPCCreateRequest, source string) (*domain.Sandbox, error) {
 	tags := append([]domain.SandboxTag(nil), req.Tags...)
-	envItems := append([]domain.SandboxEnvVar(nil), req.EnvItems...)
+	providerEnvItems := append([]domain.SandboxEnvVar(nil), req.EnvItems...)
 	globalEnvItems, err := b.configDB.ListGlobalEnv(ctx)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	envItems = domain.MergeEnvItems(globalEnvItems, envItems)
-	providerEnvItems := envItems
+	envItems := domain.MergeEnvItems(globalEnvItems, providerEnvItems)
 	envItems = llms.FilterPersistedRuntimeEnv(envItems)
 	capabilityVars, capabilityTags := capabilities.BuildGatewaySandboxVars(capabilities.ProxyTarget(b.cap), req.CapsetIDs)
 	envItems = domain.MergeEnvItems(envItems, capabilityVars)
@@ -193,7 +192,10 @@ func (b *SandboxRPCBridge) createSandbox(ctx context.Context, req sandboxRPCCrea
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	session.ProviderEnvItems = providerEnvItems
+	llms.SetSandboxProviderEnvItems(session, providerEnvItems)
+	if err := b.store.UpdateSandbox(ctx, session); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("persist sandbox provider environment provenance: %w", err))
+	}
 	if err := b.workspaceEnsurer.Ensure(ctx, session); err != nil {
 		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = b.store.UpdateSandbox(ctx, session)
