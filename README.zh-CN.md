@@ -218,7 +218,11 @@ Bearer Token 不会加密网络流量。跨机器连接时，请使用 HTTPS、S
 | `gemini` | Gemini CLI |
 | `opencode` | OpenCode CLI |
 
-LLM 凭据只在 daemon（`.env`）配置一次，而不是每个 guest 各配。对 Codex、Claude 和 OpenCode，daemon 的 **Runtime LLM Facade** 给每个 sandbox 一个受限的 scoped token，而不是你的真实 API key，因此 provider key 不会进入 guest。当 token 已固定上游 provider 时，runtime 每次请求中的模型会透传给该 provider，无需预先登记到 agent-compose；provider 不支持模型时返回其上游错误。未绑定 provider 的兼容 token 保持既有的已配置 model/provider 解析行为。
+LLM 凭据只通过 daemon 侧配置（`.env` 或 Global Env）设置一次，而不是每个 guest 各配。对 Codex、Claude 和 OpenCode，daemon 的 **Runtime LLM Facade** 给每个 sandbox 一个受限的 scoped token，而不是你的真实 API key，因此 provider key 不会进入 guest。当 token 已固定上游 provider 时，runtime 每次请求中的模型会透传给该 provider，无需预先登记到 agent-compose；provider 不支持模型时返回其上游错误。
+
+Provider 选择和环境字段解析是两条独立规则。选择顺序是：显式 provider、已配置的 system provider、最后才是 env bootstrap。对 env bootstrap，适用的 endpoint、protocol、key 和 model 字段分别按以下顺序解析：sandbox 的 provider-specific override（**Provider Env**）、控制面的 **Global Env**、daemon process/`.env`、默认值。高层非空 alias 仍高于低层 canonical；同一层 canonical 优先，空值继续回退。Global Env 是显式控制面覆盖层，因此排障时必须同时检查 Global Env 和部署 `.env`。
+
+Sandbox Provider Env 由 daemon 持有，绝不会复制进 guest。每个 facade token 都会捕获 sandbox 与本次 execution 的显式覆盖层，因此并发 execution 不会互相覆盖 endpoint、protocol 或 key。继承自 Global Env 或 daemon 的字段会在每次 facade 请求时重新解析，使轮换立即生效，同时保持 token 内的显式覆盖不变。若 token 绑定的是已配置 system provider，则完全绕过 Provider Env 解析。
 
 按你的 agent 使用的后端家族设置变量。**OpenAI 家族**（Codex，以及 daemon 自身的 `LLMService` 和 scheduler LLM 调用）：
 
@@ -237,9 +241,17 @@ ANTHROPIC_API_KEY=sk-ant-...
 ANTHROPIC_MODEL=claude-...
 ```
 
+Provider family 由变量命名空间明确选择，而不是根据 endpoint 路径推断。
+Anthropic Messages endpoint 必须使用 `ANTHROPIC_BASE_URL` 或其 alias
+`ANTHROPIC_API_ENDPOINT`；即使路径以 `/messages` 结尾，`LLM_API_ENDPOINT`
+仍属于 OpenAI family。`LLM_API_KEY` 和 `LLM_MODEL` 同样不会 bootstrap
+Anthropic provider；请使用上面的 Anthropic 专用变量名。
+
 设置 `LLM_API_PROTOCOL=chat_completions` 可对接任意 OpenAI 兼容 endpoint（DeepSeek、vLLM、Ollama）。
 
-**各 provider 说明。** OpenCode 从 agent 的 `model`（`provider/model`，如 `anthropic/…` 或 `openai/…`）选择上游家族并获得对应的 facade token；只有 OpenCode 自带的原生 provider 才走 OpenCode 自身登录。**Gemini 是例外** —— 它不会拿到任何 LLM key（`GEMINI_API_KEY` / `GOOGLE_API_KEY` 会从 guest 中过滤），而是通过 Gemini CLI 自身登录，凭据持久化在 sandbox home（`~/.gemini`）。
+**各 provider 说明。** OpenCode 从 agent 的 `model`（`provider/model`，如 `anthropic/…` 或 `openai/…`）选择上游家族并获得对应的 facade token。Codex 和 OpenCode `openai/*` 都以 Responses 访问 facade；当上游解析为 Chat Completions 时，facade 转换请求与响应，上游只会收到 `/chat/completions`。Codex 保持 Responses 入站，因为当前 Codex CLI 的 model-provider 配置只接受这一 wire API。OpenCode 自定义 provider 使用 Chat Completions 入站，Anthropic 家族使用 Messages 入站。只有 OpenCode 自带的原生 provider 才走 OpenCode 自身登录。**Gemini 是例外** —— 它不会拿到任何 LLM key（`GEMINI_API_KEY` / `GOOGLE_API_KEY` 会从 guest 中过滤），而是通过 Gemini CLI 自身登录，凭据持久化在 sandbox home（`~/.gemini`）。
+
+Daemon 侧的 `LLM_API_*` 始终描述真实上游。在 facade 托管的 guest 内，同名变量只是兼容投影：endpoint 指向本地 facade，key 是 sandbox-scoped token，protocol 是 guest 入站协议；真实 provider credential 不会进入 guest。
 
 完整变量（超时、endpoint 别名、`OPENAI_API_KEY` / `ANTHROPIC_AUTH_TOKEN` 等）见 [`.env.example`](.env.example)；facade 的托管机制见 [docs/design/agent-compose_design.md#daemon-llm-client](docs/design/agent-compose_design.md#daemon-llm-client)。
 

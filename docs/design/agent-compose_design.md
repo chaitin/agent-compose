@@ -944,15 +944,72 @@ locally. Passing plain JSON Schema performs JSON parsing.
   `chat_completions` (OpenAI-compatible Chat Completions; aliases: `chat`,
   `chat_completion`)
 
-Global env from the UI/database overrides process environment for these keys.
+Provider selection and environment-field resolution are independent. Selection
+uses an explicit provider first, then a configured system provider, then an env
+bootstrap provider. Env bootstrap resolves each field separately:
+
+1. valid sandbox provider-specific overrides (Provider Env);
+2. control-plane Global Env from the UI/database;
+3. daemon process environment / loaded `.env`;
+4. the field default.
+
+A higher source overrides only non-empty fields, so endpoint-only,
+protocol-only, key-only, and model-only sandbox configuration inherits the
+other fields. Within one source, canonical names precede aliases. A higher
+source alias still precedes a lower source canonical name, and an empty value
+falls through. Supported aliases remain `OPENAI_API_KEY` for `LLM_API_KEY`,
+`ANTHROPIC_API_ENDPOINT` for `ANTHROPIC_BASE_URL`,
+`ANTHROPIC_AUTH_TOKEN` for `ANTHROPIC_API_KEY`, and `CLAUDE_MODEL` for
+`ANTHROPIC_MODEL`. Global Env is an explicit control-plane override of the
+deployment `.env`; diagnostics must inspect both.
+
+The layers have distinct owners and lifetimes. The sandbox-owned Provider Env
+layer is persisted as daemon-only sandbox metadata and is excluded from every
+driver and guest environment projection. An agent or loader execution may add
+a transient execution overlay above it. When env bootstrap wins provider
+selection, token issuance snapshots those explicit layers into a token-unique
+facade grant. The facade request path never reconstructs a target from mutable
+sandbox state and never updates a shared session provider. Instead it combines
+the token grant with the current Global Env and daemon layers, so inherited
+field rotations are visible while concurrent or consecutive executions remain
+isolated. When a configured system provider wins, the token binds that provider
+ID and no Provider Env grant is created. Deleting a run token deletes its grant;
+sandbox removal revokes its tokens and removes their grants, while stop keeps
+them available for resume.
+
+Provider family is explicit in the variable namespace and requested agent
+family; it is never inferred from an endpoint suffix. `LLM_API_ENDPOINT` is an
+OpenAI-family field even when its path ends in `/messages`. Anthropic Messages
+configuration must establish that family with `ANTHROPIC_BASE_URL` or
+`ANTHROPIC_API_ENDPOINT` (or another Anthropic-specific key/model field), and
+Anthropic bootstrap does not inherit `LLM_API_KEY` or `LLM_MODEL`.
+
 The `chat_completions` protocol is for unary text generation only. It does not
 create workspace-capable agent sandboxes or grant file, command, or MCP tool
 access. With `outputSchema`, it uses prompt guidance and `json_object` instead
 of Responses API strict JSON Schema.
 
-Guest agent providers (`codex`, `claude`, `gemini`, `opencode`) remain separate CLI runners
-inside guest containers with their own API keys and provider-native session
-state.
+The daemon-side `LLM_API_*` values describe the real upstream. The same names
+inside a facade-managed guest are a compatibility projection: endpoint is the
+facade URL, key is a sandbox-scoped token, and protocol is the guest ingress
+wire API. Real provider keys never enter the guest.
+
+Facade ingress and upstream protocols have separate ownership:
+
+- Codex, including prompt attach, uses Responses ingress because current Codex
+  CLI model-provider configuration accepts only that wire API. The facade
+  bridges to Chat Completions when the resolved upstream requires it.
+- OpenCode `openai/*` also uses Responses ingress and the same upstream bridge.
+- OpenCode custom providers use Chat Completions ingress.
+- Anthropic-family agents use Messages ingress.
+- A facade token's `WireAPI` authorizes only guest ingress. A
+  `ResolvedTarget.WireAPI` describes only the upstream protocol. Mismatched
+  guest requests remain forbidden.
+
+Guest agent providers (`codex`, `claude`, `gemini`, `opencode`) remain separate
+CLI runners with provider-native session state. Codex, Claude, and managed
+OpenCode executions receive facade tokens rather than real upstream keys;
+Gemini continues to use its own CLI login.
 
 The loader's primary sandbox lifecycle API is:
 

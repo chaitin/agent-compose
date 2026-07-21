@@ -252,14 +252,32 @@ Each agent sets a `provider`, which selects the CLI it runs inside the sandbox:
 | `gemini` | Gemini CLI |
 | `opencode` | OpenCode CLI |
 
-You configure LLM credentials once, on the daemon (in `.env`) — not per guest.
-For Codex, Claude, and OpenCode, the daemon's **Runtime LLM Facade** hands each
-sandbox a scoped token instead of your real API key, so provider keys never enter
-the guest. When that token pins an upstream provider, the model in each runtime
-request is forwarded to that provider and does not need to be listed in
-agent-compose first; an unsupported model returns the upstream provider's error.
-Compatibility tokens without a provider keep the existing configured
-model/provider resolution behavior.
+You configure LLM credentials once through daemon-side configuration (`.env` or
+Global Env), not per guest. For Codex, Claude, and OpenCode, the daemon's
+**Runtime LLM Facade** hands each sandbox a scoped token instead of your real
+API key, so provider keys never enter the guest. When that token pins an
+upstream provider, the model in each runtime request is forwarded to that
+provider and does not need to be listed in agent-compose first; an unsupported
+model returns the upstream provider's error.
+
+Provider selection and environment-field resolution are separate rules. An
+explicit provider wins first, then a configured system provider, then an
+environment-bootstrapped provider. For that env bootstrap, the applicable
+endpoint, protocol, key, and model fields resolve independently in this order:
+sandbox provider-specific overrides (**Provider Env**), control-plane **Global
+Env**, daemon process/`.env`, then defaults. A non-empty higher-layer alias
+still beats a lower-layer canonical name; within one layer, canonical names
+win, and empty values continue to the next layer. Global Env is an explicit
+control-plane override, so troubleshooting must inspect it as well as the
+deployment `.env`.
+
+Sandbox Provider Env is daemon-owned state and is never copied into the guest.
+Each facade token captures the sandbox plus execution-specific override layer,
+so concurrent executions cannot overwrite each other's endpoint, protocol, or
+key. Fields inherited from Global Env or the daemon are resolved again for each
+facade request, allowing rotations to take effect without changing explicit
+token-scoped overrides. A token bound to a configured system provider bypasses
+Provider Env resolution entirely.
 
 Set the variables for the backend family your agents use. **OpenAI-family**
 (Codex, plus the daemon's own `LLMService` and scheduler LLM calls):
@@ -279,15 +297,32 @@ ANTHROPIC_API_KEY=sk-ant-...
 ANTHROPIC_MODEL=claude-...
 ```
 
+The variable namespace, not the endpoint path, selects the provider family.
+Use `ANTHROPIC_BASE_URL` or its `ANTHROPIC_API_ENDPOINT` alias for an Anthropic
+Messages endpoint; `LLM_API_ENDPOINT` remains OpenAI-family even when its path
+ends in `/messages`. `LLM_API_KEY` and `LLM_MODEL` likewise do not bootstrap an
+Anthropic provider; use the Anthropic-specific names shown above.
+
 Set `LLM_API_PROTOCOL=chat_completions` to target any OpenAI-compatible endpoint
 (DeepSeek, vLLM, Ollama).
 
 **Per-provider notes.** OpenCode picks its upstream family from the agent's
 `model` (`provider/model`, e.g. `anthropic/…` or `openai/…`) and gets a facade
-token for it; only OpenCode's own native provider uses OpenCode's login instead.
+token for it. Codex and OpenCode `openai/*` speak Responses to the facade; when
+the resolved upstream is Chat Completions, the facade bridges the request and
+response and sends only `/chat/completions` upstream. Codex keeps Responses
+ingress because current Codex CLI model-provider configuration accepts only
+that wire API. OpenCode custom providers speak Chat Completions, while
+Anthropic-family agents speak Messages. Only OpenCode's own native provider
+uses OpenCode's login instead.
 **Gemini is the exception** — it is never handed an LLM key (`GEMINI_API_KEY` /
 `GOOGLE_API_KEY` are filtered out of the guest) and authenticates through the
 Gemini CLI's own login, persisted under the sandbox home (`~/.gemini`).
+
+The daemon-side `LLM_API_*` values always describe the real upstream. Inside a
+facade-managed guest, the same names are compatibility projections: endpoint is
+the local facade URL, key is a sandbox-scoped token, and protocol is the guest
+ingress protocol. The real provider credential never enters the guest.
 
 See [`.env.example`](.env.example) for the full list (timeouts, endpoint aliases,
 `OPENAI_API_KEY` / `ANTHROPIC_AUTH_TOKEN`) and the

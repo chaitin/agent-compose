@@ -159,9 +159,9 @@ Agent execution should:
    - `frontend/src/pages/AgentsPage.svelte` and `frontend/src/api/agents.ts`
      accept `opencode`.
    - `README.md`, SDK docs, and runtime contract docs list the new provider.
-   - OpenCode environment-variable guidance notes that the exact provider key depends
-     on the selected OpenCode model provider, so document common cases rather
-     than a single universal key.
+   - OpenCode environment-variable guidance explains that provider-family key
+     and endpoint names are facade compatibility projections containing a
+     scoped token and facade URL, not real upstream credentials.
 
 7. Tests.
 
@@ -212,9 +212,9 @@ the current state files and command paths.
 
 - Confirm the exact JSON event shapes emitted by the installed `opencode-ai`
   version in the guest image against a real model backend.
-- Confirm whether OpenCode honors common provider API keys directly from the
-  environment, or whether a default config file should be mounted under
-  `/root/.opencode`.
+- Confirm the installed OpenCode version honors the facade-projected
+  provider-family environment and generated provider config for each supported
+  model family.
 - Decide separately whether existing Codex/Claude/Gemini runners should consume
   forwarded `model` / `system_prompt` or leave them as OpenCode-only runtime
   options.

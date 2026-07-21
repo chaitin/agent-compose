@@ -132,6 +132,12 @@ daemon 会显式传递 workspace、state 和 home 路径，并注入：
 | `VERSION` | 当前 daemon version |
 | `AGENT_COMPOSE_RUNTIME_BASE_URL` | 配置 runtime facade 时设置 |
 
+当 runtime LLM facade 托管一次 agent 执行时，daemon 还会按需投影 `LLM_API_ENDPOINT`、`LLM_API_KEY`、`LLM_API_PROTOCOL`、provider-specific key/base URL 名称和 provider model。Guest 内这些值描述的是 facade 入站，不是真实上游：endpoint 是 sandbox-scoped facade URL，所有 key 值都是 scoped facade token。Guest image **不得**假定 guest 中 `LLM_API_*` 与 daemon process/`.env` 中同名变量语义相同，也**不得**把真实 provider credential 写入或复制进镜像。
+
+Sandbox 与 execution Provider Env 始终留在 daemon 侧；跨越 guest 边界的只有 facade URL 和本次 execution 的 scoped token。
+
+入站协议由所选 guest CLI 决定。Codex（包括 prompt attach）使用 Responses，因为当前 Codex CLI 的 model-provider 配置只接受这一 wire API。OpenCode `openai/*` 同样使用 Responses，即使 facade 桥接到 Chat Completions 上游；OpenCode 自定义 provider 使用 Chat Completions。Anthropic 家族使用 Messages。Scoped token 只授权 guest 入站协议；facade 解析出的上游协议是另一个独立值。
+
 `prompt` 和 `exec` 的 stdout payload、stream 分离、artifact 文件以及交互式 NDJSON frame 都属于协议，而不仅是 CLI 展示。自行替换 runtime 时，必须实现对应 release 的完整协议。强烈建议直接复用仓库 runtime，协议详见 [agent-compose 与 runtime 调用约定](https://github.com/chaitin/agent-compose/blob/main/docs/design/agent-compose-runtime_contract.md)。
 
 ## 5. 可选能力要求
@@ -147,7 +153,7 @@ daemon 会显式传递 workspace、state 和 home 路径，并注入：
 | Gemini | `PATH` 中的 `gemini` 可执行文件 |
 | OpenCode | `PATH` 中的 `opencode` 可执行文件 |
 
-Provider credential 和 endpoint variable 会在执行时注入，**不得**写入镜像。
+当 facade 托管一次执行时，facade endpoint variable 和 scoped token 会在执行时注入。真实 provider credential 保留在 daemon 侧，**不得**写入镜像或传入 guest。
 
 ### 5.2 Jupyter
 

@@ -186,6 +186,25 @@ The daemon passes explicit workspace, state, and home paths. It also injects:
 | `VERSION` | Current daemon version |
 | `AGENT_COMPOSE_RUNTIME_BASE_URL` | Set when the runtime facade is configured |
 
+When the runtime LLM facade manages an agent execution, the daemon also
+projects compatibility variables such as `LLM_API_ENDPOINT`, `LLM_API_KEY`,
+`LLM_API_PROTOCOL`, provider-specific key/base URL names, and a provider model
+name when needed. In the guest these values describe the facade ingress, not
+the real upstream: the endpoint is a sandbox-scoped facade URL and every key
+value is a scoped facade token. A guest image **MUST NOT** assume that guest
+`LLM_API_*` values have the same meaning as daemon process/`.env` values, and
+real provider credentials **MUST NOT** be baked into or copied into the image.
+Sandbox and execution Provider Env remain daemon-side; only the facade URL and
+the execution's scoped token cross the guest boundary.
+
+The ingress protocol depends on the selected guest CLI. Codex, including
+prompt attach, uses Responses because current Codex CLI model-provider
+configuration accepts only that wire API. OpenCode `openai/*` also uses
+Responses ingress even when the facade bridges to a Chat Completions upstream;
+OpenCode custom providers use Chat Completions. Anthropic-family agents use
+Messages. A scoped token authorizes only its guest ingress protocol; the
+facade's resolved upstream protocol is a separate value.
+
 The `prompt` and `exec` stdout payloads, stream separation, artifact files, and
 interactive NDJSON frames are protocol, not just CLI presentation. A custom
 replacement runtime **MUST** implement the matching release protocol. Reusing
@@ -207,8 +226,9 @@ guest Dockerfile unless a combination has been independently tested.
 | Gemini | A `gemini` executable in `PATH` |
 | OpenCode | An `opencode` executable in `PATH` |
 
-Provider credentials and endpoint variables are injected at execution time.
-They **MUST NOT** be embedded in the image.
+When the facade manages an execution, facade endpoint variables and scoped
+tokens are injected at execution time. Real provider credentials remain
+daemon-side and **MUST NOT** be embedded in or passed through the image.
 
 ### 5.2 Jupyter
 
