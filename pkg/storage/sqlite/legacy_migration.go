@@ -26,6 +26,9 @@ func prepareLegacySchema(ctx context.Context, conn migrationConn) error {
 	if err := rebuildLegacyLoaderBinding(ctx, conn); err != nil {
 		return err
 	}
+	if err := removeUnversionedLoaderBindingConfigHash(ctx, conn); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -260,6 +263,22 @@ func rebuildLegacyLoaderBinding(ctx context.Context, conn migrationConn) error {
 		`DROP TABLE loader_binding_legacy`,
 	}
 	return execLegacyStatements(ctx, conn, "migrate loader binding trigger scope", statements)
+}
+
+func removeUnversionedLoaderBindingConfigHash(ctx context.Context, conn migrationConn) error {
+	columns, err := sqliteTableColumnTypes(ctx, conn, "loader_binding")
+	if err != nil {
+		return err
+	}
+	if _, exists := columns["sandbox_config_hash"]; !exists {
+		return nil
+	}
+	// An unversioned database may already have this derived field from a
+	// development build. Normalize it to the baseline so migration 2 can add it.
+	if _, err := conn.ExecContext(ctx, `ALTER TABLE loader_binding DROP COLUMN sandbox_config_hash`); err != nil {
+		return fmt.Errorf("remove unversioned loader binding sandbox config hash: %w", err)
+	}
+	return nil
 }
 
 func migrateLegacyLoaderTimestamps(ctx context.Context, conn migrationConn) error {
