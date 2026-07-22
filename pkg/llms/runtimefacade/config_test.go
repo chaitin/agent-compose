@@ -152,6 +152,31 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 		t.Fatalf("opencode anthropic env = %#v", anthropic.Env)
 	}
 
+	pi, err := EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "pi", "openai/gpt-test", TokenSourceAgent, "run-pi")
+	if err != nil {
+		t.Fatalf("EnsureSessionAgentRuntimeConfig pi returned error: %v", err)
+	}
+	if pi.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses || pi.Env["PI_CODING_AGENT_DIR"] != "/root/.pi/agent" || pi.Env["OPENAI_API_KEY"] == "" {
+		t.Fatalf("pi env = %#v", pi.Env)
+	}
+	piConfigPath := filepath.Join(execution.HostSandboxHome(session), ".pi", "agent", "models.json")
+	piConfig, err := os.ReadFile(piConfigPath)
+	if err != nil {
+		t.Fatalf("read pi models.json: %v", err)
+	}
+	for _, want := range []string{"agent-compose", "gpt-test", "openai-responses", "$AGENT_COMPOSE_SANDBOX_TOKEN"} {
+		if !strings.Contains(string(piConfig), want) {
+			t.Fatalf("pi config %q does not contain %q", piConfig, want)
+		}
+	}
+	if strings.Contains(string(piConfig), pi.Env["AGENT_COMPOSE_SANDBOX_TOKEN"]) {
+		t.Fatal("pi config persisted the run-scoped token")
+	}
+	token, err := store.GetLLMFacadeToken(ctx, pi.Env["AGENT_COMPOSE_SANDBOX_TOKEN"])
+	if err != nil || token.RunID != "run-pi" || token.ProviderID == "" {
+		t.Fatalf("pi token = %#v, err=%v", token, err)
+	}
+
 	custom, err := EnsureSessionAgentRuntimeConfig(ctx, config, store, session, "opencode", "custom/gpt-custom", TokenSourceLoaderCommand, "run-custom")
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode custom returned error: %v", err)

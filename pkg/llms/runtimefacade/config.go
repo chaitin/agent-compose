@@ -55,6 +55,9 @@ func EnsureSessionAgentRuntimeConfig(ctx context.Context, config *appconfig.Conf
 	case "opencode":
 		env, err := ensureSessionOpenCodeConfig(ctx, config, store, session, model, source, runID)
 		return AgentRuntimeConfig{Env: env}, err
+	case "pi":
+		env, err := llms.EnsurePiFacadeConfig(ctx, config, store, session, model, source, runID)
+		return AgentRuntimeConfig{Env: env}, err
 	default:
 		return AgentRuntimeConfig{}, nil
 	}
