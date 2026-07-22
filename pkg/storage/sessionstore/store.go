@@ -324,17 +324,20 @@ func (s *Store) createSandboxWithOptions(title, baseWorkspace, driver, guestImag
 		}
 	}
 
-	for _, dir := range []string{
+	dirs := []string{
 		sandboxDir,
 		filepath.Join(sandboxDir, "context"),
 		filepath.Join(sandboxDir, "home"),
 		filepath.Join(sandboxDir, "runtime"),
-		filepath.Join(sandboxDir, "workspace"),
 		filepath.Join(sandboxDir, "state"),
 		filepath.Join(sandboxDir, "logs"),
 		filepath.Join(sandboxDir, "vm"),
 		filepath.Join(sandboxDir, "proxy"),
-	} {
+	}
+	if workspaceProvisioning == nil {
+		dirs = append(dirs, workspaceDir)
+	}
+	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("create sandbox dir %s: %w", dir, err)
 		}

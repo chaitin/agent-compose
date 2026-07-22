@@ -59,6 +59,9 @@ func TestProvisionerMaterializerFailurePersistsFailed(t *testing.T) {
 	}
 	assertProvisionerFailureStatus(t, caller, domain.SandboxWorkspaceProvisioningStatusFailed)
 	assertProvisionerFailureStatus(t, store.sandbox(t), domain.SandboxWorkspaceProvisioningStatusFailed)
+	if _, err := os.Stat(caller.Summary.WorkspacePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("formal workspace stat after materializer failure = %v, want not exist", err)
+	}
 	if got, want := store.updateStatuses(), []string{domain.SandboxWorkspaceProvisioningStatusFailed}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateSandbox statuses = %v, want %v", got, want)
 	}
