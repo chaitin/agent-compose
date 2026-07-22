@@ -6,6 +6,10 @@ export interface TextWriter {
   line(text?: string): void;
 }
 
+export interface TranscriptTextWriter extends TextWriter {
+  transcript(): string;
+}
+
 export function appendDelta(
   writer: TextWriter,
   cache: Map<string, string>,
@@ -26,7 +30,7 @@ export function appendDelta(
   }
 }
 
-export class TranscriptWriter implements TextWriter {
+export class TranscriptWriter implements TranscriptTextWriter {
   private readonly chunks: string[] = [];
 
   write(text: string): void {

@@ -245,23 +245,29 @@ Rules:
 - `run -i --prompt` supports providers with reusable provider conversations: Codex, Claude/cc, and OpenCode. Gemini currently returns unsupported.
 - `StopRun` requests cancellation for active in-daemon runs. Pending/running runs left behind after daemon restart are reconciled to failed with a `daemon interrupted` error.
 
-## `scheduler`: Inspect and Trigger Project Schedulers
+## `scheduler`: Invoke, Inspect, and Operate Project Schedulers
 
 ```bash
 agent-compose scheduler ls [agent]
-agent-compose scheduler runs [scheduler] [--agent <agent>] [--trigger <trigger>] [--status <status>] [--limit <n>]
-agent-compose scheduler logs [run] [--run <run>] [--agent <agent>] [--trigger <trigger>] [--tail <n>]
-agent-compose scheduler trigger <agent> <trigger>
-agent-compose scheduler inspect <name-or-id> [trigger]
+agent-compose scheduler invoke <scheduler-ref> [--payload <json>]
+agent-compose scheduler trigger <scheduler-ref> <trigger-ref> [--payload <json>] [--detach]
+agent-compose scheduler runs [scheduler-ref] [--trigger <trigger-ref>] [--status <status>] [--limit <n>]
+agent-compose scheduler logs [run-ref] [--run <run-ref>] [--scheduler <scheduler-ref>] [--trigger <trigger-ref>] [--tail <n>]
+agent-compose scheduler prune [--scheduler <scheduler-ref>] [--trigger <trigger-ref>] [--status <terminal-statuses>] [--older-than <duration>] [--force]
+agent-compose scheduler inspect <scheduler-or-trigger-or-run-ref> [--scheduler <scheduler-ref>]
 ```
 
 - `scheduler ls` lists triggers from declarative scheduler config and triggers registered by scheduler scripts.
-- `scheduler runs` lists scheduler runs in the current project and the sandboxes linked to each run.
-- `scheduler logs` prints the structured event log for a scheduler run; without a run argument it selects the latest matching run.
-- `scheduler trigger` manually runs the selected trigger through the existing project run flow.
-- `scheduler trigger --prompt "..."` overrides the trigger's agent prompt for this manual run.
+- `scheduler invoke` calls the default entry point of an explicitly script-based scheduler in the foreground. It does not create trigger-run history, persisted outer logs, or artifacts. The former `scheduler run` command has been removed.
+- `scheduler trigger` manually executes a named trigger. `--detach` returns a persisted trigger run that can be inspected or stopped later.
 - `scheduler trigger --payload '{"key":"value"}'` passes a JSON payload to the scheduler trigger handler.
-- `scheduler inspect` accepts a scheduler name/ID, trigger name/ID, or scheduler run ID. The legacy `<agent> <trigger>` form remains supported.
+- `scheduler runs` lists only outer trigger runs; inner agent runs created by `scheduler.agent()` are managed by the ordinary run commands. The default is all matching runs, while `--limit` restricts the final count. Status is one of `running`, `succeeded`, `failed`, `canceled`, or `skipped`.
+- `scheduler logs` prints outer structured events for all current schedulers' trigger runs by default. `--tail N` selects the newest N matching events globally and prints them oldest-to-newest; `--tail -1` means all and `--tail 0` means none. Invocation logs and inner agent transcripts are not included.
+- For `scheduler runs/logs --trigger`, names and short IDs are resolved against the current definition first. An exact trigger ID that was removed or renamed remains queryable when persisted trigger-run history exists. If that historical ID belongs to multiple schedulers, add the scheduler positional argument for `runs` or `--scheduler` for `logs`.
+- `scheduler prune` removes outer trigger-run history and its directly owned loader events, event delivery/link rows, and canonical run artifacts. It matches all terminal (`succeeded`, `failed`, `canceled`, or `skipped`) trigger runs in the current project by default. Use `--scheduler`, `--trigger`, `--status`, or `--older-than` to narrow the scope. The default is a dry-run; only `--force` deletes data. Running runs, invocations, inner agent runs, topic events, sandboxes, loader state, and sticky bindings are retained. Historical trigger IDs use the same current-definition-first resolution as `runs` and `logs`.
+- On daemon startup, an outer trigger run left in `running` by an interrupted daemon process is reconciled to `failed` with a daemon-interrupted loader event before it can later become eligible for pruning.
+- `scheduler inspect` accepts one scheduler name/ID, trigger name/ID, or outer trigger-run ID. If a trigger reference exists in multiple schedulers, add `--scheduler <scheduler-ref>`; the old two-position-argument form is no longer supported.
+- `scheduler runs` and `scheduler logs` currently collect unary cursor pages and render once. Streaming and follow behavior are intentionally deferred to a separate change.
 
 ## `ps`: List Sandboxes
 
@@ -578,7 +584,7 @@ agent-compose inspect cache <cache-id>
 Cache domains are shown as command-level `--type` values:
 
 - `oci`: physical manifests, blobs, and interrupted entries in the daemon OCI image store.
-- `materialized`: runtime input generated from images, such as BoxLite OCI layout or Microsandbox rootfs.
+- `materialized`: runtime input generated from images, such as a BoxLite OCI layout or an immutable Microsandbox qcow2 base disk.
 - `runtime`: shared runtime-derived images under driver homes.
 - `skill`: content-addressed skill artifacts and interrupted temporary/lock entries.
 
@@ -613,6 +619,12 @@ agent-compose cache rm <cache-id> --force
 ```
 
 `CACHE_TTL` defaults to `168h`; `0` disables expiration classification. TTL never triggers background/startup deletion. Use `cache prune --expired --force` explicitly. `--older-than` remains an independent filter. `cache prune` and `cache rm` default to dry-run; `--force` authorizes execution but never bypasses `active`, `referenced`, or `unknown` protection. BoxLite v0.9.7 runtime image inventory is read-only because its ABI has no safe image remove/prune operation; Microsandbox shared images use the SDK inventory/remove APIs. `sandbox prune` does not delete cache artifacts.
+
+Microsandbox root filesystems use an immutable qcow2 base disk in `DATA_ROOT/image-cache` and a private qcow2 overlay in `MICROSANDBOX_HOME/rootfs-disks` for every sandbox. A base disk is reported as referenced and cannot be removed while any rootfs sidecar points to it. Stop/resume preserves the private overlay; sandbox remove/prune deletes that overlay and its ownership sidecar. Base and overlay paths are recorded from the daemon mount namespace, so backups and migrations must move both trees together without changing their daemon-visible paths. A `DATA_ROOT` is owned by one daemon instance and must not be shared concurrently. A base disk is only counted as referenced when a sidecar names it as a base disk inside that image cache; a sidecar that cannot be read, or that points anywhere else, is reported as a warning and makes every base disk `unknown` until it is repaired or removed, because the disk it protects can no longer be identified.
+
+Microsandbox resolves a guest image through the Docker daemon when one is reachable, and otherwise through the agent-compose image cache, the same order the BoxLite driver uses. Microsandbox itself never contacts a registry. The two paths authenticate differently: the Docker daemon uses its own credentials, while the image cache uses the daemon process keychain together with `IMAGE_REGISTRY` and `IMAGE_INSECURE_REGISTRIES`. A deployment without a Docker daemon therefore has to configure the image cache side. Falling back is logged at warning level, and the source is recorded in the base disk cache identity, so `cache ls` shows which path produced each base disk. A pull policy failure never falls back, so `pull_policy=never` cannot be satisfied by the other path. Because the two paths lay an image out with different extractors, each keeps its own base disk; an image resolved both ways is built twice.
+
+The first release using disk-image rootfs requires a one-time cutover: drain Microsandbox workloads, remove existing Microsandbox runtime sandboxes, and delete only each image cache's legacy `rootfs/` directory and `.rootfs.ready` marker. Do not delete the whole image directory because its BoxLite `oci/` cache and new Microsandbox bases share that directory. Preserve sandbox workspace and agent state under `/data`. The daemon image supplies `qemu-img` and a `mkfs.ext4` implementation with `-d` support; native deployments must install both tools. No reflink-capable filesystem, loop device, or privileged mount is required.
 
 The daemon can optionally run time-based retention cleanup. `WORKSPACE_CLEANUP_TTL` reclaims only the workspace directory of eligible stopped sandboxes, while preserving metadata, logs, and state for audit; a reclaimed sandbox cannot be resumed. `IMAGE_CACHE_CLEANUP_TTL` removes unreferenced OCI and materialized data owned by `IMAGE_CACHE_ROOT`, using last-used time when available and pull time or filesystem modification time as a fallback. Both default to `0`, which disables that cleaner. `CLEANUP_INTERVAL` defaults to `1h`. Automatic cleanup does not touch workspace sources, Docker daemon images, BoxLite home, or Microsandbox SDK caches, and it does not implement a disk-space watermark.
 

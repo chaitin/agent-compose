@@ -12,13 +12,39 @@ import (
 )
 
 type microsandboxDiskOwnership struct {
-	Version   int       `json:"version"`
-	SandboxID string    `json:"sandbox_id"`
-	DiskPath  string    `json:"disk_path"`
-	CreatedAt time.Time `json:"created_at"`
+	Version      int       `json:"version"`
+	ResourceKind string    `json:"resource_kind,omitempty"`
+	SandboxID    string    `json:"sandbox_id"`
+	DiskPath     string    `json:"disk_path"`
+	BaseIdentity string    `json:"base_cache_identity,omitempty"`
+	BackingPath  string    `json:"backing_file_path,omitempty"`
+	DiskSizeGiB  int32     `json:"disk_size_gib,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
+const (
+	microsandboxDiskOwnershipVersion = 2
+	microsandboxDockerDiskKind       = "microsandbox-docker-data"
+	microsandboxRootfsDiskKind       = "microsandbox-rootfs"
+)
+
 func writeMicrosandboxDiskOwnership(diskPath, sandboxID string) error {
+	return writeMicrosandboxDiskOwnershipRecord(microsandboxDiskOwnership{
+		Version: microsandboxDiskOwnershipVersion, ResourceKind: microsandboxDockerDiskKind,
+		SandboxID: sandboxID, DiskPath: diskPath,
+	})
+}
+
+func writeMicrosandboxRootfsDiskOwnership(diskPath, sandboxID string, base microsandboxBaseDisk) error {
+	return writeMicrosandboxDiskOwnershipRecord(microsandboxDiskOwnership{
+		Version: microsandboxDiskOwnershipVersion, ResourceKind: microsandboxRootfsDiskKind,
+		SandboxID: sandboxID, DiskPath: diskPath, BaseIdentity: base.Identity,
+		BackingPath: base.Path, DiskSizeGiB: base.DiskSizeGiB,
+	})
+}
+
+func writeMicrosandboxDiskOwnershipRecord(record microsandboxDiskOwnership) error {
+	diskPath, sandboxID := record.DiskPath, record.SandboxID
 	diskPath = filepath.Clean(strings.TrimSpace(diskPath))
 	sandboxID = strings.TrimSpace(sandboxID)
 	if diskPath == "." || sandboxID == "" {
@@ -28,11 +54,15 @@ func writeMicrosandboxDiskOwnership(diskPath, sandboxID string) error {
 	createdAt := time.Now().UTC()
 	if data, err := os.ReadFile(manifestPath); err == nil {
 		var existing microsandboxDiskOwnership
-		if json.Unmarshal(data, &existing) == nil && existing.Version == 1 && existing.SandboxID == sandboxID && !existing.CreatedAt.IsZero() {
+		if json.Unmarshal(data, &existing) == nil && existing.SandboxID == sandboxID && !existing.CreatedAt.IsZero() {
 			createdAt = existing.CreatedAt
 		}
 	}
-	data, err := json.MarshalIndent(microsandboxDiskOwnership{Version: 1, SandboxID: sandboxID, DiskPath: diskPath, CreatedAt: createdAt}, "", "  ")
+	record.Version = microsandboxDiskOwnershipVersion
+	record.SandboxID = sandboxID
+	record.DiskPath = diskPath
+	record.CreatedAt = createdAt
+	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return err
 	}

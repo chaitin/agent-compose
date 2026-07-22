@@ -59,7 +59,7 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 			}
 			return ""
 		},
-	}, loader, run, loaders.TriggerEventMetadata{EventID: "topic-event"})
+	}, loader, triggerExecution(run), loaders.TriggerEventMetadata{EventID: "topic-event"})
 
 	agentResult, err := host.Agent(ctx, "summarize", domain.LoaderAgentRequest{})
 	if err != nil {
@@ -142,7 +142,7 @@ func TestRuntimeHostProjectAgentPath(t *testing.T) {
 		Events:             events,
 		ProjectAgentRunner: projectRunner,
 		Publisher:          publisher,
-	}, loader, run, loaders.TriggerEventMetadata{EventID: "topic-event"})
+	}, loader, triggerExecution(run), loaders.TriggerEventMetadata{EventID: "topic-event"})
 
 	result, err := host.Agent(ctx, "review", domain.LoaderAgentRequest{})
 	if err != nil {
@@ -153,6 +153,23 @@ func TestRuntimeHostProjectAgentPath(t *testing.T) {
 	}
 	if !events.contains("loader.agent.completed") || len(publisher.events) != 1 || publisher.events[0].payload["projectRunId"] != "project-run" {
 		t.Fatalf("events/publisher = %#v/%#v", events.types(), publisher.events)
+	}
+	if publisher.events[0].payload["loaderRunId"] != run.ID {
+		t.Fatalf("trigger execution publisher payload = %#v", publisher.events[0].payload)
+	}
+	invocationPublisher := &hostPublisherFake{}
+	invocationHost := loaders.NewRuntimeHost(loaders.RunHostDependencies{
+		ProjectAgentRunner: projectRunner,
+		Publisher:          invocationPublisher,
+	}, loader, loaders.RuntimeExecutionContext{ID: "invocation-correlation", Kind: loaders.ExecutionKindInvocation}, loaders.TriggerEventMetadata{})
+	if _, err := invocationHost.Agent(ctx, "review", domain.LoaderAgentRequest{}); err != nil {
+		t.Fatalf("Invocation Project Agent returned error: %v", err)
+	}
+	if len(invocationPublisher.events) != 1 || invocationPublisher.events[0].payload["projectRunId"] != "project-run" {
+		t.Fatalf("invocation publisher = %#v", invocationPublisher.events)
+	}
+	if _, ok := invocationPublisher.events[0].payload["loaderRunId"]; ok {
+		t.Fatalf("invocation payload exposed correlation id as loader run: %#v", invocationPublisher.events[0].payload)
 	}
 }
 
@@ -171,7 +188,7 @@ func TestRuntimeHostProjectAgentUsesUniqueRequestIDs(t *testing.T) {
 	}}
 	host := loaders.NewRuntimeHost(loaders.RunHostDependencies{
 		ProjectAgentRunner: projectRunner,
-	}, loader, run, loaders.TriggerEventMetadata{})
+	}, loader, triggerExecution(run), loaders.TriggerEventMetadata{})
 
 	for range 2 {
 		if _, err := host.Agent(context.Background(), "review", domain.LoaderAgentRequest{}); err != nil {
@@ -204,7 +221,7 @@ func TestRuntimeHostErrorBranches(t *testing.T) {
 			err:  errors.New("agent failed"),
 		},
 		Publisher: &hostPublisherFake{},
-	}, loader, run, loaders.TriggerEventMetadata{EventID: "topic-event"})
+	}, loader, triggerExecution(run), loaders.TriggerEventMetadata{EventID: "topic-event"})
 	agentResult, err := host.Agent(ctx, "prompt", domain.LoaderAgentRequest{})
 	if err == nil || agentResult.Text != "agent stderr" || !events.contains("loader.agent.failed") || !events.contains("loader.sandbox.stop_failed") {
 		t.Fatalf("agent error result=%#v err=%v events=%#v", agentResult, err, events.types())
@@ -222,14 +239,14 @@ func TestRuntimeHostErrorBranches(t *testing.T) {
 			Error:     "project failed",
 		}},
 		Publisher: &hostPublisherFake{},
-	}, projectLoader, run, loaders.TriggerEventMetadata{})
+	}, projectLoader, triggerExecution(run), loaders.TriggerEventMetadata{})
 	projectResult, err := projectHost.Agent(ctx, "prompt", domain.LoaderAgentRequest{})
 	if err != nil || projectResult.Text != "project failed" || !projectEvents.contains("loader.agent.failed") {
 		t.Fatalf("project failed result=%#v err=%v events=%#v", projectResult, err, projectEvents.types())
 	}
 	projectHost = loaders.NewRuntimeHost(loaders.RunHostDependencies{
 		ProjectAgentRunner: &hostProjectAgentRunnerFake{err: errors.New("project unavailable")},
-	}, projectLoader, run, loaders.TriggerEventMetadata{})
+	}, projectLoader, triggerExecution(run), loaders.TriggerEventMetadata{})
 	if _, err := projectHost.Agent(ctx, "prompt", domain.LoaderAgentRequest{}); err == nil {
 		t.Fatalf("project runner error returned nil")
 	}
@@ -241,7 +258,7 @@ func TestRuntimeHostErrorBranches(t *testing.T) {
 			session:   &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-command", VMStatus: domain.VMStatusRunning}},
 			ensureErr: errors.New("ensure failed"),
 		},
-	}, loader, run, loaders.TriggerEventMetadata{})
+	}, loader, triggerExecution(run), loaders.TriggerEventMetadata{})
 	if _, err := commandHost.Command(ctx, domain.LoaderCommandRequest{Mode: "shell", Command: "echo"}); err == nil || !commandEvents.contains("loader.command.failed") {
 		t.Fatalf("command ensure err=%v events=%#v", err, commandEvents.types())
 	}
@@ -250,7 +267,7 @@ func TestRuntimeHostErrorBranches(t *testing.T) {
 		Events:          commandEvents,
 		Sessions:        &hostSessionsFake{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-command", VMStatus: domain.VMStatusRunning}}},
 		CommandExecutor: &hostCommandExecutorFake{err: errors.New("command failed"), result: domain.LoaderCommandResult{SandboxID: "session-command", CellID: "cell-command", Output: "partial"}},
-	}, loader, run, loaders.TriggerEventMetadata{})
+	}, loader, triggerExecution(run), loaders.TriggerEventMetadata{})
 	if result, err := commandHost.Command(ctx, domain.LoaderCommandRequest{Mode: "shell", Command: "false"}); err == nil || result.Output != "partial" || !commandEvents.contains("loader.command.failed") {
 		t.Fatalf("command executor result=%#v err=%v events=%#v", result, err, commandEvents.types())
 	}
@@ -259,24 +276,24 @@ func TestRuntimeHostErrorBranches(t *testing.T) {
 		Events:          commandEvents,
 		Sessions:        &hostSessionsFake{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-command", VMStatus: domain.VMStatusRunning}}},
 		CommandExecutor: &hostCommandExecutorFake{result: domain.LoaderCommandResult{Output: "bad", Success: false, SandboxID: "session-command"}},
-	}, loader, run, loaders.TriggerEventMetadata{})
+	}, loader, triggerExecution(run), loaders.TriggerEventMetadata{})
 	if result, err := commandHost.Command(ctx, domain.LoaderCommandRequest{Mode: "shell", Command: "false"}); err != nil || result.Success || !commandEvents.contains("loader.command.completed") {
 		t.Fatalf("command nonzero result=%#v err=%v events=%#v", result, err, commandEvents.types())
 	}
 
-	if _, err := loaders.NewRuntimeHost(loaders.RunHostDependencies{}, loader, run, loaders.TriggerEventMetadata{}).LLM(ctx, "prompt", domain.LoaderLLMRequest{}); err == nil {
+	if _, err := loaders.NewRuntimeHost(loaders.RunHostDependencies{}, loader, triggerExecution(run), loaders.TriggerEventMetadata{}).LLM(ctx, "prompt", domain.LoaderLLMRequest{}); err == nil {
 		t.Fatalf("nil LLM returned nil error")
 	}
 	llmEvents := &hostEventsFake{}
 	llmHost := loaders.NewRuntimeHost(loaders.RunHostDependencies{
 		Events: llmEvents,
 		LLM:    &hostLLMFake{err: errors.New("llm failed")},
-	}, loader, run, loaders.TriggerEventMetadata{})
+	}, loader, triggerExecution(run), loaders.TriggerEventMetadata{})
 	if _, err := llmHost.LLM(ctx, "prompt", domain.LoaderLLMRequest{Model: "model-a"}); err == nil || !llmEvents.contains("loader.llm.failed") {
 		t.Fatalf("llm err=%v events=%#v", err, llmEvents.types())
 	}
 
-	if _, err := loaders.NewRuntimeHost(loaders.RunHostDependencies{}, loader, run, loaders.TriggerEventMetadata{}).CallSessionRPC(ctx, "GetSession", `{}`); err == nil {
+	if _, err := loaders.NewRuntimeHost(loaders.RunHostDependencies{}, loader, triggerExecution(run), loaders.TriggerEventMetadata{}).CallSessionRPC(ctx, "GetSession", `{}`); err == nil {
 		t.Fatalf("nil session RPC returned nil error")
 	}
 	rpcEvents := &hostEventsFake{}
@@ -291,7 +308,7 @@ func TestRuntimeHostErrorBranches(t *testing.T) {
 			}
 			return ""
 		},
-	}, loader, run, loaders.TriggerEventMetadata{EventID: "topic-event"})
+	}, loader, triggerExecution(run), loaders.TriggerEventMetadata{EventID: "topic-event"})
 	if _, err := rpcHost.CallSessionRPC(ctx, "GetSession", `{"sessionId":"sandbox-rpc"}`); err == nil || !rpcEvents.contains("loader.sandbox.rpc.failed") || !rpcStore.containsLink("sandbox-rpc", "sandbox_rpc_failed") {
 		t.Fatalf("rpc err=%v events=%#v links=%#v", err, rpcEvents.types(), rpcStore.links)
 	}
@@ -306,7 +323,7 @@ func TestRuntimeHostLogPublishEventAndState(t *testing.T) {
 	host := loaders.NewRuntimeHost(loaders.RunHostDependencies{
 		Store:  store,
 		Events: events,
-	}, loader, run, loaders.TriggerEventMetadata{
+	}, loader, triggerExecution(run), loaders.TriggerEventMetadata{
 		EventID:       "trigger-event",
 		CorrelationID: "correlation-1",
 	})
@@ -325,8 +342,22 @@ func TestRuntimeHostLogPublishEventAndState(t *testing.T) {
 	if created.Topic != "runtime.demo" || created.Sequence != 7 || created.PayloadJSON == `{"value":1}` {
 		t.Fatalf("created event = %#v", created)
 	}
+	if created.PublisherRunID != run.ID {
+		t.Fatalf("trigger publisher run ID = %q, want %q", created.PublisherRunID, run.ID)
+	}
 	if !events.contains("loader.event.published") {
 		t.Fatalf("events after PublishEvent = %#v", events.types())
+	}
+	invocationStore := &hostStoreFake{}
+	invocationHost := loaders.NewRuntimeHost(loaders.RunHostDependencies{Store: invocationStore}, loader, loaders.RuntimeExecutionContext{
+		ID: "invocation-correlation", Kind: loaders.ExecutionKindInvocation,
+	}, loaders.TriggerEventMetadata{})
+	invocationEvent, err := invocationHost.PublishEvent(ctx, "runtime.demo", `{"value":2}`)
+	if err != nil {
+		t.Fatalf("Invocation PublishEvent returned error: %v", err)
+	}
+	if invocationEvent.PublisherRunID != "" {
+		t.Fatalf("invocation correlation ID exposed as publisher run ID: %#v", invocationEvent)
 	}
 
 	if err := host.StateSet(ctx, "cursor", `{"offset":2}`); err != nil {
@@ -343,10 +374,14 @@ func TestRuntimeHostLogPublishEventAndState(t *testing.T) {
 		t.Fatalf("StateGet after delete ok=%v err=%v", ok, err)
 	}
 
-	missingStoreHost := loaders.NewRuntimeHost(loaders.RunHostDependencies{}, loader, run, loaders.TriggerEventMetadata{})
+	missingStoreHost := loaders.NewRuntimeHost(loaders.RunHostDependencies{}, loader, triggerExecution(run), loaders.TriggerEventMetadata{})
 	if _, err := missingStoreHost.PublishEvent(ctx, "runtime.demo", `{}`); err == nil || !strings.Contains(err.Error(), "event store is unavailable") {
 		t.Fatalf("PublishEvent missing store error = %v", err)
 	}
+}
+
+func triggerExecution(run *domain.LoaderRunSummary) loaders.RuntimeExecutionContext {
+	return loaders.RuntimeExecutionContext{ID: run.ID, TriggerID: run.TriggerID, Kind: loaders.ExecutionKindTrigger}
 }
 
 type hostStoreFake struct {

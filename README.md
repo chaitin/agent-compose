@@ -73,15 +73,22 @@ when the current user cannot write there. For automation, run
 `install --yes` and pass options explicitly.
 
 The base stack starts the daemon. The frontend is defined under the `with-ui`
-profile; enable it from the installation directory printed by the installer:
+profile, which the installer leaves off unless you answer yes to **Install web
+UI** (or pass `--with-ui`). Enabling it there persists `COMPOSE_PROFILES` in
+`.env`, so later `docker compose up -d` runs keep the frontend. To turn it on
+afterwards, from the installation directory printed by the installer:
 
 ```bash
 cd <directory printed by the installer>
 docker compose --profile with-ui up -d
 ```
 
+The installer also pre-pulls the sandbox guest image so the first agent run
+does not stall on a large download; pass `--skip-guest-pull` (or answer no in
+the TUI) to defer it.
+
 On first run the installer generates an `admin` password and prints it once;
-use it at the printed URL after enabling the UI profile. See
+use it at the URL the installer prints when the UI is enabled. See
 [deploy/README.md](deploy/README.md) for install, upgrade, uninstall, data
 preservation, and mirror/private-registry options.
 
@@ -200,7 +207,7 @@ See the [command line manual](docs/pages/command-line-manual.md) for the full fi
 | `agent-compose exec <sandbox>` | Execute a command or prompt in a running sandbox. |
 | `agent-compose ps` / `stats` | List project sandboxes / show sandbox resource stats. |
 | `agent-compose logs` | Print project run logs; a project, agent, run, or sandbox ID can be passed without its resource type. |
-| `agent-compose scheduler ls\|runs\|logs\|trigger\|inspect` | List triggers and runs, read scheduler logs, manually run triggers, or inspect scheduler resources. |
+| `agent-compose scheduler ls\|invoke\|runs\|logs\|trigger\|inspect\|prune` | Invoke schedulers, list triggers and runs, read logs, manually run triggers, inspect resources, or prune terminal trigger-run history. |
 | `agent-compose sandbox ls\|stop\|resume\|rm\|prune` | Manage project sandboxes. |
 | `agent-compose image ls\|pull\|build\|rm\|inspect` | Manage daemon images and build agent images; top-level shortcuts remain available. |
 | `agent-compose volume ls\|create\|inspect\|rm\|prune` | Manage daemon volumes. |

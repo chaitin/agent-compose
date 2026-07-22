@@ -3,6 +3,7 @@ package execution
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	domain "agent-compose/pkg/model"
 )
@@ -50,6 +51,19 @@ func TestParseAgentAndCommandExecResultWorkflows(t *testing.T) {
 	}
 	if _, err := ParseCommandExecResult(domain.ExecResult{Stdout: "noise"}); err == nil {
 		t.Fatalf("expected missing command payload error")
+	}
+}
+
+func TestSummarizeAgentExecFailurePreservesUTF8(t *testing.T) {
+	detail := SummarizeAgentExecFailure(domain.ExecResult{Stderr: strings.Repeat("界", 241)})
+	if !strings.HasSuffix(detail, "...") {
+		t.Fatalf("summary should be truncated: %q", detail)
+	}
+	if !utf8.ValidString(detail) {
+		t.Fatalf("summary is not valid UTF-8: %q", detail)
+	}
+	if got := len([]rune(strings.TrimSuffix(detail, "..."))); got != 240 {
+		t.Fatalf("summary has %d content runes, want 240", got)
 	}
 }
 

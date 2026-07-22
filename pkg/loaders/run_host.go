@@ -84,7 +84,7 @@ type RunHostDependencies struct {
 type RuntimeHost struct {
 	deps         RunHostDependencies
 	loader       domain.Loader
-	run          *domain.LoaderRunSummary
+	execution    RuntimeExecutionContext
 	triggerEvent TriggerEventMetadata
 
 	commandSessionIDs       map[string]struct{}
@@ -93,8 +93,8 @@ type RuntimeHost struct {
 	projectAgentRunSequence atomic.Uint64
 }
 
-func NewRuntimeHost(deps RunHostDependencies, loader domain.Loader, run *domain.LoaderRunSummary, triggerEvent TriggerEventMetadata) *RuntimeHost {
-	return &RuntimeHost{deps: deps, loader: loader, run: run, triggerEvent: triggerEvent}
+func NewRuntimeHost(deps RunHostDependencies, loader domain.Loader, execution RuntimeExecutionContext, triggerEvent TriggerEventMetadata) *RuntimeHost {
+	return &RuntimeHost{deps: deps, loader: loader, execution: execution, triggerEvent: triggerEvent}
 }
 
 func (h *RuntimeHost) Log(ctx context.Context, message string, payload any) error {
@@ -105,7 +105,11 @@ func (h *RuntimeHost) PublishEvent(ctx context.Context, topic string, payloadJSO
 	if h.deps.Store == nil {
 		return domain.TopicEventRecord{}, fmt.Errorf("event store is unavailable")
 	}
-	published, err := NewPublishedTopicEvent(topic, payloadJSON, h.triggerEvent, h.loader.Summary.ID, h.run.ID)
+	publisherRunID := ""
+	if h.execution.Kind == ExecutionKindTrigger {
+		publisherRunID = h.execution.ID
+	}
+	published, err := NewPublishedTopicEvent(topic, payloadJSON, h.triggerEvent, h.loader.Summary.ID, publisherRunID)
 	if err != nil {
 		return domain.TopicEventRecord{}, err
 	}
@@ -159,7 +163,7 @@ func (h *RuntimeHost) CallSessionRPC(ctx context.Context, method, requestJSON st
 }
 
 func (h *RuntimeHost) Agent(ctx context.Context, prompt string, request domain.LoaderAgentRequest) (domain.LoaderAgentResult, error) {
-	request.BindingTriggerID = h.run.TriggerID
+	request.BindingTriggerID = h.execution.TriggerID
 	if h.useProjectManagedAgentRun(request) {
 		return h.ProjectAgent(ctx, prompt, request)
 	}
@@ -197,7 +201,7 @@ func (h *RuntimeHost) Agent(ctx context.Context, prompt string, request domain.L
 		Provider:          agentConfig.Provider,
 		AgentDefinitionID: agentDefinitionID,
 		Model:             agentConfig.Model,
-		RunID:             h.run.ID,
+		RunID:             h.execution.ID,
 		Prompt:            prompt,
 		Timeout:           request.Timeout,
 		OutputSchemaJSON:  request.OutputSchema,
@@ -253,7 +257,7 @@ func (h *RuntimeHost) Command(ctx context.Context, request domain.LoaderCommandR
 		JupyterEnabled:   request.JupyterEnabled,
 		SandboxEnv:       domain.LoaderCommandSandboxEnv(request),
 		Volumes:          request.Volumes,
-		BindingTriggerID: h.run.TriggerID,
+		BindingTriggerID: h.execution.TriggerID,
 	}
 	session, eventType, err := h.ensureCommandSession(ctx, agentRequest, cleanupSession)
 	if err != nil {
@@ -340,14 +344,14 @@ func (h *RuntimeHost) addLoaderEvent(ctx context.Context, eventType, level, mess
 	if h.deps.Events == nil {
 		return nil
 	}
-	return h.deps.Events.Add(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, eventType, level, message, payload, linkedSandboxID, linkedCellID, linkedAgentThreadID)
+	return h.deps.Events.Add(ctx, h.loader.Summary.ID, h.execution.ID, h.execution.TriggerID, eventType, level, message, payload, linkedSandboxID, linkedCellID, linkedAgentThreadID)
 }
 
 func (h *RuntimeHost) addLoaderEventRecord(ctx context.Context, eventType, level, message string, payload any, linkedSandboxID, linkedCellID, linkedAgentThreadID string) (domain.LoaderEvent, error) {
 	if h.deps.Events == nil {
 		return domain.LoaderEvent{}, nil
 	}
-	return h.deps.Events.AddRecord(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, eventType, level, message, payload, linkedSandboxID, linkedCellID, linkedAgentThreadID)
+	return h.deps.Events.AddRecord(ctx, h.loader.Summary.ID, h.execution.ID, h.execution.TriggerID, eventType, level, message, payload, linkedSandboxID, linkedCellID, linkedAgentThreadID)
 }
 
 func (h *RuntimeHost) addLinkedLoaderEvent(ctx context.Context, eventType, level, message string, payload any, linkedSandboxID, linkedCellID, linkedAgentThreadID string) error {
@@ -368,12 +372,12 @@ func (h *RuntimeHost) addEventSandboxLink(ctx context.Context, event domain.Load
 		SandboxID:     sandboxID,
 		Relation:      relation,
 		LoaderID:      h.loader.Summary.ID,
-		RunID:         h.run.ID,
-		TriggerID:     h.run.TriggerID,
+		RunID:         h.execution.ID,
+		TriggerID:     h.execution.TriggerID,
 		LoaderEventID: event.ID,
 		CreatedAt:     event.CreatedAt,
 	}); err != nil {
-		slog.Warn("failed to add event sandbox link", "event_id", h.triggerEvent.EventID, "sandbox_id", sandboxID, "run_id", h.run.ID, "error", err)
+		slog.Warn("failed to add event sandbox link", "event_id", h.triggerEvent.EventID, "sandbox_id", sandboxID, "run_id", h.execution.ID, "error", err)
 	}
 }
 
@@ -392,7 +396,9 @@ func (h *RuntimeHost) publishAgentCompleted(result domain.LoaderAgentResult, pro
 		"loaderId":      h.loader.Summary.ID,
 	}
 	if projectRun != nil {
-		payload["loaderRunId"] = h.run.ID
+		if h.execution.Kind == ExecutionKindTrigger {
+			payload["loaderRunId"] = h.execution.ID
+		}
 		payload["projectId"] = projectRun.ProjectID
 		payload["projectRunId"] = projectRun.RunID
 	}

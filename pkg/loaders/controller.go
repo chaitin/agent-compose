@@ -91,6 +91,7 @@ type Controller struct {
 	loaders         map[string]domain.Loader
 	running         map[string]int
 	runExecutor     *RunExecutor
+	invocations     *InvocationExecutor
 	schedulerRuns   *schedulerRunSupervisor
 	scheduler       *Scheduler
 	eventDispatcher *EventDispatcher
@@ -140,6 +141,15 @@ func (c *Controller) init() {
 			UpdateTriggerEventDelivery: c.UpdateTriggerEventDelivery,
 			Notify:                     c.notify,
 			Refresh:                    c.Refresh,
+		})
+	}
+	if c.invocations == nil {
+		c.invocations = NewInvocationExecutor(InvocationExecutorDependencies{
+			Engine:      c.deps.Engine,
+			HostFactory: c.deps.HostFactory,
+			EnterRun:    c.EnterRun,
+			LeaveRun:    c.LeaveRun,
+			NewID:       c.deps.NewID,
 		})
 	}
 	if c.schedulerRuns == nil {

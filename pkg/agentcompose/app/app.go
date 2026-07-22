@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -34,6 +34,7 @@ import (
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
+	storagesqlite "agent-compose/pkg/storage/sqlite"
 	"agent-compose/pkg/volumes"
 	"agent-compose/pkg/workspaces"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
@@ -53,8 +54,9 @@ func Register(di do.Injector) {
 
 func RegisterDependencies(di do.Injector) {
 	do.Provide(di, func(do.Injector) (*sessions.LifecycleLocks, error) { return sessions.NewLifecycleLocks(), nil })
-	do.Provide(di, sessionstore.NewStore)
+	do.Provide(di, NewDatabase)
 	do.Provide(di, NewConfigStore)
+	do.Provide(di, NewSandboxStore)
 	do.Provide(di, NewWorkspaceProvisioner)
 	do.MustAs[*workspaces.Provisioner, workspaces.WorkspaceEnsurer](di)
 	do.Provide(di, NewRuntimeProvider)
@@ -285,11 +287,15 @@ func NewCacheController(di do.Injector) (*cache.Controller, error) {
 	}
 	config.ImageCacheRoot = ociCache.Root()
 
+	materializedDependencies := cache.CombinedMaterializedDependencies{
+		ownershipMaterializedDependencies{sandboxRoot: config.SandboxRoot},
+		cache.MicrosandboxRootfsDependencies{Home: config.MicrosandboxHome, BaseRoot: ociCache.MaterializationRoot()},
+	}
 	sources := []cache.Source{
 		cache.OCISource{Cache: ociCache},
 		cache.MaterializedSource{
-			Scanner: cache.MaterializedScanner{Cache: ociCache, Dependencies: ownershipMaterializedDependencies{sandboxRoot: config.SandboxRoot}},
-			Remover: cache.MaterializedRemover{Cache: ociCache},
+			Scanner: cache.MaterializedScanner{Cache: ociCache, Dependencies: materializedDependencies},
+			Remover: cache.MaterializedRemover{Cache: ociCache, Dependencies: materializedDependencies},
 		},
 		cache.SkillSource{Root: filepath.Join(config.DataRoot, "skills")},
 	}
@@ -422,8 +428,23 @@ func NewSandboxRPCBridge(di do.Injector) (*adapters.SandboxRPCBridge, error) {
 	), nil
 }
 
+func NewDatabase(di do.Injector) (*storagesqlite.Database, error) {
+	config := do.MustInvoke[*appconfig.Config](di)
+	if err := os.MkdirAll(config.DataRoot, 0o755); err != nil {
+		return nil, fmt.Errorf("create agent-compose data root: %w", err)
+	}
+	return storagesqlite.Open(config.DbAddr, config.DbTimeout)
+}
+
 func NewConfigStore(di do.Injector) (*configstore.ConfigStore, error) {
-	return configstore.NewConfigStore(di)
+	database := do.MustInvoke[*storagesqlite.Database](di)
+	return configstore.FromDB(database.DB()), nil
+}
+
+func NewSandboxStore(di do.Injector) (*sessionstore.Store, error) {
+	config := do.MustInvoke[*appconfig.Config](di)
+	database := do.MustInvoke[*storagesqlite.Database](di)
+	return sessionstore.NewWithDatabase(config, database.DB())
 }
 
 func NewWorkspaceProvisioner(di do.Injector) (*workspaces.Provisioner, error) {
@@ -516,7 +537,7 @@ func registerRuntimeLLMFacadeRoutes(app *echo.Echo, di do.Injector) {
 		ResolveTarget: func(ctx context.Context, requestedModel, providerID string) (llms.ResolvedTarget, error) {
 			return llms.ResolveRuntimeLLMTarget(ctx, config, configDB, requestedModel, providerID)
 		},
-		Client: &http.Client{Timeout: config.LLMTimeout},
+		Client: proxy.NewRuntimeLLMHTTPClient(config.LLMTimeout),
 	})
 }
 

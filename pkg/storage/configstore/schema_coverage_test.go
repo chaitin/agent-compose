@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
@@ -642,29 +643,8 @@ func testConfigStoreCRUDCoverageWorkflows(t *testing.T) {
 	if store.DB() == nil {
 		t.Fatalf("DB returned nil")
 	}
-	if _, err := store.TableColumnTypes(ctx, "workspace_config"); err != nil {
-		t.Fatalf("TableColumnTypes returned error: %v", err)
-	}
-	if err := store.EnsureGlobalEnvSchema(ctx); err != nil {
-		t.Fatalf("EnsureGlobalEnvSchema returned error: %v", err)
-	}
-	if err := store.EnsureWorkspaceConfigSchema(ctx); err != nil {
-		t.Fatalf("EnsureWorkspaceConfigSchema returned error: %v", err)
-	}
-	if err := store.EnsureAgentDefinitionSchema(ctx); err != nil {
-		t.Fatalf("EnsureAgentDefinitionSchema returned error: %v", err)
-	}
-	if err := store.EnsureCapabilityGatewaySchema(ctx); err != nil {
-		t.Fatalf("EnsureCapabilityGatewaySchema returned error: %v", err)
-	}
-	if err := store.EnsureLoaderSchema(ctx); err != nil {
-		t.Fatalf("EnsureLoaderSchema returned error: %v", err)
-	}
-	if err := store.EnsureProjectSchema(ctx); err != nil {
-		t.Fatalf("EnsureProjectSchema returned error: %v", err)
-	}
-	if err := store.EnsureEventSchema(ctx); err != nil {
-		t.Fatalf("EnsureEventSchema returned error: %v", err)
+	if err := store.InitSchema(ctx); err != nil {
+		t.Fatalf("second InitSchema returned error: %v", err)
 	}
 
 	if saved, err := store.SaveCapabilityGateway(ctx, domain.CapabilityGatewaySettings{Addr: "http://octobus", Token: "token"}); err != nil || saved.Addr == "" {
@@ -1019,9 +999,6 @@ func testConfigStoreMigrationAndTimeParsingWorkflows(t *testing.T) {
 	db := newMemoryDB(t)
 	store := FromDB(db)
 
-	if _, err := store.tableColumnTypes(ctx, " "); err == nil {
-		t.Fatalf("empty table name returned nil error")
-	}
 	if _, err := db.ExecContext(ctx, `CREATE TABLE global_env (
 		name TEXT PRIMARY KEY,
 		value TEXT NOT NULL,
@@ -1034,24 +1011,6 @@ func testConfigStoreMigrationAndTimeParsingWorkflows(t *testing.T) {
 		VALUES ('A', 'one', 1, '2026-06-02T09:00:00Z')`); err != nil {
 		t.Fatalf("insert legacy global env: %v", err)
 	}
-	if err := store.rebuildGlobalEnvTable(ctx); err != nil {
-		t.Fatalf("rebuildGlobalEnvTable returned error: %v", err)
-	}
-	columns, err := store.tableColumnTypes(ctx, "global_env")
-	if err != nil {
-		t.Fatalf("tableColumnTypes returned error: %v", err)
-	}
-	if !IsIntegerColumnType(columns["updated_at"]) {
-		t.Fatalf("updated_at column type = %q, want integer", columns["updated_at"])
-	}
-	items, err := store.ListGlobalEnv(ctx)
-	if err != nil {
-		t.Fatalf("ListGlobalEnv returned error: %v", err)
-	}
-	if len(items) != 1 || items[0].Name != "A" || !items[0].Secret {
-		t.Fatalf("global env items = %#v", items)
-	}
-
 	if _, err := db.ExecContext(ctx, `CREATE TABLE workspace_config (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
@@ -1067,8 +1026,22 @@ func testConfigStoreMigrationAndTimeParsingWorkflows(t *testing.T) {
 		VALUES ('ws-1', 'Workspace', 'file', '{}', 'legacy', '2026-06-02T09:00:00.000Z', '2026-06-02T09:01:00Z')`); err != nil {
 		t.Fatalf("insert legacy workspace config: %v", err)
 	}
-	if err := store.rebuildWorkspaceConfigTable(ctx); err != nil {
-		t.Fatalf("rebuildWorkspaceConfigTable returned error: %v", err)
+	if err := store.initSchema(ctx); err != nil {
+		t.Fatalf("migrate legacy timestamp schemas: %v", err)
+	}
+	columns, err := sqliteTableColumnTypes(ctx, db, "global_env")
+	if err != nil {
+		t.Fatalf("tableColumnTypes returned error: %v", err)
+	}
+	if !isIntegerColumnType(columns["updated_at"]) {
+		t.Fatalf("updated_at column type = %q, want integer", columns["updated_at"])
+	}
+	items, err := store.ListGlobalEnv(ctx)
+	if err != nil {
+		t.Fatalf("ListGlobalEnv returned error: %v", err)
+	}
+	if len(items) != 1 || items[0].Name != "A" || !items[0].Secret {
+		t.Fatalf("global env items = %#v", items)
 	}
 	workspace, err := store.GetWorkspaceConfig(ctx, "ws-1")
 	if err != nil {
@@ -1093,9 +1066,6 @@ func testConfigStoreMigrationAndTimeParsingWorkflows(t *testing.T) {
 	if !ParseStoredTime("2026-06-02T09:00:00.000Z").Equal(time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)) {
 		t.Fatalf("ParseStoredTime custom layout failed")
 	}
-	if !strings.Contains(NormalizeSQLiteTimestampExpr("updated_at"), "updated_at") {
-		t.Fatalf("NormalizeSQLiteTimestampExpr missing column name")
-	}
 	if BoolToInt(true) != 1 || BoolToInt(false) != 0 {
 		t.Fatalf("BoolToInt returned unexpected values")
 	}
@@ -1118,17 +1088,11 @@ func testConfigStoreProjectSchemaMigrationWorkflows(t *testing.T) {
 
 	existingDB := newMemoryDB(t)
 	configDB := FromDB(existingDB)
-	for _, ensure := range []func(context.Context) error{
-		configDB.ensureGlobalEnvSchema,
-		configDB.ensureCapabilityGatewaySchema,
-		configDB.ensureWorkspaceConfigSchema,
-		configDB.ensureLoaderSchema,
-		configDB.ensureAgentDefinitionSchema,
-		configDB.ensureEventSchema,
-	} {
-		if err := ensure(ctx); err != nil {
-			t.Fatalf("prepare existing schema returned error: %v", err)
-		}
+	if err := configDB.initSchema(ctx); err != nil {
+		t.Fatalf("prepare existing schema returned error: %v", err)
+	}
+	if _, err := existingDB.ExecContext(ctx, `DELETE FROM schema_migrations`); err != nil {
+		t.Fatalf("remove migration history from existing fixture: %v", err)
 	}
 
 	agent, err := configDB.CreateAgentDefinition(ctx, domain.AgentDefinition{
@@ -1251,7 +1215,7 @@ func assertProjectSchema(t *testing.T, store *ConfigStore) {
 
 func assertTableColumns(t *testing.T, store *ConfigStore, table string, columns ...string) {
 	t.Helper()
-	columnTypes, err := store.tableColumnTypes(context.Background(), table)
+	columnTypes, err := sqliteTableColumnTypes(context.Background(), store.db, table)
 	if err != nil {
 		t.Fatalf("tableColumnTypes(%s) returned error: %v", table, err)
 	}
@@ -1282,7 +1246,7 @@ func assertSandboxNamedSQLiteSchema(t *testing.T, store *ConfigStore) {
 
 func assertTableMissingColumns(t *testing.T, store *ConfigStore, table string, columns ...string) {
 	t.Helper()
-	columnTypes, err := store.tableColumnTypes(context.Background(), table)
+	columnTypes, err := sqliteTableColumnTypes(context.Background(), store.db, table)
 	if err != nil {
 		t.Fatalf("tableColumnTypes(%s) returned error: %v", table, err)
 	}
@@ -1295,7 +1259,7 @@ func assertTableMissingColumns(t *testing.T, store *ConfigStore, table string, c
 
 func assertTableDoesNotExist(t *testing.T, store *ConfigStore, table string) {
 	t.Helper()
-	columnTypes, err := store.tableColumnTypes(context.Background(), table)
+	columnTypes, err := sqliteTableColumnTypes(context.Background(), store.db, table)
 	if err != nil {
 		t.Fatalf("tableColumnTypes(%s) returned error: %v", table, err)
 	}
@@ -1317,85 +1281,27 @@ func assertSQLiteIndexExists(t *testing.T, db *sql.DB, indexName string) {
 
 func assertSQLiteIndexUnique(t *testing.T, db *sql.DB, indexName string, want bool) {
 	t.Helper()
-	rows, err := db.QueryContext(context.Background(), `PRAGMA index_list('project_revision')`)
-	if err != nil {
-		t.Fatalf("query sqlite index list: %v", err)
+	var unique int
+	if err := db.QueryRowContext(context.Background(), `
+		SELECT il."unique"
+		FROM sqlite_master AS sm, pragma_index_list(sm.tbl_name) AS il
+		WHERE sm.type = 'index' AND sm.name = ? AND il.name = sm.name
+	`, indexName).Scan(&unique); err != nil {
+		t.Fatalf("query sqlite index %s uniqueness: %v", indexName, err)
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var seq int
-		var name string
-		var unique int
-		var origin string
-		var partial int
-		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
-			t.Fatalf("scan sqlite index list: %v", err)
-		}
-		if name == indexName {
-			if (unique != 0) != want {
-				t.Fatalf("sqlite index %s unique = %v, want %v", indexName, unique != 0, want)
-			}
-			return
-		}
+	if (unique != 0) != want {
+		t.Fatalf("sqlite index %s unique = %v, want %v", indexName, unique != 0, want)
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate sqlite index list: %v", err)
-	}
-	t.Fatalf("sqlite index %s not found", indexName)
 }
 
 func newMemoryDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := sql.Open("sqlite", "file::memory:?_pragma=foreign_keys%281%29")
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("open SQLite test database: %v", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	t.Cleanup(func() { _ = db.Close() })
 	return db
-}
-
-func TestConfigStoreExportedSchemaHelpers(t *testing.T) {
-	ctx := context.Background()
-	db := newMemoryDB(t)
-	if _, err := db.ExecContext(ctx, `CREATE TABLE helper_columns (name TEXT PRIMARY KEY)`); err != nil {
-		t.Fatalf("create helper table: %v", err)
-	}
-	if err := EnsureColumn(ctx, db, "helper_columns", "value", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		t.Fatalf("EnsureColumn add returned error: %v", err)
-	}
-	if err := EnsureColumn(ctx, db, "helper_columns", "value", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		t.Fatalf("EnsureColumn existing returned error: %v", err)
-	}
-	types, err := TableColumnTypes(ctx, db, "helper_columns")
-	if err != nil {
-		t.Fatalf("TableColumnTypes returned error: %v", err)
-	}
-	if types["value"] != "TEXT" {
-		t.Fatalf("column types = %#v", types)
-	}
-
-	store := FromDB(db)
-	if err := store.InitCoreSchema(ctx); err != nil {
-		t.Fatalf("InitCoreSchema returned error: %v", err)
-	}
-	if _, err := store.ReplaceGlobalEnv(ctx, []domain.SandboxEnvVar{{Name: "A", Value: "1", Secret: true}}); err != nil {
-		t.Fatalf("ReplaceGlobalEnv returned error: %v", err)
-	}
-	if _, err := store.CreateWorkspaceConfig(ctx, domain.WorkspaceConfig{ID: "workspace-1", Name: "Workspace", Type: "file", ConfigJSON: `{}`}); err != nil {
-		t.Fatalf("CreateWorkspaceConfig returned error: %v", err)
-	}
-	if err := store.RebuildGlobalEnvTable(ctx); err != nil {
-		t.Fatalf("RebuildGlobalEnvTable returned error: %v", err)
-	}
-	if err := store.RebuildWorkspaceConfigTable(ctx); err != nil {
-		t.Fatalf("RebuildWorkspaceConfigTable returned error: %v", err)
-	}
-	env, err := store.ListGlobalEnv(ctx)
-	if err != nil || len(env) != 1 || env[0].Name != "A" || !env[0].Secret {
-		t.Fatalf("global env after rebuild = %#v err=%v", env, err)
-	}
-	workspace, err := store.GetWorkspaceConfig(ctx, "workspace-1")
-	if err != nil || workspace.Name != "Workspace" {
-		t.Fatalf("workspace after rebuild = %#v err=%v", workspace, err)
-	}
 }

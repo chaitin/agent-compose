@@ -49,40 +49,74 @@ type composeSchedulerStopOutput struct {
 	StopRequested bool                      `json:"stop_requested"`
 }
 
+type composeSchedulerInvocationOutput struct {
+	Scheduler  string   `json:"scheduler"`
+	Status     string   `json:"status"`
+	DurationMs int64    `json:"duration_ms"`
+	ResultJSON string   `json:"result_json,omitempty"`
+	Warnings   []string `json:"warnings,omitempty"`
+}
+
 func addComposeSchedulerExecutionFlags(cmd *cobra.Command, options *composeSchedulerTriggerOptions) {
-	cmd.Flags().StringVar(&options.SandboxID, "sandbox", "", "Unsupported for complete scheduler runs")
-	cmd.Flags().StringVar(&options.Driver, "driver", "", "Unsupported for complete scheduler runs")
-	cmd.Flags().StringVar(&options.Prompt, "prompt", "", "Unsupported for complete scheduler runs; scheduler scripts own their agent prompts")
-	cmd.Flags().StringVar(&options.PayloadJSON, "payload", "", "JSON payload passed to main or the trigger callback")
-	cmd.Flags().BoolVar(&options.KeepRunning, "keep-running", false, "Unsupported for complete scheduler runs")
-	cmd.Flags().BoolVar(&options.Remove, "rm", false, "Unsupported for complete scheduler runs")
-	cmd.Flags().BoolVar(&options.Jupyter, "jupyter", false, "Unsupported for complete scheduler runs")
-	cmd.Flags().BoolVar(&options.JupyterExpose, "jupyter-expose", false, "Unsupported for complete scheduler runs")
+	cmd.Flags().StringVar(&options.PayloadJSON, "payload", "", "JSON payload passed to the trigger callback")
 	cmd.Flags().BoolVarP(&options.Detach, "detach", "d", false, "Start the scheduler run and return immediately")
 }
 
-func runComposeSchedulerMainCommand(cmd *cobra.Command, cli cliOptions, options composeSchedulerTriggerOptions, agentRef string) error {
-	options, err := prepareComposeSchedulerExecutionOptions(cmd, "scheduler run", options)
-	if err != nil {
-		return err
-	}
+func runComposeSchedulerInvokeCommand(cmd *cobra.Command, cli cliOptions, options composeSchedulerInvokeOptions, schedulerRef string) error {
 	_, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
 	}
-	agentName, err := resolveComposeAgentNameFromSpec(normalized, projectID, agentRef)
+	scheduler, err := resolveComposeScheduler(normalized, projectID, schedulerRef)
 	if err != nil {
 		return err
 	}
-	agent, ok := composeRunAgentSpec(normalized, agentName)
-	if !ok || agent.Scheduler == nil {
-		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("agent %q does not define a scheduler", agentName)}
+	agent, ok := composeRunAgentSpec(normalized, scheduler.AgentName)
+	if !ok || agent.Scheduler == nil || !agent.Scheduler.HasScript() {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler %q does not define a script; use scheduler trigger to execute one of its triggers", scheduler.AgentName)}
+	}
+	payloadJSON := strings.TrimSpace(options.PayloadJSON)
+	if payloadJSON != "" {
+		payloadJSON, err = domain.NormalizeJSONDocument(payloadJSON)
+		if err != nil {
+			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler invoke --payload: %w", err)}
+		}
 	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
-	return executeComposeSchedulerRun(cmd, cli, normalized.Name, projectID, agentName, "", options, clients.project)
+	response, err := clients.project.InvokeScheduler(cmd.Context(), connect.NewRequest(&agentcomposev2.InvokeSchedulerRequest{
+		Project: &agentcomposev2.ProjectRef{ProjectId: projectID}, AgentName: scheduler.AgentName, PayloadJson: payloadJSON,
+	}))
+	if err != nil {
+		return commandExitErrorForConnect(fmt.Errorf("invoke scheduler %s in project %s: %w", scheduler.AgentName, normalized.Name, err))
+	}
+	output := composeSchedulerInvocationOutput{
+		Scheduler: scheduler.AgentName, Status: "succeeded", DurationMs: response.Msg.GetDurationMs(),
+		ResultJSON: response.Msg.GetResultJson(), Warnings: append([]string(nil), response.Msg.GetWarnings()...),
+	}
+	if cli.JSON {
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Scheduler: %s\nStatus: %s\nDuration: %s\n", output.Scheduler, output.Status, formatDurationMs(output.DurationMs)); err != nil {
+		return err
+	}
+	if output.ResultJSON != "" {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Result: %s\n", output.ResultJSON); err != nil {
+			return err
+		}
+	}
+	for _, warning := range output.Warnings {
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", warning); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func runComposeSchedulerTriggerV2Command(cmd *cobra.Command, cli cliOptions, options composeSchedulerTriggerOptions, agentRef, triggerRef string) error {

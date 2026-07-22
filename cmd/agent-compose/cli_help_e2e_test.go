@@ -39,17 +39,17 @@ func TestE2ECLIHelpCoversUserWorkflowCommandSurface(t *testing.T) {
 		{
 			name: "scheduler",
 			args: []string{"scheduler", "--help"},
-			want: []string{"Run, inspect, and operate project schedulers, runs, logs, and triggers", "run", "trigger", "runs", "logs", "stop", "inspect"},
+			want: []string{"Invoke, inspect, and operate project schedulers, trigger runs, logs, and triggers", "invoke", "trigger", "runs", "logs", "stop", "inspect"},
 		},
 		{
-			name: "scheduler run",
-			args: []string{"scheduler", "run", "--help"},
-			want: []string{"Run a scheduler main function", "--payload", "--detach", "--prompt", "--sandbox"},
+			name: "scheduler invoke",
+			args: []string{"scheduler", "invoke", "--help"},
+			want: []string{"Invoke a script-based scheduler in the foreground", "invoke <scheduler-ref>", "--payload"},
 		},
 		{
 			name: "scheduler trigger",
 			args: []string{"scheduler", "trigger", "--help"},
-			want: []string{"Manually run a scheduler trigger", "--sandbox", "--driver", "--prompt", "--payload", "--keep-running", "--rm", "--jupyter", "--jupyter-expose", "--detach"},
+			want: []string{"Manually run a scheduler trigger", "trigger <scheduler-ref> <trigger-ref>", "--payload", "--detach"},
 		},
 		{
 			name: "logs",

@@ -27,7 +27,7 @@ func TestRunExecutorLifecycleWorkflows(t *testing.T) {
 	executor := loaders.NewRunExecutor(loaders.RunExecutorDependencies{
 		Store:  store,
 		Engine: engine,
-		HostFactory: func(domain.Loader, *domain.LoaderRunSummary, loaders.TriggerEventMetadata) loaders.RunHost {
+		HostFactory: func(domain.Loader, loaders.RuntimeExecutionContext, loaders.TriggerEventMetadata) loaders.RunHost {
 			return &runHostFake{}
 		},
 		ArtifactsDir: func(loaderID, runID string) string {
@@ -80,7 +80,7 @@ func TestRunExecutorLifecycleWorkflows(t *testing.T) {
 	busyExecutor := loaders.NewRunExecutor(loaders.RunExecutorDependencies{
 		Store:  busyStore,
 		Engine: engine,
-		HostFactory: func(domain.Loader, *domain.LoaderRunSummary, loaders.TriggerEventMetadata) loaders.RunHost {
+		HostFactory: func(domain.Loader, loaders.RuntimeExecutionContext, loaders.TriggerEventMetadata) loaders.RunHost {
 			return &runHostFake{}
 		},
 		ArtifactsDir:  func(loaderID, runID string) string { return filepath.Join(t.TempDir(), loaderID, runID) },

@@ -481,6 +481,9 @@ func TestStoreReadsAndRemovesSandboxFromLegacySessionsRoot(t *testing.T) {
 	if sandbox, err := store.GetSandbox(ctx, legacyID); err != nil || sandbox.Summary.ID != legacyID {
 		t.Fatalf("GetSandbox sandbox=%#v err=%v", sandbox, err)
 	}
+	// The legacy dir was written directly to disk after startup, so index it as
+	// the startup rebuild would when discovering pre-existing sandbox dirs.
+	store.rebuildIndex(ctx)
 	if result, err := store.ListSandboxes(ctx, SandboxListOptions{}); err != nil || len(result.Sandboxes) != 1 || result.Sandboxes[0].Summary.ID != legacyID {
 		t.Fatalf("ListSandboxes result=%#v err=%v", result, err)
 	}
@@ -861,5 +864,6 @@ func newCoverageStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatalf("NewWithConfig returned error: %v", err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	return store
 }

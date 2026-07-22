@@ -26,6 +26,7 @@ type runtimeReconciler interface {
 }
 
 type backgroundLoaderManager interface {
+	RecoverInterruptedRuns(context.Context, time.Time) error
 	Start()
 }
 
@@ -40,6 +41,9 @@ func startBackgroundManagers(ctx context.Context, sandboxes *sessionstore.Store,
 		if err := capTokens.Rebuild(reconcileCtx); err != nil {
 			slog.Warn("failed to rebuild capability sandbox token index on startup", "error", err)
 		}
+	}
+	if err := loaders.RecoverInterruptedRuns(reconcileCtx, startedAt); err != nil {
+		slog.Warn("failed to recover interrupted scheduler runs", "error", err)
 	}
 	loaders.Start()
 	events.Start()

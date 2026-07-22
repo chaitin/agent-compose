@@ -249,9 +249,9 @@ func SelectLoaderSummarySQL() string {
         l.created_at,
         l.updated_at,
         (SELECT COUNT(*) FROM loader_trigger t WHERE t.loader_id = l.id),
-        (SELECT COUNT(*) FROM loader_run r WHERE r.loader_id = l.id),
-        (SELECT COUNT(*) FROM loader_event e WHERE e.loader_id = l.id),
-        (SELECT MAX(r.started_at) FROM loader_run r WHERE r.loader_id = l.id)
+		(SELECT COUNT(*) FROM loader_run r WHERE r.loader_id = l.id AND r.trigger_id <> ''),
+		(SELECT COUNT(*) FROM loader_event e JOIN loader_run er ON er.loader_id = e.loader_id AND er.run_id = e.run_id WHERE e.loader_id = l.id AND er.trigger_id <> ''),
+		(SELECT MAX(r.started_at) FROM loader_run r WHERE r.loader_id = l.id AND r.trigger_id <> '')
         FROM loader l`
 }
 

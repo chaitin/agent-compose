@@ -3,7 +3,7 @@ import { flattenEnvMap } from "../mcp-config.js";
 import { uniqueDirectories } from "../paths.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { jsonString } from "../text.js";
-import { TranscriptWriter } from "../transcript.js";
+import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
 import type { AgentResult, RunnerOptions, StoredThread } from "../types.js";
 
 type PendingToolUse = {
@@ -75,10 +75,12 @@ function toClaudeMCPConfig(config: Record<string, unknown> | undefined): Record<
 }
 
 export class ClaudeRunner {
-  private readonly writer = new TranscriptWriter();
   private readonly pendingToolUses = new Map<string, PendingToolUse>();
 
-  constructor(private readonly options: RunnerOptions) {}
+  constructor(
+    private readonly options: RunnerOptions,
+    private readonly writer: TranscriptTextWriter = new TranscriptWriter(),
+  ) {}
 
   queryOptions(stored: StoredThread | null): Record<string, unknown> {
     const executable = claudeExecutable();

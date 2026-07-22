@@ -6,15 +6,17 @@ import readline from "node:readline";
 import { formatError } from "../errors.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { extractText, jsonString } from "../text.js";
-import { TranscriptWriter } from "../transcript.js";
+import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
 import type { AgentResult, RunnerOptions, StoredThread } from "../types.js";
 import { flattenEnvMap } from "../mcp-config.js";
 
 export class OpenCodeRunner {
-  private readonly writer = new TranscriptWriter();
   private skillsConfigDir?: string;
 
-  constructor(private readonly options: RunnerOptions) {}
+  constructor(
+    private readonly options: RunnerOptions,
+    private readonly writer: TranscriptTextWriter = new TranscriptWriter(),
+  ) {}
 
   async writeMCPConfig(): Promise<void> {
     const mcps = this.options.mcpConfig as Record<string, Record<string, unknown>> | undefined;

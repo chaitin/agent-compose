@@ -123,6 +123,9 @@ func writeSchedulerRunsText(out io.Writer, output composeSchedulerRunsOutput) er
 func writeSchedulerLogsText(out io.Writer, output composeSchedulerLogsOutput) error {
 	for _, event := range output.Events {
 		line := fmt.Sprintf("%s %s %s", event.CreatedAt, strings.ToUpper(firstNonEmptyString(event.Level, "info")), event.Type)
+		line += " scheduler=" + firstNonEmptyString(event.AgentName, shortOpaqueID(event.SchedulerID), "-")
+		line += " trigger=" + firstNonEmptyString(shortOpaqueID(event.TriggerID), "-")
+		line += " run=" + firstNonEmptyString(shortOpaqueID(event.RunID), "-")
 		if event.Message != "" {
 			line += " " + event.Message
 		}

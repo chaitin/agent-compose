@@ -61,6 +61,7 @@ type loaderRegistration struct {
 type loaderExecutionState struct {
 	ctx           context.Context
 	host          LoaderHost
+	jsonEncoder   *jsValueEncoder
 	registrations []loaderRegistration
 	seenIDs       map[string]struct{}
 	warnings      []string
@@ -83,7 +84,7 @@ func (e *QJSLoaderEngine) Execute(ctx context.Context, request LoaderExecutionRe
 	return e.execute(ctx, request, host, false)
 }
 
-func (e *QJSLoaderEngine) execute(ctx context.Context, request LoaderExecutionRequest, host LoaderHost, validateOnly bool) (LoaderExecutionResult, error) {
+func (e *QJSLoaderEngine) executeRuntime(ctx context.Context, request LoaderExecutionRequest, host LoaderHost, validateOnly bool) (LoaderExecutionResult, error) {
 	runtimeName, err := domain.NormalizeLoaderRuntime(request.Runtime)
 	if err != nil {
 		return LoaderExecutionResult{}, err
@@ -96,19 +97,25 @@ func (e *QJSLoaderEngine) execute(ctx context.Context, request LoaderExecutionRe
 	}
 
 	rt, err := qjs.New(qjs.Option{
-		Context:          ctx,
-		MemoryLimit:      64 << 20,
-		MaxExecutionTime: loaderEngineMaxExecutionTime(ctx),
+		Context:            ctx,
+		CloseOnContextDone: true,
+		MemoryLimit:        64 << 20,
+		MaxExecutionTime:   loaderEngineMaxExecutionTime(ctx),
 	})
 	if err != nil {
 		return LoaderExecutionResult{}, fmt.Errorf("create qjs runtime: %w", err)
 	}
-	defer rt.Close()
+	defer closeQJSLoaderRuntime(ctx, rt)
 
 	jsctx := rt.Context()
+	jsonEncoder, err := newJSValueEncoder(jsctx)
+	if err != nil {
+		return LoaderExecutionResult{}, err
+	}
 	state := &loaderExecutionState{
 		ctx:           ctx,
 		host:          host,
+		jsonEncoder:   jsonEncoder,
 		registrations: make([]loaderRegistration, 0),
 		seenIDs:       make(map[string]struct{}),
 		warningSet:    make(map[string]struct{}),
@@ -174,7 +181,7 @@ func (e *QJSLoaderEngine) execute(ctx context.Context, request LoaderExecutionRe
 			}
 			executed = awaited
 		}
-		if jsonResult, ok, err := loaderResultJSON(executed); err != nil {
+		if jsonResult, ok, err := loaderResultJSON(state.jsonEncoder, executed); err != nil {
 			state.freeCallbacks()
 			return LoaderExecutionResult{}, err
 		} else if ok {
@@ -353,7 +360,7 @@ func (e *QJSLoaderEngine) installRuntime(jsctx *qjs.Context, state *loaderExecut
 			return nil, fmt.Errorf("scheduler.log requires a non-empty message")
 		}
 		var payload any
-		if len(args) > 1 {
+		if len(args) > 1 && args[1] != nil && !args[1].IsUndefined() && !args[1].IsNull() {
 			value, err := qjs.ToGoValue[any](args[1])
 			if err != nil {
 				return nil, fmt.Errorf("decode scheduler.log payload: %w", err)
@@ -383,7 +390,7 @@ func (e *QJSLoaderEngine) installRuntime(jsctx *qjs.Context, state *loaderExecut
 		if args[1].IsUndefined() || args[1].IsNull() || !args[1].IsObject() || args[1].IsArray() {
 			return nil, fmt.Errorf("scheduler.event.publish payload must be an object")
 		}
-		payloadJSON, err := jsValueToJSON(args[1])
+		payloadJSON, err := state.jsonEncoder.Encode(args[1])
 		if err != nil {
 			return nil, fmt.Errorf("encode scheduler.event.publish payload: %w", err)
 		}
@@ -422,7 +429,7 @@ func (e *QJSLoaderEngine) installRuntime(jsctx *qjs.Context, state *loaderExecut
 			return nil, err
 		}
 		var outputSchemaValue *qjs.Value
-		options.OutputSchema, outputSchemaValue, err = parseLoaderOutputSchema(jsctx, args, "scheduler.agent")
+		options.OutputSchema, outputSchemaValue, err = parseLoaderOutputSchema(jsctx, state.jsonEncoder, args, "scheduler.agent")
 		if err != nil {
 			return nil, err
 		}
@@ -498,12 +505,12 @@ func (e *QJSLoaderEngine) installRuntime(jsctx *qjs.Context, state *loaderExecut
 		if prompt == "" {
 			return nil, fmt.Errorf("scheduler.llm requires a non-empty prompt")
 		}
-		options, err := parseLoaderLLMRequest(args)
+		options, err := parseLoaderLLMRequest(args, state)
 		if err != nil {
 			return nil, err
 		}
 		var outputSchemaValue *qjs.Value
-		options.OutputSchema, outputSchemaValue, err = parseLoaderOutputSchema(jsctx, args, "scheduler.llm")
+		options.OutputSchema, outputSchemaValue, err = parseLoaderOutputSchema(jsctx, state.jsonEncoder, args, "scheduler.llm")
 		if err != nil {
 			return nil, err
 		}
@@ -579,7 +586,7 @@ func (e *QJSLoaderEngine) installRuntime(jsctx *qjs.Context, state *loaderExecut
 			}
 			return jsctx.NewUndefined(), nil
 		}
-		valueJSON, err := jsValueToJSON(args[1])
+		valueJSON, err := state.jsonEncoder.Encode(args[1])
 		if err != nil {
 			return nil, err
 		}
@@ -629,7 +636,7 @@ func (e *QJSLoaderEngine) installRuntime(jsctx *qjs.Context, state *loaderExecut
 			if state.host == nil {
 				return nil, fmt.Errorf("%s is unavailable during validation", apiNameCopy)
 			}
-			requestJSON, err := loaderRPCRequestJSON(call.Args(), apiNameCopy)
+			requestJSON, err := loaderRPCRequestJSON(state.jsonEncoder, call.Args(), apiNameCopy)
 			if err != nil {
 				return nil, err
 			}
@@ -669,7 +676,7 @@ func (e *QJSLoaderEngine) installRuntime(jsctx *qjs.Context, state *loaderExecut
 			if state.host == nil {
 				return nil, fmt.Errorf("%s is unavailable during validation", apiNameCopy)
 			}
-			requestJSON, err := loaderRPCRequestJSON(call.Args(), apiNameCopy)
+			requestJSON, err := loaderRPCRequestJSON(state.jsonEncoder, call.Args(), apiNameCopy)
 			if err != nil {
 				return nil, err
 			}
@@ -1072,7 +1079,7 @@ func parseLoaderAgentRequest(args []*qjs.Value, state *loaderExecutionState) (do
 	if len(args) < 2 || args[1] == nil || args[1].IsUndefined() || args[1].IsNull() {
 		return request, nil
 	}
-	options, err := loaderAgentOptionsWithoutSchema(args[1])
+	options, err := loaderAgentOptionsWithoutSchema(state.jsonEncoder, args[1])
 	if err != nil {
 		return domain.LoaderAgentRequest{}, fmt.Errorf("decode scheduler.agent options: %w", err)
 	}
@@ -1099,14 +1106,14 @@ func parseLoaderAgentRequest(args []*qjs.Value, state *loaderExecutionState) (do
 	return request, nil
 }
 
-func loaderAgentOptionsWithoutSchema(value *qjs.Value) (map[string]any, error) {
+func loaderAgentOptionsWithoutSchema(encoder *jsValueEncoder, value *qjs.Value) (map[string]any, error) {
 	if value == nil || value.IsUndefined() || value.IsNull() {
 		return map[string]any{}, nil
 	}
 	if !value.IsObject() || value.IsArray() {
 		return qjs.ToGoValue[map[string]any](value)
 	}
-	rawJSON, err := value.JSONStringify()
+	rawJSON, err := encoder.Encode(value)
 	if err != nil {
 		return nil, err
 	}
@@ -1119,7 +1126,7 @@ func loaderAgentOptionsWithoutSchema(value *qjs.Value) (map[string]any, error) {
 	return options, nil
 }
 
-func parseLoaderOutputSchema(jsctx *qjs.Context, args []*qjs.Value, apiName string) (string, *qjs.Value, error) {
+func parseLoaderOutputSchema(jsctx *qjs.Context, encoder *jsValueEncoder, args []*qjs.Value, apiName string) (string, *qjs.Value, error) {
 	if len(args) < 2 || args[1] == nil || args[1].IsUndefined() || args[1].IsNull() {
 		return "", nil, nil
 	}
@@ -1132,7 +1139,7 @@ func parseLoaderOutputSchema(jsctx *qjs.Context, args []*qjs.Value, apiName stri
 		if schemaValue == nil || schemaValue.IsUndefined() || schemaValue.IsNull() {
 			continue
 		}
-		schemaJSON, err := loaderOutputSchemaJSON(jsctx, schemaValue)
+		schemaJSON, err := loaderOutputSchemaJSON(jsctx, encoder, schemaValue)
 		if err != nil {
 			return "", nil, fmt.Errorf("decode %s %s: %w", apiName, key, err)
 		}
@@ -1141,7 +1148,7 @@ func parseLoaderOutputSchema(jsctx *qjs.Context, args []*qjs.Value, apiName stri
 	return "", nil, nil
 }
 
-func loaderOutputSchemaJSON(jsctx *qjs.Context, value *qjs.Value) (string, error) {
+func loaderOutputSchemaJSON(jsctx *qjs.Context, encoder *jsValueEncoder, value *qjs.Value) (string, error) {
 	if !value.IsObject() || value.IsArray() {
 		return "", fmt.Errorf("must be an object")
 	}
@@ -1154,9 +1161,9 @@ func loaderOutputSchemaJSON(jsctx *qjs.Context, value *qjs.Value) (string, error
 		if converted == nil || converted.IsUndefined() || converted.IsNull() || !converted.IsObject() || converted.IsArray() {
 			return "", fmt.Errorf("toJSONSchema must return an object")
 		}
-		return jsValueToJSON(converted)
+		return encoder.Encode(converted)
 	}
-	return jsValueToJSON(value)
+	return encoder.Encode(value)
 }
 
 func validateLoaderJSONWithSchema(jsctx *qjs.Context, schemaValue, responseValue *qjs.Value, apiName string) error {
@@ -1670,12 +1677,12 @@ func loaderSecretEnvName(name string) bool {
 	}
 }
 
-func parseLoaderLLMRequest(args []*qjs.Value) (domain.LoaderLLMRequest, error) {
+func parseLoaderLLMRequest(args []*qjs.Value, state *loaderExecutionState) (domain.LoaderLLMRequest, error) {
 	request := domain.LoaderLLMRequest{}
 	if len(args) < 2 || args[1] == nil || args[1].IsUndefined() || args[1].IsNull() {
 		return request, nil
 	}
-	options, err := loaderAgentOptionsWithoutSchema(args[1])
+	options, err := loaderAgentOptionsWithoutSchema(state.jsonEncoder, args[1])
 	if err != nil {
 		return domain.LoaderLLMRequest{}, fmt.Errorf("decode scheduler.llm options: %w", err)
 	}
@@ -1685,7 +1692,7 @@ func parseLoaderLLMRequest(args []*qjs.Value) (domain.LoaderLLMRequest, error) {
 	return request, nil
 }
 
-func loaderRPCRequestJSON(args []*qjs.Value, apiName string) (string, error) {
+func loaderRPCRequestJSON(encoder *jsValueEncoder, args []*qjs.Value, apiName string) (string, error) {
 	if len(args) == 0 {
 		return "", nil
 	}
@@ -1696,7 +1703,7 @@ func loaderRPCRequestJSON(args []*qjs.Value, apiName string) (string, error) {
 	if value == nil || value.IsNull() || value.IsUndefined() {
 		return "", nil
 	}
-	requestJSON, err := jsValueToJSON(value)
+	requestJSON, err := encoder.Encode(value)
 	if err != nil {
 		return "", fmt.Errorf("encode %s request: %w", apiName, err)
 	}
@@ -1793,63 +1800,6 @@ func payloadValueFromJSON(jsctx *qjs.Context, payloadJSON string) (*qjs.Value, e
 		return jsctx.NewUndefined(), nil
 	}
 	return jsctx.ParseJSON(payloadJSON), nil
-}
-
-func jsValueToJSON(value *qjs.Value) (string, error) {
-	if value == nil || value.IsUndefined() {
-		return "", nil
-	}
-	if value.IsNull() {
-		return "null", nil
-	}
-	if value.IsBool() {
-		if value.Bool() {
-			return "true", nil
-		}
-		return "false", nil
-	}
-	if value.IsString() || value.IsBigInt() {
-		data, err := json.Marshal(value.String())
-		if err != nil {
-			return "", fmt.Errorf("encode js string value: %w", err)
-		}
-		return string(data), nil
-	}
-	if value.IsNumber() {
-		raw := strings.TrimSpace(value.String())
-		if raw == "" {
-			return "", nil
-		}
-		if raw == "NaN" || raw == "Infinity" || raw == "-Infinity" {
-			data, err := json.Marshal(raw)
-			if err != nil {
-				return "", fmt.Errorf("encode js numeric sentinel: %w", err)
-			}
-			return string(data), nil
-		}
-		if json.Valid([]byte(raw)) {
-			return raw, nil
-		}
-	}
-	jsonValue, err := value.JSONStringify()
-	if err == nil && strings.TrimSpace(jsonValue) != "" && json.Valid([]byte(jsonValue)) {
-		return jsonValue, nil
-	}
-	return "", nil
-}
-
-func loaderResultJSON(value *qjs.Value) (string, bool, error) {
-	if value == nil || value.IsUndefined() {
-		return "", false, nil
-	}
-	jsonValue, err := jsValueToJSON(value)
-	if err != nil {
-		return "", false, err
-	}
-	if strings.TrimSpace(jsonValue) == "" {
-		return "", false, nil
-	}
-	return jsonValue, true, nil
 }
 
 func normalizeImagePullPolicy(policy string) string {

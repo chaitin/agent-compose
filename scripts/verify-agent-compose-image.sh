@@ -144,6 +144,8 @@ test -x /app/microsandbox/bin/msb
 test -x /app/microsandbox/bin/agentd
 test -s /app/microsandbox/lib/libmicrosandbox_go_ffi.so
 test -s /app/microsandbox/lib/libkrunfw.so
+command -v qemu-img >/dev/null
+mkfs.ext4 2>&1 | grep -Fq -- "[-d root-directory"
 test ! -e /dev/kvm'
 
 if ! docker create \

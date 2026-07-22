@@ -81,7 +81,7 @@ COPY --from=go-build /out/agent-compose /out/agent-compose
 
 FROM ${REGISTRY_MIRROR}/library/debian:trixie-slim
 RUN if [ -f /etc/apt/sources.list ]; then       sed -i -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list &&       sed -i -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list;     fi &&     if [ -f /etc/apt/sources.list.d/debian.sources ]; then       sed -i -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources &&       sed -i -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources;     fi
-RUN apt-get update &&     apt-get install -y --no-install-recommends ca-certificates git python3 tini tzdata e2fsprogs &&     rm -rf /var/lib/apt/lists/*
+RUN apt-get update &&     apt-get install -y --no-install-recommends ca-certificates git python3 tini tzdata e2fsprogs qemu-utils &&     rm -rf /var/lib/apt/lists/*
 RUN ln -sfv /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone
 WORKDIR /app
 COPY --from=go-build /out/agent-compose /app/agent-compose
@@ -89,6 +89,8 @@ RUN ln -sf /app/agent-compose /usr/local/bin/agent-compose
 COPY --from=boxlite-build /out/runtime /app/boxlite/runtime
 COPY --from=microsandbox-fetch /out /app/microsandbox
 RUN test -x /app/agent-compose && \
+	command -v qemu-img >/dev/null && \
+	mkfs.ext4 2>&1 | grep -Fq -- '[-d root-directory' && \
     test -x /app/boxlite/runtime/boxlite-guest && \
     test -x /app/boxlite/runtime/boxlite-shim && \
     test -x /app/microsandbox/bin/msb && \

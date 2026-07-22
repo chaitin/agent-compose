@@ -24,7 +24,7 @@ func TestProjectHandlerRunSchedulerSupportsMainAndTerminalStatuses(t *testing.T)
 		status     string
 		wantStatus agentcomposev2.SchedulerRunStatus
 	}{
-		{name: "main", status: domain.LoaderRunStatusSucceeded, wantStatus: agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SUCCEEDED},
+		{name: "succeeded", triggerID: "trigger-1", status: domain.LoaderRunStatusSucceeded, wantStatus: agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SUCCEEDED},
 		{name: "canceled", triggerID: "trigger-1", status: domain.LoaderRunStatusCanceled, wantStatus: agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_CANCELED},
 		{name: "skipped", triggerID: "trigger-1", status: domain.LoaderRunStatusSkipped, wantStatus: agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SKIPPED},
 	}
@@ -79,6 +79,26 @@ func TestProjectHandlerRunSchedulerValidatesPayloadAndMissingTrigger(t *testing.
 	}
 }
 
+func TestProjectHandlerInvokeSchedulerReturnsValueWithoutRunResource(t *testing.T) {
+	store, runtime, handler := newSchedulerRunHandlerFixture()
+	runtime.invokeResult = loaders.InvocationResult{ResultJSON: `{"ok":true}`, DurationMs: 42, Warnings: []string{"warning"}}
+	response, err := handler.InvokeScheduler(context.Background(), connect.NewRequest(&agentcomposev2.InvokeSchedulerRequest{
+		Project: &agentcomposev2.ProjectRef{ProjectId: store.project.ID}, AgentName: store.scheduler.AgentName, PayloadJson: ` { "value" : true } `,
+	}))
+	if err != nil || response.Msg.GetResultJson() != `{"ok":true}` || response.Msg.GetDurationMs() != 42 || len(response.Msg.GetWarnings()) != 1 {
+		t.Fatalf("InvokeScheduler response=%#v err=%v", response, err)
+	}
+	if runtime.invokeLoaderID != store.scheduler.ManagedLoaderID || runtime.invokePayload != `{"value":true}` {
+		t.Fatalf("invocation loader/payload=%q/%q", runtime.invokeLoaderID, runtime.invokePayload)
+	}
+	store.scheduler.SpecJSON = `{"triggers":[{"name":"nightly"}]}`
+	if _, err := handler.InvokeScheduler(context.Background(), connect.NewRequest(&agentcomposev2.InvokeSchedulerRequest{
+		Project: &agentcomposev2.ProjectRef{ProjectId: store.project.ID}, AgentName: store.scheduler.AgentName,
+	})); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("declarative invoke code=%v err=%v", connect.CodeOf(err), err)
+	}
+}
+
 func TestProjectHandlerSchedulerRunLifecycle(t *testing.T) {
 	store, runtime, handler := newSchedulerRunHandlerFixture()
 	startedAt := time.Unix(200, 0).UTC()
@@ -93,7 +113,7 @@ func TestProjectHandlerSchedulerRunLifecycle(t *testing.T) {
 		t.Fatalf("StartSchedulerRun response=%#v err=%v", started, err)
 	}
 
-	getRun := domain.LoaderRunSummary{ID: "run-get", LoaderID: store.scheduler.ManagedLoaderID, Status: domain.LoaderRunStatusCanceled, Error: "user stop", StartedAt: startedAt}
+	getRun := domain.LoaderRunSummary{ID: "run-get", LoaderID: store.scheduler.ManagedLoaderID, TriggerID: "trigger-1", Status: domain.LoaderRunStatusCanceled, Error: "user stop", StartedAt: startedAt}
 	store.runs = []domain.LoaderRunSummary{getRun}
 	runtime.getResult = getRun
 	got, err := handler.GetSchedulerRun(context.Background(), connect.NewRequest(&agentcomposev2.GetSchedulerRunRequest{
@@ -104,14 +124,15 @@ func TestProjectHandlerSchedulerRunLifecycle(t *testing.T) {
 		t.Fatalf("GetSchedulerRun response=%#v err=%v", got, err)
 	}
 
-	newer := domain.LoaderRunSummary{ID: "run-new", LoaderID: store.scheduler.ManagedLoaderID, Status: domain.LoaderRunStatusSucceeded, StartedAt: startedAt.Add(time.Second)}
-	older := domain.LoaderRunSummary{ID: "run-old", LoaderID: store.scheduler.ManagedLoaderID, Status: domain.LoaderRunStatusSkipped, StartedAt: startedAt}
+	newer := domain.LoaderRunSummary{ID: "run-new", LoaderID: store.scheduler.ManagedLoaderID, TriggerID: "trigger-1", Status: domain.LoaderRunStatusSucceeded, StartedAt: startedAt.Add(time.Second)}
+	older := domain.LoaderRunSummary{ID: "run-old", LoaderID: store.scheduler.ManagedLoaderID, TriggerID: "trigger-1", Status: domain.LoaderRunStatusSkipped, StartedAt: startedAt}
 	store.runs = []domain.LoaderRunSummary{newer, older}
+	store.sandboxIDs = map[loaders.LoaderRunKey][]string{{LoaderID: newer.LoaderID, RunID: newer.ID}: {"sandbox-1"}}
 	first, err := handler.ListSchedulerRuns(context.Background(), connect.NewRequest(&agentcomposev2.ListSchedulerRunsRequest{
 		Project: &agentcomposev2.ProjectRef{ProjectId: store.project.ID},
 		Limit:   1,
 	}))
-	if err != nil || len(first.Msg.GetRuns()) != 1 || first.Msg.GetRuns()[0].GetRunId() != newer.ID || first.Msg.GetNextCursor() == "" {
+	if err != nil || len(first.Msg.GetRuns()) != 1 || first.Msg.GetRuns()[0].GetRunId() != newer.ID || len(first.Msg.GetRuns()[0].GetSandboxIds()) != 1 || first.Msg.GetNextCursor() == "" {
 		t.Fatalf("ListSchedulerRuns first=%#v err=%v", first, err)
 	}
 	second, err := handler.ListSchedulerRuns(context.Background(), connect.NewRequest(&agentcomposev2.ListSchedulerRunsRequest{
@@ -121,6 +142,11 @@ func TestProjectHandlerSchedulerRunLifecycle(t *testing.T) {
 	}))
 	if err != nil || len(second.Msg.GetRuns()) != 1 || second.Msg.GetRuns()[0].GetRunId() != older.ID || second.Msg.GetNextCursor() != "" {
 		t.Fatalf("ListSchedulerRuns second=%#v err=%v", second, err)
+	}
+	if _, err := handler.ListSchedulerRuns(context.Background(), connect.NewRequest(&agentcomposev2.ListSchedulerRunsRequest{
+		Project: &agentcomposev2.ProjectRef{ProjectId: store.project.ID}, TriggerId: "trigger-1", Status: agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SKIPPED, Limit: 1,
+	})); err != nil || !store.lastRunFilter.RequireTrigger || store.lastRunFilter.TriggerID != "trigger-1" || store.lastRunFilter.Status != domain.LoaderRunStatusSkipped {
+		t.Fatalf("ListSchedulerRuns filter=%#v err=%v", store.lastRunFilter, err)
 	}
 
 	store.runs = []domain.LoaderRunSummary{getRun}
@@ -136,20 +162,74 @@ func TestProjectHandlerSchedulerRunLifecycle(t *testing.T) {
 	}
 }
 
+func TestProjectHandlerListsProjectSchedulerEventsWithIdentityAndCursor(t *testing.T) {
+	store, _, handler := newSchedulerRunHandlerFixture()
+	createdAt := time.Unix(300, 0).UTC()
+	store.events = []domain.LoaderEvent{
+		{ID: "event-2", LoaderID: store.scheduler.ManagedLoaderID, RunID: "run-1", TriggerID: "trigger-1", Type: "loader.log", LinkedSandboxID: "sandbox-1", CreatedAt: createdAt},
+		{ID: "event-1", LoaderID: store.scheduler.ManagedLoaderID, RunID: "run-1", TriggerID: "trigger-1", Type: "loader.run.started", CreatedAt: createdAt.Add(-time.Second)},
+	}
+	first, err := handler.ListProjectSchedulerEvents(context.Background(), connect.NewRequest(&agentcomposev2.ListProjectSchedulerEventsRequest{
+		Project: &agentcomposev2.ProjectRef{ProjectId: store.project.ID}, Limit: 1,
+	}))
+	if err != nil || len(first.Msg.GetEvents()) != 1 || first.Msg.GetEvents()[0].GetAgentName() != store.scheduler.AgentName ||
+		first.Msg.GetEvents()[0].GetSchedulerId() != store.scheduler.SchedulerID || first.Msg.GetEvents()[0].GetLinkedSandboxId() != "sandbox-1" || first.Msg.GetNextCursor() == "" {
+		t.Fatalf("first event page=%#v err=%v", first, err)
+	}
+	second, err := handler.ListProjectSchedulerEvents(context.Background(), connect.NewRequest(&agentcomposev2.ListProjectSchedulerEventsRequest{
+		Project: &agentcomposev2.ProjectRef{ProjectId: store.project.ID}, Limit: 1, Cursor: first.Msg.GetNextCursor(),
+	}))
+	if err != nil || len(second.Msg.GetEvents()) != 1 || second.Msg.GetEvents()[0].GetId() != "event-1" || second.Msg.GetNextCursor() != "" {
+		t.Fatalf("second event page=%#v err=%v", second, err)
+	}
+}
+
+func TestProjectSchedulerEventCursorBindsAllFilters(t *testing.T) {
+	event := domain.LoaderEvent{ID: "event-1", LoaderID: "loader-1", CreatedAt: time.Unix(400, 0).UTC()}
+	token := encodeProjectSchedulerEventCursor("project-1", 3, "agent-1", "trigger-1", "run-1", event)
+	if _, err := decodeProjectSchedulerEventCursor(token, "project-1", 3, "agent-1", "trigger-1", "run-1"); err != nil {
+		t.Fatalf("decode event cursor: %v", err)
+	}
+	for _, scope := range []struct {
+		project             string
+		revision            int64
+		agent, trigger, run string
+	}{
+		{project: "project-2", revision: 3, agent: "agent-1", trigger: "trigger-1", run: "run-1"},
+		{project: "project-1", revision: 4, agent: "agent-1", trigger: "trigger-1", run: "run-1"},
+		{project: "project-1", revision: 3, agent: "agent-2", trigger: "trigger-1", run: "run-1"},
+		{project: "project-1", revision: 3, agent: "agent-1", trigger: "trigger-2", run: "run-1"},
+		{project: "project-1", revision: 3, agent: "agent-1", trigger: "trigger-1", run: "run-2"},
+	} {
+		if _, err := decodeProjectSchedulerEventCursor(token, scope.project, scope.revision, scope.agent, scope.trigger, scope.run); err == nil {
+			t.Fatalf("cursor accepted scope %#v", scope)
+		}
+	}
+}
+
 func TestSchedulerRunCursorIsScopedToProjectAndAgent(t *testing.T) {
 	run := domain.LoaderRunSummary{ID: "run-1", LoaderID: "loader-1", StartedAt: time.Unix(300, 0).UTC()}
-	token := encodeSchedulerRunCursor("project-1", "agent-1", run)
-	cursor, err := decodeSchedulerRunCursor(token, "project-1", "agent-1")
+	token := encodeSchedulerRunCursor("project-1", 3, "agent-1", "trigger-1", "running", run)
+	cursor, err := decodeSchedulerRunCursor(token, "project-1", 3, "agent-1", "trigger-1", "running")
 	if err != nil || cursor.RunID != run.ID || cursor.LoaderID != run.LoaderID || !cursor.StartedAt.Equal(run.StartedAt) {
 		t.Fatalf("decode cursor=%#v err=%v", cursor, err)
 	}
-	if _, err := decodeSchedulerRunCursor(token, "project-2", "agent-1"); err == nil {
+	if _, err := decodeSchedulerRunCursor(token, "project-2", 3, "agent-1", "trigger-1", "running"); err == nil {
 		t.Fatal("cursor accepted a different project")
 	}
-	if _, err := decodeSchedulerRunCursor(token, "project-1", "agent-2"); err == nil {
+	if _, err := decodeSchedulerRunCursor(token, "project-1", 4, "agent-1", "trigger-1", "running"); err == nil {
+		t.Fatal("cursor accepted a different project revision")
+	}
+	if _, err := decodeSchedulerRunCursor(token, "project-1", 3, "agent-2", "trigger-1", "running"); err == nil {
 		t.Fatal("cursor accepted a different agent")
 	}
-	if _, err := decodeSchedulerRunCursor("not-base64!", "project-1", "agent-1"); err == nil {
+	if _, err := decodeSchedulerRunCursor(token, "project-1", 3, "agent-1", "trigger-2", "running"); err == nil {
+		t.Fatal("cursor accepted a different trigger")
+	}
+	if _, err := decodeSchedulerRunCursor(token, "project-1", 3, "agent-1", "trigger-1", "failed"); err == nil {
+		t.Fatal("cursor accepted a different status")
+	}
+	if _, err := decodeSchedulerRunCursor("not-base64!", "project-1", 3, "agent-1", "trigger-1", "running"); err == nil {
 		t.Fatal("invalid cursor returned nil error")
 	}
 }
@@ -180,6 +260,7 @@ func newSchedulerRunHandlerFixture() (*schedulerRunProjectStoreFake, *schedulerR
 			ManagedLoaderID: "loader-1",
 			Revision:        1,
 			Enabled:         false,
+			SpecJSON:        `{"script":"function main() {}"}`,
 		},
 	}
 	runtime := &schedulerRunRuntimeFake{}
@@ -187,9 +268,28 @@ func newSchedulerRunHandlerFixture() (*schedulerRunProjectStoreFake, *schedulerR
 }
 
 type schedulerRunProjectStoreFake struct {
-	project   domain.ProjectRecord
-	scheduler domain.ProjectSchedulerRecord
-	runs      []domain.LoaderRunSummary
+	project       domain.ProjectRecord
+	scheduler     domain.ProjectSchedulerRecord
+	schedulers    []domain.ProjectSchedulerRecord
+	runs          []domain.LoaderRunSummary
+	events        []domain.LoaderEvent
+	sandboxIDs    map[loaders.LoaderRunKey][]string
+	lastRunFilter loaders.LoaderRunPageFilter
+}
+
+func (s *schedulerRunProjectStoreFake) ListLoaderEventsPage(_ context.Context, filter loaders.LoaderEventPageFilter) ([]domain.LoaderEvent, error) {
+	start := 0
+	if filter.BeforeEventID != "" {
+		start = len(s.events)
+		for index, event := range s.events {
+			if event.ID == filter.BeforeEventID {
+				start = index + 1
+				break
+			}
+		}
+	}
+	end := min(start+filter.Limit, len(s.events))
+	return append([]domain.LoaderEvent(nil), s.events[start:end]...), nil
 }
 
 func (s *schedulerRunProjectStoreFake) GetProject(context.Context, string) (domain.ProjectRecord, error) {
@@ -205,6 +305,9 @@ func (s *schedulerRunProjectStoreFake) ListProjectAgents(context.Context, string
 }
 
 func (s *schedulerRunProjectStoreFake) ListProjectSchedulers(context.Context, string) ([]domain.ProjectSchedulerRecord, error) {
+	if s.schedulers != nil {
+		return append([]domain.ProjectSchedulerRecord(nil), s.schedulers...), nil
+	}
 	return []domain.ProjectSchedulerRecord{s.scheduler}, nil
 }
 
@@ -227,6 +330,7 @@ func (s *schedulerRunProjectStoreFake) GetLoaderRunForLoaders(_ context.Context,
 }
 
 func (s *schedulerRunProjectStoreFake) ListLoaderRunsPage(_ context.Context, filter loaders.LoaderRunPageFilter) ([]domain.LoaderRunSummary, error) {
+	s.lastRunFilter = filter
 	start := 0
 	if filter.BeforeRunID != "" {
 		start = len(s.runs)
@@ -241,16 +345,37 @@ func (s *schedulerRunProjectStoreFake) ListLoaderRunsPage(_ context.Context, fil
 	return append([]domain.LoaderRunSummary(nil), s.runs[start:end]...), nil
 }
 
+func (s *schedulerRunProjectStoreFake) ListLoaderRunSandboxIDs(_ context.Context, _ []loaders.LoaderRunKey) (map[loaders.LoaderRunKey][]string, error) {
+	return s.sandboxIDs, nil
+}
+
 type schedulerRunRuntimeFake struct {
-	runResult     domain.LoaderRunSummary
-	startResult   domain.LoaderRunSummary
-	getResult     domain.LoaderRunSummary
-	stopResult    domain.LoaderRunSummary
-	runErr        error
-	stopRequested bool
-	runCalls      int
-	lastRequest   loaders.SchedulerRunRequest
-	stopReason    string
+	runResult      domain.LoaderRunSummary
+	startResult    domain.LoaderRunSummary
+	getResult      domain.LoaderRunSummary
+	stopResult     domain.LoaderRunSummary
+	runErr         error
+	stopRequested  bool
+	runCalls       int
+	lastRequest    loaders.SchedulerRunRequest
+	stopReason     string
+	invokeResult   loaders.InvocationResult
+	invokeLoaderID string
+	invokePayload  string
+	pruneRequest   loaders.SchedulerRunPruneRequest
+	pruneResult    loaders.SchedulerRunPruneResult
+	pruneErr       error
+}
+
+func (f *schedulerRunRuntimeFake) PruneSchedulerRuns(_ context.Context, request loaders.SchedulerRunPruneRequest) (loaders.SchedulerRunPruneResult, error) {
+	f.pruneRequest = request
+	return f.pruneResult, f.pruneErr
+}
+
+func (f *schedulerRunRuntimeFake) InvokeScheduler(_ context.Context, loaderID, payloadJSON string) (loaders.InvocationResult, error) {
+	f.invokeLoaderID = loaderID
+	f.invokePayload = payloadJSON
+	return f.invokeResult, nil
 }
 
 func (f *schedulerRunRuntimeFake) SetLoaderEnabled(context.Context, string, bool) (domain.Loader, error) {

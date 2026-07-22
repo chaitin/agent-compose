@@ -43,6 +43,13 @@ The host sandbox directory created by `Store.CreateSandbox` includes:
   state/events.jsonl
 ```
 
+For a sandbox with pending workspace provisioning, `Store.CreateSandbox` does
+not create `<sandbox>/workspace` yet. The provisioner materializes the source in
+`<sandbox>/state/workspace-provisioning/attempt-*` and atomically renames the
+completed attempt to `<sandbox>/workspace` before marking provisioning ready.
+Sandboxes without a workspace source still receive an empty workspace directory
+at creation time.
+
 Guest/runtime actually uses:
 
 | Host path | Guest path | Purpose |
@@ -109,6 +116,9 @@ Constraints:
 - `type` currently supports only `bind`.
 - `hostPath` and `guestPath` must both be absolute paths.
 - All required host sources are created before the manifest is generated.
+- Runtime start runs the workspace ensurer before manifest generation, so a
+  pending workspace may be absent at sandbox creation but must exist before it
+  becomes a mount source.
 - Runtime consumers validate the manifest against the expected driver to avoid
   accidentally reusing an old manifest.
 

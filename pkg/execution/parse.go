@@ -81,8 +81,9 @@ func SummarizeAgentExecFailure(result domain.ExecResult) string {
 		return ""
 	}
 	detail = strings.Join(strings.Fields(detail), " ")
-	if len(detail) > 240 {
-		detail = detail[:240] + "..."
+	runes := []rune(detail)
+	if len(runes) > 240 {
+		detail = string(runes[:240]) + "..."
 	}
 	return detail
 }

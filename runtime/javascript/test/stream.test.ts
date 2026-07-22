@@ -3,6 +3,7 @@ import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { decodeBinary, decodeFrame, encodeBinary, encodeFrame, FRAME_VERSION, type StreamFrame } from "../src/frame.js";
+import { OpenCodeRunner } from "../src/runners/opencode.js";
 import { runStreamCommand } from "../src/stream.js";
 import { withTempSession } from "./helpers.js";
 
@@ -23,6 +24,10 @@ const thread = {
 const startThread = vi.fn(() => thread);
 const resumeThread = vi.fn(() => thread);
 
+const claudeState = vi.hoisted(() => ({
+  queryCalls: [] as Array<Record<string, unknown>>,
+}));
+
 vi.mock("@openai/codex-sdk", () => ({
   Codex: vi.fn(function CodexMock(this: object) {
     Object.assign(this, {
@@ -32,10 +37,38 @@ vi.mock("@openai/codex-sdk", () => ({
   }),
 }));
 
+vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
+  query: vi.fn((request: Record<string, unknown>) => {
+    claudeState.queryCalls.push(request);
+    const turn = claudeState.queryCalls.length;
+    return {
+      close: vi.fn(),
+      [Symbol.asyncIterator]: async function* iterator() {
+        yield {
+          type: "stream_event",
+          session_id: "claude-session-1",
+          event: {
+            type: "content_block_delta",
+            delta: { type: "text_delta", text: `claude answer ${turn}` },
+          },
+        };
+        yield {
+          type: "result",
+          subtype: "success",
+          session_id: "claude-session-1",
+          stop_reason: "end_turn",
+          result: `claude answer ${turn}`,
+        };
+      },
+    };
+  }),
+}));
+
 afterEach(() => {
   runInputs.length = 0;
   startThread.mockClear();
   resumeThread.mockClear();
+  claudeState.queryCalls = [];
   vi.restoreAllMocks();
 });
 
@@ -110,28 +143,105 @@ describe("runStreamCommand", () => {
     });
   });
 
-  it("emits a structured error for unsupported interactive providers", async () => {
+  it("runs multiple Claude human messages by resuming the stored provider session", async () => {
     await withTempSession(async (root) => {
       const stdout = new MemoryWritable();
+      const stderr = new MemoryWritable();
 
       await runStreamCommand({
         stdin: Readable.from([
-          frame({ seq: 0, type: "start", provider: "claude", stateRoot: `${root}/state` }),
+          frame({ seq: 0, type: "start", provider: "claude", stateRoot: `${root}/state`, workspace: `${root}/workspace`, home: `${root}/home` }),
+          frame({ seq: 1, type: "human_message", message: "first" }),
+          frame({ seq: 2, type: "human_message", message: "second" }),
+          frame({ seq: 3, type: "eof" }),
         ]),
         stdout,
+        stderr,
       });
 
-      expect(parseOutput(stdout.text)).toEqual([
-        {
-          v: FRAME_VERSION,
-          seq: 0,
-          type: "error",
-          code: "unsupported_provider",
-          message: "interactive stream is not supported for provider claude",
-          inputSeq: 0,
-          provider: "claude",
-        },
+      const frames = parseOutput(stdout.text);
+      expect(frames.map((entry) => entry.type)).toEqual([
+        "started",
+        "agent_event",
+        "agent_turn_completed",
+        "agent_event",
+        "agent_turn_completed",
+        "result",
       ]);
+      expect(frames.every((entry, index) => entry.seq === index)).toBe(true);
+      expect(frames.filter((entry) => entry.type === "agent_event")).toEqual([
+        expect.objectContaining({ event: expect.objectContaining({ provider: "claude", text: "claude answer 1" }) }),
+        expect.objectContaining({ event: expect.objectContaining({ provider: "claude", text: "claude answer 2" }) }),
+      ]);
+      expect(claudeState.queryCalls.map((call) => call.prompt)).toEqual(["first", "second"]);
+      expect(claudeState.queryCalls[0]?.options).not.toMatchObject({ resume: expect.anything() });
+      expect(claudeState.queryCalls[1]?.options).toMatchObject({ resume: "claude-session-1" });
+      expect(frames.at(-1)).toMatchObject({
+        type: "result",
+        provider: "claude",
+        threadId: "claude-session-1",
+        stopReason: "eof",
+        finalText: "claude answer 2",
+        transcript: "claude answer 1\nclaude answer 2",
+      });
+      expect(stderr.text).toBe("");
+    });
+  });
+
+  it("runs multiple OpenCode human messages through the provider session", async () => {
+    await withTempSession(async (root) => {
+      const stdout = new MemoryWritable();
+      const stderr = new MemoryWritable();
+      const prompts: string[] = [];
+      vi.spyOn(OpenCodeRunner.prototype, "runPrompt").mockImplementation(async function (message) {
+        prompts.push(message);
+        const turn = prompts.length;
+        const writer = (this as unknown as { writer: { write(text: string): void; transcript(): string } }).writer;
+        writer.write(`opencode answer ${turn}`);
+        return {
+          provider: "opencode",
+          threadId: "opencode-session-1",
+          stopReason: "completed",
+          finalText: `opencode answer ${turn}`,
+          transcript: writer.transcript(),
+          stderr: "",
+        };
+      });
+
+      await runStreamCommand({
+        stdin: Readable.from([
+          frame({ seq: 0, type: "start", provider: "opencode", stateRoot: `${root}/state`, workspace: `${root}/workspace`, home: `${root}/home` }),
+          frame({ seq: 1, type: "human_message", message: "first" }),
+          frame({ seq: 2, type: "human_message", message: "second" }),
+          frame({ seq: 3, type: "eof" }),
+        ]),
+        stdout,
+        stderr,
+      });
+
+      const frames = parseOutput(stdout.text);
+      expect(frames.map((entry) => entry.type)).toEqual([
+        "started",
+        "agent_event",
+        "agent_turn_completed",
+        "agent_event",
+        "agent_turn_completed",
+        "result",
+      ]);
+      expect(prompts).toEqual(["first", "second"]);
+      expect(frames.filter((entry) => entry.type === "agent_event")).toEqual([
+        expect.objectContaining({ event: expect.objectContaining({ provider: "opencode", text: "opencode answer 1" }) }),
+        expect.objectContaining({ event: expect.objectContaining({ provider: "opencode", text: "opencode answer 2" }) }),
+      ]);
+      expect(frames.at(-1)).toMatchObject({
+        type: "result",
+        provider: "opencode",
+        threadId: "opencode-session-1",
+        stopReason: "eof",
+        finalText: "opencode answer 2",
+        transcript: "opencode answer 1\nopencode answer 2",
+      });
+      expect(stderr.text).toBe("");
     });
   });
 

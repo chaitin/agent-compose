@@ -21,7 +21,7 @@ func TestControllerCoverageWorkflow(t *testing.T) {
 	controller := NewController(ControllerDependencies{
 		Store:  store,
 		Engine: controllerTestEngine{},
-		HostFactory: func(domain.Loader, *domain.LoaderRunSummary, TriggerEventMetadata) RunHost {
+		HostFactory: func(domain.Loader, RuntimeExecutionContext, TriggerEventMetadata) RunHost {
 			return nil
 		},
 		Notifier:  notifier,
@@ -136,7 +136,7 @@ func TestControllerCoverageWorkflow(t *testing.T) {
 	bareController := NewController(ControllerDependencies{
 		Store:  store,
 		Engine: controllerTestEngine{},
-		HostFactory: func(domain.Loader, *domain.LoaderRunSummary, TriggerEventMetadata) RunHost {
+		HostFactory: func(domain.Loader, RuntimeExecutionContext, TriggerEventMetadata) RunHost {
 			return nil
 		},
 	})

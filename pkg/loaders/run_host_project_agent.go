@@ -46,7 +46,7 @@ func (h *RuntimeHost) ProjectAgent(ctx context.Context, prompt string, request d
 		AgentName:         h.loader.Summary.ManagedAgentName,
 		Prompt:            prompt,
 		SchedulerID:       h.loader.Summary.ManagedSchedulerID,
-		TriggerID:         h.run.TriggerID,
+		TriggerID:         h.execution.TriggerID,
 		OutputSchemaJSON:  request.OutputSchema,
 		ClientRequestID:   h.nextProjectAgentRunID(),
 		Volumes:           request.Volumes,
@@ -76,7 +76,7 @@ func (h *RuntimeHost) ProjectAgent(ctx context.Context, prompt string, request d
 }
 
 func (h *RuntimeHost) nextProjectAgentRunID() string {
-	baseID := firstHostNonEmpty(h.run.ID, uuid.NewString())
+	baseID := firstHostNonEmpty(h.execution.ID, uuid.NewString())
 	return fmt.Sprintf("%s:agent:%d", baseID, h.projectAgentRunSequence.Add(1))
 }
 

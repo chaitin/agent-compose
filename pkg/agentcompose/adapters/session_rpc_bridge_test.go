@@ -2,7 +2,6 @@ package adapters
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -19,10 +18,9 @@ import (
 	"agent-compose/pkg/capability"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/internal/testutil"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/sessions"
-	"agent-compose/pkg/storage/configstore"
-	"agent-compose/pkg/storage/sessionstore"
 	"agent-compose/pkg/workspaces"
 )
 
@@ -375,20 +373,9 @@ func newTestSandboxRPCBridge(t *testing.T) (*SandboxRPCBridge, *fakeRPCSandboxDr
 	if err := os.MkdirAll(config.SandboxRoot, 0o755); err != nil {
 		t.Fatalf("create sandbox root: %v", err)
 	}
-	db, err := sql.Open("sqlite", config.DbAddr)
+	configDB, store, err := testutil.OpenStores(t, config)
 	if err != nil {
-		t.Fatalf("open sqlite db: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	t.Cleanup(func() { _ = db.Close() })
-	configDB := configstore.FromDB(db)
-	if err := configDB.InitSchema(context.Background()); err != nil {
-		t.Fatalf("InitSchema returned error: %v", err)
-	}
-	store, err := sessionstore.NewWithConfig(config)
-	if err != nil {
-		t.Fatalf("NewWithConfig returned error: %v", err)
+		t.Fatalf("open test storage: %v", err)
 	}
 	driver := &fakeRPCSandboxDriver{}
 	return NewSandboxRPCBridge(

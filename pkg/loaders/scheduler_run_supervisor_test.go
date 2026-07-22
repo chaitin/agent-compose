@@ -21,7 +21,7 @@ func TestRunExecutorCancellationWritesCanceledTerminalState(t *testing.T) {
 	executor := NewRunExecutor(RunExecutorDependencies{
 		Store:       store,
 		Engine:      engine,
-		HostFactory: func(domain.Loader, *domain.LoaderRunSummary, TriggerEventMetadata) RunHost { return nil },
+		HostFactory: func(domain.Loader, RuntimeExecutionContext, TriggerEventMetadata) RunHost { return nil },
 		ArtifactsDir: func(loaderID, runID string) string {
 			return filepath.Join(artifactsDir, loaderID, runID)
 		},
@@ -79,9 +79,26 @@ func TestSchedulerRunSupervisorRunReturnsFinalResult(t *testing.T) {
 		},
 	})
 
-	run, err := supervisor.Run(context.Background(), SchedulerRunRequest{LoaderID: "loader-1"})
+	run, err := supervisor.Run(context.Background(), SchedulerRunRequest{LoaderID: "loader-1", TriggerID: "trigger-1"})
 	if err != nil || run.Status != domain.LoaderRunStatusSucceeded || run.ResultJSON != `{"ok":true}` {
 		t.Fatalf("Run run=%#v err=%v", run, err)
+	}
+}
+
+func TestSchedulerRunSupervisorRejectsEmptyTriggerWithoutPreparingRun(t *testing.T) {
+	prepareCalls := 0
+	supervisor := newSchedulerRunSupervisor(schedulerRunSupervisorDependencies{
+		LoadLoaderForRun: func(context.Context, string, string) (domain.Loader, *domain.LoaderTrigger, error) {
+			t.Fatal("empty trigger must be rejected before loading")
+			return domain.Loader{}, nil, nil
+		},
+		Prepare: func(context.Context, domain.Loader, *domain.LoaderTrigger, string, string, RunOptions) (PreparedRun, error) {
+			prepareCalls++
+			return PreparedRun{}, nil
+		},
+	})
+	if _, err := supervisor.Run(context.Background(), SchedulerRunRequest{LoaderID: "loader-1"}); !errors.Is(err, domain.ErrRequired) || prepareCalls != 0 {
+		t.Fatalf("empty trigger err=%v prepareCalls=%d", err, prepareCalls)
 	}
 }
 
@@ -106,7 +123,7 @@ func TestSchedulerRunSupervisorTimeoutCancelsExecution(t *testing.T) {
 		},
 	})
 
-	run, err := supervisor.Run(context.Background(), SchedulerRunRequest{LoaderID: "loader-1", Timeout: 10 * time.Millisecond})
+	run, err := supervisor.Run(context.Background(), SchedulerRunRequest{LoaderID: "loader-1", TriggerID: "trigger-1", Timeout: 10 * time.Millisecond})
 	if err != nil || run.Status != domain.LoaderRunStatusCanceled || run.Error != errSchedulerRunTimedOut.Error() {
 		t.Fatalf("Run run=%#v err=%v", run, err)
 	}
@@ -137,7 +154,7 @@ func TestSchedulerRunSupervisorStopWaitsForExecutorTerminalState(t *testing.T) {
 		},
 	})
 
-	created, err := supervisor.Start(context.Background(), SchedulerRunRequest{LoaderID: "loader-1", PayloadJSON: `{"key":true}`})
+	created, err := supervisor.Start(context.Background(), SchedulerRunRequest{LoaderID: "loader-1", TriggerID: "trigger-1", PayloadJSON: `{"key":true}`})
 	if err != nil || created.Status != domain.LoaderRunStatusRunning {
 		t.Fatalf("Start run=%#v err=%v", created, err)
 	}
@@ -153,6 +170,81 @@ func TestSchedulerRunSupervisorStopWaitsForExecutorTerminalState(t *testing.T) {
 	runs, err := supervisor.List(context.Background(), "loader-1", 10)
 	if err != nil || len(runs) != 1 || runs[0].ID != created.ID {
 		t.Fatalf("List runs=%#v err=%v", runs, err)
+	}
+}
+
+func TestSchedulerRunSupervisorStopsQJSPendingPromise(t *testing.T) {
+	store := newSupervisorRunStore()
+	host := &pendingPromiseRunHost{
+		engineCancellationHost: engineCancellationHost{started: make(chan struct{})},
+	}
+	var (
+		eventMu sync.Mutex
+		events  []string
+	)
+	artifactsDir := t.TempDir()
+	executor := NewRunExecutor(RunExecutorDependencies{
+		Store:  store,
+		Engine: &QJSLoaderEngine{},
+		HostFactory: func(domain.Loader, RuntimeExecutionContext, TriggerEventMetadata) RunHost {
+			return host
+		},
+		ArtifactsDir: func(loaderID, runID string) string {
+			return filepath.Join(artifactsDir, loaderID, runID)
+		},
+		WriteArtifact: func(string, string, string) error { return nil },
+		AddLoaderEvent: func(_ context.Context, _, _, _, eventType, _, _ string, _ any, _, _, _ string) error {
+			eventMu.Lock()
+			defer eventMu.Unlock()
+			events = append(events, eventType)
+			return nil
+		},
+	})
+	loader := domain.Loader{
+		Summary: domain.LoaderSummary{ID: "loader-qjs-pending", Runtime: domain.LoaderRuntimeScheduler},
+		Script: `
+scheduler.interval("pending", async function pending() {
+  scheduler.log("callback started");
+  await new Promise(function neverResolve() {});
+}, 86400000);`,
+	}
+	trigger := &domain.LoaderTrigger{ID: "pending", Kind: "interval"}
+	supervisor := newSchedulerRunSupervisor(schedulerRunSupervisorDependencies{
+		RootCtx: context.Background(),
+		Store:   store,
+		LoadLoaderForRun: func(context.Context, string, string) (domain.Loader, *domain.LoaderTrigger, error) {
+			return loader, trigger, nil
+		},
+		Prepare: executor.Prepare,
+		Execute: executor.Execute,
+	})
+
+	created, err := supervisor.Start(context.Background(), SchedulerRunRequest{
+		LoaderID:  loader.Summary.ID,
+		TriggerID: trigger.ID,
+	})
+	if err != nil || created.Status != domain.LoaderRunStatusRunning {
+		t.Fatalf("Start run=%#v err=%v", created, err)
+	}
+	select {
+	case <-host.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("scheduler callback did not start")
+	}
+
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelStop()
+	stopped, requested, err := supervisor.Stop(stopCtx, loader.Summary.ID, created.ID, "operator stop")
+	if err != nil || !requested {
+		t.Fatalf("Stop run=%#v requested=%v err=%v", stopped, requested, err)
+	}
+	if stopped.Status != domain.LoaderRunStatusCanceled || stopped.Error != "operator stop" || stopped.CompletedAt.IsZero() {
+		t.Fatalf("stopped run = %#v", stopped)
+	}
+	eventMu.Lock()
+	defer eventMu.Unlock()
+	if !slices.Equal(events, []string{"loader.run.started", "loader.run.canceled"}) {
+		t.Fatalf("events = %#v", events)
 	}
 }
 
@@ -184,7 +276,7 @@ func TestSchedulerRunSupervisorRootContextStopsBackgroundRun(t *testing.T) {
 		},
 	})
 
-	if _, err := supervisor.Start(context.Background(), SchedulerRunRequest{LoaderID: "loader-1"}); err != nil {
+	if _, err := supervisor.Start(context.Background(), SchedulerRunRequest{LoaderID: "loader-1", TriggerID: "trigger-1"}); err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
 	<-started
@@ -236,6 +328,12 @@ type supervisorRunStore struct {
 	runs map[string]domain.LoaderRunSummary
 }
 
+type pendingPromiseRunHost struct {
+	engineCancellationHost
+}
+
+func (*pendingPromiseRunHost) CleanupCommandSessions(context.Context) {}
+
 func newSupervisorRunStore() *supervisorRunStore {
 	return &supervisorRunStore{runs: map[string]domain.LoaderRunSummary{}}
 }
@@ -244,6 +342,20 @@ func (s *supervisorRunStore) set(run domain.LoaderRunSummary) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.runs[run.LoaderID+"/"+run.ID] = run
+}
+
+func (s *supervisorRunStore) CreateLoaderRun(_ context.Context, run domain.LoaderRunSummary) error {
+	s.set(run)
+	return nil
+}
+
+func (s *supervisorRunStore) UpdateLoaderRun(_ context.Context, run domain.LoaderRunSummary) error {
+	s.set(run)
+	return nil
+}
+
+func (*supervisorRunStore) UpdateLoaderLastError(context.Context, string, string) error {
+	return nil
 }
 
 func (s *supervisorRunStore) GetLoaderRun(_ context.Context, loaderID, runID string) (domain.LoaderRunSummary, error) {

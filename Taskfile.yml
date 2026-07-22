@@ -286,9 +286,10 @@ tasks:
         fi
         if [[ ",$drivers," == *",all,"* || ",$drivers," == *",microsandbox,"* ]]; then
           for test_name in \
+            TestSmokeMicrosandboxBaseDiskBuild \
             TestSmokeMicrosandboxStopResumePreservesWritableLayer \
-            TestSmokeMicrosandboxRuntimeMountManifestDirectoryOnlyStarts \
-            TestSmokeMicrosandboxUsesGoContainerRegistryOCIImage; do
+            TestSmokeMicrosandboxRootfsIsolation \
+            TestSmokeMicrosandboxRuntimeMountManifestDirectoryOnlyStarts; do
             SMOKE_RUNTIME_DRIVERS=microsandbox \
               LD_LIBRARY_PATH="$PWD/build/microsandbox/lib:${LD_LIBRARY_PATH:-}" \
               GOCACHE={{.GO_BUILD_CACHE_DIR}} \

@@ -84,6 +84,9 @@ func (s *schedulerRunSupervisor) start(ctx context.Context, request SchedulerRun
 	if request.LoaderID == "" {
 		return domain.LoaderRunSummary{}, nil, domain.ClassifyError(domain.ErrRequired, "scheduler loader id is required", nil)
 	}
+	if request.TriggerID == "" {
+		return domain.LoaderRunSummary{}, nil, domain.ClassifyError(domain.ErrRequired, "scheduler trigger id is required", nil)
+	}
 	if err := context.Cause(s.deps.RootCtx); err != nil {
 		return domain.LoaderRunSummary{}, nil, err
 	}

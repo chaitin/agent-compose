@@ -50,10 +50,14 @@ func NewLoaderController(di do.Injector) (*loaders.Controller, error) {
 		ReserveSlots: func(event domain.LoaderTopicEvent, count int) ([]*webhooks.Reservation, bool) {
 			return reserveLoaderEventQueueSlots(config, &queue, event, count)
 		},
-		HostFactory: func(loader domain.Loader, run *domain.LoaderRunSummary, triggerEvent loaders.TriggerEventMetadata) loaders.RunHost {
+		HostFactory: func(loader domain.Loader, execution loaders.RuntimeExecutionContext, triggerEvent loaders.TriggerEventMetadata) loaders.RunHost {
+			events := loaders.HostEventRecorder(nil)
+			if execution.Kind == loaders.ExecutionKindTrigger {
+				events = adapters.LoaderHostEvents{Controller: controller}
+			}
 			return loaders.NewRuntimeHost(loaders.RunHostDependencies{
 				Store:                   configDB,
-				Events:                  adapters.LoaderHostEvents{Controller: controller},
+				Events:                  events,
 				Sessions:                do.MustInvoke[*adapters.LoaderSandboxRunner](di),
 				AgentDefinitions:        do.MustInvoke[*adapters.LoaderSandboxRunner](di),
 				AgentExecutor:           adapters.LoaderHostAgentExecutor{Executor: do.MustInvoke[*adapters.AgentExecutor](di)},
@@ -64,7 +68,7 @@ func NewLoaderController(di do.Injector) (*loaders.Controller, error) {
 				Publisher:               controller,
 				CommandRequiresCleanup:  loaders.CommandRequestRequiresCleanup,
 				LinkedSandboxIDFromJSON: adapters.LoaderSandboxRPCLinkedSandboxID,
-			}, loader, run, triggerEvent)
+			}, loader, execution, triggerEvent)
 		},
 	})
 	return controller, nil

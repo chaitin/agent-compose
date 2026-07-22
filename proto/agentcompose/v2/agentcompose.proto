@@ -16,10 +16,13 @@ service ProjectService {
   rpc GetScheduler(GetSchedulerRequest) returns (GetSchedulerResponse);
   rpc ListSchedulers(ListSchedulersRequest) returns (ListSchedulersResponse);
   rpc ListSchedulerEvents(ListSchedulerEventsRequest) returns (ListSchedulerEventsResponse);
+  rpc ListProjectSchedulerEvents(ListProjectSchedulerEventsRequest) returns (ListProjectSchedulerEventsResponse);
+  rpc InvokeScheduler(InvokeSchedulerRequest) returns (InvokeSchedulerResponse);
   rpc RunScheduler(RunSchedulerRequest) returns (RunSchedulerResponse);
   rpc StartSchedulerRun(StartSchedulerRunRequest) returns (StartSchedulerRunResponse);
   rpc GetSchedulerRun(GetSchedulerRunRequest) returns (GetSchedulerRunResponse);
   rpc ListSchedulerRuns(ListSchedulerRunsRequest) returns (ListSchedulerRunsResponse);
+  rpc PruneSchedulerRuns(PruneSchedulerRunsRequest) returns (PruneSchedulerRunsResponse);
   rpc StopSchedulerRun(StopSchedulerRunRequest) returns (StopSchedulerRunResponse);
   rpc SetSchedulerEnabled(SetSchedulerEnabledRequest) returns (SetSchedulerEnabledResponse);
   rpc SetSchedulerTriggerEnabled(SetSchedulerTriggerEnabledRequest) returns (SetSchedulerTriggerEnabledResponse);
@@ -512,11 +515,42 @@ message SchedulerEvent {
   string run_id = 6;
   string trigger_id = 7;
   google.protobuf.Timestamp created_at = 8;
+  string agent_name = 9;
+  string scheduler_id = 10;
+  string linked_sandbox_id = 11;
+  string linked_cell_id = 12;
+  string linked_agent_thread_id = 13;
 }
 
 message ListSchedulerEventsResponse {
   repeated SchedulerEvent events = 1;
   string next_cursor = 2;
+}
+
+message ListProjectSchedulerEventsRequest {
+  ProjectRef project = 1;
+  string agent_name = 2;
+  string trigger_id = 3;
+  string run_id = 4;
+  uint32 limit = 5;
+  string cursor = 6;
+}
+
+message ListProjectSchedulerEventsResponse {
+  repeated SchedulerEvent events = 1;
+  string next_cursor = 2;
+}
+
+message InvokeSchedulerRequest {
+  ProjectRef project = 1;
+  string agent_name = 2;
+  string payload_json = 3;
+}
+
+message InvokeSchedulerResponse {
+  string result_json = 1;
+  int64 duration_ms = 2;
+  repeated string warnings = 3;
 }
 
 message RunSchedulerRequest {
@@ -555,11 +589,47 @@ message ListSchedulerRunsRequest {
   string agent_name = 2;
   uint32 limit = 3;
   string cursor = 4;
+  string trigger_id = 5;
+  SchedulerRunStatus status = 6;
 }
 
 message ListSchedulerRunsResponse {
   repeated SchedulerRun runs = 1;
   string next_cursor = 2;
+}
+
+message PruneSchedulerRunsRequest {
+  ProjectRef project = 1;
+  string agent_name = 2;
+  string trigger_id = 3;
+  repeated SchedulerRunStatus status = 4;
+  uint64 older_than_seconds = 5;
+  bool force = 6;
+}
+
+message SchedulerRunPruneStats {
+  uint64 runs = 1;
+  uint64 loader_events = 2;
+  uint64 event_deliveries = 3;
+  uint64 event_sandbox_links = 4;
+  uint64 artifact_dirs = 5;
+  uint64 artifact_bytes = 6;
+}
+
+message SchedulerRunPruneResidue {
+  string loader_id = 1;
+  string run_id = 2;
+  string path = 3;
+  string error = 4;
+}
+
+message PruneSchedulerRunsResponse {
+  bool dry_run = 1;
+  SchedulerRunPruneStats matched = 2;
+  SchedulerRunPruneStats removed = 3;
+  uint64 skipped_runs = 4;
+  repeated SchedulerRunPruneResidue residues = 5;
+  repeated string warnings = 6;
 }
 
 message StopSchedulerRunRequest {
@@ -590,6 +660,7 @@ message SchedulerRun {
   string payload_json = 14;
   string source_script_sha256 = 15;
   string artifacts_dir = 16;
+  repeated string sandbox_ids = 17;
 }
 
 message SetSchedulerEnabledRequest {

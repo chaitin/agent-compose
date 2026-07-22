@@ -2,7 +2,6 @@ package volumes_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,21 +10,19 @@ import (
 
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/configstore"
+	storagesqlite "agent-compose/pkg/storage/sqlite"
 	"agent-compose/pkg/volumes"
 )
 
 func TestIntegrationManagerPersistsProjectVolumeLifecycle(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open("sqlite", ":memory:")
+	database, err := storagesqlite.Open(":memory:", 0)
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("open SQLite database: %v", err)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() { _ = database.Close() }()
 
-	store := configstore.FromDB(db)
-	if err := store.InitSchema(ctx); err != nil {
-		t.Fatalf("InitSchema: %v", err)
-	}
+	store := configstore.FromDB(database.DB())
 
 	dataRoot := t.TempDir()
 	manager := volumes.NewManager(store, volumes.LocalDriver{DataRoot: dataRoot})
@@ -98,17 +95,13 @@ func TestIntegrationManagerPersistsProjectVolumeLifecycle(t *testing.T) {
 
 func TestIntegrationManagerForceRemoveDeletesProjectLinksAndData(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open("sqlite", ":memory:")
+	database, err := storagesqlite.Open(":memory:", 0)
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("open SQLite database: %v", err)
 	}
-	defer func() { _ = db.Close() }()
-	db.SetMaxOpenConns(1)
+	defer func() { _ = database.Close() }()
 
-	store := configstore.FromDB(db)
-	if err := store.InitSchema(ctx); err != nil {
-		t.Fatalf("InitSchema: %v", err)
-	}
+	store := configstore.FromDB(database.DB())
 
 	manager := volumes.NewManager(store, volumes.LocalDriver{DataRoot: t.TempDir()})
 	volume, err := manager.Create(ctx, domain.VolumeRecord{Name: "force-remove-cache"})

@@ -120,6 +120,8 @@ Agent prompt 和受管 scheduler command 不会由 daemon 直接调用 provider 
 - 普通 run 使用的 `prompt` 和 `exec` 子命令；
 - 需要交互式 prompt attach 时使用的 `stream` 子命令。
 
+Prompt mode 的 `stream` session 支持 `codex`、`claude` 和 `opencode` provider。其他 provider 会在 guest runtime interaction 打开前被拒绝。
+
 daemon 会显式传递 workspace、state 和 home 路径，并注入：
 
 | 变量 | 默认值/内容 |

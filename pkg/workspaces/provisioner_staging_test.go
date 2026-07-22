@@ -106,6 +106,31 @@ func TestProvisionerStagingPromotionReplacesPendingWorkspace(t *testing.T) {
 	}
 }
 
+func TestProvisionerStagingPromotionCreatesWorkspaceAtMissingTarget(t *testing.T) {
+	t.Parallel()
+
+	sandboxRoot := t.TempDir()
+	workspacePath := filepath.Join(sandboxRoot, "workspace")
+	stored := newProvisionerStagingSandbox("missing-workspace-target", workspacePath, domain.SandboxWorkspaceProvisioningStatusPending)
+	store := newProvisionerStagingStore(stored)
+	materializer := &provisionerStagingMaterializer{materialize: func(sandbox *domain.Sandbox) error {
+		return os.WriteFile(filepath.Join(sandbox.Summary.WorkspacePath, "materialized.txt"), []byte("ready\n"), 0o644)
+	}}
+	provisioner := NewProvisionerWithMaterializer(store, materializer)
+	caller := cloneProvisionerStagingSandbox(stored)
+
+	if _, err := os.Stat(workspacePath); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("workspace target stat before Ensure = %v, want not exist", err)
+	}
+	if err := provisioner.Ensure(context.Background(), caller); err != nil {
+		t.Fatalf("Ensure returned error: %v", err)
+	}
+
+	assertProvisionerStagingFile(t, filepath.Join(workspacePath, "materialized.txt"), "ready\n")
+	assertProvisionerStagingReady(t, caller)
+	assertProvisionerStagingReady(t, store.sandbox(t, caller.Summary.ID))
+}
+
 func TestProvisionerStagingRejectsStateSymlinkWithoutTouchingTarget(t *testing.T) {
 	t.Parallel()
 

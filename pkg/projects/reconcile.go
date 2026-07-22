@@ -123,6 +123,28 @@ func ReconcileManagedSchedulers(ctx context.Context, store ReconcileSchedulerSto
 		if err != nil {
 			return changes, false, fmt.Errorf("load project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
 		}
+		loader, ok := loadersByID[scheduler.ManagedLoaderID]
+		if !ok {
+			return changes, false, fmt.Errorf("managed loader %s for scheduler %s missing", scheduler.ManagedLoaderID, scheduler.SchedulerID)
+		}
+		existingLoader, loaderFound, err := store.GetLoaderIfExists(ctx, loader.Summary.ID)
+		if err != nil {
+			return changes, false, fmt.Errorf("load managed loader %s: %w", loader.Summary.ID, err)
+		}
+		if found && loaderFound && SchedulerRecordUnchanged(existing, scheduler) && ManagedLoaderUnchanged(existingLoader, loader) {
+			changes = append(changes, Change{
+				Action:       ChangeActionUnchanged,
+				ResourceType: "project_scheduler",
+				ResourceID:   scheduler.SchedulerID,
+				Name:         scheduler.AgentName,
+			}, Change{
+				Action:       ChangeActionUnchanged,
+				ResourceType: "loader",
+				ResourceID:   loader.Summary.ID,
+				Name:         loader.Summary.Name,
+			})
+			continue
+		}
 		stagedScheduler := scheduler
 		stagedScheduler.Enabled = false
 		saved, err := store.UpsertProjectScheduler(ctx, stagedScheduler)
@@ -130,14 +152,6 @@ func ReconcileManagedSchedulers(ctx context.Context, store ReconcileSchedulerSto
 			return changes, false, fmt.Errorf("stage project scheduler %s/%s disabled: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
 		}
 
-		loader, ok := loadersByID[saved.ManagedLoaderID]
-		if !ok {
-			return changes, false, fmt.Errorf("managed loader %s for scheduler %s missing", saved.ManagedLoaderID, saved.SchedulerID)
-		}
-		existingLoader, loaderFound, err := store.GetLoaderIfExists(ctx, loader.Summary.ID)
-		if err != nil {
-			return changes, false, fmt.Errorf("load managed loader %s: %w", loader.Summary.ID, err)
-		}
 		stagedLoader := loader
 		stagedLoader.Summary.Enabled = false
 		savedLoader, err := store.UpsertManagedLoader(ctx, stagedLoader)

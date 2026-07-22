@@ -36,9 +36,12 @@ func TestProjectSchedulerPageUsesStableCursorAndProjectQuery(t *testing.T) {
 		t.Fatalf("insert loader: %v", err)
 	}
 	for index, startedAt := range []int64{1700000000, 1700000060} {
-		if _, err := store.db.ExecContext(ctx, `INSERT INTO loader_run(loader_id, run_id, started_at) VALUES(?, ?, ?)`, "loader-a", fmt.Sprintf("run-%d", index), startedAt); err != nil {
+		if _, err := store.db.ExecContext(ctx, `INSERT INTO loader_run(loader_id, run_id, trigger_id, started_at) VALUES(?, ?, ?, ?)`, "loader-a", fmt.Sprintf("run-%d", index), "trigger-1", startedAt); err != nil {
 			t.Fatalf("insert loader run: %v", err)
 		}
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO loader_run(loader_id, run_id, started_at) VALUES(?, ?, ?)`, "loader-a", "old-invocation", int64(1700000120)); err != nil {
+		t.Fatalf("insert old invocation: %v", err)
 	}
 
 	first, err := store.ListProjectSchedulersPage(ctx, "", "", 2)

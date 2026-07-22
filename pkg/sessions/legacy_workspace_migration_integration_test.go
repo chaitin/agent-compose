@@ -18,11 +18,8 @@ import (
 	"agent-compose/pkg/internal/testutil"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/sessions"
-	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
 	"agent-compose/pkg/workspaces"
-
-	"github.com/samber/do/v2"
 )
 
 func TestIntegrationLegacyWorkspaceMigrationPreservesStateWithoutMaterialization(t *testing.T) {
@@ -38,20 +35,9 @@ func TestIntegrationLegacyWorkspaceMigrationPreservesStateWithoutMaterialization
 		JupyterProxyBasePath: "/agent-compose/session",
 	}
 
-	di := do.New()
-	do.ProvideValue(di, config)
-	workspaceStore, err := configstore.NewConfigStore(di)
+	workspaceStore, sandboxStore, err := testutil.OpenStores(t, config)
 	if err != nil {
-		t.Fatalf("create config store: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := workspaceStore.DB().Close(); err != nil {
-			t.Errorf("close config store: %v", err)
-		}
-	})
-	sandboxStore, err := sessionstore.NewWithConfig(config)
-	if err != nil {
-		t.Fatalf("create session store: %v", err)
+		t.Fatalf("create storage: %v", err)
 	}
 
 	const workspaceID = "legacy-migration-workspace"
@@ -140,7 +126,7 @@ func TestIntegrationLegacyWorkspaceMigrationPreservesStateWithoutMaterialization
 
 	// Reconstruct the file-backed store so the resume decision cannot depend on
 	// the sandbox or provisioning objects used for initial materialization.
-	resumedStore, err := sessionstore.NewWithConfig(config)
+	resumedStore, err := sessionstore.NewWithDatabase(config, workspaceStore.DB())
 	if err != nil {
 		t.Fatalf("reconstruct session store: %v", err)
 	}

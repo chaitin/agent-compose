@@ -441,8 +441,8 @@ func (s *projectStore) ListProjectSchedulersPage(ctx context.Context, query, aft
 		ORDER BY s.project_id ASC, s.agent_name ASC, s.scheduler_id ASC LIMIT ?
 	)
 	SELECT page.id, page.short_id, page.project_id, page.scheduler_id, page.agent_name, page.managed_loader_id, page.revision, page.enabled, page.trigger_count, page.spec_json, page.created_at, page.updated_at,
-		(SELECT COUNT(*) FROM loader_run lr WHERE lr.loader_id = page.managed_loader_id),
-		(SELECT MAX(started_at) FROM loader_run lr WHERE lr.loader_id = page.managed_loader_id),
+		(SELECT COUNT(*) FROM loader_run lr WHERE lr.loader_id = page.managed_loader_id AND lr.trigger_id <> ''),
+		(SELECT MAX(started_at) FROM loader_run lr WHERE lr.loader_id = page.managed_loader_id AND lr.trigger_id <> ''),
 		COALESCE(l.last_error, '')
 	FROM page LEFT JOIN loader l ON l.id = page.managed_loader_id
 	ORDER BY page.project_id ASC, page.agent_name ASC, page.scheduler_id ASC`, query, likeQuery, likeQuery, likeQuery, afterKey, limit)

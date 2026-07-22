@@ -245,23 +245,29 @@ agent-compose run reviewer --jupyter --jupyter-expose --prompt "Inspect the note
 - `run -i --prompt` 仅支持可复用 provider conversation 的 Codex、Claude/cc 和 OpenCode；Gemini 当前会返回 unsupported。
 - `StopRun` 会请求 daemon 内当前活动 run 取消；daemon 重启后遗留的 running/pending run 会在启动 reconcile 中标记为 failed，并带 `daemon interrupted` 错误。
 
-## `scheduler`：查看和执行 project scheduler
+## `scheduler`：调用、查看和操作 project scheduler
 
 ```bash
 agent-compose scheduler ls [agent]
-agent-compose scheduler runs [scheduler] [--agent <agent>] [--trigger <trigger>] [--status <status>] [--limit <n>]
-agent-compose scheduler logs [run] [--run <run>] [--agent <agent>] [--trigger <trigger>] [--tail <n>]
-agent-compose scheduler trigger <agent> <trigger>
-agent-compose scheduler inspect <name-or-id> [trigger]
+agent-compose scheduler invoke <scheduler-ref> [--payload <json>]
+agent-compose scheduler trigger <scheduler-ref> <trigger-ref> [--payload <json>] [--detach]
+agent-compose scheduler runs [scheduler-ref] [--trigger <trigger-ref>] [--status <status>] [--limit <n>]
+agent-compose scheduler logs [run-ref] [--run <run-ref>] [--scheduler <scheduler-ref>] [--trigger <trigger-ref>] [--tail <n>]
+agent-compose scheduler prune [--scheduler <scheduler-ref>] [--trigger <trigger-ref>] [--status <terminal-statuses>] [--older-than <duration>] [--force]
+agent-compose scheduler inspect <scheduler-or-trigger-or-run-ref> [--scheduler <scheduler-ref>]
 ```
 
 - `scheduler ls` 同时列出声明式 scheduler 配置的 trigger 和 scheduler script 注册到系统中的 trigger。
-- `scheduler runs` 列出当前 project 的 scheduler run，以及每次 run 关联的 sandbox。
-- `scheduler logs` 输出 scheduler run 的结构化事件日志；不指定 run 时选择最新的匹配 run。
-- `scheduler trigger` 通过现有 project run 流程手动执行指定 trigger。
-- `scheduler trigger --prompt "..."` 覆盖本次手动运行使用的 agent prompt。
+- `scheduler invoke` 在前台调用显式脚本型 scheduler 的默认执行入口；它不创建 trigger run 历史、持久化外层日志或 artifacts。原有 `scheduler run` 命令已直接移除。
+- `scheduler trigger` 手动执行指定 trigger；使用 `--detach` 时会返回一个可继续 inspect 或 stop 的持久化 trigger run。
 - `scheduler trigger --payload '{"key":"value"}'` 将 JSON payload 传给 scheduler trigger handler。
-- `scheduler inspect` 可接受 scheduler 名称/ID、trigger 名称/ID 或 scheduler run ID；原有 `<agent> <trigger>` 形式继续兼容。
+- `scheduler runs` 只列出外层 trigger run；`scheduler.agent()` 创建的内层 agent run 仍由普通 run 命令管理。默认返回全部匹配记录，只有显式设置 `--limit` 才限制最终数量；status 可选 `running`、`succeeded`、`failed`、`canceled`、`skipped`。
+- `scheduler logs` 默认输出当前所有 scheduler 的全部 trigger run 外层结构化事件。`--tail N` 选择全局最新 N 条匹配事件并按从旧到新输出；`--tail -1` 表示全部，`--tail 0` 表示不输出。这里不包含 Invocation 日志或内层 agent transcript。
+- `scheduler runs/logs --trigger` 会优先按当前定义解析名称和短 ID。Trigger 被删除或改名后，只要仍有持久化的 trigger run 历史，就可以继续用其精确 ID 查询；同一历史 ID 属于多个 Scheduler 时，`runs` 需要增加 Scheduler 位置参数，`logs` 需要增加 `--scheduler`。
+- `scheduler prune` 清理外层 trigger run 历史及其直属 loader event、event delivery/link 和规范 run artifacts。默认匹配当前 project 中全部 `succeeded`、`failed`、`canceled`、`skipped` 终态 trigger run；可用 `--scheduler`、`--trigger`、`--status`、`--older-than` 缩小范围。命令默认只 dry-run，只有 `--force` 才真正删除。running run、Invocation、内层 agent run、topic event、sandbox、loader state 和 sticky binding 都会保留。历史 Trigger ID 与 `runs`/`logs` 使用相同的“当前定义优先”解析规则。
+- daemon 启动时会先把上一次进程中断后遗留的外层 `running` trigger run 收敛为 `failed`，并记录 daemon-interrupted loader event；之后它才能按普通终态历史参与 prune。
+- `scheduler inspect` 只接受一个 scheduler 名称/ID、trigger 名称/ID 或外层 trigger run ID。多个 scheduler 存在相同 trigger reference 时，使用 `--scheduler <scheduler-ref>` 消歧；旧双位置参数形式不再支持。
+- 当前 `scheduler runs` 和 `scheduler logs` 会收齐 unary cursor pages 后一次性渲染；streaming/follow 能力留到单独修改中实现。
 
 ## `ps`：查看 sandbox
 
@@ -586,7 +592,7 @@ agent-compose inspect cache <cache-id>
 Cache domain 在 CLI 中用 `--type` 表示：
 
 - `oci`：daemon OCI image store 中的物理 manifest、blob 和中断项。
-- `materialized`：从镜像派生出的 runtime 输入，例如 BoxLite OCI layout 或 Microsandbox rootfs。
+- `materialized`：从镜像派生出的 runtime 输入，例如 BoxLite OCI layout 或不可变的 Microsandbox qcow2 母盘。
 - `runtime`：driver home 下可跨 sandbox 复用的 runtime-derived image。
 - `skill`：content-addressed skill artifact 及中断的临时/lock 项。
 
@@ -621,6 +627,12 @@ agent-compose cache rm <cache-id> --force
 ```
 
 `CACHE_TTL` 默认 `168h`，设为 `0` 会禁用 expired 判定；TTL 不会触发后台或启动时删除，必须显式执行 `cache prune --expired --force`。`--older-than` 仍是独立过滤条件。`cache prune` 和 `cache rm` 默认 dry-run；`--force` 只授权执行，不能绕过 `active`、`referenced` 或 `unknown` 保护。BoxLite v0.9.7 ABI 不提供安全 image remove/prune，因此 runtime image inventory 只读；Microsandbox 共享 image 使用 SDK inventory/remove API。`sandbox prune` 不删除 cache artifact。
+
+Microsandbox 根文件系统使用 `DATA_ROOT/image-cache` 下的不可变 qcow2 母盘，并为每个 sandbox 在 `MICROSANDBOX_HOME/rootfs-disks` 下创建私有 qcow2 子盘。只要任何 rootfs sidecar 仍指向母盘，该母盘就会被标记为 referenced 且不可删除。stop/resume 保留私有子盘；sandbox remove/prune 删除子盘及其 ownership sidecar。母盘与子盘记录的是 daemon 挂载命名空间中的路径，因此备份和迁移必须同时移动两棵目录树，并保持 daemon 可见路径不变。一个 `DATA_ROOT` 只能由一个 daemon 实例独占，不能并发共享。只有当 sidecar 指向该 image cache 内合法的母盘路径时，母盘才会被计入引用；sidecar 无法读取或指向其他位置时会输出 warning，并把所有母盘标记为 `unknown` 直到它被修复或删除——因为此时已无法确认它保护的是哪一块母盘。
+
+Microsandbox 解析 guest 镜像时优先使用可达的 Docker daemon，daemon 不可用时改用 agent-compose 自己的 image cache，顺序与 BoxLite driver 一致；Microsandbox 自身始终不访问任何 registry。两条路径的认证方式不同：Docker daemon 使用它自己的凭据，image cache 使用 daemon 进程的 keychain 以及 `IMAGE_REGISTRY`、`IMAGE_INSECURE_REGISTRIES`，因此没有 Docker daemon 的部署需要配置 image cache 一侧。发生回退时会输出 warning，且来源会写入母盘的 cache identity，`cache ls` 可以看出每块母盘由哪条路径产出。pull policy 失败不触发回退，`pull_policy=never` 不会被另一条路径绕过。两条路径使用不同的解包实现，因此各自持有独立母盘；同一镜像若两条路径都解析过会构建两份。
+
+首次升级到 disk-image rootfs 时需要一次性切换：先排空 Microsandbox workload，删除现有 Microsandbox runtime sandbox，再仅删除各镜像 cache 中旧的 `rootfs/` 目录和 `.rootfs.ready` 标志。不要删除整个镜像目录，因为 BoxLite 的 `oci/` cache 和新的 Microsandbox 母盘共用该目录；`/data` 下的 workspace 与 agent state 必须保留。daemon 镜像会提供 `qemu-img` 和支持 `-d` 的 `mkfs.ext4`；原生部署需要安装这两个工具。该方案不要求支持 reflink 的文件系统、loop device 或特权 mount。
 
 daemon 可以选择启用基于时间的保留清理。`WORKSPACE_CLEANUP_TTL` 只回收符合条件的 stopped sandbox 的 workspace 目录，metadata、logs 和 state 会保留用于审计；workspace 被回收后 sandbox 不能再 resume。`IMAGE_CACHE_CLEANUP_TTL` 清理 `IMAGE_CACHE_ROOT` 自有且未被引用的 OCI 与 materialized 数据，优先使用最后使用时间，没有时回退到拉取时间或文件修改时间。两项默认都是 `0`，即关闭对应 cleaner；`CLEANUP_INTERVAL` 默认 `1h`。自动清理不会处理 workspace source、Docker daemon 镜像、BoxLite home 或 Microsandbox SDK cache，也不实现磁盘空间水位策略。
 

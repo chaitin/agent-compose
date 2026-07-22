@@ -99,14 +99,14 @@ agents:
 				projectID = req.Msg.GetProject().GetProjectId()
 				return connect.NewResponse(&agentcomposev2.GetProjectResponse{Project: testCLIProject(projectID, "cli-ps-scheduler-run", composePath)}), nil
 			},
-			listSchedulerEvents: func(_ context.Context, req *connect.Request[agentcomposev2.ListSchedulerEventsRequest]) (*connect.Response[agentcomposev2.ListSchedulerEventsResponse], error) {
+			listSchedulerRuns: func(_ context.Context, req *connect.Request[agentcomposev2.ListSchedulerRunsRequest]) (*connect.Response[agentcomposev2.ListSchedulerRunsResponse], error) {
 				if req.Msg.GetAgentName() != "reviewer" {
-					t.Fatalf("ListSchedulerEvents agent = %q, want reviewer", req.Msg.GetAgentName())
+					t.Fatalf("ListSchedulerRuns agent = %q, want reviewer", req.Msg.GetAgentName())
 				}
-				return connect.NewResponse(&agentcomposev2.ListSchedulerEventsResponse{Events: []*agentcomposev2.SchedulerEvent{
-					{Id: "event-started", Type: "loader.run.started", RunId: schedulerRunID, CreatedAt: timestamppb.New(time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC))},
-					{Id: "event-completed", Type: "loader.run.completed", RunId: schedulerRunID, PayloadJson: `{"sandboxId":"` + sandboxID + `"}`, CreatedAt: timestamppb.New(time.Date(2026, 7, 15, 12, 1, 0, 0, time.UTC))},
-				}}), nil
+				return connect.NewResponse(&agentcomposev2.ListSchedulerRunsResponse{Runs: []*agentcomposev2.SchedulerRun{{
+					RunId: schedulerRunID, AgentName: "reviewer", TriggerId: "nightly", Status: agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SUCCEEDED,
+					SandboxIds: []string{sandboxID}, CompletedAt: timestamppb.New(time.Date(2026, 7, 15, 12, 1, 0, 0, time.UTC)),
+				}}}), nil
 			},
 		},
 		run: runServiceStub{listRuns: func(context.Context, *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {

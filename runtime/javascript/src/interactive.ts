@@ -1,9 +1,11 @@
 import { resolveCodexPath } from "./codex-path.js";
 import { stringEnv } from "./env.js";
 import { buildPromptRuntimeOptions } from "./prompt.js";
+import { ClaudeRunner } from "./runners/claude.js";
 import { CodexRunner } from "./runners/codex.js";
+import { OpenCodeRunner } from "./runners/opencode.js";
 import { readStoredThread, writeStoredThread } from "./session-state.js";
-import type { TextWriter } from "./transcript.js";
+import type { TextWriter, TranscriptTextWriter } from "./transcript.js";
 import type { AgentResult, Provider, RunnerOptions } from "./types.js";
 
 export interface InteractiveStartOptions {
@@ -17,6 +19,12 @@ export interface InteractiveStartOptions {
 
 export type EmitInteractiveFrame = (type: string, fields?: object) => void;
 
+export interface InteractiveSession {
+  start(): Promise<void>;
+  runHumanMessage(message: string): Promise<void>;
+  finish(stopReason: string): Promise<AgentResult>;
+}
+
 export class UnsupportedProviderError extends Error {
   readonly code = "unsupported_provider";
 
@@ -26,7 +34,7 @@ export class UnsupportedProviderError extends Error {
   }
 }
 
-export class CodexInteractiveSession {
+export class CodexInteractiveSession implements InteractiveSession {
   private readonly runner: CodexRunner;
   private readonly writer: BufferedTextWriter;
   private readonly result: AgentResult;
@@ -117,6 +125,74 @@ export class CodexInteractiveSession {
   }
 }
 
+interface PromptTurnRunner {
+  runPrompt(message: string): Promise<AgentResult>;
+}
+
+class PromptRunnerInteractiveSession implements InteractiveSession {
+  private readonly writer: InteractiveTextWriter;
+  private readonly runner: PromptTurnRunner;
+  private readonly result: AgentResult;
+  private started = false;
+  private turnCount = 0;
+
+  constructor(
+    private readonly provider: Provider,
+    private readonly options: RunnerOptions,
+    private readonly emit: EmitInteractiveFrame,
+    createRunner: (writer: TranscriptTextWriter) => PromptTurnRunner,
+  ) {
+    this.writer = new InteractiveTextWriter(provider, emit);
+    this.runner = createRunner(this.writer);
+    this.result = {
+      provider,
+      threadId: "",
+      stopReason: "completed",
+      finalText: "",
+      transcript: "",
+      stderr: "",
+    };
+  }
+
+  async start(): Promise<void> {
+    const stored = await readStoredThread(this.options.stateRoot, this.provider);
+    this.result.threadId = stored?.threadId || "";
+    this.started = true;
+    this.emit("started", {
+      provider: this.provider,
+      threadId: this.result.threadId,
+    });
+  }
+
+  async runHumanMessage(message: string): Promise<void> {
+    if (!this.started) {
+      throw new Error("stream has not been started");
+    }
+    if (this.turnCount > 0) {
+      this.writer.beginTurn();
+    }
+    this.turnCount++;
+    const turnResult = await this.runner.runPrompt(message);
+    this.result.threadId = turnResult.threadId || this.result.threadId;
+    this.result.stopReason = turnResult.stopReason;
+    this.result.finalText = turnResult.finalText;
+    this.result.transcript = turnResult.transcript;
+    this.result.stderr = turnResult.stderr;
+    this.emit("agent_turn_completed", {
+      provider: this.provider,
+      threadId: this.result.threadId,
+      finalText: this.result.finalText,
+      stopReason: this.result.stopReason,
+    });
+  }
+
+  async finish(stopReason: string): Promise<AgentResult> {
+    this.result.stopReason = stopReason;
+    this.result.transcript = this.writer.transcript();
+    return { ...this.result };
+  }
+}
+
 class BufferedTextWriter implements TextWriter {
   private readonly chunks: string[] = [];
 
@@ -145,15 +221,58 @@ class BufferedTextWriter implements TextWriter {
   }
 }
 
+class InteractiveTextWriter extends BufferedTextWriter implements TranscriptTextWriter {
+  constructor(
+    private readonly provider: Provider,
+    private readonly emit: EmitInteractiveFrame,
+  ) {
+    super();
+  }
+
+  override write(text: string): void {
+    if (!text) {
+      return;
+    }
+    super.write(text);
+    this.emit("agent_event", {
+      event: {
+        type: "output",
+        provider: this.provider,
+        text,
+      },
+    });
+  }
+}
+
 export async function createInteractiveSession(
   startOptions: InteractiveStartOptions,
   emit: EmitInteractiveFrame,
-): Promise<CodexInteractiveSession> {
+): Promise<InteractiveSession> {
   const options = await buildPromptRuntimeOptions(startOptions);
-  if (options.provider !== "codex") {
-    throw new UnsupportedProviderError(options.provider);
+  let session: InteractiveSession;
+  switch (options.provider) {
+    case "codex":
+      session = new CodexInteractiveSession(options, emit);
+      break;
+    case "claude":
+      session = new PromptRunnerInteractiveSession(
+        "claude",
+        options,
+        emit,
+        (writer) => new ClaudeRunner(options, writer),
+      );
+      break;
+    case "opencode":
+      session = new PromptRunnerInteractiveSession(
+        "opencode",
+        options,
+        emit,
+        (writer) => new OpenCodeRunner(options, writer),
+      );
+      break;
+    default:
+      throw new UnsupportedProviderError(options.provider);
   }
-  const session = new CodexInteractiveSession(options, emit);
   await session.start();
   return session;
 }

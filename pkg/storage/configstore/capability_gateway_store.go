@@ -19,23 +19,6 @@ type capabilityGatewayStore struct {
 // capabilityGatewayRowID pins the settings to a single row.
 const capabilityGatewayRowID = 1
 
-func (s *capabilityGatewayStore) ensureCapabilityGatewaySchema(ctx context.Context) error {
-	const createStmt = `CREATE TABLE IF NOT EXISTS capability_gateway (
-		id INTEGER PRIMARY KEY CHECK (id = 1),
-		addr TEXT NOT NULL DEFAULT '',
-		token TEXT NOT NULL DEFAULT '',
-		updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
-	);`
-	if _, err := s.db.ExecContext(ctx, createStmt); err != nil {
-		return fmt.Errorf("create capability gateway schema: %w", err)
-	}
-	return nil
-}
-
-func (s *capabilityGatewayStore) EnsureCapabilityGatewaySchema(ctx context.Context) error {
-	return s.ensureCapabilityGatewaySchema(ctx)
-}
-
 // GetCapabilityGateway returns the stored OctoBus connection. An empty addr
 // means the gateway is not configured.
 func (s *capabilityGatewayStore) GetCapabilityGateway(ctx context.Context) (domain.CapabilityGatewaySettings, error) {

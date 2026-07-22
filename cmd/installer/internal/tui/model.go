@@ -3,12 +3,10 @@ package tui
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/chaitin/agent-compose/cmd/installer/internal/core"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -50,10 +48,11 @@ type model struct {
 	language      language
 	cursor        int
 	operation     core.Operation
-	inputs        []textinput.Model
+	fields        []formField
 	focus         int
 	spinner       spinner.Model
-	events        []string
+	cancelling    bool
+	events        []logEntry
 	result        core.Result
 	err           error
 	width         int
@@ -69,6 +68,7 @@ var (
 	mutedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	fieldStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 1)
 	focusedField  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("42")).Padding(0, 1)
+	disabledField = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238")).Padding(0, 1)
 )
 
 const productBanner = `    _                    _          ____
@@ -134,7 +134,12 @@ func (m *model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" && m.screen == screenRunning {
-			m.appendEvent(m.text("正在取消并回滚...", "Cancelling and rolling back..."))
+			// Repeated presses must not stack identical lines; cancellation is
+			// already under way and the log is the only feedback available.
+			if !m.cancelling {
+				m.cancelling = true
+				m.appendEvent(m.text("正在取消并回滚...", "Cancelling and rolling back..."))
+			}
 			m.cancel()
 			return m, nil
 		}
@@ -164,7 +169,7 @@ func (m *model) updateKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return
 			}
 			m.operation = []core.Operation{core.OperationInstall, core.OperationUpgrade, core.OperationUninstall}[choice]
-			m.buildInputs()
+			m.buildFields()
 			m.cursor, m.screen = 0, screenForm
 		})
 	case screenForm:
@@ -173,12 +178,16 @@ func (m *model) updateKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if key.String() == "shift+tab" || key.String() == "up" {
 				delta = -1
 			}
-			m.focus = (m.focus + delta + len(m.inputs)) % len(m.inputs)
-			m.focusInputs()
+			m.moveFocus(delta)
 			return m, nil
 		}
+		if key.String() == "left" || key.String() == "right" || key.String() == " " {
+			if m.toggleFocusedField() {
+				return m, nil
+			}
+		}
 		if key.String() == "enter" {
-			if err := m.readInputs(); err != nil {
+			if err := m.readFields(); err != nil {
 				m.err = err
 				return m, nil
 			}
@@ -190,8 +199,11 @@ func (m *model) updateKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.fields[m.focus].toggle {
+			return m, nil
+		}
 		var cmd tea.Cmd
-		m.inputs[m.focus], cmd = m.inputs[m.focus].Update(key)
+		m.fields[m.focus].input, cmd = m.fields[m.focus].input.Update(key)
 		return m, cmd
 	case screenPurge:
 		return m.updateMenu(key, 2, func(choice int) { m.options.Purge = choice == 1; m.cursor, m.screen = 0, screenConfirm })
@@ -227,48 +239,6 @@ func (m *model) updateMenu(key tea.KeyMsg, count int, selectFn func(int)) (tea.M
 		}
 	}
 	return m, nil
-}
-
-func (m *model) buildInputs() {
-	values := []string{m.options.InstallDir}
-	if m.operation != core.OperationUninstall {
-		values = append(values, m.options.Version, strconv.Itoa(m.options.Port))
-	}
-	m.inputs = make([]textinput.Model, len(values))
-	for i, value := range values {
-		input := textinput.New()
-		input.SetValue(value)
-		input.Prompt = ""
-		input.CharLimit = 512
-		m.inputs[i] = input
-	}
-	m.focus = 0
-	m.focusInputs()
-}
-
-func (m *model) focusInputs() {
-	for i := range m.inputs {
-		if i == m.focus {
-			m.inputs[i].Focus()
-		} else {
-			m.inputs[i].Blur()
-		}
-	}
-}
-
-func (m *model) readInputs() error {
-	m.options.InstallDir = strings.TrimSpace(m.inputs[0].Value())
-	if m.operation != core.OperationUninstall {
-		m.options.Version = strings.TrimSpace(m.inputs[1].Value())
-		port, err := core.ParsePort(m.inputs[2].Value())
-		if err != nil {
-			return err
-		}
-		m.options.Port = port
-		m.options.PortSet = true
-		m.options.InstallerPath = m.installerPath
-	}
-	return m.options.Validate(m.operation)
 }
 
 func (m *model) runOperation() tea.Cmd {
@@ -326,33 +296,6 @@ func (m *model) renderKeyHelp() string {
 	return mutedStyle.Render(help)
 }
 
-func (m *model) appendEvent(message string) {
-	if message == "" {
-		return
-	}
-	m.events = append(m.events, message)
-	if len(m.events) > 50 {
-		m.events = append([]string(nil), m.events[len(m.events)-50:]...)
-	}
-}
-
-func (m *model) visibleEvents() []string {
-	limit := m.height - 14
-	if m.width < 80 {
-		limit = m.height - 7
-	}
-	if limit < 3 {
-		limit = 3
-	}
-	if limit > 12 {
-		limit = 12
-	}
-	if len(m.events) <= limit {
-		return m.events
-	}
-	return m.events[len(m.events)-limit:]
-}
-
 func (m *model) renderBrand(body *strings.Builder) {
 	if m.width >= 80 {
 		body.WriteString(lipgloss.PlaceHorizontal(m.width, lipgloss.Center, brandStyle.Render(productBanner)))
@@ -377,22 +320,6 @@ func (m *model) renderMenu(body *strings.Builder, title string, choices []string
 	}
 }
 
-func (m *model) renderForm(body *strings.Builder) {
-	labels := []string{m.text("安装目录", "Install directory")}
-	if m.operation != core.OperationUninstall {
-		labels = append(labels, m.text("应用版本", "Application version"), m.text("Web UI 端口", "Web UI port"))
-	}
-	title, description := m.formHeading()
-	body.WriteString(titleStyle.Render(title) + "\n")
-	body.WriteString(mutedStyle.Render(description) + "\n\n")
-	for i := range m.inputs {
-		m.renderFormField(body, labels[i], i)
-	}
-	if m.err != nil {
-		body.WriteString(warnStyle.Render("! "+m.err.Error()) + "\n")
-	}
-}
-
 func (m *model) formHeading() (string, string) {
 	switch m.operation {
 	case core.OperationUpgrade:
@@ -400,30 +327,8 @@ func (m *model) formHeading() (string, string) {
 	case core.OperationUninstall:
 		return m.text("选择安装位置", "Select installation"), m.text("指定要卸载的 agent-compose 目录", "Choose the agent-compose directory to uninstall")
 	default:
-		return m.text("配置安装", "Configure installation"), m.text("确认安装位置、发布版本和访问端口", "Review the location, release, and web port")
+		return m.text("配置安装", "Configure installation"), m.text("确认安装位置、发布版本、Web UI 和 guest 镜像", "Review the location, release, web UI, and guest image")
 	}
-}
-
-func (m *model) renderFormField(body *strings.Builder, label string, index int) {
-	marker := mutedStyle.Render("○")
-	labelStyle := lipgloss.NewStyle()
-	boxStyle := fieldStyle
-	if index == m.focus {
-		marker = selectedStyle.Render("●")
-		labelStyle = selectedStyle
-		boxStyle = focusedField
-	}
-	fieldWidth := m.width - 8
-	if fieldWidth > 72 {
-		fieldWidth = 72
-	}
-	if fieldWidth < 16 {
-		fieldWidth = 16
-	}
-	input := m.inputs[index]
-	input.Width = fieldWidth - 2
-	body.WriteString(marker + " " + labelStyle.Render(label) + "\n")
-	body.WriteString(boxStyle.Width(fieldWidth).Render(input.View()) + "\n\n")
 }
 
 func (m *model) renderConfirm(body *strings.Builder) {
@@ -432,7 +337,12 @@ func (m *model) renderConfirm(body *strings.Builder) {
 	if m.operation == core.OperationUninstall {
 		fmt.Fprintf(body, "  %s: %t\n", m.text("删除数据", "Purge data"), m.options.Purge)
 	} else {
-		fmt.Fprintf(body, "  %s: %s\n  %s: %d\n", m.text("版本", "Version"), m.options.Version, m.text("Web UI 端口", "Web UI port"), m.options.Port)
+		fmt.Fprintf(body, "  %s: %s\n", m.text("版本", "Version"), m.options.Version)
+		fmt.Fprintf(body, "  %s: %s\n", m.text("安装 Web UI", "Install web UI"), m.yesNo(m.options.WithUI))
+		if m.options.WithUI {
+			fmt.Fprintf(body, "  %s: %d\n", m.text("Web UI 端口", "Web UI port"), m.options.Port)
+		}
+		fmt.Fprintf(body, "  %s: %s\n", m.text("预拉取 guest 镜像", "Pre-pull guest image"), m.yesNo(!m.options.SkipGuestPull))
 	}
 	body.WriteString("\n")
 	m.renderMenu(body, m.text("确认继续？", "Continue?"), []string{m.text("继续", "Continue"), m.text("返回", "Back")})
@@ -450,9 +360,21 @@ func (m *model) renderDone(body *strings.Builder) {
 	if m.result.GeneratedPassword != "" {
 		body.WriteString("Username: " + m.result.Username + "\nPassword: " + m.result.GeneratedPassword + "\n")
 	}
+	if m.operation != core.OperationUninstall && !m.result.WithUI() {
+		body.WriteString(mutedStyle.Render(m.text("Web UI 未安装。启用：", "Web UI is not installed. Enable it with:")) + "\n")
+		body.WriteString(mutedStyle.Render("  cd "+m.result.InstallDir) + "\n")
+		body.WriteString(mutedStyle.Render("  docker compose --profile with-ui up -d") + "\n")
+	}
 	if len(m.result.RetainedFiles) > 0 {
 		body.WriteString(m.text("保留的未知文件：", "Unknown files retained: ") + strings.Join(m.result.RetainedFiles, ", ") + "\n")
 	}
+}
+
+func (m *model) yesNo(value bool) string {
+	if value {
+		return m.text("是", "Yes")
+	}
+	return m.text("否", "No")
 }
 
 func (m *model) text(zh, en string) string {

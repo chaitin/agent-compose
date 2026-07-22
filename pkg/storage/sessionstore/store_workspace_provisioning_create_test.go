@@ -3,6 +3,8 @@ package sessionstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -57,8 +59,10 @@ func TestStoreCreateSandboxInitializesWorkspaceProvisioning(t *testing.T) {
 			)
 
 			assertPendingWorkspaceProvisioning(t, "created sandbox", created.WorkspaceProvisioning)
+			assertWorkspacePathState(t, store, created, false)
 			persisted, rawMetadata := readProvisioningTestMetadata(t, store, created.Summary.ID)
 			assertPendingWorkspaceProvisioning(t, "persisted sandbox", persisted.WorkspaceProvisioning)
+			assertWorkspacePathState(t, store, persisted, false)
 			if _, ok := rawMetadata["workspace_provisioning"]; !ok {
 				t.Fatal("metadata.json has no workspace_provisioning field")
 			}
@@ -72,13 +76,36 @@ func TestStoreCreateSandboxWithoutWorkspaceOmitsWorkspaceProvisioning(t *testing
 	if created.WorkspaceProvisioning != nil {
 		t.Fatalf("created sandbox workspace provisioning = %#v, want nil", created.WorkspaceProvisioning)
 	}
+	assertWorkspacePathState(t, store, created, true)
 
 	persisted, rawMetadata := readProvisioningTestMetadata(t, store, created.Summary.ID)
 	if persisted.WorkspaceProvisioning != nil {
 		t.Fatalf("persisted sandbox workspace provisioning = %#v, want nil", persisted.WorkspaceProvisioning)
 	}
+	assertWorkspacePathState(t, store, persisted, true)
 	if _, ok := rawMetadata["workspace_provisioning"]; ok {
 		t.Fatalf("metadata.json contains workspace_provisioning: %s", rawMetadata["workspace_provisioning"])
+	}
+}
+
+func assertWorkspacePathState(t *testing.T, store *Store, sandbox *Sandbox, wantExists bool) {
+	t.Helper()
+	wantPath := filepath.Join(store.SandboxDir(sandbox.Summary.ID), "workspace")
+	if sandbox.Summary.WorkspacePath != wantPath {
+		t.Fatalf("workspace path = %q, want %q", sandbox.Summary.WorkspacePath, wantPath)
+	}
+	info, err := os.Stat(sandbox.Summary.WorkspacePath)
+	if wantExists {
+		if err != nil {
+			t.Fatalf("stat workspace path: %v", err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("workspace path %q is not a directory", sandbox.Summary.WorkspacePath)
+		}
+		return
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("workspace path stat error = %v, want not exist", err)
 	}
 }
 
@@ -159,6 +186,7 @@ func assertPendingWorkspaceProvisioning(
 	t.Helper()
 	if provisioning == nil {
 		t.Fatalf("%s workspace provisioning = nil, want pending", label)
+		return
 	}
 	if provisioning.Version != domain.SandboxWorkspaceProvisioningVersion {
 		t.Errorf(

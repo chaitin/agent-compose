@@ -22,6 +22,7 @@ import (
 	"time"
 
 	microsandbox "github.com/superradcompany/microsandbox/sdk/go"
+	"golang.org/x/sync/singleflight"
 )
 
 type microsandboxRuntime struct {
@@ -32,6 +33,8 @@ type microsandboxRuntime struct {
 
 	lifecycleMu      sync.Mutex
 	lifecycleHandles map[string]*microsandbox.Sandbox
+	createLocks      microsandboxKeyedLocks
+	baseBuilds       singleflight.Group
 }
 
 type microsandboxExecCollector struct {
@@ -272,6 +275,8 @@ func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox,
 }
 
 func (r *microsandboxRuntime) RemoveSandbox(ctx context.Context, session *Sandbox, vmState VMState) error {
+	unlock := r.createLocks.lock(session.Summary.ID)
+	defer unlock()
 	if _, err := r.StopSandbox(ctx, session, vmState); err != nil {
 		return err
 	}
@@ -282,6 +287,9 @@ func (r *microsandboxRuntime) RemoveSandbox(ctx context.Context, session *Sandbo
 		return fmt.Errorf("remove microsandbox %s: %w", name, err)
 	}
 	if err := r.removeDockerDiskFiles(session.Summary.ID); err != nil {
+		return err
+	}
+	if err := r.removeRootfsDiskFiles(session.Summary.ID); err != nil {
 		return err
 	}
 	return nil
@@ -431,6 +439,9 @@ func (r *microsandboxRuntime) prepareEnvironment() error {
 	}
 	if _, err := os.Stat(r.config.MicrosandboxLibPath); err != nil {
 		return fmt.Errorf("microsandbox Go FFI library missing at %s: %w", r.config.MicrosandboxLibPath, err)
+	}
+	if err := validateMicrosandboxDiskTools(); err != nil {
+		return err
 	}
 	libkrunfwPath, err := r.resolveLibkrunfwPath()
 	if err != nil {
@@ -852,6 +863,8 @@ func (r *microsandboxRuntime) IsSandboxAlive(ctx context.Context, session *Sandb
 }
 
 func (r *microsandboxRuntime) getOrCreateSandbox(ctx context.Context, session *Sandbox, vmState VMState, proxyState ProxyState) (*microsandbox.Sandbox, bool, bool, error) {
+	unlock := r.createLocks.lock(session.Summary.ID)
+	defer unlock()
 	name := r.sandboxName(session, vmState)
 	handle, err := microsandbox.GetSandbox(ctx, name)
 	if err != nil {
@@ -942,13 +955,39 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 			"sandbox_disk_size_gb", r.config.SandboxDiskSizeGB,
 		)
 	}
-	// Give docker its own disk-backed ext4 volume. The guest root is virtiofs,
-	// on which the kernel rejects overlayfs (docker's default storage driver)
-	// with "invalid argument"; a disk-image mount keeps docker's overlay
-	// storage on a real block device. One disk image per sandbox so concurrent
-	// VMs never share the same ext4 image. The image is provisioned on the
-	// host by agent-compose. Stop preserves it for resume; explicit sandbox
-	// removal deletes it together with the SDK sandbox state.
+	imageRef := resolveSandboxGuestImage(vmState.Image, session.Summary.GuestImage, defaultGuestImageForDriver(r.config, RuntimeDriverMicrosandbox))
+	imagePullTimeout := r.config.ImagePullTimeout
+	if imagePullTimeout <= 0 {
+		imagePullTimeout = defaultImagePullTimeout
+	}
+	baseDisk, err := r.resolveMicrosandboxBaseDisk(ctx, imageRef, session.Summary.PullPolicy, imagePullTimeout)
+	if err != nil {
+		return nil, err
+	}
+	rootfsDisk, err := r.ensureRootfsDiskWithCacheLock(ctx, session.Summary.ID, baseDisk)
+	if err != nil {
+		return nil, fmt.Errorf("provision microsandbox rootfs disk: %w", err)
+	}
+	rootfsCreated := rootfsDisk.Created
+	defer func() {
+		if rootfsCreated {
+			if cleanupErr := removeMicrosandboxRootfsDiskPair(r.config.MicrosandboxHome, rootfsDisk.Path, true); cleanupErr != nil {
+				slog.Warn("agent-compose microsandbox failed to clean newly-created rootfs disk", "sandbox_id", session.Summary.ID, "path", rootfsDisk.Path, "error", cleanupErr)
+			}
+		}
+	}()
+
+	// Keep guest Docker data on a separate disk so its unbounded image/layer
+	// growth has an independent capacity and cleanup boundary.
+	dockerDiskExisted := false
+	for _, candidate := range []string{r.dockerDiskPath(session.Summary.ID), r.legacyDockerDiskPath(session.Summary.ID)} {
+		if _, statErr := os.Lstat(candidate); statErr == nil {
+			dockerDiskExisted = true
+			break
+		} else if !os.IsNotExist(statErr) {
+			return nil, fmt.Errorf("inspect docker disk before provisioning %s: %w", candidate, statErr)
+		}
+	}
 	rawPath, err := r.ensureDockerDisk(session.Summary.ID)
 	if err != nil {
 		return nil, fmt.Errorf("provision docker disk: %w", err)
@@ -959,41 +998,19 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	// success the flag below disarms the cleanup.
 	sandboxCreated := false
 	defer func() {
-		if !sandboxCreated {
+		if !sandboxCreated && !dockerDiskExisted {
 			r.removeDockerDisk(session.Summary.ID)
 		}
 	}()
 	mounts["/var/lib/docker"] = microsandbox.Mount.Disk(rawPath, microsandbox.DiskOptions{Format: "raw", Fstype: "ext4"})
-	// /run must be a per-VM tmpfs (standard Linux boot semantics). The guest
-	// root is a shared, sandbox-reused rootfs dir on virtiofs and the msb guest
-	// init does not mount /run itself, so without this, runtime state written
-	// under /run (dockerd pid files, unix sockets) outlives the VM and leaks
-	// into every later sandbox of the same image — a stale
+	// /run must be a per-VM tmpfs because msb guest init does not mount it.
+	// The private root disk persists across stop/start, so runtime state written
+	// under /run would otherwise outlive the VM. A stale
 	// /run/docker/containerd/containerd.pid then makes dockerd kill its own
 	// containerd and refuse to start. agentd recreates /run/microsandbox after
 	// user tmpfs mounts are applied, so shadowing /run here is safe.
 	mounts["/run"] = microsandbox.Mount.Tmpfs(microsandbox.TmpfsOptions{SizeMiB: 256})
-	imageRef := resolveSandboxGuestImage(vmState.Image, session.Summary.GuestImage, defaultGuestImageForDriver(r.config, RuntimeDriverMicrosandbox))
-	imagePullTimeout := r.config.ImagePullTimeout
-	if imagePullTimeout <= 0 {
-		imagePullTimeout = defaultImagePullTimeout
-	}
-	var imageEnv []string
-	if resolvedRef, envList, ok, err := r.resolveMicrosandboxImageRef(ctx, imageRef, session.Summary.PullPolicy, imagePullTimeout); err != nil {
-		return nil, err
-	} else if ok {
-		imageRef = resolvedRef
-		imageEnv = envList
-	}
-	if filepath.IsAbs(imageRef) {
-		isolatedEtc, err := prepareMicrosandboxEtc(imageRef, filepath.Join(hostSandboxDir(session), "state"))
-		if err != nil {
-			return nil, fmt.Errorf("prepare sandbox-owned microsandbox /etc: %w", err)
-		}
-		// The isolated directory is already below the quota-managed sandbox
-		// directory. Do not assign a second, overlapping project quota here.
-		mounts["/etc"] = microsandbox.Mount.Bind(isolatedEtc, microsandbox.MountOptions{})
-	}
+	imageEnv := baseDisk.Env
 	env := sandboxEnvMap(session.EnvItems, session.RuntimeEnvItems)
 	if env == nil {
 		env = map[string]string{}
@@ -1014,7 +1031,6 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	env["STATE_ROOT"] = r.config.GuestStateRoot
 	env["RUNTIME_ROOT"] = r.config.GuestRuntimeRoot
 	env["JUPYTER_TOKEN"] = proxyState.Token
-	pullPolicy := microsandboxPullPolicyForImageRef(imageRef, session.Summary.PullPolicy)
 	// Disable DNS rebind protection so guests can resolve names that point at
 	// private/internal IPs (e.g. an internal container registry).
 	rebindDisabled := false
@@ -1022,12 +1038,12 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	network.DNS = &microsandbox.DNSConfig{RebindProtection: &rebindDisabled}
 	resources := configuredSandboxResources(r.config)
 	options := []microsandbox.SandboxOption{
-		microsandbox.WithImage(imageRef),
+		microsandbox.WithImageDisk(rootfsDisk.Path, "ext4"),
 		microsandbox.WithWorkdir("/"),
 		microsandbox.WithShell("/bin/bash"),
 		microsandbox.WithEnv(env),
 		microsandbox.WithNetwork(network),
-		microsandbox.WithPullPolicy(pullPolicy),
+		microsandbox.WithPullPolicy(microsandbox.PullPolicyNever),
 		microsandbox.WithMounts(mounts),
 		microsandbox.WithLabels(map[string]string{microsandboxManagedLabel: "true", microsandboxSandboxIDLabel: session.Summary.ID}),
 		microsandbox.WithMemory(resources.MemoryMiB),
@@ -1041,6 +1057,7 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 		return nil, err
 	}
 	sandboxCreated = true
+	rootfsCreated = false
 	return sandbox, nil
 }
 
@@ -1054,47 +1071,6 @@ func (r *microsandboxRuntime) microsandboxBindMount(hostPath string, readonly bo
 
 func (r *microsandboxRuntime) microsandboxBindQuotaGB() int32 {
 	return configuredSandboxResources(r.config).DiskSizeGB
-}
-
-func (r *microsandboxRuntime) resolveMicrosandboxImageRef(ctx context.Context, imageRef, pullPolicy string, pullTimeout time.Duration) (string, []string, bool, error) {
-	rootfs, ok, err := resolveMicrosandboxRootFS(ctx, imageRef, microsandboxImageResolverOps{
-		dockerAvailable: dockerDaemonAvailable,
-		applyDockerPullPolicy: func(ctx context.Context, imageRef string) error {
-			return applyDockerDaemonPullPolicy(ctx, imageRef, pullPolicy, pullTimeout)
-		},
-		dockerMaterialize: func(ctx context.Context, imageRef string) (microsandboxRootFSResult, bool, error) {
-			rootfs, ok, err := materializeLocalDockerImageRootfs(ctx, r.config.DataRoot, imageRef)
-			if err != nil || !ok {
-				return microsandboxRootFSResult{}, ok, err
-			}
-			return microsandboxRootFSResult{ImageID: rootfs.ImageID, ResolvedRef: rootfs.ResolvedRef, RootFSPath: rootfs.RootfsPath, Env: rootfs.Env}, true, nil
-		},
-		ociMaterialize: func(ctx context.Context, imageRef string) (microsandboxRootFSResult, bool, error) {
-			return materializeMicrosandboxOCIRootFS(ctx, r.config, imageRef, pullPolicy)
-		},
-	})
-	if err != nil {
-		return "", nil, false, err
-	}
-	if ok {
-		slog.Info("agent-compose microsandbox using materialized image rootfs", "image", imageRef, "resolved_ref", rootfs.ResolvedRef, "rootfs_path", rootfs.RootFSPath)
-		return rootfs.RootFSPath, rootfs.Env, true, nil
-	}
-	return "", nil, false, nil
-}
-
-func microsandboxPullPolicyForImageRef(imageRef string, perCallPolicy string) microsandbox.PullPolicy {
-	if filepath.IsAbs(imageRef) {
-		return microsandbox.PullPolicyNever
-	}
-	switch strings.ToLower(strings.TrimSpace(perCallPolicy)) {
-	case "always":
-		return microsandbox.PullPolicyAlways
-	case "never":
-		return microsandbox.PullPolicyNever
-	default:
-		return microsandbox.PullPolicyIfMissing
-	}
 }
 
 func (r *microsandboxRuntime) launchJupyter(ctx context.Context, sandbox *microsandbox.Sandbox, proxyState ProxyState) error {

@@ -4,17 +4,20 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	appconfig "agent-compose/pkg/config"
@@ -23,9 +26,9 @@ import (
 	"agent-compose/pkg/identity"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/sessions"
+	storagesqlite "agent-compose/pkg/storage/sqlite"
 
 	"github.com/google/uuid"
-	"github.com/samber/do/v2"
 )
 
 const (
@@ -35,6 +38,8 @@ const (
 	VMStatusFailed  = domain.VMStatusFailed
 
 	CellTypeAgent = execution.CellTypeAgent
+
+	sandboxCacheWriteTimeout = 5 * time.Second
 )
 
 type (
@@ -54,33 +59,229 @@ type (
 
 type Store struct {
 	config                *appconfig.Config
+	database              *storagesqlite.Database
 	sandboxLocks          sync.Map
 	cacheDependencyMu     sync.RWMutex
 	cacheDependencyLocker CacheDependencyLocker
+	index                 *sandboxCache
+	indexRepairMu         sync.Mutex
+	indexDirty            atomic.Bool
 }
 
 type CacheDependencyLocker interface {
 	WithLockContext(context.Context, func() error) error
 }
 
-func NewStore(di do.Injector) (*Store, error) {
-	config := do.MustInvoke[*appconfig.Config](di)
-	return NewWithConfig(config)
-}
-
+// NewWithConfig constructs a standalone Store with its own application
+// database. Production composition should use NewWithDatabase so every store
+// shares the dependency-injected database.
 func NewWithConfig(config *appconfig.Config) (*Store, error) {
 	if err := os.MkdirAll(config.SandboxRoot, 0o755); err != nil {
 		return nil, fmt.Errorf("create sandbox root: %w", err)
 	}
+	dbPath := strings.TrimSpace(config.DbAddr)
+	if dbPath == "" {
+		dbPath = filepath.Join(config.SandboxRoot, "data.db")
+	}
+	database, err := storagesqlite.Open(dbPath, config.DbTimeout)
+	if err != nil {
+		return newStoreWithIndex(config, nil, dbPath, err)
+	}
+	index, _, indexErr := openSandboxCacheDB(context.Background(), database.DB())
+	store, err := newStoreWithIndex(config, index, dbPath, indexErr)
+	if err != nil {
+		return nil, errors.Join(err, database.Close())
+	}
+	if indexErr != nil {
+		if err := database.Close(); err != nil {
+			return nil, fmt.Errorf("close unavailable standalone sandbox database: %w", err)
+		}
+		return store, nil
+	}
+	store.database = database
+	return store, nil
+}
+
+// NewWithDatabase constructs a Store using the application's shared data.db
+// connection. The caller owns db; closing the Store only releases index-owned
+// resources and never closes the shared database.
+func NewWithDatabase(config *appconfig.Config, db *sql.DB) (*Store, error) {
+	index, _, err := openSandboxCacheDB(context.Background(), db)
+	return newStoreWithIndex(config, index, config.DbAddr, err)
+}
+
+func newStoreWithIndex(config *appconfig.Config, index *sandboxCache, dbPath string, indexErr error) (*Store, error) {
+	if err := os.MkdirAll(config.SandboxRoot, 0o755); err != nil {
+		return nil, closeSandboxCacheAfterStoreInitFailure(index, fmt.Errorf("create sandbox root: %w", err))
+	}
 	store := &Store{config: config}
 	if err := store.backfillOwnershipRecords(); err != nil {
-		return nil, err
+		return nil, closeSandboxCacheAfterStoreInitFailure(index, err)
+	}
+	if indexErr != nil {
+		slog.Warn("sandbox listing cache unavailable; using filesystem listing", "database", dbPath, "error", indexErr)
+		return store, nil
+	}
+	store.index = index
+	// The filesystem is authoritative. Reconcile on every startup, including
+	// when the schema version is current, to repair a process exit between a
+	// metadata commit and its write-through index update.
+	if err := store.completeIndexRebuild(context.Background()); err != nil {
+		if !errors.Is(err, errSandboxCache) {
+			if closeErr := index.Close(); closeErr != nil {
+				err = errors.Join(err, fmt.Errorf("close sandbox listing cache after reconciliation failure: %w", closeErr))
+			}
+			return nil, fmt.Errorf("reconcile sandbox listing cache: %w", err)
+		}
+		if err := store.recreateSandboxCache(context.Background(), err); err != nil {
+			slog.Warn("sandbox listing cache recovery failed; using filesystem listing", "database", dbPath, "error", err)
+			return store, nil
+		}
 	}
 	return store, nil
 }
 
+func closeSandboxCacheAfterStoreInitFailure(index *sandboxCache, operationErr error) error {
+	if index == nil {
+		return operationErr
+	}
+	if err := index.Close(); err != nil {
+		return errors.Join(operationErr, fmt.Errorf("close sandbox listing cache after store initialization failure: %w", err))
+	}
+	return operationErr
+}
+
+func (s *Store) recreateSandboxCache(ctx context.Context, cause error) error {
+	slog.Warn("sandbox listing cache reconciliation failed; rebuilding cache table", "error", cause)
+	index := s.index
+	if index == nil || index.db == nil {
+		return fmt.Errorf("recreate sandbox listing cache: database is unavailable")
+	}
+	if err := resetSandboxCacheSchema(ctx, index.db); err != nil {
+		return err
+	}
+	if err := s.completeIndexRebuild(ctx); err != nil {
+		return fmt.Errorf("reconcile recreated sandbox listing cache: %w", err)
+	}
+	return nil
+}
+
 func FromConfig(config *appconfig.Config) *Store {
 	return &Store{config: config}
+}
+
+// Close releases database resources owned by compatibility stores. Stores
+// created with NewWithDatabase leave the caller-owned shared database open.
+func (s *Store) Close() error {
+	var err error
+	if s.index != nil {
+		err = s.index.Close()
+	}
+	if s.database != nil {
+		err = errors.Join(err, s.database.Close())
+	}
+	return err
+}
+
+// Shutdown adapts Close to the samber/do Shutdowner interface.
+func (s *Store) Shutdown() error {
+	return s.Close()
+}
+
+// rebuildIndex repopulates the sandbox listing cache from the filesystem and, only if it
+// runs to completion, stamps the schema version so the index is treated as
+// current. An interrupted rebuild (crash or transient read/upsert error)
+// leaves the version unstamped so the next startup retries it rather than
+// serving a partially-populated index.
+func (s *Store) rebuildIndex(ctx context.Context) {
+	if err := s.completeIndexRebuild(ctx); err != nil {
+		slog.Warn("sandbox listing cache rebuild incomplete; retrying on next startup", "error", err)
+	}
+}
+
+func (s *Store) completeIndexRebuild(ctx context.Context) error {
+	if err := s.runIndexRebuild(ctx); err != nil {
+		return err
+	}
+	return s.index.markComplete(ctx)
+}
+
+func (s *Store) ensureIndexCurrent(ctx context.Context) error {
+	if !s.indexDirty.Load() {
+		return nil
+	}
+	s.indexRepairMu.Lock()
+	defer s.indexRepairMu.Unlock()
+	if !s.indexDirty.Load() {
+		return nil
+	}
+	if err := s.completeIndexRebuild(ctx); err != nil {
+		return fmt.Errorf("repair sandbox listing cache: %w", err)
+	}
+	s.indexDirty.Store(false)
+	return nil
+}
+
+// runIndexRebuild does the actual repopulation. It returns a non-nil error when
+// the rebuild did not fully finish (context cancelled, root unreadable, an index
+// upsert failed, or reconcile failed), which the caller uses to decide whether
+// the index may be marked complete.
+func (s *Store) runIndexRebuild(ctx context.Context) error {
+	if s.index == nil {
+		return nil
+	}
+
+	entries, err := os.ReadDir(s.config.SandboxRoot)
+	if err != nil {
+		return fmt.Errorf("read sandbox root: %w", err)
+	}
+	validIDs := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !entry.IsDir() || entry.Name() == ".lifecycle" {
+			continue
+		}
+		sandbox, loadErr := s.loadSandbox(entry.Name())
+		if loadErr != nil {
+			// Not a loadable sandbox (corrupt/foreign dir): skip, not a failure.
+			continue
+		}
+		if upsertErr := s.index.Reconcile(ctx, sandbox); upsertErr != nil {
+			return fmt.Errorf("upsert %s: %w", sandbox.Summary.ID, upsertErr)
+		}
+		validIDs[sandbox.Summary.ID] = struct{}{}
+	}
+
+	// Rows are retained only for metadata that was successfully loaded. A
+	// directory with missing or malformed metadata is not a listable sandbox.
+	rows, err := s.index.db.QueryContext(ctx, `SELECT id FROM sandboxes`)
+	if err != nil {
+		return sandboxCacheError("query rows during reconcile", err)
+	}
+	var orphans []string
+	for rows.Next() {
+		var id string
+		if scanErr := rows.Scan(&id); scanErr != nil {
+			return sandboxCacheError("scan row during reconcile", errors.Join(scanErr, closeSandboxCacheRows(rows)))
+		}
+		if _, ok := validIDs[id]; !ok {
+			orphans = append(orphans, id)
+		}
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return sandboxCacheError("iterate rows during reconcile", errors.Join(rowsErr, closeSandboxCacheRows(rows)))
+	}
+	if err := closeSandboxCacheRows(rows); err != nil {
+		return sandboxCacheError("close rows during reconcile", err)
+	}
+	for _, id := range orphans {
+		if delErr := s.index.Delete(ctx, id); delErr != nil {
+			return fmt.Errorf("prune sandbox listing cache row %s: %w", id, delErr)
+		}
+	}
+	return nil
 }
 
 func cloneSandboxWorkspace(item *SandboxWorkspace) *SandboxWorkspace {
@@ -144,17 +345,20 @@ func (s *Store) createSandboxWithOptions(title, baseWorkspace, driver, guestImag
 		}
 	}
 
-	for _, dir := range []string{
+	dirs := []string{
 		sandboxDir,
 		filepath.Join(sandboxDir, "context"),
 		filepath.Join(sandboxDir, "home"),
 		filepath.Join(sandboxDir, "runtime"),
-		filepath.Join(sandboxDir, "workspace"),
 		filepath.Join(sandboxDir, "state"),
 		filepath.Join(sandboxDir, "logs"),
 		filepath.Join(sandboxDir, "vm"),
 		filepath.Join(sandboxDir, "proxy"),
-	} {
+	}
+	if workspaceProvisioning == nil {
+		dirs = append(dirs, workspaceDir)
+	}
+	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("create sandbox dir %s: %w", dir, err)
 		}
@@ -251,7 +455,50 @@ func (s *Store) createSandboxWithOptions(title, baseWorkspace, driver, guestImag
 		return nil, fmt.Errorf("write sandbox ownership record: %w", err)
 	}
 
+	s.recordIndex(session)
 	return session, nil
+}
+
+// recordIndex mirrors a committed sandbox summary into the queryable index.
+// Request cancellation cannot undo committed metadata, so the cache write uses
+// its own bounded context. A failure marks the index dirty for repair before
+// the next list query. Callers updating an existing sandbox hold its sandbox
+// lock through this call; creation uses a new ID that is not published until
+// recordIndex returns. This keeps metadata load and cache upsert ordered with
+// RemoveSandbox without holding the global cache repair lock during disk I/O.
+func (s *Store) recordIndex(session *Sandbox) {
+	if s.index == nil || session == nil {
+		return
+	}
+	indexed, err := s.loadSandbox(session.Summary.ID)
+	if err != nil {
+		s.indexDirty.Store(true)
+		slog.Warn("load committed sandbox for index failed", "sandbox_id", session.Summary.ID, "error", err)
+		return
+	}
+	s.indexRepairMu.Lock()
+	defer s.indexRepairMu.Unlock()
+	indexCtx, cancel := context.WithTimeout(context.Background(), sandboxCacheWriteTimeout)
+	defer cancel()
+	if err := s.index.Upsert(indexCtx, indexed); err != nil {
+		s.indexDirty.Store(true)
+		slog.Warn("sandbox listing cache upsert failed", "sandbox_id", session.Summary.ID, "error", err)
+	}
+}
+
+func (s *Store) deleteIndexRow(id string) error {
+	if s.index == nil {
+		return nil
+	}
+	s.indexRepairMu.Lock()
+	defer s.indexRepairMu.Unlock()
+	indexCtx, cancel := context.WithTimeout(context.Background(), sandboxCacheWriteTimeout)
+	defer cancel()
+	if err := s.index.Delete(indexCtx, id); err != nil {
+		s.indexDirty.Store(true)
+		return fmt.Errorf("delete sandbox listing cache row %s: %w", id, err)
+	}
+	return nil
 }
 
 func (s *Store) SetCacheDependencyLocker(locker CacheDependencyLocker) {
@@ -269,48 +516,77 @@ func (s *Store) GetSandbox(_ context.Context, id string) (*Sandbox, error) {
 	return session, nil
 }
 
-func (s *Store) ListSandboxes(_ context.Context, options SandboxListOptions) (SandboxListResult, error) {
-	entries, err := os.ReadDir(s.config.SandboxRoot)
-	if err != nil {
-		return SandboxListResult{}, fmt.Errorf("read sandbox root: %w", err)
+// ListSandboxes answers from the sandbox listing cache: filtering, sorting, and
+// pagination run as an indexed SQL query over all sandboxes, then only the
+// resulting page is loaded from disk for full fidelity (guest image, counts,
+// tags, reclamation state). Keyset pagination loads at most a page; legacy
+// offset pagination also validates the rows before the requested offset so
+// stale index entries cannot shift the observable page.
+func (s *Store) ListSandboxes(ctx context.Context, options SandboxListOptions) (SandboxListResult, error) {
+	if s.index == nil {
+		return s.listSandboxesFromFilesystem(ctx, options)
 	}
-	var sessions []*Sandbox
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		session, err := s.loadSandbox(entry.Name())
-		if err != nil {
-			continue
-		}
-		s.hydrateSandboxGuestImage(session)
-		if !domain.SandboxMatchesListOptions(session, options) {
-			continue
-		}
-		if !options.BeforeUpdatedAt.IsZero() && (session.Summary.UpdatedAt.After(options.BeforeUpdatedAt) || (session.Summary.UpdatedAt.Equal(options.BeforeUpdatedAt) && session.Summary.ID >= options.BeforeID)) {
-			continue
-		}
-		sessions = append(sessions, session)
+	if err := s.ensureIndexCurrent(ctx); err != nil {
+		return SandboxListResult{}, err
 	}
-	sort.Slice(sessions, func(i, j int) bool {
-		if sessions[i].Summary.UpdatedAt.Equal(sessions[j].Summary.UpdatedAt) {
-			return sessions[i].Summary.ID > sessions[j].Summary.ID
-		}
-		return sessions[i].Summary.UpdatedAt.After(sessions[j].Summary.UpdatedAt)
-	})
-	totalCount := len(sessions)
 	offset, limit := domain.NormalizeSandboxListBounds(options.Offset, options.Limit)
-	page := domain.PaginateSandboxes(sessions, offset, limit)
-	result := SandboxListResult{
+	queryOffset := 0
+	skipped := 0
+	var page []*Sandbox
+	total := 0
+	for len(page) < limit {
+		query := options
+		query.Offset = queryOffset
+		query.Limit = listRowsNeeded(offset-skipped, limit-len(page))
+		indexed, indexedTotal, err := s.index.list(ctx, query, s.sandboxDir)
+		if err != nil {
+			return SandboxListResult{}, err
+		}
+		// TotalCount reflects the reconciled cache view. Supported writes update
+		// it synchronously; out-of-band filesystem removals are deducted when a
+		// page encounters and prunes the stale row, or on the next startup.
+		total = indexedTotal
+		if len(indexed) == 0 {
+			break
+		}
+		ghosts := 0
+		for _, item := range indexed {
+			full, loadErr := s.loadSandbox(item.Summary.ID)
+			if loadErr != nil {
+				if err := s.deleteIndexRow(item.Summary.ID); err != nil {
+					return SandboxListResult{}, fmt.Errorf("prune unreadable sandbox listing cache row %s: %w", item.Summary.ID, err)
+				}
+				ghosts++
+				continue
+			}
+			s.hydrateSandboxGuestImage(full)
+			queryOffset++
+			if skipped < offset {
+				skipped++
+				continue
+			}
+			page = append(page, full)
+		}
+		total -= ghosts
+	}
+	nextOffset := total
+	if offset < total {
+		nextOffset = offset + len(page)
+	}
+	return SandboxListResult{
 		Sandboxes:  page,
-		TotalCount: totalCount,
-		HasMore:    offset+len(page) < totalCount,
-		NextOffset: offset + len(page),
+		TotalCount: total,
+		HasMore:    nextOffset < total,
+		NextOffset: nextOffset,
+	}, nil
+}
+
+func listRowsNeeded(skip, page int) int {
+	maxInt := int(^uint(0) >> 1)
+	if skip > maxInt-page {
+		return maxInt
 	}
-	if result.NextOffset > totalCount {
-		result.NextOffset = totalCount
-	}
-	return result, nil
+	return skip + page
 }
 
 func (s *Store) UpdateSandbox(_ context.Context, session *Sandbox) error {
@@ -318,7 +594,11 @@ func (s *Store) UpdateSandbox(_ context.Context, session *Sandbox) error {
 	session.Summary.UpdatedAt = time.Now().UTC()
 	unlock := s.lockSandbox(session.Summary.ID)
 	defer unlock()
-	return s.saveSandboxPreservingCounts(session)
+	if err := s.saveSandboxPreservingCounts(session); err != nil {
+		return err
+	}
+	s.recordIndex(session)
+	return nil
 }
 
 func (s *Store) RemoveSandbox(_ context.Context, id string) error {
@@ -339,6 +619,9 @@ func (s *Store) RemoveSandbox(_ context.Context, id string) error {
 	}
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("remove sandbox dir %s: %w", id, err)
+	}
+	if err := s.deleteIndexRow(id); err != nil {
+		slog.Warn("failed to delete sandbox listing cache row after removing authoritative metadata", "sandbox_id", id, "error", err)
 	}
 	s.sandboxLocks.Delete(sandboxLockKey(id))
 	return nil
@@ -465,16 +748,28 @@ func (s *Store) AddEvent(_ context.Context, sessionID string, event SandboxEvent
 	}
 
 	session, err := s.loadSandbox(sessionID)
-	if err == nil {
-		nextCount := session.Summary.EventCount + 1
-		if !jsonlExisted && legacyCount >= session.Summary.EventCount {
-			nextCount = legacyCount + 1
-		}
-		session.Summary.EventCount = nextCount
-		s.hydrateSandboxGuestImage(session)
-		session.Summary.UpdatedAt = time.Now().UTC()
-		_ = s.saveSandboxPreservingCounts(session)
+	if err != nil {
+		slog.Warn("load sandbox summary after committed event append failed", "sandbox_id", sessionID, "error", err)
+		return nil
 	}
+	nextCount := session.Summary.EventCount + 1
+	if !jsonlExisted && legacyCount >= session.Summary.EventCount {
+		nextCount = legacyCount + 1
+	}
+	session.Summary.EventCount = nextCount
+	if err := s.persistEventSandboxSummary(session); err != nil {
+		slog.Warn("sandbox summary update after committed event append failed", "sandbox_id", sessionID, "error", err)
+	}
+	return nil
+}
+
+func (s *Store) persistEventSandboxSummary(session *Sandbox) error {
+	s.hydrateSandboxGuestImage(session)
+	session.Summary.UpdatedAt = time.Now().UTC()
+	if err := s.saveSandboxPreservingCounts(session); err != nil {
+		return fmt.Errorf("save sandbox summary after event append: %w", err)
+	}
+	s.recordIndex(session)
 	return nil
 }
 
@@ -676,13 +971,21 @@ func (s *Store) saveEventCount(id string, eventCount int) error {
 	session.Summary.EventCount = eventCount
 	s.hydrateSandboxGuestImage(session)
 	session.Summary.UpdatedAt = time.Now().UTC()
-	return s.saveSandbox(session)
+	if err := s.saveSandbox(session); err != nil {
+		return err
+	}
+	s.recordIndex(session)
+	return nil
 }
 
 func (s *Store) SaveSandbox(session *Sandbox) error {
 	unlock := s.lockSandbox(session.Summary.ID)
 	defer unlock()
-	return s.saveSandboxPreservingCounts(session)
+	if err := s.saveSandboxPreservingCounts(session); err != nil {
+		return err
+	}
+	s.recordIndex(session)
+	return nil
 }
 
 func (s *Store) loadCells(id string) ([]NotebookCell, error) {

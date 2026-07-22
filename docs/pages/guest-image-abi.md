@@ -174,6 +174,9 @@ An image supporting these capabilities **MUST** provide:
 - the `prompt` and `exec` subcommands used by normal runs; and
 - the `stream` subcommand when interactive prompt attach is required.
 
+Prompt-mode `stream` sessions support the `codex`, `claude`, and `opencode` providers.
+Other providers are rejected before the guest runtime interaction is opened.
+
 The daemon passes explicit workspace, state, and home paths. It also injects:
 
 | Variable | Default/value |

@@ -3,15 +3,12 @@ package main
 import (
 	"agent-compose/pkg/compose"
 	domain "agent-compose/pkg/model"
-	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
-	"connectrpc.com/connect"
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
 
@@ -34,11 +31,20 @@ type composeSchedulerRunsOptions struct {
 	Limit     uint32
 }
 
+type composeSchedulerInvokeOptions struct {
+	PayloadJSON string
+}
+
 type composeSchedulerLogsOptions struct {
-	AgentName string
-	Trigger   string
-	RunID     string
-	Tail      int
+	SchedulerRef string
+	AgentName    string
+	Trigger      string
+	RunID        string
+	Tail         int
+}
+
+type composeSchedulerInspectOptions struct {
+	SchedulerRef string
 }
 
 func runComposeSchedulerTriggerCommand(cmd *cobra.Command, cli cliOptions, options composeSchedulerTriggerOptions, agentName, triggerRef string) error {
@@ -46,6 +52,9 @@ func runComposeSchedulerTriggerCommand(cmd *cobra.Command, cli cliOptions, optio
 }
 
 func runComposeSchedulerRunsCommand(cmd *cobra.Command, cli cliOptions, options composeSchedulerRunsOptions, args []string) error {
+	if err := writeDeprecatedSchedulerAgentFlagWarning(cmd, "use the scheduler positional argument instead"); err != nil {
+		return err
+	}
 	_, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
@@ -80,6 +89,9 @@ func runComposeSchedulerRunsCommand(cmd *cobra.Command, cli cliOptions, options 
 }
 
 func runComposeSchedulerLogsCommand(cmd *cobra.Command, cli cliOptions, options composeSchedulerLogsOptions, args []string) error {
+	if err := writeDeprecatedSchedulerAgentFlagWarning(cmd, "use --scheduler instead"); err != nil {
+		return err
+	}
 	_, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
@@ -98,33 +110,50 @@ func runComposeSchedulerLogsCommand(cmd *cobra.Command, cli cliOptions, options 
 	if options.Tail < -1 {
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler logs --tail must be -1 or greater")}
 	}
-	if runRef != "" && (strings.TrimSpace(options.AgentName) != "" || strings.TrimSpace(options.Trigger) != "") {
-		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler logs --agent and --trigger can only be used when selecting the latest run")}
+	schedulerRef := strings.TrimSpace(options.SchedulerRef)
+	if schedulerRef != "" && strings.TrimSpace(options.AgentName) != "" {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler logs accepts either --scheduler or deprecated --agent, not both")}
+	}
+	if schedulerRef == "" {
+		schedulerRef = strings.TrimSpace(options.AgentName)
+	}
+	if runRef != "" && (schedulerRef != "" || strings.TrimSpace(options.Trigger) != "") {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler logs run filters cannot be combined with --scheduler or --trigger")}
 	}
 	var selected *composeSchedulerRunItem
+	agentName := ""
+	triggerID := ""
 	if runRef != "" {
 		selected, err = getComposeSchedulerRun(cmd.Context(), clients, normalized, projectID, runRef)
 		if err != nil {
 			return err
 		}
-	} else {
-		runs, listErr := listComposeSchedulerRuns(cmd.Context(), clients, normalized, projectID, options.AgentName, options.Trigger, "", 1)
-		if listErr != nil {
-			return listErr
+		agentName = selected.AgentName
+		triggerID = selected.TriggerID
+		runRef = selected.RunID
+	} else if schedulerRef != "" {
+		scheduler, resolveErr := resolveComposeScheduler(normalized, projectID, schedulerRef)
+		if resolveErr != nil {
+			return resolveErr
 		}
-		if len(runs) > 0 {
-			selected = &runs[0]
+		agentName = scheduler.AgentName
+	}
+	if triggerRef := strings.TrimSpace(options.Trigger); triggerRef != "" {
+		resolvedTriggerID, resolveErr := resolveSchedulerTriggerIDForQuery(cmd.Context(), clients, normalized, projectID, agentName, triggerRef)
+		if resolveErr != nil {
+			if errors.Is(resolveErr, domain.ErrAmbiguous) && agentName == "" {
+				resolveErr = fmt.Errorf("%w; use --scheduler <scheduler-ref> to disambiguate", resolveErr)
+			}
+			if isSchedulerResourceNotFound(resolveErr) || errors.Is(resolveErr, domain.ErrAmbiguous) {
+				return commandExitError{Code: exitCodeUsage, Err: resolveErr}
+			}
+			return resolveErr
 		}
+		triggerID = resolvedTriggerID
 	}
-	if selected == nil {
-		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("no scheduler runs found")}
-	}
-	events, err := listSchedulerRunEvents(cmd.Context(), clients, projectID, *selected)
+	events, err := listProjectSchedulerLogEvents(cmd.Context(), clients.project, projectID, agentName, triggerID, runRef, options.Tail)
 	if err != nil {
-		return commandExitErrorForConnect(fmt.Errorf("list scheduler run %s logs: %w", selected.RunID, err))
-	}
-	if options.Tail >= 0 && len(events) > options.Tail {
-		events = events[len(events)-options.Tail:]
+		return err
 	}
 	output := composeSchedulerLogsOutput{
 		Project: composeUpProjectOutput{ID: displayOpaqueID(projectID), Name: normalized.Name},
@@ -141,7 +170,15 @@ func runComposeSchedulerLogsCommand(cmd *cobra.Command, cli cliOptions, options 
 	return writeSchedulerLogsText(cmd.OutOrStdout(), output)
 }
 
-func runComposeSchedulerInspectCommand(cmd *cobra.Command, cli cliOptions, args []string) error {
+func writeDeprecatedSchedulerAgentFlagWarning(cmd *cobra.Command, guidance string) error {
+	if !cmd.Flags().Changed("agent") {
+		return nil
+	}
+	_, err := fmt.Fprintf(cmd.ErrOrStderr(), "Warning: --agent is deprecated; %s\n", guidance)
+	return err
+}
+
+func runComposeSchedulerInspectCommand(cmd *cobra.Command, cli cliOptions, options composeSchedulerInspectOptions, rawRef string) error {
 	_, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
@@ -151,14 +188,14 @@ func runComposeSchedulerInspectCommand(cmd *cobra.Command, cli cliOptions, args 
 		return err
 	}
 	output := composeSchedulerInspectOutput{Project: composeUpProjectOutput{ID: displayOpaqueID(projectID), Name: normalized.Name}}
-	if len(args) == 2 {
-		trigger, err := resolveComposeSchedulerTrigger(cmd.Context(), clients, normalized, projectID, args[0], args[1])
+	ref := strings.TrimSpace(rawRef)
+	if schedulerRef := strings.TrimSpace(options.SchedulerRef); schedulerRef != "" {
+		trigger, err := resolveComposeSchedulerTrigger(cmd.Context(), clients, normalized, projectID, schedulerRef, ref)
 		if err != nil {
 			return err
 		}
 		setSchedulerTriggerInspectOutput(&output, trigger)
 	} else {
-		ref := strings.TrimSpace(args[0])
 		if shouldResolveSchedulerRunRef(ref) {
 			run, runErr := getComposeSchedulerRun(cmd.Context(), clients, normalized, projectID, ref)
 			if runErr == nil {
@@ -191,6 +228,9 @@ func runComposeSchedulerInspectCommand(cmd *cobra.Command, cli cliOptions, args 
 			}
 			trigger, triggerErr := resolveSchedulerTriggerFromItems(triggers, ref)
 			if triggerErr != nil {
+				if errors.Is(triggerErr, domain.ErrAmbiguous) {
+					triggerErr = fmt.Errorf("%w; use --scheduler <scheduler-ref> to disambiguate", triggerErr)
+				}
 				return commandExitError{Code: exitCodeUsage, Err: triggerErr}
 			}
 			setSchedulerTriggerInspectOutput(&output, *trigger)
@@ -221,59 +261,11 @@ func isSchedulerResourceNotFound(err error) bool {
 }
 
 func getComposeSchedulerRun(ctx context.Context, clients cliServiceClients, normalized *compose.NormalizedProjectSpec, projectID, runRef string) (*composeSchedulerRunItem, error) {
-	runID, err := resolveSchedulerRunID(ctx, clients.resource, projectID, runRef)
-	if err != nil {
-		if !isSchedulerResourceNotFound(err) {
-			return nil, err
-		}
-		return resolveSchedulerRuntimeRun(ctx, clients.project, normalized, projectID, runRef)
-	}
-	resp, err := clients.run.GetRun(ctx, connect.NewRequest(&agentcomposev2.GetRunRequest{ProjectId: projectID, RunId: runID}))
-	if err != nil {
-		if connect.CodeOf(err) == connect.CodeNotFound {
-			return resolveSchedulerRuntimeRun(ctx, clients.project, normalized, projectID, runRef)
-		}
-		return nil, commandExitErrorForConnect(fmt.Errorf("get scheduler run %s: %w", runRef, err))
-	}
-	summary := resp.Msg.GetRun().GetSummary()
-	if summary == nil || strings.TrimSpace(summary.GetSchedulerId()) == "" {
-		return resolveSchedulerRuntimeRun(ctx, clients.project, normalized, projectID, runRef)
-	}
-	loaderID, idErr := domain.StableManagedLoaderID(projectID, summary.GetAgentName(), "")
-	if idErr != nil {
-		return nil, idErr
-	}
-	item := schedulerRunItem(summary.GetAgentName(), summary.GetSchedulerId(), loaderID, summary)
-	item.ResultJSON = resp.Msg.GetRun().GetResultJson()
-	item.ArtifactsDir = resp.Msg.GetRun().GetArtifactsDir()
-	return &item, nil
-}
-
-func isLegacySchedulerRunID(runID string) bool {
-	runID = strings.TrimSpace(runID)
-	parsed, err := uuid.Parse(runID)
-	return err == nil && parsed.String() == runID
+	return resolveSchedulerRuntimeRun(ctx, clients.project, normalized, projectID, runRef)
 }
 
 func normalizeComposeSchedulerTriggerOptions(options composeSchedulerTriggerOptions) (composeSchedulerTriggerOptions, error) {
 	return normalizeComposeSchedulerExecutionOptions("scheduler trigger", options)
-}
-
-func mergeSchedulerRuntimeRuns(current, legacy []composeSchedulerRunItem) []composeSchedulerRunItem {
-	byID := make(map[string]int, len(current))
-	for index := range current {
-		byID[current[index].RunID] = index
-	}
-	for _, run := range legacy {
-		index, ok := byID[run.RunID]
-		if !ok {
-			byID[run.RunID] = len(current)
-			current = append(current, run)
-			continue
-		}
-		current[index].SandboxIDs = appendUniqueStrings(current[index].SandboxIDs, run.SandboxIDs...)
-	}
-	return current
 }
 
 func (b *composeDisplayChangeBuilder) addTriggerChanges(action, id, agentName, message string, spec *compose.NormalizedProjectSpec) {

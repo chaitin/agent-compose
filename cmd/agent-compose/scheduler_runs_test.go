@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func TestIntegrationCLISchedulerRunMainAndDetach(t *testing.T) {
+func TestIntegrationCLISchedulerInvokeHasNoLegacyRunOrDetachCompatibility(t *testing.T) {
 	composePath := writeComposeFile(t, t.TempDir(), `
 name: cli-scheduler-main
 agents:
@@ -22,46 +24,65 @@ agents:
       script: |
         function main(payload) { return payload; }
 `)
-	var runRequests []*agentcomposev2.RunSchedulerRequest
-	var startRequests []*agentcomposev2.StartSchedulerRunRequest
+	var invokeRequests []*agentcomposev2.InvokeSchedulerRequest
 	server := newComposeServiceStubServer(t, composeServiceStubs{project: projectServiceStub{
-		runScheduler: func(_ context.Context, req *connect.Request[agentcomposev2.RunSchedulerRequest]) (*connect.Response[agentcomposev2.RunSchedulerResponse], error) {
-			runRequests = append(runRequests, req.Msg)
-			return connect.NewResponse(&agentcomposev2.RunSchedulerResponse{Run: &agentcomposev2.SchedulerRun{
-				RunId:       "scheduler-run-main",
-				ProjectId:   req.Msg.GetProject().GetProjectId(),
-				AgentName:   req.Msg.GetAgentName(),
-				Status:      agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SUCCEEDED,
-				ResultJson:  `{"main":true}`,
-				PayloadJson: req.Msg.GetPayloadJson(),
-			}}), nil
-		},
-		startSchedulerRun: func(_ context.Context, req *connect.Request[agentcomposev2.StartSchedulerRunRequest]) (*connect.Response[agentcomposev2.StartSchedulerRunResponse], error) {
-			startRequests = append(startRequests, req.Msg)
-			return connect.NewResponse(&agentcomposev2.StartSchedulerRunResponse{Run: &agentcomposev2.SchedulerRun{
-				RunId:     "scheduler-run-detached",
-				ProjectId: req.Msg.GetProject().GetProjectId(),
-				AgentName: req.Msg.GetAgentName(),
-				Status:    agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_RUNNING,
-			}}), nil
+		invokeScheduler: func(_ context.Context, req *connect.Request[agentcomposev2.InvokeSchedulerRequest]) (*connect.Response[agentcomposev2.InvokeSchedulerResponse], error) {
+			invokeRequests = append(invokeRequests, req.Msg)
+			return connect.NewResponse(&agentcomposev2.InvokeSchedulerResponse{ResultJson: `{"main":true}`, DurationMs: 25}), nil
 		},
 	}})
 	defer server.Close()
 
-	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "run", "--host", server.URL, "--file", composePath, "--payload", ` { "main" : true } `, "reviewer")
-	if exitCode != 0 || stderr != "" || !strings.Contains(stdout, "Trigger: main") || !strings.Contains(stdout, `Result: {"main":true}`) {
-		t.Fatalf("scheduler run code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
+	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "invoke", "--host", server.URL, "--file", composePath, "--payload", ` { "main" : true } `, "reviewer")
+	if exitCode != 0 || stderr != "" || !strings.Contains(stdout, "Scheduler: reviewer") || !strings.Contains(stdout, `Result: {"main":true}`) {
+		t.Fatalf("scheduler invoke code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
 	}
-	if len(runRequests) != 1 || runRequests[0].GetTriggerId() != "" || runRequests[0].GetPayloadJson() != `{"main":true}` {
-		t.Fatalf("RunScheduler requests = %#v", runRequests)
+	if len(invokeRequests) != 1 || invokeRequests[0].GetAgentName() != "reviewer" || invokeRequests[0].GetPayloadJson() != `{"main":true}` {
+		t.Fatalf("InvokeScheduler requests = %#v", invokeRequests)
 	}
 
-	detachedOut, detachedErr, _, detachedCode := executeCLICommand("scheduler", "run", "--host", server.URL, "--file", composePath, "--detach", "reviewer")
-	if detachedCode != 0 || detachedErr != "" || !strings.Contains(detachedOut, "Run: scheduler-run-detached") || !strings.Contains(detachedOut, "Inspect: ") || !strings.Contains(detachedOut, "inspect run scheduler-run-detached") || !strings.Contains(detachedOut, "scheduler stop scheduler-run-detached") {
-		t.Fatalf("scheduler run --detach code/stdout/stderr = %d / %q / %q", detachedCode, detachedOut, detachedErr)
+	legacyOut, legacyErr, _, legacyCode := executeCLICommand("scheduler", "run", "--host", server.URL, "--file", composePath, "reviewer")
+	if legacyCode != exitCodeGeneral || legacyOut != "" || !strings.Contains(legacyErr, "unknown command") || len(invokeRequests) != 1 {
+		t.Fatalf("removed scheduler run code/stdout/stderr/requests = %d / %q / %q / %d", legacyCode, legacyOut, legacyErr, len(invokeRequests))
 	}
-	if len(startRequests) != 1 || startRequests[0].GetTriggerId() != "" {
-		t.Fatalf("StartSchedulerRun requests = %#v", startRequests)
+	detachOut, detachErr, _, detachCode := executeCLICommand("scheduler", "invoke", "--host", server.URL, "--file", composePath, "--detach", "reviewer")
+	if detachCode != exitCodeUsage || detachOut != "" || !strings.Contains(detachErr, "unknown flag: --detach") || len(invokeRequests) != 1 {
+		t.Fatalf("scheduler invoke removed --detach code/stdout/stderr/requests = %d / %q / %q / %d", detachCode, detachOut, detachErr, len(invokeRequests))
+	}
+}
+
+func TestIntegrationCLISchedulerLogsDefaultsToAllTriggerRunsAndAppliesGlobalTail(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-scheduler-logs
+agents:
+  reviewer:
+    scheduler:
+      script: function main() {}
+`)
+	var requests []*agentcomposev2.ListProjectSchedulerEventsRequest
+	events := []*agentcomposev2.SchedulerEvent{
+		{Id: "event-new", RunId: "run-new", AgentName: "reviewer", TriggerId: "trigger-new", Type: "loader.log", Level: "info", Message: "newest", CreatedAt: timestamppb.New(time.Unix(200, 0).UTC())},
+		{Id: "event-old", RunId: "run-old", AgentName: "reviewer", TriggerId: "trigger-old", Type: "loader.log", Level: "info", Message: "oldest", CreatedAt: timestamppb.New(time.Unix(100, 0).UTC())},
+	}
+	server := newComposeServiceStubServer(t, composeServiceStubs{project: projectServiceStub{
+		listProjectSchedulerEvents: func(_ context.Context, req *connect.Request[agentcomposev2.ListProjectSchedulerEventsRequest]) (*connect.Response[agentcomposev2.ListProjectSchedulerEventsResponse], error) {
+			requests = append(requests, req.Msg)
+			limit := min(int(req.Msg.GetLimit()), len(events))
+			return connect.NewResponse(&agentcomposev2.ListProjectSchedulerEventsResponse{Events: events[:limit]}), nil
+		},
+	}})
+	defer server.Close()
+	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "logs", "--host", server.URL, "--file", composePath)
+	if exitCode != 0 || stderr != "" || !strings.Contains(stdout, "oldest") || !strings.Contains(stdout, "newest") || strings.Index(stdout, "oldest") > strings.Index(stdout, "newest") {
+		t.Fatalf("scheduler logs code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
+	}
+	if len(requests) != 1 || requests[0].GetAgentName() != "" || requests[0].GetRunId() != "" || requests[0].GetLimit() != 500 {
+		t.Fatalf("default logs requests = %#v", requests)
+	}
+	requests = nil
+	tailOut, tailErr, _, tailCode := executeCLICommand("scheduler", "logs", "--host", server.URL, "--file", composePath, "--tail", "1")
+	if tailCode != 0 || tailErr != "" || !strings.Contains(tailOut, "newest") || strings.Contains(tailOut, "oldest") || len(requests) != 1 || requests[0].GetLimit() != 1 {
+		t.Fatalf("scheduler logs --tail 1 code/stdout/stderr/requests = %d / %q / %q / %#v", tailCode, tailOut, tailErr, requests)
 	}
 }
 
@@ -95,14 +116,14 @@ agents:
 			args = append(args, test.args...)
 			args = append(args, "reviewer", "nightly")
 			stdout, stderr, _, exitCode := executeCLICommand(args...)
-			if exitCode != exitCodeUsage || stdout != "" || !strings.Contains(stderr, test.flag+" is unsupported for complete scheduler runs") {
+			if exitCode != exitCodeUsage || stdout != "" || !strings.Contains(stderr, "unknown flag: "+test.flag) {
 				t.Fatalf("unsupported flag code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
 			}
 		})
 	}
-	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "run", "--file", composePath, "--prompt", "override", "reviewer")
-	if exitCode != exitCodeUsage || stdout != "" || !strings.Contains(stderr, "scheduler run --prompt is unsupported for complete scheduler runs") {
-		t.Fatalf("scheduler run unsupported flag code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
+	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "invoke", "--file", composePath, "--prompt", "override", "reviewer")
+	if exitCode != exitCodeUsage || stdout != "" || !strings.Contains(stderr, "unknown flag: --prompt") {
+		t.Fatalf("scheduler invoke unsupported flag code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
 	}
 }
 
@@ -123,12 +144,12 @@ agents:
 			requests = append(requests, req.Msg)
 			if req.Msg.GetCursor() == "" {
 				return connect.NewResponse(&agentcomposev2.ListSchedulerRunsResponse{
-					Runs:       []*agentcomposev2.SchedulerRun{{RunId: newRunID, AgentName: "reviewer", Status: agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SUCCEEDED}},
+					Runs:       []*agentcomposev2.SchedulerRun{{RunId: newRunID, AgentName: "reviewer", TriggerId: "trigger-1", Status: agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SUCCEEDED}},
 					NextCursor: "page-2",
 				}), nil
 			}
 			return connect.NewResponse(&agentcomposev2.ListSchedulerRunsResponse{
-				Runs: []*agentcomposev2.SchedulerRun{{RunId: oldRunID, AgentName: "reviewer", Status: agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SKIPPED}},
+				Runs: []*agentcomposev2.SchedulerRun{{RunId: oldRunID, AgentName: "reviewer", TriggerId: "trigger-1", Status: agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SKIPPED}},
 			}), nil
 		},
 	}})
@@ -149,6 +170,10 @@ agents:
 	}
 	if len(requests) != 2 || requests[0].GetCursor() != "" || requests[1].GetCursor() != "page-2" {
 		t.Fatalf("filtered ListSchedulerRuns requests = %#v", requests)
+	}
+	_, pendingErr, _, pendingCode := executeCLICommand("scheduler", "runs", "--host", server.URL, "--file", composePath, "--status", "pending")
+	if pendingCode != exitCodeUsage || !strings.Contains(pendingErr, "running, succeeded, failed, canceled, or skipped") {
+		t.Fatalf("scheduler runs --status pending code/stderr = %d / %q", pendingCode, pendingErr)
 	}
 }
 

@@ -406,27 +406,20 @@ func TestNormalizeComposeSchedulerTriggerOptionsPayload(t *testing.T) {
 	}
 }
 
-func TestLegacySchedulerRunIDValidation(t *testing.T) {
-	tests := []struct {
-		name  string
-		runID string
-		want  bool
-	}{
-		{name: "canonical UUID", runID: "550e8400-e29b-41d4-a716-446655440000", want: true},
-		{name: "uppercase UUID", runID: "550E8400-E29B-41D4-A716-446655440000"},
-		{name: "surrounding whitespace", runID: " 550e8400-e29b-41d4-a716-446655440000 ", want: true},
-		{name: "UUID without hyphens", runID: "550e8400e29b41d4a716446655440000"},
-		{name: "braced UUID", runID: "{550e8400-e29b-41d4-a716-446655440000}"},
-		{name: "SHA-256 resource ID", runID: identity.NewRandomID(identity.ResourceRun)},
-		{name: "invalid UUID", runID: "550e8400-e29b-41d4-a716-invalid"},
-		{name: "empty", runID: ""},
+func TestDeprecatedSchedulerAgentFlagWarningUsesStderr(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("agent", "", "")
+	if err := cmd.Flags().Set("agent", "reviewer"); err != nil {
+		t.Fatalf("Set agent flag returned error: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isLegacySchedulerRunID(tt.runID); got != tt.want {
-				t.Fatalf("isLegacySchedulerRunID(%q) = %t, want %t", tt.runID, got, tt.want)
-			}
-		})
+	var stdout, stderr strings.Builder
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	if err := writeDeprecatedSchedulerAgentFlagWarning(cmd, "use --scheduler instead"); err != nil {
+		t.Fatalf("writeDeprecatedSchedulerAgentFlagWarning returned error: %v", err)
+	}
+	if stdout.String() != "" || !strings.Contains(stderr.String(), "--agent is deprecated") || !strings.Contains(stderr.String(), "use --scheduler instead") {
+		t.Fatalf("stdout/stderr = %q / %q", stdout.String(), stderr.String())
 	}
 }
 
@@ -446,52 +439,36 @@ agents:
 	legacyRunID := "550e8400-e29b-41d4-a716-446655440000"
 	errorRunID := identity.NewRandomID(identity.ResourceRun)
 	sandboxID := identity.NewRandomID(identity.ResourceSandbox)
-	getRunCalls := 0
+	getSchedulerRunCalls := 0
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		project: projectServiceStub{
 			getProject: func(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
 				return connect.NewResponse(&agentcomposev2.GetProjectResponse{Project: testCLIProject(req.Msg.GetProject().GetProjectId(), "cli-scheduler-observability", composePath)}), nil
 			},
-			listSchedulerEvents: func(context.Context, *connect.Request[agentcomposev2.ListSchedulerEventsRequest]) (*connect.Response[agentcomposev2.ListSchedulerEventsResponse], error) {
-				return connect.NewResponse(&agentcomposev2.ListSchedulerEventsResponse{}), nil
+			listSchedulerRuns: func(context.Context, *connect.Request[agentcomposev2.ListSchedulerRunsRequest]) (*connect.Response[agentcomposev2.ListSchedulerRunsResponse], error) {
+				return connect.NewResponse(&agentcomposev2.ListSchedulerRunsResponse{Runs: []*agentcomposev2.SchedulerRun{{
+					RunId: runID, AgentName: "reviewer", SchedulerId: "scheduler-reviewer", TriggerId: "nightly",
+					Status: agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SUCCEEDED, SandboxIds: []string{sandboxID},
+					StartedAt: timestamppb.New(time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC)), CompletedAt: timestamppb.New(time.Date(2026, 7, 15, 1, 0, 2, 0, time.UTC)), DurationMs: 2000,
+				}}}), nil
 			},
-		},
-		resource: resourceServiceStub{
-			resolveID: func(_ context.Context, req *connect.Request[agentcomposev2.ResolveResourceIDRequest]) (*connect.Response[agentcomposev2.ResolveResourceIDResponse], error) {
-				if req.Msg.GetId() != runID[:12] {
-					return connect.NewResponse(&agentcomposev2.ResolveResourceIDResponse{}), nil
-				}
-				return connect.NewResponse(&agentcomposev2.ResolveResourceIDResponse{Targets: []*agentcomposev2.ResourceTarget{{Kind: agentcomposev2.ResourceKind_RESOURCE_KIND_RUN, Id: runID}}}), nil
-			},
-		},
-		run: runServiceStub{
-			getRun: func(_ context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
-				getRunCalls++
+			getSchedulerRun: func(_ context.Context, req *connect.Request[agentcomposev2.GetSchedulerRunRequest]) (*connect.Response[agentcomposev2.GetSchedulerRunResponse], error) {
+				getSchedulerRunCalls++
 				if req.Msg.GetRunId() == errorRunID {
 					return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("run store unavailable"))
 				}
-				if req.Msg.GetRunId() != runID && req.Msg.GetRunId() != legacyRunID {
+				if req.Msg.GetRunId() != runID[:12] && req.Msg.GetRunId() != legacyRunID {
 					return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("run not found"))
 				}
-				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: &agentcomposev2.RunDetail{Summary: &agentcomposev2.RunSummary{
-					RunId: req.Msg.GetRunId(), AgentName: "reviewer", Source: agentcomposev2.RunSource_RUN_SOURCE_SCHEDULER, SchedulerId: "scheduler-reviewer",
-					TriggerId: "nightly", Status: agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, SandboxId: sandboxID,
-					StartedAt: "2026-07-15T01:00:00Z", CompletedAt: "2026-07-15T01:00:02Z", DurationMs: 2000,
-				}}}), nil
+				return connect.NewResponse(&agentcomposev2.GetSchedulerRunResponse{Run: &agentcomposev2.SchedulerRun{
+					RunId: firstNonEmptyString(map[bool]string{true: legacyRunID}[req.Msg.GetRunId() == legacyRunID], runID), AgentName: "reviewer", SchedulerId: "scheduler-reviewer", TriggerId: "nightly",
+					Status: agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SUCCEEDED, SandboxIds: []string{sandboxID},
+				}}), nil
 			},
-			listRuns: func(context.Context, *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
-				return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: []*agentcomposev2.RunSummary{{
-					RunId: runID, TriggerId: "nightly", Status: agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, SandboxId: sandboxID,
-					StartedAt: "2026-07-15T01:00:00Z", CompletedAt: "2026-07-15T01:00:02Z", DurationMs: 2000,
-				}}}), nil
-			},
-			listRunEvents: func(_ context.Context, req *connect.Request[agentcomposev2.ListRunEventsRequest]) (*connect.Response[agentcomposev2.ListRunEventsResponse], error) {
-				if req.Msg.GetLimit() != 500 {
-					t.Fatalf("ListRunEvents limit = %d, want 500", req.Msg.GetLimit())
-				}
-				return connect.NewResponse(&agentcomposev2.ListRunEventsResponse{Events: []*agentcomposev2.RunEvent{
-					{Id: "event-2", RunId: runID, Kind: agentcomposev2.RunEventKind_RUN_EVENT_KIND_AGENT_ACTIVITY, Text: "done", CreatedAt: timestamppb.New(time.Date(2026, 7, 15, 1, 0, 2, 0, time.UTC))},
-					{Id: "event-1", RunId: runID, Kind: agentcomposev2.RunEventKind_RUN_EVENT_KIND_STATUS, Text: "started", CreatedAt: timestamppb.New(time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC))},
+			listProjectSchedulerEvents: func(context.Context, *connect.Request[agentcomposev2.ListProjectSchedulerEventsRequest]) (*connect.Response[agentcomposev2.ListProjectSchedulerEventsResponse], error) {
+				return connect.NewResponse(&agentcomposev2.ListProjectSchedulerEventsResponse{Events: []*agentcomposev2.SchedulerEvent{
+					{Id: "event-2", RunId: runID, AgentName: "reviewer", TriggerId: "nightly", Type: "loader.agent.activity", Level: "info", Message: "done", CreatedAt: timestamppb.New(time.Date(2026, 7, 15, 1, 0, 2, 0, time.UTC))},
+					{Id: "event-1", RunId: runID, AgentName: "reviewer", TriggerId: "nightly", Type: "loader.status", Level: "info", Message: "started", CreatedAt: timestamppb.New(time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC))},
 				}}), nil
 			},
 		},
@@ -527,8 +504,8 @@ agents:
 	if jsonCode != 0 || jsonErr != "" || !strings.Contains(jsonOut, `"resource": "scheduler"`) || !strings.Contains(jsonOut, `"agent_name": "reviewer"`) {
 		t.Fatalf("scheduler inspect scheduler code/stdout/stderr = %d / %q / %q", jsonCode, jsonOut, jsonErr)
 	}
-	if getRunCalls != 3 {
-		t.Fatalf("GetRun calls = %d, want 3; scheduler name inspection must not probe runs", getRunCalls)
+	if getSchedulerRunCalls != 3 {
+		t.Fatalf("GetSchedulerRun calls = %d, want 3; scheduler name inspection must not probe runs", getSchedulerRunCalls)
 	}
 
 	_, stderr, _, exitCode = executeCLICommand("scheduler", "inspect", errorRunID, "--host", server.URL, "--file", composePath)
@@ -547,8 +524,104 @@ agents:
 	}
 
 	_, stderr, _, exitCode = executeCLICommand("scheduler", "logs", runID, "--agent", "reviewer", "--host", server.URL, "--file", composePath)
-	if exitCode != exitCodeUsage || !strings.Contains(stderr, "selecting the latest run") {
+	if exitCode != exitCodeUsage || !strings.Contains(stderr, "cannot be combined") {
 		t.Fatalf("scheduler logs explicit run filters code/stderr = %d / %q", exitCode, stderr)
+	}
+}
+
+func TestIntegrationCLISchedulerQueriesHistoricalTriggerIDs(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-scheduler-historical-triggers
+agents:
+  reviewer:
+    provider: codex
+    scheduler:
+      triggers:
+        - name: current-shared
+          cron: "0 2 * * *"
+          prompt: review nightly
+  builder:
+    provider: codex
+    scheduler:
+      triggers:
+        - name: current-shared
+          cron: "0 3 * * *"
+          prompt: build nightly
+`)
+	const historicalTriggerID = "removed-reviewer-trigger"
+	historicalRunID := identity.NewRandomID(identity.ResourceRun)
+	legacyTriggerID := identity.NewRandomID(identity.ResourceTrigger)
+	legacyRunID := identity.NewRandomID(identity.ResourceRun)
+	probeRequests := make([]*agentcomposev2.ListSchedulerRunsRequest, 0)
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		project: projectServiceStub{
+			listSchedulerRuns: func(_ context.Context, req *connect.Request[agentcomposev2.ListSchedulerRunsRequest]) (*connect.Response[agentcomposev2.ListSchedulerRunsResponse], error) {
+				probeRequests = append(probeRequests, req.Msg)
+				var runID string
+				runAgent := req.Msg.GetAgentName()
+				switch {
+				case req.Msg.GetTriggerId() == historicalTriggerID && (req.Msg.GetAgentName() == "" || req.Msg.GetAgentName() == "reviewer"):
+					runID = historicalRunID
+					runAgent = "reviewer"
+				case req.Msg.GetTriggerId() == "removed-shared-trigger" && (req.Msg.GetAgentName() == "reviewer" || req.Msg.GetAgentName() == "builder"):
+					runID = identity.NewID(identity.ResourceRun, req.Msg.GetAgentName(), req.Msg.GetTriggerId())
+				case req.Msg.GetTriggerId() == legacyTriggerID && req.Msg.GetAgentName() == "reviewer":
+					runID = legacyRunID
+				default:
+					return connect.NewResponse(&agentcomposev2.ListSchedulerRunsResponse{}), nil
+				}
+				return connect.NewResponse(&agentcomposev2.ListSchedulerRunsResponse{Runs: []*agentcomposev2.SchedulerRun{{
+					RunId: runID, AgentName: runAgent, TriggerId: req.Msg.GetTriggerId(),
+					Status: agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SUCCEEDED,
+				}}}), nil
+			},
+			listProjectSchedulerEvents: func(_ context.Context, req *connect.Request[agentcomposev2.ListProjectSchedulerEventsRequest]) (*connect.Response[agentcomposev2.ListProjectSchedulerEventsResponse], error) {
+				if req.Msg.GetAgentName() != "" || req.Msg.GetTriggerId() != historicalTriggerID {
+					t.Fatalf("ListProjectSchedulerEvents filter = agent %q trigger %q", req.Msg.GetAgentName(), req.Msg.GetTriggerId())
+				}
+				return connect.NewResponse(&agentcomposev2.ListProjectSchedulerEventsResponse{Events: []*agentcomposev2.SchedulerEvent{{
+					Id: "historical-event", RunId: historicalRunID, AgentName: "reviewer", TriggerId: historicalTriggerID, Message: "historical log",
+				}}}), nil
+			},
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "runs", "--trigger", historicalTriggerID, "--json", "--host", server.URL, "--file", composePath)
+	if exitCode != 0 || stderr != "" || !strings.Contains(stdout, historicalRunID) || !strings.Contains(stdout, `"trigger_id": "`+historicalTriggerID+`"`) {
+		t.Fatalf("historical scheduler runs code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
+	}
+
+	stdout, stderr, _, exitCode = executeCLICommand("scheduler", "logs", "--trigger", historicalTriggerID, "--json", "--host", server.URL, "--file", composePath)
+	if exitCode != 0 || stderr != "" || !strings.Contains(stdout, `"id": "historical-event"`) || !strings.Contains(stdout, `"message": "historical log"`) {
+		t.Fatalf("historical scheduler logs code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
+	}
+
+	stdout, stderr, _, exitCode = executeCLICommand("scheduler", "runs", "reviewer", "--trigger", identity.Prefix+legacyTriggerID, "--json", "--host", server.URL, "--file", composePath)
+	if exitCode != 0 || stderr != "" || !strings.Contains(stdout, legacyRunID) {
+		t.Fatalf("legacy historical trigger ID code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
+	}
+	if len(probeRequests) == 0 || probeRequests[len(probeRequests)-2].GetTriggerId() != legacyTriggerID {
+		t.Fatalf("legacy historical trigger was not normalized in requests: %#v", probeRequests)
+	}
+
+	_, stderr, _, exitCode = executeCLICommand("scheduler", "runs", "reviewer", "--trigger", "typo-with-no-history", "--host", server.URL, "--file", composePath)
+	if exitCode != exitCodeUsage || !strings.Contains(stderr, `scheduler trigger "typo-with-no-history" not found`) {
+		t.Fatalf("missing historical trigger code/stderr = %d / %q", exitCode, stderr)
+	}
+
+	_, stderr, _, exitCode = executeCLICommand("scheduler", "runs", "--trigger", "removed-shared-trigger", "--host", server.URL, "--file", composePath)
+	if exitCode != exitCodeUsage || !strings.Contains(stderr, "ambiguous") || !strings.Contains(stderr, "specify a scheduler") {
+		t.Fatalf("ambiguous historical trigger code/stderr = %d / %q", exitCode, stderr)
+	}
+
+	requestsBeforeCurrentAmbiguity := len(probeRequests)
+	_, stderr, _, exitCode = executeCLICommand("scheduler", "logs", "--trigger", "current-shared", "--host", server.URL, "--file", composePath)
+	if exitCode != exitCodeUsage || !strings.Contains(stderr, "ambiguous") || !strings.Contains(stderr, "--scheduler") {
+		t.Fatalf("ambiguous current trigger code/stderr = %d / %q", exitCode, stderr)
+	}
+	if len(probeRequests) != requestsBeforeCurrentAmbiguity {
+		t.Fatalf("current trigger ambiguity performed historical probes: before=%d after=%d", requestsBeforeCurrentAmbiguity, len(probeRequests))
 	}
 }
 
@@ -647,12 +720,28 @@ agents:
 	})
 	defer server.Close()
 
-	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "inspect", "--host", server.URL, "--file", composePath, "reviewer", "nightly")
+	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "inspect", "--host", server.URL, "--file", composePath, "--scheduler", "reviewer", "nightly")
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("scheduler inspect code/stderr = %d / %q", exitCode, stderr)
 	}
 	if !strings.Contains(stdout, "name: nightly") || !strings.Contains(stdout, "cron: 0 2 * * *") || !strings.Contains(stdout, "prompt: review nightly") {
 		t.Fatalf("scheduler inspect stdout = %q", stdout)
+	}
+	projectID, err := domain.StableProjectID("cli-scheduler-inspect", composePath)
+	if err != nil {
+		t.Fatalf("StableProjectID returned error: %v", err)
+	}
+	triggerID, err := domain.StableManagedTriggerID(projectID, "reviewer", "", "nightly", 0)
+	if err != nil {
+		t.Fatalf("StableManagedTriggerID returned error: %v", err)
+	}
+	shortOut, shortErr, _, shortCode := executeCLICommand("scheduler", "inspect", "--host", server.URL, "--file", composePath, "--scheduler", "reviewer", shortOpaqueID(triggerID))
+	if shortCode != 0 || shortErr != "" || !strings.Contains(shortOut, "name: nightly") {
+		t.Fatalf("scheduler inspect short trigger code/stdout/stderr = %d / %q / %q", shortCode, shortOut, shortErr)
+	}
+	_, legacyErr, _, legacyCode := executeCLICommand("scheduler", "inspect", "--host", server.URL, "--file", composePath, "reviewer", "nightly")
+	if legacyCode != exitCodeUsage || !strings.Contains(legacyErr, "use --scheduler <scheduler-ref>") {
+		t.Fatalf("legacy scheduler inspect code/stderr = %d / %q", legacyCode, legacyErr)
 	}
 }
 
@@ -681,7 +770,7 @@ agents:
 	})
 	defer server.Close()
 
-	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "inspect", "--host", server.URL, "--file", composePath, "reviewer", "loader-every-minute")
+	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "inspect", "--host", server.URL, "--file", composePath, "--scheduler", "reviewer", "loader-every-minute")
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("scheduler inspect loader code/stderr = %d / %q", exitCode, stderr)
 	}

@@ -12,6 +12,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/runs"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
@@ -45,6 +46,14 @@ type ProjectLoaderRuntime interface {
 	SetLoaderTriggerEnabled(context.Context, string, string, bool) (domain.Loader, error)
 }
 
+type ProjectSchedulerInvocationRuntime interface {
+	InvokeScheduler(context.Context, string, string) (loaders.InvocationResult, error)
+}
+
+type ProjectSchedulerPruneRuntime interface {
+	PruneSchedulerRuns(context.Context, loaders.SchedulerRunPruneRequest) (loaders.SchedulerRunPruneResult, error)
+}
+
 type ProjectLoaderEventCursorStore interface {
 	ListLoaderEventsBefore(context.Context, string, time.Time, string, int) ([]domain.LoaderEvent, error)
 }
@@ -58,15 +67,19 @@ type ProjectSchedulerPageStore interface {
 
 type ProjectHandler struct {
 	agentcomposev2connect.UnimplementedProjectServiceHandler
-	delegate      ProjectDelegate
-	store         ProjectStore
-	loaderRuntime ProjectLoaderRuntime
-	schedulerRuns ProjectSchedulerRunRuntime
+	delegate       ProjectDelegate
+	store          ProjectStore
+	loaderRuntime  ProjectLoaderRuntime
+	schedulerRuns  ProjectSchedulerRunRuntime
+	invocations    ProjectSchedulerInvocationRuntime
+	schedulerPrune ProjectSchedulerPruneRuntime
 }
 
 func NewProjectHandler(delegate ProjectDelegate, store ProjectStore, loaderRuntime ProjectLoaderRuntime) *ProjectHandler {
 	schedulerRuns, _ := loaderRuntime.(ProjectSchedulerRunRuntime)
-	return &ProjectHandler{delegate: delegate, store: store, loaderRuntime: loaderRuntime, schedulerRuns: schedulerRuns}
+	invocations, _ := loaderRuntime.(ProjectSchedulerInvocationRuntime)
+	schedulerPrune, _ := loaderRuntime.(ProjectSchedulerPruneRuntime)
+	return &ProjectHandler{delegate: delegate, store: store, loaderRuntime: loaderRuntime, schedulerRuns: schedulerRuns, invocations: invocations, schedulerPrune: schedulerPrune}
 }
 
 func (h *ProjectHandler) ValidateProject(ctx context.Context, req *connect.Request[agentcomposev2.ValidateProjectRequest]) (*connect.Response[agentcomposev2.ValidateProjectResponse], error) {
@@ -247,7 +260,7 @@ func (h *ProjectHandler) ListSchedulerEvents(ctx context.Context, req *connect.R
 	}
 	response := &agentcomposev2.ListSchedulerEventsResponse{}
 	for _, event := range events[:end] {
-		response.Events = append(response.Events, &agentcomposev2.SchedulerEvent{Id: event.ID, Type: event.Type, Level: event.Level, Message: event.Message, PayloadJson: event.PayloadJSON, RunId: event.RunID, TriggerId: event.TriggerID, CreatedAt: projectTimestamp(event.CreatedAt)})
+		response.Events = append(response.Events, schedulerEventToProto(event, scheduler))
 	}
 	if end < len(events) {
 		last := events[end-1]

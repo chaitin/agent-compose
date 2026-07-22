@@ -24,7 +24,20 @@ type RunHost interface {
 	CleanupCommandSessions(ctx context.Context)
 }
 
-type RunHostFactory func(loader domain.Loader, run *domain.LoaderRunSummary, triggerEvent TriggerEventMetadata) RunHost
+type ExecutionKind string
+
+const (
+	ExecutionKindTrigger    ExecutionKind = "trigger"
+	ExecutionKindInvocation ExecutionKind = "invocation"
+)
+
+type RuntimeExecutionContext struct {
+	ID        string
+	TriggerID string
+	Kind      ExecutionKind
+}
+
+type RunHostFactory func(loader domain.Loader, execution RuntimeExecutionContext, triggerEvent TriggerEventMetadata) RunHost
 
 type RunOptions struct {
 	RetryWhenBusy  bool
@@ -145,7 +158,11 @@ func (e *RunExecutor) Execute(ctx context.Context, prepared PreparedRun) (domain
 	}
 	defer e.leaveRun(prepared.Loader.Summary.ID)
 	run := prepared.Run
-	host := e.deps.HostFactory(prepared.Loader, &run, ParseTriggerEventMetadata(prepared.PayloadJSON))
+	host := e.deps.HostFactory(prepared.Loader, RuntimeExecutionContext{
+		ID:        run.ID,
+		TriggerID: run.TriggerID,
+		Kind:      ExecutionKindTrigger,
+	}, ParseTriggerEventMetadata(prepared.PayloadJSON))
 	execution, execErr := e.deps.Engine.Execute(ctx, LoaderExecutionRequest{
 		Runtime:     prepared.Loader.Summary.Runtime,
 		Script:      prepared.Loader.Script,

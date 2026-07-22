@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -24,7 +25,40 @@ type ProjectSchedulerRunStore interface {
 	ListLoaderRunsPage(context.Context, loaders.LoaderRunPageFilter) ([]domain.LoaderRunSummary, error)
 }
 
+type ProjectSchedulerRunSandboxStore interface {
+	ListLoaderRunSandboxIDs(context.Context, []loaders.LoaderRunKey) (map[loaders.LoaderRunKey][]string, error)
+}
+
+func (h *ProjectHandler) InvokeScheduler(ctx context.Context, req *connect.Request[agentcomposev2.InvokeSchedulerRequest]) (*connect.Response[agentcomposev2.InvokeSchedulerResponse], error) {
+	_, scheduler, err := h.resolveProjectScheduler(ctx, req.Msg.GetProject(), req.Msg.GetAgentName())
+	if err != nil {
+		return nil, ConnectErrorForDomain(err)
+	}
+	var spec agentcomposev2.SchedulerSpec
+	if err := json.Unmarshal([]byte(scheduler.SpecJSON), &spec); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("decode scheduler spec: %w", err))
+	}
+	if strings.TrimSpace(spec.GetScript()) == "" {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("scheduler %q does not define a script; use scheduler trigger to execute one of its triggers", scheduler.AgentName))
+	}
+	payloadJSON, err := normalizeSchedulerRunPayload(req.Msg.GetPayloadJson())
+	if err != nil {
+		return nil, ConnectErrorForDomain(err)
+	}
+	if h.invocations == nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("scheduler invocation controller is required"))
+	}
+	result, err := h.invocations.InvokeScheduler(ctx, scheduler.ManagedLoaderID, payloadJSON)
+	if err != nil {
+		return nil, ConnectErrorForDomain(err)
+	}
+	return connect.NewResponse(&agentcomposev2.InvokeSchedulerResponse{ResultJson: result.ResultJSON, DurationMs: result.DurationMs, Warnings: result.Warnings}), nil
+}
+
 func (h *ProjectHandler) RunScheduler(ctx context.Context, req *connect.Request[agentcomposev2.RunSchedulerRequest]) (*connect.Response[agentcomposev2.RunSchedulerResponse], error) {
+	if strings.TrimSpace(req.Msg.GetTriggerId()) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("scheduler trigger id is required"))
+	}
 	_, scheduler, err := h.resolveProjectScheduler(ctx, req.Msg.GetProject(), req.Msg.GetAgentName())
 	if err != nil {
 		return nil, ConnectErrorForDomain(err)
@@ -49,6 +83,9 @@ func (h *ProjectHandler) RunScheduler(ctx context.Context, req *connect.Request[
 }
 
 func (h *ProjectHandler) StartSchedulerRun(ctx context.Context, req *connect.Request[agentcomposev2.StartSchedulerRunRequest]) (*connect.Response[agentcomposev2.StartSchedulerRunResponse], error) {
+	if strings.TrimSpace(req.Msg.GetTriggerId()) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("scheduler trigger id is required"))
+	}
 	_, scheduler, err := h.resolveProjectScheduler(ctx, req.Msg.GetProject(), req.Msg.GetAgentName())
 	if err != nil {
 		return nil, ConnectErrorForDomain(err)
@@ -73,15 +110,7 @@ func (h *ProjectHandler) StartSchedulerRun(ctx context.Context, req *connect.Req
 }
 
 func (h *ProjectHandler) GetSchedulerRun(ctx context.Context, req *connect.Request[agentcomposev2.GetSchedulerRunRequest]) (*connect.Response[agentcomposev2.GetSchedulerRunResponse], error) {
-	_, scheduler, _, err := h.resolveProjectSchedulerRun(ctx, req.Msg.GetProject(), req.Msg.GetRunId())
-	if err != nil {
-		return nil, ConnectErrorForDomain(err)
-	}
-	runtime, err := h.schedulerRunRuntime()
-	if err != nil {
-		return nil, err
-	}
-	run, err := runtime.GetSchedulerRun(ctx, scheduler.ManagedLoaderID, req.Msg.GetRunId())
+	_, scheduler, run, err := h.resolveProjectSchedulerRun(ctx, req.Msg.GetProject(), req.Msg.GetRunId())
 	if err != nil {
 		return nil, ConnectErrorForDomain(err)
 	}
@@ -97,7 +126,12 @@ func (h *ProjectHandler) ListSchedulerRuns(ctx context.Context, req *connect.Req
 	if err != nil {
 		return nil, ConnectErrorForDomain(err)
 	}
-	cursor, err := decodeSchedulerRunCursor(req.Msg.GetCursor(), project.ID, req.Msg.GetAgentName())
+	status, err := schedulerRunStatusFilter(req.Msg.GetStatus())
+	if err != nil {
+		return nil, ConnectErrorForDomain(err)
+	}
+	triggerID := strings.TrimSpace(req.Msg.GetTriggerId())
+	cursor, err := decodeSchedulerRunCursor(req.Msg.GetCursor(), project.ID, project.CurrentRevision, req.Msg.GetAgentName(), triggerID, status)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
@@ -117,6 +151,9 @@ func (h *ProjectHandler) ListSchedulerRuns(ctx context.Context, req *connect.Req
 	}
 	runs, err := store.ListLoaderRunsPage(ctx, loaders.LoaderRunPageFilter{
 		LoaderIDs:       loaderIDs,
+		RequireTrigger:  true,
+		TriggerID:       triggerID,
+		Status:          status,
 		BeforeStartedAt: cursor.StartedAt,
 		BeforeLoaderID:  cursor.LoaderID,
 		BeforeRunID:     cursor.RunID,
@@ -127,21 +164,34 @@ func (h *ProjectHandler) ListSchedulerRuns(ctx context.Context, req *connect.Req
 	}
 	end := min(limit, len(runs))
 	response := &agentcomposev2.ListSchedulerRunsResponse{Runs: make([]*agentcomposev2.SchedulerRun, 0, end)}
+	keys := make([]loaders.LoaderRunKey, 0, end)
+	for _, run := range runs[:end] {
+		keys = append(keys, loaders.LoaderRunKey{LoaderID: run.LoaderID, RunID: run.ID})
+	}
+	sandboxIDs := make(map[loaders.LoaderRunKey][]string)
+	if sandboxStore, ok := h.store.(ProjectSchedulerRunSandboxStore); ok {
+		sandboxIDs, err = sandboxStore.ListLoaderRunSandboxIDs(ctx, keys)
+		if err != nil {
+			return nil, ConnectErrorForDomain(err)
+		}
+	}
 	for _, run := range runs[:end] {
 		scheduler, ok := byLoaderID[run.LoaderID]
 		if !ok {
 			continue
 		}
-		response.Runs = append(response.Runs, schedulerRunToProto(run, scheduler))
+		item := schedulerRunToProto(run, scheduler)
+		item.SandboxIds = sandboxIDs[loaders.LoaderRunKey{LoaderID: run.LoaderID, RunID: run.ID}]
+		response.Runs = append(response.Runs, item)
 	}
 	if len(runs) > limit {
-		response.NextCursor = encodeSchedulerRunCursor(project.ID, req.Msg.GetAgentName(), runs[limit-1])
+		response.NextCursor = encodeSchedulerRunCursor(project.ID, project.CurrentRevision, req.Msg.GetAgentName(), triggerID, status, runs[limit-1])
 	}
 	return connect.NewResponse(response), nil
 }
 
 func (h *ProjectHandler) StopSchedulerRun(ctx context.Context, req *connect.Request[agentcomposev2.StopSchedulerRunRequest]) (*connect.Response[agentcomposev2.StopSchedulerRunResponse], error) {
-	_, scheduler, _, err := h.resolveProjectSchedulerRun(ctx, req.Msg.GetProject(), req.Msg.GetRunId())
+	_, scheduler, resolved, err := h.resolveProjectSchedulerRun(ctx, req.Msg.GetProject(), req.Msg.GetRunId())
 	if err != nil {
 		return nil, ConnectErrorForDomain(err)
 	}
@@ -149,11 +199,30 @@ func (h *ProjectHandler) StopSchedulerRun(ctx context.Context, req *connect.Requ
 	if err != nil {
 		return nil, err
 	}
-	run, requested, err := runtime.StopSchedulerRun(ctx, scheduler.ManagedLoaderID, req.Msg.GetRunId(), req.Msg.GetReason())
+	run, requested, err := runtime.StopSchedulerRun(ctx, scheduler.ManagedLoaderID, resolved.ID, req.Msg.GetReason())
 	if err != nil {
 		return nil, ConnectErrorForDomain(err)
 	}
 	return connect.NewResponse(&agentcomposev2.StopSchedulerRunResponse{Run: schedulerRunToProto(run, scheduler), StopRequested: requested}), nil
+}
+
+func schedulerRunStatusFilter(status agentcomposev2.SchedulerRunStatus) (string, error) {
+	switch status {
+	case agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_UNSPECIFIED:
+		return "", nil
+	case agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_RUNNING:
+		return domain.LoaderRunStatusRunning, nil
+	case agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SUCCEEDED:
+		return domain.LoaderRunStatusSucceeded, nil
+	case agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_FAILED:
+		return domain.LoaderRunStatusFailed, nil
+	case agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_CANCELED:
+		return domain.LoaderRunStatusCanceled, nil
+	case agentcomposev2.SchedulerRunStatus_SCHEDULER_RUN_STATUS_SKIPPED:
+		return domain.LoaderRunStatusSkipped, nil
+	default:
+		return "", domain.ClassifyError(domain.ErrInvalidArgument, "invalid scheduler run status", nil)
+	}
 }
 
 func (h *ProjectHandler) resolveProjectSchedulerRun(ctx context.Context, ref *agentcomposev2.ProjectRef, rawRunID string) (domain.ProjectRecord, domain.ProjectSchedulerRecord, domain.LoaderRunSummary, error) {
