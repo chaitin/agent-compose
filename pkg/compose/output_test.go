@@ -120,6 +120,31 @@ agents:
 	}
 }
 
+func TestPiAgentSurvivesCanonicalRoundTrip(t *testing.T) {
+	normalized := mustNormalizeCompose(t, `
+name: pi-provider
+agents:
+  reviewer:
+    provider: pi
+    model: openai/gpt-5.4
+`, nil)
+
+	yamlData, err := normalized.MarshalCanonicalYAML(false)
+	if err != nil {
+		t.Fatalf("MarshalCanonicalYAML returned error: %v", err)
+	}
+	jsonData, err := normalized.MarshalCanonicalJSON(false)
+	if err != nil {
+		t.Fatalf("MarshalCanonicalJSON returned error: %v", err)
+	}
+	if !bytes.Contains(yamlData, []byte("provider: pi")) || !bytes.Contains(yamlData, []byte("model: openai/gpt-5.4")) {
+		t.Fatalf("canonical YAML lost Pi provider contract:\n%s", yamlData)
+	}
+	if !bytes.Contains(jsonData, []byte(`"provider":"pi"`)) || !bytes.Contains(jsonData, []byte(`"model":"openai/gpt-5.4"`)) {
+		t.Fatalf("canonical JSON lost Pi provider contract: %s", jsonData)
+	}
+}
+
 func TestAgentEnablementUsesCanonicalBooleanOutput(t *testing.T) {
 	normalized := mustNormalizeCompose(t, `
 name: enablement

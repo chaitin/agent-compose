@@ -57,22 +57,22 @@ func validateInteractivePromptProvider(project *compose.NormalizedProjectSpec, a
 	}
 	if !attach {
 		switch provider {
-		case "codex", "claude", "opencode":
+		case "codex", "claude", "opencode", "pi":
 			return nil
 		default:
 			return commandExitError{
 				Code: exitCodeUnsupported,
-				Err:  fmt.Errorf("run -i --prompt is unsupported for provider %s; supported providers: codex, claude, opencode", provider),
+				Err:  fmt.Errorf("run -i --prompt is unsupported for provider %s; supported providers: codex, claude, opencode, pi", provider),
 			}
 		}
 	}
 	switch provider {
-	case "codex", "claude", "opencode":
+	case "codex", "claude", "opencode", "pi":
 		return nil
 	default:
 		return commandExitError{
 			Code: exitCodeUnsupported,
-			Err:  fmt.Errorf("run --prompt -it is unsupported for provider %s; supported providers: codex, claude, opencode", provider),
+			Err:  fmt.Errorf("run --prompt -it is unsupported for provider %s; supported providers: codex, claude, opencode, pi", provider),
 		}
 	}
 }
@@ -85,6 +85,8 @@ func normalizeInteractivePromptProvider(provider string) string {
 		return "claude"
 	case "open-code", "open_code":
 		return "opencode"
+	case "pi-agent", "pi_agent":
+		return "pi"
 	default:
 		return strings.ToLower(strings.TrimSpace(provider))
 	}

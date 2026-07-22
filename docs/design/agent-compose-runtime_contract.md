@@ -4,7 +4,7 @@ This document describes the call boundary between the Go host side
 `agent-compose` process and the JavaScript runtime
 `agent-compose-runtime` inside the sandbox. The current runtime is primarily
 used by `AgentService`: the host executes a unified entry command inside the
-sandbox, the JavaScript runtime adapts Codex, Claude, and Gemini, and structured
+sandbox, the JavaScript runtime adapts Codex, Claude, Gemini, OpenCode, and Pi, and structured
 results are returned to the host.
 
 Related code:
@@ -187,7 +187,7 @@ Command arguments:
 
 | Argument | Required | Description |
 | --- | ---: | --- |
-| `--provider` | yes | `codex`, `claude`, `gemini`, `opencode`, with a small set of aliases |
+| `--provider` | yes | `codex`, `claude`, `gemini`, `opencode`, `pi`, with a small set of aliases |
 | `--message-file` | yes | Prompt file path |
 | `--state-root` | no | agent-compose runtime state root; default `/srv/agent-compose/sandbox/state`. Guest discovers agent identity at `agents/system-prompts/system-prompt.txt` and MPI catalog from this root |
 | `--workspace` | no | Agent working directory; default `WORKSPACE` or `/workspace` |

@@ -7,7 +7,7 @@ image without copying every tool from the published
 
 The contract is capability-based. A sandbox image used only for direct command
 execution needs much less software than an image that runs Codex, Claude,
-Gemini, OpenCode, JupyterLab, and every supported notebook cell type.
+Gemini, OpenCode, Pi, JupyterLab, and every supported notebook cell type.
 
 Normative terms such as **MUST**, **SHOULD**, and **MAY** describe compatibility
 requirements in this document.
@@ -136,6 +136,7 @@ With default daemon configuration, the guest-visible contract is:
 | `/root/.agents` | Projected agent skills | Persisted/projected |
 | `/root/.claude` | Claude config and state | Persisted |
 | `/root/.opencode` | OpenCode state | Persisted |
+| `/root/.pi` | Pi configuration and state | Persisted |
 | `/root/.gemini` | Gemini state | Persisted |
 | `/root/.claude.json` | Claude root config | Persisted file |
 | `/root/.gitconfig` | Git config | Persisted file |
@@ -174,7 +175,7 @@ An image supporting these capabilities **MUST** provide:
 - the `prompt` and `exec` subcommands used by normal runs; and
 - the `stream` subcommand when interactive prompt attach is required.
 
-Prompt-mode `stream` sessions support the `codex`, `claude`, and `opencode` providers.
+Prompt-mode `stream` sessions support the `codex`, `claude`, `opencode`, and `pi` providers.
 Other providers are rejected before the guest runtime interaction is opened.
 
 The daemon passes explicit workspace, state, and home paths. It also injects:
@@ -209,6 +210,7 @@ guest Dockerfile unless a combination has been independently tested.
 | Claude | `@anthropic-ai/claude-agent-sdk` plus Claude Code; use `CLAUDE_CODE_EXECUTABLE`/`CLAUDE_CODE_PATH`, `/usr/bin/claude`, or the SDK-supported default |
 | Gemini | A `gemini` executable in `PATH` |
 | OpenCode | An `opencode` executable in `PATH` |
+| Pi | A `pi` executable in `PATH` |
 
 Provider credentials and endpoint variables are injected at execution time.
 They **MUST NOT** be embedded in the image.
@@ -344,7 +346,7 @@ RUN cd /tmp/agent-compose-runtime \
     && rm -rf /tmp/agent-compose-runtime /root/.npm
 
 RUN mkdir -p \
-      /root/.agents /root/.claude /root/.codex /root/.gemini /root/.opencode \
+      /root/.agents /root/.claude /root/.codex /root/.gemini /root/.opencode /root/.pi \
       /workspace /data/state /data/runtime /data/logs
 
 ENV HOME=/root

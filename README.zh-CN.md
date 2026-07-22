@@ -12,14 +12,14 @@
 
 ## agent-compose 是什么？
 
-如果你了解 Docker Compose，这里的心智模型很类似：你声明的不是容器，而是 **agent**。每个 agent 选择一个 provider CLI —— `codex`、`claude`（Claude Code）、`gemini` 或 `opencode` —— daemon 给它一个带 workspace 的隔离 sandbox，然后按 prompt、shell 命令、定时或事件来运行它。真实的 provider API key 留在 daemon 上，不会进入 guest。
+如果你了解 Docker Compose，这里的心智模型很类似：你声明的不是容器，而是 **agent**。每个 agent 选择一个 provider CLI —— `codex`、`claude`（Claude Code）、`gemini`、`opencode` 或 `pi` —— daemon 给它一个带 workspace 的隔离 sandbox，然后按 prompt、shell 命令、定时或事件来运行它。真实的 provider API key 留在 daemon 上，不会进入 guest。
 
 你用 Compose 风格的 CLI（`up`、`run`、`ps`、`logs`、`down`）管理整个生命周期，一切由一个声明式文件驱动。
 
 具体能力：
 
 - **声明式 compose 模型**（`agent-compose.yml`），支持 `${ENV}` 插值。
-- **多 provider guest agent**：Codex、Claude Code、Gemini、OpenCode CLI。
+- **多 provider guest agent**：Codex、Claude Code、Gemini、OpenCode、Pi CLI。
 - **三种 runtime driver**：`docker`（默认）、`boxlite`（microVM）、`microsandbox`。
 - **scheduler**：`cron`、`interval`、`timeout`、`event` 四种 trigger，或内联 JavaScript scheduler 脚本。
 - **事件触发与 webhook**，支持事件驱动的 agent run。
@@ -217,8 +217,9 @@ Bearer Token 不会加密网络流量。跨机器连接时，请使用 HTTPS、S
 | `claude` | Claude Code CLI |
 | `gemini` | Gemini CLI |
 | `opencode` | OpenCode CLI |
+| `pi` | Pi coding agent CLI |
 
-LLM 凭据只在 daemon（`.env`）配置一次，而不是每个 guest 各配。对 Codex、Claude 和 OpenCode，daemon 的 **Runtime LLM Facade** 给每个 sandbox 一个受限的 scoped token，而不是你的真实 API key，因此 provider key 不会进入 guest。当 token 已固定上游 provider 时，runtime 每次请求中的模型会透传给该 provider，无需预先登记到 agent-compose；provider 不支持模型时返回其上游错误。未绑定 provider 的兼容 token 保持既有的已配置 model/provider 解析行为。
+LLM 凭据只在 daemon（`.env`）配置一次，而不是每个 guest 各配。对 Codex、Claude、OpenCode 和 Pi，daemon 的 **Runtime LLM Facade** 给每个 sandbox 一个受限的 scoped token，而不是你的真实 API key，因此 provider key 不会进入 guest。当 token 已固定上游 provider 时，runtime 每次请求中的模型会透传给该 provider，无需预先登记到 agent-compose；provider 不支持模型时返回其上游错误。未绑定 provider 的兼容 token 保持既有的已配置 model/provider 解析行为。
 
 按你的 agent 使用的后端家族设置变量。**OpenAI 家族**（Codex，以及 daemon 自身的 `LLMService` 和 scheduler LLM 调用）：
 

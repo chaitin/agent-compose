@@ -3,7 +3,7 @@
 本文定义当前 `agent-compose` 与 OCI guest image 之间的最小约定，并说明如何构建、选择和验证自定义镜像，而不必照搬官方
 `ghcr.io/chaitin/agent-compose-guest` 镜像中的全部工具。
 
-这是一份按能力分层的约定。只用于直接执行命令的 sandbox 镜像，所需软件远少于同时运行 Codex、Claude、Gemini、OpenCode、JupyterLab 和所有 notebook cell 类型的镜像。
+这是一份按能力分层的约定。只用于直接执行命令的 sandbox 镜像，所需软件远少于同时运行 Codex、Claude、Gemini、OpenCode、Pi、JupyterLab 和所有 notebook cell 类型的镜像。
 
 本文使用 **必须**、**应该** 和 **可以** 描述兼容性要求。
 
@@ -94,6 +94,7 @@ mkdir  test  rm  ln  readlink  mountpoint  tail  sleep
 | `/root/.agents` | 投影后的 agent skill | 持久化/投影 |
 | `/root/.claude` | Claude config 和 state | 持久化 |
 | `/root/.opencode` | OpenCode state | 持久化 |
+| `/root/.pi` | Pi config 和 state | 持久化 |
 | `/root/.gemini` | Gemini state | 持久化 |
 | `/root/.claude.json` | Claude root config | 持久化文件 |
 | `/root/.gitconfig` | Git config | 持久化文件 |
@@ -120,7 +121,7 @@ Agent prompt 和受管 scheduler command 不会由 daemon 直接调用 provider 
 - 普通 run 使用的 `prompt` 和 `exec` 子命令；
 - 需要交互式 prompt attach 时使用的 `stream` 子命令。
 
-Prompt mode 的 `stream` session 支持 `codex`、`claude` 和 `opencode` provider。其他 provider 会在 guest runtime interaction 打开前被拒绝。
+Prompt mode 的 `stream` session 支持 `codex`、`claude`、`opencode` 和 `pi` provider。其他 provider 会在 guest runtime interaction 打开前被拒绝。
 
 daemon 会显式传递 workspace、state 和 home 路径，并注入：
 
@@ -148,6 +149,7 @@ daemon 会显式传递 workspace、state 和 home 路径，并注入：
 | Claude | `@anthropic-ai/claude-agent-sdk` 和 Claude Code；通过 `CLAUDE_CODE_EXECUTABLE`/`CLAUDE_CODE_PATH`、`/usr/bin/claude` 或 SDK 支持的默认位置选择 |
 | Gemini | `PATH` 中的 `gemini` 可执行文件 |
 | OpenCode | `PATH` 中的 `opencode` 可执行文件 |
+| Pi | `PATH` 中的 `pi` 可执行文件 |
 
 Provider credential 和 endpoint variable 会在执行时注入，**不得**写入镜像。
 
@@ -251,7 +253,7 @@ RUN cd /tmp/agent-compose-runtime \
     && rm -rf /tmp/agent-compose-runtime /root/.npm
 
 RUN mkdir -p \
-      /root/.agents /root/.claude /root/.codex /root/.gemini /root/.opencode \
+      /root/.agents /root/.claude /root/.codex /root/.gemini /root/.opencode /root/.pi \
       /workspace /data/state /data/runtime /data/logs
 
 ENV HOME=/root

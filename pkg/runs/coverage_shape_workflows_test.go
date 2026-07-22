@@ -1210,7 +1210,7 @@ func TestRunsControllerRunProjectPromptAttachUnsupportedProvidersDoNotOpenRuntim
 			if len(responses) != 1 || responses[0].GetResult() == nil || responses[0].GetResult().GetSuccess() {
 				t.Fatalf("prompt attach unsupported provider responses = %#v", responses)
 			}
-			if got := responses[0].GetResult().GetError(); !strings.Contains(got, "prompt attach currently supports codex, claude, and opencode providers only") {
+			if got := responses[0].GetResult().GetError(); !strings.Contains(got, "prompt attach currently supports codex, claude, opencode, and pi providers only") {
 				t.Fatalf("prompt attach unsupported provider error = %q", got)
 			}
 			run := responses[0].GetResult().GetRun()

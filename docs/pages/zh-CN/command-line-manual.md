@@ -244,7 +244,7 @@ agent-compose run reviewer --jupyter --jupyter-expose --prompt "Inspect the note
 - REPL 中空行不会创建 run；输入 `/exit` 或 Ctrl+D 退出。
 - REPL 不是 TTY/PTY 或运行中 stdin 透传；每条输入都是一次独立 `RunAgentStream`，但复用同一个 sandbox。
 - detached run 可通过输出的 `agent-compose logs --run <run-id> --follow` 命令观察输出，也可继续使用 `stop`/`logs` 操作该 run。
-- `run -i --prompt` 仅支持可复用 provider conversation 的 Codex、Claude/cc 和 OpenCode；Gemini 当前会返回 unsupported。
+- `run -i --prompt` 仅支持可复用 provider conversation 的 Codex、Claude/cc、OpenCode 和 Pi；Gemini 当前会返回 unsupported。
 - `StopRun` 会请求 daemon 内当前活动 run 取消；daemon 重启后遗留的 running/pending run 会在启动 reconcile 中标记为 failed，并带 `daemon interrupted` 错误。
 
 ## `scheduler`：调用、查看和操作 project scheduler

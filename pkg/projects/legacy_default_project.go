@@ -346,7 +346,7 @@ func appendLegacyLoaderAgent(spec *compose.NormalizedProjectSpec, loader domain.
 func legacyLoaderProvider(provider string) string {
 	provider = domain.NormalizeAgentKind(provider)
 	switch provider {
-	case "codex", "claude", "gemini", "opencode":
+	case "codex", "claude", "gemini", "opencode", "pi":
 		return provider
 	default:
 		return domain.DefaultAgentProvider

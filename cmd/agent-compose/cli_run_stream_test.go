@@ -23,7 +23,7 @@ agents:
 			if exitCode != exitCodeUnsupported {
 				t.Fatalf("run --prompt -it %s exit code = %d, want %d; stderr=%q", provider, exitCode, exitCodeUnsupported, stderr)
 			}
-			if stdout != "" || !strings.Contains(stderr, "run --prompt -it is unsupported for provider "+provider) || !strings.Contains(stderr, "supported providers: codex, claude, opencode") {
+			if stdout != "" || !strings.Contains(stderr, "run --prompt -it is unsupported for provider "+provider) || !strings.Contains(stderr, "supported providers: codex, claude, opencode, pi") {
 				t.Fatalf("run --prompt -it %s stdout/stderr = %q / %q", provider, stdout, stderr)
 			}
 		})

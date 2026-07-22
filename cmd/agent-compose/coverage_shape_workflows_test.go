@@ -612,6 +612,7 @@ func testComposeRunExecAndLogsEdgeHelpers(t *testing.T) {
 	}
 	if normalizeInteractivePromptProvider("claude_code") != "claude" ||
 		normalizeInteractivePromptProvider("open-code") != "opencode" ||
+		normalizeInteractivePromptProvider("PI_AGENT") != "pi" ||
 		normalizeInteractivePromptProvider(" Gemini ") != "gemini" {
 		t.Fatalf("normalizeInteractivePromptProvider returned unexpected values")
 	}
@@ -632,6 +633,10 @@ func testComposeRunExecAndLogsEdgeHelpers(t *testing.T) {
 	project.Agents[0].Provider = "codex"
 	if err := validateInteractivePromptProvider(project, "reviewer", true); err != nil {
 		t.Fatalf("validateInteractivePromptProvider codex returned error: %v", err)
+	}
+	project.Agents[0].Provider = "pi-agent"
+	if err := validateInteractivePromptProvider(project, "reviewer", true); err != nil {
+		t.Fatalf("validateInteractivePromptProvider pi-agent returned error: %v", err)
 	}
 
 	failed := &agentcomposev2.RunSummary{RunId: "run-failed", Status: agentcomposev2.RunStatus_RUN_STATUS_FAILED, ExitCode: 9, Error: "boom"}

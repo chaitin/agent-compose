@@ -96,6 +96,8 @@ func NormalizeAgentKind(agent string) string {
 		return "gemini"
 	case "opencode", "open-code", "open_code":
 		return "opencode"
+	case "pi", "pi-agent", "pi_agent":
+		return "pi"
 	default:
 		return agent
 	}
@@ -131,7 +133,7 @@ func NormalizeAgentDefinition(item AgentDefinition, assignDefaults bool) (AgentD
 	if item.Provider == "" {
 		return AgentDefinition{}, fmt.Errorf("agent definition provider is required")
 	}
-	if item.Provider != "codex" && item.Provider != "claude" && item.Provider != "gemini" && item.Provider != "opencode" {
+	if item.Provider != "codex" && item.Provider != "claude" && item.Provider != "gemini" && item.Provider != "opencode" && item.Provider != "pi" {
 		return AgentDefinition{}, fmt.Errorf("agent definition provider %q is not supported", item.Provider)
 	}
 	if !isJSONObject(item.ConfigJSON) {

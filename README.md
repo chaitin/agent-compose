@@ -23,7 +23,7 @@
 
 If you know Docker Compose, the mental model is familiar: instead of declaring
 containers, you declare **agents**. Each agent picks a provider CLI — `codex`,
-`claude` (Claude Code), `gemini`, or `opencode` — and the daemon gives it its own
+`claude` (Claude Code), `gemini`, `opencode`, or `pi` — and the daemon gives it its own
 isolated sandbox with a workspace, then runs it on a prompt, a shell command, a
 schedule, or an event. Provider API keys stay on the daemon and are never exposed
 inside the guest.
@@ -34,7 +34,7 @@ You manage the whole lifecycle with a Compose-style CLI (`up`, `run`, `ps`,
 Concretely, agent-compose provides:
 
 - A **declarative compose model** (`agent-compose.yml`) with `${ENV}` interpolation.
-- **Multi-provider guest agents**: Codex, Claude Code, Gemini, and OpenCode CLIs.
+- **Multi-provider guest agents**: Codex, Claude Code, Gemini, OpenCode, and Pi CLIs.
 - **Three runtime drivers**: `docker` (default), `boxlite` (microVM), and `microsandbox`.
 - A **scheduler** with `cron`, `interval`, `timeout`, and `event` triggers — or full inline JavaScript scheduler scripts.
 - **Event triggers and webhooks** for event-driven agent runs.
@@ -258,9 +258,10 @@ Each agent sets a `provider`, which selects the CLI it runs inside the sandbox:
 | `claude` | Claude Code CLI |
 | `gemini` | Gemini CLI |
 | `opencode` | OpenCode CLI |
+| `pi` | Pi coding agent CLI |
 
 You configure LLM credentials once, on the daemon (in `.env`) — not per guest.
-For Codex, Claude, and OpenCode, the daemon's **Runtime LLM Facade** hands each
+For Codex, Claude, OpenCode, and Pi, the daemon's **Runtime LLM Facade** hands each
 sandbox a scoped token instead of your real API key, so provider keys never enter
 the guest. When that token pins an upstream provider, the model in each runtime
 request is forwarded to that provider and does not need to be listed in

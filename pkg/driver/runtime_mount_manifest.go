@@ -215,6 +215,7 @@ func runtimeMountEntries(config *appconfig.Config) []logicalRuntimeMountEntry {
 		{sandboxPath: "home/.agents", guestPath: filepath.Join(config.GuestHomePath, ".agents"), directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.claude", guestPath: filepath.Join(config.GuestHomePath, ".claude"), directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.opencode", guestPath: filepath.Join(config.GuestHomePath, ".opencode"), directoryOnlyExposure: directoryOnlyExposureSymlink},
+		{sandboxPath: "home/.pi", guestPath: filepath.Join(config.GuestHomePath, ".pi"), directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.claude.json", guestPath: filepath.Join(config.GuestHomePath, ".claude.json"), isFile: true, directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.gitconfig", guestPath: filepath.Join(config.GuestHomePath, ".gitconfig"), isFile: true, directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.gemini", guestPath: filepath.Join(config.GuestHomePath, ".gemini"), directoryOnlyExposure: directoryOnlyExposureSymlink},

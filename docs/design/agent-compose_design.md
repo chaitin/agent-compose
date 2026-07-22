@@ -950,7 +950,7 @@ create workspace-capable agent sandboxes or grant file, command, or MCP tool
 access. With `outputSchema`, it uses prompt guidance and `json_object` instead
 of Responses API strict JSON Schema.
 
-Guest agent providers (`codex`, `claude`, `gemini`, `opencode`) remain separate CLI runners
+Guest agent providers (`codex`, `claude`, `gemini`, `opencode`, `pi`) remain separate CLI runners
 inside guest containers with their own API keys and provider-native session
 state.
 

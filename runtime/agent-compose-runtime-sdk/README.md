@@ -175,7 +175,7 @@ Options:
 
 | Option | Description |
 | --- | --- |
-| `provider` | Agent provider. One of `codex`, `claude`, `gemini`, or `opencode`. Defaults to `codex`. |
+| `provider` | Agent provider. One of `codex`, `claude`, `gemini`, `opencode`, or `pi`. Defaults to `codex`. |
 | `stateRoot` | Agent state root directory. Defaults to `runtime.paths.stateRoot`. |
 | `workspace` | Workspace path. Defaults to `runtime.paths.workspace`. |
 | `home` | Home directory. Defaults to `runtime.paths.home`. |
