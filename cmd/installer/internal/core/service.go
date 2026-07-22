@@ -29,6 +29,11 @@ type Service struct {
 	Reporter   Reporter
 }
 
+// uiProfile gates the frontend service in docker-compose.yml. Compose reads
+// COMPOSE_PROFILES from the project .env, so persisting it there keeps a later
+// manual `docker compose up -d` consistent with the installed selection.
+const uiProfile = "with-ui"
+
 type Result struct {
 	InstallDir        string
 	URL               string
@@ -36,7 +41,22 @@ type Result struct {
 	GeneratedPassword string
 	DataDir           string
 	ComposeFiles      string
+	ComposeProfiles   string
+	GuestImage        string
 	RetainedFiles     []string
+}
+
+// WithUI reports whether the installation published the web frontend.
+// COMPOSE_PROFILES is a comma-separated list, and an existing one is preserved
+// verbatim, so the installer's own profile can sit alongside others an operator
+// added by hand.
+func (r Result) WithUI() bool {
+	for profile := range strings.SplitSeq(r.ComposeProfiles, ",") {
+		if strings.TrimSpace(profile) == uiProfile {
+			return true
+		}
+	}
+	return false
 }
 
 func (s Service) Apply(ctx context.Context, operation Operation, options Options) (Result, error) {
@@ -113,6 +133,11 @@ func (s Service) installOrUpgrade(ctx context.Context, operation Operation, opti
 	}
 	defer plan.Close()
 	result = plan.result
+	// The port is only published by the frontend, so an explicit port without
+	// the UI would otherwise be accepted and then quietly do nothing.
+	if options.PortSet && !result.WithUI() {
+		s.report(EventWarning, "the requested port is unused because the web UI is not installed; pass --with-ui to publish it")
+	}
 
 	tx, err := beginInstallTransaction(options.InstallDir, plan.dataDir)
 	if err != nil {
@@ -162,6 +187,7 @@ func (s Service) installOrUpgrade(ctx context.Context, operation Operation, opti
 	if err := s.compose(ctx, options.InstallDir, "pull"); err != nil {
 		return result, fmt.Errorf("pull deployment images: %w", err)
 	}
+	s.pullGuestImage(ctx, options, result.GuestImage)
 	tx.upAttempted = true
 	s.report(EventStep, "Starting agent-compose")
 	if err := s.compose(ctx, options.InstallDir, "up", "-d"); err != nil {
@@ -170,12 +196,30 @@ func (s Service) installOrUpgrade(ctx context.Context, operation Operation, opti
 	return result, nil
 }
 
-func (s Service) compose(ctx context.Context, dir string, args ...string) error {
-	command := []string{"compose"}
-	if len(args) > 0 && (args[0] == "pull" || args[0] == "up") {
-		command = append(command, "--progress", "plain")
+// pullGuestImage fetches the sandbox guest image ahead of time. Compose never
+// pulls it because DEFAULT_IMAGE is a daemon setting rather than a service
+// image, so the first agent run would otherwise stall on a large download and
+// surface registry problems far from the installation that caused them.
+//
+// A failure is reported but does not abort: the deployment itself is healthy,
+// and rolling it back over a deferred download would cost more than it saves.
+func (s Service) pullGuestImage(ctx context.Context, options Options, image string) {
+	if options.SkipGuestPull || image == "" {
+		return
 	}
-	return s.runner().Run(ctx, dir, "docker", append(command, args...)...)
+	s.report(EventStep, "Pulling guest image "+image)
+	if err := s.runner().Run(ctx, options.InstallDir, "docker", "pull", image); err != nil {
+		s.report(EventWarning, fmt.Sprintf("guest image %s was not pulled; the first sandbox will download it: %v", image, err))
+	}
+}
+
+// compose deliberately passes no --progress flag. It was once forced to plain
+// so the TUI would not have to cope with docker's cursor-driven redraws, but
+// the flag only exists on newer Compose plugins and made pull fail outright on
+// older ones. The log now merges per-layer progress by itself, so accepting
+// whatever format Compose emits costs nothing.
+func (s Service) compose(ctx context.Context, dir string, args ...string) error {
+	return s.runner().Run(ctx, dir, "docker", append([]string{"compose"}, args...)...)
 }
 
 type installPlan struct {
@@ -280,6 +324,10 @@ func prepareInstallPlan(operation Operation, options Options, source *bundle) (*
 	if err != nil {
 		return fail(err)
 	}
+	composeProfiles, err := selectComposeProfiles(env, envExists, options)
+	if err != nil {
+		return fail(err)
+	}
 	if err := os.WriteFile(filepath.Join(workDir, ".env"), env.Bytes(), 0o600); err != nil {
 		return fail(err)
 	}
@@ -298,11 +346,30 @@ func prepareInstallPlan(operation Operation, options Options, source *bundle) (*
 	if !ok || username == "" {
 		username = "admin"
 	}
+	guestImage, _ := env.Get("DEFAULT_IMAGE")
 	plan.result = Result{
-		InstallDir: options.InstallDir, URL: fmt.Sprintf("http://localhost:%d", effectivePort),
-		Username: username, GeneratedPassword: password, DataDir: dataDir, ComposeFiles: composeFiles,
+		InstallDir: options.InstallDir, Username: username, GeneratedPassword: password,
+		DataDir: dataDir, ComposeFiles: composeFiles, ComposeProfiles: composeProfiles,
+		GuestImage: strings.TrimSpace(guestImage),
+	}
+	// Without the frontend nothing listens on the published port, so reporting a
+	// URL would send the operator to a dead address.
+	if plan.result.WithUI() {
+		plan.result.URL = httpURL(hostAddress(), effectivePort)
 	}
 	return plan, nil
+}
+
+func selectComposeProfiles(env *envFile, envExists bool, options Options) (string, error) {
+	configured, ok := env.Get("COMPOSE_PROFILES")
+	if envExists && !options.WithUISet && ok {
+		return strings.TrimSpace(configured), nil
+	}
+	value := ""
+	if options.WithUI {
+		value = uiProfile
+	}
+	return value, env.Set("COMPOSE_PROFILES", value)
 }
 
 func applyHTTPPort(env *envFile, envExists bool, options Options) (int, error) {

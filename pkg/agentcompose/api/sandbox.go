@@ -180,7 +180,10 @@ func (h *SandboxHandler) ListSandboxes(ctx context.Context, req *connect.Request
 	for _, sandbox := range result.Sandboxes {
 		response.Sandboxes = append(response.Sandboxes, sandboxToV2WithTarget(sandbox, targets[sandbox.Summary.ID]))
 	}
-	if result.HasMore {
+	// A page can come back empty while HasMore is true when every indexed row on
+	// it was a ghost (its directory vanished and was pruned during the list).
+	// Guard the cursor access so that case cannot panic the handler.
+	if result.HasMore && len(result.Sandboxes) > 0 {
 		last := result.Sandboxes[len(result.Sandboxes)-1]
 		response.NextCursor = encodeSandboxCursor(last.Summary.UpdatedAt, last.Summary.ID)
 	}

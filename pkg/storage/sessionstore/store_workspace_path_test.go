@@ -30,6 +30,7 @@ func testGetSandboxRebasesPersistedWorkspacePathToActiveRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create store: %v", err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	const sandboxID = "legacy-sandbox"
 	sandboxDir := store.SandboxDir(sandboxID)
 	if err := os.MkdirAll(sandboxDir, 0o755); err != nil {

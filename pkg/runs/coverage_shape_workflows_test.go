@@ -780,12 +780,13 @@ func TestRunsControllerRunProjectPromptAttachProjectsAgentFrames(t *testing.T) {
 	ctx := context.Background()
 	controller, configDB, runtime := newTestRunAttachController(t, []driverpkg.RuntimeOutputFrame{
 		{Type: driverpkg.RuntimeOutputStarted},
-		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":0,"type":"started","provider":"codex","sessionId":"thread-1"}` + "\n")},
-		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":1,"type":"agent_event","event":{"type":"item.completed","item":{"id":"m1","type":"agent_message","text":"hello agent\n"}}}` + "\n")},
-		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":2,"type":"agent_turn_completed","provider":"codex","sessionId":"thread-1","finalText":"hello agent\n"}` + "\n")},
-		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":3,"type":"result","provider":"codex","sessionId":"thread-1","stopReason":"eof","finalText":"hello agent\n","transcript":"hello agent\n"}` + "\n")},
+		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":0,"type":"started","provider":"claude","sessionId":"thread-1"}` + "\n")},
+		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":1,"type":"agent_event","event":{"type":"output","provider":"claude","text":"hello agent\n"}}` + "\n")},
+		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":2,"type":"agent_turn_completed","provider":"claude","sessionId":"thread-1","finalText":"hello agent\n"}` + "\n")},
+		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":3,"type":"result","provider":"claude","sessionId":"thread-1","stopReason":"eof","finalText":"hello agent\n","transcript":"hello agent\n"}` + "\n")},
 		{Type: driverpkg.RuntimeOutputResult, Result: &driverpkg.RuntimeResult{OperationID: "run-attach", ExitCode: 0, Success: true}},
 	})
+	configDB.agent.Provider = "claude"
 	requests := []*agentcomposev2.RunAttachRequest{{
 		Frame: &agentcomposev2.RunAttachRequest_Start{Start: &agentcomposev2.RunAttachStart{
 			Request: &agentcomposev2.RunAgentRequest{ProjectId: "project-1", AgentName: "worker", Prompt: "hello"},
@@ -825,7 +826,7 @@ func TestRunsControllerRunProjectPromptAttachProjectsAgentFrames(t *testing.T) {
 	if err := json.Unmarshal(runtime.interaction.sent[0].Data, &startFrame); err != nil {
 		t.Fatalf("start frame json: %v", err)
 	}
-	if startFrame["type"] != "start" || startFrame["provider"] != "codex" {
+	if startFrame["type"] != "start" || startFrame["provider"] != "claude" {
 		t.Fatalf("start frame = %#v", startFrame)
 	}
 	var humanFrame map[string]any
@@ -1184,7 +1185,7 @@ func receiveProjectorRunLogEvent(t *testing.T, sub *RunLogSubscription) RunLogEv
 }
 
 func TestRunsControllerRunProjectPromptAttachUnsupportedProvidersDoNotOpenRuntime(t *testing.T) {
-	for _, provider := range []string{"claude", "gemini", "opencode"} {
+	for _, provider := range []string{"gemini", "opencode"} {
 		t.Run(provider, func(t *testing.T) {
 			ctx := context.Background()
 			controller, configDB, runtime := newTestRunAttachController(t, nil)
@@ -1209,7 +1210,7 @@ func TestRunsControllerRunProjectPromptAttachUnsupportedProvidersDoNotOpenRuntim
 			if len(responses) != 1 || responses[0].GetResult() == nil || responses[0].GetResult().GetSuccess() {
 				t.Fatalf("prompt attach unsupported provider responses = %#v", responses)
 			}
-			if got := responses[0].GetResult().GetError(); !strings.Contains(got, "prompt attach currently supports codex provider only") {
+			if got := responses[0].GetResult().GetError(); !strings.Contains(got, "prompt attach currently supports codex and claude providers only") {
 				t.Fatalf("prompt attach unsupported provider error = %q", got)
 			}
 			run := responses[0].GetResult().GetRun()

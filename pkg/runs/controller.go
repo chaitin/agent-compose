@@ -839,8 +839,8 @@ func (c *Controller) runPromptInteraction(ctx context.Context, coordinator *Coor
 		transition.Error = fmt.Sprintf("agent execution failed: %v", err)
 		return transition, err
 	}
-	if agentConfig.Provider != "codex" {
-		err := fmt.Errorf("%w: prompt attach currently supports codex provider only", domain.ErrUnsupported)
+	if agentConfig.Provider != "codex" && agentConfig.Provider != "claude" {
+		err := fmt.Errorf("%w: prompt attach currently supports codex and claude providers only", domain.ErrUnsupported)
 		transition.ExitCode = 1
 		transition.Error = err.Error()
 		return transition, err
@@ -1049,7 +1049,13 @@ func (c *Controller) projectRunAgentSystemPrompt(ctx context.Context, run domain
 
 func (c *Controller) ensurePromptAttachLLMFacadeEnv(ctx context.Context, sandbox *domain.Sandbox, agent execution.AgentConfig, runID string) (map[string]string, error) {
 	store, ok := c.configDB.(llmFacadeStore)
-	if !ok || c.config == nil || sandbox == nil || domain.NormalizeAgentKind(agent.Provider) != "codex" {
+	if !ok || c.config == nil || sandbox == nil {
+		return nil, nil
+	}
+	if domain.NormalizeAgentKind(agent.Provider) == "claude" {
+		return ensurePromptAttachClaudeLLMFacadeEnv(ctx, c.config, store, sandbox, agent.Model, runID)
+	}
+	if domain.NormalizeAgentKind(agent.Provider) != "codex" {
 		return nil, nil
 	}
 	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, c.config, store, sandbox.Summary.ID, llms.ProviderFamilyOpenAI, agent.Model, "", promptAttachSandboxProviderEnvItems(sandbox))
@@ -1524,6 +1530,7 @@ func (p *promptAttachProjector) projectLine(line []byte) ([]*agentcomposev2.RunA
 func (p *promptAttachProjector) agentEventText(raw json.RawMessage) (string, string) {
 	var event struct {
 		Type string `json:"type"`
+		Text string `json:"text"`
 		Item *struct {
 			ID               string `json:"id"`
 			Type             string `json:"type"`
@@ -1536,6 +1543,9 @@ func (p *promptAttachProjector) agentEventText(raw json.RawMessage) (string, str
 		return "agent_event", ""
 	}
 	name := firstNonEmpty(event.Type, "agent_event")
+	if event.Text != "" {
+		return name, event.Text
+	}
 	if event.Item == nil {
 		return name, ""
 	}

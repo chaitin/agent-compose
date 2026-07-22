@@ -11,7 +11,7 @@ import (
 )
 
 func TestCLIRunInteractivePromptProviderUnsupported(t *testing.T) {
-	for _, provider := range []string{"claude", "gemini", "opencode"} {
+	for _, provider := range []string{"gemini", "opencode"} {
 		t.Run(provider, func(t *testing.T) {
 			composePath := writeComposeFile(t, t.TempDir(), fmt.Sprintf(`
 name: cli-run-interactive-%s
@@ -23,7 +23,7 @@ agents:
 			if exitCode != exitCodeUnsupported {
 				t.Fatalf("run --prompt -it %s exit code = %d, want %d; stderr=%q", provider, exitCode, exitCodeUnsupported, stderr)
 			}
-			if stdout != "" || !strings.Contains(stderr, "run --prompt -it is unsupported for provider "+provider) || !strings.Contains(stderr, "supported providers: codex") {
+			if stdout != "" || !strings.Contains(stderr, "run --prompt -it is unsupported for provider "+provider) || !strings.Contains(stderr, "supported providers: codex, claude") {
 				t.Fatalf("run --prompt -it %s stdout/stderr = %q / %q", provider, stdout, stderr)
 			}
 		})

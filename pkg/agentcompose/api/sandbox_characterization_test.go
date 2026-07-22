@@ -165,6 +165,26 @@ func TestV2SandboxLifecycleIsIdempotentAndRejectsInvalidState(t *testing.T) {
 	}
 }
 
+func TestV2ListSandboxesEmptyPageWithHasMoreDoesNotPanic(t *testing.T) {
+	// A page whose indexed rows were all ghosts comes back empty with HasMore set.
+	// The cursor must not be built from the (empty) page, which would panic.
+	store := &characterizationSandboxStore{listResults: []domain.SandboxListResult{
+		{Sandboxes: nil, TotalCount: 5, HasMore: true},
+	}}
+	handler := NewSandboxHandler(&characterizationSessionDelegate{}, store, &characterizationSandboxRemover{}, nil)
+
+	resp, err := handler.ListSandboxes(context.Background(), connect.NewRequest(&agentcomposev2.ListSandboxesRequest{Limit: 1}))
+	if err != nil {
+		t.Fatalf("ListSandboxes() error = %v", err)
+	}
+	if len(resp.Msg.GetSandboxes()) != 0 {
+		t.Fatalf("expected empty page, got %d sandboxes", len(resp.Msg.GetSandboxes()))
+	}
+	if resp.Msg.GetNextCursor() != "" {
+		t.Fatalf("empty page must not emit a cursor, got %q", resp.Msg.GetNextCursor())
+	}
+}
+
 func TestV2ListSandboxesUsesOpaquePagination(t *testing.T) {
 	firstID := identity.NewID(identity.ResourceSandbox, "characterization", "list-first")
 	secondID := identity.NewID(identity.ResourceSandbox, "characterization", "list-second")

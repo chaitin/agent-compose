@@ -53,6 +53,12 @@ func EnsureDriverImage(ctx context.Context, config *appconfig.Config, backend Ba
 	if backend == nil {
 		return fmt.Errorf("ensure image for project %s agent %s: driver %s image %s: image backend is required", req.ProjectName, req.AgentName, driver, imageRef)
 	}
+	if autoBackend, ok := backend.(*AutoBackend); ok {
+		if autoBackend == nil || autoBackend.docker == nil {
+			return fmt.Errorf("ensure image for project %s agent %s: driver %s image %s: docker image backend is required", req.ProjectName, req.AgentName, driver, imageRef)
+		}
+		backend = autoBackend.docker
+	}
 	if _, err := backend.InspectImage(ctx, InspectRequest{ImageRef: imageRef}); err == nil {
 		return nil
 	} else if !IsNotFound(err) {

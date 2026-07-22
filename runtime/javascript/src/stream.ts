@@ -2,7 +2,7 @@ import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
 import { runRuntimeCommand, type RuntimeCommandRequest } from "./command.js";
 import { decodeFrame, encodeFrame, FRAME_VERSION, type StreamFrame } from "./frame.js";
-import { createInteractiveSession, UnsupportedProviderError, type CodexInteractiveSession } from "./interactive.js";
+import { createInteractiveSession, UnsupportedProviderError, type InteractiveSession } from "./interactive.js";
 
 export interface RunStreamOptions {
   stdin?: Readable;
@@ -15,7 +15,7 @@ export async function runStreamCommand(options: RunStreamOptions = {}): Promise<
   const stdout = options.stdout || process.stdout;
   const stderr = options.stderr || process.stderr;
   let outputSeq = 0;
-  let session: CodexInteractiveSession | undefined;
+  let session: InteractiveSession | undefined;
   let finished = false;
 
   const emit = (type: string, fields: object = {}) => {

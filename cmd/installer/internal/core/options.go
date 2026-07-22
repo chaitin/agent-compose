@@ -31,6 +31,9 @@ type Options struct {
 	FrontendVersion string
 	Port            int
 	PortSet         bool
+	WithUI          bool
+	WithUISet       bool
+	SkipGuestPull   bool
 	NoStart         bool
 	Purge           bool
 	KVMPath         string

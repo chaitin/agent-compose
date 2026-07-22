@@ -192,6 +192,7 @@ func newWorkspaceProvisioningPersistenceStore(t *testing.T, sandboxRoot string) 
 	if err != nil {
 		t.Fatalf("NewWithConfig returned error: %v", err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	return store
 }
 
