@@ -71,6 +71,26 @@ func newCLISchedulerCommand(cli *cliOptions) *cobra.Command {
 	logsCmd.Flags().StringVar(&logsOptions.RunID, "run", "", "Filter by scheduler run id")
 	logsCmd.Flags().IntVarP(&logsOptions.Tail, "tail", "n", -1, "Show the last N log events")
 
+	pruneOptions := composeSchedulerPruneOptions{}
+	pruneCmd := &cobra.Command{
+		Use: "prune", Short: "Prune scheduler trigger-run history",
+		Long: "Prune terminal scheduler trigger runs and their outer events and artifacts. The command is a dry-run unless --force is specified.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.NoArgs(cmd, args); err != nil {
+				return commandExitError{Code: exitCodeUsage, Err: err}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runComposeSchedulerPruneCommand(cmd, *cli, pruneOptions)
+		},
+	}
+	pruneCmd.Flags().StringVar(&pruneOptions.SchedulerRef, "scheduler", "", "Filter by scheduler name or ID")
+	pruneCmd.Flags().StringVar(&pruneOptions.TriggerRef, "trigger", "", "Filter by current trigger name or exact historical trigger ID")
+	pruneCmd.Flags().StringVar(&pruneOptions.Status, "status", "", "Filter by terminal run status, comma-separated")
+	pruneCmd.Flags().StringVar(&pruneOptions.OlderThan, "older-than", "", "Only match runs older than a duration such as 7d or 24h")
+	pruneCmd.Flags().BoolVar(&pruneOptions.Force, "force", false, "Actually remove matched scheduler trigger runs")
+
 	stopOptions := composeSchedulerStopOptions{}
 	stopCmd := &cobra.Command{
 		Use: "stop <run>", Short: "Stop an active scheduler run", Args: cobra.ExactArgs(1),
@@ -95,6 +115,6 @@ func newCLISchedulerCommand(cli *cliOptions) *cobra.Command {
 		},
 	}
 	inspectCmd.Flags().StringVar(&inspectOptions.SchedulerRef, "scheduler", "", "Limit trigger lookup to a scheduler name or ID")
-	cmd.AddCommand(listCmd, invokeCmd, triggerCmd, runsCmd, logsCmd, stopCmd, inspectCmd)
+	cmd.AddCommand(listCmd, invokeCmd, triggerCmd, runsCmd, logsCmd, pruneCmd, stopCmd, inspectCmd)
 	return cmd
 }

@@ -100,6 +100,9 @@ const (
 	// ProjectServiceListSchedulerRunsProcedure is the fully-qualified name of the ProjectService's
 	// ListSchedulerRuns RPC.
 	ProjectServiceListSchedulerRunsProcedure = "/agentcompose.v2.ProjectService/ListSchedulerRuns"
+	// ProjectServicePruneSchedulerRunsProcedure is the fully-qualified name of the ProjectService's
+	// PruneSchedulerRuns RPC.
+	ProjectServicePruneSchedulerRunsProcedure = "/agentcompose.v2.ProjectService/PruneSchedulerRuns"
 	// ProjectServiceStopSchedulerRunProcedure is the fully-qualified name of the ProjectService's
 	// StopSchedulerRun RPC.
 	ProjectServiceStopSchedulerRunProcedure = "/agentcompose.v2.ProjectService/StopSchedulerRun"
@@ -267,6 +270,7 @@ type ProjectServiceClient interface {
 	StartSchedulerRun(context.Context, *connect.Request[v2.StartSchedulerRunRequest]) (*connect.Response[v2.StartSchedulerRunResponse], error)
 	GetSchedulerRun(context.Context, *connect.Request[v2.GetSchedulerRunRequest]) (*connect.Response[v2.GetSchedulerRunResponse], error)
 	ListSchedulerRuns(context.Context, *connect.Request[v2.ListSchedulerRunsRequest]) (*connect.Response[v2.ListSchedulerRunsResponse], error)
+	PruneSchedulerRuns(context.Context, *connect.Request[v2.PruneSchedulerRunsRequest]) (*connect.Response[v2.PruneSchedulerRunsResponse], error)
 	StopSchedulerRun(context.Context, *connect.Request[v2.StopSchedulerRunRequest]) (*connect.Response[v2.StopSchedulerRunResponse], error)
 	SetSchedulerEnabled(context.Context, *connect.Request[v2.SetSchedulerEnabledRequest]) (*connect.Response[v2.SetSchedulerEnabledResponse], error)
 	SetSchedulerTriggerEnabled(context.Context, *connect.Request[v2.SetSchedulerTriggerEnabledRequest]) (*connect.Response[v2.SetSchedulerTriggerEnabledResponse], error)
@@ -373,6 +377,12 @@ func NewProjectServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(projectServiceMethods.ByName("ListSchedulerRuns")),
 			connect.WithClientOptions(opts...),
 		),
+		pruneSchedulerRuns: connect.NewClient[v2.PruneSchedulerRunsRequest, v2.PruneSchedulerRunsResponse](
+			httpClient,
+			baseURL+ProjectServicePruneSchedulerRunsProcedure,
+			connect.WithSchema(projectServiceMethods.ByName("PruneSchedulerRuns")),
+			connect.WithClientOptions(opts...),
+		),
 		stopSchedulerRun: connect.NewClient[v2.StopSchedulerRunRequest, v2.StopSchedulerRunResponse](
 			httpClient,
 			baseURL+ProjectServiceStopSchedulerRunProcedure,
@@ -411,6 +421,7 @@ type projectServiceClient struct {
 	startSchedulerRun          *connect.Client[v2.StartSchedulerRunRequest, v2.StartSchedulerRunResponse]
 	getSchedulerRun            *connect.Client[v2.GetSchedulerRunRequest, v2.GetSchedulerRunResponse]
 	listSchedulerRuns          *connect.Client[v2.ListSchedulerRunsRequest, v2.ListSchedulerRunsResponse]
+	pruneSchedulerRuns         *connect.Client[v2.PruneSchedulerRunsRequest, v2.PruneSchedulerRunsResponse]
 	stopSchedulerRun           *connect.Client[v2.StopSchedulerRunRequest, v2.StopSchedulerRunResponse]
 	setSchedulerEnabled        *connect.Client[v2.SetSchedulerEnabledRequest, v2.SetSchedulerEnabledResponse]
 	setSchedulerTriggerEnabled *connect.Client[v2.SetSchedulerTriggerEnabledRequest, v2.SetSchedulerTriggerEnabledResponse]
@@ -491,6 +502,11 @@ func (c *projectServiceClient) ListSchedulerRuns(ctx context.Context, req *conne
 	return c.listSchedulerRuns.CallUnary(ctx, req)
 }
 
+// PruneSchedulerRuns calls agentcompose.v2.ProjectService.PruneSchedulerRuns.
+func (c *projectServiceClient) PruneSchedulerRuns(ctx context.Context, req *connect.Request[v2.PruneSchedulerRunsRequest]) (*connect.Response[v2.PruneSchedulerRunsResponse], error) {
+	return c.pruneSchedulerRuns.CallUnary(ctx, req)
+}
+
 // StopSchedulerRun calls agentcompose.v2.ProjectService.StopSchedulerRun.
 func (c *projectServiceClient) StopSchedulerRun(ctx context.Context, req *connect.Request[v2.StopSchedulerRunRequest]) (*connect.Response[v2.StopSchedulerRunResponse], error) {
 	return c.stopSchedulerRun.CallUnary(ctx, req)
@@ -523,6 +539,7 @@ type ProjectServiceHandler interface {
 	StartSchedulerRun(context.Context, *connect.Request[v2.StartSchedulerRunRequest]) (*connect.Response[v2.StartSchedulerRunResponse], error)
 	GetSchedulerRun(context.Context, *connect.Request[v2.GetSchedulerRunRequest]) (*connect.Response[v2.GetSchedulerRunResponse], error)
 	ListSchedulerRuns(context.Context, *connect.Request[v2.ListSchedulerRunsRequest]) (*connect.Response[v2.ListSchedulerRunsResponse], error)
+	PruneSchedulerRuns(context.Context, *connect.Request[v2.PruneSchedulerRunsRequest]) (*connect.Response[v2.PruneSchedulerRunsResponse], error)
 	StopSchedulerRun(context.Context, *connect.Request[v2.StopSchedulerRunRequest]) (*connect.Response[v2.StopSchedulerRunResponse], error)
 	SetSchedulerEnabled(context.Context, *connect.Request[v2.SetSchedulerEnabledRequest]) (*connect.Response[v2.SetSchedulerEnabledResponse], error)
 	SetSchedulerTriggerEnabled(context.Context, *connect.Request[v2.SetSchedulerTriggerEnabledRequest]) (*connect.Response[v2.SetSchedulerTriggerEnabledResponse], error)
@@ -625,6 +642,12 @@ func NewProjectServiceHandler(svc ProjectServiceHandler, opts ...connect.Handler
 		connect.WithSchema(projectServiceMethods.ByName("ListSchedulerRuns")),
 		connect.WithHandlerOptions(opts...),
 	)
+	projectServicePruneSchedulerRunsHandler := connect.NewUnaryHandler(
+		ProjectServicePruneSchedulerRunsProcedure,
+		svc.PruneSchedulerRuns,
+		connect.WithSchema(projectServiceMethods.ByName("PruneSchedulerRuns")),
+		connect.WithHandlerOptions(opts...),
+	)
 	projectServiceStopSchedulerRunHandler := connect.NewUnaryHandler(
 		ProjectServiceStopSchedulerRunProcedure,
 		svc.StopSchedulerRun,
@@ -675,6 +698,8 @@ func NewProjectServiceHandler(svc ProjectServiceHandler, opts ...connect.Handler
 			projectServiceGetSchedulerRunHandler.ServeHTTP(w, r)
 		case ProjectServiceListSchedulerRunsProcedure:
 			projectServiceListSchedulerRunsHandler.ServeHTTP(w, r)
+		case ProjectServicePruneSchedulerRunsProcedure:
+			projectServicePruneSchedulerRunsHandler.ServeHTTP(w, r)
 		case ProjectServiceStopSchedulerRunProcedure:
 			projectServiceStopSchedulerRunHandler.ServeHTTP(w, r)
 		case ProjectServiceSetSchedulerEnabledProcedure:
@@ -748,6 +773,10 @@ func (UnimplementedProjectServiceHandler) GetSchedulerRun(context.Context, *conn
 
 func (UnimplementedProjectServiceHandler) ListSchedulerRuns(context.Context, *connect.Request[v2.ListSchedulerRunsRequest]) (*connect.Response[v2.ListSchedulerRunsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ProjectService.ListSchedulerRuns is not implemented"))
+}
+
+func (UnimplementedProjectServiceHandler) PruneSchedulerRuns(context.Context, *connect.Request[v2.PruneSchedulerRunsRequest]) (*connect.Response[v2.PruneSchedulerRunsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ProjectService.PruneSchedulerRuns is not implemented"))
 }
 
 func (UnimplementedProjectServiceHandler) StopSchedulerRun(context.Context, *connect.Request[v2.StopSchedulerRunRequest]) (*connect.Response[v2.StopSchedulerRunResponse], error) {

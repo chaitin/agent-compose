@@ -270,6 +270,7 @@ func newSchedulerRunHandlerFixture() (*schedulerRunProjectStoreFake, *schedulerR
 type schedulerRunProjectStoreFake struct {
 	project       domain.ProjectRecord
 	scheduler     domain.ProjectSchedulerRecord
+	schedulers    []domain.ProjectSchedulerRecord
 	runs          []domain.LoaderRunSummary
 	events        []domain.LoaderEvent
 	sandboxIDs    map[loaders.LoaderRunKey][]string
@@ -304,6 +305,9 @@ func (s *schedulerRunProjectStoreFake) ListProjectAgents(context.Context, string
 }
 
 func (s *schedulerRunProjectStoreFake) ListProjectSchedulers(context.Context, string) ([]domain.ProjectSchedulerRecord, error) {
+	if s.schedulers != nil {
+		return append([]domain.ProjectSchedulerRecord(nil), s.schedulers...), nil
+	}
 	return []domain.ProjectSchedulerRecord{s.scheduler}, nil
 }
 
@@ -358,6 +362,14 @@ type schedulerRunRuntimeFake struct {
 	invokeResult   loaders.InvocationResult
 	invokeLoaderID string
 	invokePayload  string
+	pruneRequest   loaders.SchedulerRunPruneRequest
+	pruneResult    loaders.SchedulerRunPruneResult
+	pruneErr       error
+}
+
+func (f *schedulerRunRuntimeFake) PruneSchedulerRuns(_ context.Context, request loaders.SchedulerRunPruneRequest) (loaders.SchedulerRunPruneResult, error) {
+	f.pruneRequest = request
+	return f.pruneResult, f.pruneErr
 }
 
 func (f *schedulerRunRuntimeFake) InvokeScheduler(_ context.Context, loaderID, payloadJSON string) (loaders.InvocationResult, error) {

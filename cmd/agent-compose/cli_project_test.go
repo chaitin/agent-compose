@@ -581,8 +581,16 @@ type projectServiceStub struct {
 	getSchedulerRun            func(context.Context, *connect.Request[agentcomposev2.GetSchedulerRunRequest]) (*connect.Response[agentcomposev2.GetSchedulerRunResponse], error)
 	listSchedulerRuns          func(context.Context, *connect.Request[agentcomposev2.ListSchedulerRunsRequest]) (*connect.Response[agentcomposev2.ListSchedulerRunsResponse], error)
 	stopSchedulerRun           func(context.Context, *connect.Request[agentcomposev2.StopSchedulerRunRequest]) (*connect.Response[agentcomposev2.StopSchedulerRunResponse], error)
+	pruneSchedulerRuns         func(context.Context, *connect.Request[agentcomposev2.PruneSchedulerRunsRequest]) (*connect.Response[agentcomposev2.PruneSchedulerRunsResponse], error)
 
 	agentcomposev2connect.UnimplementedProjectServiceHandler
+}
+
+func (s projectServiceStub) PruneSchedulerRuns(ctx context.Context, req *connect.Request[agentcomposev2.PruneSchedulerRunsRequest]) (*connect.Response[agentcomposev2.PruneSchedulerRunsResponse], error) {
+	if s.pruneSchedulerRuns == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("PruneSchedulerRuns stub is not configured"))
+	}
+	return s.pruneSchedulerRuns(ctx, req)
 }
 
 func (s projectServiceStub) ListProjectSchedulerEvents(ctx context.Context, req *connect.Request[agentcomposev2.ListProjectSchedulerEventsRequest]) (*connect.Response[agentcomposev2.ListProjectSchedulerEventsResponse], error) {

@@ -253,6 +253,7 @@ agent-compose scheduler invoke <scheduler-ref> [--payload <json>]
 agent-compose scheduler trigger <scheduler-ref> <trigger-ref> [--payload <json>] [--detach]
 agent-compose scheduler runs [scheduler-ref] [--trigger <trigger-ref>] [--status <status>] [--limit <n>]
 agent-compose scheduler logs [run-ref] [--run <run-ref>] [--scheduler <scheduler-ref>] [--trigger <trigger-ref>] [--tail <n>]
+agent-compose scheduler prune [--scheduler <scheduler-ref>] [--trigger <trigger-ref>] [--status <terminal-statuses>] [--older-than <duration>] [--force]
 agent-compose scheduler inspect <scheduler-or-trigger-or-run-ref> [--scheduler <scheduler-ref>]
 ```
 
@@ -263,6 +264,8 @@ agent-compose scheduler inspect <scheduler-or-trigger-or-run-ref> [--scheduler <
 - `scheduler runs` 只列出外层 trigger run；`scheduler.agent()` 创建的内层 agent run 仍由普通 run 命令管理。默认返回全部匹配记录，只有显式设置 `--limit` 才限制最终数量；status 可选 `running`、`succeeded`、`failed`、`canceled`、`skipped`。
 - `scheduler logs` 默认输出当前所有 scheduler 的全部 trigger run 外层结构化事件。`--tail N` 选择全局最新 N 条匹配事件并按从旧到新输出；`--tail -1` 表示全部，`--tail 0` 表示不输出。这里不包含 Invocation 日志或内层 agent transcript。
 - `scheduler runs/logs --trigger` 会优先按当前定义解析名称和短 ID。Trigger 被删除或改名后，只要仍有持久化的 trigger run 历史，就可以继续用其精确 ID 查询；同一历史 ID 属于多个 Scheduler 时，`runs` 需要增加 Scheduler 位置参数，`logs` 需要增加 `--scheduler`。
+- `scheduler prune` 清理外层 trigger run 历史及其直属 loader event、event delivery/link 和规范 run artifacts。默认匹配当前 project 中全部 `succeeded`、`failed`、`canceled`、`skipped` 终态 trigger run；可用 `--scheduler`、`--trigger`、`--status`、`--older-than` 缩小范围。命令默认只 dry-run，只有 `--force` 才真正删除。running run、Invocation、内层 agent run、topic event、sandbox、loader state 和 sticky binding 都会保留。历史 Trigger ID 与 `runs`/`logs` 使用相同的“当前定义优先”解析规则。
+- daemon 启动时会先把上一次进程中断后遗留的外层 `running` trigger run 收敛为 `failed`，并记录 daemon-interrupted loader event；之后它才能按普通终态历史参与 prune。
 - `scheduler inspect` 只接受一个 scheduler 名称/ID、trigger 名称/ID 或外层 trigger run ID。多个 scheduler 存在相同 trigger reference 时，使用 `--scheduler <scheduler-ref>` 消歧；旧双位置参数形式不再支持。
 - 当前 `scheduler runs` 和 `scheduler logs` 会收齐 unary cursor pages 后一次性渲染；streaming/follow 能力留到单独修改中实现。
 

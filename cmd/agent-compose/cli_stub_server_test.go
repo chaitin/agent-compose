@@ -32,7 +32,7 @@ type resourceServiceStub struct {
 func newComposeServiceStubServer(t *testing.T, stubs composeServiceStubs) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	if stubs.project.applyProject != nil || stubs.project.getProject != nil || stubs.project.listProjects != nil || stubs.project.removeProject != nil || stubs.project.getScheduler != nil || stubs.project.listSchedulerEvents != nil || stubs.project.listProjectSchedulerEvents != nil || stubs.project.invokeScheduler != nil || stubs.project.runScheduler != nil || stubs.project.startSchedulerRun != nil || stubs.project.getSchedulerRun != nil || stubs.project.listSchedulerRuns != nil || stubs.project.stopSchedulerRun != nil {
+	if stubs.project.applyProject != nil || stubs.project.getProject != nil || stubs.project.listProjects != nil || stubs.project.removeProject != nil || stubs.project.getScheduler != nil || stubs.project.listSchedulerEvents != nil || stubs.project.listProjectSchedulerEvents != nil || stubs.project.invokeScheduler != nil || stubs.project.runScheduler != nil || stubs.project.startSchedulerRun != nil || stubs.project.getSchedulerRun != nil || stubs.project.listSchedulerRuns != nil || stubs.project.stopSchedulerRun != nil || stubs.project.pruneSchedulerRuns != nil {
 		path, handler := agentcomposev2connect.NewProjectServiceHandler(stubs.project)
 		mux.Handle(path, handler)
 	}

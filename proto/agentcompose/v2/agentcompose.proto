@@ -22,6 +22,7 @@ service ProjectService {
   rpc StartSchedulerRun(StartSchedulerRunRequest) returns (StartSchedulerRunResponse);
   rpc GetSchedulerRun(GetSchedulerRunRequest) returns (GetSchedulerRunResponse);
   rpc ListSchedulerRuns(ListSchedulerRunsRequest) returns (ListSchedulerRunsResponse);
+  rpc PruneSchedulerRuns(PruneSchedulerRunsRequest) returns (PruneSchedulerRunsResponse);
   rpc StopSchedulerRun(StopSchedulerRunRequest) returns (StopSchedulerRunResponse);
   rpc SetSchedulerEnabled(SetSchedulerEnabledRequest) returns (SetSchedulerEnabledResponse);
   rpc SetSchedulerTriggerEnabled(SetSchedulerTriggerEnabledRequest) returns (SetSchedulerTriggerEnabledResponse);
@@ -595,6 +596,40 @@ message ListSchedulerRunsRequest {
 message ListSchedulerRunsResponse {
   repeated SchedulerRun runs = 1;
   string next_cursor = 2;
+}
+
+message PruneSchedulerRunsRequest {
+  ProjectRef project = 1;
+  string agent_name = 2;
+  string trigger_id = 3;
+  repeated SchedulerRunStatus status = 4;
+  uint64 older_than_seconds = 5;
+  bool force = 6;
+}
+
+message SchedulerRunPruneStats {
+  uint64 runs = 1;
+  uint64 loader_events = 2;
+  uint64 event_deliveries = 3;
+  uint64 event_sandbox_links = 4;
+  uint64 artifact_dirs = 5;
+  uint64 artifact_bytes = 6;
+}
+
+message SchedulerRunPruneResidue {
+  string loader_id = 1;
+  string run_id = 2;
+  string path = 3;
+  string error = 4;
+}
+
+message PruneSchedulerRunsResponse {
+  bool dry_run = 1;
+  SchedulerRunPruneStats matched = 2;
+  SchedulerRunPruneStats removed = 3;
+  uint64 skipped_runs = 4;
+  repeated SchedulerRunPruneResidue residues = 5;
+  repeated string warnings = 6;
 }
 
 message StopSchedulerRunRequest {

@@ -80,6 +80,7 @@ func (s *loaderStore) ensureLoaderSchema(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_loader_run_started ON loader_run(loader_id, started_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_loader_run_trigger_started ON loader_run(loader_id, trigger_id, started_at DESC, run_id DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_loader_run_status_started ON loader_run(loader_id, status, started_at DESC, run_id DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_loader_run_prune ON loader_run(loader_id, status, completed_at, started_at, run_id);`,
 		`CREATE TABLE IF NOT EXISTS loader_event (
             loader_id TEXT NOT NULL,
             event_id TEXT NOT NULL,

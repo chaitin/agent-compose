@@ -72,6 +72,7 @@ func (s *eventStore) ensureEventSchema(ctx context.Context) error {
 			PRIMARY KEY(event_id, loader_id, trigger_id)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_event_delivery_run ON event_delivery(run_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_event_delivery_loader_run ON event_delivery(loader_id, run_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_event_delivery_status ON event_delivery(status, updated_at);`,
 		`CREATE TABLE IF NOT EXISTS event_sandbox_link (
 			event_id TEXT NOT NULL,
@@ -86,6 +87,7 @@ func (s *eventStore) ensureEventSchema(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_event_sandbox_link_sandbox ON event_sandbox_link(sandbox_id, created_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_event_sandbox_link_run ON event_sandbox_link(run_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_event_sandbox_link_loader_run ON event_sandbox_link(loader_id, run_id);`,
 	}
 	for _, stmt := range statements {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {

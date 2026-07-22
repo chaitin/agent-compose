@@ -50,6 +50,10 @@ type ProjectSchedulerInvocationRuntime interface {
 	InvokeScheduler(context.Context, string, string) (loaders.InvocationResult, error)
 }
 
+type ProjectSchedulerPruneRuntime interface {
+	PruneSchedulerRuns(context.Context, loaders.SchedulerRunPruneRequest) (loaders.SchedulerRunPruneResult, error)
+}
+
 type ProjectLoaderEventCursorStore interface {
 	ListLoaderEventsBefore(context.Context, string, time.Time, string, int) ([]domain.LoaderEvent, error)
 }
@@ -63,17 +67,19 @@ type ProjectSchedulerPageStore interface {
 
 type ProjectHandler struct {
 	agentcomposev2connect.UnimplementedProjectServiceHandler
-	delegate      ProjectDelegate
-	store         ProjectStore
-	loaderRuntime ProjectLoaderRuntime
-	schedulerRuns ProjectSchedulerRunRuntime
-	invocations   ProjectSchedulerInvocationRuntime
+	delegate       ProjectDelegate
+	store          ProjectStore
+	loaderRuntime  ProjectLoaderRuntime
+	schedulerRuns  ProjectSchedulerRunRuntime
+	invocations    ProjectSchedulerInvocationRuntime
+	schedulerPrune ProjectSchedulerPruneRuntime
 }
 
 func NewProjectHandler(delegate ProjectDelegate, store ProjectStore, loaderRuntime ProjectLoaderRuntime) *ProjectHandler {
 	schedulerRuns, _ := loaderRuntime.(ProjectSchedulerRunRuntime)
 	invocations, _ := loaderRuntime.(ProjectSchedulerInvocationRuntime)
-	return &ProjectHandler{delegate: delegate, store: store, loaderRuntime: loaderRuntime, schedulerRuns: schedulerRuns, invocations: invocations}
+	schedulerPrune, _ := loaderRuntime.(ProjectSchedulerPruneRuntime)
+	return &ProjectHandler{delegate: delegate, store: store, loaderRuntime: loaderRuntime, schedulerRuns: schedulerRuns, invocations: invocations, schedulerPrune: schedulerPrune}
 }
 
 func (h *ProjectHandler) ValidateProject(ctx context.Context, req *connect.Request[agentcomposev2.ValidateProjectRequest]) (*connect.Response[agentcomposev2.ValidateProjectResponse], error) {
