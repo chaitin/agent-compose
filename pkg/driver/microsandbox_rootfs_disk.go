@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"agent-compose/pkg/identity"
 	"agent-compose/pkg/imagecache"
 )
 
@@ -28,7 +29,14 @@ type qemuImageInfo struct {
 }
 
 func (r *microsandboxRuntime) rootfsDiskPath(sandboxID string) string {
-	return filepath.Join(r.config.MicrosandboxHome, "rootfs-disks", microsandboxDockerDiskName(sandboxID)+".qcow2")
+	return filepath.Join(r.config.MicrosandboxHome, "rootfs-disks", microsandboxDiskName(sandboxID)+".qcow2")
+}
+
+func microsandboxDiskName(sandboxID string) string {
+	if hash, err := identity.Hash(sandboxID); err == nil {
+		return hash
+	}
+	return sandboxID
 }
 
 func (r *microsandboxRuntime) ensureRootfsDiskWithCacheLock(ctx context.Context, sandboxID string, base microsandboxBaseDisk) (microsandboxRootfsDiskResult, error) {

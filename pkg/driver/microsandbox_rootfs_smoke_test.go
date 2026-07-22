@@ -37,6 +37,7 @@ func TestSmokeMicrosandboxRootfsIsolation(t *testing.T) {
 	}
 	secondState.BoxID = secondInfo.BoxID
 	cleanupRuntimeSmokeSandbox(t, config, runtimeDriver, second, secondState)
+	assertMicrosandboxLegacyDockerDiskDirectoryAbsent(t, config.MicrosandboxHome)
 
 	type execution struct {
 		name    string
@@ -76,6 +77,7 @@ func TestSmokeMicrosandboxRootfsIsolation(t *testing.T) {
 			t.Fatalf("%s isolated read result=%#v err=%v", item.name, result, err)
 		}
 	}
+	assertMicrosandboxDockerUsesRootDiskAcrossRestart(t, ctx, runtimeDriver, first, firstState, firstProxy)
 
 	firstDisk := runtimeDriver.rootfsDiskPath(first.Summary.ID)
 	secondDisk := runtimeDriver.rootfsDiskPath(second.Summary.ID)
@@ -93,11 +95,20 @@ func TestSmokeMicrosandboxRootfsIsolation(t *testing.T) {
 	if err := runtimeDriver.RemoveSandbox(ctx, first, firstState); err != nil {
 		t.Fatalf("remove first microsandbox: %v", err)
 	}
-	for _, path := range []string{firstDisk, firstDisk + ".owner.json", runtimeDriver.dockerDiskPath(first.Summary.ID)} {
+	legacyDockerPaths := []string{
+		runtimeDriver.legacyHashedDockerDiskPath(first.Summary.ID),
+		runtimeDriver.legacyUnhashedDockerDiskPath(first.Summary.ID),
+	}
+	removedPaths := []string{firstDisk, firstDisk + ".owner.json"}
+	for _, path := range legacyDockerPaths {
+		removedPaths = append(removedPaths, path, path+".owner.json")
+	}
+	for _, path := range removedPaths {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("removed sandbox resource %s remains: %v", path, err)
 		}
 	}
+	assertMicrosandboxLegacyDockerDiskDirectoryAbsent(t, config.MicrosandboxHome)
 
 	third, thirdState, thirdProxy := newRuntimeSmokeSandbox(t, ctx, config, RuntimeDriverMicrosandbox)
 	third.Summary.PullPolicy = "never"
@@ -107,6 +118,7 @@ func TestSmokeMicrosandboxRootfsIsolation(t *testing.T) {
 	}
 	thirdState.BoxID = thirdInfo.BoxID
 	cleanupRuntimeSmokeSandbox(t, config, runtimeDriver, third, thirdState)
+	assertMicrosandboxLegacyDockerDiskDirectoryAbsent(t, config.MicrosandboxHome)
 	result, err := runtimeDriver.Exec(ctx, third, thirdState, ExecSpec{Command: "sh", Args: []string{"-lc", "test ! -e /tmp/rootfs-isolation && test ! -e /etc/rootfs-isolation && test ! -e /var/tmp/rootfs-isolation"}, Cwd: "/"})
 	if err != nil || !result.Success {
 		t.Fatalf("new sandbox inherited rootfs pollution: result=%#v err=%v", result, err)
@@ -116,4 +128,64 @@ func TestSmokeMicrosandboxRootfsIsolation(t *testing.T) {
 		t.Fatalf("base allocated bytes changed from %d to %d", baseBefore, baseAfter)
 	}
 	t.Logf("microsandbox rootfs isolation: base=%s allocated=%d child_a=%d child_b=%d", baseMatches[0], baseAfter, allocatedBytes(t, secondDisk), allocatedBytes(t, runtimeDriver.rootfsDiskPath(third.Summary.ID)))
+}
+
+func assertMicrosandboxDockerUsesRootDiskAcrossRestart(
+	t *testing.T,
+	ctx context.Context,
+	runtimeDriver *microsandboxRuntime,
+	session *Sandbox,
+	vmState VMState,
+	proxyState ProxyState,
+) {
+	t.Helper()
+	const marker = "/var/lib/docker/agent-compose-rootfs-smoke-state"
+	const assertDockerRootDisk = `
+set -eu
+driver="$(docker info --format '{{.Driver}}')"
+case "$driver" in
+  overlay2|overlayfs) ;;
+  *) echo "unexpected Docker storage driver: $driver" >&2; exit 1 ;;
+esac
+test "$(stat -c %d /)" = "$(stat -c %d /var/lib/docker)"
+`
+	writeResult, err := runtimeDriver.Exec(ctx, session, vmState, ExecSpec{
+		Command: "sh",
+		Args:    []string{"-lc", assertDockerRootDisk + "printf %s docker-rootfs-state > " + marker},
+		Cwd:     "/",
+	})
+	if err != nil || !writeResult.Success {
+		t.Fatalf("verify Docker root disk before restart: result=%#v err=%v", writeResult, err)
+	}
+
+	missing, err := runtimeDriver.StopSandbox(ctx, session, vmState)
+	if err != nil || missing {
+		t.Fatalf("stop microsandbox for Docker root disk check: missing=%v err=%v", missing, err)
+	}
+	resumeState := vmState
+	resumeState.StoppedAt = time.Now().UTC()
+	info, err := runtimeDriver.EnsureSandbox(ctx, session, resumeState, proxyState)
+	if err != nil {
+		t.Fatalf("resume microsandbox for Docker root disk check: %v", err)
+	}
+	if info.BoxID != vmState.BoxID {
+		t.Fatalf("resumed microsandbox = %q, want %q", info.BoxID, vmState.BoxID)
+	}
+	resumeState.BoxID = info.BoxID
+	resumeState.StoppedAt = time.Time{}
+	readResult, err := runtimeDriver.Exec(ctx, session, resumeState, ExecSpec{
+		Command: "sh",
+		Args:    []string{"-lc", assertDockerRootDisk + "test \"$(cat " + marker + ")\" = docker-rootfs-state"},
+		Cwd:     "/",
+	})
+	if err != nil || !readResult.Success {
+		t.Fatalf("verify Docker root disk after restart: result=%#v err=%v", readResult, err)
+	}
+}
+
+func assertMicrosandboxLegacyDockerDiskDirectoryAbsent(t *testing.T, microsandboxHome string) {
+	t.Helper()
+	if _, err := os.Lstat(filepath.Join(microsandboxHome, "docker-disks")); !os.IsNotExist(err) {
+		t.Fatalf("new Microsandbox creation produced docker-disks, err=%v", err)
+	}
 }

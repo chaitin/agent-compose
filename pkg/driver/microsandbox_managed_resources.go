@@ -68,7 +68,7 @@ func appendMicrosandboxDiskResources(config *appconfig.Config, bySandbox map[str
 		suffix    string
 		read      func(string, string) (microsandboxDiskOwnership, error)
 	}{
-		{directory: "docker-disks", suffix: ".raw.owner.json", read: readMicrosandboxDiskOwnership},
+		{directory: "docker-disks", suffix: ".raw.owner.json", read: readMicrosandboxLegacyDockerDiskOwnership},
 		{directory: "rootfs-disks", suffix: ".qcow2.owner.json", read: readMicrosandboxRootfsDiskOwnership},
 	} {
 		diskRoot := filepath.Join(config.MicrosandboxHome, disk.directory)
@@ -155,10 +155,16 @@ func RemoveMicrosandboxManagedResource(ctx context.Context, config *appconfig.Co
 			return err
 		}
 	}
-	for _, path := range resource.OwnedPaths {
-		if err := validateMicrosandboxAnyOwnedPath(config.MicrosandboxHome, path); err != nil {
+	return removeMicrosandboxManagedPaths(config.MicrosandboxHome, resource.OwnedPaths)
+}
+
+func removeMicrosandboxManagedPaths(home string, paths []string) error {
+	for _, path := range paths {
+		if err := validateMicrosandboxAnyOwnedPath(home, path); err != nil {
 			return err
 		}
+	}
+	for _, path := range paths {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -166,8 +172,8 @@ func RemoveMicrosandboxManagedResource(ctx context.Context, config *appconfig.Co
 	return nil
 }
 
-func readMicrosandboxDiskOwnership(home, manifestPath string) (microsandboxDiskOwnership, error) {
-	if err := validateMicrosandboxOwnedPath(home, manifestPath); err != nil {
+func readMicrosandboxLegacyDockerDiskOwnership(home, manifestPath string) (microsandboxDiskOwnership, error) {
+	if err := validateMicrosandboxLegacyDockerOwnedPath(home, manifestPath); err != nil {
 		return microsandboxDiskOwnership{}, err
 	}
 	data, err := os.ReadFile(manifestPath)
@@ -178,11 +184,11 @@ func readMicrosandboxDiskOwnership(home, manifestPath string) (microsandboxDiskO
 	if err := json.Unmarshal(data, &ownership); err != nil {
 		return microsandboxDiskOwnership{}, fmt.Errorf("decode microsandbox disk ownership %s: %w", manifestPath, err)
 	}
-	validVersion := ownership.Version == 1 || (ownership.Version == microsandboxDiskOwnershipVersion && ownership.ResourceKind == microsandboxDockerDiskKind)
+	validVersion := ownership.Version == 1 || (ownership.Version == microsandboxDiskOwnershipVersion && ownership.ResourceKind == microsandboxLegacyDockerDiskKind)
 	if !validVersion || strings.TrimSpace(ownership.SandboxID) == "" || strings.TrimSpace(ownership.DiskPath) == "" || ownership.CreatedAt.IsZero() {
 		return microsandboxDiskOwnership{}, fmt.Errorf("microsandbox disk ownership %s is incomplete", manifestPath)
 	}
-	if err := validateMicrosandboxOwnedPath(home, ownership.DiskPath); err != nil {
+	if err := validateMicrosandboxLegacyDockerOwnedPath(home, ownership.DiskPath); err != nil {
 		return microsandboxDiskOwnership{}, err
 	}
 	wantManifest := filepath.Clean(ownership.DiskPath + ".owner.json")

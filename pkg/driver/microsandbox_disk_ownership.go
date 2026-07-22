@@ -24,16 +24,9 @@ type microsandboxDiskOwnership struct {
 
 const (
 	microsandboxDiskOwnershipVersion = 2
-	microsandboxDockerDiskKind       = "microsandbox-docker-data"
+	microsandboxLegacyDockerDiskKind = "microsandbox-docker-data"
 	microsandboxRootfsDiskKind       = "microsandbox-rootfs"
 )
-
-func writeMicrosandboxDiskOwnership(diskPath, sandboxID string) error {
-	return writeMicrosandboxDiskOwnershipRecord(microsandboxDiskOwnership{
-		Version: microsandboxDiskOwnershipVersion, ResourceKind: microsandboxDockerDiskKind,
-		SandboxID: sandboxID, DiskPath: diskPath,
-	})
-}
 
 func writeMicrosandboxRootfsDiskOwnership(diskPath, sandboxID string, base microsandboxBaseDisk) error {
 	return writeMicrosandboxDiskOwnershipRecord(microsandboxDiskOwnership{

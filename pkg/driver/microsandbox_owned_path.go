@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-func validateMicrosandboxOwnedPath(home, path string) error {
+func validateMicrosandboxLegacyDockerOwnedPath(home, path string) error {
 	return validateMicrosandboxPathUnder(home, "docker-disks", path)
 }
 
@@ -29,7 +29,7 @@ func validateMicrosandboxAnyOwnedPath(home, path string) error {
 	if microsandboxPathWithinRoot(rootfsRoot, clean) && rootfsRoot != clean {
 		return validateMicrosandboxRootfsOwnedPath(home, path)
 	}
-	return validateMicrosandboxOwnedPath(home, path)
+	return validateMicrosandboxLegacyDockerOwnedPath(home, path)
 }
 
 func validateMicrosandboxPathUnder(home, directory, path string) error {

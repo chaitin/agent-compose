@@ -6,12 +6,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	appconfig "agent-compose/pkg/config"
-	"agent-compose/pkg/identity"
 
 	microsandbox "github.com/superradcompany/microsandbox/sdk/go"
 )
@@ -164,6 +162,7 @@ func TestMicrosandboxResolveLibkrunfwHandlesGlobMetaInDirectory(t *testing.T) {
 func TestMicrosandboxPrepareEnvironmentPreservesDockerDisks(t *testing.T) {
 	config := testMicrosandboxConfig(t)
 	runtime := &microsandboxRuntime{config: config}
+	installFakeMicrosandboxDiskTools(t, filepath.Dir(config.MicrosandboxMSBPath))
 	disk := writeMicrosandboxFile(t, config.MicrosandboxHome, "docker-disks", "old-session.raw")
 	ignored := writeMicrosandboxFile(t, config.MicrosandboxHome, "docker-disks", "note.txt")
 	subdir := filepath.Join(config.MicrosandboxHome, "docker-disks", "nested")
@@ -181,66 +180,25 @@ func TestMicrosandboxPrepareEnvironmentPreservesDockerDisks(t *testing.T) {
 	}
 }
 
-func TestMicrosandboxRemoveDockerDiskOnlyCurrentSession(t *testing.T) {
+func TestMicrosandboxCreateMountsUseRootfsForDockerData(t *testing.T) {
 	config := testMicrosandboxConfig(t)
 	runtime := &microsandboxRuntime{config: config}
-	currentID := identity.Prefix + identity.NewRandomID(identity.ResourceSandbox)
-	otherID := identity.NewRandomID(identity.ResourceSandbox)
-	current := writeMicrosandboxFile(t, config.MicrosandboxHome, "docker-disks", microsandboxDockerDiskName(currentID)+".raw")
-	legacyCurrent := writeMicrosandboxFile(t, config.MicrosandboxHome, "docker-disks", currentID+".raw")
-	other := writeMicrosandboxFile(t, config.MicrosandboxHome, "docker-disks", microsandboxDockerDiskName(otherID)+".raw")
+	hostPath := filepath.Join(t.TempDir(), "data")
+	mounts := runtime.microsandboxCreateMounts(RuntimeMountManifest{Mounts: []RuntimeMount{{
+		HostPath: hostPath, GuestPath: "/data", Type: "bind", ReadOnly: true,
+	}}}, "sandbox-a")
 
-	runtime.removeDockerDisk(currentID)
-
-	if _, err := os.Stat(current); !os.IsNotExist(err) {
-		t.Fatalf("current disk exists after removeDockerDisk, err=%v", err)
+	if _, exists := mounts["/var/lib/docker"]; exists {
+		t.Fatalf("mounts include a separate /var/lib/docker disk: %#v", mounts["/var/lib/docker"])
 	}
-	if _, err := os.Stat(legacyCurrent); !os.IsNotExist(err) {
-		t.Fatalf("legacy current disk exists after removeDockerDisk, err=%v", err)
+	if mount := mounts["/data"]; mount.Kind() != microsandbox.MountKindBind || mount.Bind != hostPath || !mount.Readonly {
+		t.Fatalf("/data mount = %#v", mount)
 	}
-	if _, err := os.Stat(other); err != nil {
-		t.Fatalf("other disk missing after removeDockerDisk: %v", err)
+	if mount := mounts["/run"]; mount.Kind() != microsandbox.MountKindTmpfs || mount.SizeMiB != 256 {
+		t.Fatalf("/run mount = %#v", mount)
 	}
-}
-
-func TestMicrosandboxEnsureDockerDiskMigratesLegacyPath(t *testing.T) {
-	config := testMicrosandboxConfig(t)
-	runtime := &microsandboxRuntime{config: config}
-	sandboxID := identity.Prefix + identity.NewRandomID(identity.ResourceSandbox)
-	legacy := writeMicrosandboxFile(t, config.MicrosandboxHome, "docker-disks", sandboxID+".raw")
-
-	got, err := runtime.ensureDockerDisk(sandboxID)
-	if err != nil {
-		t.Fatalf("ensureDockerDisk: %v", err)
-	}
-	want := runtime.dockerDiskPath(sandboxID)
-	if got != want {
-		t.Fatalf("ensureDockerDisk path = %q, want %q", got, want)
-	}
-	if _, err := os.Stat(want); err != nil {
-		t.Fatalf("migrated docker disk missing: %v", err)
-	}
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Fatalf("legacy docker disk still exists after migration, err=%v", err)
-	}
-}
-
-func TestMicrosandboxDockerDiskPathUsesIdentityHash(t *testing.T) {
-	config := testMicrosandboxConfig(t)
-	runtime := &microsandboxRuntime{config: config}
-	sandboxID := identity.NewRandomID(identity.ResourceSandbox)
-	hash, err := identity.Hash(sandboxID)
-	if err != nil {
-		t.Fatalf("hash sandbox id: %v", err)
-	}
-
-	got := runtime.dockerDiskPath(sandboxID)
-	want := filepath.Join(config.MicrosandboxHome, "docker-disks", hash+".raw")
-	if got != want {
-		t.Fatalf("dockerDiskPath = %q, want %q", got, want)
-	}
-	if strings.ContainsAny(filepath.Base(got), ",:;") {
-		t.Fatalf("docker disk basename = %q, want no runtime-forbidden characters", filepath.Base(got))
+	if _, err := os.Lstat(filepath.Join(config.MicrosandboxHome, "docker-disks")); !os.IsNotExist(err) {
+		t.Fatalf("mount assembly created docker-disks, err=%v", err)
 	}
 }
 
@@ -309,4 +267,18 @@ func writeMicrosandboxFile(t *testing.T, root string, parts ...string) string {
 		t.Fatalf("write %s: %v", path, err)
 	}
 	return path
+}
+
+func installFakeMicrosandboxDiskTools(t *testing.T, binDir string) {
+	t.Helper()
+	for name, script := range map[string]string{
+		"qemu-img":  "#!/bin/sh\nexit 0\n",
+		"mkfs.ext4": "#!/bin/sh\nprintf '%s\\n' '[-d root-directory'\n",
+	} {
+		path := filepath.Join(binDir, name)
+		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+			t.Fatalf("write fake %s: %v", name, err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

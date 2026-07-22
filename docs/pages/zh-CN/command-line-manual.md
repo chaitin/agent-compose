@@ -630,6 +630,8 @@ agent-compose cache rm <cache-id> --force
 
 Microsandbox 根文件系统使用 `DATA_ROOT/image-cache` 下的不可变 qcow2 母盘，并为每个 sandbox 在 `MICROSANDBOX_HOME/rootfs-disks` 下创建私有 qcow2 子盘。只要任何 rootfs sidecar 仍指向母盘，该母盘就会被标记为 referenced 且不可删除。stop/resume 保留私有子盘；sandbox remove/prune 删除子盘及其 ownership sidecar。母盘与子盘记录的是 daemon 挂载命名空间中的路径，因此备份和迁移必须同时移动两棵目录树，并保持 daemon 可见路径不变。一个 `DATA_ROOT` 只能由一个 daemon 实例独占，不能并发共享。只有当 sidecar 指向该 image cache 内合法的母盘路径时，母盘才会被计入引用；sidecar 无法读取或指向其他位置时会输出 warning，并把所有母盘标记为 `unknown` 直到它被修复或删除——因为此时已无法确认它保护的是哪一块母盘。
 
+新建 Microsandbox sandbox 会把 `/var/lib/docker` 直接放在这块私有 ext4 根盘中，不再创建独立的 `docker-disks/*.raw` mount。因此 `SANDBOX_DISK_SIZE_GB` 是系统文件与 Docker 数据共享的一份逻辑容量，默认 6 GiB，不会自动翻倍。旧版本创建的 sandbox 可以继续使用其持久化配置中的 legacy raw 盘，直至 sandbox 被删除；sandbox remove 与 managed-resource prune 仍会识别归属可靠的旧盘，无法可靠归属的文件则保守保留，启动时不会自动清扫。
+
 Microsandbox 解析 guest 镜像时优先使用可达的 Docker daemon，daemon 不可用时改用 agent-compose 自己的 image cache，顺序与 BoxLite driver 一致；Microsandbox 自身始终不访问任何 registry。两条路径的认证方式不同：Docker daemon 使用它自己的凭据，image cache 使用 daemon 进程的 keychain 以及 `IMAGE_REGISTRY`、`IMAGE_INSECURE_REGISTRIES`，因此没有 Docker daemon 的部署需要配置 image cache 一侧。发生回退时会输出 warning，且来源会写入母盘的 cache identity，`cache ls` 可以看出每块母盘由哪条路径产出。pull policy 失败不触发回退，`pull_policy=never` 不会被另一条路径绕过。两条路径使用不同的解包实现，因此各自持有独立母盘；同一镜像若两条路径都解析过会构建两份。
 
 首次升级到 disk-image rootfs 时需要一次性切换：先排空 Microsandbox workload，删除现有 Microsandbox runtime sandbox，再仅删除各镜像 cache 中旧的 `rootfs/` 目录和 `.rootfs.ready` 标志。不要删除整个镜像目录，因为 BoxLite 的 `oci/` cache 和新的 Microsandbox 母盘共用该目录；`/data` 下的 workspace 与 agent state 必须保留。daemon 镜像会提供 `qemu-img` 和支持 `-d` 的 `mkfs.ext4`；原生部署需要安装这两个工具。该方案不要求支持 reflink 的文件系统、loop device 或特权 mount。

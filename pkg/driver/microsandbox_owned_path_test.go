@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestValidateMicrosandboxOwnedPathRejectsIntermediateSymlinkEscape(t *testing.T) {
+func TestValidateMicrosandboxLegacyDockerOwnedPathRejectsIntermediateSymlinkEscape(t *testing.T) {
 	home := t.TempDir()
 	diskRoot := filepath.Join(home, "docker-disks")
 	if err := os.MkdirAll(diskRoot, 0o755); err != nil {
@@ -25,16 +25,16 @@ func TestValidateMicrosandboxOwnedPathRejectsIntermediateSymlinkEscape(t *testin
 		t.Skipf("create symlink: %v", err)
 	}
 
-	err := validateMicrosandboxOwnedPath(home, filepath.Join(link, filepath.Base(outsideDisk)))
+	err := validateMicrosandboxLegacyDockerOwnedPath(home, filepath.Join(link, filepath.Base(outsideDisk)))
 	if err == nil || !strings.Contains(err.Error(), "through a symlink") {
-		t.Fatalf("validateMicrosandboxOwnedPath error = %v, want symlink escape rejection", err)
+		t.Fatalf("validateMicrosandboxLegacyDockerOwnedPath error = %v, want symlink escape rejection", err)
 	}
 	if data, readErr := os.ReadFile(outsideDisk); readErr != nil || string(data) != "outside" {
 		t.Fatalf("outside disk changed: data=%q err=%v", data, readErr)
 	}
 }
 
-func TestValidateMicrosandboxOwnedPathAcceptsRegularFile(t *testing.T) {
+func TestValidateMicrosandboxLegacyDockerOwnedPathAcceptsRegularFile(t *testing.T) {
 	home := t.TempDir()
 	diskRoot := filepath.Join(home, "docker-disks")
 	if err := os.MkdirAll(diskRoot, 0o755); err != nil {
@@ -44,7 +44,7 @@ func TestValidateMicrosandboxOwnedPathAcceptsRegularFile(t *testing.T) {
 	if err := os.WriteFile(disk, []byte("disk"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateMicrosandboxOwnedPath(home, disk); err != nil {
-		t.Fatalf("validateMicrosandboxOwnedPath: %v", err)
+	if err := validateMicrosandboxLegacyDockerOwnedPath(home, disk); err != nil {
+		t.Fatalf("validateMicrosandboxLegacyDockerOwnedPath: %v", err)
 	}
 }
