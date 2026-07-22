@@ -25,6 +25,7 @@ const microsandboxBaseDiskFormatVersion = 1
 
 type microsandboxBaseDisk struct {
 	Identity    string
+	Source      string
 	ImageID     string
 	ResolvedRef string
 	Path        string
@@ -37,6 +38,7 @@ type microsandboxBaseDisk struct {
 type microsandboxBaseDiskManifest struct {
 	FormatVersion int       `json:"format_version"`
 	Identity      string    `json:"identity"`
+	Source        string    `json:"source"`
 	ImageID       string    `json:"image_id"`
 	ResolvedRef   string    `json:"resolved_ref"`
 	Architecture  string    `json:"architecture"`
@@ -45,13 +47,23 @@ type microsandboxBaseDiskManifest struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
-func microsandboxBaseDiskIdentity(imageID, architecture string, diskSizeGiB int32) (string, error) {
+// microsandboxBaseDiskIdentity keys a base disk by everything that changes its
+// bytes, including the image source. Source belongs here because the two
+// sources lay the image out with different extractors -- the image cache
+// resolves .wh. whiteouts itself while Docker exports an already-merged
+// container filesystem -- and because both report the config digest as the
+// image id, so the same image resolved either way would otherwise collide on
+// one cache key. A published base disk is immutable and pinned by its
+// overlays, which makes silently reusing the other extractor's output
+// unrecoverable.
+func microsandboxBaseDiskIdentity(source, imageID, architecture string, diskSizeGiB int32) (string, error) {
+	source = strings.TrimSpace(source)
 	imageID = strings.TrimSpace(strings.TrimPrefix(imageID, "sha256:"))
 	architecture = strings.TrimSpace(architecture)
-	if imageID == "" || architecture == "" || diskSizeGiB <= 0 {
-		return "", fmt.Errorf("microsandbox base disk identity requires image id, architecture, and positive disk size")
+	if source == "" || imageID == "" || architecture == "" || diskSizeGiB <= 0 {
+		return "", fmt.Errorf("microsandbox base disk identity requires source, image id, architecture, and positive disk size")
 	}
-	return fmt.Sprintf("base-v%d-%s-%s-%d", microsandboxBaseDiskFormatVersion, sanitizeRuntimeName(imageID), sanitizeRuntimeName(architecture), diskSizeGiB), nil
+	return fmt.Sprintf("base-v%d-%s-%s-%s-%d", microsandboxBaseDiskFormatVersion, sanitizeRuntimeName(source), sanitizeRuntimeName(imageID), sanitizeRuntimeName(architecture), diskSizeGiB), nil
 }
 
 func (r *microsandboxRuntime) resolveMicrosandboxBaseDisk(ctx context.Context, imageRef, pullPolicy string, pullTimeout time.Duration) (microsandboxBaseDisk, error) {
@@ -59,35 +71,12 @@ func (r *microsandboxRuntime) resolveMicrosandboxBaseDisk(ctx context.Context, i
 	if imageRef == "" {
 		return microsandboxBaseDisk{}, fmt.Errorf("microsandbox guest image is required")
 	}
-	if !dockerDaemonAvailable(ctx) {
-		return microsandboxBaseDisk{}, fmt.Errorf("microsandbox resolve guest image %s: Docker daemon is unavailable", imageRef)
-	}
-	if err := applyDockerDaemonPullPolicy(ctx, imageRef, pullPolicy, pullTimeout); err != nil {
-		return microsandboxBaseDisk{}, fmt.Errorf("microsandbox resolve guest image %s with Docker pull policy: %w", imageRef, err)
-	}
-
-	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	source, err := r.resolveMicrosandboxImageSource(ctx, imageRef, pullPolicy, pullTimeout)
 	if err != nil {
-		return microsandboxBaseDisk{}, fmt.Errorf("microsandbox create Docker client for image %s: %w", imageRef, err)
-	}
-	defer func() { _ = dockerClient.Close() }()
-	resolvedRef, ok, err := resolveLocalDockerImageRef(ctx, dockerClient, imageRef)
-	if err != nil {
-		return microsandboxBaseDisk{}, fmt.Errorf("microsandbox inspect Docker image %s: %w", imageRef, err)
-	}
-	if !ok {
-		return microsandboxBaseDisk{}, fmt.Errorf("microsandbox Docker image %s is unavailable after applying pull policy", imageRef)
-	}
-	inspect, err := dockerClient.ImageInspect(ctx, resolvedRef)
-	if err != nil {
-		return microsandboxBaseDisk{}, fmt.Errorf("microsandbox inspect resolved Docker image %s: %w", resolvedRef, err)
-	}
-	imageID := strings.TrimPrefix(strings.TrimSpace(inspect.ID), "sha256:")
-	if imageID == "" {
-		return microsandboxBaseDisk{}, fmt.Errorf("microsandbox resolved Docker image %s has no image id", resolvedRef)
+		return microsandboxBaseDisk{}, err
 	}
 	diskSizeGiB := configuredSandboxResources(r.config).DiskSizeGB
-	identity, err := microsandboxBaseDiskIdentity(imageID, runtime.GOARCH, diskSizeGiB)
+	identity, err := microsandboxBaseDiskIdentity(source.Kind, source.ImageID, runtime.GOARCH, diskSizeGiB)
 	if err != nil {
 		return microsandboxBaseDisk{}, err
 	}
@@ -99,15 +88,15 @@ func (r *microsandboxRuntime) resolveMicrosandboxBaseDisk(ctx context.Context, i
 		return microsandboxBaseDisk{}, fmt.Errorf("open image cache for microsandbox base disk: %w", err)
 	}
 	cacheRoot := cache.MaterializationRoot()
-	cacheDir := filepath.Join(cacheRoot, imageID, "microsandbox")
+	cacheDir := filepath.Join(cacheRoot, source.ImageID, "microsandbox")
 	base := microsandboxBaseDisk{
-		Identity: identity, ImageID: imageID, ResolvedRef: resolvedRef,
+		Identity: identity, Source: source.Kind, ImageID: source.ImageID, ResolvedRef: source.ResolvedRef,
 		Path: filepath.Join(cacheDir, identity+".qcow2"), Manifest: filepath.Join(cacheDir, identity+".json"),
-		CacheRoot: cacheRoot, Env: inspectEnv(inspect), DiskSizeGiB: diskSizeGiB,
+		CacheRoot: cacheRoot, Env: source.Env, DiskSizeGiB: diskSizeGiB,
 	}
 
-	resultChannel := r.baseBuilds.DoChan(identity+"\x00"+imageID, func() (any, error) {
-		return base, r.ensureMicrosandboxBaseDisk(ctx, dockerClient, base)
+	resultChannel := r.baseBuilds.DoChan(identity+"\x00"+source.ImageID, func() (any, error) {
+		return base, r.ensureMicrosandboxBaseDisk(ctx, source, base)
 	})
 	select {
 	case <-ctx.Done():
@@ -120,7 +109,7 @@ func (r *microsandboxRuntime) resolveMicrosandboxBaseDisk(ctx context.Context, i
 	}
 }
 
-func (r *microsandboxRuntime) ensureMicrosandboxBaseDisk(ctx context.Context, dockerClient *client.Client, base microsandboxBaseDisk) error {
+func (r *microsandboxRuntime) ensureMicrosandboxBaseDisk(ctx context.Context, source microsandboxImageSource, base microsandboxBaseDisk) error {
 	if err := ensureMicrosandboxBaseCacheDirectory(base.CacheRoot, base.Path); err != nil {
 		return err
 	}
@@ -131,18 +120,18 @@ func (r *microsandboxRuntime) ensureMicrosandboxBaseDisk(ctx context.Context, do
 		return nil
 	}
 	started := time.Now()
-	exportDir, err := os.MkdirTemp(filepath.Dir(base.Path), ".base-export-*")
+	// The source owns the layout directory: the docker source hands back a
+	// private export it wants removed, the OCI source hands back the shared
+	// image cache rootfs it wants left alone. Only release() knows which.
+	rootfsDir, release, err := source.materialize(ctx, filepath.Dir(base.Path))
 	if err != nil {
-		return fmt.Errorf("create microsandbox image export directory: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(exportDir) }()
-	if err := exportDockerImageFilesystem(ctx, dockerClient, base.ResolvedRef, exportDir); err != nil {
 		return err
 	}
-	if err := validateMicrosandboxExportedRootfs(exportDir, base.ResolvedRef); err != nil {
+	defer release()
+	if err := validateMicrosandboxExportedRootfs(rootfsDir, base.ResolvedRef); err != nil {
 		return err
 	}
-	rawPath, err := buildMicrosandboxRawDisk(ctx, exportDir, base)
+	rawPath, err := buildMicrosandboxRawDisk(ctx, rootfsDir, base)
 	if err != nil {
 		return err
 	}
@@ -243,7 +232,7 @@ func convertMicrosandboxBaseDisk(ctx context.Context, rawPath, targetPath string
 }
 
 func publishMicrosandboxBaseDisk(ctx context.Context, qcowPath string, base microsandboxBaseDisk) error {
-	manifest := microsandboxBaseDiskManifest{FormatVersion: microsandboxBaseDiskFormatVersion, Identity: base.Identity, ImageID: base.ImageID, ResolvedRef: base.ResolvedRef, Architecture: runtime.GOARCH, DiskSizeGiB: base.DiskSizeGiB, Path: base.Path, CreatedAt: time.Now().UTC()}
+	manifest := microsandboxBaseDiskManifest{FormatVersion: microsandboxBaseDiskFormatVersion, Identity: base.Identity, Source: base.Source, ImageID: base.ImageID, ResolvedRef: base.ResolvedRef, Architecture: runtime.GOARCH, DiskSizeGiB: base.DiskSizeGiB, Path: base.Path, CreatedAt: time.Now().UTC()}
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode microsandbox base disk manifest: %w", err)
@@ -340,7 +329,7 @@ func validateMicrosandboxBaseDisk(ctx context.Context, base microsandboxBaseDisk
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		return false, fmt.Errorf("decode microsandbox base disk manifest %s: %w", base.Manifest, err)
 	}
-	if manifest.FormatVersion != microsandboxBaseDiskFormatVersion || manifest.Identity != base.Identity || manifest.ImageID != base.ImageID || manifest.Architecture != runtime.GOARCH || manifest.DiskSizeGiB != base.DiskSizeGiB || filepath.Clean(manifest.Path) != filepath.Clean(base.Path) || manifest.CreatedAt.IsZero() {
+	if manifest.FormatVersion != microsandboxBaseDiskFormatVersion || manifest.Identity != base.Identity || manifest.Source != base.Source || manifest.ImageID != base.ImageID || manifest.Architecture != runtime.GOARCH || manifest.DiskSizeGiB != base.DiskSizeGiB || filepath.Clean(manifest.Path) != filepath.Clean(base.Path) || manifest.CreatedAt.IsZero() {
 		return false, fmt.Errorf("microsandbox base disk manifest %s does not match requested cache identity", base.Manifest)
 	}
 	if diskInfo.Mode().Perm()&0o222 != 0 {

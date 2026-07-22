@@ -19,20 +19,25 @@ import (
 )
 
 func TestMicrosandboxBaseDiskIdentityIncludesInputs(t *testing.T) {
-	first, err := microsandboxBaseDiskIdentity("sha256:image-a", "amd64", 6)
+	first, err := microsandboxBaseDiskIdentity(microsandboxImageSourceDocker, "sha256:image-a", "amd64", 6)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, candidate := range []struct {
-		image string
-		arch  string
-		size  int32
+		source string
+		image  string
+		arch   string
+		size   int32
 	}{
-		{image: "image-b", arch: "amd64", size: 6},
-		{image: "image-a", arch: "arm64", size: 6},
-		{image: "image-a", arch: "amd64", size: 7},
+		{source: microsandboxImageSourceDocker, image: "image-b", arch: "amd64", size: 6},
+		{source: microsandboxImageSourceDocker, image: "image-a", arch: "arm64", size: 6},
+		{source: microsandboxImageSourceDocker, image: "image-a", arch: "amd64", size: 7},
+		// Both sources report the config digest as the image id, so an
+		// identity that ignored the source would reuse a base disk built by
+		// the other extractor.
+		{source: microsandboxImageSourceOCI, image: "image-a", arch: "amd64", size: 6},
 	} {
-		got, err := microsandboxBaseDiskIdentity(candidate.image, candidate.arch, candidate.size)
+		got, err := microsandboxBaseDiskIdentity(candidate.source, candidate.image, candidate.arch, candidate.size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -40,8 +45,11 @@ func TestMicrosandboxBaseDiskIdentityIncludesInputs(t *testing.T) {
 			t.Fatalf("identity %q did not change for input %#v", got, candidate)
 		}
 	}
-	if !strings.Contains(first, "base-v1-image-a-amd64-6") {
+	if !strings.Contains(first, "base-v1-docker-image-a-amd64-6") {
 		t.Fatalf("identity = %q", first)
+	}
+	if _, err := microsandboxBaseDiskIdentity("", "image-a", "amd64", 6); err == nil {
+		t.Fatal("identity accepted an empty source")
 	}
 }
 
