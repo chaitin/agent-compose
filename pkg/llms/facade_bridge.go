@@ -57,10 +57,9 @@ func normalizeRuntimeRawResponsesInput(payload map[string]json.RawMessage, gener
 	if genericTextParts {
 		defaultTextType = "text"
 	}
-	defaultTextTypeJSON, _ := json.Marshal(defaultTextType)
-	genericTextTypeJSON, _ := json.Marshal("text")
+	textTypeJSON, _ := json.Marshal(defaultTextType)
 	for _, item := range items {
-		if normalizeRuntimeRawResponsesContent(item, defaultTextTypeJSON, genericTextTypeJSON, genericTextParts) {
+		if normalizeRuntimeRawResponsesContent(item, textTypeJSON) {
 			changed = true
 		}
 	}
@@ -75,7 +74,7 @@ func normalizeRuntimeRawResponsesInput(payload map[string]json.RawMessage, gener
 	return true
 }
 
-func normalizeRuntimeRawResponsesContent(item map[string]json.RawMessage, defaultTextType, genericTextType []byte, genericTextParts bool) bool {
+func normalizeRuntimeRawResponsesContent(item map[string]json.RawMessage, textType []byte) bool {
 	raw := item["content"]
 	if len(raw) == 0 || string(raw) == "null" {
 		return false
@@ -90,12 +89,12 @@ func normalizeRuntimeRawResponsesContent(item map[string]json.RawMessage, defaul
 			continue
 		}
 		if len(part["type"]) == 0 || string(part["type"]) == "null" {
-			part["type"] = defaultTextType
+			part["type"] = textType
 			changed = true
 			continue
 		}
-		if genericTextParts && (string(part["type"]) == `"input_text"` || string(part["type"]) == `"output_text"`) {
-			part["type"] = genericTextType
+		if string(part["type"]) == `"output_text"` || (string(textType) == `"text"` && string(part["type"]) == `"input_text"`) {
+			part["type"] = textType
 			changed = true
 		}
 	}
