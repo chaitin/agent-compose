@@ -4,6 +4,7 @@ import (
 	"agent-compose/pkg/config"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/configstore"
+	storagesqlite "agent-compose/pkg/storage/sqlite"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 	"agent-compose/proto/health/v1/healthv1connect"
@@ -276,13 +277,16 @@ agents:
 	}
 
 	dataRoot := filepath.Join(root, "data")
-	di := do.New()
-	storeConfig := &config.Config{DataRoot: dataRoot, DbAddr: filepath.Join(dataRoot, "data.db")}
-	do.ProvideValue(di, storeConfig)
-	store, err := configstore.NewConfigStore(di)
-	if err != nil {
-		t.Fatalf("create config store: %v", err)
+	if err := os.MkdirAll(dataRoot, 0o755); err != nil {
+		t.Fatalf("create test data root: %v", err)
 	}
+	storeConfig := &config.Config{DataRoot: dataRoot, DbAddr: filepath.Join(dataRoot, "data.db")}
+	database, err := storagesqlite.Open(storeConfig.DbAddr, storeConfig.DbTimeout)
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	store := configstore.FromDB(database.DB())
 	if _, err := store.UpsertProject(context.Background(), domain.ProjectRecord{ID: projectID, Name: normalized.Name, SourcePath: composePath, CurrentRevision: 1}); err != nil {
 		t.Fatalf("upsert project: %v", err)
 	}

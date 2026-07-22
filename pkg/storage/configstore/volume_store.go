@@ -20,45 +20,6 @@ type volumeStore struct {
 
 type VolumeListOptions = domain.VolumeListOptions
 
-func (s *volumeStore) ensureVolumeSchema(ctx context.Context) error {
-	statements := []string{
-		`CREATE TABLE IF NOT EXISTS volumes (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL UNIQUE,
-			driver TEXT NOT NULL DEFAULT 'local',
-			path TEXT NOT NULL DEFAULT '',
-			labels_json TEXT NOT NULL DEFAULT '{}',
-			options_json TEXT NOT NULL DEFAULT '{}',
-			project_id TEXT NOT NULL DEFAULT '',
-			created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
-			updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_volumes_driver ON volumes(driver);`,
-		`CREATE INDEX IF NOT EXISTS idx_volumes_project ON volumes(project_id);`,
-		`CREATE TABLE IF NOT EXISTS project_volumes (
-			project_id TEXT NOT NULL,
-			volume_key TEXT NOT NULL,
-			volume_id TEXT NOT NULL,
-			external INTEGER NOT NULL DEFAULT 0,
-			created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
-			updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
-			PRIMARY KEY(project_id, volume_key),
-			FOREIGN KEY(volume_id) REFERENCES volumes(id) ON DELETE RESTRICT
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_project_volumes_volume ON project_volumes(volume_id);`,
-	}
-	for _, stmt := range statements {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("create volume schema: %w", err)
-		}
-	}
-	return nil
-}
-
-func (s *volumeStore) EnsureVolumeSchema(ctx context.Context) error {
-	return s.ensureVolumeSchema(ctx)
-}
-
 func (s *volumeStore) CreateVolume(ctx context.Context, item domain.VolumeRecord) (domain.VolumeRecord, error) {
 	item.ID = strings.TrimSpace(item.ID)
 	if item.ID == "" {

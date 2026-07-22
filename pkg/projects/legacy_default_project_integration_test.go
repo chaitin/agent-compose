@@ -13,6 +13,7 @@ import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"agent-compose/pkg/images"
+	"agent-compose/pkg/internal/testutil"
 	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/projects"
@@ -30,8 +31,9 @@ func TestIntegrationLegacyDefaultProjectAdoptsLoaderHistoryAtCurrentRevision(t *
 		DockerDefaultImage: "guest:latest",
 	}
 	di := do.New()
+	do.ProvideValue(di, ctx)
 	do.ProvideValue(di, config)
-	store, err := configstore.NewConfigStore(di)
+	store, err := testutil.OpenConfigStore(t, di)
 	if err != nil {
 		t.Fatalf("create config store: %v", err)
 	}

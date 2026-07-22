@@ -15,11 +15,8 @@ import (
 	"agent-compose/pkg/internal/testutil"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/sessions"
-	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
 	"agent-compose/pkg/workspaces"
-
-	"github.com/samber/do/v2"
 )
 
 func TestIntegrationJupyterWorkspaceProxyResumePreservesState(t *testing.T) {
@@ -36,20 +33,9 @@ func TestIntegrationJupyterWorkspaceProxyResumePreservesState(t *testing.T) {
 		SandboxStartTimeout:  2 * time.Second,
 	}
 
-	di := do.New()
-	do.ProvideValue(di, config)
-	workspaceStore, err := configstore.NewConfigStore(di)
+	workspaceStore, sandboxStore, err := testutil.OpenStores(t, config)
 	if err != nil {
-		t.Fatalf("create config store: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := workspaceStore.DB().Close(); err != nil {
-			t.Errorf("close config store: %v", err)
-		}
-	})
-	sandboxStore, err := sessionstore.NewWithConfig(config)
-	if err != nil {
-		t.Fatalf("create session store: %v", err)
+		t.Fatalf("create storage: %v", err)
 	}
 
 	workspaceConfig, err := workspaceStore.CreateWorkspaceConfig(ctx, domain.WorkspaceConfig{

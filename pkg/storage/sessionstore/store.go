@@ -26,6 +26,7 @@ import (
 	"agent-compose/pkg/identity"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/sessions"
+	storagesqlite "agent-compose/pkg/storage/sqlite"
 
 	"github.com/google/uuid"
 )
@@ -58,6 +59,7 @@ type (
 
 type Store struct {
 	config                *appconfig.Config
+	database              *storagesqlite.Database
 	sandboxLocks          sync.Map
 	cacheDependencyMu     sync.RWMutex
 	cacheDependencyLocker CacheDependencyLocker
@@ -70,6 +72,9 @@ type CacheDependencyLocker interface {
 	WithLockContext(context.Context, func() error) error
 }
 
+// NewWithConfig constructs a standalone Store with its own application
+// database. Production composition should use NewWithDatabase so every store
+// shares the dependency-injected database.
 func NewWithConfig(config *appconfig.Config) (*Store, error) {
 	if err := os.MkdirAll(config.SandboxRoot, 0o755); err != nil {
 		return nil, fmt.Errorf("create sandbox root: %w", err)
@@ -78,14 +83,26 @@ func NewWithConfig(config *appconfig.Config) (*Store, error) {
 	if dbPath == "" {
 		dbPath = filepath.Join(config.SandboxRoot, "data.db")
 	}
-	index, _, err := openSandboxCache(dbPath)
+	database, err := storagesqlite.Open(dbPath, config.DbTimeout)
 	if err != nil {
 		return newStoreWithIndex(config, nil, dbPath, err)
 	}
-	return newStoreWithIndex(config, index, dbPath, nil)
+	index, _, indexErr := openSandboxCacheDB(context.Background(), database.DB())
+	store, err := newStoreWithIndex(config, index, dbPath, indexErr)
+	if err != nil {
+		return nil, errors.Join(err, database.Close())
+	}
+	if indexErr != nil {
+		if err := database.Close(); err != nil {
+			return nil, fmt.Errorf("close unavailable standalone sandbox database: %w", err)
+		}
+		return store, nil
+	}
+	store.database = database
+	return store, nil
 }
 
-// NewWithDatabase constructs a Store using the daemon's shared data.db
+// NewWithDatabase constructs a Store using the application's shared data.db
 // connection. The caller owns db; closing the Store only releases index-owned
 // resources and never closes the shared database.
 func NewWithDatabase(config *appconfig.Config, db *sql.DB) (*Store, error) {
@@ -156,10 +173,14 @@ func FromConfig(config *appconfig.Config) *Store {
 // Close releases database resources owned by compatibility stores. Stores
 // created with NewWithDatabase leave the caller-owned shared database open.
 func (s *Store) Close() error {
-	if s.index == nil {
-		return nil
+	var err error
+	if s.index != nil {
+		err = s.index.Close()
 	}
-	return s.index.Close()
+	if s.database != nil {
+		err = errors.Join(err, s.database.Close())
+	}
+	return err
 }
 
 // Shutdown adapts Close to the samber/do Shutdowner interface.

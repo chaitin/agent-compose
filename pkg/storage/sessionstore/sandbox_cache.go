@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
-
 	domain "agent-compose/pkg/model"
 )
 
@@ -25,25 +23,6 @@ var errSandboxCache = errors.New("sandbox listing cache failure")
 type sandboxCache struct {
 	db     *sql.DB
 	ownsDB bool
-}
-
-// openSandboxCache opens data.db for compatibility callers that do not receive
-// the daemon's shared database connection. Only the sandboxes table is a
-// disposable cache; the database file may contain authoritative application
-// state and must never be removed during index recovery.
-func openSandboxCache(path string) (*sandboxCache, bool, error) {
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, false, fmt.Errorf("open data database for sandbox listing cache: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	idx, needsRebuild, err := openSandboxCacheDB(context.Background(), db)
-	if err != nil {
-		return nil, false, closeSandboxCacheDB(db, err)
-	}
-	idx.ownsDB = true
-	return idx, needsRebuild, nil
 }
 
 func openSandboxCacheDB(ctx context.Context, db *sql.DB) (*sandboxCache, bool, error) {

@@ -11,8 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samber/do/v2"
-
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"agent-compose/pkg/execution"
@@ -44,20 +42,9 @@ func TestIntegrationProjectLocalWorkspaceExistingAndNewSandboxState(t *testing.T
 		RuntimeDriver: driverpkg.RuntimeDriverDocker,
 		DefaultImage:  "guest:latest",
 	}
-	di := do.New()
-	do.ProvideValue(di, config)
-	configDB, err := configstore.NewConfigStore(di)
+	configDB, sandboxStore, err := testutil.OpenStores(t, config)
 	if err != nil {
-		t.Fatalf("create config store: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := configDB.DB().Close(); err != nil {
-			t.Errorf("close config store: %v", err)
-		}
-	})
-	sandboxStore, err := sessionstore.NewWithConfig(config)
-	if err != nil {
-		t.Fatalf("create session store: %v", err)
+		t.Fatalf("create storage: %v", err)
 	}
 
 	const (

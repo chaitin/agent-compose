@@ -21,14 +21,14 @@ func TestProjectRunEventsAreOrderedIdempotentAndCascade(t *testing.T) {
 	if err := store.initSchema(ctx); err != nil {
 		t.Fatalf("init schema: %v", err)
 	}
-	columns, err := TableColumnTypes(ctx, store.db, "project_run_event")
+	columns, err := sqliteTableColumnTypes(ctx, store.db, "project_run_event")
 	if err != nil {
 		t.Fatalf("inspect run event schema: %v", err)
 	}
 	if _, exists := columns["idempotency_key"]; exists {
 		t.Fatalf("project_run_event still contains idempotency_key: %#v", columns)
 	}
-	runColumns, err := TableColumnTypes(ctx, store.db, "project_run")
+	runColumns, err := sqliteTableColumnTypes(ctx, store.db, "project_run")
 	if err != nil {
 		t.Fatalf("inspect project run schema: %v", err)
 	}

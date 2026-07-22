@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -33,6 +34,7 @@ import (
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
+	storagesqlite "agent-compose/pkg/storage/sqlite"
 	"agent-compose/pkg/volumes"
 	"agent-compose/pkg/workspaces"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
@@ -52,6 +54,7 @@ func Register(di do.Injector) {
 
 func RegisterDependencies(di do.Injector) {
 	do.Provide(di, func(do.Injector) (*sessions.LifecycleLocks, error) { return sessions.NewLifecycleLocks(), nil })
+	do.Provide(di, NewDatabase)
 	do.Provide(di, NewConfigStore)
 	do.Provide(di, NewSandboxStore)
 	do.Provide(di, NewWorkspaceProvisioner)
@@ -425,14 +428,23 @@ func NewSandboxRPCBridge(di do.Injector) (*adapters.SandboxRPCBridge, error) {
 	), nil
 }
 
+func NewDatabase(di do.Injector) (*storagesqlite.Database, error) {
+	config := do.MustInvoke[*appconfig.Config](di)
+	if err := os.MkdirAll(config.DataRoot, 0o755); err != nil {
+		return nil, fmt.Errorf("create agent-compose data root: %w", err)
+	}
+	return storagesqlite.Open(config.DbAddr, config.DbTimeout)
+}
+
 func NewConfigStore(di do.Injector) (*configstore.ConfigStore, error) {
-	return configstore.NewConfigStore(di)
+	database := do.MustInvoke[*storagesqlite.Database](di)
+	return configstore.FromDB(database.DB()), nil
 }
 
 func NewSandboxStore(di do.Injector) (*sessionstore.Store, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
-	configDB := do.MustInvoke[*configstore.ConfigStore](di)
-	return sessionstore.NewWithDatabase(config, configDB.DB())
+	database := do.MustInvoke[*storagesqlite.Database](di)
+	return sessionstore.NewWithDatabase(config, database.DB())
 }
 
 func NewWorkspaceProvisioner(di do.Injector) (*workspaces.Provisioner, error) {

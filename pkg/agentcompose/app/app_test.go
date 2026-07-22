@@ -41,13 +41,14 @@ func TestSetupRegistersServiceGraph(t *testing.T) {
 	t.Setenv("LLM_API_ENDPOINT", "")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	t.Cleanup(cancel)
 	di := do.New()
 	appconfig.Setup(di)
 	do.ProvideValue(di, ctx)
 	do.ProvideValue(di, slog.Default())
 	do.ProvideValue(di, echo.New())
 	Setup(di)
+	cancel()
 
 	app := do.MustInvoke[*echo.Echo](di)
 	if len(app.Routes()) == 0 {
@@ -94,7 +95,7 @@ func TestStartBackgroundConstructsCleanupBeforeLoader(t *testing.T) {
 	t.Setenv("LLM_API_ENDPOINT", "")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	t.Cleanup(cancel)
 	di := do.New()
 	appconfig.Setup(di)
 	do.ProvideValue(di, ctx)
@@ -114,6 +115,7 @@ func TestStartBackgroundConstructsCleanupBeforeLoader(t *testing.T) {
 	if err := StartBackground(di); err != nil {
 		t.Fatalf("StartBackground returned error: %v", err)
 	}
+	cancel()
 	if len(constructionOrder) < 2 || constructionOrder[0] != "cleanup" || constructionOrder[1] != "loader" {
 		t.Fatalf("background construction order = %v, want cleanup before loader", constructionOrder)
 	}
@@ -181,7 +183,7 @@ func TestRegisterUsesLegacySessionsRootAndInitializesConfigStoreSchema(t *testin
 	t.Setenv("LLM_API_ENDPOINT", "")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	t.Cleanup(cancel)
 	di := do.New()
 	appconfig.Setup(di)
 	do.ProvideValue(di, ctx)
@@ -189,6 +191,7 @@ func TestRegisterUsesLegacySessionsRootAndInitializesConfigStoreSchema(t *testin
 	do.ProvideValue(di, echo.New())
 
 	Register(di)
+	cancel()
 	config := do.MustInvoke[*appconfig.Config](di)
 	if config.SandboxRoot != legacyRoot {
 		t.Fatalf("SandboxRoot = %q, want legacy root %q", config.SandboxRoot, legacyRoot)

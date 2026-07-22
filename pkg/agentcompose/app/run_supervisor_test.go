@@ -8,6 +8,7 @@ import (
 	"github.com/samber/do/v2"
 
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/internal/testutil"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/configstore"
 )
@@ -91,11 +92,12 @@ func newRunSupervisorTestConfigStore(t *testing.T) *configstore.ConfigStore {
 	t.Helper()
 	root := t.TempDir()
 	di := do.New()
+	do.ProvideValue(di, context.Background())
 	do.ProvideValue(di, &appconfig.Config{
 		DataRoot: root,
 		DbAddr:   filepath.Join(root, "data.db"),
 	})
-	store, err := configstore.NewConfigStore(di)
+	store, err := testutil.OpenConfigStore(t, di)
 	if err != nil {
 		t.Fatalf("NewConfigStore returned error: %v", err)
 	}
