@@ -144,11 +144,15 @@ func TestRuntimeHostProjectAgentPath(t *testing.T) {
 		Publisher:          publisher,
 	}, loader, triggerExecution(run), loaders.TriggerEventMetadata{EventID: "topic-event"})
 
+	expectedConfigHash, err := loaders.LoaderSandboxConfigHash(loader)
+	if err != nil {
+		t.Fatalf("LoaderSandboxConfigHash returned error: %v", err)
+	}
 	result, err := host.Agent(ctx, "review", domain.LoaderAgentRequest{})
 	if err != nil {
 		t.Fatalf("Project Agent returned error: %v", err)
 	}
-	if result.Text != "project output" || projectRunner.request.ProjectID != "project-1" || projectRunner.request.ClientRequestID != run.ID+":agent:1" || projectRunner.request.SandboxConfigHash == "" {
+	if result.Text != "project output" || projectRunner.request.ProjectID != "project-1" || projectRunner.request.ClientRequestID != run.ID+":agent:1" || projectRunner.request.TriggerID != run.TriggerID || projectRunner.request.SandboxConfigHash != expectedConfigHash {
 		t.Fatalf("project result/request = %#v/%#v", result, projectRunner.request)
 	}
 	if !events.contains("loader.agent.completed") || len(publisher.events) != 1 || publisher.events[0].payload["projectRunId"] != "project-run" {
