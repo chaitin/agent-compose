@@ -86,3 +86,29 @@ func TestEnsurePromptAttachLLMFacadeEnvClaudeUsesControllerStore(t *testing.T) {
 		t.Fatalf("stored token = %#v", token)
 	}
 }
+
+func TestEnsurePromptAttachClaudeLLMFacadeEnvPreservesRequestedModelWithoutConfiguredProvider(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	t.Setenv("LLM_API_KEY", "")
+
+	store := &promptAttachFacadeStore{}
+	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-claude-attach"}}
+	env, err := ensurePromptAttachClaudeLLMFacadeEnv(
+		context.Background(),
+		&appconfig.Config{RuntimeBaseURL: "http://agent-compose.test:7410"},
+		store,
+		sandbox,
+		" claude-sonnet-4-20250514 ",
+		"run-claude-attach",
+	)
+	if err != nil {
+		t.Fatalf("ensurePromptAttachClaudeLLMFacadeEnv returned error: %v", err)
+	}
+	if env["ANTHROPIC_MODEL"] != "claude-sonnet-4-20250514" || env["CLAUDE_MODEL"] != "claude-sonnet-4-20250514" {
+		t.Fatalf("Claude model env = %#v", env)
+	}
+	if len(store.tokens) != 1 || store.tokens[0].Model != "claude-sonnet-4-20250514" {
+		t.Fatalf("saved tokens = %#v", store.tokens)
+	}
+}

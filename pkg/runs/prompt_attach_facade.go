@@ -17,7 +17,7 @@ func ensurePromptAttachClaudeLLMFacadeEnv(ctx context.Context, config *appconfig
 		return nil, nil
 	}
 	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sandbox.Summary.ID, llms.ProviderFamilyAnthropic, model, "", promptAttachSandboxProviderEnvItems(sandbox))
-	tokenModel := ""
+	tokenModel := strings.TrimSpace(model)
 	tokenProvider := ""
 	if err != nil {
 		optional := errors.Is(err, domain.ErrRequired) || errors.Is(err, domain.ErrFailedPrecondition)
