@@ -9,6 +9,23 @@ import (
 	"connectrpc.com/connect"
 )
 
+func TestNormalizedRuntimeAgentSpecPreservesSchedulerConcurrencyPolicy(t *testing.T) {
+	enabled := true
+	agent := normalizedRuntimeAgentSpec(&agentcomposev2.AgentSpec{
+		Name:     "worker",
+		Provider: "codex",
+		Enabled:  &enabled,
+		Scheduler: &agentcomposev2.SchedulerSpec{
+			Enabled:           true,
+			ConcurrencyPolicy: "parallel",
+		},
+	})
+
+	if agent.Scheduler == nil || agent.Scheduler.ConcurrencyPolicy != "parallel" {
+		t.Fatalf("scheduler = %#v, want concurrency policy parallel", agent.Scheduler)
+	}
+}
+
 func TestIntegrationCLIRuntimeCommandsSelectStoredProjectByName(t *testing.T) {
 	withWorkingDir(t, t.TempDir())
 	enabled := true
@@ -16,7 +33,7 @@ func TestIntegrationCLIRuntimeCommandsSelectStoredProjectByName(t *testing.T) {
 		Summary: &agentcomposev2.ProjectSummary{ProjectId: "project-stored", Name: "stored-project"},
 		Spec: &agentcomposev2.ProjectSpec{Name: "stored-project", Agents: []*agentcomposev2.AgentSpec{{
 			Name: "worker", Provider: "codex", Enabled: &enabled,
-			Scheduler: &agentcomposev2.SchedulerSpec{Enabled: true, Triggers: []*agentcomposev2.TriggerSpec{{Name: "manual", Kind: "manual"}}},
+			Scheduler: &agentcomposev2.SchedulerSpec{Enabled: true, ConcurrencyPolicy: "parallel", Triggers: []*agentcomposev2.TriggerSpec{{Name: "manual", Kind: "manual"}}},
 		}}},
 		Agents:     []*agentcomposev2.ProjectAgent{{ProjectId: "project-stored", AgentName: "worker", ManagedAgentId: "agent-stored", Provider: "codex", Enabled: true}},
 		Schedulers: []*agentcomposev2.ProjectScheduler{{ProjectId: "project-stored", AgentName: "worker", SchedulerId: "scheduler-stored", Enabled: true, TriggerCount: 1}},

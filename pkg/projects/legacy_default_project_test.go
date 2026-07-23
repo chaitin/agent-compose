@@ -180,7 +180,7 @@ func TestLegacyDefaultNormalizedProjectAdoptsLegacyLoaders(t *testing.T) {
 		t.Fatalf("project agents/overrides = %#v/%#v", project.Spec.Agents, project.managedLoaderOverrides)
 	}
 	worker := findLegacyProjectAgent(t, project, "worker")
-	if worker.Scheduler == nil || worker.Scheduler.Enabled || worker.Scheduler.Script != loaders[1].Script || worker.Scheduler.DisplayName != "First task" || worker.Scheduler.Description != "First task description" {
+	if worker.Scheduler == nil || worker.Scheduler.Enabled || worker.Scheduler.Script != loaders[1].Script || worker.Scheduler.DisplayName != "First task" || worker.Scheduler.Description != "First task description" || worker.Scheduler.ConcurrencyPolicy != domain.LoaderConcurrencyPolicySkip {
 		t.Fatalf("worker scheduler = %#v", worker.Scheduler)
 	}
 	workerLoader := project.managedLoaderOverrides["worker"]
@@ -192,7 +192,7 @@ func TestLegacyDefaultNormalizedProjectAdoptsLegacyLoaders(t *testing.T) {
 	for _, agent := range project.Spec.Agents {
 		if strings.HasPrefix(agent.Name, "worker-loader-") {
 			clonedName = agent.Name
-			if agent.Scheduler == nil || !agent.Scheduler.Enabled || agent.Scheduler.Script != loaders[0].Script || agent.Scheduler.DisplayName != "Second task" || agent.Scheduler.Description != "Second task description" {
+			if agent.Scheduler == nil || !agent.Scheduler.Enabled || agent.Scheduler.Script != loaders[0].Script || agent.Scheduler.DisplayName != "Second task" || agent.Scheduler.Description != "Second task description" || agent.Scheduler.ConcurrencyPolicy != domain.LoaderConcurrencyPolicyParallel {
 				t.Fatalf("cloned scheduler = %#v", agent.Scheduler)
 			}
 		}

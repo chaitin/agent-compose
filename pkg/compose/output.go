@@ -436,12 +436,13 @@ func cloneNormalizedSchedulerSpec(value *NormalizedSchedulerSpec) *NormalizedSch
 		return nil
 	}
 	cloned := &NormalizedSchedulerSpec{
-		Enabled:       value.Enabled,
-		SandboxPolicy: value.SandboxPolicy,
-		DisplayName:   value.DisplayName,
-		Description:   value.Description,
-		Script:        value.Script,
-		scriptSource:  cloneSourcePointer(value.scriptSource),
+		Enabled:           value.Enabled,
+		SandboxPolicy:     value.SandboxPolicy,
+		ConcurrencyPolicy: value.ConcurrencyPolicy,
+		DisplayName:       value.DisplayName,
+		Description:       value.Description,
+		Script:            value.Script,
+		scriptSource:      cloneSourcePointer(value.scriptSource),
 	}
 	for _, trigger := range value.Triggers {
 		cloned.Triggers = append(cloned.Triggers, cloneNormalizedTriggerSpec(trigger))

@@ -71,17 +71,18 @@ scheduler.on("news.ready", "on-news", function onNews() {});
 `
 	loader, err := store.CreateLoader(ctx, domain.Loader{
 		Summary: domain.LoaderSummary{
-			ID:            "legacy-loader-source",
-			Name:          "资讯推送任务",
-			Description:   "每小时检查并推送资讯",
-			Enabled:       false,
-			Runtime:       domain.LoaderRuntimeScheduler,
-			AgentID:       agent.ID,
-			WorkspaceID:   workspace.ID,
-			Driver:        driverpkg.RuntimeDriverDocker,
-			GuestImage:    "guest:latest",
-			DefaultAgent:  "codex",
-			SandboxPolicy: domain.LoaderSandboxPolicySticky,
+			ID:                "legacy-loader-source",
+			Name:              "资讯推送任务",
+			Description:       "每小时检查并推送资讯",
+			Enabled:           false,
+			Runtime:           domain.LoaderRuntimeScheduler,
+			AgentID:           agent.ID,
+			WorkspaceID:       workspace.ID,
+			Driver:            driverpkg.RuntimeDriverDocker,
+			GuestImage:        "guest:latest",
+			DefaultAgent:      "codex",
+			SandboxPolicy:     domain.LoaderSandboxPolicySticky,
+			ConcurrencyPolicy: domain.LoaderConcurrencyPolicySkip,
 		},
 		Script: script,
 	})
@@ -225,6 +226,7 @@ scheduler.on("news.ready", "on-news", function onNews() {});
 	editedSpec.Agents = append([]compose.NormalizedAgentSpec(nil), repeated.RevisionSpec.Agents...)
 	editedScheduler := *editedSpec.Agents[0].Scheduler
 	editedScheduler.Description = "Edited through v2 project apply"
+	editedScheduler.ConcurrencyPolicy = domain.LoaderConcurrencyPolicyParallel
 	editedSpec.Agents[0].Scheduler = &editedScheduler
 	editedHash, err := editedSpec.Hash()
 	if err != nil {
@@ -239,8 +241,73 @@ scheduler.on("news.ready", "on-news", function onNews() {});
 		t.Fatalf("edited scheduler lost adopted loader identity: %#v, err = %v", page, err)
 	}
 	editedLoader, err := store.GetLoader(ctx, loader.Summary.ID)
-	if err != nil || editedLoader.Summary.Description != editedScheduler.Description {
+	if err != nil || editedLoader.Summary.Description != editedScheduler.Description || editedLoader.Summary.ConcurrencyPolicy != domain.LoaderConcurrencyPolicyParallel {
 		t.Fatalf("edited adopted loader = %#v, err = %v", editedLoader.Summary, err)
+	}
+	if runs, err := store.ListLoaderRuns(ctx, loader.Summary.ID, 10); err != nil || len(runs) != 1 || runs[0].ID != "legacy-run" {
+		t.Fatalf("adopted loader runs after edit = %#v, err = %v", runs, err)
+	}
+	if events, err := store.ListLoaderEvents(ctx, loader.Summary.ID, 10); err != nil || len(events) != 1 || events[0].ID != "legacy-event" {
+		t.Fatalf("adopted loader events after edit = %#v, err = %v", events, err)
+	}
+
+	parallelProject, err := store.GetProject(ctx, projectID)
+	if err != nil {
+		t.Fatalf("load project after parallel edit: %v", err)
+	}
+	revertedSpec := editedSpec
+	revertedSpec.Agents = append([]compose.NormalizedAgentSpec(nil), editedSpec.Agents...)
+	revertedScheduler := *revertedSpec.Agents[0].Scheduler
+	revertedScheduler.ConcurrencyPolicy = domain.LoaderConcurrencyPolicySkip
+	revertedSpec.Agents[0].Scheduler = &revertedScheduler
+	revertedHash, err := revertedSpec.Hash()
+	if err != nil {
+		t.Fatalf("hash reverted synthetic project: %v", err)
+	}
+	revertedProject := projects.NormalizedProject{Spec: &revertedSpec, SpecHash: revertedHash}
+
+	dryRun, err := controller.ApplyProject(ctx, projects.ApplyRequest{Normalized: revertedProject, DryRun: true})
+	if err != nil || dryRun.Applied || len(dryRun.Issues) != 0 || len(dryRun.Schedulers) != 1 {
+		t.Fatalf("dry-run reverted synthetic project = %#v, err = %v", dryRun, err)
+	}
+	if dryRun.Schedulers[0].ManagedLoaderID != loader.Summary.ID || !strings.Contains(dryRun.Schedulers[0].SpecJSON, `"concurrency_policy":"skip"`) {
+		t.Fatalf("dry-run reverted scheduler = %#v", dryRun.Schedulers[0])
+	}
+	projectAfterDryRun, err := store.GetProject(ctx, projectID)
+	if err != nil || projectAfterDryRun.CurrentRevision != parallelProject.CurrentRevision {
+		t.Fatalf("project changed during dry-run = %#v, err = %v", projectAfterDryRun, err)
+	}
+	loaderAfterDryRun, err := store.GetLoader(ctx, loader.Summary.ID)
+	if err != nil || loaderAfterDryRun.Summary.ConcurrencyPolicy != domain.LoaderConcurrencyPolicyParallel {
+		t.Fatalf("loader changed during dry-run = %#v, err = %v", loaderAfterDryRun.Summary, err)
+	}
+
+	reverted, err := controller.ApplyProject(ctx, projects.ApplyRequest{Normalized: revertedProject})
+	if err != nil || !reverted.Applied || reverted.Unchanged || reverted.Revision.Revision != parallelProject.CurrentRevision+1 {
+		t.Fatalf("apply reverted synthetic project = %#v, err = %v", reverted, err)
+	}
+	revertedLoader, err := store.GetLoader(ctx, loader.Summary.ID)
+	if err != nil || revertedLoader.Summary.ConcurrencyPolicy != domain.LoaderConcurrencyPolicySkip {
+		t.Fatalf("reverted adopted loader = %#v, err = %v", revertedLoader.Summary, err)
+	}
+
+	idempotent, err := controller.ApplyProject(ctx, projects.ApplyRequest{Normalized: revertedProject})
+	if err != nil || !idempotent.Applied || !idempotent.Unchanged || idempotent.Revision.Revision != reverted.Revision.Revision {
+		t.Fatalf("repeated reverted project apply = %#v, err = %v", idempotent, err)
+	}
+	finalProject, err := store.GetProject(ctx, projectID)
+	if err != nil || finalProject.CurrentRevision != reverted.Revision.Revision {
+		t.Fatalf("repeated apply changed project revision = %#v, err = %v", finalProject, err)
+	}
+	finalPage, err := store.ListProjectSchedulersPage(ctx, "", "", 10)
+	if err != nil || len(finalPage) != 1 || finalPage[0].ManagedLoaderID != loader.Summary.ID || finalPage[0].Revision != reverted.Revision.Revision {
+		t.Fatalf("scheduler identity after repeated apply = %#v, err = %v", finalPage, err)
+	}
+	if runs, err := store.ListLoaderRuns(ctx, loader.Summary.ID, 10); err != nil || len(runs) != 1 || runs[0].ID != "legacy-run" {
+		t.Fatalf("adopted loader runs after policy round trip = %#v, err = %v", runs, err)
+	}
+	if events, err := store.ListLoaderEvents(ctx, loader.Summary.ID, 10); err != nil || len(events) != 1 || events[0].ID != "legacy-event" {
+		t.Fatalf("adopted loader events after policy round trip = %#v, err = %v", events, err)
 	}
 }
 

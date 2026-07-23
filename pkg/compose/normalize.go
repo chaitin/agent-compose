@@ -124,12 +124,13 @@ type NormalizedDriverSpec struct {
 }
 
 type NormalizedSchedulerSpec struct {
-	Enabled       bool                    `yaml:"enabled" json:"enabled"`
-	SandboxPolicy string                  `yaml:"sandbox_policy" json:"sandbox_policy"`
-	DisplayName   string                  `yaml:"display_name,omitempty" json:"display_name,omitempty"`
-	Description   string                  `yaml:"description,omitempty" json:"description,omitempty"`
-	Script        string                  `yaml:"script,omitempty" json:"script,omitempty"`
-	Triggers      []NormalizedTriggerSpec `yaml:"triggers,omitempty" json:"triggers,omitempty"`
+	Enabled           bool                    `yaml:"enabled" json:"enabled"`
+	SandboxPolicy     string                  `yaml:"sandbox_policy" json:"sandbox_policy"`
+	ConcurrencyPolicy string                  `yaml:"concurrency_policy" json:"concurrency_policy"`
+	DisplayName       string                  `yaml:"display_name,omitempty" json:"display_name,omitempty"`
+	Description       string                  `yaml:"description,omitempty" json:"description,omitempty"`
+	Script            string                  `yaml:"script,omitempty" json:"script,omitempty"`
+	Triggers          []NormalizedTriggerSpec `yaml:"triggers,omitempty" json:"triggers,omitempty"`
 
 	scriptSource *sources.Source
 }
@@ -1076,12 +1077,17 @@ func normalizeSchedulerSpec(path string, scheduler *SchedulerSpec, options Norma
 	if err != nil {
 		return nil, err
 	}
+	concurrencyPolicy, err := normalizeSchedulerConcurrencyPolicy(path+".concurrency_policy", scheduler.ConcurrencyPolicy)
+	if err != nil {
+		return nil, err
+	}
 	normalized := &NormalizedSchedulerSpec{
-		Enabled:       enabled,
-		SandboxPolicy: sandboxPolicy,
-		DisplayName:   strings.TrimSpace(scheduler.DisplayName),
-		Description:   strings.TrimSpace(scheduler.Description),
-		Script:        script,
+		Enabled:           enabled,
+		SandboxPolicy:     sandboxPolicy,
+		ConcurrencyPolicy: concurrencyPolicy,
+		DisplayName:       strings.TrimSpace(scheduler.DisplayName),
+		Description:       strings.TrimSpace(scheduler.Description),
+		Script:            script,
 	}
 	if scriptSource.HasContent() {
 		if !options.ResolveScriptURLs {
@@ -1251,6 +1257,19 @@ func normalizeSandboxPolicy(path string, value *string, fallback string) (string
 		return policy, nil
 	default:
 		return "", &ValidationError{Path: path, Message: fmt.Sprintf("sandbox_policy must be sticky or new, got %q", policy)}
+	}
+}
+
+func normalizeSchedulerConcurrencyPolicy(path string, value *string) (string, error) {
+	if value == nil {
+		return "skip", nil
+	}
+	policy := strings.ToLower(strings.TrimSpace(*value))
+	switch policy {
+	case "skip", "parallel":
+		return policy, nil
+	default:
+		return "", &ValidationError{Path: path, Message: fmt.Sprintf("concurrency_policy must be skip or parallel, got %q", policy)}
 	}
 }
 

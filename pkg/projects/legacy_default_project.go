@@ -273,11 +273,12 @@ func projectLegacyLoaders(spec *compose.NormalizedProjectSpec, legacyLoaders []d
 			projected.Summary.Enabled = false
 		}
 		spec.Agents[targetIndex].Scheduler = &compose.NormalizedSchedulerSpec{
-			Enabled:       projected.Summary.Enabled,
-			SandboxPolicy: domain.NormalizeLoaderSandboxPolicy(projected.Summary.SandboxPolicy),
-			DisplayName:   strings.TrimSpace(projected.Summary.Name),
-			Description:   strings.TrimSpace(projected.Summary.Description),
-			Script:        projected.Script,
+			Enabled:           projected.Summary.Enabled,
+			SandboxPolicy:     domain.NormalizeLoaderSandboxPolicy(projected.Summary.SandboxPolicy),
+			ConcurrencyPolicy: domain.NormalizeLoaderConcurrencyPolicy(projected.Summary.ConcurrencyPolicy),
+			DisplayName:       strings.TrimSpace(projected.Summary.Name),
+			Description:       strings.TrimSpace(projected.Summary.Description),
+			Script:            projected.Script,
 		}
 		scheduledAgents[targetName] = struct{}{}
 		overrides[targetName] = projected

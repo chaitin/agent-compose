@@ -6062,15 +6062,16 @@ func (x *WorkspaceSpec) GetToken() string {
 }
 
 type SchedulerSpec struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
-	Triggers      []*TriggerSpec         `protobuf:"bytes,2,rep,name=triggers,proto3" json:"triggers,omitempty"`
-	Script        string                 `protobuf:"bytes,3,opt,name=script,proto3" json:"script,omitempty"`
-	SandboxPolicy string                 `protobuf:"bytes,4,opt,name=sandbox_policy,json=sandboxPolicy,proto3" json:"sandbox_policy,omitempty"`
-	DisplayName   string                 `protobuf:"bytes,5,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
-	Description   string                 `protobuf:"bytes,6,opt,name=description,proto3" json:"description,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Enabled           bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	Triggers          []*TriggerSpec         `protobuf:"bytes,2,rep,name=triggers,proto3" json:"triggers,omitempty"`
+	Script            string                 `protobuf:"bytes,3,opt,name=script,proto3" json:"script,omitempty"`
+	SandboxPolicy     string                 `protobuf:"bytes,4,opt,name=sandbox_policy,json=sandboxPolicy,proto3" json:"sandbox_policy,omitempty"`
+	DisplayName       string                 `protobuf:"bytes,5,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	Description       string                 `protobuf:"bytes,6,opt,name=description,proto3" json:"description,omitempty"`
+	ConcurrencyPolicy string                 `protobuf:"bytes,7,opt,name=concurrency_policy,json=concurrencyPolicy,proto3" json:"concurrency_policy,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SchedulerSpec) Reset() {
@@ -6141,6 +6142,13 @@ func (x *SchedulerSpec) GetDisplayName() string {
 func (x *SchedulerSpec) GetDescription() string {
 	if x != nil {
 		return x.Description
+	}
+	return ""
+}
+
+func (x *SchedulerSpec) GetConcurrencyPolicy() string {
+	if x != nil {
+		return x.ConcurrencyPolicy
 	}
 	return ""
 }
@@ -17876,14 +17884,15 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\busername\x18\b \x01(\tR\busername\x12\x1a\n" +
 	"\bpassword\x18\t \x01(\tR\bpassword\x12\x14\n" +
 	"\x05token\x18\n" +
-	" \x01(\tR\x05token\"\xe7\x01\n" +
+	" \x01(\tR\x05token\"\x96\x02\n" +
 	"\rSchedulerSpec\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x128\n" +
 	"\btriggers\x18\x02 \x03(\v2\x1c.agentcompose.v2.TriggerSpecR\btriggers\x12\x16\n" +
 	"\x06script\x18\x03 \x01(\tR\x06script\x12%\n" +
 	"\x0esandbox_policy\x18\x04 \x01(\tR\rsandboxPolicy\x12!\n" +
 	"\fdisplay_name\x18\x05 \x01(\tR\vdisplayName\x12 \n" +
-	"\vdescription\x18\x06 \x01(\tR\vdescription\"\xf7\x01\n" +
+	"\vdescription\x18\x06 \x01(\tR\vdescription\x12-\n" +
+	"\x12concurrency_policy\x18\a \x01(\tR\x11concurrencyPolicy\"\xf7\x01\n" +
 	"\vTriggerSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x12\n" +

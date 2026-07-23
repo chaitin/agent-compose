@@ -100,6 +100,46 @@ func TestProjectRecordsCarryVolumeMountSpecs(t *testing.T) {
 	}
 }
 
+func TestSchedulerConcurrencyPolicyFlowsIntoManagedLoader(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "default skip",
+			raw:  "name: default-policy\nagents:\n  reviewer:\n    scheduler:\n      triggers:\n        - interval: 1m\n",
+			want: domain.LoaderConcurrencyPolicySkip,
+		},
+		{
+			name: "parallel",
+			raw:  "name: parallel-policy\nagents:\n  reviewer:\n    scheduler:\n      concurrency_policy: parallel\n      triggers:\n        - interval: 1m\n",
+			want: domain.LoaderConcurrencyPolicyParallel,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			spec, err := compose.Parse([]byte(test.raw))
+			if err != nil {
+				t.Fatalf("Parse returned error: %v", err)
+			}
+			normalized, err := compose.Normalize(spec, compose.NormalizeOptions{})
+			if err != nil {
+				t.Fatalf("Normalize returned error: %v", err)
+			}
+			builds, err := NewSchedulerBuildsFromSpec(domain.ProjectRecord{ID: "project-1", Name: normalized.Name}, 1, normalized)
+			if err != nil {
+				t.Fatalf("NewSchedulerBuildsFromSpec returned error: %v", err)
+			}
+			if len(builds) != 1 {
+				t.Fatalf("scheduler builds = %d, want 1", len(builds))
+			}
+			if got := builds[0].Loader.Summary.ConcurrencyPolicy; got != test.want {
+				t.Fatalf("loader concurrency policy = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestDisabledAgentDisablesManagedAgentAndSchedulerRecords(t *testing.T) {
 	project := domain.ProjectRecord{ID: "project-1", Name: "project"}
 	agent := compose.NormalizedAgentSpec{

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -103,11 +104,12 @@ func TestProjectSpecToProtoIncludesSchedulerScript(t *testing.T) {
 				Boxlite: &compose.BoxliteDriverSpec{},
 			},
 			Scheduler: &compose.NormalizedSchedulerSpec{
-				Enabled:       true,
-				SandboxPolicy: "sticky",
-				DisplayName:   "Hourly review",
-				Description:   "Reviews pending changes every hour",
-				Script:        script,
+				Enabled:           true,
+				SandboxPolicy:     "sticky",
+				ConcurrencyPolicy: "parallel",
+				DisplayName:       "Hourly review",
+				Description:       "Reviews pending changes every hour",
+				Script:            script,
 			},
 		}},
 	}
@@ -123,11 +125,14 @@ func TestProjectSpecToProtoIncludesSchedulerScript(t *testing.T) {
 	if scheduler.GetSandboxPolicy() != "sticky" {
 		t.Fatalf("scheduler sandbox policy = %q, want sticky", scheduler.GetSandboxPolicy())
 	}
+	if scheduler.GetConcurrencyPolicy() != "parallel" {
+		t.Fatalf("scheduler concurrency policy = %q, want parallel", scheduler.GetConcurrencyPolicy())
+	}
 	if scheduler.GetDisplayName() != "Hourly review" || scheduler.GetDescription() != "Reviews pending changes every hour" {
 		t.Fatalf("scheduler presentation = %#v", scheduler)
 	}
 	shape := SchedulerYAMLShape(scheduler)
-	if shape["sandbox_policy"] != "sticky" || shape["display_name"] != "Hourly review" || shape["description"] != "Reviews pending changes every hour" {
+	if shape["sandbox_policy"] != "sticky" || shape["concurrency_policy"] != "parallel" || shape["display_name"] != "Hourly review" || shape["description"] != "Reviews pending changes every hour" {
 		t.Fatalf("scheduler YAML shape = %#v", shape)
 	}
 	if got := len(scheduler.GetTriggers()); got != 0 {
@@ -251,6 +256,259 @@ func TestIntegrationAgentPresentationMetadataRoundTripsThroughProtoAndCompose(t 
 	agent := response.GetAgents()[0]
 	if agent.GetName() != "legacy-agent-bfe5286dc77f" || agent.GetDisplayName() != "通用助手" || agent.GetDescription() != "处理日常通用任务" {
 		t.Fatalf("round-tripped agent = %#v", agent)
+	}
+}
+
+func TestIntegrationSchedulerConcurrencyPolicyRoundTripsThroughProtoAndCompose(t *testing.T) {
+	raw, err := compose.Parse([]byte(`
+name: scheduler-policy-round-trip
+agents:
+  reviewer:
+    provider: codex
+    driver:
+      docker: {}
+    scheduler:
+      enabled: true
+      display_name: Review queue
+      description: Processes every pending review
+      sandbox_policy: sticky
+      concurrency_policy: parallel
+      triggers:
+        - name: hourly
+          cron: "0 * * * *"
+          prompt: Review hourly changes
+        - name: frequent
+          interval: 5m
+          prompt: Review recent changes
+        - name: later
+          timeout: 30s
+          prompt: Review after delay
+        - name: requested
+          event:
+            topic: review.requested
+          prompt: Review requested change
+`))
+	if err != nil {
+		t.Fatalf("parse authoring YAML: %v", err)
+	}
+	normalized, err := compose.Normalize(raw, compose.NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("normalize authoring YAML: %v", err)
+	}
+	if len(normalized.Agents) != 1 || normalized.Agents[0].Scheduler == nil || normalized.Agents[0].Scheduler.ConcurrencyPolicy != domain.LoaderConcurrencyPolicyParallel {
+		t.Fatalf("normalized scheduler = %#v", normalized.Agents)
+	}
+
+	wireSpec, err := ProjectSpecToProtoChecked(normalized)
+	if err != nil {
+		t.Fatalf("convert normalized project to protobuf: %v", err)
+	}
+	if got := wireSpec.GetAgents()[0].GetScheduler().GetConcurrencyPolicy(); got != domain.LoaderConcurrencyPolicyParallel {
+		t.Fatalf("protobuf concurrency policy = %q, want parallel", got)
+	}
+	shape, issues := ProjectSpecYAMLShape(wireSpec)
+	if len(issues) != 0 {
+		t.Fatalf("convert protobuf project to YAML shape: %#v", issues)
+	}
+	data, err := yaml.Marshal(shape)
+	if err != nil {
+		t.Fatalf("marshal reconstructed YAML: %v", err)
+	}
+	if !strings.Contains(string(data), "concurrency_policy: parallel") {
+		t.Fatalf("reconstructed YAML lost concurrency policy:\n%s", data)
+	}
+
+	reparsed, err := compose.Parse(data)
+	if err != nil {
+		t.Fatalf("parse reconstructed YAML: %v", err)
+	}
+	roundTripped, err := compose.Normalize(reparsed, compose.NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("normalize reconstructed YAML: %v", err)
+	}
+	if len(roundTripped.Agents) != 1 || roundTripped.Agents[0].Scheduler == nil {
+		t.Fatalf("round-tripped agents = %#v", roundTripped.Agents)
+	}
+	scheduler := roundTripped.Agents[0].Scheduler
+	if scheduler.ConcurrencyPolicy != domain.LoaderConcurrencyPolicyParallel || scheduler.SandboxPolicy != domain.LoaderSandboxPolicySticky || len(scheduler.Triggers) != 4 {
+		t.Fatalf("round-tripped scheduler = %#v", scheduler)
+	}
+	for index, kind := range []string{"cron", "interval", "timeout", "event"} {
+		if scheduler.Triggers[index].Kind != kind {
+			t.Fatalf("round-tripped trigger %d = %#v, want kind %q", index, scheduler.Triggers[index], kind)
+		}
+	}
+}
+
+func TestIntegrationProjectSpecRichConfigurationRoundTripsThroughServiceShape(t *testing.T) {
+	raw, err := compose.Parse([]byte(`
+name: rich-service-round-trip
+variables:
+  API_TOKEN:
+    value: ${API_TOKEN}
+    secret: true
+mcp_servers:
+  local-tools:
+    type: local
+    command: npx
+    args: ["-y", "@example/mcp-server"]
+    env:
+      TOOL_MODE: strict
+  issue-tracker:
+    type: remote
+    transport: http
+    url: https://issues.example.test/mcp
+    headers:
+      Authorization: Bearer ${ISSUE_TOKEN}
+volumes:
+  cache:
+    name: shared-review-cache
+    driver: local
+    external: true
+    labels:
+      purpose: review
+    options:
+      device: /var/cache/reviews
+agents:
+  reviewer:
+    enabled: true
+    display_name: Release reviewer
+    description: Reviews release candidates
+    provider: codex
+    model: gpt-test
+    system_prompt: Review every release carefully.
+    image: reviewer:test
+    build:
+      context: ./guest
+      dockerfile: Dockerfile.review
+      target: runtime
+      args:
+        CHANNEL: stable
+      platforms: [linux/amd64]
+      tags: [reviewer:latest]
+      no_cache: true
+      pull: true
+    driver:
+      docker:
+        host: unix:///var/run/docker.sock
+    env:
+      LOG_LEVEL: debug
+      SERVICE_TOKEN:
+        value: ${SERVICE_TOKEN}
+        secret: true
+    capset_ids: [engineering, audit]
+    skills:
+      - name: release-check
+        provider: git
+        url: https://example.test/skills.git
+        path: skills/release-check
+        ref: main
+        username: ${SKILL_USER}
+        password: ${SKILL_PASSWORD}
+        token: ${SKILL_TOKEN}
+    mcp_servers:
+      - local-tools
+      - name: audit-api
+        type: remote
+        transport: sse
+        url: https://audit.example.test/sse
+        headers:
+          Authorization: Bearer ${AUDIT_TOKEN}
+    volumes:
+      - type: volume
+        source: cache
+        target: /cache
+        read_only: true
+      - type: bind
+        source: ./reports
+        target: /workspace/reports
+    scheduler:
+      enabled: true
+      sandbox_policy: sticky
+      concurrency_policy: parallel
+      triggers:
+        - name: hourly-review
+          cron: "0 * * * *"
+          prompt: Review current release state
+    jupyter:
+      enabled: true
+      guest_port: 8888
+`))
+	if err != nil {
+		t.Fatalf("parse rich project: %v", err)
+	}
+	composePath := filepath.Join(t.TempDir(), "agent-compose.yaml")
+	normalizeOptions := compose.NormalizeOptions{
+		ComposePath: composePath,
+		Env: map[string]string{
+			"API_TOKEN":      "${API_TOKEN}",
+			"ISSUE_TOKEN":    "${ISSUE_TOKEN}",
+			"SERVICE_TOKEN":  "${SERVICE_TOKEN}",
+			"SKILL_USER":     "${SKILL_USER}",
+			"SKILL_PASSWORD": "${SKILL_PASSWORD}",
+			"SKILL_TOKEN":    "${SKILL_TOKEN}",
+			"AUDIT_TOKEN":    "${AUDIT_TOKEN}",
+		},
+	}
+	normalized, err := compose.Normalize(raw, normalizeOptions)
+	if err != nil {
+		t.Fatalf("normalize rich project: %v", err)
+	}
+	wireSpec, err := ProjectSpecToProtoChecked(normalized)
+	if err != nil {
+		t.Fatalf("convert rich project to protobuf: %v", err)
+	}
+	shape, issues := ProjectSpecYAMLShape(wireSpec)
+	if len(issues) != 0 {
+		t.Fatalf("convert rich project to YAML shape: %#v", issues)
+	}
+	data, err := yaml.Marshal(shape)
+	if err != nil {
+		t.Fatalf("marshal rich service shape: %v", err)
+	}
+	reparsed, err := compose.Parse(data)
+	if err != nil {
+		t.Fatalf("parse rich service shape: %v\n%s", err, data)
+	}
+	roundTripped, err := compose.Normalize(reparsed, normalizeOptions)
+	if err != nil {
+		t.Fatalf("normalize rich service shape: %v\n%s", err, data)
+	}
+
+	if token := roundTripped.Variables["API_TOKEN"]; token.Value != "${API_TOKEN}" || !token.Secret {
+		t.Fatalf("round-tripped project variable = %#v", token)
+	}
+	volume := roundTripped.Volumes["cache"]
+	if volume.Name != "shared-review-cache" || !volume.External || volume.Labels["purpose"] != "review" || volume.Options["device"] != "/var/cache/reviews" {
+		t.Fatalf("round-tripped project volume = %#v", volume)
+	}
+	if len(roundTripped.MCPServers) != 2 || roundTripped.MCPServers["local-tools"].Command != "npx" || roundTripped.MCPServers["issue-tracker"].Transport != "http" {
+		t.Fatalf("round-tripped project MCP servers = %#v", roundTripped.MCPServers)
+	}
+	if len(roundTripped.Agents) != 1 {
+		t.Fatalf("round-tripped agents = %#v", roundTripped.Agents)
+	}
+	agent := roundTripped.Agents[0]
+	if agent.Build == nil || agent.Build.Dockerfile != "Dockerfile.review" || !agent.Build.NoCache || !agent.Build.Pull || len(agent.Build.Args) != 1 {
+		t.Fatalf("round-tripped build = %#v", agent.Build)
+	}
+	if agent.Driver == nil || agent.Driver.Docker == nil || agent.Driver.Docker.Host != "unix:///var/run/docker.sock" {
+		t.Fatalf("round-tripped driver = %#v", agent.Driver)
+	}
+	if len(agent.Skills) != 1 || agent.Skills[0].Name != "release-check" || agent.Skills[0].Token != "${SKILL_TOKEN}" {
+		t.Fatalf("round-tripped skills = %#v", agent.Skills)
+	}
+	if len(agent.MCPServers) != 2 || agent.MCPServers["audit-api"].Transport != "sse" {
+		t.Fatalf("round-tripped agent MCP servers = %#v", agent.MCPServers)
+	}
+	if len(agent.Volumes) != 2 || !agent.Volumes[0].ReadOnly || agent.Volumes[1].Type != "bind" {
+		t.Fatalf("round-tripped mounts = %#v", agent.Volumes)
+	}
+	if agent.Jupyter == nil || !agent.Jupyter.Enabled || agent.Jupyter.GuestPort != 8888 {
+		t.Fatalf("round-tripped jupyter = %#v", agent.Jupyter)
+	}
+	if agent.Scheduler == nil || agent.Scheduler.ConcurrencyPolicy != domain.LoaderConcurrencyPolicyParallel {
+		t.Fatalf("round-tripped scheduler = %#v", agent.Scheduler)
 	}
 }
 

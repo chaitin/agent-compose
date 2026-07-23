@@ -122,6 +122,7 @@ agents:
       guest_port: 8888
     scheduler:
       enabled: true
+      concurrency_policy: parallel
       triggers:
         - cron: "0 * * * *"
           prompt: "Review the latest workspace state."
@@ -150,6 +151,9 @@ agents:
 	}
 	if agent.Scheduler == nil || agent.Scheduler.Enabled == nil || !*agent.Scheduler.Enabled {
 		t.Fatalf("scheduler enabled = %#v", agent.Scheduler)
+	}
+	if agent.Scheduler.ConcurrencyPolicy == nil || *agent.Scheduler.ConcurrencyPolicy != "parallel" {
+		t.Fatalf("scheduler concurrency policy = %#v", agent.Scheduler.ConcurrencyPolicy)
 	}
 	if got := len(agent.Scheduler.Triggers); got != 2 {
 		t.Fatalf("trigger count = %d, want 2", got)

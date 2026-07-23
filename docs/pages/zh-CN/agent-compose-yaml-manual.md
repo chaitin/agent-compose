@@ -693,10 +693,13 @@ Scheduler 可以使用声明式 `triggers`，也可以使用 JavaScript `script`
 | --- | --- | --- | --- |
 | `enabled` | bool | `true` | 是否启用该 Agent 的 Scheduler。禁用 Agent 也会使其 Scheduler 无效。 |
 | `sandbox_policy` | string | `new` | Scheduler 默认 sandbox 策略：`new` 或 `sticky`。 |
+| `concurrency_policy` | string | `skip` | 整个 Agent Scheduler 的重叠运行策略：`skip` 或 `parallel`。 |
 | `triggers` | list | 空 | 声明式触发器。 |
 | `script` | string/object | 空 | 内联 JavaScript，或扁平的 `file`/`http`/`git` 来源配置。不能和 `triggers` 同时使用。 |
 
 `new` 为每次调用创建新 sandbox；`sticky` 允许 Scheduler 绑定并复用 sandbox。单个 Trigger 的 `sandbox_policy` 可覆盖执行 Agent 时的策略。
+
+`concurrency_policy` 作用于整个 Agent Scheduler，包括全部声明式或脚本注册的 Trigger，以及手动 Scheduler 调用。`skip` 会把与同一 Scheduler 既有运行重叠的新 run 记录为 `skipped`，且不会排队补跑；`parallel` 允许重叠 run 并行执行。它不是 Trigger 级策略。
 
 #### 声明式 Trigger
 
@@ -706,6 +709,7 @@ Scheduler 可以使用声明式 `triggers`，也可以使用 JavaScript `script`
 scheduler:
   enabled: true
   sandbox_policy: sticky
+  concurrency_policy: parallel
   triggers:
     - name: nightly
       cron: "0 2 * * *"

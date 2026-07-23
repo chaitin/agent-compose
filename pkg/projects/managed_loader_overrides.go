@@ -44,7 +44,6 @@ func mergeManagedLoaderOverride(current, override domain.Loader) domain.Loader {
 	loader.Summary.ID = override.Summary.ID
 	loader.Summary.AgentID = override.Summary.AgentID
 	loader.Summary.WorkspaceID = override.Summary.WorkspaceID
-	loader.Summary.ConcurrencyPolicy = override.Summary.ConcurrencyPolicy
 	loader.Summary.CreatedAt = override.Summary.CreatedAt
 	loader.Summary.UpdatedAt = override.Summary.UpdatedAt
 	loader.Summary.LastError = override.Summary.LastError

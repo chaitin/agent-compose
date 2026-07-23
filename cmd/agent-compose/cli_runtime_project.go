@@ -156,12 +156,13 @@ func normalizedRuntimeAgentSpec(agent *agentcomposev2.AgentSpec) compose.Normali
 	}
 	if scheduler := agent.GetScheduler(); scheduler != nil {
 		result.Scheduler = &compose.NormalizedSchedulerSpec{
-			Enabled:       scheduler.GetEnabled(),
-			SandboxPolicy: scheduler.GetSandboxPolicy(),
-			DisplayName:   scheduler.GetDisplayName(),
-			Description:   scheduler.GetDescription(),
-			Script:        scheduler.GetScript(),
-			Triggers:      make([]compose.NormalizedTriggerSpec, 0, len(scheduler.GetTriggers())),
+			Enabled:           scheduler.GetEnabled(),
+			SandboxPolicy:     scheduler.GetSandboxPolicy(),
+			ConcurrencyPolicy: scheduler.GetConcurrencyPolicy(),
+			DisplayName:       scheduler.GetDisplayName(),
+			Description:       scheduler.GetDescription(),
+			Script:            scheduler.GetScript(),
+			Triggers:          make([]compose.NormalizedTriggerSpec, 0, len(scheduler.GetTriggers())),
 		}
 		for _, trigger := range scheduler.GetTriggers() {
 			item := compose.NormalizedTriggerSpec{

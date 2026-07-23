@@ -132,12 +132,13 @@ type SkillSpec struct {
 }
 
 type SchedulerSpec struct {
-	Enabled       *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	SandboxPolicy *string       `yaml:"sandbox_policy,omitempty" json:"sandbox_policy,omitempty"`
-	DisplayName   string        `yaml:"display_name,omitempty" json:"display_name,omitempty"`
-	Description   string        `yaml:"description,omitempty" json:"description,omitempty"`
-	Triggers      []TriggerSpec `yaml:"triggers,omitempty" json:"triggers,omitempty"`
-	Script        ScriptSource  `yaml:"script,omitempty" json:"script,omitempty"`
+	Enabled           *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	SandboxPolicy     *string       `yaml:"sandbox_policy,omitempty" json:"sandbox_policy,omitempty"`
+	ConcurrencyPolicy *string       `yaml:"concurrency_policy,omitempty" json:"concurrency_policy,omitempty"`
+	DisplayName       string        `yaml:"display_name,omitempty" json:"display_name,omitempty"`
+	Description       string        `yaml:"description,omitempty" json:"description,omitempty"`
+	Triggers          []TriggerSpec `yaml:"triggers,omitempty" json:"triggers,omitempty"`
+	Script            ScriptSource  `yaml:"script,omitempty" json:"script,omitempty"`
 }
 
 // ScriptSource is the authoring shape accepted by scheduler.script. Inline is
@@ -666,12 +667,13 @@ func validateStringList(node *yaml.Node, path string) error {
 
 func validateScheduler(node *yaml.Node, path string) error {
 	return validateMapping(node, path, map[string]nodeValidator{
-		"enabled":        validateBool,
-		"sandbox_policy": validateScalar,
-		"display_name":   validateScalar,
-		"description":    validateScalar,
-		"triggers":       validateTriggerList,
-		"script":         validateScriptSource,
+		"enabled":            validateBool,
+		"sandbox_policy":     validateScalar,
+		"concurrency_policy": validateScalar,
+		"display_name":       validateScalar,
+		"description":        validateScalar,
+		"triggers":           validateTriggerList,
+		"script":             validateScriptSource,
 	})
 }
 

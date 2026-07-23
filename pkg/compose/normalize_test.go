@@ -111,7 +111,7 @@ agents:
 	}
 }
 
-func TestNormalizeSchedulerSandboxPolicies(t *testing.T) {
+func TestNormalizeSchedulerPolicies(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: policy-project
 agents:
@@ -119,6 +119,7 @@ agents:
     provider: codex
     scheduler:
       sandbox_policy: sticky
+      concurrency_policy: parallel
       triggers:
         - name: inherited
           interval: 1m
@@ -131,7 +132,7 @@ agents:
 		t.Fatalf("Normalize returned error: %v", err)
 	}
 	scheduler := normalized.Agents[0].Scheduler
-	if scheduler.SandboxPolicy != "sticky" || scheduler.Triggers[0].SandboxPolicy != "" || scheduler.Triggers[1].SandboxPolicy != "new" {
+	if scheduler.SandboxPolicy != "sticky" || scheduler.ConcurrencyPolicy != "parallel" || scheduler.Triggers[0].SandboxPolicy != "" || scheduler.Triggers[1].SandboxPolicy != "new" {
 		t.Fatalf("scheduler policies = %#v", scheduler)
 	}
 
@@ -150,6 +151,9 @@ agents:
 	if got := defaultNormalized.Agents[0].Scheduler.SandboxPolicy; got != "new" {
 		t.Fatalf("default sandbox policy = %q, want new", got)
 	}
+	if got := defaultNormalized.Agents[0].Scheduler.ConcurrencyPolicy; got != "skip" {
+		t.Fatalf("default concurrency policy = %q, want skip", got)
+	}
 
 	for _, input := range []string{
 		"sandbox_policy: reuse\n      triggers:\n        - interval: 1m",
@@ -158,6 +162,13 @@ agents:
 		invalid := mustParseCompose(t, "name: invalid-policy\nagents:\n  reviewer:\n    scheduler:\n      "+input+"\n")
 		if _, err := Normalize(invalid, NormalizeOptions{}); err == nil || !strings.Contains(err.Error(), "sandbox_policy") {
 			t.Fatalf("Normalize invalid policy error = %v", err)
+		}
+	}
+
+	for _, policy := range []string{"", "allow", "serial"} {
+		invalid := mustParseCompose(t, "name: invalid-concurrency-policy\nagents:\n  reviewer:\n    scheduler:\n      concurrency_policy: '"+policy+"'\n      triggers:\n        - interval: 1m\n")
+		if _, err := Normalize(invalid, NormalizeOptions{}); err == nil || !strings.Contains(err.Error(), "concurrency_policy") {
+			t.Fatalf("Normalize invalid concurrency policy %q error = %v", policy, err)
 		}
 	}
 }

@@ -810,6 +810,7 @@ message SchedulerSpec {
   string sandbox_policy = 4;
   string display_name = 5;
   string description = 6;
+  string concurrency_policy = 7;
 }
 
 message TriggerSpec {

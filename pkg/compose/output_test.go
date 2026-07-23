@@ -90,6 +90,36 @@ agents:
 	}
 }
 
+func TestSchedulerConcurrencyPolicySurvivesCanonicalOutput(t *testing.T) {
+	normalized := mustNormalizeCompose(t, `
+name: scheduler-concurrency
+agents:
+  reviewer:
+    scheduler:
+      concurrency_policy: parallel
+      triggers:
+        - interval: 1m
+`, nil)
+
+	jsonData, err := normalized.MarshalCanonicalJSON(false)
+	if err != nil {
+		t.Fatalf("MarshalCanonicalJSON returned error: %v", err)
+	}
+	yamlData, err := normalized.MarshalCanonicalYAML(false)
+	if err != nil {
+		t.Fatalf("MarshalCanonicalYAML returned error: %v", err)
+	}
+	if !bytes.Contains(jsonData, []byte(`"concurrency_policy":"parallel"`)) {
+		t.Fatalf("canonical JSON = %s, want concurrency policy", jsonData)
+	}
+	if !bytes.Contains(yamlData, []byte("concurrency_policy: parallel")) {
+		t.Fatalf("canonical YAML = %s, want concurrency policy", yamlData)
+	}
+	if got := normalized.Redacted().Agents[0].Scheduler.ConcurrencyPolicy; got != "parallel" {
+		t.Fatalf("redacted concurrency policy = %q, want parallel", got)
+	}
+}
+
 func TestAgentEnablementUsesCanonicalBooleanOutput(t *testing.T) {
 	normalized := mustNormalizeCompose(t, `
 name: enablement

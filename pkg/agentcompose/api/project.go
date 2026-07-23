@@ -456,12 +456,13 @@ func SchedulerSpecToProto(scheduler *compose.NormalizedSchedulerSpec) *agentcomp
 		triggers = append(triggers, TriggerSpecToProto(trigger))
 	}
 	return &agentcomposev2.SchedulerSpec{
-		Enabled:       scheduler.Enabled,
-		Triggers:      triggers,
-		Script:        scheduler.Script,
-		SandboxPolicy: scheduler.SandboxPolicy,
-		DisplayName:   scheduler.DisplayName,
-		Description:   scheduler.Description,
+		Enabled:           scheduler.Enabled,
+		Triggers:          triggers,
+		Script:            scheduler.Script,
+		SandboxPolicy:     scheduler.SandboxPolicy,
+		DisplayName:       scheduler.DisplayName,
+		Description:       scheduler.Description,
+		ConcurrencyPolicy: scheduler.ConcurrencyPolicy,
 	}
 }
 
@@ -881,6 +882,9 @@ func SchedulerYAMLShape(scheduler *agentcomposev2.SchedulerSpec) map[string]any 
 	}
 	if scheduler.GetSandboxPolicy() != "" {
 		raw["sandbox_policy"] = scheduler.GetSandboxPolicy()
+	}
+	if scheduler.GetConcurrencyPolicy() != "" {
+		raw["concurrency_policy"] = scheduler.GetConcurrencyPolicy()
 	}
 	triggers := make([]map[string]any, 0, len(scheduler.GetTriggers()))
 	for _, trigger := range scheduler.GetTriggers() {

@@ -201,7 +201,7 @@ func NewManagedLoaderFromScheduler(project domain.ProjectRecord, scheduler domai
 			GuestImage:         agent.Image,
 			DefaultAgent:       agent.Provider,
 			SandboxPolicy:      agent.Scheduler.SandboxPolicy,
-			ConcurrencyPolicy:  domain.LoaderConcurrencyPolicySkip,
+			ConcurrencyPolicy:  domain.NormalizeLoaderConcurrencyPolicy(agent.Scheduler.ConcurrencyPolicy),
 			CapsetIDs:          capabilities.NormalizeCapsetIDs(agent.CapsetIDs),
 			ManagedProjectID:   project.ID,
 			ManagedRevision:    scheduler.Revision,
