@@ -28,6 +28,43 @@ type loaderSandboxConfig struct {
 	ManagedSchedulerID string                   `json:"managed_scheduler_id,omitempty"`
 }
 
+// NormalizeStickySandboxVolumeMounts returns normalized mounts in a canonical
+// order suitable for sticky sandbox configuration hashes. The complete mount
+// state is used as a tie-breaker so equivalent inputs produce the same order
+// even when a boundary supplies conflicting mounts for the same target.
+func NormalizeStickySandboxVolumeMounts(items []domain.SandboxVolumeMount) []domain.SandboxVolumeMount {
+	mounts := domain.NormalizeSandboxVolumeMounts(items)
+	sort.Slice(mounts, func(i, j int) bool {
+		left, right := mounts[i], mounts[j]
+		if left.Target != right.Target {
+			return left.Target < right.Target
+		}
+		if left.Type != right.Type {
+			return left.Type < right.Type
+		}
+		if left.Source != right.Source {
+			return left.Source < right.Source
+		}
+		if left.HostPath != right.HostPath {
+			return left.HostPath < right.HostPath
+		}
+		if left.ID != right.ID {
+			return left.ID < right.ID
+		}
+		if left.ReadOnly != right.ReadOnly {
+			return !left.ReadOnly
+		}
+		if left.VolumeID != right.VolumeID {
+			return left.VolumeID < right.VolumeID
+		}
+		if left.Driver != right.Driver {
+			return left.Driver < right.Driver
+		}
+		return left.ProjectPath < right.ProjectPath
+	})
+	return mounts
+}
+
 // LoaderSandboxConfigHash identifies the Loader configuration that is baked
 // into a sticky sandbox. Scheduling and presentation fields are deliberately
 // excluded because changing them does not require replacing the sandbox.

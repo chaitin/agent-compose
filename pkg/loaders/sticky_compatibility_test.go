@@ -1,10 +1,29 @@
 package loaders
 
 import (
+	"slices"
 	"testing"
 
 	domain "agent-compose/pkg/model"
 )
+
+func TestNormalizeStickySandboxVolumeMountsUsesCanonicalOrder(t *testing.T) {
+	mounts := []domain.SandboxVolumeMount{
+		{ID: "z", Type: domain.VolumeMountTypeVolume, Source: "data", Target: "/workspace/data", HostPath: "/volumes/data", VolumeID: "volume-1"},
+		{ID: "b", Type: domain.VolumeMountTypeBind, Source: "./data", Target: "/workspace/data", HostPath: "/project/data", ProjectPath: "/project"},
+		{ID: "a", Type: domain.VolumeMountTypeBind, Source: "./cache", Target: "/workspace/cache", HostPath: "/project/cache", ReadOnly: true, ProjectPath: "/project"},
+	}
+	reordered := []domain.SandboxVolumeMount{mounts[2], mounts[0], mounts[1]}
+
+	first := NormalizeStickySandboxVolumeMounts(mounts)
+	second := NormalizeStickySandboxVolumeMounts(reordered)
+	if !slices.Equal(first, second) {
+		t.Fatalf("canonical mounts differ by input order:\nfirst:  %#v\nsecond: %#v", first, second)
+	}
+	if first[0].Target != "/workspace/cache" || first[1].Type != domain.VolumeMountTypeBind || first[2].Type != domain.VolumeMountTypeVolume {
+		t.Fatalf("canonical mount order = %#v", first)
+	}
+}
 
 func TestLoaderSandboxConfigHashTracksSandboxSemantics(t *testing.T) {
 	base := domain.Loader{

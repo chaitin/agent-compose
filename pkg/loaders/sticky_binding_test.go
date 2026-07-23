@@ -2,9 +2,46 @@ package loaders
 
 import (
 	"testing"
+	"time"
 
 	domain "agent-compose/pkg/model"
 )
+
+func TestLoaderBindingsMatchComparesStickyState(t *testing.T) {
+	current := domain.LoaderBinding{
+		LoaderID:          "loader-1",
+		TriggerID:         "trigger-1",
+		SandboxID:         "sandbox-1",
+		SandboxConfigHash: "sha256:current",
+		CreatedAt:         time.Unix(1, 0),
+		UpdatedAt:         time.Unix(2, 0),
+	}
+	expected := current
+	expected.LoaderID = " loader-1 "
+	expected.TriggerID = " trigger-1 "
+	expected.SandboxID = " sandbox-1 "
+	expected.SandboxConfigHash = " sha256:current "
+	expected.CreatedAt = time.Unix(3, 0)
+	expected.UpdatedAt = time.Unix(4, 0)
+	if !LoaderBindingsMatch(current, expected) {
+		t.Fatal("equivalent sticky binding state did not match")
+	}
+
+	for name, mutate := range map[string]func(*domain.LoaderBinding){
+		"loader":      func(binding *domain.LoaderBinding) { binding.LoaderID = "loader-2" },
+		"trigger":     func(binding *domain.LoaderBinding) { binding.TriggerID = "trigger-2" },
+		"sandbox":     func(binding *domain.LoaderBinding) { binding.SandboxID = "sandbox-2" },
+		"config hash": func(binding *domain.LoaderBinding) { binding.SandboxConfigHash = "sha256:other" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := current
+			mutate(&changed)
+			if LoaderBindingsMatch(current, changed) {
+				t.Fatalf("binding with changed %s matched", name)
+			}
+		})
+	}
+}
 
 func TestRetiringLoaderBindingPreservesSandboxAndTracksDesiredConfig(t *testing.T) {
 	binding := domain.LoaderBinding{

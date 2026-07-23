@@ -8,6 +8,16 @@ import (
 
 const retiringLoaderBindingConfigPrefix = "retiring:"
 
+// LoaderBindingsMatch reports whether two bindings identify the same sticky
+// sandbox state. Persistence timestamps are deliberately excluded because
+// they do not participate in compare-and-swap ownership.
+func LoaderBindingsMatch(current, expected domain.LoaderBinding) bool {
+	return strings.TrimSpace(current.LoaderID) == strings.TrimSpace(expected.LoaderID) &&
+		strings.TrimSpace(current.TriggerID) == strings.TrimSpace(expected.TriggerID) &&
+		strings.TrimSpace(current.SandboxID) == strings.TrimSpace(expected.SandboxID) &&
+		strings.TrimSpace(current.SandboxConfigHash) == strings.TrimSpace(expected.SandboxConfigHash)
+}
+
 // AdoptLegacyLoaderBindingConfigHash returns a replacement that records the
 // desired configuration on a binding created before configuration hashes were
 // persisted. The caller must install the replacement with compare-and-swap so

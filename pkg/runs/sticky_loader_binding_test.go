@@ -24,7 +24,10 @@ func TestStickyProjectRunConfigHashTracksEffectiveSandboxSpec(t *testing.T) {
 		Workspace: &domain.SandboxWorkspace{ID: "workspace-1", ConfigJSON: `{"root":"v1"}`},
 	}
 	baseHash := "sha256:loader"
-	volumeMounts := []domain.SandboxVolumeMount{{ID: "volume-v2", Type: "volume", Target: "/workspace/data", HostPath: "/host/v2"}}
+	volumeMounts := []domain.SandboxVolumeMount{
+		{ID: "volume-v2", Type: "volume", Source: "data", Target: "/workspace/data", HostPath: "/host/v2"},
+		{ID: "volume-cache", Type: "bind", Source: "./cache", Target: "/workspace/cache", HostPath: "/host/cache"},
+	}
 	first, err := stickyProjectRunConfigHash(baseHash, run, prepared, "docker", "guest:v1", volumeMounts, sessionstore.CreateSandboxOptions{})
 	if err != nil {
 		t.Fatalf("stickyProjectRunConfigHash returned error: %v", err)
@@ -38,6 +41,18 @@ func TestStickyProjectRunConfigHashTracksEffectiveSandboxSpec(t *testing.T) {
 	}
 	if same != first {
 		t.Fatalf("capset ordering changed effective hash: got %q want %q", same, first)
+	}
+	jupyterFirst, err := stickyProjectRunConfigHash(baseHash, run, prepared, "docker", "guest:v1", volumeMounts, sessionstore.CreateSandboxOptions{VolumeMounts: volumeMounts})
+	if err != nil {
+		t.Fatalf("stickyProjectRunConfigHash with Jupyter mounts returned error: %v", err)
+	}
+	reorderedMounts := []domain.SandboxVolumeMount{volumeMounts[1], volumeMounts[0]}
+	same, err = stickyProjectRunConfigHash(baseHash, run, prepared, "docker", "guest:v1", reorderedMounts, sessionstore.CreateSandboxOptions{VolumeMounts: reorderedMounts})
+	if err != nil {
+		t.Fatalf("stickyProjectRunConfigHash reordered mounts returned error: %v", err)
+	}
+	if same != jupyterFirst {
+		t.Fatalf("volume mount ordering changed effective hash: got %q want %q", same, jupyterFirst)
 	}
 
 	changed := prepared

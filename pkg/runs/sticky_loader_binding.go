@@ -39,8 +39,8 @@ func stickyProjectRunConfigHash(baseHash string, run domain.ProjectRunRecord, pr
 	}
 	capsetIDs := capabilities.NormalizeCapsetIDs(prepared.CapsetIDs)
 	sort.Strings(capsetIDs)
-	volumeMounts = domain.NormalizeSandboxVolumeMounts(volumeMounts)
-	sort.Slice(volumeMounts, func(i, j int) bool { return volumeMounts[i].Target < volumeMounts[j].Target })
+	volumeMounts = loaders.NormalizeStickySandboxVolumeMounts(volumeMounts)
+	jupyter.VolumeMounts = loaders.NormalizeStickySandboxVolumeMounts(jupyter.VolumeMounts)
 	payload, err := json.Marshal(stickyProjectRunSandboxConfig{
 		LoaderConfigHash: baseHash,
 		ProjectID:        run.ProjectID,
@@ -145,11 +145,4 @@ func loadCompatibleStickyLoaderBinding(ctx context.Context, store stickyBindingS
 		return binding, binding.SandboxConfigHash == configHash, nil
 	}
 	return domain.LoaderBinding{}, false, fmt.Errorf("sticky sandbox binding changed concurrently")
-}
-
-func stickyLoaderBindingMatches(current, expected domain.LoaderBinding) bool {
-	return strings.TrimSpace(current.LoaderID) == strings.TrimSpace(expected.LoaderID) &&
-		strings.TrimSpace(current.TriggerID) == strings.TrimSpace(expected.TriggerID) &&
-		strings.TrimSpace(current.SandboxID) == strings.TrimSpace(expected.SandboxID) &&
-		strings.TrimSpace(current.SandboxConfigHash) == strings.TrimSpace(expected.SandboxConfigHash)
 }

@@ -80,18 +80,11 @@ func (r *LoaderSandboxRunner) loadOrResumeLoaderBinding(ctx context.Context, bin
 	if err != nil {
 		return nil, "", true, err
 	}
-	if !found || !loaderBindingsMatch(current, binding) {
+	if !found || !loaders.LoaderBindingsMatch(current, binding) {
 		return nil, "", false, nil
 	}
 	session, eventType, err := r.loadOrResumeLocked(ctx, binding.SandboxID)
 	return session, eventType, true, err
-}
-
-func loaderBindingsMatch(current, expected domain.LoaderBinding) bool {
-	return strings.TrimSpace(current.LoaderID) == strings.TrimSpace(expected.LoaderID) &&
-		strings.TrimSpace(current.TriggerID) == strings.TrimSpace(expected.TriggerID) &&
-		strings.TrimSpace(current.SandboxID) == strings.TrimSpace(expected.SandboxID) &&
-		strings.TrimSpace(current.SandboxConfigHash) == strings.TrimSpace(expected.SandboxConfigHash)
 }
 
 func (r *LoaderSandboxRunner) bindLoaderSandbox(ctx context.Context, loader domain.Loader, triggerID, sandboxID, configHash string, expected *domain.LoaderBinding) (bool, error) {
@@ -218,7 +211,7 @@ func loaderRequestSandboxConfigHash(baseHash string, request domain.LoaderAgentR
 		Workspace:        workspace,
 		Driver:           driver,
 		GuestImage:       guestImage,
-		VolumeMounts:     domain.NormalizeSandboxVolumeMounts(volumeMounts),
+		VolumeMounts:     loaders.NormalizeStickySandboxVolumeMounts(volumeMounts),
 	})
 	if err != nil {
 		return "", err

@@ -2009,7 +2009,7 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 			if err != nil {
 				return SandboxResult{}, fmt.Errorf("revalidate sticky sandbox binding: %w", err)
 			}
-			if !found || !stickyLoaderBindingMatches(current, *previousStickyBinding) {
+			if !found || !loaders.LoaderBindingsMatch(current, *previousStickyBinding) {
 				return SandboxResult{}, fmt.Errorf("sticky sandbox binding changed concurrently")
 			}
 		}
