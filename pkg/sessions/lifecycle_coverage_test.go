@@ -185,19 +185,56 @@ func TestLifecycleEnsureProxyReadyBranches(t *testing.T) {
 		session := lifecycleTestSession("session-start", driverpkg.RuntimeDriverDocker, domain.VMStatusStopped)
 		proxyState := domain.ProxyState{Enabled: true, HostPort: unusedTCPPort(t), GuestPort: 8888, ProxyPath: "/lab"}
 		store := &fakeLifecycleStore{session: session, proxyState: proxyState}
-		driver := &recordingSandboxDriver{}
+		driver := &recordingSandboxDriver{onStart: func(started *domain.Sandbox) {
+			if got := domain.SandboxEnvMap(started.RuntimeEnvItems)["AGENT_COMPOSE_SANDBOX_TOKEN"]; got != "retry-token" {
+				t.Fatalf("runtime token = %q, want retry-token", got)
+			}
+		}}
+		prepareCalls := 0
 		lifecycle := Lifecycle{
 			Config:           &appconfig.Config{SandboxStartTimeout: time.Second},
 			Store:            store,
 			WorkspaceEnsurer: &recordingWorkspaceEnsurer{},
 			Driver:           driver,
+			PrepareAgentEnvironment: func(_ context.Context, sandbox *domain.Sandbox) error {
+				prepareCalls++
+				sandbox.RuntimeEnvItems = []domain.SandboxEnvVar{{Name: "AGENT_COMPOSE_SANDBOX_TOKEN", Value: "retry-token"}}
+				return nil
+			},
 		}
 		loaded, loadedProxy, err := lifecycle.EnsureProxyReady(context.Background(), session.Summary.ID)
 		if err != nil {
 			t.Fatalf("EnsureProxyReady returned error: %v", err)
 		}
-		if !driver.started || loaded.Summary.VMStatus != domain.VMStatusRunning || loadedProxy.ProxyPath != "/lab" {
+		if prepareCalls != 1 || !driver.started || loaded.Summary.VMStatus != domain.VMStatusRunning || loadedProxy.ProxyPath != "/lab" {
 			t.Fatalf("driver/loaded/proxy = %v/%#v/%#v", driver.started, loaded, loadedProxy)
+		}
+	})
+
+	t.Run("previously started sandbox skips agent preparation", func(t *testing.T) {
+		session := lifecycleTestSession("session-running-unreachable", driverpkg.RuntimeDriverDocker, domain.VMStatusRunning)
+		store := &fakeLifecycleStore{
+			session:    session,
+			vmState:    domain.VMState{StartedAt: time.Now().UTC()},
+			proxyState: domain.ProxyState{Enabled: true, HostPort: unusedTCPPort(t), GuestPort: 8888},
+		}
+		prepareCalls := 0
+		lifecycle := Lifecycle{
+			Config:           &appconfig.Config{SandboxStartTimeout: time.Second},
+			Store:            store,
+			WorkspaceEnsurer: &recordingWorkspaceEnsurer{},
+			Driver:           &recordingSandboxDriver{},
+			PrepareAgentEnvironment: func(context.Context, *domain.Sandbox) error {
+				prepareCalls++
+				return nil
+			},
+		}
+
+		if _, _, err := lifecycle.EnsureProxyReady(context.Background(), session.Summary.ID); err != nil {
+			t.Fatalf("EnsureProxyReady returned error: %v", err)
+		}
+		if prepareCalls != 0 {
+			t.Fatalf("agent preparation calls = %d, want 0", prepareCalls)
 		}
 	})
 }
@@ -376,6 +413,11 @@ func TestLifecycleResumeLoadedWorkspaceEnsurerOrdering(t *testing.T) {
 		WorkspaceEnsurer: ensurer,
 		Driver:           driver,
 		Notifier:         notifier,
+		PrepareAgentEnvironment: func(_ context.Context, sandbox *domain.Sandbox) error {
+			order = append(order, "agent.prepare")
+			sandbox.RuntimeEnvItems = []domain.SandboxEnvVar{{Name: "AGENT_COMPOSE_SANDBOX_TOKEN", Value: "retry-token"}}
+			return nil
+		},
 		GuideWriter: func(context.Context, *domain.Sandbox, []string) {
 			order = append(order, "guide")
 		},
@@ -391,7 +433,7 @@ func TestLifecycleResumeLoadedWorkspaceEnsurerOrdering(t *testing.T) {
 	if ensurer.calls != 1 || driver.calls != 1 {
 		t.Fatalf("ensure/start calls = %d/%d, want 1/1", ensurer.calls, driver.calls)
 	}
-	wantOrder := "ensure,guide,driver.start,store.update,notify.updated,notify.dashboard,event.persist,notify.event"
+	wantOrder := "ensure,agent.prepare,guide,driver.start,store.update,notify.updated,notify.dashboard,event.persist,notify.event"
 	if got := strings.Join(order, ","); got != wantOrder {
 		t.Fatalf("call order = %q, want %q", got, wantOrder)
 	}
@@ -641,14 +683,18 @@ type recordingSandboxDriver struct {
 	started  bool
 	calls    int
 	order    *[]string
+	onStart  func(*domain.Sandbox)
 	startErr error
 }
 
-func (d *recordingSandboxDriver) StartSandboxVM(context.Context, *domain.Sandbox) error {
+func (d *recordingSandboxDriver) StartSandboxVM(_ context.Context, sandbox *domain.Sandbox) error {
 	d.started = true
 	d.calls++
 	if d.order != nil {
 		*d.order = append(*d.order, "driver.start")
+	}
+	if d.onStart != nil {
+		d.onStart(sandbox)
 	}
 	return d.startErr
 }

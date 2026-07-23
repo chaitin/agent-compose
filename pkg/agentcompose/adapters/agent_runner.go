@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
 	"agent-compose/pkg/execution"
 	"agent-compose/pkg/llms"
@@ -76,33 +77,19 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, session *domain.Sandb
 		slog.Warn("resolve agent definition failed", "agent_id", strings.TrimSpace(agentDefinitionID), "error", err)
 		agentDef = nil
 	}
-	systemPrompt := ""
 	effectiveModel := strings.TrimSpace(model)
 	if agentDef != nil {
-		systemPrompt = strings.TrimSpace(agentDef.SystemPrompt)
 		if effectiveModel == "" {
 			effectiveModel = strings.TrimSpace(agentDef.Model)
 		}
 	}
-	if err := execution.WriteAgentSystemPromptFile(session, systemPrompt); err != nil {
+	skillNames, err := r.prepareAgentFiles(ctx, session, execution.AgentConfig{
+		Provider:          agent,
+		AgentDefinitionID: agentDefinitionID,
+		Model:             effectiveModel,
+	}, agentDef)
+	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
-	}
-	var skillNames []string
-	if agentDef != nil && len(agentDef.Skills) > 0 {
-		resolver := skills.NewResolver(r.config)
-		resolver.Env = agentSkillEnv(agentDef.EnvItems)
-		resolvedSkills, err := resolver.Resolve(ctx, agentDef.Skills)
-		if err != nil {
-			return domain.ExecResult{}, domain.AgentRunResult{}, err
-		}
-		skillNames, err = execution.WriteAgentSkills(session, resolver.Projected(resolvedSkills))
-		if err != nil {
-			return domain.ExecResult{}, domain.AgentRunResult{}, err
-		}
-	} else {
-		if _, err := execution.WriteAgentSkills(session, nil); err != nil {
-			return domain.ExecResult{}, domain.AgentRunResult{}, err
-		}
 	}
 	spec := BuildAgentExecSpec(r.config, session, agent, effectiveModel, promptPath, schemaPath, skillNames)
 	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, r.config, facadeStoreFor(r.configDB), session, agent, effectiveModel, runtimefacade.TokenSourceAgent, runID)
@@ -122,7 +109,7 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, session *domain.Sandb
 			}
 		}
 	}
-	if err := r.prepareAgentMCPConfig(ctx, session, agentDefinitionID, agent); err != nil {
+	if err := prepareAgentMCPConfig(session, agent, agentDef); err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}
 	result, err := runtime.ExecStream(ctx, session, vmState, spec, stream)
@@ -137,6 +124,111 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, session *domain.Sandb
 	return execution.SanitizeAgentExecResult(result), parsed, nil
 }
 
+func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, session *domain.Sandbox, agent execution.AgentConfig, definition *domain.AgentDefinition) error {
+	if session == nil {
+		return fmt.Errorf("sandbox is required")
+	}
+	appconfig.ApplyDefaultGuestPaths(r.config)
+	agent.Provider = domain.NormalizeAgentKind(agent.Provider)
+	if agent.Provider == "" {
+		agent.Provider = domain.DefaultAgentProvider
+	}
+	if definition != nil {
+		if agent.AgentDefinitionID == "" {
+			agent.AgentDefinitionID = strings.TrimSpace(definition.ID)
+		}
+		if agent.Model == "" {
+			agent.Model = strings.TrimSpace(definition.Model)
+		}
+	}
+	if r.configDB != nil {
+		if err := r.configDB.RevokeLLMFacadeTokensForSandbox(ctx, session.Summary.ID); err != nil {
+			return err
+		}
+	}
+	if _, err := r.prepareAgentFiles(ctx, session, agent, definition); err != nil {
+		return err
+	}
+	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, r.config, facadeStoreFor(r.configDB), session, agent.Provider, agent.Model, "session", "")
+	if err != nil {
+		if r.configDB != nil {
+			_ = r.configDB.RevokeLLMFacadeTokensForSandbox(context.WithoutCancel(ctx), session.Summary.ID)
+		}
+		return err
+	}
+	if err := prepareAgentMCPConfig(session, agent.Provider, definition); err != nil {
+		if r.configDB != nil {
+			_ = r.configDB.RevokeLLMFacadeTokensForSandbox(context.WithoutCancel(ctx), session.Summary.ID)
+		}
+		return err
+	}
+	if len(managedEnv) > 0 {
+		session.RuntimeEnvItems = domain.MergeEnvItems(session.RuntimeEnvItems, llms.EnvItemsFromMap(managedEnv, false))
+	}
+	return nil
+}
+
+func (r *AgentRunner) PrepareSandboxAgentEnvironmentFromTags(ctx context.Context, session *domain.Sandbox) error {
+	if r == nil {
+		return fmt.Errorf("agent runner is required")
+	}
+	if session == nil {
+		return fmt.Errorf("sandbox is required")
+	}
+	providerTag := domain.NormalizeAgentKind(execution.SessionTagValue(session.Summary.Tags, domain.AgentSandboxTagProvider))
+	provider := providerTag
+	if provider == "" {
+		provider = domain.DefaultAgentProvider
+	}
+	agent := execution.AgentConfig{Provider: provider}
+	var definition *domain.AgentDefinition
+	taggedAgentID := execution.SessionTagValue(session.Summary.Tags, domain.AgentSandboxTagID)
+	if taggedAgentID != "" && (domain.SandboxHasAgentTag(session, taggedAgentID) || execution.SessionTagValue(session.Summary.Tags, domain.AgentSandboxTagProvider) != "") {
+		if r.agents == nil {
+			return fmt.Errorf("agent definition store is required")
+		}
+		resolved, err := r.agents.GetAgentDefinition(ctx, taggedAgentID)
+		if err != nil {
+			return fmt.Errorf("resolve sandbox agent definition %s: %w", taggedAgentID, err)
+		}
+		if !resolved.Enabled {
+			return fmt.Errorf("sandbox agent definition %s is disabled", taggedAgentID)
+		}
+		definition = &resolved
+		agent = execution.AgentConfigFromDefinition(resolved, domain.DefaultAgentProvider)
+		if providerTag != "" {
+			agent.Provider = providerTag
+		}
+	}
+	return r.PrepareSandboxAgentEnvironment(ctx, session, agent, definition)
+}
+
+func (r *AgentRunner) prepareAgentFiles(ctx context.Context, session *domain.Sandbox, agent execution.AgentConfig, definition *domain.AgentDefinition) ([]string, error) {
+	systemPrompt := ""
+	if definition != nil {
+		systemPrompt = strings.TrimSpace(definition.SystemPrompt)
+	}
+	if err := execution.WriteAgentSystemPromptFile(session, systemPrompt); err != nil {
+		return nil, err
+	}
+	var skillNames []string
+	if definition != nil && len(definition.Skills) > 0 {
+		resolver := skills.NewResolver(r.config)
+		resolver.Env = agentSkillEnv(definition.EnvItems)
+		resolvedSkills, err := resolver.Resolve(ctx, definition.Skills)
+		if err != nil {
+			return nil, err
+		}
+		skillNames, err = execution.WriteAgentSkills(session, resolver.Projected(resolvedSkills))
+		if err != nil {
+			return nil, err
+		}
+	} else if _, err := execution.WriteAgentSkills(session, nil); err != nil {
+		return nil, err
+	}
+	return skillNames, nil
+}
+
 func agentSkillEnv(items []domain.SandboxEnvVar) map[string]string {
 	env := domain.SandboxEnvMap(items)
 	if env == nil {
@@ -145,40 +237,15 @@ func agentSkillEnv(items []domain.SandboxEnvVar) map[string]string {
 	return env
 }
 
-func (r *AgentRunner) prepareAgentMCPConfig(ctx context.Context, session *domain.Sandbox, agentDefinitionID, agent string) error {
-	if session == nil {
-		return nil
+func prepareAgentMCPConfig(session *domain.Sandbox, agent string, definition *domain.AgentDefinition) error {
+	var mcps map[string]compose.NormalizedMCPServerSpec
+	if definition != nil {
+		mcps = llms.AgentMCPConfig(*definition)
 	}
-	provider := domain.NormalizeAgentKind(agent)
-	clearProvider := func() error {
-		if err := execution.WriteAgentMCPConfigFile(session, nil); err != nil {
-			return err
-		}
-		switch provider {
-		case "codex":
-			return llms.WriteCodexMCPConfig(session, nil)
-		case "opencode":
-			return llms.WriteOpenCodeMCPConfig(session, nil)
-		default:
-			return nil
-		}
-	}
-	if r == nil || r.agents == nil {
-		return clearProvider()
-	}
-	agentID := strings.TrimSpace(agentDefinitionID)
-	if agentID == "" {
-		return clearProvider()
-	}
-	definition, err := r.agents.GetAgentDefinition(ctx, agentID)
-	if err != nil {
-		return clearProvider()
-	}
-	mcps := llms.AgentMCPConfig(definition)
 	if err := execution.WriteAgentMCPConfigFile(session, mcps); err != nil {
 		return err
 	}
-	switch provider {
+	switch domain.NormalizeAgentKind(agent) {
 	case "codex":
 		return llms.WriteCodexMCPConfig(session, mcps)
 	case "opencode":

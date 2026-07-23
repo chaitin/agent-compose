@@ -406,6 +406,7 @@ func NewLoaderSandboxRunner(di do.Injector) (*adapters.LoaderSandboxRunner, erro
 		do.MustInvoke[*sessions.StreamBroker](di),
 		do.MustInvoke[*loaders.Bus](di),
 		do.MustInvoke[*adapters.CapabilitySandboxResolver](di),
+		do.MustInvoke[*adapters.AgentExecutor](di),
 		do.MustInvoke[*sessions.LifecycleLocks](di),
 	), nil
 }
@@ -424,6 +425,7 @@ func NewSandboxRPCBridge(di do.Injector) (*adapters.SandboxRPCBridge, error) {
 		do.MustInvoke[capabilities.Provider](di),
 		do.MustInvoke[*adapters.CapabilitySandboxResolver](di),
 		dashboard,
+		do.MustInvoke[*adapters.AgentExecutor](di),
 		do.MustInvoke[*sessions.LifecycleLocks](di),
 	), nil
 }

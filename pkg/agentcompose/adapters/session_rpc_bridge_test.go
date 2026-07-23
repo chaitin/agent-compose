@@ -18,7 +18,9 @@ import (
 	"agent-compose/pkg/capability"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/execution"
 	"agent-compose/pkg/internal/testutil"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/workspaces"
@@ -166,6 +168,79 @@ func TestSandboxRPCBridgeCallJSONSupportsSessionRPCs(t *testing.T) {
 	}
 	if _, err := bridge.CallJSON(ctx, "GetSession", `{bad json`); err == nil || !strings.Contains(err.Error(), "decode session rpc request") {
 		t.Fatalf("bad json error = %v", err)
+	}
+}
+
+func TestSandboxRPCBridgeCreateSandboxInheritsSchedulerAgentEnvironment(t *testing.T) {
+	ctx := context.Background()
+	bridge, driver := newTestSandboxRPCBridge(t)
+	definition, err := bridge.configDB.CreateAgentDefinition(ctx, domain.AgentDefinition{
+		ID:           "agent-scheduler",
+		Name:         "scheduler-agent",
+		Enabled:      true,
+		Provider:     "codex",
+		Model:        "gpt-scheduler",
+		SystemPrompt: "Scheduler inherited prompt",
+		EnvItems:     []domain.SandboxEnvVar{{Name: "AGENT_ENV", Value: "from-agent"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateAgentDefinition returned error: %v", err)
+	}
+	ctx = loaders.WithSandboxCreationContext(ctx, loaders.SandboxCreationContext{
+		AgentDefinitionID: definition.ID,
+		Provider:          "claude",
+	})
+	responseJSON, err := bridge.CallJSONWithSource(ctx, "CreateSession", `{"title":"scheduler child","envItems":[{"name":"REQUEST_ENV","value":"from-script"}]}`, domain.SandboxTypeScript+":loader-1")
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	var response sandboxRPCResponse
+	if err := json.Unmarshal([]byte(responseJSON), &response); err != nil {
+		t.Fatalf("unmarshal create response: %v", err)
+	}
+	loaded, err := bridge.store.GetSandbox(ctx, response.Session.Summary.SessionID)
+	if err != nil {
+		t.Fatalf("GetSandbox returned error: %v", err)
+	}
+	env := domain.SandboxEnvMap(loaded.EnvItems)
+	if env["AGENT_ENV"] != "from-agent" || env["REQUEST_ENV"] != "from-script" {
+		t.Fatalf("sandbox env = %#v", env)
+	}
+	if execution.SessionTagValue(loaded.Summary.Tags, domain.AgentSandboxTagID) != definition.ID {
+		t.Fatalf("sandbox tags = %#v", loaded.Summary.Tags)
+	}
+	if execution.SessionTagValue(loaded.Summary.Tags, domain.AgentSandboxTagProvider) != definition.Provider {
+		t.Fatalf("sandbox provider tag = %#v", loaded.Summary.Tags)
+	}
+	if data, err := os.ReadFile(execution.HostAgentSystemPromptPath(loaded)); err != nil || string(data) != definition.SystemPrompt {
+		t.Fatalf("system prompt = %q err=%v", string(data), err)
+	}
+	if len(driver.startSessions) != 1 {
+		t.Fatalf("driver start sessions = %d", len(driver.startSessions))
+	}
+}
+
+func TestSandboxRPCBridgeCreateIgnoresRequestedAgentIdentityTags(t *testing.T) {
+	ctx := context.Background()
+	bridge, _ := newTestSandboxRPCBridge(t)
+
+	loaded, err := bridge.createSandbox(ctx, sandboxRPCCreateRequest{
+		Title: "untrusted agent tags",
+		Tags: []domain.SandboxTag{
+			{Name: domain.AgentSandboxTagID, Value: "forged-agent"},
+			{Name: domain.AgentSandboxTagName, Value: "forged-name"},
+			{Name: domain.AgentSandboxTagProvider, Value: "claude"},
+			{Name: "custom", Value: "preserved"},
+		},
+	}, domain.SandboxTypeManual)
+	if err != nil {
+		t.Fatalf("createSandbox returned error: %v", err)
+	}
+	if execution.SessionTagValue(loaded.Summary.Tags, domain.AgentSandboxTagID) != "" || execution.SessionTagValue(loaded.Summary.Tags, domain.AgentSandboxTagName) != "" {
+		t.Fatalf("sandbox retained requested agent identity: %#v", loaded.Summary.Tags)
+	}
+	if execution.SessionTagValue(loaded.Summary.Tags, domain.AgentSandboxTagProvider) != domain.DefaultAgentProvider || execution.SessionTagValue(loaded.Summary.Tags, "custom") != "preserved" {
+		t.Fatalf("sandbox tags = %#v", loaded.Summary.Tags)
 	}
 }
 
@@ -378,6 +453,8 @@ func newTestSandboxRPCBridge(t *testing.T) (*SandboxRPCBridge, *fakeRPCSandboxDr
 		t.Fatalf("open test storage: %v", err)
 	}
 	driver := &fakeRPCSandboxDriver{}
+	streams := sessions.NewStreamBrokerForTest()
+	agentExecutor := NewAgentExecutor(config, store, streams, NewAgentRunner(config, store, configDB, configDB, nil))
 	return NewSandboxRPCBridge(
 		config,
 		store,
@@ -386,10 +463,11 @@ func newTestSandboxRPCBridge(t *testing.T) (*SandboxRPCBridge, *fakeRPCSandboxDr
 		driver,
 		nil,
 		nil,
-		sessions.NewStreamBrokerForTest(),
+		streams,
 		testCapabilityProvider{},
 		nil,
 		nil,
+		agentExecutor,
 	), driver
 }
 

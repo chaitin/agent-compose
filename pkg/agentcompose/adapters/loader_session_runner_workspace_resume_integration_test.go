@@ -68,6 +68,7 @@ func TestIntegrationLoaderStickyResumePreservesReadyFileWorkspace(t *testing.T) 
 		bridge.streams,
 		publisher,
 		nil,
+		bridge.agentExecutor,
 	)
 
 	created, eventType, err := runner.Ensure(ctx, loader, request, false)

@@ -29,6 +29,20 @@ func NewAgentExecutor(config *appconfig.Config, store *sessionstore.Store, strea
 	return &AgentExecutor{config: config, store: store, streams: streams, runner: runner}
 }
 
+func (e *AgentExecutor) PrepareSandboxAgentEnvironment(ctx context.Context, session *domain.Sandbox, agent execution.AgentConfig, definition *domain.AgentDefinition) error {
+	if e == nil || e.runner == nil {
+		return fmt.Errorf("agent runner is required")
+	}
+	return e.runner.PrepareSandboxAgentEnvironment(ctx, session, agent, definition)
+}
+
+func (e *AgentExecutor) PrepareSandboxAgentEnvironmentFromTags(ctx context.Context, session *domain.Sandbox) error {
+	if e == nil || e.runner == nil {
+		return fmt.Errorf("agent runner is required")
+	}
+	return e.runner.PrepareSandboxAgentEnvironmentFromTags(ctx, session)
+}
+
 func (e *AgentExecutor) ExecuteAgentRequest(ctx context.Context, session *domain.Sandbox, request execution.ExecuteAgentRequest) (domain.NotebookCell, domain.SandboxEvent, domain.SandboxEvent, error) {
 	agent := domain.NormalizeAgentKind(request.Agent)
 	if agent == "" {

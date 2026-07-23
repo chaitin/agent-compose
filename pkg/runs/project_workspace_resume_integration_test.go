@@ -307,6 +307,14 @@ func upsertProjectWorkspaceAgent(t *testing.T, ctx context.Context, store *confi
 
 type projectWorkspaceExecutor struct{}
 
+func (projectWorkspaceExecutor) PrepareSandboxAgentEnvironment(_ context.Context, session *domain.Sandbox, _ execution.AgentConfig, _ *domain.AgentDefinition) error {
+	return nil
+}
+
+func (projectWorkspaceExecutor) PrepareSandboxAgentEnvironmentFromTags(context.Context, *domain.Sandbox) error {
+	return nil
+}
+
 type projectWorkspaceImages struct{}
 
 func (projectWorkspaceImages) ListImages(context.Context, images.ListRequest) (images.ListResult, error) {

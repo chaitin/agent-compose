@@ -49,16 +49,17 @@ type LifecycleNotifier interface {
 type CapabilityGuideWriter func(context.Context, *domain.Sandbox, []string)
 
 type Lifecycle struct {
-	Config           *appconfig.Config
-	Store            LifecycleStore
-	Workspace        workspaces.Store
-	WorkspaceEnsurer workspaces.WorkspaceEnsurer
-	Driver           SandboxDriver
-	Liveness         RuntimeLivenessProvider
-	TokenRevoker     FacadeTokenRevoker
-	Notifier         LifecycleNotifier
-	GuideWriter      CapabilityGuideWriter
-	Locks            *LifecycleLocks
+	Config                  *appconfig.Config
+	Store                   LifecycleStore
+	Workspace               workspaces.Store
+	WorkspaceEnsurer        workspaces.WorkspaceEnsurer
+	Driver                  SandboxDriver
+	Liveness                RuntimeLivenessProvider
+	TokenRevoker            FacadeTokenRevoker
+	Notifier                LifecycleNotifier
+	GuideWriter             CapabilityGuideWriter
+	PrepareAgentEnvironment func(context.Context, *domain.Sandbox) error
+	Locks                   *LifecycleLocks
 }
 
 func (l Lifecycle) validateSandboxRuntime(session *domain.Sandbox) error {
@@ -160,6 +161,11 @@ func (l Lifecycle) EnsureProxyReady(ctx context.Context, sessionID string) (*dom
 		_ = l.Store.UpdateSandbox(ctx, session)
 		return nil, domain.ProxyState{}, err
 	}
+	if err := l.prepareFreshStartAgentEnvironment(startCtx, session); err != nil {
+		session.Summary.VMStatus = domain.VMStatusFailed
+		_ = l.Store.UpdateSandbox(ctx, session)
+		return nil, domain.ProxyState{}, err
+	}
 	if err := l.Driver.StartSandboxVM(startCtx, session); err != nil {
 		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = l.Store.UpdateSandbox(ctx, session)
@@ -203,6 +209,11 @@ func (l Lifecycle) ResumeLoaded(ctx context.Context, session *domain.Sandbox, ca
 	if err := l.ensureWorkspace(ctx, session); err != nil {
 		return nil, err
 	}
+	if err := l.prepareFreshStartAgentEnvironment(ctx, session); err != nil {
+		session.Summary.VMStatus = domain.VMStatusFailed
+		_ = l.Store.UpdateSandbox(ctx, session)
+		return nil, err
+	}
 	if l.GuideWriter != nil {
 		l.GuideWriter(ctx, session, capsetIDs)
 	}
@@ -239,6 +250,20 @@ func (l Lifecycle) ensureWorkspace(ctx context.Context, session *domain.Sandbox)
 		return fmt.Errorf("workspace ensurer is not configured")
 	}
 	return l.WorkspaceEnsurer.Ensure(ctx, session)
+}
+
+func (l Lifecycle) prepareFreshStartAgentEnvironment(ctx context.Context, session *domain.Sandbox) error {
+	if l.PrepareAgentEnvironment == nil {
+		return nil
+	}
+	vmState, err := l.Store.GetVMState(session.Summary.ID)
+	if err != nil {
+		return err
+	}
+	if !vmState.StartedAt.IsZero() {
+		return nil
+	}
+	return l.PrepareAgentEnvironment(ctx, session)
 }
 
 func (l Lifecycle) StopLoaded(ctx context.Context, session *domain.Sandbox) (*domain.Sandbox, bool, error) {

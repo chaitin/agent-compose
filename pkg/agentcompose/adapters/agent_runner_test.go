@@ -37,6 +37,108 @@ type fakeAgentRuntime struct {
 	err          error
 }
 
+func TestAgentRunnerPrepareSandboxAgentEnvironmentUsesOnlyCurrentAgent(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:             root,
+		DbAddr:               filepath.Join(root, "data.db"),
+		SandboxRoot:          filepath.Join(root, "sandboxes"),
+		RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:         "guest:latest",
+		GuestWorkspacePath:   "/workspace",
+		GuestStateRoot:       "/state",
+		GuestHomePath:        "/root",
+		RuntimeBaseURL:       "http://agent-compose.test:7410",
+		LLMAPIEndpoint:       "https://llm.example.test/v1",
+		LLMAPIKey:            "provider-key",
+		LLMModel:             "gpt-default",
+		LLMAPIProtocol:       "responses",
+		SandboxStartTimeout:  2 * time.Second,
+		JupyterProxyBasePath: "/agent-compose/session",
+	}
+	configDB, store, err := testutil.OpenStores(t, config)
+	if err != nil {
+		t.Fatalf("OpenStores returned error: %v", err)
+	}
+	session, err := store.CreateSandbox(ctx, "agent environment", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, []domain.SandboxTag{
+		{Name: domain.AgentSandboxTagSource, Value: domain.AgentSandboxTagSourceVal},
+		{Name: domain.AgentSandboxTagID, Value: "agent-1"},
+	})
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"mcp_servers": map[string]any{
+			"filesystem": map[string]any{"type": "local", "command": "npx", "args": []string{"server"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	definition := &domain.AgentDefinition{
+		ID:           "agent-1",
+		Enabled:      true,
+		Provider:     "codex",
+		Model:        "gpt-agent",
+		SystemPrompt: "Use the configured agent identity",
+		ConfigJSON:   string(payload),
+	}
+	runner := NewAgentRunner(config, store, configDB, fakeAgentDefinitionStore{agent: *definition}, nil)
+	if err := runner.PrepareSandboxAgentEnvironmentFromTags(ctx, session); err != nil {
+		t.Fatalf("PrepareSandboxAgentEnvironmentFromTags returned error: %v", err)
+	}
+
+	env := domain.SandboxEnvMap(session.RuntimeEnvItems)
+	if env["OPENAI_API_KEY"] == "" || env["OPENAI_BASE_URL"] == "" {
+		t.Fatalf("missing current Codex environment: %#v", env)
+	}
+	if env["ANTHROPIC_API_KEY"] != "" || env["ANTHROPIC_BASE_URL"] != "" {
+		t.Fatalf("unexpected Claude environment: %#v", env)
+	}
+	if data, err := os.ReadFile(execution.HostAgentSystemPromptPath(session)); err != nil || string(data) != definition.SystemPrompt {
+		t.Fatalf("system prompt = %q err=%v", string(data), err)
+	}
+	if data, err := os.ReadFile(execution.HostAgentMCPConfigPath(session)); err != nil || !strings.Contains(string(data), `"filesystem"`) {
+		t.Fatalf("generic MCP config = %q err=%v", string(data), err)
+	}
+	if data, err := os.ReadFile(filepath.Join(execution.HostSandboxHome(session), ".codex", "config.toml")); err != nil || !strings.Contains(string(data), "[mcp_servers.filesystem]") {
+		t.Fatalf("Codex config = %q err=%v", string(data), err)
+	}
+	token, err := configDB.GetLLMFacadeToken(ctx, env["AGENT_COMPOSE_SANDBOX_TOKEN"])
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
+	}
+	if token.Model != "gpt-agent" || token.Source != "session" || token.RunID != "" {
+		t.Fatalf("sandbox token = %#v", token)
+	}
+}
+
+func TestAgentRunnerPrepareSandboxAgentEnvironmentFromTagsRejectsInvalidDefinition(t *testing.T) {
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{Tags: []domain.SandboxTag{
+		{Name: domain.AgentSandboxTagSource, Value: domain.AgentSandboxTagSourceVal},
+		{Name: domain.AgentSandboxTagID, Value: "agent-1"},
+		{Name: domain.AgentSandboxTagProvider, Value: "opencode"},
+	}}}
+
+	t.Run("definition lookup failure", func(t *testing.T) {
+		lookupErr := errors.New("definition unavailable")
+		runner := NewAgentRunner(nil, nil, nil, fakeAgentDefinitionStore{err: lookupErr}, nil)
+		err := runner.PrepareSandboxAgentEnvironmentFromTags(context.Background(), session)
+		if !errors.Is(err, lookupErr) {
+			t.Fatalf("PrepareSandboxAgentEnvironmentFromTags error = %v, want %v", err, lookupErr)
+		}
+	})
+
+	t.Run("disabled definition", func(t *testing.T) {
+		runner := NewAgentRunner(nil, nil, nil, fakeAgentDefinitionStore{agent: domain.AgentDefinition{ID: "agent-1", Enabled: false}}, nil)
+		err := runner.PrepareSandboxAgentEnvironmentFromTags(context.Background(), session)
+		if err == nil || !strings.Contains(err.Error(), "is disabled") {
+			t.Fatalf("PrepareSandboxAgentEnvironmentFromTags error = %v, want disabled definition", err)
+		}
+	})
+}
+
 func (r *fakeAgentRuntime) EnsureSandbox(context.Context, *domain.Sandbox, domain.VMState, domain.ProxyState) (domain.SandboxVMInfo, error) {
 	return domain.SandboxVMInfo{}, nil
 }
@@ -349,8 +451,8 @@ func TestAgentRunnerPrepareManagedMCPConfigForProviders(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Marshal returned error: %v", err)
 		}
-		runner := &AgentRunner{agents: fakeAgentDefinitionStore{agent: domain.AgentDefinition{ConfigJSON: string(payload)}}}
-		if err := runner.prepareAgentMCPConfig(context.Background(), session, "agent-1", "codex"); err != nil {
+		definition := &domain.AgentDefinition{ConfigJSON: string(payload)}
+		if err := prepareAgentMCPConfig(session, "codex", definition); err != nil {
 			t.Fatalf("prepareAgentMCPConfig returned error: %v", err)
 		}
 		stateConfig, err := os.ReadFile(execution.HostAgentMCPConfigPath(session))
@@ -374,8 +476,8 @@ func TestAgentRunnerPrepareManagedMCPConfigForProviders(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Marshal returned error: %v", err)
 		}
-		runner := &AgentRunner{agents: fakeAgentDefinitionStore{agent: domain.AgentDefinition{ConfigJSON: string(payload)}}}
-		if err := runner.prepareAgentMCPConfig(context.Background(), session, "agent-1", "opencode"); err != nil {
+		definition := &domain.AgentDefinition{ConfigJSON: string(payload)}
+		if err := prepareAgentMCPConfig(session, "opencode", definition); err != nil {
 			t.Fatalf("prepareAgentMCPConfig returned error: %v", err)
 		}
 		openCodeConfig, err := os.ReadFile(filepath.Join(execution.HostSandboxHome(session), ".config", "opencode", "opencode.json"))
@@ -395,8 +497,8 @@ func TestAgentRunnerPrepareManagedMCPConfigForProviders(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Marshal returned error: %v", err)
 		}
-		runner := &AgentRunner{agents: fakeAgentDefinitionStore{agent: domain.AgentDefinition{ConfigJSON: string(payload)}}}
-		if err := runner.prepareAgentMCPConfig(context.Background(), session, "agent-1", "claude"); err != nil {
+		definition := &domain.AgentDefinition{ConfigJSON: string(payload)}
+		if err := prepareAgentMCPConfig(session, "claude", definition); err != nil {
 			t.Fatalf("prepareAgentMCPConfig returned error: %v", err)
 		}
 		if _, err := os.Stat(execution.HostAgentMCPConfigPath(session)); err != nil {
@@ -417,8 +519,7 @@ func TestAgentRunnerPrepareManagedMCPConfigForProviders(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(execution.HostSandboxHome(session), ".codex", "config.toml"), []byte("# agent-compose managed mcp start\n[mcp_servers.old]\ncommand = \"old\"\n# agent-compose managed mcp end\n"), 0o644); err != nil {
 			t.Fatalf("WriteFile returned error: %v", err)
 		}
-		runner := &AgentRunner{agents: fakeAgentDefinitionStore{err: errors.New("boom")}}
-		if err := runner.prepareAgentMCPConfig(context.Background(), session, "agent-1", "codex"); err != nil {
+		if err := prepareAgentMCPConfig(session, "codex", nil); err != nil {
 			t.Fatalf("prepareAgentMCPConfig returned error: %v", err)
 		}
 		if _, err := os.Stat(execution.HostAgentMCPConfigPath(session)); !os.IsNotExist(err) {

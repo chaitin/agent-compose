@@ -168,6 +168,11 @@ func TestIntegrationSandboxRPCBridgeGitWorkspaceProvisioningFailureRetry(t *test
 func TestIntegrationSandboxRPCBridgeRuntimeStartFailureRetryPreservesReadyWorkspace(t *testing.T) {
 	ctx := context.Background()
 	bridge, driver := newTestSandboxRPCBridge(t)
+	bridge.config.RuntimeBaseURL = "http://agent-compose.test:7410"
+	bridge.config.LLMAPIEndpoint = "https://llm.example.test/v1"
+	bridge.config.LLMAPIKey = "provider-key"
+	bridge.config.LLMModel = "gpt-retry"
+	bridge.config.LLMAPIProtocol = "responses"
 	recordingStore := installIntegrationRecordingProvisioner(bridge)
 
 	const workspaceID = "runtime-failure-ready-retry"
@@ -192,8 +197,10 @@ func TestIntegrationSandboxRPCBridgeRuntimeStartFailureRetryPreservesReadyWorksp
 	runtimeErr := errors.New("injected runtime start failure")
 	driver.startErr = runtimeErr
 	var firstStartSandboxID string
+	var firstStartToken string
 	driver.onStart = func(sandbox *domain.Sandbox) {
 		firstStartSandboxID = sandbox.Summary.ID
+		firstStartToken = domain.SandboxEnvMap(sandbox.RuntimeEnvItems)["AGENT_COMPOSE_SANDBOX_TOKEN"]
 		integrationAssertPersistedReady(t, ctx, bridge, sandbox.Summary.ID, nil)
 	}
 	_, err = bridge.createSandbox(ctx, sandboxRPCCreateRequest{
@@ -205,6 +212,9 @@ func TestIntegrationSandboxRPCBridgeRuntimeStartFailureRetryPreservesReadyWorksp
 	}
 	if firstStartSandboxID == "" {
 		t.Fatal("runtime driver was not called after workspace became ready")
+	}
+	if firstStartToken == "" {
+		t.Fatal("first runtime start did not receive an agent token")
 	}
 	failed, err := bridge.store.GetSandbox(ctx, firstStartSandboxID)
 	if err != nil {
@@ -234,7 +244,7 @@ func TestIntegrationSandboxRPCBridgeRuntimeStartFailureRetryPreservesReadyWorksp
 		t.Fatalf("replace file workspace source with hostile file: %v", err)
 	}
 	driver.startErr = nil
-	driver.onStart = integrationPersistedReadyStartCheck(t, ctx, bridge, failed.Summary.ID, func(persisted *domain.Sandbox) {
+	persistedReadyCheck := integrationPersistedReadyStartCheck(t, ctx, bridge, failed.Summary.ID, func(persisted *domain.Sandbox) {
 		if !persisted.WorkspaceProvisioning.UpdatedAt.Equal(readyUpdatedAt) {
 			t.Errorf("ready timestamp at runtime retry start = %s, want %s", persisted.WorkspaceProvisioning.UpdatedAt, readyUpdatedAt)
 		}
@@ -250,6 +260,11 @@ func TestIntegrationSandboxRPCBridgeRuntimeStartFailureRetryPreservesReadyWorksp
 			t.Errorf("ready workspace changed before runtime retry start:\n got: %#v\nwant: %#v", atStart, beforeRetry)
 		}
 	})
+	var retryToken string
+	driver.onStart = func(sandbox *domain.Sandbox) {
+		persistedReadyCheck(sandbox)
+		retryToken = domain.SandboxEnvMap(sandbox.RuntimeEnvItems)["AGENT_COMPOSE_SANDBOX_TOKEN"]
+	}
 
 	if _, err := bridge.ResumeSandbox(ctx, failed.Summary.ID); err != nil {
 		t.Fatalf("ResumeSession after runtime start failure returned error: %v", err)
@@ -274,6 +289,9 @@ func TestIntegrationSandboxRPCBridgeRuntimeStartFailureRetryPreservesReadyWorksp
 	}
 	if got := len(driver.startCalls); got != 2 {
 		t.Fatalf("driver start count across runtime failure/retry = %d, want 2 attempts", got)
+	}
+	if retryToken == "" || retryToken == firstStartToken {
+		t.Fatalf("runtime retry token = %q, want a newly prepared token distinct from first start", retryToken)
 	}
 	if got, want := recordingStore.statusHistory(resumed.Summary.ID), []string{domain.SandboxWorkspaceProvisioningStatusReady}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Provisioner writes across runtime-only retry = %#v, want unchanged %#v", got, want)
