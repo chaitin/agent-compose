@@ -185,7 +185,7 @@ SECRET_VALUE:
 
 | 字段 | 类型 | 必填 | 作用 |
 | --- | --- | --- | --- |
-| `name` | string | 条件必填 | 项目标识。省略时尝试使用配置文件所在目录名；最终必须符合稳定标识符格式。也可由 CLI `--project-name` 覆盖。 |
+| `name` | string | 条件必填 | 项目标识。省略时尝试使用配置文件所在目录名；最终必须符合稳定标识符格式。 |
 | `env_file` | string 或 string[] | 否 | 指定插值使用的 dotenv 文件。相对路径以配置文件目录为基准。 |
 | `variables` | map | 否 | 项目级命名变量及 secret 元数据，写入规范化项目配置。它们不会自动继承到 Agent 的 `env`，也不会成为其他 `${NAME}` 的变量来源。 |
 | `workspaces` | map | 否 | 可复用的项目级 Workspace 定义。只能使用复数形式。 |

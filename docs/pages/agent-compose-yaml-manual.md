@@ -186,7 +186,7 @@ SECRET_VALUE:
 
 | Field | Type | Required | Purpose |
 | --- | --- | --- | --- |
-| `name` | string | Conditionally | Project identifier. If omitted, the compose directory name is used; the final value must be a stable identifier. CLI `--project-name` overrides it. |
+| `name` | string | Conditionally | Project identifier. If omitted, the compose directory name is used; the final value must be a stable identifier. |
 | `env_file` | string or string[] | No | Dotenv files used for interpolation. Relative paths are resolved from the compose directory. |
 | `variables` | map | No | Project-level named values and secret metadata stored in the normalized project specification. |
 | `workspaces` | map | No | Reusable project workspace definitions. Only the plural top-level form is valid. |

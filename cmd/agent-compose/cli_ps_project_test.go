@@ -60,21 +60,24 @@ func TestResolveComposeRuntimeProjectRefMatchesComposeSelectionSemantics(t *test
 		}
 	})
 
-	t.Run("explicit missing file does not fall back", func(t *testing.T) {
+	t.Run("project name bypasses explicit missing file", func(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "missing.yml")
-		_, _, _, err := resolveComposeRuntimeProjectRef(cliOptions{ComposeFile: missing, ProjectName: "stored-project"})
-		if err == nil || !strings.Contains(err.Error(), "no such file") {
-			t.Fatalf("resolve explicit missing file error = %v", err)
+		composePath, projectName, ref, err := resolveComposeRuntimeProjectRef(cliOptions{ComposeFile: missing, ProjectName: "stored-project"})
+		if err != nil {
+			t.Fatalf("resolve runtime project ref: %v", err)
+		}
+		if composePath != "" || projectName != "stored-project" || ref.GetProjectId() != "" || ref.GetName() != "stored-project" {
+			t.Fatalf("compose path/name/ref = %q / %q / %#v", composePath, projectName, ref)
 		}
 	})
 
-	t.Run("explicit file and project name derive exact id", func(t *testing.T) {
+	t.Run("project name filters instead of overriding explicit file", func(t *testing.T) {
 		composePath := writeComposeFile(t, t.TempDir(), "name: original\nagents: {}\n")
 		resolvedPath, projectName, ref, err := resolveComposeRuntimeProjectRef(cliOptions{ComposeFile: composePath, ProjectName: "override"})
 		if err != nil {
 			t.Fatalf("resolve runtime project ref: %v", err)
 		}
-		if resolvedPath != composePath || projectName != "override" || ref.GetProjectId() == "" || ref.GetName() != "" {
+		if resolvedPath != "" || projectName != "override" || ref.GetProjectId() != "" || ref.GetName() != "override" {
 			t.Fatalf("compose path/name/ref = %q / %q / %#v", resolvedPath, projectName, ref)
 		}
 	})

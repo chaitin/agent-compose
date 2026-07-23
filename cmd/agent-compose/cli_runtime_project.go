@@ -39,10 +39,9 @@ func (p composeRuntimeProject) name() string {
 	return strings.TrimSpace(p.project.GetSummary().GetName())
 }
 
-// resolveComposeRuntimeProject follows Docker Compose's project-or-name
-// behavior: an explicit project name selects an already-applied project unless
-// an explicit compose file was also supplied. Without either flag, the default
-// compose file continues to identify the project.
+// resolveComposeRuntimeProject resolves an explicit project name as an
+// already-applied project filter. Without one, the compose file identifies the
+// project.
 func resolveComposeRuntimeProject(ctx context.Context, client agentcomposev2connect.ProjectServiceClient, cli cliOptions, command string, loadMode composeRuntimeProjectLoadMode) (composeRuntimeProject, error) {
 	selection, err := resolveComposeRuntimeProjectSelectionForCLI(cli)
 	if err != nil {
@@ -87,7 +86,7 @@ func resolveComposeRuntimeProjectRef(cli cliOptions) (string, string, *agentcomp
 
 func resolveComposeRuntimeProjectSelectionForCLI(cli cliOptions) (composeRuntimeProjectSelection, error) {
 	projectName := strings.TrimSpace(cli.ProjectName)
-	if strings.TrimSpace(cli.ComposeFile) == "" && projectName != "" {
+	if projectName != "" {
 		return composeRuntimeProjectSelection{requestedName: projectName, ref: &agentcomposev2.ProjectRef{Name: projectName}}, nil
 	}
 	composePath, normalized, projectID, err := resolveComposeProject(cli)

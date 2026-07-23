@@ -53,7 +53,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 
 	root.PersistentFlags().StringVar(&options.Host, "host", "", "Daemon HTTP endpoint")
 	root.PersistentFlags().StringVarP(&options.ComposeFile, "file", "f", "", "Path to agent-compose.yml")
-	root.PersistentFlags().StringVar(&options.ProjectName, "project-name", "", "Set compose project name or select a deployed project")
+	root.PersistentFlags().StringVar(&options.ProjectName, "project-name", "", "Select a deployed project by name")
 	root.PersistentFlags().BoolVar(&options.JSON, "json", false, "Print machine-readable JSON")
 
 	commands := []*cobra.Command{

@@ -167,7 +167,7 @@ agents:
 | `agent-compose down` | 禁用受管 scheduler 并停止 sandbox。 |
 | `agent-compose status` | 查看 daemon 状态。 |
 
-常用全局参数：`--file, -f`（指定 compose 文件）、`--project-name`、`--json`
+常用全局参数：`--file, -f`（指定 compose 文件）、`--project-name`（按名称选择已部署项目）、`--json`
 （脚本用的稳定 JSON 输出）、`--host` / `AGENT_COMPOSE_HOST`（连接 TCP daemon）、
 `AGENT_COMPOSE_SOCKET`（Unix socket 路径）。完整参考见[命令行使用手册](docs/pages/zh-CN/command-line-manual.md)。
 

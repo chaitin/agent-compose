@@ -17,7 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func TestConfigCommandUsesGlobalFileProjectNameAndJSON(t *testing.T) {
+func TestConfigCommandProjectNameDoesNotOverrideComposeName(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "file-project")
 	composePath := writeComposeFile(t, dir, `
 name: original-project
@@ -45,8 +45,8 @@ agents:
 	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
 		t.Fatalf("config global JSON output is not JSON: %v\n%s", err, stdout)
 	}
-	if decoded.Name != "override-project" {
-		t.Fatalf("config project name = %q, want override-project", decoded.Name)
+	if decoded.Name != "original-project" {
+		t.Fatalf("config project name = %q, want original-project", decoded.Name)
 	}
 }
 

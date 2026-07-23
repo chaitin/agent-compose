@@ -137,7 +137,7 @@ func testCLIConfigAndOutputWorkflow(t *testing.T) {
 	TestConfigCommandQuietOnlyValidates(t)
 	TestConfigCommandQuietRejectsRemovedNetworkField(t)
 	TestConfigCommandMissingComposeFileWritesStderrAndExitCode(t)
-	TestConfigCommandUsesGlobalFileProjectNameAndJSON(t)
+	TestConfigCommandProjectNameDoesNotOverrideComposeName(t)
 	TestCLIClientConfigPriority(t)
 	TestCLIClientConfigRejectsInvalidHost(t)
 	TestStatusCommandUsesHostFlagBeforeEnvironment(t)

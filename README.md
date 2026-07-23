@@ -215,7 +215,7 @@ See the [command line manual](docs/pages/command-line-manual.md) for the full fi
 | `agent-compose down` | Disable managed schedulers and stop sandboxes. |
 | `agent-compose status` | Check daemon status. |
 
-Useful global flags: `--file, -f` (choose a compose file), `--project-name`,
+Useful global flags: `--file, -f` (choose a compose file), `--project-name` (select a deployed project by name),
 `--json` (stable JSON for scripts), `--host` / `AGENT_COMPOSE_HOST` (connect to a
 TCP daemon), and `AGENT_COMPOSE_SOCKET` (Unix socket path). Full reference:
 [docs/pages/command-line-manual.md](docs/pages/command-line-manual.md).

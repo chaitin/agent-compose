@@ -27,9 +27,6 @@ func loadNormalizedComposeWithOptions(ctx context.Context, cli cliOptions, resol
 	if err != nil {
 		return "", nil, commandExitError{Code: exitCodeUsage, Err: err}
 	}
-	if projectName := strings.TrimSpace(cli.ProjectName); projectName != "" {
-		spec.Name = projectName
-	}
 	projectEnv, err := resolveCLIProjectEnv(spec, composePath)
 	if err != nil {
 		return "", nil, commandExitError{Code: exitCodeUsage, Err: err}
