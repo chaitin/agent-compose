@@ -69,6 +69,8 @@ type dockerCommandInteraction struct {
 	dockerClient *client.Client
 	attachResp   dockertypes.HijackedResponse
 	execID       string
+	containerID  string
+	execMarker   string
 	operationID  string
 	tty          bool
 	attachStdin  bool
@@ -330,6 +332,8 @@ func (r *dockerRuntime) OpenInteraction(ctx context.Context, sandbox *Sandbox, v
 		cancel()
 		return nil, err
 	}
+	execMarker := newDockerExecMarker()
+	execOptions.Env = dockerExecEnvWithMarker(execOptions.Env, execMarker)
 	execResp, err := dockerClient.ContainerExecCreate(childCtx, containerInfo.ID, execOptions)
 	if err != nil {
 		cancel()
@@ -340,8 +344,10 @@ func (r *dockerRuntime) OpenInteraction(ctx context.Context, sandbox *Sandbox, v
 		ConsoleSize: dockerConsoleSize(spec.Rows, spec.Cols),
 	})
 	if err != nil {
+		terminationErr := r.terminateDockerExec(childCtx, dockerClient, containerInfo.ID, execResp.ID, execMarker)
 		cancel()
-		return nil, fmt.Errorf("attach docker exec for sandbox %s: %w", sandbox.Summary.ID, err)
+		attachErr := fmt.Errorf("attach docker exec for sandbox %s: %w", sandbox.Summary.ID, err)
+		return nil, execTerminationResultError(RuntimeDriverDocker, execResp.ID, attachErr, terminationErr)
 	}
 
 	closeClient = false
@@ -352,6 +358,8 @@ func (r *dockerRuntime) OpenInteraction(ctx context.Context, sandbox *Sandbox, v
 		dockerClient: dockerClient,
 		attachResp:   attachResp,
 		execID:       execResp.ID,
+		containerID:  containerInfo.ID,
+		execMarker:   execMarker,
 		operationID:  spec.OperationID,
 		tty:          spec.TTY,
 		attachStdin:  spec.AttachStdin,
@@ -411,11 +419,12 @@ func (r *dockerRuntime) execWithStream(ctx context.Context, sandbox *Sandbox, vm
 		return ExecResult{}, fmt.Errorf("docker container for sandbox %s is not running", sandbox.Summary.ID)
 	}
 
+	execMarker := newDockerExecMarker()
 	execResp, err := dockerClient.ContainerExecCreate(ctx, containerInfo.ID, containerapi.ExecOptions{
 		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          append([]string{command}, spec.Args...),
-		Env:          dockerEnvList(spec.Env),
+		Env:          dockerExecEnvWithMarker(dockerEnvList(spec.Env), execMarker),
 		WorkingDir:   firstNonEmpty(spec.Cwd, r.config.GuestWorkspacePath),
 	})
 	if err != nil {
@@ -423,7 +432,12 @@ func (r *dockerRuntime) execWithStream(ctx context.Context, sandbox *Sandbox, vm
 	}
 	attachResp, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, containerapi.ExecAttachOptions{})
 	if err != nil {
-		return ExecResult{}, fmt.Errorf("attach docker exec for sandbox %s: %w", sandbox.Summary.ID, err)
+		terminationErr := r.terminateDockerExec(ctx, dockerClient, containerInfo.ID, execResp.ID, execMarker)
+		attachErr := fmt.Errorf("attach docker exec for sandbox %s: %w", sandbox.Summary.ID, err)
+		if ctx.Err() != nil {
+			attachErr = ctx.Err()
+		}
+		return ExecResult{}, execTerminationResultError(RuntimeDriverDocker, execResp.ID, attachErr, terminationErr)
 	}
 	defer attachResp.Close()
 
@@ -440,16 +454,22 @@ func (r *dockerRuntime) execWithStream(ctx context.Context, sandbox *Sandbox, vm
 	collector := &dockerExecCollector{stream: stream, filter: newExecOutputFilter()}
 	_, copyErr := stdcopy.StdCopy(&dockerExecWriter{collector: collector, stream: StdioStdout}, &dockerExecWriter{collector: collector, stream: StdioStderr}, attachResp.Reader)
 	collector.finish()
-	if copyErr != nil && ctx.Err() != nil {
-		return ExecResult{}, ctx.Err()
+	if ctx.Err() != nil {
+		attachResp.Close()
+		terminationErr := r.terminateDockerExec(ctx, dockerClient, containerInfo.ID, execResp.ID, execMarker)
+		return ExecResult{}, execTerminationResultError(RuntimeDriverDocker, execResp.ID, ctx.Err(), terminationErr)
 	}
 	if copyErr != nil && !isDockerStreamClosed(copyErr) {
-		return ExecResult{}, copyErr
+		attachResp.Close()
+		terminationErr := r.terminateDockerExec(ctx, dockerClient, containerInfo.ID, execResp.ID, execMarker)
+		return ExecResult{}, execTerminationResultError(RuntimeDriverDocker, execResp.ID, copyErr, terminationErr)
 	}
 
 	execInfo, err := r.waitForExecExit(ctx, dockerClient, execResp.ID)
 	if err != nil {
-		return ExecResult{}, err
+		attachResp.Close()
+		terminationErr := r.terminateDockerExec(ctx, dockerClient, containerInfo.ID, execResp.ID, execMarker)
+		return ExecResult{}, execTerminationResultError(RuntimeDriverDocker, execResp.ID, err, terminationErr)
 	}
 	result := ExecResult{
 		ExitCode: execInfo.ExitCode,
@@ -553,6 +573,11 @@ func (i *dockerCommandInteraction) run() {
 		} else {
 			exitCode = execInfo.ExitCode
 		}
+	}
+	if runErr != nil {
+		i.attachResp.Close()
+		terminationErr := i.docker.terminateDockerExec(i.ctx, i.dockerClient, i.containerID, i.execID, i.execMarker)
+		runErr = execTerminationResultError(RuntimeDriverDocker, i.execID, runErr, terminationErr)
 	}
 
 	completedAt := time.Now()

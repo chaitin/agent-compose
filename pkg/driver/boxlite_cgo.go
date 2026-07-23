@@ -124,6 +124,15 @@ static enum BoxliteErrorCode agentcompose_boxlite_execution_on_exit(
 	void *user_data = (void *)user_handle;
 	return boxlite_execution_on_exit(execution, agentcomposeBoxliteExecExitCallbackBridge, user_data, out_error);
 }
+
+static enum BoxliteErrorCode agentcompose_boxlite_execution_kill(
+	CExecutionHandle *execution,
+	uintptr_t user_handle,
+	CBoxliteError *out_error
+) {
+	void *user_data = (void *)user_handle;
+	return boxlite_execution_kill(execution, agentcomposeBoxliteVoidCallbackBridge, user_data, out_error);
+}
 */
 import "C"
 
@@ -934,6 +943,21 @@ func (r *cgoSandboxRuntime) waitForExecCompletion(ctx context.Context, runtimeHa
 	})
 }
 
+func (r *cgoSandboxRuntime) killExecution(ctx context.Context, runtimeHandle *C.CBoxliteRuntime, execution *C.CExecutionHandle) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), execTerminationTimeout)
+	defer cancel()
+
+	awaiter := &boxliteVoidAwaiter{ch: make(chan error, 1)}
+	awaiterHandle := globalBoxliteAwaiters.register(awaiter)
+	defer globalBoxliteAwaiters.delete(awaiterHandle)
+	var ffiErr C.CBoxliteError
+	code := C.agentcompose_boxlite_execution_kill(execution, C.uintptr_t(awaiterHandle), &ffiErr)
+	if err := boxliteStatusError(code, &ffiErr, "kill box command"); err != nil {
+		return err
+	}
+	return r.waitForVoidResult(cleanupCtx, runtimeHandle, awaiter.ch)
+}
+
 func waitForExecCompletion(ctx context.Context, awaiter *boxliteExecAwaiter, exitIdleGrace time.Duration, drain func(time.Duration) error) (int, error) {
 	exited := false
 	exitCode := 0
@@ -1292,6 +1316,12 @@ func (r *cgoSandboxRuntime) executeBox(ctx context.Context, box *cgoBoxHandle, s
 		return ExecResult{}, err
 	}
 	exitCode, err := r.waitForExecCompletion(ctx, runtimeHandle, awaiter)
+	if err != nil && ctx.Err() != nil {
+		terminationErr := r.killExecution(ctx, runtimeHandle, execution)
+		r.flushRuntimeCallbacks(runtimeHandle)
+		collector.finish()
+		return ExecResult{}, execTerminationResultError(RuntimeDriverBoxlite, fmt.Sprintf("%d", awaiterHandle), ctx.Err(), terminationErr)
+	}
 	r.flushRuntimeCallbacks(runtimeHandle)
 	collector.finish()
 	if err != nil {

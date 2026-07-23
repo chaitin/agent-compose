@@ -70,10 +70,27 @@ const (
 
 type microsandboxExecEventReceiver func(context.Context) (*microsandbox.ExecEvent, error)
 type microsandboxExecHandleCloser func() error
+type microsandboxExecTerminator func(context.Context) error
+
+type microsandboxExecTerminationHandle interface {
+	Kill(context.Context) error
+	Wait(context.Context) (int, error)
+}
 
 type microsandboxExecReceiveResult struct {
 	event *microsandbox.ExecEvent
 	err   error
+}
+
+func terminateMicrosandboxExec(ctx context.Context, handle microsandboxExecTerminationHandle) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), execTerminationTimeout)
+	defer cancel()
+	killErr := handle.Kill(cleanupCtx)
+	_, waitErr := handle.Wait(cleanupCtx)
+	if waitErr == nil {
+		return nil
+	}
+	return errors.Join(killErr, waitErr)
 }
 
 // microsandboxExecLivenessProbe reports whether the guest process is still
@@ -85,6 +102,7 @@ func consumeMicrosandboxExecStream(
 	ctx context.Context,
 	recv microsandboxExecEventReceiver,
 	closeHandle microsandboxExecHandleCloser,
+	terminate microsandboxExecTerminator,
 	collector *microsandboxExecCollector,
 	idleGrace time.Duration,
 	probeAlive microsandboxExecLivenessProbe,
@@ -141,8 +159,13 @@ func consumeMicrosandboxExecStream(
 	for {
 		select {
 		case <-ctx.Done():
+			stopReceiving()
+			var terminationErr error
+			if terminate != nil {
+				terminationErr = terminate(context.WithoutCancel(ctx))
+			}
 			collector.finish()
-			return ExecResult{}, ctx.Err()
+			return ExecResult{}, execTerminationResultError(RuntimeDriverMicrosandbox, strconv.FormatUint(uint64(pid), 10), ctx.Err(), terminationErr)
 		case <-wait:
 			if sawExit {
 				stopReceiving()
@@ -532,6 +555,7 @@ func (r *microsandboxRuntime) ExecStream(ctx context.Context, session *Sandbox, 
 				ctx,
 				handle.Recv,
 				closeHandle,
+				func(cleanupCtx context.Context) error { return terminateMicrosandboxExec(cleanupCtx, handle) },
 				collector,
 				microsandboxExecExitIdleGracePeriod,
 				microsandboxExecLivenessProbeFor(sandbox),

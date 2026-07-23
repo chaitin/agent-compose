@@ -118,7 +118,7 @@ func (r driverRuntimeAdapter) RemoveSandbox(ctx context.Context, session *domain
 
 func (r driverRuntimeAdapter) Exec(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, spec domain.ExecSpec) (domain.ExecResult, error) {
 	result, err := r.runtime.Exec(ctx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState), execution.ToDriverExecSpec(spec))
-	return execution.FromDriverExecResult(result), err
+	return execution.FromDriverExecResult(result), classifyExecTerminationError(err)
 }
 
 func (r driverRuntimeAdapter) ExecStream(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, spec domain.ExecSpec, stream domain.ExecStreamWriter) (domain.ExecResult, error) {
@@ -128,7 +128,14 @@ func (r driverRuntimeAdapter) ExecStream(ctx context.Context, session *domain.Sa
 		}
 	}
 	result, err := r.runtime.ExecStream(ctx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState), execution.ToDriverExecSpec(spec), driverStream)
-	return execution.FromDriverExecResult(result), err
+	return execution.FromDriverExecResult(result), classifyExecTerminationError(err)
+}
+
+func classifyExecTerminationError(err error) error {
+	if errors.Is(err, driverpkg.ErrExecTerminationUnconfirmed) {
+		return domain.ClassifyError(domain.ErrExecTerminationUnconfirmed, "", err)
+	}
+	return err
 }
 
 func (r driverRuntimeAdapter) OpenInteraction(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, spec driverpkg.RuntimeStartSpec) (driverpkg.RuntimeInteraction, error) {

@@ -13,6 +13,7 @@ import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"agent-compose/pkg/execution"
+	"agent-compose/pkg/internal/testutil"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/sessionstore"
 )
@@ -33,6 +34,7 @@ type fakeAgentRuntime struct {
 	specs        []domain.ExecSpec
 	streamChunks []domain.ExecChunk
 	result       domain.ExecResult
+	err          error
 }
 
 func (r *fakeAgentRuntime) EnsureSandbox(context.Context, *domain.Sandbox, domain.VMState, domain.ProxyState) (domain.SandboxVMInfo, error) {
@@ -58,11 +60,79 @@ func (r *fakeAgentRuntime) ExecStream(_ context.Context, _ *domain.Sandbox, _ do
 			stream(chunk)
 		}
 	}
+	if r.err != nil {
+		return domain.ExecResult{}, r.err
+	}
 	if r.result.Stdout != "" || r.result.Stderr != "" || r.result.Output != "" || r.result.ExitCode != 0 || r.result.Success {
 		return r.result, nil
 	}
 	payload := execution.AgentResultPrefix + `{"provider":"codex","threadId":"agent-thread-1","finalText":"done","transcript":"trace","stopReason":"completed"}`
 	return domain.ExecResult{Stdout: payload, Output: payload, ExitCode: 0, Success: true}, nil
+}
+
+func TestAgentRunnerRetainsFacadeTokenOnlyWhenExecTerminationIsUnconfirmed(t *testing.T) {
+	tests := []struct {
+		name         string
+		runtimeErr   error
+		wantRetained bool
+	}{
+		{name: "confirmed cancellation", runtimeErr: context.Canceled},
+		{name: "unconfirmed termination", runtimeErr: domain.ErrExecTerminationUnconfirmed, wantRetained: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			config := &appconfig.Config{
+				DataRoot:            root,
+				DbAddr:              filepath.Join(root, "data.db"),
+				SandboxRoot:         filepath.Join(root, "sandboxes"),
+				RuntimeDriver:       driverpkg.RuntimeDriverDocker,
+				DefaultImage:        "guest:latest",
+				GuestWorkspacePath:  "/workspace",
+				GuestStateRoot:      "/data/state",
+				GuestRuntimeRoot:    "/data/runtime",
+				GuestHomePath:       "/root",
+				RuntimeBaseURL:      "http://agent-compose.test:7410",
+				LLMAPIKey:           "provider-key",
+				SandboxStartTimeout: 2 * time.Second,
+			}
+			configDB, store, err := testutil.OpenStores(t, config)
+			if err != nil {
+				t.Fatalf("OpenStores returned error: %v", err)
+			}
+			session, err := store.CreateSandbox(context.Background(), "token lifecycle", "", driverpkg.RuntimeDriverDocker, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
+			if err != nil {
+				t.Fatalf("CreateSandbox returned error: %v", err)
+			}
+			session.Summary.VMStatus = domain.VMStatusRunning
+			if err := store.UpdateSandbox(context.Background(), session); err != nil {
+				t.Fatalf("UpdateSandbox returned error: %v", err)
+			}
+			if err := store.SaveVMState(session.Summary.ID, domain.VMState{Driver: driverpkg.RuntimeDriverDocker, BoxID: "container-1"}); err != nil {
+				t.Fatalf("SaveVMState returned error: %v", err)
+			}
+			runtime := &fakeAgentRuntime{err: tt.runtimeErr}
+			runner := NewAgentRunner(config, store, configDB, nil, fakeRuntimeProvider{runtime: runtime})
+			_, _, err = runner.ExecuteAgentRun(context.Background(), session, "claude", "", "", "run-1", "wait", "", nil)
+			if !errors.Is(err, tt.runtimeErr) {
+				t.Fatalf("ExecuteAgentRun error = %v, want %v", err, tt.runtimeErr)
+			}
+			if len(runtime.specs) != 1 {
+				t.Fatalf("runtime specs = %#v", runtime.specs)
+			}
+			token := runtime.specs[0].Env["AGENT_COMPOSE_SANDBOX_TOKEN"]
+			if token == "" {
+				t.Fatal("runtime spec missing facade token")
+			}
+			_, tokenErr := configDB.GetLLMFacadeToken(context.Background(), token)
+			if tt.wantRetained && tokenErr != nil {
+				t.Fatalf("facade token was removed after unconfirmed termination: %v", tokenErr)
+			}
+			if !tt.wantRetained && !errors.Is(tokenErr, domain.ErrNotFound) {
+				t.Fatalf("facade token after confirmed termination error = %v, want not found", tokenErr)
+			}
+		})
+	}
 }
 
 func TestAgentRunnerExecuteAgentRunWritesSystemPromptAndParsesResult(t *testing.T) {

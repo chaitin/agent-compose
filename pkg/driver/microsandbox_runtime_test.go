@@ -117,7 +117,7 @@ func TestMicrosandboxExecStreamReturnsAfterExitWithoutDone(t *testing.T) {
 	grace := 25 * time.Millisecond
 	startedAt := time.Now()
 
-	result, err := consumeMicrosandboxExecStream(ctx, recv, closeHandle, collector, grace, nil, 0)
+	result, err := consumeMicrosandboxExecStream(ctx, recv, closeHandle, nil, collector, grace, nil, 0)
 	if err != nil {
 		t.Fatalf("consumeMicrosandboxExecStream returned error: %v", err)
 	}
@@ -132,6 +132,118 @@ func TestMicrosandboxExecStreamReturnsAfterExitWithoutDone(t *testing.T) {
 	}
 	if elapsed := time.Since(startedAt); elapsed < grace {
 		t.Fatalf("returned before drain grace period: %s", elapsed)
+	}
+}
+
+func TestMicrosandboxExecStreamCancellationWaitsForTermination(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	terminationStarted := make(chan struct{})
+	allowTermination := make(chan struct{})
+	result := make(chan error, 1)
+	recv := func(ctx context.Context) (*microsandbox.ExecEvent, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	terminate := func(cleanupCtx context.Context) error {
+		if cleanupCtx.Err() != nil {
+			return cleanupCtx.Err()
+		}
+		close(terminationStarted)
+		<-allowTermination
+		return nil
+	}
+	go func() {
+		_, err := consumeMicrosandboxExecStream(
+			ctx,
+			recv,
+			func() error { return nil },
+			terminate,
+			&microsandboxExecCollector{},
+			time.Second,
+			nil,
+			0,
+		)
+		result <- err
+	}()
+
+	cancel()
+	select {
+	case <-terminationStarted:
+	case <-time.After(time.Second):
+		t.Fatal("termination did not start after cancellation")
+	}
+	select {
+	case err := <-result:
+		t.Fatalf("ExecStream returned before termination completed: %v", err)
+	default:
+	}
+	close(allowTermination)
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ExecStream error = %v, want context canceled", err)
+		}
+		if errors.Is(err, ErrExecTerminationUnconfirmed) {
+			t.Fatalf("successful termination was reported as unconfirmed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ExecStream did not return after termination completed")
+	}
+}
+
+type recordingMicrosandboxTerminationHandle struct {
+	calls   []string
+	killErr error
+	waitErr error
+}
+
+func (h *recordingMicrosandboxTerminationHandle) Kill(ctx context.Context) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	h.calls = append(h.calls, "kill")
+	return h.killErr
+}
+
+func (h *recordingMicrosandboxTerminationHandle) Wait(ctx context.Context) (int, error) {
+	if ctx.Err() != nil {
+		return -1, ctx.Err()
+	}
+	h.calls = append(h.calls, "wait")
+	return -1, h.waitErr
+}
+
+func TestTerminateMicrosandboxExecKillsThenWaitsWithFreshContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	handle := &recordingMicrosandboxTerminationHandle{}
+	if err := terminateMicrosandboxExec(ctx, handle); err != nil {
+		t.Fatalf("terminateMicrosandboxExec returned error: %v", err)
+	}
+	if got := strings.Join(handle.calls, ","); got != "kill,wait" {
+		t.Fatalf("termination calls = %q, want kill,wait", got)
+	}
+}
+
+func TestMicrosandboxExecStreamCancellationReportsUnconfirmedTermination(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	wantErr := errors.New("kill failed")
+	_, err := consumeMicrosandboxExecStream(
+		ctx,
+		func(ctx context.Context) (*microsandbox.ExecEvent, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+		func() error { return nil },
+		func(context.Context) error { return wantErr },
+		&microsandboxExecCollector{},
+		time.Second,
+		nil,
+		0,
+	)
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, wantErr) || !errors.Is(err, ErrExecTerminationUnconfirmed) {
+		t.Fatalf("ExecStream error = %v, want cancellation and unconfirmed termination", err)
 	}
 }
 
@@ -169,7 +281,7 @@ func TestMicrosandboxExecStreamStopsWhenProcessIsGoneWithoutExit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	result, err := consumeMicrosandboxExecStream(ctx, recv, closeHandle, collector, 25*time.Millisecond, probeRecorder, 20*time.Millisecond)
+	result, err := consumeMicrosandboxExecStream(ctx, recv, closeHandle, nil, collector, 25*time.Millisecond, probeRecorder, 20*time.Millisecond)
 	if err == nil || !strings.Contains(err.Error(), "without reporting its status") {
 		t.Fatalf("error = %v, want a lost-exit failure", err)
 	}
@@ -278,7 +390,7 @@ func TestMicrosandboxExecStreamKeepsWaitingWhileProcessLives(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	result, err := consumeMicrosandboxExecStream(ctx, stream.recv, func() error { return nil }, collector, 10*time.Millisecond, probe, 10*time.Millisecond)
+	result, err := consumeMicrosandboxExecStream(ctx, stream.recv, func() error { return nil }, nil, collector, 10*time.Millisecond, probe, 10*time.Millisecond)
 	if err != nil {
 		t.Fatalf("consumeMicrosandboxExecStream returned error: %v", err)
 	}
@@ -313,7 +425,7 @@ func TestMicrosandboxExecStreamKeepsWaitingWhenProbeFails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	result, err := consumeMicrosandboxExecStream(ctx, stream.recv, func() error { return nil }, collector, 10*time.Millisecond, probe, 10*time.Millisecond)
+	result, err := consumeMicrosandboxExecStream(ctx, stream.recv, func() error { return nil }, nil, collector, 10*time.Millisecond, probe, 10*time.Millisecond)
 	if err != nil {
 		t.Fatalf("consumeMicrosandboxExecStream returned error: %v", err)
 	}
@@ -340,7 +452,7 @@ func TestMicrosandboxExecStreamRejectsDoneWithoutExit(t *testing.T) {
 	}
 	collector := &microsandboxExecCollector{filter: newExecOutputFilter()}
 
-	result, err := consumeMicrosandboxExecStream(context.Background(), recv, func() error { return nil }, collector, 25*time.Millisecond, nil, 0)
+	result, err := consumeMicrosandboxExecStream(context.Background(), recv, func() error { return nil }, nil, collector, 25*time.Millisecond, nil, 0)
 	if err == nil || !strings.Contains(err.Error(), "without reporting a process exit status") {
 		t.Fatalf("error = %v, want a missing-exit failure", err)
 	}

@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -75,8 +76,13 @@ func (e *LoaderCommandExecutor) ExecuteLoaderCommand(ctx context.Context, sessio
 	if err != nil {
 		return domain.LoaderCommandResult{}, err
 	}
+	retainFacadeToken := false
 	if e.ConfigDB != nil && facadeToken != "" {
-		defer func() { _ = e.ConfigDB.DeleteLLMFacadeToken(context.WithoutCancel(ctx), facadeToken) }()
+		defer func() {
+			if !retainFacadeToken {
+				_ = e.ConfigDB.DeleteLLMFacadeToken(context.WithoutCancel(ctx), facadeToken)
+			}
+		}()
 	}
 	if err := e.Store.AddCell(ctx, session, cell); err != nil {
 		return domain.LoaderCommandResult{}, err
@@ -185,6 +191,7 @@ func (e *LoaderCommandExecutor) ExecuteLoaderCommand(ctx context.Context, sessio
 	}
 	commandHome := e.Config.GuestHomePath
 	execResult, err := runtime.ExecStream(execCtx, execSession, vmState, execution.BuildLoaderCommandExecSpec(e.Config, execSession, filepath.Join(guestCellDir, "command-request.json"), commandHome), streamWriter)
+	retainFacadeToken = errors.Is(err, domain.ErrExecTerminationUnconfirmed)
 	streamErrMu.Lock()
 	deferredStreamErr := streamErr
 	streamErrMu.Unlock()
