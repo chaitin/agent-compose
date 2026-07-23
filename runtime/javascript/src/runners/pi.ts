@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
@@ -29,7 +29,7 @@ export class PiRunner {
     }
 
     const stored = await readStoredThread(this.options.stateRoot, "pi");
-    const requestedSessionID = stored?.threadId || randomUUID();
+    const requestedSessionID = stored?.threadId || createHash("sha256").update(randomBytes(32)).digest("hex");
     const sessionDir = path.join(this.options.stateRoot, "agents", "providers", "pi", "sessions");
     const tempRoot = path.join(this.options.stateRoot, "agents", "providers", "pi", "tmp");
     await fs.mkdir(sessionDir, { recursive: true });
@@ -37,6 +37,7 @@ export class PiRunner {
     const invocationDir = await fs.mkdtemp(path.join(tempRoot, "prompt-"));
 
     try {
+      await ensureManagedPiModel(this.options.home, this.options.model);
       const args = await this.buildArgs(promptText, requestedSessionID, sessionDir, invocationDir);
       const child = spawn("pi", args, {
         cwd: this.options.workspace,
@@ -191,6 +192,49 @@ export class PiRunner {
       resolved.push(skill);
     }
     return resolved;
+  }
+}
+
+async function ensureManagedPiModel(home: string, model = ""): Promise<void> {
+  if (!model.trim()) return;
+  const facadeModel = piFacadeModel(model);
+  const separator = facadeModel.indexOf("/");
+  const modelID = separator >= 0 ? facadeModel.slice(separator + 1) : facadeModel;
+  const baseUrl = process.env.LLM_API_ENDPOINT?.trim();
+  const protocol = process.env.LLM_API_PROTOCOL?.trim();
+  if (!modelID || !baseUrl || !protocol) {
+    throw new Error("Pi facade configuration is incomplete; LLM_API_ENDPOINT and LLM_API_PROTOCOL are required");
+  }
+
+  const api = protocol === "messages"
+    ? "anthropic-messages"
+    : protocol === "chat_completions"
+      ? "openai-completions"
+      : protocol === "responses"
+        ? "openai-responses"
+        : "";
+  if (!api) throw new Error(`unsupported Pi facade protocol ${JSON.stringify(protocol)}`);
+
+  const agentDir = path.join(home, ".pi", "agent");
+  await fs.mkdir(agentDir, { recursive: true, mode: 0o700 });
+  const payload = {
+    providers: {
+      "agent-compose": {
+        baseUrl: baseUrl.replace(/\/$/, ""),
+        apiKey: "$AGENT_COMPOSE_SANDBOX_TOKEN",
+        api,
+        models: [{ id: modelID, name: modelID, contextWindow: 128000, maxTokens: 16384 }],
+      },
+    },
+  };
+  const target = path.join(agentDir, "models.json");
+  const temporary = path.join(agentDir, `.models-${process.pid}-${randomBytes(8).toString("hex")}.json`);
+  await fs.writeFile(temporary, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  try {
+    await fs.rename(temporary, target);
+  } catch (error) {
+    await fs.rm(temporary, { force: true });
+    throw error;
   }
 }
 
