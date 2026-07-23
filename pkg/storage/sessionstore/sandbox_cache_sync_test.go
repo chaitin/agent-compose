@@ -11,6 +11,7 @@ import (
 
 	appconfig "agent-compose/pkg/config"
 	domain "agent-compose/pkg/model"
+	storagesqlite "agent-compose/pkg/storage/sqlite"
 )
 
 func cleanupSandboxStore(t *testing.T, store *Store) {
@@ -84,6 +85,9 @@ func TestNewWithDatabaseDoesNotCloseSharedDatabase(t *testing.T) {
 			t.Errorf("close shared database: %v", err)
 		}
 	})
+	if err := storagesqlite.Migrate(t.Context(), db); err != nil {
+		t.Fatalf("migrate shared database: %v", err)
+	}
 	store, err := NewWithDatabase(&appconfig.Config{SandboxRoot: filepath.Join(root, "sandboxes")}, db)
 	if err != nil {
 		t.Fatalf("NewWithDatabase: %v", err)
@@ -116,6 +120,9 @@ func TestNewWithDatabaseRebuildsProjectProjectionFromResolver(t *testing.T) {
 		t.Fatalf("open shared database: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	if err := storagesqlite.Migrate(t.Context(), db); err != nil {
+		t.Fatalf("migrate shared database: %v", err)
+	}
 
 	store, err := NewWithDatabase(&appconfig.Config{SandboxRoot: sandboxRoot}, db, staticSandboxProjectResolver{
 		"legacy-project-a": "project-a",
@@ -139,7 +146,7 @@ func TestNewWithDatabaseRebuildsProjectProjectionFromResolver(t *testing.T) {
 	}
 }
 
-func TestNewWithConfigRecoversFromCurrentVersionIndexWithMissingColumns(t *testing.T) {
+func TestNewWithConfigFallsBackFromCurrentVersionIndexWithMissingColumns(t *testing.T) {
 	root := t.TempDir()
 	persisted := writePersistedSandboxForIndexRecovery(t, root, "missing-columns")
 	path := filepath.Join(root, "data.db")
@@ -169,13 +176,13 @@ INSERT INTO sandbox_projection_meta(id, version) VALUES(1, 4)
 		t.Fatalf("NewWithConfig: %v", err)
 	}
 	cleanupSandboxStore(t, store)
-	if store.index == nil {
-		t.Fatal("store degraded instead of rebuilding malformed sandboxes projection table")
+	if store.index != nil {
+		t.Fatal("store retained malformed sandboxes projection instead of using filesystem fallback")
 	}
 	assertSandboxListed(t, store, persisted.Summary.ID)
 }
 
-func TestNewWithConfigRecoversWhenReconciliationHitsIndexFailure(t *testing.T) {
+func TestNewWithConfigFallsBackWhenReconciliationHitsIndexFailure(t *testing.T) {
 	root := t.TempDir()
 	persisted := writePersistedSandboxForIndexRecovery(t, root, "reconcile-failure")
 	path := filepath.Join(root, "data.db")
@@ -204,13 +211,16 @@ END;
 		t.Fatalf("NewWithConfig: %v", err)
 	}
 	cleanupSandboxStore(t, store)
+	if store.index != nil {
+		t.Fatal("store retained failing sandbox projection instead of using filesystem fallback")
+	}
 	assertSandboxListed(t, store, persisted.Summary.ID)
 	var triggerCount int
-	if err := store.index.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'fail_sandbox_reconcile'`).Scan(&triggerCount); err != nil {
-		t.Fatalf("query recovered index trigger: %v", err)
+	if err := store.database.DB().QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'fail_sandbox_reconcile'`).Scan(&triggerCount); err != nil {
+		t.Fatalf("query failing index trigger: %v", err)
 	}
-	if triggerCount != 0 {
-		t.Fatalf("recovered index retained failing trigger")
+	if triggerCount != 1 {
+		t.Fatalf("store changed migration-owned schema while falling back: trigger count = %d", triggerCount)
 	}
 }
 

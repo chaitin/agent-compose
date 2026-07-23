@@ -138,8 +138,9 @@ func newStoreWithIndex(config *appconfig.Config, index *sandboxCache, dbPath str
 			}
 			return nil, fmt.Errorf("reconcile sandbox listing cache: %w", err)
 		}
-		if err := store.recreateSandboxCache(context.Background(), err); err != nil {
+		if err := store.retrySandboxCacheRebuild(context.Background(), err); err != nil {
 			slog.Warn("sandbox listing cache recovery failed; using filesystem listing", "database", dbPath, "error", err)
+			store.index = nil
 			return store, nil
 		}
 	}
@@ -156,17 +157,17 @@ func closeSandboxCacheAfterStoreInitFailure(index *sandboxCache, operationErr er
 	return operationErr
 }
 
-func (s *Store) recreateSandboxCache(ctx context.Context, cause error) error {
-	slog.Warn("sandbox listing cache reconciliation failed; rebuilding cache table", "error", cause)
+func (s *Store) retrySandboxCacheRebuild(ctx context.Context, cause error) error {
+	slog.Warn("sandbox listing cache reconciliation failed; clearing projection before retry", "error", cause)
 	index := s.index
 	if index == nil || index.db == nil {
-		return fmt.Errorf("recreate sandbox listing cache: database is unavailable")
+		return fmt.Errorf("retry sandbox listing cache rebuild: database is unavailable")
 	}
-	if err := resetSandboxCacheSchema(ctx, index.db); err != nil {
+	if err := index.invalidate(ctx); err != nil {
 		return err
 	}
 	if err := s.completeIndexRebuild(ctx); err != nil {
-		return fmt.Errorf("reconcile recreated sandbox listing cache: %w", err)
+		return fmt.Errorf("retry sandbox listing cache rebuild: %w", err)
 	}
 	return nil
 }
