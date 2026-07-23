@@ -41,15 +41,16 @@ func runComposeLogsCommand(cmd *cobra.Command, cli cliOptions, options composeLo
 	if normalizedOptions.ResourceID != "" {
 		return runComposeLogsForResourceID(cmd, cli, normalizedOptions)
 	}
-	_, normalized, projectID, err := resolveComposeProject(cli)
-	if err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
-	normalizedOptions, err = resolveComposeLogRefs(cmd.Context(), clients.run, clients.sandbox, normalized, projectID, normalizedOptions)
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "logs", runtimeProjectIdentityOnly)
+	if err != nil {
+		return err
+	}
+	projectID := runtimeProject.id()
+	normalizedOptions, err = resolveComposeLogRefs(cmd.Context(), clients.run, clients.sandbox, runtimeProject.spec, projectID, normalizedOptions)
 	if err != nil {
 		return err
 	}
@@ -59,11 +60,11 @@ func runComposeLogsCommand(cmd *cobra.Command, cli cliOptions, options composeLo
 		}
 		run, err := getRunDetail(cmd.Context(), clients.run, projectID, normalizedOptions.RunID)
 		if err != nil {
-			return commandExitErrorForConnect(fmt.Errorf("get run %s for project %s: %w", strings.TrimSpace(normalizedOptions.RunID), normalized.Name, err))
+			return commandExitErrorForConnect(fmt.Errorf("get run %s for project %s: %w", strings.TrimSpace(normalizedOptions.RunID), runtimeProject.name(), err))
 		}
 		return writeLogsForRun(cmd.OutOrStdout(), run.Msg.GetRun(), cli.JSON, normalizedOptions)
 	}
-	return followOrPrintProjectLogs(cmd, cli, clients, projectID, normalized.Name, normalizedOptions)
+	return followOrPrintProjectLogs(cmd, cli, clients, projectID, runtimeProject.name(), normalizedOptions)
 }
 
 func normalizeComposeLogsOptions(cmd *cobra.Command, options composeLogsOptions, args []string) (composeLogsOptions, error) {

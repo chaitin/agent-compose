@@ -21,7 +21,7 @@ Global options are placed between `agent-compose` and the subcommand, and apply 
 | --- | --- |
 | `-f, --file <path>` | Path to the project config file. Both `agent-compose.yml` and `agent-compose.yaml` are supported. When this option is used, the project root is the config file directory, so you do not need to `cd` into it. |
 | `--host <endpoint>` | Daemon HTTP endpoint. This can target a local daemon or a remote daemon. |
-| `--project-name <name>` | Override the project name from the config file. For `ps` and `sandbox ls`, it also selects an existing daemon project when the current directory has no default compose file. |
+| `--project-name <name>` | Set the compose project name. Without `--file`, deployed-project commands use it to select an existing daemon project without reading a config file. With `--file`, it overrides the name declared by that file. |
 | `--json` | Print machine-readable JSON for scripts, AI agents, and automation. |
 
 Examples:
@@ -34,7 +34,9 @@ agent-compose --host http://10.0.0.12:7410 ls --json
 
 Rules:
 
-- Without `-f`, the CLI looks for `agent-compose.yml` or `agent-compose.yaml` in the current directory.
+- Without `-f` or `--project-name`, project-scoped commands look for `agent-compose.yml` or `agent-compose.yaml` in the current directory.
+- With `--project-name` and no `-f`, deployed-project commands select that daemon project directly and do not read default compose files from the current directory.
+- With both `-f` and `--project-name`, the file supplies the project definition and source path while `--project-name` overrides its declared name.
 - With `-f`, the CLI can operate on a project from any working directory.
 - `--host` only selects the daemon. Sandboxes run in the daemon environment.
 - Automation should use `--json` and avoid parsing human-readable tables.
@@ -273,7 +275,7 @@ agent-compose scheduler inspect <scheduler-or-trigger-or-run-ref> [--scheduler <
 
 List sandboxes in the current project. By default, only running sandboxes are shown. With `--all`, the command includes all statuses while remaining scoped to the current project.
 The project must already exist on the daemon; after `agent-compose down`, run `agent-compose up` again before using `ps`.
-When no default compose file is available, use `--project-name <name>` to select an existing daemon project. An explicit missing `--file` remains an error.
+Use `--project-name <name>` without `--file` to select an existing daemon project. Default compose files in the current directory are not read in this mode. An explicit missing `--file` remains an error.
 
 ```bash
 agent-compose ps

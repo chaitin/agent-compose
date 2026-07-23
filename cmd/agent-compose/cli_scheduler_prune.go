@@ -58,14 +58,16 @@ func runComposeSchedulerPruneCommand(cmd interface {
 	Context() context.Context
 	OutOrStdout() io.Writer
 }, cli cliOptions, options composeSchedulerPruneOptions) error {
-	_, normalized, projectID, err := resolveComposeProject(cli)
-	if err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "scheduler prune", runtimeProjectIdentityOnly)
+	if err != nil {
+		return err
+	}
+	normalized := runtimeProject.spec
+	projectID := runtimeProject.id()
 	agentName := ""
 	if strings.TrimSpace(options.SchedulerRef) != "" {
 		scheduler, resolveErr := resolveComposeScheduler(normalized, projectID, options.SchedulerRef)
@@ -107,7 +109,7 @@ func runComposeSchedulerPruneCommand(cmd interface {
 		return commandExitErrorForConnect(fmt.Errorf("prune scheduler runs: %w", err))
 	}
 	output := composeSchedulerPruneOutputFromResponse(response.Msg)
-	output.Project = composeUpProjectOutput{ID: displayOpaqueID(projectID), Name: normalized.Name}
+	output.Project = composeUpProjectOutput{ID: displayOpaqueID(projectID), Name: runtimeProject.name()}
 	output.Scheduler = agentName
 	output.TriggerID = triggerID
 	output.Statuses = statusNames

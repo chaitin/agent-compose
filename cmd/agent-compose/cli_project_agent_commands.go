@@ -6,10 +6,7 @@ import (
 	"io"
 	"text/tabwriter"
 
-	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
-
-	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
 func newCLIProjectCommand(options *cliOptions) *cobra.Command {
@@ -93,21 +90,15 @@ type composeAgentListOutput struct {
 }
 
 func runComposeListAgentsCommand(cmd *cobra.Command, options cliOptions) error {
-	composePath, normalized, projectID, err := resolveComposeProject(options)
-	if err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(options)
 	if err != nil {
 		return err
 	}
-	resp, err := clients.project.GetProject(cmd.Context(), connect.NewRequest(&agentcomposev2.GetProjectRequest{
-		Project: &agentcomposev2.ProjectRef{ProjectId: projectID},
-	}))
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, options, "agent ls", runtimeProjectWithState)
 	if err != nil {
-		return commandExitErrorForComposeProject(fmt.Errorf("get project %s: %w", normalized.Name, err), "agent ls", normalized.Name, composePath)
+		return err
 	}
-	project := resp.Msg.GetProject()
+	project := runtimeProject.project
 	output := composeAgentListOutput{
 		Project: composeProjectSummaryOutput(project.GetSummary()),
 		Agents:  make([]composeProjectAgentOutput, 0, len(project.GetAgents())),

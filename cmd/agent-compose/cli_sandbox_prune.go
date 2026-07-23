@@ -1,7 +1,6 @@
 package main
 
 import (
-	"agent-compose/pkg/compose"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"encoding/json"
 	"fmt"
@@ -50,14 +49,15 @@ func runComposeSandboxPruneCommand(cmd *cobra.Command, cli cliOptions, options c
 			return commandExitError{Code: exitCodeUsage, Err: err}
 		}
 	}
-	composePath, normalized, projectID, err := resolveComposeProject(cli)
-	if err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "sandbox prune", runtimeProjectIdentityOnly)
+	if err != nil {
+		return err
+	}
+	projectID := runtimeProject.id()
 	statuses := make([]string, 0, len(statusFilter))
 	for status := range statusFilter {
 		statuses = append(statuses, strings.ToUpper(status))
@@ -72,7 +72,7 @@ func runComposeSandboxPruneCommand(cmd *cobra.Command, cli cliOptions, options c
 			if options.IncludeOrphans {
 				return commandExitError{Code: exitCodeGeneral, Err: fmt.Errorf("sandbox prune --include-orphans requires a daemon with PruneSandboxes support")}
 			}
-			return runLegacyComposeSandboxPrune(cmd, cli, options, clients, composePath, normalized, projectID, statusFilter, olderThanSeconds)
+			return runLegacyComposeSandboxPrune(cmd, cli, options, clients, runtimeProject, statusFilter, olderThanSeconds)
 		}
 		return commandExitErrorForConnect(fmt.Errorf("prune sandboxes: %w", err))
 	}
@@ -86,14 +86,16 @@ func runComposeSandboxPruneCommand(cmd *cobra.Command, cli cliOptions, options c
 	return nil
 }
 
-func runLegacyComposeSandboxPrune(cmd *cobra.Command, cli cliOptions, options composeSandboxPruneOptions, clients cliServiceClients, composePath string, normalized *compose.NormalizedProjectSpec, projectID string, statusFilter map[string]bool, olderThanSeconds uint64) error {
-	project, err := clients.project.GetProject(cmd.Context(), connect.NewRequest(&agentcomposev2.GetProjectRequest{Project: &agentcomposev2.ProjectRef{ProjectId: projectID}}))
+func runLegacyComposeSandboxPrune(cmd *cobra.Command, cli cliOptions, options composeSandboxPruneOptions, clients cliServiceClients, runtimeProject composeRuntimeProject, statusFilter map[string]bool, olderThanSeconds uint64) error {
+	project, err := clients.project.GetProject(cmd.Context(), connect.NewRequest(&agentcomposev2.GetProjectRequest{
+		Project: &agentcomposev2.ProjectRef{ProjectId: runtimeProject.id()},
+	}))
 	if err != nil {
-		return commandExitErrorForComposeProject(fmt.Errorf("get project %s: %w", normalized.Name, err), "sandbox prune", normalized.Name, composePath)
+		return commandExitErrorForComposeProject(fmt.Errorf("get project %s: %w", runtimeProject.name(), err), "sandbox prune", runtimeProject.name(), runtimeProject.composePath)
 	}
 	psOutput, err := composePSOutputFromProject(cmd.Context(), clients, project.Msg.GetProject(), composePSOptions{All: true})
 	if err != nil {
-		return commandExitErrorForConnect(fmt.Errorf("build sandbox prune candidates for project %s: %w", normalized.Name, err))
+		return commandExitErrorForConnect(fmt.Errorf("build sandbox prune candidates for project %s: %w", runtimeProject.name(), err))
 	}
 	output := composeSandboxPruneDryRunOutput(psOutput.Sandboxes, statusFilter, options, olderThanSeconds)
 	if options.Force {

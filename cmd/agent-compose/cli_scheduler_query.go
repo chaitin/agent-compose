@@ -23,14 +23,16 @@ type composeSchedulerListOptions struct {
 }
 
 func runComposeSchedulerListCommand(cmd *cobra.Command, cli cliOptions, options composeSchedulerListOptions, args []string) error {
-	_, normalized, projectID, err := resolveComposeProject(cli)
-	if err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "scheduler ls", runtimeProjectIdentityOnly)
+	if err != nil {
+		return err
+	}
+	normalized := runtimeProject.spec
+	projectID := runtimeProject.id()
 	agentFilter := ""
 	if len(args) > 0 {
 		agentFilter, err = resolveComposeAgentNameFromSpec(normalized, projectID, args[0])
@@ -43,7 +45,7 @@ func runComposeSchedulerListCommand(cmd *cobra.Command, cli cliOptions, options 
 		return err
 	}
 	output := composeSchedulerListOutput{
-		Project:  composeUpProjectOutput{ID: displayOpaqueID(projectID), Name: normalized.Name},
+		Project:  composeUpProjectOutput{ID: displayOpaqueID(projectID), Name: runtimeProject.name()},
 		Triggers: triggers,
 	}
 	if cli.JSON {

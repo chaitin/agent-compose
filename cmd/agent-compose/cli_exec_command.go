@@ -90,14 +90,18 @@ func runComposeExecCommand(cmd *cobra.Command, cli cliOptions, options composeEx
 	if cli.JSON && (options.Interactive || options.TTY) {
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("exec --json cannot be used with -i/--interactive or -t/--tty")}
 	}
-	_, normalized, projectID, err := resolveComposeProject(cli)
-	if err != nil {
-		return err
+	if !cmd.Flags().Changed("run") && len(args) > 0 && strings.TrimSpace(args[0]) == "" {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("exec requires non-empty sandbox")}
 	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "exec", runtimeProjectIdentityOnly)
+	if err != nil {
+		return err
+	}
+	projectID := runtimeProject.id()
 	req, err := normalizeComposeExecRequest(cmd, clients, projectID, options, args)
 	if err != nil {
 		return err
@@ -108,20 +112,20 @@ func runComposeExecCommand(cmd *cobra.Command, cli cliOptions, options composeEx
 			return err
 		}
 		if strings.TrimSpace(options.Prompt) != "" {
-			return runComposeExecPromptAttachCommand(cmd, normalized.Name, connectExecAttachClient{client: attachClient}, req, options)
+			return runComposeExecPromptAttachCommand(cmd, runtimeProject.name(), connectExecAttachClient{client: attachClient}, req, options)
 		}
-		return runComposeExecAttachCommand(cmd, normalized.Name, connectExecAttachClient{client: attachClient}, req, options)
+		return runComposeExecAttachCommand(cmd, runtimeProject.name(), connectExecAttachClient{client: attachClient}, req, options)
 	}
 	if strings.TrimSpace(options.Prompt) != "" {
 		attachClient, err := newCLIExecAttachServiceClient(cli)
 		if err != nil {
 			return err
 		}
-		return runComposeExecPromptOnceCommand(cmd, normalized.Name, connectExecAttachClient{client: attachClient}, req, options, cli.JSON)
+		return runComposeExecPromptOnceCommand(cmd, runtimeProject.name(), connectExecAttachClient{client: attachClient}, req, options, cli.JSON)
 	}
 	stream, err := clients.execStream.ExecStream(cmd.Context(), connect.NewRequest(req))
 	if err != nil {
-		return commandExitErrorForConnect(fmt.Errorf("exec project %s: %w", normalized.Name, err))
+		return commandExitErrorForConnect(fmt.Errorf("exec project %s: %w", runtimeProject.name(), err))
 	}
 	var result *agentcomposev2.ExecResult
 	output := newTerminalStreamOutput(cmd.OutOrStdout(), cmd.ErrOrStderr())
@@ -145,10 +149,10 @@ func runComposeExecCommand(cmd *cobra.Command, cli cliOptions, options composeEx
 		}
 	}
 	if err := stream.Err(); err != nil {
-		return commandExitErrorForConnect(fmt.Errorf("exec project %s: %w", normalized.Name, err))
+		return commandExitErrorForConnect(fmt.Errorf("exec project %s: %w", runtimeProject.name(), err))
 	}
 	if result == nil {
-		return fmt.Errorf("exec project %s: stream completed without result", normalized.Name)
+		return fmt.Errorf("exec project %s: stream completed without result", runtimeProject.name())
 	}
 	if cli.JSON {
 		data, err := json.MarshalIndent(composeExecOutputFromResult(result), "", "  ")

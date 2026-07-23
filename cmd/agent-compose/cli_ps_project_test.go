@@ -44,26 +44,38 @@ func TestIntegrationCLIPSSelectsStoredProjectByNameWithoutComposeFile(t *testing
 	}
 }
 
-func TestResolveComposePSProjectKeepsComposeAndExplicitFileSemantics(t *testing.T) {
-	t.Run("existing default compose keeps derived id", func(t *testing.T) {
+func TestResolveComposeRuntimeProjectRefMatchesComposeSelectionSemantics(t *testing.T) {
+	t.Run("project name bypasses default compose", func(t *testing.T) {
 		dir := t.TempDir()
-		writeComposeFile(t, dir, "name: original\nagents: {}\n")
+		writeComposeFileNamed(t, dir, "agent-compose.yml", "not: [valid")
+		writeComposeFileNamed(t, dir, "agent-compose.yaml", "also: [invalid")
 		withWorkingDir(t, dir)
 
-		selection, err := resolveComposePSProject(cliOptions{ProjectName: "override"})
+		composePath, projectName, ref, err := resolveComposeRuntimeProjectRef(cliOptions{ProjectName: "override"})
 		if err != nil {
-			t.Fatalf("resolve compose ps project: %v", err)
+			t.Fatalf("resolve runtime project ref: %v", err)
 		}
-		if selection.projectRef.GetProjectId() == "" || selection.projectRef.GetName() != "" || selection.projectName != "override" || selection.composePath == "" {
-			t.Fatalf("selection = %#v, ref=%#v", selection, selection.projectRef)
+		if ref.GetProjectId() != "" || ref.GetName() != "override" || projectName != "override" || composePath != "" {
+			t.Fatalf("compose path/name/ref = %q / %q / %#v", composePath, projectName, ref)
 		}
 	})
 
 	t.Run("explicit missing file does not fall back", func(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "missing.yml")
-		_, err := resolveComposePSProject(cliOptions{ComposeFile: missing, ProjectName: "stored-project"})
+		_, _, _, err := resolveComposeRuntimeProjectRef(cliOptions{ComposeFile: missing, ProjectName: "stored-project"})
 		if err == nil || !strings.Contains(err.Error(), "no such file") {
 			t.Fatalf("resolve explicit missing file error = %v", err)
+		}
+	})
+
+	t.Run("explicit file and project name derive exact id", func(t *testing.T) {
+		composePath := writeComposeFile(t, t.TempDir(), "name: original\nagents: {}\n")
+		resolvedPath, projectName, ref, err := resolveComposeRuntimeProjectRef(cliOptions{ComposeFile: composePath, ProjectName: "override"})
+		if err != nil {
+			t.Fatalf("resolve runtime project ref: %v", err)
+		}
+		if resolvedPath != composePath || projectName != "override" || ref.GetProjectId() == "" || ref.GetName() != "" {
+			t.Fatalf("compose path/name/ref = %q / %q / %#v", resolvedPath, projectName, ref)
 		}
 	})
 }

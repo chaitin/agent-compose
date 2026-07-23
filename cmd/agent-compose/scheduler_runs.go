@@ -63,10 +63,16 @@ func addComposeSchedulerExecutionFlags(cmd *cobra.Command, options *composeSched
 }
 
 func runComposeSchedulerInvokeCommand(cmd *cobra.Command, cli cliOptions, options composeSchedulerInvokeOptions, schedulerRef string) error {
-	_, normalized, projectID, err := resolveComposeProject(cli)
+	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "scheduler invoke", runtimeProjectIdentityOnly)
+	if err != nil {
+		return err
+	}
+	normalized := runtimeProject.spec
+	projectID := runtimeProject.id()
 	scheduler, err := resolveComposeScheduler(normalized, projectID, schedulerRef)
 	if err != nil {
 		return err
@@ -82,15 +88,11 @@ func runComposeSchedulerInvokeCommand(cmd *cobra.Command, cli cliOptions, option
 			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler invoke --payload: %w", err)}
 		}
 	}
-	clients, err := newCLIServiceClients(cli)
-	if err != nil {
-		return err
-	}
 	response, err := clients.project.InvokeScheduler(cmd.Context(), connect.NewRequest(&agentcomposev2.InvokeSchedulerRequest{
 		Project: &agentcomposev2.ProjectRef{ProjectId: projectID}, AgentName: scheduler.AgentName, PayloadJson: payloadJSON,
 	}))
 	if err != nil {
-		return commandExitErrorForConnect(fmt.Errorf("invoke scheduler %s in project %s: %w", scheduler.AgentName, normalized.Name, err))
+		return commandExitErrorForConnect(fmt.Errorf("invoke scheduler %s in project %s: %w", scheduler.AgentName, runtimeProject.name(), err))
 	}
 	output := composeSchedulerInvocationOutput{
 		Scheduler: scheduler.AgentName, Status: "succeeded", DurationMs: response.Msg.GetDurationMs(),
@@ -124,20 +126,22 @@ func runComposeSchedulerTriggerV2Command(cmd *cobra.Command, cli cliOptions, opt
 	if err != nil {
 		return err
 	}
-	_, normalized, projectID, err := resolveComposeProject(cli)
-	if err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "scheduler trigger", runtimeProjectIdentityOnly)
+	if err != nil {
+		return err
+	}
+	normalized := runtimeProject.spec
+	projectID := runtimeProject.id()
 	trigger, err := resolveComposeSchedulerTrigger(cmd.Context(), clients, normalized, projectID, agentRef, triggerRef)
 	if err != nil {
 		return err
 	}
 	triggerID := firstNonEmptyString(trigger.RawTriggerID, trigger.TriggerID)
-	return executeComposeSchedulerRun(cmd, cli, normalized.Name, projectID, trigger.AgentName, triggerID, options, clients.project)
+	return executeComposeSchedulerRun(cmd, cli, runtimeProject.name(), projectID, trigger.AgentName, triggerID, options, clients.project)
 }
 
 func executeComposeSchedulerRun(cmd *cobra.Command, cli cliOptions, projectName, projectID, agentName, triggerID string, options composeSchedulerTriggerOptions, client agentcomposev2connect.ProjectServiceClient) error {
@@ -182,25 +186,26 @@ func runComposeSchedulerStopCommand(cmd *cobra.Command, cli cliOptions, options 
 	if runID == "" {
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler stop requires a run id")}
 	}
-	_, normalized, projectID, err := resolveComposeProject(cli)
-	if err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "scheduler stop", runtimeProjectIdentityOnly)
+	if err != nil {
+		return err
+	}
+	projectID := runtimeProject.id()
 	response, err := clients.project.StopSchedulerRun(cmd.Context(), connect.NewRequest(&agentcomposev2.StopSchedulerRunRequest{
 		Project: &agentcomposev2.ProjectRef{ProjectId: projectID}, RunId: runID, Reason: strings.TrimSpace(options.Reason),
 	}))
 	if err != nil {
-		return commandExitErrorForConnect(fmt.Errorf("stop scheduler run %s in project %s: %w", runID, normalized.Name, err))
+		return commandExitErrorForConnect(fmt.Errorf("stop scheduler run %s in project %s: %w", runID, runtimeProject.name(), err))
 	}
 	run := response.Msg.GetRun()
 	if run == nil {
-		return fmt.Errorf("stop scheduler run %s in project %s: response did not include a run", runID, normalized.Name)
+		return fmt.Errorf("stop scheduler run %s in project %s: response did not include a run", runID, runtimeProject.name())
 	}
-	output := composeSchedulerStopOutput{Run: composeSchedulerRunOutputFromProto(run, normalized.Name), StopRequested: response.Msg.GetStopRequested()}
+	output := composeSchedulerStopOutput{Run: composeSchedulerRunOutputFromProto(run, runtimeProject.name()), StopRequested: response.Msg.GetStopRequested()}
 	if cli.JSON {
 		data, err := json.MarshalIndent(output, "", "  ")
 		if err != nil {

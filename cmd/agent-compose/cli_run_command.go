@@ -127,19 +127,19 @@ func runComposeUpCommand(cmd *cobra.Command, cli cliOptions) error {
 }
 
 func runComposeDownCommand(cmd *cobra.Command, cli cliOptions) error {
-	_, normalized, projectID, err := resolveComposeProject(cli)
-	if err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "down", runtimeProjectIdentityOnly)
+	if err != nil {
+		return err
+	}
 	resp, err := clients.project.RemoveProject(cmd.Context(), connect.NewRequest(&agentcomposev2.RemoveProjectRequest{
-		Project: &agentcomposev2.ProjectRef{ProjectId: projectID},
+		Project: &agentcomposev2.ProjectRef{ProjectId: runtimeProject.id()},
 	}))
 	if err != nil {
-		return commandExitErrorForConnect(fmt.Errorf("down project %s: %w", normalized.Name, err))
+		return commandExitErrorForConnect(fmt.Errorf("down project %s: %w", runtimeProject.name(), err))
 	}
 	output := composeDownOutputFromResponse(resp.Msg)
 	if cli.JSON {
@@ -150,13 +150,13 @@ func runComposeDownCommand(cmd *cobra.Command, cli cliOptions) error {
 		if err := writeCommandOutput(cmd.OutOrStdout(), append(data, '\n')); err != nil {
 			return err
 		}
-	} else if err := writeComposeDownText(cmd.OutOrStdout(), composeDownDisplayChanges(resp.Msg, normalized)); err != nil {
+	} else if err := writeComposeDownText(cmd.OutOrStdout(), composeDownDisplayChanges(resp.Msg, runtimeProject.spec)); err != nil {
 		return err
 	}
 	if output.FailedSandboxStops > 0 {
 		return commandExitError{
 			Code: exitCodeGeneral,
-			Err:  fmt.Errorf("down project %s completed with %d sandbox stop failure(s)", normalized.Name, output.FailedSandboxStops),
+			Err:  fmt.Errorf("down project %s completed with %d sandbox stop failure(s)", runtimeProject.name(), output.FailedSandboxStops),
 		}
 	}
 	return nil
@@ -166,23 +166,17 @@ func runComposeStatsCommand(cmd *cobra.Command, cli cliOptions, args []string) e
 	if len(args) > 0 {
 		return runComposeSingleStatsCommand(cmd, cli, args[0])
 	}
-	composePath, normalized, projectID, err := resolveComposeProject(cli)
-	if err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
-	project, err := clients.project.GetProject(cmd.Context(), connect.NewRequest(&agentcomposev2.GetProjectRequest{
-		Project: &agentcomposev2.ProjectRef{ProjectId: projectID},
-	}))
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "stats", runtimeProjectWithState)
 	if err != nil {
-		return commandExitErrorForComposeProject(fmt.Errorf("get project %s: %w", normalized.Name, err), "stats", normalized.Name, composePath)
+		return err
 	}
-	output, err := composeProjectStatsOutputFromProject(cmd.Context(), clients, project.Msg.GetProject())
+	output, err := composeProjectStatsOutputFromProject(cmd.Context(), clients, runtimeProject.project)
 	if err != nil {
-		return commandExitErrorForConnect(fmt.Errorf("build stats for project %s: %w", normalized.Name, err))
+		return commandExitErrorForConnect(fmt.Errorf("build stats for project %s: %w", runtimeProject.name(), err))
 	}
 	if cli.JSON {
 		data, err := json.MarshalIndent(output, "", "  ")
@@ -276,19 +270,6 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run --prompt -it requires a non-empty prompt")}
 		}
 	}
-	_, normalized, projectID, err := resolveComposeProject(cli)
-	if err != nil {
-		return err
-	}
-	agentName, err := resolveComposeAgentNameFromSpec(normalized, projectID, args[0])
-	if err != nil {
-		return err
-	}
-	if normalizedOptions.Interactive && promptFlagChanged {
-		if err := validateInteractivePromptProvider(normalized, agentName, normalizedOptions.TTY); err != nil {
-			return err
-		}
-	}
 	if !normalizedOptions.Interactive && cmd.Flags().Changed("command") && commandText == "" {
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run --command requires a non-empty command")}
 	}
@@ -312,6 +293,20 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
+	}
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "run", runtimeProjectIdentityOnly)
+	if err != nil {
+		return err
+	}
+	projectID := runtimeProject.id()
+	agentName, err := resolveComposeAgentNameFromSpec(runtimeProject.spec, projectID, args[0])
+	if err != nil {
+		return err
+	}
+	if normalizedOptions.Interactive && promptFlagChanged {
+		if err := validateInteractivePromptProvider(runtimeProject.spec, agentName, normalizedOptions.TTY); err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(normalizedOptions.SandboxID) != "" {
 		sandboxID, err := resolveComposeSandboxRefForCommand(cmd.Context(), cli, clients, normalizedOptions.SandboxID)
@@ -343,11 +338,11 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 		SandboxId:       strings.TrimSpace(normalizedOptions.SandboxID),
 		Driver:          strings.TrimSpace(normalizedOptions.Driver),
 		CleanupPolicy:   cleanupPolicy,
-		ClientRequestId: manualRunClientRequestID(normalized.Name, agentName, firstNonEmptyString(prompt, commandText)),
+		ClientRequestId: manualRunClientRequestID(runtimeProject.name(), agentName, firstNonEmptyString(prompt, commandText)),
 		Jupyter:         jupyter,
 	}
 	if normalizedOptions.Detach {
-		return startDetachedRun(cmd, cli, normalized.Name, client, runReq)
+		return startDetachedRun(cmd, cli, runtimeProject.name(), client, runReq)
 	}
 	client = clients.runStream
 	if normalizedOptions.Interactive {
@@ -359,18 +354,18 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 			if promptFlagChanged {
 				runReq.Prompt = prompt
 				runReq.Command = ""
-				return runComposeRunPromptAttachCommand(cmd, normalized.Name, connectRunAttachClient{client: attachClient}, runReq)
+				return runComposeRunPromptAttachCommand(cmd, runtimeProject.name(), connectRunAttachClient{client: attachClient}, runReq)
 			}
 			runReq.Prompt = ""
 			runReq.Command = commandText
-			return runComposeRunAttachCommand(cmd, normalized.Name, connectRunAttachClient{client: attachClient}, runReq, normalizedOptions)
+			return runComposeRunAttachCommand(cmd, runtimeProject.name(), connectRunAttachClient{client: attachClient}, runReq, normalizedOptions)
 		}
 		runReq.Prompt = ""
 		runReq.Command = ""
 		runReq.CleanupPolicy = agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_KEEP_RUNNING
-		return runInteractiveComposeRun(cmd, normalizedOptions, normalized.Name, client, clients.sandbox, runReq, promptFlagChanged, prompt, commandText)
+		return runInteractiveComposeRun(cmd, normalizedOptions, runtimeProject.name(), client, clients.sandbox, runReq, promptFlagChanged, prompt, commandText)
 	}
-	return executeComposeRunRequest(cmd, cli, normalized.Name, projectID, client, runReq, normalizedOptions.Detach)
+	return executeComposeRunRequest(cmd, cli, runtimeProject.name(), projectID, client, runReq, normalizedOptions.Detach)
 }
 
 func composeRunCompletionError(projectName, agentName string, completed *agentcomposev2.RunSummary, detail *agentcomposev2.RunDetail) error {
@@ -471,23 +466,17 @@ func normalizeOptionalRunModeValue(value string) string {
 }
 
 func runComposePSCommand(cmd *cobra.Command, cli cliOptions, options composePSOptions) error {
-	selection, err := resolveComposePSProject(cli)
-	if err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
-	project, err := clients.project.GetProject(cmd.Context(), connect.NewRequest(&agentcomposev2.GetProjectRequest{
-		Project: selection.projectRef,
-	}))
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "ps", runtimeProjectWithState)
 	if err != nil {
-		return commandExitErrorForComposeProject(fmt.Errorf("get project %s: %w", selection.projectName, err), "ps", selection.projectName, selection.composePath)
+		return err
 	}
-	output, err := composePSOutputFromProject(cmd.Context(), clients, project.Msg.GetProject(), options)
+	output, err := composePSOutputFromProject(cmd.Context(), clients, runtimeProject.project, options)
 	if err != nil {
-		return commandExitErrorForConnect(fmt.Errorf("build ps for project %s: %w", selection.projectName, err))
+		return commandExitErrorForConnect(fmt.Errorf("build ps for project %s: %w", runtimeProject.name(), err))
 	}
 	if cli.JSON {
 		data, err := json.MarshalIndent(output, "", "  ")
@@ -526,41 +515,49 @@ func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string)
 		}
 		return runComposeVolumeInspectCommand(cmd, cli, target)
 	}
-	composePath, normalized, projectID, err := resolveComposeProject(cli)
-	if err != nil {
-		return err
+	if target == "" {
+		switch kind {
+		case "agent":
+			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect agent requires an agent name")}
+		case "run":
+			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect run requires a run id")}
+		case "sandbox":
+			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect sandbox requires a sandbox")}
+		case "session":
+			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect session requires a sandbox")}
+		}
+	}
+	switch kind {
+	case "project", "agent", "run", "sandbox", "session":
+	default:
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("unsupported inspect target %q", kind)}
 	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
+	loadMode := runtimeProjectIdentityOnly
+	if kind == "project" || kind == "agent" {
+		loadMode = runtimeProjectWithState
+	}
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "inspect "+kind, loadMode)
+	if err != nil {
+		return err
+	}
+	projectID := runtimeProject.id()
 	var output any
 	switch kind {
 	case "project":
-		project, err := clients.project.GetProject(cmd.Context(), connect.NewRequest(&agentcomposev2.GetProjectRequest{
-			Project:     &agentcomposev2.ProjectRef{ProjectId: projectID},
-			IncludeSpec: true,
-		}))
-		if err != nil {
-			return commandExitErrorForComposeProject(fmt.Errorf("inspect project %s: %w", normalized.Name, err), "inspect project", normalized.Name, composePath)
-		}
-		output = composeProjectOutputFromProject(project.Msg.GetProject())
+		output = composeProjectOutputFromProject(runtimeProject.project)
 	case "agent":
 		if target == "" {
 			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect agent requires an agent name")}
 		}
-		project, err := clients.project.GetProject(cmd.Context(), connect.NewRequest(&agentcomposev2.GetProjectRequest{
-			Project:     &agentcomposev2.ProjectRef{ProjectId: projectID},
-			IncludeSpec: true,
-		}))
-		if err != nil {
-			return commandExitErrorForComposeProject(fmt.Errorf("inspect agent %s in project %s: %w", target, normalized.Name, err), "inspect agent", normalized.Name, composePath)
-		}
-		agentName, err := resolveComposeAgentNameFromProject(project.Msg.GetProject(), target)
+		agentName, err := resolveComposeAgentNameFromProject(runtimeProject.project, target)
 		if err != nil {
 			return err
 		}
-		agent, err := composeAgentInspectOutputFor(cmd.Context(), clients, project.Msg.GetProject(), agentName)
+		agent, err := composeAgentInspectOutputFor(cmd.Context(), clients, runtimeProject.project, agentName)
 		if err != nil {
 			return err
 		}
@@ -569,7 +566,7 @@ func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string)
 		if target == "" {
 			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect run requires a run id")}
 		}
-		output, err = inspectComposeRunOutput(cmd.Context(), clients, projectID, normalized.Name, target)
+		output, err = inspectComposeRunOutput(cmd.Context(), clients, projectID, runtimeProject.name(), target)
 		if err != nil {
 			return err
 		}

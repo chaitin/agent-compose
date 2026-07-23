@@ -55,14 +55,16 @@ func runComposeSchedulerRunsCommand(cmd *cobra.Command, cli cliOptions, options 
 	if err := writeDeprecatedSchedulerAgentFlagWarning(cmd, "use the scheduler positional argument instead"); err != nil {
 		return err
 	}
-	_, normalized, projectID, err := resolveComposeProject(cli)
-	if err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "scheduler runs", runtimeProjectIdentityOnly)
+	if err != nil {
+		return err
+	}
+	normalized := runtimeProject.spec
+	projectID := runtimeProject.id()
 	agentRef := options.AgentName
 	if len(args) > 0 {
 		if agentRef != "" {
@@ -70,7 +72,7 @@ func runComposeSchedulerRunsCommand(cmd *cobra.Command, cli cliOptions, options 
 		}
 		agentRef = args[0]
 	}
-	project := composeUpProjectOutput{ID: displayOpaqueID(projectID), Name: normalized.Name}
+	project := composeUpProjectOutput{ID: displayOpaqueID(projectID), Name: runtimeProject.name()}
 	if cli.JSON {
 		writer, err := newSchedulerJSONStreamWriter[composeSchedulerRunItem](cmd.OutOrStdout(), schedulerRunsJSONPrefix{Project: project}, "runs")
 		if err != nil {
@@ -92,14 +94,16 @@ func runComposeSchedulerLogsCommand(cmd *cobra.Command, cli cliOptions, options 
 	if err := writeDeprecatedSchedulerAgentFlagWarning(cmd, "use --scheduler instead"); err != nil {
 		return err
 	}
-	_, normalized, projectID, err := resolveComposeProject(cli)
-	if err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "scheduler logs", runtimeProjectIdentityOnly)
+	if err != nil {
+		return err
+	}
+	normalized := runtimeProject.spec
+	projectID := runtimeProject.id()
 	runRef := strings.TrimSpace(options.RunID)
 	if len(args) > 0 {
 		if runRef != "" {
@@ -151,7 +155,7 @@ func runComposeSchedulerLogsCommand(cmd *cobra.Command, cli cliOptions, options 
 		}
 		triggerID = resolvedTriggerID
 	}
-	project := composeUpProjectOutput{ID: displayOpaqueID(projectID), Name: normalized.Name}
+	project := composeUpProjectOutput{ID: displayOpaqueID(projectID), Name: runtimeProject.name()}
 	if cli.JSON {
 		writer, err := newSchedulerJSONStreamWriter[composeSchedulerLogEvent](cmd.OutOrStdout(), schedulerLogsJSONPrefix{Project: project, Run: selected}, "events")
 		if err != nil {
@@ -179,15 +183,17 @@ func writeDeprecatedSchedulerAgentFlagWarning(cmd *cobra.Command, guidance strin
 }
 
 func runComposeSchedulerInspectCommand(cmd *cobra.Command, cli cliOptions, options composeSchedulerInspectOptions, rawRef string) error {
-	_, normalized, projectID, err := resolveComposeProject(cli)
-	if err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
 	}
-	output := composeSchedulerInspectOutput{Project: composeUpProjectOutput{ID: displayOpaqueID(projectID), Name: normalized.Name}}
+	runtimeProject, err := resolveComposeRuntimeProject(cmd.Context(), clients.project, cli, "scheduler inspect", runtimeProjectIdentityOnly)
+	if err != nil {
+		return err
+	}
+	normalized := runtimeProject.spec
+	projectID := runtimeProject.id()
+	output := composeSchedulerInspectOutput{Project: composeUpProjectOutput{ID: displayOpaqueID(projectID), Name: runtimeProject.name()}}
 	ref := strings.TrimSpace(rawRef)
 	if schedulerRef := strings.TrimSpace(options.SchedulerRef); schedulerRef != "" {
 		trigger, err := resolveComposeSchedulerTrigger(cmd.Context(), clients, normalized, projectID, schedulerRef, ref)
