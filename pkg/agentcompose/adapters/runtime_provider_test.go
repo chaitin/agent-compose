@@ -3,6 +3,7 @@ package adapters
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -170,5 +171,16 @@ func TestDomainStreamFromDriver(t *testing.T) {
 				t.Fatalf("domainStreamFromDriver(%q) = %q, want %q", tt.stream, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestClassifyExecTerminationErrorMapsDriverSentinelToDomain(t *testing.T) {
+	driverErr := fmt.Errorf("cancel exec: %w", driverpkg.ErrExecTerminationUnconfirmed)
+	err := classifyExecTerminationError(driverErr)
+	if !errors.Is(err, domain.ErrExecTerminationUnconfirmed) {
+		t.Fatalf("classified error = %v, want domain termination sentinel", err)
+	}
+	if !errors.Is(err, driverpkg.ErrExecTerminationUnconfirmed) {
+		t.Fatalf("classified error lost driver cause: %v", err)
 	}
 }

@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -108,11 +109,16 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, session *domain.Sandb
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}
+	retainFacadeToken := false
 	if len(managedEnv) > 0 {
 		spec.Env = llms.MergeManagedExecEnv(spec.Env, managedEnv)
 		if r.configDB != nil {
 			if token := managedEnv["AGENT_COMPOSE_SANDBOX_TOKEN"]; token != "" {
-				defer func() { _ = r.configDB.DeleteLLMFacadeToken(context.WithoutCancel(ctx), token) }()
+				defer func() {
+					if !retainFacadeToken {
+						_ = r.configDB.DeleteLLMFacadeToken(context.WithoutCancel(ctx), token)
+					}
+				}()
 			}
 		}
 	}
@@ -121,6 +127,7 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, session *domain.Sandb
 	}
 	result, err := runtime.ExecStream(ctx, session, vmState, spec, stream)
 	if err != nil {
+		retainFacadeToken = errors.Is(err, domain.ErrExecTerminationUnconfirmed)
 		return execution.SanitizeAgentExecResult(result), domain.AgentRunResult{}, err
 	}
 	parsed, err := execution.ParseAgentExecResult(agent, result)

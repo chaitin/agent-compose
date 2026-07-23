@@ -152,6 +152,20 @@ func TestDockerCommandExecOptionsNonTTYAttachesStderr(t *testing.T) {
 	}
 }
 
+func TestDockerExecEnvMarkerIsDriverOwnedAndIsolatesExecutions(t *testing.T) {
+	first := dockerExecEnvWithMarker([]string{"B=2", dockerExecMarkerEnv + "=caller", "A=1"}, "exec-1")
+	second := dockerExecEnvWithMarker([]string{"A=1"}, "exec-2")
+	if !reflect.DeepEqual(first, []string{"A=1", dockerExecMarkerEnv + "=exec-1", "B=2"}) {
+		t.Fatalf("first marked env = %#v", first)
+	}
+	if !reflect.DeepEqual(second, []string{"A=1", dockerExecMarkerEnv + "=exec-2"}) {
+		t.Fatalf("second marked env = %#v", second)
+	}
+	if reflect.DeepEqual(first, second) {
+		t.Fatalf("separate executions received the same marker: %#v", first)
+	}
+}
+
 func TestDockerInteractionWriterProjectsFramesAndFiltersStderr(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -792,7 +792,7 @@ func markProjectRunInteractionArtifacts(ctx context.Context, coordinator *Coordi
 	})
 }
 
-func (c *Controller) runPromptInteraction(ctx context.Context, coordinator *Coordinator, run domain.ProjectRunRecord, sandbox *domain.Sandbox, req RunAgentRequest, start *agentcomposev2.RunAttachStart, receive RunAttachReceiver, send RunAttachSender) (TransitionRequest, error) {
+func (c *Controller) runPromptInteraction(ctx context.Context, coordinator *Coordinator, run domain.ProjectRunRecord, sandbox *domain.Sandbox, req RunAgentRequest, start *agentcomposev2.RunAttachStart, receive RunAttachReceiver, send RunAttachSender) (transitionResult TransitionRequest, returnErr error) {
 	artifactsDir := projectRunCommandArtifactsDir(run, sandbox)
 	logsPath := filepath.Join(artifactsDir, "transcript.txt")
 	transition := TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID, LogsPath: logsPath}
@@ -872,7 +872,11 @@ func (c *Controller) runPromptInteraction(ctx context.Context, coordinator *Coor
 	if len(managedEnv) > 0 {
 		env = llms.MergeManagedExecEnv(env, managedEnv)
 		if token := managedEnv["AGENT_COMPOSE_SANDBOX_TOKEN"]; token != "" {
-			defer c.deletePromptAttachLLMFacadeToken(context.WithoutCancel(ctx), token)
+			defer func() {
+				if !errors.Is(returnErr, domain.ErrExecTerminationUnconfirmed) && !errors.Is(returnErr, driverpkg.ErrExecTerminationUnconfirmed) {
+					c.deletePromptAttachLLMFacadeToken(context.WithoutCancel(ctx), token)
+				}
+			}()
 		}
 	}
 	command := strings.Join([]string{
