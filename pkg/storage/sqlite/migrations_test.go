@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -438,6 +439,33 @@ func TestSQLiteDSNConfiguresProductionConnection(t *testing.T) {
 	}
 	if foreignKeys != 1 || busyTimeout != 5000 {
 		t.Fatalf("connection PRAGMAs = (foreign_keys=%d, busy_timeout=%d), want (1, 5000)", foreignKeys, busyTimeout)
+	}
+}
+
+func TestOpenSupportsRelativePath(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+	if err := os.Mkdir("data", 0o755); err != nil {
+		t.Fatalf("create data directory: %v", err)
+	}
+
+	database, err := Open(filepath.Join("data", "data.db"), time.Second)
+	if err != nil {
+		t.Fatalf("Open relative path: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	dbPath := filepath.Join(workDir, "data", "data.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("stat database file %q: %v", dbPath, err)
+	}
+
+	var migrationCount int
+	if err := database.DB().QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
+		t.Fatalf("query migration history: %v", err)
+	}
+	if migrationCount == 0 {
+		t.Fatal("migration history is empty")
 	}
 }
 

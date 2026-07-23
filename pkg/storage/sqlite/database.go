@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -82,7 +83,8 @@ func sqliteDSN(path string, busyTimeout time.Duration) string {
 		if path == ":memory:" {
 			uri = &url.URL{Scheme: "file", Opaque: ":memory:"}
 		} else {
-			uri = &url.URL{Scheme: "file", Path: path}
+			// 相对路径必须省略 host 分隔符，否则首段会被 SQLite 解释为 URI authority。
+			uri = &url.URL{Scheme: "file", Path: path, OmitHost: !filepath.IsAbs(path)}
 		}
 	}
 	query := uri.Query()
