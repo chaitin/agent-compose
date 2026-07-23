@@ -4,13 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { parseNPMPackEntries } from "./npm-pack-result.mjs";
+
 const execFileAsync = promisify(execFile);
 const root = process.cwd();
 const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agent-compose-runtime-sdk-packaging-"));
 
 try {
   const dryRun = await execFileAsync("npm", ["pack", "--dry-run", "--json"], { cwd: root });
-  const packEntries = JSON.parse(dryRun.stdout);
+  const packEntries = parseNPMPackEntries(dryRun.stdout);
   const files = packEntries[0]?.files?.map((entry) => entry.path).sort() ?? [];
   const allowedRootFiles = new Set(["LICENSE", "README.md", "package.json"]);
   const invalid = files.filter((file) => {

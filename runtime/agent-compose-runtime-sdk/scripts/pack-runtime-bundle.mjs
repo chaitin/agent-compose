@@ -5,6 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { parseNPMPackEntries } from "./npm-pack-result.mjs";
+
 const execFileAsync = promisify(execFile);
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..");
@@ -26,8 +28,8 @@ try {
     packArgs.push("--pack-destination", args.packDestination);
   }
   const pack = await execFileAsync("npm", packArgs, { cwd: stage });
-  const packResult = JSON.parse(pack.stdout);
-  const packedFilename = packResult[0]?.filename;
+  const packEntries = parseNPMPackEntries(pack.stdout);
+  const packedFilename = packEntries[0]?.filename;
   if (!packedFilename) {
     throw new Error("npm pack did not return a filename");
   }
