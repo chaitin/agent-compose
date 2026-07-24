@@ -58,6 +58,14 @@ mcp_servers:
         value: Bearer ${ISSUE_TRACKER_TOKEN}
         secret: true
 
+octobus_servers:
+  internal:
+    url: https://octobus.internal.example
+    token: ${OCTOBUS_INTERNAL_TOKEN}
+  public:
+    url: https://octobus.example
+    token: ${OCTOBUS_PUBLIC_TOKEN}
+
 volumes:
   cache:
     name: review-cache
@@ -104,6 +112,7 @@ agents:
             secret: true
     capset_ids:
       - engineering
+      - internal/code-review
     skills:
       - ./skills/review
       - name: release-check
@@ -160,6 +169,7 @@ Interpolation is implemented in these locations:
 - `agents.*.model`
 - `agents.*.env.*.value`
 - Project and inline-agent MCP `url`, `env.*.value`, and `headers.*.value`
+- Project OctoBus `url` and `token`
 - Skill `name`, `source`, `url`, `path`, `ref`, and `username`
 
 Other strings are not interpolated, including `name`, `provider`, `image`, `system_prompt`, workspace fields, build fields, and scheduler fields.
@@ -191,6 +201,7 @@ SECRET_VALUE:
 | `variables` | map | No | Project-level named values and secret metadata stored in the normalized project specification. |
 | `workspaces` | map | No | Reusable project workspace definitions. Only the plural top-level form is valid. |
 | `mcp_servers` | map | No | Named MCP servers that agents may reference. |
+| `octobus_servers` | map | No | Named project-scoped OctoBus servers selected by qualified `capset_ids`. |
 | `volumes` | map | No | Persistent volumes managed or referenced by the project. |
 | `agents` | map | No | Agent definitions keyed by agent name. |
 
@@ -337,6 +348,31 @@ mcp_servers:
 
 Project MCP definitions are not injected into every agent automatically. Each agent selects or defines the servers it needs under its own `mcp_servers` field.
 
+## `octobus_servers`: project OctoBus servers
+
+Projects may declare multiple named OctoBus servers:
+
+```yaml
+octobus_servers:
+  internal:
+    url: https://octobus.internal.example
+    token: ${OCTOBUS_INTERNAL_TOKEN}
+  public:
+    url: https://octobus.example
+    token: ${OCTOBUS_PUBLIC_TOKEN}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `url` | string | Yes | Absolute `http` or `https` URL for the OctoBus server. User information and URL fragments are rejected. Supports `${NAME}` interpolation. |
+| `token` | string | No | Bearer token used by the daemon when connecting to this server. Supports `${NAME}` interpolation; an empty value configures no authorization token. |
+
+The map key is the server name and must use the stable identifier format. Agents select these servers by qualifying an existing `capset_ids` entry as `<server>/<capset>`, for example `internal/code-review`. Defining a server does not grant access to it by itself.
+
+OctoBus tokens are inherently sensitive. Keep them in environment or dotenv configuration and reference them with `${NAME}`. The daemon retains the resolved token so it can proxy requests, but redacts it from normalized user-facing output and never injects it into the sandbox. Avoid committing literal tokens to compose files.
+
+Project re-apply follows the same managed agent configuration model as MCP servers. A running sandbox keeps the `capset_ids` authorization set captured when it was created, while subsequent calls resolve a referenced server from the current managed agent definition. Updating a server URL or token therefore takes effect without rebuilding the sandbox. Newly added capsets are available only to new sandboxes; if a server used by an existing authorized capset can no longer be resolved, that call fails instead of falling back to another server.
+
 ## `volumes`: project volumes
 
 ```yaml
@@ -386,7 +422,7 @@ agents:
 | `driver` | object | Docker | Runtime driver. Exactly one runtime key is allowed. |
 | `env` | map | Empty | Environment variables injected into the sandbox. |
 | `mcp_servers` | scalar/object/list | Empty | References project MCP servers or declares agent-private servers. |
-| `capset_ids` | string[] | Empty | OctoBus capability set IDs allowed for this agent's sandboxes. |
+| `capset_ids` | string[] | Empty | OctoBus capability set declarations allowed for this agent's sandboxes; entries may select a project server as `<server>/<capset>`. |
 | `skills` | list | Empty | Skill sources projected into the agent runtime. |
 | `volumes` | list | Empty | Volume and bind mounts. |
 | `workspace` | object | None | Explicitly selects a project `workspaces` entry or defines an inline workspace. |
@@ -569,11 +605,16 @@ An inline object accepts `name`, `type`, `transport`, `command`, `args`, `env`, 
 
 ```yaml
 capset_ids:
-  - engineering
-  - ticketing
+  - legacy-capset
+  - internal/engineering
+  - public/ticketing
 ```
 
-Empty and duplicate entries are removed. When the capability gateway is configured, the IDs constrain the sandbox to those OctoBus capability sets and drive environment and capability-guide injection. Missing gateway configuration or guide retrieval failures are best-effort conditions reported as warnings.
+Empty and duplicate entries are removed. An unqualified value such as `legacy-capset` uses the daemon-wide OctoBus configuration, preserving the behavior of existing project files. A qualified value such as `internal/engineering` selects `octobus_servers.internal`; `internal` is used only by agent-compose to choose the upstream server, and OctoBus receives `engineering` as the capset ID. A qualified entry whose server is not declared is a validation error.
+
+Qualified and unqualified entries may be mixed. Adding `octobus_servers` never changes the routing of unqualified entries. The complete declaration remains the sandbox authorization boundary: authorization for `internal/engineering` does not also authorize `engineering` or `public/engineering`.
+
+The selected IDs drive capability gateway environment and guide injection. Missing daemon-wide gateway configuration for an unqualified entry, an unreachable server, or guide retrieval failure is a best-effort condition reported as a warning; sandbox creation continues. Project OctoBus URL and token values remain in the daemon and are not included in guest metadata or capability guides.
 
 ### `skills`
 

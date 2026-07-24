@@ -7,6 +7,13 @@ capability sets into work sandboxes and automation tasks, and provides capabilit
 call entry points to guests. agent-compose is the only integration boundary:
 frontend and guest do not connect to OctoBus directly.
 
+This document describes the original daemon-wide gateway and the protocol shared
+by all OctoBus routes. Projects may additionally declare named servers and use
+qualified capset declarations. The project-scoped configuration, resolution,
+compatibility, and re-apply rules are specified in
+[Project-scoped OctoBus servers](project_octobus_servers_design.md). Unqualified
+capset IDs continue to use the daemon-wide gateway described here.
+
 ## Architecture
 
 Two paths:
@@ -20,8 +27,10 @@ Data plane (agent call, gRPC):              guest agent -> agent-compose capprox
   capability catalog.
 - The data plane exposes only gRPC: guest calls capabilities through
   agent-compose transparent proxy. MCP / REST are not exposed to the guest.
-- Both the control-plane provider and data-plane capproxy dynamically read
-  OctoBus connection config from `ConfigStore`.
+- Both paths resolve an OctoBus target at call time. Unqualified capsets
+  dynamically read the daemon-wide connection from `ConfigStore`; qualified
+  capsets resolve the named server from the current managed agent definition.
+  Target selection does not change the upstream OctoBus protocol.
 
 UI shows only product concepts:
 
@@ -34,7 +43,7 @@ UI shows only product concepts:
 
 ## Configuration
 
-### OctoBus Connection
+### Daemon-wide OctoBus Connection
 
 Page-configured, stored in DB, dynamically read at runtime:
 
@@ -58,6 +67,12 @@ message UpdateCapabilityGatewayConfigRequest {
 When backend accesses OctoBus, it injects `Authorization: Bearer <token>` if
 token exists. Token stays server-side only; it is not returned to frontend in
 plaintext, written into sandbox metadata, injected into guest env, or logged.
+
+This singleton remains the compatibility route for every unqualified
+`capset_ids` entry. Merely declaring project `octobus_servers` does not override
+or disable it. A qualified declaration such as `internal/dev` uses the project
+server named `internal`, while the upstream still receives `dev` in
+`x-octobus-capset`. Project tokens have the same daemon-only boundary.
 
 ### Data-Plane Proxy Entry
 
@@ -178,12 +193,13 @@ OctoBus instance ids are globally unique and already identify the service.
 capproxy handles each stream:
 
 ```text
-1. Look up in-memory index by token -> (sandbox, allowed_capsets)
-2. Validate guest-provided x-octobus-capset is in the sandbox's allowed_capsets
-3. Reflection methods (grpc.reflection.*): require only x-octobus-capset and pass through
-4. Business methods:
+1. Look up in-memory index by token -> (sandbox, allowed_capsets, managed scope)
+2. Validate the complete guest-provided x-octobus-capset declaration is in the sandbox's allowed_capsets
+3. Resolve the daemon-wide target for an unqualified declaration, or the named project target for a qualified declaration; strip the qualifier before forwarding
+4. Reflection methods (grpc.reflection.*): require only x-octobus-capset and pass through
+5. Business methods:
      - require x-octobus-instance from the guest
-     - inject OctoBus token read from ConfigStore
+     - inject the token from the selected OctoBus target
      - forward to OctoBus daemon
 ```
 
@@ -198,10 +214,13 @@ Implementation notes:
 - token -> sandbox binding uses in-memory index
   `token -> (sandbox_id, capset_ids)`: rebuilt from existing sandboxes at
   startup, incrementally maintained on sandbox create/stop.
-- capproxy validates `x-octobus-capset` belongs to the sandbox binding set,
+- capproxy validates the complete `x-octobus-capset` declaration belongs to the sandbox binding set,
   requires guest `x-octobus-instance` for business calls, and injects the
   OctoBus token.
-- OctoBus addr / token are read from `ConfigStore` during forwarding.
+- For unqualified capsets, OctoBus addr / token are read from `ConfigStore`
+  during forwarding. For qualified capsets, the current managed agent
+  definition supplies the selected project server URL / token. In both cases,
+  only the real capset ID is forwarded upstream.
 - Auth and isolation: capset set is bound to the sandbox; guest can choose only
   within the bound set. instance is routing inside a capset and must be
   specified by the guest for business calls. `CAP_TOKEN` is an
@@ -283,6 +302,15 @@ selection. `capset_ids` is added to `AgentDefinition`,
 `CreateAgentSessionRequest`, `CreateLoaderRequest`, `UpdateLoaderRequest`,
 `LoaderSummary`, and `LoaderDetail`, and is persisted as
 `agent_definition.capset_ids` / `loader.capset_ids`.
+
+`capset_ids` may contain both unqualified entries such as `dev` and qualified
+entries such as `internal/dev`. The sandbox persists the complete declarations
+as its authorization set. Project re-apply does not add or remove authorization
+from a running sandbox, but subsequent calls resolve a qualified server from the
+current managed agent definition, so URL and token updates take effect without
+recreating that sandbox. This matches the managed configuration behavior used
+for project MCP servers. See the project-scoped design for the complete failure
+and compatibility semantics.
 
 Injection chain:
 
