@@ -26,5 +26,8 @@ export interface RunnerOptions {
 export interface StoredThread {
   provider: string;
   threadId: string;
+  sessionId?: string;
   updatedAt?: string;
+  systemContextHash?: string;
+  systemContextHashVersion?: number;
 }

@@ -3,6 +3,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CODEX_SYSTEM_CONTEXT_HASH_VERSION, hashSystemContext } from "../src/codex-thread-resume.js";
 import { captureStdio, runnerOptions, withTempSession } from "./helpers.js";
 
 const codexState = vi.hoisted(() => ({
@@ -11,6 +12,7 @@ const codexState = vi.hoisted(() => ({
   threadId: "thread-new",
   resumedThreadId: "thread-resumed",
   resumed: "",
+  started: 0,
   runStreamedCalls: [] as Array<{ input: unknown; options: unknown }>,
 }));
 
@@ -18,19 +20,22 @@ vi.mock("@openai/codex-sdk", () => ({
   Codex: vi.fn().mockImplementation(function Codex(options: Record<string, unknown>) {
     codexState.constructorOptions.push(options);
     return {
-      startThread: vi.fn(() => ({
-        id: codexState.threadId,
-        runStreamed: vi.fn(async (input: unknown, options: unknown) => {
-          codexState.runStreamedCalls.push({ input, options });
-          return {
-            events: (async function* events() {
-              for (const event of codexState.events) {
-                yield event;
-              }
-            })(),
-          };
-        }),
-      })),
+      startThread: vi.fn(() => {
+        codexState.started += 1;
+        return {
+          id: codexState.threadId,
+          runStreamed: vi.fn(async (input: unknown, options: unknown) => {
+            codexState.runStreamedCalls.push({ input, options });
+            return {
+              events: (async function* events() {
+                for (const event of codexState.events) {
+                  yield event;
+                }
+              })(),
+            };
+          }),
+        };
+      }),
       resumeThread: vi.fn((threadId: string) => {
         codexState.resumed = threadId;
         return {
@@ -121,6 +126,7 @@ describe("runner execution", () => {
     codexState.threadId = "thread-new";
     codexState.resumedThreadId = "thread-resumed";
     codexState.resumed = "";
+    codexState.started = 0;
     codexState.runStreamedCalls = [];
     claudeState.messages = [];
     claudeState.closed = false;
@@ -159,7 +165,11 @@ describe("runner execution", () => {
         config: { developer_instructions: "catalog body" },
       });
       const stored = JSON.parse(await fs.readFile(path.join(root, "state", "agents", "providers", "codex.json"), "utf8"));
-      expect(stored.threadId).toBe("thread-new");
+      expect(stored).toMatchObject({
+        threadId: "thread-new",
+        systemContextHash: hashSystemContext("catalog body"),
+        systemContextHashVersion: CODEX_SYSTEM_CONTEXT_HASH_VERSION,
+      });
     });
   });
 
@@ -253,7 +263,7 @@ describe("runner execution", () => {
     });
   });
 
-  it("resumes a stored Codex thread", async () => {
+  it("resumes a stored Codex thread when the system context fingerprint matches", async () => {
     const { CodexRunner } = await import("../src/runners/codex.js");
     await withTempSession(async (root) => {
       const providerRoot = path.join(root, "state", "agents", "providers");
@@ -261,16 +271,98 @@ describe("runner execution", () => {
       await fs.writeFile(path.join(providerRoot, "codex.json"), JSON.stringify({
         provider: "codex",
         threadId: "old-thread",
+        systemContextHash: hashSystemContext("catalog body"),
+        systemContextHashVersion: CODEX_SYSTEM_CONTEXT_HASH_VERSION,
       }), "utf8");
       codexState.events = [{ type: "item.completed", item: { id: "a2", type: "agent_message", text: "resumed" } }];
       const stdio = captureStdio();
       try {
-        const result = await new CodexRunner(runnerOptions(root)).runPrompt("prompt");
+        const result = await new CodexRunner(runnerOptions(root, "catalog body")).runPrompt("prompt");
         expect(result.threadId).toBe("thread-resumed");
       } finally {
         stdio.restore();
       }
       expect(codexState.resumed).toBe("old-thread");
+      expect(codexState.started).toBe(0);
+    });
+  });
+
+  it("starts a new Codex thread when stored state has no system context fingerprint", async () => {
+    const { CodexRunner } = await import("../src/runners/codex.js");
+    await withTempSession(async (root) => {
+      const providerRoot = path.join(root, "state", "agents", "providers");
+      await fs.mkdir(providerRoot, { recursive: true });
+      await fs.writeFile(path.join(providerRoot, "codex.json"), JSON.stringify({
+        provider: "codex",
+        threadId: "legacy-thread",
+      }), "utf8");
+      codexState.events = [{ type: "item.completed", item: { id: "a2", type: "agent_message", text: "fresh" } }];
+      const stdio = captureStdio();
+      try {
+        const result = await new CodexRunner(runnerOptions(root, "catalog body")).runPrompt("prompt");
+        expect(result.threadId).toBe("thread-new");
+        expect(stdio.stderr).toContain("stored Codex thread has no system context fingerprint");
+      } finally {
+        stdio.restore();
+      }
+      expect(codexState.resumed).toBe("");
+      expect(codexState.started).toBe(1);
+    });
+  });
+
+  it("starts a new Codex thread when the system context changed", async () => {
+    const { CodexRunner } = await import("../src/runners/codex.js");
+    await withTempSession(async (root) => {
+      const providerRoot = path.join(root, "state", "agents", "providers");
+      await fs.mkdir(providerRoot, { recursive: true });
+      await fs.writeFile(path.join(providerRoot, "codex.json"), JSON.stringify({
+        provider: "codex",
+        threadId: "old-thread",
+        systemContextHash: hashSystemContext(""),
+        systemContextHashVersion: CODEX_SYSTEM_CONTEXT_HASH_VERSION,
+      }), "utf8");
+      codexState.events = [{ type: "item.completed", item: { id: "a2", type: "agent_message", text: "fresh" } }];
+      const stdio = captureStdio();
+      try {
+        const result = await new CodexRunner(runnerOptions(root, "new context")).runPrompt("prompt");
+        expect(result.threadId).toBe("thread-new");
+        expect(stdio.stderr).toContain("system context changed");
+      } finally {
+        stdio.restore();
+      }
+      expect(codexState.resumed).toBe("");
+      expect(codexState.started).toBe(1);
+      const stored = JSON.parse(await fs.readFile(path.join(providerRoot, "codex.json"), "utf8"));
+      expect(stored).toMatchObject({
+        threadId: "thread-new",
+        systemContextHash: hashSystemContext("new context"),
+        systemContextHashVersion: CODEX_SYSTEM_CONTEXT_HASH_VERSION,
+      });
+    });
+  });
+
+  it("starts a new Codex thread when the stored fingerprint version is unsupported", async () => {
+    const { CodexRunner } = await import("../src/runners/codex.js");
+    await withTempSession(async (root) => {
+      const providerRoot = path.join(root, "state", "agents", "providers");
+      await fs.mkdir(providerRoot, { recursive: true });
+      await fs.writeFile(path.join(providerRoot, "codex.json"), JSON.stringify({
+        provider: "codex",
+        threadId: "old-thread",
+        systemContextHash: hashSystemContext("context"),
+        systemContextHashVersion: CODEX_SYSTEM_CONTEXT_HASH_VERSION + 1,
+      }), "utf8");
+      codexState.events = [{ type: "item.completed", item: { id: "a2", type: "agent_message", text: "fresh" } }];
+      const stdio = captureStdio();
+      try {
+        const result = await new CodexRunner(runnerOptions(root, "context")).runPrompt("prompt");
+        expect(result.threadId).toBe("thread-new");
+        expect(stdio.stderr).toContain("unsupported system context fingerprint version");
+      } finally {
+        stdio.restore();
+      }
+      expect(codexState.resumed).toBe("");
+      expect(codexState.started).toBe(1);
     });
   });
 

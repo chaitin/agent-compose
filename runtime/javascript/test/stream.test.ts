@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CODEX_SYSTEM_CONTEXT_HASH_VERSION, hashSystemContext } from "../src/codex-thread-resume.js";
 import { decodeBinary, decodeFrame, encodeBinary, encodeFrame, FRAME_VERSION, type StreamFrame } from "../src/frame.js";
 import { OpenCodeRunner } from "../src/runners/opencode.js";
 import { PiRunner } from "../src/runners/pi.js";
@@ -141,6 +142,42 @@ describe("runStreamCommand", () => {
         transcript: "answer 1\nanswer 2",
       });
       expect(parseOutput(stdout.text)).toHaveLength(8);
+      const stored = JSON.parse(await fs.readFile(path.join(root, "state", "agents", "providers", "codex.json"), "utf8"));
+      expect(stored).toMatchObject({
+        threadId: "thread-1",
+        systemContextHash: hashSystemContext(""),
+        systemContextHashVersion: CODEX_SYSTEM_CONTEXT_HASH_VERSION,
+      });
+    });
+  });
+
+  it("resumes an interactive Codex thread only when the system context fingerprint matches", async () => {
+    await withTempSession(async (root) => {
+      const providerRoot = path.join(root, "state", "agents", "providers");
+      await fs.mkdir(providerRoot, { recursive: true });
+      await fs.writeFile(path.join(providerRoot, "codex.json"), JSON.stringify({
+        provider: "codex",
+        threadId: "stored-thread",
+        systemContextHash: hashSystemContext(""),
+        systemContextHashVersion: CODEX_SYSTEM_CONTEXT_HASH_VERSION,
+      }), "utf8");
+      const stdout = new MemoryWritable();
+
+      await runStreamCommand({
+        stdin: Readable.from([
+          frame({ seq: 0, type: "start", provider: "codex", stateRoot: `${root}/state`, workspace: `${root}/workspace`, home: `${root}/home` }),
+          frame({ seq: 1, type: "eof" }),
+        ]),
+        stdout,
+        stderr: new MemoryWritable(),
+      });
+
+      expect(resumeThread).toHaveBeenCalledWith("stored-thread", expect.any(Object));
+      expect(startThread).not.toHaveBeenCalled();
+      expect(parseOutput(stdout.text)[0]).toMatchObject({
+        type: "started",
+        threadId: "stored-thread",
+      });
     });
   });
 

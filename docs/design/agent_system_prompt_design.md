@@ -269,8 +269,26 @@ new Codex({
 ```
 
 The `@openai/codex-sdk` reads `config` at constructor scope, not from
-`ThreadOptions`. That means both `startThread` and `resumeThread` receive the
-current combined context on each run, including after `system_prompt` edits.
+`ThreadOptions`. The SDK passes the current combined context to both start and
+resume commands, but upstream Codex resume behavior does not guarantee that a
+changed plain `developer_instructions` value is model-visible on the first
+resumed turn (see [openai/codex#19045](https://github.com/openai/codex/issues/19045)).
+
+The runtime therefore stores a versioned SHA-256 fingerprint of the complete
+`systemContext` in the Codex provider state. It resumes only when the stored
+fingerprint exactly matches the current context. A missing fingerprint, an
+unsupported fingerprint version, or a changed context starts a new Codex
+thread and emits a warning to stderr.
+
+State created before fingerprint support is reset once after upgrade rather
+than resumed and lazily migrated. This intentionally favors instruction
+correctness over conversation continuity because the context associated with a
+legacy thread cannot be verified.
+
+This downstream guard can be reconsidered after the upstream issue is fixed and
+the runtime's minimum Codex SDK/CLI version is known to contain that fix. Removal
+requires an integration test proving that changed developer instructions are
+model-visible on the first resumed turn.
 
 ### Claude
 
@@ -327,8 +345,9 @@ the system prompt wiring scope.
 - MPI-only path matches pre-change injection (no `## Agent Identity`)
 - `readSystemPromptFile` trim and missing-file behavior
 
-Runner tests (`runners.test.ts`, `runner-execution.test.ts`) were updated to use
-`systemContext` instead of `mpiContext`.
+Runner and resume-policy tests verify `systemContext` injection, fingerprint
+persistence, matching-context resume, and safe reset for legacy, incompatible,
+or changed context state.
 
 ## Security and Operations
 
@@ -361,20 +380,24 @@ Runner tests (`runners.test.ts`, `runner-execution.test.ts`) were updated to use
 | `pkg/agentcompose/adapters/agent_runner_test.go` | Host resolution, fixed-path write/remove tests |
 | `runtime/javascript/src/system-context.ts` | **new** — `agentSystemPromptPath`, composition, file read helpers |
 | `runtime/javascript/src/prompt.ts` | Convention-path read; compose `systemContext` before runner dispatch |
-| `runtime/javascript/src/types.ts` | `systemContext` on `RunnerOptions` |
-| `runtime/javascript/src/runners/codex.ts` | `developer_instructions` from `systemContext` |
+| `runtime/javascript/src/types.ts` | `systemContext` on `RunnerOptions`; optional Codex fingerprint fields on `StoredThread` |
+| `runtime/javascript/src/codex-thread-resume.ts` | Versioned system-context hashing and Codex resume decision policy |
+| `runtime/javascript/src/runners/codex.ts` | `developer_instructions` from `systemContext`; fingerprint-gated resume |
+| `runtime/javascript/src/session-state.ts` | Validated provider-state parsing and optional fingerprint persistence |
 | `runtime/javascript/src/runners/claude.ts` | `systemPrompt.append` from `systemContext` |
 | `runtime/javascript/src/runners/gemini.ts` | Prepend `systemContext` to `-p` |
 | `runtime/javascript/test/system-context.test.ts` | **new** — composition unit tests |
 | `runtime/javascript/test/runners.test.ts` | Updated for `systemContext` |
-| `runtime/javascript/test/runner-execution.test.ts` | Updated for `systemContext` |
+| `runtime/javascript/test/codex-thread-resume.test.ts` | Hash, version, reset-reason, and resume-policy coverage |
+| `runtime/javascript/test/runner-execution.test.ts` | Codex resume/reset execution and persistence coverage |
 | `docs/design/agent-compose-runtime_contract.md` | Document convention path and layering |
 
 ## Success Criteria (Phase 1, verified)
 
 1. Agent with `system_prompt: "Reply only in Chinese"` obeys after Codex/Claude chat run.
 2. Empty `system_prompt` → identical to pre-change MPI-only behavior.
-3. Codex provider thread resume after prompt edit uses new instructions.
+3. Codex provider state starts a new thread after prompt or skill-context edits,
+   guaranteeing that the first turn uses the new instructions.
 4. Loader bound to an agent definition inherits `system_prompt`.
 5. `task test`, runtime JS tests, and `task lint` pass on touched packages.
 
