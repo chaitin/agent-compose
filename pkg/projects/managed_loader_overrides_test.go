@@ -3,9 +3,68 @@ package projects
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	domain "agent-compose/pkg/model"
 )
+
+func TestMergeManagedLoaderOverridePreservesLegacyTaskStateAndManagedAgentBinding(t *testing.T) {
+	createdAt := time.Unix(100, 0)
+	updatedAt := time.Unix(200, 0)
+	latestRunAt := time.Unix(300, 0)
+	current := domain.Loader{
+		Summary: domain.LoaderSummary{
+			ID:      "compiled-loader",
+			AgentID: "managed-agent",
+		},
+		Triggers: []domain.LoaderTrigger{{ID: "trigger-1", LoaderID: "compiled-loader", Enabled: true}},
+	}
+	override := legacyManagedLoaderOverride{Loader: domain.Loader{
+		Summary: domain.LoaderSummary{
+			ID:          "legacy-loader",
+			AgentID:     "legacy-agent",
+			WorkspaceID: "legacy-workspace",
+			CreatedAt:   createdAt,
+			UpdatedAt:   updatedAt,
+			LastError:   "legacy-error",
+			RunCount:    7,
+			EventCount:  11,
+			LatestRunAt: latestRunAt,
+		},
+		Triggers: []domain.LoaderTrigger{{
+			ID:          "trigger-1",
+			LoaderID:    "legacy-loader",
+			Enabled:     false,
+			NextFireAt:  time.Unix(400, 0),
+			LastFiredAt: time.Unix(500, 0),
+		}},
+	}}
+
+	got := mergeManagedLoaderOverride(current, override)
+
+	if got.Summary.ID != "legacy-loader" || got.Summary.AgentID != "managed-agent" {
+		t.Fatalf("adopted loader identity/binding = %#v", got.Summary)
+	}
+	if got.Summary.WorkspaceID != "legacy-workspace" ||
+		got.Summary.CreatedAt != createdAt ||
+		got.Summary.UpdatedAt != updatedAt ||
+		got.Summary.LastError != "legacy-error" ||
+		got.Summary.RunCount != 7 ||
+		got.Summary.EventCount != 11 ||
+		got.Summary.LatestRunAt != latestRunAt {
+		t.Fatalf("legacy task state was not preserved: %#v", got.Summary)
+	}
+	if len(got.Triggers) != 1 ||
+		got.Triggers[0].LoaderID != "legacy-loader" ||
+		got.Triggers[0].Enabled ||
+		got.Triggers[0].NextFireAt != override.Loader.Triggers[0].NextFireAt ||
+		got.Triggers[0].LastFiredAt != override.Loader.Triggers[0].LastFiredAt {
+		t.Fatalf("legacy trigger state was not preserved: %#v", got.Triggers)
+	}
+	if current.Summary.ID != "compiled-loader" || current.Summary.AgentID != "managed-agent" {
+		t.Fatalf("compiled loader was mutated: %#v", current.Summary)
+	}
+}
 
 func TestMergeLegacyManagedLoaderEnv(t *testing.T) {
 	tests := []struct {

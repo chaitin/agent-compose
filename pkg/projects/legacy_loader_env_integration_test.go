@@ -105,6 +105,9 @@ func TestIntegrationLegacyLoaderEnvironmentSurvivesProjectApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load adopted loader: %v", err)
 	}
+	if adopted.Summary.AgentID != migrated.Agents[0].ManagedAgentID {
+		t.Fatalf("adopted loader agent ID = %q, want managed agent %q", adopted.Summary.AgentID, migrated.Agents[0].ManagedAgentID)
+	}
 	assertLegacyEnvItems(t, "initial adopted loader env", adopted.EnvItems, legacyLoaderEnv)
 
 	manualLoaderEnv := []domain.SandboxEnvVar{
@@ -114,6 +117,9 @@ func TestIntegrationLegacyLoaderEnvironmentSurvivesProjectApply(t *testing.T) {
 		{Name: "SECRET_FLAG", Value: "manual-secret"},
 		{Name: "SHARED", Value: "manual-shared", Secret: true},
 	}
+	// Simulate an adopted Loader persisted by an older daemon, which kept the
+	// original v1 Agent binding. The next ordinary Project apply must repair it.
+	adopted.Summary.AgentID = agent.ID
 	adopted.EnvItems = manualLoaderEnv
 	if _, err := store.UpdateLoader(ctx, adopted); err != nil {
 		t.Fatalf("simulate loader env edit: %v", err)
@@ -139,6 +145,9 @@ func TestIntegrationLegacyLoaderEnvironmentSurvivesProjectApply(t *testing.T) {
 	afterScriptOnly, err := store.GetLoader(ctx, loader.Summary.ID)
 	if err != nil {
 		t.Fatalf("load loader after script-only apply: %v", err)
+	}
+	if afterScriptOnly.Summary.AgentID != migrated.Agents[0].ManagedAgentID {
+		t.Fatalf("script-only apply loader agent ID = %q, want managed agent %q", afterScriptOnly.Summary.AgentID, migrated.Agents[0].ManagedAgentID)
 	}
 	assertLegacyEnvItems(t, "loader env after script-only apply", afterScriptOnly.EnvItems, manualLoaderEnv)
 
@@ -167,6 +176,9 @@ func TestIntegrationLegacyLoaderEnvironmentSurvivesProjectApply(t *testing.T) {
 	finalLoader, err := store.GetLoader(ctx, loader.Summary.ID)
 	if err != nil {
 		t.Fatalf("load loader after explicit env apply: %v", err)
+	}
+	if finalLoader.Summary.AgentID != migrated.Agents[0].ManagedAgentID {
+		t.Fatalf("final loader agent ID = %q, want managed agent %q", finalLoader.Summary.AgentID, migrated.Agents[0].ManagedAgentID)
 	}
 	assertLegacyEnvItems(t, "loader overlay after explicit env apply", finalLoader.EnvItems, []domain.SandboxEnvVar{
 		{Name: "LOADER_STAYS", Value: "manual-stays", Secret: true},
