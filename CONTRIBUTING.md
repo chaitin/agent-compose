@@ -36,10 +36,10 @@ changes clearly, and include tests for user-visible behavior.
   [Docker Compose plugin](https://docs.docker.com/compose/install/). A working
   Docker daemon is required to:
 
-  - run sandboxes with the default `docker` runtime driver;
-  - build the guest image (`task image:agent-compose-guest`);
-  - build daemon images (`task image:agent-compose` or `task all`); and
-  - export BoxLite/Microsandbox development artifacts used by Linux
+  - Run sandboxes with the default `docker` runtime driver;
+  - Build the guest image (`task image:agent-compose-guest`);
+  - Build daemon images (`task image:agent-compose` or `task all`); and
+  - Export BoxLite/Microsandbox development artifacts used by Linux
     `task build`, daemon image builds, and runtime smoke tests.
 
   Lint and unit-style test commands remain isolated and do not start Docker
