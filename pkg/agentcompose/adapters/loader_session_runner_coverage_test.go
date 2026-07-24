@@ -17,8 +17,13 @@ import (
 func TestLoaderSandboxRunnerLoadResumeAndShutdownCoverage(t *testing.T) {
 	ctx := context.Background()
 	bridge, driver := newTestSandboxRPCBridge(t)
+	bridge.config.RuntimeBaseURL = "http://agent-compose.test:7410"
+	bridge.config.LLMAPIEndpoint = "https://llm.example.test/v1"
+	bridge.config.LLMAPIKey = "provider-key"
+	bridge.config.LLMModel = "gpt-loader-retry"
+	bridge.config.LLMAPIProtocol = "responses"
 	publisher := &loaderSessionPublisherFake{}
-	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, bridge.workspaceEnsurer, driver, nil, nil, bridge.streams, publisher, nil)
+	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, bridge.workspaceEnsurer, driver, nil, nil, bridge.streams, publisher, nil, bridge.agentExecutor)
 
 	running, err := bridge.store.CreateSandbox(ctx, "running", "", driverpkg.RuntimeDriverBoxlite, "", "", "loader", nil, nil, nil)
 	if err != nil {
@@ -49,6 +54,9 @@ func TestLoaderSandboxRunnerLoadResumeAndShutdownCoverage(t *testing.T) {
 	resumed, eventType, err = runner.LoadOrResume(ctx, stopped.Summary.ID)
 	if err != nil || resumed.Summary.VMStatus != domain.VMStatusRunning || eventType != "loader.sandbox.resumed" || len(driver.startCalls) != 1 {
 		t.Fatalf("LoadOrResume stopped resumed=%#v event=%q err=%v starts=%#v", resumed, eventType, err, driver.startCalls)
+	}
+	if token := domain.SandboxEnvMap(driver.startSessions[0].RuntimeEnvItems)["AGENT_COMPOSE_SANDBOX_TOKEN"]; token == "" {
+		t.Fatal("fresh loader retry started without an agent token")
 	}
 	if len(publisher.events) != 1 || publisher.events[0].Topic != "agent-compose.session.resumed" {
 		t.Fatalf("resume publisher events=%#v", publisher.events)
@@ -91,7 +99,7 @@ func TestLoaderSandboxRunnerLoadResumeAndShutdownCoverage(t *testing.T) {
 func TestLoaderSandboxRunnerRejectsUnsupportedStickyResumeBeforeSideEffects(t *testing.T) {
 	ctx := context.Background()
 	bridge, driver := newTestSandboxRPCBridge(t)
-	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, bridge.workspaceEnsurer, driver, nil, nil, bridge.streams, nil, nil)
+	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, bridge.workspaceEnsurer, driver, nil, nil, bridge.streams, nil, nil, bridge.agentExecutor)
 	session, err := bridge.store.CreateSandbox(ctx, "historical sticky", "", driverpkg.RuntimeDriverMicrosandbox, "", "", "loader", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateSandbox returned error: %v", err)
@@ -133,7 +141,7 @@ func TestLoaderSandboxRunnerRejectsUncompiledDriverBeforePersistence(t *testing.
 			ctx := context.Background()
 			bridge, sandboxDriver := newTestSandboxRPCBridge(t)
 			publisher := &loaderSessionPublisherFake{}
-			runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, bridge.workspaceEnsurer, sandboxDriver, nil, nil, bridge.streams, publisher, nil)
+			runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, bridge.workspaceEnsurer, sandboxDriver, nil, nil, bridge.streams, publisher, nil, bridge.agentExecutor)
 			loader := domain.Loader{Summary: domain.LoaderSummary{
 				ID:            "loader-uncompiled-" + runtimeDriver,
 				Name:          "Uncompiled " + runtimeDriver,
@@ -213,7 +221,7 @@ func TestLoaderSandboxRunnerResolvesVolumeMounts(t *testing.T) {
 		}},
 		warnings: []string{"volume target /cache overlaps test path"},
 	}
-	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, bridge.workspaceEnsurer, driver, nil, resolver, bridge.streams, nil, nil)
+	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, bridge.workspaceEnsurer, driver, nil, resolver, bridge.streams, nil, nil, bridge.agentExecutor)
 	projectRoot := t.TempDir()
 	projectPath := filepath.Join(projectRoot, "agent-compose.yml")
 	if _, err := bridge.configDB.UpsertProject(ctx, domain.ProjectRecord{ID: "project-1", Name: "Project", SourcePath: projectPath}); err != nil {

@@ -3,15 +3,16 @@ package adapters
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/execution"
 	"agent-compose/pkg/internal/testutil"
 	"agent-compose/pkg/llms"
-	"agent-compose/pkg/llms/runtimefacade"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/sessionstore"
 
@@ -186,6 +187,183 @@ func TestSandboxDriverStartSandboxVMSavesRuntimeState(t *testing.T) {
 	}
 }
 
+func TestSandboxDriverFreshStartFailureRevokesPreparedAgentToken(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:            root,
+		DbAddr:              filepath.Join(root, "data.db"),
+		SandboxRoot:         filepath.Join(root, "sandboxes"),
+		RuntimeDriver:       driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:        "guest:latest",
+		GuestWorkspacePath:  "/workspace",
+		GuestStateRoot:      "/state",
+		GuestHomePath:       "/root",
+		RuntimeBaseURL:      "http://agent-compose.test:7410",
+		LLMAPIEndpoint:      "https://llm.example.test/v1",
+		LLMAPIKey:           "provider-key",
+		LLMModel:            "gpt-test",
+		LLMAPIProtocol:      "responses",
+		SandboxStartTimeout: 2 * time.Second,
+	}
+	configDB, store, err := testutil.OpenStores(t, config)
+	if err != nil {
+		t.Fatalf("OpenStores returned error: %v", err)
+	}
+	session, err := store.CreateSandbox(ctx, "failed start", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	runner := NewAgentRunner(config, store, configDB, configDB, nil)
+	if err := runner.PrepareSandboxAgentEnvironment(ctx, session, execution.AgentConfig{Provider: "codex", Model: "gpt-test"}, nil); err != nil {
+		t.Fatalf("PrepareSandboxAgentEnvironment returned error: %v", err)
+	}
+	rawToken := domain.SandboxEnvMap(session.RuntimeEnvItems)["AGENT_COMPOSE_SANDBOX_TOKEN"]
+	if rawToken == "" {
+		t.Fatal("prepared sandbox token is empty")
+	}
+	startErr := errors.New("runtime start failed")
+	driver := NewSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{ensureErr: startErr}})
+	if err := driver.StartSandboxVM(ctx, session); !errors.Is(err, startErr) {
+		t.Fatalf("StartSandboxVM error = %v, want %v", err, startErr)
+	}
+	token, err := configDB.GetLLMFacadeToken(ctx, rawToken)
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
+	}
+	if token.RevokedAt.IsZero() {
+		t.Fatalf("failed fresh start token remains active: %#v", token)
+	}
+}
+
+func TestSandboxDriverFailedRunningSandboxCheckKeepsPreparedAgentToken(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:            root,
+		DbAddr:              filepath.Join(root, "data.db"),
+		SandboxRoot:         filepath.Join(root, "sandboxes"),
+		RuntimeDriver:       driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:        "guest:latest",
+		GuestWorkspacePath:  "/workspace",
+		GuestStateRoot:      "/state",
+		GuestHomePath:       "/root",
+		RuntimeBaseURL:      "http://agent-compose.test:7410",
+		LLMAPIEndpoint:      "https://llm.example.test/v1",
+		LLMAPIKey:           "provider-key",
+		LLMModel:            "gpt-test",
+		LLMAPIProtocol:      "responses",
+		SandboxStartTimeout: 2 * time.Second,
+	}
+	configDB, store, err := testutil.OpenStores(t, config)
+	if err != nil {
+		t.Fatalf("OpenStores returned error: %v", err)
+	}
+	session, err := store.CreateSandbox(ctx, "running sandbox", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	runner := NewAgentRunner(config, store, configDB, configDB, nil)
+	if err := runner.PrepareSandboxAgentEnvironment(ctx, session, execution.AgentConfig{Provider: "codex", Model: "gpt-test"}, nil); err != nil {
+		t.Fatalf("PrepareSandboxAgentEnvironment returned error: %v", err)
+	}
+	rawToken := domain.SandboxEnvMap(session.RuntimeEnvItems)["AGENT_COMPOSE_SANDBOX_TOKEN"]
+	if rawToken == "" {
+		t.Fatal("prepared sandbox token is empty")
+	}
+	if err := store.SaveVMState(session.Summary.ID, domain.VMState{
+		Driver:    driverpkg.RuntimeDriverBoxlite,
+		BoxID:     "container-1",
+		StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveVMState returned error: %v", err)
+	}
+
+	startErr := errors.New("runtime check failed")
+	driver := NewSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{ensureErr: startErr}})
+	if err := driver.StartSandboxVM(ctx, session); !errors.Is(err, startErr) {
+		t.Fatalf("StartSandboxVM error = %v, want %v", err, startErr)
+	}
+	token, err := configDB.GetLLMFacadeToken(ctx, rawToken)
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
+	}
+	if !token.RevokedAt.IsZero() {
+		t.Fatalf("running sandbox token was revoked: %#v", token)
+	}
+}
+
+func TestSandboxDriverPostStartPersistenceFailureKeepsPreparedAgentToken(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:            root,
+		DbAddr:              filepath.Join(root, "data.db"),
+		SandboxRoot:         filepath.Join(root, "sandboxes"),
+		RuntimeDriver:       driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:        "guest:latest",
+		GuestWorkspacePath:  "/workspace",
+		GuestStateRoot:      "/state",
+		GuestHomePath:       "/root",
+		RuntimeBaseURL:      "http://agent-compose.test:7410",
+		LLMAPIEndpoint:      "https://llm.example.test/v1",
+		LLMAPIKey:           "provider-key",
+		LLMModel:            "gpt-test",
+		LLMAPIProtocol:      "responses",
+		SandboxStartTimeout: 2 * time.Second,
+	}
+	configDB, store, err := testutil.OpenStores(t, config)
+	if err != nil {
+		t.Fatalf("OpenStores returned error: %v", err)
+	}
+	session, err := store.CreateSandbox(ctx, "post-start persistence failure", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	runner := NewAgentRunner(config, store, configDB, configDB, nil)
+	if err := runner.PrepareSandboxAgentEnvironment(ctx, session, execution.AgentConfig{Provider: "codex", Model: "gpt-test"}, nil); err != nil {
+		t.Fatalf("PrepareSandboxAgentEnvironment returned error: %v", err)
+	}
+	rawToken := domain.SandboxEnvMap(session.RuntimeEnvItems)["AGENT_COMPOSE_SANDBOX_TOKEN"]
+	if rawToken == "" {
+		t.Fatal("prepared sandbox token is empty")
+	}
+
+	driver := NewSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{
+		info: domain.SandboxVMInfo{BoxID: "container-1"},
+		ensureHook: func(*domain.Sandbox) {
+			proxyDir := filepath.Dir(store.ProxyStatePath(session.Summary.ID))
+			if err := os.Remove(store.ProxyStatePath(session.Summary.ID)); err != nil {
+				t.Fatalf("remove proxy state: %v", err)
+			}
+			if err := os.Remove(proxyDir); err != nil {
+				t.Fatalf("remove proxy directory: %v", err)
+			}
+			if err := os.WriteFile(proxyDir, []byte("block proxy state persistence"), 0o644); err != nil {
+				t.Fatalf("replace proxy directory: %v", err)
+			}
+		},
+	}})
+	if err := driver.StartSandboxVM(ctx, session); err == nil {
+		t.Fatal("StartSandboxVM succeeded despite proxy state persistence failure")
+	}
+
+	vmState, err := store.GetVMState(session.Summary.ID)
+	if err != nil {
+		t.Fatalf("GetVMState returned error: %v", err)
+	}
+	if vmState.StartedAt.IsZero() || vmState.BoxID != "container-1" {
+		t.Fatalf("runtime start was not persisted before proxy failure: %#v", vmState)
+	}
+	token, err := configDB.GetLLMFacadeToken(ctx, rawToken)
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
+	}
+	if !token.RevokedAt.IsZero() {
+		t.Fatalf("running sandbox token was revoked after proxy persistence failure: %#v", token)
+	}
+}
+
 func TestSandboxDriverStopSandboxVMAddsDockerStopContextMargin(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -296,13 +474,6 @@ func TestSandboxDriverStopPreservesFacadeTokensUntilRemove(t *testing.T) {
 
 func TestSandboxDriverResumeReusesRuntimeWithoutRefreshingStartupEnv(t *testing.T) {
 	ctx := context.Background()
-	originalEnsure := ensureSandboxLLMFacadeConfig
-	defer func() { ensureSandboxLLMFacadeConfig = originalEnsure }()
-	ensureCalls := 0
-	ensureSandboxLLMFacadeConfig = func(context.Context, *appconfig.Config, runtimefacade.FacadeStore, *domain.Sandbox, string, string, string, string) (map[string]string, error) {
-		ensureCalls++
-		return map[string]string{"OPENAI_API_KEY": "new-token"}, nil
-	}
 	root := t.TempDir()
 	config := &appconfig.Config{
 		DataRoot:            root,
@@ -321,6 +492,7 @@ func TestSandboxDriverResumeReusesRuntimeWithoutRefreshingStartupEnv(t *testing.
 	if err != nil {
 		t.Fatalf("CreateSandbox returned error: %v", err)
 	}
+	session.RuntimeEnvItems = []domain.SandboxEnvVar{{Name: "OPENAI_API_KEY", Value: "existing-token"}}
 	if err := store.SaveVMState(session.Summary.ID, domain.VMState{
 		Driver:    driverpkg.RuntimeDriverBoxlite,
 		BoxID:     "container-1",
@@ -331,8 +503,8 @@ func TestSandboxDriverResumeReusesRuntimeWithoutRefreshingStartupEnv(t *testing.
 	runtime := fakeSessionRuntime{
 		info: domain.SandboxVMInfo{BoxID: "container-1"},
 		ensureHook: func(resumed *domain.Sandbox) {
-			if len(resumed.RuntimeEnvItems) != 0 {
-				t.Fatalf("resume injected replacement startup env: %#v", resumed.RuntimeEnvItems)
+			if got := domain.SandboxEnvMap(resumed.RuntimeEnvItems)["OPENAI_API_KEY"]; got != "existing-token" {
+				t.Fatalf("resume runtime env = %#v", resumed.RuntimeEnvItems)
 			}
 		},
 	}
@@ -340,9 +512,6 @@ func TestSandboxDriverResumeReusesRuntimeWithoutRefreshingStartupEnv(t *testing.
 
 	if err := driver.StartSandboxVM(ctx, session); err != nil {
 		t.Fatalf("StartSandboxVM returned error: %v", err)
-	}
-	if ensureCalls != 0 {
-		t.Fatalf("startup facade refresh calls during resume = %d, want 0", ensureCalls)
 	}
 	vmState, err := store.GetVMState(session.Summary.ID)
 	if err != nil {
@@ -396,173 +565,44 @@ func TestSandboxDriverResumeRecordsAttemptBeforeRuntimeFailure(t *testing.T) {
 	}
 }
 
-func TestSandboxDriverStartSandboxVMInjectsOpenAIAndAnthropicFacadeEnv(t *testing.T) {
+func TestSandboxDriverStartSandboxVMUsesPreparedAgentEnvironmentWithoutAddingProviders(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	config := &appconfig.Config{
-		DataRoot:             root,
-		DbAddr:               filepath.Join(root, "data.db"),
-		SandboxRoot:          filepath.Join(root, "sandboxes"),
-		RuntimeDriver:        driverpkg.RuntimeDriverMicrosandbox,
-		MicrosandboxHome:     filepath.Join(root, "microsandbox"),
-		DefaultImage:         "guest:latest",
-		GuestWorkspacePath:   "/workspace",
-		JupyterGuestPort:     8888,
-		JupyterProxyBasePath: "/agent-compose/session",
-		SandboxStartTimeout:  2 * time.Second,
-		RuntimeBaseURL:       "http://agent-compose.test:7410",
+		DataRoot:            root,
+		SandboxRoot:         filepath.Join(root, "sandboxes"),
+		RuntimeDriver:       driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:        "guest:latest",
+		GuestWorkspacePath:  "/workspace",
+		SandboxStartTimeout: 2 * time.Second,
 	}
 	store, err := sessionstore.NewWithConfig(config)
 	if err != nil {
 		t.Fatalf("NewWithConfig returned error: %v", err)
 	}
-	di := do.New()
-	do.ProvideValue(di, ctx)
-	do.ProvideValue(di, config)
-	configDB, err := testutil.OpenConfigStore(t, di)
+	session, err := store.CreateSandbox(ctx, "adapter session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
 	if err != nil {
-		t.Fatalf("NewConfigStore returned error: %v", err)
+		t.Fatalf("CreateSandbox returned error: %v", err)
 	}
-	session, err := store.CreateSandbox(ctx, "adapter session", "", driverpkg.RuntimeDriverMicrosandbox, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
-	if err != nil {
-		t.Fatalf("CreateSession returned error: %v", err)
-	}
-	session.ProviderEnvItems = []domain.SandboxEnvVar{
-		{Name: "LLM_MODEL", Value: "gpt-test"},
-		{Name: "ANTHROPIC_BASE_URL", Value: "https://anthropic.example.test"},
-		{Name: "ANTHROPIC_AUTH_TOKEN", Value: "anthropic-secret"},
-		{Name: "ANTHROPIC_MODEL", Value: "claude-test"},
-	}
-	updatedProxyState := domain.ProxyState{
-		ProxyPath:  session.Summary.ProxyPath,
-		GuestHost:  "agent-compose-sandbox-1",
-		HostPort:   39000,
-		GuestPort:  8888,
-		JupyterURL: "http://127.0.0.1:39000/lab?token=secret",
-		Token:      "secret",
+	session.RuntimeEnvItems = []domain.SandboxEnvVar{
+		{Name: "OPENAI_API_KEY", Value: "prepared-token"},
+		{Name: "OPENAI_BASE_URL", Value: "http://prepared.example/v1"},
 	}
 	var runtimeEnv map[string]string
-	driver := NewSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{
-		info: domain.SandboxVMInfo{BoxID: "container-1", JupyterURL: updatedProxyState.JupyterURL, ProxyState: &updatedProxyState},
-		ensureHook: func(session *domain.Sandbox) {
-			runtimeEnv = map[string]string{}
-			for _, item := range session.RuntimeEnvItems {
-				runtimeEnv[item.Name] = item.Value
-			}
+	driver := NewSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: fakeSessionRuntime{
+		info: domain.SandboxVMInfo{BoxID: "container-1"},
+		ensureHook: func(started *domain.Sandbox) {
+			runtimeEnv = domain.SandboxEnvMap(started.RuntimeEnvItems)
 		},
 	}})
 
 	if err := driver.StartSandboxVM(ctx, session); err != nil {
 		t.Fatalf("StartSandboxVM returned error: %v", err)
 	}
-	if runtimeEnv["OPENAI_BASE_URL"] != "http://agent-compose.test:7410/api/runtime/sandboxes/"+session.Summary.ID+"/llm/openai/v1" {
-		t.Fatalf("OPENAI_BASE_URL = %q", runtimeEnv["OPENAI_BASE_URL"])
+	if runtimeEnv["OPENAI_API_KEY"] != "prepared-token" || runtimeEnv["OPENAI_BASE_URL"] != "http://prepared.example/v1" {
+		t.Fatalf("prepared runtime env = %#v", runtimeEnv)
 	}
-	if runtimeEnv["ANTHROPIC_BASE_URL"] != "http://agent-compose.test:7410/api/runtime/sandboxes/"+session.Summary.ID+"/llm/anthropic" {
-		t.Fatalf("ANTHROPIC_BASE_URL = %q", runtimeEnv["ANTHROPIC_BASE_URL"])
-	}
-	if runtimeEnv["OPENAI_API_KEY"] == "" {
-		t.Fatalf("OPENAI_API_KEY is empty")
-	}
-	if runtimeEnv["LLM_API_PROTOCOL"] != "responses" {
-		t.Fatalf("LLM_API_PROTOCOL = %q", runtimeEnv["LLM_API_PROTOCOL"])
-	}
-	if runtimeEnv["LLM_API_ENDPOINT"] != runtimeEnv["OPENAI_BASE_URL"] {
-		t.Fatalf("LLM_API_ENDPOINT = %q, want openai base %q", runtimeEnv["LLM_API_ENDPOINT"], runtimeEnv["OPENAI_BASE_URL"])
-	}
-	if runtimeEnv["ANTHROPIC_AUTH_TOKEN"] == "" {
-		t.Fatalf("ANTHROPIC_AUTH_TOKEN is empty")
-	}
-	if runtimeEnv["ANTHROPIC_AUTH_TOKEN"] != runtimeEnv["ANTHROPIC_API_KEY"] {
-		t.Fatalf("anthropic token mismatch auth=%q api=%q", runtimeEnv["ANTHROPIC_AUTH_TOKEN"], runtimeEnv["ANTHROPIC_API_KEY"])
-	}
-	if runtimeEnv["ANTHROPIC_AUTH_TOKEN"] == "anthropic-secret" {
-		t.Fatalf("expected managed anthropic facade token, got raw provider token")
-	}
-	if runtimeEnv["AGENT_COMPOSE_SANDBOX_TOKEN"] == runtimeEnv["ANTHROPIC_AUTH_TOKEN"] {
-		t.Fatalf("expected generic sandbox token to remain openai facade token")
-	}
-	if runtimeEnv["AGENT_COMPOSE_SESSION_TOKEN"] != "" {
-		t.Fatalf("AGENT_COMPOSE_SESSION_TOKEN should not be injected")
-	}
-}
-
-func TestSandboxDriverStartSandboxVMIgnoresOptionalClaudeConfigError(t *testing.T) {
-	ctx := context.Background()
-	originalEnsure := ensureSandboxLLMFacadeConfig
-	defer func() { ensureSandboxLLMFacadeConfig = originalEnsure }()
-	ensureSandboxLLMFacadeConfig = func(ctx context.Context, config *appconfig.Config, store runtimefacade.FacadeStore, session *domain.Sandbox, agent, model, source, runID string) (map[string]string, error) {
-		switch agent {
-		case "codex":
-			return map[string]string{
-				"AGENT_COMPOSE_SANDBOX_TOKEN": "openai-token",
-				"LLM_API_ENDPOINT":            "http://agent-compose.test:7410/api/runtime/sandboxes/" + session.Summary.ID + "/llm/openai/v1",
-				"LLM_API_KEY":                 "openai-token",
-				"LLM_API_PROTOCOL":            "responses",
-				"OPENAI_API_KEY":              "openai-token",
-				"OPENAI_BASE_URL":             "http://agent-compose.test:7410/api/runtime/sandboxes/" + session.Summary.ID + "/llm/openai/v1",
-			}, nil
-		case "claude":
-			return nil, domain.ClassifyError(domain.ErrRequired, "anthropic provider is required", nil)
-		default:
-			return nil, errors.New("unexpected agent")
-		}
-	}
-	root := t.TempDir()
-	config := &appconfig.Config{
-		DataRoot:             root,
-		DbAddr:               filepath.Join(root, "data.db"),
-		SandboxRoot:          filepath.Join(root, "sandboxes"),
-		RuntimeDriver:        driverpkg.RuntimeDriverMicrosandbox,
-		MicrosandboxHome:     filepath.Join(root, "microsandbox"),
-		DefaultImage:         "guest:latest",
-		GuestWorkspacePath:   "/workspace",
-		JupyterGuestPort:     8888,
-		JupyterProxyBasePath: "/agent-compose/session",
-		SandboxStartTimeout:  2 * time.Second,
-		RuntimeBaseURL:       "http://agent-compose.test:7410",
-	}
-	store, err := sessionstore.NewWithConfig(config)
-	if err != nil {
-		t.Fatalf("NewWithConfig returned error: %v", err)
-	}
-	di := do.New()
-	do.ProvideValue(di, ctx)
-	do.ProvideValue(di, config)
-	configDB, err := testutil.OpenConfigStore(t, di)
-	if err != nil {
-		t.Fatalf("NewConfigStore returned error: %v", err)
-	}
-	session, err := store.CreateSandbox(ctx, "adapter session", "", driverpkg.RuntimeDriverMicrosandbox, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
-	if err != nil {
-		t.Fatalf("CreateSession returned error: %v", err)
-	}
-	updatedProxyState := domain.ProxyState{
-		ProxyPath:  session.Summary.ProxyPath,
-		GuestHost:  "agent-compose-sandbox-1",
-		HostPort:   39000,
-		GuestPort:  8888,
-		JupyterURL: "http://127.0.0.1:39000/lab?token=secret",
-		Token:      "secret",
-	}
-	var runtimeEnv map[string]string
-	driver := NewSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{
-		info: domain.SandboxVMInfo{BoxID: "container-1", JupyterURL: updatedProxyState.JupyterURL, ProxyState: &updatedProxyState},
-		ensureHook: func(session *domain.Sandbox) {
-			runtimeEnv = map[string]string{}
-			for _, item := range session.RuntimeEnvItems {
-				runtimeEnv[item.Name] = item.Value
-			}
-		},
-	}})
-
-	if err := driver.StartSandboxVM(ctx, session); err != nil {
-		t.Fatalf("StartSandboxVM returned error: %v", err)
-	}
-	if runtimeEnv["OPENAI_BASE_URL"] == "" || runtimeEnv["OPENAI_API_KEY"] == "" {
-		t.Fatalf("missing openai facade env: %#v", runtimeEnv)
-	}
-	if runtimeEnv["ANTHROPIC_BASE_URL"] != "" || runtimeEnv["ANTHROPIC_AUTH_TOKEN"] != "" || runtimeEnv["ANTHROPIC_API_KEY"] != "" {
-		t.Fatalf("expected optional claude env to be skipped, got %#v", runtimeEnv)
+	if runtimeEnv["ANTHROPIC_API_KEY"] != "" || runtimeEnv["ANTHROPIC_BASE_URL"] != "" {
+		t.Fatalf("driver added an unrelated provider environment: %#v", runtimeEnv)
 	}
 }

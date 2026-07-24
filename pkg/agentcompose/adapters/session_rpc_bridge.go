@@ -18,6 +18,7 @@ import (
 	appconfig "agent-compose/pkg/config"
 	"agent-compose/pkg/dashboard"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/execution"
 	"agent-compose/pkg/llms"
 	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
@@ -39,10 +40,11 @@ type SandboxRPCBridge struct {
 	cap              capabilities.Provider
 	capTokens        *CapabilitySandboxResolver
 	dashboard        *dashboard.Hub
+	agentExecutor    *AgentExecutor
 	lifecycleLocks   *sessions.LifecycleLocks
 }
 
-func NewSandboxRPCBridge(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, workspaceEnsurer workspaces.WorkspaceEnsurer, driver sessions.SandboxDriver, runtimes RuntimeProvider, bus *loaders.Bus, streams *sessions.StreamBroker, cap capabilities.Provider, capTokens *CapabilitySandboxResolver, dashboard *dashboard.Hub, locks ...*sessions.LifecycleLocks) *SandboxRPCBridge {
+func NewSandboxRPCBridge(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, workspaceEnsurer workspaces.WorkspaceEnsurer, driver sessions.SandboxDriver, runtimes RuntimeProvider, bus *loaders.Bus, streams *sessions.StreamBroker, cap capabilities.Provider, capTokens *CapabilitySandboxResolver, dashboard *dashboard.Hub, agentExecutor *AgentExecutor, locks ...*sessions.LifecycleLocks) *SandboxRPCBridge {
 	bridge := &SandboxRPCBridge{
 		config:           config,
 		store:            store,
@@ -55,6 +57,7 @@ func NewSandboxRPCBridge(config *appconfig.Config, store *sessionstore.Store, co
 		cap:              cap,
 		capTokens:        capTokens,
 		dashboard:        dashboard,
+		agentExecutor:    agentExecutor,
 	}
 	if len(locks) > 0 {
 		bridge.lifecycleLocks = locks[0]
@@ -78,7 +81,7 @@ func (b *SandboxRPCBridge) CallJSONWithSource(ctx context.Context, method, reque
 		if err := decodeSandboxRPCJSON(requestJSON, &request); err != nil {
 			return "", err
 		}
-		loaded, err := b.createSandbox(ctx, request, source)
+		loaded, err := b.createSandboxWithAgent(ctx, request, source, loaders.SandboxCreationContextFromContext(ctx))
 		if err != nil {
 			return "", err
 		}
@@ -158,13 +161,43 @@ func (b *SandboxRPCBridge) publishLoaderTopic(topic string, payload map[string]a
 }
 
 func (b *SandboxRPCBridge) createSandbox(ctx context.Context, req sandboxRPCCreateRequest, source string) (*domain.Sandbox, error) {
-	tags := append([]domain.SandboxTag(nil), req.Tags...)
+	return b.createSandboxWithAgent(ctx, req, source, loaders.SandboxCreationContext{})
+}
+
+func (b *SandboxRPCBridge) createSandboxWithAgent(ctx context.Context, req sandboxRPCCreateRequest, source string, creation loaders.SandboxCreationContext) (*domain.Sandbox, error) {
+	agentConfig := execution.AgentConfig{Provider: domain.NormalizeAgentKind(creation.Provider)}
+	var agentDefinition *domain.AgentDefinition
+	if agentID := strings.TrimSpace(creation.AgentDefinitionID); agentID != "" {
+		definition, err := b.configDB.GetAgentDefinition(ctx, agentID)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("resolve sandbox agent definition %s: %w", agentID, err))
+		}
+		if !definition.Enabled {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("sandbox agent definition %s is disabled", agentID))
+		}
+		agentDefinition = &definition
+		agentConfig = execution.AgentConfigFromDefinition(definition, domain.DefaultAgentProvider)
+	}
+	if agentConfig.Provider == "" {
+		agentConfig.Provider = domain.DefaultAgentProvider
+	}
+	tags := sandboxTagsWithoutAgentIdentity(req.Tags)
+	tags = append(tags, domain.SandboxTag{Name: domain.AgentSandboxTagProvider, Value: agentConfig.Provider})
 	envItems := append([]domain.SandboxEnvVar(nil), req.EnvItems...)
 	globalEnvItems, err := b.configDB.ListGlobalEnv(ctx)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	envItems = domain.MergeEnvItems(globalEnvItems, envItems)
+	if agentDefinition != nil {
+		envItems = domain.MergeEnvItems(domain.MergeEnvItems(globalEnvItems, agentDefinition.EnvItems), envItems)
+		tags = append(tags,
+			domain.SandboxTag{Name: domain.AgentSandboxTagSource, Value: domain.AgentSandboxTagSourceVal},
+			domain.SandboxTag{Name: domain.AgentSandboxTagID, Value: agentDefinition.ID},
+			domain.SandboxTag{Name: domain.AgentSandboxTagName, Value: agentDefinition.Name},
+		)
+	} else {
+		envItems = domain.MergeEnvItems(globalEnvItems, envItems)
+	}
 	providerEnvItems := envItems
 	envItems = llms.FilterPersistedRuntimeEnv(envItems)
 	capabilityVars, capabilityTags := capabilities.BuildGatewaySandboxVars(capabilities.ProxyTarget(b.cap), req.CapsetIDs)
@@ -200,6 +233,16 @@ func (b *SandboxRPCBridge) createSandbox(ctx context.Context, req sandboxRPCCrea
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	writeCapabilityGuide(ctx, b.cap, b.store, b.streams, session, req.CapsetIDs)
+	if b.agentExecutor == nil {
+		session.Summary.VMStatus = domain.VMStatusFailed
+		_ = b.store.UpdateSandbox(ctx, session)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("agent executor is required"))
+	}
+	if err := b.agentExecutor.PrepareSandboxAgentEnvironment(ctx, session, agentConfig, agentDefinition); err != nil {
+		session.Summary.VMStatus = domain.VMStatusFailed
+		_ = b.store.UpdateSandbox(ctx, session)
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
 	if err := b.driver.StartSandboxVM(ctx, session); err != nil {
 		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = b.store.UpdateSandbox(ctx, session)
@@ -230,6 +273,19 @@ func (b *SandboxRPCBridge) createSandbox(ctx context.Context, req sandboxRPCCrea
 	b.indexCapabilitySandbox(loaded)
 	b.publishLoaderTopic("agent-compose.session.created", loaders.SessionTopicPayload(loaded, source))
 	return loaded, nil
+}
+
+func sandboxTagsWithoutAgentIdentity(tags []domain.SandboxTag) []domain.SandboxTag {
+	filtered := make([]domain.SandboxTag, 0, len(tags))
+	for _, tag := range tags {
+		switch strings.TrimSpace(tag.Name) {
+		case domain.AgentSandboxTagID, domain.AgentSandboxTagName, domain.AgentSandboxTagProvider:
+			continue
+		default:
+			filtered = append(filtered, tag)
+		}
+	}
+	return filtered
 }
 
 func (b *SandboxRPCBridge) ResumeSandbox(ctx context.Context, sandboxID string) (*domain.Sandbox, error) {
@@ -367,7 +423,8 @@ func (b *SandboxRPCBridge) sessionLifecycle() sessions.Lifecycle {
 		GuideWriter: func(ctx context.Context, session *domain.Sandbox, capsetIDs []string) {
 			writeCapabilityGuide(ctx, b.cap, b.store, b.streams, session, capsetIDs)
 		},
-		Locks: b.lifecycleLocks,
+		PrepareAgentEnvironment: b.agentExecutor.PrepareSandboxAgentEnvironmentFromTags,
+		Locks:                   b.lifecycleLocks,
 	}
 }
 

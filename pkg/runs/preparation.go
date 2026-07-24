@@ -31,6 +31,7 @@ type WorkspaceResolver interface {
 type Preparation struct {
 	EnvItems         []domain.SandboxEnvVar
 	ProviderEnvItems []domain.SandboxEnvVar
+	AgentDefinition  *domain.AgentDefinition
 	CapsetIDs        []string
 	WorkspaceConfig  *domain.WorkspaceConfig
 	Workspace        *domain.SandboxWorkspace
@@ -79,6 +80,7 @@ func PrepareProjectRun(ctx context.Context, store PreparationStore, resolver Wor
 	prepared := Preparation{
 		EnvItems:         envItems,
 		ProviderEnvItems: providerEnvItems,
+		AgentDefinition:  &agent,
 		CapsetIDs:        capabilities.NormalizeCapsetIDs(agent.CapsetIDs),
 		Volumes:          agent.Volumes,
 		ProjectRoot:      ProjectRoot(project),

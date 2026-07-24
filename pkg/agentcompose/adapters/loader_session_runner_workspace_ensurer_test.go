@@ -8,6 +8,7 @@ import (
 
 	"agent-compose/pkg/capabilities"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/execution"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/workspaces"
 )
@@ -83,7 +84,7 @@ func TestLoaderSandboxRunnerEnsureUsesWorkspaceEnsurerBeforeGuideAndDriver(t *te
 		}
 	}
 	publisher := &loaderSessionPublisherFake{}
-	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, ensurer, driver, bridge.cap, nil, bridge.streams, publisher, nil)
+	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, ensurer, driver, bridge.cap, nil, bridge.streams, publisher, nil, bridge.agentExecutor)
 	loader := domain.Loader{Summary: domain.LoaderSummary{
 		ID:            "loader-create",
 		Name:          "Loader Create",
@@ -119,6 +120,9 @@ func TestLoaderSandboxRunnerEnsureUsesWorkspaceEnsurerBeforeGuideAndDriver(t *te
 	if sandbox.Summary.VMStatus != domain.VMStatusRunning || sandbox.WorkspaceProvisioning == nil || sandbox.WorkspaceProvisioning.Status != domain.SandboxWorkspaceProvisioningStatusReady {
 		t.Fatalf("created sandbox state = vm:%q provisioning:%#v", sandbox.Summary.VMStatus, sandbox.WorkspaceProvisioning)
 	}
+	if execution.SessionTagValue(sandbox.Summary.Tags, domain.AgentSandboxTagProvider) != domain.DefaultAgentProvider {
+		t.Fatalf("sandbox provider tag = %#v", sandbox.Summary.Tags)
+	}
 	binding, ok, err := bridge.configDB.GetLoaderBinding(ctx, loader.Summary.ID, "trigger-create")
 	if err != nil || !ok || binding.SandboxID != sandbox.Summary.ID {
 		t.Fatalf("loader binding = %#v ok=%v err=%v, want sandbox %q", binding, ok, err, sandbox.Summary.ID)
@@ -137,7 +141,7 @@ func TestLoaderSandboxRunnerEnsureWorkspaceEnsurerErrorShortCircuitsDriver(t *te
 		return []byte("unexpected guide"), nil
 	}}
 	publisher := &loaderSessionPublisherFake{}
-	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, ensurer, driver, capabilityProvider, nil, bridge.streams, publisher, nil)
+	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, ensurer, driver, capabilityProvider, nil, bridge.streams, publisher, nil, bridge.agentExecutor)
 	loader := domain.Loader{Summary: domain.LoaderSummary{
 		ID:            "loader-ensure-error",
 		Name:          "Loader Ensure Error",
@@ -192,7 +196,7 @@ func TestLoaderSandboxRunnerEnsureRuntimeFailurePreservesReadyProvisioning(t *te
 	}}
 	startErr := errors.New("loader runtime start failed")
 	driver.startErr = startErr
-	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, ensurer, driver, nil, nil, bridge.streams, nil, nil)
+	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, ensurer, driver, nil, nil, bridge.streams, nil, nil, bridge.agentExecutor)
 	loader := domain.Loader{Summary: domain.LoaderSummary{
 		ID:            "loader-runtime-error",
 		Name:          "Loader Runtime Error",
@@ -275,7 +279,7 @@ func TestLoaderSandboxRunnerLoadOrResumeUsesWorkspaceEnsurer(t *testing.T) {
 			}
 		}
 		publisher := &loaderSessionPublisherFake{}
-		runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, ensurer, driver, capabilityProvider, nil, bridge.streams, publisher, nil)
+		runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, ensurer, driver, capabilityProvider, nil, bridge.streams, publisher, nil, bridge.agentExecutor)
 
 		resumed, eventType, err := runner.LoadOrResume(ctx, stopped.Summary.ID)
 		if err != nil {
@@ -328,7 +332,7 @@ func TestLoaderSandboxRunnerLoadOrResumeUsesWorkspaceEnsurer(t *testing.T) {
 			return nil, nil
 		}}
 		publisher := &loaderSessionPublisherFake{}
-		runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, ensurer, driver, capabilityProvider, nil, bridge.streams, publisher, nil)
+		runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, ensurer, driver, capabilityProvider, nil, bridge.streams, publisher, nil, bridge.agentExecutor)
 
 		_, _, err = runner.LoadOrResume(ctx, stopped.Summary.ID)
 		if err != ensureErr {
@@ -366,7 +370,7 @@ func TestLoaderSandboxRunnerLoadOrResumeUsesWorkspaceEnsurer(t *testing.T) {
 		}}
 		startErr := errors.New("resume runtime start failed")
 		driver.startErr = startErr
-		runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, ensurer, driver, nil, nil, bridge.streams, nil, nil)
+		runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, ensurer, driver, nil, nil, bridge.streams, nil, nil, bridge.agentExecutor)
 
 		_, _, err = runner.LoadOrResume(ctx, stopped.Summary.ID)
 		if err != startErr {
@@ -419,7 +423,7 @@ func TestLoaderSandboxRunnerStickyRunningMatchingConfigSkipsEnsurerAndPreservesW
 	request := domain.LoaderAgentRequest{Agent: "codex", BindingTriggerID: "sticky-trigger"}
 	ensurer := &recordingLoaderWorkspaceEnsurer{err: errors.New("running sticky path must not ensure workspace")}
 	publisher := &loaderSessionPublisherFake{}
-	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, ensurer, driver, nil, nil, bridge.streams, publisher, nil)
+	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, ensurer, driver, nil, nil, bridge.streams, publisher, nil, bridge.agentExecutor)
 	baseConfigHash, err := loaderSandboxConfigHash(loader)
 	if err != nil {
 		t.Fatalf("loaderSandboxConfigHash returned error: %v", err)
@@ -476,7 +480,7 @@ func TestLoaderSandboxRunnerAdoptsLegacyStickyBindingWithoutStoppingSandbox(t *t
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
 			bridge, driver := newTestSandboxRPCBridge(t)
-			runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, &recordingLoaderWorkspaceEnsurer{}, driver, nil, nil, bridge.streams, nil, nil)
+			runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, &recordingLoaderWorkspaceEnsurer{}, driver, nil, nil, bridge.streams, nil, nil, bridge.agentExecutor)
 			loader := domain.Loader{Summary: domain.LoaderSummary{ID: "legacy-loader", SandboxPolicy: domain.LoaderSandboxPolicySticky}}
 			const triggerID = "legacy-trigger"
 			const configHash = "sha256:current"
@@ -513,7 +517,7 @@ func TestLoaderSandboxRunnerAdoptsLegacyStickyBindingWithoutStoppingSandbox(t *t
 func TestLoaderSandboxRunnerConcurrentStickyClaimReusesWinner(t *testing.T) {
 	ctx := context.Background()
 	bridge, driver := newTestSandboxRPCBridge(t)
-	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, &recordingLoaderWorkspaceEnsurer{}, driver, nil, nil, bridge.streams, nil, nil)
+	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, &recordingLoaderWorkspaceEnsurer{}, driver, nil, nil, bridge.streams, nil, nil, bridge.agentExecutor)
 	loader := domain.Loader{Summary: domain.LoaderSummary{
 		ID:                "loader-concurrent-sticky",
 		Name:              "Concurrent Sticky",
@@ -586,7 +590,7 @@ func TestLoaderSandboxRunnerStickyWorkspaceConfigChangeCreatesReplacement(t *tes
 	if err != nil {
 		t.Fatalf("CreateWorkspaceConfig returned error: %v", err)
 	}
-	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, &recordingLoaderWorkspaceEnsurer{}, driver, nil, nil, bridge.streams, &loaderSessionPublisherFake{}, nil)
+	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, &recordingLoaderWorkspaceEnsurer{}, driver, nil, nil, bridge.streams, &loaderSessionPublisherFake{}, nil, bridge.agentExecutor)
 	loader := domain.Loader{Summary: domain.LoaderSummary{
 		ID:            "loader-sticky-workspace-update",
 		Name:          "Loader Sticky Workspace Update",
@@ -636,6 +640,7 @@ func TestLoaderSandboxRunnerStickyRunningConfigChangeCreatesReplacement(t *testi
 		bridge.streams,
 		&loaderSessionPublisherFake{},
 		capTokens,
+		bridge.agentExecutor,
 	)
 	loader := domain.Loader{
 		Summary: domain.LoaderSummary{
@@ -715,7 +720,7 @@ func TestLoaderSandboxRunnerStickyRunningConfigChangeCreatesReplacement(t *testi
 func TestLoaderSandboxRunnerStickyStoppedConfigChangeDoesNotResume(t *testing.T) {
 	ctx := context.Background()
 	bridge, driver := newTestSandboxRPCBridge(t)
-	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, &recordingLoaderWorkspaceEnsurer{}, driver, nil, nil, bridge.streams, &loaderSessionPublisherFake{}, nil)
+	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, &recordingLoaderWorkspaceEnsurer{}, driver, nil, nil, bridge.streams, &loaderSessionPublisherFake{}, nil, bridge.agentExecutor)
 	loader := domain.Loader{
 		Summary: domain.LoaderSummary{
 			ID:            "loader-sticky-stopped-update",

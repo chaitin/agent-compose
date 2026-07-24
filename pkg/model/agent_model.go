@@ -16,6 +16,7 @@ const (
 	AgentSandboxTagSourceVal = "agent"
 	AgentSandboxTagID        = "agent_id"
 	AgentSandboxTagName      = "agent_name"
+	AgentSandboxTagProvider  = "agent_provider"
 )
 
 type AgentDefinition struct {

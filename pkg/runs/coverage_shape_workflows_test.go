@@ -545,12 +545,14 @@ func TestRunsControllerRunProjectAgentCommandWorkflow(t *testing.T) {
 		runs:     map[string]domain.ProjectRunRecord{},
 	}
 	runtime := &fakeControllerRuntime{}
+	executor := &fakeControllerExecutor{}
 	controller := NewController(ControllerDependencies{
 		Config:           config,
 		Store:            store,
 		ConfigDB:         configDB,
 		WorkspaceEnsurer: &controllerWorkspaceEnsurer{},
 		Driver:           &fakeControllerDriver{store: store},
+		Executor:         executor,
 		Runtime: func(*domain.Sandbox) (Runtime, error) {
 			return runtime, nil
 		},
@@ -576,6 +578,16 @@ func TestRunsControllerRunProjectAgentCommandWorkflow(t *testing.T) {
 	})
 	if err != nil || execErr != nil {
 		t.Fatalf("RunProjectAgent command err=%v execErr=%v run=%#v", err, execErr, run)
+	}
+	if executor.prepareCalls != 1 || executor.preparedAgent.Provider != "codex" || executor.preparedDefinition == nil || executor.preparedDefinition.ID != "agent-1" {
+		t.Fatalf("sandbox agent preparation = calls:%d agent:%#v definition:%#v", executor.prepareCalls, executor.preparedAgent, executor.preparedDefinition)
+	}
+	sandbox, err := store.GetSandbox(ctx, run.SandboxID)
+	if err != nil {
+		t.Fatalf("GetSandbox returned error: %v", err)
+	}
+	if execution.SessionTagValue(sandbox.Summary.Tags, domain.AgentSandboxTagID) != "agent-1" || execution.SessionTagValue(sandbox.Summary.Tags, domain.AgentSandboxTagProvider) != "codex" {
+		t.Fatalf("sandbox agent tags = %#v", sandbox.Summary.Tags)
 	}
 	if run.Status != domain.ProjectRunStatusSucceeded || run.Output != "command output\n" || run.ArtifactsDir == "" || run.LogsPath == "" {
 		t.Fatalf("command run = %#v", run)
@@ -629,6 +641,57 @@ func TestRunsControllerRunProjectAgentCommandWorkflow(t *testing.T) {
 	}
 }
 
+func TestRunsControllerExistingSandboxDoesNotRepeatAgentEnvironmentPreparation(t *testing.T) {
+	fixture := newControllerRunFixture(t)
+	sandbox, err := fixture.store.CreateSandbox(fixture.ctx, "existing", "", driverpkg.RuntimeDriverDocker, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	sandbox.Summary.VMStatus = domain.VMStatusRunning
+	if err := fixture.store.UpdateSandbox(fixture.ctx, sandbox); err != nil {
+		t.Fatalf("UpdateSandbox returned error: %v", err)
+	}
+	result, err := fixture.controller.ensureProjectRunSandbox(fixture.ctx, domain.ProjectRunRecord{
+		RunID: "run-existing", ProjectID: "project-1", ProjectName: "Project", AgentName: "worker", Driver: driverpkg.RuntimeDriverDocker, ImageRef: "guest:latest",
+	}, Preparation{}, RunAgentRequest{SandboxID: sandbox.Summary.ID})
+	if err != nil {
+		t.Fatalf("ensureProjectRunSandbox returned error: %v", err)
+	}
+	if result.Created || result.Sandbox == nil || result.Sandbox.Summary.ID != sandbox.Summary.ID {
+		t.Fatalf("existing sandbox result = %#v", result)
+	}
+	if fixture.executor.prepareCalls != 0 || fixture.executor.prepareFromTagsCalls != 0 {
+		t.Fatalf("existing sandbox preparation calls = direct:%d tags:%d", fixture.executor.prepareCalls, fixture.executor.prepareFromTagsCalls)
+	}
+}
+
+func TestRunsControllerFailedFreshSandboxRetryPreparesAgentEnvironment(t *testing.T) {
+	fixture := newControllerRunFixture(t)
+	sandbox, err := fixture.store.CreateSandbox(fixture.ctx, "failed fresh start", "", driverpkg.RuntimeDriverDocker, "guest:latest", "", domain.SandboxTypeManual, nil, nil, []domain.SandboxTag{
+		{Name: domain.AgentSandboxTagProvider, Value: "codex"},
+	})
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	sandbox.Summary.VMStatus = domain.VMStatusFailed
+	if err := fixture.store.UpdateSandbox(fixture.ctx, sandbox); err != nil {
+		t.Fatalf("UpdateSandbox returned error: %v", err)
+	}
+
+	result, err := fixture.controller.ensureProjectRunSandbox(fixture.ctx, domain.ProjectRunRecord{
+		RunID: "run-retry", ProjectID: "project-1", ProjectName: "Project", AgentName: "worker", Driver: driverpkg.RuntimeDriverDocker, ImageRef: "guest:latest",
+	}, Preparation{}, RunAgentRequest{SandboxID: sandbox.Summary.ID})
+	if err != nil {
+		t.Fatalf("ensureProjectRunSandbox returned error: %v", err)
+	}
+	if result.Sandbox == nil || result.Sandbox.Summary.VMStatus != domain.VMStatusRunning {
+		t.Fatalf("retried sandbox = %#v", result.Sandbox)
+	}
+	if fixture.executor.prepareFromTagsCalls != 1 {
+		t.Fatalf("tag-based agent preparation calls = %d, want 1", fixture.executor.prepareFromTagsCalls)
+	}
+}
+
 func TestRunsControllerRunProjectAgentCommandNonZeroExitPreservesOutput(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -668,6 +731,7 @@ func TestRunsControllerRunProjectAgentCommandNonZeroExitPreservesOutput(t *testi
 		ConfigDB:         configDB,
 		WorkspaceEnsurer: &controllerWorkspaceEnsurer{},
 		Driver:           &fakeControllerDriver{store: store},
+		Executor:         &fakeControllerExecutor{},
 		Runtime: func(*domain.Sandbox) (Runtime, error) {
 			return runtime, nil
 		},
@@ -1385,6 +1449,7 @@ func newControllerRunFixture(t *testing.T) *controllerRunFixture {
 		Images:           fakeControllerImages{},
 		LoaderEngine:     &loaders.QJSLoaderEngine{},
 		Dashboard:        dashboard,
+		LifecycleLocks:   sessions.NewLifecycleLocks(),
 	})
 	return &controllerRunFixture{
 		ctx:        ctx,
@@ -2582,9 +2647,26 @@ func (d *fakeControllerDriver) RemoveSandboxVM(context.Context, *domain.Sandbox)
 }
 
 type fakeControllerExecutor struct {
-	request execution.ExecuteAgentRequest
-	cell    domain.NotebookCell
-	execErr error
+	request              execution.ExecuteAgentRequest
+	cell                 domain.NotebookCell
+	execErr              error
+	prepareCalls         int
+	prepareFromTagsCalls int
+	preparedAgent        execution.AgentConfig
+	preparedDefinition   *domain.AgentDefinition
+	prepareErr           error
+}
+
+func (e *fakeControllerExecutor) PrepareSandboxAgentEnvironment(_ context.Context, _ *domain.Sandbox, agent execution.AgentConfig, definition *domain.AgentDefinition) error {
+	e.prepareCalls++
+	e.preparedAgent = agent
+	e.preparedDefinition = definition
+	return e.prepareErr
+}
+
+func (e *fakeControllerExecutor) PrepareSandboxAgentEnvironmentFromTags(_ context.Context, _ *domain.Sandbox) error {
+	e.prepareFromTagsCalls++
+	return e.prepareErr
 }
 
 func (e *fakeControllerExecutor) ExecuteAgentRequest(_ context.Context, _ *domain.Sandbox, req execution.ExecuteAgentRequest) (domain.NotebookCell, domain.SandboxEvent, domain.SandboxEvent, error) {
@@ -2676,6 +2758,7 @@ func newTestRunAttachController(t *testing.T, frames []driverpkg.RuntimeOutputFr
 		ConfigDB:         configDB,
 		WorkspaceEnsurer: &controllerWorkspaceEnsurer{},
 		Driver:           &fakeControllerDriver{store: store},
+		Executor:         &fakeControllerExecutor{},
 		Runtime: func(*domain.Sandbox) (Runtime, error) {
 			return runtime, nil
 		},

@@ -112,6 +112,9 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 	if responseJSON != rpc.response || rpc.source != domain.SandboxTypeScript+":"+loader.Summary.ID {
 		t.Fatalf("rpc response/source = %q/%q", responseJSON, rpc.source)
 	}
+	if rpc.creation.Provider != "gemini" || rpc.creation.AgentDefinitionID != "" {
+		t.Fatalf("rpc sandbox creation context = %#v", rpc.creation)
+	}
 	if !store.containsLink("sandbox-rpc", "sandbox_rpc_completed") {
 		t.Fatalf("sandbox links = %#v", store.links)
 	}
@@ -576,11 +579,13 @@ func (l *hostLLMFake) Generate(_ context.Context, prompt, _, _ string) (domain.L
 type hostRPCFake struct {
 	response string
 	source   string
+	creation loaders.SandboxCreationContext
 	err      error
 }
 
-func (r *hostRPCFake) CallJSONWithSource(_ context.Context, _, _, source string) (string, error) {
+func (r *hostRPCFake) CallJSONWithSource(ctx context.Context, _, _, source string) (string, error) {
 	r.source = source
+	r.creation = loaders.SandboxCreationContextFromContext(ctx)
 	return r.response, r.err
 }
 

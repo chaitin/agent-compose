@@ -62,6 +62,22 @@ type HostSessionRPC interface {
 	CallJSONWithSource(ctx context.Context, method, requestJSON, source string) (string, error)
 }
 
+type SandboxCreationContext struct {
+	AgentDefinitionID string
+	Provider          string
+}
+
+type sandboxCreationContextKey struct{}
+
+func WithSandboxCreationContext(ctx context.Context, value SandboxCreationContext) context.Context {
+	return context.WithValue(ctx, sandboxCreationContextKey{}, value)
+}
+
+func SandboxCreationContextFromContext(ctx context.Context) SandboxCreationContext {
+	value, _ := ctx.Value(sandboxCreationContextKey{}).(SandboxCreationContext)
+	return value
+}
+
 type HostPublisher interface {
 	Publish(topic string, payload map[string]any)
 }
@@ -150,6 +166,10 @@ func (h *RuntimeHost) CallSessionRPC(ctx context.Context, method, requestJSON st
 	}
 	method = strings.TrimSpace(method)
 	requestJSON = strings.TrimSpace(requestJSON)
+	ctx = WithSandboxCreationContext(ctx, SandboxCreationContext{
+		AgentDefinitionID: strings.TrimSpace(h.loader.Summary.AgentID),
+		Provider:          domain.NormalizeAgentKind(h.loader.Summary.DefaultAgent),
+	})
 	responseJSON, err := h.deps.SessionRPC.CallJSONWithSource(ctx, method, requestJSON, domain.SandboxTypeScript+":"+h.loader.Summary.ID)
 	linkedSandboxID := h.linkedSandboxID(method, requestJSON, responseJSON)
 	if err != nil {

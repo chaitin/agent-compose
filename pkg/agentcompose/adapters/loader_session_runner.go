@@ -14,6 +14,7 @@ import (
 	"agent-compose/pkg/capabilities"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/execution"
 	"agent-compose/pkg/llms"
 	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
@@ -39,11 +40,12 @@ type LoaderSandboxRunner struct {
 	Streams          *sessions.StreamBroker
 	Publisher        loaders.ControllerPublisher
 	CapTokens        *CapabilitySandboxResolver
+	AgentExecutor    *AgentExecutor
 	LifecycleLocks   *sessions.LifecycleLocks
 }
 
-func NewLoaderSandboxRunner(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, workspaceEnsurer workspaces.WorkspaceEnsurer, driver sessions.SandboxDriver, cap capabilities.Provider, volumeResolver LoaderVolumeResolver, streams *sessions.StreamBroker, publisher loaders.ControllerPublisher, capTokens *CapabilitySandboxResolver, locks ...*sessions.LifecycleLocks) *LoaderSandboxRunner {
-	runner := &LoaderSandboxRunner{Config: config, Store: store, ConfigDB: configDB, workspaceEnsurer: workspaceEnsurer, Driver: driver, Cap: cap, Volumes: volumeResolver, Streams: streams, Publisher: publisher, CapTokens: capTokens}
+func NewLoaderSandboxRunner(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, workspaceEnsurer workspaces.WorkspaceEnsurer, driver sessions.SandboxDriver, cap capabilities.Provider, volumeResolver LoaderVolumeResolver, streams *sessions.StreamBroker, publisher loaders.ControllerPublisher, capTokens *CapabilitySandboxResolver, agentExecutor *AgentExecutor, locks ...*sessions.LifecycleLocks) *LoaderSandboxRunner {
+	runner := &LoaderSandboxRunner{Config: config, Store: store, ConfigDB: configDB, workspaceEnsurer: workspaceEnsurer, Driver: driver, Cap: cap, Volumes: volumeResolver, Streams: streams, Publisher: publisher, CapTokens: capTokens, AgentExecutor: agentExecutor}
 	if len(locks) > 0 {
 		runner.LifecycleLocks = locks[0]
 	}
@@ -107,6 +109,19 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 	if agentDefinition != nil {
 		envItems = domain.MergeEnvItems(envItems, agentDefinition.EnvItems)
 	}
+	agentConfig := execution.AgentConfig{Provider: domain.NormalizeAgentKind(request.Agent)}
+	if agentDefinition != nil {
+		agentConfig = execution.AgentConfigFromDefinition(*agentDefinition, domain.DefaultAgentProvider)
+		if requestedProvider := domain.NormalizeAgentKind(request.Agent); requestedProvider != "" {
+			agentConfig.Provider = requestedProvider
+		}
+	}
+	if agentConfig.Provider == "" {
+		agentConfig.Provider = domain.NormalizeAgentKind(loader.Summary.DefaultAgent)
+	}
+	if agentConfig.Provider == "" {
+		agentConfig.Provider = domain.DefaultAgentProvider
+	}
 	envItems = domain.MergeEnvItems(envItems, loader.EnvItems)
 	envItems = domain.MergeEnvItems(envItems, domain.LoaderAgentSandboxEnv(request))
 	providerEnvItems := envItems
@@ -153,7 +168,12 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 	if strings.TrimSpace(loader.Summary.ManagedProjectID) != "" {
 		origin = "scheduler"
 	}
-	tags := []domain.SandboxTag{{Name: "origin", Value: origin}, {Name: "loader_id", Value: loader.Summary.ID}, {Name: "loader_name", Value: loader.Summary.Name}}
+	tags := []domain.SandboxTag{
+		{Name: "origin", Value: origin},
+		{Name: "loader_id", Value: loader.Summary.ID},
+		{Name: "loader_name", Value: loader.Summary.Name},
+		{Name: domain.AgentSandboxTagProvider, Value: agentConfig.Provider},
+	}
 	if origin == "scheduler" {
 		projectID := strings.TrimSpace(loader.Summary.ManagedProjectID)
 		tags = append(tags,
@@ -193,6 +213,16 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 		return nil, "", err
 	}
 	writeCapabilityGuide(ctx, r.Cap, r.Store, r.Streams, session, loader.Summary.CapsetIDs)
+	if r.AgentExecutor == nil {
+		session.Summary.VMStatus = domain.VMStatusFailed
+		_ = r.Store.UpdateSandbox(ctx, session)
+		return nil, "", fmt.Errorf("agent executor is required")
+	}
+	if err := r.AgentExecutor.PrepareSandboxAgentEnvironment(ctx, session, agentConfig, agentDefinition); err != nil {
+		session.Summary.VMStatus = domain.VMStatusFailed
+		_ = r.Store.UpdateSandbox(ctx, session)
+		return nil, "", err
+	}
 	if err := r.Driver.StartSandboxVM(ctx, session); err != nil {
 		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = r.Store.UpdateSandbox(ctx, session)
@@ -275,6 +305,15 @@ func (r *LoaderSandboxRunner) loadOrResumeLocked(ctx context.Context, sessionID 
 	}
 	if err := r.workspaceEnsurer.Ensure(ctx, session); err != nil {
 		return nil, "", err
+	}
+	vmState, err := r.Store.GetVMState(session.Summary.ID)
+	if err != nil {
+		return nil, "", err
+	}
+	if vmState.StartedAt.IsZero() {
+		if err := r.AgentExecutor.PrepareSandboxAgentEnvironmentFromTags(ctx, session); err != nil {
+			return nil, "", err
+		}
 	}
 	writeCapabilityGuide(ctx, r.Cap, r.Store, r.Streams, session, capabilities.SandboxCapsets(session))
 	if err := r.Driver.StartSandboxVM(ctx, session); err != nil {

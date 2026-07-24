@@ -38,6 +38,8 @@ var (
 )
 
 type AgentExecutor interface {
+	PrepareSandboxAgentEnvironment(context.Context, *domain.Sandbox, execution.AgentConfig, *domain.AgentDefinition) error
+	PrepareSandboxAgentEnvironmentFromTags(context.Context, *domain.Sandbox) error
 	ExecuteAgentRequest(context.Context, *domain.Sandbox, execution.ExecuteAgentRequest) (domain.NotebookCell, domain.SandboxEvent, domain.SandboxEvent, error)
 }
 
@@ -1980,6 +1982,15 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 		return SandboxResult{}, fmt.Errorf("hash sticky project sandbox configuration: %w", err)
 	}
 	tags := SandboxTags(run)
+	agentConfig := execution.AgentConfig{Provider: domain.DefaultAgentProvider}
+	if prepared.AgentDefinition != nil {
+		agentConfig = execution.AgentConfigFromDefinition(*prepared.AgentDefinition, domain.DefaultAgentProvider)
+		tags = append(tags,
+			domain.SandboxTag{Name: domain.AgentSandboxTagID, Value: prepared.AgentDefinition.ID},
+			domain.SandboxTag{Name: domain.AgentSandboxTagName, Value: prepared.AgentDefinition.Name},
+		)
+	}
+	tags = append(tags, domain.SandboxTag{Name: domain.AgentSandboxTagProvider, Value: agentConfig.Provider})
 	capabilityVars, capabilityTags := capabilities.BuildGatewaySandboxVars(capabilities.ProxyTarget(c.cap), prepared.CapsetIDs)
 	tags = append(tags, capabilityTags...)
 	bindingStore, hasBindingStore := c.configDB.(stickyBindingStore)
@@ -2118,7 +2129,20 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 		return SandboxResult{}, err
 	}
 	sandbox.ProviderEnvItems = prepared.ProviderEnvItems
-	if err := c.startProjectRunSandbox(ctx, sandbox, "sandbox.created", "sandbox started for project run"); err != nil {
+	if err := c.ensureProjectRunSandboxWorkspace(ctx, sandbox); err != nil {
+		return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, err
+	}
+	if c.executor == nil {
+		sandbox.Summary.VMStatus = domain.VMStatusFailed
+		_ = c.store.UpdateSandbox(ctx, sandbox)
+		return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, fmt.Errorf("agent executor is required")
+	}
+	if err := c.executor.PrepareSandboxAgentEnvironment(ctx, sandbox, agentConfig, prepared.AgentDefinition); err != nil {
+		sandbox.Summary.VMStatus = domain.VMStatusFailed
+		_ = c.store.UpdateSandbox(ctx, sandbox)
+		return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, err
+	}
+	if err := c.startProjectRunSandboxRuntime(ctx, sandbox, "sandbox.created", "sandbox started for project run"); err != nil {
 		return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, err
 	}
 	if stickyLoaderID != "" {
@@ -2234,11 +2258,44 @@ func (c *Controller) startProjectRunSandbox(ctx context.Context, sandbox *domain
 	if sandbox.Summary.VMStatus == domain.VMStatusDeleting {
 		return fmt.Errorf("sandbox %s is being deleted", sandbox.Summary.ID)
 	}
+	if err := c.ensureProjectRunSandboxWorkspace(ctx, sandbox); err != nil {
+		return err
+	}
+	if err := c.prepareFreshStartAgentEnvironment(ctx, sandbox); err != nil {
+		sandbox.Summary.VMStatus = domain.VMStatusFailed
+		_ = c.store.UpdateSandbox(ctx, sandbox)
+		return err
+	}
+	return c.startProjectRunSandboxRuntime(ctx, sandbox, eventType, eventMessage)
+}
+
+func (c *Controller) ensureProjectRunSandboxWorkspace(ctx context.Context, sandbox *domain.Sandbox) error {
 	if err := c.workspaceEnsurer.Ensure(ctx, sandbox); err != nil {
 		sandbox.Summary.VMStatus = domain.VMStatusFailed
 		_ = c.store.UpdateSandbox(ctx, sandbox)
 		return err
 	}
+	return nil
+}
+
+func (c *Controller) prepareFreshStartAgentEnvironment(ctx context.Context, sandbox *domain.Sandbox) error {
+	if sandbox.Summary.VMStatus == domain.VMStatusRunning {
+		return nil
+	}
+	vmState, err := c.store.GetVMState(sandbox.Summary.ID)
+	if err != nil {
+		return err
+	}
+	if !vmState.StartedAt.IsZero() {
+		return nil
+	}
+	if c.executor == nil {
+		return fmt.Errorf("agent executor is required")
+	}
+	return c.executor.PrepareSandboxAgentEnvironmentFromTags(ctx, sandbox)
+}
+
+func (c *Controller) startProjectRunSandboxRuntime(ctx context.Context, sandbox *domain.Sandbox, eventType, eventMessage string) error {
 	writeCapabilityGuide(ctx, c.cap, c.store, c.streams, sandbox, capabilities.SandboxCapsets(sandbox))
 	if sandbox.Summary.VMStatus != domain.VMStatusRunning {
 		if err := c.driver.StartSandboxVM(ctx, sandbox); err != nil {

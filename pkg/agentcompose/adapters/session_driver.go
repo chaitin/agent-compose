@@ -2,14 +2,12 @@ package adapters
 
 import (
 	"context"
-	"strings"
+	"errors"
 	"time"
 
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"agent-compose/pkg/execution"
-	"agent-compose/pkg/llms"
-	"agent-compose/pkg/llms/runtimefacade"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
@@ -22,8 +20,6 @@ type SandboxDriver struct {
 	ConfigDB *configstore.ConfigStore
 	Runtimes RuntimeProvider
 }
-
-var ensureSandboxLLMFacadeConfig = runtimefacade.EnsureSessionLLMFacadeConfig
 
 func NewSandboxDriver(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, runtimes RuntimeProvider) *SandboxDriver {
 	return &SandboxDriver{Config: config, Store: store, ConfigDB: configDB, Runtimes: runtimes}
@@ -46,7 +42,7 @@ func (d *SandboxDriver) ValidateSandboxRuntime(session *domain.Sandbox) error {
 	return err
 }
 
-func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sandbox) error {
+func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sandbox) (resultErr error) {
 	if session == nil || session.Summary.VMStatus == domain.VMStatusDeleting {
 		return domain.ClassifyError(domain.ErrConflict, "sandbox is being deleted", nil)
 	}
@@ -62,6 +58,17 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 	if err != nil {
 		return err
 	}
+	runtimeStarted := false
+	if vmState.StartedAt.IsZero() && d.ConfigDB != nil {
+		defer func() {
+			if resultErr == nil || runtimeStarted {
+				return
+			}
+			if err := d.ConfigDB.RevokeLLMFacadeTokensForSandbox(context.WithoutCancel(ctx), session.Summary.ID); err != nil {
+				resultErr = errors.Join(resultErr, err)
+			}
+		}()
+	}
 	proxyState, err := d.Store.GetProxyState(session.Summary.ID)
 	if err != nil {
 		return err
@@ -70,8 +77,7 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 	vmState.Mode = driver
 	vmState.BoxName = firstNonEmpty(vmState.BoxName, session.Summary.RuntimeRef)
 	vmState.RuntimeHome = firstNonEmpty(vmState.RuntimeHome, driverpkg.RuntimeHomeForDriver(d.Config, driver))
-	resuming := !vmState.StoppedAt.IsZero()
-	if err := d.prepareSandboxStart(ctx, driver, session, &vmState, !resuming); err != nil {
+	if err := d.prepareSandboxStart(ctx, driver, session, &vmState); err != nil {
 		vmState.LastError = err.Error()
 		_ = d.Store.SaveVMState(session.Summary.ID, vmState)
 		return err
@@ -91,6 +97,7 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 		_ = d.Store.SaveVMState(session.Summary.ID, vmState)
 		return err
 	}
+	runtimeStarted = true
 
 	return d.saveSandboxStartInfo(session, vmState, proxyState, info)
 }
@@ -156,49 +163,11 @@ func (d *SandboxDriver) RemoveSandboxVM(ctx context.Context, session *domain.San
 	return nil
 }
 
-func (d *SandboxDriver) prepareSandboxStart(ctx context.Context, driver string, session *domain.Sandbox, vmState *domain.VMState, refreshRuntimeEnv bool) error {
+func (d *SandboxDriver) prepareSandboxStart(ctx context.Context, driver string, session *domain.Sandbox, vmState *domain.VMState) error {
 	prepared, err := driverpkg.PrepareSandboxStart(ctx, d.Config, driver, execution.ToDriverSandbox(session), execution.ToDriverVMState(*vmState))
 	if err != nil {
 		return err
 	}
 	*vmState = execution.FromDriverVMState(prepared)
-	if !refreshRuntimeEnv {
-		return nil
-	}
-	managedEnv := map[string]string{}
-	for _, agent := range []string{"codex", "claude"} {
-		agentEnv, err := ensureSandboxLLMFacadeConfig(ctx, d.Config, facadeStoreFor(d.ConfigDB), session, agent, "", "session", "")
-		if err != nil {
-			if agent == "claude" && runtimefacade.IsOptionalConfigError(err) {
-				continue
-			}
-			return err
-		}
-		for key, value := range startupFacadeEnv(agent, agentEnv) {
-			managedEnv[key] = value
-		}
-	}
-	if len(managedEnv) > 0 {
-		session.RuntimeEnvItems = llms.EnvItemsFromMap(managedEnv, false)
-	}
 	return nil
-}
-
-func startupFacadeEnv(agent string, env map[string]string) map[string]string {
-	if len(env) == 0 {
-		return nil
-	}
-	if strings.EqualFold(strings.TrimSpace(agent), "claude") {
-		filtered := make(map[string]string, len(env))
-		for _, key := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CLAUDE_MODEL"} {
-			if value := strings.TrimSpace(env[key]); value != "" {
-				filtered[key] = value
-			}
-		}
-		if len(filtered) == 0 {
-			return nil
-		}
-		return filtered
-	}
-	return env
 }
