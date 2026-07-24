@@ -708,7 +708,7 @@ func TestProjectAndRunHandlersStoreBackedWorkflows(t *testing.T) {
 			"loader-1": {Summary: domain.LoaderSummary{ID: "loader-1", Enabled: false}},
 			"loader-2": {Summary: domain.LoaderSummary{ID: "loader-2", Enabled: true}},
 		},
-		revision: domain.ProjectRevisionRecord{ProjectID: "project-1", Revision: 1, SpecJSON: `{"agents":[{"name":"worker"},{"name":"worker-2"}]}`},
+		revision: domain.ProjectRevisionRecord{ProjectID: "project-1", Revision: 1, SpecJSON: `{"variables":[{"name":"PROJECT_SECRET","value":"project-secret","secret":true}],"mcp_servers":[{"name":"remote","headers":[{"name":"Authorization","value":"mcp-secret","secret":true}]}],"octobus_servers":[{"name":"internal","url":"https://octobus.example","token":"octobus-secret"}],"agents":[{"name":"worker","env":[{"name":"AGENT_SECRET","value":"agent-secret","secret":true}]},{"name":"worker-2"}]}`},
 		agentRunStates: []domain.ProjectAgentRunState{
 			{AgentName: "worker", RunningRunCount: 1, RunningSchedulerRunCount: 2, LatestRunID: "run-1", LatestStatus: domain.ProjectRunStatusFailed, LatestSource: domain.ProjectRunSourceAPI, LatestAt: time.Unix(20, 0)},
 			{AgentName: "worker-2", LatestRunID: "run-2", LatestStatus: domain.ProjectRunStatusSucceeded, LatestSource: domain.ProjectRunSourceScheduler, LatestAt: time.Unix(10, 0)},
@@ -725,6 +725,13 @@ func TestProjectAndRunHandlersStoreBackedWorkflows(t *testing.T) {
 	}
 	if projectResp.Msg.GetProject().GetSummary().GetProjectId() != "project-1" || projectResp.Msg.GetProject().GetSpec() == nil {
 		t.Fatalf("project response = %#v", projectResp.Msg.GetProject())
+	}
+	projectSpec := projectResp.Msg.GetProject().GetSpec()
+	if projectSpec.GetVariables()[0].GetValue() != secretRedactedValue ||
+		projectSpec.GetMcpServers()[0].GetHeaders()[0].GetValue() != secretRedactedValue ||
+		projectSpec.GetOctobusServers()[0].GetToken() != secretRedactedValue ||
+		projectSpec.GetAgents()[0].GetEnv()[0].GetValue() != secretRedactedValue {
+		t.Fatalf("GetProject exposed secret values = %#v", projectSpec)
 	}
 	projectAgent := projectResp.Msg.GetProject().GetAgents()[0]
 	if store.agentRunStateCalls != 1 || projectAgent.GetCurrentRun().GetRunningRunCount() != 1 || projectAgent.GetCurrentRun().GetRunningSchedulerRunCount() != 2 || projectAgent.GetLatestRun().GetRunId() != "run-1" || projectAgent.GetHealth() != agentcomposev2.ProjectAgentHealth_PROJECT_AGENT_HEALTH_AT_RISK {

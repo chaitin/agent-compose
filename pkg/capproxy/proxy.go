@@ -2,6 +2,9 @@ package capproxy
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -10,6 +13,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/metadata"
@@ -24,6 +28,10 @@ const (
 
 type SandboxBinding struct {
 	SandboxID string
+	// ManagedProjectID and ManagedAgentID scope project-managed capability
+	// configuration. They remain empty for legacy and manually created sandboxes.
+	ManagedProjectID string
+	ManagedAgentID   string
 	// CapsetIDs is the set of capsets the sandbox is allowed to use. The guest
 	// picks one per call (x-octobus-capset); capproxy validates membership.
 	CapsetIDs []string
@@ -41,6 +49,7 @@ type OctoBusResolver func(ctx context.Context) (addr string, token string, ok bo
 type Server struct {
 	listen     string
 	octobus    OctoBusResolver
+	targets    TargetResolver
 	sandboxes  SandboxResolver
 	grpcServer *grpc.Server
 }
@@ -48,12 +57,14 @@ type Server struct {
 type Config struct {
 	Listen  string
 	OctoBus OctoBusResolver
+	Targets TargetResolver
 }
 
 func NewServer(config Config, sandboxes SandboxResolver) *Server {
 	return &Server{
 		listen:    strings.TrimSpace(config.Listen),
 		octobus:   config.OctoBus,
+		targets:   config.Targets,
 		sandboxes: sandboxes,
 	}
 }
@@ -101,11 +112,15 @@ func (s *Server) handleUnknown(_ any, stream grpc.ServerStream) error {
 	// The guest picks which capset this call targets (x-octobus-capset); capproxy
 	// validates it is one the sandbox is allowed to use. Both the reflection and
 	// business paths require a resolved capset.
-	capset, err := resolveCallCapset(stream.Context(), binding.CapsetIDs)
+	declaration, err := resolveCallCapset(stream.Context(), binding.CapsetIDs)
 	if err != nil {
 		return err
 	}
-	outgoing := buildOutgoingMetadata(stream.Context(), capset)
+	target, err := s.resolveTarget(stream.Context(), binding, declaration)
+	if err != nil {
+		return err
+	}
+	outgoing := buildOutgoingMetadata(stream.Context(), target.CapsetID)
 	if !isReflectionMethod(method) {
 		// Business calls route by capset + instance + method. The instance comes
 		// from the injected guide.
@@ -113,7 +128,7 @@ func (s *Server) handleUnknown(_ any, stream grpc.ServerStream) error {
 			return status.Error(codes.FailedPrecondition, "x-octobus-instance is required")
 		}
 	}
-	return s.proxyStream(stream, method, outgoing)
+	return s.proxyStream(stream, method, outgoing, target)
 }
 
 // resolveCallCapset picks the capset for this call: the guest-supplied
@@ -180,15 +195,15 @@ func (s *Server) resolveSandbox(ctx context.Context) (SandboxBinding, error) {
 	return binding, nil
 }
 
-func (s *Server) proxyStream(client grpc.ServerStream, method string, outgoing metadata.MD) error {
-	addr, token, ok := s.octobus(client.Context())
-	if !ok {
-		return status.Error(codes.Unavailable, "capability gateway is not configured")
+func (s *Server) proxyStream(client grpc.ServerStream, method string, outgoing metadata.MD, target Target) error {
+	if target.Token != "" {
+		outgoing.Set("authorization", "Bearer "+target.Token)
 	}
-	if token != "" {
-		outgoing.Set("authorization", "Bearer "+token)
+	grpcTarget, transportCredentials, err := resolveGRPCTransport(target.Addr, nil)
+	if err != nil {
+		return status.Error(codes.Unavailable, err.Error())
 	}
-	conn, err := grpc.NewClient(normalizeGRPCTarget(addr), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.ForceCodec(rawCodec{})))
+	conn, err := grpc.NewClient(grpcTarget, grpc.WithTransportCredentials(transportCredentials), grpc.WithDefaultCallOptions(grpc.ForceCodec(rawCodec{})))
 	if err != nil {
 		return status.Error(codes.Unavailable, err.Error())
 	}
@@ -264,16 +279,36 @@ func bearerToken(value string) string {
 	return strings.TrimSpace(value[len("bearer "):])
 }
 
-func normalizeGRPCTarget(raw string) string {
-	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+func resolveGRPCTransport(raw string, roots *x509.CertPool) (string, credentials.TransportCredentials, error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return ""
+		return "", nil, errors.New("octobus target is empty")
+	}
+	if !strings.Contains(raw, "://") {
+		target := strings.TrimRight(raw, "/")
+		if target == "" {
+			return "", nil, errors.New("octobus target is empty")
+		}
+		return target, insecure.NewCredentials(), nil
 	}
 	parsed, err := url.Parse(raw)
-	if err == nil && parsed.Host != "" {
-		return parsed.Host
+	if err != nil {
+		return "", nil, fmt.Errorf("parse octobus target: %w", err)
 	}
-	return raw
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", nil, fmt.Errorf("octobus target scheme must be http or https")
+	}
+	if parsed.Host == "" || parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", nil, fmt.Errorf("octobus target must be an origin URL without userinfo, non-root path, query, or fragment")
+	}
+	if parsed.Scheme == "http" {
+		return parsed.Host, insecure.NewCredentials(), nil
+	}
+	return parsed.Host, credentials.NewTLS(&tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ServerName: parsed.Hostname(),
+		RootCAs:    roots,
+	}), nil
 }
 
 var _ encoding.Codec = rawCodec{}

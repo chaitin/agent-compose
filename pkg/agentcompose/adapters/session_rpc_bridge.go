@@ -428,7 +428,7 @@ func writeCapabilityGuide(ctx context.Context, provider capabilities.Provider, s
 	var b strings.Builder
 	rendered := false
 	for _, id := range ids {
-		guide, err := provider.CapabilityGuide(ctx, id)
+		guide, err := capabilities.CapabilityGuideForScope(ctx, provider, capabilities.GuideScopeFromSandbox(session), id)
 		if err != nil {
 			slog.Warn("capability guide render skipped", "capset", id, "sandbox_id", session.Summary.ID, "error", err)
 			recordCapabilityGuideWarning(ctx, store, streams, session.Summary.ID, fmt.Sprintf("capability guide render skipped for capset %s", id))

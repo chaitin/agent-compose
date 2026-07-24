@@ -61,6 +61,7 @@ func RegisterDependencies(di do.Injector) {
 	do.MustAs[*workspaces.Provisioner, workspaces.WorkspaceEnsurer](di)
 	do.Provide(di, NewRuntimeProvider)
 	do.Provide(di, NewLLMClient)
+	do.Provide(di, NewProjectOctoBusTargetResolver)
 	do.Provide(di, NewCapabilityProvider)
 	do.Provide(di, NewCapabilitySandboxResolver)
 	do.Provide(di, NewImageBackends)
@@ -260,6 +261,7 @@ func NewCapProxyServer(di do.Injector) (*capproxy.Server, error) {
 		do.MustInvoke[*appconfig.Config](di),
 		do.MustInvoke[*configstore.ConfigStore](di),
 		do.MustInvoke[*adapters.CapabilitySandboxResolver](di),
+		do.MustInvoke[*adapters.ProjectOctoBusTargetResolver](di),
 	), nil
 }
 
@@ -474,7 +476,15 @@ func NewWorkspaceProvisioner(di do.Injector) (*workspaces.Provisioner, error) {
 
 func NewCapabilityProvider(di do.Injector) (capabilities.Provider, error) {
 	conf := do.MustInvoke[*appconfig.Config](di)
-	return adapters.NewCapabilityProvider(do.MustInvoke[*configstore.ConfigStore](di), conf.CapGRPCTarget), nil
+	return adapters.NewCapabilityProvider(
+		do.MustInvoke[*configstore.ConfigStore](di),
+		do.MustInvoke[*adapters.ProjectOctoBusTargetResolver](di),
+		conf.CapGRPCTarget,
+	), nil
+}
+
+func NewProjectOctoBusTargetResolver(di do.Injector) (*adapters.ProjectOctoBusTargetResolver, error) {
+	return adapters.NewProjectOctoBusTargetResolver(do.MustInvoke[*configstore.ConfigStore](di)), nil
 }
 
 func NewCapabilitySandboxResolver(di do.Injector) (*adapters.CapabilitySandboxResolver, error) {

@@ -57,6 +57,15 @@ type testCapabilityProvider struct {
 	guide  func(context.Context, string) ([]byte, error)
 }
 
+type scopedTestCapabilityProvider struct {
+	testCapabilityProvider
+	guideForScope func(context.Context, capabilities.GuideScope, string) ([]byte, error)
+}
+
+func (p scopedTestCapabilityProvider) CapabilityGuideForScope(ctx context.Context, scope capabilities.GuideScope, declaration string) ([]byte, error) {
+	return p.guideForScope(ctx, scope, declaration)
+}
+
 func (p testCapabilityProvider) Status(context.Context) capability.Status {
 	return capability.Status{Configured: true, OK: true, Status: "ok"}
 }
@@ -319,6 +328,52 @@ func TestSandboxRPCBridgeCapabilityGuideIsBestEffort(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected capability guide warning event, got %#v", events)
+	}
+}
+
+func TestSandboxRPCBridgeCapabilityGuideRoutesManagedScopeAndMergesBestEffort(t *testing.T) {
+	ctx := context.Background()
+	bridge, _ := newTestSandboxRPCBridge(t)
+	var gotScope capabilities.GuideScope
+	bridge.cap = scopedTestCapabilityProvider{
+		testCapabilityProvider: testCapabilityProvider{
+			target: "agent-compose:9100",
+			guide: func(_ context.Context, capsetID string) ([]byte, error) {
+				if capsetID != "legacy" {
+					t.Fatalf("global capset = %q, want legacy", capsetID)
+				}
+				return []byte("global guide"), nil
+			},
+		},
+		guideForScope: func(_ context.Context, scope capabilities.GuideScope, declaration string) ([]byte, error) {
+			gotScope = scope
+			if declaration == "broken/fail" {
+				return nil, errors.New("unavailable")
+			}
+			return []byte("project guide for " + declaration), nil
+		},
+	}
+
+	root := t.TempDir()
+	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{
+		ID:            "sandbox-scoped-guide",
+		WorkspacePath: filepath.Join(root, "workspace"),
+		Tags: []domain.SandboxTag{
+			{Name: "project", Value: "project-1"},
+			{Name: domain.AgentSandboxTagID, Value: "agent-1"},
+		},
+	}}
+	writeCapabilityGuide(ctx, bridge.cap, nil, nil, sandbox, []string{"legacy", "internal/dev", "broken/fail"})
+
+	guide, err := os.ReadFile(capabilities.SandboxGuidePath(sandbox))
+	if err != nil {
+		t.Fatalf("read merged guide: %v", err)
+	}
+	if gotScope != (capabilities.GuideScope{ManagedProjectID: "project-1", ManagedAgentID: "agent-1"}) {
+		t.Fatalf("guide scope = %#v", gotScope)
+	}
+	if content := string(guide); !strings.Contains(content, "global guide") || !strings.Contains(content, "project guide for internal/dev") {
+		t.Fatalf("merged guide = %s", content)
 	}
 }
 

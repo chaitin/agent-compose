@@ -29,6 +29,7 @@ func SandboxTags(run domain.ProjectRunRecord) []domain.SandboxTag {
 	tags := []domain.SandboxTag{
 		{Name: "project", Value: strings.TrimSpace(run.ProjectID)},
 		{Name: "agent", Value: strings.TrimSpace(run.AgentName)},
+		{Name: domain.AgentSandboxTagID, Value: strings.TrimSpace(run.ManagedAgentID)},
 		{Name: "run_id", Value: strings.TrimSpace(run.RunID)},
 		{Name: "source", Value: NormalizeSource(run.Source)},
 	}

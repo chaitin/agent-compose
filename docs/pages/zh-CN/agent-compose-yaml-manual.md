@@ -58,6 +58,14 @@ mcp_servers:
         value: Bearer ${ISSUE_TRACKER_TOKEN}
         secret: true
 
+octobus_servers:
+  internal:
+    url: https://octobus.internal.example
+    token: ${OCTOBUS_INTERNAL_TOKEN}
+  public:
+    url: https://octobus.example
+    token: ${OCTOBUS_PUBLIC_TOKEN}
+
 volumes:
   cache:
     name: review-cache
@@ -103,6 +111,7 @@ agents:
             secret: true
     capset_ids:
       - engineering
+      - internal/code-review
     skills:
       - ./skills/review
       - name: release-check
@@ -159,6 +168,7 @@ agents:
 - `agents.*.model`
 - `agents.*.env.*.value`
 - 项目级和 Agent 内联 MCP 的 `url`、`env.*.value`、`headers.*.value`
+- 项目级 OctoBus 的 `url` 和 `token`
 - Skill 的 `name`、`source`、`url`、`path`、`ref`、`username`
 
 其他字符串字段不会自动插值，例如 `name`、`provider`、`image`、`system_prompt`、Workspace 字段、Build 字段和 Scheduler 字段。
@@ -190,6 +200,7 @@ SECRET_VALUE:
 | `variables` | map | 否 | 项目级命名变量及 secret 元数据，写入规范化项目配置。它们不会自动继承到 Agent 的 `env`，也不会成为其他 `${NAME}` 的变量来源。 |
 | `workspaces` | map | 否 | 可复用的项目级 Workspace 定义。只能使用复数形式。 |
 | `mcp_servers` | map | 否 | 可由 Agent 按名称引用的 MCP Server 定义。 |
+| `octobus_servers` | map | 否 | 由 qualified `capset_ids` 选择的具名项目级 OctoBus Server。 |
 | `volumes` | map | 否 | 项目管理或引用的持久 Volume。 |
 | `agents` | map | 否 | Agent 定义；map key 是 Agent 名。 |
 
@@ -336,6 +347,33 @@ mcp_servers:
 
 项目级 MCP 不会自动注入所有 Agent。Agent 必须在自己的 `mcp_servers` 中引用或定义需要的 Server。
 
+## `octobus_servers`：项目级 OctoBus Server
+
+项目可以声明多个具名 OctoBus Server：
+
+```yaml
+octobus_servers:
+  internal:
+    url: https://octobus.internal.example
+    token: ${OCTOBUS_INTERNAL_TOKEN}
+  public:
+    url: https://octobus.example
+    token: ${OCTOBUS_PUBLIC_TOKEN}
+```
+
+| 字段 | 类型 | 必填 | 含义 |
+| --- | --- | --- | --- |
+| `url` | string | 是 | OctoBus Server 的绝对 `http` 或 `https` URL；不允许包含用户信息或 fragment。支持 `${NAME}` 插值。 |
+| `token` | string | 否 | daemon 连接该 Server 时使用的 Bearer token。支持 `${NAME}` 插值；空值表示不配置鉴权 token。 |
+
+map key 是 Server 名称，必须符合稳定标识符格式。Agent 通过 `<server>/<capset>` 形式限定现有 `capset_ids` 条目来选择 Server，例如 `internal/code-review`。仅声明 Server 不会自动向 Agent 授权。
+
+OctoBus token 天然属于敏感信息。应把它保存在环境变量或 dotenv 配置中，并通过 `${NAME}` 引用。daemon 会保留解析后的 token 以代理请求，但会在面向用户的规范化输出中将其脱敏，也不会把它注入 sandbox。不要把字面 token 提交到 compose 文件中。
+
+项目 API 或规范化输出中的脱敏值 `********` 仅用于展示，不能作为 OctoBus 凭据重新 apply。编辑或重新 apply 项目时，请保留以环境变量为凭据来源的原始 compose 文件。
+
+项目 re-apply 与 MCP Server 沿用相同的 managed agent 配置模型。运行中的 sandbox 保留创建时固化的 `capset_ids` 授权集合，后续调用则从当前 managed agent definition 解析所引用的 Server。因此，更新 Server URL 或 token 无需重建 sandbox 即可生效。新增 capset 只对新 sandbox 可用；如果旧 sandbox 已授权的 capset 所对应 Server 已无法解析，该调用会失败，不会回退到其他 Server。
+
 ## `volumes`：项目级 Volume
 
 ```yaml
@@ -387,7 +425,7 @@ agents:
 | `driver` | object | Docker | 运行时 driver，必须且只能选择一个 key。 |
 | `env` | map | 空 | 注入 sandbox 的环境变量。 |
 | `mcp_servers` | scalar/object/list | 空 | 引用项目级 MCP，或声明 Agent 专属 MCP。 |
-| `capset_ids` | string[] | 空 | 允许该 Agent sandbox 使用的 OctoBus capability set ID。 |
+| `capset_ids` | string[] | 空 | 允许该 Agent sandbox 使用的 OctoBus capability set 声明；可用 `<server>/<capset>` 选择项目 Server。 |
 | `skills` | list | 空 | 注入 Agent 的 Skill 来源。 |
 | `volumes` | list | 空 | Volume 或 bind mount 列表。 |
 | `workspace` | object | 无 | 显式引用一个顶层 `workspaces` 条目，或定义 Agent 内联 Workspace。 |
@@ -574,11 +612,16 @@ mcp_servers:
 
 ```yaml
 capset_ids:
-  - engineering
-  - ticketing
+  - legacy-capset
+  - internal/engineering
+  - public/ticketing
 ```
 
-列表会去除空值和重复值。配置了 capability gateway 时，这些 ID 用于将 sandbox 限制到对应 OctoBus capability set，并注入访问所需的环境和能力说明；gateway 未配置或能力说明获取失败时采用 best-effort 行为并产生 warning。
+列表会去除空值和重复值。真实 capset ID 必须符合 OctoBus 的 `^[a-zA-Z][a-zA-Z0-9_-]{0,62}$` 规则。`legacy-capset` 这类未限定值使用 daemon 全局 OctoBus 配置，从而保持已有项目文件的行为。`internal/engineering` 这类限定值选择 `octobus_servers.internal`；`internal` 仅供 agent-compose 选择上游，OctoBus 收到的 capset ID 仍为 `engineering`。限定值引用未声明 Server、包含多个 `/` 或真实 capset ID 不合法时会产生配置校验错误。
+
+限定值和未限定值可以混用。新增 `octobus_servers` 绝不会改变未限定值的路由。完整声明仍是 sandbox 的授权边界：授权 `internal/engineering` 不会同时授权 `engineering` 或 `public/engineering`。
+
+所选 ID 用于注入 capability gateway 环境和能力说明。未限定值缺少 daemon 全局 gateway 配置、Server 不可达或能力说明获取失败时采用 best-effort 行为并产生 warning，sandbox 仍会继续创建。项目级 OctoBus URL 和 token 始终留在 daemon 中，不会进入 guest metadata 或能力说明。
 
 ### `skills`
 

@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"agent-compose/pkg/capability"
 )
 
 func NewRecordFromSpec(spec *compose.NormalizedProjectSpec, sourcePath string) (domain.ProjectRecord, error) {
@@ -84,7 +86,7 @@ func NewAgentRecordsFromSpec(projectID string, revision int64, spec *compose.Nor
 func NewAgentDefinitionsFromSpec(project domain.ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]domain.AgentDefinition, error) {
 	agents := make([]domain.AgentDefinition, 0, len(spec.Agents))
 	for _, agent := range spec.Agents {
-		record, err := NewAgentDefinitionFromSpec(project, revision, agent, spec.MCPServers)
+		record, err := NewAgentDefinitionFromSpec(project, revision, agent, spec.MCPServers, spec.OctoBusServers)
 		if err != nil {
 			return nil, err
 		}
@@ -93,12 +95,12 @@ func NewAgentDefinitionsFromSpec(project domain.ProjectRecord, revision int64, s
 	return agents, nil
 }
 
-func NewAgentDefinitionFromSpec(project domain.ProjectRecord, revision int64, agent compose.NormalizedAgentSpec, projectMCPServers map[string]compose.NormalizedMCPServerSpec) (domain.AgentDefinition, error) {
+func NewAgentDefinitionFromSpec(project domain.ProjectRecord, revision int64, agent compose.NormalizedAgentSpec, projectMCPServers map[string]compose.NormalizedMCPServerSpec, projectOctoBusServers map[string]compose.NormalizedOctoBusServerSpec) (domain.AgentDefinition, error) {
 	managedAgentID, err := domain.StableManagedAgentID(project.ID, agent.Name)
 	if err != nil {
 		return domain.AgentDefinition{}, err
 	}
-	configJSON, err := agentDefinitionConfigJSON(agent, projectMCPServers)
+	configJSON, err := agentDefinitionConfigJSON(agent, projectMCPServers, projectOctoBusServers)
 	if err != nil {
 		return domain.AgentDefinition{}, fmt.Errorf("marshal managed agent %s config: %w", agent.Name, err)
 	}
@@ -134,30 +136,45 @@ func projectAgentDisplayName(agent compose.NormalizedAgentSpec) string {
 	return strings.TrimSpace(agent.Name)
 }
 
-type agentDefinitionConfigPayload struct {
-	Jupyter    *compose.JupyterSpec                       `json:"jupyter,omitempty"`
-	MCPServers map[string]compose.NormalizedMCPServerSpec `json:"mcp_servers,omitempty"`
+type agentDefinitionConfig struct {
+	Jupyter        *compose.JupyterSpec                           `json:"jupyter,omitempty"`
+	MCPServers     map[string]compose.NormalizedMCPServerSpec     `json:"mcp_servers,omitempty"`
+	OctoBusServers map[string]compose.NormalizedOctoBusServerSpec `json:"octobus_servers,omitempty"`
 }
 
-func agentDefinitionConfigJSON(agent compose.NormalizedAgentSpec, projectMCPServers map[string]compose.NormalizedMCPServerSpec) (string, error) {
-	payload := agentDefinitionConfigPayload{
-		Jupyter:    agent.Jupyter,
-		MCPServers: selectedAgentMCPServers(agent, projectMCPServers),
+func agentDefinitionConfigJSON(agent compose.NormalizedAgentSpec, projectMCPServers map[string]compose.NormalizedMCPServerSpec, projectOctoBusServers map[string]compose.NormalizedOctoBusServerSpec) (string, error) {
+	payload := agentDefinitionConfig{
+		Jupyter:        agent.Jupyter,
+		MCPServers:     selectedAgentMCPServers(agent, projectMCPServers),
+		OctoBusServers: selectedAgentOctoBusServers(agent, projectOctoBusServers),
 	}
-	if payload.Jupyter == nil && len(payload.MCPServers) == 0 {
+	if payload.Jupyter == nil && len(payload.MCPServers) == 0 && len(payload.OctoBusServers) == 0 {
 		return "{}", nil
 	}
-	data, err := MarshalCanonicalJSON(struct {
-		Jupyter    *compose.JupyterSpec                       `json:"jupyter,omitempty"`
-		MCPServers map[string]compose.NormalizedMCPServerSpec `json:"mcp_servers,omitempty"`
-	}{
-		Jupyter:    payload.Jupyter,
-		MCPServers: payload.MCPServers,
-	})
+	data, err := MarshalCanonicalJSON(payload)
 	if err != nil {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func selectedAgentOctoBusServers(agent compose.NormalizedAgentSpec, projectServers map[string]compose.NormalizedOctoBusServerSpec) map[string]compose.NormalizedOctoBusServerSpec {
+	var selected map[string]compose.NormalizedOctoBusServerSpec
+	for _, declaration := range agent.CapsetIDs {
+		parsed, err := capability.ParseCapsetDeclaration(declaration)
+		if err != nil || !parsed.Qualified() {
+			continue
+		}
+		server, ok := projectServers[parsed.ServerName]
+		if !ok {
+			continue
+		}
+		if selected == nil {
+			selected = make(map[string]compose.NormalizedOctoBusServerSpec)
+		}
+		selected[parsed.ServerName] = server
+	}
+	return selected
 }
 
 func selectedAgentMCPServers(agent compose.NormalizedAgentSpec, projectMCPServers map[string]compose.NormalizedMCPServerSpec) map[string]compose.NormalizedMCPServerSpec {

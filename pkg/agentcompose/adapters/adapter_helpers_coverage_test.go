@@ -196,6 +196,8 @@ func TestCapabilitySandboxResolverCoverage(t *testing.T) {
 			Tags: []domain.SandboxTag{
 				{Name: capabilities.CapsetTagName, Value: "dev"},
 				{Name: capabilities.CapsetTagName, Value: " dev "},
+				{Name: "project", Value: " project-1 "},
+				{Name: domain.AgentSandboxTagID, Value: " agent-1 "},
 			},
 		},
 		EnvItems: []domain.SandboxEnvVar{{Name: capabilities.SandboxTokenEnvName, Value: "token-2", Secret: true}},
@@ -204,24 +206,52 @@ func TestCapabilitySandboxResolverCoverage(t *testing.T) {
 		Summary:  domain.SandboxSummary{ID: "sandbox-stopped", VMStatus: domain.VMStatusStopped, Tags: []domain.SandboxTag{{Name: capabilities.CapsetTagName, Value: "dev"}}},
 		EnvItems: []domain.SandboxEnvVar{{Name: capabilities.SandboxTokenEnvName, Value: "token-stopped", Secret: true}},
 	}
+	legacyScoped := &domain.Sandbox{
+		Summary: domain.SandboxSummary{
+			ID:       "sandbox-legacy-scope",
+			VMStatus: domain.VMStatusRunning,
+			Tags: []domain.SandboxTag{
+				{Name: capabilities.CapsetTagName, Value: "legacy/dev"},
+				{Name: "project_id", Value: "legacy-project"},
+				{Name: domain.AgentSandboxTagID, Value: "legacy-agent"},
+			},
+		},
+		EnvItems: []domain.SandboxEnvVar{{Name: capabilities.SandboxTokenEnvName, Value: "token-legacy-scope", Secret: true}},
+	}
+	unscoped := &domain.Sandbox{
+		Summary: domain.SandboxSummary{
+			ID:       "sandbox-unscoped",
+			VMStatus: domain.VMStatusRunning,
+			Tags:     []domain.SandboxTag{{Name: capabilities.CapsetTagName, Value: "legacy"}},
+		},
+		EnvItems: []domain.SandboxEnvVar{{Name: capabilities.SandboxTokenEnvName, Value: "token-unscoped", Secret: true}},
+	}
 	noCapset := &domain.Sandbox{
 		Summary:  domain.SandboxSummary{ID: "sandbox-no-capset", VMStatus: domain.VMStatusRunning},
 		EnvItems: []domain.SandboxEnvVar{{Name: capabilities.SandboxTokenEnvName, Value: "token-no-capset", Secret: true}},
 	}
 	store := &fakeCapabilitySandboxStore{pages: []domain.SandboxListResult{
 		{Sandboxes: []*domain.Sandbox{{Summary: domain.SandboxSummary{ID: "sandbox-other", VMStatus: domain.VMStatusRunning}}}, HasMore: true, NextOffset: 200},
-		{Sandboxes: []*domain.Sandbox{nil, running, stopped, noCapset}},
+		{Sandboxes: []*domain.Sandbox{nil, running, stopped, noCapset, legacyScoped, unscoped}},
 	}}
 	resolver := NewCapabilitySandboxResolver(store)
 	binding, err := resolver.ResolveCapabilitySandbox(ctx, " token-2 ")
 	if err != nil {
 		t.Fatalf("ResolveCapabilitySandbox returned error: %v", err)
 	}
-	if binding.SandboxID != "sandbox-running" || len(binding.CapsetIDs) != 1 || binding.CapsetIDs[0] != "dev" {
+	if binding.SandboxID != "sandbox-running" || binding.ManagedProjectID != "project-1" || binding.ManagedAgentID != "agent-1" || len(binding.CapsetIDs) != 1 || binding.CapsetIDs[0] != "dev" {
 		t.Fatalf("binding = %#v", binding)
 	}
 	if len(store.offsets) != 2 || store.offsets[0] != 0 || store.offsets[1] != 200 {
 		t.Fatalf("offsets = %#v", store.offsets)
+	}
+	legacyBinding, err := resolver.ResolveCapabilitySandbox(ctx, "token-legacy-scope")
+	if err != nil || legacyBinding.ManagedProjectID != "legacy-project" || legacyBinding.ManagedAgentID != "legacy-agent" {
+		t.Fatalf("legacy scoped binding = %#v err=%v", legacyBinding, err)
+	}
+	unscopedBinding, err := resolver.ResolveCapabilitySandbox(ctx, "token-unscoped")
+	if err != nil || unscopedBinding.ManagedProjectID != "" || unscopedBinding.ManagedAgentID != "" {
+		t.Fatalf("unscoped binding = %#v err=%v", unscopedBinding, err)
 	}
 	resolver.RevokeSandbox("sandbox-running")
 	if _, err := resolver.ResolveCapabilitySandbox(ctx, "token-2"); err == nil || !strings.Contains(err.Error(), "not found") {
