@@ -132,7 +132,7 @@ func TestLegacyDefaultNormalizedProjectMapsNamedWorkspaces(t *testing.T) {
 			taskAgent = agent
 		}
 	}
-	if taskAgent.Workspace == nil || taskAgent.Workspace.Name != "tasks" || project.managedLoaderOverrides[taskAgent.Name].Summary.ID != "loader-1" {
+	if taskAgent.Workspace == nil || taskAgent.Workspace.Name != "tasks" || project.managedLoaderOverrides[taskAgent.Name].Loader.Summary.ID != "loader-1" {
 		t.Fatalf("task agent/override = %#v/%#v", taskAgent, project.managedLoaderOverrides)
 	}
 }

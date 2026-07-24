@@ -8,7 +8,7 @@ import (
 	domain "agent-compose/pkg/model"
 )
 
-// preserveLegacyManagedLoaderIdentities keeps adopted v1 loader IDs attached
+// preserveLegacyManagedLoaderIdentities keeps adopted v1 loader state attached
 // when the synthetic project is edited through the ordinary v2 ApplyProject
 // API. The initial migration already carries explicit overrides.
 func (c *Controller) preserveLegacyManagedLoaderIdentities(ctx context.Context, project domain.ProjectRecord, normalized NormalizedProject) (NormalizedProject, error) {
@@ -29,7 +29,7 @@ func (c *Controller) preserveLegacyManagedLoaderIdentities(ctx context.Context, 
 			declared[agent.Name] = struct{}{}
 		}
 	}
-	overrides := make(map[string]domain.Loader, len(schedulers))
+	overrides := make(map[string]legacyManagedLoaderOverride, len(schedulers))
 	for _, scheduler := range schedulers {
 		if _, ok := declared[scheduler.AgentName]; !ok || strings.TrimSpace(scheduler.ManagedLoaderID) == "" {
 			continue
@@ -41,7 +41,22 @@ func (c *Controller) preserveLegacyManagedLoaderIdentities(ctx context.Context, 
 		if !found || !managedLoaderMatchesProjectScheduler(loader, project.ID, scheduler) {
 			continue
 		}
-		overrides[scheduler.AgentName] = loader
+		managedAgentID, err := domain.StableManagedAgentID(project.ID, scheduler.AgentName)
+		if err != nil {
+			return NormalizedProject{}, fmt.Errorf("resolve scheduler %s managed agent: %w", scheduler.SchedulerID, err)
+		}
+		managedAgent, found, err := c.store.GetAgentDefinitionIfExists(ctx, managedAgentID, true)
+		if err != nil {
+			return NormalizedProject{}, fmt.Errorf("load scheduler %s managed agent %s: %w", scheduler.SchedulerID, managedAgentID, err)
+		}
+		if !found || !managedAgentMatchesProjectScheduler(managedAgent, project.ID, scheduler) {
+			return NormalizedProject{}, fmt.Errorf("scheduler %s managed agent %s is unavailable for legacy environment reconciliation", scheduler.SchedulerID, managedAgentID)
+		}
+		overrides[scheduler.AgentName] = legacyManagedLoaderOverride{
+			Loader:           loader,
+			BaselineAgentEnv: append([]domain.SandboxEnvVar(nil), managedAgent.EnvItems...),
+			BaselineKnown:    true,
+		}
 	}
 	if len(overrides) != 0 {
 		normalized.managedLoaderOverrides = overrides
@@ -53,4 +68,9 @@ func managedLoaderMatchesProjectScheduler(loader domain.Loader, projectID string
 	return strings.TrimSpace(loader.Summary.ManagedProjectID) == strings.TrimSpace(projectID) &&
 		strings.TrimSpace(loader.Summary.ManagedAgentName) == strings.TrimSpace(scheduler.AgentName) &&
 		strings.TrimSpace(loader.Summary.ManagedSchedulerID) == strings.TrimSpace(scheduler.SchedulerID)
+}
+
+func managedAgentMatchesProjectScheduler(agent domain.AgentDefinition, projectID string, scheduler domain.ProjectSchedulerRecord) bool {
+	return strings.TrimSpace(agent.ManagedProjectID) == strings.TrimSpace(projectID) &&
+		strings.TrimSpace(agent.ManagedAgentName) == strings.TrimSpace(scheduler.AgentName)
 }

@@ -184,7 +184,7 @@ func TestLegacyDefaultNormalizedProjectAdoptsLegacyLoaders(t *testing.T) {
 		t.Fatalf("worker scheduler = %#v", worker.Scheduler)
 	}
 	workerLoader := project.managedLoaderOverrides["worker"]
-	if workerLoader.Summary.ID != "loader-a" || workerLoader.Summary.Enabled || len(workerLoader.Triggers) != 1 || workerLoader.Triggers[0].Enabled {
+	if workerLoader.Loader.Summary.ID != "loader-a" || workerLoader.Loader.Summary.Enabled || len(workerLoader.Loader.Triggers) != 1 || workerLoader.Loader.Triggers[0].Enabled {
 		t.Fatalf("worker loader override = %#v", workerLoader)
 	}
 
@@ -197,7 +197,7 @@ func TestLegacyDefaultNormalizedProjectAdoptsLegacyLoaders(t *testing.T) {
 			}
 		}
 	}
-	if clonedName == "" || project.managedLoaderOverrides[clonedName].Summary.ID != "loader-b" {
+	if clonedName == "" || project.managedLoaderOverrides[clonedName].Loader.Summary.ID != "loader-b" {
 		t.Fatalf("second loader was not projected: name=%q overrides=%#v", clonedName, project.managedLoaderOverrides)
 	}
 
@@ -243,7 +243,7 @@ func TestLegacyDefaultNormalizedProjectKeepsUnboundLoaderVisibleButDisabled(t *t
 	if agent.Scheduler.DisplayName != "未绑定任务" || agent.Scheduler.Description != "迁移后保持可见但禁用" {
 		t.Fatalf("unbound scheduler metadata = %#v", agent.Scheduler)
 	}
-	if adopted := project.managedLoaderOverrides[agent.Name]; adopted.Summary.ID != loader.Summary.ID || adopted.Summary.Enabled {
+	if adopted := project.managedLoaderOverrides[agent.Name]; adopted.Loader.Summary.ID != loader.Summary.ID || adopted.Loader.Summary.Enabled {
 		t.Fatalf("unbound loader override = %#v", adopted)
 	}
 

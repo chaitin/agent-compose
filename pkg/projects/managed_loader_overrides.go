@@ -8,9 +8,15 @@ import (
 	domain "agent-compose/pkg/model"
 )
 
+type legacyManagedLoaderOverride struct {
+	Loader           domain.Loader
+	BaselineAgentEnv []domain.SandboxEnvVar
+	BaselineKnown    bool
+}
+
 // applyManagedLoaderOverrideBuilds adopts legacy loader identities at the
 // project artifact boundary. Ordinary project specs never populate overrides.
-func applyManagedLoaderOverrideBuilds(project domain.ProjectRecord, revision int64, builds []SchedulerBuild, overrides map[string]domain.Loader) ([]SchedulerBuild, error) {
+func applyManagedLoaderOverrideBuilds(project domain.ProjectRecord, revision int64, builds []SchedulerBuild, overrides map[string]legacyManagedLoaderOverride) ([]SchedulerBuild, error) {
 	if len(overrides) == 0 {
 		return builds, nil
 	}
@@ -19,7 +25,7 @@ func applyManagedLoaderOverrideBuilds(project domain.ProjectRecord, revision int
 		if !ok {
 			continue
 		}
-		loaderID := strings.TrimSpace(override.Summary.ID)
+		loaderID := strings.TrimSpace(override.Loader.Summary.ID)
 		if loaderID == "" {
 			return nil, fmt.Errorf("legacy loader for agent %s has no id", builds[index].Scheduler.AgentName)
 		}
@@ -39,22 +45,23 @@ func applyManagedLoaderOverrideBuilds(project domain.ProjectRecord, revision int
 	return builds, nil
 }
 
-func mergeManagedLoaderOverride(current, override domain.Loader) domain.Loader {
+func mergeManagedLoaderOverride(current domain.Loader, override legacyManagedLoaderOverride) domain.Loader {
 	loader := loaders.CloneLoader(current)
-	loader.Summary.ID = override.Summary.ID
-	loader.Summary.AgentID = override.Summary.AgentID
-	loader.Summary.WorkspaceID = override.Summary.WorkspaceID
-	loader.Summary.CreatedAt = override.Summary.CreatedAt
-	loader.Summary.UpdatedAt = override.Summary.UpdatedAt
-	loader.Summary.LastError = override.Summary.LastError
-	loader.Summary.RunCount = override.Summary.RunCount
-	loader.Summary.EventCount = override.Summary.EventCount
-	loader.Summary.LatestRunAt = override.Summary.LatestRunAt
+	loader.Summary.ID = override.Loader.Summary.ID
+	loader.Summary.AgentID = override.Loader.Summary.AgentID
+	loader.Summary.WorkspaceID = override.Loader.Summary.WorkspaceID
+	loader.Summary.CreatedAt = override.Loader.Summary.CreatedAt
+	loader.Summary.UpdatedAt = override.Loader.Summary.UpdatedAt
+	loader.Summary.LastError = override.Loader.Summary.LastError
+	loader.Summary.RunCount = override.Loader.Summary.RunCount
+	loader.Summary.EventCount = override.Loader.Summary.EventCount
+	loader.Summary.LatestRunAt = override.Loader.Summary.LatestRunAt
 	loader.Summary.CapsetIDs = append([]string(nil), current.Summary.CapsetIDs...)
 	loader.Volumes = append([]domain.VolumeMountSpec(nil), current.Volumes...)
+	loader.EnvItems = mergeLegacyManagedLoaderEnv(current.EnvItems, override)
 
-	previousTriggers := make(map[string]domain.LoaderTrigger, len(override.Triggers))
-	for _, trigger := range override.Triggers {
+	previousTriggers := make(map[string]domain.LoaderTrigger, len(override.Loader.Triggers))
+	for _, trigger := range override.Loader.Triggers {
 		previousTriggers[trigger.ID] = trigger
 	}
 	for index := range loader.Triggers {
@@ -70,7 +77,37 @@ func mergeManagedLoaderOverride(current, override domain.Loader) domain.Loader {
 	return loader
 }
 
-func applyManagedLoaderOverrides(project domain.ProjectRecord, revision int64, schedulers []domain.ProjectSchedulerRecord, managedLoaders []domain.Loader, overrides map[string]domain.Loader) ([]domain.ProjectSchedulerRecord, []domain.Loader, error) {
+func mergeLegacyManagedLoaderEnv(candidateAgentEnv []domain.SandboxEnvVar, override legacyManagedLoaderOverride) []domain.SandboxEnvVar {
+	loaderEnv := domain.NormalizeEnvItems(override.Loader.EnvItems)
+	if !override.BaselineKnown {
+		return loaderEnv
+	}
+	// Loader env is the higher-priority compatibility layer. Preserve it only
+	// when the incoming ProjectSpec left the corresponding Agent env key
+	// unchanged; an explicit Agent change must be allowed to take effect.
+	baselineByName := sandboxEnvItemsByName(override.BaselineAgentEnv)
+	candidateByName := sandboxEnvItemsByName(candidateAgentEnv)
+	preserved := make([]domain.SandboxEnvVar, 0, len(loaderEnv))
+	for _, item := range loaderEnv {
+		baseline, baselineExists := baselineByName[item.Name]
+		candidate, candidateExists := candidateByName[item.Name]
+		if baselineExists == candidateExists && (!baselineExists || baseline == candidate) {
+			preserved = append(preserved, item)
+		}
+	}
+	return preserved
+}
+
+func sandboxEnvItemsByName(items []domain.SandboxEnvVar) map[string]domain.SandboxEnvVar {
+	normalized := domain.NormalizeEnvItems(items)
+	byName := make(map[string]domain.SandboxEnvVar, len(normalized))
+	for _, item := range normalized {
+		byName[item.Name] = item
+	}
+	return byName
+}
+
+func applyManagedLoaderOverrides(project domain.ProjectRecord, revision int64, schedulers []domain.ProjectSchedulerRecord, managedLoaders []domain.Loader, overrides map[string]legacyManagedLoaderOverride) ([]domain.ProjectSchedulerRecord, []domain.Loader, error) {
 	if len(overrides) == 0 {
 		return schedulers, managedLoaders, nil
 	}

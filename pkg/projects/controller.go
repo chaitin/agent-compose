@@ -32,9 +32,9 @@ type NormalizedProject struct {
 	SourcePath string
 
 	// managedLoaderOverrides is populated only by the legacy-v1 compatibility
-	// projection. It lets that boundary adopt an existing loader ID so runs,
-	// events, trigger state, and enablement survive the project migration.
-	managedLoaderOverrides map[string]domain.Loader
+	// projection. It lets that boundary adopt an existing loader so identity,
+	// history, runtime overrides, and task-local environment survive migration.
+	managedLoaderOverrides map[string]legacyManagedLoaderOverride
 }
 
 type ProjectRef struct {
