@@ -145,10 +145,11 @@ func indexCapabilitySandbox(tokens map[string]capproxy.SandboxBinding, tokensByS
 	if len(capsetIDs) == 0 {
 		return
 	}
+	scope := capabilities.GuideScopeFromSandbox(sandbox)
 	binding := capproxy.SandboxBinding{
 		SandboxID:        sandbox.Summary.ID,
-		ManagedProjectID: sandboxTagValue(sandbox, "project", "project_id"),
-		ManagedAgentID:   sandboxTagValue(sandbox, domain.AgentSandboxTagID),
+		ManagedProjectID: scope.ManagedProjectID,
+		ManagedAgentID:   scope.ManagedAgentID,
 		CapsetIDs:        capsetIDs,
 	}
 	tokens[token] = binding
@@ -158,18 +159,4 @@ func indexCapabilitySandbox(tokens map[string]capproxy.SandboxBinding, tokensByS
 		tokensBySandbox[sandbox.Summary.ID] = tokenSet
 	}
 	tokenSet[token] = struct{}{}
-}
-
-func sandboxTagValue(sandbox *domain.Sandbox, names ...string) string {
-	if sandbox == nil {
-		return ""
-	}
-	for _, name := range names {
-		for _, tag := range sandbox.Summary.Tags {
-			if strings.TrimSpace(tag.Name) == name {
-				return strings.TrimSpace(tag.Value)
-			}
-		}
-	}
-	return ""
 }

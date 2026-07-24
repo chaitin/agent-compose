@@ -218,7 +218,7 @@ func normalizedSpecToProto(spec *compose.NormalizedProjectSpec) *agentcomposev2.
 	if spec == nil {
 		return nil
 	}
-	return api.ProjectSpecToProtoRedacted(spec)
+	return api.ProjectSpecToProtoWithRedactedOctoBusTokens(spec)
 }
 
 func projectRefFromProto(ref *agentcomposev2.ProjectRef) projects.ProjectRef {

@@ -9,7 +9,12 @@ import (
 
 type projectAwareCapabilityProvider struct {
 	capabilities.Provider
-	targets *ProjectOctoBusTargetResolver
+	targets ProjectOctoBusServerResolver
+}
+
+// ProjectOctoBusServerResolver selects one project-scoped OctoBus upstream.
+type ProjectOctoBusServerResolver interface {
+	ResolveOctoBusServer(context.Context, string, string, string) (ResolvedProjectOctoBusServer, error)
 }
 
 func (p *projectAwareCapabilityProvider) CapabilityGuideForScope(ctx context.Context, scope capabilities.GuideScope, declaration string) ([]byte, error) {
@@ -24,7 +29,7 @@ func (p *projectAwareCapabilityProvider) CapabilityGuideForScope(ctx context.Con
 	return capabilities.QualifyCapabilityGuide(guide, declaration, target.CapsetID), nil
 }
 
-func NewCapabilityProvider(source capabilities.GatewaySource, agents AgentDefinitionStore, proxyTarget string) capabilities.Provider {
+func NewCapabilityProvider(source capabilities.GatewaySource, targets ProjectOctoBusServerResolver, proxyTarget string) capabilities.Provider {
 	global := capabilities.NewDynamicProvider(source, proxyTarget)
-	return &projectAwareCapabilityProvider{Provider: global, targets: NewProjectOctoBusTargetResolver(agents)}
+	return &projectAwareCapabilityProvider{Provider: global, targets: targets}
 }

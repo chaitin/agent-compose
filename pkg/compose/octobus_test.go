@@ -16,7 +16,7 @@ octobus_servers:
     token: ${OCTOBUS_TOKEN}
 agents:
   coder:
-    capset_ids: [legacy-capset, internal/dev, public/web-search, internal/a/b]
+    capset_ids: [legacy-capset, internal/dev, public/web-search]
 `)
 	normalized, err := Normalize(spec, NormalizeOptions{Env: map[string]string{
 		"HOST":          "public.example",
@@ -31,7 +31,7 @@ agents:
 	if got := normalized.OctoBusServers["internal"].Token; got != "secret-token" {
 		t.Fatalf("internal token = %q", got)
 	}
-	wantCapsets := []string{"legacy-capset", "internal/dev", "public/web-search", "internal/a/b"}
+	wantCapsets := []string{"legacy-capset", "internal/dev", "public/web-search"}
 	if got := normalized.Agents[0].CapsetIDs; strings.Join(got, ",") != strings.Join(wantCapsets, ",") {
 		t.Fatalf("capset ids = %#v, want %#v", got, wantCapsets)
 	}
@@ -55,6 +55,8 @@ func TestNormalizeRejectsInvalidOctoBusConfiguration(t *testing.T) {
 		{name: "invalid qualified server", raw: "agents:\n  coder:\n    capset_ids: [BadName/dev]\n", wantField: "agents.coder.capset_ids[0]"},
 		{name: "empty server", raw: "agents:\n  coder:\n    capset_ids: [/dev]\n", wantField: "agents.coder.capset_ids[0]"},
 		{name: "empty capset", raw: "octobus_servers:\n  internal:\n    url: https://example.test\nagents:\n  coder:\n    capset_ids: [internal/]\n", wantField: "agents.coder.capset_ids[0]"},
+		{name: "nested slash", raw: "octobus_servers:\n  internal:\n    url: https://example.test\nagents:\n  coder:\n    capset_ids: [internal/a/b]\n", wantField: "agents.coder.capset_ids[0]"},
+		{name: "invalid capset id", raw: "octobus_servers:\n  internal:\n    url: https://example.test\nagents:\n  coder:\n    capset_ids: [internal/1dev]\n", wantField: "agents.coder.capset_ids[0]"},
 		{name: "newline in capset", raw: "agents:\n  coder:\n    capset_ids: [\"legacy\\nother\"]\n", wantField: "agents.coder.capset_ids[0]"},
 		{name: "control character in capset", raw: "agents:\n  coder:\n    capset_ids: [\"legacy\\u0000other\"]\n", wantField: "agents.coder.capset_ids[0]"},
 		{name: "backtick in capset", raw: "agents:\n  coder:\n    capset_ids: [\"internal/`dev`\"]\n", wantField: "agents.coder.capset_ids[0]"},

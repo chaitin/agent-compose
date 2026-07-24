@@ -32,8 +32,11 @@ func TestProjectSpecOctoBusServersRoundTripAndRedaction(t *testing.T) {
 		t.Fatalf("internal yaml shape = %#v", servers["internal"])
 	}
 
-	redacted := ProjectSpecToProtoRedacted(spec)
+	redacted := ProjectSpecToProtoWithRedactedOctoBusTokens(spec)
 	if got := redacted.GetOctobusServers()[0].GetToken(); got == "secret-token" || got == "" {
 		t.Fatalf("redacted token = %q", got)
+	}
+	if got := wire.GetOctobusServers()[0].GetToken(); got != "secret-token" {
+		t.Fatalf("redaction mutated source token = %q", got)
 	}
 }

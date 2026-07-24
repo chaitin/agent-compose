@@ -727,11 +727,11 @@ func TestProjectAndRunHandlersStoreBackedWorkflows(t *testing.T) {
 		t.Fatalf("project response = %#v", projectResp.Msg.GetProject())
 	}
 	projectSpec := projectResp.Msg.GetProject().GetSpec()
-	if projectSpec.GetVariables()[0].GetValue() != secretRedactedValue ||
-		projectSpec.GetMcpServers()[0].GetHeaders()[0].GetValue() != secretRedactedValue ||
+	if projectSpec.GetVariables()[0].GetValue() != "project-secret" ||
+		projectSpec.GetMcpServers()[0].GetHeaders()[0].GetValue() != "mcp-secret" ||
 		projectSpec.GetOctobusServers()[0].GetToken() != secretRedactedValue ||
-		projectSpec.GetAgents()[0].GetEnv()[0].GetValue() != secretRedactedValue {
-		t.Fatalf("GetProject returned unredacted spec = %#v", projectSpec)
+		projectSpec.GetAgents()[0].GetEnv()[0].GetValue() != "agent-secret" {
+		t.Fatalf("GetProject changed existing secret behavior or exposed OctoBus token = %#v", projectSpec)
 	}
 	projectAgent := projectResp.Msg.GetProject().GetAgents()[0]
 	if store.agentRunStateCalls != 1 || projectAgent.GetCurrentRun().GetRunningRunCount() != 1 || projectAgent.GetCurrentRun().GetRunningSchedulerRunCount() != 2 || projectAgent.GetLatestRun().GetRunId() != "run-1" || projectAgent.GetHealth() != agentcomposev2.ProjectAgentHealth_PROJECT_AGENT_HEALTH_AT_RISK {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 
+	"agent-compose/pkg/capability"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -25,7 +27,11 @@ type TargetResolver interface {
 }
 
 func (s *Server) resolveTarget(ctx context.Context, binding SandboxBinding, declaration string) (Target, error) {
-	if !strings.Contains(declaration, "/") {
+	parsed, err := capability.ParseCapsetDeclaration(declaration)
+	if err != nil {
+		return Target{}, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if !parsed.Qualified() {
 		addr, token, ok := s.octobus(ctx)
 		if !ok {
 			return Target{}, status.Error(codes.Unavailable, "capability gateway is not configured")

@@ -20,7 +20,7 @@ func TestProjectAwareCapabilityProviderUsesBareCatalogPathAndQualifiedGuideDecla
 	defer server.Close()
 
 	store := &mutableCapabilityAgentStore{definition: projectCapabilityDefinition(server.URL, "project-token")}
-	provider := NewCapabilityProvider(staticGatewaySource{}, store, "proxy:1")
+	provider := NewCapabilityProvider(staticGatewaySource{}, NewProjectOctoBusTargetResolver(store), "proxy:1")
 	guide, err := capabilities.CapabilityGuideForScope(context.Background(), provider, capabilities.GuideScope{
 		ManagedProjectID: "project-1",
 		ManagedAgentID:   "agent-1",

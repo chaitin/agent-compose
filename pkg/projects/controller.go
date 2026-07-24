@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"agent-compose/pkg/capability"
 	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
@@ -364,8 +365,9 @@ func usesGlobalCapabilityGateway(spec *compose.NormalizedProjectSpec) bool {
 		return false
 	}
 	for _, agent := range spec.Agents {
-		for _, capsetID := range agent.CapsetIDs {
-			if !strings.Contains(capsetID, "/") {
+		for _, declaration := range agent.CapsetIDs {
+			parsed, err := capability.ParseCapsetDeclaration(declaration)
+			if err == nil && !parsed.Qualified() {
 				return true
 			}
 		}

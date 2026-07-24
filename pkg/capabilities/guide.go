@@ -2,10 +2,10 @@ package capabilities
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"strings"
-	"unicode"
+
+	"agent-compose/pkg/capability"
 )
 
 const capsetMetadataName = "x-octobus-capset"
@@ -14,18 +14,8 @@ const capsetMetadataName = "x-octobus-capset"
 // in generated Markdown metadata instructions. Control characters can split
 // an instruction across lines, while a backtick can terminate its code span.
 func ValidateCapsetDeclaration(declaration string) error {
-	if strings.TrimSpace(declaration) == "" {
-		return errors.New("capset declaration is required")
-	}
-	for _, r := range declaration {
-		if unicode.IsControl(r) {
-			return errors.New("capset declaration must not contain control characters")
-		}
-		if r == '`' {
-			return errors.New("capset declaration must not contain backticks")
-		}
-	}
-	return nil
+	_, err := capability.ParseCapsetDeclaration(declaration)
+	return err
 }
 
 // QualifyCapabilityGuide adds an authoritative, agent-compose-local routing

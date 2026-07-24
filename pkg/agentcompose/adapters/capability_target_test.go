@@ -3,6 +3,7 @@ package adapters
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"agent-compose/pkg/capproxy"
@@ -77,6 +78,12 @@ func TestProjectOctoBusTargetResolverRejectsMissingServerAndStoreFailure(t *test
 	_, err = resolver.ResolveCapabilityTarget(context.Background(), binding, "internal/dev")
 	if status.Code(err) != codes.Unavailable {
 		t.Fatalf("store error status = %v, want %v", status.Code(err), codes.Unavailable)
+	}
+	if status.Convert(err).Message() != "load managed agent capability configuration" {
+		t.Fatalf("store error exposed through gRPC = %q", status.Convert(err).Message())
+	}
+	if !errors.Is(err, store.err) || !strings.Contains(err.Error(), "database unavailable") {
+		t.Fatalf("store error cause was not preserved: %v", err)
 	}
 }
 

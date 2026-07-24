@@ -1,18 +1,13 @@
 package compose
 
 import (
-	"errors"
 	"net/url"
 	"slices"
 	"strconv"
 	"strings"
-	"unicode"
-)
 
-type capsetReference struct {
-	serverName string
-	capsetID   string
-}
+	"agent-compose/pkg/capability"
+)
 
 func normalizeOctoBusMap(path string, values map[string]OctoBusServerSpec, options NormalizeOptions) (map[string]NormalizedOctoBusServerSpec, error) {
 	if len(values) == 0 {
@@ -80,46 +75,21 @@ func normalizeOctoBusServer(path string, value OctoBusServerSpec, options Normal
 	return NormalizedOctoBusServerSpec{URL: rawURL, Token: token}, nil
 }
 
-func parseCapsetReference(value string) (capsetReference, error) {
-	for _, r := range value {
-		if unicode.IsControl(r) {
-			return capsetReference{}, errors.New("capset declaration must not contain control characters")
-		}
-		if r == '`' {
-			return capsetReference{}, errors.New("capset declaration must not contain backticks")
-		}
-	}
-	serverName, capsetID, qualified := strings.Cut(value, "/")
-	if !qualified {
-		if value == "" {
-			return capsetReference{}, errors.New("capset id is required")
-		}
-		return capsetReference{capsetID: value}, nil
-	}
-	if serverName == "" {
-		return capsetReference{}, errors.New("octobus server name is required")
-	}
-	if capsetID == "" {
-		return capsetReference{}, errors.New("capset id is required")
-	}
-	return capsetReference{serverName: serverName, capsetID: capsetID}, nil
-}
-
 func validateAgentCapsetReferences(path string, values []string, servers map[string]NormalizedOctoBusServerSpec) error {
 	for i, value := range values {
 		itemPath := path + "[" + strconv.Itoa(i) + "]"
-		ref, err := parseCapsetReference(value)
+		declaration, err := capability.ParseCapsetDeclaration(value)
 		if err != nil {
 			return &ValidationError{Path: itemPath, Message: err.Error()}
 		}
-		if ref.serverName == "" {
+		if !declaration.Qualified() {
 			continue
 		}
-		if err := validateStableIdentifier(itemPath, ref.serverName, "octobus server name"); err != nil {
+		if err := validateStableIdentifier(itemPath, declaration.ServerName, "octobus server name"); err != nil {
 			return err
 		}
-		if _, ok := servers[ref.serverName]; !ok {
-			return &ValidationError{Path: itemPath, Message: "octobus server " + strconv.Quote(ref.serverName) + " is not defined"}
+		if _, ok := servers[declaration.ServerName]; !ok {
+			return &ValidationError{Path: itemPath, Message: "octobus server " + strconv.Quote(declaration.ServerName) + " is not defined"}
 		}
 	}
 	return nil

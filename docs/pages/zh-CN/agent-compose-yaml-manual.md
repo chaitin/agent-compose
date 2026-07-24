@@ -617,7 +617,7 @@ capset_ids:
   - public/ticketing
 ```
 
-列表会去除空值和重复值。`legacy-capset` 这类未限定值使用 daemon 全局 OctoBus 配置，从而保持已有项目文件的行为。`internal/engineering` 这类限定值选择 `octobus_servers.internal`；`internal` 仅供 agent-compose 选择上游，OctoBus 收到的 capset ID 仍为 `engineering`。限定值引用未声明 Server 时会产生配置校验错误。
+列表会去除空值和重复值。真实 capset ID 必须符合 OctoBus 的 `^[a-zA-Z][a-zA-Z0-9_-]{0,62}$` 规则。`legacy-capset` 这类未限定值使用 daemon 全局 OctoBus 配置，从而保持已有项目文件的行为。`internal/engineering` 这类限定值选择 `octobus_servers.internal`；`internal` 仅供 agent-compose 选择上游，OctoBus 收到的 capset ID 仍为 `engineering`。限定值引用未声明 Server、包含多个 `/` 或真实 capset ID 不合法时会产生配置校验错误。
 
 限定值和未限定值可以混用。新增 `octobus_servers` 绝不会改变未限定值的路由。完整声明仍是 sandbox 的授权边界：授权 `internal/engineering` 不会同时授权 `engineering` 或 `public/engineering`。
 

@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"agent-compose/pkg/capability"
 )
 
 func NewRecordFromSpec(spec *compose.NormalizedProjectSpec, sourcePath string) (domain.ProjectRecord, error) {
@@ -159,18 +161,18 @@ func agentDefinitionConfigJSON(agent compose.NormalizedAgentSpec, projectMCPServ
 func selectedAgentOctoBusServers(agent compose.NormalizedAgentSpec, projectServers map[string]compose.NormalizedOctoBusServerSpec) map[string]compose.NormalizedOctoBusServerSpec {
 	var selected map[string]compose.NormalizedOctoBusServerSpec
 	for _, declaration := range agent.CapsetIDs {
-		serverName, _, qualified := strings.Cut(declaration, "/")
-		if !qualified {
+		parsed, err := capability.ParseCapsetDeclaration(declaration)
+		if err != nil || !parsed.Qualified() {
 			continue
 		}
-		server, ok := projectServers[serverName]
+		server, ok := projectServers[parsed.ServerName]
 		if !ok {
 			continue
 		}
 		if selected == nil {
 			selected = make(map[string]compose.NormalizedOctoBusServerSpec)
 		}
-		selected[serverName] = server
+		selected[parsed.ServerName] = server
 	}
 	return selected
 }

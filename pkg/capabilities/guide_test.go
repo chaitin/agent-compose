@@ -6,12 +6,24 @@ import (
 	"testing"
 
 	"agent-compose/pkg/capability"
+	domain "agent-compose/pkg/model"
 )
 
 type guideTestProvider struct {
 	globalCalls []string
 	scopedCalls []string
 	scope       GuideScope
+}
+
+func TestGuideScopeFromSandboxUsesCanonicalTagPrecedence(t *testing.T) {
+	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{Tags: []domain.SandboxTag{
+		{Name: "project_id", Value: "legacy-project"},
+		{Name: domain.AgentSandboxTagID, Value: "agent-1"},
+		{Name: "project", Value: "project-1"},
+	}}}
+	if scope := GuideScopeFromSandbox(sandbox); scope != (GuideScope{ManagedProjectID: "project-1", ManagedAgentID: "agent-1"}) {
+		t.Fatalf("scope = %#v", scope)
+	}
 }
 
 func (*guideTestProvider) Status(context.Context) capability.Status                 { return capability.Status{} }

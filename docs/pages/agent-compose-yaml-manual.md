@@ -612,7 +612,7 @@ capset_ids:
   - public/ticketing
 ```
 
-Empty and duplicate entries are removed. An unqualified value such as `legacy-capset` uses the daemon-wide OctoBus configuration, preserving the behavior of existing project files. A qualified value such as `internal/engineering` selects `octobus_servers.internal`; `internal` is used only by agent-compose to choose the upstream server, and OctoBus receives `engineering` as the capset ID. A qualified entry whose server is not declared is a validation error.
+Empty and duplicate entries are removed. Each real capset ID must match OctoBus's `^[a-zA-Z][a-zA-Z0-9_-]{0,62}$` rule. An unqualified value such as `legacy-capset` uses the daemon-wide OctoBus configuration, preserving the behavior of existing project files. A qualified value such as `internal/engineering` selects `octobus_servers.internal`; `internal` is used only by agent-compose to choose the upstream server, and OctoBus receives `engineering` as the capset ID. A qualified entry whose server is not declared, contains more than one `/`, or has an invalid real capset ID is a validation error.
 
 Qualified and unqualified entries may be mixed. Adding `octobus_servers` never changes the routing of unqualified entries. The complete declaration remains the sandbox authorization boundary: authorization for `internal/engineering` does not also authorize `engineering` or `public/engineering`.
 

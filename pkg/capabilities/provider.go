@@ -29,6 +29,29 @@ type GuideScope struct {
 	ManagedAgentID   string
 }
 
+// GuideScopeFromSandbox derives the canonical project and agent scope shared
+// by capability guide generation and proxy authorization.
+func GuideScopeFromSandbox(sandbox *domain.Sandbox) GuideScope {
+	if sandbox == nil {
+		return GuideScope{}
+	}
+	return GuideScope{
+		ManagedProjectID: sandboxTagValue(sandbox, "project", "project_id"),
+		ManagedAgentID:   sandboxTagValue(sandbox, domain.AgentSandboxTagID),
+	}
+}
+
+func sandboxTagValue(sandbox *domain.Sandbox, names ...string) string {
+	for _, name := range names {
+		for _, tag := range sandbox.Summary.Tags {
+			if strings.TrimSpace(tag.Name) == name {
+				return strings.TrimSpace(tag.Value)
+			}
+		}
+	}
+	return ""
+}
+
 // ScopedGuideProvider extends the global provider with project-aware guide
 // routing. Callers should use CapabilityGuideForScope so legacy providers keep
 // working for unqualified capset IDs.
@@ -40,10 +63,11 @@ type ScopedGuideProvider interface {
 // provider and preserves the legacy global provider behavior otherwise.
 func CapabilityGuideForScope(ctx context.Context, provider Provider, scope GuideScope, declaration string) ([]byte, error) {
 	declaration = strings.TrimSpace(declaration)
-	if err := ValidateCapsetDeclaration(declaration); err != nil {
+	parsed, err := capability.ParseCapsetDeclaration(declaration)
+	if err != nil {
 		return nil, fmt.Errorf("invalid capset declaration: %w", err)
 	}
-	if !strings.Contains(declaration, "/") {
+	if !parsed.Qualified() {
 		return provider.CapabilityGuide(ctx, declaration)
 	}
 	scoped, ok := provider.(ScopedGuideProvider)
