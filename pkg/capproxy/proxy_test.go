@@ -2,12 +2,16 @@ package capproxy
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"net"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -276,14 +280,17 @@ func TestProxyHelpersAndRawCodecBranches(t *testing.T) {
 	if got := bearerToken("Basic token"); got != "" {
 		t.Fatalf("non-bearer token = %q, want empty", got)
 	}
-	if got := normalizeGRPCTarget(" http://127.0.0.1:1234/ "); got != "127.0.0.1:1234" {
-		t.Fatalf("normalized URL target = %q", got)
-	}
-	if got := normalizeGRPCTarget(" octobus:9000/ "); got != "octobus:9000" {
-		t.Fatalf("normalized bare target = %q", got)
-	}
-	if got := normalizeGRPCTarget(" / "); got != "" {
-		t.Fatalf("normalized empty target = %q", got)
+	for _, raw := range []string{"http://127.0.0.1:1234/", "octobus:9000/"} {
+		target, creds, err := resolveGRPCTransport(raw, nil)
+		if err != nil {
+			t.Fatalf("resolveGRPCTransport(%q) returned error: %v", raw, err)
+		}
+		if target != strings.TrimSuffix(strings.TrimPrefix(raw, "http://"), "/") {
+			t.Fatalf("resolveGRPCTransport(%q) target = %q", raw, target)
+		}
+		if creds.Info().SecurityProtocol != "insecure" {
+			t.Fatalf("resolveGRPCTransport(%q) protocol = %q", raw, creds.Info().SecurityProtocol)
+		}
 	}
 	if !isReflectionMethod("/grpc.reflection.v1.ServerReflection/ServerReflectionInfo") {
 		t.Fatal("v1 reflection method was not detected")
@@ -330,6 +337,78 @@ func TestProxyHelpersAndRawCodecBranches(t *testing.T) {
 	}
 	if err := codec.Unmarshal(nil, new(int)); err == nil {
 		t.Fatal("expected unsupported unmarshal type error")
+	}
+}
+
+func TestResolveGRPCTransportRejectsInvalidTargets(t *testing.T) {
+	for _, raw := range []string{
+		"",
+		"ftp://example.test",
+		"https://user:pass@example.test",
+		"https://example.test/octobus",
+		"https://example.test?tenant=internal",
+		"https://example.test#internal",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			if _, _, err := resolveGRPCTransport(raw, nil); err == nil {
+				t.Fatalf("resolveGRPCTransport(%q) succeeded", raw)
+			}
+		})
+	}
+}
+
+func TestHTTPSGRPCTransportUsesTLSAndServerName(t *testing.T) {
+	httpsServer := httptest.NewTLSServer(nil)
+	certificate := httpsServer.TLS.Certificates[0]
+	httpsServer.Close()
+	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(leaf)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{
+		Certificates: []tls.Certificate{certificate},
+		MinVersion:   tls.VersionTLS12,
+	})), grpc.ForceServerCodec(rawCodec{}), grpc.UnknownServiceHandler(func(_ any, stream grpc.ServerStream) error {
+		request := rawFrame(nil)
+		if err := stream.RecvMsg(&request); err != nil {
+			return err
+		}
+		return stream.SendMsg(rawFrame("tls:" + string(request)))
+	}))
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Serve(ln) }()
+	t.Cleanup(func() {
+		server.Stop()
+		if err := <-errCh; err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
+			t.Fatalf("TLS grpc server returned error: %v", err)
+		}
+	})
+
+	target, transportCredentials, err := resolveGRPCTransport("https://"+ln.Addr().String()+"/", roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := transportCredentials.Info().ServerName; got != "127.0.0.1" {
+		t.Fatalf("TLS ServerName = %q, want 127.0.0.1", got)
+	}
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(transportCredentials), grpc.WithDefaultCallOptions(grpc.ForceCodec(rawCodec{})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	response := rawFrame(nil)
+	if err := conn.Invoke(context.Background(), "/pkg.Service/Call", rawFrame("ping"), &response); err != nil {
+		t.Fatal(err)
+	}
+	if string(response) != "tls:ping" {
+		t.Fatalf("TLS response = %q", response)
 	}
 }
 

@@ -10,7 +10,7 @@ func TestNormalizeOctoBusServersAndQualifiedCapsets(t *testing.T) {
 name: octobus-demo
 octobus_servers:
   public:
-    url: https://public.example/${PATH}
+    url: https://${HOST}/
   internal:
     url: https://internal.example
     token: ${OCTOBUS_TOKEN}
@@ -19,13 +19,13 @@ agents:
     capset_ids: [legacy-capset, internal/dev, public/web-search, internal/a/b]
 `)
 	normalized, err := Normalize(spec, NormalizeOptions{Env: map[string]string{
-		"PATH":          "octobus",
+		"HOST":          "public.example",
 		"OCTOBUS_TOKEN": "secret-token",
 	}})
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
 	}
-	if got := normalized.OctoBusServers["public"].URL; got != "https://public.example/octobus" {
+	if got := normalized.OctoBusServers["public"].URL; got != "https://public.example/" {
 		t.Fatalf("public url = %q", got)
 	}
 	if got := normalized.OctoBusServers["internal"].Token; got != "secret-token" {
@@ -48,6 +48,9 @@ func TestNormalizeRejectsInvalidOctoBusConfiguration(t *testing.T) {
 		{name: "relative url", raw: "octobus_servers:\n  internal:\n    url: /octobus\n", wantField: "octobus_servers.internal.url"},
 		{name: "unsupported scheme", raw: "octobus_servers:\n  internal:\n    url: grpc://example.test\n", wantField: "octobus_servers.internal.url"},
 		{name: "userinfo", raw: "octobus_servers:\n  internal:\n    url: https://user:pass@example.test\n", wantField: "octobus_servers.internal.url"},
+		{name: "non-root path", raw: "octobus_servers:\n  internal:\n    url: https://example.test/octobus\n", wantField: "octobus_servers.internal.url"},
+		{name: "query", raw: "octobus_servers:\n  internal:\n    url: https://example.test?tenant=internal\n", wantField: "octobus_servers.internal.url"},
+		{name: "fragment", raw: "octobus_servers:\n  internal:\n    url: https://example.test#internal\n", wantField: "octobus_servers.internal.url"},
 		{name: "undefined server", raw: "agents:\n  coder:\n    capset_ids: [missing/dev]\n", wantField: "agents.coder.capset_ids[0]"},
 		{name: "invalid qualified server", raw: "agents:\n  coder:\n    capset_ids: [BadName/dev]\n", wantField: "agents.coder.capset_ids[0]"},
 		{name: "empty server", raw: "agents:\n  coder:\n    capset_ids: [/dev]\n", wantField: "agents.coder.capset_ids[0]"},

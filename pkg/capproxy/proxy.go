@@ -2,6 +2,9 @@ package capproxy
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -10,6 +13,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/metadata"
@@ -195,7 +199,11 @@ func (s *Server) proxyStream(client grpc.ServerStream, method string, outgoing m
 	if target.Token != "" {
 		outgoing.Set("authorization", "Bearer "+target.Token)
 	}
-	conn, err := grpc.NewClient(normalizeGRPCTarget(target.Addr), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.ForceCodec(rawCodec{})))
+	grpcTarget, transportCredentials, err := resolveGRPCTransport(target.Addr, nil)
+	if err != nil {
+		return status.Error(codes.Unavailable, err.Error())
+	}
+	conn, err := grpc.NewClient(grpcTarget, grpc.WithTransportCredentials(transportCredentials), grpc.WithDefaultCallOptions(grpc.ForceCodec(rawCodec{})))
 	if err != nil {
 		return status.Error(codes.Unavailable, err.Error())
 	}
@@ -271,16 +279,36 @@ func bearerToken(value string) string {
 	return strings.TrimSpace(value[len("bearer "):])
 }
 
-func normalizeGRPCTarget(raw string) string {
-	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+func resolveGRPCTransport(raw string, roots *x509.CertPool) (string, credentials.TransportCredentials, error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return ""
+		return "", nil, errors.New("octobus target is empty")
+	}
+	if !strings.Contains(raw, "://") {
+		target := strings.TrimRight(raw, "/")
+		if target == "" {
+			return "", nil, errors.New("octobus target is empty")
+		}
+		return target, insecure.NewCredentials(), nil
 	}
 	parsed, err := url.Parse(raw)
-	if err == nil && parsed.Host != "" {
-		return parsed.Host
+	if err != nil {
+		return "", nil, fmt.Errorf("parse octobus target: %w", err)
 	}
-	return raw
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", nil, fmt.Errorf("octobus target scheme must be http or https")
+	}
+	if parsed.Host == "" || parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", nil, fmt.Errorf("octobus target must be an origin URL without userinfo, non-root path, query, or fragment")
+	}
+	if parsed.Scheme == "http" {
+		return parsed.Host, insecure.NewCredentials(), nil
+	}
+	return parsed.Host, credentials.NewTLS(&tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ServerName: parsed.Hostname(),
+		RootCAs:    roots,
+	}), nil
 }
 
 var _ encoding.Codec = rawCodec{}

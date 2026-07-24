@@ -57,6 +57,15 @@ func normalizeOctoBusServer(path string, value OctoBusServerSpec, options Normal
 	if parsed.User != nil {
 		return NormalizedOctoBusServerSpec{}, &ValidationError{Path: path + ".url", Message: "url must not include userinfo"}
 	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return NormalizedOctoBusServerSpec{}, &ValidationError{Path: path + ".url", Message: "url path must be empty or /"}
+	}
+	if parsed.RawQuery != "" {
+		return NormalizedOctoBusServerSpec{}, &ValidationError{Path: path + ".url", Message: "url must not include a query"}
+	}
+	if parsed.Fragment != "" {
+		return NormalizedOctoBusServerSpec{}, &ValidationError{Path: path + ".url", Message: "url must not include a fragment"}
+	}
 	token, err := interpolateEnvValue(path+".token", strings.TrimSpace(value.Token), options)
 	if err != nil {
 		return NormalizedOctoBusServerSpec{}, err

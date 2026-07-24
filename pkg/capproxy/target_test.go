@@ -38,7 +38,7 @@ func TestQualifiedCapsetRoutesBusinessCallWithoutLeakingQualifier(t *testing.T) 
 	})
 	defer stopOcto()
 
-	targets := &recordingTargetResolver{target: Target{Addr: octoAddr, Token: "project-token", CapsetID: "dev"}}
+	targets := &recordingTargetResolver{target: Target{Addr: "http://" + octoAddr + "/", Token: "project-token", CapsetID: "dev"}}
 	binding := SandboxBinding{SandboxID: "s1", CapsetIDs: []string{"internal/dev"}}
 	proxyAddr, stopProxy := startTestProxy(t, Config{
 		Listen:  "127.0.0.1:0",
