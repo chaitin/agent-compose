@@ -371,6 +371,8 @@ The map key is the server name and must use the stable identifier format. Agents
 
 OctoBus tokens are inherently sensitive. Keep them in environment or dotenv configuration and reference them with `${NAME}`. The daemon retains the resolved token so it can proxy requests, but redacts it from normalized user-facing output and never injects it into the sandbox. Avoid committing literal tokens to compose files.
 
+The redacted `********` value in project API or normalized output is display-only and cannot be applied as an OctoBus credential. Preserve the original environment-backed compose source when editing or re-applying a project.
+
 Project re-apply follows the same managed agent configuration model as MCP servers. A running sandbox keeps the `capset_ids` authorization set captured when it was created, while subsequent calls resolve a referenced server from the current managed agent definition. Updating a server URL or token therefore takes effect without rebuilding the sandbox. Newly added capsets are available only to new sandboxes; if a server used by an existing authorized capset can no longer be resolved, that call fails instead of falling back to another server.
 
 ## `volumes`: project volumes

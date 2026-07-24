@@ -60,7 +60,14 @@ func normalizeOctoBusServer(path string, value OctoBusServerSpec, options Normal
 	if err != nil {
 		return NormalizedOctoBusServerSpec{}, err
 	}
-	return NormalizedOctoBusServerSpec{URL: rawURL, Token: strings.TrimSpace(token)}, nil
+	token = strings.TrimSpace(token)
+	if token == redactedOctoBusToken {
+		return NormalizedOctoBusServerSpec{}, &ValidationError{
+			Path:    path + ".token",
+			Message: "redacted token placeholder cannot be used as a credential",
+		}
+	}
+	return NormalizedOctoBusServerSpec{URL: rawURL, Token: token}, nil
 }
 
 func parseCapsetReference(value string) (capsetReference, error) {

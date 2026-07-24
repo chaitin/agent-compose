@@ -370,6 +370,8 @@ map key 是 Server 名称，必须符合稳定标识符格式。Agent 通过 `<s
 
 OctoBus token 天然属于敏感信息。应把它保存在环境变量或 dotenv 配置中，并通过 `${NAME}` 引用。daemon 会保留解析后的 token 以代理请求，但会在面向用户的规范化输出中将其脱敏，也不会把它注入 sandbox。不要把字面 token 提交到 compose 文件中。
 
+项目 API 或规范化输出中的脱敏值 `********` 仅用于展示，不能作为 OctoBus 凭据重新 apply。编辑或重新 apply 项目时，请保留以环境变量为凭据来源的原始 compose 文件。
+
 项目 re-apply 与 MCP Server 沿用相同的 managed agent 配置模型。运行中的 sandbox 保留创建时固化的 `capset_ids` 授权集合，后续调用则从当前 managed agent definition 解析所引用的 Server。因此，更新 Server URL 或 token 无需重建 sandbox 即可生效。新增 capset 只对新 sandbox 可用；如果旧 sandbox 已授权的 capset 所对应 Server 已无法解析，该调用会失败，不会回退到其他 Server。
 
 ## `volumes`：项目级 Volume
