@@ -52,6 +52,9 @@ func TestNormalizeRejectsInvalidOctoBusConfiguration(t *testing.T) {
 		{name: "invalid qualified server", raw: "agents:\n  coder:\n    capset_ids: [BadName/dev]\n", wantField: "agents.coder.capset_ids[0]"},
 		{name: "empty server", raw: "agents:\n  coder:\n    capset_ids: [/dev]\n", wantField: "agents.coder.capset_ids[0]"},
 		{name: "empty capset", raw: "octobus_servers:\n  internal:\n    url: https://example.test\nagents:\n  coder:\n    capset_ids: [internal/]\n", wantField: "agents.coder.capset_ids[0]"},
+		{name: "newline in capset", raw: "agents:\n  coder:\n    capset_ids: [\"legacy\\nother\"]\n", wantField: "agents.coder.capset_ids[0]"},
+		{name: "control character in capset", raw: "agents:\n  coder:\n    capset_ids: [\"legacy\\u0000other\"]\n", wantField: "agents.coder.capset_ids[0]"},
+		{name: "backtick in capset", raw: "agents:\n  coder:\n    capset_ids: [\"internal/`dev`\"]\n", wantField: "agents.coder.capset_ids[0]"},
 		{name: "missing token environment", raw: "octobus_servers:\n  internal:\n    url: https://example.test\n    token: ${MISSING_TOKEN}\n", wantField: "octobus_servers.internal.token"},
 		{name: "redacted token placeholder", raw: "octobus_servers:\n  internal:\n    url: https://example.test\n    token: '********'\n", wantField: "redacted token placeholder cannot be used as a credential"},
 	}

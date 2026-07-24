@@ -40,8 +40,8 @@ type ScopedGuideProvider interface {
 // provider and preserves the legacy global provider behavior otherwise.
 func CapabilityGuideForScope(ctx context.Context, provider Provider, scope GuideScope, declaration string) ([]byte, error) {
 	declaration = strings.TrimSpace(declaration)
-	if declaration == "" {
-		return nil, fmt.Errorf("capset declaration is required")
+	if err := ValidateCapsetDeclaration(declaration); err != nil {
+		return nil, fmt.Errorf("invalid capset declaration: %w", err)
 	}
 	if !strings.Contains(declaration, "/") {
 		return provider.CapabilityGuide(ctx, declaration)

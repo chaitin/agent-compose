@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type capsetReference struct {
@@ -71,6 +72,14 @@ func normalizeOctoBusServer(path string, value OctoBusServerSpec, options Normal
 }
 
 func parseCapsetReference(value string) (capsetReference, error) {
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return capsetReference{}, errors.New("capset declaration must not contain control characters")
+		}
+		if r == '`' {
+			return capsetReference{}, errors.New("capset declaration must not contain backticks")
+		}
+	}
 	serverName, capsetID, qualified := strings.Cut(value, "/")
 	if !qualified {
 		if value == "" {

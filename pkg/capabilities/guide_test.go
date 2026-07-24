@@ -48,9 +48,29 @@ func TestCapabilityGuideForScopePreservesLegacyAndRoutesQualifiedDeclarations(t 
 }
 
 func TestQualifyCapabilityGuidePresentsAuthoritativeDeclaration(t *testing.T) {
-	guide := QualifyCapabilityGuide([]byte("# Upstream\n\nx-octobus-capset: dev"), "internal/dev", "dev")
+	guide := QualifyCapabilityGuide([]byte("# Upstream\n\nx-octobus-capset: dev\n\nUse `x-octobus-capset: dev` when calling.\n\nThe text x-octobus-capset: dev is descriptive.\nother-field: dev\ncapset: dev-other"), "internal/dev", "dev")
 	content := string(guide)
-	if !strings.Contains(content, "`x-octobus-capset: internal/dev`") || !strings.Contains(content, "x-octobus-capset: dev") {
+	if strings.Count(content, "x-octobus-capset: internal/dev") != 3 {
+		t.Fatalf("qualified guide assignments = %s", content)
+	}
+	for _, unchanged := range []string{"The text x-octobus-capset: dev is descriptive.", "other-field: dev", "capset: dev-other"} {
+		if !strings.Contains(content, unchanged) {
+			t.Fatalf("qualified guide changed non-metadata content %q: %s", unchanged, content)
+		}
+	}
+	if strings.Contains(content, "\nx-octobus-capset: dev\n") || strings.Contains(content, "`x-octobus-capset: dev`") {
 		t.Fatalf("qualified guide = %s", content)
+	}
+}
+
+func TestCapabilityGuideForScopeRejectsUnsafeDeclaration(t *testing.T) {
+	provider := &guideTestProvider{}
+	for _, declaration := range []string{"internal/dev\nother", "internal/dev\x00", "internal/`dev`"} {
+		if _, err := CapabilityGuideForScope(context.Background(), provider, GuideScope{}, declaration); err == nil {
+			t.Fatalf("CapabilityGuideForScope(%q) returned nil error", declaration)
+		}
+	}
+	if len(provider.globalCalls) != 0 || len(provider.scopedCalls) != 0 {
+		t.Fatalf("unsafe declarations reached provider: global=%#v scoped=%#v", provider.globalCalls, provider.scopedCalls)
 	}
 }
