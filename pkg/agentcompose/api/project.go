@@ -271,14 +271,6 @@ func redactMCPServerSpecs(values []*agentcomposev2.MCPServerSpec) {
 	}
 }
 
-func redactOctoBusServerSpecs(values []*agentcomposev2.OctoBusServerSpec) {
-	for _, value := range values {
-		if value != nil && value.GetToken() != "" {
-			value.Token = secretRedactedValue
-		}
-	}
-}
-
 // ProjectSpecToProtoChecked prevents an unresolved CLI-only script URL from
 // being mistaken for inline scheduler source on the wire.
 func ProjectSpecToProtoChecked(spec *compose.NormalizedProjectSpec) (*agentcomposev2.ProjectSpec, error) {
@@ -297,20 +289,6 @@ func ProjectSpecToProtoChecked(spec *compose.NormalizedProjectSpec) (*agentcompo
 		McpServers:     MCPServerSpecsToProto(spec.MCPServers),
 		OctobusServers: OctoBusServerSpecsToProto(spec.OctoBusServers),
 	}, nil
-}
-
-func OctoBusServerSpecsToProto(values map[string]compose.NormalizedOctoBusServerSpec) []*agentcomposev2.OctoBusServerSpec {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	items := make([]*agentcomposev2.OctoBusServerSpec, 0, len(keys))
-	for _, key := range keys {
-		value := values[key]
-		items = append(items, &agentcomposev2.OctoBusServerSpec{Name: key, Url: value.URL, Token: value.Token})
-	}
-	return items
 }
 
 func NamedWorkspaceSpecsToProto(workspaces map[string]compose.WorkspaceSpec) []*agentcomposev2.NamedWorkspaceSpec {
@@ -598,25 +576,6 @@ func ProjectSpecYAMLShape(spec *agentcomposev2.ProjectSpec) (map[string]any, []*
 		root["octobus_servers"] = octobusServers
 	}
 	return root, nil
-}
-
-func OctoBusServerYAMLMap(servers []*agentcomposev2.OctoBusServerSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
-	values := make(map[string]any, len(servers))
-	for i, server := range servers {
-		name := strings.TrimSpace(server.GetName())
-		if name == "" {
-			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("octobus_servers[%d].name", i), "octobus server name is required")}
-		}
-		if _, ok := values[name]; ok {
-			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("octobus_servers[%d].name", i), fmt.Sprintf("duplicate octobus server %q", name))}
-		}
-		raw := map[string]any{"url": server.GetUrl()}
-		if server.GetToken() != "" {
-			raw["token"] = server.GetToken()
-		}
-		values[name] = raw
-	}
-	return values, nil
 }
 
 func ProjectVolumeYAMLMap(volumes []*agentcomposev2.ProjectVolumeSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
