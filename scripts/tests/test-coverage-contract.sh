@@ -139,7 +139,7 @@ fi
 
 listed_e2e_tests="$(go test -list '^Test' ./test/e2e | awk '/^Test/ { print }')"
 listed_e2e_count="$(printf '%s\n' "$listed_e2e_tests" | awk 'NF { count++ } END { print count + 0 }')"
-assert_equal 7 "$listed_e2e_count" "unexpected test/e2e package test count"
+assert_equal 8 "$listed_e2e_count" "unexpected test/e2e package test count"
 
 e2e_output="$(go test -run '^Test' -v ./test/e2e)"
 while IFS= read -r test_name; do
