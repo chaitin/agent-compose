@@ -34,7 +34,7 @@ func TestLoaderSandboxRunnerEnvironmentPrecedence(t *testing.T) {
 		t.Fatalf("create agent definition: %v", err)
 	}
 
-	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, bridge.workspaceEnsurer, driver, nil, nil, bridge.streams, nil, nil)
+	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, bridge.workspaceEnsurer, driver, nil, nil, bridge.streams, nil, nil, bridge.agentExecutor)
 	loader := domain.Loader{
 		Summary: domain.LoaderSummary{
 			ID:            "loader-env-precedence",
