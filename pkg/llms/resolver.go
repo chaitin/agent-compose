@@ -282,8 +282,8 @@ func ensureDefaultAnthropicEnvProvider(ctx context.Context, config *appconfig.Co
 	if !hasDefaultAnthropicEnvProviderInput(lookup) {
 		return nil
 	}
-	authHeader, authScheme := layeredAnthropicProviderAuth(ctx, store, nil)
-	_, err := EnsureAnthropicEnvProvider(ctx, store, lookup, authHeader, authScheme, ProviderIDDefaultAnthropic, "anthropic", ProviderScopeEnvDefault, requestedModel, false)
+	credential := layeredAnthropicCredential(ctx, config, store, nil)
+	_, err := ensureAnthropicEnvProvider(ctx, store, lookup, credential, ProviderIDDefaultAnthropic, "anthropic", ProviderScopeEnvDefault, requestedModel, false)
 	return err
 }
 
@@ -307,39 +307,8 @@ func ensureSessionAnthropicEnvProvider(ctx context.Context, store LLMResolverSto
 func ensureSessionAnthropicEnvProviderWithConfig(ctx context.Context, config *appconfig.Config, store LLMResolverStore, sessionID, requestedModel string, envItems []domain.SandboxEnvVar) (string, error) {
 	providerID := SessionEnvProviderID(sessionID, ProviderFamilyAnthropic)
 	lookup := layeredLLMEnvProviderLookup(ctx, config, store, envItems)
-	authHeader, authScheme := layeredAnthropicProviderAuth(ctx, store, envItems)
-	return EnsureAnthropicEnvProvider(ctx, store, lookup, authHeader, authScheme, providerID, providerID, ProviderScopeSessionEnv, requestedModel, false)
-}
-
-func layeredAnthropicProviderAuth(ctx context.Context, store LLMResolverStore, sandboxItems []domain.SandboxEnvVar) (string, string) {
-	if header, scheme, ok := anthropicProviderAuthFromItems(sandboxItems); ok {
-		return header, scheme
-	}
-	if store != nil {
-		globalItems, err := store.ListGlobalEnv(ctx)
-		if err == nil {
-			if header, scheme, ok := anthropicProviderAuthFromItems(globalItems); ok {
-				return header, scheme
-			}
-		}
-	}
-	if strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "" {
-		return "x-api-key", ""
-	}
-	if strings.TrimSpace(os.Getenv("ANTHROPIC_AUTH_TOKEN")) != "" {
-		return "Authorization", "Bearer"
-	}
-	return "x-api-key", ""
-}
-
-func anthropicProviderAuthFromItems(items []domain.SandboxEnvVar) (string, string, bool) {
-	if strings.TrimSpace(EnvItemValue(items, "ANTHROPIC_API_KEY")) != "" {
-		return "x-api-key", "", true
-	}
-	if strings.TrimSpace(EnvItemValue(items, "ANTHROPIC_AUTH_TOKEN")) != "" {
-		return "Authorization", "Bearer", true
-	}
-	return "", "", false
+	credential := layeredAnthropicCredential(ctx, config, store, envItems)
+	return ensureAnthropicEnvProvider(ctx, store, lookup, credential, providerID, providerID, ProviderScopeSessionEnv, requestedModel, false)
 }
 
 func EnsureSessionAnthropicEnvProvider(ctx context.Context, store LLMResolverStore, sessionID, requestedModel string, envItems []domain.SandboxEnvVar) (string, error) {

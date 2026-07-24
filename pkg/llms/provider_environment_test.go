@@ -218,22 +218,91 @@ func TestRuntimeTargetUsesSharedDefaultInsteadOfGlobalSessionSnapshot(t *testing
 	}
 }
 
-func TestRuntimeTargetKeepsAnthropicAuthTypeFromWinningLayer(t *testing.T) {
-	isolateLLMEnv(t)
-	t.Setenv("ANTHROPIC_API_KEY", "process-api-key")
-	store := newResolverCoverageStore()
-	store.global = []domain.SandboxEnvVar{
-		{Name: "ANTHROPIC_API_KEY", Value: "global-api-key"},
-		{Name: "ANTHROPIC_MODEL", Value: "global-claude"},
+func TestRuntimeTargetKeepsAnthropicCredentialFromWinningLayer(t *testing.T) {
+	tests := []struct {
+		name             string
+		sandboxItems     []domain.SandboxEnvVar
+		globalItems      []domain.SandboxEnvVar
+		processAPIKey    string
+		processAuthToken string
+		configKey        string
+		wantKey          string
+		wantHeader       string
+		wantScheme       string
+	}{
+		{
+			name:         "sandbox auth token beats Global Env api key",
+			sandboxItems: []domain.SandboxEnvVar{{Name: "ANTHROPIC_AUTH_TOKEN", Value: "sandbox-auth-token"}},
+			globalItems:  []domain.SandboxEnvVar{{Name: "ANTHROPIC_API_KEY", Value: "global-api-key"}},
+			wantKey:      "sandbox-auth-token",
+			wantHeader:   "Authorization",
+			wantScheme:   "Bearer",
+		},
+		{
+			name:         "sandbox generic key beats Global Env auth token",
+			sandboxItems: []domain.SandboxEnvVar{{Name: "LLM_API_KEY", Value: "sandbox-generic-key"}},
+			globalItems:  []domain.SandboxEnvVar{{Name: "ANTHROPIC_AUTH_TOKEN", Value: "global-auth-token"}},
+			wantKey:      "sandbox-generic-key",
+			wantHeader:   "x-api-key",
+		},
+		{
+			name: "family-specific token beats generic key within sandbox",
+			sandboxItems: []domain.SandboxEnvVar{
+				{Name: "LLM_API_KEY", Value: "sandbox-generic-key"},
+				{Name: "ANTHROPIC_AUTH_TOKEN", Value: "sandbox-auth-token"},
+			},
+			wantKey:    "sandbox-auth-token",
+			wantHeader: "Authorization",
+			wantScheme: "Bearer",
+		},
+		{
+			name:             "Global Env generic key beats process auth token",
+			globalItems:      []domain.SandboxEnvVar{{Name: "LLM_API_KEY", Value: "global-generic-key"}},
+			processAuthToken: "process-auth-token",
+			wantKey:          "global-generic-key",
+			wantHeader:       "x-api-key",
+		},
+		{
+			name:             "process auth token beats daemon config key",
+			processAuthToken: "process-auth-token",
+			configKey:        "config-generic-key",
+			wantKey:          "process-auth-token",
+			wantHeader:       "Authorization",
+			wantScheme:       "Bearer",
+		},
+		{
+			name:          "process api key beats daemon config key",
+			processAPIKey: "process-api-key",
+			configKey:     "config-generic-key",
+			wantKey:       "process-api-key",
+			wantHeader:    "x-api-key",
+		},
+		{
+			name:       "daemon config generic key is x-api-key",
+			configKey:  "config-generic-key",
+			wantKey:    "config-generic-key",
+			wantHeader: "x-api-key",
+		},
 	}
-	target, err := ResolveRuntimeLLMTargetWithEnv(context.Background(), &appconfig.Config{}, store, "sandbox-anthropic-auth", ProviderFamilyAnthropic, "", "", []domain.SandboxEnvVar{
-		{Name: "ANTHROPIC_AUTH_TOKEN", Value: "sandbox-auth-token"},
-	})
-	if err != nil {
-		t.Fatalf("resolve layered Anthropic target: %v", err)
-	}
-	if target.Provider.APIKey != "sandbox-auth-token" || target.Provider.AuthHeader != "Authorization" || target.Provider.AuthScheme != "Bearer" {
-		t.Fatalf("layered Anthropic target = %#v", target)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isolateLLMEnv(t)
+			t.Setenv("ANTHROPIC_API_KEY", tt.processAPIKey)
+			t.Setenv("ANTHROPIC_AUTH_TOKEN", tt.processAuthToken)
+			store := newResolverCoverageStore()
+			store.global = append([]domain.SandboxEnvVar{
+				{Name: "ANTHROPIC_BASE_URL", Value: "https://global.anthropic.example"},
+				{Name: "ANTHROPIC_MODEL", Value: "global-claude"},
+			}, tt.globalItems...)
+			target, err := ResolveRuntimeLLMTargetWithEnv(context.Background(), &appconfig.Config{LLMAPIKey: tt.configKey}, store, "sandbox-anthropic-auth", ProviderFamilyAnthropic, "", "", tt.sandboxItems)
+			if err != nil {
+				t.Fatalf("resolve layered Anthropic target: %v", err)
+			}
+			if target.Provider.APIKey != tt.wantKey || target.Provider.AuthHeader != tt.wantHeader || target.Provider.AuthScheme != tt.wantScheme {
+				t.Fatalf("layered Anthropic credential = key %q header %q scheme %q", target.Provider.APIKey, target.Provider.AuthHeader, target.Provider.AuthScheme)
+			}
+		})
 	}
 }
 
