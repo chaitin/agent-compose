@@ -2,6 +2,7 @@ package capabilities
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"agent-compose/pkg/capability"
@@ -19,6 +20,37 @@ type Provider interface {
 	Catalog(context.Context, string) (capability.Catalog, error)
 	CapabilityGuide(ctx context.Context, capsetID string) ([]byte, error)
 	ProxyTarget() string
+}
+
+// GuideScope identifies the managed agent whose project-scoped OctoBus
+// declarations may be used while rendering a sandbox capability guide.
+type GuideScope struct {
+	ManagedProjectID string
+	ManagedAgentID   string
+}
+
+// ScopedGuideProvider extends the global provider with project-aware guide
+// routing. Callers should use CapabilityGuideForScope so legacy providers keep
+// working for unqualified capset IDs.
+type ScopedGuideProvider interface {
+	CapabilityGuideForScope(context.Context, GuideScope, string) ([]byte, error)
+}
+
+// CapabilityGuideForScope routes qualified declarations through a scoped
+// provider and preserves the legacy global provider behavior otherwise.
+func CapabilityGuideForScope(ctx context.Context, provider Provider, scope GuideScope, declaration string) ([]byte, error) {
+	declaration = strings.TrimSpace(declaration)
+	if declaration == "" {
+		return nil, fmt.Errorf("capset declaration is required")
+	}
+	if !strings.Contains(declaration, "/") {
+		return provider.CapabilityGuide(ctx, declaration)
+	}
+	scoped, ok := provider.(ScopedGuideProvider)
+	if !ok {
+		return nil, fmt.Errorf("project OctoBus capability guide provider is not configured")
+	}
+	return scoped.CapabilityGuideForScope(ctx, scope, declaration)
 }
 
 func ProxyTarget(provider Provider) string {

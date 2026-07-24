@@ -476,7 +476,8 @@ func NewWorkspaceProvisioner(di do.Injector) (*workspaces.Provisioner, error) {
 
 func NewCapabilityProvider(di do.Injector) (capabilities.Provider, error) {
 	conf := do.MustInvoke[*appconfig.Config](di)
-	return adapters.NewCapabilityProvider(do.MustInvoke[*configstore.ConfigStore](di), conf.CapGRPCTarget), nil
+	store := do.MustInvoke[*configstore.ConfigStore](di)
+	return adapters.NewCapabilityProvider(store, store, conf.CapGRPCTarget), nil
 }
 
 func NewCapabilitySandboxResolver(di do.Injector) (*adapters.CapabilitySandboxResolver, error) {

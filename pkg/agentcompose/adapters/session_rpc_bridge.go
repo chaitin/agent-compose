@@ -428,7 +428,7 @@ func writeCapabilityGuide(ctx context.Context, provider capabilities.Provider, s
 	var b strings.Builder
 	rendered := false
 	for _, id := range ids {
-		guide, err := provider.CapabilityGuide(ctx, id)
+		guide, err := capabilities.CapabilityGuideForScope(ctx, provider, capabilityGuideScope(session), id)
 		if err != nil {
 			slog.Warn("capability guide render skipped", "capset", id, "sandbox_id", session.Summary.ID, "error", err)
 			recordCapabilityGuideWarning(ctx, store, streams, session.Summary.ID, fmt.Sprintf("capability guide render skipped for capset %s", id))
@@ -455,6 +455,13 @@ func writeCapabilityGuide(ctx context.Context, provider capabilities.Provider, s
 	if err := os.WriteFile(catalogPath, []byte(content), 0o644); err != nil {
 		slog.Warn("capability guide write failed", "sandbox_id", session.Summary.ID, "error", err)
 		recordCapabilityGuideWarning(ctx, store, streams, session.Summary.ID, "capability guide write failed")
+	}
+}
+
+func capabilityGuideScope(session *domain.Sandbox) capabilities.GuideScope {
+	return capabilities.GuideScope{
+		ManagedProjectID: sandboxTagValue(session, "project", "project_id"),
+		ManagedAgentID:   sandboxTagValue(session, domain.AgentSandboxTagID),
 	}
 }
 

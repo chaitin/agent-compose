@@ -2397,7 +2397,7 @@ func writeCapabilityGuide(ctx context.Context, provider capabilities.Provider, s
 	var b strings.Builder
 	rendered := false
 	for _, id := range ids {
-		guide, err := provider.CapabilityGuide(ctx, id)
+		guide, err := capabilities.CapabilityGuideForScope(ctx, provider, capabilityGuideScope(sandbox), id)
 		if err != nil {
 			slog.Warn("capability guide render skipped", "capset", id, "sandbox_id", sandbox.Summary.ID, "error", err)
 			recordCapabilityGuideWarning(ctx, store, streams, sandbox.Summary.ID, fmt.Sprintf("capability guide render skipped for capset %s", id))
@@ -2425,6 +2425,24 @@ func writeCapabilityGuide(ctx context.Context, provider capabilities.Provider, s
 		slog.Warn("capability guide write failed", "sandbox_id", sandbox.Summary.ID, "error", err)
 		recordCapabilityGuideWarning(ctx, store, streams, sandbox.Summary.ID, "capability guide write failed")
 	}
+}
+
+func capabilityGuideScope(session *domain.Sandbox) capabilities.GuideScope {
+	if session == nil {
+		return capabilities.GuideScope{}
+	}
+	var scope capabilities.GuideScope
+	for _, tag := range session.Summary.Tags {
+		switch strings.TrimSpace(tag.Name) {
+		case "project", "project_id":
+			if scope.ManagedProjectID == "" {
+				scope.ManagedProjectID = strings.TrimSpace(tag.Value)
+			}
+		case domain.AgentSandboxTagID:
+			scope.ManagedAgentID = strings.TrimSpace(tag.Value)
+		}
+	}
+	return scope
 }
 
 func recordCapabilityGuideWarning(ctx context.Context, store SandboxRuntimeStore, streams *sessions.StreamBroker, sandboxID, message string) {
