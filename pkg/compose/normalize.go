@@ -39,12 +39,13 @@ type NormalizeOptions struct {
 }
 
 type NormalizedProjectSpec struct {
-	Name       string                             `yaml:"name" json:"name"`
-	Variables  map[string]EnvVarSpec              `yaml:"variables,omitempty" json:"variables,omitempty"`
-	Workspaces map[string]WorkspaceSpec           `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
-	MCPServers map[string]NormalizedMCPServerSpec `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
-	Volumes    map[string]NormalizedVolumeSpec    `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	Agents     []NormalizedAgentSpec              `yaml:"agents,omitempty" json:"agents,omitempty"`
+	Name           string                                 `yaml:"name" json:"name"`
+	Variables      map[string]EnvVarSpec                  `yaml:"variables,omitempty" json:"variables,omitempty"`
+	Workspaces     map[string]WorkspaceSpec               `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
+	MCPServers     map[string]NormalizedMCPServerSpec     `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
+	OctoBusServers map[string]NormalizedOctoBusServerSpec `yaml:"octobus_servers,omitempty" json:"octobus_servers,omitempty"`
+	Volumes        map[string]NormalizedVolumeSpec        `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Agents         []NormalizedAgentSpec                  `yaml:"agents,omitempty" json:"agents,omitempty"`
 }
 
 type NormalizedAgentSpec struct {
@@ -76,6 +77,11 @@ type NormalizedMCPServerSpec struct {
 	Env       map[string]EnvVarSpec `yaml:"env,omitempty" json:"env,omitempty"`
 	URL       string                `yaml:"url,omitempty" json:"url,omitempty"`
 	Headers   map[string]EnvVarSpec `yaml:"headers,omitempty" json:"headers,omitempty"`
+}
+
+type NormalizedOctoBusServerSpec struct {
+	URL   string `yaml:"url" json:"url"`
+	Token string `yaml:"token,omitempty" json:"token,omitempty"`
 }
 
 type NormalizedSkillSpec struct {
@@ -197,6 +203,11 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 		return nil, err
 	}
 	normalized.MCPServers = mcps
+	octobusServers, err := normalizeOctoBusMap("octobus_servers", spec.OctoBusServers, options)
+	if err != nil {
+		return nil, err
+	}
+	normalized.OctoBusServers = octobusServers
 	volumes, err := normalizeProjectVolumes(spec.Volumes)
 	if err != nil {
 		return nil, err
@@ -214,7 +225,7 @@ func Normalize(spec *ProjectSpec, options NormalizeOptions) (*NormalizedProjectS
 			return nil, err
 		}
 		agent := spec.Agents[agentName]
-		normalizedAgent, err := normalizeAgent(agentName, agent, options, normalized.Volumes, normalized.Workspaces, normalized.MCPServers)
+		normalizedAgent, err := normalizeAgent(agentName, agent, options, normalized.Volumes, normalized.Workspaces, normalized.MCPServers, normalized.OctoBusServers)
 		if err != nil {
 			return nil, err
 		}
@@ -236,7 +247,7 @@ func NormalizeFile(path string) (*NormalizedProjectSpec, error) {
 	return normalized, nil
 }
 
-func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, projectVolumes map[string]NormalizedVolumeSpec, projectWorkspaces map[string]WorkspaceSpec, projectMCPServers map[string]NormalizedMCPServerSpec) (NormalizedAgentSpec, error) {
+func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, projectVolumes map[string]NormalizedVolumeSpec, projectWorkspaces map[string]WorkspaceSpec, projectMCPServers map[string]NormalizedMCPServerSpec, projectOctoBusServers map[string]NormalizedOctoBusServerSpec) (NormalizedAgentSpec, error) {
 	enabled := true
 	if agent.Enabled != nil {
 		enabled = *agent.Enabled
@@ -281,6 +292,10 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
+	capsetIDs := normalizeStringList(agent.CapsetIDs)
+	if err := validateAgentCapsetReferences(joinPath("agents", name)+".capset_ids", capsetIDs, projectOctoBusServers); err != nil {
+		return NormalizedAgentSpec{}, err
+	}
 	return NormalizedAgentSpec{
 		Name:         name,
 		Enabled:      enabled,
@@ -294,7 +309,7 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 		Driver:       driver,
 		Env:          env,
 		MCPServers:   agentMCPServers,
-		CapsetIDs:    normalizeStringList(agent.CapsetIDs),
+		CapsetIDs:    capsetIDs,
 		Skills:       skills,
 		Volumes:      volumes,
 		Workspace:    workspace,

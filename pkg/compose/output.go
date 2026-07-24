@@ -12,6 +12,7 @@ import (
 )
 
 const redactedEnvValue = "********"
+const redactedOctoBusToken = "********"
 
 type orderedEnvVarSpec struct {
 	Name   string `yaml:"name" json:"name"`
@@ -20,12 +21,13 @@ type orderedEnvVarSpec struct {
 }
 
 type orderedProjectSpec struct {
-	Name       string                  `yaml:"name" json:"name"`
-	Variables  []orderedEnvVarSpec     `yaml:"variables,omitempty" json:"variables,omitempty"`
-	Workspaces []orderedNamedWorkspace `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
-	MCPServers []orderedMCPServerSpec  `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
-	Volumes    []orderedVolumeSpec     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	Agents     []orderedAgentSpec      `yaml:"agents,omitempty" json:"agents,omitempty"`
+	Name           string                     `yaml:"name" json:"name"`
+	Variables      []orderedEnvVarSpec        `yaml:"variables,omitempty" json:"variables,omitempty"`
+	Workspaces     []orderedNamedWorkspace    `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
+	MCPServers     []orderedMCPServerSpec     `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
+	OctoBusServers []orderedOctoBusServerSpec `yaml:"octobus_servers,omitempty" json:"octobus_servers,omitempty"`
+	Volumes        []orderedVolumeSpec        `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Agents         []orderedAgentSpec         `yaml:"agents,omitempty" json:"agents,omitempty"`
 }
 
 type orderedNamedWorkspace struct {
@@ -72,6 +74,12 @@ type orderedMCPServerSpec struct {
 	Env       []orderedEnvVarSpec `yaml:"env,omitempty" json:"env,omitempty"`
 	URL       string              `yaml:"url,omitempty" json:"url,omitempty"`
 	Headers   []orderedEnvVarSpec `yaml:"headers,omitempty" json:"headers,omitempty"`
+}
+
+type orderedOctoBusServerSpec struct {
+	Name  string `yaml:"name" json:"name"`
+	URL   string `yaml:"url" json:"url"`
+	Token string `yaml:"token,omitempty" json:"token,omitempty"`
 }
 
 type orderedVolumeSpec struct {
@@ -135,6 +143,7 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 		return orderedProjectSpec{}
 	}
 	mcps := orderedMCPServers(s.MCPServers, redactSecrets)
+	octobusServers := orderedOctoBusServers(s.OctoBusServers, redactSecrets)
 	agents := make([]orderedAgentSpec, 0, len(s.Agents))
 	for _, agent := range s.Agents {
 		agents = append(agents, orderedAgentSpec{
@@ -162,23 +171,25 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 		return compareString(a.Name, b.Name)
 	})
 	return orderedProjectSpec{
-		Name:       s.Name,
-		Variables:  orderedEnvVars(s.Variables, redactSecrets),
-		Workspaces: orderedWorkspaces(s.Workspaces),
-		MCPServers: mcps,
-		Volumes:    orderedVolumes(s.Volumes),
-		Agents:     agents,
+		Name:           s.Name,
+		Variables:      orderedEnvVars(s.Variables, redactSecrets),
+		Workspaces:     orderedWorkspaces(s.Workspaces),
+		MCPServers:     mcps,
+		OctoBusServers: octobusServers,
+		Volumes:        orderedVolumes(s.Volumes),
+		Agents:         agents,
 	}
 }
 
 func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec {
 	ordered := s.ordered(redactSecrets)
 	cloned := &NormalizedProjectSpec{
-		Name:       ordered.Name,
-		Variables:  envVarMapFromOrdered(ordered.Variables),
-		Workspaces: workspaceMapFromOrdered(ordered.Workspaces),
-		MCPServers: mcpMapFromOrdered(ordered.MCPServers),
-		Volumes:    volumeMapFromOrdered(ordered.Volumes),
+		Name:           ordered.Name,
+		Variables:      envVarMapFromOrdered(ordered.Variables),
+		Workspaces:     workspaceMapFromOrdered(ordered.Workspaces),
+		MCPServers:     mcpMapFromOrdered(ordered.MCPServers),
+		OctoBusServers: octoBusMapFromOrdered(ordered.OctoBusServers),
+		Volumes:        volumeMapFromOrdered(ordered.Volumes),
 	}
 	for _, agent := range ordered.Agents {
 		cloned.Agents = append(cloned.Agents, NormalizedAgentSpec{

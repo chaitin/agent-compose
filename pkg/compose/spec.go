@@ -11,13 +11,19 @@ import (
 )
 
 type ProjectSpec struct {
-	Name       string                   `yaml:"name,omitempty" json:"name,omitempty"`
-	EnvFiles   EnvFileSpec              `yaml:"env_file,omitempty" json:"env_file,omitempty"`
-	Variables  map[string]EnvVarSpec    `yaml:"variables,omitempty" json:"variables,omitempty"`
-	Workspaces map[string]WorkspaceSpec `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
-	MCPServers map[string]MCPServerSpec `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
-	Volumes    map[string]VolumeSpec    `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	Agents     map[string]AgentSpec     `yaml:"agents,omitempty" json:"agents,omitempty"`
+	Name           string                       `yaml:"name,omitempty" json:"name,omitempty"`
+	EnvFiles       EnvFileSpec                  `yaml:"env_file,omitempty" json:"env_file,omitempty"`
+	Variables      map[string]EnvVarSpec        `yaml:"variables,omitempty" json:"variables,omitempty"`
+	Workspaces     map[string]WorkspaceSpec     `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
+	MCPServers     map[string]MCPServerSpec     `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
+	OctoBusServers map[string]OctoBusServerSpec `yaml:"octobus_servers,omitempty" json:"octobus_servers,omitempty"`
+	Volumes        map[string]VolumeSpec        `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Agents         map[string]AgentSpec         `yaml:"agents,omitempty" json:"agents,omitempty"`
+}
+
+type OctoBusServerSpec struct {
+	URL   string `yaml:"url,omitempty" json:"url,omitempty"`
+	Token string `yaml:"token,omitempty" json:"token,omitempty"`
 }
 
 // EnvFileSpec lists dotenv files used while loading a project configuration.
@@ -462,13 +468,25 @@ type nodeValidator func(node *yaml.Node, path string) error
 
 func validateProjectNode(node *yaml.Node) error {
 	return validateMapping(node, "", map[string]nodeValidator{
-		"name":        validateScalar,
-		"env_file":    validateScalarOrStringList,
-		"variables":   validateEnvVarMap,
-		"workspaces":  validateWorkspaceMap,
-		"mcp_servers": validateMCPMap,
-		"volumes":     validateVolumeMap,
-		"agents":      validateAgentMap,
+		"name":            validateScalar,
+		"env_file":        validateScalarOrStringList,
+		"variables":       validateEnvVarMap,
+		"workspaces":      validateWorkspaceMap,
+		"mcp_servers":     validateMCPMap,
+		"octobus_servers": validateOctoBusMap,
+		"volumes":         validateVolumeMap,
+		"agents":          validateAgentMap,
+	})
+}
+
+func validateOctoBusMap(node *yaml.Node, path string) error {
+	return validateNamedMap(node, path, validateOctoBusServer)
+}
+
+func validateOctoBusServer(node *yaml.Node, path string) error {
+	return validateMapping(node, path, map[string]nodeValidator{
+		"url":   validateScalar,
+		"token": validateScalar,
 	})
 }
 

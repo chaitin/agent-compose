@@ -713,6 +713,7 @@ message ProjectSpec {
   repeated ProjectVolumeSpec volumes = 6;
   repeated NamedWorkspaceSpec workspaces = 7;
   repeated MCPServerSpec mcp_servers = 8;
+  repeated OctoBusServerSpec octobus_servers = 9;
 }
 
 message NamedWorkspaceSpec {
@@ -750,6 +751,12 @@ message MCPServerSpec {
   repeated EnvVarSpec env = 6;
   string url = 7;
   repeated EnvVarSpec headers = 8;
+}
+
+message OctoBusServerSpec {
+  string name = 1;
+  string url = 2;
+  string token = 3;
 }
 
 message ProjectVolumeSpec {
