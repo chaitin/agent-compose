@@ -121,6 +121,24 @@ compiled only with the `docker_e2e` build tag, so the ordinary `task test`
 coverage gate does not include this scheduler Docker E2E or create its runtime
 containers.
 
+The legacy Loader environment migration has an opt-in host-daemon E2E because
+real `ApplyProject` validates Docker image availability. It seeds an isolated
+legacy database, starts the candidate daemon, and exercises dry-run and real
+updates through the public ProjectService while checking both legacy and
+ordinary v2 Project persistence:
+
+```bash
+AGENT_COMPOSE_E2E_LEGACY_LOADER_ENV_IMAGE=agent-compose-guest:latest \
+  go test ./test/e2e \
+    -run '^TestE2ELegacyLoaderEnvironmentSurvivesPublicProjectApply$' \
+    -count=1 -v
+```
+
+The selected image must already exist in the local Docker daemon. The test
+starts two short-lived Scheduler sandboxes to verify the effective
+global/Agent/legacy Loader/per-call environment precedence, then removes them
+through the public API and checks Docker cleanup.
+
 The full daemon image Docker lifecycle E2E is opt-in because it starts the
 daemon image and Docker sandbox containers through a local Docker socket. Run
 it after building both local images:

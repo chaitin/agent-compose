@@ -48,7 +48,9 @@ func applyManagedLoaderOverrideBuilds(project domain.ProjectRecord, revision int
 func mergeManagedLoaderOverride(current domain.Loader, override legacyManagedLoaderOverride) domain.Loader {
 	loader := loaders.CloneLoader(current)
 	loader.Summary.ID = override.Loader.Summary.ID
-	loader.Summary.AgentID = override.Loader.Summary.AgentID
+	// Keep the compiled managed Agent binding so ProjectSpec Agent changes are
+	// used at runtime. The legacy Loader identity and task-local state remain
+	// attached to the adopted Loader below.
 	loader.Summary.WorkspaceID = override.Loader.Summary.WorkspaceID
 	loader.Summary.CreatedAt = override.Loader.Summary.CreatedAt
 	loader.Summary.UpdatedAt = override.Loader.Summary.UpdatedAt

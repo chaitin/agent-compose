@@ -386,15 +386,17 @@ carry managed metadata. Manual resources with the same names are not overwritten
 or deleted.
 
 The synthetic `legacy-v1-default` project also preserves the task-local
-environment of each adopted v1 Loader. On the initial migration, the complete
-Loader environment becomes a compatibility overlay. On later `ApplyProject`
-calls, each key is reconciled against the previous managed Agent environment:
-an unchanged Agent key keeps the current Loader value (including out-of-band
-edits and deletions), while an explicitly added, changed, deleted, or
-secret-metadata-changed Agent key removes the Loader overlay for that key. The
-new managed Agent value then takes effect through the Loader runtime precedence
-of global environment, Agent environment, Loader environment, and per-request
-environment, from lowest to highest.
+environment of each adopted v1 Loader. The adopted Loader retains its Loader
+identity, history, trigger state, and task-local settings, but binds to the
+Project's managed Agent so later ProjectSpec Agent changes are used at runtime.
+On the initial migration, the complete Loader environment becomes a
+compatibility overlay. On later `ApplyProject` calls, each key is reconciled
+against the previous managed Agent environment: an unchanged Agent key keeps
+the current Loader value (including out-of-band edits and deletions), while an
+explicitly added, changed, deleted, or secret-metadata-changed Agent key removes
+the Loader overlay for that key. The new managed Agent value then takes effect
+through the Loader runtime precedence of global environment, Agent environment,
+Loader environment, and per-request environment, from lowest to highest.
 
 `ValidateProject` and `ApplyProject` use the same scheduler construction path.
 Declarative schedulers only receive compose and loader trigger structure
