@@ -1,0 +1,96 @@
+name: Protobuf compatibility
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: proto-compatibility-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  proto-breaking:
+    name: Protobuf compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Buf
+        run: go install github.com/bufbuild/buf/cmd/buf@v1.68.1
+      - name: Check for breaking Protobuf changes
+        id: breaking
+        continue-on-error: true
+        env:
+          PROTO_BASE: .git#ref=${{ github.event.pull_request.base.sha }}
+        run: |
+          set +e
+          buf breaking --against "$PROTO_BASE" --error-format=github-actions
+          status=$?
+          set -e
+          echo "exit-code=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+      - name: Reject unexpected Buf errors
+        if: steps.breaking.outputs.exit-code != '0' && steps.breaking.outputs.exit-code != '100'
+        env:
+          BUF_EXIT_CODE: ${{ steps.breaking.outputs.exit-code }}
+        run: |
+          echo "buf breaking failed unexpectedly with exit code $BUF_EXIT_CODE" >&2
+          exit 1
+      - name: Require approval for breaking changes
+        if: steps.breaking.outputs.exit-code == '100'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUIRED_LABEL: protobuf-breaking-approved
+        run: |
+          label_present=$(gh api "repos/$GH_REPO/issues/$PR_NUMBER" \
+            --jq '[.labels[].name] | index(env.REQUIRED_LABEL) != null')
+          reviews=$(gh api --paginate --slurp "repos/$GH_REPO/pulls/$PR_NUMBER/reviews?per_page=100")
+          approved_reviewers=$(jq -r --arg head "$PR_HEAD_SHA" '
+            [.[][] | select(
+              (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")
+            )]
+            | sort_by(.submitted_at)
+            | reduce .[] as $review ({}; .[$review.user.login | ascii_downcase] = $review)
+            | [.[] | select(.state == "APPROVED" and .commit_id == $head)]
+            | .[].user.login
+          ' <<<"$reviews")
+
+          approving_maintainer=''
+          while IFS= read -r reviewer; do
+            [[ -n $reviewer ]] || continue
+            if permission=$(gh api "repos/$GH_REPO/collaborators/$reviewer/permission" \
+              --jq '(.user.permissions.maintain == true) or (.user.permissions.admin == true)' 2>/dev/null) && \
+              [[ $permission == true ]]; then
+              approving_maintainer=$reviewer
+              break
+            fi
+          done <<<"$approved_reviewers"
+
+          if [[ $label_present == true && -n $approving_maintainer ]]; then
+            printf 'Breaking Protobuf change approved by maintainer @%s for commit %s.\n' \
+              "$approving_maintainer" "$PR_HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo '### Breaking Protobuf change requires approval'
+            echo
+            echo "- Required label \`$REQUIRED_LABEL\`: \`$label_present\`"
+            echo "- Maintainer approval for current commit: \`$([[ -n $approving_maintainer ]] && echo true || echo false)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1

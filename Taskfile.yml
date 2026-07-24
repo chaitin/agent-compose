@@ -159,6 +159,7 @@ tasks:
     desc: Run deterministic build helper, verifier, and CI topology checks
     dir: '{{.TASKFILE_DIR}}'
     cmds:
+      - ./scripts/tests/test-proto-breaking-ci-contract.sh
       - ./scripts/tests/test-build-agent-compose-binary.sh
       - ./scripts/tests/test-verify-agent-compose-binary.sh
       - ./scripts/tests/test-verify-agent-compose-image.sh
