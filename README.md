@@ -13,7 +13,7 @@
 </div>
 </p>
 
-**agent-compose is a daemon + CLI control plane that runs AI coding agents in isolated sandboxes.** You describe your agents in an `agent-compose.yml` file, and a long-lived daemon builds, runs, schedules, and proxies an isolated runtime for each one.
+**`agent-compose` is a daemon + CLI control plane that runs AI coding agents in isolated sandboxes.** You describe your agents in an `agent-compose.yml` file, and a long-lived daemon builds, runs, schedules, and proxies an isolated runtime for each one.
 
 > Public preview. APIs, runtime packaging, and deployment defaults may still change. It is suitable for experimentation, local development, and preview deployments — not yet a stable production platform.
 
@@ -87,7 +87,7 @@ The installer also pre-pulls the sandbox guest image so the first agent run
 does not stall on a large download; pass `--skip-guest-pull` (or answer no in
 the TUI) to defer it.
 
-On first run the installer generates an `admin` password and prints it once;
+On first run, the installer generates an `admin` password and prints it once;
 use it at the URL the installer prints when the UI is enabled. See
 [deploy/README.md](deploy/README.md) for install, upgrade, uninstall, data
 preservation, and mirror/private-registry options.
