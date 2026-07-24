@@ -92,6 +92,20 @@ func sessionLLMEnvProviderLookup(envItems []domain.SandboxEnvVar) EnvProviderLoo
 	}
 }
 
+// layeredLLMEnvProviderLookup resolves the sandbox-owned layer before the
+// default Global Env/process/config layers. Candidate aliases are exhausted
+// within a layer before falling through, preserving source-major precedence.
+func layeredLLMEnvProviderLookup(ctx context.Context, config *appconfig.Config, store LLMResolverStore, envItems []domain.SandboxEnvVar) EnvProviderLookup {
+	sessionLookup := sessionLLMEnvProviderLookup(envItems)
+	defaultLookup := defaultLLMEnvProviderLookup(ctx, config, store)
+	return func(keys ...string) string {
+		if value := sessionLookup(keys...); strings.TrimSpace(value) != "" {
+			return value
+		}
+		return defaultLookup(keys...)
+	}
+}
+
 func configLLMEnvValue(config *appconfig.Config, key string) string {
 	if config == nil {
 		return ""
@@ -149,6 +163,9 @@ func resolveRuntimeLLMTargetWithEnv(ctx context.Context, config *appconfig.Confi
 	requestedModel = strings.TrimSpace(requestedModel)
 	providerID = strings.TrimSpace(providerID)
 	hasSessionEnvProvider := sessionID != "" && HasSessionEnvProviderInput(envItems)
+	if sessionID != "" && preferredProviderFamily != "" {
+		hasSessionEnvProvider = hasEnvProviderInputForFamily(envItems, preferredProviderFamily)
+	}
 	sessionProviderID := ""
 	// Reuse an already-persisted session-env provider when this session can no
 	// longer supply a key from env. The raw key env (Session.ProviderEnvItems) is
@@ -168,29 +185,39 @@ func resolveRuntimeLLMTargetWithEnv(ctx context.Context, config *appconfig.Confi
 	// provider id from the token scope, so this avoids a redundant pair of
 	// idempotent provider upserts on every LLM request.
 	bootstrapProviders := (providerID == "" || !IsSessionEnvProviderID(providerID)) && !hasEnabledLLMProviderID(ctx, store, providerID)
-	if bootstrapProviders && !hasConfiguredLLMProviderForFamily(ctx, store, ProviderFamilyOpenAI) {
+	bootstrapOpenAI := preferredProviderFamily == "" || preferredProviderFamily == ProviderFamilyOpenAI
+	if bootstrapProviders && bootstrapOpenAI && !hasConfiguredLLMProviderForFamily(ctx, store, ProviderFamilyOpenAI) {
 		openAIModel := firstNonEmptyTrimmed(requestedModel, EnvItemValue(envItems, "LLM_MODEL"))
-		if sessionID != "" && HasOpenAIEnvProviderInput(envItems) {
-			id, err := ensureSessionOpenAIEnvProvider(ctx, store, sessionID, openAIModel, envItems)
+		hasOpenAIEnvProvider := HasOpenAIEnvProviderInput(envItems)
+		if preferredProviderFamily == ProviderFamilyOpenAI {
+			hasOpenAIEnvProvider = hasEnvProviderInputForFamily(envItems, ProviderFamilyOpenAI)
+		}
+		if sessionID != "" && hasOpenAIEnvProvider {
+			id, err := ensureSessionOpenAIEnvProviderWithConfig(ctx, config, store, sessionID, openAIModel, envItems)
 			if err != nil {
 				return ResolvedTarget{}, err
 			}
 			sessionProviderID = ChooseSessionEnvProviderID(sessionProviderID, id, ProviderFamilyOpenAI, preferredProviderFamily)
-		} else if !hasSessionEnvProvider {
+		} else if preferredProviderFamily == ProviderFamilyOpenAI || !hasSessionEnvProvider {
 			if err := ensureDefaultOpenAIEnvProvider(ctx, config, store, openAIModel); err != nil {
 				return ResolvedTarget{}, err
 			}
 		}
 	}
-	if bootstrapProviders && !hasConfiguredLLMProviderForFamily(ctx, store, ProviderFamilyAnthropic) {
+	bootstrapAnthropic := preferredProviderFamily == "" || preferredProviderFamily == ProviderFamilyAnthropic
+	if bootstrapProviders && bootstrapAnthropic && !hasConfiguredLLMProviderForFamily(ctx, store, ProviderFamilyAnthropic) {
 		anthropicModel := firstNonEmptyTrimmed(requestedModel, SessionAnthropicEnvModel(envItems))
-		if sessionID != "" && HasAnthropicEnvProviderInput(envItems) {
-			id, err := ensureSessionAnthropicEnvProvider(ctx, store, sessionID, anthropicModel, envItems)
+		hasAnthropicEnvProvider := HasAnthropicEnvProviderInput(envItems)
+		if preferredProviderFamily == ProviderFamilyAnthropic {
+			hasAnthropicEnvProvider = hasEnvProviderInputForFamily(envItems, ProviderFamilyAnthropic)
+		}
+		if sessionID != "" && hasAnthropicEnvProvider {
+			id, err := ensureSessionAnthropicEnvProviderWithConfig(ctx, config, store, sessionID, anthropicModel, envItems)
 			if err != nil {
 				return ResolvedTarget{}, err
 			}
 			sessionProviderID = ChooseSessionEnvProviderID(sessionProviderID, id, ProviderFamilyAnthropic, preferredProviderFamily)
-		} else if !hasSessionEnvProvider {
+		} else if preferredProviderFamily == ProviderFamilyAnthropic || !hasSessionEnvProvider {
 			if err := ensureDefaultAnthropicEnvProvider(ctx, config, store, anthropicModel); err != nil {
 				return ResolvedTarget{}, err
 			}
@@ -252,14 +279,21 @@ func BootstrapAnthropicLLMConfig(ctx context.Context, config *appconfig.Config, 
 
 func ensureDefaultAnthropicEnvProvider(ctx context.Context, config *appconfig.Config, store LLMResolverStore, requestedModel string) error {
 	lookup := defaultLLMEnvProviderLookup(ctx, config, store)
-	authHeader, authScheme := AnthropicProviderAuthFromLookup(lookup)
+	if !hasDefaultAnthropicEnvProviderInput(lookup) {
+		return nil
+	}
+	authHeader, authScheme := layeredAnthropicProviderAuth(ctx, store, nil)
 	_, err := EnsureAnthropicEnvProvider(ctx, store, lookup, authHeader, authScheme, ProviderIDDefaultAnthropic, "anthropic", ProviderScopeEnvDefault, requestedModel, false)
 	return err
 }
 
 func ensureSessionOpenAIEnvProvider(ctx context.Context, store LLMResolverStore, sessionID, requestedModel string, envItems []domain.SandboxEnvVar) (string, error) {
+	return ensureSessionOpenAIEnvProviderWithConfig(ctx, nil, store, sessionID, requestedModel, envItems)
+}
+
+func ensureSessionOpenAIEnvProviderWithConfig(ctx context.Context, config *appconfig.Config, store LLMResolverStore, sessionID, requestedModel string, envItems []domain.SandboxEnvVar) (string, error) {
 	providerID := SessionEnvProviderID(sessionID, ProviderFamilyOpenAI)
-	return EnsureOpenAIEnvProvider(ctx, store, sessionLLMEnvProviderLookup(envItems), providerID, providerID, ProviderScopeSessionEnv, requestedModel, false)
+	return EnsureOpenAIEnvProvider(ctx, store, layeredLLMEnvProviderLookup(ctx, config, store, envItems), providerID, providerID, ProviderScopeSessionEnv, requestedModel, false)
 }
 
 func EnsureSessionOpenAIEnvProvider(ctx context.Context, store LLMResolverStore, sessionID, requestedModel string, envItems []domain.SandboxEnvVar) (string, error) {
@@ -267,10 +301,45 @@ func EnsureSessionOpenAIEnvProvider(ctx context.Context, store LLMResolverStore,
 }
 
 func ensureSessionAnthropicEnvProvider(ctx context.Context, store LLMResolverStore, sessionID, requestedModel string, envItems []domain.SandboxEnvVar) (string, error) {
+	return ensureSessionAnthropicEnvProviderWithConfig(ctx, nil, store, sessionID, requestedModel, envItems)
+}
+
+func ensureSessionAnthropicEnvProviderWithConfig(ctx context.Context, config *appconfig.Config, store LLMResolverStore, sessionID, requestedModel string, envItems []domain.SandboxEnvVar) (string, error) {
 	providerID := SessionEnvProviderID(sessionID, ProviderFamilyAnthropic)
-	lookup := sessionLLMEnvProviderLookup(envItems)
-	authHeader, authScheme := AnthropicProviderAuthFromLookup(lookup)
+	lookup := layeredLLMEnvProviderLookup(ctx, config, store, envItems)
+	authHeader, authScheme := layeredAnthropicProviderAuth(ctx, store, envItems)
 	return EnsureAnthropicEnvProvider(ctx, store, lookup, authHeader, authScheme, providerID, providerID, ProviderScopeSessionEnv, requestedModel, false)
+}
+
+func layeredAnthropicProviderAuth(ctx context.Context, store LLMResolverStore, sandboxItems []domain.SandboxEnvVar) (string, string) {
+	if header, scheme, ok := anthropicProviderAuthFromItems(sandboxItems); ok {
+		return header, scheme
+	}
+	if store != nil {
+		globalItems, err := store.ListGlobalEnv(ctx)
+		if err == nil {
+			if header, scheme, ok := anthropicProviderAuthFromItems(globalItems); ok {
+				return header, scheme
+			}
+		}
+	}
+	if strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "" {
+		return "x-api-key", ""
+	}
+	if strings.TrimSpace(os.Getenv("ANTHROPIC_AUTH_TOKEN")) != "" {
+		return "Authorization", "Bearer"
+	}
+	return "x-api-key", ""
+}
+
+func anthropicProviderAuthFromItems(items []domain.SandboxEnvVar) (string, string, bool) {
+	if strings.TrimSpace(EnvItemValue(items, "ANTHROPIC_API_KEY")) != "" {
+		return "x-api-key", "", true
+	}
+	if strings.TrimSpace(EnvItemValue(items, "ANTHROPIC_AUTH_TOKEN")) != "" {
+		return "Authorization", "Bearer", true
+	}
+	return "", "", false
 }
 
 func EnsureSessionAnthropicEnvProvider(ctx context.Context, store LLMResolverStore, sessionID, requestedModel string, envItems []domain.SandboxEnvVar) (string, error) {
@@ -347,12 +416,7 @@ func lookupEnvValue(ctx context.Context, store LLMResolverStore, key string) str
 	if err != nil {
 		return ""
 	}
-	for _, item := range items {
-		if item.Name == key {
-			return item.Value
-		}
-	}
-	return ""
+	return EnvItemValue(items, key)
 }
 
 func LookupEnvValue(ctx context.Context, store LLMResolverStore, key string) string {

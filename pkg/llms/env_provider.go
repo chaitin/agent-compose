@@ -1,7 +1,6 @@
 package llms
 
 import (
-	"net/url"
 	"strings"
 
 	domain "agent-compose/pkg/model"
@@ -18,18 +17,6 @@ func EnvItemValue(items []domain.SandboxEnvVar, key string) string {
 		}
 	}
 	return ""
-}
-
-func LooksLikeAnthropicMessagesEndpoint(endpoint string) bool {
-	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
-	if endpoint == "" {
-		return false
-	}
-	parsed, err := url.Parse(endpoint)
-	if err != nil {
-		return strings.HasSuffix(endpoint, "/messages")
-	}
-	return strings.HasSuffix(strings.TrimRight(parsed.Path, "/"), "/messages")
 }
 
 func EnvHasProviderKeyForFamily(envItems []domain.SandboxEnvVar, providerFamily string) bool {
@@ -51,24 +38,63 @@ func EnvHasProviderKeyForFamily(envItems []domain.SandboxEnvVar, providerFamily 
 }
 
 func HasOpenAIEnvProviderInput(envItems []domain.SandboxEnvVar) bool {
-	endpoint := EnvItemValue(envItems, "LLM_API_ENDPOINT")
-	if LooksLikeAnthropicMessagesEndpoint(endpoint) {
-		return false
-	}
-	return strings.TrimSpace(firstNonEmpty(
-		endpoint,
-		EnvItemValue(envItems, "LLM_API_KEY"),
-		EnvItemValue(envItems, "OPENAI_API_KEY"),
-	)) != ""
+	return hasOpenAIEnvProviderInput(envItems) ||
+		hasGenericLLMEnvProviderInput(envItems) && genericLLMEnvProviderFamily(envItems) == ProviderFamilyOpenAI
 }
 
 func HasAnthropicEnvProviderInput(envItems []domain.SandboxEnvVar) bool {
+	return hasAnthropicEnvProviderInput(envItems) ||
+		hasGenericLLMEnvProviderInput(envItems) && genericLLMEnvProviderFamily(envItems) == ProviderFamilyAnthropic
+}
+
+// hasEnvProviderInputForFamily treats generic LLM_* values as belonging to an
+// explicitly selected provider family. Callers without an explicit family must
+// use HasOpenAIEnvProviderInput or HasAnthropicEnvProviderInput, which resolve
+// generic values through LLM_API_PROTOCOL instead of inspecting the endpoint.
+func hasEnvProviderInputForFamily(envItems []domain.SandboxEnvVar, providerFamily string) bool {
+	switch NormalizeProviderType(providerFamily) {
+	case ProviderFamilyOpenAI:
+		return hasOpenAIEnvProviderInput(envItems) || hasGenericLLMEnvProviderInput(envItems)
+	case ProviderFamilyAnthropic:
+		return hasAnthropicEnvProviderInput(envItems) || hasGenericLLMEnvProviderInput(envItems)
+	default:
+		return false
+	}
+}
+
+func hasOpenAIEnvProviderInput(envItems []domain.SandboxEnvVar) bool {
+	return strings.TrimSpace(EnvItemValue(envItems, "OPENAI_API_KEY")) != ""
+}
+
+func hasAnthropicEnvProviderInput(envItems []domain.SandboxEnvVar) bool {
 	return strings.TrimSpace(firstNonEmpty(
 		EnvItemValue(envItems, "ANTHROPIC_BASE_URL"),
 		EnvItemValue(envItems, "ANTHROPIC_API_ENDPOINT"),
 		EnvItemValue(envItems, "ANTHROPIC_API_KEY"),
 		EnvItemValue(envItems, "ANTHROPIC_AUTH_TOKEN"),
-	)) != "" || LooksLikeAnthropicMessagesEndpoint(EnvItemValue(envItems, "LLM_API_ENDPOINT"))
+	)) != ""
+}
+
+func hasGenericLLMEnvProviderInput(envItems []domain.SandboxEnvVar) bool {
+	return strings.TrimSpace(firstNonEmpty(
+		EnvItemValue(envItems, "LLM_API_ENDPOINT"),
+		EnvItemValue(envItems, "LLM_API_KEY"),
+	)) != ""
+}
+
+func genericLLMEnvProviderFamily(envItems []domain.SandboxEnvVar) string {
+	hasOpenAI := hasOpenAIEnvProviderInput(envItems)
+	hasAnthropic := hasAnthropicEnvProviderInput(envItems)
+	switch {
+	case hasAnthropic && !hasOpenAI:
+		return ProviderFamilyAnthropic
+	case hasOpenAI && !hasAnthropic:
+		return ProviderFamilyOpenAI
+	case NormalizeWireAPI(EnvItemValue(envItems, "LLM_API_PROTOCOL")) == APIProtocolMessages:
+		return ProviderFamilyAnthropic
+	default:
+		return ProviderFamilyOpenAI
+	}
 }
 
 func HasSessionEnvProviderInput(envItems []domain.SandboxEnvVar) bool {

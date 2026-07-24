@@ -102,12 +102,13 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 	}
 	hasOverrides := loaders.AgentRequestOverridesSession(request, titleOverridesSession)
 	forceNew := effectivePolicy == domain.LoaderSandboxPolicyNew || hasOverrides
-	envItems, err := r.ConfigDB.ListGlobalEnv(ctx)
+	globalEnvItems, err := r.ConfigDB.ListGlobalEnv(ctx)
 	if err != nil {
 		return nil, "", err
 	}
+	var providerEnvItems []domain.SandboxEnvVar
 	if agentDefinition != nil {
-		envItems = domain.MergeEnvItems(envItems, agentDefinition.EnvItems)
+		providerEnvItems = domain.MergeEnvItems(providerEnvItems, agentDefinition.EnvItems)
 	}
 	agentConfig := execution.AgentConfig{Provider: domain.NormalizeAgentKind(request.Agent)}
 	if agentDefinition != nil {
@@ -122,9 +123,9 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 	if agentConfig.Provider == "" {
 		agentConfig.Provider = domain.DefaultAgentProvider
 	}
-	envItems = domain.MergeEnvItems(envItems, loader.EnvItems)
-	envItems = domain.MergeEnvItems(envItems, domain.LoaderAgentSandboxEnv(request))
-	providerEnvItems := envItems
+	providerEnvItems = domain.MergeEnvItems(providerEnvItems, loader.EnvItems)
+	providerEnvItems = domain.MergeEnvItems(providerEnvItems, domain.LoaderAgentSandboxEnv(request))
+	envItems := domain.MergeEnvItems(globalEnvItems, providerEnvItems)
 	envItems = llms.FilterPersistedRuntimeEnv(envItems)
 	workspaceID := r.workspaceID(loader, request, agentDefinition)
 	workspaceSnapshot, err := r.workspaceSnapshot(ctx, workspaceID)
@@ -199,7 +200,7 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 	if err != nil {
 		return nil, "", err
 	}
-	session.ProviderEnvItems = providerEnvItems
+	llms.SetSandboxProviderEnvItems(session, providerEnvItems)
 	if request.PullPolicy != "" {
 		session.Summary.PullPolicy = request.PullPolicy
 		if err := r.Store.UpdateSandbox(ctx, session); err != nil {

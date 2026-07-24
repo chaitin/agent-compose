@@ -69,13 +69,12 @@ func PrepareProjectRun(ctx context.Context, store PreparationStore, resolver Wor
 	if err != nil {
 		return Preparation{}, fmt.Errorf("list global env: %w", err)
 	}
-	envItems := MergeEnvItems(
-		globalEnv,
+	providerEnvItems := MergeEnvItems(
 		EnvItemsFromV2(spec.GetVariables()),
 		agent.EnvItems,
 		EnvItemsFromV2(requestEnv),
 	)
-	providerEnvItems := envItems
+	envItems := domain.MergeEnvItems(globalEnv, providerEnvItems)
 	envItems = llms.FilterPersistedRuntimeEnv(envItems)
 	prepared := Preparation{
 		EnvItems:         envItems,

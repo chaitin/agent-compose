@@ -183,22 +183,20 @@ func (b *SandboxRPCBridge) createSandboxWithAgent(ctx context.Context, req sandb
 	}
 	tags := sandboxTagsWithoutAgentIdentity(req.Tags)
 	tags = append(tags, domain.SandboxTag{Name: domain.AgentSandboxTagProvider, Value: agentConfig.Provider})
-	envItems := append([]domain.SandboxEnvVar(nil), req.EnvItems...)
+	providerEnvItems := append([]domain.SandboxEnvVar(nil), req.EnvItems...)
 	globalEnvItems, err := b.configDB.ListGlobalEnv(ctx)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	if agentDefinition != nil {
-		envItems = domain.MergeEnvItems(domain.MergeEnvItems(globalEnvItems, agentDefinition.EnvItems), envItems)
+		providerEnvItems = domain.MergeEnvItems(agentDefinition.EnvItems, providerEnvItems)
 		tags = append(tags,
 			domain.SandboxTag{Name: domain.AgentSandboxTagSource, Value: domain.AgentSandboxTagSourceVal},
 			domain.SandboxTag{Name: domain.AgentSandboxTagID, Value: agentDefinition.ID},
 			domain.SandboxTag{Name: domain.AgentSandboxTagName, Value: agentDefinition.Name},
 		)
-	} else {
-		envItems = domain.MergeEnvItems(globalEnvItems, envItems)
 	}
-	providerEnvItems := envItems
+	envItems := domain.MergeEnvItems(globalEnvItems, providerEnvItems)
 	envItems = llms.FilterPersistedRuntimeEnv(envItems)
 	capabilityVars, capabilityTags := capabilities.BuildGatewaySandboxVars(capabilities.ProxyTarget(b.cap), req.CapsetIDs)
 	envItems = domain.MergeEnvItems(envItems, capabilityVars)
@@ -226,7 +224,7 @@ func (b *SandboxRPCBridge) createSandboxWithAgent(ctx context.Context, req sandb
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	session.ProviderEnvItems = providerEnvItems
+	llms.SetSandboxProviderEnvItems(session, providerEnvItems)
 	if err := b.workspaceEnsurer.Ensure(ctx, session); err != nil {
 		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = b.store.UpdateSandbox(ctx, session)

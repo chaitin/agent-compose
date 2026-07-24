@@ -61,7 +61,7 @@ func TestLoaderSandboxRunnerEnvironmentPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensure loader sandbox: %v", err)
 	}
-	got := loaderRunnerEnvItemsByName(sandbox.ProviderEnvItems)
+	got := loaderRunnerEnvItemsByName(domain.MergeEnvItems(sandbox.EnvItems, sandbox.ProviderEnvItems))
 	for name, want := range map[string]domain.SandboxEnvVar{
 		"GLOBAL_ONLY":       {Name: "GLOBAL_ONLY", Value: "global"},
 		"AGENT_ONLY":        {Name: "AGENT_ONLY", Value: "agent"},
@@ -74,6 +74,9 @@ func TestLoaderSandboxRunnerEnvironmentPrecedence(t *testing.T) {
 		if got[name] != want {
 			t.Fatalf("effective env %s = %#v, want %#v", name, got[name], want)
 		}
+	}
+	if _, ok := loaderRunnerEnvItemsByName(sandbox.ProviderEnvItems)["GLOBAL_ONLY"]; ok {
+		t.Fatal("global-only env was recorded as a sandbox provider override")
 	}
 }
 

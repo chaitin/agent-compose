@@ -184,9 +184,15 @@ type Sandbox struct {
 	WorkspaceProvisioning *SandboxWorkspaceProvisioning `json:"workspace_provisioning,omitempty"`
 	WorkspaceReclamation  *SandboxWorkspaceReclamation  `json:"workspace_reclamation,omitempty"`
 	EnvItems              []SandboxEnvVar               `json:"env_items,omitempty"`
-	VolumeMounts          []SandboxVolumeMount          `json:"volume_mounts,omitempty"`
-	RuntimeEnvItems       []SandboxEnvVar               `json:"-"`
-	ProviderEnvItems      []SandboxEnvVar               `json:"-"`
+	// ProviderEnvOverrideNames records which provider environment names were
+	// explicitly supplied by the sandbox. A nil slice means the metadata has no
+	// provenance; an empty, non-nil slice means provenance was recorded and the
+	// sandbox has no provider overrides. Values remain transient in ProviderEnvItems
+	// or in session-scoped LLM provider rows.
+	ProviderEnvOverrideNames []string             `json:"provider_env_override_names"`
+	VolumeMounts             []SandboxVolumeMount `json:"volume_mounts,omitempty"`
+	RuntimeEnvItems          []SandboxEnvVar      `json:"-"`
+	ProviderEnvItems         []SandboxEnvVar      `json:"-"`
 }
 
 func SandboxWorkspaceReclaimed(sandbox *Sandbox) bool {
@@ -271,6 +277,9 @@ func validSandboxWorkspaceProvisioningStatus(status string) bool {
 func RestoreSandboxTransientFields(dst, src *Sandbox) {
 	if dst == nil || src == nil {
 		return
+	}
+	if src.ProviderEnvOverrideNames != nil {
+		dst.ProviderEnvOverrideNames = append([]string{}, src.ProviderEnvOverrideNames...)
 	}
 	if len(src.RuntimeEnvItems) > 0 {
 		dst.RuntimeEnvItems = append([]SandboxEnvVar(nil), src.RuntimeEnvItems...)

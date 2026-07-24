@@ -70,7 +70,7 @@ func TestPiFacadeProtocol(t *testing.T) {
 	}{
 		{name: "responses", target: ResolvedTarget{Provider: Provider{ProviderType: ProviderFamilyOpenAI}, WireAPI: APIProtocolResponses}, wantAPI: "openai-responses", wantWire: APIProtocolResponses, wantSuffix: "/llm/openai/v1"},
 		{name: "chat completions", target: ResolvedTarget{Provider: Provider{ProviderType: ProviderFamilyOpenAI}, WireAPI: APIProtocolChatCompletions}, wantAPI: "openai-completions", wantWire: APIProtocolChatCompletions, wantSuffix: "/llm/openai/v1"},
-		{name: "messages", target: ResolvedTarget{Provider: Provider{ProviderType: ProviderFamilyAnthropic}, WireAPI: APIProtocolMessages}, wantAPI: "anthropic-messages", wantWire: APIProtocolMessages, wantSuffix: "/llm/anthropic/v1"},
+		{name: "messages", target: ResolvedTarget{Provider: Provider{ProviderType: ProviderFamilyAnthropic}, WireAPI: APIProtocolMessages}, wantAPI: "anthropic-messages", wantWire: APIProtocolMessages, wantSuffix: "/llm/anthropic"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

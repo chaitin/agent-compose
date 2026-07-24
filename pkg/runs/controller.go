@@ -1072,7 +1072,11 @@ func (c *Controller) ensurePromptAttachLLMFacadeEnv(ctx context.Context, sandbox
 	if domain.NormalizeAgentKind(agent.Provider) != "codex" {
 		return nil, nil
 	}
-	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, c.config, store, sandbox.Summary.ID, llms.ProviderFamilyOpenAI, agent.Model, "", promptAttachSandboxProviderEnvItems(sandbox))
+	providerEnv, err := llms.SandboxProviderEnvItems(ctx, store, sandbox, llms.ProviderFamilyOpenAI)
+	if err != nil {
+		return nil, err
+	}
+	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, c.config, store, sandbox.Summary.ID, llms.ProviderFamilyOpenAI, agent.Model, "", providerEnv)
 	if err != nil {
 		if errors.Is(err, domain.ErrRequired) || errors.Is(err, domain.ErrFailedPrecondition) {
 			return nil, nil
@@ -1110,16 +1114,6 @@ func (c *Controller) deletePromptAttachLLMFacadeToken(ctx context.Context, token
 		return
 	}
 	_ = store.DeleteLLMFacadeToken(ctx, token)
-}
-
-func promptAttachSandboxProviderEnvItems(sandbox *domain.Sandbox) []domain.SandboxEnvVar {
-	if sandbox == nil {
-		return nil
-	}
-	if len(sandbox.ProviderEnvItems) > 0 {
-		return sandbox.ProviderEnvItems
-	}
-	return sandbox.EnvItems
 }
 
 func projectRunAgentExecutionStream(ctx context.Context, coordinator *Coordinator, run domain.ProjectRunRecord, sandbox *domain.Sandbox, sink *StreamSink, hub *RunLogHub) execution.AgentExecutionStream {
@@ -2128,7 +2122,7 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 	if err != nil {
 		return SandboxResult{}, err
 	}
-	sandbox.ProviderEnvItems = prepared.ProviderEnvItems
+	llms.SetSandboxProviderEnvItems(sandbox, prepared.ProviderEnvItems)
 	if err := c.ensureProjectRunSandboxWorkspace(ctx, sandbox); err != nil {
 		return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, err
 	}

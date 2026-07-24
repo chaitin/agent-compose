@@ -64,7 +64,11 @@ func EnsureSessionAgentRuntimeConfig(ctx context.Context, config *appconfig.Conf
 }
 
 func ensureSessionCodexConfig(ctx context.Context, config *appconfig.Config, store FacadeStore, session *domain.Sandbox, model, source, runID string) (map[string]string, error) {
-	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, session.Summary.ID, llms.ProviderFamilyOpenAI, model, "", sessionProviderEnvItems(session))
+	providerEnv, err := llms.SandboxProviderEnvItems(ctx, store, session, llms.ProviderFamilyOpenAI)
+	if err != nil {
+		return nil, err
+	}
+	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, session.Summary.ID, llms.ProviderFamilyOpenAI, model, "", providerEnv)
 	if err != nil {
 		if isOptionalConfigError(err) {
 			return nil, nil
@@ -102,7 +106,10 @@ func ensureSessionClaudeConfig(ctx context.Context, config *appconfig.Config, st
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, nil
 	}
-	providerEnv := sessionProviderEnvItems(session)
+	providerEnv, err := llms.SandboxProviderEnvItems(ctx, store, session, llms.ProviderFamilyAnthropic)
+	if err != nil {
+		return nil, err
+	}
 	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, session.Summary.ID, llms.ProviderFamilyAnthropic, model, "", providerEnv)
 	tokenModel := ""
 	tokenProvider := ""
@@ -167,16 +174,6 @@ func HasAnthropicProviderKey(ctx context.Context, config *appconfig.Config, stor
 		os.Getenv("LLM_API_KEY"),
 		configKey,
 	)) != ""
-}
-
-func sessionProviderEnvItems(session *domain.Sandbox) []domain.SandboxEnvVar {
-	if session == nil {
-		return nil
-	}
-	if len(session.ProviderEnvItems) > 0 {
-		return session.ProviderEnvItems
-	}
-	return session.EnvItems
 }
 
 func firstNonEmpty(values ...string) string {
