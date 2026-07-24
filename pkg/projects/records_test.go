@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/compose"
 	domain "agent-compose/pkg/model"
 )
@@ -17,7 +18,7 @@ func TestNewAgentDefinitionFromSpecPreservesJupyterConfig(t *testing.T) {
 		Jupyter:  &compose.JupyterSpec{Enabled: true, GuestPort: 8888},
 	}
 
-	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil)
+	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil, nil)
 	if err != nil {
 		t.Fatalf("NewAgentDefinitionFromSpec returned error: %v", err)
 	}
@@ -36,7 +37,7 @@ func TestNewAgentDefinitionFromSpecKeepsEmptyConfigWithoutJupyter(t *testing.T) 
 	project := domain.ProjectRecord{ID: "project-1", Name: "project"}
 	agent := compose.NormalizedAgentSpec{Name: "reviewer", Enabled: true, Provider: "codex"}
 
-	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil)
+	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil, nil)
 	if err != nil {
 		t.Fatalf("NewAgentDefinitionFromSpec returned error: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestNewAgentDefinitionFromSpecKeepsStableNameWithPresentationMetadata(t *te
 		Provider:    "codex",
 	}
 
-	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil)
+	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil, nil)
 	if err != nil {
 		t.Fatalf("NewAgentDefinitionFromSpec returned error: %v", err)
 	}
@@ -77,7 +78,7 @@ func TestProjectRecordsCarryVolumeMountSpecs(t *testing.T) {
 		},
 		Scheduler: &compose.NormalizedSchedulerSpec{Enabled: true, DisplayName: "缓存巡检", Description: "检查缓存状态", Script: "scheduler.agent('hi')"},
 	}
-	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil)
+	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil, nil)
 	if err != nil {
 		t.Fatalf("NewAgentDefinitionFromSpec returned error: %v", err)
 	}
@@ -148,7 +149,7 @@ func TestDisabledAgentDisablesManagedAgentAndSchedulerRecords(t *testing.T) {
 		Enabled:   false,
 		Scheduler: &compose.NormalizedSchedulerSpec{Enabled: true, Script: "scheduler.agent('hi')"},
 	}
-	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil)
+	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil, nil)
 	if err != nil {
 		t.Fatalf("NewAgentDefinitionFromSpec returned error: %v", err)
 	}
@@ -202,7 +203,7 @@ func TestNewAgentDefinitionFromSpecPreservesMCPConfig(t *testing.T) {
 	}
 	projectMCPServers := map[string]compose.NormalizedMCPServerSpec{}
 
-	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, projectMCPServers)
+	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, projectMCPServers, nil)
 	if err != nil {
 		t.Fatalf("NewAgentDefinitionFromSpec returned error: %v", err)
 	}
@@ -214,6 +215,35 @@ func TestNewAgentDefinitionFromSpecPreservesMCPConfig(t *testing.T) {
 	}
 	if len(config.MCPServers) != 2 || config.MCPServers["filesystem"].Command != "npx" || config.MCPServers["docs"].Transport != "http" {
 		t.Fatalf("config json = %s, want mcp_servers preserved", definition.ConfigJSON)
+	}
+}
+
+func TestNewAgentDefinitionFromSpecSelectsReferencedOctoBusServers(t *testing.T) {
+	project := domain.ProjectRecord{ID: "project-1", Name: "project"}
+	agent := compose.NormalizedAgentSpec{
+		Name:      "reviewer",
+		Enabled:   true,
+		Provider:  "codex",
+		CapsetIDs: []string{"legacy", "internal/dev", "internal/review"},
+	}
+	servers := map[string]compose.NormalizedOctoBusServerSpec{
+		"internal": {URL: "https://internal.example", Token: "internal-token"},
+		"unused":   {URL: "https://unused.example", Token: "unused-token"},
+	}
+
+	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil, servers)
+	if err != nil {
+		t.Fatalf("NewAgentDefinitionFromSpec returned error: %v", err)
+	}
+	config, err := capabilities.AgentOctoBusServers(definition)
+	if err != nil {
+		t.Fatalf("AgentOctoBusServers returned error: %v", err)
+	}
+	if len(config) != 1 || config["internal"].Token != "internal-token" {
+		t.Fatalf("selected octobus servers = %#v", config)
+	}
+	if _, ok := config["unused"]; ok {
+		t.Fatalf("unused server persisted in config: %s", definition.ConfigJSON)
 	}
 }
 
@@ -229,7 +259,7 @@ func TestNewAgentDefinitionFromSpecCarriesSkills(t *testing.T) {
 		},
 	}
 
-	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil)
+	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, nil, nil)
 	if err != nil {
 		t.Fatalf("NewAgentDefinitionFromSpec returned error: %v", err)
 	}

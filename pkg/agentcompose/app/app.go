@@ -256,10 +256,12 @@ func StopBackground(ctx context.Context, di do.Injector) error {
 }
 
 func NewCapProxyServer(di do.Injector) (*capproxy.Server, error) {
+	configStore := do.MustInvoke[*configstore.ConfigStore](di)
 	return adapters.NewCapProxyServer(
 		do.MustInvoke[*appconfig.Config](di),
-		do.MustInvoke[*configstore.ConfigStore](di),
+		configStore,
 		do.MustInvoke[*adapters.CapabilitySandboxResolver](di),
+		adapters.NewProjectOctoBusTargetResolver(configStore),
 	), nil
 }
 
