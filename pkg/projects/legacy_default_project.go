@@ -202,7 +202,7 @@ func legacyProjectAgentNames(agents []domain.AgentDefinition) []string {
 	return names
 }
 
-func projectLegacyLoaders(spec *compose.NormalizedProjectSpec, legacyLoaders []domain.Loader, agentByLegacyID, agentByName map[string]int, usedNames map[string]struct{}, workspaceProjection legacyWorkspaceProjection) (map[string]domain.Loader, error) {
+func projectLegacyLoaders(spec *compose.NormalizedProjectSpec, legacyLoaders []domain.Loader, agentByLegacyID, agentByName map[string]int, usedNames map[string]struct{}, workspaceProjection legacyWorkspaceProjection) (map[string]legacyManagedLoaderOverride, error) {
 	legacyLoaders = append([]domain.Loader(nil), legacyLoaders...)
 	sort.Slice(legacyLoaders, func(i, j int) bool {
 		iManaged := strings.TrimSpace(legacyLoaders[i].Summary.ManagedAgentName) != ""
@@ -217,7 +217,7 @@ func projectLegacyLoaders(spec *compose.NormalizedProjectSpec, legacyLoaders []d
 	})
 
 	scheduledAgents := make(map[string]struct{}, len(legacyLoaders))
-	overrides := make(map[string]domain.Loader, len(legacyLoaders))
+	overrides := make(map[string]legacyManagedLoaderOverride, len(legacyLoaders))
 	for _, loader := range legacyLoaders {
 		sourceIndex, sourceFound := agentByLegacyID[strings.TrimSpace(loader.Summary.AgentID)]
 		managedName := legacyCanonicalAgentName(loader.Summary.ManagedAgentName)
@@ -281,7 +281,7 @@ func projectLegacyLoaders(spec *compose.NormalizedProjectSpec, legacyLoaders []d
 			Script:            projected.Script,
 		}
 		scheduledAgents[targetName] = struct{}{}
-		overrides[targetName] = projected
+		overrides[targetName] = legacyManagedLoaderOverride{Loader: projected}
 	}
 	if len(overrides) == 0 {
 		return nil, nil
