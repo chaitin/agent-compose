@@ -57,6 +57,13 @@ func TestAppProjectControllerHelperCoverage(t *testing.T) {
 	if got := validationIssuesFromProto(append(protoIssues, nil)); len(got) != 2 || got[0].Path != "path" {
 		t.Fatalf("validationIssues round trip = %#v", got)
 	}
+	warnings := validationIssuesToProto([]projects.ValidationIssue{{Severity: projects.ValidationSeverityWarning, Path: "agents.capset_ids", Message: "warning"}})
+	if len(warnings) != 1 || warnings[0].GetSeverity() != agentcomposev2.ProjectValidationSeverity_PROJECT_VALIDATION_SEVERITY_WARNING {
+		t.Fatalf("warning severity = %#v", warnings)
+	}
+	if got := validationIssuesFromProto(warnings); len(got) != 1 || got[0].Severity != projects.ValidationSeverityWarning {
+		t.Fatalf("warning round trip = %#v", got)
+	}
 	changes := projectChangesToProto([]projects.Change{
 		{Action: projects.ChangeActionCreated, ResourceType: "project", ResourceID: "created"},
 		{Action: projects.ChangeActionUpdated, ResourceType: "project", ResourceID: "updated"},

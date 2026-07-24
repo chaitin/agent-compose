@@ -22,8 +22,29 @@ var (
 )
 
 type ValidationIssue struct {
-	Path    string
-	Message string
+	Severity ValidationSeverity
+	Path     string
+	Message  string
+}
+
+type ValidationSeverity string
+
+const (
+	ValidationSeverityError   ValidationSeverity = "error"
+	ValidationSeverityWarning ValidationSeverity = "warning"
+)
+
+func HasValidationErrors(issues []ValidationIssue) bool {
+	for _, issue := range issues {
+		if issue.Severity != ValidationSeverityWarning {
+			return true
+		}
+	}
+	return false
+}
+
+type CapabilityGatewaySource interface {
+	GetCapabilityGateway(context.Context) (domain.CapabilityGatewaySettings, error)
 }
 
 type NormalizedProject struct {
@@ -82,6 +103,7 @@ type Controller struct {
 	images    images.Backend
 	loaders   LoaderValidator
 	volumes   VolumeManager
+	gateway   CapabilityGatewaySource
 	stop      func(context.Context, *domain.Sandbox) error
 	defaultDR string
 }
@@ -93,6 +115,7 @@ type ControllerDependencies struct {
 	Images      images.Backend
 	Loaders     LoaderValidator
 	Volumes     VolumeManager
+	Gateway     CapabilityGatewaySource
 	StopSandbox func(context.Context, *domain.Sandbox) error
 }
 
@@ -108,6 +131,7 @@ func NewController(deps ControllerDependencies) *Controller {
 		images:    deps.Images,
 		loaders:   deps.Loaders,
 		volumes:   deps.Volumes,
+		gateway:   deps.Gateway,
 		stop:      deps.StopSandbox,
 		defaultDR: defaultDriver,
 	}
@@ -120,7 +144,7 @@ type ValidateResult struct {
 }
 
 func (c *Controller) ValidateProject(ctx context.Context, normalized NormalizedProject, issues []ValidationIssue) (ValidateResult, error) {
-	if len(issues) > 0 {
+	if HasValidationErrors(issues) {
 		return ValidateResult{Valid: false, Issues: issues, SpecHash: normalized.SpecHash}, nil
 	}
 	if normalized.Spec == nil {
@@ -132,7 +156,11 @@ func (c *Controller) ValidateProject(ctx context.Context, normalized NormalizedP
 	if issues := c.validateManagedSchedulers(ctx, normalized); len(issues) > 0 {
 		return ValidateResult{Valid: false, Issues: issues, SpecHash: normalized.SpecHash}, nil
 	}
-	return ValidateResult{Valid: true, SpecHash: normalized.SpecHash}, nil
+	warnings, err := c.capabilityGatewayWarnings(ctx, normalized.Spec)
+	if err != nil {
+		return ValidateResult{}, err
+	}
+	return ValidateResult{Valid: true, Issues: append(issues, warnings...), SpecHash: normalized.SpecHash}, nil
 }
 
 type ApplyRequest struct {
@@ -155,7 +183,7 @@ type ApplyResult struct {
 
 func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyResult, error) {
 	normalized := req.Normalized
-	if len(req.Issues) > 0 {
+	if HasValidationErrors(req.Issues) {
 		return ApplyResult{Issues: req.Issues, RevisionSpec: normalized.Spec}, nil
 	}
 	if c.store == nil {
@@ -175,6 +203,10 @@ func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyR
 	if issues := c.validateManagedSchedulers(ctx, normalized); len(issues) > 0 {
 		return ApplyResult{Issues: issues, RevisionSpec: normalized.Spec}, nil
 	}
+	warnings, err := c.capabilityGatewayWarnings(ctx, normalized.Spec)
+	if err != nil {
+		return ApplyResult{}, err
+	}
 	agentRecords, agentDefinitions, schedulerRecords, managedLoaders, err := c.projectArtifacts(ctx, project, 0, normalized)
 	if err != nil {
 		return ApplyResult{}, fmt.Errorf("%w: apply project %s: %w", ErrInvalidRequest, normalized.Spec.Name, err)
@@ -187,6 +219,7 @@ func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyR
 			Schedulers:   schedulerRecords,
 			Changes:      dryRunChanges(project, agentRecords, agentDefinitions, schedulerRecords, managedLoaders),
 			Applied:      false,
+			Issues:       append(req.Issues, warnings...),
 			RevisionSpec: normalized.Spec,
 		}, nil
 	}
@@ -276,7 +309,7 @@ func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyR
 			Agents:       agents,
 			Schedulers:   schedulers,
 			Changes:      changes,
-			Issues:       []ValidationIssue{{Path: "reconcile.schedulers", Message: fmt.Sprintf("apply project %s: %v", normalized.Spec.Name, err)}},
+			Issues:       append(append(req.Issues, warnings...), ValidationIssue{Path: "reconcile.schedulers", Message: fmt.Sprintf("apply project %s: %v", normalized.Spec.Name, err)}),
 			Applied:      false,
 			Unchanged:    false,
 			RevisionSpec: normalized.Spec,
@@ -301,10 +334,43 @@ func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyR
 		Agents:       agents,
 		Schedulers:   schedulers,
 		Changes:      changes,
+		Issues:       append(req.Issues, warnings...),
 		Applied:      true,
 		Unchanged:    projectFound && !revisionCreated && ProjectRecordUnchanged(existingProject, project) && agentsUnchanged,
 		RevisionSpec: normalized.Spec,
 	}, nil
+}
+
+func (c *Controller) capabilityGatewayWarnings(ctx context.Context, spec *compose.NormalizedProjectSpec) ([]ValidationIssue, error) {
+	if c.gateway == nil || !usesGlobalCapabilityGateway(spec) {
+		return nil, nil
+	}
+	settings, err := c.gateway.GetCapabilityGateway(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("check global OctoBus configuration: %w", err)
+	}
+	if strings.TrimSpace(settings.Addr) != "" {
+		return nil, nil
+	}
+	return []ValidationIssue{{
+		Severity: ValidationSeverityWarning,
+		Path:     "agents.capset_ids",
+		Message:  "unqualified capset IDs require the daemon global OctoBus, but it is not configured",
+	}}, nil
+}
+
+func usesGlobalCapabilityGateway(spec *compose.NormalizedProjectSpec) bool {
+	if spec == nil {
+		return false
+	}
+	for _, agent := range spec.Agents {
+		for _, capsetID := range agent.CapsetIDs {
+			if !strings.Contains(capsetID, "/") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type RemoveRequest struct {

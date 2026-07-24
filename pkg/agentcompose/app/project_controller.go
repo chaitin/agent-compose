@@ -39,6 +39,7 @@ func NewProjectController(di do.Injector) (*projects.Controller, error) {
 		Images:    imageBackends.Auto,
 		Loaders:   do.MustInvoke[*loaders.Controller](di),
 		Volumes:   do.MustInvoke[*volumes.Manager](di),
+		Gateway:   do.MustInvoke[*configstore.ConfigStore](di),
 		StopSandbox: func(ctx context.Context, session *domain.Sandbox) error {
 			return stopProjectSandbox(ctx, sessionStore, sandboxDriver, streams, session)
 		},
@@ -243,13 +244,21 @@ func validationIssueFromProto(item *agentcomposev2.ProjectValidationIssue) proje
 	if item == nil {
 		return projects.ValidationIssue{}
 	}
-	return projects.ValidationIssue{Path: item.GetPath(), Message: item.GetMessage()}
+	severity := projects.ValidationSeverityError
+	if item.GetSeverity() == agentcomposev2.ProjectValidationSeverity_PROJECT_VALIDATION_SEVERITY_WARNING {
+		severity = projects.ValidationSeverityWarning
+	}
+	return projects.ValidationIssue{Severity: severity, Path: item.GetPath(), Message: item.GetMessage()}
 }
 
 func validationIssuesToProto(items []projects.ValidationIssue) []*agentcomposev2.ProjectValidationIssue {
 	issues := make([]*agentcomposev2.ProjectValidationIssue, 0, len(items))
 	for _, item := range items {
-		issues = append(issues, api.ProjectValidationIssue(item.Path, item.Message))
+		issue := api.ProjectValidationIssue(item.Path, item.Message)
+		if item.Severity == projects.ValidationSeverityWarning {
+			issue.Severity = agentcomposev2.ProjectValidationSeverity_PROJECT_VALIDATION_SEVERITY_WARNING
+		}
+		issues = append(issues, issue)
 	}
 	return issues
 }
