@@ -382,6 +382,20 @@ func GuestRuntimeBaseURL(config *appconfig.Config, session *domain.Sandbox) stri
 	return "http://" + host + ":" + port
 }
 
+// RequireGuestRuntimeBaseURL resolves the daemon URL used by sandbox runtime
+// clients and rejects topologies that do not provide a sandbox-reachable URL.
+func RequireGuestRuntimeBaseURL(config *appconfig.Config, session *domain.Sandbox) (string, error) {
+	baseURL := GuestRuntimeBaseURL(config, session)
+	if baseURL != "" {
+		return baseURL, nil
+	}
+	return "", domain.ClassifyError(
+		domain.ErrFailedPrecondition,
+		fmt.Sprintf("runtime LLM facade requires a daemon URL reachable from the sandbox; configure %s", RuntimeBaseURLEnvName),
+		nil,
+	)
+}
+
 func LookupRuntimeBaseURLEnv(session *domain.Sandbox) string {
 	if session == nil {
 		return ""

@@ -2,6 +2,7 @@ package runtimefacade
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,6 +83,72 @@ func TestEnsureSessionLLMFacadeConfigCreatesCodexEnvAndToken(t *testing.T) {
 		if !strings.Contains(string(codexConfig), want) {
 			t.Fatalf("Codex runtime config %q does not contain %q", string(codexConfig), want)
 		}
+	}
+}
+
+func TestEnsureSessionLLMFacadeConfigRejectsManagedCodexWithoutReachableFacade(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:       root,
+		DbAddr:         filepath.Join(root, "data.db"),
+		LLMAPIEndpoint: "https://llm.example.test/v1",
+		LLMAPIKey:      "test-key",
+		LLMModel:       "gpt-test",
+		LLMAPIProtocol: llms.APIProtocolResponses,
+		HttpListen:     "127.0.0.1:7410",
+		GuestHomePath:  "/root",
+	}
+	di := do.New()
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, config)
+	store, err := testutil.OpenConfigStore(t, di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{
+		ID:            "sandbox-runtimefacade-unreachable",
+		Driver:        driverpkg.RuntimeDriverDocker,
+		WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-runtimefacade-unreachable", "workspace"),
+	}}
+
+	env, err := EnsureSessionLLMFacadeConfig(ctx, config, store, session, "codex", "", "test", "run-1")
+	if !errors.Is(err, domain.ErrFailedPrecondition) {
+		t.Fatalf("EnsureSessionLLMFacadeConfig error = %v, want failed precondition", err)
+	}
+	if len(env) != 0 {
+		t.Fatalf("EnsureSessionLLMFacadeConfig env = %#v, want empty", env)
+	}
+	if !strings.Contains(err.Error(), llms.RuntimeBaseURLEnvName) {
+		t.Fatalf("EnsureSessionLLMFacadeConfig error = %q, want actionable runtime base URL configuration", err)
+	}
+}
+
+func TestEnsureSessionLLMFacadeConfigAllowsUnmanagedCodexWithoutFacade(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:      root,
+		DbAddr:        filepath.Join(root, "data.db"),
+		HttpListen:    "127.0.0.1:7410",
+		GuestHomePath: "/root",
+	}
+	di := do.New()
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, config)
+	store, err := testutil.OpenConfigStore(t, di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-runtimefacade-unmanaged", Driver: driverpkg.RuntimeDriverDocker}}
+
+	env, err := EnsureSessionLLMFacadeConfig(ctx, config, store, session, "codex", "", "test", "run-1")
+	if err != nil || len(env) != 0 {
+		t.Fatalf("EnsureSessionLLMFacadeConfig env = %#v, error = %v; want unmanaged no-op", env, err)
 	}
 }
 

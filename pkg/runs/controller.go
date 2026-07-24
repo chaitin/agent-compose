@@ -1060,52 +1060,18 @@ func (c *Controller) ensurePromptAttachLLMFacadeEnv(ctx context.Context, sandbox
 	if !ok || c.config == nil || sandbox == nil {
 		return nil, nil
 	}
-	if domain.NormalizeAgentKind(agent.Provider) == "claude" {
+	switch domain.NormalizeAgentKind(agent.Provider) {
+	case "claude":
 		return ensurePromptAttachClaudeLLMFacadeEnv(ctx, c.config, store, sandbox, agent.Model, runID)
-	}
-	if domain.NormalizeAgentKind(agent.Provider) == "opencode" {
+	case "opencode":
 		return llms.EnsureOpenCodeFacadeConfig(ctx, c.config, store, sandbox, agent.Model, "agent", runID)
-	}
-	if domain.NormalizeAgentKind(agent.Provider) == "pi" {
+	case "pi":
 		return llms.EnsurePiFacadeConfig(ctx, c.config, store, sandbox, agent.Model, "agent", runID)
-	}
-	if domain.NormalizeAgentKind(agent.Provider) != "codex" {
+	case "codex":
+		return llms.EnsureCodexFacadeConfig(ctx, c.config, store, sandbox, agent.Model, "agent", runID)
+	default:
 		return nil, nil
 	}
-	providerEnv, err := llms.SandboxProviderEnvItems(ctx, store, sandbox, llms.ProviderFamilyOpenAI)
-	if err != nil {
-		return nil, err
-	}
-	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, c.config, store, sandbox.Summary.ID, llms.ProviderFamilyOpenAI, agent.Model, "", providerEnv)
-	if err != nil {
-		if errors.Is(err, domain.ErrRequired) || errors.Is(err, domain.ErrFailedPrecondition) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	baseURL := llms.GuestRuntimeBaseURL(c.config, sandbox)
-	if strings.TrimSpace(baseURL) == "" {
-		return nil, nil
-	}
-	tokenValue, token, err := llms.NewFacadeToken(sandbox.Summary.ID, target.Model.Name, target.Provider.ID, llms.APIProtocolResponses, "agent", runID)
-	if err != nil {
-		return nil, err
-	}
-	if err := store.SaveLLMFacadeToken(ctx, token); err != nil {
-		return nil, err
-	}
-	openAIBaseURL := strings.TrimRight(baseURL, "/") + "/api/runtime/sandboxes/" + sandbox.Summary.ID + "/llm/openai/v1"
-	if err := llms.WriteCodexRuntimeConfig(sandbox, target.Model.Name, openAIBaseURL, llms.APIProtocolResponses, llms.CodexRuntimePolicyFromConfig(c.config)); err != nil {
-		return nil, err
-	}
-	return map[string]string{
-		"AGENT_COMPOSE_SANDBOX_TOKEN": tokenValue,
-		"LLM_API_ENDPOINT":            openAIBaseURL,
-		"LLM_API_KEY":                 tokenValue,
-		"LLM_API_PROTOCOL":            llms.APIProtocolResponses,
-		"OPENAI_API_KEY":              tokenValue,
-		"OPENAI_BASE_URL":             openAIBaseURL,
-	}, nil
 }
 
 func (c *Controller) deletePromptAttachLLMFacadeToken(ctx context.Context, token string) {
