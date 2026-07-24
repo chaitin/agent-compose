@@ -74,15 +74,26 @@ func EnsurePiFacadeConfig(ctx context.Context, config *appconfig.Config, store P
 }
 
 func resolvePiFacadeTarget(ctx context.Context, config *appconfig.Config, store PiFacadeStore, sandbox *domain.Sandbox, providerID, model string) (ResolvedTarget, error) {
-	envItems := sandboxProviderEnvItems(sandbox)
 	sandboxID := sandbox.Summary.ID
 	if HasEnabledLLMProviderID(ctx, store, providerID) {
+		envItems, err := SandboxProviderEnvItems(ctx, store, sandbox, "")
+		if err != nil {
+			return ResolvedTarget{}, err
+		}
 		return ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sandboxID, "", model, providerID, envItems)
 	}
 	switch providerID {
 	case ProviderFamilyAnthropic:
+		envItems, err := SandboxProviderEnvItems(ctx, store, sandbox, ProviderFamilyAnthropic)
+		if err != nil {
+			return ResolvedTarget{}, err
+		}
 		return ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sandboxID, ProviderFamilyAnthropic, model, "", envItems)
 	case ProviderFamilyOpenAI, ProviderIDDefaultOpenAI:
+		envItems, err := SandboxProviderEnvItems(ctx, store, sandbox, ProviderFamilyOpenAI)
+		if err != nil {
+			return ResolvedTarget{}, err
+		}
 		return ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sandboxID, ProviderFamilyOpenAI, model, "", envItems)
 	default:
 		return resolveCustomOpenAIFacadeTarget(ctx, config, store, sandbox, providerID, model)
@@ -92,7 +103,10 @@ func resolvePiFacadeTarget(ctx context.Context, config *appconfig.Config, store 
 func piFacadeProtocol(target ResolvedTarget, runtimeBaseURL, sandboxID string) (piAPI, facadeProtocol, facadeBaseURL string, err error) {
 	runtimeBaseURL = strings.TrimRight(runtimeBaseURL, "/")
 	if target.Provider.ProviderType == ProviderFamilyAnthropic {
-		return "anthropic-messages", APIProtocolMessages, runtimeBaseURL + "/api/runtime/sandboxes/" + sandboxID + "/llm/anthropic/v1", nil
+		// Pi's Anthropic SDK appends /v1/messages to the configured base URL.
+		// Keep the facade base at the family root so the version segment appears
+		// exactly once in the resulting request path.
+		return "anthropic-messages", APIProtocolMessages, runtimeBaseURL + "/api/runtime/sandboxes/" + sandboxID + "/llm/anthropic", nil
 	}
 	if target.Provider.ProviderType != ProviderFamilyOpenAI {
 		return "", "", "", fmt.Errorf("unsupported pi llm provider family %q", target.Provider.ProviderType)

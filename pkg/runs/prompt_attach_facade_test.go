@@ -2,6 +2,7 @@ package runs
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,6 +91,38 @@ func TestEnsurePromptAttachLLMFacadeEnvClaudeUsesControllerStore(t *testing.T) {
 	token := store.tokens[0]
 	if token.SandboxID != sandbox.Summary.ID || token.Model != "claude-test" || token.Source != "agent" || token.RunID != "run-claude-attach" {
 		t.Fatalf("stored token = %#v", token)
+	}
+}
+
+func TestEnsurePromptAttachLLMFacadeEnvRejectsManagedCodexWithoutReachableFacade(t *testing.T) {
+	store := &promptAttachFacadeStore{
+		providers: []llms.Provider{{
+			ID:             "openai-test",
+			ProviderType:   llms.ProviderFamilyOpenAI,
+			DefaultWireAPI: llms.APIProtocolResponses,
+			BaseURL:        "https://openai.example.test/v1",
+			APIKey:         "openai-key",
+			Enabled:        true,
+		}},
+		models: []llms.Model{{ID: "gpt-test", Name: "gpt-test", DefaultModel: true, Enabled: true}},
+	}
+	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-codex-no-facade", Driver: driver.RuntimeDriverDocker}}
+	controller := &Controller{
+		config:   &appconfig.Config{HttpListen: "127.0.0.1:7410", GuestHomePath: "/root"},
+		configDB: store,
+	}
+
+	env, err := controller.ensurePromptAttachLLMFacadeEnv(
+		context.Background(),
+		sandbox,
+		execution.AgentConfig{Provider: "codex", Model: "gpt-test"},
+		"run-codex-no-facade",
+	)
+	if !errors.Is(err, domain.ErrFailedPrecondition) {
+		t.Fatalf("ensurePromptAttachLLMFacadeEnv error = %v, want failed precondition", err)
+	}
+	if len(env) != 0 || len(store.tokens) != 0 {
+		t.Fatalf("facade env = %#v, tokens = %#v; want no partial configuration", env, store.tokens)
 	}
 }
 

@@ -66,6 +66,10 @@ func WriteCodexRuntimeConfig(session *domain.Sandbox, model, baseURL, wireAPI st
 	if model == "" || baseURL == "" {
 		return nil
 	}
+	wireAPI = NormalizeWireAPI(wireAPI)
+	if wireAPI != APIProtocolResponses {
+		return fmt.Errorf("codex model-provider wire API %q is unsupported; expected %q", wireAPI, APIProtocolResponses)
+	}
 	policy = normalizeCodexRuntimePolicy(policy)
 	path := filepath.Join(execution.HostSandboxHome(session), ".codex", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -104,7 +108,7 @@ ignore_default_excludes = false
 
 [history]
 persistence = "save-all"
-`, model, baseURL, NormalizeWireAPI(wireAPI), policy.RequestMaxRetries, policy.StreamMaxRetries, policy.StreamIdleTimeout.Milliseconds())
+`, model, baseURL, wireAPI, policy.RequestMaxRetries, policy.StreamMaxRetries, policy.StreamIdleTimeout.Milliseconds())
 	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
 		return fmt.Errorf("write codex config: %w", err)
 	}
@@ -376,6 +380,20 @@ func GuestRuntimeBaseURL(config *appconfig.Config, session *domain.Sandbox) stri
 		return ""
 	}
 	return "http://" + host + ":" + port
+}
+
+// RequireGuestRuntimeBaseURL resolves the daemon URL used by sandbox runtime
+// clients and rejects topologies that do not provide a sandbox-reachable URL.
+func RequireGuestRuntimeBaseURL(config *appconfig.Config, session *domain.Sandbox) (string, error) {
+	baseURL := GuestRuntimeBaseURL(config, session)
+	if baseURL != "" {
+		return baseURL, nil
+	}
+	return "", domain.ClassifyError(
+		domain.ErrFailedPrecondition,
+		fmt.Sprintf("runtime LLM facade requires a daemon URL reachable from the sandbox; configure %s", RuntimeBaseURLEnvName),
+		nil,
+	)
 }
 
 func LookupRuntimeBaseURLEnv(session *domain.Sandbox) string {

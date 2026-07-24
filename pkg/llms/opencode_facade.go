@@ -39,7 +39,11 @@ func EnsureOpenCodeFacadeConfig(ctx context.Context, config *appconfig.Config, s
 }
 
 func ensureOpenCodeAnthropicFacadeConfig(ctx context.Context, config *appconfig.Config, store OpenCodeFacadeStore, sandbox *domain.Sandbox, model, source, runID string) (map[string]string, error) {
-	target, err := ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sandbox.Summary.ID, ProviderFamilyAnthropic, model, "", sandboxProviderEnvItems(sandbox))
+	providerEnv, err := SandboxProviderEnvItems(ctx, store, sandbox, ProviderFamilyAnthropic)
+	if err != nil {
+		return nil, err
+	}
+	target, err := ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sandbox.Summary.ID, ProviderFamilyAnthropic, model, "", providerEnv)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +72,11 @@ func ensureOpenCodeAnthropicFacadeConfig(ctx context.Context, config *appconfig.
 }
 
 func ensureOpenCodeOpenAIFacadeConfig(ctx context.Context, config *appconfig.Config, store OpenCodeFacadeStore, sandbox *domain.Sandbox, model, source, runID string) (map[string]string, error) {
-	target, err := ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sandbox.Summary.ID, ProviderFamilyOpenAI, model, "", sandboxProviderEnvItems(sandbox))
+	providerEnv, err := SandboxProviderEnvItems(ctx, store, sandbox, ProviderFamilyOpenAI)
+	if err != nil {
+		return nil, err
+	}
+	target, err := ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sandbox.Summary.ID, ProviderFamilyOpenAI, model, "", providerEnv)
 	if err != nil {
 		return nil, err
 	}

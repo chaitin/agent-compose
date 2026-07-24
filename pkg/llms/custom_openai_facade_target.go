@@ -9,7 +9,10 @@ import (
 )
 
 func resolveCustomOpenAIFacadeTarget(ctx context.Context, config *appconfig.Config, store LLMResolverStore, sandbox *domain.Sandbox, providerID, model string) (ResolvedTarget, error) {
-	envItems := sandboxProviderEnvItems(sandbox)
+	envItems, err := SandboxProviderEnvItems(ctx, store, sandbox, ProviderFamilyOpenAI)
+	if err != nil {
+		return ResolvedTarget{}, err
+	}
 	sandboxID := ""
 	if sandbox != nil {
 		sandboxID = sandbox.Summary.ID
@@ -18,7 +21,7 @@ func resolveCustomOpenAIFacadeTarget(ctx context.Context, config *appconfig.Conf
 		return ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sandboxID, ProviderFamilyOpenAI, model, providerID, envItems)
 	}
 	if sandboxID != "" && HasOpenAIEnvProviderInput(envItems) {
-		sessionProviderID, err := EnsureSessionOpenAIEnvProvider(ctx, store, sandboxID, model, envItems)
+		sessionProviderID, err := ensureSessionOpenAIEnvProviderWithConfig(ctx, config, store, sandboxID, model, envItems)
 		if err != nil {
 			return ResolvedTarget{}, err
 		}
@@ -30,14 +33,4 @@ func resolveCustomOpenAIFacadeTarget(ctx context.Context, config *appconfig.Conf
 		return ResolvedTarget{}, err
 	}
 	return ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sandboxID, ProviderFamilyOpenAI, model, providerID, envItems)
-}
-
-func sandboxProviderEnvItems(sandbox *domain.Sandbox) []domain.SandboxEnvVar {
-	if sandbox == nil {
-		return nil
-	}
-	if len(sandbox.ProviderEnvItems) > 0 {
-		return sandbox.ProviderEnvItems
-	}
-	return sandbox.EnvItems
 }

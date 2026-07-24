@@ -183,6 +183,7 @@ func TestSandboxRPCBridgeCallJSONSupportsSessionRPCs(t *testing.T) {
 func TestSandboxRPCBridgeCreateSandboxInheritsSchedulerAgentEnvironment(t *testing.T) {
 	ctx := context.Background()
 	bridge, driver := newTestSandboxRPCBridge(t)
+	bridge.config.RuntimeBaseURL = "http://agent-compose.test:7410"
 	definition, err := bridge.configDB.CreateAgentDefinition(ctx, domain.AgentDefinition{
 		ID:           "agent-scheduler",
 		Name:         "scheduler-agent",

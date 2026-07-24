@@ -1060,48 +1060,18 @@ func (c *Controller) ensurePromptAttachLLMFacadeEnv(ctx context.Context, sandbox
 	if !ok || c.config == nil || sandbox == nil {
 		return nil, nil
 	}
-	if domain.NormalizeAgentKind(agent.Provider) == "claude" {
+	switch domain.NormalizeAgentKind(agent.Provider) {
+	case "claude":
 		return ensurePromptAttachClaudeLLMFacadeEnv(ctx, c.config, store, sandbox, agent.Model, runID)
-	}
-	if domain.NormalizeAgentKind(agent.Provider) == "opencode" {
+	case "opencode":
 		return llms.EnsureOpenCodeFacadeConfig(ctx, c.config, store, sandbox, agent.Model, "agent", runID)
-	}
-	if domain.NormalizeAgentKind(agent.Provider) == "pi" {
+	case "pi":
 		return llms.EnsurePiFacadeConfig(ctx, c.config, store, sandbox, agent.Model, "agent", runID)
-	}
-	if domain.NormalizeAgentKind(agent.Provider) != "codex" {
+	case "codex":
+		return llms.EnsureCodexFacadeConfig(ctx, c.config, store, sandbox, agent.Model, "agent", runID)
+	default:
 		return nil, nil
 	}
-	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, c.config, store, sandbox.Summary.ID, llms.ProviderFamilyOpenAI, agent.Model, "", promptAttachSandboxProviderEnvItems(sandbox))
-	if err != nil {
-		if errors.Is(err, domain.ErrRequired) || errors.Is(err, domain.ErrFailedPrecondition) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	baseURL := llms.GuestRuntimeBaseURL(c.config, sandbox)
-	if strings.TrimSpace(baseURL) == "" {
-		return nil, nil
-	}
-	tokenValue, token, err := llms.NewFacadeToken(sandbox.Summary.ID, target.Model.Name, target.Provider.ID, llms.APIProtocolResponses, "agent", runID)
-	if err != nil {
-		return nil, err
-	}
-	if err := store.SaveLLMFacadeToken(ctx, token); err != nil {
-		return nil, err
-	}
-	openAIBaseURL := strings.TrimRight(baseURL, "/") + "/api/runtime/sandboxes/" + sandbox.Summary.ID + "/llm/openai/v1"
-	if err := llms.WriteCodexRuntimeConfig(sandbox, target.Model.Name, openAIBaseURL, llms.APIProtocolResponses, llms.CodexRuntimePolicyFromConfig(c.config)); err != nil {
-		return nil, err
-	}
-	return map[string]string{
-		"AGENT_COMPOSE_SANDBOX_TOKEN": tokenValue,
-		"LLM_API_ENDPOINT":            openAIBaseURL,
-		"LLM_API_KEY":                 tokenValue,
-		"LLM_API_PROTOCOL":            llms.APIProtocolResponses,
-		"OPENAI_API_KEY":              tokenValue,
-		"OPENAI_BASE_URL":             openAIBaseURL,
-	}, nil
 }
 
 func (c *Controller) deletePromptAttachLLMFacadeToken(ctx context.Context, token string) {
@@ -1110,16 +1080,6 @@ func (c *Controller) deletePromptAttachLLMFacadeToken(ctx context.Context, token
 		return
 	}
 	_ = store.DeleteLLMFacadeToken(ctx, token)
-}
-
-func promptAttachSandboxProviderEnvItems(sandbox *domain.Sandbox) []domain.SandboxEnvVar {
-	if sandbox == nil {
-		return nil
-	}
-	if len(sandbox.ProviderEnvItems) > 0 {
-		return sandbox.ProviderEnvItems
-	}
-	return sandbox.EnvItems
 }
 
 func projectRunAgentExecutionStream(ctx context.Context, coordinator *Coordinator, run domain.ProjectRunRecord, sandbox *domain.Sandbox, sink *StreamSink, hub *RunLogHub) execution.AgentExecutionStream {
@@ -2128,7 +2088,7 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 	if err != nil {
 		return SandboxResult{}, err
 	}
-	sandbox.ProviderEnvItems = prepared.ProviderEnvItems
+	llms.SetSandboxProviderEnvItems(sandbox, prepared.ProviderEnvItems)
 	if err := c.ensureProjectRunSandboxWorkspace(ctx, sandbox); err != nil {
 		return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, err
 	}

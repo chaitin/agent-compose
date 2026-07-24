@@ -16,7 +16,11 @@ func ensurePromptAttachClaudeLLMFacadeEnv(ctx context.Context, config *appconfig
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, nil
 	}
-	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sandbox.Summary.ID, llms.ProviderFamilyAnthropic, model, "", promptAttachSandboxProviderEnvItems(sandbox))
+	providerEnv, err := llms.SandboxProviderEnvItems(ctx, store, sandbox, llms.ProviderFamilyAnthropic)
+	if err != nil {
+		return nil, err
+	}
+	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sandbox.Summary.ID, llms.ProviderFamilyAnthropic, model, "", providerEnv)
 	tokenModel := strings.TrimSpace(model)
 	tokenProvider := ""
 	if err != nil {

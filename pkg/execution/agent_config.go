@@ -35,7 +35,7 @@ func ApplyAgentProviderEnv(session *domain.Sandbox, agentEnv []domain.SandboxEnv
 		return
 	}
 	providerEnv := session.ProviderEnvItems
-	if len(providerEnv) == 0 {
+	if len(providerEnv) == 0 && session.ProviderEnvOverrideNames == nil {
 		providerEnv = session.EnvItems
 	}
 	session.ProviderEnvItems = domain.MergeEnvItems(agentEnv, providerEnv)

@@ -266,15 +266,12 @@ func (e *LoaderCommandExecutor) prepareLoaderCommandLLMFacadeEnv(ctx context.Con
 	execSession.EnvItems = append([]domain.SandboxEnvVar(nil), session.EnvItems...)
 	execSession.RuntimeEnvItems = append([]domain.SandboxEnvVar(nil), session.RuntimeEnvItems...)
 	execSession.ProviderEnvItems = append([]domain.SandboxEnvVar(nil), session.ProviderEnvItems...)
-	if len(execSession.ProviderEnvItems) == 0 {
-		globalEnv, err := e.ConfigDB.ListGlobalEnv(ctx)
-		if err != nil {
-			return nil, "", err
-		}
-		providerEnv := domain.MergeEnvItems(globalEnv, session.EnvItems)
-		providerEnv = domain.MergeEnvItems(providerEnv, domain.LoaderCommandSandboxEnv(request))
-		execSession.ProviderEnvItems = providerEnv
+	if len(execSession.ProviderEnvItems) == 0 && session.ProviderEnvOverrideNames == nil {
+		// Metadata without provider provenance cannot identify the original source,
+		// so its persisted environment snapshot remains the compatible fallback.
+		execSession.ProviderEnvItems = append([]domain.SandboxEnvVar(nil), session.EnvItems...)
 	}
+	execSession.ProviderEnvItems = domain.MergeEnvItems(execSession.ProviderEnvItems, domain.LoaderCommandSandboxEnv(request))
 
 	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, e.Config, facadeStoreFor(e.ConfigDB), &execSession, agent, model, runtimefacade.TokenSourceLoaderCommand, runID)
 	if err != nil {

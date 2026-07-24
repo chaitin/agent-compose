@@ -47,7 +47,7 @@ func EnsureSessionAgentRuntimeConfig(ctx context.Context, config *appconfig.Conf
 	}
 	switch domain.NormalizeAgentKind(agent) {
 	case "codex":
-		env, err := ensureSessionCodexConfig(ctx, config, store, session, model, source, runID)
+		env, err := llms.EnsureCodexFacadeConfig(ctx, config, store, session, model, source, runID)
 		return AgentRuntimeConfig{Env: env}, err
 	case "claude":
 		env, err := ensureSessionClaudeConfig(ctx, config, store, session, model, source, runID)
@@ -63,46 +63,15 @@ func EnsureSessionAgentRuntimeConfig(ctx context.Context, config *appconfig.Conf
 	}
 }
 
-func ensureSessionCodexConfig(ctx context.Context, config *appconfig.Config, store FacadeStore, session *domain.Sandbox, model, source, runID string) (map[string]string, error) {
-	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, session.Summary.ID, llms.ProviderFamilyOpenAI, model, "", sessionProviderEnvItems(session))
-	if err != nil {
-		if isOptionalConfigError(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	baseURL := llms.GuestRuntimeBaseURL(config, session)
-	if strings.TrimSpace(baseURL) == "" {
-		return nil, nil
-	}
-	facadeWireAPI := llms.APIProtocolResponses
-	tokenValue, token, err := llms.NewFacadeToken(session.Summary.ID, target.Model.Name, target.Provider.ID, facadeWireAPI, source, runID)
-	if err != nil {
-		return nil, err
-	}
-	if err := store.SaveLLMFacadeToken(ctx, token); err != nil {
-		return nil, err
-	}
-	openAIBaseURL := strings.TrimRight(baseURL, "/") + "/api/runtime/sandboxes/" + session.Summary.ID + "/llm/openai/v1"
-	if err := llms.WriteCodexRuntimeConfig(session, target.Model.Name, openAIBaseURL, facadeWireAPI, llms.CodexRuntimePolicyFromConfig(config)); err != nil {
-		return nil, err
-	}
-	return map[string]string{
-		"AGENT_COMPOSE_SANDBOX_TOKEN": tokenValue,
-		"LLM_API_ENDPOINT":            openAIBaseURL,
-		"LLM_API_KEY":                 tokenValue,
-		"LLM_API_PROTOCOL":            facadeWireAPI,
-		"OPENAI_API_KEY":              tokenValue,
-		"OPENAI_BASE_URL":             openAIBaseURL,
-	}, nil
-}
-
 func ensureSessionClaudeConfig(ctx context.Context, config *appconfig.Config, store FacadeStore, session *domain.Sandbox, model, source, runID string) (map[string]string, error) {
 	baseURL := llms.GuestRuntimeBaseURL(config, session)
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, nil
 	}
-	providerEnv := sessionProviderEnvItems(session)
+	providerEnv, err := llms.SandboxProviderEnvItems(ctx, store, session, llms.ProviderFamilyAnthropic)
+	if err != nil {
+		return nil, err
+	}
 	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, session.Summary.ID, llms.ProviderFamilyAnthropic, model, "", providerEnv)
 	tokenModel := ""
 	tokenProvider := ""
@@ -167,16 +136,6 @@ func HasAnthropicProviderKey(ctx context.Context, config *appconfig.Config, stor
 		os.Getenv("LLM_API_KEY"),
 		configKey,
 	)) != ""
-}
-
-func sessionProviderEnvItems(session *domain.Sandbox) []domain.SandboxEnvVar {
-	if session == nil {
-		return nil
-	}
-	if len(session.ProviderEnvItems) > 0 {
-		return session.ProviderEnvItems
-	}
-	return session.EnvItems
 }
 
 func firstNonEmpty(values ...string) string {
