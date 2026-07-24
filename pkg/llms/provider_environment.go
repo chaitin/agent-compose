@@ -60,7 +60,7 @@ func SandboxProviderEnvItems(ctx context.Context, store ProviderListStore, sandb
 	}
 
 	persisted := make([]domain.SandboxEnvVar, 0, len(sandbox.ProviderEnvOverrideNames))
-	missingProviderKey := false
+	missingProviderKeys := make([]string, 0, 1)
 	for _, name := range sandbox.ProviderEnvOverrideNames {
 		name = strings.ToUpper(strings.TrimSpace(name))
 		if name == "" || !providerEnvNameForFamily(name, providerFamily) {
@@ -70,23 +70,25 @@ func SandboxProviderEnvItems(ctx context.Context, store ProviderListStore, sandb
 			persisted = append(persisted, item)
 			continue
 		}
+		if item, ok := envItemByName(sandbox.ProviderEnvItems, name); ok && strings.TrimSpace(item.Value) != "" {
+			continue
+		}
 		if providerKeyOverrideName(name, providerFamily) {
-			missingProviderKey = true
+			missingProviderKeys = append(missingProviderKeys, name)
 		}
 	}
 
-	if missingProviderKey && store != nil {
+	if len(missingProviderKeys) > 0 && store != nil {
 		providers, err := store.ListEnabledLLMProviders(ctx)
 		if err != nil {
 			return nil, err
 		}
-		providerKey := sessionProviderAPIKey(sandbox.Summary.ID, providerFamily, providers)
-		if providerKey != "" {
-			for _, name := range sandbox.ProviderEnvOverrideNames {
-				name = strings.ToUpper(strings.TrimSpace(name))
-				if providerKeyOverrideName(name, providerFamily) {
-					persisted = append(persisted, domain.SandboxEnvVar{Name: name, Value: providerKey, Secret: true})
-				}
+		providerItems := domain.MergeEnvItems(persisted, sandbox.ProviderEnvItems)
+		for _, name := range missingProviderKeys {
+			ownerFamily := providerKeyOwnerFamily(name, providerFamily, providerItems)
+			providerKey := sessionProviderAPIKey(sandbox.Summary.ID, ownerFamily, providers)
+			if providerKey != "" {
+				persisted = append(persisted, domain.SandboxEnvVar{Name: name, Value: providerKey, Secret: true})
 			}
 		}
 	}
@@ -159,5 +161,22 @@ func providerKeyOverrideName(name, providerFamily string) bool {
 		return name == "LLM_API_KEY" || name == "ANTHROPIC_API_KEY" || name == "ANTHROPIC_AUTH_TOKEN"
 	default:
 		return false
+	}
+}
+
+func providerKeyOwnerFamily(name, requestedFamily string, envItems []domain.SandboxEnvVar) string {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	switch name {
+	case "LLM_API_KEY":
+		if family := genericLLMEnvProviderFamily(envItems); family != "" {
+			return family
+		}
+		return NormalizeOptionalProviderType(requestedFamily)
+	case "OPENAI_API_KEY":
+		return ProviderFamilyOpenAI
+	case "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN":
+		return ProviderFamilyAnthropic
+	default:
+		return ""
 	}
 }

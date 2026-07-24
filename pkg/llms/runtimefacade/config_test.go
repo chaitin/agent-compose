@@ -281,7 +281,10 @@ func TestEnsureSessionAgentRuntimeConfigClaudePreservesProviderlessCompatibility
 	config := &appconfig.Config{
 		DataRoot:       root,
 		DbAddr:         filepath.Join(root, "data.db"),
+		LLMAPIEndpoint: "https://openai.example.test/base",
+		LLMAPIProtocol: llms.APIProtocolResponses,
 		LLMAPIKey:      "generic-provider-key",
+		LLMModel:       "generic-model",
 		RuntimeBaseURL: "http://agent-compose.test:7410",
 	}
 	di := do.New()
@@ -307,6 +310,13 @@ func TestEnsureSessionAgentRuntimeConfigClaudePreservesProviderlessCompatibility
 	}
 	if token.ProviderID != "" || token.Model != "" {
 		t.Fatalf("compatibility token = %#v", token)
+	}
+	target, err := llms.ResolveRuntimeLLMTarget(ctx, config, store, config.LLMModel, token.ProviderID)
+	if err != nil {
+		t.Fatalf("resolve providerless compatibility target: %v", err)
+	}
+	if target.Provider.ProviderType != llms.ProviderFamilyOpenAI || target.WireAPI != llms.APIProtocolResponses || target.Provider.APIKey == "" {
+		t.Fatalf("providerless compatibility target = family %q, wire API %q", target.Provider.ProviderType, target.WireAPI)
 	}
 }
 

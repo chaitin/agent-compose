@@ -47,21 +47,6 @@ func HasAnthropicEnvProviderInput(envItems []domain.SandboxEnvVar) bool {
 		hasGenericLLMEnvProviderInput(envItems) && genericLLMEnvProviderFamily(envItems) == ProviderFamilyAnthropic
 }
 
-// hasEnvProviderInputForFamily treats generic LLM_* values as belonging to an
-// explicitly selected provider family. Callers without an explicit family must
-// use HasOpenAIEnvProviderInput or HasAnthropicEnvProviderInput, which resolve
-// generic values through LLM_API_PROTOCOL instead of inspecting the endpoint.
-func hasEnvProviderInputForFamily(envItems []domain.SandboxEnvVar, providerFamily string) bool {
-	switch NormalizeProviderType(providerFamily) {
-	case ProviderFamilyOpenAI:
-		return hasOpenAIEnvProviderInput(envItems) || hasGenericLLMEnvProviderInput(envItems)
-	case ProviderFamilyAnthropic:
-		return hasAnthropicEnvProviderInput(envItems) || hasGenericLLMEnvProviderInput(envItems)
-	default:
-		return false
-	}
-}
-
 func hasOpenAIEnvProviderInput(envItems []domain.SandboxEnvVar) bool {
 	return strings.TrimSpace(EnvItemValue(envItems, "OPENAI_API_KEY")) != ""
 }
@@ -83,6 +68,9 @@ func hasGenericLLMEnvProviderInput(envItems []domain.SandboxEnvVar) bool {
 }
 
 func genericLLMEnvProviderFamily(envItems []domain.SandboxEnvVar) string {
+	if !hasGenericLLMEnvProviderInput(envItems) {
+		return ""
+	}
 	hasOpenAI := hasOpenAIEnvProviderInput(envItems)
 	hasAnthropic := hasAnthropicEnvProviderInput(envItems)
 	switch {

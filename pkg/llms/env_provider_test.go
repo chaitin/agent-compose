@@ -62,18 +62,3 @@ func TestEnvProviderFamilySelectionUsesExplicitSignals(t *testing.T) {
 		})
 	}
 }
-
-func TestExplicitProviderFamilyOwnsGenericLLMInput(t *testing.T) {
-	items := []domain.SandboxEnvVar{
-		{Name: "LLM_API_ENDPOINT", Value: "https://gateway.example/base"},
-		{Name: "LLM_API_KEY", Value: "generic-key"},
-	}
-	for _, family := range []string{ProviderFamilyOpenAI, ProviderFamilyAnthropic} {
-		if !hasEnvProviderInputForFamily(items, family) {
-			t.Fatalf("generic LLM input was not assigned to explicit family %q", family)
-		}
-		if !EnvHasProviderKeyForFamily(items, family) {
-			t.Fatalf("generic LLM key was not assigned to explicit family %q", family)
-		}
-	}
-}

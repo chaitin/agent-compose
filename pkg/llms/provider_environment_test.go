@@ -132,6 +132,45 @@ func TestSandboxProviderEnvItemsReconstructsRestartedOverrides(t *testing.T) {
 	}
 }
 
+func TestSandboxProviderEnvItemsReconstructsGenericKeyFromProtocolFamily(t *testing.T) {
+	const sandboxID = "sandbox-generic-restart"
+	store := newResolverCoverageStore()
+	store.providers = []Provider{
+		{ID: SessionEnvProviderID(sandboxID, ProviderFamilyOpenAI), ProviderType: ProviderFamilyOpenAI, APIKey: "persisted-openai-key", Enabled: true},
+		{ID: SessionEnvProviderID(sandboxID, ProviderFamilyAnthropic), ProviderType: ProviderFamilyAnthropic, APIKey: "persisted-anthropic-key", Enabled: true},
+	}
+	tests := []struct {
+		name            string
+		protocol        string
+		requestedFamily string
+		wantKey         string
+	}{
+		{name: "responses key remains OpenAI for Claude", protocol: APIProtocolResponses, requestedFamily: ProviderFamilyAnthropic, wantKey: "persisted-openai-key"},
+		{name: "messages key remains Anthropic for Codex", protocol: APIProtocolMessages, requestedFamily: ProviderFamilyOpenAI, wantKey: "persisted-anthropic-key"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sandbox := &domain.Sandbox{
+				Summary: domain.SandboxSummary{ID: sandboxID},
+				EnvItems: []domain.SandboxEnvVar{
+					{Name: "LLM_API_ENDPOINT", Value: "https://gateway.example/base"},
+					{Name: "LLM_API_PROTOCOL", Value: tt.protocol},
+					{Name: "LLM_MODEL", Value: "generic-model"},
+				},
+				ProviderEnvOverrideNames: []string{"LLM_API_ENDPOINT", "LLM_API_KEY", "LLM_API_PROTOCOL", "LLM_MODEL"},
+			}
+			items, err := SandboxProviderEnvItems(context.Background(), store, sandbox, tt.requestedFamily)
+			if err != nil {
+				t.Fatalf("reconstruct generic provider env: %v", err)
+			}
+			if got := EnvItemValue(items, "LLM_API_KEY"); got != tt.wantKey {
+				t.Fatalf("reconstructed generic key = %q, want protocol-family key %q", got, tt.wantKey)
+			}
+		})
+	}
+}
+
 func TestSandboxProviderEnvItemsSeparatesRecordedEmptyFromMissingProvenance(t *testing.T) {
 	recorded := &domain.Sandbox{
 		EnvItems:                 []domain.SandboxEnvVar{{Name: "LLM_API_KEY", Value: "global-snapshot"}},
@@ -244,11 +283,14 @@ func TestRuntimeTargetKeepsAnthropicCredentialFromWinningLayer(t *testing.T) {
 			wantScheme:   "Bearer",
 		},
 		{
-			name:         "sandbox generic key beats Global Env auth token",
-			sandboxItems: []domain.SandboxEnvVar{{Name: "LLM_API_KEY", Value: "sandbox-generic-key"}},
-			globalItems:  []domain.SandboxEnvVar{{Name: "ANTHROPIC_AUTH_TOKEN", Value: "global-auth-token"}},
-			wantKey:      "sandbox-generic-key",
-			wantHeader:   "x-api-key",
+			name: "sandbox generic Messages key beats Global Env auth token",
+			sandboxItems: []domain.SandboxEnvVar{
+				{Name: "LLM_API_PROTOCOL", Value: APIProtocolMessages},
+				{Name: "LLM_API_KEY", Value: "sandbox-generic-key"},
+			},
+			globalItems: []domain.SandboxEnvVar{{Name: "ANTHROPIC_AUTH_TOKEN", Value: "global-auth-token"}},
+			wantKey:     "sandbox-generic-key",
+			wantHeader:  "x-api-key",
 		},
 		{
 			name: "family-specific token beats generic key within sandbox",
@@ -311,26 +353,24 @@ func TestRuntimeTargetKeepsAnthropicCredentialFromWinningLayer(t *testing.T) {
 	}
 }
 
-func TestRuntimeTargetUsesGenericEnvironmentForExplicitAnthropicFamily(t *testing.T) {
+func TestRuntimeTargetKeepsGenericResponsesProviderForClaudeFacade(t *testing.T) {
 	isolateLLMEnv(t)
 	store := newResolverCoverageStore()
 	target, err := ResolveRuntimeLLMTargetWithEnv(context.Background(), &appconfig.Config{}, store, "sandbox-generic-anthropic", ProviderFamilyAnthropic, "", "", []domain.SandboxEnvVar{
-		{Name: "LLM_API_ENDPOINT", Value: "https://gateway.example/api/anthropic"},
+		{Name: "LLM_API_ENDPOINT", Value: "https://gateway.example/base"},
+		{Name: "LLM_API_PROTOCOL", Value: APIProtocolResponses},
 		{Name: "LLM_API_KEY", Value: "generic-key"},
-		{Name: "LLM_MODEL", Value: "generic-claude"},
+		{Name: "LLM_MODEL", Value: "generic-model"},
 	})
 	if err != nil {
-		t.Fatalf("resolve generic Anthropic target: %v", err)
+		t.Fatalf("resolve generic Responses target for Claude: %v", err)
 	}
-	if target.Provider.ProviderType != ProviderFamilyAnthropic || target.Provider.BaseURL != "https://gateway.example/api/anthropic" || target.Provider.APIKey != "generic-key" || target.Model.ID != "generic-claude" {
-		t.Fatalf("generic Anthropic target = %#v", target)
-	}
-	if target.Endpoint != "https://gateway.example/api/anthropic/messages" {
-		t.Fatalf("generic Anthropic endpoint = %q", target.Endpoint)
+	if target.Provider.ProviderType != ProviderFamilyOpenAI || target.WireAPI != APIProtocolResponses || target.Provider.APIKey != "generic-key" || target.Model.ID != "generic-model" {
+		t.Fatalf("generic Responses target for Claude = %#v", target)
 	}
 	for _, provider := range store.providers {
-		if provider.ProviderType == ProviderFamilyOpenAI {
-			t.Fatalf("explicit Anthropic resolution bootstrapped OpenAI provider: %#v", store.providers)
+		if provider.ProviderType == ProviderFamilyAnthropic {
+			t.Fatalf("Claude selection reclassified generic Responses provider: %#v", store.providers)
 		}
 	}
 }

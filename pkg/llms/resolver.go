@@ -163,8 +163,9 @@ func resolveRuntimeLLMTargetWithEnv(ctx context.Context, config *appconfig.Confi
 	requestedModel = strings.TrimSpace(requestedModel)
 	providerID = strings.TrimSpace(providerID)
 	hasSessionEnvProvider := sessionID != "" && HasSessionEnvProviderInput(envItems)
-	if sessionID != "" && preferredProviderFamily != "" {
-		hasSessionEnvProvider = hasEnvProviderInputForFamily(envItems, preferredProviderFamily)
+	genericSessionProviderFamily := ""
+	if sessionID != "" {
+		genericSessionProviderFamily = genericLLMEnvProviderFamily(envItems)
 	}
 	sessionProviderID := ""
 	// Reuse an already-persisted session-env provider when this session can no
@@ -185,13 +186,12 @@ func resolveRuntimeLLMTargetWithEnv(ctx context.Context, config *appconfig.Confi
 	// provider id from the token scope, so this avoids a redundant pair of
 	// idempotent provider upserts on every LLM request.
 	bootstrapProviders := (providerID == "" || !IsSessionEnvProviderID(providerID)) && !hasEnabledLLMProviderID(ctx, store, providerID)
-	bootstrapOpenAI := preferredProviderFamily == "" || preferredProviderFamily == ProviderFamilyOpenAI
+	bootstrapOpenAI := preferredProviderFamily == "" ||
+		preferredProviderFamily == ProviderFamilyOpenAI ||
+		genericSessionProviderFamily == ProviderFamilyOpenAI
 	if bootstrapProviders && bootstrapOpenAI && !hasConfiguredLLMProviderForFamily(ctx, store, ProviderFamilyOpenAI) {
 		openAIModel := firstNonEmptyTrimmed(requestedModel, EnvItemValue(envItems, "LLM_MODEL"))
 		hasOpenAIEnvProvider := HasOpenAIEnvProviderInput(envItems)
-		if preferredProviderFamily == ProviderFamilyOpenAI {
-			hasOpenAIEnvProvider = hasEnvProviderInputForFamily(envItems, ProviderFamilyOpenAI)
-		}
 		if sessionID != "" && hasOpenAIEnvProvider {
 			id, err := ensureSessionOpenAIEnvProviderWithConfig(ctx, config, store, sessionID, openAIModel, envItems)
 			if err != nil {
@@ -204,13 +204,12 @@ func resolveRuntimeLLMTargetWithEnv(ctx context.Context, config *appconfig.Confi
 			}
 		}
 	}
-	bootstrapAnthropic := preferredProviderFamily == "" || preferredProviderFamily == ProviderFamilyAnthropic
+	bootstrapAnthropic := preferredProviderFamily == "" ||
+		preferredProviderFamily == ProviderFamilyAnthropic ||
+		genericSessionProviderFamily == ProviderFamilyAnthropic
 	if bootstrapProviders && bootstrapAnthropic && !hasConfiguredLLMProviderForFamily(ctx, store, ProviderFamilyAnthropic) {
 		anthropicModel := firstNonEmptyTrimmed(requestedModel, SessionAnthropicEnvModel(envItems))
 		hasAnthropicEnvProvider := HasAnthropicEnvProviderInput(envItems)
-		if preferredProviderFamily == ProviderFamilyAnthropic {
-			hasAnthropicEnvProvider = hasEnvProviderInputForFamily(envItems, ProviderFamilyAnthropic)
-		}
 		if sessionID != "" && hasAnthropicEnvProvider {
 			id, err := ensureSessionAnthropicEnvProviderWithConfig(ctx, config, store, sessionID, anthropicModel, envItems)
 			if err != nil {
