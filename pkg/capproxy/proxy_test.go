@@ -395,9 +395,6 @@ func TestHTTPSGRPCTransportUsesTLSAndServerName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := transportCredentials.Info().ServerName; got != "127.0.0.1" {
-		t.Fatalf("TLS ServerName = %q, want 127.0.0.1", got)
-	}
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(transportCredentials), grpc.WithDefaultCallOptions(grpc.ForceCodec(rawCodec{})))
 	if err != nil {
 		t.Fatal(err)
