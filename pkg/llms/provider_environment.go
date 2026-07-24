@@ -111,7 +111,7 @@ func filterProviderEnvItems(items []domain.SandboxEnvVar, providerFamily string)
 func providerEnvNameForFamily(name, providerFamily string) bool {
 	name = strings.ToUpper(strings.TrimSpace(name))
 	switch {
-	case strings.HasPrefix(name, "ANTHROPIC_"):
+	case strings.HasPrefix(name, "ANTHROPIC_"), name == "CLAUDE_MODEL":
 		return providerFamily == "" || providerFamily == ProviderFamilyAnthropic
 	case strings.HasPrefix(name, "OPENAI_"), strings.HasPrefix(name, "AZURE_OPENAI_"), strings.HasPrefix(name, "OPENROUTER_"):
 		return providerFamily == "" || providerFamily == ProviderFamilyOpenAI
@@ -127,7 +127,8 @@ func providerEnvName(name string) bool {
 		strings.HasPrefix(name, "OPENAI_") ||
 		strings.HasPrefix(name, "ANTHROPIC_") ||
 		strings.HasPrefix(name, "AZURE_OPENAI_") ||
-		strings.HasPrefix(name, "OPENROUTER_")
+		strings.HasPrefix(name, "OPENROUTER_") ||
+		name == "CLAUDE_MODEL"
 }
 
 func envItemByName(items []domain.SandboxEnvVar, name string) (domain.SandboxEnvVar, bool) {

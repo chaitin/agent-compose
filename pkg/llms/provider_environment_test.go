@@ -18,6 +18,8 @@ func TestSandboxProviderEnvItemsFiltersProviderFamilies(t *testing.T) {
 		{Name: "OPENAI_BASE_URL", Value: "https://openai.example/v1"},
 		{Name: "ANTHROPIC_API_KEY", Value: "anthropic-key", Secret: true},
 		{Name: "ANTHROPIC_BASE_URL", Value: "https://anthropic.example"},
+		{Name: "CLAUDE_MODEL", Value: "claude-session"},
+		{Name: "CLAUDE_CODE_PATH", Value: "/custom/claude"},
 	})
 
 	openAI, err := SandboxProviderEnvItems(context.Background(), nil, sandbox, ProviderFamilyOpenAI)
@@ -27,7 +29,7 @@ func TestSandboxProviderEnvItemsFiltersProviderFamilies(t *testing.T) {
 	if EnvItemValue(openAI, "OPENAI_API_KEY") != "openai-key" || EnvItemValue(openAI, "LLM_API_KEY") != "generic-key" {
 		t.Fatalf("OpenAI provider env = %#v", openAI)
 	}
-	if EnvItemValue(openAI, "ANTHROPIC_API_KEY") != "" || EnvItemValue(openAI, "ANTHROPIC_BASE_URL") != "" {
+	if EnvItemValue(openAI, "ANTHROPIC_API_KEY") != "" || EnvItemValue(openAI, "ANTHROPIC_BASE_URL") != "" || EnvItemValue(openAI, "CLAUDE_MODEL") != "" {
 		t.Fatalf("OpenAI provider env contains Anthropic values: %#v", openAI)
 	}
 
@@ -35,10 +37,10 @@ func TestSandboxProviderEnvItemsFiltersProviderFamilies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SandboxProviderEnvItems Anthropic returned error: %v", err)
 	}
-	if EnvItemValue(anthropic, "ANTHROPIC_API_KEY") != "anthropic-key" || EnvItemValue(anthropic, "LLM_API_KEY") != "generic-key" {
+	if EnvItemValue(anthropic, "ANTHROPIC_API_KEY") != "anthropic-key" || EnvItemValue(anthropic, "LLM_API_KEY") != "generic-key" || EnvItemValue(anthropic, "CLAUDE_MODEL") != "claude-session" {
 		t.Fatalf("Anthropic provider env = %#v", anthropic)
 	}
-	if EnvItemValue(anthropic, "OPENAI_API_KEY") != "" || EnvItemValue(anthropic, "OPENAI_BASE_URL") != "" {
+	if EnvItemValue(anthropic, "OPENAI_API_KEY") != "" || EnvItemValue(anthropic, "OPENAI_BASE_URL") != "" || EnvItemValue(anthropic, "CLAUDE_CODE_PATH") != "" {
 		t.Fatalf("Anthropic provider env contains OpenAI values: %#v", anthropic)
 	}
 }
@@ -48,6 +50,8 @@ func TestSandboxProviderEnvProvenanceDoesNotPersistSecrets(t *testing.T) {
 	SetSandboxProviderEnvItems(sandbox, []domain.SandboxEnvVar{
 		{Name: "LLM_API_ENDPOINT", Value: "https://sandbox.example/v1"},
 		{Name: "OPENAI_API_KEY", Value: "sandbox-secret", Secret: true},
+		{Name: "CLAUDE_MODEL", Value: "claude-session"},
+		{Name: "CLAUDE_CODE_PATH", Value: "/custom/claude"},
 		{Name: "EMPTY", Value: ""},
 	})
 
@@ -58,7 +62,7 @@ func TestSandboxProviderEnvProvenanceDoesNotPersistSecrets(t *testing.T) {
 	if strings.Contains(string(data), "sandbox-secret") {
 		t.Fatalf("sandbox metadata contains provider secret: %s", data)
 	}
-	if !strings.Contains(string(data), `"provider_env_override_names":["LLM_API_ENDPOINT","OPENAI_API_KEY"]`) {
+	if !strings.Contains(string(data), `"provider_env_override_names":["CLAUDE_MODEL","LLM_API_ENDPOINT","OPENAI_API_KEY"]`) {
 		t.Fatalf("sandbox metadata has unexpected provenance: %s", data)
 	}
 
@@ -103,8 +107,9 @@ func TestSandboxProviderEnvItemsReconstructsRestartedOverrides(t *testing.T) {
 		EnvItems: []domain.SandboxEnvVar{
 			{Name: "LLM_API_ENDPOINT", Value: "https://sandbox.example/v1"},
 			{Name: "ANTHROPIC_BASE_URL", Value: "https://anthropic.example"},
+			{Name: "CLAUDE_MODEL", Value: "claude-session"},
 		},
-		ProviderEnvOverrideNames: []string{"LLM_API_ENDPOINT", "OPENAI_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"},
+		ProviderEnvOverrideNames: []string{"LLM_API_ENDPOINT", "OPENAI_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_MODEL"},
 	}
 
 	openAI, err := SandboxProviderEnvItems(context.Background(), store, sandbox, ProviderFamilyOpenAI)
@@ -114,7 +119,7 @@ func TestSandboxProviderEnvItemsReconstructsRestartedOverrides(t *testing.T) {
 	if EnvItemValue(openAI, "OPENAI_API_KEY") != "persisted-openai-key" || EnvItemValue(openAI, "LLM_API_ENDPOINT") == "" {
 		t.Fatalf("reconstructed OpenAI env = %#v", openAI)
 	}
-	if EnvItemValue(openAI, "ANTHROPIC_BASE_URL") != "" {
+	if EnvItemValue(openAI, "ANTHROPIC_BASE_URL") != "" || EnvItemValue(openAI, "CLAUDE_MODEL") != "" {
 		t.Fatalf("reconstructed OpenAI env contains Anthropic value: %#v", openAI)
 	}
 
@@ -122,7 +127,7 @@ func TestSandboxProviderEnvItemsReconstructsRestartedOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reconstruct Anthropic provider env: %v", err)
 	}
-	if EnvItemValue(anthropic, "ANTHROPIC_AUTH_TOKEN") != "persisted-anthropic-key" || EnvItemValue(anthropic, "ANTHROPIC_BASE_URL") == "" {
+	if EnvItemValue(anthropic, "ANTHROPIC_AUTH_TOKEN") != "persisted-anthropic-key" || EnvItemValue(anthropic, "ANTHROPIC_BASE_URL") == "" || EnvItemValue(anthropic, "CLAUDE_MODEL") != "claude-session" {
 		t.Fatalf("reconstructed Anthropic env = %#v", anthropic)
 	}
 }
