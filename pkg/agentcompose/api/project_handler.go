@@ -445,7 +445,7 @@ func (h *ProjectHandler) GetProject(ctx context.Context, req *connect.Request[ag
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("decode project %s revision %d: %w", project.Name, project.CurrentRevision, err))
 		}
-		spec = RedactProjectOctoBusTokens(spec)
+		spec = RedactProjectSpecSecrets(spec)
 	}
 	projectProto := ProjectToProto(project, spec, agents, schedulers)
 	if err := h.enrichProjectAgentRuns(ctx, projectProto); err != nil {
