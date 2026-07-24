@@ -492,14 +492,31 @@ Content:
 {
   "provider": "codex",
   "threadId": "<provider-thread-id>",
-  "updatedAt": "2026-01-01T00:00:00.000Z"
+  "updatedAt": "2026-01-01T00:00:00.000Z",
+  "systemContextHash": "<sha256-hex-of-systemContext>",
+  "systemContextHashVersion": 1
 }
 ```
 
-Codex and Claude read this file on the next call and resume:
+`systemContextHash` and `systemContextHashVersion` are written only for Codex.
+Other providers omit these fields.
 
-- Codex: `codex.resumeThread(threadId, ...)`
+Codex and Claude read this file on the next call:
+
+- Codex resumes with `codex.resumeThread(threadId, ...)` only when the stored
+  fingerprint version is supported and the stored SHA-256 hash exactly matches
+  the current composed `systemContext`. Otherwise it starts a new thread.
 - Claude: `resume: threadId`
+
+Codex state created before fingerprint support is intentionally treated as
+incompatible and starts a new thread on the first run after upgrade. This
+safety-first migration prevents a legacy thread from receiving stale
+developer instructions when the previous context cannot be established.
+
+When an existing Codex thread is rejected because its fingerprint is missing,
+unsupported, or different, the runtime writes a warning to stderr. A reset
+preserves instruction correctness but does not preserve the previous provider
+conversation history.
 
 Gemini currently does not write provider state.
 
@@ -602,6 +619,12 @@ If `/data/state/agents/system-prompts/system-prompt.txt` and/or
 `/data/runtime/mpi/catalog.md` exist and are readable, the JavaScript runtime
 composes Agent Identity + MPI into `systemContext` and injects it through Codex
 `config.developer_instructions`.
+
+Before selecting a Codex thread, the runtime hashes the complete composed
+`systemContext`, including the configured skill catalog when present. It resumes
+only when that fingerprint matches the value stored in
+`/data/state/agents/providers/codex.json`; context changes start a new thread so
+the first model turn cannot inherit stale developer instructions.
 
 Codex events are converted into a human-readable transcript, including agent
 messages, reasoning, command execution, file changes, MCP calls, web search, and

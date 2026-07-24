@@ -1,5 +1,12 @@
 import { resolveCodexPath } from "../codex-path.js";
+import {
+  codexThreadStateMetadata,
+  codexThreadStartWarning,
+  decideCodexThreadResume,
+  hashSystemContext,
+} from "../codex-thread-resume.js";
 import { stringEnv } from "../env.js";
+import { warn } from "../mpi.js";
 import { uniqueDirectories } from "../paths.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { extractText, jsonString } from "../text.js";
@@ -191,19 +198,28 @@ export class CodexRunner {
       codexPathOverride: resolveCodexPath(),
       env: stringEnv(),
       // `config` (the `--config key=value` overrides) is a CodexOptions field on the
-      // constructor; it is NOT read from ThreadOptions/startThread. Injecting the combined
-      // Agent Identity + MPI system context here applies to both start and resume flows.
+      // constructor; it is NOT read from ThreadOptions/startThread. The resume decision below
+      // prevents a changed override from being combined with stale model-visible instructions.
       ...(this.options.systemContext
         ? { config: { developer_instructions: this.options.systemContext } }
         : {}),
     });
-    const thread = stored?.threadId
-      ? codex.resumeThread(stored.threadId, this.threadOptions())
+    const systemContextHash = hashSystemContext(this.options.systemContext);
+    const resumeDecision = decideCodexThreadResume(stored, systemContextHash);
+    const thread = resumeDecision.action === "resume"
+      ? codex.resumeThread(resumeDecision.threadId, this.threadOptions())
       : codex.startThread(this.threadOptions());
+
+    if (resumeDecision.action === "start") {
+      const warning = codexThreadStartWarning(resumeDecision.reason);
+      if (warning) {
+        warn(warning);
+      }
+    }
 
     const result: AgentResult = {
       provider: "codex",
-      threadId: stored?.threadId || "",
+      threadId: resumeDecision.action === "resume" ? resumeDecision.threadId : "",
       stopReason: "completed",
       finalText: "",
       transcript: "",
@@ -222,7 +238,13 @@ export class CodexRunner {
     if (!result.finalText && result.transcript) {
       result.finalText = result.transcript;
     }
-    await writeStoredThread(this.options.stateRoot, "codex", result.threadId);
+    await writeStoredThread(
+      this.options.stateRoot,
+      "codex",
+      result.threadId,
+      new Date(),
+      codexThreadStateMetadata(systemContextHash),
+    );
     return result;
   }
 }
