@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for considering a contribution to agent-compose.
+Thanks for considering a contribution to `agent-compose`.
 
 The project is still in preview. Please keep changes focused, explain behavior
 changes clearly, and include tests for user-visible behavior.
@@ -10,7 +10,7 @@ changes clearly, and include tests for user-visible behavior.
 ### Prerequisites
 
 - **Go 1.26.2**, matching the `go` directive in [`go.mod`](go.mod). Install it
-  from the [official Go downloads](https://go.dev/dl/), or use an existing Go
+  from the [official Go downloads page](https://go.dev/dl/), or use an existing Go
   installation with automatic toolchain downloads enabled (`GOTOOLCHAIN=auto`).
   Distribution packages may be older than the version required by this
   repository.
