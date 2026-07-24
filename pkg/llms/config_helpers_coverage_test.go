@@ -17,11 +17,15 @@ import (
 func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	root := t.TempDir()
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", WorkspacePath: filepath.Join(root, "workspace")}}
-	if err := WriteCodexRuntimeConfig(session, "gpt", "http://runtime/openai/v1/", APIProtocolChatCompletions, CodexRuntimePolicyFromConfig(nil)); err != nil {
+	policy := CodexRuntimePolicyFromConfig(nil)
+	if err := WriteCodexRuntimeConfig(session, "gpt", "http://runtime/openai/v1/", APIProtocolChatCompletions, policy); err == nil {
+		t.Fatal("WriteCodexRuntimeConfig accepted unsupported Chat Completions")
+	}
+	if err := WriteCodexRuntimeConfig(session, "gpt", "http://runtime/openai/v1/", APIProtocolResponses, policy); err != nil {
 		t.Fatalf("WriteCodexRuntimeConfig returned error: %v", err)
 	}
 	codexConfig, err := os.ReadFile(filepath.Join(execution.HostSandboxHome(session), ".codex", "config.toml"))
-	if err != nil || !strings.Contains(string(codexConfig), `wire_api = "chat_completions"`) || !strings.Contains(string(codexConfig), `AGENT_COMPOSE_SANDBOX_TOKEN`) {
+	if err != nil || !strings.Contains(string(codexConfig), `wire_api = "responses"`) || !strings.Contains(string(codexConfig), `AGENT_COMPOSE_SANDBOX_TOKEN`) {
 		t.Fatalf("codex config=%q err=%v", string(codexConfig), err)
 	}
 	if err := WriteOpenCodeRuntimeConfig(session, "custom", "gpt-custom", "http://runtime/openai/v1/"); err != nil {
