@@ -708,6 +708,62 @@ func TestDockerRuntimeSandboxProxyStateUsesContainerNameAndGuestPort(t *testing.
 	}
 }
 
+func TestDockerRuntimeWaitForJupyterProxyStateRetriesUntilBindingVisible(t *testing.T) {
+	runtime := &dockerRuntime{config: &appconfig.Config{JupyterGuestPort: 8888}}
+	sandbox := &Sandbox{
+		Summary: SandboxSummary{
+			ID:         "session-1",
+			RuntimeRef: "runtime-ref",
+		},
+	}
+	state := ProxyState{
+		GuestPort: 8888,
+		Token:     "secret",
+		Enabled:   true,
+	}
+	initialInfo := dockerInspectWithJupyterBindings("container-1", "/runtime-ref", 8888, nil)
+	inspectCalls := 0
+	inspect := func(ctx context.Context, containerID string) (containerapi.InspectResponse, error) {
+		inspectCalls++
+		if containerID != "container-1" {
+			t.Fatalf("inspect containerID = %q, want container-1", containerID)
+		}
+		return dockerInspectWithJupyterBindings("container-1", "/runtime-ref", 8888, []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: "42000"}}), nil
+	}
+
+	containerInfo, proxyState, err := runtime.waitForDockerJupyterProxyState(context.Background(), inspect, sandbox, VMState{}, state, initialInfo, false, time.Second, time.Nanosecond)
+	if err != nil {
+		t.Fatalf("waitForDockerJupyterProxyState returned error: %v", err)
+	}
+	if inspectCalls != 1 {
+		t.Fatalf("inspect calls = %d, want 1", inspectCalls)
+	}
+	if containerInfo.ID != "container-1" || proxyState.GuestHost != "127.0.0.1" || proxyState.HostPort != 42000 || proxyState.Token != "secret" {
+		t.Fatalf("proxy state = %+v container = %+v, want refreshed loopback binding", proxyState, containerInfo.ContainerJSONBase)
+	}
+}
+
+func TestDockerRuntimeWaitForJupyterProxyStateReturnsContextCancellation(t *testing.T) {
+	runtime := &dockerRuntime{config: &appconfig.Config{JupyterGuestPort: 8888}}
+	sandbox := &Sandbox{Summary: SandboxSummary{ID: "session-1", RuntimeRef: "runtime-ref"}}
+	state := ProxyState{
+		GuestPort: 8888,
+		Token:     "secret",
+		Enabled:   true,
+	}
+	initialInfo := dockerInspectWithJupyterBindings("container-1", "/runtime-ref", 8888, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err := runtime.waitForDockerJupyterProxyState(ctx, func(context.Context, string) (containerapi.InspectResponse, error) {
+		t.Fatal("inspect must not run after context cancellation")
+		return containerapi.InspectResponse{}, nil
+	}, sandbox, VMState{}, state, initialInfo, false, time.Second, time.Nanosecond)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("waitForDockerJupyterProxyState err = %v, want context.Canceled", err)
+	}
+}
+
 func dockerInspectWithJupyterBindings(id, name string, guestPort int, bindings []nat.PortBinding) containerapi.InspectResponse {
 	networkSettings := &containerapi.NetworkSettings{}
 	networkSettings.Ports = nat.PortMap{nat.Port(strconv.Itoa(guestPort) + "/tcp"): bindings}

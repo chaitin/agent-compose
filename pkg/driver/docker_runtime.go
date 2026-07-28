@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -36,6 +37,8 @@ const (
 
 	dockerStopAPIMargin             = 5 * time.Second
 	dockerStopFallbackActionTimeout = 5 * time.Second
+	dockerJupyterPortBindingWait    = 5 * time.Second
+	dockerJupyterPortBindingPoll    = 50 * time.Millisecond
 )
 
 type dockerRuntime struct {
@@ -45,6 +48,8 @@ type dockerRuntime struct {
 type dockerContainerRemover interface {
 	ContainerRemove(context.Context, string, containerapi.RemoveOptions) error
 }
+
+type dockerContainerInspector func(context.Context, string) (containerapi.InspectResponse, error)
 
 type dockerDaemonTopology struct {
 	networkMode   containerapi.NetworkMode
@@ -174,7 +179,17 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	if err != nil {
 		return SandboxVMInfo{}, fmt.Errorf("inspect started docker container %s: %w", containerInfo.ID, err)
 	}
-	proxyState, err = r.dockerSandboxProxyState(sandbox, vmState, proxyState, containerInfo, topology.containerized)
+	containerInfo, proxyState, err = r.waitForDockerJupyterProxyState(
+		ctx,
+		dockerClient.ContainerInspect,
+		sandbox,
+		vmState,
+		proxyState,
+		containerInfo,
+		topology.containerized,
+		dockerJupyterPortBindingWait,
+		dockerJupyterPortBindingPoll,
+	)
 	if err != nil {
 		return SandboxVMInfo{}, err
 	}
@@ -1173,6 +1188,49 @@ func (r *dockerRuntime) dockerSandboxProxyState(sandbox *Sandbox, vmState VMStat
 		proxyState.GuestHost = r.containerName(sandbox, vmState)
 	}
 	return proxyState, nil
+}
+
+func (r *dockerRuntime) waitForDockerJupyterProxyState(
+	ctx context.Context,
+	inspect dockerContainerInspector,
+	sandbox *Sandbox,
+	vmState VMState,
+	proxyState ProxyState,
+	containerInfo containerapi.InspectResponse,
+	containerizedDaemon bool,
+	waitTimeout time.Duration,
+	pollInterval time.Duration,
+) (containerapi.InspectResponse, ProxyState, error) {
+	currentState, err := r.dockerSandboxProxyState(sandbox, vmState, proxyState, containerInfo, containerizedDaemon)
+	if err == nil || !proxyState.Enabled || waitTimeout <= 0 || pollInterval <= 0 {
+		return containerInfo, currentState, err
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, waitTimeout)
+	defer cancel()
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	lastErr := err
+	for {
+		select {
+		case <-waitCtx.Done():
+			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+				return containerInfo, ProxyState{}, lastErr
+			}
+			return containerInfo, ProxyState{}, waitCtx.Err()
+		case <-ticker.C:
+			refreshed, inspectErr := inspect(waitCtx, containerInfo.ID)
+			if inspectErr != nil {
+				return containerInfo, ProxyState{}, fmt.Errorf("inspect started docker container %s: %w", containerInfo.ID, inspectErr)
+			}
+			currentState, err = r.dockerSandboxProxyState(sandbox, vmState, proxyState, refreshed, containerizedDaemon)
+			if err == nil {
+				return refreshed, currentState, nil
+			}
+			containerInfo = refreshed
+			lastErr = err
+		}
+	}
 }
 
 func dockerJupyterHostPort(containerInfo containerapi.InspectResponse, guestPort int) (int, error) {
