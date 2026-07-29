@@ -2,23 +2,18 @@
 
 Languages: English | [中文](README.zh-CN.md)
 
-This example shows the smallest useful `agent-compose.yml` for running an
-agent-compose project with the Docker runtime driver.
+This example is the smallest useful `agent-compose.yml` for a project using
+the Docker runtime driver: one enabled agent, an explicit guest image, and no
+scheduler.
 
-It is intentionally minimal:
-
-- one project
-- one agent
-- Docker runtime driver
-- explicit guest image
-- no scheduler
-- no model or API key requirement for `config`, `up`, and `ps`
+`config`, `up`, and `ls` exercise only the control plane and do not require a
+model or API key.
 
 ## Prerequisites
 
-- Docker daemon is running.
-- The `agent-compose` daemon is already running.
-- The `agent-compose-guest:latest` image exists locally.
+- The `agent-compose` daemon is running.
+- Docker is required only when starting a real agent sandbox.
+- `agent-compose-guest:latest` exists locally before a real run.
 
 From the repository root, build the guest image if needed:
 
@@ -26,21 +21,16 @@ From the repository root, build the guest image if needed:
 task image:agent-compose-guest
 ```
 
-If you have an installed `agent-compose` binary in `PATH`, use:
+Check the daemon before continuing:
 
 ```bash
 agent-compose status
 ```
 
-When working from the source tree, you can run the CLI directly:
-
-```bash
-go run ./cmd/agent-compose status
-```
+When working from the source tree, replace `agent-compose` with
+`go run ./cmd/agent-compose`.
 
 ## Compose file
-
-This directory contains the minimal Docker-backed project:
 
 ```yaml
 name: docker-minimal
@@ -53,24 +43,17 @@ agents:
       docker: {}
 ```
 
-The important part is:
+The agent defaults to `enabled: true`. The default driver is also Docker, but
+this example keeps `docker: {}` explicit so its runtime requirement is clear.
 
-```yaml
-driver:
-  docker: {}
-```
-
-If the agent omits `driver`, the compose normalizer defaults to `docker`.
-This example sets `docker: {}` explicitly to document the intended runtime.
-
-## Run the example
+## Validate and apply
 
 From this directory:
 
 ```bash
 agent-compose config
 agent-compose up
-agent-compose ps
+agent-compose ls
 ```
 
 From the repository root without installing the binary:
@@ -78,51 +61,23 @@ From the repository root without installing the binary:
 ```bash
 go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml config
 go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml up
-go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml ps
+go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml ls
 ```
 
 Expected result:
 
-- `config` prints a normalized project with `driver.name: docker`.
-- `up` creates or updates the project and managed agent definition.
-- `ps` shows the `reviewer` agent using Docker and `agent-compose-guest:latest`.
+- `config` prints `enabled: true` and `driver.name: docker` after normalization.
+- `up` creates or updates the project and its `reviewer` agent.
+- `ls` shows the agent using Docker and `agent-compose-guest:latest`, with its
+  scheduler set to `false`.
 
-## Optional run test
+Representative normalized output:
 
-To start a runtime session and keep it alive:
-
-```bash
-agent-compose run reviewer --keep-running --prompt "hello from docker minimal example"
-```
-
-A real agent run requires a working guest runtime and provider authentication.
-For `provider: codex`, configure the required Codex credentials or API key in
-the guest environment before expecting model execution to succeed.
-
-If the runtime session is alive, you can run commands in it:
-
-```bash
-agent-compose exec --agent reviewer -- pwd
-agent-compose exec --agent reviewer -- env
-```
-
-Clean up running project sessions:
-
-```bash
-agent-compose down
-```
-
-## Verification output
-
-Output from a local verification run.
-
-### 1. Config normalization
-
-```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml config
+```yaml
 name: docker-minimal
 agents:
     - name: reviewer
+      enabled: true
       provider: codex
       image: agent-compose-guest:latest
       driver:
@@ -130,37 +85,40 @@ agents:
         docker: {}
 ```
 
-### 2. Apply project
+Representative control-plane output (IDs depend on the local compose path):
 
 ```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml up
-Project: docker-minimal
-ID: project-docker-minimal-ad604c8bf8d3
-Revision: 1
-Spec: sha256:45c9bab1e2c12ad3e26c2168ae87bbf92fdf9933ba62258b44de00813ff106ce
-Status: applied
-Agents: 1
-Schedulers: 0
+$ agent-compose up
+ID            NAME            TYPE     ACTION
+<project-id>  docker-minimal  project  created
+<agent-id>    reviewer        agent    created
 
-ACTION   TYPE              NAME                                                                     ID
-created  project           docker-minimal                                                           project-docker-minimal-ad604c8bf8d3
-created  project_revision  sha256:45c9bab1e2c12ad3e26c2168ae87bbf92fdf9933ba62258b44de00813ff106ce  project-docker-minimal-ad604c8bf8d3/1
-created  project_agent     reviewer                                                                 agent-reviewer-a9f84de36227
-created  agent_definition  reviewer                                                                 agent-reviewer-a9f84de36227
+$ agent-compose ls
+AGENT     PROVIDER  MODEL  IMAGE                       DRIVER  SCHEDULER
+reviewer  codex            agent-compose-guest:latest  docker  false
 ```
 
-### 3. Project status
+## Optional real run
 
-```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml ps
-AGENT     SCHEDULER  LATEST RUN  RUN STATUS  SESSION  DRIVER  IMAGE
-reviewer  disabled   -           -           -        docker  agent-compose-guest:latest
+A real agent run requires Docker, a compatible guest image, and working Codex
+credentials or API access in the guest environment:
+
+```bash
+agent-compose run reviewer --keep-running --prompt "hello from docker minimal example"
 ```
 
-### 4. Docker runtime container
+List the running sandbox, then pass its ID positionally to `exec`:
 
-```console
-$ docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-NAMES                                                IMAGE                        STATUS
-agent-compose-8aa2625d-db67-4428-82ae-8bef1a137a2f   agent-compose-guest:latest   Up 14 seconds
+```bash
+agent-compose ps
+agent-compose exec <sandbox-id> -- pwd
+agent-compose exec <sandbox-id> -- env
+```
+
+The old agent-name target flag is no longer supported by `exec`.
+
+Clean up the project and any running project sandboxes:
+
+```bash
+agent-compose down
 ```

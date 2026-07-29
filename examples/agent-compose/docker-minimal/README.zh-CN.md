@@ -2,45 +2,33 @@
 
 语言：[English](README.md) | 中文
 
-本示例展示一个使用 Docker runtime driver 的最小可用
-`agent-compose.yml`。
+本示例给出使用 Docker runtime driver 的最小可用 `agent-compose.yml`：一个
+enabled agent、一个显式 guest image，并且不配置 scheduler。
 
-它刻意保持最小化：
-
-- 一个 project
-- 一个 agent
-- Docker runtime driver
-- 显式指定 guest image
-- 不启用 scheduler
-- `config`、`up` 和 `ps` 不要求配置模型或 API key
+`config`、`up` 和 `ls` 只验证控制面，不要求配置模型或 API key。
 
 ## 前置条件
 
-- Docker daemon 正在运行。
-- `agent-compose` daemon 已经启动。
-- 本地存在 `agent-compose-guest:latest` 镜像。
+- `agent-compose` daemon 正在运行。
+- 只有真正启动 agent sandbox 时才需要 Docker。
+- 真正运行前，本地需要存在 `agent-compose-guest:latest`。
 
-如果还没有 guest image，可以在仓库根目录构建：
+如有需要，可在仓库根目录构建 guest image：
 
 ```bash
 task image:agent-compose-guest
 ```
 
-如果 `agent-compose` 二进制已经在 `PATH` 中，可以直接检查 daemon：
+继续之前先检查 daemon：
 
 ```bash
 agent-compose status
 ```
 
-如果是在源码仓库中调试，也可以直接运行 CLI：
-
-```bash
-go run ./cmd/agent-compose status
-```
+在源码仓库中工作时，可将 `agent-compose` 替换成
+`go run ./cmd/agent-compose`。
 
 ## Compose 文件
-
-本目录包含一个最小 Docker project：
 
 ```yaml
 name: docker-minimal
@@ -53,24 +41,17 @@ agents:
       docker: {}
 ```
 
-关键配置是：
+agent 默认使用 `enabled: true`。默认 driver 也是 Docker；这里仍显式写出
+`docker: {}`，以便清楚表达 runtime 要求。
 
-```yaml
-driver:
-  docker: {}
-```
-
-如果 agent 省略 `driver`，compose normalizer 会默认使用 `docker`。
-本示例显式设置 `docker: {}`，是为了明确说明预期的 runtime。
-
-## 运行示例
+## 校验并应用
 
 在本目录执行：
 
 ```bash
 agent-compose config
 agent-compose up
-agent-compose ps
+agent-compose ls
 ```
 
 如果没有安装二进制，也可以在仓库根目录执行：
@@ -78,50 +59,23 @@ agent-compose ps
 ```bash
 go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml config
 go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml up
-go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml ps
+go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml ls
 ```
 
 预期结果：
 
-- `config` 输出标准化后的 project，并显示 `driver.name: docker`。
-- `up` 创建或更新 project 和 managed agent definition。
-- `ps` 显示 `reviewer` agent 使用 Docker 和 `agent-compose-guest:latest`。
+- `config` 标准化后输出 `enabled: true` 和 `driver.name: docker`。
+- `up` 创建或更新 project 及其 `reviewer` agent。
+- `ls` 显示该 agent 使用 Docker 和 `agent-compose-guest:latest`，scheduler 为
+  `false`。
 
-## 可选运行测试
+标准化输出示例：
 
-启动一次 runtime session，并在运行结束后保留 session：
-
-```bash
-agent-compose run reviewer --keep-running --prompt "hello from docker minimal example"
-```
-
-真正执行 agent 需要 guest runtime 可用，并且 provider 已完成认证。对于
-`provider: codex`，需要先在 guest 环境中配置 Codex 凭据或 API key。
-
-如果 runtime session 仍在运行，可以在其中执行命令：
-
-```bash
-agent-compose exec --agent reviewer -- pwd
-agent-compose exec --agent reviewer -- env
-```
-
-清理正在运行的 project sessions：
-
-```bash
-agent-compose down
-```
-
-## 验证输出
-
-以下为一次本地验证运行的输出。
-
-### 1. 配置标准化
-
-```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml config
+```yaml
 name: docker-minimal
 agents:
     - name: reviewer
+      enabled: true
       provider: codex
       image: agent-compose-guest:latest
       driver:
@@ -129,37 +83,40 @@ agents:
         docker: {}
 ```
 
-### 2. 应用 project
+控制面输出示例（ID 会随本地 compose 路径变化）：
 
 ```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml up
-Project: docker-minimal
-ID: project-docker-minimal-ad604c8bf8d3
-Revision: 1
-Spec: sha256:45c9bab1e2c12ad3e26c2168ae87bbf92fdf9933ba62258b44de00813ff106ce
-Status: applied
-Agents: 1
-Schedulers: 0
+$ agent-compose up
+ID            NAME            TYPE     ACTION
+<project-id>  docker-minimal  project  created
+<agent-id>    reviewer        agent    created
 
-ACTION   TYPE              NAME                                                                     ID
-created  project           docker-minimal                                                           project-docker-minimal-ad604c8bf8d3
-created  project_revision  sha256:45c9bab1e2c12ad3e26c2168ae87bbf92fdf9933ba62258b44de00813ff106ce  project-docker-minimal-ad604c8bf8d3/1
-created  project_agent     reviewer                                                                 agent-reviewer-a9f84de36227
-created  agent_definition  reviewer                                                                 agent-reviewer-a9f84de36227
+$ agent-compose ls
+AGENT     PROVIDER  MODEL  IMAGE                       DRIVER  SCHEDULER
+reviewer  codex            agent-compose-guest:latest  docker  false
 ```
 
-### 3. Project 状态
+## 可选的真实运行
 
-```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-minimal/agent-compose.yml ps
-AGENT     SCHEDULER  LATEST RUN  RUN STATUS  SESSION  DRIVER  IMAGE
-reviewer  disabled   -           -           -        docker  agent-compose-guest:latest
+真正执行 agent 需要 Docker、兼容的 guest image，以及 guest 环境中可用的
+Codex 凭据或 API 访问能力：
+
+```bash
+agent-compose run reviewer --keep-running --prompt "hello from docker minimal example"
 ```
 
-### 4. Docker runtime 容器
+先列出运行中的 sandbox，再把它的 ID 作为 `exec` 的位置参数：
 
-```console
-$ docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-NAMES                                                IMAGE                        STATUS
-agent-compose-8aa2625d-db67-4428-82ae-8bef1a137a2f   agent-compose-guest:latest   Up 14 seconds
+```bash
+agent-compose ps
+agent-compose exec <sandbox-id> -- pwd
+agent-compose exec <sandbox-id> -- env
+```
+
+`exec` 已不再支持旧的 agent-name 目标参数。
+
+清理 project 和仍在运行的 project sandboxes：
+
+```bash
+agent-compose down
 ```

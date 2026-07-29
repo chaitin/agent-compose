@@ -2,27 +2,17 @@
 
 语言：[English](README.md) | 中文
 
-本示例展示一个使用 Docker runtime 的 agent-compose project，并为它配置
-managed cron scheduler。
-
-它验证 scheduler 控制面流程：
-
-- 从 `agent-compose.yml` 解析 cron trigger
-- 将 project 应用到 daemon
-- 创建 managed project scheduler 和 loader
-- 确认 scheduler 处于 enabled 状态
-- 使用 `agent-compose down` 禁用 scheduler
-
-本示例的 `config`、`up`、`ps` 和 `down` 不要求真实调用模型。真正的定时
-运行仍然需要 guest runtime 可用，并且 provider 已完成认证。
+本示例为一个 Docker-backed agent 定义 managed cron trigger。它验证当前的
+project、agent、scheduler 和 trigger 控制面模型，不要求真实调用模型。
 
 ## 前置条件
 
-- Docker daemon 正在运行。
-- `agent-compose` daemon 已经启动。
-- 本地存在 `agent-compose-guest:latest` 镜像。
+- `agent-compose` daemon 正在运行。
+- 只有 trigger 真正启动 agent sandbox 时才需要 Docker 和
+  `agent-compose-guest:latest`。
+- 真正执行 scheduled model run 需要 provider 认证。
 
-如果还没有 guest image，可以在仓库根目录构建：
+如有需要，可在仓库根目录构建 guest image：
 
 ```bash
 task image:agent-compose-guest
@@ -47,21 +37,24 @@ agents:
           prompt: "Review the current project state and summarize any important changes."
 ```
 
-trigger 使用标准 cron 语法。下面的表达式表示每小时整点运行：
+`0 * * * *` 表示每小时整点运行。该 trigger 没有设置 `timezone`，因此使用
+daemon 本地时区（优先读取 `TZ`，否则使用 `/etc/localtime`）。如果调度时间不应
+随 daemon 部署位置变化，请添加 `timezone: UTC` 或 `Asia/Shanghai` 等 IANA
+时区。
 
-```yaml
-cron: "0 * * * *"
-```
+scheduler 默认使用 `sandbox_policy: new` 和 `concurrency_policy: skip`；
+标准化后的 config 会显示这两个默认值。
 
-## 运行示例
+## 校验并应用
 
 在本目录执行：
 
 ```bash
 agent-compose config
 agent-compose up
-agent-compose ps
-agent-compose inspect project docker-scheduler-cron
+agent-compose ls
+agent-compose scheduler ls
+agent-compose inspect project
 agent-compose down
 ```
 
@@ -70,22 +63,58 @@ agent-compose down
 ```bash
 go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml config
 go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml up
-go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml ps
-go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml inspect project docker-scheduler-cron
+go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml ls
+go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml scheduler ls
+go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml inspect project
 go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml down
 ```
 
 预期结果：
 
-- `config` 显示 trigger 为 `kind: cron`。
-- `up` 创建 `project_scheduler` 和 `loader` 资源。
-- `ps` 显示 scheduler 为 `enabled`。
+- `config` 显示 `kind: cron` 和 scheduler 标准化后的策略。
+- `up` 创建 project、agent 和 `hourly-review` trigger。
+- `ls` 显示该 agent 的 `SCHEDULER` 为 `true`。
+- `scheduler ls` 显示注册的 cron trigger。
 - `inspect project` 显示 `scheduler_count: 1` 和 `trigger_count: 1`。
-- `down` 禁用 managed scheduler 和 loader。
+- `down` 从 daemon 移除 managed trigger、project 和 agent。
 
-## 更容易观察触发的方法
+标准化后的 scheduler 输出示例：
 
-如果本地演示时希望 scheduler 很快触发，可以使用 interval trigger 替代 cron：
+```yaml
+      scheduler:
+        enabled: true
+        sandbox_policy: new
+        concurrency_policy: skip
+        triggers:
+            - name: hourly-review
+              kind: cron
+              cron: 0 * * * *
+              prompt: Review the current project state and summarize any important changes.
+```
+
+控制面输出示例（ID 会随本地 compose 路径变化）：
+
+```console
+$ agent-compose up
+ID            NAME                   TYPE     ACTION
+<project-id>  docker-scheduler-cron  project  created
+<agent-id>    reviewer               agent    created
+<trigger-id>  hourly-review          trigger  created
+
+$ agent-compose ls
+AGENT     PROVIDER  MODEL  IMAGE                       DRIVER  SCHEDULER
+reviewer  codex            agent-compose-guest:latest  docker  true
+
+$ agent-compose down
+ID            NAME                   TYPE     ACTION   MESSAGE
+<trigger-id>  hourly-review          trigger  removed  disabled by project down
+<project-id>  docker-scheduler-cron  project  removed  removed by project down
+<agent-id>    reviewer               agent    removed
+```
+
+## 更容易观察 trigger
+
+如需在本地快速观察，可将 cron trigger 替换为 interval trigger：
 
 ```yaml
 scheduler:
@@ -96,99 +125,4 @@ scheduler:
       prompt: "Say hello from the interval trigger."
 ```
 
-需要基于日历时间调度时使用 cron；需要本地快速反馈时使用 interval。
-
-## 验证输出
-
-以下为一次本地验证运行的输出。
-
-### 1. 配置标准化
-
-```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml config
-name: docker-scheduler-cron
-agents:
-    - name: reviewer
-      provider: codex
-      image: agent-compose-guest:latest
-      driver:
-        name: docker
-        docker: {}
-      scheduler:
-        enabled: true
-        triggers:
-            - name: hourly-review
-              kind: cron
-              cron: 0 * * * *
-              prompt: Review the current project state and summarize any important changes.
-```
-
-### 2. 应用 project
-
-```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml up
-Project: docker-scheduler-cron
-ID: project-docker-scheduler-cron-034aaf526f91
-Revision: 1
-Spec: sha256:609b72e32d33488851496faefccbe2e3487cf2247e5218dd5cde9ae31d57e964
-Status: applied
-Agents: 1
-Schedulers: 1
-
-ACTION   TYPE               NAME                                                                     ID
-created  project            docker-scheduler-cron                                                    project-docker-scheduler-cron-034aaf526f91
-created  project_revision   sha256:609b72e32d33488851496faefccbe2e3487cf2247e5218dd5cde9ae31d57e964  project-docker-scheduler-cron-034aaf526f91/1
-created  project_agent      reviewer                                                                 agent-reviewer-4bff2fb6372a
-created  agent_definition   reviewer                                                                 agent-reviewer-4bff2fb6372a
-created  project_scheduler  reviewer                                                                 scheduler-reviewer-default-ed0b5bed0daa
-created  loader             docker-scheduler-cron/reviewer scheduler                                 loader-reviewer-default-ed0b5bed0daa
-```
-
-### 3. Scheduler 状态
-
-```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml ps
-AGENT     SCHEDULER  LATEST RUN  RUN STATUS  SESSION  DRIVER  IMAGE
-reviewer  enabled    -           -           -        docker  agent-compose-guest:latest
-```
-
-### 4. 查看 project
-
-```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml inspect project docker-scheduler-cron
-{
-  "project": {
-    "id": "project-docker-scheduler-cron-034aaf526f91",
-    "name": "docker-scheduler-cron",
-    "current_revision": 1,
-    "agent_count": 1,
-    "scheduler_count": 1
-  },
-  "agents": [
-    {
-      "agent_name": "reviewer",
-      "provider": "codex",
-      "image": "agent-compose-guest:latest",
-      "driver": "docker",
-      "scheduler_enabled": true
-    }
-  ],
-  "schedulers": [
-    { "agent_name": "reviewer", "enabled": true, "trigger_count": 1 }
-  ]
-}
-```
-
-### 5. 禁用 scheduler
-
-```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml down
-Project: docker-scheduler-cron
-ID: project-docker-scheduler-cron-034aaf526f91
-Status: down
-Failed session stops: 0
-
-ACTION   TYPE               NAME      ID                                       MESSAGE
-updated  project_scheduler  reviewer  scheduler-reviewer-default-ed0b5bed0daa  disabled by project down
-updated  loader             reviewer  loader-reviewer-default-ed0b5bed0daa     disabled by project down
-```
+需要基于日历时间调度时使用 cron；需要基于经过时长调度时使用 interval。

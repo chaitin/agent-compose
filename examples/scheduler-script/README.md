@@ -1,12 +1,12 @@
-# Loader 脚本模板
+# Scheduler 脚本模板
 
-这个目录放的是 agent-compose Loader 的可复制脚本模板。Loader 脚本运行在 `scheduler` runtime 里，不需要 `import` 或 `require`；宿主会在全局注入 `scheduler` 对象和兼容的 timer 函数。
+这个目录放的是 agent-compose Scheduler 的可复制脚本模板。脚本运行在 `scheduler` runtime 里，不需要 `import` 或 `require`；宿主会在全局注入 `scheduler` 对象和兼容的 timer 函数。
 
 ## 编写建议
 
 - 顶层代码尽量只做函数定义和触发器注册。
 - 真实工作放在 `main(payload)` 或共享 helper 函数里。
-- 返回值必须能被 JSON 序列化，成功运行后会写入 `resultJson`。
+- 返回值必须能被 JSON 序列化，成功运行后会写入 scheduler run 的 `result_json`。
 - 每个触发器都写显式、稳定的 `triggerId`。
 - 需要长期暂停触发器时，用 UI 或 API 禁用触发器。`scheduler.clearInterval(...)` 和 `scheduler.clearTimeout(...)` 只会移除当前脚本求值期间注册出来的触发器，不会持久禁用已经保存的触发器。
 
@@ -30,7 +30,7 @@ agents:
         }
 ```
 
-`scheduler.script` 和声明式 `scheduler.triggers` 是二选一关系。需要简单 cron/interval/event/timeout 加 prompt 时用 `scheduler.triggers`；需要共享状态、多个 trigger 共用 workflow、调用 `scheduler.llm` / `scheduler.exec` / `scheduler.event.publish` 等能力时用 `scheduler.script`。inline scalar 和下面的 URL object 都使用同一套 loader runtime。
+`scheduler.script` 和声明式 `scheduler.triggers` 是二选一关系。需要简单 cron/interval/event/timeout 加 prompt 时用 `scheduler.triggers`；需要共享状态、多个 trigger 共用 workflow、调用 `scheduler.llm` / `scheduler.exec` / `scheduler.event.publish` 等能力时用 `scheduler.script`。inline scalar 和下面的 URL object 都使用同一套 scheduler runtime。
 
 脚本也可以保存在独立文件中，并通过显式 URL 对象引用：
 
@@ -45,12 +45,12 @@ agents:
 无 scheme 的相对路径以 compose 文件目录为基准；也支持绝对路径、`file://`、
 `http://` 和 `https://`。这是 CLI authoring 能力：`agent-compose config` 和
 `agent-compose up` 在本机获取一次并生成内联内容快照，daemon、v2 API、revision
-和 loader 只看到脚本文本。它不是运行时 `import`，来源内容变化只会在下次
+和 scheduler 只看到脚本文本。它不是运行时 `import`，来源内容变化只会在下次
 `up` 时生效。当前仍不支持 `import` / `require`、bundling、鉴权 header 或后台刷新。
 
 ## 触发器 ID
 
-`triggerId` 是一个 Loader 内某条触发规则的稳定名字，不是浏览器 timer handle。agent-compose 会用它持久化调度状态、在 UI 展示触发器行、启停单个触发器、把手动运行路由到指定触发器，并把运行记录和事件记录关联回对应规则。
+`triggerId` 是一个 Scheduler 内某条触发规则的稳定名字，不是浏览器 timer handle。agent-compose 会用它持久化调度状态、在 UI 展示触发器行、启停单个触发器、把手动运行路由到指定触发器，并把运行记录和事件记录关联回对应规则。
 
 推荐写法：
 
@@ -113,7 +113,7 @@ scheduler.schedule(triggerId, expression, callback, options);
 
 手动运行时，agent-compose 会优先调用全局 `main(payload)`。如果没有 `main()` 且脚本只注册了一个触发器，则会调用这个触发器的 callback；如果有多个触发器，必须显式选择触发器或定义 `main()`。
 
-- 手动运行的 `payload` 来自 `RunLoaderNow.payloadJson`。
+- 手动运行的 `payload` 来自 `agent-compose scheduler invoke <scheduler> --payload '<json>'`；对应 API 字段为 `InvokeSchedulerRequest.payload_json`。
 - `scheduler.on(...)` handler 收到事件 envelope：`{ topic, createdAt, payload }`。
 - interval、timeout、cron handler 默认收到 `undefined`，除非你在脚本里自己转发自定义上下文。
 
@@ -144,7 +144,7 @@ const reply = scheduler.agent(prompt, {
   agent: "codex",
   sandboxPolicy: "sticky", // "sticky" | "new" | "reuse"
   timeout: "10m",
-  title: "Loader Agent Sandbox",
+  title: "Scheduler Agent Sandbox",
   driver: "boxlite",
   guestImage: "agent-compose-guest:latest",
   workspaceId: "workspace-id",
@@ -185,7 +185,7 @@ const result = scheduler.llm(prompt, {
 
 ## 命令执行
 
-`scheduler.exec(...)` 和 `scheduler.shell(...)` 会在 Loader 关联的 notebook runtime 里执行命令。
+`scheduler.exec(...)` 和 `scheduler.shell(...)` 会在 Scheduler 关联的 notebook runtime 里执行命令。
 
 ```js
 const result = scheduler.exec({
@@ -196,7 +196,7 @@ const result = scheduler.exec({
   timeoutMs: 30000,
   maxOutputBytes: 4096,
   sandboxPolicy: "new",
-  title: "Loader Command Sandbox",
+  title: "Scheduler Command Sandbox",
   driver: "boxlite",
   guestImage: "agent-compose-guest:latest",
   workspaceId: "workspace-id",
@@ -276,7 +276,7 @@ scheduler.z.object({ key: schema });
 `scheduler.sandbox` 暴露 sandbox lifecycle unary RPC，参数和返回值使用 sandbox JSON shape。
 
 ```js
-const created = scheduler.sandbox.createSandbox({ title: "Loader Sandbox" });
+const created = scheduler.sandbox.createSandbox({ title: "Scheduler Sandbox" });
 const sandboxId = created.sandbox.summary.sandboxId;
 
 const current = scheduler.sandbox.getSandbox({ sandboxId });
@@ -298,7 +298,7 @@ scheduler.runtime.name; // "scheduler"
 
 ## 校验阶段限制
 
-保存或校验 Loader 时，脚本会被求值以收集触发器。此时不要在顶层调用会执行副作用的 host API。
+保存或校验 Scheduler 时，脚本会被求值以收集触发器。此时不要在顶层调用会执行副作用的 host API。
 
 - `scheduler.agent`、`scheduler.llm`、`scheduler.exec`、`scheduler.shell`、`scheduler.event.publish`、`scheduler.sandbox.*` 在校验阶段不可用。
 - `scheduler.log` 在校验阶段是 no-op。
@@ -308,9 +308,9 @@ scheduler.runtime.name; // "scheduler"
 
 ## 目录文件
 
-- `01-manual-main.js`：最小手动运行 Loader，并返回可追踪结果。
+- `01-manual-main.js`：最小手动运行 Scheduler，并返回可追踪结果。
 - `02-interval-heartbeat.js`：带持久状态的 interval 任务，也支持手动重跑。
-- `03-event-to-agent.js`：事件驱动 Loader，把事件交给 agent 处理。
+- `03-event-to-agent.js`：事件驱动 Scheduler，把事件交给 agent 处理。
 - `04-cron-daily-summary.js`：定时 agent 任务，并记录最近运行状态。
 - `05-router-with-multiple-triggers.js`：多个触发器共享一个 workflow 的推荐结构。
 - `06-conditional-triggers.js`：按条件注册或清除 interval/timeout 触发器。

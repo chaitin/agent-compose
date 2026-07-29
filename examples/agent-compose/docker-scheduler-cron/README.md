@@ -2,28 +2,18 @@
 
 Languages: English | [中文](README.zh-CN.md)
 
-This example shows a Docker-backed agent-compose project with a managed cron
-scheduler.
-
-It verifies the scheduler control-plane flow:
-
-- parse a cron trigger from `agent-compose.yml`
-- apply the project to the daemon
-- create a managed project scheduler and loader
-- show the scheduler as enabled
-- disable the scheduler with `agent-compose down`
-
-The example does not require a model call for `config`, `up`, `ps`, or `down`.
-The scheduled run itself still requires a working guest runtime and provider
-authentication.
+This example defines a Docker-backed agent with one managed cron trigger. It
+exercises the current project, agent, scheduler, and trigger control-plane
+model without requiring a model call.
 
 ## Prerequisites
 
-- Docker daemon is running.
-- The `agent-compose` daemon is already running.
-- The `agent-compose-guest:latest` image exists locally.
+- The `agent-compose` daemon is running.
+- Docker and `agent-compose-guest:latest` are needed only when the trigger
+  actually starts an agent sandbox.
+- A real scheduled model run requires provider authentication.
 
-From the repository root, build the guest image if needed:
+Build the guest image from the repository root if needed:
 
 ```bash
 task image:agent-compose-guest
@@ -48,22 +38,24 @@ agents:
           prompt: "Review the current project state and summarize any important changes."
 ```
 
-The trigger uses standard cron syntax. The expression below runs at the top of
-every hour:
+`0 * * * *` runs at the top of every hour. Because this trigger omits
+`timezone`, it uses the daemon's local timezone (`TZ` first, otherwise
+`/etc/localtime`). Add `timezone: UTC` or an IANA timezone such as
+`Asia/Shanghai` when the schedule must be independent of daemon placement.
 
-```yaml
-cron: "0 * * * *"
-```
+The scheduler defaults to `sandbox_policy: new` and
+`concurrency_policy: skip`; both defaults are visible in normalized config.
 
-## Run the example
+## Validate and apply
 
 From this directory:
 
 ```bash
 agent-compose config
 agent-compose up
-agent-compose ps
-agent-compose inspect project docker-scheduler-cron
+agent-compose ls
+agent-compose scheduler ls
+agent-compose inspect project
 agent-compose down
 ```
 
@@ -72,23 +64,58 @@ From the repository root without installing the binary:
 ```bash
 go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml config
 go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml up
-go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml ps
-go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml inspect project docker-scheduler-cron
+go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml ls
+go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml scheduler ls
+go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml inspect project
 go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml down
 ```
 
 Expected result:
 
-- `config` prints the trigger as `kind: cron`.
-- `up` creates `project_scheduler` and `loader` resources.
-- `ps` shows the scheduler as `enabled`.
-- `inspect project` shows `scheduler_count: 1` and `trigger_count: 1`.
-- `down` disables the managed scheduler and loader.
+- `config` prints `kind: cron`, plus the scheduler's normalized policies.
+- `up` creates the project, agent, and `hourly-review` trigger.
+- `ls` shows the agent with `SCHEDULER` set to `true`.
+- `scheduler ls` shows the registered cron trigger.
+- `inspect project` reports `scheduler_count: 1` and `trigger_count: 1`.
+- `down` removes the managed trigger, project, and agent from the daemon.
 
-## Making the trigger easier to observe
+Representative normalized scheduler output:
 
-For a local demo where you want the scheduler to fire soon, use an interval
-trigger instead of cron:
+```yaml
+      scheduler:
+        enabled: true
+        sandbox_policy: new
+        concurrency_policy: skip
+        triggers:
+            - name: hourly-review
+              kind: cron
+              cron: 0 * * * *
+              prompt: Review the current project state and summarize any important changes.
+```
+
+Representative control-plane output (IDs depend on the local compose path):
+
+```console
+$ agent-compose up
+ID            NAME                   TYPE     ACTION
+<project-id>  docker-scheduler-cron  project  created
+<agent-id>    reviewer               agent    created
+<trigger-id>  hourly-review          trigger  created
+
+$ agent-compose ls
+AGENT     PROVIDER  MODEL  IMAGE                       DRIVER  SCHEDULER
+reviewer  codex            agent-compose-guest:latest  docker  true
+
+$ agent-compose down
+ID            NAME                   TYPE     ACTION   MESSAGE
+<trigger-id>  hourly-review          trigger  removed  disabled by project down
+<project-id>  docker-scheduler-cron  project  removed  removed by project down
+<agent-id>    reviewer               agent    removed
+```
+
+## Make the trigger easier to observe
+
+For short local feedback, replace the cron trigger with an interval trigger:
 
 ```yaml
 scheduler:
@@ -99,100 +126,4 @@ scheduler:
       prompt: "Say hello from the interval trigger."
 ```
 
-Use cron when you want calendar-based scheduling. Use interval when you want
-short local feedback while testing.
-
-## Verification output
-
-Output from a local verification run.
-
-### 1. Config normalization
-
-```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml config
-name: docker-scheduler-cron
-agents:
-    - name: reviewer
-      provider: codex
-      image: agent-compose-guest:latest
-      driver:
-        name: docker
-        docker: {}
-      scheduler:
-        enabled: true
-        triggers:
-            - name: hourly-review
-              kind: cron
-              cron: 0 * * * *
-              prompt: Review the current project state and summarize any important changes.
-```
-
-### 2. Apply project
-
-```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml up
-Project: docker-scheduler-cron
-ID: project-docker-scheduler-cron-034aaf526f91
-Revision: 1
-Spec: sha256:609b72e32d33488851496faefccbe2e3487cf2247e5218dd5cde9ae31d57e964
-Status: applied
-Agents: 1
-Schedulers: 1
-
-ACTION   TYPE               NAME                                                                     ID
-created  project            docker-scheduler-cron                                                    project-docker-scheduler-cron-034aaf526f91
-created  project_revision   sha256:609b72e32d33488851496faefccbe2e3487cf2247e5218dd5cde9ae31d57e964  project-docker-scheduler-cron-034aaf526f91/1
-created  project_agent      reviewer                                                                 agent-reviewer-4bff2fb6372a
-created  agent_definition   reviewer                                                                 agent-reviewer-4bff2fb6372a
-created  project_scheduler  reviewer                                                                 scheduler-reviewer-default-ed0b5bed0daa
-created  loader             docker-scheduler-cron/reviewer scheduler                                 loader-reviewer-default-ed0b5bed0daa
-```
-
-### 3. Scheduler status
-
-```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml ps
-AGENT     SCHEDULER  LATEST RUN  RUN STATUS  SESSION  DRIVER  IMAGE
-reviewer  enabled    -           -           -        docker  agent-compose-guest:latest
-```
-
-### 4. Inspect project
-
-```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml inspect project docker-scheduler-cron
-{
-  "project": {
-    "id": "project-docker-scheduler-cron-034aaf526f91",
-    "name": "docker-scheduler-cron",
-    "current_revision": 1,
-    "agent_count": 1,
-    "scheduler_count": 1
-  },
-  "agents": [
-    {
-      "agent_name": "reviewer",
-      "provider": "codex",
-      "image": "agent-compose-guest:latest",
-      "driver": "docker",
-      "scheduler_enabled": true
-    }
-  ],
-  "schedulers": [
-    { "agent_name": "reviewer", "enabled": true, "trigger_count": 1 }
-  ]
-}
-```
-
-### 5. Disable scheduler
-
-```console
-$ go run ./cmd/agent-compose --file examples/agent-compose/docker-scheduler-cron/agent-compose.yml down
-Project: docker-scheduler-cron
-ID: project-docker-scheduler-cron-034aaf526f91
-Status: down
-Failed session stops: 0
-
-ACTION   TYPE               NAME      ID                                       MESSAGE
-updated  project_scheduler  reviewer  scheduler-reviewer-default-ed0b5bed0daa  disabled by project down
-updated  loader             reviewer  loader-reviewer-default-ed0b5bed0daa     disabled by project down
-```
+Use cron for calendar-based schedules and interval for elapsed-time schedules.

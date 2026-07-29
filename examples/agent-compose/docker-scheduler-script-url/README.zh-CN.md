@@ -19,12 +19,16 @@ daemon；daemon 不会在运行时刷新这个 URL。
 ```bash
 agent-compose config
 agent-compose up
-agent-compose ps
+agent-compose ls
+agent-compose scheduler ls
+agent-compose scheduler invoke reviewer --payload '{"source":"example"}'
 agent-compose down
 ```
 
 `config` 会把获取到的脚本以内联形式输出。`up` 再获取一次，基于内容快照计算
-hash，并且只把脚本文本发送给 daemon。修改 `scheduler.js` 后需再次执行 `up`
+hash，并且只把脚本文本发送给 daemon。`ls` 显示 managed agent 和 scheduler，
+`scheduler ls` 显示注册的 `daily-review` trigger；`scheduler invoke` 无需等待 cron，
+可直接调用脚本的 `main(payload)` 入口。修改 `scheduler.js` 后需再次执行 `up`
 才会生效。相对路径以 `agent-compose.yml` 所在目录为基准。
 
 控制面命令不要求 provider 凭证；实际定时运行仍需要可用的 guest runtime 和
