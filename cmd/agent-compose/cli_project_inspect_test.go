@@ -21,6 +21,7 @@ agents: {}
 `)
 	targetID := strings.Repeat("b", 64)
 	targetProject := testCLIProject(targetID, "target-project", "/projects/target/agent-compose.yml")
+	targetProject.Spec = &agentcomposev2.ProjectSpec{Variables: []*agentcomposev2.EnvVarSpec{{Name: "TOKEN", Value: "stored-secret", Secret: true}}}
 	shortID := identity.ShortID(targetID)
 
 	var requestedNames []string
@@ -91,6 +92,9 @@ agents: {}
 			}
 			if output.Project.ID != targetID || output.Project.Name != "target-project" {
 				t.Fatalf("inspect project %s output = %#v", test.ref, output.Project)
+			}
+			if got := output.Spec.GetVariables()[0].GetValue(); got != "stored-secret" {
+				t.Fatalf("inspect project %s spec secret = %q", test.ref, got)
 			}
 		})
 	}

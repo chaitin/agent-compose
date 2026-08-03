@@ -10,6 +10,7 @@ import (
 
 	agentcomposeapp "agent-compose/pkg/agentcompose/app"
 	"agent-compose/pkg/config"
+	"agent-compose/pkg/controlplane"
 	"agent-compose/proto/health/v1/healthv1connect"
 )
 
@@ -35,8 +36,7 @@ func newDaemonAuthMiddleware(conf *config.Config) echo.MiddlewareFunc {
 }
 
 func trustedLocalSocketRequest(r *http.Request) bool {
-	trusted, _ := r.Context().Value(localUnixSocketRequestKey{}).(bool)
-	return trusted
+	return controlplane.IsTrustedLocalRequest(r.Context())
 }
 
 func requestBearerToken(r *http.Request) (string, bool) {

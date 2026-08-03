@@ -590,6 +590,11 @@ agent-compose inspect cache <cache-id>
 
 对于 `inspect project <project-ref>`，位置参数中的 project ref 优先于 `--project-name` 和 `--file`。CLI 会先按精确 project name 解析，再按完整 ID 或唯一 short ID 解析；如果显式 ref 不存在或存在歧义，命令会直接失败，不会回退到 flag 或当前 Compose 文件选中的 project。不提供位置参数时，`inspect project` 继续使用常规的已部署 project 选择规则。
 
+CLI 通过 daemon 本地 Unix socket 连接，且 daemon 将 peer 验证为自身用户或 root
+时，project 配置输出会包含保存的 secret variable、agent/MCP env、MCP header 和
+OctoBus token 明文。TCP/HTTP API 响应仍会脱敏。终端和 `--json` 输出都应视为敏感
+信息：请避免被 scrollback 记录、重定向到其他用户可读文件或分享命令输出。
+
 说明：
 
 - `inspect project` 查看 project spec、revision、agent、scheduler 等信息。

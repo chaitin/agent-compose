@@ -1,10 +1,11 @@
 package main
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"agent-compose/pkg/controlplane"
 
 	"github.com/labstack/echo/v4"
 
@@ -42,7 +43,7 @@ func TestDaemonAuthMiddleware(t *testing.T) {
 				req.Header.Set(echo.HeaderAuthorization, test.header)
 			}
 			if test.trusted {
-				req = req.WithContext(context.WithValue(req.Context(), localUnixSocketRequestKey{}, true))
+				req = req.WithContext(controlplane.WithTrustedLocalRequest(req.Context()))
 			}
 			rec := httptest.NewRecorder()
 			app.ServeHTTP(rec, req)

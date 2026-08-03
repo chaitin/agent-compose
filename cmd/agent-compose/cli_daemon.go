@@ -3,6 +3,7 @@ package main
 import (
 	agentcomposeapp "agent-compose/pkg/agentcompose/app"
 	"agent-compose/pkg/config"
+	"agent-compose/pkg/controlplane"
 	"agent-compose/pkg/fxgo/echofn"
 	"agent-compose/pkg/fxgo/restful"
 	"agent-compose/pkg/fxgo/utils"
@@ -67,8 +68,6 @@ type daemonServer struct {
 	server   *http.Server
 	cleanup  func() error
 }
-
-type localUnixSocketRequestKey struct{}
 
 type daemonServers struct {
 	items []*daemonServer
@@ -274,7 +273,7 @@ func (s *daemonServers) add(name, value string, listener net.Listener, handler h
 	if listener.Addr().Network() == "unix" {
 		server.ConnContext = func(ctx context.Context, conn net.Conn) context.Context {
 			if isTrustedUnixSocketConn(conn) {
-				return context.WithValue(ctx, localUnixSocketRequestKey{}, true)
+				return controlplane.WithTrustedLocalRequest(ctx)
 			}
 			return ctx
 		}

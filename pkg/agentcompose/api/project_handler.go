@@ -11,6 +11,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"agent-compose/pkg/controlplane"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/runs"
 	"agent-compose/pkg/schedulers"
@@ -371,7 +372,9 @@ func (h *ProjectHandler) GetProject(ctx context.Context, req *connect.Request[ag
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("decode project %s revision %d: %w", project.Name, project.CurrentRevision, err))
 		}
-		spec = RedactProjectSpecSecrets(spec)
+		if !controlplane.IsTrustedLocalRequest(ctx) {
+			spec = RedactProjectSpecSecrets(spec)
+		}
 	}
 	projectProto := ProjectToProto(project, spec, agents, schedulers)
 	if err := h.enrichProjectAgentRuns(ctx, projectProto); err != nil {

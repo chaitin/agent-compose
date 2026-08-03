@@ -172,6 +172,7 @@ type composeUpChangeOutput struct {
 
 type composeProjectOutput struct {
 	Project    composeUpProjectOutput          `json:"project"`
+	Spec       *agentcomposev2.ProjectSpec     `json:"spec,omitempty"`
 	Agents     []composeProjectAgentOutput     `json:"agents"`
 	Schedulers []composeProjectSchedulerOutput `json:"schedulers"`
 }
@@ -508,7 +509,7 @@ func composePSOutputFromProject(ctx context.Context, clients cliServiceClients, 
 }
 
 func composeProjectOutputFromProject(project *agentcomposev2.Project) composeProjectOutput {
-	output := composeProjectOutput{Project: composeProjectSummaryOutput(project.GetSummary())}
+	output := composeProjectOutput{Project: composeProjectSummaryOutput(project.GetSummary()), Spec: project.GetSpec()}
 	for _, agent := range project.GetAgents() {
 		output.Agents = append(output.Agents, composeProjectAgentOutputFromProto(agent))
 	}

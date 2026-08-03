@@ -592,6 +592,13 @@ When a full ID or hexadecimal short ID is passed as the only argument, `inspect`
 
 For `inspect project <project-ref>`, the positional project reference takes precedence over both `--project-name` and `--file`. It is resolved as an exact project name first, then as a full ID or unique short ID. If the explicit reference is missing or ambiguous, the command fails instead of falling back to the project selected by flags or the current Compose file. Without a positional project reference, `inspect project` keeps using the normal deployed-project selection rules.
 
+When the CLI connects through the daemon's local Unix socket and the daemon
+verifies the peer as its own user or root, project configuration output includes
+the stored values of secret variables, agent and MCP environment entries, MCP
+headers, and OctoBus tokens. TCP/HTTP API responses remain redacted. Treat both
+terminal and `--json` output as sensitive: avoid scrollback capture, shell
+redirection to broadly readable files, and sharing command output.
+
 Details:
 
 - `inspect project` shows project spec, revision, agents, schedulers, and related metadata.
