@@ -521,8 +521,6 @@ for daemon_dockerfile in "$ROOT_DIR/Dockerfile" "$ROOT_DIR/Dockerfile.agent-comp
     continue
   }
   daemon_dockerfile_source=$(<"$daemon_dockerfile")
-  forbid_regex "$daemon_dockerfile_source" 'agent-compose-migrate' \
-    "transitional storage migrator in $(basename "$daemon_dockerfile")"
   forbid_regex "$daemon_dockerfile_source" '^[[:space:]]*ENV[[:space:]]+SANDBOX_ROOT=' \
     "sandbox root override in $(basename "$daemon_dockerfile"); daemon images must use the DATA_ROOT-derived application default"
 done
@@ -538,8 +536,6 @@ forbid_regex "$daemon_dockerfile_source" 'https://github\.com/(boxlite-ai/boxlit
   'hard-coded GitHub native runtime release downloads'
 
 image_verifier_source=$(<"$ROOT_DIR/scripts/verify-agent-compose-image.sh")
-forbid_regex "$image_verifier_source" 'agent-compose-migrate' \
-  'transitional storage migrator check in the published daemon image verifier'
 if [[ -f $ARCHLINUX_GUEST_DOCKERFILE ]]; then
   archlinux_guest_source=$(<"$ARCHLINUX_GUEST_DOCKERFILE")
   require_regex "$archlinux_guest_source" 'FROM[[:space:]]+\$\{REGISTRY_MIRROR\}/library/archlinux:\$\{ARCHLINUX_TAG\}' \

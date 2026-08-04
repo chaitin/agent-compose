@@ -171,7 +171,7 @@ tasks:
       - ./scripts/tests/test-binary-ci-contract.sh
       - ./scripts/tests/test-image-ci-contract.sh
       - ./scripts/tests/test-installer-ci-contract.sh
-      - ./scripts/tests/test-v2-storage-migrator-ci-contract.sh
+
 
   test:deploy:
     desc: Run deterministic installer, Compose, and release-asset deployment checks
@@ -321,23 +321,6 @@ tasks:
         AGENT_COMPOSE_E2E_GUEST_IMAGE="$image" \
           GOCACHE={{.GO_BUILD_CACHE_DIR}} \
           {{.GO_TOOLCHAIN_ENV}} go test -tags docker_e2e ./cmd/agent-compose -run '^TestE2EDockerSchedulerScriptHelloWorldFlow$' -count=1 -v
-
-  test:e2e:docker-v2-storage-cutover:
-    desc: Migrate a V4 standalone scheduler and execute it through the new daemon with Docker
-    dir: '{{.TASKFILE_DIR}}'
-    deps: ['build:agent-compose', 'build:migrator']
-    cmds:
-      - |
-        image="${AGENT_COMPOSE_E2E_V2_STORAGE_CUTOVER_IMAGE:-agent-compose-guest:latest}"
-        if ! docker image inspect "$image" >/dev/null 2>&1; then
-          echo "Docker V2 storage cutover image $image is unavailable; run 'task image:agent-compose-guest' or set AGENT_COMPOSE_E2E_V2_STORAGE_CUTOVER_IMAGE" >&2
-          exit 1
-        fi
-        AGENT_COMPOSE_E2E_BINARY="$PWD/build/agent-compose" \
-          AGENT_COMPOSE_E2E_MIGRATOR_BINARY="$PWD/build/agent-compose-migrate" \
-          AGENT_COMPOSE_E2E_V2_STORAGE_CUTOVER_IMAGE="$image" \
-          GOCACHE={{.GO_BUILD_CACHE_DIR}} \
-          {{.GO_TOOLCHAIN_ENV}} go test ./test/e2e -run '^TestE2EV2StorageMigratorDockerCutover$' -count=1 -v
 
   test:e2e:image-docker:
     desc: Run the full daemon image without KVM and exercise a Docker sandbox lifecycle
@@ -493,11 +476,6 @@ tasks:
     cmds:
       - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} go build ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect
 
-  build:migrator:
-    desc: Build the standalone legacy data-root copy migrator
-    dir: '{{.TASKFILE_DIR}}'
-    cmds:
-      - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} go build -o ./build/agent-compose-migrate ./cmd/agent-compose-migrate
 
   build:agent-compose:boxlite:
     desc: Deprecated alias for the Linux full agent-compose binary

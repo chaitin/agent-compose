@@ -364,17 +364,6 @@ dry-run 为准：如果仍报告运行态 ID，应重新启动旧 daemon，停�
 ID，再次停止 daemon，然后重新执行 dry-run。不要使用 `docker stop` 停止
 sandbox；必须由旧 daemon 持久化其 stopped 状态。
 
-### 从源码构建并运行
-
-在仓库根目录显式构建 migrator，然后选择生成的二进制：
-
-```bash
-task build:migrator
-MIGRATOR=./build/agent-compose-migrate
-```
-
-migrator 不会由默认的 `task build` 构建。
-
 ### 使用发布的 Binary
 
 下载 `SHASUMS256.txt` 和手动发布的对应 Linux 架构产物：

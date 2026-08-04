@@ -455,18 +455,6 @@ any running IDs, restart the old daemon, stop every reported ID, stop the
 daemon again, and repeat the dry run. Do not use `docker stop` for sandboxes;
 the old daemon must persist their stopped state.
 
-### Build and run from source
-
-Build the migrator explicitly from the repository root, then select the
-resulting binary:
-
-```bash
-task build:migrator
-MIGRATOR=./build/agent-compose-migrate
-```
-
-The migrator is not built by the default `task build`.
-
 ### Run a published binary
 
 Download `SHASUMS256.txt` and the matching manually published Linux release
