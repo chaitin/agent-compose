@@ -90,6 +90,18 @@ jobs:
             release_body="(This release has no release notes.)"
           fi
 
+          # Keep release notes under 6000 bytes for LLM input. Strip excessive
+          # whitespace and truncate with an ellipsis when needed.
+          if [[ "$release_body" != "${release_body:0:6000}" ]]; then
+            release_body="${release_body:0:5900}... (release notes truncated)"
+          fi
+          release_body="${release_body//$'\r'/}"
+          # Collapse consecutive blank lines.
+          release_body="$(sed '/^[[:space:]]*$/d' <<<"$release_body")"
+          # Escape backslashes and double quotes for jq --arg.
+          release_body_escaped="${release_body//\\/\\\\}"
+          release_body_escaped="${release_body_escaped//\"/\\\"}"
+
           temporary_response="$(mktemp)"
           trap 'rm -f "$temporary_response"' EXIT
 
@@ -98,7 +110,7 @@ jobs:
           request_body="$(jq -n \
             --arg model "$RELEASE_LLM_MODEL" \
             --arg system_prompt "$system_prompt" \
-            --arg release_body "$release_body" \
+            --arg release_body "$release_body_escaped" \
             '{
               model: $model,
               temperature: 0.1,
@@ -122,10 +134,18 @@ jobs:
             exit 1
           fi
 
+          echo "::group::Debug LLM response"
+          head -c 4000 "$temporary_response"
+          echo
+          echo "::endgroup::"
+
           translated_body="$(jq -er '.choices[0].message.content // empty' "$temporary_response" 2>/dev/null || true)"
           if [[ -z "$translated_body" ]]; then
-            llm_error="$(jq -r '.error.message // "LLM response did not contain choices[0].message.content"' "$temporary_response" 2>/dev/null || true)"
-            echo "::error::Release note translation failed: ${llm_error:-unknown error}"
+            llm_error="$(jq -r '.error.message // ""' "$temporary_response" 2>/dev/null || true)"
+            if [[ -z "$llm_error" ]]; then
+              llm_error="LLM response did not contain choices[0].message.content. Raw response (first 2000 bytes): $(head -c 2000 "$temporary_response" | tr '\n' ' ')"
+            fi
+            echo "::error::Release note translation failed: ${llm_error}"
             exit 1
           fi
 
