@@ -270,6 +270,13 @@ managed credential 使用 AEAD 加密。master key 由 operator 注入，或首�
 
 OAuth exchange、Device Code polling、PKCE state 校验和 token refresh 都由 daemon 执行。CLI/Web UI 只展示 URL、一次性 code 和脱敏状态。
 
+首版直接使用厂商公开客户端的 public client ID：
+
+- Anthropic Claude Code：`9d1c250a-e61b-44d9-88ed-5944d1962f5e`；
+- OpenAI Codex：`app_EMoamEEZ73f0CkXaXp7hrann`。
+
+public client ID 用于标识 OAuth 客户端，不是 secret。Connector 内置这些值且不使用 client secret，因此 agent-compose 无需再向 IdP 单独申请 client ID，项目 YAML 和部署配置也不提供覆盖入口。
+
 daemon 必须能够通过出站 HTTPS 访问各厂商的 authorization、token 和模型 API endpoint；登录、刷新和模型调用都依赖该网络。Device Code 不要求 daemon 暴露公网入站端口。Anthropic 的浏览器 PKCE callback 监听在运行 CLI 的本机，CLI 将 authorization code 转交 daemon；callback 不可达时允许粘贴最终 redirect URL。Sandbox 只需要访问 daemon，不需要直接访问厂商网络。
 
 每个 Account 同时只允许一个登录 session。session 是短期内存状态，不写入数据库；daemon shutdown 时统一取消并等待退出。
@@ -291,7 +298,7 @@ daemon 必须能够通过出站 HTTPS 访问各厂商的 authorization、token �
 - managed secret 只允许通过 Unix socket 或受保护的 HTTPS 控制面提交；
 - 当前 daemon 没有用户级 RBAC，因此 Account 属于整个 daemon，不宣称是个人私有凭证。
 
-实现前必须分别确认 OpenAI 和 Anthropic 的 OAuth client registration、scope、token audience、请求 headers 和代理使用方式获得厂商允许，不能直接复制其他 CLI 的 client ID。
+实现时仍需跟随厂商客户端验证 scope、token audience、请求 headers 和代理使用方式；public client ID 使用上文固定值。
 
 ## 8. 实施与验收
 
@@ -315,7 +322,6 @@ daemon 必须能够通过出站 HTTPS 访问各厂商的 authorization、token �
 实施前还需确认：
 
 - 首版支持的订阅计划、模型和 Agent provider 范围；
-- OpenAI 和 Anthropic OAuth client registration 的发布授权；
 - Anthropic extra usage 的计费提示和用户确认文案；
 - 部署是否必须显式提供 credential encryption key；
 - daemon 未启用 Bearer auth 却监听 TCP 时，credential API 的拒绝策略。
