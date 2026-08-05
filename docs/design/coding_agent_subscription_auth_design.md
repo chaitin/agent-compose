@@ -76,6 +76,8 @@ API Key 使用无回显输入。选择 OpenAI-compatible 时额外填写 Base UR
 
 ```text
 agent-compose login <account-id>       # 重新认证已有 Account
+agent-compose login --flow browser     # Codex 强制使用浏览器登录
+agent-compose login --flow device-code # Codex 强制使用 Device Code
 agent-compose logout <account-id>
 agent-compose account list
 agent-compose account show <account-id>
@@ -86,11 +88,13 @@ agent-compose account remove <account-id>
 
 `agent-compose auth` 仍表示 CLI 到 daemon 的认证，不改变原有含义。
 
-交互向导只在 TTY 中启用。脚本可以显式提供 `account-id`、`--type` 和其他必要参数；managed API Key 只能通过无回显 prompt 或 stdin 提交，不能放在命令参数中。
+交互向导只在 TTY 中启用。脚本可以显式提供 `account-id`、`--type` 和其他必要参数；managed API Key 只能通过无回显 prompt 或 stdin 提交，不能放在命令参数中。无人值守 CI 不执行交互登录，应使用预配置 credential 或 API Key。
 
 ### 2.2 登录过程
 
-Codex 支持浏览器登录，并为 headless 环境提供 Device Code。Anthropic 使用浏览器 PKCE；本地 callback 不可达时允许用户粘贴最终 redirect URL。通常登录在 30 秒到 2 分钟内完成，最长不超过上游有效期，并设置 15 分钟上限。
+Codex 默认使用 `auto`：CLI 能启动浏览器并监听本机 callback 时使用 Authorization Code + PKCE；SSH、容器或无图形环境使用 Device Code。环境判断发生在 CLI，因为 CLI 和 daemon 可能不在同一台机器。浏览器启动失败时可以切换 Device Code；callback 超时时提示继续等待、切换或取消，切换前先取消旧 session。用户也可以通过 `--flow browser` 或 `--flow device-code` 强制选择。
+
+Anthropic 始终使用 Authorization Code + PKCE，不支持 Device Code。CLI 能启动浏览器时自动打开授权 URL；远程或浏览器不可用时打印 URL，让用户在其他设备完成授权并粘贴 authorization code 或最终 callback 结果。两种交互使用同一套 PKCE 流程。通常登录在 30 秒到 2 分钟内完成，最长不超过上游有效期，并设置 15 分钟上限。
 
 登录 session 由 daemon 管理。CLI 退出后 Device Code session 可以继续到过期；Ctrl-C 会尝试取消。daemon 重启后未完成的 session 失效，用户重新登录即可。
 
@@ -277,7 +281,7 @@ OAuth exchange、Device Code polling、PKCE state 校验和 token refresh 都由
 
 public client ID 用于标识 OAuth 客户端，不是 secret。Connector 内置这些值且不使用 client secret，因此 agent-compose 无需再向 IdP 单独申请 client ID，项目 YAML 和部署配置也不提供覆盖入口。
 
-daemon 必须能够通过出站 HTTPS 访问各厂商的 authorization、token 和模型 API endpoint；登录、刷新和模型调用都依赖该网络。Device Code 不要求 daemon 暴露公网入站端口。Anthropic 的浏览器 PKCE callback 监听在运行 CLI 的本机，CLI 将 authorization code 转交 daemon；callback 不可达时允许粘贴最终 redirect URL。Sandbox 只需要访问 daemon，不需要直接访问厂商网络。
+daemon 必须能够通过出站 HTTPS 访问各厂商的 authorization、token 和模型 API endpoint；登录、刷新和模型调用都依赖该网络。Device Code 不要求 daemon 暴露公网入站端口。Codex 浏览器流程的 localhost callback 由 CLI 接收；Anthropic 使用 public client 固定的厂商 callback，CLI 接收用户粘贴的授权结果并转交 daemon。Sandbox 只需要访问 daemon，不需要直接访问厂商网络。
 
 每个 Account 同时只允许一个登录 session。session 是短期内存状态，不写入数据库；daemon shutdown 时统一取消并等待退出。
 
