@@ -322,6 +322,5 @@ daemon 必须能够通过出站 HTTPS 访问各厂商的 authorization、token �
 实施前还需确认：
 
 - 首版支持的订阅计划、模型和 Agent provider 范围；
-- Anthropic extra usage 的计费提示和用户确认文案；
 - 部署是否必须显式提供 credential encryption key；
 - daemon 未启用 Bearer auth 却监听 TCP 时，credential API 的拒绝策略。
