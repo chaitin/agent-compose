@@ -270,6 +270,8 @@ managed credential 使用 AEAD 加密。master key 由 operator 注入，或首�
 
 OAuth exchange、Device Code polling、PKCE state 校验和 token refresh 都由 daemon 执行。CLI/Web UI 只展示 URL、一次性 code 和脱敏状态。
 
+daemon 必须能够通过出站 HTTPS 访问各厂商的 authorization、token 和模型 API endpoint；登录、刷新和模型调用都依赖该网络。Device Code 不要求 daemon 暴露公网入站端口。Anthropic 的浏览器 PKCE callback 监听在运行 CLI 的本机，CLI 将 authorization code 转交 daemon；callback 不可达时允许粘贴最终 redirect URL。Sandbox 只需要访问 daemon，不需要直接访问厂商网络。
+
 每个 Account 同时只允许一个登录 session。session 是短期内存状态，不写入数据库；daemon shutdown 时统一取消并等待退出。
 
 请求到达时，如果 token 即将过期，credential service 按 credential ID 合并并发刷新。网络请求期间不持有数据库锁；新 access/refresh token 和 expiry 在短事务中原子更新。
