@@ -53,8 +53,6 @@ Account "personal-codex" is ready.
 
 `Account name` 是创建账号时的必填输入，由用户命名并在当前 daemon 内唯一，例如 `personal-codex`、`work-claude`。它使用稳定资源 ID 格式 `^[a-z][a-z0-9_-]*$`，之后直接写入 YAML，例如 `account: personal-codex`。用户名、密码和 MFA 只在上游浏览器页面输入，不经过 agent-compose。
 
-选择 Anthropic 时，CLI 必须在授权前提示：第三方工具调用可能使用 Anthropic extra usage 并按 token 计费，不一定计入 Pro/Max 套餐额度。用户明确确认后才打开授权页面。
-
 选择 API Key 后：
 
 ```text
@@ -100,7 +98,7 @@ Anthropic 始终使用 Authorization Code + PKCE，不支持 Device Code。CLI �
 
 ## 3. YAML 怎么写
 
-项目 YAML 只引用 Account 名称，不写认证类型、API Key 或 OAuth token。下面是本设计实施后的完整示例；当前版本尚不能使用 `account` 字段：
+项目 YAML 只引用 Account 名称，不写认证类型、API Key 或 OAuth token。下面是本设计实施后的完整示例
 
 ```yaml
 name: multi-agent-project
@@ -157,12 +155,18 @@ type AgentSpec struct {
 
 当前 `agents` 仍是以 Agent ID 为 key 的 map，不改成 `- name:` 列表。
 
+### 3.1 仅使用订阅账号
+
+用户可以只登录 Codex 或 Anthropic 订阅账号，不配置任何 LLM API Key。`agent-compose login` 创建的是用户命名的 Account，不会因为它是第一个账号就自动成为 `default`；`default` 只表示现有 daemon `.env` 中的兼容 LLM 配置。
+
+这种部署可以正常运行 Sandbox Coding Agent，请求仍经 daemon 转发到订阅服务；但订阅 Account 不提供通用 Generate 能力，因此 `scheduler.llm` 和 `LLMService.Generate` 不可用。需要这些能力时，用户再单独配置 API Key Account。
+
 ## 4. 请求怎么走
 
 ```text
 agent-compose login
   -> daemon 完成 OAuth/API Key 验证
-  -> daemon 加密保存 credential
+  -> daemon 将 credential 保存到 SQLite
 
 Sandbox Coding Agent
   -> 使用 Facade token 请求 daemon
@@ -225,9 +229,7 @@ CREATE TABLE llm_credential (
     display_label TEXT NOT NULL DEFAULT '',
     upstream_account_id TEXT NOT NULL DEFAULT '',
     secret_version INTEGER NOT NULL DEFAULT 1,
-    encryption_key_id TEXT NOT NULL DEFAULT '',
-    secret_nonce BLOB NOT NULL DEFAULT X'',
-    secret_ciphertext BLOB NOT NULL DEFAULT X'',
+    secret_json TEXT NOT NULL DEFAULT '{}',
     expires_at INTEGER NOT NULL DEFAULT 0,
     invalidated_at INTEGER NOT NULL DEFAULT 0,
     last_error_code TEXT NOT NULL DEFAULT '',
@@ -265,10 +267,39 @@ ON llm_provider_credential(credential_id);
 支持三种来源：
 
 - `env_api_key`：引用 daemon 环境变量，不在数据库保存 secret；
-- `managed_api_key`：CLI/UI 提交，由 daemon 加密保存；
+- `managed_api_key`：CLI/UI 提交，由 daemon 保存；
 - `oauth`：daemon 保存并刷新 access/refresh token。
 
-managed credential 使用 AEAD 加密。master key 由 operator 注入，或首次使用时生成在 data root 的受限文件中；不能与 ciphertext 一起存进 SQLite。密钥不可用时 Account 进入 `reauth_required`，不得降级为明文存储。
+managed credential 以明文 `secret_json` 保存在 SQLite，不引入额外 encryption key。所有面向用户的 API、日志和诊断输出必须省略或脱敏 credential。
+
+### 5.4 Protobuf 与 ConnectRPC
+
+在 `agentcompose.v2` 中给 `AgentSpec` 和 `ProjectAgent` 增加 `account` 字段，并新增 `AccountService`：
+
+```proto
+message AgentSpec {
+  // existing fields 1-19...
+  string account = 20;
+}
+
+message ProjectAgent {
+  // existing fields 1-17...
+  string account = 18;
+}
+
+service AccountService {
+  rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
+  rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
+  rpc StartLogin(StartLoginRequest) returns (StartLoginResponse);
+  rpc SubmitLogin(SubmitLoginRequest) returns (SubmitLoginResponse);
+  rpc WatchLogin(WatchLoginRequest) returns (stream WatchLoginResponse);
+  rpc CancelLogin(CancelLoginRequest) returns (CancelLoginResponse);
+  rpc LogoutAccount(LogoutAccountRequest) returns (LogoutAccountResponse);
+  rpc RemoveAccount(RemoveAccountRequest) returns (RemoveAccountResponse);
+}
+```
+
+`StartLogin` 返回 login ID、授权 URL 或 Device Code，`SubmitLogin` 提交 callback 结果或 API Key，`WatchLogin` 等待完成。Account 响应只包含 ID、类型、来源、状态和过期时间，不返回 access token、refresh token、API Key 或 `secret_json`。TCP 上的 AccountService 必须经过 daemon 认证并使用受保护的 HTTPS；Unix socket 继续使用本机信任边界。修改 `.proto` 后运行 `task generate:proto` 生成 Go 和 Connect 客户端。
 
 ## 6. OAuth 与刷新
 
@@ -300,6 +331,7 @@ daemon 必须能够通过出站 HTTPS 访问各厂商的 authorization、token �
 - Sandbox 请求中的 Authorization 只视为 Facade token，不能转发到上游；
 - token、authorization code、API Key 和上游原始错误体不能进入日志、事件、响应或 Sandbox 文件；
 - managed secret 只允许通过 Unix socket 或受保护的 HTTPS 控制面提交；
+- data root、SQLite 文件和数据库备份只能由 daemon 运行用户访问；
 - 当前 daemon 没有用户级 RBAC，因此 Account 属于整个 daemon，不宣称是个人私有凭证。
 
 实现时仍需跟随厂商客户端验证 scope、token audience、请求 headers 和代理使用方式；public client ID 使用上文固定值。
@@ -308,23 +340,16 @@ daemon 必须能够通过出站 HTTPS 访问各厂商的 authorization、token �
 
 建议分三步交付：
 
-1. Account/credential 存储、加密、登录 API 和 CLI；
+1. Account/credential 存储、登录 API 和 CLI；
 2. `codex-subscription`、`anthropic-subscription` Connector，OAuth refresh 和 Runtime Facade 转发；
-3. YAML `account`、多 Account 路由、Web UI 和其他厂商类型。
+3. YAML `account`、多 Account 路由。
 
 实现需要覆盖以下关键测试：
 
 - 旧数据库、旧 `.env` 和无 `account` YAML 的行为不变；
-- credential 密文、错误 key、重新登录和原子替换；
+- credential 保存、重新登录和原子替换；
 - OAuth 成功、超时、取消、logout/revoke 和并发 refresh；
 - Sandbox -> daemon -> fake Codex/Anthropic upstream 的完整请求链；
 - 显式 Account 失败不回退，所有订阅 Account 都不被 Scheduler/Generate 选中；
-- TTY 向导、non-TTY 参数、无回显输入和 Ctrl-C。
 
-完成标准：用户运行 `agent-compose login` 创建命名 Account，在 YAML 中通过 `account` 选择后，Coding Agent 请求始终经过 daemon；OAuth token 不出现在数据库明文、日志、YAML 或 Sandbox 中；现有 API Key 和 Scheduler 行为保持不变。
-
-实施前还需确认：
-
-- 首版支持的订阅计划、模型和 Agent provider 范围；
-- 部署是否必须显式提供 credential encryption key；
-- daemon 未启用 Bearer auth 却监听 TCP 时，credential API 的拒绝策略。
+完成标准：用户运行 `agent-compose login` 创建命名 Account，在 YAML 中通过 `account` 选择后，Coding Agent 请求始终经过 daemon；OAuth token 不出现在日志、用户可见 API、YAML 或 Sandbox 中；现有 API Key 和 Scheduler 行为保持不变。
