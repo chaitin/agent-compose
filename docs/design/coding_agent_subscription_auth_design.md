@@ -32,7 +32,7 @@ CLI 首先选择认证方式：
 
 ```text
 How do you want to authenticate?
-> Subscription account (browser login)
+> Subscription account (OAuth)
   API key
 ```
 
