@@ -121,12 +121,12 @@ func runComposeExecCommand(cmd *cobra.Command, cli cliOptions, options composeEx
 	}
 	if options.Interactive {
 		if strings.TrimSpace(options.Prompt) != "" {
-			return runComposeExecPromptAttachCommand(cmd, runtimeProject.name(), connectAttachExecClient{client: clients.exec}, req, options)
+			return runComposeExecPromptAttachCommand(cmd, runtimeProject.name(), connectAttachExecClient{client: clients.exec, probe: clients.attachBidiProbe}, req, options)
 		}
-		return runComposeAttachExecCommand(cmd, runtimeProject.name(), connectAttachExecClient{client: clients.exec}, req, options)
+		return runComposeAttachExecCommand(cmd, runtimeProject.name(), connectAttachExecClient{client: clients.exec, probe: clients.attachBidiProbe}, req, options)
 	}
 	if strings.TrimSpace(options.Prompt) != "" {
-		return runComposeExecPromptOnceCommand(cmd, runtimeProject.name(), connectAttachExecClient{client: clients.exec}, req, options, cli.JSON)
+		return runComposeExecPromptOnceCommand(cmd, runtimeProject.name(), connectAttachExecClient{client: clients.exec, probe: clients.attachBidiProbe}, req, options, cli.JSON)
 	}
 	stream, err := clients.exec.StreamExec(cmd.Context(), connect.NewRequest(req))
 	if err != nil {

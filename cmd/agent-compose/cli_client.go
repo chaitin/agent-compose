@@ -2,6 +2,7 @@ package main
 
 import (
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
+	"context"
 	"os"
 	"strings"
 	"time"
@@ -26,6 +27,12 @@ type cliServiceClients struct {
 	cache    agentcomposev2connect.CacheServiceClient
 	volume   agentcomposev2connect.VolumeServiceClient
 	sandbox  agentcomposev2connect.SandboxServiceClient
+
+	// attachBidiProbe is a side-effect-free pre-attach h2c capability check,
+	// or nil when probing does not apply (unix socket, https). It runs before
+	// any AttachAgentRun/AttachExec bidi stream is opened so an HTTP/1-only
+	// proxy is reported before resources are prepared.
+	attachBidiProbe func(context.Context) error
 }
 
 func newCLIServiceClients(cli cliOptions) (cliServiceClients, error) {
@@ -35,14 +42,15 @@ func newCLIServiceClients(cli cliOptions) (cliServiceClients, error) {
 	}
 	httpClient := newDaemonHTTPClient(clientConfig)
 	return cliServiceClients{
-		project:  agentcomposev2connect.NewProjectServiceClient(httpClient, clientConfig.BaseURL),
-		run:      agentcomposev2connect.NewRunServiceClient(httpClient, clientConfig.BaseURL),
-		exec:     agentcomposev2connect.NewExecServiceClient(httpClient, clientConfig.BaseURL),
-		resource: agentcomposev2connect.NewResourceServiceClient(httpClient, clientConfig.BaseURL),
-		image:    agentcomposev2connect.NewImageServiceClient(httpClient, clientConfig.BaseURL),
-		cache:    agentcomposev2connect.NewCacheServiceClient(httpClient, clientConfig.BaseURL),
-		volume:   agentcomposev2connect.NewVolumeServiceClient(httpClient, clientConfig.BaseURL),
-		sandbox:  agentcomposev2connect.NewSandboxServiceClient(httpClient, clientConfig.BaseURL),
+		project:         agentcomposev2connect.NewProjectServiceClient(httpClient, clientConfig.BaseURL),
+		run:             agentcomposev2connect.NewRunServiceClient(httpClient, clientConfig.BaseURL),
+		exec:            agentcomposev2connect.NewExecServiceClient(httpClient, clientConfig.BaseURL),
+		resource:        agentcomposev2connect.NewResourceServiceClient(httpClient, clientConfig.BaseURL),
+		image:           agentcomposev2connect.NewImageServiceClient(httpClient, clientConfig.BaseURL),
+		cache:           agentcomposev2connect.NewCacheServiceClient(httpClient, clientConfig.BaseURL),
+		volume:          agentcomposev2connect.NewVolumeServiceClient(httpClient, clientConfig.BaseURL),
+		sandbox:         agentcomposev2connect.NewSandboxServiceClient(httpClient, clientConfig.BaseURL),
+		attachBidiProbe: newAttachBidiProbe(clientConfig),
 	}, nil
 }
 

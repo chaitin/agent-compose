@@ -522,7 +522,19 @@ func newDaemonBaseRoundTripper(clientConfig cliClientConfig) http.RoundTripper {
 	if !clientConfig.UseUnixSocket && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(clientConfig.BaseURL)), "http://") {
 		return transport
 	}
-	h2cTransport := &http2.Transport{
+	return daemonAttachRoundTripper{
+		defaultTransport: transport,
+		attachTransport:  newDaemonH2CTransport(clientConfig),
+	}
+}
+
+// newDaemonH2CTransport builds the h2c (HTTP/2 cleartext) transport used for
+// attach RPCs and the pre-attach h2c capability probe. Over an HTTP/1-only
+// reverse proxy, requests made through this transport fail with
+// "http2: frame too large ... HTTP/1.1 header", which is how the CLI detects
+// that bidi attach is unsupported on the connection.
+func newDaemonH2CTransport(clientConfig cliClientConfig) *http2.Transport {
+	return &http2.Transport{
 		AllowHTTP: true,
 		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
 			if clientConfig.UseUnixSocket {
@@ -533,9 +545,41 @@ func newDaemonBaseRoundTripper(clientConfig cliClientConfig) http.RoundTripper {
 			return dialer.DialContext(ctx, network, addr)
 		},
 	}
-	return daemonAttachRoundTripper{
-		defaultTransport: transport,
-		attachTransport:  h2cTransport,
+}
+
+// newAttachBidiProbe returns a pre-attach h2c capability probe, or nil when
+// probing does not apply. Unix sockets guarantee h2c (the daemon dials the
+// socket directly), and non-http:// base URLs use the plain transport path, so
+// neither can sit behind an HTTP/1-only proxy. For a plain http:// TCP
+// connection the probe issues GET {baseURL}/api/version through a raw h2c
+// transport — the same negotiation attach RPCs require — and propagates only
+// the HTTP/2-vs-HTTP/1 transport mismatch. Transient, timeout, and connection
+// errors return nil so the real attach stream reports them as it does today.
+func newAttachBidiProbe(clientConfig cliClientConfig) func(context.Context) error {
+	if clientConfig.UseUnixSocket {
+		return nil
+	}
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(clientConfig.BaseURL)), "http://") {
+		return nil
+	}
+	probeClient := &http.Client{Transport: newDaemonH2CTransport(clientConfig)}
+	probeURL := clientConfig.BaseURL + "/api/version"
+	return func(ctx context.Context) error {
+		requestCtx, cancel := context.WithTimeout(ctx, daemonStatusTimeout)
+		defer cancel()
+		req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, probeURL, nil)
+		if err != nil {
+			return nil // local construction error is not an h2c mismatch
+		}
+		resp, err := probeClient.Do(req)
+		if err != nil {
+			if isAttachHTTP2TransportMismatch(err) {
+				return err // only the h2c/HTTP/1 mismatch is propagated
+			}
+			return nil
+		}
+		_ = resp.Body.Close()
+		return nil // h2c negotiated; application-level status is irrelevant
 	}
 }
 

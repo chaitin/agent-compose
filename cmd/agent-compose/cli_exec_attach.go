@@ -93,10 +93,32 @@ type runAttachStream interface {
 
 type connectAttachAgentRunClient struct {
 	client agentcomposev2connect.RunServiceClient
+	probe  func(context.Context) error
 }
 
 func (c connectAttachAgentRunClient) AttachAgentRun(ctx context.Context) runAttachStream {
+	if c.probe != nil {
+		if err := c.probe(ctx); err != nil {
+			return failRunAttachStream{err: err}
+		}
+	}
 	return c.client.AttachAgentRun(ctx)
+}
+
+// failRunAttachStream is returned when the pre-attach h2c probe fails. Its
+// Send surfaces the probe error through the entry function's existing
+// commandExitErrorForConnect path, so an HTTP/1-only proxy is reported before
+// any bidi stream is opened on the daemon.
+type failRunAttachStream struct{ err error }
+
+func (s failRunAttachStream) Send(*agentcomposev2.AttachAgentRunRequest) error {
+	return s.err
+}
+func (s failRunAttachStream) Receive() (*agentcomposev2.AttachAgentRunResponse, error) {
+	return nil, s.err
+}
+func (s failRunAttachStream) CloseRequest() error {
+	return s.err
 }
 
 func runComposeAttachAgentRunCommand(cmd *cobra.Command, projectName string, client runAttachClient, req *agentcomposev2.RunAgentRequest, options composeRunOptions) (err error) {
@@ -379,10 +401,31 @@ type execAttachStream interface {
 
 type connectAttachExecClient struct {
 	client agentcomposev2connect.ExecServiceClient
+	probe  func(context.Context) error
 }
 
 func (c connectAttachExecClient) AttachExec(ctx context.Context) execAttachStream {
+	if c.probe != nil {
+		if err := c.probe(ctx); err != nil {
+			return failExecAttachStream{err: err}
+		}
+	}
 	return c.client.AttachExec(ctx)
+}
+
+// failExecAttachStream is the exec counterpart of failRunAttachStream: it
+// surfaces a failed pre-attach h2c probe through the existing attach error
+// mapping before any bidi stream is opened on the daemon.
+type failExecAttachStream struct{ err error }
+
+func (s failExecAttachStream) Send(*agentcomposev2.AttachExecRequest) error {
+	return s.err
+}
+func (s failExecAttachStream) Receive() (*agentcomposev2.AttachExecResponse, error) {
+	return nil, s.err
+}
+func (s failExecAttachStream) CloseRequest() error {
+	return s.err
 }
 
 func runComposeAttachExecCommand(cmd *cobra.Command, projectName string, client execAttachClient, req *agentcomposev2.ExecRequest, options composeExecOptions) (err error) {
@@ -731,7 +774,16 @@ func isAttachHTTP2TransportMismatch(err error) bool {
 		return false
 	}
 	message := err.Error()
-	return strings.Contains(message, "http2: frame too large") && strings.Contains(message, "HTTP/1.1 header")
+	// A prior-knowledge h2c request answered by an HTTP/1-only peer (e.g. an
+	// HTTP/1 reverse proxy) surfaces one of two x/net/http2 errors: the h2c
+	// client mis-parses the HTTP/1.1 status line as a frame header ("frame too
+	// large ... HTTP/1.1 header"), or the connection is torn down during
+	// establishment before the first stream is registered ("client conn could
+	// not be established"). Both mean the peer does not speak h2c on this path.
+	if strings.Contains(message, "http2: frame too large") && strings.Contains(message, "HTTP/1.1 header") {
+		return true
+	}
+	return strings.Contains(message, "http2: client conn could not be established")
 }
 
 func isAttachRPCPath(path string) bool {

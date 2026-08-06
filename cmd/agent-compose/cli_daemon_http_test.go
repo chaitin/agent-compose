@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -237,5 +238,161 @@ func TestBrowserBaseURLForCLIUnixSocketDoesNotGuessHTTPAddress(t *testing.T) {
 	}
 	if got := joinBaseURLAndPath(baseURL, "/agent-compose/session/sandbox/lab?token=socket-token"); got != "/agent-compose/session/sandbox/lab?token=socket-token" {
 		t.Fatalf("Unix socket notebook URL = %q, want relative URL with token", got)
+	}
+}
+
+func TestNewAttachBidiProbeSkipsUnixSocket(t *testing.T) {
+	if probe := newAttachBidiProbe(cliClientConfig{BaseURL: "http://agent-compose", SocketPath: "/tmp/agent-compose.sock", UseUnixSocket: true}); probe != nil {
+		t.Fatal("newAttachBidiProbe(unix socket) = non-nil probe, want nil")
+	}
+}
+
+func TestNewAttachBidiProbeSkipsHTTPS(t *testing.T) {
+	if probe := newAttachBidiProbe(cliClientConfig{BaseURL: "https://example.com"}); probe != nil {
+		t.Fatal("newAttachBidiProbe(https) = non-nil probe, want nil")
+	}
+}
+
+func TestNewAttachBidiProbeDetectsHTTP1OnlyServerMismatch(t *testing.T) {
+	// Simulate an HTTP/1-only reverse proxy with a raw TCP listener: read the
+	// h2c client's prior-knowledge preface, then answer with a plain HTTP/1.1
+	// status line. The h2c client mis-parses that head as a frame header and
+	// surfaces the http2/HTTP/1 transport mismatch. (httptest.NewServer is not
+	// used here: its handling of the malformed `PRI *` request can reset the
+	// connection before the client reads the response, making the test flaky.)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 1024)
+		_, _ = conn.Read(buf) // drain the h2c preface and request frames
+		_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
+		time.Sleep(200 * time.Millisecond) // hold open so the client reads the head
+	}()
+
+	baseURL := "http://" + ln.Addr().String()
+	probe := newAttachBidiProbe(cliClientConfig{BaseURL: baseURL})
+	if probe == nil {
+		t.Fatalf("newAttachBidiProbe(%q) = nil, want a probe", baseURL)
+	}
+	err = probe(context.Background())
+	if err == nil {
+		t.Fatal("probe over HTTP/1-only server returned nil, want transport mismatch")
+	}
+	if !isAttachHTTP2TransportMismatch(err) {
+		t.Fatalf("probe error = %v, want h2c/HTTP/1 transport mismatch", err)
+	}
+}
+
+func TestNewAttachBidiProbeSucceedsOverH2C(t *testing.T) {
+	seen := make(chan string, 1)
+	server := httptest.NewServer(h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { //nolint:staticcheck // Tests required h2c transport compatibility.
+		if r.URL.Path == "/api/version" {
+			seen <- r.Proto
+		}
+		w.WriteHeader(http.StatusOK)
+	}), &http2.Server{}))
+	defer server.Close()
+
+	probe := newAttachBidiProbe(cliClientConfig{BaseURL: server.URL})
+	if probe == nil {
+		t.Fatalf("newAttachBidiProbe(%q) = nil, want a probe", server.URL)
+	}
+	if err := probe(context.Background()); err != nil {
+		t.Fatalf("probe over h2c server returned error = %v, want nil", err)
+	}
+	if got, want := <-seen, "HTTP/2.0"; got != want {
+		t.Fatalf("probe request protocol = %q, want %q", got, want)
+	}
+}
+
+func TestNewAttachBidiProbeReturnsNilOnConnectionError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	url := server.URL
+	server.Close() // now dialing fails with connection refused
+
+	probe := newAttachBidiProbe(cliClientConfig{BaseURL: url})
+	if probe == nil {
+		t.Fatalf("newAttachBidiProbe(%q) = nil, want a probe", url)
+	}
+	if err := probe(context.Background()); err != nil {
+		t.Fatalf("probe over closed server returned error = %v, want nil (transient error left for attach)", err)
+	}
+}
+
+func TestNewAttachBidiProbeReturnsNilOnTimeout(t *testing.T) {
+	blocked := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-blocked
+	}))
+	defer func() {
+		close(blocked)
+		server.Close()
+	}()
+
+	probe := newAttachBidiProbe(cliClientConfig{BaseURL: server.URL})
+	if probe == nil {
+		t.Fatalf("newAttachBidiProbe(%q) = nil, want a probe", server.URL)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := probe(ctx); err != nil {
+		t.Fatalf("probe timeout returned error = %v, want nil (deadline exceeded is not a mismatch)", err)
+	}
+}
+
+func TestAttachRunProbePassThroughOpensRealStream(t *testing.T) {
+	mux := http.NewServeMux()
+	path, handler := agentcomposev2connect.NewRunServiceHandler(runServiceStub{
+		runAttach: func(_ context.Context, stream *connect.BidiStream[agentcomposev2.AttachAgentRunRequest, agentcomposev2.AttachAgentRunResponse]) error {
+			req, err := stream.Receive()
+			if err != nil {
+				return err
+			}
+			if req.GetStart() == nil {
+				return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("start frame is required"))
+			}
+			return stream.Send(&agentcomposev2.AttachAgentRunResponse{
+				Frame: &agentcomposev2.AttachAgentRunResponse_Result{Result: &agentcomposev2.AttachResult{Success: true}},
+			})
+		},
+	})
+	mux.Handle(path, handler)
+	server := httptest.NewServer(h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { //nolint:staticcheck // Tests required h2c transport compatibility.
+		mux.ServeHTTP(w, r)
+	}), &http2.Server{}))
+	defer server.Close()
+
+	client := connectAttachAgentRunClient{
+		client: agentcomposev2connect.NewRunServiceClient(newDaemonHTTPClient(cliClientConfig{BaseURL: server.URL}), server.URL),
+		probe:  func(context.Context) error { return nil },
+	}
+	stream := client.AttachAgentRun(context.Background())
+	if err := stream.Send(&agentcomposev2.AttachAgentRunRequest{
+		Frame: &agentcomposev2.AttachAgentRunRequest_Start{Start: &agentcomposev2.AttachAgentRunStart{
+			Request: &agentcomposev2.RunAgentRequest{ProjectId: "project-1", AgentName: "dialog", Command: "bash"},
+			Mode:    agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_COMMAND,
+		}},
+	}); err != nil {
+		t.Fatalf("AttachAgentRun Send() error = %v", err)
+	}
+	if err := stream.CloseRequest(); err != nil {
+		t.Fatalf("AttachAgentRun CloseRequest() error = %v", err)
+	}
+	resp, err := stream.Receive()
+	if err != nil {
+		t.Fatalf("AttachAgentRun Receive() error = %v", err)
+	}
+	if !resp.GetResult().GetSuccess() {
+		t.Fatalf("AttachAgentRun result = %#v, want success", resp)
 	}
 }

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -436,4 +438,54 @@ func (s execServiceStub) AttachExec(ctx context.Context, stream *connect.BidiStr
 		return connect.NewError(connect.CodeUnimplemented, fmt.Errorf("AttachExec stub is not configured"))
 	}
 	return s.execAttach(ctx, stream)
+}
+
+func TestAttachRunProbeFailureSurfacesExitCodeUnavailable(t *testing.T) {
+	failingProbe := func(context.Context) error {
+		return fmt.Errorf("Get %q: http2: failed reading the frame payload: http2: frame too large, note that the frame header looked like an HTTP/1.1 header", "http://proxy/api/version")
+	}
+	client := connectAttachAgentRunClient{
+		client: agentcomposev2connect.NewRunServiceClient(http.DefaultClient, "http://proxy"),
+		probe:  failingProbe,
+	}
+	cmd := &cobra.Command{Use: "run"}
+	cmd.SetContext(context.Background())
+	cmd.SetIn(strings.NewReader("x\n"))
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	err := runComposeAttachAgentRunCommand(cmd, "proj", client, &agentcomposev2.RunAgentRequest{ProjectId: "proj", AgentName: "agent"}, composeRunOptions{Interactive: true})
+	if got := commandExitCode(err); got != exitCodeUnavailable {
+		t.Fatalf("exit code = %d, want %d; err=%v", got, exitCodeUnavailable, err)
+	}
+	for _, want := range []string{"attach RPCs require HTTP/2 h2c", "HTTP/1 proxy"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not contain %q", err.Error(), want)
+		}
+	}
+}
+
+func TestAttachExecProbeFailureSurfacesExitCodeUnavailable(t *testing.T) {
+	failingProbe := func(context.Context) error {
+		return fmt.Errorf("Get %q: http2: failed reading the frame payload: http2: frame too large, note that the frame header looked like an HTTP/1.1 header", "http://proxy/api/version")
+	}
+	client := connectAttachExecClient{
+		client: agentcomposev2connect.NewExecServiceClient(http.DefaultClient, "http://proxy"),
+		probe:  failingProbe,
+	}
+	cmd := &cobra.Command{Use: "exec"}
+	cmd.SetContext(context.Background())
+	cmd.SetIn(strings.NewReader("x\n"))
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	err := runComposeAttachExecCommand(cmd, "proj", client, &agentcomposev2.ExecRequest{
+		Target: &agentcomposev2.ExecRequest_SandboxId{SandboxId: "sandbox-1"},
+	}, composeExecOptions{Interactive: true})
+	if got := commandExitCode(err); got != exitCodeUnavailable {
+		t.Fatalf("exit code = %d, want %d; err=%v", got, exitCodeUnavailable, err)
+	}
+	for _, want := range []string{"attach RPCs require HTTP/2 h2c", "HTTP/1 proxy"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not contain %q", err.Error(), want)
+		}
+	}
 }

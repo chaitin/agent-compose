@@ -352,11 +352,11 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 			if promptFlagChanged {
 				runReq.Prompt = prompt
 				runReq.Command = ""
-				return runComposeRunPromptAttachCommand(cmd, runtimeProject.name(), connectAttachAgentRunClient{client: clients.run}, runReq)
+				return runComposeRunPromptAttachCommand(cmd, runtimeProject.name(), connectAttachAgentRunClient{client: clients.run, probe: clients.attachBidiProbe}, runReq)
 			}
 			runReq.Prompt = ""
 			runReq.Command = commandText
-			return runComposeAttachAgentRunCommand(cmd, runtimeProject.name(), connectAttachAgentRunClient{client: clients.run}, runReq, normalizedOptions)
+			return runComposeAttachAgentRunCommand(cmd, runtimeProject.name(), connectAttachAgentRunClient{client: clients.run, probe: clients.attachBidiProbe}, runReq, normalizedOptions)
 		}
 		runReq.Prompt = ""
 		runReq.Command = ""
