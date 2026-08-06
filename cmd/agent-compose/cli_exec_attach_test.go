@@ -1,8 +1,8 @@
 package main
 
 import (
-	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
+	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 	"bytes"
 	"context"
 	"errors"
