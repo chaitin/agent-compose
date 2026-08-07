@@ -289,6 +289,9 @@ func (h *RuntimeHost) Command(ctx context.Context, request domain.SchedulerComma
 		_ = h.addLinkedSchedulerEvent(ctx, eventType, "info", "scheduler command sandbox ready", map[string]any{"sandboxId": session.Summary.ID}, session.Summary.ID, "", "")
 	}
 	h.trackCommandSession(session.Summary.ID, cleanupSession)
+	if err := h.persistCommandSandboxLink(ctx, session.Summary.ID); err != nil {
+		return domain.SchedulerCommandResult{}, err
+	}
 
 	result, err := h.deps.CommandExecutor.ExecuteSchedulerCommand(ctx, session, request)
 	if err != nil {
@@ -301,6 +304,19 @@ func (h *RuntimeHost) Command(ctx context.Context, request domain.SchedulerComma
 	}
 	_ = h.addLinkedSchedulerEvent(ctx, "scheduler.command.completed", level, firstHostNonEmpty(result.Output, result.Stdout, result.Stderr, "scheduler command completed"), CommandEventPayload(request, result), result.SandboxID, result.CellID, "")
 	return result, nil
+}
+
+func (h *RuntimeHost) persistCommandSandboxLink(ctx context.Context, sandboxID string) error {
+	if h.execution.Kind != ExecutionKindTrigger {
+		return nil
+	}
+	if h.deps.Events == nil {
+		return fmt.Errorf("persist scheduler command sandbox link: scheduler event recorder is unavailable")
+	}
+	if err := h.addLinkedSchedulerEvent(ctx, "scheduler.command.started", "info", "scheduler command started", map[string]any{"sandboxId": sandboxID}, sandboxID, "", ""); err != nil {
+		return fmt.Errorf("persist scheduler command sandbox link: %w", err)
+	}
+	return nil
 }
 
 func (h *RuntimeHost) LLM(ctx context.Context, prompt string, request domain.SchedulerLLMRequest) (domain.SchedulerLLMResult, error) {

@@ -2,6 +2,7 @@ package configstore
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	domain "agent-compose/pkg/model"
@@ -57,5 +58,18 @@ func TestUpsertWebhookSourceValidatesGitHubSignatureConfiguration(t *testing.T) 
 	unsigned.SignatureSecret = ""
 	if _, err := store.UpsertWebhookSource(ctx, unsigned); err != nil {
 		t.Fatalf("UpsertWebhookSource with unsigned GitHub configuration returned error: %v", err)
+	}
+}
+
+func TestUpsertWebhookSourceRejectsProtocolTokenHeaders(t *testing.T) {
+	store := FromDB(newMemoryDB(t))
+	for _, tokenHeader := range []string{domain.WebhookParentEventIDHeader, "X-Correlation-ID", "Idempotency-Key", "X-GitHub-Delivery", "X-Gitlab-Event-UUID", "X-Request-ID"} {
+		_, err := store.UpsertWebhookSource(context.Background(), domain.WebhookSource{
+			ID: "internal", Name: "Internal", Enabled: true, Provider: "internal",
+			TopicPrefix: "webhook.internal.", TokenHash: "hash", TokenHeader: tokenHeader,
+		})
+		if err == nil || !strings.Contains(err.Error(), "reserved for webhook protocol metadata") {
+			t.Fatalf("UpsertWebhookSource reserved token header %q error = %v", tokenHeader, err)
+		}
 	}
 }

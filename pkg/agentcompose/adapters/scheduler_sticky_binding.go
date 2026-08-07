@@ -155,21 +155,20 @@ type schedulerEffectiveSandboxConfig struct {
 }
 
 type schedulerAgentSandboxConfig struct {
-	ID              string                   `json:"id"`
-	Provider        string                   `json:"provider"`
-	Model           string                   `json:"model,omitempty"`
-	SystemPrompt    string                   `json:"system_prompt,omitempty"`
-	Driver          string                   `json:"driver,omitempty"`
-	GuestImage      string                   `json:"guest_image,omitempty"`
-	WorkspaceID     string                   `json:"workspace_id,omitempty"`
-	EnvItems        []domain.SandboxEnvVar   `json:"env_items,omitempty"`
-	Volumes         []domain.VolumeMountSpec `json:"volumes,omitempty"`
-	ConfigJSON      string                   `json:"config_json"`
-	CapsetIDs       []string                 `json:"capset_ids,omitempty"`
-	Skills          []domain.AgentSkill      `json:"skills,omitempty"`
-	ProjectID       string                   `json:"managed_project_id,omitempty"`
-	ProjectRevision int64                    `json:"managed_project_revision,omitempty"`
-	AgentName       string                   `json:"managed_agent_name,omitempty"`
+	ID           string                   `json:"id"`
+	Provider     string                   `json:"provider"`
+	Model        string                   `json:"model,omitempty"`
+	SystemPrompt string                   `json:"system_prompt,omitempty"`
+	Driver       string                   `json:"driver,omitempty"`
+	GuestImage   string                   `json:"guest_image,omitempty"`
+	WorkspaceID  string                   `json:"workspace_id,omitempty"`
+	EnvItems     []domain.SandboxEnvVar   `json:"env_items,omitempty"`
+	Volumes      []domain.VolumeMountSpec `json:"volumes,omitempty"`
+	ConfigJSON   string                   `json:"config_json"`
+	CapsetIDs    []string                 `json:"capset_ids,omitempty"`
+	Skills       []domain.AgentSkill      `json:"skills,omitempty"`
+	ProjectID    string                   `json:"managed_project_id,omitempty"`
+	AgentName    string                   `json:"managed_agent_name,omitempty"`
 }
 
 func schedulerRequestSandboxConfigHash(baseHash string, request domain.SchedulerAgentRequest, agentDefinition *domain.AgentDefinition, providerEnvItems, envItems []domain.SandboxEnvVar, workspace *domain.SandboxWorkspace, driver, guestImage string, volumeMounts []domain.SandboxVolumeMount) (string, error) {
@@ -184,21 +183,20 @@ func schedulerRequestSandboxConfigHash(baseHash string, request domain.Scheduler
 		volumes := append([]domain.VolumeMountSpec(nil), current.Volumes...)
 		sort.Slice(volumes, func(i, j int) bool { return volumes[i].Target < volumes[j].Target })
 		agentConfig = &schedulerAgentSandboxConfig{
-			ID:              current.ID,
-			Provider:        current.Provider,
-			Model:           current.Model,
-			SystemPrompt:    current.SystemPrompt,
-			Driver:          current.Driver,
-			GuestImage:      current.GuestImage,
-			WorkspaceID:     current.WorkspaceID,
-			EnvItems:        current.EnvItems,
-			Volumes:         volumes,
-			ConfigJSON:      current.ConfigJSON,
-			CapsetIDs:       capsetIDs,
-			Skills:          current.Skills,
-			ProjectID:       current.ProjectID,
-			ProjectRevision: current.ProjectRevision,
-			AgentName:       current.AgentName,
+			ID:           current.ID,
+			Provider:     current.Provider,
+			Model:        current.Model,
+			SystemPrompt: current.SystemPrompt,
+			Driver:       current.Driver,
+			GuestImage:   current.GuestImage,
+			WorkspaceID:  current.WorkspaceID,
+			EnvItems:     current.EnvItems,
+			Volumes:      volumes,
+			ConfigJSON:   current.ConfigJSON,
+			CapsetIDs:    capsetIDs,
+			Skills:       current.Skills,
+			ProjectID:    current.ProjectID,
+			AgentName:    current.AgentName,
 		}
 	}
 	payload, err := json.Marshal(schedulerEffectiveSandboxConfig{

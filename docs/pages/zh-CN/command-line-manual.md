@@ -109,6 +109,20 @@ signature secret 后，即使 source 同时保留了旧的静态 token，缺失�
 签名。通用 webhook source（包括 signature type 为空的旧 source）继续使用 URL
 topic，以及 Bearer、`X-WEBHOOK-TOKEN` 或自定义 header token。
 
+自定义 token header 会在 Event 元数据派生和持久化之前被移除。已经承担 lineage
+或 delivery identity 的 header 不能再作为凭据：创建或更新 source 时会拒绝
+`Idempotency-Key`、`X-Correlation-ID`、`X-Request-ID`、
+`X-GitHub-Delivery`、`X-Gitlab-Event-UUID` 和
+`X-Agent-Compose-Parent-Event-ID`。运行时移除也会保护旧版本已经保存的 source。
+
+使用 token 保护的通用 webhook 转发方可以通过
+`X-Agent-Compose-Parent-Event-ID` 携带一个已存在的 Event ID，从而保留事件父子关系；
+未签名或只使用签名认证的 source 不能设置该 header。daemon 会拒绝不存在的 parent，
+或与 parent 明确使用不同 correlation ID 的请求；请求没有提供 correlation ID 时，
+child 会继承 parent 的值。幂等重放还必须保持相同的 parent 和有效 correlation。
+随后 Event trace 会包含 child webhook 创建的 SchedulerRun 和 sandbox。该 header 只能
+用于转发调用方真实收到的事件，不能用来把无关投递强行归组。
+
 该 Token 保护的是 daemon 控制面，并非只识别 CLI 程序。任何调用相同控制面 API
 的 UI server 或反向代理，也必须先配置注入 `Authorization: Bearer <token>`，再
 开启 daemon 认证。

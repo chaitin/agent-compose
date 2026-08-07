@@ -7,6 +7,30 @@ import (
 
 const WebhookSignatureGitHubSHA256 = "github_sha256"
 
+var reservedWebhookTokenHeaders = map[string]struct{}{
+	"idempotency-key":                 {},
+	"x-agent-compose-parent-event-id": {},
+	"x-correlation-id":                {},
+	"x-github-delivery":               {},
+	"x-gitlab-event-uuid":             {},
+	"x-request-id":                    {},
+}
+
+// NormalizeWebhookTokenHeaderName validates a custom credential header while
+// keeping it disjoint from headers that drive parsing, authentication, routing,
+// lineage, or delivery identity. BuildPayload separately removes every allowed
+// custom credential header from the persisted header projection.
+func NormalizeWebhookTokenHeaderName(name string) (string, error) {
+	normalized, err := NormalizeHTTPHeaderName(name)
+	if err != nil || normalized == "" {
+		return normalized, err
+	}
+	if _, reserved := reservedWebhookTokenHeaders[strings.ToLower(normalized)]; reserved {
+		return "", fmt.Errorf("header name is reserved for webhook protocol metadata")
+	}
+	return normalized, nil
+}
+
 // GitHubWebhookMode describes whether a webhook source uses legacy generic
 // handling, unsigned GitHub event routing, or signed GitHub event routing.
 type GitHubWebhookMode int

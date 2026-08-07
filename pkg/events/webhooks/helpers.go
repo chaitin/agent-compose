@@ -14,6 +14,8 @@ import (
 
 const defaultWebhookBodyLimit int64 = 1 << 20
 
+const parentEventIDHeader = domain.WebhookParentEventIDHeader
+
 func PresentedToken(r *http.Request, tokenHeader ...string) string {
 	headerName := ""
 	if len(tokenHeader) > 0 {
@@ -105,6 +107,10 @@ func ExtractCorrelationID(r *http.Request, body map[string]any) string {
 	return ""
 }
 
+func ExtractParentEventID(r *http.Request) string {
+	return strings.TrimSpace(r.Header.Get(parentEventIDHeader))
+}
+
 func ExtractIdempotencyKey(r *http.Request) string {
 	if value := strings.TrimSpace(r.Header.Get("Idempotency-Key")); value != "" {
 		return value
@@ -126,14 +132,15 @@ func ExtractDeliveryID(r *http.Request) string {
 
 func SanitizeHeaders(headers http.Header) map[string]string {
 	allowed := map[string]struct{}{
-		"content-type":        {},
-		"user-agent":          {},
-		"x-request-id":        {},
-		"x-correlation-id":    {},
-		"x-github-event":      {},
-		"x-github-delivery":   {},
-		"x-gitlab-event":      {},
-		"x-hub-signature-256": {},
+		"content-type":                    {},
+		"user-agent":                      {},
+		"x-request-id":                    {},
+		"x-correlation-id":                {},
+		"x-agent-compose-parent-event-id": {},
+		"x-github-event":                  {},
+		"x-github-delivery":               {},
+		"x-gitlab-event":                  {},
+		"x-hub-signature-256":             {},
 	}
 	out := make(map[string]string)
 	for key, values := range headers {
@@ -147,6 +154,8 @@ func SanitizeHeaders(headers http.Header) map[string]string {
 }
 
 func BuildPayload(r *http.Request, eventID string, sequence int64, topic, correlationID, idempotencyKey string, source domain.WebhookSource, body map[string]any) map[string]any {
+	headers := SanitizeHeaders(r.Header)
+	delete(headers, strings.ToLower(strings.TrimSpace(source.TokenHeader)))
 	payload := map[string]any{
 		"eventId":        eventID,
 		"sequence":       sequence,
@@ -160,7 +169,7 @@ func BuildPayload(r *http.Request, eventID string, sequence int64, topic, correl
 		"idempotencyKey": idempotencyKey,
 		"deliveryId":     ExtractDeliveryID(r),
 		"remoteAddr":     r.RemoteAddr,
-		"headers":        SanitizeHeaders(r.Header),
+		"headers":        headers,
 		"query":          QueryValuesToMap(r),
 		"body":           body,
 	}

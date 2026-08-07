@@ -68,7 +68,7 @@ func TestWebhookConcurrentIdenticalPayloadReturnsExistingEvent(t *testing.T) {
 	}
 }
 
-func TestWebhookIdempotencyComparesCanonicalRequestBodyOnly(t *testing.T) {
+func TestWebhookIdempotencyIgnoresNonIdentityRequestMetadata(t *testing.T) {
 	existing := webhookConflictEvent()
 	existing.PayloadJSON = `{
 		"body":{"intent":"original"},
@@ -82,7 +82,7 @@ func TestWebhookIdempotencyComparesCanonicalRequestBodyOnly(t *testing.T) {
 
 	response := postWebhookWithHeaders(t, store, `{"intent":"original"}`, http.Header{
 		"User-Agent":       {"changed-agent"},
-		"X-Correlation-ID": {"correlation-changed"},
+		"X-Correlation-ID": {existing.CorrelationID},
 	})
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body=%s, want %d", response.Code, response.Body.String(), http.StatusAccepted)
@@ -93,6 +93,142 @@ func TestWebhookIdempotencyComparesCanonicalRequestBodyOnly(t *testing.T) {
 	}
 	if accepted.EventID != existing.ID || accepted.CorrelationID != existing.CorrelationID {
 		t.Fatalf("accepted response = %#v", accepted)
+	}
+}
+
+func TestWebhookIdempotentParentReplayReturnsExistingEvent(t *testing.T) {
+	existing := webhookConflictEvent()
+	existing.ParentEventID = "event-parent"
+	store := newWebhookRouteStore()
+	store.events[existing.ID] = existing
+	store.events[existing.ParentEventID] = webhookParentEvent(existing.ParentEventID, existing.CorrelationID)
+	store.existingID = existing.ID
+
+	response := postWebhookWithHeaders(t, store, `{"intent":"original"}`, http.Header{
+		parentEventIDHeader: {existing.ParentEventID},
+	})
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s, want %d", response.Code, response.Body.String(), http.StatusAccepted)
+	}
+}
+
+func TestWebhookIdempotencyRejectsChangedOrMissingLineage(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		existing   domain.TopicEventRecord
+		parents    []domain.TopicEventRecord
+		headers    http.Header
+		wantStatus int
+	}{
+		{
+			name: "changed parent",
+			existing: func() domain.TopicEventRecord {
+				item := webhookConflictEvent()
+				item.ParentEventID = "event-parent-a"
+				return item
+			}(),
+			parents: []domain.TopicEventRecord{
+				webhookParentEvent("event-parent-a", "correlation-existing"),
+				webhookParentEvent("event-parent-b", "correlation-existing"),
+			},
+			headers: http.Header{
+				parentEventIDHeader: {"event-parent-b"},
+				"X-Correlation-ID":  {"correlation-existing"},
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name: "omitted parent",
+			existing: func() domain.TopicEventRecord {
+				item := webhookConflictEvent()
+				item.ParentEventID = "event-parent"
+				return item
+			}(),
+			parents:    []domain.TopicEventRecord{webhookParentEvent("event-parent", "correlation-existing")},
+			headers:    http.Header{"X-Correlation-ID": {"correlation-existing"}},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:     "missing parent",
+			existing: webhookConflictEvent(),
+			headers: http.Header{
+				parentEventIDHeader: {"event-missing"},
+				"X-Correlation-ID":  {"correlation-existing"},
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "changed parent correlation",
+			existing: func() domain.TopicEventRecord {
+				item := webhookConflictEvent()
+				item.ParentEventID = "event-parent"
+				return item
+			}(),
+			parents: []domain.TopicEventRecord{webhookParentEvent("event-parent", "correlation-existing")},
+			headers: http.Header{
+				parentEventIDHeader: {"event-parent"},
+				"X-Correlation-ID":  {"correlation-changed"},
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "changed root correlation",
+			existing:   webhookConflictEvent(),
+			headers:    http.Header{"X-Correlation-ID": {"correlation-changed"}},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "omitted explicit root correlation",
+			existing:   webhookConflictEvent(),
+			headers:    http.Header{},
+			wantStatus: http.StatusConflict,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newWebhookRouteStore()
+			store.events[test.existing.ID] = test.existing
+			for _, parent := range test.parents {
+				store.events[parent.ID] = parent
+			}
+			store.existingID = test.existing.ID
+
+			response := postWebhookWithHeaders(t, store, `{"intent":"original"}`, test.headers)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d body=%s, want %d", response.Code, response.Body.String(), test.wantStatus)
+			}
+		})
+	}
+}
+
+func TestWebhookConcurrentLineageConflictReturnsExistingEvent(t *testing.T) {
+	existing := webhookConflictEvent()
+	existing.ParentEventID = "event-parent-a"
+	base := newWebhookRouteStore()
+	base.events[existing.ID] = existing
+	base.events[existing.ParentEventID] = webhookParentEvent(existing.ParentEventID, existing.CorrelationID)
+	base.events["event-parent-b"] = webhookParentEvent("event-parent-b", existing.CorrelationID)
+	store := &concurrentWebhookConflictStore{webhookRouteStore: base, existing: existing}
+
+	response := postWebhookWithHeaders(t, store, `{"intent":"original"}`, http.Header{
+		parentEventIDHeader: {"event-parent-b"},
+		"X-Correlation-ID":  {existing.CorrelationID},
+	})
+	assertIdempotencyConflictResponse(t, response, existing)
+}
+
+func TestWebhookConcurrentIdenticalParentReturnsExistingEvent(t *testing.T) {
+	existing := webhookConflictEvent()
+	existing.ParentEventID = "event-parent"
+	base := newWebhookRouteStore()
+	base.events[existing.ID] = existing
+	base.events[existing.ParentEventID] = webhookParentEvent(existing.ParentEventID, existing.CorrelationID)
+	store := &concurrentWebhookConflictStore{webhookRouteStore: base, existing: existing}
+
+	response := postWebhookWithHeaders(t, store, `{"intent":"original"}`, http.Header{
+		parentEventIDHeader: {existing.ParentEventID},
+	})
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s, want %d", response.Code, response.Body.String(), http.StatusAccepted)
 	}
 }
 
@@ -115,9 +251,13 @@ func webhookConflictEvent() domain.TopicEventRecord {
 	}
 }
 
+func webhookParentEvent(id, correlationID string) domain.TopicEventRecord {
+	return domain.TopicEventRecord{ID: id, Topic: "webhook.devboard.task.created", CorrelationID: correlationID, PayloadJSON: `{}`}
+}
+
 func postWebhookWithIdempotencyKey(t *testing.T, store Store, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	return postWebhookWithHeaders(t, store, body, nil)
+	return postWebhookWithHeaders(t, store, body, http.Header{"X-Correlation-ID": {"correlation-existing"}})
 }
 
 func postWebhookWithHeaders(t *testing.T, store Store, body string, headers http.Header) *httptest.ResponseRecorder {

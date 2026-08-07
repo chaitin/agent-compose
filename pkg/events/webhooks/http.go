@@ -129,6 +129,15 @@ func (h routeHandler) handleWebhook(c echo.Context) error {
 	if bodyFormat == requestBodyFormatForm && githubMode == domain.GitHubWebhookModeGeneric {
 		return c.JSON(http.StatusUnsupportedMediaType, map[string]string{"error": "application/x-www-form-urlencoded is supported only for GitHub webhooks"})
 	}
+	// Authentication has already consumed the configured credential. All event
+	// metadata must be derived from a view that cannot reinterpret that secret as
+	// correlation, idempotency, delivery, lineage, or a persisted header. This also
+	// protects sources created by an older version before protocol-header validation.
+	metadataRequest := c.Request().Clone(c.Request().Context())
+	metadataRequest.Header.Del(strings.TrimSpace(source.TokenHeader))
+	if ExtractParentEventID(metadataRequest) != "" && (githubMode != domain.GitHubWebhookModeGeneric || strings.TrimSpace(source.TokenHash) == "") {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "parent event forwarding requires a token-protected generic webhook source"})
+	}
 	decodedBody := rawBody
 	if bodyFormat == requestBodyFormatForm {
 		decodedBody, err = decodeGitHubFormPayload(rawBody)
@@ -140,22 +149,32 @@ func (h routeHandler) handleWebhook(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
-	idempotencyKey := ExtractIdempotencyKey(c.Request())
+	lineage, err := h.resolveWebhookLineage(c.Request().Context(), metadataRequest, body)
+	if err != nil {
+		if errors.Is(err, errWebhookParentNotFound) || errors.Is(err, errWebhookParentCorrelationMismatch) {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load parent event"})
+	}
+	idempotencyKey := ExtractIdempotencyKey(metadataRequest)
 	if existing, ok, err := h.store().FindEventByIdempotencyKey(c.Request().Context(), topic, idempotencyKey); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load webhook event"})
 	} else if ok {
-		if ExistingBodyHash(existing.PayloadJSON) != domain.TopicEventPayloadSHA256(compactBody) {
+		if !webhookDeliveryMatches(existing, compactBody, lineage) {
 			return c.JSON(http.StatusConflict, idempotencyConflictResponseFor(existing))
 		}
 		return c.JSON(http.StatusAccepted, acceptedResponseFor(existing))
 	}
 
 	eventID := h.newEventID()
-	correlationID := ExtractCorrelationID(c.Request(), body)
+	correlationID := lineage.CorrelationID
 	if correlationID == "" {
 		correlationID = eventID
 	}
-	payload := BuildPayload(c.Request(), eventID, 0, topic, correlationID, idempotencyKey, source, body)
+	payload := BuildPayload(metadataRequest, eventID, 0, topic, correlationID, idempotencyKey, source, body)
+	if lineage.ParentEventID != "" {
+		payload["parentEventId"] = lineage.ParentEventID
+	}
 	payloadJSON, err := h.marshalJSONCompact(payload)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to encode webhook payload"})
@@ -169,10 +188,11 @@ func (h routeHandler) handleWebhook(c echo.Context) error {
 		Intent:         IntentFromBody(body),
 		CorrelationID:  correlationID,
 		IdempotencyKey: idempotencyKey,
-		DeliveryID:     ExtractDeliveryID(c.Request()),
+		DeliveryID:     ExtractDeliveryID(metadataRequest),
 		PayloadHash:    payloadHash,
 		PayloadJSON:    payloadJSON,
 		DispatchStatus: domain.TopicEventDispatchPending,
+		ParentEventID:  lineage.ParentEventID,
 		PublisherType:  domain.TopicEventSourceWebhook,
 	})
 	if err != nil {
@@ -182,7 +202,7 @@ func (h routeHandler) handleWebhook(c echo.Context) error {
 			if strings.TrimSpace(existing.ID) == "" || strings.TrimSpace(existing.Topic) != topic {
 				return c.JSON(http.StatusInternalServerError, map[string]string{"error": "invalid conflicting webhook event"})
 			}
-			if ExistingBodyHash(existing.PayloadJSON) == domain.TopicEventPayloadSHA256(compactBody) {
+			if webhookDeliveryMatches(existing, compactBody, lineage) {
 				return c.JSON(http.StatusAccepted, acceptedResponseFor(existing))
 			}
 			return c.JSON(http.StatusConflict, idempotencyConflictResponseFor(existing))
@@ -430,6 +450,11 @@ func (h routeHandler) handlePutWebhookSource(c echo.Context) error {
 	if req.ClearSignature {
 		req.SignatureSecret = ""
 	}
+	normalizedTokenHeader, err := domain.NormalizeWebhookTokenHeaderName(tokenHeader)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("webhook source token header is invalid: %v", err)})
+	}
+	tokenHeader = normalizedTokenHeader
 	source, err := h.store().UpsertWebhookSource(c.Request().Context(), domain.WebhookSource{
 		ID:              sourceID,
 		Name:            req.Name,

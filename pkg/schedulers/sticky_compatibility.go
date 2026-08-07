@@ -23,7 +23,6 @@ type schedulerSandboxConfig struct {
 	EnvItems           []domain.SandboxEnvVar   `json:"env_items,omitempty"`
 	Volumes            []domain.VolumeMountSpec `json:"volumes,omitempty"`
 	ProjectID          string                   `json:"managed_project_id,omitempty"`
-	ProjectRevision    int64                    `json:"managed_project_revision,omitempty"`
 	AgentName          string                   `json:"managed_agent_name,omitempty"`
 	ProjectSchedulerID string                   `json:"managed_scheduler_id,omitempty"`
 }
@@ -107,7 +106,6 @@ func SchedulerSandboxConfigHash(scheduler domain.Scheduler) (string, error) {
 		EnvItems:           domain.NormalizeEnvItems(scheduler.EnvItems),
 		Volumes:            volumes,
 		ProjectID:          strings.TrimSpace(scheduler.Summary.ProjectID),
-		ProjectRevision:    scheduler.Summary.ProjectRevision,
 		AgentName:          strings.TrimSpace(scheduler.Summary.AgentName),
 		ProjectSchedulerID: strings.TrimSpace(scheduler.Summary.ProjectSchedulerID),
 	})
