@@ -90,12 +90,6 @@ jobs:
             release_body="(This release has no release notes.)"
           fi
 
-          echo "::group::Debug LLM request"
-          echo "release_tag=${release_tag}"
-          echo "release_body_chars=${#release_body}"
-          echo "request_body_chars=${#request_body}"
-          echo "::endgroup::"
-
           temporary_response="$(mktemp)"
           trap 'rm -f "$temporary_response"' EXIT
 
@@ -113,6 +107,12 @@ jobs:
                 {role: "user", content: ("Translate the following release notes:\n\n--- BEGIN RELEASE NOTES ---\n" + $release_body + "\n--- END RELEASE NOTES ---")}
               ]
             }')"
+
+          echo "::group::Debug LLM request"
+          echo "release_tag=${release_tag}"
+          echo "release_body_chars=${#release_body}"
+          echo "request_body_chars=${#request_body}"
+          echo "::endgroup::"
 
           if ! curl -fsS \
             --retry 2 \
