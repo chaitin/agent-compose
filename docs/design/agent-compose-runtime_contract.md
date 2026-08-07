@@ -140,6 +140,12 @@ repair, and initial sandbox creation never invokes it. This is deliberately not
 a general workspace cleanup list: other stale or inconsistent repository state
 still fails normally and requires an explicit, separately reviewed policy.
 
+Command cell persistence also serializes on the sandbox store lock and reloads
+the current metadata before updating only `CellCount` and `UpdatedAt`. Delayed
+command output or completion may therefore extend the cell timeline after an
+out-of-band stop, but it cannot restore a stale `running` status or discard the
+current stopped-runtime state.
+
 ### 3.2 Agent Prompt File
 
 When sending an agent message, the host does not pass the prompt through stdin.

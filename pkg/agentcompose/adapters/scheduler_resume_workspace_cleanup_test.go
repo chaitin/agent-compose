@@ -10,6 +10,7 @@ import (
 	"time"
 
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/execution"
 	domain "agent-compose/pkg/model"
 )
 
@@ -51,6 +52,91 @@ func TestSchedulerResumeWorkspaceCleanupOptInRemovesGitIndexLockBeforeStart(t *t
 	}
 	if resumed.Summary.VMStatus != domain.VMStatusRunning || eventType != "scheduler.sandbox.resumed" {
 		t.Fatalf("resumed status/event = %q/%q", resumed.Summary.VMStatus, eventType)
+	}
+}
+
+func TestSchedulerResumeWorkspaceCleanupFollowsOutOfBandStopDespiteStaleCommandCell(t *testing.T) {
+	ctx := context.Background()
+	bridge, driver := newTestSandboxRPCBridge(t)
+	agent := createNativeTestAgent(t, ctx, bridge.configDB, domain.AgentDefinition{
+		ID:       "resume-cleanup-stale-cell-agent",
+		Name:     "resume-cleanup-stale-cell-agent",
+		Enabled:  true,
+		Provider: "codex",
+		EnvItems: []domain.SandboxEnvVar{{Name: resumeCleanupGitIndexLockEnv, Value: "1"}},
+	})
+	staleRunning, err := bridge.store.CreateSandbox(ctx, "stale command cell", "", driverpkg.RuntimeDriverDocker, "", "", "scheduler", nil, nil, []domain.SandboxTag{
+		{Name: domain.AgentSandboxTagSource, Value: domain.AgentSandboxTagSourceVal},
+		{Name: domain.AgentSandboxTagID, Value: agent.ID},
+		{Name: domain.AgentSandboxTagProvider, Value: "codex"},
+	})
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	staleRunning.Summary.VMStatus = domain.VMStatusRunning
+	if err := bridge.store.UpdateSandbox(ctx, staleRunning); err != nil {
+		t.Fatalf("persist running sandbox: %v", err)
+	}
+	if err := bridge.store.SaveVMState(staleRunning.Summary.ID, domain.VMState{
+		Driver:    driverpkg.RuntimeDriverDocker,
+		StartedAt: time.Now().Add(-time.Minute).UTC(),
+	}); err != nil {
+		t.Fatalf("SaveVMState returned error: %v", err)
+	}
+
+	stopped, err := bridge.store.GetSandbox(ctx, staleRunning.Summary.ID)
+	if err != nil {
+		t.Fatalf("GetSandbox before stop: %v", err)
+	}
+	stopped.Summary.VMStatus = domain.VMStatusStopped
+	stopped.StoppedRuntimePolicy = domain.StoppedRuntimePolicyRetain
+	stopped.StoppedRuntime = &domain.StoppedRuntime{State: domain.StoppedRuntimeStateRetained, RequestedAt: time.Now().UTC()}
+	if err := bridge.store.UpdateSandbox(ctx, stopped); err != nil {
+		t.Fatalf("persist out-of-band stop: %v", err)
+	}
+	lockPath := filepath.Join(stopped.Summary.WorkspacePath, ".git", "index.lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		t.Fatalf("create Git metadata: %v", err)
+	}
+	if err := os.WriteFile(lockPath, []byte("stale-lock\n"), 0o600); err != nil {
+		t.Fatalf("create Git index lock: %v", err)
+	}
+	if err := bridge.store.AddCell(ctx, staleRunning, domain.NotebookCell{
+		ID:        "command-completed-after-stop",
+		Type:      execution.CellTypeShell,
+		Source:    "git status",
+		ExitCode:  1,
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("persist command cell with stale running sandbox: %v", err)
+	}
+	persisted, err := bridge.store.GetSandbox(ctx, staleRunning.Summary.ID)
+	if err != nil {
+		t.Fatalf("GetSandbox after stale command cell: %v", err)
+	}
+	if persisted.Summary.VMStatus != domain.VMStatusStopped {
+		t.Fatalf("VM status after stale command cell = %q, want stopped", persisted.Summary.VMStatus)
+	}
+
+	runner := NewSchedulerSandboxRunner(bridge.config, bridge.store, bridge.configDB, bridge.workspaceEnsurer, driver, nil, nil, bridge.streams, nil, nil, bridge.agentExecutor)
+	driver.onStart = func(*domain.Sandbox) {
+		if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
+			t.Fatalf("Git index lock at resumed driver start: err=%v, want absent", err)
+		}
+		events, eventErr := bridge.store.ListEvents(ctx, staleRunning.Summary.ID)
+		if eventErr != nil {
+			t.Fatalf("ListEvents at resumed driver start: %v", eventErr)
+		}
+		if findSandboxEvent(events, resumeWorkspaceCleanupEvent) == nil {
+			t.Fatalf("events at resumed driver start = %#v, want cleanup event", events)
+		}
+	}
+	resumed, eventType, err := runner.LoadOrResume(ctx, staleRunning.Summary.ID)
+	if err != nil {
+		t.Fatalf("LoadOrResume returned error: %v", err)
+	}
+	if resumed.Summary.VMStatus != domain.VMStatusRunning || eventType != "scheduler.sandbox.resumed" || len(driver.startCalls) != 1 {
+		t.Fatalf("resume status/event/starts = %q/%q/%#v", resumed.Summary.VMStatus, eventType, driver.startCalls)
 	}
 }
 
