@@ -116,6 +116,30 @@ If the sandbox is bound to a Git workspace, the host clones the repository into
 first successful runtime start. Once provisioning is `ready`, later runtime
 starts and resumes reuse the workspace without cloning or refreshing it.
 
+An Agent may explicitly opt into one narrow sticky-resume repair by declaring
+this value in that Agent definition's own environment:
+
+```text
+AGENT_COMPOSE_RESUME_CLEANUP_GIT_INDEX_LOCK=1
+```
+
+For a sandbox in the exact `stopped` state and tagged with that same currently
+enabled Agent, the host checks exactly
+`<sandbox>/workspace/.git/index.lock` after workspace provisioning succeeds and
+before restarting the VM. A missing lock is a no-op; the workspace and `.git`
+path must both be real directories rather than symlinks, and only a regular
+lock file may be removed. Inspection or removal failures abort the resume
+before the VM starts. The per-sandbox lifecycle lock covers this sequence, so
+the guest cannot compete with the host cleanup. Successful removal records a
+non-sensitive `sandbox.workspace_cleanup` history event on a best-effort basis.
+
+The flag is not read from global environment, Scheduler/request overrides, or
+the sandbox's persisted merged environment. It therefore cannot be enabled
+installation-wide by accident. Running-sandbox reuse returns before this
+repair, and initial sandbox creation never invokes it. This is deliberately not
+a general workspace cleanup list: other stale or inconsistent repository state
+still fails normally and requires an explicit, separately reviewed policy.
+
 ### 3.2 Agent Prompt File
 
 When sending an agent message, the host does not pass the prompt through stdin.
