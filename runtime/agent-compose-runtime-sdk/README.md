@@ -9,7 +9,7 @@ const { runtime } = require("@chaitin-ai/agent-compose-runtime-sdk");
 ```
 
 ```js
-import runtime, { exec, shell, agent, llm } from "@chaitin-ai/agent-compose-runtime-sdk";
+import runtime, { exec, shell, agent, llm, workflowFile } from "@chaitin-ai/agent-compose-runtime-sdk";
 ```
 
 ## Installation
@@ -207,6 +207,37 @@ Error behavior:
 | The provider does not support schema-based output | The runtime throws a provider-specific error. The current Gemini runner reports unsupported output. |
 | The provider returns `finalText` that is not valid JSON | `runtime.agent()` throws a parse error. |
 | The provider returns JSON that does not satisfy the Zod schema | `runtime.agent()` throws a validation error. |
+
+### `runtime.workflow(script, options?)` and `runtime.workflowFile(path, options?)`
+
+Runs a dynamic workflow through the guest runtime CLI. `workflow()` accepts
+source text and manages a temporary script file; `workflowFile()` passes the
+caller-owned file directly.
+
+```js
+const result = await runtime.workflowFile("workflows/inspect.js", {
+  args: { area: "api" },
+  provider: "codex",
+  concurrency: 4,
+  onUpdate(event) {
+    if (event.type === "phase") {
+      console.error(`phase: ${event.title}`)
+    }
+  },
+})
+
+console.log(result.result)
+```
+
+Options include `args`, `provider`, `model`, `concurrency`, `tokenBudget`,
+`runId`, `resumeRunId`, `stateRoot`, `workspace`, `home`, `timeoutMs`, and
+`onUpdate`. Events are decoded incrementally from stderr, so `onUpdate` runs
+while the workflow is active. Non-event stderr is returned in `result.stderr`.
+
+Failed or aborted workflow payloads throw `RuntimeWorkflowError`; its `outcome`
+field retains the run ID, agents, events, and stderr. Invalid CLI protocol throws
+`RuntimeWorkflowProtocolError`. SDK timeout throws
+`RuntimeWorkflowTimeoutError` and retains partial events and stderr.
 
 ### `runtime.llm(prompt, options?)`
 

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -849,7 +848,8 @@ func TestRunsControllerRunProjectCommandAttachProjectsOutputAndResult(t *testing
 		}},
 	}}
 	var responses []*agentcomposev2.AttachAgentRunResponse
-	err := controller.RunProjectCommandAttach(ctx, recvAttachAgentRunRequests(requests), func(resp *agentcomposev2.AttachAgentRunResponse) error {
+	err := controller.RunProjectCommandAttach(ctx, recvAttachAgentRunRequests(requests), func(output RunAttachOutput) error {
+		resp := runAttachOutputToTestProto(output)
 		if started := resp.GetStarted(); started != nil {
 			stored, err := configDB.GetProjectRun(ctx, started.GetRunId())
 			if err != nil {
@@ -895,9 +895,25 @@ func TestRunsControllerRunProjectCommandAttachValidatesStartFrame(t *testing.T) 
 	controller, _, _ := newTestRunAttachController(t, nil)
 	err := controller.RunProjectCommandAttach(context.Background(), recvAttachAgentRunRequests([]*agentcomposev2.AttachAgentRunRequest{{
 		Frame: &agentcomposev2.AttachAgentRunRequest_Stdin{Stdin: &agentcomposev2.AttachStdin{Data: []byte("x")}},
-	}}), func(*agentcomposev2.AttachAgentRunResponse) error { return nil })
+	}}), func(RunAttachOutput) error { return nil })
 	if !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("RunProjectCommandAttach first frame error = %v, want ErrInvalidRequest", err)
+	}
+}
+
+func TestRunsControllerRunProjectCommandAttachRejectsInvalidMode(t *testing.T) {
+	controller, _, _ := newTestRunAttachController(t, nil)
+	receive := func() (RunAttachInput, error) {
+		return RunAttachInput{
+			Kind:    RunAttachInputStart,
+			Mode:    RunAttachModeInvalid,
+			Request: RunAgentRequest{Command: "echo hello"},
+		}, nil
+	}
+
+	err := controller.RunProjectCommandAttach(context.Background(), receive, func(RunAttachOutput) error { return nil })
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("RunProjectCommandAttach invalid mode error = %v, want ErrInvalidRequest", err)
 	}
 }
 
@@ -919,7 +935,8 @@ func TestRunsControllerRunProjectPromptAttachProjectsAgentFrames(t *testing.T) {
 		}},
 	}}
 	var responses []*agentcomposev2.AttachAgentRunResponse
-	err := controller.RunProjectCommandAttach(ctx, recvAttachAgentRunRequests(requests), func(resp *agentcomposev2.AttachAgentRunResponse) error {
+	err := controller.RunProjectCommandAttach(ctx, recvAttachAgentRunRequests(requests), func(output RunAttachOutput) error {
+		resp := runAttachOutputToTestProto(output)
 		if started := resp.GetStarted(); started != nil {
 			stored, err := configDB.GetProjectRun(ctx, started.GetRunId())
 			if err != nil {
@@ -984,26 +1001,26 @@ func TestRunsControllerRunProjectPromptAttachGatesQueuedTurnsAndOrdersTranscript
 	interaction := newScriptedRunAttachInteraction()
 	runtime.interactionOverride = interaction
 
-	requests := make(chan *agentcomposev2.AttachAgentRunRequest, 4)
-	requests <- &agentcomposev2.AttachAgentRunRequest{Frame: &agentcomposev2.AttachAgentRunRequest_Start{Start: &agentcomposev2.AttachAgentRunStart{
-		Request: &agentcomposev2.RunAgentRequest{ProjectId: "project-1", AgentName: "worker", Prompt: "human-1"},
-		Mode:    agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_PROMPT,
-	}}}
+	requests := make(chan RunAttachInput, 4)
+	requests <- RunAttachInput{Kind: RunAttachInputStart, Mode: RunAttachModePrompt, Request: RunAgentRequest{
+		ProjectID: "project-1", AgentName: "worker", Prompt: "human-1",
+	}}
 	requests <- humanMessageAttachRequest("human-2")
 	requests <- humanMessageAttachRequest("human-3")
-	requests <- &agentcomposev2.AttachAgentRunRequest{Frame: &agentcomposev2.AttachAgentRunRequest_StdinEof{StdinEof: &agentcomposev2.AttachStdinEOF{}}}
+	requests <- RunAttachInput{Kind: RunAttachInputStdinEOF}
 	close(requests)
 
 	var responses []*agentcomposev2.AttachAgentRunResponse
 	done := make(chan error, 1)
 	go func() {
-		done <- controller.RunProjectCommandAttach(ctx, func() (*agentcomposev2.AttachAgentRunRequest, error) {
+		done <- controller.RunProjectCommandAttach(ctx, func() (RunAttachInput, error) {
 			req, ok := <-requests
 			if !ok {
-				return nil, io.EOF
+				return RunAttachInput{}, io.EOF
 			}
 			return req, nil
-		}, func(resp *agentcomposev2.AttachAgentRunResponse) error {
+		}, func(output RunAttachOutput) error {
+			resp := runAttachOutputToTestProto(output)
 			responses = append(responses, resp)
 			return nil
 		})
@@ -1329,7 +1346,8 @@ func TestRunsControllerRunProjectPromptAttachUnsupportedProvidersDoNotOpenRuntim
 				}},
 			}}
 			var responses []*agentcomposev2.AttachAgentRunResponse
-			err := controller.RunProjectCommandAttach(ctx, recvAttachAgentRunRequests(requests), func(resp *agentcomposev2.AttachAgentRunResponse) error {
+			err := controller.RunProjectCommandAttach(ctx, recvAttachAgentRunRequests(requests), func(output RunAttachOutput) error {
+				resp := runAttachOutputToTestProto(output)
 				responses = append(responses, resp)
 				return nil
 			})
@@ -2300,13 +2318,6 @@ func TestRunsProjectRunLogAppendChunk(t *testing.T) {
 }
 
 func TestRunsControllerHelperEdgeWorkflows(t *testing.T) {
-	PrepareStreamingHeaders(nil)
-	headers := http.Header{}
-	PrepareStreamingHeaders(headers)
-	if headers.Get("Cache-Control") != "no-cache, no-transform" || headers.Get("X-Accel-Buffering") != "no" {
-		t.Fatalf("stream headers = %#v", headers)
-	}
-
 	baseJupyter := sandboxstore.CreateSandboxOptions{JupyterGuestPort: 8888}
 	if options, err := resolveRunJupyterOptions(baseJupyter, nil); err != nil ||
 		options.JupyterEnabled != baseJupyter.JupyterEnabled ||
@@ -2968,14 +2979,58 @@ func (i *fakeRunAttachInteraction) Wait() (driverpkg.RuntimeResult, error) {
 
 func recvAttachAgentRunRequests(requests []*agentcomposev2.AttachAgentRunRequest) RunAttachReceiver {
 	index := 0
-	return func() (*agentcomposev2.AttachAgentRunRequest, error) {
+	return func() (RunAttachInput, error) {
 		if index >= len(requests) {
-			return nil, io.EOF
+			return RunAttachInput{}, io.EOF
 		}
 		req := requests[index]
 		index++
-		return req, nil
+		return runAttachInputFromTestProto(req), nil
 	}
+}
+
+func runAttachInputFromTestProto(request *agentcomposev2.AttachAgentRunRequest) RunAttachInput {
+	input := RunAttachInput{ClientFrameID: request.GetClientFrameId()}
+	switch frame := request.GetFrame().(type) {
+	case *agentcomposev2.AttachAgentRunRequest_Start:
+		start := frame.Start
+		input.Kind = RunAttachInputStart
+		message := start.GetRequest()
+		input.Request = RunAgentRequest{
+			ProjectID: message.GetProjectId(), AgentName: message.GetAgentName(), Prompt: message.GetPrompt(), Command: message.GetCommand(),
+			ClientRequestID: message.GetClientRequestId(), Env: message.GetEnv(), SandboxID: message.GetSandboxId(), Driver: message.GetDriver(),
+			OutputSchemaJSON: message.GetOutputSchemaJson(), CleanupPolicy: message.GetCleanupPolicy(), Jupyter: message.GetJupyter(),
+		}
+		input.AttachStdin = start.GetAttachStdin()
+		input.TTY = start.GetTty()
+		input.Rows = start.GetTerminalSize().GetRows()
+		input.Cols = start.GetTerminalSize().GetCols()
+		switch start.GetMode() {
+		case agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_COMMAND:
+			input.Mode = RunAttachModeCommand
+		case agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_PROMPT:
+			input.Mode = RunAttachModePrompt
+		}
+	case *agentcomposev2.AttachAgentRunRequest_Stdin:
+		input.Kind = RunAttachInputStdin
+		input.Data = frame.Stdin.GetData()
+	case *agentcomposev2.AttachAgentRunRequest_StdinEof:
+		input.Kind = RunAttachInputStdinEOF
+	case *agentcomposev2.AttachAgentRunRequest_Resize:
+		input.Kind = RunAttachInputResize
+		input.Rows = frame.Resize.GetTerminalSize().GetRows()
+		input.Cols = frame.Resize.GetTerminalSize().GetCols()
+	case *agentcomposev2.AttachAgentRunRequest_Signal:
+		input.Kind = RunAttachInputSignal
+		input.Signal = frame.Signal.GetSignal()
+	case *agentcomposev2.AttachAgentRunRequest_Cancel:
+		input.Kind = RunAttachInputCancel
+		input.Reason = frame.Cancel.GetReason()
+	case *agentcomposev2.AttachAgentRunRequest_HumanMessage:
+		input.Kind = RunAttachInputHumanMessage
+		input.Text = frame.HumanMessage.GetText()
+	}
+	return input
 }
 
 type fakeControllerImages struct{}
@@ -3101,4 +3156,31 @@ func (s *fakeGuideSandboxStore) SaveProxyState(string, sandboxstore.ProxyState) 
 
 func (s *fakeGuideSandboxStore) AllocateHostPortForJupyter() (int, error) {
 	return 0, errors.New("not implemented")
+}
+
+func runAttachOutputToTestProto(output RunAttachOutput) *agentcomposev2.AttachAgentRunResponse {
+	response := &agentcomposev2.AttachAgentRunResponse{}
+	switch output.Kind {
+	case RunAttachOutputStarted:
+		response.Frame = &agentcomposev2.AttachAgentRunResponse_Started{Started: &agentcomposev2.AttachStarted{RunId: output.Run.RunID, SandboxId: output.SandboxID}}
+	case RunAttachOutputData:
+		stream := agentcomposev2.StdioStream_STDIO_STREAM_STDOUT
+		if output.Stream == domain.StdioStderr {
+			stream = agentcomposev2.StdioStream_STDIO_STREAM_STDERR
+		}
+		response.Frame = &agentcomposev2.AttachAgentRunResponse_Output{Output: &agentcomposev2.AttachOutput{Data: output.Data, Stream: stream, Transcript: &agentcomposev2.TranscriptEvent{Text: string(output.Data)}}}
+	case RunAttachOutputAgentEvent:
+		response.Frame = &agentcomposev2.AttachAgentRunResponse_AgentEvent{AgentEvent: &agentcomposev2.AttachAgentEvent{Name: output.Name, Text: output.Text}}
+	case RunAttachOutputAgentTurnCompleted:
+		response.Frame = &agentcomposev2.AttachAgentRunResponse_AgentTurnCompleted{AgentTurnCompleted: &agentcomposev2.AttachAgentTurnCompleted{RunId: output.Run.RunID, ResultJson: output.ResultJSON}}
+	case RunAttachOutputResult:
+		status := agentcomposev2.RunStatus_RUN_STATUS_FAILED
+		if output.Run.Status == domain.ProjectRunStatusSucceeded {
+			status = agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED
+		}
+		response.Frame = &agentcomposev2.AttachAgentRunResponse_Result{Result: &agentcomposev2.AttachResult{Success: output.Success, Error: output.Error, Run: &agentcomposev2.RunSummary{RunId: output.Run.RunID, Status: status}}}
+	case RunAttachOutputError:
+		response.Frame = &agentcomposev2.AttachAgentRunResponse_Error{Error: &agentcomposev2.AttachError{Code: output.Code, Message: output.Error, Terminal: output.Terminal}}
+	}
+	return response
 }

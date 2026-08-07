@@ -5,8 +5,48 @@ import (
 	"time"
 
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/runs"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
+
+func TestRunAttachInputFromProtoPreservesUnknownModeAsInvalid(t *testing.T) {
+	input := runAttachInputFromProto(&agentcomposev2.AttachAgentRunRequest{
+		Frame: &agentcomposev2.AttachAgentRunRequest_Start{Start: &agentcomposev2.AttachAgentRunStart{
+			Mode:    agentcomposev2.AttachRunMode(99),
+			Request: &agentcomposev2.RunAgentRequest{Command: "echo hello"},
+		}},
+	})
+
+	if input.Mode != runs.RunAttachModeInvalid {
+		t.Fatalf("mode = %q, want invalid", input.Mode)
+	}
+}
+
+func TestRunAttachInputFromProtoPreservesLegacyRequestVolumeBehavior(t *testing.T) {
+	request := &agentcomposev2.RunAgentRequest{
+		Command: "echo hello",
+		Volumes: []*agentcomposev2.VolumeMountSpec{{
+			Type:     agentcomposev2.VolumeMountType_VOLUME_MOUNT_TYPE_BIND,
+			Source:   "/host/source",
+			Target:   "/guest/target",
+			ReadOnly: true,
+		}},
+	}
+	if mapped := runAgentRequestFromProto(request); len(mapped.Volumes) != 1 {
+		t.Fatalf("ordinary run volumes = %#v, want request volume preserved", mapped.Volumes)
+	}
+
+	input := runAttachInputFromProto(&agentcomposev2.AttachAgentRunRequest{
+		Frame: &agentcomposev2.AttachAgentRunRequest_Start{Start: &agentcomposev2.AttachAgentRunStart{
+			Mode:    agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_COMMAND,
+			Request: request,
+		}},
+	})
+
+	if len(input.Request.Volumes) != 0 {
+		t.Fatalf("attach request volumes = %#v, want legacy ignored behavior", input.Request.Volumes)
+	}
+}
 
 func TestRunAgentStreamStartedProjectionPreservesResponseFields(t *testing.T) {
 	createdAt := time.Date(2026, 7, 10, 8, 9, 10, 123456789, time.FixedZone("CST", 8*60*60))

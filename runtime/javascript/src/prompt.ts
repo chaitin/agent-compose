@@ -16,40 +16,50 @@ import type { AgentResult, RuntimeJsonSchema } from "./types.js";
 export interface PromptCommandOptions {
   provider?: string;
   messageFile?: string;
+  promptText?: string;
   stateRoot?: string;
+  sessionRoot?: string;
   workspace?: string;
   home?: string;
   model?: string;
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
   outputSchemaFile?: string;
+  outputSchema?: RuntimeJsonSchema;
   skills?: string[];
+  systemContextPrefix?: string;
   abortController?: AbortController;
 }
 
 export async function buildPromptRuntimeOptions(commandOptions: Omit<PromptCommandOptions, "messageFile">) {
   const provider = normalizeProvider(commandOptions.provider);
   const stateRoot = path.resolve(commandOptions.stateRoot || path.join(SANDBOX_ROOT, "state"));
+  const sessionRoot = path.resolve(commandOptions.sessionRoot || stateRoot);
   const workspace = path.resolve(
     commandOptions.workspace || process.env.WORKSPACE || process.env.AGENT_COMPOSE_WORKSPACE || path.join(SANDBOX_ROOT, "workspace"),
   );
   const home = path.resolve(commandOptions.home || process.env.HOME || path.join(SANDBOX_ROOT, "home"));
-  const outputSchema = commandOptions.outputSchemaFile
+  const outputSchema = commandOptions.outputSchema ?? (commandOptions.outputSchemaFile
     ? parseOutputSchema(await readText(path.resolve(commandOptions.outputSchemaFile)))
-    : undefined;
+    : undefined);
   const systemPrompt = await readSystemPromptFile(agentSystemPromptPath(stateRoot));
   const mpi = await readMpiContext(stateRoot);
   const mcpConfig = await readMCPConfig(stateRoot);
   const skills = normalizeSkills(commandOptions.skills);
   const baseSystemContext = buildSystemContext(systemPrompt, mpi.context);
+  const workflowContext = String(commandOptions.systemContextPrefix || "").trim();
+  const systemContext = [workflowContext, baseSystemContext].filter(Boolean).join("\n\n");
   return {
     provider,
     model: commandOptions.model,
+    effort: commandOptions.effort,
     stateRoot,
+    sessionRoot,
     workspace,
     home,
     runtimeRoot: mpi.runtimeRoot,
     systemContext: provider === "gemini" || provider === "codex"
-      ? await appendSkillCatalogContext(baseSystemContext, home, skills)
-      : baseSystemContext,
+      ? await appendSkillCatalogContext(systemContext, home, skills)
+      : systemContext,
     mcpConfig: mcpConfig.mcp_servers,
     skills,
     outputSchema,
@@ -60,12 +70,10 @@ export async function buildPromptRuntimeOptions(commandOptions: Omit<PromptComma
 export async function runPromptCommand(commandOptions: PromptCommandOptions): Promise<AgentResult> {
   const options = await buildPromptRuntimeOptions(commandOptions);
   const messageFile = commandOptions.messageFile;
-
-  if (!messageFile) {
+  if (!messageFile && commandOptions.promptText === undefined) {
     throw new Error("--message-file is required");
   }
-
-  const promptText = await readText(path.resolve(messageFile));
+  const promptText = commandOptions.promptText ?? await readText(path.resolve(messageFile as string));
   const provider = options.provider;
   if (provider === "codex") {
     return await new CodexRunner(options).runPrompt(promptText);

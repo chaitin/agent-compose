@@ -113,10 +113,11 @@ type WorkflowMeta = {
 
 Workflow Run 是一次 workflow 执行实例。它拥有：
 
-- `runId`：显式传入或 runtime 生成的稳定 ID。
+- `runId`：当前这次物理执行的唯一 ID，显式传入或由 runtime 生成。
+- `resumedFrom`：可选，只读的历史 run ID；当前 run 可以从中复用已完成的 agent 结果。
 - `meta`：脚本元数据。
 - `args`：调用方传入的 JSON 值。
-- `status`：`running`、`completed`、`failed`、`aborted`。
+- `status`：`running`、`completed`、`failed`、`aborted`；持久化内部还允许用 `interrupted` 标识进程异常退出后遗留的非终态 run。
 - `phases`：运行中出现过的 phase 名称。
 - `logs`：workflow 级 log 文本。
 - `agents`：子 agent 调用记录。
@@ -129,20 +130,21 @@ Workflow Run 是一次 workflow 执行实例。它拥有：
 
 Agent Invocation 是 workflow 内一次 `agent(prompt, opts)` 调用。它拥有：
 
-- `agentId`：run 内递增 ID 或稳定派生 ID。
+- `agentId`：当前 run 内递增的展示和事件 ID，不参与恢复缓存寻址。
+- `invocationKey`：由 nested workflow、parallel branch、pipeline item/stage 和局部 agent key 组成的稳定逻辑路径。
 - `label`：进度显示名称。
 - `phase`：归属 phase。
 - `prompt`：传给 provider runner 的 prompt。
 - `options`：归一化后的 agent options。
-- `hash`：由 prompt、options、schema、workflow nesting path 计算，用于 resume 缓存。
-- `status`：`queued`、`running`、`done`、`error`、`skipped`。
+- `inputHash`：由完整 prompt、归一化 options、schema、script hash 和 `invocationKey` 规范序列化后计算，用于 resume 缓存。
+- `status`：`queued`、`running`、`done`、`error`、`cached`、`skipped`、`interrupted`。
 - `result`：文本或结构化 JSON。
 - `error`：失败信息。
 - `providerSessionId`：provider 原生 session/thread ID。
 - `worktreePath`：启用 worktree 隔离时的路径。
 - `gitStatus`：隔离 worktree 完成后的 `git status --short` 摘要。
 
-每个 Agent Invocation 使用独立 provider state root，避免并发子 agent 共享同一个 provider resume state 文件。
+每个 Agent Invocation 使用独立 provider session root，避免并发子 agent 共享同一个 provider resume state 文件；system prompt、MPI、MCP 和 skills 等 runtime 配置仍从父 workflow 的 `stateRoot` 读取。两者的兼容规则见“Provider runner 复用”。
 
 ### Workflow Event
 
@@ -216,6 +218,7 @@ interface PromptCommandOptions {
   provider?: string
   messageFile?: string
   stateRoot?: string
+  sessionRoot?: string
   workspace?: string
   home?: string
   model?: string
@@ -224,6 +227,15 @@ interface PromptCommandOptions {
   systemContextPrefix?: string
 }
 ```
+
+`stateRoot` 保持现有含义，是 runtime 配置和默认 provider session 状态的根目录。`sessionRoot` 是新增的可选覆盖项，只改变 provider thread/session 的读写位置：
+
+- 未传 `sessionRoot` 时，默认使用 `stateRoot`，现有 `prompt` CLI、SDK `agent()`、已部署 agent 和磁盘布局完全不变，不需要迁移。
+- workflow 调用子 agent 时，`stateRoot` 仍指向父 runtime 的原目录，`sessionRoot` 显式指向 `<runRoot>/agents/<agentId>/state/`。
+- system prompt、MPI context、MCP config 和 skills 从 `stateRoot` 读取；provider 原生 session/thread 从 `sessionRoot` 读取。
+- 不复制、不移动、不链接已有 `stateRoot` 内容，也不为非 workflow 调用创建新的目录层级。
+
+内部 runner options 应使用不同字段表达这两个所有权边界，避免 workflow 实现先用 `sessionRoot` 覆盖 `stateRoot` 后再调用现有配置加载逻辑。
 
 `systemContextPrefix` 或等价机制用于注入 workflow phase、agentType、label、isolation 等子 agent 指令，不破坏已有 agent system prompt 和 MPI context 组合规则。
 
@@ -287,10 +299,12 @@ agent-compose-runtime workflow \
 | `--model` | 默认子 agent model。 |
 | `--concurrency` | 子 agent 并发上限，归一化到 `[1, 16]`。 |
 | `--token-budget` | workflow budget total，未设置时为 `null`。 |
-| `--run-id` | 显式 run ID；未设置时生成。 |
-| `--resume-run-id` | 从已有 run 恢复并复用缓存。 |
+| `--run-id` | 当前新 run 的显式 ID；未设置时生成。已存在的 ID 拒绝执行。 |
+| `--resume-run-id` | 只读的历史 run ID；当前新 run 从头 replay 脚本并复用匹配的 agent 结果。 |
 
-`--run-id` 与 `--resume-run-id` 同时存在时，`resumeRunId` 表示读取哪个历史 run，`runId` 表示新 run 写入位置。若只传 `--resume-run-id`，新写入也使用该 ID。
+`--run-id` 与 `--resume-run-id` 同时存在时，`resumeRunId` 表示读取哪个历史 run，`runId` 表示新 run 写入位置。若只传 `--resume-run-id`，runtime 仍生成新的 `runId`；历史 run 永远只读且不被原地恢复或覆盖。`runId === resumeRunId` 时拒绝执行。
+
+这里的 resume 是“从头 replay workflow 脚本，并复用历史 run 中匹配的已完成 agent 结果”，不是恢复 JavaScript continuation 或调用栈。脚本的本地计算、`phase()` 和 `log()` 会重新执行。
 
 ### CLI stdout result protocol
 
@@ -373,6 +387,7 @@ declare function pipeline<TItem, TResult>(
   ...stages: Array<(previous: unknown, original: TItem, index: number) => TResult | Promise<TResult>>
 ): Promise<Array<TResult | null>>
 declare function phase(title: string): void
+declare function phase<T>(title: string, body: () => T | Promise<T>): Promise<T>
 declare function log(message: unknown): void
 declare function workflow<T = unknown>(nameOrRef: string | WorkflowRef, args?: unknown): Promise<T>
 declare const args: unknown
@@ -389,6 +404,7 @@ declare const budget: {
 
 ```ts
 type WorkflowAgentOptions = {
+  key?: string
   label?: string
   phase?: string
   schema?: Record<string, unknown>
@@ -412,9 +428,13 @@ type WorkflowRef = {
 
 ### Agent option 语义
 
-`label` 用于进度、日志和 record。未设置时生成 `${phase} agent ${index}` 或 `agent ${index}`。
+`label` 用于进度、日志和 record。未设置时根据稳定的调用身份生成：显式 `key` 使用
+`${phase} agent ${key}` 或 `agent ${key}`，否则使用上下文内的 agent 序号。并发分支的到达顺序不得改变默认
+label，避免相同 `invocationKey` 在 replay 时产生不同的 system context 和 `inputHash`。
 
-`phase` 覆盖当前全局 phase。若未设置，agent 归属最近一次 `phase(title)`。
+`key` 是当前结构上下文内可选的稳定逻辑名称，用于派生 `invocationKey`。它必须匹配 `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`，同一上下文内重复时报错。未设置时使用当前 parallel/pipeline/nested workflow 结构路径加局部递增序号；该序号在每个异步上下文内独立分配，不依赖并发任务的实际启动顺序。
+
+`phase` 覆盖当前异步上下文的 phase。若未设置，agent 归属当前 scoped phase 或最近一次顶层 `phase(title)`。`phase(title, body)` 为 `body` 创建异步安全的局部 phase，并在结束后恢复父 phase；并发 thunk 内必须使用 scoped phase 或显式 `agent({ phase })`，裸 `phase(title)` 只用于 workflow 顶层顺序流程。
 
 `schema` 是 plain JSON Schema object。传入后 agent 返回解析后的 JSON 值；未传时返回 final text string。
 
@@ -496,6 +516,23 @@ type RuntimeWorkflowResult<T = unknown> = {
   events: RuntimeWorkflowEvent[]
   stderr: string
 }
+
+type RuntimeWorkflowOutcome<T = unknown> =
+  | RuntimeWorkflowResult<T>
+  | RuntimeWorkflowFailed
+  | RuntimeWorkflowAborted
+
+type RuntimeWorkflowFailed = WorkflowErrorPayload & {
+  status: "failed"
+  events: RuntimeWorkflowEvent[]
+  stderr: string
+}
+
+type RuntimeWorkflowAborted = WorkflowErrorPayload & {
+  status: "aborted"
+  events: RuntimeWorkflowEvent[]
+  stderr: string
+}
 ```
 
 SDK behavior：
@@ -503,10 +540,12 @@ SDK behavior：
 - `workflow(script, options)` 写临时 script file。
 - 若 `options.args !== undefined`，写临时 args JSON file。
 - 调用 `agent-compose-runtime workflow`。
-- 从 stdout 解析 `__WORKFLOW_RESULT__`。
-- 从 stderr 解析所有 `__WORKFLOW_EVENT__` 行，调用 `onUpdate` 并收集到 `events`。
+- 使用增量 line decoder 从 stdout 解析唯一的 `__WORKFLOW_RESULT__`，不能依赖进程退出后的有界整段字符串捕获。
+- 使用增量 line decoder 从 stderr 实时解析 `__WORKFLOW_EVENT__`，每收到一个完整事件就调用 `onUpdate`；普通 stderr 单独保留。
+- 成功 payload 正常返回；合法的 `failed` 或 `aborted` payload 抛出 `RuntimeWorkflowError`，并在 `error.outcome` 中保留 run、agents、events 和 stderr。
+- 缺失、重复或 JSON 无效的 result payload 抛出 `RuntimeWorkflowProtocolError`。
 - 清理临时 script/args 文件。
-- `timeoutMs` 到期后终止 child process，并返回 `runtime.workflow timed out after <n>ms`。
+- `timeoutMs` 到期后先发送 `SIGTERM`，给 CLI 短暂机会持久化并输出 aborted payload，再以 `SIGKILL` 兜底；没有合法 payload 时抛出 `RuntimeWorkflowTimeoutError`，并保留已收集的 events 和 stderr。
 
 ### 持久化数据模型
 
@@ -515,8 +554,9 @@ SDK behavior：
 ```text
 <stateRoot>/workflows/runs/<runId>/run.json
 <stateRoot>/workflows/runs/<runId>/events.jsonl
-<stateRoot>/workflows/runs/<runId>/agents/<agentId>.json
+<stateRoot>/workflows/runs/<runId>/agents/<agentId>/record.json
 <stateRoot>/workflows/runs/<runId>/agents/<agentId>/state/
+<stateRoot>/workflows/runs/<runId>/nested/<nestedId>.json
 <stateRoot>/workflows/worktrees/<runId>/<agentId>/
 ```
 
@@ -526,6 +566,7 @@ SDK behavior：
 {
   "schemaVersion": 1,
   "runId": "run_...",
+  "resumedFrom": "run_previous",
   "status": "completed",
   "meta": { "name": "inspect_project", "description": "..." },
   "argsHash": "sha256:...",
@@ -540,14 +581,15 @@ SDK behavior：
 }
 ```
 
-`agents/<agentId>.json`：
+`agents/<agentId>/record.json`：
 
 ```json
 {
   "schemaVersion": 1,
   "agentId": "a1",
+  "invocationKey": "root/parallel:0/key:repo-scan",
   "index": 1,
-  "hash": "sha256:...",
+  "inputHash": "sha256:...",
   "label": "repo scan",
   "phase": "Scan",
   "provider": "codex",
@@ -567,7 +609,16 @@ SDK behavior：
 }
 ```
 
-完整 prompt 可以不写入 `agents/<agentId>.json`，避免泄露大段敏感上下文；hash 必须包含完整 prompt。若为了调试需要完整 prompt，应写到同目录 `prompt.txt`，并在文档中标注它属于 guest runtime state。
+持久化规则：
+
+- `runId` 必须匹配 `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`，禁止路径分隔符、绝对路径和 `..` 路径段。
+- run 目录以 exclusive create 声明所有权；目标 `runId` 已存在时拒绝启动，避免两个进程同时写同一个 run。
+- `run.json` 和 agent record 使用同目录临时文件完整写入后再 rename；state 持久化失败是 workflow fatal error。
+- `events.jsonl` 由单一 event writer 串行 append，并发 agent 不直接写文件，保证事件行不会交错。
+- 读取历史 run 时，将残留的 `running` run/agent 解释为 `interrupted`；`interrupted` 记录不能作为缓存命中。
+- `schemaVersion` 不受支持、重复 `invocationKey`、`done` 记录缺少可反序列化 result 等情况按历史状态损坏处理，不静默忽略。
+
+完整 prompt 可以不写入 `agents/<agentId>/record.json`，避免泄露大段敏感上下文；`inputHash` 必须包含完整 prompt。若为了调试需要完整 prompt，应写到同目录 `prompt.txt`，并在文档中标注它属于 guest runtime state。
 
 ### 包版本和依赖
 
@@ -583,7 +634,7 @@ SDK behavior：
 
 `runtime/javascript/package-lock.json` 更新。
 
-`runtime/javascript` 和 `runtime/agent-compose-runtime-sdk` package version 从 `0.4.0` 升到 `0.5.0`。`dist/` 不在 Git 跟踪文件内，不手工提交。
+`runtime/javascript` 和 `runtime/agent-compose-runtime-sdk` package version 从当前 `0.8.0` 升到 `0.9.0`。`dist/` 不在 Git 跟踪文件内，不手工提交。
 
 ## 工作流和失败语义
 
@@ -615,7 +666,7 @@ VM context 暴露必要内置对象：
 - `require`、`import`。
 - writable `process`。
 
-该 VM 沙箱是确定性和 API 收口机制，不声明为强安全边界。workflow 脚本来源仍应是受信任用户或受信任 workspace。
+该 VM 沙箱是确定性和 API 收口机制，不声明为强安全边界。workflow 脚本来源仍应是受信任用户或受信任 workspace。运行时移除 `Date` 和 `Math.random`，避免通过别名或间接调用绕过 AST 确定性检查。
 
 ### 并发控制
 
@@ -628,6 +679,8 @@ Math.max(1, Math.min(options.concurrency ?? Math.max(1, cpuCount - 2), 16))
 当 Node 无法可靠获取 CPU 数时，默认按 8 核处理，即默认 6，最大 16。
 
 所有 `agent()` 和 nested workflow agent 共享同一个 limiter。`parallel()` 不绕过 limiter，只负责启动多个 thunk 并按输入顺序收集结果。
+
+workflow runtime 使用 Node.js `AsyncLocalStorage` 传播当前 phase、nested workflow path、parallel branch、pipeline item/stage 和局部 agent 序号。`parallel()` 在启动 thunk 前按输入下标预分配 `parallel:<index>` 上下文，`pipeline()` 按 item/stage 预分配上下文，因此 `invocationKey` 不依赖 Promise 的实际调度和完成顺序。
 
 单次 workflow run 最多允许 1000 次 agent invocation。超过上限报错：
 
@@ -642,7 +695,8 @@ workflow agent limit exceeded: 1000
 - 参数必须是 array。
 - 每个元素必须是 function。
 - 如果传入 promises，抛错提示使用 `() => agent(...)`。
-- 非 abort 分支失败记录 log，并返回 `null`。
+- `agent()` 自身失败时 reject；`parallel()` 默认捕获非 abort 分支错误、记录 log，并在对应位置返回 `null`。
+- abort 永远立即向上传播，不转换为 `null`。
 - 结果数组顺序与输入 thunk 顺序一致。
 
 `pipeline(items, ...stages)`：
@@ -651,7 +705,9 @@ workflow agent limit exceeded: 1000
 - stage 必须是 function。
 - 每个 item 内按 stage 顺序串行执行。
 - 不同 item 之间并发执行，共享 limiter。
-- 单个 item 任一 stage 失败时，该 item 返回 `null`，后续 stage 不再执行。
+- 单个 item 任一 stage 发生非 abort 错误时，该 item 返回 `null`，后续 stage 不再执行；abort 立即向上传播。
+
+首版组合器固定使用上述 settle 语义。需要关键步骤失败即终止 workflow 时，脚本应直接 `await agent()`，或在组合器返回后检查 `null` 并主动抛错；未来如增加 fail-fast 模式，应通过显式 option 引入，不能改变首版默认行为。
 
 ### budget
 
@@ -675,42 +731,40 @@ workflow token budget exhausted
 
 1. 校验 prompt 是非空 string。
 2. 归一化 options。
-3. 分配 `agentId`、label、phase。
-4. 计算 hash。
+3. 从当前异步结构上下文派生 `invocationKey`，再分配当前 run 的 `agentId`、label、phase。
+4. 对完整 prompt、script hash、`invocationKey` 和最终归一化 options 使用 canonical JSON 序列化并计算 `inputHash`；`agentId` 不参与 hash。
 5. 如果 resume cache 命中，返回 cached result 并发 `agent_cached` event。
 6. 如果 `isolation: "worktree"`，创建 worktree 并切换 workspace。
 7. 写 agent record 为 `running`。
 8. 调用 provider runner。
 9. 成功时写 result、provider session id、duration、git status，状态为 `done`。
-10. 失败时写 error，状态为 `error`；非 abort 情况返回 `null`。
+10. 失败时写 error，状态为 `error` 并 reject；是否将非 abort 错误转换为 `null` 由 `parallel()` / `pipeline()` 决定。
 
-非结构化 agent 返回 `finalText` string。结构化 agent 返回 JSON object。结构化 JSON 解析失败或 schema 不支持按 provider 现有错误透出，并被 workflow agent 捕获为 `null`，除非错误是 abort。
+非结构化 agent 返回 `finalText` string。结构化 agent 返回 JSON object。结构化 JSON 解析失败、provider 不支持 schema 或 option 不受支持均作为明确错误 reject，不在 `agent()` 内静默转换为 `null`。
 
 ### resume 缓存
 
-resume 以 agent hash 为准。hash 输入包括：
+resume 使用 `invocationKey` 定位历史逻辑调用，再以 `inputHash` 判断是否复用。`inputHash` 输入包括：
 
 - workflow script hash。
-- nested workflow path。
+- `invocationKey`，其中包含 nested workflow 和 parallel/pipeline 结构路径。
 - agent prompt。
 - normalized options。
+- 最终 label 和 phase；两者会进入子 agent system context。
 - schema JSON。
 - default provider/model/effort。
 - isolation mode。
 
+对象使用 canonical JSON 序列化，避免对象 key 插入顺序造成无意义的 hash 差异。默认 provider/model/effort 必须先解析成 invocation 的最终值，再参与 hash。
+
 命中条件：
 
-- 历史 agent record status 是 `done`。
-- hash 完全一致。
+- 历史记录 `invocationKey` 完全一致。
+- 历史 agent record status 是 `done` 或 `cached`。
+- `inputHash` 完全一致。
 - result 字段存在且可 JSON 序列化。
 
-hash 不匹配时不复用。若 runId 相同且已有同 agentId 但 hash 不同，报错：
-
-```text
-workflow resume cache mismatch for agent <agentId>
-```
-
-该策略避免脚本改动后误用旧结果。
+`inputHash` 不匹配时是正常 cache miss，重新执行 agent，不视为 resume 错误。历史 run 中出现重复 `invocationKey`、无法解析的 record，或 `done` 记录缺少有效 result 时才报告缓存状态损坏。由于首版将完整 workflow script hash 纳入每次 invocation 的 `inputHash`，脚本发生任何变化都会使该脚本内的历史 agent 缓存 miss；仅 args 变化且没有影响最终 prompt/options 的调用仍可复用。该保守策略避免脚本语义变化后错误复用结果，同时避免并发启动顺序影响恢复结果。未来若需要局部脚本变更复用，应显式引入可审计的调用片段 hash，不能移除脚本身份校验后静默放宽。
 
 ### worktree 隔离
 
@@ -725,9 +779,11 @@ workflow resume cache mismatch for agent <agentId>
 
 worktree 清理策略：
 
-- 没有变更且 agent 成功时，可以删除 worktree。
+- worktree 基于当前 `HEAD` 创建，不包含主 workspace 的未提交修改；该限制必须在 CLI/SDK 文档中明确。
+- 没有变更且 agent 成功时，可以通过 `git worktree remove <target>` 删除 worktree，不能直接删除目录。
 - 有变更或 agent 失败时必须保留 worktree，并在 result 中记录路径。
 - 删除失败不使 workflow 失败，只写 log。
+- cached record 引用 worktree 时，命中前必须验证路径位于受管 worktree root、仍是有效 linked worktree、HEAD 和 `gitStatus` 与记录一致；验证失败按 cache miss 处理。
 
 首版不做自动 merge、patch 生成或 conflict 处理。
 
@@ -754,7 +810,7 @@ await workflow("workflows/audit.js", { area: "api" })
 nested workflow depth exceeded
 ```
 
-子 workflow 共享父 workflow 的 limiter、budget、abort signal。子 workflow 的 run state 写入父 run root 下的 nested 目录或以 parent run ID 派生 ID 写入。
+子 workflow 共享父 workflow 的 limiter、budget、abort signal。每次 `workflow()` 调用在父异步结构上下文中预分配稳定 ordinal，路径形如 `workflow:<ordinal>:<meta.name>`；同名 workflow 的重复或并发调用因此具有不同且可重放的 `invocationKey`。子 workflow 的状态写入父 run root 的 `nested/<nestedId>.json`，记录 invocationKey、meta、args/script hash、状态、结果或错误以及持续时间。
 
 ### abort 和 timeout
 
@@ -768,9 +824,9 @@ CLI 进程收到 SIGINT/SIGTERM 时：
 
 SDK `timeoutMs` 到期：
 
-- kill child process。
-- 抛 `runtime.workflow timed out after <n>ms`。
-- 如果 child 已输出 partial events，SDK 返回错误对象中可以保留 collected events；若现有 SDK error 类型不支持附加字段，至少错误 message 必须清晰。
+- 先发送 `SIGTERM`，给 CLI 一个有界 grace period 持久化状态并输出 aborted payload，再以 `SIGKILL` 兜底。
+- 如果收到合法 aborted payload，抛出带完整 `outcome` 的 `RuntimeWorkflowError`。
+- 如果没有收到合法 payload，抛出 `RuntimeWorkflowTimeoutError`，错误中保留 collected events 和 raw stderr。
 
 ### 最终结果
 
@@ -792,10 +848,11 @@ workflow result must be JSON-serializable; did you forget to await agent(), para
 - parser 拒绝 `Date.now()`、`Math.random()`、`new Date()` 及静态字符串属性变体。
 - parser 允许 prompt 文本中出现 `Date.now()` 等字符串。
 - VM context 暴露预期 globals，不暴露 `require`、`import`、`fs`。
-- `phase()` 记录 runtime-created phases，不预渲染 meta phases。
+- `phase()` 记录 runtime-created phases，不预渲染 meta phases；scoped phase 在并发分支间不串扰并在结束后恢复父 phase。
 - `parallel()` 要求 thunk array，并保持结果顺序。
 - `pipeline()` 对每个 item 串行执行 stages。
-- agent 失败返回 `null` 并记录 log。
+- `agent()` 失败 reject；`parallel()` / `pipeline()` 捕获非 abort 分支错误并在相应位置返回 `null`。
+- parallel/pipeline 预分配的结构上下文在不同调度顺序下产生相同 `invocationKey`。
 - workflow result 不可序列化时报错。
 - budget spent/remaining 行为。
 - agent limit 1000 行为。
@@ -809,8 +866,10 @@ workflow result must be JSON-serializable; did you forget to await agent(), para
 - stdout 输出单行 `__WORKFLOW_RESULT__`。
 - stderr 输出 `__WORKFLOW_EVENT__` 并保留普通 transcript。
 - resume run 命中 cached agent。
-- resume hash mismatch 报错。
-- 每个 agent 使用独立 stateRoot。
+- resume `inputHash` 不匹配时重新执行，不误报缓存损坏。
+- 历史 run 只读，只有 `resumeRunId` 时仍创建新的 `runId`。
+- 每个 agent 使用独立 `sessionRoot`，同时从原 `stateRoot` 读取 system prompt、MPI、MCP 和 skills。
+- 未传 `sessionRoot` 的现有 prompt/SDK 调用继续使用原 `stateRoot` 布局，不创建或复制新目录。
 - `provider`、`model`、`schema` 传入 prompt command。
 - Codex runner 透传 `modelReasoningEffort`。
 - Claude runner 透传 `effort`。
@@ -836,10 +895,11 @@ workflow result must be JSON-serializable; did you forget to await agent(), para
 - CLI 参数包括 provider、model、concurrency、tokenBudget、runId、resumeRunId、stateRoot、workspace、home。
 - `runtime.workflowFile(path, options)` 直接传 script path，不复制用户文件。
 - 解析 `__WORKFLOW_RESULT__` 为 `RuntimeWorkflowResult`。
-- 解析 `__WORKFLOW_EVENT__`，触发 `onUpdate`，并写入 `events`。
+- 增量解析跨 chunk 的 `__WORKFLOW_EVENT__`，实时触发 `onUpdate`，并写入 `events`。
 - 普通 stderr 保留到 `stderr`。
-- 缺失 result payload 报错。
-- timeout kill child 并报清晰错误。
+- 缺失、重复或无效 result payload 抛 `RuntimeWorkflowProtocolError`。
+- failed/aborted payload 抛 `RuntimeWorkflowError` 并保留完整 outcome。
+- timeout 先 SIGTERM 后 SIGKILL，抛出的错误保留 partial events 和 stderr。
 - temp files 在成功和失败后都清理。
 - named exports 和 default `runtime` object 都包含 workflow APIs。
 
@@ -908,3 +968,12 @@ task image:agent-compose-guest
 - workflow 进度首版主要服务 SDK 调用方和 CLI 用户，host 只保留外层 stdout/stderr/output 可观测性。
 - `agentType` 首版是 role hint，不是稳定 agent registry selector。
 - `budget.spent()` 首版是估算，不代表真实 token billing。
+
+## 关键设计依据
+
+- Node.js `AsyncLocalStorage` 用于在异步调用链中传播 scoped phase 和 invocation path：<https://nodejs.org/api/async_context.html#class-asynclocalstorage>。
+- Node.js VM 的同步 timeout 不能替代 workflow、provider 和 SDK 子进程的 abort/timeout 生命周期：<https://nodejs.org/api/vm.html#timeout-interactions-with-asynchronous-tasks-and-promises>。
+- Temporal 区分应用层 workflow identity 与每次物理 run identity，本方案据此保持历史 run 只读并为 resume 创建新 run：<https://docs.temporal.io/workflow-execution/workflowid-runid>。
+- Azure Durable Functions 将恢复描述为确定性 orchestrator replay；首版没有持久化 JavaScript continuation，因此明确限定为 replay 加 agent result memoization：<https://learn.microsoft.com/en-us/azure/azure-functions/durable/durable-functions-code-constraints>。
+- Canonical JSON hash 采用 RFC 8785 的确定性对象属性排序原则：<https://www.rfc-editor.org/rfc/rfc8785>。
+- worktree 的创建、删除和残留管理使用 Git 官方 `worktree add/remove/prune` 生命周期，不直接删除 linked worktree 目录：<https://git-scm.com/docs/git-worktree>。

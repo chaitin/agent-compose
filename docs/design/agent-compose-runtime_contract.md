@@ -824,13 +824,23 @@ host directly. The host still sees only the outer command cell's
 stdout/stderr/output and artifacts. `runtime.llm` calls the agent-compose
 `LLMService.Generate` Connect JSON endpoint.
 
-The current runtime CLI has only two host-dependent subcommands: `prompt` and
-`exec`. There is no `workflow` subcommand, `__WORKFLOW_RESULT__` stdout
-protocol, dedicated bridge token from scheduler to Node workflow, or context
-object that lets a Node workflow directly operate on scheduler state, events, or
-artifacts. Complex Node.js logic should be run through
-`agent-compose-runtime exec`, `scheduler.exec` / `scheduler.shell`, or ordinary
-workspace scripts, and composed with already implemented SDK APIs.
+The runtime CLI provides `prompt`, `exec`, and `workflow` host-dependent
+subcommands. `workflow` executes a restricted JavaScript orchestration script,
+writes one `__WORKFLOW_RESULT__` payload to stdout, and streams prefixed
+`__WORKFLOW_EVENT__` records on stderr alongside unprefixed provider transcript.
+The SDK exposes `runtime.workflow()` and `runtime.workflowFile()` and decodes
+those events incrementally.
+
+Workflow runs and child-agent records are guest-owned state below
+`<state-root>/workflows`; they are not daemon database records. Child agents use
+isolated provider session roots while system prompt, MPI, MCP, and skill
+configuration continue to come from the original state root. Existing prompt
+sessions keep the original state layout when no session-root override is
+provided, so upgrades require no state migration or copy.
+
+There is still no dedicated scheduler bridge token or context object that lets
+a Node workflow directly operate on scheduler state, scheduler events, or host
+artifacts. The host observes only the outer command output and artifacts.
 
 ### 12.1 SDK API
 

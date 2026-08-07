@@ -922,14 +922,16 @@ event publishing, and delegating work that needs sandbox capabilities to runtime
 sandboxes. The QJS layer is not intended to host complex Node.js workflows, npm
 dependencies, or long-running business logic.
 
-When full Node.js capabilities are needed, the current implementation calls
-workspace scripts inside the scheduler sandbox through `scheduler.exec` /
-`scheduler.shell`, or uses existing agent and LLM capabilities through
-`scheduler.agent` / `scheduler.llm`. Standalone `scheduler.run(file, input,
-options)`, runtime workflow context, workflow bridge token, and an
-`agent-compose-runtime workflow` subcommand are not part of the current API
-contract. Design documents should not present those draft interfaces as
-implemented capabilities.
+When full Node.js capabilities are needed, the scheduler calls workspace scripts
+inside its sandbox through `scheduler.exec` / `scheduler.shell`. Those Node.js
+scripts may use `runtime.workflow()` / `runtime.workflowFile()`, which invoke the
+implemented `agent-compose-runtime workflow` guest CLI. Workflow execution and
+progress remain guest-local; QJS does not become the workflow engine.
+
+Standalone `scheduler.run(file, input, options)`, a scheduler workflow context,
+and a dedicated workflow bridge token are not part of the API contract. A Node
+workflow cannot directly mutate scheduler state or publish scheduler events
+without using the existing explicit scheduler/runtime boundaries.
 
 `schedulers.Controller.Start()` starts the schedule loop and event loop during daemon
 background startup.

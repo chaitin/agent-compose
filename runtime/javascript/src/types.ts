@@ -15,7 +15,9 @@ export interface AgentResult {
 export interface RunnerOptions {
   provider: Provider;
   model?: string;
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
   stateRoot: string;
+  sessionRoot: string;
   workspace: string;
   home: string;
   runtimeRoot: string;

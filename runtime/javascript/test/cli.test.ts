@@ -3,10 +3,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProgram, isMainModule, main } from "../src/cli.js";
-import { COMMAND_RESULT_PREFIX, RESULT_PREFIX } from "../src/constants.js";
+import { COMMAND_RESULT_PREFIX, RESULT_PREFIX, WORKFLOW_RESULT_PREFIX } from "../src/constants.js";
 import * as commandModule from "../src/command.js";
 import * as promptModule from "../src/prompt.js";
 import * as streamModule from "../src/stream.js";
+import * as workflowModule from "../src/workflow/command.js";
 import { captureStdio, withTempSession } from "./helpers.js";
 
 describe("commander CLI", () => {
@@ -78,6 +79,65 @@ describe("commander CLI", () => {
     } finally {
       stdio.restore();
     }
+  });
+
+  it("prints the prefixed result for workflow command", async () => {
+    const runWorkflow = vi.spyOn(workflowModule, "runWorkflowCommand").mockResolvedValue({
+      runId: "run_cli",
+      status: "completed",
+      meta: { name: "cli", description: "CLI workflow" },
+      result: { ok: true },
+      phases: [],
+      logs: [],
+      agents: [],
+      agentCount: 0,
+      durationMs: 1,
+    });
+    const stdio = captureStdio();
+    try {
+      await createProgram({ exitOverride: true }).parseAsync([
+        "node",
+        "cli",
+        "workflow",
+        "--script-file",
+        "/tmp/workflow.js",
+        "--state-root",
+        "/data/state",
+        "--workspace",
+        "/data/workspace",
+        "--home",
+        "/data/home",
+        "--provider",
+        "claude",
+        "--model",
+        "claude-sonnet",
+        "--concurrency",
+        "4",
+        "--token-budget",
+        "1000",
+        "--run-id",
+        "run_cli",
+        "--resume-run-id",
+        "run_previous",
+      ]);
+    } finally {
+      stdio.restore();
+    }
+
+    expect(runWorkflow).toHaveBeenCalledWith({
+      scriptFile: "/tmp/workflow.js",
+      stateRoot: "/data/state",
+      workspace: "/data/workspace",
+      home: "/data/home",
+      provider: "claude",
+      model: "claude-sonnet",
+      concurrency: 4,
+      tokenBudget: 1000,
+      runId: "run_cli",
+      resumeRunId: "run_previous",
+      abortController: expect.any(AbortController),
+    });
+    expect(stdio.stdout).toBe(`${WORKFLOW_RESULT_PREFIX}{"runId":"run_cli","status":"completed","meta":{"name":"cli","description":"CLI workflow"},"result":{"ok":true},"phases":[],"logs":[],"agents":[],"agentCount":0,"durationMs":1}\n`);
   });
 
   it("rejects an empty prompt provider", async () => {
@@ -278,6 +338,8 @@ describe("commander CLI", () => {
         expect(runPrompt).toHaveBeenCalledWith("hello");
         expect(geminiSpy).toHaveBeenCalledWith(expect.objectContaining({
           provider: "gemini",
+          stateRoot,
+          sessionRoot: stateRoot,
           workspace: path.join(root, "workspace-from-env"),
           home: path.join(root, "home"),
           model: "models/gemini-test",
@@ -292,6 +354,47 @@ describe("commander CLI", () => {
           process.env.WORKSPACE = oldWorkspace;
         }
       }
+    });
+  });
+
+  it("keeps runtime configuration under stateRoot when sessionRoot is isolated", async () => {
+    await withTempSession(async (root) => {
+      const messageFile = path.join(root, "message.txt");
+      const stateRoot = path.join(root, "state");
+      const sessionRoot = path.join(root, "workflow-agent-state");
+      const systemPromptPath = path.join(stateRoot, "agents", "system-prompts", "system-prompt.txt");
+      await fs.mkdir(path.dirname(systemPromptPath), { recursive: true });
+      await fs.writeFile(messageFile, "task body", "utf8");
+      await fs.writeFile(systemPromptPath, "shared workflow identity", "utf8");
+
+      const runPrompt = vi.fn().mockResolvedValue({
+        provider: "codex",
+        threadId: "",
+        stopReason: "completed",
+        finalText: "ok",
+        transcript: "ok",
+        stderr: "",
+      });
+      const codexSpy = vi.spyOn(await import("../src/runners/codex.js"), "CodexRunner").mockImplementation(function mockCodex(this: unknown, options: unknown) {
+        Object.assign(this as object, { options, runPrompt });
+      } as never);
+      const { runPromptCommand } = await import("../src/prompt.js");
+
+      await runPromptCommand({
+        provider: "codex",
+        messageFile,
+        stateRoot,
+        sessionRoot,
+        workspace: path.join(root, "workspace"),
+        home: path.join(root, "home"),
+      });
+
+      expect(codexSpy).toHaveBeenCalledWith(expect.objectContaining({
+        stateRoot,
+        sessionRoot,
+        systemContext: expect.stringContaining("shared workflow identity"),
+      }));
+      await expect(fs.stat(sessionRoot)).rejects.toMatchObject({ code: "ENOENT" });
     });
   });
 

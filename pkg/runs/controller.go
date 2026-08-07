@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"agent-compose/pkg/capabilities"
 	appconfig "agent-compose/pkg/config"
@@ -221,17 +219,6 @@ type StreamSink struct {
 	SendChunk   func(runID string, chunk domain.ExecChunk, createdAt time.Time) error
 }
 
-type RunAttachReceiver func() (*agentcomposev2.AttachAgentRunRequest, error)
-type RunAttachSender func(*agentcomposev2.AttachAgentRunResponse) error
-
-func PrepareStreamingHeaders(headers http.Header) {
-	if headers == nil {
-		return
-	}
-	headers.Set("Cache-Control", "no-cache, no-transform")
-	headers.Set("X-Accel-Buffering", "no")
-}
-
 type StartedProjectRun struct {
 	Run      domain.ProjectRunRecord
 	Execute  func(context.Context, *StreamSink) (domain.ProjectRunRecord, error, error)
@@ -312,26 +299,25 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx context.Context, rece
 		}
 		return err
 	}
-	start := first.GetStart()
-	if start == nil {
+	if first.Kind != RunAttachInputStart {
 		return fmt.Errorf("%w: first run attach frame must be start", ErrInvalidRequest)
 	}
-	mode := start.GetMode()
-	req := runAgentRequestFromAttachStart(start)
+	mode := first.Mode
+	req := first.Request
 	commandText := strings.TrimSpace(req.Command)
-	if mode == agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_UNSPECIFIED && commandText != "" {
-		mode = agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_COMMAND
+	if mode == RunAttachModeUnspecified && commandText != "" {
+		mode = RunAttachModeCommand
 	}
-	if mode == agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_UNSPECIFIED && strings.TrimSpace(req.Prompt) != "" {
-		mode = agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_PROMPT
+	if mode == RunAttachModeUnspecified && strings.TrimSpace(req.Prompt) != "" {
+		mode = RunAttachModePrompt
 	}
-	if mode != agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_COMMAND && mode != agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_PROMPT {
+	if mode != RunAttachModeCommand && mode != RunAttachModePrompt {
 		return fmt.Errorf("%w: run attach command mode is required", ErrInvalidRequest)
 	}
-	if mode == agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_COMMAND && commandText == "" {
+	if mode == RunAttachModeCommand && commandText == "" {
 		return fmt.Errorf("%w: run attach command is required", ErrInvalidRequest)
 	}
-	if mode == agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_PROMPT && strings.TrimSpace(req.Prompt) == "" {
+	if mode == RunAttachModePrompt && strings.TrimSpace(req.Prompt) == "" {
 		return fmt.Errorf("%w: run attach prompt is required", ErrInvalidRequest)
 	}
 	started, err := c.StartProjectRun(ctx, req)
@@ -341,7 +327,7 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx context.Context, rece
 	if onStarted != nil {
 		onStarted(started.Run.RunID)
 	}
-	run, execErr, err := c.executeStartedProjectRunAttach(ctx, started.Run, req, started.Warnings, start, mode, receive, send)
+	run, execErr, err := c.executeStartedProjectRunAttach(ctx, started.Run, req, started.Warnings, first, mode, receive, send)
 	if err != nil {
 		return err
 	}
@@ -694,7 +680,7 @@ func (c *Controller) executeProjectRunCommand(ctx context.Context, run domain.Pr
 	return transition, nil
 }
 
-func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, run domain.ProjectRunRecord, req RunAgentRequest, warnings []string, start *agentcomposev2.AttachAgentRunStart, mode agentcomposev2.AttachRunMode, receive RunAttachReceiver, send RunAttachSender) (domain.ProjectRunRecord, error, error) {
+func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, run domain.ProjectRunRecord, req RunAgentRequest, warnings []string, start RunAttachInput, mode RunAttachMode, receive RunAttachReceiver, send RunAttachSender) (domain.ProjectRunRecord, error, error) {
 	coordinator := NewCoordinator(c.configDB, domain.StableProjectRunID)
 	commandText := strings.TrimSpace(req.Command)
 	transitionCtx := context.WithoutCancel(ctx)
@@ -727,7 +713,7 @@ func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, run dom
 	var transition TransitionRequest
 	var execErr error
 	switch mode {
-	case agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_PROMPT:
+	case RunAttachModePrompt:
 		transition, execErr = c.runPromptInteraction(ctx, coordinator, run, sandboxResult.Sandbox, req, start, receive, send)
 	default:
 		transition, execErr = c.runCommandInteraction(ctx, coordinator, run, sandboxResult.Sandbox, req, commandText, start, receive, send)
@@ -753,7 +739,7 @@ func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, run dom
 	return run, nil, nil
 }
 
-func (c *Controller) runCommandInteraction(ctx context.Context, coordinator *Coordinator, run domain.ProjectRunRecord, sandbox *domain.Sandbox, req RunAgentRequest, commandText string, start *agentcomposev2.AttachAgentRunStart, receive RunAttachReceiver, send RunAttachSender) (TransitionRequest, error) {
+func (c *Controller) runCommandInteraction(ctx context.Context, coordinator *Coordinator, run domain.ProjectRunRecord, sandbox *domain.Sandbox, req RunAgentRequest, commandText string, start RunAttachInput, receive RunAttachReceiver, send RunAttachSender) (TransitionRequest, error) {
 	artifactsDir := projectRunCommandArtifactsDir(run, sandbox)
 	logsPath := filepath.Join(artifactsDir, "transcript.txt")
 	transition := TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID, LogsPath: logsPath}
@@ -794,7 +780,6 @@ func (c *Controller) runCommandInteraction(ctx context.Context, coordinator *Coo
 		transition.Error = fmt.Sprintf("command execution failed: %v", err)
 		return transition, err
 	}
-	size := start.GetTerminalSize()
 	spec := driverpkg.RuntimeStartSpec{
 		OperationID: run.RunID,
 		Kind:        driverpkg.RuntimeOperationCommand,
@@ -807,10 +792,10 @@ func (c *Controller) runCommandInteraction(ctx context.Context, coordinator *Coo
 		},
 		Cwd:         c.config.GuestWorkspacePath,
 		Env:         execEnvMap(req.Env),
-		AttachStdin: start.GetAttachStdin(),
-		TTY:         start.GetTty(),
-		Rows:        size.GetRows(),
-		Cols:        size.GetCols(),
+		AttachStdin: start.AttachStdin,
+		TTY:         start.TTY,
+		Rows:        start.Rows,
+		Cols:        start.Cols,
 	}
 	interaction, err := interactionRuntime.OpenInteraction(ctx, sandbox, vmState, spec)
 	if err != nil {
@@ -847,8 +832,8 @@ func (c *Controller) runCommandInteraction(ctx context.Context, coordinator *Coo
 				return transition, err
 			}
 		case driverpkg.RuntimeOutputStdout, driverpkg.RuntimeOutputStderr:
-			stream := driverOutputStreamToRunProto(frame.Type)
-			chunk := domain.ExecChunk{Text: string(frame.Data), Stream: protoStreamToRunDomain(stream)}
+			stream := driverOutputStreamToRun(frame.Type)
+			chunk := domain.ExecChunk{Text: string(frame.Data), Stream: stream}
 			accumulator.WriteChunk(chunk)
 			offset, err := appendProjectRunLogChunk(logsPath, chunk)
 			if err != nil {
@@ -857,7 +842,7 @@ func (c *Controller) runCommandInteraction(ctx context.Context, coordinator *Coo
 				return transition, err
 			}
 			c.publishRunLogChunk(run.RunID, chunk, offset)
-			if err := send(runAttachOutputResponse(frame.Data, stream, start.GetTty())); err != nil {
+			if err := send(runAttachOutputResponse(frame.Data, stream, start.TTY)); err != nil {
 				transition.ExitCode = 1
 				transition.Error = fmt.Sprintf("command execution failed: %v", err)
 				return transition, err
@@ -896,7 +881,7 @@ func markProjectRunInteractionArtifacts(ctx context.Context, coordinator *Coordi
 	})
 }
 
-func (c *Controller) runPromptInteraction(ctx context.Context, coordinator *Coordinator, run domain.ProjectRunRecord, sandbox *domain.Sandbox, req RunAgentRequest, start *agentcomposev2.AttachAgentRunStart, receive RunAttachReceiver, send RunAttachSender) (transitionResult TransitionRequest, returnErr error) {
+func (c *Controller) runPromptInteraction(ctx context.Context, coordinator *Coordinator, run domain.ProjectRunRecord, sandbox *domain.Sandbox, req RunAgentRequest, _ RunAttachInput, receive RunAttachReceiver, send RunAttachSender) (transitionResult TransitionRequest, returnErr error) {
 	artifactsDir := projectRunCommandArtifactsDir(run, sandbox)
 	logsPath := filepath.Join(artifactsDir, "transcript.txt")
 	transition := TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID, LogsPath: logsPath}
@@ -1082,7 +1067,7 @@ func (c *Controller) runPromptInteraction(ctx context.Context, coordinator *Coor
 					transition.Error = fmt.Sprintf("agent execution failed: %v", err)
 					return transition, err
 				}
-				if resp.GetAgentTurnCompleted() != nil {
+				if resp.Kind == RunAttachOutputAgentTurnCompleted {
 					releasePromptTurn(turnReady)
 				}
 			}
@@ -1095,7 +1080,7 @@ func (c *Controller) runPromptInteraction(ctx context.Context, coordinator *Coor
 				transition.Error = fmt.Sprintf("agent execution failed: %v", err)
 				return transition, err
 			}
-			if err := send(runAttachOutputResponse(frame.Data, agentcomposev2.StdioStream_STDIO_STREAM_STDERR, false)); err != nil {
+			if err := send(runAttachOutputResponse(frame.Data, domain.StdioStderr, false)); err != nil {
 				transition.ExitCode = 1
 				transition.Error = fmt.Sprintf("agent execution failed: %v", err)
 				return transition, err
@@ -1266,43 +1251,6 @@ func transitionFromCommandResult(run domain.ProjectRunRecord, sandbox *domain.Sa
 	return req
 }
 
-func runAgentRequestFromAttachStart(start *agentcomposev2.AttachAgentRunStart) RunAgentRequest {
-	msg := start.GetRequest()
-	if msg == nil {
-		return RunAgentRequest{}
-	}
-	return RunAgentRequest{
-		ProjectID:        msg.GetProjectId(),
-		AgentName:        msg.GetAgentName(),
-		Prompt:           msg.GetPrompt(),
-		Command:          msg.GetCommand(),
-		Source:           projectRunSourceFromAttachProto(msg.GetSource()),
-		SchedulerID:      msg.GetSchedulerId(),
-		TriggerID:        msg.GetTriggerId(),
-		PayloadJSON:      msg.GetPayloadJson(),
-		ClientRequestID:  msg.GetClientRequestId(),
-		Env:              msg.GetEnv(),
-		SandboxID:        msg.GetSandboxId(),
-		Driver:           msg.GetDriver(),
-		OutputSchemaJSON: msg.GetOutputSchemaJson(),
-		CleanupPolicy:    msg.GetCleanupPolicy(),
-		Jupyter:          msg.GetJupyter(),
-	}
-}
-
-func projectRunSourceFromAttachProto(source agentcomposev2.RunSource) string {
-	switch source {
-	case agentcomposev2.RunSource_RUN_SOURCE_SCHEDULER:
-		return domain.ProjectRunSourceScheduler
-	case agentcomposev2.RunSource_RUN_SOURCE_API:
-		return domain.ProjectRunSourceAPI
-	case agentcomposev2.RunSource_RUN_SOURCE_MANUAL:
-		return domain.ProjectRunSourceManual
-	default:
-		return domain.ProjectRunSourceManual
-	}
-}
-
 func transitionFromRuntimeResult(run domain.ProjectRunRecord, sandbox *domain.Sandbox, commandText, logsPath string, accumulated domain.ExecResult, result driverpkg.RuntimeResult, execErr error) TransitionRequest {
 	accumulated.ExitCode = result.ExitCode
 	accumulated.Success = result.Success
@@ -1384,19 +1332,18 @@ func pumpRunAttachInput(receive RunAttachReceiver, interaction driverpkg.Runtime
 	}
 }
 
-func runtimeInputFrameFromRunAttach(req *agentcomposev2.AttachAgentRunRequest) (driverpkg.RuntimeInputFrame, bool) {
-	switch frame := req.GetFrame().(type) {
-	case *agentcomposev2.AttachAgentRunRequest_Stdin:
-		return driverpkg.RuntimeInputFrame{Type: driverpkg.RuntimeInputStdin, Data: frame.Stdin.GetData()}, true
-	case *agentcomposev2.AttachAgentRunRequest_StdinEof:
+func runtimeInputFrameFromRunAttach(req RunAttachInput) (driverpkg.RuntimeInputFrame, bool) {
+	switch req.Kind {
+	case RunAttachInputStdin:
+		return driverpkg.RuntimeInputFrame{Type: driverpkg.RuntimeInputStdin, Data: req.Data}, true
+	case RunAttachInputStdinEOF:
 		return driverpkg.RuntimeInputFrame{Type: driverpkg.RuntimeInputStdinEOF}, true
-	case *agentcomposev2.AttachAgentRunRequest_Resize:
-		size := frame.Resize.GetTerminalSize()
-		return driverpkg.RuntimeInputFrame{Type: driverpkg.RuntimeInputResize, Rows: size.GetRows(), Cols: size.GetCols()}, true
-	case *agentcomposev2.AttachAgentRunRequest_Signal:
-		return driverpkg.RuntimeInputFrame{Type: driverpkg.RuntimeInputSignal, Signal: driverpkg.RuntimeSignal(strings.TrimSpace(frame.Signal.GetSignal()))}, true
-	case *agentcomposev2.AttachAgentRunRequest_Cancel:
-		return driverpkg.RuntimeInputFrame{Type: driverpkg.RuntimeInputCancel, Message: frame.Cancel.GetReason()}, true
+	case RunAttachInputResize:
+		return driverpkg.RuntimeInputFrame{Type: driverpkg.RuntimeInputResize, Rows: req.Rows, Cols: req.Cols}, true
+	case RunAttachInputSignal:
+		return driverpkg.RuntimeInputFrame{Type: driverpkg.RuntimeInputSignal, Signal: driverpkg.RuntimeSignal(strings.TrimSpace(req.Signal))}, true
+	case RunAttachInputCancel:
+		return driverpkg.RuntimeInputFrame{Type: driverpkg.RuntimeInputCancel, Message: req.Reason}, true
 	default:
 		return driverpkg.RuntimeInputFrame{}, false
 	}
@@ -1466,22 +1413,20 @@ func pumpRunPromptAttachInput(ctx context.Context, receive RunAttachReceiver, in
 			_ = input.EOF()
 			return
 		}
-		switch frame := req.GetFrame().(type) {
-		case *agentcomposev2.AttachAgentRunRequest_HumanMessage:
-			text := frame.HumanMessage.GetText()
-			if !forwardPromptHumanMessage(ctx, input, turnReady, text, req.GetClientFrameId(), onHumanMessage) {
+		switch req.Kind {
+		case RunAttachInputHumanMessage:
+			if !forwardPromptHumanMessage(ctx, input, turnReady, req.Text, req.ClientFrameID, onHumanMessage) {
 				return
 			}
-		case *agentcomposev2.AttachAgentRunRequest_Stdin:
-			text := string(frame.Stdin.GetData())
-			if !forwardPromptHumanMessage(ctx, input, turnReady, text, req.GetClientFrameId(), onHumanMessage) {
+		case RunAttachInputStdin:
+			if !forwardPromptHumanMessage(ctx, input, turnReady, string(req.Data), req.ClientFrameID, onHumanMessage) {
 				return
 			}
-		case *agentcomposev2.AttachAgentRunRequest_StdinEof:
+		case RunAttachInputStdinEOF:
 			_ = input.EOF()
 			return
-		case *agentcomposev2.AttachAgentRunRequest_Cancel:
-			_ = input.Cancel(frame.Cancel.GetReason())
+		case RunAttachInputCancel:
+			_ = input.Cancel(req.Reason)
 			return
 		default:
 			_ = input.Cancel("invalid run prompt attach frame")
@@ -1548,7 +1493,7 @@ func newPromptAttachProjector(run domain.ProjectRunRecord, sandbox *domain.Sandb
 	}
 }
 
-func (p *promptAttachProjector) Project(data []byte) ([]*agentcomposev2.AttachAgentRunResponse, *TransitionRequest, error) {
+func (p *promptAttachProjector) Project(data []byte) ([]RunAttachOutput, *TransitionRequest, error) {
 	p.buffer = append(p.buffer, data...)
 	lines := make([][]byte, 0)
 	for {
@@ -1562,7 +1507,7 @@ func (p *promptAttachProjector) Project(data []byte) ([]*agentcomposev2.AttachAg
 			lines = append(lines, line)
 		}
 	}
-	var responses []*agentcomposev2.AttachAgentRunResponse
+	var responses []RunAttachOutput
 	var transition *TransitionRequest
 	for _, line := range lines {
 		nextResponses, nextTransition, err := p.projectLine(line)
@@ -1577,7 +1522,7 @@ func (p *promptAttachProjector) Project(data []byte) ([]*agentcomposev2.AttachAg
 	return responses, transition, nil
 }
 
-func (p *promptAttachProjector) projectLine(line []byte) ([]*agentcomposev2.AttachAgentRunResponse, *TransitionRequest, error) {
+func (p *promptAttachProjector) projectLine(line []byte) ([]RunAttachOutput, *TransitionRequest, error) {
 	var frame struct {
 		Type            string                      `json:"type"`
 		Event           json.RawMessage             `json:"event"`
@@ -1595,13 +1540,13 @@ func (p *promptAttachProjector) projectLine(line []byte) ([]*agentcomposev2.Atta
 	}
 	switch frame.Type {
 	case "started":
-		return []*agentcomposev2.AttachAgentRunResponse{runAttachAgentEventResponse("started", "", string(line))}, nil, nil
+		return []RunAttachOutput{runAttachAgentEventResponse("started", "", string(line))}, nil, nil
 	case "agent_event":
 		name, text := p.agentEventText(frame.Event)
 		if err := p.appendLogText(text); err != nil {
 			return nil, nil, err
 		}
-		return []*agentcomposev2.AttachAgentRunResponse{runAttachAgentEventResponse(firstNonEmpty(name, "agent_event"), text, string(frame.Event))}, nil, nil
+		return []RunAttachOutput{runAttachAgentEventResponse(firstNonEmpty(name, "agent_event"), text, string(frame.Event))}, nil, nil
 	case "agent_turn_completed":
 		if err := p.appendLogFinalText(frame.FinalText); err != nil {
 			return nil, nil, err
@@ -1609,7 +1554,7 @@ func (p *promptAttachProjector) projectLine(line []byte) ([]*agentcomposev2.Atta
 		if err := p.appendAssistantEvent(line, frame.Seq, agentTurnProjection{FinalText: frame.FinalText, FinalTextSource: frame.FinalTextSource, Provider: frame.Provider, StopReason: frame.StopReason}); err != nil {
 			return nil, nil, err
 		}
-		return []*agentcomposev2.AttachAgentRunResponse{runAttachAgentTurnCompletedResponse(p.run, string(line), warningsFromRun(p.run))}, nil, nil
+		return []RunAttachOutput{runAttachAgentTurnCompletedResponse(p.run, string(line), warningsFromRun(p.run))}, nil, nil
 	case "result":
 		if err := p.appendLogFinalText(frame.FinalText); err != nil {
 			return nil, nil, err
@@ -1620,9 +1565,9 @@ func (p *promptAttachProjector) projectLine(line []byte) ([]*agentcomposev2.Atta
 	case "error":
 		message := firstNonEmpty(frame.Message, "runtime stream error")
 		transition := transitionFromPromptWrapperResult(p.run, p.sandbox, p.logsPath, line, "", frame.StopReason, message)
-		return []*agentcomposev2.AttachAgentRunResponse{runAttachErrorResponse(firstNonEmpty(frame.Code, "runtime_stream_error"), message, true)}, &transition, nil
+		return []RunAttachOutput{runAttachErrorResponse(firstNonEmpty(frame.Code, "runtime_stream_error"), message, true)}, &transition, nil
 	default:
-		return []*agentcomposev2.AttachAgentRunResponse{runAttachAgentEventResponse(firstNonEmpty(frame.Type, "agent_event"), "", string(line))}, nil, nil
+		return []RunAttachOutput{runAttachAgentEventResponse(firstNonEmpty(frame.Type, "agent_event"), "", string(line))}, nil, nil
 	}
 }
 
@@ -1830,96 +1775,32 @@ func bytesIndexByte(data []byte, needle byte) int {
 	return -1
 }
 
-func runAttachStartedResponse(run domain.ProjectRunRecord, sandbox *domain.Sandbox, warnings []string, startedAt time.Time) *agentcomposev2.AttachAgentRunResponse {
-	resp := newAttachAgentRunResponse()
-	if !startedAt.IsZero() {
-		resp.CreatedAt = timestamppb.New(startedAt)
-	}
-	resp.Frame = &agentcomposev2.AttachAgentRunResponse_Started{Started: &agentcomposev2.AttachStarted{
-		OperationId: run.RunID,
-		RunId:       run.RunID,
-		SandboxId:   sandbox.Summary.ID,
-		Run:         projectRunSummaryForAttach(run),
-		Warnings:    append([]string(nil), warnings...),
-	}}
-	return resp
+func runAttachStartedResponse(run domain.ProjectRunRecord, sandbox *domain.Sandbox, warnings []string, startedAt time.Time) RunAttachOutput {
+	return RunAttachOutput{Kind: RunAttachOutputStarted, CreatedAt: startedAt, Run: run, SandboxID: sandbox.Summary.ID, Warnings: append([]string(nil), warnings...)}
 }
 
-func runAttachOutputResponse(data []byte, stream agentcomposev2.StdioStream, tty bool) *agentcomposev2.AttachAgentRunResponse {
-	resp := newAttachAgentRunResponse()
-	resp.Frame = &agentcomposev2.AttachAgentRunResponse_Output{Output: &agentcomposev2.AttachOutput{
-		Data:   append([]byte(nil), data...),
-		Stream: stream,
-		Tty:    tty,
-		Transcript: &agentcomposev2.TranscriptEvent{
-			Stream:    stream,
-			Text:      string(data),
-			CreatedAt: resp.CreatedAt,
-		},
-	}}
-	return resp
+func runAttachOutputResponse(data []byte, stream domain.StdioStream, tty bool) RunAttachOutput {
+	return RunAttachOutput{Kind: RunAttachOutputData, CreatedAt: time.Now().UTC(), Data: append([]byte(nil), data...), Stream: stream, TTY: tty}
 }
 
-func runAttachAgentEventResponse(name, text, payloadJSON string) *agentcomposev2.AttachAgentRunResponse {
-	resp := newAttachAgentRunResponse()
-	resp.Frame = &agentcomposev2.AttachAgentRunResponse_AgentEvent{AgentEvent: &agentcomposev2.AttachAgentEvent{
-		Name:        name,
-		Text:        text,
-		PayloadJson: payloadJSON,
-		CreatedAt:   resp.CreatedAt,
-	}}
-	return resp
+func runAttachAgentEventResponse(name, text, payloadJSON string) RunAttachOutput {
+	return RunAttachOutput{Kind: RunAttachOutputAgentEvent, CreatedAt: time.Now().UTC(), Name: name, Text: text, PayloadJSON: payloadJSON}
 }
 
-func runAttachAgentTurnCompletedResponse(run domain.ProjectRunRecord, resultJSON string, warnings []string) *agentcomposev2.AttachAgentRunResponse {
-	resp := newAttachAgentRunResponse()
-	resp.Frame = &agentcomposev2.AttachAgentRunResponse_AgentTurnCompleted{AgentTurnCompleted: &agentcomposev2.AttachAgentTurnCompleted{
-		RunId:      run.RunID,
-		ResultJson: resultJSON,
-		Warnings:   append([]string(nil), warnings...),
-	}}
-	return resp
+func runAttachAgentTurnCompletedResponse(run domain.ProjectRunRecord, resultJSON string, warnings []string) RunAttachOutput {
+	return RunAttachOutput{Kind: RunAttachOutputAgentTurnCompleted, CreatedAt: time.Now().UTC(), Run: run, ResultJSON: resultJSON, Warnings: append([]string(nil), warnings...)}
 }
 
-func runAttachResultResponse(run domain.ProjectRunRecord, transition TransitionRequest, success bool) *agentcomposev2.AttachAgentRunResponse {
-	resp := newAttachAgentRunResponse()
-	resp.Frame = &agentcomposev2.AttachAgentRunResponse_Result{Result: &agentcomposev2.AttachResult{
-		ExitCode:   int32(transition.ExitCode),
-		Success:    success,
-		Run:        projectRunSummaryForAttach(run),
-		Output:     transition.Output,
-		ResultJson: transition.ResultJSON,
-		Error:      transition.Error,
-	}}
-	return resp
+func runAttachResultResponse(run domain.ProjectRunRecord, transition TransitionRequest, success bool) RunAttachOutput {
+	return RunAttachOutput{Kind: RunAttachOutputResult, CreatedAt: time.Now().UTC(), Run: run, ExitCode: transition.ExitCode, Success: success, Output: transition.Output, ResultJSON: transition.ResultJSON, Error: transition.Error}
 }
 
-func runAttachErrorResponse(code, message string, terminal bool) *agentcomposev2.AttachAgentRunResponse {
-	resp := newAttachAgentRunResponse()
-	resp.Frame = &agentcomposev2.AttachAgentRunResponse_Error{Error: &agentcomposev2.AttachError{
-		Code:     code,
-		Message:  message,
-		Terminal: terminal,
-	}}
-	return resp
+func runAttachErrorResponse(code, message string, terminal bool) RunAttachOutput {
+	return RunAttachOutput{Kind: RunAttachOutputError, CreatedAt: time.Now().UTC(), Code: code, Error: message, Terminal: terminal}
 }
 
-func newAttachAgentRunResponse() *agentcomposev2.AttachAgentRunResponse {
-	return &agentcomposev2.AttachAgentRunResponse{
-		ServerFrameId: uuid.NewString(),
-		CreatedAt:     timestamppb.Now(),
-	}
-}
-
-func driverOutputStreamToRunProto(frameType driverpkg.RuntimeOutputFrameType) agentcomposev2.StdioStream {
+func driverOutputStreamToRun(frameType driverpkg.RuntimeOutputFrameType) domain.StdioStream {
 	if frameType == driverpkg.RuntimeOutputStderr {
-		return agentcomposev2.StdioStream_STDIO_STREAM_STDERR
-	}
-	return agentcomposev2.StdioStream_STDIO_STREAM_STDOUT
-}
-
-func protoStreamToRunDomain(stream agentcomposev2.StdioStream) domain.StdioStream {
-	if stream == agentcomposev2.StdioStream_STDIO_STREAM_STDERR {
 		return domain.StdioStderr
 	}
 	return domain.StdioStdout
@@ -1927,35 +1808,6 @@ func protoStreamToRunDomain(stream agentcomposev2.StdioStream) domain.StdioStrea
 
 func warningsFromRun(run domain.ProjectRunRecord) []string {
 	return append([]string(nil), run.Warnings...)
-}
-
-func projectRunSummaryForAttach(run domain.ProjectRunRecord) *agentcomposev2.RunSummary {
-	return &agentcomposev2.RunSummary{
-		RunId:       run.RunID,
-		ProjectId:   run.ProjectID,
-		ProjectName: run.ProjectName,
-		AgentName:   run.AgentName,
-		Status:      projectRunStatusForAttach(run.Status),
-		SandboxId:   run.SandboxID,
-		Warnings:    append([]string(nil), run.Warnings...),
-	}
-}
-
-func projectRunStatusForAttach(status string) agentcomposev2.RunStatus {
-	switch NormalizeStatus(status) {
-	case domain.ProjectRunStatusPending:
-		return agentcomposev2.RunStatus_RUN_STATUS_PENDING
-	case domain.ProjectRunStatusRunning:
-		return agentcomposev2.RunStatus_RUN_STATUS_RUNNING
-	case domain.ProjectRunStatusSucceeded:
-		return agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED
-	case domain.ProjectRunStatusFailed:
-		return agentcomposev2.RunStatus_RUN_STATUS_FAILED
-	case domain.ProjectRunStatusCanceled:
-		return agentcomposev2.RunStatus_RUN_STATUS_CANCELED
-	default:
-		return agentcomposev2.RunStatus_RUN_STATUS_UNSPECIFIED
-	}
 }
 
 func projectRunCommandArtifactsDir(run domain.ProjectRunRecord, sandbox *domain.Sandbox) string {

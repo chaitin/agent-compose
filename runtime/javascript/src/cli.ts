@@ -5,11 +5,12 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { runExecCommand } from "./command.js";
-import { COMMAND_RESULT_PREFIX, RESULT_PREFIX } from "./constants.js";
+import { COMMAND_RESULT_PREFIX, RESULT_PREFIX, WORKFLOW_RESULT_PREFIX } from "./constants.js";
 import { formatError } from "./errors.js";
 import { runPromptCommand } from "./prompt.js";
 import { runStreamCommand } from "./stream.js";
 import { RuntimeShutdownController } from "./shutdown.js";
+import { runWorkflowCommand } from "./workflow/command.js";
 
 function collectRepeated(value: string, previous: string[] = []): string[] {
   return [...previous, value];
@@ -55,6 +56,41 @@ export function createProgram(options: { exitOverride?: boolean } = {}): Command
     });
 
   program
+    .command("workflow")
+    .requiredOption("--script-file <path>", "workflow JavaScript file path")
+    .option("--args-file <path>", "workflow arguments JSON file path")
+    .option("--state-root <path>", "agent-compose runtime state root")
+    .option("--workspace <path>", "workflow working directory")
+    .option("--home <path>", "workflow HOME directory")
+    .option("--provider <provider>", "default agent provider", "codex")
+    .option("--model <model>", "default agent model")
+    .option("--concurrency <n>", "maximum concurrent agents", parseNumberOption)
+    .option("--token-budget <n>", "estimated workflow result token budget", parseNumberOption)
+    .option("--run-id <id>", "new workflow run ID")
+    .option("--resume-run-id <id>", "read-only workflow run to resume from")
+    .action(async (commandOptions: {
+      scriptFile: string;
+      argsFile?: string;
+      stateRoot?: string;
+      workspace?: string;
+      home?: string;
+      provider?: string;
+      model?: string;
+      concurrency?: number;
+      tokenBudget?: number;
+      runId?: string;
+      resumeRunId?: string;
+    }) => {
+      const shutdown = new RuntimeShutdownController();
+      try {
+        const result = await runWorkflowCommand({ ...commandOptions, abortController: shutdown.abortController });
+        process.stdout.write(`${WORKFLOW_RESULT_PREFIX}${JSON.stringify(result)}\n`);
+      } finally {
+        shutdown.dispose();
+      }
+    });
+
+  program
     .command("exec")
     .requiredOption("--request-file <path>", "command request JSON file path")
     .option("--state-root <path>", "agent-compose runtime state root")
@@ -88,6 +124,14 @@ export function createProgram(options: { exitOverride?: boolean } = {}): Command
     });
 
   return program;
+}
+
+function parseNumberOption(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`expected a finite number, received: ${value}`);
+  }
+  return parsed;
 }
 
 export async function main(argv = process.argv): Promise<void> {

@@ -48,7 +48,7 @@ type ExecInteractionRuntime interface {
 type ExecRuntimeResolver func(*domain.Sandbox) (ExecRuntime, error)
 
 type ExecRunAttachDelegate interface {
-	RunProjectCommandAttach(context.Context, runs.RunAttachReceiver, runs.RunAttachSender) error
+	RunProjectCommandAttach(context.Context, func() (*agentcomposev2.AttachAgentRunRequest, error), runs.RunAttachSender) error
 }
 
 type ExecHandler struct {
@@ -242,8 +242,8 @@ func (h *ExecHandler) execPromptAttach(ctx context.Context, start *agentcomposev
 		}},
 	}
 	receiver := newExecPromptRunAttachReceiver(initial, receive)
-	return h.runAttach.RunProjectCommandAttach(ctx, receiver.Receive, func(resp *agentcomposev2.AttachAgentRunResponse) error {
-		return send(execAttachResponseFromRunAttach(resp))
+	return h.runAttach.RunProjectCommandAttach(ctx, receiver.Receive, func(output runs.RunAttachOutput) error {
+		return send(execAttachResponseFromRunAttach(RunAttachOutputToProto(output)))
 	})
 }
 

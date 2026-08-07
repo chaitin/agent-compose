@@ -51,6 +51,7 @@ func TestTranscriptEventFromExecChunkMapsStdioStream(t *testing.T) {
 }
 
 func TestPrepareStreamingHeadersPreservesNoTransform(t *testing.T) {
+	PrepareStreamingHeaders(nil)
 	headers := http.Header{}
 	PrepareStreamingHeaders(headers)
 	if got, want := headers.Get("Cache-Control"), "no-cache, no-transform"; got != want {
@@ -1175,7 +1176,7 @@ type apiExecPromptRunAttachDelegate struct {
 	human *agentcomposev2.AttachHumanMessage
 }
 
-func (d *apiExecPromptRunAttachDelegate) RunProjectCommandAttach(_ context.Context, receive runs.RunAttachReceiver, send runs.RunAttachSender) error {
+func (d *apiExecPromptRunAttachDelegate) RunProjectCommandAttach(_ context.Context, receive func() (*agentcomposev2.AttachAgentRunRequest, error), send runs.RunAttachSender) error {
 	first, err := receive()
 	if err != nil {
 		return err
@@ -1186,10 +1187,10 @@ func (d *apiExecPromptRunAttachDelegate) RunProjectCommandAttach(_ context.Conte
 		return err
 	}
 	d.human = second.GetHumanMessage()
-	if err := send(&agentcomposev2.AttachAgentRunResponse{Frame: &agentcomposev2.AttachAgentRunResponse_AgentEvent{AgentEvent: &agentcomposev2.AttachAgentEvent{Text: "agent says hi"}}}); err != nil {
+	if err := send(runs.RunAttachOutput{Kind: runs.RunAttachOutputAgentEvent, Text: "agent says hi"}); err != nil {
 		return err
 	}
-	return send(&agentcomposev2.AttachAgentRunResponse{Frame: &agentcomposev2.AttachAgentRunResponse_Result{Result: &agentcomposev2.AttachResult{Success: true}}})
+	return send(runs.RunAttachOutput{Kind: runs.RunAttachOutputResult, Success: true})
 }
 
 type apiExecRuntime struct {

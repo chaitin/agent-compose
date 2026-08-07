@@ -74,6 +74,7 @@ export class GeminiRunner {
 
     const child = spawn("gemini", [
       "-p", userPrompt,
+      ...(this.options.model ? ["--model", this.options.model] : []),
       "--output-format", "stream-json",
       "--approval-mode", "yolo",
     ], {

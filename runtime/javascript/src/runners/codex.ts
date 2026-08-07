@@ -55,6 +55,9 @@ export class CodexRunner {
   }
 
   threadOptions(): Record<string, unknown> {
+    if (this.options.effort === "max") {
+      throw new Error("Codex runner does not support reasoning effort max");
+    }
     return {
       workingDirectory: this.options.workspace,
       additionalDirectories: uniqueDirectories([this.options.stateRoot, this.options.home, this.options.runtimeRoot]),
@@ -62,6 +65,8 @@ export class CodexRunner {
       sandboxMode: "danger-full-access",
       approvalPolicy: "never",
       networkAccessEnabled: true,
+      ...(this.options.model ? { model: this.options.model } : {}),
+      ...(this.options.effort ? { modelReasoningEffort: this.options.effort } : {}),
     };
   }
 
@@ -198,7 +203,7 @@ export class CodexRunner {
 
   async runPrompt(promptText: string): Promise<AgentResult> {
     const { Codex } = await import("@openai/codex-sdk");
-    const stored = await readStoredThread(this.options.stateRoot, "codex");
+    const stored = await readStoredThread(this.options.sessionRoot, "codex");
     const codex = new Codex({
       codexPathOverride: resolveCodexPath(),
       env: stringEnv(),
@@ -260,7 +265,7 @@ export class CodexRunner {
     }
     if (result.threadId) {
       await writeStoredThread(
-        this.options.stateRoot,
+        this.options.sessionRoot,
         "codex",
         result.threadId,
         new Date(),

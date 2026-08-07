@@ -95,6 +95,8 @@ export class ClaudeRunner {
       forwardSubagentText: true,
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
+      ...(this.options.model ? { model: this.options.model } : {}),
+      ...(this.options.effort ? { effort: this.options.effort } : {}),
       resume: stored?.threadId,
       ...(mcpServers ? {
         mcpServers,
@@ -189,7 +191,7 @@ export class ClaudeRunner {
 
   async runPrompt(promptText: string): Promise<AgentResult> {
     const { query: claudeQuery } = await import("@anthropic-ai/claude-agent-sdk");
-    const stored = await readStoredThread(this.options.stateRoot, "claude");
+    const stored = await readStoredThread(this.options.sessionRoot, "claude");
     const stream = claudeQuery({
       prompt: promptText,
       options: this.queryOptions(stored),
@@ -293,7 +295,7 @@ export class ClaudeRunner {
       result.finalTextSource = "transcript_fallback";
     }
     if (result.threadId) {
-      await writeStoredThread(this.options.stateRoot, "claude", result.threadId);
+      await writeStoredThread(this.options.sessionRoot, "claude", result.threadId);
     }
     return result;
   }

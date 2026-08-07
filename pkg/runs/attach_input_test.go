@@ -10,7 +10,6 @@ import (
 	"time"
 
 	driverpkg "agent-compose/pkg/driver"
-	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
 func TestAttachInputPumpsCloseRuntimeInputOnReceiveError(t *testing.T) {
@@ -18,8 +17,8 @@ func TestAttachInputPumpsCloseRuntimeInputOnReceiveError(t *testing.T) {
 
 	t.Run("command", func(t *testing.T) {
 		interaction := &closingRuntimeInteraction{}
-		pumpRunAttachInput(func() (*agentcomposev2.AttachAgentRunRequest, error) {
-			return nil, receiveErr
+		pumpRunAttachInput(func() (RunAttachInput, error) {
+			return RunAttachInput{}, receiveErr
 		}, interaction)
 		if interaction.closeCalls != 1 {
 			t.Fatalf("CloseSend calls = %d, want 1", interaction.closeCalls)
@@ -29,8 +28,8 @@ func TestAttachInputPumpsCloseRuntimeInputOnReceiveError(t *testing.T) {
 	t.Run("prompt", func(t *testing.T) {
 		interaction := &closingRuntimeInteraction{}
 		input := &promptWrapperInput{interaction: interaction}
-		pumpRunPromptAttachInput(context.Background(), func() (*agentcomposev2.AttachAgentRunRequest, error) {
-			return nil, receiveErr
+		pumpRunPromptAttachInput(context.Background(), func() (RunAttachInput, error) {
+			return RunAttachInput{}, receiveErr
 		}, input, nil, nil)
 		if interaction.closeCalls != 1 {
 			t.Fatalf("CloseSend calls = %d, want 1", interaction.closeCalls)
@@ -42,7 +41,7 @@ func TestAttachInputPumpsCloseRuntimeInputOnReceiveError(t *testing.T) {
 }
 
 func TestPromptAttachInputWaitsForCompletedTurnBeforeForwardingQueuedMessages(t *testing.T) {
-	requests := make(chan *agentcomposev2.AttachAgentRunRequest, 2)
+	requests := make(chan RunAttachInput, 2)
 	received := make(chan struct{}, 2)
 	interaction := newObservedRuntimeInteraction()
 	input := &promptWrapperInput{interaction: interaction}
@@ -51,10 +50,10 @@ func TestPromptAttachInputWaitsForCompletedTurnBeforeForwardingQueuedMessages(t 
 
 	go func() {
 		defer close(done)
-		pumpRunPromptAttachInput(context.Background(), func() (*agentcomposev2.AttachAgentRunRequest, error) {
+		pumpRunPromptAttachInput(context.Background(), func() (RunAttachInput, error) {
 			req, ok := <-requests
 			if !ok {
-				return nil, io.EOF
+				return RunAttachInput{}, io.EOF
 			}
 			received <- struct{}{}
 			return req, nil
@@ -88,7 +87,7 @@ func TestPromptAttachInputWaitsForCompletedTurnBeforeForwardingQueuedMessages(t 
 
 func TestPromptAttachInputCancellationUnblocksTurnWait(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	requests := make(chan *agentcomposev2.AttachAgentRunRequest, 1)
+	requests := make(chan RunAttachInput, 1)
 	received := make(chan struct{}, 1)
 	interaction := newObservedRuntimeInteraction()
 	input := &promptWrapperInput{interaction: interaction}
@@ -96,7 +95,7 @@ func TestPromptAttachInputCancellationUnblocksTurnWait(t *testing.T) {
 
 	go func() {
 		defer close(done)
-		pumpRunPromptAttachInput(ctx, func() (*agentcomposev2.AttachAgentRunRequest, error) {
+		pumpRunPromptAttachInput(ctx, func() (RunAttachInput, error) {
 			req := <-requests
 			received <- struct{}{}
 			return req, nil
@@ -117,10 +116,8 @@ func TestPromptAttachInputCancellationUnblocksTurnWait(t *testing.T) {
 	}
 }
 
-func humanMessageAttachRequest(message string) *agentcomposev2.AttachAgentRunRequest {
-	return &agentcomposev2.AttachAgentRunRequest{Frame: &agentcomposev2.AttachAgentRunRequest_HumanMessage{
-		HumanMessage: &agentcomposev2.AttachHumanMessage{Text: message},
-	}}
+func humanMessageAttachRequest(message string) RunAttachInput {
+	return RunAttachInput{Kind: RunAttachInputHumanMessage, Text: message}
 }
 
 func receiveRuntimeInputFrame(t *testing.T, frames <-chan driverpkg.RuntimeInputFrame) driverpkg.RuntimeInputFrame {

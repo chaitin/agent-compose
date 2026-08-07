@@ -12,6 +12,24 @@ export type { RuntimeReportWriteOptions } from "./report.js";
 export type { RuntimeJsonSchema, RuntimeOutputSchema } from "./schema.js";
 export { ssh } from "./ssh.js";
 export type { RuntimeSshConfig, RuntimeSshPrepareOptions } from "./ssh.js";
+export {
+  RuntimeWorkflowError,
+  RuntimeWorkflowProtocolError,
+  RuntimeWorkflowTimeoutError,
+  workflow,
+  workflowFile,
+} from "./workflow.js";
+export type {
+  RuntimeWorkflowAborted,
+  RuntimeWorkflowAgent,
+  RuntimeWorkflowCompleted,
+  RuntimeWorkflowEvent,
+  RuntimeWorkflowFailed,
+  RuntimeWorkflowMeta,
+  RuntimeWorkflowOptions,
+  RuntimeWorkflowOutcome,
+  RuntimeWorkflowResult,
+} from "./workflow.js";
 
 import { agent } from "./agent.js";
 import { env, paths } from "./env.js";
@@ -20,6 +38,7 @@ import { llm } from "./llm.js";
 import { log } from "./log.js";
 import { report } from "./report.js";
 import { ssh } from "./ssh.js";
+import { workflow, workflowFile } from "./workflow.js";
 
 export const runtime = {
   exec,
@@ -31,6 +50,8 @@ export const runtime = {
   log,
   report,
   ssh,
+  workflow,
+  workflowFile,
 };
 
 export default runtime;

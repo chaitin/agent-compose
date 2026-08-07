@@ -27,9 +27,9 @@ export class PiRunner {
     if (this.options.outputSchema) {
       throw new Error("structured JSON output is not supported by pi runner");
     }
-    const stored = await readStoredThread(this.options.stateRoot, "pi");
-    const sessionDir = path.join(this.options.stateRoot, "agents", "providers", "pi", "sessions");
-    const tempRoot = path.join(this.options.stateRoot, "agents", "providers", "pi", "tmp");
+    const stored = await readStoredThread(this.options.sessionRoot, "pi");
+    const sessionDir = path.join(this.options.sessionRoot, "agents", "providers", "pi", "sessions");
+    const tempRoot = path.join(this.options.sessionRoot, "agents", "providers", "pi", "tmp");
     await fs.mkdir(sessionDir, { recursive: true });
     await fs.mkdir(tempRoot, { recursive: true });
     const invocationDir = await fs.mkdtemp(path.join(tempRoot, "prompt-"));
@@ -111,7 +111,7 @@ export class PiRunner {
         result.finalTextSource = "transcript_fallback";
       }
       if (result.threadId) {
-        await writeStoredThread(this.options.stateRoot, "pi", result.threadId);
+        await writeStoredThread(this.options.sessionRoot, "pi", result.threadId);
       }
       return result;
     } finally {

@@ -74,7 +74,7 @@ export class CodexInteractiveSession implements InteractiveSession {
 
   async start(): Promise<void> {
     const { Codex } = await import("@openai/codex-sdk");
-    const stored = await readStoredThread(this.options.stateRoot, "codex");
+    const stored = await readStoredThread(this.options.sessionRoot, "codex");
     const codex = new Codex({
       codexPathOverride: resolveCodexPath(),
       env: stringEnv(),
@@ -158,7 +158,7 @@ export class CodexInteractiveSession implements InteractiveSession {
 
   private async writeThreadState(): Promise<void> {
     await writeStoredThread(
-      this.options.stateRoot,
+      this.options.sessionRoot,
       "codex",
       this.result.threadId,
       new Date(),
@@ -198,7 +198,7 @@ class PromptRunnerInteractiveSession implements InteractiveSession {
   }
 
   async start(): Promise<void> {
-    const stored = await readStoredThread(this.options.stateRoot, this.provider);
+    const stored = await readStoredThread(this.options.sessionRoot, this.provider);
     this.result.threadId = stored?.threadId || "";
     this.started = true;
     this.emit("started", {

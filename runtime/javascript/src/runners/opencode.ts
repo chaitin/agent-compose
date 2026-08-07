@@ -205,7 +205,7 @@ export class OpenCodeRunner {
     this.providerMessageID = "";
     this.providerMessageText = "";
 
-    const stored = await readStoredThread(this.options.stateRoot, "opencode");
+    const stored = await readStoredThread(this.options.sessionRoot, "opencode");
     const result: AgentResult = {
       provider: "opencode",
       threadId: stored?.threadId || "",
@@ -275,7 +275,7 @@ export class OpenCodeRunner {
       result.finalTextSource = "transcript_fallback";
     }
     if (result.threadId) {
-      await writeStoredThread(this.options.stateRoot, "opencode", result.threadId);
+      await writeStoredThread(this.options.sessionRoot, "opencode", result.threadId);
     }
     return result;
   }

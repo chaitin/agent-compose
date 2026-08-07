@@ -14,9 +14,11 @@ export async function withTempSession<T>(fn: (root: string) => Promise<T>): Prom
 }
 
 export function runnerOptions(root: string, systemContext = "", provider: RunnerOptions["provider"] = "codex"): RunnerOptions {
+  const stateRoot = path.join(root, "state");
   return {
     provider,
-    stateRoot: path.join(root, "state"),
+    stateRoot,
+    sessionRoot: stateRoot,
     workspace: path.join(root, "workspace"),
     home: path.join(root, "home"),
     runtimeRoot: path.join(root, "runtime"),

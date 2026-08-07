@@ -16,6 +16,48 @@ Successful runs write a single structured result line to stdout with the `__AGEN
 
 `--output-schema-file` is optional. When set, the file must contain a JSON Schema object. The runtime passes it to the provider's native structured-output mechanism where supported. Codex and Claude support schema-based output; Gemini, OpenCode, and Pi currently reject schema requests until a native provider mechanism is wired.
 
+## Dynamic workflows
+
+The `workflow` command runs a restricted JavaScript orchestration script:
+
+```sh
+agent-compose-runtime workflow \
+  --script-file workflows/inspect.js \
+  --args-file /tmp/workflow-args.json \
+  --state-root /data/state \
+  --workspace /workspace \
+  --provider codex \
+  --concurrency 4
+```
+
+The script begins with static metadata and can use `agent`, `parallel`,
+`pipeline`, `phase`, `log`, `workflow`, `args`, and `budget`:
+
+```js
+export const meta = {
+  name: "inspect",
+  description: "Inspect backend and frontend modules",
+}
+
+const findings = await parallel([
+  () => phase("Backend", () => agent("Inspect backend", { key: "backend" })),
+  () => phase("Frontend", () => agent("Inspect frontend", { key: "frontend" })),
+])
+
+return { findings }
+```
+
+The CLI writes exactly one final `__WORKFLOW_RESULT__` line to stdout. Live
+events use `__WORKFLOW_EVENT__` lines on stderr; provider transcript lines on
+stderr remain unprefixed. Runs are stored below
+`<state-root>/workflows/runs/<run-id>`.
+
+Existing prompt sessions are backward compatible: when the internal
+`sessionRoot` override is absent, provider state continues to use `stateRoot`
+with the existing layout. Workflow child agents alone receive isolated session
+roots; runtime configuration is still read from the original `stateRoot` and is
+never copied or migrated.
+
 ## Agent system prompt (convention path)
 
 When the host binds a run to an agent definition with non-empty `system_prompt`, it writes:
@@ -44,3 +86,4 @@ The TypeScript source lives in `src/`:
 - `runners/`: provider adapters for Codex, Claude, Gemini, OpenCode, and Pi.
 - `mpi.ts`: MPI catalog discovery and context formatting.
 - `session-state.ts`: provider thread resume state persistence.
+- `workflow/`: workflow parsing, execution, events, persistence, resume cache, and worktree isolation.
