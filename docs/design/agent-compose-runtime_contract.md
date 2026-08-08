@@ -116,6 +116,36 @@ If the sandbox is bound to a Git workspace, the host clones the repository into
 first successful runtime start. Once provisioning is `ready`, later runtime
 starts and resumes reuse the workspace without cloning or refreshing it.
 
+An Agent may explicitly opt into one narrow sticky-resume repair by declaring
+this value in that Agent definition's own environment:
+
+```text
+AGENT_COMPOSE_RESUME_CLEANUP_GIT_INDEX_LOCK=1
+```
+
+For a sandbox in the exact `stopped` state and tagged with that same currently
+enabled Agent, the host checks exactly
+`<sandbox>/workspace/.git/index.lock` after workspace provisioning succeeds and
+before restarting the VM. A missing lock is a no-op; the workspace and `.git`
+path must both be real directories rather than symlinks, and only a regular
+lock file may be removed. Inspection or removal failures abort the resume
+before the VM starts. The per-sandbox lifecycle lock covers this sequence, so
+the guest cannot compete with the host cleanup. Successful removal records a
+non-sensitive `sandbox.workspace_cleanup` history event on a best-effort basis.
+
+The flag is not read from global environment, Scheduler/request overrides, or
+the sandbox's persisted merged environment. It therefore cannot be enabled
+installation-wide by accident. Running-sandbox reuse returns before this
+repair, and initial sandbox creation never invokes it. This is deliberately not
+a general workspace cleanup list: other stale or inconsistent repository state
+still fails normally and requires an explicit, separately reviewed policy.
+
+Command cell persistence also serializes on the sandbox store lock and reloads
+the current metadata before updating only `CellCount` and `UpdatedAt`. Delayed
+command output or completion may therefore extend the cell timeline after an
+out-of-band stop, but it cannot restore a stale `running` status or discard the
+current stopped-runtime state.
+
 ### 3.2 Agent Prompt File
 
 When sending an agent message, the host does not pass the prompt through stdin.
@@ -461,6 +491,7 @@ Scheduler command host parsing flow:
 ```text
 RuntimeHost.Command
   -> ensure scheduler sandbox
+  -> persist scheduler.command.started with linked sandbox id
   -> SchedulerCommandExecutor.ExecuteSchedulerCommand
   -> Store.AddCell(running SHELL)
   -> write command-request.json
@@ -470,6 +501,25 @@ RuntimeHost.Command
   -> Store.AddCell(completed SHELL)
   -> scheduler.command.completed / scheduler.command.failed
 ```
+
+For trigger runs, the linked `scheduler.command.started` event is committed before
+the command executor starts. That event is the durable SchedulerRun-to-sandbox
+association returned by `ListSchedulerRuns.runs[].sandboxIds`; if it cannot be
+persisted, the command is not started. Direct scheduler invocations have no
+SchedulerRun record and therefore do not write this association.
+
+Every command reconstructs its transient LLM facade environment on an in-memory
+Sandbox clone instead of relying on fields that are intentionally absent from
+the persisted Sandbox record. Startup Anthropic and OpenAI family facades are
+created first; the selected provider facade is merged last so its exact provider
+variables win. Those managed values also override same-name values in the guest
+child request environment, while unrelated request environment remains intact.
+The executor tracks every token hash persisted by this command. Partial setup
+failure and confirmed command termination delete all of them; an
+`ErrExecTerminationUnconfirmed` result retains them for later Sandbox lifecycle
+revocation because the guest process may still be running. This command-scoped
+path must not rerun full Sandbox agent preparation, which would revoke tokens and
+rewrite configuration used by other work in a reusable Sandbox.
 
 After parsing succeeds, the guest runtime has already written
 `command-result.json` in the shared cell directory. The host does not rewrite

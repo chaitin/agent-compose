@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -241,6 +242,32 @@ func TestWebhookHTTPRoutesCustomTokenHeader(t *testing.T) {
 	}
 }
 
+func TestWebhookCustomTokenHeaderIsNotPersisted(t *testing.T) {
+	store := newWebhookRouteStore()
+	app := echo.New()
+	RegisterRoutes(app, RouteOptions{Store: store, NewEventID: func() string { return "event-user-agent-token" }})
+
+	req := httptest.NewRequest(http.MethodPut, "/api/webhook-sources/generic", strings.NewReader(`{"name":"Generic","enabled":true,"provider":"generic","topic_prefix":"webhook.generic.","token":"custom-token","token_header":"User-Agent"}`))
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT source status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/webhooks/webhook.generic.push", strings.NewReader(`{"intent":"push"}`))
+	req.Header.Set("User-Agent", "custom-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("webhook status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	payload := store.events["event-user-agent-token"].PayloadJSON
+	if strings.Contains(payload, "custom-token") || strings.Contains(payload, `"user-agent"`) {
+		t.Fatalf("payload persisted the configured token header: %s", payload)
+	}
+}
+
 func TestWebhookHTTPRoutesLegacyTokenHeaderFallbacks(t *testing.T) {
 	for _, header := range []string{"Authorization", "X-WEBHOOK-TOKEN"} {
 		store := newWebhookRouteStore()
@@ -271,6 +298,15 @@ func TestWebhookHTTPRoutesRejectInvalidTokenHeader(t *testing.T) {
 	app.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("PUT source with invalid token header status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	for _, tokenHeader := range []string{"X-Agent-Compose-Parent-Event-ID", "X-Correlation-ID", "Idempotency-Key", "X-GitHub-Delivery", "X-Gitlab-Event-UUID", "X-Request-ID"} {
+		req = httptest.NewRequest(http.MethodPut, "/api/webhook-sources/github", strings.NewReader(`{"name":"GitHub","enabled":true,"provider":"github","topic_prefix":"webhook.github.","token":"custom-token","token_header":`+strconv.Quote(tokenHeader)+`}`))
+		rec = httptest.NewRecorder()
+		app.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("PUT source with reserved header %s status=%d body=%s", tokenHeader, rec.Code, rec.Body.String())
+		}
 	}
 }
 
@@ -417,6 +453,22 @@ func (s *webhookRouteStore) DeleteWebhookSource(_ context.Context, sourceID stri
 	return nil
 }
 
-func (s *webhookRouteStore) ListEnabledWebhookSourcesForTopic(context.Context, string) ([]domain.WebhookSource, error) {
-	return []domain.WebhookSource{s.sources["github"]}, nil
+func (s *webhookRouteStore) ListEnabledWebhookSourcesForTopic(_ context.Context, topic string) ([]domain.WebhookSource, error) {
+	items := make([]domain.WebhookSource, 0, len(s.sources))
+	for _, source := range s.sources {
+		matchesPrefix := strings.HasPrefix(topic, source.TopicPrefix) ||
+			(strings.HasSuffix(source.TopicPrefix, ".") && topic == strings.TrimSuffix(source.TopicPrefix, "."))
+		if source.Enabled && matchesPrefix {
+			items = append(items, source)
+		}
+	}
+	if len(items) == 0 {
+		// Older unit tests use this deliberately small fake as a single configured
+		// source without modelling production topic selection. Preserve that
+		// fixture behavior while allowing tests that add a matching source to use it.
+		if source, ok := s.sources["github"]; ok {
+			items = append(items, source)
+		}
+	}
+	return items, nil
 }

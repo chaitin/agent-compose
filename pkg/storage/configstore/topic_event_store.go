@@ -557,7 +557,7 @@ func (s *eventStore) UpsertWebhookSource(ctx context.Context, source domain.Webh
 	source.Provider = strings.TrimSpace(source.Provider)
 	source.TopicPrefix = strings.TrimSpace(source.TopicPrefix)
 	source.TokenHash = strings.TrimSpace(source.TokenHash)
-	tokenHeader, err := domain.NormalizeHTTPHeaderName(source.TokenHeader)
+	tokenHeader, err := domain.NormalizeWebhookTokenHeaderName(source.TokenHeader)
 	if err != nil {
 		return domain.WebhookSource{}, fmt.Errorf("webhook source token header is invalid: %w", err)
 	}

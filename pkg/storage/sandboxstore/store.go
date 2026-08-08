@@ -703,7 +703,11 @@ func (s *Store) backfillOwnershipRecords() error {
 }
 
 func (s *Store) AddCell(_ context.Context, session *Sandbox, cell NotebookCell) error {
-	cells, err := s.loadCells(session.Summary.ID)
+	sessionID := session.Summary.ID
+	unlock := s.lockSandbox(sessionID)
+	defer unlock()
+
+	cells, err := s.loadCells(sessionID)
 	if err != nil {
 		return err
 	}
@@ -721,15 +725,29 @@ func (s *Store) AddCell(_ context.Context, session *Sandbox, cell NotebookCell) 
 	if !updated {
 		cells = append(cells, cell)
 	}
-	if err := s.saveCells(session.Summary.ID, cells); err != nil {
+	if err := s.saveCells(sessionID, cells); err != nil {
 		return err
 	}
-	timelineCells, err := s.loadCells(session.Summary.ID)
+	timelineCells, err := s.loadCells(sessionID)
 	if err != nil {
 		return err
 	}
-	session.Summary.CellCount = len(timelineCells)
-	return s.UpdateSandbox(context.Background(), session)
+	persisted, err := s.loadSandbox(sessionID)
+	if err != nil {
+		return err
+	}
+	persisted.Summary.CellCount = len(timelineCells)
+	s.hydrateSandboxGuestImage(persisted)
+	persisted.Summary.UpdatedAt = s.currentTime().UTC()
+	if err := s.saveSandbox(persisted); err != nil {
+		return err
+	}
+	s.recordIndex(persisted)
+	// Preserve the established caller-visible count without letting a stale
+	// command session overwrite lifecycle state changed by an out-of-band stop.
+	session.Summary.CellCount = persisted.Summary.CellCount
+	session.Summary.UpdatedAt = persisted.Summary.UpdatedAt
+	return nil
 }
 
 func (s *Store) ListCells(_ context.Context, id string) ([]NotebookCell, error) {
@@ -754,18 +772,7 @@ func (s *Store) AddAgentRun(_ context.Context, sessionID string, run AgentRun) e
 	if err != nil {
 		return err
 	}
-	if err := s.AddCell(context.Background(), session, cell); err != nil {
-		return err
-	}
-	session, err = s.loadSandbox(sessionID)
-	if err == nil {
-		timelineCells, loadErr := s.loadCells(sessionID)
-		if loadErr == nil {
-			session.Summary.CellCount = len(timelineCells)
-		}
-		_ = s.UpdateSandbox(context.Background(), session)
-	}
-	return nil
+	return s.AddCell(context.Background(), session, cell)
 }
 
 func (s *Store) AddEvent(_ context.Context, sessionID string, event SandboxEvent) error {

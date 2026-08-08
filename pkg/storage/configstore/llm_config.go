@@ -148,7 +148,19 @@ func (s *llmStore) DeleteLLMFacadeToken(ctx context.Context, rawToken string) er
 		return nil
 	}
 	hash, _ := llms.HashFacadeToken(rawToken)
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM llm_facade_token WHERE token_hash = ?`, hash); err != nil {
+	return s.DeleteLLMFacadeTokenHash(ctx, hash)
+}
+
+// DeleteLLMFacadeTokenHash removes one facade token by its already-computed
+// hash. Command-time facade setup tracks hashes at the persistence boundary so
+// it can clean up every token created by one command, including tokens issued
+// before a later provider configuration step fails.
+func (s *llmStore) DeleteLLMFacadeTokenHash(ctx context.Context, tokenHash string) error {
+	tokenHash = strings.TrimSpace(tokenHash)
+	if tokenHash == "" {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM llm_facade_token WHERE token_hash = ?`, tokenHash); err != nil {
 		return fmt.Errorf("delete llm facade token: %w", err)
 	}
 	return nil

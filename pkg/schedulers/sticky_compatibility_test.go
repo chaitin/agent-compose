@@ -52,11 +52,10 @@ func TestSchedulerSandboxConfigHashTracksSandboxSemantics(t *testing.T) {
 		"volumes": func(item *domain.Scheduler) {
 			item.Volumes = []domain.VolumeMountSpec{{Type: domain.VolumeMountTypeBind, Source: "/tmp/source", Target: "/workspace/data"}}
 		},
-		"managed revision": func(item *domain.Scheduler) {
+		"managed identity": func(item *domain.Scheduler) {
 			item.Summary.ProjectID = "project-1"
 			item.Summary.AgentName = "worker"
 			item.Summary.ProjectSchedulerID = "scheduler-1"
-			item.Summary.ProjectRevision = 2
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -66,6 +65,24 @@ func TestSchedulerSandboxConfigHashTracksSandboxSemantics(t *testing.T) {
 				t.Fatalf("sandbox config hash did not change for %s", name)
 			}
 		})
+	}
+}
+
+func TestSchedulerSandboxConfigHashIgnoresManagedProjectRevision(t *testing.T) {
+	base := domain.Scheduler{Summary: domain.SchedulerSummary{
+		ID:                 "scheduler-1",
+		DefaultAgent:       "codex",
+		SandboxPolicy:      domain.SchedulerSandboxPolicySticky,
+		ProjectID:          "project-1",
+		ProjectRevision:    1,
+		AgentName:          "worker",
+		ProjectSchedulerID: "scheduler-1",
+	}}
+	changed := CloneScheduler(base)
+	changed.Summary.ProjectRevision = 2
+
+	if got, want := mustSchedulerSandboxConfigHash(t, changed), mustSchedulerSandboxConfigHash(t, base); got != want {
+		t.Fatalf("unrelated managed project revision changed config hash: got %q want %q", got, want)
 	}
 }
 

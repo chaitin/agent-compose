@@ -275,6 +275,15 @@ Webhook payload written to `event.payload_json` uses camelCase:
 3. Top-level JSON body `correlationId`
 4. New event's own `event_id`
 
+A token-protected generic webhook source may set
+`X-Agent-Compose-Parent-Event-ID` when it is durably forwarding an existing
+event into another webhook queue. Unsigned or signature-only sources cannot set
+the header. The referenced event must exist. The child inherits the parent's
+correlation id when the request does not provide one; an explicitly different
+correlation id is rejected. The stored child record and payload retain the
+parent id so the original event's trace can include descendant Scheduler runs
+and sandboxes.
+
 `provider` for `webhook.<provider>.*` uses the second segment. Scheduler-derived
 events read `provider` from the top-level payload field.
 
@@ -284,6 +293,7 @@ Headers keep only an allowlist:
 - `user-agent`
 - `x-request-id`
 - `x-correlation-id`
+- `x-agent-compose-parent-event-id`
 - `x-github-event`
 - `x-github-delivery`
 - `x-gitlab-event`
@@ -343,15 +353,24 @@ Idempotency rules:
   `X-GitHub-Delivery`.
 - Without an available idempotency key, platform-level deduplication is not
   performed.
-- Same `topic + idempotency_key` with an identical canonical JSON request body
-  returns the existing event and `202 Accepted`. Generated event metadata,
-  correlation headers, other request headers, and query values are not part of
-  this comparison.
-- Same `topic + idempotency_key` with a different canonical JSON request body
-  returns `409 Conflict`. The response uses code
+- Same `topic + idempotency_key` with an identical canonical JSON request body,
+  parent Event ID, and effective correlation ID returns the existing event and
+  `202 Accepted`. An omitted correlation matches only the default root delivery
+  whose correlation is its own Event ID; for a parented delivery it resolves to
+  the parent's correlation before comparison. Other request headers and query
+  values are not part of this comparison.
+- Same `topic + idempotency_key` with a different canonical JSON request body,
+  parent Event ID, or effective correlation ID returns `409 Conflict`. The
+  response keeps the backward-compatible code
   `idempotency_payload_mismatch` and includes the existing event metadata so an
   authorized publisher can recover the accepted delivery without creating a
   second event.
+- A configured custom token header is removed before event metadata is derived
+  or persisted. Headers that already define lineage or delivery identity
+  (`Idempotency-Key`, `X-Correlation-ID`, `X-Request-ID`,
+  `X-GitHub-Delivery`, `X-Gitlab-Event-UUID`, and
+  `X-Agent-Compose-Parent-Event-ID`) are reserved and rejected as token headers.
+  Runtime stripping also protects sources saved by an older release.
 
 ## Dispatcher Semantics
 

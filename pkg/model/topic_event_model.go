@@ -10,6 +10,8 @@ import (
 )
 
 const (
+	WebhookParentEventIDHeader = "X-Agent-Compose-Parent-Event-ID"
+
 	TopicEventSourceWebhook   = "webhook"
 	TopicEventSourceScheduler = "scheduler"
 	TopicEventSourceSystem    = "system"

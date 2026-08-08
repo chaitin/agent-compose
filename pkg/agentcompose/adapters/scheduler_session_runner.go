@@ -30,22 +30,23 @@ type SchedulerVolumeResolver interface {
 }
 
 type SchedulerSandboxRunner struct {
-	Config           *appconfig.Config
-	Store            *sandboxstore.Store
-	ConfigDB         *configstore.ConfigStore
-	workspaceEnsurer workspaces.WorkspaceEnsurer
-	Driver           sandboxes.SandboxDriver
-	Cap              capabilities.Provider
-	Volumes          SchedulerVolumeResolver
-	Streams          *sandboxes.StreamBroker
-	Publisher        schedulers.ControllerPublisher
-	CapTokens        *CapabilitySandboxResolver
-	AgentExecutor    *AgentExecutor
-	LifecycleLocks   *sandboxes.LifecycleLocks
+	Config                 *appconfig.Config
+	Store                  *sandboxstore.Store
+	ConfigDB               *configstore.ConfigStore
+	workspaceEnsurer       workspaces.WorkspaceEnsurer
+	Driver                 sandboxes.SandboxDriver
+	Cap                    capabilities.Provider
+	Volumes                SchedulerVolumeResolver
+	Streams                *sandboxes.StreamBroker
+	Publisher              schedulers.ControllerPublisher
+	CapTokens              *CapabilitySandboxResolver
+	AgentExecutor          *AgentExecutor
+	LifecycleLocks         *sandboxes.LifecycleLocks
+	resumeWorkspaceCleanup func(string) (bool, error)
 }
 
 func NewSchedulerSandboxRunner(config *appconfig.Config, store *sandboxstore.Store, configDB *configstore.ConfigStore, workspaceEnsurer workspaces.WorkspaceEnsurer, driver sandboxes.SandboxDriver, cap capabilities.Provider, volumeResolver SchedulerVolumeResolver, streams *sandboxes.StreamBroker, publisher schedulers.ControllerPublisher, capTokens *CapabilitySandboxResolver, agentExecutor *AgentExecutor, locks ...*sandboxes.LifecycleLocks) *SchedulerSandboxRunner {
-	runner := &SchedulerSandboxRunner{Config: config, Store: store, ConfigDB: configDB, workspaceEnsurer: workspaceEnsurer, Driver: driver, Cap: cap, Volumes: volumeResolver, Streams: streams, Publisher: publisher, CapTokens: capTokens, AgentExecutor: agentExecutor}
+	runner := &SchedulerSandboxRunner{Config: config, Store: store, ConfigDB: configDB, workspaceEnsurer: workspaceEnsurer, Driver: driver, Cap: cap, Volumes: volumeResolver, Streams: streams, Publisher: publisher, CapTokens: capTokens, AgentExecutor: agentExecutor, resumeWorkspaceCleanup: removeStaleGitIndexLock}
 	if len(locks) > 0 {
 		runner.LifecycleLocks = locks[0]
 	}
@@ -299,6 +300,9 @@ func (r *SchedulerSandboxRunner) loadOrResumeLocked(ctx context.Context, session
 		}
 	}
 	if err := r.workspaceEnsurer.Ensure(ctx, session); err != nil {
+		return nil, "", err
+	}
+	if err := r.cleanupResumeWorkspace(ctx, session); err != nil {
 		return nil, "", err
 	}
 	vmState, err := r.Store.GetVMState(session.Summary.ID)

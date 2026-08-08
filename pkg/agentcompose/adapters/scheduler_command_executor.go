@@ -72,15 +72,18 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 		CreatedAt: startedAt,
 		Running:   true,
 	}
-	execSession, facadeToken, err := e.prepareSchedulerCommandLLMFacadeEnv(ctx, session, request, cellID)
+	execSession, managedFacadeEnv, facadeTokenHashes, err := e.prepareSchedulerCommandLLMFacadeEnv(ctx, session, request, cellID)
 	if err != nil {
 		return domain.SchedulerCommandResult{}, err
 	}
-	retainFacadeToken := false
-	if e.ConfigDB != nil && facadeToken != "" {
+	retainFacadeTokens := false
+	if e.ConfigDB != nil && len(facadeTokenHashes) > 0 {
 		defer func() {
-			if !retainFacadeToken {
-				_ = e.ConfigDB.DeleteLLMFacadeToken(context.WithoutCancel(ctx), facadeToken)
+			if !retainFacadeTokens {
+				cleanupCtx := context.WithoutCancel(ctx)
+				for _, tokenHash := range facadeTokenHashes {
+					_ = e.ConfigDB.DeleteLLMFacadeTokenHash(cleanupCtx, tokenHash)
+				}
 			}
 		}()
 	}
@@ -161,7 +164,12 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 		return buildSchedulerCommandResult(recovered), finalErr
 	}
 
-	runtimeRequest := execution.RuntimeCommandRequestPayload(e.Config, request, guestCellDir)
+	runtimeCommandRequest := request
+	// The guest runtime applies request.Env after the outer command process
+	// environment. Carry the same facade values into the request so stale
+	// provider variables cannot replace them in the actual workload child.
+	runtimeCommandRequest.Env = mergeSchedulerCommandRuntimeEnv(request.Env, managedFacadeEnv)
+	runtimeRequest := execution.RuntimeCommandRequestPayload(e.Config, runtimeCommandRequest, guestCellDir)
 	hostRequestPath := filepath.Join(hostCellDir, "command-request.json")
 	if err := execution.WriteJSONArtifact(hostRequestPath, runtimeRequest); err != nil {
 		return domain.SchedulerCommandResult{}, fmt.Errorf("write scheduler command request artifact: %w", err)
@@ -191,7 +199,7 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 	}
 	commandHome := e.Config.GuestHomePath
 	execResult, err := runtime.ExecStream(execCtx, execSession, vmState, execution.BuildSchedulerCommandExecSpec(e.Config, execSession, filepath.Join(guestCellDir, "command-request.json"), commandHome), streamWriter)
-	retainFacadeToken = errors.Is(err, domain.ErrExecTerminationUnconfirmed)
+	retainFacadeTokens = errors.Is(err, domain.ErrExecTerminationUnconfirmed)
 	streamErrMu.Lock()
 	deferredStreamErr := streamErr
 	streamErrMu.Unlock()
@@ -253,14 +261,11 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 	}, nil
 }
 
-func (e *SchedulerCommandExecutor) prepareSchedulerCommandLLMFacadeEnv(ctx context.Context, session *domain.Sandbox, request domain.SchedulerCommandRequest, runID string) (*domain.Sandbox, string, error) {
+func (e *SchedulerCommandExecutor) prepareSchedulerCommandLLMFacadeEnv(ctx context.Context, session *domain.Sandbox, request domain.SchedulerCommandRequest, runID string) (*domain.Sandbox, map[string]string, []string, error) {
 	if e == nil || e.Config == nil || e.ConfigDB == nil || session == nil {
-		return session, "", nil
+		return session, nil, nil, nil
 	}
 	agent, model := llms.SchedulerCommandFacadeAgentModel(request.Env)
-	if agent == "" {
-		return session, "", nil
-	}
 
 	execSession := *session
 	execSession.EnvItems = append([]domain.SandboxEnvVar(nil), session.EnvItems...)
@@ -273,12 +278,33 @@ func (e *SchedulerCommandExecutor) prepareSchedulerCommandLLMFacadeEnv(ctx conte
 	}
 	execSession.ProviderEnvItems = domain.MergeEnvItems(execSession.ProviderEnvItems, domain.SchedulerCommandSandboxEnv(request))
 
-	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, e.Config, facadeStoreFor(e.ConfigDB), &execSession, agent, model, runtimefacade.TokenSourceSchedulerCommand, runID)
+	managedConfig, err := runtimefacade.EnsureSessionCommandFacadeConfig(ctx, e.Config, commandFacadeStoreFor(e.ConfigDB), &execSession, agent, model, runtimefacade.TokenSourceSchedulerCommand, runID)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, nil, err
 	}
-	if len(managedEnv) > 0 {
-		execSession.RuntimeEnvItems = domain.MergeEnvItems(execSession.RuntimeEnvItems, llms.EnvItemsFromMap(managedEnv, false))
+	if len(managedConfig.Env) > 0 {
+		execSession.RuntimeEnvItems = domain.MergeEnvItems(execSession.RuntimeEnvItems, llms.EnvItemsFromMap(managedConfig.Env, true))
 	}
-	return &execSession, managedEnv["AGENT_COMPOSE_SANDBOX_TOKEN"], nil
+	return &execSession, managedConfig.Env, managedConfig.TokenHashes, nil
+}
+
+func commandFacadeStoreFor(configDB *configstore.ConfigStore) runtimefacade.CommandFacadeStore {
+	if configDB == nil {
+		return nil
+	}
+	return configDB
+}
+
+func mergeSchedulerCommandRuntimeEnv(requestEnv, managedFacadeEnv map[string]string) map[string]string {
+	if len(requestEnv) == 0 && len(managedFacadeEnv) == 0 {
+		return nil
+	}
+	merged := make(map[string]string, len(requestEnv)+len(managedFacadeEnv))
+	for name, value := range requestEnv {
+		merged[name] = value
+	}
+	for name, value := range managedFacadeEnv {
+		merged[name] = value
+	}
+	return merged
 }

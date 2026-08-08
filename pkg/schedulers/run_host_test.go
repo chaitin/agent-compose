@@ -90,7 +90,7 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 	if len(sandboxes.shutdowns) != 2 || sandboxes.shutdowns[1] != "session-host" {
 		t.Fatalf("shutdowns after cleanup = %#v", sandboxes.shutdowns)
 	}
-	if !events.contains("scheduler.command.completed") {
+	if !events.contains("scheduler.command.started") || !events.contains("scheduler.command.completed") {
 		t.Fatalf("command events = %#v", events.types())
 	}
 
@@ -321,6 +321,89 @@ func TestRuntimeHostErrorBranches(t *testing.T) {
 	}
 }
 
+func TestRuntimeHostCommandPersistsRunSandboxLinkBeforeExecution(t *testing.T) {
+	ctx := context.Background()
+	scheduler := domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-link"}}
+	run := &domain.SchedulerRunSummary{ID: "run-link", SchedulerID: scheduler.Summary.ID, TriggerID: "trigger-link"}
+	events := &hostEventsFake{}
+	executor := &hostCommandExecutorFake{}
+	executor.onExecute = func() {
+		if len(events.items) == 0 {
+			t.Fatal("command executed before its sandbox link was persisted")
+		}
+		linked := events.items[len(events.items)-1]
+		if linked.Type != "scheduler.command.started" || linked.RunID != run.ID || linked.LinkedSandboxID != "sandbox-link" {
+			t.Fatalf("last pre-execution event = %#v, want linked scheduler.command.started", linked)
+		}
+	}
+	host := schedulers.NewRuntimeHost(schedulers.RunHostDependencies{
+		Events:          events,
+		Sessions:        &hostSessionsFake{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-link", VMStatus: domain.VMStatusRunning}}},
+		CommandExecutor: executor,
+	}, scheduler, triggerExecution(run), schedulers.TriggerEventMetadata{})
+
+	if _, err := host.Command(ctx, domain.SchedulerCommandRequest{Mode: "shell", Command: "echo linked"}); err != nil {
+		t.Fatalf("Command returned error: %v", err)
+	}
+	if executor.calls != 1 {
+		t.Fatalf("command executor calls = %d, want 1", executor.calls)
+	}
+}
+
+func TestRuntimeHostCommandDoesNotExecuteWhenRunSandboxLinkFails(t *testing.T) {
+	ctx := context.Background()
+	scheduler := domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-link-failure"}}
+	run := &domain.SchedulerRunSummary{ID: "run-link-failure", SchedulerID: scheduler.Summary.ID, TriggerID: "trigger-link-failure"}
+	persistErr := errors.New("event persistence failed")
+	events := &hostEventsFake{failType: "scheduler.command.started", addRecordErr: persistErr}
+	executor := &hostCommandExecutorFake{}
+	host := schedulers.NewRuntimeHost(schedulers.RunHostDependencies{
+		Events:          events,
+		Sessions:        &hostSessionsFake{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-link-failure", VMStatus: domain.VMStatusRunning}}},
+		CommandExecutor: executor,
+	}, scheduler, triggerExecution(run), schedulers.TriggerEventMetadata{})
+
+	if _, err := host.Command(ctx, domain.SchedulerCommandRequest{Mode: "shell", Command: "must not run"}); !errors.Is(err, persistErr) {
+		t.Fatalf("Command error = %v, want wrapped persistence error", err)
+	}
+	if executor.calls != 0 {
+		t.Fatalf("command executor calls = %d, want 0", executor.calls)
+	}
+}
+
+func TestRuntimeHostTriggerCommandRequiresSchedulerEventRecorder(t *testing.T) {
+	scheduler := domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-link-missing-recorder"}}
+	run := &domain.SchedulerRunSummary{ID: "run-link-missing-recorder", SchedulerID: scheduler.Summary.ID, TriggerID: "trigger-link-missing-recorder"}
+	executor := &hostCommandExecutorFake{}
+	host := schedulers.NewRuntimeHost(schedulers.RunHostDependencies{
+		Sessions:        &hostSessionsFake{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-link-missing-recorder", VMStatus: domain.VMStatusRunning}}},
+		CommandExecutor: executor,
+	}, scheduler, triggerExecution(run), schedulers.TriggerEventMetadata{})
+
+	if _, err := host.Command(context.Background(), domain.SchedulerCommandRequest{Mode: "shell", Command: "must not run"}); err == nil || !strings.Contains(err.Error(), "scheduler event recorder is unavailable") {
+		t.Fatalf("Command error = %v, want missing event recorder", err)
+	}
+	if executor.calls != 0 {
+		t.Fatalf("command executor calls = %d, want 0", executor.calls)
+	}
+}
+
+func TestRuntimeHostInvocationCommandDoesNotRequireSchedulerRunLink(t *testing.T) {
+	scheduler := domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-invocation"}}
+	executor := &hostCommandExecutorFake{}
+	host := schedulers.NewRuntimeHost(schedulers.RunHostDependencies{
+		Sessions:        &hostSessionsFake{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-invocation", VMStatus: domain.VMStatusRunning}}},
+		CommandExecutor: executor,
+	}, scheduler, schedulers.RuntimeExecutionContext{ID: "invocation", Kind: schedulers.ExecutionKindInvocation}, schedulers.TriggerEventMetadata{})
+
+	if _, err := host.Command(context.Background(), domain.SchedulerCommandRequest{Mode: "shell", Command: "echo invocation"}); err != nil {
+		t.Fatalf("invocation Command returned error: %v", err)
+	}
+	if executor.calls != 1 {
+		t.Fatalf("command executor calls = %d, want 1", executor.calls)
+	}
+}
+
 func TestRuntimeHostLogPublishEventAndState(t *testing.T) {
 	ctx := context.Background()
 	scheduler := domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-state", Name: "State Scheduler"}}
@@ -446,7 +529,9 @@ func (s *hostStoreFake) containsLink(sessionID, relation string) bool {
 }
 
 type hostEventsFake struct {
-	items []domain.SchedulerEvent
+	items        []domain.SchedulerEvent
+	failType     string
+	addRecordErr error
 }
 
 func (e *hostEventsFake) Add(ctx context.Context, schedulerID, runID, triggerID, eventType, level, message string, payload any, linkedSandboxID, linkedCellID, linkedAgentThreadID string) error {
@@ -455,6 +540,9 @@ func (e *hostEventsFake) Add(ctx context.Context, schedulerID, runID, triggerID,
 }
 
 func (e *hostEventsFake) AddRecord(_ context.Context, schedulerID, runID, triggerID, eventType, level, message string, _ any, linkedSandboxID, linkedCellID, linkedAgentThreadID string) (domain.SchedulerEvent, error) {
+	if e.addRecordErr != nil && (e.failType == "" || e.failType == eventType) {
+		return domain.SchedulerEvent{}, e.addRecordErr
+	}
 	event := domain.SchedulerEvent{
 		ID:                  fmt.Sprintf("event-%d", len(e.items)+1),
 		SchedulerID:         schedulerID,
@@ -541,13 +629,17 @@ func (e *hostAgentExecutorFake) ExecuteAgent(_ context.Context, _ *domain.Sandbo
 }
 
 type hostCommandExecutorFake struct {
-	calls  int
-	result domain.SchedulerCommandResult
-	err    error
+	calls     int
+	result    domain.SchedulerCommandResult
+	err       error
+	onExecute func()
 }
 
 func (e *hostCommandExecutorFake) ExecuteSchedulerCommand(context.Context, *domain.Sandbox, domain.SchedulerCommandRequest) (domain.SchedulerCommandResult, error) {
 	e.calls++
+	if e.onExecute != nil {
+		e.onExecute()
+	}
 	return e.result, e.err
 }
 

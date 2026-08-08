@@ -241,6 +241,16 @@ Normalization rules:
   payload. Renaming it would change every existing binding hash; the one-shot
   migrator carries those hashes forward but cannot reconstruct their original
   runtime inputs.
+- Sticky compatibility hashes the effective sandbox inputs for the selected
+  Agent and Scheduler, including resolved driver, image, environment, volumes,
+  workspace snapshot, capsets, and agent configuration. The enclosing Project's
+  monotonically increasing revision number is deliberately excluded: changing an
+  unrelated Agent in the same Project must not retire this Scheduler's sandbox,
+  while changing any effective input still does.
+  Existing managed sticky bindings created by an older release that included the
+  Project revision in this hash are replaced once on their first post-upgrade
+  run; subsequent unrelated Project revisions leave the replacement binding
+  compatible.
 - `scheduler.script` is either an inline QJS scalar or an explicit mapping with
   the single non-empty field `url`. URL content is normalized into the same
   inline managed-scheduler `script` snapshot. Blank inline scripts are unset;

@@ -119,6 +119,23 @@ verification. Generic sources, including legacy sources with an empty signature
 type, continue to use their URL topic and Bearer, `X-WEBHOOK-TOKEN`, or a
 configured custom-header token.
 
+The custom token header is removed before event metadata is derived or
+persisted. Headers that already define lineage or delivery identity cannot be
+used for credentials: `Idempotency-Key`, `X-Correlation-ID`, `X-Request-ID`,
+`X-GitHub-Delivery`, `X-Gitlab-Event-UUID`, and
+`X-Agent-Compose-Parent-Event-ID` are rejected when a source is created or
+updated. Runtime stripping also protects a source saved by an older release.
+
+A token-protected generic webhook forwarder can preserve event lineage by
+sending `X-Agent-Compose-Parent-Event-ID` with the ID of an existing event.
+Unsigned and signature-only sources cannot set this header. The daemon rejects
+an unknown parent or an explicitly different correlation ID; when the request
+omits a correlation ID, the child inherits the parent's. Idempotent replay must
+also retain the same parent and effective correlation. Event trace queries then
+include Scheduler runs and sandboxes created by the child webhook. Use this only
+for forwarding an event that the caller actually received, not for grouping
+unrelated deliveries.
+
 The token protects the daemon control plane rather than identifying the CLI
 application. Any UI server or reverse proxy that calls the same control-plane
 APIs must also inject `Authorization: Bearer <token>` before daemon
