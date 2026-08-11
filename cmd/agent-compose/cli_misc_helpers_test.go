@@ -256,7 +256,7 @@ agents:
 			{args: []string{"inspect", "--file", composePath, "agent"}, code: exitCodeUsage, want: "requires an agent name"},
 			{args: []string{"inspect", "--file", composePath, "run"}, code: exitCodeUsage, want: "requires a run id"},
 			{args: []string{"inspect", "--file", composePath, "sandbox"}, code: exitCodeUsage, want: "requires a sandbox"},
-			{args: []string{"inspect", "--file", composePath, "session"}, code: exitCodeUsage, want: "requires a sandbox"},
+			{args: []string{"inspect", "--file", composePath, "session"}, code: exitCodeUsage, want: "unsupported inspect target"},
 			{args: []string{"inspect", "--file", composePath, "unknown"}, code: exitCodeUsage, want: "unsupported inspect target"},
 			{args: []string{"inspect", "--host", server.URL, "--file", composePath, "project"}, code: exitCodeUsage, want: "has not been started"},
 			{args: []string{"inspect", "--host", server.URL, "--file", composePath, "run", "missing"}, code: exitCodeUsage, want: "has not been started"},

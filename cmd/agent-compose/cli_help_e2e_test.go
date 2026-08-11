@@ -155,3 +155,19 @@ func TestE2ECLILegacyRunIDFlagIsRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestE2ECLIRemovedCompatibilityEntriesAreRejected(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"inspect", "session", "sandbox-1"}, want: "unsupported inspect target"},
+		{args: []string{"scheduler", "runs", "--agent", "reviewer"}, want: "unknown flag: --agent"},
+		{args: []string{"scheduler", "logs", "--agent", "reviewer"}, want: "unknown flag: --agent"},
+	} {
+		stdout, stderr, runCount, exitCode := executeCLICommand(tc.args...)
+		if exitCode != exitCodeUsage || stdout != "" || runCount != 0 || !strings.Contains(stderr, tc.want) {
+			t.Fatalf("%v code/stdout/stderr/runCount = %d / %q / %q / %d, want usage error containing %q", tc.args, exitCode, stdout, stderr, runCount, tc.want)
+		}
+	}
+}

@@ -407,23 +407,6 @@ func TestNormalizeComposeSchedulerTriggerOptionsPayload(t *testing.T) {
 	}
 }
 
-func TestDeprecatedSchedulerAgentFlagWarningUsesStderr(t *testing.T) {
-	cmd := &cobra.Command{}
-	cmd.Flags().String("agent", "", "")
-	if err := cmd.Flags().Set("agent", "reviewer"); err != nil {
-		t.Fatalf("Set agent flag returned error: %v", err)
-	}
-	var stdout, stderr strings.Builder
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&stderr)
-	if err := writeDeprecatedSchedulerAgentFlagWarning(cmd, "use --scheduler instead"); err != nil {
-		t.Fatalf("writeDeprecatedSchedulerAgentFlagWarning returned error: %v", err)
-	}
-	if stdout.String() != "" || !strings.Contains(stderr.String(), "--agent is deprecated") || !strings.Contains(stderr.String(), "use --scheduler instead") {
-		t.Fatalf("stdout/stderr = %q / %q", stdout.String(), stderr.String())
-	}
-}
-
 func TestIntegrationCLISchedulerRunsLogsAndInspectResources(t *testing.T) {
 	composePath := writeComposeFile(t, t.TempDir(), `
 name: cli-scheduler-observability
@@ -537,7 +520,7 @@ agents:
 		t.Fatalf("scheduler logs invalid tail code/stderr = %d / %q", exitCode, stderr)
 	}
 
-	_, stderr, _, exitCode = executeCLICommand("scheduler", "logs", runID, "--agent", "reviewer", "--host", server.URL, "--file", composePath)
+	_, stderr, _, exitCode = executeCLICommand("scheduler", "logs", runID, "--scheduler", "reviewer", "--host", server.URL, "--file", composePath)
 	if exitCode != exitCodeUsage || !strings.Contains(stderr, "cannot be combined") {
 		t.Fatalf("scheduler logs explicit run filters code/stderr = %d / %q", exitCode, stderr)
 	}

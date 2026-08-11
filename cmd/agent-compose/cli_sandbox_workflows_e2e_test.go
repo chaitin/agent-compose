@@ -24,7 +24,7 @@ func TestE2ECLISandboxNamingUserWorkflows(t *testing.T) {
 			run:  TestIntegrationCLILogsFiltersRunAgentSessionAndJSON,
 		},
 		{
-			name: "inspect sandbox and deprecated inspect session",
+			name: "inspect sandbox and reject removed inspect session",
 			run:  TestIntegrationCLIInspectProjectAgentRunSandboxSessionJSON,
 		},
 		{

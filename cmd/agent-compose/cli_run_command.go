@@ -527,12 +527,10 @@ func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string)
 			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect run requires a run id")}
 		case "sandbox":
 			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect sandbox requires a sandbox")}
-		case "session":
-			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect session requires a sandbox")}
 		}
 	}
 	switch kind {
-	case "project", "agent", "run", "sandbox", "session":
+	case "project", "agent", "run", "sandbox":
 	default:
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("unsupported inspect target %q", kind)}
 	}
@@ -574,22 +572,6 @@ func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string)
 	case "sandbox":
 		if target == "" {
 			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect sandbox requires a sandbox")}
-		}
-		target, err = resolveComposeSandboxRefWithProject(cmd.Context(), clients, projectID, target)
-		if err != nil {
-			return err
-		}
-		output, err = composeSandboxInspectOutputFor(cmd.Context(), clients, target)
-		if err != nil {
-			return commandExitErrorForConnect(fmt.Errorf("inspect sandbox %s: %w", target, err))
-		}
-	case "session":
-
-		if err := writeDeprecatedWarning(cmd.ErrOrStderr(), "agent-compose inspect session", "agent-compose inspect sandbox"); err != nil {
-			return err
-		}
-		if target == "" {
-			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect session requires a sandbox")}
 		}
 		target, err = resolveComposeSandboxRefWithProject(cmd.Context(), clients, projectID, target)
 		if err != nil {

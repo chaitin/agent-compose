@@ -135,7 +135,6 @@ Current main commands:
   to list, inspect, dry-run, and explicitly remove daemon runtime cache items.
   The CLI never reads or deletes daemon cache paths directly.
 - `inspect <project|agent|run|sandbox>`: inspect project-related objects.
-  `inspect session` remains a deprecated compatibility alias.
 
 ## `agent-compose.yml` Model
 

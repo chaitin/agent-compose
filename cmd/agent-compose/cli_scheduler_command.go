@@ -25,10 +25,9 @@ type composeSchedulerTriggerOptions struct {
 }
 
 type composeSchedulerRunsOptions struct {
-	AgentName string
-	Trigger   string
-	Status    string
-	Limit     uint32
+	Trigger string
+	Status  string
+	Limit   uint32
 }
 
 type composeSchedulerInvokeOptions struct {
@@ -37,7 +36,6 @@ type composeSchedulerInvokeOptions struct {
 
 type composeSchedulerLogsOptions struct {
 	SchedulerRef string
-	AgentName    string
 	Trigger      string
 	RunID        string
 	Tail         int
@@ -52,9 +50,6 @@ func runComposeSchedulerTriggerCommand(cmd *cobra.Command, cli cliOptions, optio
 }
 
 func runComposeSchedulerRunsCommand(cmd *cobra.Command, cli cliOptions, options composeSchedulerRunsOptions, args []string) error {
-	if err := writeDeprecatedSchedulerAgentFlagWarning(cmd, "use the scheduler positional argument instead"); err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
@@ -65,11 +60,8 @@ func runComposeSchedulerRunsCommand(cmd *cobra.Command, cli cliOptions, options 
 	}
 	normalized := runtimeProject.spec
 	projectID := runtimeProject.id()
-	agentRef := options.AgentName
+	agentRef := ""
 	if len(args) > 0 {
-		if agentRef != "" {
-			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler runs accepts either a scheduler argument or --agent, not both")}
-		}
 		agentRef = args[0]
 	}
 	if cli.JSON {
@@ -91,9 +83,6 @@ func runComposeSchedulerRunsCommand(cmd *cobra.Command, cli cliOptions, options 
 }
 
 func runComposeSchedulerLogsCommand(cmd *cobra.Command, cli cliOptions, options composeSchedulerLogsOptions, args []string) error {
-	if err := writeDeprecatedSchedulerAgentFlagWarning(cmd, "use --scheduler instead"); err != nil {
-		return err
-	}
 	clients, err := newCLIServiceClients(cli)
 	if err != nil {
 		return err
@@ -115,12 +104,6 @@ func runComposeSchedulerLogsCommand(cmd *cobra.Command, cli cliOptions, options 
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler logs --tail must be -1 or greater")}
 	}
 	schedulerRef := strings.TrimSpace(options.SchedulerRef)
-	if schedulerRef != "" && strings.TrimSpace(options.AgentName) != "" {
-		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler logs accepts either --scheduler or deprecated --agent, not both")}
-	}
-	if schedulerRef == "" {
-		schedulerRef = strings.TrimSpace(options.AgentName)
-	}
 	if runRef != "" && (schedulerRef != "" || strings.TrimSpace(options.Trigger) != "") {
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler logs run filters cannot be combined with --scheduler or --trigger")}
 	}
@@ -172,14 +155,6 @@ func runComposeSchedulerLogsCommand(cmd *cobra.Command, cli cliOptions, options 
 		return err
 	}
 	return nil
-}
-
-func writeDeprecatedSchedulerAgentFlagWarning(cmd *cobra.Command, guidance string) error {
-	if !cmd.Flags().Changed("agent") {
-		return nil
-	}
-	_, err := fmt.Fprintf(cmd.ErrOrStderr(), "Warning: --agent is deprecated; %s\n", guidance)
-	return err
 }
 
 func runComposeSchedulerInspectCommand(cmd *cobra.Command, cli cliOptions, options composeSchedulerInspectOptions, rawRef string) error {

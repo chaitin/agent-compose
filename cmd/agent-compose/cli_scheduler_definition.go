@@ -50,8 +50,6 @@ func newCLISchedulerCommand(cli *cliOptions) *cobra.Command {
 			return runComposeSchedulerRunsCommand(cmd, *cli, runsOptions, args)
 		},
 	}
-	runsCmd.Flags().StringVar(&runsOptions.AgentName, "agent", "", "Filter by scheduler owner (deprecated)")
-	_ = runsCmd.Flags().MarkHidden("agent")
 	runsCmd.Flags().StringVar(&runsOptions.Trigger, "trigger", "", "Filter by trigger name or id")
 	runsCmd.Flags().StringVar(&runsOptions.Status, "status", "", "Filter by run status")
 	runsCmd.Flags().Uint32Var(&runsOptions.Limit, "limit", 0, "Maximum runs to show; 0 means all")
@@ -65,8 +63,6 @@ func newCLISchedulerCommand(cli *cliOptions) *cobra.Command {
 		},
 	}
 	logsCmd.Flags().StringVar(&logsOptions.SchedulerRef, "scheduler", "", "Filter by scheduler name or ID")
-	logsCmd.Flags().StringVar(&logsOptions.AgentName, "agent", "", "Filter by scheduler owner (deprecated)")
-	_ = logsCmd.Flags().MarkHidden("agent")
 	logsCmd.Flags().StringVar(&logsOptions.Trigger, "trigger", "", "Filter by trigger name or id")
 	logsCmd.Flags().StringVar(&logsOptions.RunID, "run", "", "Filter by scheduler run id")
 	logsCmd.Flags().IntVarP(&logsOptions.Tail, "tail", "n", -1, "Show the last N log events")

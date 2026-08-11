@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -741,20 +740,7 @@ agents:
 	}
 
 	sessionOut, sessionErr, _, sessionCode := executeCLICommand("inspect", "--host", server.URL, "--file", composePath, "--json", "session", "session-inspect")
-	if sessionCode != 0 {
-		t.Fatalf("inspect session code = %d; stderr = %q", sessionCode, sessionErr)
-	}
-	if !strings.Contains(sessionErr, "deprecated") || !strings.Contains(sessionErr, "will be removed") || !strings.Contains(sessionErr, "agent-compose inspect sandbox") {
-		t.Fatalf("inspect session stderr missing deprecated warning: %q", sessionErr)
-	}
-	var sessionDecoded composeSandboxOutput
-	if err := json.Unmarshal([]byte(sessionOut), &sessionDecoded); err != nil {
-		t.Fatalf("inspect session JSON decode failed: %v\n%s", err, sessionOut)
-	}
-	if sessionDecoded.SandboxID != "session-inspect" || sessionDecoded.VMStatus != "running" || sessionDecoded.Tags["project"] == "" {
-		t.Fatalf("inspect session JSON = %#v", sessionDecoded)
-	}
-	if !reflect.DeepEqual(sessionDecoded, sandboxDecoded) {
-		t.Fatalf("inspect session alias JSON differs from sandbox JSON:\nsession=%#v\nsandbox=%#v", sessionDecoded, sandboxDecoded)
+	if sessionCode != exitCodeUsage || sessionOut != "" || !strings.Contains(sessionErr, `unsupported inspect target "session"`) {
+		t.Fatalf("inspect removed session target code/stdout/stderr = %d / %q / %q", sessionCode, sessionOut, sessionErr)
 	}
 }
