@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"agent-compose/pkg/llms"
 	domain "agent-compose/pkg/model"
 )
 
@@ -96,6 +97,15 @@ func (s *coreStore) ListGlobalEnv(ctx context.Context) ([]domain.SandboxEnvVar, 
 }
 
 func (s *coreStore) ReplaceGlobalEnv(ctx context.Context, items []domain.SandboxEnvVar) ([]domain.SandboxEnvVar, error) {
+	credentials := llms.ResolveEnvDefaultProviderCredentials(items)
+	return s.replaceGlobalEnv(ctx, items, &credentials)
+}
+
+func (s *coreStore) ReplaceGlobalEnvWithProviderCredentials(ctx context.Context, items []domain.SandboxEnvVar, credentials llms.EnvDefaultProviderCredentials) ([]domain.SandboxEnvVar, error) {
+	return s.replaceGlobalEnv(ctx, items, &credentials)
+}
+
+func (s *coreStore) replaceGlobalEnv(ctx context.Context, items []domain.SandboxEnvVar, credentials *llms.EnvDefaultProviderCredentials) ([]domain.SandboxEnvVar, error) {
 	normalized := domain.NormalizeEnvItems(items)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -110,6 +120,9 @@ func (s *coreStore) ReplaceGlobalEnv(ctx context.Context, items []domain.Sandbox
 		if _, err := tx.ExecContext(ctx, `INSERT INTO global_env(name, value, secret, updated_at) VALUES(?, ?, ?, ?)`, item.Name, item.Value, BoolToInt(item.Secret), time.Now().UTC().Unix()); err != nil {
 			return nil, fmt.Errorf("insert global env %s: %w", item.Name, err)
 		}
+	}
+	if err := syncEnvDefaultProviderCredentials(ctx, tx, credentials); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit global env tx: %w", err)

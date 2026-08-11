@@ -8,6 +8,7 @@ import (
 	"connectrpc.com/connect"
 
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/llms"
 	domain "agent-compose/pkg/model"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
@@ -70,7 +71,10 @@ func TestSettingsGlobalEnvEmptyAndOmittedEntriesReplaceCollection(t *testing.T) 
 	}
 }
 
-type settingsStoreFake struct{ env []domain.SandboxEnvVar }
+type settingsStoreFake struct {
+	env         []domain.SandboxEnvVar
+	credentials llms.EnvDefaultProviderCredentials
+}
 
 func (s *settingsStoreFake) ListGlobalEnv(context.Context) ([]domain.SandboxEnvVar, error) {
 	return append([]domain.SandboxEnvVar(nil), s.env...), nil
@@ -78,6 +82,10 @@ func (s *settingsStoreFake) ListGlobalEnv(context.Context) ([]domain.SandboxEnvV
 func (s *settingsStoreFake) ReplaceGlobalEnv(_ context.Context, items []domain.SandboxEnvVar) ([]domain.SandboxEnvVar, error) {
 	s.env = append([]domain.SandboxEnvVar(nil), items...)
 	return s.env, nil
+}
+func (s *settingsStoreFake) ReplaceGlobalEnvWithProviderCredentials(ctx context.Context, items []domain.SandboxEnvVar, credentials llms.EnvDefaultProviderCredentials) ([]domain.SandboxEnvVar, error) {
+	s.credentials = credentials
+	return s.ReplaceGlobalEnv(ctx, items)
 }
 func (*settingsStoreFake) ListWorkspaceConfigs(context.Context) ([]domain.WorkspaceConfig, error) {
 	return nil, nil
@@ -97,4 +105,81 @@ func (*settingsStoreFake) GetCapabilityGateway(context.Context) (domain.Capabili
 }
 func (*settingsStoreFake) SaveCapabilityGateway(_ context.Context, item domain.CapabilityGatewaySettings) (domain.CapabilityGatewaySettings, error) {
 	return item, nil
+}
+
+func TestSettingsGlobalEnvProviderCredentialsFallBackToProcessEnvAndConfig(t *testing.T) {
+	t.Setenv("LLM_API_KEY", "process-key")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "process-token")
+	handler := NewSettingsV2Handler(&appconfig.Config{LLMAPIKey: "config-key"}, &settingsStoreFake{})
+	credentials := handler.resolveEnvDefaultProviderCredentials(nil)
+	if credentials.OpenAIAPIKey != "process-key" {
+		t.Fatalf("OpenAI fallback key = %q, want process-key", credentials.OpenAIAPIKey)
+	}
+	if credentials.AnthropicAPIKey != "process-token" || credentials.AnthropicAuthHeader != "Authorization" || credentials.AnthropicAuthScheme != "Bearer" {
+		t.Fatalf("Anthropic fallback credentials = %#v", credentials)
+	}
+
+	t.Setenv("LLM_API_KEY", "")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	credentials = handler.resolveEnvDefaultProviderCredentials(nil)
+	if credentials.OpenAIAPIKey != "config-key" {
+		t.Fatalf("config fallback key = %q, want config-key", credentials.OpenAIAPIKey)
+	}
+}
+
+func TestSettingsGlobalEnvEmptyCredentialFallsBack(t *testing.T) {
+	t.Setenv("LLM_API_KEY", "process-key")
+	handler := NewSettingsV2Handler(&appconfig.Config{LLMAPIKey: "config-key"}, &settingsStoreFake{})
+	credentials := handler.resolveEnvDefaultProviderCredentials([]domain.SandboxEnvVar{{Name: "LLM_API_KEY", Value: ""}})
+	if credentials.OpenAIAPIKey != "process-key" {
+		t.Fatalf("empty credential fallback = %q, want process-key", credentials.OpenAIAPIKey)
+	}
+}
+
+func TestSettingsGlobalEnvEmptyAnthropicCredentialFallsBackToAuthToken(t *testing.T) {
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "process-token")
+	handler := NewSettingsV2Handler(&appconfig.Config{}, &settingsStoreFake{})
+	credentials := handler.resolveEnvDefaultProviderCredentials([]domain.SandboxEnvVar{{Name: "ANTHROPIC_API_KEY", Value: ""}})
+	if credentials.AnthropicAPIKey != "process-token" || credentials.AnthropicAuthHeader != "Authorization" || credentials.AnthropicAuthScheme != "Bearer" {
+		t.Fatalf("empty Anthropic credential fallback = %#v", credentials)
+	}
+}
+
+func TestSettingsGlobalEnvCredentialsFallBackIndependentlyByFamily(t *testing.T) {
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "process-anthropic")
+	t.Setenv("LLM_API_KEY", "process-generic")
+	handler := NewSettingsV2Handler(&appconfig.Config{}, &settingsStoreFake{})
+	credentials := handler.resolveEnvDefaultProviderCredentials([]domain.SandboxEnvVar{{Name: "OPENAI_API_KEY", Value: "global-openai"}})
+	if credentials.OpenAIAPIKey != "global-openai" {
+		t.Fatalf("OpenAI credentials = %q, want global-openai", credentials.OpenAIAPIKey)
+	}
+	if credentials.AnthropicAPIKey != "process-anthropic" || credentials.AnthropicAuthHeader != "Authorization" || credentials.AnthropicAuthScheme != "Bearer" {
+		t.Fatalf("Anthropic credentials = %#v", credentials)
+	}
+
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	credentials = handler.resolveEnvDefaultProviderCredentials([]domain.SandboxEnvVar{{Name: "ANTHROPIC_API_KEY", Value: "global-anthropic"}})
+	if credentials.AnthropicAPIKey != "global-anthropic" || credentials.OpenAIAPIKey != "process-generic" {
+		t.Fatalf("reverse family credentials = %#v", credentials)
+	}
+}
+
+func TestSettingsUpdateGlobalEnvPassesEffectiveFallbackToStore(t *testing.T) {
+	t.Setenv("LLM_API_KEY", "process-key")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "process-token")
+	store := &settingsStoreFake{env: []domain.SandboxEnvVar{{Name: "LLM_API_KEY", Value: "old-key", Secret: true}}}
+	handler := NewSettingsV2Handler(&appconfig.Config{LLMAPIKey: "config-key"}, store)
+
+	if _, err := handler.UpdateGlobalEnv(context.Background(), connect.NewRequest(&agentcomposev2.UpdateGlobalEnvRequest{})); err != nil {
+		t.Fatalf("clear global environment: %v", err)
+	}
+	if len(store.env) != 0 {
+		t.Fatalf("saved environment = %#v, want empty", store.env)
+	}
+	if store.credentials.OpenAIAPIKey != "process-key" {
+		t.Errorf("persisted OpenAI fallback = %q, want process-key", store.credentials.OpenAIAPIKey)
+	}
+	if store.credentials.AnthropicAPIKey != "process-token" || store.credentials.AnthropicAuthHeader != "Authorization" || store.credentials.AnthropicAuthScheme != "Bearer" {
+		t.Errorf("persisted Anthropic fallback = %#v", store.credentials)
+	}
 }

@@ -141,15 +141,3 @@ func EnsureAnthropicEnvProvider(ctx context.Context, store DefaultConfigStore, l
 	}
 	return ensureAnthropicEnvProvider(ctx, store, lookup, credential, providerID, name, scope, requestedModel, defaultModel)
 }
-
-// AnthropicProviderAuthFromLookup derives Anthropic authentication semantics
-// from a lookup whose values belong to one already-selected source layer.
-func AnthropicProviderAuthFromLookup(lookup EnvProviderLookup) (string, string) {
-	if strings.TrimSpace(lookup("ANTHROPIC_API_KEY")) != "" {
-		return "x-api-key", ""
-	}
-	if strings.TrimSpace(lookup("ANTHROPIC_AUTH_TOKEN")) != "" {
-		return "Authorization", "Bearer"
-	}
-	return "x-api-key", ""
-}

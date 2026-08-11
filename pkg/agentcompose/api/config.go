@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/llms"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/workspaces"
 )
@@ -23,7 +24,7 @@ func workspaceContentError(err error) error {
 
 type ConfigStore interface {
 	ListGlobalEnv(ctx context.Context) ([]domain.SandboxEnvVar, error)
-	ReplaceGlobalEnv(ctx context.Context, items []domain.SandboxEnvVar) ([]domain.SandboxEnvVar, error)
+	ReplaceGlobalEnvWithProviderCredentials(ctx context.Context, items []domain.SandboxEnvVar, credentials llms.EnvDefaultProviderCredentials) ([]domain.SandboxEnvVar, error)
 	ListWorkspaceConfigs(ctx context.Context) ([]domain.WorkspaceConfig, error)
 	GetWorkspaceConfig(ctx context.Context, id string) (domain.WorkspaceConfig, error)
 	CreateWorkspaceConfig(ctx context.Context, item domain.WorkspaceConfig) (domain.WorkspaceConfig, error)

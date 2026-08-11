@@ -4,23 +4,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/llms"
 	domain "agent-compose/pkg/model"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
 type SettingsV2Handler struct {
+	config     *appconfig.Config
 	store      ConfigStore
 	workspaces *workspaceSettings
 }
 
 func NewSettingsV2Handler(config *appconfig.Config, store ConfigStore) *SettingsV2Handler {
-	return &SettingsV2Handler{store: store, workspaces: newWorkspaceSettings(config, store)}
+	return &SettingsV2Handler{config: config, store: store, workspaces: newWorkspaceSettings(config, store)}
 }
 
 func (h *SettingsV2Handler) GetGlobalEnv(ctx context.Context, _ *connect.Request[agentcomposev2.GetGlobalEnvRequest]) (*connect.Response[agentcomposev2.GetGlobalEnvResponse], error) {
@@ -35,11 +38,32 @@ func (h *SettingsV2Handler) UpdateGlobalEnv(ctx context.Context, req *connect.Re
 	if err != nil {
 		return nil, err
 	}
-	saved, err := h.store.ReplaceGlobalEnv(ctx, items)
+	saved, err := h.store.ReplaceGlobalEnvWithProviderCredentials(ctx, items, h.resolveEnvDefaultProviderCredentials(items))
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&agentcomposev2.UpdateGlobalEnvResponse{Env: envToV2(saved)}), nil
+}
+
+func (h *SettingsV2Handler) resolveEnvDefaultProviderCredentials(items []domain.SandboxEnvVar) llms.EnvDefaultProviderCredentials {
+	process := processLLMEnvItems()
+	config := []domain.SandboxEnvVar{}
+	if h.config != nil {
+		config = append(config, domain.SandboxEnvVar{Name: "LLM_API_KEY", Value: h.config.LLMAPIKey})
+	}
+	layers := [][]domain.SandboxEnvVar{items, process, config}
+	return llms.ResolveEnvDefaultProviderCredentialsFromLayers(layers...)
+}
+
+func processLLMEnvItems() []domain.SandboxEnvVar {
+	keys := []string{"LLM_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
+	items := make([]domain.SandboxEnvVar, 0, len(keys))
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok {
+			items = append(items, domain.SandboxEnvVar{Name: key, Value: value})
+		}
+	}
+	return items
 }
 
 func (h *SettingsV2Handler) globalEnvUpdates(ctx context.Context, updates []*agentcomposev2.EnvVarUpdateSpec) ([]domain.SandboxEnvVar, error) {
