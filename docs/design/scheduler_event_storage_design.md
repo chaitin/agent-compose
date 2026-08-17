@@ -40,7 +40,8 @@ large log and output payloads persisted in SQLite"）——该 issue 指出 `sch
 - 阻止完整 command 输出持续撑大 SQLite；
 - 删除 `scheduler_event` 中可以从 `scheduler_run` 或 artifact 获得的重复正文；
 - 保持现有表结构和 Proto API 兼容；
-- 为历史数据提供可审计、可回滚的压缩流程。
+- 为历史数据提供可审计的压缩流程：默认 dry-run 可见影响范围、遇到读不到 artifact 的行会跳过而不是
+  强行截断，但压缩本身不提供自动回滚——已截断的行如需恢复，依赖执行前的 `data.db` 文件备份（见 §9）。
 
 职责边界：
 
@@ -188,7 +189,7 @@ created_at
 - 短 command 输出保持原样；
 - `scheduler.log()` 继续写数据库；
 - 历史 `loader.*` 事件保持可读，不强制改名；
-- **`agent-compose scheduler logs` / `scheduler logs --json` 的输出内容字节级不变**：DB 里的 `message` 可能被截断，但这条命令通过 `StreamProjectSchedulerEvents` 内部的 artifact fallback（见 §1.1 第 2 项）拿到的仍是完整正文，脚本/`jq` 消费方无需感知这次改造。
+- **`agent-compose scheduler logs` / `scheduler logs --json` 在 artifact 仍可读时，输出内容字节级不变**：DB 里的 `message` 可能被截断，但这条命令通过 `StreamProjectSchedulerEvents` 内部的 artifact fallback（见 §1.1 第 2 项、§8）拿到的仍是完整正文，脚本/`jq` 消费方无需感知这次改造。**已知例外**：如果对应 sandbox 已经归档或被 `scheduler prune` 清理掉（见 §7、§10），artifact 读不到，这条命令会退化为返回 DB 里的截断预览 + `artifactAvailable:false` 标记（见 §8、§11）——这种情况下输出不是字节级不变的，是本期设计里显式承认、非静默的降级，不是"完整正文不可达"的意外 bug，也不违反"不新增 archive 读取能力"这条本期边界。
 
 ## 4. 统一大小限制
 
@@ -218,6 +219,10 @@ payload_json 全局硬上限：256 KiB
 ```
 
 实现必须按 UTF-8 安全边界截断，不能切坏中文或 Emoji。
+
+上表里给出的上限（如 `scheduler.command.completed` 的 4 KiB）指的是头尾原文数据的预算，不含截断
+提示文字本身；实现时最终写入 `message` 的总字节数会略高于表格数值，这一点在写测试断言"最大长度"
+时需要按实际拼接结果而不是表格数字去核对。
 
 ## 5. 各事件类型的存储策略
 
@@ -430,17 +435,16 @@ GET /api/sandboxes/{sandboxId}/cells/{cellId}/artifacts/output
 - 文件不存在时明确返回 `NotFound`；
 - sandbox 已归档但当前不支持读取时，返回明确的 `Archived` 状态。
 
-前端默认展示 DB 中的预览：
+前端默认展示 DB 中的预览，并提供按需读取全文的入口：
 
 ```text
 [查看完整 stdout] [查看 stderr] [下载日志]
 ```
 
-CLI 保持默认输出预览，后续可增加：
-
-```bash
-agent-compose scheduler logs --full
-```
+`scheduler logs`/`scheduler logs --json` 本期已经默认返回完整内容（见 §1.1 第 2 项、§8 的 fallback
+逻辑），不需要额外的 `--full` 参数；这个默认行为只在对应 artifact 还能读到时成立——sandbox 一旦被
+归档或清理（§7），CLI 现在拿到的也只有 DB 预览，跟前端会看到的一样。等这里的公开 artifact 读取
+API 和 §7 的归档读取能力都做完之后，CLI/前端才能在归档场景下也把内容找回来。
 
 ## 7. Sandbox 归档的处理
 
@@ -555,6 +559,9 @@ Agent/LLM 历史 payload 同样不属于本期；如后续实施，需要单独�
 - 幂等；
 - 不处理 running Run；
 - 不修改未知 payload；
+- 截断某一行前必须先确认对应 sandbox cell artifact（`stdout.txt`/`stderr.txt`/`output.txt`）确实存在
+  且可读；读不到（sandbox 已归档/已被清理）就跳过这一行、保留原文不截断，计入 dry-run/执行报告的
+  "跳过"计数，不能因为是历史数据就放松这条安全底线（呼应 §5.1 的写入顺序要求）；
 - 执行前提供备份提示；
 - 报告实际减少的逻辑字节数。
 
