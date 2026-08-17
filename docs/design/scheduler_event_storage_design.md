@@ -562,6 +562,14 @@ Agent/LLM 历史 payload 同样不属于本期；如后续实施，需要单独�
 - 截断某一行前必须先确认对应 sandbox cell artifact（`stdout.txt`/`stderr.txt`/`output.txt`）确实存在
   且可读；读不到（sandbox 已归档/已被清理）就跳过这一行、保留原文不截断，计入 dry-run/执行报告的
   "跳过"计数，不能因为是历史数据就放松这条安全底线（呼应 §5.1 的写入顺序要求）；
+- **截断历史行时必须同步把 `payload_json.messageTruncated` 置为 `true`**（并按 §5.1 的形状补上
+  `outputBytes`/`outputTruncated` 等元数据）：历史行是本次改造前写入的，`payload_json` 里通常没有
+  `messageTruncated` 这个 key，反序列化后是零值 `false`；§8 的 `ResolveEventMessage` 只在这个字段
+  为 `true` 时才会去读 artifact 重建全文，为 `false` 就直接返回 DB 的 `message`、不做任何文件 I/O。
+  如果迁移只截断了 `message` 而不写这个标志，历史事件即使 artifact 仍然可读，`scheduler logs` 也会
+  一直返回 DB 截断预览，等于让 §8 的 fallback 机制在历史迁移路径上失效，直接违反 §3"artifact 仍可读
+  时输出字节级不变"的承诺。这个字段只写入迁移程序能识别的 command 事件 payload 结构（跟 command 的
+  已知形状匹配），不匹配的按"不修改未知 payload"处理、原样跳过；
 - 执行前提供备份提示；
 - 报告实际减少的逻辑字节数。
 
@@ -593,6 +601,10 @@ scheduler_id/status/age 清理终态 Run 及其直属 `scheduler_event`、event 
 - payload 始终是合法 JSON；
 - failed/canceled 仍能从 message 看到错误摘要；
 - 历史 `loader.*` 迁移；
+- 历史行 artifact 缺失/已归档时迁移会跳过、`message` 保持全文不截断；
+- **历史行截断后 `payload_json.messageTruncated` 被置为 `true`，且 `scheduler logs`/`scheduler logs
+  --json` 对这批迁移过的历史事件走 §8 fallback 仍能读到完整内容**（不能只测"DB 里 message 变短了"，
+  要测到 CLI 端到端输出，覆盖"迁移后、artifact 仍可读"这个组合场景）；
 - dry-run 不修改数据库；
 - migration 重复执行结果一致；
 - **`scheduler logs` / `scheduler logs --json` 对 `messageTruncated=true` 的事件仍返回完整内容**（走
