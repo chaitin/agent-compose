@@ -1,5 +1,12 @@
 # Scheduler Event 存储改造方案
 
+对应 [issue #565](https://github.com/chaitin/agent-compose/issues/565)（"design(storage): reduce
+large log and output payloads persisted in SQLite"）——该 issue 指出 `scheduler_event`/`project_run`
+等表里存了不少跟 artifact 文件重复的完整日志/输出内容，怀疑增加了库体积、备份、查询、prune 成本，
+但本身是未经代码核实的调查性 issue。本方案聚焦 issue 提到的 `scheduler_event` 部分，先用真实数据
+核实问题的真实构成（详见 §2.1），再给出范围收紧后的第一期实施方案；`project_run`、`scheduler_run`
+以及 issue 里提到的其余表暂不在本方案范围内。
+
 ## 1. 目标与范围
 
 本方案只改造 `scheduler_event`，暂不修改 `scheduler_run` 的存储行为。
