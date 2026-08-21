@@ -128,3 +128,10 @@ func TestAgentJSONSchemaProviderKeywordRoundTripsAsInlineSchema(t *testing.T) {
 		t.Fatal("input schema was lost")
 	}
 }
+
+func TestAgentJSONSchemaRejectsTrailingJSON(t *testing.T) {
+	var schema JSONSchema
+	if err := schema.UnmarshalJSON([]byte(`{"type":"object"} trailing`)); err == nil {
+		t.Fatal("expected trailing JSON to be rejected")
+	}
+}
