@@ -92,3 +92,39 @@ func TestAgentJSONSchemaRejectsNonSchemaDocument(t *testing.T) {
 		t.Fatalf("Parse error = %v", err)
 	}
 }
+
+func TestAgentJSONSchemaPreservesLargeNumbers(t *testing.T) {
+	spec, err := Parse([]byte("name: schemas\nagents:\n  worker:\n    input_schema:\n      type: integer\n      maximum: 9223372036854775807\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(*normalized.Agents[0].InputSchema); !strings.Contains(got, "9223372036854775807") {
+		t.Fatalf("schema = %s", got)
+	}
+}
+
+func TestAgentJSONSchemaProviderKeywordRoundTripsAsInlineSchema(t *testing.T) {
+	spec, err := Parse([]byte("name: schemas\nagents:\n  worker:\n    input_schema:\n      type: object\n      provider: custom-keyword\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := normalized.MarshalCanonicalJSON(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseCanonicalJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Agents[0].InputSchema == nil {
+		t.Fatal("input schema was lost")
+	}
+}

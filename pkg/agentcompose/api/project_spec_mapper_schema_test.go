@@ -23,7 +23,7 @@ func TestAgentSpecsToProtoIncludesJSONSchemas(t *testing.T) {
 }
 
 func TestProjectSpecSchemaProtoRoundTripPreservesHash(t *testing.T) {
-	parsedOriginal, err := compose.Parse([]byte("name: schemas\nagents:\n  worker:\n    input_schema:\n      type: object\n      properties:\n        count:\n          type: integer\n          default: 3\n    output_schema:\n      type: string\n"))
+	parsedOriginal, err := compose.Parse([]byte("name: schemas\nagents:\n  worker:\n    input_schema:\n      type: object\n      provider: custom-keyword\n      properties:\n        count:\n          type: integer\n          default: 9223372036854775807\n    output_schema:\n      type: string\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

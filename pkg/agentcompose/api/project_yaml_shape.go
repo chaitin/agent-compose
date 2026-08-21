@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -8,6 +9,8 @@ import (
 	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/compose"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
+
+	"gopkg.in/yaml.v3"
 )
 
 func ProjectSpecYAMLShape(spec *agentcomposev2.ProjectSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
@@ -188,14 +191,39 @@ func agentJSONSchemaYAMLValue(path, raw string) (any, *agentcomposev2.ProjectVal
 		return nil, nil
 	}
 	var value any
-	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
 		return nil, ProjectValidationIssue(path, "must contain valid JSON")
 	}
 	switch value.(type) {
 	case map[string]any, bool:
-		return value, nil
+		return jsonNumbersForProjectYAML(value), nil
 	default:
 		return nil, ProjectValidationIssue(path, "must contain a JSON Schema object or boolean")
+	}
+}
+
+func jsonNumbersForProjectYAML(value any) any {
+	switch value := value.(type) {
+	case json.Number:
+		tag := "!!int"
+		if strings.ContainsAny(value.String(), ".eE") {
+			tag = "!!float"
+		}
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: value.String()}
+	case map[string]any:
+		for key, item := range value {
+			value[key] = jsonNumbersForProjectYAML(item)
+		}
+		return value
+	case []any:
+		for i := range value {
+			value[i] = jsonNumbersForProjectYAML(value[i])
+		}
+		return value
+	default:
+		return value
 	}
 }
 

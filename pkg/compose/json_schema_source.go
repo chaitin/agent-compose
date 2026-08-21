@@ -22,7 +22,7 @@ type JSONSchemaSource struct {
 func (s JSONSchemaSource) IsZero() bool { return s.Inline == nil && !s.Source.HasContent() }
 
 func (s *JSONSchemaSource) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind == yaml.MappingNode && mappingHasKey(value, "provider") {
+	if value.Kind == yaml.MappingNode && mappingHasSourceProvider(value) {
 		var source sources.Source
 		if err := value.Decode(&source); err != nil {
 			return err
@@ -77,11 +77,36 @@ func (s *JSONSchema) UnmarshalJSON(data []byte) error {
 func (s JSONSchema) MarshalYAML() (any, error) { return s.yamlValue() }
 
 func (s JSONSchema) yamlValue() (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(s))
+	decoder.UseNumber()
 	var value any
-	if err := json.Unmarshal(s, &value); err != nil {
+	if err := decoder.Decode(&value); err != nil {
 		return nil, err
 	}
-	return value, nil
+	return jsonNumbersForYAML(value), nil
+}
+
+func jsonNumbersForYAML(value any) any {
+	switch value := value.(type) {
+	case json.Number:
+		tag := "!!int"
+		if bytes.ContainsAny([]byte(value), ".eE") {
+			tag = "!!float"
+		}
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: value.String()}
+	case map[string]any:
+		for key, item := range value {
+			value[key] = jsonNumbersForYAML(item)
+		}
+		return value
+	case []any:
+		for i := range value {
+			value[i] = jsonNumbersForYAML(value[i])
+		}
+		return value
+	default:
+		return value
+	}
 }
 
 func validateJSONSchemaDocument(data []byte) error {
@@ -90,8 +115,10 @@ func validateJSONSchemaDocument(data []byte) error {
 }
 
 func canonicalJSONSchemaDocument(data []byte) ([]byte, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
 	var value any
-	if err := json.Unmarshal(data, &value); err != nil {
+	if err := decoder.Decode(&value); err != nil {
 		return nil, fmt.Errorf("invalid JSON Schema: %w", err)
 	}
 	switch value.(type) {
@@ -115,8 +142,19 @@ func mappingHasKey(node *yaml.Node, key string) bool {
 	return false
 }
 
+func mappingHasSourceProvider(node *yaml.Node) bool {
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value != "provider" {
+			continue
+		}
+		value := node.Content[i+1]
+		return value.Kind == yaml.ScalarNode && (value.Value == "file" || value.Value == "http" || value.Value == "git")
+	}
+	return false
+}
+
 func validateJSONSchemaSource(node *yaml.Node, path string) error {
-	if node.Kind == yaml.MappingNode && mappingHasKey(node, "provider") {
+	if node.Kind == yaml.MappingNode && mappingHasSourceProvider(node) {
 		return validateMapping(node, path, sourceFieldValidators(nil))
 	}
 	if node.Kind == yaml.MappingNode || (node.Kind == yaml.ScalarNode && node.Tag == "!!bool") {
