@@ -50,6 +50,8 @@ type orderedAgentSpec struct {
 	Enabled      bool                        `yaml:"enabled" json:"enabled"`
 	DisplayName  string                      `yaml:"display_name,omitempty" json:"display_name,omitempty"`
 	Description  string                      `yaml:"description,omitempty" json:"description,omitempty"`
+	InputSchema  *JSONSchema                 `yaml:"input_schema,omitempty" json:"input_schema,omitempty"`
+	OutputSchema *JSONSchema                 `yaml:"output_schema,omitempty" json:"output_schema,omitempty"`
 	Provider     string                      `yaml:"provider,omitempty" json:"provider,omitempty"`
 	Model        string                      `yaml:"model,omitempty" json:"model,omitempty"`
 	SystemPrompt string                      `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
@@ -130,6 +132,12 @@ func (s *NormalizedProjectSpec) ValidateResolvedScriptURLs() error {
 		return nil
 	}
 	for _, agent := range s.Agents {
+		if agent.inputSchemaSource != nil {
+			return &ValidationError{Path: joinPath("agents", agent.Name) + ".input_schema", Message: "JSON Schema source is unresolved"}
+		}
+		if agent.outputSchemaSource != nil {
+			return &ValidationError{Path: joinPath("agents", agent.Name) + ".output_schema", Message: "JSON Schema source is unresolved"}
+		}
 		if agent.Scheduler.hasUnresolvedScriptSource() {
 			return &ValidationError{
 				Path:    joinPath("agents", agent.Name) + ".scheduler.script",
@@ -153,6 +161,8 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 			Enabled:      agent.Enabled,
 			DisplayName:  agent.DisplayName,
 			Description:  agent.Description,
+			InputSchema:  cloneJSONSchema(agent.InputSchema),
+			OutputSchema: cloneJSONSchema(agent.OutputSchema),
 			Provider:     agent.Provider,
 			Model:        agent.Model,
 			SystemPrompt: agent.SystemPrompt,
@@ -195,11 +205,13 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 		Volumes:        volumeMapFromOrdered(ordered.Volumes),
 	}
 	for _, agent := range ordered.Agents {
-		cloned.Agents = append(cloned.Agents, NormalizedAgentSpec{
+		clonedAgent := NormalizedAgentSpec{
 			Name:         agent.Name,
 			Enabled:      agent.Enabled,
 			DisplayName:  agent.DisplayName,
 			Description:  agent.Description,
+			InputSchema:  cloneJSONSchema(agent.InputSchema),
+			OutputSchema: cloneJSONSchema(agent.OutputSchema),
 			Provider:     agent.Provider,
 			Model:        agent.Model,
 			SystemPrompt: agent.SystemPrompt,
@@ -215,9 +227,33 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 			Sandbox:      agent.Sandbox,
 			Scheduler:    agent.Scheduler,
 			Jupyter:      agent.Jupyter,
-		})
+		}
+		for i := range s.Agents {
+			if s.Agents[i].Name == agent.Name {
+				clonedAgent.inputSchemaSource = cloneSource(s.Agents[i].inputSchemaSource)
+				clonedAgent.outputSchemaSource = cloneSource(s.Agents[i].outputSchemaSource)
+				break
+			}
+		}
+		cloned.Agents = append(cloned.Agents, clonedAgent)
 	}
 	return cloned
+}
+
+func cloneSource(source *sources.Source) *sources.Source {
+	if source == nil {
+		return nil
+	}
+	cloned := *source
+	return &cloned
+}
+
+func cloneJSONSchema(schema *JSONSchema) *JSONSchema {
+	if schema == nil {
+		return nil
+	}
+	cloned := JSONSchema(slices.Clone([]byte(*schema)))
+	return &cloned
 }
 
 func orderedWorkspaces(values map[string]WorkspaceSpec, redactSecrets bool) []orderedNamedWorkspace {

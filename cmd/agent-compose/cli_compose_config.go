@@ -35,6 +35,7 @@ func loadNormalizedComposeWithOptions(ctx context.Context, cli cliOptions, resol
 		ComposePath:       composePath,
 		Env:               projectEnv,
 		ResolveScriptURLs: resolveScriptURLs,
+		ResolveSchemaURLs: resolveScriptURLs,
 		Context:           ctx,
 	})
 	if err != nil {

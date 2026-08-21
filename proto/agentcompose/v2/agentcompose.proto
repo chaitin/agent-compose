@@ -885,6 +885,10 @@ message AgentSpec {
   string display_name = 17;
   string description = 18;
   SandboxSpec sandbox = 19;
+  // Optional JSON Schema describing inputs accepted by this agent.
+  string input_schema_json = 20;
+  // Optional JSON Schema describing outputs produced by this agent.
+  string output_schema_json = 21;
 }
 
 message SandboxSpec {

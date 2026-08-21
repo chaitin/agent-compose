@@ -426,6 +426,8 @@ agents:
 | `enabled` | bool | `true` | Whether the Agent is enabled. A disabled definition remains stored but cannot run normally, and its scheduler is not enabled. |
 | `display_name` | string | Empty | Human-readable agent label. |
 | `description` | string | Empty | Human-readable explanation of the agent's role. |
+| `input_schema` | JSON Schema/source | None | Optional JSON Schema describing input accepted by the agent. May be inline or loaded from a source descriptor. |
+| `output_schema` | JSON Schema/source | None | Optional JSON Schema describing output produced by the agent. May be inline or loaded from a source descriptor. |
 | `provider` | string | `codex` | Agent provider: `codex`, `claude`, `gemini`, `opencode`, `pi`, or `dsh`. Compatibility aliases are normalized at persistence boundaries. |
 | `model` | string | Provider/daemon default | Model name. Pi and dsh require `<llm-provider-id>/<model-name>`. Supports `${NAME}` interpolation. |
 | `system_prompt` | string | Empty | Additional system instructions; YAML block scalars are recommended for multiline text. |
@@ -441,6 +443,28 @@ agents:
 | `sandbox` | object | Remove stopped runtime | Sandbox lifecycle configuration. |
 | `scheduler` | object | None | Automatic trigger configuration. |
 | `jupyter` | object | Disabled | Default Jupyter behavior for agent runs. |
+
+### `input_schema` and `output_schema`
+
+Each schema is optional and independent. An agent may declare either one, both, or neither. Inline schemas use ordinary JSON Schema expressed as YAML; property-level `description` values are recommended so external platforms can present useful input and output documentation.
+
+```yaml
+agents:
+  researcher:
+    description: Researches a topic and returns cited findings.
+    input_schema:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: Topic or question to research.
+    output_schema:
+      provider: file
+      path: ./schemas/research-result.schema.json
+```
+
+The source form is the same flat descriptor accepted by `scheduler.script` (`file`, `http`, or `git`). Relative file paths resolve from the compose file directory. Source content is resolved and stored as a snapshot when the project is applied; it must contain a JSON object or boolean schema. A mapping containing `provider` is interpreted as a source descriptor, so an inline schema that needs a custom top-level `provider` keyword should place that schema in a referenced file.
 
 ### `enabled`, `provider`, `model`, and `system_prompt`
 

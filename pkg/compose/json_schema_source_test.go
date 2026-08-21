@@ -1,0 +1,94 @@
+package compose
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestAgentJSONSchemasAreOptionalAndIndependent(t *testing.T) {
+	spec, err := Parse([]byte(`
+name: schemas
+agents:
+  input-only:
+    input_schema:
+      type: object
+      description: Request accepted by the agent
+      properties:
+        query:
+          type: string
+          description: Search query
+  output-only:
+    output_schema: false
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if normalized.Agents[0].InputSchema == nil || normalized.Agents[0].OutputSchema != nil {
+		t.Fatalf("input-only schemas = %#v/%#v", normalized.Agents[0].InputSchema, normalized.Agents[0].OutputSchema)
+	}
+	if normalized.Agents[1].InputSchema != nil || normalized.Agents[1].OutputSchema == nil {
+		t.Fatalf("output-only schemas = %#v/%#v", normalized.Agents[1].InputSchema, normalized.Agents[1].OutputSchema)
+	}
+	data, err := normalized.MarshalCanonicalJSON(false)
+	if err != nil {
+		t.Fatalf("MarshalCanonicalJSON returned error: %v", err)
+	}
+	roundTrip, err := ParseCanonicalJSON(data)
+	if err != nil {
+		t.Fatalf("ParseCanonicalJSON returned error: %v", err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(*roundTrip.Agents[0].InputSchema, &schema); err != nil {
+		t.Fatalf("decode input schema: %v", err)
+	}
+	if schema["description"] != "Request accepted by the agent" {
+		t.Fatalf("input schema = %#v", schema)
+	}
+}
+
+func TestAgentJSONSchemaFileSourceIsSnapshotted(t *testing.T) {
+	dir := t.TempDir()
+	schemaPath := filepath.Join(dir, "request.schema.json")
+	if err := os.WriteFile(schemaPath, []byte(`{"type":"object","properties":{"count":{"type":"integer"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := Parse([]byte("name: schemas\nagents:\n  worker:\n    input_schema:\n      provider: file\n      path: request.schema.json\n"))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	normalized, err := Normalize(spec, NormalizeOptions{ComposePath: filepath.Join(dir, "agent-compose.yml"), ResolveSchemaURLs: true})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if normalized.Agents[0].InputSchema == nil || !strings.Contains(string(*normalized.Agents[0].InputSchema), `"count"`) {
+		t.Fatalf("resolved input schema = %v", normalized.Agents[0].InputSchema)
+	}
+}
+
+func TestUnresolvedAgentJSONSchemaSourceCannotBePersisted(t *testing.T) {
+	spec, err := Parse([]byte("name: schemas\nagents:\n  worker:\n    input_schema:\n      provider: file\n      path: request.schema.json\n"))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	normalized, err := Normalize(spec, NormalizeOptions{ComposePath: filepath.Join(t.TempDir(), "agent-compose.yml")})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if _, err := normalized.Redacted().MarshalCanonicalJSON(false); err == nil || !strings.Contains(err.Error(), "input_schema") {
+		t.Fatalf("MarshalCanonicalJSON error = %v", err)
+	}
+}
+
+func TestAgentJSONSchemaRejectsNonSchemaDocument(t *testing.T) {
+	_, err := Parse([]byte("name: schemas\nagents:\n  worker:\n    input_schema: [string]\n"))
+	if err == nil || !strings.Contains(err.Error(), "JSON Schema") {
+		t.Fatalf("Parse error = %v", err)
+	}
+}

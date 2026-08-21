@@ -2,6 +2,7 @@ package projects
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"agent-compose/pkg/capabilities"
@@ -119,6 +120,19 @@ func TestProjectRecordsCarryVolumeMountSpecs(t *testing.T) {
 	}
 	if schedulerDefinition.Summary.Name != "缓存巡检" || schedulerDefinition.Summary.Description != "检查缓存状态" {
 		t.Fatalf("scheduler presentation = %#v", schedulerDefinition.Summary)
+	}
+}
+
+func TestAgentSchemasFlowIntoManagedAgentConfig(t *testing.T) {
+	input := compose.JSONSchema(`{"type":"object"}`)
+	output := compose.JSONSchema(`{"type":"string"}`)
+	agent := compose.NormalizedAgentSpec{Name: "worker", Enabled: true, InputSchema: &input, OutputSchema: &output}
+	definition, err := NewAgentDefinitionFromSpec(domain.ProjectRecord{ID: "project-1"}, 1, agent, AgentDefinitionProjectRefs{})
+	if err != nil {
+		t.Fatalf("NewAgentDefinitionFromSpec returned error: %v", err)
+	}
+	if !strings.Contains(definition.ConfigJSON, `"input_schema":{"type":"object"}`) || !strings.Contains(definition.ConfigJSON, `"output_schema":{"type":"string"}`) {
+		t.Fatalf("config JSON = %s", definition.ConfigJSON)
 	}
 }
 

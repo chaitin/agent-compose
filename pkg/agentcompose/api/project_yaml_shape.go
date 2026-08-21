@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -111,6 +112,16 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		if strings.TrimSpace(agent.GetDescription()) != "" {
 			raw["description"] = agent.GetDescription()
 		}
+		if schema, issue := agentJSONSchemaYAMLValue(fmt.Sprintf("agents[%d].input_schema_json", i), agent.GetInputSchemaJson()); issue != nil {
+			return nil, []*agentcomposev2.ProjectValidationIssue{issue}
+		} else if schema != nil {
+			raw["input_schema"] = schema
+		}
+		if schema, issue := agentJSONSchemaYAMLValue(fmt.Sprintf("agents[%d].output_schema_json", i), agent.GetOutputSchemaJson()); issue != nil {
+			return nil, []*agentcomposev2.ProjectValidationIssue{issue}
+		} else if schema != nil {
+			raw["output_schema"] = schema
+		}
 		if agent.Enabled != nil {
 			raw["enabled"] = agent.GetEnabled()
 		}
@@ -170,6 +181,22 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		values[name] = raw
 	}
 	return values, nil
+}
+
+func agentJSONSchemaYAMLValue(path, raw string) (any, *agentcomposev2.ProjectValidationIssue) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var value any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return nil, ProjectValidationIssue(path, "must contain valid JSON")
+	}
+	switch value.(type) {
+	case map[string]any, bool:
+		return value, nil
+	default:
+		return nil, ProjectValidationIssue(path, "must contain a JSON Schema object or boolean")
+	}
 }
 
 func MCPServerYAMLMap(path string, mcps []*agentcomposev2.MCPServerSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
