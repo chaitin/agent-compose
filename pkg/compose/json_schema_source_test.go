@@ -135,3 +135,15 @@ func TestAgentJSONSchemaRejectsTrailingJSON(t *testing.T) {
 		t.Fatal("expected trailing JSON to be rejected")
 	}
 }
+
+func TestAgentJSONSchemaPreservesJSONNumberLiterals(t *testing.T) {
+	var schema JSONSchema
+	const raw = `{"type":"number","minimum":0.12345678901234567890123,"maximum":1e-3}`
+	if err := schema.UnmarshalJSON([]byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	got := string(schema)
+	if !strings.Contains(got, "0.12345678901234567890123") || !strings.Contains(got, "1e-3") {
+		t.Fatalf("schema = %s", got)
+	}
+}

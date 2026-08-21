@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 
 	"agent-compose/pkg/sources"
 
@@ -127,7 +126,6 @@ func canonicalJSONSchemaDocument(data []byte) ([]byte, error) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return nil, fmt.Errorf("invalid JSON Schema: unexpected trailing data")
 	}
-	value = canonicalizeSchemaNumbers(value)
 	switch value.(type) {
 	case map[string]any, bool:
 		canonical, err := json.Marshal(value)
@@ -149,27 +147,6 @@ func mappingHasSourceProvider(node *yaml.Node) bool {
 		return value.Kind == yaml.ScalarNode && (value.Value == "file" || value.Value == "http" || value.Value == "git")
 	}
 	return false
-}
-
-func canonicalizeSchemaNumbers(value any) any {
-	switch value := value.(type) {
-	case json.Number:
-		if strings.ContainsAny(value.String(), ".eE") {
-			if number, err := value.Float64(); err == nil {
-				return number
-			}
-		}
-		return value
-	case map[string]any:
-		for key, item := range value {
-			value[key] = canonicalizeSchemaNumbers(item)
-		}
-	case []any:
-		for i, item := range value {
-			value[i] = canonicalizeSchemaNumbers(item)
-		}
-	}
-	return value
 }
 
 func validateJSONSchemaSource(node *yaml.Node, path string) error {
