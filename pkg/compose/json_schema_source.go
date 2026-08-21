@@ -12,8 +12,9 @@ import (
 )
 
 // JSONSchemaSource accepts either an inline JSON Schema or the same source
-// descriptor shape used by scheduler.script. A mapping containing provider is
-// treated as a source descriptor; every other mapping and boolean is inline.
+// descriptor shape used by scheduler.script. A mapping whose provider is file,
+// http, or git is treated as a source descriptor; every other mapping and
+// boolean is inline.
 type JSONSchemaSource struct {
 	Inline *JSONSchema
 	Source sources.Source

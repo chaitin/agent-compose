@@ -464,7 +464,7 @@ agents:
       path: ./schemas/research-result.schema.json
 ```
 
-The source form is the same flat descriptor accepted by `scheduler.script` (`file`, `http`, or `git`). Relative file paths resolve from the compose file directory. Source content is resolved and stored as a snapshot when the project is applied; it must contain a JSON object or boolean schema. A mapping containing `provider` is interpreted as a source descriptor, so an inline schema that needs a custom top-level `provider` keyword should place that schema in a referenced file.
+The source form is the same flat descriptor accepted by `scheduler.script` (`file`, `http`, or `git`). Relative file paths resolve from the compose file directory. Source content is resolved and stored as a snapshot when the project is applied; it must contain a JSON object or boolean schema. A mapping whose top-level `provider` value is `file`, `http`, or `git` is interpreted as a source descriptor; other `provider` values remain available as custom inline-schema keywords.
 
 ### `enabled`, `provider`, `model`, and `system_prompt`
 

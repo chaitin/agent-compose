@@ -465,7 +465,7 @@ agents:
       path: ./schemas/research-result.schema.json
 ```
 
-source 形式与 `scheduler.script` 接受的扁平 descriptor 一致（`file`、`http` 或 `git`）。相对文件路径以 compose 文件所在目录为基准。应用项目时会解析内容并保存快照，内容必须是 JSON object 或 boolean schema。包含 `provider` 的 mapping 会被解释为 source descriptor；如果内联 schema 需要自定义的顶层 `provider` 关键字，请改用文件引用。
+source 形式与 `scheduler.script` 接受的扁平 descriptor 一致（`file`、`http` 或 `git`）。相对文件路径以 compose 文件所在目录为基准。应用项目时会解析内容并保存快照，内容必须是 JSON object 或 boolean schema。顶层 `provider` 值为 `file`、`http` 或 `git` 的 mapping 会被解释为 source descriptor；其他 `provider` 值仍可作为内联 schema 的自定义关键字。
 
 ### `enabled`、`provider`、`model` 和 `system_prompt`
 
