@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 
 	"agent-compose/pkg/sources"
 
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,8 +38,8 @@ func (s *JSONSchemaSource) UnmarshalYAML(value *yaml.Node) error {
 	if value.Tag == "!!null" {
 		return fmt.Errorf("JSON Schema must not be null")
 	}
-	var decoded any
-	if err := value.Decode(&decoded); err != nil {
+	decoded, err := jsonSchemaYAMLValue(value)
+	if err != nil {
 		return err
 	}
 	data, err := json.Marshal(decoded)
@@ -117,24 +117,75 @@ func validateJSONSchemaDocument(data []byte) error {
 }
 
 func canonicalJSONSchemaDocument(data []byte) ([]byte, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
+	value, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
 		return nil, fmt.Errorf("invalid JSON Schema: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return nil, fmt.Errorf("invalid JSON Schema: unexpected trailing data")
 	}
 	switch value.(type) {
 	case map[string]any, bool:
-		canonical, err := json.Marshal(value)
-		if err != nil {
-			return nil, fmt.Errorf("encode JSON Schema: %w", err)
-		}
-		return canonical, nil
 	default:
 		return nil, fmt.Errorf("JSON Schema must be an object or boolean")
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.UseLoader(rejectJSONSchemaResourceLoader{})
+	if err := compiler.AddResource("schema.json", value); err != nil {
+		return nil, fmt.Errorf("load JSON Schema: %w", err)
+	}
+	if _, err := compiler.Compile("schema.json"); err != nil {
+		return nil, fmt.Errorf("invalid JSON Schema: %w", err)
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode JSON Schema: %w", err)
+	}
+	return canonical, nil
+}
+
+type rejectJSONSchemaResourceLoader struct{}
+
+func (rejectJSONSchemaResourceLoader) Load(url string) (any, error) {
+	return nil, fmt.Errorf("external JSON Schema resource %q is not supported", url)
+}
+
+func jsonSchemaYAMLValue(node *yaml.Node) (any, error) {
+	switch node.Kind {
+	case yaml.MappingNode:
+		value := make(map[string]any, len(node.Content)/2)
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key := node.Content[i]
+			if key.Kind != yaml.ScalarNode || key.Tag != "!!str" {
+				return nil, fmt.Errorf("JSON Schema object keys must be strings")
+			}
+			item, err := jsonSchemaYAMLValue(node.Content[i+1])
+			if err != nil {
+				return nil, err
+			}
+			value[key.Value] = item
+		}
+		return value, nil
+	case yaml.SequenceNode:
+		value := make([]any, len(node.Content))
+		for i, item := range node.Content {
+			decoded, err := jsonSchemaYAMLValue(item)
+			if err != nil {
+				return nil, err
+			}
+			value[i] = decoded
+		}
+		return value, nil
+	case yaml.AliasNode:
+		return jsonSchemaYAMLValue(node.Alias)
+	case yaml.ScalarNode:
+		if (node.Tag == "!!int" || node.Tag == "!!float") && json.Valid([]byte(node.Value)) {
+			return json.Number(node.Value), nil
+		}
+		var value any
+		if err := node.Decode(&value); err != nil {
+			return nil, err
+		}
+		return value, nil
+	default:
+		return nil, fmt.Errorf("unsupported YAML node in JSON Schema")
 	}
 }
 

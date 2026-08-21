@@ -147,3 +147,43 @@ func TestAgentJSONSchemaPreservesJSONNumberLiterals(t *testing.T) {
 		t.Fatalf("schema = %s", got)
 	}
 }
+
+func TestAgentJSONSchemaInlineYAMLPreservesNumberLiterals(t *testing.T) {
+	spec, err := Parse([]byte("name: schemas\nagents:\n  worker:\n    input_schema:\n      type: number\n      minimum: 0.12345678901234567890123\n      maximum: 1e-3\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(*normalized.Agents[0].InputSchema)
+	if !strings.Contains(got, "0.12345678901234567890123") || !strings.Contains(got, "1e-3") {
+		t.Fatalf("schema = %s", got)
+	}
+}
+
+func TestAgentJSONSchemaRejectsInvalidSchemaKeywords(t *testing.T) {
+	for _, schema := range []string{
+		"name: schemas\nagents:\n  worker:\n    input_schema:\n      type: unknown\n",
+		"name: schemas\nagents:\n  worker:\n    input_schema:\n      type: string\n      pattern: '[unterminated'\n",
+	} {
+		spec, err := Parse([]byte(schema))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Normalize(spec, NormalizeOptions{}); err == nil {
+			t.Fatalf("expected invalid schema to be rejected: %s", schema)
+		}
+	}
+}
+
+func TestAgentJSONSchemaRejectsExternalReferences(t *testing.T) {
+	spec, err := Parse([]byte("name: schemas\nagents:\n  worker:\n    input_schema:\n      $ref: https://example.test/schema.json\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Normalize(spec, NormalizeOptions{}); err == nil || !strings.Contains(err.Error(), "external JSON Schema resource") {
+		t.Fatalf("Normalize error = %v", err)
+	}
+}
