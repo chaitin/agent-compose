@@ -1,9 +1,34 @@
 import http from "node:http";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { runtime } from "../src/index.js";
 
 describe("runtime.llm", () => {
+  afterEach(() => {
+    delete process.env.AGENT_COMPOSE_RUNTIME_BASE_URL;
+    delete process.env.AGENT_COMPOSE_SANDBOX_TOKEN;
+  });
+
+  it("uses the managed runtime facade URL and sandbox bearer token", async () => {
+    process.env.AGENT_COMPOSE_RUNTIME_BASE_URL = "http://managed.example/";
+    process.env.AGENT_COMPOSE_SANDBOX_TOKEN = "sandbox-secret";
+    const server = await startLLMServer(async (_body, req) => {
+      expect(req.headers.authorization).toBe("Bearer sandbox-secret");
+      return { text: "ok" };
+    });
+    process.env.AGENT_COMPOSE_RUNTIME_BASE_URL = server.baseUrl;
+    try {
+      await expect(runtime.llm("summarize")).resolves.toMatchObject({ text: "ok" });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rejects managed facade requests without a sandbox token", async () => {
+    process.env.AGENT_COMPOSE_RUNTIME_BASE_URL = "http://managed.example";
+    await expect(runtime.llm("summarize")).rejects.toThrow("AGENT_COMPOSE_SANDBOX_TOKEN");
+  });
+
   it("calls the LLM service with an output schema and parses structured JSON output", async () => {
     const server = await startLLMServer(async (body) => {
       expect(body.prompt).toBe("summarize");
@@ -104,7 +129,7 @@ describe("runtime.llm", () => {
   });
 });
 
-async function startLLMServer(handler: (body: Record<string, string>) => Promise<Record<string, unknown>> | Record<string, unknown>): Promise<{
+async function startLLMServer(handler: (body: Record<string, string>, req: http.IncomingMessage) => Promise<Record<string, unknown>> | Record<string, unknown>): Promise<{
   baseUrl: string;
   close: () => Promise<void>;
 }> {
@@ -119,7 +144,7 @@ async function startLLMServer(handler: (body: Record<string, string>) => Promise
       chunks.push(Buffer.from(chunk));
     }
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, string>;
-    const payload = await handler(body);
+    const payload = await handler(body, req);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(payload));
   });

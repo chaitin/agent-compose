@@ -299,9 +299,13 @@ Options:
 | Option | Description |
 | --- | --- |
 | `model` | LLM model name. When omitted, agent-compose uses the server-side configuration. |
-| `baseUrl` | agent-compose service URL. Defaults to `BASE_URL`, then `HTTP_URL`, then `http://127.0.0.1:7410`. |
+| `baseUrl` | agent-compose service URL. Explicit values take precedence. Otherwise the managed guest contract uses `AGENT_COMPOSE_RUNTIME_BASE_URL` and requires `AGENT_COMPOSE_SANDBOX_TOKEN`; legacy `BASE_URL`/`HTTP_URL` variables and the localhost default remain supported outside managed guests. |
 | `timeoutMs` | Terminates the LLM service request after this number of milliseconds. |
 | `outputSchema` | Zod schema or JSON Schema object. When set, the returned `json` field is parsed from `text`. |
+
+In a managed guest, requests are sent to the sandbox-scoped runtime facade with
+`Authorization: Bearer $AGENT_COMPOSE_SANDBOX_TOKEN`. The token is never included
+in thrown errors.
 
 Return value:
 

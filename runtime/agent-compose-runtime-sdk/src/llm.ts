@@ -35,10 +35,12 @@ export async function llm<T = unknown>(prompt: string, options: RuntimeLLMOption
     timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   }
   try {
-    const response = await fetch(connectProcedureURL(options.baseUrl, "/agentcompose.v2.LLMService/Generate"), {
+    const { url, token } = runtimeFacadeConfig(options.baseUrl);
+    const response = await fetch(connectProcedureURL(url, "/agentcompose.v2.LLMService/Generate"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({
         prompt: trimmedPrompt,
@@ -49,7 +51,7 @@ export async function llm<T = unknown>(prompt: string, options: RuntimeLLMOption
     });
     const responseText = await response.text();
     if (!response.ok) {
-      throw new Error(`runtime.llm request failed with HTTP ${response.status}: ${responseText}`);
+      throw new Error(`runtime.llm request failed with HTTP ${response.status}`);
     }
     const payload = JSON.parse(responseText) as {
       text?: string;
@@ -93,4 +95,22 @@ function connectProcedureURL(baseUrl: string | undefined, procedure: string): st
     return procedure;
   }
   return base.replace(/\/+$/, "") + procedure;
+}
+
+function runtimeFacadeConfig(explicitBaseUrl?: string): { url: string; token?: string } {
+  if (explicitBaseUrl?.trim()) {
+    return { url: explicitBaseUrl.trim(), token: optionalEnvValue("AGENT_COMPOSE_SANDBOX_TOKEN") };
+  }
+  const managedURL = optionalEnvValue("AGENT_COMPOSE_RUNTIME_BASE_URL");
+  if (managedURL) {
+    const token = optionalEnvValue("AGENT_COMPOSE_SANDBOX_TOKEN");
+    if (!token) {
+      throw new Error("runtime.llm requires AGENT_COMPOSE_SANDBOX_TOKEN when using the managed runtime facade");
+    }
+    return { url: managedURL, token };
+  }
+  return {
+    url: optionalEnvValue("BASE_URL") ?? optionalEnvValue("HTTP_URL") ?? optionalEnvValue("AGENT_COMPOSE_BASE_URL") ?? optionalEnvValue("AGENT_COMPOSE_HTTP_URL") ?? DEFAULT_BASE_URL,
+    token: optionalEnvValue("AGENT_COMPOSE_SANDBOX_TOKEN"),
+  };
 }
