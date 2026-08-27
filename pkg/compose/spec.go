@@ -54,6 +54,8 @@ type AgentSpec struct {
 	Enabled      *bool                 `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	DisplayName  string                `yaml:"display_name,omitempty" json:"display_name,omitempty"`
 	Description  string                `yaml:"description,omitempty" json:"description,omitempty"`
+	InputSchema  JSONSchemaSource      `yaml:"input_schema,omitempty" json:"input_schema,omitempty"`
+	OutputSchema JSONSchemaSource      `yaml:"output_schema,omitempty" json:"output_schema,omitempty"`
 	Provider     string                `yaml:"provider,omitempty" json:"provider,omitempty"`
 	Model        string                `yaml:"model,omitempty" json:"model,omitempty"`
 	SystemPrompt string                `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
@@ -517,6 +519,8 @@ func validateAgent(node *yaml.Node, path string) error {
 		"enabled":       validateBool,
 		"display_name":  validateScalar,
 		"description":   validateScalar,
+		"input_schema":  validateJSONSchemaSource,
+		"output_schema": validateJSONSchemaSource,
 		"provider":      validateScalar,
 		"model":         validateScalar,
 		"system_prompt": validateScalar,

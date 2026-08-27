@@ -57,28 +57,37 @@ func AgentSpecsToProto(agents []compose.NormalizedAgentSpec) []*agentcomposev2.A
 	items := make([]*agentcomposev2.AgentSpec, 0, len(agents))
 	for _, agent := range agents {
 		items = append(items, &agentcomposev2.AgentSpec{
-			Name:         agent.Name,
-			DisplayName:  agent.DisplayName,
-			Description:  agent.Description,
-			Provider:     agent.Provider,
-			Model:        agent.Model,
-			SystemPrompt: agent.SystemPrompt,
-			Image:        agent.Image,
-			Build:        BuildSpecToProto(agent.Build),
-			Driver:       DriverSpecToProto(agent.Driver),
-			Env:          EnvVarSpecsToProto(agent.Env),
-			CapsetIds:    capabilities.NormalizeCapsetIDs(agent.CapsetIDs),
-			Skills:       SkillSpecsToProto(agent.Skills),
-			Workspace:    WorkspaceSpecToProto(agent.Workspace),
-			Sandbox:      SandboxSpecToProto(agent.Sandbox),
-			Scheduler:    SchedulerSpecToProto(agent.Scheduler),
-			Jupyter:      JupyterSpecToProto(agent.Jupyter),
-			Volumes:      VolumeMountSpecsToProto(agent.Volumes),
-			McpServers:   MCPServerSpecsToProto(agent.MCPServers),
-			Enabled:      &agent.Enabled,
+			Name:             agent.Name,
+			DisplayName:      agent.DisplayName,
+			Description:      agent.Description,
+			InputSchemaJson:  jsonSchemaString(agent.InputSchema),
+			OutputSchemaJson: jsonSchemaString(agent.OutputSchema),
+			Provider:         agent.Provider,
+			Model:            agent.Model,
+			SystemPrompt:     agent.SystemPrompt,
+			Image:            agent.Image,
+			Build:            BuildSpecToProto(agent.Build),
+			Driver:           DriverSpecToProto(agent.Driver),
+			Env:              EnvVarSpecsToProto(agent.Env),
+			CapsetIds:        capabilities.NormalizeCapsetIDs(agent.CapsetIDs),
+			Skills:           SkillSpecsToProto(agent.Skills),
+			Workspace:        WorkspaceSpecToProto(agent.Workspace),
+			Sandbox:          SandboxSpecToProto(agent.Sandbox),
+			Scheduler:        SchedulerSpecToProto(agent.Scheduler),
+			Jupyter:          JupyterSpecToProto(agent.Jupyter),
+			Volumes:          VolumeMountSpecsToProto(agent.Volumes),
+			McpServers:       MCPServerSpecsToProto(agent.MCPServers),
+			Enabled:          &agent.Enabled,
 		})
 	}
 	return items
+}
+
+func jsonSchemaString(schema *compose.JSONSchema) string {
+	if schema == nil {
+		return ""
+	}
+	return string(*schema)
 }
 
 func SandboxSpecToProto(sandbox *compose.NormalizedSandboxSpec) *agentcomposev2.SandboxSpec {

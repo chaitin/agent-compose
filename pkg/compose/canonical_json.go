@@ -36,6 +36,8 @@ func normalizedProjectSpecFromOrdered(ordered orderedProjectSpec) *NormalizedPro
 			Enabled:      agent.Enabled,
 			DisplayName:  agent.DisplayName,
 			Description:  agent.Description,
+			InputSchema:  cloneJSONSchema(agent.InputSchema),
+			OutputSchema: cloneJSONSchema(agent.OutputSchema),
 			Provider:     agent.Provider,
 			Model:        agent.Model,
 			SystemPrompt: agent.SystemPrompt,

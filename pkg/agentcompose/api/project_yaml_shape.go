@@ -1,12 +1,16 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"agent-compose/pkg/capabilities"
 	"agent-compose/pkg/compose"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
+
+	"gopkg.in/yaml.v3"
 )
 
 func ProjectSpecYAMLShape(spec *agentcomposev2.ProjectSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
@@ -111,6 +115,16 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		if strings.TrimSpace(agent.GetDescription()) != "" {
 			raw["description"] = agent.GetDescription()
 		}
+		if schema, issue := agentJSONSchemaYAMLValue(fmt.Sprintf("agents[%d].input_schema_json", i), agent.GetInputSchemaJson()); issue != nil {
+			return nil, []*agentcomposev2.ProjectValidationIssue{issue}
+		} else if schema != nil {
+			raw["input_schema"] = schema
+		}
+		if schema, issue := agentJSONSchemaYAMLValue(fmt.Sprintf("agents[%d].output_schema_json", i), agent.GetOutputSchemaJson()); issue != nil {
+			return nil, []*agentcomposev2.ProjectValidationIssue{issue}
+		} else if schema != nil {
+			raw["output_schema"] = schema
+		}
 		if agent.Enabled != nil {
 			raw["enabled"] = agent.GetEnabled()
 		}
@@ -170,6 +184,47 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		values[name] = raw
 	}
 	return values, nil
+}
+
+func agentJSONSchemaYAMLValue(path, raw string) (any, *agentcomposev2.ProjectValidationIssue) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return nil, ProjectValidationIssue(path, "must contain valid JSON")
+	}
+	switch value.(type) {
+	case map[string]any, bool:
+		return jsonNumbersForProjectYAML(value), nil
+	default:
+		return nil, ProjectValidationIssue(path, "must contain a JSON Schema object or boolean")
+	}
+}
+
+func jsonNumbersForProjectYAML(value any) any {
+	switch value := value.(type) {
+	case json.Number:
+		tag := "!!int"
+		if strings.ContainsAny(value.String(), ".eE") {
+			tag = "!!float"
+		}
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: value.String()}
+	case map[string]any:
+		for key, item := range value {
+			value[key] = jsonNumbersForProjectYAML(item)
+		}
+		return value
+	case []any:
+		for i := range value {
+			value[i] = jsonNumbersForProjectYAML(value[i])
+		}
+		return value
+	default:
+		return value
+	}
 }
 
 func MCPServerYAMLMap(path string, mcps []*agentcomposev2.MCPServerSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {

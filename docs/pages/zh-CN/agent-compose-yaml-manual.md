@@ -427,6 +427,8 @@ agents:
 | `enabled` | bool | `true` | 是否启用 Agent。禁用后定义保留但不可按正常流程运行，Scheduler 也不会启用。 |
 | `display_name` | string | 空 | Agent 的可读显示名称。 |
 | `description` | string | 空 | Agent 职责的可读说明。 |
+| `input_schema` | JSON Schema/source | 无 | 可选，描述 Agent 可接收输入的 JSON Schema；可内联或通过 source descriptor 加载。 |
+| `output_schema` | JSON Schema/source | 无 | 可选，描述 Agent 输出的 JSON Schema；可内联或通过 source descriptor 加载。 |
 | `provider` | string | `codex` | Agent CLI/provider：`codex`、`claude`、`gemini`、`opencode`、`pi` 或 `dsh`。兼容别名会在持久化边界归一化。 |
 | `model` | string | provider/daemon 默认 | 模型名；Pi 和 dsh 要求使用 `<llm-provider-id>/<model-name>`；支持 `${NAME}` 插值。 |
 | `system_prompt` | string | 空 | 附加的系统提示，适合使用 YAML `|` 多行标量。 |
@@ -442,6 +444,28 @@ agents:
 | `sandbox` | object | 删除已停止 runtime | Sandbox 生命周期配置。 |
 | `scheduler` | object | 无 | 自动触发 Agent 的 Scheduler。 |
 | `jupyter` | object | disabled | Agent run 的 Jupyter 默认配置。 |
+
+### `input_schema` 与 `output_schema`
+
+两个 schema 都是独立可选项，Agent 可以只声明其中一个、同时声明两个，或都不声明。内联形式直接使用 YAML 表达 JSON Schema；建议为属性填写 `description`，便于外部平台展示输入输出说明。
+
+```yaml
+agents:
+  researcher:
+    description: 调研指定主题并返回带引用的结论。
+    input_schema:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: 需要调研的主题或问题。
+    output_schema:
+      provider: file
+      path: ./schemas/research-result.schema.json
+```
+
+source 形式与 `scheduler.script` 接受的扁平 descriptor 一致（`file`、`http` 或 `git`）。相对文件路径以 compose 文件所在目录为基准。应用项目时会解析内容、编译为 JSON Schema 并保存快照，内容必须是 JSON object 或 boolean schema。支持同一 schema 文档内的引用，但会拒绝外部 `$ref` 资源，确保应用已保存的快照时不会隐式访问文件系统或网络。顶层 `provider` 值为 `file`、`http` 或 `git` 的 mapping 会被解释为 source descriptor；其他 `provider` 值仍可作为内联 schema 的自定义关键字。
 
 ### `enabled`、`provider`、`model` 和 `system_prompt`
 

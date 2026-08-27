@@ -148,6 +148,11 @@
       "optional": true
     },
     {
+      "path": "agents.*.input_schema",
+      "go_type": "mapping\u003ccompose.JSONSchemaSource\u003e",
+      "optional": true
+    },
+    {
       "path": "agents.*.jupyter",
       "go_type": "optional\u003cmapping\u003ccompose.JupyterSpec\u003e\u003e",
       "optional": true
@@ -230,6 +235,11 @@
     {
       "path": "agents.*.model",
       "go_type": "string",
+      "optional": true
+    },
+    {
+      "path": "agents.*.output_schema",
+      "go_type": "mapping\u003ccompose.JSONSchemaSource\u003e",
       "optional": true
     },
     {

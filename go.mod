@@ -22,6 +22,7 @@ require (
 	github.com/samber/do/v2 v2.0.0
 	github.com/samber/mo v1.16.0
 	github.com/samber/oops v1.21.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/pflag v1.0.9
 	github.com/superradcompany/microsandbox/sdk/go v0.6.14
