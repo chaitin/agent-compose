@@ -622,5 +622,6 @@ func registerWebhookRoutes(app *echo.Echo, di do.Injector) {
 		QueryStore:       configDB,
 		Sandboxes:        do.MustInvoke[*sandboxstore.Store](di),
 		WebhookBodyLimit: do.MustInvoke[*appconfig.Config](di).WebhookBodyLimitBytes,
+		RunStopper:       do.MustInvoke[*RunSupervisor](di),
 	})
 }
