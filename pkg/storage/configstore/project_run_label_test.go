@@ -132,26 +132,51 @@ func TestInsertProjectRunLabelsTxRejectsInvalidKeysAndValues(t *testing.T) {
 
 	tests := []struct {
 		name    string
+		runID   string
 		labels  map[string]string
-		wantErr string
+		wantErr string // empty means the labels must be accepted as-is
 	}{
-		{name: "empty key", labels: map[string]string{"": "value"}, wantErr: "must not be empty"},
-		{name: "whitespace key", labels: map[string]string{"   ": "value"}, wantErr: "must not be empty"},
-		{name: "oversized key", labels: map[string]string{strings.Repeat("k", maxProjectRunLabelKeyLen+1): "value"}, wantErr: "exceeds"},
-		{name: "oversized value", labels: map[string]string{"key": strings.Repeat("v", maxProjectRunLabelValueLen+1)}, wantErr: "exceeds"},
+		{name: "empty key", runID: "run-empty-key", labels: map[string]string{"": "value"}, wantErr: "must not be empty"},
+		{name: "whitespace key", runID: "run-whitespace-key", labels: map[string]string{"   ": "value"}, wantErr: "must not be empty"},
+		{name: "oversized key", runID: "run-oversized-key", labels: map[string]string{strings.Repeat("k", maxProjectRunLabelKeyLen+1): "value"}, wantErr: "exceeds"},
+		{name: "oversized value", runID: "run-oversized-value", labels: map[string]string{"key": strings.Repeat("v", maxProjectRunLabelValueLen+1)}, wantErr: "exceeds"},
+		{name: "max length key accepted", runID: "run-max-key", labels: map[string]string{strings.Repeat("k", maxProjectRunLabelKeyLen): "value"}},
+		{name: "max length value accepted", runID: "run-max-value", labels: map[string]string{"key": strings.Repeat("v", maxProjectRunLabelValueLen)}},
+		{name: "empty value accepted", runID: "run-empty-value", labels: map[string]string{"key": ""}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runID := "run-invalid-labels"
-			_, err := store.CreateProjectRun(ctx, domain.ProjectRunRecord{
-				RunID: runID, ProjectID: "project-invalid-labels", AgentName: "worker", AgentID: agentID,
+			created, err := store.CreateProjectRun(ctx, domain.ProjectRunRecord{
+				RunID: tt.runID, ProjectID: "project-invalid-labels", AgentName: "worker", AgentID: agentID,
 				Status: domain.ProjectRunStatusRunning, Labels: tt.labels,
 			})
-			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("create run error = %v, want substring %q", err, tt.wantErr)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("create run error = %v, want substring %q", err, tt.wantErr)
+				}
+				if _, err := store.GetProjectRun(ctx, tt.runID); !errors.Is(err, domain.ErrNotFound) {
+					t.Fatalf("run survived rejected label insert: %v", err)
+				}
+				return
 			}
-			if _, err := store.GetProjectRun(ctx, runID); !errors.Is(err, domain.ErrNotFound) {
-				t.Fatalf("run survived rejected label insert: %v", err)
+			if err != nil {
+				t.Fatalf("create run: %v", err)
+			}
+			for key, value := range tt.labels {
+				got, ok := created.Labels[key]
+				if !ok || got != value {
+					t.Fatalf("created run label %q = (%q, present=%v), want (%q, present=true)", key, got, ok, value)
+				}
+			}
+			fetched, err := store.GetProjectRun(ctx, tt.runID)
+			if err != nil {
+				t.Fatalf("get run: %v", err)
+			}
+			for key, value := range tt.labels {
+				got, ok := fetched.Labels[key]
+				if !ok || got != value {
+					t.Fatalf("fetched run label %q = (%q, present=%v), want (%q, present=true)", key, got, ok, value)
+				}
 			}
 		})
 	}
