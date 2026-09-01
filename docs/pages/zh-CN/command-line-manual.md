@@ -133,8 +133,11 @@ endpoint。若这些事件需要支持停止，应另外配置 source token，�
 signature secret 当作 token 使用。
 
 成功响应会说明是否有活跃 run 接受了取消请求，以及接受请求的数量。取消是异步的，
-因此 `stop_requested=true` 并不表示所有 run 已经进入最终状态。重复调用是安全的：
-不再活跃的 run 不会发生变化。
+因此 `stop_requested=true` 并不表示所有 run 已经进入最终状态或取消状态已经持久化；
+这与同步停止确认的语义不同。需要确认停止完成的调用方必须针对已知 run ID 轮询
+`GetSchedulerRun`，或轮询 `ListSchedulerRuns`（CLI 命令
+`agent-compose scheduler runs`），直到受影响的 run 报告终态 `succeeded`、`failed`、
+`canceled` 或 `skipped`。重复调用停止接口是安全的：不再活跃的 run 不会发生变化。
 
 ```json
 {"event_id":"evt_123","stop_requested":true,"requested_runs":2,"failed_runs":0}

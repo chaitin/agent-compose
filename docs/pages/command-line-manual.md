@@ -148,8 +148,13 @@ signature secret as the token.
 
 A successful response reports whether any active run accepted cancellation and
 how many did so. Cancellation is asynchronous, so `stop_requested=true` does
-not mean that every run has already reached its final state. Repeating the
-request is safe: runs that are no longer active are left unchanged.
+not mean that every run has already reached its final state or that its canceled
+state has been persisted. This differs from a synchronous stop acknowledgement:
+callers that need confirmation must poll `GetSchedulerRun` for known run IDs or
+`ListSchedulerRuns` (the `agent-compose scheduler runs` CLI command) until the
+affected runs report a terminal `succeeded`, `failed`, `canceled`, or `skipped`
+status. Repeating the stop request is safe: runs that are no longer active are
+left unchanged.
 
 ```json
 {"event_id":"evt_123","stop_requested":true,"requested_runs":2,"failed_runs":0}
