@@ -263,16 +263,16 @@ type recordingRunStopper struct {
 	reasons      []string
 }
 
-func (s *recordingRunStopper) StopSchedulerRun(_ context.Context, schedulerID, runID, reason string) (domain.SchedulerRunSummary, bool, error) {
+func (s *recordingRunStopper) RequestSchedulerRunStop(_ context.Context, schedulerID, runID, reason string) (bool, error) {
 	s.schedulerIDs = append(s.schedulerIDs, schedulerID)
 	s.runIDs = append(s.runIDs, runID)
 	s.reasons = append(s.reasons, reason)
 	index := len(s.runIDs) - 1
 	if index < len(s.errs) && s.errs[index] != nil {
-		return domain.SchedulerRunSummary{}, false, s.errs[index]
+		return false, s.errs[index]
 	}
 	if index < len(s.results) {
-		return domain.SchedulerRunSummary{}, s.results[index], nil
+		return s.results[index], nil
 	}
-	return domain.SchedulerRunSummary{}, false, nil
+	return false, nil
 }

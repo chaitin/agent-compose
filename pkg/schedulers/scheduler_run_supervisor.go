@@ -169,28 +169,43 @@ func (s *SchedulerRunSupervisor) ListSchedulerRuns(ctx context.Context, schedule
 }
 
 func (s *SchedulerRunSupervisor) StopSchedulerRun(ctx context.Context, schedulerID, runID, reason string) (domain.SchedulerRunSummary, bool, error) {
-	schedulerID = strings.TrimSpace(schedulerID)
-	runID = strings.TrimSpace(runID)
-	active := s.lookup(schedulerID, runID)
-	if active == nil {
-		current, err := s.GetSchedulerRun(ctx, schedulerID, runID)
-		if err != nil || SchedulerRunStatusIsTerminal(current.Status) {
-			return current, false, err
-		}
-		id := schedulerID + "/" + runID
-		return current, false, domain.ResourceError(domain.ErrFailedPrecondition, "scheduler run", id, fmt.Sprintf("scheduler run %s is not active in this process", id), nil)
+	active, current, requested, err := s.requestSchedulerRunStop(ctx, schedulerID, runID, reason)
+	if err != nil || !requested {
+		return current, requested, err
 	}
-	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		reason = "stop requested"
-	}
-	active.cancel(errors.New(reason))
 	select {
 	case <-active.done:
 		return active.result, true, active.err
 	case <-ctx.Done():
 		return domain.SchedulerRunSummary{}, true, ctx.Err()
 	}
+}
+
+// RequestSchedulerRunStop requests cancellation without waiting for the run to
+// reach a terminal state.
+func (s *SchedulerRunSupervisor) RequestSchedulerRunStop(ctx context.Context, schedulerID, runID, reason string) (bool, error) {
+	_, _, requested, err := s.requestSchedulerRunStop(ctx, schedulerID, runID, reason)
+	return requested, err
+}
+
+func (s *SchedulerRunSupervisor) requestSchedulerRunStop(ctx context.Context, schedulerID, runID, reason string) (*activeSchedulerRun, domain.SchedulerRunSummary, bool, error) {
+	schedulerID = strings.TrimSpace(schedulerID)
+	runID = strings.TrimSpace(runID)
+	active := s.lookup(schedulerID, runID)
+	if active == nil {
+		current, err := s.GetSchedulerRun(ctx, schedulerID, runID)
+		if err != nil || SchedulerRunStatusIsTerminal(current.Status) {
+			return nil, current, false, err
+		}
+		id := schedulerID + "/" + runID
+		return nil, current, false, domain.ResourceError(domain.ErrFailedPrecondition, "scheduler run", id, fmt.Sprintf("scheduler run %s is not active in this process", id), nil)
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "stop requested"
+	}
+	active.cancel(errors.New(reason))
+	return active, domain.SchedulerRunSummary{}, true, nil
 }
 
 func (s *SchedulerRunSupervisor) register(schedulerID, runID string, active *activeSchedulerRun) {

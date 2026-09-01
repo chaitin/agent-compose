@@ -55,7 +55,18 @@ func TestIntegrationWebhookStopCancelsDispatchedSchedulerRun(t *testing.T) {
 	})
 
 	scheduler := seedWebhookStopScheduler(t, ctx, store)
-	engine := &blockingWebhookSchedulerEngine{started: make(chan struct{})}
+	engine := &blockingWebhookSchedulerEngine{
+		started:  make(chan struct{}),
+		canceled: make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+	t.Cleanup(func() {
+		select {
+		case <-engine.release:
+		default:
+			close(engine.release)
+		}
+	})
 	controller := schedulers.NewController(schedulers.ControllerDependencies{
 		RootCtx: ctx,
 		Store:   store,
@@ -114,7 +125,18 @@ func TestIntegrationWebhookStopCancelsDispatchedSchedulerRun(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+token)
 	recorder := httptest.NewRecorder()
-	app.ServeHTTP(recorder, request)
+	responseDone := make(chan struct{})
+	go func() {
+		app.ServeHTTP(recorder, request)
+		close(responseDone)
+	}()
+	select {
+	case <-responseDone:
+	case <-time.After(time.Second):
+		close(engine.release)
+		<-responseDone
+		t.Fatal("stop request waited for scheduler execution to reach a terminal state")
+	}
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("stop status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -128,8 +150,16 @@ func TestIntegrationWebhookStopCancelsDispatchedSchedulerRun(t *testing.T) {
 	if !response.StopRequested || response.RequestedRuns != 1 {
 		t.Fatalf("stop response = %#v", response)
 	}
+	select {
+	case <-engine.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("scheduler execution did not receive cancellation")
+	}
+	close(engine.release)
 
-	run, err := controller.SchedulerRuns().GetSchedulerRun(ctx, scheduler.Summary.ID, deliveries[0].RunID)
+	stopCtx, cancelStop := context.WithTimeout(ctx, time.Second)
+	defer cancelStop()
+	run, _, err := controller.SchedulerRuns().StopSchedulerRun(stopCtx, scheduler.Summary.ID, deliveries[0].RunID, "integration stop")
 	if err != nil {
 		t.Fatalf("load stopped scheduler run: %v", err)
 	}
@@ -196,8 +226,11 @@ func seedWebhookStopScheduler(t *testing.T, ctx context.Context, store *configst
 }
 
 type blockingWebhookSchedulerEngine struct {
-	started chan struct{}
-	once    sync.Once
+	started      chan struct{}
+	canceled     chan struct{}
+	release      chan struct{}
+	startedOnce  sync.Once
+	canceledOnce sync.Once
 }
 
 func (*blockingWebhookSchedulerEngine) Validate(context.Context, string, string) (schedulers.SchedulerValidationResult, error) {
@@ -205,7 +238,9 @@ func (*blockingWebhookSchedulerEngine) Validate(context.Context, string, string)
 }
 
 func (e *blockingWebhookSchedulerEngine) Execute(ctx context.Context, _ schedulers.SchedulerExecutionRequest, _ schedulers.SchedulerHost) (schedulers.SchedulerExecutionResult, error) {
-	e.once.Do(func() { close(e.started) })
+	e.startedOnce.Do(func() { close(e.started) })
 	<-ctx.Done()
+	e.canceledOnce.Do(func() { close(e.canceled) })
+	<-e.release
 	return schedulers.SchedulerExecutionResult{}, ctx.Err()
 }

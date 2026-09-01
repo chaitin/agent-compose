@@ -17,7 +17,7 @@ import (
 const maxStopEventCount = 1000
 
 type RunStopper interface {
-	StopSchedulerRun(context.Context, string, string, string) (domain.SchedulerRunSummary, bool, error)
+	RequestSchedulerRunStop(context.Context, string, string, string) (bool, error)
 }
 
 type stopEventRequest struct {
@@ -135,7 +135,7 @@ func stopEventRuns(ctx context.Context, stopper RunStopper, eventID, reason stri
 			continue
 		}
 		seen[ref] = struct{}{}
-		_, requested, err := stopper.StopSchedulerRun(ctx, schedulerID, runID, reason)
+		requested, err := stopper.RequestSchedulerRunStop(ctx, schedulerID, runID, reason)
 		if err != nil {
 			response.FailedRunIDs = append(response.FailedRunIDs, runID)
 			continue
