@@ -415,7 +415,7 @@ func (s *eventStore) ListDescendantEventIDs(ctx context.Context, rootEventID str
 	if rootEventID == "" {
 		return nil, fmt.Errorf("event id is required")
 	}
-	if limit <= 0 || limit > 1000 {
+	if limit <= 0 {
 		limit = 1000
 	}
 	ids := []string{rootEventID}

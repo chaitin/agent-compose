@@ -113,6 +113,40 @@ topic，以及 Bearer、`X-WEBHOOK-TOKEN` 或自定义 header token。
 的 UI server 或反向代理，也必须先配置注入 `Authorization: Bearer <token>`，再
 开启 daemon 认证。
 
+#### 停止 Webhook 事件触发的运行
+
+提交 webhook 的客户端可以在之后请求取消该事件及其后代事件关联的全部活跃 run：
+
+```http
+POST /api/webhooks/events/<event-id>/stop
+Authorization: Bearer <webhook-source-token>
+Content-Type: application/json
+
+{"reason":"business canceled"}
+```
+
+JSON 请求体可以省略。该 endpoint 只接受事件所属 webhook source 配置的静态
+token；source 配置了自定义 token header 时也沿用该 header。GitHub 请求签名只能
+证明单次 delivery 的真实性，不是可复用的控制凭据。因此，没有配置静态 source
+token 的 signed 或 unsigned GitHub source 可以接收事件，但不能调用此停止
+endpoint。若这些事件需要支持停止，应另外配置 source token，不能把 GitHub
+signature secret 当作 token 使用。
+
+成功响应会说明是否有活跃 run 接受了取消请求，以及接受请求的数量。取消是异步的，
+因此 `stop_requested=true` 并不表示所有 run 已经进入最终状态。重复调用是安全的：
+不再活跃的 run 不会发生变化。
+
+```json
+{"event_id":"evt_123","stop_requested":true,"requested_runs":2,"failed_runs":0}
+```
+
+daemon 单次最多处理同一事件树中的 1,000 个事件。事件树更大时，会在停止任何 run
+之前返回 `409` 和 `max_event_count`，不会把被截断的结果当作成功。如果个别停止操作
+失败，daemon 仍会继续处理其余 run，并返回 `500`；响应中的 `requested_runs`
+记录成功请求取消的数量，`failed_runs` 和 `failed_run_ids` 记录失败项。重新对整个
+事件发起请求是安全的，只会重试仍然活跃的 run。Token 缺失或无效时返回 `401`，
+非 webhook 事件返回 `403`，事件不存在时返回 `404`。
+
 ### Project 环境文件
 
 配置可以显式指定一个或多个 dotenv 文件；相对路径以 project 配置文件所在目录为基准：

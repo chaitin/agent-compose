@@ -103,6 +103,54 @@ func TestCreateEventPayloadConflictCarriesExistingEvent(t *testing.T) {
 	}
 }
 
+func TestListDescendantEventIDsHonorsExplicitLimitAboveDefault(t *testing.T) {
+	ctx := context.Background()
+	store := FromDB(newMemoryDB(t))
+	if err := store.initSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin event fixture transaction: %v", err)
+	}
+	statement, err := tx.PrepareContext(ctx, `INSERT INTO event(
+		id, topic, source, correlation_id, payload_hash, payload_json,
+		dispatch_status, parent_event_id, created_at
+	) VALUES(?, 'webhook.test', 'webhook', '', 'hash', '{}', 'pending', ?, 1)`)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("prepare event fixture insert: %v", err)
+	}
+	if _, err := statement.ExecContext(ctx, "event-1", ""); err != nil {
+		_ = statement.Close()
+		_ = tx.Rollback()
+		t.Fatalf("insert root event: %v", err)
+	}
+	for index := 2; index <= 1001; index++ {
+		if _, err := statement.ExecContext(ctx, "event-"+strconv.Itoa(index), "event-1"); err != nil {
+			_ = statement.Close()
+			_ = tx.Rollback()
+			t.Fatalf("insert child event %d: %v", index, err)
+		}
+	}
+	if err := statement.Close(); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("close event fixture statement: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit event fixture: %v", err)
+	}
+
+	ids, err := store.ListDescendantEventIDs(ctx, "event-1", 1001)
+	if err != nil {
+		t.Fatalf("ListDescendantEventIDs returned error: %v", err)
+	}
+	if len(ids) != 1001 {
+		t.Fatalf("descendant event count=%d, want 1001", len(ids))
+	}
+}
+
 func TestCreateEventReturnsSequencedRecordWhenContextIsCanceledAfterCommit(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "events.db")
 	setup, err := sql.Open("sqlite", databasePath)

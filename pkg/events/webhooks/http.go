@@ -32,10 +32,6 @@ type Store interface {
 	ListEnabledWebhookSourcesForTopic(context.Context, string) ([]domain.WebhookSource, error)
 }
 
-type RunStopper interface {
-	StopActiveRun(context.Context, string, string) (bool, error)
-}
-
 type RouteOptions struct {
 	Store              Store
 	QueryStore         EventQueryStore
@@ -60,69 +56,6 @@ func RegisterRoutes(app *echo.Echo, opts RouteOptions) {
 	app.GET("/api/events/:event_id/runs", h.handleGetEventRuns)
 	app.GET("/api/events/:event_id/trace", h.handleGetEventTrace)
 	app.GET("/api/events/:event_id", h.handleGetEvent)
-}
-
-func (h routeHandler) handleStopEvent(c echo.Context) error {
-	if h.store() == nil || h.opts.RunStopper == nil {
-		return c.JSON(http.StatusNotImplemented, map[string]string{"error": "event stopping is not configured"})
-	}
-	eventID := strings.TrimSpace(c.Param("event_id"))
-	if eventID == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event_id is required"})
-	}
-	event, err := h.store().GetEvent(c.Request().Context(), eventID)
-	if err != nil {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "event not found"})
-	}
-	var srcID string
-	var payload map[string]any
-	_ = json.Unmarshal([]byte(event.PayloadJSON), &payload)
-	if v, ok := payload["webhookSourceId"].(string); ok {
-		srcID = v
-	}
-	if srcID == "" {
-		return c.JSON(http.StatusForbidden, map[string]string{"error": "event is not associated with a webhook source"})
-	}
-	sources, err := h.store().ListWebhookSources(c.Request().Context())
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load webhook source"})
-	}
-	var source domain.WebhookSource
-	for _, s := range sources {
-		if s.ID == srcID {
-			source = s
-			break
-		}
-	}
-	if source.ID == "" || source.TokenHash == "" || !ValidTokenHash(c.Request(), source.TokenHash, source.TokenHeader) {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid webhook token"})
-	}
-	var req struct {
-		Reason string `json:"reason"`
-	}
-	_ = c.Bind(&req)
-	eventIDs, err := h.store().ListDescendantEventIDs(c.Request().Context(), eventID, 10000)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load event descendants"})
-	}
-	deliveries, err := h.store().ListEventDeliveries(c.Request().Context(), eventIDs)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load event deliveries"})
-	}
-	requested := 0
-	for _, d := range deliveries {
-		if strings.TrimSpace(d.RunID) == "" {
-			continue
-		}
-		ok, e := h.opts.RunStopper.StopActiveRun(c.Request().Context(), d.RunID, req.Reason)
-		if e != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to stop event run"})
-		}
-		if ok {
-			requested++
-		}
-	}
-	return c.JSON(http.StatusOK, map[string]any{"event_id": eventID, "stop_requested": requested > 0, "requested_runs": requested})
 }
 
 type routeHandler struct {

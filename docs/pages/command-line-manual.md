@@ -124,6 +124,46 @@ application. Any UI server or reverse proxy that calls the same control-plane
 APIs must also inject `Authorization: Bearer <token>` before daemon
 authentication is enabled.
 
+#### Stopping webhook-triggered runs
+
+The client that submitted a webhook can later request cancellation of every
+active run associated with that event and its descendant events:
+
+```http
+POST /api/webhooks/events/<event-id>/stop
+Authorization: Bearer <webhook-source-token>
+Content-Type: application/json
+
+{"reason":"business canceled"}
+```
+
+The JSON body is optional. The endpoint authenticates only with the static
+token configured on the event's webhook source, using that source's custom
+token header when one is configured. A GitHub request signature proves the
+authenticity of one delivery; it is not a reusable control credential.
+Consequently, signed and unsigned GitHub sources without a static source token
+can receive events but cannot use this stop endpoint. Configure a separate
+source token when those events must be stoppable; do not reuse the GitHub
+signature secret as the token.
+
+A successful response reports whether any active run accepted cancellation and
+how many did so. Cancellation is asynchronous, so `stop_requested=true` does
+not mean that every run has already reached its final state. Repeating the
+request is safe: runs that are no longer active are left unchanged.
+
+```json
+{"event_id":"evt_123","stop_requested":true,"requested_runs":2,"failed_runs":0}
+```
+
+The daemon evaluates at most 1,000 events in one event tree. If the tree is
+larger, it returns `409` with `max_event_count` before stopping any run, rather
+than silently processing a truncated tree. If an individual stop operation
+fails, the daemon still attempts the remaining runs and returns `500` with the
+successful `requested_runs` count plus `failed_runs` and `failed_run_ids`.
+Retrying the whole event is safe and retries only runs that remain active.
+Missing or invalid tokens return `401`; a non-webhook event returns `403`; and
+an unknown event returns `404`.
+
 ### Project environment files
 
 A project can explicitly load one or more dotenv files. Relative paths are resolved from the directory containing the project config file:
