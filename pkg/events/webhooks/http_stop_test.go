@@ -51,7 +51,7 @@ func TestHandleStopEvent(t *testing.T) {
 		},
 		{
 			name: "multiple deliveries are stopped", event: webhookStopEvent("event-1", "github"), token: "token",
-			deliveries: []domain.EventDelivery{{RunID: "run-1"}, {RunID: ""}, {RunID: "run-2"}}, stopResults: []bool{true, true},
+			deliveries: []domain.EventDelivery{{RunID: "run-1"}, {RunID: " "}, {RunID: "run-2"}}, stopResults: []bool{true, true},
 			wantStatus: http.StatusOK, wantRequested: true, wantRuns: 2, wantStopped: []string{"run-1", "run-2"},
 		},
 		{
