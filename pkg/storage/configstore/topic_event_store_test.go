@@ -122,14 +122,13 @@ func TestListDescendantEventIDsHonorsExplicitLimitAboveDefault(t *testing.T) {
 		_ = tx.Rollback()
 		t.Fatalf("prepare event fixture insert: %v", err)
 	}
+	defer func() { _ = statement.Close() }()
 	if _, err := statement.ExecContext(ctx, "event-1", ""); err != nil {
-		_ = statement.Close()
 		_ = tx.Rollback()
 		t.Fatalf("insert root event: %v", err)
 	}
 	for index := 2; index <= 1001; index++ {
 		if _, err := statement.ExecContext(ctx, "event-"+strconv.Itoa(index), "event-1"); err != nil {
-			_ = statement.Close()
 			_ = tx.Rollback()
 			t.Fatalf("insert child event %d: %v", index, err)
 		}
