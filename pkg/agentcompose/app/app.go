@@ -617,11 +617,12 @@ func registerRuntimeLLMFacadeRoutes(app *echo.Echo, di do.Injector) {
 
 func registerWebhookRoutes(app *echo.Echo, di do.Injector) {
 	configDB := do.MustInvoke[*configstore.ConfigStore](di)
+	schedulerController := do.MustInvoke[*schedulers.Controller](di)
 	webhooks.RegisterRoutes(app, webhooks.RouteOptions{
 		Store:            configDB,
 		QueryStore:       configDB,
 		Sandboxes:        do.MustInvoke[*sandboxstore.Store](di),
 		WebhookBodyLimit: do.MustInvoke[*appconfig.Config](di).WebhookBodyLimitBytes,
-		RunStopper:       do.MustInvoke[*RunSupervisor](di),
+		RunStopper:       schedulerController.SchedulerRuns(),
 	})
 }

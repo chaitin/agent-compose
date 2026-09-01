@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -39,15 +40,14 @@ type SchedulerRunSupervisor struct {
 	deps schedulerRunSupervisorDependencies
 
 	mu     sync.Mutex
-	active map[string]*activeSchedulerRun
+	active map[SchedulerRunKey]*activeSchedulerRun
 }
 
 type activeSchedulerRun struct {
-	schedulerID string
-	cancel      context.CancelCauseFunc
-	done        chan struct{}
-	result      domain.SchedulerRunSummary
-	err         error
+	cancel context.CancelCauseFunc
+	done   chan struct{}
+	result domain.SchedulerRunSummary
+	err    error
 }
 
 func newSchedulerRunSupervisor(deps schedulerRunSupervisorDependencies) *SchedulerRunSupervisor {
@@ -56,8 +56,36 @@ func newSchedulerRunSupervisor(deps schedulerRunSupervisorDependencies) *Schedul
 	}
 	return &SchedulerRunSupervisor{
 		deps:   deps,
-		active: map[string]*activeSchedulerRun{},
+		active: map[SchedulerRunKey]*activeSchedulerRun{},
 	}
+}
+
+// runTrigger prepares and executes a scheduler trigger while keeping the run
+// visible to lifecycle operations such as StopSchedulerRun.
+func (s *SchedulerRunSupervisor) runTrigger(ctx context.Context, request RunTriggerRequest, triggerEventAck ...func(context.Context) error) (domain.SchedulerRunSummary, error) {
+	prepared, err := s.deps.Prepare(ctx, request)
+	if err != nil {
+		return domain.SchedulerRunSummary{}, err
+	}
+	if len(triggerEventAck) > 0 && triggerEventAck[0] != nil {
+		if err := triggerEventAck[0](ctx); err != nil {
+			slog.Warn("failed to mark scheduler topic event published", "topic", request.Source, "error", err)
+		}
+	}
+	return s.runPrepared(ctx, prepared)
+}
+
+// runPrepared executes an already-persisted scheduler run under supervisor
+// ownership. Event delivery uses this after preparing all matched webhook runs.
+func (s *SchedulerRunSupervisor) runPrepared(ctx context.Context, prepared PreparedRun) (domain.SchedulerRunSummary, error) {
+	if SchedulerRunStatusIsTerminal(prepared.Run.Status) {
+		return prepared.Run, nil
+	}
+	runCtx, cancel := context.WithCancelCause(ctx)
+	active := &activeSchedulerRun{cancel: cancel, done: make(chan struct{})}
+	s.register(prepared.Run.SchedulerID, prepared.Run.ID, active)
+	s.execute(runCtx, func() { cancel(context.Canceled) }, prepared, active)
+	return active.result, active.err
 }
 
 func (s *SchedulerRunSupervisor) RunScheduler(ctx context.Context, request SchedulerRunRequest) (domain.SchedulerRunSummary, error) {
@@ -113,12 +141,8 @@ func (s *SchedulerRunSupervisor) start(ctx context.Context, request SchedulerRun
 			cancel(context.Canceled)
 		}
 	}
-	active := &activeSchedulerRun{
-		schedulerID: request.SchedulerID,
-		cancel:      cancel,
-		done:        make(chan struct{}),
-	}
-	s.register(prepared.Run.ID, active)
+	active := &activeSchedulerRun{cancel: cancel, done: make(chan struct{})}
+	s.register(request.SchedulerID, prepared.Run.ID, active)
 	go s.execute(runCtx, cleanup, prepared, active)
 	return prepared.Run, active, nil
 }
@@ -127,7 +151,7 @@ func (s *SchedulerRunSupervisor) execute(ctx context.Context, cleanup func(), pr
 	defer cleanup()
 	active.result, active.err = s.deps.Execute(ctx, prepared)
 	close(active.done)
-	s.unregister(prepared.Run.ID, active)
+	s.unregister(prepared.Run.SchedulerID, prepared.Run.ID, active)
 }
 
 func (s *SchedulerRunSupervisor) GetSchedulerRun(ctx context.Context, schedulerID, runID string) (domain.SchedulerRunSummary, error) {
@@ -169,29 +193,29 @@ func (s *SchedulerRunSupervisor) StopSchedulerRun(ctx context.Context, scheduler
 	}
 }
 
-func (s *SchedulerRunSupervisor) register(runID string, active *activeSchedulerRun) {
+func (s *SchedulerRunSupervisor) register(schedulerID, runID string, active *activeSchedulerRun) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.active[strings.TrimSpace(runID)] = active
+	s.active[schedulerRunKey(schedulerID, runID)] = active
 }
 
-func (s *SchedulerRunSupervisor) unregister(runID string, active *activeSchedulerRun) {
+func (s *SchedulerRunSupervisor) unregister(schedulerID, runID string, active *activeSchedulerRun) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	runID = strings.TrimSpace(runID)
-	if s.active[runID] == active {
-		delete(s.active, runID)
+	key := schedulerRunKey(schedulerID, runID)
+	if s.active[key] == active {
+		delete(s.active, key)
 	}
 }
 
 func (s *SchedulerRunSupervisor) lookup(schedulerID, runID string) *activeSchedulerRun {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	active := s.active[runID]
-	if active == nil || active.schedulerID != schedulerID {
-		return nil
-	}
-	return active
+	return s.active[schedulerRunKey(schedulerID, runID)]
+}
+
+func schedulerRunKey(schedulerID, runID string) SchedulerRunKey {
+	return SchedulerRunKey{SchedulerID: strings.TrimSpace(schedulerID), RunID: strings.TrimSpace(runID)}
 }
 
 func SchedulerRunStatusIsTerminal(status string) bool {

@@ -32,6 +32,7 @@ func TestEventStopHandler(t *testing.T) {
 		wantRuns            int
 		wantFailed          []string
 		wantStopped         []string
+		wantSchedulers      []string
 		wantDescendantQuery bool
 		wantEventIDs        []string
 	}{
@@ -86,6 +87,19 @@ func TestEventStopHandler(t *testing.T) {
 			wantDescendantQuery: true, wantEventIDs: defaultEventIDs,
 		},
 		{
+			name: "same run id from different schedulers is stopped separately", event: webhookStopEvent("event-1", "github"), token: "token",
+			deliveries:    []domain.EventDelivery{{SchedulerID: "scheduler-1", RunID: "run-1"}, {SchedulerID: "scheduler-2", RunID: "run-1"}},
+			stopResults:   []bool{true, true},
+			wantStatus:    http.StatusOK,
+			wantRequested: true,
+			wantRuns:      2,
+			wantStopped:   []string{"run-1", "run-1"},
+			wantSchedulers: []string{
+				"scheduler-1", "scheduler-2",
+			},
+			wantDescendantQuery: true, wantEventIDs: defaultEventIDs,
+		},
+		{
 			name: "stop failures are aggregated after other runs", event: webhookStopEvent("event-1", "github"), token: "token",
 			deliveries:  []domain.EventDelivery{{RunID: "run-1"}, {RunID: "run-2"}},
 			stopResults: []bool{false, true}, stopErrs: []error{errors.New("stop failed"), nil},
@@ -109,7 +123,13 @@ func TestEventStopHandler(t *testing.T) {
 			if tt.source != nil {
 				base.sources[tt.source.ID] = *tt.source
 			}
-			store := &webhookStopStore{webhookRouteStore: base, descendantIDs: tt.eventIDs, deliveries: tt.deliveries}
+			deliveries := append([]domain.EventDelivery(nil), tt.deliveries...)
+			for index := range deliveries {
+				if deliveries[index].SchedulerID == "" {
+					deliveries[index].SchedulerID = "scheduler-1"
+				}
+			}
+			store := &webhookStopStore{webhookRouteStore: base, descendantIDs: tt.eventIDs, deliveries: deliveries}
 			stopper := &recordingRunStopper{results: tt.stopResults, errs: tt.stopErrs}
 			app := echo.New()
 			RegisterRoutes(app, RouteOptions{Store: store, RunStopper: stopper})
@@ -137,6 +157,16 @@ func TestEventStopHandler(t *testing.T) {
 			}
 			if !equalStrings(stopper.runIDs, tt.wantStopped) {
 				t.Fatalf("stopped runs=%v, want %v", stopper.runIDs, tt.wantStopped)
+			}
+			wantSchedulers := tt.wantSchedulers
+			if wantSchedulers == nil {
+				wantSchedulers = make([]string, len(tt.wantStopped))
+				for index := range wantSchedulers {
+					wantSchedulers[index] = "scheduler-1"
+				}
+			}
+			if !equalStrings(stopper.schedulerIDs, wantSchedulers) {
+				t.Fatalf("stopped schedulers=%v, want %v", stopper.schedulerIDs, wantSchedulers)
 			}
 			for i := range tt.wantStopped {
 				wantReason := "operator request"
@@ -215,21 +245,23 @@ func (s *webhookStopStore) ListEventDeliveries(_ context.Context, eventIDs []str
 }
 
 type recordingRunStopper struct {
-	results []bool
-	errs    []error
-	runIDs  []string
-	reasons []string
+	results      []bool
+	errs         []error
+	schedulerIDs []string
+	runIDs       []string
+	reasons      []string
 }
 
-func (s *recordingRunStopper) StopActiveRun(_ context.Context, runID, reason string) (bool, error) {
+func (s *recordingRunStopper) StopSchedulerRun(_ context.Context, schedulerID, runID, reason string) (domain.SchedulerRunSummary, bool, error) {
+	s.schedulerIDs = append(s.schedulerIDs, schedulerID)
 	s.runIDs = append(s.runIDs, runID)
 	s.reasons = append(s.reasons, reason)
 	index := len(s.runIDs) - 1
 	if index < len(s.errs) && s.errs[index] != nil {
-		return false, s.errs[index]
+		return domain.SchedulerRunSummary{}, false, s.errs[index]
 	}
 	if index < len(s.results) {
-		return s.results[index], nil
+		return domain.SchedulerRunSummary{}, s.results[index], nil
 	}
-	return false, nil
+	return domain.SchedulerRunSummary{}, false, nil
 }

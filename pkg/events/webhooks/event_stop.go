@@ -16,7 +16,7 @@ import (
 const maxStopEventCount = 1000
 
 type RunStopper interface {
-	StopActiveRun(context.Context, string, string) (bool, error)
+	StopSchedulerRun(context.Context, string, string, string) (domain.SchedulerRunSummary, bool, error)
 }
 
 type stopEventRequest struct {
@@ -115,17 +115,19 @@ func decodeStopEventRequest(r *http.Request) (stopEventRequest, error) {
 
 func stopEventRuns(ctx context.Context, stopper RunStopper, eventID, reason string, deliveries []domain.EventDelivery) stopEventResponse {
 	response := stopEventResponse{EventID: eventID}
-	seen := make(map[string]struct{}, len(deliveries))
+	seen := make(map[schedulerRunRef]struct{}, len(deliveries))
 	for _, delivery := range deliveries {
+		schedulerID := strings.TrimSpace(delivery.SchedulerID)
 		runID := strings.TrimSpace(delivery.RunID)
-		if runID == "" {
+		if schedulerID == "" || runID == "" {
 			continue
 		}
-		if _, ok := seen[runID]; ok {
+		ref := schedulerRunRef{schedulerID: schedulerID, runID: runID}
+		if _, ok := seen[ref]; ok {
 			continue
 		}
-		seen[runID] = struct{}{}
-		requested, err := stopper.StopActiveRun(ctx, runID, reason)
+		seen[ref] = struct{}{}
+		_, requested, err := stopper.StopSchedulerRun(ctx, schedulerID, runID, reason)
 		if err != nil {
 			response.FailedRunIDs = append(response.FailedRunIDs, runID)
 			continue
@@ -137,4 +139,9 @@ func stopEventRuns(ctx context.Context, stopper RunStopper, eventID, reason stri
 	response.StopRequested = response.RequestedRuns > 0
 	response.FailedRuns = len(response.FailedRunIDs)
 	return response
+}
+
+type schedulerRunRef struct {
+	schedulerID string
+	runID       string
 }
