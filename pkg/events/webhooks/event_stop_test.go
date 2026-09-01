@@ -23,6 +23,7 @@ func TestEventStopHandler(t *testing.T) {
 		source              *domain.WebhookSource
 		token               string
 		body                string
+		bodyLimit           int64
 		eventIDs            []string
 		deliveries          []domain.EventDelivery
 		stopResults         []bool
@@ -52,6 +53,11 @@ func TestEventStopHandler(t *testing.T) {
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
+			name: "disabled source cannot stop runs", event: webhookStopEvent("event-1", "github"), token: "token",
+			source:     &domain.WebhookSource{ID: "github", Provider: "github", TopicPrefix: "webhook.github.", TokenHash: TokenHash("token")},
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
 			name: "missing event is not found", token: "token",
 			wantStatus: http.StatusNotFound,
 		},
@@ -66,6 +72,11 @@ func TestEventStopHandler(t *testing.T) {
 		{
 			name: "malformed request body is rejected", event: webhookStopEvent("event-1", "github"), token: "token", body: "{",
 			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "oversized request body is rejected", event: webhookStopEvent("event-1", "github"), token: "token",
+			body: `{"reason":"request body exceeds the configured limit"}`, bodyLimit: 16,
+			wantStatus: http.StatusRequestEntityTooLarge,
 		},
 		{
 			name: "empty body uses the default stop reason", event: webhookStopEvent("event-1", "github"), token: "token", body: " ",
@@ -132,7 +143,7 @@ func TestEventStopHandler(t *testing.T) {
 			store := &webhookStopStore{webhookRouteStore: base, descendantIDs: tt.eventIDs, deliveries: deliveries}
 			stopper := &recordingRunStopper{results: tt.stopResults, errs: tt.stopErrs}
 			app := echo.New()
-			RegisterRoutes(app, RouteOptions{Store: store, RunStopper: stopper})
+			RegisterRoutes(app, RouteOptions{Store: store, RunStopper: stopper, WebhookBodyLimit: tt.bodyLimit})
 
 			body := tt.body
 			if body == "" {

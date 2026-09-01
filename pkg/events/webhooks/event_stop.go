@@ -1,6 +1,7 @@
 package webhooks
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -59,11 +60,14 @@ func (h routeHandler) handleStopEvent(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load webhook source"})
 	}
-	if !ok || source.TokenHash == "" || !ValidTokenHash(c.Request(), source.TokenHash, source.TokenHeader) {
+	if !ok || !source.Enabled || source.TokenHash == "" || !ValidTokenHash(c.Request(), source.TokenHash, source.TokenHeader) {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid webhook token"})
 	}
-	req, err := decodeStopEventRequest(c.Request())
+	req, err := decodeStopEventRequest(c.Request(), h.opts.WebhookBodyLimit)
 	if err != nil {
+		if errors.Is(err, domain.ErrBodyTooLarge) {
+			return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": "request body is too large"})
+		}
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "body must be a JSON object"})
 	}
 	eventIDs, err := h.store().ListDescendantEventIDs(ctx, eventID, maxStopEventCount+1)
@@ -97,9 +101,13 @@ func stopEventSourceID(payloadJSON string) (string, error) {
 	return strings.TrimSpace(sourceID), nil
 }
 
-func decodeStopEventRequest(r *http.Request) (stopEventRequest, error) {
+func decodeStopEventRequest(r *http.Request, bodyLimit int64) (stopEventRequest, error) {
+	body, err := ReadBody(r, bodyLimit)
+	if err != nil {
+		return stopEventRequest{}, err
+	}
 	var req stopEventRequest
-	decoder := json.NewDecoder(r.Body)
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	if err := decoder.Decode(&req); err != nil {
 		if errors.Is(err, io.EOF) {
 			return req, nil
