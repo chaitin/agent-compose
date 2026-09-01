@@ -31,6 +31,13 @@ const manuals = [
     alternate: "../connect-transport-matrix.html",
   },
   {
+    source: "octobus-quickstart.md",
+    output: "octobus-quickstart.html",
+    title: "OctoBus Integration Quick Start",
+    lang: "en",
+    alternate: "zh-CN/octobus-quickstart.html",
+  },
+  {
     source: "agent-compose-yaml-manual.md",
     output: "agent-compose-yaml-manual.html",
     title: "agent-compose.yml Manual",
@@ -50,6 +57,13 @@ const manuals = [
     title: "命令行手册",
     lang: "zh-CN",
     alternate: "../command-line-manual.html",
+  },
+  {
+    source: "zh-CN/octobus-quickstart.md",
+    output: "zh-CN/octobus-quickstart.html",
+    title: "OctoBus 集成快速开始",
+    lang: "zh-CN",
+    alternate: "../octobus-quickstart.html",
   },
   {
     source: "zh-CN/agent-compose-yaml-manual.md",
