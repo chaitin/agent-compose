@@ -235,6 +235,7 @@ func (h *RunHandler) ListRuns(ctx context.Context, req *connect.Request[agentcom
 		StartedTo:      startedTo,
 		Offset:         offset,
 		Limit:          limit,
+		Labels:         req.Msg.GetLabels(),
 	}
 	runs, err := h.store.ListProjectRunsByOptions(ctx, options)
 	if err != nil {

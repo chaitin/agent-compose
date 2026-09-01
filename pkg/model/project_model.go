@@ -109,6 +109,11 @@ type ProjectRunRecord struct {
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 	Warnings        []string  `json:"warnings,omitempty"`
+	// Labels holds user-defined key/value pairs attached to the run at start
+	// time. It is not a column on project_run; it is populated by GetProjectRun
+	// from the project_run_label table on read, and by Coordinator.BeginRun on
+	// write for the store layer to persist into project_run_label.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // ProjectRunCompletionRecord is the durable intent to finish a run after its
@@ -188,6 +193,9 @@ type ProjectRunListOptions struct {
 	StartedTo      *time.Time
 	Offset         int
 	Limit          int
+	// Labels filters to runs carrying every given key/value pair (AND semantics).
+	// An empty map applies no filter.
+	Labels map[string]string
 }
 
 type ProjectAgentRunState struct {

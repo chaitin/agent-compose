@@ -213,6 +213,7 @@ type RunAgentRequest struct {
 	StickyBindingTriggerID   string
 	StickyBindingConfigHash  string
 	Interactive              bool
+	Labels                   map[string]string
 }
 
 type StreamSink struct {
@@ -260,6 +261,7 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		Driver:          req.Driver,
 		CleanupPolicy:   CleanupPolicyFromProto(req.CleanupPolicy),
 		ClientRequestID: req.ClientRequestID,
+		Labels:          req.Labels,
 	})
 	if err != nil {
 		return StartedProjectRun{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)

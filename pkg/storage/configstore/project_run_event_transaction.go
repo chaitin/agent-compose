@@ -48,6 +48,8 @@ func (s *projectStore) CreateProjectRunWithEvents(ctx context.Context, run Proje
 			return ProjectRunRecord{}, fmt.Errorf("load existing project run %s: %w", run.RunID, loadErr)
 		}
 		run = existing
+	} else if err := insertProjectRunLabelsTx(ctx, tx, run.RunID, run.Labels); err != nil {
+		return ProjectRunRecord{}, err
 	}
 	if _, _, err := appendProjectRunEventsTx(ctx, tx, events); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("append create project run events: %w", err)
@@ -116,5 +118,14 @@ func validateRunEventBatch(runID string, events []domain.ProjectRunEventRecord) 
 }
 
 func getProjectRunTx(ctx context.Context, tx *sql.Tx, runID string) (ProjectRunRecord, error) {
-	return projects.ScanProjectRun(tx.QueryRowContext(ctx, projects.SelectProjectRunSQL()+` WHERE run_id = ?`, runID).Scan)
+	item, err := projects.ScanProjectRun(tx.QueryRowContext(ctx, projects.SelectProjectRunSQL()+` WHERE run_id = ?`, runID).Scan)
+	if err != nil {
+		return ProjectRunRecord{}, err
+	}
+	labels, err := loadProjectRunLabels(ctx, tx, item.RunID)
+	if err != nil {
+		return ProjectRunRecord{}, err
+	}
+	item.Labels = labels
+	return item, nil
 }

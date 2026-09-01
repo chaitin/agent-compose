@@ -1059,6 +1059,8 @@ message RunAgentRequest {
   string sandbox_id = 14;
   repeated VolumeMountSpec volumes = 15;
   string payload_json = 16;
+  // Optional user-defined key/value labels attached to the run at start time.
+  map<string, string> labels = 17;
 }
 
 message RunAgentResponse {
@@ -1160,6 +1162,8 @@ message ListRunsRequest {
   string sandbox_id = 10;
   // Optional exact scheduler run association for automation-originated Agent Runs.
   string scheduler_run_id = 11;
+  // Optional exact-match label filters, ANDed together. An empty map applies no filter.
+  map<string, string> labels = 12;
 }
 
 message ListRunsResponse {
@@ -1432,6 +1436,8 @@ message RunDetail {
   string image_ref = 9;
   repeated string warnings = 10;
   string error_stack = 11;
+  // User-defined key/value labels attached to the run at start time.
+  map<string, string> labels = 12;
 }
 
 message ExecRequest {

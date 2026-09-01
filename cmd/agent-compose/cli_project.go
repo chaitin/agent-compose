@@ -458,8 +458,12 @@ func composePSOutputFromProject(ctx context.Context, clients cliServiceClients, 
 	if err != nil {
 		return composePSOutput{}, err
 	}
+	labels, err := parseCLIStringMap(options.Labels, "--label")
+	if err != nil {
+		return composePSOutput{}, commandExitError{Code: exitCodeUsage, Err: err}
+	}
 	projectID := project.GetSummary().GetProjectId()
-	runs, err := listProjectRuns(ctx, clients.run, projectID)
+	runs, err := listProjectRuns(ctx, clients.run, projectID, labels)
 	if err != nil {
 		return composePSOutput{}, err
 	}
@@ -474,6 +478,13 @@ func composePSOutputFromProject(ctx context.Context, clients cliServiceClients, 
 	}
 	for _, session := range sessions {
 		if !composePSSessionBelongsToProject(session, project, runBySandbox) {
+			continue
+		}
+		// A label filter is only meaningful against a run that actually
+		// carries the matching labels. Without this, a sandbox with no run in
+		// runBySandbox would still surface via composePSSessionBelongsToProject's
+		// tag-based fallback, silently defeating the filter.
+		if len(labels) > 0 && runBySandbox[session.GetSandboxId()] == nil {
 			continue
 		}
 		status := sandboxStatusText(session.GetStatus())
