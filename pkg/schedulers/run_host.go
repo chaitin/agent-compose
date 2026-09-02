@@ -48,7 +48,10 @@ type HostAgentExecutionRequest struct {
 
 // ExecuteAgent returns the cell (full transcript) plus the provider's final
 // assistant message, when the provider emitted one distinct from the
-// transcript; the message is "" when no such message exists.
+// transcript; the message is "" when no such message exists. On a failed
+// run the message may instead be a synthesized failure summary (not
+// provider text) — callers must check cell.Success before preferring it
+// over the transcript.
 type HostAgentExecutor interface {
 	ExecuteAgent(ctx context.Context, session *domain.Sandbox, request HostAgentExecutionRequest) (domain.NotebookCell, string, error)
 }
@@ -273,6 +276,13 @@ func (h *RuntimeHost) Agent(ctx context.Context, prompt string, request domain.S
 		Timeout:           request.Timeout,
 		OutputSchemaJSON:  request.OutputSchema,
 	})
+	if execErr != nil || !cell.Success {
+		// assistantMessage may be a synthesized failure summary (see
+		// agentAssistantMessage), not provider text; trust it only on
+		// success, or a failed run's real transcript gets displaced by
+		// that placeholder.
+		assistantMessage = ""
+	}
 	finalText := firstHostNonEmpty(assistantMessage, cell.Output, cell.Stdout, cell.Stderr)
 	jsonValue, jsonErr := JSONResult(finalText, request.OutputSchema, "agent finalText")
 	if jsonErr != nil && execErr == nil {

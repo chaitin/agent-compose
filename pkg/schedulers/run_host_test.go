@@ -170,6 +170,22 @@ func TestRuntimeHostAgentPrefersAssistantMessageOverTranscript(t *testing.T) {
 	if result.FinalText != "plain transcript" || result.Output != "plain transcript" {
 		t.Fatalf("FinalText/Output = %q/%q, want both to fall back to the transcript", result.FinalText, result.Output)
 	}
+
+	// On a failed run, agentAssistantMessage synthesizes a placeholder like
+	// "<agent> failed without output" instead of returning "" — that must
+	// not displace the real transcript, which carries the actual failure
+	// diagnostics.
+	failed := &hostAgentExecutorFake{
+		cell:          domain.NotebookCell{ID: "cell-3", Output: "tool call failed: ENOENT /workspace/build.sh\nstack: ...", Success: false},
+		assistantText: "codex failed without output",
+	}
+	result, err = newHost(failed).Agent(ctx, "prompt", domain.SchedulerAgentRequest{})
+	if err != nil {
+		t.Fatalf("Agent returned error: %v", err)
+	}
+	if result.FinalText != failed.cell.Output || result.Text != failed.cell.Output {
+		t.Fatalf("FinalText/Text = %q/%q, want the real transcript %q, not the synthesized failure summary", result.FinalText, result.Text, failed.cell.Output)
+	}
 }
 
 func TestRuntimeHostLLMModelPriorityAndEnvironmentPropagation(t *testing.T) {

@@ -45,6 +45,25 @@ func TestAgentResultFromProjectRunFallsBackToOutputWithoutFinalTextMetadata(t *t
 	}
 }
 
+func TestAgentResultFromProjectRunIgnoresFinalTextMetadataOnFailure(t *testing.T) {
+	// A failed run's ResultJSON.finalText may hold a synthesized failure
+	// summary (see agentAssistantMessage), not provider text. It must not
+	// displace run.Output, which carries the real failure diagnostics.
+	run := domain.ProjectRunRecord{
+		RunID:      "project-run-4",
+		Status:     domain.ProjectRunStatusFailed,
+		Output:     "tool call failed: ENOENT /workspace/build.sh\nstack: ...",
+		ResultJSON: `{"cellId":"cell-4","finalText":"codex run failed: exit status 1"}`,
+	}
+	result, err := AgentResultFromProjectRun(run, "")
+	if err != nil {
+		t.Fatalf("AgentResultFromProjectRun returned error: %v", err)
+	}
+	if result.FinalText != run.Output || result.Text != run.Output {
+		t.Fatalf("FinalText/Text = %q/%q, want the real transcript %q, not the synthesized failure summary", result.FinalText, result.Text, run.Output)
+	}
+}
+
 func TestAgentResultFromProjectRunFallsBackToErrorWhenEmpty(t *testing.T) {
 	run := domain.ProjectRunRecord{
 		RunID:  "project-run-3",
