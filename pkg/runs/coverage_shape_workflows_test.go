@@ -111,11 +111,11 @@ func TestRunsCoordinatorAndHelperWorkflows(t *testing.T) {
 		t.Fatalf("session helpers title=%q tags=%#v", title, tags)
 	}
 	cell := domain.NotebookCell{ID: "cell-1", Type: execution.CellTypeAgent, Agent: "codex", AgentThreadID: "agent-thread", Output: "output", Success: false, ExitCode: 0, Stderr: "stderr"}
-	transition := TransitionFromAgentCell(run, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", WorkspacePath: t.TempDir()}}, cell, nil)
+	transition := TransitionFromAgentCell(run, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", WorkspacePath: t.TempDir()}}, cell, "", nil)
 	if transition.ExitCode == 0 || !strings.Contains(transition.ErrorStack, "stderr") || transition.ArtifactsDir == "" {
 		t.Fatalf("transition from failed cell = %#v", transition)
 	}
-	transition = TransitionFromAgentCell(run, nil, cell, errors.New("boom"))
+	transition = TransitionFromAgentCell(run, nil, cell, "", errors.New("boom"))
 	if transition.ExitCode == 0 || !strings.Contains(transition.ErrorStack, "boom") {
 		t.Fatalf("transition from exec error = %#v", transition)
 	}

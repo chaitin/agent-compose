@@ -674,7 +674,7 @@ func (c *Controller) completeProjectRunAgent(ctx context.Context, sandboxed sand
 			Hub:         c.runLogs,
 		}),
 	})
-	transition := TransitionFromAgentCell(run, sandboxed.Sandbox, cell, execErr)
+	transition := TransitionFromAgentCell(run, sandboxed.Sandbox, cell, assistantEvent.Message, execErr)
 	transition.TerminalEvents = projectAgentTerminalEvents(run, cell, assistantEvent, execErr)
 	if execErr != nil || !cell.Success {
 		run, err = c.completeProjectRunError(sandboxed.TransitionCtx, ctx, transition, execErr)
