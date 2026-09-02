@@ -265,17 +265,23 @@ func TestCancelEventDispatchOnlyWithdrawsWaitingEvents(t *testing.T) {
 	statuses := map[string]string{
 		"waiting-pending":   domain.TopicEventDispatchPending,
 		"waiting-retrying":  domain.TopicEventDispatchRetrying,
-		"claimed":           domain.TopicEventDispatchPublishing,
+		"expired-claim":     domain.TopicEventDispatchPublishing,
+		"active-claim":      domain.TopicEventDispatchPublishing,
 		"already-published": domain.TopicEventDispatchPublishedToBus,
 		"dead":              domain.TopicEventDispatchDeadLetter,
 	}
 	ids := make([]string, 0, len(statuses))
+	activeClaimUntil := time.Now().UTC().Add(time.Hour).UnixMilli()
 	for id, status := range statuses {
 		ids = append(ids, id)
+		claimUntil := int64(99)
+		if id == "active-claim" {
+			claimUntil = activeClaimUntil
+		}
 		if _, err := store.db.ExecContext(ctx, `INSERT INTO event(
 			id, topic, source, correlation_id, payload_hash, payload_json,
 			dispatch_status, parent_event_id, created_at, claim_id, claim_until, next_attempt_at
-		) VALUES(?, 'webhook.test', 'webhook', '', 'hash', '{}', ?, '', 1, 'claim-1', 99, 99)`, id, status); err != nil {
+		) VALUES(?, 'webhook.test', 'webhook', '', 'hash', '{}', ?, '', 1, 'claim-1', ?, 99)`, id, status, claimUntil); err != nil {
 			t.Fatalf("insert %s event: %v", id, err)
 		}
 	}
@@ -284,8 +290,8 @@ func TestCancelEventDispatchOnlyWithdrawsWaitingEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CancelEventDispatch returned error: %v", err)
 	}
-	if cancellation.Canceled != 2 {
-		t.Fatalf("canceled=%d, want 2", cancellation.Canceled)
+	if cancellation.Canceled != 3 {
+		t.Fatalf("canceled=%d, want 3", cancellation.Canceled)
 	}
 	if cancellation.InFlight != 1 {
 		t.Fatalf("in flight=%d, want 1", cancellation.InFlight)
@@ -297,7 +303,7 @@ func TestCancelEventDispatchOnlyWithdrawsWaitingEvents(t *testing.T) {
 			t.Fatalf("get %s event: %v", id, err)
 		}
 		want := original
-		if original == domain.TopicEventDispatchPending || original == domain.TopicEventDispatchRetrying {
+		if original == domain.TopicEventDispatchPending || original == domain.TopicEventDispatchRetrying || id == "expired-claim" {
 			want = domain.TopicEventDispatchCanceled
 		}
 		if event.DispatchStatus != want {
@@ -312,7 +318,7 @@ func TestCancelEventDispatchOnlyWithdrawsWaitingEvents(t *testing.T) {
 		t.Fatalf("ListDispatchableEvents returned error: %v", err)
 	}
 	for _, item := range dispatchable {
-		if item.ID == "waiting-pending" || item.ID == "waiting-retrying" {
+		if item.ID == "waiting-pending" || item.ID == "waiting-retrying" || item.ID == "expired-claim" {
 			t.Fatalf("withdrawn event %s is still dispatchable", item.ID)
 		}
 	}

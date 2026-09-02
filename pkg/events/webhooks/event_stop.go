@@ -92,7 +92,13 @@ func (h routeHandler) handleStopEvent(c echo.Context) error {
 	}
 	deliveries, err := h.store().ListEventDeliveries(ctx, eventIDs)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load event deliveries"})
+		return c.JSON(http.StatusInternalServerError, stopEventResponse{
+			EventID:        eventID,
+			StopRequested:  cancellation.Canceled > 0,
+			CanceledEvents: cancellation.Canceled,
+			PendingEvents:  cancellation.InFlight,
+			Error:          "failed to load event deliveries",
+		})
 	}
 	response := stopEventRuns(ctx, h.opts.RunStopper, eventID, req.Reason, deliveries)
 	response.CanceledEvents = cancellation.Canceled

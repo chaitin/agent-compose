@@ -319,12 +319,9 @@ func (s *eventStore) AddEventSandboxLink(ctx context.Context, link domain.EventS
 }
 
 // CancelEventDispatch withdraws the given events from the dispatch queue so
-// they never start a run. Only events that are still waiting are withdrawn:
-// ListDispatchableEvents and ClaimEvent both admit pending, retrying, and
-// publishing_to_bus, so the canceled status alone removes an event from both.
-// An event already claimed for delivery is left alone and reported as in
-// flight, because its run is about to exist and belongs to the run-stop path
-// instead; withdrawing it here would leave a canceled event owning a live run.
+// they never start a run. Publishing events whose lease expired are waiting
+// again, because ListDispatchableEvents and ClaimEvent can reclaim them. Only
+// publishing events with an active lease are left alone and reported in flight.
 func (s *eventStore) CancelEventDispatch(ctx context.Context, eventIDs []string, reason string) (domain.EventDispatchCancellation, error) {
 	ids := dedupedEventIDs(eventIDs)
 	if len(ids) == 0 {
@@ -336,15 +333,20 @@ func (s *eventStore) CancelEventDispatch(ctx context.Context, eventIDs []string,
 	}
 	idList := strings.Join(placeholders, ",")
 
-	args := make([]any, 0, len(ids)+3)
+	nowMillis := time.Now().UTC().UnixMilli()
+	args := make([]any, 0, len(ids)+5)
 	args = append(args, domain.TopicEventDispatchCanceled, strings.TrimSpace(reason))
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	args = append(args, domain.TopicEventDispatchPending, domain.TopicEventDispatchRetrying)
+	args = append(args, domain.TopicEventDispatchPending, domain.TopicEventDispatchRetrying,
+		domain.TopicEventDispatchPublishing, nowMillis)
 	result, err := s.db.ExecContext(ctx, `UPDATE event
 		SET dispatch_status = ?, last_error = ?, claim_id = '', claim_until = 0, next_attempt_at = 0
-		WHERE id IN (`+idList+`) AND dispatch_status IN (?, ?)`, args...)
+		WHERE id IN (`+idList+`) AND (
+			dispatch_status IN (?, ?) OR
+			(dispatch_status = ? AND (claim_until = 0 OR claim_until <= ?))
+		)`, args...)
 	if err != nil {
 		return domain.EventDispatchCancellation{}, fmt.Errorf("cancel event dispatch: %w", err)
 	}
@@ -353,14 +355,14 @@ func (s *eventStore) CancelEventDispatch(ctx context.Context, eventIDs []string,
 		return domain.EventDispatchCancellation{}, fmt.Errorf("read canceled event count: %w", err)
 	}
 
-	countArgs := make([]any, 0, len(ids)+1)
+	countArgs := make([]any, 0, len(ids)+2)
 	for _, id := range ids {
 		countArgs = append(countArgs, id)
 	}
-	countArgs = append(countArgs, domain.TopicEventDispatchPublishing)
+	countArgs = append(countArgs, domain.TopicEventDispatchPublishing, nowMillis)
 	var inFlight int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event
-		WHERE id IN (`+idList+`) AND dispatch_status = ?`, countArgs...).Scan(&inFlight); err != nil {
+		WHERE id IN (`+idList+`) AND dispatch_status = ? AND claim_until > ?`, countArgs...).Scan(&inFlight); err != nil {
 		return domain.EventDispatchCancellation{}, fmt.Errorf("count in-flight events: %w", err)
 	}
 	return domain.EventDispatchCancellation{Canceled: int(canceled), InFlight: inFlight}, nil

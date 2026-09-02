@@ -30,6 +30,7 @@ func TestEventStopHandler(t *testing.T) {
 		stopErrs            []error
 		cancellation        domain.EventDispatchCancellation
 		cancelErr           error
+		deliveryErr         error
 		wantStatus          int
 		wantRequested       bool
 		wantRuns            int
@@ -150,6 +151,16 @@ func TestEventStopHandler(t *testing.T) {
 			wantDescendantQuery: true,
 		},
 		{
+			name: "delivery lookup failure reports completed cancellation", event: webhookStopEvent("event-1", "github"), token: "token",
+			cancellation:        domain.EventDispatchCancellation{Canceled: 1, InFlight: 2},
+			deliveryErr:         errors.New("lookup failed"),
+			wantStatus:          http.StatusInternalServerError,
+			wantRequested:       true,
+			wantCanceledEvents:  1,
+			wantPendingEvents:   2,
+			wantDescendantQuery: true, wantEventIDs: defaultEventIDs,
+		},
+		{
 			name: "oversized event tree fails before stopping any run", event: webhookStopEvent("event-1", "github"), token: "token",
 			eventIDs: webhookStopEventIDs(maxStopEventCount + 1), deliveries: []domain.EventDelivery{{RunID: "run-1"}},
 			wantStatus: http.StatusConflict, wantDescendantQuery: true,
@@ -173,7 +184,7 @@ func TestEventStopHandler(t *testing.T) {
 			}
 			store := &webhookStopStore{
 				webhookRouteStore: base, descendantIDs: tt.eventIDs, deliveries: deliveries,
-				cancellation: tt.cancellation, cancelErr: tt.cancelErr,
+				cancellation: tt.cancellation, cancelErr: tt.cancelErr, deliveryErr: tt.deliveryErr,
 			}
 			stopper := &recordingRunStopper{results: tt.stopResults, errs: tt.stopErrs, store: store}
 			app := echo.New()
@@ -236,7 +247,7 @@ func TestEventStopHandler(t *testing.T) {
 					t.Fatalf("stop reason=%q, want %q", stopper.reasons[i], wantReason)
 				}
 			}
-			if tt.wantStatus == http.StatusOK || len(tt.wantFailed) > 0 {
+			if tt.wantStatus == http.StatusOK || len(tt.wantFailed) > 0 || tt.deliveryErr != nil {
 				var response stopEventResponse
 				if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 					t.Fatalf("decode response: %v", err)
@@ -290,6 +301,7 @@ type webhookStopStore struct {
 	deliveries          []domain.EventDelivery
 	cancellation        domain.EventDispatchCancellation
 	cancelErr           error
+	deliveryErr         error
 	gotRootEventID      string
 	gotDescendantLimit  int
 	gotEventIDs         []string
@@ -310,6 +322,9 @@ func (s *webhookStopStore) ListDescendantEventIDs(_ context.Context, rootEventID
 
 func (s *webhookStopStore) ListEventDeliveries(_ context.Context, eventIDs []string) ([]domain.EventDelivery, error) {
 	s.gotEventIDs = append([]string(nil), eventIDs...)
+	if s.deliveryErr != nil {
+		return nil, s.deliveryErr
+	}
 	return s.deliveries, nil
 }
 
