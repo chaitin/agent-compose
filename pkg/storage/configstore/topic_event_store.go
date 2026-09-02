@@ -319,9 +319,9 @@ func (s *eventStore) AddEventSandboxLink(ctx context.Context, link domain.EventS
 }
 
 // CancelEventDispatch withdraws the given events from the dispatch queue so
-// they never start a run. Publishing events whose lease expired are waiting
-// again, because ListDispatchableEvents and ClaimEvent can reclaim them. Only
-// publishing events with an active lease are left alone and reported in flight.
+// they never start a run. Publishing events are left in flight, including
+// expired leases: the original worker may still be creating a delivery, and
+// clearing its claim could leave that run orphaned after cancellation.
 func (s *eventStore) CancelEventDispatch(ctx context.Context, eventIDs []string, reason string) (domain.EventDispatchCancellation, error) {
 	ids := dedupedEventIDs(eventIDs)
 	if len(ids) == 0 {
@@ -333,19 +333,16 @@ func (s *eventStore) CancelEventDispatch(ctx context.Context, eventIDs []string,
 	}
 	idList := strings.Join(placeholders, ",")
 
-	nowMillis := time.Now().UTC().UnixMilli()
 	args := make([]any, 0, len(ids)+5)
 	args = append(args, domain.TopicEventDispatchCanceled, strings.TrimSpace(reason))
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	args = append(args, domain.TopicEventDispatchPending, domain.TopicEventDispatchRetrying,
-		domain.TopicEventDispatchPublishing, nowMillis)
+	args = append(args, domain.TopicEventDispatchPending, domain.TopicEventDispatchRetrying)
 	result, err := s.db.ExecContext(ctx, `UPDATE event
 		SET dispatch_status = ?, last_error = ?, claim_id = '', claim_until = 0, next_attempt_at = 0
 		WHERE id IN (`+idList+`) AND (
-			dispatch_status IN (?, ?) OR
-			(dispatch_status = ? AND (claim_until = 0 OR claim_until <= ?))
+			dispatch_status IN (?, ?)
 		)`, args...)
 	if err != nil {
 		return domain.EventDispatchCancellation{}, fmt.Errorf("cancel event dispatch: %w", err)
@@ -359,10 +356,10 @@ func (s *eventStore) CancelEventDispatch(ctx context.Context, eventIDs []string,
 	for _, id := range ids {
 		countArgs = append(countArgs, id)
 	}
-	countArgs = append(countArgs, domain.TopicEventDispatchPublishing, nowMillis)
+	countArgs = append(countArgs, domain.TopicEventDispatchPublishing)
 	var inFlight int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event
-		WHERE id IN (`+idList+`) AND dispatch_status = ? AND claim_until > ?`, countArgs...).Scan(&inFlight); err != nil {
+		WHERE id IN (`+idList+`) AND dispatch_status = ?`, countArgs...).Scan(&inFlight); err != nil {
 		return domain.EventDispatchCancellation{}, fmt.Errorf("count in-flight events: %w", err)
 	}
 	return domain.EventDispatchCancellation{Canceled: int(canceled), InFlight: inFlight}, nil

@@ -290,11 +290,11 @@ func TestCancelEventDispatchOnlyWithdrawsWaitingEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CancelEventDispatch returned error: %v", err)
 	}
-	if cancellation.Canceled != 3 {
-		t.Fatalf("canceled=%d, want 3", cancellation.Canceled)
+	if cancellation.Canceled != 2 {
+		t.Fatalf("canceled=%d, want 2", cancellation.Canceled)
 	}
-	if cancellation.InFlight != 1 {
-		t.Fatalf("in flight=%d, want 1", cancellation.InFlight)
+	if cancellation.InFlight != 2 {
+		t.Fatalf("in flight=%d, want 2", cancellation.InFlight)
 	}
 
 	for id, original := range statuses {
@@ -303,7 +303,7 @@ func TestCancelEventDispatchOnlyWithdrawsWaitingEvents(t *testing.T) {
 			t.Fatalf("get %s event: %v", id, err)
 		}
 		want := original
-		if original == domain.TopicEventDispatchPending || original == domain.TopicEventDispatchRetrying || id == "expired-claim" {
+		if original == domain.TopicEventDispatchPending || original == domain.TopicEventDispatchRetrying {
 			want = domain.TopicEventDispatchCanceled
 		}
 		if event.DispatchStatus != want {
@@ -311,14 +311,15 @@ func TestCancelEventDispatchOnlyWithdrawsWaitingEvents(t *testing.T) {
 		}
 	}
 
-	// A withdrawn event must leave the dispatch queue, and its claim must be
-	// released so a stale lease cannot resurrect it.
+	// Waiting events must leave the dispatch queue, and their claims must be
+	// released. Publishing events remain in flight so an active worker can
+	// finish delivery and release its claim safely.
 	dispatchable, err := store.ListDispatchableEvents(ctx, time.UnixMilli(1000).UTC(), 100)
 	if err != nil {
 		t.Fatalf("ListDispatchableEvents returned error: %v", err)
 	}
 	for _, item := range dispatchable {
-		if item.ID == "waiting-pending" || item.ID == "waiting-retrying" || item.ID == "expired-claim" {
+		if item.ID == "waiting-pending" || item.ID == "waiting-retrying" {
 			t.Fatalf("withdrawn event %s is still dispatchable", item.ID)
 		}
 	}
