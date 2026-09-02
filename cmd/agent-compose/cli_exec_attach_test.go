@@ -72,8 +72,14 @@ func TestRunComposeExecPromptOnceCommand(t *testing.T) {
 		t.Fatalf("prompt once stdout = %q", stdout.String())
 	}
 	sent := stream.sentFrames()
-	if len(sent) != 1 || sent[0].GetStart().GetPrompt() != "hello" || sent[0].GetStart().GetAttachStdin() {
-		t.Fatalf("prompt once start = %#v", sent)
+	if len(sent) != 2 {
+		t.Fatalf("prompt once sent %d frames, want start/eof: %#v", len(sent), sent)
+	}
+	if sent[0].GetStart().GetPrompt() != "hello" || sent[0].GetStart().GetAttachStdin() {
+		t.Fatalf("prompt once start = %#v", sent[0])
+	}
+	if sent[1].GetStdinEof() == nil {
+		t.Fatalf("prompt once did not end input, frame = %#v", sent[1])
 	}
 	if !stream.closedRequest() {
 		t.Fatal("prompt once request was not closed")
