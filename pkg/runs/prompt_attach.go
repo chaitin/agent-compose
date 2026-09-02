@@ -265,6 +265,11 @@ func receivePromptInteractionFrames(run domain.ProjectRunRecord, sandbox *domain
 			// than embedding it in the streamed agent events. Treat both forms
 			// consistently so queued input (including EOF from exec --prompt)
 			// is not left waiting indefinitely.
+			if err := send(runAttachAgentTurnCompletedResponse(run, "", warningsFromRun(run))); err != nil {
+				transition.ExitCode = 1
+				transition.Error = fmt.Sprintf("agent execution failed: %v", err)
+				return transition, err
+			}
 			releasePromptTurn(turnReady)
 		case driverpkg.RuntimeOutputResult:
 			result := frame.Result
