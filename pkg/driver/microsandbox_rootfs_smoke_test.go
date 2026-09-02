@@ -38,6 +38,7 @@ func TestSmokeMicrosandboxRootfsIsolation(t *testing.T) {
 	}
 	secondState.BoxID = secondInfo.BoxID
 	cleanupRuntimeSmokeSandbox(t, config, runtimeDriver, second, secondState)
+	assertMicrosandboxLegacyDockerDiskDirectoryAbsent(t, config.MicrosandboxHome)
 
 	type execution struct {
 		name    string
@@ -99,6 +100,7 @@ func TestSmokeMicrosandboxRootfsIsolation(t *testing.T) {
 			t.Fatalf("removed sandbox resource %s remains: %v", path, err)
 		}
 	}
+	assertMicrosandboxLegacyDockerDiskDirectoryAbsent(t, config.MicrosandboxHome)
 
 	third, thirdState, thirdProxy := newRuntimeSmokeSandbox(t, ctx, config, RuntimeDriverMicrosandbox)
 	third.Summary.PullPolicy = "never"
@@ -108,6 +110,7 @@ func TestSmokeMicrosandboxRootfsIsolation(t *testing.T) {
 	}
 	thirdState.BoxID = thirdInfo.BoxID
 	cleanupRuntimeSmokeSandbox(t, config, runtimeDriver, third, thirdState)
+	assertMicrosandboxLegacyDockerDiskDirectoryAbsent(t, config.MicrosandboxHome)
 	result, err := runtimeDriver.Exec(ctx, third, thirdState, ExecSpec{Command: "sh", Args: []string{"-lc", "test ! -e /tmp/rootfs-isolation && test ! -e /etc/rootfs-isolation && test ! -e /var/tmp/rootfs-isolation"}, Cwd: "/"})
 	if err != nil || !result.Success {
 		t.Fatalf("new sandbox inherited rootfs pollution: result=%#v err=%v", result, err)
@@ -132,6 +135,9 @@ func assertMicrosandboxRootDiskPersistsAcrossRestart(
 	const assertRootDisk = `
 set -eu
 test "$(stat -c %d /)" = "$(stat -c %d /var/lib)"
+if [ -d /var/lib/docker ]; then
+  test "$(stat -c %d /)" = "$(stat -c %d /var/lib/docker)"
+fi
 `
 	writeResult, err := runtimeDriver.Exec(ctx, session, vmState, ExecSpec{
 		Command: "sh",
@@ -164,5 +170,12 @@ test "$(stat -c %d /)" = "$(stat -c %d /var/lib)"
 	})
 	if err != nil || !readResult.Success {
 		t.Fatalf("verify root disk after restart: result=%#v err=%v", readResult, err)
+	}
+}
+
+func assertMicrosandboxLegacyDockerDiskDirectoryAbsent(t *testing.T, microsandboxHome string) {
+	t.Helper()
+	if _, err := os.Lstat(filepath.Join(microsandboxHome, "docker-disks")); !os.IsNotExist(err) {
+		t.Fatalf("new Microsandbox creation produced docker-disks, err=%v", err)
 	}
 }
