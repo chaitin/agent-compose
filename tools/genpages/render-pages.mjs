@@ -45,6 +45,13 @@ const manuals = [
     alternate: "zh-CN/guest-image-abi.html",
   },
   {
+    source: "showcase.md",
+    output: "showcase.html",
+    title: "Showcase",
+    lang: "en",
+    alternate: "zh-CN/showcase.html",
+  },
+  {
     source: "zh-CN/command-line-manual.md",
     output: "zh-CN/command-line-manual.html",
     title: "命令行手册",
@@ -64,6 +71,13 @@ const manuals = [
     title: "自定义 Guest Image ABI",
     lang: "zh-CN",
     alternate: "../guest-image-abi.html",
+  },
+  {
+    source: "zh-CN/showcase.md",
+    output: "zh-CN/showcase.html",
+    title: "作品集",
+    lang: "zh-CN",
+    alternate: "../showcase.html",
   },
 ];
 
@@ -92,13 +106,14 @@ function renderPage(manual, body) {
   const nested = currentPage.includes("/");
   const root = nested ? "../" : "./";
   const labels = lang === "zh-CN"
-    ? ["首页", "命令行手册", "YAML 配置手册", "Connect 传输矩阵"]
-    : ["Home", "CLI Manual", "YAML Manual", "Connect Transport"];
+    ? ["首页", "命令行手册", "YAML 配置手册", "Connect 传输矩阵", "作品集"]
+    : ["Home", "CLI Manual", "YAML Manual", "Connect Transport", "Showcase"];
   const navItems = [
     [root, labels[0], ""],
     ["command-line-manual.html", labels[1], "command-line-manual.html"],
     ["agent-compose-yaml-manual.html", labels[2], "agent-compose-yaml-manual.html"],
     ["connect-transport-matrix.html", labels[3], "connect-transport-matrix.html"],
+    ["showcase.html", labels[4], "showcase.html"],
   ];
   const nav = navItems
     .map(([href, label, page]) => {
