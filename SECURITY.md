@@ -31,9 +31,10 @@ development branch until versioned release support is documented.
 - Set `AUTH_PASSWORD` and a stable, high-entropy `AUTH_SECRET` for the UI server
   before exposing the Web UI to other users.
 - Terminate HTTPS before the UI server in production-like deployments.
-- Treat `HTTP_LISTEN=0.0.0.0:7410` as an internal daemon API. Startup emits a
-  warning but still proceeds; use container networking, reverse proxies, VPNs,
-  or equivalent controls to avoid direct public access.
+- Non-loopback `HTTP_LISTEN` requires `AGENT_COMPOSE_AUTH_TOKEN`,
+  `HTTP_TLS_CERT_FILE`, and `HTTP_TLS_KEY_FILE`; the daemon refuses to start an
+  exposed plaintext h2c listener. Keep the TLS private key readable only by the
+  daemon account and use a high-entropy token.
 - Do not expose guest Jupyter ports directly. Use the agent-compose proxy.
 - Treat workspace uploads, Git credentials, environment variables, webhook
   tokens, and LLM API keys as secrets.

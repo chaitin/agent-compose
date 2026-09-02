@@ -214,7 +214,7 @@ agents:
 
 ## Daemon 认证
 
-在 daemon 环境中设置 `AGENT_COMPOSE_AUTH_TOKEN` 后，HTTP(S) 控制面请求必须携带共享 Bearer Token；配置为空或未配置时，认证保持关闭。受信任的本地 Unix socket 连接不需要此 Token。
+在 daemon 环境中设置 `AGENT_COMPOSE_AUTH_TOKEN` 后，HTTP(S) 控制面请求必须携带共享 Bearer Token。非 Loopback 的 `HTTP_LISTEN` 还必须同时配置 `HTTP_TLS_CERT_FILE` 和 `HTTP_TLS_KEY_FILE`，否则 daemon 拒绝启动明文 h2c 监听。受信任的本地 Unix socket 连接不需要此 Token。
 
 Health RPC 和 webhook ingestion 继续使用各自已有的认证或信任边界，不使用 daemon Token。
 
@@ -314,7 +314,7 @@ Daemon 还会以只读方式挂载 Linux 宿主机的 `/etc/localtime`，因此�
 **[`.env.example`](.env.example) 是权威的、带完整注释的配置参考。** 对外部署前至少检查这些：
 
 - `AUTH_PASSWORD`、`AUTH_SECRET` —— UI server 登录 secret（务必替换示例值）。
-- `AGENT_COMPOSE_AUTH_TOKEN` —— daemon HTTP(S) 控制面可选的共享 Bearer Token。
+- `AGENT_COMPOSE_AUTH_TOKEN` —— daemon HTTP(S) 控制面的共享 Bearer Token；非 Loopback `HTTP_LISTEN` 必须配置。
 - `AGENT_COMPOSE_HTTP_PORT` —— 启用 `with-ui` 时 Web UI / 反向代理的宿主机端口。
 - `RUNTIME_DRIVER` —— 默认 runtime driver。
 
@@ -328,8 +328,8 @@ Web UI 在独立仓库 [agent-compose-ui](https://github.com/chaitin/agent-compo
 
 - 浏览器入口通过 agent-compose-ui server 暴露，不要直连 daemon。
 - 设置稳定、高熵的 `AUTH_SECRET`；生产环境使用 HTTPS 终止。
-- daemon TCP API（`HTTP_LISTEN`）应置于容器网络、反向代理或 VPN 之后。
-- 启用 daemon Token 认证时，跨机器连接使用 HTTPS 或其他受保护隧道；明文 HTTP 无法防止 Token 被截获和重放。
+- 非 Loopback `HTTP_LISTEN` 必须配置 `AGENT_COMPOSE_AUTH_TOKEN`、`HTTP_TLS_CERT_FILE` 和 `HTTP_TLS_KEY_FILE`；TLS 私钥仅应允许 daemon 账户读取。远程 CLI 必须使用 `https://` 地址；私有 CA 签发的证书可通过 `AGENT_COMPOSE_TLS_CA_FILE` 配置信任。
+- 浏览器入口通过 agent-compose-ui server 暴露，不要直连 daemon。
 - 把 Git 凭据、上传的 workspace、环境变量和 LLM API key 都当作 secret。
 
 更多说明见 [SECURITY.md](SECURITY.md)。

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"github.com/chaitin/agent-compose/pkg/config"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
@@ -21,6 +23,54 @@ import (
 	"connectrpc.com/connect"
 	"github.com/samber/do/v2"
 )
+
+func TestDaemonTLSServerUsesHTTP2AndCustomCA(t *testing.T) {
+	certificateServer := httptest.NewTLSServer(http.NotFoundHandler())
+	certificate := certificateServer.TLS.Certificates[0]
+	certificateDER := certificateServer.Certificate().Raw
+	certificateServer.Close()
+
+	caFile := filepath.Join(t.TempDir(), "daemon-ca.pem")
+	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER}), 0o600); err != nil {
+		t.Fatalf("write CA file: %v", err)
+	}
+	t.Setenv("AGENT_COMPOSE_TLS_CA_FILE", caFile)
+
+	seen := make(chan string, 1)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.Proto
+		w.WriteHeader(http.StatusNoContent)
+	})
+	plainListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	tlsListener := tls.NewListener(plainListener, &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{certificate},
+		NextProtos:   []string{"h2", "http/1.1"},
+	})
+	servers := &daemonServers{}
+	servers.add("HTTP_LISTEN", tlsListener.Addr().String(), tlsListener, handler, nil)
+	errCh := servers.serve(slog.Default())
+	t.Cleanup(func() {
+		_ = servers.shutdown(context.Background())
+		<-errCh
+	})
+
+	client := newDaemonHTTPClient(cliClientConfig{BaseURL: "https://" + tlsListener.Addr().String()})
+	response, err := client.Get("https://" + tlsListener.Addr().String())
+	if err != nil {
+		t.Fatalf("TLS HTTP/2 request: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusNoContent)
+	}
+	if protocol := <-seen; protocol != "HTTP/2.0" {
+		t.Fatalf("protocol = %q, want HTTP/2.0", protocol)
+	}
+}
 
 func TestDaemonTCPServerAttachAgentRunBidiUsesH2C(t *testing.T) {
 	seen := make(chan string, 1)

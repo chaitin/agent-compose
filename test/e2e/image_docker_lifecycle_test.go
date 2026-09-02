@@ -3,10 +3,19 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -61,6 +70,13 @@ type imageDockerBuildInfo struct {
 	CompiledDrivers []string `json:"compiled_drivers"`
 }
 
+type imageDockerTLSConfig struct {
+	certPath  string
+	keyPath   string
+	caPEM     []byte
+	authToken string
+}
+
 type imageDockerFixture struct {
 	docker      *client.Client
 	containerID string
@@ -69,6 +85,7 @@ type imageDockerFixture struct {
 	volumeName  string
 	sandboxID   string
 	baseURL     string
+	tls         imageDockerTLSConfig
 }
 
 func TestE2EImageDockerNoKVMStartup(t *testing.T) {
@@ -124,7 +141,7 @@ func TestE2EImageDockerSandboxLifecycle(t *testing.T) {
 	version := waitForImageDockerVersion(t, ctx, fixture)
 	assertImageDockerVersion(t, fixture, version, "linux", imageDockerImageArchitecture(t, ctx, dockerClient, daemonImage))
 
-	httpClient := imageDockerHTTPClient(0)
+	httpClient := imageDockerHTTPClient(0, fixture.tls)
 	projectClient := agentcomposev2connect.NewProjectServiceClient(httpClient, fixture.baseURL)
 	runClient := agentcomposev2connect.NewRunServiceClient(httpClient, fixture.baseURL)
 	execClient := agentcomposev2connect.NewExecServiceClient(httpClient, fixture.baseURL)
@@ -298,23 +315,74 @@ func runImageDockerVersionCommand(t *testing.T, ctx context.Context, dockerClien
 	return imageDockerBuildInfo{}
 }
 
+func newImageDockerTLSConfig(t *testing.T) imageDockerTLSConfig {
+	t.Helper()
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate test TLS private key: %v", err)
+	}
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("generate test TLS certificate serial: %v", err)
+	}
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber:          serialNumber,
+		NotBefore:             now.Add(-time.Minute),
+		NotAfter:              now.Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		t.Fatalf("create test TLS certificate: %v", err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		t.Fatalf("marshal test TLS private key: %v", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	certPath := filepath.Join(t.TempDir(), "server.crt")
+	keyPath := filepath.Join(filepath.Dir(certPath), "server.key")
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+		t.Fatalf("write test TLS certificate: %v", err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		t.Fatalf("write test TLS private key: %v", err)
+	}
+	return imageDockerTLSConfig{certPath: certPath, keyPath: keyPath, caPEM: certPEM, authToken: "image-docker-test-token"}
+}
+
 func startImageDockerStartupDaemon(t *testing.T, ctx context.Context, dockerClient *client.Client, image string) *imageDockerFixture {
 	t.Helper()
 	port := nat.Port(imageDockerDaemonPort)
 	name := imageDockerResourceName("startup")
+	tlsConfig := newImageDockerTLSConfig(t)
 	createResp, err := dockerClient.ContainerCreate(ctx, &containerapi.Config{
-		Image:        image,
+		Image: image,
+		Env: []string{
+			"AGENT_COMPOSE_AUTH_TOKEN=" + tlsConfig.authToken,
+			"HTTP_TLS_CERT_FILE=/tmp/agent-compose-server.crt",
+			"HTTP_TLS_KEY_FILE=/tmp/agent-compose-server.key",
+		},
 		ExposedPorts: nat.PortSet{port: struct{}{}},
 		Labels:       imageDockerLabels(name),
 	}, &containerapi.HostConfig{
 		AutoRemove:   false,
 		PortBindings: nat.PortMap{port: []nat.PortBinding{{HostIP: "127.0.0.1"}}},
 		Tmpfs:        map[string]string{"/data": "rw"},
+		Mounts: []mountapi.Mount{
+			{Type: mountapi.TypeBind, Source: tlsConfig.certPath, Target: "/tmp/agent-compose-server.crt", ReadOnly: true},
+			{Type: mountapi.TypeBind, Source: tlsConfig.keyPath, Target: "/tmp/agent-compose-server.key", ReadOnly: true},
+		},
 	}, nil, nil, name)
 	if err != nil {
 		t.Fatalf("create no-KVM daemon container: %v", err)
 	}
-	fixture := &imageDockerFixture{docker: dockerClient, containerID: createResp.ID}
+	fixture := &imageDockerFixture{docker: dockerClient, containerID: createResp.ID, tls: tlsConfig}
 	t.Cleanup(func() { fixture.cleanup(t) })
 	if err := dockerClient.ContainerStart(ctx, createResp.ID, containerapi.StartOptions{}); err != nil {
 		failImageDockerFixture(t, fixture, "start no-KVM daemon container: %v", err)
@@ -326,6 +394,7 @@ func startImageDockerStartupDaemon(t *testing.T, ctx context.Context, dockerClie
 func startImageDockerLifecycleDaemon(t *testing.T, ctx context.Context, dockerClient *client.Client, daemonImage, guestImage, dockerSocket string) *imageDockerFixture {
 	t.Helper()
 	name := imageDockerResourceName("lifecycle")
+	tlsConfig := newImageDockerTLSConfig(t)
 	networkResp, err := dockerClient.NetworkCreate(ctx, name, networkapi.CreateOptions{
 		Driver: "bridge",
 		Labels: imageDockerLabels(name),
@@ -337,6 +406,7 @@ func startImageDockerLifecycleDaemon(t *testing.T, ctx context.Context, dockerCl
 		docker:      dockerClient,
 		networkID:   networkResp.ID,
 		networkName: name,
+		tls:         tlsConfig,
 	}
 	t.Cleanup(func() { fixture.cleanup(t) })
 	volume, err := dockerClient.VolumeCreate(ctx, volumeapi.CreateOptions{
@@ -352,6 +422,7 @@ func startImageDockerLifecycleDaemon(t *testing.T, ctx context.Context, dockerCl
 		Image: daemonImage,
 		Env: []string{
 			"AGENT_COMPOSE_SOCKET=/data/agent-compose.sock",
+			"AGENT_COMPOSE_AUTH_TOKEN=" + tlsConfig.authToken,
 			"AUTH_PASSWORD=",
 			"AUTH_USERNAME=",
 			"DATA_ROOT=/data",
@@ -359,6 +430,8 @@ func startImageDockerLifecycleDaemon(t *testing.T, ctx context.Context, dockerCl
 			"DOCKER_DEFAULT_IMAGE=" + guestImage,
 			"DOCKER_HOST=unix:///var/run/docker.sock",
 			"HTTP_LISTEN=0.0.0.0:7410",
+			"HTTP_TLS_CERT_FILE=/tmp/agent-compose-server.crt",
+			"HTTP_TLS_KEY_FILE=/tmp/agent-compose-server.key",
 			"LLM_API_ENDPOINT=",
 			"LLM_API_KEY=",
 			"OPENAI_API_KEY=",
@@ -375,6 +448,8 @@ func startImageDockerLifecycleDaemon(t *testing.T, ctx context.Context, dockerCl
 		Mounts: []mountapi.Mount{
 			{Type: mountapi.TypeBind, Source: dockerSocket, Target: "/var/run/docker.sock"},
 			{Type: mountapi.TypeVolume, Source: volume.Name, Target: "/data"},
+			{Type: mountapi.TypeBind, Source: tlsConfig.certPath, Target: "/tmp/agent-compose-server.crt", ReadOnly: true},
+			{Type: mountapi.TypeBind, Source: tlsConfig.keyPath, Target: "/tmp/agent-compose-server.key", ReadOnly: true},
 		},
 		PortBindings: nat.PortMap{port: []nat.PortBinding{{HostIP: "127.0.0.1"}}},
 	}, nil, nil, name)
@@ -419,22 +494,67 @@ func imageDockerDaemonBaseURL(t *testing.T, ctx context.Context, fixture *imageD
 		}
 		hostPort, err := strconv.Atoi(binding.HostPort)
 		if err == nil && hostPort > 0 {
-			return "http://127.0.0.1:" + strconv.Itoa(hostPort)
+			return "https://127.0.0.1:" + strconv.Itoa(hostPort)
 		}
 	}
 	failImageDockerFixture(t, fixture, "daemon port bindings for %s = %#v", port, bindings)
 	return ""
 }
 
-func imageDockerHTTPClient(timeout time.Duration) *http.Client {
+func imageDockerHTTPClient(timeout time.Duration, tlsConfig imageDockerTLSConfig) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	return &http.Client{Timeout: timeout, Transport: transport}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(tlsConfig.caPEM) {
+		panic("invalid image Docker E2E CA certificate")
+	}
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+	return &http.Client{Timeout: timeout, Transport: imageDockerAuthTransport{base: transport, token: tlsConfig.authToken}}
+}
+
+type imageDockerAuthTransport struct {
+	base  http.RoundTripper
+	token string
+}
+
+func (t imageDockerAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	request := req.Clone(req.Context())
+	request.Header.Set("Authorization", "Bearer "+t.token)
+	return t.base.RoundTrip(request)
+}
+
+func assertImageDockerAuthEnforced(t *testing.T, ctx context.Context, fixture *imageDockerFixture) {
+	t.Helper()
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(fixture.tls.caPEM) {
+		t.Fatal("invalid image Docker E2E CA certificate")
+	}
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: transport}
+	for _, token := range []string{"", "wrong-image-docker-token"} {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fixture.baseURL+"/api/version", nil)
+		if err != nil {
+			t.Fatalf("create unauthenticated request: %v", err)
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			failImageDockerFixture(t, fixture, "unauthenticated /api/version request: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
+			failImageDockerFixture(t, fixture, "unauthenticated /api/version status = %d, want 401 or 403", resp.StatusCode)
+		}
+	}
 }
 
 func waitForImageDockerVersion(t *testing.T, ctx context.Context, fixture *imageDockerFixture) imageDockerVersionEnvelope {
 	t.Helper()
-	client := imageDockerHTTPClient(time.Second)
+	client := imageDockerHTTPClient(time.Second, fixture.tls)
 	deadline := time.Now().Add(30 * time.Second)
 	var lastErr error
 	var lastBody bytes.Buffer
@@ -449,6 +569,7 @@ func waitForImageDockerVersion(t *testing.T, ctx context.Context, fixture *image
 				if resp.StatusCode == http.StatusOK {
 					var envelope imageDockerVersionEnvelope
 					if decodeErr := json.Unmarshal(lastBody.Bytes(), &envelope); decodeErr == nil {
+						assertImageDockerAuthEnforced(t, ctx, fixture)
 						return envelope
 					} else {
 						lastErr = decodeErr

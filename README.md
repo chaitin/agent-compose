@@ -369,7 +369,7 @@ behavior.
 configuration reference.** At minimum, review these before exposing a deployment:
 
 - `AUTH_PASSWORD`, `AUTH_SECRET` — UI server login secrets (replace the examples).
-- `AGENT_COMPOSE_AUTH_TOKEN` — optional shared Bearer token for daemon HTTP(S) control-plane access.
+- `AGENT_COMPOSE_AUTH_TOKEN` — shared Bearer token for daemon HTTP(S) control-plane access; required for non-loopback `HTTP_LISTEN`.
 - `AGENT_COMPOSE_HTTP_PORT` — host port for the web UI / reverse proxy (`with-ui`).
 - `RUNTIME_DRIVER` — default runtime driver.
 
@@ -387,8 +387,8 @@ deployment to a network:
 
 - Expose browser access through the agent-compose-ui server, not the daemon directly.
 - Set a stable, high-entropy `AUTH_SECRET`, and terminate HTTPS in production.
-- Keep the daemon TCP API (`HTTP_LISTEN`) behind container networking, a reverse proxy, or a VPN.
-- When daemon token authentication is enabled, use HTTPS or another protected tunnel across machines; plain HTTP does not prevent token capture and replay.
+- Non-loopback `HTTP_LISTEN` requires `AGENT_COMPOSE_AUTH_TOKEN`, `HTTP_TLS_CERT_FILE`, and `HTTP_TLS_KEY_FILE`; the daemon refuses to start an exposed plaintext h2c listener.
+- Keep the TLS private key readable only by the daemon account and use a high-entropy daemon token. Remote CLI clients must use an `https://` host; set `AGENT_COMPOSE_TLS_CA_FILE` when the daemon certificate is signed by a private CA.
 - Treat Git credentials, uploaded workspaces, environment variables, and LLM API keys as secrets.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and hardening notes.

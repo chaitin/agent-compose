@@ -642,16 +642,17 @@ func testNewConfigWarnsForPublicHTTPListen(t *testing.T) {
 		listen   string
 		env      map[string]string
 		wantWarn bool
+		wantErr  bool
 	}{
 		{
-			name:     "public listen without auth warns",
-			listen:   "0.0.0.0:7410",
-			wantWarn: true,
+			name:    "public listen without auth is rejected",
+			listen:  "0.0.0.0:7410",
+			wantErr: true,
 		},
 		{
-			name:     "all IPv6 listen without auth warns",
-			listen:   "[::]:7410",
-			wantWarn: true,
+			name:    "all IPv6 listen without auth is rejected",
+			listen:  "[::]:7410",
+			wantErr: true,
 		},
 		{
 			name:   "loopback listen without auth is allowed",
@@ -668,7 +669,7 @@ func testNewConfigWarnsForPublicHTTPListen(t *testing.T) {
 				"AUTH_PASSWORD": "secret",
 				"AUTH_SECRET":   "auth-secret",
 			},
-			wantWarn: true,
+			wantErr: true,
 		},
 		{
 			name:   "oauth env no longer secures daemon listen",
@@ -677,6 +678,24 @@ func testNewConfigWarnsForPublicHTTPListen(t *testing.T) {
 				"OAUTH_APIKEY":       "client-id",
 				"OAUTH_CALLBACK_URL": "http://localhost:7410/oauth/callback",
 			},
+			wantErr: true,
+		},
+		{
+			name:    "public listen with auth requires TLS certificate pair",
+			listen:  "0.0.0.0:7410",
+			wantErr: true,
+			env: map[string]string{
+				"AGENT_COMPOSE_AUTH_TOKEN": "daemon-token",
+			},
+		},
+		{
+			name:   "public listen accepts auth and TLS certificate pair",
+			listen: "0.0.0.0:7410",
+			env: map[string]string{
+				"AGENT_COMPOSE_AUTH_TOKEN": "daemon-token",
+				"HTTP_TLS_CERT_FILE":       "/tmp/server.crt",
+				"HTTP_TLS_KEY_FILE":        "/tmp/server.key",
+			},
 			wantWarn: true,
 		},
 	} {
@@ -684,6 +703,9 @@ func testNewConfigWarnsForPublicHTTPListen(t *testing.T) {
 			root := t.TempDir()
 			t.Setenv("DATA_ROOT", filepath.Join(root, "data"))
 			t.Setenv("HTTP_LISTEN", tc.listen)
+			t.Setenv("AGENT_COMPOSE_AUTH_TOKEN", "")
+			t.Setenv("HTTP_TLS_CERT_FILE", "")
+			t.Setenv("HTTP_TLS_KEY_FILE", "")
 			for key, value := range tc.env {
 				t.Setenv(key, value)
 			}
@@ -693,6 +715,12 @@ func testNewConfigWarnsForPublicHTTPListen(t *testing.T) {
 			di := do.New()
 			do.ProvideValue(di, logger)
 			_, err := NewConfig(di)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("NewConfig error = %v, want error = %t", err, tc.wantErr)
+			}
+			if tc.wantErr {
+				return
+			}
 			if err != nil {
 				t.Fatalf("NewConfig returned error: %v", err)
 			}

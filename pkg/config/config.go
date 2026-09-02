@@ -51,6 +51,8 @@ type Config struct {
 	SandboxRootExplicit        bool
 	HttpListen                 string
 	DaemonAuthToken            string
+	HttpTLSCertFile            string
+	HttpTLSKeyFile             string
 	AgentComposeSocket         string
 	AgentComposeHost           string
 	WebhookBodyLimitBytes      int64
@@ -262,6 +264,8 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		SandboxRootExplicit:        sandbox.Explicit,
 		HttpListen:                 daemonHTTP.HttpListen,
 		DaemonAuthToken:            daemonHTTP.DaemonAuthToken,
+		HttpTLSCertFile:            daemonHTTP.HttpTLSCertFile,
+		HttpTLSKeyFile:             daemonHTTP.HttpTLSKeyFile,
 		AgentComposeSocket:         daemonHTTP.AgentComposeSocket,
 		AgentComposeHost:           daemonHTTP.AgentComposeHost,
 		WebhookBodyLimitBytes:      httpLimits.WebhookBodyLimitBytes,
@@ -394,6 +398,8 @@ func loadSandboxRootConfig(logger *slog.Logger, dataRoot string) (sandboxRootCon
 type daemonHTTPConfig struct {
 	HttpListen         string
 	DaemonAuthToken    string
+	HttpTLSCertFile    string
+	HttpTLSKeyFile     string
 	AgentComposeSocket string
 	AgentComposeHost   string
 }
@@ -406,6 +412,19 @@ func loadDaemonHTTPConfig() (daemonHTTPConfig, error) {
 		}
 	}
 	daemonAuthToken := strings.TrimSpace(os.Getenv("AGENT_COMPOSE_AUTH_TOKEN"))
+	httpTLSCertFile := strings.TrimSpace(os.Getenv("HTTP_TLS_CERT_FILE"))
+	httpTLSKeyFile := strings.TrimSpace(os.Getenv("HTTP_TLS_KEY_FILE"))
+	if (httpTLSCertFile == "") != (httpTLSKeyFile == "") {
+		return daemonHTTPConfig{}, errors.New("HTTP_TLS_CERT_FILE and HTTP_TLS_KEY_FILE must be configured together")
+	}
+	if httpListen != "" && !isLoopbackListenAddress(httpListen) {
+		if daemonAuthToken == "" {
+			return daemonHTTPConfig{}, errors.New("non-loopback HTTP_LISTEN requires AGENT_COMPOSE_AUTH_TOKEN")
+		}
+		if httpTLSCertFile == "" {
+			return daemonHTTPConfig{}, errors.New("non-loopback HTTP_LISTEN requires HTTP_TLS_CERT_FILE and HTTP_TLS_KEY_FILE")
+		}
+	}
 	agentComposeSocket, err := resolveAgentComposeSocket(os.Getenv("AGENT_COMPOSE_SOCKET"))
 	if err != nil {
 		return daemonHTTPConfig{}, err
@@ -419,6 +438,8 @@ func loadDaemonHTTPConfig() (daemonHTTPConfig, error) {
 	return daemonHTTPConfig{
 		HttpListen:         httpListen,
 		DaemonAuthToken:    daemonAuthToken,
+		HttpTLSCertFile:    httpTLSCertFile,
+		HttpTLSKeyFile:     httpTLSKeyFile,
 		AgentComposeSocket: agentComposeSocket,
 		AgentComposeHost:   agentComposeHost,
 	}, nil
