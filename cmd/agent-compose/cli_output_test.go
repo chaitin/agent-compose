@@ -2,10 +2,49 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 	"strings"
 	"testing"
 )
+
+// Run labels ride along on RunDetail, so every detail-derived output (inspect
+// run, exec, latest run) must surface them without a second request. Summary
+// derived output has none to report and leaves the field nil, which omitempty
+// drops the same way it drops a detail-derived run with no labels at all.
+func TestComposeRunOutputCarriesLabelsFromDetailOnly(t *testing.T) {
+	detail := testRunDetail("project-1", "run-labeled", "reviewer", "sandbox-1", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "ok\n")
+	detail.Labels = map[string]string{"env": "prod", "team": "platform"}
+
+	output := composeRunOutputFromDetail(detail)
+	if len(output.Labels) != 2 || output.Labels["env"] != "prod" || output.Labels["team"] != "platform" {
+		t.Fatalf("detail output labels = %#v, want env=prod team=platform", output.Labels)
+	}
+	encoded, err := json.Marshal(output)
+	if err != nil {
+		t.Fatalf("marshal detail output: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"labels":{"env":"prod","team":"platform"}`) {
+		t.Fatalf("detail output json = %s", encoded)
+	}
+
+	unlabeled := composeRunOutputFromDetail(testRunDetail("project-1", "run-plain", "reviewer", "sandbox-1", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "ok\n"))
+	if unlabeled.Labels != nil {
+		t.Fatalf("unlabeled detail output labels = %#v, want nil", unlabeled.Labels)
+	}
+	encoded, err = json.Marshal(unlabeled)
+	if err != nil {
+		t.Fatalf("marshal unlabeled output: %v", err)
+	}
+	if strings.Contains(string(encoded), `"labels"`) {
+		t.Fatalf("unlabeled output json must omit labels, got %s", encoded)
+	}
+
+	summaryOutput := composeRunOutputFromSummary(detail.GetSummary(), "project-1", "agent-compose logs")
+	if summaryOutput.Labels != nil {
+		t.Fatalf("summary output labels = %#v, want nil", summaryOutput.Labels)
+	}
+}
 
 func TestPrefixedRunOutputStreamWriterPreservesLinesAcrossChunks(t *testing.T) {
 	summary := &agentcomposev2.RunSummary{RunId: "run-stream-boundary", AgentName: "reviewer"}

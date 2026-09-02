@@ -85,9 +85,16 @@ type composeRunOutput struct {
 	Driver         string   `json:"driver,omitempty"`
 	ImageRef       string   `json:"image_ref,omitempty"`
 	Warnings       []string `json:"warnings,omitempty"`
-	LogsCommand    string   `json:"logs_command,omitempty"`
-	JupyterURL     string   `json:"jupyter_url,omitempty"`
-	JupyterPath    string   `json:"jupyter_path,omitempty"`
+	// Labels is only populated from a RunDetail; summary-derived output leaves
+	// it nil because RunSummary carries no labels. omitempty drops a nil and an
+	// empty map alike, so an absent field means "no label information here" —
+	// it covers both a summary-derived output and a detail-derived run that
+	// genuinely has no labels, and the two cannot be told apart. That matches
+	// the API, where proto3 JSON omits an empty labels map on GetRun too.
+	Labels      map[string]string `json:"labels,omitempty"`
+	LogsCommand string            `json:"logs_command,omitempty"`
+	JupyterURL  string            `json:"jupyter_url,omitempty"`
+	JupyterPath string            `json:"jupyter_path,omitempty"`
 }
 
 func latestRunOutput(ctx context.Context, client agentcomposev2connect.RunServiceClient, projectID, agentName string) (*composeRunOutput, error) {
@@ -163,6 +170,7 @@ func composeRunOutputFromDetailWithOptions(run *agentcomposev2.RunDetail, option
 		Driver:         run.GetDriver(),
 		ImageRef:       run.GetImageRef(),
 		Warnings:       appendUniqueStrings(append([]string(nil), summary.GetWarnings()...), run.GetWarnings()...),
+		Labels:         run.GetLabels(),
 	}
 }
 

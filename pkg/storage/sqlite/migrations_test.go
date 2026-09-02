@@ -39,7 +39,7 @@ func TestMigrationBaseline(t *testing.T) {
 		"capability_gateway", "volumes", "project_volumes", "scheduler_trigger",
 		"scheduler_run", "scheduler_event", "scheduler_state", "scheduler_sandbox_binding", "project",
 		"project_revision", "project_agent", "project_scheduler", "project_run",
-		"project_run_event", "project_run_completion", "event", "webhook_source", "event_delivery", "event_sandbox_link",
+		"project_run_event", "project_run_completion", "project_run_label", "event", "webhook_source", "event_delivery", "event_sandbox_link",
 		"sandbox_projection_meta", "sandboxes",
 	}
 	for _, table := range tables {

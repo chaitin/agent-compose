@@ -1,6 +1,8 @@
 package configstore
 
 import (
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/chaitin/agent-compose/internal/projects"
@@ -49,6 +51,12 @@ func projectRunFilter(options model.ProjectRunListOptions) ([]string, []any) {
 	if options.StartedTo != nil {
 		where = append(where, "started_at <= ?")
 		args = append(args, options.StartedTo.UnixMilli())
+	}
+	// Sort keys first so the generated SQL text (and therefore its prepared
+	// statement cache key) is stable across calls with the same filter set.
+	for _, key := range slices.Sorted(maps.Keys(options.Labels)) {
+		where = append(where, "EXISTS (SELECT 1 FROM project_run_label WHERE run_id = project_run.run_id AND key = ? AND value = ?)")
+		args = append(args, key, options.Labels[key])
 	}
 	return where, args
 }
