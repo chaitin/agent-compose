@@ -260,6 +260,12 @@ func receivePromptInteractionFrames(run domain.ProjectRunRecord, sandbox *domain
 				transition.Error = fmt.Sprintf("agent execution failed: %v", err)
 				return transition, err
 			}
+		case driverpkg.RuntimeOutputAgentTurnCompleted:
+			// Some runtimes signal turn completion as a dedicated frame rather
+			// than embedding it in the streamed agent events. Treat both forms
+			// consistently so queued input (including EOF from exec --prompt)
+			// is not left waiting indefinitely.
+			releasePromptTurn(turnReady)
 		case driverpkg.RuntimeOutputResult:
 			result := frame.Result
 			if result == nil {
