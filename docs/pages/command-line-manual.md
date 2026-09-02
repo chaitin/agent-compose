@@ -146,19 +146,30 @@ can receive events but cannot use this stop endpoint. Configure a separate
 source token when those events must be stoppable; do not reuse the GitHub
 signature secret as the token.
 
-A successful response reports whether any active run accepted cancellation and
-how many did so. Cancellation is asynchronous, so `stop_requested=true` does
-not mean that every run has already reached its final state or that its canceled
-state has been persisted. This differs from a synchronous stop acknowledgement:
-callers that need confirmation must poll `GetSchedulerRun` for known run IDs or
-`ListSchedulerRuns` (the `agent-compose scheduler runs` CLI command) until the
-affected runs report a terminal `succeeded`, `failed`, `canceled`, or `skipped`
-status. Repeating the stop request is safe: runs that are no longer active are
-left unchanged.
+The request covers both the runs an event already started and the deliveries it
+has not started yet. Events still waiting in the dispatch queue are withdrawn so
+they never start a run, and `canceled_events` counts them. Active runs receive
+an asynchronous cancellation request counted by `requested_runs`.
 
 ```json
-{"event_id":"evt_123","stop_requested":true,"requested_runs":2,"failed_runs":0}
+{"event_id":"evt_123","stop_requested":true,"requested_runs":2,
+ "canceled_events":1,"pending_events":0,"failed_runs":0}
 ```
+
+`pending_events` counts the events that had already been claimed for delivery
+when the request arrived. Their runs are about to exist and this request cannot
+stop them, so a caller that must cancel everything repeats the request once
+`pending_events` is greater than zero; the repeat stops those runs. Repeating is
+always safe: withdrawn events and runs that are no longer active are left
+unchanged.
+
+Cancellation is asynchronous, so `stop_requested=true` does not mean that every
+run has already reached its final state or that its canceled state has been
+persisted. This differs from a synchronous stop acknowledgement: callers that
+need confirmation must poll `GetSchedulerRun` for known run IDs or
+`ListSchedulerRuns` (the `agent-compose scheduler runs` CLI command) until the
+affected runs report a terminal `succeeded`, `failed`, `canceled`, or `skipped`
+status.
 
 The daemon evaluates at most 1,000 events in one event tree. If the tree is
 larger, it returns `409` with `max_event_count` before stopping any run, rather

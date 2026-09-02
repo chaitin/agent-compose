@@ -25,12 +25,14 @@ type stopEventRequest struct {
 }
 
 type stopEventResponse struct {
-	EventID       string   `json:"event_id"`
-	StopRequested bool     `json:"stop_requested"`
-	RequestedRuns int      `json:"requested_runs"`
-	FailedRuns    int      `json:"failed_runs"`
-	FailedRunIDs  []string `json:"failed_run_ids,omitempty"`
-	Error         string   `json:"error,omitempty"`
+	EventID        string   `json:"event_id"`
+	StopRequested  bool     `json:"stop_requested"`
+	RequestedRuns  int      `json:"requested_runs"`
+	CanceledEvents int      `json:"canceled_events"`
+	PendingEvents  int      `json:"pending_events"`
+	FailedRuns     int      `json:"failed_runs"`
+	FailedRunIDs   []string `json:"failed_run_ids,omitempty"`
+	Error          string   `json:"error,omitempty"`
 }
 
 func (h routeHandler) handleStopEvent(c echo.Context) error {
@@ -80,11 +82,22 @@ func (h routeHandler) handleStopEvent(c echo.Context) error {
 			"max_event_count": maxStopEventCount,
 		})
 	}
+	// Withdraw the events that have not been dispatched yet before stopping the
+	// runs that already exist. The reverse order leaves a window where a waiting
+	// event is dispatched after its runs were collected, producing a run this
+	// request never stops while the caller is told the event is idle.
+	cancellation, err := h.store().CancelEventDispatch(ctx, eventIDs, req.Reason)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to cancel pending event delivery"})
+	}
 	deliveries, err := h.store().ListEventDeliveries(ctx, eventIDs)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load event deliveries"})
 	}
 	response := stopEventRuns(ctx, h.opts.RunStopper, eventID, req.Reason, deliveries)
+	response.CanceledEvents = cancellation.Canceled
+	response.PendingEvents = cancellation.InFlight
+	response.StopRequested = response.RequestedRuns > 0 || response.CanceledEvents > 0
 	if response.FailedRuns > 0 {
 		response.Error = "failed to stop one or more event runs"
 		return c.JSON(http.StatusInternalServerError, response)
@@ -144,7 +157,8 @@ func stopEventRuns(ctx context.Context, stopper RunStopper, eventID, reason stri
 			response.RequestedRuns++
 		}
 	}
-	response.StopRequested = response.RequestedRuns > 0
+	// StopRequested also covers withdrawn events, so the caller sets it once both
+	// counts are known.
 	response.FailedRuns = len(response.FailedRunIDs)
 	return response
 }

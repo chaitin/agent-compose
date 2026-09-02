@@ -28,9 +28,13 @@ func TestEventStopHandler(t *testing.T) {
 		deliveries          []domain.EventDelivery
 		stopResults         []bool
 		stopErrs            []error
+		cancellation        domain.EventDispatchCancellation
+		cancelErr           error
 		wantStatus          int
 		wantRequested       bool
 		wantRuns            int
+		wantCanceledEvents  int
+		wantPendingEvents   int
 		wantFailed          []string
 		wantStopped         []string
 		wantSchedulers      []string
@@ -119,6 +123,33 @@ func TestEventStopHandler(t *testing.T) {
 			wantDescendantQuery: true, wantEventIDs: defaultEventIDs,
 		},
 		{
+			name: "waiting event is withdrawn from dispatch", event: webhookStopEvent("event-1", "github"), token: "token",
+			cancellation: domain.EventDispatchCancellation{Canceled: 1},
+			wantStatus:   http.StatusOK, wantRequested: true, wantCanceledEvents: 1,
+			wantDescendantQuery: true, wantEventIDs: defaultEventIDs,
+		},
+		{
+			name: "claimed event is reported as still pending", event: webhookStopEvent("event-1", "github"), token: "token",
+			cancellation: domain.EventDispatchCancellation{InFlight: 2},
+			wantStatus:   http.StatusOK, wantPendingEvents: 2,
+			wantDescendantQuery: true, wantEventIDs: defaultEventIDs,
+		},
+		{
+			name: "withdrawn event and stopped run are both reported", event: webhookStopEvent("event-1", "github"), token: "token",
+			deliveries: []domain.EventDelivery{{RunID: "run-1"}}, stopResults: []bool{true},
+			cancellation: domain.EventDispatchCancellation{Canceled: 1, InFlight: 1},
+			wantStatus:   http.StatusOK, wantRequested: true, wantRuns: 1, wantStopped: []string{"run-1"},
+			wantCanceledEvents: 1, wantPendingEvents: 1,
+			wantDescendantQuery: true, wantEventIDs: defaultEventIDs,
+		},
+		{
+			name: "dispatch cancellation failure stops no run", event: webhookStopEvent("event-1", "github"), token: "token",
+			deliveries: []domain.EventDelivery{{RunID: "run-1"}}, stopResults: []bool{true},
+			cancelErr:           errors.New("cancel failed"),
+			wantStatus:          http.StatusInternalServerError,
+			wantDescendantQuery: true,
+		},
+		{
 			name: "oversized event tree fails before stopping any run", event: webhookStopEvent("event-1", "github"), token: "token",
 			eventIDs: webhookStopEventIDs(maxStopEventCount + 1), deliveries: []domain.EventDelivery{{RunID: "run-1"}},
 			wantStatus: http.StatusConflict, wantDescendantQuery: true,
@@ -140,8 +171,11 @@ func TestEventStopHandler(t *testing.T) {
 					deliveries[index].SchedulerID = "scheduler-1"
 				}
 			}
-			store := &webhookStopStore{webhookRouteStore: base, descendantIDs: tt.eventIDs, deliveries: deliveries}
-			stopper := &recordingRunStopper{results: tt.stopResults, errs: tt.stopErrs}
+			store := &webhookStopStore{
+				webhookRouteStore: base, descendantIDs: tt.eventIDs, deliveries: deliveries,
+				cancellation: tt.cancellation, cancelErr: tt.cancelErr,
+			}
+			stopper := &recordingRunStopper{results: tt.stopResults, errs: tt.stopErrs, store: store}
 			app := echo.New()
 			RegisterRoutes(app, RouteOptions{Store: store, RunStopper: stopper, WebhookBodyLimit: tt.bodyLimit})
 
@@ -165,6 +199,20 @@ func TestEventStopHandler(t *testing.T) {
 			}
 			if !equalStrings(store.gotEventIDs, tt.wantEventIDs) {
 				t.Fatalf("delivery event IDs=%v, want %v", store.gotEventIDs, tt.wantEventIDs)
+			}
+			// The oversized-tree and rejected-auth cases return before any
+			// cancellation, so the ordering contract only applies once the
+			// handler actually reached the dispatch queue.
+			if store.gotCancelEventIDs != nil {
+				if !store.canceledBeforeStops {
+					t.Fatal("dispatch cancellation must run before any run is stopped")
+				}
+				if len(store.gotEventIDs) > 0 && !equalStrings(store.gotCancelEventIDs, store.gotEventIDs) {
+					t.Fatalf("cancel event IDs=%v, want the delivery event IDs %v", store.gotCancelEventIDs, store.gotEventIDs)
+				}
+			}
+			if tt.cancelErr != nil && len(stopper.runIDs) != 0 {
+				t.Fatalf("stopped runs=%v, want none when dispatch cancellation fails", stopper.runIDs)
 			}
 			if !equalStrings(stopper.runIDs, tt.wantStopped) {
 				t.Fatalf("stopped runs=%v, want %v", stopper.runIDs, tt.wantStopped)
@@ -198,6 +246,10 @@ func TestEventStopHandler(t *testing.T) {
 				}
 				if response.FailedRuns != len(tt.wantFailed) {
 					t.Fatalf("failed_runs=%d, want %d", response.FailedRuns, len(tt.wantFailed))
+				}
+				if response.CanceledEvents != tt.wantCanceledEvents || response.PendingEvents != tt.wantPendingEvents {
+					t.Fatalf("canceled_events=%d pending_events=%d, want %d and %d",
+						response.CanceledEvents, response.PendingEvents, tt.wantCanceledEvents, tt.wantPendingEvents)
 				}
 			}
 		})
@@ -234,11 +286,17 @@ func equalStrings(got, want []string) bool {
 
 type webhookStopStore struct {
 	*webhookRouteStore
-	descendantIDs      []string
-	deliveries         []domain.EventDelivery
-	gotRootEventID     string
-	gotDescendantLimit int
-	gotEventIDs        []string
+	descendantIDs       []string
+	deliveries          []domain.EventDelivery
+	cancellation        domain.EventDispatchCancellation
+	cancelErr           error
+	gotRootEventID      string
+	gotDescendantLimit  int
+	gotEventIDs         []string
+	gotCancelEventIDs   []string
+	gotCancelReason     string
+	canceledBeforeStops bool
+	stopsStarted        bool
 }
 
 func (s *webhookStopStore) ListDescendantEventIDs(_ context.Context, rootEventID string, limit int) ([]string, error) {
@@ -255,15 +313,29 @@ func (s *webhookStopStore) ListEventDeliveries(_ context.Context, eventIDs []str
 	return s.deliveries, nil
 }
 
+func (s *webhookStopStore) CancelEventDispatch(_ context.Context, eventIDs []string, reason string) (domain.EventDispatchCancellation, error) {
+	s.gotCancelEventIDs = append([]string(nil), eventIDs...)
+	s.gotCancelReason = reason
+	s.canceledBeforeStops = !s.stopsStarted
+	if s.cancelErr != nil {
+		return domain.EventDispatchCancellation{}, s.cancelErr
+	}
+	return s.cancellation, nil
+}
+
 type recordingRunStopper struct {
 	results      []bool
 	errs         []error
+	store        *webhookStopStore
 	schedulerIDs []string
 	runIDs       []string
 	reasons      []string
 }
 
 func (s *recordingRunStopper) RequestSchedulerRunStop(_ context.Context, schedulerID, runID, reason string) (bool, error) {
+	if s.store != nil {
+		s.store.stopsStarted = true
+	}
 	s.schedulerIDs = append(s.schedulerIDs, schedulerID)
 	s.runIDs = append(s.runIDs, runID)
 	s.reasons = append(s.reasons, reason)

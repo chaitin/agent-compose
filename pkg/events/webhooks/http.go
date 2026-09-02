@@ -25,6 +25,7 @@ type Store interface {
 	ListDescendantEventIDs(context.Context, string, int) ([]string, error)
 	ListEventSandboxLinks(context.Context, []string) ([]domain.EventSandboxTraceItem, error)
 	ListEventDeliveries(context.Context, []string) ([]domain.EventDelivery, error)
+	CancelEventDispatch(context.Context, []string, string) (domain.EventDispatchCancellation, error)
 	ListWebhookSources(context.Context) ([]domain.WebhookSource, error)
 	GetWebhookSource(context.Context, string) (domain.WebhookSource, bool, error)
 	UpsertWebhookSource(context.Context, domain.WebhookSource) (domain.WebhookSource, error)

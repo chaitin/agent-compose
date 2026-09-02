@@ -17,6 +17,7 @@ const (
 	TopicEventDispatchNoSubscriber   = "no_subscriber"
 	TopicEventDispatchRetrying       = "retrying"
 	TopicEventDispatchDeadLetter     = "dead_letter"
+	TopicEventDispatchCanceled       = "canceled"
 
 	EventDeliveryStatusMatched      = "matched"
 	EventDeliveryStatusRunStarted   = "run_started"
@@ -158,6 +159,15 @@ type WebhookSource struct {
 	BodyLimitBytes  int64     `json:"body_limit_bytes,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// EventDispatchCancellation reports how a stop request affected the events that
+// had not been handed to the scheduler bus yet. Canceled counts the events that
+// will never start a run; InFlight counts the events already claimed for
+// delivery, whose runs the caller must stop with a later request.
+type EventDispatchCancellation struct {
+	Canceled int
+	InFlight int
 }
 
 type EventDelivery struct {

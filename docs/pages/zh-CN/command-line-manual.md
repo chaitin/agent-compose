@@ -132,16 +132,25 @@ token 的 signed 或 unsigned GitHub source 可以接收事件，但不能调用
 endpoint。若这些事件需要支持停止，应另外配置 source token，不能把 GitHub
 signature secret 当作 token 使用。
 
-成功响应会说明是否有活跃 run 接受了取消请求，以及接受请求的数量。取消是异步的，
-因此 `stop_requested=true` 并不表示所有 run 已经进入最终状态或取消状态已经持久化；
-这与同步停止确认的语义不同。需要确认停止完成的调用方必须针对已知 run ID 轮询
-`GetSchedulerRun`，或轮询 `ListSchedulerRuns`（CLI 命令
-`agent-compose scheduler runs`），直到受影响的 run 报告终态 `succeeded`、`failed`、
-`canceled` 或 `skipped`。重复调用停止接口是安全的：不再活跃的 run 不会发生变化。
+该请求同时覆盖事件已经启动的 run 和尚未启动的投递。仍在投递队列中等待的事件会被
+撤回，不会再启动 run，数量记在 `canceled_events`；已经活跃的 run 会收到异步取消
+请求，数量记在 `requested_runs`。
 
 ```json
-{"event_id":"evt_123","stop_requested":true,"requested_runs":2,"failed_runs":0}
+{"event_id":"evt_123","stop_requested":true,"requested_runs":2,
+ "canceled_events":1,"pending_events":0,"failed_runs":0}
 ```
+
+`pending_events` 表示请求到达时已经被领取投递的事件数量。它们的 run 即将产生，本次
+请求停不掉，因此需要确保全部取消的调用方应在 `pending_events` 大于 0 时重复调用一
+次，重复调用会停掉这些 run。重复调用始终是安全的：已撤回的事件和不再活跃的 run 都
+不会发生变化。
+
+取消是异步的，因此 `stop_requested=true` 并不表示所有 run 已经进入最终状态或取消状
+态已经持久化；这与同步停止确认的语义不同。需要确认停止完成的调用方必须针对已知
+run ID 轮询 `GetSchedulerRun`，或轮询 `ListSchedulerRuns`（CLI 命令
+`agent-compose scheduler runs`），直到受影响的 run 报告终态 `succeeded`、`failed`、
+`canceled` 或 `skipped`。
 
 daemon 单次最多处理同一事件树中的 1,000 个事件。事件树更大时，会在停止任何 run
 之前返回 `409` 和 `max_event_count`，不会把被截断的结果当作成功。如果个别停止操作

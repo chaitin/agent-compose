@@ -395,6 +395,10 @@ func (s *webhookRouteStore) ListEventSandboxLinks(context.Context, []string) ([]
 	return []domain.EventSandboxTraceItem{{EventID: "event-1", SandboxID: "session-1", Relation: "created"}}, nil
 }
 
+func (s *webhookRouteStore) CancelEventDispatch(context.Context, []string, string) (domain.EventDispatchCancellation, error) {
+	return domain.EventDispatchCancellation{}, nil
+}
+
 func (s *webhookRouteStore) ListEventDeliveries(context.Context, []string) ([]domain.EventDelivery, error) {
 	return []domain.EventDelivery{{EventID: "event-1", SchedulerID: "scheduler-1", TriggerID: "trigger-1", RunID: "run-1", Status: domain.EventDeliveryStatusRunSucceeded}}, nil
 }

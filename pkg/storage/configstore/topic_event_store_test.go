@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	storagesqlite "github.com/chaitin/agent-compose/pkg/storage/sqlite"
@@ -252,4 +253,74 @@ func (t *cancelAfterEventCommitTx) Commit() error {
 	}
 	t.owner.once.Do(t.owner.cancel)
 	return nil
+}
+
+func TestCancelEventDispatchOnlyWithdrawsWaitingEvents(t *testing.T) {
+	ctx := context.Background()
+	store := FromDB(newMemoryDB(t))
+	if err := store.initSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+
+	statuses := map[string]string{
+		"waiting-pending":   domain.TopicEventDispatchPending,
+		"waiting-retrying":  domain.TopicEventDispatchRetrying,
+		"claimed":           domain.TopicEventDispatchPublishing,
+		"already-published": domain.TopicEventDispatchPublishedToBus,
+		"dead":              domain.TopicEventDispatchDeadLetter,
+	}
+	ids := make([]string, 0, len(statuses))
+	for id, status := range statuses {
+		ids = append(ids, id)
+		if _, err := store.db.ExecContext(ctx, `INSERT INTO event(
+			id, topic, source, correlation_id, payload_hash, payload_json,
+			dispatch_status, parent_event_id, created_at, claim_id, claim_until, next_attempt_at
+		) VALUES(?, 'webhook.test', 'webhook', '', 'hash', '{}', ?, '', 1, 'claim-1', 99, 99)`, id, status); err != nil {
+			t.Fatalf("insert %s event: %v", id, err)
+		}
+	}
+
+	cancellation, err := store.CancelEventDispatch(ctx, append(ids, "", "waiting-pending"), "business canceled")
+	if err != nil {
+		t.Fatalf("CancelEventDispatch returned error: %v", err)
+	}
+	if cancellation.Canceled != 2 {
+		t.Fatalf("canceled=%d, want 2", cancellation.Canceled)
+	}
+	if cancellation.InFlight != 1 {
+		t.Fatalf("in flight=%d, want 1", cancellation.InFlight)
+	}
+
+	for id, original := range statuses {
+		event, err := store.GetEvent(ctx, id)
+		if err != nil {
+			t.Fatalf("get %s event: %v", id, err)
+		}
+		want := original
+		if original == domain.TopicEventDispatchPending || original == domain.TopicEventDispatchRetrying {
+			want = domain.TopicEventDispatchCanceled
+		}
+		if event.DispatchStatus != want {
+			t.Fatalf("event %s dispatch_status=%q, want %q", id, event.DispatchStatus, want)
+		}
+	}
+
+	// A withdrawn event must leave the dispatch queue, and its claim must be
+	// released so a stale lease cannot resurrect it.
+	dispatchable, err := store.ListDispatchableEvents(ctx, time.UnixMilli(1000).UTC(), 100)
+	if err != nil {
+		t.Fatalf("ListDispatchableEvents returned error: %v", err)
+	}
+	for _, item := range dispatchable {
+		if item.ID == "waiting-pending" || item.ID == "waiting-retrying" {
+			t.Fatalf("withdrawn event %s is still dispatchable", item.ID)
+		}
+	}
+	claimed, err := store.ClaimEvent(ctx, "waiting-pending", "claim-2", time.UnixMilli(1000).UTC(), time.UnixMilli(31000).UTC())
+	if err != nil {
+		t.Fatalf("ClaimEvent returned error: %v", err)
+	}
+	if claimed {
+		t.Fatal("withdrawn event was claimed for dispatch")
+	}
 }
