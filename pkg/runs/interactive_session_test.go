@@ -166,7 +166,7 @@ func TestStartRunAttachInputForwarderReleasesInitialLeaseBeforeResume(t *testing
 	}
 	released := startRunAttachInputForwarder(context.Background(), func() (RunAttachInput, error) {
 		return RunAttachInput{}, io.EOF
-	}, s, release)
+	}, s, AttachDisconnectCancel, release)
 	select {
 	case <-released:
 	case <-time.After(time.Second):
@@ -197,7 +197,7 @@ func TestRunAttachInputForwarderReleasesLeaseWhenBackpressuredConnectionCancels(
 	released := startRunAttachInputForwarder(inputCtx, func() (RunAttachInput, error) {
 		received <- struct{}{}
 		return RunAttachInput{Kind: RunAttachInputHumanMessage}, nil
-	}, s, release)
+	}, s, AttachDisconnectCancel, release)
 	for range 33 {
 		<-received
 	}
@@ -587,5 +587,93 @@ func TestE2EControllerResumesAndCompletesInteractiveSession(t *testing.T) {
 				t.Fatalf("RunProjectCommandAttach() error = %v, want %v", err, test.want)
 			}
 		})
+	}
+}
+
+func TestRunAttachInputForwarderEndsInputOnClientHalfClose(t *testing.T) {
+	s := NewInteractiveSession("run-1")
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	release, err := s.AcquireInput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := startRunAttachInputForwarder(context.Background(), func() (RunAttachInput, error) {
+		return RunAttachInput{}, io.EOF
+	}, s, AttachDisconnectCancel, release)
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("input lease was not released")
+	}
+	select {
+	case input := <-s.input:
+		if input.Kind != RunAttachInputStdinEOF {
+			t.Fatalf("half-close forwarded %q, want %q", input.Kind, RunAttachInputStdinEOF)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("half-close did not forward stdin EOF to the session")
+	}
+}
+
+func TestRunAttachInputForwarderKeepsInputOpenForDetachedClients(t *testing.T) {
+	s := NewInteractiveSession("run-1")
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	release, err := s.AcquireInput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := startRunAttachInputForwarder(context.Background(), func() (RunAttachInput, error) {
+		return RunAttachInput{}, io.EOF
+	}, s, AttachDisconnectDetach, release)
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("input lease was not released")
+	}
+	select {
+	case input := <-s.input:
+		t.Fatalf("detached half-close forwarded input %q", input.Kind)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestRunAttachInputForwarderForwardsClientEOFOnlyOnce(t *testing.T) {
+	s := NewInteractiveSession("run-1")
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	release, err := s.AcquireInput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := false
+	released := startRunAttachInputForwarder(context.Background(), func() (RunAttachInput, error) {
+		if sent {
+			return RunAttachInput{}, io.EOF
+		}
+		sent = true
+		return RunAttachInput{Kind: RunAttachInputStdinEOF}, nil
+	}, s, AttachDisconnectCancel, release)
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("input lease was not released")
+	}
+	select {
+	case input := <-s.input:
+		if input.Kind != RunAttachInputStdinEOF {
+			t.Fatalf("forwarded %q, want %q", input.Kind, RunAttachInputStdinEOF)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("explicit stdin EOF was not forwarded to the session")
+	}
+	select {
+	case extra := <-s.input:
+		t.Fatalf("half-close after explicit EOF forwarded a duplicate %q", extra.Kind)
+	case <-time.After(50 * time.Millisecond):
 	}
 }
