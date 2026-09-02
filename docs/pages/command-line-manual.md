@@ -152,9 +152,18 @@ they never start a run, and `canceled_events` counts them. Active runs receive
 an asynchronous cancellation request counted by `requested_runs`.
 
 ```json
-{"event_id":"evt_123","stop_requested":true,"requested_runs":2,
+{"event_id":"evt_123","stop_requested":true,"requested_runs":2,"pending_runs":0,
  "canceled_events":1,"pending_events":0,"stale_events":0,"failed_runs":0}
 ```
+
+`pending_runs` counts runs this daemon could not stop because they are recorded
+as active but are not registered in this process. A run is persisted and its ID
+is stamped onto the delivery slightly before the daemon takes ownership of it,
+so a caller that reads the run ID and stops it immediately can land in that gap;
+repeating the request stops the run. A run left behind by a crashed daemon stays
+in this state until startup reconciliation moves it to `failed`, so repeating
+does not stop it and no run is still executing. This is reported with `200`, not
+as a failure.
 
 `pending_events` and `stale_events` both count events that had already been
 claimed for delivery when the request arrived, so this request could not stop

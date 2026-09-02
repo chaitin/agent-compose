@@ -338,6 +338,25 @@ func TestCancelEventDispatchOnlyWithdrawsWaitingEvents(t *testing.T) {
 		t.Fatal("withdrawn event was claimed for dispatch")
 	}
 
+	// A withdrawn event must survive the canonical dispatch-status validator.
+	// When "canceled" is missing from it the filter is silently dropped and the
+	// query answers with every event instead of the withdrawn ones, so this
+	// asserts the count rather than just the absence of an error.
+	withdrawn, total, err := store.ListEvents(ctx, domain.TopicEventFilter{
+		Topic: "webhook.test", DispatchStatus: domain.TopicEventDispatchCanceled, Limit: 100,
+	})
+	if err != nil {
+		t.Fatalf("ListEvents returned error: %v", err)
+	}
+	if total != 2 || len(withdrawn) != 2 {
+		t.Fatalf("canceled events=%d total=%d, want 2 and 2", len(withdrawn), total)
+	}
+	for _, item := range withdrawn {
+		if item.DispatchStatus != domain.TopicEventDispatchCanceled {
+			t.Fatalf("event %s dispatch_status=%q, want canceled", item.ID, item.DispatchStatus)
+		}
+	}
+
 	// The stale event is deliberately still dispatchable, which is exactly why
 	// it is reported apart from the in-flight one: its run appears only after
 	// another loop reclaims it.

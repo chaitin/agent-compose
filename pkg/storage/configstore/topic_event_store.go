@@ -477,13 +477,19 @@ func (s *eventStore) ListEventSandboxLinks(ctx context.Context, eventIDs []strin
 	return items, nil
 }
 
+// maxDescendantEventIDs bounds one descendant walk. Callers pass their own
+// limit -- the stop endpoint probes with its cap plus one to detect an
+// oversized tree -- and this ceiling only keeps a caller that asks for
+// everything from walking an unbounded tree one query per node.
+const maxDescendantEventIDs = 10000
+
 func (s *eventStore) ListDescendantEventIDs(ctx context.Context, rootEventID string, limit int) ([]string, error) {
 	rootEventID = strings.TrimSpace(rootEventID)
 	if rootEventID == "" {
 		return nil, fmt.Errorf("event id is required")
 	}
-	if limit <= 0 {
-		limit = 1000
+	if limit <= 0 || limit > maxDescendantEventIDs {
+		limit = maxDescendantEventIDs
 	}
 	ids := []string{rootEventID}
 	seen := map[string]struct{}{rootEventID: {}}

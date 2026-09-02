@@ -28,6 +28,8 @@ type stopEventResponse struct {
 	EventID        string   `json:"event_id"`
 	StopRequested  bool     `json:"stop_requested"`
 	RequestedRuns  int      `json:"requested_runs"`
+	PendingRuns    int      `json:"pending_runs"`
+	PendingRunIDs  []string `json:"pending_run_ids,omitempty"`
 	CanceledEvents int      `json:"canceled_events"`
 	PendingEvents  int      `json:"pending_events"`
 	StaleEvents    int      `json:"stale_events"`
@@ -159,6 +161,17 @@ func stopEventRuns(ctx context.Context, stopper RunStopper, eventID, reason stri
 		seen[ref] = struct{}{}
 		requested, err := stopper.RequestSchedulerRunStop(ctx, schedulerID, runID, reason)
 		if err != nil {
+			// A run that is persisted as active but unknown to this process is
+			// not a failure. Prepare writes the run row and stamps the run ID
+			// onto the delivery before the supervisor registers the run, so a
+			// caller that polls for the run ID and stops it at once lands in
+			// that gap; a run left behind by a crashed daemon stays there until
+			// startup reconciliation. Reporting these separately keeps the
+			// request successful and tells the caller to repeat it.
+			if errors.Is(err, domain.ErrFailedPrecondition) {
+				response.PendingRunIDs = append(response.PendingRunIDs, runID)
+				continue
+			}
 			response.FailedRunIDs = append(response.FailedRunIDs, runID)
 			continue
 		}
@@ -168,6 +181,7 @@ func stopEventRuns(ctx context.Context, stopper RunStopper, eventID, reason stri
 	}
 	// StopRequested also covers withdrawn events, so the caller sets it once both
 	// counts are known.
+	response.PendingRuns = len(response.PendingRunIDs)
 	response.FailedRuns = len(response.FailedRunIDs)
 	return response
 }

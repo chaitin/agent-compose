@@ -38,6 +38,7 @@ func TestEventStopHandler(t *testing.T) {
 		wantPendingEvents   int
 		wantStaleEvents     int
 		wantFailed          []string
+		wantPendingRuns     []string
 		wantStopped         []string
 		wantSchedulers      []string
 		wantDescendantQuery bool
@@ -168,6 +169,16 @@ func TestEventStopHandler(t *testing.T) {
 			wantDescendantQuery: true, wantEventIDs: defaultEventIDs,
 		},
 		{
+			name: "run not owned by this process is pending, not failed", event: webhookStopEvent("event-1", "github"), token: "token",
+			deliveries:  []domain.EventDelivery{{RunID: "run-1"}, {RunID: "run-2"}},
+			stopResults: []bool{false, true},
+			stopErrs: []error{domain.ResourceError(domain.ErrFailedPrecondition, "scheduler run", "scheduler-1/run-1",
+				"scheduler run scheduler-1/run-1 is not active in this process", nil), nil},
+			wantStatus: http.StatusOK, wantRequested: true, wantRuns: 1,
+			wantPendingRuns: []string{"run-1"}, wantStopped: []string{"run-1", "run-2"},
+			wantDescendantQuery: true, wantEventIDs: defaultEventIDs,
+		},
+		{
 			name: "oversized event tree fails before stopping any run", event: webhookStopEvent("event-1", "github"), token: "token",
 			eventIDs: webhookStopEventIDs(maxStopEventCount + 1), deliveries: []domain.EventDelivery{{RunID: "run-1"}},
 			wantStatus: http.StatusConflict, wantDescendantQuery: true,
@@ -264,6 +275,10 @@ func TestEventStopHandler(t *testing.T) {
 				}
 				if response.FailedRuns != len(tt.wantFailed) {
 					t.Fatalf("failed_runs=%d, want %d", response.FailedRuns, len(tt.wantFailed))
+				}
+				if !equalStrings(response.PendingRunIDs, tt.wantPendingRuns) || response.PendingRuns != len(tt.wantPendingRuns) {
+					t.Fatalf("pending_runs=%d ids=%v, want %d and %v",
+						response.PendingRuns, response.PendingRunIDs, len(tt.wantPendingRuns), tt.wantPendingRuns)
 				}
 				if response.CanceledEvents != tt.wantCanceledEvents || response.PendingEvents != tt.wantPendingEvents || response.StaleEvents != tt.wantStaleEvents {
 					t.Fatalf("canceled_events=%d pending_events=%d stale_events=%d, want %d, %d and %d",

@@ -137,9 +137,15 @@ signature secret 当作 token 使用。
 请求，数量记在 `requested_runs`。
 
 ```json
-{"event_id":"evt_123","stop_requested":true,"requested_runs":2,
+{"event_id":"evt_123","stop_requested":true,"requested_runs":2,"pending_runs":0,
  "canceled_events":1,"pending_events":0,"stale_events":0,"failed_runs":0}
 ```
+
+`pending_runs` 表示记录为活跃、但未在本进程注册，因而本次停不掉的 run。run 写入存储
+并把 run ID 盖到 delivery 上，略早于 daemon 接管它，所以调用方读到 run ID 后立即停止
+就可能落在这个间隙里，重复调用即可停掉。若某个 run 是崩溃的 daemon 遗留的，它会保持
+这个状态直到启动对账把它改成 `failed`，此时重复调用不会停掉它，也没有 run 仍在执行。
+这种情况返回 `200`，不按失败处理。
 
 `pending_events` 和 `stale_events` 都表示请求到达时已经被领取投递的事件，本次请求
 停不掉它们。两者的区别在于 run 何时出现，这决定了什么时候重复调用：
