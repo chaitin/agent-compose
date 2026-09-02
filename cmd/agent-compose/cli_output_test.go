@@ -10,8 +10,8 @@ import (
 
 // Run labels ride along on RunDetail, so every detail-derived output (inspect
 // run, exec, latest run) must surface them without a second request. Summary
-// derived output has no labels to report and must omit the key entirely rather
-// than render an empty map that reads as "this run has no labels".
+// derived output has none to report and leaves the field nil, which omitempty
+// drops the same way it drops a detail-derived run with no labels at all.
 func TestComposeRunOutputCarriesLabelsFromDetailOnly(t *testing.T) {
 	detail := testRunDetail("project-1", "run-labeled", "reviewer", "sandbox-1", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "ok\n")
 	detail.Labels = map[string]string{"env": "prod", "team": "platform"}

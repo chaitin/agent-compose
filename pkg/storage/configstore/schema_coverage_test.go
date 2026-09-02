@@ -841,8 +841,6 @@ func assertProjectSchema(t *testing.T, store *ConfigStore) {
 		"idx_project_run_scheduler",
 		"idx_project_run_scheduler_run",
 		"idx_scheduler_run_started",
-		"idx_project_run_label_key_value",
-		"idx_project_run_label_run_id",
 	} {
 		assertSQLiteIndexExists(t, store.db, index)
 	}

@@ -6,5 +6,7 @@ CREATE TABLE project_run_label (
     UNIQUE(run_id, key)
 );
 
-CREATE INDEX idx_project_run_label_key_value ON project_run_label(key, value);
-CREATE INDEX idx_project_run_label_run_id ON project_run_label(run_id);
+-- No explicit indexes: the implicit UNIQUE(run_id, key) index already serves
+-- both query shapes. The label filter searches it on (run_id, key), and
+-- loadProjectRunLabels searches it on the run_id prefix, so a separate
+-- run_id index would only duplicate that prefix and add write amplification.
