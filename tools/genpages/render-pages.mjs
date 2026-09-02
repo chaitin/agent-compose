@@ -31,18 +31,18 @@ const manuals = [
     alternate: "../connect-transport-matrix.html",
   },
   {
-    source: "octobus-quickstart.md",
-    output: "octobus-quickstart.html",
-    title: "OctoBus Integration Quick Start",
-    lang: "en",
-    alternate: "zh-CN/octobus-quickstart.html",
-  },
-  {
     source: "agent-compose-yaml-manual.md",
     output: "agent-compose-yaml-manual.html",
     title: "agent-compose.yml Manual",
     lang: "en",
     alternate: "zh-CN/agent-compose-yaml-manual.html",
+  },
+  {
+    source: "octobus-quickstart.md",
+    output: "octobus-quickstart.html",
+    title: "OctoBus Integration Quick Start",
+    lang: "en",
+    alternate: "zh-CN/octobus-quickstart.html",
   },
   {
     source: "guest-image-abi.md",
@@ -59,18 +59,18 @@ const manuals = [
     alternate: "../command-line-manual.html",
   },
   {
-    source: "zh-CN/octobus-quickstart.md",
-    output: "zh-CN/octobus-quickstart.html",
-    title: "OctoBus 集成快速开始",
-    lang: "zh-CN",
-    alternate: "../octobus-quickstart.html",
-  },
-  {
     source: "zh-CN/agent-compose-yaml-manual.md",
     output: "zh-CN/agent-compose-yaml-manual.html",
     title: "agent-compose.yml 配置手册",
     lang: "zh-CN",
     alternate: "../agent-compose-yaml-manual.html",
+  },
+  {
+    source: "zh-CN/octobus-quickstart.md",
+    output: "zh-CN/octobus-quickstart.html",
+    title: "OctoBus 集成快速开始",
+    lang: "zh-CN",
+    alternate: "../octobus-quickstart.html",
   },
   {
     source: "zh-CN/guest-image-abi.md",
@@ -106,13 +106,14 @@ function renderPage(manual, body) {
   const nested = currentPage.includes("/");
   const root = nested ? "../" : "./";
   const labels = lang === "zh-CN"
-    ? ["首页", "命令行手册", "YAML 配置手册", "Connect 传输矩阵"]
-    : ["Home", "CLI Manual", "YAML Manual", "Connect Transport"];
+    ? ["首页", "命令行手册", "YAML 配置手册", "OctoBus 快速开始", "Connect 传输矩阵"]
+    : ["Home", "CLI Manual", "YAML Manual", "OctoBus Quick Start", "Connect Transport"];
   const navItems = [
     [root, labels[0], ""],
     ["command-line-manual.html", labels[1], "command-line-manual.html"],
     ["agent-compose-yaml-manual.html", labels[2], "agent-compose-yaml-manual.html"],
-    ["connect-transport-matrix.html", labels[3], "connect-transport-matrix.html"],
+    ["octobus-quickstart.html", labels[3], "octobus-quickstart.html"],
+    ["connect-transport-matrix.html", labels[4], "connect-transport-matrix.html"],
   ];
   const nav = navItems
     .map(([href, label, page]) => {
