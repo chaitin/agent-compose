@@ -171,7 +171,7 @@ func (c *Controller) init() {
 			Store:         c.deps.Store,
 			Snapshot:      c.CachedSchedulersMap,
 			ReplaceCached: c.ReplaceCachedSchedulers,
-			Run:           c.Run,
+			Run:           c.schedulerRuns.runTrigger,
 			RunTimeout:    c.runTimeout,
 		})
 	}
@@ -182,9 +182,9 @@ func (c *Controller) init() {
 			Targets:      func(topic string) []EventTarget { return CollectEventTargets(c.SnapshotSchedulers(), topic) },
 			IsBusy:       c.AnyTargetBusy,
 			ReserveSlots: c.deps.ReserveSlots,
-			Run:          c.Run,
+			Run:          c.schedulerRuns.runTrigger,
 			Prepare:      c.Prepare,
-			Execute:      c.Execute,
+			Execute:      c.schedulerRuns.runPrepared,
 			Abort:        c.Abort,
 			RunTimeout:   c.runTimeout,
 			EnterRun:     c.EnterRun,
@@ -277,7 +277,7 @@ func (c *Controller) RunNow(ctx context.Context, req RunNowRequest) (domain.Sche
 }
 
 func (c *Controller) Run(ctx context.Context, req RunTriggerRequest, triggerEventAck ...func(context.Context) error) (domain.SchedulerRunSummary, error) {
-	return c.runExecutor.Run(ctx, req, triggerEventAck...)
+	return c.schedulerRuns.runTrigger(ctx, req, triggerEventAck...)
 }
 
 func (c *Controller) Prepare(ctx context.Context, req RunTriggerRequest) (PreparedRun, error) {

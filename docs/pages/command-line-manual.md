@@ -124,6 +124,79 @@ application. Any UI server or reverse proxy that calls the same control-plane
 APIs must also inject `Authorization: Bearer <token>` before daemon
 authentication is enabled.
 
+#### Stopping webhook-triggered runs
+
+The client that submitted a webhook can later request cancellation of every
+active run associated with that event and its descendant events:
+
+```http
+POST /api/webhooks/events/<event-id>/stop
+Authorization: Bearer <webhook-source-token>
+Content-Type: application/json
+
+{"reason":"business canceled"}
+```
+
+The JSON body is optional. The endpoint authenticates only with the static
+token configured on the event's webhook source, using that source's custom
+token header when one is configured. A GitHub request signature proves the
+authenticity of one delivery; it is not a reusable control credential.
+Consequently, signed and unsigned GitHub sources without a static source token
+can receive events but cannot use this stop endpoint. Configure a separate
+source token when those events must be stoppable; do not reuse the GitHub
+signature secret as the token.
+
+The request covers both the runs an event already started and the deliveries it
+has not started yet. Events still waiting in the dispatch queue are withdrawn so
+they never start a run, and `canceled_events` counts them. Active runs receive
+an asynchronous cancellation request counted by `requested_runs`.
+
+```json
+{"event_id":"evt_123","stop_requested":true,"requested_runs":2,"pending_runs":0,
+ "canceled_events":1,"pending_events":0,"stale_events":0,"failed_runs":0}
+```
+
+`pending_runs` counts runs this daemon could not stop because they are recorded
+as active but are not registered in this process. A run is persisted and its ID
+is stamped onto the delivery slightly before the daemon takes ownership of it,
+so a caller that reads the run ID and stops it immediately can land in that gap;
+repeating the request stops the run. A run left behind by a crashed daemon stays
+in this state until startup reconciliation moves it to `failed`, so repeating
+does not stop it and no run is still executing. This is reported with `200`, not
+as a failure.
+
+`pending_events` and `stale_events` both count events that had already been
+claimed for delivery when the request arrived, so this request could not stop
+them. They differ in when the run appears, which decides when to repeat the
+request:
+
+- `pending_events` — the claim still holds, so a worker is delivering the event
+  and its run exists in a moment. Repeat the request shortly and it stops.
+- `stale_events` — the claim expired, so the delivering worker is gone and the
+  event waits for another dispatch pass to pick it up. An immediate repeat finds
+  nothing to stop; repeat once the run appears in
+  `GET /api/events/<event-id>/runs`.
+
+Repeating is always safe: withdrawn events and runs that are no longer active
+are left unchanged.
+
+Cancellation is asynchronous, so `stop_requested=true` does not mean that every
+run has already reached its final state or that its canceled state has been
+persisted. This differs from a synchronous stop acknowledgement: callers that
+need confirmation must poll `GetSchedulerRun` for known run IDs or
+`ListSchedulerRuns` (the `agent-compose scheduler runs` CLI command) until the
+affected runs report a terminal `succeeded`, `failed`, `canceled`, or `skipped`
+status.
+
+The daemon evaluates at most 1,000 events in one event tree. If the tree is
+larger, it returns `409` with `max_event_count` before stopping any run, rather
+than silently processing a truncated tree. If an individual stop operation
+fails, the daemon still attempts the remaining runs and returns `500` with the
+successful `requested_runs` count plus `failed_runs` and `failed_run_ids`.
+Retrying the whole event is safe and retries only runs that remain active.
+Missing or invalid tokens return `401`; a non-webhook event returns `403`; and
+an unknown event returns `404`.
+
 ### Project environment files
 
 A project can explicitly load one or more dotenv files. Relative paths are resolved from the directory containing the project config file:

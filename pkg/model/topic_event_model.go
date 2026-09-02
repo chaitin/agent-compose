@@ -17,6 +17,7 @@ const (
 	TopicEventDispatchNoSubscriber   = "no_subscriber"
 	TopicEventDispatchRetrying       = "retrying"
 	TopicEventDispatchDeadLetter     = "dead_letter"
+	TopicEventDispatchCanceled       = "canceled"
 
 	EventDeliveryStatusMatched      = "matched"
 	EventDeliveryStatusRunStarted   = "run_started"
@@ -158,6 +159,19 @@ type WebhookSource struct {
 	BodyLimitBytes  int64     `json:"body_limit_bytes,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// EventDispatchCancellation reports how a stop request affected the events that
+// had not been handed to the scheduler bus yet. Canceled counts the events that
+// will never start a run. InFlight and Stale both count events already claimed
+// for delivery, whose runs a later request must stop, and they differ in when
+// that run appears: an in-flight claim is still held, so its run exists in a
+// moment, while a stale claim has expired and the event waits for another
+// dispatch loop to reclaim it.
+type EventDispatchCancellation struct {
+	Canceled int
+	InFlight int
+	Stale    int
 }
 
 type EventDelivery struct {

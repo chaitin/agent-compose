@@ -25,6 +25,7 @@ type Store interface {
 	ListDescendantEventIDs(context.Context, string, int) ([]string, error)
 	ListEventSandboxLinks(context.Context, []string) ([]domain.EventSandboxTraceItem, error)
 	ListEventDeliveries(context.Context, []string) ([]domain.EventDelivery, error)
+	CancelEventDispatch(context.Context, []string, string) (domain.EventDispatchCancellation, error)
 	ListWebhookSources(context.Context) ([]domain.WebhookSource, error)
 	GetWebhookSource(context.Context, string) (domain.WebhookSource, bool, error)
 	UpsertWebhookSource(context.Context, domain.WebhookSource) (domain.WebhookSource, error)
@@ -39,11 +40,13 @@ type RouteOptions struct {
 	WebhookBodyLimit   int64
 	NewEventID         func() string
 	MarshalJSONCompact func(any) (string, error)
+	RunStopper         RunStopper
 }
 
 func RegisterRoutes(app *echo.Echo, opts RouteOptions) {
 	h := routeHandler{opts: opts}
 	app.POST("/api/webhooks/:topic", h.handleWebhook)
+	app.POST("/api/webhooks/events/:event_id/stop", h.handleStopEvent)
 	app.GET("/api/webhook-sources", h.handleListWebhookSources)
 	app.PUT("/api/webhook-sources/:source_id", h.handlePutWebhookSource)
 	app.DELETE("/api/webhook-sources/:source_id", h.handleDeleteWebhookSource)

@@ -54,3 +54,25 @@ func TestIntegrationNormalizeTopicEventRecordCoverage(t *testing.T) {
 func TestE2ENormalizeTopicEventRecordCoverage(t *testing.T) {
 	TestNormalizeTopicEventRecordCoverage(t)
 }
+
+func TestNormalizeDispatchStatusAcceptsEveryStoredStatus(t *testing.T) {
+	// Every status the storage layer can write must survive this validator.
+	// A status it does not recognize is rejected on write and, worse, silently
+	// dropped as a query filter, which answers with every event instead of none.
+	for _, status := range []string{
+		domain.TopicEventDispatchPending,
+		domain.TopicEventDispatchPublishing,
+		domain.TopicEventDispatchPublishedToBus,
+		domain.TopicEventDispatchNoSubscriber,
+		domain.TopicEventDispatchRetrying,
+		domain.TopicEventDispatchDeadLetter,
+		domain.TopicEventDispatchCanceled,
+	} {
+		if got := NormalizeDispatchStatus(status); got != status {
+			t.Errorf("NormalizeDispatchStatus(%q) = %q, want %q", status, got, status)
+		}
+	}
+	if got := NormalizeDispatchStatus("nonsense"); got != "" {
+		t.Errorf("NormalizeDispatchStatus(nonsense) = %q, want empty", got)
+	}
+}

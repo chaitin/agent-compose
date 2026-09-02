@@ -318,7 +318,69 @@ func (s *eventStore) AddEventSandboxLink(ctx context.Context, link domain.EventS
 	return nil
 }
 
-func (s *eventStore) ListEventDeliveries(ctx context.Context, eventIDs []string) ([]domain.EventDelivery, error) {
+// CancelEventDispatch withdraws the given events from the dispatch queue so
+// they never start a run. Only waiting events are withdrawn:
+// ListDispatchableEvents and ClaimEvent both admit pending, retrying, and
+// publishing_to_bus, so the canceled status alone removes an event from both.
+//
+// Publishing events are left in flight, expired claims included: the original
+// worker may still be creating a delivery, and clearing its claim could leave
+// that run alive with nobody to stop it. They are reported instead, split by
+// whether the claim still holds. The split matters to the caller: an in-flight
+// claim produces its run in a moment, so retrying the stop request shortly
+// stops it, while a stale claim waits for another dispatch loop to reclaim the
+// event, so an immediate retry would find nothing to stop.
+func (s *eventStore) CancelEventDispatch(ctx context.Context, eventIDs []string, reason string) (domain.EventDispatchCancellation, error) {
+	ids := dedupedEventIDs(eventIDs)
+	if len(ids) == 0 {
+		return domain.EventDispatchCancellation{}, nil
+	}
+	placeholders := make([]string, len(ids))
+	for i := range ids {
+		placeholders[i] = "?"
+	}
+	idList := strings.Join(placeholders, ",")
+	nowMillis := time.Now().UTC().UnixMilli()
+
+	args := make([]any, 0, len(ids)+4)
+	args = append(args, domain.TopicEventDispatchCanceled, strings.TrimSpace(reason))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	args = append(args, domain.TopicEventDispatchPending, domain.TopicEventDispatchRetrying)
+	result, err := s.db.ExecContext(ctx, `UPDATE event
+		SET dispatch_status = ?, last_error = ?, claim_id = '', claim_until = 0, next_attempt_at = 0
+		WHERE id IN (`+idList+`) AND dispatch_status IN (?, ?)`, args...)
+	if err != nil {
+		return domain.EventDispatchCancellation{}, fmt.Errorf("cancel event dispatch: %w", err)
+	}
+	canceled, err := result.RowsAffected()
+	if err != nil {
+		return domain.EventDispatchCancellation{}, fmt.Errorf("read canceled event count: %w", err)
+	}
+
+	// A claim_until of 0 counts as stale: ListDispatchableEvents admits it, so
+	// the event is queued for another loop rather than held by a live worker.
+	countArgs := make([]any, 0, len(ids)+3)
+	countArgs = append(countArgs, nowMillis, nowMillis)
+	for _, id := range ids {
+		countArgs = append(countArgs, id)
+	}
+	countArgs = append(countArgs, domain.TopicEventDispatchPublishing)
+	var inFlight, stale int
+	if err := s.db.QueryRowContext(ctx, `SELECT
+			COALESCE(SUM(CASE WHEN claim_until >  ? THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN claim_until <= ? THEN 1 ELSE 0 END), 0)
+		FROM event WHERE id IN (`+idList+`) AND dispatch_status = ?`,
+		countArgs...).Scan(&inFlight, &stale); err != nil {
+		return domain.EventDispatchCancellation{}, fmt.Errorf("count in-flight events: %w", err)
+	}
+	return domain.EventDispatchCancellation{Canceled: int(canceled), InFlight: inFlight, Stale: stale}, nil
+}
+
+// dedupedEventIDs trims, drops empties, and removes duplicates while keeping
+// the caller's order.
+func dedupedEventIDs(eventIDs []string) []string {
 	seen := map[string]struct{}{}
 	ids := make([]string, 0, len(eventIDs))
 	for _, id := range eventIDs {
@@ -332,6 +394,11 @@ func (s *eventStore) ListEventDeliveries(ctx context.Context, eventIDs []string)
 		seen[id] = struct{}{}
 		ids = append(ids, id)
 	}
+	return ids
+}
+
+func (s *eventStore) ListEventDeliveries(ctx context.Context, eventIDs []string) ([]domain.EventDelivery, error) {
+	ids := dedupedEventIDs(eventIDs)
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -410,13 +477,19 @@ func (s *eventStore) ListEventSandboxLinks(ctx context.Context, eventIDs []strin
 	return items, nil
 }
 
+// maxDescendantEventIDs bounds one descendant walk. Callers pass their own
+// limit -- the stop endpoint probes with its cap plus one to detect an
+// oversized tree -- and this ceiling only keeps a caller that asks for
+// everything from walking an unbounded tree one query per node.
+const maxDescendantEventIDs = 10000
+
 func (s *eventStore) ListDescendantEventIDs(ctx context.Context, rootEventID string, limit int) ([]string, error) {
 	rootEventID = strings.TrimSpace(rootEventID)
 	if rootEventID == "" {
 		return nil, fmt.Errorf("event id is required")
 	}
-	if limit <= 0 || limit > 1000 {
-		limit = 1000
+	if limit <= 0 || limit > maxDescendantEventIDs {
+		limit = maxDescendantEventIDs
 	}
 	ids := []string{rootEventID}
 	seen := map[string]struct{}{rootEventID: {}}

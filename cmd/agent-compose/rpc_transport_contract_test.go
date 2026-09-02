@@ -24,6 +24,7 @@ func TestDaemonHTTPRouteAllowlist(t *testing.T) {
 		"GET /api/version":                                                       "bootstrap",
 		"GET /api/null":                                                          "bootstrap",
 		"POST /api/webhooks/:topic":                                              "webhook ingress",
+		"POST /api/webhooks/events/:event_id/stop":                               "webhook event cancellation",
 		"GET /api/webhook-sources":                                               "webhook administration and event queries",
 		"PUT /api/webhook-sources/:source_id":                                    "webhook administration and event queries",
 		"DELETE /api/webhook-sources/:source_id":                                 "webhook administration and event queries",

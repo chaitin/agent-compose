@@ -113,6 +113,64 @@ topic，以及 Bearer、`X-WEBHOOK-TOKEN` 或自定义 header token。
 的 UI server 或反向代理，也必须先配置注入 `Authorization: Bearer <token>`，再
 开启 daemon 认证。
 
+#### 停止 Webhook 事件触发的运行
+
+提交 webhook 的客户端可以在之后请求取消该事件及其后代事件关联的全部活跃 run：
+
+```http
+POST /api/webhooks/events/<event-id>/stop
+Authorization: Bearer <webhook-source-token>
+Content-Type: application/json
+
+{"reason":"business canceled"}
+```
+
+JSON 请求体可以省略。该 endpoint 只接受事件所属 webhook source 配置的静态
+token；source 配置了自定义 token header 时也沿用该 header。GitHub 请求签名只能
+证明单次 delivery 的真实性，不是可复用的控制凭据。因此，没有配置静态 source
+token 的 signed 或 unsigned GitHub source 可以接收事件，但不能调用此停止
+endpoint。若这些事件需要支持停止，应另外配置 source token，不能把 GitHub
+signature secret 当作 token 使用。
+
+该请求同时覆盖事件已经启动的 run 和尚未启动的投递。仍在投递队列中等待的事件会被
+撤回，不会再启动 run，数量记在 `canceled_events`；已经活跃的 run 会收到异步取消
+请求，数量记在 `requested_runs`。
+
+```json
+{"event_id":"evt_123","stop_requested":true,"requested_runs":2,"pending_runs":0,
+ "canceled_events":1,"pending_events":0,"stale_events":0,"failed_runs":0}
+```
+
+`pending_runs` 表示记录为活跃、但未在本进程注册，因而本次停不掉的 run。run 写入存储
+并把 run ID 盖到 delivery 上，略早于 daemon 接管它，所以调用方读到 run ID 后立即停止
+就可能落在这个间隙里，重复调用即可停掉。若某个 run 是崩溃的 daemon 遗留的，它会保持
+这个状态直到启动对账把它改成 `failed`，此时重复调用不会停掉它，也没有 run 仍在执行。
+这种情况返回 `200`，不按失败处理。
+
+`pending_events` 和 `stale_events` 都表示请求到达时已经被领取投递的事件，本次请求
+停不掉它们。两者的区别在于 run 何时出现，这决定了什么时候重复调用：
+
+- `pending_events`：认领仍然有效，worker 正在投递，run 马上就会出现。稍后重复调用
+  一次即可停掉。
+- `stale_events`：认领已过期，原投递方已经失联，事件要等下一轮派发才会被重新领取。
+  立刻重复调用什么也停不到；应等到 `GET /api/events/<event-id>/runs` 中出现该 run
+  之后再调用。
+
+重复调用始终是安全的：已撤回的事件和不再活跃的 run 都不会发生变化。
+
+取消是异步的，因此 `stop_requested=true` 并不表示所有 run 已经进入最终状态或取消状
+态已经持久化；这与同步停止确认的语义不同。需要确认停止完成的调用方必须针对已知
+run ID 轮询 `GetSchedulerRun`，或轮询 `ListSchedulerRuns`（CLI 命令
+`agent-compose scheduler runs`），直到受影响的 run 报告终态 `succeeded`、`failed`、
+`canceled` 或 `skipped`。
+
+daemon 单次最多处理同一事件树中的 1,000 个事件。事件树更大时，会在停止任何 run
+之前返回 `409` 和 `max_event_count`，不会把被截断的结果当作成功。如果个别停止操作
+失败，daemon 仍会继续处理其余 run，并返回 `500`；响应中的 `requested_runs`
+记录成功请求取消的数量，`failed_runs` 和 `failed_run_ids` 记录失败项。重新对整个
+事件发起请求是安全的，只会重试仍然活跃的 run。Token 缺失或无效时返回 `401`，
+非 webhook 事件返回 `403`，事件不存在时返回 `404`。
+
 ### Project 环境文件
 
 配置可以显式指定一个或多个 dotenv 文件；相对路径以 project 配置文件所在目录为基准：
