@@ -121,6 +121,57 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 	}
 }
 
+func TestRuntimeHostAgentPrefersAssistantMessageOverTranscript(t *testing.T) {
+	ctx := context.Background()
+	scheduler := domain.Scheduler{
+		Summary: domain.SchedulerSummary{ID: "scheduler-final-text", Runtime: domain.SchedulerRuntimeScheduler, DefaultAgent: "codex"},
+	}
+	run := &domain.SchedulerRunSummary{ID: "run-final-text", SchedulerID: scheduler.Summary.ID, TriggerID: "trigger-final-text"}
+	newHost := func(agentExecutor *hostAgentExecutorFake) *schedulers.RuntimeHost {
+		return schedulers.NewRuntimeHost(schedulers.RunHostDependencies{
+			Store:            &hostStoreFake{},
+			Events:           &hostEventsFake{},
+			Sessions:         &hostSessionsFake{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-final-text", VMStatus: domain.VMStatusRunning}}},
+			AgentDefinitions: hostAgentDefinitionsFake{},
+			AgentExecutor:    agentExecutor,
+			Publisher:        &hostPublisherFake{},
+		}, scheduler, triggerExecution(run), schedulers.TriggerEventMetadata{EventID: "topic-event"})
+	}
+
+	// A provider that emits a distinct final assistant message: Text/FinalText
+	// must carry that message, not the raw transcript in cell.Output.
+	withMessage := &hostAgentExecutorFake{
+		cell:          domain.NotebookCell{ID: "cell-1", Output: "thinking...\ncat SKILL.md\n{...}", Success: true},
+		assistantText: "here is the answer",
+	}
+	result, err := newHost(withMessage).Agent(ctx, "prompt", domain.SchedulerAgentRequest{})
+	if err != nil {
+		t.Fatalf("Agent returned error: %v", err)
+	}
+	if result.FinalText != "here is the answer" || result.Text != "here is the answer" {
+		t.Fatalf("FinalText/Text = %q/%q, want the assistant message", result.FinalText, result.Text)
+	}
+	if result.Output != withMessage.cell.Output {
+		t.Fatalf("Output = %q, want the untouched transcript %q", result.Output, withMessage.cell.Output)
+	}
+	if result.FinalText == result.Output {
+		t.Fatalf("FinalText must not equal the transcript Output when a distinct assistant message exists")
+	}
+
+	// No distinct assistant message (e.g. transcript-fallback source): FinalText
+	// keeps falling back to the transcript, same as before this fix.
+	withoutMessage := &hostAgentExecutorFake{
+		cell: domain.NotebookCell{ID: "cell-2", Output: "plain transcript", Success: true},
+	}
+	result, err = newHost(withoutMessage).Agent(ctx, "prompt", domain.SchedulerAgentRequest{})
+	if err != nil {
+		t.Fatalf("Agent returned error: %v", err)
+	}
+	if result.FinalText != "plain transcript" || result.Output != "plain transcript" {
+		t.Fatalf("FinalText/Output = %q/%q, want both to fall back to the transcript", result.FinalText, result.Output)
+	}
+}
+
 func TestRuntimeHostLLMModelPriorityAndEnvironmentPropagation(t *testing.T) {
 	for _, test := range []struct {
 		name           string
@@ -730,14 +781,15 @@ func (hostAgentDefinitionsFake) ResolveSchedulerAgentDefinition(context.Context,
 }
 
 type hostAgentExecutorFake struct {
-	request schedulers.HostAgentExecutionRequest
-	cell    domain.NotebookCell
-	err     error
+	request       schedulers.HostAgentExecutionRequest
+	cell          domain.NotebookCell
+	assistantText string
+	err           error
 }
 
-func (e *hostAgentExecutorFake) ExecuteAgent(_ context.Context, _ *domain.Sandbox, request schedulers.HostAgentExecutionRequest) (domain.NotebookCell, error) {
+func (e *hostAgentExecutorFake) ExecuteAgent(_ context.Context, _ *domain.Sandbox, request schedulers.HostAgentExecutionRequest) (domain.NotebookCell, string, error) {
 	e.request = request
-	return e.cell, e.err
+	return e.cell, e.assistantText, e.err
 }
 
 type hostCommandExecutorFake struct {

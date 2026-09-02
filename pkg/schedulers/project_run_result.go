@@ -11,16 +11,18 @@ type ProjectRunResultFields struct {
 	Agent         string `json:"agent"`
 	AgentThreadID string `json:"agentThreadId"`
 	StopReason    string `json:"stopReason"`
+	FinalText     string `json:"finalText"`
 }
 
 func AgentResultFromProjectRun(run domain.ProjectRunRecord, outputSchemaJSON string) (domain.SchedulerAgentResult, error) {
 	metadata := ProjectRunResultMetadata(run.ResultJSON)
-	text := firstNonEmpty(run.Output, run.Error)
+	finalText := firstNonEmpty(metadata.FinalText, run.Output)
+	text := firstNonEmpty(finalText, run.Error)
 	jsonValue, jsonErr := JSONResult(text, outputSchemaJSON, "project run output")
 	return domain.SchedulerAgentResult{
 		Text:          text,
 		Output:        run.Output,
-		FinalText:     run.Output,
+		FinalText:     finalText,
 		JSON:          jsonValue,
 		SandboxID:     run.SandboxID,
 		CellID:        metadata.CellID,
