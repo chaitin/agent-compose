@@ -223,6 +223,14 @@ func (h *RunHandler) ListRuns(ctx context.Context, req *connect.Request[agentcom
 	if err != nil {
 		return nil, err
 	}
+	// Normalize with the same rules the write path applies, so a filter key
+	// matches the stored form and an oversized label set is refused as a client
+	// error instead of reaching SQLite and failing its expression-depth limit
+	// as an internal error.
+	labels, err := domain.NormalizeProjectRunLabels(req.Msg.GetLabels())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	options := domain.ProjectRunListOptions{
 		ProjectID:      req.Msg.GetProjectId(),
 		AgentName:      req.Msg.GetAgentName(),
@@ -235,7 +243,7 @@ func (h *RunHandler) ListRuns(ctx context.Context, req *connect.Request[agentcom
 		StartedTo:      startedTo,
 		Offset:         offset,
 		Limit:          limit,
-		Labels:         req.Msg.GetLabels(),
+		Labels:         labels,
 	}
 	runs, err := h.store.ListProjectRunsByOptions(ctx, options)
 	if err != nil {

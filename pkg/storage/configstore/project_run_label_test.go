@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -275,4 +276,93 @@ func withTx(ctx context.Context, db *sql.DB, fn func(tx *sql.Tx) error) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func TestInsertProjectRunLabelsTxEnforcesLabelCountLimit(t *testing.T) {
+	ctx := context.Background()
+	store := FromDB(newMemoryDB(t))
+	if err := store.initSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+	if _, err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "project-label-count", Name: "label-count"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	agentID := createRunEventTestAgent(t, runEventTestAgentSpec{Ctx: ctx, Store: store, ProjectID: "project-label-count", AgentName: "worker"})
+
+	labels := func(count int) map[string]string {
+		result := make(map[string]string, count)
+		for index := range count {
+			result[fmt.Sprintf("k%d", index)] = "v"
+		}
+		return result
+	}
+
+	atLimit, err := store.CreateProjectRun(ctx, domain.ProjectRunRecord{
+		RunID: "run-at-limit", ProjectID: "project-label-count", AgentName: "worker", AgentID: agentID,
+		Status: domain.ProjectRunStatusRunning, Labels: labels(domain.MaxProjectRunLabels),
+	})
+	if err != nil {
+		t.Fatalf("create run at limit: %v", err)
+	}
+	if len(atLimit.Labels) != domain.MaxProjectRunLabels {
+		t.Fatalf("labels at limit = %d, want %d", len(atLimit.Labels), domain.MaxProjectRunLabels)
+	}
+
+	_, err = store.CreateProjectRun(ctx, domain.ProjectRunRecord{
+		RunID: "run-over-limit", ProjectID: "project-label-count", AgentName: "worker", AgentID: agentID,
+		Status: domain.ProjectRunStatusRunning, Labels: labels(domain.MaxProjectRunLabels + 1),
+	})
+	if err == nil || !strings.Contains(err.Error(), "label limit") {
+		t.Fatalf("create run over limit error = %v, want label limit rejection", err)
+	}
+	if _, err := store.GetProjectRun(ctx, "run-over-limit"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("run survived rejected oversized label set: %v", err)
+	}
+}
+
+func TestInsertProjectRunLabelsTxTrimsKeys(t *testing.T) {
+	ctx := context.Background()
+	store := FromDB(newMemoryDB(t))
+	if err := store.initSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+	if _, err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "project-label-trim", Name: "label-trim"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	agentID := createRunEventTestAgent(t, runEventTestAgentSpec{Ctx: ctx, Store: store, ProjectID: "project-label-trim", AgentName: "worker"})
+
+	// A padded key must land in the same slot a CLI caller's trimmed key would,
+	// otherwise the two forms become separate labels that miss each other.
+	created, err := store.CreateProjectRun(ctx, domain.ProjectRunRecord{
+		RunID: "run-padded-key", ProjectID: "project-label-trim", AgentName: "worker", AgentID: agentID,
+		Status: domain.ProjectRunStatusRunning, Labels: map[string]string{"  env  ": "prod"},
+	})
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if created.Labels["env"] != "prod" || len(created.Labels) != 1 {
+		t.Fatalf("created labels = %#v, want {env: prod}", created.Labels)
+	}
+	matched, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{
+		ProjectID: "project-label-trim", Labels: map[string]string{"env": "prod"}, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("list by trimmed label: %v", err)
+	}
+	if len(matched) != 1 || matched[0].RunID != "run-padded-key" {
+		t.Fatalf("trimmed filter matched %#v, want run-padded-key", matched)
+	}
+
+	// Two raw keys collapsing to one must be refused rather than resolved by
+	// map iteration order.
+	_, err = store.CreateProjectRun(ctx, domain.ProjectRunRecord{
+		RunID: "run-colliding-keys", ProjectID: "project-label-trim", AgentName: "worker", AgentID: agentID,
+		Status: domain.ProjectRunStatusRunning, Labels: map[string]string{"env": "prod", " env ": "staging"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "more than once") {
+		t.Fatalf("colliding keys error = %v, want duplicate-key rejection", err)
+	}
+	if _, err := store.GetProjectRun(ctx, "run-colliding-keys"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("run survived rejected colliding label keys: %v", err)
+	}
 }

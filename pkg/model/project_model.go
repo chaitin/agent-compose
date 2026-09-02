@@ -1,6 +1,67 @@
 package model
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+const (
+	// MaxProjectRunLabels caps how many labels one run may carry and how many
+	// may be ANDed into a single run list filter. Both directions need a bound.
+	// Unbounded writes let a single run grow project_run_label without limit,
+	// and the filter path emits one EXISTS subquery per label, which trips
+	// SQLite's expression-tree depth limit of 1000 somewhere past 900 labels
+	// and surfaces to the caller as an opaque internal error. The cap sits far
+	// below that ceiling because labels identify a run rather than describe it.
+	MaxProjectRunLabels = 64
+	// MaxProjectRunLabelKeyBytes and MaxProjectRunLabelValueBytes are byte
+	// counts, not rune counts, so a multi-byte key reaches the limit sooner
+	// than its character count suggests.
+	MaxProjectRunLabelKeyBytes   = 128
+	MaxProjectRunLabelValueBytes = 256
+)
+
+// ValidateProjectRunLabelCount bounds a label set without normalizing it, for
+// the list filter path where labels are matched rather than stored.
+func ValidateProjectRunLabelCount(labels map[string]string) error {
+	if len(labels) > MaxProjectRunLabels {
+		return fmt.Errorf("run labels exceed the %d label limit (got %d)", MaxProjectRunLabels, len(labels))
+	}
+	return nil
+}
+
+// NormalizeProjectRunLabels validates a label set and returns it with keys
+// trimmed, so a direct API caller sending " env " and a CLI caller sending
+// "env" converge on one label instead of two that silently miss each other at
+// filter time. Two raw keys that trim to the same key are rejected rather than
+// resolved by map iteration order, which would pick a winner at random.
+func NormalizeProjectRunLabels(labels map[string]string) (map[string]string, error) {
+	if err := ValidateProjectRunLabelCount(labels); err != nil {
+		return nil, err
+	}
+	if len(labels) == 0 {
+		return nil, nil
+	}
+	normalized := make(map[string]string, len(labels))
+	for key, value := range labels {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" {
+			return nil, fmt.Errorf("run label key must not be empty")
+		}
+		if len(trimmed) > MaxProjectRunLabelKeyBytes {
+			return nil, fmt.Errorf("run label key %q exceeds %d bytes", trimmed, MaxProjectRunLabelKeyBytes)
+		}
+		if len(value) > MaxProjectRunLabelValueBytes {
+			return nil, fmt.Errorf("run label value for key %q exceeds %d bytes", trimmed, MaxProjectRunLabelValueBytes)
+		}
+		if _, exists := normalized[trimmed]; exists {
+			return nil, fmt.Errorf("run label key %q is specified more than once after trimming surrounding whitespace", trimmed)
+		}
+		normalized[trimmed] = value
+	}
+	return normalized, nil
+}
 
 const (
 	ProjectRunStatusPending   = "pending"
