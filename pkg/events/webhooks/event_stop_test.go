@@ -36,6 +36,7 @@ func TestEventStopHandler(t *testing.T) {
 		wantRuns            int
 		wantCanceledEvents  int
 		wantPendingEvents   int
+		wantStaleEvents     int
 		wantFailed          []string
 		wantStopped         []string
 		wantSchedulers      []string
@@ -133,6 +134,12 @@ func TestEventStopHandler(t *testing.T) {
 			name: "claimed event is reported as still pending", event: webhookStopEvent("event-1", "github"), token: "token",
 			cancellation: domain.EventDispatchCancellation{InFlight: 2},
 			wantStatus:   http.StatusOK, wantPendingEvents: 2,
+			wantDescendantQuery: true, wantEventIDs: defaultEventIDs,
+		},
+		{
+			name: "expired claim is reported apart from a held one", event: webhookStopEvent("event-1", "github"), token: "token",
+			cancellation: domain.EventDispatchCancellation{InFlight: 1, Stale: 2},
+			wantStatus:   http.StatusOK, wantPendingEvents: 1, wantStaleEvents: 2,
 			wantDescendantQuery: true, wantEventIDs: defaultEventIDs,
 		},
 		{
@@ -258,9 +265,10 @@ func TestEventStopHandler(t *testing.T) {
 				if response.FailedRuns != len(tt.wantFailed) {
 					t.Fatalf("failed_runs=%d, want %d", response.FailedRuns, len(tt.wantFailed))
 				}
-				if response.CanceledEvents != tt.wantCanceledEvents || response.PendingEvents != tt.wantPendingEvents {
-					t.Fatalf("canceled_events=%d pending_events=%d, want %d and %d",
-						response.CanceledEvents, response.PendingEvents, tt.wantCanceledEvents, tt.wantPendingEvents)
+				if response.CanceledEvents != tt.wantCanceledEvents || response.PendingEvents != tt.wantPendingEvents || response.StaleEvents != tt.wantStaleEvents {
+					t.Fatalf("canceled_events=%d pending_events=%d stale_events=%d, want %d, %d and %d",
+						response.CanceledEvents, response.PendingEvents, response.StaleEvents,
+						tt.wantCanceledEvents, tt.wantPendingEvents, tt.wantStaleEvents)
 				}
 			}
 		})

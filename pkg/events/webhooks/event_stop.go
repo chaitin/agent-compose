@@ -30,6 +30,7 @@ type stopEventResponse struct {
 	RequestedRuns  int      `json:"requested_runs"`
 	CanceledEvents int      `json:"canceled_events"`
 	PendingEvents  int      `json:"pending_events"`
+	StaleEvents    int      `json:"stale_events"`
 	FailedRuns     int      `json:"failed_runs"`
 	FailedRunIDs   []string `json:"failed_run_ids,omitempty"`
 	Error          string   `json:"error,omitempty"`
@@ -97,12 +98,14 @@ func (h routeHandler) handleStopEvent(c echo.Context) error {
 			StopRequested:  cancellation.Canceled > 0,
 			CanceledEvents: cancellation.Canceled,
 			PendingEvents:  cancellation.InFlight,
+			StaleEvents:    cancellation.Stale,
 			Error:          "failed to load event deliveries",
 		})
 	}
 	response := stopEventRuns(ctx, h.opts.RunStopper, eventID, req.Reason, deliveries)
 	response.CanceledEvents = cancellation.Canceled
 	response.PendingEvents = cancellation.InFlight
+	response.StaleEvents = cancellation.Stale
 	response.StopRequested = response.RequestedRuns > 0 || response.CanceledEvents > 0
 	if response.FailedRuns > 0 {
 		response.Error = "failed to stop one or more event runs"

@@ -138,13 +138,19 @@ signature secret 当作 token 使用。
 
 ```json
 {"event_id":"evt_123","stop_requested":true,"requested_runs":2,
- "canceled_events":1,"pending_events":0,"failed_runs":0}
+ "canceled_events":1,"pending_events":0,"stale_events":0,"failed_runs":0}
 ```
 
-`pending_events` 表示请求到达时已经被领取投递的事件数量。它们的 run 即将产生，本次
-请求停不掉，因此需要确保全部取消的调用方应在 `pending_events` 大于 0 时重复调用一
-次，重复调用会停掉这些 run。重复调用始终是安全的：已撤回的事件和不再活跃的 run 都
-不会发生变化。
+`pending_events` 和 `stale_events` 都表示请求到达时已经被领取投递的事件，本次请求
+停不掉它们。两者的区别在于 run 何时出现，这决定了什么时候重复调用：
+
+- `pending_events`：认领仍然有效，worker 正在投递，run 马上就会出现。稍后重复调用
+  一次即可停掉。
+- `stale_events`：认领已过期，原投递方已经失联，事件要等下一轮派发才会被重新领取。
+  立刻重复调用什么也停不到；应等到 `GET /api/events/<event-id>/runs` 中出现该 run
+  之后再调用。
+
+重复调用始终是安全的：已撤回的事件和不再活跃的 run 都不会发生变化。
 
 取消是异步的，因此 `stop_requested=true` 并不表示所有 run 已经进入最终状态或取消状
 态已经持久化；这与同步停止确认的语义不同。需要确认停止完成的调用方必须针对已知

@@ -153,15 +153,23 @@ an asynchronous cancellation request counted by `requested_runs`.
 
 ```json
 {"event_id":"evt_123","stop_requested":true,"requested_runs":2,
- "canceled_events":1,"pending_events":0,"failed_runs":0}
+ "canceled_events":1,"pending_events":0,"stale_events":0,"failed_runs":0}
 ```
 
-`pending_events` counts the events that had already been claimed for delivery
-when the request arrived. Their runs are about to exist and this request cannot
-stop them, so a caller that must cancel everything repeats the request once
-`pending_events` is greater than zero; the repeat stops those runs. Repeating is
-always safe: withdrawn events and runs that are no longer active are left
-unchanged.
+`pending_events` and `stale_events` both count events that had already been
+claimed for delivery when the request arrived, so this request could not stop
+them. They differ in when the run appears, which decides when to repeat the
+request:
+
+- `pending_events` — the claim still holds, so a worker is delivering the event
+  and its run exists in a moment. Repeat the request shortly and it stops.
+- `stale_events` — the claim expired, so the delivering worker is gone and the
+  event waits for another dispatch pass to pick it up. An immediate repeat finds
+  nothing to stop; repeat once the run appears in
+  `GET /api/events/<event-id>/runs`.
+
+Repeating is always safe: withdrawn events and runs that are no longer active
+are left unchanged.
 
 Cancellation is asynchronous, so `stop_requested=true` does not mean that every
 run has already reached its final state or that its canceled state has been

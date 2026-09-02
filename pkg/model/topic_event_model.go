@@ -163,11 +163,15 @@ type WebhookSource struct {
 
 // EventDispatchCancellation reports how a stop request affected the events that
 // had not been handed to the scheduler bus yet. Canceled counts the events that
-// will never start a run; InFlight counts the events already claimed for
-// delivery, whose runs the caller must stop with a later request.
+// will never start a run. InFlight and Stale both count events already claimed
+// for delivery, whose runs a later request must stop, and they differ in when
+// that run appears: an in-flight claim is still held, so its run exists in a
+// moment, while a stale claim has expired and the event waits for another
+// dispatch loop to reclaim it.
 type EventDispatchCancellation struct {
 	Canceled int
 	InFlight int
+	Stale    int
 }
 
 type EventDelivery struct {

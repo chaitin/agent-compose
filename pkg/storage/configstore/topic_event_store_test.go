@@ -293,8 +293,15 @@ func TestCancelEventDispatchOnlyWithdrawsWaitingEvents(t *testing.T) {
 	if cancellation.Canceled != 2 {
 		t.Fatalf("canceled=%d, want 2", cancellation.Canceled)
 	}
-	if cancellation.InFlight != 2 {
-		t.Fatalf("in flight=%d, want 2", cancellation.InFlight)
+	// The two publishing events must not be lumped together: only the one whose
+	// claim still holds produces its run in a moment. The expired one waits for
+	// another dispatch pass, so reporting it as in flight would tell the caller
+	// to retry immediately and find nothing.
+	if cancellation.InFlight != 1 {
+		t.Fatalf("in flight=%d, want 1", cancellation.InFlight)
+	}
+	if cancellation.Stale != 1 {
+		t.Fatalf("stale=%d, want 1", cancellation.Stale)
 	}
 
 	for id, original := range statuses {
@@ -329,5 +336,16 @@ func TestCancelEventDispatchOnlyWithdrawsWaitingEvents(t *testing.T) {
 	}
 	if claimed {
 		t.Fatal("withdrawn event was claimed for dispatch")
+	}
+
+	// The stale event is deliberately still dispatchable, which is exactly why
+	// it is reported apart from the in-flight one: its run appears only after
+	// another loop reclaims it.
+	reclaimed, err := store.ClaimEvent(ctx, "expired-claim", "claim-3", time.UnixMilli(1000).UTC(), time.UnixMilli(31000).UTC())
+	if err != nil {
+		t.Fatalf("ClaimEvent returned error: %v", err)
+	}
+	if !reclaimed {
+		t.Fatal("stale event was not reclaimable, so stale_events would be misreported")
 	}
 }
