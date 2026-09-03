@@ -14,6 +14,7 @@ const manualNames = [
   "command-line-manual.md",
   "connect-transport-matrix.md",
   "guest-image-abi.md",
+  "octobus-quickstart.md",
 ];
 const expectedOutput = new Set([
   "agent-compose-yaml-manual.html",
@@ -21,11 +22,13 @@ const expectedOutput = new Set([
   "connect-transport-matrix.html",
   "guest-image-abi.html",
   "index.html",
+  "octobus-quickstart.html",
   "manual.css",
   "zh-CN/agent-compose-yaml-manual.html",
   "zh-CN/command-line-manual.html",
   "zh-CN/connect-transport-matrix.html",
   "zh-CN/guest-image-abi.html",
+  "zh-CN/octobus-quickstart.html",
 ]);
 
 await checkSourceLayout();
