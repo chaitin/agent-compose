@@ -154,8 +154,7 @@ agents:
 ```
 
 Scheduler 脚本可以是内联 JavaScript，也可以通过 `provider: file`、
-`provider: http` 或 `provider: git` 配置外部来源。`config` 和 `up` 会在本地
-读取外部脚本，并把内联内容快照发送给 daemon。例如，通过 HTTP 加载脚本：
+`provider: http` 或 `provider: git` 配置外部来源。HTTP(S) 脚本源必须解析到公网地址，且不会使用环境代理；这是为了避免代理侧 DNS 解析绕过 SSRF 防护。`config` 和 `up` 会在本地读取外部脚本，并把内联内容快照发送给 daemon。例如，通过 HTTP 加载脚本：
 
 ```yaml
 agents:

@@ -9,9 +9,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/compose"
 	"github.com/chaitin/agent-compose/pkg/identity"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -25,11 +23,7 @@ import (
 )
 
 func TestConfigCommandExpandsSchedulerScriptURLs(t *testing.T) {
-	const script = `scheduler.interval("from-url", "1h");`
-	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, script)
-	}))
-	defer httpServer.Close()
+	const script = `scheduler.interval("from-file", "1h");`
 
 	for _, tc := range []struct {
 		name     string
@@ -45,7 +39,6 @@ func TestConfigCommandExpandsSchedulerScriptURLs(t *testing.T) {
 			}
 			return "provider: file\n        path: ./scripts/scheduler.js"
 		}},
-		{name: "HTTP", location: func(string) string { return "provider: http\n        url: " + httpServer.URL + "/scheduler.js" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -69,11 +62,12 @@ agents:
 }
 
 func TestUpResolvesSchedulerScriptURLBeforeApply(t *testing.T) {
-	const script = `scheduler.interval("from-url", "1h");`
-	sourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, script)
-	}))
-	defer sourceServer.Close()
+	const script = `scheduler.interval("from-file", "1h");`
+	composeDir := t.TempDir()
+	scriptPath := filepath.Join(composeDir, "scheduler.js")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	var captured *agentcomposev2.ApplyProjectRequest
 	daemon := newComposeServiceStubServer(t, composeServiceStubs{project: projectServiceStub{
@@ -84,15 +78,15 @@ func TestUpResolvesSchedulerScriptURLBeforeApply(t *testing.T) {
 	}})
 	defer daemon.Close()
 
-	composePath := writeComposeFile(t, t.TempDir(), fmt.Sprintf(`
-name: up-script-url
+	composePath := writeComposeFile(t, composeDir, `
+name: up-script-file
 agents:
   reviewer:
     scheduler:
       script:
-        provider: http
-        url: %s/scheduler.js
-`, sourceServer.URL))
+        provider: file
+        path: ./scheduler.js
+`)
 	_, expected, err := loadResolvedNormalizedCompose(context.Background(), cliOptions{ComposeFile: composePath})
 	if err != nil {
 		t.Fatalf("load expected spec: %v", err)

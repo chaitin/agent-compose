@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -35,16 +36,24 @@ func (f ScriptSourceResolverFunc) Resolve(ctx context.Context, source sources.So
 }
 
 type defaultScriptSourceResolver struct {
-	client *http.Client
-	env    map[string]string
+	client                *http.Client
+	env                   map[string]string
+	validateNetworkTarget func(context.Context, *url.URL) error
 }
 
 // NewDefaultScriptSourceResolver returns the bounded file and HTTP(S) resolver
 // used by CLI compose loading.
 func NewDefaultScriptSourceResolver(env map[string]string) ScriptSourceResolver {
-	resolver := &defaultScriptSourceResolver{env: env}
+	resolver := &defaultScriptSourceResolver{env: env, validateNetworkTarget: validateScriptNetworkTarget}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Do not use environment-configured proxies here. A forward proxy resolves
+	// and fetches the target outside this process, so the daemon cannot enforce
+	// the same public-address SSRF policy on the actual connection.
+	transport.Proxy = nil
+	transport.DialContext = safeScriptDialContext
 	resolver.client = &http.Client{
-		Timeout: defaultScriptSourceTimeout,
+		Timeout:   defaultScriptSourceTimeout,
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) > maxScriptSourceRedirects {
 				return fmt.Errorf("too many redirects (maximum %d)", maxScriptSourceRedirects)
@@ -61,7 +70,7 @@ func NewDefaultScriptSourceResolver(env map[string]string) ScriptSourceResolver 
 			if len(via) > 0 && via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme == "http" {
 				return errors.New("HTTPS redirect downgrade to HTTP is not allowed")
 			}
-			return nil
+			return resolver.validateNetworkTarget(req.Context(), req.URL)
 		},
 	}
 	return resolver
@@ -234,6 +243,9 @@ func readScriptFile(path string) ([]byte, error) {
 }
 
 func (r *defaultScriptSourceResolver) readHTTP(ctx context.Context, location *url.URL, source sources.Source) ([]byte, error) {
+	if err := r.validateNetworkTarget(ctx, location); err != nil {
+		return nil, fmt.Errorf("fetch script from %s: %w", redactedScriptURL(location), err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, location.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("create script request for %s", redactedScriptURL(location))
@@ -241,13 +253,127 @@ func (r *defaultScriptSourceResolver) readHTTP(ctx context.Context, location *ur
 	sources.ApplyHTTPAuthentication(req, source, r.env)
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch script from %s: %s", redactedScriptURL(location), sanitizeScriptFetchError(err))
+		return nil, fmt.Errorf("fetch script from %s: %s%s", redactedScriptURL(location), sanitizeScriptFetchError(err), scriptProxyDisabledDiagnostic())
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("fetch script from %s: unexpected HTTP status %d", redactedScriptURL(location), resp.StatusCode)
 	}
 	return readLimitedScript(resp.Body)
+}
+
+func scriptProxyDisabledDiagnostic() string {
+	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return fmt.Sprintf(" (environment %s is intentionally disabled for SSRF protection)", name)
+		}
+	}
+	return ""
+}
+
+func validateScriptNetworkTarget(ctx context.Context, target *url.URL) error {
+	host := strings.TrimSpace(target.Hostname())
+	if host == "" {
+		return errors.New("script URL requires a valid host")
+	}
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("resolve script URL host: %w", err)
+	}
+	if len(addresses) == 0 {
+		return errors.New("script URL host resolved to no addresses")
+	}
+	for _, address := range addresses {
+		if !isPublicScriptAddress(address.IP) {
+			return fmt.Errorf("script URL host resolves to prohibited address %s", address.IP)
+		}
+	}
+	return nil
+}
+
+func safeScriptDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	dialer := net.Dialer{}
+	return safeScriptDialContextWithResolver(ctx, network, address,
+		func(ctx context.Context, host string) ([]net.IP, error) {
+			addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+			ips := make([]net.IP, 0, len(addresses))
+			for _, address := range addresses {
+				ips = append(ips, address.IP)
+			}
+			return ips, nil
+		}, dialer.DialContext)
+}
+
+func safeScriptDialContextWithResolver(
+	ctx context.Context,
+	network, address string,
+	lookup func(context.Context, string) ([]net.IP, error),
+	dial func(context.Context, string, string) (net.Conn, error),
+) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, fmt.Errorf("parse script endpoint: %w", err)
+	}
+	addresses, err := lookup(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve script endpoint: %w", err)
+	}
+	var dialErrs error
+	for _, candidate := range addresses {
+		if !isPublicScriptAddress(candidate) {
+			continue
+		}
+		conn, dialErr := dial(ctx, network, net.JoinHostPort(candidate.String(), port))
+		if dialErr == nil {
+			return conn, nil
+		}
+		dialErrs = errors.Join(dialErrs, dialErr)
+	}
+	if dialErrs != nil {
+		return nil, dialErrs
+	}
+	return nil, errors.New("script endpoint has no permitted public address")
+}
+
+func isPublicScriptAddress(ip net.IP) bool {
+	if ip == nil || !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		return false
+	}
+	for _, network := range prohibitedScriptNetworks {
+		if network.Contains(ip) {
+			return false
+		}
+	}
+	return true
+}
+
+var prohibitedScriptNetworks = mustParseScriptNetworks([]string{
+	"0.0.0.0/8",
+	"100.64.0.0/10", // RFC 6598 carrier-grade NAT.
+	"192.0.0.0/24",
+	"192.0.2.0/24",    // RFC 5737 documentation.
+	"198.18.0.0/15",   // RFC 2544 benchmarking.
+	"198.51.100.0/24", // RFC 5737 documentation.
+	"203.0.113.0/24",  // RFC 5737 documentation.
+	"224.0.0.0/4",
+	"240.0.0.0/4",
+	"fec0::/10",     // deprecated IPv6 site-local.
+	"2001:db8::/32", // IPv6 documentation.
+})
+
+func mustParseScriptNetworks(cidrs []string) []*net.IPNet {
+	networks := make([]*net.IPNet, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			panic(fmt.Sprintf("invalid script network %q: %v", cidr, err))
+		}
+		networks = append(networks, network)
+	}
+	return networks
 }
 
 func readLimitedScript(reader io.Reader) ([]byte, error) {

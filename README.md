@@ -190,8 +190,10 @@ agents:
 ```
 
 Scheduler scripts may be inline JavaScript or a flat source mapping using
-`provider: file`, `provider: http`, or `provider: git`. `config` and `up`
-fetch mapped sources locally and send an inline snapshot to the daemon. Use
+`provider: file`, `provider: http`, or `provider: git`. HTTP(S) script sources
+must resolve to public addresses and are fetched without environment proxies;
+this prevents SSRF through proxy-side DNS resolution. `config` and `up` fetch
+mapped sources locally and send an inline snapshot to the daemon. Use
 either `scheduler.script` or `scheduler.triggers` in one scheduler.
 
 For example, load a scheduler script over HTTP:
