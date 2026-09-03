@@ -800,8 +800,10 @@ The SDK currently uses only Node standard library APIs, environment variables,
 file system, child processes, built-in `fetch`, and declared npm dependencies.
 `runtime.exec`, `runtime.shell`, and `runtime.agent` do not call back into the Go
 host directly. The host still sees only the outer command cell's
-stdout/stderr/output and artifacts. `runtime.llm` calls the agent-compose
-`LLMService.Generate` Connect JSON endpoint.
+stdout/stderr/output and artifacts. In a managed sandbox, `runtime.llm` calls
+the sandbox-scoped runtime LLM facade (`/api/runtime/sandboxes/<id>/llm/...`)
+with the injected facade token; outside that environment it falls back to the
+public `LLMService.Generate` Connect JSON endpoint.
 
 The runtime CLI provides `prompt`, `exec`, and `workflow` host-dependent
 subcommands. `workflow` executes a restricted JavaScript orchestration script,
@@ -866,14 +868,22 @@ the same Zod schema. When `outputSchema` is set, `finalText` must be a JSON
 string, which the SDK parses into `result.json`; when unset, `result.json` is
 `null`.
 
-`runtime.llm(prompt, options?)` calls `LLMService.Generate`. The daemon selects
-the HTTP protocol with `LLM_API_PROTOCOL` (`responses` by default, or
+`runtime.llm(prompt, options?)` resolves its endpoint in three steps: an
+explicit `baseUrl` option selects the public `LLMService.Generate` Connect JSON
+endpoint; otherwise the managed facade environment (`OPENAI_BASE_URL` /
+`ANTHROPIC_BASE_URL`, or `AGENT_COMPOSE_RUNTIME_BASE_URL` + `SANDBOX_ID`)
+selects the sandbox runtime LLM facade, authenticated with
+`AGENT_COMPOSE_SANDBOX_TOKEN` (falling back to the family-specific
+`OPENAI_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY`); otherwise the
+legacy `BASE_URL` / `HTTP_URL` chain selects `LLMService.Generate` without a
+token. The facade wire protocol follows `LLM_API_PROTOCOL` (`responses` by
+default, `anthropic_messages` for the Anthropic Messages facade, or
 `chat_completions` for OpenAI-compatible Chat Completions backends):
 
 | Field | Description |
 | --- | --- |
 | `model` | Optional model name; server config is used when omitted |
-| `baseUrl` | agent-compose service URL. Defaults in order to `BASE_URL`, `HTTP_URL`, then `http://127.0.0.1:7410` |
+| `baseUrl` | Explicit service URL; always selects `LLMService.Generate`. When omitted, the managed facade environment is used first, then `BASE_URL`, `HTTP_URL`, `AGENT_COMPOSE_BASE_URL`, `AGENT_COMPOSE_HTTP_URL`, and finally `http://127.0.0.1:7410` |
 | `timeoutMs` | Request timeout in milliseconds |
 | `outputSchema` | Zod schema or plain JSON Schema object |
 
@@ -889,12 +899,12 @@ type RuntimeLLMResult<T = unknown> = {
 };
 ```
 
-With `outputSchema`, the SDK sends JSON Schema to `LLMService.Generate` as
-`output_schema`. When schema is set, `text` must be a JSON string; the SDK
-parses it into `json` and validates Zod schemas again locally. With
-`LLM_API_PROTOCOL=responses`, the daemon enforces strict JSON Schema via the
-Responses API. With `chat_completions`, it uses prompt guidance and
-`response_format: json_object` instead.
+With `outputSchema`, the legacy `LLMService.Generate` path sends JSON Schema as
+`output_schema`, the OpenAI Responses facade sends it as strict
+`text.format: json_schema`, and the Anthropic Messages facade appends the
+schema to the prompt. When schema is set, `text` must be a JSON string; the
+SDK parses it into `json` and validates Zod schemas again locally. The facade
+token never appears in thrown errors, stdout, stderr, or persisted artifacts.
 
 `runtime.env` provides:
 
