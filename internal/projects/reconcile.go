@@ -37,6 +37,57 @@ type ReconcileSchedulerOptions struct {
 	RefreshSchedulers      func(ctx context.Context) error
 }
 
+type schedulerReconcileError struct {
+	err                    error
+	storeChanged           bool
+	storeMutationUncertain bool
+	refreshOnly            bool
+}
+
+func (e schedulerReconcileError) Error() string { return e.err.Error() }
+func (e schedulerReconcileError) Unwrap() error { return e.err }
+
+func schedulerReconcileNeedsFailClosed(err error) bool {
+	var reconcileErr schedulerReconcileError
+	return errors.As(err, &reconcileErr) && (reconcileErr.storeChanged || reconcileErr.storeMutationUncertain) && !reconcileErr.refreshOnly
+}
+
+type mutationTrackingSchedulerStore struct {
+	ReconcileSchedulerStore
+	changed   bool
+	uncertain bool
+}
+
+func (s *mutationTrackingSchedulerStore) UpsertProjectScheduler(ctx context.Context, scheduler domain.ProjectSchedulerRecord) (domain.ProjectSchedulerRecord, error) {
+	record, err := s.ReconcileSchedulerStore.UpsertProjectScheduler(ctx, scheduler)
+	if err == nil {
+		s.changed = true
+	} else {
+		s.uncertain = true
+	}
+	return record, err
+}
+
+func (s *mutationTrackingSchedulerStore) SetProjectSchedulerEnabled(ctx context.Context, projectID, schedulerID string, enabled bool) (domain.ProjectSchedulerRecord, error) {
+	record, err := s.ReconcileSchedulerStore.SetProjectSchedulerEnabled(ctx, projectID, schedulerID, enabled)
+	if err == nil {
+		s.changed = true
+	} else if !errors.Is(err, domain.ErrNotFound) || enabled {
+		s.uncertain = true
+	}
+	return record, err
+}
+
+func (s *mutationTrackingSchedulerStore) ReplaceSchedulerTriggers(ctx context.Context, schedulerID string, triggers []domain.SchedulerTrigger) ([]domain.SchedulerTrigger, error) {
+	records, err := s.ReconcileSchedulerStore.ReplaceSchedulerTriggers(ctx, schedulerID, triggers)
+	if err == nil {
+		s.changed = true
+	} else {
+		s.uncertain = true
+	}
+	return records, err
+}
+
 // ReconcileSchedulersRequest describes the project schedulers to reconcile
 // against their scheduler definitions.
 type ReconcileSchedulersRequest struct {
@@ -49,21 +100,27 @@ func ReconcileSchedulers(ctx context.Context, store ReconcileSchedulerStore, req
 	if store == nil {
 		return nil, false, fmt.Errorf("config store is required")
 	}
-	changes, currentByID, unchanged, err := reconcileCurrentSchedulers(ctx, store, req, options)
+	trackedStore := &mutationTrackingSchedulerStore{ReconcileSchedulerStore: store}
+	changes, currentByID, unchanged, err := reconcileCurrentSchedulers(ctx, trackedStore, req, options)
 	if err != nil {
-		return changes, false, err
+		return changes, false, schedulerReconcileError{err: err, storeChanged: trackedStore.changed, storeMutationUncertain: trackedStore.uncertain}
 	}
-	removedChanges, removedUnchanged, err := disableRemovedSchedulers(ctx, store, req, currentByID)
+	removedChanges, removedUnchanged, err := disableRemovedSchedulers(ctx, trackedStore, req, currentByID)
 	changes = append(changes, removedChanges...)
 	if err != nil {
-		return changes, false, err
+		return changes, false, schedulerReconcileError{err: err, storeChanged: trackedStore.changed, storeMutationUncertain: trackedStore.uncertain}
 	}
 	if !removedUnchanged {
 		unchanged = false
 	}
 	if options.RefreshSchedulers != nil {
 		if err := options.RefreshSchedulers(ctx); err != nil {
-			return changes, false, fmt.Errorf("refresh scheduler controller: %w", err)
+			return changes, false, schedulerReconcileError{
+				err:                    fmt.Errorf("refresh scheduler controller: %w", err),
+				storeChanged:           trackedStore.changed,
+				storeMutationUncertain: trackedStore.uncertain,
+				refreshOnly:            true,
+			}
 		}
 	}
 	return changes, unchanged, nil
@@ -164,6 +221,17 @@ func disableRemovedSchedulers(ctx context.Context, store ReconcileSchedulerStore
 		}
 		disabled, err := store.SetProjectSchedulerEnabled(ctx, existing.ProjectID, existing.SchedulerID, false)
 		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				unchanged = false
+				changes = append(changes, Change{
+					Action:       ChangeActionRemoved,
+					ResourceType: "scheduler",
+					ResourceID:   existing.ID,
+					Name:         existing.AgentName,
+					Message:      "already absent while disabling removed scheduler",
+				})
+				continue
+			}
 			return changes, false, fmt.Errorf("disable removed project scheduler %s/%s: %w", existing.ProjectID, existing.SchedulerID, err)
 		}
 		unchanged = false

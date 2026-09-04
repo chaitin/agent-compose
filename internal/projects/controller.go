@@ -406,6 +406,11 @@ func (c *Controller) applyProject(ctx context.Context, req ApplyRequest, lifecyc
 	})
 	if err != nil {
 		changes = append(changes, schedulerChanges...)
+		if schedulerReconcileNeedsFailClosed(err) {
+			if failClosedErr := c.disableProjectSchedulersAfterReconcileFailure(ctx, project.ID); failClosedErr != nil {
+				err = errors.Join(err, failClosedErr)
+			}
+		}
 		agents, listAgentsErr := c.store.ListProjectAgents(ctx, project.ID)
 		if listAgentsErr != nil {
 			// The listing failure is reported for diagnosis only and is formatted
@@ -785,6 +790,33 @@ func (c *Controller) refreshSchedulers(ctx context.Context) error {
 		return nil
 	}
 	return c.schedulers.Refresh(ctx)
+}
+
+// disableProjectSchedulersAfterReconcileFailure makes a partially applied
+// project fail closed. Without this compensation, schedulers that were enabled
+// before a later scheduler failed could continue running against a revision
+// whose complete scheduler set was never reconciled.
+func (c *Controller) disableProjectSchedulersAfterReconcileFailure(ctx context.Context, projectID string) error {
+	schedulers, err := c.store.ListProjectSchedulers(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("list schedulers while failing closed: %w", err)
+	}
+	var disableErr error
+	for _, scheduler := range schedulers {
+		if !scheduler.Enabled {
+			continue
+		}
+		if _, err := c.store.SetProjectSchedulerEnabled(ctx, projectID, scheduler.SchedulerID, false); err != nil {
+			disableErr = errors.Join(disableErr, fmt.Errorf("disable scheduler %s: %w", scheduler.SchedulerID, err))
+		}
+	}
+	if err := c.refreshSchedulers(ctx); err != nil {
+		disableErr = errors.Join(disableErr, fmt.Errorf("refresh scheduler controller after fail-closed compensation: %w", err))
+	}
+	if disableErr != nil {
+		return fmt.Errorf("fail-closed scheduler compensation: %w", disableErr)
+	}
+	return nil
 }
 
 func (c *Controller) getProjectAgentIfExists(ctx context.Context, projectID, agentName string) (domain.ProjectAgentRecord, bool, error) {
