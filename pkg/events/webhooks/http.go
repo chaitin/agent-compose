@@ -23,6 +23,7 @@ type Store interface {
 	GetEvent(context.Context, string) (domain.TopicEventRecord, error)
 	ListEvents(context.Context, domain.TopicEventFilter) ([]domain.TopicEventRecord, int, error)
 	ListDescendantEventIDs(context.Context, string, int) ([]string, error)
+	ListCorrelatedEventIDs(context.Context, string, int) ([]string, error)
 	ListEventSandboxLinks(context.Context, []string) ([]domain.EventSandboxTraceItem, error)
 	ListEventDeliveries(context.Context, []string) ([]domain.EventDelivery, error)
 	CancelEventDispatch(context.Context, []string, string) (domain.EventDispatchCancellation, error)
