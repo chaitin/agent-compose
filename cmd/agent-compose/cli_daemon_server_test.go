@@ -22,6 +22,29 @@ import (
 	"github.com/samber/do/v2"
 )
 
+func TestDaemonServerConfiguresConnectionLimits(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	servers := &daemonServers{}
+	servers.add("HTTP_LISTEN", listener.Addr().String(), listener, http.NewServeMux(), nil)
+	server := servers.items[0].server
+	if server.ReadHeaderTimeout != 5*time.Second || server.IdleTimeout != 2*time.Minute || server.MaxHeaderBytes != 64<<10 {
+		t.Fatalf("server limits = header %s idle %s max-header %d", server.ReadHeaderTimeout, server.IdleTimeout, server.MaxHeaderBytes)
+	}
+	if server.WriteTimeout != 0 {
+		t.Fatalf("server WriteTimeout = %s, want zero for long-running streams", server.WriteTimeout)
+	}
+	config := servers.items[0].h2c
+	if config == nil || config.IdleTimeout != 0 || config.ReadIdleTimeout != 0 || config.PingTimeout != 0 || config.WriteByteTimeout != 0 {
+		t.Fatalf("h2c connection limits = %#v, want all zero for long-running streams", config)
+	}
+	if err := servers.shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown server: %v", err)
+	}
+}
+
 func TestDaemonTCPServerAttachAgentRunBidiUsesH2C(t *testing.T) {
 	seen := make(chan string, 1)
 	mux := http.NewServeMux()

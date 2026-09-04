@@ -66,6 +66,7 @@ type daemonServer struct {
 	listener net.Listener
 	server   *http.Server
 	cleanup  func() error
+	h2c      *http2.Server
 }
 
 type localUnixSocketRequestKey struct{}
@@ -271,7 +272,15 @@ func isLoopbackListenAddress(address string) bool {
 }
 
 func (s *daemonServers) add(name, value string, listener net.Listener, handler http.Handler, cleanup func() error) {
-	server := &http.Server{Handler: h2c.NewHandler(handler, &http2.Server{})} //nolint:staticcheck // h2c is required for unencrypted HTTP/2 compatibility with Connect bidi streams.
+	// Keep HTTP/2 connection timeouts disabled: this server carries long-lived
+	// Connect bidi streams, whose idle periods are part of the protocol.
+	h2cConfig := &http2.Server{}
+	server := &http.Server{
+		Handler:           h2c.NewHandler(handler, h2cConfig), //nolint:staticcheck // h2c is required for unencrypted HTTP/2 compatibility with Connect bidi streams.
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    64 << 10,
+	}
 	if listener.Addr().Network() == "unix" {
 		server.ConnContext = func(ctx context.Context, conn net.Conn) context.Context {
 			if isTrustedUnixSocketConn(conn) {
@@ -286,6 +295,7 @@ func (s *daemonServers) add(name, value string, listener net.Listener, handler h
 		listener: listener,
 		server:   server,
 		cleanup:  cleanup,
+		h2c:      h2cConfig,
 	})
 }
 

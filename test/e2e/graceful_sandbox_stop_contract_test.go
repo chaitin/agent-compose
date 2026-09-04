@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/chaitin/agent-compose/pkg/agentcompose/api"
@@ -68,9 +69,9 @@ func TestGracefulSandboxStopOutcomesUsePublicConnectContract(t *testing.T) {
 			t.Cleanup(server.Close)
 			client := agentcomposev2connect.NewSandboxServiceClient(server.Client(), server.URL)
 
-			request := *test.request
+			request := proto.Clone(test.request).(*agentcomposev2.StopSandboxRequest)
 			request.SandboxId = sandboxID
-			response, err := client.StopSandbox(context.Background(), connect.NewRequest(&request))
+			response, err := client.StopSandbox(context.Background(), connect.NewRequest(request))
 			if test.wantCode != 0 {
 				if connect.CodeOf(err) != test.wantCode {
 					t.Fatalf("StopSandbox() error = %v, code = %s, want %s", err, connect.CodeOf(err), test.wantCode)
