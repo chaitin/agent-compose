@@ -120,9 +120,16 @@ func httpError(op string, response *http.Response) error {
 // stream is one Connect bidirectional stream. Send is safe to call
 // concurrently with recv; concurrent sends serialize.
 type stream struct {
-	op       string
-	body     *io.PipeWriter
+	op   string
+	body *io.PipeWriter
+
+	// ready closes once the response is known. The request is dispatched in
+	// the background because a Connect handler does not write response headers
+	// until it has received the first client message: waiting for headers
+	// before sending the opening frame deadlocks both sides.
+	ready    chan struct{}
 	response *http.Response
+	openErr  error
 
 	sendMu sync.Mutex
 	sent   bool
@@ -130,8 +137,9 @@ type stream struct {
 	header [5]byte
 }
 
-// openStream starts a bidirectional Connect stream and waits for the server's
-// response headers. Connect requires HTTP/2 for bidirectional streams.
+// openStream starts a bidirectional Connect stream. It returns before the
+// server has responded; recv reports any failure to open. Connect requires
+// HTTP/2 for bidirectional streams.
 func (t *transport) openStream(ctx context.Context, op, procedure string) (*stream, error) {
 	reader, writer := io.Pipe()
 	request, err := t.request(ctx, op, procedure, streamMediaType, reader)
@@ -139,26 +147,38 @@ func (t *transport) openStream(ctx context.Context, op, procedure string) (*stre
 		_ = writer.Close()
 		return nil, err
 	}
-	response, err := t.client.Do(request)
-	if err != nil {
-		_ = writer.Close()
-		return nil, unavailable(op, err)
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		defer func() { _ = response.Body.Close() }()
-		_ = writer.Close()
-		return nil, httpError(op, response)
-	}
-	if response.ProtoMajor < 2 {
-		defer func() { _ = response.Body.Close() }()
-		_ = writer.Close()
-		return nil, &Error{
-			Op:      op,
-			Code:    "unavailable",
-			Message: "conversations need HTTP/2; the daemon answered HTTP/1, which an intermediate proxy usually causes",
+	opened := &stream{op: op, body: writer, ready: make(chan struct{})}
+	go func() {
+		defer close(opened.ready)
+		// Any failure is also pushed into the pipe, so a send blocked writing
+		// the opening frame fails instead of waiting for a reader that will
+		// never arrive.
+		fail := func(err error) {
+			opened.openErr = err
+			_ = writer.CloseWithError(err)
 		}
-	}
-	return &stream{op: op, body: writer, response: response}, nil
+		response, err := t.client.Do(request)
+		if err != nil {
+			fail(unavailable(op, err))
+			return
+		}
+		switch {
+		case response.StatusCode < 200 || response.StatusCode >= 300:
+			failure := httpError(op, response)
+			_ = response.Body.Close()
+			fail(failure)
+		case response.ProtoMajor < 2:
+			_ = response.Body.Close()
+			fail(&Error{
+				Op:      op,
+				Code:    "unavailable",
+				Message: "conversations need HTTP/2; the daemon answered HTTP/1, which an intermediate proxy usually causes",
+			})
+		default:
+			opened.response = response
+		}
+	}()
+	return opened, nil
 }
 
 // send writes one message envelope.
@@ -197,8 +217,13 @@ func (s *stream) closeSend() error {
 }
 
 // recv decodes the next message envelope. It returns io.EOF once the server
-// ends the stream without an error, and an [Error] when it ends with one.
+// ends the stream without an error, and an [Error] when it ends with one or
+// when the stream could not be opened.
 func (s *stream) recv(out any) error {
+	<-s.ready
+	if s.openErr != nil {
+		return s.openErr
+	}
 	for {
 		if _, err := io.ReadFull(s.response.Body, s.header[:]); err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
@@ -233,10 +258,17 @@ func (s *stream) recv(out any) error {
 	}
 }
 
-// close abandons the stream in both directions.
+// close abandons the stream in both directions. It does not wait for the
+// server, so a daemon that has stopped answering cannot hold Close up.
 func (s *stream) close() error {
-	_ = s.closeSend()
-	return s.response.Body.Close()
+	err := s.closeSend()
+	go func() {
+		<-s.ready
+		if s.response != nil {
+			_ = s.response.Body.Close()
+		}
+	}()
+	return err
 }
 
 // defaultHTTPClient returns a client able to carry Connect bidirectional

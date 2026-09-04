@@ -8,6 +8,129 @@ import (
 	"time"
 )
 
+func TestSendDoesNotWaitForResponseHeadersBeforeOpening(t *testing.T) {
+	// A Connect handler writes response headers only after receiving the
+	// client's first message. Waiting for headers before sending the opening
+	// frame deadlocks: the daemon never answers and the turn never starts.
+	daemon := newFakeDaemon(t)
+	daemon.attach = func(stream *fakeStream) {
+		// Nothing is written until the opening frame has arrived, exactly as
+		// the daemon behaves.
+		if _, ok := stream.recv(); !ok {
+			return
+		}
+		stream.send(wireAttachResponse{TurnComplete: &wireTurnCompleted{}})
+		<-stream.hold
+	}
+
+	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
+	defer func() { _ = conversation.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	reply, err := conversation.Send(ctx, "hi")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if _, err := reply.Wait(ctx); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+}
+
+func TestSendReportsAnUnreachableDaemonRatherThanBlocking(t *testing.T) {
+	client, err := New(Config{BaseURL: "http://127.0.0.1:1"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	conversation := client.Agent("project-1", "reviewer").Start()
+	defer func() { _ = conversation.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	reply, err := conversation.Send(ctx, "hi")
+	if err == nil {
+		if _, err = reply.Wait(ctx); err == nil {
+			t.Fatal("the turn succeeded against a closed port")
+		}
+	}
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("error = %v, want ErrUnavailable", err)
+	}
+}
+
+func TestTheSessionOutlivesTheContextOfTheSendThatOpenedIt(t *testing.T) {
+	// A server handling an HTTP request sends on the request's context. That
+	// context ends with the request, but the conversation does not: the next
+	// message must still land on the same session, with the agent's context
+	// intact.
+	daemon := newFakeDaemon(t)
+	frames := make(chan wireAttachRequest, 2)
+	daemon.attach = func(stream *fakeStream) {
+		for range 2 {
+			frame, ok := stream.recv()
+			if !ok {
+				return
+			}
+			frames <- frame
+			stream.send(wireAttachResponse{TurnComplete: &wireTurnCompleted{}})
+		}
+		<-stream.hold
+	}
+
+	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
+	defer func() { _ = conversation.Close() }()
+
+	first, cancelFirst := context.WithCancel(context.Background())
+	reply, err := conversation.Send(first, "first")
+	if err != nil {
+		t.Fatalf("first Send: %v", err)
+	}
+	if _, err := reply.Wait(first); err != nil {
+		t.Fatalf("first Wait: %v", err)
+	}
+	cancelFirst()
+
+	second, err := conversation.Send(context.Background(), "second")
+	if err != nil {
+		t.Fatalf("second Send after the first context ended: %v", err)
+	}
+	if _, err := second.Wait(context.Background()); err != nil {
+		t.Fatalf("second Wait: %v", err)
+	}
+	<-frames
+	followUp := <-frames
+	if followUp.HumanMessage == nil || followUp.HumanMessage.Text != "second" {
+		t.Fatalf("second frame = %#v, want a human message on the same session", followUp)
+	}
+	if attaches := daemon.count("AttachAgentRun"); attaches != 1 {
+		t.Errorf("attach count = %d, want 1: the session must survive the first context", attaches)
+	}
+}
+
+func TestCloseReturnsEvenWhenTheDaemonStopsAnswering(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	daemon.attach = func(stream *fakeStream) {
+		// Accept the opening frame and then go silent, never answering.
+		_, _ = stream.recv()
+		<-stream.hold
+	}
+
+	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
+	if _, err := conversation.Send(context.Background(), "hi"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- conversation.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close blocked on a daemon that stopped answering")
+	}
+}
+
 func TestSendStreamsATurnAndAccumulatesTheAnswer(t *testing.T) {
 	daemon := newFakeDaemon(t)
 	starts := make(chan *wireAttachStart, 1)

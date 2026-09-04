@@ -27,9 +27,11 @@ type Conversation struct {
 	id     string
 	labels map[string]string
 
-	mu         sync.Mutex
-	stream     *stream
-	loopDone   chan struct{}
+	mu     sync.Mutex
+	stream *stream
+	// cancel tears down the stream's own context. The stream outlives any one
+	// Send, so it must not borrow that call's context.
+	cancel     context.CancelFunc
 	runID      string
 	sandboxID  string
 	continuity Continuity
@@ -193,23 +195,24 @@ func (c *Conversation) History(ctx context.Context) ([]Message, error) {
 // [Conversation.Delete] only to end one for good.
 func (c *Conversation) Close() error {
 	c.mu.Lock()
-	stream, current := c.stream, c.current
-	c.stream, c.current, c.closed = nil, nil, true
-	done := c.loopDone
-	c.loopDone = nil
+	opened, current, cancel := c.stream, c.current, c.cancel
+	c.stream, c.current, c.cancel = nil, nil, nil
+	c.closed = true
 	c.mu.Unlock()
 
 	if current != nil {
 		current.finish(nil, time.Time{}, ErrClosed)
 	}
-	if stream == nil {
+	if cancel != nil {
+		cancel()
+	}
+	if opened == nil {
 		return nil
 	}
-	err := stream.close()
-	if done != nil {
-		<-done
-	}
-	if err != nil && !errors.Is(err, io.ErrClosedPipe) {
+	// Deliberately not waiting for the reader: a daemon that has stopped
+	// answering must not be able to hold Close up. Cancelling the stream's
+	// context is what lets the reader finish.
+	if err := opened.close(); err != nil && !errors.Is(err, io.ErrClosedPipe) {
 		return err
 	}
 	return nil
@@ -264,8 +267,13 @@ func (c *Conversation) interrupt(ctx context.Context) error {
 // Callers must hold c.mu, except in Open where the conversation is not yet
 // shared.
 func (c *Conversation) attach(ctx context.Context, op, prompt string) error {
-	stream, err := c.agent.client.transport.openStream(ctx, op, "AttachAgentRun")
+	// The stream belongs to the conversation, not to this call: a Send whose
+	// context is a single HTTP request's must not take the session down with
+	// it when that request ends. Values are kept, cancellation is not.
+	streamCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	opened, err := c.agent.client.transport.openStream(streamCtx, op, "AttachAgentRun")
 	if err != nil {
+		cancel()
 		return err
 	}
 	start := &wireAttachStart{
@@ -291,20 +299,19 @@ func (c *Conversation) attach(ctx context.Context, op, prompt string) error {
 			Labels:        labels,
 		}
 	}
-	if err := stream.send(wireAttachRequest{Start: start}); err != nil {
-		_ = stream.close()
+	if err := opened.send(wireAttachRequest{Start: start}); err != nil {
+		cancel()
+		_ = opened.close()
 		return err
 	}
-	done := make(chan struct{})
-	c.stream = stream
-	c.loopDone = done
-	go c.readLoop(stream, done)
+	c.stream = opened
+	c.cancel = cancel
+	go c.readLoop(opened)
 	return nil
 }
 
 // readLoop translates server frames until the stream ends.
-func (c *Conversation) readLoop(stream *stream, done chan struct{}) {
-	defer close(done)
+func (c *Conversation) readLoop(stream *stream) {
 	for {
 		var frame wireAttachResponse
 		err := stream.recv(&frame)
@@ -393,10 +400,13 @@ func (c *Conversation) takeReply() *Reply {
 // environment is gone with it, so the next Send builds a new one.
 func (c *Conversation) finishSession(err error, resultJSON string, at time.Time) {
 	c.mu.Lock()
-	reply := c.current
-	c.current, c.stream, c.runID = nil, nil, ""
+	reply, cancel := c.current, c.cancel
+	c.current, c.stream, c.cancel, c.runID = nil, nil, nil, ""
 	c.continuity = Restarted
 	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	if reply != nil {
 		reply.finish(json.RawMessage(resultJSON), at, err)
 	}
@@ -410,9 +420,12 @@ func (c *Conversation) finishSession(err error, resultJSON string, at time.Time)
 // A turn in flight still fails: its outcome is genuinely unknown here.
 func (c *Conversation) dropStream(err error) {
 	c.mu.Lock()
-	reply := c.current
-	c.current, c.stream = nil, nil
+	reply, cancel := c.current, c.cancel
+	c.current, c.stream, c.cancel = nil, nil, nil
 	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	if reply != nil {
 		reply.finish(nil, time.Time{}, err)
 	}

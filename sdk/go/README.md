@@ -133,10 +133,26 @@ and allows one `Reply` in flight at a time; a second `Send` returns `ErrBusy`.
   conversation table; products store their own thread list, which they need
   anyway for titles, ownership, and ordering.
 
-## Example
+## Examples
+
+A terminal client:
 
 ```bash
 export AGENT_COMPOSE_TOKEN=optional-token
 go run ./examples/chat -project my-project -agent my-agent
 go run ./examples/chat -project my-project -agent my-agent -conversation conv_1a2b3c
 ```
+
+A browser chat UI:
+
+```bash
+go run ./examples/uiserver -daemon http://127.0.0.1:7411
+# http://127.0.0.1:7500
+```
+
+The UI server is also the answer to "why not talk to the daemon from the
+browser directly". A browser cannot: Connect needs HTTP/2 bidirectional
+streaming for a multi-turn session, and a `fetch()` with a streaming request
+body is half duplex, so nothing comes back while that body stays open. The
+server holds the conversation on the Go side, where this SDK handles it, and
+gives the browser the one-way event stream it can actually consume.

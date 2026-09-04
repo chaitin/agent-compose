@@ -102,11 +102,15 @@ func (d *fakeDaemon) handleAttach(w http.ResponseWriter, r *http.Request) {
 	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		d.t.Fatalf("response writer cannot flush")
+		d.t.Errorf("response writer cannot flush")
+		return
 	}
 	w.Header().Set("Content-Type", streamMediaType)
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
+	// Deliberately no WriteHeader here. A Connect handler writes response
+	// headers only once it has something to say, which in practice means after
+	// it has received the client's first message. A client that waits for
+	// headers before sending that message deadlocks, so the fake reproduces
+	// the real ordering rather than a friendlier one.
 
 	stream := &fakeStream{t: d.t, body: r.Body, out: w, flush: flusher.Flush, hold: d.hold}
 	if d.attach != nil {
