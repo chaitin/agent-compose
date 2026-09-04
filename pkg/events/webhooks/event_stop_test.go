@@ -25,6 +25,7 @@ func TestEventStopHandler(t *testing.T) {
 		body                string
 		bodyLimit           int64
 		eventIDs            []string
+		correlatedIDs       []string
 		deliveries          []domain.EventDelivery
 		stopResults         []bool
 		stopErrs            []error
@@ -183,6 +184,22 @@ func TestEventStopHandler(t *testing.T) {
 			eventIDs: webhookStopEventIDs(maxStopEventCount + 1), deliveries: []domain.EventDelivery{{RunID: "run-1"}},
 			wantStatus: http.StatusConflict, wantDescendantQuery: true,
 		},
+		{
+			name: "correlated event outside the parent chain is stopped too", event: webhookStopEvent("event-1", "github"), token: "token",
+			correlatedIDs: []string{"event-1", "sibling-event"},
+			deliveries:    []domain.EventDelivery{{EventID: "event-1", RunID: "run-1"}, {EventID: "sibling-event", RunID: "run-2"}},
+			stopResults:   []bool{true, true},
+			wantStatus:    http.StatusOK, wantRequested: true, wantRuns: 2, wantStopped: []string{"run-1", "run-2"},
+			wantDescendantQuery: true, wantEventIDs: []string{"event-1", "child-event", "sibling-event"},
+		},
+		{
+			name: "correlated event already in the parent chain is not duplicated", event: webhookStopEvent("event-1", "github"), token: "token",
+			correlatedIDs: []string{"event-1", "child-event"},
+			deliveries:    []domain.EventDelivery{{EventID: "child-event", RunID: "run-1"}},
+			stopResults:   []bool{true},
+			wantStatus:    http.StatusOK, wantRequested: true, wantRuns: 1, wantStopped: []string{"run-1"},
+			wantDescendantQuery: true, wantEventIDs: defaultEventIDs,
+		},
 	}
 
 	for _, tt := range tests {
@@ -201,7 +218,7 @@ func TestEventStopHandler(t *testing.T) {
 				}
 			}
 			store := &webhookStopStore{
-				webhookRouteStore: base, descendantIDs: tt.eventIDs, deliveries: deliveries,
+				webhookRouteStore: base, descendantIDs: tt.eventIDs, correlatedIDs: tt.correlatedIDs, deliveries: deliveries,
 				cancellation: tt.cancellation, cancelErr: tt.cancelErr, deliveryErr: tt.deliveryErr,
 			}
 			stopper := &recordingRunStopper{results: tt.stopResults, errs: tt.stopErrs, store: store}
@@ -224,6 +241,9 @@ func TestEventStopHandler(t *testing.T) {
 			if tt.wantDescendantQuery {
 				if store.gotRootEventID != "event-1" || store.gotDescendantLimit != maxStopEventCount+1 {
 					t.Fatalf("descendant query root=%q limit=%d, want event-1 and %d", store.gotRootEventID, store.gotDescendantLimit, maxStopEventCount+1)
+				}
+				if store.gotCorrelatedLimit != maxStopEventCount+1 {
+					t.Fatalf("correlated query limit=%d, want %d", store.gotCorrelatedLimit, maxStopEventCount+1)
 				}
 			}
 			if !equalStrings(store.gotEventIDs, tt.wantEventIDs) {
@@ -321,12 +341,14 @@ func equalStrings(got, want []string) bool {
 type webhookStopStore struct {
 	*webhookRouteStore
 	descendantIDs       []string
+	correlatedIDs       []string
 	deliveries          []domain.EventDelivery
 	cancellation        domain.EventDispatchCancellation
 	cancelErr           error
 	deliveryErr         error
 	gotRootEventID      string
 	gotDescendantLimit  int
+	gotCorrelatedLimit  int
 	gotEventIDs         []string
 	gotCancelEventIDs   []string
 	gotCancelReason     string
@@ -341,6 +363,17 @@ func (s *webhookStopStore) ListDescendantEventIDs(_ context.Context, rootEventID
 		return []string{"event-1", "child-event"}, nil
 	}
 	return append([]string(nil), s.descendantIDs...), nil
+}
+
+// ListCorrelatedEventIDs defaults to just the root event, matching
+// production's default correlation_id (the event's own ID), so existing
+// tests that don't set correlatedIDs see no change in the merged set.
+func (s *webhookStopStore) ListCorrelatedEventIDs(_ context.Context, rootEventID string, limit int) ([]string, error) {
+	s.gotCorrelatedLimit = limit
+	if s.correlatedIDs == nil {
+		return []string{rootEventID}, nil
+	}
+	return append([]string(nil), s.correlatedIDs...), nil
 }
 
 func (s *webhookStopStore) ListEventDeliveries(_ context.Context, eventIDs []string) ([]domain.EventDelivery, error) {

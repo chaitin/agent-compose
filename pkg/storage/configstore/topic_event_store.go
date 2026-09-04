@@ -516,6 +516,49 @@ func (s *eventStore) ListDescendantEventIDs(ctx context.Context, rootEventID str
 	return ids, nil
 }
 
+// ListCorrelatedEventIDs returns the IDs of every event sharing eventID's
+// correlation_id, eventID included. A webhook forwarder that POSTs a
+// follow-up event into a separate topic never sets parent_event_id on it, so
+// correlation_id is the only link between such an event and the one that
+// triggered it; ListDescendantEventIDs alone would miss it.
+func (s *eventStore) ListCorrelatedEventIDs(ctx context.Context, eventID string, limit int) ([]string, error) {
+	eventID = strings.TrimSpace(eventID)
+	if eventID == "" {
+		return nil, fmt.Errorf("event id is required")
+	}
+	if limit <= 0 || limit > maxDescendantEventIDs {
+		limit = maxDescendantEventIDs
+	}
+	var correlationID string
+	if err := s.db.QueryRowContext(ctx, `SELECT correlation_id FROM event WHERE id = ?`, eventID).Scan(&correlationID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ResourceError(domain.ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), err)
+		}
+		return nil, fmt.Errorf("load event correlation id: %w", err)
+	}
+	correlationID = strings.TrimSpace(correlationID)
+	if correlationID == "" {
+		return []string{eventID}, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM event WHERE correlation_id = ? ORDER BY sequence ASC LIMIT ?`, correlationID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query correlated events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	ids := make([]string, 0, limit)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan correlated event: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate correlated events: %w", err)
+	}
+	return ids, nil
+}
+
 // childEventIDs reads the direct children of one event. The traversal above
 // visits many parents, so the cursor is owned by this call rather than deferred
 // to the end of the walk.

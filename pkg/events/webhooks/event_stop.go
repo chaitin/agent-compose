@@ -79,6 +79,11 @@ func (h routeHandler) handleStopEvent(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load event descendants"})
 	}
+	correlatedIDs, err := h.store().ListCorrelatedEventIDs(ctx, eventID, maxStopEventCount+1)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load correlated events"})
+	}
+	eventIDs = mergeEventIDs(eventIDs, correlatedIDs)
 	if len(eventIDs) > maxStopEventCount {
 		return c.JSON(http.StatusConflict, map[string]any{
 			"error":           "event descendant limit exceeded",
@@ -114,6 +119,28 @@ func (h routeHandler) handleStopEvent(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, response)
 	}
 	return c.JSON(http.StatusOK, response)
+}
+
+// mergeEventIDs unions two ID lists, keeping a's order first and appending
+// b's members that a doesn't already contain.
+func mergeEventIDs(a, b []string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	merged := make([]string, 0, len(a)+len(b))
+	for _, id := range a {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		merged = append(merged, id)
+	}
+	for _, id := range b {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		merged = append(merged, id)
+	}
+	return merged
 }
 
 func stopEventSourceID(payloadJSON string) (string, error) {

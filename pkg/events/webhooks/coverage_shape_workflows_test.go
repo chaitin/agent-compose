@@ -391,6 +391,10 @@ func (s *webhookRouteStore) ListDescendantEventIDs(context.Context, string, int)
 	return []string{"event-1"}, nil
 }
 
+func (s *webhookRouteStore) ListCorrelatedEventIDs(context.Context, string, int) ([]string, error) {
+	return []string{"event-1"}, nil
+}
+
 func (s *webhookRouteStore) ListEventSandboxLinks(context.Context, []string) ([]domain.EventSandboxTraceItem, error) {
 	return []domain.EventSandboxTraceItem{{EventID: "event-1", SandboxID: "session-1", Relation: "created"}}, nil
 }
