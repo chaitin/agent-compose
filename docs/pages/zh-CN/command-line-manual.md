@@ -115,7 +115,10 @@ topic，以及 Bearer、`X-WEBHOOK-TOKEN` 或自定义 header token。
 
 #### 停止 Webhook 事件触发的运行
 
-提交 webhook 的客户端可以在之后请求取消该事件及其后代事件关联的全部活跃 run：
+提交 webhook 的客户端可以在之后请求取消该事件、其后代事件，以及与该请求事件共享
+`correlation_id` 的全部事件所关联的活跃 run。`correlation_id` 的停止范围是整个关联
+组，而不只是因果后代：同组中更早、更晚和同级的事件都会纳入，即使它们由不同的
+webhook source 提交。
 
 ```http
 POST /api/webhooks/events/<event-id>/stop
@@ -125,16 +128,18 @@ Content-Type: application/json
 {"reason":"business canceled"}
 ```
 
-JSON 请求体可以省略。该 endpoint 只接受事件所属 webhook source 配置的静态
-token；source 配置了自定义 token header 时也沿用该 header。GitHub 请求签名只能
+JSON 请求体可以省略。该 endpoint 只接受请求事件所属 webhook source 配置的静态
+token；source 配置了自定义 token header 时也沿用该 header。停止范围内的后代或
+关联事件即使属于其他 source，也不会再分别校验其 source token。GitHub 请求签名只能
 证明单次 delivery 的真实性，不是可复用的控制凭据。因此，没有配置静态 source
 token 的 signed 或 unsigned GitHub source 可以接收事件，但不能调用此停止
 endpoint。若这些事件需要支持停止，应另外配置 source token，不能把 GitHub
 signature secret 当作 token 使用。
 
-该请求同时覆盖事件已经启动的 run 和尚未启动的投递。仍在投递队列中等待的事件会被
-撤回，不会再启动 run，数量记在 `canceled_events`；已经活跃的 run 会收到异步取消
-请求，数量记在 `requested_runs`。
+对于停止范围内的每个后代或关联事件，该请求同时覆盖已经启动的 run 和尚未启动的
+投递。仍在投递队列中等待的事件会被撤回，不会再启动 run，数量记在
+`canceled_events`；已经活跃的 run 会收到异步取消请求，数量记在
+`requested_runs`。
 
 ```json
 {"event_id":"evt_123","stop_requested":true,"requested_runs":2,"pending_runs":0,
@@ -164,12 +169,13 @@ run ID 轮询 `GetSchedulerRun`，或轮询 `ListSchedulerRuns`（CLI 命令
 `agent-compose scheduler runs`），直到受影响的 run 报告终态 `succeeded`、`failed`、
 `canceled` 或 `skipped`。
 
-daemon 单次最多处理同一事件树中的 1,000 个事件。事件树更大时，会在停止任何 run
-之前返回 `409` 和 `max_event_count`，不会把被截断的结果当作成功。如果个别停止操作
-失败，daemon 仍会继续处理其余 run，并返回 `500`；响应中的 `requested_runs`
-记录成功请求取消的数量，`failed_runs` 和 `failed_run_ids` 记录失败项。重新对整个
-事件发起请求是安全的，只会重试仍然活跃的 run。Token 缺失或无效时返回 `401`，
-非 webhook 事件返回 `403`，事件不存在时返回 `404`。
+daemon 单次最多处理后代事件树和 correlation group 合并后的 1,000 个不同事件。合并
+范围更大时，会在停止任何 run 之前返回 `409` 和 `max_event_count`，不会把被截断的
+结果当作成功。如果个别停止操作失败，daemon 仍会继续处理其余 run，并返回 `500`；
+响应中的 `requested_runs` 记录成功请求取消的数量，`failed_runs` 和
+`failed_run_ids` 记录失败项。重新对整个事件发起请求是安全的，只会重试仍然活跃的
+run。Token 缺失或无效时返回 `401`，非 webhook 事件返回 `403`，事件不存在时返回
+`404`。
 
 ### Project 环境文件
 

@@ -127,7 +127,11 @@ authentication is enabled.
 #### Stopping webhook-triggered runs
 
 The client that submitted a webhook can later request cancellation of every
-active run associated with that event and its descendant events:
+active run associated with that event, its descendant events, and every event
+that shares the requested event's `correlation_id`. Correlation scope is
+group-wide rather than descendant-only: it includes earlier, later, and sibling
+events, even when those correlated events were submitted through different
+webhook sources.
 
 ```http
 POST /api/webhooks/events/<event-id>/stop
@@ -138,18 +142,20 @@ Content-Type: application/json
 ```
 
 The JSON body is optional. The endpoint authenticates only with the static
-token configured on the event's webhook source, using that source's custom
-token header when one is configured. A GitHub request signature proves the
-authenticity of one delivery; it is not a reusable control credential.
-Consequently, signed and unsigned GitHub sources without a static source token
-can receive events but cannot use this stop endpoint. Configure a separate
-source token when those events must be stoppable; do not reuse the GitHub
-signature secret as the token.
+token configured on the requested event's webhook source, using that source's
+custom token header when one is configured. It does not separately authenticate
+the sources of descendant or correlated events included in the cancellation.
+A GitHub request signature proves the authenticity of one delivery; it is not
+a reusable control credential. Consequently, signed and unsigned GitHub
+sources without a static source token can receive events but cannot use this
+stop endpoint. Configure a separate source token when those events must be
+stoppable; do not reuse the GitHub signature secret as the token.
 
-The request covers both the runs an event already started and the deliveries it
-has not started yet. Events still waiting in the dispatch queue are withdrawn so
-they never start a run, and `canceled_events` counts them. Active runs receive
-an asynchronous cancellation request counted by `requested_runs`.
+For every descendant or correlated event in scope, the request covers both runs
+already started and deliveries not started yet. Events still waiting in the
+dispatch queue are withdrawn so they never start a run, and `canceled_events`
+counts them. Active runs receive an asynchronous cancellation request counted
+by `requested_runs`.
 
 ```json
 {"event_id":"evt_123","stop_requested":true,"requested_runs":2,"pending_runs":0,
@@ -188,14 +194,14 @@ need confirmation must poll `GetSchedulerRun` for known run IDs or
 affected runs report a terminal `succeeded`, `failed`, `canceled`, or `skipped`
 status.
 
-The daemon evaluates at most 1,000 events in one event tree. If the tree is
-larger, it returns `409` with `max_event_count` before stopping any run, rather
-than silently processing a truncated tree. If an individual stop operation
-fails, the daemon still attempts the remaining runs and returns `500` with the
-successful `requested_runs` count plus `failed_runs` and `failed_run_ids`.
-Retrying the whole event is safe and retries only runs that remain active.
-Missing or invalid tokens return `401`; a non-webhook event returns `403`; and
-an unknown event returns `404`.
+The daemon evaluates at most 1,000 distinct events across the descendant tree
+and correlation group. If the combined scope is larger, it returns `409` with
+`max_event_count` before stopping any run, rather than silently processing a
+truncated set. If an individual stop operation fails, the daemon still attempts
+the remaining runs and returns `500` with the successful `requested_runs` count
+plus `failed_runs` and `failed_run_ids`. Retrying the whole event is safe and
+retries only runs that remain active. Missing or invalid tokens return `401`; a
+non-webhook event returns `403`; and an unknown event returns `404`.
 
 ### Project environment files
 
