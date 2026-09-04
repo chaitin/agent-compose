@@ -11,6 +11,8 @@ import { uniqueDirectories } from "../paths.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { extractText, jsonString } from "../text.js";
 import { appendDelta, TranscriptWriter, type TextWriter } from "../transcript.js";
+import type { AgentEvent, AgentEventSink } from "../agent-event.js";
+import { toolOutputText } from "../agent-event.js";
 import type { AgentResult, RunnerOptions } from "../types.js";
 import { cancellationRequested } from "../shutdown.js";
 
@@ -52,6 +54,93 @@ export class CodexRunner {
 
   transcript(): string {
     return this.writer.transcript();
+  }
+
+  private readonly emittedText = new Map<string, string>();
+
+  /** Codex re-sends the whole text on every item update; emit only the delta. */
+  private emitTextDelta(kind: "text_delta" | "reasoning_delta", key: string, next: string): void {
+    const previous = this.emittedText.get(key) || "";
+    if (next === previous) {
+      return;
+    }
+    const delta = next.startsWith(previous) ? next.slice(previous.length) : next;
+    this.emittedText.set(key, next);
+    if (delta) {
+      this.emit({ kind, text: delta });
+    }
+  }
+
+  private emit(event: AgentEvent): void {
+    const sink: AgentEventSink | undefined = this.options.onEvent;
+    sink?.(event);
+  }
+
+  /**
+   * Codex is the only provider that separates shell execution and patch
+   * application from ordinary tool calls at the protocol level, so the
+   * ToolKind comes from the item type rather than the tool name.
+   */
+  private emitCommandEvents(item: Record<string, unknown> & { id: string }): void {
+    const status = String(item.status || "in_progress");
+    const exitCode = typeof item.exit_code === "number" ? item.exit_code : undefined;
+    this.emit({
+      kind: "tool_call",
+      id: item.id,
+      name: "shell",
+      toolKind: "execute",
+      status: status === "completed" ? "completed" : status === "failed" ? "failed" : "in_progress",
+      command: String(item.command || ""),
+      ...(exitCode === undefined ? {} : { exitCode }),
+    });
+    if (status !== "in_progress") {
+      this.emit({
+        kind: "tool_result",
+        id: item.id,
+        ok: exitCode === 0,
+        output: String(item.aggregated_output || ""),
+      });
+    }
+  }
+
+  private emitFileChangeEvents(item: Record<string, unknown> & { id: string }): void {
+    const status = String(item.status || "");
+    this.emit({
+      kind: "tool_call",
+      id: item.id,
+      name: "apply_patch",
+      toolKind: "edit",
+      status: status === "completed" ? "completed" : status === "failed" ? "failed" : "in_progress",
+      changes: (Array.isArray(item.changes) ? item.changes : []).map((change) => {
+        const record = change as Record<string, unknown>;
+        return { path: String(record.path || ""), kind: String(record.kind || "update") as "add" | "delete" | "update" };
+      }),
+    });
+    if (status === "completed" || status === "failed") {
+      this.emit({ kind: "tool_result", id: item.id, ok: status === "completed" });
+    }
+  }
+
+  private emitMcpEvents(item: Record<string, unknown> & { id: string }): void {
+    const status = String(item.status || "in_progress");
+    this.emit({
+      kind: "tool_call",
+      id: item.id,
+      name: `${item.server}/${item.tool}`,
+      toolKind: "other",
+      status: status === "completed" ? "completed" : status === "failed" ? "failed" : "in_progress",
+      input: item.arguments,
+    });
+    if (status !== "in_progress") {
+      const error = item.error as Record<string, unknown> | undefined;
+      this.emit({
+        kind: "tool_result",
+        id: item.id,
+        ok: status === "completed",
+        output: toolOutputText((item.result as Record<string, unknown> | undefined)?.content),
+        ...(typeof error?.message === "string" ? { error: error.message } : {}),
+      });
+    }
   }
 
   threadOptions(): Record<string, unknown> {
@@ -156,9 +245,41 @@ export class CodexRunner {
       result.threadId = String(event.thread_id || result.threadId);
       return;
     }
+    if (event.type === "turn.completed") {
+      // Codex accounts usage per turn, not per model call, and reports input
+      // tokens inclusive of the cached prefix; subtract so `inputTokens` means
+      // the same thing across providers. `cache_write_input_tokens` is present
+      // on the wire but absent from @openai/codex-sdk's Usage type, so read it
+      // defensively rather than trusting the declaration.
+      const usage = event.usage as Record<string, number | undefined> | undefined;
+      if (!usage) {
+        return;
+      }
+      const input = usage.input_tokens ?? 0;
+      const cached = usage.cached_input_tokens ?? 0;
+      this.emit({
+        kind: "usage",
+        scope: "turn",
+        inputTokens: Math.max(input - cached, 0),
+        outputTokens: usage.output_tokens ?? 0,
+        reasoningTokens: usage.reasoning_output_tokens,
+        cachedTokens: cached,
+        cacheWriteTokens: usage.cache_write_input_tokens,
+      });
+      return;
+    }
     if (event.type === "turn.failed") {
       const error = event.error as Record<string, unknown> | undefined;
-      throw new Error(String(error?.message || "codex turn failed"));
+      const message = String(error?.message || "codex turn failed");
+      this.emit({ kind: "error", severity: "fatal", message });
+      throw new Error(message);
+    }
+    if (event.type === "error") {
+      // A fatal stream error carries no `item`, so the guard below used to drop
+      // it silently and the turn just ended with no explanation.
+      const message = String(event.message || "codex stream error");
+      this.emit({ kind: "error", severity: "fatal", message });
+      throw new Error(message);
     }
     if (!event.item || typeof event.item !== "object") {
       return;
@@ -166,6 +287,7 @@ export class CodexRunner {
     const item = event.item as Record<string, unknown> & { id: string; type: string };
     switch (item.type) {
       case "agent_message":
+        this.emitTextDelta("text_delta", item.id, String(item.text || ""));
         appendDelta(this.writer, this.itemState as Map<string, string>, item.id, String(item.text || ""));
         if (event.type === "item.completed") {
           const finalText = String(item.text || "");
@@ -176,24 +298,44 @@ export class CodexRunner {
         }
         break;
       case "reasoning":
+        this.emitTextDelta("reasoning_delta", `reasoning:${item.id}`, String(item.text || ""));
         appendDelta(this.writer, this.itemState as Map<string, string>, item.id, String(item.text || ""));
         break;
       case "command_execution":
+        this.emitCommandEvents(item);
         this.emitCommand(item);
         break;
       case "file_change":
+        this.emitFileChangeEvents(item);
         this.emitFileChange(item);
         break;
       case "mcp_tool_call":
+        this.emitMcpEvents(item);
         this.emitMcp(item);
         break;
       case "web_search":
+        this.emit({
+          kind: "tool_call",
+          id: item.id,
+          name: "web_search",
+          toolKind: "fetch",
+          status: event.type === "item.completed" ? "completed" : "in_progress",
+          input: { query: webSearchQuery(item) },
+        });
         this.emitWebSearch(item, event.type);
         break;
       case "todo_list":
+        this.emit({
+          kind: "todo",
+          items: (Array.isArray(item.items) ? item.items : []).map((entry) => {
+            const record = entry as Record<string, unknown>;
+            return { text: String(record.text || ""), completed: Boolean(record.completed) };
+          }),
+        });
         this.emitTodo(item);
         break;
       case "error":
+        this.emit({ kind: "error", severity: "error", message: String(item.message || "codex item error") });
         this.writer.line(String(item.message || "codex item error"));
         break;
       default:

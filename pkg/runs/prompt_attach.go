@@ -32,6 +32,19 @@ type preparedPromptInteraction struct {
 	InteractionRuntime InteractionRuntime
 }
 
+// promptAttachProviders lists the providers whose guest runner can drive the
+// interactive `agent-compose-runtime stream` loop. Membership requires the
+// runner to resume its provider session between turns, because each turn spawns
+// a fresh runPrompt: gemini is absent because GeminiRunner persists no thread
+// id and would silently lose the previous turn's context.
+var promptAttachProviders = map[string]bool{
+	"codex":    true,
+	"claude":   true,
+	"opencode": true,
+	"pi":       true,
+	"dsh":      true,
+}
+
 func (c *Controller) preparePromptInteractionRuntime(ctx context.Context, runCtx interactionRunContext) (preparedPromptInteraction, error) {
 	run := runCtx.Run
 	sandbox := runCtx.Sandbox
@@ -65,8 +78,8 @@ func (c *Controller) preparePromptInteractionRuntime(ctx context.Context, runCtx
 	if err != nil {
 		return preparedPromptInteraction{}, err
 	}
-	if agentConfig.Provider != "codex" && agentConfig.Provider != "claude" && agentConfig.Provider != "opencode" && agentConfig.Provider != "pi" {
-		return preparedPromptInteraction{}, fmt.Errorf("%w: prompt attach currently supports codex, claude, opencode, and pi providers only", domain.ErrUnsupported)
+	if !promptAttachProviders[agentConfig.Provider] {
+		return preparedPromptInteraction{}, fmt.Errorf("%w: prompt attach currently supports codex, claude, opencode, pi, and dsh providers only", domain.ErrUnsupported)
 	}
 	systemPrompt, err := c.projectRunAgentSystemPrompt(ctx, run)
 	if err != nil {

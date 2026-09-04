@@ -291,20 +291,45 @@ describe("DshRunner", () => {
     });
   });
 
-  it("clears host-inherited DSH_RESUME/DSH_MODEL/DSH_REASONING_EFFORT/DSH_SKILL_DIRS when this run doesn't set them", async () => {
+  it("clears inherited DSH_RESUME/DSH_REASONING_EFFORT/DSH_SKILL_DIRS when this run doesn't set them", async () => {
     vi.stubEnv("DSH_RESUME", "1");
-    vi.stubEnv("DSH_MODEL", "host-leaked-model");
     vi.stubEnv("DSH_REASONING_EFFORT", "max");
     vi.stubEnv("DSH_SKILL_DIRS", "/host/leaked/skills");
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
-      // No stored thread (so resume=false), no model/effort/skills configured.
+      // No stored thread (so resume=false), no effort/skills configured.
       await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_RESUME).toBeUndefined();
-      expect(env.DSH_MODEL).toBeUndefined();
       expect(env.DSH_REASONING_EFFORT).toBeUndefined();
       expect(env.DSH_SKILL_DIRS).toBeUndefined();
+    });
+  });
+
+  it("keeps an inherited DSH_MODEL when the agent names no model", async () => {
+    // DSH_MODEL is deliberately exempt from the clearing rule the test above
+    // covers: the daemon's facade config sets it to the model it resolved and
+    // minted the run's token against, and the runner cannot tell that apart
+    // from ambient environment. Dropping it would send DSH to the profile's
+    // hardcoded fallback model, which the facade token does not authorise.
+    // Unlike DSH_SKILL_DIRS an unexpected value here is not a privilege
+    // escalation: the facade rejects a model the token is not bound to.
+    vi.stubEnv("DSH_MODEL", "daemon-resolved-model");
+    const { DshRunner } = await import("../src/runners/dsh.js");
+    await withTempSession(async (root) => {
+      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
+      const env = processState.calls[0].options.env as Record<string, string>;
+      expect(env.DSH_MODEL).toBe("daemon-resolved-model");
+    });
+  });
+
+  it("overrides an inherited DSH_MODEL when the agent does name one", async () => {
+    vi.stubEnv("DSH_MODEL", "daemon-resolved-model");
+    const { DshRunner } = await import("../src/runners/dsh.js");
+    await withTempSession(async (root) => {
+      await new DshRunner({ ...runnerOptions(root, "", "dsh"), model: "default/configured-model" }).runPrompt("prompt");
+      const env = processState.calls[0].options.env as Record<string, string>;
+      expect(env.DSH_MODEL).toBe("configured-model");
     });
   });
 
