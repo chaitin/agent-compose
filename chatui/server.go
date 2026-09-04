@@ -1,65 +1,20 @@
-// Command uiserver serves a browser chat UI backed by the chat SDK.
-//
-// The browser cannot hold a conversation with agent-compose directly: Connect
-// needs HTTP/2 bidirectional streaming for a multi-turn attach, and a browser
-// fetch() with a streaming request body is half duplex, so nothing comes back
-// while the request body stays open. This server keeps the conversation on the
-// Go side, where the SDK handles it, and gives the browser the one-way event
-// stream it can actually consume.
 package main
 
 import (
 	"bytes"
 	"cmp"
 	"context"
-	"embed"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/chaitin/agent-compose/sdk/go/chat"
 )
-
-//go:embed public/index.html
-var assets embed.FS
-
-func main() {
-	listen := flag.String("listen", "127.0.0.1:7500", "address to serve the UI on")
-	daemon := flag.String("daemon", "http://127.0.0.1:7411", "agent-compose HTTP address")
-	flag.Parse()
-
-	client, err := chat.New(chat.Config{
-		BaseURL:   *daemon,
-		Token:     chat.StaticToken(cmp.Or(envToken(), "")),
-		UserAgent: "agent-compose-chat-uiserver",
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	server := &uiServer{client: client, daemon: *daemon, sessions: map[string]*session{}}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", server.index)
-	mux.HandleFunc("GET /api/agents", server.agents)
-	mux.HandleFunc("POST /api/conversations", server.open)
-	mux.HandleFunc("GET /api/conversations/{id}/history", server.history)
-	mux.HandleFunc("POST /api/conversations/{id}/messages", server.send)
-	mux.HandleFunc("POST /api/conversations/{id}/stop", server.stop)
-	mux.HandleFunc("DELETE /api/conversations/{id}", server.remove)
-
-	log.Printf("chat UI on http://%s (daemon %s)", *listen, *daemon)
-	log.Fatal(http.ListenAndServe(*listen, mux))
-}
-
-func envToken() string { return strings.TrimSpace(os.Getenv("AGENT_COMPOSE_TOKEN")) }
 
 type uiServer struct {
 	client *chat.Client
@@ -251,46 +206,7 @@ func (s *uiServer) send(w http.ResponseWriter, r *http.Request) {
 }
 
 // renderEvent flattens one SDK event for the browser.
-func renderEvent(event chat.Event) map[string]any {
-	payload := map[string]any{"kind": string(event.Kind())}
-	switch typed := event.(type) {
-	case *chat.TextDeltaEvent:
-		payload["text"] = typed.Text
-	case *chat.ReasoningDeltaEvent:
-		payload["text"] = typed.Text
-	case *chat.ToolCallEvent:
-		payload["id"] = typed.ID
-		payload["name"] = typed.Name
-		payload["toolKind"] = typed.ToolKind
-		payload["status"] = typed.Status
-		payload["command"] = typed.Command
-	case *chat.ToolResultEvent:
-		payload["id"] = typed.ID
-		payload["ok"] = typed.OK
-		payload["output"] = truncate(cmp.Or(typed.Output, typed.Error), 2000)
-	case *chat.TodoEvent:
-		payload["items"] = typed.Items
-	case *chat.UsageEvent:
-		payload["scope"] = typed.Scope
-		payload["inputTokens"] = typed.InputTokens
-		payload["outputTokens"] = typed.OutputTokens
-	case *chat.RetryEvent:
-		payload["reason"] = typed.Reason
-		payload["attempt"] = typed.Attempt
-	case *chat.ErrorEvent:
-		payload["severity"] = typed.Severity
-		payload["message"] = typed.Message
-	case *chat.StepEndEvent:
-		payload["stopReason"] = typed.StopReason
-	}
-	return payload
-}
 
-// stop interrupts the turn in flight.
-//
-// The daemon cancels the whole session rather than one turn, so the
-// conversation restarts on the next message. The response says so instead of
-// letting the UI pretend the agent kept its context.
 func (s *uiServer) stop(w http.ResponseWriter, r *http.Request) {
 	found, ok := s.lookup(w, r)
 	if !ok {

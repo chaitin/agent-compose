@@ -143,16 +143,7 @@ go run ./examples/chat -project my-project -agent my-agent
 go run ./examples/chat -project my-project -agent my-agent -conversation conv_1a2b3c
 ```
 
-A browser chat UI:
-
-```bash
-go run ./examples/uiserver -daemon http://127.0.0.1:7411
-# http://127.0.0.1:7500
-```
-
-The UI server is also the answer to "why not talk to the daemon from the
-browser directly". A browser cannot: Connect needs HTTP/2 bidirectional
-streaming for a multi-turn session, and a `fetch()` with a streaming request
-body is half duplex, so nothing comes back while that body stays open. The
-server holds the conversation on the Go side, where this SDK handles it, and
-gives the browser the one-way event stream it can actually consume.
+A browser chat UI lives in [`chatui`](../../chatui), which is also the answer
+to "why not talk to the daemon from the browser directly": a browser cannot,
+because Connect needs HTTP/2 bidirectional streaming for a multi-turn session
+and a `fetch()` with a streaming request body is half duplex.
