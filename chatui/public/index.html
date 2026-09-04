@@ -78,8 +78,9 @@ const statusEl = document.getElementById("status");
 const textArea = document.getElementById("text");
 const sendBtn = document.getElementById("send");
 
+let socket = null;
 let conversationId = null;
-let busy = false;
+let turn = null;   // the assistant bubble and tool cards of the turn in flight
 
 const setStatus = (text) => { statusEl.textContent = text; };
 const scroll = () => { chat.parentElement.parentElement.scrollTop = 1e9; };
@@ -96,6 +97,10 @@ function addRow(kind) {
 }
 
 const addNote = (text) => { addRow("note").textContent = text; };
+
+function setBusy(busy) {
+  sendBtn.textContent = busy ? "停止" : "发送";
+}
 
 async function api(method, path, body) {
   const response = await fetch(path, {
@@ -125,25 +130,87 @@ async function loadAgents() {
   }
 }
 
-async function ensureConversation() {
-  if (conversationId) return conversationId;
-  if (!agentSelect.value) throw new Error("先选一个 agent");
-  const target = JSON.parse(agentSelect.value);
-  const { id } = await api("POST", "/api/conversations", target);
-  conversationId = id;
-  addNote("会话 " + id);
-  return id;
+// Opens the conversation socket. Every turn on the conversation arrives here,
+// including turns another client started and one already running when this
+// page connected, so the UI renders from the socket rather than from what it
+// just sent.
+function connect(id) {
+  if (socket) { socket.onclose = null; socket.close(); }
+  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+  socket = new WebSocket(`${scheme}//${location.host}/api/conversations/${id}/socket`);
+  socket.onopen = () => setStatus("已连接");
+  socket.onclose = () => { setStatus("连接已断开"); setBusy(false); };
+  socket.onerror = () => setStatus("连接出错");
+  socket.onmessage = (message) => handle(JSON.parse(message.data));
 }
 
-// The tool cards of the turn being streamed, keyed by tool call ID so a result
-// lands on the card its call created.
-function renderTool(bubble, cards, event) {
-  let card = cards.get(event.id);
+function handle(frame) {
+  switch (frame.type) {
+    case "turn_started": {
+      if (frame.prompt) addRow("user").textContent = frame.prompt;
+      const bubble = addRow("assistant");
+      bubble.classList.add("cursor");
+      turn = { bubble, cards: new Map(), text: "" };
+      setBusy(true);
+      break;
+    }
+    case "event":
+      if (turn) renderEvent(turn, frame.event);
+      break;
+    case "turn_done":
+      if (turn) {
+        turn.bubble.classList.remove("cursor");
+        if (!turn.text) turn.bubble.textContent = frame.text;
+      }
+      // A turn that lost its environment must say so: the agent no longer has
+      // the context the earlier turns built up.
+      if (frame.continuity === "restarted") {
+        addNote("上下文已重置——这个会话的运行环境被重建了");
+      }
+      turn = null;
+      setBusy(false);
+      break;
+    case "stopped":
+      if (frame.contextLost) addNote("已停止。下一条消息会重建环境，agent 不再记得之前的上下文");
+      break;
+    case "error":
+      if (turn) turn.bubble.classList.remove("cursor");
+      addNote("错误: " + frame.message);
+      turn = null;
+      setBusy(false);
+      break;
+  }
+}
+
+function renderEvent(state, event) {
+  switch (event.kind) {
+    case "text_delta":
+      state.text += event.text;
+      state.bubble.textContent = state.text;
+      scroll();
+      break;
+    case "tool_call":
+    case "tool_result":
+      renderTool(state, event);
+      break;
+    case "usage":
+      setStatus(`${event.scope}: ${event.inputTokens} in / ${event.outputTokens} out`);
+      break;
+    case "retry":
+      addNote(`重试 (${event.reason}, 第 ${event.attempt} 次)`);
+      break;
+  }
+}
+
+// Tool cards are keyed by tool call ID so a result lands on the card its call
+// created.
+function renderTool(state, event) {
+  let card = state.cards.get(event.id);
   if (!card) {
     card = document.createElement("div");
     card.className = "tool";
-    bubble.parentElement.insertBefore(card, bubble);
-    cards.set(event.id, card);
+    state.bubble.parentElement.insertBefore(card, state.bubble);
+    state.cards.set(event.id, card);
   }
   if (event.kind === "tool_call") {
     card.textContent = `${event.toolKind} · ${event.name}` + (event.command ? `: ${event.command}` : "");
@@ -158,89 +225,38 @@ function renderTool(bubble, cards, event) {
   scroll();
 }
 
-async function send(text) {
-  const id = await ensureConversation();
-  addRow("user").textContent = text;
-
-  const bubble = addRow("assistant");
-  bubble.classList.add("cursor");
-  const cards = new Map();
-  let answer = "";
-
-  const response = await fetch(`/api/conversations/${id}/messages`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
+async function ensureConversation() {
+  if (conversationId) return conversationId;
+  if (!agentSelect.value) throw new Error("先选一个 agent");
+  const { id } = await api("POST", "/api/conversations", JSON.parse(agentSelect.value));
+  conversationId = id;
+  addNote("会话 " + id);
+  connect(id);
+  // Wait for the socket before the first message, so the turn it starts is not
+  // missed.
+  await new Promise((resolve, reject) => {
+    if (socket.readyState === WebSocket.OPEN) return resolve();
+    socket.addEventListener("open", resolve, { once: true });
+    socket.addEventListener("error", reject, { once: true });
   });
-  if (!response.ok) throw new Error((await response.text()).trim());
-
-  // Server-sent events, one JSON object per event.
-  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
-  let buffer = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += value;
-    let boundary;
-    while ((boundary = buffer.indexOf("\n\n")) !== -1) {
-      const frame = buffer.slice(0, boundary).trim();
-      buffer = buffer.slice(boundary + 2);
-      if (!frame.startsWith("data:")) continue;
-      const event = JSON.parse(frame.slice(5));
-      switch (event.kind) {
-        case "text_delta":
-          answer += event.text;
-          bubble.textContent = answer;
-          scroll();
-          break;
-        case "tool_call":
-        case "tool_result":
-          renderTool(bubble, cards, event);
-          break;
-        case "usage":
-          setStatus(`${event.scope}: ${event.inputTokens} in / ${event.outputTokens} out`);
-          break;
-        case "retry":
-          addNote(`重试 (${event.reason}, 第 ${event.attempt} 次)`);
-          break;
-        case "error":
-          bubble.classList.remove("cursor");
-          addNote("错误: " + event.message);
-          return;
-        case "done":
-          bubble.classList.remove("cursor");
-          // A turn that lost its environment must say so: the agent no longer
-          // has the context the earlier turns built up.
-          if (event.continuity === "restarted") {
-            addNote("上下文已重置——这个会话的运行环境被重建了");
-          }
-          if (!answer) bubble.textContent = event.text;
-          return;
-      }
-    }
-  }
-  bubble.classList.remove("cursor");
+  return id;
 }
 
 document.getElementById("composer").addEventListener("submit", async (submitEvent) => {
   submitEvent.preventDefault();
-  if (busy) {
-    await api("POST", `/api/conversations/${conversationId}/stop`).catch(() => {});
+  if (turn) {
+    socket?.send(JSON.stringify({ type: "stop" }));
     return;
   }
   const text = textArea.value.trim();
   if (!text) return;
   textArea.value = "";
   textArea.style.height = "auto";
-  busy = true;
-  sendBtn.textContent = "停止";
   try {
-    await send(text);
+    await ensureConversation();
+    socket.send(JSON.stringify({ type: "message", text }));
   } catch (error) {
     addNote("发送失败: " + error.message);
-  } finally {
-    busy = false;
-    sendBtn.textContent = "发送";
   }
 });
 
@@ -256,8 +272,11 @@ textArea.addEventListener("keydown", (keyEvent) => {
 });
 
 document.getElementById("new").addEventListener("click", () => {
+  if (socket) { socket.onclose = null; socket.close(); socket = null; }
   conversationId = null;
+  turn = null;
   chat.innerHTML = "";
+  setBusy(false);
   setStatus("就绪");
 });
 
@@ -265,6 +284,7 @@ document.getElementById("delete").addEventListener("click", async () => {
   if (!conversationId) return;
   try {
     await api("DELETE", `/api/conversations/${conversationId}`);
+    if (socket) { socket.onclose = null; socket.close(); socket = null; }
     addNote("会话已删除");
     conversationId = null;
   } catch (error) {
@@ -273,6 +293,7 @@ document.getElementById("delete").addEventListener("click", async () => {
 });
 
 agentSelect.addEventListener("change", () => {
+  if (socket) { socket.onclose = null; socket.close(); socket = null; }
   conversationId = null;
   chat.innerHTML = "";
 });

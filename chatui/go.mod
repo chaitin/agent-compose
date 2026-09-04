@@ -2,7 +2,10 @@ module github.com/chaitin/agent-compose/chatui
 
 go 1.23.0
 
-require github.com/chaitin/agent-compose/sdk/go v0.0.0
+require (
+	github.com/chaitin/agent-compose/sdk/go v0.0.0
+	github.com/gorilla/websocket v1.5.3
+)
 
 require (
 	golang.org/x/net v0.38.0 // indirect

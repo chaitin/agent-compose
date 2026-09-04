@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,36 +12,34 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
+
 	"github.com/chaitin/agent-compose/sdk/go/chat"
 )
 
 type uiServer struct {
-	client *chat.Client
-	daemon string
+	client   *chat.Client
+	daemon   string
+	upgrader websocket.Upgrader
 
 	mu       sync.Mutex
 	sessions map[string]*session
 }
 
-// session pairs a conversation with the turn currently streaming on it, so a
-// stop from the browser can reach the right Reply.
-type session struct {
-	conversation *chat.Conversation
-
-	mu      sync.Mutex
-	current *chat.Reply
-}
-
-func (s *session) begin(reply *chat.Reply) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.current = reply
-}
-
-func (s *session) inFlight() *chat.Reply {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.current
+// release closes conversations nobody is watching. Closing is not ending: the
+// conversation survives on the daemon and a later resume reopens it with its
+// context intact, so an unattended browser tab costs this process nothing.
+func (s *uiServer) release(every, after time.Duration) {
+	for range time.Tick(every) {
+		s.mu.Lock()
+		for id, found := range s.sessions {
+			if found.releasable(after) {
+				_ = found.conversation.Close()
+				delete(s.sessions, id)
+			}
+		}
+		s.mu.Unlock()
+	}
 }
 
 func (s *uiServer) index(w http.ResponseWriter, _ *http.Request) {
@@ -120,7 +117,7 @@ func (s *uiServer) open(w http.ResponseWriter, r *http.Request) {
 		conversation = resumed
 	}
 	s.mu.Lock()
-	s.sessions[conversation.ID()] = &session{conversation: conversation}
+	s.sessions[conversation.ID()] = newSession(conversation)
 	s.mu.Unlock()
 	writeJSON(w, map[string]any{"id": conversation.ID(), "continuity": conversation.Continuity()})
 }
@@ -140,88 +137,6 @@ func (s *uiServer) history(w http.ResponseWriter, r *http.Request) {
 		rendered = append(rendered, map[string]any{"role": message.Role, "text": message.Text, "time": message.Time})
 	}
 	writeJSON(w, map[string]any{"messages": rendered})
-}
-
-// send contributes one message and streams the agent's work back as
-// server-sent events, one JSON object per event.
-func (s *uiServer) send(w http.ResponseWriter, r *http.Request) {
-	found, ok := s.lookup(w, r)
-	if !ok {
-		return
-	}
-	var body struct {
-		Text string `json:"text"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	flusher, canFlush := w.(http.Flusher)
-	if !canFlush {
-		http.Error(w, "streaming is not supported by this server", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
-
-	emit := func(payload map[string]any) {
-		encoded, err := json.Marshal(payload)
-		if err != nil {
-			return
-		}
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", encoded)
-		flusher.Flush()
-	}
-
-	// The request's context bounds only this call. The SDK gives the session
-	// its own lifetime, so a browser that goes away mid-answer stops the
-	// streaming below without stopping the agent: the finished turn is in
-	// History next time.
-	reply, err := found.conversation.Send(r.Context(), body.Text)
-	if err != nil {
-		emit(map[string]any{"kind": "error", "message": err.Error(), "busy": errors.Is(err, chat.ErrBusy)})
-		return
-	}
-	found.begin(reply)
-	for event, err := range reply.Events(r.Context()) {
-		if err != nil {
-			emit(map[string]any{"kind": "error", "message": err.Error()})
-			return
-		}
-		emit(renderEvent(event))
-	}
-	message, err := reply.Wait(r.Context())
-	if err != nil {
-		emit(map[string]any{"kind": "error", "message": err.Error()})
-		return
-	}
-	emit(map[string]any{
-		"kind":       "done",
-		"text":       message.Text,
-		"result":     json.RawMessage(cmp.Or(string(message.Result), "null")),
-		"continuity": found.conversation.Continuity(),
-	})
-}
-
-// renderEvent flattens one SDK event for the browser.
-
-func (s *uiServer) stop(w http.ResponseWriter, r *http.Request) {
-	found, ok := s.lookup(w, r)
-	if !ok {
-		return
-	}
-	reply := found.inFlight()
-	if reply == nil || reply.Done() {
-		writeJSON(w, map[string]any{"stopped": false})
-		return
-	}
-	if err := reply.Interrupt(r.Context()); err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{"stopped": true, "contextLost": true})
 }
 
 func (s *uiServer) remove(w http.ResponseWriter, r *http.Request) {

@@ -19,14 +19,32 @@ arrive while the request body is still open, which is exactly the state a
 multi-turn session lives in.
 
 So the conversation stays on the Go side, where the SDK handles the
-bidirectional stream, and the browser gets the one-way stream it can consume:
+bidirectional stream. The browser keeps a duplex connection of its own, in the
+shape it can actually open:
 
 ```
-browser ──POST + server-sent events──> chatui ──Connect bidi (h2c)──> daemon
+browser ──WebSocket──> chatui ──Connect bidi (h2c)──> daemon
 ```
 
-The browser therefore never encodes a protocol frame, never threads a sandbox
-ID between turns, and never tracks session lifetime. Those belong to the SDK.
+Duplex the whole way, because a conversation is duplex the whole way. The
+browser still never encodes a protocol frame, never threads a sandbox ID
+between turns, and never tracks session lifetime — those belong to the SDK.
+
+Keeping the browser connected, rather than streaming one turn per request,
+is what makes the rest work:
+
+- **A turn nobody here started still shows up.** Once a conversation outlives
+  the page that opened it, the turn in flight is often one this browser did not
+  send — from a phone, or from before a refresh. Viewers render from the socket,
+  not from what they just typed.
+- **Several viewers share one conversation.** A laptop and a phone on the same
+  conversation both watch the same turn live.
+- **Leaving is a signal.** A closed socket is how this server learns nobody is
+  watching, which is what lets it release the conversation.
+
+There is no fan-out machinery behind this: every viewer ranges over the same
+`chat.Reply`, which retains its events and replays them for each caller, so a
+viewer joining mid-turn sees that turn from its beginning.
 
 ## What it does
 
@@ -40,18 +58,31 @@ ID between turns, and never tracks session lifetime. Those belong to the SDK.
 
 ## HTTP API
 
+Discrete actions stay plain HTTP; only the conversation itself needs a socket.
+
 | | |
 |---|---|
 | `GET /api/agents` | projects and their agents |
 | `POST /api/conversations` | `{projectId, agentName, resume?}` → `{id, continuity}` |
-| `POST /api/conversations/{id}/messages` | `{text}` → `text/event-stream` |
-| `POST /api/conversations/{id}/stop` | interrupt the turn in flight |
+| `GET /api/conversations/{id}/socket` | the conversation, as a WebSocket |
 | `GET /api/conversations/{id}/history` | every message, oldest first |
 | `DELETE /api/conversations/{id}` | end the conversation and release its environment |
 
-Conversations live in this process's memory only. A real product would store
-each conversation ID against its own thread record and reopen it on demand,
-which is what `resume` is for.
+On the socket, the browser sends `{type:"message", text}` and `{type:"stop"}`,
+and receives `turn_started` (with the prompt, so a viewer that did not send it
+sees the question), `event` (one SDK event), `turn_done`, `stopped`, and
+`error`.
+
+A handshake is accepted only from the page this server serves; `-allow-origin`
+adds others. A WebSocket handshake is not subject to the same-origin policy,
+so a permissive check would let any site a viewer visits drive their
+conversations.
+
+Conversations live in this process's memory only, and one nobody has watched
+for fifteen minutes is closed — not ended. The conversation survives on the
+daemon, and `resume` reopens it with its context intact. A real product would
+store each conversation ID against its own thread record and reopen it on
+demand.
 
 ## Limits
 
