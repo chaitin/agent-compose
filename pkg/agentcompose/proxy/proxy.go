@@ -68,7 +68,9 @@ func RegisterJupyterRoutes(app *echo.Echo, opts JupyterOptions) {
 			Rewrite: func(req *httputil.ProxyRequest) {
 				req.SetURL(target)
 				req.SetXForwarded()
-				req.Out.Host = target.Host
+				// Preserve the public proxy host so Jupyter's same-origin and
+				// XSRF checks see the same host as the browser Origin header.
+				req.Out.Host = req.In.Host
 				req.Out.URL.Path = req.In.URL.Path
 				req.Out.URL.RawPath = req.Out.URL.Path
 				req.Out.URL.RawQuery = req.In.URL.RawQuery

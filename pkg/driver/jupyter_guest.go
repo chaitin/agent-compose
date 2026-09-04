@@ -180,7 +180,7 @@ func jupyterLaunchCommandWithBootstrap(config *appconfig.Config, proxyState Prox
 		" --ServerApp.root_dir=\"" + config.GuestWorkspacePath + "\"" +
 		" --ServerApp.base_url=\"" + strings.TrimRight(jupyterBaseURL(proxyState), "/") + "\"" +
 		" --IdentityProvider.token=\"" + proxyState.Token + "\"" +
-		" --ServerApp.password= --ServerApp.allow_origin='*' --ServerApp.disable_check_xsrf=True" +
+		" --ServerApp.password= --ServerApp.allow_origin='' --ServerApp.disable_check_xsrf=False" +
 		" --allow-root --no-browser"
 	if background {
 		// Keep the trailing ampersand scoped to the Jupyter launch. Without

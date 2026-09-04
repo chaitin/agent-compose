@@ -34,7 +34,7 @@ development branch until versioned release support is documented.
 - Treat `HTTP_LISTEN=0.0.0.0:7410` as an internal daemon API. Startup emits a
   warning but still proceeds; use container networking, reverse proxies, VPNs,
   or equivalent controls to avoid direct public access.
-- Do not expose guest Jupyter ports directly. Use the agent-compose proxy.
+- Do not expose guest Jupyter ports directly. Use the agent-compose proxy; the guest keeps same-origin and XSRF protection enabled.
 - Treat workspace uploads, Git credentials, environment variables, webhook
   tokens, and LLM API keys as secrets.
 - Review runtime driver network behavior before running untrusted workloads.
