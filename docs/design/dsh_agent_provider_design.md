@@ -54,11 +54,15 @@ Env vars aren't unbounded: Linux caps a single `argv`/`envp` string at `MAX_ARG_
 
 ### 4.1 Facade token and wire protocol
 
-`EnsureDshFacadeConfig` (`pkg/llms/dsh_facade.go`) always issues a chat-completions facade token and points the guest at `/llm/openai/v1`, regardless of the resolved upstream provider's own protocol — the facade bridges the difference, so DSH's own upstream protocol is irrelevant to the guest. Model selection is `<llm-provider-id>/<model-name>` (`SplitDshModel`), the same shape Pi and OpenCode use.
+`EnsureDshFacadeConfig` (`pkg/llms/dsh_facade.go`) issues a facade token whose wire API **follows the resolved provider**, and exports the same choice as `DSH_WIRE_API` for the profile's `llm-pi-ai` route to name its protocol. Matching the provider keeps the request on the proxy's passthrough path instead of the conversion path, where an upstream event the bridge does not model would reach the guest as assistant text. It was unconditionally chat-completions while the profile used `llm-deepseek`, whose Config has no protocol field at all (see §4.2). Model selection is `<llm-provider-id>/<model-name>` (`SplitDshModel`), the same shape Pi and OpenCode use; an agent naming no model falls back to the daemon's default catalog entry.
 
-### 4.2 `llm-deepseek` route
+### 4.2 LLM adapter and route
 
-`cordis.patch.yml`'s `llm-deepseek` row registers a single route, `deepseek-official`, reading its API key/base URL/reasoning effort from the spawn environment. `agent-default-model` selects `deepseek-official` + `DSH_MODEL`.
+`cordis.patch.yml` disables dsh-base's `llm-deepseek` row and configures `llm-pi-ai` instead, which dsh-base mounts dormant until a profile supplies routes.
+
+`llm-deepseek` is DSH's native adapter and speaks only chat completions — its Config exposes `apiKeyEnv`, `baseURL`, `thinking` and `reasoningEffort`, and no protocol field — so any provider serving something else forced a conversion on every turn. `llm-pi-ai` names its wire protocol per route (`openai-completions`, `openai-responses`, `anthropic-messages`), so the guest can speak whatever the facade resolved.
+
+The profile declares one hand-declared route, `agent-compose`: pi-ai ships nothing under that key, so the route supplies `api` (from `DSH_WIRE_API`), `baseURL`, and a `models` list, all from the spawn environment. `agent-default-model` selects that route + `DSH_MODEL`.
 
 ## 5. Security and isolation
 

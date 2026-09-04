@@ -5,6 +5,8 @@ import readline from "node:readline";
 import { extractText, jsonString } from "../text.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
+import type { AgentEvent } from "../agent-event.js";
+import { toolKindForName, toolOutputText } from "../agent-event.js";
 import type { AgentResult, RunnerOptions } from "../types.js";
 import { piMCPAdapterExtension, writePiMCPConfig } from "./pi-mcp.js";
 import { cancellationRequested } from "../shutdown.js";
@@ -15,6 +17,7 @@ const maxDiagnosticBytes = 64 * 1024;
 export class PiRunner {
   private reportedError: Error | null = null;
   private latestAssistantError: Error | null = null;
+  private step = 0;
 
   constructor(
     private readonly options: RunnerOptions,
@@ -149,7 +152,125 @@ export class PiRunner {
     return args;
   }
 
+  private emit(event: AgentEvent): void {
+    this.options.onEvent?.(event);
+  }
+
+  /**
+   * Map one `pi --mode json` event. Pi calls one model call plus its tool
+   * executions a "turn" (an `agent_start`/`agent_end` pair wraps several of
+   * them), which is what every other provider calls a step — hence the
+   * turn_start -> step_start mapping.
+   *
+   * Pi closes the assistant message before running the tools, so tool events
+   * for a step arrive after that step's `step_end`. Consumers must group by the
+   * `step` field, never by the step_start/step_end interval.
+   */
+  private emitNeutral(event: Record<string, unknown>): void {
+    const type = String(event.type || "");
+    if (type === "turn_start") {
+      this.step += 1;
+      this.emit({ kind: "step_start", step: this.step });
+      return;
+    }
+    if (type === "message_update") {
+      const update = recordValue(event.assistantMessageEvent) || recordValue(event.assistant_message_event);
+      const updateType = String(update?.type || "");
+      const text = firstString(update, "delta", "text");
+      const blockIndex = typeof update?.contentIndex === "number" ? update.contentIndex : undefined;
+      if (updateType === "text_delta" && text) {
+        this.emit({ kind: "text_delta", step: this.step, blockIndex, text });
+      } else if (updateType === "thinking_delta" && text) {
+        this.emit({ kind: "reasoning_delta", step: this.step, blockIndex, text });
+      }
+      return;
+    }
+    if (type === "message_end") {
+      const message = recordValue(event.message);
+      if (String(message?.role || "") !== "assistant") {
+        return;
+      }
+      const usage = recordValue(message?.usage);
+      if (usage) {
+        const cost = recordValue(usage.cost);
+        this.emit({
+          kind: "usage",
+          step: this.step,
+          scope: "step",
+          model: firstString(message, "model") || undefined,
+          inputTokens: Number(usage.input ?? 0),
+          outputTokens: Number(usage.output ?? 0),
+          reasoningTokens: typeof usage.reasoning === "number" ? usage.reasoning : undefined,
+          cachedTokens: typeof usage.cacheRead === "number" ? usage.cacheRead : undefined,
+          cacheWriteTokens: typeof usage.cacheWrite === "number" ? usage.cacheWrite : undefined,
+          costUsd: typeof cost?.total === "number" ? cost.total : undefined,
+        });
+      }
+      const stopReason = firstString(message, "stopReason", "stop_reason");
+      this.emit({
+        kind: "step_end",
+        step: this.step,
+        stopReason: stopReason === "toolUse" ? "tool_use" : stopReason === "stop" ? "stop" : stopReason === "error" ? "error" : undefined,
+        rawStopReason: firstString(message, "rawStopReason", "raw_stop_reason") || stopReason || undefined,
+      });
+      if (stopReason === "error") {
+        this.emit({
+          kind: "error",
+          severity: "error",
+          message: firstString(message, "errorMessage", "error_message") || "pi model error",
+        });
+      }
+      return;
+    }
+    if (type === "tool_execution_start") {
+      const name = firstString(event, "toolName");
+      this.emit({
+        kind: "tool_call",
+        step: this.step,
+        id: firstString(event, "toolCallId"),
+        name,
+        toolKind: toolKindForName(name),
+        status: "in_progress",
+        input: event.args,
+      });
+      return;
+    }
+    if (type === "tool_execution_end") {
+      this.emit({
+        kind: "tool_result",
+        step: this.step,
+        id: firstString(event, "toolCallId"),
+        ok: !event.isError,
+        output: toolOutputText(event.result),
+        ...(event.isError ? { error: "tool error" } : {}),
+      });
+      return;
+    }
+    if (type === "auto_retry_start") {
+      this.emit({
+        kind: "retry",
+        reason: "other",
+        attempt: Number(event.attempt ?? 0),
+        maxAttempts: typeof event.maxAttempts === "number" ? event.maxAttempts : undefined,
+        message: firstString(event, "errorMessage") || undefined,
+      });
+      return;
+    }
+    if (type === "compaction_start" || type === "compaction_end") {
+      this.emit({ kind: "compaction", phase: type === "compaction_start" ? "start" : "end" });
+      return;
+    }
+    if (type === "error") {
+      this.emit({
+        kind: "error",
+        severity: "error",
+        message: extractText(event.error) || extractText(event.message) || jsonString(event),
+      });
+    }
+  }
+
   handleEvent(event: Record<string, unknown>, result: AgentResult): void {
+    this.emitNeutral(event);
     const type = String(event.type || "");
     if (type === "session") {
       result.threadId = firstString(event, "id", "sessionId", "session_id") || result.threadId;

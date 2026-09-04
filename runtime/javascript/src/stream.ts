@@ -65,6 +65,8 @@ export async function runStreamCommand(options: RunStreamOptions = {}): Promise<
             workspace: stringField(frame, "workspace"),
             home: stringField(frame, "home"),
             model: stringField(frame, "model"),
+            effort: effortField(frame),
+            skills: skillsField(frame),
             outputSchemaFile: stringField(frame, "outputSchemaFile"),
             abortController: options.abortController,
           }, emit);
@@ -167,6 +169,24 @@ function emitOutputFrame(
   chunk: Buffer,
 ) {
   emit("output", { source, text: chunk.toString("utf8") });
+}
+
+const efforts = new Set(["low", "medium", "high", "xhigh", "max"]);
+
+/** Read the optional reasoning effort from a start frame. */
+function effortField(frame: StreamFrame): "low" | "medium" | "high" | "xhigh" | "max" | undefined {
+  const value = stringField(frame, "effort") ?? "";
+  return efforts.has(value) ? value as "low" | "medium" | "high" | "xhigh" | "max" : undefined;
+}
+
+/** Read the optional skill names from a start frame. */
+function skillsField(frame: StreamFrame): string[] | undefined {
+  const value = frame.skills;
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const names = value.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "");
+  return names.length > 0 ? names : undefined;
 }
 
 function stringField(frame: StreamFrame, field: string): string | undefined {

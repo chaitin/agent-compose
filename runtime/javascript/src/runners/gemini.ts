@@ -5,6 +5,8 @@ import readline from "node:readline";
 import { flattenEnvMap } from "../mcp-config.js";
 import { extractText, jsonString } from "../text.js";
 import { TranscriptWriter } from "../transcript.js";
+import type { AgentEvent } from "../agent-event.js";
+import { toolKindForName } from "../agent-event.js";
 import type { AgentResult, RunnerOptions } from "../types.js";
 import { cancellationRequested } from "../shutdown.js";
 import { waitForChildExit } from "../child-process.js";
@@ -13,6 +15,100 @@ export class GeminiRunner {
   private readonly writer = new TranscriptWriter();
 
   constructor(private readonly options: RunnerOptions) {}
+
+  private emit(event: AgentEvent): void {
+    this.options.onEvent?.(event);
+  }
+
+  /**
+   * Map one `--output-format stream-json` event.
+   *
+   * The vocabulary is exactly six types: init, message, tool_use, tool_result,
+   * error, result. Gemini reports no step boundaries and no reasoning on this
+   * channel (thought chunks exist only under --experimental-acp), so
+   * `step_start` / `step_end`(per call) / `reasoning_delta` never appear.
+   *
+   * Field names here intentionally differ from the legacy transcript branch
+   * below, which reads `name`/`result`/`response` — none of which the CLI
+   * actually sends. Fixing that path changes existing finalText behaviour and
+   * is tracked separately; see the design doc §4.2.
+   */
+  handleEvent(event: Record<string, unknown>, result: AgentResult): void {
+    const type = String(event?.type || "");
+    if (type === "message") {
+      // role is "user" for the echoed prompt; only assistant text is agent output.
+      if (String(event.role || "") !== "assistant") {
+        return;
+      }
+      const text = typeof event.content === "string" ? event.content : extractText(event.content);
+      if (text) {
+        this.emit({ kind: "text_delta", text });
+      }
+      return;
+    }
+    if (type === "tool_use") {
+      const name = String(event.tool_name || event.toolName || event.name || "tool");
+      this.emit({
+        kind: "tool_call",
+        id: String(event.tool_id || event.toolId || name),
+        name,
+        toolKind: toolKindForName(name),
+        status: "in_progress",
+        input: event.parameters,
+      });
+      return;
+    }
+    if (type === "tool_result") {
+      const errorDetail = event.error as Record<string, unknown> | undefined;
+      const ok = String(event.status || "") !== "error" && !errorDetail;
+      this.emit({
+        kind: "tool_result",
+        id: String(event.tool_id || event.toolId || ""),
+        ok,
+        output: typeof event.output === "string" ? event.output : undefined,
+        ...(errorDetail ? { error: String(errorDetail.message || "tool error") } : {}),
+      });
+      return;
+    }
+    if (type === "error") {
+      const severity = String(event.severity || "error");
+      this.emit({
+        kind: "error",
+        severity: severity === "warning" ? "warning" : "error",
+        message: String(event.message || "gemini error"),
+      });
+      return;
+    }
+    if (type === "result") {
+      const stats = (event.stats || {}) as Record<string, unknown>;
+      const models = (stats.models || {}) as Record<string, unknown>;
+      // `stats.input_tokens` counts cached tokens too; `stats.input` is the
+      // uncached remainder, which is what inputTokens means here.
+      this.emit({
+        kind: "usage",
+        scope: "run",
+        model: Object.keys(models)[0],
+        inputTokens: Number(stats.input ?? 0),
+        outputTokens: Number(stats.output_tokens ?? 0),
+        cachedTokens: typeof stats.cached === "number" ? stats.cached : undefined,
+      });
+      const errorDetail = event.error as Record<string, unknown> | undefined;
+      this.emit({
+        kind: "step_end",
+        stopReason: errorDetail ? "error" : "stop",
+        rawStopReason: String(event.status || ""),
+      });
+      if (errorDetail) {
+        this.emit({
+          kind: "error",
+          severity: "fatal",
+          code: typeof errorDetail.type === "string" ? errorDetail.type : undefined,
+          message: String(errorDetail.message || "gemini execution failed"),
+        });
+      }
+      void result;
+    }
+  }
 
   async writeSettingsFile(): Promise<void> {
     const mcps = this.options.mcpConfig as Record<string, Record<string, unknown>> | undefined;
@@ -104,6 +200,7 @@ export class GeminiRunner {
       } catch {
         continue;
       }
+      this.handleEvent(event, result);
       const eventType = String(event?.type || "");
       if (eventType === "init") {
         result.threadId = String(event.sessionId || event.session_id || result.threadId);

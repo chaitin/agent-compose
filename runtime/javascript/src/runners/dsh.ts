@@ -7,6 +7,8 @@ import { extractText } from "../text.js";
 import { flattenEnvMap, type RuntimeMCPServer } from "../mcp-config.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
+import type { AgentEvent } from "../agent-event.js";
+import { toolKindForName } from "../agent-event.js";
 import type { AgentResult, RunnerOptions } from "../types.js";
 import { cancellationRequested } from "../shutdown.js";
 import { waitForChildExit } from "../child-process.js";
@@ -108,11 +110,14 @@ export class DshRunner {
       } else {
         delete env.DSH_RESUME;
       }
+      // DSH_MODEL is the one conditional DSH_* var with a legitimate inherited
+      // value: the daemon's facade config sets it to the model it resolved and
+      // minted the token against. Deleting it when no --model was passed would
+      // drop that and let the profile fall back to its hardcoded default, so
+      // only overwrite when this invocation actually names a model.
       const modelName = dshModelName(this.options.model);
       if (modelName) {
         env.DSH_MODEL = modelName;
-      } else {
-        delete env.DSH_MODEL;
       }
       const effort = dshReasoningEffort(this.options.effort);
       if (effort) {
@@ -203,7 +208,136 @@ export class DshRunner {
     }
   }
 
+  private emit(event: AgentEvent): void {
+    this.options.onEvent?.(event);
+  }
+
+  /**
+   * Map one DSH SessionEvent onto the neutral model.
+   *
+   * DSH reports the same per-step usage twice — once as an `assistant/chunk`
+   * of type "usage" and once on `assistant/message.usage`, byte-identical.
+   * Only the latter is mapped; taking both doubles every token count.
+   */
+  private emitNeutral(event: Record<string, unknown>): void {
+    const type = String(event.type || "");
+    const data = recordValue(event.data);
+    const step = typeof data?.step === "number" ? data.step : undefined;
+    if (type === "step/start") {
+      this.emit({ kind: "step_start", step });
+      return;
+    }
+    if (type === "step/end") {
+      this.emit({ kind: "step_end", step });
+      return;
+    }
+    if (type === "assistant/chunk") {
+      const chunk = recordValue(data?.chunk);
+      const chunkType = String(chunk?.type || "");
+      const index = typeof chunk?.index === "number" ? chunk.index : undefined;
+      if (chunkType === "text-delta" && typeof chunk?.text === "string" && chunk.text) {
+        this.emit({ kind: "text_delta", step, blockIndex: index, text: chunk.text });
+      } else if (chunkType === "reasoning-delta" && typeof chunk?.text === "string" && chunk.text) {
+        this.emit({ kind: "reasoning_delta", step, blockIndex: index, text: chunk.text });
+      }
+      return;
+    }
+    if (type === "assistant/message") {
+      const usage = recordValue(data?.usage);
+      if (usage) {
+        this.emit({
+          kind: "usage",
+          step,
+          scope: "step",
+          inputTokens: Number(usage.inputTokens ?? 0),
+          outputTokens: Number(usage.outputTokens ?? 0),
+          reasoningTokens: typeof usage.reasoningTokens === "number" ? usage.reasoningTokens : undefined,
+          cachedTokens: typeof usage.cacheReadTokens === "number" ? usage.cacheReadTokens : undefined,
+        });
+      }
+      return;
+    }
+    if (type === "tool/call") {
+      const name = firstString(data, "name");
+      let input: unknown;
+      try {
+        input = JSON.parse(String(data?.arguments ?? "null"));
+      } catch {
+        input = data?.arguments;
+      }
+      this.emit({
+        kind: "tool_call",
+        step,
+        id: firstString(data, "callId"),
+        name,
+        toolKind: toolKindForName(name),
+        status: "in_progress",
+        input,
+      });
+      return;
+    }
+    if (type === "tool/result") {
+      const message = recordValue(data?.message);
+      const blocks = Array.isArray(message?.content) ? message.content : [];
+      const results = blocks.filter((block): block is Record<string, unknown> => isRecord(block) && block.type === "tool-result");
+      const text = results
+        .flatMap((block) => (Array.isArray(block.content) ? block.content : []))
+        .filter((entry): entry is Record<string, unknown> => isRecord(entry) && entry.type === "text")
+        .map((entry) => String(entry.text || ""))
+        .join("");
+      const errorDetail = recordValue(data?.error);
+      const failed = Boolean(errorDetail) || results.some((block) => block.isError === true);
+      this.emit({
+        kind: "tool_result",
+        step,
+        id: firstString(results[0], "toolCallId") || firstString(recordValue(message?.source), "callId"),
+        ok: !failed,
+        output: text,
+        ...(errorDetail ? { error: firstString(errorDetail, "message") || "dsh tool error" } : {}),
+      });
+      return;
+    }
+    if (type === "todo/write") {
+      const todos = Array.isArray(data?.todos) ? data.todos : [];
+      this.emit({
+        kind: "todo",
+        items: todos.map((entry) => {
+          const record = entry as Record<string, unknown>;
+          return { text: String(record.text ?? record.content ?? ""), completed: String(record.status || "") === "completed" || record.completed === true };
+        }),
+      });
+      return;
+    }
+    if (type === "turn/end") {
+      const reason = recordValue(data?.reason);
+      const kind = firstString(reason, "kind") || "completed";
+      this.emit({
+        kind: "step_end",
+        stopReason: kind === "completed" ? "stop" : kind === "cancelled" ? "cancelled" : kind === "error" ? "error" : undefined,
+        rawStopReason: kind,
+      });
+      if (kind === "error") {
+        const errorDetail = recordValue(reason?.error);
+        this.emit({
+          kind: "error",
+          severity: "fatal",
+          code: firstString(errorDetail, "code") || undefined,
+          message: firstString(errorDetail, "message") || "unknown dsh error",
+        });
+      }
+      return;
+    }
+    if (type.startsWith("compaction/")) {
+      this.emit({ kind: "compaction", phase: type.endsWith("start") ? "start" : "end" });
+      return;
+    }
+    if (type.startsWith("llm/retry")) {
+      this.emit({ kind: "retry", reason: "other", attempt: 0 });
+    }
+  }
+
   handleEvent(event: Record<string, unknown>, result: AgentResult): void {
+    this.emitNeutral(event);
     // event is a DSH SessionEvent: {type, seq, time, data}. See
     // packages/core/session/src/types.ts in deepseek-harness.
     const type = String(event.type || "");

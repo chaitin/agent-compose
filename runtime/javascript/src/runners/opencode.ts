@@ -7,6 +7,8 @@ import { formatError } from "../errors.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { extractText, jsonString } from "../text.js";
 import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
+import type { AgentEvent } from "../agent-event.js";
+import { toolKindForName, toolOutputText } from "../agent-event.js";
 import type { AgentResult, RunnerOptions, StoredThread } from "../types.js";
 import { flattenEnvMap } from "../mcp-config.js";
 import { cancellationRequested } from "../shutdown.js";
@@ -14,6 +16,7 @@ import { waitForChildExit } from "../child-process.js";
 
 export class OpenCodeRunner {
   private skillsConfigDir?: string;
+  private step = 0;
   private providerMessageID = "";
   private providerMessageText = "";
 
@@ -127,7 +130,99 @@ export class OpenCodeRunner {
     }
   }
 
+  private emit(event: AgentEvent): void {
+    this.options.onEvent?.(event);
+  }
+
+  /**
+   * Map one `opencode run --format json` event. The CLI emits only six types
+   * (`step_start` / `step_finish` / `text` / `reasoning` / `tool_use` / `error`),
+   * all wrapped as `{type, timestamp, sessionID, part}`; the other branches
+   * below are kept for older CLI shapes the transcript path still tolerates.
+   */
+  private emitNeutral(event: Record<string, unknown>): void {
+    const type = String(event.type || event.event || "");
+    const part = isRecord(event.part) ? event.part : {};
+    switch (type) {
+      case "step_start":
+        this.step += 1;
+        this.emit({ kind: "step_start", step: this.step });
+        return;
+      case "step_finish": {
+        const tokens = isRecord(part.tokens) ? part.tokens as Record<string, unknown> : undefined;
+        const cache = isRecord(tokens?.cache) ? tokens.cache as Record<string, unknown> : {};
+        if (tokens) {
+          this.emit({
+            kind: "usage",
+            step: this.step,
+            scope: "step",
+            inputTokens: Number(tokens.input ?? 0),
+            outputTokens: Number(tokens.output ?? 0),
+            reasoningTokens: numberOrUndefined(tokens.reasoning),
+            cachedTokens: numberOrUndefined(cache.read),
+            cacheWriteTokens: numberOrUndefined(cache.write),
+            costUsd: numberOrUndefined(part.cost),
+          });
+        }
+        this.emit({ kind: "step_end", step: this.step, rawStopReason: stringField(part, "reason") || undefined });
+        return;
+      }
+      case "text":
+        // opencode publishes a text part only once it is complete, so this is a
+        // whole block rather than a token-level delta.
+        if (typeof part.text === "string" && part.text) {
+          this.emit({ kind: "text_delta", step: this.step, text: part.text });
+        }
+        return;
+      case "reasoning":
+        if (typeof part.text === "string" && part.text) {
+          this.emit({ kind: "reasoning_delta", step: this.step, text: part.text });
+        }
+        return;
+      case "tool_use": {
+        const state = isRecord(part.state) ? part.state as Record<string, unknown> : {};
+        const status = String(state.status || "");
+        const name = String(part.tool || "tool");
+        const id = String(part.id || name);
+        this.emit({
+          kind: "tool_call",
+          step: this.step,
+          id,
+          name,
+          toolKind: toolKindForName(name),
+          status: status === "completed" ? "completed" : status === "error" ? "failed" : "in_progress",
+          input: state.input,
+        });
+        if (status === "completed" || status === "error") {
+          this.emit({
+            kind: "tool_result",
+            step: this.step,
+            id,
+            ok: status === "completed",
+            output: toolOutputText(state.output),
+            ...(status === "error" ? { error: toolOutputText(state.error) || "tool error" } : {}),
+          });
+        }
+        return;
+      }
+      case "error": {
+        const error = isRecord(event.error) ? event.error as Record<string, unknown> : {};
+        const data = isRecord(error.data) ? error.data as Record<string, unknown> : {};
+        this.emit({
+          kind: "error",
+          severity: "fatal",
+          code: stringField(error, "name") || undefined,
+          message: stringField(data, "message") || stringField(error, "name") || "opencode error",
+        });
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
   handleEvent(event: Record<string, unknown>, result: AgentResult): void {
+    this.emitNeutral(event);
     const providerThreadID = stringField(event, "sessionID", "sessionId", "session_id");
     if (providerThreadID) {
       result.threadId = providerThreadID;
@@ -311,6 +406,10 @@ async function readOpenCodeConfig(configPath?: string): Promise<Record<string, u
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function uniqueStrings(values: string[]): string[] {

@@ -132,54 +132,32 @@ func (p *promptAttachProjector) projectLine(line []byte) ([]RunAttachOutput, *Tr
 	}
 }
 
+// agentEventText derives the frame's name and human-readable text from a
+// runtime agent event.
+//
+// The runtime publishes provider-neutral events: the frame name is the event
+// kind and only text_delta carries transcript text. Reasoning deliberately
+// contributes no text, so a consumer reading just that field never splices the
+// model's thinking into the answer.
 func (p *promptAttachProjector) agentEventText(raw json.RawMessage) (string, string) {
 	var event struct {
-		Type string `json:"type"`
+		Kind string `json:"kind"`
 		Text string `json:"text"`
-		Item *struct {
-			ID               string `json:"id"`
-			Type             string `json:"type"`
-			Text             string `json:"text"`
-			AggregatedOutput string `json:"aggregated_output"`
-			Command          string `json:"command"`
-		} `json:"item"`
+		Type string `json:"type"`
 	}
 	if err := json.Unmarshal(raw, &event); err != nil {
 		return "agent_event", ""
 	}
-	name := firstNonEmpty(event.Type, "agent_event")
-	if event.Text != "" {
-		return name, event.Text
-	}
-	if event.Item == nil {
-		return name, ""
-	}
-	key := firstNonEmpty(event.Item.ID, name)
-	var text string
-	switch event.Item.Type {
-	case "agent_message", "reasoning":
-		text = event.Item.Text
-	case "command_execution":
-		if event.Item.Command != "" {
-			commandKey := key + ":command"
-			if p.itemTexts[commandKey] == "" {
-				p.itemTexts[commandKey] = event.Item.Command
-				text += "\n$ " + event.Item.Command + "\n"
-			}
+	if event.Kind != "" {
+		name := event.Kind
+		if event.Kind == "text_delta" {
+			return name, event.Text
 		}
-		text += event.Item.AggregatedOutput
-	default:
 		return name, ""
 	}
-	if text == "" {
-		return name, ""
-	}
-	previous := p.itemTexts[key]
-	p.itemTexts[key] = text
-	if strings.HasPrefix(text, previous) {
-		return name, text[len(previous):]
-	}
-	return name, text
+	// Legacy shape: a raw provider event with no neutral kind. Keep the frame
+	// addressable but contribute nothing to the transcript.
+	return firstNonEmpty(event.Type, "agent_event"), ""
 }
 
 func (p *promptAttachProjector) appendLogText(text string) error {

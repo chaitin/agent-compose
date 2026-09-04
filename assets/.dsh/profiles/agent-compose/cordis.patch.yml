@@ -4,18 +4,45 @@
 # runtime/javascript/src/runners/dsh.ts — see docs/design/dsh_agent_provider_design.md
 # §3.2/§3.5. This file ships as a repo asset (assets/.dsh/...), not an npm package.
 
+# dsh-base mounts two LLM adapters: llm-deepseek (its native one, active) and
+# llm-pi-ai (dormant until a profile supplies routes). agent-compose uses the
+# latter because llm-deepseek speaks only chat completions — its Config has no
+# protocol field at all — which forces a protocol conversion whenever the
+# resolved provider serves something else. A conversion also carries whatever
+# the upstream sends that the bridge does not model: this gateway emits its own
+# codex.response.metadata and responsesapi.websocket_timing events, which the
+# chat-completions encoder rendered into the assistant's answer.
+# llm-pi-ai names its wire protocol per route, so the guest can speak whatever
+# the facade resolved and the request stays on the passthrough path.
+#
+# Disabling llm-deepseek keeps one adapter owning the route namespace: two
+# adapters claiming the same provider id fail plugin loading.
 - id: llm-deepseek
-  config:
-    apiKeyEnv: LLM_API_KEY
-    baseURL: !!js process.env.LLM_API_ENDPOINT
-    thinking: enabled
-    reasoningEffort: !!js process.env.DSH_REASONING_EFFORT || 'max'
+  disabled: true
 
-# llm-deepseek registers a single route, 'deepseek-official' (see §4.2); the
-# model name alone comes from the spawn environment.
+# A hand-declared route: pi-ai ships nothing under this key, so the profile
+# supplies the whole provider. Such a route requires api, baseURL, and a
+# non-empty models list. All three come from the spawn environment, and
+# DSH_WIRE_API is the protocol the daemon's facade resolved for this run.
+- id: llm-pi-ai
+  config:
+    providers:
+      agent-compose:
+        displayName: agent-compose facade
+        apiKeyEnv: LLM_API_KEY
+        api: !!js process.env.DSH_WIRE_API || 'openai-completions'
+        baseURL: !!js process.env.LLM_API_ENDPOINT
+        models:
+          - id: !!js process.env.DSH_MODEL || 'deepseek-v4-flash'
+            reasoningEfforts:
+              off:
+              low: low
+              high: high
+              max: max
+
 - id: agent-default-model
   config:
-    provider: deepseek-official
+    provider: agent-compose
     model: !!js process.env.DSH_MODEL || 'deepseek-v4-flash'
 
 # agent-compose assembles persona/skills-catalog/workspace context host-side,
@@ -52,6 +79,31 @@
   config:
     includeDefaultRoots: false
     customSkillDirs: !!js (process.env.DSH_SKILL_DIRS || '').split(':').filter(Boolean)
+
+# dsh-base confines tool execution itself: bash-sandbox, pwsh-sandbox and
+# fs-sandbox enforce a mode, and sandbox-policy pins it from
+# DSH_PERMISSION_MODE. agent-compose already runs the whole guest inside its
+# own sandbox, so that inner layer enforces nothing extra — it only adds a
+# `sandbox_permissions` escalation argument to every tool schema.
+#
+# That argument is unusable here and actively costly. Its enum is advertised
+# whenever a confining executor is mounted, but nothing tells the model which
+# mode it currently holds, so a model reaches for it, asks for a mode narrower
+# than the danger-full-access it already has, and approveEscalation rejects the
+# call as "not strictly wider" — one wasted turn per occurrence. See
+# https://github.com/deepseek-ai/deepseek-harness/discussions/468.
+#
+# Swapping in the unconfined executors drops `ctx.shell.sandboxMode`, the gate
+# the tools read: with no mode the escalation fields leave the schema entirely,
+# so the model cannot ask for something it already holds. Narrowing the mode
+# instead would be worse, since dsh-base derives the approval policy from the
+# same variable ('never' only under danger-full-access) and this guest has no
+# one to answer an approval prompt.
+- id: bash-sandbox
+  name: '@deepseek-ai/dsh-bash-local'
+
+- id: fs-sandbox
+  name: '@deepseek-ai/dsh-fs-local'
 
 # No approval/sandbox-policy overrides here: dsh-base's own rows already key
 # off DSH_PERMISSION_MODE (agent-compose always sets danger-full-access — see
