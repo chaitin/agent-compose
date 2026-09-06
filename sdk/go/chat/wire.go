@@ -87,14 +87,29 @@ type wireAttachResponse struct {
 }
 
 type wireRunSummary struct {
-	RunID     string            `json:"runId"`
-	ProjectID string            `json:"projectId"`
-	AgentName string            `json:"agentName"`
-	Status    string            `json:"status"`
-	SandboxID string            `json:"sandboxId"`
-	Labels    map[string]string `json:"labels"`
-	CreatedAt time.Time         `json:"createdAt"`
-	UpdatedAt time.Time         `json:"updatedAt"`
+	RunID     string    `json:"runId"`
+	ProjectID string    `json:"projectId"`
+	AgentName string    `json:"agentName"`
+	Status    string    `json:"status"`
+	SandboxID string    `json:"sandboxId"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// wireGetRunRequest and wireGetRunResponse read a run's detail, which is where
+// labels live: a run summary deliberately carries only the fields a list view
+// needs.
+type wireGetRunRequest struct {
+	RunID string `json:"runId"`
+}
+
+type wireRunDetail struct {
+	Summary wireRunSummary    `json:"summary"`
+	Labels  map[string]string `json:"labels"`
+}
+
+type wireGetRunResponse struct {
+	Run wireRunDetail `json:"run"`
 }
 
 // live reports whether a run can still accept an attach.

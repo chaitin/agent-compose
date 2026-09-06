@@ -536,19 +536,6 @@ func (s *projectStore) ListProjectRunsByOptions(ctx context.Context, options Pro
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate project runs: %w", err)
 	}
-	// One query for the page's labels, so a caller that filtered on labels can
-	// group what it gets back without a GetRun per row.
-	runIDs := make([]string, 0, len(items))
-	for _, item := range items {
-		runIDs = append(runIDs, item.RunID)
-	}
-	labels, err := loadProjectRunLabelsForRuns(ctx, s.db, runIDs)
-	if err != nil {
-		return nil, err
-	}
-	for index := range items {
-		items[index].Labels = labels[items[index].RunID]
-	}
 	return items, nil
 }
 

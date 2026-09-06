@@ -27,7 +27,8 @@ type ConversationInfo struct {
 	ProjectID string
 	AgentName string
 	// Labels are the labels the conversation was created with, minus the one
-	// this package uses for identity.
+	// this package uses for identity. It is nil for a conversation reached
+	// through [Client.Lookup], which does not read them.
 	Labels map[string]string
 	// LastActive is when the conversation's most recent session started.
 	LastActive time.Time
@@ -37,15 +38,54 @@ type ConversationInfo struct {
 	Live bool
 }
 
+// Lookup reports what the server knows about one conversation, and nothing if
+// it has never run or does not match every label in mustMatch.
+//
+// This is the cheap question, and the one authorization needs: "is there a
+// conversation with this ID carrying these labels?" is answered by the run
+// list's label filter alone, in a single call, without reading any label back.
+// A product can therefore check that a conversation belongs to the user in
+// front of it without keeping its own record of who owns what.
+func (c *Client) Lookup(ctx context.Context, id string, mustMatch map[string]string) (ConversationInfo, bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ConversationInfo{}, false, invalidArgument("Lookup", "conversation ID is required")
+	}
+	labels := maps.Clone(mustMatch)
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[conversationLabel] = id
+
+	runs, err := c.matchingRuns(ctx, "Lookup", Search{Labels: labels})
+	if err != nil {
+		return ConversationInfo{}, false, err
+	}
+	if len(runs) == 0 {
+		return ConversationInfo{}, false, nil
+	}
+	latest := runs[0]
+	for _, run := range runs[1:] {
+		if run.CreatedAt.After(latest.CreatedAt) {
+			latest = run
+		}
+	}
+	// The ID is what was asked for, so it needs no confirming: a run came back
+	// only because it carries that label.
+	return ConversationInfo{
+		ID:         id,
+		ProjectID:  latest.ProjectID,
+		AgentName:  latest.AgentName,
+		LastActive: latest.CreatedAt,
+		Live:       latest.live(),
+	}, true, nil
+}
+
 // Search selects which conversations [Client.Conversations] returns.
 //
 // An empty Search matches every conversation this package created. Fields
 // combine with AND.
 type Search struct {
-	// ID narrows the search to one conversation, which is how a caller asks
-	// whether a given conversation exists and is still live without opening
-	// it. Combined with Labels it also answers whether it is theirs.
-	ID string
 	// ProjectID and AgentName narrow the search to one counterpart. Empty
 	// means any.
 	ProjectID string
@@ -63,36 +103,24 @@ type Search struct {
 // Conversations lists the conversations matching search, most recently active
 // first.
 //
-// A conversation is not a server-side object: it is a set of runs sharing an
-// identity label, so this reads one page of runs and folds them together. A
-// conversation that has been rebuilt appears once, described by its most
-// recent run.
+// This is the expensive question. The daemon's run list returns summaries
+// without labels — labels belong to a run's detail — so discovering which
+// conversation each run belongs to costs one detail read per run. A product
+// that shows a chat list on every page load should keep its own index of the
+// conversation IDs it created and call [Agent.Open] directly; this is for
+// rebuilding such an index, or for tools that never had one.
 func (c *Client) Conversations(ctx context.Context, search Search) ([]ConversationInfo, error) {
-	limit := search.Limit
-	if limit <= 0 || limit > listPageSize {
-		limit = listPageSize
-	}
-	labels := maps.Clone(search.Labels)
-	if labels == nil {
-		labels = map[string]string{}
-	}
-	if id := strings.TrimSpace(search.ID); id != "" {
-		labels[conversationLabel] = id
-	}
-	request := wireListRunsRequest{
-		ProjectID: strings.TrimSpace(search.ProjectID),
-		AgentName: strings.TrimSpace(search.AgentName),
-		Labels:    labels,
-		Limit:     uint32(limit),
-	}
-	var response wireListRunsResponse
-	if err := c.transport.unary(ctx, "Conversations", "ListRuns", request, &response); err != nil {
+	runs, err := c.matchingRuns(ctx, "Conversations", search)
+	if err != nil {
 		return nil, err
 	}
-
-	found := make(map[string]ConversationInfo, len(response.Runs))
-	for _, run := range response.Runs {
-		id := run.Labels[conversationLabel]
+	found := make(map[string]ConversationInfo, len(runs))
+	for _, run := range runs {
+		labels, err := c.runLabels(ctx, run.RunID)
+		if err != nil {
+			return nil, err
+		}
+		id := labels[conversationLabel]
 		if id == "" {
 			// A run this package did not start. It has no conversation
 			// identity, and inventing one from its run ID would produce an ID
@@ -102,7 +130,7 @@ func (c *Client) Conversations(ctx context.Context, search Search) ([]Conversati
 		if seen, ok := found[id]; ok && seen.LastActive.After(run.CreatedAt) {
 			continue
 		}
-		remaining := maps.Clone(run.Labels)
+		remaining := maps.Clone(labels)
 		delete(remaining, conversationLabel)
 		found[id] = ConversationInfo{
 			ID:         id,
@@ -122,4 +150,33 @@ func (c *Client) Conversations(ctx context.Context, search Search) ([]Conversati
 		return strings.Compare(a.ID, b.ID)
 	})
 	return conversations, nil
+}
+
+// matchingRuns runs one filtered run list.
+func (c *Client) matchingRuns(ctx context.Context, op string, search Search) ([]wireRunSummary, error) {
+	limit := search.Limit
+	if limit <= 0 || limit > listPageSize {
+		limit = listPageSize
+	}
+	request := wireListRunsRequest{
+		ProjectID: strings.TrimSpace(search.ProjectID),
+		AgentName: strings.TrimSpace(search.AgentName),
+		Labels:    maps.Clone(search.Labels),
+		Limit:     uint32(limit),
+	}
+	var response wireListRunsResponse
+	if err := c.transport.unary(ctx, op, "ListRuns", request, &response); err != nil {
+		return nil, err
+	}
+	return response.Runs, nil
+}
+
+// runLabels reads one run's labels, which only the detail view carries.
+func (c *Client) runLabels(ctx context.Context, runID string) (map[string]string, error) {
+	var response wireGetRunResponse
+	request := wireGetRunRequest{RunID: runID}
+	if err := c.transport.unary(ctx, "Conversations", "GetRun", request, &response); err != nil {
+		return nil, err
+	}
+	return response.Run.Labels, nil
 }

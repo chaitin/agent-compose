@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
@@ -24,8 +23,8 @@ type rowQueryer interface {
 // project_run_label. There is no redundant column on project_run, so this
 // query is the only way to reconstruct a run's labels for detail-view reads
 // (GetProjectRun and the transactional helpers that back RunAgent/GetRun).
-// The list path uses loadProjectRunLabelsForRuns instead, which reads one
-// page's labels in a single query rather than one per row.
+// ListProjectRunsByOptions never calls this: labels live on RunDetail, not
+// RunSummary, so the high-frequency list/stream path stays free of it.
 func loadProjectRunLabels(ctx context.Context, q rowQueryer, runID string) (map[string]string, error) {
 	rows, err := q.QueryContext(ctx, `SELECT key, value FROM project_run_label WHERE run_id = ?`, runID)
 	if err != nil {
@@ -66,43 +65,4 @@ func insertProjectRunLabelsTx(ctx context.Context, tx *sql.Tx, runID string, lab
 		}
 	}
 	return nil
-}
-
-// loadProjectRunLabelsForRuns reads the labels of a whole page of runs in one
-// query, keyed by run ID.
-//
-// The list path needs labels because a caller that filtered on them has to be
-// able to group the page it gets back; doing that with loadProjectRunLabels
-// would cost one query per row. Runs with no labels are absent from the
-// result, which callers read as an empty set.
-func loadProjectRunLabelsForRuns(ctx context.Context, q rowQueryer, runIDs []string) (map[string]map[string]string, error) {
-	if len(runIDs) == 0 {
-		return nil, nil
-	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(runIDs)), ",")
-	args := make([]any, 0, len(runIDs))
-	for _, runID := range runIDs {
-		args = append(args, runID)
-	}
-	rows, err := q.QueryContext(ctx,
-		`SELECT run_id, key, value FROM project_run_label WHERE run_id IN (`+placeholders+`)`, args...)
-	if err != nil {
-		return nil, fmt.Errorf("load project run labels for %d runs: %w", len(runIDs), err)
-	}
-	defer func() { _ = rows.Close() }()
-	byRun := make(map[string]map[string]string, len(runIDs))
-	for rows.Next() {
-		var runID, key, value string
-		if err := rows.Scan(&runID, &key, &value); err != nil {
-			return nil, fmt.Errorf("scan project run label: %w", err)
-		}
-		if byRun[runID] == nil {
-			byRun[runID] = make(map[string]string, 4)
-		}
-		byRun[runID][key] = value
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate project run labels: %w", err)
-	}
-	return byRun, nil
 }

@@ -89,7 +89,9 @@ page can tell "did not happen" from "this provider never reports it".
 
 ## Where the chat list lives
 
-On the daemon. Every run this server starts carries three labels:
+Identity is on the daemon; the index is here.
+
+Every run this server starts carries three labels:
 
 | | |
 |---|---|
@@ -97,16 +99,23 @@ On the daemon. Every run this server starts carries three labels:
 | `chat.user` | who it belongs to |
 | `chat.app` | that this app started it |
 
-so one `ListRuns` filtered by `chat.user` **is** the chat list. The SDK's
-`Client.Conversations` folds a conversation's runs together — a rebuilt one
-occupies several — and reports when each was last active and whether its
-environment is still alive.
+**Ownership is answered by those labels, in one call and with nothing read
+back.** `ListRuns` filtered on `{chat.conversation, chat.user}` returning a run
+*is* the proof the conversation is that user's; an empty result is the proof it
+is not. So a conversation resolves for its owner, and hides from everyone else,
+even when this server has no record of it.
 
-This server's state file holds only the two things labels cannot: **titles**,
-because a run's labels are fixed when it starts and a rename has to work without
-starting one; and **conversations that have not run yet**, which have no run
-behind them until their first message. Delete the file and the list comes back
-from the daemon, ownership included — only the titles are gone.
+**The list is not**, because a run summary carries no labels — they belong to a
+run's detail, so grouping a page of runs into conversations costs one `GetRun`
+per run. The sidebar is redrawn after every turn, so it reads a local index
+instead: `state.json` maps each conversation to its owner, its agent, and its
+title.
+
+Losing that file therefore loses the *list*, not the conversations. The ⟳ button
+rebuilds it from the daemon — the expensive path, run when asked rather than on
+every page load. Recovered conversations come back without titles, because a
+title was never the daemon's to hold: labels are fixed when a run starts, and a
+rename has to work without starting one.
 
 ## Accounts
 
@@ -117,7 +126,8 @@ live in memory, so restarting the server signs everyone out.
 
 Each conversation belongs to one account, and ownership is enforced from the
 `chat.user` label rather than from this server's own record — so it holds even
-for a conversation this process has never seen. Asking for someone else's is
+for a conversation this process has never seen, and a tampered-with state file
+cannot grant access the daemon would refuse. Asking for someone else's is
 answered as *not found* rather than *forbidden*: that another user has a
 conversation is itself none of the asker's business.
 
@@ -138,6 +148,7 @@ Everything except `POST /api/login` and the page requires a session.
 | `GET /api/me` | who is signed in, or `null` |
 | `GET /api/agents` | projects and their agents |
 | `GET /api/conversations` | this user's chat list, most recent first |
+| `POST /api/conversations/recover` | rebuild the list from the daemon |
 | `POST /api/conversations` | `{projectId, agentName}` → a new conversation |
 | `GET /api/conversations/{id}` | one conversation and its transcript |
 | `PATCH /api/conversations/{id}` | `{title}` |
@@ -166,8 +177,10 @@ daemon and is reopened by ID on the next visit, with its context intact.
 - **The activity trace needs [#666](https://github.com/chaitin/agent-compose/pull/666).**
   Until it merges, only the codex provider emits structured agent events; the
   others complete their turns in one piece, and the trace stays hidden.
-- **Titles are local.** Everything else about a conversation comes from the
-  daemon; a title cannot, because labels are fixed when a run starts.
-- **The list is paged by run, not by conversation.** `ListRuns` returns runs, and
-  a conversation that has been rebuilt occupies several, so a page of 200 runs
-  yields somewhere between 1 and 200 conversations.
+- **The chat list is an index, not a source of truth.** It can drift from the
+  daemon — a conversation deleted by another client stays in the sidebar until
+  it is opened. Rebuilding it is one click, not automatic, because the daemon
+  answers it at one `GetRun` per run.
+- **Rebuilding is paged by run, not by conversation.** `ListRuns` returns runs,
+  and a conversation that has been rebuilt occupies several, so a page of 200
+  runs yields somewhere between 1 and 200 conversations.

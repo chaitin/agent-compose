@@ -103,6 +103,7 @@ func TestEveryAPIRouteNeedsASession(t *testing.T) {
 		{http.MethodPatch, "/api/conversations/x"},
 		{http.MethodDelete, "/api/conversations/x"},
 		{http.MethodGet, "/api/conversations/x/socket"},
+		{http.MethodPost, "/api/conversations/recover"},
 	}
 	for _, route := range guarded {
 		recorder := call(t, server, nil, route.method, route.path, "{}")
@@ -319,11 +320,11 @@ func TestASessionExpires(t *testing.T) {
 	}
 }
 
-// The chat list lives on the daemon, in the chat.user and chat.conversation
-// labels every run carries. Losing this server's state file costs titles, not
-// conversations — and ownership still holds, because it was never this file's
-// to enforce.
-func TestTheChatListSurvivesLosingTheStateFile(t *testing.T) {
+// Losing the index does not lose the conversations: ownership lives in the
+// chat.user label, so a conversation this server has no record of still
+// resolves for its owner and still hides from everyone else. Rebuilding the
+// list is an explicit request, because it costs a run detail read per run.
+func TestAConversationResolvesWithoutALocalRecord(t *testing.T) {
 	daemon := quietDaemon(t)
 	daemon.listRuns(
 		map[string]any{
@@ -345,21 +346,16 @@ func TestTheChatListSurvivesLosingTheStateFile(t *testing.T) {
 	server := newTestServer(t, daemon)
 	alice, bob := signIn(t, server, "alice"), signIn(t, server, "bob")
 
+	// The sidebar is the local index, which knows nothing yet.
 	listed := call(t, server, alice, http.MethodGet, "/api/conversations", "")
-	if listed.Code != http.StatusOK {
-		t.Fatalf("list: %d %s", listed.Code, listed.Body)
-	}
 	var page struct {
 		Conversations []map[string]any `json:"conversations"`
 	}
 	if err := json.Unmarshal(listed.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(page.Conversations) != 1 || page.Conversations[0]["id"] != "conv_alice" {
-		t.Fatalf("the daemon's conversations were not listed: %v", page.Conversations)
-	}
-	if page.Conversations[0]["live"] != true {
-		t.Errorf("a conversation whose run is still running is not reported live: %v", page.Conversations[0])
+	if len(page.Conversations) != 0 {
+		t.Fatalf("the sidebar invented rows it has no record of: %v", page.Conversations)
 	}
 
 	// Ownership comes from the label, with no local record to consult.
@@ -368,6 +364,22 @@ func TestTheChatListSurvivesLosingTheStateFile(t *testing.T) {
 	}
 	if recorder := call(t, server, alice, http.MethodGet, "/api/conversations/conv_alice", ""); recorder.Code != http.StatusOK {
 		t.Errorf("the owner could not open their own conversation: %d %s", recorder.Code, recorder.Body)
+	}
+
+	// Asked explicitly, the index is rebuilt from the daemon.
+	rebuilt := call(t, server, alice, http.MethodPost, "/api/conversations/recover", "")
+	if rebuilt.Code != http.StatusOK {
+		t.Fatalf("recover: %d %s", rebuilt.Code, rebuilt.Body)
+	}
+	listed = call(t, server, alice, http.MethodGet, "/api/conversations", "")
+	if err := json.Unmarshal(listed.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(page.Conversations) != 1 || page.Conversations[0]["id"] != "conv_alice" {
+		t.Fatalf("recover did not rebuild the list: %v", page.Conversations)
+	}
+	if bobs := call(t, server, bob, http.MethodPost, "/api/conversations/recover", ""); !strings.Contains(bobs.Body.String(), `"recovered":1`) {
+		t.Errorf("bob recovered %s, want only his own conversation", bobs.Body)
 	}
 }
 

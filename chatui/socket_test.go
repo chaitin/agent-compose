@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -120,11 +121,29 @@ func fakeDaemon(t *testing.T, script []wireEvent) *daemonStub {
 				}
 			}
 			if keep {
-				matching = append(matching, run)
+				// A run summary carries no labels, which is the whole reason
+				// grouping runs into conversations needs GetRun.
+				summary := maps.Clone(run)
+				delete(summary, "labels")
+				matching = append(matching, summary)
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"runs": matching, "total": len(matching)})
+	})
+	mux.HandleFunc("POST /agentcompose.v2.RunService/GetRun", func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			RunID string `json:"runId"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		detail := map[string]any{}
+		for _, run := range stub.currentRuns() {
+			if run["runId"] == request.RunID {
+				detail["labels"] = run["labels"]
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"run": detail})
 	})
 	mux.HandleFunc("POST /agentcompose.v2.RunService/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

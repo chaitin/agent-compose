@@ -53,7 +53,6 @@ func ProjectRunSummaryToProto(run domain.ProjectRunRecord) *agentcomposev2.RunSu
 		CreatedAt:       FormatProjectTime(run.CreatedAt),
 		UpdatedAt:       FormatProjectTime(run.UpdatedAt),
 		Warnings:        append([]string(nil), run.Warnings...),
-		Labels:          run.Labels,
 	}
 }
 

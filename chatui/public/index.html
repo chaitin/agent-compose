@@ -141,6 +141,7 @@
     <div id="list"></div>
     <div class="side-bottom">
       <span class="who" id="who"></span>
+      <button class="ghost" id="recover" title="从守护进程重建列表">⟳</button>
       <button class="ghost" id="signout">退出</button>
     </div>
   </aside>
@@ -234,6 +235,19 @@ $("signinForm").addEventListener("submit", async (submitEvent) => {
   } catch (error) {
     $("signinError").textContent = error.message;
   }
+});
+
+// Rebuilding the list asks the daemon which conversations carry this user's
+// label. It is a request, not a refresh: a run summary carries no labels, so
+// the answer costs one detail read per run and is not something to do on every
+// page load.
+$("recover").addEventListener("click", async () => {
+  setStatus("正在从守护进程重建列表…");
+  await guarded(async () => {
+    const { recovered, found } = await api("POST", "/api/conversations/recover");
+    await refreshList();
+    setStatus(recovered ? `找回 ${recovered} 个对话（共 ${found} 个）` : `没有新对话（共 ${found} 个）`);
+  });
 });
 
 $("signout").addEventListener("click", async () => {

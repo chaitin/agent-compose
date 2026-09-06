@@ -294,7 +294,6 @@ func TestOpenResumesALiveConversation(t *testing.T) {
 		RunID:     "run-7",
 		Status:    "RUN_STATUS_RUNNING",
 		SandboxID: "sandbox-7",
-		Labels:    map[string]string{conversationLabel: "conv-abc"},
 		CreatedAt: time.Now().Add(-time.Hour),
 	}}, Total: 1}
 	starts := make(chan *wireAttachStart, 1)

@@ -50,30 +50,42 @@ continuity of the environment they run in.
 ## Finding conversations again
 
 `Open` needs an ID, which a product normally already has against its own thread
-record. When it does not — a new device, a lost cache, a support tool — the
-conversations are still findable, because their identity is a label on the runs
-they occupy:
+record. Two questions come up when it does not, and they cost very different
+things.
+
+**Is this conversation this user's?** `Lookup` answers in one call, because the
+run list's label filter answers it without reading a single label back:
 
 ```go
 conversation := agent.Start(chat.WithLabels(map[string]string{"user": "alice"}))
 ...
+info, ok, err := client.Lookup(ctx, id, map[string]string{"user": "alice"})
+```
+
+`ok` is false when no run carries both labels — the conversation does not exist,
+or is not hers, and the caller cannot tell which. That is the right answer for
+an authorization check, and it means a product does not have to trust its own
+record of who owns what.
+
+**Which conversations does this user have?** `Conversations` answers it, but a
+run summary deliberately carries no labels — they belong to a run's detail — so
+discovering which conversation each run belongs to costs one read per run:
+
+```go
 found, err := client.Conversations(ctx, chat.Search{
     Labels: map[string]string{"user": "alice"},
 })
-for _, info := range found {
-    fmt.Println(info.ID, info.AgentName, info.LastActive, info.Live)
-}
 ```
 
-A conversation that has been rebuilt occupies several runs; `Conversations`
-folds them into one entry described by the most recent. `Live` reports whether
-that environment is still up, which is what separates a conversation that will
-resume with its context from one that will be rebuilt.
+Keep your own index of the IDs you created and call `Open` directly; use this to
+rebuild that index, not to draw a list on every page load. A conversation that
+has been rebuilt occupies several runs and is folded into one entry described by
+the most recent, with `Live` reporting whether that environment is still up.
 
-What comes back is only what the server holds. A title, an unread marker, or
-anything else a product invents about a conversation stays the product's to
-keep: run labels are fixed when a run starts, so they cannot carry a name that
-has to be changeable.
+What comes back either way is only what the server holds. A title, an unread
+marker, or anything else a product invents about a conversation stays the
+product's to keep: run labels are fixed when a run starts, so they cannot carry
+a name that has to be changeable.
 
 ## Continuity
 
