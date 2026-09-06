@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -165,6 +166,10 @@ func (a *authenticator) signIn(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(body.User)
 	if err := a.store.authenticate(name, body.Password); err != nil {
 		a.recordFailure(r)
+		// Logged because a rejected sign-in is worth seeing, and because the
+		// reply deliberately says nothing about which half was wrong. The
+		// password is not logged, and the name is what the client sent.
+		slog.Warn("chat sign-in rejected", "user", name, "from", clientAddress(r))
 		http.Error(w, "wrong user name or password", http.StatusUnauthorized)
 		return
 	}

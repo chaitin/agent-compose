@@ -18,6 +18,9 @@
     }
   }
   * { box-sizing: border-box; }
+  /* An author display rule outweighs the UA sheet's [hidden] rule, so every
+     element this page hides by attribute needs this to actually disappear. */
+  [hidden] { display: none !important; }
   body { margin: 0; height: 100vh; overflow: hidden; background: var(--bg); color: var(--ink);
          font: 14px/1.6 ui-sans-serif, -apple-system, "Segoe UI", "PingFang SC", sans-serif; }
   button, select, textarea, input {
@@ -40,7 +43,6 @@
 
   /* ---------- layout ---------- */
   #app { display: grid; grid-template-columns: 268px 1fr; height: 100vh; }
-  #app[hidden] { display: none; }
 
   aside { display: flex; flex-direction: column; min-height: 0;
           background: var(--side); border-right: 1px solid var(--line); }
@@ -220,7 +222,9 @@ async function showApp(user) {
   $("signin").hidden = true;
   $("app").hidden = false;
   $("who").textContent = user;
-  await loadAgents();
+  // Neither of these may keep the user on the sign-in screen: they are already
+  // signed in, and a daemon that is down is a message, not a rejection.
+  await loadAgents().catch((error) => setStatus("加载 agent 失败: " + error.message));
   await refreshList();
 }
 
@@ -280,10 +284,14 @@ async function loadAgents() {
 }
 
 async function refreshList() {
-  const data = await guarded(() => api("GET", "/api/conversations"));
-  if (!data) return;
-  conversations = data.conversations;
-  drawList();
+  try {
+    const data = await guarded(() => api("GET", "/api/conversations"));
+    if (!data) return;
+    conversations = data.conversations;
+    drawList();
+  } catch (error) {
+    setStatus("读取对话列表失败: " + error.message);
+  }
 }
 
 // drawList groups by when a conversation was last used, which is how someone

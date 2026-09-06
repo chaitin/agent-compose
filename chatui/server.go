@@ -84,6 +84,9 @@ func (s *uiServer) index(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// The page is the whole app and is embedded in the binary, so a rebuilt
+	// server must not be shadowed by a copy the browser decided to keep.
+	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(page)
 }
 
