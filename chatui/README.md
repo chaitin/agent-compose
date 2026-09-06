@@ -4,11 +4,18 @@ A browser chat UI for agent-compose agents, built on the
 [Go chat SDK](../sdk/go).
 
 ```bash
-go run . -daemon http://127.0.0.1:7411
+go run . -daemon http://127.0.0.1:7410
 # http://127.0.0.1:7500
 ```
 
-`AGENT_COMPOSE_TOKEN` is sent as a bearer token when set.
+With no accounts yet, the first start creates `admin` and prints a generated
+password once. `AGENT_COMPOSE_TOKEN` is sent to the daemon as a bearer token
+when set.
+
+```bash
+go run . -add-user alice        # prompts for a password, no echo
+go run . -set-password alice
+```
 
 ## Why a server sits in the middle
 
@@ -48,47 +55,96 @@ viewer joining mid-turn sees that turn from its beginning.
 
 ## What it does
 
+- Signs in, and shows each person only their own conversations
+- Lists past conversations by recency, with rename and delete
 - Picks a project and agent, and holds a multi-turn conversation with one
-- Streams text, tool calls and results, token usage, and retries as they happen
+- Shows what the agent is doing as it works: a collapsible trace of steps, tool
+  calls and their output, reasoning, plans, retries, and token usage
 - Survives a restart of this server: conversations are resumed by ID, and the
   agent keeps the context it built up
 - Says so when a conversation's environment was rebuilt, rather than silently
   starting over with no context
 - Reads back history, including turns that ran while nobody was watching
 
+## The activity trace
+
+A turn renders as two things: what the agent **did**, and what it **said**. The
+trace above each answer holds the first, folded away once the turn finishes
+unless the reader opened it themselves.
+
+Work is grouped by the step number each event carries — never by what falls
+between a `step_start` and a `step_end`. Providers interleave, so an event's own
+step number is the only thing that says where it belongs. Events from a provider
+that does not number its steps land in one shared panel rather than being
+assigned a step they never claimed.
+
+Token usage is shown per scope and **never summed across scopes**: one provider
+reports a step's tokens, another repeats a running total for the whole turn, and
+adding those together produces a number that means nothing. Step-scoped records
+cover disjoint work and do add up; turn- and run-scoped records replace the
+previous total.
+
+A field a provider did not report is omitted rather than sent as a zero, so the
+page can tell "did not happen" from "this provider never reports it".
+
+## Accounts
+
+Accounts live in the state file (`-state`, by default
+`~/.agent-compose/chatui/state.json`), which also holds the chat list. Passwords
+are stored as PBKDF2-HMAC-SHA256 verifiers, never in the clear. Sessions are
+cookie-based and live in memory, so restarting the server signs everyone out.
+
+Each conversation belongs to one account. Asking for someone else's is answered
+as *not found* rather than *forbidden* — that another user has a conversation is
+itself none of the asker's business. Runs are also labelled `chat.user` on the
+daemon, so a conversation is attributable from the daemon's own tooling.
+
+This is a sign-in, not an identity system: there are no roles, no sharing, and
+no password reset beyond `-set-password`. Put it behind TLS before exposing it
+past localhost — the session cookie is marked `Secure` only when the request
+arrives over HTTPS.
+
 ## HTTP API
 
 Discrete actions stay plain HTTP; only the conversation itself needs a socket.
+Everything except `POST /api/login` and the page requires a session.
 
 | | |
 |---|---|
+| `POST /api/login` | `{user, password}` → session cookie |
+| `POST /api/logout` | drop the session |
+| `GET /api/me` | who is signed in, or `null` |
 | `GET /api/agents` | projects and their agents |
-| `POST /api/conversations` | `{projectId, agentName, resume?}` → `{id, continuity}` |
-| `GET /api/conversations/{id}/socket` | the conversation, as a WebSocket |
-| `GET /api/conversations/{id}/history` | every message, oldest first |
+| `GET /api/conversations` | this user's chat list, most recent first |
+| `POST /api/conversations` | `{projectId, agentName}` → a new conversation |
+| `GET /api/conversations/{id}` | one conversation and its transcript |
+| `PATCH /api/conversations/{id}` | `{title}` |
 | `DELETE /api/conversations/{id}` | end the conversation and release its environment |
+| `GET /api/conversations/{id}/socket` | the conversation, as a WebSocket |
 
 On the socket, the browser sends `{type:"message", text}` and `{type:"stop"}`,
 and receives `turn_started` (with the prompt, so a viewer that did not send it
-sees the question), `event` (one SDK event), `turn_done`, `stopped`, and
-`error`.
+sees the question), `event` (one SDK event), `turn_done`, `conversation` (the
+updated sidebar row), `stopped`, and `error`.
 
 A handshake is accepted only from the page this server serves; `-allow-origin`
 adds others. A WebSocket handshake is not subject to the same-origin policy,
 so a permissive check would let any site a viewer visits drive their
 conversations.
 
-Conversations live in this process's memory only, and one nobody has watched
+Attached conversations live in this process's memory, and one nobody has watched
 for fifteen minutes is closed — not ended. The conversation survives on the
-daemon, and `resume` reopens it with its context intact. A real product would
-store each conversation ID against its own thread record and reopen it on
-demand.
+daemon and is reopened by ID on the next visit, with its context intact.
 
 ## Limits
 
 - **Stop ends the conversation's session, not just the turn.** The daemon
   cancels the whole interactive execution, so the next message rebuilds the
   environment; the UI reports that rather than hiding it.
-- **Streaming text needs [#666](https://github.com/chaitin/agent-compose/pull/666).**
+- **The activity trace needs [#666](https://github.com/chaitin/agent-compose/pull/666).**
   Until it merges, only the codex provider emits structured agent events; the
-  others complete their turns without deltas.
+  others complete their turns in one piece, and the trace stays hidden.
+- **The chat list is this server's own.** Titles and ordering are not something
+  the daemon keeps: a run's labels are fixed when it starts, so a title could
+  never be renamed, and `ListRuns` returns summaries without labels, so drawing
+  a sidebar from the daemon would cost one `GetRun` per row.

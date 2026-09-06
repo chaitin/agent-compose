@@ -39,8 +39,16 @@ type clientFrame struct {
 // over the SDK's duplex stream for the same reason. Neither side has to
 // pretend a long-lived exchange is a sequence of unrelated requests.
 func (s *uiServer) socket(w http.ResponseWriter, r *http.Request) {
-	found, ok := s.lookup(w, r)
+	record, ok := s.record(w, r)
 	if !ok {
+		return
+	}
+	// Attaching before the upgrade means a daemon that cannot be reached is
+	// reported as an HTTP error the page can show, rather than as a socket that
+	// opens and then goes quiet.
+	found, err := s.attach(r.Context(), record)
+	if err != nil {
+		writeError(w, err)
 		return
 	}
 	conn, err := s.upgrader.Upgrade(w, r, nil)
@@ -88,6 +96,16 @@ func (s *uiServer) socket(w http.ResponseWriter, r *http.Request) {
 		case "message":
 			if err := found.send(ctx, frame.Text); err != nil {
 				emit(map[string]any{"type": "error", "message": err.Error(), "busy": errors.Is(err, chat.ErrBusy)})
+				continue
+			}
+			// The first message names the conversation and every message
+			// reorders the list, so the sidebar row is re-sent once it changes.
+			if err := s.store.touch(record.Owner, record.ID, frame.Text); err != nil {
+				slog.Warn("chat list not updated", "conversation", record.ID, "error", err)
+				continue
+			}
+			if updated, err := s.store.conversation(record.Owner, record.ID); err == nil {
+				emit(map[string]any{"type": "conversation", "conversation": s.describeRecord(updated)})
 			}
 		case "stop":
 			stopped, err := found.interrupt(ctx)

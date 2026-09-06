@@ -17,6 +17,9 @@ import (
 // beginning and one that connects between turns simply waits.
 type session struct {
 	conversation *chat.Conversation
+	// record identifies the conversation in this server's own state, so a turn
+	// can name and reorder its sidebar row.
+	record conversationRecord
 
 	mu      sync.Mutex
 	current *chat.Reply
@@ -30,8 +33,20 @@ type session struct {
 	idle    time.Time
 }
 
-func newSession(conversation *chat.Conversation) *session {
-	return &session{conversation: conversation, turn: make(chan struct{}), idle: time.Now()}
+func newSession(conversation *chat.Conversation, record conversationRecord) *session {
+	return &session{
+		conversation: conversation,
+		record:       record,
+		turn:         make(chan struct{}),
+		idle:         time.Now(),
+	}
+}
+
+// running reports whether a turn is in flight, which the sidebar shows.
+func (s *session) running() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.current != nil && !s.current.Done()
 }
 
 // send contributes a message and publishes the resulting turn to viewers.

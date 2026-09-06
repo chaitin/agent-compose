@@ -6,33 +6,74 @@
 <title>agent-compose chat</title>
 <style>
   :root {
-    --bg: #fbfbfa; --panel: #fff; --line: #e6e4e0; --ink: #1c1b19;
+    --bg: #fbfbfa; --panel: #fff; --side: #f4f3f1; --line: #e6e4e0; --ink: #1c1b19;
     --muted: #78736c; --accent: #2f6f4f; --user: #eef2f7; --tool: #f6f5f3;
-    --danger: #a5352b;
+    --danger: #a5352b; --sel: #e7e9e6;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #16171a; --panel: #1d1f23; --line: #2e3238; --ink: #e9e7e4;
+      --bg: #16171a; --panel: #1d1f23; --side: #131417; --line: #2e3238; --ink: #e9e7e4;
       --muted: #9a958d; --accent: #6fb894; --user: #23272e; --tool: #202329;
-      --danger: #e08a80;
+      --danger: #e08a80; --sel: #262b31;
     }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; height: 100vh; display: flex; flex-direction: column;
-         background: var(--bg); color: var(--ink);
+  body { margin: 0; height: 100vh; overflow: hidden; background: var(--bg); color: var(--ink);
          font: 14px/1.6 ui-sans-serif, -apple-system, "Segoe UI", "PingFang SC", sans-serif; }
-  header { display: flex; gap: 8px; align-items: center; padding: 10px 14px;
-           border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
-  select, button, textarea {
+  button, select, textarea, input {
     font: inherit; color: inherit; background: var(--panel);
     border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
   }
   button { cursor: pointer; }
   button:hover:not(:disabled) { border-color: var(--accent); }
   button:disabled { opacity: .5; cursor: default; }
+  .ghost { border-color: transparent; background: transparent; padding: 4px 6px; color: var(--muted); }
+  .ghost:hover { background: var(--sel); border-color: transparent; color: var(--ink); }
+
+  /* ---------- sign in ---------- */
+  #signin { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg); z-index: 10; }
+  #signin form { width: 300px; display: flex; flex-direction: column; gap: 10px;
+                 padding: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+  #signin h1 { margin: 0 0 6px; font-size: 16px; }
+  #signin .why { color: var(--muted); font-size: 12px; margin: 0; }
+  #signinError { color: var(--danger); font-size: 12px; min-height: 1em; }
+
+  /* ---------- layout ---------- */
+  #app { display: grid; grid-template-columns: 268px 1fr; height: 100vh; }
+  #app[hidden] { display: none; }
+
+  aside { display: flex; flex-direction: column; min-height: 0;
+          background: var(--side); border-right: 1px solid var(--line); }
+  .side-top { padding: 12px; display: flex; flex-direction: column; gap: 8px;
+              border-bottom: 1px solid var(--line); }
+  .side-top select { width: 100%; }
+  #new { background: var(--accent); color: #fff; border-color: transparent; font-weight: 600; }
+  #list { flex: 1; overflow-y: auto; padding: 8px; }
+  .group { color: var(--muted); font-size: 11px; padding: 10px 8px 4px; letter-spacing: .04em; }
+  .item { display: flex; align-items: center; gap: 6px; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
+  .item:hover { background: var(--sel); }
+  .item.on { background: var(--sel); }
+  .item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .sub { display: block; font-size: 11px; color: var(--muted); }
+  .item .acts { display: none; gap: 2px; }
+  .item:hover .acts, .item.on .acts { display: flex; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none;
+         animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .side-bottom { border-top: 1px solid var(--line); padding: 10px 12px; display: flex;
+                 align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .side-bottom .who { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ---------- conversation ---------- */
+  section.chat { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
+  section.chat > header { display: flex; align-items: center; gap: 8px; padding: 10px 16px;
+                          border-bottom: 1px solid var(--line); background: var(--panel); }
+  #title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #subtitle { color: var(--muted); font-size: 12px; }
   #status { margin-left: auto; color: var(--muted); font-size: 12px; }
   main { flex: 1; overflow-y: auto; padding: 20px 0; }
-  .wrap { max-width: 780px; margin: 0 auto; padding: 0 16px; }
+  .wrap { max-width: 800px; margin: 0 auto; padding: 0 16px; }
+  .empty { color: var(--muted); text-align: center; margin-top: 18vh; }
   .row { display: flex; margin-bottom: 14px; }
   .row.user { justify-content: flex-end; }
   .bubble { max-width: 86%; padding: 10px 14px; border-radius: 12px;
@@ -41,49 +82,391 @@
   .row.user .bubble { background: var(--user); }
   .row.note .bubble { background: transparent; border: 0; color: var(--muted);
                       font-size: 12px; margin: 0 auto; text-align: center; }
-  .tool { margin: 6px 0; padding: 6px 10px; border-radius: 8px; background: var(--tool);
-          border: 1px solid var(--line); font-family: ui-monospace, SFMono-Regular, monospace;
-          font-size: 12px; color: var(--muted); }
-  .tool.failed { color: var(--danger); border-color: var(--danger); }
-  .tool pre { margin: 6px 0 0; white-space: pre-wrap; max-height: 160px; overflow: auto; }
-  .meta { font-size: 11px; color: var(--muted); margin-top: 6px; }
   .cursor::after { content: "▍"; animation: blink 1s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
   footer { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 0; }
-  form { display: flex; gap: 8px; align-items: flex-end; }
-  textarea { flex: 1; resize: none; max-height: 160px; }
+  form.composer { display: flex; gap: 8px; align-items: flex-end; }
+  form.composer textarea { flex: 1; resize: none; max-height: 180px; }
+
+  /* ---------- activity trace ---------- */
+  .activity { margin: 0 0 8px; border: 1px solid var(--line); border-radius: 10px;
+              background: var(--tool); font-size: 12.5px; overflow: hidden; }
+  .activity > summary { cursor: pointer; padding: 7px 12px; color: var(--muted);
+                        display: flex; align-items: center; gap: 8px; list-style: none; }
+  .activity > summary::-webkit-details-marker { display: none; }
+  .activity > summary::before { content: "▸"; font-size: 10px; transition: transform .15s; }
+  .activity[open] > summary::before { transform: rotate(90deg); }
+  .activity .grow { flex: 1; }
+  .body { padding: 4px 12px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .step > summary { cursor: pointer; padding: 4px 0; color: var(--muted); font-weight: 600; }
+  .step .entries { display: flex; flex-direction: column; gap: 4px;
+                   margin: 4px 0 8px 10px; padding-left: 10px; border-left: 2px solid var(--line); }
+  .entry { border-radius: 6px; }
+  .entry > summary { cursor: pointer; padding: 3px 6px; border-radius: 6px;
+                     font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+  .entry > summary:hover { background: var(--sel); }
+  .entry pre { margin: 4px 0 6px 14px; padding: 6px 8px; background: var(--panel);
+               border: 1px solid var(--line); border-radius: 6px; white-space: pre-wrap;
+               word-break: break-word; max-height: 240px; overflow: auto;
+               font-size: 11.5px; color: var(--muted); }
+  .entry.failed > summary { color: var(--danger); }
+  .entry .tag { color: var(--muted); }
+  .plan { margin: 0; padding: 6px 10px; list-style: none; font-size: 12px; }
+  .plan li { color: var(--muted); }
+  .plan li.done { text-decoration: line-through; opacity: .65; }
+  .spin { width: 10px; height: 10px; border: 2px solid var(--line); border-top-color: var(--accent);
+          border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
-<header>
-  <select id="agent"><option value="">加载中…</option></select>
-  <button id="new">新会话</button>
-  <button id="delete">删除会话</button>
-  <span id="status">就绪</span>
-</header>
 
-<main><div class="wrap" id="chat"></div></main>
-
-<footer><div class="wrap">
-  <form id="composer">
-    <textarea id="text" rows="1" placeholder="说点什么…  (Enter 发送, Shift+Enter 换行)"></textarea>
-    <button id="send" type="submit">发送</button>
+<div id="signin">
+  <form id="signinForm">
+    <h1>agent-compose chat</h1>
+    <p class="why">这个界面代你持有与 agent 的会话，所以需要知道你是谁。</p>
+    <input id="user" autocomplete="username" placeholder="用户名" required>
+    <input id="password" type="password" autocomplete="current-password" placeholder="密码" required>
+    <div id="signinError"></div>
+    <button type="submit">登录</button>
   </form>
-</div></footer>
+</div>
+
+<div id="app" hidden>
+  <aside>
+    <div class="side-top">
+      <select id="agent"><option value="">加载中…</option></select>
+      <button id="new">＋ 新建对话</button>
+    </div>
+    <div id="list"></div>
+    <div class="side-bottom">
+      <span class="who" id="who"></span>
+      <button class="ghost" id="signout">退出</button>
+    </div>
+  </aside>
+
+  <section class="chat">
+    <header>
+      <div>
+        <div id="title">未选择对话</div>
+        <div id="subtitle"></div>
+      </div>
+      <span id="status"></span>
+      <button class="ghost" id="renameBtn" title="重命名" hidden>✎</button>
+      <button class="ghost" id="deleteBtn" title="删除对话" hidden>🗑</button>
+    </header>
+    <main id="scroller"><div class="wrap" id="chat"></div></main>
+    <footer><div class="wrap">
+      <form class="composer" id="composer">
+        <textarea id="text" rows="1" placeholder="说点什么…  (Enter 发送, Shift+Enter 换行)"></textarea>
+        <button id="send" type="submit">发送</button>
+      </form>
+    </div></footer>
+  </section>
+</div>
 
 <script>
-const chat = document.getElementById("chat");
-const agentSelect = document.getElementById("agent");
-const statusEl = document.getElementById("status");
-const textArea = document.getElementById("text");
-const sendBtn = document.getElementById("send");
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const chat = $("chat"), scroller = $("scroller"), listEl = $("list");
+const agentSelect = $("agent"), statusEl = $("status"), textArea = $("text"), sendBtn = $("send");
 
 let socket = null;
-let conversationId = null;
-let turn = null;   // the assistant bubble and tool cards of the turn in flight
+let current = null;      // the open conversation record
+let turn = null;         // the turn in flight, if any
+let conversations = [];
 
-const setStatus = (text) => { statusEl.textContent = text; };
-const scroll = () => { chat.parentElement.parentElement.scrollTop = 1e9; };
+const setStatus = (text) => { statusEl.textContent = text || ""; };
+const scroll = () => { scroller.scrollTop = scroller.scrollHeight; };
+const atBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+
+// ---------------------------------------------------------------- transport
+
+// api reports a lost session as a distinct signal, because everything below
+// has the same answer for it: show the sign-in form again.
+class Unauthorized extends Error {}
+
+async function api(method, path, body) {
+  const response = await fetch(path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (response.status === 401) throw new Unauthorized("sign in required");
+  if (!response.ok) throw new Error((await response.text()).trim() || response.statusText);
+  return response.status === 204 ? null : response.json();
+}
+
+async function guarded(work) {
+  try { return await work(); }
+  catch (error) {
+    if (error instanceof Unauthorized) { showSignIn(); return null; }
+    throw error;
+  }
+}
+
+// ---------------------------------------------------------------- sign in
+
+function showSignIn() {
+  closeSocket();
+  $("app").hidden = true;
+  $("signin").hidden = false;
+  $("password").value = "";
+}
+
+async function showApp(user) {
+  $("signin").hidden = true;
+  $("app").hidden = false;
+  $("who").textContent = user;
+  await loadAgents();
+  await refreshList();
+}
+
+$("signinForm").addEventListener("submit", async (submitEvent) => {
+  submitEvent.preventDefault();
+  $("signinError").textContent = "";
+  try {
+    const { user } = await api("POST", "/api/login", {
+      user: $("user").value.trim(), password: $("password").value,
+    });
+    await showApp(user);
+  } catch (error) {
+    $("signinError").textContent = error.message;
+  }
+});
+
+$("signout").addEventListener("click", async () => {
+  await api("POST", "/api/logout").catch(() => {});
+  current = null;
+  showSignIn();
+});
+
+// ---------------------------------------------------------------- sidebar
+
+async function loadAgents() {
+  try {
+    const { projects } = await api("GET", "/api/agents");
+    agentSelect.innerHTML = "";
+    for (const project of projects) {
+      for (const agent of project.agents) {
+        const option = document.createElement("option");
+        option.value = JSON.stringify({ projectId: project.projectId, agentName: agent });
+        option.textContent = `${project.name} / ${agent}`;
+        agentSelect.appendChild(option);
+      }
+    }
+    if (!agentSelect.options.length) {
+      agentSelect.innerHTML = "<option value=''>没有可用的 agent</option>";
+    }
+  } catch (error) {
+    if (error instanceof Unauthorized) throw error;
+    agentSelect.innerHTML = `<option value="">加载失败: ${error.message}</option>`;
+  }
+}
+
+async function refreshList() {
+  const data = await guarded(() => api("GET", "/api/conversations"));
+  if (!data) return;
+  conversations = data.conversations;
+  drawList();
+}
+
+// drawList groups by when a conversation was last used, which is how someone
+// looks for one they had "yesterday".
+function drawList() {
+  listEl.innerHTML = "";
+  const buckets = new Map([["今天", []], ["昨天", []], ["最近 7 天", []], ["更早", []]]);
+  const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+  for (const item of conversations) {
+    const used = new Date(item.updatedAt);
+    const days = Math.floor((midnight - used) / 86400000);
+    const bucket = used >= midnight ? "今天" : days < 1 ? "昨天" : days < 7 ? "最近 7 天" : "更早";
+    buckets.get(bucket).push(item);
+  }
+  for (const [label, items] of buckets) {
+    if (!items.length) continue;
+    const heading = document.createElement("div");
+    heading.className = "group";
+    heading.textContent = label;
+    listEl.appendChild(heading);
+    for (const item of items) listEl.appendChild(drawItem(item));
+  }
+  if (!conversations.length) {
+    listEl.innerHTML = "<div class='group'>还没有对话</div>";
+  }
+}
+
+function drawItem(item) {
+  const row = document.createElement("div");
+  row.className = "item" + (current && current.id === item.id ? " on" : "");
+  row.onclick = () => openConversation(item.id);
+
+  if (item.running) row.appendChild(Object.assign(document.createElement("span"), { className: "dot" }));
+
+  const name = document.createElement("div");
+  name.className = "name";
+  name.textContent = item.title || "新对话";
+  const sub = document.createElement("span");
+  sub.className = "sub";
+  sub.textContent = item.agentName;
+  name.appendChild(sub);
+  row.appendChild(name);
+
+  const acts = document.createElement("div");
+  acts.className = "acts";
+  acts.appendChild(iconButton("✎", "重命名", (clickEvent) => { clickEvent.stopPropagation(); renameConversation(item); }));
+  acts.appendChild(iconButton("🗑", "删除", (clickEvent) => { clickEvent.stopPropagation(); deleteConversation(item); }));
+  row.appendChild(acts);
+  return row;
+}
+
+function iconButton(glyph, title, onClick) {
+  const button = document.createElement("button");
+  button.className = "ghost";
+  button.textContent = glyph;
+  button.title = title;
+  button.onclick = onClick;
+  return button;
+}
+
+async function renameConversation(item) {
+  const title = prompt("对话标题", item.title || "");
+  if (title === null) return;
+  await guarded(async () => {
+    await api("PATCH", `/api/conversations/${item.id}`, { title });
+    await refreshList();
+    if (current && current.id === item.id) { current.title = title; $("title").textContent = title; }
+  });
+}
+
+async function deleteConversation(item) {
+  if (!confirm(`删除“${item.title || "新对话"}”？这会结束 agent 的运行环境。`)) return;
+  await guarded(async () => {
+    const result = await api("DELETE", `/api/conversations/${item.id}`);
+    if (result && result.warning) setStatus("已从列表移除，但守护进程报错: " + result.warning);
+    if (current && current.id === item.id) clearConversation();
+    await refreshList();
+  });
+}
+
+$("new").addEventListener("click", async () => {
+  if (!agentSelect.value) { setStatus("先选一个 agent"); return; }
+  await guarded(async () => {
+    const created = await api("POST", "/api/conversations", JSON.parse(agentSelect.value));
+    conversations.unshift(created);
+    await openConversation(created.id);
+    await refreshList();
+    textArea.focus();
+  });
+});
+
+// ---------------------------------------------------------------- conversation
+
+function clearConversation() {
+  closeSocket();
+  current = null; turn = null;
+  chat.innerHTML = "<div class='empty'>选择左边的对话，或新建一个</div>";
+  $("title").textContent = "未选择对话";
+  $("subtitle").textContent = "";
+  $("renameBtn").hidden = $("deleteBtn").hidden = true;
+  setStatus("");
+  setBusy(false);
+}
+
+async function openConversation(id) {
+  await guarded(async () => {
+    const data = await api("GET", `/api/conversations/${id}`);
+    closeSocket();
+    current = data;
+    turn = null;
+    $("title").textContent = data.title || "新对话";
+    $("subtitle").textContent = data.agentName;
+    $("renameBtn").hidden = $("deleteBtn").hidden = false;
+    chat.innerHTML = "";
+    for (const message of data.messages || []) {
+      addRow(message.role === "user" ? "user" : "assistant").textContent = message.text;
+    }
+    if (data.continuity === "restarted") addNote("上下文已重置——这个会话的运行环境被重建了");
+    drawList();
+    connect(id);
+    scroll();
+  });
+}
+
+$("renameBtn").addEventListener("click", () => current && renameConversation(current));
+$("deleteBtn").addEventListener("click", () => current && deleteConversation(current));
+
+// ---------------------------------------------------------------- socket
+
+function closeSocket() {
+  if (!socket) return;
+  socket.onclose = null;
+  socket.close();
+  socket = null;
+}
+
+// connect opens the conversation socket. Every turn on the conversation arrives
+// here, including turns another tab started and one already running when this
+// page connected, so the UI renders from the socket rather than from what it
+// just typed.
+function connect(id) {
+  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+  socket = new WebSocket(`${scheme}//${location.host}/api/conversations/${id}/socket`);
+  socket.onopen = () => setStatus("已连接");
+  socket.onclose = () => { setStatus("连接已断开"); setBusy(false); };
+  socket.onerror = () => setStatus("连接出错");
+  socket.onmessage = (message) => handle(JSON.parse(message.data));
+}
+
+function socketReady() {
+  if (socket && socket.readyState === WebSocket.OPEN) return Promise.resolve();
+  if (!socket) return Promise.reject(new Error("没有打开的对话"));
+  return new Promise((resolve, reject) => {
+    socket.addEventListener("open", resolve, { once: true });
+    socket.addEventListener("error", () => reject(new Error("连接失败")), { once: true });
+  });
+}
+
+function handle(frame) {
+  switch (frame.type) {
+    case "turn_started":
+      turn = startTurn(frame.prompt);
+      setBusy(true);
+      break;
+    case "event":
+      if (turn) applyEvent(turn, frame.event);
+      break;
+    case "turn_done":
+      finishTurn(frame);
+      break;
+    case "conversation":
+      mergeConversation(frame.conversation);
+      break;
+    case "stopped":
+      if (frame.contextLost) addNote("已停止。下一条消息会重建环境，agent 不再记得之前的上下文");
+      break;
+    case "error":
+      if (turn) { turn.bubble.classList.remove("cursor"); markActivity(turn, "出错"); }
+      addNote("错误: " + frame.message);
+      turn = null;
+      setBusy(false);
+      break;
+  }
+}
+
+function mergeConversation(updated) {
+  const index = conversations.findIndex((item) => item.id === updated.id);
+  if (index >= 0) conversations[index] = updated; else conversations.unshift(updated);
+  conversations.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  if (current && current.id === updated.id) {
+    current = { ...current, ...updated };
+    $("title").textContent = updated.title || "新对话";
+  }
+  drawList();
+}
+
+// ---------------------------------------------------------------- rendering
 
 function addRow(kind) {
   const row = document.createElement("div");
@@ -98,162 +481,310 @@ function addRow(kind) {
 
 const addNote = (text) => { addRow("note").textContent = text; };
 
-function setBusy(busy) {
-  sendBtn.textContent = busy ? "停止" : "发送";
+function setBusy(busy) { sendBtn.textContent = busy ? "停止" : "发送"; }
+
+// startTurn lays out one turn: an activity trace above, the answer below. The
+// trace is what the agent did; the bubble is what it said.
+function startTurn(prompt) {
+  if (prompt) addRow("user").textContent = prompt;
+
+  const row = document.createElement("div");
+  row.className = "row assistant";
+  const column = document.createElement("div");
+  column.style.cssText = "max-width:86%;min-width:0";
+
+  const activity = document.createElement("details");
+  activity.className = "activity";
+  activity.open = true;
+  const summary = document.createElement("summary");
+  const spinner = document.createElement("span");
+  spinner.className = "spin";
+  const label = document.createElement("span");
+  label.className = "grow";
+  label.textContent = "正在工作…";
+  summary.append(spinner, label);
+  const body = document.createElement("div");
+  body.className = "body";
+  activity.append(summary, body);
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble cursor";
+
+  column.append(activity, bubble);
+  row.appendChild(column);
+  chat.appendChild(row);
+  scroll();
+
+  const state = {
+    activity, spinner, label, body, bubble,
+    steps: new Map(), tools: new Map(), reasoning: new Map(),
+    plan: null, text: "", tools_count: 0, startedAt: Date.now(),
+    // usage is kept per scope and never summed across scopes: one provider
+    // reports a step's tokens, another repeats a running total for the turn.
+    usage: new Map(),
+    pinned: false, verdict: "",
+  };
+  // Opening or closing the trace by hand pins it, so a finished turn does not
+  // fold away something the reader was in the middle of. This listens for the
+  // click rather than the toggle event, because setting `open` in code queues a
+  // toggle too and would pin every turn the moment it starts.
+  summary.addEventListener("click", () => { state.pinned = true; });
+  return state;
 }
 
-async function api(method, path, body) {
-  const response = await fetch(path, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!response.ok) throw new Error((await response.text()).trim() || response.statusText);
-  return response.status === 204 ? null : response.json();
-}
-
-async function loadAgents() {
-  try {
-    const { projects } = await api("GET", "/api/agents");
-    agentSelect.innerHTML = "";
-    for (const project of projects) {
-      for (const agent of project.agents) {
-        const option = document.createElement("option");
-        option.value = JSON.stringify({ projectId: project.projectId, agentName: agent });
-        option.textContent = `${project.name} / ${agent}`;
-        agentSelect.appendChild(option);
-      }
-    }
-    setStatus(agentSelect.options.length ? "就绪" : "没有可用的 agent");
-  } catch (error) {
-    setStatus("加载 agent 失败: " + error.message);
-  }
-}
-
-// Opens the conversation socket. Every turn on the conversation arrives here,
-// including turns another client started and one already running when this
-// page connected, so the UI renders from the socket rather than from what it
-// just sent.
-function connect(id) {
-  if (socket) { socket.onclose = null; socket.close(); }
-  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-  socket = new WebSocket(`${scheme}//${location.host}/api/conversations/${id}/socket`);
-  socket.onopen = () => setStatus("已连接");
-  socket.onclose = () => { setStatus("连接已断开"); setBusy(false); };
-  socket.onerror = () => setStatus("连接出错");
-  socket.onmessage = (message) => handle(JSON.parse(message.data));
-}
-
-function handle(frame) {
-  switch (frame.type) {
-    case "turn_started": {
-      if (frame.prompt) addRow("user").textContent = frame.prompt;
-      const bubble = addRow("assistant");
-      bubble.classList.add("cursor");
-      turn = { bubble, cards: new Map(), text: "" };
-      setBusy(true);
-      break;
-    }
-    case "event":
-      if (turn) renderEvent(turn, frame.event);
-      break;
-    case "turn_done":
-      if (turn) {
-        turn.bubble.classList.remove("cursor");
-        if (!turn.text) turn.bubble.textContent = frame.text;
-      }
-      // A turn that lost its environment must say so: the agent no longer has
-      // the context the earlier turns built up.
-      if (frame.continuity === "restarted") {
-        addNote("上下文已重置——这个会话的运行环境被重建了");
-      }
-      turn = null;
-      setBusy(false);
-      break;
-    case "stopped":
-      if (frame.contextLost) addNote("已停止。下一条消息会重建环境，agent 不再记得之前的上下文");
-      break;
-    case "error":
-      if (turn) turn.bubble.classList.remove("cursor");
-      addNote("错误: " + frame.message);
-      turn = null;
-      setBusy(false);
-      break;
-  }
-}
-
-function renderEvent(state, event) {
+function applyEvent(state, event) {
   switch (event.kind) {
-    case "text_delta":
+    case "text_delta": {
+      const stick = atBottom();
       state.text += event.text;
       state.bubble.textContent = state.text;
-      scroll();
+      if (stick) scroll();
       break;
+    }
+    case "reasoning_delta": appendReasoning(state, event); break;
+    case "step_start": stepOf(state, event.step); break;
+    case "step_end": endStep(state, event); break;
     case "tool_call":
-    case "tool_result":
-      renderTool(state, event);
-      break;
-    case "usage":
-      setStatus(`${event.scope}: ${event.inputTokens} in / ${event.outputTokens} out`);
-      break;
+    case "tool_result": renderTool(state, event); break;
+    case "todo": renderPlan(state, event); break;
+    case "usage": recordUsage(state, event); break;
     case "retry":
-      addNote(`重试 (${event.reason}, 第 ${event.attempt} 次)`);
+      addEntry(state, event.step, "↻", `重试 ${event.reason} · 第 ${event.attempt} 次` +
+        (event.maxAttempts ? ` / ${event.maxAttempts}` : ""), event.message);
+      break;
+    case "compaction":
+      addEntry(state, event.step, "🗜", event.phase === "start" ? "开始压缩上下文" : "压缩完成");
+      break;
+    case "error":
+      addEntry(state, event.step, "⚠", `${event.severity}${event.code ? " · " + event.code : ""}`,
+        event.message, true);
       break;
   }
+  updateActivity(state);
 }
 
-// Tool cards are keyed by tool call ID so a result lands on the card its call
-// created.
+// stepOf returns the panel for one step, creating it in numeric order.
+//
+// Events are grouped by their own step number rather than by what falls
+// between a step_start and a step_end: providers interleave, and the number an
+// event carries is the only thing that says where it belongs. Events from a
+// provider that does not number steps land in one shared panel.
+function stepOf(state, step) {
+  const key = step === undefined ? "-" : String(step);
+  let found = state.steps.get(key);
+  if (found) return found;
+
+  const panel = document.createElement("details");
+  panel.className = "step";
+  panel.open = true;
+  const summary = document.createElement("summary");
+  summary.textContent = key === "-" ? "过程" : `步骤 ${step + 1}`;
+  const entries = document.createElement("div");
+  entries.className = "entries";
+  panel.append(summary, entries);
+
+  found = { key, panel, summary, entries, calls: 0, step };
+  state.steps.set(key, found);
+
+  // Keep panels in step order even if a later step's event arrives first.
+  const ordered = [...state.steps.values()].sort((a, b) => sortKey(a) - sortKey(b));
+  for (const item of ordered) state.body.appendChild(item.panel);
+  return found;
+}
+
+const sortKey = (item) => (item.key === "-" ? Number.MAX_SAFE_INTEGER : Number(item.key));
+
+function labelStep(state, found) {
+  const parts = [found.key === "-" ? "过程" : `步骤 ${found.step + 1}`];
+  if (found.calls) parts.push(`${found.calls} 次工具调用`);
+  if (found.stopReason) parts.push(found.stopReason);
+  found.summary.textContent = parts.join(" · ");
+}
+
+function endStep(state, event) {
+  const found = stepOf(state, event.step);
+  found.stopReason = event.stopReason || event.rawStopReason || "";
+  labelStep(state, found);
+  // A step that is over folds away; its detail is still one click deep.
+  found.panel.open = false;
+}
+
+// addEntry appends one collapsible line to a step.
+function addEntry(state, step, glyph, title, detail, failed) {
+  const found = stepOf(state, step);
+  const entry = document.createElement("details");
+  entry.className = "entry" + (failed ? " failed" : "");
+  const summary = document.createElement("summary");
+  summary.textContent = `${glyph} ${title}`;
+  entry.appendChild(summary);
+  if (detail) {
+    const pre = document.createElement("pre");
+    pre.textContent = detail;
+    entry.appendChild(pre);
+  }
+  found.entries.appendChild(entry);
+  return entry;
+}
+
+// Tool entries are keyed by tool call ID, so a result lands on the card its
+// call created even when several tools run at once.
 function renderTool(state, event) {
-  let card = state.cards.get(event.id);
+  let card = state.tools.get(event.id);
   if (!card) {
-    card = document.createElement("div");
-    card.className = "tool";
-    state.bubble.parentElement.insertBefore(card, state.bubble);
-    state.cards.set(event.id, card);
+    const found = stepOf(state, event.step);
+    found.calls++;
+    labelStep(state, found);
+    state.tools_count++;
+
+    const entry = document.createElement("details");
+    entry.className = "entry";
+    const summary = document.createElement("summary");
+    entry.appendChild(summary);
+    found.entries.appendChild(entry);
+    card = { entry, summary, name: "", detail: null };
+    state.tools.set(event.id, card);
   }
   if (event.kind === "tool_call") {
-    card.textContent = `${event.toolKind} · ${event.name}` + (event.command ? `: ${event.command}` : "");
+    card.name = event.name;
+    card.kind = event.toolKind;
+    const head = event.command || describeInput(event.input) || "";
+    card.summary.textContent = `⚙ ${event.toolKind} · ${event.name}` + (head ? ` — ${head}` : "");
+    if (event.input) attach(card.entry, "参数", pretty(event.input));
+    if (event.changes) attach(card.entry, "改动", event.changes.map((c) => `${c.kind} ${c.path}`).join("\n"));
   } else {
-    if (!event.ok) card.classList.add("failed");
-    if (event.output) {
-      const pre = document.createElement("pre");
-      pre.textContent = event.output;
-      card.appendChild(pre);
-    }
+    if (!event.ok) card.entry.classList.add("failed");
+    card.summary.textContent = `${event.ok ? "✓" : "✗"} ${card.kind || ""} · ${card.name}`;
+    const output = event.output || event.error;
+    if (output) attach(card.entry, event.ok ? "输出" : "错误", output);
   }
-  scroll();
 }
 
-async function ensureConversation() {
-  if (conversationId) return conversationId;
-  if (!agentSelect.value) throw new Error("先选一个 agent");
-  const { id } = await api("POST", "/api/conversations", JSON.parse(agentSelect.value));
-  conversationId = id;
-  addNote("会话 " + id);
-  connect(id);
-  // Wait for the socket before the first message, so the turn it starts is not
-  // missed.
-  await new Promise((resolve, reject) => {
-    if (socket.readyState === WebSocket.OPEN) return resolve();
-    socket.addEventListener("open", resolve, { once: true });
-    socket.addEventListener("error", reject, { once: true });
-  });
-  return id;
+function attach(entry, label, text) {
+  const pre = document.createElement("pre");
+  pre.textContent = label + "\n" + text;
+  entry.appendChild(pre);
 }
 
-document.getElementById("composer").addEventListener("submit", async (submitEvent) => {
-  submitEvent.preventDefault();
+function pretty(value) {
+  try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+}
+
+// describeInput picks the one field of a tool's arguments worth showing on the
+// collapsed line, so a summary reads like what the tool is about to do.
+function describeInput(input) {
+  if (!input || typeof input !== "object") return "";
+  for (const key of ["command", "path", "file_path", "pattern", "query", "url"]) {
+    if (typeof input[key] === "string") return input[key].slice(0, 120);
+  }
+  return "";
+}
+
+function appendReasoning(state, event) {
+  const key = event.step === undefined ? "-" : String(event.step);
+  let block = state.reasoning.get(key);
+  if (!block) {
+    const entry = addEntry(state, event.step, "💭", "思考", "");
+    block = { pre: entry.querySelector("pre"), text: "" };
+    state.reasoning.set(key, block);
+  }
+  block.text += event.text;
+  block.pre.textContent = block.text;
+}
+
+// renderPlan keeps one checklist, replaced whenever the agent revises it.
+function renderPlan(state, event) {
+  if (!state.plan) {
+    state.plan = document.createElement("ul");
+    state.plan.className = "plan";
+    state.body.prepend(state.plan);
+  }
+  state.plan.innerHTML = "";
+  for (const item of event.items || []) {
+    const entry = document.createElement("li");
+    entry.className = item.completed ? "done" : "";
+    entry.textContent = (item.completed ? "☑ " : "☐ ") + item.text;
+    state.plan.appendChild(entry);
+  }
+}
+
+function recordUsage(state, event) {
+  const found = state.usage.get(event.scope) || { input: 0, output: 0, cost: 0, count: 0 };
+  if (event.scope === "step") {
+    // Step records cover disjoint work, so they add up.
+    found.input += event.inputTokens; found.output += event.outputTokens;
+    found.cost += event.costUsd || 0;
+  } else {
+    // Turn and run records are running totals; the newest one replaces the
+    // last rather than being added to it.
+    found.input = event.inputTokens; found.output = event.outputTokens;
+    found.cost = event.costUsd || 0;
+  }
+  found.count++;
+  found.model = event.model || found.model;
+  state.usage.set(event.scope, found);
+}
+
+function usageLine(state) {
+  // Prefer the coarsest scope the provider reported; scopes are never mixed.
+  for (const scope of ["turn", "run", "step"]) {
+    const found = state.usage.get(scope);
+    if (!found) continue;
+    const cost = found.cost ? ` · $${found.cost.toFixed(4)}` : "";
+    return `${found.input} in / ${found.output} out (${scope})${cost}`;
+  }
+  return "";
+}
+
+function updateActivity(state) {
+  const seconds = ((Date.now() - state.startedAt) / 1000).toFixed(1);
+  const numbered = [...state.steps.values()].filter((item) => item.key !== "-").length;
+  const parts = [];
+  if (numbered) parts.push(`${numbered} 步`);
+  if (state.tools_count) parts.push(`${state.tools_count} 次工具调用`);
+  parts.push(`${seconds}s`);
+  const usage = usageLine(state);
+  if (usage) parts.push(usage);
+  state.label.textContent = (state.verdict || "正在工作") + " · " + parts.join(" · ");
+}
+
+function markActivity(state, verdict) {
+  state.verdict = verdict;
+  state.spinner.remove();
+  updateActivity(state);
+}
+
+function finishTurn(frame) {
   if (turn) {
-    socket?.send(JSON.stringify({ type: "stop" }));
-    return;
+    turn.bubble.classList.remove("cursor");
+    if (!turn.text) turn.bubble.textContent = frame.text;
+    markActivity(turn, "已完成");
+    // A finished trace folds away unless the reader opened it themselves; the
+    // answer is what they came for, the trace is there when they want it.
+    if (!turn.pinned) turn.activity.open = false;
+    if (!turn.steps.size && !turn.tools_count) turn.activity.hidden = true;
   }
+  // A turn that lost its environment must say so: the agent no longer has the
+  // context the earlier turns built up.
+  if (frame.continuity === "restarted") {
+    addNote("上下文已重置——这个会话的运行环境被重建了");
+  }
+  turn = null;
+  setBusy(false);
+  refreshList();
+}
+
+// ---------------------------------------------------------------- composer
+
+$("composer").addEventListener("submit", async (submitEvent) => {
+  submitEvent.preventDefault();
+  if (turn) { socket?.send(JSON.stringify({ type: "stop" })); return; }
   const text = textArea.value.trim();
   if (!text) return;
+  if (!current) { setStatus("先新建或选择一个对话"); return; }
   textArea.value = "";
   textArea.style.height = "auto";
   try {
-    await ensureConversation();
+    await socketReady();
     socket.send(JSON.stringify({ type: "message", text }));
   } catch (error) {
     addNote("发送失败: " + error.message);
@@ -262,43 +793,22 @@ document.getElementById("composer").addEventListener("submit", async (submitEven
 
 textArea.addEventListener("input", () => {
   textArea.style.height = "auto";
-  textArea.style.height = Math.min(textArea.scrollHeight, 160) + "px";
+  textArea.style.height = Math.min(textArea.scrollHeight, 180) + "px";
 });
 textArea.addEventListener("keydown", (keyEvent) => {
   if (keyEvent.key === "Enter" && !keyEvent.shiftKey) {
     keyEvent.preventDefault();
-    document.getElementById("composer").requestSubmit();
+    $("composer").requestSubmit();
   }
 });
 
-document.getElementById("new").addEventListener("click", () => {
-  if (socket) { socket.onclose = null; socket.close(); socket = null; }
-  conversationId = null;
-  turn = null;
-  chat.innerHTML = "";
-  setBusy(false);
-  setStatus("就绪");
-});
+// ---------------------------------------------------------------- start
 
-document.getElementById("delete").addEventListener("click", async () => {
-  if (!conversationId) return;
-  try {
-    await api("DELETE", `/api/conversations/${conversationId}`);
-    if (socket) { socket.onclose = null; socket.close(); socket = null; }
-    addNote("会话已删除");
-    conversationId = null;
-  } catch (error) {
-    addNote("删除失败: " + error.message);
-  }
-});
-
-agentSelect.addEventListener("change", () => {
-  if (socket) { socket.onclose = null; socket.close(); socket = null; }
-  conversationId = null;
-  chat.innerHTML = "";
-});
-
-loadAgents();
+(async () => {
+  clearConversation();
+  const { user } = await api("GET", "/api/me").catch(() => ({ user: null }));
+  if (user) await showApp(user); else showSignIn();
+})();
 </script>
 </body>
 </html>

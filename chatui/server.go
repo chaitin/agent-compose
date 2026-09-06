@@ -11,23 +11,57 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 
 	"github.com/chaitin/agent-compose/sdk/go/chat"
 )
 
+// ownerLabel and appLabel are attached to every run this server starts, so a
+// conversation is attributable on the daemon side without consulting this
+// server's own state file.
+const (
+	ownerLabel = "chat.user"
+	appLabel   = "chat.app"
+	appName    = "chatui"
+)
+
 type uiServer struct {
 	client   *chat.Client
 	daemon   string
+	token    string
+	store    *store
+	auth     *authenticator
 	upgrader websocket.Upgrader
 
 	mu       sync.Mutex
 	sessions map[string]*session
 }
 
+// routes wires every endpoint. Everything but signing in and the page itself
+// requires a session.
+func (s *uiServer) routes() *http.ServeMux {
+	mux := http.NewServeMux()
+	guard := s.auth.guard
+
+	mux.HandleFunc("GET /", s.index)
+	mux.HandleFunc("POST /api/login", s.auth.signIn)
+	mux.HandleFunc("POST /api/logout", s.auth.signOut)
+	mux.HandleFunc("GET /api/me", s.auth.whoami)
+
+	mux.HandleFunc("GET /api/agents", guard(s.agents))
+	mux.HandleFunc("GET /api/conversations", guard(s.list))
+	mux.HandleFunc("POST /api/conversations", guard(s.create))
+	mux.HandleFunc("GET /api/conversations/{id}", guard(s.describe))
+	mux.HandleFunc("PATCH /api/conversations/{id}", guard(s.rename))
+	mux.HandleFunc("DELETE /api/conversations/{id}", guard(s.remove))
+	mux.HandleFunc("GET /api/conversations/{id}/socket", guard(s.socket))
+	return mux
+}
+
 // release closes conversations nobody is watching. Closing is not ending: the
-// conversation survives on the daemon and a later resume reopens it with its
+// conversation survives on the daemon and a later attach reopens it with its
 // context intact, so an unattended browser tab costs this process nothing.
 func (s *uiServer) release(every, after time.Duration) {
 	for range time.Tick(every) {
@@ -95,73 +129,217 @@ func (s *uiServer) agents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"projects": result})
 }
 
-func (s *uiServer) open(w http.ResponseWriter, r *http.Request) {
+// list draws the sidebar. It reads this server's own state rather than the
+// daemon: a chat list is a list of titles in recency order, and neither is
+// something the daemon keeps.
+func (s *uiServer) list(w http.ResponseWriter, r *http.Request) {
+	records := s.store.conversations(userOf(r))
+	rendered := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		rendered = append(rendered, s.describeRecord(record))
+	}
+	writeJSON(w, map[string]any{"conversations": rendered})
+}
+
+// create starts a new conversation. No daemon call is made: the environment is
+// provisioned by the first message, so an abandoned "new chat" costs nothing.
+func (s *uiServer) create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ProjectID string `json:"projectId"`
 		AgentName string `json:"agentName"`
-		Resume    string `json:"resume"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
+		http.Error(w, "malformed request", http.StatusBadRequest)
 		return
 	}
-	agent := s.client.Agent(body.ProjectID, body.AgentName)
+	if strings.TrimSpace(body.ProjectID) == "" || strings.TrimSpace(body.AgentName) == "" {
+		http.Error(w, "projectId and agentName are required", http.StatusBadRequest)
+		return
+	}
+	owner := userOf(r)
+	conversation := s.client.Agent(body.ProjectID, body.AgentName).Start()
+	record := conversationRecord{
+		ID:        conversation.ID(),
+		Owner:     owner,
+		ProjectID: body.ProjectID,
+		AgentName: body.AgentName,
+	}
+	record, err := s.store.remember(record)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.mu.Lock()
+	s.sessions[record.ID] = newSession(conversation, record)
+	s.mu.Unlock()
+	writeJSON(w, s.describeRecord(record))
+}
 
-	conversation := agent.Start()
-	if body.Resume != "" {
-		resumed, err := agent.Open(r.Context(), body.Resume)
+// describe returns one conversation with its transcript, which is what opening
+// it from the sidebar needs. Reading history does not attach: that happens when
+// the socket opens.
+func (s *uiServer) describe(w http.ResponseWriter, r *http.Request) {
+	record, ok := s.record(w, r)
+	if !ok {
+		return
+	}
+	payload := s.describeRecord(record)
+	messages := []map[string]any{}
+	if record.Started {
+		history, err := s.handle(record).History(r.Context())
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		conversation = resumed
+		for _, message := range history {
+			messages = append(messages, map[string]any{
+				"role": message.Role, "text": message.Text, "time": message.Time,
+			})
+		}
 	}
-	s.mu.Lock()
-	s.sessions[conversation.ID()] = newSession(conversation)
-	s.mu.Unlock()
-	writeJSON(w, map[string]any{"id": conversation.ID(), "continuity": conversation.Continuity()})
+	payload["messages"] = messages
+	writeJSON(w, payload)
 }
 
-func (s *uiServer) history(w http.ResponseWriter, r *http.Request) {
-	found, ok := s.lookup(w, r)
+func (s *uiServer) rename(w http.ResponseWriter, r *http.Request) {
+	record, ok := s.record(w, r)
 	if !ok {
 		return
 	}
-	messages, err := found.conversation.History(r.Context())
+	var body struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		http.Error(w, "malformed request", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.rename(record.Owner, record.ID, body.Title); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	updated, err := s.store.conversation(record.Owner, record.ID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	rendered := make([]map[string]any, 0, len(messages))
-	for _, message := range messages {
-		rendered = append(rendered, map[string]any{"role": message.Role, "text": message.Text, "time": message.Time})
-	}
-	writeJSON(w, map[string]any{"messages": rendered})
+	writeJSON(w, s.describeRecord(updated))
 }
 
+// remove ends the conversation on the daemon and drops it from the sidebar.
+//
+// It works whether or not this process is currently attached: a conversation
+// that was released while nobody watched still has to be deletable.
 func (s *uiServer) remove(w http.ResponseWriter, r *http.Request) {
-	found, ok := s.lookup(w, r)
+	record, ok := s.record(w, r)
 	if !ok {
 		return
 	}
-	err := found.conversation.Delete(r.Context())
 	s.mu.Lock()
-	delete(s.sessions, found.conversation.ID())
+	live, attached := s.sessions[record.ID]
+	delete(s.sessions, record.ID)
 	s.mu.Unlock()
-	if err != nil {
+
+	conversation := s.handle(record)
+	if attached {
+		conversation = live.conversation
+	}
+	var failure error
+	if record.Started {
+		failure = conversation.Delete(r.Context())
+	} else {
+		failure = conversation.Close()
+	}
+	if err := s.store.forget(record.Owner, record.ID); err != nil {
 		writeError(w, err)
+		return
+	}
+	// The sidebar entry is gone either way. A daemon that could not be reached
+	// is reported, not hidden, but it does not resurrect the row.
+	if failure != nil {
+		writeJSON(w, map[string]any{"deleted": true, "warning": failure.Error()})
 		return
 	}
 	writeJSON(w, map[string]any{"deleted": true})
 }
 
-func (s *uiServer) lookup(w http.ResponseWriter, r *http.Request) (*session, bool) {
+// attach returns the live session for a conversation, opening one if this
+// process is not currently holding it.
+//
+// A conversation that has never run is started rather than opened: opening one
+// with no runs behind it would report it as restarted, which would be a lie
+// about a conversation that has nothing to restart.
+func (s *uiServer) attach(ctx context.Context, record conversationRecord) (*session, error) {
 	s.mu.Lock()
-	found, ok := s.sessions[r.PathValue("id")]
+	found, ok := s.sessions[record.ID]
 	s.mu.Unlock()
-	if !ok {
+	if ok {
+		return found, nil
+	}
+	agent := s.client.Agent(record.ProjectID, record.AgentName)
+	conversation := agent.Start(chat.WithID(record.ID), s.labels(record.Owner))
+	if record.Started {
+		resumed, err := agent.Open(ctx, record.ID, s.labels(record.Owner))
+		if err != nil {
+			return nil, err
+		}
+		conversation = resumed
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Another request may have attached while this one was talking to the
+	// daemon. The first one wins; a second live stream on one conversation
+	// would have both of them competing for its turns.
+	if found, ok := s.sessions[record.ID]; ok {
+		_ = conversation.Close()
+		return found, nil
+	}
+	opened := newSession(conversation, record)
+	s.sessions[record.ID] = opened
+	return opened, nil
+}
+
+// handle returns a conversation handle for the operations that need no live
+// stream: reading history, and deleting.
+func (s *uiServer) handle(record conversationRecord) *chat.Conversation {
+	agent := s.client.Agent(record.ProjectID, record.AgentName)
+	return agent.Start(chat.WithID(record.ID), s.labels(record.Owner))
+}
+
+// labels mark the run on the daemon with who it belongs to, so a conversation
+// can be traced back to a person from the daemon's own tooling.
+func (s *uiServer) labels(owner string) chat.Option {
+	return chat.WithLabels(map[string]string{ownerLabel: owner, appLabel: appName})
+}
+
+// describeRecord renders one sidebar row, including whether this process is
+// holding the conversation and whether a turn is running on it.
+func (s *uiServer) describeRecord(record conversationRecord) map[string]any {
+	s.mu.Lock()
+	live, attached := s.sessions[record.ID]
+	s.mu.Unlock()
+	row := map[string]any{
+		"id":        record.ID,
+		"projectId": record.ProjectID,
+		"agentName": record.AgentName,
+		"title":     record.Title,
+		"started":   record.Started,
+		"createdAt": record.CreatedAt,
+		"updatedAt": record.UpdatedAt,
+		"attached":  attached,
+		"running":   attached && live.running(),
+	}
+	if attached {
+		row["continuity"] = live.conversation.Continuity()
+	}
+	return row
+}
+
+// record resolves the path's conversation, and only for the user who owns it.
+func (s *uiServer) record(w http.ResponseWriter, r *http.Request) (conversationRecord, bool) {
+	found, err := s.store.conversation(userOf(r), r.PathValue("id"))
+	if err != nil {
 		http.Error(w, "unknown conversation", http.StatusNotFound)
-		return nil, false
+		return conversationRecord{}, false
 	}
 	return found, true
 }
@@ -180,8 +358,8 @@ func (s *uiServer) connect(ctx context.Context, service, method string, in, out 
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Connect-Protocol-Version", "1")
-	if token := envToken(); token != "" {
-		request.Header.Set("Authorization", "Bearer "+token)
+	if s.token != "" {
+		request.Header.Set("Authorization", "Bearer "+s.token)
 	}
 	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(request)
 	if err != nil {
@@ -208,7 +386,7 @@ func writeJSON(w http.ResponseWriter, payload any) {
 func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusBadGateway
 	switch {
-	case errors.Is(err, chat.ErrNotFound):
+	case errors.Is(err, chat.ErrNotFound), errors.Is(err, errNoSuchConversation):
 		status = http.StatusNotFound
 	case errors.Is(err, chat.ErrInvalidArgument):
 		status = http.StatusBadRequest
@@ -218,9 +396,15 @@ func writeError(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), status)
 }
 
+// truncate shortens text to limit bytes without splitting a rune, so a cut
+// Chinese title stays readable instead of ending in a replacement character.
 func truncate(text string, limit int) string {
 	if len(text) <= limit {
 		return text
 	}
-	return text[:limit] + "…"
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + "…"
 }
