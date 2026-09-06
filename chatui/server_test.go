@@ -12,10 +12,8 @@ import (
 	"github.com/chaitin/agent-compose/sdk/go/chat"
 )
 
-// newTestServer builds a server with two accounts and no daemon behind it.
-// Every route exercised here answers from local state, so no daemon is needed
-// to check who may see what.
-func newTestServer(t *testing.T) *uiServer {
+// newTestServer builds a server with two accounts in front of a daemon stub.
+func newTestServer(t *testing.T, daemon *daemonStub) *uiServer {
 	t.Helper()
 	backing, err := openStore(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
@@ -26,18 +24,22 @@ func newTestServer(t *testing.T) *uiServer {
 			t.Fatalf("add %s: %v", name, err)
 		}
 	}
-	client, err := chat.New(chat.Config{BaseURL: "http://127.0.0.1:1"})
+	client, err := chat.New(chat.Config{BaseURL: daemon.URL})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 	return &uiServer{
 		client:   client,
-		daemon:   "http://127.0.0.1:1",
+		daemon:   daemon.URL,
 		store:    backing,
 		auth:     newAuthenticator(backing),
 		sessions: map[string]*session{},
 	}
 }
+
+// quietDaemon is a stub with no runs and no scripted turn, for the routes that
+// never reach the agent.
+func quietDaemon(t *testing.T) *daemonStub { return fakeDaemon(t, nil) }
 
 // signIn returns the cookie a completed sign-in hands the browser.
 func signIn(t *testing.T, server *uiServer, name string) *http.Cookie {
@@ -92,7 +94,7 @@ func createConversation(t *testing.T, server *uiServer, cookie *http.Cookie) str
 }
 
 func TestEveryAPIRouteNeedsASession(t *testing.T) {
-	server := newTestServer(t)
+	server := newTestServer(t, quietDaemon(t))
 	guarded := []struct{ method, path string }{
 		{http.MethodGet, "/api/agents"},
 		{http.MethodGet, "/api/conversations"},
@@ -114,7 +116,7 @@ func TestEveryAPIRouteNeedsASession(t *testing.T) {
 // does not exist rather than that they may not have it, because the existence
 // of another user's conversation is itself none of their business.
 func TestAConversationIsInvisibleToAnyoneButItsOwner(t *testing.T) {
-	server := newTestServer(t)
+	server := newTestServer(t, quietDaemon(t))
 	alice, bob := signIn(t, server, "alice"), signIn(t, server, "bob")
 	id := createConversation(t, server, alice)
 
@@ -140,7 +142,7 @@ func TestAConversationIsInvisibleToAnyoneButItsOwner(t *testing.T) {
 }
 
 func TestSignInRejectsTheWrongPasswordAndThenThrottles(t *testing.T) {
-	server := newTestServer(t)
+	server := newTestServer(t, quietDaemon(t))
 	for attempt := range maxSignInFailures {
 		recorder := call(t, server, nil, http.MethodPost, "/api/login", `{"user":"alice","password":"nope"}`)
 		if recorder.Code != http.StatusUnauthorized {
@@ -156,7 +158,7 @@ func TestSignInRejectsTheWrongPasswordAndThenThrottles(t *testing.T) {
 }
 
 func TestSigningOutInvalidatesTheCookie(t *testing.T) {
-	server := newTestServer(t)
+	server := newTestServer(t, quietDaemon(t))
 	alice := signIn(t, server, "alice")
 	if recorder := call(t, server, alice, http.MethodPost, "/api/logout", ""); recorder.Code != http.StatusOK {
 		t.Fatalf("sign out: %d %s", recorder.Code, recorder.Body)
@@ -169,7 +171,7 @@ func TestSigningOutInvalidatesTheCookie(t *testing.T) {
 // A conversation nobody has written to yet has never run, so deleting it must
 // not need the daemon: there is nothing on the daemon to delete.
 func TestDeletingAnUnusedConversationDoesNotNeedTheDaemon(t *testing.T) {
-	server := newTestServer(t)
+	server := newTestServer(t, quietDaemon(t))
 	alice := signIn(t, server, "alice")
 	id := createConversation(t, server, alice)
 
@@ -186,7 +188,7 @@ func TestDeletingAnUnusedConversationDoesNotNeedTheDaemon(t *testing.T) {
 }
 
 func TestTheChatListIsOrderedByLastUse(t *testing.T) {
-	server := newTestServer(t)
+	server := newTestServer(t, quietDaemon(t))
 	alice := signIn(t, server, "alice")
 	first := createConversation(t, server, alice)
 	second := createConversation(t, server, alice)
@@ -235,7 +237,7 @@ func TestTheStateFileSurvivesARestart(t *testing.T) {
 }
 
 func TestAPasswordIsNeverStored(t *testing.T) {
-	server := newTestServer(t)
+	server := newTestServer(t, quietDaemon(t))
 	raw, err := json.Marshal(server.store.data)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -303,7 +305,7 @@ func TestRenderedEventsCarryTheirStepAndOmitWhatWasNotReported(t *testing.T) {
 }
 
 func TestASessionExpires(t *testing.T) {
-	server := newTestServer(t)
+	server := newTestServer(t, quietDaemon(t))
 	alice := signIn(t, server, "alice")
 	server.auth.mu.Lock()
 	for key, found := range server.auth.sessions {
@@ -314,5 +316,79 @@ func TestASessionExpires(t *testing.T) {
 
 	if recorder := call(t, server, alice, http.MethodGet, "/api/conversations", ""); recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("an expired session still worked: %d", recorder.Code)
+	}
+}
+
+// The chat list lives on the daemon, in the chat.user and chat.conversation
+// labels every run carries. Losing this server's state file costs titles, not
+// conversations — and ownership still holds, because it was never this file's
+// to enforce.
+func TestTheChatListSurvivesLosingTheStateFile(t *testing.T) {
+	daemon := quietDaemon(t)
+	daemon.listRuns(
+		map[string]any{
+			"runId": "run_a", "projectId": "p", "agentName": "a",
+			"status": "RUN_STATUS_RUNNING", "createdAt": time.Now().UTC().Format(time.RFC3339Nano),
+			"labels": map[string]string{
+				"chat.conversation": "conv_alice", "chat.user": "alice", "chat.app": appName,
+			},
+		},
+		map[string]any{
+			"runId": "run_b", "projectId": "p", "agentName": "a",
+			"status": "RUN_STATUS_SUCCEEDED", "createdAt": time.Now().UTC().Format(time.RFC3339Nano),
+			"labels": map[string]string{
+				"chat.conversation": "conv_bob", "chat.user": "bob", "chat.app": appName,
+			},
+		},
+	)
+	// A fresh server: nothing in its store but the accounts.
+	server := newTestServer(t, daemon)
+	alice, bob := signIn(t, server, "alice"), signIn(t, server, "bob")
+
+	listed := call(t, server, alice, http.MethodGet, "/api/conversations", "")
+	if listed.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", listed.Code, listed.Body)
+	}
+	var page struct {
+		Conversations []map[string]any `json:"conversations"`
+	}
+	if err := json.Unmarshal(listed.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(page.Conversations) != 1 || page.Conversations[0]["id"] != "conv_alice" {
+		t.Fatalf("the daemon's conversations were not listed: %v", page.Conversations)
+	}
+	if page.Conversations[0]["live"] != true {
+		t.Errorf("a conversation whose run is still running is not reported live: %v", page.Conversations[0])
+	}
+
+	// Ownership comes from the label, with no local record to consult.
+	if recorder := call(t, server, bob, http.MethodGet, "/api/conversations/conv_alice", ""); recorder.Code != http.StatusNotFound {
+		t.Errorf("a stranger reached a conversation the store never recorded: %d", recorder.Code)
+	}
+	if recorder := call(t, server, alice, http.MethodGet, "/api/conversations/conv_alice", ""); recorder.Code != http.StatusOK {
+		t.Errorf("the owner could not open their own conversation: %d %s", recorder.Code, recorder.Body)
+	}
+}
+
+// A conversation nobody has written to yet has no run behind it, so the daemon
+// has never heard of it. It still belongs in its owner's list.
+func TestAConversationThatHasNotRunYetIsStillListed(t *testing.T) {
+	server := newTestServer(t, quietDaemon(t))
+	alice := signIn(t, server, "alice")
+	id := createConversation(t, server, alice)
+
+	listed := call(t, server, alice, http.MethodGet, "/api/conversations", "")
+	var page struct {
+		Conversations []map[string]any `json:"conversations"`
+	}
+	if err := json.Unmarshal(listed.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(page.Conversations) != 1 || page.Conversations[0]["id"] != id {
+		t.Fatalf("a conversation with no run yet vanished from the list: %v", page.Conversations)
+	}
+	if page.Conversations[0]["started"] != false {
+		t.Errorf("it should not claim to have run: %v", page.Conversations[0])
 	}
 }

@@ -105,7 +105,7 @@ func (s *uiServer) socket(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if updated, err := s.store.conversation(record.Owner, record.ID); err == nil {
-				emit(map[string]any{"type": "conversation", "conversation": s.describeRecord(updated)})
+				emit(map[string]any{"type": "conversation", "conversation": s.describeRecord(updated, nil)})
 			}
 		case "stop":
 			stopped, err := found.interrupt(ctx)

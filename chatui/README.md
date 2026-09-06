@@ -87,17 +87,39 @@ previous total.
 A field a provider did not report is omitted rather than sent as a zero, so the
 page can tell "did not happen" from "this provider never reports it".
 
+## Where the chat list lives
+
+On the daemon. Every run this server starts carries three labels:
+
+| | |
+|---|---|
+| `chat.conversation` | the conversation's identity — what `Agent.Open` resumes |
+| `chat.user` | who it belongs to |
+| `chat.app` | that this app started it |
+
+so one `ListRuns` filtered by `chat.user` **is** the chat list. The SDK's
+`Client.Conversations` folds a conversation's runs together — a rebuilt one
+occupies several — and reports when each was last active and whether its
+environment is still alive.
+
+This server's state file holds only the two things labels cannot: **titles**,
+because a run's labels are fixed when it starts and a rename has to work without
+starting one; and **conversations that have not run yet**, which have no run
+behind them until their first message. Delete the file and the list comes back
+from the daemon, ownership included — only the titles are gone.
+
 ## Accounts
 
 Accounts live in the state file (`-state`, by default
-`~/.agent-compose/chatui/state.json`), which also holds the chat list. Passwords
-are stored as PBKDF2-HMAC-SHA256 verifiers, never in the clear. Sessions are
-cookie-based and live in memory, so restarting the server signs everyone out.
+`~/.agent-compose/chatui/state.json`). Passwords are stored as
+PBKDF2-HMAC-SHA256 verifiers, never in the clear. Sessions are cookie-based and
+live in memory, so restarting the server signs everyone out.
 
-Each conversation belongs to one account. Asking for someone else's is answered
-as *not found* rather than *forbidden* — that another user has a conversation is
-itself none of the asker's business. Runs are also labelled `chat.user` on the
-daemon, so a conversation is attributable from the daemon's own tooling.
+Each conversation belongs to one account, and ownership is enforced from the
+`chat.user` label rather than from this server's own record — so it holds even
+for a conversation this process has never seen. Asking for someone else's is
+answered as *not found* rather than *forbidden*: that another user has a
+conversation is itself none of the asker's business.
 
 This is a sign-in, not an identity system: there are no roles, no sharing, and
 no password reset beyond `-set-password`. Put it behind TLS before exposing it
@@ -144,7 +166,8 @@ daemon and is reopened by ID on the next visit, with its context intact.
 - **The activity trace needs [#666](https://github.com/chaitin/agent-compose/pull/666).**
   Until it merges, only the codex provider emits structured agent events; the
   others complete their turns in one piece, and the trace stays hidden.
-- **The chat list is this server's own.** Titles and ordering are not something
-  the daemon keeps: a run's labels are fixed when it starts, so a title could
-  never be renamed, and `ListRuns` returns summaries without labels, so drawing
-  a sidebar from the daemon would cost one `GetRun` per row.
+- **Titles are local.** Everything else about a conversation comes from the
+  daemon; a title cannot, because labels are fixed when a run starts.
+- **The list is paged by run, not by conversation.** `ListRuns` returns runs, and
+  a conversation that has been rebuilt occupies several, so a page of 200 runs
+  yields somewhere between 1 and 200 conversations.

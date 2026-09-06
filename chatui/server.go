@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -129,16 +130,62 @@ func (s *uiServer) agents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"projects": result})
 }
 
-// list draws the sidebar. It reads this server's own state rather than the
-// daemon: a chat list is a list of titles in recency order, and neither is
-// something the daemon keeps.
+// list draws the sidebar from the daemon.
+//
+// Every run this server starts carries chat.user and chat.conversation, so one
+// filtered ListRuns is the whole chat list: the SDK folds a conversation's runs
+// together and reports when each was last active. This server contributes only
+// the titles, and the conversations that have not run yet.
 func (s *uiServer) list(w http.ResponseWriter, r *http.Request) {
-	records := s.store.conversations(userOf(r))
-	rendered := make([]map[string]any, 0, len(records))
-	for _, record := range records {
-		rendered = append(rendered, s.describeRecord(record))
+	owner := userOf(r)
+	known, err := s.client.Conversations(r.Context(), chat.Search{
+		Labels: map[string]string{ownerLabel: owner, appLabel: appName},
+	})
+	if err != nil {
+		writeError(w, err)
+		return
 	}
-	writeJSON(w, map[string]any{"conversations": rendered})
+	overlay := s.store.conversations(owner)
+	rows := make([]map[string]any, 0, len(known)+len(overlay))
+	listed := make(map[string]bool, len(known))
+	for _, found := range known {
+		listed[found.ID] = true
+		record, err := s.store.conversation(owner, found.ID)
+		if err != nil {
+			// The daemon knows a conversation this server has forgotten — a
+			// lost state file, or another instance. It is still the user's, so
+			// show it; it just has no title yet.
+			record = recordOf(owner, found)
+		}
+		rows = append(rows, s.describeRecord(record, &found))
+	}
+	for _, record := range overlay {
+		if !listed[record.ID] {
+			rows = append(rows, s.describeRecord(record, nil))
+		}
+	}
+	slices.SortStableFunc(rows, func(a, b map[string]any) int {
+		return compareActivity(b).Compare(compareActivity(a))
+	})
+	writeJSON(w, map[string]any{"conversations": rows})
+}
+
+// recordOf synthesises an overlay for a conversation only the daemon knows.
+func recordOf(owner string, found chat.ConversationInfo) conversationRecord {
+	return conversationRecord{
+		ID:        found.ID,
+		Owner:     owner,
+		ProjectID: found.ProjectID,
+		AgentName: found.AgentName,
+		Started:   true,
+		CreatedAt: found.LastActive,
+		UpdatedAt: found.LastActive,
+	}
+}
+
+func compareActivity(row map[string]any) time.Time {
+	at, _ := row["updatedAt"].(time.Time)
+	return at
 }
 
 // create starts a new conversation. No daemon call is made: the environment is
@@ -157,7 +204,10 @@ func (s *uiServer) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	owner := userOf(r)
-	conversation := s.client.Agent(body.ProjectID, body.AgentName).Start()
+	// The labels go on at creation, not at attach: they are what makes the run
+	// this conversation eventually starts attributable to its owner, and the
+	// start frame is the only chance to set them.
+	conversation := s.client.Agent(body.ProjectID, body.AgentName).Start(s.labels(owner))
 	record := conversationRecord{
 		ID:        conversation.ID(),
 		Owner:     owner,
@@ -172,7 +222,7 @@ func (s *uiServer) create(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.sessions[record.ID] = newSession(conversation, record)
 	s.mu.Unlock()
-	writeJSON(w, s.describeRecord(record))
+	writeJSON(w, s.describeRecord(record, nil))
 }
 
 // describe returns one conversation with its transcript, which is what opening
@@ -183,7 +233,7 @@ func (s *uiServer) describe(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	payload := s.describeRecord(record)
+	payload := s.describeRecord(record, nil)
 	messages := []map[string]any{}
 	if record.Started {
 		history, err := s.handle(record).History(r.Context())
@@ -222,7 +272,7 @@ func (s *uiServer) rename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, s.describeRecord(updated))
+	writeJSON(w, s.describeRecord(updated, nil))
 }
 
 // remove ends the conversation on the daemon and drops it from the sidebar.
@@ -249,7 +299,7 @@ func (s *uiServer) remove(w http.ResponseWriter, r *http.Request) {
 	} else {
 		failure = conversation.Close()
 	}
-	if err := s.store.forget(record.Owner, record.ID); err != nil {
+	if err := s.store.forget(record.Owner, record.ID); err != nil && !errors.Is(err, errNoSuchConversation) {
 		writeError(w, err)
 		return
 	}
@@ -311,9 +361,12 @@ func (s *uiServer) labels(owner string) chat.Option {
 	return chat.WithLabels(map[string]string{ownerLabel: owner, appLabel: appName})
 }
 
-// describeRecord renders one sidebar row, including whether this process is
-// holding the conversation and whether a turn is running on it.
-func (s *uiServer) describeRecord(record conversationRecord) map[string]any {
+// describeRecord renders one sidebar row.
+//
+// found is what the daemon reports about the conversation, and is nil for one
+// that has not run yet. Where the two disagree the daemon wins: it is the only
+// thing that actually knows whether a conversation is still alive.
+func (s *uiServer) describeRecord(record conversationRecord, found *chat.ConversationInfo) map[string]any {
 	s.mu.Lock()
 	live, attached := s.sessions[record.ID]
 	s.mu.Unlock()
@@ -328,6 +381,15 @@ func (s *uiServer) describeRecord(record conversationRecord) map[string]any {
 		"attached":  attached,
 		"running":   attached && live.running(),
 	}
+	// live is omitted rather than sent as false when the daemon was not
+	// consulted: "this run has ended" and "nobody asked" are different answers.
+	if found != nil {
+		row["started"] = true
+		row["updatedAt"] = found.LastActive
+		row["live"] = found.Live
+		row["projectId"] = found.ProjectID
+		row["agentName"] = found.AgentName
+	}
 	if attached {
 		row["continuity"] = live.conversation.Continuity()
 	}
@@ -335,13 +397,26 @@ func (s *uiServer) describeRecord(record conversationRecord) map[string]any {
 }
 
 // record resolves the path's conversation, and only for the user who owns it.
+//
+// The local overlay is consulted first because it is free, but a miss is not an
+// answer: the daemon is where ownership actually lives, in the chat.user label
+// on every run. Asking it means a conversation still works after this server
+// has lost or never had a record of it.
 func (s *uiServer) record(w http.ResponseWriter, r *http.Request) (conversationRecord, bool) {
-	found, err := s.store.conversation(userOf(r), r.PathValue("id"))
-	if err != nil {
+	owner, id := userOf(r), r.PathValue("id")
+	if found, err := s.store.conversation(owner, id); err == nil {
+		return found, true
+	}
+	known, err := s.client.Conversations(r.Context(), chat.Search{
+		ID: id, Labels: map[string]string{ownerLabel: owner, appLabel: appName},
+	})
+	if err != nil || len(known) == 0 {
+		// Someone else's conversation is reported absent rather than
+		// forbidden: that it exists is none of the asker's business.
 		http.Error(w, "unknown conversation", http.StatusNotFound)
 		return conversationRecord{}, false
 	}
-	return found, true
+	return recordOf(owner, known[0]), true
 }
 
 // connect makes one plain Connect JSON call, for the services the chat SDK

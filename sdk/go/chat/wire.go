@@ -88,6 +88,8 @@ type wireAttachResponse struct {
 
 type wireRunSummary struct {
 	RunID     string            `json:"runId"`
+	ProjectID string            `json:"projectId"`
+	AgentName string            `json:"agentName"`
 	Status    string            `json:"status"`
 	SandboxID string            `json:"sandboxId"`
 	Labels    map[string]string `json:"labels"`

@@ -1422,6 +1422,10 @@ message RunSummary {
   string sandbox_short_id = 21;
   // Present when this Agent Run was created by a SchedulerRun.
   string scheduler_run_id = 22;
+  // User-defined key/value labels attached to the run at start time. Returned
+  // so a caller that filters by labels can group the page it gets back without
+  // one GetRun per row.
+  map<string, string> labels = 23;
 }
 
 message RunDetail {

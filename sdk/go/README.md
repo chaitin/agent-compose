@@ -47,6 +47,34 @@ vocabulary. The SDK owns the three things the daemon deliberately does not
 model: the conversation's identity, the ordering of its turns, and the
 continuity of the environment they run in.
 
+## Finding conversations again
+
+`Open` needs an ID, which a product normally already has against its own thread
+record. When it does not — a new device, a lost cache, a support tool — the
+conversations are still findable, because their identity is a label on the runs
+they occupy:
+
+```go
+conversation := agent.Start(chat.WithLabels(map[string]string{"user": "alice"}))
+...
+found, err := client.Conversations(ctx, chat.Search{
+    Labels: map[string]string{"user": "alice"},
+})
+for _, info := range found {
+    fmt.Println(info.ID, info.AgentName, info.LastActive, info.Live)
+}
+```
+
+A conversation that has been rebuilt occupies several runs; `Conversations`
+folds them into one entry described by the most recent. `Live` reports whether
+that environment is still up, which is what separates a conversation that will
+resume with its context from one that will be rebuilt.
+
+What comes back is only what the server holds. A title, an unread marker, or
+anything else a product invents about a conversation stays the product's to
+keep: run labels are fixed when a run starts, so they cannot carry a name that
+has to be changeable.
+
 ## Continuity
 
 Turns share one environment, and that environment is what carries the agent's

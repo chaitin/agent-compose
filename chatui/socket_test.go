@@ -8,7 +8,9 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,20 +19,55 @@ import (
 	"github.com/chaitin/agent-compose/sdk/go/chat"
 )
 
-// fakeDaemon answers AttachAgentRun with a scripted turn.
+// daemonStub stands in for agent-compose.
 //
-// It serves h2c because a Connect bidirectional stream needs HTTP/2, and it
-// writes no response header until it has read the client's opening frame,
-// which is how the real daemon behaves.
-func fakeDaemon(t *testing.T, script []wireEvent) *httptest.Server {
+// It serves unencrypted HTTP/2 because a Connect bidirectional stream needs
+// HTTP/2, and it writes no response header until it has read the client's
+// opening frame, which is how the real daemon behaves.
+type daemonStub struct {
+	*httptest.Server
+
+	mu    sync.Mutex
+	runs  []map[string]any
+	start map[string]any
+}
+
+// startFrame returns the request the last attach opened with, so a test can
+// check what the run was actually created with.
+func (d *daemonStub) startFrame() map[string]any {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.start
+}
+
+// listRuns sets what ListRuns reports, which is where the chat list comes from.
+func (d *daemonStub) listRuns(runs ...map[string]any) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.runs = runs
+}
+
+func (d *daemonStub) currentRuns() []map[string]any {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.runs)
+}
+
+func fakeDaemon(t *testing.T, script []wireEvent) *daemonStub {
 	t.Helper()
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/AttachAgentRun") {
-			http.Error(w, "unexpected procedure "+r.URL.Path, http.StatusNotFound)
+	stub := &daemonStub{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /agentcompose.v2.RunService/AttachAgentRun", func(w http.ResponseWriter, r *http.Request) {
+		d := stub
+		opening, err := readEnvelope(r.Body)
+		if err != nil {
 			return
 		}
-		if _, err := readEnvelope(r.Body); err != nil {
-			return
+		var frame map[string]any
+		if err := json.Unmarshal(opening, &frame); err == nil {
+			d.mu.Lock()
+			stub.start, _ = frame["start"].(map[string]any)
+			d.mu.Unlock()
 		}
 		w.Header().Set("Content-Type", "application/connect+json")
 		w.WriteHeader(http.StatusOK)
@@ -67,13 +104,40 @@ func fakeDaemon(t *testing.T, script []wireEvent) *httptest.Server {
 		}
 		send(map[string]any{"agentTurnCompleted": map[string]any{"runId": "run_1"}})
 	})
-	server := httptest.NewUnstartedServer(handler)
+	mux.HandleFunc("POST /agentcompose.v2.RunService/ListRuns", func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Labels map[string]string `json:"labels"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		matching := make([]map[string]any, 0, len(stub.currentRuns()))
+		for _, run := range stub.currentRuns() {
+			labels, _ := run["labels"].(map[string]string)
+			keep := true
+			for key, value := range request.Labels {
+				if labels[key] != value {
+					keep = false
+					break
+				}
+			}
+			if keep {
+				matching = append(matching, run)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"runs": matching, "total": len(matching)})
+	})
+	mux.HandleFunc("POST /agentcompose.v2.RunService/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{})
+	})
+
+	stub.Server = httptest.NewUnstartedServer(mux)
 	protocols := new(http.Protocols)
 	protocols.SetUnencryptedHTTP2(true)
-	server.Config.Protocols = protocols
-	server.Start()
-	t.Cleanup(server.Close)
-	return server
+	stub.Config.Protocols = protocols
+	stub.Start()
+	t.Cleanup(stub.Close)
+	return stub
 }
 
 type wireEvent struct {
@@ -114,12 +178,7 @@ func TestTheSocketRelaysATurnAsStructuredSteps(t *testing.T) {
 		{"step_end", map[string]any{"step": 1, "stopReason": "stop"}},
 	})
 
-	server := newTestServer(t)
-	client, err := chat.New(chat.Config{BaseURL: daemon.URL})
-	if err != nil {
-		t.Fatalf("client: %v", err)
-	}
-	server.client, server.daemon = client, daemon.URL
+	server := newTestServer(t, daemon)
 
 	front := httptest.NewServer(server.routes())
 	t.Cleanup(front.Close)
@@ -205,12 +264,7 @@ func TestTheSocketRelaysATurnAsStructuredSteps(t *testing.T) {
 func TestTheFirstMessageNamesTheConversationOverTheSocket(t *testing.T) {
 	daemon := fakeDaemon(t, []wireEvent{{"text_delta", map[string]any{"text": "好的"}}})
 
-	server := newTestServer(t)
-	client, err := chat.New(chat.Config{BaseURL: daemon.URL})
-	if err != nil {
-		t.Fatalf("client: %v", err)
-	}
-	server.client, server.daemon = client, daemon.URL
+	server := newTestServer(t, daemon)
 
 	front := httptest.NewServer(server.routes())
 	t.Cleanup(front.Close)
@@ -286,4 +340,51 @@ func browserCreate(t *testing.T, browser *http.Client, base string) string {
 		t.Fatalf("decode: %v", err)
 	}
 	return created.ID
+}
+
+// The run a conversation starts must carry the labels the chat list is built
+// from. They can only be set on the start frame, so a conversation created
+// without them would be invisible to its own owner's sidebar forever after.
+func TestTheRunAConversationStartsIsLabelledWithItsOwner(t *testing.T) {
+	daemon := fakeDaemon(t, []wireEvent{{"text_delta", map[string]any{"text": "好"}}})
+	server := newTestServer(t, daemon)
+
+	front := httptest.NewServer(server.routes())
+	t.Cleanup(front.Close)
+	browser := newBrowser(t, front.URL)
+	id := browserCreate(t, browser, front.URL)
+
+	socketURL := strings.Replace(front.URL, "http://", "ws://", 1) + "/api/conversations/" + id + "/socket"
+	conn, handshake, err := (&websocket.Dialer{Jar: browser.Jar}).Dial(socketURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = handshake.Body.Close() }()
+	defer func() { _ = conn.Close() }()
+	if err := conn.WriteJSON(map[string]string{"type": "message", "text": "在吗"}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		var frame map[string]any
+		if err := conn.ReadJSON(&frame); err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		if frame["type"] == "turn_done" {
+			break
+		}
+	}
+
+	start := daemon.startFrame()
+	request, _ := start["request"].(map[string]any)
+	labels, _ := request["labels"].(map[string]any)
+	if labels["chat.user"] != "alice" {
+		t.Errorf("the run was not attributed to its owner: %v", labels)
+	}
+	if labels["chat.app"] != appName {
+		t.Errorf("the run does not say which app started it: %v", labels)
+	}
+	if labels["chat.conversation"] != id {
+		t.Errorf("the run does not carry its conversation identity: %v", labels)
+	}
 }

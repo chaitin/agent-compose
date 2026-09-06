@@ -20,14 +20,15 @@ var (
 	errUserExists         = errors.New("user already exists")
 )
 
-// store is this server's own record of who may sign in and what conversations
-// they own.
+// store holds what the daemon does not: who may sign in, and what each person
+// has chosen to call their conversations.
 //
-// The daemon owns the conversations themselves; this file holds only what a
-// chat list needs and the daemon does not keep. Run labels cannot stand in for
-// it: a run's labels are fixed when it starts, so a title could never be
-// renamed, and ListRuns returns summaries without labels, so drawing a sidebar
-// would cost one GetRun per row.
+// The chat list itself comes from the daemon, found by the chat.user and
+// chat.conversation labels every run carries. Two things cannot: a title,
+// because a run's labels are fixed when it starts and a rename has to survive
+// without starting one; and a conversation nobody has written to yet, which
+// has no run behind it at all until its first message. Losing this file
+// therefore costs titles, not conversations.
 type store struct {
 	path string
 
@@ -48,8 +49,9 @@ type credential struct {
 	CreatedAt  time.Time `json:"createdAt,omitzero"`
 }
 
-// conversationRecord is one row of a user's chat list. The conversation it
-// names lives on the daemon and is reached through the SDK by ID.
+// conversationRecord is this server's overlay on one conversation: the title
+// its owner gave it, plus enough to open a conversation the daemon has never
+// heard of because it has not run yet.
 type conversationRecord struct {
 	ID        string `json:"id"`
 	Owner     string `json:"owner"`

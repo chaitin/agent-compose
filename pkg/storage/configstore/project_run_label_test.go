@@ -366,3 +366,72 @@ func TestInsertProjectRunLabelsTxTrimsKeys(t *testing.T) {
 		t.Fatalf("run survived rejected colliding label keys: %v", err)
 	}
 }
+
+// A caller that filters by labels has to be able to group the page it gets
+// back — which conversation each run belongs to, say. Returning summaries
+// without labels would force one GetProjectRun per row, so the list path
+// carries them.
+func TestListProjectRunsByOptionsReturnsEachRunsLabels(t *testing.T) {
+	ctx := context.Background()
+	store := FromDB(newMemoryDB(t))
+	if err := store.initSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+	if _, err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "project-label-list", Name: "label-list"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	agentID := createRunEventTestAgent(t, runEventTestAgentSpec{Ctx: ctx, Store: store, ProjectID: "project-label-list", AgentName: "worker"})
+
+	want := map[string]map[string]string{
+		"run-first":  {"chat.user": "alice", "chat.conversation": "conv_1"},
+		"run-second": {"chat.user": "alice", "chat.conversation": "conv_2"},
+		"run-bare":   nil,
+	}
+	for runID, labels := range want {
+		if _, err := store.CreateProjectRun(ctx, domain.ProjectRunRecord{
+			RunID: runID, ProjectID: "project-label-list", AgentName: "worker", AgentID: agentID,
+			Status: domain.ProjectRunStatusRunning, Labels: labels,
+		}); err != nil {
+			t.Fatalf("create run %s: %v", runID, err)
+		}
+	}
+
+	got, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{
+		ProjectID: "project-label-list", Limit: 50,
+	})
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("run count = %d, want %d", len(got), len(want))
+	}
+	for _, run := range got {
+		expected := want[run.RunID]
+		if len(run.Labels) != len(expected) {
+			t.Fatalf("run %s labels = %#v, want %#v", run.RunID, run.Labels, expected)
+		}
+		for key, value := range expected {
+			if run.Labels[key] != value {
+				t.Fatalf("run %s label %s = %q, want %q", run.RunID, key, run.Labels[key], value)
+			}
+		}
+	}
+
+	// The filtered path carries them too: that is the case the grouping needs.
+	filtered, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{
+		ProjectID: "project-label-list", Labels: map[string]string{"chat.user": "alice"}, Limit: 50,
+	})
+	if err != nil {
+		t.Fatalf("list filtered runs: %v", err)
+	}
+	if len(filtered) != 2 {
+		t.Fatalf("filtered run count = %d, want 2", len(filtered))
+	}
+	conversations := map[string]bool{}
+	for _, run := range filtered {
+		conversations[run.Labels["chat.conversation"]] = true
+	}
+	if !conversations["conv_1"] || !conversations["conv_2"] {
+		t.Fatalf("filtered runs did not carry their conversation labels: %#v", conversations)
+	}
+}
