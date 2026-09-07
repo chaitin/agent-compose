@@ -922,7 +922,7 @@ func TestRunsControllerRunProjectPromptAttachProjectsAgentFrames(t *testing.T) {
 	controller, configDB, runtime := newTestRunAttachController(t, []driverpkg.RuntimeOutputFrame{
 		{Type: driverpkg.RuntimeOutputStarted},
 		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":0,"type":"started","provider":"claude","sessionId":"thread-1"}` + "\n")},
-		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":1,"type":"agent_event","event":{"type":"output","provider":"claude","text":"hello agent\n"}}` + "\n")},
+		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":1,"type":"agent_event","event":{"kind":"text_delta","text":"hello agent\n"}}` + "\n")},
 		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":2,"type":"agent_turn_completed","provider":"claude","sessionId":"thread-1","finalText":"hello agent\n","finalTextSource":"provider_message"}` + "\n")},
 		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":3,"type":"result","provider":"claude","sessionId":"thread-1","stopReason":"eof","finalText":"hello agent\n","finalTextSource":"provider_message","transcript":"hello agent\n"}` + "\n")},
 		{Type: driverpkg.RuntimeOutputResult, Result: &driverpkg.RuntimeResult{OperationID: "run-attach", ExitCode: 0, Success: true}},
@@ -1032,17 +1032,17 @@ func TestRunsControllerRunProjectPromptAttachGatesQueuedTurnsAndOrdersTranscript
 
 	interaction.frames <- driverpkg.RuntimeOutputFrame{Type: driverpkg.RuntimeOutputStarted}
 	interaction.frames <- promptRuntimeStdoutFrame(`{"v":1,"seq":0,"type":"started","provider":"codex","sessionId":"thread-1"}`)
-	interaction.frames <- promptRuntimeStdoutFrame(`{"v":1,"seq":1,"type":"agent_event","event":{"type":"item.completed","item":{"id":"m1","type":"agent_message","text":"agent-1\n"}}}`)
+	interaction.frames <- promptRuntimeStdoutFrame(`{"v":1,"seq":1,"type":"agent_event","event":{"kind":"text_delta","text":"agent-1\n"}}`)
 	interaction.frames <- promptRuntimeStdoutFrame(`{"v":1,"seq":2,"type":"agent_turn_completed","provider":"codex","sessionId":"thread-1","finalText":"agent-1\n","finalTextSource":"provider_message"}`)
 	assertPromptRuntimeFrame(t, receiveRuntimeInputFrame(t, interaction.sent), "human_message", "human-2")
 	assertNoRuntimeInputFrame(t, interaction.sent)
 
-	interaction.frames <- promptRuntimeStdoutFrame(`{"v":1,"seq":3,"type":"agent_event","event":{"type":"item.completed","item":{"id":"m2","type":"agent_message","text":"agent-2\n"}}}`)
+	interaction.frames <- promptRuntimeStdoutFrame(`{"v":1,"seq":3,"type":"agent_event","event":{"kind":"text_delta","text":"agent-2\n"}}`)
 	interaction.frames <- promptRuntimeStdoutFrame(`{"v":1,"seq":4,"type":"agent_turn_completed","provider":"codex","sessionId":"thread-1","finalText":"agent-2\n","finalTextSource":"provider_message"}`)
 	assertPromptRuntimeFrame(t, receiveRuntimeInputFrame(t, interaction.sent), "human_message", "human-3")
 	assertPromptRuntimeFrame(t, receiveRuntimeInputFrame(t, interaction.sent), "eof", "")
 
-	interaction.frames <- promptRuntimeStdoutFrame(`{"v":1,"seq":5,"type":"agent_event","event":{"type":"item.completed","item":{"id":"m3","type":"agent_message","text":"agent-3\n"}}}`)
+	interaction.frames <- promptRuntimeStdoutFrame(`{"v":1,"seq":5,"type":"agent_event","event":{"kind":"text_delta","text":"agent-3\n"}}`)
 	interaction.frames <- promptRuntimeStdoutFrame(`{"v":1,"seq":6,"type":"agent_turn_completed","provider":"codex","sessionId":"thread-1","finalText":"agent-3\n","finalTextSource":"provider_message"}`)
 	interaction.frames <- promptRuntimeStdoutFrame(`{"v":1,"seq":7,"type":"result","provider":"codex","sessionId":"thread-1","stopReason":"eof","finalText":"agent-3\n","finalTextSource":"provider_message","transcript":"agent-1\nagent-2\nagent-3\n"}`)
 	interaction.frames <- driverpkg.RuntimeOutputFrame{Type: driverpkg.RuntimeOutputResult, Result: &driverpkg.RuntimeResult{OperationID: "run-attach", Success: true}}
@@ -1108,7 +1108,7 @@ func TestPromptAttachProjectorLogsHumanMessagesAndTurnFinalText(t *testing.T) {
 	sub := hub.Subscribe("run-follow")
 	defer sub.Close()
 	projector := newPromptAttachProjector(domain.ProjectRunRecord{RunID: "run-follow"}, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-follow"}}, logsPath, hub)
-	if _, _, err := projector.Project([]byte(`{"type":"agent_event","event":{"type":"item.completed","item":{"id":"m1","type":"agent_message","text":"first answer\n"}}}` + "\n")); err != nil {
+	if _, _, err := projector.Project([]byte(`{"type":"agent_event","event":{"kind":"text_delta","text":"first answer\n"}}` + "\n")); err != nil {
 		t.Fatalf("project first answer: %v", err)
 	}
 	if err := projector.AppendHumanMessage("next question"); err != nil {
@@ -1149,7 +1149,7 @@ func TestPromptAttachProjectorLogsTurnFinalTextWithoutAgentEventText(t *testing.
 func TestPromptAttachProjectorSeparatesHumanMessageAfterUnterminatedAgentText(t *testing.T) {
 	logsPath := filepath.Join(t.TempDir(), "transcript.txt")
 	projector := newPromptAttachProjector(domain.ProjectRunRecord{RunID: "run-boundary"}, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-boundary"}}, logsPath, nil)
-	if _, _, err := projector.Project([]byte(`{"type":"agent_event","event":{"type":"item.completed","item":{"id":"m1","type":"agent_message","text":"first answer"}}}` + "\n")); err != nil {
+	if _, _, err := projector.Project([]byte(`{"type":"agent_event","event":{"kind":"text_delta","text":"first answer"}}` + "\n")); err != nil {
 		t.Fatalf("project agent text: %v", err)
 	}
 	if err := projector.AppendHumanMessage("next question"); err != nil {
@@ -1167,7 +1167,7 @@ func TestPromptAttachProjectorSeparatesHumanMessageAfterUnterminatedAgentText(t 
 func TestPromptAttachProjectorDoesNotDuplicateSeparatorsBetweenQueuedHumanMessages(t *testing.T) {
 	logsPath := filepath.Join(t.TempDir(), "transcript.txt")
 	projector := newPromptAttachProjector(domain.ProjectRunRecord{RunID: "run-human-tail"}, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-human-tail"}}, logsPath, nil)
-	if _, _, err := projector.Project([]byte(`{"type":"agent_event","event":{"type":"item.completed","item":{"id":"m1","type":"agent_message","text":"agent"}}}` + "\n")); err != nil {
+	if _, _, err := projector.Project([]byte(`{"type":"agent_event","event":{"kind":"text_delta","text":"agent"}}` + "\n")); err != nil {
 		t.Fatalf("project agent text: %v", err)
 	}
 	if err := projector.AppendHumanMessage("human-2"); err != nil {
@@ -1223,7 +1223,7 @@ func TestPromptAttachProjectorPersistsEachFrameIdempotently(t *testing.T) {
 	if err := projector.AppendHumanMessageFrame("question", "client-frame-1"); err != nil {
 		t.Fatalf("retry human frame: %v", err)
 	}
-	activity := []byte(`{"seq":41,"type":"agent_event","event":{"type":"item.completed","item":{"id":"cmd-1","type":"command_execution","command":"curl https://weather.test","aggregated_output":"{\"temperature\":26}\n"}}}` + "\n")
+	activity := []byte(`{"seq":41,"type":"agent_event","event":{"kind":"text_delta","text":"\\n$ curl https://weather.test\\n{\"temperature\":26}\n"}}` + "\n")
 	if _, _, err := projector.Project(activity); err != nil {
 		t.Fatalf("project activity: %v", err)
 	}
@@ -1360,7 +1360,7 @@ func TestRunsControllerRunProjectPromptAttachUnsupportedProvidersDoNotOpenRuntim
 			if len(responses) != 1 || responses[0].GetResult() == nil || responses[0].GetResult().GetSuccess() {
 				t.Fatalf("prompt attach unsupported provider responses = %#v", responses)
 			}
-			if got := responses[0].GetResult().GetError(); !strings.Contains(got, "prompt attach currently supports codex, claude, opencode, and pi providers only") {
+			if got := responses[0].GetResult().GetError(); !strings.Contains(got, "prompt attach currently supports codex, claude, opencode, pi, and dsh providers only") {
 				t.Fatalf("prompt attach unsupported provider error = %q", got)
 			}
 			run := responses[0].GetResult().GetRun()
@@ -3239,4 +3239,123 @@ func runAttachOutputToTestProto(output RunAttachOutput) *agentcomposev2.AttachAg
 		response.Frame = &agentcomposev2.AttachAgentRunResponse_Error{Error: &agentcomposev2.AttachError{Code: output.Code, Message: output.Error, Terminal: output.Terminal}}
 	}
 	return response
+}
+
+// TestPromptAttachProjectorKeepsToolActivityInTheTranscript covers what an
+// attach transcript would otherwise lose when the runtime moved to neutral
+// events: which tool ran, with what command, and what it printed. Only
+// text_delta carries assistant prose, so a transcript built from that alone
+// reads as if the model answered without doing anything.
+func TestPromptAttachProjectorKeepsToolActivityInTheTranscript(t *testing.T) {
+	logsPath := filepath.Join(t.TempDir(), "transcript.txt")
+	projector := newPromptAttachProjector(domain.ProjectRunRecord{RunID: "run-tools"}, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-tools"}}, logsPath, nil)
+	frames := []string{
+		`{"type":"agent_event","event":{"kind":"text_delta","text":"listing the workspace"}}`,
+		// claude and codex announce the same call twice; the second carries the
+		// arguments the first did not have yet.
+		`{"type":"agent_event","event":{"kind":"tool_call","id":"call-1","name":"bash","toolKind":"execute","status":"in_progress"}}`,
+		`{"type":"agent_event","event":{"kind":"tool_call","id":"call-1","name":"bash","toolKind":"execute","status":"completed","command":"ls -1"}}`,
+		// codex resends a command's aggregated output on every update.
+		`{"type":"agent_event","event":{"kind":"tool_result","id":"call-1","ok":true,"output":"hello.txt\n"}}`,
+		`{"type":"agent_event","event":{"kind":"tool_result","id":"call-1","ok":true,"output":"hello.txt\nnotes.md\n"}}`,
+		// Reasoning stays out of the transcript on purpose.
+		`{"type":"agent_event","event":{"kind":"reasoning_delta","text":"thinking about it"}}`,
+		`{"type":"agent_event","event":{"kind":"text_delta","text":"done"}}`,
+	}
+	responses, _, err := projector.Project([]byte(strings.Join(frames, "\n") + "\n"))
+	if err != nil {
+		t.Fatalf("project agent events: %v", err)
+	}
+	if len(responses) != len(frames) {
+		t.Fatalf("responses = %d, want %d", len(responses), len(frames))
+	}
+	transcript, err := os.ReadFile(logsPath)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	want := "listing the workspace\n[tool:bash]\n$ ls -1\nhello.txt\nnotes.md\ndone"
+	if string(transcript) != want {
+		t.Fatalf("transcript = %q, want %q", string(transcript), want)
+	}
+}
+
+// TestPromptAttachProjectorNamesFramesByEventKind pins the other half of the
+// contract: the frame name is the neutral kind, and a kind with no transcript
+// text still reaches the client as an addressable frame.
+func TestPromptAttachProjectorNamesFramesByEventKind(t *testing.T) {
+	logsPath := filepath.Join(t.TempDir(), "transcript.txt")
+	projector := newPromptAttachProjector(domain.ProjectRunRecord{RunID: "run-kinds"}, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-kinds"}}, logsPath, nil)
+	frames := []string{
+		`{"type":"agent_event","event":{"kind":"usage","scope":"run","inputTokens":4,"outputTokens":104}}`,
+		`{"type":"agent_event","event":{"kind":"step_end","scope":"run","stopReason":"stop"}}`,
+		// A raw provider event with no neutral kind stays addressable by type.
+		`{"type":"agent_event","event":{"type":"thread.started","thread_id":"t-1"}}`,
+	}
+	responses, _, err := projector.Project([]byte(strings.Join(frames, "\n") + "\n"))
+	if err != nil {
+		t.Fatalf("project agent events: %v", err)
+	}
+	names := make([]string, 0, len(responses))
+	for _, response := range responses {
+		names = append(names, response.Name)
+	}
+	if strings.Join(names, ",") != "usage,step_end,thread.started" {
+		t.Fatalf("frame names = %v", names)
+	}
+	if data, err := os.ReadFile(logsPath); err == nil && len(data) != 0 {
+		t.Fatalf("transcript = %q, want no text from these kinds", string(data))
+	}
+}
+
+// A turn that used tools splits the assistant's prose around the tool
+// activity, so FinalText is not prefixed by everything in the transcript. The
+// tail that never streamed as a text_delta still has to land in the log.
+func TestPromptAttachProjectorLogsFinalTextTailAfterToolActivity(t *testing.T) {
+	logsPath := filepath.Join(t.TempDir(), "transcript.txt")
+	projector := newPromptAttachProjector(domain.ProjectRunRecord{RunID: "run-tool-final"}, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-tool-final"}}, logsPath, nil)
+	frames := []string{
+		`{"type":"agent_event","event":{"kind":"text_delta","text":"looking now."}}`,
+		`{"type":"agent_event","event":{"kind":"tool_call","id":"call-1","name":"shell","command":"ls"}}`,
+		`{"type":"agent_event","event":{"kind":"tool_result","id":"call-1","output":"README.md\n"}}`,
+		`{"type":"agent_turn_completed","finalText":"looking now. found it.","finalTextSource":"provider_message"}`,
+	}
+	for _, frame := range frames {
+		if _, _, err := projector.Project([]byte(frame + "\n")); err != nil {
+			t.Fatalf("project %s: %v", frame, err)
+		}
+	}
+	transcript, err := os.ReadFile(logsPath)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	if want := "looking now.\n[tool:shell]\n$ ls\nREADME.md\n found it."; string(transcript) != want {
+		t.Fatalf("transcript = %q, want %q", string(transcript), want)
+	}
+}
+
+// A second turn's final text is reconciled against its own prose. Keying on
+// the whole run's prose would leave every turn after the first unable to match
+// its prefix, dropping its unstreamed tail.
+func TestPromptAttachProjectorLogsFinalTextTailOnLaterTurn(t *testing.T) {
+	logsPath := filepath.Join(t.TempDir(), "transcript.txt")
+	projector := newPromptAttachProjector(domain.ProjectRunRecord{RunID: "run-turn-two"}, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-turn-two"}}, logsPath, nil)
+	if _, _, err := projector.Project([]byte(`{"type":"agent_event","event":{"kind":"text_delta","text":"first answer\n"}}` + "\n")); err != nil {
+		t.Fatalf("project first answer: %v", err)
+	}
+	if _, _, err := projector.Project([]byte(`{"type":"agent_turn_completed","finalText":"first answer\n","finalTextSource":"provider_message"}` + "\n")); err != nil {
+		t.Fatalf("project first turn completion: %v", err)
+	}
+	if err := projector.AppendHumanMessage("next question"); err != nil {
+		t.Fatalf("append human message: %v", err)
+	}
+	if _, _, err := projector.Project([]byte(`{"type":"agent_turn_completed","finalText":"second answer\n","finalTextSource":"provider_message"}` + "\n")); err != nil {
+		t.Fatalf("project second turn completion: %v", err)
+	}
+	transcript, err := os.ReadFile(logsPath)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	if want := "first answer\nnext question\nsecond answer\n"; string(transcript) != want {
+		t.Fatalf("transcript = %q, want %q", string(transcript), want)
+	}
 }

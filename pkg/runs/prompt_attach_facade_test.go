@@ -285,3 +285,94 @@ func TestEnsurePromptAttachLLMFacadeEnvPiUsesSharedRuntimeConfig(t *testing.T) {
 		t.Fatalf("Pi runtime config = %s", data)
 	}
 }
+
+// TestEnsurePromptAttachLLMFacadeEnvDshMintsRunScopedFacade guards the pairing
+// between promptAttachProviders and this switch: dsh is an accepted attach
+// provider, so it must also get a facade environment here. The env
+// EnsureDshFacadeConfig builds is per-exec and never persisted onto the
+// sandbox, so a missing case leaves the guest with no endpoint, no token and
+// no model — the profile falls back to its hardcoded default and the turn
+// fails.
+func TestEnsurePromptAttachLLMFacadeEnvDshMintsRunScopedFacade(t *testing.T) {
+	isolatePromptAttachLLMEnv(t)
+	config := &appconfig.Config{
+		RuntimeBaseURL: "http://agent-compose.test:7410",
+		GuestHomePath:  "/root",
+	}
+	store := &promptAttachFacadeStore{
+		providers: []llms.Provider{{
+			ID:             "openai-test",
+			ProviderType:   llms.ProviderFamilyOpenAI,
+			DefaultWireAPI: llms.APIProtocolResponses,
+			BaseURL:        "https://openai.example.test/v1",
+			APIKey:         "openai-key",
+			Enabled:        true,
+		}},
+		models: []llms.Model{{ID: "gpt-test", Name: "gpt-test", DefaultModel: true, Enabled: true}},
+	}
+	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-dsh-attach", Driver: driver.RuntimeDriverDocker}}
+	controller := &Controller{config: config, configDB: store}
+
+	env, err := controller.ensurePromptAttachLLMFacadeEnv(
+		context.Background(),
+		sandbox,
+		execution.AgentConfig{Provider: "dsh", Model: "openai-test/gpt-test"},
+		"run-dsh-attach",
+	)
+	if err != nil {
+		t.Fatalf("ensurePromptAttachLLMFacadeEnv returned error: %v", err)
+	}
+	if env["DSH_MODEL"] != "gpt-test" || env["DSH_WIRE_API"] != "openai-responses" ||
+		env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses {
+		t.Fatalf("DSH facade env = %#v", env)
+	}
+	if env["LLM_API_ENDPOINT"] != "http://agent-compose.test:7410/api/runtime/sandboxes/sandbox-dsh-attach/llm/openai/v1" {
+		t.Fatalf("LLM_API_ENDPOINT = %q", env["LLM_API_ENDPOINT"])
+	}
+	if env["AGENT_COMPOSE_SANDBOX_TOKEN"] == "" || env["LLM_API_KEY"] != env["AGENT_COMPOSE_SANDBOX_TOKEN"] || len(store.tokens) != 1 {
+		t.Fatalf("DSH token env = %#v, saved tokens = %#v", env, store.tokens)
+	}
+	if token := store.tokens[0]; token.Model != "gpt-test" || token.ProviderID != "openai-test" ||
+		token.Source != "agent" || token.RunID != "run-dsh-attach" {
+		t.Fatalf("stored token = %#v", token)
+	}
+}
+
+// TestPromptAttachProvidersAllHaveFacadeCases is the general form of the bug
+// above: every provider prompt attach accepts must resolve a facade
+// environment, or its guest starts with no LLM credentials at all.
+func TestPromptAttachProvidersAllHaveFacadeCases(t *testing.T) {
+	isolatePromptAttachLLMEnv(t)
+	store := &promptAttachFacadeStore{
+		providers: []llms.Provider{
+			{ID: "openai-test", ProviderType: llms.ProviderFamilyOpenAI, DefaultWireAPI: llms.APIProtocolResponses, BaseURL: "https://openai.example.test/v1", APIKey: "openai-key", Enabled: true},
+			{ID: "anthropic-test", ProviderType: llms.ProviderFamilyAnthropic, DefaultWireAPI: llms.APIProtocolMessages, BaseURL: "https://anthropic.example.test", APIKey: "anthropic-key", Enabled: true},
+		},
+		models: []llms.Model{{ID: "gpt-test", Name: "gpt-test", DefaultModel: true, Enabled: true}},
+	}
+	models := map[string]string{"codex": "gpt-test", "claude": "", "opencode": "openai/gpt-test", "pi": "openai-test/gpt-test", "dsh": "openai-test/gpt-test"}
+	for provider := range promptAttachProviders {
+		root := t.TempDir()
+		sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{
+			ID:            "sandbox-" + provider,
+			Driver:        driver.RuntimeDriverDocker,
+			WorkspacePath: filepath.Join(root, "sandbox", "workspace"),
+		}}
+		controller := &Controller{
+			config:   &appconfig.Config{RuntimeBaseURL: "http://agent-compose.test:7410", GuestHomePath: "/root"},
+			configDB: store,
+		}
+		env, err := controller.ensurePromptAttachLLMFacadeEnv(
+			context.Background(),
+			sandbox,
+			execution.AgentConfig{Provider: provider, Model: models[provider]},
+			"run-"+provider,
+		)
+		if err != nil {
+			t.Fatalf("%s: ensurePromptAttachLLMFacadeEnv returned error: %v", provider, err)
+		}
+		if env["AGENT_COMPOSE_SANDBOX_TOKEN"] == "" {
+			t.Fatalf("%s: prompt attach accepts the provider but mints no facade token: %#v", provider, env)
+		}
+	}
+}

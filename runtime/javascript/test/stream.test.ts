@@ -121,15 +121,19 @@ describe("runStreamCommand", () => {
       });
 
       const frames = parseOutput(stdout.text);
+      // thread.started carries no agent-observable content, so it maps to no
+      // neutral event; each turn now emits a single text_delta.
       expect(frames.map((entry) => entry.type)).toEqual([
         "started",
         "agent_event",
-        "agent_event",
         "agent_turn_completed",
-        "agent_event",
         "agent_event",
         "agent_turn_completed",
         "result",
+      ]);
+      expect(frames.filter((entry) => entry.type === "agent_event")).toEqual([
+        expect.objectContaining({ event: { kind: "text_delta", text: "answer 1" } }),
+        expect.objectContaining({ event: { kind: "text_delta", text: "answer 2" } }),
       ]);
       expect(frames.every((entry, index) => entry.seq === index)).toBe(true);
       expect(runInputs).toEqual(["first", "second"]);
@@ -144,7 +148,7 @@ describe("runStreamCommand", () => {
         finalTextSource: "provider_message",
         transcript: "answer 1\nanswer 2",
       });
-      expect(parseOutput(stdout.text)).toHaveLength(8);
+      expect(parseOutput(stdout.text)).toHaveLength(6);
       const stored = JSON.parse(await fs.readFile(path.join(root, "state", "agents", "providers", "codex.json"), "utf8"));
       expect(stored).toMatchObject({
         threadId: "thread-1",
@@ -235,15 +239,21 @@ describe("runStreamCommand", () => {
       expect(frames.map((entry) => entry.type)).toEqual([
         "started",
         "agent_event",
+        "agent_event",
         "agent_turn_completed",
+        "agent_event",
         "agent_event",
         "agent_turn_completed",
         "result",
       ]);
       expect(frames.every((entry, index) => entry.seq === index)).toBe(true);
+      // Each turn now yields the answer text plus the terminal step_end that
+      // the provider's result message carries.
       expect(frames.filter((entry) => entry.type === "agent_event")).toEqual([
-        expect.objectContaining({ event: expect.objectContaining({ provider: "claude", text: "claude answer 1" }) }),
-        expect.objectContaining({ event: expect.objectContaining({ provider: "claude", text: "claude answer 2" }) }),
+        expect.objectContaining({ event: expect.objectContaining({ kind: "text_delta", text: "claude answer 1" }) }),
+        expect.objectContaining({ event: expect.objectContaining({ kind: "step_end" }) }),
+        expect.objectContaining({ event: expect.objectContaining({ kind: "text_delta", text: "claude answer 2" }) }),
+        expect.objectContaining({ event: expect.objectContaining({ kind: "step_end" }) }),
       ]);
       expect(claudeState.queryCalls.map((call) => call.prompt)).toEqual(["first", "second"]);
       expect(claudeState.queryCalls[0]?.options).not.toMatchObject({ resume: expect.anything() });
@@ -268,14 +278,20 @@ describe("runStreamCommand", () => {
       vi.spyOn(OpenCodeRunner.prototype, "runPrompt").mockImplementation(async function (message) {
         prompts.push(message);
         const turn = prompts.length;
-        const writer = (this as unknown as { writer: { write(text: string): void; transcript(): string } }).writer;
-        writer.write(`opencode answer ${turn}`);
+        const self = this as unknown as {
+          writer: { write(text: string): void; transcript(): string };
+          options: { onEvent?: (event: { kind: string; text: string }) => void };
+        };
+        // A real runner publishes structured events through its onEvent sink;
+        // writing to the transcript alone no longer produces a frame.
+        self.options.onEvent?.({ kind: "text_delta", text: `opencode answer ${turn}` });
+        self.writer.write(`opencode answer ${turn}`);
         return {
           provider: "opencode",
           threadId: "opencode-session-1",
           stopReason: "completed",
           finalText: `opencode answer ${turn}`,
-          transcript: writer.transcript(),
+          transcript: self.writer.transcript(),
           stderr: "",
         };
       });
@@ -302,8 +318,8 @@ describe("runStreamCommand", () => {
       ]);
       expect(prompts).toEqual(["first", "second"]);
       expect(frames.filter((entry) => entry.type === "agent_event")).toEqual([
-        expect.objectContaining({ event: expect.objectContaining({ provider: "opencode", text: "opencode answer 1" }) }),
-        expect.objectContaining({ event: expect.objectContaining({ provider: "opencode", text: "opencode answer 2" }) }),
+        expect.objectContaining({ event: expect.objectContaining({ kind: "text_delta", text: "opencode answer 1" }) }),
+        expect.objectContaining({ event: expect.objectContaining({ kind: "text_delta", text: "opencode answer 2" }) }),
       ]);
       expect(frames.at(-1)).toMatchObject({
         type: "result",
@@ -325,14 +341,20 @@ describe("runStreamCommand", () => {
       vi.spyOn(PiRunner.prototype, "runPrompt").mockImplementation(async function (message) {
         prompts.push(message);
         const turn = prompts.length;
-        const writer = (this as unknown as { writer: { write(text: string): void; transcript(): string } }).writer;
-        writer.write(`pi answer ${turn}`);
+        const self = this as unknown as {
+          writer: { write(text: string): void; transcript(): string };
+          options: { onEvent?: (event: { kind: string; text: string }) => void };
+        };
+        // A real runner publishes structured events through its onEvent sink;
+        // writing to the transcript alone no longer produces a frame.
+        self.options.onEvent?.({ kind: "text_delta", text: `pi answer ${turn}` });
+        self.writer.write(`pi answer ${turn}`);
         return {
           provider: "pi",
           threadId: "pi-session-1",
           stopReason: "completed",
           finalText: `pi answer ${turn}`,
-          transcript: writer.transcript(),
+          transcript: self.writer.transcript(),
           stderr: "",
         };
       });
@@ -351,8 +373,8 @@ describe("runStreamCommand", () => {
       const frames = parseOutput(stdout.text);
       expect(prompts).toEqual(["first", "second"]);
       expect(frames.filter((entry) => entry.type === "agent_event")).toEqual([
-        expect.objectContaining({ event: expect.objectContaining({ provider: "pi", text: "pi answer 1" }) }),
-        expect.objectContaining({ event: expect.objectContaining({ provider: "pi", text: "pi answer 2" }) }),
+        expect.objectContaining({ event: expect.objectContaining({ kind: "text_delta", text: "pi answer 1" }) }),
+        expect.objectContaining({ event: expect.objectContaining({ kind: "text_delta", text: "pi answer 2" }) }),
       ]);
       expect(frames.at(-1)).toMatchObject({
         type: "result",

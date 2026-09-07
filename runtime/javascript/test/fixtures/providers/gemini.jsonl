@@ -1,0 +1,7 @@
+{"type":"init","timestamp":"2026-09-03T04:01:40.704Z","session_id":"7525e214-3b13-401f-8152-85d9c075362b","model":"auto"}
+{"type":"message","timestamp":"2026-09-03T04:01:40.705Z","role":"user","content":"Create a file named hello.txt in the current directory whose only content is the word hi. Then read it back with a shell command and reply with exactly what it contains. Keep it short."}
+{"type":"message","timestamp":"2026-09-03T04:01:40.738Z","role":"assistant","content":"I'll write the file and read it back.","delta":true}
+{"type":"tool_use","timestamp":"2026-09-03T04:01:40.753Z","tool_name":"run_shell_command","tool_id":"run_shell_command__run_shell_command_1788408100739_0","parameters":{"command":"printf 'hi\\n' > hello.txt && cat hello.txt","description":"write and read hello.txt","is_background":false}}
+{"type":"tool_result","timestamp":"2026-09-03T04:01:40.846Z","tool_id":"run_shell_command__run_shell_command_1788408100739_0","status":"success","output":"hi"}
+{"type":"message","timestamp":"2026-09-03T04:01:40.848Z","role":"assistant","content":"hi","delta":true}
+{"type":"result","timestamp":"2026-09-03T04:01:40.849Z","status":"success","stats":{"total_tokens":6328,"input_tokens":6240,"output_tokens":88,"cached":1024,"input":5216,"duration_ms":145,"tool_calls":1,"models":{"gemini-3.1-flash-lite":{"total_tokens":0,"input_tokens":0,"output_tokens":0,"cached":0,"input":0},"gemini-3.1-pro-preview":{"total_tokens":6328,"input_tokens":6240,"output_tokens":88,"cached":1024,"input":5216}}}}

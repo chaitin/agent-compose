@@ -17,7 +17,7 @@ type promptAttachProjector struct {
 	mu                     sync.Mutex
 	buffer                 []byte
 	itemTexts              map[string]string
-	loggedText             string
+	loggedProse            string
 	turnText               string
 	hasLoggedText          bool
 	logEndsWithNewline     bool
@@ -104,7 +104,7 @@ func (p *promptAttachProjector) projectLine(line []byte) ([]RunAttachOutput, *Tr
 		return []RunAttachOutput{runAttachAgentEventResponse("started", "", string(line))}, nil, nil
 	case "agent_event":
 		name, text := p.agentEventText(frame.Event)
-		if err := p.appendLogText(text); err != nil {
+		if err := p.appendLogText(text, name == "text_delta"); err != nil {
 			return nil, nil, err
 		}
 		return []RunAttachOutput{runAttachAgentEventResponse(firstNonEmpty(name, "agent_event"), text, string(frame.Event))}, nil, nil
@@ -132,57 +132,109 @@ func (p *promptAttachProjector) projectLine(line []byte) ([]RunAttachOutput, *Tr
 	}
 }
 
+// agentEventText derives the frame's name and human-readable text from a
+// runtime agent event.
+//
+// The runtime publishes provider-neutral events: the frame name is the event
+// kind, and the transcript is assembled from the kinds a reader needs to
+// follow the run — assistant prose plus the tool activity that produced it.
+// Reasoning deliberately contributes no text, so a consumer reading just that
+// field never splices the model's thinking into the answer.
 func (p *promptAttachProjector) agentEventText(raw json.RawMessage) (string, string) {
 	var event struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-		Item *struct {
-			ID               string `json:"id"`
-			Type             string `json:"type"`
-			Text             string `json:"text"`
-			AggregatedOutput string `json:"aggregated_output"`
-			Command          string `json:"command"`
-		} `json:"item"`
+		Kind    string          `json:"kind"`
+		Text    string          `json:"text"`
+		Type    string          `json:"type"`
+		ID      string          `json:"id"`
+		Name    string          `json:"name"`
+		Command string          `json:"command"`
+		Input   json.RawMessage `json:"input"`
+		Output  string          `json:"output"`
+		Error   string          `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &event); err != nil {
 		return "agent_event", ""
 	}
-	name := firstNonEmpty(event.Type, "agent_event")
-	if event.Text != "" {
-		return name, event.Text
-	}
-	if event.Item == nil {
-		return name, ""
-	}
-	key := firstNonEmpty(event.Item.ID, name)
-	var text string
-	switch event.Item.Type {
-	case "agent_message", "reasoning":
-		text = event.Item.Text
-	case "command_execution":
-		if event.Item.Command != "" {
-			commandKey := key + ":command"
-			if p.itemTexts[commandKey] == "" {
-				p.itemTexts[commandKey] = event.Item.Command
-				text += "\n$ " + event.Item.Command + "\n"
-			}
-		}
-		text += event.Item.AggregatedOutput
+	switch event.Kind {
+	case "":
+		// Legacy shape: a raw provider event with no neutral kind. Keep the
+		// frame addressable but contribute nothing to the transcript.
+		return firstNonEmpty(event.Type, "agent_event"), ""
+	case "text_delta":
+		return event.Kind, event.Text
+	case "tool_call":
+		return event.Kind, p.newToolText(event.ID, promptAttachToolCallText(event.Name, event.Command, event.Input))
+	case "tool_result":
+		return event.Kind, p.newToolText(event.ID+"\x00result", promptAttachToolResultText(event.Output, event.Error))
 	default:
-		return name, ""
+		return event.Kind, ""
 	}
+}
+
+// newToolText returns only the part of text not already written under key.
+//
+// Tool events are announced more than once and carry cumulative payloads:
+// claude re-emits a tool call once its arguments finish streaming, and codex
+// resends a command's aggregated output on every update. Without this the
+// transcript would repeat each tool's header and output.
+func (p *promptAttachProjector) newToolText(key, text string) string {
 	if text == "" {
-		return name, ""
+		return ""
 	}
 	previous := p.itemTexts[key]
 	p.itemTexts[key] = text
-	if strings.HasPrefix(text, previous) {
-		return name, text[len(previous):]
+	if previous != "" && strings.HasPrefix(text, previous) {
+		return text[len(previous):]
 	}
-	return name, text
+	return text
 }
 
-func (p *promptAttachProjector) appendLogText(text string) error {
+// promptAttachToolCallText renders a tool call the way the guest runners'
+// own transcript writers do: a named header, then the shell command for an
+// execute call or the tool's arguments for anything else.
+func promptAttachToolCallText(name, command string, input json.RawMessage) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	header := "\n[tool:" + name + "]\n"
+	if command = strings.TrimSpace(command); command != "" {
+		return header + "$ " + command + "\n"
+	}
+	if arguments := promptAttachToolInputText(input); arguments != "" {
+		return header + arguments + "\n"
+	}
+	return header
+}
+
+func promptAttachToolInputText(input json.RawMessage) string {
+	switch trimmed := strings.TrimSpace(string(input)); trimmed {
+	case "", "null", "{}", `""`:
+		return ""
+	default:
+		return trimmed
+	}
+}
+
+func promptAttachToolResultText(output, failure string) string {
+	if failure = strings.TrimSpace(failure); failure == "" {
+		return output
+	}
+	if output != "" && !strings.HasSuffix(output, "\n") {
+		output += "\n"
+	}
+	return output + "[tool error] " + failure + "\n"
+}
+
+// appendLogText writes text to the transcript, tracking assistant prose
+// separately from tool activity.
+//
+// appendLogFinalText reconciles the turn's final text against what the run
+// already streamed, and it does that by prefix. Only assistant prose can serve
+// as that prefix: tool headers, commands and output are interleaved into the
+// same transcript but never appear in FinalText, so counting them would break
+// the comparison and silently drop the final text's tail.
+func (p *promptAttachProjector) appendLogText(text string, prose bool) error {
 	if text == "" {
 		return nil
 	}
@@ -191,37 +243,76 @@ func (p *promptAttachProjector) appendLogText(text string) error {
 	if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text}); err != nil {
 		return err
 	}
-	p.loggedText += text
+	if prose {
+		p.loggedProse += text
+	}
 	p.turnText += text
 	return nil
 }
 
+// appendLogFinalText appends the part of the turn's final text that never
+// reached the transcript as a text_delta.
+//
+// Providers that deliver the answer only on the terminal frame land here whole;
+// providers that streamed it land here with nothing left to write. Both the
+// turn-completed and the result frame carry the same final text, so the second
+// one finds the first's work already done and appends nothing.
 func (p *promptAttachProjector) appendLogFinalText(finalText string) error {
 	if finalText == "" {
 		return nil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if strings.HasPrefix(finalText, p.loggedText) {
-		text := finalText[len(p.loggedText):]
-		if text == "" {
-			return nil
-		}
-		if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text}); err != nil {
-			return err
-		}
-		p.loggedText += text
-		p.turnText += text
+	text := finalText[streamedFinalTextOverlap(p.loggedProse, finalText):]
+	if text == "" {
 		return nil
 	}
-	if p.loggedText == "" {
-		if err := p.appendLogChunkLocked(domain.ExecChunk{Text: finalText}); err != nil {
-			return err
-		}
-		p.loggedText = finalText
-		p.turnText += finalText
+	if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text}); err != nil {
+		return err
 	}
+	p.loggedProse += text
+	p.turnText += text
 	return nil
+}
+
+// streamedFinalTextOverlap returns the length of the longest prefix of
+// finalText that the prose logged so far ends with.
+//
+// Requiring finalText to be prefixed by the whole prose log would only hold
+// for the first turn of a run that never used a tool: tool activity splits a
+// turn's prose in the transcript, and every turn after the first is preceded
+// by another turn's prose. Matching the overlap instead keeps the reconciliation
+// anchored on what this turn actually streamed, so an unstreamed tail still
+// lands in the log.
+//
+// The overlap is computed with the KMP prefix function over
+// finalText + sentinel + the tail of logged, keeping the cost linear in
+// len(finalText). The sentinel is only assumed to be rare, not absent, so the
+// result is verified before it is trusted.
+func streamedFinalTextOverlap(logged, finalText string) int {
+	if finalText == "" || logged == "" {
+		return 0
+	}
+	if len(logged) > len(finalText) {
+		logged = logged[len(logged)-len(finalText):]
+	}
+	combined := finalText + "\x00" + logged
+	failure := make([]int, len(combined))
+	for i := 1; i < len(combined); i++ {
+		length := failure[i-1]
+		for length > 0 && combined[i] != combined[length] {
+			length = failure[length-1]
+		}
+		if combined[i] == combined[length] {
+			length++
+		}
+		failure[i] = length
+	}
+	overlap := failure[len(combined)-1]
+	if overlap > len(finalText) || !strings.HasSuffix(logged, finalText[:overlap]) {
+		return 0
+	}
+	return overlap
 }
 
 func (p *promptAttachProjector) AppendHumanMessage(message string) error {

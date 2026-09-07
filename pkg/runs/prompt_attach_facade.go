@@ -114,6 +114,10 @@ func (c *Controller) ensurePromptAttachLLMFacadeEnv(ctx context.Context, sandbox
 		return llms.EnsureCodexFacadeConfig(ctx, llms.CodexFacadeConfigRequest{
 			Config: c.config, Store: store, Sandbox: sandbox, Model: agent.Model, Source: "agent", RunID: runID,
 		})
+	case "dsh":
+		return llms.EnsureDshFacadeConfig(ctx, llms.DshFacadeConfigRequest{
+			Config: c.config, Store: store, Sandbox: sandbox, Model: agent.Model, Source: "agent", RunID: runID,
+		})
 	default:
 		return nil, nil
 	}
