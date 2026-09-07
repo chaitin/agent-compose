@@ -86,15 +86,13 @@ func TestDefaultScriptSourceResolverDisablesEnvironmentProxy(t *testing.T) {
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("scheduler.interval('direct', 1000, main);"))
 	}))
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen target: %v", err)
-	}
-	target.Listener = listener
 	target.Start()
 	defer target.Close()
-	targetAddress := listener.Addr().String()
-	targetPort := strings.TrimPrefix(target.URL, "http://127.0.0.1:")
+	targetAddress := target.Listener.Addr().String()
+	_, targetPort, err := net.SplitHostPort(targetAddress)
+	if err != nil {
+		t.Fatalf("parse target address: %v", err)
+	}
 
 	resolver := newTestScriptSourceResolver()
 	transport := resolver.client.Transport.(*http.Transport).Clone()
