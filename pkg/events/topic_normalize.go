@@ -85,6 +85,8 @@ func NormalizeDispatchStatus(status string) string {
 		return domain.TopicEventDispatchRetrying
 	case domain.TopicEventDispatchDeadLetter:
 		return domain.TopicEventDispatchDeadLetter
+	case domain.TopicEventDispatchCanceled:
+		return domain.TopicEventDispatchCanceled
 	default:
 		return ""
 	}

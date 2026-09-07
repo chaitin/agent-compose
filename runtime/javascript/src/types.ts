@@ -1,3 +1,5 @@
+import type { AgentEventSink } from "./agent-event.js";
+
 export type Provider = "codex" | "claude" | "gemini" | "opencode" | "pi" | "dsh";
 export type RuntimeJsonSchema = Record<string, unknown>;
 export type FinalTextSource = "none" | "provider_message" | "transcript_fallback";
@@ -26,6 +28,11 @@ export interface RunnerOptions {
   skills?: string[];
   outputSchema?: RuntimeJsonSchema;
   abortController?: AbortController;
+  /**
+   * Receives provider-neutral events as the runner maps them. Optional and
+   * defaulted to a no-op, so the non-attach `prompt` path pays nothing.
+   */
+  onEvent?: AgentEventSink;
 }
 
 export interface StoredThread {

@@ -65,6 +65,8 @@ export async function runStreamCommand(options: RunStreamOptions = {}): Promise<
             workspace: stringField(frame, "workspace"),
             home: stringField(frame, "home"),
             model: stringField(frame, "model"),
+            effort: effortField(frame),
+            skills: skillsField(frame),
             outputSchemaFile: stringField(frame, "outputSchemaFile"),
             abortController: options.abortController,
           }, emit);
@@ -167,6 +169,37 @@ function emitOutputFrame(
   chunk: Buffer,
 ) {
   emit("output", { source, text: chunk.toString("utf8") });
+}
+
+const efforts = new Set(["low", "medium", "high", "xhigh", "max"]);
+
+/**
+ * Read the optional reasoning effort from a start frame.
+ *
+ * The daemon does not send it yet: prompt-attach builds its start frame from
+ * execution.AgentConfig, which carries no effort, and no agent definition
+ * field feeds one. `agent-compose-runtime prompt --effort` remains the only
+ * producer, so this reader exists for the frame protocol, not for a live path.
+ */
+function effortField(frame: StreamFrame): "low" | "medium" | "high" | "xhigh" | "max" | undefined {
+  const value = stringField(frame, "effort") ?? "";
+  return efforts.has(value) ? value as "low" | "medium" | "high" | "xhigh" | "max" : undefined;
+}
+
+/**
+ * Read the optional skill names from a start frame.
+ *
+ * Also unset by the daemon today: prompt-attach never resolves or materialises
+ * an agent's skills the way AgentRunner.prepareAgentFiles does for a one-shot
+ * run, so there are no names to send.
+ */
+function skillsField(frame: StreamFrame): string[] | undefined {
+  const value = frame.skills;
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const names = value.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "");
+  return names.length > 0 ? names : undefined;
 }
 
 function stringField(frame: StreamFrame, field: string): string | undefined {

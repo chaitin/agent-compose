@@ -822,6 +822,7 @@ func assertProjectSchema(t *testing.T, store *ConfigStore) {
 		"project_run": {"run_id", "project_id", "project_name", "project_revision", "agent_name", "agent_id", "source", "scheduler_id", "scheduler_run_id", "trigger_id", "status",
 			"sandbox_id", "exit_code", "error", "prompt", "output", "result_json", "logs_path", "artifacts_dir", "cleanup_error", "driver", "image_ref", "started_at",
 			"completed_at", "duration_ms", "created_at", "updated_at"},
+		"project_run_label": {"run_id", "key", "value"},
 		"scheduler_trigger": {"scheduler_id", "trigger_id", "kind", "spec_json"},
 		"scheduler_run":     {"scheduler_id", "run_id", "status", "started_at"},
 		"scheduler_event":   {"scheduler_id", "scheduler_run_id", "event_id", "type"},

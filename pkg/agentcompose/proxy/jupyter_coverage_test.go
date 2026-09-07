@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -65,6 +67,45 @@ func TestJupyterProxyRouteCoverage(t *testing.T) {
 
 	if JupyterTargetReachable(domain.ProxyState{}, time.Millisecond) {
 		t.Fatalf("empty proxy state reported reachable")
+	}
+}
+
+func TestJupyterProxyPreservesPublicHostForSameOriginChecks(t *testing.T) {
+	var gotHost, gotOrigin string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost = r.Host
+		gotOrigin = r.Header.Get("Origin")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+	backendURL, err := url.Parse(backend.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(backendURL.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := echo.New()
+	state := domain.ProxyState{Enabled: true, GuestHost: "127.0.0.1", GuestPort: port, HostPort: port, ProxyPath: "/jupyter/session-1"}
+	RegisterJupyterRoutes(e, JupyterOptions{
+		BasePath: "/jupyter",
+		Store:    fakeJupyterStore{state: state},
+		EnsureReady: func(context.Context, string) (domain.ProxyState, error) {
+			return state, nil
+		},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/jupyter/session-1/api/kernels", nil)
+	request.Host = "proxy.example.test"
+	request.Header.Set("Origin", "http://proxy.example.test")
+	recorder := httptest.NewRecorder()
+	e.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("proxy status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if gotHost != request.Host || gotOrigin != request.Header.Get("Origin") {
+		t.Fatalf("backend host/origin = %q/%q, want %q/%q", gotHost, gotOrigin, request.Host, request.Header.Get("Origin"))
 	}
 }
 

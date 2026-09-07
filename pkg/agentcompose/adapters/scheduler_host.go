@@ -33,11 +33,11 @@ type SchedulerHostAgentExecutor struct {
 	Executor *AgentExecutor
 }
 
-func (e SchedulerHostAgentExecutor) ExecuteAgent(ctx context.Context, session *domain.Sandbox, request schedulers.HostAgentExecutionRequest) (domain.NotebookCell, error) {
+func (e SchedulerHostAgentExecutor) ExecuteAgent(ctx context.Context, session *domain.Sandbox, request schedulers.HostAgentExecutionRequest) (domain.NotebookCell, string, error) {
 	if e.Executor == nil {
-		return domain.NotebookCell{}, fmt.Errorf("agent executor is unavailable")
+		return domain.NotebookCell{}, "", fmt.Errorf("agent executor is unavailable")
 	}
-	cell, _, _, err := e.Executor.ExecuteAgentRequest(ctx, session, execution.ExecuteAgentRequest{
+	cell, _, assistantEvent, err := e.Executor.ExecuteAgentRequest(ctx, session, execution.ExecuteAgentRequest{
 		Agent:             request.Provider,
 		AgentDefinitionID: request.AgentDefinitionID,
 		Model:             request.Model,
@@ -46,7 +46,7 @@ func (e SchedulerHostAgentExecutor) ExecuteAgent(ctx context.Context, session *d
 		Timeout:           request.Timeout,
 		OutputSchemaJSON:  request.OutputSchemaJSON,
 	})
-	return cell, err
+	return cell, assistantEvent.Message, err
 }
 
 type SchedulerHostCommandExecutor struct {

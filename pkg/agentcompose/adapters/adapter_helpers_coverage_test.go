@@ -22,7 +22,7 @@ func TestAdapterHelperCoverage(t *testing.T) {
 		if _, err := (SchedulerHostEvents{}).AddRecord(context.Background(), schedulers.SchedulerEventInput{}); err == nil {
 			t.Fatalf("SchedulerHostEvents.AddRecord returned nil error")
 		}
-		if _, err := (SchedulerHostAgentExecutor{}).ExecuteAgent(context.Background(), nil, schedulers.HostAgentExecutionRequest{}); err == nil {
+		if _, _, err := (SchedulerHostAgentExecutor{}).ExecuteAgent(context.Background(), nil, schedulers.HostAgentExecutionRequest{}); err == nil {
 			t.Fatalf("SchedulerHostAgentExecutor.ExecuteAgent returned nil error")
 		}
 		if _, err := (SchedulerHostCommandExecutor{}).ExecuteSchedulerCommand(context.Background(), nil, domain.SchedulerCommandRequest{}); err == nil {

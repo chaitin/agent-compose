@@ -1,10 +1,12 @@
 package api
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
+	domain "github.com/chaitin/agent-compose/pkg/model"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -59,5 +61,58 @@ func assertOptionalInstant(t *testing.T, name string, got, want *time.Time) {
 	}
 	if !got.Equal(*want) {
 		t.Fatalf("%s = %v, want instant %v", name, got, want)
+	}
+}
+
+func TestListRunsLabelFilterNormalization(t *testing.T) {
+	overLimit := make(map[string]string, domain.MaxProjectRunLabels+1)
+	for index := range domain.MaxProjectRunLabels + 1 {
+		overLimit[fmt.Sprintf("k%d", index)] = "v"
+	}
+	atLimit := make(map[string]string, domain.MaxProjectRunLabels)
+	for index := range domain.MaxProjectRunLabels {
+		atLimit[fmt.Sprintf("k%d", index)] = "v"
+	}
+
+	tests := []struct {
+		name      string
+		labels    map[string]string
+		want      map[string]string
+		wantError bool
+	}{
+		{name: "no labels"},
+		{name: "at limit", labels: atLimit, want: atLimit},
+		// Without a bound this reaches SQLite and fails its expression-tree
+		// depth limit as an internal error instead of a client error.
+		{name: "over limit", labels: overLimit, wantError: true},
+		{name: "padded key trimmed", labels: map[string]string{"  env  ": "prod"}, want: map[string]string{"env": "prod"}},
+		{name: "colliding keys", labels: map[string]string{"env": "prod", " env ": "staging"}, wantError: true},
+		{name: "empty key", labels: map[string]string{"  ": "prod"}, wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := domain.NormalizeProjectRunLabels(tt.labels)
+			if tt.wantError {
+				if err == nil {
+					t.Fatalf("normalize %#v succeeded, want rejection", tt.labels)
+				}
+				if code := connect.CodeOf(connect.NewError(connect.CodeInvalidArgument, err)); code != connect.CodeInvalidArgument {
+					t.Fatalf("mapped code = %v, want %v", code, connect.CodeInvalidArgument)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalize %#v: %v", tt.labels, err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("normalized = %#v, want %#v", got, tt.want)
+			}
+			for key, value := range tt.want {
+				if got[key] != value {
+					t.Fatalf("normalized[%q] = %q, want %q", key, got[key], value)
+				}
+			}
+		})
 	}
 }

@@ -10,7 +10,13 @@ import (
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
 
-func TransitionFromAgentCell(run domain.ProjectRunRecord, sandbox *domain.Sandbox, cell domain.NotebookCell, execErr error) TransitionRequest {
+// TransitionFromAgentCell builds the completion transition for a finished
+// agent cell. assistantMessage is the provider's final assistant message
+// (from ExecuteAgentRequest's assistant event), "" when the provider gave no
+// message distinct from the transcript; it rides along in ResultJSON so
+// AgentResultFromProjectRun can recover it later without access to the
+// project run's event stream.
+func TransitionFromAgentCell(run domain.ProjectRunRecord, sandbox *domain.Sandbox, cell domain.NotebookCell, assistantMessage string, execErr error) TransitionRequest {
 	req := TransitionRequest{
 		RunID:    run.RunID,
 		ExitCode: cell.ExitCode,
@@ -32,6 +38,7 @@ func TransitionFromAgentCell(run domain.ProjectRunRecord, sandbox *domain.Sandbo
 		"stopReason":    cell.StopReason,
 		"success":       cell.Success,
 		"exitCode":      cell.ExitCode,
+		"finalText":     assistantMessage,
 	})
 	if err == nil {
 		req.ResultJSON = string(resultJSON)

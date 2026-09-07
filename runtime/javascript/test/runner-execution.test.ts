@@ -947,7 +947,10 @@ describe("runner execution", () => {
     // Stub host values first so the assertions below are deterministic —
     // proof the delete branches ran, not that the CI environment happened
     // not to have these vars set (see docs/design/dsh_agent_provider_design.md §3.5).
-    vi.stubEnv("DSH_MODEL", "host-leaked-model");
+    // DSH_MODEL is the deliberate exception: the daemon's facade config sets it
+    // to the model it resolved and bound the run's token to, so it is carried
+    // through rather than cleared (see dsh-runner.test.ts for that contract).
+    vi.stubEnv("DSH_MODEL", "daemon-resolved-model");
     vi.stubEnv("DSH_REASONING_EFFORT", "max");
     vi.stubEnv("DSH_SKILL_DIRS", "/host/leaked/skills");
     vi.stubEnv("DSH_MCP_SERVERS", JSON.stringify([{ transport: "stdio", serverName: "leaked", command: "evil" }]));
@@ -973,7 +976,7 @@ describe("runner execution", () => {
       const env = call?.options.env as Record<string, string>;
       expect(env.DSH_RESUME).toBe("1");
       expect(env.DSH_SESSION_ID).toBe("session-existing");
-      expect(env).not.toHaveProperty("DSH_MODEL");
+      expect(env.DSH_MODEL).toBe("daemon-resolved-model");
       expect(env).not.toHaveProperty("DSH_REASONING_EFFORT");
       expect(env).not.toHaveProperty("DSH_SKILL_DIRS");
       expect(env).not.toHaveProperty("DSH_MCP_SERVERS");

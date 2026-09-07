@@ -25,6 +25,7 @@ type StartRequest struct {
 	Driver          string
 	CleanupPolicy   string
 	ClientRequestID string
+	Labels          map[string]string
 }
 
 type TransitionRequest struct {
@@ -151,6 +152,7 @@ func (c *Coordinator) BeginRun(ctx context.Context, req StartRequest) (domain.Pr
 		ImageRef:        firstNonEmpty(agent.GuestImage, projectAgent.Image),
 		CleanupPolicy:   NormalizeCleanupPolicy(req.CleanupPolicy),
 		ResultJSON:      "{}",
+		Labels:          req.Labels,
 	}
 	var initialEvents []domain.ProjectRunEventRecord
 	if strings.TrimSpace(run.Prompt) != "" {

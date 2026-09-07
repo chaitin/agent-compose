@@ -35,7 +35,7 @@ development branch until versioned release support is documented.
   `HTTP_TLS_CERT_FILE`, and `HTTP_TLS_KEY_FILE`; the daemon refuses to start an
   exposed plaintext h2c listener. Keep the TLS private key readable only by the
   daemon account and use a high-entropy token.
-- Do not expose guest Jupyter ports directly. Use the agent-compose proxy.
+- Do not expose guest Jupyter ports directly. Use the agent-compose proxy; the guest keeps same-origin and XSRF protection enabled.
 - Treat workspace uploads, Git credentials, environment variables, webhook
   tokens, and LLM API keys as secrets.
 - Review runtime driver network behavior before running untrusted workloads.

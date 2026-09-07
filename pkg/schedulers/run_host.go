@@ -46,8 +46,14 @@ type HostAgentExecutionRequest struct {
 	OutputSchemaJSON  string
 }
 
+// ExecuteAgent returns the cell (full transcript) plus the provider's final
+// assistant message, when the provider emitted one distinct from the
+// transcript; the message is "" when no such message exists. On a failed
+// run the message may instead be a synthesized failure summary (not
+// provider text) — callers must check cell.Success before preferring it
+// over the transcript.
 type HostAgentExecutor interface {
-	ExecuteAgent(ctx context.Context, session *domain.Sandbox, request HostAgentExecutionRequest) (domain.NotebookCell, error)
+	ExecuteAgent(ctx context.Context, session *domain.Sandbox, request HostAgentExecutionRequest) (domain.NotebookCell, string, error)
 }
 
 type HostCommandExecutor interface {
@@ -261,7 +267,7 @@ func (h *RuntimeHost) Agent(ctx context.Context, prompt string, request domain.S
 		agentConfig.Provider = "codex"
 	}
 
-	cell, execErr := h.deps.AgentExecutor.ExecuteAgent(ctx, session, HostAgentExecutionRequest{
+	cell, assistantMessage, execErr := h.deps.AgentExecutor.ExecuteAgent(ctx, session, HostAgentExecutionRequest{
 		Provider:          agentConfig.Provider,
 		AgentDefinitionID: agentDefinitionID,
 		Model:             agentConfig.Model,
@@ -270,7 +276,14 @@ func (h *RuntimeHost) Agent(ctx context.Context, prompt string, request domain.S
 		Timeout:           request.Timeout,
 		OutputSchemaJSON:  request.OutputSchema,
 	})
-	finalText := firstHostNonEmpty(cell.Output, cell.Stdout, cell.Stderr)
+	if execErr != nil || !cell.Success {
+		// assistantMessage may be a synthesized failure summary (see
+		// agentAssistantMessage), not provider text; trust it only on
+		// success, or a failed run's real transcript gets displaced by
+		// that placeholder.
+		assistantMessage = ""
+	}
+	finalText := firstHostNonEmpty(assistantMessage, cell.Output, cell.Stdout, cell.Stderr)
 	jsonValue, jsonErr := JSONResult(finalText, request.OutputSchema, "agent finalText")
 	if jsonErr != nil && execErr == nil {
 		execErr = jsonErr

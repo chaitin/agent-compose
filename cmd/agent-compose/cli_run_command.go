@@ -34,6 +34,7 @@ type composeRunOptions struct {
 	Detach        bool
 	Interactive   bool
 	TTY           bool
+	Labels        []string
 }
 
 func composeRunArgs(_ *cobra.Command, args []string) error {
@@ -332,6 +333,10 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 			Expose:  normalizedOptions.JupyterExpose,
 		}
 	}
+	labels, err := parseCLIStringMap(normalizedOptions.Labels, "--label")
+	if err != nil {
+		return commandExitError{Code: exitCodeUsage, Err: err}
+	}
 	runReq := &agentcomposev2.RunAgentRequest{
 		ProjectId:       projectID,
 		AgentName:       agentName,
@@ -343,6 +348,7 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 		CleanupPolicy:   cleanupPolicy,
 		ClientRequestId: manualRunClientRequestID(runtimeProject.name(), agentName, firstNonEmptyString(prompt, commandText)),
 		Jupyter:         jupyter,
+		Labels:          labels,
 	}
 	if normalizedOptions.Detach {
 		return startDetachedRun(cmd, cli, runtimeProject.name(), client, runReq)
@@ -616,7 +622,7 @@ func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string)
 	return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
 }
 
-func listProjectRuns(ctx context.Context, client agentcomposev2connect.RunServiceClient, projectID string) ([]*agentcomposev2.RunSummary, error) {
+func listProjectRuns(ctx context.Context, client agentcomposev2connect.RunServiceClient, projectID string, labels map[string]string) ([]*agentcomposev2.RunSummary, error) {
 	var result []*agentcomposev2.RunSummary
 	var offset uint32
 	const limit uint32 = 100
@@ -625,6 +631,7 @@ func listProjectRuns(ctx context.Context, client agentcomposev2connect.RunServic
 			ProjectId: projectID,
 			Offset:    offset,
 			Limit:     limit,
+			Labels:    labels,
 		}))
 		if err != nil {
 			return nil, err

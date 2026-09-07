@@ -420,7 +420,12 @@ func (s *projectStore) CreateProjectRun(ctx context.Context, run ProjectRunRecor
 	now := time.Now().UTC()
 	run.CreatedAt = now
 	run.UpdatedAt = now
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO project_run(
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ProjectRunRecord{}, fmt.Errorf("begin create project run transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO project_run(
 		run_id, project_id, project_name, project_revision, agent_name, agent_id, source, scheduler_id, scheduler_run_id, trigger_id, status,
 		sandbox_id, exit_code, error, error_stack, prompt, output, result_json, logs_path, artifacts_dir, cleanup_error, cleanup_policy, sandbox_created, driver, image_ref,
 		started_at, completed_at, duration_ms, created_at, updated_at
@@ -430,7 +435,17 @@ func (s *projectStore) CreateProjectRun(ctx context.Context, run ProjectRunRecor
 		domain.NonZeroTimeUnixMilli(run.StartedAt), domain.NonZeroTimeUnixMilli(run.CompletedAt), run.DurationMs, run.CreatedAt.Unix(), run.UpdatedAt.Unix()); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("insert project run %s: %w", run.RunID, err)
 	}
-	return s.GetProjectRun(ctx, run.RunID)
+	if err := insertProjectRunLabelsTx(ctx, tx, run.RunID, run.Labels); err != nil {
+		return ProjectRunRecord{}, err
+	}
+	stored, err := getProjectRunTx(ctx, tx, run.RunID)
+	if err != nil {
+		return ProjectRunRecord{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ProjectRunRecord{}, fmt.Errorf("commit create project run transaction: %w", err)
+	}
+	return stored, nil
 }
 
 func (s *projectStore) UpdateProjectRun(ctx context.Context, run ProjectRunRecord) (ProjectRunRecord, error) {
@@ -474,6 +489,11 @@ func (s *projectStore) GetProjectRun(ctx context.Context, runID string) (Project
 		}
 		return ProjectRunRecord{}, err
 	}
+	labels, err := loadProjectRunLabels(ctx, s.db, item.RunID)
+	if err != nil {
+		return ProjectRunRecord{}, err
+	}
+	item.Labels = labels
 	return item, nil
 }
 

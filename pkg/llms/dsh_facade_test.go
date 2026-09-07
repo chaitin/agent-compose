@@ -41,8 +41,15 @@ func TestEnsureDshFacadeConfigBindsConfiguredProviderToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureDshFacadeConfig returned error: %v", err)
 	}
-	if env["DSH_MODEL"] != "org/deepseek-v4" || env["LLM_API_PROTOCOL"] != APIProtocolChatCompletions {
+	// The wire protocol follows the resolved provider (Responses here) rather
+	// than being fixed, so the guest speaks what the provider serves and the
+	// proxy never has to convert. DSH_WIRE_API carries the same choice in the
+	// spelling the profile's llm-pi-ai route expects.
+	if env["DSH_MODEL"] != "org/deepseek-v4" || env["LLM_API_PROTOCOL"] != APIProtocolResponses {
 		t.Fatalf("DSH environment = %#v", env)
+	}
+	if env["DSH_WIRE_API"] != "openai-responses" {
+		t.Fatalf("DSH_WIRE_API = %q", env["DSH_WIRE_API"])
 	}
 	if env["LLM_API_ENDPOINT"] != "http://runtime.test/base/api/runtime/sandboxes/sandbox-1/llm/openai/v1" {
 		t.Fatalf("LLM_API_ENDPOINT = %q", env["LLM_API_ENDPOINT"])
@@ -55,7 +62,7 @@ func TestEnsureDshFacadeConfigBindsConfiguredProviderToken(t *testing.T) {
 	}
 	token := store.savedTokens[0]
 	if token.SandboxID != "sandbox-1" || token.Model != "org/deepseek-v4" || token.ProviderID != "deepseek-catalog" ||
-		token.WireAPI != APIProtocolChatCompletions || token.Source != "agent" || token.RunID != "run-1" {
+		token.WireAPI != APIProtocolResponses || token.Source != "agent" || token.RunID != "run-1" {
 		t.Fatalf("saved token = %#v", token)
 	}
 }
@@ -107,7 +114,7 @@ func TestEnsureDshFacadeConfigUsesSessionEnvProvider(t *testing.T) {
 	if len(store.savedTokens) != 1 || store.savedTokens[0].ProviderID != wantProviderID {
 		t.Fatalf("saved tokens = %#v, want session provider %q", store.savedTokens, wantProviderID)
 	}
-	if store.savedTokens[0].Model != "org/deepseek-v4" || store.savedTokens[0].WireAPI != APIProtocolChatCompletions {
+	if store.savedTokens[0].Model != "org/deepseek-v4" || store.savedTokens[0].WireAPI != APIProtocolResponses {
 		t.Fatalf("saved token = %#v", store.savedTokens[0])
 	}
 	if env["DSH_MODEL"] != "org/deepseek-v4" {
@@ -144,4 +151,107 @@ func (s *dshFacadeTestStore) SaveLLMFacadeToken(_ context.Context, token FacadeT
 	}
 	s.savedTokens = append(s.savedTokens, token)
 	return nil
+}
+
+// TestEnsureDshFacadeConfigFollowsChatCompletionsProvider is the other half of
+// the contract the two tests above cover for Responses: dsh no longer pins a
+// wire protocol, so a provider serving chat completions gets a guest speaking
+// chat completions. Matching the provider is what keeps the request off the
+// proxy's conversion path, where an unmodelled upstream event would otherwise
+// reach the guest as assistant text.
+func TestEnsureDshFacadeConfigFollowsChatCompletionsProvider(t *testing.T) {
+	store := newDshFacadeTestStore()
+	store.providers = []Provider{{
+		ID: "compat-gateway", ProviderType: ProviderFamilyOpenAI,
+		DefaultWireAPI: APIProtocolChatCompletions, BaseURL: "https://compat.test", APIKey: "secret", Enabled: true,
+	}}
+	store.models = []Model{{ID: "model-id", Name: "org/compat-model", Enabled: true}}
+	store.wire["compat-gateway\x00model-id"] = APIProtocolChatCompletions
+
+	env, err := EnsureDshFacadeConfig(context.Background(), DshFacadeConfigRequest{
+		Config:  &appconfig.Config{RuntimeBaseURL: "http://runtime.test/base/"},
+		Store:   store,
+		Sandbox: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-chat"}},
+		Model:   "compat-gateway/org/compat-model", Source: "agent", RunID: "run-chat",
+	})
+	if err != nil {
+		t.Fatalf("EnsureDshFacadeConfig returned error: %v", err)
+	}
+	if env["LLM_API_PROTOCOL"] != APIProtocolChatCompletions {
+		t.Fatalf("LLM_API_PROTOCOL = %q", env["LLM_API_PROTOCOL"])
+	}
+	if env["DSH_WIRE_API"] != "openai-completions" {
+		t.Fatalf("DSH_WIRE_API = %q", env["DSH_WIRE_API"])
+	}
+	if len(store.savedTokens) != 1 || store.savedTokens[0].WireAPI != APIProtocolChatCompletions {
+		t.Fatalf("saved token = %#v", store.savedTokens)
+	}
+}
+
+// TestEnsureDshFacadeConfigRoutesAnthropicProviderNatively covers the third
+// family. Pinning chat completions meant an Anthropic provider was bridged
+// down; following the provider must not turn that configuration into a hard
+// failure, so it is served over the /llm/anthropic route the same way pi
+// serves it (piFacadeProtocol).
+func TestEnsureDshFacadeConfigRoutesAnthropicProviderNatively(t *testing.T) {
+	isolateLLMEnv(t)
+	store := newDshFacadeTestStore()
+	store.providers = []Provider{{
+		ID: "anthropic-gateway", ProviderType: ProviderFamilyAnthropic,
+		DefaultWireAPI: APIProtocolMessages, BaseURL: "https://anthropic.test", APIKey: "secret", Enabled: true,
+	}}
+	store.models = []Model{{ID: "model-id", Name: "claude-opus-5", Enabled: true}}
+	store.wire["anthropic-gateway\x00model-id"] = APIProtocolMessages
+
+	env, err := EnsureDshFacadeConfig(context.Background(), DshFacadeConfigRequest{
+		Config:  &appconfig.Config{RuntimeBaseURL: "http://runtime.test/base/"},
+		Store:   store,
+		Sandbox: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-anthropic"}},
+		Model:   "anthropic-gateway/claude-opus-5", Source: "agent", RunID: "run-anthropic",
+	})
+	if err != nil {
+		t.Fatalf("EnsureDshFacadeConfig returned error: %v", err)
+	}
+	if env["LLM_API_PROTOCOL"] != APIProtocolMessages || env["DSH_WIRE_API"] != "anthropic-messages" {
+		t.Fatalf("DSH environment = %#v", env)
+	}
+	// The Anthropic client appends /v1/messages itself, so the facade base
+	// stays at the family root — the same rule piFacadeProtocol follows.
+	if env["LLM_API_ENDPOINT"] != "http://runtime.test/base/api/runtime/sandboxes/sandbox-anthropic/llm/anthropic" {
+		t.Fatalf("LLM_API_ENDPOINT = %q", env["LLM_API_ENDPOINT"])
+	}
+	if len(store.savedTokens) != 1 || store.savedTokens[0].WireAPI != APIProtocolMessages {
+		t.Fatalf("saved token = %#v", store.savedTokens)
+	}
+}
+
+// provider_type is stored without a CHECK constraint, so a family that is
+// neither Anthropic nor OpenAI is representable. It has to be refused while
+// minting the facade config rather than routed to /llm/openai/v1 and refused
+// later, at request time, by UpstreamProtocolAndEndpoint.
+func TestEnsureDshFacadeConfigRejectsUnsupportedProviderFamily(t *testing.T) {
+	isolateLLMEnv(t)
+	store := newDshFacadeTestStore()
+	store.providers = []Provider{{
+		ID: "gemini-gateway", ProviderType: "gemini",
+		DefaultWireAPI: APIProtocolChatCompletions, BaseURL: "https://gemini.test", APIKey: "secret", Enabled: true,
+	}}
+	store.models = []Model{{ID: "model-id", Name: "gemini-3.1-pro", Enabled: true}}
+	store.wire["gemini-gateway\x00model-id"] = APIProtocolChatCompletions
+
+	env, err := EnsureDshFacadeConfig(context.Background(), DshFacadeConfigRequest{
+		Config:  &appconfig.Config{RuntimeBaseURL: "http://runtime.test/base/"},
+		Store:   store,
+		Sandbox: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-gemini"}},
+		Model:   "gemini-gateway/gemini-3.1-pro", Source: "agent", RunID: "run-gemini",
+	})
+	if err == nil {
+		t.Fatalf("EnsureDshFacadeConfig accepted an unsupported family: %#v", env)
+	}
+	if !strings.Contains(err.Error(), `llm provider family "gemini"`) {
+		t.Fatalf("error = %v", err)
+	}
+	if len(store.savedTokens) != 0 {
+		t.Fatalf("minted a token for an unroutable target: %#v", store.savedTokens)
+	}
 }

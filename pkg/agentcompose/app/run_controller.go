@@ -295,6 +295,7 @@ func runAgentRequestFromProto(msg *agentcomposev2.RunAgentRequest) runs.RunAgent
 		CleanupPolicy:    msg.GetCleanupPolicy(),
 		Jupyter:          msg.GetJupyter(),
 		Volumes:          volumeMountSpecsFromProto(msg.GetVolumes()),
+		Labels:           msg.GetLabels(),
 	}
 }
 

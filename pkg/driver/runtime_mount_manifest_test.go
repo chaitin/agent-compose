@@ -679,6 +679,20 @@ func TestBackgroundJupyterLaunchCommandStartsBeforeJupyterLabImportProbe(t *test
 	}
 }
 
+func TestJupyterLaunchCommandKeepsOriginAndXSRFProtection(t *testing.T) {
+	config := testRuntimeMountConfig()
+	proxyState := ProxyState{Enabled: true, GuestPort: 8888, Token: "test-token"}
+	for _, background := range []bool{false, true} {
+		command := jupyterLaunchCommand(config, proxyState, background)
+		if strings.Contains(command, "--ServerApp.allow_origin='*'") || !strings.Contains(command, "--ServerApp.allow_origin=''") {
+			t.Fatalf("background=%t command origin policy is unsafe: %s", background, command)
+		}
+		if strings.Contains(command, "--ServerApp.disable_check_xsrf=True") || !strings.Contains(command, "--ServerApp.disable_check_xsrf=False") {
+			t.Fatalf("background=%t command xsrf policy is unsafe: %s", background, command)
+		}
+	}
+}
+
 func TestBackgroundJupyterLaunchCommandScopesAmpersand(t *testing.T) {
 	config := testRuntimeMountConfig()
 	proxyState := ProxyState{Enabled: true, GuestPort: 8888, Token: "test-token"}

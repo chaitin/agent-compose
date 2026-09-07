@@ -20,6 +20,7 @@ type composePSOptions struct {
 	All     bool
 	Status  string
 	Verbose bool
+	Labels  []string
 }
 
 func formatDurationMs(value int64) string {

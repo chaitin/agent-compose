@@ -23,6 +23,7 @@ func newCLIRunCommand(cli *cliOptions) *cobra.Command {
 	cmd.Flags().BoolVarP(&options.Detach, "detach", "d", false, "Start the run in the daemon and return immediately")
 	cmd.Flags().BoolVarP(&options.Interactive, "interactive", "i", false, "Reserved for future interactive runs")
 	cmd.Flags().BoolVarP(&options.TTY, "tty", "t", false, "Allocate a TTY for interactive command runs")
+	cmd.Flags().StringArrayVar(&options.Labels, "label", nil, "Attach a key=value label to this run (repeatable)")
 	cmd.Flags().Lookup("prompt").NoOptDefVal = optionalRunModeFlagNoValue
 	cmd.Flags().Lookup("command").NoOptDefVal = optionalRunModeFlagNoValue
 	hideOptionalFlagNoValueInUsage(cmd, "prompt", "command")

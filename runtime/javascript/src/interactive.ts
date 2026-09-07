@@ -8,8 +8,10 @@ import {
 import { stringEnv } from "./env.js";
 import { warn } from "./mpi.js";
 import { buildPromptRuntimeOptions } from "./prompt.js";
+import type { AgentEvent } from "./agent-event.js";
 import { ClaudeRunner } from "./runners/claude.js";
 import { CodexRunner } from "./runners/codex.js";
+import { DshRunner } from "./runners/dsh.js";
 import { OpenCodeRunner } from "./runners/opencode.js";
 import { PiRunner } from "./runners/pi.js";
 import { readStoredThread, writeStoredThread } from "./session-state.js";
@@ -22,6 +24,8 @@ export interface InteractiveStartOptions {
   workspace?: string;
   home?: string;
   model?: string;
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  skills?: string[];
   outputSchemaFile?: string;
   abortController?: AbortController;
 }
@@ -119,9 +123,9 @@ export class CodexInteractiveSession implements InteractiveSession {
         : undefined;
       const { events } = await this.thread.runStreamed(message, turnOptions);
       for await (const event of events) {
-        const sdkEvent = event as Record<string, unknown>;
-        this.emit("agent_event", { event: sdkEvent });
-        this.runner.handleEvent(sdkEvent, this.result);
+        // The runner's onEvent sink publishes the neutral events; the raw SDK
+        // event is no longer forwarded verbatim.
+        this.runner.handleEvent(event as Record<string, unknown>, this.result);
       }
     } catch (error) {
       if (!this.options.abortController?.signal.aborted) {
@@ -167,6 +171,20 @@ export class CodexInteractiveSession implements InteractiveSession {
   }
 }
 
+
+/**
+ * Wrap the runner's neutral events into `agent_event` frames.
+ *
+ * The frame carries only the event; the daemon derives the frame name and the
+ * transcript text from its `kind` (see promptAttachProjector.agentEventText),
+ * so there is one source of truth for both.
+ */
+function agentEventEmitter(emit: EmitInteractiveFrame): (event: AgentEvent) => void {
+  return (event) => {
+    emit("agent_event", { event });
+  };
+}
+
 interface PromptTurnRunner {
   runPrompt(message: string): Promise<AgentResult>;
 }
@@ -184,7 +202,7 @@ class PromptRunnerInteractiveSession implements InteractiveSession {
     private readonly emit: EmitInteractiveFrame,
     createRunner: (writer: TranscriptTextWriter) => PromptTurnRunner,
   ) {
-    this.writer = new InteractiveTextWriter(provider, emit);
+    this.writer = new InteractiveTextWriter();
     this.runner = createRunner(this.writer);
     this.result = {
       provider,
@@ -266,34 +284,21 @@ class BufferedTextWriter implements TextWriter {
   }
 }
 
-class InteractiveTextWriter extends BufferedTextWriter implements TranscriptTextWriter {
-  constructor(
-    private readonly provider: Provider,
-    private readonly emit: EmitInteractiveFrame,
-  ) {
-    super();
-  }
-
-  override write(text: string): void {
-    if (!text) {
-      return;
-    }
-    super.write(text);
-    this.emit("agent_event", {
-      event: {
-        type: "output",
-        provider: this.provider,
-        text,
-      },
-    });
-  }
-}
+/**
+ * Transcript accumulator for the prompt-runner sessions. It no longer
+ * synthesises `agent_event` frames: structured events now come from the
+ * runner's own `onEvent` sink, so the writer is purely a text buffer.
+ */
+class InteractiveTextWriter extends BufferedTextWriter implements TranscriptTextWriter {}
 
 export async function createInteractiveSession(
   startOptions: InteractiveStartOptions,
   emit: EmitInteractiveFrame,
 ): Promise<InteractiveSession> {
-  const options = await buildPromptRuntimeOptions(startOptions);
+  const base = await buildPromptRuntimeOptions(startOptions);
+  // One sink for every provider: the runners publish neutral events, the
+  // session classes no longer synthesise frames of their own.
+  const options = { ...base, onEvent: agentEventEmitter(emit) };
   let session: InteractiveSession;
   switch (options.provider) {
     case "codex":
@@ -321,6 +326,14 @@ export async function createInteractiveSession(
         options,
         emit,
         (writer) => new PiRunner(options, writer),
+      );
+      break;
+    case "dsh":
+      session = new PromptRunnerInteractiveSession(
+        "dsh",
+        options,
+        emit,
+        (writer) => new DshRunner(options, writer),
       );
       break;
     default:

@@ -213,6 +213,7 @@ type RunAgentRequest struct {
 	StickyBindingTriggerID   string
 	StickyBindingConfigHash  string
 	Interactive              bool
+	Labels                   map[string]string
 }
 
 type StreamSink struct {
@@ -260,6 +261,7 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		Driver:          req.Driver,
 		CleanupPolicy:   CleanupPolicyFromProto(req.CleanupPolicy),
 		ClientRequestID: req.ClientRequestID,
+		Labels:          req.Labels,
 	})
 	if err != nil {
 		return StartedProjectRun{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
@@ -341,7 +343,7 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	defer func() { _ = c.interactiveSessions.Remove(started.Run.RunID, sessionTerminalState) }()
 	inputCtx, cancelInput := context.WithCancel(inputCtx)
 	defer cancelInput()
-	inputReleased := startRunAttachInputForwarder(inputCtx, receive, session, releaseInput)
+	inputReleased := startRunAttachInputForwarder(inputCtx, receive, session, first.DisconnectPolicy, releaseInput)
 	if onStarted != nil {
 		onStarted(started.Run.RunID, inputReleased)
 	}
@@ -466,11 +468,23 @@ func newInteractiveRunOutputSender(session *InteractiveSession, policy AttachDis
 	}
 }
 
-func forwardRunAttachInputs(ctx context.Context, receive RunAttachReceiver, session *InteractiveSession) {
+func forwardRunAttachInputs(ctx context.Context, receive RunAttachReceiver, session *InteractiveSession, policy AttachDisconnectPolicy) {
+	sentEOF := false
 	for {
 		input, err := receive()
 		if err != nil {
+			// A clean half-close means the client will send nothing more, so
+			// forward it as stdin EOF: prompt sessions otherwise block on
+			// session input forever and never close the runtime turn. Detached
+			// clients keep the run open for a later attach, so leave their
+			// input stream alone.
+			if errors.Is(err, io.EOF) && !sentEOF && policy != AttachDisconnectDetach {
+				_ = session.Send(ctx, RunAttachInput{Kind: RunAttachInputStdinEOF})
+			}
 			return
+		}
+		if input.Kind == RunAttachInputStdinEOF {
+			sentEOF = true
 		}
 		if err := session.Send(ctx, input); err != nil {
 			return
@@ -478,12 +492,12 @@ func forwardRunAttachInputs(ctx context.Context, receive RunAttachReceiver, sess
 	}
 }
 
-func startRunAttachInputForwarder(ctx context.Context, receive RunAttachReceiver, session *InteractiveSession, release func()) <-chan struct{} {
+func startRunAttachInputForwarder(ctx context.Context, receive RunAttachReceiver, session *InteractiveSession, policy AttachDisconnectPolicy, release func()) <-chan struct{} {
 	released := make(chan struct{})
 	go func() {
 		defer close(released)
 		defer release()
-		forwardRunAttachInputs(ctx, receive, session)
+		forwardRunAttachInputs(ctx, receive, session, policy)
 	}()
 	return released
 }
@@ -660,7 +674,7 @@ func (c *Controller) completeProjectRunAgent(ctx context.Context, sandboxed sand
 			Hub:         c.runLogs,
 		}),
 	})
-	transition := TransitionFromAgentCell(run, sandboxed.Sandbox, cell, execErr)
+	transition := TransitionFromAgentCell(run, sandboxed.Sandbox, cell, assistantEvent.Message, execErr)
 	transition.TerminalEvents = projectAgentTerminalEvents(run, cell, assistantEvent, execErr)
 	if execErr != nil || !cell.Success {
 		run, err = c.completeProjectRunError(sandboxed.TransitionCtx, ctx, transition, execErr)

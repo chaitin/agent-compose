@@ -549,6 +549,24 @@ main implementation path for a formal API:
 - Therefore `GET /api/events/:event_id/sandboxes` should not rely on full-table
   JSON scan as the main implementation.
 
+The exact-relation restriction above governs exact attribution in
+relation-oriented read models. It does not define the cancellation scope of
+`POST /api/webhooks/events/:event_id/stop`. That endpoint deliberately treats
+the requested event's `correlation_id` as a group-wide cancellation domain and
+cancels the union of:
+
+- the requested event and its descendants found through `parent_event_id`; and
+- every stored event that shares the requested event's `correlation_id`.
+
+The correlation group has no causal direction, so this cancellation scope can
+include earlier, later, and sibling events, including events submitted through
+different webhook sources. The endpoint authenticates the static token and
+enabled state of the requested event's webhook source only; it does not
+separately authenticate or require an enabled source for every correlated
+event. This is an explicit control-plane policy, not a claim that
+`correlation_id` establishes an exact causal relation, and it must not be reused
+as exact attribution by relation-oriented APIs.
+
 Formal implementation needs explicit relation tables. Event-to-run relation is
 stored in `event_delivery`; event-to-sandbox relation is stored in
 `event_sandbox_link`:
@@ -576,9 +594,11 @@ Write timing:
   `event_delivery(event_id, scheduler_id, trigger_id, scheduler_run_id, status=run_started)`.
 - When the scheduler run host sees `linked_sandbox_id`, also write
   `event_id -> sandbox_id`.
-- When a scheduler derives events, write `parent_event_id`. Query
-  `GET /api/events/:event_id/sandboxes` should expand descendant events by
-  `parent_event_id`, then aggregate `event_sandbox_link` for those events.
+- When a scheduler derives events, write `parent_event_id`. For exact sandbox
+  attribution, `GET /api/events/:event_id/sandboxes` should expand descendant
+  events by `parent_event_id`, then aggregate `event_sandbox_link` for those
+  events. This causal expansion rule does not limit the correlation-wide
+  cancellation scope defined above.
 - If business wants the original webhook event to find sandboxes created by
   derived events, query layer expands descendants; descendants do not need to
   write duplicate ancestor links.

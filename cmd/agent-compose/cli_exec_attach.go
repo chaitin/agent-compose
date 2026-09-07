@@ -22,6 +22,12 @@ func runComposeExecPromptOnceCommand(cmd *cobra.Command, projectName string, cli
 	}}}); err != nil {
 		return commandExitErrorForConnect(fmt.Errorf("exec project %s prompt start: %w", projectName, err))
 	}
+	// The one-shot prompt sends no further input, so close the turn explicitly.
+	// Half-closing the request alone leaves the runtime waiting for more input
+	// and the response stream never completes.
+	if err := stream.Send(&agentcomposev2.AttachExecRequest{Frame: &agentcomposev2.AttachExecRequest_StdinEof{StdinEof: &agentcomposev2.AttachStdinEOF{}}}); err != nil {
+		return commandExitErrorForConnect(fmt.Errorf("exec project %s prompt end input: %w", projectName, err))
+	}
 	if err := stream.CloseRequest(); err != nil {
 		return commandExitErrorForConnect(fmt.Errorf("exec project %s prompt close request: %w", projectName, err))
 	}
