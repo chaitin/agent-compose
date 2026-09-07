@@ -536,18 +536,18 @@ func assertImageDockerAuthEnforced(t *testing.T, ctx context.Context, fixture *i
 	for _, token := range []string{"", "wrong-image-docker-token"} {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fixture.baseURL+"/api/version", nil)
 		if err != nil {
-			t.Fatalf("create unauthenticated request: %v", err)
+			t.Fatalf("create auth-enforcement request (token %q): %v", token, err)
 		}
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
 		resp, err := client.Do(req)
 		if err != nil {
-			failImageDockerFixture(t, fixture, "unauthenticated /api/version request: %v", err)
+			failImageDockerFixture(t, fixture, "/api/version auth-enforcement (token %q) request: %v", token, err)
 		}
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
-			failImageDockerFixture(t, fixture, "unauthenticated /api/version status = %d, want 401 or 403", resp.StatusCode)
+			failImageDockerFixture(t, fixture, "/api/version auth-enforcement (token %q) status = %d, want 401 or 403", token, resp.StatusCode)
 		}
 	}
 }
