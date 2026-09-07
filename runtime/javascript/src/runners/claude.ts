@@ -5,7 +5,7 @@ import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { jsonString } from "../text.js";
 import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
 import type { AgentEvent } from "../agent-event.js";
-import { toolKindForName, toolOutputText } from "../agent-event.js";
+import { dominantUsageModel, toolKindForName, toolOutputText } from "../agent-event.js";
 import type { AgentResult, RunnerOptions, StoredThread } from "../types.js";
 import { cancellationRequested } from "../shutdown.js";
 
@@ -248,7 +248,11 @@ export class ClaudeRunner {
         this.emit({
           kind: "usage",
           scope: "run",
-          model: Object.keys(modelUsage)[0],
+          // Cache tokens are part of the comparison: claude's sidecar model
+          // can out-spend the answering model on uncached tokens alone.
+          model: dominantUsageModel(modelUsage, (entry) =>
+            Number(entry.inputTokens ?? 0) + Number(entry.outputTokens ?? 0)
+            + Number(entry.cacheReadInputTokens ?? 0) + Number(entry.cacheCreationInputTokens ?? 0)),
           inputTokens: Number(usage.input_tokens ?? 0),
           outputTokens: Number(usage.output_tokens ?? 0),
           reasoningTokens: typeof details?.thinking_tokens === "number" ? details.thinking_tokens : undefined,
@@ -260,6 +264,7 @@ export class ClaudeRunner {
       const stopReason = typeof message.stop_reason === "string" ? message.stop_reason : undefined;
       this.emit({
         kind: "step_end",
+        scope: "run",
         stopReason: stopReason === "end_turn" ? "stop" : stopReason === "max_tokens" ? "max_tokens" : undefined,
         rawStopReason: stopReason,
       });

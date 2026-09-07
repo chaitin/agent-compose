@@ -46,9 +46,10 @@ Env vars aren't unbounded: Linux caps a single `argv`/`envp` string at `MAX_ARG_
 | `DSH_SYSTEM_CONTEXT_FILE` | `dsh.ts` | Path to the persona text file `runner.js` reads and injects (§7); unset when there's no system context |
 | `DSH_SKILL_DIRS` | `dsh.ts` | Colon-joined resolved skill directories; consumed by the `skill-filesystem` row's `customSkillDirs` (§5.1) |
 | `DSH_MCP_SERVERS` | `dsh.ts` | JSON array of per-server `dsh-mcp-client` configs; consumed by `runner.js` (§6) |
-| `LLM_API_KEY`, `LLM_API_ENDPOINT` | facade config | Consumed by the `llm-deepseek` row (§4) |
+| `DSH_WIRE_API` | facade config | The wire protocol the facade resolved for this run (`openai-completions`, `openai-responses` or `anthropic-messages`); consumed by the `llm-pi-ai` route's `api` (§4.1) |
+| `LLM_API_KEY`, `LLM_API_ENDPOINT` | facade config | Consumed by the `llm-pi-ai` route's `apiKeyEnv`/`baseURL` (§4) |
 
-`env` starts from `...process.env`, so a key this run has no value for isn't automatically absent — it's whatever the host process happened to export. Every conditional `DSH_*` var (`DSH_SYSTEM_CONTEXT_FILE`, `DSH_MCP_SERVERS`, `DSH_RESUME`, `DSH_MODEL`, `DSH_REASONING_EFFORT`, `DSH_SKILL_DIRS`) is therefore explicitly `delete`d in its false branch rather than left conditionally-set, so a host-inherited value can't leak through as this run's persona file, MCP server list, resume flag, model, effort, or skill directories. `DSH_SKILL_DIRS` is the sharpest case: an inherited value would have `dsh` load a skill directory `resolveSkillPaths()`'s symlink-escape check never saw, under `danger-full-access` permissions.
+`env` starts from `...process.env`, so a key this run has no value for isn't automatically absent — it's whatever the host process happened to export. Every conditional `DSH_*` var (`DSH_SYSTEM_CONTEXT_FILE`, `DSH_MCP_SERVERS`, `DSH_RESUME`, `DSH_REASONING_EFFORT`, `DSH_SKILL_DIRS`) is therefore explicitly `delete`d in its false branch rather than left conditionally-set, so a host-inherited value can't leak through as this run's persona file, MCP server list, resume flag, effort, or skill directories. `DSH_MODEL` is the deliberate exception: the inherited value is the one the daemon's facade config exported for the model it minted the token against, so `dsh.ts` overwrites it only when the invocation names a model of its own and never deletes it. `DSH_SKILL_DIRS` is the sharpest case: an inherited value would have `dsh` load a skill directory `resolveSkillPaths()`'s symlink-escape check never saw, under `danger-full-access` permissions.
 
 ## 4. LLM facade routing
 
@@ -72,7 +73,7 @@ The profile declares one hand-declared route, `agent-compose`: pi-ai ships nothi
 
 ### 5.2 Model/provider resolution
 
-Resolution mirrors Pi's (`resolveDshFacadeTarget` mirrors `resolvePiFacadeTarget`'s branch structure: configured provider id → family → custom OpenAI), minus an Anthropic-family branch — `llm-deepseek` always speaks chat completions, so there is nothing to mirror there.
+Resolution mirrors Pi's: `resolveDshFacadeTarget` mirrors `resolvePiFacadeTarget`'s branch structure (configured provider id → family → custom OpenAI), Anthropic-family branch included. `dshFacadeProtocol` then mirrors `piFacadeProtocol`, routing an Anthropic provider to the `/llm/anthropic` facade endpoint with an `anthropic-messages` token rather than bridging it down to chat completions.
 
 ### 5.3 Sandbox policy / permission mode
 

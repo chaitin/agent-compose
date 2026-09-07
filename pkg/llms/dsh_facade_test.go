@@ -187,3 +187,40 @@ func TestEnsureDshFacadeConfigFollowsChatCompletionsProvider(t *testing.T) {
 		t.Fatalf("saved token = %#v", store.savedTokens)
 	}
 }
+
+// TestEnsureDshFacadeConfigRoutesAnthropicProviderNatively covers the third
+// family. Pinning chat completions meant an Anthropic provider was bridged
+// down; following the provider must not turn that configuration into a hard
+// failure, so it is served over the /llm/anthropic route the same way pi
+// serves it (piFacadeProtocol).
+func TestEnsureDshFacadeConfigRoutesAnthropicProviderNatively(t *testing.T) {
+	isolateLLMEnv(t)
+	store := newDshFacadeTestStore()
+	store.providers = []Provider{{
+		ID: "anthropic-gateway", ProviderType: ProviderFamilyAnthropic,
+		DefaultWireAPI: APIProtocolMessages, BaseURL: "https://anthropic.test", APIKey: "secret", Enabled: true,
+	}}
+	store.models = []Model{{ID: "model-id", Name: "claude-opus-5", Enabled: true}}
+	store.wire["anthropic-gateway\x00model-id"] = APIProtocolMessages
+
+	env, err := EnsureDshFacadeConfig(context.Background(), DshFacadeConfigRequest{
+		Config:  &appconfig.Config{RuntimeBaseURL: "http://runtime.test/base/"},
+		Store:   store,
+		Sandbox: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-anthropic"}},
+		Model:   "anthropic-gateway/claude-opus-5", Source: "agent", RunID: "run-anthropic",
+	})
+	if err != nil {
+		t.Fatalf("EnsureDshFacadeConfig returned error: %v", err)
+	}
+	if env["LLM_API_PROTOCOL"] != APIProtocolMessages || env["DSH_WIRE_API"] != "anthropic-messages" {
+		t.Fatalf("DSH environment = %#v", env)
+	}
+	// The Anthropic client appends /v1/messages itself, so the facade base
+	// stays at the family root — the same rule piFacadeProtocol follows.
+	if env["LLM_API_ENDPOINT"] != "http://runtime.test/base/api/runtime/sandboxes/sandbox-anthropic/llm/anthropic" {
+		t.Fatalf("LLM_API_ENDPOINT = %q", env["LLM_API_ENDPOINT"])
+	}
+	if len(store.savedTokens) != 1 || store.savedTokens[0].WireAPI != APIProtocolMessages {
+		t.Fatalf("saved token = %#v", store.savedTokens)
+	}
+}

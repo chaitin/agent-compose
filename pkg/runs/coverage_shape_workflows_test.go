@@ -3240,3 +3240,69 @@ func runAttachOutputToTestProto(output RunAttachOutput) *agentcomposev2.AttachAg
 	}
 	return response
 }
+
+// TestPromptAttachProjectorKeepsToolActivityInTheTranscript covers what an
+// attach transcript would otherwise lose when the runtime moved to neutral
+// events: which tool ran, with what command, and what it printed. Only
+// text_delta carries assistant prose, so a transcript built from that alone
+// reads as if the model answered without doing anything.
+func TestPromptAttachProjectorKeepsToolActivityInTheTranscript(t *testing.T) {
+	logsPath := filepath.Join(t.TempDir(), "transcript.txt")
+	projector := newPromptAttachProjector(domain.ProjectRunRecord{RunID: "run-tools"}, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-tools"}}, logsPath, nil)
+	frames := []string{
+		`{"type":"agent_event","event":{"kind":"text_delta","text":"listing the workspace"}}`,
+		// claude and codex announce the same call twice; the second carries the
+		// arguments the first did not have yet.
+		`{"type":"agent_event","event":{"kind":"tool_call","id":"call-1","name":"bash","toolKind":"execute","status":"in_progress"}}`,
+		`{"type":"agent_event","event":{"kind":"tool_call","id":"call-1","name":"bash","toolKind":"execute","status":"completed","command":"ls -1"}}`,
+		// codex resends a command's aggregated output on every update.
+		`{"type":"agent_event","event":{"kind":"tool_result","id":"call-1","ok":true,"output":"hello.txt\n"}}`,
+		`{"type":"agent_event","event":{"kind":"tool_result","id":"call-1","ok":true,"output":"hello.txt\nnotes.md\n"}}`,
+		// Reasoning stays out of the transcript on purpose.
+		`{"type":"agent_event","event":{"kind":"reasoning_delta","text":"thinking about it"}}`,
+		`{"type":"agent_event","event":{"kind":"text_delta","text":"done"}}`,
+	}
+	responses, _, err := projector.Project([]byte(strings.Join(frames, "\n") + "\n"))
+	if err != nil {
+		t.Fatalf("project agent events: %v", err)
+	}
+	if len(responses) != len(frames) {
+		t.Fatalf("responses = %d, want %d", len(responses), len(frames))
+	}
+	transcript, err := os.ReadFile(logsPath)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	want := "listing the workspace\n[tool:bash]\n$ ls -1\nhello.txt\nnotes.md\ndone"
+	if string(transcript) != want {
+		t.Fatalf("transcript = %q, want %q", string(transcript), want)
+	}
+}
+
+// TestPromptAttachProjectorNamesFramesByEventKind pins the other half of the
+// contract: the frame name is the neutral kind, and a kind with no transcript
+// text still reaches the client as an addressable frame.
+func TestPromptAttachProjectorNamesFramesByEventKind(t *testing.T) {
+	logsPath := filepath.Join(t.TempDir(), "transcript.txt")
+	projector := newPromptAttachProjector(domain.ProjectRunRecord{RunID: "run-kinds"}, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-kinds"}}, logsPath, nil)
+	frames := []string{
+		`{"type":"agent_event","event":{"kind":"usage","scope":"run","inputTokens":4,"outputTokens":104}}`,
+		`{"type":"agent_event","event":{"kind":"step_end","scope":"run","stopReason":"stop"}}`,
+		// A raw provider event with no neutral kind stays addressable by type.
+		`{"type":"agent_event","event":{"type":"thread.started","thread_id":"t-1"}}`,
+	}
+	responses, _, err := projector.Project([]byte(strings.Join(frames, "\n") + "\n"))
+	if err != nil {
+		t.Fatalf("project agent events: %v", err)
+	}
+	names := make([]string, 0, len(responses))
+	for _, response := range responses {
+		names = append(names, response.Name)
+	}
+	if strings.Join(names, ",") != "usage,step_end,thread.started" {
+		t.Fatalf("frame names = %v", names)
+	}
+	if data, err := os.ReadFile(logsPath); err == nil && len(data) != 0 {
+		t.Fatalf("transcript = %q, want no text from these kinds", string(data))
+	}
+}

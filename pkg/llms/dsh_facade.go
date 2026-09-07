@@ -47,13 +47,14 @@ type DshFacadeConfigRequest struct {
 // pair; an absent model falls back to the daemon's default catalog entry, the
 // same way codex and claude behave.
 //
-// The wire protocol follows the resolved provider rather than being fixed.
-// The profile's llm-pi-ai route names its protocol per request through
-// DSH_WIRE_API, so the guest speaks whatever the provider serves and the
-// request stays on the proxy's passthrough path — no conversion, and none of
-// the vendor-event leakage a conversion can carry. The previous adapter,
-// llm-deepseek, could only speak chat completions, which is why this was
-// unconditional before (see docs/design/dsh_agent_provider_design.md §4.1).
+// The wire protocol and the facade endpoint follow the resolved provider
+// rather than being fixed. The profile's llm-pi-ai route names its protocol
+// per request through DSH_WIRE_API and its endpoint through LLM_API_ENDPOINT,
+// so the guest speaks whatever the provider serves and the request stays on
+// the proxy's passthrough path — no conversion, and none of the vendor-event
+// leakage a conversion can carry. The previous adapter, llm-deepseek, could
+// only speak chat completions, which is why this was unconditional before
+// (see docs/design/dsh_agent_provider_design.md §4.1).
 func EnsureDshFacadeConfig(ctx context.Context, req DshFacadeConfigRequest) (map[string]string, error) {
 	config, store, sandbox := req.Config, req.Store, req.Sandbox
 	baseURL := GuestRuntimeBaseURL(config, sandbox)
@@ -65,11 +66,10 @@ func EnsureDshFacadeConfig(ctx context.Context, req DshFacadeConfigRequest) (map
 	if err != nil {
 		return nil, err
 	}
-	wireAPI, piAiAPI, err := dshWireAPI(target)
+	piAiAPI, wireAPI, facadeBaseURL, err := dshFacadeProtocol(target, baseURL, sandbox.Summary.ID)
 	if err != nil {
 		return nil, err
 	}
-	facadeBaseURL := strings.TrimRight(baseURL, "/") + "/api/runtime/sandboxes/" + sandbox.Summary.ID + "/llm/openai/v1"
 	tokenValue, token, err := NewFacadeToken(NewFacadeTokenRequest{
 		SandboxID: sandbox.Summary.ID, Model: target.Model.Name, ProviderID: target.Provider.ID, WireAPI: wireAPI, Source: req.Source, RunID: req.RunID,
 	})
@@ -92,16 +92,30 @@ func EnsureDshFacadeConfig(ctx context.Context, req DshFacadeConfigRequest) (map
 	}, nil
 }
 
-// dshWireAPI maps the resolved target onto the facade token's wire API and the
-// spelling llm-pi-ai uses for the same protocol in its route config.
-func dshWireAPI(target ResolvedTarget) (string, string, error) {
+// dshFacadeProtocol maps the resolved target onto the spelling llm-pi-ai uses
+// for the protocol in its route config, the facade token's wire API, and the
+// facade endpoint the guest talks to.
+//
+// It mirrors piFacadeProtocol, because llm-pi-ai is the same pi-ai adapter:
+// an Anthropic-family provider is served natively over the /llm/anthropic
+// route rather than bridged down to chat completions, so no family is a hard
+// error here. Only an OpenAI provider declaring a wire api that is neither
+// responses nor chat completions is unroutable.
+func dshFacadeProtocol(target ResolvedTarget, runtimeBaseURL, sandboxID string) (piAiAPI, facadeProtocol, facadeBaseURL string, err error) {
+	runtimeBaseURL = strings.TrimRight(runtimeBaseURL, "/")
+	if NormalizeProviderType(target.Provider.ProviderType) == ProviderFamilyAnthropic {
+		// Same base-path rule as pi: the Anthropic client appends /v1/messages
+		// itself, so the facade base stays at the family root.
+		return "anthropic-messages", APIProtocolMessages, runtimeBaseURL + "/api/runtime/sandboxes/" + sandboxID + "/llm/anthropic", nil
+	}
+	openAIBaseURL := runtimeBaseURL + "/api/runtime/sandboxes/" + sandboxID + "/llm/openai/v1"
 	switch NormalizeWireAPI(target.WireAPI) {
 	case APIProtocolResponses:
-		return APIProtocolResponses, "openai-responses", nil
+		return "openai-responses", APIProtocolResponses, openAIBaseURL, nil
 	case APIProtocolChatCompletions:
-		return APIProtocolChatCompletions, "openai-completions", nil
+		return "openai-completions", APIProtocolChatCompletions, openAIBaseURL, nil
 	default:
-		return "", "", domain.ClassifyError(domain.ErrFailedPrecondition,
+		return "", "", "", domain.ClassifyError(domain.ErrFailedPrecondition,
 			fmt.Sprintf("dsh does not support wire api %q", target.WireAPI), nil)
 	}
 }
@@ -113,8 +127,9 @@ func dshWireAPI(target ResolvedTarget) (string, string, error) {
 // codex does, rather than going through resolveDshFacadeTarget: that
 // function dispatches on the provider id, and an empty id falls through to
 // the custom-OpenAI branch, which needs a concrete provider to resolve.
-// OpenAI is the preferred family because the DSH facade always issues a
-// chat-completions token and routes the guest to /llm/openai/v1.
+// OpenAI is the preferred family for that default, matching codex; an explicit
+// <llm-provider-id>/<model-name> still resolves to whichever family the
+// provider belongs to, and dshFacadeProtocol routes it accordingly.
 func resolveDshTarget(ctx context.Context, req DshFacadeConfigRequest) (ResolvedTarget, error) {
 	config, store, sandbox := req.Config, req.Store, req.Sandbox
 	if strings.TrimSpace(req.Model) == "" {
@@ -143,10 +158,10 @@ type dshFacadeTargetInput struct {
 	Model      string
 }
 
-// resolveDshFacadeTarget mirrors resolvePiFacadeTarget's branch structure
-// (configured provider id -> family -> custom OpenAI), but DSH has no
-// Anthropic-family route: llm-deepseek always speaks chat completions, so
-// there is no Anthropic branch to mirror.
+// resolveDshFacadeTarget mirrors resolvePiFacadeTarget's branch structure:
+// configured provider id -> family -> custom OpenAI. Since the profile now
+// drives llm-pi-ai, the Anthropic family is routable here exactly as it is for
+// pi, so the family branch covers it.
 func resolveDshFacadeTarget(ctx context.Context, in dshFacadeTargetInput) (ResolvedTarget, error) {
 	config, store, sandbox, providerID, model := in.Config, in.Store, in.Sandbox, in.ProviderID, in.Model
 	sandboxID := sandbox.Summary.ID
@@ -169,6 +184,10 @@ func resolveDshFacadeTarget(ctx context.Context, in dshFacadeTargetInput) (Resol
 		})
 	}
 	switch providerID {
+	case ProviderFamilyAnthropic:
+		return ResolveRuntimeLLMTargetWithEnv(ctx, store, RuntimeLLMTargetQuery{
+			Config: config, SessionID: sandboxID, PreferredProviderFamily: ProviderFamilyAnthropic, RequestedModel: model, ProviderID: "", EnvItems: envItems,
+		})
 	case ProviderFamilyOpenAI, ProviderIDDefaultOpenAI:
 		return ResolveRuntimeLLMTargetWithEnv(ctx, store, RuntimeLLMTargetQuery{
 			Config: config, SessionID: sandboxID, PreferredProviderFamily: ProviderFamilyOpenAI, RequestedModel: model, ProviderID: "", EnvItems: envItems,

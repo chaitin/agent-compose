@@ -11,6 +11,10 @@
  *   distinguish "did not happen" from "this provider never reports it".
  * - `inputTokens` always EXCLUDES cached tokens. Providers that report an
  *   inclusive count (codex, gemini) subtract before emitting.
+ * - A tool call may be announced more than once. claude and codex report a
+ *   call twice (`in_progress` then `completed`), the others once, so anything
+ *   counting or listing tool calls must de-duplicate by `id` — the number of
+ *   `tool_call` events is a provider detail, the number of distinct ids is not.
  */
 
 /** Tool categories, mirroring ACP's ToolKind minus its editor-only `switch_mode`. */
@@ -48,7 +52,12 @@ export interface TodoItem {
 
 export type AgentEvent =
   | { kind: "step_start"; step?: number }
-  | { kind: "step_end"; step?: number; stopReason?: AgentStopReason; rawStopReason?: string }
+  /**
+   * `scope: "run"` marks a turn/run terminator that closes no individual step
+   * — claude, gemini and dsh emit one after their last step. Consumers pairing
+   * step boundaries must ignore it, or every turn gains a phantom step.
+   */
+  | { kind: "step_end"; step?: number; scope?: "step" | "run"; stopReason?: AgentStopReason; rawStopReason?: string }
   | { kind: "text_delta"; step?: number; blockIndex?: number; text: string }
   | { kind: "reasoning_delta"; step?: number; blockIndex?: number; text: string }
   | {
@@ -126,7 +135,7 @@ const fetchToolNames = new Set(["fetch", "web_fetch", "web_search", "google_web_
  * Classify a provider tool name. Only codex separates shell and patch calls at
  * the protocol level; every other provider reports them as ordinary tools, so
  * the name is all we have. Cross-provider counting must therefore key on
- * `kind === "tool_call"`, never on the resulting ToolKind.
+ * `kind === "tool_call"` de-duplicated by `id`, never on the resulting ToolKind.
  */
 export function toolKindForName(name: string): ToolKind {
   const normalized = String(name || "").trim().toLowerCase();
@@ -157,4 +166,33 @@ export function toolOutputText(value: unknown): string | undefined {
   } catch {
     return String(value);
   }
+}
+
+/**
+ * Name the model a run-scope usage record belongs to, given the provider's
+ * per-model breakdown.
+ *
+ * The first key is not the run's model: claude lists its sidecar (haiku) ahead
+ * of the model that answered, and gemini lists an all-zero entry first, so
+ * indexing position 0 charges one model with another's tokens. Pick the entry
+ * that actually spent tokens; when none did, name no model rather than one at
+ * random.
+ */
+export function dominantUsageModel(
+  breakdown: Record<string, unknown>,
+  tokensOf: (entry: Record<string, unknown>) => number,
+): string | undefined {
+  let name: string | undefined;
+  let best = 0;
+  for (const [key, entry] of Object.entries(breakdown)) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const tokens = tokensOf(entry as Record<string, unknown>);
+    if (tokens > best) {
+      name = key;
+      best = tokens;
+    }
+  }
+  return name;
 }

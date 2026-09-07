@@ -22,8 +22,10 @@
 
 # A hand-declared route: pi-ai ships nothing under this key, so the profile
 # supplies the whole provider. Such a route requires api, baseURL, and a
-# non-empty models list. All three come from the spawn environment, and
-# DSH_WIRE_API is the protocol the daemon's facade resolved for this run.
+# non-empty models list. All three come from the spawn environment.
+# DSH_WIRE_API is the protocol the daemon's facade resolved for this run —
+# openai-responses, openai-completions or anthropic-messages, following the
+# resolved provider's family (see EnsureDshFacadeConfig).
 - id: llm-pi-ai
   config:
     providers:
@@ -65,12 +67,13 @@
     root: !!js process.env.DSH_SESSION_ROOT
 
 # Local credential discovery is disabled — the only LLM credential is the
-# run-scoped facade token injected as LLM_API_KEY (see §5.4). llm-deepseek
-# still resolves apiKeyEnv from the launch environment when this row is off.
+# run-scoped facade token injected as LLM_API_KEY (see §5.4). The llm-pi-ai
+# route still resolves its apiKeyEnv from the launch environment when this row
+# is off.
 - id: credentials
   disabled: true
 
-# $DSH_HOME/settings.yaml can otherwise override llm-deepseek's apiKeyEnv/
+# $DSH_HOME/settings.yaml can otherwise override the LLM route's apiKeyEnv/
 # baseURL at runtime; disabling this row keeps the facade the only LLM
 # credential source (see §5.4).
 - id: settings
@@ -104,6 +107,9 @@
 # one to answer an approval prompt.
 - id: bash-sandbox
   name: '@deepseek-ai/dsh-bash-local'
+
+- id: pwsh-sandbox
+  name: '@deepseek-ai/dsh-pwsh-local'
 
 - id: fs-sandbox
   name: '@deepseek-ai/dsh-fs-local'

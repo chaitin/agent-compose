@@ -148,6 +148,43 @@ describe("provider event mapping", () => {
     }
   });
 
+  it("attributes run-scope usage to the model that spent the tokens", () => {
+    // Neither provider lists that model first: claude's fixture leads with the
+    // haiku sidecar (931/15) and gemini's with an all-zero flash-lite entry,
+    // so indexing the breakdown by position charges the wrong model.
+    const claudeUsage = replay("claude").filter((event) => event.kind === "usage");
+    expect(claudeUsage.at(-1)).toMatchObject({ scope: "run", model: "claude-opus-5", inputTokens: 4, outputTokens: 104 });
+    const geminiUsage = replay("gemini").find((event) => event.kind === "usage");
+    expect(geminiUsage).toMatchObject({ model: "gemini-3.1-pro-preview" });
+  });
+
+  it("marks a turn terminator so it is not counted as a step boundary", () => {
+    // claude, gemini and dsh close the turn with a step-less step_end after
+    // their last step. Without the scope marker, pairing or counting step
+    // boundaries invents one phantom step per turn.
+    for (const provider of ["claude", "gemini", "dsh"] as Provider[]) {
+      const ends = replay(provider).filter((event) => event.kind === "step_end");
+      const terminators = ends.filter((event) => event.scope === "run");
+      expect(terminators.length, provider).toBe(1);
+      expect(terminators[0]?.step, provider).toBeUndefined();
+      const starts = replay(provider).filter((event) => event.kind === "step_start");
+      expect(ends.length - terminators.length, provider).toBe(starts.length);
+    }
+  });
+
+  it("announces a tool call once per id even when a provider repeats it", () => {
+    // claude re-emits a call once its arguments finish streaming and codex
+    // sends both item.started and item.completed, so the event count is a
+    // provider detail — only the distinct ids are portable.
+    const perProvider: Record<Provider, number> = {
+      codex: 2, claude: 1, gemini: 1, opencode: 1, pi: 2, dsh: 2,
+    };
+    for (const provider of providers) {
+      const calls = replay(provider).filter((event) => event.kind === "tool_call");
+      expect(new Set(calls.map((event) => event.id)).size, provider).toBe(perProvider[provider]);
+    }
+  });
+
   it("keeps inputTokens exclusive of cached tokens", () => {
     // codex and gemini report an inclusive prompt count upstream; the mappers
     // subtract so the field means the same thing everywhere.

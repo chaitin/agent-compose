@@ -6,7 +6,7 @@ import { flattenEnvMap } from "../mcp-config.js";
 import { extractText, jsonString } from "../text.js";
 import { TranscriptWriter } from "../transcript.js";
 import type { AgentEvent } from "../agent-event.js";
-import { toolKindForName } from "../agent-event.js";
+import { dominantUsageModel, toolKindForName } from "../agent-event.js";
 import type { AgentResult, RunnerOptions } from "../types.js";
 import { cancellationRequested } from "../shutdown.js";
 import { waitForChildExit } from "../child-process.js";
@@ -80,21 +80,26 @@ export class GeminiRunner {
       return;
     }
     if (type === "result") {
-      const stats = (event.stats || {}) as Record<string, unknown>;
-      const models = (stats.models || {}) as Record<string, unknown>;
-      // `stats.input_tokens` counts cached tokens too; `stats.input` is the
-      // uncached remainder, which is what inputTokens means here.
-      this.emit({
-        kind: "usage",
-        scope: "run",
-        model: Object.keys(models)[0],
-        inputTokens: Number(stats.input ?? 0),
-        outputTokens: Number(stats.output_tokens ?? 0),
-        cachedTokens: typeof stats.cached === "number" ? stats.cached : undefined,
-      });
+      // A result without stats reports no usage at all. Emitting an all-zero
+      // record would be the empty placeholder the module contract forbids.
+      const stats = event.stats && typeof event.stats === "object" ? event.stats as Record<string, unknown> : undefined;
+      if (stats) {
+        const models = (stats.models || {}) as Record<string, unknown>;
+        // `stats.input_tokens` counts cached tokens too; `stats.input` is the
+        // uncached remainder, which is what inputTokens means here.
+        this.emit({
+          kind: "usage",
+          scope: "run",
+          model: dominantUsageModel(models, (entry) => Number(entry.total_tokens ?? 0)),
+          inputTokens: Number(stats.input ?? 0),
+          outputTokens: Number(stats.output_tokens ?? 0),
+          cachedTokens: typeof stats.cached === "number" ? stats.cached : undefined,
+        });
+      }
       const errorDetail = event.error as Record<string, unknown> | undefined;
       this.emit({
         kind: "step_end",
+        scope: "run",
         stopReason: errorDetail ? "error" : "stop",
         rawStopReason: String(event.status || ""),
       });

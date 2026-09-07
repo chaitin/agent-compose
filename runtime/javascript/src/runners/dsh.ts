@@ -313,6 +313,7 @@ export class DshRunner {
       const kind = firstString(reason, "kind") || "completed";
       this.emit({
         kind: "step_end",
+        scope: "run",
         stopReason: kind === "completed" ? "stop" : kind === "cancelled" ? "cancelled" : kind === "error" ? "error" : undefined,
         rawStopReason: kind,
       });

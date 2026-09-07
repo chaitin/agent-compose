@@ -136,28 +136,94 @@ func (p *promptAttachProjector) projectLine(line []byte) ([]RunAttachOutput, *Tr
 // runtime agent event.
 //
 // The runtime publishes provider-neutral events: the frame name is the event
-// kind and only text_delta carries transcript text. Reasoning deliberately
-// contributes no text, so a consumer reading just that field never splices the
-// model's thinking into the answer.
+// kind, and the transcript is assembled from the kinds a reader needs to
+// follow the run — assistant prose plus the tool activity that produced it.
+// Reasoning deliberately contributes no text, so a consumer reading just that
+// field never splices the model's thinking into the answer.
 func (p *promptAttachProjector) agentEventText(raw json.RawMessage) (string, string) {
 	var event struct {
-		Kind string `json:"kind"`
-		Text string `json:"text"`
-		Type string `json:"type"`
+		Kind    string          `json:"kind"`
+		Text    string          `json:"text"`
+		Type    string          `json:"type"`
+		ID      string          `json:"id"`
+		Name    string          `json:"name"`
+		Command string          `json:"command"`
+		Input   json.RawMessage `json:"input"`
+		Output  string          `json:"output"`
+		Error   string          `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &event); err != nil {
 		return "agent_event", ""
 	}
-	if event.Kind != "" {
-		name := event.Kind
-		if event.Kind == "text_delta" {
-			return name, event.Text
-		}
-		return name, ""
+	switch event.Kind {
+	case "":
+		// Legacy shape: a raw provider event with no neutral kind. Keep the
+		// frame addressable but contribute nothing to the transcript.
+		return firstNonEmpty(event.Type, "agent_event"), ""
+	case "text_delta":
+		return event.Kind, event.Text
+	case "tool_call":
+		return event.Kind, p.newToolText(event.ID, promptAttachToolCallText(event.Name, event.Command, event.Input))
+	case "tool_result":
+		return event.Kind, p.newToolText(event.ID+"\x00result", promptAttachToolResultText(event.Output, event.Error))
+	default:
+		return event.Kind, ""
 	}
-	// Legacy shape: a raw provider event with no neutral kind. Keep the frame
-	// addressable but contribute nothing to the transcript.
-	return firstNonEmpty(event.Type, "agent_event"), ""
+}
+
+// newToolText returns only the part of text not already written under key.
+//
+// Tool events are announced more than once and carry cumulative payloads:
+// claude re-emits a tool call once its arguments finish streaming, and codex
+// resends a command's aggregated output on every update. Without this the
+// transcript would repeat each tool's header and output.
+func (p *promptAttachProjector) newToolText(key, text string) string {
+	if text == "" {
+		return ""
+	}
+	previous := p.itemTexts[key]
+	p.itemTexts[key] = text
+	if previous != "" && strings.HasPrefix(text, previous) {
+		return text[len(previous):]
+	}
+	return text
+}
+
+// promptAttachToolCallText renders a tool call the way the guest runners'
+// own transcript writers do: a named header, then the shell command for an
+// execute call or the tool's arguments for anything else.
+func promptAttachToolCallText(name, command string, input json.RawMessage) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	header := "\n[tool:" + name + "]\n"
+	if command = strings.TrimSpace(command); command != "" {
+		return header + "$ " + command + "\n"
+	}
+	if arguments := promptAttachToolInputText(input); arguments != "" {
+		return header + arguments + "\n"
+	}
+	return header
+}
+
+func promptAttachToolInputText(input json.RawMessage) string {
+	switch trimmed := strings.TrimSpace(string(input)); trimmed {
+	case "", "null", "{}", `""`:
+		return ""
+	default:
+		return trimmed
+	}
+}
+
+func promptAttachToolResultText(output, failure string) string {
+	if failure = strings.TrimSpace(failure); failure == "" {
+		return output
+	}
+	if output != "" && !strings.HasSuffix(output, "\n") {
+		output += "\n"
+	}
+	return output + "[tool error] " + failure + "\n"
 }
 
 func (p *promptAttachProjector) appendLogText(text string) error {
