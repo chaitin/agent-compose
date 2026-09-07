@@ -189,7 +189,7 @@ func TestEnsurePromptAttachLLMFacadeEnvOpenCodeUsesSharedRuntimeConfig(t *testin
 	if err != nil {
 		t.Fatalf("ensurePromptAttachLLMFacadeEnv returned error: %v", err)
 	}
-	if env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses ||
+	if env["LLM_API_PROTOCOL"] != llms.APIProtocolChatCompletions ||
 		env["OPENCODE_CONFIG"] != "/root/.config/opencode/opencode.json" ||
 		env["LLM_MODEL"] != "agent-compose/gpt-test" ||
 		env["OPENCODE_MODEL"] != "agent-compose/gpt-test" {
@@ -376,6 +376,7 @@ func TestPromptAttachProvidersAllHaveFacadeCases(t *testing.T) {
 		}
 	}
 }
+
 // The start frame's model becomes opencode's --model, which overrides the
 // OPENCODE_MODEL env the facade just exported. It therefore has to carry the
 // facade's namespace-corrected model, not the agent-compose provider/model pair
