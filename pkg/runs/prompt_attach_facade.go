@@ -130,3 +130,26 @@ func (c *Controller) deletePromptAttachLLMFacadeToken(ctx context.Context, token
 	}
 	_ = store.DeleteLLMFacadeToken(ctx, token)
 }
+
+// promptAttachRuntimeModel returns the model the guest runner should be told to
+// use, which is not always the one the agent configured.
+//
+// The facade resolves an agent-compose provider/model pair and then republishes
+// it in whatever namespace the guest agent addresses models by. opencode is the
+// only provider where the two namespaces differ: its model must carry the
+// provider key WriteOpenCodeRuntimeConfig writes into the guest's opencode.json,
+// so EnsureOpenCodeFacadeConfig exports the resolved pair as OPENCODE_MODEL.
+// Forwarding the configured model instead would hand opencode a provider name it
+// has no entry for, and it exits without diagnosing the failure.
+//
+// The one-shot run path performs the same substitution through
+// runtimefacade.AgentRuntimeConfig.Model; this is its prompt-attach counterpart.
+func promptAttachRuntimeModel(agent execution.AgentConfig, managedEnv map[string]string) string {
+	if domain.NormalizeAgentKind(agent.Provider) != "opencode" {
+		return agent.Model
+	}
+	if model := strings.TrimSpace(managedEnv["OPENCODE_MODEL"]); model != "" {
+		return model
+	}
+	return agent.Model
+}

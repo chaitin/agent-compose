@@ -19,7 +19,11 @@ func AgentConfigFromDefinition(agent domain.AgentDefinition, fallbackProvider st
 		provider = domain.NormalizeAgentKind(fallbackProvider)
 	}
 	model := strings.TrimSpace(agent.Model)
-	if provider == "opencode" {
+	if provider == "opencode" && model == "" {
+		// Compatibility fallback. `model:` used to be discarded outright for
+		// opencode, so agents written against that behaviour carry their model
+		// only as an OPENCODE_MODEL env item. Those keep working; a configured
+		// `model:` now wins, as it does for every other provider.
 		model = strings.TrimSpace(domain.SandboxEnvMap(agent.EnvItems)["OPENCODE_MODEL"])
 	}
 	return AgentConfig{
