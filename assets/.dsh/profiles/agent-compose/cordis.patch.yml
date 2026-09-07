@@ -32,6 +32,9 @@
         apiKeyEnv: LLM_API_KEY
         api: !!js process.env.DSH_WIRE_API || 'openai-completions'
         baseURL: !!js process.env.LLM_API_ENDPOINT
+        # DSH_REASONING_EFFORT is normalized by dsh.ts from agent-compose's
+        # effort levels and consumed as the route's default reasoning level.
+        reasoning: !!js process.env.DSH_REASONING_EFFORT || undefined
         models:
           - id: !!js process.env.DSH_MODEL || 'deepseek-v4-flash'
             reasoningEfforts:
