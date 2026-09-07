@@ -17,7 +17,7 @@ type promptAttachProjector struct {
 	mu                     sync.Mutex
 	buffer                 []byte
 	itemTexts              map[string]string
-	loggedText             string
+	loggedProse            string
 	turnText               string
 	hasLoggedText          bool
 	logEndsWithNewline     bool
@@ -104,7 +104,7 @@ func (p *promptAttachProjector) projectLine(line []byte) ([]RunAttachOutput, *Tr
 		return []RunAttachOutput{runAttachAgentEventResponse("started", "", string(line))}, nil, nil
 	case "agent_event":
 		name, text := p.agentEventText(frame.Event)
-		if err := p.appendLogText(text); err != nil {
+		if err := p.appendLogText(text, name == "text_delta"); err != nil {
 			return nil, nil, err
 		}
 		return []RunAttachOutput{runAttachAgentEventResponse(firstNonEmpty(name, "agent_event"), text, string(frame.Event))}, nil, nil
@@ -226,7 +226,15 @@ func promptAttachToolResultText(output, failure string) string {
 	return output + "[tool error] " + failure + "\n"
 }
 
-func (p *promptAttachProjector) appendLogText(text string) error {
+// appendLogText writes text to the transcript, tracking assistant prose
+// separately from tool activity.
+//
+// appendLogFinalText reconciles the turn's final text against what the run
+// already streamed, and it does that by prefix. Only assistant prose can serve
+// as that prefix: tool headers, commands and output are interleaved into the
+// same transcript but never appear in FinalText, so counting them would break
+// the comparison and silently drop the final text's tail.
+func (p *promptAttachProjector) appendLogText(text string, prose bool) error {
 	if text == "" {
 		return nil
 	}
@@ -235,37 +243,76 @@ func (p *promptAttachProjector) appendLogText(text string) error {
 	if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text}); err != nil {
 		return err
 	}
-	p.loggedText += text
+	if prose {
+		p.loggedProse += text
+	}
 	p.turnText += text
 	return nil
 }
 
+// appendLogFinalText appends the part of the turn's final text that never
+// reached the transcript as a text_delta.
+//
+// Providers that deliver the answer only on the terminal frame land here whole;
+// providers that streamed it land here with nothing left to write. Both the
+// turn-completed and the result frame carry the same final text, so the second
+// one finds the first's work already done and appends nothing.
 func (p *promptAttachProjector) appendLogFinalText(finalText string) error {
 	if finalText == "" {
 		return nil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if strings.HasPrefix(finalText, p.loggedText) {
-		text := finalText[len(p.loggedText):]
-		if text == "" {
-			return nil
-		}
-		if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text}); err != nil {
-			return err
-		}
-		p.loggedText += text
-		p.turnText += text
+	text := finalText[streamedFinalTextOverlap(p.loggedProse, finalText):]
+	if text == "" {
 		return nil
 	}
-	if p.loggedText == "" {
-		if err := p.appendLogChunkLocked(domain.ExecChunk{Text: finalText}); err != nil {
-			return err
-		}
-		p.loggedText = finalText
-		p.turnText += finalText
+	if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text}); err != nil {
+		return err
 	}
+	p.loggedProse += text
+	p.turnText += text
 	return nil
+}
+
+// streamedFinalTextOverlap returns the length of the longest prefix of
+// finalText that the prose logged so far ends with.
+//
+// Requiring finalText to be prefixed by the whole prose log would only hold
+// for the first turn of a run that never used a tool: tool activity splits a
+// turn's prose in the transcript, and every turn after the first is preceded
+// by another turn's prose. Matching the overlap instead keeps the reconciliation
+// anchored on what this turn actually streamed, so an unstreamed tail still
+// lands in the log.
+//
+// The overlap is computed with the KMP prefix function over
+// finalText + sentinel + the tail of logged, keeping the cost linear in
+// len(finalText). The sentinel is only assumed to be rare, not absent, so the
+// result is verified before it is trusted.
+func streamedFinalTextOverlap(logged, finalText string) int {
+	if finalText == "" || logged == "" {
+		return 0
+	}
+	if len(logged) > len(finalText) {
+		logged = logged[len(logged)-len(finalText):]
+	}
+	combined := finalText + "\x00" + logged
+	failure := make([]int, len(combined))
+	for i := 1; i < len(combined); i++ {
+		length := failure[i-1]
+		for length > 0 && combined[i] != combined[length] {
+			length = failure[length-1]
+		}
+		if combined[i] == combined[length] {
+			length++
+		}
+		failure[i] = length
+	}
+	overlap := failure[len(combined)-1]
+	if overlap > len(finalText) || !strings.HasSuffix(logged, finalText[:overlap]) {
+		return 0
+	}
+	return overlap
 }
 
 func (p *promptAttachProjector) AppendHumanMessage(message string) error {

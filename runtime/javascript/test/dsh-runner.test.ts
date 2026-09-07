@@ -152,7 +152,7 @@ describe("DshRunner", () => {
   });
 
   it.each([
-    ["low", "high"],
+    ["low", "low"],
     ["medium", "high"],
     ["high", "high"],
     ["xhigh", "max"],

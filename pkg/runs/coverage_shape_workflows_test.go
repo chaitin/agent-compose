@@ -3306,3 +3306,56 @@ func TestPromptAttachProjectorNamesFramesByEventKind(t *testing.T) {
 		t.Fatalf("transcript = %q, want no text from these kinds", string(data))
 	}
 }
+
+// A turn that used tools splits the assistant's prose around the tool
+// activity, so FinalText is not prefixed by everything in the transcript. The
+// tail that never streamed as a text_delta still has to land in the log.
+func TestPromptAttachProjectorLogsFinalTextTailAfterToolActivity(t *testing.T) {
+	logsPath := filepath.Join(t.TempDir(), "transcript.txt")
+	projector := newPromptAttachProjector(domain.ProjectRunRecord{RunID: "run-tool-final"}, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-tool-final"}}, logsPath, nil)
+	frames := []string{
+		`{"type":"agent_event","event":{"kind":"text_delta","text":"looking now."}}`,
+		`{"type":"agent_event","event":{"kind":"tool_call","id":"call-1","name":"shell","command":"ls"}}`,
+		`{"type":"agent_event","event":{"kind":"tool_result","id":"call-1","output":"README.md\n"}}`,
+		`{"type":"agent_turn_completed","finalText":"looking now. found it.","finalTextSource":"provider_message"}`,
+	}
+	for _, frame := range frames {
+		if _, _, err := projector.Project([]byte(frame + "\n")); err != nil {
+			t.Fatalf("project %s: %v", frame, err)
+		}
+	}
+	transcript, err := os.ReadFile(logsPath)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	if want := "looking now.\n[tool:shell]\n$ ls\nREADME.md\n found it."; string(transcript) != want {
+		t.Fatalf("transcript = %q, want %q", string(transcript), want)
+	}
+}
+
+// A second turn's final text is reconciled against its own prose. Keying on
+// the whole run's prose would leave every turn after the first unable to match
+// its prefix, dropping its unstreamed tail.
+func TestPromptAttachProjectorLogsFinalTextTailOnLaterTurn(t *testing.T) {
+	logsPath := filepath.Join(t.TempDir(), "transcript.txt")
+	projector := newPromptAttachProjector(domain.ProjectRunRecord{RunID: "run-turn-two"}, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-turn-two"}}, logsPath, nil)
+	if _, _, err := projector.Project([]byte(`{"type":"agent_event","event":{"kind":"text_delta","text":"first answer\n"}}` + "\n")); err != nil {
+		t.Fatalf("project first answer: %v", err)
+	}
+	if _, _, err := projector.Project([]byte(`{"type":"agent_turn_completed","finalText":"first answer\n","finalTextSource":"provider_message"}` + "\n")); err != nil {
+		t.Fatalf("project first turn completion: %v", err)
+	}
+	if err := projector.AppendHumanMessage("next question"); err != nil {
+		t.Fatalf("append human message: %v", err)
+	}
+	if _, _, err := projector.Project([]byte(`{"type":"agent_turn_completed","finalText":"second answer\n","finalTextSource":"provider_message"}` + "\n")); err != nil {
+		t.Fatalf("project second turn completion: %v", err)
+	}
+	transcript, err := os.ReadFile(logsPath)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	if want := "first answer\nnext question\nsecond answer\n"; string(transcript) != want {
+		t.Fatalf("transcript = %q, want %q", string(transcript), want)
+	}
+}

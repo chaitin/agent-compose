@@ -39,7 +39,7 @@ Env vars aren't unbounded: Linux caps a single `argv`/`envp` string at `MAX_ARG_
 | Variable | Set by | Purpose |
 | --- | --- | --- |
 | `DSH_MODEL` | `dsh.ts` | Model name (provider routing is resolved host-side; only the model literal crosses) |
-| `DSH_REASONING_EFFORT` | `dsh.ts` | agent-compose's 5-level `effort` collapsed to DSH's 2-level `high`/`max` (§6 has no equivalent collapse — this is the reasoning-effort case) |
+| `DSH_REASONING_EFFORT` | `dsh.ts` | agent-compose's 5-level `effort` collapsed onto the `low`/`high`/`max` the `llm-pi-ai` route declares (§6 has no equivalent collapse — this is the reasoning-effort case). No daemon-driven path sets an effort today, so the route's `'max'` fallback is what every run actually gets; it preserves the static `thinking: enabled` + `reasoningEffort: 'max'` the replaced `llm-deepseek` row carried |
 | `DSH_PERMISSION_MODE` | facade config + `dsh.ts` | Always `danger-full-access`; guest sandboxing is the agent-compose sandbox, not a nested DSH one (§5.3/§5.5) |
 | `DSH_SESSION_ROOT`, `DSH_SESSION_ID`, `DSH_RESUME` | `dsh.ts` | Session persistence and resume (§3.3) |
 | `DSH_PROMPT_FILE` | `dsh.ts` | Path to the prompt text file `runner.js` reads |

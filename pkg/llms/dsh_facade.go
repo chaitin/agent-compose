@@ -98,15 +98,25 @@ func EnsureDshFacadeConfig(ctx context.Context, req DshFacadeConfigRequest) (map
 //
 // It mirrors piFacadeProtocol, because llm-pi-ai is the same pi-ai adapter:
 // an Anthropic-family provider is served natively over the /llm/anthropic
-// route rather than bridged down to chat completions, so no family is a hard
-// error here. Only an OpenAI provider declaring a wire api that is neither
-// responses nor chat completions is unroutable.
+// route rather than bridged down to chat completions. Two things are
+// unroutable: a family that is neither Anthropic nor OpenAI, and an OpenAI
+// provider declaring a wire api that is neither responses nor chat
+// completions. The family check is not redundant with the wire-api switch —
+// provider_type has no CHECK constraint, so an unrecognised family would
+// otherwise fall through to the OpenAI branch and be pointed at
+// /llm/openai/v1, turning a configuration error into a request-time failure
+// further downstream in UpstreamProtocolAndEndpoint.
 func dshFacadeProtocol(target ResolvedTarget, runtimeBaseURL, sandboxID string) (piAiAPI, facadeProtocol, facadeBaseURL string, err error) {
 	runtimeBaseURL = strings.TrimRight(runtimeBaseURL, "/")
-	if NormalizeProviderType(target.Provider.ProviderType) == ProviderFamilyAnthropic {
+	family := NormalizeProviderType(target.Provider.ProviderType)
+	if family == ProviderFamilyAnthropic {
 		// Same base-path rule as pi: the Anthropic client appends /v1/messages
 		// itself, so the facade base stays at the family root.
 		return "anthropic-messages", APIProtocolMessages, runtimeBaseURL + "/api/runtime/sandboxes/" + sandboxID + "/llm/anthropic", nil
+	}
+	if family != ProviderFamilyOpenAI {
+		return "", "", "", domain.ClassifyError(domain.ErrFailedPrecondition,
+			fmt.Sprintf("dsh does not support llm provider family %q", target.Provider.ProviderType), nil)
 	}
 	openAIBaseURL := runtimeBaseURL + "/api/runtime/sandboxes/" + sandboxID + "/llm/openai/v1"
 	switch NormalizeWireAPI(target.WireAPI) {

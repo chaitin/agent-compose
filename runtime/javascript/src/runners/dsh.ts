@@ -415,9 +415,18 @@ function dshModelName(model: string | undefined): string {
   return separator >= 0 ? trimmed.slice(separator + 1) : trimmed;
 }
 
+// Collapses agent-compose's five effort levels onto the ones the profile's
+// llm-pi-ai route declares. pi-ai's own domain is wider (off, minimal, low,
+// medium, high, xhigh, max), but resolveReasoningLevel throws rather than
+// clamps for a level the model does not offer, so the target here is the
+// route's reasoningEfforts dict — off, low, high, max — not pi-ai's full range.
+// medium therefore still rounds up to high, while low maps straight through:
+// the route declares it, and the old llm-deepseek adapter's three-value
+// domain, which is what forced low to collapse, is no longer the consumer.
 function dshReasoningEffort(effort: RunnerOptions["effort"]): string {
   switch (effort) {
     case "low":
+      return "low";
     case "medium":
     case "high":
       return "high";

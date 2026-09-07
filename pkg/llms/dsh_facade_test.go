@@ -224,3 +224,34 @@ func TestEnsureDshFacadeConfigRoutesAnthropicProviderNatively(t *testing.T) {
 		t.Fatalf("saved token = %#v", store.savedTokens)
 	}
 }
+
+// provider_type is stored without a CHECK constraint, so a family that is
+// neither Anthropic nor OpenAI is representable. It has to be refused while
+// minting the facade config rather than routed to /llm/openai/v1 and refused
+// later, at request time, by UpstreamProtocolAndEndpoint.
+func TestEnsureDshFacadeConfigRejectsUnsupportedProviderFamily(t *testing.T) {
+	isolateLLMEnv(t)
+	store := newDshFacadeTestStore()
+	store.providers = []Provider{{
+		ID: "gemini-gateway", ProviderType: "gemini",
+		DefaultWireAPI: APIProtocolChatCompletions, BaseURL: "https://gemini.test", APIKey: "secret", Enabled: true,
+	}}
+	store.models = []Model{{ID: "model-id", Name: "gemini-3.1-pro", Enabled: true}}
+	store.wire["gemini-gateway\x00model-id"] = APIProtocolChatCompletions
+
+	env, err := EnsureDshFacadeConfig(context.Background(), DshFacadeConfigRequest{
+		Config:  &appconfig.Config{RuntimeBaseURL: "http://runtime.test/base/"},
+		Store:   store,
+		Sandbox: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-gemini"}},
+		Model:   "gemini-gateway/gemini-3.1-pro", Source: "agent", RunID: "run-gemini",
+	})
+	if err == nil {
+		t.Fatalf("EnsureDshFacadeConfig accepted an unsupported family: %#v", env)
+	}
+	if !strings.Contains(err.Error(), `llm provider family "gemini"`) {
+		t.Fatalf("error = %v", err)
+	}
+	if len(store.savedTokens) != 0 {
+		t.Fatalf("minted a token for an unroutable target: %#v", store.savedTokens)
+	}
+}
