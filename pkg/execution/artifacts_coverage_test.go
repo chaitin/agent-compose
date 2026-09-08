@@ -45,8 +45,14 @@ func TestCellArtifactsAndAgentFilesWorkflows(t *testing.T) {
 	if config := AgentConfigFromDefinition(domain.AgentDefinition{ID: " agent-1 ", Provider: " ", Model: " model "}, " codex "); config.Provider != "codex" || config.AgentDefinitionID != "agent-1" || config.Model != "model" {
 		t.Fatalf("AgentConfigFromDefinition fallback = %#v", config)
 	}
-	if config := AgentConfigFromDefinition(domain.AgentDefinition{Provider: "opencode", Model: "ignored", EnvItems: []domain.SandboxEnvVar{{Name: "OPENCODE_MODEL", Value: "env-model"}}}, "codex"); config.Model != "env-model" {
+	// A configured `model:` wins for opencode as it does for every other
+	// provider; OPENCODE_MODEL is only the fallback for agents written before
+	// `model:` was read at all.
+	if config := AgentConfigFromDefinition(domain.AgentDefinition{Provider: "opencode", Model: "configured-model", EnvItems: []domain.SandboxEnvVar{{Name: "OPENCODE_MODEL", Value: "env-model"}}}, "codex"); config.Model != "configured-model" {
 		t.Fatalf("AgentConfigFromDefinition opencode = %#v", config)
+	}
+	if config := AgentConfigFromDefinition(domain.AgentDefinition{Provider: "opencode", EnvItems: []domain.SandboxEnvVar{{Name: "OPENCODE_MODEL", Value: "env-model"}}}, "codex"); config.Model != "env-model" {
+		t.Fatalf("AgentConfigFromDefinition opencode env fallback = %#v", config)
 	}
 	ApplyAgentProviderEnv(nil, []domain.SandboxEnvVar{{Name: "A", Value: "1"}})
 	sessionEnvTarget := &domain.Sandbox{EnvItems: []domain.SandboxEnvVar{{Name: "A", Value: "session"}}}

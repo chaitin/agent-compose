@@ -135,12 +135,14 @@ func ensureOpenCodeResolvedFacadeConfig(ctx context.Context, call openCodeFacade
 	if providerFamily != ProviderFamilyOpenAI {
 		return nil, domain.ClassifyError(domain.ErrFailedPrecondition, "opencode requires an OpenAI-compatible or Anthropic model", nil)
 	}
-	protocol := NormalizeWireAPI(target.WireAPI)
-	if protocol != APIProtocolResponses && protocol != APIProtocolChatCompletions {
+	// The guard still rejects a provider the facade could not proxy to, so an
+	// unroutable target fails at run start rather than on the first request.
+	// It does not decide the token's wire api: see openCodeGuestWireAPI.
+	if upstream := NormalizeWireAPI(target.WireAPI); upstream != APIProtocolResponses && upstream != APIProtocolChatCompletions {
 		return nil, domain.ClassifyError(domain.ErrFailedPrecondition, "opencode model uses an unsupported wire protocol", nil)
 	}
 	tokenValue, token, err := NewFacadeToken(NewFacadeTokenRequest{
-		SandboxID: sandbox.Summary.ID, Model: target.Model.Name, ProviderID: target.Provider.ID, WireAPI: protocol, Source: source, RunID: runID,
+		SandboxID: sandbox.Summary.ID, Model: target.Model.Name, ProviderID: target.Provider.ID, WireAPI: openCodeGuestWireAPI, Source: source, RunID: runID,
 	})
 	if err != nil {
 		return nil, err
@@ -152,7 +154,7 @@ func ensureOpenCodeResolvedFacadeConfig(ctx context.Context, call openCodeFacade
 	if err := WriteOpenCodeRuntimeConfig(sandbox, "agent-compose", target.Model.Name, openAIBaseURL); err != nil {
 		return nil, err
 	}
-	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, protocol, config)
+	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, openCodeGuestWireAPI, config)
 	env["LLM_MODEL"] = "agent-compose/" + target.Model.Name
 	env["OPENCODE_MODEL"] = "agent-compose/" + target.Model.Name
 	return env, nil
@@ -212,7 +214,7 @@ func ensureOpenCodeOpenAIFacadeConfig(ctx context.Context, call openCodeFacadeCa
 	}
 	baseURL := GuestRuntimeBaseURL(config, sandbox)
 	tokenValue, token, err := NewFacadeToken(NewFacadeTokenRequest{
-		SandboxID: sandbox.Summary.ID, Model: target.Model.Name, ProviderID: target.Provider.ID, WireAPI: APIProtocolResponses, Source: source, RunID: runID,
+		SandboxID: sandbox.Summary.ID, Model: target.Model.Name, ProviderID: target.Provider.ID, WireAPI: openCodeGuestWireAPI, Source: source, RunID: runID,
 	})
 	if err != nil {
 		return nil, err
@@ -224,7 +226,7 @@ func ensureOpenCodeOpenAIFacadeConfig(ctx context.Context, call openCodeFacadeCa
 	if err := WriteOpenCodeRuntimeConfig(sandbox, "agent-compose", target.Model.Name, openAIBaseURL); err != nil {
 		return nil, err
 	}
-	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, APIProtocolResponses, config)
+	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, openCodeGuestWireAPI, config)
 	env["LLM_MODEL"] = "agent-compose/" + target.Model.Name
 	env["OPENCODE_MODEL"] = "agent-compose/" + target.Model.Name
 	return env, nil
@@ -244,7 +246,7 @@ func ensureOpenCodeCustomFacadeConfig(ctx context.Context, call openCodeFacadeCa
 	}
 	baseURL := GuestRuntimeBaseURL(config, sandbox)
 	tokenValue, token, err := NewFacadeToken(NewFacadeTokenRequest{
-		SandboxID: sandbox.Summary.ID, Model: target.Model.Name, ProviderID: target.Provider.ID, WireAPI: APIProtocolChatCompletions, Source: source, RunID: runID,
+		SandboxID: sandbox.Summary.ID, Model: target.Model.Name, ProviderID: target.Provider.ID, WireAPI: openCodeGuestWireAPI, Source: source, RunID: runID,
 	})
 	if err != nil {
 		return nil, err
@@ -256,8 +258,21 @@ func ensureOpenCodeCustomFacadeConfig(ctx context.Context, call openCodeFacadeCa
 	if err := WriteOpenCodeRuntimeConfig(sandbox, providerID, target.Model.Name, openAIBaseURL); err != nil {
 		return nil, err
 	}
-	return openCodeOpenAIEnv(tokenValue, openAIBaseURL, APIProtocolChatCompletions, config), nil
+	return openCodeOpenAIEnv(tokenValue, openAIBaseURL, openCodeGuestWireAPI, config), nil
 }
+
+// openCodeGuestWireAPI is the protocol opencode speaks to the facade, which is
+// a property of the guest client rather than of the upstream provider.
+// WriteOpenCodeRuntimeConfig registers the facade with `@ai-sdk/openai-compatible`
+// (and `@ai-sdk/openai` in its default mode), both of which post chat
+// completions whatever the provider behind the facade speaks. Minting the token
+// for the provider's wire api instead made every responses-only provider
+// unusable from opencode: the guest's chat-completions request was refused with
+// "llm facade token wire api mismatch" before it could be proxied. The facade
+// bridges the two protocols itself — UpstreamProtocolAndEndpoint still derives
+// the upstream call from the resolved target — so the token only has to describe
+// the inbound half.
+const openCodeGuestWireAPI = APIProtocolChatCompletions
 
 func openCodeOpenAIEnv(tokenValue, baseURL, protocol string, config *appconfig.Config) map[string]string {
 	return map[string]string{
