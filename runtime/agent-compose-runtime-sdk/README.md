@@ -241,11 +241,21 @@ field retains the run ID, agents, events, and stderr. Invalid CLI protocol throw
 
 ### `runtime.llm(prompt, options?)`
 
-Calls the agent-compose LLM service. The daemon selects the HTTP protocol via
-`LLM_API_PROTOCOL` (`responses` by default, or `chat_completions` for
-OpenAI-compatible Chat Completions backends). With `outputSchema`,
-`chat_completions` uses prompt guidance and `response_format: json_object`, not
-Responses API strict JSON Schema.
+Calls the daemon's LLM capability. Inside a managed sandbox it uses the
+injected runtime facade: the base URL comes from `OPENAI_BASE_URL` /
+`ANTHROPIC_BASE_URL` (or is derived from `AGENT_COMPOSE_RUNTIME_BASE_URL` +
+`SANDBOX_ID`), the call is authenticated with the injected facade token
+(`AGENT_COMPOSE_SANDBOX_TOKEN`, falling back to `OPENAI_API_KEY` /
+`ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY`), and the wire protocol follows
+`LLM_API_PROTOCOL` (`responses` by default; `anthropic_messages` selects the
+Anthropic Messages facade; `chat_completions` uses the same OpenAI facade).
+No user-side URL or token wiring is required in a managed guest.
+
+An explicit `baseUrl` option (or, outside a managed sandbox, the legacy
+`BASE_URL` / `HTTP_URL` chain) instead calls the public
+`agentcompose.v2.LLMService/Generate` Connect JSON endpoint without a token,
+preserving the previous behavior. The facade token is only used for the
+request credential and never appears in thrown errors, logs, or results.
 
 ```ts
 const result = await runtime.llm("Summarize the workspace risk.", {
@@ -299,7 +309,7 @@ Options:
 | Option | Description |
 | --- | --- |
 | `model` | LLM model name. When omitted, agent-compose uses the server-side configuration. |
-| `baseUrl` | agent-compose service URL. Defaults to `BASE_URL`, then `HTTP_URL`, then `http://127.0.0.1:7410`. |
+| `baseUrl` | Explicit agent-compose service URL; always selects the legacy `LLMService.Generate` endpoint. When omitted, the managed sandbox facade environment is used first, then `BASE_URL`, `HTTP_URL`, `AGENT_COMPOSE_BASE_URL`, `AGENT_COMPOSE_HTTP_URL`, and finally `http://127.0.0.1:7410`. |
 | `timeoutMs` | Terminates the LLM service request after this number of milliseconds. |
 | `outputSchema` | Zod schema or JSON Schema object. When set, the returned `json` field is parsed from `text`. |
 
