@@ -40,6 +40,14 @@ type Conversation struct {
 	continuity Continuity
 	current    *Reply
 	closed     bool
+	// sentFrameID identifies the message of the turn in flight, and
+	// retryFrameID that of a turn dropStream ended without an outcome.
+	// Resending the latter verbatim reuses its ID, which is what tells the
+	// daemon the second copy is the same message.
+	sentFrameID  string
+	sentText     string
+	retryFrameID string
+	retryText    string
 }
 
 // Start returns a new conversation with this Agent.
@@ -102,6 +110,10 @@ func (a *Agent) Open(ctx context.Context, id string, opts ...Option) (*Conversat
 	}
 	conversation.runID = run.GetRunId()
 	conversation.sandboxID = run.GetSandboxId()
+	// attach starts the read loop, and the frames it handles write these same
+	// fields. Everything from here on is shared state.
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
 	if err := conversation.attach(ctx, "Open", ""); err != nil {
 		if !resolved.restartIfGone {
 			return nil, err
@@ -141,6 +153,14 @@ func (c *Conversation) RunID() string {
 
 // Send contributes a message and returns the agent's [Reply], which streams
 // while the agent works.
+//
+// A Reply that fails because the stream broke leaves the turn's outcome
+// unknown: the daemon was asked to keep the run alive without a viewer, so the
+// agent may well have finished the turn. Resending the same text is the way to
+// recover, and doing so immediately does not record the message twice — it
+// travels under the identity the lost turn already had. The agent can still
+// work through it a second time, so a caller that cares should read
+// [Conversation.History] before resending.
 func (c *Conversation) Send(ctx context.Context, text string) (*Reply, error) {
 	if strings.TrimSpace(text) == "" {
 		return nil, invalidArgument("Send", "message text is required")
@@ -156,6 +176,7 @@ func (c *Conversation) Send(ctx context.Context, text string) (*Reply, error) {
 	if c.current != nil && !c.current.Done() {
 		return nil, ErrBusy
 	}
+	frameID := c.turnFrameID(text)
 	if c.stream == nil {
 		// No live stream: either this is the conversation's first message, or
 		// an earlier one was lost. attach reattaches when a run survived and
@@ -171,16 +192,44 @@ func (c *Conversation) Send(ctx context.Context, text string) (*Reply, error) {
 			}
 			// A reattach start frame carries no prompt, so the message still
 			// has to be sent.
-			if err := c.stream.Send(humanMessage(text)); err != nil {
+			if err := c.stream.Send(humanMessage(text, frameID)); err != nil {
 				return nil, fromConnect("Send", err)
 			}
+		} else {
+			// The message went out as the new run's opening prompt, which the
+			// daemon records under an identity derived from the run itself.
+			// There is nothing for a frame ID to key, and no earlier copy for
+			// a resend to collide with: a resend of a turn that never reached
+			// a run starts a run of its own.
+			frameID = ""
 		}
-	} else if err := c.stream.Send(humanMessage(text)); err != nil {
+	} else if err := c.stream.Send(humanMessage(text, frameID)); err != nil {
 		return nil, fromConnect("Send", err)
 	}
+	c.sentFrameID, c.sentText = frameID, text
+	c.retryFrameID, c.retryText = "", ""
 	reply := newReply(c)
 	c.current = reply
 	return reply, nil
+}
+
+// turnFrameID returns the client frame ID this turn's message carries.
+//
+// The daemon keys a human message's persisted identity on this value, so a
+// turn that ended without an outcome and is then resent verbatim can reuse the
+// ID it already had: the daemon recognises the second copy as the message it
+// already recorded instead of writing it down twice.
+//
+// Only the Send immediately after such a break qualifies, and only for the
+// same text. Reuse is what collapses two copies into one message, so widening
+// it any further would start swallowing messages a person really did repeat.
+//
+// Callers must hold c.mu.
+func (c *Conversation) turnFrameID(text string) string {
+	if c.retryFrameID != "" && c.retryText == text {
+		return c.retryFrameID
+	}
+	return newFrameID()
 }
 
 // Ask sends a message and waits for the complete answer.
@@ -305,8 +354,7 @@ func (c *Conversation) interrupt(ctx context.Context, reply *Reply) error {
 // attach opens the interactive session. prompt is the opening message when
 // starting a new one, and empty when reattaching to an existing run.
 //
-// Callers must hold c.mu, except in Open where the conversation is not yet
-// shared.
+// Callers must hold c.mu.
 func (c *Conversation) attach(ctx context.Context, op, prompt string) error {
 	// The stream belongs to the conversation, not to this call: a Send whose
 	// context is a single HTTP request's must not take the session down with
@@ -385,8 +433,9 @@ func (c *Conversation) readLoop(stream *attachStream) {
 }
 
 // humanMessage builds the frame carrying one turn's message.
-func humanMessage(text string) *agentcomposev2.AttachAgentRunRequest {
+func humanMessage(text, frameID string) *agentcomposev2.AttachAgentRunRequest {
 	return &agentcomposev2.AttachAgentRunRequest{
+		ClientFrameId: frameID,
 		Frame: &agentcomposev2.AttachAgentRunRequest_HumanMessage{
 			HumanMessage: &agentcomposev2.AttachHumanMessage{Text: text},
 		},
@@ -487,6 +536,10 @@ func (c *Conversation) takeReply() *Reply {
 	defer c.mu.Unlock()
 	reply := c.current
 	c.current = nil
+	// The turn reached its outcome, so there is nothing left to resend: the
+	// same text arriving later is a person saying it again, and must be
+	// recorded as its own message.
+	c.sentFrameID, c.sentText = "", ""
 	return reply
 }
 
@@ -506,6 +559,8 @@ func (c *Conversation) finishSession(stream *attachStream, err error, resultJSON
 	}
 	reply, cancel := c.current, c.cancel
 	c.current, c.stream, c.cancel, c.runID = nil, nil, nil, ""
+	c.sentFrameID, c.sentText = "", ""
+	c.retryFrameID, c.retryText = "", ""
 	c.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -532,6 +587,11 @@ func (c *Conversation) dropStream(stream *attachStream, err error) {
 	}
 	reply, cancel := c.current, c.cancel
 	c.current, c.stream, c.cancel = nil, nil, nil
+	// The turn's message may or may not have been recorded, so keep its frame
+	// ID: a resend of the same text is the same message, and reusing the ID is
+	// what stops the daemon from writing it down a second time.
+	c.retryFrameID, c.retryText = c.sentFrameID, c.sentText
+	c.sentFrameID, c.sentText = "", ""
 	c.mu.Unlock()
 	if cancel != nil {
 		cancel()

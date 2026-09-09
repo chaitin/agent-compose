@@ -60,18 +60,12 @@ func (c *Client) Lookup(ctx context.Context, id string, mustMatch map[string]str
 	}
 	labels[conversationLabel] = id
 
-	runs, err := c.matchingRuns(ctx, "Lookup", Search{Labels: labels})
+	latest, err := c.latestMatchingRun(ctx, "Lookup", Search{Labels: labels})
 	if err != nil {
 		return ConversationInfo{}, false, err
 	}
-	if len(runs) == 0 {
+	if latest == nil {
 		return ConversationInfo{}, false, nil
-	}
-	latest := runs[0]
-	for _, run := range runs[1:] {
-		if run.GetCreatedAt().AsTime().After(latest.GetCreatedAt().AsTime()) {
-			latest = run
-		}
 	}
 	// The ID is what was asked for, so it needs no confirming: a run came back
 	// only because it carries that label.
@@ -98,8 +92,10 @@ type Search struct {
 	// users.
 	Labels map[string]string
 	// Limit caps how many runs are examined, not how many conversations come
-	// back: a conversation that was rebuilt occupies several runs. Zero uses a
-	// sensible default.
+	// back: a conversation that was rebuilt occupies several runs. It is a
+	// budget across every page read, so a conversation whose runs all fall
+	// beyond it is not reported at all. Zero examines every matching run,
+	// which is what makes an empty Search mean every conversation.
 	Limit int
 }
 
@@ -155,22 +151,67 @@ func (c *Client) Conversations(ctx context.Context, search Search) ([]Conversati
 	return conversations, nil
 }
 
-// matchingRuns runs one filtered run list.
+// matchingRuns reads the runs matching search, walking as many pages as
+// search.Limit allows.
+//
+// The daemon caps a page well below what a busy conversation accumulates, so
+// reading one page and stopping would silently drop every conversation whose
+// runs fall outside it. Limit bounds the walk instead, and what it excludes is
+// excluded by the caller's own choice.
 func (c *Client) matchingRuns(ctx context.Context, op string, search Search) ([]*agentcomposev2.RunSummary, error) {
-	limit := search.Limit
-	if limit <= 0 || limit > listPageSize {
-		limit = listPageSize
+	budget := search.Limit
+	var runs []*agentcomposev2.RunSummary
+	for offset := uint32(0); budget <= 0 || len(runs) < budget; {
+		size := uint32(listPageSize)
+		if budget > 0 {
+			size = min(uint32(budget-len(runs)), listPageSize)
+		}
+		page, total, err := c.listRunsPage(ctx, op, search, offset, size)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, page...)
+		offset += uint32(len(page))
+		if len(page) == 0 || offset >= total {
+			break
+		}
 	}
+	return runs, nil
+}
+
+// latestMatchingRun returns the most recent run matching search, or nil when
+// there is none.
+//
+// A single row answers this. The daemon orders a run list by creation time,
+// newest first, so the first row is the latest run however many the
+// conversation has accumulated; reading a page to pick the newest out of it
+// would cost more for the same answer, and reading only the first page of a
+// long list would risk a wrong one.
+func (c *Client) latestMatchingRun(ctx context.Context, op string, search Search) (*agentcomposev2.RunSummary, error) {
+	runs, _, err := c.listRunsPage(ctx, op, search, 0, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(runs) == 0 {
+		return nil, nil
+	}
+	return runs[0], nil
+}
+
+// listRunsPage reads one page of the filtered run list, and how many runs match
+// it in total.
+func (c *Client) listRunsPage(ctx context.Context, op string, search Search, offset, limit uint32) ([]*agentcomposev2.RunSummary, uint32, error) {
 	response, err := c.transport.runs.ListRuns(ctx, connect.NewRequest(&agentcomposev2.ListRunsRequest{
 		ProjectId: strings.TrimSpace(search.ProjectID),
 		AgentName: strings.TrimSpace(search.AgentName),
 		Labels:    maps.Clone(search.Labels),
-		Limit:     uint32(limit),
+		Offset:    offset,
+		Limit:     limit,
 	}))
 	if err != nil {
-		return nil, fromConnect(op, err)
+		return nil, 0, fromConnect(op, err)
 	}
-	return response.Msg.GetRuns(), nil
+	return response.Msg.GetRuns(), response.Msg.GetTotal(), nil
 }
 
 // runLabels reads one run's labels, which only the detail view carries.
@@ -199,20 +240,14 @@ func (c *Client) EndSession(ctx context.Context, id string) error {
 	if id == "" {
 		return invalidArgument("EndSession", "conversation ID is required")
 	}
-	runs, err := c.matchingRuns(ctx, "EndSession", Search{
+	latest, err := c.latestMatchingRun(ctx, "EndSession", Search{
 		Labels: map[string]string{conversationLabel: id},
 	})
 	if err != nil {
 		return err
 	}
-	if len(runs) == 0 {
+	if latest == nil {
 		return nil
-	}
-	latest := runs[0]
-	for _, run := range runs[1:] {
-		if run.GetCreatedAt().AsTime().After(latest.GetCreatedAt().AsTime()) {
-			latest = run
-		}
 	}
 	// The run's status is not consulted: stopping one that has already
 	// finished answers plainly and changes nothing, while trusting a status

@@ -144,3 +144,13 @@ func newConversationID() string {
 	}
 	return "conv_" + hex.EncodeToString(raw[:])
 }
+
+// newFrameID returns the identity one turn's message travels under, which the
+// daemon uses to recognise a resent message as one it already recorded.
+func newFrameID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "turn_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return "turn_" + hex.EncodeToString(raw[:])
+}

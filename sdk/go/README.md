@@ -235,6 +235,13 @@ holder at a time, a run's input being the one this SDK meets: reattaching just
 after losing a stream can arrive before the previous attachment has let go.
 Retrying shortly is usually right.
 
+A `Reply` that fails because the stream broke leaves the turn's **outcome
+unknown**: the run was asked to survive its viewer, so the agent may well have
+finished. Resending the same text is how to recover, and resending it
+immediately does not record the message twice — it travels under the identity
+the lost turn already had. What it does not yet prevent is the agent working
+through that message a second time; see Known gaps.
+
 ## Concurrency
 
 A `Client` and an `Agent` are safe for concurrent use. A `Conversation` is not,
@@ -255,6 +262,14 @@ and allows one `Reply` in flight at a time; a second `Send` returns `ErrBusy`.
   that exits without closing its conversations leaves a run — and a sandbox —
   behind for each of them. Close them on the way out; recovering the ones a
   crash left behind means finding them through their labels.
+- **Resending a lost turn is deduplicated in history, not in execution.** The
+  message carries a client frame ID the daemon keys its persisted identity on,
+  so the resend is recorded once. The daemon still hands the message to the
+  agent again, so the turn can run twice; suppressing that needs the daemon to
+  stop forwarding a human message it has already recorded. The exception is a
+  run's **opening** turn, whose message is recorded under an identity derived
+  from the run rather than from a frame ID: resending that one does duplicate.
+  A caller that cares reads `History` before resending.
 - **`History` and `HistoryPage` return only user and assistant text.** Tool
   calls, reasoning, usage, and every other event kind are turn-scoped and not
   durable messages; replaying a turn's full activity trace after a reload

@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"strconv"
 	"testing"
 	"time"
 
@@ -131,5 +132,126 @@ func TestConversationsIgnoresRunsThisPackageDidNotStart(t *testing.T) {
 func getRunLabelled(labels map[string]string) func(*agentcomposev2.GetRunRequest) (*agentcomposev2.GetRunResponse, error) {
 	return func(*agentcomposev2.GetRunRequest) (*agentcomposev2.GetRunResponse, error) {
 		return &agentcomposev2.GetRunResponse{Run: &agentcomposev2.RunDetail{Labels: labels}}, nil
+	}
+}
+
+// listRunsPaged emulates the daemon's run pagination over a fixed list,
+// honoring the request's offset and limit. listRunsReturning hands back
+// everything at once, which cannot show whether a caller walks past the first
+// page.
+func listRunsPaged(runs ...*agentcomposev2.RunSummary) func(*agentcomposev2.ListRunsRequest) (*agentcomposev2.ListRunsResponse, error) {
+	return func(request *agentcomposev2.ListRunsRequest) (*agentcomposev2.ListRunsResponse, error) {
+		total := uint32(len(runs))
+		start := min(request.GetOffset(), total)
+		end := total
+		if limit := request.GetLimit(); limit > 0 {
+			end = min(start+limit, total)
+		}
+		return &agentcomposev2.ListRunsResponse{Runs: runs[start:end], Total: total}, nil
+	}
+}
+
+// A conversation is found through the runs it occupied, and a busy daemon has
+// far more runs than one page holds. Stopping at the first page would hide
+// whole conversations from an enumeration that claims to return every one.
+func TestConversationsWalksPastTheFirstPageOfRuns(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	created := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	labels := map[string]map[string]string{}
+	var runs []*agentcomposev2.RunSummary
+	// One conversation hogs the first page and then some; the other is reachable
+	// only by asking for a second one.
+	for index := range listPageSize + 5 {
+		runID := "run_" + strconv.Itoa(index)
+		conversation := "conv_loud"
+		if index >= listPageSize+3 {
+			conversation = "conv_quiet"
+		}
+		runs = append(runs, &agentcomposev2.RunSummary{
+			RunId: runID, ProjectId: "p", AgentName: "a",
+			Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
+			CreatedAt: timestamppb.New(created.Add(-time.Duration(index) * time.Minute)),
+		})
+		labels[runID] = map[string]string{conversationLabel: conversation}
+	}
+	daemon.listRuns = listRunsPaged(runs...)
+	daemon.getRun = func(request *agentcomposev2.GetRunRequest) (*agentcomposev2.GetRunResponse, error) {
+		return &agentcomposev2.GetRunResponse{Run: &agentcomposev2.RunDetail{Labels: labels[request.GetRunId()]}}, nil
+	}
+
+	found, err := daemon.client(t).Conversations(context.Background(), Search{})
+	if err != nil {
+		t.Fatalf("Conversations: %v", err)
+	}
+	if len(found) != 2 {
+		t.Fatalf("got %d conversations, want both", len(found))
+	}
+	if found[0].ID != "conv_loud" || found[1].ID != "conv_quiet" {
+		t.Errorf("got %q and %q, want conv_loud then conv_quiet by last activity", found[0].ID, found[1].ID)
+	}
+	if calls := daemon.count("ListRuns"); calls != 2 {
+		t.Errorf("listed runs %d times, want 2 pages for %d runs", calls, len(runs))
+	}
+}
+
+// A caller's Limit is a budget over the whole walk. It bounds the cost of an
+// enumeration, and what it leaves out is left out by the caller's own choice.
+func TestConversationsHonorsLimitAsABudgetAcrossPages(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	var runs []*agentcomposev2.RunSummary
+	for index := range listPageSize * 2 {
+		runs = append(runs, &agentcomposev2.RunSummary{
+			RunId: "run_" + strconv.Itoa(index), ProjectId: "p", AgentName: "a",
+			CreatedAt: timestamppb.New(time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)),
+		})
+	}
+	daemon.listRuns = listRunsPaged(runs...)
+	daemon.getRun = getRunLabelled(map[string]string{conversationLabel: "conv_1"})
+
+	if _, err := daemon.client(t).Conversations(context.Background(), Search{Limit: listPageSize + 1}); err != nil {
+		t.Fatalf("Conversations: %v", err)
+	}
+	// A budget of one page plus one run costs two pages, not the whole list.
+	if calls := daemon.count("ListRuns"); calls != 2 {
+		t.Errorf("listed runs %d times, want 2", calls)
+	}
+	if calls := daemon.count("GetRun"); calls != listPageSize+1 {
+		t.Errorf("examined %d runs, want the budget of %d", calls, listPageSize+1)
+	}
+}
+
+// Lookup and EndSession want the conversation's newest run and nothing else.
+// The daemon returns a run list newest first, so one row answers both however
+// many runs the conversation has piled up — and asking for one row is what
+// keeps a long-lived conversation from making the cheap question expensive.
+func TestLookupAsksTheDaemonForOnlyTheNewestRun(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	var asked *agentcomposev2.ListRunsRequest
+	daemon.listRuns = func(request *agentcomposev2.ListRunsRequest) (*agentcomposev2.ListRunsResponse, error) {
+		asked = request
+		return &agentcomposev2.ListRunsResponse{
+			Runs: []*agentcomposev2.RunSummary{{
+				RunId: "run_newest", ProjectId: "p", AgentName: "a",
+				Status:    agentcomposev2.RunStatus_RUN_STATUS_RUNNING,
+				CreatedAt: timestamppb.New(time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)),
+			}},
+			Total: 1200,
+		}, nil
+	}
+
+	found, ok, err := daemon.client(t).Lookup(context.Background(), "conv_1", nil)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if !ok || !found.Live {
+		t.Fatalf("Lookup returned %+v (ok=%v), want the live newest run", found, ok)
+	}
+	if asked.GetLimit() != 1 || asked.GetOffset() != 0 {
+		t.Errorf("asked for offset %d limit %d, want the single newest run", asked.GetOffset(), asked.GetLimit())
+	}
+	// 1200 matching runs, one request: the answer does not get more expensive
+	// as a conversation ages.
+	if calls := daemon.count("ListRuns"); calls != 1 {
+		t.Errorf("listed runs %d times, want 1", calls)
 	}
 }

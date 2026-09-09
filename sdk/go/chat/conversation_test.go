@@ -718,3 +718,90 @@ func TestOpeningAfterTheLastRunEndedStillResumesItsSandbox(t *testing.T) {
 		t.Errorf("Continuity = %q, want %q", got, Continuous)
 	}
 }
+
+// A turn whose stream broke leaves its outcome unknown, so a caller recovers by
+// resending. The daemon must be able to tell that resend apart from a person
+// typing the same thing twice, and the only thing that can tell them apart is
+// the identity the message travels under.
+func TestResendingALostTurnCarriesTheIdentityItAlreadyHad(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	messages := make(chan *agentcomposev2.AttachAgentRunRequest, 3)
+	attaches := 0
+	daemon.attach = func(stream *fakeStream) {
+		attaches++
+		if attaches == 1 {
+			// The opening turn travels as the run's prompt, not as a message.
+			if _, ok := stream.recv(); !ok {
+				return
+			}
+			stream.send(started("run-1", ""))
+			stream.send(turnCompleted(""))
+			frame, ok := stream.recv()
+			if !ok {
+				return
+			}
+			messages <- frame
+			// Drop the stream while that turn is in flight. The run survives,
+			// and so does the message it already took.
+			return
+		}
+		if _, ok := stream.recv(); !ok {
+			return
+		}
+		for range 2 {
+			frame, ok := stream.recv()
+			if !ok {
+				return
+			}
+			messages <- frame
+			stream.send(turnCompleted(""))
+		}
+		<-stream.hold
+	}
+
+	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
+	defer func() { _ = conversation.Close(context.Background()) }()
+	opening, err := conversation.Send(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if _, err := opening.Wait(context.Background()); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	lost, err := conversation.Send(context.Background(), "again")
+	if err != nil {
+		t.Fatalf("second Send: %v", err)
+	}
+	if _, err := lost.Wait(context.Background()); err == nil {
+		t.Fatal("the turn succeeded, want it to fail when its stream is lost")
+	}
+	for _, step := range []string{"resend", "repeat"} {
+		reply, err := conversation.Send(context.Background(), "again")
+		if err != nil {
+			t.Fatalf("%s Send: %v", step, err)
+		}
+		if _, err := reply.Wait(context.Background()); err != nil {
+			t.Fatalf("%s Wait: %v", step, err)
+		}
+	}
+
+	original, resent, repeated := <-messages, <-messages, <-messages
+	for _, frame := range []*agentcomposev2.AttachAgentRunRequest{original, resent, repeated} {
+		if text := frame.GetHumanMessage().GetText(); text != "again" {
+			t.Fatalf("frame carried %q, want the message under test", text)
+		}
+	}
+	if original.GetClientFrameId() == "" {
+		t.Fatal("the message carried no identity, so a resend of it cannot be recognised")
+	}
+	if resent.GetClientFrameId() != original.GetClientFrameId() {
+		t.Errorf("the resend travelled as %q, want the lost turn's %q: it is the same message",
+			resent.GetClientFrameId(), original.GetClientFrameId())
+	}
+	// The turn before it completed, so this one is a person saying the same
+	// thing again and has to be recorded on its own.
+	if repeated.GetClientFrameId() == original.GetClientFrameId() {
+		t.Errorf("a repeat after a completed turn reused %q, and would be swallowed as a duplicate",
+			repeated.GetClientFrameId())
+	}
+}
