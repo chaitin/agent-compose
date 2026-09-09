@@ -1,6 +1,6 @@
 {
   "name": "@chaitin-ai/agent-compose-runtime",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Guest-side runtime CLI for agent-compose agent sessions.",
   "license": "AGPL-3.0",
   "type": "module",

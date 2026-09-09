@@ -41,11 +41,6 @@ coverage.out
 *.prof
 __debug_bin*
 
-# Generated protobuf messages. The .proto files are the source of truth;
-# standard Task and image builds regenerate these files before compiling.
-/proto/agentcompose/v2/agentcompose.pb.go
-/proto/health/v1/health.pb.go
-
 # Task runner
 /.task/
 

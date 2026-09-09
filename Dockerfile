@@ -38,6 +38,10 @@ COPY --from=microsandbox-fetch /out /app/build/microsandbox
 COPY scripts/build-agent-compose-binary.sh scripts/build-agent-compose-binary.sh
 COPY scripts/with-go-toolchain.sh scripts/with-go-toolchain.sh
 COPY go.mod go.sum ./
+# go.mod replaces the proto module with ./proto, so its module files have to
+# be here before anything can resolve the graph. Only the module files: the
+# generated sources arrive later and must not bust this layer's cache.
+COPY proto/go.mod proto/go.sum ./proto/
 RUN go env -w GOPROXY="${GOPROXY}" && go mod download
 RUN GOBIN=/usr/local/bin go install github.com/bufbuild/buf/cmd/buf@${BUF_VERSION}
 COPY cmd ./cmd

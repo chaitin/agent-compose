@@ -14,7 +14,13 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
-func TestIntegrationEnsureSessionOpenCodeKeepsResponsesIngressForChatUpstream(t *testing.T) {
+// The guest's ingress protocol is decided by the client opencode is configured
+// with, not by the upstream provider: WriteOpenCodeRuntimeConfig registers the
+// facade with an ai-sdk package that posts chat completions. The facade bridges
+// to whatever the upstream speaks, so ingress stays chat completions here even
+// though this provider's own wire api is also chat completions — and equally
+// when it is responses (see TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows).
+func TestIntegrationEnsureSessionOpenCodePinsChatIngressIndependentOfUpstream(t *testing.T) {
 	isolateLLMEnv(t)
 
 	ctx := context.Background()
@@ -49,8 +55,8 @@ func TestIntegrationEnsureSessionOpenCodeKeepsResponsesIngressForChatUpstream(t 
 		t.Fatalf("EnsureSessionAgentRuntimeConfig returned error: %v", err)
 	}
 	env := runtimeConfig.Env
-	if env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses {
-		t.Fatalf("OpenCode ingress protocol = %q, want responses", env["LLM_API_PROTOCOL"])
+	if env["LLM_API_PROTOCOL"] != llms.APIProtocolChatCompletions {
+		t.Fatalf("OpenCode ingress protocol = %q, want chat completions", env["LLM_API_PROTOCOL"])
 	}
 	if runtimeConfig.Model != "agent-compose/gpt-chat" {
 		t.Fatalf("OpenCode runtime model = %q, want facade model", runtimeConfig.Model)
@@ -59,8 +65,8 @@ func TestIntegrationEnsureSessionOpenCodeKeepsResponsesIngressForChatUpstream(t 
 	if err != nil {
 		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
 	}
-	if token.WireAPI != llms.APIProtocolResponses {
-		t.Fatalf("facade token wire API = %q, want responses", token.WireAPI)
+	if token.WireAPI != llms.APIProtocolChatCompletions {
+		t.Fatalf("facade token wire API = %q, want chat completions", token.WireAPI)
 	}
 	providers, err := store.ListEnabledLLMProviders(ctx)
 	if err != nil {
@@ -139,14 +145,14 @@ func TestIntegrationEnsureSessionOpenCodeKeepsConfiguredProviderInMixedEnvironme
 	}
 
 	sessionProviderID := llms.SessionEnvProviderID(session.Summary.ID, llms.ProviderFamilyOpenAI)
-	assertTarget(session, "openai/gpt-test", "legacy-gpt", llms.APIProtocolResponses, sessionProviderID, "run-openai-env")
-	assertTarget(session, "baizhi/deepseek-v4-flash", "legacy-gpt", llms.APIProtocolResponses, sessionProviderID, "run-baizhi-env")
+	assertTarget(session, "openai/gpt-test", "legacy-gpt", llms.APIProtocolChatCompletions, sessionProviderID, "run-openai-env")
+	assertTarget(session, "baizhi/deepseek-v4-flash", "legacy-gpt", llms.APIProtocolChatCompletions, sessionProviderID, "run-baizhi-env")
 
 	exactSession := &domain.Sandbox{Summary: domain.SandboxSummary{
 		ID:            "sandbox-opencode-configured-provider",
 		Driver:        driverpkg.RuntimeDriverDocker,
 		WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-opencode-configured-provider", "workspace"),
 	}}
-	assertTarget(exactSession, "openai/gpt-test", "gpt-test", llms.APIProtocolResponses, "openai", "run-openai-configured")
+	assertTarget(exactSession, "openai/gpt-test", "gpt-test", llms.APIProtocolChatCompletions, "openai", "run-openai-configured")
 	assertTarget(exactSession, "baizhi/deepseek-v4-flash", "deepseek-v4-flash", llms.APIProtocolChatCompletions, "baizhi", "run-baizhi-configured")
 }

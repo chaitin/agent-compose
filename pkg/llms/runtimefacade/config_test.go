@@ -317,7 +317,7 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode openai returned error: %v", err)
 	}
-	if openAI.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses || openAI.Env["OPENCODE_CONFIG"] == "" {
+	if openAI.Env["LLM_API_PROTOCOL"] != llms.APIProtocolChatCompletions || openAI.Env["OPENCODE_CONFIG"] == "" {
 		t.Fatalf("opencode openai env = %#v", openAI.Env)
 	}
 

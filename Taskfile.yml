@@ -13,7 +13,7 @@ vars:
   GO_TOOLCHAIN_ENV: '{{.TASKFILE_DIR}}/scripts/with-go-toolchain.sh'
   GOLANGCI_LINT_CACHE_DIR: '{{.TASKFILE_DIR}}/.cache/golangci-lint'
   GO_BUILD_CACHE_DIR: '{{.TASKFILE_DIR}}/.cache/go-build'
-  GO_LINT_PACKAGES: ./cmd/... ./pkg/... ./internal/... ./proto/health/v1 ./proto/health/v1/healthv1connect ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect
+  GO_LINT_PACKAGES: ./cmd/... ./pkg/... ./internal/...
   GOHOSTOS:
     sh: ./scripts/with-go-toolchain.sh go env GOHOSTOS
   GOHOSTARCH:
@@ -172,7 +172,7 @@ tasks:
 
   lint:
     desc: Lint/format code
-    deps: ['lint:go', 'lint:installer']
+    deps: ['lint:go', 'lint:installer', 'lint:proto']
     cmds:
       - echo "lint all done"
 
@@ -184,6 +184,17 @@ tasks:
       - mkdir -p {{.GOLANGCI_LINT_CACHE_DIR}} {{.GO_BUILD_CACHE_DIR}}
       - GOCACHE={{.GO_BUILD_CACHE_DIR}} GOLANGCI_LINT_CACHE={{.GOLANGCI_LINT_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} golangci-lint fmt --diff {{.GO_LINT_PACKAGES}}
       - GOCACHE={{.GO_BUILD_CACHE_DIR}} GOLANGCI_LINT_CACHE={{.GOLANGCI_LINT_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} golangci-lint run --allow-parallel-runners {{.GO_LINT_PACKAGES}}
+
+  lint:proto:
+    desc: Lint and format the standalone wire-contract module
+    dir: '{{.TASKFILE_DIR}}/proto'
+    deps: ['generate:proto']
+    cmds:
+      - mkdir -p {{.GOLANGCI_LINT_CACHE_DIR}} {{.GO_BUILD_CACHE_DIR}}
+      # proto is a separate module, so the repository config is passed
+      # explicitly rather than discovered by walking up from this directory.
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} GOLANGCI_LINT_CACHE={{.GOLANGCI_LINT_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} golangci-lint fmt -c {{.TASKFILE_DIR}}/.golangci.yml --diff ./...
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} GOLANGCI_LINT_CACHE={{.GOLANGCI_LINT_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} golangci-lint run -c {{.TASKFILE_DIR}}/.golangci.yml --allow-parallel-runners ./...
 
   lint:installer:
     desc: Lint and format the standalone installer module
@@ -209,6 +220,7 @@ tasks:
     deps: ['generate:proto']
     cmds:
       - ./scripts/tests/test-generated-proto-contract.sh
+      - '{{.GO_TOOLCHAIN_ENV}} go -C proto test ./...'
       - ./scripts/tests/test-proto-breaking-ci-contract.sh
       - ./scripts/tests/test-build-agent-compose-binary.sh
       - ./scripts/tests/test-task-build-variables.sh
@@ -522,7 +534,7 @@ tasks:
     dir: '{{.TASKFILE_DIR}}'
     deps: ['generate:proto']
     cmds:
-      - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} go build ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} go -C proto build ./...
 
 
   build:agent-compose:boxlite:

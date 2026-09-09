@@ -102,6 +102,7 @@ func (c *Controller) preparePromptInteractionRuntime(ctx context.Context, runCtx
 	}
 	if len(managedEnv) > 0 {
 		env = llms.MergeManagedExecEnv(env, managedEnv)
+		agentConfig.Model = promptAttachRuntimeModel(agentConfig, managedEnv)
 	}
 	return preparedPromptInteraction{
 		Run:                run,
