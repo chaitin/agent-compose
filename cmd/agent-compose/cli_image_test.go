@@ -52,7 +52,7 @@ func TestIntegrationCLIImagesAliasesAndJSON(t *testing.T) {
 	}
 
 	textOut, textErr, _, textCode := executeCLICommand("image", "ls", "--host", server.URL)
-	if textCode != 0 || textErr != "" {
+	if textCode != 0 || !strings.Contains(textErr, "image ls is deprecated") || !strings.Contains(textErr, "use images instead") {
 		t.Fatalf("image ls code/stderr = %d / %q", textCode, textErr)
 	}
 	for _, want := range []string{"IMAGE ID", "REF", "DISK USAGE", "abc123456789", "agent:latest", "1.0KB"} {
@@ -121,7 +121,7 @@ func TestIntegrationCLIImagePullAliasesAndJSON(t *testing.T) {
 	}
 
 	textOut, textErr, _, textCode := executeCLICommand("image", "pull", "--host", server.URL, "agent:latest")
-	if textCode != 0 || textErr != "" {
+	if textCode != 0 || !strings.Contains(textErr, "image pull [image] is deprecated") || !strings.Contains(textErr, "use pull [image] instead") {
 		t.Fatalf("image pull code/stderr = %d / %q", textCode, textErr)
 	}
 	if !strings.Contains(textOut, "Pulled agent:latest") || !strings.Contains(textOut, "agent@sha256:def") {
@@ -213,7 +213,8 @@ agents:
 			args := append([]string{}, command.args...)
 			args = append(args, "--host", server.URL, "--file", composePath, "--platform", "linux/amd64")
 			stdout, stderr, _, exitCode := executeCLICommand(args...)
-			if exitCode != 0 || stderr != "" {
+			wantWarning := command.name == "image command"
+			if exitCode != 0 || (wantWarning && !strings.Contains(stderr, "image pull [image] is deprecated")) || (!wantWarning && stderr != "") {
 				t.Fatalf("pull project code/stderr = %d / %q", exitCode, stderr)
 			}
 			for _, want := range []string{"Pulled agent:v2", "agent:v2@sha256:def", "Pulled agent:v1", "agent:v1@sha256:def"} {
@@ -465,7 +466,7 @@ func TestIntegrationCLIImageRemoveAliasesAndJSON(t *testing.T) {
 	}
 
 	textOut, textErr, _, textCode := executeCLICommand("image", "rm", "--host", server.URL, "--prune-children", "agent:old")
-	if textCode != 0 || textErr != "" {
+	if textCode != 0 || !strings.Contains(textErr, "image rm <image> is deprecated") || !strings.Contains(textErr, "use rmi <image> instead") {
 		t.Fatalf("image rm code/stderr = %d / %q", textCode, textErr)
 	}
 	if !strings.Contains(textOut, "Untagged: agent:old") || !strings.Contains(textOut, "Deleted: old") {
@@ -536,7 +537,7 @@ func TestIntegrationCLIImageInspectJSON(t *testing.T) {
 	}
 
 	imageOut, imageErr, _, imageCode := executeCLICommand("image", "inspect", "--host", server.URL, "agent:latest")
-	if imageCode != 0 || imageErr != "" {
+	if imageCode != 0 || !strings.Contains(imageErr, "image inspect <image> is deprecated") || !strings.Contains(imageErr, "use inspect image <image> instead") {
 		t.Fatalf("image inspect code/stderr = %d / %q", imageCode, imageErr)
 	}
 	var imageDecoded composeImageInspectOutput
