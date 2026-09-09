@@ -280,6 +280,9 @@ and allows one `Reply` in flight at a time; a second `Send` returns `ErrBusy`.
   conversation's label, but a `Close` fast enough to beat the daemon's own
   creation of that run finds nothing to stop — closing that sliver means the
   daemon not keeping a run whose client left before the handshake finished.
+  `Close` bounds its own daemon calls to a few seconds so an unresponsive
+  daemon cannot hang a shutdown; when it gives up it says so, and the run it
+  could not stop is still reachable through `EndSession`.
 - **Resending a lost turn is deduplicated in history, not in execution.** The
   message carries a client frame ID the daemon keys its persisted identity on,
   so the resend is recorded once. The daemon still hands the message to the

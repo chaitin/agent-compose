@@ -118,24 +118,46 @@ func TestCloseReturnsEvenWhenTheDaemonStopsAnswering(t *testing.T) {
 		<-stream.hold
 	}
 
-	// A daemon that never answers still started a run, and Close now goes
-	// looking for it by label, so the lookup has to be answerable.
-	daemon.listRuns = listRunsReturning(runSummary("run-1", "RUN_STATUS_RUNNING", "sandbox-1"))
+	// Nothing answers, including the lookup Close makes for a run whose start
+	// frame never arrived — a daemon too wedged to name a run is exactly the
+	// one that will not answer that lookup either.
+	daemon.listRuns = func(*agentcomposev2.ListRunsRequest) (*agentcomposev2.ListRunsResponse, error) {
+		<-daemon.hold
+		return &agentcomposev2.ListRunsResponse{}, nil
+	}
+	daemon.stopRun = func(*agentcomposev2.StopRunRequest) (*agentcomposev2.StopRunResponse, error) {
+		<-daemon.hold
+		return &agentcomposev2.StopRunResponse{}, nil
+	}
+	shortenCloseBound(t, 100*time.Millisecond)
 
 	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
 	if _, err := conversation.Send(context.Background(), "hi"); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	closed := make(chan error, 1)
+	// context.Background() on purpose: the bound has to be Close's own, not one
+	// the caller was careful enough to supply.
 	go func() { closed <- conversation.Close(context.Background()) }()
 	select {
 	case err := <-closed:
-		if err != nil {
-			t.Fatalf("Close: %v", err)
+		// Giving up is reported rather than passed off as a clean close: the
+		// run may still be running, and EndSession is how it gets stopped.
+		if err == nil {
+			t.Fatal("Close reported success while the daemon never answered its cleanup")
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close blocked on a daemon that stopped answering")
 	}
+}
+
+// shortenCloseBound makes Close give up quickly so a test can watch it do so
+// without waiting out the real bound.
+func shortenCloseBound(t *testing.T, bound time.Duration) {
+	t.Helper()
+	previous := closeCallBound
+	closeCallBound = bound
+	t.Cleanup(func() { closeCallBound = previous })
 }
 
 func TestSendStreamsATurnAndAccumulatesTheAnswer(t *testing.T) {

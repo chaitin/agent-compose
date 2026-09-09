@@ -20,6 +20,18 @@ import (
 // above 500.
 const historyPageSize = 200
 
+// closeCallBound caps how long [Conversation.Close] will wait on the daemon.
+//
+// Close promises that a daemon which has stopped answering cannot hold it up,
+// and it has daemon calls to make: stopping the run, and finding that run when
+// its start frame never arrived. Those two are correlated — a daemon too wedged
+// to name a run is a daemon that may not answer the lookup either — so the
+// promise needs a bound of its own rather than whatever context the caller
+// happened to pass. A caller's own deadline still wins when it is shorter.
+//
+// A variable so a test can shorten it; nothing outside this package sets it.
+var closeCallBound = 10 * time.Second
+
 // Conversation is a durable thread of turns with one Agent.
 //
 // It is not safe for concurrent use and allows one [Reply] in flight at a
@@ -292,6 +304,12 @@ func (c *Conversation) History(ctx context.Context) ([]Message, error) {
 // A handle that never attached holds no run, so closing it is free — in
 // particular it cannot end a run some other handle is holding. Use
 // [Client.EndSession] to end a session no handle of yours is attached to.
+//
+// Close talks to the daemon, and bounds itself doing so: its calls give up
+// after a few seconds, or sooner if ctx says so. A Close that gives up reports
+// the failure and may leave the run running — [Client.EndSession] reaches it
+// later by ID, which is also how a run outliving a crashed process is
+// recovered.
 func (c *Conversation) Close(ctx context.Context) error {
 	c.mu.Lock()
 	opened, current, cancel, runID := c.stream, c.current, c.cancel, c.runID
@@ -307,6 +325,12 @@ func (c *Conversation) Close(ctx context.Context) error {
 	if cancel != nil {
 		cancel()
 	}
+
+	// Everything below talks to the daemon. Bound it: the run this is trying to
+	// stop may be unnamed precisely because the daemon went quiet, and a
+	// cleanup call must not become the thing that hangs a shutdown.
+	ctx, giveUp := context.WithTimeout(ctx, closeCallBound)
+	defer giveUp()
 
 	var failures []error
 	if opened != nil {
