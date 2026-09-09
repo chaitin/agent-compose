@@ -1,11 +1,14 @@
 package chat
 
 import (
+	"connectrpc.com/connect"
 	"context"
 	"maps"
 	"slices"
 	"strings"
 	"time"
+
+	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
 
 // listPageSize bounds one page of a conversation search. The daemon rejects
@@ -66,7 +69,7 @@ func (c *Client) Lookup(ctx context.Context, id string, mustMatch map[string]str
 	}
 	latest := runs[0]
 	for _, run := range runs[1:] {
-		if run.CreatedAt.After(latest.CreatedAt) {
+		if run.GetCreatedAt().AsTime().After(latest.GetCreatedAt().AsTime()) {
 			latest = run
 		}
 	}
@@ -74,10 +77,10 @@ func (c *Client) Lookup(ctx context.Context, id string, mustMatch map[string]str
 	// only because it carries that label.
 	return ConversationInfo{
 		ID:         id,
-		ProjectID:  latest.ProjectID,
-		AgentName:  latest.AgentName,
-		LastActive: latest.CreatedAt,
-		Live:       latest.live(),
+		ProjectID:  latest.GetProjectId(),
+		AgentName:  latest.GetAgentName(),
+		LastActive: latest.GetCreatedAt().AsTime(),
+		Live:       runIsLive(latest),
 	}, true, nil
 }
 
@@ -116,7 +119,7 @@ func (c *Client) Conversations(ctx context.Context, search Search) ([]Conversati
 	}
 	found := make(map[string]ConversationInfo, len(runs))
 	for _, run := range runs {
-		labels, err := c.runLabels(ctx, run.RunID)
+		labels, err := c.runLabels(ctx, run.GetRunId())
 		if err != nil {
 			return nil, err
 		}
@@ -127,18 +130,18 @@ func (c *Client) Conversations(ctx context.Context, search Search) ([]Conversati
 			// that Open cannot resume.
 			continue
 		}
-		if seen, ok := found[id]; ok && seen.LastActive.After(run.CreatedAt) {
+		if seen, ok := found[id]; ok && seen.LastActive.After(run.GetCreatedAt().AsTime()) {
 			continue
 		}
 		remaining := maps.Clone(labels)
 		delete(remaining, conversationLabel)
 		found[id] = ConversationInfo{
 			ID:         id,
-			ProjectID:  run.ProjectID,
-			AgentName:  run.AgentName,
+			ProjectID:  run.GetProjectId(),
+			AgentName:  run.GetAgentName(),
 			Labels:     remaining,
-			LastActive: run.CreatedAt,
-			Live:       run.live(),
+			LastActive: run.GetCreatedAt().AsTime(),
+			Live:       runIsLive(run),
 		}
 	}
 
@@ -153,30 +156,71 @@ func (c *Client) Conversations(ctx context.Context, search Search) ([]Conversati
 }
 
 // matchingRuns runs one filtered run list.
-func (c *Client) matchingRuns(ctx context.Context, op string, search Search) ([]wireRunSummary, error) {
+func (c *Client) matchingRuns(ctx context.Context, op string, search Search) ([]*agentcomposev2.RunSummary, error) {
 	limit := search.Limit
 	if limit <= 0 || limit > listPageSize {
 		limit = listPageSize
 	}
-	request := wireListRunsRequest{
-		ProjectID: strings.TrimSpace(search.ProjectID),
+	response, err := c.transport.runs.ListRuns(ctx, connect.NewRequest(&agentcomposev2.ListRunsRequest{
+		ProjectId: strings.TrimSpace(search.ProjectID),
 		AgentName: strings.TrimSpace(search.AgentName),
 		Labels:    maps.Clone(search.Labels),
 		Limit:     uint32(limit),
+	}))
+	if err != nil {
+		return nil, fromConnect(op, err)
 	}
-	var response wireListRunsResponse
-	if err := c.transport.unary(ctx, op, "ListRuns", request, &response); err != nil {
-		return nil, err
-	}
-	return response.Runs, nil
+	return response.Msg.GetRuns(), nil
 }
 
 // runLabels reads one run's labels, which only the detail view carries.
 func (c *Client) runLabels(ctx context.Context, runID string) (map[string]string, error) {
-	var response wireGetRunResponse
-	request := wireGetRunRequest{RunID: runID}
-	if err := c.transport.unary(ctx, "Conversations", "GetRun", request, &response); err != nil {
-		return nil, err
+	response, err := c.transport.runs.GetRun(ctx, connect.NewRequest(&agentcomposev2.GetRunRequest{RunId: runID}))
+	if err != nil {
+		return nil, fromConnect("Conversations", err)
 	}
-	return response.Run.Labels, nil
+	return response.Msg.GetRun().GetLabels(), nil
+}
+
+// EndSession ends whatever run a conversation currently has, releasing the
+// environment that run was holding. It is addressed by ID and needs no
+// attached handle, which is what a product needs to retire a conversation it
+// is not holding open — after a restart, say, when its own sessions are gone
+// but the daemon's runs are not.
+//
+// The conversation itself is untouched: its history and identity survive, and
+// [Agent.Open] resumes it, reporting [Restarted] because the environment is
+// gone. Ending a session that has already ended is not an error.
+//
+// [Conversation.Close] is the right call when you do hold the handle; closing
+// already ends the run it holds.
+func (c *Client) EndSession(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return invalidArgument("EndSession", "conversation ID is required")
+	}
+	runs, err := c.matchingRuns(ctx, "EndSession", Search{
+		Labels: map[string]string{conversationLabel: id},
+	})
+	if err != nil {
+		return err
+	}
+	if len(runs) == 0 {
+		return nil
+	}
+	latest := runs[0]
+	for _, run := range runs[1:] {
+		if run.GetCreatedAt().AsTime().After(latest.GetCreatedAt().AsTime()) {
+			latest = run
+		}
+	}
+	// The run's status is not consulted: stopping one that has already
+	// finished answers plainly and changes nothing, while trusting a status
+	// string the daemon might spell differently would leave a live run — and
+	// its environment — behind.
+	_, err = c.transport.runs.StopRun(ctx, connect.NewRequest(&agentcomposev2.StopRunRequest{
+		RunId:  latest.GetRunId(),
+		Reason: "conversation session ended",
+	}))
+	return fromConnect("EndSession", err)
 }

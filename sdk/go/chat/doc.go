@@ -14,9 +14,12 @@
 //
 // # Lifetime
 //
-// [Conversation.Close] releases local resources and leaves the conversation
-// intact on the server; a later [Agent.Open] resumes it. Only
-// [Conversation.Delete] ends it. Disconnecting never cancels work in progress:
+// [Conversation.Close] releases everything the handle holds — its stream and
+// the run behind it, whose environment the daemon then stops — while the
+// conversation's history and identity remain, so a later [Agent.Open] resumes
+// it, reporting [Restarted]. [Client.EndSession] does the same addressed by
+// ID, for a conversation no handle is attached to. Disconnecting without
+// closing never cancels work in progress:
 // an agent that is still working when the caller goes away keeps working, and
 // the events it produced meanwhile are available from
 // [Conversation.History] on return.

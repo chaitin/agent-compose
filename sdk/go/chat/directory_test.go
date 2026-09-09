@@ -2,8 +2,11 @@ package chat
 
 import (
 	"context"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"testing"
 	"time"
+
+	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
 
 // Lookup is the question authorization asks, and it must not need a label
@@ -11,12 +14,11 @@ import (
 // with this ID carrying these labels?".
 func TestLookupAnswersFromTheFilterAloneWithoutReadingRunDetail(t *testing.T) {
 	daemon := newFakeDaemon(t)
-	daemon.unary["ListRuns"] = map[string]any{
-		"runs": []map[string]any{{
-			"runId": "run_1", "projectId": "p", "agentName": "a",
-			"status": "RUN_STATUS_RUNNING", "createdAt": time.Now().UTC(),
-		}},
-	}
+	daemon.listRuns = listRunsReturning(&agentcomposev2.RunSummary{
+		RunId: "run_1", ProjectId: "p", AgentName: "a",
+		Status:    agentcomposev2.RunStatus_RUN_STATUS_RUNNING,
+		CreatedAt: timestamppb.New(time.Now().UTC()),
+	})
 	found, ok, err := daemon.client(t).Lookup(context.Background(), "conv_1",
 		map[string]string{"chat.user": "alice"})
 	if err != nil {
@@ -40,7 +42,7 @@ func TestLookupAnswersFromTheFilterAloneWithoutReadingRunDetail(t *testing.T) {
 // does not exist. The caller cannot tell which, which is the point.
 func TestLookupReportsNothingWhenNoRunMatches(t *testing.T) {
 	daemon := newFakeDaemon(t)
-	daemon.unary["ListRuns"] = map[string]any{"runs": []map[string]any{}}
+	daemon.listRuns = listRunsReturning()
 	_, ok, err := daemon.client(t).Lookup(context.Background(), "conv_1",
 		map[string]string{"chat.user": "mallory"})
 	if err != nil {
@@ -65,19 +67,19 @@ func TestConversationsReadsRunDetailAndFoldsARebuiltConversation(t *testing.T) {
 	daemon := newFakeDaemon(t)
 	early := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 	late := early.Add(2 * time.Hour)
-	daemon.unary["ListRuns"] = map[string]any{
-		"runs": []map[string]any{
-			{"runId": "run_old", "projectId": "p", "agentName": "a",
-				"status": "RUN_STATUS_SUCCEEDED", "createdAt": early},
-			{"runId": "run_new", "projectId": "p", "agentName": "a",
-				"status": "RUN_STATUS_RUNNING", "createdAt": late},
+	daemon.listRuns = listRunsReturning(
+		&agentcomposev2.RunSummary{
+			RunId: "run_old", ProjectId: "p", AgentName: "a",
+			Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
+			CreatedAt: timestamppb.New(early),
 		},
-	}
-	daemon.unary["GetRun"] = map[string]any{
-		"run": map[string]any{
-			"labels": map[string]string{conversationLabel: "conv_1", "chat.user": "alice"},
+		&agentcomposev2.RunSummary{
+			RunId: "run_new", ProjectId: "p", AgentName: "a",
+			Status:    agentcomposev2.RunStatus_RUN_STATUS_RUNNING,
+			CreatedAt: timestamppb.New(late),
 		},
-	}
+	)
+	daemon.getRun = getRunLabelled(map[string]string{conversationLabel: "conv_1", "chat.user": "alice"})
 
 	found, err := daemon.client(t).Conversations(context.Background(), Search{
 		Labels: map[string]string{"chat.user": "alice"},
@@ -110,19 +112,24 @@ func TestConversationsReadsRunDetailAndFoldsARebuiltConversation(t *testing.T) {
 // a conversation and must not be reported as one.
 func TestConversationsIgnoresRunsThisPackageDidNotStart(t *testing.T) {
 	daemon := newFakeDaemon(t)
-	daemon.unary["ListRuns"] = map[string]any{
-		"runs": []map[string]any{
-			{"runId": "run_cli", "projectId": "p", "agentName": "a", "status": "RUN_STATUS_SUCCEEDED"},
-		},
-	}
-	daemon.unary["GetRun"] = map[string]any{
-		"run": map[string]any{"labels": map[string]string{"scheduler": "nightly"}},
-	}
+	daemon.listRuns = listRunsReturning(&agentcomposev2.RunSummary{
+		RunId: "run_cli", ProjectId: "p", AgentName: "a",
+		Status: agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
+	})
+	daemon.getRun = getRunLabelled(map[string]string{"scheduler": "nightly"})
 	found, err := daemon.client(t).Conversations(context.Background(), Search{})
 	if err != nil {
 		t.Fatalf("Conversations: %v", err)
 	}
 	if len(found) != 0 {
 		t.Fatalf("runs without a conversation identity were listed: %+v", found)
+	}
+}
+
+// getRunLabelled answers every GetRun with the same labels, which is the only
+// field the conversation directory reads from a run's detail.
+func getRunLabelled(labels map[string]string) func(*agentcomposev2.GetRunRequest) (*agentcomposev2.GetRunResponse, error) {
+	return func(*agentcomposev2.GetRunRequest) (*agentcomposev2.GetRunResponse, error) {
+		return &agentcomposev2.GetRunResponse{Run: &agentcomposev2.RunDetail{Labels: labels}}, nil
 	}
 }

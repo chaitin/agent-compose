@@ -24,8 +24,9 @@ const (
 	KindError          EventKind = "error"
 )
 
-// Event is one observation from an agent working on a turn. The set of
-// variants is closed; switch on the concrete type to handle them.
+// Event is one observation from an agent working on a turn. Known
+// provider-neutral variants have concrete types; provider extensions use
+// [RawEvent]. Switch on the concrete type to handle them.
 //
 // A provider that structurally cannot report a kind emits no event of that
 // kind at all, and an optional field a provider does not report stays nil.
@@ -38,6 +39,20 @@ type Event interface {
 	At() time.Time
 	isEvent()
 }
+
+// RawEvent preserves an AttachAgentEvent whose provider-defined name is not
+// part of this SDK's typed, provider-neutral schema. The daemon's event name,
+// display text, and JSON payload are kept intact so clients can evolve their
+// own handling without waiting for an SDK release.
+type RawEvent struct {
+	eventAt
+	Name        string `json:"name"`
+	Text        string `json:"text,omitempty"`
+	PayloadJSON string `json:"payloadJson,omitempty"`
+}
+
+// Kind reports the daemon-provided event name, including provider extensions.
+func (e *RawEvent) Kind() EventKind { return EventKind(e.Name) }
 
 // ToolKind categorizes what a tool does.
 type ToolKind string
@@ -149,10 +164,22 @@ type StepStartEvent struct {
 // Kind reports [KindStepStart].
 func (*StepStartEvent) Kind() EventKind { return KindStepStart }
 
+// StepEndScope identifies what a [StepEndEvent] closes.
+type StepEndScope string
+
+// Step-end scopes.
+const (
+	StepEndScopeStep StepEndScope = "step"
+	StepEndScopeRun  StepEndScope = "run"
+)
+
 // StepEndEvent reports that the agent finished a step.
 type StepEndEvent struct {
 	eventAt
 	Step *int `json:"step,omitempty"`
+	// Scope is [StepEndScopeRun] for a turn/run terminator that does not close
+	// an individual step. Empty means the provider did not report a scope.
+	Scope StepEndScope `json:"scope,omitempty"`
 	// StopReason is empty when the provider does not report one.
 	StopReason StopReason `json:"stopReason,omitempty"`
 	// RawStopReason preserves the provider's own spelling.
@@ -286,8 +313,8 @@ type ErrorEvent struct {
 func (*ErrorEvent) Kind() EventKind { return KindError }
 
 // decodeEvent maps one agent event frame onto its variant. An unrecognized
-// kind yields a nil Event and no error: the daemon may add kinds this build
-// does not know, and dropping them is preferable to failing the turn.
+// kind becomes RawEvent: the daemon may add provider extensions this build
+// does not know, and callers should still be able to inspect them.
 func decodeEvent(name string, payload []byte, at time.Time) (Event, error) {
 	if len(payload) == 0 {
 		payload = []byte("{}")
@@ -298,7 +325,10 @@ func decodeEvent(name string, payload []byte, at time.Time) (Event, error) {
 		target = &StepStartEvent{}
 	case KindStepEnd:
 		target = &StepEndEvent{}
-	case KindTextDelta:
+	case KindTextDelta, EventKind("output"):
+		// Older prompt-based runtimes used the generic output name for
+		// incremental assistant text. Keep accepting it so clients can attach
+		// to guests built before the provider-neutral text_delta name landed.
 		target = &TextDeltaEvent{}
 	case KindReasoningDelta:
 		target = &ReasoningDeltaEvent{}
@@ -317,7 +347,7 @@ func decodeEvent(name string, payload []byte, at time.Time) (Event, error) {
 	case KindError:
 		target = &ErrorEvent{}
 	default:
-		return nil, nil
+		return &RawEvent{eventAt: eventAt{Time: at}, Name: name, PayloadJSON: string(payload)}, nil
 	}
 	if err := json.Unmarshal(payload, target); err != nil {
 		return nil, err

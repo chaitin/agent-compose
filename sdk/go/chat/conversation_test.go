@@ -3,9 +3,12 @@ package chat
 import (
 	"context"
 	"errors"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"strings"
 	"testing"
 	"time"
+
+	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
 
 func TestSendDoesNotWaitForResponseHeadersBeforeOpening(t *testing.T) {
@@ -19,12 +22,12 @@ func TestSendDoesNotWaitForResponseHeadersBeforeOpening(t *testing.T) {
 		if _, ok := stream.recv(); !ok {
 			return
 		}
-		stream.send(wireAttachResponse{TurnComplete: &wireTurnCompleted{}})
+		stream.send(turnCompleted(""))
 		<-stream.hold
 	}
 
 	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
-	defer func() { _ = conversation.Close() }()
+	defer func() { _ = conversation.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -43,7 +46,7 @@ func TestSendReportsAnUnreachableDaemonRatherThanBlocking(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	conversation := client.Agent("project-1", "reviewer").Start()
-	defer func() { _ = conversation.Close() }()
+	defer func() { _ = conversation.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -64,7 +67,7 @@ func TestTheSessionOutlivesTheContextOfTheSendThatOpenedIt(t *testing.T) {
 	// message must still land on the same session, with the agent's context
 	// intact.
 	daemon := newFakeDaemon(t)
-	frames := make(chan wireAttachRequest, 2)
+	frames := make(chan *agentcomposev2.AttachAgentRunRequest, 2)
 	daemon.attach = func(stream *fakeStream) {
 		for range 2 {
 			frame, ok := stream.recv()
@@ -72,13 +75,13 @@ func TestTheSessionOutlivesTheContextOfTheSendThatOpenedIt(t *testing.T) {
 				return
 			}
 			frames <- frame
-			stream.send(wireAttachResponse{TurnComplete: &wireTurnCompleted{}})
+			stream.send(turnCompleted(""))
 		}
 		<-stream.hold
 	}
 
 	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
-	defer func() { _ = conversation.Close() }()
+	defer func() { _ = conversation.Close(context.Background()) }()
 
 	first, cancelFirst := context.WithCancel(context.Background())
 	reply, err := conversation.Send(first, "first")
@@ -99,7 +102,7 @@ func TestTheSessionOutlivesTheContextOfTheSendThatOpenedIt(t *testing.T) {
 	}
 	<-frames
 	followUp := <-frames
-	if followUp.HumanMessage == nil || followUp.HumanMessage.Text != "second" {
+	if followUp.GetHumanMessage() == nil || followUp.GetHumanMessage().GetText() != "second" {
 		t.Fatalf("second frame = %#v, want a human message on the same session", followUp)
 	}
 	if attaches := daemon.count("AttachAgentRun"); attaches != 1 {
@@ -120,7 +123,7 @@ func TestCloseReturnsEvenWhenTheDaemonStopsAnswering(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	closed := make(chan error, 1)
-	go func() { closed <- conversation.Close() }()
+	go func() { closed <- conversation.Close(context.Background()) }()
 	select {
 	case err := <-closed:
 		if err != nil {
@@ -133,20 +136,20 @@ func TestCloseReturnsEvenWhenTheDaemonStopsAnswering(t *testing.T) {
 
 func TestSendStreamsATurnAndAccumulatesTheAnswer(t *testing.T) {
 	daemon := newFakeDaemon(t)
-	starts := make(chan *wireAttachStart, 1)
+	starts := make(chan *agentcomposev2.AttachAgentRunStart, 1)
 	daemon.attach = func(stream *fakeStream) {
 		frame, _ := stream.recv()
-		starts <- frame.Start
-		stream.send(wireAttachResponse{Started: &wireStarted{RunID: "run-1", SandboxID: "sandbox-1"}})
+		starts <- frame.GetStart()
+		stream.send(started("run-1", "sandbox-1"))
 		stream.agentEvent("step_start", map[string]any{"step": 0})
 		stream.agentEvent("text_delta", map[string]any{"text": "Hello, "})
 		stream.agentEvent("tool_call", map[string]any{"id": "t1", "name": "bash", "toolKind": "execute", "status": "completed", "command": "ls"})
 		stream.agentEvent("text_delta", map[string]any{"text": "world"})
-		stream.send(wireAttachResponse{TurnComplete: &wireTurnCompleted{RunID: "run-1", ResultJSON: `{"ok":true}`}})
+		stream.send(turnCompleted(`{"ok":true}`))
 	}
 
 	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
-	defer func() { _ = conversation.Close() }()
+	defer func() { _ = conversation.Close(context.Background()) }()
 
 	reply, err := conversation.Send(context.Background(), "check this PR")
 	if err != nil {
@@ -172,20 +175,23 @@ func TestSendStreamsATurnAndAccumulatesTheAnswer(t *testing.T) {
 	// The opening message provisions the session, so it travels in the start
 	// frame rather than as a separate human message.
 	start := <-starts
-	if start == nil || start.Request == nil {
+	if start == nil || start.GetRequest() == nil {
 		t.Fatalf("start frame = %#v, want one carrying a run request", start)
 	}
-	if start.Request.Prompt != "check this PR" {
-		t.Errorf("start prompt = %q, want the opening message", start.Request.Prompt)
+	if start.GetRequest().GetPrompt() != "check this PR" {
+		t.Errorf("start prompt = %q, want the opening message", start.GetRequest().GetPrompt())
 	}
-	if start.Request.Labels[conversationLabel] != conversation.ID() {
-		t.Errorf("start labels = %v, want one identifying the conversation", start.Request.Labels)
+	if start.GetRequest().GetLabels()[conversationLabel] != conversation.ID() {
+		t.Errorf("start labels = %v, want one identifying the conversation", start.GetRequest().GetLabels())
 	}
-	if start.DisconnectPolicy != attachPolicyDetach {
-		t.Errorf("disconnect policy = %q, want %q", start.DisconnectPolicy, attachPolicyDetach)
+	if start.GetDisconnectPolicy() != agentcomposev2.AttachDisconnectPolicy_ATTACH_DISCONNECT_POLICY_DETACH {
+		t.Errorf("disconnect policy = %v, want DETACH", start.GetDisconnectPolicy())
 	}
-	if start.Request.CleanupPolicy != cleanupPolicyKeepLive {
-		t.Errorf("cleanup policy = %q, want the environment kept alive", start.Request.CleanupPolicy)
+	// A conversation's environment must not outlive the run that serves it:
+	// one run covers every turn of a session, and pinning the sandbox past
+	// that leaves one running for every conversation ever opened.
+	if start.GetRequest().GetCleanupPolicy() != agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_STOP_ON_COMPLETION {
+		t.Errorf("cleanup policy = %v, want the environment stopped when the run ends", start.GetRequest().GetCleanupPolicy())
 	}
 }
 
@@ -195,11 +201,11 @@ func TestEventsReplayForEveryCaller(t *testing.T) {
 		_, _ = stream.recv()
 		stream.agentEvent("text_delta", map[string]any{"text": "one"})
 		stream.agentEvent("usage", map[string]any{"scope": "turn", "inputTokens": 10, "outputTokens": 4})
-		stream.send(wireAttachResponse{TurnComplete: &wireTurnCompleted{}})
+		stream.send(turnCompleted(""))
 	}
 
 	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
-	defer func() { _ = conversation.Close() }()
+	defer func() { _ = conversation.Close(context.Background()) }()
 	reply, err := conversation.Send(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("Send: %v", err)
@@ -224,17 +230,54 @@ func TestEventsReplayForEveryCaller(t *testing.T) {
 	}
 }
 
+func TestEventsPreserveProviderExtensions(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	daemon.attach = func(stream *fakeStream) {
+		_, _ = stream.recv()
+		stream.send(&agentcomposev2.AttachAgentRunResponse{
+			Frame: &agentcomposev2.AttachAgentRunResponse_AgentEvent{
+				AgentEvent: &agentcomposev2.AttachAgentEvent{
+					Name: "item.completed", Text: "provider text",
+					PayloadJson: `{"item":{"type":"agent_message","text":"provider text"}}`,
+				},
+			},
+		})
+		stream.send(turnCompleted(""))
+	}
+
+	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
+	defer func() { _ = conversation.Close(context.Background()) }()
+	reply, err := conversation.Send(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if _, err := reply.Wait(context.Background()); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	var event Event
+	for got, err := range reply.Events(context.Background()) {
+		if err != nil {
+			t.Fatalf("Events: %v", err)
+		}
+		event = got
+	}
+	raw, ok := event.(*RawEvent)
+	if !ok || raw.Name != "item.completed" || raw.Text != "provider text" || raw.PayloadJSON == "" {
+		t.Fatalf("event = %#v, want preserved provider event", event)
+	}
+}
+
 func TestSendWhileAReplyIsStreamingReportsBusy(t *testing.T) {
 	daemon := newFakeDaemon(t)
 	release := make(chan struct{})
 	daemon.attach = func(stream *fakeStream) {
 		_, _ = stream.recv()
 		<-release
-		stream.send(wireAttachResponse{TurnComplete: &wireTurnCompleted{}})
+		stream.send(turnCompleted(""))
 	}
 
 	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
-	defer func() { _ = conversation.Close() }()
+	defer func() { _ = conversation.Close(context.Background()) }()
 	first, err := conversation.Send(context.Background(), "first")
 	if err != nil {
 		t.Fatalf("first Send: %v", err)
@@ -250,7 +293,7 @@ func TestSendWhileAReplyIsStreamingReportsBusy(t *testing.T) {
 
 func TestFollowUpTurnsTravelAsMessagesOnTheSameSession(t *testing.T) {
 	daemon := newFakeDaemon(t)
-	frames := make(chan wireAttachRequest, 2)
+	frames := make(chan *agentcomposev2.AttachAgentRunRequest, 2)
 	daemon.attach = func(stream *fakeStream) {
 		for range 2 {
 			frame, ok := stream.recv()
@@ -258,13 +301,13 @@ func TestFollowUpTurnsTravelAsMessagesOnTheSameSession(t *testing.T) {
 				return
 			}
 			frames <- frame
-			stream.send(wireAttachResponse{TurnComplete: &wireTurnCompleted{}})
+			stream.send(turnCompleted(""))
 		}
 		<-stream.hold
 	}
 
 	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
-	defer func() { _ = conversation.Close() }()
+	defer func() { _ = conversation.Close(context.Background()) }()
 	for _, text := range []string{"first", "second"} {
 		reply, err := conversation.Send(context.Background(), text)
 		if err != nil {
@@ -274,11 +317,11 @@ func TestFollowUpTurnsTravelAsMessagesOnTheSameSession(t *testing.T) {
 			t.Fatalf("Wait %q: %v", text, err)
 		}
 	}
-	if opening := <-frames; opening.Start == nil {
+	if opening := <-frames; opening.GetStart() == nil {
 		t.Fatalf("first frame = %#v, want a start", opening)
 	}
 	followUp := <-frames
-	if followUp.HumanMessage == nil || followUp.HumanMessage.Text != "second" {
+	if followUp.GetHumanMessage() == nil || followUp.GetHumanMessage().GetText() != "second" {
 		t.Fatalf("second frame = %#v, want the follow-up as a human message", followUp)
 	}
 	// One session served both turns, so the environment carried context across
@@ -290,16 +333,12 @@ func TestFollowUpTurnsTravelAsMessagesOnTheSameSession(t *testing.T) {
 
 func TestOpenResumesALiveConversation(t *testing.T) {
 	daemon := newFakeDaemon(t)
-	daemon.unary["ListRuns"] = wireListRunsResponse{Runs: []wireRunSummary{{
-		RunID:     "run-7",
-		Status:    "RUN_STATUS_RUNNING",
-		SandboxID: "sandbox-7",
-		CreatedAt: time.Now().Add(-time.Hour),
-	}}, Total: 1}
-	starts := make(chan *wireAttachStart, 1)
+	daemon.listRuns = listRunsReturning(runSummary("run-7", "RUN_STATUS_RUNNING", "sandbox-7",
+		timestamppb.New(time.Now().Add(-time.Hour))))
+	starts := make(chan *agentcomposev2.AttachAgentRunStart, 1)
 	daemon.attach = func(stream *fakeStream) {
 		frame, _ := stream.recv()
-		starts <- frame.Start
+		starts <- frame.GetStart()
 		<-stream.hold
 	}
 
@@ -307,25 +346,22 @@ func TestOpenResumesALiveConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer func() { _ = conversation.Close() }()
+	defer func() { _ = conversation.Close(context.Background()) }()
 	if conversation.Continuity() != Continuous {
 		t.Errorf("continuity = %q, want %q", conversation.Continuity(), Continuous)
 	}
 	start := <-starts
-	if start == nil || start.RunID != "run-7" {
+	if start == nil || start.GetRunId() != "run-7" {
 		t.Fatalf("start frame = %#v, want a reattach to run-7", start)
 	}
-	if start.Request != nil {
-		t.Errorf("reattach carried a run request %#v, want none", start.Request)
+	if start.GetRequest() != nil {
+		t.Errorf("reattach carried a run request %#v, want none", start.GetRequest())
 	}
 }
 
 func TestOpenReportsRestartedWhenTheEnvironmentIsGone(t *testing.T) {
 	daemon := newFakeDaemon(t)
-	daemon.unary["ListRuns"] = wireListRunsResponse{Runs: []wireRunSummary{{
-		RunID:  "run-7",
-		Status: "RUN_STATUS_SUCCEEDED",
-	}}, Total: 1}
+	daemon.listRuns = listRunsReturning(runSummary("run-7", "RUN_STATUS_SUCCEEDED", ""))
 
 	conversation, err := daemon.client(t).Agent("project-1", "reviewer").Open(context.Background(), "conv-abc")
 	if err != nil {
@@ -341,7 +377,7 @@ func TestOpenReportsRestartedWhenTheEnvironmentIsGone(t *testing.T) {
 
 func TestOpenCanRefuseToRestart(t *testing.T) {
 	daemon := newFakeDaemon(t)
-	daemon.unary["ListRuns"] = wireListRunsResponse{}
+	daemon.listRuns = listRunsReturning()
 
 	_, err := daemon.client(t).Agent("project-1", "reviewer").Open(context.Background(), "conv-abc", WithRestartIfGone(false))
 	if !errors.Is(err, ErrNotFound) {
@@ -349,13 +385,12 @@ func TestOpenCanRefuseToRestart(t *testing.T) {
 	}
 }
 
-func TestCloseLeavesTheConversationResumableAndDeleteEndsIt(t *testing.T) {
+func TestClosingEndsTheRunAndEndSessionReachesItByID(t *testing.T) {
 	daemon := newFakeDaemon(t)
-	daemon.unary["StopRun"] = map[string]any{}
 	daemon.attach = func(stream *fakeStream) {
 		_, _ = stream.recv()
-		stream.send(wireAttachResponse{Started: &wireStarted{RunID: "run-1"}})
-		stream.send(wireAttachResponse{TurnComplete: &wireTurnCompleted{}})
+		stream.send(started("run-1", ""))
+		stream.send(turnCompleted(""))
 		// Hold the session open the way a detached daemon would.
 		<-stream.hold
 	}
@@ -369,47 +404,51 @@ func TestCloseLeavesTheConversationResumableAndDeleteEndsIt(t *testing.T) {
 	if _, err := reply.Wait(context.Background()); err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if err := conversation.Close(); err != nil {
+	if err := conversation.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if stops := daemon.count("StopRun"); stops != 0 {
-		t.Fatalf("Close issued %d stops, want none: it must leave the conversation resumable", stops)
+	// Closing ends the run this handle held. The disconnect policy keeps a run
+	// alive when a stream merely drops, so if Close did not end it nothing
+	// would, and every conversation ever opened would keep an environment.
+	if stops := daemon.count("StopRun"); stops != 1 {
+		t.Fatalf("Close issued %d stops, want 1: closing must end the run it holds", stops)
 	}
 	if _, err := conversation.Send(context.Background(), "again"); !errors.Is(err, ErrClosed) {
 		t.Errorf("Send after Close = %v, want ErrClosed", err)
 	}
 
-	second := agent.Start()
-	second.runID = "run-1"
-	if err := second.Delete(context.Background()); err != nil {
-		t.Fatalf("Delete: %v", err)
+	// Ending the session again by ID, the way a product retires a conversation
+	// it holds no handle for, reaches the same run through its label.
+	daemon.listRuns = listRunsReturning(runSummary("run-1", "RUN_STATUS_RUNNING", "sandbox-1"))
+	if err := daemon.client(t).EndSession(context.Background(), conversation.ID()); err != nil {
+		t.Fatalf("EndSession: %v", err)
 	}
-	if stops := daemon.count("StopRun"); stops != 1 {
-		t.Errorf("Delete issued %d stops, want 1", stops)
+	if stops := daemon.count("StopRun"); stops != 2 {
+		t.Errorf("stops = %d, want 2 (one per session ended)", stops)
 	}
 }
 
 func TestALostStreamFailsTheTurnAndReattachesToTheSameSession(t *testing.T) {
 	daemon := newFakeDaemon(t)
-	starts := make(chan *wireAttachStart, 2)
+	starts := make(chan *agentcomposev2.AttachAgentRunStart, 2)
 	attaches := 0
 	daemon.attach = func(stream *fakeStream) {
 		frame, _ := stream.recv()
-		starts <- frame.Start
+		starts <- frame.GetStart()
 		attaches++
 		if attaches == 1 {
-			stream.send(wireAttachResponse{Started: &wireStarted{RunID: "run-1"}})
+			stream.send(started("run-1", ""))
 			stream.agentEvent("text_delta", map[string]any{"text": "partial"})
 			// Drop the stream mid-turn, the way a network blip does. The run
 			// itself is untouched.
 			return
 		}
-		stream.send(wireAttachResponse{TurnComplete: &wireTurnCompleted{}})
+		stream.send(turnCompleted(""))
 		<-stream.hold
 	}
 
 	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
-	defer func() { _ = conversation.Close() }()
+	defer func() { _ = conversation.Close(context.Background()) }()
 	reply, err := conversation.Send(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("Send: %v", err)
@@ -433,7 +472,7 @@ func TestALostStreamFailsTheTurnAndReattachesToTheSameSession(t *testing.T) {
 		t.Fatalf("second Wait: %v", err)
 	}
 	reattach := <-starts
-	if reattach == nil || reattach.RunID != "run-1" {
+	if reattach == nil || reattach.GetRunId() != "run-1" {
 		t.Fatalf("second start frame = %#v, want a reattach to run-1", reattach)
 	}
 	if reattach.Request != nil {
@@ -441,18 +480,21 @@ func TestALostStreamFailsTheTurnAndReattachesToTheSameSession(t *testing.T) {
 	}
 }
 
-func TestATerminalRunReportsRestarted(t *testing.T) {
+// TestATerminalRunClearsTheRunButNotContinuity checks that a terminal run by
+// itself does not declare a restart: the sandbox it used may still be
+// resumable, and Continuity is decided by whether the next attach actually
+// gets it back, not by the mere fact that a run ended.
+func TestATerminalRunClearsTheRunButNotContinuity(t *testing.T) {
 	daemon := newFakeDaemon(t)
 	daemon.attach = func(stream *fakeStream) {
 		_, _ = stream.recv()
-		stream.send(wireAttachResponse{Started: &wireStarted{RunID: "run-1"}})
-		// The run reached a terminal state, so its environment is gone too.
-		stream.send(wireAttachResponse{Result: &wireAttachResult{Success: true}})
+		stream.send(started("run-1", "sandbox-1"))
+		stream.send(runResult(true, ""))
 		<-stream.hold
 	}
 
 	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
-	defer func() { _ = conversation.Close() }()
+	defer func() { _ = conversation.Close(context.Background()) }()
 	reply, err := conversation.Send(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("Send: %v", err)
@@ -460,11 +502,98 @@ func TestATerminalRunReportsRestarted(t *testing.T) {
 	if _, err := reply.Wait(context.Background()); err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if conversation.Continuity() != Restarted {
-		t.Errorf("continuity = %q, want %q", conversation.Continuity(), Restarted)
+	if conversation.Continuity() != Continuous {
+		t.Errorf("continuity = %q, want %q: nothing has attempted a restart yet", conversation.Continuity(), Continuous)
 	}
 	if conversation.RunID() != "" {
 		t.Errorf("run ID = %q, want it cleared once the run is terminal", conversation.RunID())
+	}
+}
+
+// TestNextRunAsksToReuseTheSandboxAndReportsContinuous checks that once a
+// run ends, the next one asks the daemon to resume the same sandbox rather
+// than starting from nothing — and that a successful resume reports
+// Continuous even though it took a new run to get there.
+func TestNextRunAsksToReuseTheSandboxAndReportsContinuous(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	starts := make(chan *agentcomposev2.AttachAgentRunStart, 2)
+	daemon.attach = func(stream *fakeStream) {
+		frame, _ := stream.recv()
+		starts <- frame.GetStart()
+		stream.send(started("run", "sandbox-1"))
+		stream.send(runResult(true, ""))
+		<-stream.hold
+	}
+
+	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
+	defer func() { _ = conversation.Close(context.Background()) }()
+
+	first, err := conversation.Send(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("first Send: %v", err)
+	}
+	if _, err := first.Wait(context.Background()); err != nil {
+		t.Fatalf("first Wait: %v", err)
+	}
+	opening := <-starts
+	if opening.Request == nil || opening.Request.GetSandboxId() != "" {
+		t.Fatalf("opening run asked to reuse a sandbox it never had: %#v", opening.Request)
+	}
+
+	second, err := conversation.Send(context.Background(), "again")
+	if err != nil {
+		t.Fatalf("second Send: %v", err)
+	}
+	if _, err := second.Wait(context.Background()); err != nil {
+		t.Fatalf("second Wait: %v", err)
+	}
+	reopened := <-starts
+	if reopened.Request == nil || reopened.Request.GetSandboxId() != "sandbox-1" {
+		t.Fatalf("second run did not ask to reuse the prior sandbox: %#v", reopened.Request)
+	}
+	if conversation.Continuity() != Continuous {
+		t.Errorf("continuity = %q, want %q: the daemon reused the same sandbox", conversation.Continuity(), Continuous)
+	}
+}
+
+// TestSandboxReuseFailingReportsRestarted checks the other side: when the
+// daemon does not honor the reuse request and hands back a different
+// sandbox, that is a genuine restart and must be reported as one.
+func TestSandboxReuseFailingReportsRestarted(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	attempt := 0
+	daemon.attach = func(stream *fakeStream) {
+		attempt++
+		_, _ = stream.recv()
+		sandboxID := "sandbox-1"
+		if attempt > 1 {
+			sandboxID = "sandbox-2" // a different sandbox: the reuse request was not honored
+		}
+		stream.send(started("run", sandboxID))
+		stream.send(runResult(true, ""))
+		<-stream.hold
+	}
+
+	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
+	defer func() { _ = conversation.Close(context.Background()) }()
+
+	first, err := conversation.Send(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("first Send: %v", err)
+	}
+	if _, err := first.Wait(context.Background()); err != nil {
+		t.Fatalf("first Wait: %v", err)
+	}
+
+	second, err := conversation.Send(context.Background(), "again")
+	if err != nil {
+		t.Fatalf("second Send: %v", err)
+	}
+	if _, err := second.Wait(context.Background()); err != nil {
+		t.Fatalf("second Wait: %v", err)
+	}
+	if conversation.Continuity() != Restarted {
+		t.Errorf("continuity = %q, want %q: the daemon did not reuse the sandbox it was asked to", conversation.Continuity(), Restarted)
 	}
 }
 
@@ -472,11 +601,11 @@ func TestAFailedRunSurfacesItsError(t *testing.T) {
 	daemon := newFakeDaemon(t)
 	daemon.attach = func(stream *fakeStream) {
 		_, _ = stream.recv()
-		stream.send(wireAttachResponse{Result: &wireAttachResult{Success: false, Error: "image pull failed"}})
+		stream.send(runResult(false, "image pull failed"))
 	}
 
 	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
-	defer func() { _ = conversation.Close() }()
+	defer func() { _ = conversation.Close(context.Background()) }()
 	if _, err := conversation.Ask(context.Background(), "hi"); err == nil || !strings.Contains(err.Error(), "image pull failed") {
 		t.Fatalf("Ask error = %v, want the daemon's reason", err)
 	}
@@ -490,7 +619,7 @@ func TestWaitHonorsContextCancellation(t *testing.T) {
 	}
 
 	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
-	defer func() { _ = conversation.Close() }()
+	defer func() { _ = conversation.Close(context.Background()) }()
 	reply, err := conversation.Send(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("Send: %v", err)
@@ -504,15 +633,15 @@ func TestWaitHonorsContextCancellation(t *testing.T) {
 
 func TestHistoryReadsBothRolesAcrossRestarts(t *testing.T) {
 	daemon := newFakeDaemon(t)
-	daemon.unary["ListRuns"] = wireListRunsResponse{Runs: []wireRunSummary{
-		{RunID: "run-2", CreatedAt: time.Unix(200, 0)},
-		{RunID: "run-1", CreatedAt: time.Unix(100, 0)},
-	}, Total: 2}
-	daemon.unary["ListRunEvents"] = wireListEventsResponse{Events: []wireRunEvent{
-		{ID: "e1", Kind: "RUN_EVENT_KIND_USER_MESSAGE", Text: "question"},
-		{ID: "e2", Kind: "RUN_EVENT_KIND_STATUS", Text: "running"},
-		{ID: "e3", Kind: "RUN_EVENT_KIND_AGENT_MESSAGE", Text: "answer"},
-	}, Total: 3}
+	daemon.listRuns = listRunsReturning(
+		&agentcomposev2.RunSummary{RunId: "run-2", CreatedAt: timestamppb.New(time.Unix(200, 0))},
+		&agentcomposev2.RunSummary{RunId: "run-1", CreatedAt: timestamppb.New(time.Unix(100, 0))},
+	)
+	daemon.listRunEvents = listEventsReturning(
+		runEvent("e1", agentcomposev2.RunEventKind_RUN_EVENT_KIND_USER_MESSAGE, "question"),
+		runEvent("e2", agentcomposev2.RunEventKind_RUN_EVENT_KIND_STATUS, "running"),
+		runEvent("e3", agentcomposev2.RunEventKind_RUN_EVENT_KIND_AGENT_MESSAGE, "answer"),
+	)
 
 	conversation := daemon.client(t).Agent("project-1", "reviewer").Start(WithID("conv-abc"))
 	messages, err := conversation.History(context.Background())
@@ -528,5 +657,64 @@ func TestHistoryReadsBothRolesAcrossRestarts(t *testing.T) {
 	}
 	if messages[1].Role != RoleAssistant || messages[1].Text != "answer" {
 		t.Errorf("second message = %#v", messages[1])
+	}
+}
+
+// A handle that never attached holds no run, so closing it must not go looking
+// for one. Two handles can name the same conversation — a server that races to
+// attach discards the loser — and a discarded handle that ended the winner's
+// run would kill a live session.
+func TestClosingAHandleThatNeverAttachedEndsNothing(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	daemon.listRuns = listRunsReturning(runSummary("run-live", "RUN_STATUS_RUNNING", "sandbox-a"))
+
+	spare := daemon.client(t).Agent("project-1", "reviewer").Start(WithID("conv-1"))
+	if err := spare.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if stops := daemon.count("StopRun"); stops != 0 {
+		t.Fatalf("closing an unattached handle issued %d stops, want none", stops)
+	}
+	if lists := daemon.count("ListRuns"); lists != 0 {
+		t.Errorf("closing an unattached handle read the run list %d times, want none", lists)
+	}
+}
+
+// Reopening a conversation whose last run has ended must still ask for that
+// run's sandbox. Runs end every time a client closes, so this is the ordinary
+// path back into a conversation — and dropping the sandbox here builds a new
+// environment beside the old one, losing the context the agent had persisted.
+func TestOpeningAfterTheLastRunEndedStillResumesItsSandbox(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	daemon.listRuns = listRunsReturning(runSummary("run-done", "RUN_STATUS_FAILED", "sandbox-a"))
+	starts := make(chan *agentcomposev2.AttachAgentRunStart, 1)
+	daemon.attach = func(stream *fakeStream) {
+		frame, _ := stream.recv()
+		starts <- frame.GetStart()
+		stream.send(started("run-2", "sandbox-a"))
+		stream.send(turnCompleted(""))
+		<-stream.hold
+	}
+
+	agent := daemon.client(t).Agent("project-1", "reviewer")
+	conversation, err := agent.Open(context.Background(), "conv-1")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	reply, err := conversation.Send(context.Background(), "still there?")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if _, err := reply.Wait(context.Background()); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+
+	start := <-starts
+	if start.Request.GetSandboxId() != "sandbox-a" {
+		t.Fatalf("resumed sandbox %q, want the one the ended run used", start.Request.GetSandboxId())
+	}
+	// The daemon gave back the sandbox that was asked for, so nothing was lost.
+	if got := conversation.Continuity(); got != Continuous {
+		t.Errorf("Continuity = %q, want %q", got, Continuous)
 	}
 }

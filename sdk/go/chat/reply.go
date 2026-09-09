@@ -113,12 +113,12 @@ func (r *Reply) Err() error {
 // Interrupt stops the agent mid-turn.
 //
 // The daemon cancels the whole interactive session rather than the single
-// turn, so the conversation's environment goes with it: this Reply ends, and
-// the next [Conversation.Send] rebuilds the environment and reports
-// [Restarted]. The agent keeps the conversation's durable history but not the
-// context it had accumulated.
+// turn, so this Reply ends and the next [Conversation.Send] needs a new run.
+// That run asks to resume the same sandbox; [Conversation.Continuity] reports
+// [Restarted] only if that does not happen. Either way the agent keeps the
+// conversation's durable history.
 func (r *Reply) Interrupt(ctx context.Context) error {
-	return r.conversation.interrupt(ctx)
+	return r.conversation.interrupt(ctx, r)
 }
 
 // add records one event and wakes every waiter.

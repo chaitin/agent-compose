@@ -36,6 +36,20 @@ func TestDecodeEventKeepsAbsentFieldsAbsent(t *testing.T) {
 	}
 }
 
+func TestDecodeEventTreatsLegacyOutputAsTextDelta(t *testing.T) {
+	event, err := decodeEvent("output", []byte(`{"provider":"claude","text":"partial"}`), time.Unix(1000, 0).UTC())
+	if err != nil {
+		t.Fatalf("decode legacy output: %v", err)
+	}
+	delta, ok := event.(*TextDeltaEvent)
+	if !ok {
+		t.Fatalf("event = %T, want *TextDeltaEvent", event)
+	}
+	if delta.Text != "partial" {
+		t.Errorf("text = %q, want partial", delta.Text)
+	}
+}
+
 func TestDecodeEventVariants(t *testing.T) {
 	at := time.Unix(1000, 0).UTC()
 	for _, testCase := range []struct {
@@ -92,11 +106,22 @@ func TestDecodeEventVariants(t *testing.T) {
 		{
 			name:    "step end",
 			kind:    "step_end",
-			payload: `{"step":2,"stopReason":"tool_use","rawStopReason":"toolUse"}`,
+			payload: `{"step":2,"scope":"step","stopReason":"tool_use","rawStopReason":"toolUse"}`,
 			verify: func(t *testing.T, event Event) {
 				end := event.(*StepEndEvent)
-				if end.StopReason != StopToolUse || end.RawStopReason != "toolUse" {
+				if end.Scope != StepEndScopeStep || end.StopReason != StopToolUse || end.RawStopReason != "toolUse" {
 					t.Errorf("step end = %#v", end)
+				}
+			},
+		},
+		{
+			name:    "run end",
+			kind:    "step_end",
+			payload: `{"scope":"run","stopReason":"stop"}`,
+			verify: func(t *testing.T, event Event) {
+				end := event.(*StepEndEvent)
+				if end.Scope != StepEndScopeRun || end.Step != nil || end.StopReason != StopEnd {
+					t.Errorf("run end = %#v", end)
 				}
 			},
 		},
@@ -142,15 +167,14 @@ func TestDecodeEventVariants(t *testing.T) {
 	}
 }
 
-func TestDecodeEventDropsKindsThisBuildDoesNotKnow(t *testing.T) {
-	// The daemon may add kinds; dropping one is better than failing the turn
-	// over an event the caller may not even use.
+func TestDecodeEventPreservesKindsThisBuildDoesNotKnow(t *testing.T) {
 	event, err := decodeEvent("some_future_kind", []byte(`{"whatever":1}`), time.Now())
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if event != nil {
-		t.Errorf("event = %#v, want none", event)
+	raw, ok := event.(*RawEvent)
+	if !ok || raw.Name != "some_future_kind" || raw.PayloadJSON != `{"whatever":1}` {
+		t.Errorf("event = %#v, want preserved raw event", event)
 	}
 }
 

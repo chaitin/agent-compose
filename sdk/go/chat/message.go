@@ -2,7 +2,6 @@ package chat
 
 import (
 	"encoding/json"
-	"strings"
 	"time"
 )
 
@@ -45,22 +44,3 @@ const (
 	// user about this.
 	Restarted Continuity = "restarted"
 )
-
-// messageFromEvent maps one durable run event onto a Message. It returns false
-// for events that are not conversational, such as lifecycle transitions.
-func messageFromEvent(event wireRunEvent) (Message, bool) {
-	kind := strings.ToUpper(strings.TrimSpace(event.Kind))
-	var role Role
-	switch {
-	case strings.HasSuffix(kind, "USER_MESSAGE"):
-		role = RoleUser
-	case strings.HasSuffix(kind, "AGENT_MESSAGE"):
-		role = RoleAssistant
-	default:
-		return Message{}, false
-	}
-	if strings.TrimSpace(event.Text) == "" {
-		return Message{}, false
-	}
-	return Message{ID: event.ID, Role: role, Text: event.Text, Time: event.CreatedAt}, true
-}

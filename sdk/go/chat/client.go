@@ -65,12 +65,7 @@ func New(cfg Config) (*Client, error) {
 	if extra := strings.TrimSpace(cfg.UserAgent); extra != "" {
 		agent += " " + extra
 	}
-	return &Client{transport: &transport{
-		baseURL:   raw,
-		token:     cfg.Token,
-		client:    client,
-		userAgent: agent,
-	}}, nil
+	return &Client{transport: newTransport(raw, client, cfg.Token, agent)}, nil
 }
 
 // Agent returns a handle for conversing with one Agent of one Project.

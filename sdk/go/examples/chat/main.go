@@ -51,8 +51,9 @@ func main() {
 			fmt.Println("note: this conversation's environment was rebuilt, so the agent no longer has its earlier context")
 		}
 	}
-	// Close leaves the conversation resumable; only Delete ends it.
-	defer func() { _ = conversation.Close() }()
+	// Close ends this session and stops its environment; the conversation
+	// itself stays resumable by ID.
+	defer func() { _ = conversation.Close(ctx) }()
 	fmt.Printf("conversation %s\n", conversation.ID())
 
 	input := bufio.NewScanner(os.Stdin)

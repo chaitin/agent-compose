@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"connectrpc.com/connect"
 )
 
 // Sentinel errors reported through [Error.Unwrap], so callers can classify a
@@ -18,9 +20,13 @@ var (
 	ErrPermission = errors.New("chat: permission denied")
 	// ErrUnavailable reports a daemon that could not be reached or is failing.
 	ErrUnavailable = errors.New("chat: service unavailable")
+	// ErrConflict reports a request that lost a race for something the daemon
+	// hands to one holder at a time, such as a run's input. Retrying shortly
+	// is usually the right response: the holder is normally on its way out.
+	ErrConflict = errors.New("chat: conflicting request")
 	// ErrBusy reports a Send issued while an earlier Reply is still streaming.
 	ErrBusy = errors.New("chat: a reply is already in progress")
-	// ErrClosed reports use of a Conversation after Close or Delete.
+	// ErrClosed reports use of a Conversation after Close.
 	ErrClosed = errors.New("chat: conversation is closed")
 )
 
@@ -50,6 +56,9 @@ func (e *Error) Error() string {
 
 // Unwrap maps the server's error code onto one of this package's sentinels.
 func (e *Error) Unwrap() error {
+	if e.conflict() {
+		return ErrConflict
+	}
 	switch strings.ToLower(strings.TrimSpace(e.Code)) {
 	case "invalid_argument", "out_of_range", "failed_precondition":
 		return ErrInvalidArgument
@@ -79,4 +88,39 @@ func invalidArgument(op, format string, args ...any) error {
 
 func unavailable(op string, err error) error {
 	return &Error{Op: op, Code: "unavailable", Message: err.Error()}
+}
+
+// conflict reports whether this is the daemon losing a race for something it
+// hands to one holder at a time.
+//
+// The daemon renders its conflicts as FAILED_PRECONDITION with a "conflict:"
+// prefix rather than as ABORTED, so the prefix is what separates them from a
+// genuine precondition failure. Both spellings are accepted, so this keeps
+// working once the daemon uses the code the condition deserves.
+func (e *Error) conflict() bool {
+	switch strings.ToLower(strings.TrimSpace(e.Code)) {
+	case "aborted", "already_exists":
+		return true
+	case "failed_precondition":
+		return strings.HasPrefix(strings.TrimSpace(e.Message), "conflict:")
+	}
+	return false
+}
+
+// fromConnect names a Connect failure in this package's terms. A failure that
+// never reached the daemon - a dial that did not connect, a context that
+// ended - carries no code, and is reported as unavailable.
+func fromConnect(op string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var already *Error
+	if errors.As(err, &already) {
+		return already
+	}
+	var failure *connect.Error
+	if !errors.As(err, &failure) {
+		return unavailable(op, err)
+	}
+	return &Error{Op: op, Code: failure.Code().String(), Message: failure.Message()}
 }

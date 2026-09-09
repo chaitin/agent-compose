@@ -2,6 +2,7 @@ package chat
 
 import (
 	"cmp"
+	"connectrpc.com/connect"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
 
 // historyPageSize bounds one page of a history read. The daemon rejects pages
@@ -28,7 +31,7 @@ type Conversation struct {
 	labels map[string]string
 
 	mu     sync.Mutex
-	stream *stream
+	stream *attachStream
 	// cancel tears down the stream's own context. The stream outlives any one
 	// Send, so it must not borrow that call's context.
 	cancel     context.CancelFunc
@@ -75,22 +78,37 @@ func (a *Agent) Open(ctx context.Context, id string, opts ...Option) (*Conversat
 	if err != nil {
 		return nil, err
 	}
-	if run == nil || !run.live() {
+	if run == nil || !runIsLive(run) {
 		if !resolved.restartIfGone {
 			return nil, &Error{Op: "Open", Code: "not_found", Message: "conversation " + id + " is no longer running"}
 		}
-		conversation.continuity = Restarted
+		// A conversation whose last run has ended is the ordinary case, not a
+		// lost one: runs end whenever a client closes, and the sandbox they
+		// used survives with the workspace and the directories a provider
+		// keeps its session in. Carrying that sandbox forward is what lets the
+		// next run resume the conversation instead of building a new
+		// environment beside it.
+		//
+		// Whether the resume actually happened is not decided here: the
+		// daemon's start frame reports which sandbox the new run got, and
+		// handle compares it against the one asked for.
+		if run != nil {
+			conversation.sandboxID = run.GetSandboxId()
+		}
+		if conversation.sandboxID == "" {
+			conversation.continuity = Restarted
+		}
 		return conversation, nil
 	}
-	conversation.runID = run.RunID
-	conversation.sandboxID = run.SandboxID
+	conversation.runID = run.GetRunId()
+	conversation.sandboxID = run.GetSandboxId()
 	if err := conversation.attach(ctx, "Open", ""); err != nil {
 		if !resolved.restartIfGone {
 			return nil, err
 		}
+		// The run could not be attached to, but the sandbox it used is still
+		// the one to resume; only the run is given up on.
 		conversation.runID = ""
-		conversation.sandboxID = ""
-		conversation.continuity = Restarted
 		return conversation, nil
 	}
 	conversation.continuity = Continuous
@@ -127,6 +145,9 @@ func (c *Conversation) Send(ctx context.Context, text string) (*Reply, error) {
 	if strings.TrimSpace(text) == "" {
 		return nil, invalidArgument("Send", "message text is required")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -145,14 +166,17 @@ func (c *Conversation) Send(ctx context.Context, text string) (*Reply, error) {
 			return nil, err
 		}
 		if reattached {
-			// A reattach start frame carries no prompt, so the message still
-			// has to be sent.
-			if err := c.stream.send(wireAttachRequest{HumanMessage: &wireHumanMessage{Text: text}}); err != nil {
+			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
+			// A reattach start frame carries no prompt, so the message still
+			// has to be sent.
+			if err := c.stream.Send(humanMessage(text)); err != nil {
+				return nil, fromConnect("Send", err)
+			}
 		}
-	} else if err := c.stream.send(wireAttachRequest{HumanMessage: &wireHumanMessage{Text: text}}); err != nil {
-		return nil, err
+	} else if err := c.stream.Send(humanMessage(text)); err != nil {
+		return nil, fromConnect("Send", err)
 	}
 	reply := newReply(c)
 	c.current = reply
@@ -169,7 +193,14 @@ func (c *Conversation) Ask(ctx context.Context, text string) (Message, error) {
 }
 
 // History returns every message of the conversation, oldest first, including
-// turns that ran while no client was attached.
+// turns that ran while no client was attached. Only user and assistant text
+// comes back; tool calls, reasoning, usage and every other event kind are
+// turn-scoped and not durable messages.
+//
+// This fetches the whole conversation, at a cost proportional to how many
+// runs it has occupied. A caller that wants a bounded, incremental read —
+// the common case for a chat UI's initial load — should use
+// [Conversation.HistoryPage] instead.
 func (c *Conversation) History(ctx context.Context) ([]Message, error) {
 	runs, err := c.runs(ctx, "History")
 	if err != nil {
@@ -177,7 +208,7 @@ func (c *Conversation) History(ctx context.Context) ([]Message, error) {
 	}
 	messages := make([]Message, 0, len(runs)*4)
 	for _, run := range runs {
-		page, err := c.runMessages(ctx, run.RunID)
+		page, err := c.runMessages(ctx, run.GetRunId())
 		if err != nil {
 			return nil, err
 		}
@@ -186,16 +217,23 @@ func (c *Conversation) History(ctx context.Context) ([]Message, error) {
 	return messages, nil
 }
 
-// Close releases this client's hold on the conversation and leaves it intact
-// on the server, so a later [Agent.Open] resumes it. Work already in progress
-// keeps running; its events are readable from [Conversation.History] on
-// return.
+// Close releases everything this handle is holding: its stream, and the run
+// behind it whose environment the daemon then stops. The conversation itself
+// survives — its history and identity are untouched, and a later
+// [Agent.Open] resumes it with the agent's context intact.
 //
-// Close is the right way to finish with a conversation. Use
-// [Conversation.Delete] only to end one for good.
-func (c *Conversation) Close() error {
+// Closing has to end the run. A conversation attaches with a disconnect
+// policy that deliberately keeps the run alive when the stream drops, because
+// a turn must survive its viewer going away; the cost is that nothing else
+// ever ends it. A Close that only dropped the stream therefore left a run —
+// and the sandbox it holds — alive for every conversation ever opened.
+//
+// A handle that never attached holds no run, so closing it is free — in
+// particular it cannot end a run some other handle is holding. Use
+// [Client.EndSession] to end a session no handle of yours is attached to.
+func (c *Conversation) Close(ctx context.Context) error {
 	c.mu.Lock()
-	opened, current, cancel := c.stream, c.current, c.cancel
+	opened, current, cancel, runID := c.stream, c.current, c.cancel, c.runID
 	c.stream, c.current, c.cancel = nil, nil, nil
 	c.closed = true
 	c.mu.Unlock()
@@ -207,58 +245,61 @@ func (c *Conversation) Close() error {
 		cancel()
 	}
 	if opened == nil {
-		return nil
+		if runID == "" {
+			return nil
+		}
+		err := c.stopRun(ctx, runID)
+		if err == nil {
+			c.clearRunID(runID)
+		}
+		return err
 	}
 	// Deliberately not waiting for the reader: a daemon that has stopped
 	// answering must not be able to hold Close up. Cancelling the stream's
 	// context is what lets the reader finish.
-	if err := opened.close(); err != nil && !errors.Is(err, io.ErrClosedPipe) {
-		return err
+	var failures []error
+	if err := opened.CloseRequest(); err != nil && !errors.Is(err, io.ErrClosedPipe) {
+		failures = append(failures, fromConnect("Close", err))
 	}
-	return nil
+	if runID != "" {
+		if err := c.stopRun(ctx, runID); err != nil {
+			failures = append(failures, err)
+		} else {
+			c.clearRunID(runID)
+		}
+	}
+	return errors.Join(failures...)
 }
 
-// Delete ends the conversation for good: the agent stops and its environment
-// is released. Durable history remains readable through the daemon, but
-// [Agent.Open] can no longer resume this conversation.
-func (c *Conversation) Delete(ctx context.Context) error {
+func (c *Conversation) clearRunID(runID string) {
 	c.mu.Lock()
-	runID := c.runID
-	c.mu.Unlock()
-	if runID == "" {
-		run, err := c.latestRun(ctx, "Delete")
-		if err != nil {
-			return err
-		}
-		if run != nil {
-			runID = run.RunID
-		}
+	defer c.mu.Unlock()
+	if c.runID == runID {
+		c.runID = ""
 	}
-	closeErr := c.Close()
-	if runID == "" {
-		return closeErr
-	}
-	request := wireStopRunRequest{RunID: runID, Reason: "conversation deleted"}
-	if err := c.agent.client.transport.unary(ctx, "Delete", "StopRun", request, nil); err != nil {
-		return err
-	}
-	return closeErr
 }
 
 // interrupt stops the agent mid-turn.
 //
-// The daemon's cancel ends the whole interactive session, not just the current
-// turn, so the conversation's environment goes with it: the next Send rebuilds
-// and Continuity reports Restarted.
-func (c *Conversation) interrupt(ctx context.Context) error {
+// The daemon's cancel ends the whole interactive session, not just the
+// current turn, so the next Send needs a new run. That run asks to resume
+// the same sandbox, the same as any other run boundary; Continuity reports
+// whether it actually did.
+func (c *Conversation) interrupt(ctx context.Context, reply *Reply) error {
 	c.mu.Lock()
 	stream := c.stream
+	current := c.current
 	c.mu.Unlock()
+	if current != reply || reply.Done() {
+		return nil
+	}
 	if stream == nil {
 		return ErrClosed
 	}
 	_ = ctx
-	return stream.send(wireAttachRequest{Cancel: &struct{}{}})
+	return fromConnect("Interrupt", stream.Send(&agentcomposev2.AttachAgentRunRequest{
+		Frame: &agentcomposev2.AttachAgentRunRequest_Cancel{Cancel: &agentcomposev2.AttachCancel{}},
+	}))
 }
 
 // attach opens the interactive session. prompt is the opening message when
@@ -271,38 +312,54 @@ func (c *Conversation) attach(ctx context.Context, op, prompt string) error {
 	// context is a single HTTP request's must not take the session down with
 	// it when that request ends. Values are kept, cancellation is not.
 	streamCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	opened, err := c.agent.client.transport.openStream(streamCtx, op, "AttachAgentRun")
-	if err != nil {
-		cancel()
-		return err
-	}
-	start := &wireAttachStart{
-		Mode:             attachModePrompt,
+	opened := c.agent.client.transport.runs.AttachAgentRun(streamCtx)
+	start := &agentcomposev2.AttachAgentRunStart{
+		Mode:             agentcomposev2.AttachRunMode_ATTACH_RUN_MODE_PROMPT,
 		AttachStdin:      true,
-		DisconnectPolicy: attachPolicyDetach,
+		DisconnectPolicy: agentcomposev2.AttachDisconnectPolicy_ATTACH_DISCONNECT_POLICY_DETACH,
 	}
 	if c.runID != "" {
-		start.RunID = c.runID
+		start.RunId = c.runID
 	} else {
 		labels := maps.Clone(c.labels)
 		if labels == nil {
 			labels = map[string]string{}
 		}
 		labels[conversationLabel] = c.id
-		start.Request = &wireRunRequest{
-			ProjectID: c.agent.projectID,
+		start.Request = &agentcomposev2.RunAgentRequest{
+			ProjectId: c.agent.projectID,
 			AgentName: c.agent.name,
 			Prompt:    prompt,
-			// The environment must outlive each turn; it is what carries the
-			// agent's context forward. Conversation.Delete releases it.
-			CleanupPolicy: cleanupPolicyKeepLive,
-			Labels:        labels,
+			// One run serves every turn of an open session, so the
+			// environment already outlives a turn without being pinned:
+			// stopping it when the run itself ends is enough. Keeping it
+			// running instead left an environment alive for every
+			// conversation that had ever been opened, since a conversation
+			// ends far more often than it is archived.
+			//
+			// The sandbox survives the stop — the daemon keeps its metadata,
+			// workspace, and the mounted home directories where a provider
+			// stores the session it resumes from — so the next run asks for
+			// this same sandbox by ID and picks the conversation back up.
+			CleanupPolicy: agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_STOP_ON_COMPLETION,
+			// A prior run's sandbox may still be alive even though that run
+			// ended — ask the daemon to resume it rather than starting from
+			// nothing. handle's Started case reports whether this actually
+			// happened.
+			SandboxId: c.sandboxID,
+			Labels:    labels,
 		}
 	}
-	if err := opened.send(wireAttachRequest{Start: start}); err != nil {
+	// The opening frame is what makes the daemon answer: a Connect handler
+	// writes no response headers until it has received one, so a failure to
+	// open the stream surfaces here rather than at AttachAgentRun.
+	if err := opened.Send(&agentcomposev2.AttachAgentRunRequest{
+		Frame: &agentcomposev2.AttachAgentRunRequest_Start{Start: start},
+	}); err != nil {
 		cancel()
-		_ = opened.close()
-		return err
+		_ = opened.CloseRequest()
+		_ = opened.CloseResponse()
+		return fromConnect(op, err)
 	}
 	c.stream = opened
 	c.cancel = cancel
@@ -311,73 +368,110 @@ func (c *Conversation) attach(ctx context.Context, op, prompt string) error {
 }
 
 // readLoop translates server frames until the stream ends.
-func (c *Conversation) readLoop(stream *stream) {
+func (c *Conversation) readLoop(stream *attachStream) {
 	for {
-		var frame wireAttachResponse
-		err := stream.recv(&frame)
+		frame, err := stream.Receive()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				err = nil
+			} else {
+				err = fromConnect("Send", err)
 			}
-			c.endSession(err)
+			c.endSession(stream, err)
 			return
 		}
-		c.handle(frame)
+		c.handle(stream, frame)
 	}
 }
 
-func (c *Conversation) handle(frame wireAttachResponse) {
-	switch {
-	case frame.Started != nil:
+// humanMessage builds the frame carrying one turn's message.
+func humanMessage(text string) *agentcomposev2.AttachAgentRunRequest {
+	return &agentcomposev2.AttachAgentRunRequest{
+		Frame: &agentcomposev2.AttachAgentRunRequest_HumanMessage{
+			HumanMessage: &agentcomposev2.AttachHumanMessage{Text: text},
+		},
+	}
+}
+
+// stopRun ends the run backing this conversation.
+func (c *Conversation) stopRun(ctx context.Context, runID string) error {
+	_, err := c.agent.client.transport.runs.StopRun(ctx, connect.NewRequest(&agentcomposev2.StopRunRequest{
+		RunId:  runID,
+		Reason: "conversation closed",
+	}))
+	return fromConnect("Close", err)
+}
+
+func (c *Conversation) handle(stream *attachStream, frame *agentcomposev2.AttachAgentRunResponse) {
+	switch body := frame.GetFrame().(type) {
+	case *agentcomposev2.AttachAgentRunResponse_Started:
+		started := body.Started
 		c.mu.Lock()
-		c.runID = frame.Started.RunID
-		c.sandboxID = frame.Started.SandboxID
+		requested := c.sandboxID
+		c.runID = started.GetRunId()
+		c.sandboxID = started.GetSandboxId()
+		// A run starting is not by itself a restart: what matters is whether
+		// the sandbox this run got is the one the prior run used. requested
+		// is empty for a conversation's very first run, which is not a
+		// restart either — there is nothing yet for it to have lost.
+		if requested != "" && started.GetSandboxId() != "" {
+			if started.GetSandboxId() == requested {
+				c.continuity = Continuous
+			} else {
+				c.continuity = Restarted
+			}
+		}
 		c.mu.Unlock()
 
-	case frame.AgentEvent != nil:
-		event, err := decodeEvent(frame.AgentEvent.Name, []byte(frame.AgentEvent.PayloadJSON), c.eventTime(frame))
+	case *agentcomposev2.AttachAgentRunResponse_AgentEvent:
+		at := c.eventTime(frame)
+		agentEvent := body.AgentEvent
+		event, err := decodeEvent(agentEvent.GetName(), []byte(agentEvent.GetPayloadJson()), at)
 		if err != nil || event == nil {
-			// An unknown kind, or a payload this build cannot parse. Dropping
-			// it is better than failing the turn over an event the caller may
-			// not even use.
-			return
+			// A malformed typed payload is still a valid Attach event. Preserve
+			// its wire fields instead of losing it or failing the whole turn.
+			event = &RawEvent{eventAt: eventAt{Time: at}, Name: agentEvent.GetName()}
+		}
+		if raw, ok := event.(*RawEvent); ok {
+			raw.Text = agentEvent.GetText()
+			raw.PayloadJSON = agentEvent.GetPayloadJson()
 		}
 		if reply := c.reply(); reply != nil {
 			reply.add(event)
 		}
 
-	case frame.TurnComplete != nil:
+	case *agentcomposev2.AttachAgentRunResponse_AgentTurnCompleted:
 		if reply := c.takeReply(); reply != nil {
-			reply.finish(json.RawMessage(frame.TurnComplete.ResultJSON), c.eventTime(frame), nil)
+			reply.finish(json.RawMessage(body.AgentTurnCompleted.GetResultJson()), c.eventTime(frame), nil)
 		}
 
-	case frame.Result != nil:
+	case *agentcomposev2.AttachAgentRunResponse_Result:
 		var err error
-		if !frame.Result.Success {
-			err = &Error{Op: "Send", Message: cmp.Or(strings.TrimSpace(frame.Result.Error), "the agent run failed")}
+		if !body.Result.GetSuccess() {
+			err = &Error{Op: "Send", Message: cmp.Or(strings.TrimSpace(body.Result.GetError()), "the agent run failed")}
 		}
-		c.finishSession(err, frame.Result.ResultJSON, c.eventTime(frame))
+		c.finishSession(stream, err, body.Result.GetResultJson(), c.eventTime(frame))
 
-	case frame.Error != nil:
-		failure := &Error{Op: "Send", Code: frame.Error.Code, Message: frame.Error.Message}
-		if frame.Error.Terminal {
-			c.endSession(failure)
+	case *agentcomposev2.AttachAgentRunResponse_Error:
+		failure := &Error{Op: "Send", Code: body.Error.GetCode(), Message: body.Error.GetMessage()}
+		if body.Error.GetTerminal() {
+			c.endSession(stream, failure)
 			return
 		}
 		if reply := c.reply(); reply != nil {
 			reply.add(&ErrorEvent{
 				eventAt:  eventAt{Time: c.eventTime(frame)},
 				Severity: SeverityError,
-				Code:     frame.Error.Code,
-				Message:  frame.Error.Message,
+				Code:     body.Error.GetCode(),
+				Message:  body.Error.GetMessage(),
 			})
 		}
 	}
 }
 
-func (c *Conversation) eventTime(frame wireAttachResponse) time.Time {
-	if !frame.CreatedAt.IsZero() {
-		return frame.CreatedAt
+func (c *Conversation) eventTime(frame *agentcomposev2.AttachAgentRunResponse) time.Time {
+	if at := frame.GetCreatedAt(); at.IsValid() {
+		return at.AsTime()
 	}
 	return time.Now().UTC()
 }
@@ -396,13 +490,22 @@ func (c *Conversation) takeReply() *Reply {
 	return reply
 }
 
-// finishSession records that the run itself reached a terminal state. The
-// environment is gone with it, so the next Send builds a new one.
-func (c *Conversation) finishSession(err error, resultJSON string, at time.Time) {
+// finishSession records that the run itself reached a terminal state, so the
+// next Send must start a new one. The sandbox this run used is not
+// necessarily gone — CleanupPolicy asked the daemon to keep it running, and
+// the next attach asks to resume it — so Continuity is left as it was here;
+// handle's Started case sets it once that next attach reports whether the
+// resume actually happened.
+func (c *Conversation) finishSession(stream *attachStream, err error, resultJSON string, at time.Time) {
 	c.mu.Lock()
+	if c.stream != stream {
+		// A later attach already replaced this one. Its turn is not this
+		// loop's to end.
+		c.mu.Unlock()
+		return
+	}
 	reply, cancel := c.current, c.cancel
 	c.current, c.stream, c.cancel, c.runID = nil, nil, nil, ""
-	c.continuity = Restarted
 	c.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -418,8 +521,15 @@ func (c *Conversation) finishSession(err error, resultJSON string, at time.Time)
 // environment that still holds the conversation's context.
 //
 // A turn in flight still fails: its outcome is genuinely unknown here.
-func (c *Conversation) dropStream(err error) {
+func (c *Conversation) dropStream(stream *attachStream, err error) {
 	c.mu.Lock()
+	if c.stream != stream {
+		// This loop's stream is already gone — finished, closed, or replaced
+		// by a later attach. Tearing down what is there now would end a turn
+		// this loop has nothing to do with.
+		c.mu.Unlock()
+		return
+	}
 	reply, cancel := c.current, c.cancel
 	c.current, c.stream, c.cancel = nil, nil, nil
 	c.mu.Unlock()
@@ -432,33 +542,41 @@ func (c *Conversation) dropStream(err error) {
 }
 
 // endSession handles the stream ending, whether cleanly or in error.
-func (c *Conversation) endSession(err error) {
+func (c *Conversation) endSession(stream *attachStream, err error) {
 	if err == nil {
 		err = &Error{Op: "Send", Code: "unavailable", Message: "the conversation stream ended before the turn completed"}
 	}
-	c.dropStream(err)
+	c.dropStream(stream, err)
 }
 
 // runs returns every run this conversation has occupied, oldest first.
-func (c *Conversation) runs(ctx context.Context, op string) ([]wireRunSummary, error) {
-	request := wireListRunsRequest{
-		ProjectID: c.agent.projectID,
-		AgentName: c.agent.name,
-		Labels:    map[string]string{conversationLabel: c.id},
-		Limit:     historyPageSize,
+func (c *Conversation) runs(ctx context.Context, op string) ([]*agentcomposev2.RunSummary, error) {
+	var runs []*agentcomposev2.RunSummary
+	for offset := uint32(0); ; {
+		response, err := c.agent.client.transport.runs.ListRuns(ctx, connect.NewRequest(&agentcomposev2.ListRunsRequest{
+			ProjectId: c.agent.projectID, AgentName: c.agent.name,
+			Labels: map[string]string{conversationLabel: c.id},
+			Offset: offset, Limit: historyPageSize,
+		}))
+		if err != nil {
+			return nil, fromConnect(op, err)
+		}
+		page := response.Msg.GetRuns()
+		runs = append(runs, page...)
+		if len(page) == 0 || offset+uint32(len(page)) >= response.Msg.GetTotal() {
+			break
+		}
+		offset += uint32(len(page))
 	}
-	var response wireListRunsResponse
-	if err := c.agent.client.transport.unary(ctx, op, "ListRuns", request, &response); err != nil {
-		return nil, err
-	}
-	runs := response.Runs
-	slices.SortStableFunc(runs, func(a, b wireRunSummary) int { return a.CreatedAt.Compare(b.CreatedAt) })
+	slices.SortStableFunc(runs, func(a, b *agentcomposev2.RunSummary) int {
+		return a.GetCreatedAt().AsTime().Compare(b.GetCreatedAt().AsTime())
+	})
 	return runs, nil
 }
 
 // latestRun returns the conversation's most recent run, or nil when it has
 // none.
-func (c *Conversation) latestRun(ctx context.Context, op string) (*wireRunSummary, error) {
+func (c *Conversation) latestRun(ctx context.Context, op string) (*agentcomposev2.RunSummary, error) {
 	runs, err := c.runs(ctx, op)
 	if err != nil {
 		return nil, err
@@ -466,25 +584,27 @@ func (c *Conversation) latestRun(ctx context.Context, op string) (*wireRunSummar
 	if len(runs) == 0 {
 		return nil, nil
 	}
-	return &runs[len(runs)-1], nil
+	return runs[len(runs)-1], nil
 }
 
 // runMessages reads one run's durable messages, oldest first.
 func (c *Conversation) runMessages(ctx context.Context, runID string) ([]Message, error) {
 	messages := make([]Message, 0, historyPageSize)
 	for offset := uint32(0); ; {
-		request := wireListEventsRequest{RunID: runID, Offset: offset, Limit: historyPageSize}
-		var response wireListEventsResponse
-		if err := c.agent.client.transport.unary(ctx, "History", "ListRunEvents", request, &response); err != nil {
-			return nil, err
+		response, err := c.agent.client.transport.runs.ListRunEvents(ctx, connect.NewRequest(&agentcomposev2.ListRunEventsRequest{
+			RunId: runID, Offset: offset, Limit: historyPageSize,
+		}))
+		if err != nil {
+			return nil, fromConnect("History", err)
 		}
-		for _, event := range response.Events {
+		events := response.Msg.GetEvents()
+		for _, event := range events {
 			if message, ok := messageFromEvent(event); ok {
 				messages = append(messages, message)
 			}
 		}
-		offset += uint32(len(response.Events))
-		if len(response.Events) == 0 || offset >= response.Total {
+		offset += uint32(len(events))
+		if len(events) == 0 || offset >= response.Msg.GetTotal() {
 			return messages, nil
 		}
 	}
