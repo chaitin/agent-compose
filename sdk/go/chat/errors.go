@@ -28,6 +28,12 @@ var (
 	ErrBusy = errors.New("chat: a reply is already in progress")
 	// ErrClosed reports use of a Conversation after Close.
 	ErrClosed = errors.New("chat: conversation is closed")
+	// ErrIncomplete reports an enumeration that stopped at the caller's own
+	// budget while matches were still unread. What was found is returned
+	// alongside it and is usable; it is just not the whole answer. An
+	// enumeration must never quietly stand in for a complete one, so a
+	// [Search.Limit] that runs out says so rather than returning a subset.
+	ErrIncomplete = errors.New("chat: result is incomplete")
 )
 
 // Error reports a failed agent-compose request.

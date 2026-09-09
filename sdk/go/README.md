@@ -94,8 +94,17 @@ discovering which conversation each run belongs to costs one read per run:
 ```go
 found, err := client.Conversations(ctx, chat.Search{
     Labels: map[string]string{"user": "alice"},
+    Limit:  500, // a budget over the whole walk; omit it to read every match
 })
+if err != nil && !errors.Is(err, chat.ErrIncomplete) {
+    return err
+}
 ```
+
+An unbounded search walks every matching run, one detail read each, so on a
+long-lived daemon it costs one request per run. `Search.Limit` is how you refuse
+to pay that, and a search that runs out of budget returns what it found
+alongside `ErrIncomplete` — a subset is never passed off as the whole list.
 
 Keep your own index of the IDs you created and call `Open` directly; use this to
 rebuild that index, not to draw a list on every page load. A conversation that
@@ -227,8 +236,13 @@ obscurely.
 ## Errors
 
 Classify with `errors.Is` against `ErrInvalidArgument`, `ErrNotFound`,
-`ErrPermission`, `ErrUnavailable`, `ErrConflict`, `ErrBusy` and `ErrClosed`.
-`*Error` carries the daemon's own `Code`, `Status` and `Message` for logging.
+`ErrPermission`, `ErrUnavailable`, `ErrConflict`, `ErrBusy`, `ErrClosed` and
+`ErrIncomplete`. `*Error` carries the daemon's own `Code`, `Status` and
+`Message` for logging.
+
+`ErrIncomplete` is the one that comes back with a usable result: `Conversations`
+returns it when `Search.Limit` ran out before the matching runs did, so the list
+is real but partial.
 
 `ErrConflict` is the daemon refusing to hand over something it gives to one
 holder at a time, a run's input being the one this SDK meets: reattaching just

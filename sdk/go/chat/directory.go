@@ -93,41 +93,48 @@ type Search struct {
 	Labels map[string]string
 	// Limit caps how many runs are examined, not how many conversations come
 	// back: a conversation that was rebuilt occupies several runs. It is a
-	// budget across every page read, so a conversation whose runs all fall
-	// beyond it is not reported at all. Zero examines every matching run,
-	// which is what makes an empty Search mean every conversation.
+	// budget across every page read, and reaching it returns what was found
+	// so far together with [ErrIncomplete], never a subset passed off as the
+	// whole. Zero examines every matching run, which is what makes an empty
+	// Search mean every conversation — and what makes an unbounded Search
+	// cost what the daemon's run count says it costs.
 	Limit int
 }
 
 // Conversations lists the conversations matching search, most recently active
 // first.
 //
-// This is the expensive question. The daemon's run list returns summaries
-// without labels — labels belong to a run's detail — so discovering which
-// conversation each run belongs to costs one detail read per run. A product
-// that shows a chat list on every page load should keep its own index of the
-// conversation IDs it created and call [Agent.Open] directly; this is for
-// rebuilding such an index, or for tools that never had one.
+// This is the expensive question, and worth being plain about how expensive:
+// the daemon's run list returns summaries without labels — labels belong to a
+// run's detail — so discovering which conversation each run belongs to costs
+// one detail read per run. An unbounded search of a long-lived daemon is
+// therefore one request per matching run, in sequence. That is the price of
+// the answer being complete, and [Search.Limit] is how a caller refuses to pay
+// it; a bounded search that runs out reports [ErrIncomplete] rather than
+// quietly returning less.
+//
+// A product that shows a chat list on every page load should keep its own
+// index of the conversation IDs it created and call [Agent.Open] directly;
+// this is for rebuilding such an index, or for tools that never had one.
 func (c *Client) Conversations(ctx context.Context, search Search) ([]ConversationInfo, error) {
-	runs, err := c.matchingRuns(ctx, "Conversations", search)
-	if err != nil {
-		return nil, err
-	}
-	found := make(map[string]ConversationInfo, len(runs))
-	for _, run := range runs {
+	found := map[string]ConversationInfo{}
+	// Fold each page as it arrives rather than collecting every run first: what
+	// this holds is then one page plus the conversations themselves, not one
+	// summary for every run the daemon has ever recorded.
+	truncated, err := c.walkMatchingRuns(ctx, "Conversations", search, func(run *agentcomposev2.RunSummary) error {
 		labels, err := c.runLabels(ctx, run.GetRunId())
 		if err != nil {
-			return nil, err
+			return err
 		}
 		id := labels[conversationLabel]
 		if id == "" {
 			// A run this package did not start. It has no conversation
 			// identity, and inventing one from its run ID would produce an ID
 			// that Open cannot resume.
-			continue
+			return nil
 		}
 		if seen, ok := found[id]; ok && seen.LastActive.After(run.GetCreatedAt().AsTime()) {
-			continue
+			return nil
 		}
 		remaining := maps.Clone(labels)
 		delete(remaining, conversationLabel)
@@ -139,6 +146,10 @@ func (c *Client) Conversations(ctx context.Context, search Search) ([]Conversati
 			LastActive: run.GetCreatedAt().AsTime(),
 			Live:       runIsLive(run),
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	conversations := slices.Collect(maps.Values(found))
@@ -148,45 +159,58 @@ func (c *Client) Conversations(ctx context.Context, search Search) ([]Conversati
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
+	if truncated {
+		// The budget ran out with runs still unread, so this is a subset. Say
+		// so: what the caller does about a partial chat list — raise the
+		// budget, or use what came back — is theirs to decide, but they cannot
+		// decide it if a subset is indistinguishable from the whole.
+		return conversations, ErrIncomplete
+	}
 	return conversations, nil
 }
 
-// matchingRuns reads the runs matching search, walking as many pages as
-// search.Limit allows.
+// walkMatchingRuns visits the runs matching search, a page at a time, and
+// reports whether search.Limit stopped the walk with matches still unread.
 //
-// The daemon caps a page well below what a busy conversation accumulates, so
-// reading one page and stopping would silently drop every conversation whose
-// runs fall outside it. Limit bounds the walk instead, and what it excludes is
-// excluded by the caller's own choice.
-func (c *Client) matchingRuns(ctx context.Context, op string, search Search) ([]*agentcomposev2.RunSummary, error) {
+// The daemon caps a page well below what a busy daemon accumulates, so reading
+// one page and stopping would drop conversations from an enumeration that says
+// it returns every one. Limit is what bounds the walk instead — and when it is
+// what ended the walk, the caller is told.
+func (c *Client) walkMatchingRuns(ctx context.Context, op string, search Search, visit func(*agentcomposev2.RunSummary) error) (bool, error) {
 	budget := search.Limit
-	var runs []*agentcomposev2.RunSummary
-	for offset := uint32(0); budget <= 0 || len(runs) < budget; {
+	for offset := uint32(0); budget <= 0 || int(offset) < budget; {
 		size := uint32(listPageSize)
 		if budget > 0 {
-			size = min(uint32(budget-len(runs)), listPageSize)
+			size = min(uint32(budget-int(offset)), listPageSize)
 		}
 		page, total, err := c.listRunsPage(ctx, op, search, offset, size)
 		if err != nil {
-			return nil, err
+			return false, err
 		}
-		runs = append(runs, page...)
+		for _, run := range page {
+			if err := visit(run); err != nil {
+				return false, err
+			}
+		}
 		offset += uint32(len(page))
 		if len(page) == 0 || offset >= total {
-			break
+			return false, nil
 		}
 	}
-	return runs, nil
+	return true, nil
 }
 
 // latestMatchingRun returns the most recent run matching search, or nil when
 // there is none.
 //
-// A single row answers this. The daemon orders a run list by creation time,
-// newest first, so the first row is the latest run however many the
-// conversation has accumulated; reading a page to pick the newest out of it
-// would cost more for the same answer, and reading only the first page of a
-// long list would risk a wrong one.
+// A single row answers this. The daemon returns a run list newest first — a
+// contract pinned by TestListProjectRunsByOptionsReturnsNewestFirstAcrossPages
+// in pkg/storage/configstore, because these two callers depend on it — so the
+// first row is the latest run however many the conversation has accumulated.
+// Reading a page to pick the newest out of it would cost more for the same
+// answer, and would be no safer: if the order were not newest first, the
+// newest run could sit outside that page just as easily as outside a page of
+// one.
 func (c *Client) latestMatchingRun(ctx context.Context, op string, search Search) (*agentcomposev2.RunSummary, error) {
 	runs, _, err := c.listRunsPage(ctx, op, search, 0, 1)
 	if err != nil {

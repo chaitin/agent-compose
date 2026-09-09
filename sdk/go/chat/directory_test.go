@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"strconv"
 	"testing"
@@ -194,9 +195,30 @@ func TestConversationsWalksPastTheFirstPageOfRuns(t *testing.T) {
 	}
 }
 
+// An unbounded walk that reaches the end is complete, and must not carry the
+// incomplete signal.
+func TestConversationsWithNoLimitReportsComplete(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	var runs []*agentcomposev2.RunSummary
+	for index := range listPageSize + 5 {
+		runs = append(runs, &agentcomposev2.RunSummary{
+			RunId: "run_" + strconv.Itoa(index), ProjectId: "p", AgentName: "a",
+			CreatedAt: timestamppb.New(time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)),
+		})
+	}
+	daemon.listRuns = listRunsPaged(runs...)
+	daemon.getRun = getRunLabelled(map[string]string{conversationLabel: "conv_1"})
+
+	if _, err := daemon.client(t).Conversations(context.Background(), Search{}); err != nil {
+		t.Fatalf("Conversations: %v", err)
+	}
+}
+
 // A caller's Limit is a budget over the whole walk. It bounds the cost of an
-// enumeration, and what it leaves out is left out by the caller's own choice.
-func TestConversationsHonorsLimitAsABudgetAcrossPages(t *testing.T) {
+// enumeration — and running out of it is reported, because a subset that
+// cannot be told apart from the whole is the bug this budget would otherwise
+// reintroduce.
+func TestConversationsHonorsLimitAsABudgetAndReportsWhatItLeftOut(t *testing.T) {
 	daemon := newFakeDaemon(t)
 	var runs []*agentcomposev2.RunSummary
 	for index := range listPageSize * 2 {
@@ -208,8 +230,13 @@ func TestConversationsHonorsLimitAsABudgetAcrossPages(t *testing.T) {
 	daemon.listRuns = listRunsPaged(runs...)
 	daemon.getRun = getRunLabelled(map[string]string{conversationLabel: "conv_1"})
 
-	if _, err := daemon.client(t).Conversations(context.Background(), Search{Limit: listPageSize + 1}); err != nil {
-		t.Fatalf("Conversations: %v", err)
+	found, err := daemon.client(t).Conversations(context.Background(), Search{Limit: listPageSize + 1})
+	if !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("Conversations err = %v, want ErrIncomplete: the budget ran out with runs unread", err)
+	}
+	// The partial answer still comes back: it is usable, just not the whole.
+	if len(found) != 1 || found[0].ID != "conv_1" {
+		t.Errorf("got %+v, want the conversations found before the budget ran out", found)
 	}
 	// A budget of one page plus one run costs two pages, not the whole list.
 	if calls := daemon.count("ListRuns"); calls != 2 {
@@ -217,6 +244,25 @@ func TestConversationsHonorsLimitAsABudgetAcrossPages(t *testing.T) {
 	}
 	if calls := daemon.count("GetRun"); calls != listPageSize+1 {
 		t.Errorf("examined %d runs, want the budget of %d", calls, listPageSize+1)
+	}
+}
+
+// A budget large enough to reach the end is not "incomplete": the signal has
+// to mean something was left out, or callers will learn to ignore it.
+func TestConversationsReportsCompleteWhenTheBudgetIsEnough(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	daemon.listRuns = listRunsPaged(&agentcomposev2.RunSummary{
+		RunId: "run_1", ProjectId: "p", AgentName: "a",
+		CreatedAt: timestamppb.New(time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)),
+	})
+	daemon.getRun = getRunLabelled(map[string]string{conversationLabel: "conv_1"})
+
+	found, err := daemon.client(t).Conversations(context.Background(), Search{Limit: 50})
+	if err != nil {
+		t.Fatalf("Conversations: %v", err)
+	}
+	if len(found) != 1 {
+		t.Fatalf("got %d conversations, want 1", len(found))
 	}
 }
 
