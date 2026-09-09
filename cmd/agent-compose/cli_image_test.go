@@ -338,7 +338,7 @@ agents:
 	defer server.Close()
 
 	textOut, textErr, _, textCode := executeCLICommand("image", "build", "--host", server.URL, "--file", composePath, "-t", "reviewer:ci", "--dockerfile", "Dockerfile.agent", "--target", "runtime", "--build-arg", "NODE_ENV=development", "--platform", "linux/amd64", "--no-cache", "--pull", "reviewer")
-	if textCode != 0 || textErr != "" {
+	if textCode != 0 || !strings.Contains(textErr, "image build [agent...] is deprecated") || !strings.Contains(textErr, "use build [agent...] instead") {
 		t.Fatalf("image build code/stderr = %d / %q", textCode, textErr)
 	}
 	if !strings.Contains(textOut, "build step") || !strings.Contains(textOut, "Built reviewer:dev") {

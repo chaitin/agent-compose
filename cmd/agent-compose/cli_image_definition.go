@@ -14,7 +14,7 @@ func newCLIImageCommand(cli *cliOptions) *cobra.Command {
 	cmd.AddCommand(
 		newCLIImageListCommand(cli, "ls", "List daemon images", "image ls", "images"),
 		newCLIImagePullCommand(cli, "pull [image]", "image pull [image]", "pull [image]"),
-		newCLIImageBuildCommand(cli, "build [agent...]"),
+		newCLIImageBuildCommand(cli, "build [agent...]", "image build [agent...]", "build [agent...]"),
 		newCLIImageRemoveCommand(cli, "rm <image>", "image rm <image>", "rmi <image>"),
 		newCLIImageInspectCommandWithWarning(cli, "inspect <image>", "image inspect <image>", "inspect image <image>"),
 	)
@@ -57,9 +57,14 @@ func newCLIImagePullCommand(cli *cliOptions, use string, warning ...string) *cob
 	return cmd
 }
 
-func newCLIImageBuildCommand(cli *cliOptions, use string) *cobra.Command {
+func newCLIImageBuildCommand(cli *cliOptions, use string, warning ...string) *cobra.Command {
 	options := composeImageBuildOptions{}
 	cmd := &cobra.Command{Use: use, Short: "Build project agent images", Args: cobra.ArbitraryArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		if len(warning) == 2 {
+			if err := writeDeprecatedWarning(cmd.ErrOrStderr(), warning[0], warning[1]); err != nil {
+				return err
+			}
+		}
 		return runComposeBuildCommand(cmd, *cli, options, args)
 	}}
 	addImageBuildFlags(cmd, &options)
