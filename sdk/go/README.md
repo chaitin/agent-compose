@@ -5,7 +5,7 @@ A client for holding a conversation with an agent-compose Agent.
 ```go
 client, err := chat.New(chat.Config{
     BaseURL: "http://127.0.0.1:7410",
-    Token:   chat.StaticToken(os.Getenv("AGENT_COMPOSE_TOKEN")),
+    Token:   chat.StaticToken(os.Getenv("AGENT_COMPOSE_AUTH_TOKEN")),
 })
 if err != nil {
     return err
@@ -13,7 +13,7 @@ if err != nil {
 agent := client.Agent("review-project", "reviewer")
 
 conversation := agent.Start()
-defer conversation.Close()
+defer func() { _ = conversation.Close(ctx) }()
 
 reply, err := conversation.Send(ctx, "check this PR")
 if err != nil {
@@ -34,6 +34,26 @@ Or, when only the answer matters:
 ```go
 message, err := conversation.Ask(ctx, "check this PR")
 ```
+
+## Finding an agent
+
+`Agent` takes a project ID and an agent name. `Projects` is how a product
+learns them, so a chooser does not need them configured out of band:
+
+```go
+projects, err := client.Projects(ctx)
+for _, project := range projects {
+    for _, agent := range project.Agents {
+        if agent.Available {
+            fmt.Println(project.ID, agent.Name, agent.DisplayName)
+        }
+    }
+}
+```
+
+An agent that is disabled, or whose configuration did not validate, is listed
+with `Available` false and a `Unavailable` reason rather than hidden: someone
+looking for it should see that it exists.
 
 ## The model
 
@@ -90,8 +110,12 @@ a name that has to be changeable.
 ## Continuity
 
 Turns share one environment, and that environment is what carries the agent's
-context forward. When it is gone and the conversation had to be rebuilt,
-`Continuity()` reports `Restarted` instead of silently starting over:
+context forward. A run ending stops that environment, but stopping is not
+losing it: the sandbox keeps the workspace and the directories a provider
+stores its session in, so every new run asks the daemon to resume the sandbox
+the conversation last had rather than starting from nothing. `Continuity()` reports `Restarted`
+only once that resume actually fails to happen, not merely because a new run
+was needed:
 
 ```go
 if conversation.Continuity() == chat.Restarted {
@@ -103,13 +127,56 @@ Losing the network is not losing the environment. A dropped stream fails the
 turn in flight but keeps the conversation `Continuous`, and the next `Send`
 reattaches to the same session.
 
-## Close, not Delete
+## Ending a session
 
-`Close()` releases this client's stream and leaves the conversation intact on
-the server, so `defer conversation.Close()` is the safe default. Work already
-in progress keeps running; a user who closes the browser tab mid-answer finds
-the finished answer in `History()` on return. Only `Delete(ctx)` ends a
-conversation and releases its environment.
+`Close(ctx)` releases everything the handle is holding: its stream, and the run
+behind it, whose environment the daemon then stops. The conversation itself
+survives — its durable history and identity are untouched, `Lookup` and
+`Conversations` keep finding it, and `Agent.Open` resumes it later.
+
+Closing has to end the run. A conversation attaches with the detach disconnect
+policy, because a turn must survive the browser tab that started it going
+away; the cost is that a dropped stream leaves the run — and the sandbox it
+holds — alive, and nothing on the daemon side expires it. A `Close` that only
+dropped the stream would leave one running environment per conversation ever
+opened. `defer conversation.Close(ctx)` is the right default precisely because
+it does not.
+
+Resuming after a close asks the daemon to reuse the conversation's last
+sandbox. `Continuity` reports `Continuous` when that succeeds and `Restarted`
+when the sandbox is gone and a replacement is built. Nothing here makes a
+conversation's history or identity irrecoverable.
+
+`Client.EndSession(ctx, id)` does the same thing addressed by ID, for a
+conversation no handle of yours is attached to — after a restart, say, when
+your own sessions are gone but the daemon's runs are not. It finds the run
+through the label every conversation's runs carry. Ending a session that has
+already ended is not an error.
+
+A handle that never attached holds no run, so closing it is free, and in
+particular it cannot end a run some other handle is holding — which matters
+when two handles race to attach to the same conversation and the loser is
+discarded.
+
+## Reading history
+
+`History(ctx)` fetches every message the conversation has ever had, which is
+fine for a short thread but costs one request per page of every run the
+conversation has occupied. `HistoryPage` fetches events in bounded pages and
+walks backward from the most recent message; it still discovers the
+conversation's run list first, so a conversation with many historical runs is
+not free to open:
+
+```go
+page, err := conversation.HistoryPage(ctx, chat.HistoryOptions{Limit: 30})
+// page.Messages is the 30 most recent, oldest first.
+older, err := conversation.HistoryPage(ctx, chat.HistoryOptions{Limit: 30, Before: page.Cursor})
+// page.Cursor is "" once there is nothing older.
+```
+
+Use `HistoryPage` for a chat UI that loads recent messages first and fetches
+further back only when the reader scrolls up; `History` remains the
+convenience for a caller that genuinely wants the whole thread at once.
 
 ## Events
 
@@ -131,15 +198,25 @@ Two rules the event model carries, both measured against real provider runs:
   per turn, some per run. Never sum records of differing scope.
 - **Group tool events by `Step`, never by the `step_start`/`step_end`
   interval.** Some providers close a step before its tool events arrive.
+- **A `StepEndEvent` with `Scope == StepEndScopeRun` closes the turn/run, not
+  an individual step.** Consumers pairing step boundaries must ignore it.
 
 An optional field a provider does not report stays nil rather than becoming a
 zero value, so `Step == nil` and `Step` pointing at `0` stay distinguishable.
-An event kind this build does not know is dropped rather than failing the turn.
+Event kinds this build does not know are exposed as `RawEvent`, preserving the
+daemon's name, display text, and payload so provider extensions are not lost.
 
 Events are retained on the `Reply`: `Wait` and `Events` can be used together,
 in either order, and a second `Events` pass replays from the start.
 
 ## Requirements
+
+Go 1.24 or newer. The SDK depends on `connectrpc.com/connect` and on
+`github.com/chaitin/agent-compose/proto`, the wire contract as its own module —
+so taking this SDK does not mean taking the daemon's dependencies. Requests are
+binary Protobuf over Connect; the daemon accepts JSON too, and
+`connect.WithProtoJSON()` on a hand-built client is how you would ask for it,
+usually only to read a capture.
 
 Conversations need **HTTP/2**, which the Connect protocol requires for
 bidirectional streams. The default HTTP client handles both h2c (plaintext, as
@@ -150,8 +227,13 @@ obscurely.
 ## Errors
 
 Classify with `errors.Is` against `ErrInvalidArgument`, `ErrNotFound`,
-`ErrPermission`, `ErrUnavailable`, `ErrBusy` and `ErrClosed`. `*Error` carries
-the daemon's own `Code`, `Status` and `Message` for logging.
+`ErrPermission`, `ErrUnavailable`, `ErrConflict`, `ErrBusy` and `ErrClosed`.
+`*Error` carries the daemon's own `Code`, `Status` and `Message` for logging.
+
+`ErrConflict` is the daemon refusing to hand over something it gives to one
+holder at a time, a run's input being the one this SDK meets: reattaching just
+after losing a stream can arrive before the previous attachment has let go.
+Retrying shortly is usually right.
 
 ## Concurrency
 
@@ -162,23 +244,28 @@ and allows one `Reply` in flight at a time; a second `Send` returns `ErrBusy`.
 
 - **`Reply.Interrupt` ends the conversation's session, not just the turn.** The
   daemon's cancel cancels the whole interactive execution, so the next `Send`
-  rebuilds the environment and reports `Restarted`. A turn-scoped cancel needs
-  daemon support.
-- **Streaming text requires the provider-neutral agent events from
-  [#666](https://github.com/chaitin/agent-compose/pull/666), which is not
-  merged yet.** Until it lands, only the codex provider emits structured
-  events; the others complete their turns without deltas. The interface does
-  not change when it merges.
-- **Listing a user's conversations is not offered.** The daemon has no
-  conversation table; products store their own thread list, which they need
-  anyway for titles, ownership, and ordering.
+  needs a new run — which asks to resume the same sandbox, same as any other
+  run boundary. A turn-scoped cancel needs daemon support.
+- **Provider event vocabularies differ.** The SDK has typed variants for the
+  provider-neutral schema and treats the legacy generic `output` event as a
+  text delta. Other provider-defined Attach events are returned as `RawEvent`;
+  the daemon does not rewrite them for a particular provider.
+- **A detached run never expires on its own.** The daemon keeps a run alive
+  when its client disconnects and has no idle timeout for one, so a process
+  that exits without closing its conversations leaves a run — and a sandbox —
+  behind for each of them. Close them on the way out; recovering the ones a
+  crash left behind means finding them through their labels.
+- **`History` and `HistoryPage` return only user and assistant text.** Tool
+  calls, reasoning, usage, and every other event kind are turn-scoped and not
+  durable messages; replaying a turn's full activity trace after a reload
+  needs the live stream, not history.
 
 ## Examples
 
 A terminal client:
 
 ```bash
-export AGENT_COMPOSE_TOKEN=optional-token
+export AGENT_COMPOSE_AUTH_TOKEN=optional-token
 go run ./examples/chat -project my-project -agent my-agent
 go run ./examples/chat -project my-project -agent my-agent -conversation conv_1a2b3c
 ```
