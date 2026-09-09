@@ -17834,12 +17834,20 @@ func (x *ListSandboxHistoryRequest) GetLimit() uint32 {
 }
 
 type SandboxHistoryCell struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Type          string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
-	Source        string                 `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
-	Stdout        string                 `protobuf:"bytes,4,opt,name=stdout,proto3" json:"stdout,omitempty"`
-	Stderr        string                 `protobuf:"bytes,5,opt,name=stderr,proto3" json:"stderr,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Id     string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Type   string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
+	Source string                 `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	// Never set. A cell's captured streams reach a reader through output, which
+	// already merges them; keeping a second copy here doubled a response that was
+	// large for the same reason it was worth truncating.
+	Stdout string `protobuf:"bytes,4,opt,name=stdout,proto3" json:"stdout,omitempty"`
+	Stderr string `protobuf:"bytes,5,opt,name=stderr,proto3" json:"stderr,omitempty"`
+	// The captured stream, holding the most recent bytes of a long run rather than
+	// all of them: a single build log reaches tens of megabytes and one such cell
+	// is enough to make a page unreadable and its response unloadable.
+	// output_truncated_bytes says how much was dropped; RunService.FollowRunLogs
+	// still serves the complete log.
 	Output        string                 `protobuf:"bytes,6,opt,name=output,proto3" json:"output,omitempty"`
 	ExitCode      int32                  `protobuf:"varint,7,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
 	Success       bool                   `protobuf:"varint,8,opt,name=success,proto3" json:"success,omitempty"`
@@ -17848,8 +17856,10 @@ type SandboxHistoryCell struct {
 	Agent         string                 `protobuf:"bytes,11,opt,name=agent,proto3" json:"agent,omitempty"`
 	AgentThreadId string                 `protobuf:"bytes,12,opt,name=agent_thread_id,json=agentThreadId,proto3" json:"agent_thread_id,omitempty"`
 	StopReason    string                 `protobuf:"bytes,13,opt,name=stop_reason,json=stopReason,proto3" json:"stop_reason,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Bytes dropped from the head of output. Zero means output is complete.
+	OutputTruncatedBytes uint64 `protobuf:"varint,14,opt,name=output_truncated_bytes,json=outputTruncatedBytes,proto3" json:"output_truncated_bytes,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *SandboxHistoryCell) Reset() {
@@ -17971,6 +17981,13 @@ func (x *SandboxHistoryCell) GetStopReason() string {
 		return x.StopReason
 	}
 	return ""
+}
+
+func (x *SandboxHistoryCell) GetOutputTruncatedBytes() uint64 {
+	if x != nil {
+		return x.OutputTruncatedBytes
+	}
+	return 0
 }
 
 type SandboxHistoryEvent struct {
@@ -20300,7 +20317,7 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\rR\x06offset\x12\x14\n" +
-	"\x05limit\x18\x03 \x01(\rR\x05limit\"\x83\x03\n" +
+	"\x05limit\x18\x03 \x01(\rR\x05limit\"\xb9\x03\n" +
 	"\x12SandboxHistoryCell\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x16\n" +
@@ -20317,7 +20334,8 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\x05agent\x18\v \x01(\tR\x05agent\x12&\n" +
 	"\x0fagent_thread_id\x18\f \x01(\tR\ragentThreadId\x12\x1f\n" +
 	"\vstop_reason\x18\r \x01(\tR\n" +
-	"stopReason\"\xa4\x01\n" +
+	"stopReason\x124\n" +
+	"\x16output_truncated_bytes\x18\x0e \x01(\x04R\x14outputTruncatedBytes\"\xa4\x01\n" +
 	"\x13SandboxHistoryEvent\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x14\n" +

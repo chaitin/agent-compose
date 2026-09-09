@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -298,15 +299,37 @@ func sandboxHistoryTimestamp(value time.Time) *timestamppb.Timestamp {
 	return timestamppb.New(value)
 }
 
+// A cell accumulates every byte its run writes, for as long as the run lasts, so
+// nothing bounds its size: one verbose build an agent reran a dozen times reached
+// 41MB, and because the same bytes travelled in both stdout and output, listing
+// that single cell meant a 75MB response. Carry the newest bytes, which is the
+// end anyone reads, and leave the rest to RunService.FollowRunLogs.
+const maxSandboxHistoryCellOutputBytes = 64 << 10
+
 func sandboxHistoryCellToV2(cell *domain.NotebookCell) *agentcomposev2.SandboxHistoryCell {
 	if cell == nil {
 		return nil
 	}
+	output, truncated := tailBytes(firstNonEmpty(cell.Output, cell.Stdout+cell.Stderr), maxSandboxHistoryCellOutputBytes)
 	return &agentcomposev2.SandboxHistoryCell{
-		Id: cell.ID, Type: cell.Type, Source: cell.Source, Stdout: cell.Stdout, Stderr: cell.Stderr,
-		Output: cell.Output, ExitCode: int32(cell.ExitCode), Success: cell.Success, Running: cell.Running,
+		Id: cell.ID, Type: cell.Type, Source: cell.Source, Output: output, OutputTruncatedBytes: truncated,
+		ExitCode: int32(cell.ExitCode), Success: cell.Success, Running: cell.Running,
 		CreatedAt: sandboxHistoryTimestamp(cell.CreatedAt), Agent: cell.Agent, AgentThreadId: cell.AgentThreadID, StopReason: cell.StopReason,
 	}
+}
+
+// tailBytes keeps the last limit bytes of value and reports how many it dropped.
+// The cut lands on a rune boundary: a proto3 string must be valid UTF-8, and
+// slicing through a multi-byte rune would make the whole response unmarshalable.
+func tailBytes(value string, limit int) (string, uint64) {
+	if len(value) <= limit {
+		return value, 0
+	}
+	tail := value[len(value)-limit:]
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
+	return tail, uint64(len(value) - len(tail))
 }
 
 func sandboxHistoryEventToV2(event *domain.SandboxEvent) *agentcomposev2.SandboxHistoryEvent {

@@ -1,8 +1,12 @@
 package api
 
 import (
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	"google.golang.org/protobuf/proto"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
@@ -52,5 +56,66 @@ func TestPaginateSandboxHistoryBreaksTimestampTiesDeterministically(t *testing.T
 	}
 	if first.GetCells()[0].GetId() != "cell-b" || second.GetCells()[0].GetId() != "cell-a" || third.GetEvents()[0].GetId() != "event-z" {
 		t.Fatalf("tie order = (%v, %v, %v), want cell-b, cell-a, event-z", first, second, third)
+	}
+}
+
+func TestPaginateSandboxHistoryCapsCellOutput(t *testing.T) {
+	buildLog := strings.Repeat("a", maxSandboxHistoryCellOutputBytes+4096)
+	cells := []domain.NotebookCell{{ID: "cell-build", Output: buildLog, Running: true}}
+
+	response, err := paginateSandboxHistory(cells, nil, 0, 0)
+	if err != nil {
+		t.Fatalf("paginateSandboxHistory returned error: %v", err)
+	}
+	cell := response.GetCells()[0]
+	if got := len(cell.GetOutput()); got != maxSandboxHistoryCellOutputBytes {
+		t.Fatalf("output length = %d, want %d", got, maxSandboxHistoryCellOutputBytes)
+	}
+	if got := cell.GetOutputTruncatedBytes(); got != 4096 {
+		t.Fatalf("output_truncated_bytes = %d, want 4096", got)
+	}
+	if !strings.HasSuffix(buildLog, cell.GetOutput()) {
+		t.Fatal("output is not the tail of the captured stream")
+	}
+}
+
+func TestPaginateSandboxHistorySendsOneCopyOfTheCapturedStream(t *testing.T) {
+	cells := []domain.NotebookCell{
+		{ID: "cell-merged", Stdout: "out", Stderr: "err", Output: "outerr"},
+		{ID: "cell-legacy", Stdout: "out", Stderr: "err"},
+	}
+
+	response, err := paginateSandboxHistory(cells, nil, 0, 0)
+	if err != nil {
+		t.Fatalf("paginateSandboxHistory returned error: %v", err)
+	}
+	for _, cell := range response.GetCells() {
+		if cell.GetStdout() != "" || cell.GetStderr() != "" {
+			t.Fatalf("%s still carries a second copy: stdout = %q, stderr = %q", cell.GetId(), cell.GetStdout(), cell.GetStderr())
+		}
+		if cell.GetOutput() != "outerr" {
+			t.Fatalf("%s output = %q, want the merged stream", cell.GetId(), cell.GetOutput())
+		}
+	}
+}
+
+func TestPaginateSandboxHistoryKeepsTruncatedOutputMarshalable(t *testing.T) {
+	// A cut through a multi-byte rune leaves a proto3 string that no longer
+	// marshals, which would fail the whole response rather than one cell.
+	cells := []domain.NotebookCell{{ID: "cell-cjk", Output: strings.Repeat("日", maxSandboxHistoryCellOutputBytes)}}
+
+	response, err := paginateSandboxHistory(cells, nil, 0, 0)
+	if err != nil {
+		t.Fatalf("paginateSandboxHistory returned error: %v", err)
+	}
+	output := response.GetCells()[0].GetOutput()
+	if !utf8.ValidString(output) {
+		t.Fatal("truncated output is not valid UTF-8")
+	}
+	if len(output) > maxSandboxHistoryCellOutputBytes {
+		t.Fatalf("output length = %d, want at most %d", len(output), maxSandboxHistoryCellOutputBytes)
+	}
+	if _, err := proto.Marshal(response); err != nil {
+		t.Fatalf("marshal truncated response: %v", err)
 	}
 }

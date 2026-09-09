@@ -2125,8 +2125,16 @@ message SandboxHistoryCell {
   string id = 1;
   string type = 2;
   string source = 3;
+  // Never set. A cell's captured streams reach a reader through output, which
+  // already merges them; keeping a second copy here doubled a response that was
+  // large for the same reason it was worth truncating.
   string stdout = 4;
   string stderr = 5;
+  // The captured stream, holding the most recent bytes of a long run rather than
+  // all of them: a single build log reaches tens of megabytes and one such cell
+  // is enough to make a page unreadable and its response unloadable.
+  // output_truncated_bytes says how much was dropped; RunService.FollowRunLogs
+  // still serves the complete log.
   string output = 6;
   int32 exit_code = 7;
   bool success = 8;
@@ -2135,6 +2143,8 @@ message SandboxHistoryCell {
   string agent = 11;
   string agent_thread_id = 12;
   string stop_reason = 13;
+  // Bytes dropped from the head of output. Zero means output is complete.
+  uint64 output_truncated_bytes = 14;
 }
 
 message SandboxHistoryEvent {
