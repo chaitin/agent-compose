@@ -1,0 +1,401 @@
+{
+  "commands": [
+    {
+      "path": "agent-compose agent"
+    },
+    {
+      "path": "agent-compose agent ls"
+    },
+    {
+      "path": "agent-compose auth"
+    },
+    {
+      "path": "agent-compose auth login",
+      "flags": [
+        "token="
+      ]
+    },
+    {
+      "path": "agent-compose auth logout"
+    },
+    {
+      "path": "agent-compose auth ls"
+    },
+    {
+      "path": "agent-compose build",
+      "flags": [
+        "build-arg=[]",
+        "dockerfile=",
+        "no-cache=false",
+        "platform=",
+        "pull=false",
+        "tag=[]",
+        "target="
+      ]
+    },
+    {
+      "path": "agent-compose cache"
+    },
+    {
+      "path": "agent-compose cache inspect"
+    },
+    {
+      "path": "agent-compose cache ls",
+      "flags": [
+        "driver=",
+        "status=",
+        "type="
+      ]
+    },
+    {
+      "path": "agent-compose cache prune",
+      "flags": [
+        "driver=",
+        "expired=false",
+        "force=false",
+        "older-than=",
+        "orphaned=false",
+        "status=",
+        "type=",
+        "unused=false"
+      ]
+    },
+    {
+      "path": "agent-compose cache rm",
+      "flags": [
+        "force=false"
+      ]
+    },
+    {
+      "path": "agent-compose config",
+      "flags": [
+        "quiet=false"
+      ]
+    },
+    {
+      "path": "agent-compose daemon"
+    },
+    {
+      "path": "agent-compose down"
+    },
+    {
+      "path": "agent-compose exec",
+      "flags": [
+        "command=",
+        "cwd=",
+        "interactive=false",
+        "prompt=",
+        "run=",
+        "tty=false"
+      ]
+    },
+    {
+      "path": "agent-compose image"
+    },
+    {
+      "path": "agent-compose image build",
+      "flags": [
+        "build-arg=[]",
+        "dockerfile=",
+        "no-cache=false",
+        "platform=",
+        "pull=false",
+        "tag=[]",
+        "target="
+      ]
+    },
+    {
+      "path": "agent-compose image inspect"
+    },
+    {
+      "path": "agent-compose image ls",
+      "flags": [
+        "all=false",
+        "query=",
+        "verbose=false"
+      ]
+    },
+    {
+      "path": "agent-compose image pull",
+      "flags": [
+        "platform="
+      ]
+    },
+    {
+      "path": "agent-compose image rm",
+      "flags": [
+        "force=false",
+        "prune-children=false"
+      ]
+    },
+    {
+      "path": "agent-compose images",
+      "flags": [
+        "all=false",
+        "query=",
+        "verbose=false"
+      ]
+    },
+    {
+      "path": "agent-compose inspect"
+    },
+    {
+      "path": "agent-compose logs",
+      "flags": [
+        "agent=",
+        "follow=false",
+        "run=",
+        "sandbox=",
+        "tail=-1",
+        "timestamp=false"
+      ]
+    },
+    {
+      "path": "agent-compose ls"
+    },
+    {
+      "path": "agent-compose project"
+    },
+    {
+      "path": "agent-compose project down"
+    },
+    {
+      "path": "agent-compose project ls",
+      "flags": [
+        "limit=0",
+        "offset=0",
+        "verbose=false"
+      ]
+    },
+    {
+      "path": "agent-compose project up"
+    },
+    {
+      "path": "agent-compose ps",
+      "flags": [
+        "all=false",
+        "label=[]",
+        "status=",
+        "verbose=false"
+      ]
+    },
+    {
+      "path": "agent-compose pull",
+      "flags": [
+        "platform="
+      ]
+    },
+    {
+      "path": "agent-compose resume"
+    },
+    {
+      "path": "agent-compose rm",
+      "flags": [
+        "force=false"
+      ]
+    },
+    {
+      "path": "agent-compose rmi",
+      "flags": [
+        "force=false",
+        "prune-children=false"
+      ]
+    },
+    {
+      "path": "agent-compose run",
+      "flags": [
+        "command=",
+        "detach=false",
+        "driver=",
+        "interactive=false",
+        "jupyter-expose=false",
+        "jupyter=false",
+        "keep-running=false",
+        "label=[]",
+        "prompt=",
+        "rm=false",
+        "sandbox=",
+        "tty=false"
+      ]
+    },
+    {
+      "path": "agent-compose sandbox"
+    },
+    {
+      "path": "agent-compose sandbox ls",
+      "flags": [
+        "all=false",
+        "label=[]",
+        "status=",
+        "verbose=false"
+      ]
+    },
+    {
+      "path": "agent-compose sandbox prune",
+      "flags": [
+        "agent=",
+        "driver=",
+        "force=false",
+        "include-orphans=false",
+        "older-than=",
+        "status="
+      ]
+    },
+    {
+      "path": "agent-compose sandbox resume"
+    },
+    {
+      "path": "agent-compose sandbox rm",
+      "flags": [
+        "force=false"
+      ]
+    },
+    {
+      "path": "agent-compose sandbox stop",
+      "flags": [
+        "force=false",
+        "grace-period=0s",
+        "graceful=false"
+      ]
+    },
+    {
+      "path": "agent-compose scheduler"
+    },
+    {
+      "path": "agent-compose scheduler inspect",
+      "flags": [
+        "scheduler="
+      ]
+    },
+    {
+      "path": "agent-compose scheduler invoke",
+      "flags": [
+        "payload="
+      ]
+    },
+    {
+      "path": "agent-compose scheduler logs",
+      "flags": [
+        "agent=",
+        "run=",
+        "scheduler=",
+        "tail=-1",
+        "trigger="
+      ]
+    },
+    {
+      "path": "agent-compose scheduler ls",
+      "flags": [
+        "verbose=false"
+      ]
+    },
+    {
+      "path": "agent-compose scheduler prune",
+      "flags": [
+        "force=false",
+        "older-than=",
+        "scheduler=",
+        "status=",
+        "trigger="
+      ]
+    },
+    {
+      "path": "agent-compose scheduler runs",
+      "flags": [
+        "agent=",
+        "limit=0",
+        "status=",
+        "trigger="
+      ]
+    },
+    {
+      "path": "agent-compose scheduler stop",
+      "flags": [
+        "reason="
+      ]
+    },
+    {
+      "path": "agent-compose scheduler trigger",
+      "flags": [
+        "detach=false",
+        "payload="
+      ]
+    },
+    {
+      "path": "agent-compose stats"
+    },
+    {
+      "path": "agent-compose status"
+    },
+    {
+      "path": "agent-compose stop",
+      "flags": [
+        "force=false",
+        "grace-period=0s",
+        "graceful=false"
+      ]
+    },
+    {
+      "path": "agent-compose up"
+    },
+    {
+      "path": "agent-compose version"
+    },
+    {
+      "path": "agent-compose volume"
+    },
+    {
+      "path": "agent-compose volume create",
+      "flags": [
+        "driver=local",
+        "label=[]",
+        "opt=[]"
+      ]
+    },
+    {
+      "path": "agent-compose volume inspect"
+    },
+    {
+      "path": "agent-compose volume ls",
+      "flags": [
+        "driver=",
+        "project-id=",
+        "query=",
+        "verbose=false"
+      ]
+    },
+    {
+      "path": "agent-compose volume prune",
+      "flags": [
+        "driver=",
+        "force=false",
+        "project-id=",
+        "query="
+      ]
+    },
+    {
+      "path": "agent-compose volume rm",
+      "aliases": [
+        "remove"
+      ],
+      "flags": [
+        "force=false"
+      ]
+    }
+  ],
+  "exit_codes": {
+    "general": 1,
+    "success": 0,
+    "unavailable": 3,
+    "unsupported": 4,
+    "usage": 2
+  },
+  "json_fields": {
+    "version --json": [
+      "version",
+      "os",
+      "arch",
+      "compiled_drivers"
+    ]
+  }
+}
