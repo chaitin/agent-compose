@@ -175,6 +175,28 @@ func TestV2SandboxWatchEventProjection(t *testing.T) {
 	}
 }
 
+func TestV2SandboxWatchCellCarriesTheSameCappedOutputAsAListing(t *testing.T) {
+	// A completed cell is published with everything its run accumulated, so the
+	// watch stream pushes the same tens of megabytes a listing used to return.
+	// Both go through sandboxHistoryCellToV2 and both are capped; a subscriber
+	// that needs the head of the log reads it from RunService.FollowRunLogs.
+	buildLog := strings.Repeat("a", maxSandboxHistoryCellOutputBytes+4096)
+	cell := domain.NotebookCell{ID: "cell-build", Stdout: buildLog, Output: buildLog}
+
+	for _, eventType := range []sandboxes.WatchEventType{sandboxes.WatchEventTypeCellStarted, sandboxes.WatchEventTypeCellCompleted} {
+		got := sandboxWatchEventToV2(sandboxes.WatchEvent{EventType: eventType, Cell: &cell}).GetCell()
+		if length := len(got.GetOutput()); length != maxSandboxHistoryCellOutputBytes {
+			t.Fatalf("%v output length = %d, want %d", eventType, length, maxSandboxHistoryCellOutputBytes)
+		}
+		if truncated := got.GetOutputTruncatedBytes(); truncated != 4096 {
+			t.Fatalf("%v output_truncated_bytes = %d, want 4096", eventType, truncated)
+		}
+		if got.GetStdout() != "" || got.GetStderr() != "" {
+			t.Fatalf("%v still carries a second copy of the stream", eventType)
+		}
+	}
+}
+
 func TestV2SandboxLifecycleIsIdempotentAndRejectsInvalidState(t *testing.T) {
 	sandboxID := identity.NewID(identity.ResourceSandbox, "characterization", "idempotent")
 	delegate := &characterizationSessionDelegate{}

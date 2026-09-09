@@ -310,7 +310,14 @@ func sandboxHistoryCellToV2(cell *domain.NotebookCell) *agentcomposev2.SandboxHi
 	if cell == nil {
 		return nil
 	}
-	output, truncated := tailBytes(firstNonEmpty(cell.Output, cell.Stdout+cell.Stderr), maxSandboxHistoryCellOutputBytes)
+	// Go evaluates arguments before the call, so folding this into firstNonEmpty
+	// would concatenate and then discard a copy of the very stream this function
+	// exists to keep out of memory.
+	merged := cell.Output
+	if merged == "" {
+		merged = cell.Stdout + cell.Stderr
+	}
+	output, truncated := tailBytes(merged, maxSandboxHistoryCellOutputBytes)
 	return &agentcomposev2.SandboxHistoryCell{
 		Id: cell.ID, Type: cell.Type, Source: cell.Source, Output: output, OutputTruncatedBytes: truncated,
 		ExitCode: int32(cell.ExitCode), Success: cell.Success, Running: cell.Running,
