@@ -4,6 +4,10 @@ go 1.26.2
 
 require (
 	connectrpc.com/connect v1.19.2
+	// v0.0.0 resolves only through the replace at the bottom of this file,
+	// which does not reach anyone depending on this module. Point this at a
+	// real proto/vX.Y.Z before cutting the next release tag.
+	github.com/chaitin/agent-compose/proto v0.0.0
 	github.com/chaitin/ai-api-protocol-bridge v1.0.0
 	github.com/chzyer/readline v1.5.1
 	github.com/containerd/errdefs v1.0.0
@@ -124,3 +128,8 @@ tool (
 	connectrpc.com/connect/cmd/protoc-gen-connect-go
 	google.golang.org/protobuf/cmd/protoc-gen-go
 )
+
+// The wire contract is a module of its own so clients can depend on it without
+// inheriting everything below. It is developed in lockstep here; released
+// clients use a tagged proto/vX.Y.Z instead.
+replace github.com/chaitin/agent-compose/proto => ./proto

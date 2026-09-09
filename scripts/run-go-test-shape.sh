@@ -18,7 +18,7 @@ if [[ -n "$go_coverage_dir" ]]; then
 fi
 
 extra_packages=()
-base_packages=(./cmd/... ./internal/... ./pkg/... ./proto/health/v1 ./proto/health/v1/healthv1connect ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect)
+base_packages=(./cmd/... ./internal/... ./pkg/...)
 case "$shape" in
   unit)
     packages=("${base_packages[@]}")
