@@ -56,6 +56,26 @@ jobs:
       - name: Run lint
         run: task lint
 
+  proto-version:
+    name: Published proto version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Every other job builds through the replace, against the proto/ in the
+      # working tree, so a proto change that was never tagged - or a tag the
+      # require was never moved to - looks fine here and breaks only for
+      # whoever depends on this module. Dropping the replace is the one build
+      # that actually exercises the version in go.mod.
+      - name: Build against the published proto module
+        run: |
+          go mod edit -dropreplace=github.com/chaitin/agent-compose/proto
+          GOFLAGS=-mod=mod go mod download github.com/chaitin/agent-compose/proto
+          go build ./...
+
   go-test:
     name: Go tests
     runs-on: ubuntu-latest
