@@ -48,6 +48,12 @@ type Conversation struct {
 	sentText     string
 	retryFrameID string
 	retryText    string
+	// pendingRun records that this handle asked the daemon to start a run and
+	// has not yet been told its ID. The daemon reports that ID asynchronously,
+	// in the start frame, so between the request and that frame there is a run
+	// — holding a sandbox, and asked to survive a disconnect — that this handle
+	// cannot yet name. Close has to end it anyway.
+	pendingRun bool
 }
 
 // Start returns a new conversation with this Agent.
@@ -277,13 +283,21 @@ func (c *Conversation) History(ctx context.Context) ([]Message, error) {
 // ever ends it. A Close that only dropped the stream therefore left a run —
 // and the sandbox it holds — alive for every conversation ever opened.
 //
+// A run this handle started but was never named is stopped too. The daemon
+// reports a run's ID asynchronously, in the start frame, while [Conversation.Send]
+// returns as soon as the request is away — so a Close right after a Send can
+// arrive with a run already running and no ID to stop it by. Such a run is
+// found through the conversation's identity label instead.
+//
 // A handle that never attached holds no run, so closing it is free — in
 // particular it cannot end a run some other handle is holding. Use
 // [Client.EndSession] to end a session no handle of yours is attached to.
 func (c *Conversation) Close(ctx context.Context) error {
 	c.mu.Lock()
 	opened, current, cancel, runID := c.stream, c.current, c.cancel, c.runID
+	pending := c.pendingRun
 	c.stream, c.current, c.cancel = nil, nil, nil
+	c.pendingRun = false
 	c.closed = true
 	c.mu.Unlock()
 
@@ -293,22 +307,26 @@ func (c *Conversation) Close(ctx context.Context) error {
 	if cancel != nil {
 		cancel()
 	}
-	if opened == nil {
-		if runID == "" {
-			return nil
-		}
-		err := c.stopRun(ctx, runID)
-		if err == nil {
-			c.clearRunID(runID)
-		}
-		return err
-	}
-	// Deliberately not waiting for the reader: a daemon that has stopped
-	// answering must not be able to hold Close up. Cancelling the stream's
-	// context is what lets the reader finish.
+
 	var failures []error
-	if err := opened.CloseRequest(); err != nil && !errors.Is(err, io.ErrClosedPipe) {
-		failures = append(failures, fromConnect("Close", err))
+	if opened != nil {
+		// Deliberately not waiting for the reader: a daemon that has stopped
+		// answering must not be able to hold Close up. Cancelling the stream's
+		// context is what lets the reader finish.
+		if err := opened.CloseRequest(); err != nil && !errors.Is(err, io.ErrClosedPipe) {
+			failures = append(failures, fromConnect("Close", err))
+		}
+	}
+	// A lost stream is not a stopped run either: dropStream keeps a known run
+	// ID precisely because the run outlives its viewer, and a run whose start
+	// frame never arrived leaves nothing behind to keep. Both still need
+	// stopping, so the run to end is decided here rather than per branch.
+	if runID == "" && pending {
+		found, err := c.unnamedRun(ctx)
+		if err != nil {
+			failures = append(failures, err)
+		}
+		runID = found
 	}
 	if runID != "" {
 		if err := c.stopRun(ctx, runID); err != nil {
@@ -318,6 +336,30 @@ func (c *Conversation) Close(ctx context.Context) error {
 		}
 	}
 	return errors.Join(failures...)
+}
+
+// unnamedRun finds the run this handle started before the daemon said what it
+// was called, and returns an empty ID when there is none to find.
+//
+// The run carries this conversation's identity label, so it can be asked for
+// by that instead, and the newest run under the label is this one: the only
+// way to reach here is to have just asked for a new run, which by construction
+// is the most recent.
+//
+// One sliver stays open. A Close fast enough to beat the daemon's own creation
+// of the run finds either nothing, or the previous session's run — already
+// terminal, since a new run was being started in its place, and stopping a run
+// that has finished changes nothing. Closing that sliver properly means the
+// daemon not keeping a run whose client left before the handshake finished,
+// which is its call to make, not this package's.
+func (c *Conversation) unnamedRun(ctx context.Context) (string, error) {
+	run, err := c.agent.client.latestMatchingRun(ctx, "Close", Search{
+		Labels: map[string]string{conversationLabel: c.id},
+	})
+	if err != nil || run == nil {
+		return "", err
+	}
+	return run.GetRunId(), nil
 }
 
 func (c *Conversation) clearRunID(runID string) {
@@ -411,6 +453,10 @@ func (c *Conversation) attach(ctx context.Context, op, prompt string) error {
 	}
 	c.stream = opened
 	c.cancel = cancel
+	// The frame is away, so from the daemon's side a run may now exist. Only a
+	// start frame carrying a request creates one; a reattach names a run this
+	// handle already knows.
+	c.pendingRun = start.Request != nil
 	go c.readLoop(opened)
 	return nil
 }
@@ -459,6 +505,7 @@ func (c *Conversation) handle(stream *attachStream, frame *agentcomposev2.Attach
 		requested := c.sandboxID
 		c.runID = started.GetRunId()
 		c.sandboxID = started.GetSandboxId()
+		c.pendingRun = false
 		// A run starting is not by itself a restart: what matters is whether
 		// the sandbox this run got is the one the prior run used. requested
 		// is empty for a conversation's very first run, which is not a
@@ -559,6 +606,7 @@ func (c *Conversation) finishSession(stream *attachStream, err error, resultJSON
 	}
 	reply, cancel := c.current, c.cancel
 	c.current, c.stream, c.cancel, c.runID = nil, nil, nil, ""
+	c.pendingRun = false
 	c.sentFrameID, c.sentText = "", ""
 	c.retryFrameID, c.retryText = "", ""
 	c.mu.Unlock()

@@ -275,7 +275,11 @@ and allows one `Reply` in flight at a time; a second `Send` returns `ErrBusy`.
   when its client disconnects and has no idle timeout for one, so a process
   that exits without closing its conversations leaves a run — and a sandbox —
   behind for each of them. Close them on the way out; recovering the ones a
-  crash left behind means finding them through their labels.
+  crash left behind means finding them through their labels. `Close` covers the
+  run whose start frame had not arrived yet by looking it up under the
+  conversation's label, but a `Close` fast enough to beat the daemon's own
+  creation of that run finds nothing to stop — closing that sliver means the
+  daemon not keeping a run whose client left before the handshake finished.
 - **Resending a lost turn is deduplicated in history, not in execution.** The
   message carries a client frame ID the daemon keys its persisted identity on,
   so the resend is recorded once. The daemon still hands the message to the

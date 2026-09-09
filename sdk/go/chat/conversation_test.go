@@ -118,6 +118,10 @@ func TestCloseReturnsEvenWhenTheDaemonStopsAnswering(t *testing.T) {
 		<-stream.hold
 	}
 
+	// A daemon that never answers still started a run, and Close now goes
+	// looking for it by label, so the lookup has to be answerable.
+	daemon.listRuns = listRunsReturning(runSummary("run-1", "RUN_STATUS_RUNNING", "sandbox-1"))
+
 	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
 	if _, err := conversation.Send(context.Background(), "hi"); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -803,5 +807,113 @@ func TestResendingALostTurnCarriesTheIdentityItAlreadyHad(t *testing.T) {
 	if repeated.GetClientFrameId() == original.GetClientFrameId() {
 		t.Errorf("a repeat after a completed turn reused %q, and would be swallowed as a duplicate",
 			repeated.GetClientFrameId())
+	}
+}
+
+// A run is created by the request, but named only by the start frame that
+// follows it, and Send returns as soon as the request is away. A Close landing
+// in that gap has a run to end and no ID to end it by — and the disconnect
+// policy means nothing else ever will, so the run and its sandbox would be
+// stranded.
+func TestClosingBeforeTheRunIsNamedStillStopsIt(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	daemon.attach = func(stream *fakeStream) {
+		// Take the request and withhold the start frame, the way a daemon that
+		// is still building the environment does.
+		_, _ = stream.recv()
+		<-stream.hold
+	}
+	// The daemon did create the run; it just has not said so yet. It carries
+	// the conversation's identity label, which is how Close finds it.
+	daemon.listRuns = listRunsReturning(runSummary("run-unnamed", "RUN_STATUS_RUNNING", "sandbox-1"))
+	stopped := make(chan string, 1)
+	daemon.stopRun = func(request *agentcomposev2.StopRunRequest) (*agentcomposev2.StopRunResponse, error) {
+		stopped <- request.GetRunId()
+		return &agentcomposev2.StopRunResponse{}, nil
+	}
+
+	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
+	if _, err := conversation.Send(context.Background(), "hi"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if err := conversation.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	select {
+	case runID := <-stopped:
+		if runID != "run-unnamed" {
+			t.Errorf("stopped %q, want the run this handle started", runID)
+		}
+	default:
+		t.Fatal("Close stopped nothing: a run started but not yet named was left running")
+	}
+	// The label is what identifies it, since the run ID never arrived.
+	if lookups := daemon.count("ListRuns"); lookups != 1 {
+		t.Errorf("looked the run up %d times, want 1", lookups)
+	}
+}
+
+// A handle that never sent anything started no run, so Close must not go
+// hunting for one — it would find a run belonging to some other holder of the
+// same conversation and stop that instead.
+func TestClosingAHandleThatSentNothingLooksForNoRun(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
+	if err := conversation.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if lookups := daemon.count("ListRuns"); lookups != 0 {
+		t.Errorf("looked up %d runs for a handle that never attached, want 0", lookups)
+	}
+	if stops := daemon.count("StopRun"); stops != 0 {
+		t.Errorf("issued %d stops for a handle that never attached, want 0", stops)
+	}
+}
+
+// The daemon may answer the opening frame with the whole turn before Send has
+// returned. Those frames must land on the turn's Reply rather than falling
+// into the gap between sending and installing it — a dropped first event, or
+// a Wait that never ends, would be the shape of that mistake.
+func TestATurnAnsweredBeforeSendReturnsLosesNothing(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	daemon.attach = func(stream *fakeStream) {
+		if _, ok := stream.recv(); !ok {
+			return
+		}
+		// Everything at once, as fast as the wire allows.
+		stream.send(started("run-1", "sandbox-1"))
+		stream.agentEvent("text_delta", map[string]any{"text": "instant"})
+		stream.send(turnCompleted(""))
+		<-stream.hold
+	}
+
+	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
+	defer func() { _ = conversation.Close(context.Background()) }()
+	reply, err := conversation.Send(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	answer, err := reply.Wait(context.Background())
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if answer.Text != "instant" {
+		t.Errorf("answer = %q, want the event that arrived before Send returned", answer.Text)
+	}
+	var seen int
+	for event, err := range reply.Events(context.Background()) {
+		if err != nil {
+			t.Fatalf("Events: %v", err)
+		}
+		if _, ok := event.(*TextDeltaEvent); ok {
+			seen++
+		}
+	}
+	if seen != 1 {
+		t.Errorf("replayed %d text events, want 1", seen)
+	}
+	if conversation.RunID() != "run-1" {
+		t.Errorf("run ID = %q, want run-1 from the start frame", conversation.RunID())
 	}
 }
