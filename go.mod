@@ -4,6 +4,9 @@ go 1.26.2
 
 require (
 	connectrpc.com/connect v1.19.2
+	// v0.0.0 resolves only through the replace at the bottom of this file,
+	// which does not reach anyone depending on this module. Point this at a
+	// real proto/vX.Y.Z before cutting the next release tag.
 	github.com/chaitin/agent-compose/proto v0.0.0
 	github.com/chaitin/ai-api-protocol-bridge v1.0.0
 	github.com/chzyer/readline v1.5.1

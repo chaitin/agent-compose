@@ -39,11 +39,20 @@ jobs:
       # module of its own: a tag carries only what is in git, and a client
       # that go-gets it has no buf. Regenerating must therefore change
       # nothing.
+      #
+      # git status, not git diff: a new .proto brings a new generated package,
+      # and forgetting to add it leaves an untracked file that git diff cannot
+      # see - which is exactly the omission that would ship a tag whose connect
+      # stubs reference types nobody can build.
       - name: Verify generated Protobuf sources are current
         run: |
           buf generate
-          git diff --exit-code -- proto \
-            || { echo "::error::proto/ is out of date - run 'buf generate' and commit the result"; exit 1; }
+          drift="$(git status --porcelain -- proto)"
+          if [ -n "$drift" ]; then
+            echo "$drift"
+            echo "::error::proto/ is out of date - run 'buf generate' and commit the result"
+            exit 1
+          fi
       - name: Run lint
         run: task lint
 
