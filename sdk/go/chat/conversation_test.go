@@ -118,36 +118,82 @@ func TestCloseReturnsEvenWhenTheDaemonStopsAnswering(t *testing.T) {
 		<-stream.hold
 	}
 
-	// Nothing answers, including the lookup Close makes for a run whose start
-	// frame never arrived — a daemon too wedged to name a run is exactly the
-	// one that will not answer that lookup either.
-	daemon.listRuns = func(*agentcomposev2.ListRunsRequest) (*agentcomposev2.ListRunsResponse, error) {
-		<-daemon.hold
-		return &agentcomposev2.ListRunsResponse{}, nil
-	}
-	daemon.stopRun = func(*agentcomposev2.StopRunRequest) (*agentcomposev2.StopRunResponse, error) {
-		<-daemon.hold
-		return &agentcomposev2.StopRunResponse{}, nil
-	}
-	shortenCloseBound(t, 100*time.Millisecond)
+	// The lookup Close makes for a run whose start frame never arrived goes
+	// unanswered too: a daemon too wedged to name a run is exactly the one that
+	// will not answer that lookup either.
+	daemon.listRuns = blockingListRuns(daemon)
+	bound := 100 * time.Millisecond
+	shortenCloseBound(t, bound)
 
 	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
 	if _, err := conversation.Send(context.Background(), "hi"); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	closed := make(chan error, 1)
 	// context.Background() on purpose: the bound has to be Close's own, not one
 	// the caller was careful enough to supply.
-	go func() { closed <- conversation.Close(context.Background()) }()
-	select {
-	case err := <-closed:
-		// Giving up is reported rather than passed off as a clean close: the
-		// run may still be running, and EndSession is how it gets stopped.
-		if err == nil {
-			t.Fatal("Close reported success while the daemon never answered its cleanup")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Close blocked on a daemon that stopped answering")
+	took, err := closeUnbounded(t, conversation, 5*time.Second)
+
+	// Giving up is reported rather than passed off as a clean close: the run
+	// may still be running, and EndSession is how it gets stopped.
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Close err = %v, want ErrUnavailable from giving up on the daemon", err)
+	}
+	// Returning before the bound would mean Close never really waited on the
+	// lookup — an error raised instead of the cleanup being attempted passes a
+	// bare non-nil check just as well.
+	if took < bound {
+		t.Errorf("Close returned after %s, inside its own %s bound: the lookup cannot have been attempted", took, bound)
+	}
+	if lookups := daemon.count("ListRuns"); lookups != 1 {
+		t.Errorf("looked the run up %d times, want 1", lookups)
+	}
+}
+
+// The ordinary close path — the run's ID is known, and StopRun is the one call
+// standing between the caller and a returned Close. It has to be bounded for
+// the same reason, and it is the path every well-behaved caller takes, so
+// losing the context binding here would go unnoticed by the unnamed-run test.
+func TestCloseGivesUpOnAStopRunThatNeverAnswers(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	daemon.attach = func(stream *fakeStream) {
+		_, _ = stream.recv()
+		// The run is named, so Close knows exactly what to stop.
+		stream.send(started("run-1", "sandbox-1"))
+		stream.send(turnCompleted(""))
+		<-stream.hold
+	}
+	daemon.stopRun = func(*agentcomposev2.StopRunRequest) (*agentcomposev2.StopRunResponse, error) {
+		<-daemon.hold
+		return &agentcomposev2.StopRunResponse{}, nil
+	}
+	bound := 100 * time.Millisecond
+	shortenCloseBound(t, bound)
+
+	conversation := daemon.client(t).Agent("project-1", "reviewer").Start()
+	reply, err := conversation.Send(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if _, err := reply.Wait(context.Background()); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if conversation.RunID() != "run-1" {
+		t.Fatalf("run ID = %q, want the named run this test is about", conversation.RunID())
+	}
+
+	took, closeErr := closeUnbounded(t, conversation, 5*time.Second)
+	if !errors.Is(closeErr, ErrUnavailable) {
+		t.Fatalf("Close err = %v, want ErrUnavailable from giving up on StopRun", closeErr)
+	}
+	if took < bound {
+		t.Errorf("Close returned after %s, inside its own %s bound: StopRun cannot have been attempted", took, bound)
+	}
+	if stops := daemon.count("StopRun"); stops != 1 {
+		t.Errorf("issued %d stops, want 1: Close must try before it gives up", stops)
+	}
+	// No lookup: the run was named, so there was nothing to look up.
+	if lookups := daemon.count("ListRuns"); lookups != 0 {
+		t.Errorf("looked up %d runs for a named run, want 0", lookups)
 	}
 }
 
@@ -158,6 +204,39 @@ func shortenCloseBound(t *testing.T, bound time.Duration) {
 	previous := closeCallBound
 	closeCallBound = bound
 	t.Cleanup(func() { closeCallBound = previous })
+}
+
+// closeUnbounded closes with a context that imposes no deadline of its own, so
+// what bounds the call is Close, and reports how long that took. It fails the
+// test rather than hanging it when Close never returns.
+func closeUnbounded(t *testing.T, conversation *Conversation, guard time.Duration) (time.Duration, error) {
+	t.Helper()
+	type outcome struct {
+		took time.Duration
+		err  error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		start := time.Now()
+		err := conversation.Close(context.Background())
+		done <- outcome{took: time.Since(start), err: err}
+	}()
+	select {
+	case got := <-done:
+		return got.took, got.err
+	case <-time.After(guard):
+		t.Fatal("Close blocked on a daemon that stopped answering")
+		return 0, nil
+	}
+}
+
+// blockingListRuns is a daemon that accepts a run list request and never
+// answers it, the way an unresponsive one does.
+func blockingListRuns(daemon *fakeDaemon) func(*agentcomposev2.ListRunsRequest) (*agentcomposev2.ListRunsResponse, error) {
+	return func(*agentcomposev2.ListRunsRequest) (*agentcomposev2.ListRunsResponse, error) {
+		<-daemon.hold
+		return &agentcomposev2.ListRunsResponse{}, nil
+	}
 }
 
 func TestSendStreamsATurnAndAccumulatesTheAnswer(t *testing.T) {
