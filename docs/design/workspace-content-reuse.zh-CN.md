@@ -265,18 +265,31 @@ AGENT_COMPOSE_E2E_SKILL_FILES=257 \
 
 [Published proto version 失败日志](https://github.com/chaitin/agent-compose/actions/runs/34437803053/job/102817765843) 暴露了本地构建未覆盖的依赖路径：根模块仍 require `proto v0.1.0`，但新增 `WorkspaceMode`、`WorkspaceSpec.mode/read_only` 及 `SandboxWorkspaceDelivery` 尚未发布；本地 `replace => ./proto` 隐藏了差异。
 
-已创建最小前置草稿 [PR #691](https://github.com/chaitin/agent-compose/pull/691)，提交 `59d2474b`，只包含 schema、重新生成的 Go 文件和完整合同测试，没有主程序、依赖或 CI 改动。构建、28 项测试、全部 18 个 proto 文件的生成一致性、Buf breaking 检查均通过；在隔离目录原样执行「移除 replace → 下载 v0.1.0 → go build ./...」也通过，因为前置 PR 的主程序仍来自 main，尚不消费新增字段。
+前置 [PR #691](https://github.com/chaitin/agent-compose/pull/691) 已在 2026-09-10 UTC 10:28 合并为 `fbc89af976448417ad2f114dd89e00d040567d6d`。它只包含 schema、重新生成的 Go 文件和完整合同测试；实际 GitHub CI 的全部 12 个 job（含 Published proto）及 Protobuf compatibility 均通过。本轮将该 main 合入 #686，已合并的协议文件不再作为本 PR 的新增协议重复展示。
+
+合并后的实际发布核对发现，`proto/v0.1.1` 属于另一条尚未合并的 [PR #689](https://github.com/chaitin/agent-compose/pull/689) 分支，不能用于本次依赖升级：
+
+| 可选版本 | 实际内容 | 处理结果 |
+| --- | --- | --- |
+| 已发布 `v0.1.0` | 不含 Workspace 新字段 | 当前 require 保持原值，Published proto 仍是已知阻塞 |
+| 已发布 `v0.1.1` | tag 指向 `2e2bb5f5794ddacee61a1e9128fa5bbd6145d108`，新增五个 LLM Provider RPC，但没有 #691 的 Workspace 字段 | 已从官方 Go proxy/sumdb 下载并核对；不能直接升级 |
+| main 合并提交的 `v0.1.1-0.20260910102853-fbc89af97644` | 包含 Workspace，但不含 v0.1.1 的 LLM Provider 协议 | 可以实际解析，仅用作隔离验证，不作为最终依赖 |
+
+`v0.1.1` 的实际模块校验和是 `h1:xraMi6zTKpPFfk4LOrcXMdcnLqvYIqJ1SsYZlnaTb7E=`，go.mod 校验和是 `h1:sgEGuy3xcx0uneY7QeNdCd6CP8DJ+GuxblSAwvyt3wg=`。两个提交来自不同分支；不是标签名称相同就代表已经包含本 PR 的协议。
+
+main 伪版本的排序低于稳定 `v0.1.1`。下游同时要求后者时，Go 的最小版本选择会选回不含 Workspace 的版本；依赖模块中的 replace/exclude 不能向下游传递保护。因此只让当前 checkout 的编译变绿还不够，不能用该伪版本掩盖发布冲突。[Go 模块规则](https://go.dev/ref/mod#minimal-version-selection)
 
 ```text
-#691 合并（仅新增协议）
-    -> 上游发布 proto/v0.1.1
+#691 已合并
+    -> 整合已发布 v0.1.1 的 LLM Provider 协议与 Workspace 协议
+    -> 对已发布协议做兼容性检查，发布新的 proto/v0.1.2
     -> #686 更新真实 require / go.sum
     -> 原样运行 Published proto 检查
 ```
 
-`vt128` 只有上游读取权限，不能发布上游 tag；`proto/v0.1.1` 目前不存在。主 PR 因此仍有这个明确的发布前置依赖，不能宣称 CI 全绿。没有填写虚构校验和、改用 fork replace 或跳过兼容性检查。Actions 的 fork 审批与执行结果必须逐个 HEAD 查看，旧提交的通过不能替代最新提交。
+建议的 `proto/v0.1.2` 需要发布在同时包含两边协议的提交上。直接给当前 main 打更高标签会删除 v0.1.1 已发布的 LLM Provider RPC；移动或覆盖已有 v0.1.1 标签也不合适。`vt128` 对上游只有读取权限，不能自行发 tag。本轮没有提交错误版本更新，也没有跳过 CI；正确的新版本发布后才能完成依赖升级。
 
-2026-09-10 UTC 09:53 核对已获批的 `adecc5b9`：CI [34461231052](https://github.com/chaitin/agent-compose/actions/runs/34461231052) 的其他 10 个 job 全部通过，仅 Published proto 和尚未修复的旧计数断言失败；包括实际 lint、生成一致性、Go tests/driver race 及平台二进制检查。Images [34461230998](https://github.com/chaitin/agent-compose/actions/runs/34461230998) 全部通过，完整 daemon 镜像及默认、Arch Linux 两种 guest 生命周期均通过。该轮是本次生产代码的实际 Actions 证据；后续测试修复的 HEAD 仍应等待自己的审批与结果。
+2026-09-10 UTC 09:53 核对已获批的 `adecc5b9`：CI [34461231052](https://github.com/chaitin/agent-compose/actions/runs/34461231052) 的其他 10 个 job 全部通过，仅 Published proto 和尚未修复的旧计数断言失败；包括实际 lint、生成一致性、Go tests/driver race 及平台二进制检查。Images [34461230998](https://github.com/chaitin/agent-compose/actions/runs/34461230998) 全部通过，完整 daemon 镜像及默认、Arch Linux 两种 guest 生命周期均通过。该轮是本次生产代码的实际 Actions 证据。后续 `5a71fc0e` 的 [CI](https://github.com/chaitin/agent-compose/actions/runs/34463241390)、[Protobuf compatibility](https://github.com/chaitin/agent-compose/actions/runs/34463241392) 和 [Images](https://github.com/chaitin/agent-compose/actions/runs/34463241401) 也已实际完成：20 项检查中 17 成功、2 项发布步骤正常跳过，唯一失败仍是 Published proto。覆盖率、Go tests/driver race、lint、平台二进制及实际 Docker smoke 均通过。
 
 ## 9. 后续扩展边界
 
