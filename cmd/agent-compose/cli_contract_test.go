@@ -25,9 +25,10 @@ type cliContract struct {
 }
 
 type cliCommandContract struct {
-	Path  string            `json:"path"`
-	Use   string            `json:"use"`
-	Flags []cliFlagContract `json:"flags,omitempty"`
+	Path    string            `json:"path"`
+	Use     string            `json:"use"`
+	Aliases []string          `json:"aliases,omitempty"`
+	Flags   []cliFlagContract `json:"flags,omitempty"`
 }
 
 type cliFlagContract struct {
@@ -111,14 +112,18 @@ func collectCLICommandContracts(root *cobra.Command) []cliCommandContract {
 		}
 		if path != root.Name() {
 			var flags []cliFlagContract
-			cmd.InheritedFlags().VisitAll(func(flag *pflag.Flag) {
+			visitFlag := func(flag *pflag.Flag) {
 				flags = append(flags, cliFlagContract{Name: flag.Name, Shorthand: flag.Shorthand, Type: flag.Value.Type(), Default: flag.DefValue, Optional: flag.NoOptDefVal, Hidden: flag.Hidden})
-			})
+			}
+			cmd.InheritedFlags().VisitAll(visitFlag)
+			cmd.PersistentFlags().VisitAll(visitFlag)
 			cmd.LocalNonPersistentFlags().VisitAll(func(flag *pflag.Flag) {
 				flags = append(flags, cliFlagContract{Name: flag.Name, Shorthand: flag.Shorthand, Type: flag.Value.Type(), Default: flag.DefValue, Optional: flag.NoOptDefVal, Hidden: flag.Hidden})
 			})
 			sort.Slice(flags, func(i, j int) bool { return flags[i].Name < flags[j].Name })
-			out = append(out, cliCommandContract{Path: path, Use: cmd.Use, Flags: flags})
+			aliases := append([]string(nil), cmd.Aliases...)
+			sort.Strings(aliases)
+			out = append(out, cliCommandContract{Path: path, Use: cmd.Use, Aliases: aliases, Flags: flags})
 		}
 		children := append([]*cobra.Command(nil), cmd.Commands()...)
 		sort.Slice(children, func(i, j int) bool { return children[i].Name() < children[j].Name() })
@@ -177,6 +182,9 @@ func jsonStructFields(value any) map[string]string {
 }
 
 func jsonTypeName(typ reflect.Type) string {
+	if typ == nil {
+		return "null"
+	}
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
@@ -196,6 +204,37 @@ func jsonTypeName(typ reflect.Type) string {
 	default:
 		return typ.Kind().String()
 	}
+}
+
+func TestCLIContractCapturesAliasesAndPersistentFlags(t *testing.T) {
+	root := &cobra.Command{Use: "root"}
+	root.PersistentFlags().String("global", "", "")
+	child := &cobra.Command{Use: "child", Aliases: []string{"c", "kid"}}
+	child.PersistentFlags().Bool("child-global", false, "")
+	root.AddCommand(child)
+
+	contracts := collectCLICommandContracts(root)
+	if len(contracts) != 1 {
+		t.Fatalf("contracts = %d, want 1", len(contracts))
+	}
+	got := contracts[0]
+	if !reflect.DeepEqual(got.Aliases, []string{"c", "kid"}) {
+		t.Fatalf("aliases = %v, want [c kid]", got.Aliases)
+	}
+	names := make(map[string]bool)
+	for _, flag := range got.Flags {
+		names[flag.Name] = true
+	}
+	if !names["global"] || !names["child-global"] {
+		t.Fatalf("persistent flags = %v, want global and child-global", names)
+	}
+}
+
+func TestJSONTypeNameHandlesNull(t *testing.T) {
+	if got := jsonTypeName(nil); got != "null" {
+		t.Fatalf("jsonTypeName(nil) = %q, want null", got)
+	}
+	assertJSONFields(t, map[string]any{"nullable": nil}, map[string]string{"nullable": "null"})
 }
 
 func assertJSONFields(t *testing.T, value map[string]any, schema map[string]string) {

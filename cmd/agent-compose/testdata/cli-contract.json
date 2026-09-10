@@ -2743,6 +2743,9 @@
     {
       "path": "agent-compose volume rm",
       "use": "rm \u003cname\u003e [\u003cname N\u003e]",
+      "aliases": [
+        "remove"
+      ],
       "flags": [
         {
           "name": "file",
