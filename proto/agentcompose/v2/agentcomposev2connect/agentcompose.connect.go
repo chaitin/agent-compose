@@ -260,6 +260,20 @@ const (
 	// CapabilityServiceGetCapabilityCatalogProcedure is the fully-qualified name of the
 	// CapabilityService's GetCapabilityCatalog RPC.
 	CapabilityServiceGetCapabilityCatalogProcedure = "/agentcompose.v2.CapabilityService/GetCapabilityCatalog"
+	// LLMServiceCreateProviderProcedure is the fully-qualified name of the LLMService's CreateProvider
+	// RPC.
+	LLMServiceCreateProviderProcedure = "/agentcompose.v2.LLMService/CreateProvider"
+	// LLMServiceGetProviderProcedure is the fully-qualified name of the LLMService's GetProvider RPC.
+	LLMServiceGetProviderProcedure = "/agentcompose.v2.LLMService/GetProvider"
+	// LLMServiceListProvidersProcedure is the fully-qualified name of the LLMService's ListProviders
+	// RPC.
+	LLMServiceListProvidersProcedure = "/agentcompose.v2.LLMService/ListProviders"
+	// LLMServiceUpdateProviderProcedure is the fully-qualified name of the LLMService's UpdateProvider
+	// RPC.
+	LLMServiceUpdateProviderProcedure = "/agentcompose.v2.LLMService/UpdateProvider"
+	// LLMServiceDeleteProviderProcedure is the fully-qualified name of the LLMService's DeleteProvider
+	// RPC.
+	LLMServiceDeleteProviderProcedure = "/agentcompose.v2.LLMService/DeleteProvider"
 	// LLMServiceGenerateProcedure is the fully-qualified name of the LLMService's Generate RPC.
 	LLMServiceGenerateProcedure = "/agentcompose.v2.LLMService/Generate"
 	// ResourceServiceResolveIDProcedure is the fully-qualified name of the ResourceService's ResolveID
@@ -2654,6 +2668,12 @@ func (UnimplementedCapabilityServiceHandler) GetCapabilityCatalog(context.Contex
 
 // LLMServiceClient is a client for the agentcompose.v2.LLMService service.
 type LLMServiceClient interface {
+	// Manage API-owned upstream model providers, not coding-agent providers.
+	CreateProvider(context.Context, *connect.Request[v2.CreateProviderRequest]) (*connect.Response[v2.CreateProviderResponse], error)
+	GetProvider(context.Context, *connect.Request[v2.GetProviderRequest]) (*connect.Response[v2.GetProviderResponse], error)
+	ListProviders(context.Context, *connect.Request[v2.ListProvidersRequest]) (*connect.Response[v2.ListProvidersResponse], error)
+	UpdateProvider(context.Context, *connect.Request[v2.UpdateProviderRequest]) (*connect.Response[v2.UpdateProviderResponse], error)
+	DeleteProvider(context.Context, *connect.Request[v2.DeleteProviderRequest]) (*connect.Response[v2.DeleteProviderResponse], error)
 	Generate(context.Context, *connect.Request[v2.GenerateLLMRequest]) (*connect.Response[v2.GenerateLLMResponse], error)
 }
 
@@ -2668,6 +2688,36 @@ func NewLLMServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 	baseURL = strings.TrimRight(baseURL, "/")
 	lLMServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("LLMService").Methods()
 	return &lLMServiceClient{
+		createProvider: connect.NewClient[v2.CreateProviderRequest, v2.CreateProviderResponse](
+			httpClient,
+			baseURL+LLMServiceCreateProviderProcedure,
+			connect.WithSchema(lLMServiceMethods.ByName("CreateProvider")),
+			connect.WithClientOptions(opts...),
+		),
+		getProvider: connect.NewClient[v2.GetProviderRequest, v2.GetProviderResponse](
+			httpClient,
+			baseURL+LLMServiceGetProviderProcedure,
+			connect.WithSchema(lLMServiceMethods.ByName("GetProvider")),
+			connect.WithClientOptions(opts...),
+		),
+		listProviders: connect.NewClient[v2.ListProvidersRequest, v2.ListProvidersResponse](
+			httpClient,
+			baseURL+LLMServiceListProvidersProcedure,
+			connect.WithSchema(lLMServiceMethods.ByName("ListProviders")),
+			connect.WithClientOptions(opts...),
+		),
+		updateProvider: connect.NewClient[v2.UpdateProviderRequest, v2.UpdateProviderResponse](
+			httpClient,
+			baseURL+LLMServiceUpdateProviderProcedure,
+			connect.WithSchema(lLMServiceMethods.ByName("UpdateProvider")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteProvider: connect.NewClient[v2.DeleteProviderRequest, v2.DeleteProviderResponse](
+			httpClient,
+			baseURL+LLMServiceDeleteProviderProcedure,
+			connect.WithSchema(lLMServiceMethods.ByName("DeleteProvider")),
+			connect.WithClientOptions(opts...),
+		),
 		generate: connect.NewClient[v2.GenerateLLMRequest, v2.GenerateLLMResponse](
 			httpClient,
 			baseURL+LLMServiceGenerateProcedure,
@@ -2679,7 +2729,37 @@ func NewLLMServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 
 // lLMServiceClient implements LLMServiceClient.
 type lLMServiceClient struct {
-	generate *connect.Client[v2.GenerateLLMRequest, v2.GenerateLLMResponse]
+	createProvider *connect.Client[v2.CreateProviderRequest, v2.CreateProviderResponse]
+	getProvider    *connect.Client[v2.GetProviderRequest, v2.GetProviderResponse]
+	listProviders  *connect.Client[v2.ListProvidersRequest, v2.ListProvidersResponse]
+	updateProvider *connect.Client[v2.UpdateProviderRequest, v2.UpdateProviderResponse]
+	deleteProvider *connect.Client[v2.DeleteProviderRequest, v2.DeleteProviderResponse]
+	generate       *connect.Client[v2.GenerateLLMRequest, v2.GenerateLLMResponse]
+}
+
+// CreateProvider calls agentcompose.v2.LLMService.CreateProvider.
+func (c *lLMServiceClient) CreateProvider(ctx context.Context, req *connect.Request[v2.CreateProviderRequest]) (*connect.Response[v2.CreateProviderResponse], error) {
+	return c.createProvider.CallUnary(ctx, req)
+}
+
+// GetProvider calls agentcompose.v2.LLMService.GetProvider.
+func (c *lLMServiceClient) GetProvider(ctx context.Context, req *connect.Request[v2.GetProviderRequest]) (*connect.Response[v2.GetProviderResponse], error) {
+	return c.getProvider.CallUnary(ctx, req)
+}
+
+// ListProviders calls agentcompose.v2.LLMService.ListProviders.
+func (c *lLMServiceClient) ListProviders(ctx context.Context, req *connect.Request[v2.ListProvidersRequest]) (*connect.Response[v2.ListProvidersResponse], error) {
+	return c.listProviders.CallUnary(ctx, req)
+}
+
+// UpdateProvider calls agentcompose.v2.LLMService.UpdateProvider.
+func (c *lLMServiceClient) UpdateProvider(ctx context.Context, req *connect.Request[v2.UpdateProviderRequest]) (*connect.Response[v2.UpdateProviderResponse], error) {
+	return c.updateProvider.CallUnary(ctx, req)
+}
+
+// DeleteProvider calls agentcompose.v2.LLMService.DeleteProvider.
+func (c *lLMServiceClient) DeleteProvider(ctx context.Context, req *connect.Request[v2.DeleteProviderRequest]) (*connect.Response[v2.DeleteProviderResponse], error) {
+	return c.deleteProvider.CallUnary(ctx, req)
 }
 
 // Generate calls agentcompose.v2.LLMService.Generate.
@@ -2689,6 +2769,12 @@ func (c *lLMServiceClient) Generate(ctx context.Context, req *connect.Request[v2
 
 // LLMServiceHandler is an implementation of the agentcompose.v2.LLMService service.
 type LLMServiceHandler interface {
+	// Manage API-owned upstream model providers, not coding-agent providers.
+	CreateProvider(context.Context, *connect.Request[v2.CreateProviderRequest]) (*connect.Response[v2.CreateProviderResponse], error)
+	GetProvider(context.Context, *connect.Request[v2.GetProviderRequest]) (*connect.Response[v2.GetProviderResponse], error)
+	ListProviders(context.Context, *connect.Request[v2.ListProvidersRequest]) (*connect.Response[v2.ListProvidersResponse], error)
+	UpdateProvider(context.Context, *connect.Request[v2.UpdateProviderRequest]) (*connect.Response[v2.UpdateProviderResponse], error)
+	DeleteProvider(context.Context, *connect.Request[v2.DeleteProviderRequest]) (*connect.Response[v2.DeleteProviderResponse], error)
 	Generate(context.Context, *connect.Request[v2.GenerateLLMRequest]) (*connect.Response[v2.GenerateLLMResponse], error)
 }
 
@@ -2699,6 +2785,36 @@ type LLMServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewLLMServiceHandler(svc LLMServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	lLMServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("LLMService").Methods()
+	lLMServiceCreateProviderHandler := connect.NewUnaryHandler(
+		LLMServiceCreateProviderProcedure,
+		svc.CreateProvider,
+		connect.WithSchema(lLMServiceMethods.ByName("CreateProvider")),
+		connect.WithHandlerOptions(opts...),
+	)
+	lLMServiceGetProviderHandler := connect.NewUnaryHandler(
+		LLMServiceGetProviderProcedure,
+		svc.GetProvider,
+		connect.WithSchema(lLMServiceMethods.ByName("GetProvider")),
+		connect.WithHandlerOptions(opts...),
+	)
+	lLMServiceListProvidersHandler := connect.NewUnaryHandler(
+		LLMServiceListProvidersProcedure,
+		svc.ListProviders,
+		connect.WithSchema(lLMServiceMethods.ByName("ListProviders")),
+		connect.WithHandlerOptions(opts...),
+	)
+	lLMServiceUpdateProviderHandler := connect.NewUnaryHandler(
+		LLMServiceUpdateProviderProcedure,
+		svc.UpdateProvider,
+		connect.WithSchema(lLMServiceMethods.ByName("UpdateProvider")),
+		connect.WithHandlerOptions(opts...),
+	)
+	lLMServiceDeleteProviderHandler := connect.NewUnaryHandler(
+		LLMServiceDeleteProviderProcedure,
+		svc.DeleteProvider,
+		connect.WithSchema(lLMServiceMethods.ByName("DeleteProvider")),
+		connect.WithHandlerOptions(opts...),
+	)
 	lLMServiceGenerateHandler := connect.NewUnaryHandler(
 		LLMServiceGenerateProcedure,
 		svc.Generate,
@@ -2707,6 +2823,16 @@ func NewLLMServiceHandler(svc LLMServiceHandler, opts ...connect.HandlerOption) 
 	)
 	return "/agentcompose.v2.LLMService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case LLMServiceCreateProviderProcedure:
+			lLMServiceCreateProviderHandler.ServeHTTP(w, r)
+		case LLMServiceGetProviderProcedure:
+			lLMServiceGetProviderHandler.ServeHTTP(w, r)
+		case LLMServiceListProvidersProcedure:
+			lLMServiceListProvidersHandler.ServeHTTP(w, r)
+		case LLMServiceUpdateProviderProcedure:
+			lLMServiceUpdateProviderHandler.ServeHTTP(w, r)
+		case LLMServiceDeleteProviderProcedure:
+			lLMServiceDeleteProviderHandler.ServeHTTP(w, r)
 		case LLMServiceGenerateProcedure:
 			lLMServiceGenerateHandler.ServeHTTP(w, r)
 		default:
@@ -2717,6 +2843,26 @@ func NewLLMServiceHandler(svc LLMServiceHandler, opts ...connect.HandlerOption) 
 
 // UnimplementedLLMServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedLLMServiceHandler struct{}
+
+func (UnimplementedLLMServiceHandler) CreateProvider(context.Context, *connect.Request[v2.CreateProviderRequest]) (*connect.Response[v2.CreateProviderResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.LLMService.CreateProvider is not implemented"))
+}
+
+func (UnimplementedLLMServiceHandler) GetProvider(context.Context, *connect.Request[v2.GetProviderRequest]) (*connect.Response[v2.GetProviderResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.LLMService.GetProvider is not implemented"))
+}
+
+func (UnimplementedLLMServiceHandler) ListProviders(context.Context, *connect.Request[v2.ListProvidersRequest]) (*connect.Response[v2.ListProvidersResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.LLMService.ListProviders is not implemented"))
+}
+
+func (UnimplementedLLMServiceHandler) UpdateProvider(context.Context, *connect.Request[v2.UpdateProviderRequest]) (*connect.Response[v2.UpdateProviderResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.LLMService.UpdateProvider is not implemented"))
+}
+
+func (UnimplementedLLMServiceHandler) DeleteProvider(context.Context, *connect.Request[v2.DeleteProviderRequest]) (*connect.Response[v2.DeleteProviderResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.LLMService.DeleteProvider is not implemented"))
+}
 
 func (UnimplementedLLMServiceHandler) Generate(context.Context, *connect.Request[v2.GenerateLLMRequest]) (*connect.Response[v2.GenerateLLMResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.LLMService.Generate is not implemented"))

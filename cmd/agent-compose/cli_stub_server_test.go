@@ -19,6 +19,7 @@ type composeServiceStubs struct {
 	image    imageServiceStub
 	cache    cacheServiceStub
 	volume   volumeServiceStub
+	llm      llmServiceStub
 	sandbox  sandboxServiceStub
 	session  sessionServiceStub
 }
@@ -58,6 +59,10 @@ func newComposeServiceStubServer(t *testing.T, stubs composeServiceStubs) *httpt
 	}
 	if stubs.volume.listVolumes != nil || stubs.volume.createVolume != nil || stubs.volume.inspectVolume != nil || stubs.volume.removeVolume != nil || stubs.volume.pruneVolumes != nil {
 		path, handler := agentcomposev2connect.NewVolumeServiceHandler(stubs.volume)
+		mux.Handle(path, handler)
+	}
+	if stubs.llm.listProviders != nil || stubs.llm.createProvider != nil || stubs.llm.getProvider != nil || stubs.llm.updateProvider != nil || stubs.llm.deleteProvider != nil {
+		path, handler := agentcomposev2connect.NewLLMServiceHandler(stubs.llm)
 		mux.Handle(path, handler)
 	}
 	effectiveSandbox := sandboxStubWithSessionCompatibility(stubs.sandbox, stubs.session)

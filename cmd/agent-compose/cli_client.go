@@ -25,6 +25,7 @@ type cliServiceClients struct {
 	image    agentcomposev2connect.ImageServiceClient
 	cache    agentcomposev2connect.CacheServiceClient
 	volume   agentcomposev2connect.VolumeServiceClient
+	llm      agentcomposev2connect.LLMServiceClient
 	sandbox  agentcomposev2connect.SandboxServiceClient
 }
 
@@ -42,6 +43,7 @@ func newCLIServiceClients(cli cliOptions) (cliServiceClients, error) {
 		image:    agentcomposev2connect.NewImageServiceClient(httpClient, clientConfig.BaseURL),
 		cache:    agentcomposev2connect.NewCacheServiceClient(httpClient, clientConfig.BaseURL),
 		volume:   agentcomposev2connect.NewVolumeServiceClient(httpClient, clientConfig.BaseURL),
+		llm:      agentcomposev2connect.NewLLMServiceClient(httpClient, clientConfig.BaseURL),
 		sandbox:  agentcomposev2connect.NewSandboxServiceClient(httpClient, clientConfig.BaseURL),
 	}, nil
 }
