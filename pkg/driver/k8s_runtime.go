@@ -218,6 +218,9 @@ func (r *k8sRuntime) client(contextName string) (kubernetes.Interface, *rest.Con
 }
 
 func (r *k8sRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
+	if _, err := sandboxWorkspaceMount(sandbox, RuntimeDriverK8s); err != nil {
+		return SandboxVMInfo{}, err
+	}
 	clientset, _, err := r.client(vmState.K8sContext)
 	if err != nil {
 		return SandboxVMInfo{}, err

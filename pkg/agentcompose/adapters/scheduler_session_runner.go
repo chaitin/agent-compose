@@ -162,13 +162,16 @@ func (r *SchedulerSandboxRunner) resolveSchedulerSandboxConfig(ctx context.Conte
 	providerEnvItems = domain.MergeEnvItems(providerEnvItems, schedulers.AgentSandboxEnv(request))
 	envItems := domain.MergeEnvItems(globalEnvItems, providerEnvItems)
 	envItems = llms.FilterPersistedRuntimeEnv(envItems)
-	workspaceID := r.workspaceID(scheduler, request, agentDefinition)
-	workspaceSnapshot, workspaceID, err := r.resolveWorkspaceSnapshot(ctx, request, agentDefinition, workspaceID)
+	driver, err := r.driver(request, scheduler, agentDefinition)
 	if err != nil {
 		return resolvedSchedulerSandboxConfig{}, err
 	}
-	driver, err := r.driver(request, scheduler, agentDefinition)
+	workspaceID := r.workspaceID(scheduler, request, agentDefinition)
+	workspaceSnapshot, workspaceID, err := r.resolveWorkspaceSnapshot(ctx, request, agentDefinition, workspaceID, driver)
 	if err != nil {
+		return resolvedSchedulerSandboxConfig{}, err
+	}
+	if err := workspaces.ValidateWorkspaceRuntimeDriver(workspaceSnapshot, driver); err != nil {
 		return resolvedSchedulerSandboxConfig{}, err
 	}
 	if err := validateSchedulerRuntimeDriverCompiled(driver); err != nil {
@@ -488,10 +491,10 @@ func (r *SchedulerSandboxRunner) workspaceID(scheduler domain.Scheduler, request
 // that override, an agent's yaml `workspace:` declaration is resolved
 // inline instead of being looked up as a preset (see issue #599: the yaml
 // `name` label was never a real preset id, so that lookup always failed).
-func (r *SchedulerSandboxRunner) resolveWorkspaceSnapshot(ctx context.Context, request domain.SchedulerAgentRequest, agentDefinition *domain.AgentDefinition, workspaceID string) (*domain.SandboxWorkspace, string, error) {
+func (r *SchedulerSandboxRunner) resolveWorkspaceSnapshot(ctx context.Context, request domain.SchedulerAgentRequest, agentDefinition *domain.AgentDefinition, workspaceID, driver string) (*domain.SandboxWorkspace, string, error) {
 	if strings.TrimSpace(request.WorkspaceID) == "" {
 		if spec := agentDefinitionInlineWorkspace(agentDefinition); spec != nil {
-			snapshot, resolvedID, err := r.inlineWorkspaceSnapshot(ctx, agentDefinition, spec)
+			snapshot, resolvedID, err := r.inlineWorkspaceSnapshot(ctx, agentDefinition, spec, driver)
 			if err != nil {
 				return nil, "", err
 			}

@@ -368,6 +368,9 @@ func (c *microsandboxExecCollector) appendChunk(chunk ExecChunk) {
 }
 
 func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
+	if _, err := sandboxWorkspaceMount(session, RuntimeDriverMicrosandbox); err != nil {
+		return SandboxVMInfo{}, err
+	}
 	name := r.sandboxName(session, vmState)
 	if err := r.ensureReady(ctx); err != nil {
 		return SandboxVMInfo{}, err

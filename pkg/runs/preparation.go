@@ -189,11 +189,17 @@ func EnvItemsFromV2(items []*agentcomposev2.EnvVarSpec) []domain.SandboxEnvVar {
 	return domain.NormalizeEnvItems(env)
 }
 
-func ComposeWorkspaceSpecFromV2(workspace *agentcomposev2.WorkspaceSpec) *compose.WorkspaceSpec {
+func ComposeWorkspaceSpecFromV2(workspace *agentcomposev2.WorkspaceSpec) (*compose.WorkspaceSpec, error) {
 	if workspace == nil {
-		return nil
+		return nil, nil
+	}
+	mode, err := workspaceModeText(workspace.GetMode())
+	if err != nil {
+		return nil, err
 	}
 	return &compose.WorkspaceSpec{
+		Mode:     mode,
+		ReadOnly: workspace.GetReadOnly(),
 		Name:     workspace.GetName(),
 		Provider: workspace.GetProvider(),
 		URL:      workspace.GetUrl(),
@@ -204,7 +210,7 @@ func ComposeWorkspaceSpecFromV2(workspace *agentcomposev2.WorkspaceSpec) *compos
 		Username: workspace.GetUsername(),
 		Password: workspace.GetPassword(),
 		Token:    workspace.GetToken(),
-	}
+	}, nil
 }
 
 func ProjectRunWorkspaceSpecsFromV2(projectWorkspaces []*agentcomposev2.NamedWorkspaceSpec, agentWorkspace *agentcomposev2.WorkspaceSpec) (*compose.WorkspaceSpec, *compose.WorkspaceSpec, error) {
@@ -217,7 +223,10 @@ func ProjectRunWorkspaceSpecsFromV2(projectWorkspaces []*agentcomposev2.NamedWor
 		if _, exists := globals[name]; exists {
 			return nil, nil, fmt.Errorf("duplicate project workspace %q", name)
 		}
-		workspace := ComposeWorkspaceSpecFromV2(item.GetWorkspace())
+		workspace, err := ComposeWorkspaceSpecFromV2(item.GetWorkspace())
+		if err != nil {
+			return nil, nil, fmt.Errorf("project workspace %q: %w", name, err)
+		}
 		if workspace == nil {
 			return nil, nil, fmt.Errorf("project workspace %q spec is required", name)
 		}
@@ -225,10 +234,16 @@ func ProjectRunWorkspaceSpecsFromV2(projectWorkspaces []*agentcomposev2.NamedWor
 		globals[name] = *workspace
 	}
 
-	agent := ComposeWorkspaceSpecFromV2(agentWorkspace)
+	agent, err := ComposeWorkspaceSpecFromV2(agentWorkspace)
+	if err != nil {
+		return nil, nil, fmt.Errorf("agent workspace: %w", err)
+	}
 	if agent != nil {
 		hasName := strings.TrimSpace(agent.Name) != ""
 		hasInline := agent.ContentSource().HasContent() || strings.TrimSpace(agent.Target) != ""
+		if !hasInline && (agent.Mode != "" || agent.ReadOnly) {
+			return nil, nil, fmt.Errorf("workspace mode and read_only require an inline source; set them on the named workspace definition instead")
+		}
 		switch {
 		case hasInline:
 			return nil, agent, nil

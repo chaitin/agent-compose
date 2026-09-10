@@ -448,6 +448,11 @@
       "optional": true
     },
     {
+      "path": "agents.*.workspace.mode",
+      "go_type": "string",
+      "optional": true
+    },
+    {
       "path": "agents.*.workspace.name",
       "go_type": "string",
       "optional": true
@@ -465,6 +470,11 @@
     {
       "path": "agents.*.workspace.provider",
       "go_type": "string",
+      "optional": true
+    },
+    {
+      "path": "agents.*.workspace.read_only",
+      "go_type": "bool",
       "optional": true
     },
     {
@@ -633,6 +643,11 @@
       "optional": true
     },
     {
+      "path": "workspaces.*.mode",
+      "go_type": "string",
+      "optional": true
+    },
+    {
       "path": "workspaces.*.name",
       "go_type": "string",
       "optional": true
@@ -650,6 +665,11 @@
     {
       "path": "workspaces.*.provider",
       "go_type": "string",
+      "optional": true
+    },
+    {
+      "path": "workspaces.*.read_only",
+      "go_type": "bool",
       "optional": true
     },
     {

@@ -280,7 +280,7 @@ func TestSchedulerSandboxRunnerConcurrentInlineFileWorkspaceMaterializationIsSer
 			<-start
 			runCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
-			_, _, err := runner.inlineWorkspaceSnapshot(runCtx, agentDefinition, spec)
+			_, _, err := runner.inlineWorkspaceSnapshot(runCtx, agentDefinition, spec, driverpkg.RuntimeDriverDocker)
 			results <- result{index: index, err: err}
 		}(index)
 	}

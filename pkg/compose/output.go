@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"slices"
 
+	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sources"
 
 	"gopkg.in/yaml.v3"
@@ -32,6 +33,8 @@ type orderedProjectSpec struct {
 }
 
 type orderedNamedWorkspace struct {
+	Mode     string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	ReadOnly bool   `yaml:"read_only,omitempty" json:"read_only,omitempty"`
 	Key      string `yaml:"key" json:"key"`
 	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
 	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
@@ -234,6 +237,8 @@ func orderedWorkspaces(values map[string]WorkspaceSpec, redactSecrets bool) []or
 		value := values[key]
 		credentials := outputWorkspace(&value, redactSecrets)
 		out = append(out, orderedNamedWorkspace{
+			Mode:     credentials.Mode,
+			ReadOnly: value.ReadOnly,
 			Key:      key,
 			Name:     value.Name,
 			Provider: value.Provider,
@@ -252,6 +257,9 @@ func orderedWorkspaces(values map[string]WorkspaceSpec, redactSecrets bool) []or
 
 func outputWorkspace(value *WorkspaceSpec, redactSecrets bool) *WorkspaceSpec {
 	result := cloneWorkspaceSpec(value)
+	if result != nil && result.Mode == domain.WorkspaceModeCopy {
+		result.Mode = ""
+	}
 	if result == nil || !redactSecrets {
 		return result
 	}
@@ -293,6 +301,8 @@ func workspaceMapFromOrdered(values []orderedNamedWorkspace) map[string]Workspac
 	out := make(map[string]WorkspaceSpec, len(values))
 	for _, value := range values {
 		out[value.Key] = WorkspaceSpec{
+			Mode:     value.Mode,
+			ReadOnly: value.ReadOnly,
 			Name:     value.Name,
 			Provider: value.Provider,
 			URL:      value.URL,

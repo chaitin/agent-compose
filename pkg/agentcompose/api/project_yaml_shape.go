@@ -147,7 +147,9 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		} else if len(skills) > 0 {
 			raw["skills"] = skills
 		}
-		if workspace := WorkspaceYAMLShape(agent.GetWorkspace()); len(workspace) > 0 {
+		if workspace, err := WorkspaceYAMLShape(agent.GetWorkspace()); err != nil {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("agents[%d].workspace.mode", i), err.Error())}
+		} else if len(workspace) > 0 {
 			raw["workspace"] = workspace
 		}
 		if sandbox := agent.GetSandbox(); sandbox != nil {
@@ -476,11 +478,21 @@ func TriggerYAMLShape(trigger *agentcomposev2.TriggerSpec) map[string]any {
 	return raw
 }
 
-func WorkspaceYAMLShape(workspace *agentcomposev2.WorkspaceSpec) map[string]any {
+func WorkspaceYAMLShape(workspace *agentcomposev2.WorkspaceSpec) (map[string]any, error) {
 	if workspace == nil {
-		return nil
+		return nil, nil
+	}
+	mode, err := workspaceModeFromProto(workspace.GetMode())
+	if err != nil {
+		return nil, err
 	}
 	raw := map[string]any{}
+	if mode != "" {
+		raw["mode"] = mode
+	}
+	if workspace.GetReadOnly() {
+		raw["read_only"] = true
+	}
 	if strings.TrimSpace(workspace.GetName()) != "" {
 		raw["name"] = workspace.GetName()
 	}
@@ -511,7 +523,7 @@ func WorkspaceYAMLShape(workspace *agentcomposev2.WorkspaceSpec) map[string]any 
 	if strings.TrimSpace(workspace.GetToken()) != "" {
 		raw["token"] = workspace.GetToken()
 	}
-	return raw
+	return raw, nil
 }
 
 func NamedWorkspaceYAMLMap(workspaces []*agentcomposev2.NamedWorkspaceSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
@@ -524,7 +536,10 @@ func NamedWorkspaceYAMLMap(workspaces []*agentcomposev2.NamedWorkspaceSpec) (map
 		if _, ok := values[name]; ok {
 			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("workspaces[%d].name", i), fmt.Sprintf("duplicate workspace %q", name))}
 		}
-		workspace := WorkspaceYAMLShape(item.GetWorkspace())
+		workspace, err := WorkspaceYAMLShape(item.GetWorkspace())
+		if err != nil {
+			return nil, []*agentcomposev2.ProjectValidationIssue{ProjectValidationIssue(fmt.Sprintf("workspaces[%d].mode", i), err.Error())}
+		}
 		delete(workspace, "name")
 		values[name] = workspace
 	}

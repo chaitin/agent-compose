@@ -84,6 +84,36 @@ a new sandbox receives the latest Workspace Source without state leaking back
 to that source. It also checks resource cleanup. Inspect verbose test output and
 daemon logs when it fails.
 
+Workspace mount has a separate opt-in Docker E2E:
+
+```bash
+AGENT_COMPOSE_E2E_DOCKER_WORKSPACE_IMAGE=agent-compose-guest:latest \
+  task test:e2e:docker-workspace-mount
+```
+
+It applies real YAML with the CLI, runs `true` through the public run API, and
+uses public Exec requests without calling a model. Cases cover the default copy,
+root/subdirectory mounts, read-write/read-only access, host-to-guest visibility,
+guest create/modify/delete/rename, retained runtime restart across a daemon
+restart, removed runtime recreation, and sandbox/project deletion preserving
+external source files. Complete source-tree hashes are checked before and after
+lifecycle operations; read-only cases also verify writable sandbox-owned
+state/logs. Docker inspection verifies the declared mount target occurs once;
+public sandbox details preserve safe delivery metadata across resume. Moving a
+running sandbox's source away must still allow inspect, stop, and removal;
+resume must reject the missing source and succeed after it is restored.
+
+Each case reports source file count/bytes, daemon-owned file count, duplicate
+source files, and run preparation milliseconds as `workspace_measurement` log
+lines. The copy baseline must have two copies of every source fixture file;
+mount cases must have none. This is an observable file-count contract, not a
+fixed timing threshold. Sources live outside the daemon data root, and scanning
+does not follow symlinks. The default fixture has 128 small payload files plus
+three control files. Set `AGENT_COMPOSE_E2E_WORKSPACE_FILES=10000` (range
+1–100000) to measure a larger tree. Keep verbose output when comparing runs.
+Direct `go test` skips this E2E unless the image variable is set; the task checks
+that the selected local image exists and builds the daemon first.
+
 Graceful sandbox stop has an opt-in host-daemon E2E that exercises the public
 project, run, exec, and sandbox APIs against real runtimes:
 

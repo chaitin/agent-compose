@@ -13,6 +13,7 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/volumes"
+	"github.com/chaitin/agent-compose/pkg/workspaces"
 
 	"github.com/google/uuid"
 )
@@ -98,6 +99,13 @@ type preparedSandboxCreate struct {
 func (s *Store) prepareSandboxCreateSession(spec sandboxCreateSpec) (preparedSandboxCreate, error) {
 	title, baseWorkspace, driver, guestImage, workspaceID, triggerSource, workspace, envItems, tags, options :=
 		spec.Title, spec.BaseWorkspace, spec.Driver, spec.GuestImage, spec.WorkspaceID, spec.TriggerSource, spec.Workspace, spec.EnvItems, spec.Tags, spec.Options
+	driver, err := driverpkg.ResolveSandboxRuntimeDriver(driver, s.config.RuntimeDriver)
+	if err != nil {
+		return preparedSandboxCreate{}, err
+	}
+	if err := workspaces.ValidateWorkspaceRuntimeDriver(workspace, driver); err != nil {
+		return preparedSandboxCreate{}, err
+	}
 	localNow := s.currentTime()
 	now := localNow.UTC()
 	workspaceID = strings.TrimSpace(workspaceID)
@@ -109,10 +117,6 @@ func (s *Store) prepareSandboxCreateSession(spec sandboxCreateSpec) (preparedSan
 	}
 	workspaceDir := filepath.Join(sandboxDir, "workspace")
 	proxyPath := strings.TrimRight(s.config.JupyterProxyBasePath, "/") + "/" + id + "/lab"
-	driver, err = driverpkg.ResolveSandboxRuntimeDriver(driver, s.config.RuntimeDriver)
-	if err != nil {
-		return preparedSandboxCreate{}, err
-	}
 	guestImage = driverpkg.ResolveSandboxGuestImage(guestImage, "", driverpkg.DefaultGuestImageForDriver(s.config, driver))
 	stoppedRuntimePolicy, err := compose.NormalizeStoppedRuntimePolicy(options.StoppedRuntimePolicy)
 	if err != nil {

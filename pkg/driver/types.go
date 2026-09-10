@@ -26,9 +26,16 @@ type SandboxSummary struct {
 
 type Sandbox struct {
 	Summary         SandboxSummary       `json:"summary"`
+	Workspace       *SandboxWorkspace    `json:"workspace,omitempty"`
 	EnvItems        []SandboxEnvVar      `json:"env_items,omitempty"`
 	VolumeMounts    []SandboxVolumeMount `json:"volume_mounts,omitempty"`
 	RuntimeEnvItems []SandboxEnvVar      `json:"-"`
+}
+
+// SandboxWorkspace carries the persisted delivery contract into the runtime boundary.
+type SandboxWorkspace struct {
+	Type       string `json:"type"`
+	ConfigJSON string `json:"config_json"`
 }
 
 type SandboxVolumeMount struct {

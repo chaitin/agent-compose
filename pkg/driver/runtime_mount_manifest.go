@@ -35,6 +35,7 @@ type runtimeMountSpec struct {
 	guestPath string
 	isFile    bool
 	readOnly  bool
+	mustExist bool
 }
 
 type directoryOnlyExposure string
@@ -60,6 +61,9 @@ func prepareRuntimeMountManifest(config *appconfig.Config, session *Sandbox, dri
 	appconfig.ApplyDefaultGuestPaths(config)
 	driver = resolveRuntimeDriver(driver)
 	if err := validateRuntimeDriver(driver); err != nil {
+		return RuntimeMountManifest{}, err
+	}
+	if _, err := workspaceRuntimeMountSpec(config, session, driver); err != nil {
 		return RuntimeMountManifest{}, err
 	}
 	if err := initializeSandboxHomeDefaults(session); err != nil {
@@ -92,6 +96,11 @@ func PrepareRuntimeMountManifest(config *appconfig.Config, session *Sandbox, dri
 }
 
 func loadRuntimeMountManifest(session *Sandbox, expectedDriver string) (RuntimeMountManifest, error) {
+	if expectedDriver != "" {
+		if _, err := decodeSandboxWorkspaceMount(session, expectedDriver); err != nil {
+			return RuntimeMountManifest{}, err
+		}
+	}
 	path := runtimeMountManifestPath(session)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -107,6 +116,9 @@ func loadRuntimeMountManifest(session *Sandbox, expectedDriver string) (RuntimeM
 	manifest.Driver = resolveRuntimeDriver(manifest.Driver)
 	if err := validateRuntimeDriver(manifest.Driver); err != nil {
 		return RuntimeMountManifest{}, fmt.Errorf("invalid runtime mount manifest driver: %w", err)
+	}
+	if _, err := decodeSandboxWorkspaceMount(session, manifest.Driver); err != nil {
+		return RuntimeMountManifest{}, err
 	}
 	if strings.TrimSpace(expectedDriver) != "" {
 		expectedDriver = resolveRuntimeDriver(expectedDriver)
@@ -162,12 +174,16 @@ func buildRuntimeMountManifest(config *appconfig.Config, session *Sandbox, drive
 	if err := validateRuntimeDriver(driver); err != nil {
 		return RuntimeMountManifest{}, err
 	}
+	workspace, err := workspaceRuntimeMountSpec(config, session, driver)
+	if err != nil {
+		return RuntimeMountManifest{}, err
+	}
 	if driver == RuntimeDriverBoxlite {
 		if err := prepareBoxliteVolumeBridge(session); err != nil {
 			return RuntimeMountManifest{}, err
 		}
 	}
-	specs := runtimeMountSpecsForDriver(config, session, driver)
+	specs := applyWorkspaceRuntimeMount(config, runtimeMountSpecsForDriver(config, session, driver), workspace)
 	mounts := make([]RuntimeMount, 0, len(specs))
 	for _, spec := range specs {
 		if err := ensureRuntimeMountSource(spec); err != nil {
@@ -292,6 +308,16 @@ func sandboxVolumeMountSpecs(session *Sandbox) []runtimeMountSpec {
 }
 
 func ensureRuntimeMountSource(spec runtimeMountSpec) error {
+	if spec.mustExist {
+		info, err := os.Stat(spec.hostPath)
+		if err != nil {
+			return fmt.Errorf("stat workspace mount source %s: %w", spec.hostPath, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("workspace mount source %s is not a directory", spec.hostPath)
+		}
+		return nil
+	}
 	if spec.isFile {
 		if err := os.MkdirAll(filepath.Dir(spec.hostPath), 0o755); err != nil {
 			return fmt.Errorf("create runtime mount file parent %s: %w", filepath.Dir(spec.hostPath), err)

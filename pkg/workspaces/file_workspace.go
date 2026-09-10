@@ -59,6 +59,13 @@ func (w fileWorkspace) Prepare(_ context.Context, session *domain.Sandbox) error
 }
 
 func FileWorkspaceContentRoot(config *appconfig.Config, workspace domain.WorkspaceConfig) (string, error) {
+	mount, err := DecodeFileWorkspaceMount(workspace.ConfigJSON)
+	if err != nil {
+		return "", err
+	}
+	if mount != nil {
+		return "", domain.ClassifyError(domain.ErrInvalidArgument, "mounted workspaces do not have managed file content", nil)
+	}
 	workspaceID := strings.TrimSpace(workspace.ID)
 	if workspaceID == "" {
 		return "", domain.ClassifyError(domain.ErrRequired, "workspace config id is required for file workspace", nil)

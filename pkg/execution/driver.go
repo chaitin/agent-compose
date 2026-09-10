@@ -43,8 +43,16 @@ func ToDriverSandbox(session *domain.Sandbox) *driverpkg.Sandbox {
 		},
 		EnvItems:        envItems,
 		VolumeMounts:    volumeMounts,
+		Workspace:       toDriverWorkspace(session.Workspace),
 		RuntimeEnvItems: runtimeEnvItems,
 	}
+}
+
+func toDriverWorkspace(workspace *domain.SandboxWorkspace) *driverpkg.SandboxWorkspace {
+	if workspace == nil {
+		return nil
+	}
+	return &driverpkg.SandboxWorkspace{Type: workspace.Type, ConfigJSON: workspace.ConfigJSON}
 }
 
 func ToDriverVMState(state domain.VMState) driverpkg.VMState {

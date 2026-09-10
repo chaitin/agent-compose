@@ -675,6 +675,17 @@ agent-compose inspect cache <cache-id>
 - `inspect image <image>` 查看镜像详情。
 - `inspect cache <cache-id>` 查看一个 daemon runtime cache item，包括引用、阻止删除原因和 warnings。
 
+当 sandbox 保存了 workspace 快照时，`inspect sandbox` 会提供安全的 `workspace_delivery` 信息。`mode` 为 `copy` 或 `mount`；mount 还会显示 daemon 解析后的源目录 `source_path`、相对 guest workspace 的 `target`，以及 `read_only`。现有 `workspace_path` 仍指向 sandbox 自有目录。copy 快照不暴露私有源目录，输出中不包含 workspace 凭据或原始配置。缺少交付元数据时省略该字段；损坏的快照显示 `mode: unknown`。
+
+```json
+"workspace_delivery": {
+  "mode": "mount",
+  "source_path": "/srv/project/source",
+  "target": "reference",
+  "read_only": true
+}
+```
+
 ## 镜像命令
 
 管理 daemon 或当前 project 相关的镜像。

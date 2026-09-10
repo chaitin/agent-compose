@@ -64,8 +64,18 @@ func inlineWorkspaceID(agentDefinition *domain.AgentDefinition, provider string)
 // snapshot from the inline spec instead keeps this path in sync with the
 // project-run path without requiring project apply to write workspace_config
 // rows.
-func (r *SchedulerSandboxRunner) inlineWorkspaceSnapshot(ctx context.Context, agentDefinition *domain.AgentDefinition, spec *compose.WorkspaceSpec) (*domain.SandboxWorkspace, string, error) {
+func (r *SchedulerSandboxRunner) inlineWorkspaceSnapshot(ctx context.Context, agentDefinition *domain.AgentDefinition, spec *compose.WorkspaceSpec, driver string) (*domain.SandboxWorkspace, string, error) {
 	provider := strings.ToLower(strings.TrimSpace(spec.Provider))
+	mode, err := domain.NormalizeWorkspaceDelivery(provider, spec.Mode, spec.ReadOnly)
+	if err != nil {
+		return nil, "", err
+	}
+	if mode == domain.WorkspaceModeMount && driver != "docker" {
+		return nil, "", fmt.Errorf("%w: workspace mount mode requires the docker runtime driver, got %q", domain.ErrInvalidArgument, driver)
+	}
+	normalizedSpec := *spec
+	normalizedSpec.Mode = mode
+	spec = &normalizedSpec
 	workspaceID := inlineWorkspaceID(agentDefinition, provider)
 	switch provider {
 	case sources.ProviderGit:
@@ -130,6 +140,16 @@ func (r *SchedulerSandboxRunner) materializeInlineFileWorkspace(ctx context.Cont
 	project, err := r.ConfigDB.GetProject(ctx, projectID)
 	if err != nil {
 		return domain.WorkspaceConfig{}, fmt.Errorf("get agent project %s: %w", projectID, err)
+	}
+	if spec.Mode == domain.WorkspaceModeMount {
+		configJSON, err := workspaces.NewFileWorkspaceMountConfig(project, spec.Path, spec.Target, spec.ReadOnly)
+		if err != nil {
+			return domain.WorkspaceConfig{}, err
+		}
+		return domain.WorkspaceConfig{
+			ID: workspaceID, Name: firstNonEmpty(strings.TrimSpace(spec.Name), workspaceID), Type: "file", ConfigJSON: configJSON,
+			Comment: "agent yaml workspace mount",
+		}, nil
 	}
 	sourceDir, err := runs.ResolveLocalProjectWorkspacePath(project, spec.Path)
 	if err != nil {

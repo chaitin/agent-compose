@@ -405,6 +405,9 @@ func notifyBoxliteExecExit(exitCode int, handle uintptr) {
 }
 
 func (r *cgoSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
+	if _, err := sandboxWorkspaceMount(sandbox, RuntimeDriverBoxlite); err != nil {
+		return SandboxVMInfo{}, err
+	}
 	r.ensureMu.Lock()
 	defer r.ensureMu.Unlock()
 

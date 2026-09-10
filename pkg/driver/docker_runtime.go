@@ -191,6 +191,9 @@ func (w *dockerExecWriter) Write(p []byte) (int, error) {
 }
 
 func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
+	if _, err := workspaceRuntimeMountSpec(r.config, sandbox, RuntimeDriverDocker); err != nil {
+		return SandboxVMInfo{}, err
+	}
 	dockerClient, err := r.newClient()
 	if err != nil {
 		return SandboxVMInfo{}, err
@@ -270,11 +273,11 @@ func (r *dockerRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox, vm
 	if err != nil || !ok {
 		return false, err
 	}
-	expectedMounts, err := r.dockerRuntimeMounts(ctx, dockerClient, sandbox)
+	expectedMounts, err := r.dockerRuntimeMountsForLiveSandbox(ctx, dockerClient, sandbox)
 	if err != nil {
 		return false, err
 	}
-	if !dockerContainerMountsMatch(containerInfo, expectedMounts) {
+	if !r.dockerSandboxMountsMatch(containerInfo, expectedMounts, sandbox) {
 		slog.Warn("docker sandbox mounts no longer match the active data root; retiring stale runtime for safe recreation", "sandbox_id", sandbox.Summary.ID, "container_id", containerInfo.ID)
 		if err := removeDockerContainerWithStaleMounts(ctx, dockerClient, containerInfo.ID); err != nil {
 			return false, err
@@ -848,7 +851,7 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 	if containerInfo, ok, err := r.findContainer(ctx, dockerClient, sandbox, vmState); err != nil {
 		return containerapi.InspectResponse{}, false, err
 	} else if ok {
-		if dockerContainerMountsMatch(containerInfo, mounts) {
+		if r.dockerSandboxMountsMatch(containerInfo, mounts, sandbox) {
 			return containerInfo, false, nil
 		}
 		slog.Warn("recreating docker sandbox whose bind mounts reference an earlier data root", "sandbox_id", sandbox.Summary.ID, "container_id", containerInfo.ID)
@@ -896,33 +899,10 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 	if err != nil {
 		return containerapi.InspectResponse{}, false, fmt.Errorf("inspect docker container %s: %w", createResp.ID, err)
 	}
+	if err := r.validateCreatedDockerWorkspaceMounts(ctx, dockerClient, sandbox, containerInfo, mounts); err != nil {
+		return containerapi.InspectResponse{}, false, err
+	}
 	return containerInfo, true, nil
-}
-
-func dockerContainerMountsMatch(containerInfo containerapi.InspectResponse, expected []mountapi.Mount) bool {
-	type mountIdentity struct {
-		source   string
-		readOnly bool
-	}
-	actual := make(map[string]mountIdentity, len(containerInfo.Mounts))
-	for _, item := range containerInfo.Mounts {
-		if item.Type != mountapi.TypeBind {
-			continue
-		}
-		actual[filepath.Clean(item.Destination)] = mountIdentity{
-			source: filepath.Clean(item.Source), readOnly: !item.RW,
-		}
-	}
-	for _, item := range expected {
-		if item.Type != mountapi.TypeBind {
-			continue
-		}
-		identity, ok := actual[filepath.Clean(item.Target)]
-		if !ok || identity.source != filepath.Clean(item.Source) || identity.readOnly != item.ReadOnly {
-			return false
-		}
-	}
-	return true
 }
 
 func (r *dockerRuntime) validateLegacyDockerRecreate(sandbox *Sandbox, vmState VMState) error {
@@ -1082,27 +1062,6 @@ func selectDockerNetworkName(containerInfo containerapi.InspectResponse) (string
 		return "", false
 	}
 	return networkNames[0], true
-}
-
-func (r *dockerRuntime) dockerRuntimeMounts(ctx context.Context, dockerClient *client.Client, sandbox *Sandbox) ([]mountapi.Mount, error) {
-	manifest, err := loadRuntimeMountManifest(sandbox, RuntimeDriverDocker)
-	if err != nil {
-		return nil, err
-	}
-	mounts := make([]mountapi.Mount, 0, len(manifest.Mounts))
-	for _, item := range manifest.Mounts {
-		source, err := r.bindRuntimeMountSource(ctx, dockerClient, item.HostPath)
-		if err != nil {
-			return nil, err
-		}
-		mounts = append(mounts, mountapi.Mount{
-			Type:     mountapi.TypeBind,
-			Source:   source,
-			Target:   item.GuestPath,
-			ReadOnly: item.ReadOnly,
-		})
-	}
-	return mounts, nil
 }
 
 func (r *dockerRuntime) bindRuntimeMountSource(ctx context.Context, dockerClient *client.Client, hostPath string) (string, error) {

@@ -175,8 +175,11 @@ func TestRunsPreparationWorkspaceAndStatusWorkflows(t *testing.T) {
 	if env := EnvItemsFromV2([]*agentcomposev2.EnvVarSpec{nil, {Name: "A", Value: "B"}}); len(env) != 1 {
 		t.Fatalf("EnvItemsFromV2 env=%#v", env)
 	}
-	if ComposeWorkspaceSpecFromV2(nil) != nil || ComposeWorkspaceSpecFromV2(&agentcomposev2.WorkspaceSpec{Provider: "git", Url: "url"}).Provider != "git" {
-		t.Fatalf("ComposeWorkspaceSpecFromV2 failed")
+	if workspace, err := ComposeWorkspaceSpecFromV2(nil); err != nil || workspace != nil {
+		t.Fatalf("nil ComposeWorkspaceSpecFromV2 = %#v, %v", workspace, err)
+	}
+	if workspace, err := ComposeWorkspaceSpecFromV2(&agentcomposev2.WorkspaceSpec{Provider: "git", Url: "url"}); err != nil || workspace.Provider != "git" {
+		t.Fatalf("ComposeWorkspaceSpecFromV2 = %#v, %v", workspace, err)
 	}
 	if merged := MergeEnvItems([]domain.SandboxEnvVar{{Name: "A", Value: "1"}}, []domain.SandboxEnvVar{{Name: "A", Value: "2"}}); len(merged) != 1 || merged[0].Value != "2" {
 		t.Fatalf("MergeEnvItems merged=%#v", merged)

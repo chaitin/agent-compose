@@ -115,6 +115,15 @@ func (p *Provisioner) ensureLoaded(ctx context.Context, sandbox *domain.Sandbox)
 	if strings.TrimSpace(sandbox.Summary.WorkspacePath) == "" {
 		return fmt.Errorf("%w: sandbox %s workspace path is required", domain.ErrRequired, sandbox.Summary.ID)
 	}
+	if sandbox.Workspace != nil {
+		mount, err := DecodeFileWorkspaceMount(sandbox.Workspace.ConfigJSON)
+		if err != nil {
+			return err
+		}
+		if mount != nil {
+			return p.ensureMounted(ctx, sandbox, *mount)
+		}
+	}
 	if sandbox.WorkspaceProvisioning == nil {
 		sandbox.WorkspaceProvisioning = &domain.SandboxWorkspaceProvisioning{
 			Version:   domain.SandboxWorkspaceProvisioningVersion,

@@ -320,6 +320,22 @@ tasks:
           GOCACHE={{.GO_BUILD_CACHE_DIR}} \
           {{.GO_TOOLCHAIN_ENV}} go test ./test/e2e -run '^TestE2EDockerFileWorkspaceResumePreservesState$' -count=1 -v
 
+  test:e2e:docker-workspace-mount:
+    desc: Verify file workspace copy/mount contracts with a real host daemon and Docker
+    dir: '{{.TASKFILE_DIR}}'
+    deps: ['build:agent-compose']
+    cmds:
+      - |
+        image="${AGENT_COMPOSE_E2E_DOCKER_WORKSPACE_IMAGE:-agent-compose-guest:latest}"
+        if ! docker image inspect "$image" >/dev/null 2>&1; then
+          echo "Docker workspace-mount image $image is unavailable; build a compatible guest image or set AGENT_COMPOSE_E2E_DOCKER_WORKSPACE_IMAGE" >&2
+          exit 1
+        fi
+        AGENT_COMPOSE_E2E_BINARY="$PWD/build/agent-compose" \
+          AGENT_COMPOSE_E2E_DOCKER_WORKSPACE_IMAGE="$image" \
+          GOCACHE={{.GO_BUILD_CACHE_DIR}} \
+          {{.GO_TOOLCHAIN_ENV}} go test ./test/e2e -run '^TestE2EDockerWorkspaceMount$' -count=1 -timeout 12m -v
+
   test:e2e:docker-retention-archive:
     desc: Run the opt-in host-daemon Docker stopped-sandbox retention archive E2E test
     dir: '{{.TASKFILE_DIR}}'

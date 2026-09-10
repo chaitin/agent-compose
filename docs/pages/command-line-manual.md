@@ -692,6 +692,17 @@ Details:
 - `inspect image <image>` shows image details.
 - `inspect cache <cache-id>` shows one daemon runtime cache item, including references, blocked reasons, and warnings.
 
+For a sandbox with a workspace snapshot, `inspect sandbox` includes safe `workspace_delivery` metadata. `mode` is `copy` or `mount`; mounted workspaces also expose the resolved daemon `source_path`, guest-relative `target`, and `read_only`. The existing `workspace_path` remains the sandbox-owned directory. Copy snapshots omit their private source roots, and workspace credentials and raw configuration are never included. Missing delivery metadata is omitted; malformed snapshots report `mode: unknown`.
+
+```json
+"workspace_delivery": {
+  "mode": "mount",
+  "source_path": "/srv/project/source",
+  "target": "reference",
+  "read_only": true
+}
+```
+
 ## Image Commands
 
 Manage images known to the daemon or referenced by the current project.
