@@ -85,10 +85,6 @@ func newCLIImageRemoveCommand(cli *cliOptions, use string, warning ...string) *c
 	return cmd
 }
 
-func newCLIImageInspectCommand(cli *cliOptions) *cobra.Command {
-	return newCLIImageInspectCommandWithWarning(cli, "inspect <image>")
-}
-
 func newCLIImageInspectCommandWithWarning(cli *cliOptions, use string, warning ...string) *cobra.Command {
 	return &cobra.Command{Use: use, Short: "Inspect an image", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if len(warning) == 2 {
