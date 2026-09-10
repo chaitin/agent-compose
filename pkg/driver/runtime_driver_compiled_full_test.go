@@ -1,4 +1,4 @@
-//go:build linux && cgo && boxlitecgo && microsandboxcgo
+//go:build linux && cgo && boxlitecgo && microsandboxcgo && !k8scompose
 
 package driver
 

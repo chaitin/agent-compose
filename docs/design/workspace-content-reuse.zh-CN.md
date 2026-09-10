@@ -188,7 +188,7 @@ reflink 的实现与快照 GC 分开：即使文件系统不支持 reflink，快
 
 ### 本次修改的实测结果
 
-验证使用 Go 1.26.7；远程为 Ubuntu 24.04 / Linux 6.17 / Docker 29.1.5 API 1.52 / linux/amd64。冻结的非报告源码指纹为 `89e3cd2721877042aca179f9161ad5cfaa66e6e2a1001ecbf047965d12f533d6`；该指纹按源码清单中除 `docs/design/` 外的每个路径与 SHA-256 排序计算。最终仅补充本文与 `TESTING.md` 的验证说明，执行代码保持一致。
+验证使用 Go 1.26.7；远程为 Ubuntu 24.04 / Linux 6.17 / Docker 29.1.5 API 1.52 / linux/amd64。冻结的非报告源码指纹为 `89e3cd2721877042aca179f9161ad5cfaa66e6e2a1001ecbf047965d12f533d6`；该指纹按源码清单中除 `docs/design/` 外的每个路径与 SHA-256 排序计算。该镜像对应随后推送的 `adecc5b9` 生产代码。后续 `81a43e7b` 及本轮编译标签、协议 golden 的补充只修改测试/报告，执行代码保持一致。
 
 本次 full Linux 二进制 SHA-256 为 `01b2c9114e61ae1e80fc0bc4a403dbe0cee99b130a6547ef10c88e1d1aa38cae`，版本标记 `pr686-review-worktree`，编入 Docker、BoxLite、Microsandbox、K8s。Daemon 测试镜像复用既有官方构建的 runtime 依赖，仅替换本次 `task build` 产物；它不是重新下载所有依赖的干净官方镜像构建。Guest 镜像按当前 `Dockerfile.workspace-test` 及 lockfile 构建，并实际运行 runtime `--help`。
 
@@ -237,11 +237,41 @@ AGENT_COMPOSE_E2E_SKILL_FILES=257 \
 
 镜像任务强制 `--platform linux/amd64`，并实际运行 runtime。Linux 的常规 Compose 配置测试需要工作目录有 `.env`（隔离验证目录使用空文件即可）；完整 `task test` 不要求创建真实 sandbox，它的覆盖率 E2E 与上面的显式 Docker 测试分别报告。
 
-### 本轮推送时的门禁进度
+### 最终测试与覆盖率
 
-本机 `task build`、8 个改动相关包的完整测试、对应 lint/格式检查、文档构建均通过。远程 `task build` 也通过，仓库 `task test` 的全部行为断言通过，但覆盖门禁尚未全绿：Unit 76.77%、Integration 60.53%、E2E 59.17%、Combined 80.79%，E2E 低于要求的 60%。正在补充经过公开 HTTP API、真实应用组件与 SQLite 的内容复用 E2E，不降低阈值或改变排除规则。
+本机 `task build`、8 个改动相关包的完整测试、对应 lint/格式检查、文档构建均通过。远程 Linux full build、完整 `task test` 和额外四 driver 标签的九包测试已完成：
 
-四 driver 标签的额外测试当前有 2,416 项 PASS、50 项 SKIP、1 项 FAIL（含子测试）：失败是旧的三 driver 编译清单 fixture 与现有四 driver fixture 同时启用，前者在 `k8scompose` 下仍错误期待三个 driver。正在修正这两个 fixture 的互斥编译条件并复验。上述尚未完成的门禁不能写成通过；后续测试提交会同步更新本文和 PR。
+| 检查 | 结果 |
+| --- | --- |
+| 完整 `task test` | PASS；Unit 76.77%、Integration 60.51%、E2E 60.39%、Combined 81.06% |
+| 额外九包四 driver 标签测试 | 2,417 PASS / 50 SKIP / 0 FAIL，含子测试；跳过不等于运行通过 |
+| 三／四 driver 编译清单 fixture | 各 1 RUN / 1 PASS / 0 SKIP，编译条件互斥 |
+| `scripts/tests/test-coverage-contract.sh` | 本机与 Linux 均 PASS，完整 15 项 E2E 名称 golden 与实际清单一致 |
+| Linux proto 模块 | 28 RUN / 28 PASS / 0 SKIP / 0 FAIL，包含 Sandbox 全 25 字段 golden |
+| workspace / execution / skills race | 271 PASS / 1 SKIP / 0 FAIL；跨 UID 清理回归通过 |
+| 文档构建 | 本机与 Linux PASS；73 个 YAML schema 字段、12 个公开文件校验通过 |
+| `task lint` | Linux 全部 scope 完成，0 issues；格式检查通过 |
+
+四 driver 标签测试的 50 项跳过逐项分类为：30 项是当前 driver 已编译而不适用的“未编译拒绝”分支，13 项是未显式启用的 runtime/OCI smoke，6 项缺少 `qemu-img`，1 项是 root 会绕过普通用户的不可读权限夹具。race 的唯一跳过也是最后这一权限条件，专门跨 UID 的清理测试实际通过。
+
+此前 59.17% 的 E2E 覆盖门禁失败已经通过实际公开服务用例补齐。新增用例使用真实 HTTP 路由、应用依赖、SQLite、控制器、Provisioner、SandboxDriver 和 AgentRunner；仅替换外部 runtime 执行及 Docker image-inspect 协议端点。两次 ApplyProject、八次 RunAgent（七成功、一次别名冲突预期失败）及两次 RemoveSandbox 逐次验证快照回收、Ready、无残留 stage、未变 inode、guest 漂移修复、source 内容/执行位更新、声明删除和双向隔离。原 Go E2E 覆盖为 23,759 / 39,819，新结果为 24,281 / 39,819，增加 522 条语句；合并 JS/SDK 后是 25,796 / 42,716 = 60.39%。没有降低阈值、调整覆盖范围或改名凑分类。
+
+`test/e2e` 的清单问题也已定位到真实 Actions：main 原有 13 项，`34f9f8dc` 增加 workspace mount 变成 14，`adecc5b9` 增加 skills reuse 变成 15，而旧断言始终是 13。[GitHub Linux 日志](https://github.com/chaitin/agent-compose/actions/runs/34461231052/job/102821965553) 实际报告 `got 15, want 13`。`81a43e7b` 用完整名称 golden 修复它；公开服务 E2E 位于 app 包，不计入这 15 项。三 driver fixture 另补 `!k8scompose`，与原四 driver fixture 互斥，不改变真实 driver 清单。
+
+### Published proto 编译与发布顺序
+
+[Published proto version 失败日志](https://github.com/chaitin/agent-compose/actions/runs/34437803053/job/102817765843) 暴露了本地构建未覆盖的依赖路径：根模块仍 require `proto v0.1.0`，但新增 `WorkspaceMode`、`WorkspaceSpec.mode/read_only` 及 `SandboxWorkspaceDelivery` 尚未发布；本地 `replace => ./proto` 隐藏了差异。
+
+已创建最小前置草稿 [PR #691](https://github.com/chaitin/agent-compose/pull/691)，提交 `59d2474b`，只包含 schema、重新生成的 Go 文件和完整合同测试，没有主程序、依赖或 CI 改动。构建、28 项测试、全部 18 个 proto 文件的生成一致性、Buf breaking 检查均通过；在隔离目录原样执行「移除 replace → 下载 v0.1.0 → go build ./...」也通过，因为前置 PR 的主程序仍来自 main，尚不消费新增字段。
+
+```text
+#691 合并（仅新增协议）
+    -> 上游发布 proto/v0.1.1
+    -> #686 更新真实 require / go.sum
+    -> 原样运行 Published proto 检查
+```
+
+`vt128` 只有上游读取权限，不能发布上游 tag；`proto/v0.1.1` 目前不存在。主 PR 因此仍有这个明确的发布前置依赖，不能宣称 CI 全绿。没有填写虚构校验和、改用 fork replace 或跳过兼容性检查。Actions 的 fork 审批与执行结果必须逐个 HEAD 查看，旧提交的通过不能替代最新提交。
 
 ## 9. 后续扩展边界
 

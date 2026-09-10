@@ -1,6 +1,8 @@
 package agentcomposev2
 
 import (
+	"fmt"
+	"slices"
 	"testing"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -74,5 +76,50 @@ func TestSandboxWorkspaceDeliveryWireContract(t *testing.T) {
 	field := sandbox.Fields().ByNumber(25)
 	if field == nil || field.Name() != "workspace_delivery" || field.JSONName() != "workspaceDelivery" || field.Kind() != protoreflect.MessageKind || field.Cardinality() != protoreflect.Optional || field.Message().FullName() != message.FullName() || !field.HasPresence() {
 		t.Fatalf("Sandbox field 25 must remain optional workspace_delivery: %v", field)
+	}
+}
+
+func TestSandboxFullWireContract(t *testing.T) {
+	want := []string{
+		"1:sandbox_id:sandboxId:string:optional:false",
+		"2:status:status:enum:agentcompose.v2.SandboxStatus:optional:false",
+		"3:driver:driver:string:optional:false",
+		"4:project_id:projectId:string:optional:false",
+		"5:agent_name:agentName:string:optional:false",
+		"6:created_at:createdAt:message:google.protobuf.Timestamp:optional:true",
+		"7:updated_at:updatedAt:message:google.protobuf.Timestamp:optional:true",
+		"8:image:image:string:optional:false",
+		"9:workspace_path:workspacePath:string:optional:false",
+		"10:tags:tags:message:agentcompose.v2.SandboxTag:repeated:false",
+		"11:title:title:string:optional:false",
+		"12:proxy_path:proxyPath:string:optional:false",
+		"13:trigger_source:triggerSource:string:optional:false",
+		"14:cell_count:cellCount:uint32:optional:false",
+		"15:event_count:eventCount:uint32:optional:false",
+		"16:notebook_url:notebookUrl:string:optional:false",
+		"17:workspace_reclamation_state:workspaceReclamationState:enum:agentcompose.v2.WorkspaceReclamationState:optional:false",
+		"18:workspace_reclamation_started_at:workspaceReclamationStartedAt:message:google.protobuf.Timestamp:optional:true",
+		"19:workspace_reclamation_completed_at:workspaceReclamationCompletedAt:message:google.protobuf.Timestamp:optional:true",
+		"20:workspace_reclamation_last_error:workspaceReclamationLastError:string:optional:false",
+		"21:stopped_runtime_policy:stoppedRuntimePolicy:string:optional:false",
+		"22:stopped_runtime_state:stoppedRuntimeState:string:optional:false",
+		"23:stopped_runtime_last_error:stoppedRuntimeLastError:string:optional:false",
+		"24:stopped_runtime_released_at:stoppedRuntimeReleasedAt:message:google.protobuf.Timestamp:optional:true",
+		"25:workspace_delivery:workspaceDelivery:message:agentcompose.v2.SandboxWorkspaceDelivery:optional:true",
+	}
+	fields := (&Sandbox{}).ProtoReflect().Descriptor().Fields()
+	got := make([]string, fields.Len())
+	for index := range fields.Len() {
+		field := fields.Get(index)
+		fieldType := field.Kind().String()
+		if field.Kind() == protoreflect.MessageKind {
+			fieldType += ":" + string(field.Message().FullName())
+		} else if field.Kind() == protoreflect.EnumKind {
+			fieldType += ":" + string(field.Enum().FullName())
+		}
+		got[index] = fmt.Sprintf("%d:%s:%s:%s:%s:%t", field.Number(), field.Name(), field.JSONName(), fieldType, field.Cardinality(), field.HasPresence())
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("Sandbox wire contract changed; review every field before updating the golden\ngot: %q\nwant: %q", got, want)
 	}
 }
