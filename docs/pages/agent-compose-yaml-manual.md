@@ -501,6 +501,68 @@ The optional `models` array adds per-model metadata and behavior: `id`, `name`, 
 
 All compatible coding agents and `scheduler.llm` use this catalog for agent-compose Provider routing and model selection; it does not replace an agent's native model-capability catalog. A complete Agent-level `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, and `LLM_API_KEY` configuration remains the higher-priority compatibility path. The daemon's complete `LLM_*` configuration remains the default ahead of `models.json.default`. A catalog Provider ID that conflicts with an existing non-catalog Provider causes startup to fail without overwriting the existing configuration.
 
+### Managing LLM providers through RPC
+
+`agentcompose.v2.LLMService` exposes `CreateProvider`, `GetProvider`,
+`ListProviders`, `UpdateProvider`, and `DeleteProvider` for upstream model
+endpoints and API keys. These are separate from coding-agent `provider: codex`
+or `provider: pi` settings.
+
+For example, call `CreateProvider` using Connect JSON:
+
+```json
+{
+  "provider": {
+    "id": "team-gateway",
+    "baseUrl": "https://gateway.example.com/v1",
+    "protocol": "responses",
+    "apiKey": "your-upstream-api-key"
+  }
+}
+```
+
+The request path is `/agentcompose.v2.LLMService/CreateProvider`, using existing
+daemon API authentication. Then set an Agent model to `team-gateway/model-id`;
+models do not need to be enumerated. Other methods share the service path prefix.
+
+- IDs are immutable, 1–128 ASCII letters, digits, dots, underscores or hyphens,
+  starting with a letter or digit. `default`, `anthropic`, and session environment
+  IDs are reserved for the daemon.
+- `protocol` must be `responses`, `chat_completions`, or `anthropic_messages`.
+  `baseUrl` must be an absolute HTTP(S) URL without user credentials, query or fragment.
+- `apiKey` is literal, without environment interpolation. Create requires a
+  nonempty key. On update, omission preserves it, a nonempty value rotates it,
+  and an empty value is invalid. Responses expose only `apiKeySet`, never the key.
+- Create defaults an empty `name` to the ID and an omitted `enabled` field to
+  `true`. `anthropic_messages` providers send `anthropic-version: 2023-06-01` by
+  default; other protocols send no extra headers.
+- `UpdateProvider` uses the same `provider` object. Omitted `name`, `baseUrl`,
+  `protocol`, `apiKey`, and `enabled` preserve stored values. Present nonempty
+  `apiKey` rotates the key; present empty is invalid. Protocol changes also
+  refresh authentication headers.
+- CLI: `agent-compose llm provider ls|create|inspect|update|rm`. Create requires
+  `--base-url`, `--protocol`, and `--api-key`. Update sends only flags that are
+  set, so `update --base-url ...` does not re-enable a disabled provider.
+- `GetProvider` / `DeleteProvider` take `{"id":"team-gateway"}`.
+  `ListProviders` takes `offset` / `limit`, orders by ID, includes disabled entries,
+  and returns `providers` and `total`.
+- These methods manage only API-owned providers, without overwriting models.json
+  or environment configuration. Duplicate IDs return `AlreadyExists`, missing IDs
+  return `NotFound`, and ownership conflicts return `FailedPrecondition`.
+  API configuration survives restart; a models.json entry with the same ID still
+  causes a startup ownership conflict.
+- URL/key updates affect subsequent target resolution without restarting the
+  daemon; in-flight upstream requests continue. Protocol changes may require
+  restarting an Agent run to refresh client protocol configuration. Deletion
+  removes provider-bound facade tokens; reusing the ID cannot revive old tokens.
+- Deletion does not rewrite project model references. Unknown `provider/` prefixes
+  on new requests retain the existing literal-model interpretation. Disabling
+  retains configuration and tokens, allowing use again after re-enabling.
+
+These methods do not change default models or manage per-model overrides or custom
+headers. Credentials use the existing database storage contract without additional
+application-level encryption.
+
 ### `image`
 
 ```yaml

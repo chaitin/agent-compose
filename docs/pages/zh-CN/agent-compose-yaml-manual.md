@@ -502,6 +502,57 @@ daemon 在启动时加载一次 `$DATA_ROOT/models.json`。文件不存在是合
 
 所有兼容的 Coding Agent 和 `scheduler.llm` 使用这份目录完成 agent-compose 的 Provider 路由和模型选择；它不替代 Agent 自身的模型能力目录。Agent 中完整配置的 `LLM_API_ENDPOINT`、`LLM_API_PROTOCOL` 和 `LLM_API_KEY` 仍是更高优先级的兼容路径；daemon 自身完整的 `LLM_*` 配置也继续作为默认值，并优先于 `models.json.default`。Catalog Provider ID 如果与已有非 catalog Provider 冲突，daemon 会在不覆盖原配置的前提下启动失败。
 
+### 通过 RPC 管理 LLM Provider
+
+`agentcompose.v2.LLMService` 提供 `CreateProvider`、`GetProvider`、
+`ListProviders`、`UpdateProvider` 和 `DeleteProvider`。这里管理的是上游模型地址和
+API Key，与 Agent 的 `provider: codex` / `provider: pi` 无关。
+
+例如，通过 Connect JSON 调用 `CreateProvider`：
+
+```json
+{
+  "provider": {
+    "id": "team-gateway",
+    "baseUrl": "https://gateway.example.com/v1",
+    "protocol": "responses",
+    "apiKey": "your-upstream-api-key"
+  }
+}
+```
+
+请求路径为 `/agentcompose.v2.LLMService/CreateProvider`，使用现有 daemon API
+鉴权。随后可以在 Agent 的 `model` 中设置 `team-gateway/model-id`，无需枚举模型。
+其他方法使用同样的服务路径前缀。
+
+- `id` 不可修改，支持 1–128 个 ASCII 字母、数字、点、下划线和连字符，首位必须是
+  字母或数字；`default`、`anthropic` 以及 session 环境 ID 保留给 daemon。
+- `protocol` 必须为 `responses`、`chat_completions` 或 `anthropic_messages`。
+  `baseUrl` 必须为 HTTP(S) 绝对地址，不能包含用户名密码、查询参数或 fragment。
+- `apiKey` 是字面量，不解析环境变量引用。创建必须提供非空值；更新省略时保留旧值，
+  提供非空值时轮换，空值无效。响应仅返回 `apiKeySet`，不会回显密钥。
+- 创建时，空 `name` 默认使用 ID，省略 `enabled` 默认为 `true`。
+  `anthropic_messages` 会默认发送 `anthropic-version: 2023-06-01`，其他协议不加额外 Header。
+- `UpdateProvider` 使用相同的 `provider` 对象。省略 `name`、`baseUrl`、`protocol`、
+  `apiKey`、`enabled` 时保留已存储值。提供非空 `apiKey` 会轮换密钥，空值无效。
+  修改协议会同时刷新认证 Header。
+- CLI：`agent-compose llm provider ls|create|inspect|update|rm`。创建必须提供
+  `--base-url`、`--protocol`、`--api-key`。更新只发送显式设置的 flag，因此
+  `update --base-url ...` 不会把已禁用的 Provider 重新启用。
+- `GetProvider` / `DeleteProvider` 请求为 `{"id":"team-gateway"}`。
+  `ListProviders` 接受 `offset` / `limit`，按 ID 排序并包含禁用项，返回 `providers` 和 `total`。
+- 这些接口只管理 `api` 归属的 Provider，不覆盖 `models.json` 或环境配置。
+  重复 ID 返回 `AlreadyExists`，不存在返回 `NotFound`，归属冲突返回 `FailedPrecondition`。
+  API 配置持久化到数据库，重启后保留；与 `models.json` 同名仍会导致启动冲突。
+- 地址和密钥更新在后续模型目标解析时生效，无需重启 daemon；已发出的上游请求不受影响。
+  切换协议可能需要重新启动 Agent run，以刷新客户端协议配置。
+  删除会清理 provider 绑定的 facade token，同名重建不会恢复旧 token。
+- 删除不会修改项目中的模型引用；新请求中的未知 `provider/` 前缀仍遵循现有的字面量模型
+  解释规则。禁用保留配置和 token，重新启用后可恢复使用。
+
+这些接口不修改默认模型，不提供模型级配置或自定义 Header 管理。密钥沿用现有数据库
+存储方式，未增加应用层加密。
+
 ### `image`
 
 ```yaml
