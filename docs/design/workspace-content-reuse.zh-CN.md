@@ -251,8 +251,11 @@ AGENT_COMPOSE_E2E_SKILL_FILES=257 \
 | workspace / execution / skills race | 271 PASS / 1 SKIP / 0 FAIL；跨 UID 清理回归通过 |
 | 文档构建 | 本机与 Linux PASS；73 个 YAML schema 字段、12 个公开文件校验通过 |
 | `task lint` | Linux 全部 scope 完成，0 issues；格式检查通过 |
+| 追加 qemu 镜像行为测试 | 安装工具后精确重跑 6 项：6 RUN / 6 PASS / 0 SKIP / 0 FAIL |
 
 四 driver 标签测试的 50 项跳过逐项分类为：30 项是当前 driver 已编译而不适用的“未编译拒绝”分支，13 项是未显式启用的 runtime/OCI smoke，6 项缺少 `qemu-img`，1 项是 root 会绕过普通用户的不可读权限夹具。race 的唯一跳过也是最后这一权限条件，专门跨 UID 的清理测试实际通过。
+
+随后仅在独立临时测试容器安装 `qemu-img/qemu-io 7.2.22`，六项缺工具的用例实际全部运行通过，追加结果与原 50 项跳过分开记录。它们验证 base cache 命中不重新物化、拒绝既有 backing、两个 qcow2 overlay 经真实 qemu-io 写入后相互隔离且 base 不变、并发创建收敛、不完整文件对修复，以及 ownership/backing 不一致拒绝。该验证不需要 KVM，也没有启动 VM 客体；不会据此声称 BoxLite/Microsandbox 的 Go driver 客体 E2E 已通过。
 
 此前 59.17% 的 E2E 覆盖门禁失败已经通过实际公开服务用例补齐。新增用例使用真实 HTTP 路由、应用依赖、SQLite、控制器、Provisioner、SandboxDriver 和 AgentRunner；仅替换外部 runtime 执行及 Docker image-inspect 协议端点。两次 ApplyProject、八次 RunAgent（七成功、一次别名冲突预期失败）及两次 RemoveSandbox 逐次验证快照回收、Ready、无残留 stage、未变 inode、guest 漂移修复、source 内容/执行位更新、声明删除和双向隔离。原 Go E2E 覆盖为 23,759 / 39,819，新结果为 24,281 / 39,819，增加 522 条语句；合并 JS/SDK 后是 25,796 / 42,716 = 60.39%。没有降低阈值、调整覆盖范围或改名凑分类。
 
@@ -272,6 +275,8 @@ AGENT_COMPOSE_E2E_SKILL_FILES=257 \
 ```
 
 `vt128` 只有上游读取权限，不能发布上游 tag；`proto/v0.1.1` 目前不存在。主 PR 因此仍有这个明确的发布前置依赖，不能宣称 CI 全绿。没有填写虚构校验和、改用 fork replace 或跳过兼容性检查。Actions 的 fork 审批与执行结果必须逐个 HEAD 查看，旧提交的通过不能替代最新提交。
+
+2026-09-10 UTC 09:53 核对已获批的 `adecc5b9`：CI [34461231052](https://github.com/chaitin/agent-compose/actions/runs/34461231052) 的其他 10 个 job 全部通过，仅 Published proto 和尚未修复的旧计数断言失败；包括实际 lint、生成一致性、Go tests/driver race 及平台二进制检查。Images [34461230998](https://github.com/chaitin/agent-compose/actions/runs/34461230998) 全部通过，完整 daemon 镜像及默认、Arch Linux 两种 guest 生命周期均通过。该轮是本次生产代码的实际 Actions 证据；后续测试修复的 HEAD 仍应等待自己的审批与结果。
 
 ## 9. 后续扩展边界
 
