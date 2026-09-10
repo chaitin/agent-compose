@@ -962,6 +962,12 @@ message EnvVarUpdateSpec {
   bool secret = 3;
 }
 
+enum WorkspaceMode {
+  WORKSPACE_MODE_UNSPECIFIED = 0;
+  WORKSPACE_MODE_COPY = 1;
+  WORKSPACE_MODE_MOUNT = 2;
+}
+
 message WorkspaceSpec {
   // Workspace provider name. Unknown extension values are allowed.
   string provider = 1;
@@ -975,6 +981,10 @@ message WorkspaceSpec {
   string username = 8;
   string password = 9;
   string token = 10;
+  // Empty defaults to an isolated copy. Mount shares a file source with Docker.
+  WorkspaceMode mode = 11;
+  // Mount-only guest write protection. False preserves writable behavior.
+  bool read_only = 12;
 }
 
 message SchedulerSpec {
@@ -1329,6 +1339,18 @@ message Sandbox {
   string stopped_runtime_state = 22;
   string stopped_runtime_last_error = 23;
   google.protobuf.Timestamp stopped_runtime_released_at = 24;
+  // Safe delivery metadata from this sandbox snapshot, when available.
+  SandboxWorkspaceDelivery workspace_delivery = 25;
+}
+
+message SandboxWorkspaceDelivery {
+  // Unknown or malformed snapshots use UNSPECIFIED, never an inferred copy.
+  WorkspaceMode mode = 1;
+  // Resolved daemon source for mount only. Managed copy roots are not exposed.
+  string source_path = 2;
+  // Relative to the guest workspace; mount only.
+  string target = 3;
+  bool read_only = 4;
 }
 
 message SandboxTag {
