@@ -26,6 +26,9 @@ type StartRequest struct {
 	CleanupPolicy   string
 	ClientRequestID string
 	Labels          map[string]string
+	// PromptFrameID, when set, identifies Prompt by the client frame that
+	// carried it. See RunAgentRequest.PromptFrameID.
+	PromptFrameID string
 }
 
 type TransitionRequest struct {
@@ -156,7 +159,7 @@ func (c *Coordinator) BeginRun(ctx context.Context, req StartRequest) (domain.Pr
 	}
 	var initialEvents []domain.ProjectRunEventRecord
 	if strings.TrimSpace(run.Prompt) != "" {
-		initialEvents = append(initialEvents, domain.ProjectRunEventRecord{ID: initialPromptEventID(run.RunID), RunID: run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: run.Prompt, Agent: run.AgentName})
+		initialEvents = append(initialEvents, domain.ProjectRunEventRecord{ID: openingPromptEventID(run.RunID, req.PromptFrameID), RunID: run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: run.Prompt, Agent: run.AgentName})
 	}
 	created, err := c.store.CreateProjectRunWithEvents(ctx, run, initialEvents)
 	if err != nil {

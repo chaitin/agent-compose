@@ -40,3 +40,20 @@ func TestRunAttachOutputToProtoPreservesCreatedAt(t *testing.T) {
 		t.Fatalf("created at = %s, want %s", got, createdAt)
 	}
 }
+
+// A declined human message names the client frame it answers in the error's
+// details. Without them a client that has since sent another message could not
+// tell which of its messages the answer is about.
+func TestRunAttachOutputToProtoCarriesErrorDetails(t *testing.T) {
+	details := map[string]string{"client_frame_id": "frame-1"}
+	response := RunAttachOutputToProto(runs.RunAttachOutput{Kind: runs.RunAttachOutputError, Code: "duplicate_message", Details: details})
+	if got := response.GetError().GetDetails()["client_frame_id"]; got != "frame-1" {
+		t.Fatalf("details client_frame_id = %q, want frame-1", got)
+	}
+	// The frame holds its own copy, so a sender that reuses its map cannot
+	// rewrite a frame already on its way out.
+	details["client_frame_id"] = "changed"
+	if got := response.GetError().GetDetails()["client_frame_id"]; got != "frame-1" {
+		t.Fatalf("details followed the sender's map to %q", got)
+	}
+}

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"maps"
+
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"time"
@@ -28,7 +30,7 @@ func RunAttachOutputToProto(output runs.RunAttachOutput) *agentcomposev2.AttachA
 	case runs.RunAttachOutputResult:
 		response.Frame = &agentcomposev2.AttachAgentRunResponse_Result{Result: &agentcomposev2.AttachResult{ExitCode: int32(output.ExitCode), Success: output.Success, Run: ProjectRunSummaryToProto(output.Run), Output: output.Output, ResultJson: output.ResultJSON, Error: output.Error}}
 	case runs.RunAttachOutputError:
-		response.Frame = &agentcomposev2.AttachAgentRunResponse_Error{Error: &agentcomposev2.AttachError{Code: output.Code, Message: output.Error, Terminal: output.Terminal}}
+		response.Frame = &agentcomposev2.AttachAgentRunResponse_Error{Error: &agentcomposev2.AttachError{Code: output.Code, Message: output.Error, Terminal: output.Terminal, Details: maps.Clone(output.Details)}}
 	}
 	return response
 }

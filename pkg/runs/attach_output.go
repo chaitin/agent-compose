@@ -37,6 +37,9 @@ type RunAttachOutput struct {
 	ExitCode    int
 	Success     bool
 	Terminal    bool
+	// Details carries structured context for an error frame, such as which
+	// client frame it answers.
+	Details map[string]string
 }
 
 type RunAttachSender func(RunAttachOutput) error
@@ -63,6 +66,28 @@ func runAttachResultResponse(run domain.ProjectRunRecord, transition TransitionR
 
 func runAttachErrorResponse(code, message string, terminal bool) RunAttachOutput {
 	return RunAttachOutput{Kind: RunAttachOutputError, CreatedAt: time.Now().UTC(), Code: code, Error: message, Terminal: terminal}
+}
+
+// Attach error codes a prompt run uses to tell a client that a human message
+// it sent was not run. Both are non-terminal — the session carries on — and
+// the frame's details name the client frame the answer is about.
+const (
+	// attachErrorDuplicateMessage answers a message whose client frame ID the
+	// run has already recorded with the same text: a resend of something that
+	// was delivered. Running it again would redo the agent's work.
+	attachErrorDuplicateMessage = "duplicate_message"
+	// attachErrorClientFrameReused answers a message whose client frame ID the
+	// run has already recorded with different text. The ID is the client's
+	// promise that the two are one message, and that promise was broken.
+	attachErrorClientFrameReused = "client_frame_id_reused"
+)
+
+// runAttachRejectedMessageResponse tells the client that the human message it
+// sent as clientFrameID was not handed to the agent, and why.
+func runAttachRejectedMessageResponse(code, message, clientFrameID string) RunAttachOutput {
+	output := runAttachErrorResponse(code, message, false)
+	output.Details = map[string]string{"client_frame_id": clientFrameID}
+	return output
 }
 
 func driverOutputStreamToRun(frameType driverpkg.RuntimeOutputFrameType) domain.StdioStream {

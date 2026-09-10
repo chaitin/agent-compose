@@ -214,6 +214,11 @@ type RunAgentRequest struct {
 	StickyBindingConfigHash  string
 	Interactive              bool
 	Labels                   map[string]string
+	// PromptFrameID is the client frame ID of the start frame that carried
+	// Prompt, set only for an attached prompt run. It gives the opening message
+	// the identity a later human message with that frame ID would get, so a
+	// client resending the opening message is recognised as doing so.
+	PromptFrameID string
 }
 
 type StreamSink struct {
@@ -262,6 +267,7 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		CleanupPolicy:   CleanupPolicyFromProto(req.CleanupPolicy),
 		ClientRequestID: req.ClientRequestID,
 		Labels:          req.Labels,
+		PromptFrameID:   req.PromptFrameID,
 	})
 	if err != nil {
 		return StartedProjectRun{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
@@ -330,6 +336,11 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	}
 	if mode == RunAttachModePrompt && strings.TrimSpace(req.Prompt) == "" {
 		return fmt.Errorf("%w: run attach prompt is required", ErrInvalidRequest)
+	}
+	if mode == RunAttachModePrompt {
+		// The start frame carries the opening message, so its frame ID is that
+		// message's identity.
+		req.PromptFrameID = first.ClientFrameID
 	}
 	started, err := c.StartProjectRun(ctx, req)
 	if err != nil {

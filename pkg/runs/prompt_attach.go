@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
@@ -139,6 +140,9 @@ func (c *Controller) runPromptInteractionSession(ctx context.Context, runCtx int
 	sandbox := runCtx.Sandbox
 	logsPath := prepared.LogsPath
 	transition := TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID, LogsPath: logsPath}
+	// Two goroutines answer the client from here on: the receive loop, and the
+	// input pump when it declines to run a message it has already recorded.
+	send = serializeRunAttachSender(send)
 	command := strings.Join([]string{
 		"set -e",
 		"cd " + execution.ShellQuote(c.config.GuestWorkspacePath),
@@ -190,7 +194,7 @@ func (c *Controller) runPromptInteractionSession(ctx context.Context, runCtx int
 	} else {
 		releasePromptTurn(turnReady)
 	}
-	go pumpRunPromptAttachInput(inputCtx, receive, promptInputPump{Input: input, TurnReady: turnReady, OnHumanMessage: projector.AppendHumanMessageFrame})
+	go pumpRunPromptAttachInput(inputCtx, receive, promptInputPump{Input: input, TurnReady: turnReady, OnHumanMessage: projector.AppendHumanMessageFrame, Send: send})
 	return receivePromptInteractionFrames(run, sandbox, transition, promptInteractionReceiveState{Interaction: interaction, Projector: projector, TurnReady: turnReady}, send)
 }
 
@@ -363,11 +367,15 @@ func (w *promptWrapperInput) send(frame map[string]any) error {
 }
 
 // promptInputPump groups the wrapper input stream, the gate that releases a
-// turn, and the callback notified of each forwarded human message.
+// turn, the callback that records each human message, and the sender used to
+// answer a message it declines to run.
 type promptInputPump struct {
-	Input          *promptWrapperInput
-	TurnReady      <-chan struct{}
-	OnHumanMessage func(string, string) error
+	Input     *promptWrapperInput
+	TurnReady chan struct{}
+	// OnHumanMessage records a message and reports whether it is new. A
+	// message that is not new has been delivered before and is not run again.
+	OnHumanMessage func(text, clientFrameID string) (bool, error)
+	Send           RunAttachSender
 }
 
 func pumpRunPromptAttachInput(ctx context.Context, receive RunAttachReceiver, pump promptInputPump) {
@@ -409,11 +417,46 @@ func forwardPromptHumanMessage(ctx context.Context, pump promptInputPump, text, 
 		}
 	}
 	if pump.OnHumanMessage != nil {
-		if err := pump.OnHumanMessage(text, clientFrameID); err != nil {
+		fresh, err := pump.OnHumanMessage(text, clientFrameID)
+		switch {
+		case errors.Is(err, errClientFrameReused):
+			declinePromptHumanMessage(pump, attachErrorClientFrameReused, "client frame id already names a different message; it was not run", clientFrameID)
+			return true
+		case err != nil:
 			return false
+		case !fresh:
+			declinePromptHumanMessage(pump, attachErrorDuplicateMessage, "message was already delivered; it was not run again", clientFrameID)
+			return true
 		}
 	}
 	return pump.Input.HumanMessage(text) == nil
+}
+
+// declinePromptHumanMessage answers a message the pump will not hand to the
+// agent. No turn runs for it, so the gate it took is handed straight back:
+// nothing else would ever release it, and the next message would wait forever
+// for a turn that is not coming.
+func declinePromptHumanMessage(pump promptInputPump, code, message, clientFrameID string) {
+	if pump.TurnReady != nil {
+		releasePromptTurn(pump.TurnReady)
+	}
+	if pump.Send != nil {
+		// Best effort: a client that cannot hear this has gone, and the
+		// receive loop is the one that finds out.
+		_ = pump.Send(runAttachRejectedMessageResponse(code, message, clientFrameID))
+	}
+}
+
+// serializeRunAttachSender lets several goroutines answer one client. A stream
+// carries one send at a time, and the sender it wraps keeps unsynchronized
+// state of its own.
+func serializeRunAttachSender(send RunAttachSender) RunAttachSender {
+	var mu sync.Mutex
+	return func(output RunAttachOutput) error {
+		mu.Lock()
+		defer mu.Unlock()
+		return send(output)
+	}
 }
 
 func releasePromptTurn(turnReady chan<- struct{}) {

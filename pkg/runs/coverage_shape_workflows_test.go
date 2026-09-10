@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1217,10 +1218,10 @@ func TestPromptAttachProjectorSeparatesHumanMessageFromStderrTail(t *testing.T) 
 func TestPromptAttachProjectorPersistsEachFrameIdempotently(t *testing.T) {
 	store := &projectorEventStore{keys: map[string]struct{}{}}
 	projector := newPersistentPromptAttachProjector(context.Background(), persistentPromptAttachProjectorDeps{Run: domain.ProjectRunRecord{RunID: "run-events", AgentName: "worker"}, Sandbox: &domain.Sandbox{}, LogsPath: filepath.Join(t.TempDir(), "transcript.txt"), EventStore: store})
-	if err := projector.AppendHumanMessageFrame("question", "client-frame-1"); err != nil {
+	if _, err := projector.AppendHumanMessageFrame("question", "client-frame-1"); err != nil {
 		t.Fatalf("append human frame: %v", err)
 	}
-	if err := projector.AppendHumanMessageFrame("question", "client-frame-1"); err != nil {
+	if _, err := projector.AppendHumanMessageFrame("question", "client-frame-1"); err != nil {
 		t.Fatalf("retry human frame: %v", err)
 	}
 	activity := []byte(`{"seq":41,"type":"agent_event","event":{"kind":"text_delta","text":"\\n$ curl https://weather.test\\n{\"temperature\":26}\n"}}` + "\n")
@@ -1252,7 +1253,7 @@ func TestPromptAttachProjectorPersistsEachFrameIdempotently(t *testing.T) {
 func TestPromptAttachProjectorProjectsTerminalAgentEventAfterOnlyHumanMessage(t *testing.T) {
 	store := &projectorEventStore{keys: map[string]struct{}{}}
 	projector := newPersistentPromptAttachProjector(context.Background(), persistentPromptAttachProjectorDeps{Run: domain.ProjectRunRecord{RunID: "run-result-only", AgentName: "worker"}, Sandbox: &domain.Sandbox{}, LogsPath: filepath.Join(t.TempDir(), "transcript.txt"), EventStore: store})
-	if err := projector.AppendHumanMessageFrame("question", "client-frame-1"); err != nil {
+	if _, err := projector.AppendHumanMessageFrame("question", "client-frame-1"); err != nil {
 		t.Fatalf("append human frame: %v", err)
 	}
 	_, transition, err := projector.Project([]byte(`{"seq":43,"type":"result","finalText":"answer","finalTextSource":"provider_message","stopReason":"end_turn"}` + "\n"))
@@ -1270,7 +1271,7 @@ func TestPromptAttachProjectorProjectsTerminalAgentEventAfterOnlyHumanMessage(t 
 func TestIntegrationPromptAttachProjectorPersistsAssistantTurnBeforeSkippingTerminalEvent(t *testing.T) {
 	store := &projectorEventStore{keys: map[string]struct{}{}}
 	projector := newPersistentPromptAttachProjector(context.Background(), persistentPromptAttachProjectorDeps{Run: domain.ProjectRunRecord{RunID: "run-integration-events", AgentName: "worker"}, Sandbox: &domain.Sandbox{}, LogsPath: filepath.Join(t.TempDir(), "transcript.txt"), EventStore: store})
-	if err := projector.AppendHumanMessageFrame("question", "client-frame-1"); err != nil {
+	if _, err := projector.AppendHumanMessageFrame("question", "client-frame-1"); err != nil {
 		t.Fatalf("append human frame: %v", err)
 	}
 	_, transition, err := projector.Project([]byte(`{"seq":43,"type":"result","finalText":"answer","finalTextSource":"provider_message","stopReason":"end_turn"}` + "\n"))
@@ -1303,6 +1304,10 @@ type projectorEventStore struct {
 
 func (s *projectorEventStore) AppendProjectRunEvent(_ context.Context, event domain.ProjectRunEventRecord) (domain.ProjectRunEventRecord, bool, error) {
 	if _, exists := s.keys[event.ID]; exists {
+		// Like the real store, a duplicate answers with what was recorded.
+		if i := slices.IndexFunc(s.events, func(recorded domain.ProjectRunEventRecord) bool { return recorded.ID == event.ID }); i >= 0 {
+			return s.events[i], false, nil
+		}
 		return event, false, nil
 	}
 	s.keys[event.ID] = struct{}{}

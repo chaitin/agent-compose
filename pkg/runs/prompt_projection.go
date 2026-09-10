@@ -3,6 +3,7 @@ package runs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 
@@ -316,30 +317,54 @@ func streamedFinalTextOverlap(logged, finalText string) int {
 }
 
 func (p *promptAttachProjector) AppendHumanMessage(message string) error {
-	return p.AppendHumanMessageFrame(message, "")
+	_, err := p.AppendHumanMessageFrame(message, "")
+	return err
 }
 
-func (p *promptAttachProjector) AppendHumanMessageFrame(message, clientFrameID string) error {
-	text := promptAttachHumanLogText(message)
+// errClientFrameReused reports a client frame ID the run has already recorded
+// for a different message.
+var errClientFrameReused = errors.New("client frame id already names a different message")
+
+// AppendHumanMessageFrame records one human message and reports whether it is
+// new, which is to say whether the agent should see it.
+//
+// A message whose client frame ID the run has already recorded, with the same
+// text, is a resend of something already delivered: it is neither logged nor
+// recorded again, and the caller must not hand it to the agent a second time.
+// The event is written before the transcript precisely so that this is known
+// before anything is logged. A frame ID already recorded with different text
+// returns errClientFrameReused.
+//
+// Without a client frame ID a message's identity is derived from its position,
+// which never repeats, so such a message is always new.
+func (p *promptAttachProjector) AppendHumanMessageFrame(message, clientFrameID string) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.events != nil && strings.TrimSpace(message) != "" {
+		index := p.humanIndex + 1
+		recorded, created, err := p.events.AppendProjectRunEvent(p.eventContext(), domain.ProjectRunEventRecord{
+			ID: attachedHumanEventID(p.run.RunID, clientFrameID, index, message), RunID: p.run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: message, Agent: p.run.AgentName,
+		})
+		if err != nil {
+			return false, err
+		}
+		if !created {
+			if strings.TrimSpace(recorded.Text) != strings.TrimSpace(message) {
+				return false, errClientFrameReused
+			}
+			return false, nil
+		}
+		p.humanIndex = index
+	}
 	p.persistedAssistantTurn = false
-	if text != "" {
-		if p.hasLoggedText && !p.logEndsWithNewline {
-			text = "\n" + text
-		}
-		if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text}); err != nil {
-			return err
-		}
+	text := promptAttachHumanLogText(message)
+	if text == "" {
+		return true, nil
 	}
-	if p.events == nil || strings.TrimSpace(message) == "" {
-		return nil
+	if p.hasLoggedText && !p.logEndsWithNewline {
+		text = "\n" + text
 	}
-	p.humanIndex++
-	_, _, err := p.events.AppendProjectRunEvent(p.eventContext(), domain.ProjectRunEventRecord{
-		ID: attachedHumanEventID(p.run.RunID, clientFrameID, uint64(p.humanIndex), message), RunID: p.run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: message, Agent: p.run.AgentName,
-	})
-	return err
+	return true, p.appendLogChunkLocked(domain.ExecChunk{Text: text})
 }
 
 func (p *promptAttachProjector) AppendStderr(text string) error {

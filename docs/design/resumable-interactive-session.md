@@ -35,6 +35,8 @@ Run
 
 第一阶段只允许一个 attachment 持有输入租约，多个 attachment 可订阅输出。输入复用现有 `client_frame_id` 做幂等去重，并由 session 内部单写者队列保证顺序。终态、超时、取消和空闲清理必须由 session manager 统一处理。
 
+去重覆盖落库和执行两侧：已记录过的 human message 不会再次交给 agent。同一 `client_frame_id`、同一文本视为重发，daemon 以非终止的 `AttachError` 回应 `duplicate_message`；同一 `client_frame_id` 对应不同文本时回应 `client_frame_id_reused`，同样不执行，会话继续。两者都在 `details["client_frame_id"]` 中指明所回应的消息。prompt 模式下首帧的 `client_frame_id` 同时是首轮消息的身份，因此首轮消息的重发也能被识别；不带 `client_frame_id` 的消息按位置派生身份，始终视为新消息。
+
 ## 输出恢复
 
 attachment 应支持从事件序号继续订阅。初期可复用现有 `ListRunEvents`/`FollowRunLogs`，后续将历史补发与实时订阅合并，避免刷新时丢事件。

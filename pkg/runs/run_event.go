@@ -26,6 +26,18 @@ func initialPromptEventID(runID string) string {
 	return stableRunEventID(runID, runEventIdentityInitialPrompt, nil)
 }
 
+// openingPromptEventID identifies a run's opening message. When the client
+// named the frame that carried it, the message takes the identity any attached
+// human message with that frame ID takes, so a client that resends its opening
+// message under the same frame ID is recognised as resending it rather than
+// saying it again. Without one it keeps the run-scoped identity it always had.
+func openingPromptEventID(runID, clientFrameID string) string {
+	if strings.TrimSpace(clientFrameID) == "" {
+		return initialPromptEventID(runID)
+	}
+	return attachedHumanEventID(runID, clientFrameID, 0, "")
+}
+
 func attachedHumanEventID(runID, clientFrameID string, index uint64, message string) string {
 	if frameID := strings.TrimSpace(clientFrameID); frameID != "" {
 		return stableRunEventID(runID, runEventIdentityAttachedHuman, identityToken(attachedEventExplicitToken, []byte(frameID)))
