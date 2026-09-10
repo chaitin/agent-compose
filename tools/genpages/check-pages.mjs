@@ -174,6 +174,13 @@ async function checkNavigation() {
   if (homepage.includes("guest-image-abi")) {
     throw new Error("index.html must not link to Guest Image ABI");
   }
+  for (const nav of homepage.matchAll(/<nav\b[\s\S]*?<\/nav>/g)) {
+    for (const link of nav[0].matchAll(/<a\b([^>]*)>/g)) {
+      if (!/\bdata-zh="[^"]+"/.test(link[1]) || !/\bdata-en="[^"]+"/.test(link[1])) {
+        throw new Error("index.html contains a navigation link without both data-zh and data-en");
+      }
+    }
+  }
 }
 
 async function checkABILanguageSwitch() {
