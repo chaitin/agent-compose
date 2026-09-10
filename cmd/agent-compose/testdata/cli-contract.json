@@ -1,0 +1,3065 @@
+{
+  "commands": [
+    {
+      "path": "agent-compose agent",
+      "use": "agent",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose agent ls",
+      "use": "ls",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose auth",
+      "use": "auth",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose auth login",
+      "use": "login",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "token",
+          "type": "string",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "path": "agent-compose auth logout",
+      "use": "logout",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose auth ls",
+      "use": "ls",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose build",
+      "use": "build [agent...]",
+      "flags": [
+        {
+          "name": "build-arg",
+          "type": "stringArray",
+          "default": "[]"
+        },
+        {
+          "name": "dockerfile",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "no-cache",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "platform",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "pull",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "tag",
+          "shorthand": "t",
+          "type": "stringArray",
+          "default": "[]"
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose cache",
+      "use": "cache",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose cache inspect",
+      "use": "inspect \u003ccache-id\u003e",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose cache ls",
+      "use": "ls",
+      "flags": [
+        {
+          "name": "driver",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "type",
+          "type": "string",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "path": "agent-compose cache prune",
+      "use": "prune",
+      "flags": [
+        {
+          "name": "driver",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "expired",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "older-than",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "orphaned",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "type",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "unused",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose cache rm",
+      "use": "rm \u003ccache-id\u003e",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose config",
+      "use": "config",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose daemon",
+      "use": "daemon",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose down",
+      "use": "down",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose exec",
+      "use": "exec \u003csandbox\u003e (--command \u003cshell-command\u003e | --prompt \u003cprompt\u003e | -- \u003ccommand\u003e [args...])",
+      "flags": [
+        {
+          "name": "command",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "cwd",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "interactive",
+          "shorthand": "i",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "prompt",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "run",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "tty",
+          "shorthand": "t",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose image",
+      "use": "image",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose image build",
+      "use": "build [agent...]",
+      "flags": [
+        {
+          "name": "build-arg",
+          "type": "stringArray",
+          "default": "[]"
+        },
+        {
+          "name": "dockerfile",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "no-cache",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "platform",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "pull",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "tag",
+          "shorthand": "t",
+          "type": "stringArray",
+          "default": "[]"
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose image inspect",
+      "use": "inspect \u003cimage\u003e",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose image ls",
+      "use": "ls",
+      "flags": [
+        {
+          "name": "all",
+          "shorthand": "a",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "query",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose image pull",
+      "use": "pull [image]",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "platform",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose image rm",
+      "use": "rm \u003cimage\u003e",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "prune-children",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose images",
+      "use": "images",
+      "flags": [
+        {
+          "name": "all",
+          "shorthand": "a",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "query",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose inspect",
+      "use": "inspect \u003cid\u003e|\u003cproject|agent|run|sandbox|image|cache|volume\u003e [name-or-id]",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose logs",
+      "use": "logs [agent-or-id]",
+      "flags": [
+        {
+          "name": "agent",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "follow",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "run",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "sandbox",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "tail",
+          "shorthand": "n",
+          "type": "int",
+          "default": "-1"
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "timestamp",
+          "shorthand": "t",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose ls",
+      "use": "ls",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose project",
+      "use": "project",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose project down",
+      "use": "down",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose project ls",
+      "use": "ls",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "limit",
+          "type": "uint32",
+          "default": "0"
+        },
+        {
+          "name": "offset",
+          "type": "uint32",
+          "default": "0"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose project up",
+      "use": "up",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose ps",
+      "use": "ps",
+      "flags": [
+        {
+          "name": "all",
+          "shorthand": "a",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "label",
+          "type": "stringArray",
+          "default": "[]"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose pull",
+      "use": "pull [image]",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "platform",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose resume",
+      "use": "resume \u003csandbox\u003e [\u003csandbox N\u003e]",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose rm",
+      "use": "rm \u003csandbox\u003e [\u003csandbox N\u003e]",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose rmi",
+      "use": "rmi \u003cimage\u003e",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "prune-children",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose run",
+      "use": "run \u003cagent\u003e",
+      "flags": [
+        {
+          "name": "command",
+          "type": "string",
+          "default": "",
+          "optional": "\u0000agent-compose-run-mode"
+        },
+        {
+          "name": "detach",
+          "shorthand": "d",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "driver",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "interactive",
+          "shorthand": "i",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "jupyter",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "jupyter-expose",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "keep-running",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "label",
+          "type": "stringArray",
+          "default": "[]"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "prompt",
+          "type": "string",
+          "default": "",
+          "optional": "\u0000agent-compose-run-mode"
+        },
+        {
+          "name": "rm",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "sandbox",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "tty",
+          "shorthand": "t",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose sandbox",
+      "use": "sandbox",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose sandbox ls",
+      "use": "ls",
+      "flags": [
+        {
+          "name": "all",
+          "shorthand": "a",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "label",
+          "type": "stringArray",
+          "default": "[]"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose sandbox prune",
+      "use": "prune",
+      "flags": [
+        {
+          "name": "agent",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "driver",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "include-orphans",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "older-than",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose sandbox resume",
+      "use": "resume \u003csandbox\u003e [\u003csandbox N\u003e]",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose sandbox rm",
+      "use": "rm \u003csandbox\u003e [\u003csandbox N\u003e]",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose sandbox stop",
+      "use": "stop \u003csandbox\u003e [\u003csandbox N\u003e]",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "grace-period",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "graceful",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose scheduler",
+      "use": "scheduler",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose scheduler inspect",
+      "use": "inspect \u003cscheduler-or-trigger-or-run-ref\u003e",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "scheduler",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose scheduler invoke",
+      "use": "invoke \u003cscheduler-ref\u003e",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "payload",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose scheduler logs",
+      "use": "logs [run-ref]",
+      "flags": [
+        {
+          "name": "agent",
+          "type": "string",
+          "default": "",
+          "hidden": true
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "run",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "scheduler",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "tail",
+          "shorthand": "n",
+          "type": "int",
+          "default": "-1"
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "trigger",
+          "type": "string",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "path": "agent-compose scheduler ls",
+      "use": "ls [agent]",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose scheduler prune",
+      "use": "prune",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "older-than",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "scheduler",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "trigger",
+          "type": "string",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "path": "agent-compose scheduler runs",
+      "use": "runs [scheduler-ref]",
+      "flags": [
+        {
+          "name": "agent",
+          "type": "string",
+          "default": "",
+          "hidden": true
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "limit",
+          "type": "uint32",
+          "default": "0"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "trigger",
+          "type": "string",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "path": "agent-compose scheduler stop",
+      "use": "stop \u003crun\u003e",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose scheduler trigger",
+      "use": "trigger \u003cscheduler-ref\u003e \u003ctrigger-ref\u003e",
+      "flags": [
+        {
+          "name": "detach",
+          "shorthand": "d",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "payload",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose stats",
+      "use": "stats [sandbox]",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose status",
+      "use": "status",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose stop",
+      "use": "stop \u003csandbox\u003e [\u003csandbox N\u003e]",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "grace-period",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "graceful",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose up",
+      "use": "up",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose version",
+      "use": "version",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose volume",
+      "use": "volume",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose volume create",
+      "use": "create \u003cname\u003e",
+      "flags": [
+        {
+          "name": "driver",
+          "type": "string",
+          "default": "local"
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "label",
+          "type": "stringArray",
+          "default": "[]"
+        },
+        {
+          "name": "opt",
+          "type": "stringArray",
+          "default": "[]"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose volume inspect",
+      "use": "inspect \u003cname\u003e",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose volume ls",
+      "use": "ls",
+      "flags": [
+        {
+          "name": "driver",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-id",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "query",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose volume prune",
+      "use": "prune",
+      "flags": [
+        {
+          "name": "driver",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-id",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "query",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose volume rm",
+      "use": "rm \u003cname\u003e [\u003cname N\u003e]",
+      "aliases": [
+        "remove"
+      ],
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    }
+  ],
+  "exit_codes": {
+    "general": 1,
+    "success": 0,
+    "unavailable": 3,
+    "unsupported": 4,
+    "usage": 2
+  },
+  "json_fields": {
+    "agent_inspect": {
+      "agent": "object",
+      "latest_run": "object",
+      "project": "object",
+      "running_sandboxes": "array",
+      "schedulers": "array"
+    },
+    "agent_list": {
+      "agents": "array",
+      "project": "object"
+    },
+    "build_info": {
+      "arch": "string",
+      "compiled_drivers": "array",
+      "os": "string",
+      "version": "string"
+    },
+    "cache_inspect": {
+      "cache": "object",
+      "warnings": "array"
+    },
+    "cache_list": {
+      "caches": "array",
+      "total": "number",
+      "warnings": "array"
+    },
+    "cache_operation": {
+      "dry_run": "boolean",
+      "matched": "array",
+      "removed": "array",
+      "skipped": "array",
+      "warnings": "array"
+    },
+    "down": {
+      "changes": "array",
+      "failed_sandbox_stops": "number",
+      "project": "object",
+      "status": "string"
+    },
+    "exec": {
+      "args": "array",
+      "command": "string",
+      "cwd": "string",
+      "error": "string",
+      "exec_id": "string",
+      "exit_code": "number",
+      "output": "string",
+      "run_id": "string",
+      "sandbox_id": "string",
+      "stderr": "string",
+      "stdout": "string",
+      "success": "boolean"
+    },
+    "image_build": {
+      "image": "object",
+      "image_ref": "string",
+      "resolved_ref": "string",
+      "status": "string",
+      "warnings": "array"
+    },
+    "image_inspect": {
+      "image": "object",
+      "store_status": "object"
+    },
+    "image_list": {
+      "images": "array",
+      "store_status": "object",
+      "total": "number"
+    },
+    "image_pull": {
+      "image": "object",
+      "image_ref": "string",
+      "progress": "array",
+      "resolved_ref": "string",
+      "status": "string",
+      "warnings": "array"
+    },
+    "image_remove": {
+      "deleted_ids": "array",
+      "image_ref": "string",
+      "untagged_refs": "array",
+      "warnings": "array"
+    },
+    "logs": {
+      "runs": "array"
+    },
+    "project": {
+      "agents": "array",
+      "project": "object",
+      "schedulers": "array"
+    },
+    "project_list": {
+      "projects": "array",
+      "total": "number"
+    },
+    "project_stats": {
+      "project": "object",
+      "stats": "array"
+    },
+    "ps": {
+      "project": "object",
+      "sandboxes": "array"
+    },
+    "run": {
+      "agent_name": "string",
+      "artifacts_dir": "string",
+      "cleanup_error": "string",
+      "completed_at": "string",
+      "driver": "string",
+      "duration_ms": "number",
+      "error": "string",
+      "exit_code": "number",
+      "id": "string",
+      "image_ref": "string",
+      "jupyter_path": "string",
+      "jupyter_url": "string",
+      "labels": "object",
+      "logs_command": "string",
+      "logs_path": "string",
+      "output": "string",
+      "project_id": "string",
+      "project_name": "string",
+      "prompt": "string",
+      "result_json": "string",
+      "sandbox_id": "string",
+      "sandbox_short_id": "string",
+      "short_id": "string",
+      "source": "string",
+      "started_at": "string",
+      "status": "string",
+      "warnings": "array"
+    },
+    "run_jupyter": {
+      "Path": "string",
+      "URL": "string"
+    },
+    "sandbox": {
+      "cell_count": "number",
+      "created_at": "string",
+      "driver": "string",
+      "event_count": "number",
+      "guest_image": "string",
+      "proxy_path": "string",
+      "sandbox_id": "string",
+      "sandbox_short_id": "string",
+      "stopped_runtime_last_error": "string",
+      "stopped_runtime_policy": "string",
+      "stopped_runtime_released_at": "string",
+      "stopped_runtime_state": "string",
+      "tags": "object",
+      "title": "string",
+      "trigger_source": "string",
+      "updated_at": "string",
+      "vm_status": "string",
+      "workspace_path": "string",
+      "workspace_reclamation": "object"
+    },
+    "sandbox_action": {
+      "results": "array"
+    },
+    "sandbox_list": {
+      "agent": "string",
+      "created_at": "string",
+      "driver": "string",
+      "image": "string",
+      "kind": "string",
+      "run_id": "string",
+      "run_short_id": "string",
+      "runtime_id": "string",
+      "sandbox_id": "string",
+      "sandbox_short_id": "string",
+      "status": "string",
+      "stopped_runtime_policy": "string",
+      "stopped_runtime_state": "string",
+      "updated_at": "string",
+      "workspace": "string"
+    },
+    "sandbox_logs": {
+      "events": "array",
+      "output": "string",
+      "sandbox_id": "string"
+    },
+    "sandbox_prune": {
+      "dry_run": "boolean",
+      "matched": "array",
+      "removed": "array",
+      "skipped": "array",
+      "warnings": "array"
+    },
+    "scheduler_inspect": {
+      "agent_name": "string",
+      "definition": "object",
+      "project": "object",
+      "registered": "object",
+      "resource": "string",
+      "run": "object",
+      "scheduler": "object",
+      "source": "string",
+      "trigger": "object"
+    },
+    "scheduler_list": {
+      "project": "object",
+      "triggers": "array"
+    },
+    "scheduler_logs": {
+      "events": "array",
+      "project": "object",
+      "run": "object"
+    },
+    "scheduler_prune": {
+      "dry_run": "boolean",
+      "matched": "object",
+      "older_than": "string",
+      "project": "object",
+      "record_scope": "string",
+      "removed": "object",
+      "residues": "array",
+      "scheduler": "string",
+      "skipped_runs": "number",
+      "statuses": "array",
+      "trigger_id": "string",
+      "warnings": "array"
+    },
+    "scheduler_runs": {
+      "project": "object",
+      "runs": "array"
+    },
+    "stats": {
+      "block_read_bytes": "object",
+      "block_write_bytes": "object",
+      "cpu_percent": "object",
+      "driver": "string",
+      "memory_limit_bytes": "object",
+      "memory_percent": "object",
+      "memory_usage_bytes": "object",
+      "network_rx_bytes": "object",
+      "network_tx_bytes": "object",
+      "sampled_at": "string",
+      "sandbox_id": "string",
+      "sandbox_short_id": "string",
+      "uptime_seconds": "object"
+    },
+    "up": {
+      "applied": "boolean",
+      "changes": "array",
+      "project": "object",
+      "revision": "object",
+      "unchanged": "boolean"
+    },
+    "volume_create": {
+      "created": "boolean",
+      "volume": "object"
+    },
+    "volume_inspect": {
+      "volume": "object"
+    },
+    "volume_list": {
+      "total": "number",
+      "volumes": "array"
+    },
+    "volume_prune": {
+      "dry_run": "boolean",
+      "matched": "array",
+      "removed": "array",
+      "skipped": "array"
+    },
+    "volume_remove": {
+      "removed": "array"
+    }
+  }
+}
