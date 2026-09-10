@@ -218,3 +218,15 @@ func TestIntegrationManagedProviderConcurrentCreate(t *testing.T) {
 		t.Fatalf("successful creates = %d, want 1", successes)
 	}
 }
+
+func TestE2EManagedProviderLifecycleAndRouting(t *testing.T) {
+	TestIntegrationManagedProviderLifecycleAndRouting(t)
+}
+
+func TestE2EManagedProviderOwnershipAndCancellation(t *testing.T) {
+	TestIntegrationManagedProviderOwnershipAndCancellation(t)
+}
+
+func TestE2EManagedProviderConcurrentCreate(t *testing.T) {
+	TestIntegrationManagedProviderConcurrentCreate(t)
+}

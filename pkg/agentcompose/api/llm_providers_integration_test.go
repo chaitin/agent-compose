@@ -121,3 +121,7 @@ func assertProviderResponseRedacted(t *testing.T, message proto.Message) {
 		t.Fatalf("credential leaked in response: %T", message)
 	}
 }
+
+func TestE2ELLMProviderConnectLifecycle(t *testing.T) {
+	TestIntegrationLLMProviderConnectLifecycle(t)
+}

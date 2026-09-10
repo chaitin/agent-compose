@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -94,6 +95,146 @@ func TestIntegrationCLILLMProviderCommands(t *testing.T) {
 	if removeCode != 0 || removeErr != "" || strings.TrimSpace(removeOut) != "gateway" || deleted != "gateway" {
 		t.Fatalf("llm provider rm code/stdout/stderr = %d / %q / %q deleted=%q", removeCode, removeOut, removeErr, deleted)
 	}
+}
+
+func TestE2ECLILLMProviderCommands(t *testing.T) {
+	TestIntegrationCLILLMProviderCommands(t)
+}
+
+func TestIntegrationCLILLMProviderJSONAndPartialUpdate(t *testing.T) {
+	var created *agentcomposev2.LLMProviderSpec
+	var updated *agentcomposev2.LLMProviderSpec
+	var listOffsets []uint32
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		llm: llmServiceStub{
+			listProviders: func(ctx context.Context, req *connect.Request[agentcomposev2.ListProvidersRequest]) (*connect.Response[agentcomposev2.ListProvidersResponse], error) {
+				listOffsets = append(listOffsets, req.Msg.GetOffset())
+				if req.Msg.GetOffset() == 0 {
+					return connect.NewResponse(&agentcomposev2.ListProvidersResponse{
+						Providers: []*agentcomposev2.LLMProvider{testCLILLMProvider("gateway")},
+						Total:     2,
+					}), nil
+				}
+				second := testCLILLMProvider("messages")
+				second.Protocol = "anthropic_messages"
+				second.Enabled = false
+				return connect.NewResponse(&agentcomposev2.ListProvidersResponse{
+					Providers: []*agentcomposev2.LLMProvider{second},
+					Total:     2,
+				}), nil
+			},
+			createProvider: func(ctx context.Context, req *connect.Request[agentcomposev2.CreateProviderRequest]) (*connect.Response[agentcomposev2.CreateProviderResponse], error) {
+				created = req.Msg.GetProvider()
+				if created.GetId() != "messages" || created.GetName() != "Claude" || created.GetProtocol() != "anthropic_messages" || created.GetApiKey() != "secret" || created.Enabled == nil || !*created.Enabled {
+					t.Fatalf("CreateProvider request = %#v", created)
+				}
+				provider := testCLILLMProvider("messages")
+				provider.Name = created.GetName()
+				provider.Protocol = created.GetProtocol()
+				return connect.NewResponse(&agentcomposev2.CreateProviderResponse{Provider: provider}), nil
+			},
+			getProvider: func(ctx context.Context, req *connect.Request[agentcomposev2.GetProviderRequest]) (*connect.Response[agentcomposev2.GetProviderResponse], error) {
+				return connect.NewResponse(&agentcomposev2.GetProviderResponse{Provider: testCLILLMProvider(req.Msg.GetId())}), nil
+			},
+			updateProvider: func(ctx context.Context, req *connect.Request[agentcomposev2.UpdateProviderRequest]) (*connect.Response[agentcomposev2.UpdateProviderResponse], error) {
+				updated = req.Msg.GetProvider()
+				if updated.GetId() != "gateway" || updated.GetName() != "renamed" || updated.GetProtocol() != "anthropic_messages" || updated.GetApiKey() != "rotated" || updated.Enabled == nil || *updated.Enabled || updated.GetBaseUrl() != "" {
+					t.Fatalf("UpdateProvider request = %#v", updated)
+				}
+				provider := testCLILLMProvider("gateway")
+				provider.Name = updated.GetName()
+				provider.Protocol = updated.GetProtocol()
+				provider.Enabled = false
+				return connect.NewResponse(&agentcomposev2.UpdateProviderResponse{Provider: provider}), nil
+			},
+			deleteProvider: func(ctx context.Context, req *connect.Request[agentcomposev2.DeleteProviderRequest]) (*connect.Response[agentcomposev2.DeleteProviderResponse], error) {
+				return connect.NewResponse(&agentcomposev2.DeleteProviderResponse{}), nil
+			},
+		},
+	})
+	defer server.Close()
+
+	listOut, listErr, _, listCode := executeCLICommand("llm", "provider", "ls", "--host", server.URL, "--json")
+	if listCode != 0 || listErr != "" {
+		t.Fatalf("paginated ls code/stderr = %d / %q", listCode, listErr)
+	}
+	var listDecoded composeLLMProviderListOutput
+	if err := json.Unmarshal([]byte(listOut), &listDecoded); err != nil {
+		t.Fatalf("paginated ls JSON: %v\n%s", err, listOut)
+	}
+	if listDecoded.Total != 2 || len(listDecoded.Providers) != 2 || listDecoded.Providers[1].Protocol != "anthropic_messages" || !reflect.DeepEqual(listOffsets, []uint32{0, 1}) {
+		t.Fatalf("paginated ls = %#v offsets=%v", listDecoded, listOffsets)
+	}
+
+	createOut, createErr, _, createCode := executeCLICommand("llm", "provider", "create", "--json", "--host", server.URL, "--name", "Claude", "--base-url", "https://api.anthropic.com", "--protocol", "anthropic_messages", "--api-key", "secret", "messages")
+	if createCode != 0 || createErr != "" || created == nil {
+		t.Fatalf("json create code/stdout/stderr = %d / %q / %q", createCode, createOut, createErr)
+	}
+	var createDecoded composeLLMProviderCreateOutput
+	if err := json.Unmarshal([]byte(createOut), &createDecoded); err != nil || createDecoded.Provider.ID != "messages" || createDecoded.Provider.Protocol != "anthropic_messages" {
+		t.Fatalf("json create output = %q err=%v", createOut, err)
+	}
+
+	inspectOut, inspectErr, _, inspectCode := executeCLICommand("llm", "provider", "inspect", "--json", "--host", server.URL, "gateway")
+	if inspectCode != 0 || inspectErr != "" {
+		t.Fatalf("json inspect code/stderr = %d / %q", inspectCode, inspectErr)
+	}
+	var inspectDecoded composeLLMProviderInspectOutput
+	if err := json.Unmarshal([]byte(inspectOut), &inspectDecoded); err != nil || inspectDecoded.Provider.ID != "gateway" || !inspectDecoded.Provider.APIKeySet {
+		t.Fatalf("json inspect = %q err=%v", inspectOut, err)
+	}
+
+	updateOut, updateErr, _, updateCode := executeCLICommand("llm", "provider", "update", "--json", "--host", server.URL, "--name", "renamed", "--protocol", "anthropic_messages", "--api-key", "rotated", "--enabled=false", "gateway")
+	if updateCode != 0 || updateErr != "" || updated == nil {
+		t.Fatalf("json update code/stdout/stderr = %d / %q / %q", updateCode, updateOut, updateErr)
+	}
+	var updateDecoded composeLLMProviderUpdateOutput
+	if err := json.Unmarshal([]byte(updateOut), &updateDecoded); err != nil || updateDecoded.Provider.Name != "renamed" || updateDecoded.Provider.Enabled {
+		t.Fatalf("json update = %q err=%v", updateOut, err)
+	}
+
+	removeOut, removeErr, _, removeCode := executeCLICommand("llm", "provider", "rm", "--json", "--host", server.URL, "gateway")
+	if removeCode != 0 || removeErr != "" {
+		t.Fatalf("json rm code/stderr = %d / %q", removeCode, removeErr)
+	}
+	var removeDecoded composeLLMProviderRemoveOutput
+	if err := json.Unmarshal([]byte(removeOut), &removeDecoded); err != nil || removeDecoded.ID != "gateway" || !removeDecoded.Removed {
+		t.Fatalf("json rm = %q err=%v", removeOut, err)
+	}
+}
+
+func TestE2ECLILLMProviderJSONAndPartialUpdate(t *testing.T) {
+	TestIntegrationCLILLMProviderJSONAndPartialUpdate(t)
+}
+
+func TestCLILLMProviderUsageAndOutputHelpers(t *testing.T) {
+	for _, args := range [][]string{
+		{"llm", "provider", "create", "--base-url", "https://example.com", "--protocol", "responses", "--api-key", "secret"},
+		{"llm", "provider", "inspect"},
+		{"llm", "provider", "update"},
+		{"llm", "provider", "rm"},
+	} {
+		stdout, stderr, runCount, code := executeCLICommand(args...)
+		if code == 0 || stdout != "" || runCount != 0 || stderr == "" {
+			t.Fatalf("%v code/stdout/stderr/runCount = %d / %q / %q / %d", args, code, stdout, stderr, runCount)
+		}
+	}
+	if got := composeLLMProviderOutputFromProto(nil); got != (composeLLMProviderOutput{}) {
+		t.Fatalf("nil provider output = %#v", got)
+	}
+	if err := writeLLMProviderJSON(failingWriter{}, composeLLMProviderListOutput{}); err == nil {
+		t.Fatal("writeLLMProviderJSON failing writer returned nil error")
+	}
+	if err := writeLLMProviderListText(failingWriter{}, []composeLLMProviderOutput{{ID: "gateway"}}); err == nil {
+		t.Fatal("writeLLMProviderListText failing writer returned nil error")
+	}
+	if err := writeLLMProviderInspectText(failingWriter{}, composeLLMProviderOutput{ID: "gateway"}); err == nil {
+		t.Fatal("writeLLMProviderInspectText failing writer returned nil error")
+	}
+}
+
+func TestE2ECLILLMProviderUsageAndOutputHelpers(t *testing.T) {
+	TestCLILLMProviderUsageAndOutputHelpers(t)
 }
 
 type llmServiceStub struct {

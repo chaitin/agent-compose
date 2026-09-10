@@ -101,3 +101,62 @@ func TestE2ELLMProviderLiveConfiguration(t *testing.T) {
 	default:
 	}
 }
+
+func TestE2ELLMProviderAnthropicMessagesLiveConfiguration(t *testing.T) {
+	db, err := storagesqlite.Open(":memory:", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	store := configstore.FromDB(db.DB())
+	type upstreamRequest struct{ path, version, apiKey, model string }
+	requests := make(chan upstreamRequest, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode upstream request: %v", err)
+			http.Error(w, "bad request", 400)
+			return
+		}
+		requests <- upstreamRequest{path: r.URL.Path, version: r.Header.Get("anthropic-version"), apiKey: r.Header.Get("x-api-key"), model: body.Model}
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := fmt.Fprint(w, `{"id":"msg-1","model":"claude","stop_reason":"end_turn","content":[{"type":"text","text":"works"}]}`); err != nil {
+			t.Errorf("write upstream response: %v", err)
+		}
+	}))
+	t.Cleanup(upstream.Close)
+	service := api.NewLLMHandler(adapters.NewLLMClient(nil, store), store)
+	path, handler := agentcomposev2connect.NewLLMServiceHandler(service)
+	mux := http.NewServeMux()
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	client := agentcomposev2connect.NewLLMServiceClient(server.Client(), server.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	spec := &agentcomposev2.LLMProviderSpec{Id: "claude", BaseUrl: upstream.URL + "/v1", Protocol: "anthropic_messages", ApiKey: proto.String("anthropic-key")}
+	if _, err := client.CreateProvider(ctx, connect.NewRequest(&agentcomposev2.CreateProviderRequest{Provider: spec})); err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Generate(ctx, connect.NewRequest(&agentcomposev2.GenerateLLMRequest{Prompt: "hello", Model: "claude/literal-model"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Msg.Text != "works" {
+		t.Fatalf("unexpected model response: %v", response.Msg)
+	}
+	select {
+	case request := <-requests:
+		if request.path != "/v1/messages" || request.version != "2023-06-01" || request.apiKey != "anthropic-key" || request.model != "literal-model" {
+			t.Fatalf("anthropic upstream request = %#v", request)
+		}
+	case <-ctx.Done():
+		t.Fatal("upstream did not receive model request")
+	}
+}

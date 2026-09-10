@@ -82,3 +82,40 @@ func TestManagedProviderHeadersJSON(t *testing.T) {
 		t.Fatalf("openai headers = %q", got)
 	}
 }
+
+func TestNormalizeProviderUpdateRejectsInvalidValues(t *testing.T) {
+	injected := "secret\r\nX-Key: injected"
+	for _, tc := range []struct {
+		name  string
+		input ProviderReplacement
+	}{
+		{name: "reserved id", input: ProviderReplacement{ID: "default"}},
+		{name: "invalid protocol", input: ProviderReplacement{ID: "gateway-1", Protocol: "unknown"}},
+		{name: "relative url", input: ProviderReplacement{ID: "gateway-1", BaseURL: "/v1"}},
+		{name: "header injection key", input: ProviderReplacement{ID: "gateway-1", APIKey: &injected}},
+		{name: "url newline", input: ProviderReplacement{ID: "gateway-1", BaseURL: "https://exam\nple.com"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NormalizeProviderUpdate(tc.input)
+			if !errors.Is(err, domain.ErrInvalidArgument) || strings.Contains(err.Error(), "secret") {
+				t.Fatalf("expected redacted validation error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestE2ENormalizeProviderReplacement(t *testing.T) {
+	TestNormalizeProviderReplacement(t)
+}
+
+func TestE2ENormalizeProviderUpdatePreservesOmittedFields(t *testing.T) {
+	TestNormalizeProviderUpdatePreservesOmittedFields(t)
+}
+
+func TestE2EManagedProviderHeadersJSON(t *testing.T) {
+	TestManagedProviderHeadersJSON(t)
+}
+
+func TestE2ENormalizeProviderUpdateRejectsInvalidValues(t *testing.T) {
+	TestNormalizeProviderUpdateRejectsInvalidValues(t)
+}
