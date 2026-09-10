@@ -189,6 +189,7 @@ type composeSandboxOutput struct {
 	Driver                   string                             `json:"driver,omitempty"`
 	VMStatus                 string                             `json:"vm_status,omitempty"`
 	WorkspacePath            string                             `json:"workspace_path,omitempty"`
+	WorkspaceDelivery        *composeWorkspaceDeliveryOutput    `json:"workspace_delivery,omitempty"`
 	ProxyPath                string                             `json:"proxy_path,omitempty"`
 	GuestImage               string                             `json:"guest_image,omitempty"`
 	TriggerSource            string                             `json:"trigger_source,omitempty"`
@@ -306,6 +307,7 @@ func composeSandboxOutputFromSummary(summary *agentcomposev2.Sandbox) composeSan
 		Driver:                   summary.GetDriver(),
 		VMStatus:                 sandboxStatusText(summary.GetStatus()),
 		WorkspacePath:            summary.GetWorkspacePath(),
+		WorkspaceDelivery:        composeWorkspaceDeliveryFromProto(summary.GetWorkspaceDelivery()),
 		ProxyPath:                summary.GetProxyPath(),
 		GuestImage:               summary.GetImage(),
 		TriggerSource:            summary.GetTriggerSource(),

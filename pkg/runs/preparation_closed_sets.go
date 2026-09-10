@@ -13,6 +13,9 @@ func normalizeRevisionClosedSetsJSON(data []byte) ([]byte, error) {
 	if err := json.Unmarshal(data, &root); err != nil {
 		return nil, err
 	}
+	if err := normalizeRevisionWorkspaceModes(root); err != nil {
+		return nil, err
+	}
 	agents, _ := root["agents"].([]any)
 	for index, value := range agents {
 		agent, _ := value.(map[string]any)

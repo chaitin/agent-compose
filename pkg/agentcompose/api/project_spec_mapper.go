@@ -24,6 +24,9 @@ func ProjectSpecToProtoChecked(spec *compose.NormalizedProjectSpec) (*agentcompo
 	if err := spec.ValidateResolvedScriptURLs(); err != nil {
 		return nil, err
 	}
+	if err := validateProjectWorkspaceModes(spec); err != nil {
+		return nil, err
+	}
 	return &agentcomposev2.ProjectSpec{
 		Name:           spec.Name,
 		Variables:      EnvVarSpecsToProto(spec.Variables),
@@ -207,7 +210,13 @@ func WorkspaceSpecToProto(workspace *compose.WorkspaceSpec) *agentcomposev2.Work
 	if workspace == nil {
 		return nil
 	}
+	mode, err := workspaceModeToProto(workspace.Mode)
+	if err != nil {
+		return nil
+	}
 	return &agentcomposev2.WorkspaceSpec{
+		Mode:     mode,
+		ReadOnly: workspace.ReadOnly,
 		Name:     workspace.Name,
 		Provider: workspace.Provider,
 		Url:      workspace.URL,

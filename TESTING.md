@@ -84,6 +84,88 @@ a new sandbox receives the latest Workspace Source without state leaking back
 to that source. It also checks resource cleanup. Inspect verbose test output and
 daemon logs when it fails.
 
+Workspace mount has a separate opt-in Docker E2E. A small dedicated guest image
+builds the real JavaScript runtime from the checked-out sources and lockfile,
+with Node and standard filesystem tools but no provider CLIs or model calls:
+
+```bash
+task image:workspace-test
+AGENT_COMPOSE_E2E_DOCKER_WORKSPACE_IMAGE=agent-compose-guest:workspace-test \
+  AGENT_COMPOSE_E2E_WORKSPACE_FILES=10000 task test:e2e:docker-workspace-mount
+```
+
+The image task builds `linux/amd64` and runs the runtime CLI as a smoke check.
+This image is for file-delivery tests, not provider or Jupyter conformance.
+It can be passed to another driver's existing file/lifecycle test through that
+test's image option, provided the driver and host support this architecture.
+An installed native VM CLI alone does not validate agent-compose's Go driver;
+a compiled driver and a usable hypervisor are both required. Kubernetes transfer
+unit tests do not substitute for a real-cluster run.
+
+To use the full guest image instead:
+
+```bash
+AGENT_COMPOSE_E2E_DOCKER_WORKSPACE_IMAGE=agent-compose-guest:latest \
+  task test:e2e:docker-workspace-mount
+```
+
+It applies real YAML with the CLI, runs `true` through the public run API, and
+uses public Exec requests without calling a model. Cases cover the default copy,
+root/subdirectory mounts, read-write/read-only access, host-to-guest visibility,
+guest create/modify/delete/rename, retained runtime restart across a daemon
+restart, removed runtime recreation, and sandbox/project deletion preserving
+external source files. Complete source-tree hashes are checked before and after
+lifecycle operations; read-only cases also verify writable sandbox-owned
+state/logs. Docker inspection verifies the declared mount target occurs once;
+public sandbox details preserve safe delivery metadata across resume. Moving a
+running sandbox's source away must still allow inspect, stop, and removal;
+resume must reject the missing source and succeed after it is restored.
+
+Each case reports source file count/bytes, daemon-owned file count, duplicate
+source files, and run preparation milliseconds as `workspace_measurement` log
+lines. After Ready, copy mode must retain one private copy of every source fixture
+file and no transient run snapshot; mount cases must have none. This is an observable file-count contract, not a
+fixed timing threshold. Sources live outside the daemon data root, and scanning
+does not follow symlinks. The default fixture has 128 small payload files plus
+three control files. Set `AGENT_COMPOSE_E2E_WORKSPACE_FILES=10000` (range
+1–100000) to measure a larger tree. Keep verbose output when comparing runs.
+Direct `go test` skips this E2E unless the image variable is set; the task checks
+that the selected local image exists and builds the daemon first.
+
+Skills reuse has a separate opt-in Docker E2E using the same dedicated guest:
+
+```bash
+task image:workspace-test
+AGENT_COMPOSE_E2E_DOCKER_WORKSPACE_IMAGE=agent-compose-guest:workspace-test \
+  AGENT_COMPOSE_E2E_SKILL_FILES=257 \
+  go test -count=1 -timeout=15m -run '^TestE2EDockerSkillsReuse$' -v ./test/e2e
+```
+
+Set `AGENT_COMPOSE_E2E_BINARY` to an already-built daemon to skip the test's
+native build. The test creates two sandboxes with the public command API, installs
+a test-owned Codex CLI fixture through public Exec, then executes real prompt
+runs through the runtime and Codex SDK subprocess path. The fixture emits local
+NDJSON; it does not contact a model or change the production guest image.
+On Linux, run this complete prompt-and-removal scenario with the daemon's
+shipped root identity, or with compatible guest/daemon filesystem ownership.
+A root guest creates provider thread state; an unprivileged native daemon can
+hit an existing `RemoveSandbox` permission failure in `state/agents/providers`.
+The [content reuse validation](docs/design/workspace-content-reuse.zh-CN.md)
+records that mixed-UID limitation separately from skills reconciliation.
+
+Three unchanged prompt runs must preserve every canonical skills inode, complete
+tree digest, and Claude alias inode. Further runs restore guest additions,
+deletions, edits, directories, and executable permissions; publish changed source
+content; and demonstrate isolation in both directions between source and both
+sandboxes. Sandbox deletion must preserve the source.
+
+`skills_measurement` logs separately report immutable cache generations, their
+content-file count, and sandbox-private skill file counts. A source revision
+leaves a cache generation eligible for ordinary cache GC, so the test does not
+claim cross-sandbox zero-copy sharing. The default fixture has 257 files,
+including `SKILL.md`; `AGENT_COMPOSE_E2E_SKILL_FILES` accepts 3–100000. The complete
+skills tree includes a bookkeeping manifest in addition to these source files.
+
 Graceful sandbox stop has an opt-in host-daemon E2E that exercises the public
 project, run, exec, and sandbox APIs against real runtimes:
 

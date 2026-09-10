@@ -452,6 +452,7 @@ func sandboxToV2WithTarget(sandbox *domain.Sandbox, target runs.SandboxRunTarget
 		UpdatedAt:            timestamppb.New(sandbox.Summary.UpdatedAt),
 		Image:                sandbox.Summary.GuestImage,
 		WorkspacePath:        sandbox.Summary.WorkspacePath,
+		WorkspaceDelivery:    sandboxWorkspaceDeliveryToProto(sandbox.Workspace),
 		Title:                sandbox.Summary.Title,
 		ProxyPath:            sandbox.Summary.ProxyPath,
 		TriggerSource:        sandbox.Summary.TriggerSource,

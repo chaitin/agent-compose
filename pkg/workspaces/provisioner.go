@@ -33,6 +33,7 @@ type WorkspaceEnsurer interface {
 }
 
 type Provisioner struct {
+	config       *appconfig.Config
 	sandboxes    SandboxStore
 	paths        SandboxPathResolver
 	materializer WorkspaceMaterializer
@@ -43,10 +44,12 @@ type Provisioner struct {
 var _ WorkspaceEnsurer = (*Provisioner)(nil)
 
 func NewProvisioner(config *appconfig.Config, workspaces WorkspaceConfigStore, sandboxes SandboxStore) *Provisioner {
-	return NewProvisionerWithMaterializer(sandboxes, sessionWorkspaceMaterializer{
+	provisioner := NewProvisionerWithMaterializer(sandboxes, sessionWorkspaceMaterializer{
 		config:     config,
 		workspaces: workspaces,
 	})
+	provisioner.config = config
+	return provisioner
 }
 
 func NewProvisionerWithMaterializer(sandboxes SandboxStore, materializer WorkspaceMaterializer) *Provisioner {
@@ -115,13 +118,26 @@ func (p *Provisioner) ensureLoaded(ctx context.Context, sandbox *domain.Sandbox)
 	if strings.TrimSpace(sandbox.Summary.WorkspacePath) == "" {
 		return fmt.Errorf("%w: sandbox %s workspace path is required", domain.ErrRequired, sandbox.Summary.ID)
 	}
+	if sandbox.Workspace != nil {
+		mount, err := DecodeFileWorkspaceMount(sandbox.Workspace.ConfigJSON)
+		if err != nil {
+			return err
+		}
+		if mount != nil {
+			return p.ensureMounted(ctx, sandbox, *mount)
+		}
+	}
 	if sandbox.WorkspaceProvisioning == nil {
 		sandbox.WorkspaceProvisioning = &domain.SandboxWorkspaceProvisioning{
 			Version:   domain.SandboxWorkspaceProvisioningVersion,
 			Status:    domain.SandboxWorkspaceProvisioningStatusReady,
 			UpdatedAt: time.Now().UTC(),
 		}
-		return p.sandboxes.UpdateSandbox(ctx, sandbox)
+		if err := p.sandboxes.UpdateSandbox(ctx, sandbox); err != nil {
+			return err
+		}
+		p.releaseReadySnapshot(ctx, sandbox)
+		return nil
 	}
 	if err := domain.ValidateSandboxWorkspaceProvisioning(sandbox.WorkspaceProvisioning); err != nil {
 		return err
@@ -129,6 +145,7 @@ func (p *Provisioner) ensureLoaded(ctx context.Context, sandbox *domain.Sandbox)
 
 	switch sandbox.WorkspaceProvisioning.Status {
 	case domain.SandboxWorkspaceProvisioningStatusReady:
+		p.releaseReadySnapshot(ctx, sandbox)
 		return nil
 	case domain.SandboxWorkspaceProvisioningStatusFailed:
 		if err := domain.TransitionSandboxWorkspaceProvisioning(

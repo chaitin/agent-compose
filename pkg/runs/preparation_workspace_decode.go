@@ -29,16 +29,19 @@ type storedNamedRevisionWorkspace struct {
 }
 
 type storedRevisionWorkspace struct {
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
-	URL      string `json:"url"`
-	Ref      string `json:"ref"`
-	Path     string `json:"path"`
-	Format   string `json:"format"`
-	Target   string `json:"target"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Token    string `json:"token"`
+	Mode          json.RawMessage `json:"mode"`
+	ReadOnly      *bool           `json:"read_only"`
+	ProtoReadOnly *bool           `json:"readOnly"`
+	Name          string          `json:"name"`
+	Provider      string          `json:"provider"`
+	URL           string          `json:"url"`
+	Ref           string          `json:"ref"`
+	Path          string          `json:"path"`
+	Format        string          `json:"format"`
+	Target        string          `json:"target"`
+	Username      string          `json:"username"`
+	Password      string          `json:"password"`
+	Token         string          `json:"token"`
 
 	// Branch and Commit are read-only aliases for revisions persisted before
 	// issue #332 unified Git revisions under ref. In that historical format,
@@ -138,6 +141,18 @@ func restoreStoredRevisionWorkspace(raw json.RawMessage, nameIsWorkspaceField bo
 		return nil, false, err
 	}
 
+	mode, err := storedWorkspaceMode(stored.Mode)
+	if err != nil {
+		return nil, false, err
+	}
+	if stored.ReadOnly != nil && stored.ProtoReadOnly != nil {
+		return nil, false, fmt.Errorf("workspace read_only specified twice")
+	}
+	readOnly := stored.ReadOnly
+	if readOnly == nil {
+		readOnly = stored.ProtoReadOnly
+	}
+	readOnlyValue := readOnly != nil && *readOnly
 	provider := strings.TrimSpace(stored.Provider)
 	ref := strings.TrimSpace(stored.Ref)
 	path := strings.TrimSpace(stored.Path)
@@ -163,13 +178,16 @@ func restoreStoredRevisionWorkspace(raw json.RawMessage, nameIsWorkspaceField bo
 	if nameIsWorkspaceField {
 		name = strings.TrimSpace(stored.Name)
 	}
-	present := name != "" || provider != "" || strings.TrimSpace(stored.URL) != "" ||
+	present := mode != agentcomposev2.WorkspaceMode_WORKSPACE_MODE_UNSPECIFIED || readOnlyValue ||
+		name != "" || provider != "" || strings.TrimSpace(stored.URL) != "" ||
 		ref != "" || path != "" || strings.TrimSpace(stored.Format) != "" || target != "" ||
 		strings.TrimSpace(stored.Username) != "" || strings.TrimSpace(stored.Password) != "" || strings.TrimSpace(stored.Token) != ""
 	if !present {
 		return nil, false, nil
 	}
 	return &agentcomposev2.WorkspaceSpec{
+		Mode:     mode,
+		ReadOnly: readOnlyValue,
 		Name:     name,
 		Provider: provider,
 		Url:      strings.TrimSpace(stored.URL),

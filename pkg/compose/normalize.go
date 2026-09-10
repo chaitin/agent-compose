@@ -316,6 +316,9 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
+	if workspace != nil && workspace.Mode == domain.WorkspaceModeMount && driver != nil && driver.Name != DriverDocker {
+		return NormalizedAgentSpec{}, &ValidationError{Path: joinPath("agents", name) + ".workspace.mode", Message: "workspace mount mode is only supported by the docker driver"}
+	}
 	sandbox, err := normalizeSandboxSpec(joinPath("agents", name)+".sandbox", agent.Sandbox)
 	if err != nil {
 		return NormalizedAgentSpec{}, err
@@ -422,6 +425,9 @@ func resolveAgentWorkspace(path string, spec *WorkspaceSpec, globals map[string]
 	trimmed := cloneWorkspaceSpec(spec)
 	hasName := trimmed.Name != ""
 	hasInline := workspaceSource(*trimmed).HasContent() || trimmed.Target != ""
+	if !hasInline && (trimmed.Mode != "" || trimmed.ReadOnly) {
+		return nil, &ValidationError{Path: path, Message: "workspace mode and read_only require an inline source; set them on the named workspace definition instead"}
+	}
 	switch {
 	case hasName && !hasInline:
 		workspace, ok := globals[trimmed.Name]
@@ -457,6 +463,9 @@ func normalizeInlineWorkspaceSpec(path string, spec *WorkspaceSpec, defaultName 
 	applyWorkspaceSource(workspace, normalizedSource)
 	workspace.Provider = provider
 	workspace.Name = defaultName
+	if err := normalizeWorkspaceDelivery(path, workspace); err != nil {
+		return nil, err
+	}
 	switch provider {
 	case sources.ProviderFile:
 		if strings.TrimSpace(workspace.URL) != "" {
@@ -1516,6 +1525,7 @@ func cloneWorkspaceSpec(value *WorkspaceSpec) *WorkspaceSpec {
 	}
 	cloned := *value
 	cloned.Name = strings.TrimSpace(cloned.Name)
+	cloned.Mode = strings.TrimSpace(cloned.Mode)
 	applyWorkspaceSource(&cloned, workspaceSource(cloned))
 	cloned.Target = strings.TrimSpace(cloned.Target)
 	return &cloned

@@ -3256,6 +3256,7 @@
       "trigger_source": "string",
       "updated_at": "string",
       "vm_status": "string",
+      "workspace_delivery": "object",
       "workspace_path": "string",
       "workspace_reclamation": "object"
     },
@@ -3370,6 +3371,12 @@
     },
     "volume_remove": {
       "removed": "array"
+    },
+    "workspace_delivery": {
+      "mode": "string",
+      "read_only": "boolean",
+      "source_path": "string",
+      "target": "string"
     }
   }
 }

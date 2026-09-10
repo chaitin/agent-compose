@@ -13,6 +13,7 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/volumes"
+	"github.com/chaitin/agent-compose/pkg/workspaces"
 
 	"github.com/google/uuid"
 )
@@ -75,12 +76,12 @@ func (s *Store) createSandboxWithCacheDependencyLock(ctx context.Context, spec s
 	locker := s.cacheDependencyLocker
 	s.cacheDependencyMu.RUnlock()
 	if locker == nil {
-		return s.createSandboxWithOptions(spec)
+		return s.createSandboxWithOptions(ctx, spec)
 	}
 	var sandbox *Sandbox
 	err := locker.WithLockContext(ctx, func() error {
 		var err error
-		sandbox, err = s.createSandboxWithOptions(spec)
+		sandbox, err = s.createSandboxWithOptions(ctx, spec)
 		return err
 	})
 	return sandbox, err
@@ -95,9 +96,16 @@ type preparedSandboxCreate struct {
 	GuestImage string
 }
 
-func (s *Store) prepareSandboxCreateSession(spec sandboxCreateSpec) (preparedSandboxCreate, error) {
+func (s *Store) prepareSandboxCreateSession(ctx context.Context, spec sandboxCreateSpec) (preparedSandboxCreate, error) {
 	title, baseWorkspace, driver, guestImage, workspaceID, triggerSource, workspace, envItems, tags, options :=
 		spec.Title, spec.BaseWorkspace, spec.Driver, spec.GuestImage, spec.WorkspaceID, spec.TriggerSource, spec.Workspace, spec.EnvItems, spec.Tags, spec.Options
+	driver, err := driverpkg.ResolveSandboxRuntimeDriver(driver, s.config.RuntimeDriver)
+	if err != nil {
+		return preparedSandboxCreate{}, err
+	}
+	if err := workspaces.ValidateWorkspaceRuntimeDriver(workspace, driver); err != nil {
+		return preparedSandboxCreate{}, err
+	}
 	localNow := s.currentTime()
 	now := localNow.UTC()
 	workspaceID = strings.TrimSpace(workspaceID)
@@ -109,10 +117,6 @@ func (s *Store) prepareSandboxCreateSession(spec sandboxCreateSpec) (preparedSan
 	}
 	workspaceDir := filepath.Join(sandboxDir, "workspace")
 	proxyPath := strings.TrimRight(s.config.JupyterProxyBasePath, "/") + "/" + id + "/lab"
-	driver, err = driverpkg.ResolveSandboxRuntimeDriver(driver, s.config.RuntimeDriver)
-	if err != nil {
-		return preparedSandboxCreate{}, err
-	}
 	guestImage = driverpkg.ResolveSandboxGuestImage(guestImage, "", driverpkg.DefaultGuestImageForDriver(s.config, driver))
 	stoppedRuntimePolicy, err := compose.NormalizeStoppedRuntimePolicy(options.StoppedRuntimePolicy)
 	if err != nil {
@@ -187,14 +191,17 @@ func (s *Store) prepareSandboxCreateSession(spec sandboxCreateSpec) (preparedSan
 	if driver == driverpkg.RuntimeDriverBoxlite {
 		vmState.Registry = s.config.ImageRegistry
 	}
+	if err := workspaces.ClaimTransientSnapshot(ctx, s.config, session.Workspace, session.Summary.ID); err != nil {
+		return preparedSandboxCreate{}, err
+	}
 	if err := s.saveVMState(session.Summary.ID, vmState); err != nil {
 		return preparedSandboxCreate{}, err
 	}
 	return preparedSandboxCreate{Session: session, SandboxDir: sandboxDir, GuestImage: guestImage}, nil
 }
 
-func (s *Store) createSandboxWithOptions(spec sandboxCreateSpec) (*Sandbox, error) {
-	prepared, err := s.prepareSandboxCreateSession(spec)
+func (s *Store) createSandboxWithOptions(ctx context.Context, spec sandboxCreateSpec) (*Sandbox, error) {
+	prepared, err := s.prepareSandboxCreateSession(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -228,6 +235,9 @@ func (s *Store) createSandboxWithOptions(spec sandboxCreateSpec) (*Sandbox, erro
 	}
 	if err := s.saveSandbox(session); err != nil {
 		return nil, err
+	}
+	if err := workspaces.CloseTransientSnapshotLease(session.Workspace); err != nil {
+		return nil, fmt.Errorf("close prepared workspace lease: %w", err)
 	}
 	if err := s.saveCells(id, nil); err != nil {
 		return nil, err

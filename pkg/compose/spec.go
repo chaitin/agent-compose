@@ -216,6 +216,8 @@ type EventTriggerSpec struct {
 }
 
 type WorkspaceSpec struct {
+	Mode     string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	ReadOnly bool   `yaml:"read_only,omitempty" json:"read_only,omitempty"`
 	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
 	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 	URL      string `yaml:"url,omitempty" json:"url,omitempty"`
@@ -773,8 +775,10 @@ func validateEventTrigger(node *yaml.Node, path string) error {
 
 func validateWorkspace(node *yaml.Node, path string) error {
 	return validateMapping(node, path, sourceFieldValidators(map[string]nodeValidator{
-		"name":   validateScalar,
-		"target": validateScalar,
+		"name":      validateScalar,
+		"target":    validateScalar,
+		"mode":      validateScalar,
+		"read_only": validateBool,
 	}))
 }
 

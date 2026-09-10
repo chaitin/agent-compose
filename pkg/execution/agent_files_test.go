@@ -192,8 +192,7 @@ func TestWriteAgentSkillsRejectsUserClaudeSkillsDirectory(t *testing.T) {
 }
 
 // No-shared-mount path (k8s - see docs/design/k8s_pod_runtime_driver_design.md
-// §2.1): the reconciled skills directory must be pushed to both guest
-// locations a mount would otherwise expose it at for free.
+// §2.1): the writer reconciles one canonical directory and its provider aliases.
 func TestWriteAgentSkillsPushesToGuestWhenPresent(t *testing.T) {
 	root := t.TempDir()
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{WorkspacePath: filepath.Join(root, "workspace")}}
@@ -206,13 +205,9 @@ func TestWriteAgentSkillsPushesToGuestWhenPresent(t *testing.T) {
 	}
 	config := &appconfig.Config{}
 
-	type push struct {
-		hostSrcDir string
-		guestDir   string
-	}
-	var pushes []push
-	writer := func(_ context.Context, hostSrcDir, guestDir string) error {
-		pushes = append(pushes, push{hostSrcDir: hostSrcDir, guestDir: guestDir})
+	var pushes []string
+	writer := func(_ context.Context, hostSrcDir string) error {
+		pushes = append(pushes, hostSrcDir)
 		return nil
 	}
 
@@ -223,13 +218,9 @@ func TestWriteAgentSkillsPushesToGuestWhenPresent(t *testing.T) {
 	if len(names) != 1 || names[0] != "pdf" {
 		t.Fatalf("names = %#v, want pdf", names)
 	}
-	appconfig.ApplyDefaultGuestPaths(config)
 	skillsDir := HostAgentSkillsDir(session)
-	wantPushes := []push{
-		{hostSrcDir: skillsDir, guestDir: filepath.Join(config.GuestHomePath, ".agents", "skills")},
-		{hostSrcDir: skillsDir, guestDir: filepath.Join(config.GuestHomePath, ".claude", "skills")},
-	}
-	if len(pushes) != len(wantPushes) || pushes[0] != wantPushes[0] || pushes[1] != wantPushes[1] {
+	wantPushes := []string{skillsDir}
+	if len(pushes) != len(wantPushes) || pushes[0] != wantPushes[0] {
 		t.Fatalf("pushes = %#v, want %#v", pushes, wantPushes)
 	}
 
@@ -241,7 +232,7 @@ func TestWriteAgentSkillsPushesToGuestWhenPresent(t *testing.T) {
 	if _, err := WriteAgentSkills(context.Background(), config, session, nil, writer); err != nil {
 		t.Fatalf("WriteAgentSkills (clearing) returned error: %v", err)
 	}
-	if len(pushes) != len(wantPushes) || pushes[0] != wantPushes[0] || pushes[1] != wantPushes[1] {
+	if len(pushes) != len(wantPushes) || pushes[0] != wantPushes[0] {
 		t.Fatalf("clearing pushes = %#v, want %#v", pushes, wantPushes)
 	}
 }
@@ -252,7 +243,7 @@ func TestWriteAgentSkillsSkipsPushWhenNeverConfigured(t *testing.T) {
 	config := &appconfig.Config{}
 
 	var pushCount int
-	writer := func(context.Context, string, string) error {
+	writer := func(context.Context, string) error {
 		pushCount++
 		return nil
 	}
@@ -280,24 +271,24 @@ func TestWriteAgentSkillsRetriesGuestClearAfterTransientPushFailure(t *testing.T
 	}
 	config := &appconfig.Config{}
 
-	if _, err := WriteAgentSkills(context.Background(), config, session, []ResolvedAgentSkill{{Name: "pdf", LocalDir: skillSource}}, func(context.Context, string, string) error { return nil }); err != nil {
+	if _, err := WriteAgentSkills(context.Background(), config, session, []ResolvedAgentSkill{{Name: "pdf", LocalDir: skillSource}}, func(context.Context, string) error { return nil }); err != nil {
 		t.Fatalf("WriteAgentSkills (populate) returned error: %v", err)
 	}
 
-	failing := func(context.Context, string, string) error { return fmt.Errorf("transient exec failure") }
+	failing := func(context.Context, string) error { return fmt.Errorf("transient exec failure") }
 	if _, err := WriteAgentSkills(context.Background(), config, session, nil, failing); err == nil {
 		t.Fatal("WriteAgentSkills (clear, guest push fails) returned nil error, want the push failure")
 	}
 
 	var pushCount int
-	retry := func(context.Context, string, string) error {
+	retry := func(context.Context, string) error {
 		pushCount++
 		return nil
 	}
 	if _, err := WriteAgentSkills(context.Background(), config, session, nil, retry); err != nil {
 		t.Fatalf("WriteAgentSkills (clear, retry) returned error: %v", err)
 	}
-	if pushCount != 2 {
-		t.Fatalf("push count on retry after a prior transient failure = %d, want 2 (.agents/skills and .claude/skills)", pushCount)
+	if pushCount != 1 {
+		t.Fatalf("push count on retry after a prior transient failure = %d, want 1 canonical reconciliation", pushCount)
 	}
 }

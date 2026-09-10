@@ -45,7 +45,7 @@ func (osProvisioningFileSystem) ReadDir(path string) ([]os.DirEntry, error) {
 }
 
 func (osProvisioningFileSystem) RemoveAll(path string) error {
-	return os.RemoveAll(path)
+	return RemoveOwnedDirectory(path)
 }
 
 func (osProvisioningFileSystem) Rename(oldPath, newPath string) error {
@@ -88,6 +88,7 @@ func (p *Provisioner) provisionPending(ctx context.Context, sandbox *domain.Sand
 	if err := p.sandboxes.UpdateSandbox(ctx, sandbox); err != nil {
 		return fmt.Errorf("persist ready workspace provisioning for sandbox %s: %w", sandbox.Summary.ID, err)
 	}
+	p.releaseReadySnapshot(ctx, sandbox)
 	return nil
 }
 

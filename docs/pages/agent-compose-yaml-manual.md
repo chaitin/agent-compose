@@ -279,11 +279,13 @@ Each `workspaces.<key>` accepts:
 | `ref` | string | Optional for `git` | Git branch, tag, or commit. |
 | `path` | string | Required for `file` | Source path relative to the compose directory; it cannot escape the project root. Git workspaces do not support a repository subpath. |
 | `target` | string | Optional | Destination below the sandbox workspace root. Defaults to `.`. |
+| `mode` | string | Optional | `copy` (default) creates an isolated workspace. `mount` maps a local `file` source directly into a Docker sandbox. |
+| `read_only` | bool | Optional for `mount` | Defaults to `false`. Set `true` to prevent guest writes through the workspace mount; `true` is invalid with `copy`. |
 | `username` | string | Optional for `git` | Git HTTP username. |
 | `password` | string | Optional for `git` | Git password as an exact environment reference such as `${NAME}`. |
 | `token` | string | Optional for `git` | Git token as an exact environment reference such as `${NAME}`. |
 
-A local workspace is copied into an isolated snapshot for each project run. Agent changes to that snapshot do not modify the source directory.
+A local workspace defaults to `mode: copy`: it is copied into an isolated snapshot for each project run, and Agent changes do not modify the source directory. Omitting `mode` and explicitly setting `copy` have the same behavior.
 
 ```yaml
 workspaces:
@@ -303,6 +305,49 @@ Workspace selection follows these rules:
 - When an agent omits `workspace`, the run has no configured workspace, regardless of how many project workspaces exist.
 - To use a project workspace, the agent must explicitly select it with `workspace.name`, or define an inline workspace.
 - An explicit empty `workspace: {}` is invalid; omit the key to configure no workspace.
+
+### Mount a local workspace
+
+Use `mode: mount` to reuse an existing local directory without creating a run snapshot or copying its files into each sandbox:
+
+```yaml
+workspaces:
+  shared-input:
+    provider: file
+    path: ./reference-data
+    mode: mount
+    read_only: true
+    target: inputs
+agents:
+  reviewer:
+    provider: codex
+    driver:
+      docker: {}
+    workspace:
+      name: shared-input
+```
+
+The example exposes the source at `/workspace/inputs` with the default guest paths. The remaining workspace stays writable for outputs. `target: .` mounts the source at the whole workspace root; when this mount is read-only, programs must write outputs elsewhere. Targets must stay inside the workspace and cannot overlap an agent volume mount. Additional volumes declared by the guest image must also stay outside the mounted subtree; overlapping image volumes cause startup to fail, while unrelated image volumes remain supported.
+
+Mount mode supports `provider: file` with the Docker runtime only. Git sources and BoxLite, Microsandbox, or Kubernetes runtimes are rejected; an unsupported mount does not fall back to copying. The recorded project source path must identify an existing directory or compose file. The source must already exist inside the project's source directory and be visible in the agent-compose daemon's filesystem. Paths on a remote CLI client are not uploaded automatically.
+
+For a native agent-compose daemon, supported Docker connections use a local Unix socket and Linux containers: on Linux, the Docker Engine name must match the local hostname; on macOS, the Engine must identify itself as Docker Desktop or OrbStack. Native connections over TCP (including localhost) or SSH, forwarded sockets, and other VM integrations are unsupported. For a containerized agent-compose daemon, the connected Engine must be able to inspect that container by its hostname, and the source must lie within one of its existing bind or volume mounts. The most specific containing mount determines the host source path; an unshareable nested mount, such as tmpfs, blocks mapping through its parent. Sources that exist only in the daemon container's writable layer are rejected. `DOCKER_HOST_SANDBOX_ROOT` explicitly translates sources inside `SANDBOX_ROOT`, including a workspace located there; it cannot supply a mapping for an external workspace source. Existing bind volumes and workspace mounts share this path-resolution implementation. Existing bind volumes retain their configured host-path behavior; workspace mount additionally requires the source-sharing guarantee described above.
+
+The default `read_only: false` is a **live, writable mapping**: Agent writes, deletions, and renames affect the original directory, and sandboxes using that directory see the same changes. Concurrent writers must coordinate. `read_only: true` blocks guest writes through this mapping; host-side changes remain visible and the directory is not an immutable snapshot. Keep `copy` for isolated edits or a stable initial snapshot.
+
+`read_only: true` requires Docker Engine API 1.44 or newer and recursive read-only bind support from the Engine's Linux kernel (5.12 or newer, including the VM kernel on macOS). agent-compose explicitly requires recursive read-only enforcement, including existing source submounts. An older API or a runtime unable to enforce it causes startup to fail; it does not fall back to a partially read-only mount. See Docker's [recursive mount requirements](https://docs.docker.com/engine/storage/bind-mounts/#recursive-mounts).
+
+Stop, resume, and sandbox removal preserve the external source. Resume reuses the persisted source and delivery settings; changing the project does not convert an existing copied workspace into a mount. A missing or invalid source fails explicitly on creation or restart. Workspace-source upload/download APIs continue to manage copied workspace presets, rather than granting access to mounted project directories.
+
+This option controls the declared workspace source. A `.codex` directory inside that source follows the workspace mode. The sandbox's separate provider home, such as `~/.codex`, holds private configuration, credentials, and history and stays isolated between sandboxes.
+
+### Automatic content reuse
+
+Copy mode releases its internal run input after the private sandbox workspace reaches persisted Ready. Inputs needed for a pending or failed preparation remain available for retry; copied workspace presets and externally mounted directories are preserved. File copies use filesystem cloning where supported and otherwise copy bytes, retaining independent writable files. Existing unmarked snapshots from older versions are not deleted automatically.
+
+Agent skills also remain private and writable. Preparation compares the source and actual sandbox content, including executable permissions, and leaves unchanged files in place. Modified content is staged before publication; modifications made inside a sandbox are reconciled against the declared skills on the next preparation. A valid Claude skills alias is reused. Kubernetes compares the guest contents before transferring a single canonical tree and reconciling the alias, so an unchanged daemon-side directory does not hide a missing or modified guest copy. Provider credentials and histories are never converted into a shared skill cache.
+
+The daemon API is an administrative trust boundary. API clients can choose project source paths, and existing bind volumes can expose host directories. The workspace's project-root check validates the source contract; it is not a per-project access-control boundary for untrusted API clients. Configure the listening address and `AGENT_COMPOSE_AUTH_TOKEN` for trusted administrators.
 
 ## `mcp_servers`: project MCP servers
 
@@ -870,7 +915,7 @@ workspace:
   target: .
 ```
 
-If `name` is combined with any source field or `target`, the object is treated as an inline workspace rather than an inherited project workspace with overrides. To reuse a project entry, set only `name`.
+Inline workspaces accept the same `mode` and `read_only` fields as top-level definitions. To inherit a project entry, set only `name`; its delivery mode and permissions are inherited together. A name-only reference cannot override `mode` or set `read_only: true`. To use different settings, define another project workspace or provide a complete inline source. If `name` is combined with source fields or `target`, the object is an inline workspace and must include its own valid source; it does not merge fields from a project entry.
 
 ### `sandbox`: stopped runtime lifecycle
 

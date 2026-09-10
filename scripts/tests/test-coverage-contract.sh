@@ -137,9 +137,31 @@ if ((sdk_total == 0)); then
   exit 1
 fi
 
-listed_e2e_tests="$(go test -list '^Test' ./test/e2e | awk '/^Test/ { print }')"
-listed_e2e_count="$(printf '%s\n' "$listed_e2e_tests" | awk 'NF { count++ } END { print count + 0 }')"
-assert_equal 13 "$listed_e2e_count" "unexpected test/e2e package test count"
+# Pin the complete inventory so additions, removals, and same-count renames all
+# require a deliberate coverage-contract update.
+cat > "$tmp/e2e-tests.expected" <<'EOF'
+TestE2EDockerDaemonRetentionCleanup
+TestE2EDockerFileWorkspaceResumePreservesState
+TestE2EDockerJupyterHostDaemonStopResume
+TestE2EDockerRunCompletionRecoversAfterDaemonHardKill
+TestE2EDockerSkillsReuse
+TestE2EDockerStoppedSandboxRetentionArchivesAuditData
+TestE2EDockerWorkspaceMount
+TestE2EGracefulSandboxStopHostDaemon
+TestE2EImageDockerNoKVMStartup
+TestE2EImageDockerSandboxLifecycle
+TestE2EProjectListSQLitePagination
+TestGracefulSandboxStopOutcomesUsePublicConnectContract
+TestStoppedSandboxArchiveRecoveryLifecycle
+TestWorkspaceExecHelpersUseFormalConnectContract
+TestWorkspaceHTTPHelpersUsePublicRouteContracts
+EOF
+go test -list '^Test' ./test/e2e | awk '/^Test/ { print }' | LC_ALL=C sort > "$tmp/e2e-tests.actual"
+if ! diff -u "$tmp/e2e-tests.expected" "$tmp/e2e-tests.actual"; then
+  echo "unexpected test/e2e package test inventory; review and update the complete golden list" >&2
+  exit 1
+fi
+listed_e2e_tests="$(cat "$tmp/e2e-tests.actual")"
 
 e2e_output="$(go test -run '^Test' -v ./test/e2e)"
 while IFS= read -r test_name; do

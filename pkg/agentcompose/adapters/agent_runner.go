@@ -78,7 +78,12 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 	if session.Summary.VMStatus != domain.VMStatusRunning {
 		return domain.ExecResult{}, domain.AgentRunResult{}, fmt.Errorf("session is not running")
 	}
-	appconfig.ApplyDefaultGuestPaths(r.config)
+	// Defaulting writes fields even when they already have their default value.
+	// Each execution owns its config copy so concurrent sandboxes do not race.
+	localRunner, localConfig := *r, *r.config
+	appconfig.ApplyDefaultGuestPaths(&localConfig)
+	localRunner.config = &localConfig
+	r = &localRunner
 	vmState, err := r.store.GetVMState(session.Summary.ID)
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
@@ -151,6 +156,9 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 			}
 		}
 	}
+	if err := r.syncPiRuntimeConfigToGuest(ctx, session, agent); err != nil {
+		return domain.ExecResult{}, domain.AgentRunResult{}, err
+	}
 	if err := r.prepareAgentMCPConfig(ctx, session, agent, agentDef); err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}
@@ -173,7 +181,12 @@ func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, sessio
 	if session == nil {
 		return fmt.Errorf("sandbox is required")
 	}
-	appconfig.ApplyDefaultGuestPaths(r.config)
+	// Defaulting writes fields even when they already have their default value.
+	// Each execution owns its config copy so concurrent sandboxes do not race.
+	localRunner, localConfig := *r, *r.config
+	appconfig.ApplyDefaultGuestPaths(&localConfig)
+	localRunner.config = &localConfig
+	r = &localRunner
 	agent.Provider = domain.NormalizeAgentKind(agent.Provider)
 	if agent.Provider == "" {
 		agent.Provider = domain.DefaultAgentProvider
@@ -200,6 +213,15 @@ func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, sessio
 		}
 		return err
 	}
+	// Seed private directories before publishing per-run managed files. In
+	// particular, a later home archive must not replace the canonical skills
+	// publication or materialize the provider projection a second time.
+	if err := r.syncSandboxGuestDirectories(ctx, session); err != nil {
+		if r.configDB != nil {
+			_ = r.configDB.RevokeLLMFacadeTokensForSandbox(context.WithoutCancel(ctx), session.Summary.ID)
+		}
+		return err
+	}
 	if _, err := r.prepareAgentFiles(ctx, session, agent, definition); err != nil {
 		if r.configDB != nil {
 			_ = r.configDB.RevokeLLMFacadeTokensForSandbox(context.WithoutCancel(ctx), session.Summary.ID)
@@ -210,6 +232,12 @@ func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, sessio
 		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent.Provider, Model: agent.Model, Source: "session", RunID: "",
 	})
 	if err != nil {
+		if r.configDB != nil {
+			_ = r.configDB.RevokeLLMFacadeTokensForSandbox(context.WithoutCancel(ctx), session.Summary.ID)
+		}
+		return err
+	}
+	if err := r.syncPiRuntimeConfigToGuest(ctx, session, agent.Provider); err != nil {
 		if r.configDB != nil {
 			_ = r.configDB.RevokeLLMFacadeTokensForSandbox(context.WithoutCancel(ctx), session.Summary.ID)
 		}
@@ -226,12 +254,6 @@ func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, sessio
 	}
 	if len(managedEnv) > 0 {
 		session.RuntimeEnvItems = domain.MergeEnvItems(session.RuntimeEnvItems, llms.EnvItemsFromMap(managedEnv, true))
-	}
-	if err := r.syncSandboxGuestDirectories(ctx, session); err != nil {
-		if r.configDB != nil {
-			_ = r.configDB.RevokeLLMFacadeTokensForSandbox(context.WithoutCancel(ctx), session.Summary.ID)
-		}
-		return err
 	}
 	return nil
 }
@@ -283,15 +305,15 @@ func (r *AgentRunner) prepareAgentFiles(ctx context.Context, session *domain.San
 	if definition != nil && len(definition.Skills) > 0 {
 		resolver := skills.NewResolver(r.config)
 		resolver.Env = agentSkillEnv(definition.EnvItems)
-		resolvedSkills, err := resolver.Resolve(ctx, definition.Skills)
+		err := resolver.WithResolved(ctx, definition.Skills, func(resolvedSkills []skills.ResolvedSkill) error {
+			var writeErr error
+			skillNames, writeErr = execution.WriteAgentSkills(ctx, r.config, session, resolver.Projected(resolvedSkills), r.guestSkillsWriterFor(session))
+			return writeErr
+		})
 		if err != nil {
 			return nil, err
 		}
-		skillNames, err = execution.WriteAgentSkills(ctx, r.config, session, resolver.Projected(resolvedSkills), r.guestDirWriterFor(session))
-		if err != nil {
-			return nil, err
-		}
-	} else if _, err := execution.WriteAgentSkills(ctx, r.config, session, nil, r.guestDirWriterFor(session)); err != nil {
+	} else if _, err := execution.WriteAgentSkills(ctx, r.config, session, nil, r.guestSkillsWriterFor(session)); err != nil {
 		return nil, err
 	}
 	return skillNames, nil
@@ -376,7 +398,9 @@ type AgentExecSpecRequest struct {
 func BuildAgentExecSpec(config *appconfig.Config, req AgentExecSpecRequest) domain.ExecSpec {
 	session, agent, model := req.Session, req.Agent, req.Model
 	promptPath, schemaPath, skillNames := req.PromptPath, req.SchemaPath, req.SkillNames
-	appconfig.ApplyDefaultGuestPaths(config)
+	localConfig := *config
+	appconfig.ApplyDefaultGuestPaths(&localConfig)
+	config = &localConfig
 	agentHome := config.GuestHomePath
 	env := execution.BuildSandboxExecEnv(config, session, agentHome)
 

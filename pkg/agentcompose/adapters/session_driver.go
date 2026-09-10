@@ -13,6 +13,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/storage/configstore"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
+	"github.com/chaitin/agent-compose/pkg/workspaces"
 )
 
 type SandboxDriver struct {
@@ -46,8 +47,11 @@ func (d *SandboxDriver) runtimeForSession(session *domain.Sandbox) (string, Sand
 }
 
 func (d *SandboxDriver) ValidateSandboxRuntime(session *domain.Sandbox) error {
-	_, _, err := d.runtimeForSession(session)
-	return err
+	driver, _, err := d.runtimeForSession(session)
+	if err != nil {
+		return err
+	}
+	return workspaces.ValidateWorkspaceRuntimeDriver(session.Workspace, driver)
 }
 
 func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sandbox) (resultErr error) {

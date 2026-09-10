@@ -201,8 +201,9 @@ func NewSandboxRemovalCoordinator(di do.Injector) (*sandboxes.RemovalCoordinator
 		Targets: sandboxRemovalTargetResolver{
 			resolver: do.MustInvoke[*runs.SandboxRunTargetResolver](di),
 		},
-		Residues: adapters.NewRuntimeResidueManager(config, do.MustInvoke[*adapters.SandboxDriver](di)),
-		Locks:    do.MustInvoke[*sandboxes.LifecycleLocks](di),
+		Accessories: workspaces.SnapshotAccessoryReleaser{Config: config, Store: do.MustInvoke[*sandboxstore.Store](di)},
+		Residues:    adapters.NewRuntimeResidueManager(config, do.MustInvoke[*adapters.SandboxDriver](di)),
+		Locks:       do.MustInvoke[*sandboxes.LifecycleLocks](di),
 	}, nil
 }
 
@@ -226,9 +227,15 @@ func NewCleanupRunner(di do.Injector) (*cleanup.Runner, error) {
 		return nil, err
 	}
 	store.SetCacheDependencyLocker(imageCache)
+	snapshots := &workspaces.TransientSnapshotCleaner{Config: config, Store: store}
+	if _, err := snapshots.Clean(do.MustInvoke[context.Context](di), time.Time{}); err != nil {
+		slog.Warn("failed to recover transient workspace snapshots", "error", err)
+	}
+
 	return &cleanup.Runner{
 		Interval: config.CleanupInterval,
 		Policies: []cleanup.Policy{
+			{TTL: time.Nanosecond, Cleaner: snapshots},
 			{TTL: config.WorkspaceCleanupTTL, Cleaner: &sandboxes.WorkspaceCleaner{
 				Store: store, Locks: do.MustInvoke[*sandboxes.LifecycleLocks](di),
 			}},

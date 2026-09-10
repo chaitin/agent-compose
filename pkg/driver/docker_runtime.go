@@ -12,7 +12,6 @@ import (
 	"math"
 	"net"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,6 +60,8 @@ func dockerJupyterPortBindingPendingErrorf(format string, args ...any) error {
 
 type dockerRuntime struct {
 	config *appconfig.Config
+	// workspaceProcess is fixed at construction when supplied; nil probes this process.
+	workspaceProcess func() (dockerWorkspaceProcess, error)
 }
 
 type dockerContainerRemover interface {
@@ -191,6 +192,9 @@ func (w *dockerExecWriter) Write(p []byte) (int, error) {
 }
 
 func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
+	if _, err := workspaceRuntimeMountSpec(r.config, sandbox, RuntimeDriverDocker); err != nil {
+		return SandboxVMInfo{}, err
+	}
 	dockerClient, err := r.newClient()
 	if err != nil {
 		return SandboxVMInfo{}, err
@@ -270,11 +274,11 @@ func (r *dockerRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox, vm
 	if err != nil || !ok {
 		return false, err
 	}
-	expectedMounts, err := r.dockerRuntimeMounts(ctx, dockerClient, sandbox)
+	expectedMounts, err := r.dockerRuntimeMountsForLiveSandbox(ctx, dockerClient, sandbox)
 	if err != nil {
 		return false, err
 	}
-	if !dockerContainerMountsMatch(containerInfo, expectedMounts) {
+	if !r.dockerSandboxMountsMatch(containerInfo, expectedMounts, sandbox) {
 		slog.Warn("docker sandbox mounts no longer match the active data root; retiring stale runtime for safe recreation", "sandbox_id", sandbox.Summary.ID, "container_id", containerInfo.ID)
 		if err := removeDockerContainerWithStaleMounts(ctx, dockerClient, containerInfo.ID); err != nil {
 			return false, err
@@ -848,7 +852,7 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 	if containerInfo, ok, err := r.findContainer(ctx, dockerClient, sandbox, vmState); err != nil {
 		return containerapi.InspectResponse{}, false, err
 	} else if ok {
-		if dockerContainerMountsMatch(containerInfo, mounts) {
+		if r.dockerSandboxMountsMatch(containerInfo, mounts, sandbox) {
 			return containerInfo, false, nil
 		}
 		slog.Warn("recreating docker sandbox whose bind mounts reference an earlier data root", "sandbox_id", sandbox.Summary.ID, "container_id", containerInfo.ID)
@@ -896,33 +900,10 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 	if err != nil {
 		return containerapi.InspectResponse{}, false, fmt.Errorf("inspect docker container %s: %w", createResp.ID, err)
 	}
+	if err := r.validateCreatedDockerWorkspaceMounts(ctx, dockerClient, sandbox, containerInfo, mounts); err != nil {
+		return containerapi.InspectResponse{}, false, err
+	}
 	return containerInfo, true, nil
-}
-
-func dockerContainerMountsMatch(containerInfo containerapi.InspectResponse, expected []mountapi.Mount) bool {
-	type mountIdentity struct {
-		source   string
-		readOnly bool
-	}
-	actual := make(map[string]mountIdentity, len(containerInfo.Mounts))
-	for _, item := range containerInfo.Mounts {
-		if item.Type != mountapi.TypeBind {
-			continue
-		}
-		actual[filepath.Clean(item.Destination)] = mountIdentity{
-			source: filepath.Clean(item.Source), readOnly: !item.RW,
-		}
-	}
-	for _, item := range expected {
-		if item.Type != mountapi.TypeBind {
-			continue
-		}
-		identity, ok := actual[filepath.Clean(item.Target)]
-		if !ok || identity.source != filepath.Clean(item.Source) || identity.readOnly != item.ReadOnly {
-			return false
-		}
-	}
-	return true
 }
 
 func (r *dockerRuntime) validateLegacyDockerRecreate(sandbox *Sandbox, vmState VMState) error {
@@ -1082,147 +1063,6 @@ func selectDockerNetworkName(containerInfo containerapi.InspectResponse) (string
 		return "", false
 	}
 	return networkNames[0], true
-}
-
-func (r *dockerRuntime) dockerRuntimeMounts(ctx context.Context, dockerClient *client.Client, sandbox *Sandbox) ([]mountapi.Mount, error) {
-	manifest, err := loadRuntimeMountManifest(sandbox, RuntimeDriverDocker)
-	if err != nil {
-		return nil, err
-	}
-	mounts := make([]mountapi.Mount, 0, len(manifest.Mounts))
-	for _, item := range manifest.Mounts {
-		source, err := r.bindRuntimeMountSource(ctx, dockerClient, item.HostPath)
-		if err != nil {
-			return nil, err
-		}
-		mounts = append(mounts, mountapi.Mount{
-			Type:     mountapi.TypeBind,
-			Source:   source,
-			Target:   item.GuestPath,
-			ReadOnly: item.ReadOnly,
-		})
-	}
-	return mounts, nil
-}
-
-func (r *dockerRuntime) bindRuntimeMountSource(ctx context.Context, dockerClient *client.Client, hostPath string) (string, error) {
-	hostPath = filepath.Clean(strings.TrimSpace(hostPath))
-	if hostPath == "." || hostPath == "" {
-		return "", fmt.Errorf("docker runtime mount source is empty")
-	}
-
-	hostRoot := strings.TrimSpace(r.config.DockerHostSandboxRoot)
-	if hostRoot != "" {
-		return rebasePathUnderRoot(hostPath, r.config.SandboxRoot, hostRoot)
-	}
-
-	if dockerClient != nil {
-		if bindPath, ok, err := r.bindRuntimeMountSourceFromSelfContainer(ctx, dockerClient, hostPath); err != nil {
-			return "", err
-		} else if ok {
-			return bindPath, nil
-		}
-	}
-
-	return hostPath, nil
-}
-
-func (r *dockerRuntime) bindRuntimeMountSourceFromSelfContainer(ctx context.Context, dockerClient *client.Client, hostPath string) (string, bool, error) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return "", false, nil
-	}
-	hostname = strings.TrimSpace(hostname)
-	if hostname == "" {
-		return "", false, nil
-	}
-
-	containerInfo, err := dockerClient.ContainerInspect(ctx, hostname)
-	if err != nil {
-		if isDockerNotFound(err) {
-			return "", false, nil
-		}
-		return "", false, fmt.Errorf("inspect current docker container %s: %w", hostname, err)
-	}
-
-	var bestSource string
-	var bestDestination string
-	for _, mount := range containerInfo.Mounts {
-		source := filepath.Clean(strings.TrimSpace(mount.Source))
-		destination := filepath.Clean(strings.TrimSpace(mount.Destination))
-		if source == "." || source == "" || destination == "." || destination == "" {
-			continue
-		}
-		if _, err := relativePathUnderRoot(hostPath, destination); err != nil {
-			continue
-		}
-		if len(destination) > len(bestDestination) {
-			bestSource = source
-			bestDestination = destination
-		}
-	}
-	if bestSource == "" {
-		return "", false, nil
-	}
-
-	bindPath, err := rebasePathUnderRoot(hostPath, bestDestination, bestSource)
-	if err != nil {
-		return "", false, err
-	}
-	return bindPath, true, nil
-}
-
-func rebasePathUnderRoot(path, oldRoot, newRoot string) (string, error) {
-	relativeDir, err := relativePathUnderRoot(path, oldRoot)
-	if err != nil {
-		return "", err
-	}
-	return joinDockerHostPath(newRoot, relativeDir), nil
-}
-
-func joinDockerHostPath(root, relativePath string) string {
-	root = strings.TrimSpace(root)
-	relativePath = filepath.Clean(strings.TrimSpace(relativePath))
-	if relativePath == "." || relativePath == "" {
-		return root
-	}
-	if isWindowsHostPath(root) && strings.Contains(root, "\\") {
-		return strings.TrimRight(root, `\/`) + `\` + strings.ReplaceAll(relativePath, "/", `\`)
-	}
-	if isWindowsHostPath(root) || strings.Contains(root, "/") {
-		return strings.TrimRight(root, "/") + "/" + filepath.ToSlash(relativePath)
-	}
-	return filepath.Join(root, relativePath)
-}
-
-func isWindowsHostPath(path string) bool {
-	if strings.HasPrefix(path, `\\`) {
-		return true
-	}
-	if len(path) < 3 {
-		return false
-	}
-	drive := path[0]
-	if (drive < 'A' || drive > 'Z') && (drive < 'a' || drive > 'z') {
-		return false
-	}
-	return path[1] == ':' && (path[2] == '\\' || path[2] == '/')
-}
-
-func relativePathUnderRoot(path, root string) (string, error) {
-	path = filepath.Clean(strings.TrimSpace(path))
-	root = filepath.Clean(strings.TrimSpace(root))
-	if path == "." || path == "" || root == "." || root == "" {
-		return "", fmt.Errorf("path and root are required")
-	}
-	relativeDir, err := filepath.Rel(root, path)
-	if err != nil {
-		return "", fmt.Errorf("resolve %s under %s: %w", path, root, err)
-	}
-	if relativeDir == "." || strings.HasPrefix(relativeDir, ".."+string(filepath.Separator)) || relativeDir == ".." || filepath.IsAbs(relativeDir) {
-		return "", fmt.Errorf("path %s is outside root %s", path, root)
-	}
-	return relativeDir, nil
 }
 
 func (r *dockerRuntime) findContainer(ctx context.Context, dockerClient *client.Client, sandbox *Sandbox, vmState VMState) (containerapi.InspectResponse, bool, error) {

@@ -113,20 +113,20 @@ func TestNewCleanupRunnerSeparatesWorkspaceAndSandboxRetentionPolicies(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.Policies) != 3 {
-		t.Fatalf("cleanup policies = %#v, want workspace, sandbox retention, and image cache", runner.Policies)
+	if len(runner.Policies) != 4 {
+		t.Fatalf("cleanup policies = %#v, want transient snapshots, workspace, sandbox retention, and image cache", runner.Policies)
 	}
-	if runner.Policies[0].TTL != 12*time.Hour {
-		t.Fatalf("workspace cleanup TTL = %s", runner.Policies[0].TTL)
+	if runner.Policies[1].TTL != 12*time.Hour {
+		t.Fatalf("workspace cleanup TTL = %s", runner.Policies[1].TTL)
 	}
-	if _, ok := runner.Policies[0].Cleaner.(*sandboxes.WorkspaceCleaner); !ok {
-		t.Fatalf("workspace cleanup cleaner = %T", runner.Policies[0].Cleaner)
+	if _, ok := runner.Policies[1].Cleaner.(*sandboxes.WorkspaceCleaner); !ok {
+		t.Fatalf("workspace cleanup cleaner = %T", runner.Policies[1].Cleaner)
 	}
-	if runner.Policies[1].TTL != 24*time.Hour {
-		t.Fatalf("sandbox retention TTL = %s", runner.Policies[1].TTL)
+	if runner.Policies[2].TTL != 24*time.Hour {
+		t.Fatalf("sandbox retention TTL = %s", runner.Policies[2].TTL)
 	}
-	if _, ok := runner.Policies[1].Cleaner.(*sandboxes.SandboxRetentionCleaner); !ok {
-		t.Fatalf("sandbox retention cleaner = %T", runner.Policies[1].Cleaner)
+	if _, ok := runner.Policies[2].Cleaner.(*sandboxes.SandboxRetentionCleaner); !ok {
+		t.Fatalf("sandbox retention cleaner = %T", runner.Policies[2].Cleaner)
 	}
 }
 

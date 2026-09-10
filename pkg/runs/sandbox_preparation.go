@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
 	"github.com/chaitin/agent-compose/pkg/volumes"
+	"github.com/chaitin/agent-compose/pkg/workspaces"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
 
@@ -49,6 +51,16 @@ func resolveRunJupyterOptions(base sandboxstore.CreateSandboxOptions, override *
 
 //nolint:funlen // a manual mutex lock/unlock spans the reuse-attempt and fallthrough-to-create paths, driverValidated/volumesResolved flags are set in one phase and read in another, and a recursive self-call handles concurrent sticky-binding claims; splitting would move this coupling across a function boundary rather than remove it.
 func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.ProjectRunRecord, prepared Preparation, req RunAgentRequest) (SandboxResult, error) {
+	defer func() {
+		if c == nil || c.config == nil {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if err := workspaces.ReleaseUnusedTransientSnapshot(cleanupCtx, c.config, c.store, prepared.Workspace); err != nil {
+			slog.Warn("failed to release prepared workspace snapshot", "error", err)
+		}
+	}()
 	if c == nil || c.config == nil || c.store == nil || c.driver == nil {
 		return SandboxResult{}, fmt.Errorf("sandbox runtime dependencies are required")
 	}

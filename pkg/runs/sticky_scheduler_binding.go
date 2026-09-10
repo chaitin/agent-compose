@@ -16,6 +16,7 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
+	"github.com/chaitin/agent-compose/pkg/workspaces"
 )
 
 type stickyProjectRunSandboxConfig struct {
@@ -88,7 +89,7 @@ func stickyProjectRunConfigHash(baseHash string, run domain.ProjectRunRecord, pr
 		ImageRef:            strings.TrimSpace(spec.GuestImage),
 		EnvItems:            domain.NormalizeEnvItems(prepared.EnvItems),
 		CapsetIDs:           capsetIDs,
-		Workspace:           prepared.Workspace,
+		Workspace:           workspaces.WorkspaceForConfigurationHash(prepared.Workspace),
 		VolumeMounts:        volumeMounts,
 		Jupyter:             stickyProjectSandboxOptionsFrom(spec.Jupyter),
 	})
