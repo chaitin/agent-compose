@@ -40,7 +40,7 @@ daemon/runtime image 同一 release 的 SDK。
 ## 完整示例
 
 ```js
-import { runtime } from "@chaitin-ai/agent-compose-runtime-sdk";
+import runtime from "@chaitin-ai/agent-compose-runtime-sdk";
 
 const check = await runtime.shell('test -d "$WORKSPACE" && pwd', {
   streamOutput: false,

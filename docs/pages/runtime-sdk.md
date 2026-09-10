@@ -44,7 +44,7 @@ and [guest image ABI](guest-image-abi.html) for the image-side requirements.
 ## Complete example
 
 ```js
-import { runtime } from "@chaitin-ai/agent-compose-runtime-sdk";
+import runtime from "@chaitin-ai/agent-compose-runtime-sdk";
 
 const check = await runtime.shell("test -d \"$WORKSPACE\" && pwd", {
   streamOutput: false,
