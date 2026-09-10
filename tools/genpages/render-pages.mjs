@@ -73,6 +73,13 @@ const manuals = [
     alternate: "zh-CN/daemon-integration.html",
   },
   {
+    source: "runtime-sdk.md",
+    output: "runtime-sdk.html",
+    title: "Guest Runtime SDK",
+    lang: "en",
+    alternate: "zh-CN/runtime-sdk.html",
+  },
+  {
     source: "zh-CN/command-line-manual.md",
     output: "zh-CN/command-line-manual.html",
     title: "命令行手册",
@@ -120,6 +127,13 @@ const manuals = [
     title: "Daemon 集成",
     lang: "zh-CN",
     alternate: "../daemon-integration.html",
+  },
+  {
+    source: "zh-CN/runtime-sdk.md",
+    output: "zh-CN/runtime-sdk.html",
+    title: "Guest Runtime SDK",
+    lang: "zh-CN",
+    alternate: "../runtime-sdk.html",
   },
 ];
 

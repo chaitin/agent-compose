@@ -18,6 +18,7 @@ const manualNames = [
   "developing-agents.md",
   "scheduler-api.md",
   "daemon-integration.md",
+  "runtime-sdk.md",
 ];
 const expectedOutput = new Set([
   "agent-compose-yaml-manual.html",
@@ -38,6 +39,8 @@ const expectedOutput = new Set([
   "zh-CN/developing-agents.html",
   "zh-CN/scheduler-api.html",
   "zh-CN/daemon-integration.html",
+  "runtime-sdk.html",
+  "zh-CN/runtime-sdk.html",
 ]);
 
 await checkSourceLayout();

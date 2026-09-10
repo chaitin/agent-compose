@@ -137,6 +137,8 @@ tasks:
       - '../../build/pages/zh-CN/developing-agents.html'
       - '../../build/pages/zh-CN/scheduler-api.html'
       - '../../build/pages/zh-CN/daemon-integration.html'
+      - '../../build/pages/runtime-sdk.html'
+      - '../../build/pages/zh-CN/runtime-sdk.html'
     cmds:
       - npm ci --no-audit --no-fund
       - npm run build
