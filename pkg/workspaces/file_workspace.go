@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -39,7 +40,7 @@ func PrepareFileWorkspace(config *appconfig.Config, session *domain.Sandbox, wor
 	return fileWorkspace{config: config, workspace: workspace}.Prepare(context.Background(), session)
 }
 
-func (w fileWorkspace) Prepare(_ context.Context, session *domain.Sandbox) error {
+func (w fileWorkspace) Prepare(ctx context.Context, session *domain.Sandbox) error {
 	workspaceRoot := strings.TrimSpace(session.Summary.WorkspacePath)
 	if workspaceRoot == "" {
 		return domain.ClassifyError(domain.ErrRequired, fmt.Sprintf("session %s missing workspace path", session.Summary.ID), nil)
@@ -52,7 +53,7 @@ func (w fileWorkspace) Prepare(_ context.Context, session *domain.Sandbox) error
 		return err
 	}
 	defer func() { _ = content.Root.Close() }()
-	if err := CopyRootDirectoryContents(content.Root, workspaceRoot); err != nil {
+	if err := CopyRootDirectoryContentsContext(ctx, content.Root, workspaceRoot); err != nil {
 		return fmt.Errorf("prepare workspace %s failed: copy file workspace content: %w", w.workspace.Name, err)
 	}
 	return nil
@@ -65,6 +66,9 @@ func FileWorkspaceContentRoot(config *appconfig.Config, workspace domain.Workspa
 	}
 	if mount != nil {
 		return "", domain.ClassifyError(domain.ErrInvalidArgument, "mounted workspaces do not have managed file content", nil)
+	}
+	if workspace.SnapshotID != "" {
+		return transientSnapshotContentRoot(config, workspace.SnapshotID)
 	}
 	workspaceID := strings.TrimSpace(workspace.ID)
 	if workspaceID == "" {
@@ -114,6 +118,9 @@ func ValidateFileWorkspaceConfig(config *appconfig.Config, workspaceID, configJS
 }
 
 func OpenFileWorkspaceContent(config *appconfig.Config, workspace domain.WorkspaceConfig) (FileWorkspaceContent, error) {
+	if workspace.SnapshotID != "" {
+		return openTransientFileContent(config, workspace)
+	}
 	absRoot, err := FileWorkspaceContentRoot(config, workspace)
 	if err != nil {
 		return FileWorkspaceContent{}, err
@@ -231,20 +238,35 @@ func EnsureRootParentDir(root *os.Root, relPath string) error {
 	return nil
 }
 
+// CopyRootDirectoryContents is retained for non-request callers.
 func CopyRootDirectoryContents(srcRoot *os.Root, dstDir string) error {
+	return CopyRootDirectoryContentsContext(context.Background(), srcRoot, dstDir)
+}
+
+// CopyRootDirectoryContentsContext copies regular files and directories with
+// independent write semantics. Symlinks and special files are rejected.
+func CopyRootDirectoryContentsContext(ctx context.Context, srcRoot *os.Root, dstDir string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	entries, err := fs.ReadDir(srcRoot.FS(), ".")
 	if err != nil {
 		return fmt.Errorf("read source workspace dir: %w", err)
 	}
 	for _, entry := range entries {
-		if err := copyRootWorkspaceEntry(srcRoot, entry.Name(), filepath.Join(dstDir, entry.Name())); err != nil {
+		if err := CopyRootEntry(ctx, srcRoot, entry.Name(), filepath.Join(dstDir, entry.Name())); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func copyRootWorkspaceEntry(srcRoot *os.Root, relPath, dst string) error {
+// CopyRootEntry copies one entry under srcRoot, replacing its destination.
+// It follows the same file type and cancellation contract as directory copying.
+func CopyRootEntry(ctx context.Context, srcRoot *os.Root, relPath, dst string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	cleanPath, err := CleanRelativePath(relPath, false)
 	if err != nil {
 		return err
@@ -256,10 +278,10 @@ func copyRootWorkspaceEntry(srcRoot *os.Root, relPath, dst string) error {
 	}
 	switch mode := info.Mode(); {
 	case mode.IsDir():
-		if err := os.RemoveAll(dst); err != nil {
+		if err := RemoveOwnedDirectory(dst); err != nil {
 			return fmt.Errorf("remove destination workspace directory %s: %w", dst, err)
 		}
-		if err := os.MkdirAll(dst, mode.Perm()); err != nil {
+		if err := os.MkdirAll(dst, mode.Perm()|0o700); err != nil {
 			return fmt.Errorf("create destination workspace directory %s: %w", dst, err)
 		}
 		entries, err := fs.ReadDir(srcRoot.FS(), cleanPath)
@@ -267,34 +289,28 @@ func copyRootWorkspaceEntry(srcRoot *os.Root, relPath, dst string) error {
 			return fmt.Errorf("read source workspace directory %s: %w", cleanPath, err)
 		}
 		for _, entry := range entries {
-			if err := copyRootWorkspaceEntry(srcRoot, filepath.ToSlash(filepath.Join(cleanPath, entry.Name())), filepath.Join(dst, entry.Name())); err != nil {
+			if err := CopyRootEntry(ctx, srcRoot, filepath.ToSlash(filepath.Join(cleanPath, entry.Name())), filepath.Join(dst, entry.Name())); err != nil {
 				return err
 			}
 		}
-		return nil
+		return os.Chmod(dst, mode.Perm())
 	case mode.Type() == os.ModeSymlink:
 		return fmt.Errorf("file workspace symlink %s is not supported", cleanPath)
-	default:
+	case mode.IsRegular():
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			return fmt.Errorf("create destination workspace file parent %s: %w", filepath.Dir(dst), err)
+			return err
 		}
-		if err := os.RemoveAll(dst); err != nil {
-			return fmt.Errorf("remove destination workspace file %s: %w", dst, err)
+		if err := RemoveOwnedDirectory(dst); err != nil {
+			return err
 		}
-		srcFile, err := srcRoot.Open(cleanPath)
+		srcFile, err := openWorkspaceCopySource(srcRoot, cleanPath)
 		if err != nil {
 			return fmt.Errorf("open source workspace file %s: %w", cleanPath, err)
 		}
-		defer func() { _ = srcFile.Close() }()
-		dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode.Perm())
-		if err != nil {
-			return fmt.Errorf("create destination workspace file %s: %w", dst, err)
-		}
-		defer func() { _ = dstFile.Close() }()
-		if _, err := io.Copy(dstFile, srcFile); err != nil {
-			return fmt.Errorf("copy workspace file %s to %s: %w", cleanPath, dst, err)
-		}
-		return nil
+		copyErr := copyWorkspaceFile(ctx, srcFile, dst, mode.Perm(), cloneWorkspaceFile)
+		return errors.Join(copyErr, srcFile.Close())
+	default:
+		return fmt.Errorf("file workspace entry %s has unsupported type %s", cleanPath, mode.Type())
 	}
 }
 

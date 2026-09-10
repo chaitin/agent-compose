@@ -807,13 +807,13 @@ func (concurrentK8sExecutor) StreamWithContext(_ context.Context, options remote
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 200; i++ {
-			_, _ = options.Stdout.Write([]byte(fmt.Sprintf("out-%d\n", i)))
+			_, _ = fmt.Fprintf(options.Stdout, "out-%d\n", i)
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 200; i++ {
-			_, _ = options.Stderr.Write([]byte(fmt.Sprintf("err-%d\n", i)))
+			_, _ = fmt.Fprintf(options.Stderr, "err-%d\n", i)
 		}
 	}()
 	wg.Wait()

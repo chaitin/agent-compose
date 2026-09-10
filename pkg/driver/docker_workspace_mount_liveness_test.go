@@ -29,7 +29,7 @@ func TestDockerWorkspaceMountLivenessSurvivesUnavailableSource(t *testing.T) {
 					}
 					self := containerapi.InspectResponse{Mounts: []containerapi.MountPoint{{Type: mountapi.TypeBind, Source: "/engine/source", Destination: source}}}
 					dockerClient := workspaceDockerClient(t, "1.44", self)
-					runtime := &dockerRuntime{config: config}
+					runtime := &dockerRuntime{config: config, workspaceProcess: testContainerizedDockerWorkspaceProcess}
 					before, err := runtime.dockerRuntimeMounts(context.Background(), dockerClient, sandbox)
 					if err != nil {
 						t.Fatal(err)
@@ -82,7 +82,7 @@ func TestDockerWorkspaceMountLivenessStillRejectsStaleManifest(t *testing.T) {
 	if err := os.RemoveAll(source); err != nil {
 		t.Fatal(err)
 	}
-	runtime := &dockerRuntime{config: config}
+	runtime := &dockerRuntime{config: config, workspaceProcess: testContainerizedDockerWorkspaceProcess}
 	for _, field := range []string{"source", "readonly", "extra mount"} {
 		t.Run(field, func(t *testing.T) {
 			changed := manifest

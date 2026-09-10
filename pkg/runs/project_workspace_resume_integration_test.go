@@ -128,10 +128,7 @@ func TestIntegrationProjectLocalWorkspaceExistingAndNewSandboxState(t *testing.T
 		t.Fatalf("run A driver provisioning = status %q timestamp %v, want ready timestamp %v", driver.starts[0].provisioningStatus, driver.starts[0].readyAt, readyAtA)
 	}
 	snapshotRootA := projectWorkspaceSnapshotRoot(t, config, &workspaceA)
-	snapshotManifestA := mustProjectWorkspaceManifest(t, snapshotRootA)
-	if !projectWorkspaceSnapshotContentsEqual(snapshotManifestA, driver.starts[0].manifest) {
-		t.Fatalf("run A source snapshot differs from provisioned workspace:\n got: %#v\nwant: %#v", snapshotManifestA, driver.starts[0].manifest)
-	}
+	assertProjectWorkspaceSnapshotReleased(t, snapshotRootA)
 
 	workspaceRootA := sandboxA.Summary.WorkspacePath
 	writeProjectWorkspaceFile(t, filepath.Join(workspaceRootA, "editable.txt"), "user edit\n", 0o600)
@@ -164,9 +161,7 @@ func TestIntegrationProjectLocalWorkspaceExistingAndNewSandboxState(t *testing.T
 	writeProjectWorkspaceFile(t, filepath.Join(sourceRoot, "source-v2.txt"), "new source v2 file\n", 0o644)
 	revisionV2 := saveProjectWorkspaceRevision(t, projectWorkspaceStoreHarness{Ctx: ctx, Store: configDB}, projectID, "v2")
 	upsertProjectWorkspaceAgent(t, projectWorkspaceStoreHarness{Ctx: ctx, Store: configDB}, projectWorkspaceAgentSpec{Project: project, AgentID: agentID, Revision: revisionV2.Revision})
-	if got := mustProjectWorkspaceManifest(t, snapshotRootA); !reflect.DeepEqual(got, snapshotManifestA) {
-		t.Fatalf("run A source snapshot changed after project source v2 update:\n got: %#v\nwant: %#v", got, snapshotManifestA)
-	}
+	assertProjectWorkspaceSnapshotReleased(t, snapshotRootA)
 
 	reused, reusedExecErr, reusedErr := controller.RunProjectAgent(ctx, runs.RunAgentRequest{
 		ProjectID:       projectID,
@@ -259,10 +254,7 @@ func TestIntegrationProjectLocalWorkspaceExistingAndNewSandboxState(t *testing.T
 	assertProjectWorkspaceManifestMissing(t, startB.manifest, "generated")
 	assertProjectWorkspaceManifestMissing(t, startB.manifest, "generated/result.txt")
 	assertProjectWorkspaceManifestMissing(t, startB.manifest, "result-link")
-	snapshotManifestB := mustProjectWorkspaceManifest(t, projectWorkspaceSnapshotRoot(t, config, startB.workspace))
-	if !projectWorkspaceSnapshotContentsEqual(snapshotManifestB, startB.manifest) {
-		t.Fatalf("run B source snapshot differs from provisioned workspace:\n got: %#v\nwant: %#v", snapshotManifestB, startB.manifest)
-	}
+	assertProjectWorkspaceSnapshotReleased(t, projectWorkspaceSnapshotRoot(t, config, startB.workspace))
 	if _, err := sandboxStore.GetSandbox(ctx, runB.SandboxID); err == nil {
 		t.Fatalf("new run B sandbox %q still exists after REMOVE_ON_COMPLETION", runB.SandboxID)
 	}
@@ -288,6 +280,11 @@ func TestIntegrationProjectLocalWorkspaceExistingAndNewSandboxState(t *testing.T
 	if len(driver.stopped) != 3 || driver.stopped[0] != runA.SandboxID || driver.stopped[1] != runA.SandboxID || driver.stopped[2] != runB.SandboxID {
 		t.Fatalf("driver stop order = %#v, want [%q %q %q]", driver.stopped, runA.SandboxID, runA.SandboxID, runB.SandboxID)
 	}
+	entries, err := os.ReadDir(filepath.Join(config.DataRoot, "workspace-snapshots"))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("new/reused runs leaked transient generations: %v %v", entries, err)
+	}
+
 }
 
 const projectWorkspaceRevisionSpec = `{
@@ -468,6 +465,7 @@ func projectWorkspaceSnapshotRoot(t *testing.T, config *appconfig.Config, worksp
 		Name:       workspace.Name,
 		Type:       workspace.Type,
 		ConfigJSON: workspace.ConfigJSON,
+		SnapshotID: workspace.SnapshotID,
 	})
 	if err != nil {
 		t.Fatalf("resolve workspace snapshot root: %v", err)
@@ -531,18 +529,9 @@ func containsProjectWorkspaceSandboxID(ids []string, want string) bool {
 	return false
 }
 
-func projectWorkspaceSnapshotContentsEqual(left, right []testutil.WorkspaceManifestEntry) bool {
-	left = append([]testutil.WorkspaceManifestEntry(nil), left...)
-	right = append([]testutil.WorkspaceManifestEntry(nil), right...)
-	for i := range left {
-		if left[i].Path == "." {
-			left[i].Mode = 0
-		}
+func assertProjectWorkspaceSnapshotReleased(t *testing.T, root string) {
+	t.Helper()
+	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Ready snapshot should be released, stat = %v", err)
 	}
-	for i := range right {
-		if right[i].Path == "." {
-			right[i].Mode = 0
-		}
-	}
-	return reflect.DeepEqual(left, right)
 }

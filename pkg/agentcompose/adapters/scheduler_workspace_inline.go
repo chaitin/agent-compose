@@ -3,14 +3,16 @@ package adapters
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/chaitin/agent-compose/internal/projects"
 	"github.com/chaitin/agent-compose/pkg/compose"
-	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	"github.com/chaitin/agent-compose/pkg/sources"
@@ -120,19 +122,10 @@ func inlineGitWorkspaceConfig(workspaceID string, spec *compose.WorkspaceSpec) (
 	}, nil
 }
 
-// materializeInlineFileWorkspace resets and repopulates the shared content
-// directory for an agent's inline file workspace (keyed by the stable
-// inlineWorkspaceID, not a per-run id, since scheduler sandboxes reuse and
-// reference the same agent workspace across runs). Concurrent scheduler
-// calls for the same agent (parallel triggers, or scheduler.shell/exec/agent
-// racing each other) can reach Ensure at the same time, so the reset+copy is
-// serialized per workspace id to prevent one call's CopyRootDirectoryContents
-// from reading a directory another call is concurrently RemoveAll-ing,
-// which would otherwise surface as intermittent ENOENT failures or leave the
-// shared directory with interleaved content from two different callers.
-func (r *SchedulerSandboxRunner) materializeInlineFileWorkspace(ctx context.Context, agentDefinition *domain.AgentDefinition, workspaceID string, spec *compose.WorkspaceSpec) (domain.WorkspaceConfig, error) {
-	unlock := r.inlineWorkspaceLocks.Lock(workspaceID)
-	defer unlock()
+// materializeInlineFileWorkspace creates an independently owned generation for
+// each preparation. The logical workspace ID remains stable for sticky reuse,
+// while concurrent sandboxes never overwrite or release each other's source.
+func (r *SchedulerSandboxRunner) materializeInlineFileWorkspace(ctx context.Context, agentDefinition *domain.AgentDefinition, workspaceID string, spec *compose.WorkspaceSpec) (result domain.WorkspaceConfig, retErr error) {
 	projectID := strings.TrimSpace(agentDefinition.ProjectID)
 	if projectID == "" {
 		return domain.WorkspaceConfig{}, fmt.Errorf("file workspace requires a project-managed agent")
@@ -159,9 +152,6 @@ func (r *SchedulerSandboxRunner) materializeInlineFileWorkspace(ctx context.Cont
 	if _, err := workspaces.ValidateFileWorkspaceConfig(r.Config, workspaceID, configJSON); err != nil {
 		return domain.WorkspaceConfig{}, err
 	}
-	if err := resetInlineFileWorkspaceContent(r.Config, workspaceID); err != nil {
-		return domain.WorkspaceConfig{}, err
-	}
 	config := domain.WorkspaceConfig{
 		ID:         workspaceID,
 		Name:       firstNonEmpty(strings.TrimSpace(spec.Name), workspaceID),
@@ -169,6 +159,15 @@ func (r *SchedulerSandboxRunner) materializeInlineFileWorkspace(ctx context.Cont
 		ConfigJSON: configJSON,
 		Comment:    "agent yaml workspace snapshot",
 	}
+	config, err = workspaces.CreateTransientFileSnapshot(ctx, r.Config, config)
+	if err != nil {
+		return domain.WorkspaceConfig{}, err
+	}
+	defer func() {
+		if retErr != nil {
+			retErr = errors.Join(retErr, workspaces.ReleaseTransientSnapshot(context.WithoutCancel(ctx), r.Config, toSandboxWorkspaceSnapshot(config)))
+		}
+	}()
 	content, err := workspaces.OpenFileWorkspaceContent(r.Config, config)
 	if err != nil {
 		return domain.WorkspaceConfig{}, err
@@ -190,24 +189,16 @@ func (r *SchedulerSandboxRunner) materializeInlineFileWorkspace(ctx context.Cont
 			return domain.WorkspaceConfig{}, fmt.Errorf("create agent workspace target %s: %w", target, err)
 		}
 	}
-	if err := workspaces.CopyRootDirectoryContents(sourceRoot, destination); err != nil {
+	if err := workspaces.CopyRootDirectoryContentsContext(ctx, sourceRoot, destination); err != nil {
 		return domain.WorkspaceConfig{}, fmt.Errorf("materialize agent workspace snapshot: %w", err)
 	}
 	return config, nil
 }
 
-func resetInlineFileWorkspaceContent(config *appconfig.Config, workspaceID string) error {
-	dataRoot, err := workspaces.OpenFileWorkspaceDataRoot(config)
-	if err != nil {
-		return err
+func (r *SchedulerSandboxRunner) releaseUnusedSnapshot(ctx context.Context, workspace *domain.SandboxWorkspace) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if err := workspaces.ReleaseUnusedTransientSnapshot(cleanupCtx, r.Config, r.Store, workspace); err != nil {
+		slog.Warn("failed to release scheduler workspace snapshot", "error", err)
 	}
-	defer func() { _ = dataRoot.Close() }()
-	relRoot, err := workspaces.FileWorkspaceContentRelRoot(workspaceID)
-	if err != nil {
-		return err
-	}
-	if err := dataRoot.RemoveAll(relRoot); err != nil {
-		return fmt.Errorf("reset agent workspace snapshot %s: %w", workspaceID, err)
-	}
-	return nil
 }

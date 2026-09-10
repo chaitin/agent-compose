@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -49,8 +50,9 @@ type Resolver struct {
 }
 
 type ResolvedSkill struct {
-	Name     string
-	LocalDir string
+	Name        string
+	LocalDir    string
+	Fingerprint string
 }
 
 func NewResolver(config *appconfig.Config) Resolver {
@@ -73,33 +75,52 @@ func NewResolver(config *appconfig.Config) Resolver {
 	}
 }
 
+// Resolve resolves artifacts without retaining them for a later consumer.
+// Use WithResolved when materializing their contents concurrently with cache GC.
 func (r Resolver) Resolve(ctx context.Context, specs []domain.AgentSkill) ([]ResolvedSkill, error) {
+	var resolved []ResolvedSkill
+	err := r.WithResolved(ctx, specs, func(skills []ResolvedSkill) error { resolved = skills; return nil })
+	return resolved, err
+}
+
+// WithResolved protects artifacts from cache pruning until consume has finished
+// copying them into sandbox-owned storage. It creates no persistent cache pin.
+func (r Resolver) WithResolved(ctx context.Context, specs []domain.AgentSkill, consume func([]ResolvedSkill) error) error {
+	if consume == nil {
+		return fmt.Errorf("resolved skills consumer is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(specs) == 0 {
-		return nil, nil
+		return consume(nil)
 	}
 	if err := os.MkdirAll(r.CacheRoot, 0o755); err != nil {
-		return nil, fmt.Errorf("create skills cache root: %w", err)
+		return fmt.Errorf("create skills cache root: %w", err)
 	}
-	rootLock, err := lockSkillCacheRoot(r.CacheRoot, syscall.LOCK_SH)
+	unlock, err := lockSkillCacheFile(ctx, filepath.Join(r.CacheRoot, cacheRootLockName), syscall.LOCK_SH)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	defer rootLock()
+	defer unlock()
 	resolved := make([]ResolvedSkill, 0, len(specs))
 	for _, spec := range domain.NormalizeAgentSkills(specs) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		current, err := r.resolveOne(ctx, spec)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		resolved = append(resolved, current)
 	}
-	return resolved, nil
+	return consume(resolved)
 }
 
 func (r Resolver) Projected(skills []ResolvedSkill) []execution.ResolvedAgentSkill {
 	out := make([]execution.ResolvedAgentSkill, 0, len(skills))
 	for _, skill := range skills {
-		out = append(out, execution.ResolvedAgentSkill{Name: skill.Name, LocalDir: skill.LocalDir})
+		out = append(out, execution.ResolvedAgentSkill{Name: skill.Name, LocalDir: skill.LocalDir, Fingerprint: skill.Fingerprint})
 	}
 	return out
 }
@@ -111,7 +132,7 @@ func (r Resolver) resolveOne(ctx context.Context, spec domain.AgentSkill) (Resol
 		if spec.Format == sources.FormatZIP {
 			return r.resolveZip(ctx, spec)
 		}
-		return r.resolveFile(spec)
+		return r.resolveFile(ctx, spec)
 	case sources.ProviderGit:
 		return r.resolveGit(ctx, spec)
 	case sources.ProviderHTTP:
@@ -124,7 +145,7 @@ func (r Resolver) resolveOne(ctx context.Context, spec domain.AgentSkill) (Resol
 	}
 }
 
-func (r Resolver) resolveFile(spec domain.AgentSkill) (ResolvedSkill, error) {
+func (r Resolver) resolveFile(ctx context.Context, spec domain.AgentSkill) (ResolvedSkill, error) {
 	sourceDir := strings.TrimSpace(spec.Path)
 	if sourceDir == "" {
 		return ResolvedSkill{}, fmt.Errorf("skill %s file path is required", spec.Name)
@@ -132,23 +153,35 @@ func (r Resolver) resolveFile(spec domain.AgentSkill) (ResolvedSkill, error) {
 	if err := r.validateLocalSource(spec, sourceDir); err != nil {
 		return ResolvedSkill{}, err
 	}
-	key, err := directoryFingerprint(sourceDir)
+	key, err := execution.FingerprintAgentSkill(ctx, sourceDir)
 	if err != nil {
 		return ResolvedSkill{}, fmt.Errorf("fingerprint skill %s: %w", spec.Name, err)
 	}
-	dst := filepath.Join(r.CacheRoot, "file-"+key)
-	if err := ensureCachedDir(dst, func(tmp string) error {
-		return copyDir(sourceDir, tmp)
+	dst := filepath.Join(r.CacheRoot, "file-v2-"+key)
+	content := filepath.Join(dst, "content")
+	if err := ensureCachedDir(ctx, dst, func(tmp string) error {
+		staged := filepath.Join(tmp, "content")
+		if err := copyDir(ctx, sourceDir, staged); err != nil {
+			return err
+		}
+		fingerprint, err := execution.FingerprintAgentSkill(ctx, staged)
+		if err != nil {
+			return err
+		}
+		if fingerprint != key {
+			return fmt.Errorf("skill %s changed while caching", spec.Name)
+		}
+		return nil
 	}); err != nil {
 		return ResolvedSkill{}, err
 	}
-	if err := validateSkillDir(spec.Name, dst); err != nil {
+	if err := validateSkillDir(spec.Name, content); err != nil {
 		return ResolvedSkill{}, err
 	}
 	if err := touchArtifactManifest(dst, "file", key); err != nil {
 		return ResolvedSkill{}, err
 	}
-	return ResolvedSkill{Name: spec.Name, LocalDir: dst}, nil
+	return ResolvedSkill{Name: spec.Name, LocalDir: content, Fingerprint: key}, nil
 }
 
 func (r Resolver) resolveGit(ctx context.Context, spec domain.AgentSkill) (ResolvedSkill, error) {
@@ -177,7 +210,7 @@ func (r Resolver) resolveGit(ctx context.Context, spec domain.AgentSkill) (Resol
 	}
 	key := cacheKey("git", gitCacheURL(rawURL), resolved.Commit, spec.Path)
 	dst := filepath.Join(r.CacheRoot, key)
-	if err := ensureCachedDir(dst, func(tmp string) error {
+	if err := ensureCachedDir(ctx, dst, func(tmp string) error {
 		cloneDir := filepath.Join(tmp, "repo")
 		if err := gitClient.CheckoutCommit(ctx, source, resolved.Commit, cloneDir); err != nil {
 			return err
@@ -192,7 +225,7 @@ func (r Resolver) resolveGit(ctx context.Context, spec domain.AgentSkill) (Resol
 			}
 		}
 		content := filepath.Join(tmp, "content")
-		return copyDir(src, content)
+		return copyDir(ctx, src, content)
 	}); err != nil {
 		return ResolvedSkill{}, err
 	}
@@ -203,7 +236,11 @@ func (r Resolver) resolveGit(ctx context.Context, spec domain.AgentSkill) (Resol
 	if err := touchArtifactManifest(dst, "git", resolved.Commit); err != nil {
 		return ResolvedSkill{}, err
 	}
-	return ResolvedSkill{Name: spec.Name, LocalDir: content}, nil
+	fingerprint, err := execution.FingerprintAgentSkill(ctx, content)
+	if err != nil {
+		return ResolvedSkill{}, err
+	}
+	return ResolvedSkill{Name: spec.Name, LocalDir: content, Fingerprint: fingerprint}, nil
 }
 
 func isHTTPURL(raw string) bool {
@@ -259,17 +296,17 @@ func (r Resolver) resolveZip(ctx context.Context, spec domain.AgentSkill) (Resol
 	if err != nil {
 		return ResolvedSkill{}, fmt.Errorf("hash skill %s zip: %w", spec.Name, err)
 	}
-	key := cacheKey("zip", hash, spec.Path)
+	key := cacheKey("zip-v2", hash, spec.Path)
 	dst := filepath.Join(r.CacheRoot, key)
-	if err := ensureCachedDir(dst, func(tmp string) error {
-		return extractZip(archivePath, tmp)
+	if err := ensureCachedDir(ctx, dst, func(tmp string) error {
+		return extractZip(archivePath, filepath.Join(tmp, "content"))
 	}); err != nil {
 		return ResolvedSkill{}, err
 	}
-	content := dst
+	content := filepath.Join(dst, "content")
 	if spec.URL != "" && spec.Path != "" {
 		var err error
-		content, err = safeArtifactSubdir(dst, spec.Path)
+		content, err = safeArtifactSubdir(content, spec.Path)
 		if err != nil {
 			return ResolvedSkill{}, err
 		}
@@ -280,7 +317,11 @@ func (r Resolver) resolveZip(ctx context.Context, spec domain.AgentSkill) (Resol
 	if err := touchArtifactManifest(dst, "zip", hash); err != nil {
 		return ResolvedSkill{}, err
 	}
-	return ResolvedSkill{Name: spec.Name, LocalDir: content}, nil
+	fingerprint, err := execution.FingerprintAgentSkill(ctx, content)
+	if err != nil {
+		return ResolvedSkill{}, err
+	}
+	return ResolvedSkill{Name: spec.Name, LocalDir: content, Fingerprint: fingerprint}, nil
 }
 
 func safeArtifactSubdir(root, subdir string) (string, error) {
@@ -564,16 +605,12 @@ func isPrivateIP(ip net.IP) bool {
 	return false
 }
 
-func ensureCachedDir(dst string, fill func(tmp string) error) error {
-	lock, err := os.OpenFile(dst+".lock", os.O_CREATE|os.O_RDWR, 0o644)
+func ensureCachedDir(ctx context.Context, dst string, fill func(tmp string) error) (retErr error) {
+	unlock, err := lockSkillCacheFile(ctx, dst+".lock", syscall.LOCK_EX)
 	if err != nil {
-		return fmt.Errorf("open skills cache lock: %w", err)
+		return err
 	}
-	defer func() { _ = lock.Close() }()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		return fmt.Errorf("lock skills cache: %w", err)
-	}
-	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
+	defer unlock()
 	if _, err := os.Stat(filepath.Join(dst, ".ready")); err == nil {
 		return nil
 	}
@@ -581,14 +618,17 @@ func ensureCachedDir(dst string, fill func(tmp string) error) error {
 	if err != nil {
 		return fmt.Errorf("create skills cache temp dir: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(tmp) }()
+	defer func() { retErr = errors.Join(retErr, workspaces.RemoveOwnedDirectory(tmp)) }()
 	if err := fill(tmp); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(tmp, ".ready"), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 		return fmt.Errorf("write skills ready flag: %w", err)
 	}
-	if err := os.RemoveAll(dst); err != nil {
+	if err := workspaces.RemoveOwnedDirectory(dst); err != nil {
 		return fmt.Errorf("replace skills cache dir: %w", err)
 	}
 	if err := os.Rename(tmp, dst); err != nil {
@@ -597,19 +637,34 @@ func ensureCachedDir(dst string, fill func(tmp string) error) error {
 	return nil
 }
 
-func lockSkillCacheRoot(root string, mode int) (func(), error) {
-	lock, err := os.OpenFile(filepath.Join(root, cacheRootLockName), os.O_CREATE|os.O_RDWR, 0o600)
+func lockSkillCacheFile(ctx context.Context, path string, mode int) (func(), error) {
+	lock, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("open skills cache root lock: %w", err)
+		return nil, fmt.Errorf("open skills cache lock: %w", err)
 	}
-	if err := syscall.Flock(int(lock.Fd()), mode); err != nil {
-		_ = lock.Close()
-		return nil, fmt.Errorf("lock skills cache root: %w", err)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			_ = lock.Close()
+			return nil, err
+		}
+		err = syscall.Flock(int(lock.Fd()), mode|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			_ = lock.Close()
+			return nil, fmt.Errorf("lock skills cache: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			_ = lock.Close()
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
 	}
-	return func() {
-		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-		_ = lock.Close()
-	}, nil
+	return func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); _ = lock.Close() }, nil
 }
 
 func touchArtifactManifest(root, source, identity string) error {
@@ -650,7 +705,7 @@ func touchArtifactManifest(root, source, identity string) error {
 	return os.Rename(tmpName, path)
 }
 
-func copyDir(src, dst string) error {
+func copyDir(ctx context.Context, src, dst string) error {
 	root, err := os.OpenRoot(src)
 	if err != nil {
 		return err
@@ -659,7 +714,14 @@ func copyDir(src, dst string) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
-	return workspaces.CopyRootDirectoryContents(root, dst)
+	if err := workspaces.CopyRootDirectoryContentsContext(ctx, root, dst); err != nil {
+		return err
+	}
+	info, err := root.Stat(".")
+	if err != nil {
+		return err
+	}
+	return os.Chmod(dst, info.Mode().Perm())
 }
 
 func validateSkillDir(expectedName, dir string) error {
@@ -707,45 +769,6 @@ func parseSkillFrontmatter(data []byte) (string, string, error) {
 		}
 	}
 	return name, description, nil
-}
-
-func directoryFingerprint(root string) (string, error) {
-	h := sha256.New()
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("symlink %s is not supported", rel)
-		}
-		_, _ = h.Write([]byte(filepath.ToSlash(rel)))
-		_, _ = h.Write([]byte{0})
-		if entry.IsDir() {
-			return nil
-		}
-		file, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = file.Close() }()
-		_, err = io.Copy(h, file)
-		return err
-	})
-	if err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func fileSHA256(path string) (string, error) {

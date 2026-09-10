@@ -189,7 +189,7 @@ func TestSchedulerSandboxRunnerEnsureResolvesInlineFileWorkspace(t *testing.T) {
 	if snapshot.Type != "file" {
 		t.Fatalf("resolved workspace type = %q, want file", snapshot.Type)
 	}
-	contentRoot, err := workspaces.FileWorkspaceContentRoot(bridge.config, domain.WorkspaceConfig{ID: snapshot.ID, Type: "file", ConfigJSON: snapshot.ConfigJSON})
+	contentRoot, err := workspaces.FileWorkspaceContentRoot(bridge.config, domain.WorkspaceConfig{ID: snapshot.ID, Type: "file", ConfigJSON: snapshot.ConfigJSON, SnapshotID: snapshot.SnapshotID})
 	if err != nil {
 		t.Fatalf("resolve materialized file workspace content root: %v", err)
 	}
@@ -202,16 +202,8 @@ func TestSchedulerSandboxRunnerEnsureResolvesInlineFileWorkspace(t *testing.T) {
 	}
 }
 
-// TestSchedulerSandboxRunnerConcurrentInlineFileWorkspaceMaterializationIsSerialized
-// covers a race a reviewer flagged on this fix: materializeInlineFileWorkspace
-// resets and repopulates a shared content directory keyed by the agent's
-// stable inlineWorkspaceID (not a per-run id), on every Ensure call.
-// Scheduler calls for the same agent can run concurrently (parallel
-// triggers, or scheduler.shell/exec/agent racing each other), so without
-// serialization one goroutine's CopyRootDirectoryContents can read a
-// directory another goroutine is concurrently RemoveAll-ing, surfacing as
-// ENOENT. Every concurrent Ensure call here must succeed.
-func TestSchedulerSandboxRunnerConcurrentInlineFileWorkspaceMaterializationIsSerialized(t *testing.T) {
+// Concurrent preparations have distinct physical generations and stable logical identity.
+func TestSchedulerSandboxRunnerConcurrentInlineFileWorkspaceGenerationsAreIndependent(t *testing.T) {
 	ctx := context.Background()
 	bridge, driver := newTestSandboxRPCBridge(t)
 	ensurer := &recordingSchedulerWorkspaceEnsurer{}
@@ -267,8 +259,9 @@ func TestSchedulerSandboxRunnerConcurrentInlineFileWorkspaceMaterializationIsSer
 	const callerCount = 16
 	const timeout = 10 * time.Second
 	type result struct {
-		index int
-		err   error
+		index    int
+		snapshot *domain.SandboxWorkspace
+		err      error
 	}
 	results := make(chan result, callerCount)
 	start := make(chan struct{})
@@ -280,56 +273,57 @@ func TestSchedulerSandboxRunnerConcurrentInlineFileWorkspaceMaterializationIsSer
 			<-start
 			runCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
-			_, _, err := runner.inlineWorkspaceSnapshot(runCtx, agentDefinition, spec, driverpkg.RuntimeDriverDocker)
-			results <- result{index: index, err: err}
+			snapshot, _, err := runner.inlineWorkspaceSnapshot(runCtx, agentDefinition, spec, driverpkg.RuntimeDriverDocker)
+			results <- result{index: index, snapshot: snapshot, err: err}
 		}(index)
 	}
 	ready.Wait()
 	close(start)
 
+	snapshots := make([]*domain.SandboxWorkspace, 0, callerCount)
 	for i := 0; i < callerCount; i++ {
 		select {
 		case r := <-results:
 			if r.err != nil {
 				t.Fatalf("concurrent inlineWorkspaceSnapshot call %d returned error: %v, want the shared content directory reset+copy to be serialized", r.index, r.err)
 			}
+			snapshots = append(snapshots, r.snapshot)
 		case <-time.After(timeout):
 			t.Fatalf("timed out waiting for concurrent inlineWorkspaceSnapshot calls (%d/%d returned)", i, callerCount)
 		}
 	}
 
 	workspaceID := inlineWorkspaceID(agentDefinition, "file")
-	contentRoot, err := workspaces.FileWorkspaceContentRoot(bridge.config, domain.WorkspaceConfig{ID: workspaceID, Type: "file", ConfigJSON: workspaces.DefaultFileConfigJSON(bridge.config, workspaceID)})
-	if err != nil {
-		t.Fatalf("resolve materialized file workspace content root: %v", err)
-	}
-	for dir := 0; dir < 8; dir++ {
-		for file := 0; file < 40; file++ {
-			want := strings.Repeat(fmt.Sprintf("dir-%d-file-%d\n", dir, file), 64)
-			got, err := os.ReadFile(filepath.Join(contentRoot, fmt.Sprintf("dir-%d", dir), fmt.Sprintf("file-%d.txt", file)))
-			if err != nil {
-				t.Fatalf("read materialized workspace content dir=%d file=%d: %v", dir, file, err)
+	seen := make(map[string]bool)
+	for _, snapshot := range snapshots {
+		if snapshot.ID != workspaceID || snapshot.SnapshotID == "" || seen[snapshot.SnapshotID] {
+			t.Fatalf("snapshot identity = %#v", snapshot)
+		}
+		seen[snapshot.SnapshotID] = true
+		contentRoot, err := workspaces.FileWorkspaceContentRoot(bridge.config, domain.WorkspaceConfig{ID: workspaceID, Type: "file", ConfigJSON: snapshot.ConfigJSON, SnapshotID: snapshot.SnapshotID})
+		if err != nil {
+			t.Fatalf("resolve materialized file workspace content root: %v", err)
+		}
+		for dir := 0; dir < 8; dir++ {
+			for file := 0; file < 40; file++ {
+				want := strings.Repeat(fmt.Sprintf("dir-%d-file-%d\n", dir, file), 64)
+				got, err := os.ReadFile(filepath.Join(contentRoot, fmt.Sprintf("dir-%d", dir), fmt.Sprintf("file-%d.txt", file)))
+				if err != nil {
+					t.Fatalf("read materialized workspace content dir=%d file=%d: %v", dir, file, err)
+				}
+				if string(got) != want {
+					t.Fatalf("materialized workspace content dir=%d file=%d = %q, want %q", dir, file, got, want)
+				}
 			}
-			if string(got) != want {
-				t.Fatalf("materialized workspace content dir=%d file=%d = %q, want %q", dir, file, got, want)
-			}
+		}
+		if err := workspaces.ReleaseTransientSnapshot(ctx, bridge.config, snapshot); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
 
-// TestSchedulerSandboxRunnerConcurrentEnsureSerializesFileWorkspaceReadAgainstMaterialize
-// covers a second race a reviewer flagged after the first fix landed: the
-// inlineWorkspaceLocks lock only spanned materializeInlineFileWorkspace's
-// own reset+copy, released as soon as resolveWorkspaceSnapshot returned.
-// Later in Ensure, workspaceEnsurer.Ensure reads that same shared content
-// directory to populate the new sandbox's own workspace path (see
-// pkg/workspaces file workspace Prepare / materializeSessionWorkspace) with
-// no lock held at all. A concurrent Ensure call for the same agent could
-// start resetting/recopying the shared directory while another call's
-// workspaceEnsurer.Ensure was mid-read from it. This exercises the full
-// Ensure path (not just inlineWorkspaceSnapshot) with a real, file-copying
-// WorkspaceEnsurer so that read is actually reached.
-func TestSchedulerSandboxRunnerConcurrentEnsureSerializesFileWorkspaceReadAgainstMaterialize(t *testing.T) {
+// Concurrent full provisioning consumes and releases only its own generation.
+func TestSchedulerSandboxRunnerConcurrentEnsureConsumesIndependentGenerations(t *testing.T) {
 	ctx := context.Background()
 	bridge, driver := newTestSandboxRPCBridge(t)
 	provisioner := workspaces.NewProvisioner(bridge.config, bridge.configDB, bridge.store)
@@ -339,7 +333,7 @@ func TestSchedulerSandboxRunnerConcurrentEnsureSerializesFileWorkspaceReadAgains
 		Store:            bridge.store,
 		ConfigDB:         bridge.configDB,
 		WorkspaceEnsurer: provisioner,
-		Driver:           driver,
+		Driver:           &concurrentInlineWorkspaceDriver{fakeRPCSandboxDriver: driver},
 		Cap:              nil,
 		VolumeResolver:   nil,
 		Streams:          bridge.streams,
@@ -417,6 +411,13 @@ func TestSchedulerSandboxRunnerConcurrentEnsureSerializesFileWorkspaceReadAgains
 	}
 
 	for _, sandbox := range sandboxes {
+		root, err := workspaces.FileWorkspaceContentRoot(bridge.config, domain.WorkspaceConfig{ID: sandbox.Workspace.ID, Type: "file", ConfigJSON: sandbox.Workspace.ConfigJSON, SnapshotID: sandbox.Workspace.SnapshotID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			t.Fatalf("ready generation remains: %v", err)
+		}
 		for dir := 0; dir < dirCount; dir++ {
 			for file := 0; file < fileCount; file++ {
 				want := strings.Repeat(fmt.Sprintf("dir-%d-file-%d\n", dir, file), 64)
@@ -508,4 +509,15 @@ func TestSchedulerSandboxRunnerEnsureReleasesFileWorkspaceLockOnEnsurerPanic(t *
 	case <-time.After(5 * time.Second):
 		t.Fatalf("second Ensure call for the same workspace hung, want the per-workspace lock released after the first call's ensurer panic")
 	}
+}
+
+type concurrentInlineWorkspaceDriver struct {
+	*fakeRPCSandboxDriver
+	mu sync.Mutex
+}
+
+func (d *concurrentInlineWorkspaceDriver) StartSandboxVM(ctx context.Context, sandbox *domain.Sandbox) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.fakeRPCSandboxDriver.StartSandboxVM(ctx, sandbox)
 }

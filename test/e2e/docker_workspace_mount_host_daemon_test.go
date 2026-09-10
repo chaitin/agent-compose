@@ -88,7 +88,9 @@ func TestE2EDockerWorkspaceMount(t *testing.T) {
 			copied, total := countWorkspaceMountE2ECopies(t, dataRoot, fixture)
 			wantCopies := 0
 			if tc.mode == "" {
-				wantCopies = 2 * len(fixture)
+				// Ready workspaces retain only their private copy; the run input
+				// has been released after successful provisioning.
+				wantCopies = len(fixture)
 			}
 			if copied != wantCopies {
 				t.Fatalf("source copies in daemon data root = %d, want %d", copied, wantCopies)

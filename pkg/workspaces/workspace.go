@@ -19,10 +19,12 @@ func materializeSessionWorkspace(ctx context.Context, config *appconfig.Config, 
 	workspaceID := strings.TrimSpace(session.WorkspaceID)
 	if session.Workspace != nil && strings.TrimSpace(session.Workspace.ID) != "" {
 		workspace := domain.WorkspaceConfig{
-			ID:         strings.TrimSpace(session.Workspace.ID),
-			Name:       session.Workspace.Name,
-			Type:       session.Workspace.Type,
-			ConfigJSON: session.Workspace.ConfigJSON,
+			ID:            strings.TrimSpace(session.Workspace.ID),
+			Name:          session.Workspace.Name,
+			Type:          session.Workspace.Type,
+			ConfigJSON:    session.Workspace.ConfigJSON,
+			SnapshotID:    session.Workspace.SnapshotID,
+			SnapshotLease: session.Workspace.SnapshotLease,
 		}
 		if workspaceID == "" {
 			session.WorkspaceID = workspace.ID

@@ -35,14 +35,14 @@ func TestDockerWorkspaceContainerSourceMapping(t *testing.T) {
 		{"/writable-layer/source", ""},
 	} {
 		t.Run(test.source, func(t *testing.T) {
-			got, err := dockerWorkspaceContainerSource(self, test.source)
+			got, found, err := dockerContainerBindSource(self, test.source)
 			if test.want == "" {
-				if err == nil {
+				if err == nil && found {
 					t.Fatalf("unmapped container source accepted as %q", got)
 				}
 				return
 			}
-			if err != nil || got != test.want {
+			if err != nil || !found || got != test.want {
 				t.Fatalf("source mapping = %q, %v; want %q", got, err, test.want)
 			}
 		})
@@ -129,7 +129,7 @@ func TestDockerWorkspaceMountUsesExternalMappingAndRecursiveReadOnly(t *testing.
 				}
 				self := containerapi.InspectResponse{Mounts: []containerapi.MountPoint{{Type: mountapi.TypeBind, Source: "/engine/project", Destination: filepath.Dir(source)}}}
 				dockerClient := workspaceDockerClient(t, "1.44", self)
-				runtime := &dockerRuntime{config: config}
+				runtime := &dockerRuntime{config: config, workspaceProcess: testContainerizedDockerWorkspaceProcess}
 				mounts, err := runtime.dockerRuntimeMounts(context.Background(), dockerClient, sandbox)
 				if err != nil {
 					t.Fatal(err)
@@ -171,7 +171,7 @@ func TestDockerWorkspaceReadOnlyRejectsOlderAPI(t *testing.T) {
 	}
 	self := containerapi.InspectResponse{Mounts: []containerapi.MountPoint{{Type: mountapi.TypeBind, Source: "/engine/source", Destination: source}}}
 	dockerClient := workspaceDockerClient(t, "1.43", self)
-	runtime := &dockerRuntime{config: config}
+	runtime := &dockerRuntime{config: config, workspaceProcess: testContainerizedDockerWorkspaceProcess}
 	if _, err := runtime.dockerRuntimeMounts(context.Background(), dockerClient, sandbox); err == nil || !strings.Contains(err.Error(), "1.44") {
 		t.Fatalf("older API readonly error = %v", err)
 	}
@@ -184,8 +184,12 @@ func TestDockerWorkspaceMountRejectsWritableLayerSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	dockerClient := workspaceDockerClient(t, "1.44", containerapi.InspectResponse{})
-	runtime := &dockerRuntime{config: config}
+	runtime := &dockerRuntime{config: config, workspaceProcess: testContainerizedDockerWorkspaceProcess}
 	if _, err := runtime.dockerRuntimeMounts(context.Background(), dockerClient, sandbox); err == nil || !strings.Contains(err.Error(), "writable-layer") {
 		t.Fatalf("writable layer source error = %v", err)
 	}
+}
+
+func testContainerizedDockerWorkspaceProcess() (dockerWorkspaceProcess, error) {
+	return dockerWorkspaceProcess{platform: "linux", hostname: "daemon-container", containerized: true}, nil
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/chaitin/agent-compose/internal/projects"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
+	"github.com/chaitin/agent-compose/pkg/workspaces"
 )
 
 func (r *SchedulerSandboxRunner) reuseCompatibleSchedulerBinding(ctx context.Context, scheduler domain.Scheduler, triggerID, configHash string) (*domain.Sandbox, string, bool, *domain.SchedulerBinding, error) {
@@ -210,7 +211,7 @@ func schedulerRequestSandboxConfigHash(req schedulerRequestSandboxConfigHashRequ
 		JupyterEnabled:      request.JupyterEnabled,
 		ProviderEnvItems:    domain.NormalizeEnvItems(providerEnvItems),
 		EnvItems:            domain.NormalizeEnvItems(envItems),
-		Workspace:           workspace,
+		Workspace:           workspaces.WorkspaceForConfigurationHash(workspace),
 		Driver:              driver,
 		GuestImage:          guestImage,
 		VolumeMounts:        schedulers.NormalizeStickySandboxVolumeMounts(volumeMounts),

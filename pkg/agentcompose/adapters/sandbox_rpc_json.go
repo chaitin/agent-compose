@@ -90,10 +90,19 @@ type sandboxRPCResponse struct {
 }
 
 type sandboxRPCDetail struct {
-	Summary     *sandboxRPCSummary       `json:"summary,omitempty"`
-	EnvItems    []domain.SandboxEnvVar   `json:"envItems,omitempty"`
-	WorkspaceID string                   `json:"workspaceId,omitempty"`
-	Workspace   *domain.SandboxWorkspace `json:"workspace,omitempty"`
+	Summary     *sandboxRPCSummary     `json:"summary,omitempty"`
+	EnvItems    []domain.SandboxEnvVar `json:"envItems,omitempty"`
+	WorkspaceID string                 `json:"workspaceId,omitempty"`
+	Workspace   *sandboxRPCWorkspace   `json:"workspace,omitempty"`
+}
+
+// The RPC contract projects public workspace fields explicitly. The domain
+// model also persists transient ownership and holds a process-local lease.
+type sandboxRPCWorkspace struct {
+	ID         string `json:"id"`
+	Name       string `json:"name,omitempty"`
+	Type       string `json:"type,omitempty"`
+	ConfigJSON string `json:"config_json,omitempty"`
 }
 
 type sandboxRPCSummary struct {
@@ -138,7 +147,11 @@ func sandboxRPCDetailFromDomain(sandbox *domain.Sandbox) *sandboxRPCDetail {
 		}
 		env = append(env, item)
 	}
-	return &sandboxRPCDetail{Summary: sandboxRPCSummaryFromDomain(&sandbox.Summary), EnvItems: env, WorkspaceID: sandbox.WorkspaceID, Workspace: sandbox.Workspace}
+	var workspace *sandboxRPCWorkspace
+	if source := sandbox.Workspace; source != nil {
+		workspace = &sandboxRPCWorkspace{ID: source.ID, Name: source.Name, Type: source.Type, ConfigJSON: source.ConfigJSON}
+	}
+	return &sandboxRPCDetail{Summary: sandboxRPCSummaryFromDomain(&sandbox.Summary), EnvItems: env, WorkspaceID: sandbox.WorkspaceID, Workspace: workspace}
 }
 
 func sandboxRPCSummaryFromDomain(summary *domain.SandboxSummary) *sandboxRPCSummary {

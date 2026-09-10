@@ -69,6 +69,14 @@ mkdir  test  rm  ln  readlink  mountpoint  tail  sleep
 
 仅让基础 Docker sandbox 保持运行不要求 `bash`；但使用 shell cell、runtime `shell` request、runtime SDK `shell` API 或跨 driver Jupyter 时，镜像**必须**安装 `bash`。通用自定义 guest 建议安装它。
 
+Kubernetes 的 agent skills 功能还**必须**提供 `node`、`sh`、`tar` 和
+`flock`（Debian 中由 `util-linux` 提供），以及常规文件工具 `cat`、`mktemp`、
+`mv`、`basename`、`mkdir`、`rm`、`ln`、`readlink`。内容比较仅使用 Node 内置的
+`fs`、`path`、`crypto` 模块。交付时先准备 sandbox 私有、可写的完整版本目录，
+验证归档末尾的随机完成条目，再原子替换 canonical 软链接；`flock` 通过操作系统
+进程锁串行化发布。缺少必要工具时，在替换旧目录之前失败。使用 fake API 和真实
+Linux shell 的传输测试验证此工具合同，不能替代真实集群部署测试。
+
 ### 3.3 固定命令搜索路径
 
 在受管 agent 和 runtime 执行中，`agent-compose` 会注入以下 `PATH`：

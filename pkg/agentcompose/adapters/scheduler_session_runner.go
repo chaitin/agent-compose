@@ -171,6 +171,12 @@ func (r *SchedulerSandboxRunner) resolveSchedulerSandboxConfig(ctx context.Conte
 	if err != nil {
 		return resolvedSchedulerSandboxConfig{}, err
 	}
+	resolved := false
+	defer func() {
+		if !resolved {
+			r.releaseUnusedSnapshot(ctx, workspaceSnapshot)
+		}
+	}()
 	if err := workspaces.ValidateWorkspaceRuntimeDriver(workspaceSnapshot, driver); err != nil {
 		return resolvedSchedulerSandboxConfig{}, err
 	}
@@ -200,6 +206,7 @@ func (r *SchedulerSandboxRunner) resolveSchedulerSandboxConfig(ctx context.Conte
 	if err != nil {
 		return resolvedSchedulerSandboxConfig{}, err
 	}
+	resolved = true
 	return resolvedSchedulerSandboxConfig{
 		AgentDefinition:   agentDefinition,
 		EffectivePolicy:   effectivePolicy,
@@ -271,6 +278,7 @@ func (r *SchedulerSandboxRunner) Ensure(ctx context.Context, scheduler domain.Sc
 	if err != nil {
 		return nil, "", err
 	}
+	defer r.releaseUnusedSnapshot(ctx, cfg.WorkspaceSnapshot)
 	var previousBinding *domain.SchedulerBinding
 	if !cfg.ForceNew {
 		if session, eventType, reused, binding, err := r.reuseCompatibleSchedulerBinding(ctx, scheduler, request.BindingTriggerID, cfg.ConfigHash); err != nil {
@@ -511,20 +519,10 @@ func (r *SchedulerSandboxRunner) resolveWorkspaceSnapshot(ctx context.Context, r
 	return snapshot, workspaceID, nil
 }
 
-// fileWorkspaceReadLock holds the same per-workspace-id lock
-// materializeInlineFileWorkspace uses while resetting and recopying its
-// shared content directory (workspaces/<id>/content under the data root).
-// workspaceEnsurer.Ensure reads that same shared directory (see
-// pkg/workspaces file workspace Prepare) to populate the sandbox's own
-// workspace path, at both sandbox creation (Ensure) and resume
-// (loadOrResumeLocked) time. Without holding this lock across that read, a
-// concurrent Ensure call for the same workspace id could RemoveAll/recopy
-// the shared directory while this read is in flight, surfacing as ENOENT or
-// partial content copied into the sandbox. Settings-managed file presets
-// share this lock key too; their content is static outside of Settings
-// edits, so the extra serialization there is harmless.
+// fileWorkspaceReadLock serializes legacy preset reads. Inline preparations use
+// separate immutable generations and do not share a content directory.
 func (r *SchedulerSandboxRunner) fileWorkspaceReadLock(workspace *domain.SandboxWorkspace) func() {
-	if workspace == nil || workspace.Type != "file" || strings.TrimSpace(workspace.ID) == "" {
+	if workspace == nil || workspace.Type != "file" || workspace.SnapshotID != "" || strings.TrimSpace(workspace.ID) == "" {
 		return func() {}
 	}
 	return r.inlineWorkspaceLocks.Lock(workspace.ID)

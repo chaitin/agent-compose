@@ -434,6 +434,13 @@ func archiveGuestDir(ctx context.Context, destination *io.PipeWriter, hostSrcDir
 }
 
 func writeTarArchive(destination io.Writer, hostSrcDir string) error {
+	return writeTarArchiveWithCompletion(destination, hostSrcDir, "")
+}
+
+// A publication completion entry is written only after the entire source tree
+// was read successfully. A valid tar prefix from a failed producer must never
+// be mistaken for a complete directory by the guest publisher.
+func writeTarArchiveWithCompletion(destination io.Writer, hostSrcDir, completion string) error {
 	writer := tar.NewWriter(destination)
 	walkErr := filepath.WalkDir(hostSrcDir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -488,6 +495,12 @@ func writeTarArchive(destination io.Writer, hostSrcDir string) error {
 	if walkErr != nil {
 		_ = writer.Close()
 		return walkErr
+	}
+	if completion != "" {
+		if err := writer.WriteHeader(&tar.Header{Name: completion, Mode: 0o600, Typeflag: tar.TypeReg}); err != nil {
+			_ = writer.Close()
+			return err
+		}
 	}
 	if err := writer.Close(); err != nil {
 		return err

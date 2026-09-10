@@ -330,7 +330,7 @@ agents:
 
 挂载模式仅支持 `provider: file` 和 Docker runtime。Git 来源及 BoxLite、Microsandbox、Kubernetes runtime 会被拒绝，不会静默回退到复制。项目记录中的来源路径必须指向已存在的目录或 Compose 配置文件。来源必须是项目来源目录内已存在的目录，且在 agent-compose daemon 文件系统中可见。远程 CLI 客户端上的路径不会自动上传。
 
-原生运行 agent-compose daemon 时，支持通过本地 Unix socket 连接运行 Linux 容器的 Docker：Linux 上要求 Docker Engine 名称与本机主机名一致；macOS 上要求 Engine 标识为 Docker Desktop 或 OrbStack。原生进程通过 TCP（包括 localhost）或 SSH 连接、转发 socket，以及其他虚拟机集成都不受支持。agent-compose daemon 运行在容器内时，所连接的 Engine 必须能通过该容器的主机名查询它，来源也必须位于该容器已有的 bind 或 volume 挂载内；包含来源的最深层挂载决定宿主来源路径。仅存在于 daemon 容器可写层中的来源会被拒绝。`DOCKER_HOST_SANDBOX_ROOT` 只转换受管理的 sandbox 路径，不能为外部工作区来源提供映射。
+原生运行 agent-compose daemon 时，支持通过本地 Unix socket 连接运行 Linux 容器的 Docker：Linux 上要求 Docker Engine 名称与本机主机名一致；macOS 上要求 Engine 标识为 Docker Desktop 或 OrbStack。原生进程通过 TCP（包括 localhost）或 SSH 连接、转发 socket，以及其他虚拟机集成都不受支持。agent-compose daemon 运行在容器内时，所连接的 Engine 必须能通过该容器的主机名查询它，来源也必须位于该容器已有的 bind 或 volume 挂载内；包含来源的最深层挂载决定宿主来源路径；tmpfs 等不可分享的嵌套挂载会阻止继续按父目录换算。仅存在于 daemon 容器可写层中的来源会被拒绝。`DOCKER_HOST_SANDBOX_ROOT` 显式转换 `SANDBOX_ROOT` 内的来源，包括位于其中的工作区，但不能为外部工作区来源提供映射。已有 bind volume 和 workspace mount 共用该路径解析实现。已有 bind volume 保留配置宿主路径的行为，workspace mount 额外要求满足上述来源共享保证。
 
 默认的 `read_only: false` 是**实时可写映射**：Agent 的写入、删除和重命名会直接修改源目录，使用同一目录的 sandbox 也会看到变化。多个写入者需要自行协调。`read_only: true` 禁止 guest 通过此映射写入，但宿主对源目录的修改仍然可见，因此不是不可变快照。需要隔离编辑或稳定初始快照时继续使用 `copy`。
 
@@ -338,7 +338,15 @@ agents:
 
 停止、恢复和删除 sandbox 都会保留外部源目录。恢复使用已持久化的来源和交付设置；修改项目不会把已有复制工作区自动转换为挂载。创建或重新启动时，来源缺失或无效会明确报错。Workspace 来源上传/下载 API 继续管理复制模式的 Workspace 预设，不会借此开放已挂载的项目目录。
 
-此选项只控制声明的 Workspace 来源。`~/.codex` 等 Provider home、注入的 Agent skills 和执行日志仍保持原有的逐 sandbox 行为。
+此选项控制声明的 Workspace 来源。其中的 `.codex` 目录遵循工作区模式；sandbox 独立的 `~/.codex` 等 Provider home 则存放私有配置、凭据与历史，继续在 sandbox 之间隔离。
+
+### 自动内容复用
+
+复制模式在 sandbox 私有工作区的 Ready 状态成功持久化后，释放内部 run 输入。等待或失败的准备流程保留重试所需输入；复制模式的工作区预设与外部挂载目录保持不变。文件系统支持时优先使用克隆，否则复制字节，两者都保留可独立修改的文件。旧版本遗留的无标记快照不会被自动删除。
+
+Agent skills 也保持私有可写。准备时比较来源与 sandbox 实际内容，包括可执行权限，未变化的文件保留原位。变化的内容先完整暂存再发布；sandbox 内对技能的修改，会在下次准备时按声明的来源恢复。正确的 Claude skills 链接直接复用。Kubernetes 在传输单份 canonical 内容并维护别名之前检查 guest 内容，避免 daemon 目录未变化却漏掉 guest 内容缺失或被修改的情况。Provider 凭据与历史不会被转换为共享技能缓存。
+
+daemon API 属于管理信任边界。API 客户端可以选择项目来源路径，已有 bind volume 也可以暴露宿主目录。Workspace 的项目根包含校验用于验证来源合同，不是面向不可信 API 客户端的逐项目访问控制。应按受信任管理员的权限配置监听地址和 `AGENT_COMPOSE_AUTH_TOKEN`。
 
 ## `mcp_servers`：项目级 MCP
 

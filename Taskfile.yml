@@ -160,6 +160,13 @@ tasks:
     cmds:
       - ./scripts/build-agent-compose-guest.sh
 
+  image:workspace-test:
+    desc: Build the minimal amd64 guest for workspace and skills file-delivery tests
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - docker build --platform linux/amd64 --file guest-images/Dockerfile.workspace-test --build-arg 'REVISION={{.VERSION}}' --tag agent-compose-guest:workspace-test .
+      - docker run --rm --platform linux/amd64 agent-compose-guest:workspace-test agent-compose-runtime --help
+
   image:agent-compose-guest-archlinux:
     desc: Build the optional Arch Linux agent-compose guest image
     dir: '{{.TASKFILE_DIR}}'

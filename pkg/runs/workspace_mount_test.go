@@ -156,7 +156,53 @@ func TestProjectRunExplicitCopyPreservesHistoricalWorkspaceConfiguration(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	if implicit.SnapshotID == "" || explicit.SnapshotID == "" || implicit.SnapshotID == explicit.SnapshotID {
+		t.Fatalf("copy preparations must have distinct owned generations")
+	}
+	if err := workspaces.CloseTransientSnapshotLease(toSandboxWorkspaceSnapshot(*implicit)); err != nil {
+		t.Fatal(err)
+	}
+	if err := workspaces.CloseTransientSnapshotLease(toSandboxWorkspaceSnapshot(*explicit)); err != nil {
+		t.Fatal(err)
+	}
+	implicit.SnapshotID, explicit.SnapshotID = "", ""
+	implicit.SnapshotLease, explicit.SnapshotLease = nil, nil
 	if !reflect.DeepEqual(implicit, explicit) {
 		t.Fatalf("explicit copy changed historical configuration: implicit=%#v explicit=%#v", implicit, explicit)
 	}
+}
+
+func TestProjectRunFailedCopyAndPreCreateFailureReleaseGeneration(t *testing.T) {
+	root := t.TempDir()
+	config := &appconfig.Config{DataRoot: t.TempDir()}
+	controller := &Controller{config: config}
+	if err := os.WriteFile(filepath.Join(root, "a-file"), []byte("source"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("a-file", filepath.Join(root, "z-link")); err != nil {
+		t.Fatal(err)
+	}
+	request := WorkspaceRequest{Agent: &compose.WorkspaceSpec{Provider: "file", Path: "."}}
+	if _, err := controller.prepareProjectRunWorkspace(context.Background(), domain.ProjectRunRecord{RunID: "copy-fails"}, domain.ProjectRecord{SourcePath: root}, request); err == nil {
+		t.Fatal("symlink copy unexpectedly succeeded")
+	}
+	assertEmpty := func() {
+		t.Helper()
+		entries, err := os.ReadDir(filepath.Join(config.DataRoot, "workspace-snapshots"))
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("unused generation leaked: %v %v", entries, err)
+		}
+	}
+	assertEmpty()
+	if err := os.Remove(filepath.Join(root, "z-link")); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := controller.prepareProjectRunWorkspace(context.Background(), domain.ProjectRunRecord{RunID: "create-fails"}, domain.ProjectRecord{SourcePath: root}, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.ensureProjectRunSandbox(context.Background(), domain.ProjectRunRecord{}, Preparation{Workspace: toSandboxWorkspaceSnapshot(*cfg)}, RunAgentRequest{}); err == nil {
+		t.Fatal("missing runtime dependencies accepted")
+	}
+	assertEmpty()
 }

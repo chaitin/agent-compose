@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -164,6 +165,11 @@ type SandboxWorkspace struct {
 	Name       string `json:"name,omitempty"`
 	Type       string `json:"type,omitempty"`
 	ConfigJSON string `json:"config_json,omitempty"`
+	// SnapshotID identifies an internally owned, disposable file generation.
+	// It is persisted for provisioning recovery and is never an API input.
+	SnapshotID string `json:"snapshot_id,omitempty"`
+	// SnapshotLease exists only while an internal preparation is active.
+	SnapshotLease io.Closer `json:"-"`
 }
 
 type SandboxWorkspaceProvisioning struct {
@@ -316,6 +322,9 @@ type WorkspaceConfig struct {
 	Comment    string    `json:"comment,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+	// SnapshotID is only populated by internal run workspace preparation.
+	SnapshotID    string    `json:"-"`
+	SnapshotLease io.Closer `json:"-"`
 }
 
 type NotebookCell struct {

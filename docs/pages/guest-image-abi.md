@@ -107,6 +107,17 @@ Why they are needed:
 runtime SDK `shell` API, or cross-driver Jupyter. A general-purpose custom guest
 should install it.
 
+For Kubernetes agent skills, the image **MUST** additionally provide `node`,
+`sh`, `tar`, and `flock` (from `util-linux` on Debian), plus the ordinary file
+utilities `cat`, `mktemp`, `mv`, `basename`, `mkdir`, `rm`, `ln`, and `readlink`.
+The content comparison uses only Node's built-in `fs`, `path`, and `crypto`
+modules. Delivery stages one private, writable generation, verifies a random
+final archive entry, and atomically renames a canonical symlink; `flock`
+serializes publication with an OS-managed process lock. A missing required tool
+fails before replacing the previous directory. Kubernetes transport tests using
+fake API clients and a real Linux shell validate this contract; they do not
+substitute for a live-cluster deployment test.
+
 ### 3.3 Fixed command search path
 
 For managed agent and runtime execution, `agent-compose` injects this `PATH`:

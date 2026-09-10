@@ -232,10 +232,10 @@ func TestRunsPreparationWorkspaceAndStatusWorkflows(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(targetedRoot, "README.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("workspace source was copied outside target: %v", err)
 	}
-	if _, err := (&Controller{}).materializeLocalProjectRunWorkspace(run, store.project, &compose.WorkspaceSpec{Provider: "file", Path: "."}); err == nil {
+	if _, err := (&Controller{}).materializeLocalProjectRunWorkspace(context.Background(), run, store.project, &compose.WorkspaceSpec{Provider: "file", Path: "."}); err == nil {
 		t.Fatalf("materialize without config returned nil error")
 	}
-	if _, err := controller.materializeLocalProjectRunWorkspace(run, store.project, &compose.WorkspaceSpec{Provider: "file", Path: "missing"}); err == nil {
+	if _, err := controller.materializeLocalProjectRunWorkspace(context.Background(), run, store.project, &compose.WorkspaceSpec{Provider: "file", Path: "missing"}); err == nil {
 		t.Fatalf("materialize missing local path returned nil error")
 	}
 	if snapshot := toSandboxWorkspaceSnapshot(domain.WorkspaceConfig{ID: "workspace", Name: "Workspace", Type: "file", ConfigJSON: "{}"}); snapshot.ID != "workspace" {

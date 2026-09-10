@@ -46,7 +46,7 @@ func TestResolverArtifactManifestOmitsSourcePathAndCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve returned error: %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(resolved[0].LocalDir, artifactManifestName))
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(resolved[0].LocalDir), artifactManifestName))
 	if err != nil {
 		t.Fatal(err)
 	}

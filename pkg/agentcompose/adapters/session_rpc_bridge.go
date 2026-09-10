@@ -548,9 +548,11 @@ func (n sandboxLifecycleNotifier) NotifyDashboard(reason string) {
 
 func toSandboxWorkspaceSnapshot(item domain.WorkspaceConfig) *domain.SandboxWorkspace {
 	return &domain.SandboxWorkspace{
-		ID:         item.ID,
-		Name:       item.Name,
-		Type:       item.Type,
-		ConfigJSON: item.ConfigJSON,
+		ID:            item.ID,
+		Name:          item.Name,
+		Type:          item.Type,
+		ConfigJSON:    item.ConfigJSON,
+		SnapshotID:    item.SnapshotID,
+		SnapshotLease: item.SnapshotLease,
 	}
 }
