@@ -17,10 +17,11 @@ type LLMGenerator interface {
 
 type LLMHandler struct {
 	generator LLMGenerator
+	providers LLMProviderStore
 }
 
-func NewLLMHandler(generator LLMGenerator) *LLMHandler {
-	return &LLMHandler{generator: generator}
+func NewLLMHandler(generator LLMGenerator, providers LLMProviderStore) *LLMHandler {
+	return &LLMHandler{generator: generator, providers: providers}
 }
 
 func (h *LLMHandler) Generate(ctx context.Context, req *connect.Request[agentcomposev2.GenerateLLMRequest]) (*connect.Response[agentcomposev2.GenerateLLMResponse], error) {

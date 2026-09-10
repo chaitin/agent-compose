@@ -146,6 +146,12 @@ service CapabilityService {
 }
 
 service LLMService {
+  // Manage API-owned upstream model providers, not coding-agent providers.
+  rpc CreateProvider(CreateProviderRequest) returns (CreateProviderResponse);
+  rpc GetProvider(GetProviderRequest) returns (GetProviderResponse);
+  rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
+  rpc UpdateProvider(UpdateProviderRequest) returns (UpdateProviderResponse);
+  rpc DeleteProvider(DeleteProviderRequest) returns (DeleteProviderResponse);
   rpc Generate(GenerateLLMRequest) returns (GenerateLLMResponse);
 }
 
@@ -2247,3 +2253,47 @@ message SandboxSchedulerRun {
 message BatchGetLatestSchedulerRunsResponse {
   repeated SandboxSchedulerRun results = 1;
 }
+
+// LLMProvider contains public configuration only; credentials are never returned.
+message LLMProvider {
+  string id = 1;
+  string name = 2;
+  string base_url = 3;
+  string protocol = 4;
+  bool enabled = 5;
+  bool api_key_set = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// LLMProviderSpec replaces public configuration on update. ID is immutable.
+message LLMProviderSpec {
+  string id = 1;
+  string name = 2;
+  string base_url = 3;
+  // responses, chat_completions, or anthropic_messages; required.
+  string protocol = 4;
+  // Required and nonempty on create. Absent on update preserves the key.
+  // Present empty is invalid. Values are literal, not environment references.
+  optional string api_key = 5;
+  // Absent means enabled, including on replacement updates.
+  optional bool enabled = 6;
+}
+message CreateProviderRequest { LLMProviderSpec provider = 1; }
+message CreateProviderResponse { LLMProvider provider = 1; }
+message GetProviderRequest { string id = 1; }
+message GetProviderResponse { LLMProvider provider = 1; }
+// Lists API-owned providers, including disabled providers, ordered by ID.
+message ListProvidersRequest {
+  uint32 offset = 1;
+  uint32 limit = 2;
+}
+message ListProvidersResponse {
+  repeated LLMProvider providers = 1;
+  uint32 total = 2;
+}
+message UpdateProviderRequest { LLMProviderSpec provider = 1; }
+message UpdateProviderResponse { LLMProvider provider = 1; }
+// Deletes API-owned configuration and invalidates provider-bound facade tokens.
+message DeleteProviderRequest { string id = 1; }
+message DeleteProviderResponse {}
