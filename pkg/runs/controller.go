@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chaitin/agent-compose/internal/projects"
@@ -464,8 +465,17 @@ func interactiveSessionDomainError(err error) error {
 }
 
 func newInteractiveRunOutputSender(session *InteractiveSession, policy AttachDisconnectPolicy, send RunAttachSender) RunAttachSender {
+	// Every writer of an attached run shares this sender: the receive loop, the
+	// prompt input pump declining a message it has already recorded, and the
+	// result frame sent once the interaction returns — while that pump may
+	// still be running. The stream takes one send at a time and detached is
+	// plain state, so the send is serialized here, where that state lives,
+	// rather than by whichever caller happens to know about a second writer.
+	var mu sync.Mutex
 	detached := false
 	return func(output RunAttachOutput) error {
+		mu.Lock()
+		defer mu.Unlock()
 		session.Publish(output)
 		if detached {
 			return nil

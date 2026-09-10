@@ -1,6 +1,7 @@
 package runs
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -199,27 +200,86 @@ func TestOpeningPromptIdentityIsTheAttachedMessageIdentity(t *testing.T) {
 	}
 }
 
-// The receive loop and the input pump now both answer the client. The stream
-// underneath takes one send at a time, so the wrapper has to be what orders
-// them; run under -race this fails if it does not.
-func TestSerializedRunAttachSenderAnswersOneAtATime(t *testing.T) {
-	var answered int
-	send := serializeRunAttachSender(func(RunAttachOutput) error {
-		answered++ // deliberately unsynchronized: the wrapper must serialize it
+// Several goroutines write to an attached run's sender: the receive loop, the
+// input pump declining a message, and the result frame sent after the
+// interaction returns while the pump may still be alive. The sender itself has
+// to order them — the stream takes one send at a time and its detached flag is
+// plain state — so no caller can end up holding an unserialized one. Under
+// -race this fails if it does not.
+func TestInteractiveRunOutputSenderIsSafeForConcurrentWriters(t *testing.T) {
+	session := NewInteractiveSession("run-concurrent")
+
+	var streamed int
+	attached := newInteractiveRunOutputSender(session, AttachDisconnectCancel, func(RunAttachOutput) error {
+		streamed++ // deliberately unsynchronized: the sender must serialize it
 		return nil
 	})
+	writeConcurrently(attached)
+	if streamed != 800 {
+		t.Fatalf("streamed %d frames, want 800", streamed)
+	}
+
+	// A stream that fails flips the sender to detached: the first failure
+	// writes that flag and every writer reads it.
+	var failed int
+	detaching := newInteractiveRunOutputSender(session, AttachDisconnectDetach, func(RunAttachOutput) error {
+		failed++
+		return errors.New("stream closed")
+	})
+	writeConcurrently(detaching)
+	if failed != 1 {
+		t.Fatalf("wrote to a closed stream %d times, want once before detaching", failed)
+	}
+}
+
+// A pump whose session has just ended can find its turn gate and its context
+// ready together, and select picks either. It must not go on to run or answer
+// the message: its interaction is gone, and the result frame may already be on
+// its way to the client.
+func TestPumpDoesNotAnswerAfterItsSessionEnded(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	interaction := newObservedRuntimeInteraction()
+	turnReady := make(chan struct{}, 1)
+	turnReady <- struct{}{}
+	queue := make(chan RunAttachInput, 1)
+	queue <- RunAttachInput{Kind: RunAttachInputHumanMessage, Text: "again", ClientFrameID: "frame-delivered"}
+	close(queue)
+
+	var answered int
+	pumpRunPromptAttachInput(ctx, func() (RunAttachInput, error) {
+		request, ok := <-queue
+		if !ok {
+			return RunAttachInput{}, io.EOF
+		}
+		return request, nil
+	}, promptInputPump{
+		Input:          &promptWrapperInput{interaction: interaction},
+		TurnReady:      turnReady,
+		OnHumanMessage: func(string, string) (bool, error) { return false, nil },
+		Send: func(RunAttachOutput) error {
+			answered++
+			return nil
+		},
+	})
+
+	if answered != 0 {
+		t.Fatalf("a pump whose session ended answered %d times", answered)
+	}
+	assertNoRuntimeInputFrame(t, interaction.sent)
+}
+
+// writeConcurrently sends through one sender from several goroutines at once.
+func writeConcurrently(send RunAttachSender) {
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
 			for range 100 {
-				_ = send(RunAttachOutput{})
+				_ = send(RunAttachOutput{Kind: RunAttachOutputData})
 			}
 		})
 	}
 	wg.Wait()
-	if answered != 800 {
-		t.Fatalf("answered %d times, want 800", answered)
-	}
 }
 
 // startPromptPump feeds requests to a prompt input pump until they run out,

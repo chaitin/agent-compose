@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
@@ -140,9 +139,6 @@ func (c *Controller) runPromptInteractionSession(ctx context.Context, runCtx int
 	sandbox := runCtx.Sandbox
 	logsPath := prepared.LogsPath
 	transition := TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID, LogsPath: logsPath}
-	// Two goroutines answer the client from here on: the receive loop, and the
-	// input pump when it declines to run a message it has already recorded.
-	send = serializeRunAttachSender(send)
 	command := strings.Join([]string{
 		"set -e",
 		"cd " + execution.ShellQuote(c.config.GuestWorkspacePath),
@@ -375,7 +371,9 @@ type promptInputPump struct {
 	// OnHumanMessage records a message and reports whether it is new. A
 	// message that is not new has been delivered before and is not run again.
 	OnHumanMessage func(text, clientFrameID string) (bool, error)
-	Send           RunAttachSender
+	// Send answers the client alongside the receive loop, so it must be safe
+	// for concurrent use; the interactive run sender is.
+	Send RunAttachSender
 }
 
 func pumpRunPromptAttachInput(ctx context.Context, receive RunAttachReceiver, pump promptInputPump) {
@@ -416,6 +414,14 @@ func forwardPromptHumanMessage(ctx context.Context, pump promptInputPump, text, 
 		case <-pump.TurnReady:
 		}
 	}
+	// Both cases can be ready at once when the session has just ended — the
+	// gate released by its last turn, the context by its teardown — and select
+	// picks either. A pump whose session is over must not go on to run or
+	// answer a message: its interaction is gone, and the result frame may
+	// already be on its way to the client.
+	if ctx.Err() != nil {
+		return false
+	}
 	if pump.OnHumanMessage != nil {
 		fresh, err := pump.OnHumanMessage(text, clientFrameID)
 		switch {
@@ -444,18 +450,6 @@ func declinePromptHumanMessage(pump promptInputPump, code, message, clientFrameI
 		// Best effort: a client that cannot hear this has gone, and the
 		// receive loop is the one that finds out.
 		_ = pump.Send(runAttachRejectedMessageResponse(code, message, clientFrameID))
-	}
-}
-
-// serializeRunAttachSender lets several goroutines answer one client. A stream
-// carries one send at a time, and the sender it wraps keeps unsynchronized
-// state of its own.
-func serializeRunAttachSender(send RunAttachSender) RunAttachSender {
-	var mu sync.Mutex
-	return func(output RunAttachOutput) error {
-		mu.Lock()
-		defer mu.Unlock()
-		return send(output)
 	}
 }
 
