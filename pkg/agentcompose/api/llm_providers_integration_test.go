@@ -61,6 +61,14 @@ func TestIntegrationLLMProviderConnectLifecycle(t *testing.T) {
 	if err != nil || saved.APIKey != "upstream-secret" {
 		t.Fatalf("omitted key not preserved: %v", err)
 	}
+	partial, err := client.UpdateProvider(ctx, connect.NewRequest(&agentcomposev2.UpdateProviderRequest{Provider: &agentcomposev2.LLMProviderSpec{Id: spec.Id, BaseUrl: "https://rotated.example.com/v1"}}))
+	if err != nil || partial.Msg.Provider.Enabled || partial.Msg.Provider.Name != "renamed" || partial.Msg.Provider.BaseUrl != "https://rotated.example.com/v1" || !partial.Msg.Provider.ApiKeySet {
+		t.Fatalf("partial update replaced omitted fields: %v %#v", err, partial)
+	}
+	saved, err = store.GetManagedLLMProvider(ctx, spec.Id)
+	if err != nil || saved.APIKey != "upstream-secret" || saved.Enabled || saved.Name != "renamed" {
+		t.Fatalf("partial update clobbered stored values: %v %#v", err, saved)
+	}
 	got, err := client.GetProvider(ctx, connect.NewRequest(&agentcomposev2.GetProviderRequest{Id: spec.Id}))
 	if err != nil || got.Msg.Provider.Enabled {
 		t.Fatalf("get disabled: %v", err)

@@ -2,17 +2,18 @@ package llms
 
 import (
 	"errors"
-	domain "github.com/chaitin/agent-compose/pkg/model"
 	"strings"
 	"testing"
+
+	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
 func TestNormalizeProviderReplacement(t *testing.T) {
 	key := " key "
-	valid := ProviderReplacement{ID: "gateway-1", BaseURL: " https://example.com/v1 ", Protocol: APIProtocolResponses, APIKey: &key, Enabled: true}
+	valid := ProviderReplacement{ID: "gateway-1", BaseURL: " https://example.com/v1 ", Protocol: APIProtocolResponses, APIKey: &key}
 	result, err := NormalizeProviderReplacement(valid)
-	if err != nil || result.Name != valid.ID || result.BaseURL != "https://example.com/v1" || *result.APIKey != "key" || key != " key " {
-		t.Fatalf("normalization or input ownership failed: %v", err)
+	if err != nil || result.Name != valid.ID || result.BaseURL != "https://example.com/v1" || *result.APIKey != "key" || key != " key " || result.Enabled == nil || !*result.Enabled {
+		t.Fatalf("normalization or input ownership failed: %v %#v", err, result)
 	}
 	for _, protocol := range []string{APIProtocolResponses, APIProtocolChatCompletions, APIProtocolMessages} {
 		input := valid
@@ -39,6 +40,7 @@ func TestNormalizeProviderReplacement(t *testing.T) {
 		{"url scheme", func(p *ProviderReplacement) { p.BaseURL = "file:///secret" }},
 		{"empty key", func(p *ProviderReplacement) { v := " "; p.APIKey = &v }},
 		{"header injection", func(p *ProviderReplacement) { v := "secret\r\nX-Key: injected"; p.APIKey = &v }},
+		{"missing key", func(p *ProviderReplacement) { p.APIKey = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			input := valid
@@ -48,5 +50,35 @@ func TestNormalizeProviderReplacement(t *testing.T) {
 				t.Fatalf("expected redacted validation error, got %v", err)
 			}
 		})
+	}
+}
+
+func TestNormalizeProviderUpdatePreservesOmittedFields(t *testing.T) {
+	result, err := NormalizeProviderUpdate(ProviderReplacement{ID: "gateway-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Name != "" || result.BaseURL != "" || result.Protocol != "" || result.APIKey != nil || result.Enabled != nil {
+		t.Fatalf("omitted update fields were defaulted: %#v", result)
+	}
+	disabled := false
+	key := " rotated "
+	result, err = NormalizeProviderUpdate(ProviderReplacement{ID: "gateway-1", Name: " renamed ", BaseURL: " https://second.example/v1 ", Protocol: APIProtocolMessages, APIKey: &key, Enabled: &disabled})
+	if err != nil || result.Name != "renamed" || result.BaseURL != "https://second.example/v1" || result.Protocol != APIProtocolMessages || *result.APIKey != "rotated" || result.Enabled == nil || *result.Enabled || key != " rotated " {
+		t.Fatalf("explicit update fields: %v %#v", err, result)
+	}
+	empty := " "
+	_, err = NormalizeProviderUpdate(ProviderReplacement{ID: "gateway-1", APIKey: &empty})
+	if !errors.Is(err, domain.ErrInvalidArgument) {
+		t.Fatalf("empty key: %v", err)
+	}
+}
+
+func TestManagedProviderHeadersJSON(t *testing.T) {
+	if got := ManagedProviderHeadersJSON(APIProtocolMessages); got != AnthropicVersionHeadersJSON {
+		t.Fatalf("anthropic headers = %q", got)
+	}
+	if got := ManagedProviderHeadersJSON(APIProtocolResponses); got != "{}" {
+		t.Fatalf("openai headers = %q", got)
 	}
 }

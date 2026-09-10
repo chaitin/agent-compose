@@ -12,17 +12,20 @@ import (
 // ProviderScopeAPI identifies providers managed through the public LLM service.
 const ProviderScopeAPI = "api"
 
+// AnthropicVersionHeadersJSON is the default header set required by Anthropic Messages.
+const AnthropicVersionHeadersJSON = `{"anthropic-version":"2023-06-01"}`
+
 var managedProviderIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
 
-// ProviderReplacement is a complete public configuration replacement. A nil key
-// preserves the stored credential on update, without requiring clients to read it.
+// ProviderReplacement is API-owned provider configuration. Nil or empty optional
+// fields are create defaults or, on update, mean "leave the stored value unchanged".
 type ProviderReplacement struct {
 	ID       string
 	Name     string
 	BaseURL  string
 	Protocol string
 	APIKey   *string
-	Enabled  bool
+	Enabled  *bool
 }
 
 // ValidateManagedProviderID rejects IDs reserved for environment bootstrap.
@@ -33,32 +36,112 @@ func ValidateManagedProviderID(id string) error {
 	return nil
 }
 
-// NormalizeProviderReplacement validates external configuration without exposing
-// credentials in errors. It does not mutate caller-owned values.
+// NormalizeProviderReplacement validates create input without exposing credentials
+// in errors. It does not mutate caller-owned values. Empty name defaults to the ID;
+// a nil enabled flag defaults to true.
 func NormalizeProviderReplacement(input ProviderReplacement) (ProviderReplacement, error) {
+	normalized, err := normalizeProviderIdentity(input)
+	if err != nil {
+		return ProviderReplacement{}, err
+	}
+	normalized.Name = strings.TrimSpace(normalized.Name)
+	if normalized.Name == "" {
+		normalized.Name = normalized.ID
+	}
+	if err := normalizeProviderEndpoint(&normalized, true); err != nil {
+		return ProviderReplacement{}, err
+	}
+	if err := normalizeProviderProtocol(&normalized, true); err != nil {
+		return ProviderReplacement{}, err
+	}
+	if err := normalizeProviderAPIKey(&normalized, true); err != nil {
+		return ProviderReplacement{}, err
+	}
+	if normalized.Enabled == nil {
+		enabled := true
+		normalized.Enabled = &enabled
+	}
+	return normalized, nil
+}
+
+// NormalizeProviderUpdate validates an explicit-field update. Omitted name,
+// base URL, protocol, API key, and enabled are left empty/nil so storage can
+// preserve the current values.
+func NormalizeProviderUpdate(input ProviderReplacement) (ProviderReplacement, error) {
+	normalized, err := normalizeProviderIdentity(input)
+	if err != nil {
+		return ProviderReplacement{}, err
+	}
+	normalized.Name = strings.TrimSpace(normalized.Name)
+	if err := normalizeProviderEndpoint(&normalized, false); err != nil {
+		return ProviderReplacement{}, err
+	}
+	if err := normalizeProviderProtocol(&normalized, false); err != nil {
+		return ProviderReplacement{}, err
+	}
+	if err := normalizeProviderAPIKey(&normalized, false); err != nil {
+		return ProviderReplacement{}, err
+	}
+	return normalized, nil
+}
+
+func normalizeProviderIdentity(input ProviderReplacement) (ProviderReplacement, error) {
 	if err := ValidateManagedProviderID(input.ID); err != nil {
 		return ProviderReplacement{}, err
 	}
-	input.Name = strings.TrimSpace(input.Name)
-	if input.Name == "" {
-		input.Name = input.ID
-	}
+	return input, nil
+}
+
+func normalizeProviderEndpoint(input *ProviderReplacement, required bool) error {
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
+	if input.BaseURL == "" {
+		if required {
+			return fmt.Errorf("%w: base_url must be an absolute HTTP(S) URL without credentials, query or fragment", domain.ErrInvalidArgument)
+		}
+		return nil
+	}
 	endpoint, err := url.Parse(input.BaseURL)
 	if err != nil || endpoint.Hostname() == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || strings.ContainsAny(input.BaseURL, "\r\n") {
-		return ProviderReplacement{}, fmt.Errorf("%w: base_url must be an absolute HTTP(S) URL without credentials, query or fragment", domain.ErrInvalidArgument)
+		return fmt.Errorf("%w: base_url must be an absolute HTTP(S) URL without credentials, query or fragment", domain.ErrInvalidArgument)
+	}
+	return nil
+}
+
+func normalizeProviderProtocol(input *ProviderReplacement, required bool) error {
+	input.Protocol = strings.TrimSpace(input.Protocol)
+	if input.Protocol == "" {
+		if required {
+			return fmt.Errorf("%w: unsupported provider protocol", domain.ErrInvalidArgument)
+		}
+		return nil
 	}
 	switch input.Protocol {
 	case APIProtocolResponses, APIProtocolChatCompletions, APIProtocolMessages:
+		return nil
 	default:
-		return ProviderReplacement{}, fmt.Errorf("%w: unsupported provider protocol", domain.ErrInvalidArgument)
+		return fmt.Errorf("%w: unsupported provider protocol", domain.ErrInvalidArgument)
 	}
-	if input.APIKey != nil {
-		key := strings.TrimSpace(*input.APIKey)
-		if key == "" || strings.ContainsAny(key, "\r\n") {
-			return ProviderReplacement{}, fmt.Errorf("%w: api_key must be nonempty and contain no line breaks", domain.ErrInvalidArgument)
+}
+
+func normalizeProviderAPIKey(input *ProviderReplacement, required bool) error {
+	if input.APIKey == nil {
+		if required {
+			return fmt.Errorf("%w: api_key is required", domain.ErrInvalidArgument)
 		}
-		input.APIKey = &key
+		return nil
 	}
-	return input, nil
+	key := strings.TrimSpace(*input.APIKey)
+	if key == "" || strings.ContainsAny(key, "\r\n") {
+		return fmt.Errorf("%w: api_key must be nonempty and contain no line breaks", domain.ErrInvalidArgument)
+	}
+	input.APIKey = &key
+	return nil
+}
+
+// ManagedProviderHeadersJSON returns default upstream headers for a protocol.
+func ManagedProviderHeadersJSON(protocol string) string {
+	if protocol == APIProtocolMessages {
+		return AnthropicVersionHeadersJSON
+	}
+	return "{}"
 }

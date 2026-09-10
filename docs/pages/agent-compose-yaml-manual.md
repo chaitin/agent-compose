@@ -533,9 +533,16 @@ models do not need to be enumerated. Other methods share the service path prefix
 - `apiKey` is literal, without environment interpolation. Create requires a
   nonempty key. On update, omission preserves it, a nonempty value rotates it,
   and an empty value is invalid. Responses expose only `apiKeySet`, never the key.
-- `UpdateProvider` uses the same `provider` object and replaces public settings;
-  it is not a field patch. Omitted `name` defaults to the ID, and omitted
-  `enabled` means `true`, including on updates.
+- Create defaults an empty `name` to the ID and an omitted `enabled` field to
+  `true`. `anthropic_messages` providers send `anthropic-version: 2023-06-01` by
+  default; other protocols send no extra headers.
+- `UpdateProvider` uses the same `provider` object. Omitted `name`, `baseUrl`,
+  `protocol`, `apiKey`, and `enabled` preserve stored values. Present nonempty
+  `apiKey` rotates the key; present empty is invalid. Protocol changes also
+  refresh authentication headers.
+- CLI: `agent-compose llm provider ls|create|inspect|update|rm`. Create requires
+  `--base-url`, `--protocol`, and `--api-key`. Update sends only flags that are
+  set, so `update --base-url ...` does not re-enable a disabled provider.
 - `GetProvider` / `DeleteProvider` take `{"id":"team-gateway"}`.
   `ListProviders` takes `offset` / `limit`, orders by ID, includes disabled entries,
   and returns `providers` and `total`.

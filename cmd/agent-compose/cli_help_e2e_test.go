@@ -117,6 +117,16 @@ func TestE2ECLIHelpCoversUserWorkflowCommandSurface(t *testing.T) {
 			want: []string{"Pull an image or all project images", "pull [image]", "--platform"},
 		},
 		{
+			name: "llm provider",
+			args: []string{"llm", "provider", "--help"},
+			want: []string{"Manage API-owned upstream LLM providers", "ls", "create", "inspect", "update", "rm"},
+		},
+		{
+			name: "llm provider create",
+			args: []string{"llm", "provider", "create", "--help"},
+			want: []string{"Create an API-owned upstream LLM provider", "--base-url", "--protocol", "--api-key", "--name", "--enabled"},
+		},
+		{
 			name: "inspect",
 			args: []string{"inspect", "--help"},
 			want: []string{"Inspect project, agent, run, sandbox, image, cache, or volume details"},

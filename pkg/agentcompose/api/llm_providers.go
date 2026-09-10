@@ -60,7 +60,7 @@ func (h *LLMHandler) ListProviders(ctx context.Context, req *connect.Request[age
 	return connect.NewResponse(&agentcomposev2.ListProvidersResponse{Providers: result, Total: total}), nil
 }
 
-// UpdateProvider replaces public configuration and optionally rotates the key.
+// UpdateProvider applies explicit fields and preserves omitted values.
 func (h *LLMHandler) UpdateProvider(ctx context.Context, req *connect.Request[agentcomposev2.UpdateProviderRequest]) (*connect.Response[agentcomposev2.UpdateProviderResponse], error) {
 	input, err := providerReplacementFromV2(req.Msg.GetProvider())
 	if err != nil {
@@ -85,8 +85,7 @@ func providerReplacementFromV2(spec *agentcomposev2.LLMProviderSpec) (llms.Provi
 	if spec == nil {
 		return llms.ProviderReplacement{}, fmt.Errorf("%w: provider is required", domain.ErrInvalidArgument)
 	}
-	enabled := spec.Enabled == nil || spec.GetEnabled()
-	return llms.ProviderReplacement{ID: spec.GetId(), Name: spec.GetName(), BaseURL: spec.GetBaseUrl(), Protocol: spec.GetProtocol(), APIKey: spec.ApiKey, Enabled: enabled}, nil
+	return llms.ProviderReplacement{ID: spec.GetId(), Name: spec.GetName(), BaseURL: spec.GetBaseUrl(), Protocol: spec.GetProtocol(), APIKey: spec.ApiKey, Enabled: spec.Enabled}, nil
 }
 
 func providerToV2(provider llms.Provider) *agentcomposev2.LLMProvider {

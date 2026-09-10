@@ -16,12 +16,20 @@ IDs default and anthropic are reserved; session-env IDs cannot match this syntax
 
 Create requires an absolute HTTP(S) base URL, a supported protocol, and a nonempty
 literal API key. Responses contain api_key_set, never the credential. Update
-replaces public fields; absent api_key preserves the current key atomically,
-present nonempty rotates it, and present empty is invalid. An absent enabled
-field means true on both create and replacement update. An empty name defaults
-to the ID. Headers, per-model overrides and default-model management are outside
-this change. Protocol selects the existing OpenAI Bearer or Anthropic x-api-key
-upstream authentication.
+applies explicit fields only; omitted name, base_url, protocol, api_key, and
+enabled preserve stored values. Absent api_key preserves the current key
+atomically, present nonempty rotates it, and present empty is invalid. An absent
+enabled field means true on create and is preserved on update. An empty name
+defaults to the ID on create and is preserved on update. Anthropic Messages
+providers send anthropic-version: 2023-06-01 by default. Per-model overrides,
+custom headers, and default-model management remain outside this change.
+Protocol selects the existing OpenAI Bearer or Anthropic x-api-key upstream
+authentication and refreshes those headers when protocol is updated.
+
+CLI `agent-compose llm provider` exposes ls, create, inspect, update, and rm.
+Create requires --base-url, --protocol, and --api-key. Update sends only flags
+that were set. Environment bootstrap remains last fallback; API CRUD takes
+effect on the next target resolution.
 
 List includes disabled API-owned providers in ID order, using the existing
 offset/limit pagination convention. Get/Update/Delete reject non-API ownership.

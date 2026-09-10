@@ -1056,6 +1056,299 @@
       ]
     },
     {
+      "path": "agent-compose llm",
+      "use": "llm",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose llm provider",
+      "use": "provider",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose llm provider create",
+      "use": "create \u003cid\u003e",
+      "flags": [
+        {
+          "name": "api-key",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "base-url",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "enabled",
+          "type": "bool",
+          "default": "true",
+          "optional": "true"
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "protocol",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose llm provider inspect",
+      "use": "inspect \u003cid\u003e",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose llm provider ls",
+      "use": "ls",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose llm provider rm",
+      "use": "rm \u003cid\u003e",
+      "aliases": [
+        "remove"
+      ],
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose llm provider update",
+      "use": "update \u003cid\u003e",
+      "flags": [
+        {
+          "name": "api-key",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "base-url",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "enabled",
+          "type": "bool",
+          "default": "true",
+          "optional": "true"
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "protocol",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
       "path": "agent-compose logs",
       "use": "logs [agent-or-id]",
       "flags": [
@@ -2874,6 +3167,23 @@
       "image_ref": "string",
       "untagged_refs": "array",
       "warnings": "array"
+    },
+    "llm_provider_create": {
+      "provider": "object"
+    },
+    "llm_provider_inspect": {
+      "provider": "object"
+    },
+    "llm_provider_list": {
+      "providers": "array",
+      "total": "number"
+    },
+    "llm_provider_remove": {
+      "id": "string",
+      "removed": "boolean"
+    },
+    "llm_provider_update": {
+      "provider": "object"
     },
     "logs": {
       "runs": "array"

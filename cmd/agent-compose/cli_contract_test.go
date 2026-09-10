@@ -156,6 +156,9 @@ func collectCLIJSONContracts() map[string]map[string]string {
 		"scheduler_logs": composeSchedulerLogsOutput{}, "volume_list": composeVolumeListOutput{},
 		"volume_inspect": composeVolumeInspectOutput{}, "volume_create": composeVolumeCreateOutput{},
 		"volume_remove": composeVolumeRemoveOutput{}, "volume_prune": composeVolumePruneOutput{},
+		"llm_provider_list": composeLLMProviderListOutput{}, "llm_provider_inspect": composeLLMProviderInspectOutput{},
+		"llm_provider_create": composeLLMProviderCreateOutput{}, "llm_provider_update": composeLLMProviderUpdateOutput{},
+		"llm_provider_remove": composeLLMProviderRemoveOutput{},
 	}
 	out := make(map[string]map[string]string, len(values))
 	for name, value := range values {

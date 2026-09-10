@@ -22,12 +22,16 @@ func (s *llmStore) CreateLLMProvider(ctx context.Context, input llms.ProviderRep
 	if input.APIKey == nil {
 		return llms.Provider{}, fmt.Errorf("%w: api_key is required", domain.ErrInvalidArgument)
 	}
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
 	family, header, scheme := managedProviderAuth(input.Protocol)
 	now := time.Now().UTC().Unix()
 	row := s.db.QueryRowContext(ctx, `INSERT INTO llm_provider (`+providerColumns+`)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', 0, 10, ?, ?, ?, ?)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 10, ?, ?, ?, ?)
  ON CONFLICT(id) DO NOTHING RETURNING `+providerColumns,
-		input.ID, input.Name, family, input.Protocol, input.BaseURL, *input.APIKey, header, scheme, BoolToInt(input.Enabled), llms.ProviderScopeAPI, now, now)
+		input.ID, input.Name, family, input.Protocol, input.BaseURL, *input.APIKey, header, scheme, llms.ManagedProviderHeadersJSON(input.Protocol), BoolToInt(enabled), llms.ProviderScopeAPI, now, now)
 	provider, err := llms.ScanProvider(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return llms.Provider{}, fmt.Errorf("%w: provider id already exists", domain.ErrAlreadyExists)
@@ -78,16 +82,16 @@ func (s *llmStore) ListManagedLLMProviders(ctx context.Context) ([]llms.Provider
 	return providers, nil
 }
 
-// UpdateLLMProvider atomically replaces configuration and optionally rotates its key.
+// UpdateLLMProvider applies explicit fields and preserves omitted values.
 func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderReplacement) (llms.Provider, error) {
-	input, err := llms.NormalizeProviderReplacement(input)
+	input, err := llms.NormalizeProviderUpdate(input)
 	if err != nil {
 		return llms.Provider{}, err
 	}
-	family, header, scheme := managedProviderAuth(input.Protocol)
-	row := s.db.QueryRowContext(ctx, `UPDATE llm_provider SET name = ?, provider_type = ?, default_wire_api = ?, base_url = ?, api_key = COALESCE(?, api_key), auth_header = ?, auth_scheme = ?, enabled = ?, updated_at = ?
+	family, header, scheme, headersJSON := managedProviderUpdateColumns(input.Protocol)
+	row := s.db.QueryRowContext(ctx, `UPDATE llm_provider SET name = COALESCE(NULLIF(?, ''), name), provider_type = COALESCE(?, provider_type), default_wire_api = COALESCE(NULLIF(?, ''), default_wire_api), base_url = COALESCE(NULLIF(?, ''), base_url), api_key = COALESCE(?, api_key), auth_header = COALESCE(?, auth_header), auth_scheme = CASE WHEN ? IS NOT NULL THEN ? ELSE auth_scheme END, headers_json = COALESCE(?, headers_json), enabled = COALESCE(?, enabled), updated_at = ?
  WHERE id = ? AND scope = ? RETURNING `+providerColumns,
-		input.Name, family, input.Protocol, input.BaseURL, input.APIKey, header, scheme, BoolToInt(input.Enabled), time.Now().UTC().Unix(), input.ID, llms.ProviderScopeAPI)
+		input.Name, family, input.Protocol, input.BaseURL, input.APIKey, header, header, scheme, headersJSON, optionalBoolToSQL(input.Enabled), time.Now().UTC().Unix(), input.ID, llms.ProviderScopeAPI)
 	provider, err := llms.ScanProvider(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		_, err = s.GetManagedLLMProvider(ctx, input.ID)
@@ -145,4 +149,19 @@ func managedProviderAuth(protocol string) (family, header, scheme string) {
 		return llms.ProviderFamilyAnthropic, "x-api-key", ""
 	}
 	return llms.ProviderFamilyOpenAI, "Authorization", "Bearer"
+}
+
+func managedProviderUpdateColumns(protocol string) (family, header, scheme, headersJSON any) {
+	if protocol == "" {
+		return nil, nil, nil, nil
+	}
+	familyName, headerName, schemeName := managedProviderAuth(protocol)
+	return familyName, headerName, schemeName, llms.ManagedProviderHeadersJSON(protocol)
+}
+
+func optionalBoolToSQL(value *bool) any {
+	if value == nil {
+		return nil
+	}
+	return BoolToInt(*value)
 }

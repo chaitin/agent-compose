@@ -531,8 +531,14 @@ API Key，与 Agent 的 `provider: codex` / `provider: pi` 无关。
   `baseUrl` 必须为 HTTP(S) 绝对地址，不能包含用户名密码、查询参数或 fragment。
 - `apiKey` 是字面量，不解析环境变量引用。创建必须提供非空值；更新省略时保留旧值，
   提供非空值时轮换，空值无效。响应仅返回 `apiKeySet`，不会回显密钥。
-- `UpdateProvider` 使用相同的 `provider` 对象，替换公开配置，不是字段 patch。
-  `name` 省略时使用 ID；`enabled` 省略时为 `true`，更新时也如此。
+- 创建时，空 `name` 默认使用 ID，省略 `enabled` 默认为 `true`。
+  `anthropic_messages` 会默认发送 `anthropic-version: 2023-06-01`，其他协议不加额外 Header。
+- `UpdateProvider` 使用相同的 `provider` 对象。省略 `name`、`baseUrl`、`protocol`、
+  `apiKey`、`enabled` 时保留已存储值。提供非空 `apiKey` 会轮换密钥，空值无效。
+  修改协议会同时刷新认证 Header。
+- CLI：`agent-compose llm provider ls|create|inspect|update|rm`。创建必须提供
+  `--base-url`、`--protocol`、`--api-key`。更新只发送显式设置的 flag，因此
+  `update --base-url ...` 不会把已禁用的 Provider 重新启用。
 - `GetProvider` / `DeleteProvider` 请求为 `{"id":"team-gateway"}`。
   `ListProviders` 接受 `offset` / `limit`，按 ID 排序并包含禁用项，返回 `providers` 和 `total`。
 - 这些接口只管理 `api` 归属的 Provider，不覆盖 `models.json` 或环境配置。

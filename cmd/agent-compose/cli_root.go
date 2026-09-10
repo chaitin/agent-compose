@@ -88,6 +88,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		newCLIImagesCommand(&options),
 		newCLICacheCommand(&options),
 		newCLIVolumeCommand(&options),
+		newCLILLMCommand(&options),
 		newCLIImageCommand(&options),
 	)
 	commands = append(commands, newCLILegacyImageCommands(&options)...)
