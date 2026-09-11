@@ -10,8 +10,8 @@ github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1x
 github.com/cenkalti/backoff/v5 v5.0.3/go.mod h1:rkhZdG3JZukswDf7f0cwqPNk4K0sa+F97BxZthm/crw=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
-github.com/chaitin/agent-compose/proto v0.1.4 h1:SCOKbG9Zu2tkysIGYKSq/Aw6g9vf9aoVnXlT3tF+wtw=
-github.com/chaitin/agent-compose/proto v0.1.4/go.mod h1:sgEGuy3xcx0uneY7QeNdCd6CP8DJ+GuxblSAwvyt3wg=
+github.com/chaitin/agent-compose/proto v0.1.5 h1:tX7R88AiA4cycvpiTxELPDjQZ2HD0PXSE+4i6xiTcWE=
+github.com/chaitin/agent-compose/proto v0.1.5/go.mod h1:sgEGuy3xcx0uneY7QeNdCd6CP8DJ+GuxblSAwvyt3wg=
 github.com/chaitin/ai-api-protocol-bridge v1.0.0 h1:JKV+KRIzSe2ZlM0BxUdvPhVxroCc/cLQbILJR/iAvig=
 github.com/chaitin/ai-api-protocol-bridge v1.0.0/go.mod h1:hSbqFEyrkL/j6r4k9NooMaV3gkjXzMR96GddRH/AObA=
 github.com/chzyer/logex v1.2.1 h1:XHDu3E6q+gdHgsdTPH6ImJMIp436vR6MPtH8gP05QzM=
