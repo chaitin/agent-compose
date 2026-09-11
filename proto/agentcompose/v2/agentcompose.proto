@@ -596,6 +596,8 @@ message ProjectScheduler {
 message GetSchedulerRequest {
   ProjectRef project = 1;
   string agent_name = 2;
+  // Globally unique native scheduler ID. Set this instead of project and agent_name.
+  string scheduler_id = 3;
 }
 
 message GetSchedulerResponse {

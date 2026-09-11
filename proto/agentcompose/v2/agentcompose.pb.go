@@ -3495,9 +3495,11 @@ func (x *ProjectScheduler) GetDescription() string {
 }
 
 type GetSchedulerRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Project       *ProjectRef            `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
-	AgentName     string                 `protobuf:"bytes,2,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Project   *ProjectRef            `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	AgentName string                 `protobuf:"bytes,2,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
+	// Globally unique native scheduler ID. Set this instead of project and agent_name.
+	SchedulerId   string `protobuf:"bytes,3,opt,name=scheduler_id,json=schedulerId,proto3" json:"scheduler_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3542,6 +3544,13 @@ func (x *GetSchedulerRequest) GetProject() *ProjectRef {
 func (x *GetSchedulerRequest) GetAgentName() string {
 	if x != nil {
 		return x.AgentName
+	}
+	return ""
+}
+
+func (x *GetSchedulerRequest) GetSchedulerId() string {
+	if x != nil {
+		return x.SchedulerId
 	}
 	return ""
 }
@@ -19794,11 +19803,12 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\aenabled\x18\x04 \x01(\bR\aenabled\x12#\n" +
 	"\rtrigger_count\x18\x05 \x01(\rR\ftriggerCount\x12!\n" +
 	"\fdisplay_name\x18\x06 \x01(\tR\vdisplayName\x12 \n" +
-	"\vdescription\x18\a \x01(\tR\vdescription\"k\n" +
+	"\vdescription\x18\a \x01(\tR\vdescription\"\x8e\x01\n" +
 	"\x13GetSchedulerRequest\x125\n" +
 	"\aproject\x18\x01 \x01(\v2\x1b.agentcompose.v2.ProjectRefR\aproject\x12\x1d\n" +
 	"\n" +
-	"agent_name\x18\x02 \x01(\tR\tagentName\"\xe9\x01\n" +
+	"agent_name\x18\x02 \x01(\tR\tagentName\x12!\n" +
+	"\fscheduler_id\x18\x03 \x01(\tR\vschedulerId\"\xe9\x01\n" +
 	"\x14GetSchedulerResponse\x12?\n" +
 	"\tscheduler\x18\x01 \x01(\v2!.agentcompose.v2.ProjectSchedulerR\tscheduler\x122\n" +
 	"\x04spec\x18\x02 \x01(\v2\x1e.agentcompose.v2.SchedulerSpecR\x04spec\x12<\n" +

@@ -22,6 +22,7 @@ func TestV2FieldNumbersHaveNoUnexplainedGaps(t *testing.T) {
 func TestV2FreezeFieldLayout(t *testing.T) {
 	want := map[protoreflect.FullName]map[protoreflect.Name]protoreflect.FieldNumber{
 		"agentcompose.v2.ProjectScheduler":         {"enabled": 4, "description": 7},
+		"agentcompose.v2.GetSchedulerRequest":      {"project": 1, "agent_name": 2, "scheduler_id": 3},
 		"agentcompose.v2.ProjectSpec":              {"agents": 3, "octobus_servers": 7},
 		"agentcompose.v2.RunAgentRequest":          {"env": 5, "payload_json": 16},
 		"agentcompose.v2.StartAgentRunRequest":     {"run": 1, "interactive": 2},
