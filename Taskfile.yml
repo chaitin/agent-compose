@@ -128,9 +128,17 @@ tasks:
       - '../../build/pages/command-line-manual.html'
       - '../../build/pages/agent-compose-yaml-manual.html'
       - '../../build/pages/guest-image-abi.html'
+      - '../../build/pages/developing-agents.html'
+      - '../../build/pages/scheduler-api.html'
+      - '../../build/pages/daemon-integration.html'
       - '../../build/pages/zh-CN/command-line-manual.html'
       - '../../build/pages/zh-CN/agent-compose-yaml-manual.html'
       - '../../build/pages/zh-CN/guest-image-abi.html'
+      - '../../build/pages/zh-CN/developing-agents.html'
+      - '../../build/pages/zh-CN/scheduler-api.html'
+      - '../../build/pages/zh-CN/daemon-integration.html'
+      - '../../build/pages/runtime-sdk.html'
+      - '../../build/pages/zh-CN/runtime-sdk.html'
     cmds:
       - npm ci --no-audit --no-fund
       - npm run build
