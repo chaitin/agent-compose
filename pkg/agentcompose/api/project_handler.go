@@ -189,11 +189,10 @@ func (h *ProjectHandler) WatchProject(ctx context.Context, req *connect.Request[
 }
 
 func (h *ProjectHandler) GetScheduler(ctx context.Context, req *connect.Request[agentcomposev2.GetSchedulerRequest]) (*connect.Response[agentcomposev2.GetSchedulerResponse], error) {
-	project, scheduler, err := h.resolveProjectScheduler(ctx, req.Msg.GetProject(), req.Msg.GetAgentName())
+	scheduler, err := h.resolveGetScheduler(ctx, req.Msg)
 	if err != nil {
 		return nil, projectConnectError(err)
 	}
-	_ = project
 	response, err := h.schedulerResponse(ctx, scheduler)
 	if err != nil {
 		return nil, err

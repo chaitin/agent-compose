@@ -46,8 +46,15 @@ func TestProjectSchedulerPageUsesStableCursorAndProjectQuery(t *testing.T) {
 	if err != nil || loaded.ID != "scheduler-record-a" || loaded.SchedulerID != loaded.ID {
 		t.Fatalf("get scheduler by native id = %#v, err = %v", loaded, err)
 	}
+	loadedByID, err := store.GetProjectSchedulerByID(ctx, "scheduler-record-a")
+	if err != nil || loadedByID.ID != "scheduler-record-a" || loadedByID.ProjectID != "project-a" || loadedByID.SchedulerID != loadedByID.ID {
+		t.Fatalf("get scheduler by global native id = %#v, err = %v", loadedByID, err)
+	}
 	if _, err := store.GetProjectScheduler(ctx, "project-a", "legacy-alias-a"); err == nil {
 		t.Fatal("get scheduler unexpectedly used compatibility scheduler_id")
+	}
+	if _, err := store.GetProjectSchedulerByID(ctx, "legacy-alias-a"); err == nil {
+		t.Fatal("global scheduler lookup unexpectedly used compatibility scheduler_id")
 	}
 	if loaded, err = store.SetProjectSchedulerEnabled(ctx, "project-a", "scheduler-record-a", false); err != nil || loaded.Enabled {
 		t.Fatalf("disable scheduler by native id = %#v, err = %v", loaded, err)
