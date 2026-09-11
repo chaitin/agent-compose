@@ -41,16 +41,31 @@ func octobusHTTPError(status int, body []byte) error {
 			Message string          `json:"message"`
 			Details json.RawMessage `json:"details"`
 		} `json:"error"`
+		Code    string          `json:"code"`
+		Message string          `json:"message"`
+		Details json.RawMessage `json:"details"`
 	}
 	if err := json.Unmarshal(body, &payload); err == nil {
-		if code := strings.TrimSpace(payload.Error.Code); code != "" {
+		code := strings.TrimSpace(payload.Error.Code)
+		if code == "" {
+			code = strings.TrimSpace(payload.Code)
+		}
+		if code != "" {
 			upstream.Code = code
 		}
-		if message := strings.TrimSpace(payload.Error.Message); message != "" {
+		message := strings.TrimSpace(payload.Error.Message)
+		if message == "" {
+			message = strings.TrimSpace(payload.Message)
+		}
+		if message != "" {
 			upstream.Message = message
 		}
-		if len(payload.Error.Details) > 0 {
-			upstream.Details = append(json.RawMessage(nil), payload.Error.Details...)
+		details := payload.Error.Details
+		if len(details) == 0 {
+			details = payload.Details
+		}
+		if len(details) > 0 {
+			upstream.Details = append(json.RawMessage(nil), details...)
 		}
 	}
 	return upstream

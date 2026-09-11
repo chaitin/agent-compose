@@ -2,6 +2,7 @@ package capabilities
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -34,6 +35,9 @@ func (*guideTestProvider) Catalog(context.Context, string) (capability.Catalog, 
 func (p *guideTestProvider) CapabilityGuide(_ context.Context, id string) ([]byte, error) {
 	p.globalCalls = append(p.globalCalls, id)
 	return []byte("global"), nil
+}
+func (*guideTestProvider) InvokeConnect(context.Context, capability.InvokeRequest) (json.RawMessage, error) {
+	return nil, capability.ErrNotConfigured
 }
 func (*guideTestProvider) ProxyTarget() string { return "proxy:1" }
 func (p *guideTestProvider) CapabilityGuideForScope(_ context.Context, scope GuideScope, declaration string) ([]byte, error) {

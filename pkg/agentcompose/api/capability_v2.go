@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -52,6 +53,19 @@ func (h *CapabilityV2Handler) GetCapabilityCatalog(ctx context.Context, req *con
 		return nil, CapabilityConnectError(err)
 	}
 	return connect.NewResponse(capabilityCatalogV2(item)), nil
+}
+func (h *CapabilityV2Handler) InvokeCapability(ctx context.Context, req *connect.Request[agentcomposev2.InvokeCapabilityRequest]) (*connect.Response[agentcomposev2.InvokeCapabilityResponse], error) {
+	result, err := h.provider.InvokeConnect(ctx, capability.InvokeRequest{
+		CapsetID:   req.Msg.GetCapsetId(),
+		InstanceID: req.Msg.GetInstanceId(),
+		ServiceID:  req.Msg.GetServiceId(),
+		Method:     req.Msg.GetMethod(),
+		Payload:    json.RawMessage(strings.TrimSpace(req.Msg.GetPayloadJson())),
+	})
+	if err != nil {
+		return nil, CapabilityConnectError(err)
+	}
+	return connect.NewResponse(&agentcomposev2.InvokeCapabilityResponse{ResultJson: string(result)}), nil
 }
 func capabilityCatalogV2(item capability.Catalog) *agentcomposev2.GetCapabilityCatalogResponse {
 	response := &agentcomposev2.GetCapabilityCatalogResponse{CapsetId: item.CapsetID, Name: item.Name, Description: item.Description}

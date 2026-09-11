@@ -73,7 +73,11 @@ func (h *SettingsV2Handler) GetCapabilityGatewayConfig(ctx context.Context, _ *c
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&agentcomposev2.GetCapabilityGatewayConfigResponse{Config: &agentcomposev2.CapabilityGatewayConfig{Addr: settings.Addr, TokenSet: strings.TrimSpace(settings.Token) != ""}}), nil
+	return connect.NewResponse(&agentcomposev2.GetCapabilityGatewayConfigResponse{Config: &agentcomposev2.CapabilityGatewayConfig{
+		Addr:          settings.Addr,
+		TokenSet:      strings.TrimSpace(settings.Token) != "",
+		AdminTokenSet: strings.TrimSpace(settings.AdminToken) != "",
+	}}), nil
 }
 func (h *SettingsV2Handler) UpdateCapabilityGatewayConfig(ctx context.Context, req *connect.Request[agentcomposev2.UpdateCapabilityGatewayConfigRequest]) (*connect.Response[agentcomposev2.UpdateCapabilityGatewayConfigResponse], error) {
 	current, err := h.store.GetCapabilityGateway(ctx)
@@ -86,11 +90,18 @@ func (h *SettingsV2Handler) UpdateCapabilityGatewayConfig(ctx context.Context, r
 	if req.Msg.Token != nil {
 		current.Token = req.Msg.GetToken()
 	}
+	if req.Msg.AdminToken != nil {
+		current.AdminToken = req.Msg.GetAdminToken()
+	}
 	saved, err := h.store.SaveCapabilityGateway(ctx, current)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&agentcomposev2.UpdateCapabilityGatewayConfigResponse{Config: &agentcomposev2.CapabilityGatewayConfig{Addr: saved.Addr, TokenSet: strings.TrimSpace(saved.Token) != ""}}), nil
+	return connect.NewResponse(&agentcomposev2.UpdateCapabilityGatewayConfigResponse{Config: &agentcomposev2.CapabilityGatewayConfig{
+		Addr:          saved.Addr,
+		TokenSet:      strings.TrimSpace(saved.Token) != "",
+		AdminTokenSet: strings.TrimSpace(saved.AdminToken) != "",
+	}}), nil
 }
 func (h *SettingsV2Handler) ListWorkspacePresets(ctx context.Context, req *connect.Request[agentcomposev2.ListWorkspacePresetsRequest]) (*connect.Response[agentcomposev2.ListWorkspacePresetsResponse], error) {
 	items, err := h.store.ListWorkspaceConfigs(ctx)

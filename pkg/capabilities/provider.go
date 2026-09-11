@@ -2,6 +2,7 @@ package capabilities
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -19,6 +20,7 @@ type Provider interface {
 	ListCapsets(context.Context) ([]capability.Capset, error)
 	Catalog(context.Context, string) (capability.Catalog, error)
 	CapabilityGuide(ctx context.Context, capsetID string) ([]byte, error)
+	InvokeConnect(context.Context, capability.InvokeRequest) (json.RawMessage, error)
 	ProxyTarget() string
 }
 
@@ -109,7 +111,11 @@ func (p *DynamicProvider) client(ctx context.Context) (*capability.Client, bool)
 	if err != nil || strings.TrimSpace(settings.Addr) == "" {
 		return nil, false
 	}
-	return capability.NewClient(capability.Config{Addr: settings.Addr, Token: settings.Token}), true
+	return capability.NewClient(capability.Config{
+		Addr:       settings.Addr,
+		Token:      settings.Token,
+		AdminToken: settings.AdminToken,
+	}), true
 }
 
 func (p *DynamicProvider) Status(ctx context.Context) capability.Status {
@@ -142,6 +148,14 @@ func (p *DynamicProvider) CapabilityGuide(ctx context.Context, capsetID string) 
 		return nil, capability.ErrNotConfigured
 	}
 	return client.CatalogMarkdown(ctx, capsetID)
+}
+
+func (p *DynamicProvider) InvokeConnect(ctx context.Context, request capability.InvokeRequest) (json.RawMessage, error) {
+	client, ok := p.client(ctx)
+	if !ok {
+		return nil, capability.ErrNotConfigured
+	}
+	return client.InvokeConnect(ctx, request)
 }
 
 func (p *DynamicProvider) ProxyTarget() string {

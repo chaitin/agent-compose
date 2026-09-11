@@ -19,15 +19,19 @@ capset IDs continue to use the daemon-wide gateway described here.
 
 ## Architecture
 
-Two paths:
+Three paths:
 
 ```text
-Control plane (frontend read, Connect/HTTP): frontend -> agent-compose CapabilityService -> OctoBus /admin/v1/*
-Data plane (agent call, gRPC):              guest agent -> agent-compose capproxy -> OctoBus daemon gRPC
+Control plane (frontend read, Connect/HTTP):   frontend -> agent-compose CapabilityService -> OctoBus /admin/v1/*
+Business invocation (Connect/HTTP):            business service -> agent-compose CapabilityService -> OctoBus Connect RPC
+Agent data plane (gRPC):                       guest agent -> agent-compose capproxy -> OctoBus daemon gRPC
 ```
 
-- The control plane is read-only: connection status, capability set list, and
-  capability catalog.
+- The control plane provides read-only connection status, capability set list,
+  and capability catalog.
+- Business invocation is deterministic and forwards an explicit
+  `capset/instance/service/method/payload` request without involving an agent
+  or model.
 - The data plane exposes only gRPC: guest calls capabilities through
   agent-compose transparent proxy. MCP / REST are not exposed to the guest.
 - Both paths resolve an OctoBus target at call time. Unqualified capsets
@@ -50,25 +54,30 @@ UI shows only product concepts:
 
 Page-configured, stored in DB, dynamically read at runtime:
 
-- Table `capability_gateway`, single row: `addr`, `token` (secret).
+- Table `capability_gateway`, single row: `addr`, `token` (capset invocation
+  secret), and `admin_token` (OctoBus admin API secret).
 - `ConfigService` provides `GetCapabilityGatewayConfig` /
-  `UpdateCapabilityGatewayConfig`; token is redacted when read back.
+  `UpdateCapabilityGatewayConfig`; both tokens are redacted when read back.
 - Non-empty `addr` means enabled.
 
 ```proto
 message CapabilityGatewayConfig {   // read response, never returns token
   string addr = 1;
-  bool token_set = 2;               // whether token is set
+  bool token_set = 2;               // whether the capset token is set
+  bool admin_token_set = 3;         // whether the admin token is set
 }
 
 message UpdateCapabilityGatewayConfigRequest {
-  string addr = 1;
-  string token = 2;                 // empty string means clear
+  optional string addr = 1;
+  optional string token = 2;        // capset token; empty string means clear
+  optional string admin_token = 3;  // admin token; empty string means clear
 }
 ```
 
-When backend accesses OctoBus, it injects `Authorization: Bearer <token>` if
-token exists. Token stays server-side only; it is not returned to frontend in
+Admin API reads (`/admin/v1/status`, capsets, and catalog) use `admin_token`.
+When `admin_token` is empty, the legacy `token` value is used only as a
+compatibility fallback. Business `InvokeCapability` calls always use `token`.
+Both values stay server-side only; neither is returned to the frontend in
 plaintext, written into sandbox metadata, injected into guest env, or logged.
 
 This singleton remains the compatibility route for every unqualified
@@ -100,6 +109,7 @@ service CapabilityService {
   rpc GetCapabilityStatus(GetCapabilityStatusRequest) returns (CapabilityStatusResponse);
   rpc ListCapabilitySets(ListCapabilitySetsRequest) returns (ListCapabilitySetsResponse);
   rpc GetCapabilityCatalog(GetCapabilityCatalogRequest) returns (GetCapabilityCatalogResponse);
+  rpc InvokeCapability(InvokeCapabilityRequest) returns (InvokeCapabilityResponse);
 }
 
 message GetCapabilityStatusRequest {}
@@ -152,6 +162,17 @@ message GetCapabilityCatalogResponse {
   string description = 3;
   repeated CapabilityMethod methods = 4;
 }
+
+message InvokeCapabilityRequest {
+  string capset_id = 1;
+  string instance_id = 2;
+  string service_id = 3;
+  string method = 4;
+  string payload_json = 5;
+}
+message InvokeCapabilityResponse {
+  string result_json = 1;
+}
 ```
 
 Backend behavior:
@@ -161,6 +182,7 @@ Backend behavior:
 | `GetCapabilityStatus` | `GET /admin/v1/status` | Return `configured` / `ok` / `status` / `service_count` |
 | `ListCapabilitySets` | `GET /admin/v1/capsets` | Normalize to UI capability set list |
 | `GetCapabilityCatalog` | `GET /admin/v1/catalog/{capset_id}?all=true` | Backend performs URL escaping and normalizes the three protocol entries |
+| `InvokeCapability` | `POST /capsets/{capset_id}/connect/{instance_id}/{service_id}/{method}` | Forward the JSON request to OctoBus and return the JSON response |
 
 The same catalog endpoint also provides `?format=md` (`text/markdown`, rendered
 by OctoBus `RenderCatalogMarkdown`). During sandbox injection, agent-compose
@@ -329,7 +351,7 @@ Injection chain:
 Settings page "Capability Gateway":
 
 - `GetCapabilityGatewayConfig` / `UpdateCapabilityGatewayConfig` edit
-  `addr` / `token`.
+  `addr`, the capset invocation token, and the OctoBus admin token.
 - `GetCapabilityStatus` probes connection status and capability count.
 
 Sandbox creation and scheduler:
@@ -356,14 +378,14 @@ client uses timeout.
 
 Backend:
 
-1. Add `capability_gateway` table to `ConfigStore` with single row `addr` and
-   `token`, plus `Get` / `Save`.
+1. Add `capability_gateway` table to `ConfigStore` with single row `addr`,
+   `token`, and `admin_token`, plus `Get` / `Save`.
 2. Proto: add `GetCapabilityGatewayConfig` /
    `UpdateCapabilityGatewayConfig` to `SettingsService`; add `capset_ids` to
    `AgentSpec` and sandbox request shapes; add three
    `CapabilityService` RPCs. Regenerate Go / TS.
-3. Control-plane provider depends on `ConfigStore` and reads `addr` / `token`
-   on every call.
+3. Control-plane provider depends on `ConfigStore` and reads `addr` /
+   `admin_token` on every call.
 4. Data-plane capproxy: read OctoBus addr / token from `ConfigStore`; maintain
    token -> sandbox in-memory index; validate guest `x-octobus-capset` belongs
    to sandbox binding; require guest `x-octobus-instance` for business calls;

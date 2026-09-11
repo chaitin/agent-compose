@@ -486,11 +486,16 @@ func testConfigStoreCRUDCoverageWorkflows(t *testing.T) {
 	if err := store.InitSchema(ctx); err != nil {
 		t.Fatalf("second InitSchema returned error: %v", err)
 	}
+	assertTableColumns(t, store, "capability_gateway", "addr", "token", "admin_token")
 
-	if saved, err := store.SaveCapabilityGateway(ctx, domain.CapabilityGatewaySettings{Addr: "http://octobus", Token: "token"}); err != nil || saved.Addr == "" {
+	if saved, err := store.SaveCapabilityGateway(ctx, domain.CapabilityGatewaySettings{
+		Addr:       "http://octobus",
+		Token:      "capset-token",
+		AdminToken: "admin-token",
+	}); err != nil || saved.Addr == "" {
 		t.Fatalf("SaveCapabilityGateway saved=%#v err=%v", saved, err)
 	}
-	if gateway, err := store.GetCapabilityGateway(ctx); err != nil || gateway.Token != "token" {
+	if gateway, err := store.GetCapabilityGateway(ctx); err != nil || gateway.Token != "capset-token" || gateway.AdminToken != "admin-token" {
 		t.Fatalf("GetCapabilityGateway gateway=%#v err=%v", gateway, err)
 	}
 

@@ -2,6 +2,7 @@ package runs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -30,6 +31,9 @@ func (scopedRunGuideProvider) Catalog(context.Context, string) (capability.Catal
 func (scopedRunGuideProvider) ProxyTarget() string { return "proxy:1" }
 func (scopedRunGuideProvider) CapabilityGuide(_ context.Context, id string) ([]byte, error) {
 	return []byte("global " + id), nil
+}
+func (scopedRunGuideProvider) InvokeConnect(context.Context, capability.InvokeRequest) (json.RawMessage, error) {
+	return nil, capability.ErrNotConfigured
 }
 func (p *scopedRunGuideProvider) CapabilityGuideForScope(_ context.Context, scope capabilities.GuideScope, declaration string) ([]byte, error) {
 	p.scope = scope

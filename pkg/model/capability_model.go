@@ -5,6 +5,7 @@ package model
 // dynamically at request time. The deployment-fixed proxy listen/target
 // addresses are intentionally not stored here.
 type CapabilityGatewaySettings struct {
-	Addr  string
-	Token string
+	Addr       string
+	Token      string
+	AdminToken string
 }

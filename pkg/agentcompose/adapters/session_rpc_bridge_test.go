@@ -106,6 +106,10 @@ func (p testCapabilityProvider) CapabilityGuide(ctx context.Context, capsetID st
 	return p.guide(ctx, capsetID)
 }
 
+func (p testCapabilityProvider) InvokeConnect(context.Context, capability.InvokeRequest) (json.RawMessage, error) {
+	return nil, capability.ErrNotConfigured
+}
+
 func (p testCapabilityProvider) ProxyTarget() string {
 	return p.target
 }

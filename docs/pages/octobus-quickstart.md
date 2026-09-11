@@ -8,7 +8,7 @@ For configuration field reference, see the [agent-compose.yml Manual](https://gi
 
 | Concept | What it is | Who owns it |
 | --- | --- | --- |
-| **Capability Gateway** | The OctoBus connection configured in the agent-compose settings page (`addr` + `token`). | agent-compose daemon |
+| **Capability Gateway** | The OctoBus connection configured in the agent-compose settings page (`addr` plus admin and capset tokens). | agent-compose daemon |
 | **capset** | A named set of capabilities published by OctoBus, composed of `capset -> service -> instance -> method` bindings. | OctoBus |
 | **`capset_ids`** | The agent field that declares which capsets its sandboxes may use. | Your `agent-compose.yml` |
 | **capability proxy (capproxy)** | A gRPC proxy inside the daemon. Sandboxes never talk to OctoBus directly; capproxy checks authorization and forwards calls. | agent-compose daemon |
@@ -23,6 +23,21 @@ guest agent ──gRPC──▶ capproxy (CAP_GRPC_TARGET) ──gRPC──▶ O
 ```
 
 The guest only ever sees `CAP_GRPC_TARGET` and `CAP_TOKEN`. The OctoBus address and token stay inside the daemon and never enter the sandbox.
+
+## Business requests through agent-compose
+
+Agents use the gRPC capability proxy described below. Separately, a business
+service can call an OctoBus Connect RPC method through the deterministic
+`CapabilityService.InvokeCapability` API. The request names the capset, instance,
+service, method, and JSON payload. agent-compose resolves the configured
+OctoBus connection, injects the capset invocation token, and forwards the
+request to OctoBus. No agent or model participates in this path.
+
+```text
+business service
+  -> agent-compose /agentcompose.v2.CapabilityService/InvokeCapability
+  -> OctoBus Connect RPC
+```
 
 ## Prerequisites
 
@@ -87,11 +102,18 @@ Two independent things must both be configured:
 Open the web UI, go to **Settings → Capability Gateway**, and set:
 
 - **Address**: the OctoBus admin API address as reachable from the daemon container, e.g. `http://octobus:9000` (Docker network) or `http://host.docker.internal:9000` (OctoBus on the host).
-- **Token**: the capset/daemon token if you configured one in Step 2; leave empty otherwise.
+- **Admin Token (OctoBus Admin Token)**: the token used for OctoBus
+  `/admin/v1/*` reads. Leave empty only if the admin API is unprotected.
+- **Capability Invocation Token (Capset Token)**: the capset access token from
+  Step 2, used only for `InvokeCapability`; leave empty only if the capset is
+  public.
 
 The settings page immediately probes `GET /admin/v1/status` on OctoBus and shows the connection status and the number of published capability sets. A green status with your `dev` capset listed means the control plane is wired correctly.
 
-The token is stored by the daemon only: it is redacted on read-back, never written into sandbox metadata, never injected into guest env, and never logged.
+Both tokens are stored by the daemon only: they are redacted on read-back,
+never written into sandbox metadata, never injected into guest env, and never
+logged. The admin token and capset token are independent and should not be
+interchanged.
 
 ### 3b. Capability proxy (data plane)
 

@@ -8,7 +8,7 @@
 
 | 概念 | 含义 | 归属方 |
 | --- | --- | --- |
-| **Capability Gateway（能力网关）** | 在 agent-compose 设置页配置的 OctoBus 连接（`addr` + `token`）。 | agent-compose daemon |
+| **Capability Gateway（能力网关）** | 在 agent-compose 设置页配置的 OctoBus 连接（`addr`，以及管理 Token 和 Capset Token）。 | agent-compose daemon |
 | **capset（能力集）** | OctoBus 发布的一组能力，由 `capset -> service -> instance -> method` 绑定构成。 | OctoBus |
 | **`capset_ids`** | Agent 配置字段，声明其沙箱允许使用哪些能力集。 | 你的 `agent-compose.yml` |
 | **capability proxy（capproxy）** | daemon 内部的 gRPC 代理。沙箱从不直接连接 OctoBus，由 capproxy 做鉴权检查并转发调用。 | agent-compose daemon |
@@ -23,6 +23,20 @@ guest agent ──gRPC──▶ capproxy (CAP_GRPC_TARGET) ──gRPC──▶ O
 ```
 
 guest 只能看到 `CAP_GRPC_TARGET` 和 `CAP_TOKEN`。OctoBus 的地址和 token 始终留在 daemon 内，不会进入沙箱。
+
+## 业务请求通过 agent-compose 调用 OctoBus
+
+Agent 使用后文描述的 gRPC 能力代理。除此之外，业务服务还可以通过确定性的
+`CapabilityService.InvokeCapability` 接口调用 OctoBus Connect RPC 方法。
+请求显式指定 capset、instance、service、method 和 JSON payload；
+agent-compose 读取已配置的 OctoBus 连接，注入 Capset Token 后转发给
+OctoBus。这条路径不经过 Agent，也不调用模型。
+
+```text
+业务服务
+  -> agent-compose /agentcompose.v2.CapabilityService/InvokeCapability
+  -> OctoBus Connect RPC
+```
 
 ## 前置条件
 
@@ -87,11 +101,16 @@ octobus catalog dev --all --json
 打开 Web UI，进入 **Settings → Capability Gateway**，设置：
 
 - **地址（Address）**：从 daemon 容器视角可达的 OctoBus admin API 地址，例如 `http://octobus:9000`（Docker 网络）或 `http://host.docker.internal:9000`（OctoBus 跑在宿主机）。
-- **Token**：如果你在第 2 步配置了能力集 token 就填上，否则留空。
+- **管理 Token（OctoBus Admin Token）**：用于读取 OctoBus
+  `/admin/v1/*` 的管理 Token。只有管理 API 未受保护时才留空。
+- **能力调用 Token（Capset Token）**：第 2 步配置的 Capset 访问 Token，
+  只用于 `InvokeCapability`。只有 Capset 公开访问时才留空。
 
 设置页会立即探测 OctoBus 的 `GET /admin/v1/status`，并显示连接状态和已发布能力集数量。状态为绿色且能看到 `dev` 能力集，说明控制面已经接通。
 
-token 只保存在 daemon：读取时会被脱敏，不会写入沙箱元数据、不会注入 guest 环境变量、不会进入日志。
+两类 Token 都只保存在 daemon：读取时会被脱敏，不会写入沙箱元数据、
+不会注入 guest 环境变量、不会进入日志。管理 Token 与 Capset Token
+相互独立，不能混用。
 
 ### 3b. 能力代理（数据面）
 

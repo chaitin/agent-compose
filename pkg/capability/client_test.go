@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -143,6 +144,137 @@ func TestClientCatalogMarkdownPreservesPlainTextOctoBusError(t *testing.T) {
 	}
 	if upstream.HTTPStatus != http.StatusServiceUnavailable || upstream.Code != "HTTP_503" || upstream.Message != http.StatusText(http.StatusServiceUnavailable) {
 		t.Fatalf("unexpected OctoBus error fallback: %+v", upstream)
+	}
+}
+
+func TestClientInvokeConnectPostsJSONAndPreservesResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.EscapedPath() != "/capsets/threat-intel/connect/cloud/ThreatBook.Cloud/IpReputation" {
+			t.Fatalf("unexpected path %s", r.URL.EscapedPath())
+		}
+		if r.Header.Get("Authorization") != "Bearer secret-token" {
+			t.Fatalf("unexpected authorization header %q", r.Header.Get("Authorization"))
+		}
+		if r.Header.Get("Connect-Protocol-Version") != "1" {
+			t.Fatalf("unexpected connect protocol header %q", r.Header.Get("Connect-Protocol-Version"))
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(body) != `{"resource":"8.8.8.8","lang":"zh"}` {
+			t.Fatalf("unexpected body %s", body)
+		}
+		_, _ = w.Write([]byte(`{"response_code":0,"data":{"is_malicious":false}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{Addr: server.URL, Token: "secret-token"})
+	result, err := client.InvokeConnect(context.Background(), InvokeRequest{
+		CapsetID:   "threat-intel",
+		InstanceID: "cloud",
+		ServiceID:  "ThreatBook.Cloud",
+		Method:     "IpReputation",
+		Payload:    json.RawMessage(`{"resource":"8.8.8.8","lang":"zh"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(result) != `{"response_code":0,"data":{"is_malicious":false}}` {
+		t.Fatalf("unexpected result %s", result)
+	}
+}
+
+func TestClientSeparatesAdminAndInvokeTokens(t *testing.T) {
+	var adminAuthorization, invokeAuthorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/admin/v1/capsets":
+			adminAuthorization = r.Header.Get("Authorization")
+			_ = json.NewEncoder(w).Encode(map[string]any{"capsets": []any{}})
+		case "/capsets/threat-intel/connect/cloud/ThreatBook.Cloud/IpReputation":
+			invokeAuthorization = r.Header.Get("Authorization")
+			_, _ = w.Write([]byte(`{"response_code":0}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{
+		Addr:       server.URL,
+		Token:      "capset-token",
+		AdminToken: "admin-token",
+	})
+	if _, err := client.ListCapsets(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.InvokeConnect(context.Background(), InvokeRequest{
+		CapsetID:   "threat-intel",
+		InstanceID: "cloud",
+		ServiceID:  "ThreatBook.Cloud",
+		Method:     "IpReputation",
+		Payload:    json.RawMessage(`{"resource":"8.8.8.8"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if adminAuthorization != "Bearer admin-token" {
+		t.Fatalf("admin authorization = %q", adminAuthorization)
+	}
+	if invokeAuthorization != "Bearer capset-token" {
+		t.Fatalf("invoke authorization = %q", invokeAuthorization)
+	}
+}
+
+func TestClientInvokeConnectPreservesConnectError(t *testing.T) {
+	const nestedMessage = `{"code":"FAILED_PRECONDITION","message":"threatbook upstream business failure","response_code":-4,"verbose_msg":"超出每月访问限制"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusPreconditionFailed)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    "failed_precondition",
+			"message": nestedMessage,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{Addr: server.URL, Token: "capset-token"})
+	_, err := client.InvokeConnect(context.Background(), InvokeRequest{
+		CapsetID:   "threat-intel",
+		InstanceID: "cloud",
+		ServiceID:  "ThreatBook.Cloud",
+		Method:     "IpReputation",
+	})
+	if err == nil {
+		t.Fatal("InvokeConnect returned nil error")
+	}
+	var upstream *OctoBusError
+	if !errors.As(err, &upstream) {
+		t.Fatalf("InvokeConnect error type = %T, want *OctoBusError: %v", err, err)
+	}
+	if upstream.HTTPStatus != http.StatusPreconditionFailed || upstream.Code != "failed_precondition" || upstream.Message != nestedMessage {
+		t.Fatalf("unexpected OctoBus error: %+v", upstream)
+	}
+	if !strings.Contains(err.Error(), "response_code") || !strings.Contains(err.Error(), "超出每月访问限制") {
+		t.Fatalf("error string did not preserve upstream details: %v", err)
+	}
+}
+
+func TestClientInvokeConnectRejectsInvalidRequest(t *testing.T) {
+	client := NewClient(Config{Addr: "http://127.0.0.1:9000"})
+	tests := []InvokeRequest{
+		{InstanceID: "cloud", ServiceID: "svc", Method: "method"},
+		{CapsetID: "dev", ServiceID: "svc", Method: "method"},
+		{CapsetID: "dev", InstanceID: "cloud", Method: "method"},
+		{CapsetID: "dev", InstanceID: "cloud", ServiceID: "svc"},
+		{CapsetID: "dev", InstanceID: "cloud", ServiceID: "svc", Method: "method", Payload: json.RawMessage(`{`)},
+	}
+	for _, request := range tests {
+		if _, err := client.InvokeConnect(context.Background(), request); !errors.Is(err, ErrInvalidInvoke) {
+			t.Fatalf("InvokeConnect(%+v) error = %v, want ErrInvalidInvoke", request, err)
+		}
 	}
 }
 

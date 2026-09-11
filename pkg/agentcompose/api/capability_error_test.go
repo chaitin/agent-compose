@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -196,8 +197,47 @@ func TestListCapabilitySetsPreservesOctoBusErrorCode(t *testing.T) {
 	}
 }
 
+func TestInvokeCapabilityForwardsRequestAndPreservesResponse(t *testing.T) {
+	provider := &capabilityErrorProvider{
+		invokeResult: json.RawMessage(`{"response_code":0,"data":{"kind":"ip"}}`),
+	}
+	handler := NewCapabilityV2Handler(provider, nil)
+
+	response, err := handler.InvokeCapability(context.Background(), connect.NewRequest(&agentcomposev2.InvokeCapabilityRequest{
+		CapsetId:    "threat-intel",
+		InstanceId:  "cloud",
+		ServiceId:   "ThreatBook.Cloud",
+		Method:      "IpReputation",
+		PayloadJson: `{"resource":"8.8.8.8"}`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Msg.GetResultJson() != `{"response_code":0,"data":{"kind":"ip"}}` {
+		t.Fatalf("result_json = %s", response.Msg.GetResultJson())
+	}
+	if provider.invokeRequest.CapsetID != "threat-intel" ||
+		provider.invokeRequest.InstanceID != "cloud" ||
+		provider.invokeRequest.ServiceID != "ThreatBook.Cloud" ||
+		provider.invokeRequest.Method != "IpReputation" ||
+		string(provider.invokeRequest.Payload) != `{"resource":"8.8.8.8"}` {
+		t.Fatalf("invoke request = %+v", provider.invokeRequest)
+	}
+}
+
+func TestInvokeCapabilityMapsInvalidInvoke(t *testing.T) {
+	handler := NewCapabilityV2Handler(&capabilityErrorProvider{invokeErr: capability.ErrInvalidInvoke}, nil)
+	_, err := handler.InvokeCapability(context.Background(), connect.NewRequest(&agentcomposev2.InvokeCapabilityRequest{}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("InvokeCapability code = %s, want %s; err=%v", connect.CodeOf(err), connect.CodeInvalidArgument, err)
+	}
+}
+
 type capabilityErrorProvider struct {
-	listErr error
+	listErr       error
+	invokeErr     error
+	invokeResult  json.RawMessage
+	invokeRequest capability.InvokeRequest
 }
 
 func (p *capabilityErrorProvider) Status(context.Context) capability.Status {
@@ -214,6 +254,11 @@ func (p *capabilityErrorProvider) Catalog(context.Context, string) (capability.C
 
 func (p *capabilityErrorProvider) CapabilityGuide(context.Context, string) ([]byte, error) {
 	return nil, nil
+}
+
+func (p *capabilityErrorProvider) InvokeConnect(_ context.Context, request capability.InvokeRequest) (json.RawMessage, error) {
+	p.invokeRequest = request
+	return p.invokeResult, p.invokeErr
 }
 
 func (p *capabilityErrorProvider) ProxyTarget() string { return "" }

@@ -1,6 +1,9 @@
 package capability
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	ProtocolGRPC    = "grpc"
@@ -9,9 +12,18 @@ const (
 )
 
 type Config struct {
-	Addr    string
-	Token   string
-	Timeout time.Duration
+	Addr       string
+	Token      string
+	AdminToken string
+	Timeout    time.Duration
+}
+
+type InvokeRequest struct {
+	CapsetID   string
+	InstanceID string
+	ServiceID  string
+	Method     string
+	Payload    json.RawMessage
 }
 
 type Status struct {

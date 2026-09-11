@@ -3172,6 +3172,10 @@ func (p fakeCapabilityProvider) CapabilityGuide(_ context.Context, capsetID stri
 	return nil, errors.New("not found")
 }
 
+func (p fakeCapabilityProvider) InvokeConnect(context.Context, capability.InvokeRequest) (json.RawMessage, error) {
+	return nil, capability.ErrNotConfigured
+}
+
 func (p fakeCapabilityProvider) ProxyTarget() string {
 	return p.target
 }

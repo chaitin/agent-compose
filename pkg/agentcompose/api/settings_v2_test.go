@@ -70,7 +70,52 @@ func TestSettingsGlobalEnvEmptyAndOmittedEntriesReplaceCollection(t *testing.T) 
 	}
 }
 
-type settingsStoreFake struct{ env []domain.SandboxEnvVar }
+func TestSettingsCapabilityGatewayTokensAreIndependent(t *testing.T) {
+	ctx := context.Background()
+	store := &settingsStoreFake{gateway: domain.CapabilityGatewaySettings{
+		Addr:       "http://octobus",
+		Token:      "capset-token",
+		AdminToken: "admin-token",
+	}}
+	handler := NewSettingsV2Handler(&appconfig.Config{DataRoot: t.TempDir()}, store)
+
+	configured, err := handler.GetCapabilityGatewayConfig(ctx, connect.NewRequest(&agentcomposev2.GetCapabilityGatewayConfigRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !configured.Msg.GetConfig().GetTokenSet() || !configured.Msg.GetConfig().GetAdminTokenSet() {
+		t.Fatalf("configured tokens = %+v", configured.Msg.GetConfig())
+	}
+
+	empty := ""
+	if _, err := handler.UpdateCapabilityGatewayConfig(ctx, connect.NewRequest(&agentcomposev2.UpdateCapabilityGatewayConfigRequest{
+		AdminToken: &empty,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if store.gateway.Token != "capset-token" || store.gateway.AdminToken != "" {
+		t.Fatalf("gateway after admin clear = %+v", store.gateway)
+	}
+
+	replacement := "replacement-capset-token"
+	updated, err := handler.UpdateCapabilityGatewayConfig(ctx, connect.NewRequest(&agentcomposev2.UpdateCapabilityGatewayConfigRequest{
+		Token: &replacement,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.gateway.Token != replacement || store.gateway.AdminToken != "" {
+		t.Fatalf("gateway after capset update = %+v", store.gateway)
+	}
+	if !updated.Msg.GetConfig().GetTokenSet() || updated.Msg.GetConfig().GetAdminTokenSet() {
+		t.Fatalf("updated token state = %+v", updated.Msg.GetConfig())
+	}
+}
+
+type settingsStoreFake struct {
+	env     []domain.SandboxEnvVar
+	gateway domain.CapabilityGatewaySettings
+}
 
 func (s *settingsStoreFake) ListGlobalEnv(context.Context) ([]domain.SandboxEnvVar, error) {
 	return append([]domain.SandboxEnvVar(nil), s.env...), nil
@@ -92,9 +137,10 @@ func (*settingsStoreFake) UpdateWorkspaceConfig(_ context.Context, item domain.W
 	return item, nil
 }
 func (*settingsStoreFake) DeleteWorkspaceConfig(context.Context, string) error { return nil }
-func (*settingsStoreFake) GetCapabilityGateway(context.Context) (domain.CapabilityGatewaySettings, error) {
-	return domain.CapabilityGatewaySettings{}, nil
+func (s *settingsStoreFake) GetCapabilityGateway(context.Context) (domain.CapabilityGatewaySettings, error) {
+	return s.gateway, nil
 }
-func (*settingsStoreFake) SaveCapabilityGateway(_ context.Context, item domain.CapabilityGatewaySettings) (domain.CapabilityGatewaySettings, error) {
+func (s *settingsStoreFake) SaveCapabilityGateway(_ context.Context, item domain.CapabilityGatewaySettings) (domain.CapabilityGatewaySettings, error) {
+	s.gateway = item
 	return item, nil
 }

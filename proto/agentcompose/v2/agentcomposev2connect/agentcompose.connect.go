@@ -260,6 +260,9 @@ const (
 	// CapabilityServiceGetCapabilityCatalogProcedure is the fully-qualified name of the
 	// CapabilityService's GetCapabilityCatalog RPC.
 	CapabilityServiceGetCapabilityCatalogProcedure = "/agentcompose.v2.CapabilityService/GetCapabilityCatalog"
+	// CapabilityServiceInvokeCapabilityProcedure is the fully-qualified name of the CapabilityService's
+	// InvokeCapability RPC.
+	CapabilityServiceInvokeCapabilityProcedure = "/agentcompose.v2.CapabilityService/InvokeCapability"
 	// LLMServiceCreateProviderProcedure is the fully-qualified name of the LLMService's CreateProvider
 	// RPC.
 	LLMServiceCreateProviderProcedure = "/agentcompose.v2.LLMService/CreateProvider"
@@ -2549,6 +2552,7 @@ type CapabilityServiceClient interface {
 	GetCapabilityStatus(context.Context, *connect.Request[v2.GetCapabilityStatusRequest]) (*connect.Response[v2.CapabilityStatusResponse], error)
 	ListCapabilitySets(context.Context, *connect.Request[v2.ListCapabilitySetsRequest]) (*connect.Response[v2.ListCapabilitySetsResponse], error)
 	GetCapabilityCatalog(context.Context, *connect.Request[v2.GetCapabilityCatalogRequest]) (*connect.Response[v2.GetCapabilityCatalogResponse], error)
+	InvokeCapability(context.Context, *connect.Request[v2.InvokeCapabilityRequest]) (*connect.Response[v2.InvokeCapabilityResponse], error)
 }
 
 // NewCapabilityServiceClient constructs a client for the agentcompose.v2.CapabilityService service.
@@ -2580,6 +2584,12 @@ func NewCapabilityServiceClient(httpClient connect.HTTPClient, baseURL string, o
 			connect.WithSchema(capabilityServiceMethods.ByName("GetCapabilityCatalog")),
 			connect.WithClientOptions(opts...),
 		),
+		invokeCapability: connect.NewClient[v2.InvokeCapabilityRequest, v2.InvokeCapabilityResponse](
+			httpClient,
+			baseURL+CapabilityServiceInvokeCapabilityProcedure,
+			connect.WithSchema(capabilityServiceMethods.ByName("InvokeCapability")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -2588,6 +2598,7 @@ type capabilityServiceClient struct {
 	getCapabilityStatus  *connect.Client[v2.GetCapabilityStatusRequest, v2.CapabilityStatusResponse]
 	listCapabilitySets   *connect.Client[v2.ListCapabilitySetsRequest, v2.ListCapabilitySetsResponse]
 	getCapabilityCatalog *connect.Client[v2.GetCapabilityCatalogRequest, v2.GetCapabilityCatalogResponse]
+	invokeCapability     *connect.Client[v2.InvokeCapabilityRequest, v2.InvokeCapabilityResponse]
 }
 
 // GetCapabilityStatus calls agentcompose.v2.CapabilityService.GetCapabilityStatus.
@@ -2605,11 +2616,17 @@ func (c *capabilityServiceClient) GetCapabilityCatalog(ctx context.Context, req 
 	return c.getCapabilityCatalog.CallUnary(ctx, req)
 }
 
+// InvokeCapability calls agentcompose.v2.CapabilityService.InvokeCapability.
+func (c *capabilityServiceClient) InvokeCapability(ctx context.Context, req *connect.Request[v2.InvokeCapabilityRequest]) (*connect.Response[v2.InvokeCapabilityResponse], error) {
+	return c.invokeCapability.CallUnary(ctx, req)
+}
+
 // CapabilityServiceHandler is an implementation of the agentcompose.v2.CapabilityService service.
 type CapabilityServiceHandler interface {
 	GetCapabilityStatus(context.Context, *connect.Request[v2.GetCapabilityStatusRequest]) (*connect.Response[v2.CapabilityStatusResponse], error)
 	ListCapabilitySets(context.Context, *connect.Request[v2.ListCapabilitySetsRequest]) (*connect.Response[v2.ListCapabilitySetsResponse], error)
 	GetCapabilityCatalog(context.Context, *connect.Request[v2.GetCapabilityCatalogRequest]) (*connect.Response[v2.GetCapabilityCatalogResponse], error)
+	InvokeCapability(context.Context, *connect.Request[v2.InvokeCapabilityRequest]) (*connect.Response[v2.InvokeCapabilityResponse], error)
 }
 
 // NewCapabilityServiceHandler builds an HTTP handler from the service implementation. It returns
@@ -2637,6 +2654,12 @@ func NewCapabilityServiceHandler(svc CapabilityServiceHandler, opts ...connect.H
 		connect.WithSchema(capabilityServiceMethods.ByName("GetCapabilityCatalog")),
 		connect.WithHandlerOptions(opts...),
 	)
+	capabilityServiceInvokeCapabilityHandler := connect.NewUnaryHandler(
+		CapabilityServiceInvokeCapabilityProcedure,
+		svc.InvokeCapability,
+		connect.WithSchema(capabilityServiceMethods.ByName("InvokeCapability")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/agentcompose.v2.CapabilityService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case CapabilityServiceGetCapabilityStatusProcedure:
@@ -2645,6 +2668,8 @@ func NewCapabilityServiceHandler(svc CapabilityServiceHandler, opts ...connect.H
 			capabilityServiceListCapabilitySetsHandler.ServeHTTP(w, r)
 		case CapabilityServiceGetCapabilityCatalogProcedure:
 			capabilityServiceGetCapabilityCatalogHandler.ServeHTTP(w, r)
+		case CapabilityServiceInvokeCapabilityProcedure:
+			capabilityServiceInvokeCapabilityHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -2664,6 +2689,10 @@ func (UnimplementedCapabilityServiceHandler) ListCapabilitySets(context.Context,
 
 func (UnimplementedCapabilityServiceHandler) GetCapabilityCatalog(context.Context, *connect.Request[v2.GetCapabilityCatalogRequest]) (*connect.Response[v2.GetCapabilityCatalogResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.CapabilityService.GetCapabilityCatalog is not implemented"))
+}
+
+func (UnimplementedCapabilityServiceHandler) InvokeCapability(context.Context, *connect.Request[v2.InvokeCapabilityRequest]) (*connect.Response[v2.InvokeCapabilityResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.CapabilityService.InvokeCapability is not implemented"))
 }
 
 // LLMServiceClient is a client for the agentcompose.v2.LLMService service.

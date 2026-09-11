@@ -21,6 +21,8 @@ func CapabilityConnectError(err error) error {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	case errors.Is(err, capability.ErrInvalidCatalog):
 		return connect.NewError(connect.CodeInvalidArgument, err)
+	case errors.Is(err, capability.ErrInvalidInvoke):
+		return connect.NewError(connect.CodeInvalidArgument, err)
 	case errors.As(err, &upstream):
 		return connect.NewError(octoBusConnectCode(upstream), err)
 	default:
