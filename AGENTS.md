@@ -166,6 +166,7 @@ Compose and environment variable conventions:
 - Edit public manuals under `docs/pages`; keep English and `docs/pages/zh-CN` variants aligned when changing shared behavior. Run `task docs:build` and never edit `build/pages` directly.
 - When changing the compose schema in `pkg/compose/spec.go`, update the YAML manuals and run the documentation build because the renderer validates schema coverage.
 - Change API definitions in `proto/**/*.proto`, run `task generate` (or `task generate:proto`), and commit the regenerated Go and Connect outputs. `buf.yaml` and `buf.gen.yaml` define generation behavior.
+- `proto/` is its own Go module, and the root `go.mod` replaces it with `./proto`: change a contract and its implementation in the same pull request. Do not tag `proto/v*` by hand; once CI passes on a `main` commit that changes `proto/`, the Proto tag workflow tags it with the next patch version. Before a release tag, move the root requirement to the newest proto tag (`go get github.com/chaitin/agent-compose/proto@vX.Y.Z`); the Published proto version job checks it on release tags. `sdk/go` has no replace and moves to a new proto tag only when it needs the new contract.
 
 ## Commits and Pull Requests
 

@@ -240,6 +240,7 @@ tasks:
       - ./scripts/tests/test-generated-proto-contract.sh
       - '{{.GO_TOOLCHAIN_ENV}} go -C proto test ./...'
       - ./scripts/tests/test-proto-breaking-ci-contract.sh
+      - ./scripts/tests/test-proto-tag-ci-contract.sh
       - ./scripts/tests/test-build-agent-compose-binary.sh
       - ./scripts/tests/test-task-build-variables.sh
       - ./scripts/tests/test-verify-agent-compose-binary.sh

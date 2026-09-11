@@ -58,6 +58,11 @@ jobs:
 
   proto-version:
     name: Published proto version
+    # Only a release has to name a published proto version. A proto change
+    # merges together with its implementation and is tagged afterwards by the
+    # Proto tag workflow, so on pull requests and main the required version
+    # legitimately trails proto/.
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,10 +71,10 @@ jobs:
           go-version-file: go.mod
           cache: true
       # Every other job builds through the replace, against the proto/ in the
-      # working tree, so a proto change that was never tagged - or a tag the
-      # require was never moved to - looks fine here and breaks only for
-      # whoever depends on this module. Dropping the replace is the one build
-      # that actually exercises the version in go.mod.
+      # working tree, so a require that was never moved to the tag carrying
+      # the contract looks fine there and breaks only for whoever depends on
+      # this module. Dropping the replace is the one build that actually
+      # exercises the version in go.mod.
       - name: Build against the published proto module
         run: |
           go mod edit -dropreplace=github.com/chaitin/agent-compose/proto
