@@ -8,13 +8,13 @@ import (
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
 
-func TestPrepareProjectRunKeepsGlobalEnvOutOfSandboxProviderOverrides(t *testing.T) {
+func TestPrepareProjectRunSeparatesProviderEnvFromGuestRuntime(t *testing.T) {
 	store := &fakePreparationStore{
 		project: domain.ProjectRecord{ID: "project-1", Name: "project"},
 		revision: domain.ProjectRevisionRecord{
 			ProjectID: "project-1",
 			Revision:  1,
-			SpecJSON:  `{"variables":[{"name":"PROJECT_VALUE","value":"project"}],"agents":[{"name":"worker","env":[{"name":"AGENT_VALUE","value":"agent"}]}]}`,
+			SpecJSON:  `{"variables":[{"name":"PROJECT_VALUE","value":"project"}],"agents":[{"name":"worker","env":[{"name":"AGENT_VALUE","value":"agent"},{"name":"LLM_API_HEADERS","value":"{\"X-Gateway-Token\":\"agent-header\"}","secret":true}]}]}`,
 		},
 		agent: domain.AgentDefinition{
 			ID:       "agent-1",
@@ -23,7 +23,7 @@ func TestPrepareProjectRunKeepsGlobalEnvOutOfSandboxProviderOverrides(t *testing
 		global: []domain.SandboxEnvVar{
 			{Name: "GLOBAL_VALUE", Value: "global"},
 			{Name: "LLM_API_KEY", Value: "global-key", Secret: true},
-			{Name: "LLM_API_HEADERS", Value: `{"X-Gateway-Token":"long-lived"}`, Secret: true},
+			{Name: "LLM_API_HEADERS", Value: `{"X-Gateway-Token":"global-header"}`, Secret: true},
 		},
 	}
 	prepared, err := PrepareProjectRun(context.Background(), PreparationDeps{Store: store}, domain.ProjectRunRecord{
@@ -40,13 +40,14 @@ func TestPrepareProjectRunKeepsGlobalEnvOutOfSandboxProviderOverrides(t *testing
 		t.Fatalf("runtime env = %#v", runtimeEnv)
 	}
 	providerEnv := domain.SandboxEnvMap(prepared.ProviderEnvItems)
-	if providerEnv["GLOBAL_VALUE"] != "" || providerEnv["LLM_API_KEY"] != "" || providerEnv["LLM_API_HEADERS"] != "" {
+	if providerEnv["GLOBAL_VALUE"] != "" || providerEnv["LLM_API_KEY"] != "" {
 		t.Fatalf("provider overrides contain Global Env: %#v", providerEnv)
 	}
 	for name, want := range map[string]string{
-		"PROJECT_VALUE": "project",
-		"AGENT_VALUE":   "agent",
-		"REQUEST_VALUE": "request",
+		"PROJECT_VALUE":   "project",
+		"AGENT_VALUE":     "agent",
+		"REQUEST_VALUE":   "request",
+		"LLM_API_HEADERS": `{"X-Gateway-Token":"agent-header"}`,
 	} {
 		if providerEnv[name] != want {
 			t.Fatalf("provider env %s = %q, want %q", name, providerEnv[name], want)

@@ -35,7 +35,7 @@ func TestLLMHandlerMapsClassifiedErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := NewLLMHandler(llmGeneratorStub{err: tt.err})
+			handler := NewLLMHandler(llmGeneratorStub{err: tt.err}, nil)
 			_, err := handler.Generate(context.Background(), connect.NewRequest(&agentcomposev2.GenerateLLMRequest{}))
 			if got := connect.CodeOf(err); got != tt.code {
 				t.Fatalf("Generate() code = %s, want %s: %v", got, tt.code, err)

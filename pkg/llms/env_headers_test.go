@@ -42,9 +42,9 @@ func TestEnvProviderHeadersJSON(t *testing.T) {
 		}
 	})
 
-	t.Run("custom headers override canonicalized extra headers", func(t *testing.T) {
+	t.Run("merges custom and extra headers", func(t *testing.T) {
 		got, err := envProviderHeadersJSON(mapLookup(map[string]string{
-			llmAPIHeadersEnv: `{"ANTHROPIC-version":"2024-01-01","Bizscenario":"mobile-learning"}`,
+			llmAPIHeadersEnv: `{"Bizscenario":"mobile-learning"}`,
 		}), map[string]string{"anthropic-version": "2023-06-01"})
 		if err != nil {
 			t.Fatalf("error = %v", err)
@@ -53,8 +53,17 @@ func TestEnvProviderHeadersJSON(t *testing.T) {
 		if err := json.Unmarshal([]byte(got), &headers); err != nil {
 			t.Fatalf("decode %q: %v", got, err)
 		}
-		if headers["Anthropic-Version"] != "2024-01-01" || headers["Bizscenario"] != "mobile-learning" || len(headers) != 2 {
+		if headers["Anthropic-Version"] != "2023-06-01" || headers["Bizscenario"] != "mobile-learning" || len(headers) != 2 {
 			t.Fatalf("headers = %#v", headers)
+		}
+	})
+
+	t.Run("rejects overriding provider managed headers", func(t *testing.T) {
+		_, err := envProviderHeadersJSON(mapLookup(map[string]string{
+			llmAPIHeadersEnv: `{"ANTHROPIC-version":"2024-01-01"}`,
+		}), map[string]string{"anthropic-version": "2023-06-01"})
+		if !errors.Is(err, domain.ErrFailedPrecondition) {
+			t.Fatalf("error = %v, want failed precondition", err)
 		}
 	})
 

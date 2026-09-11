@@ -37,6 +37,9 @@ func envProviderHeadersJSON(lookup EnvProviderLookup, extra map[string]string) (
 			return "", err
 		}
 		for key, value := range custom {
+			if _, managed := headers[key]; managed {
+				return "", envProviderHeadersError(fmt.Sprintf("%s cannot override provider-managed headers", llmAPIHeadersEnv), nil)
+			}
 			headers[key] = value
 		}
 	}
