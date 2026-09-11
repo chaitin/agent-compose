@@ -1,0 +1,83 @@
+name: Proto tag
+
+# Publishes the proto module. A proto change merges together with its
+# implementation - go.mod replaces the module with ./proto - so the contract
+# reaches main before any version of it exists. Once CI passes on such a main
+# commit, this workflow tags it with the next proto/vX.Y.Z.
+#
+# The tags are made here rather than by hand so they are only ever cut from
+# main and only ever move forward: a hand-made tag on a feature branch once
+# published a version that lacked RPCs an earlier version had.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One tagger at a time, so two commits never claim the same next version.
+concurrency:
+  group: proto-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag proto module
+    # The branch filter also matches a pull request whose head branch is named
+    # main, so require the push run that tested main itself.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.COMMIT }}
+          fetch-depth: 0
+      - name: Decide the next proto version
+        id: next
+        run: |
+          tag=$(./scripts/proto-next-tag.sh "$COMMIT")
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Push the tag
+        if: steps.next.outputs.tag != ''
+        env:
+          TAG: ${{ steps.next.outputs.tag }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" -m "$TAG" "$COMMIT"
+          git push origin "refs/tags/$TAG"
+          echo "Tagged \`$TAG\` on \`$COMMIT\`." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-go@v5
+        if: steps.next.outputs.tag != ''
+        with:
+          go-version-file: proto/go.mod
+          cache: false
+      # Ask the public proxy for the version now: it is recorded in the
+      # checksum database before the first client asks, and a tag that cannot
+      # resolve fails here instead of in someone's go get.
+      - name: Resolve the tag through the module proxy
+        if: steps.next.outputs.tag != ''
+        working-directory: ${{ runner.temp }}
+        env:
+          TAG: ${{ steps.next.outputs.tag }}
+          GOPROXY: https://proxy.golang.org
+        run: |
+          version=${TAG#proto/}
+          for attempt in 1 2 3; do
+            if go list -m -json "github.com/chaitin/agent-compose/proto@$version"; then
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::proxy.golang.org could not resolve $TAG"
+          exit 1
