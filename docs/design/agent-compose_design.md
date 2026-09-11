@@ -982,7 +982,10 @@ Global env from the UI/database overrides process environment for these keys.
 `LLM_API_HEADERS` is an optional JSON object of static `string -> string`
 headers forwarded on daemon LLM requests. Empty object means no extra
 headers. `Authorization` and other system headers are still generated from
-the API key and cannot be overridden.
+the API key and cannot be overridden. The daemon consumes this value and does
+not expose it to guest runtimes. The setting is shared by env-backed OpenAI
+and Anthropic Providers, so each configured header must be safe to send to
+every configured upstream.
 The `chat_completions` protocol is for unary text generation only. It does not
 create workspace-capable agent sandboxes or grant file, command, or MCP tool
 access. With `outputSchema`, it uses prompt guidance and `json_object` instead

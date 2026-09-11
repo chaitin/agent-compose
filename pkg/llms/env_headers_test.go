@@ -3,6 +3,7 @@ package llms
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,9 +42,9 @@ func TestEnvProviderHeadersJSON(t *testing.T) {
 		}
 	})
 
-	t.Run("merges extra headers under custom values", func(t *testing.T) {
+	t.Run("custom headers override canonicalized extra headers", func(t *testing.T) {
 		got, err := envProviderHeadersJSON(mapLookup(map[string]string{
-			llmAPIHeadersEnv: `{"Bizscenario":"mobile-learning"}`,
+			llmAPIHeadersEnv: `{"ANTHROPIC-version":"2024-01-01","Bizscenario":"mobile-learning"}`,
 		}), map[string]string{"anthropic-version": "2023-06-01"})
 		if err != nil {
 			t.Fatalf("error = %v", err)
@@ -52,29 +53,52 @@ func TestEnvProviderHeadersJSON(t *testing.T) {
 		if err := json.Unmarshal([]byte(got), &headers); err != nil {
 			t.Fatalf("decode %q: %v", got, err)
 		}
-		if headers["anthropic-version"] != "2023-06-01" || headers["Bizscenario"] != "mobile-learning" {
+		if headers["Anthropic-Version"] != "2024-01-01" || headers["Bizscenario"] != "mobile-learning" || len(headers) != 2 {
 			t.Fatalf("headers = %#v", headers)
 		}
 	})
 
 	t.Run("rejects non-object and invalid values", func(t *testing.T) {
-		tests := []string{`[]`, `"x"`, `{"A":1}`, `{"A":"1","B":true}`, "not-json"}
+		tests := []string{`[]`, `"x"`, `null`, `{"A":1}`, `{"A":"1","B":true}`, `{"A":null}`, "not-json"}
 		for _, raw := range tests {
-			if _, err := envProviderHeadersJSON(mapLookup(map[string]string{llmAPIHeadersEnv: raw}), nil); err == nil {
-				t.Fatalf("raw %q returned nil error", raw)
+			if _, err := envProviderHeadersJSON(mapLookup(map[string]string{llmAPIHeadersEnv: raw}), nil); !errors.Is(err, domain.ErrFailedPrecondition) {
+				t.Fatalf("raw %q error = %v, want failed precondition", raw, err)
 			}
 		}
 	})
 
-	t.Run("rejects empty names and CR LF", func(t *testing.T) {
-		if _, err := envProviderHeadersJSON(mapLookup(map[string]string{llmAPIHeadersEnv: `{"":"x"}`}), nil); err == nil {
-			t.Fatal("empty name returned nil error")
+	t.Run("rejects invalid HTTP names and values", func(t *testing.T) {
+		tests := []string{
+			`{"":"x"}`,
+			`{"Bad Header":"x"}`,
+			"{\"A\\n\":\"x\"}",
+			"{\"A\":\"x\\r\\n\"}",
+			"{\"A\":\"x\\u0000\"}",
 		}
-		if _, err := envProviderHeadersJSON(mapLookup(map[string]string{llmAPIHeadersEnv: "{\"A\\n\":\"x\"}"}), nil); err == nil {
-			t.Fatal("CR/LF name returned nil error")
+		for _, raw := range tests {
+			if _, err := envProviderHeadersJSON(mapLookup(map[string]string{llmAPIHeadersEnv: raw}), nil); !errors.Is(err, domain.ErrFailedPrecondition) {
+				t.Fatalf("raw %q error = %v, want failed precondition", raw, err)
+			}
 		}
-		if _, err := envProviderHeadersJSON(mapLookup(map[string]string{llmAPIHeadersEnv: "{\"A\":\"x\\r\\n\"}"}), nil); err == nil {
-			t.Fatal("CR/LF value returned nil error")
+	})
+
+	t.Run("rejects duplicate names case insensitively", func(t *testing.T) {
+		tests := []string{
+			`{"X-Tenant":"a","x-tenant":"b"}`,
+			`{"X-Tenant":"a"," X-Tenant ":"b"}`,
+			`{"X-Tenant":"a","X-Tenant":"b"}`,
+		}
+		for _, raw := range tests {
+			if _, err := envProviderHeadersJSON(mapLookup(map[string]string{llmAPIHeadersEnv: raw}), nil); !errors.Is(err, domain.ErrFailedPrecondition) {
+				t.Fatalf("raw %q error = %v, want failed precondition", raw, err)
+			}
+		}
+	})
+
+	t.Run("rejects duplicate extra names case insensitively", func(t *testing.T) {
+		_, err := envProviderHeadersJSON(nil, map[string]string{"X-Tenant": "a", "x-tenant": "b"})
+		if !errors.Is(err, domain.ErrFailedPrecondition) {
+			t.Fatalf("error = %v, want failed precondition", err)
 		}
 	})
 }
@@ -164,7 +188,7 @@ func TestAnthropicEnvProviderMergesLLMAPIHeaders(t *testing.T) {
 	if err := json.Unmarshal([]byte(store.providers[0].HeadersJSON), &headers); err != nil {
 		t.Fatalf("decode HeadersJSON %q: %v", store.providers[0].HeadersJSON, err)
 	}
-	if headers["anthropic-version"] != "2023-06-01" || headers["Bizscenario"] != "mobile-learning" {
+	if headers["Anthropic-Version"] != "2023-06-01" || headers["Bizscenario"] != "mobile-learning" {
 		t.Fatalf("headers = %#v", headers)
 	}
 }

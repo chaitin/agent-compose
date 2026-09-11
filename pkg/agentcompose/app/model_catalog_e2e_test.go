@@ -19,7 +19,7 @@ func TestE2EModelCatalogConfiguresOpenCodeFacadeTarget(t *testing.T) {
 	// Keep the catalog resolution deterministic when the developer/CI environment
 	// provides global LLM credentials. The test exercises models.json as the
 	// source of truth and must not inherit ambient provider configuration.
-	for _, key := range []string{"LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL", "OPENAI_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_ENDPOINT", "ANTHROPIC_MODEL", "CLAUDE_MODEL"} {
+	for _, key := range []string{"LLM_API_KEY", "LLM_API_HEADERS", "LLM_BASE_URL", "LLM_MODEL", "OPENAI_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_ENDPOINT", "ANTHROPIC_MODEL", "CLAUDE_MODEL"} {
 		t.Setenv(key, "")
 	}
 	root := t.TempDir()

@@ -23,6 +23,7 @@ func TestPrepareProjectRunKeepsGlobalEnvOutOfSandboxProviderOverrides(t *testing
 		global: []domain.SandboxEnvVar{
 			{Name: "GLOBAL_VALUE", Value: "global"},
 			{Name: "LLM_API_KEY", Value: "global-key", Secret: true},
+			{Name: "LLM_API_HEADERS", Value: `{"X-Gateway-Token":"long-lived"}`, Secret: true},
 		},
 	}
 	prepared, err := PrepareProjectRun(context.Background(), PreparationDeps{Store: store}, domain.ProjectRunRecord{
@@ -35,11 +36,11 @@ func TestPrepareProjectRunKeepsGlobalEnvOutOfSandboxProviderOverrides(t *testing
 		t.Fatalf("PrepareProjectRun returned error: %v", err)
 	}
 	runtimeEnv := domain.SandboxEnvMap(prepared.EnvItems)
-	if runtimeEnv["GLOBAL_VALUE"] != "global" || runtimeEnv["LLM_API_KEY"] != "" {
+	if runtimeEnv["GLOBAL_VALUE"] != "global" || runtimeEnv["LLM_API_KEY"] != "" || runtimeEnv["LLM_API_HEADERS"] != "" {
 		t.Fatalf("runtime env = %#v", runtimeEnv)
 	}
 	providerEnv := domain.SandboxEnvMap(prepared.ProviderEnvItems)
-	if providerEnv["GLOBAL_VALUE"] != "" || providerEnv["LLM_API_KEY"] != "" {
+	if providerEnv["GLOBAL_VALUE"] != "" || providerEnv["LLM_API_KEY"] != "" || providerEnv["LLM_API_HEADERS"] != "" {
 		t.Fatalf("provider overrides contain Global Env: %#v", providerEnv)
 	}
 	for name, want := range map[string]string{
