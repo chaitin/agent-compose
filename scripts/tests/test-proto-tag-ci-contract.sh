@@ -109,6 +109,17 @@ require "$tag_workflow" 'scripts/proto-next-tag\.sh "\$COMMIT"' 'tag decision fo
 require "$tag_workflow" 'git push origin "refs/tags/\$TAG"' 'tag push'
 require "$tag_workflow" 'GOPROXY: https://proxy\.golang\.org$' 'resolution through the public proxy alone'
 
+# Resolution follows the tag the commit carries rather than the tag this run
+# decided to push, so a re-run after a failed resolution checks it again.
+require "$tag_workflow" 'git tag --points-at "\$COMMIT"' 'lookup of the proto tag on the tested commit'
+resolve_step=$(awk '
+  /^      - name: Resolve the tag through the module proxy$/ { found = 1; print; next }
+  found && /^      - / { exit }
+  found { print }
+' "$TAG_WORKFLOW")
+require "$resolve_step" "if: steps\.published\.outputs\.tag != ''" 'resolution gated on the tag the commit carries'
+require "$resolve_step" 'TAG: \$\{\{ steps\.published\.outputs\.tag \}\}' 'resolution of the tag the commit carries'
+
 proto_version=$(awk '
   $0 == "  proto-version:" { found = 1; print; next }
   found && $0 ~ /^  [[:alnum:]_-]+:[[:space:]]*$/ { exit }

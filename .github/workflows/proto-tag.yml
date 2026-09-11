@@ -57,8 +57,20 @@ jobs:
           git tag -a "$TAG" -m "$TAG" "$COMMIT"
           git push origin "refs/tags/$TAG"
           echo "Tagged \`$TAG\` on \`$COMMIT\`." >> "$GITHUB_STEP_SUMMARY"
+      # Verify whichever proto tag this commit carries, not only one this run
+      # pushed: a re-run after a failed resolution finds the tag already
+      # published, decides there is nothing to tag, and must still check it.
+      # Deleting the tag on failure instead is not safe - the proxy may have
+      # recorded the version already, and re-cutting it would give one version
+      # two contents.
+      - name: Find the proto tag on this commit
+        id: published
+        run: |
+          tag=$(git tag --points-at "$COMMIT" --list 'proto/v*' |
+            grep -E '^proto/v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
-        if: steps.next.outputs.tag != ''
+        if: steps.published.outputs.tag != ''
         with:
           go-version-file: proto/go.mod
           cache: false
@@ -66,10 +78,10 @@ jobs:
       # checksum database before the first client asks, and a tag that cannot
       # resolve fails here instead of in someone's go get.
       - name: Resolve the tag through the module proxy
-        if: steps.next.outputs.tag != ''
+        if: steps.published.outputs.tag != ''
         working-directory: ${{ runner.temp }}
         env:
-          TAG: ${{ steps.next.outputs.tag }}
+          TAG: ${{ steps.published.outputs.tag }}
           GOPROXY: https://proxy.golang.org
         run: |
           version=${TAG#proto/}
