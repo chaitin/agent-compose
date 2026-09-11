@@ -189,7 +189,7 @@ func TestResolveAgentModelReturnsReadFailure(t *testing.T) {
 func clearAgentModelResolutionEnvironment(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
-		"LLM_API_ENDPOINT", "LLM_API_PROTOCOL", "LLM_API_KEY", "LLM_MODEL", "OPENAI_API_KEY",
+		"LLM_API_ENDPOINT", "LLM_API_PROTOCOL", "LLM_API_KEY", "LLM_API_HEADERS", "LLM_MODEL", "OPENAI_API_KEY",
 		"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_ENDPOINT",
 		"ANTHROPIC_MODEL", "CLAUDE_MODEL",
 	} {

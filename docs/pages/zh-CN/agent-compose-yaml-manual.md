@@ -545,7 +545,7 @@ daemon 在启动时加载一次 `$DATA_ROOT/models.json`。文件不存在是合
 
 可选的 `models` 数组只补充模型级元数据和行为，包括 `id`、`name`、`baseUrl`、`protocol`、`headers` 和正整数 `maxOutputTokens`。模型级 `protocol` 必须与 Provider 的协议族兼容：OpenAI Provider（`responses` 或 `chat_completions`）只允许 `responses` 和 `chat_completions`，Anthropic Provider（`anthropic_messages`）只允许 `anthropic_messages`。这些属性属于具体的 Provider/Model 部署，共享同一 Model ID 的 Provider 不会相互覆盖；该数组也不是白名单。只要 `gateway` Provider 已配置，`gateway/a-model-not-listed-here` 仍会使用 Provider 默认配置，把右侧 Model ID 原样发送给上游。
 
-所有兼容的 Coding Agent 和 `scheduler.llm` 使用这份目录完成 agent-compose 的 Provider 路由和模型选择；它不替代 Agent 自身的模型能力目录。Agent 中完整配置的 `LLM_API_ENDPOINT`、`LLM_API_PROTOCOL` 和 `LLM_API_KEY` 仍是更高优先级的兼容路径；daemon 自身完整的 `LLM_*` 配置也继续作为默认值，并优先于 `models.json.default`。Catalog Provider ID 如果与已有非 catalog Provider 冲突，daemon 会在不覆盖原配置的前提下启动失败。
+所有兼容的 Coding Agent 和 `scheduler.llm` 使用这份目录完成 agent-compose 的 Provider 路由和模型选择；它不替代 Agent 自身的模型能力目录。Agent 中完整配置的 `LLM_API_ENDPOINT`、`LLM_API_PROTOCOL` 和 `LLM_API_KEY` 仍是更高优先级的兼容路径。可选的 daemon 或 Agent `LLM_API_HEADERS` 是该 env Provider 上的静态额外 HTTP Header JSON 对象，它不替代 catalog 的 `headers`，原始值也不会暴露给 guest runtime。该变量由 env-backed OpenAI 和 Anthropic Provider 共用，因此每个 Header 都必须适合发送给所有已配置的上游。daemon 自身完整的 `LLM_*` 配置也继续作为默认值，并优先于 `models.json.default`。Catalog Provider ID 如果与已有非 catalog Provider 冲突，daemon 会在不覆盖原配置的前提下启动失败。
 
 ### 通过 RPC 管理 LLM Provider
 

@@ -30,7 +30,7 @@ func (h *LLMHandler) Generate(ctx context.Context, req *connect.Request[agentcom
 	}
 	result, err := h.generator.Generate(ctx, req.Msg.GetPrompt(), req.Msg.GetModel(), req.Msg.GetOutputSchema())
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ConnectErrorForDomain(err)
 	}
 	return connect.NewResponse(&agentcomposev2.GenerateLLMResponse{
 		Text:         result.Text,

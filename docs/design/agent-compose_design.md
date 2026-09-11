@@ -969,7 +969,7 @@ locally. Passing plain JSON Schema performs JSON parsing.
 `LLMClient` in the Go daemon. Configuration is daemon-global:
 
 - `LLM_API_ENDPOINT`, `LLM_API_KEY`, `OPENAI_API_KEY`, `LLM_MODEL`,
-  `LLM_TIMEOUT`
+  `LLM_TIMEOUT`, `LLM_API_HEADERS`
 - `CODEX_REQUEST_MAX_RETRIES`, `CODEX_STREAM_MAX_RETRIES`, and
   `CODEX_STREAM_IDLE_TIMEOUT` bound guest Codex retries and stream stalls. The
   retry limits default to one and accept zero to disable that retry layer; the
@@ -979,6 +979,13 @@ locally. Passing plain JSON Schema performs JSON parsing.
   `chat_completion`)
 
 Global env from the UI/database overrides process environment for these keys.
+`LLM_API_HEADERS` is an optional JSON object of static `string -> string`
+headers forwarded on daemon LLM requests. Empty object means no extra
+headers. `Authorization` and other system headers are still generated from
+the API key and cannot be overridden. The daemon consumes this value and does
+not expose it to guest runtimes. The setting is shared by env-backed OpenAI
+and Anthropic Providers, so each configured header must be safe to send to
+every configured upstream.
 The `chat_completions` protocol is for unary text generation only. It does not
 create workspace-capable agent sandboxes or grant file, command, or MCP tool
 access. With `outputSchema`, it uses prompt guidance and `json_object` instead

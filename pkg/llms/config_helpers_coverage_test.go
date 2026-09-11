@@ -111,7 +111,7 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if provider, model := SchedulerCommandFacadeAgentModel(map[string]string{"AGENT_PROVIDER": "opencode"}); provider != "" || model != "" {
 		t.Fatalf("opencode missing model provider=%q model=%q", provider, model)
 	}
-	filtered := FilterPersistedRuntimeEnv([]domain.SandboxEnvVar{{Name: "OPENAI_API_KEY", Value: "secret"}, {Name: "AGENT_COMPOSE_RUNTIME_BASE_URL", Value: "http://runtime"}, {Name: "VISIBLE", Value: "1"}})
+	filtered := FilterPersistedRuntimeEnv([]domain.SandboxEnvVar{{Name: "OPENAI_API_KEY", Value: "secret"}, {Name: "LLM_API_HEADERS", Value: `{"X-Token":"secret"}`}, {Name: "AGENT_COMPOSE_RUNTIME_BASE_URL", Value: "http://runtime"}, {Name: "VISIBLE", Value: "1"}})
 	if len(filtered) != 1 || filtered[0].Name != "VISIBLE" {
 		t.Fatalf("filtered = %#v", filtered)
 	}

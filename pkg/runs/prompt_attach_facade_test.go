@@ -220,6 +220,7 @@ func isolatePromptAttachLLMEnv(t *testing.T) {
 		"LLM_API_ENDPOINT",
 		"LLM_API_PROTOCOL",
 		"LLM_API_KEY",
+		"LLM_API_HEADERS",
 		"OPENAI_API_KEY",
 		"LLM_MODEL",
 		"ANTHROPIC_BASE_URL",

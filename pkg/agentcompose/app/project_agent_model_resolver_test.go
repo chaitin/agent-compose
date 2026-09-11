@@ -15,7 +15,7 @@ func newProjectAgentModelResolverFixture(t *testing.T, yaml string, config appco
 	ctx := context.Background()
 	// Model resolution consults os.Getenv as a fallback; clear ambient LLM
 	// environment so the assertions depend only on the injected config.
-	for _, key := range []string{"LLM_MODEL", "LLM_API_KEY", "LLM_API_ENDPOINT", "LLM_API_PROTOCOL", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"} {
+	for _, key := range []string{"LLM_MODEL", "LLM_API_KEY", "LLM_API_HEADERS", "LLM_API_ENDPOINT", "LLM_API_PROTOCOL", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"} {
 		t.Setenv(key, "")
 	}
 	store := newRunSupervisorTestConfigStore(t)

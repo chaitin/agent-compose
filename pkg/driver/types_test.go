@@ -30,6 +30,7 @@ func TestSandboxEnvMapKeepsNonLLMSecretEnv(t *testing.T) {
 	env := sandboxEnvMap([]SandboxEnvVar{
 		{Name: "DATABASE_PASSWORD", Value: "db-secret", Secret: true},
 		{Name: "OPENAI_API_KEY", Value: "provider-key", Secret: true},
+		{Name: "LLM_API_HEADERS", Value: `{"X-Gateway-Token":"long-lived"}`, Secret: true},
 	}, []SandboxEnvVar{
 		{Name: "OPENAI_API_KEY", Value: "facade-token", Secret: false},
 	})
@@ -38,5 +39,8 @@ func TestSandboxEnvMapKeepsNonLLMSecretEnv(t *testing.T) {
 	}
 	if env["OPENAI_API_KEY"] != "facade-token" {
 		t.Fatalf("OPENAI_API_KEY = %q, want managed facade token", env["OPENAI_API_KEY"])
+	}
+	if _, ok := env["LLM_API_HEADERS"]; ok {
+		t.Fatal("LLM_API_HEADERS must not be passed to the guest runtime")
 	}
 }

@@ -192,12 +192,12 @@ func sandboxEnvMap(groups ...[]SandboxEnvVar) map[string]string {
 	return env
 }
 
-// LLMProviderKeyName reports whether name is a long-lived LLM provider credential
-// that must never be passed through to a guest runtime. It is the canonical
-// denylist shared by the driver env assembly and the agent-compose facade layer.
+// LLMProviderKeyName reports whether name is long-lived LLM provider
+// configuration that must never be passed through to a guest runtime. It is
+// the canonical denylist shared by driver env assembly and the facade layer.
 func LLMProviderKeyName(name string) bool {
 	switch strings.ToUpper(strings.TrimSpace(name)) {
-	case "LLM_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENROUTER_API_KEY", "AZURE_OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY":
+	case "LLM_API_KEY", "LLM_API_HEADERS", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENROUTER_API_KEY", "AZURE_OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY":
 		return true
 	default:
 		return false

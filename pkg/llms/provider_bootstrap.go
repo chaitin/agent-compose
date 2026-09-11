@@ -92,6 +92,10 @@ func EnsureOpenAIEnvProvider(ctx context.Context, store DefaultConfigStore, look
 	if providerID == "" || model == "" {
 		return "", nil
 	}
+	headersJSON, err := envProviderHeadersJSON(lookup, nil)
+	if err != nil {
+		return "", err
+	}
 	return providerID, store.UpsertDefaultLLMConfig(ctx, Provider{
 		ID:             providerID,
 		Name:           name,
@@ -101,7 +105,7 @@ func EnsureOpenAIEnvProvider(ctx context.Context, store DefaultConfigStore, look
 		APIKey:         apiKey,
 		AuthHeader:     "Authorization",
 		AuthScheme:     "Bearer",
-		HeadersJSON:    "{}",
+		HeadersJSON:    headersJSON,
 		Weight:         10,
 		Enabled:        true,
 		Scope:          scope,
@@ -132,6 +136,12 @@ func ensureAnthropicEnvProvider(ctx context.Context, store DefaultConfigStore, l
 	if providerID == "" || model == "" {
 		return "", nil
 	}
+	headersJSON, err := envProviderHeadersJSON(lookup, map[string]string{
+		"anthropic-version": "2023-06-01",
+	})
+	if err != nil {
+		return "", err
+	}
 	return providerID, store.UpsertDefaultLLMConfig(ctx, Provider{
 		ID:             providerID,
 		Name:           name,
@@ -141,7 +151,7 @@ func ensureAnthropicEnvProvider(ctx context.Context, store DefaultConfigStore, l
 		APIKey:         credential.apiKey,
 		AuthHeader:     credential.authHeader,
 		AuthScheme:     credential.authScheme,
-		HeadersJSON:    `{"anthropic-version":"2023-06-01"}`,
+		HeadersJSON:    headersJSON,
 		Weight:         10,
 		Enabled:        true,
 		Scope:          scope,
