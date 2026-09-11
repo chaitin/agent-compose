@@ -238,11 +238,12 @@ daemon release that serves that contract:
 The client reports its version to the daemon in its `User-Agent`, taken from
 the module version the program was built with.
 
-Maintainers tag releases from `main` by hand. Unlike the proto module, whose
-tags only ever record additions, an SDK version is a judgement about what the
-API change means to callers; `gorelease -base=sdk/go/<previous tag>` reports
-the API difference and the version it implies. A release that moves to a newer
-proto contract or relies on newer daemon behavior adds a row above.
+Maintainers tag releases from `main` by hand. Unlike the proto module, which
+CI tags automatically, an SDK version is a judgement about what the API change
+means to callers. Run `gorelease` (`golang.org/x/exp/cmd/gorelease`) in
+`sdk/go` on a clean checkout of `main`: it compares the API with the latest
+release and suggests the next version and its tag. A release that moves to a
+newer proto contract or relies on newer daemon behavior adds a row above.
 
 ## Requirements
 
