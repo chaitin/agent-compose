@@ -16,9 +16,6 @@ import (
 // how a conversation is found again from another process.
 const conversationLabel = "chat.conversation"
 
-// defaultUserAgent identifies this client to the daemon.
-const defaultUserAgent = "agent-compose-chat-go/0.1"
-
 // TokenSource resolves a bearer token for one request. It is called per
 // request, so it can refresh a short-lived credential.
 type TokenSource func(context.Context) (string, error)
@@ -61,7 +58,7 @@ func New(cfg Config) (*Client, error) {
 	if client == nil {
 		client = defaultHTTPClient(base)
 	}
-	agent := defaultUserAgent
+	agent := userAgent()
 	if extra := strings.TrimSpace(cfg.UserAgent); extra != "" {
 		agent += " " + extra
 	}

@@ -179,7 +179,7 @@ tasks:
 
   lint:
     desc: Lint/format code
-    deps: ['lint:go', 'lint:installer', 'lint:proto']
+    deps: ['lint:go', 'lint:installer', 'lint:proto', 'lint:sdk']
     cmds:
       - echo "lint all done"
 
@@ -213,12 +213,23 @@ tasks:
       - GOCACHE={{.GO_BUILD_CACHE_DIR}} GOLANGCI_LINT_CACHE={{.GOLANGCI_LINT_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} golangci-lint fmt -c {{.TASKFILE_DIR}}/.golangci.yml --diff ./...
       - GOCACHE={{.GO_BUILD_CACHE_DIR}} GOLANGCI_LINT_CACHE={{.GOLANGCI_LINT_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} golangci-lint run -c {{.TASKFILE_DIR}}/.golangci.yml --allow-parallel-runners ./...
 
+  lint:sdk:
+    desc: Lint and format the standalone Go chat SDK module
+    dir: '{{.TASKFILE_DIR}}/sdk/go'
+    cmds:
+      - mkdir -p {{.GOLANGCI_LINT_CACHE_DIR}} {{.GO_BUILD_CACHE_DIR}}
+      # The SDK is a separate module, so the repository config is passed
+      # explicitly rather than discovered by walking up from this directory.
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} GOLANGCI_LINT_CACHE={{.GOLANGCI_LINT_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} golangci-lint fmt -c {{.TASKFILE_DIR}}/.golangci.yml --diff ./...
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} GOLANGCI_LINT_CACHE={{.GOLANGCI_LINT_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} golangci-lint run -c {{.TASKFILE_DIR}}/.golangci.yml --allow-parallel-runners ./...
+
   test:
     desc: Run all test shapes with coverage quality gates
     deps: ['generate:proto']
     cmds:
       - task: test:scripts
       - task: test:deploy
+      - task: test:sdk
       - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} ./scripts/test-coverage.sh
 
   test:scripts:
@@ -249,6 +260,12 @@ tasks:
       - ./scripts/tests/test-compose-kvm-config.sh
       - ./scripts/tests/test-installer-assets.sh
       - ./scripts/tests/test-installer-binaries.sh
+
+  test:sdk:
+    desc: Test the standalone Go chat SDK module against the proto version it requires
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - '{{.GO_TOOLCHAIN_ENV}} go -C sdk/go test ./...'
 
   demo:installer-docker:
     desc: Run and retain an isolated real-Docker installer lifecycle demo
