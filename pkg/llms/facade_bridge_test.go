@@ -2,10 +2,80 @@ package llms
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	protocolbridge "github.com/chaitin/ai-api-protocol-bridge"
 )
+
+func TestRuntimeStreamBridgeCompletesChatToolCallForResponses(t *testing.T) {
+	decoder, encoder, err := RuntimeStreamBridge(
+		protocolbridge.ProtocolOpenAIResponses,
+		protocolbridge.ProtocolOpenAIChat,
+		ProviderFamilyOpenAI,
+		"deepseek-chat",
+	)
+	if err != nil {
+		t.Fatalf("RuntimeStreamBridge() error = %v", err)
+	}
+
+	chunks := []string{
+		`{"id":"chatcmpl-1","object":"chat.completion.chunk","created":0,"model":"deepseek-chat","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"exec_command","arguments":""}}]},"finish_reason":null}]}`,
+		`{"id":"chatcmpl-1","object":"chat.completion.chunk","created":0,"model":"deepseek-chat","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"cmd\":\"echo bridge"}}]},"finish_reason":null}]}`,
+		`{"id":"chatcmpl-1","object":"chat.completion.chunk","created":0,"model":"deepseek-chat","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"-response-canary\"}"}}]},"finish_reason":null}]}`,
+		`{"id":"chatcmpl-1","object":"chat.completion.chunk","created":0,"model":"deepseek-chat","choices":[{"index":0,"delta":{"content":""},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+	}
+
+	var encoded []protocolbridge.RawStreamEvent
+	for _, chunk := range chunks {
+		parts, decodeErr := decoder.Decode(protocolbridge.RawStreamEvent{Data: []byte(chunk)})
+		if decodeErr != nil {
+			t.Fatalf("Decode() error = %v", decodeErr)
+		}
+		for _, part := range parts {
+			events, encodeErr := encoder.Encode(part)
+			if encodeErr != nil {
+				t.Fatalf("Encode(%s) error = %v", part.Type, encodeErr)
+			}
+			encoded = append(encoded, events...)
+		}
+	}
+	parts, err := decoder.Close()
+	if err != nil {
+		t.Fatalf("decoder.Close() error = %v", err)
+	}
+	for _, part := range parts {
+		events, encodeErr := encoder.Encode(part)
+		if encodeErr != nil {
+			t.Fatalf("Encode(%s) after close error = %v", part.Type, encodeErr)
+		}
+		encoded = append(encoded, events...)
+	}
+	events, err := encoder.Close()
+	if err != nil {
+		t.Fatalf("encoder.Close() error = %v", err)
+	}
+	encoded = append(encoded, events...)
+
+	var body strings.Builder
+	for _, event := range encoded {
+		body.Write(event.Data)
+		body.WriteByte('\n')
+	}
+	got := body.String()
+	for _, want := range []string{
+		`"type":"response.output_item.added"`,
+		`"type":"response.function_call_arguments.delta"`,
+		`"type":"response.function_call_arguments.done"`,
+		`"type":"response.output_item.done"`,
+		`"type":"response.completed"`,
+		`"arguments":"{\"cmd\":\"echo bridge-response-canary\"}"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("encoded stream missing %s:\n%s", want, got)
+		}
+	}
+}
 
 func TestRewriteRuntimeRequestForUpstreamPreservesAssistantTextAfterToolCall(t *testing.T) {
 	body := []byte(`{

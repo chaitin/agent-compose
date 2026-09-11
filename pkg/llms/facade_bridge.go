@@ -244,6 +244,9 @@ func RuntimeStreamBridge(inboundProtocol, upstreamProtocol protocolbridge.Protoc
 		if err != nil {
 			return nil, nil, err
 		}
+		if requiresCompletedChatToolCalls(inboundProtocol, upstreamProtocol) {
+			decoder = newCompletedToolCallStreamDecoder(decoder)
+		}
 		encoder, err := inboundAdapter.NewStreamEncoder(protocolbridge.StreamEncodeOptions{Model: model})
 		if err != nil {
 			return nil, nil, err
@@ -258,9 +261,170 @@ func RuntimeStreamBridge(inboundProtocol, upstreamProtocol protocolbridge.Protoc
 	if err != nil {
 		return nil, nil, err
 	}
+	if requiresCompletedChatToolCalls(inboundProtocol, upstreamProtocol) {
+		decoder = newCompletedToolCallStreamDecoder(decoder)
+	}
 	encoder, err := bridge.NewStreamEncoder(protocolbridge.StreamEncodeOptions{Model: model})
 	if err != nil {
 		return nil, nil, err
 	}
 	return decoder, encoder, nil
+}
+
+func requiresCompletedChatToolCalls(inboundProtocol, upstreamProtocol protocolbridge.Protocol) bool {
+	return inboundProtocol == protocolbridge.ProtocolOpenAIResponses && upstreamProtocol == protocolbridge.ProtocolOpenAIChat
+}
+
+// completedToolCallStreamDecoder buffers Chat tool-call fragments until the
+// stream finishes. The Responses encoder needs a complete tool call to emit
+// both function_call_arguments.done and output_item.done; Chat streams only
+// provide finish_reason=tool_calls and do not send a separate tool-input-end
+// event.
+type completedToolCallStreamDecoder struct {
+	inner   protocolbridge.StreamDecoder
+	order   []string
+	pending map[string]*completedToolCall
+}
+
+type completedToolCall struct {
+	id         string
+	toolCallID string
+	toolName   string
+	arguments  strings.Builder
+}
+
+func newCompletedToolCallStreamDecoder(inner protocolbridge.StreamDecoder) protocolbridge.StreamDecoder {
+	return &completedToolCallStreamDecoder{
+		inner:   inner,
+		pending: map[string]*completedToolCall{},
+	}
+}
+
+func (d *completedToolCallStreamDecoder) Decode(event protocolbridge.RawStreamEvent) ([]protocolbridge.StreamPart, error) {
+	parts, err := d.inner.Decode(event)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]protocolbridge.StreamPart, 0, len(parts)+1)
+	for _, part := range parts {
+		switch part.Type {
+		case protocolbridge.StreamToolInputStart:
+			d.start(part)
+		case protocolbridge.StreamToolInputDelta:
+			d.delta(part)
+		case protocolbridge.StreamToolInputEnd:
+			if toolCall := d.take(toolCallKey(part)); toolCall != nil {
+				out = append(out, d.completedPart(toolCall))
+			}
+		case protocolbridge.StreamFinish:
+			out = append(out, d.flush()...)
+			out = append(out, part)
+		default:
+			out = append(out, part)
+		}
+	}
+	return out, nil
+}
+
+func (d *completedToolCallStreamDecoder) Close() ([]protocolbridge.StreamPart, error) {
+	parts, err := d.inner.Close()
+	if err != nil {
+		return nil, err
+	}
+	out := d.flush()
+	out = append(out, parts...)
+	return out, nil
+}
+
+func (d *completedToolCallStreamDecoder) start(part protocolbridge.StreamPart) {
+	key := toolCallKey(part)
+	if key == "" {
+		return
+	}
+	toolCall, ok := d.pending[key]
+	if !ok {
+		toolCall = &completedToolCall{}
+		d.pending[key] = toolCall
+		d.order = append(d.order, key)
+	}
+	toolCall.id = firstNonEmptyString(part.ID, toolCall.id)
+	toolCall.toolCallID = firstNonEmptyString(part.ToolCallID, toolCall.toolCallID)
+	toolCall.toolName = firstNonEmptyString(part.ToolName, toolCall.toolName)
+}
+
+func (d *completedToolCallStreamDecoder) delta(part protocolbridge.StreamPart) {
+	key := toolCallKey(part)
+	if key == "" {
+		return
+	}
+	toolCall, ok := d.pending[key]
+	if !ok {
+		toolCall = &completedToolCall{}
+		d.pending[key] = toolCall
+		d.order = append(d.order, key)
+	}
+	toolCall.id = firstNonEmptyString(part.ID, toolCall.id)
+	toolCall.toolCallID = firstNonEmptyString(part.ToolCallID, toolCall.toolCallID)
+	toolCall.toolName = firstNonEmptyString(part.ToolName, toolCall.toolName)
+	toolCall.arguments.WriteString(part.Delta)
+}
+
+func (d *completedToolCallStreamDecoder) take(key string) *completedToolCall {
+	if key == "" {
+		return nil
+	}
+	toolCall := d.pending[key]
+	if toolCall == nil {
+		return nil
+	}
+	delete(d.pending, key)
+	for index, current := range d.order {
+		if current == key {
+			d.order = append(d.order[:index], d.order[index+1:]...)
+			break
+		}
+	}
+	return toolCall
+}
+
+func (d *completedToolCallStreamDecoder) flush() []protocolbridge.StreamPart {
+	parts := make([]protocolbridge.StreamPart, 0, len(d.order))
+	for _, key := range d.order {
+		if toolCall := d.pending[key]; toolCall != nil {
+			parts = append(parts, d.completedPart(toolCall))
+		}
+	}
+	d.order = nil
+	d.pending = map[string]*completedToolCall{}
+	return parts
+}
+
+func (d *completedToolCallStreamDecoder) completedPart(toolCall *completedToolCall) protocolbridge.StreamPart {
+	arguments := toolCall.arguments.String()
+	var input any
+	if strings.TrimSpace(arguments) == "" {
+		input = map[string]any{}
+	} else if err := json.Unmarshal([]byte(arguments), &input); err != nil {
+		input = map[string]any{"_raw": arguments}
+	}
+	return protocolbridge.StreamPart{
+		Type:       protocolbridge.StreamToolCall,
+		ID:         toolCall.id,
+		ToolCallID: toolCall.toolCallID,
+		ToolName:   toolCall.toolName,
+		Input:      input,
+	}
+}
+
+func toolCallKey(part protocolbridge.StreamPart) string {
+	return firstNonEmptyString(part.ID, part.ToolCallID)
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
