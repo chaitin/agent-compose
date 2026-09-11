@@ -123,6 +123,25 @@ jobs:
           readelf -h installer-assets/agent-compose-installer-linux-amd64 | grep -F 'Advanced Micro Devices X86-64'
           readelf -h installer-assets/agent-compose-installer-linux-arm64 | grep -F 'AArch64'
 
+  go-sdk:
+    name: Go chat SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The SDK's own go.mod, not the daemon's: it has no replace, so this
+      # builds against the proto version it requires, on the oldest Go its
+      # README promises.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sdk/go/go.mod
+          cache: true
+          cache-dependency-path: sdk/go/go.sum
+      - name: Test the SDK module
+        working-directory: sdk/go
+        run: |
+          go vet ./...
+          go test -race ./...
+
   coverage:
     name: Coverage gate
     runs-on: ubuntu-latest

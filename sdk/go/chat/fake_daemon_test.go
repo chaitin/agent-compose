@@ -215,14 +215,6 @@ func runResult(success bool, failure string) *agentcomposev2.AttachAgentRunRespo
 	}
 }
 
-func attachFailure(code, message string, terminal bool) *agentcomposev2.AttachAgentRunResponse {
-	return &agentcomposev2.AttachAgentRunResponse{
-		Frame: &agentcomposev2.AttachAgentRunResponse_Error{
-			Error: &agentcomposev2.AttachError{Code: code, Message: message, Terminal: terminal},
-		},
-	}
-}
-
 // runSummary builds a summary with the fields these tests actually assert on.
 func runSummary(runID, status, sandboxID string, created ...*timestamppb.Timestamp) *agentcomposev2.RunSummary {
 	summary := &agentcomposev2.RunSummary{

@@ -218,6 +218,32 @@ daemon's name, display text, and payload so provider extensions are not lost.
 Events are retained on the `Reply`: `Wait` and `Events` can be used together,
 in either order, and a second `Events` pass replays from the start.
 
+## Versions
+
+```bash
+go get github.com/chaitin/agent-compose/sdk/go@latest
+```
+
+Releases are tagged `sdk/go/vX.Y.Z`. While the major version is `v0` the API
+can still change: a release that breaks callers raises the minor version, and
+anything else raises the patch version. Pin the version you tested against.
+
+Each release line names the proto contract it is built on and the oldest
+daemon release that serves that contract:
+
+| SDK | proto | daemon |
+| --- | --- | --- |
+| v0.1.x | v0.1.0 | v2609.2.0 or newer |
+
+The client reports its version to the daemon in its `User-Agent`, taken from
+the module version the program was built with.
+
+Maintainers tag releases from `main` by hand. Unlike the proto module, whose
+tags only ever record additions, an SDK version is a judgement about what the
+API change means to callers; `gorelease -base=sdk/go/<previous tag>` reports
+the API difference and the version it implies. A release that moves to a newer
+proto contract or relies on newer daemon behavior adds a row above.
+
 ## Requirements
 
 Go 1.24 or newer. The SDK depends on `connectrpc.com/connect` and on
@@ -306,7 +332,7 @@ go run ./examples/chat -project my-project -agent my-agent
 go run ./examples/chat -project my-project -agent my-agent -conversation conv_1a2b3c
 ```
 
-A browser chat UI lives in [`chatui`](../../chatui), which is also the answer
-to "why not talk to the daemon from the browser directly": a browser cannot,
-because Connect needs HTTP/2 bidirectional streaming for a multi-turn session
-and a `fetch()` with a streaming request body is half duplex.
+A browser cannot hold a conversation with the daemon directly: Connect needs
+HTTP/2 bidirectional streaming for a multi-turn session, and a `fetch()` with a
+streaming request body is half duplex. A browser chat UI goes through a server
+that holds the conversation with this SDK on its behalf.
