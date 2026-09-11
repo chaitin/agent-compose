@@ -43,18 +43,10 @@ func paginateSandboxHistory(cells []domain.NotebookCell, events []domain.Sandbox
 	response := &agentcomposev2.ListSandboxHistoryResponse{LegacyHistory: true, Total: total}
 	for _, entry := range page {
 		if entry.cell != nil {
-			cell := entry.cell
-			response.Cells = append(response.Cells, &agentcomposev2.SandboxHistoryCell{
-				Id: cell.ID, Type: cell.Type, Source: cell.Source, Stdout: cell.Stdout, Stderr: cell.Stderr,
-				Output: cell.Output, ExitCode: int32(cell.ExitCode), Success: cell.Success, Running: cell.Running,
-				CreatedAt: sandboxHistoryTimestamp(cell.CreatedAt), Agent: cell.Agent, AgentThreadId: cell.AgentThreadID, StopReason: cell.StopReason,
-			})
+			response.Cells = append(response.Cells, sandboxHistoryCellToV2(entry.cell))
 			continue
 		}
-		event := entry.event
-		response.Events = append(response.Events, &agentcomposev2.SandboxHistoryEvent{
-			Id: event.ID, Type: event.Type, Level: event.Level, Message: event.Message, CreatedAt: sandboxHistoryTimestamp(event.CreatedAt),
-		})
+		response.Events = append(response.Events, sandboxHistoryEventToV2(entry.event))
 	}
 	return response, nil
 }
