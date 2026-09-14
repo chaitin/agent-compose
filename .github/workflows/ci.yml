@@ -214,7 +214,7 @@ jobs:
     name: Configure binary matrix
     runs-on: ubuntu-latest
     outputs:
-      linux_platforms: ${{ steps.platforms.outputs.json }}
+      linux_platforms: ${{ steps.platforms.outputs.linux_json }}
       darwin_platforms: ${{ steps.platforms.outputs.darwin_json }}
     steps:
       - uses: actions/checkout@v4
@@ -227,11 +227,14 @@ jobs:
         run: |
           amd64='{"arch":"amd64","runner":"ubuntu-latest"}'
           arm64='{"arch":"arm64","runner":"ubuntu-24.04-arm"}'
-          if [ "$REF_TYPE" = "tag" ]; then
-            echo "json=[$amd64,$arm64]" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "linux_json=[$amd64]" >> "$GITHUB_OUTPUT"
+            echo "darwin_json=[\"amd64\"]" >> "$GITHUB_OUTPUT"
+          elif [ "$REF_TYPE" = "tag" ]; then
+            echo "linux_json=[$amd64,$arm64]" >> "$GITHUB_OUTPUT"
             echo "darwin_json=[\"amd64\",\"arm64\"]" >> "$GITHUB_OUTPUT"
           else
-            echo "json=[$amd64]" >> "$GITHUB_OUTPUT"
+            echo "linux_json=[$amd64]" >> "$GITHUB_OUTPUT"
             echo "darwin_json=[\"amd64\"]" >> "$GITHUB_OUTPUT"
           fi
 
