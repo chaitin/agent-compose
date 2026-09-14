@@ -223,15 +223,16 @@ jobs:
       - id: platforms
         env:
           EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
           amd64='{"arch":"amd64","runner":"ubuntu-latest"}'
           arm64='{"arch":"arm64","runner":"ubuntu-24.04-arm"}'
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            echo "json=[$amd64]" >> "$GITHUB_OUTPUT"
-            echo "darwin_json=[\"amd64\"]" >> "$GITHUB_OUTPUT"
-          else
+          if [ "$REF_TYPE" = "tag" ]; then
             echo "json=[$amd64,$arm64]" >> "$GITHUB_OUTPUT"
             echo "darwin_json=[\"amd64\",\"arm64\"]" >> "$GITHUB_OUTPUT"
+          else
+            echo "json=[$amd64]" >> "$GITHUB_OUTPUT"
+            echo "darwin_json=[\"amd64\"]" >> "$GITHUB_OUTPUT"
           fi
 
   binary-darwin:
@@ -241,7 +242,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pull requests use amd64; main and tags use amd64 and arm64.
+        # Pull requests and main use amd64; release tags use amd64 and arm64.
         arch: ${{ fromJSON(needs.binary-matrix.outputs.darwin_platforms) }}
     steps:
       - uses: actions/checkout@v4
@@ -298,7 +299,7 @@ jobs:
   binary-darwin-native:
     name: Darwin native binary smoke
     needs: binary-matrix
-    if: github.event_name != 'pull_request'
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
