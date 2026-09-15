@@ -164,14 +164,6 @@ func (f httpWorkspaceFixture) sandbox() *domain.Sandbox {
 	return &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-http", WorkspacePath: f.root}}
 }
 
-func (f httpWorkspaceFixture) limits(t *testing.T) HTTPWorkspaceLimits {
-	t.Helper()
-	limits := DefaultHTTPWorkspaceLimits()
-	// Loopback is the only address an httptest server offers.
-	limits.AllowPrivateAddresses = true
-	return limits
-}
-
 func (f httpWorkspaceFixture) prepare(t *testing.T, limits HTTPWorkspaceLimits) error {
 	t.Helper()
 	return httpWorkspace{workspace: f.workspace, limits: limits}.Prepare(context.Background(), f.sandbox())
@@ -179,7 +171,7 @@ func (f httpWorkspaceFixture) prepare(t *testing.T, limits HTTPWorkspaceLimits) 
 
 func TestHTTPWorkspaceIntegrationSelectsArchiveSubdirectory(t *testing.T) {
 	fixture := newHTTPWorkspaceFixture(t, "service", "src")
-	if err := fixture.prepare(t, fixture.limits(t)); err != nil {
+	if err := fixture.prepare(t, DefaultHTTPWorkspaceLimits()); err != nil {
 		t.Fatalf("Prepare returned error: %v", err)
 	}
 	app, err := os.ReadFile(filepath.Join(fixture.root, "src", "app.txt"))
@@ -204,7 +196,7 @@ func TestHTTPWorkspaceIntegrationSelectsArchiveSubdirectory(t *testing.T) {
 
 func TestHTTPWorkspaceIntegrationCopiesWholeArchive(t *testing.T) {
 	fixture := newHTTPWorkspaceFixture(t, "", ".")
-	if err := fixture.prepare(t, fixture.limits(t)); err != nil {
+	if err := fixture.prepare(t, DefaultHTTPWorkspaceLimits()); err != nil {
 		t.Fatalf("Prepare returned error: %v", err)
 	}
 	for _, path := range []string{"LICENSE", filepath.Join("service", "app.txt")} {
@@ -217,7 +209,7 @@ func TestHTTPWorkspaceIntegrationCopiesWholeArchive(t *testing.T) {
 
 func TestHTTPWorkspaceIntegrationRejectsOverLimitArchive(t *testing.T) {
 	fixture := newHTTPWorkspaceFixture(t, "", ".")
-	limits := fixture.limits(t)
+	limits := DefaultHTTPWorkspaceLimits()
 	limits.ExpandedBytes = 4
 	err := fixture.prepare(t, limits)
 	if err == nil || !strings.Contains(err.Error(), "expanded size") {
@@ -231,19 +223,43 @@ func TestHTTPWorkspaceIntegrationRejectsOverLimitArchive(t *testing.T) {
 
 func TestHTTPWorkspaceIntegrationRejectsMissingDirectoryPath(t *testing.T) {
 	fixture := newHTTPWorkspaceFixture(t, "absent", ".")
-	err := fixture.prepare(t, fixture.limits(t))
+	err := fixture.prepare(t, DefaultHTTPWorkspaceLimits())
 	if err == nil || !strings.Contains(err.Error(), "not present") {
 		t.Fatalf("Prepare error = %v, want a missing archive path rejection", err)
 	}
 }
 
-func TestHTTPWorkspaceIntegrationRequiresOptInForPrivateHosts(t *testing.T) {
+// TestHTTPWorkspaceIntegrationFetchesFromInternalHost documents a deliberate
+// difference from skill resolution: a workspace archive normally lives on an
+// internal artifact host, which resolves to a loopback or private address
+// (another compose service, a published loopback port, or a host on a private
+// network). Those targets must be fetched, not refused.
+func TestHTTPWorkspaceIntegrationFetchesFromInternalHost(t *testing.T) {
 	fixture := newHTTPWorkspaceFixture(t, "", ".")
-	limits := fixture.limits(t)
-	limits.AllowPrivateAddresses = false
-	err := fixture.prepare(t, limits)
-	if err == nil || !strings.Contains(err.Error(), "private address") {
-		t.Fatalf("Prepare error = %v, want private address rejection", err)
+	if !strings.Contains(fixture.workspace.ConfigJSON, "127.0.0.1") {
+		t.Fatalf("fixture config %s does not use a loopback artifact host", fixture.workspace.ConfigJSON)
+	}
+	if err := fixture.prepare(t, DefaultHTTPWorkspaceLimits()); err != nil {
+		t.Fatalf("Prepare returned error: %v, want the internal archive host to be fetched", err)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.root, "LICENSE")); err != nil {
+		t.Fatalf("expected the archive content in the workspace: %v", err)
+	}
+}
+
+func TestHTTPWorkspacePrepareRejectsUnsupportedScheme(t *testing.T) {
+	workspace, err := NewHTTPWorkspaceConfig("run-http", "run-http", "fixture", sources.Source{
+		Provider: sources.ProviderHTTP,
+		URL:      "file:///tmp/archive.zip",
+		Format:   sources.FormatZIP,
+	}, ".")
+	if err != nil {
+		t.Fatalf("NewHTTPWorkspaceConfig returned error: %v", err)
+	}
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-http", WorkspacePath: filepath.Join(t.TempDir(), "workspace")}}
+	err = httpWorkspace{workspace: workspace, limits: DefaultHTTPWorkspaceLimits()}.Prepare(context.Background(), session)
+	if err == nil || !strings.Contains(err.Error(), "unsupported download scheme") {
+		t.Fatalf("Prepare error = %v, want a scheme rejection", err)
 	}
 }
 

@@ -323,7 +323,7 @@ workspaces:
 
 Behavior:
 
-- Only `http` and `https` URLs are accepted. The URL is author-supplied input, so a host that resolves to a private, loopback, link-local, or cloud-metadata address is rejected, redirects are revalidated against the same rule, and the request ignores proxy environment variables so a proxy cannot resolve the target on the daemon's behalf.
+- Only `http` and `https` URLs are accepted, redirects are revalidated against the same rule, and the request ignores proxy environment variables so a proxy cannot resolve the target on the daemon's behalf. Internal artifact hosts are supported: the URL may resolve to a loopback or private address, such as another Docker Compose service name, a published loopback port, or a host on the daemon's private network. (Skill resolution does not allow private addresses; workspace archives are written by the operator who deploys the project.)
 - `path` must name a directory that exists inside the archive. A `path` that names a file, or that is absent from the archive, fails the run instead of producing an empty workspace, and a `path` that escapes the archive (`../`, an absolute path) is rejected.
 - Archive entries are validated before they are written: entries that escape the destination and symlink entries are rejected, and entry permissions are sanitized (executable bits are preserved, group and other write bits are cleared, and setuid, setgid, and sticky bits are dropped).
 - Per-workspace limits: 256 MiB downloaded archive, 1 GiB expanded content, 100,000 entries, a 100:1 compression ratio once an archive expands beyond 64 MiB, and a 10 minute fetch timeout. Exceeding any limit fails the run.

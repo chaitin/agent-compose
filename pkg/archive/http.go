@@ -39,9 +39,11 @@ type FetchPolicy struct {
 	// MaxRedirects caps the redirect chain. Every hop is revalidated.
 	MaxRedirects int
 	// AllowPrivateAddresses permits loopback, link-local, private-range, and
-	// metadata targets. It is false by default: an archive URL is
+	// metadata targets. It is false by default because an archive URL is
 	// author-controlled input and the daemon usually sits next to services the
-	// author cannot otherwise reach.
+	// author cannot otherwise reach; skill resolution relies on that default,
+	// while http workspaces opt in because their URL is written by the
+	// operator who deploys the project and is often an internal artifact host.
 	AllowPrivateAddresses bool
 	// RequireZipContentType rejects responses that are neither named .zip nor
 	// served with a zip-like content type.

@@ -23,10 +23,7 @@ const (
 
 // HTTPWorkspaceLimits bounds one HTTP workspace materialization. The defaults
 // are wider than the skill resolver's because a workspace usually carries a
-// full source tree and its dependencies. Internal artifact hosts are refused
-// unless AllowPrivateAddresses is set, because the archive URL is
-// author-supplied input and the daemon usually sits next to services an author
-// cannot otherwise reach.
+// full source tree and its dependencies.
 type HTTPWorkspaceLimits struct {
 	DownloadBytes              int64
 	ExpandedBytes              int64
@@ -34,7 +31,6 @@ type HTTPWorkspaceLimits struct {
 	MaxCompressionRatio        int64
 	CompressionRatioFloorBytes int64
 	FetchTimeout               time.Duration
-	AllowPrivateAddresses      bool
 }
 
 func DefaultHTTPWorkspaceLimits() HTTPWorkspaceLimits {
@@ -194,7 +190,13 @@ func (w httpWorkspace) fetchPolicy() archive.FetchPolicy {
 		MaxBytes:              w.limits.DownloadBytes,
 		Timeout:               w.limits.FetchTimeout,
 		RequireZipContentType: true,
-		AllowPrivateAddresses: w.limits.AllowPrivateAddresses,
+		// A workspace URL is written by the operator who deploys the project,
+		// and internal artifact servers are a normal source: the archive often
+		// comes from another compose service, from a published loopback port,
+		// or from a host on a private network. Skill resolution keeps the
+		// public-address-only default, because a skill may be authored for
+		// someone else to resolve.
+		AllowPrivateAddresses: true,
 	}
 }
 
