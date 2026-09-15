@@ -19,8 +19,8 @@ const (
 	// Workspaces commonly contain source trees and dependencies that are much
 	// larger than individual skills, so their archive limits are intentionally
 	// wider than the skill resolver's limits.
-	HTTPWorkspaceDownloadLimit = 1 << 30
-	HTTPWorkspaceExpandedLimit = 4 << 30
+	HTTPWorkspaceDownloadLimit = 512 << 20
+	HTTPWorkspaceExpandedLimit = 2 << 30
 )
 
 type HTTPWorkspaceConfig struct {
