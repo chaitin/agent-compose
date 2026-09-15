@@ -275,10 +275,10 @@ Each `workspaces.<key>` accepts:
 | --- | --- | --- | --- |
 | `name` | string | Compatibility field | The map key is the effective project workspace name. Normally omit this redundant field. |
 | `provider` | string | Required | `file`, `git`, or `http`. |
-| `url` | string | Required for `git` | Git clone URL. It is forbidden for `file`. |
-| `ref` | string | Optional for `git` | Git branch, tag, or commit. |
-| `path` | string | Required for `file` | Source path relative to the compose directory; it cannot escape the project root. Git workspaces do not support a repository subpath. |
-| `format` | string | Required for `http` | Must be `zip`; the URL is downloaded and extracted as an isolated workspace. `path`, when set, selects a directory inside the archive. |
+| `url` | string | Required for `git` and `http` | Git clone URL, or an `http`/`https` URL to a ZIP archive. It is forbidden for `file`. |
+| `ref` | string | Optional for `git` | Git branch, tag, or commit. `http` workspaces do not support a ref. |
+| `path` | string | Required for `file` | Source path relative to the compose directory; it cannot escape the project root. Git workspaces do not support a repository subpath. For `http`, an optional directory inside the archive. |
+| `format` | string | Required for `http` | Must be `zip`; the URL is downloaded and extracted as an isolated workspace. `path`, when set, must select an existing directory inside the archive. |
 | `target` | string | Optional | Destination below the sandbox workspace root. Defaults to `.`. |
 | `mode` | string | Optional | `copy` (default) creates an isolated workspace. `mount` maps a local `file` source directly into a Docker sandbox. |
 | `read_only` | bool | Optional for `mount` | Defaults to `false`. Set `true` to prevent guest writes through the workspace mount; `true` is invalid with `copy`. |
@@ -305,6 +305,30 @@ workspaces:
     path: service
     target: .
 ```
+
+### Fetch a ZIP workspace over HTTP
+
+An `http` workspace downloads a ZIP archive when the run prepares its sandbox and extracts it into the run workspace, so every run starts from the content the URL served:
+
+```yaml
+workspaces:
+  remote-release:
+    provider: http
+    url: https://artifacts.example.com/releases/service.zip
+    format: zip
+    token: ${ARTIFACT_TOKEN}
+    path: service
+    target: src
+```
+
+Behavior:
+
+- Only `http` and `https` URLs are accepted. The URL is author-supplied input, so a host that resolves to a private, loopback, link-local, or cloud-metadata address is rejected, redirects are revalidated against the same rule, and the request ignores proxy environment variables so a proxy cannot resolve the target on the daemon's behalf.
+- `path` must name a directory that exists inside the archive. A `path` that names a file, or that is absent from the archive, fails the run instead of producing an empty workspace, and a `path` that escapes the archive (`../`, an absolute path) is rejected.
+- Archive entries are validated before they are written: entries that escape the destination and symlink entries are rejected, and entry permissions are sanitized (executable bits are preserved, group and other write bits are cleared, and setuid, setgid, and sticky bits are dropped).
+- Per-workspace limits: 256 MiB downloaded archive, 1 GiB expanded content, 100,000 entries, a 100:1 compression ratio once an archive expands beyond 64 MiB, and a 10 minute fetch timeout. Exceeding any limit fails the run.
+- `username`, `password`, and `token` accept exact environment references such as `${NAME}`; a token is sent as `Authorization: Bearer`, and basic credentials are only used when no token is configured.
+- `mode: mount` is not supported for `http`; the archive is always copied into the run workspace.
 
 Workspace selection follows these rules:
 

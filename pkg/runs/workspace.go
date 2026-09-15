@@ -77,7 +77,13 @@ func (c *Controller) prepareProjectRunWorkspace(ctx context.Context, run domain.
 		}
 		return &config, nil
 	case sources.ProviderHTTP:
-		config, err := projectRunHTTPWorkspaceConfig(run, workspace)
+		config, err := workspaces.NewHTTPWorkspaceConfig(
+			WorkspaceID(run, "http"),
+			WorkspaceName(run, "http"),
+			fmt.Sprintf("project run %s http workspace snapshot", run.RunID),
+			workspace.ContentSource(),
+			workspace.Target,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -88,21 +94,6 @@ func (c *Controller) prepareProjectRunWorkspace(ctx context.Context, run domain.
 		}
 		return nil, fmt.Errorf("unsupported workspace provider %q", workspace.Provider)
 	}
-}
-
-func projectRunHTTPWorkspaceConfig(run domain.ProjectRunRecord, workspace *compose.WorkspaceSpec) (domain.WorkspaceConfig, error) {
-	workspaceID := WorkspaceID(run, "http")
-	if strings.TrimSpace(workspace.URL) == "" || workspace.Format != sources.FormatZIP {
-		return domain.WorkspaceConfig{}, fmt.Errorf("http workspace requires a zip URL")
-	}
-	if _, err := workspaces.NormalizeWorkspaceTarget(workspaceID, workspace.Target); err != nil {
-		return domain.WorkspaceConfig{}, err
-	}
-	payload, err := json.Marshal(workspaces.HTTPWorkspaceConfig{Source: workspace.ContentSource(), Target: strings.TrimSpace(workspace.Target)})
-	if err != nil {
-		return domain.WorkspaceConfig{}, fmt.Errorf("encode http workspace config: %w", err)
-	}
-	return domain.WorkspaceConfig{ID: workspaceID, Name: WorkspaceName(run, "http"), Type: "http", ConfigJSON: string(payload), Comment: fmt.Sprintf("project run %s http workspace snapshot", run.RunID)}, nil
 }
 
 func (c *Controller) materializeLocalProjectRunWorkspace(ctx context.Context, run domain.ProjectRunRecord, project domain.ProjectRecord, workspace *compose.WorkspaceSpec) (result domain.WorkspaceConfig, retErr error) {

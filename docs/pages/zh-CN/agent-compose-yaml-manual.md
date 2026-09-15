@@ -274,10 +274,10 @@ workspace:
 | --- | --- | --- | --- |
 | `name` | string | 兼容字段 | 顶层条目的实际名称由 map key 决定；通常不要重复填写。 |
 | `provider` | string | 必填 | `file`、`git` 或 `http`。 |
-| `url` | string | `git` 必填 | Git clone URL；`file` 不允许设置。 |
-| `ref` | string | `git` 可选 | Git branch、tag 或 commit。 |
-| `path` | string | `file` 必填 | 相对于 compose 文件目录的来源路径，不可逃逸项目根目录；Git Workspace 不支持仓库内子目录。 |
-| `format` | string | `http` 必填 | 必须是 `zip`；系统会下载并解压 URL 作为隔离 Workspace。设置 `path` 时表示压缩包内的目录。 |
+| `url` | string | `git`、`http` 必填 | Git clone URL，或指向 ZIP 压缩包的 `http`/`https` URL；`file` 不允许设置。 |
+| `ref` | string | `git` 可选 | Git branch、tag 或 commit。`http` Workspace 不支持 ref。 |
+| `path` | string | `file` 必填 | 相对于 compose 文件目录的来源路径，不可逃逸项目根目录；Git Workspace 不支持仓库内子目录。`http` 可为压缩包内的目录。 |
+| `format` | string | `http` 必填 | 必须是 `zip`；系统会下载并解压 URL 作为隔离 Workspace。设置 `path` 时必须指向压缩包内已存在的目录。 |
 | `target` | string | 可选 | sandbox workspace 根目录下的目标目录，默认 `.`。 |
 | `mode` | string | 可选 | 默认 `copy` 创建隔离工作区；`mount` 将本地 `file` 来源直接映射到 Docker sandbox。 |
 | `read_only` | bool | `mount` 可选 | 默认 `false`；设为 `true` 禁止 guest 通过该工作区挂载写入。`copy` 模式不允许设为 `true`。 |
@@ -304,6 +304,30 @@ workspaces:
     path: service
     target: .
 ```
+
+### 通过 HTTP 获取 ZIP Workspace
+
+`http` Workspace 在该 run 准备 sandbox 时下载 ZIP 压缩包并解压到 run workspace，因此每次 run 都从 URL 当时提供的内容开始：
+
+```yaml
+workspaces:
+  remote-release:
+    provider: http
+    url: https://artifacts.example.com/releases/service.zip
+    format: zip
+    token: ${ARTIFACT_TOKEN}
+    path: service
+    target: src
+```
+
+行为说明：
+
+- 只接受 `http` 与 `https` URL。由于 URL 属于作者提供的输入，解析到私有、loopback、link-local 或云元数据地址的 host 会被拒绝，重定向同样按该规则重新校验，并且该请求会忽略代理环境变量，避免代理代替 daemon 解析目标地址。
+- `path` 必须指向压缩包内已存在的目录。`path` 指向普通文件或不存在时，run 会直接失败，而不会生成空 Workspace；`path` 逃逸压缩包（`../`、绝对路径）同样会被拒绝。
+- 解压前会校验每个条目：逃逸目标目录的条目与符号链接条目会被拒绝，条目权限会被清理（保留可执行位，清除 group/other 写权限，丢弃 setuid、setgid、sticky 位）。
+- 单个 Workspace 的限制：下载压缩包 256 MiB、解压后 1 GiB、最多 100,000 个条目、压缩包解压超过 64 MiB 后压缩比上限 100:1、下载超时 10 分钟；超过任一限制都会使该 run 失败。
+- `username`、`password`、`token` 只接受完整环境引用 `${NAME}`；配置 token 时以 `Authorization: Bearer` 发送，未配置 token 时才使用 Basic 认证。
+- `http` 不支持 `mode: mount`，压缩包内容始终复制到 run workspace。
 
 Workspace 选择规则：
 

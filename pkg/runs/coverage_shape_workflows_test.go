@@ -25,6 +25,7 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
+	"github.com/chaitin/agent-compose/pkg/sources"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
 	"github.com/chaitin/agent-compose/pkg/volumes"
 	"github.com/chaitin/agent-compose/pkg/workspaces"
@@ -204,6 +205,25 @@ func TestRunsPreparationWorkspaceAndStatusWorkflows(t *testing.T) {
 	}
 	if _, err := projectRunGitWorkspaceConfig(run, &compose.WorkspaceSpec{Provider: "git"}); err == nil {
 		t.Fatalf("expected git workspace url error")
+	}
+	httpWorkspace, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, WorkspaceRequest{Agent: &compose.WorkspaceSpec{
+		Provider: "http", URL: "https://example.test/workspace.zip", Format: sources.FormatZIP, Path: "service", Target: "src",
+	}})
+	if err != nil {
+		t.Fatalf("http prepareProjectRunWorkspace returned error: %v", err)
+	}
+	if httpWorkspace == nil || httpWorkspace.Type != "http" {
+		t.Fatalf("http workspace = %#v", httpWorkspace)
+	}
+	for _, want := range []string{`"url":"https://example.test/workspace.zip"`, `"path":"service"`, `"target":"src"`, `"format":"zip"`} {
+		if !strings.Contains(httpWorkspace.ConfigJSON, want) {
+			t.Fatalf("http workspace config %s is missing %s", httpWorkspace.ConfigJSON, want)
+		}
+	}
+	if _, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, WorkspaceRequest{Agent: &compose.WorkspaceSpec{
+		Provider: "http", URL: "https://example.test/workspace.zip",
+	}}); err == nil || !strings.Contains(err.Error(), "format") {
+		t.Fatalf("http workspace without a zip format err=%v", err)
 	}
 	if workspace, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, WorkspaceRequest{}); err != nil || workspace != nil {
 		t.Fatalf("nil workspace = %#v/%v", workspace, err)

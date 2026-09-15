@@ -20,7 +20,7 @@ func newWorkspace(config *appconfig.Config, workspace domain.WorkspaceConfig) (w
 	case "file":
 		return fileWorkspace{config: config, workspace: workspace}, nil
 	case "http":
-		return httpWorkspace{workspace: workspace}, nil
+		return httpWorkspace{workspace: workspace, limits: DefaultHTTPWorkspaceLimits()}, nil
 	default:
 		return nil, fmt.Errorf("unsupported workspace type %q", workspace.Type)
 	}

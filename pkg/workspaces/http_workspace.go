@@ -1,42 +1,119 @@
 package workspaces
 
 import (
-	"archive/zip"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/chaitin/agent-compose/pkg/archive"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sources"
 )
 
 const (
-	// Workspaces commonly contain source trees and dependencies that are much
-	// larger than individual skills, so their archive limits are intentionally
-	// wider than the skill resolver's limits.
-	HTTPWorkspaceDownloadLimit       = 256 << 20
-	HTTPWorkspaceExpandedLimit       = 1 << 30
-	HTTPWorkspaceMaxCompressionRatio = 100
+	httpWorkspaceStagingPrefix = ".agent-compose-http-workspace-"
+	httpWorkspaceArchiveName   = "workspace.zip"
+	httpWorkspaceContentDir    = "content"
 )
+
+// HTTPWorkspaceLimits bounds one HTTP workspace materialization. The defaults
+// are wider than the skill resolver's because a workspace usually carries a
+// full source tree and its dependencies. Internal artifact hosts are refused
+// unless AllowPrivateAddresses is set, because the archive URL is
+// author-supplied input and the daemon usually sits next to services an author
+// cannot otherwise reach.
+type HTTPWorkspaceLimits struct {
+	DownloadBytes              int64
+	ExpandedBytes              int64
+	MaxEntries                 int
+	MaxCompressionRatio        int64
+	CompressionRatioFloorBytes int64
+	FetchTimeout               time.Duration
+	AllowPrivateAddresses      bool
+}
+
+func DefaultHTTPWorkspaceLimits() HTTPWorkspaceLimits {
+	return HTTPWorkspaceLimits{
+		DownloadBytes:              256 << 20,
+		ExpandedBytes:              1 << 30,
+		MaxEntries:                 100000,
+		MaxCompressionRatio:        100,
+		CompressionRatioFloorBytes: 64 << 20,
+		FetchTimeout:               10 * time.Minute,
+	}
+}
 
 type HTTPWorkspaceConfig struct {
 	sources.Source
 	Target string `json:"target,omitempty"`
 }
 
-type httpWorkspace struct{ workspace domain.WorkspaceConfig }
+func DecodeHTTPWorkspaceConfig(raw string) (HTTPWorkspaceConfig, error) {
+	var stored HTTPWorkspaceConfig
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &stored); err != nil {
+		return HTTPWorkspaceConfig{}, err
+	}
+	// Normalized is promoted from the embedded source.
+	stored.Source = stored.Normalized()
+	stored.Target = strings.TrimSpace(stored.Target)
+	return stored, nil
+}
+
+// NewHTTPWorkspaceConfig builds the materialization config for one HTTP
+// workspace. It owns provider, url, ref, format, and target validation so the
+// project-run path and the scheduler path cannot drift apart.
+func NewHTTPWorkspaceConfig(workspaceID, name, comment string, source sources.Source, target string) (domain.WorkspaceConfig, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return domain.WorkspaceConfig{}, fmt.Errorf("http workspace id is required")
+	}
+	source = source.Normalized()
+	switch {
+	case source.Provider != sources.ProviderHTTP:
+		return domain.WorkspaceConfig{}, fmt.Errorf("http workspace requires provider %q", sources.ProviderHTTP)
+	case source.URL == "":
+		return domain.WorkspaceConfig{}, fmt.Errorf("http workspace url is required")
+	case source.Ref != "":
+		return domain.WorkspaceConfig{}, fmt.Errorf("http workspace does not support ref")
+	case source.Format != sources.FormatZIP:
+		return domain.WorkspaceConfig{}, fmt.Errorf("http workspace format must be %q", sources.FormatZIP)
+	}
+	target = strings.TrimSpace(target)
+	if _, err := NormalizeWorkspaceTarget(workspaceID, target); err != nil {
+		return domain.WorkspaceConfig{}, err
+	}
+	payload, err := json.Marshal(HTTPWorkspaceConfig{Source: source, Target: target})
+	if err != nil {
+		return domain.WorkspaceConfig{}, fmt.Errorf("encode http workspace config: %w", err)
+	}
+	return domain.WorkspaceConfig{
+		ID:         workspaceID,
+		Name:       strings.TrimSpace(name),
+		Type:       "http",
+		ConfigJSON: string(payload),
+		Comment:    strings.TrimSpace(comment),
+	}, nil
+}
+
+type httpWorkspace struct {
+	workspace domain.WorkspaceConfig
+	limits    HTTPWorkspaceLimits
+	// client is an injection point for tests and a future configuration
+	// surface; nil uses the hardened transport built by the archive fetcher.
+	client *http.Client
+}
 
 func (w httpWorkspace) Prepare(ctx context.Context, session *domain.Sandbox) error {
-	var cfg HTTPWorkspaceConfig
-	if err := json.Unmarshal([]byte(w.workspace.ConfigJSON), &cfg); err != nil {
+	cfg, err := DecodeHTTPWorkspaceConfig(w.workspace.ConfigJSON)
+	if err != nil {
 		return fmt.Errorf("decode http workspace config %s: %w", w.workspace.ID, err)
 	}
-	if cfg.Provider != sources.ProviderHTTP || cfg.Format != sources.FormatZIP || strings.TrimSpace(cfg.URL) == "" {
+	if cfg.Provider != sources.ProviderHTTP || cfg.Format != sources.FormatZIP || cfg.URL == "" {
 		return fmt.Errorf("http workspace %s has invalid source", w.workspace.ID)
 	}
 	root := strings.TrimSpace(session.Summary.WorkspacePath)
@@ -44,29 +121,36 @@ func (w httpWorkspace) Prepare(ctx context.Context, session *domain.Sandbox) err
 		return fmt.Errorf("session %s missing workspace path", session.Summary.ID)
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
-		return err
+		return fmt.Errorf("prepare workspace %s failed: create workspace root: %w", w.workspace.Name, err)
 	}
-	tmp, err := os.MkdirTemp("", "agent-compose-http-workspace-")
+	target, err := NormalizeWorkspaceTarget(w.workspace.ID, cfg.Target)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(tmp) }()
-	archive := filepath.Join(tmp, "workspace.zip")
-	if err := downloadWorkspace(ctx, cfg.Source, archive); err != nil {
-		return err
+	// Staging lives beside the workspace inside the sandbox directory: it uses
+	// the same filesystem as the destination, it is never exposed to the guest,
+	// and sandbox removal discards it even if this process is killed.
+	staging, err := os.MkdirTemp(filepath.Dir(root), httpWorkspaceStagingPrefix)
+	if err != nil {
+		return fmt.Errorf("prepare workspace %s failed: create staging directory: %w", w.workspace.Name, err)
 	}
-	extracted := filepath.Join(tmp, "content")
-	if err := extractWorkspaceZip(archive, extracted); err != nil {
-		return err
+	defer func() { _ = os.RemoveAll(staging) }()
+
+	fetcher, err := archive.NewFetcher(w.client, w.fetchPolicy())
+	if err != nil {
+		return fmt.Errorf("prepare workspace %s failed: %w", w.workspace.Name, err)
 	}
-	source := extracted
-	if strings.TrimSpace(cfg.Path) != "" {
-		source, err = safeWorkspaceSubdir(extracted, cfg.Path)
-		if err != nil {
-			return err
-		}
+	archivePath := filepath.Join(staging, httpWorkspaceArchiveName)
+	// A nil env resolves "${NAME}" credentials from the daemon process
+	// environment, matching how the git workspace provider resolves them.
+	if _, err := fetcher.Fetch(ctx, cfg.Source, nil, archivePath); err != nil {
+		return fmt.Errorf("prepare workspace %s failed: %w", w.workspace.Name, err)
 	}
-	target, err := NormalizeWorkspaceTarget(w.workspace.ID, cfg.Target)
+	content := filepath.Join(staging, httpWorkspaceContentDir)
+	if err := archive.ExtractZip(archivePath, content, w.extractPolicy()); err != nil {
+		return fmt.Errorf("prepare workspace %s failed: extract archive: %w", w.workspace.Name, err)
+	}
+	source, err := w.selectSource(content, cfg.Path)
 	if err != nil {
 		return err
 	}
@@ -74,152 +158,64 @@ func (w httpWorkspace) Prepare(ctx context.Context, session *domain.Sandbox) err
 	if target != "." {
 		destination = filepath.Join(root, target)
 		if err := os.MkdirAll(destination, 0o755); err != nil {
-			return err
+			return fmt.Errorf("prepare workspace %s failed: create target %s: %w", w.workspace.Name, target, err)
 		}
 	}
-	return copyWorkspaceDir(source, destination)
-}
-
-func downloadWorkspace(ctx context.Context, source sources.Source, destination string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source.URL, nil)
-	if err != nil {
-		return err
-	}
-	sources.ApplyHTTPAuthentication(req, source, nil)
-	resp, err := (&http.Client{}).Do(req)
-	if err != nil {
-		return fmt.Errorf("download workspace: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("download workspace: unexpected HTTP status %d", resp.StatusCode)
-	}
-	out, err := os.OpenFile(destination, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = out.Close() }()
-	if _, err := io.Copy(out, io.LimitReader(resp.Body, HTTPWorkspaceDownloadLimit+1)); err != nil {
-		return err
-	}
-	info, err := out.Stat()
-	if err != nil {
-		return err
-	}
-	if info.Size() > HTTPWorkspaceDownloadLimit {
-		return fmt.Errorf("workspace archive exceeds download limit")
+	if err := copyHTTPWorkspaceContent(ctx, source, destination); err != nil {
+		return fmt.Errorf("prepare workspace %s failed: %w", w.workspace.Name, err)
 	}
 	return nil
 }
 
-func extractWorkspaceZip(archive, destination string) error {
-	return extractWorkspaceZipWithLimit(archive, destination, HTTPWorkspaceExpandedLimit)
-}
-
-func extractWorkspaceZipWithLimit(archive, destination string, expandedLimit int64) error {
-	r, err := zip.OpenReader(archive)
+// selectSource resolves the optional in-archive subdirectory. A path that names
+// a file, or nothing at all, fails loudly: silently materializing an empty
+// workspace would hide an authoring mistake behind a successful run.
+func (w httpWorkspace) selectSource(content, subpath string) (string, error) {
+	trimmed := strings.TrimSpace(subpath)
+	if trimmed == "" {
+		return content, nil
+	}
+	selected, err := archive.SafeJoinRelative(content, trimmed)
 	if err != nil {
-		return err
+		return "", fmt.Errorf("prepare workspace %s failed: archive path %q is invalid", w.workspace.Name, subpath)
 	}
-	defer func() { _ = r.Close() }()
-	if err := os.MkdirAll(destination, 0o755); err != nil {
-		return err
+	info, err := os.Stat(selected)
+	if err != nil {
+		return "", fmt.Errorf("prepare workspace %s failed: archive path %q is not present in the archive", w.workspace.Name, subpath)
 	}
-	var expanded int64
-	var compressed int64
-	for _, f := range r.File {
-		name, err := safeWorkspaceSubdir(destination, f.Name)
-		if err != nil {
-			return err
-		}
-		if f.FileInfo().Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("workspace archive contains symlink %q", f.Name)
-		}
-		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(name, 0o755); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
-			return err
-		}
-		in, err := f.Open()
-		if err != nil {
-			return err
-		}
-		out, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-		if err != nil {
-			_ = in.Close()
-			return err
-		}
-		remaining := expandedLimit - expanded
-		if remaining <= 0 {
-			_ = in.Close()
-			_ = out.Close()
-			_ = os.Remove(name)
-			return fmt.Errorf("workspace archive exceeds expanded size limit")
-		}
-		written, copyErr := io.Copy(out, io.LimitReader(in, remaining+1))
-		_ = in.Close()
-		_ = out.Close()
-		if copyErr != nil {
-			_ = os.Remove(name)
-			return copyErr
-		}
-		if written > remaining {
-			_ = os.Remove(name)
-			return fmt.Errorf("workspace archive exceeds expanded size limit")
-		}
-		expanded += written
-		compressed += int64(f.CompressedSize64)
-		if expanded > compressed*HTTPWorkspaceMaxCompressionRatio {
-			_ = os.Remove(name)
-			return fmt.Errorf("workspace archive exceeds compression ratio limit")
-		}
+	if !info.IsDir() {
+		return "", fmt.Errorf("prepare workspace %s failed: archive path %q is not a directory", w.workspace.Name, subpath)
 	}
-	return nil
+	return selected, nil
 }
 
-func safeWorkspaceSubdir(root, subdir string) (string, error) {
-	clean := filepath.Clean(filepath.FromSlash(strings.ReplaceAll(subdir, "\\", "/")))
-	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("workspace archive path %q escapes root", subdir)
+func (w httpWorkspace) fetchPolicy() archive.FetchPolicy {
+	return archive.FetchPolicy{
+		MaxBytes:              w.limits.DownloadBytes,
+		Timeout:               w.limits.FetchTimeout,
+		RequireZipContentType: true,
+		AllowPrivateAddresses: w.limits.AllowPrivateAddresses,
 	}
-	return filepath.Join(root, clean), nil
 }
 
-func copyWorkspaceDir(source, destination string) error {
-	return filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(source, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		target := filepath.Join(destination, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("workspace contains unsupported file %q", rel)
-		}
-		in, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
-		if err != nil {
-			_ = in.Close()
-			return err
-		}
-		_, copyErr := io.Copy(out, in)
-		_ = in.Close()
-		_ = out.Close()
-		return copyErr
-	})
+func (w httpWorkspace) extractPolicy() archive.ExtractPolicy {
+	return archive.ExtractPolicy{
+		MaxExpandedBytes:           w.limits.ExpandedBytes,
+		MaxEntries:                 w.limits.MaxEntries,
+		MaxCompressionRatio:        w.limits.MaxCompressionRatio,
+		CompressionRatioFloorBytes: w.limits.CompressionRatioFloorBytes,
+	}
+}
+
+// copyHTTPWorkspaceContent copies extracted archive content into the workspace
+// destination through the same cancellation-aware, clone-capable copy the file
+// workspace provider uses. Extraction has already rejected symlinks and
+// escaping entries.
+func copyHTTPWorkspaceContent(ctx context.Context, source, destination string) error {
+	sourceRoot, err := os.OpenRoot(source)
+	if err != nil {
+		return fmt.Errorf("open extracted archive content: %w", err)
+	}
+	defer func() { _ = sourceRoot.Close() }()
+	return CopyRootDirectoryContentsContext(ctx, sourceRoot, destination)
 }

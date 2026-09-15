@@ -2,71 +2,284 @@ package workspaces
 
 import (
 	"archive/zip"
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/sources"
 )
 
-func TestExtractWorkspaceZipCountsActualBytesAndRejectsTruncation(t *testing.T) {
-	archivePath := filepath.Join(t.TempDir(), "workspace.zip")
-	file, err := os.Create(archivePath)
+func TestDecodeHTTPWorkspaceConfigNormalizesSource(t *testing.T) {
+	decoded, err := DecodeHTTPWorkspaceConfig(`{"provider":" HTTP ","url":" https://example.com/a.zip ","format":"ZIP","target":" src "}`)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("DecodeHTTPWorkspaceConfig returned error: %v", err)
 	}
-	archive := zip.NewWriter(file)
-	for _, item := range []struct{ name, content string }{{"one.txt", "123456"}, {"two.txt", "abcdef"}} {
-		entry, err := archive.Create(item.name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := entry.Write([]byte(item.content)); err != nil {
-			t.Fatal(err)
-		}
+	if decoded.Provider != sources.ProviderHTTP || decoded.Format != sources.FormatZIP {
+		t.Fatalf("decoded source = %#v", decoded.Source)
 	}
-	if err := archive.Close(); err != nil {
-		t.Fatal(err)
+	if decoded.URL != "https://example.com/a.zip" || decoded.Target != "src" {
+		t.Fatalf("decoded config = %#v", decoded)
 	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	destination := filepath.Join(t.TempDir(), "content")
-	err = extractWorkspaceZipWithLimit(archivePath, destination, 10)
-	if err == nil || !strings.Contains(err.Error(), "expanded size limit") {
-		t.Fatalf("extract error = %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(destination, "two.txt")); !os.IsNotExist(err) {
-		t.Fatalf("over-limit file was retained: %v", err)
+	if _, err := DecodeHTTPWorkspaceConfig("not-json"); err == nil {
+		t.Fatal("expected malformed config to be rejected")
 	}
 }
 
-func TestExtractWorkspaceZipAllowsEmptyFiles(t *testing.T) {
-	archivePath := filepath.Join(t.TempDir(), "workspace.zip")
-	file, err := os.Create(archivePath)
+func TestNewHTTPWorkspaceConfigValidatesSource(t *testing.T) {
+	valid := sources.Source{Provider: sources.ProviderHTTP, URL: "https://example.com/a.zip", Format: sources.FormatZIP}
+	configured, err := NewHTTPWorkspaceConfig("run-http", " run-http ", " comment ", valid, " src ")
 	if err != nil {
+		t.Fatalf("NewHTTPWorkspaceConfig returned error: %v", err)
+	}
+	if configured.Type != "http" || configured.Name != "run-http" || configured.Comment != "comment" {
+		t.Fatalf("workspace config = %#v", configured)
+	}
+	for _, want := range []string{`"url":"https://example.com/a.zip"`, `"format":"zip"`, `"target":"src"`} {
+		if !strings.Contains(configured.ConfigJSON, want) {
+			t.Fatalf("config JSON %s is missing %s", configured.ConfigJSON, want)
+		}
+	}
+
+	for _, test := range []struct {
+		name   string
+		source sources.Source
+		target string
+	}{
+		{name: "wrong provider", source: sources.Source{Provider: sources.ProviderGit, URL: "https://example.com/a.zip", Format: sources.FormatZIP}},
+		{name: "missing url", source: sources.Source{Provider: sources.ProviderHTTP, Format: sources.FormatZIP}},
+		{name: "unsupported ref", source: sources.Source{Provider: sources.ProviderHTTP, URL: "https://example.com/a.zip", Ref: "main", Format: sources.FormatZIP}},
+		{name: "missing format", source: sources.Source{Provider: sources.ProviderHTTP, URL: "https://example.com/a.zip"}},
+		{name: "escaping target", source: valid, target: "../escape"},
+		{name: "absolute target", source: valid, target: "/tmp"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := NewHTTPWorkspaceConfig("run-http", "run-http", "", test.source, test.target); err == nil {
+				t.Fatal("expected an invalid http workspace config to be rejected")
+			}
+		})
+	}
+	if _, err := NewHTTPWorkspaceConfig("", "run-http", "", valid, "."); err == nil {
+		t.Fatal("expected a missing workspace id to be rejected")
+	}
+}
+
+func TestHTTPWorkspaceSelectSourceRejectsMissingAndNonDirectoryPaths(t *testing.T) {
+	content := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(content, "service", "nested"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	archive := zip.NewWriter(file)
-	if _, err := archive.Create(".gitkeep"); err != nil {
+	if err := os.WriteFile(filepath.Join(content, "service", "app.txt"), []byte("app"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := archive.Close(); err != nil {
+	workspace := httpWorkspace{}
+	if selected, err := workspace.selectSource(content, "  "); err != nil || selected != content {
+		t.Fatalf("selectSource(blank) = %q, %v", selected, err)
+	}
+	if selected, err := workspace.selectSource(content, "service"); err != nil || selected != filepath.Join(content, "service") {
+		t.Fatalf("selectSource(service) = %q, %v", selected, err)
+	}
+	for _, test := range []struct{ name, subpath, want string }{
+		{name: "file instead of directory", subpath: "service/app.txt", want: "is not a directory"},
+		{name: "missing path", subpath: "absent", want: "not present"},
+		{name: "escaping path", subpath: "../escape", want: "is invalid"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := workspace.selectSource(content, test.subpath)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("selectSource(%q) error = %v, want %q", test.subpath, err, test.want)
+			}
+		})
+	}
+}
+
+type httpWorkspaceFixture struct {
+	archiveURL string
+	workspace  domain.WorkspaceConfig
+	sandboxDir string
+	root       string
+}
+
+// newHTTPWorkspaceFixture serves a zip containing a nested "service" directory
+// and a top-level file, then wires the workspace config to it.
+func newHTTPWorkspaceFixture(t *testing.T, path, target string) httpWorkspaceFixture {
+	t.Helper()
+	var payload bytes.Buffer
+	writer := zip.NewWriter(&payload)
+	if err := writeZipEntry(writer, "LICENSE", []byte("license"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := file.Close(); err != nil {
+	if err := writeZipEntry(writer, "service/app.txt", []byte("application"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeZipEntry(writer, "service/scripts/run.sh", []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	destination := filepath.Join(t.TempDir(), "content")
-	if err := extractWorkspaceZipWithLimit(archivePath, destination, 10); err != nil {
-		t.Fatalf("extract empty file archive: %v", err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(payload.Bytes())
+	}))
+	t.Cleanup(server.Close)
+
+	workspace, err := NewHTTPWorkspaceConfig("run-http", "run-http", "fixture", sources.Source{
+		Provider: sources.ProviderHTTP,
+		URL:      server.URL + "/archive.zip",
+		Format:   sources.FormatZIP,
+		Path:     path,
+	}, target)
+	if err != nil {
+		t.Fatalf("NewHTTPWorkspaceConfig returned error: %v", err)
 	}
-	info, err := os.Stat(filepath.Join(destination, ".gitkeep"))
+	sandboxDir := t.TempDir()
+	return httpWorkspaceFixture{
+		archiveURL: workspace.ConfigJSON,
+		workspace:  workspace,
+		sandboxDir: sandboxDir,
+		root:       filepath.Join(sandboxDir, "workspace"),
+	}
+}
+
+func writeZipEntry(writer *zip.Writer, name string, content []byte, mode os.FileMode) error {
+	header := &zip.FileHeader{Name: name}
+	header.SetMode(mode)
+	entry, err := writer.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+	_, err = entry.Write(content)
+	return err
+}
+
+func (f httpWorkspaceFixture) sandbox() *domain.Sandbox {
+	return &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-http", WorkspacePath: f.root}}
+}
+
+func (f httpWorkspaceFixture) limits(t *testing.T) HTTPWorkspaceLimits {
+	t.Helper()
+	limits := DefaultHTTPWorkspaceLimits()
+	// Loopback is the only address an httptest server offers.
+	limits.AllowPrivateAddresses = true
+	return limits
+}
+
+func (f httpWorkspaceFixture) prepare(t *testing.T, limits HTTPWorkspaceLimits) error {
+	t.Helper()
+	return httpWorkspace{workspace: f.workspace, limits: limits}.Prepare(context.Background(), f.sandbox())
+}
+
+func TestHTTPWorkspaceIntegrationSelectsArchiveSubdirectory(t *testing.T) {
+	fixture := newHTTPWorkspaceFixture(t, "service", "src")
+	if err := fixture.prepare(t, fixture.limits(t)); err != nil {
+		t.Fatalf("Prepare returned error: %v", err)
+	}
+	app, err := os.ReadFile(filepath.Join(fixture.root, "src", "app.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Size() != 0 {
-		t.Fatalf("empty file size = %d, want 0", info.Size())
+	if string(app) != "application" {
+		t.Fatalf("app.txt = %q", app)
+	}
+	script, err := os.Stat(filepath.Join(fixture.root, "src", "scripts", "run.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if script.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("script mode = %v, want the executable bit preserved", script.Mode().Perm())
+	}
+	if _, err := os.Stat(filepath.Join(fixture.root, "LICENSE")); !os.IsNotExist(err) {
+		t.Fatalf("selected subdirectory copied unrelated archive content: %v", err)
+	}
+	assertNoHTTPWorkspaceStaging(t, fixture.sandboxDir)
+}
+
+func TestHTTPWorkspaceIntegrationCopiesWholeArchive(t *testing.T) {
+	fixture := newHTTPWorkspaceFixture(t, "", ".")
+	if err := fixture.prepare(t, fixture.limits(t)); err != nil {
+		t.Fatalf("Prepare returned error: %v", err)
+	}
+	for _, path := range []string{"LICENSE", filepath.Join("service", "app.txt")} {
+		if _, err := os.Stat(filepath.Join(fixture.root, path)); err != nil {
+			t.Fatalf("expected %s in the workspace: %v", path, err)
+		}
+	}
+	assertNoHTTPWorkspaceStaging(t, fixture.sandboxDir)
+}
+
+func TestHTTPWorkspaceIntegrationRejectsOverLimitArchive(t *testing.T) {
+	fixture := newHTTPWorkspaceFixture(t, "", ".")
+	limits := fixture.limits(t)
+	limits.ExpandedBytes = 4
+	err := fixture.prepare(t, limits)
+	if err == nil || !strings.Contains(err.Error(), "expanded size") {
+		t.Fatalf("Prepare error = %v, want expanded size limit", err)
+	}
+	if entries, readErr := os.ReadDir(fixture.root); readErr == nil && len(entries) != 0 {
+		t.Fatalf("failed preparation left %d workspace entries", len(entries))
+	}
+	assertNoHTTPWorkspaceStaging(t, fixture.sandboxDir)
+}
+
+func TestHTTPWorkspaceIntegrationRejectsMissingDirectoryPath(t *testing.T) {
+	fixture := newHTTPWorkspaceFixture(t, "absent", ".")
+	err := fixture.prepare(t, fixture.limits(t))
+	if err == nil || !strings.Contains(err.Error(), "not present") {
+		t.Fatalf("Prepare error = %v, want a missing archive path rejection", err)
+	}
+}
+
+func TestHTTPWorkspaceIntegrationRequiresOptInForPrivateHosts(t *testing.T) {
+	fixture := newHTTPWorkspaceFixture(t, "", ".")
+	limits := fixture.limits(t)
+	limits.AllowPrivateAddresses = false
+	err := fixture.prepare(t, limits)
+	if err == nil || !strings.Contains(err.Error(), "private address") {
+		t.Fatalf("Prepare error = %v, want private address rejection", err)
+	}
+}
+
+func assertNoHTTPWorkspaceStaging(t *testing.T, sandboxDir string) {
+	t.Helper()
+	entries, err := os.ReadDir(sandboxDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), httpWorkspaceStagingPrefix) {
+			t.Fatalf("staging directory %s was not removed", entry.Name())
+		}
+	}
+}
+
+func TestHTTPWorkspacePrepareRejectsInvalidConfig(t *testing.T) {
+	for _, raw := range []string{"{}", `{"provider":"git","url":"https://example.com/a.zip","format":"zip"}`, `{"provider":"http","url":"https://example.com/a.zip"}`} {
+		t.Run(raw, func(t *testing.T) {
+			session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox", WorkspacePath: filepath.Join(t.TempDir(), "workspace")}}
+			err := httpWorkspace{workspace: domain.WorkspaceConfig{ID: "run-http", Type: "http", ConfigJSON: raw}, limits: DefaultHTTPWorkspaceLimits()}.Prepare(context.Background(), session)
+			if err == nil {
+				t.Fatal("expected an invalid workspace config to be rejected")
+			}
+		})
+	}
+}
+
+func TestHTTPWorkspacePrepareRejectsMissingWorkspacePath(t *testing.T) {
+	encoded, err := json.Marshal(HTTPWorkspaceConfig{Source: sources.Source{Provider: sources.ProviderHTTP, URL: "https://example.com/a.zip", Format: sources.FormatZIP}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox"}}
+	err = httpWorkspace{workspace: domain.WorkspaceConfig{ID: "run-http", Type: "http", ConfigJSON: string(encoded)}, limits: DefaultHTTPWorkspaceLimits()}.Prepare(context.Background(), session)
+	if err == nil || !strings.Contains(err.Error(), "missing workspace path") {
+		t.Fatalf("Prepare error = %v, want a missing workspace path rejection", err)
 	}
 }

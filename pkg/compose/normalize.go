@@ -506,9 +506,6 @@ func normalizeInlineWorkspaceSpec(path string, spec *WorkspaceSpec, defaultName 
 		if workspace.Format != sources.FormatZIP {
 			return nil, &ValidationError{Path: path + ".format", Message: "http workspace format must be zip"}
 		}
-		if workspace.Mode == "mount" {
-			return nil, &ValidationError{Path: path + ".mode", Message: "http workspace only supports copy mode"}
-		}
 		workspace.URL = strings.TrimSpace(workspace.URL)
 	default:
 		return nil, &ValidationError{Path: path + ".provider", Message: fmt.Sprintf("unsupported workspace provider %q", workspace.Provider)}
