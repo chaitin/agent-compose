@@ -19,6 +19,8 @@ func newWorkspace(config *appconfig.Config, workspace domain.WorkspaceConfig) (w
 		return gitWorkspace{workspace: workspace}, nil
 	case "file":
 		return fileWorkspace{config: config, workspace: workspace}, nil
+	case "http":
+		return httpWorkspace{workspace: workspace}, nil
 	default:
 		return nil, fmt.Errorf("unsupported workspace type %q", workspace.Type)
 	}

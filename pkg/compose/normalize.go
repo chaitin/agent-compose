@@ -496,6 +496,20 @@ func normalizeInlineWorkspaceSpec(path string, spec *WorkspaceSpec, defaultName 
 			return nil, &ValidationError{Path: path + ".format", Message: "git workspace does not support format"}
 		}
 		workspace.URL = strings.TrimSpace(workspace.URL)
+	case sources.ProviderHTTP:
+		if strings.TrimSpace(workspace.URL) == "" {
+			return nil, &ValidationError{Path: path + ".url", Message: "http workspace url is required"}
+		}
+		if strings.TrimSpace(workspace.Ref) != "" {
+			return nil, &ValidationError{Path: path + ".ref", Message: "http workspace does not support ref"}
+		}
+		if workspace.Format != sources.FormatZIP {
+			return nil, &ValidationError{Path: path + ".format", Message: "http workspace format must be zip"}
+		}
+		if workspace.Mode == "mount" {
+			return nil, &ValidationError{Path: path + ".mode", Message: "http workspace only supports copy mode"}
+		}
+		workspace.URL = strings.TrimSpace(workspace.URL)
 	default:
 		return nil, &ValidationError{Path: path + ".provider", Message: fmt.Sprintf("unsupported workspace provider %q", workspace.Provider)}
 	}

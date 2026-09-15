@@ -274,10 +274,11 @@ Each `workspaces.<key>` accepts:
 | Field | Type | Applicability | Purpose |
 | --- | --- | --- | --- |
 | `name` | string | Compatibility field | The map key is the effective project workspace name. Normally omit this redundant field. |
-| `provider` | string | Required | `file` or `git`. |
+| `provider` | string | Required | `file`, `git`, or `http`. |
 | `url` | string | Required for `git` | Git clone URL. It is forbidden for `file`. |
 | `ref` | string | Optional for `git` | Git branch, tag, or commit. |
 | `path` | string | Required for `file` | Source path relative to the compose directory; it cannot escape the project root. Git workspaces do not support a repository subpath. |
+| `format` | string | Required for `http` | Must be `zip`; the URL is downloaded and extracted as an isolated workspace. `path`, when set, selects a directory inside the archive. |
 | `target` | string | Optional | Destination below the sandbox workspace root. Defaults to `.`. |
 | `mode` | string | Optional | `copy` (default) creates an isolated workspace. `mount` maps a local `file` source directly into a Docker sandbox. |
 | `read_only` | bool | Optional for `mount` | Defaults to `false`. Set `true` to prevent guest writes through the workspace mount; `true` is invalid with `copy`. |
@@ -296,6 +297,12 @@ workspaces:
     provider: git
     url: https://github.com/example/service.git
     ref: release
+    target: .
+  remote-release:
+    provider: http
+    url: https://example.com/releases/service.zip
+    format: zip
+    path: service
     target: .
 ```
 

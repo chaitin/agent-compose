@@ -273,10 +273,11 @@ workspace:
 | 字段 | 类型 | 适用范围 | 作用 |
 | --- | --- | --- | --- |
 | `name` | string | 兼容字段 | 顶层条目的实际名称由 map key 决定；通常不要重复填写。 |
-| `provider` | string | 必填 | `file` 或 `git`。 |
+| `provider` | string | 必填 | `file`、`git` 或 `http`。 |
 | `url` | string | `git` 必填 | Git clone URL；`file` 不允许设置。 |
 | `ref` | string | `git` 可选 | Git branch、tag 或 commit。 |
 | `path` | string | `file` 必填 | 相对于 compose 文件目录的来源路径，不可逃逸项目根目录；Git Workspace 不支持仓库内子目录。 |
+| `format` | string | `http` 必填 | 必须是 `zip`；系统会下载并解压 URL 作为隔离 Workspace。设置 `path` 时表示压缩包内的目录。 |
 | `target` | string | 可选 | sandbox workspace 根目录下的目标目录，默认 `.`。 |
 | `mode` | string | 可选 | 默认 `copy` 创建隔离工作区；`mount` 将本地 `file` 来源直接映射到 Docker sandbox。 |
 | `read_only` | bool | `mount` 可选 | 默认 `false`；设为 `true` 禁止 guest 通过该工作区挂载写入。`copy` 模式不允许设为 `true`。 |
@@ -295,6 +296,12 @@ workspaces:
     provider: git
     url: https://github.com/example/service.git
     ref: release
+    target: .
+  remote-release:
+    provider: http
+    url: https://example.com/releases/service.zip
+    format: zip
+    path: service
     target: .
 ```
 
