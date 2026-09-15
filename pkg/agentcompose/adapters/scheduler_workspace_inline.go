@@ -92,6 +92,18 @@ func (r *SchedulerSandboxRunner) inlineWorkspaceSnapshot(ctx context.Context, ag
 			return nil, "", err
 		}
 		return toSandboxWorkspaceSnapshot(config), workspaceID, nil
+	case sources.ProviderHTTP:
+		config, err := workspaces.NewHTTPWorkspaceConfig(
+			workspaceID,
+			firstNonEmpty(strings.TrimSpace(spec.Name), workspaceID),
+			"agent yaml workspace snapshot",
+			spec.ContentSource(),
+			spec.Target,
+		)
+		if err != nil {
+			return nil, "", err
+		}
+		return toSandboxWorkspaceSnapshot(config), workspaceID, nil
 	case "":
 		return nil, "", fmt.Errorf("workspace provider is required")
 	default:

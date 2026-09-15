@@ -135,6 +135,73 @@ func TestSchedulerSandboxRunnerEnsureResolvesInlineGitWorkspace(t *testing.T) {
 	}
 }
 
+// TestSchedulerSandboxRunnerEnsureResolvesInlineHTTPWorkspace covers the
+// `provider: http` variant of the same path: a scheduled agent that declares an
+// archive workspace must materialize it from the inline spec, not from a
+// workspace_config preset that project apply never creates.
+func TestSchedulerSandboxRunnerEnsureResolvesInlineHTTPWorkspace(t *testing.T) {
+	ctx := context.Background()
+	bridge, driver := newTestSandboxRPCBridge(t)
+	ensurer := &recordingSchedulerWorkspaceEnsurer{}
+	publisher := &schedulerSessionPublisherFake{}
+	runner := NewSchedulerSandboxRunner(SchedulerSandboxRunnerDeps{
+		Config:           bridge.config,
+		Store:            bridge.store,
+		ConfigDB:         bridge.configDB,
+		WorkspaceEnsurer: ensurer,
+		Driver:           driver,
+		Cap:              nil,
+		VolumeResolver:   nil,
+		Streams:          bridge.streams,
+		Publisher:        publisher,
+		CapTokens:        nil,
+		AgentExecutor:    bridge.agentExecutor,
+	})
+
+	scheduler := domain.Scheduler{Summary: domain.SchedulerSummary{
+		ID:            "scheduler-inline-http",
+		Name:          "Scheduler Inline HTTP",
+		Driver:        driverpkg.RuntimeDriverDocker,
+		SandboxPolicy: domain.SchedulerSandboxPolicySticky,
+	}}
+	scheduler = createNativeTestSchedulerWithWorkspace(t, ctx, bridge.configDB, scheduler, "", &compose.WorkspaceSpec{
+		Provider: "http",
+		URL:      "https://example.com/some/archive.zip",
+		Format:   "zip",
+		Path:     "service",
+		Target:   "src",
+		Name:     "app-archive",
+	})
+
+	sandbox, eventType, err := runner.Ensure(ctx, scheduler, domain.SchedulerAgentRequest{BindingTriggerID: "trigger-inline-http"}, false)
+	if err != nil {
+		t.Fatalf("Ensure returned error: %v, want the inline http workspace to resolve without a workspace_config lookup", err)
+	}
+	if eventType != "scheduler.sandbox.created" {
+		t.Fatalf("Ensure event type = %q, want scheduler.sandbox.created", eventType)
+	}
+	if len(ensurer.initialWorkspaces) != 1 || ensurer.initialWorkspaces[0] == nil {
+		t.Fatalf("workspace Ensure snapshot = %#v, want one non-nil snapshot", ensurer.initialWorkspaces)
+	}
+	snapshot := ensurer.initialWorkspaces[0]
+	if snapshot.Type != "http" {
+		t.Fatalf("resolved workspace type = %q, want http", snapshot.Type)
+	}
+	var decoded workspaces.HTTPWorkspaceConfig
+	if err := json.Unmarshal([]byte(snapshot.ConfigJSON), &decoded); err != nil {
+		t.Fatalf("decode resolved http workspace config: %v", err)
+	}
+	if decoded.URL != "https://example.com/some/archive.zip" || decoded.Path != "service" || decoded.Format != "zip" {
+		t.Fatalf("resolved http workspace config = %#v", decoded)
+	}
+	if decoded.Target != "src" {
+		t.Fatalf("resolved http workspace target = %q, want src", decoded.Target)
+	}
+	if sandbox.Summary.ID == "" {
+		t.Fatalf("expected sandbox to be created")
+	}
+}
+
 // TestSchedulerSandboxRunnerEnsureResolvesInlineFileWorkspace covers the
 // `provider: file` variant of issue #599: the agent's local workspace
 // content must be materialized directly from the project source path
