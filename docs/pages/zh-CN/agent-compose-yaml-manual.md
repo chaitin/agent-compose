@@ -322,7 +322,7 @@ workspaces:
 
 行为说明：
 
-- 只接受 `http` 与 `https` URL，重定向同样按该规则重新校验，且不允许从 `https` 降级到 `http`，凭据不会以明文重发。请求会忽略代理环境变量，避免代理代替 daemon 解析目标地址。支持内网制品服务器：URL 可以解析到 loopback 或私网地址，例如另一个 Docker Compose 服务名、发布到本机环回的端口，或 daemon 私网内的主机。（Skill 解析不允许私网地址；Workspace 压缩包通常来自内网制品服务器。）
+- 只接受 `http` 与 `https` URL，重定向同样按该规则重新校验，且不允许从 `https` 降级到 `http`，凭据不会以明文重发。请求会忽略代理环境变量，避免代理代替 daemon 解析目标地址。支持内网主机：URL 可以解析到 loopback 或私网地址，例如另一个 Docker Compose 服务名、发布到本机环回的端口，或 daemon 私网内的主机。Skill 来源同样遵循这套规则。
 - `path` 必须指向压缩包内已存在的目录。`path` 指向普通文件或不存在时，run 会直接失败，而不会生成空 Workspace；`path` 逃逸压缩包（`../`、绝对路径）同样会被拒绝。
 - 解压前会校验每个条目：逃逸目标目录的条目与符号链接条目会被拒绝，条目权限会被清理（保留可执行位，清除 group/other 写权限，丢弃 setuid、setgid、sticky 位）。
 - 单个 Workspace 的限制：下载压缩包 256 MiB、解压后 1 GiB、最多 100,000 个条目、压缩包解压超过 64 MiB 后压缩比上限 100:1、下载超时 10 分钟；超过任一限制都会使该 run 失败。
@@ -869,7 +869,9 @@ skills:
 | `password` | string | HTTP/Git 密码，只允许完整环境引用 `${NAME}`。 |
 | `token` | string | HTTP/Git token，只允许完整环境引用 `${NAME}`。 |
 
-`password` 和 `token` 不允许明文。执行 `config` 或 `up` 时，CLI 会从项目 dotenv/进程环境解析完整的 `${NAME}` 引用，再把项目提交给 daemon；引用对应的变量缺失时保留引用本身而不是报错，并在 clone 时再解析。面向用户的规范化输出和项目 API 会对解析后的凭据脱敏。远程 ZIP 下载限制为 HTTP(S)，并执行大小、压缩包和网络地址安全检查。
+`git` 或 `http` Skill 也可以来自内网主机，例如内网 GitLab 或制品服务器：允许解析到私网或 loopback 地址，因为该主机由 daemon 自己解析。只有 `http` 与 `https` URL 会走网络下载；其他 URL 会按本地来源处理，必须位于允许的来源根目录内。
+
+`password` 和 `token` 不允许明文。执行 `config` 或 `up` 时，CLI 会从项目 dotenv/进程环境解析完整的 `${NAME}` 引用，再把项目提交给 daemon；引用对应的变量缺失时保留引用本身而不是报错，并在 clone 时再解析。面向用户的规范化输出和项目 API 会对解析后的凭据脱敏。远程 ZIP 下载限制为 HTTP(S)，可以指向内网主机（允许私网与 loopback 地址），并执行大小、压缩包与内容检查。
 
 Git ref 会在各自业务生命周期中解析：Skill 在 Agent run 时解析，Workspace 在 sandbox provisioning 时解析，Scheduler 来源在 `config`/`up` 时解析并保存脚本快照。因此 moving branch 在三处可能得到不同 commit；需要严格一致时，应在 `ref` 中直接填写 commit SHA。
 
