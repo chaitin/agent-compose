@@ -190,12 +190,13 @@ func (w httpWorkspace) fetchPolicy() archive.FetchPolicy {
 		MaxBytes:              w.limits.DownloadBytes,
 		Timeout:               w.limits.FetchTimeout,
 		RequireZipContentType: true,
-		// A workspace URL is written by the operator who deploys the project,
-		// and internal artifact servers are a normal source: the archive often
-		// comes from another compose service, from a published loopback port,
-		// or from a host on a private network. Skill resolution keeps the
-		// public-address-only default, because a skill may be authored for
-		// someone else to resolve.
+		// An http workspace normally fetches from an internal artifact server:
+		// another compose service, a published loopback port, or a host on the
+		// daemon's private network, so the archive fetch skips the shared
+		// public-address default. The tradeoff is deliberate and this is the
+		// only consumer that takes it: a workspace URL from a project document
+		// the operator did not write can therefore reach daemon-local services
+		// and metadata endpoints. Skill resolution keeps the hardened default.
 		AllowPrivateAddresses: true,
 	}
 }

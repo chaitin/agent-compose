@@ -1,7 +1,11 @@
 // Package archive fetches remote archives and expands them inside explicit
-// limits. Every feature that accepts an author-provided archive URL (skills and
-// HTTP workspaces) uses this package so that address filtering, redirect
-// validation, credential application, and archive limits cannot drift apart.
+// limits. Skill resolution and HTTP workspaces both take a URL from the compose
+// document and both use this package, so redirect validation, credential
+// application, and archive limits cannot drift apart.
+//
+// Address filtering is policy, not mechanism: FetchPolicy rejects non-public
+// targets by default, which skill resolution relies on, and a consumer that
+// normally fetches from an internal artifact host opts in explicitly.
 package archive
 
 import (
@@ -39,11 +43,10 @@ type FetchPolicy struct {
 	// MaxRedirects caps the redirect chain. Every hop is revalidated.
 	MaxRedirects int
 	// AllowPrivateAddresses permits loopback, link-local, private-range, and
-	// metadata targets. It is false by default because an archive URL is
-	// author-controlled input and the daemon usually sits next to services the
-	// author cannot otherwise reach; skill resolution relies on that default,
-	// while http workspaces opt in because their URL is written by the
-	// operator who deploys the project and is often an internal artifact host.
+	// metadata targets. It is false by default: a URL from a compose document
+	// can point at services the daemon can reach but its author cannot, so the
+	// hardened default is the public address space. A consumer whose normal
+	// source is an internal artifact host opts in, and owns that decision.
 	AllowPrivateAddresses bool
 	// RequireZipContentType rejects responses that are neither named .zip nor
 	// served with a zip-like content type.
@@ -138,6 +141,12 @@ func newFetchClient(base *http.Client, policy FetchPolicy) *http.Client {
 		client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
 			if len(via) >= policy.MaxRedirects {
 				return fmt.Errorf("stopped after %d redirects", policy.MaxRedirects)
+			}
+			// Go strips Authorization, Cookie, and Www-Authenticate only when a
+			// redirect changes host, so a same-host downgrade would resend
+			// credentials over cleartext and fetch the archive that way.
+			if previous := via[len(via)-1]; previous.URL.Scheme == "https" && request.URL.Scheme != "https" {
+				return fmt.Errorf("refusing redirect from https to %s", request.URL.Scheme)
 			}
 			return ValidateDownloadURL(request.URL.String(), policy.AllowPrivateAddresses)
 		}
