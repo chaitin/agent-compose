@@ -16,8 +16,11 @@ import (
 )
 
 const (
-	HTTPWorkspaceDownloadLimit = 64 << 20
-	HTTPWorkspaceExpandedLimit = 256 << 20
+	// Workspaces commonly contain source trees and dependencies that are much
+	// larger than individual skills, so their archive limits are intentionally
+	// wider than the skill resolver's limits.
+	HTTPWorkspaceDownloadLimit = 1 << 30
+	HTTPWorkspaceExpandedLimit = 4 << 30
 )
 
 type HTTPWorkspaceConfig struct {
