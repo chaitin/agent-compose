@@ -19,7 +19,7 @@ const (
 	// Workspaces commonly contain source trees and dependencies that are much
 	// larger than individual skills, so their archive limits are intentionally
 	// wider than the skill resolver's limits.
-	HTTPWorkspaceDownloadLimit       = 512 << 20
+	HTTPWorkspaceDownloadLimit       = 256 << 20
 	HTTPWorkspaceExpandedLimit       = 1 << 30
 	HTTPWorkspaceMaxCompressionRatio = 100
 )
