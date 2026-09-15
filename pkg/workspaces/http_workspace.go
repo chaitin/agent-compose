@@ -50,7 +50,7 @@ func (w httpWorkspace) Prepare(ctx context.Context, session *domain.Sandbox) err
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 	archive := filepath.Join(tmp, "workspace.zip")
 	if err := downloadWorkspace(ctx, cfg.Source, archive); err != nil {
 		return err
@@ -90,7 +90,7 @@ func downloadWorkspace(ctx context.Context, source sources.Source, destination s
 	if err != nil {
 		return fmt.Errorf("download workspace: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("download workspace: unexpected HTTP status %d", resp.StatusCode)
 	}
@@ -98,7 +98,7 @@ func downloadWorkspace(ctx context.Context, source sources.Source, destination s
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 	if _, err := io.Copy(out, io.LimitReader(resp.Body, HTTPWorkspaceDownloadLimit+1)); err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func extractWorkspaceZipWithLimit(archive, destination string, expandedLimit int
 	if err != nil {
 		return err
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	if err := os.MkdirAll(destination, 0o755); err != nil {
 		return err
 	}
@@ -150,19 +150,19 @@ func extractWorkspaceZipWithLimit(archive, destination string, expandedLimit int
 		}
 		out, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 		if err != nil {
-			in.Close()
+			_ = in.Close()
 			return err
 		}
 		remaining := expandedLimit - expanded
 		if remaining <= 0 {
-			in.Close()
-			out.Close()
+			_ = in.Close()
+			_ = out.Close()
 			_ = os.Remove(name)
 			return fmt.Errorf("workspace archive exceeds expanded size limit")
 		}
 		written, copyErr := io.Copy(out, io.LimitReader(in, remaining+1))
-		in.Close()
-		out.Close()
+		_ = in.Close()
+		_ = out.Close()
 		if copyErr != nil {
 			_ = os.Remove(name)
 			return copyErr
@@ -214,12 +214,12 @@ func copyWorkspaceDir(source, destination string) error {
 		}
 		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
 		if err != nil {
-			in.Close()
+			_ = in.Close()
 			return err
 		}
 		_, copyErr := io.Copy(out, in)
-		in.Close()
-		out.Close()
+		_ = in.Close()
+		_ = out.Close()
 		return copyErr
 	})
 }
