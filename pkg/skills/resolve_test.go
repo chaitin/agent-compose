@@ -9,6 +9,7 @@ import (
 	"hash/crc32"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -149,22 +150,31 @@ func TestResolverRejectsLocalGitOutsideAllowedRoots(t *testing.T) {
 	}
 }
 
-func TestResolverRejectsRemoteGitPrivateHosts(t *testing.T) {
+// TestResolverAcceptsRemoteGitInternalHosts covers the policy for git skills:
+// an internal GitLab on a private or loopback address is a normal source, so
+// the URL passes validation and the failure comes from the clone attempt
+// itself. Only the scheme and host shape are enforced for remote git URLs.
+func TestResolverAcceptsRemoteGitInternalHosts(t *testing.T) {
 	resolver := Resolver{CacheRoot: filepath.Join(t.TempDir(), "cache")}
 
-	for _, rawURL := range []string{
-		"http://127.0.0.1/repo.git",
-		"http://169.254.169.254/repo.git",
-	} {
-		t.Run(rawURL, func(t *testing.T) {
-			_, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Provider: "git", URL: rawURL}})
-			if err == nil {
-				t.Fatalf("expected Resolve to reject private git host")
-			}
-			if !strings.Contains(err.Error(), "validate git skill pdf url") {
-				t.Fatalf("error = %q, want git url validation", err)
-			}
-		})
+	_, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Provider: "git", URL: "http://127.0.0.1/repo.git"}})
+	if err == nil {
+		t.Fatal("expected the unreachable internal repository to fail the clone")
+	}
+	if strings.Contains(err.Error(), "validate git skill pdf url") {
+		t.Fatalf("error = %q, want the internal host to pass url validation", err)
+	}
+	if !strings.Contains(err.Error(), "resolve git skill pdf ref") {
+		t.Fatalf("error = %q, want a clone failure", err)
+	}
+}
+
+func TestResolverRejectsRemoteGitMalformedURL(t *testing.T) {
+	resolver := Resolver{CacheRoot: filepath.Join(t.TempDir(), "cache")}
+
+	_, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Provider: "git", URL: "http:///repo.git"}})
+	if err == nil || !strings.Contains(err.Error(), "validate git skill pdf url") {
+		t.Fatalf("error = %q, want a url shape rejection", err)
 	}
 }
 
@@ -241,36 +251,109 @@ func TestGitCacheURLStripsCredentials(t *testing.T) {
 	}
 }
 
-// TestResolverRejectsZipPrivateHost covers the shared archive fetch policy
-// through the resolver: a loopback or metadata target must be refused before
-// any request is made.
-func TestResolverRejectsZipPrivateHost(t *testing.T) {
-	for _, rawURL := range []string{"http://127.0.0.1/skill.zip", "http://169.254.169.254/skill.zip", "file:///tmp/skill.zip"} {
+// TestResolverRejectsNonHTTPSkillURL covers what still has to hold now that
+// private hosts are accepted: only http and https reach the wire. Any other
+// URL is treated as a local source, so it must live under an allowed root and
+// never reaches the HTTP fetcher.
+func TestResolverRejectsNonHTTPSkillURL(t *testing.T) {
+	for _, rawURL := range []string{"file:///tmp/skill.zip", "ftp://downloads.example.com/skill.zip"} {
 		t.Run(rawURL, func(t *testing.T) {
 			resolver := Resolver{CacheRoot: t.TempDir()}
 			_, err := resolver.Resolve(context.Background(), []domain.AgentSkill{
 				{Name: "pdf", Provider: "http", Format: "zip", URL: rawURL},
 			})
-			if err == nil {
-				t.Fatalf("expected Resolve to reject %q", rawURL)
+			if err == nil || !strings.Contains(err.Error(), "is not allowed") {
+				t.Fatalf("error = %v, want a local source rejection", err)
 			}
 		})
 	}
+
+	// A caller that hands the URL straight to the fetcher still gets a scheme
+	// rejection, so the wire stays http/https only.
+	resolver := Resolver{CacheRoot: t.TempDir()}
+	if _, _, err := resolver.download(context.Background(), "file:///tmp/skill.zip", sources.Source{}); err == nil || !strings.Contains(err.Error(), "unsupported download scheme") {
+		t.Fatalf("download error = %v, want a scheme rejection", err)
+	}
 }
 
-func TestDownloadRejectsRedirectToPrivateHost(t *testing.T) {
+// TestResolverIntegrationFetchesZipSkillFromInternalHost covers the intended
+// internal-artifact-server path end to end: the resolver downloads from a
+// loopback host, expands the archive, and resolves the skill from it.
+func TestResolverIntegrationFetchesZipSkillFromInternalHost(t *testing.T) {
+	payload := zipSkillArchive(t, "pdf")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	resolver := Resolver{CacheRoot: t.TempDir()}
+	resolved, err := resolver.Resolve(context.Background(), []domain.AgentSkill{
+		{Name: "pdf", Provider: "http", Format: "zip", URL: server.URL + "/skills.zip"},
+	})
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v, want the internal host to be fetched", err)
+	}
+	if len(resolved) != 1 || resolved[0].Name != "pdf" {
+		t.Fatalf("resolved = %#v", resolved)
+	}
+	if _, err := os.Stat(filepath.Join(resolved[0].LocalDir, "SKILL.md")); err != nil {
+		t.Fatalf("resolved skill directory is missing SKILL.md: %v", err)
+	}
+}
+
+// zipSkillArchive builds a skill archive in memory for HTTP fixtures.
+func zipSkillArchive(t *testing.T, name string) []byte {
+	t.Helper()
+	var payload bytes.Buffer
+	writer := zip.NewWriter(&payload)
+	header := &zip.FileHeader{Name: "SKILL.md"}
+	header.SetMode(0o644)
+	entry, err := writer.CreateHeader(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write([]byte("---\nname: " + name + "\ndescription: Test skill\n---\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return payload.Bytes()
+}
+
+// TestDownloadFollowsRedirectToInternalHost covers the redirect policy for the
+// shared fetcher through download: a redirect to an internal host is followed,
+// and the archive is staged for the caller.
+func TestDownloadFollowsRedirectToInternalHost(t *testing.T) {
+	var requests int
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			return &http.Response{
+				StatusCode: http.StatusFound,
+				Status:     "302 Found",
+				Header:     http.Header{"Location": []string{"http://127.0.0.1/skill.zip"}},
+				Body:       http.NoBody,
+				Request:    req,
+			}, nil
+		}
 		return &http.Response{
-			StatusCode: http.StatusFound,
-			Status:     "302 Found",
-			Header:     http.Header{"Location": []string{"http://127.0.0.1/skill.zip"}},
-			Body:       http.NoBody,
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/zip"}},
+			Body:       io.NopCloser(strings.NewReader("not-a-zip")),
 			Request:    req,
 		}, nil
 	})}
 	resolver := Resolver{HTTPClient: client}
-	if _, _, err := resolver.download(context.Background(), "http://93.184.216.34/skill.zip", sources.Source{}); err == nil {
-		t.Fatalf("expected redirect to private host to be rejected")
+	path, cleanup, err := resolver.download(context.Background(), "http://93.184.216.34/skill.zip", sources.Source{})
+	if err != nil {
+		t.Fatalf("download returned error: %v, want the internal redirect to be followed", err)
+	}
+	defer cleanup()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("staged archive %s is missing: %v", path, err)
 	}
 }
 

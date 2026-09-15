@@ -193,7 +193,12 @@ func (r Resolver) resolveGit(ctx context.Context, spec domain.AgentSkill) (Resol
 		}
 	}
 	if isHTTPURL(rawURL) {
-		if err := archive.ValidateDownloadURL(rawURL, false); err != nil {
+		// Private and loopback hosts are accepted: an internal GitLab or
+		// artifact server is a normal skill source. This call therefore only
+		// enforces the scheme and host shape, and git reports an unreachable
+		// repository itself. Local paths stay restricted to the allowed roots
+		// above.
+		if err := archive.ValidateDownloadURL(rawURL, true); err != nil {
 			return ResolvedSkill{}, fmt.Errorf("validate git skill %s url: %w", spec.Name, err)
 		}
 	}
@@ -371,7 +376,9 @@ func (r Resolver) download(ctx context.Context, rawURL string, source sources.So
 
 // fetchPolicy keeps the skill download contract: a tighter size limit than
 // workspaces, zip content type validation, and the resolver's own client,
-// which is also the seam tests use to avoid real network calls.
+// which is also the seam tests use to avoid real network calls. Private
+// addresses are allowed because skills are commonly served by an internal
+// artifact server or an internal GitLab; only http and https reach the wire.
 func (r Resolver) fetchPolicy() archive.FetchPolicy {
 	limit := r.DownloadLimitBytes
 	if limit <= 0 {
@@ -381,6 +388,7 @@ func (r Resolver) fetchPolicy() archive.FetchPolicy {
 		MaxBytes:              limit,
 		Timeout:               30 * time.Second,
 		RequireZipContentType: true,
+		AllowPrivateAddresses: true,
 	}
 }
 
