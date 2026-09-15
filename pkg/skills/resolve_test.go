@@ -3,8 +3,10 @@ package skills
 import (
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"context"
 	"encoding/json"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"os"
@@ -239,27 +241,18 @@ func TestGitCacheURLStripsCredentials(t *testing.T) {
 	}
 }
 
-func TestValidateDownloadURLRejectsPrivateHosts(t *testing.T) {
-	if err := validateDownloadURL("file:///tmp/skill.zip"); err == nil {
-		t.Fatalf("expected non-http scheme to be rejected")
-	}
-	if err := validateDownloadURL("http://127.0.0.1/skill.zip"); err == nil {
-		t.Fatalf("expected loopback host to be rejected")
-	}
-}
-
-func TestValidatedDialContextRejectsPrivateAddresses(t *testing.T) {
-	for _, address := range []string{"127.0.0.1:80", "169.254.169.254:80"} {
-		t.Run(address, func(t *testing.T) {
-			conn, err := validatedDialContext(context.Background(), "tcp", address)
-			if conn != nil {
-				_ = conn.Close()
-			}
+// TestResolverRejectsZipPrivateHost covers the shared archive fetch policy
+// through the resolver: a loopback or metadata target must be refused before
+// any request is made.
+func TestResolverRejectsZipPrivateHost(t *testing.T) {
+	for _, rawURL := range []string{"http://127.0.0.1/skill.zip", "http://169.254.169.254/skill.zip", "file:///tmp/skill.zip"} {
+		t.Run(rawURL, func(t *testing.T) {
+			resolver := Resolver{CacheRoot: t.TempDir()}
+			_, err := resolver.Resolve(context.Background(), []domain.AgentSkill{
+				{Name: "pdf", Provider: "http", Format: "zip", URL: rawURL},
+			})
 			if err == nil {
-				t.Fatalf("expected private address dial to be rejected")
-			}
-			if !strings.Contains(err.Error(), "no allowed public address") {
-				t.Fatalf("error = %q, want public address validation", err)
+				t.Fatalf("expected Resolve to reject %q", rawURL)
 			}
 		})
 	}
@@ -413,35 +406,49 @@ func TestExtractZipSanitizesEntryModes(t *testing.T) {
 	}
 }
 
-func TestSanitizedZipFileMode(t *testing.T) {
-	tests := []struct {
-		name string
-		mode os.FileMode
-		want os.FileMode
-	}{
-		{name: "default", mode: 0, want: 0o644},
-		{name: "world writable file", mode: 0o666, want: 0o644},
-		{name: "world writable executable", mode: 0o777, want: 0o755},
-		{name: "special bits", mode: os.ModeSetuid | os.ModeSetgid | os.ModeSticky | 0o777, want: 0o755},
+// TestExtractZipRejectsDeclaredOversizeArchive proves the skill limits are
+// bound to the shared extractor: an archive declaring more than
+// MaxZipExpandedBytes is rejected before any content is written.
+func TestExtractZipRejectsDeclaredOversizeArchive(t *testing.T) {
+	payload := []byte("small")
+	var compressed bytes.Buffer
+	deflater, err := flate.NewWriter(&compressed, flate.DefaultCompression)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := sanitizedZipFileMode(tt.mode); got != tt.want {
-				t.Fatalf("sanitizedZipFileMode(%v) = %v, want %v", tt.mode, got, tt.want)
-			}
-		})
+	if _, err := deflater.Write(payload); err != nil {
+		t.Fatal(err)
 	}
-}
+	if err := deflater.Close(); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	archivePath := filepath.Join(root, "declared.zip")
+	file, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := zip.NewWriter(file)
+	header := &zip.FileHeader{Name: "entry.bin", Method: zip.Deflate}
+	header.UncompressedSize64 = uint64(MaxZipExpandedBytes) + 1
+	header.CompressedSize64 = uint64(compressed.Len())
+	header.CRC32 = crc32.ChecksumIEEE(payload)
+	entry, err := writer.CreateRaw(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write(compressed.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
 
-func TestCopyWithExpandedLimitTracksActualBytes(t *testing.T) {
-	var expanded uint64
-	var out bytes.Buffer
-	err := copyWithExpandedLimit(&out, strings.NewReader("123456"), &expanded, 5)
-	if err == nil {
-		t.Fatalf("expected actual expanded bytes to be limited")
-	}
-	if expanded != 6 {
-		t.Fatalf("expanded = %d, want 6", expanded)
+	if err := extractZip(archivePath, filepath.Join(root, "out")); err == nil || !strings.Contains(err.Error(), "expanded size exceeds") {
+		t.Fatalf("extractZip error = %v, want expanded size limit", err)
 	}
 }
 

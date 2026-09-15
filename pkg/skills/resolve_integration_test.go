@@ -11,5 +11,5 @@ func TestIntegrationResolverLocalAndArchiveSources(t *testing.T) {
 	t.Run("redirect boundary", TestDownloadRejectsRedirectToPrivateHost)
 	t.Run("zip traversal", TestExtractZipRejectsBackslashTraversal)
 	t.Run("zip modes", TestExtractZipSanitizesEntryModes)
-	t.Run("expanded size limit", TestCopyWithExpandedLimitTracksActualBytes)
+	t.Run("expanded size limit", TestExtractZipRejectsDeclaredOversizeArchive)
 }

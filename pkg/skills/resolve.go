@@ -1,7 +1,6 @@
 package skills
 
 import (
-	"archive/zip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chaitin/agent-compose/pkg/archive"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -194,7 +193,7 @@ func (r Resolver) resolveGit(ctx context.Context, spec domain.AgentSkill) (Resol
 		}
 	}
 	if isHTTPURL(rawURL) {
-		if err := validateDownloadURL(rawURL); err != nil {
+		if err := archive.ValidateDownloadURL(rawURL, false); err != nil {
 			return ResolvedSkill{}, fmt.Errorf("validate git skill %s url: %w", spec.Name, err)
 		}
 	}
@@ -333,164 +332,55 @@ func safeArtifactSubdir(root, subdir string) (string, error) {
 	if trimmed == "" {
 		return root, nil
 	}
-	normalized := filepath.FromSlash(strings.ReplaceAll(trimmed, "\\", "/"))
-	if filepath.IsAbs(normalized) {
+	if filepath.IsAbs(filepath.FromSlash(strings.ReplaceAll(trimmed, "\\", "/"))) {
 		return "", fmt.Errorf("skill subpath %q must be relative", subdir)
 	}
-	clean := filepath.Clean(normalized)
-	if clean == "." {
-		return root, nil
+	target, err := archive.SafeJoinRelative(root, trimmed)
+	if errors.Is(err, archive.ErrPathEscapes) {
+		return "", fmt.Errorf("skill subpath %q escapes fetched content", subdir)
 	}
-	target := filepath.Clean(filepath.Join(root, clean))
-	relative, err := filepath.Rel(root, target)
 	if err != nil {
 		return "", fmt.Errorf("validate skill subpath %q: %w", subdir, err)
-	}
-	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
-		return "", fmt.Errorf("skill subpath %q escapes fetched content", subdir)
 	}
 	return target, nil
 }
 
 func (r Resolver) download(ctx context.Context, rawURL string, source sources.Source) (string, func(), error) {
-	if err := validateDownloadURL(rawURL); err != nil {
-		return "", nil, err
-	}
-	client := r.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second, Transport: secureDownloadTransport()}
-	}
-	clientCopy := *client
-	if clientCopy.Transport == nil {
-		clientCopy.Transport = secureDownloadTransport()
-	}
-	if clientCopy.CheckRedirect == nil {
-		clientCopy.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return fmt.Errorf("stopped after %d redirects", len(via))
-			}
-			return validateDownloadURL(req.URL.String())
-		}
-	}
-	limit := r.DownloadLimitBytes
-	if limit <= 0 {
-		limit = DefaultDownloadLimitBytes
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return "", nil, err
-	}
-	sources.ApplyHTTPAuthentication(req, source, r.Env)
-	resp, err := clientCopy.Do(req)
-	if err != nil {
-		return "", nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", nil, fmt.Errorf("unexpected status %s", resp.Status)
-	}
-	if err := validateZipResponse(resp); err != nil {
-		return "", nil, err
-	}
 	tmp, err := os.CreateTemp("", "agent-compose-skill-*.zip")
 	if err != nil {
 		return "", nil, err
 	}
-	defer func() { _ = tmp.Close() }()
-	if _, err := io.Copy(tmp, io.LimitReader(resp.Body, limit+1)); err != nil {
-		_ = os.Remove(tmp.Name())
+	archivePath := tmp.Name()
+	cleanup := func() { _ = os.Remove(archivePath) }
+	if err := tmp.Close(); err != nil {
+		cleanup()
 		return "", nil, err
 	}
-	info, err := tmp.Stat()
+	fetcher, err := archive.NewFetcher(r.HTTPClient, r.fetchPolicy())
 	if err != nil {
-		_ = os.Remove(tmp.Name())
+		cleanup()
 		return "", nil, err
 	}
-	if info.Size() > limit {
-		_ = os.Remove(tmp.Name())
-		return "", nil, fmt.Errorf("download exceeds %d bytes", limit)
+	source.URL = rawURL
+	if _, err := fetcher.Fetch(ctx, source, r.Env, archivePath); err != nil {
+		cleanup()
+		return "", nil, err
 	}
-	return tmp.Name(), func() { _ = os.Remove(tmp.Name()) }, nil
+	return archivePath, cleanup, nil
 }
 
-func secureDownloadTransport() *http.Transport {
-	base := http.DefaultTransport.(*http.Transport).Clone()
-	base.Proxy = nil
-	base.DialContext = validatedDialContext
-	return base
-}
-
-func validatedDialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(address)
-	if err != nil {
-		return nil, err
+// fetchPolicy keeps the skill download contract: a tighter size limit than
+// workspaces, zip content type validation, and the resolver's own client,
+// which is also the seam tests use to avoid real network calls.
+func (r Resolver) fetchPolicy() archive.FetchPolicy {
+	limit := r.DownloadLimitBytes
+	if limit <= 0 {
+		limit = DefaultDownloadLimitBytes
 	}
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-	var selected net.IP
-	for _, item := range ips {
-		ip := item.IP
-		if ip == nil || isPrivateIP(ip) {
-			continue
-		}
-		if network == "tcp4" && ip.To4() == nil {
-			continue
-		}
-		if network == "tcp6" && ip.To4() != nil {
-			continue
-		}
-		selected = ip
-		break
-	}
-	if selected == nil {
-		return nil, fmt.Errorf("download host %s has no allowed public address", host)
-	}
-	dialer := net.Dialer{Timeout: 30 * time.Second}
-	return dialer.DialContext(ctx, network, net.JoinHostPort(selected.String(), port))
-}
-
-func validateDownloadURL(rawURL string) error {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return err
-	}
-	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return fmt.Errorf("unsupported download scheme %q", parsed.Scheme)
-	}
-	host := parsed.Hostname()
-	if host == "" {
-		return fmt.Errorf("download host is required")
-	}
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return err
-	}
-	for _, ip := range ips {
-		if isPrivateIP(ip) {
-			return fmt.Errorf("download host %s resolves to private address %s", host, ip)
-		}
-	}
-	return nil
-}
-
-func validateZipResponse(resp *http.Response) error {
-	if resp == nil || resp.Request == nil || resp.Request.URL == nil {
-		return nil
-	}
-	if strings.HasSuffix(strings.ToLower(resp.Request.URL.Path), ".zip") {
-		return nil
-	}
-	contentType := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
-	if index := strings.Index(contentType, ";"); index >= 0 {
-		contentType = strings.TrimSpace(contentType[:index])
-	}
-	switch contentType {
-	case "application/zip", "application/octet-stream", "application/x-zip-compressed", "binary/octet-stream":
-		return nil
-	default:
-		return fmt.Errorf("unexpected content type %q for zip download", resp.Header.Get("Content-Type"))
+	return archive.FetchPolicy{
+		MaxBytes:              limit,
+		Timeout:               30 * time.Second,
+		RequireZipContentType: true,
 	}
 }
 
@@ -589,20 +479,6 @@ func uniqueStrings(values []string) []string {
 		out = append(out, value)
 	}
 	return out
-}
-
-func isPrivateIP(ip net.IP) bool {
-	ip = ip.To16()
-	if ip == nil {
-		return true
-	}
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
-		return true
-	}
-	if ip.Equal(net.ParseIP("169.254.169.254")) {
-		return true
-	}
-	return false
 }
 
 func ensureCachedDir(ctx context.Context, dst string, fill func(tmp string) error) (retErr error) {
@@ -804,91 +680,10 @@ func gitCacheURL(raw string) string {
 }
 
 func extractZip(path, dst string) error {
-	reader, err := zip.OpenReader(path)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = reader.Close() }()
-	if len(reader.File) > MaxZipFiles {
-		return fmt.Errorf("zip contains %d files, max %d", len(reader.File), MaxZipFiles)
-	}
-	var expanded uint64
-	var actualExpanded uint64
-	for _, file := range reader.File {
-		expanded += file.UncompressedSize64
-		if expanded > MaxZipExpandedBytes {
-			return fmt.Errorf("zip expanded size exceeds %d bytes", MaxZipExpandedBytes)
-		}
-		rel := filepath.Clean(strings.ReplaceAll(file.Name, "\\", "/"))
-		if rel == "." || rel == "" {
-			continue
-		}
-		if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("zip entry %q escapes destination", file.Name)
-		}
-		target := filepath.Join(dst, rel)
-		if file.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
-				return err
-			}
-			continue
-		}
-		if file.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("zip symlink %s is not supported", file.Name)
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		src, err := file.Open()
-		if err != nil {
-			return err
-		}
-		dstFile, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, sanitizedZipFileMode(file.Mode()))
-		if err != nil {
-			_ = src.Close()
-			return err
-		}
-		copyErr := copyWithExpandedLimit(dstFile, src, &actualExpanded, MaxZipExpandedBytes)
-		closeDstErr := dstFile.Close()
-		closeSrcErr := src.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeDstErr != nil {
-			return closeDstErr
-		}
-		if closeSrcErr != nil {
-			return closeSrcErr
-		}
-	}
-	return nil
-}
-
-func sanitizedZipFileMode(mode os.FileMode) os.FileMode {
-	perm := mode.Perm()
-	if perm == 0 {
-		return 0o644
-	}
-	return perm &^ 0o022
-}
-
-func copyWithExpandedLimit(dst io.Writer, src io.Reader, expanded *uint64, limit uint64) error {
-	if expanded == nil {
-		return fmt.Errorf("expanded size counter is required")
-	}
-	if *expanded > limit {
-		return fmt.Errorf("zip expanded size exceeds %d bytes", limit)
-	}
-	remaining := limit - *expanded
-	written, err := io.Copy(dst, io.LimitReader(src, int64(remaining)+1))
-	*expanded += uint64(written)
-	if err != nil {
-		return err
-	}
-	if *expanded > limit {
-		return fmt.Errorf("zip expanded size exceeds %d bytes", limit)
-	}
-	return nil
+	return archive.ExtractZip(path, dst, archive.ExtractPolicy{
+		MaxExpandedBytes: MaxZipExpandedBytes,
+		MaxEntries:       MaxZipFiles,
+	})
 }
 
 func resolveSecretRefs(value string, env map[string]string) string {
