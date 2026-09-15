@@ -112,6 +112,10 @@ func downloadWorkspace(ctx context.Context, source sources.Source, destination s
 }
 
 func extractWorkspaceZip(archive, destination string) error {
+	return extractWorkspaceZipWithLimit(archive, destination, HTTPWorkspaceExpandedLimit)
+}
+
+func extractWorkspaceZipWithLimit(archive, destination string, expandedLimit int64) error {
 	r, err := zip.OpenReader(archive)
 	if err != nil {
 		return err
@@ -135,10 +139,6 @@ func extractWorkspaceZip(archive, destination string) error {
 			}
 			continue
 		}
-		expanded += int64(f.UncompressedSize64)
-		if expanded > HTTPWorkspaceExpandedLimit {
-			return fmt.Errorf("workspace archive exceeds expanded size limit")
-		}
 		if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 			return err
 		}
@@ -151,12 +151,25 @@ func extractWorkspaceZip(archive, destination string) error {
 			in.Close()
 			return err
 		}
-		_, copyErr := io.Copy(out, io.LimitReader(in, HTTPWorkspaceExpandedLimit-expanded+1))
+		remaining := expandedLimit - expanded
+		if remaining <= 0 {
+			in.Close()
+			out.Close()
+			_ = os.Remove(name)
+			return fmt.Errorf("workspace archive exceeds expanded size limit")
+		}
+		written, copyErr := io.Copy(out, io.LimitReader(in, remaining+1))
 		in.Close()
 		out.Close()
 		if copyErr != nil {
+			_ = os.Remove(name)
 			return copyErr
 		}
+		if written > remaining {
+			_ = os.Remove(name)
+			return fmt.Errorf("workspace archive exceeds expanded size limit")
+		}
+		expanded += written
 	}
 	return nil
 }
