@@ -19,8 +19,9 @@ const (
 	// Workspaces commonly contain source trees and dependencies that are much
 	// larger than individual skills, so their archive limits are intentionally
 	// wider than the skill resolver's limits.
-	HTTPWorkspaceDownloadLimit = 512 << 20
-	HTTPWorkspaceExpandedLimit = 2 << 30
+	HTTPWorkspaceDownloadLimit       = 512 << 20
+	HTTPWorkspaceExpandedLimit       = 1 << 30
+	HTTPWorkspaceMaxCompressionRatio = 100
 )
 
 type HTTPWorkspaceConfig struct {
@@ -125,6 +126,7 @@ func extractWorkspaceZipWithLimit(archive, destination string, expandedLimit int
 		return err
 	}
 	var expanded int64
+	var compressed int64
 	for _, f := range r.File {
 		name, err := safeWorkspaceSubdir(destination, f.Name)
 		if err != nil {
@@ -170,6 +172,11 @@ func extractWorkspaceZipWithLimit(archive, destination string, expandedLimit int
 			return fmt.Errorf("workspace archive exceeds expanded size limit")
 		}
 		expanded += written
+		compressed += int64(f.CompressedSize64)
+		if compressed == 0 || expanded > compressed*HTTPWorkspaceMaxCompressionRatio {
+			_ = os.Remove(name)
+			return fmt.Errorf("workspace archive exceeds compression ratio limit")
+		}
 	}
 	return nil
 }
