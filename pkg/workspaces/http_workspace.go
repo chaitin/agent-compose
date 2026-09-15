@@ -173,7 +173,7 @@ func extractWorkspaceZipWithLimit(archive, destination string, expandedLimit int
 		}
 		expanded += written
 		compressed += int64(f.CompressedSize64)
-		if compressed == 0 || expanded > compressed*HTTPWorkspaceMaxCompressionRatio {
+		if expanded > compressed*HTTPWorkspaceMaxCompressionRatio {
 			_ = os.Remove(name)
 			return fmt.Errorf("workspace archive exceeds compression ratio limit")
 		}

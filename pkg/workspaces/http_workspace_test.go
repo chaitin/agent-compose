@@ -40,3 +40,33 @@ func TestExtractWorkspaceZipCountsActualBytesAndRejectsTruncation(t *testing.T) 
 		t.Fatalf("over-limit file was retained: %v", err)
 	}
 }
+
+func TestExtractWorkspaceZipAllowsEmptyFiles(t *testing.T) {
+	archivePath := filepath.Join(t.TempDir(), "workspace.zip")
+	file, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := zip.NewWriter(file)
+	if _, err := archive.Create(".gitkeep"); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	destination := filepath.Join(t.TempDir(), "content")
+	if err := extractWorkspaceZipWithLimit(archivePath, destination, 10); err != nil {
+		t.Fatalf("extract empty file archive: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(destination, ".gitkeep"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("empty file size = %d, want 0", info.Size())
+	}
+}
