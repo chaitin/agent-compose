@@ -2,7 +2,7 @@ name: Protobuf compatibility
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   proto-breaking:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Protobuf compatibility
     runs-on: ubuntu-latest
     steps:

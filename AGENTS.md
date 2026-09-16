@@ -170,6 +170,7 @@ Compose and environment variable conventions:
 
 ## Commits and Pull Requests
 
+- Create new pull requests as drafts (`gh pr create --draft`). Keep them in draft while work is in progress, and mark them ready for review when the change is ready for CI and review. Draft PRs skip all CI jobs; marking a PR ready triggers the applicable checks.
 - Prefer the scoped Conventional Commit style used by current history, for example `feat(cli): load project environment files`, `fix(deploy): preserve legacy data directories`, or `test(runs): avoid duplicate capability revoke`. Use `docs`, `refactor`, `chore`, `build`, and `ci` where appropriate; keep each commit focused.
 - Keep pull requests scoped to one change. Complete the template with a problem/solution summary, exact test commands (or a reason they were not run), and the documentation and test checklist.
 - Update docs for behavior, configuration, API, or workflow changes. Link the relevant issue when one exists; screenshots are useful only for UI or rendered-documentation changes.

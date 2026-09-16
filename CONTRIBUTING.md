@@ -91,6 +91,11 @@ cd runtime/javascript && npm run test:unit
 
 ## Pull Requests
 
+Draft PRs skip CI, image builds, and Protobuf compatibility checks. Mark a PR
+as **Ready for review** to run the checks; subsequent commits run them while the
+PR is ready. Image checks still follow their existing path filters. GitHub may
+show skipped workflow runs for drafts.
+
 - Keep PRs scoped to one change.
 - Include a clear problem statement and solution summary.
 - Update documentation when behavior, configuration, or user workflows change.

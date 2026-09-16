@@ -39,7 +39,7 @@ require_workflow() {
   fi
 }
 
-require_workflow 'types: \[opened, synchronize, reopened\]' 'PR revision triggers'
+require_workflow 'types: \[opened, synchronize, reopened, ready_for_review\]' 'PR revision triggers'
 require_workflow 'pull-requests:[[:space:]]*read' 'pull request read permission'
 require_workflow 'cancel-in-progress:[[:space:]]*false' 'review-safe compatibility concurrency'
 require 'fetch-depth:[[:space:]]*0' 'complete Git history checkout'

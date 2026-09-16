@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches:
       - main
@@ -21,6 +22,7 @@ concurrency:
 
 jobs:
   lint:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Lint
     runs-on: ubuntu-latest
     steps:
@@ -82,6 +84,7 @@ jobs:
           go build ./...
 
   go-test:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Go tests
     runs-on: ubuntu-latest
     steps:
@@ -106,6 +109,7 @@ jobs:
       - run: go test -tags k8scompose -race ./pkg/driver/...
 
   installer-build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Installer binaries
     runs-on: ubuntu-latest
     steps:
@@ -129,6 +133,7 @@ jobs:
           readelf -h installer-assets/agent-compose-installer-linux-arm64 | grep -F 'AArch64'
 
   go-sdk:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Go chat SDK
     runs-on: ubuntu-latest
     steps:
@@ -148,6 +153,7 @@ jobs:
           go test -race ./...
 
   coverage:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Coverage gate
     runs-on: ubuntu-latest
     steps:
@@ -178,6 +184,7 @@ jobs:
         run: ./scripts/test-coverage.sh
 
   runtime-sdk:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Runtime SDK
     runs-on: ubuntu-latest
     defaults:
@@ -195,6 +202,7 @@ jobs:
       - run: npm run test:packaging
 
   scheduler-runtime:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Scheduler runtime
     runs-on: ubuntu-latest
     defaults:
@@ -211,6 +219,7 @@ jobs:
       - run: npm run test:unit
 
   binary-matrix:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Configure binary matrix
     runs-on: ubuntu-latest
     outputs:

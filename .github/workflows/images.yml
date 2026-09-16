@@ -2,6 +2,7 @@ name: Images & Release
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - .github/workflows/images.yml
       - Dockerfile
@@ -64,6 +65,7 @@ jobs:
   # because that `if` cannot read the matrix context, so the arm64 legs would
   # otherwise still be created (and only skipped) on PRs.
   setup:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Configure build matrix
     runs-on: ubuntu-latest
     outputs:

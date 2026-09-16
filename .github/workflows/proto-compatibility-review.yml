@@ -18,7 +18,9 @@ concurrency:
 jobs:
   refresh-proto-breaking-approval:
     name: Refresh Protobuf compatibility approval
-    if: github.event.action == 'dismissed' || github.event.review.state == 'approved' || github.event.review.state == 'changes_requested'
+    if: >-
+      github.event.pull_request.draft == false &&
+      (github.event.action == 'dismissed' || github.event.review.state == 'approved' || github.event.review.state == 'changes_requested')
     runs-on: ubuntu-latest
     steps:
       - name: Rerun compatibility check for current commit
