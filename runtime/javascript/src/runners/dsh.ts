@@ -403,7 +403,7 @@ export class DshRunner {
   }
 }
 
-// Matches SplitDshModel's (pkg/llms/dsh_facade.go) strings.Cut(value, "/")
+// Matches SplitModelReference's (pkg/llms/model_reference.go) strings.Cut(value, "/")
 // semantics: split on the FIRST slash, not the last. The model remainder may
 // itself contain slashes (see agent-compose-yaml-manual.md), and the facade
 // token daemon-side is bound to that full remainder — extracting anything
