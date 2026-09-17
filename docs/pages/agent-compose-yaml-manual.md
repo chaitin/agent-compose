@@ -503,7 +503,7 @@ agents:
 | `display_name` | string | Empty | Human-readable agent label. |
 | `description` | string | Empty | Human-readable explanation of the agent's role. |
 | `provider` | string | `codex` | Agent provider: `codex`, `claude`, `gemini`, `opencode`, `pi`, or `dsh`. Compatibility aliases are normalized at persistence boundaries. |
-| `model` | string | Provider/daemon default | Model name. Pi and dsh require `<llm-provider-id>/<model-name>`. Supports `${NAME}` interpolation. |
+| `model` | string | Provider/daemon default | Model name. Pi, opencode, and dsh accept an optional `<llm-provider-id>/` prefix; without it the daemon's default connection resolves the model. Supports `${NAME}` interpolation. |
 | `system_prompt` | string | Empty | Additional system instructions; YAML block scalars are recommended for multiline text. |
 | `image` | string | Daemon default image | Guest image reference and an output tag when `build` is used. |
 | `build` | string/object | None | Image build configuration used by `agent-compose build`. |
@@ -599,7 +599,9 @@ For example, call `CreateProvider` using Connect JSON:
 
 The request path is `/agentcompose.v2.LLMService/CreateProvider`, using existing
 daemon API authentication. Then set an Agent model to `team-gateway/model-id`;
-models do not need to be enumerated. Other methods share the service path prefix.
+models do not need to be enumerated. A single configured connection is the daemon
+default, so the bare `model-id` resolves to it as well. Other methods share the
+service path prefix.
 
 - IDs are immutable, 1–128 ASCII letters, digits, dots, underscores or hyphens,
   starting with a letter or digit. `default`, `anthropic`, and session environment

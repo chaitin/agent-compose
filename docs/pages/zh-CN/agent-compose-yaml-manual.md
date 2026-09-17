@@ -504,7 +504,7 @@ agents:
 | `display_name` | string | 空 | Agent 的可读显示名称。 |
 | `description` | string | 空 | Agent 职责的可读说明。 |
 | `provider` | string | `codex` | Agent CLI/provider：`codex`、`claude`、`gemini`、`opencode`、`pi` 或 `dsh`。兼容别名会在持久化边界归一化。 |
-| `model` | string | provider/daemon 默认 | 模型名；Pi 和 dsh 要求使用 `<llm-provider-id>/<model-name>`；支持 `${NAME}` 插值。 |
+| `model` | string | provider/daemon 默认 | 模型名；Pi、opencode 和 dsh 可选的 `<llm-provider-id>/` 前缀，省略时由 daemon 的默认 Connection 解析该模型；支持 `${NAME}` 插值。 |
 | `system_prompt` | string | 空 | 附加的系统提示，适合使用 YAML `|` 多行标量。 |
 | `image` | string | daemon 默认镜像 | Guest 镜像引用，也会作为 `build` 的一个输出 tag。 |
 | `build` | string/object | 无 | `agent-compose build` 使用的镜像构建配置。 |
@@ -599,6 +599,7 @@ API Key，与 Agent 的 `provider: codex` / `provider: pi` 无关。
 
 请求路径为 `/agentcompose.v2.LLMService/CreateProvider`，使用现有 daemon API
 鉴权。随后可以在 Agent 的 `model` 中设置 `team-gateway/model-id`，无需枚举模型。
+只配置一个 Connection 时它就是 daemon 默认值，直接写 `model-id` 也会解析到它。
 其他方法使用同样的服务路径前缀。
 
 - `id` 不可修改，支持 1–128 个 ASCII 字母、数字、点、下划线和连字符，首位必须是

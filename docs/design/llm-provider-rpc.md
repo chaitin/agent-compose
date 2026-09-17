@@ -60,23 +60,46 @@ provider remains stored and can be re-enabled; disabling does not revoke tokens.
 
 ## Runtime behavior
 
-No resolver fork is introduced. API providers are configured providers under the
-existing scope rules. Callers select gateway/model with the existing Agent model
-field or model request. Literal models do not require model-table registration.
+No resolver fork is introduced. API providers are configured connections under
+the existing scope rules, and target resolution is one staged pipeline:
+
+1. An explicit provider reference (the `<connection>/<model>` form) selects that
+   connection and passes the literal model to the upstream. Literal models do not
+   require model-table registration.
+2. A registered model with a provider binding selects its bound connection.
+3. Otherwise the daemon's default connection serves the literal model. The
+   reserved bootstrap connection (`default`/`anthropic`) wins; with none, the only
+   configured connection of the requested family is used. A session-env
+   connection never acts as a daemon default. Competing connections are reported
+   as an ambiguity instead of being resolved by accident.
+
+Model bindings are optional metadata rather than an authorization boundary, so a
+provider created through this RPC is usable with a bare Agent model name and no
+models.json entry. The facade agents (pi, opencode, dsh) treat the
+`<connection>/<model>` prefix as optional for the same reason; codex and claude
+already accepted unqualified model names. Prefixed values keep their established
+meaning: a configured connection id, a family alias, or an env-backed custom
+endpoint.
+
 The next target resolution reads current provider settings, so address/key
 updates require no restart. Existing in-flight requests use their resolved
 configuration; agent-side model/protocol setup may require restarting a run after
 protocol changes. API CRUD does not change global or catalog defaults. Unknown
-slash prefixes retain the existing literal-model interpretation; clients should
-verify provider existence when constructing a new reference after deletion.
+slash prefixes reaching the runtime LLM facade retain the existing literal-model
+interpretation; clients should verify provider existence when constructing a new
+reference after deletion.
 
 ## Validation
 
-Domain tests cover ID/protocol/URL/key validation and input ownership. SQLite
-integration tests cover literal routing, key preservation/rotation, protocol
-mapping, disabled providers, restart/catalog coexistence, collisions, cancellation,
-concurrent create and token invalidation across deletion/recreation. Connect
-integration tests exercise generated clients over HTTP, response redaction,
-pagination and error codes. A local service E2E exercises CreateProvider, Generate,
-URL/key rotation and disabled-provider rejection against an HTTP upstream stub.
-Existing Generate and runtime tests remain applicable.
+Domain tests cover ID/protocol/URL/key validation and input ownership, and the
+resolution stages above: configured-connection defaulting, reserved-default
+preference, ambiguity rejection, disabled-connection exclusion, binding
+precedence, and unqualified model names for pi, opencode and dsh. SQLite
+integration tests cover literal routing, bare-model routing with an RPC-created
+provider, key preservation/rotation, protocol mapping, disabled providers,
+restart/catalog coexistence, collisions, cancellation, concurrent create and
+token invalidation across deletion/recreation. Connect integration tests exercise
+generated clients over HTTP, response redaction, pagination and error codes. A
+local service E2E exercises CreateProvider, Generate, URL/key rotation and
+disabled-provider rejection against an HTTP upstream stub. Existing Generate and
+runtime tests remain applicable.
