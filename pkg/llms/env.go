@@ -9,6 +9,16 @@ import (
 
 const RuntimeBaseURLEnvName = "AGENT_COMPOSE_RUNTIME_BASE_URL"
 
+// GuestModelEnvName carries the model name the runtime facade resolved for a
+// sandbox, in the namespace the guest agent addresses models by. The daemon
+// tells the runner this name instead of the model the agent declared, because a
+// declaration is a request that resolution may rewrite: a <connection>/<model>
+// prefix is stripped, a catalog default may supply the model, and opencode
+// addresses models through the provider key written into its config. Passing
+// the declaration through instead makes the agent CLI and the facade token
+// disagree, which the agent reports as a hung or failed model call.
+const GuestModelEnvName = "AGENT_COMPOSE_RESOLVED_MODEL"
+
 func SchedulerCommandFacadeAgentModel(env map[string]string) (string, string) {
 	if env == nil {
 		return domain.DefaultAgentProvider, ""

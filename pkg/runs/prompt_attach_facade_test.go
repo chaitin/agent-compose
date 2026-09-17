@@ -383,31 +383,35 @@ func TestPromptAttachProvidersAllHaveFacadeCases(t *testing.T) {
 // facade's namespace-corrected model, not the agent-compose provider/model pair
 // the agent configured — opencode has no entry for the latter and exits without
 // reporting why.
-func TestPromptAttachRuntimeModelUsesFacadeOpenCodeModel(t *testing.T) {
-	managedEnv := map[string]string{"OPENCODE_MODEL": "agent-compose/gpt-test"}
-	agent := execution.AgentConfig{Provider: "opencode", Model: "openai/gpt-test"}
-	if model := promptAttachRuntimeModel(agent, managedEnv); model != "agent-compose/gpt-test" {
-		t.Fatalf("opencode runtime model = %q", model)
-	}
-}
-
-// Every other provider addresses models in agent-compose's own namespace, so
-// their configured model must reach the runner untouched.
-func TestPromptAttachRuntimeModelLeavesOtherProvidersUntouched(t *testing.T) {
-	managedEnv := map[string]string{"OPENCODE_MODEL": "agent-compose/gpt-test"}
-	for _, provider := range []string{"codex", "claude", "pi", "dsh"} {
+// The runner must address the model the facade resolved, which resolution may
+// have rewritten: a <connection>/<model> prefix is stripped, a catalog or
+// bootstrap default supplies a model the agent never declared, and opencode
+// addresses models through the provider key written into its config.
+func TestPromptAttachRuntimeModelUsesFacadeResolvedModel(t *testing.T) {
+	managedEnv := map[string]string{llms.GuestModelEnvName: "agent-compose/gpt-test"}
+	for _, provider := range []string{"codex", "claude", "opencode", "pi", "dsh"} {
 		agent := execution.AgentConfig{Provider: provider, Model: "openai/gpt-test"}
-		if model := promptAttachRuntimeModel(agent, managedEnv); model != "openai/gpt-test" {
-			t.Fatalf("%s runtime model = %q", provider, model)
+		if model := promptAttachRuntimeModel(agent, managedEnv); model != "agent-compose/gpt-test" {
+			t.Fatalf("%s runtime model = %q, want the facade-resolved model", provider, model)
 		}
 	}
 }
 
-// A facade that resolved no opencode model must not blank out the configured
-// one; the run should still get as far as opencode's own error reporting.
+// A facade that resolved no model leaves the agent to authenticate on its own,
+// so the configured model must reach the runner untouched.
 func TestPromptAttachRuntimeModelKeepsConfiguredModelWithoutFacadeModel(t *testing.T) {
-	agent := execution.AgentConfig{Provider: "opencode", Model: "openai/gpt-test"}
+	agent := execution.AgentConfig{Provider: "pi", Model: "openai/gpt-test"}
 	if model := promptAttachRuntimeModel(agent, map[string]string{}); model != "openai/gpt-test" {
-		t.Fatalf("opencode runtime model without facade model = %q", model)
+		t.Fatalf("runtime model without facade model = %q", model)
+	}
+}
+
+// Provider-specific model variables stay the agent CLI's own input; only the
+// facade-resolved variable decides which model the runner is told to use.
+func TestPromptAttachRuntimeModelIgnoresProviderSpecificModelEnv(t *testing.T) {
+	managedEnv := map[string]string{"OPENCODE_MODEL": "agent-compose/gpt-test", "CODEX_MODEL": "agent-compose/gpt-test"}
+	agent := execution.AgentConfig{Provider: "codex", Model: "openai/gpt-test"}
+	if model := promptAttachRuntimeModel(agent, managedEnv); model != "openai/gpt-test" {
+		t.Fatalf("runtime model = %q, want the configured model", model)
 	}
 }

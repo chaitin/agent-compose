@@ -249,3 +249,72 @@ func TestResolveRuntimeLLMTargetUsesReservedBootstrapFamilyForBareModel(t *testi
 		t.Fatalf("qualified target = %#v, want the explicit gateway connection", qualified)
 	}
 }
+
+func anthropicConnection(id string, scope string) Provider {
+	provider := configuredConnection(id, scope)
+	provider.ProviderType = ProviderFamilyAnthropic
+	provider.DefaultWireAPI = APIProtocolMessages
+	provider.BaseURL = "https://" + id + ".test"
+	return provider
+}
+
+// An anthropic-family agent resolves against the only configured connection
+// even when that connection is OpenAI-compatible: the runtime bridge translates
+// the request, which is how an OpenAI-family bootstrap connection has always
+// served the anthropic family. Resolution must not be stricter than bootstrap.
+func TestResolveRuntimeLLMTargetFallsBackToAnotherFamilyForBareModel(t *testing.T) {
+	isolateLLMEnv(t)
+	store := newResolverCoverageStore()
+	store.providers = []Provider{configuredConnection("gateway", ProviderScopeAPI)}
+
+	target, err := ResolveRuntimeLLMTargetWithEnv(context.Background(), store, RuntimeLLMTargetQuery{
+		Config: &appconfig.Config{}, PreferredProviderFamily: ProviderFamilyAnthropic, RequestedModel: "deepseek-flash",
+	})
+	if err != nil {
+		t.Fatalf("cross-family fallback returned error: %v", err)
+	}
+	if target.Provider.ID != "gateway" || target.Model.ID != "deepseek-flash" {
+		t.Fatalf("target = %#v, want gateway/deepseek-flash", target)
+	}
+}
+
+// A connection of the requested family still wins over the fallback, so adding
+// an anthropic connection never reroutes claude.
+func TestResolveRuntimeLLMTargetPrefersRequestedFamilyOverFallback(t *testing.T) {
+	isolateLLMEnv(t)
+	store := newResolverCoverageStore()
+	store.providers = []Provider{
+		configuredConnection("gateway-openai", ProviderScopeAPI),
+		anthropicConnection("gateway-anthropic", ProviderScopeAPI),
+	}
+
+	target, err := ResolveRuntimeLLMTargetWithEnv(context.Background(), store, RuntimeLLMTargetQuery{
+		Config: &appconfig.Config{}, PreferredProviderFamily: ProviderFamilyAnthropic, RequestedModel: "deepseek-flash",
+	})
+	if err != nil {
+		t.Fatalf("ResolveRuntimeLLMTargetWithEnv returned error: %v", err)
+	}
+	if target.Provider.ID != "gateway-anthropic" {
+		t.Fatalf("provider = %q, want the anthropic-family connection", target.Provider.ID)
+	}
+}
+
+// The fallback keeps the ambiguity rule and names the competing connections.
+func TestResolveRuntimeLLMTargetRejectsAmbiguousCrossFamilyFallback(t *testing.T) {
+	isolateLLMEnv(t)
+	store := newResolverCoverageStore()
+	store.providers = []Provider{
+		configuredConnection("gateway-a", ProviderScopeAPI),
+		configuredConnection("gateway-b", ProviderScopeAPI),
+	}
+
+	_, err := ResolveRuntimeLLMTargetWithEnv(context.Background(), store, RuntimeLLMTargetQuery{
+		Config: &appconfig.Config{}, PreferredProviderFamily: ProviderFamilyAnthropic, RequestedModel: "deepseek-flash",
+	})
+	if err == nil {
+		t.Fatal("ambiguous cross-family bare model resolved without an error")
+	}
+	if !strings.Contains(err.Error(), "gateway-a") || !strings.Contains(err.Error(), "gateway-b") {
+		t.Fatalf("ambiguous error = %v, want both connection ids", err)
+	}
+}

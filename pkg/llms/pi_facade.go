@@ -70,6 +70,7 @@ func EnsurePiFacadeConfig(ctx context.Context, req PiFacadeConfigRequest) (map[s
 		"LLM_API_KEY":                 tokenValue,
 		"LLM_API_PROTOCOL":            facadeProtocol,
 		"PI_CODING_AGENT_DIR":         GuestPiAgentDir(config),
+		GuestModelEnvName:             target.Model.Name,
 	}
 	if target.Provider.ProviderType == ProviderFamilyAnthropic {
 		env["ANTHROPIC_API_KEY"] = tokenValue

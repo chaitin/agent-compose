@@ -2,7 +2,6 @@ package llms
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -41,7 +40,7 @@ func EnsureCodexFacadeConfig(ctx context.Context, req CodexFacadeConfigRequest) 
 		Config: config, SessionID: sandbox.Summary.ID, PreferredProviderFamily: ProviderFamilyOpenAI, RequestedModel: model, ProviderID: "", EnvItems: providerEnv,
 	})
 	if err != nil {
-		if errors.Is(err, domain.ErrRequired) || errors.Is(err, domain.ErrFailedPrecondition) {
+		if OptionalFacadeConfigError(err) {
 			return nil, nil
 		}
 		return nil, err
@@ -74,6 +73,7 @@ func EnsureCodexFacadeConfig(ctx context.Context, req CodexFacadeConfigRequest) 
 		"LLM_API_PROTOCOL":            APIProtocolResponses,
 		"LLM_MODEL":                   target.Model.Name,
 		"CODEX_MODEL":                 target.Model.Name,
+		GuestModelEnvName:             target.Model.Name,
 		"OPENAI_API_KEY":              tokenValue,
 		"OPENAI_BASE_URL":             openAIBaseURL,
 	}, nil

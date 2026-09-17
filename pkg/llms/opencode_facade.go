@@ -142,6 +142,7 @@ func ensureOpenCodeResolvedFacadeConfig(ctx context.Context, call openCodeFacade
 			"AGENT_COMPOSE_SANDBOX_TOKEN": tokenValue, "LLM_API_ENDPOINT": anthropicBaseURL,
 			"LLM_API_KEY": tokenValue, "LLM_API_PROTOCOL": APIProtocolMessages,
 			"LLM_MODEL": "anthropic/" + target.Model.Name, "OPENCODE_MODEL": "anthropic/" + target.Model.Name,
+			GuestModelEnvName:   "anthropic/" + target.Model.Name,
 			"ANTHROPIC_API_KEY": tokenValue, "ANTHROPIC_AUTH_TOKEN": tokenValue,
 			"ANTHROPIC_BASE_URL": anthropicBaseURL, "OPENCODE_CONFIG": GuestOpenCodeConfigPath(config),
 		}, nil
@@ -171,6 +172,7 @@ func ensureOpenCodeResolvedFacadeConfig(ctx context.Context, call openCodeFacade
 	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, openCodeGuestWireAPI, config)
 	env["LLM_MODEL"] = "agent-compose/" + target.Model.Name
 	env["OPENCODE_MODEL"] = "agent-compose/" + target.Model.Name
+	env[GuestModelEnvName] = "agent-compose/" + target.Model.Name
 	return env, nil
 }
 
@@ -211,6 +213,7 @@ func ensureOpenCodeAnthropicFacadeConfig(ctx context.Context, call openCodeFacad
 		"ANTHROPIC_BASE_URL":          anthropicBaseURL,
 		"OPENCODE_CONFIG":             GuestOpenCodeConfigPath(config),
 		"OPENCODE_MODEL":              "anthropic/" + target.Model.Name,
+		GuestModelEnvName:             "anthropic/" + target.Model.Name,
 	}, nil
 }
 
@@ -243,6 +246,7 @@ func ensureOpenCodeOpenAIFacadeConfig(ctx context.Context, call openCodeFacadeCa
 	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, openCodeGuestWireAPI, config)
 	env["LLM_MODEL"] = "agent-compose/" + target.Model.Name
 	env["OPENCODE_MODEL"] = "agent-compose/" + target.Model.Name
+	env[GuestModelEnvName] = "agent-compose/" + target.Model.Name
 	return env, nil
 }
 

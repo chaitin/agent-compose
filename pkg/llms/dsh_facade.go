@@ -74,6 +74,7 @@ func EnsureDshFacadeConfig(ctx context.Context, req DshFacadeConfigRequest) (map
 		// The profile's llm-pi-ai route reads this to name its wire protocol.
 		"DSH_WIRE_API":        piAiAPI,
 		"DSH_MODEL":           target.Model.Name,
+		GuestModelEnvName:     target.Model.Name,
 		"DSH_PERMISSION_MODE": "danger-full-access",
 	}, nil
 }

@@ -2,7 +2,6 @@ package runs
 
 import (
 	"context"
-	"errors"
 	"os"
 	"strings"
 
@@ -39,8 +38,7 @@ func ensurePromptAttachClaudeLLMFacadeEnv(ctx context.Context, facade promptAtta
 	tokenModel := strings.TrimSpace(model)
 	tokenProvider := ""
 	if err != nil {
-		optional := errors.Is(err, domain.ErrRequired) || errors.Is(err, domain.ErrFailedPrecondition)
-		if !optional || !promptAttachHasAnthropicProviderKey(ctx, config, store) {
+		if !llms.OptionalFacadeConfigError(err) || !promptAttachHasAnthropicProviderKey(ctx, config, store) {
 			return nil, err
 		}
 	} else {
@@ -69,6 +67,7 @@ func ensurePromptAttachClaudeLLMFacadeEnv(ctx context.Context, facade promptAtta
 	if tokenModel != "" {
 		env["ANTHROPIC_MODEL"] = tokenModel
 		env["CLAUDE_MODEL"] = tokenModel
+		env[llms.GuestModelEnvName] = tokenModel
 	}
 	return env, nil
 }
@@ -134,21 +133,17 @@ func (c *Controller) deletePromptAttachLLMFacadeToken(ctx context.Context, token
 // promptAttachRuntimeModel returns the model the guest runner should be told to
 // use, which is not always the one the agent configured.
 //
-// The facade resolves an agent-compose provider/model pair and then republishes
-// it in whatever namespace the guest agent addresses models by. opencode is the
-// only provider where the two namespaces differ: its model must carry the
-// provider key WriteOpenCodeRuntimeConfig writes into the guest's opencode.json,
-// so EnsureOpenCodeFacadeConfig exports the resolved pair as OPENCODE_MODEL.
-// Forwarding the configured model instead would hand opencode a provider name it
-// has no entry for, and it exits without diagnosing the failure.
+// The facade resolves an agent-compose connection/model pair and republishes it
+// in whatever namespace the guest agent addresses models by, under
+// llms.GuestModelEnvName. Forwarding the configured model instead makes the
+// agent CLI disagree with the facade token: a <connection>/<model> prefix or an
+// unset model reaches the CLI verbatim, and the model call then fails or hangs
+// without naming the cause.
 //
 // The one-shot run path performs the same substitution through
 // runtimefacade.AgentRuntimeConfig.Model; this is its prompt-attach counterpart.
 func promptAttachRuntimeModel(agent execution.AgentConfig, managedEnv map[string]string) string {
-	if domain.NormalizeAgentKind(agent.Provider) != "opencode" {
-		return agent.Model
-	}
-	if model := strings.TrimSpace(managedEnv["OPENCODE_MODEL"]); model != "" {
+	if model := strings.TrimSpace(managedEnv[llms.GuestModelEnvName]); model != "" {
 		return model
 	}
 	return agent.Model

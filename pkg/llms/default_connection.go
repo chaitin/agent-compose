@@ -23,8 +23,13 @@ var errNoDefaultConnection = errors.New("no default llm connection")
 // connection, not a binding row.
 //
 // Selection order:
-//  1. the reserved bootstrap connection for the family (default or anthropic);
-//  2. the only configured connection when no reserved connection competes.
+//  1. a connection of the requested family: the reserved bootstrap connection
+//     (default or anthropic) when it competes, otherwise the only one;
+//  2. when the requested family has no connection at all, the same choice over
+//     every other family, because the runtime bridge translates across
+//     protocols. The bootstrap path has always let an OpenAI-family bootstrap
+//     connection serve the anthropic family; a configured connection must not
+//     be stricter than the bootstrap environment.
 //
 // Session-env connections are request-local credentials and never act as a
 // daemon default; they are only selected explicitly.
@@ -34,6 +39,27 @@ func defaultConfiguredConnection(ctx context.Context, store ProviderListStore, p
 		return Provider{}, fmt.Errorf("list enabled llm providers for default connection: %w", err)
 	}
 	family := NormalizeOptionalProviderType(providerFamily)
+	selectionFamily := family
+	candidates := configuredConnections(providers, family)
+	if len(candidates) == 0 && family != "" {
+		selectionFamily = ""
+		candidates = configuredConnections(providers, "")
+	}
+	if len(candidates) == 0 {
+		return Provider{}, errNoDefaultConnection
+	}
+	if provider, ok := reservedDefaultConnection(candidates, selectionFamily); ok {
+		return provider, nil
+	}
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	return Provider{}, ambiguousDefaultConnectionError(selectionFamily, candidates)
+}
+
+// configuredConnections returns the connections that can act as a daemon
+// default, optionally narrowed to one provider family.
+func configuredConnections(providers []Provider, family string) []Provider {
 	candidates := make([]Provider, 0, len(providers))
 	for _, provider := range providers {
 		if strings.TrimSpace(provider.Scope) == ProviderScopeSessionEnv {
@@ -44,16 +70,7 @@ func defaultConfiguredConnection(ctx context.Context, store ProviderListStore, p
 		}
 		candidates = append(candidates, provider)
 	}
-	if len(candidates) == 0 {
-		return Provider{}, errNoDefaultConnection
-	}
-	if provider, ok := reservedDefaultConnection(candidates, family); ok {
-		return provider, nil
-	}
-	if len(candidates) == 1 {
-		return candidates[0], nil
-	}
-	return Provider{}, ambiguousDefaultConnectionError(family, candidates)
+	return candidates
 }
 
 // reservedDefaultConnection prefers the connection the daemon created for
@@ -81,6 +98,24 @@ func reservedDefaultConnection(candidates []Provider, family string) (Provider, 
 	return selected, found
 }
 
+// ErrAmbiguousDefaultConnection reports that more than one configured
+// connection could serve a model that names none of them. It is a configuration
+// error the operator must resolve, unlike the absence of any connection, which
+// lets an agent fall back to credentials it carries itself.
+var ErrAmbiguousDefaultConnection = errors.New("ambiguous default llm connection")
+
+// ambiguousConnectionKind classifies the ambiguity as a failed precondition so
+// transport mapping is unchanged, while keeping it distinguishable from the
+// failed preconditions that only mean "nothing is configured". It is always
+// paired with a reason, so its own text is never the user-facing message.
+type ambiguousConnectionKind struct{}
+
+func (ambiguousConnectionKind) Error() string { return domain.ErrFailedPrecondition.Error() }
+
+func (ambiguousConnectionKind) Is(target error) bool {
+	return target == domain.ErrFailedPrecondition || target == ErrAmbiguousDefaultConnection
+}
+
 func ambiguousDefaultConnectionError(family string, candidates []Provider) error {
 	ids := make([]string, 0, len(candidates))
 	for _, provider := range candidates {
@@ -91,7 +126,7 @@ func ambiguousDefaultConnectionError(family string, candidates []Provider) error
 	if family != "" {
 		label = family
 	}
-	return domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf(
+	return domain.ClassifyError(ambiguousConnectionKind{}, fmt.Sprintf(
 		"multiple %s connections are configured (%s); qualify the model as <connection>/<model>",
 		label, strings.Join(ids, ", ")), nil)
 }

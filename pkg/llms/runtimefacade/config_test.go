@@ -455,3 +455,59 @@ func isolateLLMEnv(t *testing.T) {
 		t.Setenv(key, "")
 	}
 }
+
+// Every facade reports the model the guest runner must address, not only
+// opencode. Forwarding the declared model instead left the runner addressing an
+// unresolved <connection>/<model> reference, or nothing at all when the agent
+// declared no model and resolution supplied one.
+func TestEnsureSessionAgentRuntimeConfigReportsResolvedGuestModel(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:       root,
+		DbAddr:         filepath.Join(root, "data.db"),
+		LLMAPIKey:      "global-provider-key",
+		RuntimeBaseURL: "http://agent-compose.test:7410",
+		GuestHomePath:  "/root",
+	}
+	di := do.New()
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, config)
+	store, err := testutil.OpenConfigStore(t, di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	session := &domain.Sandbox{
+		Summary: domain.SandboxSummary{
+			ID:            "sandbox-guest-model",
+			Driver:        driverpkg.RuntimeDriverDocker,
+			WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-guest-model", "workspace"),
+		},
+		ProviderEnvItems: []domain.SandboxEnvVar{
+			{Name: "LLM_API_ENDPOINT", Value: "https://openai.example.test/v1"},
+			{Name: "LLM_API_KEY", Value: "openai-key"},
+			{Name: "LLM_MODEL", Value: "gpt-test"},
+		},
+	}
+	for _, agent := range []string{"codex", "claude", "pi", "dsh", "opencode"} {
+		t.Run(agent, func(t *testing.T) {
+			result, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{
+				Config: config, Store: store, Session: session, Agent: agent, Model: "gpt-test", Source: TokenSourceAgent, RunID: "run-" + agent,
+			})
+			if err != nil {
+				t.Fatalf("EnsureSessionAgentRuntimeConfig %s returned error: %v", agent, err)
+			}
+			if result.Model == "" {
+				t.Fatalf("%s reported no resolved model: env = %#v", agent, result.Env)
+			}
+			if got := result.Env[llms.GuestModelEnvName]; got != result.Model {
+				t.Fatalf("%s model = %q, env[%s] = %q", agent, result.Model, llms.GuestModelEnvName, got)
+			}
+			if strings.Contains(result.Model, "/") && agent != "opencode" {
+				t.Fatalf("%s model = %q, want the resolved model name", agent, result.Model)
+			}
+		})
+	}
+}
