@@ -122,3 +122,43 @@ func TestEnsureDshFacadeConfigAcceptsUnqualifiedModel(t *testing.T) {
 		t.Fatalf("dsh env = %#v", env)
 	}
 }
+
+// A bare "opencode" names OpenCode's own provider without a model. It is a typo
+// rather than a literal model name: resolving it would mint a managed facade
+// token for a model that cannot exist, and it must not silently disable the
+// managed path either.
+func TestEnsureOpenCodeFacadeConfigRejectsBareNativeProvider(t *testing.T) {
+	isolateLLMEnv(t)
+	root := t.TempDir()
+	store := newBareModelFacadeStore()
+	store.providers = []Provider{gatewayConnection()}
+
+	if _, err := EnsureOpenCodeFacadeConfig(context.Background(), OpenCodeFacadeConfigRequest{
+		Config: bareModelConfig(root), Store: store, Sandbox: bareModelSandbox(root, "sandbox-opencode-native"),
+		Model: "opencode", Source: "agent", RunID: "run-opencode",
+	}); err == nil {
+		t.Fatal("EnsureOpenCodeFacadeConfig accepted a bare native provider name")
+	}
+	if len(store.savedTokens) != 0 {
+		t.Fatalf("saved tokens = %#v, want none for a rejected reference", store.savedTokens)
+	}
+}
+
+// A malformed reference is rejected at the facade boundary instead of becoming a
+// managed token for a model name that cannot exist upstream.
+func TestEnsurePiFacadeConfigRejectsMalformedReference(t *testing.T) {
+	isolateLLMEnv(t)
+	root := t.TempDir()
+	store := newBareModelFacadeStore()
+	store.providers = []Provider{gatewayConnection()}
+
+	if _, err := EnsurePiFacadeConfig(context.Background(), PiFacadeConfigRequest{
+		Config: bareModelConfig(root), Store: store, Sandbox: bareModelSandbox(root, "sandbox-pi-malformed"),
+		Model: "gateway/", Source: "agent", RunID: "run-pi",
+	}); err == nil {
+		t.Fatal("EnsurePiFacadeConfig accepted a reference with an empty model side")
+	}
+	if len(store.savedTokens) != 0 {
+		t.Fatalf("saved tokens = %#v, want none for a rejected reference", store.savedTokens)
+	}
+}

@@ -128,7 +128,10 @@ func dshFacadeProtocol(target ResolvedTarget, runtimeBaseURL, sandboxID string) 
 // the default connection decide and dshFacadeProtocol routes it accordingly.
 func resolveDshTarget(ctx context.Context, req DshFacadeConfigRequest) (ResolvedTarget, error) {
 	config, store, sandbox := req.Config, req.Store, req.Sandbox
-	providerID, modelName := SplitModelReference(req.Model)
+	providerID, modelName, err := SplitModelReference(req.Model)
+	if err != nil {
+		return ResolvedTarget{}, err
+	}
 	if providerID != "" {
 		return resolveDshFacadeTarget(ctx, dshFacadeTargetInput{Config: config, Store: store, Sandbox: sandbox, ProviderID: providerID, Model: modelName})
 	}

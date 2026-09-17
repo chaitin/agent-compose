@@ -54,13 +54,23 @@ const openCodeNativeProviderID = "opencode"
 // connection resolves the literal model name.
 func EnsureOpenCodeFacadeConfig(ctx context.Context, req OpenCodeFacadeConfigRequest) (map[string]string, error) {
 	config, store, sandbox, model, source, runID := req.Config, req.Store, req.Sandbox, req.Model, req.Source, req.RunID
-	providerID, modelName := SplitModelReference(model)
+	providerID, modelName, err := SplitModelReference(model)
+	if err != nil {
+		return nil, err
+	}
 	baseURL := GuestRuntimeBaseURL(config, sandbox)
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, nil
 	}
 	if prefix, _, ok := SplitProviderModelReference(model); ok && prefix == openCodeNativeProviderID {
 		return nil, nil
+	}
+	// A bare "opencode" names OpenCode's own provider without a model. It is a
+	// typo rather than a literal model name, and resolving it would mint a
+	// managed facade token for a model that cannot exist upstream.
+	if providerID == "" && modelName == openCodeNativeProviderID {
+		return nil, domain.ClassifyError(domain.ErrRequired,
+			"opencode model must use opencode/<model-name> to run with OpenCode's own authentication", nil)
 	}
 	call := openCodeFacadeCall{Config: config, Store: store, Sandbox: sandbox, ProviderID: providerID, Model: modelName, Source: source, RunID: runID}
 	if providerID == "" || HasEnabledLLMProviderID(ctx, store, providerID) {

@@ -115,14 +115,29 @@ func TestSplitModelReferenceLeavesUnqualifiedModelBare(t *testing.T) {
 		provider string
 		model    string
 	}{
+		{value: "", provider: "", model: ""},
 		{value: "qwen3-8b", provider: "", model: "qwen3-8b"},
 		{value: "  qwen3-8b  ", provider: "", model: "qwen3-8b"},
 		{value: "gateway/org/deepseek-v4", provider: "gateway", model: "org/deepseek-v4"},
 		{value: "openai/gpt-test", provider: "openai", model: "gpt-test"},
 	} {
-		provider, model := SplitModelReference(tc.value)
+		provider, model, err := SplitModelReference(tc.value)
+		if err != nil {
+			t.Fatalf("SplitModelReference(%q) returned error: %v", tc.value, err)
+		}
 		if provider != tc.provider || model != tc.model {
 			t.Fatalf("SplitModelReference(%q) = (%q, %q), want (%q, %q)", tc.value, provider, model, tc.provider, tc.model)
+		}
+	}
+}
+
+// A value that carries a slash but leaves a side empty is a typo, not a model
+// name: resolving it would publish a facade token for a model that cannot exist
+// upstream. An absent value stays valid and means "use the daemon default".
+func TestSplitModelReferenceRejectsEmptyReferenceSide(t *testing.T) {
+	for _, value := range []string{"/model", "connection/", "/", "  /model  "} {
+		if _, _, err := SplitModelReference(value); err == nil {
+			t.Fatalf("SplitModelReference(%q) returned no error, want a malformed-reference error", value)
 		}
 	}
 }
@@ -138,9 +153,12 @@ func bootstrapConfig(model string) *appconfig.Config {
 	}
 }
 
-// The bootstrap environment stays the default channel. Adding a configured
-// connection through the RPC must not move an existing agent that names only a
-// model: the literal model keeps flowing through the bootstrap base/key.
+// The bootstrap environment stays the default channel end to end. This pins the
+// complete request path rather than the default-connection tier: a complete
+// bootstrap environment short-circuits in ResolveRuntimeLLMTargetWithEnv before
+// defaultConfiguredConnection runs, so adding a connection through the RPC must
+// not move an agent that names only a model. The tier itself is covered by
+// TestResolveRuntimeLLMTargetPrefersPersistedBootstrapConnection.
 func TestResolveRuntimeLLMTargetKeepsBootstrapChannelForBareModel(t *testing.T) {
 	isolateLLMEnv(t)
 	store := newResolverCoverageStore()
@@ -172,5 +190,62 @@ func TestResolveRuntimeLLMTargetUsesBootstrapModelWhenAgentDeclaresNone(t *testi
 	}
 	if target.Provider.ID != ProviderIDDefaultOpenAI || target.Model.ID != "gpt-env-default" {
 		t.Fatalf("target = %#v, want the bootstrap model", target)
+	}
+}
+
+// The reserved bootstrap connection is the daemon default even when it survives
+// only as a persisted env_default row: it wins over a connection added through
+// the RPC. This reaches defaultConfiguredConnection itself because a live
+// environment is absent, so it exercises the default-connection tier directly
+// rather than the bootstrap short-circuit in ResolveRuntimeLLMTargetWithEnv.
+func TestResolveRuntimeLLMTargetPrefersPersistedBootstrapConnection(t *testing.T) {
+	isolateLLMEnv(t)
+	store := newResolverCoverageStore()
+	store.providers = []Provider{
+		configuredConnection(ProviderIDDefaultOpenAI, ProviderScopeEnvDefault),
+		configuredConnection("gateway", ProviderScopeAPI),
+	}
+
+	target, err := ResolveRuntimeLLMTargetWithEnv(context.Background(), store, RuntimeLLMTargetQuery{
+		Config: &appconfig.Config{}, SessionID: "session-1", RequestedModel: "qwen3-8b",
+	})
+	if err != nil {
+		t.Fatalf("ResolveRuntimeLLMTargetWithEnv returned error: %v", err)
+	}
+	if target.Provider.ID != ProviderIDDefaultOpenAI || target.Model.ID != "qwen3-8b" {
+		t.Fatalf("target = %#v, want the reserved bootstrap connection", target)
+	}
+}
+
+// A reserved connection is the daemon default even when its family differs from
+// the other configured connection, because a bare model does not imply a family
+// and agent-compose does not interpret model names. The operator selects a
+// different connection by qualifying the model as <connection>/<model>.
+func TestResolveRuntimeLLMTargetUsesReservedBootstrapFamilyForBareModel(t *testing.T) {
+	isolateLLMEnv(t)
+	anthropic := configuredConnection(ProviderIDDefaultAnthropic, ProviderScopeEnvDefault)
+	anthropic.ProviderType = ProviderFamilyAnthropic
+	anthropic.DefaultWireAPI = APIProtocolMessages
+	store := newResolverCoverageStore()
+	store.providers = []Provider{anthropic, configuredConnection("gateway", ProviderScopeAPI)}
+
+	target, err := ResolveRuntimeLLMTargetWithEnv(context.Background(), store, RuntimeLLMTargetQuery{
+		Config: &appconfig.Config{}, SessionID: "session-1", RequestedModel: "qwen3-8b",
+	})
+	if err != nil {
+		t.Fatalf("ResolveRuntimeLLMTargetWithEnv returned error: %v", err)
+	}
+	if target.Provider.ID != ProviderIDDefaultAnthropic || target.Model.ID != "qwen3-8b" {
+		t.Fatalf("target = %#v, want the reserved bootstrap connection", target)
+	}
+
+	qualified, err := ResolveRuntimeLLMTargetWithEnv(context.Background(), store, RuntimeLLMTargetQuery{
+		Config: &appconfig.Config{}, SessionID: "session-1", RequestedModel: "gateway/qwen3-8b",
+	})
+	if err != nil {
+		t.Fatalf("qualified ResolveRuntimeLLMTargetWithEnv returned error: %v", err)
+	}
+	if qualified.Provider.ID != "gateway" || qualified.Model.ID != "qwen3-8b" {
+		t.Fatalf("qualified target = %#v, want the explicit gateway connection", qualified)
 	}
 }

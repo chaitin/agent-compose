@@ -34,7 +34,10 @@ type PiFacadeConfigRequest struct {
 // connection resolves the literal model name.
 func EnsurePiFacadeConfig(ctx context.Context, req PiFacadeConfigRequest) (map[string]string, error) {
 	config, store, sandbox, model, source, runID := req.Config, req.Store, req.Sandbox, req.Model, req.Source, req.RunID
-	providerID, modelName := SplitModelReference(model)
+	providerID, modelName, err := SplitModelReference(model)
+	if err != nil {
+		return nil, err
+	}
 	baseURL := GuestRuntimeBaseURL(config, sandbox)
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, nil
