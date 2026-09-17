@@ -70,11 +70,15 @@ the existing scope rules, and target resolution is one staged pipeline:
 3. Otherwise the daemon's default connection serves the literal model. The
    reserved bootstrap connection (`default`/`anthropic`) wins, including when it
    survives only as a persisted env-default row; with none, the only configured
-   connection of the requested family is used. A session-env connection never
-   acts as a daemon default. Competing connections are reported as an ambiguity
-   instead of being resolved by accident. A bare model does not imply a family,
-   so the reserved connection is chosen without a family comparison; qualify the
-   model as `<connection>/<model>` to select a different connection explicitly.
+   connection of the requested family is used. When the requested family has no
+   connection at all, the same choice runs over the other families, because the
+   runtime bridge translates across protocols: an OpenAI-compatible connection
+   can serve claude, exactly as the OpenAI bootstrap environment always could. A
+   session-env connection never acts as a daemon default. Competing connections
+   are reported as an ambiguity instead of being resolved by accident. A bare
+   model does not imply a family, so the reserved connection is chosen without a
+   family comparison; qualify the model as `<connection>/<model>` to select a
+   different connection explicitly.
 
 Model bindings are optional metadata rather than an authorization boundary, so a
 provider created through this RPC is usable with a bare Agent model name and no
@@ -83,6 +87,22 @@ models.json entry. The facade agents (pi, opencode, dsh) treat the
 already accepted unqualified model names. Prefixed values keep their established
 meaning: a configured connection id, a family alias, or an env-backed custom
 endpoint.
+
+A connection's protocol decides which agents it can serve, because the runtime
+facade bridges only some protocol pairs. An OpenAI `responses` connection serves
+every facade agent. An OpenAI `chat_completions` connection serves codex, pi,
+opencode, and dsh but not claude: no bridge converts an Anthropic Messages
+request into OpenAI Chat, so the run fails with `unsupported llm protocol bridge
+from "anthropic_messages" to "openai_chat"`. Give claude a `responses` or an
+`anthropic_messages` connection.
+
+The facade publishes the model it resolved as `AGENT_COMPOSE_RESOLVED_MODEL`, and
+the daemon tells the guest runner that value instead of the model the agent
+declared. A declaration is a request that resolution may rewrite: a
+`<connection>/<model>` prefix is stripped, a catalog or bootstrap default
+supplies a model the agent omitted, and opencode addresses models through the
+provider key written into its config. An agent CLI told the declaration instead
+addresses a model the facade token is not bound to.
 
 The next target resolution reads current provider settings, so address/key
 updates require no restart. Existing in-flight requests use their resolved
