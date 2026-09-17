@@ -12,18 +12,6 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
-func TestSplitPiModel(t *testing.T) {
-	provider, model, err := SplitPiModel(" custom/model/variant ")
-	if err != nil || provider != "custom" || model != "model/variant" {
-		t.Fatalf("SplitPiModel provider=%q model=%q err=%v", provider, model, err)
-	}
-	for _, invalid := range []string{"", "model", "/model", "provider/"} {
-		if _, _, err := SplitPiModel(invalid); err == nil {
-			t.Fatalf("SplitPiModel(%q) succeeded", invalid)
-		}
-	}
-}
-
 func TestWritePiRuntimeConfigIsPrivateAndContainsNoToken(t *testing.T) {
 	root := t.TempDir()
 	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{

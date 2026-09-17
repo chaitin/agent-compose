@@ -219,8 +219,54 @@ func TestIntegrationManagedProviderConcurrentCreate(t *testing.T) {
 	}
 }
 
+func TestIntegrationManagedProviderServesBareModel(t *testing.T) {
+	clearLLMTestEnvironment(t)
+	ctx := context.Background()
+	store := FromDB(newMemoryDB(t))
+	if err := store.InitSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	key := "gateway-key"
+	input := llms.ProviderReplacement{ID: "gateway", BaseURL: "https://gateway.example/v1", Protocol: llms.APIProtocolChatCompletions, APIKey: &key, Enabled: boolPtr(true)}
+	if _, err := store.CreateLLMProvider(ctx, input); err != nil {
+		t.Fatal(err)
+	}
+
+	// No bootstrap LLM_* configuration and no models.json catalog: the provider
+	// RPC is the only configured upstream. A bare model name must still resolve,
+	// which is what makes "configure with RPC, then run" work end to end.
+	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{RequestedModel: "qwen3-8b"})
+	if err != nil {
+		t.Fatalf("bare model did not resolve against the configured provider: %v", err)
+	}
+	if target.Provider.ID != "gateway" || target.Model.ID != "qwen3-8b" || target.WireAPI != llms.APIProtocolChatCompletions {
+		t.Fatalf("target = %#v, want gateway/qwen3-8b over chat completions", target)
+	}
+
+	// A second configured connection makes the bare model ambiguous instead of
+	// silently picking one; the qualified form still routes explicitly.
+	second := "second-key"
+	if _, err := store.CreateLLMProvider(ctx, llms.ProviderReplacement{ID: "other", BaseURL: "https://other.example/v1", Protocol: llms.APIProtocolChatCompletions, APIKey: &second, Enabled: boolPtr(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{RequestedModel: "qwen3-8b"}); err == nil {
+		t.Fatal("ambiguous bare model resolved without an error")
+	}
+	qualified, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{RequestedModel: "other/qwen3-8b"})
+	if err != nil {
+		t.Fatalf("qualified model did not resolve: %v", err)
+	}
+	if qualified.Provider.ID != "other" || qualified.Model.ID != "qwen3-8b" {
+		t.Fatalf("qualified target = %#v", qualified)
+	}
+}
+
 func TestE2EManagedProviderLifecycleAndRouting(t *testing.T) {
 	TestIntegrationManagedProviderLifecycleAndRouting(t)
+}
+
+func TestE2EManagedProviderServesBareModel(t *testing.T) {
+	TestIntegrationManagedProviderServesBareModel(t)
 }
 
 func TestE2EManagedProviderOwnershipAndCancellation(t *testing.T) {

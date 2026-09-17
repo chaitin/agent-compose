@@ -369,8 +369,14 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 	if len(noop.Env) != 0 {
 		t.Fatalf("opencode local env = %#v", noop.Env)
 	}
-	if _, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "bad-model", Source: "", RunID: ""}); err == nil {
-		t.Fatalf("expected invalid opencode model error")
+	// An unqualified model is valid: the daemon's default connection resolves
+	// it, so agent configuration no longer has to name a provider.
+	bare, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "bare-model", Source: "", RunID: ""})
+	if err != nil {
+		t.Fatalf("opencode unqualified model returned error: %v", err)
+	}
+	if bare.Env["OPENCODE_CONFIG"] == "" || bare.Env["LLM_API_KEY"] == "" {
+		t.Fatalf("opencode unqualified env = %#v", bare.Env)
 	}
 	if env, err := EnsureSessionLLMFacadeConfig(ctx, SessionFacadeConfigRequest{Config: nil, Store: store, Session: session, Agent: "codex", Model: "", Source: "", RunID: ""}); err != nil || env != nil {
 		t.Fatalf("nil config env=%#v err=%v", env, err)

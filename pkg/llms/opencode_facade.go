@@ -43,23 +43,27 @@ type OpenCodeFacadeConfigRequest struct {
 	RunID   string
 }
 
-// EnsureOpenCodeFacadeConfig resolves an OpenCode provider/model pair, writes
-// its guest runtime config, and returns the managed facade environment.
+// openCodeNativeProviderID is OpenCode's own provider name. A model under it
+// means "use OpenCode's configured authentication", so agent-compose leaves the
+// guest unmanaged instead of publishing a facade token.
+const openCodeNativeProviderID = "opencode"
+
+// EnsureOpenCodeFacadeConfig resolves an OpenCode model selection, writes its
+// guest runtime config, and returns the managed facade environment. The
+// <connection>/<model> prefix is optional: without it the daemon's default
+// connection resolves the literal model name.
 func EnsureOpenCodeFacadeConfig(ctx context.Context, req OpenCodeFacadeConfigRequest) (map[string]string, error) {
 	config, store, sandbox, model, source, runID := req.Config, req.Store, req.Sandbox, req.Model, req.Source, req.RunID
-	providerID, modelName, err := SplitOpenCodeModel(model)
-	if err != nil {
-		return nil, err
-	}
+	providerID, modelName := SplitModelReference(model)
 	baseURL := GuestRuntimeBaseURL(config, sandbox)
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, nil
 	}
-	if providerID == "opencode" {
+	if prefix, _, ok := SplitProviderModelReference(model); ok && prefix == openCodeNativeProviderID {
 		return nil, nil
 	}
 	call := openCodeFacadeCall{Config: config, Store: store, Sandbox: sandbox, ProviderID: providerID, Model: modelName, Source: source, RunID: runID}
-	if HasEnabledLLMProviderID(ctx, store, providerID) {
+	if providerID == "" || HasEnabledLLMProviderID(ctx, store, providerID) {
 		return ensureOpenCodeConfiguredFacadeConfig(ctx, call)
 	}
 	switch providerID {
