@@ -296,3 +296,31 @@ func TestOptionalFacadeConfigError(t *testing.T) {
 		})
 	}
 }
+
+// A reference that leaves a side empty is a typo in every agent. codex parses
+// the value itself rather than through the facade agents' shared splitter, so
+// without the resolver check it forwarded `gateway/` upstream and failed later
+// with an unrelated upstream error.
+func TestEnsureCodexFacadeConfigRejectsMalformedModelReference(t *testing.T) {
+	isolateLLMEnv(t)
+	root := t.TempDir()
+	store := newBareModelFacadeStore()
+	store.providers = []Provider{gatewayConnection()}
+
+	env, err := EnsureCodexFacadeConfig(context.Background(), CodexFacadeConfigRequest{
+		Config: bareModelConfig(root), Store: store, Sandbox: bareModelSandbox(root, "sandbox-codex-malformed"),
+		Model: "gateway/", Source: "agent", RunID: "run-codex-malformed",
+	})
+	if err == nil {
+		t.Fatalf("malformed reference was accepted, env = %#v", env)
+	}
+	if !errors.Is(err, domain.ErrInvalidArgument) {
+		t.Fatalf("err = %v, want an invalid-argument error", err)
+	}
+	if !strings.Contains(err.Error(), `"gateway/"`) {
+		t.Fatalf("err = %v, want it to quote the reference", err)
+	}
+	if len(store.savedTokens) != 0 {
+		t.Fatalf("saved tokens = %#v, want none", store.savedTokens)
+	}
+}

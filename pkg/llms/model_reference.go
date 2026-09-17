@@ -20,7 +20,9 @@ import (
 // An absent value stays valid and resolves to the daemon default. A value that
 // carries a slash but leaves a side empty ("/model" or "connection/") is a typo
 // rather than a literal model name, so it is rejected here instead of being
-// forwarded to an upstream as a model that cannot exist.
+// forwarded to an upstream as a model that cannot exist. The failure is an
+// invalid argument rather than a missing configuration, so an agent that may
+// fall back to credentials it carries itself still reports the typo.
 func SplitModelReference(value string) (string, string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" || !strings.Contains(value, "/") {
@@ -28,7 +30,7 @@ func SplitModelReference(value string) (string, string, error) {
 	}
 	providerID, model, ok := SplitProviderModelReference(value)
 	if !ok {
-		return "", "", domain.ClassifyError(domain.ErrRequired, fmt.Sprintf(
+		return "", "", domain.ClassifyError(domain.ErrInvalidArgument, fmt.Sprintf(
 			"llm model reference %q must not leave either side of <llm-provider-id>/<model-name> empty", value), nil)
 	}
 	return providerID, model, nil

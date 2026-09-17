@@ -317,6 +317,12 @@ func ResolveRuntimeLLMTargetWithEnv(ctx context.Context, store LLMResolverStore,
 	preferredProviderFamily := NormalizeOptionalProviderType(q.PreferredProviderFamily)
 	requestedModel = strings.TrimSpace(requestedModel)
 	providerID = strings.TrimSpace(providerID)
+	// A reference that leaves a side empty is a typo in every agent, not only in
+	// the facade agents that parse the value themselves. Rejecting it here keeps
+	// codex and claude from forwarding an impossible model to an upstream.
+	if _, _, err := SplitModelReference(requestedModel); err != nil {
+		return ResolvedTarget{}, err
+	}
 	hasSessionEnvProvider := sessionHasEnvProvider(sessionID, requestedModel, envItems)
 	defaultLookup := defaultLLMEnvProviderLookup(ctx, config, store)
 	providerID, requestedModel, explicitProvider := refineProviderAndModelFromReference(ctx, store, providerModelRefinementInput{
@@ -554,6 +560,9 @@ type llmTargetForProviderFamilyQuery struct {
 
 func resolveLLMTargetForProviderFamily(ctx context.Context, store LLMResolverStore, q llmTargetForProviderFamilyQuery) (ResolvedTarget, error) {
 	config, providerFamily, requestedModel := q.Config, q.ProviderFamily, q.RequestedModel
+	if _, _, err := SplitModelReference(requestedModel); err != nil {
+		return ResolvedTarget{}, err
+	}
 	if strings.TrimSpace(providerFamily) != "" {
 		providerFamily = NormalizeProviderType(providerFamily)
 	}
