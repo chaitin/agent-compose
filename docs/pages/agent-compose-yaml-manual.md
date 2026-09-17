@@ -599,9 +599,12 @@ For example, call `CreateProvider` using Connect JSON:
 
 The request path is `/agentcompose.v2.LLMService/CreateProvider`, using existing
 daemon API authentication. Then set an Agent model to `team-gateway/model-id`;
-models do not need to be enumerated. A single configured connection is the daemon
-default, so the bare `model-id` resolves to it as well. Other methods share the
-service path prefix.
+models do not need to be enumerated. A bare `model-id` resolves to the daemon
+default connection: the reserved bootstrap connection (`default`/`anthropic`)
+wins, otherwise the only configured connection is used, and several connections
+without a reserved one are reported as an ambiguity. Qualify the model as
+`<connection>/<model-id>` to select a connection explicitly. Other methods share
+the service path prefix.
 
 - IDs are immutable, 1–128 ASCII letters, digits, dots, underscores or hyphens,
   starting with a letter or digit. `default`, `anthropic`, and session environment

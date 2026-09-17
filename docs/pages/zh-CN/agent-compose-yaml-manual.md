@@ -599,7 +599,9 @@ API Key，与 Agent 的 `provider: codex` / `provider: pi` 无关。
 
 请求路径为 `/agentcompose.v2.LLMService/CreateProvider`，使用现有 daemon API
 鉴权。随后可以在 Agent 的 `model` 中设置 `team-gateway/model-id`，无需枚举模型。
-只配置一个 Connection 时它就是 daemon 默认值，直接写 `model-id` 也会解析到它。
+直接写 `model-id` 时由 daemon 默认 Connection 解析：保留的 bootstrap Connection
+（`default`/`anthropic`）优先，否则使用唯一已配置的 Connection；存在多个候选且
+无保留 Connection 时报告歧义。用 `<connection>/<model-id>` 可显式选择 Connection。
 其他方法使用同样的服务路径前缀。
 
 - `id` 不可修改，支持 1–128 个 ASCII 字母、数字、点、下划线和连字符，首位必须是

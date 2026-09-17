@@ -68,10 +68,13 @@ the existing scope rules, and target resolution is one staged pipeline:
    require model-table registration.
 2. A registered model with a provider binding selects its bound connection.
 3. Otherwise the daemon's default connection serves the literal model. The
-   reserved bootstrap connection (`default`/`anthropic`) wins; with none, the only
-   configured connection of the requested family is used. A session-env
-   connection never acts as a daemon default. Competing connections are reported
-   as an ambiguity instead of being resolved by accident.
+   reserved bootstrap connection (`default`/`anthropic`) wins, including when it
+   survives only as a persisted env-default row; with none, the only configured
+   connection of the requested family is used. A session-env connection never
+   acts as a daemon default. Competing connections are reported as an ambiguity
+   instead of being resolved by accident. A bare model does not imply a family,
+   so the reserved connection is chosen without a family comparison; qualify the
+   model as `<connection>/<model>` to select a different connection explicitly.
 
 Model bindings are optional metadata rather than an authorization boundary, so a
 provider created through this RPC is usable with a bare Agent model name and no
@@ -94,7 +97,8 @@ reference after deletion.
 Domain tests cover ID/protocol/URL/key validation and input ownership, and the
 resolution stages above: configured-connection defaulting, reserved-default
 preference, ambiguity rejection, disabled-connection exclusion, binding
-precedence, and unqualified model names for pi, opencode and dsh. SQLite
+precedence, unqualified model names for pi, opencode and dsh, and rejection of a
+reference with an empty `<connection>/<model>` side. SQLite
 integration tests cover literal routing, bare-model routing with an RPC-created
 provider, key preservation/rotation, protocol mapping, disabled providers,
 restart/catalog coexistence, collisions, cancellation, concurrent create and
