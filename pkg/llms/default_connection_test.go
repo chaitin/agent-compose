@@ -126,3 +126,51 @@ func TestSplitModelReferenceLeavesUnqualifiedModelBare(t *testing.T) {
 		}
 	}
 }
+
+// bootstrapConfig is the historical .env channel: base, key and (optionally)
+// a model.
+func bootstrapConfig(model string) *appconfig.Config {
+	return &appconfig.Config{
+		LLMAPIEndpoint: "https://api.openai.test",
+		LLMAPIProtocol: APIProtocolResponses,
+		LLMAPIKey:      "openai-key",
+		LLMModel:       model,
+	}
+}
+
+// The bootstrap environment stays the default channel. Adding a configured
+// connection through the RPC must not move an existing agent that names only a
+// model: the literal model keeps flowing through the bootstrap base/key.
+func TestResolveRuntimeLLMTargetKeepsBootstrapChannelForBareModel(t *testing.T) {
+	isolateLLMEnv(t)
+	store := newResolverCoverageStore()
+	store.providers = []Provider{configuredConnection("gateway", ProviderScopeAPI)}
+
+	target, err := ResolveRuntimeLLMTargetWithEnv(context.Background(), store, RuntimeLLMTargetQuery{
+		Config: bootstrapConfig("gpt-env-default"), SessionID: "session-1", RequestedModel: "qwen3-8b",
+	})
+	if err != nil {
+		t.Fatalf("ResolveRuntimeLLMTargetWithEnv returned error: %v", err)
+	}
+	if target.Provider.ID != ProviderIDDefaultOpenAI || target.Model.ID != "qwen3-8b" {
+		t.Fatalf("target = %#v, want the bootstrap channel with the literal model", target)
+	}
+}
+
+// An agent that declares no model uses the bootstrap model, which is why the
+// model field is optional in a project definition.
+func TestResolveRuntimeLLMTargetUsesBootstrapModelWhenAgentDeclaresNone(t *testing.T) {
+	isolateLLMEnv(t)
+	store := newResolverCoverageStore()
+	store.providers = []Provider{configuredConnection("gateway", ProviderScopeAPI)}
+
+	target, err := ResolveRuntimeLLMTargetWithEnv(context.Background(), store, RuntimeLLMTargetQuery{
+		Config: bootstrapConfig("gpt-env-default"), SessionID: "session-1",
+	})
+	if err != nil {
+		t.Fatalf("ResolveRuntimeLLMTargetWithEnv returned error: %v", err)
+	}
+	if target.Provider.ID != ProviderIDDefaultOpenAI || target.Model.ID != "gpt-env-default" {
+		t.Fatalf("target = %#v, want the bootstrap model", target)
+	}
+}
