@@ -2278,6 +2278,17 @@ message BatchGetLatestSchedulerRunsResponse {
   repeated SandboxSchedulerRun results = 1;
 }
 
+// LLMProviderAuth selects how the upstream credential is presented on the wire.
+// A gateway can speak the Anthropic wire protocol while authenticating with a
+// bearer token, so the presentation is not implied by the protocol alone.
+enum LLMProviderAuth {
+  // Keep the protocol convention: x-api-key for anthropic_messages, bearer
+  // otherwise.
+  LLM_PROVIDER_AUTH_UNSPECIFIED = 0;
+  LLM_PROVIDER_AUTH_X_API_KEY = 1;
+  LLM_PROVIDER_AUTH_BEARER = 2;
+}
+
 // LLMProvider contains public configuration only; credentials are never returned.
 message LLMProvider {
   string id = 1;
@@ -2288,6 +2299,8 @@ message LLMProvider {
   bool api_key_set = 6;
   google.protobuf.Timestamp created_at = 7;
   google.protobuf.Timestamp updated_at = 8;
+  // Effective credential presentation, including the protocol convention.
+  LLMProviderAuth auth = 9;
 }
 
 // LLMProviderSpec replaces public configuration on update. ID is immutable.
@@ -2302,6 +2315,9 @@ message LLMProviderSpec {
   optional string api_key = 5;
   // Absent means enabled, including on replacement updates.
   optional bool enabled = 6;
+  // Credential presentation. Absent on create keeps the protocol convention;
+  // absent on update preserves the stored value.
+  optional LLMProviderAuth auth = 7;
 }
 message CreateProviderRequest { LLMProviderSpec provider = 1; }
 message CreateProviderResponse { LLMProvider provider = 1; }

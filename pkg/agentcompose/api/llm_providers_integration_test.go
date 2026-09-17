@@ -92,6 +92,34 @@ func TestIntegrationLLMProviderConnectLifecycle(t *testing.T) {
 	if _, err := client.DeleteProvider(ctx, connect.NewRequest(&agentcomposev2.DeleteProviderRequest{Id: spec.Id})); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("delete missing: %v", err)
 	}
+	// The credential presentation travels over the transport, is stored on the
+	// connection, and is reported back as the effective configuration.
+	messagesSpec := &agentcomposev2.LLMProviderSpec{
+		Id: "messages", BaseUrl: "https://messages.example", Protocol: "anthropic_messages",
+		ApiKey: proto.String("messages-secret"),
+		Auth:   authPtr(agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_BEARER),
+	}
+	createdMessages, err := client.CreateProvider(ctx, connect.NewRequest(&agentcomposev2.CreateProviderRequest{Provider: messagesSpec}))
+	if err != nil || createdMessages.Msg.Provider.Auth != agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_BEARER {
+		t.Fatalf("create messages provider: %v %#v", err, createdMessages)
+	}
+	savedMessages, err := store.GetManagedLLMProvider(ctx, messagesSpec.Id)
+	if err != nil || savedMessages.AuthHeader != "Authorization" || savedMessages.AuthScheme != "Bearer" {
+		t.Fatalf("stored auth = %#v, err %v", savedMessages, err)
+	}
+	if _, err := client.UpdateProvider(ctx, connect.NewRequest(&agentcomposev2.UpdateProviderRequest{Provider: &agentcomposev2.LLMProviderSpec{Id: messagesSpec.Id, Name: "renamed"}})); err != nil {
+		t.Fatal(err)
+	}
+	savedMessages, err = store.GetManagedLLMProvider(ctx, messagesSpec.Id)
+	if err != nil || savedMessages.AuthHeader != "Authorization" || savedMessages.AuthScheme != "Bearer" {
+		t.Fatalf("omitted auth was not preserved: %#v, err %v", savedMessages, err)
+	}
+	if _, err := client.CreateProvider(ctx, connect.NewRequest(&agentcomposev2.CreateProviderRequest{Provider: &agentcomposev2.LLMProviderSpec{
+		Id: "bad-auth", BaseUrl: "https://example.com", Protocol: "anthropic_messages",
+		ApiKey: proto.String("upstream-secret"), Auth: authPtr(agentcomposev2.LLMProviderAuth(99)),
+	}})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("unknown auth create: %v", err)
+	}
 	for _, invalid := range []*agentcomposev2.LLMProviderSpec{
 		nil,
 		{Id: "bad", BaseUrl: "https://example.com", Protocol: "unknown", ApiKey: proto.String("upstream-secret")},

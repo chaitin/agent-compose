@@ -1133,6 +1133,11 @@
           "default": ""
         },
         {
+          "name": "auth",
+          "type": "string",
+          "default": ""
+        },
+        {
           "name": "base-url",
           "type": "string",
           "default": ""
@@ -1294,6 +1299,11 @@
       "flags": [
         {
           "name": "api-key",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "auth",
           "type": "string",
           "default": ""
         },

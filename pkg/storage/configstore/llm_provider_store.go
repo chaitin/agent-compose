@@ -26,7 +26,7 @@ func (s *llmStore) CreateLLMProvider(ctx context.Context, input llms.ProviderRep
 	if input.Enabled != nil {
 		enabled = *input.Enabled
 	}
-	family, header, scheme := managedProviderAuth(input.Protocol)
+	family, header, scheme := managedProviderAuth(input.Protocol, input.Auth)
 	now := time.Now().UTC().Unix()
 	row := s.db.QueryRowContext(ctx, `INSERT INTO llm_provider (`+providerColumns+`)
  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 10, ?, ?, ?, ?)
@@ -88,7 +88,7 @@ func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderRep
 	if err != nil {
 		return llms.Provider{}, err
 	}
-	family, header, scheme, headersJSON := managedProviderUpdateColumns(input.Protocol)
+	family, header, scheme, headersJSON := managedProviderUpdateColumns(input.Protocol, input.Auth)
 	row := s.db.QueryRowContext(ctx, `UPDATE llm_provider SET name = COALESCE(NULLIF(?, ''), name), provider_type = COALESCE(?, provider_type), default_wire_api = COALESCE(NULLIF(?, ''), default_wire_api), base_url = COALESCE(NULLIF(?, ''), base_url), api_key = COALESCE(?, api_key), auth_header = COALESCE(?, auth_header), auth_scheme = CASE WHEN ? IS NOT NULL THEN ? ELSE auth_scheme END, headers_json = COALESCE(?, headers_json), enabled = COALESCE(?, enabled), updated_at = ?
  WHERE id = ? AND scope = ? RETURNING `+providerColumns,
 		input.Name, family, input.Protocol, input.BaseURL, input.APIKey, header, header, scheme, headersJSON, optionalBoolToSQL(input.Enabled), time.Now().UTC().Unix(), input.ID, llms.ProviderScopeAPI)
@@ -144,19 +144,34 @@ func (s *llmStore) DeleteLLMProvider(ctx context.Context, id string) error {
 	return nil
 }
 
-func managedProviderAuth(protocol string) (family, header, scheme string) {
+// managedProviderAuth derives the provider family from the protocol and the
+// credential presentation from the connection's explicit auth, falling back to
+// the protocol convention. A gateway may speak the Anthropic Messages protocol
+// while authenticating with a bearer token, so the protocol alone cannot decide
+// the header.
+func managedProviderAuth(protocol string, auth llms.ProviderAuth) (family, header, scheme string) {
+	family = llms.ProviderFamilyOpenAI
 	if protocol == llms.APIProtocolMessages {
-		return llms.ProviderFamilyAnthropic, "x-api-key", ""
+		family = llms.ProviderFamilyAnthropic
 	}
-	return llms.ProviderFamilyOpenAI, "Authorization", "Bearer"
+	header, scheme = llms.ResolveProviderAuth(protocol, auth)
+	return family, header, scheme
 }
 
-func managedProviderUpdateColumns(protocol string) (family, header, scheme, headersJSON any) {
-	if protocol == "" {
+// managedProviderUpdateColumns derives the columns an update must rewrite. An
+// empty protocol and auth leave the stored credential presentation untouched.
+func managedProviderUpdateColumns(protocol string, auth llms.ProviderAuth) (family, header, scheme, headersJSON any) {
+	if protocol == "" && auth == "" {
 		return nil, nil, nil, nil
 	}
-	familyName, headerName, schemeName := managedProviderAuth(protocol)
-	return familyName, headerName, schemeName, llms.ManagedProviderHeadersJSON(protocol)
+	if protocol == "" {
+		// Only the presentation changed; the stored protocol keeps its family and
+		// headers, and the SQL preserves them.
+		header, scheme = llms.ProviderAuthWire(auth)
+		return nil, header, scheme, nil
+	}
+	family, header, scheme = managedProviderAuth(protocol, auth)
+	return family, header, scheme, llms.ManagedProviderHeadersJSON(protocol)
 }
 
 func optionalBoolToSQL(value *bool) any {

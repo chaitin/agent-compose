@@ -26,6 +26,7 @@ type ProviderReplacement struct {
 	Protocol string
 	APIKey   *string
 	Enabled  *bool
+	Auth     ProviderAuth
 }
 
 // ValidateManagedProviderID rejects IDs reserved for environment bootstrap.
@@ -57,6 +58,9 @@ func NormalizeProviderReplacement(input ProviderReplacement) (ProviderReplacemen
 	if err := normalizeProviderAPIKey(&normalized, true); err != nil {
 		return ProviderReplacement{}, err
 	}
+	if err := normalizeProviderAuth(&normalized); err != nil {
+		return ProviderReplacement{}, err
+	}
 	if normalized.Enabled == nil {
 		enabled := true
 		normalized.Enabled = &enabled
@@ -80,6 +84,9 @@ func NormalizeProviderUpdate(input ProviderReplacement) (ProviderReplacement, er
 		return ProviderReplacement{}, err
 	}
 	if err := normalizeProviderAPIKey(&normalized, false); err != nil {
+		return ProviderReplacement{}, err
+	}
+	if err := normalizeProviderAuth(&normalized); err != nil {
 		return ProviderReplacement{}, err
 	}
 	return normalized, nil
@@ -136,6 +143,18 @@ func normalizeProviderAPIKey(input *ProviderReplacement, required bool) error {
 	}
 	input.APIKey = &key
 	return nil
+}
+
+// normalizeProviderAuth accepts only the presentations the daemon can put on the
+// wire; an unknown name must not silently fall back to the protocol convention.
+func normalizeProviderAuth(input *ProviderReplacement) error {
+	input.Auth = ProviderAuth(strings.ToLower(strings.TrimSpace(string(input.Auth))))
+	switch input.Auth {
+	case "", ProviderAuthXAPIKey, ProviderAuthBearer:
+		return nil
+	default:
+		return fmt.Errorf("%w: auth must be x-api-key or bearer", domain.ErrInvalidArgument)
+	}
 }
 
 // ManagedProviderHeadersJSON returns default upstream headers for a protocol.

@@ -608,16 +608,22 @@ API Key，与 Agent 的 `provider: codex` / `provider: pi` 无关。
   字母或数字；`default`、`anthropic` 以及 session 环境 ID 保留给 daemon。
 - `protocol` 必须为 `responses`、`chat_completions` 或 `anthropic_messages`。
   `baseUrl` 必须为 HTTP(S) 绝对地址，不能包含用户名密码、查询参数或 fragment。
+- `auth` 指定凭据在 HTTP 上的呈现方式，缺省时沿用协议约定：OpenAI 系协议为
+  `bearer`，`anthropic_messages` 为 `x-api-key`。当网关使用 Anthropic Messages
+  协议但要求 `Authorization: Bearer` 认证时，设置 `"auth": "bearer"`；反向场景
+  设置 `"auth": "x-api-key"`。该覆盖只改变认证 Header，不改变协议或地址；未知取值
+  会被拒绝。响应返回生效值，更新时省略 `auth` 会保留原值。
 - `apiKey` 是字面量，不解析环境变量引用。创建必须提供非空值；更新省略时保留旧值，
   提供非空值时轮换，空值无效。响应仅返回 `apiKeySet`，不会回显密钥。
 - 创建时，空 `name` 默认使用 ID，省略 `enabled` 默认为 `true`。
   `anthropic_messages` 会默认发送 `anthropic-version: 2023-06-01`，其他协议不加额外 Header。
 - `UpdateProvider` 使用相同的 `provider` 对象。省略 `name`、`baseUrl`、`protocol`、
-  `apiKey`、`enabled` 时保留已存储值。提供非空 `apiKey` 会轮换密钥，空值无效。
+  `apiKey`、`auth`、`enabled` 时保留已存储值。提供非空 `apiKey` 会轮换密钥，空值无效。
   修改协议会同时刷新认证 Header。
 - CLI：`agent-compose llm provider ls|create|inspect|update|rm`。创建必须提供
   `--base-url`、`--protocol`、`--api-key`。更新只发送显式设置的 flag，因此
-  `update --base-url ...` 不会把已禁用的 Provider 重新启用。
+  `update --base-url ...` 不会把已禁用的 Provider 重新启用。两个命令都支持
+  `--auth x-api-key|bearer` 覆盖协议默认值。
 - `GetProvider` / `DeleteProvider` 请求为 `{"id":"team-gateway"}`。
   `ListProviders` 接受 `offset` / `limit`，按 ID 排序并包含禁用项，返回 `providers` 和 `total`。
 - 这些接口只管理 `api` 归属的 Provider，不覆盖 `models.json` 或环境配置。

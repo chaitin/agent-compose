@@ -16,20 +16,30 @@ IDs default and anthropic are reserved; session-env IDs cannot match this syntax
 
 Create requires an absolute HTTP(S) base URL, a supported protocol, and a nonempty
 literal API key. Responses contain api_key_set, never the credential. Update
-applies explicit fields only; omitted name, base_url, protocol, api_key, and
-enabled preserve stored values. Absent api_key preserves the current key
+applies explicit fields only; omitted name, base_url, protocol, api_key, auth,
+and enabled preserve stored values. Absent api_key preserves the current key
 atomically, present nonempty rotates it, and present empty is invalid. An absent
 enabled field means true on create and is preserved on update. An empty name
 defaults to the ID on create and is preserved on update. Anthropic Messages
 providers send anthropic-version: 2023-06-01 by default. Per-model overrides,
 custom headers, and default-model management remain outside this change.
-Protocol selects the existing OpenAI Bearer or Anthropic x-api-key upstream
-authentication and refreshes those headers when protocol is updated.
+
+Protocol selects the default upstream credential presentation: Bearer for the
+OpenAI protocols and x-api-key for Anthropic Messages. A gateway can serve the
+Anthropic Messages wire protocol while authenticating with a bearer token, so a
+connection may override that presentation with auth = bearer or auth = x-api-key;
+the override changes only the header, not the protocol or endpoint. Responses
+report the effective presentation. An unknown presentation is rejected rather
+than falling back to the protocol default, because silently keeping x-api-key
+would resurface as an unexplained upstream 401. The environment-bootstrap path
+already chooses the same two presentations through ANTHROPIC_AUTH_TOKEN (Bearer)
+and ANTHROPIC_API_KEY or LLM_API_KEY (x-api-key).
 
 CLI `agent-compose llm provider` exposes ls, create, inspect, update, and rm.
 Create requires --base-url, --protocol, and --api-key. Update sends only flags
-that were set. Environment bootstrap remains last fallback; API CRUD takes
-effect on the next target resolution.
+that were set. `--auth x-api-key|bearer` overrides the protocol default on either
+command. Environment bootstrap remains last fallback; API CRUD takes effect on
+the next target resolution.
 
 List includes disabled API-owned providers in ID order, using the existing
 offset/limit pagination convention. Get/Update/Delete reject non-API ownership.
@@ -114,16 +124,18 @@ reference after deletion.
 
 ## Validation
 
-Domain tests cover ID/protocol/URL/key validation and input ownership, and the
-resolution stages above: configured-connection defaulting, reserved-default
+Domain tests cover ID/protocol/URL/key/auth validation and input ownership, and
+the resolution stages above: configured-connection defaulting, reserved-default
 preference, ambiguity rejection, disabled-connection exclusion, binding
 precedence, unqualified model names for pi, opencode and dsh, and rejection of a
 reference with an empty `<connection>/<model>` side. SQLite
 integration tests cover literal routing, bare-model routing with an RPC-created
-provider, key preservation/rotation, protocol mapping, disabled providers,
+provider, key preservation/rotation, protocol mapping, the protocol-default and
+explicit credential presentations, presentation-only updates, disabled providers,
 restart/catalog coexistence, collisions, cancellation, concurrent create and
 token invalidation across deletion/recreation. Connect integration tests exercise
-generated clients over HTTP, response redaction, pagination and error codes. A
+generated clients over HTTP, response redaction, pagination, error codes, and the
+auth override round trip. A
 local service E2E exercises CreateProvider, Generate, URL/key rotation and
 disabled-provider rejection against an HTTP upstream stub. Existing Generate and
 runtime tests remain applicable.

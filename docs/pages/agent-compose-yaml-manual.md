@@ -611,6 +611,13 @@ the service path prefix.
   IDs are reserved for the daemon.
 - `protocol` must be `responses`, `chat_completions`, or `anthropic_messages`.
   `baseUrl` must be an absolute HTTP(S) URL without user credentials, query or fragment.
+- `auth` names how the credential is presented and defaults to the protocol
+  convention: `bearer` for the OpenAI protocols and `x-api-key` for
+  `anthropic_messages`. Set `"auth": "bearer"` when a gateway serves the
+  Anthropic Messages protocol but authenticates with `Authorization: Bearer`;
+  set `"auth": "x-api-key"` for the reverse. The override changes only the
+  header. An unknown value is rejected. Responses report the effective value,
+  and omitting `auth` on update preserves it.
 - `apiKey` is literal, without environment interpolation. Create requires a
   nonempty key. On update, omission preserves it, a nonempty value rotates it,
   and an empty value is invalid. Responses expose only `apiKeySet`, never the key.
@@ -618,12 +625,13 @@ the service path prefix.
   `true`. `anthropic_messages` providers send `anthropic-version: 2023-06-01` by
   default; other protocols send no extra headers.
 - `UpdateProvider` uses the same `provider` object. Omitted `name`, `baseUrl`,
-  `protocol`, `apiKey`, and `enabled` preserve stored values. Present nonempty
-  `apiKey` rotates the key; present empty is invalid. Protocol changes also
-  refresh authentication headers.
+  `protocol`, `apiKey`, `auth`, and `enabled` preserve stored values. Present
+  nonempty `apiKey` rotates the key; present empty is invalid. Protocol changes
+  also refresh authentication headers.
 - CLI: `agent-compose llm provider ls|create|inspect|update|rm`. Create requires
   `--base-url`, `--protocol`, and `--api-key`. Update sends only flags that are
   set, so `update --base-url ...` does not re-enable a disabled provider.
+  `--auth x-api-key|bearer` overrides the protocol default on either command.
 - `GetProvider` / `DeleteProvider` take `{"id":"team-gateway"}`.
   `ListProviders` takes `offset` / `limit`, orders by ID, includes disabled entries,
   and returns `providers` and `total`.

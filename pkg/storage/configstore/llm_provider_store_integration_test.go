@@ -261,12 +261,78 @@ func TestIntegrationManagedProviderServesBareModel(t *testing.T) {
 	}
 }
 
+// A gateway can serve the Anthropic Messages protocol while authenticating with
+// a bearer token, so a connection must be able to name the presentation instead
+// of inheriting the protocol convention.
+func TestIntegrationManagedProviderAuthPresentation(t *testing.T) {
+	clearLLMTestEnvironment(t)
+	ctx := context.Background()
+	store := FromDB(newMemoryDB(t))
+	if err := store.InitSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	key := "gateway-key"
+	// The protocol convention for messages remains x-api-key.
+	if _, err := store.CreateLLMProvider(ctx, llms.ProviderReplacement{
+		ID: "messages", BaseURL: "https://messages.example", Protocol: llms.APIProtocolMessages, APIKey: &key,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defaultTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{RequestedModel: "messages/claude-sonnet"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultTarget.Headers.Get("x-api-key"); got != key {
+		t.Fatalf("x-api-key = %q, want the configured key", got)
+	}
+
+	// Naming the presentation overrides only the header, not the wire protocol.
+	if _, err := store.CreateLLMProvider(ctx, llms.ProviderReplacement{
+		ID: "bearer", BaseURL: "https://bearer.example", Protocol: llms.APIProtocolMessages, APIKey: &key, Auth: llms.ProviderAuthBearer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bearerTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{RequestedModel: "bearer/claude-sonnet"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := bearerTarget.Headers.Get("Authorization"); got != "Bearer "+key {
+		t.Fatalf("Authorization = %q, want a bearer credential", got)
+	}
+	if got := bearerTarget.Headers.Get("x-api-key"); got != "" {
+		t.Fatalf("x-api-key = %q, want it unused", got)
+	}
+	if bearerTarget.WireAPI != llms.APIProtocolMessages {
+		t.Fatalf("wire API = %q, want the configured messages protocol", bearerTarget.WireAPI)
+	}
+
+	// An update that only changes the presentation preserves the rest of the row.
+	updated, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "messages", Auth: llms.ProviderAuthBearer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.BaseURL != "https://messages.example" || updated.APIKey != key || updated.AuthHeader != "Authorization" || updated.AuthScheme != "Bearer" {
+		t.Fatalf("updated = %#v", updated)
+	}
+	updatedTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{RequestedModel: "messages/claude-sonnet"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := updatedTarget.Headers.Get("Authorization"); got != "Bearer "+key {
+		t.Fatalf("Authorization = %q after the presentation update", got)
+	}
+}
+
 func TestE2EManagedProviderLifecycleAndRouting(t *testing.T) {
 	TestIntegrationManagedProviderLifecycleAndRouting(t)
 }
 
 func TestE2EManagedProviderServesBareModel(t *testing.T) {
 	TestIntegrationManagedProviderServesBareModel(t)
+}
+
+func TestE2EManagedProviderAuthPresentation(t *testing.T) {
+	TestIntegrationManagedProviderAuthPresentation(t)
 }
 
 func TestE2EManagedProviderOwnershipAndCancellation(t *testing.T) {
