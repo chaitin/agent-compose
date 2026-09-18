@@ -608,18 +608,7 @@ func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string)
 	default:
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("unsupported inspect target %q", kind)}
 	}
-	if cli.JSON {
-		data, err := json.MarshalIndent(output, "", "  ")
-		if err != nil {
-			return err
-		}
-		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
-	}
-	data, err := json.MarshalIndent(output, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	return writeComposeInspectOutput(cmd, output)
 }
 
 func listProjectRuns(ctx context.Context, client agentcomposev2connect.RunServiceClient, projectID string, labels map[string]string) ([]*agentcomposev2.RunSummary, error) {

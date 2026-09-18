@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -93,6 +94,15 @@ agents:
 		t.Fatalf("get applied project: %v", err)
 	}
 	assertAppliedYAMLSourceCredentialsRedacted(t, project.Msg.GetProject().GetSpec())
+	inspectOut, inspectErr, _, inspectCode := executeCLICommand("inspect", "--file", composePath, "project")
+	if inspectCode != 0 || inspectErr != "" {
+		t.Fatalf("inspect project code/stderr = %d / %q", inspectCode, inspectErr)
+	}
+	var inspected composeProjectOutput
+	if err := json.Unmarshal([]byte(inspectOut), &inspected); err != nil {
+		t.Fatal(err)
+	}
+	assertYAMLSourceCredentialsRedacted(t, string(inspected.DeclaredConfig))
 	t.Log("evidence: a filesystem agent-compose.yml loaded six source credentials from .env, passed config, and was accepted by project up with all credentials redacted by the daemon API")
 }
 

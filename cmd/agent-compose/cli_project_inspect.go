@@ -20,14 +20,14 @@ func runComposeProjectInspectCommand(cmd *cobra.Command, cli cliOptions, clients
 		if err != nil {
 			return err
 		}
-		return writeComposeInspectOutput(cmd, composeProjectOutputFromProject(runtimeProject.project))
+		return writeComposeProjectInspectOutput(cmd, runtimeProject.project)
 	}
 
 	project, err := resolveExplicitInspectProject(cmd, clients, ref)
 	if err != nil {
 		return err
 	}
-	return writeComposeInspectOutput(cmd, composeProjectOutputFromProject(project))
+	return writeComposeProjectInspectOutput(cmd, project)
 }
 
 func resolveExplicitInspectProject(cmd *cobra.Command, clients cliServiceClients, ref string) (*agentcomposev2.Project, error) {

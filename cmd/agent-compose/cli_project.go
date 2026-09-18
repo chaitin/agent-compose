@@ -170,12 +170,6 @@ type composeUpChangeOutput struct {
 	Message      string `json:"message,omitempty"`
 }
 
-type composeProjectOutput struct {
-	Project    composeUpProjectOutput          `json:"project"`
-	Agents     []composeProjectAgentOutput     `json:"agents"`
-	Schedulers []composeProjectSchedulerOutput `json:"schedulers"`
-}
-
 type composeProjectAgentOutput struct {
 	ID               string `json:"id"`
 	Name             string `json:"name"`
@@ -187,14 +181,6 @@ type composeProjectAgentOutput struct {
 	Image            string `json:"image,omitempty"`
 	Driver           string `json:"driver,omitempty"`
 	SchedulerEnabled bool   `json:"scheduler_enabled"`
-}
-
-type composeAgentInspectOutput struct {
-	Project          composeUpProjectOutput          `json:"project"`
-	Agent            composeProjectAgentOutput       `json:"agent"`
-	Schedulers       []composeProjectSchedulerOutput `json:"schedulers"`
-	LatestRun        *composeRunOutput               `json:"latest_run,omitempty"`
-	RunningSandboxes []composeSandboxOutput          `json:"running_sandboxes,omitempty"`
 }
 
 func composeProjectListItemFromSummary(summary *agentcomposev2.ProjectSummary) composeProjectListItem {
@@ -529,39 +515,6 @@ func composeProjectOutputFromProject(project *agentcomposev2.Project) composePro
 		output.Schedulers = append(output.Schedulers, composeProjectSchedulerOutputFromProto(scheduler))
 	}
 	return output
-}
-
-func composeAgentInspectOutputFor(ctx context.Context, clients cliServiceClients, project *agentcomposev2.Project, agentName string) (composeAgentInspectOutput, error) {
-	var found *agentcomposev2.ProjectAgent
-	for _, agent := range project.GetAgents() {
-		if agent.GetAgentName() == agentName {
-			found = agent
-			break
-		}
-	}
-	if found == nil {
-		return composeAgentInspectOutput{}, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("agent %s not found in project %s", agentName, project.GetSummary().GetName())}
-	}
-	output := composeAgentInspectOutput{
-		Project: composeProjectSummaryOutput(project.GetSummary()),
-		Agent:   composeProjectAgentOutputFromProto(found),
-	}
-	for _, scheduler := range project.GetSchedulers() {
-		if scheduler.GetAgentName() == agentName {
-			output.Schedulers = append(output.Schedulers, composeProjectSchedulerOutputFromProto(scheduler))
-		}
-	}
-	if latest, err := latestRunOutput(ctx, clients.run, project.GetSummary().GetProjectId(), agentName); err != nil {
-		return composeAgentInspectOutput{}, commandExitErrorForConnect(fmt.Errorf("list latest run for agent %s: %w", agentName, err))
-	} else {
-		output.LatestRun = latest
-	}
-	if session, err := firstRunningSandboxOutput(ctx, clients, project.GetSummary().GetProjectId(), agentName); err != nil {
-		return composeAgentInspectOutput{}, commandExitErrorForConnect(fmt.Errorf("list running sandbox for agent %s: %w", agentName, err))
-	} else if session != nil {
-		output.RunningSandboxes = append(output.RunningSandboxes, *session)
-	}
-	return output, nil
 }
 
 func composeProjectSummaryOutput(summary *agentcomposev2.ProjectSummary) composeUpProjectOutput {

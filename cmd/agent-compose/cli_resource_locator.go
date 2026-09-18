@@ -53,13 +53,16 @@ func inspectResolvedTarget(cmd *cobra.Command, cli cliOptions, clients cliServic
 	if target == nil {
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolved resource target is empty")}
 	}
+	if flag := cmd.Flags().Lookup("omit-scripts"); flag != nil && flag.Value.String() == "true" && target.GetKind() != agentcomposev2.ResourceKind_RESOURCE_KIND_PROJECT && target.GetKind() != agentcomposev2.ResourceKind_RESOURCE_KIND_AGENT {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("--omit-scripts requires a project or agent resource")}
+	}
 	switch target.GetKind() {
 	case agentcomposev2.ResourceKind_RESOURCE_KIND_PROJECT:
 		project, err := clients.project.GetProject(cmd.Context(), connect.NewRequest(&agentcomposev2.GetProjectRequest{Project: &agentcomposev2.ProjectRef{Selector: &agentcomposev2.ProjectRef_ProjectId{ProjectId: target.GetId()}}, IncludeSpec: true}))
 		if err != nil {
 			return commandExitErrorForConnect(fmt.Errorf("inspect project %s: %w", target.GetId(), err))
 		}
-		return writeComposeInspectOutput(cmd, composeProjectOutputFromProject(project.Msg.GetProject()))
+		return writeComposeProjectInspectOutput(cmd, project.Msg.GetProject())
 	case agentcomposev2.ResourceKind_RESOURCE_KIND_AGENT:
 		project, err := clients.project.GetProject(cmd.Context(), connect.NewRequest(&agentcomposev2.GetProjectRequest{Project: &agentcomposev2.ProjectRef{Selector: &agentcomposev2.ProjectRef_ProjectId{ProjectId: target.GetProjectId()}}, IncludeSpec: true}))
 		if err != nil {
@@ -105,6 +108,13 @@ func describeResourceTarget(target *agentcomposev2.ResourceTarget) string {
 }
 
 func writeComposeInspectOutput(cmd *cobra.Command, output any) error {
+	if flag := cmd.Flags().Lookup("omit-scripts"); flag != nil && flag.Value.String() == "true" {
+		var err error
+		output, err = omitInspectScripts(output)
+		if err != nil {
+			return err
+		}
+	}
 	data, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {
 		return err

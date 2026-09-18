@@ -675,6 +675,22 @@ agent-compose inspect cache <cache-id>
 - `inspect image <image>` 查看镜像详情。
 - `inspect cache <cache-id>` 查看一个 daemon runtime cache item，包括引用、阻止删除原因和 warnings。
 
+Project 和 agent 的 inspect 输出包含两个独立视图：
+
+- `declared_config`：daemon 当前 project revision 中保存的完整脱敏配置，或其中被选中 agent 的配置。这是规范化后的已部署声明，不是即时读取的本地 YAML，也不是历史 run 的配置快照。daemon 未提供声明时，此字段为 `null`，CLI 不会用摘要字段拼装配置。项目级变量和命名资源可通过 `inspect project` 查看。
+- `runtime`：daemon 当前的资源信息。project 包含 `summary`、`agents`、`schedulers`；agent 包含当前 agent 记录，包括可用性、健康状态、当前/最近 run 摘要、`resolved_model`、`model_source` 和当前的 `scheduler_enabled`。解析后的 model 是新 run 在没有请求或 session 覆盖时的默认选择，不一定是现有 sandbox 使用的 model。多次请求获得的运行状态不构成原子快照。
+
+原有顶层 project、agent、scheduler 摘要以及最近 run、sandbox 字段继续保留以兼容已有使用方式。有效状态应优先读取 `runtime`；旧顶层 agent 摘要中的调度开关反映 apply 时的声明。新增视图采用 protobuf JSON，字段名使用 snake_case，枚举使用名称。project 和 agent inspect 无论是否指定 `--json` 都输出 JSON。
+
+脚本默认完整输出，不按长度截断。对 project 或 agent 使用 `--omit-scripts`，可省略 `declared_config` 中非空的 `scheduler.script` 正文；`omitted_scripts` 数组会列出被省略字段的路径、原始 UTF-8 字节数和 SHA-256。空脚本仍保留为空，其他配置和运行状态不受影响。通过资源 ID inspect 时也支持此选项。例如：
+
+```bash
+agent-compose inspect agent reviewer --omit-scripts
+agent-compose inspect project --json > project-details.json
+```
+
+标记为 secret 的环境变量/header 值，以及 workspace、skill、OctoBus 的结构化凭据会显示为 `********`。脚本源码和其他自由文本不扫描内嵌凭据；应使用 secret 配置字段，避免把凭据硬编码到脚本中。
+
 当 sandbox 保存了 workspace 快照时，`inspect sandbox` 会提供安全的 `workspace_delivery` 信息。`mode` 为 `copy` 或 `mount`；mount 还会显示 daemon 解析后的源目录 `source_path`、相对 guest workspace 的 `target`，以及 `read_only`。现有 `workspace_path` 仍指向 sandbox 自有目录。copy 快照不暴露私有源目录，输出中不包含 workspace 凭据或原始配置。缺少交付元数据时省略该字段；损坏的快照显示 `mode: unknown`。
 
 ```json

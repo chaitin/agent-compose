@@ -1043,6 +1043,12 @@
           "optional": "true"
         },
         {
+          "name": "omit-scripts",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
           "name": "project-name",
           "shorthand": "p",
           "type": "string",
@@ -3087,9 +3093,12 @@
   "json_fields": {
     "agent_inspect": {
       "agent": "object",
+      "declared_config": "object",
       "latest_run": "object",
+      "omitted_scripts": "array",
       "project": "object",
       "running_sandboxes": "array",
+      "runtime": "object",
       "schedulers": "array"
     },
     "agent_list": {
@@ -3190,7 +3199,10 @@
     },
     "project": {
       "agents": "array",
+      "declared_config": "object",
+      "omitted_scripts": "array",
       "project": "object",
+      "runtime": "object",
       "schedulers": "array"
     },
     "project_list": {
