@@ -150,6 +150,122 @@ func assertProviderResponseRedacted(t *testing.T, message proto.Message) {
 	}
 }
 
+// newLLMProviderTestClient starts an in-process LLM service over an in-memory
+// store and returns a connected client plus the backing store for assertions.
+func newLLMProviderTestClient(t *testing.T) (agentcomposev2connect.LLMServiceClient, *configstore.ConfigStore) {
+	t.Helper()
+	db, err := storagesqlite.Open(":memory:", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	store := configstore.FromDB(db.DB())
+	path, handler := agentcomposev2connect.NewLLMServiceHandler(NewLLMHandler(nil, store))
+	mux := http.NewServeMux()
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return agentcomposev2connect.NewLLMServiceClient(server.Client(), server.URL), store
+}
+
+// A Get response reports the stored override, so a client that edits one field
+// and writes the whole object back does not freeze the protocol convention into
+// an override that then survives a protocol change.
+func TestIntegrationLLMProviderAuthRoundTripKeepsConvention(t *testing.T) {
+	ctx := context.Background()
+	client, store := newLLMProviderTestClient(t)
+
+	created, err := client.CreateProvider(ctx, connect.NewRequest(&agentcomposev2.CreateProviderRequest{Provider: &agentcomposev2.LLMProviderSpec{
+		Id: "gateway", BaseUrl: "https://gateway.example/v1", Protocol: "responses", ApiKey: proto.String("upstream-secret"),
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := created.Msg.Provider.GetAuth(); got != agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_UNSPECIFIED {
+		t.Fatalf("create reported auth = %v, want no override", got)
+	}
+
+	// Edit only the base URL and echo the rest of the object back, the way a
+	// Get -> Update client does.
+	echoed := created.Msg.Provider
+	if _, err := client.UpdateProvider(ctx, connect.NewRequest(&agentcomposev2.UpdateProviderRequest{Provider: &agentcomposev2.LLMProviderSpec{
+		Id: echoed.GetId(), Name: echoed.GetName(), BaseUrl: "https://moved.example/v1", Protocol: echoed.GetProtocol(),
+		ApiKey: proto.String("upstream-secret"), Enabled: proto.Bool(echoed.GetEnabled()), Auth: authPtr(echoed.GetAuth()),
+	}})); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := store.GetManagedLLMProvider(ctx, "gateway")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Auth != "" {
+		t.Fatalf("echoed response hardened the convention into %q", saved.Auth)
+	}
+
+	// Changing the protocol now follows the new convention rather than the header
+	// the responses protocol happened to use.
+	if _, err := client.UpdateProvider(ctx, connect.NewRequest(&agentcomposev2.UpdateProviderRequest{Provider: &agentcomposev2.LLMProviderSpec{
+		Id: "gateway", Protocol: "anthropic_messages",
+	}})); err != nil {
+		t.Fatal(err)
+	}
+	saved, err = store.GetManagedLLMProvider(ctx, "gateway")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.AuthHeader != "x-api-key" || saved.AuthScheme != "" {
+		t.Fatalf("protocol change kept the old header: %#v", saved)
+	}
+}
+
+// An explicit unspecified auth clears a stored override; an absent one preserves it.
+func TestIntegrationLLMProviderAuthOverrideCanBeCleared(t *testing.T) {
+	ctx := context.Background()
+	client, store := newLLMProviderTestClient(t)
+
+	if _, err := client.CreateProvider(ctx, connect.NewRequest(&agentcomposev2.CreateProviderRequest{Provider: &agentcomposev2.LLMProviderSpec{
+		Id: "gateway", BaseUrl: "https://gateway.example/v1", Protocol: "anthropic_messages", ApiKey: proto.String("upstream-secret"),
+		Auth: authPtr(agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_BEARER),
+	}})); err != nil {
+		t.Fatal(err)
+	}
+	preserved, err := client.UpdateProvider(ctx, connect.NewRequest(&agentcomposev2.UpdateProviderRequest{Provider: &agentcomposev2.LLMProviderSpec{Id: "gateway", Name: "renamed"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := preserved.Msg.Provider.GetAuth(); got != agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_BEARER {
+		t.Fatalf("absent auth changed the override to %v", got)
+	}
+	cleared, err := client.UpdateProvider(ctx, connect.NewRequest(&agentcomposev2.UpdateProviderRequest{Provider: &agentcomposev2.LLMProviderSpec{
+		Id: "gateway", Auth: authPtr(agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_UNSPECIFIED),
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cleared.Msg.Provider.GetAuth(); got != agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_UNSPECIFIED {
+		t.Fatalf("explicit unspecified auth reported %v, want no override", got)
+	}
+	saved, err := store.GetManagedLLMProvider(ctx, "gateway")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Auth != "" || saved.AuthHeader != "x-api-key" || saved.AuthScheme != "" {
+		t.Fatalf("cleared provider = %#v, want the anthropic_messages convention", saved)
+	}
+}
+
+func TestE2ELLMProviderAuthRoundTripKeepsConvention(t *testing.T) {
+	TestIntegrationLLMProviderAuthRoundTripKeepsConvention(t)
+}
+
+func TestE2ELLMProviderAuthOverrideCanBeCleared(t *testing.T) {
+	TestIntegrationLLMProviderAuthOverrideCanBeCleared(t)
+}
+
 func TestE2ELLMProviderConnectLifecycle(t *testing.T) {
 	TestIntegrationLLMProviderConnectLifecycle(t)
 }

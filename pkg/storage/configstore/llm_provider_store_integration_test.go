@@ -288,7 +288,7 @@ func TestIntegrationManagedProviderAuthPresentation(t *testing.T) {
 
 	// Naming the presentation overrides only the header, not the wire protocol.
 	if _, err := store.CreateLLMProvider(ctx, llms.ProviderReplacement{
-		ID: "bearer", BaseURL: "https://bearer.example", Protocol: llms.APIProtocolMessages, APIKey: &key, Auth: llms.ProviderAuthBearer,
+		ID: "bearer", BaseURL: "https://bearer.example", Protocol: llms.APIProtocolMessages, APIKey: &key, Auth: providerAuthPtr(llms.ProviderAuthBearer),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +307,7 @@ func TestIntegrationManagedProviderAuthPresentation(t *testing.T) {
 	}
 
 	// An update that only changes the presentation preserves the rest of the row.
-	updated, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "messages", Auth: llms.ProviderAuthBearer})
+	updated, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "messages", Auth: providerAuthPtr(llms.ProviderAuthBearer)})
 	if err != nil {
 		t.Fatal(err)
 	}

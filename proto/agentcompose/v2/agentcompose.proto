@@ -2299,7 +2299,9 @@ message LLMProvider {
   bool api_key_set = 6;
   google.protobuf.Timestamp created_at = 7;
   google.protobuf.Timestamp updated_at = 8;
-  // Effective credential presentation, including the protocol convention.
+  // Explicit credential presentation override. UNSPECIFIED means the connection
+  // follows the protocol convention. Reporting the override rather than the
+  // effective header keeps a Get response safe to send back through Update.
   LLMProviderAuth auth = 9;
 }
 
@@ -2315,8 +2317,10 @@ message LLMProviderSpec {
   optional string api_key = 5;
   // Absent means enabled, including on replacement updates.
   optional bool enabled = 6;
-  // Credential presentation. Absent on create keeps the protocol convention;
-  // absent on update preserves the stored value.
+  // Credential presentation override. Absent on create keeps the protocol
+  // convention and absent on update preserves the stored override; an explicit
+  // UNSPECIFIED clears a stored override so the connection follows the protocol
+  // convention again.
   optional LLMProviderAuth auth = 7;
 }
 message CreateProviderRequest { LLMProviderSpec provider = 1; }

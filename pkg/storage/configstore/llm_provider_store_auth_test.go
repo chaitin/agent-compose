@@ -7,6 +7,10 @@ import (
 	"github.com/chaitin/agent-compose/pkg/llms"
 )
 
+func providerAuthPtr(auth llms.ProviderAuth) *llms.ProviderAuth {
+	return &auth
+}
+
 // An update that names the protocol must not silently reset a stored explicit
 // credential presentation: the protocol only supplies a default, so an omitted
 // auth preserves the operator's override.
@@ -22,7 +26,7 @@ func TestIntegrationManagedProviderUpdatePreservesExplicitAuth(t *testing.T) {
 	// A bearer presentation on an Anthropic Messages connection is an override:
 	// the protocol convention would have sent x-api-key.
 	created, err := store.CreateLLMProvider(ctx, llms.ProviderReplacement{
-		ID: "gateway", BaseURL: "https://gateway.example", Protocol: llms.APIProtocolMessages, APIKey: &key, Auth: llms.ProviderAuthBearer,
+		ID: "gateway", BaseURL: "https://gateway.example", Protocol: llms.APIProtocolMessages, APIKey: &key, Auth: providerAuthPtr(llms.ProviderAuthBearer),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -44,16 +48,21 @@ func TestIntegrationManagedProviderUpdatePreservesExplicitAuth(t *testing.T) {
 		t.Fatalf("effective presentation = %q, want bearer", got)
 	}
 
-	// A protocol change keeps the explicit override...
+	// A protocol change keeps the explicit override even where it coincides with
+	// the new convention, so moving back restores the same header.
 	changed, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Protocol: llms.APIProtocolResponses})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed.DefaultWireAPI != llms.APIProtocolResponses || changed.AuthHeader != "Authorization" || changed.AuthScheme != "Bearer" {
+	if changed.DefaultWireAPI != llms.APIProtocolResponses || changed.AuthHeader != "Authorization" || changed.AuthScheme != "Bearer" || changed.Auth != llms.ProviderAuthBearer {
 		t.Fatalf("protocol change dropped the explicit override: %#v", changed)
 	}
-	if got := llms.ProviderAuthFromWire(changed.AuthHeader, changed.AuthScheme); got != llms.ProviderAuthBearer {
-		t.Fatalf("effective presentation = %q after the protocol change, want bearer", got)
+	restored, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Protocol: llms.APIProtocolMessages})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.AuthHeader != "Authorization" || restored.AuthScheme != "Bearer" {
+		t.Fatalf("override did not survive a protocol round trip: %#v", restored)
 	}
 
 	// ...while a connection that only ever used the convention refreshes with it.
@@ -75,12 +84,29 @@ func TestIntegrationManagedProviderUpdatePreservesExplicitAuth(t *testing.T) {
 	}
 
 	// An explicit auth changes only the presentation, not the wire protocol.
-	flipped, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Auth: llms.ProviderAuthXAPIKey})
+	flipped, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Auth: providerAuthPtr(llms.ProviderAuthXAPIKey)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if flipped.AuthHeader != "x-api-key" || flipped.AuthScheme != "" || flipped.DefaultWireAPI != llms.APIProtocolResponses {
+	if flipped.AuthHeader != "x-api-key" || flipped.AuthScheme != "" || flipped.DefaultWireAPI != llms.APIProtocolMessages || flipped.Auth != llms.ProviderAuthXAPIKey {
 		t.Fatalf("explicit auth only update = %#v", flipped)
+	}
+
+	// An explicit empty auth clears the override so the connection follows the
+	// protocol convention again.
+	cleared, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Auth: providerAuthPtr("")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.Auth != "" || cleared.AuthHeader != "x-api-key" || cleared.AuthScheme != "" {
+		t.Fatalf("clearing auth = %#v, want the anthropic_messages convention", cleared)
+	}
+	followed, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Protocol: llms.APIProtocolResponses})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if followed.AuthHeader != "Authorization" || followed.AuthScheme != "Bearer" {
+		t.Fatalf("cleared connection did not follow the protocol convention: %#v", followed)
 	}
 }
 

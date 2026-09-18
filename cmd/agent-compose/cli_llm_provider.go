@@ -271,7 +271,7 @@ func writeLLMProviderInspectText(out io.Writer, provider composeLLMProviderOutpu
 		firstNonEmptyString(provider.Name, "-"),
 		firstNonEmptyString(provider.BaseURL, "-"),
 		firstNonEmptyString(provider.Protocol, "-"),
-		firstNonEmptyString(provider.Auth, "-"),
+		firstNonEmptyString(provider.Auth, "protocol default"),
 		provider.Enabled,
 		provider.APIKeySet,
 		firstNonEmptyString(provider.CreatedAt, "-"),
@@ -281,9 +281,10 @@ func writeLLMProviderInspectText(out io.Writer, provider composeLLMProviderOutpu
 }
 
 // llmProviderAuthFromFlag maps the --auth flag value onto the request enum. An
-// empty flag leaves the presentation unset, which keeps the stored or
-// protocol-default value; a misspelled value is rejected instead of silently
-// keeping the default.
+// empty flag leaves the presentation unspecified, which keeps the stored or
+// protocol-default value; "protocol-default" sends the unspecified presentation
+// explicitly, which clears a stored override. A misspelled value is rejected
+// instead of silently keeping the default.
 func llmProviderAuthFromFlag(value string) (*agentcomposev2.LLMProviderAuth, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "":
@@ -294,12 +295,16 @@ func llmProviderAuthFromFlag(value string) (*agentcomposev2.LLMProviderAuth, err
 	case "bearer":
 		auth := agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_BEARER
 		return &auth, nil
+	case "protocol-default":
+		auth := agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_UNSPECIFIED
+		return &auth, nil
 	default:
-		return nil, fmt.Errorf("auth must be x-api-key or bearer")
+		return nil, fmt.Errorf("auth must be x-api-key, bearer, or protocol-default")
 	}
 }
 
-// llmProviderAuthFlagFromProto renders the effective presentation for humans.
+// llmProviderAuthFlagFromProto renders the stored override for humans. An empty
+// result means the connection follows the protocol convention.
 func llmProviderAuthFlagFromProto(auth agentcomposev2.LLMProviderAuth) string {
 	switch auth {
 	case agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_X_API_KEY:

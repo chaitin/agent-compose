@@ -26,12 +26,13 @@ func (s *llmStore) CreateLLMProvider(ctx context.Context, input llms.ProviderRep
 	if input.Enabled != nil {
 		enabled = *input.Enabled
 	}
-	family, header, scheme := managedProviderAuth(input.Protocol, input.Auth)
+	auth := providerAuthValue(input.Auth)
+	family, header, scheme := managedProviderAuth(input.Protocol, auth)
 	now := time.Now().UTC().Unix()
 	row := s.db.QueryRowContext(ctx, `INSERT INTO llm_provider (`+providerColumns+`)
  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 10, ?, ?, ?, ?)
  ON CONFLICT(id) DO NOTHING RETURNING `+providerColumns,
-		input.ID, input.Name, family, input.Protocol, input.BaseURL, *input.APIKey, header, scheme, string(input.Auth), llms.ManagedProviderHeadersJSON(input.Protocol), BoolToInt(enabled), llms.ProviderScopeAPI, now, now)
+		input.ID, input.Name, family, input.Protocol, input.BaseURL, *input.APIKey, header, scheme, string(auth), llms.ManagedProviderHeadersJSON(input.Protocol), BoolToInt(enabled), llms.ProviderScopeAPI, now, now)
 	provider, err := llms.ScanProvider(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return llms.Provider{}, fmt.Errorf("%w: provider id already exists", domain.ErrAlreadyExists)
@@ -84,9 +85,10 @@ func (s *llmStore) ListManagedLLMProviders(ctx context.Context) ([]llms.Provider
 
 // UpdateLLMProvider applies explicit fields and preserves omitted values.
 //
-// An omitted auth keeps the operator's stored presentation even when this update
+// An omitted auth keeps the operator's stored override even when this update
 // rewrites the protocol: the protocol only supplies the presentation default, so
-// an explicit override must survive a protocol-only change.
+// an override must survive a protocol-only change. An explicit empty auth clears
+// the override instead, returning the connection to the protocol convention.
 func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderReplacement) (llms.Provider, error) {
 	input, err := llms.NormalizeProviderUpdate(input)
 	if err != nil {
@@ -109,8 +111,8 @@ func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderRep
 		return llms.Provider{}, fmt.Errorf("%w: provider is not API-managed", domain.ErrFailedPrecondition)
 	}
 	presentation := stored.Auth
-	if input.Auth != "" {
-		presentation = input.Auth
+	if input.Auth != nil {
+		presentation = *input.Auth
 	}
 	protocol := stored.DefaultWireAPI
 	// The family and the protocol headers keep their stored values unless the
@@ -190,6 +192,15 @@ func managedProviderAuth(protocol string, auth llms.ProviderAuth) (family, heade
 	}
 	header, scheme = llms.ResolveProviderAuth(protocol, auth)
 	return family, header, scheme
+}
+
+// providerAuthValue reports the presentation a replacement names, or the empty
+// presentation when the request left it unspecified.
+func providerAuthValue(auth *llms.ProviderAuth) llms.ProviderAuth {
+	if auth == nil {
+		return ""
+	}
+	return *auth
 }
 
 func optionalBoolToSQL(value *bool) any {

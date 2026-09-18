@@ -26,7 +26,11 @@ type ProviderReplacement struct {
 	Protocol string
 	APIKey   *string
 	Enabled  *bool
-	Auth     ProviderAuth
+	// Auth is the explicit credential presentation. Nil means unspecified: the
+	// create default is the protocol convention and an update preserves the
+	// stored override. A non-nil empty presentation clears an override so the
+	// connection follows the protocol convention again.
+	Auth *ProviderAuth
 }
 
 // ValidateManagedProviderID rejects IDs reserved for environment bootstrap.
@@ -147,10 +151,16 @@ func normalizeProviderAPIKey(input *ProviderReplacement, required bool) error {
 
 // normalizeProviderAuth accepts only the presentations the daemon can put on the
 // wire; an unknown name must not silently fall back to the protocol convention.
+// A nil presentation stays unspecified, which is distinct from an explicit empty
+// one that clears a stored override.
 func normalizeProviderAuth(input *ProviderReplacement) error {
-	input.Auth = ProviderAuth(strings.ToLower(strings.TrimSpace(string(input.Auth))))
-	switch input.Auth {
+	if input.Auth == nil {
+		return nil
+	}
+	normalized := ProviderAuth(strings.ToLower(strings.TrimSpace(string(*input.Auth))))
+	switch normalized {
 	case "", ProviderAuthXAPIKey, ProviderAuthBearer:
+		input.Auth = &normalized
 		return nil
 	default:
 		return fmt.Errorf("%w: auth must be x-api-key or bearer", domain.ErrInvalidArgument)

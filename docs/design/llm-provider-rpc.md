@@ -29,10 +29,13 @@ OpenAI protocols and x-api-key for Anthropic Messages. A gateway can serve the
 Anthropic Messages wire protocol while authenticating with a bearer token, so a
 connection may override that presentation with auth = bearer or auth = x-api-key;
 the override changes only the header, not the protocol or endpoint. Responses
-report the effective presentation. Omitted auth preserves the stored
-presentation even when the same update changes protocol: a connection that never
-named an override follows the new protocol convention, while one that did keeps
-overriding it. An unknown presentation is rejected rather
+report the stored override rather than the effective header, so a Get response
+can be sent back through Update without freezing the protocol convention into an
+override; when the connection follows the convention the response carries the
+unspecified presentation. Because the spec's auth field is optional, an absent
+auth preserves the stored override even when the same update changes protocol,
+while an explicit unspecified auth clears the override and returns the connection
+to the protocol convention. An unknown presentation is rejected rather
 than falling back to the protocol default, because silently keeping x-api-key
 would resurface as an unexplained upstream 401. The environment-bootstrap path
 already chooses the same two presentations through ANTHROPIC_AUTH_TOKEN (Bearer)

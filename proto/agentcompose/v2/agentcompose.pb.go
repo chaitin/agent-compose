@@ -19082,7 +19082,9 @@ type LLMProvider struct {
 	ApiKeySet bool                   `protobuf:"varint,6,opt,name=api_key_set,json=apiKeySet,proto3" json:"api_key_set,omitempty"`
 	CreatedAt *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
-	// Effective credential presentation, including the protocol convention.
+	// Explicit credential presentation override. UNSPECIFIED means the connection
+	// follows the protocol convention. Reporting the override rather than the
+	// effective header keeps a Get response safe to send back through Update.
 	Auth          LLMProviderAuth `protobuf:"varint,9,opt,name=auth,proto3,enum=agentcompose.v2.LLMProviderAuth" json:"auth,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -19194,8 +19196,10 @@ type LLMProviderSpec struct {
 	ApiKey *string `protobuf:"bytes,5,opt,name=api_key,json=apiKey,proto3,oneof" json:"api_key,omitempty"`
 	// Absent means enabled, including on replacement updates.
 	Enabled *bool `protobuf:"varint,6,opt,name=enabled,proto3,oneof" json:"enabled,omitempty"`
-	// Credential presentation. Absent on create keeps the protocol convention;
-	// absent on update preserves the stored value.
+	// Credential presentation override. Absent on create keeps the protocol
+	// convention and absent on update preserves the stored override; an explicit
+	// UNSPECIFIED clears a stored override so the connection follows the protocol
+	// convention again.
 	Auth          *LLMProviderAuth `protobuf:"varint,7,opt,name=auth,proto3,enum=agentcompose.v2.LLMProviderAuth,oneof" json:"auth,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
