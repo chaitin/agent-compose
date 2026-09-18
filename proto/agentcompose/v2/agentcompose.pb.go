@@ -19200,7 +19200,8 @@ type LLMProviderSpec struct {
 	// Credential presentation override. Absent on create keeps the protocol
 	// convention and absent on update preserves the stored override; an explicit
 	// UNSPECIFIED clears a stored override so the connection follows the protocol
-	// convention again.
+	// convention again. A named value equal to the protocol in effect is not stored
+	// as an override, so a later protocol change refreshes the header.
 	Auth          *LLMProviderAuth `protobuf:"varint,7,opt,name=auth,proto3,enum=agentcompose.v2.LLMProviderAuth,oneof" json:"auth,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

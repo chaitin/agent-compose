@@ -13,7 +13,10 @@ import (
 
 const providerColumns = `id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, auth, headers_json, use_generic_responses_text_parts, weight, enabled, scope, created_at, updated_at`
 
-// CreateLLMProvider creates an API-owned upstream provider without changing defaults.
+// CreateLLMProvider creates an API-owned upstream provider without changing
+// defaults. A named presentation is recorded as an override only when it differs
+// from the protocol in effect, matching the migration and the environment
+// bootstrap, so naming the convention does not pin it across a protocol change.
 func (s *llmStore) CreateLLMProvider(ctx context.Context, input llms.ProviderReplacement) (llms.Provider, error) {
 	input, err := llms.NormalizeProviderReplacement(input)
 	if err != nil {
@@ -32,7 +35,7 @@ func (s *llmStore) CreateLLMProvider(ctx context.Context, input llms.ProviderRep
 	row := s.db.QueryRowContext(ctx, `INSERT INTO llm_provider (`+providerColumns+`)
  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 10, ?, ?, ?, ?)
  ON CONFLICT(id) DO NOTHING RETURNING `+providerColumns,
-		input.ID, input.Name, family, input.Protocol, input.BaseURL, *input.APIKey, header, scheme, string(auth), llms.ManagedProviderHeadersJSON(input.Protocol), BoolToInt(enabled), llms.ProviderScopeAPI, now, now)
+		input.ID, input.Name, family, input.Protocol, input.BaseURL, *input.APIKey, header, scheme, string(llms.ProviderAuthIntent(input.Protocol, header, scheme)), llms.ManagedProviderHeadersJSON(input.Protocol), BoolToInt(enabled), llms.ProviderScopeAPI, now, now)
 	provider, err := llms.ScanProvider(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return llms.Provider{}, fmt.Errorf("%w: provider id already exists", domain.ErrAlreadyExists)
@@ -85,10 +88,12 @@ func (s *llmStore) ListManagedLLMProviders(ctx context.Context) ([]llms.Provider
 
 // UpdateLLMProvider applies explicit fields and preserves omitted values.
 //
-// An omitted auth keeps the operator's stored override even when this update
-// rewrites the protocol: the protocol only supplies the presentation default, so
-// an override must survive a protocol-only change. An explicit empty auth clears
-// the override instead, returning the connection to the protocol convention.
+// An omitted auth carries the operator's stored override forward even when this
+// update rewrites the protocol, so a genuine override survives a protocol-only
+// change. A presentation this request names is recorded as an override only when
+// it differs from the protocol in effect, matching creation, the migration, and
+// the environment bootstrap; an explicit empty auth clears the override and
+// returns the connection to the protocol convention.
 func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderReplacement) (llms.Provider, error) {
 	input, err := llms.NormalizeProviderUpdate(input)
 	if err != nil {
@@ -125,9 +130,16 @@ func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderRep
 		headersJSON = llms.ManagedProviderHeadersJSON(input.Protocol)
 	}
 	_, header, scheme := managedProviderAuth(protocol, presentation)
+	// A stored override is carried forward untouched so a protocol change cannot
+	// erase it; only a presentation this request names is measured against the
+	// protocol in effect.
+	intent := presentation
+	if input.Auth != nil {
+		intent = llms.ProviderAuthIntent(protocol, header, scheme)
+	}
 	row := tx.QueryRowContext(ctx, `UPDATE llm_provider SET name = COALESCE(NULLIF(?, ''), name), provider_type = COALESCE(?, provider_type), default_wire_api = COALESCE(NULLIF(?, ''), default_wire_api), base_url = COALESCE(NULLIF(?, ''), base_url), api_key = COALESCE(?, api_key), auth_header = ?, auth_scheme = ?, auth = ?, headers_json = COALESCE(?, headers_json), enabled = COALESCE(?, enabled), updated_at = ?
  WHERE id = ? AND scope = ? RETURNING `+providerColumns,
-		input.Name, family, input.Protocol, input.BaseURL, input.APIKey, header, scheme, string(presentation), headersJSON, optionalBoolToSQL(input.Enabled), time.Now().UTC().Unix(), input.ID, llms.ProviderScopeAPI)
+		input.Name, family, input.Protocol, input.BaseURL, input.APIKey, header, scheme, string(intent), headersJSON, optionalBoolToSQL(input.Enabled), time.Now().UTC().Unix(), input.ID, llms.ProviderScopeAPI)
 	provider, err := llms.ScanProvider(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		// The row was readable and API-managed moments ago, so it changed under us.

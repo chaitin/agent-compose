@@ -83,13 +83,24 @@ func TestIntegrationManagedProviderUpdatePreservesExplicitAuth(t *testing.T) {
 		t.Fatalf("protocol change did not refresh the default presentation: %#v", refreshed)
 	}
 
-	// An explicit auth changes only the presentation, not the wire protocol.
-	flipped, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Auth: providerAuthPtr(llms.ProviderAuthXAPIKey)})
+	// Naming the protocol convention is not an override: the header changes but
+	// nothing is stored, so a later protocol change still refreshes it.
+	namedConvention, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Auth: providerAuthPtr(llms.ProviderAuthXAPIKey)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if flipped.AuthHeader != "x-api-key" || flipped.AuthScheme != "" || flipped.DefaultWireAPI != llms.APIProtocolMessages || flipped.Auth != llms.ProviderAuthXAPIKey {
-		t.Fatalf("explicit auth only update = %#v", flipped)
+	if namedConvention.Auth != "" || namedConvention.AuthHeader != "x-api-key" || namedConvention.AuthScheme != "" || namedConvention.DefaultWireAPI != llms.APIProtocolMessages {
+		t.Fatalf("naming the convention stored an override: %#v", namedConvention)
+	}
+
+	// Naming a presentation the protocol does not use is an override, and the
+	// update changes only the presentation, not the wire protocol.
+	overridden, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Auth: providerAuthPtr(llms.ProviderAuthBearer)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overridden.AuthHeader != "Authorization" || overridden.AuthScheme != "Bearer" || overridden.DefaultWireAPI != llms.APIProtocolMessages || overridden.Auth != llms.ProviderAuthBearer {
+		t.Fatalf("explicit auth only update = %#v", overridden)
 	}
 
 	// An explicit empty auth clears the override so the connection follows the
@@ -114,12 +125,12 @@ func TestE2EManagedProviderUpdatePreservesExplicitAuth(t *testing.T) {
 	TestIntegrationManagedProviderUpdatePreservesExplicitAuth(t)
 }
 
-// The RPC path records the presentation the operator named, so naming the
-// protocol convention explicitly is still a stored override. That is deliberate:
-// the migration and the environment bootstrap can only infer an override from a
-// stored header, and normalizing a named value away would silently drop it the
-// next time the protocol changed to one whose convention happens to match.
-func TestIntegrationManagedProviderExplicitConventionAuthIsAnOverride(t *testing.T) {
+// Naming the protocol convention is not an override: every write path — the RPC
+// create, the migration, and the environment bootstrap — records a presentation
+// only when it differs from the protocol in effect. Naming the convention
+// therefore leaves the connection following the protocol, while a presentation
+// that does differ is stored and survives a later protocol change.
+func TestIntegrationManagedProviderExplicitConventionAuthIsNotAnOverride(t *testing.T) {
 	clearLLMTestEnvironment(t)
 	ctx := context.Background()
 	store := FromDB(newMemoryDB(t))
@@ -128,37 +139,45 @@ func TestIntegrationManagedProviderExplicitConventionAuthIsAnOverride(t *testing
 	}
 	key := "gateway-key"
 
-	// x-api-key is the anthropic_messages convention, but the operator named it.
-	created, err := store.CreateLLMProvider(ctx, llms.ProviderReplacement{
-		ID: "gateway", BaseURL: "https://gateway.example", Protocol: llms.APIProtocolMessages, APIKey: &key, Auth: providerAuthPtr(llms.ProviderAuthXAPIKey),
+	// x-api-key is the anthropic_messages convention, so naming it stores no
+	// override and a later protocol change refreshes the header.
+	conventional, err := store.CreateLLMProvider(ctx, llms.ProviderReplacement{
+		ID: "conventional", BaseURL: "https://conventional.example", Protocol: llms.APIProtocolMessages, APIKey: &key, Auth: providerAuthPtr(llms.ProviderAuthXAPIKey),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Auth != llms.ProviderAuthXAPIKey {
-		t.Fatalf("created = %#v, want the named presentation recorded", created)
+	if conventional.Auth != "" || conventional.AuthHeader != "x-api-key" || conventional.AuthScheme != "" {
+		t.Fatalf("created = %#v, want the convention left unstored", conventional)
 	}
-
-	// Changing the protocol keeps it, so a gateway configured for x-api-key does
-	// not silently lose that choice on the way to another protocol.
-	changed, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Protocol: llms.APIProtocolResponses})
+	refreshed, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "conventional", Protocol: llms.APIProtocolResponses})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed.AuthHeader != "x-api-key" || changed.AuthScheme != "" || changed.Auth != llms.ProviderAuthXAPIKey {
-		t.Fatalf("named presentation was dropped by the protocol change: %#v", changed)
+	if refreshed.Auth != "" || refreshed.AuthHeader != "Authorization" || refreshed.AuthScheme != "Bearer" {
+		t.Fatalf("conventional provider did not follow the new protocol: %#v", refreshed)
 	}
 
-	// Clearing it returns the connection to the protocol convention.
-	cleared, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Auth: providerAuthPtr("")})
+	// bearer differs from the messages convention, so it is stored and kept
+	// across the same protocol change.
+	override, err := store.CreateLLMProvider(ctx, llms.ProviderReplacement{
+		ID: "override", BaseURL: "https://override.example", Protocol: llms.APIProtocolMessages, APIKey: &key, Auth: providerAuthPtr(llms.ProviderAuthBearer),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cleared.Auth != "" || cleared.AuthHeader != "Authorization" || cleared.AuthScheme != "Bearer" {
-		t.Fatalf("cleared provider = %#v, want the responses convention", cleared)
+	if override.Auth != llms.ProviderAuthBearer || override.AuthHeader != "Authorization" || override.AuthScheme != "Bearer" {
+		t.Fatalf("created = %#v, want a stored bearer override", override)
+	}
+	carried, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "override", Protocol: llms.APIProtocolResponses})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if carried.Auth != llms.ProviderAuthBearer || carried.AuthHeader != "Authorization" || carried.AuthScheme != "Bearer" {
+		t.Fatalf("stored override was dropped by the protocol change: %#v", carried)
 	}
 }
 
-func TestE2EManagedProviderExplicitConventionAuthIsAnOverride(t *testing.T) {
-	TestIntegrationManagedProviderExplicitConventionAuthIsAnOverride(t)
+func TestE2EManagedProviderExplicitConventionAuthIsNotAnOverride(t *testing.T) {
+	TestIntegrationManagedProviderExplicitConventionAuthIsNotAnOverride(t)
 }

@@ -32,12 +32,14 @@ the override changes only the header, not the protocol or endpoint. Responses
 report the stored override rather than the effective header, so a Get response
 can be sent back through Update without freezing the protocol convention into an
 override; a connection with no stored override carries the unspecified
-presentation. The migration and the environment bootstrap can only infer an
-override from a stored header, so they record the empty presentation for a row
-that matches its protocol convention, while the RPC write path records what the
-operator named: naming the convention explicitly is still a stored override
-there, which is what keeps it from being silently dropped by a later protocol
-change. Because the spec's auth field is optional, an absent
+presentation. Every write path records an override only when the presentation
+differs from the protocol in effect: the migration and the environment bootstrap
+infer that difference from a stored header, and the RPC create and update paths
+measure the presentation the request names against the same protocol. Naming the
+convention therefore stores nothing, so a later protocol change refreshes the
+header instead of pinning it, while a presentation that does differ is stored and
+carried forward even when a later update changes the protocol. Because the spec's
+auth field is optional, an absent
 auth preserves the stored override even when the same update changes protocol,
 while an explicit unspecified auth clears the override and returns the connection
 to the protocol convention. An unknown presentation is rejected rather
