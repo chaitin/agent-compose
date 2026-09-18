@@ -63,3 +63,16 @@ func ProviderAuthFromWire(header, scheme string) ProviderAuth {
 		return ""
 	}
 }
+
+// ProviderAuthIntent records an explicit presentation only when it differs from
+// the protocol convention. Storage keeps that intent beside the effective
+// header, so an update that omits auth can preserve an override without pinning
+// a header that was merely the protocol default.
+func ProviderAuthIntent(protocol, header, scheme string) ProviderAuth {
+	presentation := ProviderAuthFromWire(header, scheme)
+	defaultHeader, defaultScheme := ProviderProtocolAuth(protocol)
+	if presentation == "" || presentation == ProviderAuthFromWire(defaultHeader, defaultScheme) {
+		return ""
+	}
+	return presentation
+}

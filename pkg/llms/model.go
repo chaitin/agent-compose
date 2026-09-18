@@ -38,6 +38,9 @@ type Provider struct {
 	Scope                        string
 	CreatedAt                    time.Time
 	UpdatedAt                    time.Time
+	// Auth is the operator's explicit credential presentation. Empty means the
+	// protocol convention decided AuthHeader and AuthScheme.
+	Auth ProviderAuth
 }
 
 type Model struct {

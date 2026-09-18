@@ -616,8 +616,8 @@ the service path prefix.
   `anthropic_messages`. Set `"auth": "bearer"` when a gateway serves the
   Anthropic Messages protocol but authenticates with `Authorization: Bearer`;
   set `"auth": "x-api-key"` for the reverse. The override changes only the
-  header. An unknown value is rejected. Responses report the effective value,
-  and omitting `auth` on update preserves it.
+  header, not the wire protocol. An unknown value is rejected. Responses report
+  the effective value.
 - `apiKey` is literal, without environment interpolation. Create requires a
   nonempty key. On update, omission preserves it, a nonempty value rotates it,
   and an empty value is invalid. Responses expose only `apiKeySet`, never the key.
@@ -626,8 +626,10 @@ the service path prefix.
   default; other protocols send no extra headers.
 - `UpdateProvider` uses the same `provider` object. Omitted `name`, `baseUrl`,
   `protocol`, `apiKey`, `auth`, and `enabled` preserve stored values. Present
-  nonempty `apiKey` rotates the key; present empty is invalid. Protocol changes
-  also refresh authentication headers.
+  nonempty `apiKey` rotates the key; present empty is invalid. Omitting `auth`
+  preserves the stored presentation even when the same update changes
+  `protocol`: a connection that never named an explicit `auth` follows the new
+  protocol convention, while one that did keeps overriding it.
 - CLI: `agent-compose llm provider ls|create|inspect|update|rm`. Create requires
   `--base-url`, `--protocol`, and `--api-key`. Update sends only flags that are
   set, so `update --base-url ...` does not re-enable a disabled provider.

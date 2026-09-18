@@ -11,7 +11,7 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
-const providerColumns = `id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, headers_json, use_generic_responses_text_parts, weight, enabled, scope, created_at, updated_at`
+const providerColumns = `id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, auth, headers_json, use_generic_responses_text_parts, weight, enabled, scope, created_at, updated_at`
 
 // CreateLLMProvider creates an API-owned upstream provider without changing defaults.
 func (s *llmStore) CreateLLMProvider(ctx context.Context, input llms.ProviderReplacement) (llms.Provider, error) {
@@ -29,9 +29,9 @@ func (s *llmStore) CreateLLMProvider(ctx context.Context, input llms.ProviderRep
 	family, header, scheme := managedProviderAuth(input.Protocol, input.Auth)
 	now := time.Now().UTC().Unix()
 	row := s.db.QueryRowContext(ctx, `INSERT INTO llm_provider (`+providerColumns+`)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 10, ?, ?, ?, ?)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 10, ?, ?, ?, ?)
  ON CONFLICT(id) DO NOTHING RETURNING `+providerColumns,
-		input.ID, input.Name, family, input.Protocol, input.BaseURL, *input.APIKey, header, scheme, llms.ManagedProviderHeadersJSON(input.Protocol), BoolToInt(enabled), llms.ProviderScopeAPI, now, now)
+		input.ID, input.Name, family, input.Protocol, input.BaseURL, *input.APIKey, header, scheme, string(input.Auth), llms.ManagedProviderHeadersJSON(input.Protocol), BoolToInt(enabled), llms.ProviderScopeAPI, now, now)
 	provider, err := llms.ScanProvider(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return llms.Provider{}, fmt.Errorf("%w: provider id already exists", domain.ErrAlreadyExists)
@@ -83,25 +83,59 @@ func (s *llmStore) ListManagedLLMProviders(ctx context.Context) ([]llms.Provider
 }
 
 // UpdateLLMProvider applies explicit fields and preserves omitted values.
+//
+// An omitted auth keeps the operator's stored presentation even when this update
+// rewrites the protocol: the protocol only supplies the presentation default, so
+// an explicit override must survive a protocol-only change.
 func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderReplacement) (llms.Provider, error) {
 	input, err := llms.NormalizeProviderUpdate(input)
 	if err != nil {
 		return llms.Provider{}, err
 	}
-	family, header, scheme, headersJSON := managedProviderUpdateColumns(input.Protocol, input.Auth)
-	row := s.db.QueryRowContext(ctx, `UPDATE llm_provider SET name = COALESCE(NULLIF(?, ''), name), provider_type = COALESCE(?, provider_type), default_wire_api = COALESCE(NULLIF(?, ''), default_wire_api), base_url = COALESCE(NULLIF(?, ''), base_url), api_key = COALESCE(?, api_key), auth_header = COALESCE(?, auth_header), auth_scheme = CASE WHEN ? IS NOT NULL THEN ? ELSE auth_scheme END, headers_json = COALESCE(?, headers_json), enabled = COALESCE(?, enabled), updated_at = ?
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return llms.Provider{}, fmt.Errorf("begin provider update: %w", err)
+	}
+	// Rollback after commit is harmless; on errors it releases the transaction.
+	defer func() { _ = tx.Rollback() }()
+	stored, err := llms.ScanProvider(tx.QueryRowContext(ctx, `SELECT `+providerColumns+` FROM llm_provider WHERE id = ?`, input.ID).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return llms.Provider{}, fmt.Errorf("%w: llm provider not found", domain.ErrNotFound)
+	}
+	if err != nil {
+		return llms.Provider{}, fmt.Errorf("read llm provider for update: %w", err)
+	}
+	if stored.Scope != llms.ProviderScopeAPI {
+		return llms.Provider{}, fmt.Errorf("%w: provider is not API-managed", domain.ErrFailedPrecondition)
+	}
+	presentation := stored.Auth
+	if input.Auth != "" {
+		presentation = input.Auth
+	}
+	protocol := stored.DefaultWireAPI
+	// The family and the protocol headers keep their stored values unless the
+	// request replaces the protocol, so an auth-only update cannot rewrite them.
+	var family, headersJSON any
+	if input.Protocol != "" {
+		protocol = input.Protocol
+		effectiveFamily, _, _ := managedProviderAuth(input.Protocol, presentation)
+		family = effectiveFamily
+		headersJSON = llms.ManagedProviderHeadersJSON(input.Protocol)
+	}
+	_, header, scheme := managedProviderAuth(protocol, presentation)
+	row := tx.QueryRowContext(ctx, `UPDATE llm_provider SET name = COALESCE(NULLIF(?, ''), name), provider_type = COALESCE(?, provider_type), default_wire_api = COALESCE(NULLIF(?, ''), default_wire_api), base_url = COALESCE(NULLIF(?, ''), base_url), api_key = COALESCE(?, api_key), auth_header = ?, auth_scheme = ?, auth = ?, headers_json = COALESCE(?, headers_json), enabled = COALESCE(?, enabled), updated_at = ?
  WHERE id = ? AND scope = ? RETURNING `+providerColumns,
-		input.Name, family, input.Protocol, input.BaseURL, input.APIKey, header, header, scheme, headersJSON, optionalBoolToSQL(input.Enabled), time.Now().UTC().Unix(), input.ID, llms.ProviderScopeAPI)
+		input.Name, family, input.Protocol, input.BaseURL, input.APIKey, header, scheme, string(presentation), headersJSON, optionalBoolToSQL(input.Enabled), time.Now().UTC().Unix(), input.ID, llms.ProviderScopeAPI)
 	provider, err := llms.ScanProvider(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
-		_, err = s.GetManagedLLMProvider(ctx, input.ID)
-		if err == nil {
-			err = fmt.Errorf("%w: provider changed during update", domain.ErrConflict)
-		}
-		return llms.Provider{}, err
+		// The row was readable and API-managed moments ago, so it changed under us.
+		return llms.Provider{}, fmt.Errorf("%w: provider changed during update", domain.ErrConflict)
 	}
 	if err != nil {
 		return llms.Provider{}, fmt.Errorf("update llm provider: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return llms.Provider{}, fmt.Errorf("commit provider update: %w", err)
 	}
 	return provider, nil
 }
@@ -156,22 +190,6 @@ func managedProviderAuth(protocol string, auth llms.ProviderAuth) (family, heade
 	}
 	header, scheme = llms.ResolveProviderAuth(protocol, auth)
 	return family, header, scheme
-}
-
-// managedProviderUpdateColumns derives the columns an update must rewrite. An
-// empty protocol and auth leave the stored credential presentation untouched.
-func managedProviderUpdateColumns(protocol string, auth llms.ProviderAuth) (family, header, scheme, headersJSON any) {
-	if protocol == "" && auth == "" {
-		return nil, nil, nil, nil
-	}
-	if protocol == "" {
-		// Only the presentation changed; the stored protocol keeps its family and
-		// headers, and the SQL preserves them.
-		header, scheme = llms.ProviderAuthWire(auth)
-		return nil, header, scheme, nil
-	}
-	family, header, scheme = managedProviderAuth(protocol, auth)
-	return family, header, scheme, llms.ManagedProviderHeadersJSON(protocol)
 }
 
 func optionalBoolToSQL(value *bool) any {
