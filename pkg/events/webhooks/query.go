@@ -3,6 +3,7 @@ package webhooks
 import (
 	"context"
 	"strings"
+	"time"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
@@ -47,7 +48,9 @@ func (s *traceService) trace(ctx context.Context, eventID string) (eventTraceVie
 	if s.sandboxes == nil {
 		return view, nil
 	}
-	summaries, summaryErr := s.sandboxes.ListSandboxSummaries(ctx, eventTraceSandboxIDs(trace.SandboxLinks))
+	summaryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	summaries, summaryErr := s.sandboxes.ListSandboxSummaries(summaryCtx, eventTraceSandboxIDs(trace.SandboxLinks))
 	if summaryErr != nil && ctx.Err() != nil {
 		return eventTraceView{}, ctx.Err()
 	}

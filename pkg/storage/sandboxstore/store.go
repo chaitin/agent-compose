@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -54,8 +53,7 @@ type Store struct {
 	cacheDependencyMu     sync.RWMutex
 	cacheDependencyLocker CacheDependencyLocker
 	index                 *sandboxCache
-	indexRepairMu         sync.Mutex
-	indexDirty            atomic.Bool
+	indexRepairs          *sandboxIndexRepairs
 	projectResolver       SandboxProjectResolver
 }
 
@@ -153,6 +151,7 @@ func newStoreWithIndex(config *appconfig.Config, init storeIndexInit) (*Store, e
 			return store, nil
 		}
 	}
+	store.startIndexRepairs()
 	return store, nil
 }
 
@@ -178,6 +177,9 @@ func FromConfig(config *appconfig.Config) *Store {
 // Close releases database resources owned by compatibility stores. Stores
 // created with NewWithDatabase leave the caller-owned shared database open.
 func (s *Store) Close() error {
+	if s.indexRepairs != nil {
+		s.indexRepairs.stop()
+	}
 	var err error
 	if s.index != nil {
 		err = s.index.Close()
@@ -192,12 +194,6 @@ func (s *Store) Close() error {
 func (s *Store) Shutdown() error {
 	return s.Close()
 }
-
-// rebuildIndex repopulates the sandbox listing cache from the filesystem and, only if it
-// runs to completion, stamps the schema version so the index is treated as
-// current. An interrupted rebuild (crash or transient read/upsert error)
-// leaves the version unstamped so the next startup retries it rather than
-// serving a partially-populated index.
 
 func (s *Store) SetCacheDependencyLocker(locker CacheDependencyLocker) {
 	s.cacheDependencyMu.Lock()

@@ -355,23 +355,6 @@ func TestUpdateSandboxSynchronizesIndexAfterRequestCancellation(t *testing.T) {
 	}
 }
 
-func TestListSandboxesRepairsDirtyIndexBeforeQuery(t *testing.T) {
-	store := newTestStore(t)
-	sandbox := seedSandboxDir(t, store, "dirty-repair", time.Unix(100, 0).UTC())
-	store.indexDirty.Store(true)
-
-	result, err := store.ListSandboxes(context.Background(), domain.SandboxListOptions{})
-	if err != nil {
-		t.Fatalf("list sandboxes: %v", err)
-	}
-	if got := ids(result.Sandboxes); len(got) != 1 || got[0] != sandbox.Summary.ID {
-		t.Fatalf("sandboxes = %v, want [%s]", got, sandbox.Summary.ID)
-	}
-	if store.indexDirty.Load() {
-		t.Fatal("index remained dirty after successful repair")
-	}
-}
-
 func TestAddEventReturnsSuccessOnceAppendIsCommitted(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

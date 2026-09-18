@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/chaitin/agent-compose/pkg/idset"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -23,21 +24,48 @@ func (s *Store) ListSandboxSummaries(ctx context.Context, sandboxIDs []string) (
 		return map[string]domain.SandboxSummary{}, nil
 	}
 
+	indexedIDs, fallbackIDs := s.partitionSandboxSummaryIDs(ids)
+	summaries := make(map[string]domain.SandboxSummary, len(ids))
 	var cacheErr error
-	if s.index != nil {
-		if err := s.ensureIndexCurrent(ctx); err != nil {
+	if len(indexedIDs) > 0 {
+		// Leave time for filesystem fallback when the shared connection pool is
+		// busy. Optional summaries must not wait for cache repair or pool recovery.
+		queryCtx, cancel := context.WithTimeout(ctx, time.Second)
+		indexed, err := s.index.listSummaries(queryCtx, indexedIDs, s.sandboxDir)
+		cancel()
+		if err != nil {
 			cacheErr = err
+			fallbackIDs = append(fallbackIDs, indexedIDs...)
 		} else {
-			summaries, err := s.index.listSummaries(ctx, ids, s.sandboxDir)
-			if err == nil {
-				return summaries, nil
+			for id, summary := range indexed {
+				summaries[id] = summary
 			}
-			cacheErr = err
 		}
 	}
-
-	summaries, filesystemErr := s.listSandboxSummariesFromFilesystem(ctx, ids)
+	// A write may have failed while the projection was being queried. Override
+	// any newly dirty results from authoritative metadata as well.
+	for _, id := range indexedIDs {
+		if s.indexRepairs != nil && s.indexRepairs.revision(id) != 0 {
+			delete(summaries, id)
+			fallbackIDs = append(fallbackIDs, id)
+		}
+	}
+	fallback, filesystemErr := s.listSandboxSummariesFromFilesystem(ctx, idset.Normalize(fallbackIDs))
+	for id, summary := range fallback {
+		summaries[id] = summary
+	}
 	return summaries, errors.Join(cacheErr, filesystemErr)
+}
+
+func (s *Store) partitionSandboxSummaryIDs(ids []string) (indexed, fallback []string) {
+	for _, id := range ids {
+		if s.index == nil || (s.indexRepairs != nil && s.indexRepairs.revision(id) != 0) {
+			fallback = append(fallback, id)
+		} else {
+			indexed = append(indexed, id)
+		}
+	}
+	return indexed, fallback
 }
 
 func (s *Store) listSandboxSummariesFromFilesystem(ctx context.Context, ids []string) (map[string]domain.SandboxSummary, error) {

@@ -20,22 +20,6 @@ func (s *Store) completeIndexRebuild(ctx context.Context) error {
 	return s.index.markComplete(ctx)
 }
 
-func (s *Store) ensureIndexCurrent(ctx context.Context) error {
-	if !s.indexDirty.Load() {
-		return nil
-	}
-	s.indexRepairMu.Lock()
-	defer s.indexRepairMu.Unlock()
-	if !s.indexDirty.Load() {
-		return nil
-	}
-	if err := s.completeIndexRebuild(ctx); err != nil {
-		return fmt.Errorf("repair sandbox listing cache: %w", err)
-	}
-	s.indexDirty.Store(false)
-	return nil
-}
-
 // runIndexRebuild does the actual repopulation. It returns a non-nil error when
 // the rebuild did not fully finish (context cancelled, root unreadable, an index
 // upsert failed, or reconcile failed), which the caller uses to decide whether

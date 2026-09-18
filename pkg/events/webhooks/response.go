@@ -97,10 +97,11 @@ func eventSummaryToJSON(item domain.EventSummary) EventSummaryJSON {
 
 func eventTraceResponseFor(view eventTraceView) EventTraceResponse {
 	resp := EventTraceResponse{
-		Event:                eventSummaryToJSON(view.Trace.Event),
-		Runs:                 make([]EventRunTraceJSON, 0, len(view.Trace.Runs)),
-		Sandboxes:            make([]EventTraceSandboxJSON, 0, len(view.Trace.SandboxLinks)),
-		DescendantsTruncated: view.Trace.DescendantsTruncated,
+		SandboxSummariesIncomplete: view.SandboxSummaryError != nil,
+		Event:                      eventSummaryToJSON(view.Trace.Event),
+		Runs:                       make([]EventRunTraceJSON, 0, len(view.Trace.Runs)),
+		Sandboxes:                  make([]EventTraceSandboxJSON, 0, len(view.Trace.SandboxLinks)),
+		DescendantsTruncated:       view.Trace.DescendantsTruncated,
 	}
 	schedulers := make(map[string]domain.EventSchedulerSummary)
 	for _, trace := range view.Trace.Runs {

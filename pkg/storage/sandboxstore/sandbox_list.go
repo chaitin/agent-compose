@@ -28,9 +28,6 @@ func (s *Store) ListSandboxes(ctx context.Context, options SandboxListOptions) (
 	if s.index == nil {
 		return s.listSandboxesFromFilesystem(ctx, options)
 	}
-	if err := s.ensureIndexCurrent(ctx); err != nil {
-		return SandboxListResult{}, err
-	}
 	offset, limit := sandboxes.NormalizeListBounds(options.Offset, options.Limit)
 	queryOffset := 0
 	skipped := 0
