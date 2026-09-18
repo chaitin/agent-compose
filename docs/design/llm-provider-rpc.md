@@ -36,17 +36,16 @@ presentation. Every write path records an override only when the presentation
 differs from the protocol in effect: the migration and the environment bootstrap
 infer that difference from a stored header, and the RPC create and update paths
 measure the presentation the request names against the same protocol. Naming the
-convention therefore stores nothing, so a later protocol change refreshes the
-header instead of pinning it, while a presentation that does differ is stored and
-carried forward even when a later update changes the protocol. Because the spec's
-auth field is optional, an absent
-auth preserves the stored override even when the same update changes protocol,
-while an explicit unspecified auth clears the override and returns the connection
-to the protocol convention. An unknown presentation is rejected rather
-than falling back to the protocol default, because silently keeping x-api-key
-would resurface as an unexplained upstream 401. The environment-bootstrap path
-already chooses the same two presentations through ANTHROPIC_AUTH_TOKEN (Bearer)
-and ANTHROPIC_API_KEY or LLM_API_KEY (x-api-key).
+convention therefore stores nothing, and a protocol change always returns the
+connection to the new protocol's convention: a stored override describes the
+protocol it was written for, so an update that omits auth and changes the
+protocol re-derives the presentation instead of carrying the old override
+forward. An explicit unspecified auth likewise clears the override and returns
+the connection to the protocol convention. An unknown presentation is rejected
+rather than falling back to the protocol default, because silently keeping
+x-api-key would resurface as an unexplained upstream 401. The
+environment-bootstrap path already chooses the same two presentations through
+ANTHROPIC_AUTH_TOKEN (Bearer) and ANTHROPIC_API_KEY or LLM_API_KEY (x-api-key).
 
 CLI `agent-compose llm provider` exposes ls, create, inspect, update, and rm.
 Create requires --base-url, --protocol, and --api-key. Update sends only flags

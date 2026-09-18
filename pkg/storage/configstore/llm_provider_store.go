@@ -88,12 +88,14 @@ func (s *llmStore) ListManagedLLMProviders(ctx context.Context) ([]llms.Provider
 
 // UpdateLLMProvider applies explicit fields and preserves omitted values.
 //
-// An omitted auth carries the operator's stored override forward even when this
-// update rewrites the protocol, so a genuine override survives a protocol-only
-// change. A presentation this request names is recorded as an override only when
-// it differs from the protocol in effect, matching creation, the migration, and
-// the environment bootstrap; an explicit empty auth clears the override and
-// returns the connection to the protocol convention.
+// A presentation this request names is recorded as an override only when it
+// differs from the protocol in effect, matching creation, the migration, and the
+// environment bootstrap; an explicit empty auth clears the override. When the
+// request omits auth, the stored presentation is preserved only while the
+// protocol is unchanged: a protocol change returns the connection to the new
+// protocol's convention, because an override describes the protocol it was
+// written for and carrying it forward could leave a stored override equal to the
+// convention, which the next read cannot distinguish from "follow the protocol".
 func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderReplacement) (llms.Provider, error) {
 	input, err := llms.NormalizeProviderUpdate(input)
 	if err != nil {
@@ -116,23 +118,33 @@ func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderRep
 		return llms.Provider{}, fmt.Errorf("%w: provider is not API-managed", domain.ErrFailedPrecondition)
 	}
 	presentation := stored.Auth
-	if input.Auth != nil {
-		presentation = *input.Auth
-	}
 	protocol := stored.DefaultWireAPI
+	if input.Protocol != "" {
+		protocol = input.Protocol
+	}
+	// The protocol selects the credential presentation. A presentation this
+	// request names is measured against the protocol in effect; an omitted one
+	// follows it whenever the protocol changed, so a stored override never ends
+	// up equal to the new convention — the ambiguous state that made a Get
+	// response unsafe to send back through Update.
+	switch {
+	case input.Auth != nil:
+		presentation = *input.Auth
+	case input.Protocol != "" && input.Protocol != stored.DefaultWireAPI:
+		presentation = ""
+	}
 	// The family and the protocol headers keep their stored values unless the
 	// request replaces the protocol, so an auth-only update cannot rewrite them.
 	var family, headersJSON any
 	if input.Protocol != "" {
-		protocol = input.Protocol
 		effectiveFamily, _, _ := managedProviderAuth(input.Protocol, presentation)
 		family = effectiveFamily
 		headersJSON = llms.ManagedProviderHeadersJSON(input.Protocol)
 	}
 	_, header, scheme := managedProviderAuth(protocol, presentation)
-	// A stored override is carried forward untouched so a protocol change cannot
-	// erase it; only a presentation this request names is measured against the
-	// protocol in effect.
+	// A named presentation is measured against the protocol in effect so naming
+	// the convention does not pin it. An omitted one is already an override or
+	// empty for the current protocol, and is preserved as stored.
 	intent := presentation
 	if input.Auth != nil {
 		intent = llms.ProviderAuthIntent(protocol, header, scheme)

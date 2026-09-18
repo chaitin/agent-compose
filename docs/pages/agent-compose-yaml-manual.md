@@ -630,8 +630,9 @@ the service path prefix.
 - `UpdateProvider` uses the same `provider` object. Omitted `name`, `baseUrl`,
   `protocol`, `apiKey`, `auth`, and `enabled` preserve stored values. Present
   nonempty `apiKey` rotates the key; present empty is invalid. An omitted `auth`
-  preserves the stored override even when the same update changes `protocol`,
-  so a connection that stored an override keeps it. An explicit empty `auth`
+  preserves the stored override only while `protocol` is unchanged: a change to
+  `protocol` re-derives the presentation from the new protocol, because an
+  override describes the protocol it was written for. An explicit empty `auth`
   clears the override, after which the connection follows the protocol
   convention again. Naming the protocol's own convention stores no override, so
   the connection keeps following the protocol instead of pinning the header.

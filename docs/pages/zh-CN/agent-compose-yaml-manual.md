@@ -621,9 +621,10 @@ API Key，与 Agent 的 `provider: codex` / `provider: pi` 无关。
   `anthropic_messages` 会默认发送 `anthropic-version: 2023-06-01`，其他协议不加额外 Header。
 - `UpdateProvider` 使用相同的 `provider` 对象。省略 `name`、`baseUrl`、`protocol`、
   `apiKey`、`auth`、`enabled` 时保留已存储值。提供非空 `apiKey` 会轮换密钥，空值无效。
-  省略 `auth` 会保留已存储的覆盖值，即使同一次更新修改了 `protocol`：已存储覆盖的连接
-  会继续沿用该覆盖。显式传入空 `auth` 则清除覆盖，此后连接重新跟随协议约定。显式指定
-  协议自身的约定不会存储覆盖值，连接会继续跟随协议而不会钉住旧 Header。
+  省略 `auth` 只在 `protocol` 不变时保留已存储的覆盖值；一旦修改 `protocol`，就会按新协议
+  重新推导凭据呈现方式，因为覆盖值是针对写入时的协议定义的。显式传入空 `auth` 则清除覆盖，
+  此后连接重新跟随协议约定。显式指定协议自身的约定不会存储覆盖值，连接会继续跟随协议而
+  不会钉住旧 Header。
 - CLI：`agent-compose llm provider ls|create|inspect|update|rm`。创建必须提供
   `--base-url`、`--protocol`、`--api-key`。更新只发送显式设置的 flag，因此
   `update --base-url ...` 不会把已禁用的 Provider 重新启用。两个命令都支持
