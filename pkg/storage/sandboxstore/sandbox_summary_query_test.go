@@ -2,6 +2,9 @@ package sandboxstore
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -49,5 +52,43 @@ func TestListSandboxSummariesFilesystemFallbackReturnsPartialResults(t *testing.
 	}
 	if len(summaries) != 1 || summaries["sandbox-valid"].Title != valid.Summary.Title {
 		t.Fatalf("partial sandbox summaries = %#v", summaries)
+	}
+}
+
+func TestListSandboxSummariesRecoversCacheFailure(t *testing.T) {
+	for _, broken := range []bool{false, true} {
+		t.Run(fmt.Sprintf("broken_metadata=%v", broken), func(t *testing.T) {
+			store := newTestStore(t)
+			first := seedSandboxDir(t, store, "first", time.Unix(100, 0))
+			second := seedSandboxDir(t, store, "second", time.Unix(101, 0))
+			store.recordIndex(first)
+			store.recordIndex(second)
+			if broken {
+				if err := os.WriteFile(filepath.Join(store.sandboxDir(second.Summary.ID), "metadata.json"), []byte("{"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Force a cache read failure without relying on real-time pool starvation.
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			summaries, err := store.ListSandboxSummaries(t.Context(), []string{first.Summary.ID, second.Summary.ID, "absent"})
+			if summaries[first.Summary.ID].Title != first.Summary.Title {
+				t.Fatalf("valid summary missing: %#v", summaries)
+			}
+			if broken {
+				var syntaxErr *json.SyntaxError
+				if !errors.As(err, &syntaxErr) || len(summaries) != 1 {
+					t.Fatalf("partial fallback = %#v, error = %v", summaries, err)
+				}
+			} else if err != nil || len(summaries) != 2 || summaries[second.Summary.ID].Title != second.Summary.Title {
+				t.Fatalf("complete fallback = %#v, error = %v", summaries, err)
+			}
+			canceled, cancel := context.WithCancel(t.Context())
+			cancel()
+			if _, err := store.ListSandboxSummaries(canceled, []string{first.Summary.ID}); !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancellation lost: %v", err)
+			}
+		})
 	}
 }

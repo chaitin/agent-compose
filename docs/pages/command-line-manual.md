@@ -133,10 +133,15 @@ descendants and events with the same correlation ID, capped at 1,000 events.
 Sandbox summaries are best effort. Their lookup has a two-second context budget;
 if enrichment fails or times out, the response preserves the trace and available
 summaries and sets `sandbox_summaries_incomplete: true`. Request cancellation
-still cancels the request. A missing sandbox may have no summary.
+still cancels the request. A successful filesystem fallback does not set this
+flag merely because the cache query failed. A missing sandbox may have no summary.
 
 A failed sandbox cache update queues only that sandbox for background repair,
-with retries backing off from one to 30 seconds. Trace requests read pending
+with retries backing off from one to 30 seconds. Invalid metadata (malformed JSON,
+missing or mismatched ID, or invalid driver) is excluded from the cache; its pending
+repair ends after the stale row is removed. The metadata file is preserved, and a
+later valid update or startup reconciliation can index it again. Filesystem read
+errors and database failures remain retryable. Trace requests read pending
 sandboxes directly from their metadata files and never trigger a full cache
 rebuild. Sandbox list filtering and totals can lag during repair; successful
 updates normally remain synchronous. Startup still reconciles the full cache

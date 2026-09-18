@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 )
@@ -80,8 +81,20 @@ func (s *Store) refreshSandboxIndex(ctx context.Context, id string, observation 
 	// Sandbox value across a newer metadata commit or deletion.
 	sandbox, err := s.loadSandbox(id)
 	observation.metadataRead = time.Since(started)
-	if errors.Is(err, os.ErrNotExist) {
-		return s.index.Delete(ctx, id)
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, errInvalidSandboxMetadata) {
+		// Match startup reconciliation: invalid metadata is not listable. Only
+		// retire the pending revision after its stale projection is removed;
+		// a database failure still needs a retry. Keep the source file intact.
+		started = time.Now()
+		deleteErr := s.index.Delete(ctx, id)
+		observation.write = time.Since(started)
+		if deleteErr != nil {
+			return deleteErr
+		}
+		if errors.Is(err, errInvalidSandboxMetadata) {
+			slog.WarnContext(ctx, "invalid sandbox metadata excluded from listing cache", "sandbox_id", id, "error", err)
+		}
+		return nil
 	}
 	if err != nil {
 		return err

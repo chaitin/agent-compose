@@ -54,7 +54,12 @@ func (s *Store) ListSandboxSummaries(ctx context.Context, sandboxIDs []string) (
 	for id, summary := range fallback {
 		summaries[id] = summary
 	}
-	return summaries, errors.Join(cacheErr, filesystemErr)
+	if filesystemErr != nil {
+		return summaries, errors.Join(cacheErr, filesystemErr)
+	}
+	// Successful fallback has recovered the cache failure. Confirmed absent
+	// sandboxes may omit a summary; neither case makes enrichment incomplete.
+	return summaries, nil
 }
 
 func (s *Store) partitionSandboxSummaryIDs(ids []string) (indexed, fallback []string) {

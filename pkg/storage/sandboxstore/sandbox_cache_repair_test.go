@@ -176,16 +176,114 @@ func TestSandboxIndexRepairStopsBeforeDatabaseClose(t *testing.T) {
 	}
 }
 
-func TestDirtySandboxSummaryDoesNotReturnStaleCacheOnUnreadableMetadata(t *testing.T) {
+func TestSandboxIndexRepairPrunesInvalidMetadata(t *testing.T) {
+	cases := []struct{ name, metadata string }{
+		{"malformed JSON", "{"},
+		{"wrong JSON type", `{"summary":{"id":123}}`},
+		{"missing ID", `{"summary":{"driver":"docker"}}`},
+		{"mismatched ID", `{"summary":{"id":"other","driver":"docker"}}`},
+		{"invalid driver", `{"summary":{"id":"unreadable","driver":"invalid-driver"}}`},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			store := newTestStore(t)
+			sandbox := seedSandboxDir(t, store, "unreadable", time.Unix(100, 0))
+			store.recordIndex(sandbox)
+			path := filepath.Join(store.sandboxDir(sandbox.Summary.ID), "metadata.json")
+			if err := os.WriteFile(path, []byte(test.metadata), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.syncSandboxIndex(t.Context(), sandbox.Summary.ID, sandboxIndexRefresh); err != nil {
+				t.Fatalf("invalid metadata did not converge by pruning its cached row: %v", err)
+			}
+			var count int
+			if err := store.index.db.QueryRow(`SELECT COUNT(*) FROM sandboxes WHERE id = ?`, sandbox.Summary.ID).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("invalid metadata cached row count = %d, error = %v", count, err)
+			}
+			metadata, err := os.ReadFile(path)
+			if err != nil || string(metadata) != test.metadata {
+				t.Fatalf("authoritative metadata changed: %q, error = %v", metadata, err)
+			}
+			if err := store.saveSandbox(sandbox); err != nil {
+				t.Fatal(err)
+			}
+			store.recordIndex(sandbox)
+			summaries, err := store.ListSandboxSummaries(t.Context(), []string{sandbox.Summary.ID})
+			if err != nil || summaries[sandbox.Summary.ID].Title != sandbox.Summary.Title {
+				t.Fatalf("corrected metadata was not indexed: %#v, error = %v", summaries, err)
+			}
+		})
+	}
+}
+
+func TestSandboxIndexRepairClearsPendingInvalidMetadata(t *testing.T) {
 	store := newTestStore(t)
-	sandbox := seedSandboxDir(t, store, "unreadable", time.Unix(100, 0))
+	sandbox := seedSandboxDir(t, store, "becomes-invalid", time.Unix(100, 0))
+	started, release := failThenBlockIndexRepair(t, store, sandbox.Summary.ID)
+	store.recordIndex(sandbox)
+	awaitIndexSignal(t, started)
+	if err := os.WriteFile(filepath.Join(store.sandboxDir(sandbox.Summary.ID), "metadata.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store.markIndexRepair(sandbox.Summary.ID)
+	release()
+	awaitIndexCondition(t, func() bool { return store.indexRepairs.revision(sandbox.Summary.ID) == 0 })
+	summaries, err := store.ListSandboxSummaries(t.Context(), []string{sandbox.Summary.ID})
+	if err != nil || len(summaries) != 0 {
+		t.Fatalf("invalid sandbox still cached or retrying: %#v, error = %v", summaries, err)
+	}
+}
+
+func TestSandboxIndexRepairKeepsFilesystemReadErrorsRetryable(t *testing.T) {
+	store := newTestStore(t)
+	sandbox := seedSandboxDir(t, store, "unreadable-file", time.Unix(100, 0))
+	store.recordIndex(sandbox)
+	path := filepath.Join(store.sandboxDir(sandbox.Summary.ID), "metadata.json")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A filesystem read error must not be mistaken for invalid JSON and cause
+	// the last known projection to be pruned as permanently unrepairable.
+	err := store.syncSandboxIndex(t.Context(), sandbox.Summary.ID, sandboxIndexRefresh)
+	var pathErr *os.PathError
+	if !errors.As(err, &pathErr) {
+		t.Fatalf("filesystem read error lost: %v", err)
+	}
+	var count int
+	if err := store.index.db.QueryRow(`SELECT COUNT(*) FROM sandboxes WHERE id = ?`, sandbox.Summary.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("transient failure pruned cached row: count=%d, error=%v", count, err)
+	}
+}
+
+func TestSandboxIndexRepairRetriesFailedInvalidMetadataPrune(t *testing.T) {
+	store := newTestStore(t)
+	sandbox := seedSandboxDir(t, store, "failed-prune", time.Unix(100, 0))
 	store.recordIndex(sandbox)
 	if err := os.WriteFile(filepath.Join(store.sandboxDir(sandbox.Summary.ID), "metadata.json"), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	var schema string
+	if err := store.index.db.QueryRow(`SELECT sql FROM sqlite_master WHERE name = 'sandboxes'`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	// The source is permanently invalid, but removing its projection can still
+	// fail transiently. The repair must stay pending until deletion succeeds.
+	if _, err := store.index.db.Exec(`DROP TABLE sandboxes`); err != nil {
+		t.Fatal(err)
+	}
 	store.recordIndex(sandbox)
-	summaries, err := store.ListSandboxSummaries(t.Context(), []string{sandbox.Summary.ID})
-	if err == nil || len(summaries) != 0 {
-		t.Fatalf("summaries = %#v, error = %v; want partial failure without stale entry", summaries, err)
+	if store.indexRepairs.revision(sandbox.Summary.ID) == 0 {
+		t.Fatal("failed projection deletion was dropped from pending repairs")
+	}
+	if _, err := store.index.db.Exec(schema); err != nil {
+		t.Fatal(err)
+	}
+	awaitIndexCondition(t, func() bool { return store.indexRepairs.revision(sandbox.Summary.ID) == 0 })
+	var count int
+	if err := store.index.db.QueryRow(`SELECT COUNT(*) FROM sandboxes WHERE id = ?`, sandbox.Summary.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("invalid sandbox projection survived retry: count=%d, error=%v", count, err)
 	}
 }

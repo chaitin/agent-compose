@@ -3,6 +3,7 @@ package webhooks_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -116,4 +117,82 @@ type traceRepairProjectResolver func(context.Context, []*domain.Sandbox) (map[st
 
 func (f traceRepairProjectResolver) ResolveSandboxProjectIDs(ctx context.Context, sandboxes []*domain.Sandbox) (map[string]string, error) {
 	return f(ctx, sandboxes)
+}
+
+func TestIntegrationEventTraceReportsFilesystemFallbackCompleteness(t *testing.T) {
+	for _, broken := range []bool{false, true} {
+		t.Run(fmt.Sprintf("broken_metadata=%v", broken), func(t *testing.T) {
+			root := t.TempDir()
+			database, err := sqlite.Open(filepath.Join(root, "events.db"), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := database.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			sandboxRoot := filepath.Join(root, "sandboxes")
+			store, err := sandboxstore.NewWithConfig(&appconfig.Config{SandboxRoot: sandboxRoot})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := store.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "fallback-sandbox", Title: "file title", Driver: "docker"}}
+			dir := filepath.Join(sandboxRoot, sandbox.Summary.ID)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.SaveSandbox(sandbox); err != nil {
+				t.Fatal(err)
+			}
+			// A closed projection forces the real summary reader to use metadata.
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if broken {
+				if err := os.WriteFile(filepath.Join(dir, "metadata.json"), []byte("{"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			events := configstore.FromDB(database.DB())
+			event, err := events.CreateEvent(t.Context(), domain.TopicEventRecord{
+				ID: "fallback-event", Topic: "webhook.test.created", Source: domain.TopicEventSourceWebhook,
+				PayloadJSON: `{}`, DispatchStatus: domain.TopicEventDispatchPublishedToBus,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := events.AddEventSandboxLink(t.Context(), domain.EventSandboxLink{
+				EventID: event.ID, SandboxID: sandbox.Summary.ID, Relation: "scheduler.created",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			app := echo.New()
+			webhooks.RegisterRoutes(app, webhooks.RouteOptions{Store: events, QueryStore: events, Sandboxes: store})
+			response := httptest.NewRecorder()
+			app.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/events/"+event.ID+"/trace", nil))
+			if response.Code != http.StatusOK {
+				t.Fatalf("trace status = %d, body = %s", response.Code, response.Body.String())
+			}
+			var trace webhooks.EventTraceResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &trace); err != nil {
+				t.Fatal(err)
+			}
+			if trace.Event.EventID != event.ID || len(trace.Sandboxes) != 1 || trace.SandboxSummariesIncomplete != broken {
+				t.Fatalf("trace = %#v, want incomplete=%v", trace, broken)
+			}
+			summary := trace.Sandboxes[0].Sandbox
+			if broken && summary != nil {
+				t.Fatalf("unexpected summary for invalid metadata: %#v", summary)
+			}
+			if !broken && (summary == nil || summary.Title != sandbox.Summary.Title) {
+				t.Fatalf("complete fallback summary missing: %#v", summary)
+			}
+		})
+	}
 }
