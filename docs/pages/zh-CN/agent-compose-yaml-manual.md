@@ -329,6 +329,8 @@ workspaces:
 - `username`、`password`、`token` 只接受完整环境引用 `${NAME}`；配置 token 时以 `Authorization: Bearer` 发送，未配置 token 时才使用 Basic 认证。
 - `http` 不支持 `mode: mount`，压缩包内容始终复制到 run workspace。
 
+Workspace 凭据是可选的。CLI 在提交前从本机项目 dotenv/进程环境解析 `${NAME}`；直接调用 RPC 时应传入已解析的值。下载/克隆前会拒绝未解析的引用，包括旧版已保存配置中的引用，不再读取 daemon 自身环境。已有依赖 daemon 环境凭据的 workspace，需要由 CLI 或 RPC 调用方解析凭据后重新应用。Git workspace 同样遵循此规则，公开来源无需填写认证字段。
+
 Workspace 选择规则：
 
 - 顶层 `workspaces` 只是命名定义，不会自动分配给任何 Agent。
@@ -871,7 +873,7 @@ skills:
 
 `git` 或 `http` Skill 也可以来自内网主机，例如内网 GitLab 或制品服务器：允许解析到私网或 loopback 地址，因为该主机由 daemon 自己解析。只有 `http` 与 `https` URL 会走网络下载；其他 URL 会按本地来源处理，必须位于允许的来源根目录内。
 
-`password` 和 `token` 不允许明文。执行 `config` 或 `up` 时，CLI 会从项目 dotenv/进程环境解析完整的 `${NAME}` 引用，再把项目提交给 daemon；引用对应的变量缺失时保留引用本身而不是报错，并在 clone 时再解析。面向用户的规范化输出和项目 API 会对解析后的凭据脱敏。远程 ZIP 下载限制为 HTTP(S)，可以指向内网主机（允许私网与 loopback 地址），并执行大小、压缩包与内容检查。
+`password` 和 `token` 不允许明文。执行 `config` 或 `up` 时，CLI 会从项目 dotenv/进程环境解析完整的 `${NAME}` 引用，再把项目提交给 daemon；引用对应的变量缺失时保留引用本身，准备 Skill 时仅从 agent 配置的环境变量解析，不隐式读取 daemon 进程环境。面向用户的规范化输出和项目 API 会对解析后的凭据脱敏。远程 ZIP 下载限制为 HTTP(S)，可以指向内网主机（允许私网与 loopback 地址），并执行大小、压缩包与内容检查。
 
 Git ref 会在各自业务生命周期中解析：Skill 在 Agent run 时解析，Workspace 在 sandbox provisioning 时解析，Scheduler 来源在 `config`/`up` 时解析并保存脚本快照。因此 moving branch 在三处可能得到不同 commit；需要严格一致时，应在 `ref` 中直接填写 commit SHA。
 
@@ -1095,7 +1097,7 @@ scheduler:
 }
 ```
 
-文件来源使用 `{"provider":"file","path":"./scheduler.js"}`；HTTP 来源使用 `{"provider":"http","url":"https://example.com/scheduler.js"}`。RPC 文件路径指向 **daemon 的文件系统**，容器部署时需能通过挂载访问。相对路径依次以 `ProjectSource.compose_path` 所在目录、`ProjectSource.project_dir`、daemon 工作目录为基准；PatchProject 使用已保存的项目 source path。Git 的 `path` 指向仓库内文件，HTTP 响应直接返回源码正文。Git 来源要求 daemon 安装 Git。认证字段可传凭据值，或通过 `${NAME}` 引用 daemon 环境变量。
+文件来源使用 `{"provider":"file","path":"./scheduler.js"}`；HTTP 来源使用 `{"provider":"http","url":"https://example.com/scheduler.js"}`。RPC 文件路径指向 **daemon 的文件系统**，容器部署时需能通过挂载访问。相对路径依次以 `ProjectSource.compose_path` 所在目录、`ProjectSource.project_dir`、daemon 工作目录为基准；PatchProject 使用已保存的项目 source path。Git 的 `path` 指向仓库内文件，HTTP 响应直接返回源码正文。Git 来源要求 daemon 安装 Git。认证字段可省略。直接调用 RPC 时必须传入已解析的凭据值；`username`、`password`、`token` 中未解析的 `${NAME}` 引用会在发起来源请求前被拒绝，不读取 daemon 进程环境。公开来源无需填写认证字段。
 
 ValidateProject、ApplyProject、PatchProject（包括 dry run）均在 daemon 解析来源，复用现有受限读取器，传播请求取消并保留超时、大小、重定向和 UTF-8 检查。获取或校验失败不会保存 revision。成功应用后只保存解析后的内联源码快照，并通过 `script` 返回；不保留来源凭据或来源元数据。后续调度执行和 GetProject 不会重新获取来源；再次提交包含 `script_source` 的请求才会重新获取。
 

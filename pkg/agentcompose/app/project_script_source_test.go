@@ -85,21 +85,35 @@ func TestIntegrationNormalizeProjectRequestScriptSourceCancellation(t *testing.T
 	}
 }
 
-func TestIntegrationNormalizeProjectRequestScriptSourceEnvironmentAuthentication(t *testing.T) {
-	t.Setenv("SCRIPT_SOURCE_TEST_TOKEN", "private-token")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer private-token" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if _, err := w.Write([]byte(sourceTestScript)); err != nil {
-			t.Errorf("write source response: %v", err)
-		}
-	}))
-	t.Cleanup(server.Close)
-	spec := scriptSourceProjectSpec(&agentcomposev2.SchedulerScriptSource{Provider: "http", Url: server.URL, Token: "${SCRIPT_SOURCE_TEST_TOKEN}"})
-	normalized, issues, err := normalizeProjectRequest(t.Context(), spec, nil, "")
-	if err != nil || len(issues) > 0 || normalized.Spec.Agents[0].Scheduler.Script != sourceTestScript {
-		t.Fatalf("env auth: %#v %v", issues, err)
+func TestIntegrationNormalizeProjectRequestScriptSourceOptionalAuthentication(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "daemon-only-token")
+	for _, tc := range []struct {
+		name     string
+		source   *agentcomposev2.SchedulerScriptSource
+		wantAuth string
+	}{
+		{"anonymous", &agentcomposev2.SchedulerScriptSource{}, ""},
+		{"token", &agentcomposev2.SchedulerScriptSource{Token: "caller-token"}, "Bearer caller-token"},
+		{"basic", &agentcomposev2.SchedulerScriptSource{Username: "user", Password: "password"}, "Basic dXNlcjpwYXNzd29yZA=="},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.Header.Get("Authorization"); got != tc.wantAuth {
+					t.Error("unexpected authentication header")
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				if _, err := w.Write([]byte(sourceTestScript)); err != nil {
+					t.Errorf("write source response: %v", err)
+				}
+			}))
+			t.Cleanup(server.Close)
+			tc.source.Provider = "http"
+			tc.source.Url = server.URL
+			normalized, issues, err := normalizeProjectRequest(t.Context(), scriptSourceProjectSpec(tc.source), nil, "")
+			if err != nil || len(issues) > 0 || normalized.Spec.Agents[0].Scheduler.Script != sourceTestScript {
+				t.Fatalf("source authentication: %#v %v", issues, err)
+			}
+		})
 	}
 }

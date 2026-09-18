@@ -1023,7 +1023,8 @@ message SchedulerScriptSource {
   string url = 2;
   string ref = 3;
   string path = 4;
-  // Credentials may be literal values or daemon environment references.
+  // Optional credentials must be resolved by the caller. Unresolved environment
+  // references are rejected; daemon process variables are never used.
   // Token takes precedence over basic authentication for HTTP.
   string username = 5;
   string password = 6;

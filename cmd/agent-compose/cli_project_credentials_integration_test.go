@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -13,6 +16,34 @@ import (
 )
 
 func TestIntegrationCLIUpAppliesYAMLSourceCredentialsFromProjectEnv(t *testing.T) {
+	for _, environment := range []string{"dotenv", "process"} {
+		t.Run(environment, func(t *testing.T) {
+			testCLIUpSourceCredentials(t, environment)
+		})
+	}
+}
+
+func testCLIUpSourceCredentials(t *testing.T, environment string) {
+	t.Helper()
+	const script = "function main() {}"
+	wantToken := "dotenv-script-token"
+	if environment == "process" {
+		wantToken = "process-script-token"
+		t.Setenv("YAML_SCRIPT_TOKEN", wantToken)
+	}
+	var sourceRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sourceRequests.Add(1)
+		if r.Header.Get("Authorization") != "Bearer "+wantToken {
+			t.Error("CLI did not resolve the script credential from its environment")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if _, err := fmt.Fprint(w, script); err != nil {
+			t.Errorf("write script: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
 	useTestDockerImage(t, "guest:v1")
 	socketPath := shortUnixSocketPath(t)
 	app, cancel := newTestDaemonAppWithSocketAndTCP(t, socketPath, "", nil)
@@ -28,7 +59,7 @@ func TestIntegrationCLIUpAppliesYAMLSourceCredentialsFromProjectEnv(t *testing.T
 	t.Setenv("AGENT_COMPOSE_HOST", "")
 
 	projectDir := t.TempDir()
-	composePath := writeComposeFile(t, projectDir, `
+	composePath := writeComposeFile(t, projectDir, fmt.Sprintf(`
 name: yaml-source-credentials
 workspaces:
   shared:
@@ -42,6 +73,12 @@ agents:
     image: guest:v1
     driver:
       docker: {}
+    scheduler:
+      enabled: false
+      script:
+        provider: http
+        url: %s
+        token: ${YAML_SCRIPT_TOKEN}
     workspace:
       provider: git
       url: https://example.test/reviewer.git
@@ -53,8 +90,9 @@ agents:
         username: ${YAML_SKILL_USER}
         password: ${YAML_SKILL_PASSWORD}
         token: ${YAML_SKILL_TOKEN}
-`)
+`, server.URL))
 	writeTestFile(t, filepath.Join(projectDir, ".env"), strings.Join([]string{
+		"YAML_SCRIPT_TOKEN=dotenv-script-token",
 		"YAML_WORKSPACE_USER=workspace-user",
 		"YAML_WORKSPACE_PASSWORD=workspace-password",
 		"YAML_WORKSPACE_TOKEN=workspace-token",
@@ -93,7 +131,12 @@ agents:
 		t.Fatalf("get applied project: %v", err)
 	}
 	assertAppliedYAMLSourceCredentialsRedacted(t, project.Msg.GetProject().GetSpec())
-	t.Log("evidence: a filesystem agent-compose.yml loaded six source credentials from .env, passed config, and was accepted by project up with all credentials redacted by the daemon API")
+	if got := project.Msg.GetProject().GetSpec().GetAgents()[0].GetScheduler(); got.GetScript() != script || got.GetScriptSource() != nil {
+		t.Fatalf("up did not submit the resolved script snapshot: %v", got)
+	}
+	if sourceRequests.Load() != 2 {
+		t.Fatalf("script fetches = %d, want config and up CLI fetches only", sourceRequests.Load())
+	}
 }
 
 func assertYAMLSourceCredentialsRedacted(t *testing.T, output string) {
@@ -104,6 +147,7 @@ func assertYAMLSourceCredentialsRedacted(t *testing.T, output string) {
 	for _, forbidden := range []string{
 		"workspace-user", "workspace-password", "workspace-token",
 		"skill-user", "skill-password", "skill-token",
+		"dotenv-script-token", "process-script-token",
 		"${YAML_",
 	} {
 		if strings.Contains(output, forbidden) {

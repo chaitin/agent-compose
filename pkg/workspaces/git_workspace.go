@@ -34,6 +34,9 @@ func (w gitWorkspace) Prepare(ctx context.Context, session *domain.Sandbox) erro
 	if cfg.URL == "" {
 		return fmt.Errorf("workspace config %s missing git url", w.workspace.ID)
 	}
+	if err := cfg.ValidateResolvedCredentials(); err != nil {
+		return fmt.Errorf("git workspace %s credentials: %w", w.workspace.ID, err)
+	}
 	target, err := NormalizeWorkspaceTarget(w.workspace.ID, cfg.Target)
 	if err != nil {
 		return err
@@ -58,7 +61,7 @@ func (w gitWorkspace) Prepare(ctx context.Context, session *domain.Sandbox) erro
 	if err := os.MkdirAll(filepath.Dir(clonePath), 0o755); err != nil {
 		return fmt.Errorf("prepare workspace %s failed: create clone parent: %w", w.workspace.Name, err)
 	}
-	if _, err := (sources.GitClient{}).Checkout(ctx, cfg.Source, clonePath); err != nil {
+	if _, err := (sources.GitClient{Env: map[string]string{}}).Checkout(ctx, cfg.Source, clonePath); err != nil {
 		return fmt.Errorf("prepare workspace %s failed: %w", w.workspace.Name, err)
 	}
 	return nil
@@ -93,7 +96,7 @@ func cleanupGitCloneTempDir(workspaceRoot string) error {
 
 func cloneGitWorkspaceRoot(ctx context.Context, workspaceRoot string, source sources.Source) error {
 	tempDir := filepath.Join(workspaceRoot, GitWorkspaceTempDirName)
-	if _, err := (sources.GitClient{}).Checkout(ctx, source, tempDir); err != nil {
+	if _, err := (sources.GitClient{Env: map[string]string{}}).Checkout(ctx, source, tempDir); err != nil {
 		_ = os.RemoveAll(tempDir)
 		return err
 	}

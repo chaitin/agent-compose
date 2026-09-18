@@ -109,6 +109,11 @@ func normalizeSchedulerScriptSource(path string, source sources.Source, options 
 	if err != nil {
 		return sources.Source{}, err
 	}
+	if options.SourceCredentials == SourceCredentialsResolved {
+		if err := source.ValidateResolvedCredentials(); err != nil {
+			return sources.Source{}, &ValidationError{Path: path, Message: err.Error()}
+		}
+	}
 	if source.Format != "" {
 		return sources.Source{}, &ValidationError{Path: path + ".format", Message: "scheduler script does not support format"}
 	}

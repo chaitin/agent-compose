@@ -330,6 +330,8 @@ Behavior:
 - `username`, `password`, and `token` accept exact environment references such as `${NAME}`; a token is sent as `Authorization: Bearer`, and basic credentials are only used when no token is configured.
 - `mode: mount` is not supported for `http`; the archive is always copied into the run workspace.
 
+Workspace credentials are optional. The CLI resolves `${NAME}` from its project dotenv/process environment before submission. Direct RPC callers must submit resolved values. At download/clone time, unresolved references are rejected before network access, including references in older persisted workspace configurations; the daemon does not substitute its own environment. If an existing workspace relied on daemon environment credentials, reapply it with credentials resolved by the CLI or RPC caller. This also applies to Git workspaces. Public sources need no authentication fields.
+
 Workspace selection follows these rules:
 
 - Top-level `workspaces` entries are named definitions only; they are never assigned to an agent automatically.
@@ -877,7 +879,7 @@ skills:
 
 A `git` or `http` skill may also come from an internal host, such as an internal GitLab or an artifact server: private and loopback addresses are accepted, because the daemon resolves that host itself. Only `http` and `https` URLs are fetched over the network; any other URL is treated as a local source and must stay under an allowed source root.
 
-`password` and `token` cannot contain plaintext. During `config` or `up`, the CLI resolves their exact `${NAME}` references from the project dotenv/process environment before submitting the project to the daemon; a reference whose variable is absent is kept as-is and resolved at clone time instead of failing. User-facing normalized output and project APIs redact the resolved credentials. Remote ZIP downloads are restricted to HTTP(S), may point at an internal host (private and loopback addresses are accepted), and are subject to size, archive, and content checks.
+`password` and `token` cannot contain plaintext. During `config` or `up`, the CLI resolves their exact `${NAME}` references from the project dotenv/process environment before submitting the project to the daemon; a reference whose variable is absent is kept as-is and can resolve only from the agent's configured environment during skill preparation, never implicitly from the daemon process environment. User-facing normalized output and project APIs redact the resolved credentials. Remote ZIP downloads are restricted to HTTP(S), may point at an internal host (private and loopback addresses are accepted), and are subject to size, archive, and content checks.
 
 Git refs are resolved at each business lifecycle: skills during an agent run, workspaces during sandbox provisioning, and scheduler sources during `config`/`up` before the script snapshot is stored. A moving branch can therefore resolve to different commits across those operations. Use a commit SHA in `ref` when all consumers must use the exact same revision.
 
@@ -1107,7 +1109,7 @@ For example, the scheduler portion of an ApplyProject JSON request can be:
 }
 ```
 
-Use `{"provider":"file","path":"./scheduler.js"}` for a file or `{"provider":"http","url":"https://example.com/scheduler.js"}` for an HTTP source. RPC file paths refer to the **daemon filesystem**, including container mounts. Relative paths use the directory of `ProjectSource.compose_path`, then `ProjectSource.project_dir`, then the daemon working directory. PatchProject uses the stored project source path. Git `path` selects a file inside the repository; HTTP returns the script body directly. The daemon needs Git installed for Git sources. Credentials can be supplied as values or `${NAME}` references resolved from the daemon environment.
+Use `{"provider":"file","path":"./scheduler.js"}` for a file or `{"provider":"http","url":"https://example.com/scheduler.js"}` for an HTTP source. RPC file paths refer to the **daemon filesystem**, including container mounts. Relative paths use the directory of `ProjectSource.compose_path`, then `ProjectSource.project_dir`, then the daemon working directory. PatchProject uses the stored project source path. Git `path` selects a file inside the repository; HTTP returns the script body directly. The daemon needs Git installed for Git sources. Credentials are optional. Direct RPC callers must supply resolved credential values; unresolved `${NAME}` references in `username`, `password`, or `token` are rejected before any source request. The daemon does not read its process environment for these credentials. Omit authentication fields for public sources.
 
 ValidateProject, ApplyProject, and PatchProject resolve sources on the daemon, including dry runs. The existing bounded resolver propagates request cancellation and retains its timeout, size, redirect, and UTF-8 checks. Fetch/validation failures do not save a revision. Successful application persists the resolved inline script snapshot and returns it in `script`; source credentials and source metadata are not retained. Subsequent scheduler execution and GetProject do not fetch the source again. A later request containing `script_source` fetches it again.
 

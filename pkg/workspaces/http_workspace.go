@@ -112,6 +112,9 @@ func (w httpWorkspace) Prepare(ctx context.Context, session *domain.Sandbox) err
 	if cfg.Provider != sources.ProviderHTTP || cfg.Format != sources.FormatZIP || cfg.URL == "" {
 		return fmt.Errorf("http workspace %s has invalid source", w.workspace.ID)
 	}
+	if err := cfg.ValidateResolvedCredentials(); err != nil {
+		return fmt.Errorf("http workspace %s credentials: %w", w.workspace.ID, err)
+	}
 	root := strings.TrimSpace(session.Summary.WorkspacePath)
 	if root == "" {
 		return fmt.Errorf("session %s missing workspace path", session.Summary.ID)
@@ -137,9 +140,7 @@ func (w httpWorkspace) Prepare(ctx context.Context, session *domain.Sandbox) err
 		return fmt.Errorf("prepare workspace %s failed: %w", w.workspace.Name, err)
 	}
 	archivePath := filepath.Join(staging, httpWorkspaceArchiveName)
-	// A nil env resolves "${NAME}" credentials from the daemon process
-	// environment, matching how the git workspace provider resolves them.
-	if _, err := fetcher.Fetch(ctx, cfg.Source, nil, archivePath); err != nil {
+	if _, err := fetcher.Fetch(ctx, cfg.Source, map[string]string{}, archivePath); err != nil {
 		return fmt.Errorf("prepare workspace %s failed: %w", w.workspace.Name, err)
 	}
 	content := filepath.Join(staging, httpWorkspaceContentDir)

@@ -7080,7 +7080,8 @@ type SchedulerScriptSource struct {
 	Url      string `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
 	Ref      string `protobuf:"bytes,3,opt,name=ref,proto3" json:"ref,omitempty"`
 	Path     string `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
-	// Credentials may be literal values or daemon environment references.
+	// Optional credentials must be resolved by the caller. Unresolved environment
+	// references are rejected; daemon process variables are never used.
 	// Token takes precedence over basic authentication for HTTP.
 	Username      string `protobuf:"bytes,5,opt,name=username,proto3" json:"username,omitempty"`
 	Password      string `protobuf:"bytes,6,opt,name=password,proto3" json:"password,omitempty"`
