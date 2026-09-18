@@ -617,8 +617,8 @@ the service path prefix.
   a gateway serves the Anthropic Messages protocol but authenticates with
   `Authorization: Bearer`; set `"auth": "x-api-key"` for the reverse. The override
   changes only the header, not the wire protocol. An unknown value is rejected.
-  Responses report the stored override, or no value when the connection follows
-  the protocol convention.
+  Responses report the stored override; a connection with no stored override
+  reports no value and follows the protocol convention.
 - `apiKey` is literal, without environment interpolation. Create requires a
   nonempty key. On update, omission preserves it, a nonempty value rotates it,
   and an empty value is invalid. Responses expose only `apiKeySet`, never the key.

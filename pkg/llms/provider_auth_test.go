@@ -80,9 +80,11 @@ func sameProviderAuth(a, b *ProviderAuth) bool {
 	return *a == *b
 }
 
-// An override is recorded only when it differs from the protocol convention, so
-// the migration, the environment bootstrap, and the RPC write path agree on what
-// the stored auth means.
+// The migration and the environment bootstrap can only infer an override from a
+// stored header, so they record a value only when it differs from the protocol
+// convention. The RPC write path is told what the operator named and records
+// that instead, which is why naming the convention explicitly is still a stored
+// override there.
 func TestProviderAuthIntentRecordsOnlyOverrides(t *testing.T) {
 	cases := []struct {
 		protocol, header, scheme string

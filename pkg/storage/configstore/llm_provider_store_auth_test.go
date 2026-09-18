@@ -113,3 +113,52 @@ func TestIntegrationManagedProviderUpdatePreservesExplicitAuth(t *testing.T) {
 func TestE2EManagedProviderUpdatePreservesExplicitAuth(t *testing.T) {
 	TestIntegrationManagedProviderUpdatePreservesExplicitAuth(t)
 }
+
+// The RPC path records the presentation the operator named, so naming the
+// protocol convention explicitly is still a stored override. That is deliberate:
+// the migration and the environment bootstrap can only infer an override from a
+// stored header, and normalizing a named value away would silently drop it the
+// next time the protocol changed to one whose convention happens to match.
+func TestIntegrationManagedProviderExplicitConventionAuthIsAnOverride(t *testing.T) {
+	clearLLMTestEnvironment(t)
+	ctx := context.Background()
+	store := FromDB(newMemoryDB(t))
+	if err := store.InitSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	key := "gateway-key"
+
+	// x-api-key is the anthropic_messages convention, but the operator named it.
+	created, err := store.CreateLLMProvider(ctx, llms.ProviderReplacement{
+		ID: "gateway", BaseURL: "https://gateway.example", Protocol: llms.APIProtocolMessages, APIKey: &key, Auth: providerAuthPtr(llms.ProviderAuthXAPIKey),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Auth != llms.ProviderAuthXAPIKey {
+		t.Fatalf("created = %#v, want the named presentation recorded", created)
+	}
+
+	// Changing the protocol keeps it, so a gateway configured for x-api-key does
+	// not silently lose that choice on the way to another protocol.
+	changed, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Protocol: llms.APIProtocolResponses})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.AuthHeader != "x-api-key" || changed.AuthScheme != "" || changed.Auth != llms.ProviderAuthXAPIKey {
+		t.Fatalf("named presentation was dropped by the protocol change: %#v", changed)
+	}
+
+	// Clearing it returns the connection to the protocol convention.
+	cleared, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Auth: providerAuthPtr("")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.Auth != "" || cleared.AuthHeader != "Authorization" || cleared.AuthScheme != "Bearer" {
+		t.Fatalf("cleared provider = %#v, want the responses convention", cleared)
+	}
+}
+
+func TestE2EManagedProviderExplicitConventionAuthIsAnOverride(t *testing.T) {
+	TestIntegrationManagedProviderExplicitConventionAuthIsAnOverride(t)
+}

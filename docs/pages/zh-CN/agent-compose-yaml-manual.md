@@ -612,7 +612,8 @@ API Key，与 Agent 的 `provider: codex` / `provider: pi` 无关。
   `bearer`（`Authorization: Bearer`），`anthropic_messages` 的约定为 `x-api-key`。
   当网关使用 Anthropic Messages 协议但要求 `Authorization: Bearer` 认证时，设置
   `"auth": "bearer"`；反向场景设置 `"auth": "x-api-key"`。该覆盖只改变认证 Header，
-  不改变协议或地址；未知取值会被拒绝。响应返回已存储的覆盖值；跟随协议约定时返回空值。
+  不改变协议或地址；未知取值会被拒绝。响应返回已存储的覆盖值；未存储覆盖值时返回空值
+  并跟随协议约定。
 - `apiKey` 是字面量，不解析环境变量引用。创建必须提供非空值；更新省略时保留旧值，
   提供非空值时轮换，空值无效。响应仅返回 `apiKeySet`，不会回显密钥。
 - 创建时，空 `name` 默认使用 ID，省略 `enabled` 默认为 `true`。

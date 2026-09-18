@@ -31,8 +31,13 @@ connection may override that presentation with auth = bearer or auth = x-api-key
 the override changes only the header, not the protocol or endpoint. Responses
 report the stored override rather than the effective header, so a Get response
 can be sent back through Update without freezing the protocol convention into an
-override; when the connection follows the convention the response carries the
-unspecified presentation. Because the spec's auth field is optional, an absent
+override; a connection with no stored override carries the unspecified
+presentation. The migration and the environment bootstrap can only infer an
+override from a stored header, so they record the empty presentation for a row
+that matches its protocol convention, while the RPC write path records what the
+operator named: naming the convention explicitly is still a stored override
+there, which is what keeps it from being silently dropped by a later protocol
+change. Because the spec's auth field is optional, an absent
 auth preserves the stored override even when the same update changes protocol,
 while an explicit unspecified auth clears the override and returns the connection
 to the protocol convention. An unknown presentation is rejected rather

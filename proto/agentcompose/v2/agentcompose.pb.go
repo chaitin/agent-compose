@@ -19082,9 +19082,10 @@ type LLMProvider struct {
 	ApiKeySet bool                   `protobuf:"varint,6,opt,name=api_key_set,json=apiKeySet,proto3" json:"api_key_set,omitempty"`
 	CreatedAt *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
-	// Explicit credential presentation override. UNSPECIFIED means the connection
-	// follows the protocol convention. Reporting the override rather than the
-	// effective header keeps a Get response safe to send back through Update.
+	// Explicit credential presentation override. UNSPECIFIED means no override is
+	// stored, so the connection follows the protocol convention. Reporting the
+	// stored override rather than the effective header keeps a Get response safe to
+	// send back through Update.
 	Auth          LLMProviderAuth `protobuf:"varint,9,opt,name=auth,proto3,enum=agentcompose.v2.LLMProviderAuth" json:"auth,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

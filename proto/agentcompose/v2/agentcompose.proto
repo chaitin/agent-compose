@@ -2299,9 +2299,10 @@ message LLMProvider {
   bool api_key_set = 6;
   google.protobuf.Timestamp created_at = 7;
   google.protobuf.Timestamp updated_at = 8;
-  // Explicit credential presentation override. UNSPECIFIED means the connection
-  // follows the protocol convention. Reporting the override rather than the
-  // effective header keeps a Get response safe to send back through Update.
+  // Explicit credential presentation override. UNSPECIFIED means no override is
+  // stored, so the connection follows the protocol convention. Reporting the
+  // stored override rather than the effective header keeps a Get response safe to
+  // send back through Update.
   LLMProviderAuth auth = 9;
 }
 
