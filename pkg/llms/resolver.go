@@ -144,9 +144,13 @@ type RuntimeLLMTargetQuery struct {
 	Config                  *appconfig.Config
 	SessionID               string
 	PreferredProviderFamily string
-	RequestedModel          string
-	ProviderID              string
-	EnvItems                []domain.SandboxEnvVar
+	// ProviderFamilyIsRequired forbids a bare model from resolving against a
+	// default connection of another family. Protocol-fixed agents (codex) set it:
+	// the runtime bridge cannot present a non-OpenAI connection to them.
+	ProviderFamilyIsRequired bool
+	RequestedModel           string
+	ProviderID               string
+	EnvItems                 []domain.SandboxEnvVar
 }
 
 func resolveRuntimeLLMTarget(ctx context.Context, store LLMResolverStore, q RuntimeLLMTargetQuery) (ResolvedTarget, error) {
@@ -417,7 +421,7 @@ func ResolveRuntimeLLMTargetWithEnv(ctx context.Context, store LLMResolverStore,
 	// daemon's default connection. An explicit provider prefix already pinned a
 	// connection above, so only the provider-less case falls back.
 	if providerID == "" {
-		target, err := resolveLiteralModelTarget(ctx, store, requestedModel, preferredProviderFamily)
+		target, err := resolveLiteralModelTarget(ctx, store, requestedModel, preferredProviderFamily, q.ProviderFamilyIsRequired)
 		if err != nil {
 			return ResolvedTarget{}, err
 		}
@@ -603,8 +607,9 @@ func resolveLLMTargetForProviderFamily(ctx context.Context, store LLMResolverSto
 	}
 	// As in ResolveRuntimeLLMTargetWithEnv, an unregistered model resolves
 	// against the default connection for the family instead of failing on a
-	// missing model-catalog row.
-	if target, err := resolveLiteralModelTarget(ctx, store, requestedModel, providerFamily); err != nil {
+	// missing model-catalog row. This path states the family explicitly, so it
+	// keeps the cross-family default the runtime bridge allows.
+	if target, err := resolveLiteralModelTarget(ctx, store, requestedModel, providerFamily, false); err != nil {
 		return ResolvedTarget{}, err
 	} else if target != nil {
 		return *target, nil

@@ -29,11 +29,13 @@ var errNoDefaultConnection = errors.New("no default llm connection")
 //     every other family, because the runtime bridge translates across
 //     protocols. The bootstrap path has always let an OpenAI-family bootstrap
 //     connection serve the anthropic family; a configured connection must not
-//     be stricter than the bootstrap environment.
+//     be stricter than the bootstrap environment. A caller whose family is a
+//     hard requirement (familyIsRequired) skips this step, so it never receives
+//     a connection it cannot speak.
 //
 // Session-env connections are request-local credentials and never act as a
 // daemon default; they are only selected explicitly.
-func defaultConfiguredConnection(ctx context.Context, store ProviderListStore, providerFamily string) (Provider, error) {
+func defaultConfiguredConnection(ctx context.Context, store ProviderListStore, providerFamily string, familyIsRequired bool) (Provider, error) {
 	providers, err := store.ListEnabledLLMProviders(ctx)
 	if err != nil {
 		return Provider{}, fmt.Errorf("list enabled llm providers for default connection: %w", err)
@@ -41,7 +43,7 @@ func defaultConfiguredConnection(ctx context.Context, store ProviderListStore, p
 	family := NormalizeOptionalProviderType(providerFamily)
 	selectionFamily := family
 	candidates := configuredConnections(providers, family)
-	if len(candidates) == 0 && family != "" {
+	if len(candidates) == 0 && family != "" && !familyIsRequired {
 		selectionFamily = ""
 		candidates = configuredConnections(providers, "")
 	}
@@ -136,12 +138,12 @@ func ambiguousDefaultConnectionError(family string, candidates []Provider) error
 // an authorization boundary: the upstream accepts or rejects them. The function
 // returns (nil, nil) when no unambiguous default exists, leaving the caller's
 // existing diagnostics in place.
-func resolveLiteralModelTarget(ctx context.Context, store LLMResolverStore, requestedModel, providerFamily string) (*ResolvedTarget, error) {
+func resolveLiteralModelTarget(ctx context.Context, store LLMResolverStore, requestedModel, providerFamily string, familyIsRequired bool) (*ResolvedTarget, error) {
 	requestedModel = strings.TrimSpace(requestedModel)
 	if requestedModel == "" {
 		return nil, nil
 	}
-	provider, err := defaultConfiguredConnection(ctx, store, providerFamily)
+	provider, err := defaultConfiguredConnection(ctx, store, providerFamily, familyIsRequired)
 	if errors.Is(err, errNoDefaultConnection) {
 		return nil, nil
 	}

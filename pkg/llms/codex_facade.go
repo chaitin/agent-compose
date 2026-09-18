@@ -37,7 +37,7 @@ func EnsureCodexFacadeConfig(ctx context.Context, req CodexFacadeConfigRequest) 
 		return nil, err
 	}
 	target, err := ResolveRuntimeLLMTargetWithEnv(ctx, store, RuntimeLLMTargetQuery{
-		Config: config, SessionID: sandbox.Summary.ID, PreferredProviderFamily: ProviderFamilyOpenAI, RequestedModel: model, ProviderID: "", EnvItems: providerEnv,
+		Config: config, SessionID: sandbox.Summary.ID, PreferredProviderFamily: ProviderFamilyOpenAI, ProviderFamilyIsRequired: true, RequestedModel: model, ProviderID: "", EnvItems: providerEnv,
 	})
 	if err != nil {
 		if OptionalFacadeConfigError(err) {
