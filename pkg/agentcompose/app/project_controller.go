@@ -111,9 +111,9 @@ type projectControllerDelegate struct {
 }
 
 func (d projectControllerDelegate) ValidateProject(ctx context.Context, req *connect.Request[agentcomposev2.ValidateProjectRequest]) (*connect.Response[agentcomposev2.ValidateProjectResponse], error) {
-	normalized, issues, err := normalizeProjectRequest(req.Msg.GetSpec(), req.Msg.GetSource(), req.Msg.GetSubmittedSpecHash())
+	normalized, issues, err := normalizeProjectRequest(ctx, req.Msg.GetSpec(), req.Msg.GetSource(), req.Msg.GetSubmittedSpecHash())
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, projectConnectError(err)
 	}
 	result, err := d.controller.ValidateProject(ctx, normalized, issues)
 	if err != nil {
@@ -127,9 +127,9 @@ func (d projectControllerDelegate) ValidateProject(ctx context.Context, req *con
 }
 
 func (d projectControllerDelegate) ApplyProject(ctx context.Context, req *connect.Request[agentcomposev2.ApplyProjectRequest]) (*connect.Response[agentcomposev2.ApplyProjectResponse], error) {
-	normalized, issues, err := normalizeProjectRequest(req.Msg.GetSpec(), req.Msg.GetSource(), req.Msg.GetSubmittedSpecHash())
+	normalized, issues, err := normalizeProjectRequest(ctx, req.Msg.GetSpec(), req.Msg.GetSource(), req.Msg.GetSubmittedSpecHash())
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, projectConnectError(err)
 	}
 	result, err := d.controller.ApplyProject(ctx, projects.ApplyRequest{
 		Normalized: normalized,
@@ -196,40 +196,6 @@ func (d projectControllerDelegate) WatchProject(ctx context.Context, req *connec
 	_ = req
 	_ = stream
 	return connect.NewError(connect.CodeUnimplemented, fmt.Errorf("project watch is not implemented"))
-}
-
-func normalizeProjectRequest(spec *agentcomposev2.ProjectSpec, source *agentcomposev2.ProjectSource, submittedHash string) (projects.NormalizedProject, []projects.ValidationIssue, error) {
-	parsed, issues, err := parseProjectRequest(spec)
-	if err != nil || len(issues) > 0 {
-		return projects.NormalizedProject{}, issues, err
-	}
-	sourcePath := api.ProjectServiceSourcePath(source)
-	projectDir := ""
-	if source != nil {
-		projectDir = strings.TrimSpace(source.GetProjectDir())
-	}
-	normalized, err := compose.Normalize(parsed, compose.NormalizeOptions{
-		ComposePath:       sourcePath,
-		ProjectDir:        projectDir,
-		SourceCredentials: compose.SourceCredentialsResolved,
-	})
-	if err != nil {
-		return projects.NormalizedProject{}, []projects.ValidationIssue{validationIssueFromProto(api.IssueFromComposeError(err))}, nil
-	}
-	hash, err := normalized.Hash()
-	if err != nil {
-		return projects.NormalizedProject{}, nil, fmt.Errorf("hash project spec: %w", err)
-	}
-	result := projects.NormalizedProject{
-		Spec:       normalized,
-		SpecHash:   hash,
-		SourcePath: sourcePath,
-	}
-	submittedHash = strings.TrimSpace(submittedHash)
-	if submittedHash != "" && submittedHash != hash {
-		return result, []projects.ValidationIssue{{Path: "submitted_spec_hash", Message: fmt.Sprintf("submitted spec hash %s does not match normalized spec hash %s", submittedHash, hash)}}, nil
-	}
-	return result, nil, nil
 }
 
 func parseProjectRequest(spec *agentcomposev2.ProjectSpec) (*compose.ProjectSpec, []projects.ValidationIssue, error) {
@@ -323,6 +289,10 @@ func projectConnectError(err error) error {
 		return nil
 	}
 	switch {
+	case errors.Is(err, context.Canceled):
+		return connect.NewError(connect.CodeCanceled, err)
+	case errors.Is(err, context.DeadlineExceeded):
+		return connect.NewError(connect.CodeDeadlineExceeded, err)
 	case errors.Is(err, projects.ErrRevisionConflict):
 		return connect.NewError(connect.CodeAborted, err)
 	case errors.Is(err, projects.ErrInvalidRequest), errors.Is(err, domain.ErrRequired), errors.Is(err, domain.ErrAmbiguous), errors.Is(err, domain.ErrInvalidArgument):

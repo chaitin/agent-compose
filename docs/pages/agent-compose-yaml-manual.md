@@ -1089,6 +1089,30 @@ External script mappings use the same source keys as skills and workspaces:
 
 When a project is applied, the CLI reads the script and stores a content snapshot in the project specification; the daemon does not fetch the source again later. HTTP fetching uses a 10-second timeout, a 1 MiB limit, no more than five redirects, and UTF-8 validation. URL userinfo and HTTPS-to-HTTP redirect downgrades are rejected.
 
+#### Script sources through the project RPC API
+
+`SchedulerSpec.script` remains an inline JavaScript string. Direct RPC callers can instead set `SchedulerSpec.script_source` with `provider`, `url`, `ref`, `path`, `username`, `password`, and `token`. The source is mutually exclusive with inline `script` and declarative `triggers`. Supported providers match YAML: `file`, `http` (HTTP/HTTPS), and `git`. ZIP archives and `format` are not supported for scripts.
+
+For example, the scheduler portion of an ApplyProject JSON request can be:
+
+```json
+{
+  "enabled": true,
+  "script_source": {
+    "provider": "git",
+    "url": "https://github.com/example/workflows.git",
+    "ref": "main",
+    "path": "agents/reviewer/scheduler.js"
+  }
+}
+```
+
+Use `{"provider":"file","path":"./scheduler.js"}` for a file or `{"provider":"http","url":"https://example.com/scheduler.js"}` for an HTTP source. RPC file paths refer to the **daemon filesystem**, including container mounts. Relative paths use the directory of `ProjectSource.compose_path`, then `ProjectSource.project_dir`, then the daemon working directory. PatchProject uses the stored project source path. Git `path` selects a file inside the repository; HTTP returns the script body directly. The daemon needs Git installed for Git sources. Credentials can be supplied as values or `${NAME}` references resolved from the daemon environment.
+
+ValidateProject, ApplyProject, and PatchProject resolve sources on the daemon, including dry runs. The existing bounded resolver propagates request cancellation and retains its timeout, size, redirect, and UTF-8 checks. Fetch/validation failures do not save a revision. Successful application persists the resolved inline script snapshot and returns it in `script`; source credentials and source metadata are not retained. Subsequent scheduler execution and GetProject do not fetch the source again. A later request containing `script_source` fetches it again.
+
+The spec hash covers the normalized script content. `submitted_spec_hash`, when present, must match that resolved snapshot; a source that changes between ValidateProject and ApplyProject causes a hash mismatch. PatchProject rechecks `expected_current_spec_hash` after retrieval and rejects concurrent revision changes. Existing CLI `config`/`up` continue resolving YAML sources on the CLI host and submitting inline script snapshots.
+
 ### `jupyter`
 
 ```yaml

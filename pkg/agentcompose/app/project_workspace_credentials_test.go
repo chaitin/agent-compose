@@ -43,7 +43,7 @@ agents:
 		t.Fatalf("ProjectSpecToProtoChecked returned error: %v", err)
 	}
 
-	normalized, issues, err := normalizeProjectRequest(wireSpec, nil, submittedHash)
+	normalized, issues, err := normalizeProjectRequest(t.Context(), wireSpec, nil, submittedHash)
 	if err != nil {
 		t.Fatalf("normalizeProjectRequest returned error: %v", err)
 	}
@@ -93,7 +93,7 @@ agents: {}
 		t.Fatalf("ProjectSpecToProtoChecked returned error: %v", err)
 	}
 
-	normalized, issues, err := normalizeProjectRequest(wireSpec, nil, "")
+	normalized, issues, err := normalizeProjectRequest(t.Context(), wireSpec, nil, "")
 	if err != nil {
 		t.Fatalf("normalizeProjectRequest returned error: %v", err)
 	}

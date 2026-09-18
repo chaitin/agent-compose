@@ -8,7 +8,7 @@ import (
 
 func TestNormalizeProjectRequestSubmittedSpecHashContract(t *testing.T) {
 	spec := &agentcomposev2.ProjectSpec{Name: "hash-contract"}
-	normalized, issues, err := normalizeProjectRequest(spec, nil, "")
+	normalized, issues, err := normalizeProjectRequest(t.Context(), spec, nil, "")
 	if err != nil || len(issues) != 0 {
 		t.Fatalf("normalize without submitted hash: issues=%#v err=%v", issues, err)
 	}
@@ -23,7 +23,7 @@ func TestNormalizeProjectRequestSubmittedSpecHashContract(t *testing.T) {
 		{name: "mismatch reports submitted field", submittedHash: "sha256:not-the-submitted-spec", wantIssue: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, gotIssues, gotErr := normalizeProjectRequest(spec, nil, tc.submittedHash)
+			got, gotIssues, gotErr := normalizeProjectRequest(t.Context(), spec, nil, tc.submittedHash)
 			if gotErr != nil {
 				t.Fatalf("normalize: %v", gotErr)
 			}

@@ -1077,6 +1077,30 @@ scheduler:
 
 应用项目时 CLI 会读取脚本并将内容快照保存到项目规范，而不是让 daemon 以后重新读取来源。HTTP 读取限制包括 10 秒超时、最大 1 MiB、最多 5 次 redirect、UTF-8 校验；HTTPS 不允许降级 redirect 到 HTTP，URL userinfo 不允许使用。
 
+#### 通过项目 RPC API 指定脚本来源
+
+`SchedulerSpec.script` 继续接收内联 JavaScript 字符串。直接调用 RPC 时，也可以改用 `SchedulerSpec.script_source`，字段为 `provider`、`url`、`ref`、`path`、`username`、`password`、`token`。来源与内联 `script`、声明式 `triggers` 互斥。支持的 provider 与 YAML 一致：`file`、`http`（HTTP/HTTPS）、`git`；脚本不支持 ZIP 或 `format`。
+
+例如 ApplyProject JSON 请求中的 scheduler 部分可以写成：
+
+```json
+{
+  "enabled": true,
+  "script_source": {
+    "provider": "git",
+    "url": "https://github.com/example/workflows.git",
+    "ref": "main",
+    "path": "agents/reviewer/scheduler.js"
+  }
+}
+```
+
+文件来源使用 `{"provider":"file","path":"./scheduler.js"}`；HTTP 来源使用 `{"provider":"http","url":"https://example.com/scheduler.js"}`。RPC 文件路径指向 **daemon 的文件系统**，容器部署时需能通过挂载访问。相对路径依次以 `ProjectSource.compose_path` 所在目录、`ProjectSource.project_dir`、daemon 工作目录为基准；PatchProject 使用已保存的项目 source path。Git 的 `path` 指向仓库内文件，HTTP 响应直接返回源码正文。Git 来源要求 daemon 安装 Git。认证字段可传凭据值，或通过 `${NAME}` 引用 daemon 环境变量。
+
+ValidateProject、ApplyProject、PatchProject（包括 dry run）均在 daemon 解析来源，复用现有受限读取器，传播请求取消并保留超时、大小、重定向和 UTF-8 检查。获取或校验失败不会保存 revision。成功应用后只保存解析后的内联源码快照，并通过 `script` 返回；不保留来源凭据或来源元数据。后续调度执行和 GetProject 不会重新获取来源；再次提交包含 `script_source` 的请求才会重新获取。
+
+spec hash 基于规范化后的脚本内容。传入 `submitted_spec_hash` 时，必须匹配解析后的快照；ValidateProject 与 ApplyProject 之间来源内容变化会导致 hash 不匹配。PatchProject 获取来源后会重新检查 `expected_current_spec_hash`，拒绝覆盖并发 revision 更新。现有 CLI `config`/`up` 仍在客户端读取 YAML 来源并提交内联源码快照。
+
 ### `jupyter`
 
 ```yaml

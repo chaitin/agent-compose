@@ -155,6 +155,9 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		if sandbox := agent.GetSandbox(); sandbox != nil {
 			raw["sandbox"] = map[string]any{"stopped_runtime_policy": sandbox.GetStoppedRuntimePolicy()}
 		}
+		if issue := validateSchedulerScriptSource(agent.GetScheduler(), fmt.Sprintf("agents[%d].scheduler", i)); issue != nil {
+			return nil, []*agentcomposev2.ProjectValidationIssue{issue}
+		}
 		if scheduler := SchedulerYAMLShape(agent.GetScheduler()); len(scheduler) > 0 {
 			raw["scheduler"] = scheduler
 		}
@@ -433,6 +436,8 @@ func SchedulerYAMLShape(scheduler *agentcomposev2.SchedulerSpec) map[string]any 
 	}
 	if scheduler.GetScript() != "" {
 		raw["script"] = scheduler.GetScript()
+	} else if source := scheduler.GetScriptSource(); source != nil {
+		raw["script"] = schedulerScriptSourceYAMLShape(source)
 	}
 	return raw
 }

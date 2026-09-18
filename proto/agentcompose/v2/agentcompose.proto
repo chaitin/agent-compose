@@ -998,6 +998,7 @@ message WorkspaceSpec {
 message SchedulerSpec {
   bool enabled = 1;
   repeated TriggerSpec triggers = 2;
+  // Inline JavaScript source. Mutually exclusive with script_source.
   string script = 3;
   SchedulerSandboxPolicy sandbox_policy = 4;
   string display_name = 5;
@@ -1006,6 +1007,27 @@ message SchedulerSpec {
   string model = 8;
   // Optional per-scheduler run timeout. Empty inherits the daemon default.
   string run_timeout = 9;
+  // Optional source resolved by the daemon during ValidateProject, ApplyProject,
+  // and PatchProject, including dry runs. Persisted specs and responses contain
+  // the resolved script text instead. Mutually exclusive with script and triggers.
+  SchedulerScriptSource script_source = 10;
+}
+
+// SchedulerScriptSource selects one JavaScript file, not an archive or module
+// bundle. File paths refer to the daemon filesystem. Relative paths use the
+// project's compose_path directory, then project_dir, then the daemon cwd;
+// PatchProject uses the stored project source path. Git path is repository-relative.
+message SchedulerScriptSource {
+  // Supported providers: file, http (HTTP or HTTPS), and git.
+  string provider = 1;
+  string url = 2;
+  string ref = 3;
+  string path = 4;
+  // Credentials may be literal values or daemon environment references.
+  // Token takes precedence over basic authentication for HTTP.
+  string username = 5;
+  string password = 6;
+  string token = 7;
 }
 
 message TriggerSpec {

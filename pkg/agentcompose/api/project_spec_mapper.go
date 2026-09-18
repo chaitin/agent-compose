@@ -17,6 +17,8 @@ func ProjectSpecToProto(spec *compose.NormalizedProjectSpec) *agentcomposev2.Pro
 	return result
 }
 
+// ProjectSpecToProtoChecked encodes resolved script snapshots; unresolved
+// authoring sources must be loaded before serializing a normalized project.
 func ProjectSpecToProtoChecked(spec *compose.NormalizedProjectSpec) (*agentcomposev2.ProjectSpec, error) {
 	if spec == nil {
 		return nil, nil

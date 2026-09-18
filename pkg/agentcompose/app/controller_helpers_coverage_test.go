@@ -18,11 +18,11 @@ import (
 )
 
 func TestAppProjectControllerHelperCoverage(t *testing.T) {
-	if normalized, issues, err := normalizeProjectRequest(nil, nil, ""); err != nil || normalized.Spec != nil || len(issues) != 1 {
+	if normalized, issues, err := normalizeProjectRequest(t.Context(), nil, nil, ""); err != nil || normalized.Spec != nil || len(issues) != 1 {
 		t.Fatalf("normalizeProjectRequest nil normalized=%#v issues=%#v err=%v", normalized, issues, err)
 	}
 	dupSpec := &agentcomposev2.ProjectSpec{Variables: []*agentcomposev2.EnvVarSpec{{Name: "A"}, {Name: " A "}}}
-	if _, issues, err := normalizeProjectRequest(dupSpec, nil, ""); err != nil || len(issues) != 1 || issues[0].Path == "" {
+	if _, issues, err := normalizeProjectRequest(t.Context(), dupSpec, nil, ""); err != nil || len(issues) != 1 || issues[0].Path == "" {
 		t.Fatalf("normalizeProjectRequest duplicate issues=%#v err=%v", issues, err)
 	}
 	validSpec := &agentcomposev2.ProjectSpec{
@@ -37,11 +37,11 @@ func TestAppProjectControllerHelperCoverage(t *testing.T) {
 			Model:    "gpt",
 		}},
 	}
-	normalized, issues, err := normalizeProjectRequest(validSpec, &agentcomposev2.ProjectSource{ProjectDir: "/repo"}, "mismatch")
+	normalized, issues, err := normalizeProjectRequest(t.Context(), validSpec, &agentcomposev2.ProjectSource{ProjectDir: "/repo"}, "mismatch")
 	if err != nil || normalized.Spec == nil || len(issues) != 1 || issues[0].Path != "submitted_spec_hash" {
 		t.Fatalf("normalizeProjectRequest mismatch normalized=%#v issues=%#v err=%v", normalized, issues, err)
 	}
-	normalized, issues, err = normalizeProjectRequest(validSpec, &agentcomposev2.ProjectSource{ComposePath: "/repo/custom.yml"}, "")
+	normalized, issues, err = normalizeProjectRequest(t.Context(), validSpec, &agentcomposev2.ProjectSource{ComposePath: "/repo/custom.yml"}, "")
 	if err != nil || len(issues) != 0 || normalized.SourcePath != "/repo/custom.yml" || normalizedSpecToProto(normalized.Spec).GetName() != "app-project" {
 		t.Fatalf("normalizeProjectRequest valid normalized=%#v issues=%#v err=%v", normalized, issues, err)
 	}

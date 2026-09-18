@@ -37,6 +37,7 @@ func RedactProjectSpecSecrets(spec *agentcomposev2.ProjectSpec) *agentcomposev2.
 		redactMCPServerSpecs(agent.McpServers)
 		redactWorkspaceSpec(agent.Workspace)
 		redactSkillSpecs(agent.Skills)
+		redactSchedulerScriptSource(agent.GetScheduler().GetScriptSource())
 	}
 	return redacted
 }
@@ -98,6 +99,3 @@ func redactMCPServerSpecs(values []*agentcomposev2.MCPServerSpec) {
 		redactEnvVarSpecs(value.Headers)
 	}
 }
-
-// ProjectSpecToProtoChecked prevents an unresolved CLI-only script URL from
-// being mistaken for inline scheduler source on the wire.

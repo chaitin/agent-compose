@@ -126,7 +126,7 @@ func (s *NormalizedProjectSpec) MarshalCanonicalYAML(redactSecrets bool) ([]byte
 	return yaml.Marshal(s.ordered(redactSecrets))
 }
 
-// ValidateResolvedScriptURLs fails when a CLI-only URL source has not been
+// ValidateResolvedScriptURLs fails when a script source has not been
 // materialized into an inline snapshot yet.
 func (s *NormalizedProjectSpec) ValidateResolvedScriptURLs() error {
 	if s == nil {

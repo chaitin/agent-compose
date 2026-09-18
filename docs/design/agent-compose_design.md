@@ -208,15 +208,27 @@ agents:
   reviewer:
     scheduler:
       script:
-        url: ./scripts/reviewer-scheduler.js
+        provider: file
+        path: ./scripts/reviewer-scheduler.js
 ```
 
-Scheme-less relative and absolute paths, `file://`, `http://`, and `https://`
-are supported. `config` and `up` resolve the source on the CLI host and replace
-it with an inline snapshot before hashing or sending the v2 request. The daemon,
-v2 API, stored revisions, and scheduler runtime continue to accept script text
-only; a URL is not a runtime import and is fetched again only by a later
-`config` or `up` invocation.
+The `file`, `http`, and `git` providers select a JavaScript file. `config` and
+`up` resolve it on the CLI host and replace it with an inline snapshot before
+hashing or sending the v2 request. Direct RPC callers can use the additive
+`SchedulerSpec.script_source` message instead of the existing `script` string.
+ValidateProject, ApplyProject, and PatchProject resolve this source on the
+daemon, including dry runs; file paths then refer to the daemon filesystem.
+Relative file paths use the project source directory, or the daemon working
+directory when no source directory is provided. PatchProject uses the stored
+source path and rechecks the expected revision after fetching without holding
+the project lifecycle token during retrieval.
+
+Sources and inline scripts are mutually exclusive. Persisted revisions, API
+responses, and scheduler execution use resolved script text only. The source
+location and credentials are not retained. Source retrieval failures do not
+persist revisions, and submitted hashes refer to the resolved content. Sources
+are fetched again only when a later request supplies them, not when a stored
+scheduler runs. Script sources do not support archives or a `format` field.
 
 Normalization rules:
 
