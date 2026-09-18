@@ -913,7 +913,7 @@ describe("runner execution", () => {
 
       const result = await new DshRunner({
         ...runnerOptions(root, "persona text", "dsh"),
-        model: "deepseek-official/org/deepseek-v4",
+        model: "org/deepseek-v4",
         effort: "xhigh",
         skills: ["review"],
         mcpConfig: {

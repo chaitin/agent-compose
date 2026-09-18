@@ -76,8 +76,10 @@ func TestEnsurePiFacadeConfigAcceptsUnqualifiedModel(t *testing.T) {
 		t.Fatalf("pi env = %#v", env)
 	}
 	// The runner forwards this to `pi --model`; without it pi falls back to its
-	// own default model and the call never reaches the facade.
-	if env[GuestModelEnvName] != "qwen3-8b" {
+	// own default model and the call never reaches the facade. Pi addresses the
+	// model through the provider key WritePiRuntimeConfig registers, so the
+	// published reference carries that namespace.
+	if env[GuestModelEnvName] != "agent-compose/qwen3-8b" {
 		t.Fatalf("pi env[%s] = %q, want the resolved model", GuestModelEnvName, env[GuestModelEnvName])
 	}
 }
@@ -94,7 +96,8 @@ func TestFacadesPublishResolvedGuestModel(t *testing.T) {
 		want     string
 	}{
 		{provider: "codex", want: "qwen3-8b"},
-		{provider: "pi", want: "qwen3-8b"},
+		// pi addresses the model through the provider key in its models.json.
+		{provider: "pi", want: "agent-compose/qwen3-8b"},
 		{provider: "dsh", want: "qwen3-8b"},
 		// opencode addresses models through the provider key in its config.
 		{provider: "opencode", want: "agent-compose/qwen3-8b"},
@@ -126,6 +129,43 @@ func TestFacadesPublishResolvedGuestModel(t *testing.T) {
 				t.Fatalf("%s env[%s] = %q, want %q", test.provider, GuestModelEnvName, got, test.want)
 			}
 		})
+	}
+}
+
+// A resolved model id may itself contain slashes. The facade has to publish the
+// complete guest-facing reference so the runner can forward it untouched: pi
+// addresses the model under the facade provider, dsh as the bare literal. Both
+// guests pass the value straight to their CLI, so a truncated reference would
+// silently select a different model.
+func TestFacadesPublishGuestModelWithSlashesInModelID(t *testing.T) {
+	isolateLLMEnv(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	store := newBareModelFacadeStore()
+	store.providers = []Provider{gatewayConnection()}
+	config := bareModelConfig(root)
+	sandbox := bareModelSandbox(root, "sandbox-slash")
+	// "gateway" is the connection prefix; the literal remainder keeps its slash.
+	const declared = "gateway/anthropic/claude-3.5-sonnet"
+	const remainder = "anthropic/claude-3.5-sonnet"
+
+	piEnv, err := EnsurePiFacadeConfig(ctx, PiFacadeConfigRequest{Config: config, Store: store, Sandbox: sandbox, Model: declared, Source: "agent", RunID: "run-pi"})
+	if err != nil {
+		t.Fatalf("EnsurePiFacadeConfig returned error: %v", err)
+	}
+	if got := piEnv[GuestModelEnvName]; got != "agent-compose/"+remainder {
+		t.Fatalf("pi env[%s] = %q, want %q", GuestModelEnvName, got, "agent-compose/"+remainder)
+	}
+
+	dshEnv, err := EnsureDshFacadeConfig(ctx, DshFacadeConfigRequest{Config: config, Store: store, Sandbox: sandbox, Model: declared, Source: "agent", RunID: "run-dsh"})
+	if err != nil {
+		t.Fatalf("EnsureDshFacadeConfig returned error: %v", err)
+	}
+	if got := dshEnv[GuestModelEnvName]; got != remainder {
+		t.Fatalf("dsh env[%s] = %q, want %q", GuestModelEnvName, got, remainder)
+	}
+	if got := dshEnv["DSH_MODEL"]; got != remainder {
+		t.Fatalf("DSH_MODEL = %q, want %q", got, remainder)
 	}
 }
 

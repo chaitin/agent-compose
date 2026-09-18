@@ -35,3 +35,31 @@ func SplitModelReference(value string) (string, string, error) {
 	}
 	return providerID, model, nil
 }
+
+// GuestModelReference builds the model string a guest agent addresses, in the
+// provider namespace its own model configuration uses (for example
+// "agent-compose/gpt-5" for pi or "anthropic/claude-sonnet-4" for opencode). An
+// empty provider key returns the bare model, which is how dsh and codex address
+// a model whose route already carries the provider.
+//
+// The daemon is the single owner of this normalization: a runtime facade
+// publishes the result as GuestModelEnvName and the guest runner passes it
+// through untouched. Building the reference here instead of in a guest runtime
+// keeps the model the agent CLI asks for and the model the facade token was
+// minted for in agreement even when the resolved model id itself contains
+// slashes.
+func GuestModelReference(providerKey, model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	providerKey = strings.TrimSpace(providerKey)
+	if providerKey == "" {
+		return model
+	}
+	prefix := providerKey + "/"
+	if strings.HasPrefix(model, prefix) {
+		return model
+	}
+	return prefix + model
+}

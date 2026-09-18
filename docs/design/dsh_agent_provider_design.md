@@ -38,7 +38,7 @@ Env vars aren't unbounded: Linux caps a single `argv`/`envp` string at `MAX_ARG_
 
 | Variable | Set by | Purpose |
 | --- | --- | --- |
-| `DSH_MODEL` | `dsh.ts` | Model name (provider routing is resolved host-side; only the model literal crosses) |
+| `DSH_MODEL` | facade config + `dsh.ts` | Model literal (provider routing and any `<connection>/` prefix are resolved host-side; `dsh.ts` forwards the resolved value untouched) |
 | `DSH_REASONING_EFFORT` | `dsh.ts` | agent-compose's 5-level `effort` collapsed onto the `low`/`high`/`max` the `llm-pi-ai` route declares (§6 has no equivalent collapse — this is the reasoning-effort case). No daemon-driven path sets an effort today, so the route's `'max'` fallback is what every run actually gets; it preserves the static `thinking: enabled` + `reasoningEffort: 'max'` the replaced `llm-deepseek` row carried |
 | `DSH_PERMISSION_MODE` | facade config + `dsh.ts` | Always `danger-full-access`; guest sandboxing is the agent-compose sandbox, not a nested DSH one (§5.3/§5.5) |
 | `DSH_SESSION_ROOT`, `DSH_SESSION_ID`, `DSH_RESUME` | `dsh.ts` | Session persistence and resume (§3.3) |
@@ -55,7 +55,7 @@ Env vars aren't unbounded: Linux caps a single `argv`/`envp` string at `MAX_ARG_
 
 ### 4.1 Facade token and wire protocol
 
-`EnsureDshFacadeConfig` (`pkg/llms/dsh_facade.go`) issues a facade token whose wire API **follows the resolved provider**, and exports the same choice as `DSH_WIRE_API` for the profile's `llm-pi-ai` route to name its protocol. Matching the provider keeps the request on the proxy's passthrough path instead of the conversion path, where an upstream event the bridge does not model would reach the guest as assistant text. It was unconditionally chat-completions while the profile used `llm-deepseek`, whose Config has no protocol field at all (see §4.2). Model selection is an optional `<llm-provider-id>/<model-name>` reference (`SplitModelReference` in `pkg/llms/model_reference.go`), the same shape Pi and OpenCode use. When the prefix names a configured connection the request dispatches on that id; without it, the daemon's default connection resolves the literal model, and an agent naming no model at all falls back to the daemon's default catalog entry.
+`EnsureDshFacadeConfig` (`pkg/llms/dsh_facade.go`) issues a facade token whose wire API **follows the resolved provider**, and exports the same choice as `DSH_WIRE_API` for the profile's `llm-pi-ai` route to name its protocol. Matching the provider keeps the request on the proxy's passthrough path instead of the conversion path, where an upstream event the bridge does not model would reach the guest as assistant text. It was unconditionally chat-completions while the profile used `llm-deepseek`, whose Config has no protocol field at all (see §4.2). Model selection is an optional `<llm-provider-id>/<model-name>` reference (`SplitModelReference` in `pkg/llms/model_reference.go`), the same shape Pi and OpenCode use. When the prefix names a configured connection the request dispatches on that id; without it, the daemon's default connection resolves the literal model, and an agent naming no model at all falls back to the daemon's default catalog entry. The facade publishes the resolved model literal as `DSH_MODEL` and `AGENT_COMPOSE_RESOLVED_MODEL`; `dsh.ts` forwards that value unchanged, so prefix stripping stays the daemon's job and a model id containing slashes survives.
 
 ### 4.2 LLM adapter and route
 

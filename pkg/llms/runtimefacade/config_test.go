@@ -505,7 +505,10 @@ func TestEnsureSessionAgentRuntimeConfigReportsResolvedGuestModel(t *testing.T) 
 			if got := result.Env[llms.GuestModelEnvName]; got != result.Model {
 				t.Fatalf("%s model = %q, env[%s] = %q", agent, result.Model, llms.GuestModelEnvName, got)
 			}
-			if strings.Contains(result.Model, "/") && agent != "opencode" {
+			// pi and opencode address the model through the provider key written
+			// into their config, so their guest reference carries that namespace;
+			// the other agents pass a bare model literal.
+			if strings.Contains(result.Model, "/") && agent != "opencode" && agent != "pi" {
 				t.Fatalf("%s model = %q, want the resolved model name", agent, result.Model)
 			}
 		})

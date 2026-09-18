@@ -138,13 +138,19 @@ func ensureOpenCodeResolvedFacadeConfig(ctx context.Context, call openCodeFacade
 		if err := WriteOpenCodeAnthropicRuntimeConfig(sandbox, target.Model.Name, anthropicBaseURL+"/v1"); err != nil {
 			return nil, err
 		}
+		guestModel := GuestModelReference(ProviderFamilyAnthropic, target.Model.Name)
 		return map[string]string{
-			"AGENT_COMPOSE_SANDBOX_TOKEN": tokenValue, "LLM_API_ENDPOINT": anthropicBaseURL,
-			"LLM_API_KEY": tokenValue, "LLM_API_PROTOCOL": APIProtocolMessages,
-			"LLM_MODEL": "anthropic/" + target.Model.Name, "OPENCODE_MODEL": "anthropic/" + target.Model.Name,
-			GuestModelEnvName:   "anthropic/" + target.Model.Name,
-			"ANTHROPIC_API_KEY": tokenValue, "ANTHROPIC_AUTH_TOKEN": tokenValue,
-			"ANTHROPIC_BASE_URL": anthropicBaseURL, "OPENCODE_CONFIG": GuestOpenCodeConfigPath(config),
+			"AGENT_COMPOSE_SANDBOX_TOKEN": tokenValue,
+			"LLM_API_ENDPOINT":            anthropicBaseURL,
+			"LLM_API_KEY":                 tokenValue,
+			"LLM_API_PROTOCOL":            APIProtocolMessages,
+			"LLM_MODEL":                   guestModel,
+			"ANTHROPIC_API_KEY":           tokenValue,
+			"ANTHROPIC_AUTH_TOKEN":        tokenValue,
+			"ANTHROPIC_BASE_URL":          anthropicBaseURL,
+			"OPENCODE_CONFIG":             GuestOpenCodeConfigPath(config),
+			"OPENCODE_MODEL":              guestModel,
+			GuestModelEnvName:             guestModel,
 		}, nil
 	}
 	if providerFamily != ProviderFamilyOpenAI {
@@ -170,9 +176,10 @@ func ensureOpenCodeResolvedFacadeConfig(ctx context.Context, call openCodeFacade
 		return nil, err
 	}
 	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, openCodeGuestWireAPI, config)
-	env["LLM_MODEL"] = "agent-compose/" + target.Model.Name
-	env["OPENCODE_MODEL"] = "agent-compose/" + target.Model.Name
-	env[GuestModelEnvName] = "agent-compose/" + target.Model.Name
+	guestModel := GuestModelReference("agent-compose", target.Model.Name)
+	env["LLM_MODEL"] = guestModel
+	env["OPENCODE_MODEL"] = guestModel
+	env[GuestModelEnvName] = guestModel
 	return env, nil
 }
 
@@ -202,18 +209,19 @@ func ensureOpenCodeAnthropicFacadeConfig(ctx context.Context, call openCodeFacad
 	if err := WriteOpenCodeAnthropicRuntimeConfig(sandbox, target.Model.Name, anthropicBaseURL+"/v1"); err != nil {
 		return nil, err
 	}
+	guestModel := GuestModelReference(ProviderFamilyAnthropic, target.Model.Name)
 	return map[string]string{
 		"AGENT_COMPOSE_SANDBOX_TOKEN": tokenValue,
 		"LLM_API_ENDPOINT":            anthropicBaseURL,
 		"LLM_API_KEY":                 tokenValue,
 		"LLM_API_PROTOCOL":            APIProtocolMessages,
-		"LLM_MODEL":                   "anthropic/" + target.Model.Name,
+		"LLM_MODEL":                   guestModel,
 		"ANTHROPIC_API_KEY":           tokenValue,
 		"ANTHROPIC_AUTH_TOKEN":        tokenValue,
 		"ANTHROPIC_BASE_URL":          anthropicBaseURL,
 		"OPENCODE_CONFIG":             GuestOpenCodeConfigPath(config),
-		"OPENCODE_MODEL":              "anthropic/" + target.Model.Name,
-		GuestModelEnvName:             "anthropic/" + target.Model.Name,
+		"OPENCODE_MODEL":              guestModel,
+		GuestModelEnvName:             guestModel,
 	}, nil
 }
 
@@ -244,9 +252,10 @@ func ensureOpenCodeOpenAIFacadeConfig(ctx context.Context, call openCodeFacadeCa
 		return nil, err
 	}
 	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, openCodeGuestWireAPI, config)
-	env["LLM_MODEL"] = "agent-compose/" + target.Model.Name
-	env["OPENCODE_MODEL"] = "agent-compose/" + target.Model.Name
-	env[GuestModelEnvName] = "agent-compose/" + target.Model.Name
+	guestModel := GuestModelReference("agent-compose", target.Model.Name)
+	env["LLM_MODEL"] = guestModel
+	env["OPENCODE_MODEL"] = guestModel
+	env[GuestModelEnvName] = guestModel
 	return env, nil
 }
 
@@ -276,7 +285,16 @@ func ensureOpenCodeCustomFacadeConfig(ctx context.Context, call openCodeFacadeCa
 	if err := WriteOpenCodeRuntimeConfig(sandbox, providerID, target.Model.Name, openAIBaseURL); err != nil {
 		return nil, err
 	}
-	return openCodeOpenAIEnv(tokenValue, openAIBaseURL, openCodeGuestWireAPI, config), nil
+	// A custom endpoint is registered under the operator's own provider key, so
+	// the guest addresses the model through that key. Publishing it keeps every
+	// facade on the same contract: the runner forwards GuestModelEnvName and
+	// never reconstructs the reference.
+	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, openCodeGuestWireAPI, config)
+	guestModel := GuestModelReference(providerID, target.Model.Name)
+	env["LLM_MODEL"] = guestModel
+	env["OPENCODE_MODEL"] = guestModel
+	env[GuestModelEnvName] = guestModel
+	return env, nil
 }
 
 // openCodeGuestWireAPI is the protocol opencode speaks to the facade, which is

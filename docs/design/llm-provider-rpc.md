@@ -119,13 +119,17 @@ request into OpenAI Chat, so the run fails with `unsupported llm protocol bridge
 from "anthropic_messages" to "openai_chat"`. Give claude a `responses` or an
 `anthropic_messages` connection.
 
-The facade publishes the model it resolved as `AGENT_COMPOSE_RESOLVED_MODEL`, and
-the daemon tells the guest runner that value instead of the model the agent
+The facade publishes the model it resolved as `AGENT_COMPOSE_RESOLVED_MODEL`,
+already rewritten into the namespace the guest addresses models by, and the
+daemon tells the guest runner that value instead of the model the agent
 declared. A declaration is a request that resolution may rewrite: a
 `<connection>/<model>` prefix is stripped, a catalog or bootstrap default
-supplies a model the agent omitted, and opencode addresses models through the
-provider key written into its config. An agent CLI told the declaration instead
-addresses a model the facade token is not bound to.
+supplies a model the agent omitted, and pi and opencode address models through
+the provider key written into their config. The runner passes the published
+reference through untouched — no guest runtime strips or re-adds a prefix — so a
+resolved model id that itself contains slashes reaches the upstream intact. An
+agent CLI told the declaration instead addresses a model the facade token is not
+bound to.
 
 The next target resolution reads current provider settings, so address/key
 updates require no restart. Existing in-flight requests use their resolved

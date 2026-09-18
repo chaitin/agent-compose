@@ -70,8 +70,11 @@ func EnsurePiFacadeConfig(ctx context.Context, req PiFacadeConfigRequest) (map[s
 		"LLM_API_KEY":                 tokenValue,
 		"LLM_API_PROTOCOL":            facadeProtocol,
 		"PI_CODING_AGENT_DIR":         GuestPiAgentDir(config),
-		GuestModelEnvName:             target.Model.Name,
 	}
+	// Pi addresses the model through the provider key WritePiRuntimeConfig
+	// registers, so the guest-facing reference carries the namespace. The runner
+	// passes this value to `pi --model` untouched.
+	env[GuestModelEnvName] = GuestModelReference(piFacadeProviderID, target.Model.Name)
 	if target.Provider.ProviderType == ProviderFamilyAnthropic {
 		env["ANTHROPIC_API_KEY"] = tokenValue
 	} else {

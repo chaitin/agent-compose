@@ -83,7 +83,7 @@ describe("DshRunner", () => {
 
       const result = await new DshRunner({
         ...runnerOptions(root, "system context", "dsh"),
-        model: "deepseek-official/deepseek-v4-flash",
+        model: "deepseek-v4-flash",
         effort: "high",
         skills: ["review"],
       }).runPrompt("user prompt");
@@ -121,12 +121,15 @@ describe("DshRunner", () => {
     });
   });
 
-  it("keeps every slash after the provider id when the model remainder itself contains slashes", async () => {
+  it("forwards a daemon-resolved model whose id contains slashes without stripping", async () => {
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
+      // The daemon resolved "deepseek-official/org/deepseek-v4-flash" down to
+      // this literal. Stripping the first segment here would send DSH
+      // "deepseek-v4-flash", a different model than the facade token names.
       await new DshRunner({
         ...runnerOptions(root, "", "dsh"),
-        model: "deepseek-official/org/deepseek-v4-flash",
+        model: "org/deepseek-v4-flash",
       }).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_MODEL).toBe("org/deepseek-v4-flash");
@@ -327,7 +330,7 @@ describe("DshRunner", () => {
     vi.stubEnv("DSH_MODEL", "daemon-resolved-model");
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
-      await new DshRunner({ ...runnerOptions(root, "", "dsh"), model: "default/configured-model" }).runPrompt("prompt");
+      await new DshRunner({ ...runnerOptions(root, "", "dsh"), model: "configured-model" }).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_MODEL).toBe("configured-model");
     });
