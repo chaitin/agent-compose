@@ -152,6 +152,12 @@ func normalizeSchedulerScriptSource(path string, source sources.Source, options 
 		if source.URL == "" {
 			return sources.Source{}, &ValidationError{Path: path + ".url", Message: "git script url is required"}
 		}
+		if options.ScriptSourceBoundary == ScriptSourceBoundaryDaemon {
+			source.URL, err = normalizeDaemonGitScriptURL(source.URL, options)
+			if err != nil {
+				return sources.Source{}, &ValidationError{Path: path + ".url", Message: err.Error()}
+			}
+		}
 		if source.Path == "" {
 			return sources.Source{}, &ValidationError{Path: path + ".path", Message: "git script path is required"}
 		}

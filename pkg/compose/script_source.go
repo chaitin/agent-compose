@@ -22,8 +22,8 @@ const (
 )
 
 // ScriptSourceBoundary identifies which host owns the filesystem that a script
-// source location refers to. It constrains accepted location forms only; it is
-// neither a credential nor a transport policy.
+// source location refers to. It constrains local source locations; it is
+// neither a credential nor a network access policy.
 type ScriptSourceBoundary uint8
 
 const (
@@ -31,7 +31,8 @@ const (
 	// resolves them on the authoring host before submitting the project.
 	ScriptSourceBoundaryAuthoring ScriptSourceBoundary = iota
 	// ScriptSourceBoundaryDaemon allows http and git sources only. File scripts
-	// belong to the authoring host and must be submitted as inline content.
+	// belong to the authoring host and must be submitted as inline content. Local
+	// Git repositories must remain inside the daemon-visible project directory.
 	ScriptSourceBoundaryDaemon
 )
 

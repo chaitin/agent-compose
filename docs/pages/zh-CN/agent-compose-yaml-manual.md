@@ -1093,7 +1093,7 @@ CLI 本身也是 Project RPC 客户端。Workspace 和 Skill 路径不会自动�
 
 #### 通过项目 RPC API 指定脚本来源
 
-`SchedulerSpec.script` 继续接收内联 JavaScript 字符串。直接调用 RPC 时，也可以改用 `SchedulerSpec.script_source`，字段为 `provider`、`url`、`ref`、`path`、`username`、`password`、`token`。来源与内联 `script`、声明式 `triggers` 互斥；脚本不支持 ZIP 或 `format`。项目 RPC 只接受 `http`（HTTP/HTTPS）与 `git`。YAML 另外支持 `provider: file`，由 CLI 在编写侧读取并以内联脚本内容提交。此 provider 限制不改变已有 Git URL 校验规则。
+`SchedulerSpec.script` 继续接收内联 JavaScript 字符串。直接调用 RPC 时，也可以改用 `SchedulerSpec.script_source`，字段为 `provider`、`url`、`ref`、`path`、`username`、`password`、`token`。来源与内联 `script`、声明式 `triggers` 互斥；脚本不支持 ZIP 或 `format`。项目 RPC 只接受 `http`（HTTP/HTTPS）与 `git`。YAML 另外支持 `provider: file`，由 CLI 在编写侧读取并以内联脚本内容提交。
 
 例如 ApplyProject JSON 请求中的 scheduler 部分可以写成：
 
@@ -1111,7 +1111,9 @@ CLI 本身也是 Project RPC 客户端。Workspace 和 Skill 路径不会自动�
 
 HTTP 来源使用 `{"provider":"http","url":"https://example.com/scheduler.js"}`。Git 的 `path` 指向仓库内文件，HTTP 响应直接返回源码正文。Git 来源要求 daemon 安装 Git。认证字段可省略。直接 RPC 提交的 `username`、`password`、`token` 按字面值使用，包括 `${NAME}`；daemon 不从自身或 Agent 环境变量展开这些值。公开来源无需填写认证字段。
 
-ValidateProject、ApplyProject、PatchProject（包括 dry run）均在 daemon 解析来源，复用现有受限读取器，传播请求取消并保留超时、大小、重定向和 UTF-8 检查。获取或校验失败不会保存 revision。成功应用后只保存解析后的内联源码快照，并通过 `script` 返回；不保留来源凭据或来源元数据。后续调度执行和 GetProject 不会重新获取来源；再次提交包含 `script_source` 的请求才会重新获取。
+Project RPC 的 Git 来源既支持远程仓库（包括内网地址和已有 SSH/Git 传输方式），也支持 daemon 本地仓库。本地路径和 `file://` URL 解析符号链接后，仓库必须位于项目来源目录内。相对仓库路径以该目录为基准，不以 daemon 工作目录为基准。调用方需提供绝对路径 `source.compose_path` 或 `source.project_dir`，对应目录必须在 daemon 上存在；compose 文件路径取其父目录，同时提供两个字段时以 `source.compose_path` 为准。PatchProject 使用已保存的项目来源路径。缺少来源目录或仓库位于目录外时，在 Git 获取前拒绝请求。脚本的 `path` 也必须位于检出的仓库内。这些检查定义资源位置约定；daemon API 仍是管理员信任边界，不是不可信调用者之间的隔离边界。
+
+ValidateProject、ApplyProject、PatchProject（包括 dry run）均在 daemon 解析来源，复用现有受限读取器，传播请求取消并保留超时、大小、重定向和 UTF-8 检查。获取或校验失败不会保存 revision。规范化会裁剪脚本首尾空白，并移除获取内容开头的 BOM；不会对脚本文本进行环境变量插值。成功应用后只保存规范化后的内联源码快照，并通过 `script` 返回；不保留来源凭据或来源元数据。后续调度执行和 GetProject 不会重新获取来源；再次提交包含 `script_source` 的请求才会重新获取。
 
 spec hash 基于规范化后的脚本内容。传入 `submitted_spec_hash` 时，必须匹配解析后的快照；ValidateProject 与 ApplyProject 之间来源内容变化会导致 hash 不匹配。PatchProject 获取来源后会重新检查 `expected_current_spec_hash`，拒绝覆盖并发 revision 更新。现有 CLI `config`/`up` 仍在客户端读取 YAML 来源并提交内联源码快照。
 

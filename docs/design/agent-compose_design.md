@@ -223,8 +223,19 @@ daemon-visible resources resolved during preparation. PatchProject
 rechecks the expected revision after fetching without holding the project
 lifecycle token during retrieval.
 
+Git script sources retain remote transports and internal-host support. Daemon-local
+repository paths and file URLs are permitted only within the project source
+directory after symlink resolution; relative repositories resolve against that
+directory. Local Git requires an absolute compose path or project directory with
+an existing daemon-visible source directory. The compose path takes precedence,
+and PatchProject uses the persisted source path. Repository-internal script paths
+remain confined to the checkout. This is a source-location contract within the
+administrative daemon API, not per-project authorization for untrusted clients.
+
 Sources and inline scripts are mutually exclusive. Persisted revisions, API
-responses, and scheduler execution use resolved script text only. The source
+responses, and scheduler execution use normalized script text only: outer
+whitespace is trimmed, a leading BOM is removed from fetched content, and script
+text is not interpolated against environment variables. The source
 location and credentials are not retained. Source retrieval failures do not
 persist revisions, and submitted hashes refer to the resolved content. Sources
 are fetched again only when a later request supplies them, not when a stored

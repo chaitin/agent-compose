@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -33,18 +32,7 @@ import (
 const sourceTestScript = `function main() { return {ok: true}; }`
 
 func TestIntegrationProjectScriptSources(t *testing.T) {
-	root := t.TempDir()
-	scriptPath := filepath.Join(root, "scheduler.js")
-	if err := os.WriteFile(scriptPath, []byte(sourceTestScript), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{{"init", "-b", "main"}, {"config", "user.email", "test@example.test"}, {"config", "user.name", "Test"}, {"add", "scheduler.js"}, {"commit", "-m", "script"}} {
-		cmd := exec.CommandContext(t.Context(), "git", args...)
-		cmd.Dir = root
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git: %v %s", err, output)
-		}
-	}
+	root := newScriptSourceRepository(t, t.TempDir())
 	sourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer source-test-token" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -59,12 +47,17 @@ func TestIntegrationProjectScriptSources(t *testing.T) {
 		for _, source := range []*agentcomposev2.SchedulerScriptSource{
 			{Provider: "http", Url: sourceServer.URL, Token: "source-test-token"},
 			{Provider: "git", Url: root, Ref: "main", Path: "scheduler.js"},
+			{Provider: "git", Url: (&url.URL{Scheme: "file", Path: root}).String(), Ref: "main", Path: "scheduler.js"},
+			{Provider: "git", Url: ".", Ref: "main", Path: "scheduler.js"},
 		} {
 			t.Run(protocol+"/"+source.Provider, func(t *testing.T) {
 				client, store := newScriptSourceProjectClient(t, protocol)
 				spec := scriptSourceProjectSpec(source)
 				original := proto.Clone(spec)
 				origin := &agentcomposev2.ProjectSource{ComposePath: filepath.Join(root, "compose.yml")}
+				if protocol == "grpc" {
+					origin = &agentcomposev2.ProjectSource{ProjectDir: root}
+				}
 				validated, err := client.ValidateProject(t.Context(), connect.NewRequest(&agentcomposev2.ValidateProjectRequest{Spec: spec, Source: origin}))
 				if err != nil || !validated.Msg.GetValid() {
 					t.Fatalf("validate: %v %v", validated, err)

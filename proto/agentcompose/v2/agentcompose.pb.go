@@ -7079,8 +7079,12 @@ func (x *SchedulerSpec) GetScriptSource() *SchedulerScriptSource {
 // bundle. Git path is repository-relative; http returns the body directly.
 type SchedulerScriptSource struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Supported providers: http (HTTP or HTTPS) and git. The file provider is
-	// resolved by the CLI on the authoring host and submitted as inline script
+	// Supported providers: http (HTTP or HTTPS) and git. Local Git repository
+	// paths and file URLs must stay within the project source directory after
+	// symlink resolution. Relative paths use that directory. Local Git requires
+	// an absolute project source path with an existing daemon-visible directory;
+	// PatchProject uses the saved source path. Remote Git transports remain valid.
+	// The file provider is resolved by the CLI and submitted as inline script
 	// content; it is rejected here.
 	Provider string `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
 	Url      string `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
