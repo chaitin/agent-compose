@@ -569,17 +569,6 @@ func TestAgentRunnerExecuteAgentRunContinuesWhenDefinitionLookupFails(t *testing
 	}
 }
 
-func TestAgentSkillEnvReturnsScopedMap(t *testing.T) {
-	env := agentSkillEnv([]domain.SandboxEnvVar{{Name: "GIT_TOKEN", Value: "agent-token"}})
-	if env["GIT_TOKEN"] != "agent-token" {
-		t.Fatalf("agentSkillEnv = %#v", env)
-	}
-	empty := agentSkillEnv(nil)
-	if empty == nil {
-		t.Fatalf("agentSkillEnv(nil) returned nil")
-	}
-}
-
 func TestAgentRunnerResolveAgentSystemPromptBranches(t *testing.T) {
 	ctx := context.Background()
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{Tags: []domain.SandboxTag{

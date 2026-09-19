@@ -304,7 +304,6 @@ func (r *AgentRunner) prepareAgentFiles(ctx context.Context, session *domain.San
 	var skillNames []string
 	if definition != nil && len(definition.Skills) > 0 {
 		resolver := skills.NewResolver(r.config)
-		resolver.Env = agentSkillEnv(definition.EnvItems)
 		err := resolver.WithResolved(ctx, definition.Skills, func(resolvedSkills []skills.ResolvedSkill) error {
 			var writeErr error
 			skillNames, writeErr = execution.WriteAgentSkills(ctx, r.config, session, resolver.Projected(resolvedSkills), r.guestSkillsWriterFor(session))
@@ -317,14 +316,6 @@ func (r *AgentRunner) prepareAgentFiles(ctx context.Context, session *domain.San
 		return nil, err
 	}
 	return skillNames, nil
-}
-
-func agentSkillEnv(items []domain.SandboxEnvVar) map[string]string {
-	env := domain.SandboxEnvMap(items)
-	if env == nil {
-		return map[string]string{}
-	}
-	return env
 }
 
 func (r *AgentRunner) prepareAgentMCPConfig(ctx context.Context, session *domain.Sandbox, agent string, definition *domain.AgentDefinition) error {

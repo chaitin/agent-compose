@@ -109,7 +109,7 @@ func TestFetchRejectsPrivateHostBeforeConnecting(t *testing.T) {
 		t.Fatal(err)
 	}
 	destination := filepath.Join(t.TempDir(), "archive.zip")
-	_, err = fetcher.Fetch(context.Background(), sources.Source{Provider: sources.ProviderHTTP, URL: "http://169.254.169.254/archive.zip"}, nil, destination)
+	_, err = fetcher.Fetch(context.Background(), sources.Source{Provider: sources.ProviderHTTP, URL: "http://169.254.169.254/archive.zip"}, destination)
 	if err == nil || !strings.Contains(err.Error(), "private address") {
 		t.Fatalf("Fetch error = %v, want private address rejection", err)
 	}
@@ -132,7 +132,7 @@ func TestFetchRejectsRedirectToPrivateHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = fetcher.Fetch(context.Background(), sources.Source{URL: "http://93.184.216.34/archive.zip"}, nil, filepath.Join(t.TempDir(), "archive.zip"))
+	_, err = fetcher.Fetch(context.Background(), sources.Source{URL: "http://93.184.216.34/archive.zip"}, filepath.Join(t.TempDir(), "archive.zip"))
 	if err == nil || !strings.Contains(err.Error(), "private address") {
 		t.Fatalf("Fetch error = %v, want redirect rejection", err)
 	}
@@ -179,7 +179,7 @@ func TestFetchRestrictsRedirectSchemeDowngrade(t *testing.T) {
 			_, err = fetcher.Fetch(context.Background(), sources.Source{
 				URL:   "https://93.184.216.34/start.zip",
 				Token: "archive-secret",
-			}, nil, destination)
+			}, destination)
 			if test.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "refusing redirect from https") {
 					t.Fatalf("Fetch error = %v, want a downgrade rejection", err)
@@ -216,7 +216,7 @@ func TestFetchRejectsUnexpectedStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = fetcher.Fetch(context.Background(), sources.Source{URL: "http://93.184.216.34/archive.zip"}, nil, filepath.Join(t.TempDir(), "archive.zip"))
+	_, err = fetcher.Fetch(context.Background(), sources.Source{URL: "http://93.184.216.34/archive.zip"}, filepath.Join(t.TempDir(), "archive.zip"))
 	if err == nil || !strings.Contains(err.Error(), "unexpected status") {
 		t.Fatalf("Fetch error = %v, want status rejection", err)
 	}

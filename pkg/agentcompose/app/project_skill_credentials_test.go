@@ -81,7 +81,7 @@ func TestNormalizeProjectRequestAcceptsLegacySkillCredentialReferences(t *testin
 	}
 
 	// A legacy persisted reference arriving at the daemon boundary must be
-	// accepted so unrelated patches keep working; it is resolved at clone time.
+	// accepted so unrelated patches keep working; it is used literally at clone time.
 	normalized, issues, err := normalizeProjectRequest(t.Context(), wireSpec, nil, "")
 	if err != nil {
 		t.Fatalf("normalizeProjectRequest returned error: %v", err)

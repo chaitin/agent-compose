@@ -861,6 +861,10 @@ message ProjectChange {
   string message = 5;
 }
 
+// Project RPC input is literal: no environment interpolation occurs during
+// validation, persistence, patching, or resource preparation. CLI/YAML performs
+// authoring-time interpolation before submission. Normal field validation and
+// PatchProject secret-preservation semantics still apply.
 message ProjectSpec {
   string name = 1;
   repeated EnvVarSpec variables = 2;
@@ -952,6 +956,7 @@ message BuildSpec {
   bool pull = 8;
 }
 
+// Values are literal on the wire, including strings such as ${NAME}.
 message EnvVarSpec {
   string name = 1;
   string value = 2;
@@ -977,7 +982,8 @@ enum WorkspaceMode {
 }
 
 message WorkspaceSpec {
-  // Workspace provider name. Unknown extension values are allowed.
+  // Supported providers: file, git, http. File paths refer to daemon-visible
+  // project directories and are read during run preparation, not uploaded.
   string provider = 1;
   string url = 2;
   string ref = 3;
@@ -1014,17 +1020,17 @@ message SchedulerSpec {
 }
 
 // SchedulerScriptSource selects one JavaScript file, not an archive or module
-// bundle. File paths refer to the daemon filesystem. Relative paths use the
-// project's compose_path directory, then project_dir, then the daemon cwd;
-// PatchProject uses the stored project source path. Git path is repository-relative.
+// bundle. Git path is repository-relative; http returns the body directly.
 message SchedulerScriptSource {
-  // Supported providers: file, http (HTTP or HTTPS), and git.
+  // Supported providers: http (HTTP or HTTPS) and git. The file provider is
+  // resolved by the CLI on the authoring host and submitted as inline script
+  // content; it is rejected here.
   string provider = 1;
   string url = 2;
   string ref = 3;
   string path = 4;
-  // Optional credentials must be resolved by the caller. Unresolved environment
-  // references are rejected; daemon process variables are never used.
+  // Optional credentials are literal strings, including ${NAME}. Neither daemon
+  // nor Agent environment variables are consulted.
   // Token takes precedence over basic authentication for HTTP.
   string username = 5;
   string password = 6;
@@ -1991,6 +1997,9 @@ message StartAgentRunResponse {
   bool started = 3;
 }
 
+// File, git, and http sources are resolved during Agent preparation. File
+// paths must be daemon-visible and inside allowed source roots. Credentials,
+// paths, URLs, and refs are literal RPC values with no environment expansion.
 message SkillSpec {
   string name = 1;
   string provider = 2;

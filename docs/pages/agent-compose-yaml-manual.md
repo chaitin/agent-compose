@@ -330,7 +330,7 @@ Behavior:
 - `username`, `password`, and `token` accept exact environment references such as `${NAME}`; a token is sent as `Authorization: Bearer`, and basic credentials are only used when no token is configured.
 - `mode: mount` is not supported for `http`; the archive is always copied into the run workspace.
 
-Workspace credentials are optional. The CLI resolves `${NAME}` from its project dotenv/process environment before submission. Direct RPC callers must submit resolved values. At download/clone time, unresolved references are rejected before network access, including references in older persisted workspace configurations; the daemon does not substitute its own environment. If an existing workspace relied on daemon environment credentials, reapply it with credentials resolved by the CLI or RPC caller. This also applies to Git workspaces. Public sources need no authentication fields.
+Workspace credentials are optional. The CLI resolves `${NAME}` from its project dotenv/process environment before submission. Project RPC values and persisted credentials are literal: `${NAME}` is used as that exact string during Git/HTTP authentication, without looking up daemon or Agent environment variables. This also applies to legacy stored credentials. Reapply projects that relied on runtime expansion with credentials resolved by the CLI or RPC caller. Public sources need no authentication fields.
 
 Workspace selection follows these rules:
 
@@ -879,7 +879,7 @@ skills:
 
 A `git` or `http` skill may also come from an internal host, such as an internal GitLab or an artifact server: private and loopback addresses are accepted, because the daemon resolves that host itself. Only `http` and `https` URLs are fetched over the network; any other URL is treated as a local source and must stay under an allowed source root.
 
-`password` and `token` cannot contain plaintext. During `config` or `up`, the CLI resolves their exact `${NAME}` references from the project dotenv/process environment before submitting the project to the daemon; a reference whose variable is absent is kept as-is and can resolve only from the agent's configured environment during skill preparation, never implicitly from the daemon process environment. User-facing normalized output and project APIs redact the resolved credentials. Remote ZIP downloads are restricted to HTTP(S), may point at an internal host (private and loopback addresses are accepted), and are subject to size, archive, and content checks.
+In YAML, `password` and `token` must be environment references. During `config` or `up`, the CLI resolves their exact `${NAME}` references from the project dotenv/process environment before submitting the project to the daemon; a reference whose variable is absent is kept as a literal string. Skill preparation never expands it from Agent or daemon environment variables. Direct RPC credentials are also literal. Projects relying on deferred expansion must be reapplied with resolved credentials. User-facing normalized output and project APIs redact the resolved credentials. Remote ZIP downloads are restricted to HTTP(S), may point at an internal host (private and loopback addresses are accepted), and are subject to size, archive, and content checks.
 
 Git refs are resolved at each business lifecycle: skills during an agent run, workspaces during sandbox provisioning, and scheduler sources during `config`/`up` before the script snapshot is stored. A moving branch can therefore resolve to different commits across those operations. Use a commit SHA in `ref` when all consumers must use the exact same revision.
 
@@ -1091,9 +1091,21 @@ External script mappings use the same source keys as skills and workspaces:
 
 When a project is applied, the CLI reads the script and stores a content snapshot in the project specification; the daemon does not fetch the source again later. HTTP fetching uses a 10-second timeout, a 1 MiB limit, no more than five redirects, and UTF-8 validation. URL userinfo and HTTPS-to-HTTP redirect downgrades are rejected.
 
+#### Project RPC resource boundaries
+
+| Resource | Project RPC providers | Local file behavior |
+| --- | --- | --- |
+| Workspace | `file`, `git`, `http` | The daemon reads/copies the directory at run preparation, or mounts it for Docker. |
+| Skill | `file`, `git`, `http` | The daemon reads the directory or ZIP at Agent preparation. |
+| Scheduler script source | `git`, `http` | RPC rejects `file`; CLI reads local scripts and submits inline text. |
+
+CLI is itself a Project RPC client. Workspace and Skill paths are not uploaded automatically and must be visible to the daemon. Their existing source-root restrictions still apply. Scheduler source rejection does not remove the administrative host-filesystem capabilities of Workspace and Skill.
+
+All Project RPC input strings use literal semantics, including `env.value`, source credentials, URLs, paths, and refs. `${NAME}` is neither expanded nor rejected merely for resembling a reference; normal field validation still applies. Validate, Apply, Patch, and later resource preparation do not consult daemon or Agent environments to interpolate these values. CLI/YAML interpolation remains a separate step before submission. The documented `PatchProject` redacted-secret marker behavior is unchanged.
+
 #### Script sources through the project RPC API
 
-`SchedulerSpec.script` remains an inline JavaScript string. Direct RPC callers can instead set `SchedulerSpec.script_source` with `provider`, `url`, `ref`, `path`, `username`, `password`, and `token`. The source is mutually exclusive with inline `script` and declarative `triggers`. Supported providers match YAML: `file`, `http` (HTTP/HTTPS), and `git`. ZIP archives and `format` are not supported for scripts.
+`SchedulerSpec.script` remains an inline JavaScript string. Direct RPC callers can instead set `SchedulerSpec.script_source` with `provider`, `url`, `ref`, `path`, `username`, `password`, and `token`. The source is mutually exclusive with inline `script` and declarative `triggers`. ZIP archives and `format` are not supported for scripts. A project request accepts `http` (HTTP/HTTPS) and `git` only. YAML also supports `provider: file`, which the CLI reads on the authoring host and submits as inline script content. This provider restriction does not change the existing Git URL validation rules.
 
 For example, the scheduler portion of an ApplyProject JSON request can be:
 
@@ -1109,7 +1121,7 @@ For example, the scheduler portion of an ApplyProject JSON request can be:
 }
 ```
 
-Use `{"provider":"file","path":"./scheduler.js"}` for a file or `{"provider":"http","url":"https://example.com/scheduler.js"}` for an HTTP source. RPC file paths refer to the **daemon filesystem**, including container mounts. Relative paths use the directory of `ProjectSource.compose_path`, then `ProjectSource.project_dir`, then the daemon working directory. PatchProject uses the stored project source path. Git `path` selects a file inside the repository; HTTP returns the script body directly. The daemon needs Git installed for Git sources. Credentials are optional. Direct RPC callers must supply resolved credential values; unresolved `${NAME}` references in `username`, `password`, or `token` are rejected before any source request. The daemon does not read its process environment for these credentials. Omit authentication fields for public sources.
+Use `{"provider":"http","url":"https://example.com/scheduler.js"}` for an HTTP source. Git `path` selects a file inside the repository; HTTP returns the script body directly. The daemon needs Git installed for Git sources. Credentials are optional. Direct RPC `username`, `password`, and `token` values are used literally, including `${NAME}`. The daemon does not expand them from its process environment or an Agent environment. Omit authentication fields for public sources.
 
 ValidateProject, ApplyProject, and PatchProject resolve sources on the daemon, including dry runs. The existing bounded resolver propagates request cancellation and retains its timeout, size, redirect, and UTF-8 checks. Fetch/validation failures do not save a revision. Successful application persists the resolved inline script snapshot and returns it in `script`; source credentials and source metadata are not retained. Subsequent scheduler execution and GetProject do not fetch the source again. A later request containing `script_source` fetches it again.
 

@@ -21,6 +21,20 @@ const (
 	maxScriptSourceRedirects   = 5
 )
 
+// ScriptSourceBoundary identifies which host owns the filesystem that a script
+// source location refers to. It constrains accepted location forms only; it is
+// neither a credential nor a transport policy.
+type ScriptSourceBoundary uint8
+
+const (
+	// ScriptSourceBoundaryAuthoring allows file, http, and git sources. The CLI
+	// resolves them on the authoring host before submitting the project.
+	ScriptSourceBoundaryAuthoring ScriptSourceBoundary = iota
+	// ScriptSourceBoundaryDaemon allows http and git sources only. File scripts
+	// belong to the authoring host and must be submitted as inline content.
+	ScriptSourceBoundaryDaemon
+)
+
 // ScriptSourceResolver fetches a structurally validated, normalized script
 // location. Plain paths are absolute; URL locations use file/http/https.
 type ScriptSourceResolver interface {
@@ -36,13 +50,12 @@ func (f ScriptSourceResolverFunc) Resolve(ctx context.Context, source sources.So
 
 type defaultScriptSourceResolver struct {
 	client *http.Client
-	env    map[string]string
 }
 
-// NewDefaultScriptSourceResolver returns the bounded file and HTTP(S) resolver
-// used by CLI compose loading.
-func NewDefaultScriptSourceResolver(env map[string]string) ScriptSourceResolver {
-	resolver := &defaultScriptSourceResolver{env: env}
+// NewDefaultScriptSourceResolver returns the file, HTTP(S), and Git resolver.
+// Callers must validate providers against the source boundary before resolving.
+func NewDefaultScriptSourceResolver() ScriptSourceResolver {
+	resolver := &defaultScriptSourceResolver{}
 	resolver.client = &http.Client{
 		Timeout: defaultScriptSourceTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -172,7 +185,7 @@ func (r *defaultScriptSourceResolver) readGit(ctx context.Context, source source
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 	checkoutDir := filepath.Join(tempDir, "repository")
-	if _, err := (sources.GitClient{Env: r.env}).Checkout(ctx, source, checkoutDir); err != nil {
+	if _, err := (sources.GitClient{}).Checkout(ctx, source, checkoutDir); err != nil {
 		return nil, err
 	}
 	scriptPath, err := resolveGitScriptPath(checkoutDir, source.Path)
@@ -238,7 +251,7 @@ func (r *defaultScriptSourceResolver) readHTTP(ctx context.Context, location *ur
 	if err != nil {
 		return nil, fmt.Errorf("create script request for %s", redactedScriptURL(location))
 	}
-	sources.ApplyHTTPAuthentication(req, source, r.env)
+	sources.ApplyHTTPAuthentication(req, source)
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch script from %s: %s", redactedScriptURL(location), sanitizeScriptFetchError(err))

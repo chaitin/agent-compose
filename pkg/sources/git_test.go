@@ -130,8 +130,8 @@ func TestGitClientRejectsUnsafeOperandsAndSchemes(t *testing.T) {
 
 func TestGitClientInjectsCredentialsOutsideArguments(t *testing.T) {
 	const secret = "super-secret-token"
-	client := GitClient{Env: map[string]string{"TOKEN": secret}}
-	source := Source{Provider: ProviderGit, URL: "https://example.invalid/repo.git", Token: "${TOKEN}"}
+	client := GitClient{}
+	source := Source{Provider: ProviderGit, URL: "https://example.invalid/repo.git", Token: secret}
 	cmd := client.command(context.Background(), "", source, "ls-remote", "--", source.URL, "HEAD")
 	if strings.Contains(strings.Join(cmd.Args, " "), secret) {
 		t.Fatalf("git arguments contain credential: %#v", cmd.Args)
@@ -144,8 +144,8 @@ func TestGitClientInjectsCredentialsOutsideArguments(t *testing.T) {
 
 func TestGitClientRedactsCredentialsFromErrors(t *testing.T) {
 	const secret = "super-secret-token"
-	client := GitClient{Env: map[string]string{"TOKEN": secret}}
-	source := Source{Provider: ProviderGit, URL: "https://example.invalid/repo.git", Token: "${TOKEN}"}
+	client := GitClient{}
+	source := Source{Provider: ProviderGit, URL: "https://example.invalid/repo.git", Token: secret}
 	err := client.commandError(
 		source,
 		[]string{"clone", "https://user:" + secret + "@example.invalid/repo.git"},

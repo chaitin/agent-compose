@@ -5892,6 +5892,10 @@ func (x *ProjectChange) GetMessage() string {
 	return ""
 }
 
+// Project RPC input is literal: no environment interpolation occurs during
+// validation, persistence, patching, or resource preparation. CLI/YAML performs
+// authoring-time interpolation before submission. Normal field validation and
+// PatchProject secret-preservation semantics still apply.
 type ProjectSpec struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Name           string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -6686,6 +6690,7 @@ func (x *BuildSpec) GetPull() bool {
 	return false
 }
 
+// Values are literal on the wire, including strings such as ${NAME}.
 type EnvVarSpec struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -6814,7 +6819,8 @@ func (x *EnvVarUpdateSpec) GetSecret() bool {
 
 type WorkspaceSpec struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Workspace provider name. Unknown extension values are allowed.
+	// Supported providers: file, git, http. File paths refer to daemon-visible
+	// project directories and are read during run preparation, not uploaded.
 	Provider string `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
 	Url      string `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
 	Ref      string `protobuf:"bytes,3,opt,name=ref,proto3" json:"ref,omitempty"`
@@ -7070,18 +7076,18 @@ func (x *SchedulerSpec) GetScriptSource() *SchedulerScriptSource {
 }
 
 // SchedulerScriptSource selects one JavaScript file, not an archive or module
-// bundle. File paths refer to the daemon filesystem. Relative paths use the
-// project's compose_path directory, then project_dir, then the daemon cwd;
-// PatchProject uses the stored project source path. Git path is repository-relative.
+// bundle. Git path is repository-relative; http returns the body directly.
 type SchedulerScriptSource struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Supported providers: file, http (HTTP or HTTPS), and git.
+	// Supported providers: http (HTTP or HTTPS) and git. The file provider is
+	// resolved by the CLI on the authoring host and submitted as inline script
+	// content; it is rejected here.
 	Provider string `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
 	Url      string `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
 	Ref      string `protobuf:"bytes,3,opt,name=ref,proto3" json:"ref,omitempty"`
 	Path     string `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
-	// Optional credentials must be resolved by the caller. Unresolved environment
-	// references are rejected; daemon process variables are never used.
+	// Optional credentials are literal strings, including ${NAME}. Neither daemon
+	// nor Agent environment variables are consulted.
 	// Token takes precedence over basic authentication for HTTP.
 	Username      string `protobuf:"bytes,5,opt,name=username,proto3" json:"username,omitempty"`
 	Password      string `protobuf:"bytes,6,opt,name=password,proto3" json:"password,omitempty"`
@@ -15965,6 +15971,9 @@ func (x *StartAgentRunResponse) GetStarted() bool {
 	return false
 }
 
+// File, git, and http sources are resolved during Agent preparation. File
+// paths must be daemon-visible and inside allowed source roots. Credentials,
+// paths, URLs, and refs are literal RPC values with no environment expansion.
 type SkillSpec struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`

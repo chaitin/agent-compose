@@ -22,11 +22,13 @@ func normalizeProjectRequest(ctx context.Context, spec *agentcomposev2.ProjectSp
 		projectDir = strings.TrimSpace(source.GetProjectDir())
 	}
 	normalized, err := compose.Normalize(parsed, compose.NormalizeOptions{
-		ComposePath:       sourcePath,
-		ProjectDir:        projectDir,
-		SourceCredentials: compose.SourceCredentialsResolved,
-		ResolveScriptURLs: true,
-		Context:           ctx,
+		ComposePath:          sourcePath,
+		ProjectDir:           projectDir,
+		LiteralValues:        true,
+		SourceCredentials:    compose.SourceCredentialsResolved,
+		ScriptSourceBoundary: compose.ScriptSourceBoundaryDaemon,
+		ResolveScriptURLs:    true,
+		Context:              ctx,
 	})
 	if ctx.Err() != nil {
 		return projects.NormalizedProject{}, nil, ctx.Err()

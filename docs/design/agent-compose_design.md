@@ -217,11 +217,11 @@ The `file`, `http`, and `git` providers select a JavaScript file. `config` and
 hashing or sending the v2 request. Direct RPC callers can use the additive
 `SchedulerSpec.script_source` message instead of the existing `script` string.
 ValidateProject, ApplyProject, and PatchProject resolve this source on the
-daemon, including dry runs; file paths then refer to the daemon filesystem.
-Relative file paths use the project source directory, or the daemon working
-directory when no source directory is provided. PatchProject uses the stored
-source path and rechecks the expected revision after fetching without holding
-the project lifecycle token during retrieval.
+daemon, including dry runs, but accept `http` and `git` only. The `file`
+provider is resolved by the CLI and submitted as inline script content. Workspace and Skill file sources remain
+daemon-visible resources resolved during preparation. PatchProject
+rechecks the expected revision after fetching without holding the project
+lifecycle token during retrieval.
 
 Sources and inline scripts are mutually exclusive. Persisted revisions, API
 responses, and scheduler execution use resolved script text only. The source
@@ -229,6 +229,12 @@ location and credentials are not retained. Source retrieval failures do not
 persist revisions, and submitted hashes refer to the resolved content. Sources
 are fetched again only when a later request supplies them, not when a stored
 scheduler runs. Script sources do not support archives or a `format` field.
+
+Project RPC normalization treats input strings literally, including environment
+values and source credentials. Only CLI/YAML authoring expands references. Git
+and HTTP resource consumers never expand persisted strings from daemon or Agent
+environments, including legacy credentials. Projects relying on deferred
+expansion must be reapplied with resolved values.
 
 Normalization rules:
 

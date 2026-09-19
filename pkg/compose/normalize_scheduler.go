@@ -65,7 +65,7 @@ func normalizeSchedulerSpec(path string, scheduler *SchedulerSpec, options Norma
 		} else {
 			resolver := options.ScriptSourceResolver
 			if resolver == nil {
-				resolver = NewDefaultScriptSourceResolver(options.Env)
+				resolver = NewDefaultScriptSourceResolver()
 			}
 			ctx := options.Context
 			if ctx == nil {
@@ -109,16 +109,14 @@ func normalizeSchedulerScriptSource(path string, source sources.Source, options 
 	if err != nil {
 		return sources.Source{}, err
 	}
-	if options.SourceCredentials == SourceCredentialsResolved {
-		if err := source.ValidateResolvedCredentials(); err != nil {
-			return sources.Source{}, &ValidationError{Path: path, Message: err.Error()}
-		}
-	}
 	if source.Format != "" {
 		return sources.Source{}, &ValidationError{Path: path + ".format", Message: "scheduler script does not support format"}
 	}
 	switch source.Provider {
 	case sources.ProviderFile:
+		if options.ScriptSourceBoundary == ScriptSourceBoundaryDaemon {
+			return sources.Source{}, &ValidationError{Path: path + ".provider", Message: "file script sources are resolved by the CLI; the project API accepts http or git"}
+		}
 		if source.Path == "" {
 			return sources.Source{}, &ValidationError{Path: path + ".path", Message: "file script path is required"}
 		}

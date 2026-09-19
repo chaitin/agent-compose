@@ -14,9 +14,10 @@ import (
 )
 
 func TestFetcherIntegrationDownloadsZipWithAuthentication(t *testing.T) {
+	t.Setenv("ARCHIVE_TOKEN", "process-value")
 	payload := []byte("zip-payload")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if got := request.Header.Get("Authorization"); got != "Bearer archive-secret" {
+		if got := request.Header.Get("Authorization"); got != "Bearer ${ARCHIVE_TOKEN}" {
 			t.Errorf("Authorization = %q", got)
 		}
 		w.Header().Set("Content-Type", "application/zip")
@@ -30,7 +31,7 @@ func TestFetcherIntegrationDownloadsZipWithAuthentication(t *testing.T) {
 		Provider: sources.ProviderHTTP,
 		URL:      server.URL + "/archive.zip",
 		Token:    "${ARCHIVE_TOKEN}",
-	}, map[string]string{"ARCHIVE_TOKEN": "archive-secret"}, destination)
+	}, destination)
 	if err != nil {
 		t.Fatalf("Fetch returned error: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestFetcherIntegrationEnforcesDownloadLimit(t *testing.T) {
 
 	fetcher := newLoopbackFetcher(t, FetchPolicy{MaxBytes: 1024})
 	destination := filepath.Join(t.TempDir(), "archive.zip")
-	if _, err := fetcher.Fetch(context.Background(), sources.Source{URL: server.URL + "/archive.zip"}, nil, destination); err == nil || !strings.Contains(err.Error(), "download exceeds") {
+	if _, err := fetcher.Fetch(context.Background(), sources.Source{URL: server.URL + "/archive.zip"}, destination); err == nil || !strings.Contains(err.Error(), "download exceeds") {
 		t.Fatalf("Fetch error = %v, want download limit rejection", err)
 	}
 	if _, err := os.Stat(destination); !os.IsNotExist(err) {
@@ -71,7 +72,7 @@ func TestFetcherIntegrationRejectsUnexpectedContentType(t *testing.T) {
 	defer server.Close()
 
 	fetcher := newLoopbackFetcher(t, FetchPolicy{MaxBytes: 1 << 20, RequireZipContentType: true})
-	_, err := fetcher.Fetch(context.Background(), sources.Source{URL: server.URL + "/download"}, nil, filepath.Join(t.TempDir(), "archive.zip"))
+	_, err := fetcher.Fetch(context.Background(), sources.Source{URL: server.URL + "/download"}, filepath.Join(t.TempDir(), "archive.zip"))
 	if err == nil || !strings.Contains(err.Error(), "unexpected content type") {
 		t.Fatalf("Fetch error = %v, want content type rejection", err)
 	}
@@ -92,7 +93,7 @@ func TestFetcherIntegrationFollowsRedirectsWithinPolicy(t *testing.T) {
 
 	fetcher := newLoopbackFetcher(t, FetchPolicy{MaxBytes: 1 << 20})
 	destination := filepath.Join(t.TempDir(), "archive.zip")
-	if _, err := fetcher.Fetch(context.Background(), sources.Source{URL: server.URL + "/start.zip"}, nil, destination); err != nil {
+	if _, err := fetcher.Fetch(context.Background(), sources.Source{URL: server.URL + "/start.zip"}, destination); err != nil {
 		t.Fatalf("Fetch returned error: %v", err)
 	}
 	if requested.Load() != 2 {
@@ -123,7 +124,7 @@ func TestFetcherIntegrationRequiresOptInForPrivateHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = fetcher.Fetch(context.Background(), sources.Source{URL: server.URL + "/archive.zip"}, nil, filepath.Join(t.TempDir(), "archive.zip"))
+	_, err = fetcher.Fetch(context.Background(), sources.Source{URL: server.URL + "/archive.zip"}, filepath.Join(t.TempDir(), "archive.zip"))
 	if err == nil || !strings.Contains(err.Error(), "private address") {
 		t.Fatalf("Fetch error = %v, want private address rejection", err)
 	}
@@ -154,7 +155,7 @@ func TestFetcherIntegrationAppliesAddressPolicyToResolvedHostnames(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = hardened.Fetch(context.Background(), sources.Source{URL: serviceURL + "/archive.zip"}, nil, filepath.Join(t.TempDir(), "archive.zip"))
+	_, err = hardened.Fetch(context.Background(), sources.Source{URL: serviceURL + "/archive.zip"}, filepath.Join(t.TempDir(), "archive.zip"))
 	if err == nil || !strings.Contains(err.Error(), "private address") {
 		t.Fatalf("hardened Fetch error = %v, want the resolved private address to be refused", err)
 	}
@@ -164,7 +165,7 @@ func TestFetcherIntegrationAppliesAddressPolicyToResolvedHostnames(t *testing.T)
 		t.Fatal(err)
 	}
 	destination := filepath.Join(t.TempDir(), "archive.zip")
-	written, err := optedIn.Fetch(context.Background(), sources.Source{URL: serviceURL + "/archive.zip"}, nil, destination)
+	written, err := optedIn.Fetch(context.Background(), sources.Source{URL: serviceURL + "/archive.zip"}, destination)
 	if err != nil {
 		t.Fatalf("opt-in Fetch returned error: %v, want the hostname to be fetched", err)
 	}

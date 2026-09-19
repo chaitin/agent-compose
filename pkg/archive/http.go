@@ -79,10 +79,9 @@ func NewFetcher(base *http.Client, policy FetchPolicy) (Fetcher, error) {
 	return Fetcher{policy: policy, client: newFetchClient(base, policy)}, nil
 }
 
-// Fetch downloads source.URL into destination. env resolves "${NAME}"
-// credential references in source; nil means the daemon process environment.
+// Fetch downloads source.URL into destination using literal source credentials.
 // The caller owns destination and its staging directory.
-func (f Fetcher) Fetch(ctx context.Context, source sources.Source, env map[string]string, destination string) (int64, error) {
+func (f Fetcher) Fetch(ctx context.Context, source sources.Source, destination string) (int64, error) {
 	rawURL := strings.TrimSpace(source.URL)
 	if err := ValidateDownloadURL(rawURL, f.policy.AllowPrivateAddresses); err != nil {
 		return 0, fmt.Errorf("validate archive url: %w", err)
@@ -91,7 +90,7 @@ func (f Fetcher) Fetch(ctx context.Context, source sources.Source, env map[strin
 	if err != nil {
 		return 0, err
 	}
-	sources.ApplyHTTPAuthentication(request, source, env)
+	sources.ApplyHTTPAuthentication(request, source)
 	response, err := f.client.Do(request)
 	if err != nil {
 		return 0, fmt.Errorf("download archive: %w", err)

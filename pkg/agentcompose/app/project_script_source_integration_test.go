@@ -57,7 +57,6 @@ func TestIntegrationProjectScriptSources(t *testing.T) {
 	t.Cleanup(sourceServer.Close)
 	for _, protocol := range []string{"connect", "grpc"} {
 		for _, source := range []*agentcomposev2.SchedulerScriptSource{
-			{Provider: "file", Path: "scheduler.js"},
 			{Provider: "http", Url: sourceServer.URL, Token: "source-test-token"},
 			{Provider: "git", Url: root, Ref: "main", Path: "scheduler.js"},
 		} {
@@ -160,26 +159,33 @@ func TestIntegrationProjectScriptSourceFailuresPreserveRevision(t *testing.T) {
 		t.Fatalf("create: %v %v", created, err)
 	}
 	ref := &agentcomposev2.ProjectRef{Selector: &agentcomposev2.ProjectRef_ProjectId{ProjectId: created.Msg.GetProject().GetSummary().GetProjectId()}}
-	path := filepath.Join(t.TempDir(), "scheduler.js")
-	if err := os.WriteFile(path, []byte(sourceTestScript), 0o600); err != nil {
-		t.Fatal(err)
+	provider := func(body string) *httptest.Server {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/" {
+				http.Error(w, "missing", http.StatusNotFound)
+				return
+			}
+			if _, err := fmt.Fprint(w, body); err != nil {
+				t.Errorf("write source response: %v", err)
+			}
+		}))
+		t.Cleanup(server.Close)
+		return server
 	}
-	spec := scriptSourceProjectSpec(&agentcomposev2.SchedulerScriptSource{Provider: "file", Path: path})
+	unchanged := provider(sourceTestScript)
+	changed := provider(sourceTestScript + " // changed after validation")
+	spec := scriptSourceProjectSpec(&agentcomposev2.SchedulerScriptSource{Provider: "http", Url: unchanged.URL})
 	validated, err := client.ValidateProject(t.Context(), connect.NewRequest(&agentcomposev2.ValidateProjectRequest{Spec: spec}))
 	if err != nil || !validated.Msg.GetValid() {
 		t.Fatalf("validate: %v %v", validated, err)
 	}
-	if err := os.WriteFile(path, []byte(sourceTestScript+" // changed after validation"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	applied, err := client.ApplyProject(t.Context(), connect.NewRequest(&agentcomposev2.ApplyProjectRequest{Spec: spec, SubmittedSpecHash: validated.Msg.GetSpecHash()}))
+	drifted := scriptSourceProjectSpec(&agentcomposev2.SchedulerScriptSource{Provider: "http", Url: changed.URL})
+	applied, err := client.ApplyProject(t.Context(), connect.NewRequest(&agentcomposev2.ApplyProjectRequest{Spec: drifted, SubmittedSpecHash: validated.Msg.GetSpecHash()}))
 	if err != nil || applied.Msg.GetApplied() || len(applied.Msg.GetIssues()) != 1 || applied.Msg.GetIssues()[0].GetPath() != "submitted_spec_hash" {
 		t.Fatalf("changed source hash: %v %v", applied, err)
 	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	patched, err := client.PatchProject(t.Context(), connect.NewRequest(&agentcomposev2.PatchProjectRequest{Project: ref, Spec: spec, ExpectedCurrentSpecHash: created.Msg.GetRevision().GetSpecHash()}))
+	missing := scriptSourceProjectSpec(&agentcomposev2.SchedulerScriptSource{Provider: "http", Url: unchanged.URL + "/missing"})
+	patched, err := client.PatchProject(t.Context(), connect.NewRequest(&agentcomposev2.PatchProjectRequest{Project: ref, Spec: missing, ExpectedCurrentSpecHash: created.Msg.GetRevision().GetSpecHash()}))
 	if err != nil || patched.Msg.GetApplied() || len(patched.Msg.GetIssues()) == 0 {
 		t.Fatalf("missing patch source: %v %v", patched, err)
 	}

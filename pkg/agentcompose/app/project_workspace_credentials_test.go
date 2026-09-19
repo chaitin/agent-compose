@@ -84,7 +84,7 @@ agents: {}
 	}
 	// A legacy persisted reference arriving at the daemon boundary must be
 	// accepted (not rejected) so unrelated patches keep working. It is resolved
-	// at clone time.
+	// literally at clone time.
 	wireSpec, err := api.ProjectSpecToProtoChecked(&compose.NormalizedProjectSpec{
 		Name:       parsed.Name,
 		Workspaces: parsed.Workspaces,

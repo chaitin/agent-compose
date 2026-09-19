@@ -90,4 +90,7 @@ const ProjectNamePattern = compose.ProjectNamePattern
 const (
 	SourceCredentialsFromReferences = compose.SourceCredentialsFromReferences
 	SourceCredentialsResolved       = compose.SourceCredentialsResolved
+
+	ScriptSourceBoundaryAuthoring = compose.ScriptSourceBoundaryAuthoring
+	ScriptSourceBoundaryDaemon    = compose.ScriptSourceBoundaryDaemon
 )

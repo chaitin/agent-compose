@@ -18,9 +18,8 @@ var (
 	gitRemoteHelperURLPattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*::`)
 )
 
-type GitClient struct {
-	Env map[string]string
-}
+// GitClient fetches repositories using literal source credentials.
+type GitClient struct{}
 
 type ResolvedGit struct {
 	Commit string
@@ -213,9 +212,9 @@ func (c GitClient) command(ctx context.Context, dir string, source Source, args 
 }
 
 func (c GitClient) authorizationHeader(source Source) string {
-	username := ResolveEnvReference(source.Username, c.Env)
-	password := ResolveEnvReference(source.Password, c.Env)
-	token := ResolveEnvReference(source.Token, c.Env)
+	username := source.Username
+	password := source.Password
+	token := source.Token
 	if token != "" {
 		if username == "" {
 			username = "oauth2"
@@ -235,8 +234,8 @@ func (c GitClient) commandError(source Source, args []string, output []byte, err
 		message = err.Error()
 	}
 	for _, secret := range []string{
-		ResolveEnvReference(source.Password, c.Env),
-		ResolveEnvReference(source.Token, c.Env),
+		source.Password,
+		source.Token,
 	} {
 		if secret != "" {
 			message = strings.ReplaceAll(message, secret, "xxxxx")

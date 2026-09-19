@@ -43,7 +43,7 @@ func TestResolverArtifactManifestOmitsSourcePathAndCredentials(t *testing.T) {
 	const secret = "token-super-secret"
 	source := filepath.Join(root, "source-"+secret)
 	writeSkill(t, source, "pdf")
-	resolver := Resolver{CacheRoot: filepath.Join(root, "cache"), LocalSourceRoots: []string{root}, Env: map[string]string{"TOKEN": secret}}
+	resolver := Resolver{CacheRoot: filepath.Join(root, "cache"), LocalSourceRoots: []string{root}}
 
 	resolved, err := resolver.Resolve(context.Background(), []domain.AgentSkill{{Name: "pdf", Provider: "file", Path: source, Token: "${TOKEN}"}})
 	if err != nil {
@@ -231,19 +231,6 @@ func TestResolverAllowsComposeSourceRoot(t *testing.T) {
 	}
 }
 
-func TestResolveSecretRefsUsesScopedEnvWhenProvided(t *testing.T) {
-	t.Setenv("GIT_TOKEN", "daemon-token")
-	if got := resolveSecretRefs("${GIT_TOKEN}", map[string]string{}); got != "" {
-		t.Fatalf("resolveSecretRefs with scoped empty env = %q, want empty", got)
-	}
-	if got := resolveSecretRefs("${GIT_TOKEN}", map[string]string{"GIT_TOKEN": "agent-token"}); got != "agent-token" {
-		t.Fatalf("resolveSecretRefs with scoped env = %q, want agent-token", got)
-	}
-	if got := resolveSecretRefs("${GIT_TOKEN}", nil); got != "daemon-token" {
-		t.Fatalf("resolveSecretRefs with nil env = %q, want daemon-token", got)
-	}
-}
-
 func TestGitCacheURLStripsCredentials(t *testing.T) {
 	got := gitCacheURL("https://user:secret@git.example/repo.git")
 	if got != "https://git.example/repo.git" {
@@ -357,9 +344,10 @@ func TestDownloadFollowsRedirectToInternalHost(t *testing.T) {
 	}
 }
 
-func TestDownloadAppliesSourceAuthentication(t *testing.T) {
+func TestDownloadAppliesLiteralSourceAuthentication(t *testing.T) {
+	t.Setenv("TOKEN", "process-value-must-not-be-used")
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if got := request.Header.Get("Authorization"); got != "Bearer skill-secret" {
+		if got := request.Header.Get("Authorization"); got != "Bearer ${TOKEN}" {
 			t.Errorf("Authorization = %q", got)
 		}
 		return &http.Response{
@@ -370,7 +358,7 @@ func TestDownloadAppliesSourceAuthentication(t *testing.T) {
 			Request:    request,
 		}, nil
 	})}
-	resolver := Resolver{HTTPClient: client, Env: map[string]string{"TOKEN": "skill-secret"}}
+	resolver := Resolver{HTTPClient: client}
 	path, cleanup, err := resolver.download(context.Background(), "https://example.com/skill.zip", sources.Source{Token: "${TOKEN}"})
 	if err != nil {
 		t.Fatalf("download returned error: %v", err)
@@ -394,7 +382,7 @@ func TestDownloadUsesResolvedSourceAuthenticationWithoutEnvironmentLookup(t *tes
 			Request:    request,
 		}, nil
 	})}
-	resolver := Resolver{HTTPClient: client, Env: map[string]string{"TOKEN": "daemon-environment-secret"}}
+	resolver := Resolver{HTTPClient: client}
 	path, cleanup, err := resolver.download(context.Background(), "https://example.com/skill.zip", sources.Source{Token: "resolved-skill-secret"})
 	if err != nil {
 		t.Fatalf("download returned error: %v", err)

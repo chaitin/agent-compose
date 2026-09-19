@@ -329,7 +329,7 @@ workspaces:
 - `username`、`password`、`token` 只接受完整环境引用 `${NAME}`；配置 token 时以 `Authorization: Bearer` 发送，未配置 token 时才使用 Basic 认证。
 - `http` 不支持 `mode: mount`，压缩包内容始终复制到 run workspace。
 
-Workspace 凭据是可选的。CLI 在提交前从本机项目 dotenv/进程环境解析 `${NAME}`；直接调用 RPC 时应传入已解析的值。下载/克隆前会拒绝未解析的引用，包括旧版已保存配置中的引用，不再读取 daemon 自身环境。已有依赖 daemon 环境凭据的 workspace，需要由 CLI 或 RPC 调用方解析凭据后重新应用。Git workspace 同样遵循此规则，公开来源无需填写认证字段。
+Workspace 凭据是可选的。CLI 在提交前从本机项目 dotenv/进程环境解析 `${NAME}`。Project RPC 和已保存的凭据按字面值使用：Git/HTTP 认证中的 `${NAME}` 就是这个字符串，不读取 daemon 或 Agent 环境变量。旧版已保存的凭据同样遵循此规则。依赖运行时展开的项目需要由 CLI 或 RPC 调用方解析凭据后重新应用。公开来源无需填写认证字段。
 
 Workspace 选择规则：
 
@@ -873,7 +873,7 @@ skills:
 
 `git` 或 `http` Skill 也可以来自内网主机，例如内网 GitLab 或制品服务器：允许解析到私网或 loopback 地址，因为该主机由 daemon 自己解析。只有 `http` 与 `https` URL 会走网络下载；其他 URL 会按本地来源处理，必须位于允许的来源根目录内。
 
-`password` 和 `token` 不允许明文。执行 `config` 或 `up` 时，CLI 会从项目 dotenv/进程环境解析完整的 `${NAME}` 引用，再把项目提交给 daemon；引用对应的变量缺失时保留引用本身，准备 Skill 时仅从 agent 配置的环境变量解析，不隐式读取 daemon 进程环境。面向用户的规范化输出和项目 API 会对解析后的凭据脱敏。远程 ZIP 下载限制为 HTTP(S)，可以指向内网主机（允许私网与 loopback 地址），并执行大小、压缩包与内容检查。
+YAML 中的 `password` 和 `token` 必须使用环境变量引用。执行 `config` 或 `up` 时，CLI 会从项目 dotenv/进程环境解析完整的 `${NAME}` 引用，再把项目提交给 daemon；引用对应的变量缺失时保留为字面字符串，准备 Skill 时不再从 Agent 或 daemon 环境变量展开。直接 RPC 提交的凭据也按字面值使用。依赖延迟展开的项目需要重新提交已解析凭据。面向用户的规范化输出和项目 API 会对解析后的凭据脱敏。远程 ZIP 下载限制为 HTTP(S)，可以指向内网主机（允许私网与 loopback 地址），并执行大小、压缩包与内容检查。
 
 Git ref 会在各自业务生命周期中解析：Skill 在 Agent run 时解析，Workspace 在 sandbox provisioning 时解析，Scheduler 来源在 `config`/`up` 时解析并保存脚本快照。因此 moving branch 在三处可能得到不同 commit；需要严格一致时，应在 `ref` 中直接填写 commit SHA。
 
@@ -1079,9 +1079,21 @@ scheduler:
 
 应用项目时 CLI 会读取脚本并将内容快照保存到项目规范，而不是让 daemon 以后重新读取来源。HTTP 读取限制包括 10 秒超时、最大 1 MiB、最多 5 次 redirect、UTF-8 校验；HTTPS 不允许降级 redirect 到 HTTP，URL userinfo 不允许使用。
 
+#### Project RPC 资源边界
+
+| 资源 | Project RPC provider | 本地文件行为 |
+| --- | --- | --- |
+| Workspace | `file`、`git`、`http` | daemon 在运行准备阶段读取、复制目录，或通过 Docker 挂载。 |
+| Skill | `file`、`git`、`http` | daemon 在 Agent 准备阶段读取目录或 ZIP。 |
+| Scheduler script source | `git`、`http` | RPC 拒绝 `file`；CLI 读取本地脚本后提交内联文本。 |
+
+CLI 本身也是 Project RPC 客户端。Workspace 和 Skill 路径不会自动上传，必须在 daemon 文件系统中可见，并继续遵守已有 source root 限制。Scheduler 禁止文件来源并不会移除 Workspace 和 Skill 已有的宿主文件管理能力。
+
+所有 Project RPC 输入字符串均按字面值使用，包括 `env.value`、来源凭据、URL、路径和 ref。`${NAME}` 不会被展开，也不会仅因形似引用而被拒绝；正常的字段校验仍然适用。Validate、Apply、Patch 和后续资源准备均不从 daemon 或 Agent 环境变量插值。CLI/YAML 的插值发生在提交前，是独立步骤。已记录的 `PatchProject` 脱敏 secret marker 语义保持不变。
+
 #### 通过项目 RPC API 指定脚本来源
 
-`SchedulerSpec.script` 继续接收内联 JavaScript 字符串。直接调用 RPC 时，也可以改用 `SchedulerSpec.script_source`，字段为 `provider`、`url`、`ref`、`path`、`username`、`password`、`token`。来源与内联 `script`、声明式 `triggers` 互斥。支持的 provider 与 YAML 一致：`file`、`http`（HTTP/HTTPS）、`git`；脚本不支持 ZIP 或 `format`。
+`SchedulerSpec.script` 继续接收内联 JavaScript 字符串。直接调用 RPC 时，也可以改用 `SchedulerSpec.script_source`，字段为 `provider`、`url`、`ref`、`path`、`username`、`password`、`token`。来源与内联 `script`、声明式 `triggers` 互斥；脚本不支持 ZIP 或 `format`。项目 RPC 只接受 `http`（HTTP/HTTPS）与 `git`。YAML 另外支持 `provider: file`，由 CLI 在编写侧读取并以内联脚本内容提交。此 provider 限制不改变已有 Git URL 校验规则。
 
 例如 ApplyProject JSON 请求中的 scheduler 部分可以写成：
 
@@ -1097,7 +1109,7 @@ scheduler:
 }
 ```
 
-文件来源使用 `{"provider":"file","path":"./scheduler.js"}`；HTTP 来源使用 `{"provider":"http","url":"https://example.com/scheduler.js"}`。RPC 文件路径指向 **daemon 的文件系统**，容器部署时需能通过挂载访问。相对路径依次以 `ProjectSource.compose_path` 所在目录、`ProjectSource.project_dir`、daemon 工作目录为基准；PatchProject 使用已保存的项目 source path。Git 的 `path` 指向仓库内文件，HTTP 响应直接返回源码正文。Git 来源要求 daemon 安装 Git。认证字段可省略。直接调用 RPC 时必须传入已解析的凭据值；`username`、`password`、`token` 中未解析的 `${NAME}` 引用会在发起来源请求前被拒绝，不读取 daemon 进程环境。公开来源无需填写认证字段。
+HTTP 来源使用 `{"provider":"http","url":"https://example.com/scheduler.js"}`。Git 的 `path` 指向仓库内文件，HTTP 响应直接返回源码正文。Git 来源要求 daemon 安装 Git。认证字段可省略。直接 RPC 提交的 `username`、`password`、`token` 按字面值使用，包括 `${NAME}`；daemon 不从自身或 Agent 环境变量展开这些值。公开来源无需填写认证字段。
 
 ValidateProject、ApplyProject、PatchProject（包括 dry run）均在 daemon 解析来源，复用现有受限读取器，传播请求取消并保留超时、大小、重定向和 UTF-8 检查。获取或校验失败不会保存 revision。成功应用后只保存解析后的内联源码快照，并通过 `script` 返回；不保留来源凭据或来源元数据。后续调度执行和 GetProject 不会重新获取来源；再次提交包含 `script_source` 的请求才会重新获取。
 

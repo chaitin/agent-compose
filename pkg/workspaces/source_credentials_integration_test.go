@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -14,22 +13,48 @@ import (
 	"github.com/chaitin/agent-compose/pkg/sources"
 )
 
-func TestIntegrationWorkspaceRejectsDaemonCredentialReferences(t *testing.T) {
-	t.Setenv("WORKSPACE_DAEMON_SECRET", "daemon-only-secret")
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		http.Error(w, "unexpected source request", http.StatusUnauthorized)
-	}))
-	t.Cleanup(server.Close)
+// Persisted legacy values use the same literal contract as new RPC values.
+func TestIntegrationWorkspaceUsesLiteralCredentialReferences(t *testing.T) {
+	t.Setenv("WORKSPACE_TOKEN", "process-value")
 	for _, provider := range []string{"http", "git"} {
 		for _, field := range []string{"username", "password", "token", "credential"} {
 			if provider != "git" && field == "credential" {
 				continue
 			}
 			t.Run(provider+"/"+field, func(t *testing.T) {
-				// Include legacy persisted credentials, which bypass compose normalization.
-				config := map[string]string{"provider": provider, "url": server.URL, field: " ${WORKSPACE_DAEMON_SECRET} "}
+				var authenticated atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Header.Get("Authorization") == "" {
+						w.Header().Set("WWW-Authenticate", `Basic realm="test"`)
+						http.Error(w, "auth required", http.StatusUnauthorized)
+						return
+					}
+					authenticated.Add(1)
+					value := "${WORKSPACE_TOKEN}"
+					if provider == "http" && field == "token" {
+						if r.Header.Get("Authorization") != "Bearer "+value {
+							t.Error("token changed")
+						}
+					} else {
+						user, password, ok := r.BasicAuth()
+						wantUser, wantPassword := "", ""
+						switch field {
+						case "username", "credential":
+							wantUser = value
+						case "password":
+							wantPassword = value
+						default:
+							wantUser = "oauth2"
+							wantPassword = value
+						}
+						if !ok || user != wantUser || password != wantPassword {
+							t.Error("basic credentials changed")
+						}
+					}
+					http.Error(w, "fixture rejects authentication", http.StatusUnauthorized)
+				}))
+				t.Cleanup(server.Close)
+				config := map[string]string{"provider": provider, "url": server.URL, field: "${WORKSPACE_TOKEN}"}
 				if provider == "http" {
 					config["format"] = "zip"
 				}
@@ -37,23 +62,19 @@ func TestIntegrationWorkspaceRejectsDaemonCredentialReferences(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				w, err := newWorkspace(nil, domain.WorkspaceConfig{ID: "credential-test", Type: provider, ConfigJSON: string(payload)})
+				w, err := newWorkspace(nil, domain.WorkspaceConfig{ID: "literal", Type: provider, ConfigJSON: string(payload)})
 				if err != nil {
 					t.Fatal(err)
 				}
 				sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "test", WorkspacePath: filepath.Join(t.TempDir(), "workspace")}}
-				err = w.Prepare(t.Context(), sandbox)
-				if err == nil || !strings.Contains(err.Error(), "must be resolved by the caller") {
-					t.Fatalf("expected unresolved credential rejection, got %v", err)
+				if err := w.Prepare(t.Context(), sandbox); err == nil {
+					t.Fatal("fixture must fail authentication")
 				}
-				if strings.Contains(err.Error(), "daemon-only-secret") {
-					t.Fatal("workspace error leaked a daemon secret")
+				if authenticated.Load() == 0 {
+					t.Fatal("literal credentials did not reach source")
 				}
 			})
 		}
-	}
-	if requests.Load() != 0 {
-		t.Fatal("unresolved credentials triggered outbound requests")
 	}
 }
 

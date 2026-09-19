@@ -3,7 +3,6 @@ package sources
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 )
@@ -65,27 +64,15 @@ func ValidateSecretReference(field, value string) error {
 	return nil
 }
 
-func ResolveEnvReference(value string, env map[string]string) string {
-	value = strings.TrimSpace(value)
-	if !exactEnvReferencePattern.MatchString(value) {
-		return value
-	}
-	name := strings.TrimSuffix(strings.TrimPrefix(value, "${"), "}")
-	if env != nil {
-		return env[name]
-	}
-	return os.Getenv(name)
-}
-
 // ApplyHTTPAuthentication applies Source authentication without placing
-// credentials in the request URL. A token takes precedence over basic auth.
-func ApplyHTTPAuthentication(request *http.Request, source Source, env map[string]string) {
+// credentials in the request URL. Values are literal, including ${NAME}. A token takes precedence over basic auth.
+func ApplyHTTPAuthentication(request *http.Request, source Source) {
 	if request == nil {
 		return
 	}
-	username := ResolveEnvReference(source.Username, env)
-	password := ResolveEnvReference(source.Password, env)
-	token := ResolveEnvReference(source.Token, env)
+	username := source.Username
+	password := source.Password
+	token := source.Token
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 		return

@@ -42,7 +42,6 @@ type artifactManifest struct {
 
 type Resolver struct {
 	CacheRoot          string
-	Env                map[string]string
 	HTTPClient         *http.Client
 	DownloadLimitBytes int64
 	LocalSourceRoots   []string
@@ -67,7 +66,6 @@ func NewResolver(config *appconfig.Config) Resolver {
 	}
 	return Resolver{
 		CacheRoot:          cacheRoot,
-		Env:                nil,
 		HTTPClient:         &http.Client{Timeout: 30 * time.Second},
 		DownloadLimitBytes: DefaultDownloadLimitBytes,
 		LocalSourceRoots:   configuredLocalSourceRoots(dataRoot, sandboxRoot),
@@ -184,7 +182,7 @@ func (r Resolver) resolveFile(ctx context.Context, spec domain.AgentSkill) (Reso
 }
 
 func (r Resolver) resolveGit(ctx context.Context, spec domain.AgentSkill) (ResolvedSkill, error) {
-	rawURL := resolveSecretRefs(strings.TrimSpace(spec.URL), r.Env)
+	rawURL := strings.TrimSpace(spec.URL)
 	if localPath, ok, err := localGitSourcePath(rawURL); err != nil {
 		return ResolvedSkill{}, fmt.Errorf("validate git skill %s url: %w", spec.Name, err)
 	} else if ok {
@@ -207,7 +205,7 @@ func (r Resolver) resolveGit(ctx context.Context, spec domain.AgentSkill) (Resol
 	}
 	source := domain.AgentSkillSource(spec)
 	source.URL = rawURL
-	gitClient := sources.GitClient{Env: r.Env}
+	gitClient := sources.GitClient{}
 	resolved, err := gitClient.Resolve(ctx, source)
 	if err != nil {
 		return ResolvedSkill{}, fmt.Errorf("resolve git skill %s ref: %w", spec.Name, err)
@@ -367,7 +365,7 @@ func (r Resolver) download(ctx context.Context, rawURL string, source sources.So
 		return "", nil, err
 	}
 	source.URL = rawURL
-	if _, err := fetcher.Fetch(ctx, source, r.Env, archivePath); err != nil {
+	if _, err := fetcher.Fetch(ctx, source, archivePath); err != nil {
 		cleanup()
 		return "", nil, err
 	}
@@ -692,15 +690,4 @@ func extractZip(path, dst string) error {
 		MaxExpandedBytes: MaxZipExpandedBytes,
 		MaxEntries:       MaxZipFiles,
 	})
-}
-
-func resolveSecretRefs(value string, env map[string]string) string {
-	if !strings.HasPrefix(value, "${") || !strings.HasSuffix(value, "}") {
-		return value
-	}
-	name := strings.TrimSuffix(strings.TrimPrefix(value, "${"), "}")
-	if env != nil {
-		return env[name]
-	}
-	return os.Getenv(name)
 }

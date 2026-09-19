@@ -64,7 +64,7 @@ agents: {}
 `)
 
 	// A missing environment variable must not fail authoring normalization:
-	// the reference is kept so runtime clone-time resolution can apply.
+	// the reference is kept as literal data for subsequent consumers.
 	normalized, err := Normalize(spec, NormalizeOptions{Env: map[string]string{}})
 	if err != nil {
 		t.Fatalf("Normalize returned error for missing credential env: %v", err)

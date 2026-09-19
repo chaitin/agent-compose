@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,10 +22,10 @@ func TestNormalizeProjectRequestRejectsInvalidScriptSources(t *testing.T) {
 		scheduler *agentcomposev2.SchedulerSpec
 	}{
 		{"empty", &agentcomposev2.SchedulerSpec{ScriptSource: &agentcomposev2.SchedulerScriptSource{}}},
-		{"inline and source", &agentcomposev2.SchedulerSpec{Script: "text", ScriptSource: &agentcomposev2.SchedulerScriptSource{Provider: "file", Path: "ignored.js"}}},
+		{"inline and source", &agentcomposev2.SchedulerSpec{Script: "text", ScriptSource: &agentcomposev2.SchedulerScriptSource{Provider: "http", Url: "http://example.invalid/script"}}},
 		{"triggers and source", &agentcomposev2.SchedulerSpec{Triggers: []*agentcomposev2.TriggerSpec{{Name: "x"}}, ScriptSource: &agentcomposev2.SchedulerScriptSource{Provider: "http", Url: "http://example.invalid/script"}}},
 		{"unknown provider", &agentcomposev2.SchedulerSpec{ScriptSource: &agentcomposev2.SchedulerScriptSource{Provider: "s3"}}},
-		{"file missing path", &agentcomposev2.SchedulerSpec{ScriptSource: &agentcomposev2.SchedulerScriptSource{Provider: "file"}}},
+		{"file provider", &agentcomposev2.SchedulerSpec{ScriptSource: &agentcomposev2.SchedulerScriptSource{Provider: "file", Path: "script.js"}}},
 		{"http path", &agentcomposev2.SchedulerSpec{ScriptSource: &agentcomposev2.SchedulerScriptSource{Provider: "http", Url: "https://example.invalid/script", Path: "x"}}},
 		{"git traversal", &agentcomposev2.SchedulerSpec{ScriptSource: &agentcomposev2.SchedulerScriptSource{Provider: "git", Url: "https://example.invalid/repo", Path: "../secret"}}},
 		{"git missing path", &agentcomposev2.SchedulerSpec{ScriptSource: &agentcomposev2.SchedulerScriptSource{Provider: "git", Url: "https://example.invalid/repo"}}},
@@ -40,17 +41,38 @@ func TestNormalizeProjectRequestRejectsInvalidScriptSources(t *testing.T) {
 	}
 }
 
-func TestNormalizeProjectRequestFileSourceBaseAndHash(t *testing.T) {
+func TestNormalizeProjectRequestRejectsDaemonFileSource(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "script.js"), []byte(sourceTestScript), 0o600); err != nil {
+	present := filepath.Join(root, "script.js")
+	if err := os.WriteFile(present, []byte(sourceTestScript), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	spec := scriptSourceProjectSpec(&agentcomposev2.SchedulerScriptSource{Provider: "file", Path: "script.js"})
-	normalized, issues, err := normalizeProjectRequest(t.Context(), spec, &agentcomposev2.ProjectSource{ProjectDir: root}, "")
-	if err != nil || len(issues) > 0 || normalized.Spec.Agents[0].Scheduler.Script != sourceTestScript {
-		t.Fatalf("file: %#v %v", issues, err)
+	// Existing files must be rejected by provider validation before resolution.
+	for _, path := range []string{"script.js", present, "file://" + present} {
+		spec := scriptSourceProjectSpec(&agentcomposev2.SchedulerScriptSource{Provider: "file", Path: path})
+		normalized, issues, err := normalizeProjectRequest(t.Context(), spec, &agentcomposev2.ProjectSource{ProjectDir: root}, "")
+		if err != nil || normalized.Spec != nil || len(issues) != 1 {
+			t.Fatalf("file source %q: %#v %#v %v", path, normalized, issues, err)
+		}
+		if !strings.Contains(issues[0].Path, "scheduler.script") || !strings.Contains(issues[0].Message, "http or git") {
+			t.Fatalf("file source %q issue = %#v", path, issues[0])
+		}
 	}
-	_, issues, err = normalizeProjectRequest(t.Context(), spec, &agentcomposev2.ProjectSource{ProjectDir: root}, "stale-hash")
+}
+
+func TestNormalizeProjectRequestScriptSourceHashUsesResolvedContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := fmt.Fprint(w, sourceTestScript); err != nil {
+			t.Errorf("write source response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	spec := scriptSourceProjectSpec(&agentcomposev2.SchedulerScriptSource{Provider: "http", Url: server.URL})
+	normalized, issues, err := normalizeProjectRequest(t.Context(), spec, nil, "")
+	if err != nil || len(issues) > 0 || normalized.Spec.Agents[0].Scheduler.Script != sourceTestScript {
+		t.Fatalf("resolved source: %#v %v", issues, err)
+	}
+	_, issues, err = normalizeProjectRequest(t.Context(), spec, nil, "stale-hash")
 	if err != nil || len(issues) != 1 || issues[0].Path != "submitted_spec_hash" {
 		t.Fatalf("hash mismatch: %#v %v", issues, err)
 	}

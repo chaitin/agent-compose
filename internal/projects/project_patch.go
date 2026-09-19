@@ -51,10 +51,12 @@ func (c *Controller) PatchProject(ctx context.Context, req PatchRequest) (ApplyR
 		return ApplyResult{Issues: restoreIssues, RevisionSpec: current}, nil
 	}
 	normalizedSpec, err := projectdef.Normalize(restored, projectdef.NormalizeOptions{
-		ComposePath:       project.SourcePath,
-		SourceCredentials: projectdef.SourceCredentialsResolved,
-		ResolveScriptURLs: true,
-		Context:           ctx,
+		ComposePath:          project.SourcePath,
+		LiteralValues:        true,
+		SourceCredentials:    projectdef.SourceCredentialsResolved,
+		ScriptSourceBoundary: projectdef.ScriptSourceBoundaryDaemon,
+		ResolveScriptURLs:    true,
+		Context:              ctx,
 	})
 	if ctx.Err() != nil {
 		return ApplyResult{}, ctx.Err()

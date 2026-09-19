@@ -15,13 +15,11 @@ const (
 	// environment references and resolves all credential references from
 	// NormalizeOptions.Env. References that cannot be resolved from the
 	// environment are kept as-is so authoring input remains valid without the
-	// variable present; the source consumer determines whether deferred
-	// resolution is allowed and which explicit environment scope it uses.
+	// variable present. Source consumers treat remaining references literally.
 	SourceCredentialsFromReferences SourceCredentialMode = iota
 	// SourceCredentialsResolved accepts credential values that the CLI already
 	// resolved as well as legacy environment references persisted by older
-	// daemons. Consumers must reject unresolved references or resolve them
-	// against an explicit scope, never the daemon process environment.
+	// daemons. Source consumers use these strings literally without expansion.
 	SourceCredentialsResolved
 )
 
@@ -52,9 +50,9 @@ func normalizeSourceCredentials(path string, source sources.Source, options Norm
 
 // resolveSourceCredentialReferences resolves each credential reference from
 // NormalizeOptions.Env. A reference whose variable is missing from the
-// environment is kept as-is instead of failing: authoring input may rely on
-// deferred resolution by a scoped consumer, and persisted legacy data may still
-// contain references. Literal credential values are never rewritten.
+// environment is kept as-is instead of failing. After transport, resource
+// consumers use any remaining references literally; they never resolve them
+// against daemon or Agent environments.
 func resolveSourceCredentialReferences(path string, source sources.Source, options NormalizeOptions) (sources.Source, error) {
 	var err error
 	source.Username, err = interpolateEnvValueLoose(path+".username", source.Username, options)

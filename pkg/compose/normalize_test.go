@@ -1049,6 +1049,43 @@ func TestNormalizeSchedulerScriptProviderMatchesLocation(t *testing.T) {
 	}
 }
 
+func TestNormalizeScriptSourceBoundaryControlsFileProvider(t *testing.T) {
+	composePath := filepath.Join(t.TempDir(), "project", "agent-compose.yml")
+	spec := mustParseCompose(t, `
+name: boundary-script
+agents:
+  reviewer:
+    scheduler:
+      script:
+        provider: file
+        path: ./scripts/scheduler.js
+`)
+	_, err := Normalize(spec, NormalizeOptions{
+		ComposePath:          composePath,
+		ScriptSourceBoundary: ScriptSourceBoundaryDaemon,
+		ResolveScriptURLs:    true,
+		ScriptSourceResolver: ScriptSourceResolverFunc(func(context.Context, sources.Source) ([]byte, error) {
+			t.Error("daemon boundary resolved a file source")
+			return nil, nil
+		}),
+	})
+	if err == nil || !strings.Contains(err.Error(), "agents.reviewer.scheduler.script.provider") || !strings.Contains(err.Error(), "http or git") {
+		t.Fatalf("daemon boundary error = %v", err)
+	}
+	// The CLI keeps resolving file sources on the authoring host.
+	normalized, err := Normalize(spec, NormalizeOptions{
+		ComposePath:          composePath,
+		ScriptSourceBoundary: ScriptSourceBoundaryAuthoring,
+		ResolveScriptURLs:    true,
+		ScriptSourceResolver: ScriptSourceResolverFunc(func(context.Context, sources.Source) ([]byte, error) {
+			return []byte("function main() {}"), nil
+		}),
+	})
+	if err != nil || normalized.Agents[0].Scheduler.Script != "function main() {}" {
+		t.Fatalf("authoring boundary: %#v %v", normalized, err)
+	}
+}
+
 func TestNormalizeRejectsSchedulerScriptURLWithTriggers(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: mixed-url-scheduler
