@@ -141,6 +141,10 @@ func (s *Store) loadSandbox(id string) (*Sandbox, error) {
 	return s.loadSandboxFromDir(id, s.sandboxDir(id))
 }
 
+// Invalid contents require a metadata change, not another database retry.
+// Keep filesystem read errors separate so transient I/O failures stay retryable.
+var errInvalidSandboxMetadata = errors.New("invalid sandbox metadata")
+
 func (s *Store) loadSandboxFromDir(id, sandboxDir string) (*Sandbox, error) {
 	path := filepath.Join(sandboxDir, "metadata.json")
 	data, err := os.ReadFile(path)
@@ -149,13 +153,13 @@ func (s *Store) loadSandboxFromDir(id, sandboxDir string) (*Sandbox, error) {
 	}
 	var session Sandbox
 	if err := json.Unmarshal(data, &session); err != nil {
-		return nil, fmt.Errorf("decode session metadata %s: %w", id, err)
+		return nil, fmt.Errorf("%w: decode session metadata %s: %w", errInvalidSandboxMetadata, id, err)
 	}
 	if strings.TrimSpace(session.Summary.ID) == "" {
-		return nil, fmt.Errorf("decode session metadata %s: sandbox id is required", id)
+		return nil, fmt.Errorf("%w: decode session metadata %s: sandbox id is required", errInvalidSandboxMetadata, id)
 	}
 	if sandboxDirName(session.Summary.ID) != sandboxDirName(id) {
-		return nil, fmt.Errorf("decode session metadata %s: sandbox id %q does not match directory", id, session.Summary.ID)
+		return nil, fmt.Errorf("%w: decode session metadata %s: sandbox id %q does not match directory", errInvalidSandboxMetadata, id, session.Summary.ID)
 	}
 	// WorkspacePath is derived from the active sandbox root. Persisted absolute
 	// paths may refer to the filesystem namespace of an older daemon process.
@@ -166,7 +170,7 @@ func (s *Store) loadSandboxFromDir(id, sandboxDir string) (*Sandbox, error) {
 	}
 	driver, err := driverpkg.ResolveSandboxRuntimeDriver(session.Summary.Driver, s.config.RuntimeDriver)
 	if err != nil {
-		return nil, fmt.Errorf("session metadata %s has invalid driver: %w", id, err)
+		return nil, fmt.Errorf("%w: session metadata %s has invalid driver: %w", errInvalidSandboxMetadata, id, err)
 	}
 	session.Summary.Driver = driver
 	if err := s.layout.register(session.Summary.ID, sandboxDir); err != nil {
@@ -262,7 +266,7 @@ func (s *Store) loadSandboxCounts(id string) (SandboxSummary, error) {
 	}
 	var session Sandbox
 	if err := json.Unmarshal(data, &session); err != nil {
-		return SandboxSummary{}, fmt.Errorf("decode session metadata %s: %w", id, err)
+		return SandboxSummary{}, fmt.Errorf("%w: decode session metadata %s: %w", errInvalidSandboxMetadata, id, err)
 	}
 	return session.Summary, nil
 }

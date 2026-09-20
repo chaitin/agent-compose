@@ -62,10 +62,11 @@ type EventSummaryJSON struct {
 }
 
 type EventTraceResponse struct {
-	Event                EventSummaryJSON        `json:"event"`
-	Runs                 []EventRunTraceJSON     `json:"runs"`
-	Sandboxes            []EventTraceSandboxJSON `json:"sandboxes"`
-	DescendantsTruncated bool                    `json:"descendants_truncated"`
+	SandboxSummariesIncomplete bool                    `json:"sandbox_summaries_incomplete,omitempty"`
+	Event                      EventSummaryJSON        `json:"event"`
+	Runs                       []EventRunTraceJSON     `json:"runs"`
+	Sandboxes                  []EventTraceSandboxJSON `json:"sandboxes"`
+	DescendantsTruncated       bool                    `json:"descendants_truncated"`
 }
 
 type EventRunTraceJSON struct {

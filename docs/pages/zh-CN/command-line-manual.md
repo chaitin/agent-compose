@@ -113,6 +113,27 @@ topic，以及 Bearer、`X-WEBHOOK-TOKEN` 或自定义 header token。
 的 UI server 或反向代理，也必须先配置注入 `Authorization: Bearer <token>`，再
 开启 daemon 认证。
 
+#### 查看事件 Trace
+
+`GET /api/events/{event_id}/trace` 返回事件、关联的 scheduler run 和事件，以及
+sandbox 关联记录和可选摘要。查询范围包含后代事件及相同 correlation ID 的事件，
+总计最多 1,000 个事件。
+
+Sandbox 摘要采用尽力补充策略，查询使用两秒的 context 预算；补充失败或超时时，
+响应保留 trace 和已获取的摘要，并设置 `sandbox_summaries_incomplete: true`。
+请求本身被取消时仍会取消整个请求。文件系统回退成功时，不会仅因缓存查询失败
+就设置不完整标志。已不存在的 sandbox 可以没有摘要。
+
+Sandbox 缓存更新失败时，只将该 sandbox 加入后台修复队列，重试退避从一秒递增到
+最多 30 秒。无效 metadata（JSON 格式错误、ID 缺失或不匹配、driver 非法）会被
+排除出缓存，成功清除旧缓存行后结束对应重试。metadata 文件保持不变，后续有效
+更新或启动校准可以重新建立缓存。文件系统读取错误和数据库错误仍保留重试。
+Trace 对待修复的 sandbox 按 ID 直接读取 metadata 文件，不会触发
+全量缓存重建。修复期间，sandbox 列表的筛选和总数可能暂时滞后；正常成功的更新
+仍然同步完成。启动时仍会根据文件系统 metadata 校准全部缓存。缓存失败日志包含
+各阶段耗时和共享数据库连接池统计，用于区分归属查询、更新排队和存储延迟；
+连接池等待增量包含同期其他请求的等待。
+
 #### 停止 Webhook 事件触发的运行
 
 提交 webhook 的客户端可以在之后请求取消该事件、其后代事件，以及与该请求事件共享

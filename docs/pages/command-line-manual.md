@@ -124,6 +124,31 @@ application. Any UI server or reverse proxy that calls the same control-plane
 APIs must also inject `Authorization: Bearer <token>` before daemon
 authentication is enabled.
 
+#### Inspecting an Event Trace
+
+`GET /api/events/{event_id}/trace` returns the event, its related scheduler runs
+and events, and sandbox links with optional summaries. The event scope includes
+descendants and events with the same correlation ID, capped at 1,000 events.
+
+Sandbox summaries are best effort. Their lookup has a two-second context budget;
+if enrichment fails or times out, the response preserves the trace and available
+summaries and sets `sandbox_summaries_incomplete: true`. Request cancellation
+still cancels the request. A successful filesystem fallback does not set this
+flag merely because the cache query failed. A missing sandbox may have no summary.
+
+A failed sandbox cache update queues only that sandbox for background repair,
+with retries backing off from one to 30 seconds. Invalid metadata (malformed JSON,
+missing or mismatched ID, or invalid driver) is excluded from the cache; its pending
+repair ends after the stale row is removed. The metadata file is preserved, and a
+later valid update or startup reconciliation can index it again. Filesystem read
+errors and database failures remain retryable. Trace requests read pending
+sandboxes directly from their metadata files and never trigger a full cache
+rebuild. Sandbox list filtering and totals can lag during repair; successful
+updates normally remain synchronous. Startup still reconciles the full cache
+with filesystem metadata. Cache failure logs include stage timings and shared
+connection-pool statistics to help distinguish lookup, serialization, and
+storage delays; pool wait deltas include other concurrent requests.
+
 #### Stopping webhook-triggered runs
 
 The client that submitted a webhook can later request cancellation of every
