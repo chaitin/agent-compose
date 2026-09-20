@@ -29,7 +29,7 @@ export type ToolKind =
   | "fetch"
   | "other";
 
-export type AgentStopReason = "stop" | "tool_use" | "tool_terminal" | "max_tokens" | "cancelled" | "error";
+export type AgentStopReason = "stop" | "tool_use" | "max_tokens" | "cancelled" | "error";
 
 export type ToolCallStatus = "pending" | "in_progress" | "completed" | "failed";
 
@@ -83,8 +83,6 @@ export type AgentEvent =
     ok: boolean;
     output?: string;
     error?: string;
-    terminal?: boolean;
-    finalText?: string;
   }
   | { kind: "todo"; items: TodoItem[] }
   | {

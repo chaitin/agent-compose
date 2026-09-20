@@ -109,6 +109,10 @@ export class PiRunner {
         result.stopReason = "cancelled";
       }
       result.transcript = this.writer.transcript();
+      if (!result.finalText && result.transcript) {
+        result.finalText = result.transcript;
+        result.finalTextSource = "transcript_fallback";
+      }
       if (result.threadId) {
         await writeStoredThread(this.options.sessionRoot, "pi", result.threadId);
       }
@@ -384,8 +388,4 @@ function lastAssistantMessage(value: unknown): string {
     if (message?.role === "assistant") return extractText(message.content);
   }
   return "";
-}
-
-function lastAssistantTextFromTranscript(transcript: string): string {
-	return transcript.trim();
 }

@@ -64,13 +64,3 @@ func TestProviderFinalTextPersistsAgentMessage(t *testing.T) {
 		t.Fatalf("provider message events = %#v", events)
 	}
 }
-
-func TestTerminalToolFinalTextPersistsAgentMessage(t *testing.T) {
-	events := terminalPromptTurnEvents(domain.ProjectRunRecord{RunID: "run-terminal-tool"}, agentTurnProjection{
-		FinalText: "规则已删除。", FinalTextSource: domain.AgentFinalTextSourceTerminalTool,
-		Provider: "codex", StopReason: "tool_terminal",
-	})
-	if len(events) != 1 || events[0].Text != "规则已删除。" || events[0].StopReason != "tool_terminal" {
-		t.Fatalf("terminal tool events = %#v", events)
-	}
-}

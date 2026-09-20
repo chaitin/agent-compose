@@ -74,8 +74,6 @@ func normalizeFinalTextSource(source, finalText, transcript string) domain.Agent
 	switch normalized := domain.AgentFinalTextSource(strings.TrimSpace(source)); normalized {
 	case domain.AgentFinalTextSourceProviderMessage:
 		return domain.AgentFinalTextSourceProviderMessage
-	case domain.AgentFinalTextSourceTerminalTool:
-		return domain.AgentFinalTextSourceTerminalTool
 	case domain.AgentFinalTextSourceTranscriptFallback:
 		return domain.AgentFinalTextSourceTranscriptFallback
 	case domain.AgentFinalTextSourceNone:
