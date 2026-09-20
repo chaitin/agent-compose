@@ -14,10 +14,12 @@ import (
 func ScanProvider(scan func(dest ...any) error) (Provider, error) {
 	var item Provider
 	var genericResponsesTextParts, enabled int
+	var auth string
 	var createdAt, updatedAt int64
-	if err := scan(&item.ID, &item.Name, &item.ProviderType, &item.DefaultWireAPI, &item.BaseURL, &item.APIKey, &item.AuthHeader, &item.AuthScheme, &item.HeadersJSON, &genericResponsesTextParts, &item.Weight, &enabled, &item.Scope, &createdAt, &updatedAt); err != nil {
+	if err := scan(&item.ID, &item.Name, &item.ProviderType, &item.DefaultWireAPI, &item.BaseURL, &item.APIKey, &item.AuthHeader, &item.AuthScheme, &auth, &item.HeadersJSON, &genericResponsesTextParts, &item.Weight, &enabled, &item.Scope, &createdAt, &updatedAt); err != nil {
 		return Provider{}, err
 	}
+	item.Auth = ProviderAuth(strings.TrimSpace(auth))
 	item.UseGenericResponsesTextParts = genericResponsesTextParts != 0
 	item.Enabled = enabled != 0
 	item.ProviderType = NormalizeProviderType(item.ProviderType)

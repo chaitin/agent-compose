@@ -12,6 +12,7 @@ import { toolKindForName } from "../agent-event.js";
 import type { AgentResult, RunnerOptions } from "../types.js";
 import { cancellationRequested } from "../shutdown.js";
 import { waitForChildExit } from "../child-process.js";
+import { resolveFacadeModel } from "./model-reference.js";
 
 const maxDiagnosticBytes = 64 * 1024;
 
@@ -114,8 +115,8 @@ export class DshRunner {
       // value: the daemon's facade config sets it to the model it resolved and
       // minted the token against. Deleting it when no --model was passed would
       // drop that and let the profile fall back to its hardcoded default, so
-      // only overwrite when this invocation actually names a model.
-      const modelName = dshModelName(this.options.model);
+      // only overwrite when the daemon or the invocation names a model.
+      const modelName = resolveFacadeModel("dsh", this.options.model, process.env.AGENT_COMPOSE_RESOLVED_MODEL);
       if (modelName) {
         env.DSH_MODEL = modelName;
       }
@@ -401,18 +402,6 @@ export class DshRunner {
     }
     return resolved;
   }
-}
-
-// Matches SplitDshModel's (pkg/llms/dsh_facade.go) strings.Cut(value, "/")
-// semantics: split on the FIRST slash, not the last. The model remainder may
-// itself contain slashes (see agent-compose-yaml-manual.md), and the facade
-// token daemon-side is bound to that full remainder — extracting anything
-// else here would send DSH a model name that doesn't match the token.
-function dshModelName(model: string | undefined): string {
-  const trimmed = (model || "").trim();
-  if (!trimmed) return "";
-  const separator = trimmed.indexOf("/");
-  return separator >= 0 ? trimmed.slice(separator + 1) : trimmed;
 }
 
 // Collapses agent-compose's five effort levels onto the ones the profile's

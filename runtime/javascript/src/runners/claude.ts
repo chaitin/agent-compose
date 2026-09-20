@@ -268,7 +268,7 @@ export class ClaudeRunner {
         stopReason: stopReason === "end_turn" ? "stop" : stopReason === "max_tokens" ? "max_tokens" : undefined,
         rawStopReason: stopReason,
       });
-      if (message.subtype !== "success") {
+      if (message.subtype !== "success" || message.is_error === true) {
         this.emit({
           kind: "error",
           severity: "fatal",
@@ -435,7 +435,9 @@ export class ClaudeRunner {
             break;
           case "result":
             result.stopReason = String(message.stop_reason || result.stopReason);
-            if (message.subtype === "success") {
+            // Claude can report subtype=success for an API error. The explicit
+            // error flag takes precedence over the subtype, including HTTP 4xx.
+            if (message.subtype === "success" && message.is_error !== true) {
               const finalText = hasOwn(message, "structured_output")
                 ? JSON.stringify(message.structured_output)
                 : String(message.result || result.finalText);

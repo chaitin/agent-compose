@@ -43,6 +43,7 @@ func addLLMProviderCreateFlags(cmd *cobra.Command, options *composeLLMProviderCr
 	cmd.Flags().StringVar(&options.Protocol, "protocol", "", "Upstream protocol: responses, chat_completions, or anthropic_messages")
 	cmd.Flags().StringVar(&options.APIKey, "api-key", "", "Literal upstream API key")
 	cmd.Flags().BoolVar(&options.Enabled, "enabled", true, "Whether the provider is enabled")
+	cmd.Flags().StringVar(&options.Auth, "auth", "", "Credential presentation override: x-api-key or bearer; protocol-default clears it")
 	for _, name := range []string{"base-url", "protocol", "api-key"} {
 		if err := cmd.MarkFlagRequired(name); err != nil {
 			panic(fmt.Sprintf("mark %s required: %v", name, err))
@@ -56,4 +57,5 @@ func addLLMProviderUpdateFlags(cmd *cobra.Command, options *composeLLMProviderUp
 	cmd.Flags().StringVar(&options.Protocol, "protocol", "", "Upstream protocol: responses, chat_completions, or anthropic_messages")
 	cmd.Flags().StringVar(&options.APIKey, "api-key", "", "Literal upstream API key")
 	cmd.Flags().BoolVar(&options.Enabled, "enabled", true, "Whether the provider is enabled")
+	cmd.Flags().StringVar(&options.Auth, "auth", "", "Credential presentation override: x-api-key or bearer; protocol-default clears it")
 }

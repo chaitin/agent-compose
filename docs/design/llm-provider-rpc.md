@@ -16,20 +16,42 @@ IDs default and anthropic are reserved; session-env IDs cannot match this syntax
 
 Create requires an absolute HTTP(S) base URL, a supported protocol, and a nonempty
 literal API key. Responses contain api_key_set, never the credential. Update
-applies explicit fields only; omitted name, base_url, protocol, api_key, and
-enabled preserve stored values. Absent api_key preserves the current key
+applies explicit fields only; omitted name, base_url, protocol, api_key, auth,
+and enabled preserve stored values. Absent api_key preserves the current key
 atomically, present nonempty rotates it, and present empty is invalid. An absent
 enabled field means true on create and is preserved on update. An empty name
 defaults to the ID on create and is preserved on update. Anthropic Messages
 providers send anthropic-version: 2023-06-01 by default. Per-model overrides,
 custom headers, and default-model management remain outside this change.
-Protocol selects the existing OpenAI Bearer or Anthropic x-api-key upstream
-authentication and refreshes those headers when protocol is updated.
+
+Protocol selects the default upstream credential presentation: Bearer for the
+OpenAI protocols and x-api-key for Anthropic Messages. A gateway can serve the
+Anthropic Messages wire protocol while authenticating with a bearer token, so a
+connection may override that presentation with auth = bearer or auth = x-api-key;
+the override changes only the header, not the protocol or endpoint. Responses
+report the stored override rather than the effective header, so a Get response
+can be sent back through Update without freezing the protocol convention into an
+override; a connection with no stored override carries the unspecified
+presentation. RPC writes preserve an explicit auth choice even when it matches
+the current protocol's default. An update that omits auth preserves that choice
+across protocol changes; an explicit unspecified auth clears it. Only connections
+without an explicit choice follow the protocol's default. This keeps a gateway's
+authentication stable when switching between Chat Completions and Responses.
+
+Legacy migration and environment bootstrap have only effective headers, not an
+explicit auth field. They infer an override only when the header differs from
+the protocol's default; a matching header gives no evidence of operator intent.
+This inference is confined to those compatibility boundaries and is not used for
+new RPC writes. Existing empty auth values keep following the protocol; operators
+can pin them with an explicit update. Unknown presentations are rejected. The
+environment-bootstrap path already chooses the same two presentations through
+ANTHROPIC_AUTH_TOKEN (Bearer) and ANTHROPIC_API_KEY or LLM_API_KEY (x-api-key).
 
 CLI `agent-compose llm provider` exposes ls, create, inspect, update, and rm.
 Create requires --base-url, --protocol, and --api-key. Update sends only flags
-that were set. Environment bootstrap remains last fallback; API CRUD takes
-effect on the next target resolution.
+that were set. `--auth x-api-key|bearer` overrides the protocol default on either
+command. Environment bootstrap remains last fallback; API CRUD takes effect on
+the next target resolution.
 
 List includes disabled API-owned providers in ID order, using the existing
 offset/limit pagination convention. Get/Update/Delete reject non-API ownership.
@@ -60,23 +82,101 @@ provider remains stored and can be re-enabled; disabling does not revoke tokens.
 
 ## Runtime behavior
 
-No resolver fork is introduced. API providers are configured providers under the
-existing scope rules. Callers select gateway/model with the existing Agent model
-field or model request. Literal models do not require model-table registration.
+No resolver fork is introduced. API providers are configured connections under
+the existing scope rules, and target resolution is one staged pipeline:
+
+1. An explicit provider reference (the `<connection>/<model>` form) selects that
+   connection and passes the literal model to the upstream. Literal models do not
+   require model-table registration.
+2. A registered model with a provider binding selects its bound connection.
+3. Otherwise the daemon's default connection serves the literal model. The
+   reserved bootstrap connection (`default`/`anthropic`) wins, including when it
+   survives only as a persisted env-default row; with none, the only configured
+   connection of the requested family is used. When the requested family has no
+   connection at all, the same choice runs over the other families, because the
+   runtime bridge translates across protocols: an OpenAI-compatible connection
+   can serve claude, exactly as the OpenAI bootstrap environment always could. A
+   session-env connection never acts as a daemon default. Competing connections
+   are reported as an ambiguity instead of being resolved by accident. A bare
+   model does not imply a family, so the reserved connection is chosen without a
+   family comparison; qualify the model as `<connection>/<model>` to select a
+   different connection explicitly.
+
+Model bindings are optional metadata rather than an authorization boundary, so a
+provider created through this RPC is usable with a bare Agent model name and no
+models.json entry. The facade agents (pi, opencode, dsh) treat the
+`<connection>/<model>` prefix as optional for the same reason; codex and claude
+already accepted unqualified model names. Prefixed values keep their established
+meaning: a configured connection id, a family alias, or an env-backed custom
+endpoint.
+
+A connection's protocol decides which agents it can serve, because the runtime
+facade bridges only some protocol pairs. An OpenAI `responses` connection serves
+every facade agent. An OpenAI `chat_completions` connection serves codex, pi,
+opencode, and dsh but not claude: no bridge converts an Anthropic Messages
+request into OpenAI Chat, so the run fails with `unsupported llm protocol bridge
+from "anthropic_messages" to "openai_chat"`. Give claude a `responses` or an
+`anthropic_messages` connection.
+Codex only accepts OpenAI-family connections: an explicit `anthropic_messages`
+connection is rejected before execution with `codex requires an OpenAI-compatible
+model`. Pi, OpenCode, and DSH can use all three protocols.
+
+Claude SDK results must also honor `is_error`: the SDK can return a `success`
+subtype with `is_error=true` for an upstream HTTP error. Such a result fails the
+run and emits a fatal error event instead of publishing an API error as a
+successful answer.
+
+The facade publishes the model it resolved as `AGENT_COMPOSE_RESOLVED_MODEL`,
+already rewritten into the namespace the guest addresses models by, and the
+daemon tells the guest runner that value instead of the model the agent
+declared. A declaration is a request that resolution may rewrite: a
+`<connection>/<model>` prefix is stripped, a catalog or bootstrap default
+supplies a model the agent omitted, and pi and opencode address models through
+the provider key written into their config. The runner passes the published
+reference through untouched on the resolved path, so a
+resolved model id that itself contains slashes reaches the upstream intact. An
+agent CLI told the declaration instead addresses a model the facade token is not
+bound to. A model whose literal prefix equals the guest provider still needs
+both components: provider `anthropic` and model `anthropic/example` produce
+`anthropic/anthropic/example`.
+
+The runtime argument remains compatible with old guest images. For DSH the
+daemon sends `agent-compose/<resolved-model>` so an old runner's first-slash
+conversion preserves the entire model ID. New Pi/DSH runners prefer
+`AGENT_COMPOSE_RESOLVED_MODEL`; when an old daemon omits it, they retain their
+legacy argument conversion. These two compatibility boundaries are deprecated:
+remove them together once old daemon and guest versions are no longer supported.
+New routing must use the resolved value, not introduce further prefix inference.
+This supports staged upgrades of the model argument contract, not arbitrary
+version combinations of the complete runtime protocol.
+
+Ambiguous defaults are reported instead of silently falling back to an agent's
+own credentials. This intentionally changes Codex/Claude fallback behavior when
+multiple managed connections exist and no target can be selected. Configure an
+explicit connection/model reference to resolve the ambiguity.
+
 The next target resolution reads current provider settings, so address/key
 updates require no restart. Existing in-flight requests use their resolved
 configuration; agent-side model/protocol setup may require restarting a run after
 protocol changes. API CRUD does not change global or catalog defaults. Unknown
-slash prefixes retain the existing literal-model interpretation; clients should
-verify provider existence when constructing a new reference after deletion.
+slash prefixes reaching the runtime LLM facade retain the existing literal-model
+interpretation; clients should verify provider existence when constructing a new
+reference after deletion.
 
 ## Validation
 
-Domain tests cover ID/protocol/URL/key validation and input ownership. SQLite
-integration tests cover literal routing, key preservation/rotation, protocol
-mapping, disabled providers, restart/catalog coexistence, collisions, cancellation,
-concurrent create and token invalidation across deletion/recreation. Connect
-integration tests exercise generated clients over HTTP, response redaction,
-pagination and error codes. A local service E2E exercises CreateProvider, Generate,
-URL/key rotation and disabled-provider rejection against an HTTP upstream stub.
-Existing Generate and runtime tests remain applicable.
+Domain tests cover ID/protocol/URL/key/auth validation and input ownership, and
+the resolution stages above: configured-connection defaulting, reserved-default
+preference, ambiguity rejection, disabled-connection exclusion, binding
+precedence, unqualified model names for pi, opencode and dsh, and rejection of a
+reference with an empty `<connection>/<model>` side. SQLite
+integration tests cover literal routing, bare-model routing with an RPC-created
+provider, key preservation/rotation, protocol mapping, the protocol-default and
+explicit credential presentations, presentation-only updates, disabled providers,
+restart/catalog coexistence, collisions, cancellation, concurrent create and
+token invalidation across deletion/recreation. Connect integration tests exercise
+generated clients over HTTP, response redaction, pagination, error codes, and the
+auth override round trip. A
+local service E2E exercises CreateProvider, Generate, URL/key rotation and
+disabled-provider rejection against an HTTP upstream stub. Existing Generate and
+runtime tests remain applicable.

@@ -294,3 +294,38 @@ func testCLILLMProvider(id string) *agentcomposev2.LLMProvider {
 		UpdatedAt: mustProtoTimestamp("2026-07-07T12:00:00Z"),
 	}
 }
+
+func TestCLILLMProviderAuthFlagMapping(t *testing.T) {
+	cases := []struct {
+		value string
+		want  agentcomposev2.LLMProviderAuth
+		set   bool
+	}{
+		{value: ""},
+		{value: "x-api-key", want: agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_X_API_KEY, set: true},
+		{value: " Bearer ", want: agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_BEARER, set: true},
+	}
+	for _, tc := range cases {
+		auth, err := llmProviderAuthFromFlag(tc.value)
+		if err != nil {
+			t.Fatalf("auth %q: %v", tc.value, err)
+		}
+		if tc.set != (auth != nil) {
+			t.Fatalf("auth %q set = %t, want %t", tc.value, auth != nil, tc.set)
+		}
+		if auth != nil && *auth != tc.want {
+			t.Fatalf("auth %q = %v, want %v", tc.value, *auth, tc.want)
+		}
+	}
+	// A misspelled presentation must fail loudly instead of silently keeping the
+	// protocol convention.
+	if _, err := llmProviderAuthFromFlag("boat"); err == nil {
+		t.Fatal("unknown auth value was accepted")
+	}
+	if got := llmProviderAuthFlagFromProto(agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_BEARER); got != "bearer" {
+		t.Fatalf("rendered auth = %q", got)
+	}
+	if got := llmProviderAuthFlagFromProto(agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_UNSPECIFIED); got != "" {
+		t.Fatalf("unspecified auth rendered as %q", got)
+	}
+}

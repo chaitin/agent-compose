@@ -1,23 +1,10 @@
 package llms
 
 import (
-	"fmt"
 	"sort"
-	"strings"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
-
-func SplitOpenCodeModel(model string) (string, string, error) {
-	model = strings.TrimSpace(model)
-	providerID, modelName, ok := strings.Cut(model, "/")
-	providerID = strings.TrimSpace(providerID)
-	modelName = strings.TrimSpace(modelName)
-	if !ok || providerID == "" || modelName == "" {
-		return "", "", fmt.Errorf("opencode model must be in provider/model format")
-	}
-	return providerID, modelName, nil
-}
 
 func MergeManagedExecEnv(base map[string]string, managed map[string]string) map[string]string {
 	if len(base) == 0 && len(managed) == 0 {

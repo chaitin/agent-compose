@@ -26,6 +26,11 @@ type ProviderReplacement struct {
 	Protocol string
 	APIKey   *string
 	Enabled  *bool
+	// Auth is the explicit credential presentation. Nil means unspecified: the
+	// create default is the protocol convention and an update preserves the
+	// stored override. A non-nil empty presentation clears an override so the
+	// connection follows the protocol convention again.
+	Auth *ProviderAuth
 }
 
 // ValidateManagedProviderID rejects IDs reserved for environment bootstrap.
@@ -57,6 +62,9 @@ func NormalizeProviderReplacement(input ProviderReplacement) (ProviderReplacemen
 	if err := normalizeProviderAPIKey(&normalized, true); err != nil {
 		return ProviderReplacement{}, err
 	}
+	if err := normalizeProviderAuth(&normalized); err != nil {
+		return ProviderReplacement{}, err
+	}
 	if normalized.Enabled == nil {
 		enabled := true
 		normalized.Enabled = &enabled
@@ -80,6 +88,9 @@ func NormalizeProviderUpdate(input ProviderReplacement) (ProviderReplacement, er
 		return ProviderReplacement{}, err
 	}
 	if err := normalizeProviderAPIKey(&normalized, false); err != nil {
+		return ProviderReplacement{}, err
+	}
+	if err := normalizeProviderAuth(&normalized); err != nil {
 		return ProviderReplacement{}, err
 	}
 	return normalized, nil
@@ -136,6 +147,24 @@ func normalizeProviderAPIKey(input *ProviderReplacement, required bool) error {
 	}
 	input.APIKey = &key
 	return nil
+}
+
+// normalizeProviderAuth accepts only the presentations the daemon can put on the
+// wire; an unknown name must not silently fall back to the protocol convention.
+// A nil presentation stays unspecified, which is distinct from an explicit empty
+// one that clears a stored override.
+func normalizeProviderAuth(input *ProviderReplacement) error {
+	if input.Auth == nil {
+		return nil
+	}
+	normalized := ProviderAuth(strings.ToLower(strings.TrimSpace(string(*input.Auth))))
+	switch normalized {
+	case "", ProviderAuthXAPIKey, ProviderAuthBearer:
+		input.Auth = &normalized
+		return nil
+	default:
+		return fmt.Errorf("%w: auth must be x-api-key or bearer", domain.ErrInvalidArgument)
+	}
 }
 
 // ManagedProviderHeadersJSON returns default upstream headers for a protocol.

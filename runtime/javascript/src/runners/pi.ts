@@ -11,6 +11,7 @@ import type { AgentResult, RunnerOptions } from "../types.js";
 import { piMCPAdapterExtension, writePiMCPConfig } from "./pi-mcp.js";
 import { cancellationRequested } from "../shutdown.js";
 import { waitForChildExit } from "../child-process.js";
+import { resolveFacadeModel } from "./model-reference.js";
 
 const maxDiagnosticBytes = 64 * 1024;
 
@@ -135,8 +136,9 @@ export class PiRunner {
       "--offline",
     ];
     if (sessionID) args.push("--session-id", sessionID);
-    if (this.options.model?.trim()) {
-      args.push("--model", piFacadeModel(this.options.model));
+    const model = resolveFacadeModel("pi", this.options.model, process.env.AGENT_COMPOSE_RESOLVED_MODEL);
+    if (model) {
+      args.push("--model", model);
     }
     if (this.options.systemContext) {
       const systemPath = path.join(invocationDir, "system-context.md");
@@ -345,13 +347,6 @@ export class PiRunner {
     }
     return resolved;
   }
-}
-
-function piFacadeModel(model: string): string {
-  const normalized = model.trim();
-  if (normalized.startsWith("agent-compose/")) return normalized;
-  const separator = normalized.indexOf("/");
-  return `agent-compose/${separator >= 0 ? normalized.slice(separator + 1) : normalized}`;
 }
 
 function appendBounded(current: Buffer, next: Buffer, limit: number): Buffer {

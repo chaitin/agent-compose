@@ -118,12 +118,6 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if env := RuntimeEnvMap([]domain.SandboxEnvVar{{Name: "OPENAI_API_KEY", Value: "secret"}, {Name: "VISIBLE", Value: "1"}}); env["VISIBLE"] != "1" || env["OPENAI_API_KEY"] != "" {
 		t.Fatalf("runtime env = %#v", env)
 	}
-	if provider, model, err := SplitOpenCodeModel(" custom/gpt "); err != nil || provider != "custom" || model != "gpt" {
-		t.Fatalf("SplitOpenCodeModel provider=%q model=%q err=%v", provider, model, err)
-	}
-	if _, _, err := SplitOpenCodeModel("bad"); err == nil {
-		t.Fatalf("expected invalid opencode model error")
-	}
 	if got := NormalizeAPIEndpoint("https://api.example.test/openai"); got != "https://api.example.test/openai/v1/responses" {
 		t.Fatalf("NormalizeAPIEndpoint = %q", got)
 	}

@@ -2278,6 +2278,17 @@ message BatchGetLatestSchedulerRunsResponse {
   repeated SandboxSchedulerRun results = 1;
 }
 
+// LLMProviderAuth selects how the upstream credential is presented on the wire.
+// A gateway can speak the Anthropic wire protocol while authenticating with a
+// bearer token, so the presentation is not implied by the protocol alone.
+enum LLMProviderAuth {
+  // Keep the protocol convention: x-api-key for anthropic_messages, bearer
+  // otherwise.
+  LLM_PROVIDER_AUTH_UNSPECIFIED = 0;
+  LLM_PROVIDER_AUTH_X_API_KEY = 1;
+  LLM_PROVIDER_AUTH_BEARER = 2;
+}
+
 // LLMProvider contains public configuration only; credentials are never returned.
 message LLMProvider {
   string id = 1;
@@ -2288,20 +2299,32 @@ message LLMProvider {
   bool api_key_set = 6;
   google.protobuf.Timestamp created_at = 7;
   google.protobuf.Timestamp updated_at = 8;
+  // Explicit credential presentation override. UNSPECIFIED means no override is
+  // stored, so the connection follows the protocol convention. Reporting the
+  // stored override rather than the effective header keeps a Get response safe to
+  // send back through Update.
+  LLMProviderAuth auth = 9;
 }
 
-// LLMProviderSpec replaces public configuration on update. ID is immutable.
+// LLMProviderSpec applies explicit fields on update. ID is immutable.
 message LLMProviderSpec {
   string id = 1;
   string name = 2;
   string base_url = 3;
-  // responses, chat_completions, or anthropic_messages; required.
+  // responses, chat_completions, or anthropic_messages; required on create.
+  // Absent or empty on update preserves the stored protocol.
   string protocol = 4;
   // Required and nonempty on create. Absent on update preserves the key.
   // Present empty is invalid. Values are literal, not environment references.
   optional string api_key = 5;
-  // Absent means enabled, including on replacement updates.
+  // Absent means enabled on create and preserves the stored value on update.
   optional bool enabled = 6;
+  // Credential presentation override. Absent on create keeps the protocol
+  // convention and absent on update preserves the stored override; an explicit
+  // UNSPECIFIED clears a stored override so the connection follows the protocol
+  // convention again. Named values are preserved across protocol changes, even
+  // when they match the current protocol's default.
+  optional LLMProviderAuth auth = 7;
 }
 message CreateProviderRequest { LLMProviderSpec provider = 1; }
 message CreateProviderResponse { LLMProvider provider = 1; }

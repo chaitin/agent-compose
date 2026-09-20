@@ -504,7 +504,7 @@ agents:
 | `display_name` | string | 空 | Agent 的可读显示名称。 |
 | `description` | string | 空 | Agent 职责的可读说明。 |
 | `provider` | string | `codex` | Agent CLI/provider：`codex`、`claude`、`gemini`、`opencode`、`pi` 或 `dsh`。兼容别名会在持久化边界归一化。 |
-| `model` | string | provider/daemon 默认 | 模型名；Pi 和 dsh 要求使用 `<llm-provider-id>/<model-name>`；支持 `${NAME}` 插值。 |
+| `model` | string | provider/daemon 默认 | 模型名；Pi、opencode 和 dsh 可选的 `<llm-provider-id>/` 前缀，省略时由 daemon 的默认 Connection 解析该模型；支持 `${NAME}` 插值。 |
 | `system_prompt` | string | 空 | 附加的系统提示，适合使用 YAML `|` 多行标量。 |
 | `image` | string | daemon 默认镜像 | Guest 镜像引用，也会作为 `build` 的一个输出 tag。 |
 | `build` | string/object | 无 | `agent-compose build` 使用的镜像构建配置。 |
@@ -599,22 +599,35 @@ API Key，与 Agent 的 `provider: codex` / `provider: pi` 无关。
 
 请求路径为 `/agentcompose.v2.LLMService/CreateProvider`，使用现有 daemon API
 鉴权。随后可以在 Agent 的 `model` 中设置 `team-gateway/model-id`，无需枚举模型。
+直接写 `model-id` 时由 daemon 默认 Connection 解析：保留的 bootstrap Connection
+（`default`/`anthropic`）优先，否则使用唯一已配置的 Connection；存在多个候选且
+无保留 Connection 时报告歧义。用 `<connection>/<model-id>` 可显式选择 Connection。
 其他方法使用同样的服务路径前缀。
 
 - `id` 不可修改，支持 1–128 个 ASCII 字母、数字、点、下划线和连字符，首位必须是
   字母或数字；`default`、`anthropic` 以及 session 环境 ID 保留给 daemon。
 - `protocol` 必须为 `responses`、`chat_completions` 或 `anthropic_messages`。
   `baseUrl` 必须为 HTTP(S) 绝对地址，不能包含用户名密码、查询参数或 fragment。
+- `auth` 指定显式覆盖协议约定的凭据呈现方式：OpenAI 系协议的约定为
+  `bearer`（`Authorization: Bearer`），`anthropic_messages` 的约定为 `x-api-key`。
+  当网关使用 Anthropic Messages 协议但要求 `Authorization: Bearer` 认证时，设置
+  `"auth": "LLM_PROVIDER_AUTH_BEARER"`；反向场景设置
+  `"auth": "LLM_PROVIDER_AUTH_X_API_KEY"`。该覆盖只改变认证 Header，
+  不改变协议或地址；未知取值会被拒绝。显式选择会跨协议变更保留，即使它与当前协议的
+  默认值相同。响应返回已存储的选择；未指定时跟随协议约定。
 - `apiKey` 是字面量，不解析环境变量引用。创建必须提供非空值；更新省略时保留旧值，
   提供非空值时轮换，空值无效。响应仅返回 `apiKeySet`，不会回显密钥。
 - 创建时，空 `name` 默认使用 ID，省略 `enabled` 默认为 `true`。
   `anthropic_messages` 会默认发送 `anthropic-version: 2023-06-01`，其他协议不加额外 Header。
 - `UpdateProvider` 使用相同的 `provider` 对象。省略 `name`、`baseUrl`、`protocol`、
-  `apiKey`、`enabled` 时保留已存储值。提供非空 `apiKey` 会轮换密钥，空值无效。
-  修改协议会同时刷新认证 Header。
+  `apiKey`、`auth`、`enabled` 时保留已存储值。提供非空 `apiKey` 会轮换密钥，空值无效。
+  即使修改 `protocol`，省略 `auth` 也会保留原选择。设置
+  `"auth": "LLM_PROVIDER_AUTH_UNSPECIFIED"` 才会清除覆盖并重新跟随协议约定。
+  没有显式认证选择的旧配置保留原有行为；需要固定认证方式时，显式更新 `auth`。
 - CLI：`agent-compose llm provider ls|create|inspect|update|rm`。创建必须提供
   `--base-url`、`--protocol`、`--api-key`。更新只发送显式设置的 flag，因此
-  `update --base-url ...` 不会把已禁用的 Provider 重新启用。
+  `update --base-url ...` 不会把已禁用的 Provider 重新启用。两个命令都支持
+  `--auth x-api-key|bearer` 覆盖协议默认值，`--auth protocol-default` 清除已存储的覆盖。
 - `GetProvider` / `DeleteProvider` 请求为 `{"id":"team-gateway"}`。
   `ListProviders` 接受 `offset` / `limit`，按 ID 排序并包含禁用项，返回 `providers` 和 `total`。
 - 这些接口只管理 `api` 归属的 Provider，不覆盖 `models.json` 或环境配置。

@@ -2,7 +2,6 @@ package runtimefacade
 
 import (
 	"context"
-	"errors"
 	"os"
 	"strings"
 
@@ -29,6 +28,11 @@ const (
 	TokenSourceSchedulerCommand = "scheduler_command"
 )
 
+// AgentRuntimeConfig is the result of configuring one agent's runtime facade.
+//
+// Model is the runtime command argument, including encoding for legacy guests.
+// Env carries the authoritative guest model in llms.GuestModelEnvName. Model is
+// empty when the agent authenticates outside the facade or nothing was resolved.
 type AgentRuntimeConfig struct {
 	Env   map[string]string
 	Model string
@@ -61,31 +65,31 @@ func EnsureSessionAgentRuntimeConfig(ctx context.Context, req SessionFacadeConfi
 	if config == nil || store == nil || session == nil {
 		return AgentRuntimeConfig{}, nil
 	}
+	var (
+		env map[string]string
+		err error
+	)
 	switch domain.NormalizeAgentKind(agent) {
 	case "codex":
-		env, err := llms.EnsureCodexFacadeConfig(ctx, llms.CodexFacadeConfigRequest{
+		env, err = llms.EnsureCodexFacadeConfig(ctx, llms.CodexFacadeConfigRequest{
 			Config: config, Store: store, Sandbox: session, Model: model, Source: source, RunID: runID,
 		})
-		return AgentRuntimeConfig{Env: env}, err
 	case "claude":
-		env, err := ensureSessionClaudeConfig(ctx, sessionFacadeCall{Config: config, Store: store, Session: session, Model: model, Source: source, RunID: runID})
-		return AgentRuntimeConfig{Env: env}, err
+		env, err = ensureSessionClaudeConfig(ctx, sessionFacadeCall{Config: config, Store: store, Session: session, Model: model, Source: source, RunID: runID})
 	case "opencode":
-		env, err := ensureSessionOpenCodeConfig(ctx, sessionFacadeCall{Config: config, Store: store, Session: session, Model: model, Source: source, RunID: runID})
-		return AgentRuntimeConfig{Env: env, Model: strings.TrimSpace(env["OPENCODE_MODEL"])}, err
+		env, err = ensureSessionOpenCodeConfig(ctx, sessionFacadeCall{Config: config, Store: store, Session: session, Model: model, Source: source, RunID: runID})
 	case "pi":
-		env, err := llms.EnsurePiFacadeConfig(ctx, llms.PiFacadeConfigRequest{
+		env, err = llms.EnsurePiFacadeConfig(ctx, llms.PiFacadeConfigRequest{
 			Config: config, Store: store, Sandbox: session, Model: model, Source: source, RunID: runID,
 		})
-		return AgentRuntimeConfig{Env: env}, err
 	case "dsh":
-		env, err := llms.EnsureDshFacadeConfig(ctx, llms.DshFacadeConfigRequest{
+		env, err = llms.EnsureDshFacadeConfig(ctx, llms.DshFacadeConfigRequest{
 			Config: config, Store: store, Sandbox: session, Model: model, Source: source, RunID: runID,
 		})
-		return AgentRuntimeConfig{Env: env}, err
 	default:
 		return AgentRuntimeConfig{}, nil
 	}
+	return AgentRuntimeConfig{Env: env, Model: llms.RuntimeModelArgument(agent, env[llms.GuestModelEnvName])}, err
 }
 
 // sessionFacadeCall groups the environment (Config/Store/Session) and
@@ -116,7 +120,7 @@ func ensureSessionClaudeConfig(ctx context.Context, call sessionFacadeCall) (map
 	tokenModel := ""
 	tokenProvider := ""
 	if err != nil {
-		if !isOptionalConfigError(err) || !HasAnthropicProviderKey(ctx, config, store) {
+		if !llms.OptionalFacadeConfigError(err) || !HasAnthropicProviderKey(ctx, config, store) {
 			return nil, err
 		}
 	} else {
@@ -145,6 +149,7 @@ func ensureSessionClaudeConfig(ctx context.Context, call sessionFacadeCall) (map
 	if tokenModel != "" {
 		env["ANTHROPIC_MODEL"] = tokenModel
 		env["CLAUDE_MODEL"] = tokenModel
+		env[llms.GuestModelEnvName] = tokenModel
 	}
 	return env, nil
 }
@@ -153,13 +158,6 @@ func ensureSessionOpenCodeConfig(ctx context.Context, call sessionFacadeCall) (m
 	return llms.EnsureOpenCodeFacadeConfig(ctx, llms.OpenCodeFacadeConfigRequest{
 		Config: call.Config, Store: call.Store, Sandbox: call.Session, Model: call.Model, Source: call.Source, RunID: call.RunID,
 	})
-}
-
-func isOptionalConfigError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return errors.Is(err, domain.ErrRequired) || errors.Is(err, domain.ErrFailedPrecondition)
 }
 
 func HasAnthropicProviderKey(ctx context.Context, config *appconfig.Config, store FacadeStore) bool {

@@ -10,18 +10,6 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
-func TestSplitDshModel(t *testing.T) {
-	provider, model, err := SplitDshModel(" custom/model/variant ")
-	if err != nil || provider != "custom" || model != "model/variant" {
-		t.Fatalf("SplitDshModel provider=%q model=%q err=%v", provider, model, err)
-	}
-	for _, invalid := range []string{"", "model", "/model", "provider/", " / "} {
-		if _, _, err := SplitDshModel(invalid); err == nil {
-			t.Fatalf("SplitDshModel(%q) succeeded", invalid)
-		}
-	}
-}
-
 func TestEnsureDshFacadeConfigBindsConfiguredProviderToken(t *testing.T) {
 	isolateLLMEnv(t)
 	store := newDshFacadeTestStore()

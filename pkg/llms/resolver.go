@@ -144,9 +144,13 @@ type RuntimeLLMTargetQuery struct {
 	Config                  *appconfig.Config
 	SessionID               string
 	PreferredProviderFamily string
-	RequestedModel          string
-	ProviderID              string
-	EnvItems                []domain.SandboxEnvVar
+	// ProviderFamilyIsRequired forbids a bare model from resolving against a
+	// default connection of another family. Protocol-fixed agents (codex) set it:
+	// the runtime bridge cannot present a non-OpenAI connection to them.
+	ProviderFamilyIsRequired bool
+	RequestedModel           string
+	ProviderID               string
+	EnvItems                 []domain.SandboxEnvVar
 }
 
 func resolveRuntimeLLMTarget(ctx context.Context, store LLMResolverStore, q RuntimeLLMTargetQuery) (ResolvedTarget, error) {
@@ -297,12 +301,32 @@ func sessionHasEnvProvider(sessionID, requestedModel string, envItems []domain.S
 	return firstNonEmptyTrimmed(SessionAnthropicEnvModel(envItems), EnvItemValue(envItems, "LLM_MODEL"), sessionRequestedModel) != ""
 }
 
+// ResolveRuntimeLLMTargetWithEnv resolves the upstream target for one runtime
+// call. It is the single selection stage shared by the facade agents and the
+// runtime LLM proxy, and applies this precedence:
+//
+//  1. an explicit <connection>/<model> reference or provider id selects that
+//     connection and passes the literal model through;
+//  2. the bootstrap or session environment, then the catalog default, supply a
+//     connection and model when the caller names neither;
+//  3. a registered model with a provider binding selects its bound connection;
+//  4. any remaining literal model resolves against the daemon's default
+//     connection, when that connection is unambiguous.
+//
+// Model bindings are metadata rather than an authorization boundary, so steps 3
+// and 4 accept models that are absent from the model catalog.
 func ResolveRuntimeLLMTargetWithEnv(ctx context.Context, store LLMResolverStore, q RuntimeLLMTargetQuery) (ResolvedTarget, error) {
 	config, requestedModel, providerID, envItems := q.Config, q.RequestedModel, q.ProviderID, q.EnvItems
 	sessionID := strings.TrimSpace(q.SessionID)
 	preferredProviderFamily := NormalizeOptionalProviderType(q.PreferredProviderFamily)
 	requestedModel = strings.TrimSpace(requestedModel)
 	providerID = strings.TrimSpace(providerID)
+	// A reference that leaves a side empty is a typo in every agent, not only in
+	// the facade agents that parse the value themselves. Rejecting it here keeps
+	// codex and claude from forwarding an impossible model to an upstream.
+	if _, _, err := SplitModelReference(requestedModel); err != nil {
+		return ResolvedTarget{}, err
+	}
 	hasSessionEnvProvider := sessionHasEnvProvider(sessionID, requestedModel, envItems)
 	defaultLookup := defaultLLMEnvProviderLookup(ctx, config, store)
 	providerID, requestedModel, explicitProvider := refineProviderAndModelFromReference(ctx, store, providerModelRefinementInput{
@@ -376,9 +400,6 @@ func ResolveRuntimeLLMTargetWithEnv(ctx context.Context, store LLMResolverStore,
 	if err != nil {
 		return ResolvedTarget{}, err
 	}
-	if len(models) == 0 {
-		return ResolvedTarget{}, domain.ClassifyError(domain.ErrRequired, "llm model is required", nil)
-	}
 	providers, err := store.ListEnabledLLMProviders(ctx)
 	if err != nil {
 		return ResolvedTarget{}, err
@@ -386,23 +407,35 @@ func ResolveRuntimeLLMTargetWithEnv(ctx context.Context, store LLMResolverStore,
 	if len(providers) == 0 {
 		return ResolvedTarget{}, domain.ClassifyError(domain.ErrFailedPrecondition, "llm provider is not configured", nil)
 	}
-	model, provider, wireAPI, ok, err := SelectModelAndProvider(ctx, store, ModelProviderSelection{Models: models, Providers: providers, RequestedModel: requestedModel, ProviderFamily: preferredProviderFamily, ProviderID: providerID})
-	if err != nil {
-		return ResolvedTarget{}, err
+	if len(models) > 0 {
+		model, provider, wireAPI, ok, err := SelectModelAndProvider(ctx, store, ModelProviderSelection{Models: models, Providers: providers, RequestedModel: requestedModel, ProviderFamily: preferredProviderFamily, ProviderID: providerID})
+		if err != nil {
+			return ResolvedTarget{}, err
+		}
+		if ok {
+			return BuildResolvedTarget(ctx, store, ResolvedTargetInput{Provider: provider, Model: model, WireAPI: wireAPI})
+		}
 	}
-	if !ok {
-		if requestedModel != "" && providerID != "" {
-			return ResolvedTarget{}, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf("llm model %q is not configured for provider %q", requestedModel, providerID), nil)
+	// Model/provider declarations are optional metadata, not an authorization
+	// boundary: a model that is not registered still resolves against the
+	// daemon's default connection. An explicit provider prefix already pinned a
+	// connection above, so only the provider-less case falls back.
+	if providerID == "" {
+		target, err := resolveLiteralModelTarget(ctx, store, requestedModel, preferredProviderFamily, q.ProviderFamilyIsRequired)
+		if err != nil {
+			return ResolvedTarget{}, err
 		}
-		if requestedModel != "" {
-			return ResolvedTarget{}, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf("llm model %q is not configured", requestedModel), nil)
+		if target != nil {
+			return *target, nil
 		}
-		if providerID != "" {
-			return ResolvedTarget{}, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf("llm provider %q is not configured", providerID), nil)
-		}
-		return ResolvedTarget{}, domain.ClassifyError(domain.ErrFailedPrecondition, "llm provider is not configured", nil)
 	}
-	return BuildResolvedTarget(ctx, store, ResolvedTargetInput{Provider: provider, Model: model, WireAPI: wireAPI})
+	if requestedModel == "" {
+		return ResolvedTarget{}, domain.ClassifyError(domain.ErrRequired, "llm model is required", nil)
+	}
+	if providerID != "" {
+		return ResolvedTarget{}, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf("llm model %q is not configured for provider %q", requestedModel, providerID), nil)
+	}
+	return ResolvedTarget{}, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf("llm model %q is not configured", requestedModel), nil)
 }
 
 func hasCompleteDefaultOpenAIProvider(lookup EnvProviderLookup) bool {
@@ -531,6 +564,9 @@ type llmTargetForProviderFamilyQuery struct {
 
 func resolveLLMTargetForProviderFamily(ctx context.Context, store LLMResolverStore, q llmTargetForProviderFamilyQuery) (ResolvedTarget, error) {
 	config, providerFamily, requestedModel := q.Config, q.ProviderFamily, q.RequestedModel
+	if _, _, err := SplitModelReference(requestedModel); err != nil {
+		return ResolvedTarget{}, err
+	}
 	if strings.TrimSpace(providerFamily) != "" {
 		providerFamily = NormalizeProviderType(providerFamily)
 	}
@@ -548,9 +584,6 @@ func resolveLLMTargetForProviderFamily(ctx context.Context, store LLMResolverSto
 	if err != nil {
 		return ResolvedTarget{}, err
 	}
-	if len(models) == 0 {
-		return ResolvedTarget{}, domain.ClassifyError(domain.ErrRequired, "llm model is required", nil)
-	}
 	providers, err := store.ListEnabledLLMProviders(ctx)
 	if err != nil {
 		return ResolvedTarget{}, err
@@ -558,22 +591,36 @@ func resolveLLMTargetForProviderFamily(ctx context.Context, store LLMResolverSto
 	if len(providers) == 0 {
 		return ResolvedTarget{}, domain.ClassifyError(domain.ErrFailedPrecondition, "llm provider is not configured", nil)
 	}
-	model, provider, wireAPI, ok, err := SelectModelAndProvider(ctx, store, ModelProviderSelection{Models: models, Providers: providers, RequestedModel: requestedModel, ProviderFamily: providerFamily})
-	if err != nil {
-		return ResolvedTarget{}, err
-	}
-	if !ok {
-		if strings.TrimSpace(requestedModel) != "" {
-			return ResolvedTarget{}, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf("llm model %q is not configured for provider family %q", strings.TrimSpace(requestedModel), providerFamily), nil)
+	if len(models) > 0 {
+		model, provider, wireAPI, ok, err := SelectModelAndProvider(ctx, store, ModelProviderSelection{Models: models, Providers: providers, RequestedModel: requestedModel, ProviderFamily: providerFamily})
+		if err != nil {
+			return ResolvedTarget{}, err
 		}
-		return ResolvedTarget{}, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf("llm provider is not configured for provider family %q", providerFamily), nil)
+		if ok {
+			endpoint := EndpointForProvider(provider, wireAPI)
+			headers, err := ProviderForwardHeaders(provider)
+			if err != nil {
+				return ResolvedTarget{}, err
+			}
+			return ResolvedTarget{Provider: provider, Model: model, WireAPI: wireAPI, Endpoint: endpoint, Headers: headers}, nil
+		}
 	}
-	endpoint := EndpointForProvider(provider, wireAPI)
-	headers, err := ProviderForwardHeaders(provider)
-	if err != nil {
+	// As in ResolveRuntimeLLMTargetWithEnv, an unregistered model resolves
+	// against the default connection for the family instead of failing on a
+	// missing model-catalog row. This path states the family explicitly, so it
+	// keeps the cross-family default the runtime bridge allows.
+	if target, err := resolveLiteralModelTarget(ctx, store, requestedModel, providerFamily, false); err != nil {
 		return ResolvedTarget{}, err
+	} else if target != nil {
+		return *target, nil
 	}
-	return ResolvedTarget{Provider: provider, Model: model, WireAPI: wireAPI, Endpoint: endpoint, Headers: headers}, nil
+	if strings.TrimSpace(requestedModel) == "" && len(models) == 0 {
+		return ResolvedTarget{}, domain.ClassifyError(domain.ErrRequired, "llm model is required", nil)
+	}
+	if strings.TrimSpace(requestedModel) != "" {
+		return ResolvedTarget{}, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf("llm model %q is not configured for provider family %q", strings.TrimSpace(requestedModel), providerFamily), nil)
+	}
+	return ResolvedTarget{}, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf("llm provider is not configured for provider family %q", providerFamily), nil)
 }
 
 func ResolveLLMTargetForProviderFamily(ctx context.Context, config *appconfig.Config, store LLMResolverStore, providerFamily, requestedModel string) (ResolvedTarget, error) {

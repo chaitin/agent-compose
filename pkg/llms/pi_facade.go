@@ -16,17 +16,6 @@ type PiFacadeStore interface {
 	SaveLLMFacadeToken(context.Context, FacadeToken) error
 }
 
-// SplitPiModel parses Pi's required <llm-provider-id>/<model-name> selection.
-func SplitPiModel(value string) (string, string, error) {
-	providerID, model, ok := strings.Cut(strings.TrimSpace(value), "/")
-	providerID = strings.TrimSpace(providerID)
-	model = strings.TrimSpace(model)
-	if !ok || providerID == "" || model == "" {
-		return "", "", domain.ClassifyError(domain.ErrRequired, "pi model must use <llm-provider-id>/<model-name>", nil)
-	}
-	return providerID, model, nil
-}
-
 // PiFacadeConfigRequest bundles the config, credential store, target
 // sandbox, and requested model/source/run identifiers
 // EnsurePiFacadeConfig needs to resolve and mint a Pi facade token.
@@ -39,11 +28,13 @@ type PiFacadeConfigRequest struct {
 	RunID   string
 }
 
-// EnsurePiFacadeConfig resolves Pi's explicit provider/model selection, writes
-// the managed models.json, and returns only facade-scoped credentials.
+// EnsurePiFacadeConfig resolves Pi's model selection, writes the managed
+// models.json, and returns only facade-scoped credentials. The
+// <connection>/<model> prefix is optional: without it the daemon's default
+// connection resolves the literal model name.
 func EnsurePiFacadeConfig(ctx context.Context, req PiFacadeConfigRequest) (map[string]string, error) {
 	config, store, sandbox, model, source, runID := req.Config, req.Store, req.Sandbox, req.Model, req.Source, req.RunID
-	providerID, modelName, err := SplitPiModel(model)
+	providerID, modelName, err := SplitModelReference(model)
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +71,10 @@ func EnsurePiFacadeConfig(ctx context.Context, req PiFacadeConfigRequest) (map[s
 		"LLM_API_PROTOCOL":            facadeProtocol,
 		"PI_CODING_AGENT_DIR":         GuestPiAgentDir(config),
 	}
+	// Pi addresses the model through the provider key WritePiRuntimeConfig
+	// registers, so the guest-facing reference carries the namespace. The runner
+	// passes this value to `pi --model` untouched.
+	env[GuestModelEnvName] = GuestModelReference(piFacadeProviderID, target.Model.Name)
 	if target.Provider.ProviderType == ProviderFamilyAnthropic {
 		env["ANTHROPIC_API_KEY"] = tokenValue
 	} else {
@@ -113,6 +108,12 @@ func resolvePiFacadeTarget(ctx context.Context, in piFacadeTargetInput) (Resolve
 		})
 	}
 	switch providerID {
+	case "":
+		// No connection prefix: the daemon default connection owns routing, and
+		// the requested value is a literal model name for it.
+		return ResolveRuntimeLLMTargetWithEnv(ctx, store, RuntimeLLMTargetQuery{
+			Config: config, SessionID: sandboxID, PreferredProviderFamily: "", RequestedModel: model, ProviderID: "", EnvItems: envItems,
+		})
 	case ProviderFamilyAnthropic:
 		return ResolveRuntimeLLMTargetWithEnv(ctx, store, RuntimeLLMTargetQuery{
 			Config: config, SessionID: sandboxID, PreferredProviderFamily: ProviderFamilyAnthropic, RequestedModel: model, ProviderID: "", EnvItems: envItems,

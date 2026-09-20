@@ -85,13 +85,56 @@ func providerReplacementFromV2(spec *agentcomposev2.LLMProviderSpec) (llms.Provi
 	if spec == nil {
 		return llms.ProviderReplacement{}, fmt.Errorf("%w: provider is required", domain.ErrInvalidArgument)
 	}
-	return llms.ProviderReplacement{ID: spec.GetId(), Name: spec.GetName(), BaseURL: spec.GetBaseUrl(), Protocol: spec.GetProtocol(), APIKey: spec.ApiKey, Enabled: spec.Enabled}, nil
+	auth, err := providerAuthFromV2(spec.Auth)
+	if err != nil {
+		return llms.ProviderReplacement{}, err
+	}
+	return llms.ProviderReplacement{ID: spec.GetId(), Name: spec.GetName(), BaseURL: spec.GetBaseUrl(), Protocol: spec.GetProtocol(), APIKey: spec.ApiKey, Enabled: spec.Enabled, Auth: auth}, nil
+}
+
+// providerAuthFromV2 maps the optional presence onto the replacement's explicit
+// intent. An absent field leaves Auth nil, which takes the protocol convention on
+// create and preserves the stored override on update, including protocol
+// changes; an explicit value — including the unspecified presentation that
+// clears an override — is carried through.
+func providerAuthFromV2(auth *agentcomposev2.LLMProviderAuth) (*llms.ProviderAuth, error) {
+	if auth == nil {
+		return nil, nil
+	}
+	presentation := llms.ProviderAuth("")
+	switch *auth {
+	case agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_UNSPECIFIED:
+		presentation = ""
+	case agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_X_API_KEY:
+		presentation = llms.ProviderAuthXAPIKey
+	case agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_BEARER:
+		presentation = llms.ProviderAuthBearer
+	default:
+		return nil, fmt.Errorf("%w: auth must be x-api-key or bearer", domain.ErrInvalidArgument)
+	}
+	return &presentation, nil
 }
 
 func providerToV2(provider llms.Provider) *agentcomposev2.LLMProvider {
 	return &agentcomposev2.LLMProvider{
-		Id: provider.ID, Name: provider.Name, BaseUrl: provider.BaseURL,
-		Protocol: provider.DefaultWireAPI, Enabled: provider.Enabled, ApiKeySet: provider.APIKey != "",
+		Id: provider.ID, Name: provider.Name,
+		BaseUrl: provider.BaseURL, Protocol: provider.DefaultWireAPI,
+		Enabled: provider.Enabled, ApiKeySet: provider.APIKey != "",
+		// The stored override, not the effective header, so a client can send the
+		// response back through Update without hardening the protocol convention
+		// into an explicit override.
+		Auth:      providerAuthToV2(provider.Auth),
 		CreatedAt: timestamppb.New(provider.CreatedAt), UpdatedAt: timestamppb.New(provider.UpdatedAt),
+	}
+}
+
+func providerAuthToV2(auth llms.ProviderAuth) agentcomposev2.LLMProviderAuth {
+	switch auth {
+	case llms.ProviderAuthXAPIKey:
+		return agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_X_API_KEY
+	case llms.ProviderAuthBearer:
+		return agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_BEARER
+	default:
+		return agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_UNSPECIFIED
 	}
 }

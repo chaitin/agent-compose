@@ -16,20 +16,6 @@ type DshFacadeStore interface {
 	SaveLLMFacadeToken(context.Context, FacadeToken) error
 }
 
-// SplitDshModel parses DSH's <llm-provider-id>/<model-name> selection (same
-// format as Pi/OpenCode, see agent-compose-yaml-manual.md). An agent that
-// names no model at all does not reach here: EnsureDshFacadeConfig resolves
-// the daemon default instead.
-func SplitDshModel(value string) (string, string, error) {
-	providerID, model, ok := strings.Cut(strings.TrimSpace(value), "/")
-	providerID = strings.TrimSpace(providerID)
-	model = strings.TrimSpace(model)
-	if !ok || providerID == "" || model == "" {
-		return "", "", domain.ClassifyError(domain.ErrRequired, "dsh model must use <llm-provider-id>/<model-name>", nil)
-	}
-	return providerID, model, nil
-}
-
 // DshFacadeConfigRequest groups EnsureDshFacadeConfig's inputs: the
 // environment to resolve against (Config/Store/Sandbox) plus the specific
 // call's provider/model selection and token attribution.
@@ -88,6 +74,7 @@ func EnsureDshFacadeConfig(ctx context.Context, req DshFacadeConfigRequest) (map
 		// The profile's llm-pi-ai route reads this to name its wire protocol.
 		"DSH_WIRE_API":        piAiAPI,
 		"DSH_MODEL":           target.Model.Name,
+		GuestModelEnvName:     target.Model.Name,
 		"DSH_PERMISSION_MODE": "danger-full-access",
 	}, nil
 }
@@ -132,31 +119,35 @@ func dshFacadeProtocol(target ResolvedTarget, runtimeBaseURL, sandboxID string) 
 
 // resolveDshTarget picks the provider/model pair for this run.
 //
-// With no model configured it delegates to the shared default resolution
-// (SelectModelAndProvider picks the catalog's default entry) exactly as
-// codex does, rather than going through resolveDshFacadeTarget: that
-// function dispatches on the provider id, and an empty id falls through to
-// the custom-OpenAI branch, which needs a concrete provider to resolve.
-// OpenAI is the preferred family for that default, matching codex; an explicit
-// <llm-provider-id>/<model-name> still resolves to whichever family the
-// provider belongs to, and dshFacadeProtocol routes it accordingly.
+// A model reference that carries a prefix is dispatched on that prefix by
+// resolveDshFacadeTarget: a configured connection id, a family alias, or an
+// env-backed custom endpoint. An absent or unqualified model is not tied to a
+// connection, so the shared default resolution picks the daemon's default
+// connection and treats the value as a literal model name. That avoids the
+// custom-OpenAI branch, which needs a concrete provider to resolve. An absent
+// model keeps OpenAI as the preferred family, matching codex; a bare model lets
+// the default connection decide and dshFacadeProtocol routes it accordingly.
 func resolveDshTarget(ctx context.Context, req DshFacadeConfigRequest) (ResolvedTarget, error) {
 	config, store, sandbox := req.Config, req.Store, req.Sandbox
-	if strings.TrimSpace(req.Model) == "" {
-		envItems, err := SandboxProviderEnvItems(ctx, store, sandbox, ProviderFamilyOpenAI)
-		if err != nil {
-			return ResolvedTarget{}, err
-		}
-		return ResolveRuntimeLLMTargetWithEnv(ctx, store, RuntimeLLMTargetQuery{
-			Config: config, SessionID: sandbox.Summary.ID, PreferredProviderFamily: ProviderFamilyOpenAI,
-			RequestedModel: "", ProviderID: "", EnvItems: envItems,
-		})
-	}
-	providerID, modelName, err := SplitDshModel(req.Model)
+	providerID, modelName, err := SplitModelReference(req.Model)
 	if err != nil {
 		return ResolvedTarget{}, err
 	}
-	return resolveDshFacadeTarget(ctx, dshFacadeTargetInput{Config: config, Store: store, Sandbox: sandbox, ProviderID: providerID, Model: modelName})
+	if providerID != "" {
+		return resolveDshFacadeTarget(ctx, dshFacadeTargetInput{Config: config, Store: store, Sandbox: sandbox, ProviderID: providerID, Model: modelName})
+	}
+	preferredFamily := ProviderFamilyOpenAI
+	if strings.TrimSpace(modelName) != "" {
+		preferredFamily = ""
+	}
+	envItems, err := SandboxProviderEnvItems(ctx, store, sandbox, preferredFamily)
+	if err != nil {
+		return ResolvedTarget{}, err
+	}
+	return ResolveRuntimeLLMTargetWithEnv(ctx, store, RuntimeLLMTargetQuery{
+		Config: config, SessionID: sandbox.Summary.ID, PreferredProviderFamily: preferredFamily,
+		RequestedModel: modelName, ProviderID: "", EnvItems: envItems,
+	})
 }
 
 // dshFacadeTargetInput groups resolveDshFacadeTarget's inputs.

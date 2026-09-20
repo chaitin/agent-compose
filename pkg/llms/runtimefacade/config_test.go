@@ -369,8 +369,14 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 	if len(noop.Env) != 0 {
 		t.Fatalf("opencode local env = %#v", noop.Env)
 	}
-	if _, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "bad-model", Source: "", RunID: ""}); err == nil {
-		t.Fatalf("expected invalid opencode model error")
+	// An unqualified model is valid: the daemon's default connection resolves
+	// it, so agent configuration no longer has to name a provider.
+	bare, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "bare-model", Source: "", RunID: ""})
+	if err != nil {
+		t.Fatalf("opencode unqualified model returned error: %v", err)
+	}
+	if bare.Env["OPENCODE_CONFIG"] == "" || bare.Env["LLM_API_KEY"] == "" {
+		t.Fatalf("opencode unqualified env = %#v", bare.Env)
 	}
 	if env, err := EnsureSessionLLMFacadeConfig(ctx, SessionFacadeConfigRequest{Config: nil, Store: store, Session: session, Agent: "codex", Model: "", Source: "", RunID: ""}); err != nil || env != nil {
 		t.Fatalf("nil config env=%#v err=%v", env, err)
@@ -447,5 +453,71 @@ func isolateLLMEnv(t *testing.T) {
 		"CLAUDE_MODEL",
 	} {
 		t.Setenv(key, "")
+	}
+}
+
+// Every facade reports the model the guest runner must address, not only
+// opencode. Forwarding the declared model instead left the runner addressing an
+// unresolved <connection>/<model> reference, or nothing at all when the agent
+// declared no model and resolution supplied one.
+func TestEnsureSessionAgentRuntimeConfigReportsResolvedGuestModel(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:       root,
+		DbAddr:         filepath.Join(root, "data.db"),
+		LLMAPIKey:      "global-provider-key",
+		RuntimeBaseURL: "http://agent-compose.test:7410",
+		GuestHomePath:  "/root",
+	}
+	di := do.New()
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, config)
+	store, err := testutil.OpenConfigStore(t, di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	session := &domain.Sandbox{
+		Summary: domain.SandboxSummary{
+			ID:            "sandbox-guest-model",
+			Driver:        driverpkg.RuntimeDriverDocker,
+			WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-guest-model", "workspace"),
+		},
+		ProviderEnvItems: []domain.SandboxEnvVar{
+			{Name: "LLM_API_ENDPOINT", Value: "https://openai.example.test/v1"},
+			{Name: "LLM_API_KEY", Value: "openai-key"},
+			{Name: "LLM_MODEL", Value: "gpt-test"},
+		},
+	}
+	for _, agent := range []string{"codex", "claude", "pi", "dsh", "opencode"} {
+		t.Run(agent, func(t *testing.T) {
+			result, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{
+				Config: config, Store: store, Session: session, Agent: agent, Model: "gpt-test", Source: TokenSourceAgent, RunID: "run-" + agent,
+			})
+			if err != nil {
+				t.Fatalf("EnsureSessionAgentRuntimeConfig %s returned error: %v", agent, err)
+			}
+			if result.Model == "" {
+				t.Fatalf("%s reported no resolved model: env = %#v", agent, result.Env)
+			}
+			guestModel := result.Model
+			if agent == "dsh" {
+				if result.Model != "agent-compose/gpt-test" {
+					t.Fatalf("legacy DSH argument = %q", result.Model)
+				}
+				guestModel = "gpt-test"
+			}
+			if got := result.Env[llms.GuestModelEnvName]; got != guestModel {
+				t.Fatalf("%s model = %q, env[%s] = %q", agent, result.Model, llms.GuestModelEnvName, got)
+			}
+			// pi and opencode address the model through the provider key written
+			// into their config, so their guest reference carries that namespace;
+			// the other agents pass a bare model literal.
+			if strings.Contains(guestModel, "/") && agent != "opencode" && agent != "pi" {
+				t.Fatalf("%s model = %q, want the resolved model name", agent, result.Model)
+			}
+		})
 	}
 }

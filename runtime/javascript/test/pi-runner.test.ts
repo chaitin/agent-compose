@@ -46,6 +46,7 @@ describe("PiRunner", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   beforeEach(() => {
+    vi.stubEnv("AGENT_COMPOSE_RESOLVED_MODEL", "");
     processState.lines = [];
     processState.stderr = [];
     processState.exitCode = 0;
@@ -74,6 +75,8 @@ describe("PiRunner", () => {
       try {
         const result = await new PiRunner({
           ...runnerOptions(root, "system context", "pi"),
+          // The daemon publishes the guest-facing reference (provider namespace
+          // included) as AGENT_COMPOSE_RESOLVED_MODEL; the runner forwards it.
           model: "openai/gpt-5",
           skills: ["review"],
         }).runPrompt("user prompt");
@@ -113,6 +116,26 @@ describe("PiRunner", () => {
       await expect(fs.access(systemPath)).rejects.toThrow();
       const stored = JSON.parse(await fs.readFile(path.join(root, "state", "agents", "providers", "pi.json"), "utf8"));
       expect(stored.threadId).toBe("pi-session");
+    });
+  });
+
+  it("forwards a daemon-resolved model whose id contains slashes without stripping", async () => {
+    vi.stubEnv("AGENT_COMPOSE_RESOLVED_MODEL", "agent-compose/anthropic/claude-3.5-sonnet");
+    const { PiRunner } = await import("../src/runners/pi.js");
+    await withTempSession(async (root) => {
+      processState.lines = [
+        JSON.stringify({ type: "session", id: "pi-session" }),
+        JSON.stringify({ type: "agent_end", stopReason: "end_turn" }),
+      ];
+      // The daemon resolved "openrouter/anthropic/claude-3.5-sonnet" down to
+      // this reference. Stripping the first segment here would address
+      // "agent-compose/claude-3.5-sonnet", a model models.json never declared.
+      await new PiRunner({
+        ...runnerOptions(root, "", "pi"),
+        model: "gateway/ignored-model",
+      }).runPrompt("prompt");
+      const call = processState.calls[0];
+      expect(call.args[call.args.indexOf("--model") + 1]).toBe("agent-compose/anthropic/claude-3.5-sonnet");
     });
   });
 

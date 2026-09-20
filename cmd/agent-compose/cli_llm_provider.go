@@ -20,6 +20,7 @@ type composeLLMProviderCreateOptions struct {
 	Protocol string
 	APIKey   string
 	Enabled  bool
+	Auth     string
 }
 
 type composeLLMProviderUpdateOptions struct {
@@ -28,6 +29,7 @@ type composeLLMProviderUpdateOptions struct {
 	Protocol string
 	APIKey   string
 	Enabled  bool
+	Auth     string
 }
 
 type composeLLMProviderListOutput struct {
@@ -59,6 +61,7 @@ type composeLLMProviderOutput struct {
 	Protocol  string `json:"protocol"`
 	Enabled   bool   `json:"enabled"`
 	APIKeySet bool   `json:"api_key_set"`
+	Auth      string `json:"auth,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
@@ -101,6 +104,10 @@ func runComposeLLMProviderCreateCommand(cmd *cobra.Command, cli cliOptions, opti
 	if id == "" {
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("llm provider create requires a provider id")}
 	}
+	auth, err := llmProviderAuthFromFlag(options.Auth)
+	if err != nil {
+		return commandExitError{Code: exitCodeUsage, Err: err}
+	}
 	spec := &agentcomposev2.LLMProviderSpec{
 		Id:       id,
 		Name:     strings.TrimSpace(options.Name),
@@ -108,6 +115,7 @@ func runComposeLLMProviderCreateCommand(cmd *cobra.Command, cli cliOptions, opti
 		Protocol: strings.TrimSpace(options.Protocol),
 		ApiKey:   proto.String(options.APIKey),
 		Enabled:  proto.Bool(options.Enabled),
+		Auth:     auth,
 	}
 	resp, err := clients.llm.CreateProvider(cmd.Context(), connect.NewRequest(&agentcomposev2.CreateProviderRequest{Provider: spec}))
 	if err != nil {
@@ -166,6 +174,13 @@ func runComposeLLMProviderUpdateCommand(cmd *cobra.Command, cli cliOptions, opti
 	if cmd.Flags().Changed("enabled") {
 		spec.Enabled = proto.Bool(options.Enabled)
 	}
+	if cmd.Flags().Changed("auth") {
+		auth, err := llmProviderAuthFromFlag(options.Auth)
+		if err != nil {
+			return commandExitError{Code: exitCodeUsage, Err: err}
+		}
+		spec.Auth = auth
+	}
 	resp, err := clients.llm.UpdateProvider(cmd.Context(), connect.NewRequest(&agentcomposev2.UpdateProviderRequest{Provider: spec}))
 	if err != nil {
 		return commandExitErrorForConnect(fmt.Errorf("update llm provider %s: %w", id, err))
@@ -217,6 +232,7 @@ func composeLLMProviderOutputFromProto(provider *agentcomposev2.LLMProvider) com
 		Protocol:  provider.GetProtocol(),
 		Enabled:   provider.GetEnabled(),
 		APIKeySet: provider.GetApiKeySet(),
+		Auth:      llmProviderAuthFlagFromProto(provider.GetAuth()),
 		CreatedAt: formatProtoTimestamp(provider.GetCreatedAt()),
 		UpdatedAt: formatProtoTimestamp(provider.GetUpdatedAt()),
 	}
@@ -250,15 +266,52 @@ func writeLLMProviderListText(out io.Writer, providers []composeLLMProviderOutpu
 }
 
 func writeLLMProviderInspectText(out io.Writer, provider composeLLMProviderOutput) error {
-	_, err := fmt.Fprintf(out, "ID: %s\nName: %s\nBase URL: %s\nProtocol: %s\nEnabled: %t\nAPI Key Set: %t\nCreated: %s\nUpdated: %s\n",
+	_, err := fmt.Fprintf(out, "ID: %s\nName: %s\nBase URL: %s\nProtocol: %s\nAuth: %s\nEnabled: %t\nAPI Key Set: %t\nCreated: %s\nUpdated: %s\n",
 		firstNonEmptyString(provider.ID, "-"),
 		firstNonEmptyString(provider.Name, "-"),
 		firstNonEmptyString(provider.BaseURL, "-"),
 		firstNonEmptyString(provider.Protocol, "-"),
+		firstNonEmptyString(provider.Auth, "protocol default"),
 		provider.Enabled,
 		provider.APIKeySet,
 		firstNonEmptyString(provider.CreatedAt, "-"),
 		firstNonEmptyString(provider.UpdatedAt, "-"),
 	)
 	return err
+}
+
+// llmProviderAuthFromFlag maps the --auth flag value onto the request enum. An
+// empty flag leaves the presentation unspecified, which keeps the stored or
+// protocol-default value; "protocol-default" sends the unspecified presentation
+// explicitly, which clears a stored override. A misspelled value is rejected
+// instead of silently keeping the default.
+func llmProviderAuthFromFlag(value string) (*agentcomposev2.LLMProviderAuth, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return nil, nil
+	case "x-api-key":
+		auth := agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_X_API_KEY
+		return &auth, nil
+	case "bearer":
+		auth := agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_BEARER
+		return &auth, nil
+	case "protocol-default":
+		auth := agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_UNSPECIFIED
+		return &auth, nil
+	default:
+		return nil, fmt.Errorf("auth must be x-api-key, bearer, or protocol-default")
+	}
+}
+
+// llmProviderAuthFlagFromProto renders the stored override for humans. An empty
+// result means the connection follows the protocol convention.
+func llmProviderAuthFlagFromProto(auth agentcomposev2.LLMProviderAuth) string {
+	switch auth {
+	case agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_X_API_KEY:
+		return "x-api-key"
+	case agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_BEARER:
+		return "bearer"
+	default:
+		return ""
+	}
 }

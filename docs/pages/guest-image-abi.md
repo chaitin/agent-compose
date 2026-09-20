@@ -200,6 +200,15 @@ The daemon passes explicit workspace, state, and home paths. It also injects:
 | `SANDBOX_ID` | Current sandbox ID |
 | `VERSION` | Current daemon version |
 | `AGENT_COMPOSE_RUNTIME_BASE_URL` | Set when the runtime facade is configured |
+| `AGENT_COMPOSE_RESOLVED_MODEL` | Model reference resolved for the current managed agent invocation |
+
+Pi and DSH runtimes use `AGENT_COMPOSE_RESOLVED_MODEL` without interpreting its
+slashes. During staged upgrades, new runtimes still accept the legacy
+connection/model argument when an older daemon omits this variable. The daemon
+also preserves DSH's legacy argument prefix for older guests. This fallback is
+deprecated and will be removed once those daemon/guest versions are no longer
+supported; new integrations should consume the resolved value. Continue to use
+release-matched images for the rest of the runtime protocol.
 
 The `prompt` and `exec` stdout payloads, stream separation, artifact files, and
 interactive NDJSON frames are protocol, not just CLI presentation. A custom
