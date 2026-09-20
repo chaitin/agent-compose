@@ -19184,24 +19184,25 @@ func (x *LLMProvider) GetAuth() LLMProviderAuth {
 	return LLMProviderAuth_LLM_PROVIDER_AUTH_UNSPECIFIED
 }
 
-// LLMProviderSpec replaces public configuration on update. ID is immutable.
+// LLMProviderSpec applies explicit fields on update. ID is immutable.
 type LLMProviderSpec struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Id      string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Name    string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	BaseUrl string                 `protobuf:"bytes,3,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
-	// responses, chat_completions, or anthropic_messages; required.
+	// responses, chat_completions, or anthropic_messages; required on create.
+	// Absent or empty on update preserves the stored protocol.
 	Protocol string `protobuf:"bytes,4,opt,name=protocol,proto3" json:"protocol,omitempty"`
 	// Required and nonempty on create. Absent on update preserves the key.
 	// Present empty is invalid. Values are literal, not environment references.
 	ApiKey *string `protobuf:"bytes,5,opt,name=api_key,json=apiKey,proto3,oneof" json:"api_key,omitempty"`
-	// Absent means enabled, including on replacement updates.
+	// Absent means enabled on create and preserves the stored value on update.
 	Enabled *bool `protobuf:"varint,6,opt,name=enabled,proto3,oneof" json:"enabled,omitempty"`
 	// Credential presentation override. Absent on create keeps the protocol
 	// convention and absent on update preserves the stored override; an explicit
 	// UNSPECIFIED clears a stored override so the connection follows the protocol
-	// convention again. A named value equal to the protocol in effect is not stored
-	// as an override, so a later protocol change refreshes the header.
+	// convention again. Named values are preserved across protocol changes, even
+	// when they match the current protocol's default.
 	Auth          *LLMProviderAuth `protobuf:"varint,7,opt,name=auth,proto3,enum=agentcompose.v2.LLMProviderAuth,oneof" json:"auth,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

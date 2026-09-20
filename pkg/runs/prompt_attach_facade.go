@@ -135,16 +135,17 @@ func (c *Controller) deletePromptAttachLLMFacadeToken(ctx context.Context, token
 //
 // The facade resolves an agent-compose connection/model pair and republishes it
 // in whatever namespace the guest agent addresses models by, under
-// llms.GuestModelEnvName. Forwarding the configured model instead makes the
-// agent CLI disagree with the facade token: a <connection>/<model> prefix or an
-// unset model reaches the CLI verbatim, and the model call then fails or hangs
+// llms.GuestModelEnvName. RuntimeModelArgument preserves the legacy guest
+// command encoding without changing that value. Forwarding the configured model
+// instead makes the agent CLI disagree with the facade token: a connection
+// prefix or an unset model reaches the CLI verbatim, and the call fails or hangs
 // without naming the cause.
 //
 // The one-shot run path performs the same substitution through
 // runtimefacade.AgentRuntimeConfig.Model; this is its prompt-attach counterpart.
 func promptAttachRuntimeModel(agent execution.AgentConfig, managedEnv map[string]string) string {
 	if model := strings.TrimSpace(managedEnv[llms.GuestModelEnvName]); model != "" {
-		return model
+		return llms.RuntimeModelArgument(agent.Provider, model)
 	}
 	return agent.Model
 }

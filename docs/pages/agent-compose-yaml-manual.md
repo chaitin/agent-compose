@@ -613,14 +613,13 @@ the service path prefix.
   `baseUrl` must be an absolute HTTP(S) URL without user credentials, query or fragment.
 - `auth` names an explicit credential presentation that overrides the protocol
   convention: `bearer` (`Authorization: Bearer`) is the convention for the OpenAI
-  protocols and `x-api-key` for `anthropic_messages`. Set `"auth": "bearer"` when
+  protocols and `x-api-key` for `anthropic_messages`. Set `"auth": "LLM_PROVIDER_AUTH_BEARER"` when
   a gateway serves the Anthropic Messages protocol but authenticates with
-  `Authorization: Bearer`; set `"auth": "x-api-key"` for the reverse. The override
+  `Authorization: Bearer`; set `"auth": "LLM_PROVIDER_AUTH_X_API_KEY"` for the reverse. The override
   changes only the header, not the wire protocol. An unknown value is rejected.
-  Naming the protocol's own convention stores no override, so the connection
-  keeps following the protocol and a later `protocol` change refreshes the
-  header. Responses report the stored override; a connection with no stored
-  override reports no value and follows the protocol convention.
+  An explicit choice is preserved across protocol changes, even when it matches
+  the current protocol's convention. Responses report that stored choice; an
+  unspecified value means the connection follows the protocol convention.
 - `apiKey` is literal, without environment interpolation. Create requires a
   nonempty key. On update, omission preserves it, a nonempty value rotates it,
   and an empty value is invalid. Responses expose only `apiKeySet`, never the key.
@@ -629,13 +628,11 @@ the service path prefix.
   default; other protocols send no extra headers.
 - `UpdateProvider` uses the same `provider` object. Omitted `name`, `baseUrl`,
   `protocol`, `apiKey`, `auth`, and `enabled` preserve stored values. Present
-  nonempty `apiKey` rotates the key; present empty is invalid. An omitted `auth`
-  preserves the stored override only while `protocol` is unchanged: a change to
-  `protocol` re-derives the presentation from the new protocol, because an
-  override describes the protocol it was written for. An explicit empty `auth`
-  clears the override, after which the connection follows the protocol
-  convention again. Naming the protocol's own convention stores no override, so
-  the connection keeps following the protocol instead of pinning the header.
+  nonempty `apiKey` rotates the key; present empty is invalid. Omitted `auth`
+  preserves the stored choice even when `protocol` changes. Set
+  `"auth": "LLM_PROVIDER_AUTH_UNSPECIFIED"` to clear it and follow the protocol
+  convention again. Older configuration without an explicit auth choice retains
+  its existing behavior; set `auth` explicitly to pin the authentication method.
 - CLI: `agent-compose llm provider ls|create|inspect|update|rm`. Create requires
   `--base-url`, `--protocol`, and `--api-key`. Update sends only flags that are
   set, so `update --base-url ...` does not re-enable a disabled provider.

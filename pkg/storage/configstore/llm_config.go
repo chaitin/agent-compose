@@ -48,7 +48,7 @@ func (s *llmStore) UpsertDefaultLLMConfig(ctx context.Context, provider llms.Pro
 	// Anthropic bearer token), so record it with the same intent rule the
 	// migration used: only a presentation that differs from the protocol
 	// convention is an override worth preserving.
-	authIntent := llms.ProviderAuthIntent(provider.DefaultWireAPI, provider.AuthHeader, provider.AuthScheme)
+	authIntent := llms.InferLegacyProviderAuth(provider.DefaultWireAPI, provider.AuthHeader, provider.AuthScheme)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_provider(id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, auth, headers_json, use_generic_responses_text_parts, weight, enabled, scope, created_at, updated_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET name = excluded.name, provider_type = excluded.provider_type, default_wire_api = excluded.default_wire_api, base_url = excluded.base_url, api_key = excluded.api_key, auth_header = excluded.auth_header, auth_scheme = excluded.auth_scheme, auth = excluded.auth, headers_json = excluded.headers_json, use_generic_responses_text_parts = excluded.use_generic_responses_text_parts, weight = excluded.weight, enabled = excluded.enabled, scope = excluded.scope, updated_at = excluded.updated_at`, provider.ID, provider.Name, provider.ProviderType, provider.DefaultWireAPI, provider.BaseURL, provider.APIKey, provider.AuthHeader, provider.AuthScheme, string(authIntent), provider.HeadersJSON, BoolToInt(provider.UseGenericResponsesTextParts), provider.Weight, provider.Scope, now, now); err != nil {

@@ -30,9 +30,9 @@ const (
 
 // AgentRuntimeConfig is the result of configuring one agent's runtime facade.
 //
-// Model is the resolved model the guest agent CLI must address, taken from the
-// facade environment (llms.GuestModelEnvName). It is empty when the agent
-// authenticates outside the facade, or when the facade had nothing to resolve.
+// Model is the runtime command argument, including encoding for legacy guests.
+// Env carries the authoritative guest model in llms.GuestModelEnvName. Model is
+// empty when the agent authenticates outside the facade or nothing was resolved.
 type AgentRuntimeConfig struct {
 	Env   map[string]string
 	Model string
@@ -89,7 +89,7 @@ func EnsureSessionAgentRuntimeConfig(ctx context.Context, req SessionFacadeConfi
 	default:
 		return AgentRuntimeConfig{}, nil
 	}
-	return AgentRuntimeConfig{Env: env, Model: strings.TrimSpace(env[llms.GuestModelEnvName])}, err
+	return AgentRuntimeConfig{Env: env, Model: llms.RuntimeModelArgument(agent, env[llms.GuestModelEnvName])}, err
 }
 
 // sessionFacadeCall groups the environment (Config/Store/Session) and

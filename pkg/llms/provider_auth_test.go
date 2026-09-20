@@ -80,13 +80,9 @@ func sameProviderAuth(a, b *ProviderAuth) bool {
 	return *a == *b
 }
 
-// Every write path records a presentation only when it differs from the protocol
-// in effect: the migration and the environment bootstrap infer an override from
-// a stored header, and the RPC create and update paths measure the presentation
-// the request names against that same protocol. Naming the convention therefore
-// stores nothing, so a later protocol change refreshes the header instead of
-// pinning it.
-func TestProviderAuthIntentRecordsOnlyOverrides(t *testing.T) {
+// Legacy headers carry no explicit intent; only a difference from the protocol
+// default is evidence of an override. RPC input does not use this inference.
+func TestInferLegacyProviderAuthRecordsOnlyOverrides(t *testing.T) {
 	cases := []struct {
 		protocol, header, scheme string
 		want                     ProviderAuth
@@ -98,8 +94,8 @@ func TestProviderAuthIntentRecordsOnlyOverrides(t *testing.T) {
 		{protocol: APIProtocolResponses, header: "X-Custom", scheme: "Token"},
 	}
 	for _, tc := range cases {
-		if got := ProviderAuthIntent(tc.protocol, tc.header, tc.scheme); got != tc.want {
-			t.Fatalf("ProviderAuthIntent(%q, %q, %q) = %q, want %q", tc.protocol, tc.header, tc.scheme, got, tc.want)
+		if got := InferLegacyProviderAuth(tc.protocol, tc.header, tc.scheme); got != tc.want {
+			t.Fatalf("InferLegacyProviderAuth(%q, %q, %q) = %q, want %q", tc.protocol, tc.header, tc.scheme, got, tc.want)
 		}
 	}
 }

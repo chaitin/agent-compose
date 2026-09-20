@@ -123,6 +123,7 @@ describe("runner execution", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   beforeEach(() => {
+    vi.stubEnv("AGENT_COMPOSE_RESOLVED_MODEL", "");
     codexState.constructorOptions = [];
     codexState.events = [];
     codexState.threadId = "thread-new";
@@ -596,13 +597,19 @@ describe("runner execution", () => {
     });
   });
 
-  it("turns Claude result errors into thrown errors", async () => {
+  it.each([
+    { type: "result", subtype: "error", errors: ["api failed"] },
+    { type: "result", subtype: "success", is_error: true, result: "api failed" },
+  ])("rejects Claude error result $subtype with is_error=$is_error", async (message) => {
     const { ClaudeRunner } = await import("../src/runners/claude.js");
     await withTempSession(async (root) => {
-      claudeState.messages = [{ type: "result", subtype: "error", errors: ["api failed"] }];
+      claudeState.messages = [message];
+      const onEvent = vi.fn();
       const stdio = captureStdio();
       try {
-        await expect(new ClaudeRunner(runnerOptions(root, "", "claude")).runPrompt("prompt")).rejects.toThrow("api failed");
+        await expect(new ClaudeRunner({ ...runnerOptions(root, "", "claude"), onEvent }).runPrompt("prompt")).rejects.toThrow("api failed");
+        expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "error", severity: "fatal" }));
+        expect(claudeState.closed).toBe(true);
       } finally {
         stdio.restore();
       }
@@ -897,6 +904,7 @@ describe("runner execution", () => {
     // stub a host-leaked value so clearing it is asserted deterministically,
     // the same way the resume test below covers the other four vars' deletes.
     vi.stubEnv("DSH_RESUME", "1");
+    vi.stubEnv("AGENT_COMPOSE_RESOLVED_MODEL", "org/deepseek-v4");
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
       const skillDir = path.join(root, "home", ".agents", "skills", "review");

@@ -46,6 +46,7 @@ describe("PiRunner", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   beforeEach(() => {
+    vi.stubEnv("AGENT_COMPOSE_RESOLVED_MODEL", "");
     processState.lines = [];
     processState.stderr = [];
     processState.exitCode = 0;
@@ -76,7 +77,7 @@ describe("PiRunner", () => {
           ...runnerOptions(root, "system context", "pi"),
           // The daemon publishes the guest-facing reference (provider namespace
           // included) as AGENT_COMPOSE_RESOLVED_MODEL; the runner forwards it.
-          model: "agent-compose/gpt-5",
+          model: "openai/gpt-5",
           skills: ["review"],
         }).runPrompt("user prompt");
         expect(result).toMatchObject({
@@ -119,6 +120,7 @@ describe("PiRunner", () => {
   });
 
   it("forwards a daemon-resolved model whose id contains slashes without stripping", async () => {
+    vi.stubEnv("AGENT_COMPOSE_RESOLVED_MODEL", "agent-compose/anthropic/claude-3.5-sonnet");
     const { PiRunner } = await import("../src/runners/pi.js");
     await withTempSession(async (root) => {
       processState.lines = [
@@ -130,7 +132,7 @@ describe("PiRunner", () => {
       // "agent-compose/claude-3.5-sonnet", a model models.json never declared.
       await new PiRunner({
         ...runnerOptions(root, "", "pi"),
-        model: "agent-compose/anthropic/claude-3.5-sonnet",
+        model: "gateway/ignored-model",
       }).runPrompt("prompt");
       const call = processState.calls[0];
       expect(call.args[call.args.indexOf("--model") + 1]).toBe("agent-compose/anthropic/claude-3.5-sonnet");

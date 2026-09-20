@@ -12,6 +12,7 @@ import { toolKindForName } from "../agent-event.js";
 import type { AgentResult, RunnerOptions } from "../types.js";
 import { cancellationRequested } from "../shutdown.js";
 import { waitForChildExit } from "../child-process.js";
+import { resolveFacadeModel } from "./model-reference.js";
 
 const maxDiagnosticBytes = 64 * 1024;
 
@@ -114,11 +115,8 @@ export class DshRunner {
       // value: the daemon's facade config sets it to the model it resolved and
       // minted the token against. Deleting it when no --model was passed would
       // drop that and let the profile fall back to its hardcoded default, so
-      // only overwrite when this invocation actually names a model. The value
-      // the daemon resolved is already the model literal — it stripped any
-      // <connection>/ prefix and resolution rewrote the rest — so the runner
-      // must not strip again, or a model id containing slashes is truncated.
-      const modelName = (this.options.model || "").trim();
+      // only overwrite when the daemon or the invocation names a model.
+      const modelName = resolveFacadeModel("dsh", this.options.model, process.env.AGENT_COMPOSE_RESOLVED_MODEL);
       if (modelName) {
         env.DSH_MODEL = modelName;
       }

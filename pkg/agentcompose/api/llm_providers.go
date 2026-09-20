@@ -94,8 +94,8 @@ func providerReplacementFromV2(spec *agentcomposev2.LLMProviderSpec) (llms.Provi
 
 // providerAuthFromV2 maps the optional presence onto the replacement's explicit
 // intent. An absent field leaves Auth nil, which takes the protocol convention on
-// create and preserves the stored override while an update leaves the protocol
-// unchanged; an explicit value — including the unspecified presentation that
+// create and preserves the stored override on update, including protocol
+// changes; an explicit value — including the unspecified presentation that
 // clears an override — is carried through.
 func providerAuthFromV2(auth *agentcomposev2.LLMProviderAuth) (*llms.ProviderAuth, error) {
 	if auth == nil {

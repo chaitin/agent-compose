@@ -57,9 +57,23 @@ func GuestModelReference(providerKey, model string) string {
 	if providerKey == "" {
 		return model
 	}
-	prefix := providerKey + "/"
-	if strings.HasPrefix(model, prefix) {
-		return model
+	// model is an upstream literal, not an already-qualified guest reference.
+	// Its own prefix may equal providerKey and must remain part of the model ID.
+	return providerKey + "/" + model
+}
+
+// RuntimeModelArgument encodes a resolved guest model for the runtime command
+// argument. New runtimes use GuestModelEnvName as the authoritative model.
+//
+// Compatibility only: old DSH runtimes strip the first argument component as a
+// connection prefix. Keep a disposable prefix so they preserve the full resolved
+// model, including slashes. Pi already receives its guest provider namespace;
+// the other runtimes consume literal arguments. Remove this DSH encoding once
+// supported guest images all consume GuestModelEnvName; do not use it for new
+// model selection or upstream routing.
+func RuntimeModelArgument(agent, resolvedModel string) string {
+	if domain.NormalizeAgentKind(agent) == "dsh" {
+		return GuestModelReference("agent-compose", resolvedModel)
 	}
-	return prefix + model
+	return strings.TrimSpace(resolvedModel)
 }

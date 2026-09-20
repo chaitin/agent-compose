@@ -11,6 +11,7 @@ import type { AgentResult, RunnerOptions } from "../types.js";
 import { piMCPAdapterExtension, writePiMCPConfig } from "./pi-mcp.js";
 import { cancellationRequested } from "../shutdown.js";
 import { waitForChildExit } from "../child-process.js";
+import { resolveFacadeModel } from "./model-reference.js";
 
 const maxDiagnosticBytes = 64 * 1024;
 
@@ -135,12 +136,7 @@ export class PiRunner {
       "--offline",
     ];
     if (sessionID) args.push("--session-id", sessionID);
-    // The daemon already resolved the model and published the guest-facing
-    // reference (provider namespace included) through
-    // AGENT_COMPOSE_RESOLVED_MODEL. Pass it through untouched: stripping a
-    // <connection>/ prefix or re-adding a namespace here would address a
-    // different model whenever the resolved id itself contains a slash.
-    const model = this.options.model?.trim();
+    const model = resolveFacadeModel("pi", this.options.model, process.env.AGENT_COMPOSE_RESOLVED_MODEL);
     if (model) {
       args.push("--model", model);
     }

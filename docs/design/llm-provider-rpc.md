@@ -32,18 +32,18 @@ the override changes only the header, not the protocol or endpoint. Responses
 report the stored override rather than the effective header, so a Get response
 can be sent back through Update without freezing the protocol convention into an
 override; a connection with no stored override carries the unspecified
-presentation. Every write path records an override only when the presentation
-differs from the protocol in effect: the migration and the environment bootstrap
-infer that difference from a stored header, and the RPC create and update paths
-measure the presentation the request names against the same protocol. Naming the
-convention therefore stores nothing, and a protocol change always returns the
-connection to the new protocol's convention: a stored override describes the
-protocol it was written for, so an update that omits auth and changes the
-protocol re-derives the presentation instead of carrying the old override
-forward. An explicit unspecified auth likewise clears the override and returns
-the connection to the protocol convention. An unknown presentation is rejected
-rather than falling back to the protocol default, because silently keeping
-x-api-key would resurface as an unexplained upstream 401. The
+presentation. RPC writes preserve an explicit auth choice even when it matches
+the current protocol's default. An update that omits auth preserves that choice
+across protocol changes; an explicit unspecified auth clears it. Only connections
+without an explicit choice follow the protocol's default. This keeps a gateway's
+authentication stable when switching between Chat Completions and Responses.
+
+Legacy migration and environment bootstrap have only effective headers, not an
+explicit auth field. They infer an override only when the header differs from
+the protocol's default; a matching header gives no evidence of operator intent.
+This inference is confined to those compatibility boundaries and is not used for
+new RPC writes. Existing empty auth values keep following the protocol; operators
+can pin them with an explicit update. Unknown presentations are rejected. The
 environment-bootstrap path already chooses the same two presentations through
 ANTHROPIC_AUTH_TOKEN (Bearer) and ANTHROPIC_API_KEY or LLM_API_KEY (x-api-key).
 
@@ -117,6 +117,14 @@ opencode, and dsh but not claude: no bridge converts an Anthropic Messages
 request into OpenAI Chat, so the run fails with `unsupported llm protocol bridge
 from "anthropic_messages" to "openai_chat"`. Give claude a `responses` or an
 `anthropic_messages` connection.
+Codex only accepts OpenAI-family connections: an explicit `anthropic_messages`
+connection is rejected before execution with `codex requires an OpenAI-compatible
+model`. Pi, OpenCode, and DSH can use all three protocols.
+
+Claude SDK results must also honor `is_error`: the SDK can return a `success`
+subtype with `is_error=true` for an upstream HTTP error. Such a result fails the
+run and emits a fatal error event instead of publishing an API error as a
+successful answer.
 
 The facade publishes the model it resolved as `AGENT_COMPOSE_RESOLVED_MODEL`,
 already rewritten into the namespace the guest addresses models by, and the
@@ -125,10 +133,27 @@ declared. A declaration is a request that resolution may rewrite: a
 `<connection>/<model>` prefix is stripped, a catalog or bootstrap default
 supplies a model the agent omitted, and pi and opencode address models through
 the provider key written into their config. The runner passes the published
-reference through untouched — no guest runtime strips or re-adds a prefix — so a
+reference through untouched on the resolved path, so a
 resolved model id that itself contains slashes reaches the upstream intact. An
 agent CLI told the declaration instead addresses a model the facade token is not
-bound to.
+bound to. A model whose literal prefix equals the guest provider still needs
+both components: provider `anthropic` and model `anthropic/example` produce
+`anthropic/anthropic/example`.
+
+The runtime argument remains compatible with old guest images. For DSH the
+daemon sends `agent-compose/<resolved-model>` so an old runner's first-slash
+conversion preserves the entire model ID. New Pi/DSH runners prefer
+`AGENT_COMPOSE_RESOLVED_MODEL`; when an old daemon omits it, they retain their
+legacy argument conversion. These two compatibility boundaries are deprecated:
+remove them together once old daemon and guest versions are no longer supported.
+New routing must use the resolved value, not introduce further prefix inference.
+This supports staged upgrades of the model argument contract, not arbitrary
+version combinations of the complete runtime protocol.
+
+Ambiguous defaults are reported instead of silently falling back to an agent's
+own credentials. This intentionally changes Codex/Claude fallback behavior when
+multiple managed connections exist and no target can be selected. Configure an
+explicit connection/model reference to resolve the ambiguity.
 
 The next target resolution reads current provider settings, so address/key
 updates require no restart. Existing in-flight requests use their resolved

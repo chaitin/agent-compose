@@ -64,11 +64,12 @@ func ProviderAuthFromWire(header, scheme string) ProviderAuth {
 	}
 }
 
-// ProviderAuthIntent records an explicit presentation only when it differs from
-// the protocol convention. Storage keeps that intent beside the effective
-// header, so an update that omits auth can preserve an override without pinning
-// a header that was merely the protocol default.
-func ProviderAuthIntent(protocol, header, scheme string) ProviderAuth {
+// InferLegacyProviderAuth recovers a non-default presentation from a connection
+// that has no explicit auth field, such as environment bootstrap. As with the
+// legacy database migration, a header matching the protocol gives no evidence
+// of an override. Do not use this inference for RPC input: a named auth value
+// is explicit intent even when it matches the current protocol's default.
+func InferLegacyProviderAuth(protocol, header, scheme string) ProviderAuth {
 	presentation := ProviderAuthFromWire(header, scheme)
 	defaultHeader, defaultScheme := ProviderProtocolAuth(protocol)
 	if presentation == "" || presentation == ProviderAuthFromWire(defaultHeader, defaultScheme) {

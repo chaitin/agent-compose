@@ -142,6 +142,13 @@ daemon 会显式传递 workspace、state 和 home 路径，并注入：
 | `SANDBOX_ID` | 当前 sandbox ID |
 | `VERSION` | 当前 daemon version |
 | `AGENT_COMPOSE_RUNTIME_BASE_URL` | 配置 runtime facade 时设置 |
+| `AGENT_COMPOSE_RESOLVED_MODEL` | 为本次托管 agent 调用解析的完整模型引用 |
+
+Pi 和 DSH runtime 直接使用 `AGENT_COMPOSE_RESOLVED_MODEL`，不再解析其中的斜杠。
+分步升级时，若旧 daemon 未提供该变量，新 runtime 仍接受旧的 connection/model 参数；
+daemon 也为旧 guest 保留 DSH 的参数前缀。该回退方式已弃用，待旧 daemon/guest
+版本退出支持后移除；新集成应使用已解析的值。runtime 协议的其他部分仍应使用
+与 release 匹配的镜像。
 
 `prompt` 和 `exec` 的 stdout payload、stream 分离、artifact 文件以及交互式 NDJSON frame 都属于协议，而不仅是 CLI 展示。自行替换 runtime 时，必须实现对应 release 的完整协议。强烈建议直接复用仓库 runtime，协议详见 [agent-compose 与 runtime 调用约定](https://github.com/chaitin/agent-compose/blob/main/docs/design/agent-compose-runtime_contract.md)。
 

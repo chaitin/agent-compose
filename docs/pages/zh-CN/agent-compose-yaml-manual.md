@@ -611,20 +611,19 @@ API Key，与 Agent 的 `provider: codex` / `provider: pi` 无关。
 - `auth` 指定显式覆盖协议约定的凭据呈现方式：OpenAI 系协议的约定为
   `bearer`（`Authorization: Bearer`），`anthropic_messages` 的约定为 `x-api-key`。
   当网关使用 Anthropic Messages 协议但要求 `Authorization: Bearer` 认证时，设置
-  `"auth": "bearer"`；反向场景设置 `"auth": "x-api-key"`。该覆盖只改变认证 Header，
-  不改变协议或地址；未知取值会被拒绝。显式指定协议自身的约定不会存储覆盖值，连接会继续
-  跟随协议，之后修改 `protocol` 会刷新认证 Header。响应返回已存储的覆盖值；未存储覆盖值时
-  返回空值并跟随协议约定。
+  `"auth": "LLM_PROVIDER_AUTH_BEARER"`；反向场景设置
+  `"auth": "LLM_PROVIDER_AUTH_X_API_KEY"`。该覆盖只改变认证 Header，
+  不改变协议或地址；未知取值会被拒绝。显式选择会跨协议变更保留，即使它与当前协议的
+  默认值相同。响应返回已存储的选择；未指定时跟随协议约定。
 - `apiKey` 是字面量，不解析环境变量引用。创建必须提供非空值；更新省略时保留旧值，
   提供非空值时轮换，空值无效。响应仅返回 `apiKeySet`，不会回显密钥。
 - 创建时，空 `name` 默认使用 ID，省略 `enabled` 默认为 `true`。
   `anthropic_messages` 会默认发送 `anthropic-version: 2023-06-01`，其他协议不加额外 Header。
 - `UpdateProvider` 使用相同的 `provider` 对象。省略 `name`、`baseUrl`、`protocol`、
   `apiKey`、`auth`、`enabled` 时保留已存储值。提供非空 `apiKey` 会轮换密钥，空值无效。
-  省略 `auth` 只在 `protocol` 不变时保留已存储的覆盖值；一旦修改 `protocol`，就会按新协议
-  重新推导凭据呈现方式，因为覆盖值是针对写入时的协议定义的。显式传入空 `auth` 则清除覆盖，
-  此后连接重新跟随协议约定。显式指定协议自身的约定不会存储覆盖值，连接会继续跟随协议而
-  不会钉住旧 Header。
+  即使修改 `protocol`，省略 `auth` 也会保留原选择。设置
+  `"auth": "LLM_PROVIDER_AUTH_UNSPECIFIED"` 才会清除覆盖并重新跟随协议约定。
+  没有显式认证选择的旧配置保留原有行为；需要固定认证方式时，显式更新 `auth`。
 - CLI：`agent-compose llm provider ls|create|inspect|update|rm`。创建必须提供
   `--base-url`、`--protocol`、`--api-key`。更新只发送显式设置的 flag，因此
   `update --base-url ...` 不会把已禁用的 Provider 重新启用。两个命令都支持

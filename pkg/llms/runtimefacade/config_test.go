@@ -502,13 +502,20 @@ func TestEnsureSessionAgentRuntimeConfigReportsResolvedGuestModel(t *testing.T) 
 			if result.Model == "" {
 				t.Fatalf("%s reported no resolved model: env = %#v", agent, result.Env)
 			}
-			if got := result.Env[llms.GuestModelEnvName]; got != result.Model {
+			guestModel := result.Model
+			if agent == "dsh" {
+				if result.Model != "agent-compose/gpt-test" {
+					t.Fatalf("legacy DSH argument = %q", result.Model)
+				}
+				guestModel = "gpt-test"
+			}
+			if got := result.Env[llms.GuestModelEnvName]; got != guestModel {
 				t.Fatalf("%s model = %q, env[%s] = %q", agent, result.Model, llms.GuestModelEnvName, got)
 			}
 			// pi and opencode address the model through the provider key written
 			// into their config, so their guest reference carries that namespace;
 			// the other agents pass a bare model literal.
-			if strings.Contains(result.Model, "/") && agent != "opencode" && agent != "pi" {
+			if strings.Contains(guestModel, "/") && agent != "opencode" && agent != "pi" {
 				t.Fatalf("%s model = %q, want the resolved model name", agent, result.Model)
 			}
 		})

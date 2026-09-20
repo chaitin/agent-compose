@@ -391,7 +391,11 @@ func TestPromptAttachRuntimeModelUsesFacadeResolvedModel(t *testing.T) {
 	managedEnv := map[string]string{llms.GuestModelEnvName: "agent-compose/gpt-test"}
 	for _, provider := range []string{"codex", "claude", "opencode", "pi", "dsh"} {
 		agent := execution.AgentConfig{Provider: provider, Model: "openai/gpt-test"}
-		if model := promptAttachRuntimeModel(agent, managedEnv); model != "agent-compose/gpt-test" {
+		want := "agent-compose/gpt-test"
+		if provider == "dsh" {
+			want = "agent-compose/agent-compose/gpt-test"
+		}
+		if model := promptAttachRuntimeModel(agent, managedEnv); model != want {
 			t.Fatalf("%s runtime model = %q, want the facade-resolved model", provider, model)
 		}
 	}

@@ -55,6 +55,7 @@ describe("DshRunner", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   beforeEach(() => {
+    vi.stubEnv("AGENT_COMPOSE_RESOLVED_MODEL", "");
     processState.lines = [];
     processState.stderr = [];
     processState.exitCode = 0;
@@ -83,7 +84,7 @@ describe("DshRunner", () => {
 
       const result = await new DshRunner({
         ...runnerOptions(root, "system context", "dsh"),
-        model: "deepseek-v4-flash",
+        model: "deepseek-official/deepseek-v4-flash",
         effort: "high",
         skills: ["review"],
       }).runPrompt("user prompt");
@@ -122,6 +123,7 @@ describe("DshRunner", () => {
   });
 
   it("forwards a daemon-resolved model whose id contains slashes without stripping", async () => {
+    vi.stubEnv("AGENT_COMPOSE_RESOLVED_MODEL", "org/deepseek-v4-flash");
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
       // The daemon resolved "deepseek-official/org/deepseek-v4-flash" down to
@@ -129,7 +131,7 @@ describe("DshRunner", () => {
       // "deepseek-v4-flash", a different model than the facade token names.
       await new DshRunner({
         ...runnerOptions(root, "", "dsh"),
-        model: "org/deepseek-v4-flash",
+        model: "agent-compose/org/deepseek-v4-flash",
       }).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_MODEL).toBe("org/deepseek-v4-flash");
