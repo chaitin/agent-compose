@@ -717,6 +717,22 @@ Details:
 - `inspect image <image>` shows image details.
 - `inspect cache <cache-id>` shows one daemon runtime cache item, including references, blocked reasons, and warnings.
 
+Project and agent inspection includes two separate views:
+
+- `declared_config`: the complete, redacted configuration stored in the daemon's current project revision, or the selected agent's configuration within that revision. This is the normalized deployed declaration, not a fresh read of the local YAML or a snapshot of an earlier run. If the daemon does not supply the declaration, the field is `null`; the CLI does not reconstruct it from summary fields. Project-level variables and named resources are available through `inspect project`.
+- `runtime`: the daemon's current resource information. For a project, this contains `summary`, `agents`, and `schedulers`; for an agent, it contains the current agent record, including availability, health, current/latest run summaries, `resolved_model`, `model_source`, and the current `scheduler_enabled` value. The resolved model is the default for a new run without request/session overrides, not necessarily the model used by an existing sandbox. Runtime observations are not an atomic snapshot across requests.
+
+The existing top-level project/agent/scheduler summaries, latest run, and sandbox fields remain for compatibility. Prefer `runtime` for effective state; an older top-level agent summary's scheduler flag reflects the declaration at apply time. New views use protobuf JSON with snake_case field names and named enums. Project and agent inspection emits JSON both with and without `--json`.
+
+Scripts are included in full by default, regardless of length. Use `--omit-scripts` with project or agent inspection to remove non-empty `scheduler.script` bodies from `declared_config`. The `omitted_scripts` array identifies each omitted field by path, original UTF-8 byte count, and SHA-256. Empty scripts remain empty; other configuration and runtime fields are unaffected. This also works when inspecting by resource ID. For example:
+
+```bash
+agent-compose inspect agent reviewer --omit-scripts
+agent-compose inspect project --json > project-details.json
+```
+
+Secret-marked environment/header values and structured workspace, skill, and OctoBus credentials are redacted as `********`. Arbitrary script source and other free-form strings are not scanned for embedded credentials; use secret configuration fields instead of hardcoding credentials in scripts.
+
 For a sandbox with a workspace snapshot, `inspect sandbox` includes safe `workspace_delivery` metadata. `mode` is `copy` or `mount`; mounted workspaces also expose the resolved daemon `source_path`, guest-relative `target`, and `read_only`. The existing `workspace_path` remains the sandbox-owned directory. Copy snapshots omit their private source roots, and workspace credentials and raw configuration are never included. Missing delivery metadata is omitted; malformed snapshots report `mode: unknown`.
 
 ```json

@@ -165,6 +165,12 @@ func collectCLIJSONContracts() map[string]map[string]string {
 	for name, value := range values {
 		out[name] = jsonStructFields(value)
 	}
+	// These RawMessages contain protobuf JSON objects, not their underlying
+	// Go byte-slice representation.
+	for _, name := range []string{"project", "agent_inspect"} {
+		out[name]["declared_config"] = "object"
+		out[name]["runtime"] = "object"
+	}
 	return out
 }
 
