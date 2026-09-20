@@ -68,7 +68,7 @@ func terminalPromptTurnEvents(run domain.ProjectRunRecord, turn agentTurnProject
 
 func projectableFinalText(turn agentTurnProjection) string {
 	finalText := strings.TrimSpace(turn.FinalText)
-	if turn.FinalTextSource == domain.AgentFinalTextSourceProviderMessage {
+	if turn.FinalTextSource == domain.AgentFinalTextSourceProviderMessage || turn.FinalTextSource == domain.AgentFinalTextSourceTerminalTool {
 		return finalText
 	}
 	if turn.FinalTextSource != "" || finalText == "" {

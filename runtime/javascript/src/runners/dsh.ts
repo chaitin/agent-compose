@@ -195,10 +195,6 @@ export class DshRunner {
         result.stopReason = "cancelled";
       }
       result.transcript = this.writer.transcript();
-      if (!result.finalText && result.transcript) {
-        result.finalText = result.transcript;
-        result.finalTextSource = "transcript_fallback";
-      }
       if (!cancelled) {
         await writeStoredThread(this.options.sessionRoot, "dsh", sessionId);
       }

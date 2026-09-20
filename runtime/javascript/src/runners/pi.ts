@@ -109,10 +109,6 @@ export class PiRunner {
         result.stopReason = "cancelled";
       }
       result.transcript = this.writer.transcript();
-      if (!result.finalText && result.transcript) {
-        result.finalText = lastAssistantTextFromTranscript(result.transcript);
-        result.finalTextSource = "transcript_fallback";
-      }
       if (result.threadId) {
         await writeStoredThread(this.options.sessionRoot, "pi", result.threadId);
       }

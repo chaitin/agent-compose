@@ -365,10 +365,6 @@ export class OpenCodeRunner {
     }
 
     result.transcript = this.writer.transcript();
-    if (!result.finalText && result.transcript) {
-      result.finalText = result.transcript;
-      result.finalTextSource = "transcript_fallback";
-    }
     if (result.threadId) {
       await writeStoredThread(this.options.sessionRoot, "opencode", result.threadId);
     }

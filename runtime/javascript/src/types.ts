@@ -2,7 +2,7 @@ import type { AgentEventSink } from "./agent-event.js";
 
 export type Provider = "codex" | "claude" | "gemini" | "opencode" | "pi" | "dsh";
 export type RuntimeJsonSchema = Record<string, unknown>;
-export type FinalTextSource = "none" | "provider_message" | "transcript_fallback";
+export type FinalTextSource = "none" | "provider_message" | "terminal_tool" | "transcript_fallback";
 
 export interface AgentResult {
   provider: Provider;

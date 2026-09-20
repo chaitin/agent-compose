@@ -13,6 +13,19 @@ afterEach(() => {
 });
 
 describe("CodexRunner", () => {
+  it("supports terminal tool final text as a distinct source", () => {
+    const result = {
+      provider: "codex" as const,
+      threadId: "thread-1",
+      stopReason: "tool_terminal",
+      finalText: "规则已删除。",
+      finalTextSource: "terminal_tool" as const,
+      transcript: "tool output\n规则已删除。",
+      stderr: "",
+    };
+    expect(result.finalTextSource).toBe("terminal_tool");
+    expect(result.finalText).not.toBe(result.transcript);
+  });
   it("exposes Codex thread options without constructor-only config", async () => {
     await withTempSession(async (root) => {
       const systemContext = "## MPI Catalog\n\ncatalog body";

@@ -137,10 +137,6 @@ export class CodexInteractiveSession implements InteractiveSession {
     }
     this.result.threadId = this.thread.id || this.result.threadId;
     this.result.transcript = this.runner.transcript();
-    if (!this.result.finalText && this.result.transcript) {
-      this.result.finalText = this.result.transcript;
-      this.result.finalTextSource = "transcript_fallback";
-    }
     await this.writeThreadState();
     this.emit("agent_turn_completed", {
       provider: "codex",

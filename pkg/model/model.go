@@ -564,6 +564,8 @@ const (
 	AgentFinalTextSourceNone AgentFinalTextSource = "none"
 	// AgentFinalTextSourceProviderMessage means FinalText came from a provider assistant-message event.
 	AgentFinalTextSourceProviderMessage AgentFinalTextSource = "provider_message"
+	// AgentFinalTextSourceTerminalTool means FinalText came from a terminating tool result.
+	AgentFinalTextSourceTerminalTool AgentFinalTextSource = "terminal_tool"
 	// AgentFinalTextSourceTranscriptFallback means FinalText is a compatibility fallback containing the transcript.
 	AgentFinalTextSourceTranscriptFallback AgentFinalTextSource = "transcript_fallback"
 )
