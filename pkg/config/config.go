@@ -831,7 +831,7 @@ func loadSandboxTimeoutsConfig(logger *slog.Logger) (sandboxTimeoutsConfig, erro
 		}
 	}
 
-	jupyterReadyTimeout := 30 * time.Second
+	jupyterReadyTimeout := 120 * time.Second
 	if raw := os.Getenv("JUPYTER_READY_TIMEOUT"); raw != "" {
 		if parsed, err := time.ParseDuration(raw); err != nil {
 			logger.Warn("failed to parse JUPYTER_READY_TIMEOUT", "value", raw, "error", err)

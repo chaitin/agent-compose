@@ -512,11 +512,11 @@ func TestNewConfigJupyterReadyTimeoutDefaultAndGuard(t *testing.T) {
 		value string // "" means unset
 		want  time.Duration
 	}{
-		{"default when unset", "", 30 * time.Second},
+		{"default when unset", "", 120 * time.Second},
 		{"custom value honored", "90s", 90 * time.Second},
-		{"zero falls back to default", "0s", 30 * time.Second},
-		{"negative falls back to default", "-5s", 30 * time.Second},
-		{"invalid falls back to default", "not-a-duration", 30 * time.Second},
+		{"zero falls back to default", "0s", 120 * time.Second},
+		{"negative falls back to default", "-5s", 120 * time.Second},
+		{"invalid falls back to default", "not-a-duration", 120 * time.Second},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

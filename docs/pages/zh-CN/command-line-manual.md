@@ -43,6 +43,7 @@ agent-compose --host http://10.0.0.12:7410 ls --json
 - `--timeout` 接受 `30s`、`15m`、`2h` 等 Go duration。它分别作用于每个 unary、server-streaming 或双向流 RPC；设置为 `0` 时会等待 RPC 完成或用户主动取消。
 - 即使 `--timeout` 为 `0`，连接建立和显式健康检查仍保留各自的有限超时。
 - `--timeout` 只控制 CLI 请求；`AGENT_TIMEOUT`、`SANDBOX_START_TIMEOUT`、`SANDBOX_STOP_TIMEOUT` 等 daemon 侧限制保持独立。
+- `JUPYTER_READY_TIMEOUT` 控制 daemon 等待 guest Jupyter 就绪的时间，默认 `120s`，为冷启动留出余量；Jupyter 一旦就绪便立即继续启动。可用正数 Go duration 覆盖；未设置、格式无效或非正数时使用默认值。
 - daemon 不再消费浏览器登录用的 `AUTH_*` / `OAUTH_*` 配置；UI 浏览器认证由 agent-compose-ui server 处理。
 - 自动化场景应使用 `--json`，不要解析人类可读表格。
 
