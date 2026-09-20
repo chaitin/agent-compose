@@ -43,6 +43,7 @@ Rules:
 - `--timeout` accepts Go durations such as `30s`, `15m`, and `2h`. It applies independently to each unary, server-streaming, or bidirectional RPC; `0` waits until the RPC completes or the user cancels it.
 - Connection establishment and explicit health probes retain their own bounded timeouts even when `--timeout` is `0`.
 - `--timeout` only controls the CLI request. Daemon-side limits such as `AGENT_TIMEOUT`, `SANDBOX_START_TIMEOUT`, and `SANDBOX_STOP_TIMEOUT` remain independent.
+- `JUPYTER_READY_TIMEOUT` controls how long the daemon waits for guest Jupyter readiness, defaulting to `120s` to accommodate cold starts. Startup continues as soon as Jupyter is ready. Set a positive Go duration to override it; unset, invalid, or non-positive values use the default.
 - Automation should use `--json` and avoid parsing human-readable tables.
 
 ### Daemon authentication
