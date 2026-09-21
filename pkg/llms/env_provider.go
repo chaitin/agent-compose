@@ -104,7 +104,12 @@ func SessionAnthropicEnvModel(envItems []domain.SandboxEnvVar) string {
 // that lets the environment own the model must use this value verbatim instead
 // of the remainder of an agent's <connection>/<model> declaration.
 func SessionEnvModel(envItems []domain.SandboxEnvVar) string {
-	return firstNonEmptyTrimmed(SessionAnthropicEnvModel(envItems), EnvItemValue(envItems, "LLM_MODEL"))
+	// LLM_MODEL is the generic provider model and must win when present. The
+	// Anthropic-specific names are fallbacks for message-protocol environments.
+	if model := EnvItemValue(envItems, "LLM_MODEL"); model != "" {
+		return model
+	}
+	return firstNonEmptyTrimmed(EnvItemValue(envItems, "ANTHROPIC_MODEL"), EnvItemValue(envItems, "CLAUDE_MODEL"))
 }
 
 // sessionEnvModelForDeclaration returns the model a facade must resolve for an

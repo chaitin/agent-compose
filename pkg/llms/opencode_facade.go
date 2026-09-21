@@ -189,7 +189,7 @@ func ensureOpenCodeResolvedFacadeConfig(ctx context.Context, call openCodeFacade
 	if err := WriteOpenCodeRuntimeConfig(sandbox, "agent-compose", target.Model.Name, openAIBaseURL); err != nil {
 		return nil, err
 	}
-	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, openCodeGuestWireAPI, config)
+	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, NormalizeWireAPI(target.WireAPI), config)
 	guestModel := GuestModelReference("agent-compose", target.Model.Name)
 	env["LLM_MODEL"] = guestModel
 	env["OPENCODE_MODEL"] = guestModel
@@ -265,7 +265,7 @@ func ensureOpenCodeOpenAIFacadeConfig(ctx context.Context, call openCodeFacadeCa
 	if err := WriteOpenCodeRuntimeConfig(sandbox, "agent-compose", target.Model.Name, openAIBaseURL); err != nil {
 		return nil, err
 	}
-	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, openCodeGuestWireAPI, config)
+	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, NormalizeWireAPI(target.WireAPI), config)
 	guestModel := GuestModelReference("agent-compose", target.Model.Name)
 	env["LLM_MODEL"] = guestModel
 	env["OPENCODE_MODEL"] = guestModel
@@ -303,7 +303,7 @@ func ensureOpenCodeCustomFacadeConfig(ctx context.Context, call openCodeFacadeCa
 	// the guest addresses the model through that key. Publishing it keeps every
 	// facade on the same contract: the runner forwards GuestModelEnvName and
 	// never reconstructs the reference.
-	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, openCodeGuestWireAPI, config)
+	env := openCodeOpenAIEnv(tokenValue, openAIBaseURL, NormalizeWireAPI(target.WireAPI), config)
 	guestModel := GuestModelReference(providerID, target.Model.Name)
 	env["LLM_MODEL"] = guestModel
 	env["OPENCODE_MODEL"] = guestModel

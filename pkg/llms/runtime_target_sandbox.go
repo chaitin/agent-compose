@@ -22,7 +22,18 @@ import (
 // supplies its own provider environment owns the connection, model and wire
 // api, and the daemon configuration answers only when the sandbox publishes no
 // provider environment of its own.
-func SandboxRuntimeLLMTarget(ctx context.Context, config *appconfig.Config, store LLMResolverStore, sandbox *domain.Sandbox, providerFamily, requestedModel, providerID string) (ResolvedTarget, error) {
+type SandboxRuntimeLLMTargetQuery struct {
+	Config         *appconfig.Config
+	Store          LLMResolverStore
+	Sandbox        *domain.Sandbox
+	ProviderFamily string
+	RequestedModel string
+	ProviderID     string
+}
+
+func SandboxRuntimeLLMTarget(ctx context.Context, q SandboxRuntimeLLMTargetQuery) (ResolvedTarget, error) {
+	config, store, sandbox := q.Config, q.Store, q.Sandbox
+	providerFamily, requestedModel, providerID := q.ProviderFamily, q.RequestedModel, q.ProviderID
 	if sandbox == nil {
 		return ResolveRuntimeLLMTarget(ctx, config, store, requestedModel, providerID)
 	}

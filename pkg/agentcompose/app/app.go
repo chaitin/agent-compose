@@ -619,7 +619,7 @@ func registerRuntimeLLMFacadeRoutes(app *echo.Echo, di do.Injector) {
 		// LLM_API_PROTOCOL) owns the upstream connection, model and wire api, and
 		// the daemon configuration answers only when it publishes none.
 		ResolveTarget: func(ctx context.Context, sandbox *domain.Sandbox, providerFamily, requestedModel, providerID string) (llms.ResolvedTarget, error) {
-			return llms.SandboxRuntimeLLMTarget(ctx, config, configDB, sandbox, providerFamily, requestedModel, providerID)
+			return llms.SandboxRuntimeLLMTarget(ctx, llms.SandboxRuntimeLLMTargetQuery{Config: config, Store: configDB, Sandbox: sandbox, ProviderFamily: providerFamily, RequestedModel: requestedModel, ProviderID: providerID})
 		},
 		Client:          proxy.NewRuntimeLLMHTTPClient(config.LLMTimeout),
 		MaxOutputTokens: config.LLMMaxOutputTokens,

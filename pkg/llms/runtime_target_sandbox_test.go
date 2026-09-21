@@ -37,7 +37,7 @@ func TestSandboxRuntimeLLMTargetKeepsInjectedWireAPI(t *testing.T) {
 				{Name: "LLM_API_PROTOCOL", Value: test.wireAPI},
 			})
 
-			target, err := SandboxRuntimeLLMTarget(ctx, bareModelConfig(root), store, sandbox, ProviderFamilyOpenAI, "matrix/deepseek-flash", "")
+			target, err := SandboxRuntimeLLMTarget(ctx, SandboxRuntimeLLMTargetQuery{Config: bareModelConfig(root), Store: store, Sandbox: sandbox, ProviderFamily: ProviderFamilyOpenAI, RequestedModel: "matrix/deepseek-flash"})
 			if err != nil {
 				t.Fatalf("SandboxRuntimeLLMTarget returned error: %v", err)
 			}
@@ -67,7 +67,7 @@ func TestSandboxRuntimeLLMTargetFallsBackToDaemonConfig(t *testing.T) {
 	store := newBareModelFacadeStore()
 	sandbox := bareModelSandbox(root, "session-env-empty")
 
-	_, fromSandbox := SandboxRuntimeLLMTarget(ctx, bareModelConfig(root), store, sandbox, ProviderFamilyOpenAI, "matrix/deepseek-flash", "")
+	_, fromSandbox := SandboxRuntimeLLMTarget(ctx, SandboxRuntimeLLMTargetQuery{Config: bareModelConfig(root), Store: store, Sandbox: sandbox, ProviderFamily: ProviderFamilyOpenAI, RequestedModel: "matrix/deepseek-flash"})
 	_, fromDaemon := ResolveRuntimeLLMTarget(ctx, bareModelConfig(root), store, "matrix/deepseek-flash", "")
 	if (fromSandbox == nil) != (fromDaemon == nil) {
 		t.Fatalf("sandbox path error = %v, daemon path error = %v; want the same outcome", fromSandbox, fromDaemon)
