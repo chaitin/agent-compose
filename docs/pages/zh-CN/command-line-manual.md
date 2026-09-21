@@ -640,6 +640,7 @@ agent-compose logs <project|agent|run|sandbox-id>
 agent-compose logs --agent reviewer
 agent-compose logs --run <run-id>
 agent-compose logs --sandbox <sandbox>
+agent-compose logs --event <evt-id>
 agent-compose logs --follow
 agent-compose logs -n 100
 agent-compose logs -t
@@ -655,8 +656,11 @@ agent-compose logs -t
 | `--agent <agent>` | 按 agent 过滤。 |
 | `--run <run-id>` | 按 run 过滤。 |
 | `--sandbox <sandbox>` | 按 sandbox 过滤。 |
+| `--event <evt-id>` | 按事件总线事件 ID（`evt_...`）过滤，展示该事件及其关联事件触发的 run。 |
 
 `--run` 和 `--sandbox` 是互斥的资源选择器。同时指定二者会返回用法错误，且不会发送日志请求。
+
+`--event` 只接受完整事件 ID，不支持前缀匹配。CLI 会解析事件 trace 并回放其中记录的 agent run，因此 `--event` 不能与 `--run` 或 `--sandbox` 同时使用。`--event --follow` 只回放查询时已知的 run，不会自动发现之后新建的 run。事件没有关联 run 时输出提示（JSON 模式输出空文档）并正常退出。`--event` 与 `--agent` 组合时，只回放该 agent 的 run；过滤后没有 run 时输出同样的提示。
 
 示例：
 
@@ -666,6 +670,7 @@ agent-compose logs reviewer
 agent-compose logs --agent reviewer --tail 200
 agent-compose logs --sandbox sandbox_123 --follow -t
 agent-compose logs --run run_123 --json
+agent-compose logs --event evt_0e1c7bd2-8f5a-4c1d-9b3e-2f6a7d8c9e01
 ```
 
 ## `inspect`：查看资源详情

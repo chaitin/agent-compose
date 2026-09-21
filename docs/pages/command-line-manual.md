@@ -663,6 +663,7 @@ agent-compose logs <project|agent|run|sandbox-id>
 agent-compose logs --agent reviewer
 agent-compose logs --run <run-id>
 agent-compose logs --sandbox <sandbox>
+agent-compose logs --event <evt-id>
 agent-compose logs --follow
 agent-compose logs -n 100
 agent-compose logs -t
@@ -676,8 +677,11 @@ agent-compose logs -t
 | `--agent <agent>` | Filter by agent. |
 | `--run <run-id>` | Filter by run id. |
 | `--sandbox <sandbox>` | Filter by sandbox. |
+| `--event <evt-id>` | Filter by event-bus event id (`evt_...`). Shows the runs triggered by the event and its correlated events. |
 
 `--run` and `--sandbox` are mutually exclusive resource selectors. Combining them is a usage error, and no log request is sent.
+
+`--event` accepts a full event id only; prefix matching is not supported. It resolves the event trace and replays the agent runs recorded against it, so `--run` and `--sandbox` cannot be combined with `--event`. `--event --follow` replays the runs known at query time; runs created afterwards are not picked up. An event without recorded runs prints a notice (or an empty JSON document) and exits successfully. Combining `--event` with `--agent` narrows the replayed runs to that agent; when the narrowing leaves no runs, the same notice is printed.
 
 Examples:
 
@@ -687,6 +691,7 @@ agent-compose logs reviewer
 agent-compose logs --agent reviewer --tail 200
 agent-compose logs --sandbox sandbox_123 --follow -t
 agent-compose logs --run run_123 --json
+agent-compose logs --event evt_0e1c7bd2-8f5a-4c1d-9b3e-2f6a7d8c9e01
 ```
 
 ## `inspect`: Inspect Resources
