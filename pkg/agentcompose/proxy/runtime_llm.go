@@ -25,7 +25,17 @@ type RuntimeLLMSandboxStore interface {
 	GetSandbox(context.Context, string) (*domain.Sandbox, error)
 }
 
-type RuntimeLLMTargetResolver func(ctx context.Context, requestedModel, providerID string) (llms.ResolvedTarget, error)
+// RuntimeLLMTargetResolver resolves the upstream target for one proxied call.
+//
+// The sandbox belongs in the query: an orchestrator injects LLM_API_ENDPOINT,
+// LLM_API_KEY, LLM_MODEL and LLM_API_PROTOCOL into the sandbox it starts, and
+// the upstream answering on that endpoint serves exactly the published wire
+// api. Resolving without the sandbox let a previously stored connection choose
+// the protocol, so a chat-completions model was posted to a responses endpoint
+// and a gateway that routes by wire api rejected the call. providerFamily is
+// the family of the inbound wire api, which is what scopes that sandbox's
+// provider environment for this call.
+type RuntimeLLMTargetResolver func(ctx context.Context, sandbox *domain.Sandbox, providerFamily, requestedModel, providerID string) (llms.ResolvedTarget, error)
 
 type HTTPDoer interface {
 	Do(*http.Request) (*http.Response, error)
@@ -132,7 +142,7 @@ func (h runtimeLLMHandler) authorizeAndResolveRuntimeLLMRequest(c echo.Context, 
 	if token.ProviderID == "" && token.Model != "" && token.Model != model {
 		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusForbidden, map[string]string{"error": "llm facade token model mismatch"})
 	}
-	target, err := h.opts.ResolveTarget(c.Request().Context(), model, token.ProviderID)
+	target, err := h.opts.ResolveTarget(c.Request().Context(), session, llms.ProtocolFamily(inboundProtocol), model, token.ProviderID)
 	if err != nil {
 		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}

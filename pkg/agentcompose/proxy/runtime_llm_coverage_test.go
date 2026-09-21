@@ -316,7 +316,7 @@ func TestRuntimeLLMFacadeRejectsInvalidSecurityContext(t *testing.T) {
 			body:    `{"model":"gpt","input":"hi"}`,
 			token:   llms.FacadeToken{SandboxID: "sandbox-1", Model: "gpt", ProviderID: "provider-2", WireAPI: llms.APIProtocolResponses, ExpiresAt: time.Now().Add(time.Hour)},
 			session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}},
-			resolver: func(context.Context, string, string) (llms.ResolvedTarget, error) {
+			resolver: func(context.Context, *domain.Sandbox, string, string, string) (llms.ResolvedTarget, error) {
 				return llms.ResolvedTarget{
 					Provider: llms.Provider{ID: "provider-1", ProviderType: llms.ProviderFamilyOpenAI, BaseURL: "http://upstream.test/v1"},
 					Model:    llms.Model{Name: "gpt"},
@@ -422,7 +422,7 @@ func TestRuntimeLLMFacadeHandlerEdgeBranches(t *testing.T) {
 			body:     `{"model":"gpt","input":"hi"}`,
 			tokens:   fakeRuntimeLLMTokens{token: validToken},
 			sessions: fakeRuntimeLLMSessions{session: runningSession},
-			resolver: func(context.Context, string, string) (llms.ResolvedTarget, error) {
+			resolver: func(context.Context, *domain.Sandbox, string, string, string) (llms.ResolvedTarget, error) {
 				return llms.ResolvedTarget{}, errors.New("resolver down")
 			},
 			client:   &fakeRuntimeLLMHTTPClient{status: http.StatusOK, body: `{"id":"resp-1","model":"gpt","output":[]}`},
@@ -435,7 +435,7 @@ func TestRuntimeLLMFacadeHandlerEdgeBranches(t *testing.T) {
 			body:     `{"model":"gpt","input":"hi"}`,
 			tokens:   fakeRuntimeLLMTokens{token: validToken},
 			sessions: fakeRuntimeLLMSessions{session: runningSession},
-			resolver: func(context.Context, string, string) (llms.ResolvedTarget, error) {
+			resolver: func(context.Context, *domain.Sandbox, string, string, string) (llms.ResolvedTarget, error) {
 				return llms.ResolvedTarget{
 					Provider: llms.Provider{ID: "provider-1", ProviderType: "custom", BaseURL: "http://upstream.test/v1"},
 					Model:    llms.Model{Name: "gpt"},
@@ -589,7 +589,7 @@ func TestRuntimeLLMFacadeTransparentGenericResponsesTextParts(t *testing.T) {
 			RegisterRuntimeLLMFacadeRoutes(e, RuntimeLLMOptions{
 				Tokens:    fakeRuntimeLLMTokens{token: llms.FacadeToken{SandboxID: "sandbox-1", Model: "gpt", ProviderID: "provider-1", WireAPI: llms.APIProtocolResponses, ExpiresAt: time.Now().Add(time.Hour)}},
 				Sandboxes: fakeRuntimeLLMSessions{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}}},
-				ResolveTarget: func(context.Context, string, string) (llms.ResolvedTarget, error) {
+				ResolveTarget: func(context.Context, *domain.Sandbox, string, string, string) (llms.ResolvedTarget, error) {
 					return llms.ResolvedTarget{
 						Provider: llms.Provider{ID: "provider-1", ProviderType: llms.ProviderFamilyOpenAI, BaseURL: "http://upstream.test/v1", UseGenericResponsesTextParts: true},
 						Model:    llms.Model{Name: "gpt"},
@@ -639,7 +639,7 @@ func (s fakeRuntimeLLMSessions) GetSandbox(context.Context, string) (*domain.San
 }
 
 func fakeRuntimeLLMTargetResolver(baseURL string) RuntimeLLMTargetResolver {
-	return func(_ context.Context, model, _ string) (llms.ResolvedTarget, error) {
+	return func(_ context.Context, _ *domain.Sandbox, _, model, _ string) (llms.ResolvedTarget, error) {
 		return llms.ResolvedTarget{
 			Provider: llms.Provider{ID: "provider-1", ProviderType: llms.ProviderFamilyOpenAI, BaseURL: baseURL},
 			Model:    llms.Model{Name: model},
@@ -649,7 +649,7 @@ func fakeRuntimeLLMTargetResolver(baseURL string) RuntimeLLMTargetResolver {
 }
 
 func fakeRuntimeLLMChatTargetResolver(baseURL string) RuntimeLLMTargetResolver {
-	return func(context.Context, string, string) (llms.ResolvedTarget, error) {
+	return func(context.Context, *domain.Sandbox, string, string, string) (llms.ResolvedTarget, error) {
 		return llms.ResolvedTarget{
 			Provider: llms.Provider{ID: "provider-1", ProviderType: llms.ProviderFamilyOpenAI, BaseURL: baseURL},
 			Model:    llms.Model{Name: "gpt"},
@@ -659,7 +659,7 @@ func fakeRuntimeLLMChatTargetResolver(baseURL string) RuntimeLLMTargetResolver {
 }
 
 func fakeRuntimeLLMAnthropicTargetResolver(baseURL string) RuntimeLLMTargetResolver {
-	return func(context.Context, string, string) (llms.ResolvedTarget, error) {
+	return func(context.Context, *domain.Sandbox, string, string, string) (llms.ResolvedTarget, error) {
 		return llms.ResolvedTarget{
 			Provider: llms.Provider{ID: "provider-1", ProviderType: llms.ProviderFamilyAnthropic, BaseURL: baseURL},
 			Model:    llms.Model{Name: "claude"},
