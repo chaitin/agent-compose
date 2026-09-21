@@ -179,6 +179,39 @@ func TestFacadesHonorDeclaredConnectionWithoutSessionEnv(t *testing.T) {
 	}
 }
 
+// LLM_API_PROTOCOL describes the upstream the gateway serves, not the wire api
+// the guest speaks. Codex always talks Responses to its own facade route, so
+// publishing Responses here made the persisted session provider advertise an
+// upstream protocol the logical model does not have: the proxy sent
+// /v1/responses to a chat-only model and the gateway rejected the call with 403.
+// The guest wire api stays Responses in the facade token, which is what the
+// proxy validates the guest route against, and the runtime bridge converts the
+// request to the declared upstream protocol.
+func TestCodexFacadePublishesTheUpstreamWireAPI(t *testing.T) {
+	isolateLLMEnv(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	store := newBareModelFacadeStore()
+	sandbox := bareModelSandbox(root, "codex-chat-upstream")
+	SetSandboxProviderEnvItems(sandbox, []domain.SandboxEnvVar{
+		{Name: "LLM_API_ENDPOINT", Value: "https://gateway.test/v1"},
+		{Name: "LLM_API_KEY", Value: "facade-token"},
+		{Name: "LLM_MODEL", Value: "matrix-chat/deepseek-flash"},
+		{Name: "LLM_API_PROTOCOL", Value: APIProtocolChatCompletions},
+	})
+
+	env, err := EnsureCodexFacadeConfig(ctx, CodexFacadeConfigRequest{Config: bareModelConfig(root), Store: store, Sandbox: sandbox, Model: "matrix-chat/deepseek-flash"})
+	if err != nil {
+		t.Fatalf("EnsureCodexFacadeConfig returned error: %v", err)
+	}
+	if got := env["LLM_API_PROTOCOL"]; got != APIProtocolChatCompletions {
+		t.Fatalf("LLM_API_PROTOCOL = %q, want %q (the upstream's wire api)", got, APIProtocolChatCompletions)
+	}
+	if len(store.savedTokens) != 1 || store.savedTokens[0].WireAPI != APIProtocolResponses {
+		t.Fatalf("codex facade token = %#v, want the guest wire api %q", store.savedTokens, APIProtocolResponses)
+	}
+}
+
 func ensureFacadeAgentConfig(ctx context.Context, agent string, config *appconfig.Config, store *bareModelFacadeStore, sandbox *domain.Sandbox, model string) (map[string]string, error) {
 	switch agent {
 	case "codex":
