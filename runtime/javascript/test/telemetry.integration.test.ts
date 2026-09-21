@@ -58,7 +58,7 @@ describe("telemetry runner integration", () => {
       expect(ctx.plugin).not.toHaveBeenCalled();
       vi.stubEnv("AGENT_COMPOSE_DSH_TELEMETRY", "");
       await apply(ctx, { mode: "DISABLED" });
-      expect(ctx.plugin).not.toHaveBeenCalled();
+      expect(ctx.plugin).toHaveBeenCalledWith(expect.anything(), { mode: "DISABLED" });
     });
   });
 

@@ -4,21 +4,21 @@ export const inject = ['sessions'];
 
 export async function apply(ctx, inheritedConfig) {
   const raw = process.env.AGENT_COMPOSE_DSH_TELEMETRY;
+  let backend;
+  try {
+    backend = await import('@deepseek-ai/dsh-session-telemetry-otel');
+  } catch {
+    if (!raw) return;
+    ctx.logger.warn('agent-compose: DSH telemetry backend is unavailable; export disabled');
+    return;
+  }
   if (!raw) {
-    // The telemetry backend is optional. Do not resolve it for ordinary DSH
-    // executions, so an image without that package remains fully usable.
+    await ctx.plugin(backend, inheritedConfig);
     return;
   }
   const telemetry = JSON.parse(raw);
   if (!telemetry.captureContent) {
     ctx.logger.warn('agent-compose: DSH native telemetry requires AGENT_TELEMETRY_CAPTURE_CONTENT=true; export disabled');
-    return;
-  }
-  let backend;
-  try {
-    backend = await import('@deepseek-ai/dsh-session-telemetry-otel');
-  } catch {
-    ctx.logger.warn('agent-compose: DSH telemetry backend is unavailable; export disabled');
     return;
   }
   if (backend.SessionTelemetryMode?.FULL !== 'FULL') {

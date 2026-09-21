@@ -48,6 +48,12 @@ func loadAgentTelemetryConfig() (AgentTelemetryConfig, error) {
 				return cfg, fmt.Errorf("AGENT_TELEMETRY_OTLP_HEADERS must contain comma-separated name=percent-encoded-value pairs")
 			}
 			name = strings.ToLower(name)
+			if strings.Contains(name, ".") {
+				return cfg, fmt.Errorf("AGENT_TELEMETRY_OTLP_HEADERS must not contain dots in header names")
+			}
+			if strings.Contains(value, ",") {
+				return cfg, fmt.Errorf("AGENT_TELEMETRY_OTLP_HEADERS must not contain commas in header values")
+			}
 			if _, exists := cfg.Headers[name]; exists {
 				return cfg, fmt.Errorf("AGENT_TELEMETRY_OTLP_HEADERS contains duplicate header names")
 			}

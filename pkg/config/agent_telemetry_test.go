@@ -23,13 +23,13 @@ func TestAgentTelemetryConfig(t *testing.T) {
 		t.Fatalf("unexpected defaults: %+v, %v", cfg, err)
 	}
 	t.Setenv("AGENT_TELEMETRY_OTLP_ENDPOINT", "https://collector.example/otlp/")
-	t.Setenv("AGENT_TELEMETRY_OTLP_HEADERS", "Authorization=Bearer%20test%2Btoken,X-Org=a%2Cb")
+	t.Setenv("AGENT_TELEMETRY_OTLP_HEADERS", "Authorization=Bearer%20test%2Btoken,X-Org=a%2Fb")
 	t.Setenv("AGENT_TELEMETRY_CAPTURE_CONTENT", "true")
 	cfg, err = loadAgentTelemetryConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Endpoint != "https://collector.example/otlp" || !cfg.CaptureContent || cfg.Headers["authorization"] != "Bearer test+token" || cfg.Headers["x-org"] != "a,b" {
+	if cfg.Endpoint != "https://collector.example/otlp" || !cfg.CaptureContent || cfg.Headers["authorization"] != "Bearer test+token" || cfg.Headers["x-org"] != "a/b" {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
 }
@@ -46,6 +46,8 @@ func TestAgentTelemetryRejectsInvalidConfigWithoutSecrets(t *testing.T) {
 		{"header injection", "AGENT_TELEMETRY_OTLP_HEADERS", "Authorization=secret%0d%0aX:bad"},
 		{"invalid escape", "AGENT_TELEMETRY_OTLP_HEADERS", "Authorization=secret%XX"},
 		{"duplicate", "AGENT_TELEMETRY_OTLP_HEADERS", "Authorization=secret,authorization=other"},
+		{"provider header name", "AGENT_TELEMETRY_OTLP_HEADERS", "x.y=secret"},
+		{"provider header value", "AGENT_TELEMETRY_OTLP_HEADERS", "Authorization=a%2Cb"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			telemetryTestEnv(t)
