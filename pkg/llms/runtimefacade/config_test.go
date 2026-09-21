@@ -317,7 +317,10 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode openai returned error: %v", err)
 	}
-	if openAI.Env["LLM_API_PROTOCOL"] != llms.APIProtocolChatCompletions || openAI.Env["OPENCODE_CONFIG"] == "" {
+	// LLM_API_PROTOCOL carries the upstream protocol, not the chat-completions
+	// ingress the facade token pins: the mixed env declares no LLM_API_PROTOCOL,
+	// so the session env OpenAI provider keeps its responses default.
+	if openAI.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses || openAI.Env["OPENCODE_CONFIG"] == "" {
 		t.Fatalf("opencode openai env = %#v", openAI.Env)
 	}
 
@@ -358,7 +361,10 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode custom returned error: %v", err)
 	}
-	if custom.Env["LLM_API_PROTOCOL"] != llms.APIProtocolChatCompletions || custom.Env["OPENAI_BASE_URL"] == "" {
+	// A custom endpoint that declares no wire api resolves to the responses
+	// default, so that is the protocol published as the upstream the gateway
+	// serves; the opencode guest still posts chat completions to the facade.
+	if custom.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses || custom.Env["OPENAI_BASE_URL"] == "" {
 		t.Fatalf("opencode custom env = %#v", custom.Env)
 	}
 

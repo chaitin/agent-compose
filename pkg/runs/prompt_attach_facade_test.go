@@ -189,7 +189,10 @@ func TestEnsurePromptAttachLLMFacadeEnvOpenCodeUsesSharedRuntimeConfig(t *testin
 	if err != nil {
 		t.Fatalf("ensurePromptAttachLLMFacadeEnv returned error: %v", err)
 	}
-	if env["LLM_API_PROTOCOL"] != llms.APIProtocolChatCompletions ||
+	// LLM_API_PROTOCOL is the protocol the resolved upstream serves (this
+	// provider's responses default); the guest's chat-completions ingress is
+	// pinned by the facade token instead.
+	if env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses ||
 		env["OPENCODE_CONFIG"] != "/root/.config/opencode/opencode.json" ||
 		env["LLM_MODEL"] != "agent-compose/gpt-test" ||
 		env["OPENCODE_MODEL"] != "agent-compose/gpt-test" {
@@ -199,7 +202,8 @@ func TestEnsurePromptAttachLLMFacadeEnvOpenCodeUsesSharedRuntimeConfig(t *testin
 		t.Fatalf("OpenCode token env = %q, saved tokens = %#v", env["AGENT_COMPOSE_SANDBOX_TOKEN"], store.tokens)
 	}
 	token := store.tokens[0]
-	if token.Model != "gpt-test" || token.ProviderID != "openai-test" || token.Source != "agent" || token.RunID != "run-opencode-attach" {
+	if token.Model != "gpt-test" || token.ProviderID != "openai-test" || token.WireAPI != llms.APIProtocolChatCompletions ||
+		token.Source != "agent" || token.RunID != "run-opencode-attach" {
 		t.Fatalf("stored token = %#v", token)
 	}
 	configPath := filepath.Join(root, "sandbox", "home", ".config", "opencode", "opencode.json")
