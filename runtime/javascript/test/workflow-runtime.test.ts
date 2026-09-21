@@ -251,6 +251,10 @@ describe("workflow runtime", () => {
     });
   });
 
+  // 1000 agent invocations is by far the heaviest case in this file, and vitest
+  // runs test files in parallel workers. The default 5s budget is close enough
+  // to the real runtime that a loaded CI runner times the test out rather than
+  // observing the limit it is asserting, so give it a budget with headroom.
   it("enforces the 1000 agent invocation limit", async () => {
     await withTempSession(async (root) => {
       const runPrompt = vi.fn(async () => agentResult("ok"));
@@ -260,7 +264,7 @@ describe("workflow runtime", () => {
       await expect(runtime.execute()).rejects.toThrow("workflow agent limit exceeded: 1000");
       expect(runPrompt).toHaveBeenCalledTimes(1000);
     });
-  });
+  }, 30_000);
 });
 
 async function createRuntime(
