@@ -57,9 +57,21 @@ describe("telemetry runner integration", () => {
       await apply(ctx, {});
       expect(ctx.plugin).not.toHaveBeenCalled();
       vi.stubEnv("AGENT_COMPOSE_DSH_TELEMETRY", "");
-      const native = { mode: "DISABLED" };
-      await apply(ctx, native);
-      expect(ctx.plugin).toHaveBeenCalledWith(expect.anything(), native);
+      await apply(ctx, { mode: "DISABLED" });
+      expect(ctx.plugin).not.toHaveBeenCalled();
+    });
+  });
+
+  it("runs without the optional DSH backend when telemetry is disabled", async () => {
+    await withTempSession(async (root) => {
+      const source = await fs.readFile(new URL("../../../assets/.dsh/profiles/agent-compose/telemetry.js", import.meta.url), "utf8");
+      await fs.writeFile(path.join(root, "telemetry.mjs"), source.replace("'@deepseek-ai/dsh-session-telemetry-otel'", "'./missing-backend.mjs'"));
+      const { apply } = await import(/* @vite-ignore */ pathToFileURL(path.join(root, "telemetry.mjs")).href);
+      const ctx = { plugin: vi.fn().mockResolvedValue(undefined), on: vi.fn(), logger: { warn: vi.fn() } };
+      vi.stubEnv("AGENT_COMPOSE_DSH_TELEMETRY", "");
+      await expect(apply(ctx, { mode: "DISABLED" })).resolves.toBeUndefined();
+      expect(ctx.plugin).not.toHaveBeenCalled();
+      expect(ctx.logger.warn).not.toHaveBeenCalled();
     });
   });
 });
