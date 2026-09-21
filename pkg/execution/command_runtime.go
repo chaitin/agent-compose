@@ -133,6 +133,7 @@ func BuildSandboxExecEnv(config *appconfig.Config, session *domain.Sandbox, home
 	env["STATE_ROOT"] = config.GuestStateRoot
 	env["RUNTIME_ROOT"] = config.GuestRuntimeRoot
 	env["VERSION"] = config.Version
+	ApplyAgentTelemetryEnv(config, session, env)
 	return env
 }
 

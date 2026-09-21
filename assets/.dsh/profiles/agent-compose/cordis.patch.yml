@@ -135,3 +135,8 @@
         promptFile: !!js process.env.DSH_PROMPT_FILE
         sessionId: !!js process.env.DSH_SESSION_ID ?? undefined
         systemContextFile: !!js process.env.DSH_SYSTEM_CONTEXT_FILE ?? undefined
+
+# The installed backend's capability, not the CLI version, decides whether
+# continuous native telemetry is available. No shared config is rewritten.
+- id: session-telemetry-otel
+  name: './telemetry.js'

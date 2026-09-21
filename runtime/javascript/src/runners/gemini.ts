@@ -1,3 +1,4 @@
+import { providerTelemetryEnv } from "../telemetry.js";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -180,7 +181,7 @@ export class GeminiRunner {
       "--approval-mode", "yolo",
     ], {
       cwd: this.options.workspace,
-      env: { ...process.env },
+      env: providerTelemetryEnv("gemini", this.options.telemetry, process.env),
       stdio: ["ignore", "pipe", "pipe"],
       signal: this.options.abortController?.signal,
     });

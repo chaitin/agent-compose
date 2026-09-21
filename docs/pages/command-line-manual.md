@@ -918,3 +918,71 @@ The following commands or capabilities are not published as stable CLI features 
 - Use `-f /path/to/project/agent-compose.yml` or `-f /path/to/project/agent-compose.yaml` for cross-directory project operations.
 - When operating against a remote daemon, pass `--host` explicitly and verify the target project name and config path.
 - Use `--json` in scripts and automation; do not parse table layouts.
+
+## Native Agent Telemetry
+
+Configure the daemon environment (the deployed `.env` file), then restart the
+daemon. New executions, including executions in resumed sandboxes, receive the
+current settings. Existing running provider processes retain their initial settings.
+
+```dotenv
+AGENT_TELEMETRY_OTLP_ENDPOINT=http://collector.example:4318
+# Optional authentication; percent-encode values, e.g. spaces as %20.
+# AGENT_TELEMETRY_OTLP_HEADERS=Authorization=Bearer%20your-token
+# AGENT_TELEMETRY_CAPTURE_CONTENT=true
+```
+
+The endpoint is an **OTLP/HTTP base URL**. The runtime appends `/v1/logs`,
+`/v1/traces`, or `/v1/metrics`. URL path prefixes are supported; signal suffixes,
+URL credentials, queries and fragments are rejected at startup. The collector
+must accept OTLP/HTTP JSON for Claude, Codex and OpenCode. DSH uses its native
+OTLP/HTTP log exporter. gRPC-only collectors are not supported by this integration.
+The address must be reachable **from the sandbox**, not just the daemon:
+`localhost` is the guest itself. No collector or port is automatically deployed.
+
+| Provider in the default guest | Managed native export |
+| --- | --- |
+| Codex 0.146.0 | Logs, traces and metrics; per-invocation SDK configuration overrides |
+| Claude Code 2.1.220 | Metrics and logs/events; beta traces are not enabled |
+| OpenCode 1.18.9 | Infrastructure logs and traces; LLM spans require content opt-in |
+| DeepSeek Harness | FULL session logs only with content opt-in and a backend that actually exports `SessionTelemetryMode.FULL` |
+| Pi 0.82.1 | No integrated official native exporter; a runtime warning is emitted and collector credentials are not passed to Pi |
+
+All native signals listed for a provider are enabled together; there is no
+per-signal selector in this initial integration. This does not instrument the
+daemon, and does not synthesize spans from agent-compose's event stream. Pi's
+[official observability design](https://github.com/badlogic/pi-mono/blob/v0.82.1/packages/agent/docs/observability.md)
+describes external listeners and a possible future OTel package, not a shipped
+exporter. Its `PI_TELEMETRY` switch controls installation statistics, not OTLP.
+Gemini is outside this integration and also receives no managed collector credentials.
+
+An empty endpoint disables daemon-managed export. Explicit native settings supplied
+by the guest/user remain native settings; disabling this feature does not erase
+those settings. When managed export is enabled, inherited `OTEL_*` destinations,
+headers and beta tracing destinations are replaced for supported providers, so
+collector credentials cannot be redirected by an old per-signal environment value.
+Headers must use names without dots for Codex and values without commas for
+OpenCode. Normal `Authorization=Bearer%20...` headers work across providers.
+The runtime does not persist collector credentials in shared provider files or
+sandbox configuration. Credentials are available to the running guest process;
+this is not a secret-isolation boundary against code running inside that guest.
+
+`AGENT_TELEMETRY_CAPTURE_CONTENT` defaults to `false`. This turns off the supported
+Codex/Claude prompt and tool-content controls, disables OpenCode LLM spans, and
+skips DSH FULL export. It is **not a universal redactor**: native diagnostic logs,
+errors and provider-specific fields can still contain content. Configure collector
+redaction for your requirements. Setting it to `true` may export prompts, responses,
+tool arguments/results and file contents. DSH checks the installed backend rather
+than trusting the CLI version: the rc.6 backend supports FULL, but newer backends
+may not. An incompatible backend emits a warning and skips export without blocking
+the agent; it does not silently switch to feedback uploads or the vendor endpoint.
+
+Resource attributes carry `agent_compose.sandbox.id`, `agent_compose.provider`,
+and run/project IDs when available. DSH attaches these to log records through its
+native record hook. Native session IDs remain provider-owned; correlation attributes
+do not automatically produce a shared distributed trace across providers.
+Ordinary prompts, interactive prompt sessions, and workflow child agents use the
+same configuration. Exporters own batching and retry; a collector outage is not an
+agent health check. Graceful provider shutdown can flush pending data, while a hard
+kill can lose buffered records. Validate delivery against your actual guest versions
+before relying on it for auditing.

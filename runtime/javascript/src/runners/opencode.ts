@@ -1,3 +1,4 @@
+import { providerTelemetryEnv } from "../telemetry.js";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -81,7 +82,7 @@ export class OpenCodeRunner {
 
   async environment(): Promise<NodeJS.ProcessEnv> {
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
+      ...providerTelemetryEnv("opencode", this.options.telemetry, process.env),
       OPENCODE_DISABLE_AUTOUPDATE: process.env.OPENCODE_DISABLE_AUTOUPDATE || "true",
       OPENCODE_DISABLE_MODELS_FETCH: process.env.OPENCODE_DISABLE_MODELS_FETCH || "1",
     };

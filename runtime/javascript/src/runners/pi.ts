@@ -1,3 +1,4 @@
+import { providerTelemetryEnv } from "../telemetry.js";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -55,7 +56,7 @@ export class PiRunner {
       const child = spawn("pi", args, {
         cwd: this.options.workspace,
         env: {
-          ...process.env,
+          ...providerTelemetryEnv("pi", this.options.telemetry, process.env),
           HOME: this.options.home,
           PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR || path.join(this.options.home, ".pi", "agent"),
           PI_OFFLINE: "1",

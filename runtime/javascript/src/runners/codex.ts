@@ -1,3 +1,4 @@
+import { codexTelemetryConfig, providerTelemetryEnv } from "../telemetry.js";
 import { resolveCodexPath } from "../codex-path.js";
 import {
   codexThreadStateMetadata,
@@ -348,13 +349,14 @@ export class CodexRunner {
     const stored = await readStoredThread(this.options.sessionRoot, "codex");
     const codex = new Codex({
       codexPathOverride: resolveCodexPath(),
-      env: stringEnv(),
+      env: stringEnv(providerTelemetryEnv("codex", this.options.telemetry, process.env)),
       // `config` (the `--config key=value` overrides) is a CodexOptions field on the
       // constructor; it is NOT read from ThreadOptions/startThread. The resume decision below
       // prevents a changed override from being combined with stale model-visible instructions.
-      ...(this.options.systemContext
-        ? { config: { developer_instructions: this.options.systemContext } }
-        : {}),
+      config: {
+        ...codexTelemetryConfig(this.options.telemetry),
+        ...(this.options.systemContext ? { developer_instructions: this.options.systemContext } : {}),
+      },
     });
     const systemContextHash = hashSystemContext(this.options.systemContext);
     const resumeDecision = decideCodexThreadResume(stored, systemContextHash);

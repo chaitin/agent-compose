@@ -1,3 +1,4 @@
+import { codexTelemetryConfig, providerTelemetryEnv } from "./telemetry.js";
 import { resolveCodexPath } from "./codex-path.js";
 import {
   codexThreadStateMetadata,
@@ -81,10 +82,11 @@ export class CodexInteractiveSession implements InteractiveSession {
     const stored = await readStoredThread(this.options.sessionRoot, "codex");
     const codex = new Codex({
       codexPathOverride: resolveCodexPath(),
-      env: stringEnv(),
-      ...(this.options.systemContext
-        ? { config: { developer_instructions: this.options.systemContext } }
-        : {}),
+      env: stringEnv(providerTelemetryEnv("codex", this.options.telemetry, process.env)),
+      config: {
+        ...codexTelemetryConfig(this.options.telemetry),
+        ...(this.options.systemContext ? { developer_instructions: this.options.systemContext } : {}),
+      },
     });
     const resumeDecision = decideCodexThreadResume(stored, this.systemContextHash);
     this.thread = resumeDecision.action === "resume"
