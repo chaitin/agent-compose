@@ -544,6 +544,8 @@ agents:
 
 第一个 `/` 前的部分是 agent-compose 中配置的 LLM Provider ID，后面的全部内容是发送给上游的字面量 Model ID，Model ID 本身还可以包含 `/`。Pi 和 dsh 的模型流量都通过 sandbox runtime LLM facade 转发，上游凭据仍只保留在 daemon 中。
 
+Agent 级 `LLM_API_*` 环境是优先级更高的兼容路径，它注入的模型本身也可能是一个限定名（例如网关发布 `<provider>/<model>` 形式的逻辑名）。因此，当 Agent 的 model 声明与该注入值完全一致时，会按原值解析，而不会在第一个 `/` 处拆分，使限定名完整到达上游。其他声明仍保持上述行为：前缀选择路由，其余部分是字面量上游 Model ID。
+
 ### Daemon `models.json`
 
 daemon 在启动时加载一次 `$DATA_ROOT/models.json`。文件不存在是合法状态：catalog-owned 条目按不存在处理，已有 system 和环境 Provider 的默认值保持不变。修改文件后需要重启 daemon。

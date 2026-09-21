@@ -174,7 +174,7 @@ func resolveDshFacadeTarget(ctx context.Context, in dshFacadeTargetInput) (Resol
 		// A declaration that names exactly the model the sandbox's own
 		// environment publishes resolves verbatim; every other declaration keeps
 		// its established precedence.
-		requestedModel := sessionEnvModelForDeclaration(providerID, model, envItems)
+		requestedModel := sessionEnvModelForDeclaration(providerID, model, envItems, ProviderFamilyOpenAI)
 		providerID, err := ensureSessionOpenAIEnvProviderWithConfig(ctx, store, SessionEnvProviderQuery{Config: config, SessionID: sandboxID, RequestedModel: requestedModel, EnvItems: envItems})
 		if err != nil {
 			return ResolvedTarget{}, err

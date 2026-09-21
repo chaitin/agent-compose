@@ -151,7 +151,7 @@ type piEnvFacadeTargetInput struct {
 func resolvePiEnvFacadeTarget(ctx context.Context, in piEnvFacadeTargetInput) (ResolvedTarget, error) {
 	config, store, sandboxID, envItems := in.Config, in.Store, in.SandboxID, in.EnvItems
 	family := piEnvProviderFamily(ctx, store, in.RequestedProviderID, envItems)
-	requestedModel := sessionEnvModelForDeclaration(in.RequestedProviderID, in.Model, envItems)
+	requestedModel := sessionEnvModelForDeclaration(in.RequestedProviderID, in.Model, envItems, family)
 	if family == ProviderFamilyAnthropic {
 		providerID, err := ensureSessionAnthropicEnvProviderWithConfig(ctx, store, SessionEnvProviderQuery{Config: config, SessionID: sandboxID, RequestedModel: requestedModel, EnvItems: envItems})
 		if err != nil {

@@ -99,17 +99,30 @@ func SessionAnthropicEnvModel(envItems []domain.SandboxEnvVar) string {
 }
 
 // SessionEnvModel returns the model the sandbox's own provider environment
-// names. A model id may itself contain slashes — a gateway injecting
-// LLM_MODEL=<provider>/<model> publishes a qualified logical name — so a caller
-// that lets the environment own the model must use this value verbatim instead
-// of the remainder of an agent's <connection>/<model> declaration.
-func SessionEnvModel(envItems []domain.SandboxEnvVar) string {
-	// LLM_MODEL is the generic provider model and must win when present. The
-	// Anthropic-specific names are fallbacks for message-protocol environments.
-	if model := EnvItemValue(envItems, "LLM_MODEL"); model != "" {
-		return model
+// publishes for one provider family. A model id may itself contain slashes — a
+// gateway injecting LLM_MODEL=<provider>/<model> publishes a qualified logical
+// name — so a caller that lets the environment own the model must use this
+// value verbatim instead of the remainder of an agent's
+// <connection>/<model> declaration.
+//
+// Which name to read depends on the family the caller resolved: LLM_MODEL is
+// the generic spelling every family shares, while ANTHROPIC_MODEL/CLAUDE_MODEL
+// are the message-protocol spelling. A sandbox that declares both — a gateway
+// serving both protocols — must be read through the family that owns the call,
+// otherwise the verbatim comparison sees a model from the other family, misses,
+// and falls back to splitting the declaration at its first slash.
+func SessionEnvModel(envItems []domain.SandboxEnvVar, providerFamily string) string {
+	if NormalizeProviderType(providerFamily) == ProviderFamilyAnthropic {
+		// Message-protocol environments name their model with the Anthropic
+		// spelling first; LLM_MODEL remains the fallback SessionAnthropicEnvModel
+		// already applies.
+		return SessionAnthropicEnvModel(envItems)
 	}
-	return firstNonEmptyTrimmed(EnvItemValue(envItems, "ANTHROPIC_MODEL"), EnvItemValue(envItems, "CLAUDE_MODEL"))
+	return firstNonEmptyTrimmed(
+		EnvItemValue(envItems, "LLM_MODEL"),
+		EnvItemValue(envItems, "ANTHROPIC_MODEL"),
+		EnvItemValue(envItems, "CLAUDE_MODEL"),
+	)
 }
 
 // sessionEnvModelForDeclaration returns the model a facade must resolve for an
@@ -125,15 +138,16 @@ func SessionEnvModel(envItems []domain.SandboxEnvVar) string {
 // declaration keeps its established precedence, including a family alias or a
 // configured connection that deliberately selects a different model.
 //
-// declaredProviderID and declaredModel are the two halves the caller split; the
+// declaredProviderID and declaredModel are the two halves the caller split and
+// providerFamily is the family the caller resolved for the declaration; the
 // caller keeps the returned value as its requested model.
-func sessionEnvModelForDeclaration(declaredProviderID, declaredModel string, envItems []domain.SandboxEnvVar) string {
+func sessionEnvModelForDeclaration(declaredProviderID, declaredModel string, envItems []domain.SandboxEnvVar, providerFamily string) string {
 	requestedModel := strings.TrimSpace(declaredModel)
 	declared := requestedModel
 	if prefix := strings.TrimSpace(declaredProviderID); prefix != "" {
 		declared = prefix + "/" + requestedModel
 	}
-	if envModel := SessionEnvModel(envItems); envModel != "" && envModel == declared {
+	if envModel := SessionEnvModel(envItems, providerFamily); envModel != "" && envModel == declared {
 		return envModel
 	}
 	return requestedModel

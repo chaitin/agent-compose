@@ -92,7 +92,7 @@ func EnsureOpenCodeFacadeConfig(ctx context.Context, req OpenCodeFacadeConfigReq
 		if err != nil {
 			return nil, err
 		}
-		if envModel := SessionEnvModel(sessionEnv); envModel != "" && envModel == strings.TrimSpace(model) {
+		if envModel := SessionEnvModel(sessionEnv, ""); envModel != "" && envModel == strings.TrimSpace(model) {
 			call.ProviderID, call.Model = "", envModel
 			return ensureOpenCodeConfiguredFacadeConfig(ctx, call)
 		}
