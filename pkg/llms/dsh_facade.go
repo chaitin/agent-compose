@@ -171,12 +171,16 @@ func resolveDshFacadeTarget(ctx context.Context, in dshFacadeTargetInput) (Resol
 		return ResolvedTarget{}, err
 	}
 	if HasSessionEnvProviderInput(envItems) {
-		providerID, err := ensureSessionOpenAIEnvProviderWithConfig(ctx, store, SessionEnvProviderQuery{Config: config, SessionID: sandboxID, RequestedModel: model, EnvItems: envItems})
+		// A declaration that names exactly the model the sandbox's own
+		// environment publishes resolves verbatim; every other declaration keeps
+		// its established precedence.
+		requestedModel := sessionEnvModelForDeclaration(providerID, model, envItems)
+		providerID, err := ensureSessionOpenAIEnvProviderWithConfig(ctx, store, SessionEnvProviderQuery{Config: config, SessionID: sandboxID, RequestedModel: requestedModel, EnvItems: envItems})
 		if err != nil {
 			return ResolvedTarget{}, err
 		}
 		return ResolveRuntimeLLMTargetWithEnv(ctx, store, RuntimeLLMTargetQuery{
-			Config: config, SessionID: sandboxID, PreferredProviderFamily: ProviderFamilyOpenAI, RequestedModel: model, ProviderID: providerID, EnvItems: envItems,
+			Config: config, SessionID: sandboxID, PreferredProviderFamily: ProviderFamilyOpenAI, RequestedModel: requestedModel, ProviderID: providerID, EnvItems: envItems,
 		})
 	}
 	if HasEnabledLLMProviderID(ctx, store, providerID) {

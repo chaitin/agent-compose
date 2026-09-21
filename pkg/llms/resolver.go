@@ -266,7 +266,7 @@ func refineProviderAndModelFromReference(ctx context.Context, store LLMResolverS
 	providerID, requestedModel = in.ProviderID, in.RequestedModel
 	explicitProvider = providerID != ""
 	if in.HasSessionEnvProvider && providerID == "" {
-		if envModel := firstNonEmptyTrimmed(SessionAnthropicEnvModel(in.EnvItems), EnvItemValue(in.EnvItems, "LLM_MODEL")); envModel != "" {
+		if envModel := SessionEnvModel(in.EnvItems); envModel != "" {
 			requestedModel = envModel
 		} else if _, selectedModel, ok := SplitProviderModelReference(requestedModel); ok {
 			requestedModel = selectedModel

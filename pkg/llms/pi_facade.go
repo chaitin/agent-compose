@@ -143,24 +143,30 @@ type piEnvFacadeTargetInput struct {
 	EnvItems            []domain.SandboxEnvVar
 }
 
+// resolvePiEnvFacadeTarget resolves against the sandbox's own provider
+// environment. A declaration that names exactly the model that environment
+// publishes resolves verbatim (see sessionEnvModelForDeclaration); every other
+// declaration keeps its established precedence, and its prefix additionally
+// picks the family.
 func resolvePiEnvFacadeTarget(ctx context.Context, in piEnvFacadeTargetInput) (ResolvedTarget, error) {
-	config, store, sandboxID, model, envItems := in.Config, in.Store, in.SandboxID, in.Model, in.EnvItems
+	config, store, sandboxID, envItems := in.Config, in.Store, in.SandboxID, in.EnvItems
 	family := piEnvProviderFamily(ctx, store, in.RequestedProviderID, envItems)
+	requestedModel := sessionEnvModelForDeclaration(in.RequestedProviderID, in.Model, envItems)
 	if family == ProviderFamilyAnthropic {
-		providerID, err := ensureSessionAnthropicEnvProviderWithConfig(ctx, store, SessionEnvProviderQuery{Config: config, SessionID: sandboxID, RequestedModel: model, EnvItems: envItems})
+		providerID, err := ensureSessionAnthropicEnvProviderWithConfig(ctx, store, SessionEnvProviderQuery{Config: config, SessionID: sandboxID, RequestedModel: requestedModel, EnvItems: envItems})
 		if err != nil {
 			return ResolvedTarget{}, err
 		}
 		return ResolveRuntimeLLMTargetWithEnv(ctx, store, RuntimeLLMTargetQuery{
-			Config: config, SessionID: sandboxID, PreferredProviderFamily: family, RequestedModel: model, ProviderID: providerID, EnvItems: envItems,
+			Config: config, SessionID: sandboxID, PreferredProviderFamily: family, RequestedModel: requestedModel, ProviderID: providerID, EnvItems: envItems,
 		})
 	}
-	providerID, err := ensureSessionOpenAIEnvProviderWithConfig(ctx, store, SessionEnvProviderQuery{Config: config, SessionID: sandboxID, RequestedModel: model, EnvItems: envItems})
+	providerID, err := ensureSessionOpenAIEnvProviderWithConfig(ctx, store, SessionEnvProviderQuery{Config: config, SessionID: sandboxID, RequestedModel: requestedModel, EnvItems: envItems})
 	if err != nil {
 		return ResolvedTarget{}, err
 	}
 	return ResolveRuntimeLLMTargetWithEnv(ctx, store, RuntimeLLMTargetQuery{
-		Config: config, SessionID: sandboxID, PreferredProviderFamily: ProviderFamilyOpenAI, RequestedModel: model, ProviderID: providerID, EnvItems: envItems,
+		Config: config, SessionID: sandboxID, PreferredProviderFamily: ProviderFamilyOpenAI, RequestedModel: requestedModel, ProviderID: providerID, EnvItems: envItems,
 	})
 }
 

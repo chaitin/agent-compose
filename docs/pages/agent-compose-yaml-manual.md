@@ -543,6 +543,8 @@ agents:
 
 The part before the first slash is an LLM provider ID configured in agent-compose; the entire remainder is the literal upstream model ID and may contain additional slashes. Pi and dsh model traffic is routed through the sandbox runtime LLM facade, so upstream credentials remain on the daemon.
 
+An Agent-level `LLM_API_*` environment is the higher-priority compatibility path, and the model it injects may itself be a qualified name (for example a gateway that publishes `<provider>/<model>` logical names). A model declaration that repeats exactly that injected value is therefore resolved verbatim instead of being split at its first slash, so the qualified name reaches the upstream intact. Any other declaration keeps the behavior above: its prefix selects the route and the remainder is the literal upstream model ID.
+
 ### Daemon `models.json`
 
 The daemon loads `$DATA_ROOT/models.json` once during startup. A missing file is valid: catalog-owned entries are treated as absent while existing system and environment Provider defaults remain unchanged. Restart the daemon after editing the file.

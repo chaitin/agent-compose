@@ -82,6 +82,20 @@ func EnsureOpenCodeFacadeConfig(ctx context.Context, req OpenCodeFacadeConfigReq
 	case ProviderFamilyOpenAI:
 		return ensureOpenCodeOpenAIFacadeConfig(ctx, call)
 	default:
+		// An unknown prefix names a custom endpoint. When the sandbox supplies
+		// its own provider environment and the declaration names exactly the
+		// model that environment publishes, the declaration is that model rather
+		// than "<custom-endpoint>/<model>": the published value is one model id
+		// that may itself contain slashes (a gateway publishes
+		// <provider>/<model> logical names) and must be resolved verbatim.
+		sessionEnv, err := SandboxProviderEnvItems(ctx, store, sandbox, "")
+		if err != nil {
+			return nil, err
+		}
+		if envModel := SessionEnvModel(sessionEnv); envModel != "" && envModel == strings.TrimSpace(model) {
+			call.ProviderID, call.Model = "", envModel
+			return ensureOpenCodeConfiguredFacadeConfig(ctx, call)
+		}
 		return ensureOpenCodeCustomFacadeConfig(ctx, call)
 	}
 }
