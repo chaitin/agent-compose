@@ -228,11 +228,23 @@ describe("runtime.llm sandbox facade contract", () => {
     }
   });
 
-  it("requires a model when calling the sandbox facade", async () => {
+  it("allows an omitted model on the managed facade so the token-scoped server default can resolve it", async () => {
     saved = snapshotEnv();
     process.env.AGENT_COMPOSE_SANDBOX_TOKEN = "tok";
-    process.env.OPENAI_BASE_URL = "http://127.0.0.1:1";
-    await expect(llm("hi")).rejects.toThrow("requires a model");
+    const seen: { body?: Record<string, unknown> } = {};
+    const server = await startRawServer((_req, body) => {
+      seen.body = body;
+      return { status: 200, payload: { id: "r-default", model: "server-default", output_text: "ok", status: "completed" } };
+    });
+    try {
+      process.env.OPENAI_BASE_URL = server.baseUrl;
+      const result = await llm("hi");
+      expect(result.text).toBe("ok");
+      expect(result.model).toBe("server-default");
+      expect(seen.body).not.toHaveProperty("model");
+    } finally {
+      await server.close();
+    }
   });
 
   it("surfaces non-2xx facade responses without leaking the token", async () => {

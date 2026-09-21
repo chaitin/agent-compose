@@ -33,9 +33,6 @@ export async function llm<T = unknown>(prompt: string, options: RuntimeLLMOption
   }
   const { schema = null, validator } = normalizeOptionalOutputSchema(options.outputSchema, "llm");
   const endpoint = resolveLLMEndpoint(options);
-  if (endpoint.protocol !== "connect-generate" && !(options.model ?? "").trim()) {
-    throw new Error("runtime.llm requires a model when calling the sandbox LLM facade");
-  }
   const controller = new AbortController();
   let timeout: NodeJS.Timeout | undefined;
   if (options.timeoutMs && options.timeoutMs > 0) {
@@ -54,7 +51,7 @@ export async function llm<T = unknown>(prompt: string, options: RuntimeLLMOption
       model: decoded.model,
       responseId: decoded.responseId,
       finishReason: decoded.finishReason,
-      json: schema ? parseJsonOutput<T>(decoded.text, validator, "llm text") : null,
+      json: schema ? parseJsonOutput<T>(decoded.structured, validator, "llm text") : null,
     };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
@@ -79,6 +76,9 @@ interface ResolvedLLMEndpoint {
 
 interface DecodedLLMResponse {
   text: string;
+  // structured preserves the legacy LLMService.Generate json field for
+  // outputSchema parsing without changing the public raw-text result.
+  structured: string;
   model: string;
   responseId: string;
   finishReason: string;
@@ -208,9 +208,10 @@ function defaultFacadeBaseURL(runtimeBase: string, protocol: FacadeWireProtocol)
 }
 
 function buildResponsesRequest(prompt: string, options: RuntimeLLMOptions, schema: RuntimeJsonSchema | null): Record<string, unknown> {
+  const model = (options.model ?? "").trim();
   const body: Record<string, unknown> = {
-    model: (options.model ?? "").trim(),
     input: prompt,
+    ...(model ? { model } : {}),
   };
   if (schema) {
     body.text = {
@@ -230,8 +231,9 @@ function buildAnthropicMessagesRequest(prompt: string, options: RuntimeLLMOption
   if (schema) {
     content = `${prompt}\n\nRespond with a JSON object that matches this JSON Schema. Output only the JSON object, without markdown fences or commentary.\n${JSON.stringify(schema)}`;
   }
+  const model = (options.model ?? "").trim();
   return {
-    model: (options.model ?? "").trim(),
+    ...(model ? { model } : {}),
     max_tokens: ANTHROPIC_DEFAULT_MAX_TOKENS,
     messages: [{ role: "user", content }],
   };
@@ -248,8 +250,10 @@ function decodeLLMResponse(protocol: LLMProtocol, payload: Record<string, unknow
 }
 
 function decodeConnectGeneratePayload(payload: Record<string, unknown>, requestedModel: string | undefined): DecodedLLMResponse {
+  const text = stringField(payload, "text");
   return {
-    text: stringField(payload, "text"),
+    text,
+    structured: stringField(payload, "json") || text,
     model: stringField(payload, "model") || (requestedModel ?? ""),
     responseId: stringField(payload, "responseId") || stringField(payload, "response_id"),
     finishReason: stringField(payload, "finishReason") || stringField(payload, "finish_reason"),
@@ -280,6 +284,7 @@ function decodeOpenAIResponsesPayload(payload: Record<string, unknown>, requeste
   }
   return {
     text,
+    structured: text,
     model: stringField(payload, "model") || (requestedModel ?? ""),
     responseId: stringField(payload, "id"),
     finishReason,
@@ -296,8 +301,10 @@ function decodeAnthropicMessagesPayload(payload: Record<string, unknown>, reques
       }
     }
   }
+  const text = parts.join("\n");
   return {
-    text: parts.join("\n"),
+    text,
+    structured: text,
     model: stringField(payload, "model") || (requestedModel ?? ""),
     responseId: stringField(payload, "id"),
     finishReason: stringField(payload, "stop_reason"),

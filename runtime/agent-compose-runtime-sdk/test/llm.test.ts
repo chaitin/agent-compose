@@ -43,6 +43,27 @@ describe("runtime.llm", () => {
     }
   });
 
+  it("preserves the legacy json field for outputSchema parsing while keeping text unchanged", async () => {
+    const server = await startLLMServer(async () => ({
+      text: "human-readable fallback",
+      json: JSON.stringify({ summary: "ok", risk: "low" }),
+    }));
+    try {
+      const result = await runtime.llm<{ summary: string; risk: string }>("summarize", {
+        baseUrl: server.baseUrl,
+        outputSchema: {
+          type: "object",
+          properties: { summary: { type: "string" }, risk: { type: "string" } },
+          required: ["summary", "risk"],
+        },
+      });
+      expect(result.text).toBe("human-readable fallback");
+      expect(result.json).toEqual({ summary: "ok", risk: "low" });
+    } finally {
+      await server.close();
+    }
+  });
+
   it("accepts Zod schemas, converts them to JSON Schema, and validates parsed output", async () => {
     const server = await startLLMServer(async (body) => {
       const schema = JSON.parse(body.outputSchema);

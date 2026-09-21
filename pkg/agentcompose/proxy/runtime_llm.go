@@ -124,9 +124,14 @@ func (h runtimeLLMHandler) authorizeAndResolveRuntimeLLMRequest(c echo.Context, 
 		return resolvedRuntimeLLMRequest{}, true, WriteRuntimeLLMEncodedError(c, raw, status)
 	}
 	model := strings.TrimSpace(llmReq.Model)
+	// A managed facade token is minted for the resolved sandbox model. Preserve
+	// runtime.llm(prompt)'s optional-model contract by using that scoped model
+	// when the guest omits model; an empty token model remains eligible for the
+	// resolver's configured default-model selection.
 	if model == "" {
-		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusBadRequest, map[string]string{"error": "llm model is required"})
+		model = strings.TrimSpace(token.Model)
 	}
+	llmReq.Model = model
 	// Provider-bound tokens may request any model from that provider. Preserve
 	// the legacy model scope for compatibility tokens that have no provider.
 	if token.ProviderID == "" && token.Model != "" && token.Model != model {
