@@ -115,11 +115,13 @@ func PrepareAgentLLM(ctx context.Context, req AgentLLMRequest) (*AgentLLM, error
 		return nil, domain.ClassifyError(domain.ErrFailedPrecondition,
 			fmt.Sprintf("cannot serve a %s upstream to %s: no %s to %s conversion is available", upstream, dialect.Kind, inbound, upstream), nil)
 	}
+	guestModel := dialect.GuestModel(model)
 	tokenValue, token, err := NewFacadeToken(NewFacadeTokenRequest{
 		SandboxID:  req.Sandbox.Summary.ID,
 		Model:      model,
 		ProviderID: target.Provider.ID,
 		WireAPI:    string(inbound),
+		GuestModel: guestModel,
 		Source:     req.Source,
 		RunID:      req.RunID,
 	})
@@ -133,7 +135,7 @@ func PrepareAgentLLM(ctx context.Context, req AgentLLMRequest) (*AgentLLM, error
 		Dialect:    dialect,
 		Target:     target,
 		Model:      model,
-		GuestModel: dialect.GuestModel(model),
+		GuestModel: guestModel,
 		Upstream:   upstream,
 		Inbound:    inbound,
 		Convert:    dialect.NeedsConversion(upstream),

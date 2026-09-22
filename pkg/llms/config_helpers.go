@@ -43,10 +43,14 @@ func ScanModel(scan func(dest ...any) error) (Model, error) {
 	return item, nil
 }
 
+// FacadeTokenColumns is the column list ScanFacadeToken reads, in order. It
+// exists so the store's SELECT and this scanner cannot drift apart.
+const FacadeTokenColumns = "sandbox_id, token_hash, token_fingerprint, model, provider_id, wire_api, guest_model, source, run_id, issued_at, expires_at, revoked_at"
+
 func ScanFacadeToken(scan func(dest ...any) error) (FacadeToken, error) {
 	var item FacadeToken
 	var issuedAt, expiresAt, revokedAt int64
-	if err := scan(&item.SandboxID, &item.TokenHash, &item.TokenFingerprint, &item.Model, &item.ProviderID, &item.WireAPI, &item.Source, &item.RunID, &issuedAt, &expiresAt, &revokedAt); err != nil {
+	if err := scan(&item.SandboxID, &item.TokenHash, &item.TokenFingerprint, &item.Model, &item.ProviderID, &item.WireAPI, &item.GuestModel, &item.Source, &item.RunID, &issuedAt, &expiresAt, &revokedAt); err != nil {
 		return FacadeToken{}, err
 	}
 	item.IssuedAt = storedtime.ParseStoredTime(issuedAt)

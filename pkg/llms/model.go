@@ -70,9 +70,13 @@ type FacadeToken struct {
 	Model            string
 	ProviderID       string
 	WireAPI          string
-	Source           string
-	RunID            string
-	IssuedAt         time.Time
-	ExpiresAt        time.Time
-	RevokedAt        time.Time
+	// GuestModel is the model reference the guest was told to use, in the
+	// namespace its own configuration addresses models by. The proxy maps an
+	// exact match back to Model, so it never parses a model string.
+	GuestModel string
+	Source     string
+	RunID      string
+	IssuedAt   time.Time
+	ExpiresAt  time.Time
+	RevokedAt  time.Time
 }

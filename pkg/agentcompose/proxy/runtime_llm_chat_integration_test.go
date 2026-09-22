@@ -40,8 +40,7 @@ func TestIntegrationRuntimeLLMFacadeUsesChatOnlyUpstream(t *testing.T) {
 			upstream, upstreamPaths := newChatOnlyUpstream(t)
 
 			sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}}
-			var resolvedSandbox *domain.Sandbox
-			var resolvedFamily string
+			var resolvedConnectionID string
 			e := echo.New()
 			RegisterRuntimeLLMFacadeRoutes(e, RuntimeLLMOptions{
 				Tokens: fakeRuntimeLLMTokens{token: llms.FacadeToken{
@@ -52,13 +51,14 @@ func TestIntegrationRuntimeLLMFacadeUsesChatOnlyUpstream(t *testing.T) {
 					ExpiresAt:  time.Now().Add(time.Hour),
 				}},
 				Sandboxes: fakeRuntimeLLMSessions{session: sandbox},
-				// The target carries the wire api the upstream serves. The sandbox
-				// has to reach the resolver, because that is where an orchestrator
-				// publishes LLM_API_PROTOCOL for the model it injected.
-				ResolveTarget: func(_ context.Context, resolved *domain.Sandbox, family, _, _ string) (llms.ResolvedTarget, error) {
-					resolvedSandbox, resolvedFamily = resolved, family
+				// The connection comes from the token, and the target it resolves
+				// carries the wire api the upstream serves. The facade then has to
+				// translate the guest's ingress protocol to what the connection
+				// speaks.
+				Connections: func(_ context.Context, connectionID, _ string) (llms.ResolvedTarget, error) {
+					resolvedConnectionID = connectionID
 					return llms.ResolvedTarget{
-						Provider: llms.Provider{ID: "provider-1", ProviderType: llms.ProviderFamilyOpenAI, BaseURL: upstream.URL + "/v1"},
+						Provider: llms.Provider{ID: connectionID, ProviderType: llms.ProviderFamilyOpenAI, BaseURL: upstream.URL + "/v1"},
 						Model:    llms.Model{Name: "gpt"},
 						WireAPI:  llms.APIProtocolChatCompletions,
 					}, nil
@@ -76,11 +76,8 @@ func TestIntegrationRuntimeLLMFacadeUsesChatOnlyUpstream(t *testing.T) {
 			if upstreamPath := <-upstreamPaths; upstreamPath != "/v1/chat/completions" {
 				t.Fatalf("upstream path = %q", upstreamPath)
 			}
-			if resolvedSandbox != sandbox {
-				t.Fatalf("resolver sandbox = %v, want the authorizing sandbox", resolvedSandbox)
-			}
-			if resolvedFamily != llms.ProviderFamilyOpenAI {
-				t.Fatalf("resolver provider family = %q, want %q", resolvedFamily, llms.ProviderFamilyOpenAI)
+			if resolvedConnectionID != "provider-1" {
+				t.Fatalf("resolver connection id = %q, want the token's connection %q", resolvedConnectionID, "provider-1")
 			}
 		})
 	}
