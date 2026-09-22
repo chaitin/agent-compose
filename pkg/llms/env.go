@@ -80,18 +80,3 @@ func FilterPersistedRuntimeEnv(items []domain.SandboxEnvVar) []domain.SandboxEnv
 	}
 	return result
 }
-
-func RuntimeEnvMap(items []domain.SandboxEnvVar) map[string]string {
-	env := make(map[string]string, len(items))
-	for _, item := range domain.NormalizeEnvItems(items) {
-		name := strings.TrimSpace(item.Name)
-		if name == "" || ProviderKeyName(name) {
-			continue
-		}
-		env[name] = item.Value
-	}
-	if len(env) == 0 {
-		return nil
-	}
-	return env
-}

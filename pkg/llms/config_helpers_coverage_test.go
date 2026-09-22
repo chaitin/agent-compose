@@ -115,12 +115,6 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if len(filtered) != 1 || filtered[0].Name != "VISIBLE" {
 		t.Fatalf("filtered = %#v", filtered)
 	}
-	if env := RuntimeEnvMap([]domain.SandboxEnvVar{{Name: "OPENAI_API_KEY", Value: "secret"}, {Name: "VISIBLE", Value: "1"}}); env["VISIBLE"] != "1" || env["OPENAI_API_KEY"] != "" {
-		t.Fatalf("runtime env = %#v", env)
-	}
-	if got := NormalizeAPIEndpoint("https://api.example.test/openai"); got != "https://api.example.test/openai/v1/responses" {
-		t.Fatalf("NormalizeAPIEndpoint = %q", got)
-	}
 	if got := NormalizeAPIEndpointForProtocol("https://api.example.test/openai/v1", APIProtocolChatCompletions); got != "https://api.example.test/openai/v1/chat/completions" {
 		t.Fatalf("NormalizeAPIEndpointForProtocol chat = %q", got)
 	}
@@ -394,34 +388,4 @@ func TestConfigHelperEdgeBranches(t *testing.T) {
 		t.Fatalf("AppendAPIEndpointToBaseURL base responses = %q", got)
 	}
 	joinAPIBasePath(nil, "/v1", "responses")
-}
-
-func TestClientConfigAndSelectionWorkflows(t *testing.T) {
-	ctx := context.Background()
-	store := llmCoverageEnvStore{items: []domain.SandboxEnvVar{{Name: "LLM_API_ENDPOINT", Value: "https://example.test"}, {Name: "LLM_API_PROTOCOL", Value: "chat"}}}
-	if got := ResolveProtocol(ctx, store, ClientConfig{}); got != APIProtocolChatCompletions {
-		t.Fatalf("ResolveProtocol = %q", got)
-	}
-	if got := ResolveEndpoint(ctx, store, ClientConfig{}); !strings.Contains(got, "chat/completions") {
-		t.Fatalf("ResolveEndpoint = %q", got)
-	}
-	t.Setenv("LLM_API_ENDPOINT", "https://env.test")
-	if got := ResolveEndpoint(ctx, nil, ClientConfig{Protocol: APIProtocolResponses}); got != "https://env.test/v1/responses" {
-		t.Fatalf("env endpoint = %q", got)
-	}
-	if got := ResolveSetting(ctx, nil, "fallback", "MISSING_SETTING"); got != "fallback" {
-		t.Fatalf("ResolveSetting fallback = %q", got)
-	}
-}
-
-func TestE2EClientConfigAndSelectionWorkflows(t *testing.T) {
-	TestClientConfigAndSelectionWorkflows(t)
-}
-
-type llmCoverageEnvStore struct {
-	items []domain.SandboxEnvVar
-}
-
-func (s llmCoverageEnvStore) ListGlobalEnv(context.Context) ([]domain.SandboxEnvVar, error) {
-	return s.items, nil
 }

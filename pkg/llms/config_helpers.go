@@ -113,10 +113,6 @@ func NormalizeWireAPI(value string) string {
 	}
 }
 
-func NormalizeAPIEndpoint(raw string) string {
-	return NormalizeAPIEndpointForProtocol(raw, APIProtocolResponses)
-}
-
 func NormalizeAPIEndpointForProtocol(raw, protocol string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -163,13 +159,6 @@ func NormalizeProviderType(value string) string {
 	default:
 		return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(value)), "-", "_")
 	}
-}
-
-func NormalizeOptionalProviderType(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return ""
-	}
-	return NormalizeProviderType(value)
 }
 
 func NormalizeAPIBaseURL(raw, wireAPI string) string {
