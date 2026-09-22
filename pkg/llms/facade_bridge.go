@@ -153,19 +153,18 @@ func normalizeRuntimeRawRoleItems(payload map[string]json.RawMessage, field stri
 
 // crossFamilyBridge returns the bridge that converts inbound into upstream.
 //
-// The library selects a cross-family bridge by upstream *family*. That is not
-// precise enough for an Anthropic inbound, which has two possible OpenAI
-// targets, so its family lookup always returns the Responses bridge. The one
-// pairing it cannot express is supplied here; everything else defers to it.
+// The library selects a cross-family bridge by upstream *family*, and an
+// Anthropic inbound has two possible OpenAI targets (Responses and Chat), so a
+// family lookup cannot tell them apart and may return the other one. The
+// UpstreamProtocol check below is therefore a correctness guard, not a
+// redundant restatement of the request: deleting it would not make
+// messages-to-chat work, it would silently post the wrong protocol upstream.
 //
-// The UpstreamProtocol check that follows is a correctness guard, not a
-// redundant restatement of the request. It stays because a library release could
-// change which bridge a family lookup returns: without the check that change
-// would silently post the wrong protocol upstream instead of failing locally.
+// The matrix cell anthropic_messages -> openai_chat stays unavailable until the
+// library exposes a protocol-precise constructor and ships the bridge. When it
+// does, replace this helper with that constructor and drop the check here — and
+// only then. See docs/design/llm_model_routing_redesign.md, phase P0.
 func crossFamilyBridge(inbound, upstream protocolbridge.Protocol, upstreamFamily string) (protocolbridge.CrossFamilyBridge, error) {
-	if inbound == protocolbridge.ProtocolAnthropicMessages && upstream == protocolbridge.ProtocolOpenAIChat {
-		return anthropicToChatBridge{upstream: protocolbridge.NewOpenAIChatAdapter()}, nil
-	}
 	bridge, ok := protocolbridge.NewCrossFamilyBridge(inbound, upstreamFamily)
 	if !ok {
 		return nil, fmt.Errorf("unsupported llm protocol bridge from %q to %q", inbound, upstream)
