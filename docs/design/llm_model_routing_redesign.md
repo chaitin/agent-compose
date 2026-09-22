@@ -175,10 +175,14 @@ type Connection struct {         // 一个上游
 }
 
 type Catalog struct {
-    Connections  map[string]Connection
-    DefaultModel string
+    Connections       map[string]Connection
+    DefaultModel      string
+    DefaultConnection string   // 该 default 的来源连接；无 default 时为空
 }
 ```
+
+`DefaultConnection` 不是第二个 default：它只是记录"这个 default 是从哪个连接来的"，
+因此当被解析的 model 恰好是配置的 default 时，来源连接是确定的，不必去猜（§3.3）。
 
 三个来源在**装载期**合并，之后只读：
 
@@ -205,11 +209,17 @@ func SelectModel(agentModel, catalogDefault string) (string, error) {
 ```go
 func (c *Catalog) connectionFor(explicitID, model string) (Connection, error) {
     if explicitID != "" { return lookupOrError(explicitID) }
+    if len(c.Connections) == 0 { return Connection{}, ErrNoConnection } // 无可托管的连接
+    if model == c.DefaultModel && c.DefaultConnection != "" { return c.DefaultConnection, nil }
     if ids := c.boundConnections(model); len(ids) == 1 { return c.Connections[ids[0]], nil }
     if len(c.Connections) == 1 { return theOnly, nil }
     return Connection{}, ErrAmbiguous // 列出候选 + 提示显式声明
 }
 ```
+
+`ErrNoConnection` 与 `ErrAmbiguous` 分开，是因为"什么都没有"和"有好几个、你不说我
+不知道选哪个"是两件事：前者是 daemon 不托管这个 agent，后者才是配置错误。两者都由
+`llms.IsUnmanagedAgentLLMError` 收敛成调用点唯一的判定（`ErrNoModel` 同理）。
 
 - 没有 `default`/`anthropic` 保留 id 的优先级；
 - 没有"请求家族没有连接就借另一个家族"（`default_connection.go:46-49`）；
