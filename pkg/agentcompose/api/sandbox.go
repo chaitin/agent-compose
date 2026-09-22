@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -298,15 +299,53 @@ func sandboxHistoryTimestamp(value time.Time) *timestamppb.Timestamp {
 	return timestamppb.New(value)
 }
 
+// A cell accumulates every byte its run writes, for as long as the run lasts, so
+// nothing bounds its size: one verbose build an agent reran a dozen times reached
+// 41MB, and because the same bytes travelled in both stdout and output, listing
+// that single cell meant a 75MB response. Carry the newest bytes, which is the
+// end anyone reads, and leave the rest to RunService.FollowRunLogs.
+const maxSandboxHistoryCellOutputBytes = 64 << 10
+
 func sandboxHistoryCellToV2(cell *domain.NotebookCell) *agentcomposev2.SandboxHistoryCell {
 	if cell == nil {
 		return nil
 	}
+	// Go evaluates arguments before the call, so folding this into firstNonEmpty
+	// would concatenate and then discard a copy of the very stream this function
+	// exists to keep out of memory.
+	merged := cell.Output
+	if merged == "" {
+		merged = cell.Stdout + cell.Stderr
+	}
+	output, truncated := tailBytes(merged, maxSandboxHistoryCellOutputBytes)
+	// A cell carries whatever bytes its run wrote, which for a command that cats a
+	// binary is not text at all. One invalid sequence anywhere fails the marshal for
+	// the entire response, not just the cell that produced it. Scrub after the cut so
+	// the scan covers the tail rather than the whole stream, and so a stream that was
+	// already valid - which is nearly all of them - is returned unchanged without
+	// allocating. A tail that is mostly binary grows to at most three times the cap,
+	// which is still four orders of magnitude below what this function exists to stop.
+	output = strings.ToValidUTF8(output, "\uFFFD")
 	return &agentcomposev2.SandboxHistoryCell{
-		Id: cell.ID, Type: cell.Type, Source: cell.Source, Stdout: cell.Stdout, Stderr: cell.Stderr,
-		Output: cell.Output, ExitCode: int32(cell.ExitCode), Success: cell.Success, Running: cell.Running,
+		Id: cell.ID, Type: cell.Type, Source: cell.Source, Output: output, OutputTruncatedBytes: truncated,
+		ExitCode: int32(cell.ExitCode), Success: cell.Success, Running: cell.Running,
 		CreatedAt: sandboxHistoryTimestamp(cell.CreatedAt), Agent: cell.Agent, AgentThreadId: cell.AgentThreadID, StopReason: cell.StopReason,
 	}
+}
+
+// tailBytes keeps the last limit bytes of value and reports how many it dropped.
+// The cut lands on a rune boundary so it does not split a multi-byte rune that
+// survived the cut; whether what the run wrote was valid UTF-8 to begin with is
+// the caller's problem, and it has to scrub for that separately.
+func tailBytes(value string, limit int) (string, uint64) {
+	if len(value) <= limit {
+		return value, 0
+	}
+	tail := value[len(value)-limit:]
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
+	return tail, uint64(len(value) - len(tail))
 }
 
 func sandboxHistoryEventToV2(event *domain.SandboxEvent) *agentcomposev2.SandboxHistoryEvent {
