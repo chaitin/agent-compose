@@ -406,15 +406,33 @@ func TestRuntimeLLMFacadeHandlerEdgeBranches(t *testing.T) {
 			want:     http.StatusBadRequest,
 		},
 		{
-			name:     "missing model",
+			name:     "missing model delegates default selection to resolver",
 			path:     "/api/runtime/sandboxes/sandbox-1/llm/openai/v1/responses",
 			body:     `{"input":"hi"}`,
 			tokens:   fakeRuntimeLLMTokens{token: llms.FacadeToken{SandboxID: "sandbox-1", ProviderID: "provider-1", WireAPI: llms.APIProtocolResponses, ExpiresAt: time.Now().Add(time.Hour)}},
 			sessions: fakeRuntimeLLMSessions{session: runningSession},
 			resolver: fakeRuntimeLLMTargetResolver("http://upstream.test/v1"),
 			client:   &fakeRuntimeLLMHTTPClient{status: http.StatusOK, body: `{"id":"resp-1","model":"gpt","output":[]}`},
-			want:     http.StatusBadRequest,
-			contains: "llm model is required",
+			want:     http.StatusOK,
+		},
+		{
+			name:     "missing model uses token scoped model",
+			path:     "/api/runtime/sandboxes/sandbox-1/llm/openai/v1/responses",
+			body:     `{"input":"hi"}`,
+			tokens:   fakeRuntimeLLMTokens{token: llms.FacadeToken{SandboxID: "sandbox-1", Model: "token-model", ProviderID: "provider-1", WireAPI: llms.APIProtocolResponses, ExpiresAt: time.Now().Add(time.Hour)}},
+			sessions: fakeRuntimeLLMSessions{session: runningSession},
+			resolver: func(_ context.Context, model, providerID string) (llms.ResolvedTarget, error) {
+				if model != "token-model" || providerID != "provider-1" {
+					return llms.ResolvedTarget{}, errors.New("token model was not used for resolution")
+				}
+				return llms.ResolvedTarget{
+					Provider: llms.Provider{ID: "provider-1", ProviderType: llms.ProviderFamilyOpenAI, BaseURL: "http://upstream.test/v1"},
+					Model:    llms.Model{Name: model},
+					WireAPI:  llms.APIProtocolResponses,
+				}, nil
+			},
+			client: &fakeRuntimeLLMHTTPClient{status: http.StatusOK, body: `{"id":"resp-1","model":"token-model","output":[]}`},
+			want:   http.StatusOK,
 		},
 		{
 			name:     "resolver error",
