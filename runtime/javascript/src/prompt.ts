@@ -1,3 +1,4 @@
+import { readAgentTelemetry } from "./telemetry.js";
 import path from "node:path";
 import process from "node:process";
 import { SANDBOX_ROOT } from "./constants.js";
@@ -51,6 +52,7 @@ export async function buildPromptRuntimeOptions(commandOptions: Omit<PromptComma
   const systemContext = [workflowContext, baseSystemContext].filter(Boolean).join("\n\n");
   return {
     provider,
+    telemetry: readAgentTelemetry(provider, process.env),
     model: commandOptions.model,
     effort: commandOptions.effort,
     stateRoot,

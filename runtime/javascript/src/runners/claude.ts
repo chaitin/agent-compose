@@ -1,3 +1,4 @@
+import { providerTelemetryEnv } from "../telemetry.js";
 import { existsSync } from "node:fs";
 import { flattenEnvMap } from "../mcp-config.js";
 import { uniqueDirectories } from "../paths.js";
@@ -37,8 +38,8 @@ function claudeExecutable(): string | undefined {
   return existsSync("/usr/bin/claude") ? "/usr/bin/claude" : undefined;
 }
 
-function claudeEnvironment(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, IS_SANDBOX: "1" };
+function claudeEnvironment(options: RunnerOptions): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...providerTelemetryEnv("claude", options.telemetry, process.env), IS_SANDBOX: "1" };
   if (!env.ANTHROPIC_API_KEY && env.LLM_API_KEY) {
     env.ANTHROPIC_API_KEY = env.LLM_API_KEY;
   }
@@ -96,7 +97,7 @@ export class ClaudeRunner {
     const mcpServers = toClaudeMCPConfig(this.options.mcpConfig as Record<string, unknown> | undefined);
     return {
       cwd: this.options.workspace,
-      env: claudeEnvironment(),
+      env: claudeEnvironment(this.options),
       ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
       additionalDirectories: uniqueDirectories([this.options.stateRoot, this.options.home, this.options.runtimeRoot]),
       includePartialMessages: true,

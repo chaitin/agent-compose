@@ -897,3 +897,57 @@ agent-compose config --quiet
 - 跨目录操作 project 时使用 `-f /path/to/project/agent-compose.yml` 或 `-f /path/to/project/agent-compose.yaml`。
 - 操作远程 daemon 时显式传入 `--host`，并确认目标 daemon 上的 project 名称和配置文件路径符合预期。
 - 脚本和自动化系统使用 `--json`，避免依赖表格列宽或文本排版。
+
+## Agent 原生遥测
+
+在 daemon 环境（部署时的 `.env` 文件）中配置后重启 daemon。新的执行，包括恢复的
+sandbox 中的新执行，都会收到当前设置；已经运行的 provider 进程仍使用启动时的设置。
+
+```dotenv
+AGENT_TELEMETRY_OTLP_ENDPOINT=http://collector.example:4318
+# 可选认证；值使用百分号编码，例如空格写成 %20。
+# AGENT_TELEMETRY_OTLP_HEADERS=Authorization=Bearer%20your-token
+# AGENT_TELEMETRY_CAPTURE_CONTENT=true
+```
+
+地址是 **OTLP/HTTP 基础 URL**，runtime 按信号追加 `/v1/logs`、`/v1/traces` 或
+`/v1/metrics`。支持 URL 路径前缀；信号路径后缀、URL 用户凭证、查询参数和 fragment
+会在启动时被拒绝。collector 必须支持 Codex、Claude 和 OpenCode 使用的 OTLP/HTTP JSON；
+DSH 使用其原生 OTLP/HTTP logs exporter。此集成不支持仅接受 gRPC 的 collector。
+地址必须从 **sandbox 内部**可达，不能仅从 daemon 可达；`localhost` 指向 guest 自身。
+系统不会自动部署 collector 或开放端口。
+
+| 默认 guest 中的 provider | 受管理的原生导出 |
+| --- | --- |
+| Codex 0.146.0 | logs、traces、metrics；通过每次调用的 SDK 配置覆盖启用 |
+| Claude Code 2.1.220 | metrics、logs/events；不启用 beta traces |
+| OpenCode 1.18.9 | 基础运行 logs 和 traces；LLM spans 需要显式开启内容采集 |
+| DeepSeek Harness | 仅在开启内容采集且实际 backend 导出 `SessionTelemetryMode.FULL` 时导出 FULL 会话 logs |
+| Pi 0.82.1 | 尚无已集成的官方原生 exporter；runtime 提示后继续执行，不向 Pi 传递 collector 凭证 |
+
+此初版同时启用表中 provider 支持的信号，没有单独的信号选择器。它不为 daemon 本身插桩，
+也不把 agent-compose 事件流转换为 spans。Pi 的
+[官方 observability 设计](https://github.com/badlogic/pi-mono/blob/v0.82.1/packages/agent/docs/observability.md)
+描述了外部监听器及可能的未来 OTel 包，并非已发布的 exporter；其 `PI_TELEMETRY` 开关
+控制安装统计，不是 OTLP。Gemini 不在此集成范围内，同样不会收到受管理的 collector 凭证。
+
+endpoint 为空时关闭 daemon 管理的导出，但不会删除用户在 guest 中自行配置的原生遥测设置。
+启用时，受支持 provider 继承的 `OTEL_*` 地址、headers 和 beta tracing 地址会被替换，
+避免旧的分信号环境变量把 collector 凭证发往其他地址。Codex 的 header 名不能包含点，
+OpenCode 的 header 值不能包含逗号；常见的 `Authorization=Bearer%20...` 在各 provider 中均可用。
+collector 凭证不会写入共享 provider 文件或 sandbox 持久化配置，但运行中的 guest 进程能读取
+这些凭证；这不是对 guest 内执行代码的凭证隔离机制。
+
+`AGENT_TELEMETRY_CAPTURE_CONTENT` 默认 `false`：关闭 Codex/Claude 支持的 prompt 和工具内容开关，
+关闭 OpenCode LLM spans，并跳过 DSH FULL 导出。它**不是通用脱敏器**：原生诊断日志、错误和
+provider 特有字段仍可能包含内容，需要按实际要求在 collector 配置脱敏。设置为 `true` 可能导出
+prompt、回答、工具参数/结果和文件内容。DSH 检查实际安装的 backend，而不是仅看 CLI 版本：rc.6
+backend 支持 FULL，较新 backend 可能不支持。不兼容时提示并跳过导出，不阻塞 agent，也不会
+静默退回反馈上传或厂商地址。
+
+Resource attributes 包含 `agent_compose.sandbox.id`、`agent_compose.provider`，以及可获得的
+run/project ID；DSH 通过原生记录钩子将这些属性附加到 log records。原生 session ID 仍由
+provider 定义，关联属性不会自动形成跨 provider 的统一分布式 trace。
+普通 prompt、交互式 prompt session 和 workflow 子 agent 使用同一配置。
+exporter 自行管理批处理与重试，collector 不可达不属于 agent 健康检查。正常退出可以刷新
+缓冲数据，强制终止仍可能丢失数据；用于审计前应使用实际 guest 版本验证收包。

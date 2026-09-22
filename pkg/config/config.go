@@ -42,6 +42,7 @@ const (
 var BuildVersion = "0"
 
 type Config struct {
+	AgentTelemetry             AgentTelemetryConfig
 	DbAddr                     string
 	DbName                     string
 	DbTimeout                  time.Duration
@@ -159,6 +160,7 @@ func NewConfig(di do.Injector) (*Config, error) {
 // configSources bundles every environment-derived config group NewConfig
 // assembles into the final *Config.
 type configSources struct {
+	AgentTelemetry  AgentTelemetryConfig
 	Database        databaseConfig
 	Sandbox         sandboxRootConfigValues
 	DaemonHTTP      daemonHTTPConfig
@@ -174,6 +176,10 @@ type configSources struct {
 }
 
 func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, error) {
+	telemetry, err := loadAgentTelemetryConfig()
+	if err != nil {
+		return configSources{}, err
+	}
 	database, err := loadDatabaseConfig(logger, dataRoot)
 	if err != nil {
 		return configSources{}, err
@@ -214,6 +220,7 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 		return configSources{}, err
 	}
 	return configSources{
+		AgentTelemetry:  telemetry,
 		Database:        database,
 		Sandbox:         sandbox,
 		DaemonHTTP:      daemonHTTP,
@@ -253,6 +260,7 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 	images, resources, cleanup := sources.Images, sources.Resources, sources.Cleanup
 	guestPaths, sandboxTimeouts, httpLimits := sources.GuestPaths, sources.SandboxTimeouts, sources.HTTPLimits
 	return &Config{
+		AgentTelemetry:             sources.AgentTelemetry,
 		DbAddr:                     database.DbAddr,
 		DbName:                     database.DbName,
 		DbTimeout:                  database.DbTimeout,

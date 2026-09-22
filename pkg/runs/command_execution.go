@@ -105,7 +105,10 @@ func (c *Controller) executeProjectRunCommand(ctx context.Context, exec projectR
 	}
 	execCtx, cancel := execution.ExecContext(ctx, 0)
 	defer cancel()
-	result, execErr := runtime.ExecStream(execCtx, sandbox, vmState, execution.BuildRuntimeCommandExecSpec(c.config, sandbox, guestRequestPath, c.config.GuestHomePath), writer)
+	spec := execution.BuildRuntimeCommandExecSpec(c.config, sandbox, guestRequestPath, c.config.GuestHomePath)
+	spec.Env["AGENT_COMPOSE_RUN_ID"] = run.RunID
+	spec.Env["AGENT_COMPOSE_PROJECT_ID"] = run.ProjectID
+	result, execErr := runtime.ExecStream(execCtx, sandbox, vmState, spec, writer)
 	if pullErr := execution.SyncGuestDirToHost(ctx, guestArtifactsDir, artifactsDir, guestDirReaderFor(runtime, sandbox, vmState)); pullErr != nil {
 		execErr = errors.Join(execErr, fmt.Errorf("pull command artifacts: %w", pullErr))
 	}

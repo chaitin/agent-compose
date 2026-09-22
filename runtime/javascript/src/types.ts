@@ -1,3 +1,4 @@
+import type { AgentTelemetry } from "./telemetry.js";
 import type { AgentEventSink } from "./agent-event.js";
 
 export type Provider = "codex" | "claude" | "gemini" | "opencode" | "pi" | "dsh";
@@ -15,6 +16,7 @@ export interface AgentResult {
 }
 
 export interface RunnerOptions {
+  telemetry?: AgentTelemetry;
   provider: Provider;
   model?: string;
   effort?: "low" | "medium" | "high" | "xhigh" | "max";

@@ -1,3 +1,4 @@
+import { providerTelemetryEnv } from "../telemetry.js";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
@@ -86,7 +87,7 @@ export class DshRunner {
       }
 
       const env: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...providerTelemetryEnv("dsh", this.options.telemetry, process.env),
         HOME: this.options.home,
         DSH_PERMISSION_MODE: "danger-full-access",
         DSH_SESSION_ROOT: sessionRoot,
