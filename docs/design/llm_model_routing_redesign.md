@@ -639,6 +639,14 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   理由，否则测试失败。`TestPrepareAgentLLMRejectsClaudeChatUpstream` 已改写为正向用例
   `TestPrepareAgentLLMClaudeConvertsChatUpstream`。
 
-- **文档**：`docs/pages` 的 YAML 手册 en / zh-CN 已随 M4 更新并通过
-  `task docs:build`；`guest-image-abi.md` 中英两版已按 dsh 的决策改写。
-  `docs/design/llm-provider-rpc.md` 与 release note 尚未同步。
+- **文档：已同步**。`docs/pages` 的 YAML 手册 en / zh-CN 随 M4 更新并通过
+  `task docs:build`；`guest-image-abi.md` 中英两版按 dsh 的决策改写；
+  `docs/design/llm-provider-rpc.md` 的「Runtime behavior」「Validation」两节按新的
+  解析规则重写——它此前仍在描述被本次改造删掉的保留连接优先级、`<connection>/<model>`
+  前缀、按家族兜底，并且断言 claude 不能用 chat-only 连接、codex 不能用 anthropic
+  连接（这两条现在都与事实相反）。
+
+  设计稿提到的 release note 在仓库内没有落点：本仓库无 CHANGELOG，
+  `.github/pull_request_template.md` 也不要求，发布说明是在打 tag 时写进 GitHub
+  release body 的（`.github/workflows/notify-dingtalk-release.yml` 消费它）。
+  因此这不是一个待补的文件，而是发布时的动作；相关素材在各 commit message 里。
