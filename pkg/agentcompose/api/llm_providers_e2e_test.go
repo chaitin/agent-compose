@@ -64,7 +64,7 @@ func TestE2ELLMProviderLiveConfiguration(t *testing.T) {
 	}
 	generate := func(expectedPath, expectedAuth string) {
 		t.Helper()
-		response, err := client.Generate(ctx, connect.NewRequest(&agentcomposev2.GenerateLLMRequest{Prompt: "hello", Model: "live/literal-model"}))
+		response, err := client.Generate(ctx, connect.NewRequest(&agentcomposev2.GenerateLLMRequest{Prompt: "hello", Model: "literal-model"}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,7 +92,7 @@ func TestE2ELLMProviderLiveConfiguration(t *testing.T) {
 	if _, err := client.UpdateProvider(ctx, connect.NewRequest(&agentcomposev2.UpdateProviderRequest{Provider: spec})); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Generate(ctx, connect.NewRequest(&agentcomposev2.GenerateLLMRequest{Prompt: "hello", Model: "live/literal-model"})); err == nil {
+	if _, err := client.Generate(ctx, connect.NewRequest(&agentcomposev2.GenerateLLMRequest{Prompt: "hello", Model: "literal-model"})); err == nil {
 		t.Fatal("disabled provider accepted generation")
 	}
 	select {
@@ -144,7 +144,7 @@ func TestE2ELLMProviderAnthropicMessagesLiveConfiguration(t *testing.T) {
 	if _, err := client.CreateProvider(ctx, connect.NewRequest(&agentcomposev2.CreateProviderRequest{Provider: spec})); err != nil {
 		t.Fatal(err)
 	}
-	response, err := client.Generate(ctx, connect.NewRequest(&agentcomposev2.GenerateLLMRequest{Prompt: "hello", Model: "claude/literal-model"}))
+	response, err := client.Generate(ctx, connect.NewRequest(&agentcomposev2.GenerateLLMRequest{Prompt: "hello", Model: "literal-model"}))
 	if err != nil {
 		t.Fatal(err)
 	}

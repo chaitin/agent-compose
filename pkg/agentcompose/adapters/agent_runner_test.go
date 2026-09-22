@@ -124,8 +124,10 @@ func TestAgentRunnerPrepareSandboxAgentEnvironmentUsesOnlyCurrentAgent(t *testin
 	if env["OPENAI_API_KEY"] == "" || env["OPENAI_BASE_URL"] == "" {
 		t.Fatalf("missing current Codex environment: %#v", env)
 	}
-	if env["ANTHROPIC_API_KEY"] == "" || env["ANTHROPIC_BASE_URL"] == "" || env["ANTHROPIC_API_KEY"] == "anthropic-upstream-secret" {
-		t.Fatalf("missing or leaked Claude environment: %#v", env)
+	// The agent is configured once, for the dialect it names: a Codex run must
+	// not receive the other provider family's environment.
+	if env["ANTHROPIC_API_KEY"] != "" || env["ANTHROPIC_BASE_URL"] != "" {
+		t.Fatalf("another agent's Claude environment leaked: %#v", env)
 	}
 	if data, err := os.ReadFile(execution.HostAgentSystemPromptPath(session)); err != nil || string(data) != definition.SystemPrompt {
 		t.Fatalf("system prompt = %q err=%v", string(data), err)

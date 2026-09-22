@@ -423,6 +423,37 @@ codex/claude 不再限制上游家族（由矩阵决定）。
 
 ### 已完成
 
+**M5 代理：direct / managed 二分**（本次改动）
+
+`PrepareAgentLLM` 现在先做一次判定，再决定走哪条路：
+
+- **direct**：agent 的 `env` 里声明了自己的上游 → 用**同一个** Dialect writer 把
+  guest 指向那个上游，凭据就是 agent 自己的 key，**不查 catalog、不签 token、
+  不代理、不转换**，model 取 agent 声明的/`env` 里的，原样。
+- **managed**：agent 没声明 → catalog 拥有上游，一切照旧。
+
+两条路互斥，且判据是**声明**而不是**兜底**。细节规则：
+
+- 只声明 key（无 endpoint）算完整声明——vendor 的公开 endpoint 是 vendor 的属性，
+  不是 daemon 的路由选择；只声明 endpoint 不算，daemon 没有凭据可用，也不能编一个。
+- `LLM_API_PROTOCOL` 未声明时取该 agent 的 `Canonical`，因为这条路上没有转换，
+  这是它自己的 CLI 对该 endpoint 会选的协议。
+- 声明的协议 agent 说不出来 → **报错**，不静默改写：在 agent env 里写连接，就是
+  要求"key 进 guest、daemon 别管"；要 daemon 代管就写 catalog connection。
+
+`AgentLLM` 因此显式携带 `Endpoint`/`Credential`（guest 视角的最终值），而不是一个
+还需要每个 writer 自己去拼 facade 路由的 daemon base URL——writer 从此只是格式化
+一个已经定好的决定。`MergeManagedExecEnv` 不再抹掉 base env 里的 provider key：
+那正是 direct 模式要保住的东西。
+
+### 进行中
+
+- **删除旧层**：`resolver.go` 一族、`startup_config.go`、session-env provider、
+  `SplitModelReference` 及其消费者（`llm_client.go`、`command_config.go`、
+  `sandbox_preparation.go`）正在迁移/删除。
+
+### 未完成
+
 **M3 代理：connection-bound token + 弱转发**（本次改动）
 
 - `FacadeToken` 增加 `GuestModel`（migration 16，旧 token 为空则保持旧的
@@ -443,9 +474,9 @@ codex/claude 不再限制上游家族（由矩阵决定）。
 
 ### 进行中
 
-- **预览路径**：`pkg/llms/agent_model_resolution.go` 是最后一个走旧解析器的
-  只读消费者（项目 UI 预览每个 agent 会选哪个模型），正在改写为
-  `Catalog` + `Catalog.DefaultModel()`，保持 proto 契约不变。
+- **删除旧层**：`resolver.go` 一族、`startup_config.go`、session-env provider、
+  `SplitModelReference` 及其消费者（`llm_client.go`、`command_config.go`、
+  `sandbox_preparation.go`）正在迁移/删除。
 
 ### 未完成
 

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
-	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -18,7 +17,7 @@ func TestSandboxProviderEnvPersistsOnlyProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSandbox returned error: %v", err)
 	}
-	llms.SetSandboxProviderEnvItems(sandbox, []domain.SandboxEnvVar{
+	sandbox.SetProviderEnvItems([]domain.SandboxEnvVar{
 		{Name: "LLM_API_ENDPOINT", Value: "https://sandbox.example/v1"},
 		{Name: "LLM_API_KEY", Value: "sandbox-key", Secret: true},
 		{Name: "ORDINARY", Value: "ordinary"},

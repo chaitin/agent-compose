@@ -277,7 +277,7 @@ func (b *SandboxRPCBridge) createSandboxWithAgent(ctx context.Context, req sandb
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	llms.SetSandboxProviderEnvItems(session, providerEnvItems)
+	session.SetProviderEnvItems(providerEnvItems)
 	if err := b.workspaceEnsurer.Ensure(ctx, session); err != nil {
 		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = b.store.UpdateSandbox(ctx, session)

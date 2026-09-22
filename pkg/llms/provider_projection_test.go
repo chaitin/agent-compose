@@ -209,3 +209,69 @@ func TestProjectDaemonLLMConfigIgnoresMissingStore(t *testing.T) {
 		t.Fatalf("ProjectDaemonLLMConfig: %v", err)
 	}
 }
+
+// TestProjectDaemonLLMConfigUsesProtocolInsteadOfEndpointShape pins that the
+// declared protocol, not the shape of the endpoint path, decides which family
+// the daemon environment projects. A responses gateway whose path ends in
+// "/messages" must still register as an OpenAI connection.
+func TestProjectDaemonLLMConfigUsesProtocolInsteadOfEndpointShape(t *testing.T) {
+	isolateLLMEnv(t)
+	t.Setenv("LLM_API_ENDPOINT", "https://gateway.example/custom/messages")
+	t.Setenv("LLM_API_PROTOCOL", APIProtocolResponses)
+	t.Setenv("LLM_API_KEY", "generic-key")
+	t.Setenv("LLM_MODEL", "test-model")
+
+	store := &projectionStore{}
+	if err := ProjectDaemonLLMConfig(context.Background(), nil, store); err != nil {
+		t.Fatalf("ProjectDaemonLLMConfig error = %v", err)
+	}
+	if len(store.upserts) != 1 {
+		t.Fatalf("upserts = %#v, want one", store.upserts)
+	}
+	provider := store.upserts[0].Provider
+	if provider.ProviderType != ProviderFamilyOpenAI || provider.DefaultWireAPI != APIProtocolResponses || provider.BaseURL != "https://gateway.example/custom/messages" {
+		t.Fatalf("projected provider = %#v", provider)
+	}
+}
+
+func TestDefaultAnthropicEnvProviderInputRequiresExplicitSignal(t *testing.T) {
+	tests := []struct {
+		name   string
+		values map[string]string
+		want   bool
+	}{
+		{
+			name: "generic OpenAI configuration",
+			values: map[string]string{
+				"LLM_API_ENDPOINT": "https://gateway.example/openai",
+				"LLM_API_PROTOCOL": APIProtocolResponses,
+				"LLM_API_KEY":      "generic-key",
+			},
+		},
+		{
+			name: "generic messages configuration",
+			values: map[string]string{
+				"LLM_API_ENDPOINT": "https://gateway.example/anthropic",
+				"LLM_API_PROTOCOL": APIProtocolMessages,
+				"LLM_API_KEY":      "generic-key",
+			},
+			want: true,
+		},
+		{
+			name: "Anthropic-specific configuration",
+			values: map[string]string{
+				"ANTHROPIC_BASE_URL": "https://gateway.example/anthropic",
+				"ANTHROPIC_API_KEY":  "anthropic-key",
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasDefaultAnthropicEnvProviderInput(mapLookup(tt.values)); got != tt.want {
+				t.Fatalf("hasDefaultAnthropicEnvProviderInput() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}

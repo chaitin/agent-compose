@@ -176,7 +176,7 @@ func TestSchedulerCommandExecutorRebuildsAndOwnsCommandFacadeTokens(t *testing.T
 		wantTokenExists bool
 	}{
 		{name: "normal completion cleans every command token"},
-		{name: "unconfirmed termination retains every command token", runtimeErr: domain.ErrExecTerminationUnconfirmed, wantTokenCount: 3, wantTokenExists: true},
+		{name: "unconfirmed termination retains every command token", runtimeErr: domain.ErrExecTerminationUnconfirmed, wantTokenCount: 1, wantTokenExists: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -230,8 +230,10 @@ func TestSchedulerCommandExecutorRebuildsAndOwnsCommandFacadeTokens(t *testing.T
 				t.Fatal("runtime did not receive command Sandbox clone")
 			}
 			env := domain.SandboxEnvMap(runtime.session.RuntimeEnvItems)
-			if env["ANTHROPIC_API_KEY"] == "" || env["ANTHROPIC_API_KEY"] == "persisted-upstream-key" || env["ANTHROPIC_BASE_URL"] == "https://anthropic.persisted.test" {
-				t.Fatalf("command did not reconstruct Anthropic startup facade environment: %#v", env)
+			// One dialect is prepared for the agent the command names, so the
+			// other provider family's facade must not appear.
+			if env["ANTHROPIC_API_KEY"] != "" || env["ANTHROPIC_BASE_URL"] != "" {
+				t.Fatalf("command reconstructed another family's startup facade: %#v", env)
 			}
 			if env["OPENAI_API_KEY"] == "" || env["OPENAI_API_KEY"] != env["AGENT_COMPOSE_SANDBOX_TOKEN"] {
 				t.Fatalf("selected Codex facade environment = %#v", env)
@@ -253,7 +255,6 @@ func TestSchedulerCommandExecutorRebuildsAndOwnsCommandFacadeTokens(t *testing.T
 			if got := countSchedulerCommandFacadeTokens(t, ctx, configDB); got != tt.wantTokenCount {
 				t.Fatalf("persisted scheduler command tokens = %d, want %d", got, tt.wantTokenCount)
 			}
-			assertSchedulerCommandTokenState(t, ctx, configDB, env["ANTHROPIC_API_KEY"], tt.wantTokenExists)
 			assertSchedulerCommandTokenState(t, ctx, configDB, env["AGENT_COMPOSE_SANDBOX_TOKEN"], tt.wantTokenExists)
 		})
 	}

@@ -16,12 +16,8 @@ import (
 // Callers that hold a possibly-nil concrete store must pass a true nil
 // interface when the store is absent (see adapters.facadeStoreFor); wrapping a
 // nil pointer in the interface would bypass the `store == nil` guards here.
-//
-// LLMResolverStore is still embedded for the pre-agent startup facade in
-// startup_config.go; it goes away when that path is migrated to the catalog.
 type FacadeStore interface {
 	llms.AgentLLMStore
-	llms.LLMResolverStore
 }
 
 const (

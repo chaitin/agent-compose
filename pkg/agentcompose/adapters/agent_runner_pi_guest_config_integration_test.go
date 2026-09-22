@@ -143,9 +143,14 @@ func TestIntegrationAgentRunnerFreshGuestHomeIncludesEveryGeneratedProviderFile(
 			if err != nil {
 				t.Fatal(err)
 			}
+			// In direct mode the declared protocol must be one the agent can
+			// speak: the daemon is not converting this run.
 			protocol := "responses"
-			if test.provider == "claude" {
+			switch test.provider {
+			case "claude":
 				protocol = "messages"
+			case "opencode":
+				protocol = "chat_completions"
 			}
 			sandbox.ProviderEnvItems = []domain.SandboxEnvVar{{Name: "LLM_API_ENDPOINT", Value: "https://upstream.example.test/v1"}, {Name: "LLM_API_KEY", Value: "fixture-upstream-key"}, {Name: "LLM_API_PROTOCOL", Value: protocol}, {Name: "LLM_MODEL", Value: "first"}}
 			hostHome := execution.HostSandboxHome(sandbox)
@@ -203,20 +208,24 @@ func TestIntegrationAgentRunnerFreshGuestHomeIncludesEveryGeneratedProviderFile(
 			if !slices.Equal(runtime.dirWrites, []string{"/workspace", "/root"}) {
 				t.Fatalf("initial seeding order = %v", runtime.dirWrites)
 			}
-			// Startup facade environment is retained after the initial file transfer.
-			key := "OPENAI_API_KEY"
-			if test.provider == "claude" {
-				key = "ANTHROPIC_API_KEY"
-			}
+			// The sandbox declares its own upstream, so the declared credential
+			// is passed through: direct mode mints no facade token. An agent
+			// kind with no LLM dialect receives no configuration at all.
 			environment := map[string]string{}
 			for _, item := range sandbox.RuntimeEnvItems {
 				environment[item.Name] = item.Value
 			}
-			if environment[key] == "" || environment[key] == "fixture-upstream-key" {
-				t.Fatalf("startup facade token missing or not scoped for %s", test.provider)
+			if test.provider == "gemini" {
+				if len(environment) != 0 {
+					t.Fatalf("agent without an LLM dialect received an environment: %#v", environment)
+				}
+				return
 			}
-			if test.provider != "gemini" && environment["AGENT_COMPOSE_SANDBOX_TOKEN"] == "" {
-				t.Fatalf("selected provider facade token missing for %s", test.provider)
+			if environment["LLM_API_KEY"] != "fixture-upstream-key" || environment["LLM_API_ENDPOINT"] != "https://upstream.example.test/v1" {
+				t.Fatalf("declared upstream was not passed through for %s: %#v", test.provider, environment)
+			}
+			if environment["AGENT_COMPOSE_SANDBOX_TOKEN"] != "" {
+				t.Fatalf("direct preparation minted a facade token for %s: %#v", test.provider, environment)
 			}
 		})
 	}

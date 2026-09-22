@@ -15,7 +15,6 @@ import (
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	"github.com/chaitin/agent-compose/pkg/images"
-	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
@@ -268,7 +267,7 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 		_, removeErr := c.removal.Remove(context.WithoutCancel(ctx), sandbox.Summary.ID, true)
 		return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, errors.Join(bindErr, removeErr)
 	}
-	llms.SetSandboxProviderEnvItems(sandbox, prepared.ProviderEnvItems)
+	sandbox.SetProviderEnvItems(prepared.ProviderEnvItems)
 	if err := c.ensureProjectRunSandboxWorkspace(ctx, sandbox); err != nil {
 		return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, err
 	}

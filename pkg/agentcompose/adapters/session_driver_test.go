@@ -355,12 +355,11 @@ func TestSandboxDriverFreshStartFailureRevokesPreparedAgentToken(t *testing.T) {
 		t.Fatalf("PrepareSandboxAgentEnvironment returned error: %v", err)
 	}
 	rawToken := domain.SandboxEnvMap(session.RuntimeEnvItems)["AGENT_COMPOSE_SANDBOX_TOKEN"]
-	anthropicToken := domain.SandboxEnvMap(session.RuntimeEnvItems)["ANTHROPIC_API_KEY"]
 	if rawToken == "" {
 		t.Fatal("prepared sandbox token is empty")
 	}
-	if anthropicToken == "" || anthropicToken == "anthropic-upstream-secret" {
-		t.Fatalf("prepared Anthropic token = %q", anthropicToken)
+	if env := domain.SandboxEnvMap(session.RuntimeEnvItems); env["ANTHROPIC_API_KEY"] != "" || env["ANTHROPIC_BASE_URL"] != "" {
+		t.Fatalf("preparation minted another family's startup facade: %#v", env)
 	}
 	startErr := errors.New("runtime start failed")
 	driver := NewSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{ensureErr: startErr}})
@@ -373,13 +372,6 @@ func TestSandboxDriverFreshStartFailureRevokesPreparedAgentToken(t *testing.T) {
 	}
 	if token.RevokedAt.IsZero() {
 		t.Fatalf("failed fresh start token remains active: %#v", token)
-	}
-	anthropicFacadeToken, err := configDB.GetLLMFacadeToken(ctx, anthropicToken)
-	if err != nil {
-		t.Fatalf("GetLLMFacadeToken Anthropic token: %v", err)
-	}
-	if anthropicFacadeToken.RevokedAt.IsZero() {
-		t.Fatalf("failed fresh start Anthropic token remains active: %#v", anthropicFacadeToken)
 	}
 }
 
@@ -432,12 +424,11 @@ func TestSandboxDriverReleasedRuntimeRecreationFailureRevokesPreparedAgentToken(
 		t.Fatalf("PrepareSandboxAgentEnvironment returned error: %v", err)
 	}
 	rawToken := domain.SandboxEnvMap(session.RuntimeEnvItems)["AGENT_COMPOSE_SANDBOX_TOKEN"]
-	anthropicToken := domain.SandboxEnvMap(session.RuntimeEnvItems)["ANTHROPIC_API_KEY"]
 	if rawToken == "" {
 		t.Fatal("prepared sandbox token is empty")
 	}
-	if anthropicToken == "" || anthropicToken == "anthropic-upstream-secret" {
-		t.Fatalf("prepared Anthropic token = %q", anthropicToken)
+	if env := domain.SandboxEnvMap(session.RuntimeEnvItems); env["ANTHROPIC_API_KEY"] != "" || env["ANTHROPIC_BASE_URL"] != "" {
+		t.Fatalf("preparation minted another family's startup facade: %#v", env)
 	}
 	if err := store.SaveVMState(session.Summary.ID, domain.VMState{
 		Driver:    driverpkg.RuntimeDriverBoxlite,
@@ -457,13 +448,6 @@ func TestSandboxDriverReleasedRuntimeRecreationFailureRevokesPreparedAgentToken(
 	}
 	if token.RevokedAt.IsZero() {
 		t.Fatalf("failed runtime recreation token remains active: %#v", token)
-	}
-	anthropicFacadeToken, err := configDB.GetLLMFacadeToken(ctx, anthropicToken)
-	if err != nil {
-		t.Fatalf("GetLLMFacadeToken Anthropic token: %v", err)
-	}
-	if anthropicFacadeToken.RevokedAt.IsZero() {
-		t.Fatalf("failed runtime recreation Anthropic token remains active: %#v", anthropicFacadeToken)
 	}
 }
 
@@ -489,6 +473,9 @@ func TestSandboxDriverFailedRunningSandboxCheckKeepsPreparedAgentToken(t *testin
 	configDB, store, err := testutil.OpenStores(t, config)
 	if err != nil {
 		t.Fatalf("OpenStores returned error: %v", err)
+	}
+	if err := llms.ProjectDaemonLLMConfig(ctx, config, configDB); err != nil {
+		t.Fatalf("project daemon llm config: %v", err)
 	}
 	session, err := store.CreateSandbox(ctx, "running sandbox", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
 	if err != nil {
@@ -552,6 +539,9 @@ func TestSandboxDriverPostStartPersistenceFailureKeepsPreparedAgentToken(t *test
 	configDB, store, err := testutil.OpenStores(t, config)
 	if err != nil {
 		t.Fatalf("OpenStores returned error: %v", err)
+	}
+	if err := llms.ProjectDaemonLLMConfig(ctx, config, configDB); err != nil {
+		t.Fatalf("project daemon llm config: %v", err)
 	}
 	session, err := store.CreateSandbox(ctx, "post-start persistence failure", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
 	if err != nil {

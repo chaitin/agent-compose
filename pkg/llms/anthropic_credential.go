@@ -1,55 +1,13 @@
 package llms
 
-import (
-	"context"
-	"os"
-	"strings"
+import "strings"
 
-	appconfig "github.com/chaitin/agent-compose/pkg/config"
-	domain "github.com/chaitin/agent-compose/pkg/model"
-)
-
+// anthropicCredential is one credential value together with the wire
+// authentication semantics it must be presented with.
 type anthropicCredential struct {
 	apiKey     string
 	authHeader string
 	authScheme string
-}
-
-// layeredAnthropicCredential selects the credential value and its wire
-// authentication semantics from one winning source layer. A generic key in a
-// higher layer must not be paired with, or displaced by, a family-specific
-// credential from a lower layer.
-func layeredAnthropicCredential(ctx context.Context, config *appconfig.Config, store GlobalEnvStore, sandboxItems []domain.SandboxEnvVar) anthropicCredential {
-	if credential, ok := anthropicCredentialFromItems(sandboxItems); ok {
-		return credential
-	}
-	if store != nil {
-		globalItems, err := store.ListGlobalEnv(ctx)
-		if err == nil {
-			if credential, ok := anthropicCredentialFromItems(globalItems); ok {
-				return credential
-			}
-		}
-	}
-	if credential, ok := anthropicCredentialFromValues(
-		os.Getenv("ANTHROPIC_API_KEY"),
-		os.Getenv("ANTHROPIC_AUTH_TOKEN"),
-		os.Getenv("LLM_API_KEY"),
-	); ok {
-		return credential
-	}
-	if credential, ok := anthropicCredentialFromValues("", "", configLLMEnvValue(config, "LLM_API_KEY")); ok {
-		return credential
-	}
-	return anthropicCredential{authHeader: "x-api-key"}
-}
-
-func anthropicCredentialFromItems(items []domain.SandboxEnvVar) (anthropicCredential, bool) {
-	return anthropicCredentialFromValues(
-		EnvItemValue(items, "ANTHROPIC_API_KEY"),
-		EnvItemValue(items, "ANTHROPIC_AUTH_TOKEN"),
-		EnvItemValue(items, "LLM_API_KEY"),
-	)
 }
 
 func anthropicCredentialFromValues(apiKey, authToken, genericKey string) (anthropicCredential, bool) {

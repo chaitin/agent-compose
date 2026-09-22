@@ -11,6 +11,19 @@ import (
 	"github.com/chaitin/agent-compose/pkg/storedtime"
 )
 
+// firstNonEmptyTrimmed returns the first value that is non-empty after
+// trimming, returning the trimmed form. It is intentionally distinct from
+// firstNonEmpty (which returns the raw value) because the LLM resolution paths
+// normalize the value they finally use.
+func firstNonEmptyTrimmed(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func ScanProvider(scan func(dest ...any) error) (Provider, error) {
 	var item Provider
 	var genericResponsesTextParts, enabled int
@@ -237,13 +250,12 @@ func endpointAlreadyMatchesProtocol(raw, wireAPI string) bool {
 	}
 }
 
+// ProviderScopeIsConfigured reports whether a connection's stored base URL is a
+// complete endpoint that needs no protocol path appended. The daemon
+// environment projection stores a bare base URL and is the only scope that is
+// not an operator-configured endpoint.
 func ProviderScopeIsConfigured(scope string) bool {
-	switch strings.TrimSpace(scope) {
-	case ProviderScopeEnvDefault, ProviderScopeSessionEnv:
-		return false
-	default:
-		return true
-	}
+	return strings.TrimSpace(scope) != ProviderScopeEnvDefault
 }
 
 func ProviderForwardHeaders(provider Provider) (http.Header, error) {

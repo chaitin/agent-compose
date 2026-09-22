@@ -17,7 +17,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/storage/configstore"
 )
 
-func TestEnsureSessionCommandFacadeConfigRebuildsStartupAndSelectedEnvironment(t *testing.T) {
+func TestEnsureSessionCommandFacadeConfigConfiguresSelectedAgent(t *testing.T) {
 	isolateLLMEnv(t)
 
 	ctx := context.Background()
@@ -34,29 +34,30 @@ func TestEnsureSessionCommandFacadeConfigRebuildsStartupAndSelectedEnvironment(t
 	if err != nil {
 		t.Fatalf("EnsureSessionCommandFacadeConfig returned error: %v", err)
 	}
-	if result.Env["ANTHROPIC_API_KEY"] == "" || result.Env["ANTHROPIC_AUTH_TOKEN"] != result.Env["ANTHROPIC_API_KEY"] || result.Env["ANTHROPIC_BASE_URL"] == "" {
-		t.Fatalf("command Anthropic startup environment = %#v", result.Env)
+	// PrepareAgentLLM decides one dialect for the named agent, so the retired
+	// startup facade for the other family must not appear.
+	if result.Env["ANTHROPIC_API_KEY"] != "" || result.Env["ANTHROPIC_BASE_URL"] != "" {
+		t.Fatalf("command environment contains a startup Anthropic facade = %#v", result.Env)
 	}
 	if result.Env["AGENT_COMPOSE_SANDBOX_TOKEN"] == "" || result.Env["OPENAI_API_KEY"] != result.Env["AGENT_COMPOSE_SANDBOX_TOKEN"] {
-		t.Fatalf("selected Codex environment did not override startup OpenAI values = %#v", result.Env)
+		t.Fatalf("selected Codex environment = %#v", result.Env)
 	}
-	if result.Env["ANTHROPIC_API_KEY"] == result.Env["AGENT_COMPOSE_SANDBOX_TOKEN"] {
-		t.Fatalf("Anthropic and selected Codex tokens unexpectedly match")
+	if result.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses {
+		t.Fatalf("LLM_API_PROTOCOL = %q, want responses", result.Env["LLM_API_PROTOCOL"])
 	}
-	if len(result.TokenHashes) != 3 {
-		t.Fatalf("command token hashes = %#v, want startup Anthropic, startup OpenAI, and selected Codex", result.TokenHashes)
+	if len(result.TokenHashes) != 1 {
+		t.Fatalf("command token hashes = %#v, want exactly the selected Codex token", result.TokenHashes)
 	}
-	anthropicHash, _ := llms.HashFacadeToken(result.Env["ANTHROPIC_API_KEY"])
 	selectedHash, _ := llms.HashFacadeToken(result.Env["AGENT_COMPOSE_SANDBOX_TOKEN"])
-	if result.TokenHashes[0] != anthropicHash || result.TokenHashes[len(result.TokenHashes)-1] != selectedHash {
-		t.Fatalf("command token hash ordering = %#v", result.TokenHashes)
+	if result.TokenHashes[0] != selectedHash {
+		t.Fatalf("command token hash = %#v, want the selected token hash", result.TokenHashes)
 	}
-	if got := countCommandFacadeTokens(t, ctx, store, "run-command"); got != 3 {
-		t.Fatalf("persisted command facade tokens = %d, want 3", got)
+	if got := countCommandFacadeTokens(t, ctx, store, "run-command"); got != 1 {
+		t.Fatalf("persisted command facade tokens = %d, want 1", got)
 	}
 }
 
-func TestEnsureSessionCommandFacadeConfigCleansAllTokensAfterPartialFailure(t *testing.T) {
+func TestEnsureSessionCommandFacadeConfigCleansTokenAfterPartialFailure(t *testing.T) {
 	isolateLLMEnv(t)
 
 	ctx := context.Background()

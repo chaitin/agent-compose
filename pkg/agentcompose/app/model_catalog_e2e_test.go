@@ -59,10 +59,7 @@ func TestE2EModelCatalogConfiguresOpenCodeFacadeTarget(t *testing.T) {
 		t.Fatalf("load models.json: %v", err)
 	}
 
-	defaultTarget, err := llms.ResolveRuntimeLLMTarget(ctx, config, store, "", "")
-	if err != nil {
-		t.Fatalf("resolve models.json default: %v", err)
-	}
+	defaultTarget := resolveCatalogTarget(t, ctx, store, "", "")
 	if defaultTarget.Provider.ID != "baizhi" || defaultTarget.Model.ID != "deepseek-v4-flash" {
 		t.Fatalf("default target = %#v", defaultTarget)
 	}
@@ -99,10 +96,7 @@ func TestE2EModelCatalogConfiguresOpenCodeFacadeTarget(t *testing.T) {
 	if token.ProviderID != "baizhi" || token.Model != "deepseek-v4-flash" || token.WireAPI != llms.APIProtocolChatCompletions {
 		t.Fatalf("facade token = %#v", token)
 	}
-	target, err := llms.ResolveRuntimeLLMTarget(ctx, config, store, token.Model, token.ProviderID)
-	if err != nil {
-		t.Fatalf("resolve facade upstream target: %v", err)
-	}
+	target := resolveCatalogTarget(t, ctx, store, token.ProviderID, token.Model)
 	if target.Endpoint != "https://gateway.example.test/api/openai/v1/chat/completions" || target.MaxOutputTokens != 99999 {
 		t.Fatalf("upstream target = %#v", target)
 	}
@@ -120,6 +114,26 @@ func TestE2EModelCatalogConfiguresOpenCodeFacadeTarget(t *testing.T) {
 	if strings.Contains(string(guestConfig), "catalog-e2e-key") || strings.Contains(string(guestConfig), "gateway.example.test") {
 		t.Fatalf("OpenCode config leaked upstream configuration: %s", guestConfig)
 	}
+}
+
+// resolveCatalogTarget resolves one (connection, opaque model) pair through the
+// catalog snapshot the store feeds. An empty connection and model select the
+// configured default.
+func resolveCatalogTarget(t *testing.T, ctx context.Context, store llms.CatalogStore, connectionID, requested string) llms.ResolvedTarget {
+	t.Helper()
+	snapshot, err := llms.LoadCatalog(ctx, store)
+	if err != nil {
+		t.Fatalf("LoadCatalog: %v", err)
+	}
+	model, err := snapshot.SelectModel(requested)
+	if err != nil {
+		t.Fatalf("SelectModel(%q): %v", requested, err)
+	}
+	target, err := snapshot.Resolve(connectionID, model)
+	if err != nil {
+		t.Fatalf("Resolve(%q, %q): %v", connectionID, model, err)
+	}
+	return target
 }
 
 func TestE2ELoadMissingModelCatalogPreservesExistingDefault(t *testing.T) {

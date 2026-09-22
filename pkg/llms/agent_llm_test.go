@@ -30,22 +30,8 @@ func (s *prepareAgentLLMStore) SaveLLMFacadeToken(_ context.Context, token Facad
 	return nil
 }
 
-// bareModelFacadeStore backs the resolver-based facade paths that still read
-// LLMResolverStore rather than the catalog.
-type bareModelFacadeStore struct {
-	*resolverCoverageStore
-	savedTokens []FacadeToken
-}
-
-func newBareModelFacadeStore() *bareModelFacadeStore {
-	return &bareModelFacadeStore{resolverCoverageStore: newResolverCoverageStore()}
-}
-
-func (s *bareModelFacadeStore) SaveLLMFacadeToken(_ context.Context, token FacadeToken) error {
-	s.savedTokens = append(s.savedTokens, token)
-	return nil
-}
-
+// bareModelSandbox is a sandbox with no agent-declared environment, so
+// PrepareAgentLLM resolves through the catalog.
 func bareModelSandbox(root, id string) *domain.Sandbox {
 	return &domain.Sandbox{Summary: domain.SandboxSummary{
 		ID:            id,

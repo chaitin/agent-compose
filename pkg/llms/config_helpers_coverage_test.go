@@ -127,8 +127,19 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if got := NormalizeAPIEndpointForProtocol("https://api.example.test", APIProtocolChatCompletions); got != "https://api.example.test/v1/chat/completions" {
 		t.Fatalf("NormalizeAPIEndpointForProtocol root = %q", got)
 	}
-	merged := MergeManagedExecEnv(map[string]string{"OPENAI_API_KEY": "secret", "A": "1"}, map[string]string{"B": "2"})
-	if merged["OPENAI_API_KEY"] != "" || merged["A"] != "1" || merged["B"] != "2" {
+	// A declared provider credential in the base environment must survive the
+	// merge; only keys the managed layer actually sets are overwritten.
+	merged := MergeManagedExecEnv(
+		map[string]string{"OPENAI_API_KEY": "declared", "ANTHROPIC_API_KEY": "base-only", "A": "1"},
+		map[string]string{"OPENAI_API_KEY": "managed", "B": "2"},
+	)
+	if merged["OPENAI_API_KEY"] != "managed" {
+		t.Fatalf("managed provider key did not win: %#v", merged)
+	}
+	if merged["ANTHROPIC_API_KEY"] != "base-only" {
+		t.Fatalf("declared provider key was stripped: %#v", merged)
+	}
+	if merged["A"] != "1" || merged["B"] != "2" {
 		t.Fatalf("merged env = %#v", merged)
 	}
 	if items := EnvItemsFromMap(map[string]string{"B": "2", "A": "1"}, true); len(items) != 2 || !items[0].Secret || items[0].Name != "A" {
@@ -401,19 +412,6 @@ func TestClientConfigAndSelectionWorkflows(t *testing.T) {
 	if got := ResolveSetting(ctx, nil, "fallback", "MISSING_SETTING"); got != "fallback" {
 		t.Fatalf("ResolveSetting fallback = %q", got)
 	}
-
-	models := []Model{{ID: "m1", Name: "gpt-1"}, {ID: "m2", Name: "gpt-2", DefaultModel: true}}
-	providers := []Provider{{ID: "p2", ProviderType: ProviderFamilyOpenAI, Scope: ProviderScopeEnvDefault, Weight: 10}, {ID: "p1", ProviderType: ProviderFamilyOpenAI, Weight: 1}}
-	selected, provider, wireAPI, ok, err := SelectModelAndProvider(ctx, llmCoverageWireStore{ok: true, wireAPI: APIProtocolResponses}, ModelProviderSelection{Models: models, Providers: providers, ProviderFamily: ProviderFamilyOpenAI})
-	if err != nil || !ok || selected.ID != "m2" || provider.ID != "p2" || wireAPI != APIProtocolResponses {
-		t.Fatalf("selected=%#v provider=%#v wire=%q ok=%v err=%v", selected, provider, wireAPI, ok, err)
-	}
-	if _, _, _, ok, err := SelectModelAndProvider(ctx, llmCoverageWireStore{}, ModelProviderSelection{Models: models, Providers: providers, RequestedModel: "missing"}); err != nil || ok {
-		t.Fatalf("expected missing model ok=false err=%v", err)
-	}
-	if priority := ProviderSelectionPriority(ProviderScopeSessionEnv); priority != 0 {
-		t.Fatalf("session env priority = %d", priority)
-	}
 }
 
 func TestE2EClientConfigAndSelectionWorkflows(t *testing.T) {
@@ -426,13 +424,4 @@ type llmCoverageEnvStore struct {
 
 func (s llmCoverageEnvStore) ListGlobalEnv(context.Context) ([]domain.SandboxEnvVar, error) {
 	return s.items, nil
-}
-
-type llmCoverageWireStore struct {
-	ok      bool
-	wireAPI string
-}
-
-func (s llmCoverageWireStore) LLMProviderModelWireAPI(context.Context, string, string) (string, bool, error) {
-	return s.wireAPI, s.ok, nil
 }

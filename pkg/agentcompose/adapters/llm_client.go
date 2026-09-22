@@ -8,10 +8,13 @@ import (
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/llms"
-	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/storage/configstore"
 )
 
+// LLMClient is the daemon's own LLM caller, used by the scheduler when a host
+// model call is requested. It is not an agent runtime: it resolves against the
+// configured connection catalog exactly as the daemon would, and carries no
+// per-sandbox or per-scope environment.
 type LLMClient struct {
 	config *appconfig.Config
 	store  *configstore.ConfigStore
@@ -30,36 +33,32 @@ func NewLLMClient(config *appconfig.Config, store *configstore.ConfigStore) *LLM
 	}
 }
 
+// Generate makes one daemon-owned LLM call. The model is opaque: an empty model
+// selects the catalog default, and connection selection is the catalog's fixed
+// precedence. A daemon-owned call has no sandbox and therefore no per-scope
+// environment to layer on top of the catalog.
 func (c *LLMClient) Generate(ctx context.Context, prompt, model, outputSchemaJSON string) (llms.GenerateResult, error) {
-	return c.GenerateWithEnv(ctx, GenerateWithEnvRequest{Prompt: prompt, Model: model, OutputSchemaJSON: outputSchemaJSON})
-}
-
-// GenerateWithEnvRequest bundles the prompt/model inputs and scope/env
-// context GenerateWithEnv needs to resolve an LLM target and generate.
-type GenerateWithEnvRequest struct {
-	Prompt           string
-	Model            string
-	OutputSchemaJSON string
-	ScopeID          string
-	EnvItems         []domain.SandboxEnvVar
-}
-
-func (c *LLMClient) GenerateWithEnv(ctx context.Context, req GenerateWithEnvRequest) (llms.GenerateResult, error) {
-	if c == nil {
+	if c == nil || c.store == nil {
 		return llms.GenerateResult{}, fmt.Errorf("llm client is unavailable")
 	}
-	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, c.store, llms.RuntimeLLMTargetQuery{
-		Config: c.config, SessionID: req.ScopeID, PreferredProviderFamily: "", RequestedModel: req.Model, ProviderID: "", EnvItems: req.EnvItems,
-	})
+	catalog, err := llms.LoadCatalog(ctx, c.store)
+	if err != nil {
+		return llms.GenerateResult{}, err
+	}
+	selected, err := catalog.SelectModel(model)
+	if err != nil {
+		return llms.GenerateResult{}, err
+	}
+	target, err := catalog.Resolve("", selected)
 	if err != nil {
 		return llms.GenerateResult{}, err
 	}
 	return llms.Generate(ctx, c.client, llms.GenerateRequest{
 		Endpoint:         target.Endpoint,
 		Protocol:         target.WireAPI,
-		Prompt:           req.Prompt,
+		Prompt:           prompt,
 		Model:            firstNonEmpty(target.Model.ID, target.Model.Name),
-		OutputSchemaJSON: req.OutputSchemaJSON,
+		OutputSchemaJSON: outputSchemaJSON,
 		Headers:          target.Headers,
 		MaxOutputTokens:  firstPositive(target.MaxOutputTokens, configuredMaxOutputTokens(c.config)),
 	})

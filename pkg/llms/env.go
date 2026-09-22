@@ -19,6 +19,21 @@ const RuntimeBaseURLEnvName = "AGENT_COMPOSE_RUNTIME_BASE_URL"
 // disagree, which the agent reports as a hung or failed model call.
 const GuestModelEnvName = "AGENT_COMPOSE_RESOLVED_MODEL"
 
+// EnvItemValue returns the value of one environment item, matched
+// case-insensitively and trimmed, or "" when the item is absent.
+func EnvItemValue(items []domain.SandboxEnvVar, key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	for _, item := range domain.NormalizeEnvItems(items) {
+		if strings.EqualFold(strings.TrimSpace(item.Name), key) {
+			return strings.TrimSpace(item.Value)
+		}
+	}
+	return ""
+}
+
 func SchedulerCommandFacadeAgentModel(env map[string]string) (string, string) {
 	if env == nil {
 		return domain.DefaultAgentProvider, ""

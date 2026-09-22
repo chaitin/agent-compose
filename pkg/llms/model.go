@@ -12,7 +12,6 @@ const (
 	ProviderScopeSystem     = "system"
 	ProviderScopeCatalog    = "catalog"
 	ProviderScopeEnvDefault = "env_default"
-	ProviderScopeSessionEnv = "session_env"
 
 	ProviderIDDefaultOpenAI    = "default"
 	ProviderIDDefaultAnthropic = "anthropic"
