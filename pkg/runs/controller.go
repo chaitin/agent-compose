@@ -131,8 +131,7 @@ type llmFacadeTokenDeleter interface {
 }
 
 type llmFacadeStore interface {
-	llms.LLMResolverStore
-	SaveLLMFacadeToken(context.Context, llms.FacadeToken) error
+	llms.AgentLLMStore
 }
 
 type ControllerDependencies struct {

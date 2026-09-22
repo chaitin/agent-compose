@@ -17,6 +17,7 @@ import (
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	"github.com/chaitin/agent-compose/pkg/internal/testutil"
+	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -32,20 +33,27 @@ func TestIntegrationAgentRunnerPublishesPiCatalogBeforeEachGuestExecution(t *tes
 		t.Fatal(err)
 	}
 	ctx := context.Background()
+	// The agent facade resolves the declared model against the connection
+	// catalog; sandbox ProviderEnvItems are no longer read for LLM selection.
+	if err := configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+		ID:             "openai-primary",
+		Name:           "OpenAI",
+		ProviderType:   llms.ProviderFamilyOpenAI,
+		DefaultWireAPI: llms.APIProtocolResponses,
+		BaseURL:        "https://openai.example.test/v1",
+		APIKey:         "fixture-upstream-key",
+		Scope:          llms.ProviderScopeSystem,
+	}, llms.Model{ID: "first", Name: "first", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
+		t.Fatalf("seed llm catalog: %v", err)
+	}
 	sandbox, err := store.CreateSandbox(ctx, "Pi guest", "", "k8s", "guest:test", "", domain.SandboxTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sandbox.ProviderEnvItems = []domain.SandboxEnvVar{
-		{Name: "LLM_API_ENDPOINT", Value: "https://openai.example.test/v1"},
-		{Name: "LLM_API_KEY", Value: "fixture-upstream-key"},
-		{Name: "LLM_API_PROTOCOL", Value: "responses"},
-		{Name: "LLM_MODEL", Value: "first"},
-	}
 	runtime := &filesystemGuestAgentRuntime{root: t.TempDir()}
 	runtime.result = domain.ExecResult{Success: true, Stdout: execution.AgentResultPrefix + `{"provider":"pi","threadId":"pi-fixture","finalText":"done","stopReason":"completed"}`}
 	runner := NewAgentRunner(AgentRunnerDeps{Config: config, Store: store, ConfigDB: configDB, Runtimes: fakeRuntimeProvider{runtime: runtime}})
-	if err := runner.PrepareSandboxAgentEnvironment(ctx, sandbox, execution.AgentConfig{Provider: "pi", Model: "openai/first"}, nil); err != nil {
+	if err := runner.PrepareSandboxAgentEnvironment(ctx, sandbox, execution.AgentConfig{Provider: "pi", Model: "first"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertGuestPiCatalog(t, runtime, "first")
@@ -58,7 +66,7 @@ func TestIntegrationAgentRunnerPublishesPiCatalogBeforeEachGuestExecution(t *tes
 	}
 	sandbox.Summary.VMStatus = domain.VMStatusRunning
 	for _, model := range []string{"second", "third"} {
-		_, _, err := runner.ExecuteAgentRun(ctx, AgentRunRequest{Session: sandbox, Agent: "pi", Model: "openai/" + model, RunID: model, Message: "probe"}, nil)
+		_, _, err := runner.ExecuteAgentRun(ctx, AgentRunRequest{Session: sandbox, Agent: "pi", Model: model, RunID: model, Message: "probe"}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -73,13 +81,13 @@ func TestIntegrationAgentRunnerPublishesPiCatalogBeforeEachGuestExecution(t *tes
 	pushErr := errors.New("guest catalog push failed")
 	runtime.fileErr = pushErr
 	executions := len(runtime.specs)
-	_, _, err = runner.ExecuteAgentRun(ctx, AgentRunRequest{Session: sandbox, Agent: "pi", Model: "openai/fourth", RunID: "failed", Message: "probe"}, nil)
+	_, _, err = runner.ExecuteAgentRun(ctx, AgentRunRequest{Session: sandbox, Agent: "pi", Model: "fourth", RunID: "failed", Message: "probe"}, nil)
 	if !errors.Is(err, pushErr) || len(runtime.specs) != executions {
 		t.Fatalf("failed Pi push executed stale config: %v", err)
 	}
 	assertGuestPiCatalog(t, runtime, "third")
 	runtime.fileErr = nil
-	if _, _, err := runner.ExecuteAgentRun(ctx, AgentRunRequest{Session: sandbox, Agent: "pi", Model: "openai/fourth", RunID: "retry", Message: "probe"}, nil); err != nil {
+	if _, _, err := runner.ExecuteAgentRun(ctx, AgentRunRequest{Session: sandbox, Agent: "pi", Model: "fourth", RunID: "retry", Message: "probe"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertGuestPiCatalog(t, runtime, "fourth")

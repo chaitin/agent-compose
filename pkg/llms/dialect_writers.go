@@ -1,0 +1,155 @@
+package llms
+
+import (
+	"fmt"
+
+	appconfig "github.com/chaitin/agent-compose/pkg/config"
+	domain "github.com/chaitin/agent-compose/pkg/model"
+)
+
+// writeDialectGuestConfig writes the guest-side LLM configuration for one
+// resolved run and returns the environment the agent process inherits.
+//
+// Each agent owns its own file format and environment names, so the writers
+// stay separate; what they share is that none of them resolves anything. They
+// receive an already-chosen model, connection, and inbound protocol.
+func writeDialectGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox, prepared *AgentLLM) (map[string]string, error) {
+	switch prepared.Dialect.Kind {
+	case "codex":
+		return writeCodexGuestConfig(config, sandbox, prepared)
+	case "claude":
+		return writeClaudeGuestConfig(config, sandbox, prepared)
+	case "opencode":
+		return writeOpenCodeGuestConfig(config, sandbox, prepared)
+	case "pi":
+		return writePiGuestConfig(config, sandbox, prepared)
+	case "dsh":
+		return writeDshGuestConfig(config, sandbox, prepared)
+	default:
+		return nil, fmt.Errorf("%w: %q", ErrUnsupportedAgentDialect, prepared.Dialect.Kind)
+	}
+}
+
+// facadeCredentialEnv is the environment every managed agent receives:
+// the run-scoped facade credential, the endpoint to send it to, and the
+// upstream protocol the daemon will speak on the agent's behalf.
+func facadeCredentialEnv(prepared *AgentLLM, endpoint string) map[string]string {
+	return map[string]string{
+		"AGENT_COMPOSE_SANDBOX_TOKEN": prepared.Token,
+		"LLM_API_ENDPOINT":            endpoint,
+		"LLM_API_KEY":                 prepared.Token,
+		// The upstream protocol, for operators and for restart inspection. No
+		// guest runner reads it: the agent's own protocol is pinned by the
+		// facade route it is configured with.
+		"LLM_API_PROTOCOL": string(prepared.Upstream),
+	}
+}
+
+// facadeEndpoint returns the facade route that serves inbound. The route path
+// is what selects the protocol at the proxy, so it is derived from the inbound
+// protocol and never from the upstream.
+func facadeEndpoint(baseURL, sandboxID string, inbound Protocol) string {
+	if inbound == ProtocolMessages {
+		return baseURL + "/api/runtime/sandboxes/" + sandboxID + "/llm/anthropic"
+	}
+	return baseURL + "/api/runtime/sandboxes/" + sandboxID + "/llm/openai/v1"
+}
+
+// agentProtocolSpelling is the protocol name the pi-ai adapter family uses in
+// guest configuration.
+func agentProtocolSpelling(protocol Protocol) string {
+	switch protocol {
+	case ProtocolResponses:
+		return "openai-responses"
+	case ProtocolChatCompletions:
+		return "openai-completions"
+	case ProtocolMessages:
+		return "anthropic-messages"
+	default:
+		return ""
+	}
+}
+
+func writeCodexGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox, prepared *AgentLLM) (map[string]string, error) {
+	endpoint := facadeEndpoint(prepared.BaseURL, sandbox.Summary.ID, prepared.Inbound)
+	if err := WriteCodexRuntimeConfig(sandbox, CodexRuntimeConfig{
+		Model: prepared.Model, BaseURL: endpoint, WireAPI: string(prepared.Inbound),
+		Policy: CodexRuntimePolicyFromConfig(config),
+	}); err != nil {
+		return nil, err
+	}
+	env := facadeCredentialEnv(prepared, endpoint)
+	env["LLM_MODEL"] = prepared.Model
+	env["CODEX_MODEL"] = prepared.Model
+	env[GuestModelEnvName] = prepared.Model
+	env["OPENAI_API_KEY"] = prepared.Token
+	env["OPENAI_BASE_URL"] = endpoint
+	return env, nil
+}
+
+func writeClaudeGuestConfig(_ *appconfig.Config, sandbox *domain.Sandbox, prepared *AgentLLM) (map[string]string, error) {
+	endpoint := facadeEndpoint(prepared.BaseURL, sandbox.Summary.ID, prepared.Inbound)
+	env := facadeCredentialEnv(prepared, endpoint)
+	// The claude runner maps the generic LLM_* variables onto Anthropic's own
+	// names, and the CLI reads the latter.
+	env["ANTHROPIC_API_KEY"] = prepared.Token
+	env["ANTHROPIC_AUTH_TOKEN"] = prepared.Token
+	env["ANTHROPIC_BASE_URL"] = endpoint
+	env["ANTHROPIC_MODEL"] = prepared.Model
+	env["CLAUDE_MODEL"] = prepared.Model
+	env[GuestModelEnvName] = prepared.Model
+	return env, nil
+}
+
+func writeOpenCodeGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox, prepared *AgentLLM) (map[string]string, error) {
+	endpoint := facadeEndpoint(prepared.BaseURL, sandbox.Summary.ID, prepared.Inbound)
+	// The Anthropic SDK appends the version segment itself, so its provider
+	// base carries /v1 explicitly while the raw facade route does not.
+	configBaseURL := endpoint
+	if prepared.Inbound == ProtocolMessages {
+		configBaseURL = endpoint + "/v1"
+	}
+	if err := WriteOpenCodeRuntimeConfig(sandbox, prepared.Inbound, prepared.Model, configBaseURL); err != nil {
+		return nil, err
+	}
+	env := facadeCredentialEnv(prepared, endpoint)
+	env["OPENCODE_CONFIG"] = GuestOpenCodeConfigPath(config)
+	env["LLM_MODEL"] = prepared.GuestModel
+	env["OPENCODE_MODEL"] = prepared.GuestModel
+	env[GuestModelEnvName] = prepared.GuestModel
+	if prepared.Inbound == ProtocolMessages {
+		env["ANTHROPIC_API_KEY"] = prepared.Token
+		env["ANTHROPIC_AUTH_TOKEN"] = prepared.Token
+		env["ANTHROPIC_BASE_URL"] = endpoint
+	} else {
+		env["OPENAI_API_KEY"] = prepared.Token
+		env["OPENAI_BASE_URL"] = endpoint
+	}
+	return env, nil
+}
+
+func writePiGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox, prepared *AgentLLM) (map[string]string, error) {
+	endpoint := facadeEndpoint(prepared.BaseURL, sandbox.Summary.ID, prepared.Inbound)
+	if err := WritePiRuntimeConfig(sandbox, prepared.Model, endpoint, agentProtocolSpelling(prepared.Inbound)); err != nil {
+		return nil, err
+	}
+	env := facadeCredentialEnv(prepared, endpoint)
+	env["PI_CODING_AGENT_DIR"] = GuestPiAgentDir(config)
+	env[GuestModelEnvName] = prepared.GuestModel
+	if prepared.Inbound == ProtocolMessages {
+		env["ANTHROPIC_API_KEY"] = prepared.Token
+	} else {
+		env["OPENAI_API_KEY"] = prepared.Token
+	}
+	return env, nil
+}
+
+func writeDshGuestConfig(_ *appconfig.Config, sandbox *domain.Sandbox, prepared *AgentLLM) (map[string]string, error) {
+	endpoint := facadeEndpoint(prepared.BaseURL, sandbox.Summary.ID, prepared.Inbound)
+	env := facadeCredentialEnv(prepared, endpoint)
+	env["DSH_WIRE_API"] = agentProtocolSpelling(prepared.Inbound)
+	env["DSH_MODEL"] = prepared.Model
+	env[GuestModelEnvName] = prepared.Model
+	env["DSH_PERMISSION_MODE"] = "danger-full-access"
+	return env, nil
+}

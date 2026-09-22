@@ -72,6 +72,20 @@ func TestAgentRunnerPrepareSandboxAgentEnvironmentUsesOnlyCurrentAgent(t *testin
 	}, llms.Model{ID: "claude-agent", Name: "claude-agent", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
 		t.Fatalf("save Anthropic provider: %v", err)
 	}
+	// The codex agent declares gpt-agent, so bind it to exactly one connection.
+	// Connection selection is not family-based: an unbound model with several
+	// configured connections is ambiguous by design.
+	if err := configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+		ID:             "openai-primary",
+		Name:           "OpenAI",
+		ProviderType:   llms.ProviderFamilyOpenAI,
+		DefaultWireAPI: llms.APIProtocolResponses,
+		BaseURL:        "https://openai.upstream.test/v1",
+		APIKey:         "openai-upstream-secret",
+		Scope:          llms.ProviderScopeSystem,
+	}, llms.Model{ID: "gpt-agent", Name: "gpt-agent", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
+		t.Fatalf("save OpenAI provider: %v", err)
+	}
 	session, err := store.CreateSandbox(ctx, "agent environment", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, []domain.SandboxTag{
 		{Name: domain.AgentSandboxTagSource, Value: domain.AgentSandboxTagSourceVal},
 		{Name: domain.AgentSandboxTagID, Value: "agent-1"},
@@ -126,7 +140,7 @@ func TestAgentRunnerPrepareSandboxAgentEnvironmentUsesOnlyCurrentAgent(t *testin
 	if err != nil {
 		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
 	}
-	if token.Model != "gpt-agent" || token.Source != "session" || token.RunID != "" {
+	if token.Model != "gpt-agent" || token.ProviderID != "openai-primary" || token.Source != "session" || token.RunID != "" {
 		t.Fatalf("sandbox token = %#v", token)
 	}
 	if err := store.UpdateSandbox(ctx, session); err != nil {
@@ -240,6 +254,15 @@ func TestAgentRunnerRetainsFacadeTokenOnlyWhenExecTerminationIsUnconfirmed(t *te
 			configDB, store, err := testutil.OpenStores(t, config)
 			if err != nil {
 				t.Fatalf("OpenStores returned error: %v", err)
+			}
+			// The agent declares no model, so the catalog default supplies one
+			// and the run is managed: a facade token must be minted for the
+			// retention assertions below.
+			if err := configDB.UpsertDefaultLLMConfig(context.Background(), llms.Provider{
+				ID: "anthropic-primary", Name: "Anthropic", ProviderType: llms.ProviderFamilyAnthropic,
+				BaseURL: "https://anthropic.upstream.test", APIKey: "anthropic-upstream-secret", Scope: llms.ProviderScopeSystem,
+			}, llms.Model{ID: "claude-agent", Name: "claude-agent", DefaultModel: true, Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
+				t.Fatalf("seed llm catalog: %v", err)
 			}
 			session, err := store.CreateSandbox(context.Background(), "token lifecycle", "", driverpkg.RuntimeDriverDocker, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
 			if err != nil {
@@ -508,7 +531,7 @@ func TestAgentRunnerExecuteAgentRunUsesResolvedOpenCodeFacadeModel(t *testing.T)
 		Session:           session,
 		Agent:             "opencode",
 		AgentDefinitionID: "",
-		Model:             "baizhi/deepseek-v4-flash",
+		Model:             "deepseek-v4-flash",
 		RunID:             "run-1",
 		Message:           "hello",
 		OutputSchemaJSON:  "",

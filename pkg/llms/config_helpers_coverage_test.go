@@ -28,11 +28,11 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if err != nil || !strings.Contains(string(codexConfig), `wire_api = "responses"`) || !strings.Contains(string(codexConfig), `AGENT_COMPOSE_SANDBOX_TOKEN`) {
 		t.Fatalf("codex config=%q err=%v", string(codexConfig), err)
 	}
-	if err := WriteOpenCodeRuntimeConfig(session, "custom", "gpt-custom", "http://runtime/openai/v1/"); err != nil {
+	if err := WriteOpenCodeRuntimeConfig(session, ProtocolChatCompletions, "gpt-custom", "http://runtime/openai/v1/"); err != nil {
 		t.Fatalf("WriteOpenCodeRuntimeConfig returned error: %v", err)
 	}
-	if err := WriteOpenCodeAnthropicRuntimeConfig(session, "claude", "http://runtime/anthropic/"); err != nil {
-		t.Fatalf("WriteOpenCodeAnthropicRuntimeConfig returned error: %v", err)
+	if err := WriteOpenCodeRuntimeConfig(session, ProtocolMessages, "claude", "http://runtime/anthropic/"); err != nil {
+		t.Fatalf("WriteOpenCodeRuntimeConfig anthropic returned error: %v", err)
 	}
 	openCodeConfig, err := os.ReadFile(filepath.Join(execution.HostSandboxHome(session), ".config", "opencode", "opencode.json"))
 	if err != nil || !strings.Contains(string(openCodeConfig), "@ai-sdk/anthropic") || !strings.Contains(string(openCodeConfig), "AGENT_COMPOSE_SANDBOX_TOKEN") {
@@ -249,8 +249,8 @@ func TestWriteCodexMCPConfigSkipsGuestPushWhenNothingWasEverWritten(t *testing.T
 
 	var pushCount int
 	// No prior WriteCodexRuntimeConfig/WriteCodexMCPConfig call ever touched
-	// this sandbox's .codex/config.toml (e.g. no managed LLM provider - see
-	// EnsureCodexFacadeConfig's "let Codex use its own login" no-op path).
+	// this sandbox's .codex/config.toml (e.g. no managed LLM catalog entry -
+	// the "let Codex use its own login" no-op path).
 	// Calling with zero MCP servers must not push an empty file to a guest
 	// that never had anything pushed there in the first place.
 	if err := WriteCodexMCPConfig(context.Background(), config, session, nil, func(context.Context, string, []byte) error {

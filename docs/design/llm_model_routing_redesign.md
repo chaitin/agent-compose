@@ -416,3 +416,82 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   真实 key 出现在 guest 环境；未命中的 agent 一定产生 token 且不泄漏上游 key。
 - 回归：删除 `ValidateFacadeModelReference` 后，原"unknown prefix"用例转为
   "字面 id 透传"用例。
+
+---
+
+## 8. 实现进度（分支 `feat/llm-call-chain`）
+
+### 已完成
+
+**M1 纯函数内核**（commit `a9bd09c`）
+
+- `pkg/llms/protocol.go`：`Protocol` 类型与三个常量，`Family()`、`ProtocolForFamily`。
+- `pkg/llms/connection_catalog.go`：`Catalog` 快照 + `LoadCatalog`（一次查询装完
+  连接与模型绑定）+ `SelectModel` + `Resolve` + 三个哨兵错误。连接选择为
+  固定优先级查找，无兜底。
+- `pkg/llms/agent_dialect.go`：`DialectFor` / `Supports` / `InboundProtocol` /
+  `NeedsConversion` / `GuestModel`。`GuestModel` 是全链路唯一合成
+  `<provider>/<model>` 的地方。
+- `pkg/llms/target.go`：新增纯函数 `NewResolvedTarget`，`BuildResolvedTarget`
+  改为委托它。
+- `configstore.ListLLMProviderModelConfigs`：一次列出全部 model binding。
+
+两处对 v2 设计的修正（以现有实现为准）：
+
+- opencode 的 `Supported` 是 `{chat, messages}` 而非 `{chat}`：它经 AI SDK 的
+  Anthropic provider 原生说 messages。
+- `CanConvert` 不复制 bridge 注册表，而是直接询问
+  `protocolbridge.NewCrossFamilyBridge`，因此 `messages → chat` 的缺口由库自己
+  决定，补桥后无需改本仓库。
+
+**M2 facade 收敛**（本次改动）
+
+- `pkg/llms/agent_llm.go`：`PrepareAgentLLM` 成为唯一入口，一次完成
+  选模型 → 选连接 → 定入站协议 → 校验可转换 → 签发 token → 写 guest 配置 → 返回 env。
+- `pkg/llms/dialect_writers.go`：五个 agent 各自的 env/文件写入，全部只消费
+  已解析结果，不做任何解析。
+- opencode 的 writer 合并为一个（按入站协议选 AI SDK 包），provider key 恒为
+  `agent-compose`：删除了 `anthropic` / 上游 provider id / `openCodeNativeProviderID`
+  三种 guest key 并存的不一致。
+- `runtimefacade.EnsureSessionAgentRuntimeConfig` 与
+  `runs.ensurePromptAttachLLMFacadeEnv` 都改为调用 `PrepareAgentLLM`；
+  `RuntimeModelArgument`（dsh 兼容前缀）与 `GuestModelReference` 删除。
+- 删除 `codex_facade.go` / `pi_facade.go` / `dsh_facade.go` / `opencode_facade.go` /
+  `custom_openai_facade_target.go` / `facade_config_error.go`，以及
+  `model_reference.go` 中除 `SplitModelReference` 之外的全部导出函数。
+- `runtimefacade.FacadeStore` 暂时仍嵌入 `llms.LLMResolverStore`，因为
+  `startup_config.go` 尚未迁移。
+
+**M2 期间发现并修掉的两个真实回归**
+
+1. **daemon env 不再被投影**。旧实现把 `LLM_API_*` / `ANTHROPIC_*` 的物化放在
+   解析路径里懒执行；`PrepareAgentLLM` 只读 catalog，于是只用环境变量配置的
+   daemon 会得到空 catalog，agent 静默退化为"自带凭据"。
+   修复：新增 `llms.ProjectDaemonLLMConfig`，由 `app.loadLLMConfig` 在启动时
+   与 models.json 一起投影一次；`PrepareAgentLLM` 之后只读 catalog，
+   请求路径不再写配置。无 key 的环境不注册连接（保持旧
+   `hasCompleteDefaultOpenAIProvider` 的语义）。
+2. **零连接被报成"歧义"**。`connectionFor` 在 `len(providers)==0` 时会走到
+   歧义分支，产生 `model "x" matches ; declare llm_connection` 这种无候选的错误。
+   修复：新增 `ErrNoConnection`，与 `ErrNoModel` 一并由
+   `llms.IsUnmanagedAgentLLMError` 判定为"daemon 不管这个 agent"，facade 侧
+   视作 no-op。三个哨兵错误的判定收敛到这一个谓词，避免调用点各自漂移。
+
+另外把 `PrepareAgentLLM` 的检查顺序调整为"先选模型、后校验可达 URL"：
+未托管的 agent 在 daemon 没有可达 URL 时也应当是 `ErrNoModel`，而不是
+failed-precondition —— 否则没有配模型的 agent 会被误判为配置错误。
+
+### 未完成
+
+- **M3 代理**：`runtime_llm.go` 仍按请求体里的 model + `SandboxRuntimeLLMTarget`
+  解析，因此 pi/opencode 回传的 `agent-compose/<model>` 还要靠
+  `SplitModelReference` 兜底。目标：token 绑定连接（`ConnectionID`）与
+  `GuestModel`，代理精确匹配 `GuestModel` 时替换为字面 model，否则原样转发；
+  随后删除 `resolver.go`、`default_connection.go`、`selection.go`、
+  `provider_bootstrap.go`、`provider_environment.go`、`env_provider.go`、
+  `agent_model_resolution.go`、`runtime_facade_provider.go`、
+  `runtime_target_sandbox.go`、`runtime_facade_target.go`、`SplitModelReference`
+  与 `startup_config.go`。
+- **M4** `llm_connection` 配置面（compose schema、proto、API、configstore）。
+- **M5** direct/managed 分叉与 session-env 机制删除。
+- **M6** 补 `anthropic_messages → chat_completions` 桥（外部仓库），删除家族约束。

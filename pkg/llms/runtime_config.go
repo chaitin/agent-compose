@@ -243,23 +243,25 @@ func buildCodexManagedMCPBlock(mcps map[string]compose.NormalizedMCPServerSpec) 
 	return b.String()
 }
 
-func WriteOpenCodeRuntimeConfig(session *domain.Sandbox, providerID, model, baseURL string) error {
+// WriteOpenCodeRuntimeConfig registers the llm facade as OpenCode's provider.
+//
+// The provider key is always the daemon's own key, never the upstream
+// connection id, so renaming a connection cannot change what the guest sees
+// and an upstream literally named after a built-in OpenCode provider cannot
+// collide with it. inbound selects the AI SDK package, because that package is
+// what decides the protocol OpenCode posts to the facade.
+func WriteOpenCodeRuntimeConfig(session *domain.Sandbox, inbound Protocol, model, baseURL string) error {
 	if session == nil {
 		return nil
 	}
-	providerID = strings.TrimSpace(providerID)
 	model = strings.TrimSpace(model)
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if providerID == "" || model == "" || baseURL == "" {
+	if model == "" || baseURL == "" {
 		return nil
 	}
-	providerPackage := "@ai-sdk/openai-compatible"
-	if providerID == "openai" {
-		providerPackage = "@ai-sdk/openai"
-	}
-	providerName := "agent-compose " + providerID
-	if providerID == "agent-compose" {
-		providerName = providerID
+	providerPackage, err := openCodeProviderPackage(inbound)
+	if err != nil {
+		return err
 	}
 	path := filepath.Join(execution.HostSandboxHome(session), ".config", "opencode", "opencode.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -268,9 +270,9 @@ func WriteOpenCodeRuntimeConfig(session *domain.Sandbox, providerID, model, base
 	payload := map[string]any{
 		"$schema": "https://opencode.ai/config.json",
 		"provider": map[string]any{
-			providerID: map[string]any{
+			GuestProviderAgentCompose: map[string]any{
 				"npm":  providerPackage,
-				"name": providerName,
+				"name": GuestProviderAgentCompose,
 				"options": map[string]any{
 					"baseURL": baseURL,
 					"apiKey":  "{env:AGENT_COMPOSE_SANDBOX_TOKEN}",
@@ -285,10 +287,25 @@ func WriteOpenCodeRuntimeConfig(session *domain.Sandbox, providerID, model, base
 	if err != nil {
 		return fmt.Errorf("encode opencode config: %w", err)
 	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 		return fmt.Errorf("write opencode config: %w", err)
 	}
 	return nil
+}
+
+// openCodeProviderPackage maps the inbound protocol onto the AI SDK package
+// that speaks it. OpenCode cannot speak the Responses API, so a responses
+// upstream is converted to chat completions by the daemon before it reaches
+// this writer.
+func openCodeProviderPackage(inbound Protocol) (string, error) {
+	switch inbound {
+	case ProtocolChatCompletions:
+		return "@ai-sdk/openai-compatible", nil
+	case ProtocolMessages:
+		return "@ai-sdk/anthropic", nil
+	default:
+		return "", fmt.Errorf("opencode cannot speak %s to the llm facade", inbound)
+	}
 }
 
 func WriteOpenCodeMCPConfig(ctx context.Context, config *appconfig.Config, session *domain.Sandbox, mcps map[string]compose.NormalizedMCPServerSpec, writeGuestFile execution.GuestFileWriterFunc) error {
@@ -371,46 +388,6 @@ func replaceManagedTextBlock(existing, startMarker, endMarker, managed string) s
 		return managed + "\n"
 	}
 	return existing + "\n\n" + managed + "\n"
-}
-
-func WriteOpenCodeAnthropicRuntimeConfig(session *domain.Sandbox, model, baseURL string) error {
-	if session == nil {
-		return nil
-	}
-	model = strings.TrimSpace(model)
-	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if model == "" || baseURL == "" {
-		return nil
-	}
-	path := filepath.Join(execution.HostSandboxHome(session), ".config", "opencode", "opencode.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create opencode config dir: %w", err)
-	}
-	payload := map[string]any{
-		"$schema": "https://opencode.ai/config.json",
-		"provider": map[string]any{
-			"anthropic": map[string]any{
-				"npm":  "@ai-sdk/anthropic",
-				"name": "agent-compose anthropic",
-				"options": map[string]any{
-					"baseURL": baseURL,
-					"apiKey":  "{env:AGENT_COMPOSE_SANDBOX_TOKEN}",
-				},
-				"models": map[string]any{
-					model: map[string]any{"name": model},
-				},
-			},
-		},
-	}
-	data, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode opencode config: %w", err)
-	}
-	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write opencode config: %w", err)
-	}
-	return nil
 }
 
 func GuestOpenCodeConfigPath(config *appconfig.Config) string {

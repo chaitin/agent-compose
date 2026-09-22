@@ -11,6 +11,11 @@ import (
 var (
 	// ErrNoModel reports that neither the agent nor the catalog declares a model.
 	ErrNoModel = errors.New("no llm model configured")
+	// ErrNoConnection reports that the daemon has no upstream connection at all.
+	// It is the "nothing is configured" counterpart to ErrNoModel, and callers
+	// treat it the same way: the agent keeps its own authentication. Ambiguity
+	// between configured connections is a different failure and stays fatal.
+	ErrNoConnection = errors.New("no llm connection configured")
 	// ErrConnectionNotFound reports an llm_connection that matches no connection.
 	ErrConnectionNotFound = errors.New("llm connection not found")
 	// ErrAmbiguousConnection reports that a model did not identify one connection.
@@ -215,6 +220,11 @@ func (c *Catalog) connectionFor(connectionID, model string) (Provider, error) {
 			return Provider{}, fmt.Errorf("%w: %q", ErrConnectionNotFound, id)
 		}
 		return provider, nil
+	}
+	// A daemon with no connection at all has nothing to manage: report that
+	// plainly rather than as an ambiguity between zero candidates.
+	if len(c.providers) == 0 {
+		return Provider{}, ErrNoConnection
 	}
 	if c.defaultModel != "" && c.defaultModel == model && c.defaultConnection != "" {
 		if provider, ok := c.providers[c.defaultConnection]; ok {

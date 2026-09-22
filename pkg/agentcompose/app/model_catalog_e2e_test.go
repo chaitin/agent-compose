@@ -79,7 +79,7 @@ func TestE2EModelCatalogConfiguresOpenCodeFacadeTarget(t *testing.T) {
 			Store:   store,
 			Session: sandbox,
 			Agent:   "opencode",
-			Model:   "baizhi/deepseek-v4-flash",
+			Model:   "deepseek-v4-flash",
 			Source:  runtimefacade.TokenSourceAgent,
 			RunID:   "catalog-e2e-run",
 		},

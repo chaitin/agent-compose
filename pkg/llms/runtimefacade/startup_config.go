@@ -184,3 +184,12 @@ func startupEnvValue(ctx context.Context, config *appconfig.Config, store Facade
 		return ""
 	}
 }
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
