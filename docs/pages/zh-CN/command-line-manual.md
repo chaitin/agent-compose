@@ -950,12 +950,13 @@ run/project ID；DSH 通过原生记录钩子将这些属性附加到 log record
 provider 定义，关联属性不会自动形成跨 provider 的统一分布式 trace。
 
 若调用方已有分布式 trace，可在启动执行的 daemon RPC 上携带 W3C trace context 的
-`traceparent`（以及可选的 `tracestate`）header。daemon 校验该值后转发给支持入站父上下文的
-provider，使其导出的 span 接入调用方的 trace，而不是新起一个根。Codex 与 Claude Code 会
-采纳该 header；在当前受支持的版本中，OpenCode 与 DSH 不提供入站父上下文机制，因此仍会各自
-新建 trace 根。header 缺失或格式非法时会被忽略：执行与引入该字段前完全一致地以自身为根，
-且不会向 sandbox 或其配置持久化任何内容。该行为由 header 驱动，与
-`AGENT_TELEMETRY_OTLP_ENDPOINT` 相互独立，既不开启导出也不改变导出目标。
+`traceparent`（以及可选的 `tracestate`）header。daemon 校验这两个值后，通过 agent telemetry
+载荷转发给支持入站父上下文的 provider，使其导出的 span 接入调用方的 trace，而不是新起一个
+根。Codex 与 Claude Code 会采纳该 trace context；在当前受支持的版本中，OpenCode 与 DSH 不
+提供入站父上下文机制，因此仍会各自新建 trace 根。该中继复用承载 collector 设置的每次执行
+telemetry 载荷，因此需要启用 agent telemetry（`AGENT_TELEMETRY_OTLP_ENDPOINT`）才能到达
+guest；header 本身既不开启导出也不改变导出目标。header 缺失或格式非法时会被忽略：执行与
+引入该字段前完全一致地以自身为根，且不会向 sandbox 或其配置持久化任何内容。
 
 普通 prompt、交互式 prompt session 和 workflow 子 agent 使用同一配置。
 exporter 自行管理批处理与重试，collector 不可达不属于 agent 健康检查。正常退出可以刷新
