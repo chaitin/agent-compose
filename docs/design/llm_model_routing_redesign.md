@@ -365,31 +365,29 @@ CRUD、token、env headers 等），路由核心本身已是 8 个文件。
 
 ## 5. 分阶段落地
 
-**P0 — 补桥，补全矩阵**（`ai-api-protocol-bridge` 仓库）。
+**P0 — 补桥，补全矩阵**（原计划改 `ai-api-protocol-bridge` 仓库）。
 
-*API 变更*：现有 `NewCrossFamilyBridge(inbound, upstreamFamily)` 无法区分
-"Anthropic 入站去 OpenAI Responses" 与 "去 Chat"（`bridge_cross_family.go:29-40`）。
-新增协议精确版本，旧函数保留以兼容：
+*实际落地*：该库对本环境只读，所以桥实现于本仓库
+`pkg/llms/bridge_anthropic_to_chat.go`，实现该库**公开**的 `CrossFamilyBridge`
+接口。详见 §8「未完成」里的说明与退出路径。
 
-```go
-func NewCrossFamilyBridgeForProtocol(inbound, upstream Protocol) (CrossFamilyBridge, bool)
-```
+*与原计划的两处修正*：
 
-*新增 `bridge_anthropic_to_chat.go`*，与 `bridge_anthropic_to_responses.go` 同构：
+1. **请求编码委托，不逐字段手写**。原计划列了一张字段映射表
+   （`system`→`role=system`、`tool_use`→`assistant.tool_calls`、图片→`image_url`……）。
+   这张表就是 `OpenAIChatAdapter.EncodeRequest` 本身：入站请求早已被 dialect 解码成
+   中立 `LLMRequest`，再手写一遍等于复制该库的 chat 编解码器。实际只做 pairing：
+   `EncodeUpstreamRequest` → `OpenAIChatAdapter.EncodeRequest`，
+   `DecodeUpstreamResponse` → `OpenAIChatAdapter.DecodeResponse`，
+   `NewStreamDecoder` → `OpenAIChatAdapter`，
+   `NewStreamEncoder` → `AnthropicMessagesAdapter`。
+2. **`UpstreamProtocol()` 校验保留，不删除**。原计划说桥到位后就删掉它。不删：
+   家族查找的返回值是库的实现细节，升级后可能改变；没有这个校验，那种改变会从
+   "本地明确报错"退化成"静默把 chat 请求发给 responses 上游"。
 
-- `InboundProtocol() = ProtocolAnthropicMessages`，`UpstreamProtocol() = ProtocolOpenAIChat`；
-- 请求编码：`system`/`developer` → `role=system`；`tool_use` → `assistant.tool_calls`
-  （复用 `encodeOpenAIToolInput`）；`tool_result` → `role=tool` + `tool_call_id`；
-  文本 → `content`；图片 → `image_url`；`tools`/`tool_choice`/`max_tokens`/
-  `temperature`/`top_p`/`stop`/`response_format` 直映射（`openAIChatRequest` 字段齐全）；
-- reasoning：`Reasoning`/`ReasoningBudgetTokens` → `reasoning_effort`；
-  **签名/redacted 无法表达，丢弃**（chat 只有 `reasoning_content` 字符串通道）；
-- 流：`NewStreamDecoder` 用 `OpenAIChatAdapter`，`NewStreamEncoder` 用
-  `anthropicStreamEncoder`，start/finish 走 OpenAI→Anthropic 的 usage 转换；
-- 注册进 `NewCrossFamilyBridge` 的兼容分支与新的按协议构造函数。
-
-*本仓库*：`EncodeRuntimeUpstreamRequest`（`pkg/llms/facade_bridge.go:162`）改用
-按协议构造函数，删除 `bridge.UpstreamProtocol() != upstreamProtocol` 的兜底判断。
+*唯一重述的规则*：usage 换算。chat 解码器按 OpenAI 口径给 `prompt_tokens`（含缓存）
+并单列缓存量，Anthropic 要求 `input_tokens` 不含缓存。该库的换算 helper 是私有的，
+所以 6 行的 `usageForAnthropicInbound` 在本仓库重述了一次，并有回归测试。
 
 **P1 — Catalog 与纯函数解析**：建立 `Catalog`，把 env/models.json/RPC 合并到装载期；
 `SelectModel` + `connectionFor` 落地；旧解析路径保留薄适配层以便增量切换。
@@ -589,25 +587,34 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   `OPENCODE_MODEL`，与预览的 key 列表已经漂移；现在由 `directModelFromEnv`
   单点承担，两条路径共用。
 
-### 未完成
+### 未完成与偏差
 
-- **P0 补 `anthropic_messages → chat_completions` 桥**。这一格在**另一个仓库**
-  `github.com/chaitin/ai-api-protocol-bridge`（网络可达，但本 worktree 的改动范围
-  不含它）。已核实的缺口：该库 v1.0.0 只有
+此节区分三类：已经完成但落点与原计划不同的、刻意保留的、以及真正还没做的。
+
+- **P0 桥：功能已完整，但落点在本仓库而非协议库**。已核实的缺口：该库 v1.0.0 只有
   `NewCrossFamilyBridge(inbound Protocol, upstreamFamily string)`，按**家族**选桥，
   而 Anthropic 入站去 OpenAI 有 responses / chat 两条，家族无法区分，因此它只返回
   messages→responses 那条。
 
-  本仓库现在用一个 `crossFamilyBridge` helper 集中兜住这个不精确（`facade_bridge.go`，
-  三个调用点共用，`CanConvert` 也改为询问它而不是各写一份）。这个校验正是
-  `messages → chat` 目前返回 "unsupported llm protocol bridge" 的原因。
+  **为什么没有按原计划改库**：本环境对该库无写权限
+  （`git push` 返回 403，`gh` 账号对该组织仓库只读）。因此改为在本仓库实现
+  `pkg/llms/bridge_anthropic_to_chat.go`：一个满足该库**公开** `CrossFamilyBridge`
+  接口的类型，内部全部委托给该库自己的公开适配器（`OpenAIChatAdapter` 编解码、
+  `AnthropicMessagesAdapter` 的流编码器）。这不是第二套编解码——pairing（把哪个入站
+  配哪个上游）本来就是 daemon 的路由决定，而该接口公开存在正是为了让调用方补这一格。
 
-  落地顺序因此是：① 在该库加 `NewCrossFamilyBridgeForProtocol(inbound, upstream Protocol)`
-  与 `bridge_anthropic_to_chat.go` 并发布；② 本仓库升依赖，改用按协议构造函数并
-  删掉 helper 里的 `UpstreamProtocol()` 判断。**在这两步完成前，矩阵缺口与那处校验
-  必须保留**——删掉校验而桥没到位，只会把"明确报错"变成"静默走错协议"。
+  唯一无法委托的是 usage 约定：chat 解码器按 OpenAI 口径给 `prompt_tokens`（含缓存）
+  并把缓存量单列，而 Anthropic 要求 `input_tokens` 不含缓存、缓存量走
+  `cache_read_input_tokens`。该库把对应的换算 helper 保持私有，所以这段算术
+  （`usageForAnthropicInbound`，6 行）在本仓库重述了一遍。**这是本次改造中唯一一处
+  有意的规则重述**，有专门的回归测试（去掉重述后 `input_tokens` 会从 60 变 100，
+  即缓存 token 被计两次）。
 
-  `CanConvert` 已经是询问注册表而不是复制表，所以 ② 之后本仓库不需要再有别的改动。
+  **退出路径**：该库一旦发布按协议精确选桥的构造函数，就删掉
+  `bridge_anthropic_to_chat.go`、改调该库、并去掉本地的 usage 换算。已把等价的库内
+  补丁留在仓库之外（`.cache/anthropic-to-chat-bridge.patch`，含测试），便于直接上游化。
+  `crossFamilyBridge` 里的 `UpstreamProtocol()` 校验**继续保留**：库升级后家族查找
+  的返回可能变化，没有它就会把"明确报错"变成"静默走错协议"。
 
 - **guest 侧 `resolveFacadeModel` 保留是刻意的**。`docs/pages/guest-image-abi.md`
   明文承诺滚动升级期间新 runtime 仍接受旧 daemon 传的 legacy 参数，并声明该兼容
@@ -625,9 +632,13 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   必须先更新 guest 镜像，或与 daemon 同时更新；`agent_dialect.go` 的 dsh 分支
   也加了注释说明这个"空 `GuestProvider`"是刻意的，避免后人误当遗漏而恢复前缀。
 
-- **§7 的 15 格转换矩阵表驱动测试**未补齐：现有测试分散覆盖 codex×messages、
-  opencode、pi，且 `TestPrepareAgentLLMRejectsClaudeChatUpstream` 断言 claude×chat
-  **必须失败**——这在 P0 完成前是正确写法，但矩阵因此没有单一表驱动用例。
+- **§7 的 15 格转换矩阵表驱动测试：已补齐**。`TestDialectConversionMatrix` 单表覆盖
+  全部 15 格，并断言"需要转换的格只有在 `CanConvert` 也同意时才可服务"——此前它只断言
+  入站协议决定，于是 claude×chat 看起来和普通转换格一样，缺口因此长期不可见。
+  它同时保留一个（现在为空的）`unservable` 声明表：将来若再有缺口，必须在表里写明
+  理由，否则测试失败。`TestPrepareAgentLLMRejectsClaudeChatUpstream` 已改写为正向用例
+  `TestPrepareAgentLLMClaudeConvertsChatUpstream`。
 
 - **文档**：`docs/pages` 的 YAML 手册 en / zh-CN 已随 M4 更新并通过
-  `task docs:build`；`docs/design/llm-provider-rpc.md` 与 release note 尚未同步。
+  `task docs:build`；`guest-image-abi.md` 中英两版已按 dsh 的决策改写。
+  `docs/design/llm-provider-rpc.md` 与 release note 尚未同步。

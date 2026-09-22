@@ -3,41 +3,40 @@ package llms
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
-// TestPrepareAgentLLMRejectsClaudeChatUpstream pins the one conversion the
-// bridge registry does not provide. Claude needs the messages->chat bridge to be
-// served a chat-completions upstream, so the call must fail while preparing the
-// run instead of failing on every request.
-func TestPrepareAgentLLMRejectsClaudeChatUpstream(t *testing.T) {
+// TestPrepareAgentLLMClaudeConvertsChatUpstream is the claude half of the
+// conversion contract, and the last cell of the matrix to become servable: a
+// chat-only upstream is bridged to the messages API claude speaks, and the token
+// still pins messages because that is what the guest posts.
+func TestPrepareAgentLLMClaudeConvertsChatUpstream(t *testing.T) {
 	isolateLLMEnv(t)
 	root := t.TempDir()
 	store := &prepareAgentLLMStore{fakeCatalogStore: fakeCatalogStore{providers: []Provider{
 		agentLLMProvider("gateway-chat", ProviderFamilyOpenAI, APIProtocolChatCompletions, "https://gateway.test/v1"),
 	}}}
+	endpoint := agentLLMEndpoint(ProtocolMessages)
 
-	_, err := PrepareAgentLLM(context.Background(), AgentLLMRequest{
+	prepared, err := PrepareAgentLLM(context.Background(), AgentLLMRequest{
 		Config: bareModelConfig(root), Store: store, Sandbox: bareModelSandbox(root, agentLLMSandboxID),
-		AgentKind: "claude", Model: "claude-sonnet-4",
+		AgentKind: "claude", Model: "claude-sonnet-4", Source: "agent", RunID: "run-claude-chat",
 	})
-	if err == nil {
-		t.Fatal("PrepareAgentLLM served a chat-completions upstream to claude")
+	if err != nil {
+		t.Fatalf("PrepareAgentLLM returned error: %v", err)
 	}
-	if !errors.Is(err, domain.ErrFailedPrecondition) {
-		t.Fatalf("error = %v, want a failed-precondition classification", err)
+	if prepared.Upstream != ProtocolChatCompletions || prepared.Inbound != ProtocolMessages || !prepared.Convert {
+		t.Fatalf("upstream/inbound/convert = %q/%q/%v, want chat_completions/messages/true", prepared.Upstream, prepared.Inbound, prepared.Convert)
 	}
-	if !strings.Contains(err.Error(), "chat_completions") || !strings.Contains(err.Error(), "claude") {
-		t.Fatalf("error = %v, want it to name the agent and the unsupported upstream", err)
+	if prepared.Env["ANTHROPIC_BASE_URL"] != endpoint {
+		t.Fatalf("claude env = %#v, want the facade base url", prepared.Env)
 	}
-	if len(store.savedTokens) != 0 {
-		t.Fatalf("saved tokens = %#v, want none for an unservable upstream", store.savedTokens)
+	if len(store.savedTokens) != 1 || store.savedTokens[0].WireAPI != string(ProtocolMessages) ||
+		store.savedTokens[0].ProviderID != "gateway-chat" {
+		t.Fatalf("saved token = %#v, want messages to the chat connection", store.savedTokens)
 	}
 }
 
