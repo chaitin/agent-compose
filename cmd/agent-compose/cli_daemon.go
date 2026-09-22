@@ -158,6 +158,7 @@ func installDaemonMiddleware(app *echo.Echo, conf *config.Config) {
 	app.Use(middleware.Recover())
 	app.Use(newDaemonAuthMiddleware(conf))
 	app.Use(newDaemonTrustedHeadersMiddleware())
+	app.Use(newDaemonTraceContextMiddleware())
 }
 
 func (a *DaemonApp) StartBackground() error {

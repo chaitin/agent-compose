@@ -232,6 +232,7 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		return StartedProjectRun{}, fmt.Errorf("config store is required")
 	}
 	trustedHeaders := domain.TrustedHeadersFromContext(ctx)
+	traceContext := domain.TraceContextFromContext(ctx)
 	commandText := strings.TrimSpace(req.Command)
 	if commandText != "" && (strings.TrimSpace(req.Prompt) != "" || strings.TrimSpace(req.TriggerID) != "") {
 		return StartedProjectRun{}, fmt.Errorf("%w: run requires only one of command, prompt, or trigger", ErrInvalidRequest)
@@ -274,6 +275,7 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 			// Async runs execute from the daemon root context. Restore only the
 			// request metadata they need instead of retaining the transport context.
 			execCtx = domain.NewContextWithTrustedHeaders(execCtx, trustedHeaders)
+			execCtx = domain.NewContextWithTraceContext(execCtx, traceContext)
 			return c.executeStartedProjectRun(execCtx, startedProjectRunContext{
 				Coordinator: coordinator,
 				Run:         run,

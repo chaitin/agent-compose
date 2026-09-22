@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"context"
 	"fmt"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
@@ -79,13 +80,13 @@ func RuntimeCommandRequestPayloadFromCommand(config *appconfig.Config, spec Runt
 	}
 }
 
-func BuildSchedulerCommandExecSpec(config *appconfig.Config, session *domain.Sandbox, guestRequestPath, home string) domain.ExecSpec {
-	return BuildRuntimeCommandExecSpec(config, session, guestRequestPath, home)
+func BuildSchedulerCommandExecSpec(ctx context.Context, config *appconfig.Config, session *domain.Sandbox, guestRequestPath, home string) domain.ExecSpec {
+	return BuildRuntimeCommandExecSpec(ctx, config, session, guestRequestPath, home)
 }
 
-func BuildRuntimeCommandExecSpec(config *appconfig.Config, session *domain.Sandbox, guestRequestPath, home string) domain.ExecSpec {
+func BuildRuntimeCommandExecSpec(ctx context.Context, config *appconfig.Config, session *domain.Sandbox, guestRequestPath, home string) domain.ExecSpec {
 	appconfig.ApplyDefaultGuestPaths(config)
-	env := BuildSandboxExecEnv(config, session, home)
+	env := BuildSandboxExecEnv(ctx, config, session, home)
 	command := strings.Join([]string{
 		"set -e",
 		"cd " + ShellQuote(config.GuestWorkspacePath),
@@ -114,7 +115,7 @@ func RuntimeCommandResultToExecResult(result domain.RuntimeCommandResult) domain
 	}
 }
 
-func BuildSandboxExecEnv(config *appconfig.Config, session *domain.Sandbox, home string) map[string]string {
+func BuildSandboxExecEnv(ctx context.Context, config *appconfig.Config, session *domain.Sandbox, home string) map[string]string {
 	appconfig.ApplyDefaultGuestPaths(config)
 	env := runtimeEnvMap(session.EnvItems)
 	if env == nil {
@@ -133,7 +134,7 @@ func BuildSandboxExecEnv(config *appconfig.Config, session *domain.Sandbox, home
 	env["STATE_ROOT"] = config.GuestStateRoot
 	env["RUNTIME_ROOT"] = config.GuestRuntimeRoot
 	env["VERSION"] = config.Version
-	ApplyAgentTelemetryEnv(config, session, env)
+	ApplyAgentTelemetryEnv(ctx, config, session, env)
 	return env
 }
 

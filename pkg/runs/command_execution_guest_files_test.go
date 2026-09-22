@@ -2,6 +2,7 @@ package runs
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,5 +85,50 @@ func TestExecuteProjectRunCommandTransfersGuestRequestAndArtifacts(t *testing.T)
 	}
 	if data, readErr := os.ReadFile(filepath.Join(projectRunCommandArtifactsDir(run, sandbox), "command-result.json")); readErr != nil || !strings.Contains(string(data), `"success":true`) {
 		t.Fatalf("pulled result artifact = %q, err = %v", data, readErr)
+	}
+}
+
+func TestExecuteProjectRunCommandForwardsTraceContext(t *testing.T) {
+	const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	ctx := domain.NewContextWithTraceContext(context.Background(), domain.TraceContext{Traceparent: traceparent})
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:           root,
+		SandboxRoot:        filepath.Join(root, "sandboxes"),
+		RuntimeDriver:      driverpkg.RuntimeDriverK8s,
+		DefaultImage:       "guest:latest",
+		GuestWorkspacePath: "/workspace",
+		GuestStateRoot:     "/state",
+		GuestHomePath:      "/root",
+		AgentTelemetry:     appconfig.AgentTelemetryConfig{Endpoint: "http://collector:4318"},
+	}
+	store, err := sandboxstore.NewWithConfig(config)
+	if err != nil {
+		t.Fatalf("NewWithConfig returned error: %v", err)
+	}
+	sandbox, err := store.CreateSandbox(ctx, "k8s run command", "", driverpkg.RuntimeDriverK8s, "guest:latest", "", domain.SandboxTypeScript, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	if err := store.SaveVMState(sandbox.Summary.ID, domain.VMState{Driver: driverpkg.RuntimeDriverK8s, BoxID: sandbox.Summary.ID}); err != nil {
+		t.Fatalf("SaveVMState returned error: %v", err)
+	}
+	runtime := &guestFileControllerRuntime{}
+	controller := &Controller{config: config, store: store, runtime: func(*domain.Sandbox) (Runtime, error) { return runtime, nil }}
+	run := domain.ProjectRunRecord{RunID: "run-trace", ProjectID: "project-1", AgentName: "worker"}
+
+	if _, err := controller.executeProjectRunCommand(ctx, projectRunCommandExecution{Run: run, Sandbox: sandbox, CommandText: "echo run"}); err != nil {
+		t.Fatalf("executeProjectRunCommand returned error: %v", err)
+	}
+
+	var payload struct {
+		Traceparent string            `json:"traceparent"`
+		Attributes  map[string]string `json:"attributes"`
+	}
+	if err := json.Unmarshal([]byte(runtime.spec.Env["AGENT_COMPOSE_TELEMETRY"]), &payload); err != nil {
+		t.Fatalf("decode agent telemetry payload: %v", err)
+	}
+	if payload.Traceparent != traceparent || payload.Attributes["agent_compose.sandbox.id"] != sandbox.Summary.ID {
+		t.Fatalf("trace context was not relayed to the execution: %+v", payload)
 	}
 }

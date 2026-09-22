@@ -134,7 +134,7 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 	if strings.TrimSpace(runtimeConfig.Model) != "" {
 		runtimeModel = strings.TrimSpace(runtimeConfig.Model)
 	}
-	spec := BuildAgentExecSpec(r.config, AgentExecSpecRequest{
+	spec := BuildAgentExecSpec(ctx, r.config, AgentExecSpecRequest{
 		Session:    session,
 		Agent:      agent,
 		Model:      runtimeModel,
@@ -400,14 +400,14 @@ type AgentExecSpecRequest struct {
 	SkillNames []string
 }
 
-func BuildAgentExecSpec(config *appconfig.Config, req AgentExecSpecRequest) domain.ExecSpec {
+func BuildAgentExecSpec(ctx context.Context, config *appconfig.Config, req AgentExecSpecRequest) domain.ExecSpec {
 	session, agent, model := req.Session, req.Agent, req.Model
 	promptPath, schemaPath, skillNames := req.PromptPath, req.SchemaPath, req.SkillNames
 	localConfig := *config
 	appconfig.ApplyDefaultGuestPaths(&localConfig)
 	config = &localConfig
 	agentHome := config.GuestHomePath
-	env := execution.BuildSandboxExecEnv(config, session, agentHome)
+	env := execution.BuildSandboxExecEnv(ctx, config, session, agentHome)
 
 	promptCommand := "agent-compose-runtime prompt" +
 		" --provider " + execution.ShellQuote(agent) +

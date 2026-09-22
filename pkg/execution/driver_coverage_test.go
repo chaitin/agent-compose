@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,14 +80,14 @@ func TestDriverConversionWorkflows(t *testing.T) {
 	}
 	session.EnvItems = []domain.SandboxEnvVar{{Name: "USER_VAR", Value: "ok"}, {Name: "LLM_API_KEY", Value: "secret"}}
 	session.RuntimeEnvItems = []domain.SandboxEnvVar{{Name: "MANAGED", Value: "yes"}}
-	env := BuildSandboxExecEnv(config, session, "/home/agent")
+	env := BuildSandboxExecEnv(context.Background(), config, session, "/home/agent")
 	if env["USER_VAR"] != "ok" || env["LLM_API_KEY"] != "" || env["MANAGED"] != "yes" || env["SANDBOX_ID"] != "sandbox-1" {
 		t.Fatalf("sandbox exec env = %#v", env)
 	}
 	if env["SESSION_ID"] != "" {
 		t.Fatalf("SESSION_ID should not be injected: %#v", env)
 	}
-	execSpec := BuildSchedulerCommandExecSpec(config, session, "/state/cells/cell-1/request.json", "/home/agent")
+	execSpec := BuildSchedulerCommandExecSpec(context.Background(), config, session, "/state/cells/cell-1/request.json", "/home/agent")
 	if execSpec.Command != "sh" || len(execSpec.Args) != 2 || !strings.Contains(execSpec.Args[1], "agent-compose-runtime exec") || execSpec.Cwd != "/workspace" {
 		t.Fatalf("scheduler command spec = %#v", execSpec)
 	}

@@ -218,7 +218,7 @@ func TestIntegrationAgentRunnerGuestDefaultingDoesNotMutateSharedConfiguration(t
 	runner, sandbox, _, _ := newGuestSkillsRunner(t)
 	runner.config.GuestHomePath = "/caller-owned-value"
 	before := *runner.config
-	_ = BuildAgentExecSpec(runner.config, AgentExecSpecRequest{Session: sandbox, Agent: "claude", PromptPath: "/prompt"})
+	_ = BuildAgentExecSpec(context.Background(), runner.config, AgentExecSpecRequest{Session: sandbox, Agent: "claude", PromptPath: "/prompt"})
 	if !reflect.DeepEqual(before, *runner.config) {
 		t.Fatal("command construction changed caller configuration")
 	}

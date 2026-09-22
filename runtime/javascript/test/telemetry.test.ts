@@ -9,6 +9,8 @@ const telemetry: AgentTelemetry = {
   captureContent: false, attributes: { "agent_compose.sandbox.id": "sandbox-1" },
 };
 
+const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe("agent telemetry", () => {
@@ -19,6 +21,55 @@ describe("agent telemetry", () => {
     result.headers.authorization = "changed";
     expect(env.AGENT_COMPOSE_TELEMETRY).toBe(JSON.stringify(telemetry));
     expect(readAgentTelemetry("claude", { ...env, AGENT_COMPOSE_RUN_ID: "run-2" })?.attributes["agent_compose.run.id"]).toBe("run-2");
+  });
+
+  it("surfaces a valid inbound W3C traceparent and forwards it only where a parent is honoured", () => {
+    const result = readAgentTelemetry("codex", { AGENT_COMPOSE_TELEMETRY: JSON.stringify({ ...telemetry, traceparent }) })!;
+    expect(result.traceparent).toBe(traceparent);
+    // Codex parents its exec root span and Claude Code its interaction span
+    // from the TRACEPARENT env var; no OTEL_* key carries a parent.
+    for (const provider of ["codex", "claude"] as const) {
+      expect(providerTelemetryEnv(provider, result, {}).TRACEPARENT).toBe(traceparent);
+    }
+    for (const provider of ["opencode", "dsh", "pi", "gemini"] as const) {
+      expect(providerTelemetryEnv(provider, result, {}).TRACEPARENT).toBeUndefined();
+    }
+  });
+
+  it("carries the traceparent into the Claude SDK child environment", async () => {
+    await withTempSession(async (root) => {
+      const opts = new ClaudeRunner({ ...runnerOptions(root, "", "claude"), telemetry: { ...telemetry, traceparent } }).queryOptions(null);
+      expect((opts.env as NodeJS.ProcessEnv).TRACEPARENT).toBe(traceparent);
+    });
+  });
+
+  it.each([
+    "not-a-traceparent",
+    "",
+    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7",
+    "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+    "00-4bf92f3577b34da6a3ce929d0e0e473-00f067aa0ba902b7-01",
+    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b-01",
+    "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+    "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01",
+    "00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01",
+    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-extra",
+    42,
+  ])("ignores a malformed traceparent without throwing: %s", (value) => {
+    const result = readAgentTelemetry("codex", { AGENT_COMPOSE_TELEMETRY: JSON.stringify({ ...telemetry, traceparent: value }) });
+    expect(result).toBeDefined();
+    expect(result?.traceparent).toBeUndefined();
+    expect(providerTelemetryEnv("codex", result, {}).TRACEPARENT).toBeUndefined();
+  });
+
+  it("keeps the encoded payload and provider env unchanged when traceparent is absent", () => {
+    const result = readAgentTelemetry("codex", { AGENT_COMPOSE_TELEMETRY: JSON.stringify(telemetry) })!;
+    expect(result).not.toHaveProperty("traceparent");
+    // The DSH config is forwarded verbatim, so its encoding must stay byte-identical.
+    expect(providerTelemetryEnv("dsh", telemetry, {}).AGENT_COMPOSE_DSH_TELEMETRY).toBe(JSON.stringify(telemetry));
+    for (const provider of ["codex", "claude", "opencode", "dsh"] as const) {
+      expect(providerTelemetryEnv(provider, result, {}).TRACEPARENT).toBeUndefined();
+    }
   });
 
   it.each(["not json", "null", "[]", '{"endpoint":"ftp://host"}', '{"endpoint":"http://secret@host"}', '{"endpoint":"http://host","headers":{"x":1}}'])

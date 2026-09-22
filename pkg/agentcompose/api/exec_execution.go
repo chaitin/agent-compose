@@ -154,7 +154,7 @@ func (h *ExecHandler) executeProjectCommand(ctx context.Context, req *agentcompo
 	})
 	execCtx, cancel := execution.ExecContext(ctx, req.GetTimeoutMs())
 	defer cancel()
-	result, execErr := prep.Runtime.ExecStream(execCtx, sandbox, prep.VMState, execution.BuildRuntimeCommandExecSpec(h.config, sandbox, filepath.Join(prep.GuestExecDir, "command-request.json"), h.config.GuestHomePath), writer)
+	result, execErr := prep.Runtime.ExecStream(execCtx, sandbox, prep.VMState, execution.BuildRuntimeCommandExecSpec(execCtx, h.config, sandbox, filepath.Join(prep.GuestExecDir, "command-request.json"), h.config.GuestHomePath), writer)
 	if *sendErr != nil {
 		return nil, connect.NewError(connect.CodeUnknown, *sendErr)
 	}
