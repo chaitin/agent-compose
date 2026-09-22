@@ -33,12 +33,15 @@ describe("telemetry runner integration", () => {
     });
   });
 
-  it("forwards the inbound traceparent to the Codex CLI process", async () => {
+  it("forwards the inbound trace context to the Codex CLI process", async () => {
     await withTempSession(async (root) => {
       const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-      await new CodexRunner({ ...runnerOptions(root, ""), telemetry: { ...telemetry, traceparent } }).runPrompt("hello");
+      const tracestate = "vendor=value";
+      await new CodexRunner({ ...runnerOptions(root, ""), telemetry: { ...telemetry, traceparent, tracestate } }).runPrompt("hello");
       expect(capture.options).toHaveLength(1);
       expect(capture.options[0].env.TRACEPARENT).toBe(traceparent);
+      // Codex's exec path reads both variables when loading its parent context.
+      expect(capture.options[0].env.TRACESTATE).toBe(tracestate);
       // The parent link rides the env var; no dedicated config.otel key exists.
       expect(capture.options[0].config.otel.trace_exporter["otlp-http"].endpoint).toBe("http://collector:4318/v1/traces");
     });

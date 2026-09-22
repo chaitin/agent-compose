@@ -10,6 +10,7 @@ const telemetry: AgentTelemetry = {
 };
 
 const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+const tracestate = "vendor=value,other=1";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
@@ -23,23 +24,30 @@ describe("agent telemetry", () => {
     expect(readAgentTelemetry("claude", { ...env, AGENT_COMPOSE_RUN_ID: "run-2" })?.attributes["agent_compose.run.id"]).toBe("run-2");
   });
 
-  it("surfaces a valid inbound W3C traceparent and forwards it only where a parent is honoured", () => {
-    const result = readAgentTelemetry("codex", { AGENT_COMPOSE_TELEMETRY: JSON.stringify({ ...telemetry, traceparent }) })!;
+  it("surfaces a valid inbound W3C trace context and forwards it only where a parent is honoured", () => {
+    const result = readAgentTelemetry("codex", { AGENT_COMPOSE_TELEMETRY: JSON.stringify({ ...telemetry, traceparent, tracestate }) })!;
     expect(result.traceparent).toBe(traceparent);
+    expect(result.tracestate).toBe(tracestate);
     // Codex parents its exec root span and Claude Code its interaction span
-    // from the TRACEPARENT env var; no OTEL_* key carries a parent.
+    // from the TRACEPARENT/TRACESTATE env vars; no OTEL_* key carries a parent.
     for (const provider of ["codex", "claude"] as const) {
-      expect(providerTelemetryEnv(provider, result, {}).TRACEPARENT).toBe(traceparent);
+      const env = providerTelemetryEnv(provider, result, {});
+      expect(env.TRACEPARENT).toBe(traceparent);
+      expect(env.TRACESTATE).toBe(tracestate);
     }
     for (const provider of ["opencode", "dsh", "pi", "gemini"] as const) {
-      expect(providerTelemetryEnv(provider, result, {}).TRACEPARENT).toBeUndefined();
+      const env = providerTelemetryEnv(provider, result, {});
+      expect(env.TRACEPARENT).toBeUndefined();
+      expect(env.TRACESTATE).toBeUndefined();
     }
   });
 
-  it("carries the traceparent into the Claude SDK child environment", async () => {
+  it("carries the trace context into the Claude SDK child environment", async () => {
     await withTempSession(async (root) => {
-      const opts = new ClaudeRunner({ ...runnerOptions(root, "", "claude"), telemetry: { ...telemetry, traceparent } }).queryOptions(null);
-      expect((opts.env as NodeJS.ProcessEnv).TRACEPARENT).toBe(traceparent);
+      const opts = new ClaudeRunner({ ...runnerOptions(root, "", "claude"), telemetry: { ...telemetry, traceparent, tracestate } }).queryOptions(null);
+      const env = opts.env as NodeJS.ProcessEnv;
+      expect(env.TRACEPARENT).toBe(traceparent);
+      expect(env.TRACESTATE).toBe(tracestate);
     });
   });
 
@@ -56,19 +64,48 @@ describe("agent telemetry", () => {
     "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-extra",
     42,
   ])("ignores a malformed traceparent without throwing: %s", (value) => {
-    const result = readAgentTelemetry("codex", { AGENT_COMPOSE_TELEMETRY: JSON.stringify({ ...telemetry, traceparent: value }) });
+    const result = readAgentTelemetry("codex", { AGENT_COMPOSE_TELEMETRY: JSON.stringify({ ...telemetry, traceparent: value, tracestate }) });
     expect(result).toBeDefined();
     expect(result?.traceparent).toBeUndefined();
-    expect(providerTelemetryEnv("codex", result, {}).TRACEPARENT).toBeUndefined();
+    // tracestate is only meaningful with a traceparent, so it is dropped too.
+    expect(result?.tracestate).toBeUndefined();
+    const env = providerTelemetryEnv("codex", result, {});
+    expect(env.TRACEPARENT).toBeUndefined();
+    expect(env.TRACESTATE).toBeUndefined();
   });
 
-  it("keeps the encoded payload and provider env unchanged when traceparent is absent", () => {
+  it.each([
+    "bad\u0000state",
+    "bad\nstate",
+    "a".repeat(513),
+    42,
+    "",
+    "   ",
+  ])("drops a malformed tracestate without dropping the traceparent: %s", (value) => {
+    const result = readAgentTelemetry("codex", { AGENT_COMPOSE_TELEMETRY: JSON.stringify({ ...telemetry, traceparent, tracestate: value }) })!;
+    expect(result.traceparent).toBe(traceparent);
+    expect(result.tracestate).toBeUndefined();
+    const env = providerTelemetryEnv("codex", result, {});
+    expect(env.TRACEPARENT).toBe(traceparent);
+    expect(env.TRACESTATE).toBeUndefined();
+  });
+
+  it("trims a valid tracestate before forwarding it", () => {
+    const result = readAgentTelemetry("codex", { AGENT_COMPOSE_TELEMETRY: JSON.stringify({ ...telemetry, traceparent, tracestate: `  ${tracestate}  ` }) })!;
+    expect(result.tracestate).toBe(tracestate);
+    expect(providerTelemetryEnv("codex", result, {}).TRACESTATE).toBe(tracestate);
+  });
+
+  it("keeps the encoded payload and provider env unchanged when trace context is absent", () => {
     const result = readAgentTelemetry("codex", { AGENT_COMPOSE_TELEMETRY: JSON.stringify(telemetry) })!;
     expect(result).not.toHaveProperty("traceparent");
+    expect(result).not.toHaveProperty("tracestate");
     // The DSH config is forwarded verbatim, so its encoding must stay byte-identical.
     expect(providerTelemetryEnv("dsh", telemetry, {}).AGENT_COMPOSE_DSH_TELEMETRY).toBe(JSON.stringify(telemetry));
     for (const provider of ["codex", "claude", "opencode", "dsh"] as const) {
-      expect(providerTelemetryEnv(provider, result, {}).TRACEPARENT).toBeUndefined();
+      const env = providerTelemetryEnv(provider, result, {});
+      expect(env.TRACEPARENT).toBeUndefined();
+      expect(env.TRACESTATE).toBeUndefined();
     }
   });
 
