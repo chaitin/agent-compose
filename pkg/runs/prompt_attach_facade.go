@@ -32,6 +32,14 @@ func ensurePromptAttachClaudeLLMFacadeEnv(ctx context.Context, facade promptAtta
 	if err != nil {
 		return nil, err
 	}
+	// Keep an unknown connection prefix from resolving as a literal model on the
+	// default connection and from being swallowed into claude's own-login
+	// fallback below.
+	if err := llms.ValidateFacadeModelReference(ctx, llms.FacadeModelReferenceQuery{
+		Config: config, Store: store, SessionID: sandbox.Summary.ID, Model: model, EnvItems: providerEnv,
+	}); err != nil {
+		return nil, err
+	}
 	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{
 		Config: config, SessionID: sandbox.Summary.ID, PreferredProviderFamily: llms.ProviderFamilyAnthropic, RequestedModel: model, ProviderID: "", EnvItems: providerEnv,
 	})

@@ -155,6 +155,46 @@ func TestEnsurePromptAttachClaudeLLMFacadeEnvPreservesRequestedModelWithoutConfi
 	}
 }
 
+// Prompt attach dispatches claude's declaration through the same resolver as
+// the session facade, so an unknown connection prefix must fail here too instead
+// of publishing a managed token that sends the connection id upstream as the
+// model name.
+func TestEnsurePromptAttachClaudeLLMFacadeEnvRejectsUnknownConnectionPrefix(t *testing.T) {
+	isolatePromptAttachLLMEnv(t)
+	store := &promptAttachFacadeStore{
+		providers: []llms.Provider{{
+			ID:             "anthropic-test",
+			ProviderType:   llms.ProviderFamilyAnthropic,
+			DefaultWireAPI: llms.APIProtocolMessages,
+			BaseURL:        "https://anthropic.example.test",
+			APIKey:         "anthropic-key",
+			Enabled:        true,
+		}},
+		models: []llms.Model{{ID: "claude-test", Name: "claude-test", DefaultModel: true, Enabled: true}},
+	}
+	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-claude-unknown-connection"}}
+
+	env, err := ensurePromptAttachClaudeLLMFacadeEnv(
+		context.Background(),
+		promptAttachFacadeTarget{
+			Config:  &appconfig.Config{RuntimeBaseURL: "http://agent-compose.test:7410"},
+			Store:   store,
+			Sandbox: sandbox,
+		},
+		"matrix-chat/deepseek-flash",
+		"run-claude-unknown-connection",
+	)
+	if !errors.Is(err, domain.ErrFailedPrecondition) {
+		t.Fatalf("err = %v, want failed precondition", err)
+	}
+	if !strings.Contains(err.Error(), `llm provider "matrix-chat" is not configured`) {
+		t.Fatalf("err = %v, want the unknown connection named", err)
+	}
+	if len(env) != 0 || len(store.tokens) != 0 {
+		t.Fatalf("facade env = %#v, tokens = %#v; want no partial configuration", env, store.tokens)
+	}
+}
+
 func TestEnsurePromptAttachLLMFacadeEnvOpenCodeUsesSharedRuntimeConfig(t *testing.T) {
 	isolatePromptAttachLLMEnv(t)
 	root := t.TempDir()

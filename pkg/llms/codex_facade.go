@@ -36,6 +36,17 @@ func EnsureCodexFacadeConfig(ctx context.Context, req CodexFacadeConfigRequest) 
 	if err != nil {
 		return nil, err
 	}
+	// Codex must not degrade a `<connection>/<model>` declaration with an unknown
+	// connection to a literal model on the default connection, because that
+	// forwards the connection id to the upstream as the model name. Checking
+	// before the resolution below also keeps the clear failed-precondition error:
+	// reaching the resolver instead lets OptionalFacadeConfigError swallow it
+	// into "codex keeps its own login".
+	if err := ValidateFacadeModelReference(ctx, FacadeModelReferenceQuery{
+		Config: config, Store: store, SessionID: sandbox.Summary.ID, Model: model, EnvItems: providerEnv,
+	}); err != nil {
+		return nil, err
+	}
 	target, err := ResolveRuntimeLLMTargetWithEnv(ctx, store, RuntimeLLMTargetQuery{
 		Config: config, SessionID: sandbox.Summary.ID, PreferredProviderFamily: ProviderFamilyOpenAI, ProviderFamilyIsRequired: true, RequestedModel: model, ProviderID: "", EnvItems: providerEnv,
 	})

@@ -108,7 +108,12 @@ models.json entry. The facade agents (pi, opencode, dsh) treat the
 `<connection>/<model>` prefix as optional for the same reason; codex and claude
 already accepted unqualified model names. Prefixed values keep their established
 meaning: a configured connection id, a family alias, or an env-backed custom
-endpoint.
+endpoint. A facade agent declaration whose prefix names none of those is a
+configuration error rather than a literal model name, because resolving it
+against the default connection would forward the connection id upstream as part
+of the model name. A literal model id that itself contains a slash is therefore
+written with its connection (`<connection>/<org>/<model>`); the resolved model id
+keeps the remaining slashes.
 
 A connection's protocol decides which agents it can serve, because the runtime
 facade bridges only some protocol pairs. An OpenAI `responses` connection serves

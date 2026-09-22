@@ -605,8 +605,18 @@ models do not need to be enumerated. A bare `model-id` resolves to the daemon
 default connection: the reserved bootstrap connection (`default`/`anthropic`)
 wins, otherwise the only configured connection is used, and several connections
 without a reserved one are reported as an ambiguity. Qualify the model as
-`<connection>/<model-id>` to select a connection explicitly. Other methods share
-the service path prefix.
+`<connection>/<model-id>` to select a connection explicitly. An Agent model value
+that carries a `/` is such a reference: a literal upstream model id that itself
+contains slashes is written with its connection (for example
+`team-gateway/meta-llama/Llama-3.1-8B-Instruct`). A prefix that names no
+configured connection, family alias, or session-environment provider is reported
+as a configuration error instead of being forwarded upstream as part of the model
+name. This is a behavior change for codex and claude: a declaration that wrote a
+slash-containing model id verbatim and relied on the default connection (for
+example `meta-llama/Llama-3.1-8B-Instruct`) now fails with
+`llm provider "meta-llama" is not configured`; rewrite it with the connection
+that serves the model (`team-gateway/meta-llama/Llama-3.1-8B-Instruct`). Other
+methods share the service path prefix.
 
 - IDs are immutable, 1–128 ASCII letters, digits, dots, underscores or hyphens,
   starting with a letter or digit. `default`, `anthropic`, and session environment
