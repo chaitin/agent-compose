@@ -49,9 +49,13 @@ func DialectFor(agentKind string) (Dialect, error) {
 			Canonical: ProtocolMessages,
 		}, nil
 	case "opencode":
+		// OpenCode reaches the facade through the AI SDK: its OpenAI-compatible
+		// provider posts chat completions, and its Anthropic provider posts
+		// messages. It cannot speak the Responses API, so that is the one
+		// upstream it needs converted.
 		return Dialect{
 			Kind:          kind,
-			Supported:     []Protocol{ProtocolChatCompletions},
+			Supported:     []Protocol{ProtocolChatCompletions, ProtocolMessages},
 			Canonical:     ProtocolChatCompletions,
 			GuestProvider: GuestProviderAgentCompose,
 		}, nil

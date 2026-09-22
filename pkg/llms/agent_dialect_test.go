@@ -59,8 +59,8 @@ func TestDialectConversionMatrix(t *testing.T) {
 		},
 		"opencode": {
 			ProtocolChatCompletions: {ProtocolChatCompletions, false},
+			ProtocolMessages:        {ProtocolMessages, false},
 			ProtocolResponses:       {ProtocolChatCompletions, true},
-			ProtocolMessages:        {ProtocolChatCompletions, true},
 		},
 		"pi": {
 			ProtocolChatCompletions: {ProtocolChatCompletions, false},
@@ -138,5 +138,35 @@ func TestProtocolHelpers(t *testing.T) {
 	}
 	if ProtocolForFamily(ProviderFamilyOpenAI) != ProtocolResponses {
 		t.Error("ProtocolForFamily(openai) should be responses")
+	}
+}
+
+// TestCanConvertPinsBridgeCoverage records exactly which (inbound, upstream)
+// pairs the daemon can serve. Every same-family pair re-encodes through the
+// shared adapters. Cross-family pairs depend on the bridge registry, and
+// messages -> chat is the one pair it does not register, so PrepareAgentLLM
+// must reject that combination at configuration time instead of failing on the
+// first request.
+func TestCanConvertPinsBridgeCoverage(t *testing.T) {
+	cases := []struct {
+		inbound  Protocol
+		upstream Protocol
+		want     bool
+	}{
+		{ProtocolResponses, ProtocolResponses, true},
+		{ProtocolResponses, ProtocolChatCompletions, true},
+		{ProtocolResponses, ProtocolMessages, true},
+		{ProtocolChatCompletions, ProtocolChatCompletions, true},
+		{ProtocolChatCompletions, ProtocolResponses, true},
+		{ProtocolChatCompletions, ProtocolMessages, true},
+		{ProtocolMessages, ProtocolMessages, true},
+		{ProtocolMessages, ProtocolResponses, true},
+		{ProtocolMessages, ProtocolChatCompletions, false},
+		{ProtocolMessages, Protocol("bogus"), false},
+	}
+	for _, tc := range cases {
+		if got := CanConvert(tc.inbound, tc.upstream); got != tc.want {
+			t.Errorf("CanConvert(%s, %s) = %v, want %v", tc.inbound, tc.upstream, got, tc.want)
+		}
 	}
 }

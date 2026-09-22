@@ -19,6 +19,40 @@ func ProtocolAdapter(protocol protocolbridge.Protocol) (protocolbridge.Adapter, 
 	}
 }
 
+// BridgeProtocol maps a daemon Protocol onto the protocol bridge's protocol.
+func BridgeProtocol(protocol Protocol) (protocolbridge.Protocol, error) {
+	switch protocol {
+	case ProtocolResponses:
+		return protocolbridge.ProtocolOpenAIResponses, nil
+	case ProtocolChatCompletions:
+		return protocolbridge.ProtocolOpenAIChat, nil
+	case ProtocolMessages:
+		return protocolbridge.ProtocolAnthropicMessages, nil
+	default:
+		return "", fmt.Errorf("unsupported llm protocol %q", protocol)
+	}
+}
+
+// CanConvert reports whether the daemon can turn a request that arrived as
+// inbound into one the upstream accepts. Same-family pairs re-encode through
+// the shared adapters; cross-family pairs need a registered bridge, so the
+// answer is derived from the bridge registry rather than from a copy of it.
+func CanConvert(inbound, upstream Protocol) bool {
+	inboundBridge, err := BridgeProtocol(inbound)
+	if err != nil {
+		return false
+	}
+	upstreamBridge, err := BridgeProtocol(upstream)
+	if err != nil {
+		return false
+	}
+	if inboundBridge == upstreamBridge || ProtocolsShareFamily(inboundBridge, upstreamBridge) {
+		return true
+	}
+	bridge, ok := protocolbridge.NewCrossFamilyBridge(inboundBridge, upstream.Family())
+	return ok && bridge.UpstreamProtocol() == upstreamBridge
+}
+
 func UpstreamProtocolAndEndpoint(target ResolvedTarget) (protocolbridge.Protocol, string, error) {
 	switch NormalizeProviderType(target.Provider.ProviderType) {
 	case ProviderFamilyAnthropic:
