@@ -3,6 +3,7 @@ package llms
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -57,6 +58,33 @@ func TestEnsureCodexFacadeConfigRejectsExplicitNonOpenAIConnection(t *testing.T)
 	})
 	if !errors.Is(err, domain.ErrFailedPrecondition) {
 		t.Fatalf("explicit non-OpenAI Codex model err = %v, want failed precondition", err)
+	}
+	if len(store.savedTokens) != 0 {
+		t.Fatalf("saved tokens = %#v, want none for a rejected connection", store.savedTokens)
+	}
+}
+
+// A `<connection>/<model>` declaration names a daemon connection, so the prefix
+// is never part of the upstream model id. With a resolvable default connection
+// but no connection named by the prefix, Codex used to degrade the whole string
+// to a literal model on that default connection, which sent
+// "matrix-chat/deepseek-flash" to the upstream as the model name. The missing
+// connection is a configuration error and must be reported, not resolved.
+func TestEnsureCodexFacadeConfigRejectsUnknownConnectionPrefix(t *testing.T) {
+	isolateLLMEnv(t)
+	root := t.TempDir()
+	store := newBareModelFacadeStore()
+	store.providers = []Provider{gatewayConnection()}
+
+	_, err := EnsureCodexFacadeConfig(context.Background(), CodexFacadeConfigRequest{
+		Config: bareModelConfig(root), Store: store, Sandbox: bareModelSandbox(root, "sandbox-codex-unknown-connection"),
+		Model: "matrix-chat/deepseek-flash", Source: "agent", RunID: "run-codex-unknown-connection",
+	})
+	if !errors.Is(err, domain.ErrFailedPrecondition) {
+		t.Fatalf("unknown connection prefix err = %v, want failed precondition", err)
+	}
+	if !strings.Contains(err.Error(), `llm provider "matrix-chat" is not configured`) {
+		t.Fatalf("err = %v, want the unknown connection named in the error", err)
 	}
 	if len(store.savedTokens) != 0 {
 		t.Fatalf("saved tokens = %#v, want none for a rejected connection", store.savedTokens)
