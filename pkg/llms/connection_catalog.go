@@ -20,6 +20,12 @@ var (
 	ErrConnectionNotFound = errors.New("llm connection not found")
 	// ErrAmbiguousConnection reports that a model did not identify one connection.
 	ErrAmbiguousConnection = errors.New("ambiguous llm connection")
+	// ErrLegacyQualifiedModel reports a model written as "<connection>/<model>",
+	// the syntax the connection-aware catalog replaced. It is not sniffed from
+	// the shape alone: a model id is opaque and may legitimately contain a slash,
+	// so this is reported only when the prefix names a connection that serves the
+	// remainder, which the old syntax guaranteed and a real model id rarely does.
+	ErrLegacyQualifiedModel = errors.New("model uses the retired <connection>/<model> syntax")
 )
 
 // ProviderModelBinding is one model served by one connection.
@@ -234,12 +240,48 @@ func (c *Catalog) connectionFor(connectionID, model string) (Provider, error) {
 	if serving := c.serving[model]; len(serving) == 1 {
 		return c.providers[serving[0]], nil
 	}
+	if err := c.legacyQualifiedModelError(model); err != nil {
+		return Provider{}, err
+	}
 	if len(c.providers) == 1 {
 		for _, provider := range c.providers {
 			return provider, nil
 		}
 	}
 	return Provider{}, c.ambiguousConnectionError(model)
+}
+
+// legacyQualifiedModelError diagnoses the retired "<connection>/<model>" syntax.
+//
+// Nothing reinterprets such a value: guessing would corrupt a legitimate model id,
+// which stays opaque. Without this the operator sees either an upstream "unknown
+// model" rejection or an ambiguity error listing connections, and neither says
+// that the model string itself is what needs changing.
+func (c *Catalog) legacyQualifiedModelError(model string) error {
+	if len(c.serving[model]) != 0 {
+		return nil
+	}
+	connection, remainder, found := strings.Cut(model, "/")
+	if !found || connection == "" || remainder == "" {
+		return nil
+	}
+	if _, ok := c.providers[connection]; !ok {
+		return nil
+	}
+	if !serves(c.serving[remainder], connection) {
+		return nil
+	}
+	return fmt.Errorf("%w: model %q is served by no connection, but connection %q serves %q; declare llm_connection: %s with model: %s",
+		ErrLegacyQualifiedModel, model, connection, remainder, connection, remainder)
+}
+
+func serves(connectionIDs []string, connectionID string) bool {
+	for _, candidate := range connectionIDs {
+		if candidate == connectionID {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Catalog) ambiguousConnectionError(model string) error {

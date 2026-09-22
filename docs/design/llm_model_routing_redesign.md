@@ -401,8 +401,9 @@ guest `resolveFacadeModel` / `RuntimeModelArgument` 删除，guest 只读
 **P3 — direct/managed 分叉**：agent env 命中 LLM key → direct；
 删除 session-env provider 与所有 env 探测函数。
 
-**P4 — 配置面显式化**：`agents.*.llm_connection` + `model` 字面化；
-兼容期允许 `model` 前缀命中唯一连接时按旧语义解释并告警，之后移除。
+**P4 — 配置面显式化**：`agents.*.llm_connection` + `model` 字面化。
+按旧语义解释 `model` 前缀的方案已否决：那正是本设计要消灭的第二套解释，
+且 model 是整体、可以合法含 `/`。改为**只诊断、不解释**（见 §6）。
 
 **P5 — 删除 fallback 与 family 约束**：删 §4.1 剩余项；
 codex/claude 不再限制上游家族（由矩阵决定）。
@@ -411,8 +412,15 @@ codex/claude 不再限制上游家族（由矩阵决定）。
 
 ## 6. 迁移
 
-- 配置：`model: gateway/model` → `llm_connection: gateway` + `model: model`；
-  提供 `agent-compose` 校验/迁移提示。
+- 配置：`model: gateway/model` → `llm_connection: gateway` + `model: model`。
+  迁移提示已落地为 `Catalog.legacyQualifiedModelError`：当一个 model
+  **不被任何连接提供**、而它的第一个 `/` 前缀**是某个连接**且该连接**确实提供
+  剩余部分**时，返回 `ErrLegacyQualifiedModel`，错误信息直接给出应改写的
+  `llm_connection` 与 `model`。
+
+  这不是兜底：行为完全不改，值也不会被重新解释。三个条件同时成立才触发，
+  所以合法含 `/` 的 model（如 `meta-llama/Llama-3.1-8B`）不受影响；它只是把
+  本来会出现的上游 "unknown model" 或令人困惑的歧义错误，换成本地可执行的提示。
 - 部署：daemon env / models.json / RPC 继续作为连接来源；
   **agent 级 `LLM_API_*` 语义由"daemon 代理的环境上游"改为"agent 直连"**，
   真实 key 进入 guest。这是唯一需要显式通告的行为变更，需要在 release note

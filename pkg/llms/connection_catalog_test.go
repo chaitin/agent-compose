@@ -167,6 +167,66 @@ func TestCatalogResolveUsesSoleConnectionForAnyModel(t *testing.T) {
 	}
 }
 
+func TestCatalogDiagnosesRetiredQualifiedModelSyntax(t *testing.T) {
+	newCatalog := func() *Catalog {
+		return mustLoadCatalog(t, fakeCatalogStore{
+			providers: []Provider{
+				catalogOpenAIConnection("gateway", "https://gw.example.com"),
+				catalogAnthropicConnection("anthropic", "https://api.anthropic.com"),
+			},
+			bindings: []ProviderModelBinding{
+				{ProviderID: "gateway", ModelID: "gpt-5.5"},
+			},
+		})
+	}
+
+	t.Run("a qualified model naming its own connection is diagnosed", func(t *testing.T) {
+		_, err := newCatalog().Resolve("", "gateway/gpt-5.5")
+		if !errors.Is(err, ErrLegacyQualifiedModel) {
+			t.Fatalf("Resolve() error = %v, want ErrLegacyQualifiedModel", err)
+		}
+		// The hint has to be actionable: it names the connection and the model
+		// the operator should write instead.
+		for _, want := range []string{"gateway", "gpt-5.5", "llm_connection"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		}
+	})
+
+	t.Run("an opaque model whose prefix is a connection is left alone", func(t *testing.T) {
+		// "gateway" is a connection and the model starts with it, but the
+		// connection does not serve "some-model", so the slash is part of a
+		// legitimate model id and must survive untouched.
+		catalog := mustLoadCatalog(t, fakeCatalogStore{
+			providers: []Provider{catalogOpenAIConnection("gateway", "https://gw.example.com")},
+		})
+		target, err := catalog.Resolve("", "gateway/some-model")
+		if err != nil {
+			t.Fatalf("Resolve() error = %v", err)
+		}
+		if target.Model.ID != "gateway/some-model" {
+			t.Errorf("model = %q, want the literal model string", target.Model.ID)
+		}
+	})
+
+	t.Run("a bound model containing a slash is served", func(t *testing.T) {
+		catalog := mustLoadCatalog(t, fakeCatalogStore{
+			providers: []Provider{catalogOpenAIConnection("gateway", "https://gw.example.com")},
+			bindings: []ProviderModelBinding{
+				{ProviderID: "gateway", ModelID: "meta-llama/Llama-3.1-8B"},
+			},
+		})
+		target, err := catalog.Resolve("", "meta-llama/Llama-3.1-8B")
+		if err != nil {
+			t.Fatalf("Resolve() error = %v", err)
+		}
+		if target.Model.ID != "meta-llama/Llama-3.1-8B" {
+			t.Errorf("model = %q, want the literal model string", target.Model.ID)
+		}
+	})
+}
+
 func TestCatalogIgnoresBindingsOfDisabledConnections(t *testing.T) {
 	catalog := mustLoadCatalog(t, fakeCatalogStore{
 		providers: []Provider{catalogOpenAIConnection("gateway", "https://gw.example.com")},
