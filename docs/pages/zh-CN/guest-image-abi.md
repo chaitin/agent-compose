@@ -145,10 +145,11 @@ daemon 会显式传递 workspace、state 和 home 路径，并注入：
 | `AGENT_COMPOSE_RESOLVED_MODEL` | 为本次托管 agent 调用解析的完整模型引用 |
 
 Pi 和 DSH runtime 直接使用 `AGENT_COMPOSE_RESOLVED_MODEL`，不再解析其中的斜杠。
-分步升级时，若旧 daemon 未提供该变量，新 runtime 仍接受旧的 connection/model 参数；
-daemon 也为旧 guest 保留 DSH 的参数前缀。该回退方式已弃用，待旧 daemon/guest
-版本退出支持后移除；新集成应使用已解析的值。runtime 协议的其他部分仍应使用
-与 release 匹配的镜像。
+分步升级时，若旧 daemon 未提供该变量，新 runtime 仍接受旧的 connection/model 参数。
+这个容忍**只有一个方向**：daemon 不再为旧 guest 保留 DSH 的参数前缀，因此旧 DSH guest
+被新 daemon 驱动时会拿到字面 model，并在第一个斜杠处截断。请先更新 guest 镜像，或与
+daemon 同时更新。该回退方式已弃用，待旧 daemon 版本退出支持后移除；新集成应使用已
+解析的值。runtime 协议的其他部分仍应使用与 release 匹配的镜像。
 
 `prompt` 和 `exec` 的 stdout payload、stream 分离、artifact 文件以及交互式 NDJSON frame 都属于协议，而不仅是 CLI 展示。自行替换 runtime 时，必须实现对应 release 的完整协议。强烈建议直接复用仓库 runtime，协议详见 [agent-compose 与 runtime 调用约定](https://github.com/chaitin/agent-compose/blob/main/docs/design/agent-compose-runtime_contract.md)。
 

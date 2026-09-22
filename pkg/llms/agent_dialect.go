@@ -69,6 +69,14 @@ func DialectFor(agentKind string) (Dialect, error) {
 	case "dsh":
 		// The DSH profile declares its provider separately from its model, so
 		// the model string never carries a provider prefix.
+		//
+		// GuestProvider is deliberately left empty. An older DSH guest truncated
+		// the model argument at its first slash, and the daemon used to shield it
+		// by sending a disposable "agent-compose/" prefix. That direction was
+		// dropped on purpose: support runs one way, so a new runtime tolerates an
+		// older daemon but a new daemon does not accommodate an older guest.
+		// docs/pages/guest-image-abi.md states the upgrade order this requires.
+		// Do not reintroduce the prefix without changing that document.
 		return Dialect{
 			Kind:      kind,
 			Supported: []Protocol{ProtocolChatCompletions, ProtocolResponses, ProtocolMessages},

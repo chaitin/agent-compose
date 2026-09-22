@@ -615,12 +615,15 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   （即新 guest + 旧 daemon）时生效，当前 daemon 恒设该变量。删它必须连同那段 ABI
   承诺一起改，属于发布策略决定，不是代码清理。
 
-- **dsh legacy 参数前缀的方向性缺口（待决策）**。同一段 ABI 文档还承诺"daemon 也为
+- **dsh legacy 参数前缀：已决定放弃该方向**。同一段 ABI 文档原本还承诺"daemon 也为
   旧 guest 保留 DSH 的 legacy 参数前缀"，实现它的 `RuntimeModelArgument` 已随 M2
   删除，而新 daemon 传给 dsh 的 CLI 参数是字面 model。于是"新 daemon + 旧 dsh guest"
-  这条方向失去保护：旧 guest 会剥掉字面 model 的第一个 `/` 分量。两个方向的兼容
-  现在只剩 guest 侧一半。需要决策：恢复 daemon 侧前缀（可复用 `GuestModel` 的
-  `GuestProvider` 单点机制），或同步修改 ABI 文档正式放弃该方向。
+  这条方向失去保护：旧 guest 会剥掉字面 model 的第一个 `/` 分量。
+
+  决定：**不恢复**。兼容只保留一个方向（新 runtime 容忍旧 daemon），
+  `docs/pages/guest-image-abi.md` 的中英两版已改写为明确的升级顺序约束——
+  必须先更新 guest 镜像，或与 daemon 同时更新；`agent_dialect.go` 的 dsh 分支
+  也加了注释说明这个"空 `GuestProvider`"是刻意的，避免后人误当遗漏而恢复前缀。
 
 - **§7 的 15 格转换矩阵表驱动测试**未补齐：现有测试分散覆盖 codex×messages、
   opencode、pi，且 `TestPrepareAgentLLMRejectsClaudeChatUpstream` 断言 claude×chat
