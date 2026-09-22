@@ -124,8 +124,15 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}
+	// The agent's own environment decides which side owns the upstream: an
+	// agent that publishes an LLM connection there is configured against it,
+	// and one that publishes none falls back to the daemon's catalog.
+	var agentEnvItems []domain.SandboxEnvVar
+	if agentDef != nil {
+		agentEnvItems = agentDef.EnvItems
+	}
 	runtimeConfig, err := runtimefacade.EnsureSessionAgentRuntimeConfig(ctx, runtimefacade.SessionFacadeConfigRequest{
-		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent, Model: effectiveModel, Source: runtimefacade.TokenSourceAgent, RunID: runID,
+		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent, Model: effectiveModel, AgentEnv: agentEnvItems, Source: runtimefacade.TokenSourceAgent, RunID: runID,
 	})
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err

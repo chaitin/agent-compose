@@ -29,8 +29,12 @@ type AgentLLMRequest struct {
 	// ConnectionID names the upstream connection explicitly. Empty infers it
 	// from the model.
 	ConnectionID string
-	Source       string
-	RunID        string
+	// AgentEnv is the environment the agent declared for itself. When it
+	// publishes an LLM connection, that connection owns this run and the catalog
+	// is not consulted at all.
+	AgentEnv []domain.SandboxEnvVar
+	Source   string
+	RunID    string
 }
 
 // IsUnmanagedAgentLLMError reports whether err means "the daemon has no managed
@@ -58,16 +62,30 @@ type AgentLLM struct {
 	Convert    bool
 	Token      string
 	BaseURL    string
-	Env        map[string]string
+	// Endpoint is the base URL the guest is pointed at: the daemon's facade
+	// route in managed mode, or the upstream the agent declared in direct mode.
+	Endpoint string
+	// Credential is what the guest presents at Endpoint: a run-scoped facade
+	// token in managed mode, or the agent's own upstream key in direct mode.
+	Credential string
+	// Direct reports that the agent declared its own upstream, so the daemon
+	// neither proxies nor converts this run's calls.
+	Direct bool
+	Env    map[string]string
 }
 
 // PrepareAgentLLM is the single entry point that turns configured connections
 // into the guest-facing LLM configuration of one agent run.
 //
-// It makes every LLM decision in one place: which model, which connection,
-// which inbound protocol the agent needs, and whether that implies protocol
-// conversion. The guest resolves nothing; it receives a base URL, a credential,
-// and an already-composed model string.
+// It makes every LLM decision in one place: whether the agent or the daemon owns
+// the upstream, which model, which connection, which inbound protocol the agent
+// needs, and whether that implies protocol conversion. The guest resolves
+// nothing; it receives an endpoint, a credential, and an already-composed model
+// string.
+//
+// The two modes are mutually exclusive. An agent that declares its own LLM
+// connection in its environment is served by that connection and the catalog is
+// not consulted; an agent that declares none is served by the catalog.
 //
 // A catalog with no model to apply returns ErrNoModel, which callers treat as
 // "the agent manages its own authentication". Every other failure is a real
@@ -83,6 +101,9 @@ func PrepareAgentLLM(ctx context.Context, req AgentLLMRequest) (*AgentLLM, error
 	dialect, err := DialectFor(req.AgentKind)
 	if err != nil {
 		return nil, err
+	}
+	if upstream, declared := directUpstreamFromAgentEnv(req.AgentEnv, dialect); declared {
+		return prepareDirectAgentLLM(req, dialect, upstream)
 	}
 	catalog, err := LoadCatalog(ctx, req.Store)
 	if err != nil {
@@ -131,6 +152,7 @@ func PrepareAgentLLM(ctx context.Context, req AgentLLMRequest) (*AgentLLM, error
 	if err := req.Store.SaveLLMFacadeToken(ctx, token); err != nil {
 		return nil, err
 	}
+	daemonBaseURL := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	prepared := &AgentLLM{
 		Dialect:    dialect,
 		Target:     target,
@@ -140,7 +162,9 @@ func PrepareAgentLLM(ctx context.Context, req AgentLLMRequest) (*AgentLLM, error
 		Inbound:    inbound,
 		Convert:    dialect.NeedsConversion(upstream),
 		Token:      tokenValue,
-		BaseURL:    strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		BaseURL:    daemonBaseURL,
+		Endpoint:   facadeEndpoint(daemonBaseURL, req.Sandbox.Summary.ID, inbound),
+		Credential: tokenValue,
 	}
 	env, err := writeDialectGuestConfig(req.Config, req.Sandbox, prepared)
 	if err != nil {

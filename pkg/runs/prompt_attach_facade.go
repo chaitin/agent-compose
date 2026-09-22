@@ -23,6 +23,7 @@ func (c *Controller) ensurePromptAttachLLMFacadeEnv(ctx context.Context, sandbox
 		Sandbox:   sandbox,
 		AgentKind: agent.Provider,
 		Model:     agent.Model,
+		AgentEnv:  agent.EnvItems,
 		Source:    "agent",
 		RunID:     runID,
 	})

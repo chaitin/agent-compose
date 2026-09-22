@@ -51,8 +51,12 @@ type SessionFacadeConfigRequest struct {
 	Session *domain.Sandbox
 	Agent   string
 	Model   string
-	Source  string
-	RunID   string
+	// AgentEnv is the environment the agent declared for itself. When it
+	// publishes an LLM connection there, the daemon configures the agent
+	// against it and does not use the catalog.
+	AgentEnv []domain.SandboxEnvVar
+	Source   string
+	RunID    string
 }
 
 func EnsureSessionLLMFacadeConfig(ctx context.Context, req SessionFacadeConfigRequest) (map[string]string, error) {
@@ -80,6 +84,7 @@ func EnsureSessionAgentRuntimeConfig(ctx context.Context, req SessionFacadeConfi
 		Sandbox:   req.Session,
 		AgentKind: req.Agent,
 		Model:     req.Model,
+		AgentEnv:  req.AgentEnv,
 		Source:    req.Source,
 		RunID:     req.RunID,
 	})
