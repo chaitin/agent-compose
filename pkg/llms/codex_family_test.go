@@ -90,3 +90,38 @@ func TestEnsureCodexFacadeConfigRejectsUnknownConnectionPrefix(t *testing.T) {
 		t.Fatalf("saved tokens = %#v, want none for a rejected connection", store.savedTokens)
 	}
 }
+
+// A gateway issues a `<provider>/<model>` logical name through the session
+// environment. Its prefix names no daemon connection, but resolution takes the
+// model from the session environment instead of forwarding the qualified
+// string, so the unknown-connection guard must leave it alone. This is the only
+// branch that keeps such a gateway-issued name from regressing to a startup
+// failure, and the rejection test above does not cover it.
+func TestEnsureCodexFacadeConfigAllowsSessionEnvProviderReference(t *testing.T) {
+	isolateLLMEnv(t)
+	root := t.TempDir()
+	store := newBareModelFacadeStore()
+	sandbox := bareModelSandbox(root, "sandbox-codex-env-reference")
+	SetSandboxProviderEnvItems(sandbox, []domain.SandboxEnvVar{
+		{Name: "LLM_API_KEY", Value: "session-key", Secret: true},
+		{Name: "LLM_API_ENDPOINT", Value: "https://session.test/v1"},
+		{Name: "LLM_MODEL", Value: "baizhi/deepseek-flash"},
+	})
+
+	env, err := EnsureCodexFacadeConfig(context.Background(), CodexFacadeConfigRequest{
+		Config: bareModelConfig(root), Store: store, Sandbox: sandbox,
+		Model: "baizhi/deepseek-flash", Source: "agent", RunID: "run-codex-env-reference",
+	})
+	if err != nil {
+		t.Fatalf("session-env provider reference returned error: %v", err)
+	}
+	if env == nil || env["LLM_API_KEY"] == "" {
+		t.Fatalf("env = %#v, want a managed facade environment", env)
+	}
+	if len(store.savedTokens) != 1 || store.savedTokens[0].ProviderID != "session-env:sandbox-codex-env-reference:openai" {
+		t.Fatalf("saved tokens = %#v, want the session-env provider", store.savedTokens)
+	}
+	if model := store.savedTokens[0].Model; model != "baizhi/deepseek-flash" {
+		t.Fatalf("token model = %q, want the gateway logical model without a forwarded connection id", model)
+	}
+}
