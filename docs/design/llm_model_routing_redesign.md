@@ -557,8 +557,23 @@ codex/claude 不再限制上游家族（由矩阵决定）。
 - **M4** `llm_connection` 配置面（compose schema、proto、API、configstore）：
   目前 catalog 的三个来源是 daemon env（启动投影）、models.json（启动投影）、
   RPC（写入 store），声明式 compose 字段尚未提供。
-- **M6** 补 `anthropic_messages → chat_completions` 桥。这一格位于外部仓库
-  `github.com/chaitin/ai-api-protocol-bridge`（本机无源码 checkout，需联网），
-  补桥后升级依赖即可，本仓库已通过 `CanConvert` 询问注册表而无需改动。
+- **P0 补 `anthropic_messages → chat_completions` 桥**。这一格在**另一个仓库**
+  `github.com/chaitin/ai-api-protocol-bridge`（网络可达，但本 worktree 的改动范围
+  不含它）。已核实的缺口：该库 v1.0.0 只有
+  `NewCrossFamilyBridge(inbound Protocol, upstreamFamily string)`，按**家族**选桥，
+  而 Anthropic 入站去 OpenAI 有 responses / chat 两条，家族无法区分，因此它只返回
+  messages→responses 那条。
+
+  本仓库现在用 `bridge.UpstreamProtocol() != upstreamProtocol` 校验来兜住这个不精确
+  （`facade_bridge.go` 的 `EncodeRuntimeUpstreamRequest` /
+  `DecodeRuntimeUpstreamResponse` / `RuntimeStreamBridge` 三处）。这个校验正是
+  `messages → chat` 目前返回 "unsupported llm protocol bridge" 的原因。
+
+  落地顺序因此是：① 在该库加 `NewCrossFamilyBridgeForProtocol(inbound, upstream Protocol)`
+  与 `bridge_anthropic_to_chat.go` 并发布；② 本仓库升依赖，三处改用按协议构造函数并
+  删掉那三个 `UpstreamProtocol()` 兜底判断。**在这两步完成前，矩阵缺口与那三处校验
+  必须保留**——删掉校验而桥没到位，只会把"明确报错"变成"静默走错协议"。
+
+  `CanConvert` 已经是询问注册表而不是复制表，所以 ② 之后本仓库不需要再有别的改动。
 - **文档**：`docs/pages` 的 en / zh-CN 两版仍需按新语义更新，并跑
   `task docs:build`。
