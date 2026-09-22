@@ -70,11 +70,20 @@ func EnsureCodexFacadeConfig(ctx context.Context, req CodexFacadeConfigRequest) 
 		"AGENT_COMPOSE_SANDBOX_TOKEN": tokenValue,
 		"LLM_API_ENDPOINT":            openAIBaseURL,
 		"LLM_API_KEY":                 tokenValue,
-		"LLM_API_PROTOCOL":            APIProtocolResponses,
-		"LLM_MODEL":                   target.Model.Name,
-		"CODEX_MODEL":                 target.Model.Name,
-		GuestModelEnvName:             target.Model.Name,
-		"OPENAI_API_KEY":              tokenValue,
-		"OPENAI_BASE_URL":             openAIBaseURL,
+		// This declaration describes the upstream the gateway serves, not the
+		// wire api the guest speaks. Codex always talks Responses to its own
+		// facade route — that is what the facade token above and the runtime
+		// config below pin — while the model behind the gateway may only serve
+		// chat completions. Publishing Responses here made the persisted session
+		// provider advertise an upstream protocol the logical model does not
+		// have, so the proxy sent /v1/responses to a chat-only model and the
+		// gateway rejected the call with 403. The runtime bridge converts the
+		// guest's Responses request to whatever this value declares.
+		"LLM_API_PROTOCOL": NormalizeWireAPI(target.WireAPI),
+		"LLM_MODEL":        target.Model.Name,
+		"CODEX_MODEL":      target.Model.Name,
+		GuestModelEnvName:  target.Model.Name,
+		"OPENAI_API_KEY":   tokenValue,
+		"OPENAI_BASE_URL":  openAIBaseURL,
 	}, nil
 }

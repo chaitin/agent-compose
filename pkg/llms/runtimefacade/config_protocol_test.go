@@ -16,10 +16,12 @@ import (
 
 // The guest's ingress protocol is decided by the client opencode is configured
 // with, not by the upstream provider: WriteOpenCodeRuntimeConfig registers the
-// facade with an ai-sdk package that posts chat completions. The facade bridges
-// to whatever the upstream speaks, so ingress stays chat completions here even
-// though this provider's own wire api is also chat completions — and equally
-// when it is responses (see TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows).
+// facade with an ai-sdk package that posts chat completions, and the facade
+// token pins that ingress (openCodeGuestWireAPI). LLM_API_PROTOCOL, by contrast,
+// describes the protocol the resolved upstream serves — the runtime bridge
+// converts between the two — so here it is chat completions because the sandbox
+// publishes a chat-completions provider. The next test covers the opposite
+// direction: a responses-configured provider with a chat-completions guest.
 func TestIntegrationEnsureSessionOpenCodePinsChatIngressIndependentOfUpstream(t *testing.T) {
 	isolateLLMEnv(t)
 
@@ -145,14 +147,17 @@ func TestIntegrationEnsureSessionOpenCodeKeepsConfiguredProviderInMixedEnvironme
 	}
 
 	sessionProviderID := llms.SessionEnvProviderID(session.Summary.ID, llms.ProviderFamilyOpenAI)
-	assertTarget(session, "openai/gpt-test", "legacy-gpt", llms.APIProtocolChatCompletions, sessionProviderID, "run-openai-env")
-	assertTarget(session, "baizhi/deepseek-v4-flash", "legacy-gpt", llms.APIProtocolChatCompletions, sessionProviderID, "run-baizhi-env")
+	// The env publishes no LLM_API_PROTOCOL, so the session env OpenAI provider
+	// keeps its responses default; that is the protocol the proxy will speak to
+	// the upstream, independent of the guest's chat-completions ingress.
+	assertTarget(session, "openai/gpt-test", "legacy-gpt", llms.APIProtocolResponses, sessionProviderID, "run-openai-env")
+	assertTarget(session, "baizhi/deepseek-v4-flash", "legacy-gpt", llms.APIProtocolResponses, sessionProviderID, "run-baizhi-env")
 
 	exactSession := &domain.Sandbox{Summary: domain.SandboxSummary{
 		ID:            "sandbox-opencode-configured-provider",
 		Driver:        driverpkg.RuntimeDriverDocker,
 		WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-opencode-configured-provider", "workspace"),
 	}}
-	assertTarget(exactSession, "openai/gpt-test", "gpt-test", llms.APIProtocolChatCompletions, "openai", "run-openai-configured")
+	assertTarget(exactSession, "openai/gpt-test", "gpt-test", llms.APIProtocolResponses, "openai", "run-openai-configured")
 	assertTarget(exactSession, "baizhi/deepseek-v4-flash", "deepseek-v4-flash", llms.APIProtocolChatCompletions, "baizhi", "run-baizhi-configured")
 }

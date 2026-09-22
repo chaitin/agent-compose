@@ -98,6 +98,61 @@ func SessionAnthropicEnvModel(envItems []domain.SandboxEnvVar) string {
 	)
 }
 
+// SessionEnvModel returns the model the sandbox's own provider environment
+// publishes for one provider family. A model id may itself contain slashes — a
+// gateway injecting LLM_MODEL=<provider>/<model> publishes a qualified logical
+// name — so a caller that lets the environment own the model must use this
+// value verbatim instead of the remainder of an agent's
+// <connection>/<model> declaration.
+//
+// Which name to read depends on the family the caller resolved: LLM_MODEL is
+// the generic spelling every family shares, while ANTHROPIC_MODEL/CLAUDE_MODEL
+// are the message-protocol spelling. A sandbox that declares both — a gateway
+// serving both protocols — must be read through the family that owns the call,
+// otherwise the verbatim comparison sees a model from the other family, misses,
+// and falls back to splitting the declaration at its first slash.
+func SessionEnvModel(envItems []domain.SandboxEnvVar, providerFamily string) string {
+	if NormalizeProviderType(providerFamily) == ProviderFamilyAnthropic {
+		// Message-protocol environments name their model with the Anthropic
+		// spelling first; LLM_MODEL remains the fallback SessionAnthropicEnvModel
+		// already applies.
+		return SessionAnthropicEnvModel(envItems)
+	}
+	return firstNonEmptyTrimmed(
+		EnvItemValue(envItems, "LLM_MODEL"),
+		EnvItemValue(envItems, "ANTHROPIC_MODEL"),
+		EnvItemValue(envItems, "CLAUDE_MODEL"),
+	)
+}
+
+// sessionEnvModelForDeclaration returns the model a facade must resolve for an
+// agent declaration when the sandbox publishes its own provider environment.
+//
+// A facade splits <connection>/<model> at the first slash, but the model a
+// sandbox environment publishes is a single id that may legitimately contain
+// slashes: an orchestrator that materializes one qualified name into both the
+// agent declaration and LLM_MODEL (a gateway publishing <provider>/<model>
+// logical names, for example) would otherwise have its name truncated to the
+// remainder and address a model that upstream does not serve. A declaration
+// that names exactly the published model therefore resolves verbatim; any other
+// declaration keeps its established precedence, including a family alias or a
+// configured connection that deliberately selects a different model.
+//
+// declaredProviderID and declaredModel are the two halves the caller split and
+// providerFamily is the family the caller resolved for the declaration; the
+// caller keeps the returned value as its requested model.
+func sessionEnvModelForDeclaration(declaredProviderID, declaredModel string, envItems []domain.SandboxEnvVar, providerFamily string) string {
+	requestedModel := strings.TrimSpace(declaredModel)
+	declared := requestedModel
+	if prefix := strings.TrimSpace(declaredProviderID); prefix != "" {
+		declared = prefix + "/" + requestedModel
+	}
+	if envModel := SessionEnvModel(envItems, providerFamily); envModel != "" && envModel == declared {
+		return envModel
+	}
+	return requestedModel
+}
+
 func SessionEnvProviderID(sessionID, providerFamily string) string {
 	sessionID = strings.TrimSpace(sessionID)
 	providerFamily = NormalizeOptionalProviderType(providerFamily)

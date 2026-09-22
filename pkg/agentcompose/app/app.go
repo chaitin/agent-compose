@@ -614,8 +614,12 @@ func registerRuntimeLLMFacadeRoutes(app *echo.Echo, di do.Injector) {
 	proxy.RegisterRuntimeLLMFacadeRoutes(app, proxy.RuntimeLLMOptions{
 		Tokens:    configDB,
 		Sandboxes: do.MustInvoke[*sandboxstore.Store](di),
-		ResolveTarget: func(ctx context.Context, requestedModel, providerID string) (llms.ResolvedTarget, error) {
-			return llms.ResolveRuntimeLLMTarget(ctx, config, configDB, requestedModel, providerID)
+		// The sandbox is part of the resolution: a sandbox that publishes its own
+		// provider environment (LLM_API_ENDPOINT/LLM_API_KEY/LLM_MODEL/
+		// LLM_API_PROTOCOL) owns the upstream connection, model and wire api, and
+		// the daemon configuration answers only when it publishes none.
+		ResolveTarget: func(ctx context.Context, sandbox *domain.Sandbox, providerFamily, requestedModel, providerID string) (llms.ResolvedTarget, error) {
+			return llms.SandboxRuntimeLLMTarget(ctx, llms.SandboxRuntimeLLMTargetQuery{Config: config, Store: configDB, Sandbox: sandbox, ProviderFamily: providerFamily, RequestedModel: requestedModel, ProviderID: providerID})
 		},
 		Client:          proxy.NewRuntimeLLMHTTPClient(config.LLMTimeout),
 		MaxOutputTokens: config.LLMMaxOutputTokens,

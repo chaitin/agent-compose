@@ -224,6 +224,16 @@ func (s *llmStore) LLMProviderModelConfig(ctx context.Context, providerID, model
 	if err != nil {
 		return llms.ProviderModelConfig{}, false, fmt.Errorf("query provider model config: %w", err)
 	}
-	config.WireAPI = llms.NormalizeWireAPI(config.WireAPI)
+	// An unset per-model wire api stays unset. NormalizeWireAPI maps the empty
+	// string onto responses, so normalizing unconditionally turned "this binding
+	// declares no wire api" into "this binding declares responses", and the
+	// target builder then preferred that over the provider's own
+	// default_wire_api. A sandbox that publishes LLM_API_PROTOCOL=chat_completions
+	// is persisted exactly that way, so the fabricated responses value silently
+	// overrode the published protocol: the runtime proxy posted a
+	// chat-completions model to /v1/responses and the gateway rejected the pair.
+	if strings.TrimSpace(config.WireAPI) != "" {
+		config.WireAPI = llms.NormalizeWireAPI(config.WireAPI)
+	}
 	return config, true, nil
 }

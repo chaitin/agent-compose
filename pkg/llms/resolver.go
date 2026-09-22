@@ -250,11 +250,12 @@ func bootstrapSessionOrDefaultProviders(ctx context.Context, store LLMResolverSt
 
 // providerModelRefinementInput groups refineProviderAndModelFromReference's inputs.
 type providerModelRefinementInput struct {
-	HasSessionEnvProvider bool
-	ProviderID            string
-	RequestedModel        string
-	EnvItems              []domain.SandboxEnvVar
-	DefaultLookup         EnvProviderLookup
+	HasSessionEnvProvider   bool
+	ProviderID              string
+	RequestedModel          string
+	EnvItems                []domain.SandboxEnvVar
+	PreferredProviderFamily string
+	DefaultLookup           EnvProviderLookup
 }
 
 // refineProviderAndModelFromReference splits a legacy <provider>/<model>
@@ -266,7 +267,7 @@ func refineProviderAndModelFromReference(ctx context.Context, store LLMResolverS
 	providerID, requestedModel = in.ProviderID, in.RequestedModel
 	explicitProvider = providerID != ""
 	if in.HasSessionEnvProvider && providerID == "" {
-		if envModel := firstNonEmptyTrimmed(SessionAnthropicEnvModel(in.EnvItems), EnvItemValue(in.EnvItems, "LLM_MODEL")); envModel != "" {
+		if envModel := SessionEnvModel(in.EnvItems, in.PreferredProviderFamily); envModel != "" {
 			requestedModel = envModel
 		} else if _, selectedModel, ok := SplitProviderModelReference(requestedModel); ok {
 			requestedModel = selectedModel
@@ -330,7 +331,8 @@ func ResolveRuntimeLLMTargetWithEnv(ctx context.Context, store LLMResolverStore,
 	hasSessionEnvProvider := sessionHasEnvProvider(sessionID, requestedModel, envItems)
 	defaultLookup := defaultLLMEnvProviderLookup(ctx, config, store)
 	providerID, requestedModel, explicitProvider := refineProviderAndModelFromReference(ctx, store, providerModelRefinementInput{
-		HasSessionEnvProvider: hasSessionEnvProvider, ProviderID: providerID, RequestedModel: requestedModel, EnvItems: envItems, DefaultLookup: defaultLookup,
+		HasSessionEnvProvider: hasSessionEnvProvider, ProviderID: providerID, RequestedModel: requestedModel, EnvItems: envItems,
+		PreferredProviderFamily: preferredProviderFamily, DefaultLookup: defaultLookup,
 	})
 	genericSessionProviderFamily := ""
 	if sessionID != "" {
