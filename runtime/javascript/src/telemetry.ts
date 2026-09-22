@@ -7,6 +7,14 @@ export interface AgentTelemetry {
   headers: Record<string, string>;
   captureContent: boolean;
   attributes: Record<string, string>;
+  /**
+   * Caller's inbound W3C trace context, already validated. Present only when
+   * the daemon relayed a syntactically valid value; a malformed value is
+   * dropped rather than failing the run. `tracestate` accompanies
+   * `traceparent`, so it is only kept when a valid `traceparent` is present.
+   */
+  traceparent?: string;
+  tracestate?: string;
 }
 
 export function readAgentTelemetry(provider: Provider, env: NodeJS.ProcessEnv): AgentTelemetry | undefined {
@@ -32,11 +40,17 @@ export function readAgentTelemetry(provider: Provider, env: NodeJS.ProcessEnv): 
   for (const [key, name] of [["AGENT_COMPOSE_RUN_ID", "agent_compose.run.id"], ["AGENT_COMPOSE_PROJECT_ID", "agent_compose.project.id"]]) {
     if (env[key]) attributes[name] = env[key]!;
   }
+  // Malformed trace context is dropped, never fatal: the run must still start
+  // on its own root trace exactly as it did before the field existed.
+  const traceparent = validTraceparent(value.traceparent);
+  const tracestate = traceparent === undefined ? undefined : validTracestate(value.tracestate);
   return {
     endpoint: value.endpoint.replace(/\/+$/, ""),
     headers: { ...(value.headers as Record<string, string> ?? {}) },
     captureContent: value.captureContent === true,
     attributes,
+    ...(traceparent === undefined ? {} : { traceparent }),
+    ...(tracestate === undefined ? {} : { tracestate }),
   };
 }
 
@@ -62,6 +76,20 @@ export function providerTelemetryEnv(provider: Provider, telemetry: AgentTelemet
   env.OTEL_EXPORTER_OTLP_HEADERS = encodedPairs(telemetry.headers);
   env.OTEL_RESOURCE_ATTRIBUTES = encodedPairs(telemetry.attributes);
   env.OTEL_EXPORTER_OTLP_TIMEOUT = "3000";
+  // Codex and Claude Code parent their root span from an inbound W3C
+  // TRACEPARENT environment variable, and both read the accompanying
+  // TRACESTATE alongside it — no OTEL_* key carries a parent, so the pair must
+  // be set explicitly. Codex's `exec` path calls `set_parent_from_context` on
+  // its root span (codex-rs/exec/src/lib.rs) after loading both variables in
+  // codex-rs/otel/src/trace_context.rs; Claude Code reads them when starting
+  // `claude_code.interaction` in Agent SDK / `-p` sessions and stamps its OTLP
+  // event records with the resulting trace_id/span_id even while the traces
+  // exporter stays disabled. Providers with no supported parent input
+  // (opencode, dsh, pi, gemini) never receive either value.
+  if (telemetry.traceparent !== undefined && (provider === "codex" || provider === "claude")) {
+    env.TRACEPARENT = telemetry.traceparent;
+    if (telemetry.tracestate !== undefined) env.TRACESTATE = telemetry.tracestate;
+  }
   if (provider === "claude") {
     env.CLAUDE_CODE_ENABLE_TELEMETRY = "1";
     env.OTEL_METRICS_EXPORTER = "otlp";
@@ -116,6 +144,35 @@ export function codexTelemetryConfig(telemetry?: AgentTelemetry): NonNullable<Co
 
 function encodedPairs(values: Record<string, string>): string {
   return Object.entries(values).map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join(",");
+}
+
+// W3C Trace Context version 00: 00-<32 lowercase hex trace-id>-<16 lowercase
+// hex span-id>-<2 lowercase hex flags>. The all-zero trace-id and span-id are
+// reserved and never valid.
+const traceparentFormat = /^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/;
+
+function validTraceparent(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const match = traceparentFormat.exec(value);
+  if (!match || /^0+$/.test(match[1]) || /^0+$/.test(match[2])) return undefined;
+  return value;
+}
+
+// W3C Trace Context caps tracestate at 512 printable ASCII characters. The
+// daemon applies the same rule; repeating it here keeps a hand-written
+// AGENT_COMPOSE_TELEMETRY value from injecting control bytes into the child
+// environment. The vendor list itself is opaque to this integration.
+const tracestateLimit = 512;
+
+function validTracestate(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed === "" || trimmed.length > tracestateLimit) return undefined;
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const code = trimmed.charCodeAt(index);
+    if (code < 0x20 || code > 0x7e) return undefined;
+  }
+  return trimmed;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

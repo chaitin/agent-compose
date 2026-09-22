@@ -95,7 +95,7 @@ func (c *Controller) preparePromptInteractionRuntime(ctx context.Context, runCtx
 	if err != nil {
 		return preparedPromptInteraction{}, err
 	}
-	env := execution.BuildSandboxExecEnv(c.config, sandbox, c.config.GuestHomePath)
+	env := execution.BuildSandboxExecEnv(ctx, c.config, sandbox, c.config.GuestHomePath)
 	env["AGENT_COMPOSE_RUN_ID"] = run.RunID
 	env["AGENT_COMPOSE_PROJECT_ID"] = run.ProjectID
 	managedEnv, err := c.ensurePromptAttachLLMFacadeEnv(ctx, sandbox, agentConfig, run.RunID)

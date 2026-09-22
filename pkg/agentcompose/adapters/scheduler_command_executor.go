@@ -215,7 +215,7 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 		e.Streams.PublishCellOutput(session.Summary.ID, snapshot.ID, filtered.Text, filtered.Stream)
 	}
 	commandHome := e.Config.GuestHomePath
-	execResult, err := runtime.ExecStream(execCtx, execSession, vmState, execution.BuildSchedulerCommandExecSpec(e.Config, execSession, filepath.Join(guestCellDir, "command-request.json"), commandHome), streamWriter)
+	execResult, err := runtime.ExecStream(execCtx, execSession, vmState, execution.BuildSchedulerCommandExecSpec(execCtx, e.Config, execSession, filepath.Join(guestCellDir, "command-request.json"), commandHome), streamWriter)
 	if reader, ok := runtime.(GuestDirReader); ok {
 		readGuestDir := func(ctx context.Context, guestDir, hostDestDir string) error {
 			return reader.ReadGuestDir(ctx, execSession, vmState, guestDir, hostDestDir)

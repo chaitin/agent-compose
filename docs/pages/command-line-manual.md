@@ -981,6 +981,19 @@ Resource attributes carry `agent_compose.sandbox.id`, `agent_compose.provider`,
 and run/project IDs when available. DSH attaches these to log records through its
 native record hook. Native session IDs remain provider-owned; correlation attributes
 do not automatically produce a shared distributed trace across providers.
+
+Callers that already run a distributed trace can pass their W3C trace context as a
+`traceparent` (and optional `tracestate`) header on the daemon RPC that starts the
+execution. The daemon validates both values and relays them through the agent
+telemetry payload to providers that support an inbound parent context, so their
+exported spans join the caller's trace instead of starting a new one. Codex and
+Claude Code honour the pair; OpenCode and DSH expose no inbound parent mechanism in
+the supported versions, so they still begin their own trace root. The relay rides the
+per-execution telemetry payload, so agent telemetry must be enabled
+(`AGENT_TELEMETRY_OTLP_ENDPOINT`) for the context to reach the guest; the header
+itself never enables export or changes the destination. A malformed or absent header
+is ignored: the execution starts on its own root trace exactly as it did before, and
+nothing is persisted to the sandbox or to sandbox configuration.
 Ordinary prompts, interactive prompt sessions, and workflow child agents use the
 same configuration. Exporters own batching and retry; a collector outage is not an
 agent health check. Graceful provider shutdown can flush pending data, while a hard
