@@ -143,22 +143,22 @@ func testConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 
 	agent, err := store.UpsertProjectAgent(ctx, domain.ProjectAgentRecord{
 		ProjectID: project.ID, AgentName: "worker", ID: "managed-agent-1", Revision: thirdRevision.Revision,
-		Provider: "codex", Model: "gpt", Image: "guest:latest", Driver: driverpkg.RuntimeDriverBoxlite, SchedulerEnabled: true, SpecJSON: `{"name":"worker"}`,
+		Provider: "codex", Model: "gpt", LLMConnection: "team-gateway", Image: "guest:latest", Driver: driverpkg.RuntimeDriverBoxlite, SchedulerEnabled: true, SpecJSON: `{"name":"worker"}`,
 	})
 	if err != nil {
 		t.Fatalf("UpsertProjectAgent returned error: %v", err)
 	}
 	agent.Model = "gpt-updated"
-	if agent, err = store.UpsertProjectAgent(ctx, agent); err != nil || agent.Model != "gpt-updated" {
+	if agent, err = store.UpsertProjectAgent(ctx, agent); err != nil || agent.Model != "gpt-updated" || agent.LLMConnection != "team-gateway" {
 		t.Fatalf("UpsertProjectAgent update agent=%#v err=%v", agent, err)
 	}
-	if got, err := store.GetProjectAgent(ctx, project.ID, "worker"); err != nil || got.ID != "managed-agent-1" {
+	if got, err := store.GetProjectAgent(ctx, project.ID, "worker"); err != nil || got.ID != "managed-agent-1" || got.LLMConnection != "team-gateway" {
 		t.Fatalf("GetProjectAgent got=%#v err=%v", got, err)
 	}
 	if _, err := store.GetProjectAgent(ctx, project.ID, "missing-agent"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("GetProjectAgent missing err=%v, want not found", err)
 	}
-	if agents, err := store.ListProjectAgents(ctx, project.ID); err != nil || len(agents) != 1 {
+	if agents, err := store.ListProjectAgents(ctx, project.ID); err != nil || len(agents) != 1 || agents[0].LLMConnection != "team-gateway" {
 		t.Fatalf("ListProjectAgents agents=%#v err=%v", agents, err)
 	}
 	scheduler, err := store.UpsertProjectScheduler(ctx, domain.ProjectSchedulerRecord{

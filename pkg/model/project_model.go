@@ -113,6 +113,7 @@ type ProjectAgentRecord struct {
 	Revision         int64     `json:"revision"`
 	Provider         string    `json:"provider,omitempty"`
 	Model            string    `json:"model,omitempty"`
+	LLMConnection    string    `json:"llm_connection,omitempty"`
 	Image            string    `json:"image,omitempty"`
 	Driver           string    `json:"driver,omitempty"`
 	SchedulerEnabled bool      `json:"scheduler_enabled"`

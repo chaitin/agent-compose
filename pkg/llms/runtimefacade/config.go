@@ -47,6 +47,9 @@ type SessionFacadeConfigRequest struct {
 	Session *domain.Sandbox
 	Agent   string
 	Model   string
+	// ConnectionID names the daemon connection the agent's llm_connection
+	// declared. Empty infers the connection from the model.
+	ConnectionID string
 	// AgentEnv is the environment the agent declared for itself. When it
 	// publishes an LLM connection there, the daemon configures the agent
 	// against it and does not use the catalog.
@@ -75,14 +78,15 @@ func EnsureSessionAgentRuntimeConfig(ctx context.Context, req SessionFacadeConfi
 		return AgentRuntimeConfig{}, nil
 	}
 	prepared, err := llms.PrepareAgentLLM(ctx, llms.AgentLLMRequest{
-		Config:    req.Config,
-		Store:     req.Store,
-		Sandbox:   req.Session,
-		AgentKind: req.Agent,
-		Model:     req.Model,
-		AgentEnv:  req.AgentEnv,
-		Source:    req.Source,
-		RunID:     req.RunID,
+		Config:       req.Config,
+		Store:        req.Store,
+		Sandbox:      req.Session,
+		AgentKind:    req.Agent,
+		Model:        req.Model,
+		ConnectionID: req.ConnectionID,
+		AgentEnv:     req.AgentEnv,
+		Source:       req.Source,
+		RunID:        req.RunID,
 	})
 	if err != nil {
 		if llms.IsUnmanagedAgentLLMError(err) {

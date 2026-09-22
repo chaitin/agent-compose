@@ -46,8 +46,13 @@ type CommandFacadeConfigRequest struct {
 	Session *domain.Sandbox
 	Agent   string
 	Model   string
-	Source  string
-	RunID   string
+	// ConnectionID names the daemon connection the agent declared. The
+	// scheduler-command path selects its agent from request environment rather
+	// than an agent definition, so callers leave this empty unless they have a
+	// definition to read it from.
+	ConnectionID string
+	Source       string
+	RunID        string
 }
 
 // EnsureSessionCommandFacadeConfig prepares the managed LLM configuration of
@@ -63,7 +68,7 @@ type CommandFacadeConfigRequest struct {
 // Any failure removes every token successfully persisted by this invocation.
 // Successful callers own the returned token hashes until command termination.
 func EnsureSessionCommandFacadeConfig(ctx context.Context, req CommandFacadeConfigRequest) (result CommandFacadeConfig, returnErr error) {
-	config, store, session, agent, model, source, runID := req.Config, req.Store, req.Session, req.Agent, req.Model, req.Source, req.RunID
+	config, store, session, agent, model, connectionID, source, runID := req.Config, req.Store, req.Session, req.Agent, req.Model, req.ConnectionID, req.Source, req.RunID
 	if config == nil || store == nil || session == nil {
 		return CommandFacadeConfig{}, nil
 	}
@@ -85,7 +90,7 @@ func EnsureSessionCommandFacadeConfig(ctx context.Context, req CommandFacadeConf
 	}()
 
 	prepared, err := llms.PrepareAgentLLM(ctx, llms.AgentLLMRequest{
-		Config: config, Store: tracker, Sandbox: session, AgentKind: agent, Model: model, Source: source, RunID: runID,
+		Config: config, Store: tracker, Sandbox: session, AgentKind: agent, Model: model, ConnectionID: connectionID, Source: source, RunID: runID,
 	})
 	if err != nil {
 		if llms.IsUnmanagedAgentLLMError(err) {

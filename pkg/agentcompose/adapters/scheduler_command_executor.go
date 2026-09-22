@@ -306,6 +306,10 @@ func (e *SchedulerCommandExecutor) prepareSchedulerCommandLLMFacadeEnv(ctx conte
 	}
 	execSession.ProviderEnvItems = domain.MergeEnvItems(execSession.ProviderEnvItems, schedulers.CommandSandboxEnv(request))
 
+	// This path selects its agent and model from the scheduler command's own
+	// environment, not from a project agent definition, so there is no
+	// `llm_connection` to honour: ConnectionID stays empty and the catalog
+	// infers the connection from the model.
 	managedConfig, err := runtimefacade.EnsureSessionCommandFacadeConfig(ctx, runtimefacade.CommandFacadeConfigRequest{
 		Config: e.Config, Store: commandFacadeStoreFor(e.ConfigDB), Session: &execSession, Agent: agent, Model: model, Source: runtimefacade.TokenSourceSchedulerCommand, RunID: runID,
 	})

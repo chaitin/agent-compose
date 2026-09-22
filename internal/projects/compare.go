@@ -92,6 +92,7 @@ func AgentDefinitionUnchanged(existing, current domain.AgentDefinition) bool {
 		existing.Enabled == current.Enabled &&
 		existing.Provider == current.Provider &&
 		existing.Model == current.Model &&
+		existing.LLMConnection == current.LLMConnection &&
 		existing.SystemPrompt == current.SystemPrompt &&
 		existing.Driver == current.Driver &&
 		existing.GuestImage == current.GuestImage &&
@@ -149,6 +150,7 @@ func ProjectAgentRecordUnchanged(existing, current domain.ProjectAgentRecord) bo
 		existing.Revision == current.Revision &&
 		existing.Provider == current.Provider &&
 		existing.Model == current.Model &&
+		existing.LLMConnection == current.LLMConnection &&
 		existing.Image == current.Image &&
 		existing.Driver == current.Driver &&
 		existing.SchedulerEnabled == current.SchedulerEnabled &&

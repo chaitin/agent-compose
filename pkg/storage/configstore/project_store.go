@@ -185,9 +185,9 @@ func (s *projectStore) UpsertProjectAgent(ctx context.Context, agent ProjectAgen
 	}
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(ctx, `UPDATE project_agent SET
-		id = ?, name = ?, short_id = ?, revision = ?, provider = ?, model = ?, image = ?, driver = ?, scheduler_enabled = ?, spec_json = ?, updated_at = ?
+		id = ?, name = ?, short_id = ?, revision = ?, provider = ?, model = ?, llm_connection = ?, image = ?, driver = ?, scheduler_enabled = ?, spec_json = ?, updated_at = ?
 		WHERE project_id = ? AND agent_name = ?`,
-		agent.ID, agent.Name, agent.ShortID, agent.Revision, agent.Provider, agent.Model, agent.Image, agent.Driver, BoolToInt(agent.SchedulerEnabled), agent.SpecJSON, now.Unix(),
+		agent.ID, agent.Name, agent.ShortID, agent.Revision, agent.Provider, agent.Model, agent.LLMConnection, agent.Image, agent.Driver, BoolToInt(agent.SchedulerEnabled), agent.SpecJSON, now.Unix(),
 		agent.ProjectID, agent.AgentName)
 	if err != nil {
 		return ProjectAgentRecord{}, fmt.Errorf("update project agent %s/%s: %w", agent.ProjectID, agent.AgentName, err)
@@ -198,9 +198,9 @@ func (s *projectStore) UpsertProjectAgent(ctx context.Context, agent ProjectAgen
 	agent.CreatedAt = now
 	agent.UpdatedAt = now
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO project_agent(
-		id, name, short_id, project_id, agent_name, revision, provider, model, image, driver, scheduler_enabled, spec_json, created_at, updated_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		agent.ID, agent.Name, agent.ShortID, agent.ProjectID, agent.AgentName, agent.Revision, agent.Provider, agent.Model, agent.Image, agent.Driver, BoolToInt(agent.SchedulerEnabled), agent.SpecJSON,
+		id, name, short_id, project_id, agent_name, revision, provider, model, llm_connection, image, driver, scheduler_enabled, spec_json, created_at, updated_at
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		agent.ID, agent.Name, agent.ShortID, agent.ProjectID, agent.AgentName, agent.Revision, agent.Provider, agent.Model, agent.LLMConnection, agent.Image, agent.Driver, BoolToInt(agent.SchedulerEnabled), agent.SpecJSON,
 		agent.CreatedAt.Unix(), agent.UpdatedAt.Unix()); err != nil {
 		return ProjectAgentRecord{}, fmt.Errorf("insert project agent %s/%s: %w", agent.ProjectID, agent.AgentName, err)
 	}
@@ -208,7 +208,7 @@ func (s *projectStore) UpsertProjectAgent(ctx context.Context, agent ProjectAgen
 }
 
 func (s *projectStore) GetProjectAgent(ctx context.Context, projectID, agentName string) (ProjectAgentRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, short_id, project_id, agent_name, revision, provider, model, image, driver, scheduler_enabled, spec_json, created_at, updated_at
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, short_id, project_id, agent_name, revision, provider, model, llm_connection, image, driver, scheduler_enabled, spec_json, created_at, updated_at
 		FROM project_agent WHERE project_id = ? AND agent_name = ?`, strings.TrimSpace(projectID), strings.TrimSpace(agentName))
 	item, err := projects.ScanProjectAgent(row.Scan)
 	if err != nil {
@@ -222,7 +222,7 @@ func (s *projectStore) GetProjectAgent(ctx context.Context, projectID, agentName
 }
 
 func (s *projectStore) ListProjectAgents(ctx context.Context, projectID string) ([]ProjectAgentRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, short_id, project_id, agent_name, revision, provider, model, image, driver, scheduler_enabled, spec_json, created_at, updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, short_id, project_id, agent_name, revision, provider, model, llm_connection, image, driver, scheduler_enabled, spec_json, created_at, updated_at
 		FROM project_agent WHERE project_id = ? ORDER BY agent_name ASC`, strings.TrimSpace(projectID))
 	if err != nil {
 		return nil, fmt.Errorf("query project agents %s: %w", strings.TrimSpace(projectID), err)
@@ -251,7 +251,7 @@ func (s *projectStore) ListProjectAgentsByIDs(ctx context.Context, agentIDs []st
 	for i, id := range ids {
 		args[i] = id
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, short_id, project_id, agent_name, revision, provider, model, image, driver, scheduler_enabled, spec_json, created_at, updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, short_id, project_id, agent_name, revision, provider, model, llm_connection, image, driver, scheduler_enabled, spec_json, created_at, updated_at
 		FROM project_agent WHERE id IN (`+placeholders(len(ids))+`) ORDER BY updated_at DESC, project_id ASC, agent_name ASC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query project agents by managed agent ids: %w", err)

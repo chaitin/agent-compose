@@ -3175,6 +3175,8 @@ type ProjectAgent struct {
 	// Model selected for a new run when no request- or session-level override is present.
 	ResolvedModel string           `protobuf:"bytes,16,opt,name=resolved_model,json=resolvedModel,proto3" json:"resolved_model,omitempty"`
 	ModelSource   AgentModelSource `protobuf:"varint,17,opt,name=model_source,json=modelSource,proto3,enum=agentcompose.v2.AgentModelSource" json:"model_source,omitempty"`
+	// Daemon connection the agent must use. Empty infers it from the model.
+	LlmConnection string `protobuf:"bytes,18,opt,name=llm_connection,json=llmConnection,proto3" json:"llm_connection,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3326,6 +3328,13 @@ func (x *ProjectAgent) GetModelSource() AgentModelSource {
 		return x.ModelSource
 	}
 	return AgentModelSource_AGENT_MODEL_SOURCE_UNSPECIFIED
+}
+
+func (x *ProjectAgent) GetLlmConnection() string {
+	if x != nil {
+		return x.LlmConnection
+	}
+	return ""
 }
 
 type ProjectAgentCurrentRun struct {
@@ -19841,7 +19850,7 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\tspec_hash\x18\x03 \x01(\tR\bspecHash\x120\n" +
 	"\x04spec\x18\x04 \x01(\v2\x1c.agentcompose.v2.ProjectSpecR\x04spec\x129\n" +
 	"\n" +
-	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xec\x05\n" +
+	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\x93\x06\n" +
 	"\fProjectAgent\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x1d\n" +
@@ -19864,7 +19873,8 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\fdisplay_name\x18\x0e \x01(\tR\vdisplayName\x12 \n" +
 	"\vdescription\x18\x0f \x01(\tR\vdescription\x12%\n" +
 	"\x0eresolved_model\x18\x10 \x01(\tR\rresolvedModel\x12D\n" +
-	"\fmodel_source\x18\x11 \x01(\x0e2!.agentcompose.v2.AgentModelSourceR\vmodelSource\"\x97\x01\n" +
+	"\fmodel_source\x18\x11 \x01(\x0e2!.agentcompose.v2.AgentModelSourceR\vmodelSource\x12%\n" +
+	"\x0ellm_connection\x18\x12 \x01(\tR\rllmConnection\"\x97\x01\n" +
 	"\x16ProjectAgentCurrentRun\x12\x12\n" +
 	"\x04text\x18\x01 \x01(\tR\x04text\x12*\n" +
 	"\x11running_run_count\x18\x02 \x01(\rR\x0frunningRunCount\x12=\n" +

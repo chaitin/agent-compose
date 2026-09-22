@@ -10,7 +10,10 @@ type AgentConfig struct {
 	Provider          string
 	AgentDefinitionID string
 	Model             string
-	EnvItems          []domain.SandboxEnvVar
+	// LLMConnection names the daemon connection the agent definition asked for.
+	// Empty infers it from the model.
+	LLMConnection string
+	EnvItems      []domain.SandboxEnvVar
 }
 
 func AgentConfigFromDefinition(agent domain.AgentDefinition, fallbackProvider string) AgentConfig {
@@ -30,6 +33,7 @@ func AgentConfigFromDefinition(agent domain.AgentDefinition, fallbackProvider st
 		Provider:          provider,
 		AgentDefinitionID: strings.TrimSpace(agent.ID),
 		Model:             model,
+		LLMConnection:     strings.TrimSpace(agent.LLMConnection),
 		EnvItems:          append([]domain.SandboxEnvVar(nil), agent.EnvItems...),
 	}
 }

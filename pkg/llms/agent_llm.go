@@ -102,6 +102,14 @@ func PrepareAgentLLM(ctx context.Context, req AgentLLMRequest) (*AgentLLM, error
 	if err != nil {
 		return nil, err
 	}
+	connectionID := strings.TrimSpace(req.ConnectionID)
+	if connectionID != "" {
+		if key := declaredDirectConnectionEnvKey(req.AgentEnv); key != "" {
+			return nil, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf(
+				"agent %q names llm_connection %q and also declares %s in its own environment; a named connection and an agent-owned upstream are mutually exclusive",
+				dialect.Kind, connectionID, key), nil)
+		}
+	}
 	if upstream, declared := directUpstreamFromAgentEnv(req.AgentEnv, dialect); declared {
 		return prepareDirectAgentLLM(req, dialect, upstream)
 	}
@@ -122,7 +130,7 @@ func PrepareAgentLLM(ctx context.Context, req AgentLLMRequest) (*AgentLLM, error
 		return nil, domain.ClassifyError(domain.ErrFailedPrecondition,
 			fmt.Sprintf("agent %q needs a daemon URL reachable from the sandbox; configure %s", dialect.Kind, RuntimeBaseURLEnvName), nil)
 	}
-	target, err := catalog.Resolve(req.ConnectionID, model)
+	target, err := catalog.Resolve(connectionID, model)
 	if err != nil {
 		return nil, err
 	}

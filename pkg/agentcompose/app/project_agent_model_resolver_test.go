@@ -75,7 +75,7 @@ func TestProjectAgentModelResolverUsesCurrentRevisionAndCatalogDefault(t *testin
 
 func TestProjectAgentModelResolverUsesAgentRecordEnv(t *testing.T) {
 	project, agents, resolver := newProjectAgentModelResolverFixture(t,
-		"name: model-env\nagents:\n  coder:\n    provider: codex\n    env:\n      CODEX_MODEL: gpt-env-model\n",
+		"name: model-env\nagents:\n  coder:\n    provider: codex\n    env:\n      OPENAI_API_KEY: sk-declared\n      CODEX_MODEL: gpt-env-model\n",
 		"dev/gpt-5.5")
 	resolutions, err := resolver.ResolveProjectAgentModels(context.Background(), project, agents)
 	if err != nil {

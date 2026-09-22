@@ -129,6 +129,78 @@ func TestPrepareAgentLLMReturnsErrNoModel(t *testing.T) {
 	}
 }
 
+// TestPrepareAgentLLMExplicitConnectionBeatsAnAmbiguousModel pins the level of
+// connection selection that an agent's `llm_connection` reaches. Two
+// connections serve the same model, so a bare declaration is ambiguous and
+// rejected; naming one resolves it without parsing the opaque model id.
+func TestPrepareAgentLLMExplicitConnectionBeatsAnAmbiguousModel(t *testing.T) {
+	isolateLLMEnv(t)
+	providers := []Provider{
+		catalogOpenAIConnection("gateway", "https://gateway.test"),
+		catalogOpenAIConnection("backup", "https://backup.test"),
+	}
+	bindings := []ProviderModelBinding{
+		{ProviderID: "gateway", ModelID: "shared-model"},
+		{ProviderID: "backup", ModelID: "shared-model"},
+	}
+
+	root := t.TempDir()
+	ambiguousStore := &prepareAgentLLMStore{fakeCatalogStore: fakeCatalogStore{providers: providers, bindings: bindings}}
+	if _, err := PrepareAgentLLM(context.Background(), AgentLLMRequest{
+		Config: bareModelConfig(root), Store: ambiguousStore, Sandbox: bareModelSandbox(root, agentLLMSandboxID),
+		AgentKind: "pi", Model: "shared-model",
+	}); !errors.Is(err, ErrAmbiguousConnection) {
+		t.Fatalf("PrepareAgentLLM without a connection error = %v, want ErrAmbiguousConnection", err)
+	}
+
+	store := &prepareAgentLLMStore{fakeCatalogStore: fakeCatalogStore{providers: providers, bindings: bindings}}
+	prepared, err := PrepareAgentLLM(context.Background(), AgentLLMRequest{
+		Config: bareModelConfig(root), Store: store, Sandbox: bareModelSandbox(root, agentLLMSandboxID),
+		AgentKind: "pi", Model: "shared-model", ConnectionID: "backup",
+	})
+	if err != nil {
+		t.Fatalf("PrepareAgentLLM returned error: %v", err)
+	}
+	if prepared.Target.Provider.ID != "backup" {
+		t.Errorf("resolved connection = %q, want the agent's explicit llm_connection", prepared.Target.Provider.ID)
+	}
+	if prepared.Model != "shared-model" {
+		t.Errorf("Model = %q, want the opaque model passed through unchanged", prepared.Model)
+	}
+	if len(store.savedTokens) != 1 || store.savedTokens[0].ProviderID != "backup" {
+		t.Fatalf("saved tokens = %#v, want the explicitly named connection", store.savedTokens)
+	}
+}
+
+// TestPrepareAgentLLMRejectsConnectionCombinedWithAgentOwnedUpstream pins that
+// contradictory configuration is an error rather than a silent winner: naming
+// `llm_connection` and publishing an LLM key in the agent's own env ask two
+// different owners to serve the same run.
+func TestPrepareAgentLLMRejectsConnectionCombinedWithAgentOwnedUpstream(t *testing.T) {
+	isolateLLMEnv(t)
+	root := t.TempDir()
+	store := &prepareAgentLLMStore{fakeCatalogStore: fakeCatalogStore{
+		providers: []Provider{catalogOpenAIConnection("gateway", "https://gateway.test")},
+	}}
+
+	_, err := PrepareAgentLLM(context.Background(), AgentLLMRequest{
+		Config: bareModelConfig(root), Store: store, Sandbox: bareModelSandbox(root, agentLLMSandboxID),
+		AgentKind: "pi", Model: "shared-model", ConnectionID: "gateway",
+		AgentEnv: directEnvItems("OPENAI_API_KEY", "sk-agent"),
+	})
+	if !errors.Is(err, domain.ErrFailedPrecondition) {
+		t.Fatalf("PrepareAgentLLM error = %v, want failed precondition for contradictory configuration", err)
+	}
+	for _, want := range []string{"pi", "gateway", "OPENAI_API_KEY"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+	if len(store.savedTokens) != 0 {
+		t.Fatalf("saved tokens = %#v, want none for contradictory configuration", store.savedTokens)
+	}
+}
+
 func TestPrepareAgentLLMRejectsUnknownConnection(t *testing.T) {
 	isolateLLMEnv(t)
 	root := t.TempDir()

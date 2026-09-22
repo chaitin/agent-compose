@@ -42,7 +42,7 @@ func ScanProjectAgent(scan func(dest ...any) error) (domain.ProjectAgentRecord, 
 	var schedulerEnabled int
 	var createdAtRaw any
 	var updatedAtRaw any
-	if err := scan(&item.ID, &item.Name, &item.ShortID, &item.ProjectID, &item.AgentName, &item.Revision, &item.Provider, &item.Model, &item.Image, &item.Driver, &schedulerEnabled, &item.SpecJSON, &createdAtRaw, &updatedAtRaw); err != nil {
+	if err := scan(&item.ID, &item.Name, &item.ShortID, &item.ProjectID, &item.AgentName, &item.Revision, &item.Provider, &item.Model, &item.LLMConnection, &item.Image, &item.Driver, &schedulerEnabled, &item.SpecJSON, &createdAtRaw, &updatedAtRaw); err != nil {
 		return domain.ProjectAgentRecord{}, fmt.Errorf("scan project agent: %w", err)
 	}
 	if item.Name == "" {
