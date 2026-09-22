@@ -1,7 +1,5 @@
 package llms
 
-import "strings"
-
 // Protocol is one wire protocol on one side of the LLM call chain.
 //
 // The same three values describe the protocol an upstream connection serves
@@ -43,12 +41,4 @@ func (p Protocol) Family() string {
 		return ProviderFamilyAnthropic
 	}
 	return ProviderFamilyOpenAI
-}
-
-// ProtocolForFamily returns the canonical protocol of an upstream family.
-func ProtocolForFamily(family string) Protocol {
-	if strings.TrimSpace(family) == ProviderFamilyAnthropic {
-		return ProtocolMessages
-	}
-	return ProtocolResponses
 }

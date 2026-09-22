@@ -64,9 +64,6 @@ func TestRuntimeLLMFacadeRoutesCoverageWorkflow(t *testing.T) {
 	if err := WriteRuntimeLLMEncodedError(c, []byte(`{"error":"bad"}`), 0); err != nil {
 		t.Fatalf("WriteRuntimeLLMEncodedError returned error: %v", err)
 	}
-	if firstNonEmpty("", " value ") != " value " {
-		t.Fatalf("firstNonEmpty returned unexpected value")
-	}
 }
 
 // TestRuntimeLLMFacadeConnectionBoundTokenModelMapping exercises the whole
@@ -607,9 +604,6 @@ func TestRuntimeLLMFacadeHandlerEdgeBranches(t *testing.T) {
 
 	if (runtimeLLMHandler{}).httpClient() == nil {
 		t.Fatalf("default runtime llm http client is nil")
-	}
-	if firstNonEmpty("", " \t ") != "" {
-		t.Fatalf("firstNonEmpty returned a blank value")
 	}
 }
 

@@ -23,17 +23,6 @@ const (
 	SourceCredentialsResolved
 )
 
-// WorkspaceCredentialMode is retained for source compatibility.
-// Deprecated: use SourceCredentialMode.
-type WorkspaceCredentialMode = SourceCredentialMode
-
-const (
-	// Deprecated: use SourceCredentialsFromReferences.
-	WorkspaceCredentialsFromReferences = SourceCredentialsFromReferences
-	// Deprecated: use SourceCredentialsResolved.
-	WorkspaceCredentialsResolved = SourceCredentialsResolved
-)
-
 func normalizeSourceCredentials(path string, source sources.Source, options NormalizeOptions) (sources.Source, error) {
 	switch options.SourceCredentials {
 	case SourceCredentialsFromReferences:

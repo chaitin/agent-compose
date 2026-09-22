@@ -133,12 +133,6 @@ func TestProtocolHelpers(t *testing.T) {
 	if ProtocolResponses.Family() != ProviderFamilyOpenAI || ProtocolMessages.Family() != ProviderFamilyAnthropic {
 		t.Error("Protocol.Family returned the wrong family")
 	}
-	if ProtocolForFamily(ProviderFamilyAnthropic) != ProtocolMessages {
-		t.Error("ProtocolForFamily(anthropic) should be messages")
-	}
-	if ProtocolForFamily(ProviderFamilyOpenAI) != ProtocolResponses {
-		t.Error("ProtocolForFamily(openai) should be responses")
-	}
 }
 
 // TestCanConvertPinsBridgeCoverage records exactly which (inbound, upstream)

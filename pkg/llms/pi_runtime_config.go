@@ -13,8 +13,6 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
-const piFacadeProviderID = "agent-compose"
-
 func GuestPiAgentDir(config *appconfig.Config) string {
 	appconfig.ApplyDefaultGuestPaths(config)
 	return filepath.Join(config.GuestHomePath, ".pi", "agent")
@@ -33,7 +31,7 @@ func WritePiRuntimeConfig(sandbox *domain.Sandbox, model, baseURL, api string) e
 		return nil
 	}
 	payload := map[string]any{"providers": map[string]any{
-		piFacadeProviderID: map[string]any{
+		GuestProviderAgentCompose: map[string]any{
 			"baseUrl": baseURL,
 			"apiKey":  "$AGENT_COMPOSE_SANDBOX_TOKEN",
 			"api":     api,
