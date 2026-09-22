@@ -604,6 +604,10 @@ API Key，与 Agent 的 `provider: codex` / `provider: pi` 无关。
 直接写 `model-id` 时由 daemon 默认 Connection 解析：保留的 bootstrap Connection
 （`default`/`anthropic`）优先，否则使用唯一已配置的 Connection；存在多个候选且
 无保留 Connection 时报告歧义。用 `<connection>/<model-id>` 可显式选择 Connection。
+含 `/` 的 Agent model 值就是这种引用：本身包含斜杠的字面上游模型 ID 需要连同
+Connection 一起书写（例如 `team-gateway/meta-llama/Llama-3.1-8B-Instruct`）。
+前缀不对应任何已配置 Connection、协议族别名或会话环境 Provider 时，会作为配置错误
+上报，而不会把连接 ID 当作模型名的一部分转发给上游。
 其他方法使用同样的服务路径前缀。
 
 - `id` 不可修改，支持 1–128 个 ASCII 字母、数字、点、下划线和连字符，首位必须是
