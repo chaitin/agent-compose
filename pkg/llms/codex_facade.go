@@ -2,7 +2,6 @@ package llms
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -37,29 +36,16 @@ func EnsureCodexFacadeConfig(ctx context.Context, req CodexFacadeConfigRequest) 
 	if err != nil {
 		return nil, err
 	}
-	// A `<connection>/<model>` declaration names a daemon connection; the prefix
-	// is never part of the upstream model id. Pi, opencode and dsh dispatch that
-	// reference explicitly and reject an unknown connection
-	// (resolveCustomOpenAIFacadeTarget). Codex must not degrade the whole
-	// qualified string to a literal model on the default connection, because
-	// that forwards the connection id to the upstream as the model name.
-	// Checking here, before the resolution below, also keeps the clear
-	// failed-precondition error: OptionalFacadeConfigError would otherwise
-	// swallow it into "codex keeps its own login".
-	//
-	// The condition mirrors the resolver's own boundary rather than adding a
-	// second opinion: refineProviderAndModelFromReference resolves the
-	// declaration through a session environment that publishes provider input
-	// (a gateway-issued `<provider>/<model>` logical name arrives that way), and
-	// otherwise keeps the precedence of a legacy alias or a known connection.
-	// Only the case left over by those branches degrades the qualified string to
-	// a literal model, so only that case is rejected here.
-	if prefix, _, ok := SplitProviderModelReference(model); ok &&
-		!sessionHasEnvProvider(sandbox.Summary.ID, model, providerEnv) &&
-		!legacyReferenceUsesDefaultEnv(prefix, defaultLLMEnvProviderLookup(ctx, config, store)) &&
-		!hasEnabledLLMProviderID(ctx, store, prefix) &&
-		!hasConfiguredProviderID(ctx, store, prefix) {
-		return nil, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf("llm provider %q is not configured", prefix), nil)
+	// Codex must not degrade a `<connection>/<model>` declaration with an unknown
+	// connection to a literal model on the default connection, because that
+	// forwards the connection id to the upstream as the model name. Checking
+	// before the resolution below also keeps the clear failed-precondition error:
+	// reaching the resolver instead lets OptionalFacadeConfigError swallow it
+	// into "codex keeps its own login".
+	if err := ValidateFacadeModelReference(ctx, FacadeModelReferenceQuery{
+		Config: config, Store: store, SessionID: sandbox.Summary.ID, Model: model, EnvItems: providerEnv,
+	}); err != nil {
+		return nil, err
 	}
 	target, err := ResolveRuntimeLLMTargetWithEnv(ctx, store, RuntimeLLMTargetQuery{
 		Config: config, SessionID: sandbox.Summary.ID, PreferredProviderFamily: ProviderFamilyOpenAI, ProviderFamilyIsRequired: true, RequestedModel: model, ProviderID: "", EnvItems: providerEnv,

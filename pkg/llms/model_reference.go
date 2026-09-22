@@ -1,9 +1,11 @@
 package llms
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -34,6 +36,51 @@ func SplitModelReference(value string) (string, string, error) {
 			"llm model reference %q must not leave either side of <llm-provider-id>/<model-name> empty", value), nil)
 	}
 	return providerID, model, nil
+}
+
+// FacadeModelReferenceQuery groups ValidateFacadeModelReference's inputs.
+type FacadeModelReferenceQuery struct {
+	Config *appconfig.Config
+	Store  LLMResolverStore
+	// SessionID and EnvItems are the session identity and the family-scoped
+	// sandbox provider environment the caller passes to
+	// ResolveRuntimeLLMTargetWithEnv; the session-environment branch is evaluated
+	// over exactly those items.
+	SessionID string
+	Model     string
+	EnvItems  []domain.SandboxEnvVar
+}
+
+// ValidateFacadeModelReference rejects a `<connection>/<model>` declaration whose
+// prefix names no connection the resolver would select. A facade that skips this
+// check leaves the declaration whole, resolves it against the daemon's default
+// connection, and forwards the connection id to the upstream as part of the
+// model name, reporting a daemon configuration error as an upstream capability
+// error.
+//
+// The condition mirrors the resolver's own boundary rather than adding a second
+// opinion. refineProviderAndModelFromReference resolves the declaration through a
+// session environment that publishes provider input (a gateway-issued
+// `<provider>/<model>` logical name arrives that way), and otherwise keeps the
+// precedence of a legacy family alias or a known connection. Only the case left
+// over by those branches degrades the qualified string to a literal model, so
+// only that case is rejected.
+func ValidateFacadeModelReference(ctx context.Context, q FacadeModelReferenceQuery) error {
+	prefix, _, ok := SplitProviderModelReference(q.Model)
+	if !ok {
+		return nil
+	}
+	switch {
+	case sessionHasEnvProvider(q.SessionID, q.Model, q.EnvItems):
+		return nil
+	case legacyReferenceUsesDefaultEnv(prefix, defaultLLMEnvProviderLookup(ctx, q.Config, q.Store)):
+		return nil
+	case hasEnabledLLMProviderID(ctx, q.Store, prefix):
+		return nil
+	case hasConfiguredProviderID(ctx, q.Store, prefix):
+		return nil
+	}
+	return domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf("llm provider %q is not configured", prefix), nil)
 }
 
 // GuestModelReference builds the model string a guest agent addresses, in the

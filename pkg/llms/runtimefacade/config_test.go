@@ -527,3 +527,49 @@ func TestEnsureSessionAgentRuntimeConfigReportsResolvedGuestModel(t *testing.T) 
 		})
 	}
 }
+
+// Claude's session facade passes the raw declaration to the resolver instead of
+// splitting it first, so an unknown connection prefix used to resolve against
+// the daemon's default connection with the prefix left in the model name. It is
+// a configuration error and must not be swallowed into claude's own-login
+// fallback either.
+func TestEnsureSessionLLMFacadeConfigRejectsUnknownClaudeConnectionPrefix(t *testing.T) {
+	isolateLLMEnv(t)
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key")
+	t.Setenv("ANTHROPIC_MODEL", "claude-default")
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:       root,
+		DbAddr:         filepath.Join(root, "data.db"),
+		RuntimeBaseURL: "http://agent-compose.test:7410",
+		GuestHomePath:  "/root",
+	}
+	di := do.New()
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, config)
+	store, err := testutil.OpenConfigStore(t, di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{
+		ID:            "sandbox-claude-unknown-connection",
+		Driver:        driverpkg.RuntimeDriverDocker,
+		WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-claude-unknown-connection", "workspace"),
+	}}
+
+	env, err := EnsureSessionLLMFacadeConfig(ctx, SessionFacadeConfigRequest{
+		Config: config, Store: store, Session: session, Agent: "claude",
+		Model: "matrix-chat/deepseek-flash", Source: TokenSourceAgent, RunID: "run-claude-unknown-connection",
+	})
+	if !errors.Is(err, domain.ErrFailedPrecondition) {
+		t.Fatalf("unknown claude connection prefix err = %v, want failed precondition", err)
+	}
+	if !strings.Contains(err.Error(), `llm provider "matrix-chat" is not configured`) {
+		t.Fatalf("err = %v, want the unknown connection named", err)
+	}
+	if len(env) != 0 {
+		t.Fatalf("env = %#v, want no partial facade environment", env)
+	}
+}

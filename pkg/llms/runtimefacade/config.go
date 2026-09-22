@@ -114,6 +114,15 @@ func ensureSessionClaudeConfig(ctx context.Context, call sessionFacadeCall) (map
 	if err != nil {
 		return nil, err
 	}
+	// An unknown connection prefix is a configuration error, not "no managed
+	// configuration". Rejecting it before resolution keeps it from being
+	// swallowed below into claude's own-login fallback and from being forwarded
+	// upstream as part of the model name.
+	if err := llms.ValidateFacadeModelReference(ctx, llms.FacadeModelReferenceQuery{
+		Config: config, Store: store, SessionID: session.Summary.ID, Model: model, EnvItems: providerEnv,
+	}); err != nil {
+		return nil, err
+	}
 	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{
 		Config: config, SessionID: session.Summary.ID, PreferredProviderFamily: llms.ProviderFamilyAnthropic, RequestedModel: model, ProviderID: "", EnvItems: providerEnv,
 	})
