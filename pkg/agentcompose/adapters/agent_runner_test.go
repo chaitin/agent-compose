@@ -370,6 +370,29 @@ func TestAgentRunnerExecuteAgentRunWritesSystemPromptAndParsesResult(t *testing.
 	}
 }
 
+func TestBuildAgentExecSpecRelaysTraceContext(t *testing.T) {
+	const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	const tracestate = "vendor=value"
+	config := &appconfig.Config{AgentTelemetry: appconfig.AgentTelemetryConfig{Endpoint: "http://collector:4318"}}
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1"}}
+	ctx := domain.NewContextWithTraceContext(context.Background(), domain.TraceContext{Traceparent: traceparent, Tracestate: tracestate})
+
+	spec := BuildAgentExecSpec(ctx, config, AgentExecSpecRequest{Session: session, Agent: "codex", PromptPath: "/prompt"})
+	var payload struct {
+		Traceparent string `json:"traceparent"`
+		Tracestate  string `json:"tracestate"`
+	}
+	if err := json.Unmarshal([]byte(spec.Env["AGENT_COMPOSE_TELEMETRY"]), &payload); err != nil {
+		t.Fatalf("decode agent telemetry payload: %v", err)
+	}
+	if payload.Traceparent != traceparent || payload.Tracestate != tracestate {
+		t.Fatalf("agent exec spec did not relay the trace context: %+v", payload)
+	}
+	if config.GuestHomePath != "" {
+		t.Fatalf("BuildAgentExecSpec mutated caller configuration: %q", config.GuestHomePath)
+	}
+}
+
 func TestAgentRunnerExecuteAgentRunFallsBackToDefinitionModel(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
