@@ -339,18 +339,27 @@ convert(inbound, conn.Protocol)
   `dsh_facade.go` 的 6 个函数与 4 个 opencode 变体、`resolvePiFacadeTarget` /
   `resolveDshFacadeTarget` / `resolveCustomOpenAIFacadeTarget`、
   `runtimefacade/config.go` 内联 claude、`runs/prompt_attach_facade.go` 的 claude 副本。
-- 第二套预览解析：`agent_model_resolution.go`（预览改为复用 `PrepareAgentLLM` 的纯函数部分）。
-- guest 兼容：`RuntimeModelArgument`（dsh 前缀）、`model-reference.ts` 的 `resolveFacadeModel`。
+- 第二套预览解析：`agent_model_resolution.go` 已改为按 `PrepareAgentLLM` 的同一套
+  优先级取模型，并且只在 direct 模式真正生效时才读 agent 环境里的 model（见 §8）。
+- guest 兼容：daemon 侧 `RuntimeModelArgument`（dsh 前缀）已删除；guest 侧
+  `model-reference.ts` 的 `resolveFacadeModel` **保留**，它是 `guest-image-abi.md`
+  明文承诺的滚动升级兼容面（新 guest + 旧 daemon），不是改造残留。删除它必须与
+  该文档承诺一同变更，见 §8「未完成项」。
 
 ### 4.2 新增
 
-- `pkg/llms/catalog.go`：Connection/ModelSpec/Protocol + 三源合并。
-- `pkg/llms/resolve.go`：`SelectModel` + `connectionFor` 纯函数。
-- `pkg/llms/dialect.go`：dialect 表 + `PrepareAgentLLM`。
-- `pkg/llms/guestconfig.go`：三个 writer（现有实现迁移过来，去掉 prefix 逻辑）。
-- 运行期 `runtime_llm.go`：按 §3.6 简化。
+实际落点与本节最初的命名不同，职责一一对应：
 
-预计 `pkg/llms` 生产代码从 ~40 个文件降到 ~10 个。
+| 本节原名 | 实际文件 | 职责 |
+| --- | --- | --- |
+| `catalog.go` | `connection_catalog.go` | Connection/ModelSpec/Protocol + 三源合并 |
+| `resolve.go` | `connection_catalog.go` 内的 `SelectModel` / `connectionFor` | 选择是 Catalog 的不变量，不另立文件 |
+| `dialect.go` | `agent_dialect.go` + `agent_llm.go` | dialect 表与 `PrepareAgentLLM` 入口 |
+| `guestconfig.go` | `dialect_writers.go` | 各 agent 的 guest 配置 writer |
+
+`pkg/llms` 生产代码从 39 个文件降到 26 个。原始估计的 ~10 个偏乐观：其中约 8 个
+是改造范围之外且各有一项独立职责（HTTP facade、MCP 配置、pi runtime 配置、provider
+CRUD、token、env headers 等），路由核心本身已是 8 个文件。
 
 ---
 
@@ -440,7 +449,8 @@ codex/claude 不再限制上游家族（由矩阵决定）。
 **M1 纯函数内核**（`a9bd09cf`）
 
 - `pkg/llms/protocol.go`：`Protocol` 类型与三个常量，`NormalizeProtocol` /
-  `Valid` / `Family` / `ProtocolForFamily`。
+  `Valid` / `Family`。（`ProtocolForFamily` 一度存在，后因无生产调用方而删除；
+  按家族取协议这件事由 dialect 表的 `Canonical` 承担。）
 - `pkg/llms/connection_catalog.go`：`Catalog` 快照 + `LoadCatalog`（一次查询装完
   连接与模型绑定）+ `SelectModel` + `Resolve` + 四个哨兵错误。连接选择是固定
   优先级的**查找**，无兜底。
@@ -504,8 +514,9 @@ codex/claude 不再限制上游家族（由矩阵决定）。
 
 - `pkg/llms/agent_model_resolution.go` 从 336 行降到 77 行：项目 UI 预览不再
   自己重算 provider family / session env / 全局环境 / 存储默认值，而是加载一次
-  catalog，按"agent 声明的 model → agent env 里的 model → catalog 默认 model →
-  无"取值。输出契约（`AgentModelSource` 与 proto 枚举）不变。
+  catalog，按"agent 声明的 model → catalog 默认 model → 无"取值。输出契约
+  （`AgentModelSource` 与 proto 枚举）不变。
+  （"agent env 里的 model"那一级在 M4 被改成只在 direct 模式生效时才读，见下。）
 
 **M5 direct / managed 二分**（`c608d64b`）
 
@@ -552,11 +563,26 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   保护 daemon 托管 facade 不被 sandbox 自己的 provider env 覆盖；direct 模式下
   要保住的恰是 agent 自己的声明，managed 值仍按 key 覆盖。
 
+**M4 显式连接 + 预览对齐**
+
+- `agents.<name>.llm_connection`（compose schema / `NormalizedAgentSpec` /
+  canonical JSON / spec hash / mig 17 / `project_agent.llm_connection` /
+  `ProjectAgent.llm_connection = 18` / API 映射）打通到
+  `AgentLLMRequest.ConnectionID`。此前 `Catalog.Resolve` 的**最高优先级**
+  （显式连接）在生产中不可达，而 `ambiguousConnectionError` 却要求运维
+  "declare llm_connection"——即错误信息让人去写一个不存在的字段。
+- 一个 agent 同时写 `llm_connection` 与自己的上游 env（7 个 key 之一）是
+  **矛盾配置**，返回 `ErrFailedPrecondition`，不让任何一方静默胜出。
+- scheduler command 路径没有项目 agent 定义可读，`ConnectionID` 留空并注明。
+- 预览改为与 `PrepareAgentLLM` 同一套优先级，且**只在 direct 模式生效时**才读
+  agent 环境里的 model。此前"agent env 里有 model"会直接作为预览结果，而 managed
+  运行根本不读该环境，UI 会承诺一个不会发生的模型。
+- 该修正顺带消灭了第二份 model key 列表：direct 路径原先不认 `CODEX_MODEL` /
+  `OPENCODE_MODEL`，与预览的 key 列表已经漂移；现在由 `directModelFromEnv`
+  单点承担，两条路径共用。
+
 ### 未完成
 
-- **M4** `llm_connection` 配置面（compose schema、proto、API、configstore）：
-  目前 catalog 的三个来源是 daemon env（启动投影）、models.json（启动投影）、
-  RPC（写入 store），声明式 compose 字段尚未提供。
 - **P0 补 `anthropic_messages → chat_completions` 桥**。这一格在**另一个仓库**
   `github.com/chaitin/ai-api-protocol-bridge`（网络可达，但本 worktree 的改动范围
   不含它）。已核实的缺口：该库 v1.0.0 只有
@@ -564,16 +590,33 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   而 Anthropic 入站去 OpenAI 有 responses / chat 两条，家族无法区分，因此它只返回
   messages→responses 那条。
 
-  本仓库现在用 `bridge.UpstreamProtocol() != upstreamProtocol` 校验来兜住这个不精确
-  （`facade_bridge.go` 的 `EncodeRuntimeUpstreamRequest` /
-  `DecodeRuntimeUpstreamResponse` / `RuntimeStreamBridge` 三处）。这个校验正是
+  本仓库现在用一个 `crossFamilyBridge` helper 集中兜住这个不精确（`facade_bridge.go`，
+  三个调用点共用，`CanConvert` 也改为询问它而不是各写一份）。这个校验正是
   `messages → chat` 目前返回 "unsupported llm protocol bridge" 的原因。
 
   落地顺序因此是：① 在该库加 `NewCrossFamilyBridgeForProtocol(inbound, upstream Protocol)`
-  与 `bridge_anthropic_to_chat.go` 并发布；② 本仓库升依赖，三处改用按协议构造函数并
-  删掉那三个 `UpstreamProtocol()` 兜底判断。**在这两步完成前，矩阵缺口与那三处校验
+  与 `bridge_anthropic_to_chat.go` 并发布；② 本仓库升依赖，改用按协议构造函数并
+  删掉 helper 里的 `UpstreamProtocol()` 判断。**在这两步完成前，矩阵缺口与那处校验
   必须保留**——删掉校验而桥没到位，只会把"明确报错"变成"静默走错协议"。
 
   `CanConvert` 已经是询问注册表而不是复制表，所以 ② 之后本仓库不需要再有别的改动。
-- **文档**：`docs/pages` 的 en / zh-CN 两版仍需按新语义更新，并跑
-  `task docs:build`。
+
+- **guest 侧 `resolveFacadeModel` 保留是刻意的**。`docs/pages/guest-image-abi.md`
+  明文承诺滚动升级期间新 runtime 仍接受旧 daemon 传的 legacy 参数，并声明该兼容
+  已废弃、待那些版本不再支持时移除。它只在 `AGENT_COMPOSE_RESOLVED_MODEL` 缺席
+  （即新 guest + 旧 daemon）时生效，当前 daemon 恒设该变量。删它必须连同那段 ABI
+  承诺一起改，属于发布策略决定，不是代码清理。
+
+- **dsh legacy 参数前缀的方向性缺口（待决策）**。同一段 ABI 文档还承诺"daemon 也为
+  旧 guest 保留 DSH 的 legacy 参数前缀"，实现它的 `RuntimeModelArgument` 已随 M2
+  删除，而新 daemon 传给 dsh 的 CLI 参数是字面 model。于是"新 daemon + 旧 dsh guest"
+  这条方向失去保护：旧 guest 会剥掉字面 model 的第一个 `/` 分量。两个方向的兼容
+  现在只剩 guest 侧一半。需要决策：恢复 daemon 侧前缀（可复用 `GuestModel` 的
+  `GuestProvider` 单点机制），或同步修改 ABI 文档正式放弃该方向。
+
+- **§7 的 15 格转换矩阵表驱动测试**未补齐：现有测试分散覆盖 codex×messages、
+  opencode、pi，且 `TestPrepareAgentLLMRejectsClaudeChatUpstream` 断言 claude×chat
+  **必须失败**——这在 P0 完成前是正确写法，但矩阵因此没有单一表驱动用例。
+
+- **文档**：`docs/pages` 的 YAML 手册 en / zh-CN 已随 M4 更新并通过
+  `task docs:build`；`docs/design/llm-provider-rpc.md` 与 release note 尚未同步。
