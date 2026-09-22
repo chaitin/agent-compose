@@ -73,6 +73,13 @@ func TestDialectConversionMatrix(t *testing.T) {
 			ProtocolMessages:        {ProtocolMessages, false},
 		},
 	}
+	// The one cell no bridge can serve today. An Anthropic inbound has two
+	// OpenAI targets and the protocol library selects a cross-family bridge by
+	// family, so messages -> chat has no bridge yet (design phase P0). Listing
+	// it here makes this table the complete statement of the matrix: every
+	// other cell must be servable.
+	unservable := map[string]bool{"claude/chat_completions": true}
+
 	for agentKind, byUpstream := range matrix {
 		dialect, err := DialectFor(agentKind)
 		if err != nil {
@@ -85,6 +92,14 @@ func TestDialectConversionMatrix(t *testing.T) {
 			}
 			if got := dialect.NeedsConversion(upstream); got != expected.needsConvert {
 				t.Errorf("%s upstream %s: NeedsConversion = %v, want %v", agentKind, upstream, got, expected.needsConvert)
+			}
+			// Deciding to convert is not the same as being able to. Without this
+			// the table reads as though all fifteen combinations work, which is
+			// how the missing bridge stayed invisible.
+			cell := agentKind + "/" + string(upstream)
+			servable := !expected.needsConvert || CanConvert(expected.inbound, upstream)
+			if wantServable := !unservable[cell]; servable != wantServable {
+				t.Errorf("%s: servable = %v, want %v; a cell that needs conversion is only servable when CanConvert agrees", cell, servable, wantServable)
 			}
 		}
 	}
