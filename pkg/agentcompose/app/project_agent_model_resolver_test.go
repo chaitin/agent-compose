@@ -6,19 +6,28 @@ import (
 
 	"github.com/chaitin/agent-compose/internal/projects"
 	"github.com/chaitin/agent-compose/pkg/compose"
-	appconfig "github.com/chaitin/agent-compose/pkg/config"
+	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
-func newProjectAgentModelResolverFixture(t *testing.T, yaml string, config appconfig.Config) (domain.ProjectRecord, []domain.ProjectAgentRecord, *projectAgentModelResolver) {
+// newProjectAgentModelResolverFixture saves one project revision from yaml and
+// returns a resolver backed by a config store. A non-empty catalogDefaultModel
+// seeds the store's model catalog so the preview has a daemon default to find.
+func newProjectAgentModelResolverFixture(t *testing.T, yaml, catalogDefaultModel string) (domain.ProjectRecord, []domain.ProjectAgentRecord, *projectAgentModelResolver) {
 	t.Helper()
 	ctx := context.Background()
-	// Model resolution consults os.Getenv as a fallback; clear ambient LLM
-	// environment so the assertions depend only on the injected config.
-	for _, key := range []string{"LLM_MODEL", "LLM_API_KEY", "LLM_API_HEADERS", "LLM_API_ENDPOINT", "LLM_API_PROTOCOL", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"} {
-		t.Setenv(key, "")
-	}
 	store := newRunSupervisorTestConfigStore(t)
+	if catalogDefaultModel != "" {
+		baseURL, protocol, apiKey := "https://daemon.example.test/v1", llms.APIProtocolResponses, "daemon-key"
+		if err := store.ApplyModelCatalog(ctx, llms.ModelCatalog{
+			Default: "gateway/" + catalogDefaultModel,
+			Providers: map[string]llms.CatalogProvider{
+				"gateway": {BaseURL: &baseURL, Protocol: &protocol, APIKey: &apiKey, Models: []llms.CatalogModel{{ID: catalogDefaultModel}}},
+			},
+		}); err != nil {
+			t.Fatalf("seed model catalog: %v", err)
+		}
+	}
 	raw, err := compose.Parse([]byte(yaml))
 	if err != nil {
 		t.Fatal(err)
@@ -47,45 +56,61 @@ func newProjectAgentModelResolverFixture(t *testing.T, yaml string, config appco
 	if err != nil {
 		t.Fatal(err)
 	}
-	return project, agents, newProjectAgentModelResolver(&config, store)
+	return project, agents, newProjectAgentModelResolver(store)
 }
 
-func TestProjectAgentModelResolverUsesCurrentRevisionAndDaemonDefault(t *testing.T) {
-	ctx := context.Background()
+func TestProjectAgentModelResolverUsesCurrentRevisionAndCatalogDefault(t *testing.T) {
 	project, agents, resolver := newProjectAgentModelResolverFixture(t,
 		"name: model-preview\nagents:\n  coder:\n    provider: codex\n",
-		appconfig.Config{
-			LLMAPIEndpoint: "https://daemon.example.test/v1",
-			LLMAPIProtocol: "responses",
-			LLMAPIKey:      "daemon-key",
-			LLMModel:       "dev/gpt-5.5",
-		})
-	resolutions, err := resolver.ResolveProjectAgentModels(ctx, project, agents)
+		"dev/gpt-5.5")
+	resolutions, err := resolver.ResolveProjectAgentModels(context.Background(), project, agents)
 	if err != nil {
 		t.Fatal(err)
 	}
 	resolution := resolutions["coder"]
-	if resolution.Model != "dev/gpt-5.5" || resolution.Source != "daemon_default" {
+	if resolution.Model != "dev/gpt-5.5" || resolution.Source != llms.AgentModelSourceDaemonDefault {
 		t.Fatalf("resolution = %#v", resolution)
 	}
 }
 
 func TestProjectAgentModelResolverUsesAgentRecordEnv(t *testing.T) {
-	ctx := context.Background()
 	project, agents, resolver := newProjectAgentModelResolverFixture(t,
 		"name: model-env\nagents:\n  coder:\n    provider: codex\n    env:\n      CODEX_MODEL: gpt-env-model\n",
-		appconfig.Config{
-			LLMAPIEndpoint: "https://daemon.example.test/v1",
-			LLMAPIProtocol: "responses",
-			LLMAPIKey:      "daemon-key",
-			LLMModel:       "dev/gpt-5.5",
-		})
-	resolutions, err := resolver.ResolveProjectAgentModels(ctx, project, agents)
+		"dev/gpt-5.5")
+	resolutions, err := resolver.ResolveProjectAgentModels(context.Background(), project, agents)
 	if err != nil {
 		t.Fatal(err)
 	}
 	resolution := resolutions["coder"]
-	if resolution.Model != "gpt-env-model" || resolution.Source != "agent_env" {
+	if resolution.Model != "gpt-env-model" || resolution.Source != llms.AgentModelSourceAgentEnv {
+		t.Fatalf("resolution = %#v", resolution)
+	}
+}
+
+func TestProjectAgentModelResolverUsesProjectDeclaredModel(t *testing.T) {
+	project, agents, resolver := newProjectAgentModelResolverFixture(t,
+		"name: model-declared\nagents:\n  coder:\n    provider: codex\n    model: openai/agent-model\n",
+		"dev/gpt-5.5")
+	resolutions, err := resolver.ResolveProjectAgentModels(context.Background(), project, agents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolution := resolutions["coder"]
+	if resolution.Model != "openai/agent-model" || resolution.Source != llms.AgentModelSourceProject {
+		t.Fatalf("resolution = %#v", resolution)
+	}
+}
+
+func TestProjectAgentModelResolverReportsProviderDefaultWithoutModel(t *testing.T) {
+	project, agents, resolver := newProjectAgentModelResolverFixture(t,
+		"name: model-empty\nagents:\n  coder:\n    provider: gemini\n",
+		"")
+	resolutions, err := resolver.ResolveProjectAgentModels(context.Background(), project, agents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolution := resolutions["coder"]
+	if resolution.Model != "" || resolution.Source != llms.AgentModelSourceProviderDefault {
 		t.Fatalf("resolution = %#v", resolution)
 	}
 }

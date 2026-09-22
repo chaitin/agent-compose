@@ -423,6 +423,32 @@ codex/claude 不再限制上游家族（由矩阵决定）。
 
 ### 已完成
 
+**M3 代理：connection-bound token + 弱转发**（本次改动）
+
+- `FacadeToken` 增加 `GuestModel`（migration 16，旧 token 为空则保持旧的
+  "单模型锁定"行为）。token 从此记录三件事：连接 id、上游字面 model、
+  guest 侧拼写。
+- 新增 `FacadeToken.ResolveUpstreamModel(requested) (string, bool)`：
+  - 请求命中 `GuestModel` → 精确替换为字面 `Model`（纯字符串相等，不切分，
+    含 `/` 的字面 model 因此完好）；
+  - 其他 model → **原样转发**（token 已绑定连接，由上游决定它服务哪些模型）；
+  - 无连接的旧 token → 继续锁定单一 model，不匹配即 403。
+- `RuntimeLLMTargetResolver`（参数含 sandbox / providerFamily）换成
+  `RuntimeLLMConnectionResolver(ctx, connectionID, model)`。代理不再选择连接：
+  它按 token 的连接 id 查 catalog，把 model 转发过去。原来的
+  `token.ProviderID != target.Provider.ID` 校验随之消失——连接来自 token，
+  不可能不一致；取而代之的是 `token.ProviderID == ""` → 403。
+- 这一改动同时消掉了"同一 sandbox 的 provider env 可以在请求期改写上游协议"
+  的路径：连接在准备期决定一次。
+
+### 进行中
+
+- **预览路径**：`pkg/llms/agent_model_resolution.go` 是最后一个走旧解析器的
+  只读消费者（项目 UI 预览每个 agent 会选哪个模型），正在改写为
+  `Catalog` + `Catalog.DefaultModel()`，保持 proto 契约不变。
+
+### 未完成
+
 **M1 纯函数内核**（commit `a9bd09c`）
 
 - `pkg/llms/protocol.go`：`Protocol` 类型与三个常量，`Family()`、`ProtocolForFamily`。

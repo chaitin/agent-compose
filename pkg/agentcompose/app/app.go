@@ -103,7 +103,7 @@ func RegisterRoutes(di do.Injector) {
 		Store:            do.MustInvoke[*configstore.ConfigStore](di),
 		SchedulerRuntime: schedulerController,
 		SchedulerRuns:    schedulerController.SchedulerRuns(),
-		AgentModels:      newProjectAgentModelResolver(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*configstore.ConfigStore](di)),
+		AgentModels:      newProjectAgentModelResolver(do.MustInvoke[*configstore.ConfigStore](di)),
 		SandboxDirs:      do.MustInvoke[*sandboxstore.Store](di),
 	})
 	path, handler := agentcomposev2connect.NewProjectServiceHandler(projectHandler)
