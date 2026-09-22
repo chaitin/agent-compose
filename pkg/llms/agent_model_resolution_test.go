@@ -68,13 +68,26 @@ func TestResolveAgentModelsPrecedence(t *testing.T) {
 			want:  AgentModelResolution{Model: "dev/gpt-5.5", Source: AgentModelSourceProject},
 		},
 		{
-			name:  "agent environment wins over the catalog default",
-			agent: domain.AgentDefinition{Provider: "codex", EnvItems: []domain.SandboxEnvVar{{Name: "CODEX_MODEL", Value: "  openai/gpt-5.5  "}}},
-			want:  AgentModelResolution{Model: "openai/gpt-5.5", Source: AgentModelSourceAgentEnv},
+			name: "a declared upstream's model wins over the catalog default",
+			agent: domain.AgentDefinition{Provider: "codex", EnvItems: []domain.SandboxEnvVar{
+				{Name: "OPENAI_API_KEY", Value: "sk-openai"},
+				{Name: "CODEX_MODEL", Value: "  openai/gpt-5.5  "},
+			}},
+			want: AgentModelResolution{Model: "openai/gpt-5.5", Source: AgentModelSourceAgentEnv},
 		},
 		{
 			name:  "catalog default fills the gap",
 			agent: domain.AgentDefinition{Provider: "codex", Model: "   "},
+			want:  AgentModelResolution{Model: "catalog-model", Source: AgentModelSourceDaemonDefault},
+		},
+		{
+			// Regression: a model in the agent's environment is only used when
+			// that environment also owns the upstream. Without a credential the
+			// run is managed, never reads the environment, and uses the catalog
+			// default — so reporting agent_env here described a run that would
+			// not happen.
+			name:  "a model key without a declared upstream falls through to the catalog default",
+			agent: domain.AgentDefinition{Provider: "codex", EnvItems: []domain.SandboxEnvVar{{Name: "CODEX_MODEL", Value: "agent-model"}}},
 			want:  AgentModelResolution{Model: "catalog-model", Source: AgentModelSourceDaemonDefault},
 		},
 	}
@@ -108,11 +121,11 @@ func TestResolveAgentModelsReadsProviderSpecificAgentEnvironmentKeys(t *testing.
 		{name: "claude generic fallback", provider: "claude", env: []domain.SandboxEnvVar{{Name: "LLM_MODEL", Value: "generic-model"}}, want: "generic-model"},
 		{name: "opencode preferred key", provider: "opencode", env: []domain.SandboxEnvVar{{Name: "OPENCODE_MODEL", Value: "opencode-model"}}, want: "opencode-model"},
 		{name: "opencode generic fallback", provider: "opencode", env: []domain.SandboxEnvVar{{Name: "LLM_MODEL", Value: "generic-model"}}, want: "generic-model"},
-		{name: "generic env keys do not apply to other providers", provider: "gemini", env: []domain.SandboxEnvVar{{Name: "LLM_MODEL", Value: "generic-model"}}, want: ""},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			resolutions, err := ResolveAgentModels(context.Background(), catalogStoreStub{}, []domain.AgentDefinition{{Provider: test.provider, EnvItems: test.env}})
+			env := append([]domain.SandboxEnvVar{{Name: "LLM_API_KEY", Value: "sk-declared"}}, test.env...)
+			resolutions, err := ResolveAgentModels(context.Background(), catalogStoreStub{}, []domain.AgentDefinition{{Provider: test.provider, EnvItems: env}})
 			if err != nil {
 				t.Fatal(err)
 			}

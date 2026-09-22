@@ -43,14 +43,23 @@ func ResolveAgentModels(ctx context.Context, store CatalogStore, agents []domain
 	return resolutions, nil
 }
 
-// resolveAgentModel applies the preview precedence: the agent's own declaration,
-// then its own environment, then the configured catalog default, then nothing.
+// resolveAgentModel reports the model a new run would use, applying exactly the
+// precedence PrepareAgentLLM applies: the agent's own declaration, then the
+// model named by an upstream the agent declared itself, then the configured
+// catalog default, then nothing.
+//
+// The agent's environment is consulted only when direct mode would actually
+// engage, which is what directUpstreamFromAgentEnv decides. Reading a model out
+// of the environment in managed mode would report a model the run will not use,
+// because a managed run never consults the agent's environment.
 func resolveAgentModel(catalog *Catalog, agent domain.AgentDefinition) AgentModelResolution {
 	if model := strings.TrimSpace(agent.Model); model != "" {
 		return AgentModelResolution{Model: model, Source: AgentModelSourceProject}
 	}
-	if model := agentEnvironmentModel(domain.NormalizeAgentKind(agent.Provider), agent.EnvItems); model != "" {
-		return AgentModelResolution{Model: model, Source: AgentModelSourceAgentEnv}
+	if dialect, err := DialectFor(domain.NormalizeAgentKind(agent.Provider)); err == nil {
+		if upstream, declared := directUpstreamFromAgentEnv(agent.EnvItems, dialect); declared && upstream.Model != "" {
+			return AgentModelResolution{Model: upstream.Model, Source: AgentModelSourceAgentEnv}
+		}
 	}
 	if model := catalog.DefaultModel(); model != "" {
 		return AgentModelResolution{Model: model, Source: AgentModelSourceDaemonDefault}
@@ -59,19 +68,4 @@ func resolveAgentModel(catalog *Catalog, agent domain.AgentDefinition) AgentMode
 	// and has no per-provider default, so the preview cannot claim the selection
 	// is unresolved: the provider or its upstream owns the final choice.
 	return AgentModelResolution{Source: AgentModelSourceProviderDefault}
-}
-
-// agentEnvironmentModel reads the model an agent declares in its own
-// environment, using the provider-specific keys that agent CLI understands.
-func agentEnvironmentModel(provider string, items []domain.SandboxEnvVar) string {
-	switch provider {
-	case "codex":
-		return firstNonEmptyTrimmed(EnvItemValue(items, "CODEX_MODEL"), EnvItemValue(items, "LLM_MODEL"))
-	case "claude":
-		return firstNonEmptyTrimmed(EnvItemValue(items, "ANTHROPIC_MODEL"), EnvItemValue(items, "CLAUDE_MODEL"), EnvItemValue(items, "LLM_MODEL"))
-	case "opencode":
-		return firstNonEmptyTrimmed(EnvItemValue(items, "OPENCODE_MODEL"), EnvItemValue(items, "LLM_MODEL"))
-	default:
-		return ""
-	}
 }

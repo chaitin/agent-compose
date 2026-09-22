@@ -49,7 +49,7 @@ func directUpstreamFromAgentEnv(env []domain.SandboxEnvVar, dialect Dialect) (di
 			Endpoint: envItemOr(env, directAnthropicEndpoint, "ANTHROPIC_BASE_URL", "LLM_API_ENDPOINT"),
 			APIKey:   key,
 			Protocol: ProtocolMessages,
-			Model:    envItemFirst(env, "ANTHROPIC_MODEL", "CLAUDE_MODEL", "LLM_MODEL"),
+			Model:    directModelFromEnv(dialect.Kind, env),
 		}, true
 	}
 	genericKey := envItemFirst(env, "OPENAI_API_KEY", "LLM_API_KEY")
@@ -61,8 +61,35 @@ func directUpstreamFromAgentEnv(env []domain.SandboxEnvVar, dialect Dialect) (di
 		Endpoint: envItemOr(env, directEndpointFor(protocol), "OPENAI_BASE_URL", "LLM_API_ENDPOINT"),
 		APIKey:   genericKey,
 		Protocol: protocol,
-		Model:    envItemFirst(env, "LLM_MODEL", "OPENAI_MODEL"),
+		Model:    directModelFromEnv(dialect.Kind, env),
 	}, true
+}
+
+// directModelFromEnv reads the model an agent declares in its own environment.
+//
+// This is the single list of model keys for the direct path. The agent's own
+// key comes first because it is the most specific, and the generic names follow
+// because a generic LLM_* environment may drive any of these CLIs. The preview
+// reads this same function, so what the UI reports and what a run uses cannot
+// drift apart.
+func directModelFromEnv(kind string, env []domain.SandboxEnvVar) string {
+	if model := envItemFirst(env, agentSpecificModelKeys(kind)...); model != "" {
+		return model
+	}
+	return envItemFirst(env, "LLM_MODEL", "OPENAI_MODEL")
+}
+
+func agentSpecificModelKeys(kind string) []string {
+	switch kind {
+	case "codex":
+		return []string{"CODEX_MODEL"}
+	case "claude":
+		return []string{"ANTHROPIC_MODEL", "CLAUDE_MODEL"}
+	case "opencode":
+		return []string{"OPENCODE_MODEL"}
+	default:
+		return nil
+	}
 }
 
 // directProtocolFromEnv reads the declared wire protocol of an agent that
