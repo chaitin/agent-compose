@@ -151,6 +151,30 @@ func normalizeRuntimeRawRoleItems(payload map[string]json.RawMessage, field stri
 	return true
 }
 
+// crossFamilyBridge returns the bridge that converts inbound into upstream.
+//
+// The library selects a cross-family bridge by upstream *family*, and an
+// Anthropic inbound has two possible OpenAI targets (Responses and Chat), so a
+// family lookup cannot tell them apart and may return the other one. The
+// UpstreamProtocol check below is therefore a correctness guard, not a
+// redundant restatement of the request: deleting it would not make
+// messages-to-chat work, it would silently post the wrong protocol upstream.
+//
+// The matrix cell anthropic_messages -> openai_chat stays unavailable until the
+// library exposes a protocol-precise constructor and ships the bridge. When it
+// does, replace this helper with that constructor and drop the check here — and
+// only then. See docs/design/llm_model_routing_redesign.md, phase P0.
+func crossFamilyBridge(inbound, upstream protocolbridge.Protocol, upstreamFamily string) (protocolbridge.CrossFamilyBridge, error) {
+	bridge, ok := protocolbridge.NewCrossFamilyBridge(inbound, upstreamFamily)
+	if !ok {
+		return nil, fmt.Errorf("unsupported llm protocol bridge from %q to %q", inbound, upstream)
+	}
+	if bridge.UpstreamProtocol() != upstream {
+		return nil, fmt.Errorf("unsupported llm protocol bridge from %q to %q: the %s family bridge converts to %q", inbound, upstream, upstreamFamily, bridge.UpstreamProtocol())
+	}
+	return bridge, nil
+}
+
 func EncodeRuntimeUpstreamRequest(inboundProtocol, upstreamProtocol protocolbridge.Protocol, target ResolvedTarget, req *protocolbridge.LLMRequest) ([]byte, error) {
 	if inboundProtocol == upstreamProtocol || ProtocolsShareFamily(inboundProtocol, upstreamProtocol) {
 		adapter, err := ProtocolAdapter(upstreamProtocol)
@@ -159,9 +183,9 @@ func EncodeRuntimeUpstreamRequest(inboundProtocol, upstreamProtocol protocolbrid
 		}
 		return adapter.EncodeRequest(normalizeRuntimeRequestForUpstream(req, upstreamProtocol), protocolbridge.EncodeRequestOptions{Model: target.Model.Name})
 	}
-	bridge, ok := protocolbridge.NewCrossFamilyBridge(inboundProtocol, NormalizeProviderType(target.Provider.ProviderType))
-	if !ok || bridge.UpstreamProtocol() != upstreamProtocol {
-		return nil, fmt.Errorf("unsupported llm protocol bridge from %q to %q", inboundProtocol, upstreamProtocol)
+	bridge, err := crossFamilyBridge(inboundProtocol, upstreamProtocol, NormalizeProviderType(target.Provider.ProviderType))
+	if err != nil {
+		return nil, err
 	}
 	return bridge.EncodeUpstreamRequest(req, protocolbridge.EncodeRequestOptions{Model: target.Model.Name})
 }
@@ -203,9 +227,9 @@ func EncodeRuntimeClientResponse(inboundProtocol, upstreamProtocol protocolbridg
 			return nil, err
 		}
 	} else {
-		bridge, ok := protocolbridge.NewCrossFamilyBridge(inboundProtocol, NormalizeProviderType(target.Provider.ProviderType))
-		if !ok || bridge.UpstreamProtocol() != upstreamProtocol {
-			return nil, fmt.Errorf("unsupported llm protocol bridge from %q to %q", inboundProtocol, upstreamProtocol)
+		bridge, err := crossFamilyBridge(inboundProtocol, upstreamProtocol, NormalizeProviderType(target.Provider.ProviderType))
+		if err != nil {
+			return nil, err
 		}
 		llmResp, err = bridge.DecodeUpstreamResponse(upstreamBody)
 		if err != nil {
@@ -250,9 +274,9 @@ func RuntimeStreamBridge(inboundProtocol, upstreamProtocol protocolbridge.Protoc
 		}
 		return decoder, encoder, nil
 	}
-	bridge, ok := protocolbridge.NewCrossFamilyBridge(inboundProtocol, upstreamFamily)
-	if !ok || bridge.UpstreamProtocol() != upstreamProtocol {
-		return nil, nil, fmt.Errorf("unsupported llm stream bridge from %q to %q", inboundProtocol, upstreamProtocol)
+	bridge, err := crossFamilyBridge(inboundProtocol, upstreamProtocol, upstreamFamily)
+	if err != nil {
+		return nil, nil, fmt.Errorf("llm stream bridge: %w", err)
 	}
 	decoder, err := bridge.NewStreamDecoder(protocolbridge.StreamDecodeOptions{})
 	if err != nil {
