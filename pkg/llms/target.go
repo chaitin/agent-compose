@@ -19,24 +19,31 @@ type ResolvedTargetInput struct {
 }
 
 // BuildResolvedTarget applies provider defaults followed by per-model catalog
-// overrides when the selected model has metadata.
+// overrides when the selected model has metadata. It looks the binding up from
+// the store; prefer Catalog.Resolve on the request path.
 func BuildResolvedTarget(ctx context.Context, store ProviderModelWireAPIStore, in ResolvedTargetInput) (ResolvedTarget, error) {
-	provider, model := in.Provider, in.Model
-	wireAPI := firstNonEmptyTrimmed(in.WireAPI, provider.DefaultWireAPI)
 	config := ProviderModelConfig{}
 	if configStore, ok := store.(ProviderModelConfigStore); ok {
-		resolved, found, err := configStore.LLMProviderModelConfig(ctx, provider.ID, model.ID)
+		resolved, found, err := configStore.LLMProviderModelConfig(ctx, in.Provider.ID, in.Model.ID)
 		if err != nil {
 			return ResolvedTarget{}, err
 		}
 		if found {
 			config = resolved
-			wireAPI = firstNonEmptyTrimmed(config.WireAPI, wireAPI)
 		}
 	}
+	config.WireAPI = firstNonEmptyTrimmed(config.WireAPI, in.WireAPI)
+	return NewResolvedTarget(in.Provider, in.Model, config)
+}
+
+// NewResolvedTarget builds a ResolvedTarget from an already-loaded connection,
+// model, and per-model binding override. It is pure: the upstream protocol,
+// endpoint, and headers depend only on its inputs, and the protocol is never
+// supplied by the caller.
+func NewResolvedTarget(provider Provider, model Model, config ProviderModelConfig) (ResolvedTarget, error) {
 	effectiveProvider := provider
-	if strings.TrimSpace(config.BaseURL) != "" {
-		effectiveProvider.BaseURL = strings.TrimSpace(config.BaseURL)
+	if baseURL := strings.TrimSpace(config.BaseURL); baseURL != "" {
+		effectiveProvider.BaseURL = baseURL
 	}
 	headers, err := ProviderForwardHeaders(effectiveProvider)
 	if err != nil {
@@ -54,7 +61,7 @@ func BuildResolvedTarget(ctx context.Context, store ProviderModelWireAPIStore, i
 			headers.Set(strings.TrimSpace(key), value)
 		}
 	}
-	wireAPI = NormalizeWireAPI(wireAPI)
+	wireAPI := NormalizeWireAPI(firstNonEmptyTrimmed(config.WireAPI, provider.DefaultWireAPI))
 	return ResolvedTarget{
 		Provider: effectiveProvider, Model: model, WireAPI: wireAPI,
 		Endpoint: EndpointForProvider(effectiveProvider, wireAPI), Headers: headers,
