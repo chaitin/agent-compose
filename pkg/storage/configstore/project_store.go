@@ -498,10 +498,11 @@ func (s *projectStore) GetProjectRun(ctx context.Context, runID string) (Project
 }
 
 func (s *projectStore) ListProjectRuns(ctx context.Context, projectID string, limit int) ([]ProjectRunRecord, error) {
-	return s.ListProjectRunsByOptions(ctx, ProjectRunListOptions{ProjectID: projectID, Limit: limit})
+	result, err := s.ListProjectRunsByOptions(ctx, ProjectRunListOptions{ProjectID: projectID, Limit: limit})
+	return result.Runs, err
 }
 
-func (s *projectStore) ListProjectRunsByOptions(ctx context.Context, options ProjectRunListOptions) ([]ProjectRunRecord, error) {
+func (s *projectStore) ListProjectRunsByOptions(ctx context.Context, options ProjectRunListOptions) (domain.ProjectRunListResult, error) {
 	limit := options.Limit
 	if limit <= 0 {
 		limit = 50
@@ -513,7 +514,10 @@ func (s *projectStore) ListProjectRunsByOptions(ctx context.Context, options Pro
 	if offset < 0 {
 		offset = 0
 	}
-	where, args := projectRunFilter(options)
+	where, args, eventScopeTruncated, err := s.projectRunFilterWithEventScope(ctx, options)
+	if err != nil {
+		return domain.ProjectRunListResult{}, err
+	}
 	query := projects.SelectProjectRunSQL()
 	if len(where) > 0 {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
@@ -522,34 +526,73 @@ func (s *projectStore) ListProjectRunsByOptions(ctx context.Context, options Pro
 	args = append(args, limit, offset)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query project runs: %w", err)
+		return domain.ProjectRunListResult{}, fmt.Errorf("query project runs: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var items []ProjectRunRecord
 	for rows.Next() {
 		item, err := projects.ScanProjectRun(rows.Scan)
 		if err != nil {
-			return nil, err
+			return domain.ProjectRunListResult{}, err
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate project runs: %w", err)
+		return domain.ProjectRunListResult{}, fmt.Errorf("iterate project runs: %w", err)
 	}
-	return items, nil
+	return domain.ProjectRunListResult{Runs: items, EventScopeTruncated: eventScopeTruncated}, nil
 }
 
-func (s *projectStore) CountProjectRuns(ctx context.Context, options ProjectRunListOptions) (int, error) {
-	where, args := projectRunFilter(options)
+func (s *projectStore) CountProjectRuns(ctx context.Context, options ProjectRunListOptions) (int, bool, error) {
+	where, args, eventScopeTruncated, err := s.projectRunFilterWithEventScope(ctx, options)
+	if err != nil {
+		return 0, false, err
+	}
 	query := `SELECT COUNT(*) FROM project_run`
 	if len(where) > 0 {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
 	var total int
 	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
-		return 0, fmt.Errorf("count project runs: %w", err)
+		return 0, false, fmt.Errorf("count project runs: %w", err)
 	}
-	return total, nil
+	return total, eventScopeTruncated, nil
+}
+
+// projectRunFilterWithEventScope extends the static run filter with the
+// scheduler-run set recorded against options.EventID. The event scope is
+// resolved fresh on every call; deliveries written between a list and its
+// matching count can skew totals, the same way concurrent runs already can.
+// An event without recorded deliveries filters to an empty result rather than
+// no filter. eventScopeTruncated reports that the event scope hit its cap, so
+// runs recorded only against events beyond it are missing from the result.
+//
+// The derived IN list is bounded only indirectly, through the 1000-event scope
+// cap in eventRunScope, so each list/count pair re-resolves the scope and
+// carries one bound parameter per scheduler run. Rewriting this as an
+// EXISTS/JOIN subquery over event_delivery would remove both the parameter
+// fan-out and the duplicate resolution, at the cost of restructuring the
+// filter assembly; revisit if event-scoped listing shows up in query profiles.
+func (s *projectStore) projectRunFilterWithEventScope(ctx context.Context, options ProjectRunListOptions) ([]string, []any, bool, error) {
+	where, args := projectRunFilter(options)
+	eventID := strings.TrimSpace(options.EventID)
+	if eventID == "" {
+		return where, args, false, nil
+	}
+	schedulerRunIDs, eventScopeTruncated, err := eventRunScope(ctx, s.db, eventID)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if len(schedulerRunIDs) == 0 {
+		where = append(where, "0 = 1")
+		return where, args, eventScopeTruncated, nil
+	}
+	clause := "scheduler_run_id IN (" + placeholders(len(schedulerRunIDs)) + ")"
+	for _, id := range schedulerRunIDs {
+		args = append(args, id)
+	}
+	where = append(where, clause)
+	return where, args, eventScopeTruncated, nil
 }
 
 func (s *projectStore) getProject(ctx context.Context, projectID string, includeRemoved bool) (ProjectRecord, bool, error) {

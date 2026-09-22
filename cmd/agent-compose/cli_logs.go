@@ -79,6 +79,9 @@ func normalizeComposeLogsOptions(cmd *cobra.Command, options composeLogsOptions,
 		if cmd.Flags().Changed("agent") {
 			return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs agent can be specified either positionally or with --agent, not both")}
 		}
+		if options.EventID != "" {
+			return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --event cannot be combined with a positional target")}
+		}
 		if identity.IsIDPrefix(args[0]) {
 			options.ResourceID = strings.TrimSpace(args[0])
 		} else {
@@ -93,9 +96,6 @@ func normalizeComposeLogsOptions(cmd *cobra.Command, options composeLogsOptions,
 	}
 	if options.EventID != "" && options.SandboxID != "" {
 		return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --event cannot be combined with --sandbox")}
-	}
-	if options.EventID != "" && options.ResourceID != "" {
-		return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --event cannot be combined with a positional resource id")}
 	}
 	if options.TailLines < -1 {
 		return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --tail must be -1 or greater")}
@@ -261,8 +261,6 @@ func listLogRuns(ctx context.Context, client agentcomposev2connect.RunServiceCli
 	return resp.Msg.GetRuns(), nil
 }
 
-// runComposeLogsForEvent is implemented in cli_logs_event.go; the dispatch
-// branch lives here because it is part of the logs command flow.
 func listLogRunRefCandidates(ctx context.Context, client agentcomposev2connect.RunServiceClient, projectID, agentName string) ([]*agentcomposev2.RunSummary, error) {
 	resp, err := client.ListRuns(ctx, connect.NewRequest(&agentcomposev2.ListRunsRequest{
 		ProjectId: strings.TrimSpace(projectID),

@@ -124,11 +124,17 @@ func (s *eventStore) ListEventSummaries(ctx context.Context, filter domain.Topic
 }
 
 func (s *eventStore) getEventSummary(ctx context.Context, eventID string) (domain.EventSummary, error) {
+	return eventSummaryByID(ctx, s.db, eventID)
+}
+
+// eventSummaryByID loads one event by exact id. Unknown or blank ids return
+// NotFound / argument errors respectively.
+func eventSummaryByID(ctx context.Context, db *sql.DB, eventID string) (domain.EventSummary, error) {
 	eventID = strings.TrimSpace(eventID)
 	if eventID == "" {
 		return domain.EventSummary{}, fmt.Errorf("event id is required")
 	}
-	item, err := scanEventSummary(s.db.QueryRowContext(ctx, selectEventSummarySQL()+` WHERE id = ?`, eventID).Scan)
+	item, err := scanEventSummary(db.QueryRowContext(ctx, selectEventSummarySQL()+` WHERE id = ?`, eventID).Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.EventSummary{}, domain.ResourceError(domain.ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), err)
@@ -239,6 +245,13 @@ func (s *eventStore) GetEventTrace(ctx context.Context, eventID string, descenda
 }
 
 func (s *eventStore) mergeCorrelationEventIDs(ctx context.Context, root domain.EventSummary, descendants []string, limit int) ([]string, bool, error) {
+	return mergeCorrelationEventIDs(ctx, s.db, root, descendants, limit)
+}
+
+// mergeCorrelationEventIDs appends events that share the root's correlation id
+// but are outside its parent chain, up to the remaining limit. It reports
+// whether the merged scope was truncated.
+func mergeCorrelationEventIDs(ctx context.Context, db *sql.DB, root domain.EventSummary, descendants []string, limit int) ([]string, bool, error) {
 	correlationID := strings.TrimSpace(root.CorrelationID)
 	if correlationID == "" {
 		return descendants, false, nil
@@ -254,7 +267,7 @@ func (s *eventStore) mergeCorrelationEventIDs(ctx context.Context, root domain.E
 		args = append(args, id)
 	}
 	args = append(args, remaining+1)
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := db.QueryContext(ctx,
 		`SELECT id FROM event WHERE correlation_id = ? AND id NOT IN (`+placeholders(len(descendants))+`) ORDER BY sequence ASC LIMIT ?`,
 		args...)
 	if err != nil {
@@ -281,7 +294,13 @@ func (s *eventStore) mergeCorrelationEventIDs(ctx context.Context, root domain.E
 }
 
 func (s *eventStore) listEventDescendantIDs(ctx context.Context, eventID string, limit int) ([]string, bool, error) {
-	rows, err := s.db.QueryContext(ctx, `WITH RECURSIVE descendants(id, sequence) AS (
+	return listEventDescendantIDs(ctx, s.db, eventID, limit)
+}
+
+// listEventDescendantIDs walks the event's parent_event_id chain starting at
+// eventID, capped at limit entries. It reports whether more descendants exist.
+func listEventDescendantIDs(ctx context.Context, db *sql.DB, eventID string, limit int) ([]string, bool, error) {
+	rows, err := db.QueryContext(ctx, `WITH RECURSIVE descendants(id, sequence) AS (
 		SELECT id, sequence FROM event WHERE id = ?
 		UNION
 		SELECT child.id, child.sequence FROM event child

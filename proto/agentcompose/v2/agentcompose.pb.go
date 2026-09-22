@@ -8535,7 +8535,14 @@ type ListRunsRequest struct {
 	// Optional exact scheduler run association for automation-originated Agent Runs.
 	SchedulerRunId string `protobuf:"bytes,11,opt,name=scheduler_run_id,json=schedulerRunId,proto3" json:"scheduler_run_id,omitempty"`
 	// Optional exact-match label filters, ANDed together. An empty map applies no filter.
-	Labels        map[string]string `protobuf:"bytes,12,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Labels map[string]string `protobuf:"bytes,12,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Optional event-bus event id (evt_...). Resolves the event, its descendant
+	// events, and events sharing its correlation id, then filters to the Agent
+	// Runs recorded against them. Unknown event ids return NOT_FOUND. The event
+	// scope is capped at 1000 events like GetEventTrace; events beyond the cap
+	// (and runs recorded only against them) are left out, and the response
+	// reports it via event_scope_truncated.
+	EventId       string `protobuf:"bytes,13,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -8654,13 +8661,24 @@ func (x *ListRunsRequest) GetLabels() map[string]string {
 	return nil
 }
 
+func (x *ListRunsRequest) GetEventId() string {
+	if x != nil {
+		return x.EventId
+	}
+	return ""
+}
+
 type ListRunsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Runs  []*RunSummary          `protobuf:"bytes,1,rep,name=runs,proto3" json:"runs,omitempty"`
 	// Total matching resources before offset and limit are applied.
-	Total         uint32 `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Total uint32 `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	// True when the request filtered by event_id and the event scope hit the
+	// 1000-event cap, so runs recorded only against events beyond the cap are
+	// missing from runs and total. Mirrors GetEventTrace's descendants_truncated.
+	EventScopeTruncated bool `protobuf:"varint,3,opt,name=event_scope_truncated,json=eventScopeTruncated,proto3" json:"event_scope_truncated,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ListRunsResponse) Reset() {
@@ -8705,6 +8723,13 @@ func (x *ListRunsResponse) GetTotal() uint32 {
 		return x.Total
 	}
 	return 0
+}
+
+func (x *ListRunsResponse) GetEventScopeTruncated() bool {
+	if x != nil {
+		return x.EventScopeTruncated
+	}
+	return false
 }
 
 type FollowRunLogsRequest struct {
@@ -20342,7 +20367,7 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\n" +
 	"project_id\x18\x02 \x01(\tR\tprojectId\">\n" +
 	"\x0eGetRunResponse\x12,\n" +
-	"\x03run\x18\x01 \x01(\v2\x1a.agentcompose.v2.RunDetailR\x03run\"\xcc\x04\n" +
+	"\x03run\x18\x01 \x01(\v2\x1a.agentcompose.v2.RunDetailR\x03run\"\xe7\x04\n" +
 	"\x0fListRunsRequest\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x1d\n" +
@@ -20360,13 +20385,15 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"sandbox_id\x18\n" +
 	" \x01(\tR\tsandboxId\x12(\n" +
 	"\x10scheduler_run_id\x18\v \x01(\tR\x0eschedulerRunId\x12D\n" +
-	"\x06labels\x18\f \x03(\v2,.agentcompose.v2.ListRunsRequest.LabelsEntryR\x06labels\x1a9\n" +
+	"\x06labels\x18\f \x03(\v2,.agentcompose.v2.ListRunsRequest.LabelsEntryR\x06labels\x12\x19\n" +
+	"\bevent_id\x18\r \x01(\tR\aeventId\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"Y\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8d\x01\n" +
 	"\x10ListRunsResponse\x12/\n" +
 	"\x04runs\x18\x01 \x03(\v2\x1b.agentcompose.v2.RunSummaryR\x04runs\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\rR\x05total\"\xec\x01\n" +
+	"\x05total\x18\x02 \x01(\rR\x05total\x122\n" +
+	"\x15event_scope_truncated\x18\x03 \x01(\bR\x13eventScopeTruncated\"\xec\x01\n" +
 	"\x14FollowRunLogsRequest\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x15\n" +

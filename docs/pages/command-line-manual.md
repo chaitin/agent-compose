@@ -681,7 +681,9 @@ agent-compose logs -t
 
 `--run` and `--sandbox` are mutually exclusive resource selectors. Combining them is a usage error, and no log request is sent.
 
-`--event` accepts a full event id only; prefix matching is not supported. It resolves the event trace and replays the agent runs recorded against it, so `--run` and `--sandbox` cannot be combined with `--event`. `--event --follow` replays the runs known at query time; runs created afterwards are not picked up. An event without recorded runs prints a notice (or an empty JSON document) and exits successfully. Combining `--event` with `--agent` narrows the replayed runs to that agent; when the narrowing leaves no runs, the same notice is printed.
+`--event` accepts a full event id only; prefix matching is not supported. The daemon resolves the event, its descendant events, and events sharing its correlation id, and returns the agent runs recorded against them, so `--run` and `--sandbox` cannot be combined with `--event`. `--event --follow` follows the runs known at query time; runs created afterwards are not picked up. An event without recorded runs prints a notice (or an empty JSON document) and exits successfully. Combining `--event` with `--agent` filters the runs to that agent server-side; when the narrowing leaves no runs, the same notice is printed.
+
+The event scope is capped at 1000 events (the same limit the event trace view applies). If an event's descendants plus its correlation group exceed the cap, events beyond it — and the runs recorded only against them — are left out of the result; the CLI prints a warning on stderr when this happens, and the `ListRuns` response reports it via `event_scope_truncated`. Very large event chains should be inspected with the event trace view instead.
 
 Examples:
 

@@ -149,7 +149,7 @@ func reconcilePersistedProjectRunsWithStatus(ctx context.Context, reconcile proj
 	var staleRuns []domain.ProjectRunRecord
 	offset := 0
 	for {
-		runs, err := reconcile.ConfigDB.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{
+		result, err := reconcile.ConfigDB.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{
 			Status: status,
 			Limit:  200,
 			Offset: offset,
@@ -157,16 +157,16 @@ func reconcilePersistedProjectRunsWithStatus(ctx context.Context, reconcile proj
 		if err != nil {
 			return err
 		}
-		if len(runs) == 0 {
+		if len(result.Runs) == 0 {
 			break
 		}
-		for _, run := range runs {
+		for _, run := range result.Runs {
 			if !run.CreatedAt.Before(reconcile.StartedAt) {
 				continue
 			}
 			staleRuns = append(staleRuns, run)
 		}
-		offset += len(runs)
+		offset += len(result.Runs)
 	}
 	for _, run := range staleRuns {
 		if err := reconcile.Completions.StageInterrupted(ctx, run, staleProjectRunError); err != nil {

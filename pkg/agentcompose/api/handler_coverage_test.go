@@ -894,6 +894,12 @@ func TestProjectAndRunHandlersStoreBackedWorkflows(t *testing.T) {
 	if store.lastRunListOptions.SchedulerRunID != "scheduler-run-1" {
 		t.Fatalf("ListRuns scheduler run filter = %#v", store.lastRunListOptions)
 	}
+	if _, err := runHandler.ListRuns(ctx, connect.NewRequest(&agentcomposev2.ListRunsRequest{ProjectId: "project-1", EventId: "  evt-filter  ", Limit: 10})); err != nil {
+		t.Fatalf("ListRuns with event filter err=%v", err)
+	}
+	if store.lastRunListOptions.EventID != "evt-filter" {
+		t.Fatalf("ListRuns event filter = %#v", store.lastRunListOptions)
+	}
 	runEvents, err := runHandler.ListRunEvents(ctx, connect.NewRequest(&agentcomposev2.ListRunEventsRequest{RunId: "run-1", Limit: 10}))
 	if err != nil || !runEvents.Msg.GetHistoryAvailable() || len(runEvents.Msg.GetEvents()) != 1 {
 		t.Fatalf("ListRunEvents resp=%#v err=%v", runEvents, err)
@@ -1556,7 +1562,7 @@ func (s *apiProjectRunStore) UpdateProjectRunWithEvents(ctx context.Context, run
 	return updated, nil
 }
 
-func (s *apiProjectRunStore) ListProjectRunsByOptions(_ context.Context, options domain.ProjectRunListOptions) ([]domain.ProjectRunRecord, error) {
+func (s *apiProjectRunStore) ListProjectRunsByOptions(_ context.Context, options domain.ProjectRunListOptions) (domain.ProjectRunListResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastRunListOptions = options
@@ -1564,7 +1570,7 @@ func (s *apiProjectRunStore) ListProjectRunsByOptions(_ context.Context, options
 	for _, run := range s.runs {
 		items = append(items, run)
 	}
-	return items, nil
+	return domain.ProjectRunListResult{Runs: items}, nil
 }
 
 func (s *apiProjectRunStore) ListProjectAgentRunStates(_ context.Context, _ string) ([]domain.ProjectAgentRunState, error) {

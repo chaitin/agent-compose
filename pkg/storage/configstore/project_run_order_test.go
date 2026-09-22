@@ -8,7 +8,7 @@ import (
 )
 
 // The run list's order is a contract, not an implementation detail. Clients
-// read the newest run of a conversation by asking for the first row — the Go
+// read the newest run of a conversation by asking for the firstResult row — the Go
 // chat SDK's Lookup and EndSession both do, and EndSession stopping a stale
 // run would leave the live one, and its sandbox, behind. Pin the order here so
 // a change to the query has to come past this test.
@@ -23,7 +23,7 @@ func TestListProjectRunsByOptionsReturnsNewestFirstAcrossPages(t *testing.T) {
 	}
 	agentID := createRunEventTestAgent(t, runEventTestAgentSpec{Ctx: ctx, Store: store, ProjectID: "project-order", AgentName: "worker"})
 
-	// Insert oldest first, so a query that preserved insertion order would fail
+	// Insert oldest firstResult, so a query that preserved insertion order would fail
 	// this test rather than pass it by accident. CreateProjectRun stamps
 	// created_at itself, so the ages are written afterwards; the column holds
 	// Unix seconds.
@@ -40,36 +40,36 @@ func TestListProjectRunsByOptionsReturnsNewestFirstAcrossPages(t *testing.T) {
 		}
 	}
 
-	all, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: "project-order"})
+	allResult, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: "project-order"})
 	if err != nil {
 		t.Fatalf("list runs: %v", err)
 	}
 	want := []string{"run-newest", "run-middle", "run-oldest"}
-	if len(all) != len(want) {
-		t.Fatalf("listed %d runs, want %d", len(all), len(want))
+	if len(allResult.Runs) != len(want) {
+		t.Fatalf("listed %d runs, want %d", len(allResult.Runs), len(want))
 	}
 	for index, runID := range want {
-		if all[index].RunID != runID {
-			t.Fatalf("run %d = %s, want %s: the list must be newest first", index, all[index].RunID, runID)
+		if allResult.Runs[index].RunID != runID {
+			t.Fatalf("run %d = %s, want %s: the list must be newest firstResult", index, allResult.Runs[index].RunID, runID)
 		}
 	}
 
-	// A client that wants only the newest run asks for one row, so the first
-	// page of one has to be the newest and not merely some matching run.
-	first, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: "project-order", Limit: 1})
+	// A client that wants only the newest run asks for one row, so the firstResult
+	// pageResult of one has to be the newest and not merely some matching run.
+	firstResult, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: "project-order", Limit: 1})
 	if err != nil {
 		t.Fatalf("list newest run: %v", err)
 	}
-	if len(first) != 1 || first[0].RunID != "run-newest" {
-		t.Fatalf("first page = %#v, want just run-newest", first)
+	if len(firstResult.Runs) != 1 || firstResult.Runs[0].RunID != "run-newest" {
+		t.Fatalf("firstResult pageResult = %#v, want just run-newest", firstResult)
 	}
 
 	// Paging continues in the same order, so a walk sees every run once.
-	page, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: "project-order", Offset: 1, Limit: 1})
+	pageResult, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: "project-order", Offset: 1, Limit: 1})
 	if err != nil {
-		t.Fatalf("list second page: %v", err)
+		t.Fatalf("list second pageResult: %v", err)
 	}
-	if len(page) != 1 || page[0].RunID != "run-middle" {
-		t.Fatalf("second page = %#v, want just run-middle", page)
+	if len(pageResult.Runs) != 1 || pageResult.Runs[0].RunID != "run-middle" {
+		t.Fatalf("second pageResult = %#v, want just run-middle", pageResult)
 	}
 }

@@ -100,19 +100,19 @@ func TestListProjectRunsByOptionsFiltersByLabelsWithAndSemantics(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			options := domain.ProjectRunListOptions{ProjectID: "project-label-filter", Labels: tt.labels, Limit: 50}
-			got, err := store.ListProjectRunsByOptions(ctx, options)
+			gotResult, err := store.ListProjectRunsByOptions(ctx, options)
 			if err != nil {
 				t.Fatalf("list runs: %v", err)
 			}
-			if len(got) != len(tt.want) {
-				t.Fatalf("run count = %d, want %d: %#v", len(got), len(tt.want), got)
+			if len(gotResult.Runs) != len(tt.want) {
+				t.Fatalf("run count = %d, want %d: %#v", len(gotResult.Runs), len(tt.want), gotResult.Runs)
 			}
-			for _, run := range got {
+			for _, run := range gotResult.Runs {
 				if !tt.want[run.RunID] {
 					t.Errorf("unexpected run %q", run.RunID)
 				}
 			}
-			total, err := store.CountProjectRuns(ctx, options)
+			total, _, err := store.CountProjectRuns(ctx, options)
 			if err != nil || total != len(tt.want) {
 				t.Fatalf("count = %d, want %d (err=%v)", total, len(tt.want), err)
 			}
@@ -164,9 +164,9 @@ func TestInsertProjectRunLabelsTxRejectsInvalidKeysAndValues(t *testing.T) {
 				t.Fatalf("create run: %v", err)
 			}
 			for key, value := range tt.labels {
-				got, ok := created.Labels[key]
-				if !ok || got != value {
-					t.Fatalf("created run label %q = (%q, present=%v), want (%q, present=true)", key, got, ok, value)
+				gotResult, ok := created.Labels[key]
+				if !ok || gotResult != value {
+					t.Fatalf("created run label %q = (%q, present=%v), want (%q, present=true)", key, gotResult, ok, value)
 				}
 			}
 			fetched, err := store.GetProjectRun(ctx, tt.runID)
@@ -174,9 +174,9 @@ func TestInsertProjectRunLabelsTxRejectsInvalidKeysAndValues(t *testing.T) {
 				t.Fatalf("get run: %v", err)
 			}
 			for key, value := range tt.labels {
-				got, ok := fetched.Labels[key]
-				if !ok || got != value {
-					t.Fatalf("fetched run label %q = (%q, present=%v), want (%q, present=true)", key, got, ok, value)
+				gotResult, ok := fetched.Labels[key]
+				if !ok || gotResult != value {
+					t.Fatalf("fetched run label %q = (%q, present=%v), want (%q, present=true)", key, gotResult, ok, value)
 				}
 			}
 		})
@@ -343,14 +343,14 @@ func TestInsertProjectRunLabelsTxTrimsKeys(t *testing.T) {
 	if created.Labels["env"] != "prod" || len(created.Labels) != 1 {
 		t.Fatalf("created labels = %#v, want {env: prod}", created.Labels)
 	}
-	matched, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{
+	matchedResult, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{
 		ProjectID: "project-label-trim", Labels: map[string]string{"env": "prod"}, Limit: 10,
 	})
 	if err != nil {
 		t.Fatalf("list by trimmed label: %v", err)
 	}
-	if len(matched) != 1 || matched[0].RunID != "run-padded-key" {
-		t.Fatalf("trimmed filter matched %#v, want run-padded-key", matched)
+	if len(matchedResult.Runs) != 1 || matchedResult.Runs[0].RunID != "run-padded-key" {
+		t.Fatalf("trimmed filter matchedResult %#v, want run-padded-key", matchedResult.Runs)
 	}
 
 	// Two raw keys collapsing to one must be refused rather than resolved by

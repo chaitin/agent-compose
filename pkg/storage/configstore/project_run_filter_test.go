@@ -70,19 +70,19 @@ func TestListProjectRunsByOptionsFiltersInclusiveStartRange(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			options := domain.ProjectRunListOptions{StartedFrom: tt.from, StartedTo: tt.to, Limit: 50}
-			got, err := store.ListProjectRunsByOptions(ctx, options)
+			gotResult, err := store.ListProjectRunsByOptions(ctx, options)
 			if err != nil {
 				t.Fatalf("list runs: %v", err)
 			}
-			if len(got) != len(tt.want) {
-				t.Fatalf("run count = %d, want %d: %#v", len(got), len(tt.want), got)
+			if len(gotResult.Runs) != len(tt.want) {
+				t.Fatalf("run count = %d, want %d: %#v", len(gotResult.Runs), len(tt.want), gotResult.Runs)
 			}
-			for _, run := range got {
+			for _, run := range gotResult.Runs {
 				if !tt.want[run.RunID] {
 					t.Errorf("unexpected run %q", run.RunID)
 				}
 			}
-			total, err := store.CountProjectRuns(ctx, options)
+			total, _, err := store.CountProjectRuns(ctx, options)
 			if err != nil || total != len(tt.want) {
 				t.Fatalf("count = %d, want %d (err=%v)", total, len(tt.want), err)
 			}
@@ -90,19 +90,19 @@ func TestListProjectRunsByOptionsFiltersInclusiveStartRange(t *testing.T) {
 	}
 
 	filteredOptions := domain.ProjectRunListOptions{SchedulerRunID: " scheduler-run-1 ", Limit: 50}
-	filteredRuns, err := store.ListProjectRunsByOptions(ctx, filteredOptions)
+	filteredRunsResult, err := store.ListProjectRunsByOptions(ctx, filteredOptions)
 	if err != nil {
 		t.Fatalf("list runs by scheduler run: %v", err)
 	}
-	if len(filteredRuns) != 1 || filteredRuns[0].RunID != "from" {
-		t.Fatalf("scheduler run filter = %#v, want run from", filteredRuns)
+	if len(filteredRunsResult.Runs) != 1 || filteredRunsResult.Runs[0].RunID != "from" {
+		t.Fatalf("scheduler run filter = %#v, want run from", filteredRunsResult)
 	}
-	filteredTotal, err := store.CountProjectRuns(ctx, filteredOptions)
+	filteredTotal, _, err := store.CountProjectRuns(ctx, filteredOptions)
 	if err != nil {
 		t.Fatalf("count runs by scheduler run: %v", err)
 	}
-	if filteredTotal != len(filteredRuns) {
-		t.Fatalf("scheduler run count = %d, list length = %d", filteredTotal, len(filteredRuns))
+	if filteredTotal != len(filteredRunsResult.Runs) {
+		t.Fatalf("scheduler run count = %d, list length = %d", filteredTotal, len(filteredRunsResult.Runs))
 	}
 }
 
