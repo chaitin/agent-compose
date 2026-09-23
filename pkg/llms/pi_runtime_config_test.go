@@ -18,7 +18,7 @@ func TestWritePiRuntimeConfigIsPrivateAndContainsNoToken(t *testing.T) {
 		ID: "pi-config", Driver: driverpkg.RuntimeDriverDocker,
 		WorkspacePath: filepath.Join(root, "sandboxes", "pi-config", "workspace"),
 	}}
-	if err := WritePiRuntimeConfig(sandbox, "gpt-test", "http://runtime/openai/v1/", "openai-responses"); err != nil {
+	if err := WritePiRuntimeConfig(sandbox, "gpt-test", "http://runtime/openai/v1/", "openai-responses", guestFacadeTokenEnvName); err != nil {
 		t.Fatalf("WritePiRuntimeConfig returned error: %v", err)
 	}
 	path := filepath.Join(execution.HostSandboxHome(sandbox), ".pi", "agent", "models.json")

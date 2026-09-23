@@ -28,10 +28,10 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if err != nil || !strings.Contains(string(codexConfig), `wire_api = "responses"`) || !strings.Contains(string(codexConfig), `AGENT_COMPOSE_SANDBOX_TOKEN`) {
 		t.Fatalf("codex config=%q err=%v", string(codexConfig), err)
 	}
-	if err := WriteOpenCodeRuntimeConfig(session, ProtocolChatCompletions, "gpt-custom", "http://runtime/openai/v1/"); err != nil {
+	if err := WriteOpenCodeRuntimeConfig(session, ProtocolChatCompletions, "gpt-custom", "http://runtime/openai/v1/", guestFacadeTokenEnvName); err != nil {
 		t.Fatalf("WriteOpenCodeRuntimeConfig returned error: %v", err)
 	}
-	if err := WriteOpenCodeRuntimeConfig(session, ProtocolMessages, "claude", "http://runtime/anthropic/"); err != nil {
+	if err := WriteOpenCodeRuntimeConfig(session, ProtocolMessages, "claude", "http://runtime/anthropic/", guestFacadeTokenEnvName); err != nil {
 		t.Fatalf("WriteOpenCodeRuntimeConfig anthropic returned error: %v", err)
 	}
 	openCodeConfig, err := os.ReadFile(filepath.Join(execution.HostSandboxHome(session), ".config", "opencode", "opencode.json"))

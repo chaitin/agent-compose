@@ -63,7 +63,11 @@ type CodexRuntimeConfig struct {
 	Model   string
 	BaseURL string
 	WireAPI string
-	Policy  CodexRuntimePolicy
+	// CredentialEnv names the environment variable codex reads its API key from.
+	// A managed run points at the facade token; a direct run points at the
+	// vendor key the dialect writer exports. Empty defaults to the facade token.
+	CredentialEnv string
+	Policy        CodexRuntimePolicy
 }
 
 func WriteCodexRuntimeConfig(session *domain.Sandbox, cfg CodexRuntimeConfig) error {
@@ -76,6 +80,10 @@ func WriteCodexRuntimeConfig(session *domain.Sandbox, cfg CodexRuntimeConfig) er
 	policy := cfg.Policy
 	if model == "" || baseURL == "" {
 		return nil
+	}
+	credentialEnv := strings.TrimSpace(cfg.CredentialEnv)
+	if credentialEnv == "" {
+		credentialEnv = guestFacadeTokenEnvName
 	}
 	wireAPI = NormalizeWireAPI(wireAPI)
 	if wireAPI != APIProtocolResponses {
@@ -93,7 +101,7 @@ check_for_update_on_startup = false
 [model_providers.agent_compose]
 name = "agent-compose"
 base_url = %q
-env_key = "AGENT_COMPOSE_SANDBOX_TOKEN"
+env_key = %q
 wire_api = %q
 request_max_retries = %d
 stream_max_retries = %d
@@ -119,7 +127,7 @@ ignore_default_excludes = false
 
 [history]
 persistence = "save-all"
-`, model, baseURL, wireAPI, policy.RequestMaxRetries, policy.StreamMaxRetries, policy.StreamIdleTimeout.Milliseconds())
+`, model, baseURL, credentialEnv, wireAPI, policy.RequestMaxRetries, policy.StreamMaxRetries, policy.StreamIdleTimeout.Milliseconds())
 	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
 		return fmt.Errorf("write codex config: %w", err)
 	}
@@ -249,13 +257,19 @@ func buildCodexManagedMCPBlock(mcps map[string]compose.NormalizedMCPServerSpec) 
 // connection id, so renaming a connection cannot change what the guest sees
 // and an upstream literally named after a built-in OpenCode provider cannot
 // collide with it. inbound selects the AI SDK package, because that package is
-// what decides the protocol OpenCode posts to the facade.
-func WriteOpenCodeRuntimeConfig(session *domain.Sandbox, inbound Protocol, model, baseURL string) error {
+// what decides the protocol OpenCode posts to the facade. credentialEnv names
+// the environment variable the generated config reads the API key from: the
+// facade token for a managed run, the vendor key for a direct one.
+func WriteOpenCodeRuntimeConfig(session *domain.Sandbox, inbound Protocol, model, baseURL, credentialEnv string) error {
 	if session == nil {
 		return nil
 	}
 	model = strings.TrimSpace(model)
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	credentialEnv = strings.TrimSpace(credentialEnv)
+	if credentialEnv == "" {
+		credentialEnv = guestFacadeTokenEnvName
+	}
 	if model == "" || baseURL == "" {
 		return nil
 	}
@@ -275,7 +289,7 @@ func WriteOpenCodeRuntimeConfig(session *domain.Sandbox, inbound Protocol, model
 				"name": GuestProviderAgentCompose,
 				"options": map[string]any{
 					"baseURL": baseURL,
-					"apiKey":  "{env:AGENT_COMPOSE_SANDBOX_TOKEN}",
+					"apiKey":  "{env:" + credentialEnv + "}",
 				},
 				"models": map[string]any{
 					model: map[string]any{"name": model},

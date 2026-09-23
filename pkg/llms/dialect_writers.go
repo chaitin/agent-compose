@@ -30,6 +30,11 @@ func writeDialectGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox, 
 	}
 }
 
+// guestFacadeTokenEnvName is the environment variable a managed guest presents
+// its run-scoped facade token through. A direct guest has no facade and no
+// token, so its CLI reads the vendor's own variable instead.
+const guestFacadeTokenEnvName = "AGENT_COMPOSE_SANDBOX_TOKEN"
+
 // guestCredentialEnv is the generic LLM environment every agent receives: the
 // endpoint to send calls to, the credential to present, and the protocol in use.
 //
@@ -45,9 +50,28 @@ func guestCredentialEnv(prepared *AgentLLM) map[string]string {
 		"LLM_API_PROTOCOL": string(prepared.Upstream),
 	}
 	if !prepared.Direct {
-		env["AGENT_COMPOSE_SANDBOX_TOKEN"] = prepared.Credential
+		env[guestFacadeTokenEnvName] = prepared.Credential
 	}
 	return env
+}
+
+// guestCredentialEnvName is the environment variable the guest CLI reads its
+// credential from. It is exactly the variable guestCredentialEnv, and the
+// dialect writer below, export the credential into.
+//
+// A managed run presents the facade token, so its CLI configuration points at
+// guestFacadeTokenEnvName. A direct run presents the agent's own upstream key,
+// which is exported under the vendor's conventional name; a generated CLI
+// config that still referenced the facade token would read an unset variable and
+// fail to authenticate against the declared upstream.
+func guestCredentialEnvName(prepared *AgentLLM) string {
+	if !prepared.Direct {
+		return guestFacadeTokenEnvName
+	}
+	if prepared.Inbound == ProtocolMessages {
+		return "ANTHROPIC_API_KEY"
+	}
+	return "OPENAI_API_KEY"
 }
 
 // facadeEndpoint returns the facade route that serves inbound. The route path
@@ -78,7 +102,8 @@ func agentProtocolSpelling(protocol Protocol) string {
 func writeCodexGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox, prepared *AgentLLM) (map[string]string, error) {
 	if err := WriteCodexRuntimeConfig(sandbox, CodexRuntimeConfig{
 		Model: prepared.Model, BaseURL: prepared.Endpoint, WireAPI: string(prepared.Inbound),
-		Policy: CodexRuntimePolicyFromConfig(config),
+		CredentialEnv: guestCredentialEnvName(prepared),
+		Policy:        CodexRuntimePolicyFromConfig(config),
 	}); err != nil {
 		return nil, err
 	}
@@ -113,7 +138,7 @@ func writeOpenCodeGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox,
 	if prepared.Inbound == ProtocolMessages && !prepared.Direct {
 		configBaseURL = endpoint + "/v1"
 	}
-	if err := WriteOpenCodeRuntimeConfig(sandbox, prepared.Inbound, prepared.Model, configBaseURL); err != nil {
+	if err := WriteOpenCodeRuntimeConfig(sandbox, prepared.Inbound, prepared.Model, configBaseURL, guestCredentialEnvName(prepared)); err != nil {
 		return nil, err
 	}
 	env := guestCredentialEnv(prepared)
@@ -133,7 +158,7 @@ func writeOpenCodeGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox,
 }
 
 func writePiGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox, prepared *AgentLLM) (map[string]string, error) {
-	if err := WritePiRuntimeConfig(sandbox, prepared.Model, prepared.Endpoint, agentProtocolSpelling(prepared.Inbound)); err != nil {
+	if err := WritePiRuntimeConfig(sandbox, prepared.Model, prepared.Endpoint, agentProtocolSpelling(prepared.Inbound), guestCredentialEnvName(prepared)); err != nil {
 		return nil, err
 	}
 	env := guestCredentialEnv(prepared)
