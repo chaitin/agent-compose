@@ -18,7 +18,7 @@ func TestWritePiRuntimeConfigIsPrivateAndContainsNoToken(t *testing.T) {
 		ID: "pi-config", Driver: driverpkg.RuntimeDriverDocker,
 		WorkspacePath: filepath.Join(root, "sandboxes", "pi-config", "workspace"),
 	}}
-	if err := WritePiRuntimeConfig(sandbox, "gpt-test", "http://runtime/openai/v1/", "openai-responses"); err != nil {
+	if err := WritePiRuntimeConfig(sandbox, "gpt-test", "http://runtime/openai/v1/", "openai-responses", guestFacadeTokenEnvName); err != nil {
 		t.Fatalf("WritePiRuntimeConfig returned error: %v", err)
 	}
 	path := filepath.Join(execution.HostSandboxHome(sandbox), ".pi", "agent", "models.json")
@@ -45,30 +45,5 @@ func TestWritePiRuntimeConfigIsPrivateAndContainsNoToken(t *testing.T) {
 	}
 	if strings.Contains(string(data), "contextWindow") || strings.Contains(string(data), "maxTokens") || strings.Contains(string(data), "reasoning") {
 		t.Fatalf("models.json hard-codes model capabilities instead of using Pi defaults: %s", data)
-	}
-}
-
-func TestPiFacadeProtocol(t *testing.T) {
-	tests := []struct {
-		name       string
-		target     ResolvedTarget
-		wantAPI    string
-		wantWire   string
-		wantSuffix string
-	}{
-		{name: "responses", target: ResolvedTarget{Provider: Provider{ProviderType: ProviderFamilyOpenAI}, WireAPI: APIProtocolResponses}, wantAPI: "openai-responses", wantWire: APIProtocolResponses, wantSuffix: "/llm/openai/v1"},
-		{name: "chat completions", target: ResolvedTarget{Provider: Provider{ProviderType: ProviderFamilyOpenAI}, WireAPI: APIProtocolChatCompletions}, wantAPI: "openai-completions", wantWire: APIProtocolChatCompletions, wantSuffix: "/llm/openai/v1"},
-		{name: "messages", target: ResolvedTarget{Provider: Provider{ProviderType: ProviderFamilyAnthropic}, WireAPI: APIProtocolMessages}, wantAPI: "anthropic-messages", wantWire: APIProtocolMessages, wantSuffix: "/llm/anthropic"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			api, wire, baseURL, err := piFacadeProtocol(test.target, "http://runtime/", "sandbox")
-			if err != nil {
-				t.Fatalf("piFacadeProtocol returned error: %v", err)
-			}
-			if api != test.wantAPI || wire != test.wantWire || !strings.HasSuffix(baseURL, test.wantSuffix) {
-				t.Fatalf("piFacadeProtocol = (%q, %q, %q)", api, wire, baseURL)
-			}
-		})
 	}
 }

@@ -203,12 +203,15 @@ The daemon passes explicit workspace, state, and home paths. It also injects:
 | `AGENT_COMPOSE_RESOLVED_MODEL` | Model reference resolved for the current managed agent invocation |
 
 Pi and DSH runtimes use `AGENT_COMPOSE_RESOLVED_MODEL` without interpreting its
-slashes. During staged upgrades, new runtimes still accept the legacy
-connection/model argument when an older daemon omits this variable. The daemon
-also preserves DSH's legacy argument prefix for older guests. This fallback is
-deprecated and will be removed once those daemon/guest versions are no longer
-supported; new integrations should consume the resolved value. Continue to use
-release-matched images for the rest of the runtime protocol.
+slashes. During staged upgrades, a new runtime still accepts the legacy
+connection/model argument when an older daemon omits this variable. That
+tolerance runs one way only: the daemon does **not** preserve DSH's legacy
+argument prefix for older guests, so an older DSH guest driven by a newer daemon
+receives the model verbatim and will truncate it at the first slash. Upgrade the
+guest image before or together with the daemon. This fallback is deprecated and
+will be removed once those older daemon versions are no longer supported; new
+integrations should consume the resolved value. Continue to use release-matched
+images for the rest of the runtime protocol.
 
 The `prompt` and `exec` stdout payloads, stream separation, artifact files, and
 interactive NDJSON frames are protocol, not just CLI presentation. A custom

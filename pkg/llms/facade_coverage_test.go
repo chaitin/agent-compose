@@ -105,13 +105,13 @@ func TestRuntimeFacadeHTTPAndBridgeCoverage(t *testing.T) {
 	if _, err := EncodeRuntimeClientResponse(protocolbridge.ProtocolOpenAIResponses, "bad", target, []byte(`{}`)); err == nil {
 		t.Fatalf("expected unsupported client response protocol error")
 	}
-	if _, _, err := RuntimeStreamBridge(protocolbridge.ProtocolOpenAIResponses, protocolbridge.ProtocolOpenAIResponses, ProviderFamilyOpenAI, "gpt"); err != nil {
+	if _, _, err := RuntimeStreamBridge(protocolbridge.ProtocolOpenAIResponses, protocolbridge.ProtocolOpenAIResponses, "gpt"); err != nil {
 		t.Fatalf("RuntimeStreamBridge same protocol returned error: %v", err)
 	}
-	if _, _, err := RuntimeStreamBridge(protocolbridge.ProtocolOpenAIResponses, protocolbridge.ProtocolOpenAIChat, ProviderFamilyOpenAI, "gpt"); err != nil {
+	if _, _, err := RuntimeStreamBridge(protocolbridge.ProtocolOpenAIResponses, protocolbridge.ProtocolOpenAIChat, "gpt"); err != nil {
 		t.Fatalf("RuntimeStreamBridge shared family returned error: %v", err)
 	}
-	if _, _, err := RuntimeStreamBridge(protocolbridge.ProtocolOpenAIResponses, protocolbridge.ProtocolAnthropicMessages, "unknown", "gpt"); err == nil {
+	if _, _, err := RuntimeStreamBridge(protocolbridge.ProtocolOpenAIResponses, protocolbridge.Protocol("bad"), "gpt"); err == nil {
 		t.Fatalf("expected unsupported stream bridge error")
 	}
 	if !ProtocolsShareFamily(protocolbridge.ProtocolOpenAIResponses, protocolbridge.ProtocolOpenAIChat) || ProtocolFamily("bad") != "" {

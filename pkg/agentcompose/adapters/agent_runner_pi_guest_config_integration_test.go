@@ -17,6 +17,7 @@ import (
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	"github.com/chaitin/agent-compose/pkg/internal/testutil"
+	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -32,20 +33,27 @@ func TestIntegrationAgentRunnerPublishesPiCatalogBeforeEachGuestExecution(t *tes
 		t.Fatal(err)
 	}
 	ctx := context.Background()
+	// The agent facade resolves the declared model against the connection
+	// catalog; sandbox ProviderEnvItems are no longer read for LLM selection.
+	if err := configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+		ID:             "openai-primary",
+		Name:           "OpenAI",
+		ProviderType:   llms.ProviderFamilyOpenAI,
+		DefaultWireAPI: llms.APIProtocolResponses,
+		BaseURL:        "https://openai.example.test/v1",
+		APIKey:         "fixture-upstream-key",
+		Scope:          llms.ProviderScopeSystem,
+	}, llms.Model{ID: "first", Name: "first", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
+		t.Fatalf("seed llm catalog: %v", err)
+	}
 	sandbox, err := store.CreateSandbox(ctx, "Pi guest", "", "k8s", "guest:test", "", domain.SandboxTypeManual, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sandbox.ProviderEnvItems = []domain.SandboxEnvVar{
-		{Name: "LLM_API_ENDPOINT", Value: "https://openai.example.test/v1"},
-		{Name: "LLM_API_KEY", Value: "fixture-upstream-key"},
-		{Name: "LLM_API_PROTOCOL", Value: "responses"},
-		{Name: "LLM_MODEL", Value: "first"},
-	}
 	runtime := &filesystemGuestAgentRuntime{root: t.TempDir()}
 	runtime.result = domain.ExecResult{Success: true, Stdout: execution.AgentResultPrefix + `{"provider":"pi","threadId":"pi-fixture","finalText":"done","stopReason":"completed"}`}
 	runner := NewAgentRunner(AgentRunnerDeps{Config: config, Store: store, ConfigDB: configDB, Runtimes: fakeRuntimeProvider{runtime: runtime}})
-	if err := runner.PrepareSandboxAgentEnvironment(ctx, sandbox, execution.AgentConfig{Provider: "pi", Model: "openai/first"}, nil); err != nil {
+	if err := runner.PrepareSandboxAgentEnvironment(ctx, sandbox, execution.AgentConfig{Provider: "pi", Model: "first"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertGuestPiCatalog(t, runtime, "first")
@@ -58,7 +66,7 @@ func TestIntegrationAgentRunnerPublishesPiCatalogBeforeEachGuestExecution(t *tes
 	}
 	sandbox.Summary.VMStatus = domain.VMStatusRunning
 	for _, model := range []string{"second", "third"} {
-		_, _, err := runner.ExecuteAgentRun(ctx, AgentRunRequest{Session: sandbox, Agent: "pi", Model: "openai/" + model, RunID: model, Message: "probe"}, nil)
+		_, _, err := runner.ExecuteAgentRun(ctx, AgentRunRequest{Session: sandbox, Agent: "pi", Model: model, RunID: model, Message: "probe"}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -73,13 +81,13 @@ func TestIntegrationAgentRunnerPublishesPiCatalogBeforeEachGuestExecution(t *tes
 	pushErr := errors.New("guest catalog push failed")
 	runtime.fileErr = pushErr
 	executions := len(runtime.specs)
-	_, _, err = runner.ExecuteAgentRun(ctx, AgentRunRequest{Session: sandbox, Agent: "pi", Model: "openai/fourth", RunID: "failed", Message: "probe"}, nil)
+	_, _, err = runner.ExecuteAgentRun(ctx, AgentRunRequest{Session: sandbox, Agent: "pi", Model: "fourth", RunID: "failed", Message: "probe"}, nil)
 	if !errors.Is(err, pushErr) || len(runtime.specs) != executions {
 		t.Fatalf("failed Pi push executed stale config: %v", err)
 	}
 	assertGuestPiCatalog(t, runtime, "third")
 	runtime.fileErr = nil
-	if _, _, err := runner.ExecuteAgentRun(ctx, AgentRunRequest{Session: sandbox, Agent: "pi", Model: "openai/fourth", RunID: "retry", Message: "probe"}, nil); err != nil {
+	if _, _, err := runner.ExecuteAgentRun(ctx, AgentRunRequest{Session: sandbox, Agent: "pi", Model: "fourth", RunID: "retry", Message: "probe"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertGuestPiCatalog(t, runtime, "fourth")
@@ -135,9 +143,14 @@ func TestIntegrationAgentRunnerFreshGuestHomeIncludesEveryGeneratedProviderFile(
 			if err != nil {
 				t.Fatal(err)
 			}
+			// In direct mode the declared protocol must be one the agent can
+			// speak: the daemon is not converting this run.
 			protocol := "responses"
-			if test.provider == "claude" {
+			switch test.provider {
+			case "claude":
 				protocol = "messages"
+			case "opencode":
+				protocol = "chat_completions"
 			}
 			sandbox.ProviderEnvItems = []domain.SandboxEnvVar{{Name: "LLM_API_ENDPOINT", Value: "https://upstream.example.test/v1"}, {Name: "LLM_API_KEY", Value: "fixture-upstream-key"}, {Name: "LLM_API_PROTOCOL", Value: protocol}, {Name: "LLM_MODEL", Value: "first"}}
 			hostHome := execution.HostSandboxHome(sandbox)
@@ -195,20 +208,24 @@ func TestIntegrationAgentRunnerFreshGuestHomeIncludesEveryGeneratedProviderFile(
 			if !slices.Equal(runtime.dirWrites, []string{"/workspace", "/root"}) {
 				t.Fatalf("initial seeding order = %v", runtime.dirWrites)
 			}
-			// Startup facade environment is retained after the initial file transfer.
-			key := "OPENAI_API_KEY"
-			if test.provider == "claude" {
-				key = "ANTHROPIC_API_KEY"
-			}
+			// The sandbox declares its own upstream, so the declared credential
+			// is passed through: direct mode mints no facade token. An agent
+			// kind with no LLM dialect receives no configuration at all.
 			environment := map[string]string{}
 			for _, item := range sandbox.RuntimeEnvItems {
 				environment[item.Name] = item.Value
 			}
-			if environment[key] == "" || environment[key] == "fixture-upstream-key" {
-				t.Fatalf("startup facade token missing or not scoped for %s", test.provider)
+			if test.provider == "gemini" {
+				if len(environment) != 0 {
+					t.Fatalf("agent without an LLM dialect received an environment: %#v", environment)
+				}
+				return
 			}
-			if test.provider != "gemini" && environment["AGENT_COMPOSE_SANDBOX_TOKEN"] == "" {
-				t.Fatalf("selected provider facade token missing for %s", test.provider)
+			if environment["LLM_API_KEY"] != "fixture-upstream-key" || environment["LLM_API_ENDPOINT"] != "https://upstream.example.test/v1" {
+				t.Fatalf("declared upstream was not passed through for %s: %#v", test.provider, environment)
+			}
+			if environment["AGENT_COMPOSE_SANDBOX_TOKEN"] != "" {
+				t.Fatalf("direct preparation minted a facade token for %s: %#v", test.provider, environment)
 			}
 		})
 	}

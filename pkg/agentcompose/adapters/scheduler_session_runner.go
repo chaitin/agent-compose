@@ -262,7 +262,7 @@ func (r *SchedulerSandboxRunner) createSchedulerSandbox(ctx context.Context, sch
 	if err != nil {
 		return nil, err
 	}
-	llms.SetSandboxProviderEnvItems(session, cfg.ProviderEnvItems)
+	session.SetProviderEnvItems(cfg.ProviderEnvItems)
 	if request.PullPolicy != "" {
 		session.Summary.PullPolicy = request.PullPolicy
 		if err := r.Store.UpdateSandbox(ctx, session); err != nil {

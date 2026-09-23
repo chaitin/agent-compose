@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -121,28 +120,28 @@ func TestOpenAIEnvProviderPersistsLLMAPIHeaders(t *testing.T) {
 		"LLM_MODEL":        "test-model",
 		llmAPIHeadersEnv:   `{"Bizscenario":"mobile-learning","Authorization":"should-not-win"}`,
 	}
-	store := newResolverCoverageStore()
-	id, err := EnsureOpenAIEnvProvider(context.Background(), store, mapLookup(values), reg)
+	store := &projectionStore{}
+	id, err := ensureOpenAIEnvProvider(context.Background(), store, mapLookup(values), reg)
 	if err != nil {
-		t.Fatalf("EnsureOpenAIEnvProvider() error = %v", err)
+		t.Fatalf("ensureOpenAIEnvProvider() error = %v", err)
 	}
-	if id == "" || len(store.providers) != 1 {
-		t.Fatalf("provider id = %q providers = %#v", id, store.providers)
+	if id == "" || len(store.upserts) != 1 {
+		t.Fatalf("provider id = %q upserts = %#v", id, store.upserts)
 	}
 	var headers map[string]string
-	if err := json.Unmarshal([]byte(store.providers[0].HeadersJSON), &headers); err != nil {
-		t.Fatalf("decode HeadersJSON %q: %v", store.providers[0].HeadersJSON, err)
+	if err := json.Unmarshal([]byte(store.upserts[0].Provider.HeadersJSON), &headers); err != nil {
+		t.Fatalf("decode HeadersJSON %q: %v", store.upserts[0].Provider.HeadersJSON, err)
 	}
 	if headers["Bizscenario"] != "mobile-learning" {
-		t.Fatalf("HeadersJSON = %s", store.providers[0].HeadersJSON)
+		t.Fatalf("HeadersJSON = %s", store.upserts[0].Provider.HeadersJSON)
 	}
 
 	values[llmAPIHeadersEnv] = `{"Branchid":"010801"}`
-	if _, err := EnsureOpenAIEnvProvider(context.Background(), store, mapLookup(values), reg); err != nil {
+	if _, err := ensureOpenAIEnvProvider(context.Background(), store, mapLookup(values), reg); err != nil {
 		t.Fatalf("update error = %v", err)
 	}
 	headers = map[string]string{}
-	if err := json.Unmarshal([]byte(store.providers[0].HeadersJSON), &headers); err != nil {
+	if err := json.Unmarshal([]byte(store.upserts[len(store.upserts)-1].Provider.HeadersJSON), &headers); err != nil {
 		t.Fatalf("decode updated HeadersJSON: %v", err)
 	}
 	if headers["Branchid"] != "010801" || headers["Bizscenario"] != "" {
@@ -150,58 +149,67 @@ func TestOpenAIEnvProviderPersistsLLMAPIHeaders(t *testing.T) {
 	}
 
 	values[llmAPIHeadersEnv] = "{}"
-	if _, err := EnsureOpenAIEnvProvider(context.Background(), store, mapLookup(values), reg); err != nil {
+	if _, err := ensureOpenAIEnvProvider(context.Background(), store, mapLookup(values), reg); err != nil {
 		t.Fatalf("clear error = %v", err)
 	}
-	if store.providers[0].HeadersJSON != "{}" {
-		t.Fatalf("cleared HeadersJSON = %q", store.providers[0].HeadersJSON)
+	if got := store.upserts[len(store.upserts)-1].Provider.HeadersJSON; got != "{}" {
+		t.Fatalf("cleared HeadersJSON = %q", got)
 	}
 }
 
 func TestOpenAIEnvProviderRejectsInvalidLLMAPIHeaders(t *testing.T) {
-	store := newResolverCoverageStore()
-	_, err := EnsureOpenAIEnvProvider(context.Background(), store, mapLookup(map[string]string{
+	store := &projectionStore{}
+	_, err := ensureOpenAIEnvProvider(context.Background(), store, mapLookup(map[string]string{
 		"LLM_API_ENDPOINT": "https://gateway.example/openai",
 		"LLM_API_KEY":      "generic-key",
 		"LLM_MODEL":        "test-model",
 		llmAPIHeadersEnv:   "{broken",
 	}), EnvProviderRegistration{ProviderID: "openai-env", Name: "openai-env", Scope: ProviderScopeEnvDefault})
 	if err == nil {
-		t.Fatal("EnsureOpenAIEnvProvider() returned nil error")
+		t.Fatal("ensureOpenAIEnvProvider() returned nil error")
 	}
-	if len(store.providers) != 0 {
-		t.Fatalf("invalid headers still persisted %#v", store.providers)
+	if len(store.upserts) != 0 {
+		t.Fatalf("invalid headers still persisted %#v", store.upserts)
 	}
 }
 
 func TestAnthropicEnvProviderMergesLLMAPIHeaders(t *testing.T) {
-	store := newResolverCoverageStore()
-	id, err := EnsureAnthropicEnvProvider(context.Background(), store, mapLookup(map[string]string{
+	lookup := mapLookup(map[string]string{
 		"LLM_API_ENDPOINT": "https://gateway.example/api/anthropic",
 		"LLM_API_KEY":      "generic-key",
 		"LLM_MODEL":        "test-model",
 		llmAPIHeadersEnv:   `{"Bizscenario":"mobile-learning"}`,
-	}), AnthropicEnvProviderRequest{
-		AuthHeader: "x-api-key",
+	})
+	credential, ok := anthropicCredentialFromValues("", "", lookup("LLM_API_KEY"))
+	if !ok {
+		t.Fatal("generic key did not produce an Anthropic credential")
+	}
+	store := &projectionStore{}
+	id, err := ensureAnthropicEnvProvider(context.Background(), store, lookup, anthropicEnvProviderInput{
+		Credential: credential,
 		EnvProviderRegistration: EnvProviderRegistration{
-			ProviderID: "anthropic-env", Name: "anthropic-env", Scope: ProviderScopeSessionEnv,
+			ProviderID: "anthropic-env", Name: "anthropic-env", Scope: ProviderScopeEnvDefault,
 		},
 	})
 	if err != nil {
-		t.Fatalf("EnsureAnthropicEnvProvider() error = %v", err)
+		t.Fatalf("ensureAnthropicEnvProvider() error = %v", err)
 	}
-	if id == "" || len(store.providers) != 1 {
-		t.Fatalf("provider id = %q providers = %#v", id, store.providers)
+	if id == "" || len(store.upserts) != 1 {
+		t.Fatalf("provider id = %q upserts = %#v", id, store.upserts)
 	}
 	var headers map[string]string
-	if err := json.Unmarshal([]byte(store.providers[0].HeadersJSON), &headers); err != nil {
-		t.Fatalf("decode HeadersJSON %q: %v", store.providers[0].HeadersJSON, err)
+	if err := json.Unmarshal([]byte(store.upserts[0].Provider.HeadersJSON), &headers); err != nil {
+		t.Fatalf("decode HeadersJSON %q: %v", store.upserts[0].Provider.HeadersJSON, err)
 	}
 	if headers["Anthropic-Version"] != "2023-06-01" || headers["Bizscenario"] != "mobile-learning" {
 		t.Fatalf("headers = %#v", headers)
 	}
 }
 
+// TestDefaultEnvGenerateForwardsLLMAPIHeaders covers the daemon's environment
+// connection end to end: LLM_API_HEADERS is stored on the projected connection
+// and reaches the upstream request, with the provider credential winning over a
+// header an operator tries to smuggle in.
 func TestDefaultEnvGenerateForwardsLLMAPIHeaders(t *testing.T) {
 	isolateLLMEnv(t)
 
@@ -212,17 +220,22 @@ func TestDefaultEnvGenerateForwardsLLMAPIHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 
-	store := newResolverCoverageStore()
-	store.global = []domain.SandboxEnvVar{
-		{Name: "LLM_API_ENDPOINT", Value: server.URL},
-		{Name: "LLM_API_PROTOCOL", Value: APIProtocolChatCompletions},
-		{Name: "LLM_API_KEY", Value: "gateway-key"},
-		{Name: "LLM_MODEL", Value: "gateway-model"},
-		{Name: llmAPIHeadersEnv, Value: `{"Bizscenario":"mobile-learning","Branchid":"010801","Servid":"1001","Authorization":"should-not-win"}`},
+	store := &projectionStore{}
+	values := map[string]string{
+		"LLM_API_ENDPOINT": server.URL,
+		"LLM_API_PROTOCOL": APIProtocolChatCompletions,
+		"LLM_API_KEY":      "gateway-key",
+		"LLM_MODEL":        "gateway-model",
+		llmAPIHeadersEnv:   `{"Bizscenario":"mobile-learning","Branchid":"010801","Servid":"1001","Authorization":"should-not-win"}`,
 	}
-	target, err := ResolveLLMTarget(context.Background(), &appconfig.Config{}, store, "")
+	if _, err := ensureOpenAIEnvProvider(context.Background(), store, mapLookup(values), EnvProviderRegistration{
+		ProviderID: "gateway", Name: "gateway", Scope: ProviderScopeEnvDefault,
+	}); err != nil {
+		t.Fatalf("ensureOpenAIEnvProvider() error = %v", err)
+	}
+	target, err := NewResolvedTarget(store.upserts[0].Provider, Model{ID: "gateway-model", Name: "gateway-model"}, ProviderModelConfig{})
 	if err != nil {
-		t.Fatalf("ResolveLLMTarget() error = %v", err)
+		t.Fatalf("NewResolvedTarget() error = %v", err)
 	}
 	if target.Headers.Get("Bizscenario") != "mobile-learning" || target.Headers.Get("Authorization") != "Bearer gateway-key" {
 		t.Fatalf("resolved headers = %#v", target.Headers)

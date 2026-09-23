@@ -702,16 +702,32 @@ func testConfigStoreLLMBootstrapResolveCoverage(t *testing.T, ctx context.Contex
 	t.Helper()
 	isolateConfigStoreLLMEnv(t)
 
-	store := FromDB(newMemoryDB(t))
-	if err := store.initSchema(ctx); err != nil {
+	config := &appconfig.Config{LLMAPIEndpoint: "https://config.example/v1", LLMAPIProtocol: "chat_completions", LLMAPIKey: "config-key", LLMModel: "config-model"}
+
+	// The daemon environment is projected into the catalog at startup; the
+	// catalog is then the only thing a request path reads.
+	openaiStore := FromDB(newMemoryDB(t))
+	if err := openaiStore.initSchema(ctx); err != nil {
 		t.Fatalf("initSchema for LLM bootstrap returned error: %v", err)
 	}
-	config := &appconfig.Config{LLMAPIEndpoint: "https://config.example/v1", LLMAPIProtocol: "chat_completions", LLMAPIKey: "config-key", LLMModel: "config-model"}
-	lookup := llms.DefaultLLMEnvProviderLookup(ctx, config, store)
-	if endpoint := lookup("LLM_API_ENDPOINT"); endpoint != "https://config.example/v1" {
-		t.Fatalf("config LLM endpoint = %q, want %q", endpoint, "https://config.example/v1")
+	if err := llms.ProjectDaemonLLMConfig(ctx, config, openaiStore); err != nil {
+		t.Fatalf("ProjectDaemonLLMConfig returned error: %v", err)
 	}
-	if _, err := store.ReplaceGlobalEnv(ctx, []domain.SandboxEnvVar{
+	target, err := resolveCatalogConnection(ctx, openaiStore, "", "config-model")
+	if err != nil {
+		t.Fatalf("resolveCatalogConnection returned error: %v", err)
+	}
+	if target.Provider.ID != llms.ProviderIDDefaultOpenAI || target.Provider.APIKey != "config-key" || target.Model.ID != "config-model" || target.WireAPI != llms.APIProtocolChatCompletions {
+		t.Fatalf("OpenAI resolved target = %#v", target)
+	}
+
+	// The stored global environment is not a connection source: only the
+	// daemon's own declaration (environment or configuration) is projected.
+	globalStore := FromDB(newMemoryDB(t))
+	if err := globalStore.initSchema(ctx); err != nil {
+		t.Fatalf("initSchema for global env returned error: %v", err)
+	}
+	if _, err := globalStore.ReplaceGlobalEnv(ctx, []domain.SandboxEnvVar{
 		{Name: "LLM_API_ENDPOINT", Value: "https://global.example/v1"},
 		{Name: "LLM_API_PROTOCOL", Value: "chat_completions"},
 		{Name: "LLM_API_KEY", Value: "global-key", Secret: true},
@@ -719,37 +735,15 @@ func testConfigStoreLLMBootstrapResolveCoverage(t *testing.T, ctx context.Contex
 	}); err != nil {
 		t.Fatalf("ReplaceGlobalEnv for LLM returned error: %v", err)
 	}
-	target, err := llms.ResolveLLMTarget(ctx, config, store, "")
+	if err := llms.ProjectDaemonLLMConfig(ctx, nil, globalStore); err != nil {
+		t.Fatalf("ProjectDaemonLLMConfig with no daemon declaration returned error: %v", err)
+	}
+	globalCatalog, err := llms.LoadCatalog(ctx, globalStore)
 	if err != nil {
-		t.Fatalf("ResolveLLMTarget returned error: %v", err)
+		t.Fatalf("LoadCatalog returned error: %v", err)
 	}
-	if target.Provider.ID != llms.ProviderIDDefaultOpenAI || target.Provider.APIKey != "global-key" || target.Model.ID != "global-model" || target.WireAPI != llms.APIProtocolChatCompletions {
-		t.Fatalf("OpenAI resolved target = %#v", target)
-	}
-	runtimeTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{
-		Config: config, SessionID: "sandbox-1", PreferredProviderFamily: llms.ProviderFamilyOpenAI, RequestedModel: "session-model", ProviderID: "", EnvItems: []domain.SandboxEnvVar{
-			{Name: "LLM_API_ENDPOINT", Value: "https://session.example/v1"},
-			{Name: "LLM_API_KEY", Value: "session-key", Secret: true},
-			{Name: "LLM_MODEL", Value: "session-model"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("ResolveRuntimeLLMTargetWithEnv OpenAI returned error: %v", err)
-	}
-	if runtimeTarget.Provider.ID == target.Provider.ID || runtimeTarget.Provider.Scope != llms.ProviderScopeSessionEnv || runtimeTarget.Model.ID != "session-model" {
-		t.Fatalf("session OpenAI target = %#v", runtimeTarget)
-	}
-	if llms.HasEnabledLLMProviderID(ctx, store, runtimeTarget.Provider.ID) != true {
-		t.Fatalf("expected session provider to be enabled")
-	}
-	reusedRuntimeTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{
-		Config: config, SessionID: "sandbox-1", PreferredProviderFamily: llms.ProviderFamilyOpenAI, RequestedModel: "session-model", ProviderID: "", EnvItems: nil,
-	})
-	if err != nil || reusedRuntimeTarget.Provider.ID != runtimeTarget.Provider.ID {
-		t.Fatalf("reused session OpenAI target=%#v err=%v", reusedRuntimeTarget, err)
-	}
-	if _, err := llms.ResolveRuntimeLLMTarget(ctx, config, store, "missing-model", "missing-provider"); err == nil {
-		t.Fatalf("expected missing runtime LLM target error")
+	if connections := globalCatalog.Connections(); len(connections) != 0 {
+		t.Fatalf("global environment produced connections %#v, want none", connections)
 	}
 
 	anthropicStore := FromDB(newMemoryDB(t))
@@ -759,20 +753,26 @@ func testConfigStoreLLMBootstrapResolveCoverage(t *testing.T, ctx context.Contex
 	t.Setenv("ANTHROPIC_BASE_URL", "https://anthropic.example")
 	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key")
 	t.Setenv("ANTHROPIC_MODEL", "claude-test")
-	anthropicTarget, err := llms.ResolveLLMTargetForProviderFamily(ctx, &appconfig.Config{}, anthropicStore, llms.ProviderFamilyAnthropic, "")
+	if err := llms.ProjectDaemonLLMConfig(ctx, &appconfig.Config{}, anthropicStore); err != nil {
+		t.Fatalf("ProjectDaemonLLMConfig Anthropic returned error: %v", err)
+	}
+	anthropicTarget, err := resolveCatalogConnection(ctx, anthropicStore, "", "claude-test")
 	if err != nil {
-		t.Fatalf("ResolveLLMTargetForProviderFamily Anthropic returned error: %v", err)
+		t.Fatalf("resolveCatalogConnection Anthropic returned error: %v", err)
 	}
 	if anthropicTarget.Provider.ProviderType != llms.ProviderFamilyAnthropic || anthropicTarget.WireAPI != llms.APIProtocolMessages || anthropicTarget.Model.ID != "claude-test" {
 		t.Fatalf("Anthropic target = %#v", anthropicTarget)
 	}
-	sessionAnthropicID, err := llms.EnsureSessionAnthropicEnvProvider(ctx, anthropicStore, llms.SessionEnvProviderQuery{SessionID: "session-2", RequestedModel: "claude-session", EnvItems: []domain.SandboxEnvVar{
-		{Name: "ANTHROPIC_API_KEY", Value: "session-anthropic-key", Secret: true},
-		{Name: "ANTHROPIC_MODEL", Value: "claude-session"},
-	}})
-	if err != nil || sessionAnthropicID == "" {
-		t.Fatalf("EnsureSessionAnthropicEnvProvider id=%q err=%v", sessionAnthropicID, err)
+}
+
+// resolveCatalogConnection resolves (connection, opaque model) through the
+// catalog snapshot the store feeds.
+func resolveCatalogConnection(ctx context.Context, store *ConfigStore, connectionID, model string) (llms.ResolvedTarget, error) {
+	snapshot, err := llms.LoadCatalog(ctx, store)
+	if err != nil {
+		return llms.ResolvedTarget{}, err
 	}
+	return snapshot.Resolve(connectionID, model, nil)
 }
 
 func isolateConfigStoreLLMEnv(t *testing.T) {

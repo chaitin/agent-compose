@@ -151,6 +151,30 @@ func normalizeRuntimeRawRoleItems(payload map[string]json.RawMessage, field stri
 	return true
 }
 
+// crossFamilyBridge returns the bridge that converts inbound into upstream.
+//
+// The library now selects a cross-family bridge by the exact protocol pair, so
+// an Anthropic inbound reaches the OpenAI target it actually asks for: messages
+// -> responses and messages -> chat are distinct bridges rather than one family
+// lookup that can only return the first.
+//
+// The UpstreamProtocol check below stays as a correctness guard, not a
+// redundant restatement of the request. The pair lookup is the library's
+// implementation detail; if a future release returned a bridge for another
+// protocol, this turns that into a local, explicit error instead of silently
+// posting the wrong protocol upstream. See
+// docs/design/llm_model_routing_redesign.md, phase P0.
+func crossFamilyBridge(inbound, upstream protocolbridge.Protocol) (protocolbridge.CrossFamilyBridge, error) {
+	bridge, ok := protocolbridge.NewCrossFamilyBridgeForProtocol(inbound, upstream)
+	if !ok {
+		return nil, fmt.Errorf("unsupported llm protocol bridge from %q to %q", inbound, upstream)
+	}
+	if bridge.UpstreamProtocol() != upstream {
+		return nil, fmt.Errorf("unsupported llm protocol bridge from %q to %q: the bridge converts to %q", inbound, upstream, bridge.UpstreamProtocol())
+	}
+	return bridge, nil
+}
+
 func EncodeRuntimeUpstreamRequest(inboundProtocol, upstreamProtocol protocolbridge.Protocol, target ResolvedTarget, req *protocolbridge.LLMRequest) ([]byte, error) {
 	if inboundProtocol == upstreamProtocol || ProtocolsShareFamily(inboundProtocol, upstreamProtocol) {
 		adapter, err := ProtocolAdapter(upstreamProtocol)
@@ -159,9 +183,9 @@ func EncodeRuntimeUpstreamRequest(inboundProtocol, upstreamProtocol protocolbrid
 		}
 		return adapter.EncodeRequest(normalizeRuntimeRequestForUpstream(req, upstreamProtocol), protocolbridge.EncodeRequestOptions{Model: target.Model.Name})
 	}
-	bridge, ok := protocolbridge.NewCrossFamilyBridge(inboundProtocol, NormalizeProviderType(target.Provider.ProviderType))
-	if !ok || bridge.UpstreamProtocol() != upstreamProtocol {
-		return nil, fmt.Errorf("unsupported llm protocol bridge from %q to %q", inboundProtocol, upstreamProtocol)
+	bridge, err := crossFamilyBridge(inboundProtocol, upstreamProtocol)
+	if err != nil {
+		return nil, err
 	}
 	return bridge.EncodeUpstreamRequest(req, protocolbridge.EncodeRequestOptions{Model: target.Model.Name})
 }
@@ -203,9 +227,9 @@ func EncodeRuntimeClientResponse(inboundProtocol, upstreamProtocol protocolbridg
 			return nil, err
 		}
 	} else {
-		bridge, ok := protocolbridge.NewCrossFamilyBridge(inboundProtocol, NormalizeProviderType(target.Provider.ProviderType))
-		if !ok || bridge.UpstreamProtocol() != upstreamProtocol {
-			return nil, fmt.Errorf("unsupported llm protocol bridge from %q to %q", inboundProtocol, upstreamProtocol)
+		bridge, err := crossFamilyBridge(inboundProtocol, upstreamProtocol)
+		if err != nil {
+			return nil, err
 		}
 		llmResp, err = bridge.DecodeUpstreamResponse(upstreamBody)
 		if err != nil {
@@ -215,7 +239,7 @@ func EncodeRuntimeClientResponse(inboundProtocol, upstreamProtocol protocolbridg
 	return inboundAdapter.EncodeResponse(llmResp, protocolbridge.EncodeResponseOptions{Model: target.Model.Name})
 }
 
-func RuntimeStreamBridge(inboundProtocol, upstreamProtocol protocolbridge.Protocol, upstreamFamily string, model string) (protocolbridge.StreamDecoder, protocolbridge.StreamEncoder, error) {
+func RuntimeStreamBridge(inboundProtocol, upstreamProtocol protocolbridge.Protocol, model string) (protocolbridge.StreamDecoder, protocolbridge.StreamEncoder, error) {
 	if inboundProtocol == upstreamProtocol {
 		adapter, err := ProtocolAdapter(inboundProtocol)
 		if err != nil {
@@ -250,9 +274,9 @@ func RuntimeStreamBridge(inboundProtocol, upstreamProtocol protocolbridge.Protoc
 		}
 		return decoder, encoder, nil
 	}
-	bridge, ok := protocolbridge.NewCrossFamilyBridge(inboundProtocol, upstreamFamily)
-	if !ok || bridge.UpstreamProtocol() != upstreamProtocol {
-		return nil, nil, fmt.Errorf("unsupported llm stream bridge from %q to %q", inboundProtocol, upstreamProtocol)
+	bridge, err := crossFamilyBridge(inboundProtocol, upstreamProtocol)
+	if err != nil {
+		return nil, nil, fmt.Errorf("llm stream bridge: %w", err)
 	}
 	decoder, err := bridge.NewStreamDecoder(protocolbridge.StreamDecodeOptions{})
 	if err != nil {

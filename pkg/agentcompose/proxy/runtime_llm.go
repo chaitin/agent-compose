@@ -25,27 +25,24 @@ type RuntimeLLMSandboxStore interface {
 	GetSandbox(context.Context, string) (*domain.Sandbox, error)
 }
 
-// RuntimeLLMTargetResolver resolves the upstream target for one proxied call.
+// RuntimeLLMConnectionResolver resolves the upstream target of the connection a
+// facade token is bound to, for one literal upstream model.
 //
-// The sandbox belongs in the query: an orchestrator injects LLM_API_ENDPOINT,
-// LLM_API_KEY, LLM_MODEL and LLM_API_PROTOCOL into the sandbox it starts, and
-// the upstream answering on that endpoint serves exactly the published wire
-// api. Resolving without the sandbox let a previously stored connection choose
-// the protocol, so a chat-completions model was posted to a responses endpoint
-// and a gateway that routes by wire api rejected the call. providerFamily is
-// the family of the inbound wire api, which is what scopes that sandbox's
-// provider environment for this call.
-type RuntimeLLMTargetResolver func(ctx context.Context, sandbox *domain.Sandbox, providerFamily, requestedModel, providerID string) (llms.ResolvedTarget, error)
+// The token names the connection, so a proxied call never selects one: it looks
+// up the connection the run was prepared with and forwards the requested model
+// to it. That is what makes the daemon a weak caller — it holds an address and a
+// credential, and the upstream decides which models it serves.
+type RuntimeLLMConnectionResolver func(ctx context.Context, connectionID, model string) (llms.ResolvedTarget, error)
 
 type HTTPDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
 type RuntimeLLMOptions struct {
-	Tokens        RuntimeLLMTokenStore
-	Sandboxes     RuntimeLLMSandboxStore
-	ResolveTarget RuntimeLLMTargetResolver
-	Client        HTTPDoer
+	Tokens      RuntimeLLMTokenStore
+	Sandboxes   RuntimeLLMSandboxStore
+	Connections RuntimeLLMConnectionResolver
+	Client      HTTPDoer
 	// MaxOutputTokens, when > 0, is injected into every proxied upstream LLM
 	// request using the field names supported by the upstream protocol. codex
 	// does not send max_output_tokens itself, so without this API proxies that
@@ -89,12 +86,11 @@ type resolvedRuntimeLLMRequest struct {
 }
 
 // authorizeAndResolveRuntimeLLMRequest validates the caller's facade token,
-// checks the sandbox is running, decodes the inbound LLM request, and
-// resolves which upstream provider/model target to proxy it to. If handled
-// is true, the caller must return err as-is (a response has already been
-// written).
+// checks the sandbox is running, decodes the inbound LLM request, and resolves
+// the connection the token was issued for. If handled is true, the caller must
+// return err as-is (a response has already been written).
 func (h runtimeLLMHandler) authorizeAndResolveRuntimeLLMRequest(c echo.Context, inboundProtocol protocolbridge.Protocol, facadeWireAPI string) (resolvedRuntimeLLMRequest, bool, error) {
-	if h.opts.Tokens == nil || h.opts.Sandboxes == nil || h.opts.ResolveTarget == nil {
+	if h.opts.Tokens == nil || h.opts.Sandboxes == nil || h.opts.Connections == nil {
 		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusInternalServerError, map[string]string{"error": "llm facade dependencies are required"})
 	}
 	sandboxID := strings.TrimSpace(c.Param("sandbox_id"))
@@ -133,21 +129,24 @@ func (h runtimeLLMHandler) authorizeAndResolveRuntimeLLMRequest(c echo.Context, 
 		raw, status := inboundAdapter.EncodeError(err)
 		return resolvedRuntimeLLMRequest{}, true, WriteRuntimeLLMEncodedError(c, raw, status)
 	}
-	model := strings.TrimSpace(llmReq.Model)
-	if model == "" {
+	requestedModel := strings.TrimSpace(llmReq.Model)
+	if requestedModel == "" {
 		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusBadRequest, map[string]string{"error": "llm model is required"})
 	}
-	// Provider-bound tokens may request any model from that provider. Preserve
-	// the legacy model scope for compatibility tokens that have no provider.
-	if token.ProviderID == "" && token.Model != "" && token.Model != model {
+	model, authorized := token.ResolveUpstreamModel(requestedModel)
+	if !authorized {
 		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusForbidden, map[string]string{"error": "llm facade token model mismatch"})
 	}
-	target, err := h.opts.ResolveTarget(c.Request().Context(), session, llms.ProtocolFamily(inboundProtocol), model, token.ProviderID)
+	if token.ProviderID == "" {
+		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusForbidden, map[string]string{"error": "llm facade token is not bound to a connection"})
+	}
+	// The model the upstream is asked for is the literal one. The guest's own
+	// spelling reached the token at preparation time; from here on the request
+	// carries what the connection understands.
+	llmReq.Model = model
+	target, err := h.opts.Connections(c.Request().Context(), token.ProviderID, model)
 	if err != nil {
 		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-	}
-	if token.ProviderID != "" && token.ProviderID != target.Provider.ID {
-		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusForbidden, map[string]string{"error": "llm facade token provider mismatch"})
 	}
 	upstreamProtocol, upstreamEndpoint, err := llms.UpstreamProtocolAndEndpoint(target)
 	if err != nil {
@@ -214,7 +213,6 @@ func (h runtimeLLMHandler) handle(c echo.Context, inboundProtocol protocolbridge
 		return BridgeRuntimeLLMStreamResponse(c, resp, runtimeLLMStreamBridgeRequest{
 			InboundProtocol:  inboundProtocol,
 			UpstreamProtocol: upstreamProtocol,
-			UpstreamFamily:   llms.NormalizeProviderType(target.Provider.ProviderType),
 			Model:            target.Model.Name,
 		})
 	}
@@ -306,7 +304,6 @@ func (h runtimeLLMHandler) proxyTransparent(c echo.Context, req proxyTransparent
 			return BridgeRuntimeLLMStreamResponse(c, resp, runtimeLLMStreamBridgeRequest{
 				InboundProtocol:  protocolbridge.ProtocolOpenAIResponses,
 				UpstreamProtocol: protocolbridge.ProtocolOpenAIResponses,
-				UpstreamFamily:   llms.ProviderFamilyOpenAI,
 				Model:            target.Model.Name,
 			})
 		}
@@ -355,13 +352,12 @@ func WriteRuntimeLLMEncodedError(c echo.Context, raw []byte, status int) error {
 type runtimeLLMStreamBridgeRequest struct {
 	InboundProtocol  protocolbridge.Protocol
 	UpstreamProtocol protocolbridge.Protocol
-	UpstreamFamily   string
 	Model            string
 }
 
 func BridgeRuntimeLLMStreamResponse(c echo.Context, resp *http.Response, req runtimeLLMStreamBridgeRequest) error {
 	inboundProtocol := req.InboundProtocol
-	decoder, encoder, err := llms.RuntimeStreamBridge(req.InboundProtocol, req.UpstreamProtocol, req.UpstreamFamily, req.Model)
+	decoder, encoder, err := llms.RuntimeStreamBridge(req.InboundProtocol, req.UpstreamProtocol, req.Model)
 	if err != nil {
 		return err
 	}
@@ -447,13 +443,4 @@ func BridgeRuntimeLLMStreamResponse(c echo.Context, resp *http.Response, req run
 		return nil
 	}
 	return writeEvents(events)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

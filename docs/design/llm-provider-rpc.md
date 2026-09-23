@@ -2,17 +2,21 @@
 
 ## Problem and scope
 
-The daemon already persists upstream providers and routes literal provider/model
-references, but models.json is startup-only and no public RPC manages providers.
-Add live CRUD to agentcompose.v2.LLMService for upstream model endpoints and
-credentials. Coding-agent providers such as codex and pi are unrelated.
+The daemon already persists upstream providers, but models.json is startup-only
+and no public RPC manages providers. Add live CRUD to
+agentcompose.v2.LLMService for upstream model endpoints and credentials.
+Coding-agent providers such as codex and pi are unrelated. The daemon env,
+models.json and this RPC are three sources for one set of connection data; they
+merge into a single catalog while configuration loads, and the runtime resolves
+against that catalog alone.
 
 ## Contract
 
 CreateProvider, GetProvider, ListProviders, UpdateProvider and DeleteProvider use
 an immutable caller-chosen ID. IDs are 1–128 ASCII letters, digits, dots,
 underscores or hyphens, beginning with a letter or digit. The environment-owned
-IDs default and anthropic are reserved; session-env IDs cannot match this syntax.
+IDs default and anthropic are reserved, because the daemon projects its own
+configuration under them at startup.
 
 Create requires an absolute HTTP(S) base URL, a supported protocol, and a nonempty
 literal API key. Responses contain api_key_set, never the credential. Update
@@ -50,8 +54,8 @@ ANTHROPIC_AUTH_TOKEN (Bearer) and ANTHROPIC_API_KEY or LLM_API_KEY (x-api-key).
 CLI `agent-compose llm provider` exposes ls, create, inspect, update, and rm.
 Create requires --base-url, --protocol, and --api-key. Update sends only flags
 that were set. `--auth x-api-key|bearer` overrides the protocol default on either
-command. Environment bootstrap remains last fallback; API CRUD takes effect on
-the next target resolution.
+command. Both write into the same store; API CRUD takes effect on the next target
+resolution.
 
 List includes disabled API-owned providers in ID order, using the existing
 offset/limit pagination convention. Get/Update/Delete reject non-API ownership.
@@ -67,7 +71,7 @@ Use scope=api in the existing llm_provider table. No schema migration is needed.
 Catalog synchronization affects only catalog scope, and existing collision checks
 reject models.json entries that collide with API-owned IDs. Restart therefore
 preserves API-owned configuration. Environment bootstrap cannot overwrite it
-because its fixed IDs and session prefix are unavailable to API creation.
+because its fixed IDs are unavailable to API creation.
 
 API keys follow the existing provider storage contract: application-level
 plaintext in data.db, never returned by the management RPCs. The existing daemon
@@ -83,98 +87,111 @@ provider remains stored and can be re-enabled; disabling does not revoke tokens.
 ## Runtime behavior
 
 No resolver fork is introduced. API providers are configured connections under
-the existing scope rules, and target resolution is one staged pipeline:
+the existing scope rules. The daemon env, `models.json`, and this RPC are three
+sources for one set of connection data; they merge into a single `Catalog`
+snapshot while configuration loads. Resolution reads only that snapshot, so no
+part of it consults the environment again.
 
-1. An explicit provider reference (the `<connection>/<model>` form) selects that
-   connection and passes the literal model to the upstream. Literal models do not
-   require model-table registration.
-2. A registered model with a provider binding selects its bound connection.
-3. Otherwise the daemon's default connection serves the literal model. The
-   reserved bootstrap connection (`default`/`anthropic`) wins, including when it
-   survives only as a persisted env-default row; with none, the only configured
-   connection of the requested family is used. When the requested family has no
-   connection at all, the same choice runs over the other families, because the
-   runtime bridge translates across protocols: an OpenAI-compatible connection
-   can serve claude, exactly as the OpenAI bootstrap environment always could. A
-   session-env connection never acts as a daemon default. Competing connections
-   are reported as an ambiguity instead of being resolved by accident. A bare
-   model does not imply a family, so the reserved connection is chosen without a
-   family comparison; qualify the model as `<connection>/<model>` to select a
-   different connection explicitly.
+`PrepareAgentLLM` is the one entry point for an agent's LLM configuration:
 
-Model bindings are optional metadata rather than an authorization boundary, so a
-provider created through this RPC is usable with a bare Agent model name and no
-models.json entry. The facade agents (pi, opencode, dsh) treat the
-`<connection>/<model>` prefix as optional for the same reason; codex and claude
-already accepted unqualified model names. Prefixed values keep their established
-meaning: a configured connection id, a family alias, or an env-backed custom
-endpoint. A facade agent declaration whose prefix names none of those is a
-configuration error rather than a literal model name, because resolving it
-against the default connection would forward the connection id upstream as part
-of the model name. A literal model id that itself contains a slash is therefore
-written with its connection (`<connection>/<org>/<model>`); the resolved model id
-keeps the remaining slashes.
+1. **Model.** The agent's declared `model`, else the catalog's default model,
+   else `ErrNoModel`. A model id is opaque: it is never split on `/` and never
+   matched against a connection to infer anything.
+2. **Connection.** The runtime facade re-resolves the connection its token already
+   names; that is a lookup of a decision already made, not a second choice. For
+   every other caller, in order: among the connections that serve the model, the
+   one speaking the caller's most preferred protocol; the connection that owns
+   the default model; the only configured connection; otherwise every configured
+   connection, ranked the same way, because a model id is opaque and a connection
+   that never declared the model may still serve it. Preference exists so an
+   agent is served by a passthrough whenever a connection can do that; connections
+   that speak the model over the same protocol are interchangeable, and one of
+   them is chosen at random instead of failing the run. With no connection at all
+   the answer is `ErrNoConnection`, and the agent keeps its own authentication.
+3. **Protocol.** The dialect table gives each agent the protocols it speaks
+   natively, in affinity order, and one canonical protocol. Because step 2 ranks
+   candidates by that order, an upstream protocol the agent speaks is passed
+   through; anything else is converted to the agent's canonical protocol.
+   If no conversion exists the run fails while preparing, not on the first
+   request.
 
-A connection's protocol decides which agents it can serve, because the runtime
-facade bridges only some protocol pairs. An OpenAI `responses` connection serves
-every facade agent. An OpenAI `chat_completions` connection serves codex, pi,
-opencode, and dsh but not claude: no bridge converts an Anthropic Messages
-request into OpenAI Chat, so the run fails with `unsupported llm protocol bridge
-from "anthropic_messages" to "openai_chat"`. Give claude a `responses` or an
-`anthropic_messages` connection.
-Codex only accepts OpenAI-family connections: an explicit `anthropic_messages`
-connection is rejected before execution with `codex requires an OpenAI-compatible
-model`. Pi, OpenCode, and DSH can use all three protocols.
+A provider created through this RPC is usable with a bare agent model name and
+no `models.json` entry: model bindings are optional metadata, not an
+authorization boundary. Family plays no part in any of the above. There is no
+reserved `default` or `anthropic` connection that wins by name, and no search
+that widens to another family when the first has no connection.
+
+Connection selection is daemon configuration, not agent configuration: an agent
+declares only its `model`, and an operator resolves a tie by making one
+connection the owner of the default model or by binding the model to exactly one
+connection. The retired `<connection>/<model>` form is not interpreted, and
+splitting it would corrupt a legitimate model id that contains a slash; when such
+a value is served by no connection while its prefix names a connection that
+serves the remainder, the daemon reports `ErrLegacyQualifiedModel` naming the
+model to write and the connection to configure instead.
+
+**Protocol coverage.** Every (agent, upstream protocol) combination is served;
+the agent's protocol never restricts which connection it may use.
+
+| Agent | Passes through | Converted to |
+| --- | --- | --- |
+| codex | `responses` | `chat_completions`, `anthropic_messages` → `responses` |
+| claude | `anthropic_messages` | `responses`, `chat_completions` → `anthropic_messages` |
+| opencode | `chat_completions`, `anthropic_messages` | `responses` → `chat_completions` |
+| pi | all three | — |
+| dsh | all three | — |
+
+Same-family conversion (`chat_completions` ↔ `responses`) re-encodes through the
+shared adapters. Cross-family conversion uses the protocol bridge, which covers
+all four cells. An agent whose dialect declares a canonical protocol the upstream
+cannot reach fails with `unsupported llm protocol bridge`.
 
 Claude SDK results must also honor `is_error`: the SDK can return a `success`
 subtype with `is_error=true` for an upstream HTTP error. Such a result fails the
 run and emits a fatal error event instead of publishing an API error as a
 successful answer.
 
-The facade publishes the model it resolved as `AGENT_COMPOSE_RESOLVED_MODEL`,
-already rewritten into the namespace the guest addresses models by, and the
-daemon tells the guest runner that value instead of the model the agent
-declared. A declaration is a request that resolution may rewrite: a
-`<connection>/<model>` prefix is stripped, a catalog or bootstrap default
-supplies a model the agent omitted, and pi and opencode address models through
-the provider key written into their config. The runner passes the published
-reference through untouched on the resolved path, so a
-resolved model id that itself contains slashes reaches the upstream intact. An
-agent CLI told the declaration instead addresses a model the facade token is not
-bound to. A model whose literal prefix equals the guest provider still needs
-both components: provider `anthropic` and model `anthropic/example` produce
-`anthropic/anthropic/example`.
+The facade publishes the model it resolved as `AGENT_COMPOSE_RESOLVED_MODEL`, in
+the namespace the guest addresses models by, and the runner uses that value
+instead of the model the agent declared. A declaration is a request that
+resolution may rewrite: the catalog default may supply a model the agent
+omitted, and pi and opencode address models through the provider key written
+into their config. The runner passes the published reference through untouched,
+so a resolved model id that itself contains slashes reaches the upstream intact.
+An agent CLI told the declaration instead would address a model the facade token
+is not bound to. A model whose literal text already begins with the guest
+provider still keeps both components: provider `agent-compose` and model
+`agent-compose/example` produce `agent-compose/agent-compose/example`.
 
-The runtime argument remains compatible with old guest images. For DSH the
-daemon sends `agent-compose/<resolved-model>` so an old runner's first-slash
-conversion preserves the entire model ID. New Pi/DSH runners prefer
-`AGENT_COMPOSE_RESOLVED_MODEL`; when an old daemon omits it, they retain their
-legacy argument conversion. These two compatibility boundaries are deprecated:
-remove them together once old daemon and guest versions are no longer supported.
-New routing must use the resolved value, not introduce further prefix inference.
-This supports staged upgrades of the model argument contract, not arbitrary
-version combinations of the complete runtime protocol.
+The published value is the only model channel that may add a prefix, and it
+never removes one. Compatibility with an older daemon runs one way: a new pi or
+dsh runtime still converts the legacy runtime argument when
+`AGENT_COMPOSE_RESOLVED_MODEL` is absent, which is what makes a rollback safe.
+The daemon does not reciprocate — it sends the model verbatim — so an older dsh
+guest driven by a newer daemon truncates a slashed model id at the first slash.
+Update the guest image before or together with the daemon. See
+`docs/pages/guest-image-abi.md`, which states the same constraint.
 
-Ambiguous defaults are reported instead of silently falling back to an agent's
-own credentials. This intentionally changes Codex/Claude fallback behavior when
-multiple managed connections exist and no target can be selected. Configure an
-explicit connection/model reference to resolve the ambiguity.
+Ambiguous defaulting is reported instead of silently falling back to an agent's
+own credentials. When multiple managed connections exist and no connection can
+be selected, the run fails naming the candidates; make one of them the owner of
+the default model or bind the model to exactly one connection.
 
 The next target resolution reads current provider settings, so address/key
 updates require no restart. Existing in-flight requests use their resolved
 configuration; agent-side model/protocol setup may require restarting a run after
-protocol changes. API CRUD does not change global or catalog defaults. Unknown
-slash prefixes reaching the runtime LLM facade retain the existing literal-model
-interpretation; clients should verify provider existence when constructing a new
-reference after deletion.
+protocol changes. API CRUD does not change global or catalog defaults. A model id
+reaching the runtime LLM facade is forwarded as written; clients should verify
+provider existence when constructing a new reference after deletion.
 
 ## Validation
 
 Domain tests cover ID/protocol/URL/key/auth validation and input ownership, and
-the resolution stages above: configured-connection defaulting, reserved-default
-preference, ambiguity rejection, disabled-connection exclusion, binding
-precedence, unqualified model names for pi, opencode and dsh, and rejection of a
-reference with an empty `<connection>/<model>` side. SQLite
+the resolution rules above: model selection with and without a catalog default,
+connection precedence from the catalog default model down to the only
+connection, ambiguity rejection naming its candidates, the no-connection case,
+disabled-connection exclusion, binding precedence, and the diagnostic for the
+retired `<connection>/<model>` form. SQLite
 integration tests cover literal routing, bare-model routing with an RPC-created
 provider, key preservation/rotation, protocol mapping, the protocol-default and
 explicit credential presentations, presentation-only updates, disabled providers,

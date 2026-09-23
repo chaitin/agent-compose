@@ -8,19 +8,17 @@ import (
 
 	"github.com/chaitin/agent-compose/internal/projects"
 	"github.com/chaitin/agent-compose/pkg/compose"
-	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/storage/configstore"
 )
 
 type projectAgentModelResolver struct {
-	config *appconfig.Config
-	store  *configstore.ConfigStore
+	store *configstore.ConfigStore
 }
 
-func newProjectAgentModelResolver(config *appconfig.Config, store *configstore.ConfigStore) *projectAgentModelResolver {
-	return &projectAgentModelResolver{config: config, store: store}
+func newProjectAgentModelResolver(store *configstore.ConfigStore) *projectAgentModelResolver {
+	return &projectAgentModelResolver{store: store}
 }
 
 // ResolveProjectAgentModels previews the model each current agent would select.
@@ -42,7 +40,7 @@ func (r *projectAgentModelResolver) ResolveProjectAgentModels(ctx context.Contex
 		}
 		definitions = append(definitions, definition)
 	}
-	resolved, err := llms.ResolveAgentModels(ctx, r.config, r.store, definitions)
+	resolved, err := llms.ResolveAgentModels(ctx, r.store, definitions)
 	if err != nil {
 		return nil, fmt.Errorf("resolve project agent models: %w", err)
 	}

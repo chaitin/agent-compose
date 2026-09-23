@@ -12,12 +12,27 @@ const RuntimeBaseURLEnvName = "AGENT_COMPOSE_RUNTIME_BASE_URL"
 // GuestModelEnvName carries the model name the runtime facade resolved for a
 // sandbox, in the namespace the guest agent addresses models by. The daemon
 // tells the runner this name instead of the model the agent declared, because a
-// declaration is a request that resolution may rewrite: a <connection>/<model>
-// prefix is stripped, a catalog default may supply the model, and opencode
-// addresses models through the provider key written into its config. Passing
-// the declaration through instead makes the agent CLI and the facade token
-// disagree, which the agent reports as a hung or failed model call.
+// declaration is a request that resolution may rewrite: a catalog default may
+// supply the model, and pi and opencode address models as
+// "<provider>/<model>", so a prefix the declaration never had is added for
+// them. Passing the declaration through instead makes the agent CLI and the
+// facade token disagree, which the agent reports as a hung or failed model call.
 const GuestModelEnvName = "AGENT_COMPOSE_RESOLVED_MODEL"
+
+// EnvItemValue returns the value of one environment item, matched
+// case-insensitively and trimmed, or "" when the item is absent.
+func EnvItemValue(items []domain.SandboxEnvVar, key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	for _, item := range domain.NormalizeEnvItems(items) {
+		if strings.EqualFold(strings.TrimSpace(item.Name), key) {
+			return strings.TrimSpace(item.Value)
+		}
+	}
+	return ""
+}
 
 func SchedulerCommandFacadeAgentModel(env map[string]string) (string, string) {
 	if env == nil {
@@ -48,14 +63,10 @@ func SchedulerCommandFacadeAgentModel(env map[string]string) (string, string) {
 	}
 }
 
-func ProviderKeyName(name string) bool {
-	return driverpkg.LLMProviderKeyName(name)
-}
-
 func FilterPersistedRuntimeEnv(items []domain.SandboxEnvVar) []domain.SandboxEnvVar {
 	result := make([]domain.SandboxEnvVar, 0, len(items))
 	for _, item := range domain.NormalizeEnvItems(items) {
-		if ProviderKeyName(item.Name) || strings.EqualFold(strings.TrimSpace(item.Name), RuntimeBaseURLEnvName) {
+		if driverpkg.LLMProviderKeyName(item.Name) || strings.EqualFold(strings.TrimSpace(item.Name), RuntimeBaseURLEnvName) {
 			continue
 		}
 		result = append(result, item)
@@ -64,19 +75,4 @@ func FilterPersistedRuntimeEnv(items []domain.SandboxEnvVar) []domain.SandboxEnv
 		return nil
 	}
 	return result
-}
-
-func RuntimeEnvMap(items []domain.SandboxEnvVar) map[string]string {
-	env := make(map[string]string, len(items))
-	for _, item := range domain.NormalizeEnvItems(items) {
-		name := strings.TrimSpace(item.Name)
-		if name == "" || ProviderKeyName(name) {
-			continue
-		}
-		env[name] = item.Value
-	}
-	if len(env) == 0 {
-		return nil
-	}
-	return env
 }

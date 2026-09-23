@@ -124,8 +124,20 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}
+	// The agent's own environment decides which side owns the upstream: an
+	// agent that publishes an LLM connection there is configured against it,
+	// and one that publishes none falls back to the daemon's catalog.
+	//
+	// The declaration is the sandbox's prepared provider environment merged
+	// with the definition this run resolved, the same one the sandbox start
+	// path used, so a run cannot decide the mode differently from the
+	// environment the guest was prepared with.
+	var agentDefEnvItems []domain.SandboxEnvVar
+	if agentDef != nil {
+		agentDefEnvItems = agentDef.EnvItems
+	}
 	runtimeConfig, err := runtimefacade.EnsureSessionAgentRuntimeConfig(ctx, runtimefacade.SessionFacadeConfigRequest{
-		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent, Model: effectiveModel, Source: runtimefacade.TokenSourceAgent, RunID: runID,
+		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent, Model: effectiveModel, AgentEnv: session.DeclaredProviderEnv(agentDefEnvItems), Source: runtimefacade.TokenSourceAgent, RunID: runID,
 	})
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
@@ -209,15 +221,6 @@ func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, sessio
 			return err
 		}
 	}
-	startupEnv, err := runtimefacade.EnsureSessionStartupFacadeConfig(ctx, runtimefacade.SessionFacadeConfigRequest{
-		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Source: runtimefacade.TokenSourceAgent, RunID: "",
-	})
-	if err != nil {
-		if r.configDB != nil {
-			_ = r.configDB.RevokeLLMFacadeTokensForSandbox(context.WithoutCancel(ctx), session.Summary.ID)
-		}
-		return err
-	}
 	// Seed private directories before publishing per-run managed files. In
 	// particular, a later home archive must not replace the canonical skills
 	// publication or materialize the provider projection a second time.
@@ -233,8 +236,15 @@ func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, sessio
 		}
 		return err
 	}
+	// A sandbox start, a release resume, and a run all decide direct versus
+	// managed from the same declaration: the provider environment the sandbox
+	// carries plus the definition it was prepared for.
+	var definitionEnvItems []domain.SandboxEnvVar
+	if definition != nil {
+		definitionEnvItems = definition.EnvItems
+	}
 	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, runtimefacade.SessionFacadeConfigRequest{
-		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent.Provider, Model: agent.Model, Source: "session", RunID: "",
+		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent.Provider, Model: agent.Model, AgentEnv: session.DeclaredProviderEnv(definitionEnvItems), Source: "session", RunID: "",
 	})
 	if err != nil {
 		if r.configDB != nil {
@@ -253,9 +263,6 @@ func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, sessio
 			_ = r.configDB.RevokeLLMFacadeTokensForSandbox(context.WithoutCancel(ctx), session.Summary.ID)
 		}
 		return err
-	}
-	if len(startupEnv) > 0 {
-		session.RuntimeEnvItems = domain.MergeEnvItems(session.RuntimeEnvItems, llms.EnvItemsFromMap(startupEnv, true))
 	}
 	if len(managedEnv) > 0 {
 		session.RuntimeEnvItems = domain.MergeEnvItems(session.RuntimeEnvItems, llms.EnvItemsFromMap(managedEnv, true))

@@ -20,6 +20,7 @@ import (
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	"github.com/chaitin/agent-compose/pkg/internal/testutil"
+	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
@@ -657,6 +658,16 @@ func newTestSandboxRPCBridge(t *testing.T) (*SandboxRPCBridge, *fakeRPCSandboxDr
 		Dashboard:        nil,
 		AgentExecutor:    agentExecutor,
 	}), driver
+}
+
+// projectTestDaemonLLMConfig materializes a test bridge's configured daemon LLM
+// environment into its catalog, the way app startup does before preparing any
+// agent.
+func projectTestDaemonLLMConfig(t *testing.T, ctx context.Context, bridge *SandboxRPCBridge) {
+	t.Helper()
+	if err := llms.ProjectDaemonLLMConfig(ctx, bridge.config, bridge.configDB); err != nil {
+		t.Fatalf("project daemon llm config: %v", err)
+	}
 }
 
 func TestSandboxRPCBridgeCapabilityGuideFromHTTPProvider(t *testing.T) {

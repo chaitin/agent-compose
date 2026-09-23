@@ -15,12 +15,20 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
+// promptAttachFacadeStore is the AgentLLMStore surface prompt attach needs: a
+// catalog snapshot plus the facade tokens it mints.
 type promptAttachFacadeStore struct {
 	ControllerStore
-	providers []llms.Provider
-	models    []llms.Model
-	tokens    []llms.FacadeToken
+	providers   []llms.Provider
+	models      []llms.Model
+	bindings    []llms.ProviderModelBinding
+	defProvider string
+	defModel    string
+	hasDefault  bool
+	tokens      []llms.FacadeToken
 }
+
+var _ llms.AgentLLMStore = (*promptAttachFacadeStore)(nil)
 
 func (s *promptAttachFacadeStore) UpsertDefaultLLMConfig(context.Context, llms.Provider, llms.Model) error {
 	return nil
@@ -32,6 +40,14 @@ func (s *promptAttachFacadeStore) ListEnabledLLMProviders(context.Context) ([]ll
 
 func (s *promptAttachFacadeStore) ListEnabledLLMModels(context.Context) ([]llms.Model, error) {
 	return s.models, nil
+}
+
+func (s *promptAttachFacadeStore) ListLLMProviderModelConfigs(context.Context) ([]llms.ProviderModelBinding, error) {
+	return s.bindings, nil
+}
+
+func (s *promptAttachFacadeStore) DefaultLLMModelReference(context.Context) (string, string, bool, error) {
+	return s.defProvider, s.defModel, s.hasDefault, nil
 }
 
 func (s *promptAttachFacadeStore) LLMProviderModelWireAPI(_ context.Context, providerID, _ string) (string, bool, error) {
@@ -50,6 +66,24 @@ func (s *promptAttachFacadeStore) SaveLLMFacadeToken(_ context.Context, token ll
 	return nil
 }
 
+// openAIFacadeStore serves gpt-test over responses from one connection and makes
+// it the catalog default.
+func openAIFacadeStore() *promptAttachFacadeStore {
+	return &promptAttachFacadeStore{
+		providers: []llms.Provider{{
+			ID:             "openai-test",
+			ProviderType:   llms.ProviderFamilyOpenAI,
+			DefaultWireAPI: llms.APIProtocolResponses,
+			BaseURL:        "https://openai.example.test/v1",
+			APIKey:         "openai-key",
+			Enabled:        true,
+		}},
+		models:      []llms.Model{{ID: "gpt-test", Name: "gpt-test", DefaultModel: true, Enabled: true}},
+		bindings:    []llms.ProviderModelBinding{{ProviderID: "openai-test", ModelID: "gpt-test"}},
+		defProvider: "openai-test", defModel: "gpt-test", hasDefault: true,
+	}
+}
+
 func TestEnsurePromptAttachLLMFacadeEnvClaudeUsesControllerStore(t *testing.T) {
 	ctx := context.Background()
 	config := &appconfig.Config{
@@ -65,7 +99,9 @@ func TestEnsurePromptAttachLLMFacadeEnvClaudeUsesControllerStore(t *testing.T) {
 			APIKey:         "anthropic-key",
 			Enabled:        true,
 		}},
-		models: []llms.Model{{ID: "claude-test", Name: "claude-test", DefaultModel: true, Enabled: true}},
+		models:      []llms.Model{{ID: "claude-test", Name: "claude-test", DefaultModel: true, Enabled: true}},
+		bindings:    []llms.ProviderModelBinding{{ProviderID: "anthropic-test", ModelID: "claude-test"}},
+		defProvider: "anthropic-test", defModel: "claude-test", hasDefault: true,
 	}
 	sandbox := &domain.Sandbox{
 		Summary: domain.SandboxSummary{
@@ -85,28 +121,22 @@ func TestEnsurePromptAttachLLMFacadeEnvClaudeUsesControllerStore(t *testing.T) {
 	if env["ANTHROPIC_BASE_URL"] != "http://agent-compose.test:7410/api/runtime/sandboxes/sandbox-claude-attach/llm/anthropic" {
 		t.Fatalf("ANTHROPIC_BASE_URL = %q", env["ANTHROPIC_BASE_URL"])
 	}
+	if env[llms.GuestModelEnvName] != "claude-test" {
+		t.Fatalf("Claude resolved model = %q", env[llms.GuestModelEnvName])
+	}
 	if env["AGENT_COMPOSE_SANDBOX_TOKEN"] == "" || len(store.tokens) != 1 {
 		t.Fatalf("Claude facade token env = %q, saved tokens = %#v", env["AGENT_COMPOSE_SANDBOX_TOKEN"], store.tokens)
 	}
 	token := store.tokens[0]
-	if token.SandboxID != sandbox.Summary.ID || token.Source != "agent" || token.RunID != "run-claude-attach" {
+	if token.SandboxID != sandbox.Summary.ID || token.Source != "agent" || token.RunID != "run-claude-attach" ||
+		token.ProviderID != "anthropic-test" || token.Model != "claude-test" || token.WireAPI != llms.APIProtocolMessages {
 		t.Fatalf("stored token = %#v", token)
 	}
 }
 
 func TestEnsurePromptAttachLLMFacadeEnvRejectsManagedCodexWithoutReachableFacade(t *testing.T) {
 	isolatePromptAttachLLMEnv(t)
-	store := &promptAttachFacadeStore{
-		providers: []llms.Provider{{
-			ID:             "openai-test",
-			ProviderType:   llms.ProviderFamilyOpenAI,
-			DefaultWireAPI: llms.APIProtocolResponses,
-			BaseURL:        "https://openai.example.test/v1",
-			APIKey:         "openai-key",
-			Enabled:        true,
-		}},
-		models: []llms.Model{{ID: "gpt-test", Name: "gpt-test", DefaultModel: true, Enabled: true}},
-	}
+	store := openAIFacadeStore()
 	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-codex-no-facade", Driver: driver.RuntimeDriverDocker}}
 	controller := &Controller{
 		config:   &appconfig.Config{HttpListen: "127.0.0.1:7410", GuestHomePath: "/root"},
@@ -127,74 +157,6 @@ func TestEnsurePromptAttachLLMFacadeEnvRejectsManagedCodexWithoutReachableFacade
 	}
 }
 
-func TestEnsurePromptAttachClaudeLLMFacadeEnvPreservesRequestedModelWithoutConfiguredProvider(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key")
-	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
-	t.Setenv("LLM_API_KEY", "")
-
-	store := &promptAttachFacadeStore{}
-	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-claude-attach"}}
-	env, err := ensurePromptAttachClaudeLLMFacadeEnv(
-		context.Background(),
-		promptAttachFacadeTarget{
-			Config:  &appconfig.Config{RuntimeBaseURL: "http://agent-compose.test:7410"},
-			Store:   store,
-			Sandbox: sandbox,
-		},
-		" claude-sonnet-4-20250514 ",
-		"run-claude-attach",
-	)
-	if err != nil {
-		t.Fatalf("ensurePromptAttachClaudeLLMFacadeEnv returned error: %v", err)
-	}
-	if env["ANTHROPIC_MODEL"] != "claude-sonnet-4-20250514" || env["CLAUDE_MODEL"] != "claude-sonnet-4-20250514" {
-		t.Fatalf("Claude model env = %#v", env)
-	}
-	if len(store.tokens) != 1 || store.tokens[0].Model != "claude-sonnet-4-20250514" {
-		t.Fatalf("saved tokens = %#v", store.tokens)
-	}
-}
-
-// Prompt attach dispatches claude's declaration through the same resolver as
-// the session facade, so an unknown connection prefix must fail here too instead
-// of publishing a managed token that sends the connection id upstream as the
-// model name.
-func TestEnsurePromptAttachClaudeLLMFacadeEnvRejectsUnknownConnectionPrefix(t *testing.T) {
-	isolatePromptAttachLLMEnv(t)
-	store := &promptAttachFacadeStore{
-		providers: []llms.Provider{{
-			ID:             "anthropic-test",
-			ProviderType:   llms.ProviderFamilyAnthropic,
-			DefaultWireAPI: llms.APIProtocolMessages,
-			BaseURL:        "https://anthropic.example.test",
-			APIKey:         "anthropic-key",
-			Enabled:        true,
-		}},
-		models: []llms.Model{{ID: "claude-test", Name: "claude-test", DefaultModel: true, Enabled: true}},
-	}
-	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-claude-unknown-connection"}}
-
-	env, err := ensurePromptAttachClaudeLLMFacadeEnv(
-		context.Background(),
-		promptAttachFacadeTarget{
-			Config:  &appconfig.Config{RuntimeBaseURL: "http://agent-compose.test:7410"},
-			Store:   store,
-			Sandbox: sandbox,
-		},
-		"matrix-chat/deepseek-flash",
-		"run-claude-unknown-connection",
-	)
-	if !errors.Is(err, domain.ErrFailedPrecondition) {
-		t.Fatalf("err = %v, want failed precondition", err)
-	}
-	if !strings.Contains(err.Error(), `llm provider "matrix-chat" is not configured`) {
-		t.Fatalf("err = %v, want the unknown connection named", err)
-	}
-	if len(env) != 0 || len(store.tokens) != 0 {
-		t.Fatalf("facade env = %#v, tokens = %#v; want no partial configuration", env, store.tokens)
-	}
-}
-
 func TestEnsurePromptAttachLLMFacadeEnvOpenCodeUsesSharedRuntimeConfig(t *testing.T) {
 	isolatePromptAttachLLMEnv(t)
 	root := t.TempDir()
@@ -202,17 +164,7 @@ func TestEnsurePromptAttachLLMFacadeEnvOpenCodeUsesSharedRuntimeConfig(t *testin
 		RuntimeBaseURL: "http://agent-compose.test:7410",
 		GuestHomePath:  "/root",
 	}
-	store := &promptAttachFacadeStore{
-		providers: []llms.Provider{{
-			ID:             "openai-test",
-			ProviderType:   llms.ProviderFamilyOpenAI,
-			DefaultWireAPI: llms.APIProtocolResponses,
-			BaseURL:        "https://openai.example.test/v1",
-			APIKey:         "openai-key",
-			Enabled:        true,
-		}},
-		models: []llms.Model{{ID: "gpt-test", Name: "gpt-test", DefaultModel: true, Enabled: true}},
-	}
+	store := openAIFacadeStore()
 	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{
 		ID:            "sandbox-opencode-attach",
 		Driver:        driver.RuntimeDriverDocker,
@@ -223,7 +175,7 @@ func TestEnsurePromptAttachLLMFacadeEnvOpenCodeUsesSharedRuntimeConfig(t *testin
 	env, err := controller.ensurePromptAttachLLMFacadeEnv(
 		context.Background(),
 		sandbox,
-		execution.AgentConfig{Provider: "opencode", Model: "openai/gpt-test"},
+		execution.AgentConfig{Provider: "opencode", Model: "gpt-test"},
 		"run-opencode-attach",
 	)
 	if err != nil {
@@ -284,17 +236,7 @@ func TestEnsurePromptAttachLLMFacadeEnvPiUsesSharedRuntimeConfig(t *testing.T) {
 		RuntimeBaseURL: "http://agent-compose.test:7410",
 		GuestHomePath:  "/root",
 	}
-	store := &promptAttachFacadeStore{
-		providers: []llms.Provider{{
-			ID:             "openai-test",
-			ProviderType:   llms.ProviderFamilyOpenAI,
-			DefaultWireAPI: llms.APIProtocolResponses,
-			BaseURL:        "https://openai.example.test/v1",
-			APIKey:         "openai-key",
-			Enabled:        true,
-		}},
-		models: []llms.Model{{ID: "gpt-test", Name: "gpt-test", DefaultModel: true, Enabled: true}},
-	}
+	store := openAIFacadeStore()
 	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{
 		ID:            "sandbox-pi-attach",
 		Driver:        driver.RuntimeDriverDocker,
@@ -305,7 +247,7 @@ func TestEnsurePromptAttachLLMFacadeEnvPiUsesSharedRuntimeConfig(t *testing.T) {
 	env, err := controller.ensurePromptAttachLLMFacadeEnv(
 		context.Background(),
 		sandbox,
-		execution.AgentConfig{Provider: "pi", Model: "openai-test/gpt-test"},
+		execution.AgentConfig{Provider: "pi", Model: "gpt-test"},
 		"run-pi-attach",
 	)
 	if err != nil {
@@ -313,6 +255,9 @@ func TestEnsurePromptAttachLLMFacadeEnvPiUsesSharedRuntimeConfig(t *testing.T) {
 	}
 	if env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses || env["PI_CODING_AGENT_DIR"] != "/root/.pi/agent" {
 		t.Fatalf("Pi facade env = %#v", env)
+	}
+	if env[llms.GuestModelEnvName] != "agent-compose/gpt-test" {
+		t.Fatalf("Pi resolved model = %q", env[llms.GuestModelEnvName])
 	}
 	if env["AGENT_COMPOSE_SANDBOX_TOKEN"] == "" || len(store.tokens) != 1 {
 		t.Fatalf("Pi token env = %q, saved tokens = %#v", env["AGENT_COMPOSE_SANDBOX_TOKEN"], store.tokens)
@@ -332,36 +277,24 @@ func TestEnsurePromptAttachLLMFacadeEnvPiUsesSharedRuntimeConfig(t *testing.T) {
 }
 
 // TestEnsurePromptAttachLLMFacadeEnvDshMintsRunScopedFacade guards the pairing
-// between promptAttachProviders and this switch: dsh is an accepted attach
-// provider, so it must also get a facade environment here. The env
-// EnsureDshFacadeConfig builds is per-exec and never persisted onto the
-// sandbox, so a missing case leaves the guest with no endpoint, no token and
-// no model — the profile falls back to its hardcoded default and the turn
-// fails.
+// between promptAttachProviders and the shared facade entry point: dsh is an
+// accepted attach provider, so it must also get a facade environment here. That
+// environment is per-exec and never persisted onto the sandbox, so a missing
+// case leaves the guest with no endpoint, no token and no model.
 func TestEnsurePromptAttachLLMFacadeEnvDshMintsRunScopedFacade(t *testing.T) {
 	isolatePromptAttachLLMEnv(t)
 	config := &appconfig.Config{
 		RuntimeBaseURL: "http://agent-compose.test:7410",
 		GuestHomePath:  "/root",
 	}
-	store := &promptAttachFacadeStore{
-		providers: []llms.Provider{{
-			ID:             "openai-test",
-			ProviderType:   llms.ProviderFamilyOpenAI,
-			DefaultWireAPI: llms.APIProtocolResponses,
-			BaseURL:        "https://openai.example.test/v1",
-			APIKey:         "openai-key",
-			Enabled:        true,
-		}},
-		models: []llms.Model{{ID: "gpt-test", Name: "gpt-test", DefaultModel: true, Enabled: true}},
-	}
+	store := openAIFacadeStore()
 	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-dsh-attach", Driver: driver.RuntimeDriverDocker}}
 	controller := &Controller{config: config, configDB: store}
 
 	env, err := controller.ensurePromptAttachLLMFacadeEnv(
 		context.Background(),
 		sandbox,
-		execution.AgentConfig{Provider: "dsh", Model: "openai-test/gpt-test"},
+		execution.AgentConfig{Provider: "dsh", Model: "gpt-test"},
 		"run-dsh-attach",
 	)
 	if err != nil {
@@ -388,14 +321,8 @@ func TestEnsurePromptAttachLLMFacadeEnvDshMintsRunScopedFacade(t *testing.T) {
 // environment, or its guest starts with no LLM credentials at all.
 func TestPromptAttachProvidersAllHaveFacadeCases(t *testing.T) {
 	isolatePromptAttachLLMEnv(t)
-	store := &promptAttachFacadeStore{
-		providers: []llms.Provider{
-			{ID: "openai-test", ProviderType: llms.ProviderFamilyOpenAI, DefaultWireAPI: llms.APIProtocolResponses, BaseURL: "https://openai.example.test/v1", APIKey: "openai-key", Enabled: true},
-			{ID: "anthropic-test", ProviderType: llms.ProviderFamilyAnthropic, DefaultWireAPI: llms.APIProtocolMessages, BaseURL: "https://anthropic.example.test", APIKey: "anthropic-key", Enabled: true},
-		},
-		models: []llms.Model{{ID: "gpt-test", Name: "gpt-test", DefaultModel: true, Enabled: true}},
-	}
-	models := map[string]string{"codex": "gpt-test", "claude": "", "opencode": "openai/gpt-test", "pi": "openai-test/gpt-test", "dsh": "openai-test/gpt-test"}
+	store := openAIFacadeStore()
+	models := map[string]string{"codex": "gpt-test", "claude": "", "opencode": "gpt-test", "pi": "gpt-test", "dsh": "gpt-test"}
 	for provider := range promptAttachProviders {
 		root := t.TempDir()
 		sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{
@@ -422,24 +349,16 @@ func TestPromptAttachProvidersAllHaveFacadeCases(t *testing.T) {
 	}
 }
 
-// The start frame's model becomes opencode's --model, which overrides the
-// OPENCODE_MODEL env the facade just exported. It therefore has to carry the
-// facade's namespace-corrected model, not the agent-compose provider/model pair
-// the agent configured — opencode has no entry for the latter and exits without
-// reporting why.
-// The runner must address the model the facade resolved, which resolution may
-// have rewritten: a <connection>/<model> prefix is stripped, a catalog or
-// bootstrap default supplies a model the agent never declared, and opencode
-// addresses models through the provider key written into its config.
+// The start frame's model becomes the agent's --model, which overrides the model
+// variable the facade just exported. It therefore has to carry the facade's
+// resolved reference: pi and opencode address models through the provider key
+// written into their config, so the runner must forward the namespaced value
+// rather than the configured one.
 func TestPromptAttachRuntimeModelUsesFacadeResolvedModel(t *testing.T) {
 	managedEnv := map[string]string{llms.GuestModelEnvName: "agent-compose/gpt-test"}
 	for _, provider := range []string{"codex", "claude", "opencode", "pi", "dsh"} {
-		agent := execution.AgentConfig{Provider: provider, Model: "openai/gpt-test"}
-		want := "agent-compose/gpt-test"
-		if provider == "dsh" {
-			want = "agent-compose/agent-compose/gpt-test"
-		}
-		if model := promptAttachRuntimeModel(agent, managedEnv); model != want {
+		agent := execution.AgentConfig{Provider: provider, Model: "gpt-test"}
+		if model := promptAttachRuntimeModel(agent, managedEnv); model != "agent-compose/gpt-test" {
 			t.Fatalf("%s runtime model = %q, want the facade-resolved model", provider, model)
 		}
 	}

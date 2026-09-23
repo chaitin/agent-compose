@@ -17,6 +17,17 @@ func boolPtr(value bool) *bool {
 	return &value
 }
 
+// resolveProviderTarget resolves one (connection, opaque model) pair through the
+// catalog snapshot the store feeds, mirroring the request path. The connection
+// is named outright, so no protocol preference applies.
+func resolveProviderTarget(ctx context.Context, store *ConfigStore, connectionID, model string) (llms.ResolvedTarget, error) {
+	snapshot, err := llms.LoadCatalog(ctx, store)
+	if err != nil {
+		return llms.ResolvedTarget{}, err
+	}
+	return snapshot.Resolve(connectionID, model, nil)
+}
+
 func TestIntegrationManagedProviderLifecycleAndRouting(t *testing.T) {
 	clearLLMTestEnvironment(t)
 	ctx := context.Background()
@@ -47,7 +58,7 @@ func TestIntegrationManagedProviderLifecycleAndRouting(t *testing.T) {
 	}
 	resolve := func() llms.ResolvedTarget {
 		t.Helper()
-		target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{RequestedModel: "gateway/literal/model"})
+		target, err := resolveProviderTarget(ctx, store, "gateway", "literal/model")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -90,7 +101,7 @@ func TestIntegrationManagedProviderLifecycleAndRouting(t *testing.T) {
 	if _, err := store.UpdateLLMProvider(ctx, input); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{RequestedModel: "gateway/literal/model"}); err == nil {
+	if _, err := resolveProviderTarget(ctx, store, "gateway", "literal/model"); err == nil {
 		t.Fatal("disabled provider routed a request")
 	}
 	listed, err := store.ListManagedLLMProviders(ctx)
@@ -235,7 +246,7 @@ func TestIntegrationManagedProviderServesBareModel(t *testing.T) {
 	// No bootstrap LLM_* configuration and no models.json catalog: the provider
 	// RPC is the only configured upstream. A bare model name must still resolve,
 	// which is what makes "configure with RPC, then run" work end to end.
-	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{RequestedModel: "qwen3-8b"})
+	target, err := resolveProviderTarget(ctx, store, "", "qwen3-8b")
 	if err != nil {
 		t.Fatalf("bare model did not resolve against the configured provider: %v", err)
 	}
@@ -243,16 +254,21 @@ func TestIntegrationManagedProviderServesBareModel(t *testing.T) {
 		t.Fatalf("target = %#v, want gateway/qwen3-8b over chat completions", target)
 	}
 
-	// A second configured connection makes the bare model ambiguous instead of
-	// silently picking one; the qualified form still routes explicitly.
+	// A second configured connection serving the same protocol makes the bare
+	// model a choice between two equivalent connections. Either of them may
+	// serve it, and naming one still routes explicitly.
 	second := "second-key"
 	if _, err := store.CreateLLMProvider(ctx, llms.ProviderReplacement{ID: "other", BaseURL: "https://other.example/v1", Protocol: llms.APIProtocolChatCompletions, APIKey: &second, Enabled: boolPtr(true)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{RequestedModel: "qwen3-8b"}); err == nil {
-		t.Fatal("ambiguous bare model resolved without an error")
+	equivalent, err := resolveProviderTarget(ctx, store, "", "qwen3-8b")
+	if err != nil {
+		t.Fatalf("bare model did not resolve against two equivalent providers: %v", err)
 	}
-	qualified, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{RequestedModel: "other/qwen3-8b"})
+	if equivalent.Provider.ID != "gateway" && equivalent.Provider.ID != "other" {
+		t.Fatalf("equivalent target = %#v, want one of the two configured connections", equivalent)
+	}
+	qualified, err := resolveProviderTarget(ctx, store, "other", "qwen3-8b")
 	if err != nil {
 		t.Fatalf("qualified model did not resolve: %v", err)
 	}
@@ -278,7 +294,7 @@ func TestIntegrationManagedProviderAuthPresentation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	defaultTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{RequestedModel: "messages/claude-sonnet"})
+	defaultTarget, err := resolveProviderTarget(ctx, store, "messages", "claude-sonnet")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +308,7 @@ func TestIntegrationManagedProviderAuthPresentation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	bearerTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{RequestedModel: "bearer/claude-sonnet"})
+	bearerTarget, err := resolveProviderTarget(ctx, store, "bearer", "claude-sonnet")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +330,7 @@ func TestIntegrationManagedProviderAuthPresentation(t *testing.T) {
 	if updated.BaseURL != "https://messages.example" || updated.APIKey != key || updated.AuthHeader != "Authorization" || updated.AuthScheme != "Bearer" {
 		t.Fatalf("updated = %#v", updated)
 	}
-	updatedTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{RequestedModel: "messages/claude-sonnet"})
+	updatedTarget, err := resolveProviderTarget(ctx, store, "messages", "claude-sonnet")
 	if err != nil {
 		t.Fatal(err)
 	}

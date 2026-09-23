@@ -503,7 +503,7 @@ agents:
 | `display_name` | string | Empty | Human-readable agent label. |
 | `description` | string | Empty | Human-readable explanation of the agent's role. |
 | `provider` | string | `codex` | Agent provider: `codex`, `claude`, `gemini`, `opencode`, `pi`, or `dsh`. Compatibility aliases are normalized at persistence boundaries. |
-| `model` | string | Provider/daemon default | Model name. Pi, opencode, and dsh accept an optional `<llm-provider-id>/` prefix; without it the daemon's default connection resolves the model. Supports `${NAME}` interpolation. |
+| `model` | string | Daemon default model | Opaque model name. Omitting it selects the daemon's default model. Supports `${NAME}` interpolation. |
 | `system_prompt` | string | Empty | Additional system instructions; YAML block scalars are recommended for multiline text. |
 | `image` | string | Daemon default image | Guest image reference and an output tag when `build` is used. |
 | `build` | string/object | None | Image build configuration used by `agent-compose build`. |
@@ -532,18 +532,18 @@ agents:
 
 Canonical providers are `codex`, `claude`, `gemini`, `opencode`, `pi`, and `dsh`. Compatibility normalization also accepts `claude-code` / `claude_code`, `gemini-cli` / `gemini_cli`, `open-code` / `open_code`, `pi-agent` / `pi_agent`, and `deepseek` / `deepseek-harness` / `deepseek_harness`; new files should use canonical names.
 
-Pi and dsh are multi-model agents, so their model must identify both the configured LLM provider and model, for example:
+Pi, dsh, and opencode are multi-model agents, so their model is worth declaring explicitly:
 
 ```yaml
 agents:
   reviewer:
     provider: pi
-    model: openai/gpt-5.4
+    model: gpt-5.4
 ```
 
-The part before the first slash is an LLM provider ID configured in agent-compose; the entire remainder is the literal upstream model ID and may contain additional slashes. Pi and dsh model traffic is routed through the sandbox runtime LLM facade, so upstream credentials remain on the daemon.
+The model stays opaque: the daemon never splits it in order to select an upstream. Which connection serves it is daemon configuration — the connections that declare the model, the default model's owning connection, or the only configured connection. When several connections could serve one model, the daemon prefers a connection the agent can speak natively, so the call is passed through instead of converted; connections that speak the same protocol are interchangeable and one is chosen at random, so several upstreams offering the same model never fail a run. For pi, dsh, and opencode the daemon composes the `<llm-provider-id>/<model>` reference those CLIs expect from the selected connection, so the compose file never writes one. The retired `model: <connection>/<model>` form is rejected when its prefix names a connection that serves the remainder.
 
-An Agent-level `LLM_API_*` environment is the higher-priority compatibility path, and the model it injects may itself be a qualified name (for example a gateway that publishes `<provider>/<model>` logical names). A model declaration that repeats exactly that injected value is therefore resolved verbatim instead of being split at its first slash, so the qualified name reaches the upstream intact. Any other declaration keeps the behavior above: its prefix selects the route and the remainder is the literal upstream model ID.
+An Agent-level `LLM_API_*` environment is the higher-priority compatibility path: an agent that publishes its own upstream is served by it, and the model it injects may itself be a qualified name (for example a gateway that publishes `<provider>/<model>` logical names). Such a value reaches the upstream verbatim.
 
 ### Daemon `models.json`
 
@@ -600,23 +600,16 @@ For example, call `CreateProvider` using Connect JSON:
 ```
 
 The request path is `/agentcompose.v2.LLMService/CreateProvider`, using existing
-daemon API authentication. Then set an Agent model to `team-gateway/model-id`;
-models do not need to be enumerated. A bare `model-id` resolves to the daemon
-default connection: the reserved bootstrap connection (`default`/`anthropic`)
-wins, otherwise the only configured connection is used, and several connections
-without a reserved one are reported as an ambiguity. Qualify the model as
-`<connection>/<model-id>` to select a connection explicitly. An Agent model value
-that carries a `/` is such a reference: a literal upstream model id that itself
-contains slashes is written with its connection (for example
-`team-gateway/meta-llama/Llama-3.1-8B-Instruct`). A prefix that names no
-configured connection, family alias, or session-environment provider is reported
-as a configuration error instead of being forwarded upstream as part of the model
-name. This is a behavior change for codex and claude: a declaration that wrote a
-slash-containing model id verbatim and relied on the default connection (for
-example `meta-llama/Llama-3.1-8B-Instruct`) now fails with
-`llm provider "meta-llama" is not configured`; rewrite it with the connection
-that serves the model (`team-gateway/meta-llama/Llama-3.1-8B-Instruct`). Other
-methods share the service path prefix.
+daemon API authentication. Then point an Agent at the model with its bare `model`
+value (for example `model-id`); models do not need to be enumerated. The daemon
+picks the connection: a model the created connection declares is served by it,
+otherwise the default model's owning connection or the only configured connection
+is used. Several connections serving one model are not an error — the daemon
+prefers one the agent can speak natively and otherwise picks among them. Do not
+write `<connection>/<model-id>`: that form is retired and rejected when its prefix
+names a connection that serves the remainder. A slash-containing upstream model
+id (for example `meta-llama/Llama-3.1-8B-Instruct`) is still forwarded verbatim.
+Other methods share the service path prefix.
 
 - IDs are immutable, 1–128 ASCII letters, digits, dots, underscores or hyphens,
   starting with a letter or digit. `default`, `anthropic`, and session environment

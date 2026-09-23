@@ -504,7 +504,7 @@ agents:
 | `display_name` | string | 空 | Agent 的可读显示名称。 |
 | `description` | string | 空 | Agent 职责的可读说明。 |
 | `provider` | string | `codex` | Agent CLI/provider：`codex`、`claude`、`gemini`、`opencode`、`pi` 或 `dsh`。兼容别名会在持久化边界归一化。 |
-| `model` | string | provider/daemon 默认 | 模型名；Pi、opencode 和 dsh 可选的 `<llm-provider-id>/` 前缀，省略时由 daemon 的默认 Connection 解析该模型；支持 `${NAME}` 插值。 |
+| `model` | string | daemon 默认模型 | 不透明的模型名；省略时使用 daemon 的默认模型；支持 `${NAME}` 插值。 |
 | `system_prompt` | string | 空 | 附加的系统提示，适合使用 YAML `|` 多行标量。 |
 | `image` | string | daemon 默认镜像 | Guest 镜像引用，也会作为 `build` 的一个输出 tag。 |
 | `build` | string/object | 无 | `agent-compose build` 使用的镜像构建配置。 |
@@ -533,18 +533,18 @@ agents:
 
 Provider 支持 `codex`、`claude`、`gemini`、`opencode`、`pi` 和 `dsh`。当前兼容归一化还接受 `claude-code` / `claude_code`、`gemini-cli` / `gemini_cli`、`open-code` / `open_code`、`pi-agent` / `pi_agent`、`deepseek` / `deepseek-harness` / `deepseek_harness`，新配置建议使用规范名称。
 
-Pi 和 dsh 是多模型 Agent，因此 model 必须同时标识已配置的 LLM provider 和模型，例如：
+Pi、dsh 和 opencode 是多模型 Agent，建议显式声明其模型：
 
 ```yaml
 agents:
   reviewer:
     provider: pi
-    model: openai/gpt-5.4
+    model: gpt-5.4
 ```
 
-第一个 `/` 前的部分是 agent-compose 中配置的 LLM Provider ID，后面的全部内容是发送给上游的字面量 Model ID，Model ID 本身还可以包含 `/`。Pi 和 dsh 的模型流量都通过 sandbox runtime LLM facade 转发，上游凭据仍只保留在 daemon 中。
+model 始终是不透明的：daemon 不会为了选择上游而拆分它。由哪个 Connection 提供该模型属于 daemon 配置——声明该模型的 Connection、默认模型所属的 Connection，或唯一已配置的 Connection。当多个 Connection 都可能提供同一个模型时，daemon 优先选择该 Agent 能原生使用的协议，从而透传而非转换；协议相同的 Connection 彼此等价，会随机选择其中一个，因此多个上游提供同一模型不会导致运行失败。对 pi、dsh 和 opencode，daemon 会根据选中的 Connection 组合出这些 CLI 需要的 `<llm-provider-id>/<model>` 引用，因此 compose 文件不需要写该前缀。已废弃的 `model: <connection>/<model>` 写法在其前缀是指向该剩余部分的 Connection 时会被拒绝。
 
-Agent 级 `LLM_API_*` 环境是优先级更高的兼容路径，它注入的模型本身也可能是一个限定名（例如网关发布 `<provider>/<model>` 形式的逻辑名）。因此，当 Agent 的 model 声明与该注入值完全一致时，会按原值解析，而不会在第一个 `/` 处拆分，使限定名完整到达上游。其他声明仍保持上述行为：前缀选择路由，其余部分是字面量上游 Model ID。
+Agent 级 `LLM_API_*` 环境是优先级更高的兼容路径：自行发布上游的 Agent 由它提供服务，它注入的模型本身也可能是限定名（例如网关发布 `<provider>/<model>` 形式的逻辑名），此类值会原样到达上游。
 
 ### Daemon `models.json`
 
@@ -600,19 +600,13 @@ API Key，与 Agent 的 `provider: codex` / `provider: pi` 无关。
 ```
 
 请求路径为 `/agentcompose.v2.LLMService/CreateProvider`，使用现有 daemon API
-鉴权。随后可以在 Agent 的 `model` 中设置 `team-gateway/model-id`，无需枚举模型。
-直接写 `model-id` 时由 daemon 默认 Connection 解析：保留的 bootstrap Connection
-（`default`/`anthropic`）优先，否则使用唯一已配置的 Connection；存在多个候选且
-无保留 Connection 时报告歧义。用 `<connection>/<model-id>` 可显式选择 Connection。
-含 `/` 的 Agent model 值就是这种引用：本身包含斜杠的字面上游模型 ID 需要连同
-Connection 一起书写（例如 `team-gateway/meta-llama/Llama-3.1-8B-Instruct`）。
-前缀不对应任何已配置 Connection、协议族别名或会话环境 Provider 时，会作为配置错误
-上报，而不会把连接 ID 当作模型名的一部分转发给上游。这是 codex 与 claude 的行为变更：
-此前把含斜杠的模型 ID 整串写在 model 中、依赖默认 Connection 的声明（例如
-`meta-llama/Llama-3.1-8B-Instruct`）现在会报
-`llm provider "meta-llama" is not configured`，需要改写为
-`team-gateway/meta-llama/Llama-3.1-8B-Instruct` 这种显式带上 Connection 的写法。
-其他方法使用同样的服务路径前缀。
+鉴权。随后在 Agent 的 `model` 中直接写模型名（例如 `model-id`）即可，无需枚举模型。
+Connection 由 daemon 选择：新建 Connection 声明了该模型时由它提供，否则使用默认模型
+所属的 Connection 或唯一已配置的 Connection。多个 Connection 提供同一模型不是错误——
+daemon 优先选择该 Agent 能原生使用的协议，否则在其中随机选择。不要写
+`<connection>/<model-id>`：该写法已废弃，当前缀对应的 Connection 提供了剩余部分时会
+被拒绝。本身包含斜杠的字面上游模型 ID（例如 `meta-llama/Llama-3.1-8B-Instruct`）
+仍会原样转发。其他方法使用同样的服务路径前缀。
 
 - `id` 不可修改，支持 1–128 个 ASCII 字母、数字、点、下划线和连字符，首位必须是
   字母或数字；`default`、`anthropic` 以及 session 环境 ID 保留给 daemon。

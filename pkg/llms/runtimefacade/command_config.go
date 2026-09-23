@@ -11,8 +11,8 @@ import (
 )
 
 // CommandFacadeStore adds precise token deletion to the normal facade store.
-// A command can create multiple family-specific tokens before it starts, so
-// cleanup must target exactly the tokens created by that command.
+// A command obtains one run-scoped facade token before it starts, so cleanup
+// must target exactly the token created by that command.
 type CommandFacadeStore interface {
 	FacadeStore
 	DeleteLLMFacadeTokenHash(context.Context, string) error
@@ -46,14 +46,24 @@ type CommandFacadeConfigRequest struct {
 	Session *domain.Sandbox
 	Agent   string
 	Model   string
-	Source  string
-	RunID   string
+	// AgentEnv is the provider environment this command declares for the agent:
+	// the sandbox's own provider environment plus the command's. It decides
+	// whether the agent owns its upstream, exactly as it does for a sandbox
+	// start, a run, and an attached prompt.
+	AgentEnv []domain.SandboxEnvVar
+	Source   string
+	RunID    string
 }
 
-// EnsureSessionCommandFacadeConfig reconstructs the transient facade
-// environment on the command's in-memory Sandbox clone. Startup family
-// variables are applied first and the selected agent variables are applied
-// last, so the selected provider remains authoritative for overlapping names.
+// EnsureSessionCommandFacadeConfig prepares the managed LLM configuration of
+// the command's selected agent on the command's in-memory Sandbox clone.
+//
+// The selected agent determines the dialect and the catalog supplies the
+// connection, so there is exactly one preparation. Earlier revisions also
+// provisioned a startup facade for both provider families before the agent was
+// known; that belonged to the retired resolver stack, where an agent could be
+// served by either family depending on the environment. PrepareAgentLLM decides
+// that once, for the agent this command actually names.
 //
 // Any failure removes every token successfully persisted by this invocation.
 // Successful callers own the returned token hashes until command termination.
@@ -79,31 +89,17 @@ func EnsureSessionCommandFacadeConfig(ctx context.Context, req CommandFacadeConf
 		returnErr = errors.Join(returnErr, cleanupErr)
 	}()
 
-	startupEnv, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{
-		Config: config, Store: tracker, Session: session, Source: source, RunID: runID,
+	prepared, err := llms.PrepareAgentLLM(ctx, llms.AgentLLMRequest{
+		Config: config, Store: tracker, Sandbox: session, AgentKind: agent, Model: model, AgentEnv: req.AgentEnv, Source: source, RunID: runID,
 	})
 	if err != nil {
+		if llms.IsUnmanagedAgentLLMError(err) {
+			return CommandFacadeConfig{}, nil
+		}
 		return CommandFacadeConfig{}, err
-	}
-	selectedEnv, err := EnsureSessionLLMFacadeConfig(ctx, SessionFacadeConfigRequest{
-		Config: config, Store: tracker, Session: session, Agent: agent, Model: model, Source: source, RunID: runID,
-	})
-	if err != nil {
-		return CommandFacadeConfig{}, err
-	}
-
-	managedEnv := make(map[string]string, len(startupEnv)+len(selectedEnv))
-	for name, value := range startupEnv {
-		managedEnv[name] = value
-	}
-	for name, value := range selectedEnv {
-		managedEnv[name] = value
-	}
-	if len(managedEnv) == 0 {
-		managedEnv = nil
 	}
 	return CommandFacadeConfig{
-		Env:         managedEnv,
+		Env:         prepared.Env,
 		TokenHashes: append([]string(nil), tracker.tokenHashes...),
 	}, nil
 }

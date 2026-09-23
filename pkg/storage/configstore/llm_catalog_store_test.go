@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/llms"
 )
 
@@ -32,11 +31,9 @@ func TestIntegrationLoadApplyAndResolveModelCatalogProtocolOverrides(t *testing.
 		t.Fatalf("ApplyModelCatalog: %v", err)
 	}
 
-	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{
-		Config: nil, SessionID: "", PreferredProviderFamily: "", RequestedModel: "gateway/chat-model", ProviderID: "", EnvItems: nil,
-	})
+	target, err := resolveCatalogModel(ctx, store, "chat-model")
 	if err != nil {
-		t.Fatalf("ResolveRuntimeLLMTargetWithEnv: %v", err)
+		t.Fatalf("resolveCatalogModel: %v", err)
 	}
 	if target.Provider.ID != "gateway" || target.Model.ID != "chat-model" || target.WireAPI != llms.APIProtocolChatCompletions {
 		t.Fatalf("resolved target = %#v", target)
@@ -74,27 +71,21 @@ func TestIntegrationApplyModelCatalogResolvesLiteralModelsDefaultsAndBehavior(t 
 	if err != nil || !ok || providerID != "baizhi" || modelID != "deepseek-v4-flash" {
 		t.Fatalf("default = %q/%q ok=%v err=%v", providerID, modelID, ok, err)
 	}
-	literal, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{
-		Config: nil, SessionID: "", PreferredProviderFamily: "", RequestedModel: "baizhi/upstream-only-model", ProviderID: "", EnvItems: nil,
-	})
+	literal, err := resolveCatalogModel(ctx, store, "upstream-only-model")
 	if err != nil {
 		t.Fatalf("resolve literal model: %v", err)
 	}
 	if literal.Model.ID != "upstream-only-model" || literal.MaxOutputTokens != 0 {
 		t.Fatalf("literal target = %#v", literal)
 	}
-	configured, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{
-		Config: nil, SessionID: "", PreferredProviderFamily: "", RequestedModel: "baizhi/deepseek-v4-flash", ProviderID: "", EnvItems: nil,
-	})
+	configured, err := resolveCatalogModel(ctx, store, "deepseek-v4-flash")
 	if err != nil {
 		t.Fatalf("resolve configured model: %v", err)
 	}
 	if configured.MaxOutputTokens != limit || configured.Provider.APIKey != apiKey {
 		t.Fatalf("configured target = %#v", configured)
 	}
-	defaultTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{
-		Config: nil, SessionID: "", PreferredProviderFamily: "", RequestedModel: "", ProviderID: "", EnvItems: nil,
-	})
+	defaultTarget, err := resolveCatalogModel(ctx, store, "")
 	if err != nil {
 		t.Fatalf("resolve catalog default: %v", err)
 	}
@@ -103,57 +94,18 @@ func TestIntegrationApplyModelCatalogResolvesLiteralModelsDefaultsAndBehavior(t 
 	}
 }
 
-func TestIntegrationDaemonEnvironmentDefaultWinsButExplicitCatalogProviderRemainsPinned(t *testing.T) {
-	clearLLMTestEnvironment(t)
-	ctx := context.Background()
-	store := FromDB(newMemoryDB(t))
-	if err := store.InitSchema(ctx); err != nil {
-		t.Fatal(err)
-	}
-	baseURL, protocol, apiKey := "https://gateway.example/v1", llms.APIProtocolResponses, "catalog-key"
-	if err := store.ApplyModelCatalog(ctx, llms.ModelCatalog{Default: "baizhi/catalog-model", Providers: map[string]llms.CatalogProvider{
-		"baizhi": {BaseURL: &baseURL, Protocol: &protocol, APIKey: &apiKey},
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	config := &appconfig.Config{LLMAPIEndpoint: "https://legacy.example/v1", LLMAPIProtocol: llms.APIProtocolResponses, LLMAPIKey: "legacy-key", LLMModel: "feature/gpt-5.6-sol"}
-	legacy, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{
-		Config: config, SessionID: "", PreferredProviderFamily: "", RequestedModel: "", ProviderID: "", EnvItems: nil,
-	})
+// resolveCatalogModel resolves one opaque model id through the catalog snapshot
+// the store feeds, mirroring the request path's SelectModel + Resolve pair.
+func resolveCatalogModel(ctx context.Context, store *ConfigStore, requested string) (llms.ResolvedTarget, error) {
+	snapshot, err := llms.LoadCatalog(ctx, store)
 	if err != nil {
-		t.Fatalf("resolve daemon environment default: %v", err)
+		return llms.ResolvedTarget{}, err
 	}
-	if legacy.Provider.ID != llms.ProviderIDDefaultOpenAI || legacy.Model.ID != "feature/gpt-5.6-sol" || legacy.Provider.APIKey != "legacy-key" {
-		t.Fatalf("daemon environment target = %#v", legacy)
-	}
-	explicit, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{
-		Config: config, SessionID: "", PreferredProviderFamily: "", RequestedModel: "baizhi/literal-model", ProviderID: "", EnvItems: nil,
-	})
+	model, err := snapshot.SelectModel(requested)
 	if err != nil {
-		t.Fatalf("resolve explicit catalog provider: %v", err)
+		return llms.ResolvedTarget{}, err
 	}
-	if explicit.Provider.ID != "baizhi" || explicit.Model.ID != "literal-model" || explicit.Provider.APIKey != apiKey {
-		t.Fatalf("explicit catalog target = %#v", explicit)
-	}
-}
-
-func TestIntegrationExplicitUnavailableCatalogProviderDoesNotFallBack(t *testing.T) {
-	clearLLMTestEnvironment(t)
-	ctx := context.Background()
-	store := FromDB(newMemoryDB(t))
-	if err := store.InitSchema(ctx); err != nil {
-		t.Fatal(err)
-	}
-	baseURL, protocol := "https://unavailable.example/v1", llms.APIProtocolResponses
-	if err := store.ApplyModelCatalog(ctx, llms.ModelCatalog{Providers: map[string]llms.CatalogProvider{"custom": {BaseURL: &baseURL, Protocol: &protocol}}}); err != nil {
-		t.Fatal(err)
-	}
-	_, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, store, llms.RuntimeLLMTargetQuery{
-		Config: &appconfig.Config{LLMAPIEndpoint: "https://daemon.example/v1", LLMAPIKey: "daemon-key", LLMModel: "daemon-model"}, SessionID: "", PreferredProviderFamily: "", RequestedModel: "custom/literal-model", ProviderID: "", EnvItems: nil,
-	})
-	if err == nil || !strings.Contains(err.Error(), `provider "custom"`) {
-		t.Fatalf("explicit unavailable provider error = %v", err)
-	}
+	return snapshot.Resolve("", model, llms.DefaultProtocolPreference())
 }
 
 func TestIntegrationApplyEmptyModelCatalogOnlyClearsCatalogOwnedState(t *testing.T) {
@@ -206,7 +158,7 @@ func TestIntegrationApplyEmptyModelCatalogOnlyClearsCatalogOwnedState(t *testing
 
 func TestIntegrationApplyModelCatalogRejectsNonCatalogProviderCollision(t *testing.T) {
 	clearLLMTestEnvironment(t)
-	for _, scope := range []string{llms.ProviderScopeSystem, llms.ProviderScopeEnvDefault, llms.ProviderScopeSessionEnv} {
+	for _, scope := range []string{llms.ProviderScopeSystem, llms.ProviderScopeEnvDefault, llms.ProviderScopeAPI} {
 		t.Run(scope, func(t *testing.T) {
 			ctx := context.Background()
 			store := FromDB(newMemoryDB(t))

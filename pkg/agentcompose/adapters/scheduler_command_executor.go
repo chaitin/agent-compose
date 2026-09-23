@@ -298,16 +298,19 @@ func (e *SchedulerCommandExecutor) prepareSchedulerCommandLLMFacadeEnv(ctx conte
 	execSession := *session
 	execSession.EnvItems = append([]domain.SandboxEnvVar(nil), session.EnvItems...)
 	execSession.RuntimeEnvItems = append([]domain.SandboxEnvVar(nil), session.RuntimeEnvItems...)
-	execSession.ProviderEnvItems = append([]domain.SandboxEnvVar(nil), session.ProviderEnvItems...)
-	if len(execSession.ProviderEnvItems) == 0 && session.ProviderEnvOverrideNames == nil {
-		// Metadata without provider provenance cannot identify the original source,
-		// so its persisted environment snapshot remains the compatible fallback.
-		execSession.ProviderEnvItems = append([]domain.SandboxEnvVar(nil), session.EnvItems...)
-	}
-	execSession.ProviderEnvItems = domain.MergeEnvItems(execSession.ProviderEnvItems, schedulers.CommandSandboxEnv(request))
+	// One declaration, derived exactly as every other entry point derives it:
+	// the sandbox's own provider environment, recovered from legacy metadata
+	// when it predates provenance, plus what this command declares. It decides
+	// direct versus managed and it is the provider environment the guest runs
+	// with.
+	execSession.ProviderEnvItems = session.DeclaredProviderEnv(schedulers.CommandSandboxEnv(request))
 
+	// This path selects its agent and model from the scheduler command's own
+	// environment, not from a project agent definition, so the catalog infers
+	// the connection from the model. A command that declares its own upstream
+	// keeps it instead of being routed through the catalog.
 	managedConfig, err := runtimefacade.EnsureSessionCommandFacadeConfig(ctx, runtimefacade.CommandFacadeConfigRequest{
-		Config: e.Config, Store: commandFacadeStoreFor(e.ConfigDB), Session: &execSession, Agent: agent, Model: model, Source: runtimefacade.TokenSourceSchedulerCommand, RunID: runID,
+		Config: e.Config, Store: commandFacadeStoreFor(e.ConfigDB), Session: &execSession, Agent: agent, Model: model, AgentEnv: execSession.ProviderEnvItems, Source: runtimefacade.TokenSourceSchedulerCommand, RunID: runID,
 	})
 	if err != nil {
 		return nil, nil, err

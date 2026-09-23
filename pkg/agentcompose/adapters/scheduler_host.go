@@ -68,13 +68,7 @@ func (r SchedulerHostLLMRunner) Generate(ctx context.Context, request schedulers
 	if r.Client == nil {
 		return domain.SchedulerLLMResult{}, fmt.Errorf("llm client is unavailable")
 	}
-	result, err := r.Client.GenerateWithEnv(ctx, GenerateWithEnvRequest{
-		Prompt:           request.Prompt,
-		Model:            request.Model,
-		OutputSchemaJSON: request.OutputSchema,
-		ScopeID:          "scheduler:" + request.SchedulerID,
-		EnvItems:         request.EnvItems,
-	})
+	result, err := r.Client.Generate(ctx, request.Prompt, request.Model, request.OutputSchema)
 	if err != nil {
 		return domain.SchedulerLLMResult{}, err
 	}

@@ -11,6 +11,19 @@ import (
 	"github.com/chaitin/agent-compose/pkg/storedtime"
 )
 
+// firstNonEmptyTrimmed returns the first value that is non-empty after
+// trimming, returning the trimmed form. It is intentionally distinct from
+// firstNonEmpty (which returns the raw value) because the LLM resolution paths
+// normalize the value they finally use.
+func firstNonEmptyTrimmed(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func ScanProvider(scan func(dest ...any) error) (Provider, error) {
 	var item Provider
 	var genericResponsesTextParts, enabled int
@@ -43,10 +56,14 @@ func ScanModel(scan func(dest ...any) error) (Model, error) {
 	return item, nil
 }
 
+// FacadeTokenColumns is the column list ScanFacadeToken reads, in order. It
+// exists so the store's SELECT and this scanner cannot drift apart.
+const FacadeTokenColumns = "sandbox_id, token_hash, token_fingerprint, model, provider_id, wire_api, guest_model, source, run_id, issued_at, expires_at, revoked_at"
+
 func ScanFacadeToken(scan func(dest ...any) error) (FacadeToken, error) {
 	var item FacadeToken
 	var issuedAt, expiresAt, revokedAt int64
-	if err := scan(&item.SandboxID, &item.TokenHash, &item.TokenFingerprint, &item.Model, &item.ProviderID, &item.WireAPI, &item.Source, &item.RunID, &issuedAt, &expiresAt, &revokedAt); err != nil {
+	if err := scan(&item.SandboxID, &item.TokenHash, &item.TokenFingerprint, &item.Model, &item.ProviderID, &item.WireAPI, &item.GuestModel, &item.Source, &item.RunID, &issuedAt, &expiresAt, &revokedAt); err != nil {
 		return FacadeToken{}, err
 	}
 	item.IssuedAt = storedtime.ParseStoredTime(issuedAt)
@@ -96,10 +113,6 @@ func NormalizeWireAPI(value string) string {
 	}
 }
 
-func NormalizeAPIEndpoint(raw string) string {
-	return NormalizeAPIEndpointForProtocol(raw, APIProtocolResponses)
-}
-
 func NormalizeAPIEndpointForProtocol(raw, protocol string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -146,13 +159,6 @@ func NormalizeProviderType(value string) string {
 	default:
 		return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(value)), "-", "_")
 	}
-}
-
-func NormalizeOptionalProviderType(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return ""
-	}
-	return NormalizeProviderType(value)
 }
 
 func NormalizeAPIBaseURL(raw, wireAPI string) string {
@@ -233,13 +239,12 @@ func endpointAlreadyMatchesProtocol(raw, wireAPI string) bool {
 	}
 }
 
+// ProviderScopeIsConfigured reports whether a connection's stored base URL is a
+// complete endpoint that needs no protocol path appended. The daemon
+// environment projection stores a bare base URL and is the only scope that is
+// not an operator-configured endpoint.
 func ProviderScopeIsConfigured(scope string) bool {
-	switch strings.TrimSpace(scope) {
-	case ProviderScopeEnvDefault, ProviderScopeSessionEnv:
-		return false
-	default:
-		return true
-	}
+	return strings.TrimSpace(scope) != ProviderScopeEnvDefault
 }
 
 func ProviderForwardHeaders(provider Provider) (http.Header, error) {

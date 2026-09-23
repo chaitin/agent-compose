@@ -103,7 +103,7 @@ func RegisterRoutes(di do.Injector) {
 		Store:            do.MustInvoke[*configstore.ConfigStore](di),
 		SchedulerRuntime: schedulerController,
 		SchedulerRuns:    schedulerController.SchedulerRuns(),
-		AgentModels:      newProjectAgentModelResolver(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*configstore.ConfigStore](di)),
+		AgentModels:      newProjectAgentModelResolver(do.MustInvoke[*configstore.ConfigStore](di)),
 		SandboxDirs:      do.MustInvoke[*sandboxstore.Store](di),
 	})
 	path, handler := agentcomposev2connect.NewProjectServiceHandler(projectHandler)
@@ -254,8 +254,8 @@ func StartBackground(di do.Injector) error {
 	// create a sandbox, so the initial cleanup pass cannot race registration.
 	runner := do.MustInvoke[*cleanup.Runner](di)
 	ctx := do.MustInvoke[context.Context](di)
-	if err := loadModelCatalog(ctx, do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*configstore.ConfigStore](di)); err != nil {
-		return fmt.Errorf("load model catalog: %w", err)
+	if err := loadLLMConfig(ctx, do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*configstore.ConfigStore](di)); err != nil {
+		return fmt.Errorf("load llm configuration: %w", err)
 	}
 	for _, warning := range do.MustInvoke[*adapters.SandboxRPCBridge](di).RecoverStoppedRuntimeReleases(ctx) {
 		slog.Warn("failed to recover stopped runtime release", "warning", warning)
@@ -614,12 +614,16 @@ func registerRuntimeLLMFacadeRoutes(app *echo.Echo, di do.Injector) {
 	proxy.RegisterRuntimeLLMFacadeRoutes(app, proxy.RuntimeLLMOptions{
 		Tokens:    configDB,
 		Sandboxes: do.MustInvoke[*sandboxstore.Store](di),
-		// The sandbox is part of the resolution: a sandbox that publishes its own
-		// provider environment (LLM_API_ENDPOINT/LLM_API_KEY/LLM_MODEL/
-		// LLM_API_PROTOCOL) owns the upstream connection, model and wire api, and
-		// the daemon configuration answers only when it publishes none.
-		ResolveTarget: func(ctx context.Context, sandbox *domain.Sandbox, providerFamily, requestedModel, providerID string) (llms.ResolvedTarget, error) {
-			return llms.SandboxRuntimeLLMTarget(ctx, llms.SandboxRuntimeLLMTargetQuery{Config: config, Store: configDB, Sandbox: sandbox, ProviderFamily: providerFamily, RequestedModel: requestedModel, ProviderID: providerID})
+		// The token names the connection, so the proxy looks it up rather than
+		// choosing one, and no protocol preference applies: the request already
+		// belongs to that connection. The requested model is forwarded to it
+		// verbatim, which is what makes the daemon a weak caller.
+		Connections: func(ctx context.Context, connectionID, model string) (llms.ResolvedTarget, error) {
+			catalog, err := llms.LoadCatalog(ctx, configDB)
+			if err != nil {
+				return llms.ResolvedTarget{}, err
+			}
+			return catalog.Resolve(connectionID, model, nil)
 		},
 		Client:          proxy.NewRuntimeLLMHTTPClient(config.LLMTimeout),
 		MaxOutputTokens: config.LLMMaxOutputTokens,

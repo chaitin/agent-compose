@@ -27,10 +27,6 @@ func TestEnsureSessionLLMFacadeConfigCreatesCodexEnvAndToken(t *testing.T) {
 	config := &appconfig.Config{
 		DataRoot:               root,
 		DbAddr:                 filepath.Join(root, "data.db"),
-		LLMAPIEndpoint:         "https://llm.example.test/v1",
-		LLMAPIKey:              "test-key",
-		LLMModel:               "gpt-test",
-		LLMAPIProtocol:         "responses",
 		RuntimeBaseURL:         "http://agent-compose.test:7410",
 		GuestHomePath:          "/root",
 		CodexRequestMaxRetries: 2,
@@ -43,6 +39,21 @@ func TestEnsureSessionLLMFacadeConfigCreatesCodexEnvAndToken(t *testing.T) {
 	store, err := testutil.OpenConfigStore(t, di)
 	if err != nil {
 		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	// The agent facade resolves against the model catalog, not the legacy
+	// daemon-environment provider, so the test declares its connection there.
+	if err := store.ApplyModelCatalog(ctx, llms.ModelCatalog{
+		Default: "openai/gpt-test",
+		Providers: map[string]llms.CatalogProvider{
+			"openai": {
+				BaseURL:  catalogStringPointer("https://llm.example.test/v1"),
+				Protocol: catalogStringPointer(llms.APIProtocolResponses),
+				APIKey:   catalogStringPointer("test-key"),
+				Models:   []llms.CatalogModel{{ID: "gpt-test"}},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("apply model catalog: %v", err)
 	}
 	session := &domain.Sandbox{
 		Summary: domain.SandboxSummary{
@@ -58,6 +69,9 @@ func TestEnsureSessionLLMFacadeConfigCreatesCodexEnvAndToken(t *testing.T) {
 	}
 	if env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses {
 		t.Fatalf("LLM_API_PROTOCOL = %q, want responses", env["LLM_API_PROTOCOL"])
+	}
+	if env[llms.GuestModelEnvName] != "gpt-test" {
+		t.Fatalf("env[%s] = %q, want the catalog default", llms.GuestModelEnvName, env[llms.GuestModelEnvName])
 	}
 	if env["OPENAI_BASE_URL"] != "http://agent-compose.test:7410/api/runtime/sandboxes/sandbox-runtimefacade/llm/openai/v1" {
 		t.Fatalf("OPENAI_BASE_URL = %q", env["OPENAI_BASE_URL"])
@@ -86,122 +100,10 @@ func TestEnsureSessionLLMFacadeConfigCreatesCodexEnvAndToken(t *testing.T) {
 	}
 }
 
-func TestEnsureSessionStartupFacadeConfigIncludesAllAvailableFamilies(t *testing.T) {
-	isolateLLMEnv(t)
-
-	ctx := context.Background()
-	root := t.TempDir()
-	config := &appconfig.Config{
-		DataRoot:       root,
-		DbAddr:         filepath.Join(root, "data.db"),
-		RuntimeBaseURL: "http://agent-compose.test:7410",
-		GuestHomePath:  "/root",
-	}
-	di := do.New()
-	do.ProvideValue(di, ctx)
-	do.ProvideValue(di, config)
-	store, err := testutil.OpenConfigStore(t, di)
-	if err != nil {
-		t.Fatalf("NewConfigStore returned error: %v", err)
-	}
-	if err := store.UpsertDefaultLLMConfig(ctx, llms.Provider{
-		ID:             "anthropic-primary",
-		Name:           "Anthropic",
-		ProviderType:   llms.ProviderFamilyAnthropic,
-		DefaultWireAPI: llms.APIProtocolMessages,
-		BaseURL:        "https://anthropic.upstream.test",
-		APIKey:         "anthropic-upstream-secret",
-		Scope:          llms.ProviderScopeSystem,
-		Weight:         1,
-	}, llms.Model{ID: "claude-model", Name: "claude-model", Enabled: true, DefaultModel: true, Scope: llms.ProviderScopeSystem}); err != nil {
-		t.Fatalf("save Anthropic provider: %v", err)
-	}
-	if err := store.UpsertDefaultLLMConfig(ctx, llms.Provider{
-		ID:             "openai-primary",
-		Name:           "OpenAI",
-		ProviderType:   llms.ProviderFamilyOpenAI,
-		DefaultWireAPI: llms.APIProtocolResponses,
-		BaseURL:        "https://openai.upstream.test",
-		APIKey:         "openai-upstream-secret",
-		Scope:          llms.ProviderScopeSystem,
-		Weight:         2,
-	}, llms.Model{ID: "openai-model", Name: "openai-model", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
-		t.Fatalf("save OpenAI provider: %v", err)
-	}
-
-	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-startup-facades", Driver: driverpkg.RuntimeDriverDocker}}
-	env, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Source: TokenSourceAgent, RunID: ""})
-	if err != nil {
-		t.Fatalf("EnsureSessionStartupFacadeConfig returned error: %v", err)
-	}
-	if env["ANTHROPIC_API_KEY"] == "" || env["ANTHROPIC_AUTH_TOKEN"] != env["ANTHROPIC_API_KEY"] || env["ANTHROPIC_BASE_URL"] == "" {
-		t.Fatalf("Anthropic startup environment = %#v", env)
-	}
-	if env["OPENAI_API_KEY"] == "" || env["OPENAI_BASE_URL"] == "" {
-		t.Fatalf("OpenAI startup environment = %#v", env)
-	}
-	if env["AGENT_COMPOSE_SANDBOX_TOKEN"] != "" || env["LLM_API_KEY"] != "" {
-		t.Fatalf("startup environment unexpectedly contains common facade variables = %#v", env)
-	}
-	if env["ANTHROPIC_API_KEY"] == "anthropic-upstream-secret" || env["OPENAI_API_KEY"] == "openai-upstream-secret" {
-		t.Fatalf("startup environment leaked an upstream credential = %#v", env)
-	}
-
-	anthropicToken, err := store.GetLLMFacadeToken(ctx, env["ANTHROPIC_API_KEY"])
-	if err != nil {
-		t.Fatalf("load Anthropic startup token: %v", err)
-	}
-	if anthropicToken.ProviderID != "anthropic-primary" || anthropicToken.WireAPI != llms.APIProtocolMessages {
-		t.Fatalf("Anthropic startup token = %#v", anthropicToken)
-	}
-	openAIToken, err := store.GetLLMFacadeToken(ctx, env["OPENAI_API_KEY"])
-	if err != nil {
-		t.Fatalf("load OpenAI startup token: %v", err)
-	}
-	if openAIToken.ProviderID != "openai-primary" || openAIToken.WireAPI != "" {
-		t.Fatalf("OpenAI startup token = %#v", openAIToken)
-	}
-}
-
-func TestEnsureSessionStartupFacadeConfigSkipsUnavailableFamily(t *testing.T) {
-	isolateLLMEnv(t)
-
-	ctx := context.Background()
-	root := t.TempDir()
-	config := &appconfig.Config{DataRoot: root, DbAddr: filepath.Join(root, "data.db"), RuntimeBaseURL: "http://agent-compose.test:7410"}
-	di := do.New()
-	do.ProvideValue(di, ctx)
-	do.ProvideValue(di, config)
-	store, err := testutil.OpenConfigStore(t, di)
-	if err != nil {
-		t.Fatalf("NewConfigStore returned error: %v", err)
-	}
-	if err := store.UpsertDefaultLLMConfig(ctx, llms.Provider{
-		ID:           "anthropic-only",
-		Name:         "Anthropic",
-		ProviderType: llms.ProviderFamilyAnthropic,
-		BaseURL:      "https://anthropic.upstream.test",
-		APIKey:       "anthropic-upstream-secret",
-		Scope:        llms.ProviderScopeSystem,
-	}, llms.Model{ID: "claude-only", Name: "claude-only", Enabled: true, DefaultModel: true, Scope: llms.ProviderScopeSystem}); err != nil {
-		t.Fatalf("save Anthropic provider: %v", err)
-	}
-
-	env, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-anthropic-only"}}, Source: TokenSourceAgent, RunID: ""})
-	if err != nil {
-		t.Fatalf("EnsureSessionStartupFacadeConfig returned error: %v", err)
-	}
-	if env["ANTHROPIC_API_KEY"] == "" || env["OPENAI_API_KEY"] != "" || env["OPENAI_BASE_URL"] != "" {
-		t.Fatalf("single-family startup environment = %#v", env)
-	}
-}
-
-func TestEnsureSessionLLMFacadeConfigRejectsManagedCodexWithoutReachableFacade(t *testing.T) {
-	isolateLLMEnv(t)
-
-	ctx := context.Background()
-	root := t.TempDir()
-	config := &appconfig.Config{
+// unreachableFacadeDaemonConfig is a daemon that binds only loopback and has no
+// sandbox-reachable runtime base URL, so a managed facade could never reach it.
+func unreachableFacadeDaemonConfig(root string) *appconfig.Config {
+	return &appconfig.Config{
 		DataRoot:       root,
 		DbAddr:         filepath.Join(root, "data.db"),
 		LLMAPIEndpoint: "https://llm.example.test/v1",
@@ -211,12 +113,67 @@ func TestEnsureSessionLLMFacadeConfigRejectsManagedCodexWithoutReachableFacade(t
 		HttpListen:     "127.0.0.1:7410",
 		GuestHomePath:  "/root",
 	}
+}
+
+// TestEnsureSessionLLMFacadeConfigAllowsUnmanagedCodexWithoutReachableFacade
+// covers an agent the daemon has no model for on a daemon with no
+// sandbox-reachable URL: the catalog is empty, so the agent is unmanaged and
+// keeps its own login. The missing daemon URL is not the unmanaged agent's
+// problem, so the facade must be a no-op rather than an error.
+func TestEnsureSessionLLMFacadeConfigAllowsUnmanagedCodexWithoutReachableFacade(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := unreachableFacadeDaemonConfig(root)
 	di := do.New()
 	do.ProvideValue(di, ctx)
 	do.ProvideValue(di, config)
 	store, err := testutil.OpenConfigStore(t, di)
 	if err != nil {
 		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{
+		ID:            "sandbox-runtimefacade-unreachable",
+		Driver:        driverpkg.RuntimeDriverDocker,
+		WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-runtimefacade-unreachable", "workspace"),
+	}}
+
+	env, err := EnsureSessionLLMFacadeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "codex", Model: "", Source: "test", RunID: "run-1"})
+	if err != nil || env != nil {
+		t.Fatalf("EnsureSessionLLMFacadeConfig env = %#v, error = %v; want an unmanaged no-op", env, err)
+	}
+}
+
+// TestEnsureSessionLLMFacadeConfigRejectsManagedCodexWithoutReachableFacade is
+// the other direction: once the catalog declares a model, the daemon does manage
+// codex, and it cannot deliver the credential without a sandbox-reachable URL.
+// That is a configuration fault the operator must see, not a no-op.
+func TestEnsureSessionLLMFacadeConfigRejectsManagedCodexWithoutReachableFacade(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := unreachableFacadeDaemonConfig(root)
+	di := do.New()
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, config)
+	store, err := testutil.OpenConfigStore(t, di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	if err := store.ApplyModelCatalog(ctx, llms.ModelCatalog{
+		Default: "openai/gpt-test",
+		Providers: map[string]llms.CatalogProvider{
+			"openai": {
+				BaseURL:  catalogStringPointer("https://llm.example.test/v1"),
+				Protocol: catalogStringPointer(llms.APIProtocolResponses),
+				APIKey:   catalogStringPointer("test-key"),
+				Models:   []llms.CatalogModel{{ID: "gpt-test"}},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("apply model catalog: %v", err)
 	}
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{
 		ID:            "sandbox-runtimefacade-unreachable",
@@ -236,16 +193,20 @@ func TestEnsureSessionLLMFacadeConfigRejectsManagedCodexWithoutReachableFacade(t
 	}
 }
 
+// TestEnsureSessionLLMFacadeConfigAllowsUnmanagedCodexWithoutFacade covers an
+// agent the daemon has no model for: the catalog is empty, so the facade has
+// nothing to apply and codex keeps its own login.
 func TestEnsureSessionLLMFacadeConfigAllowsUnmanagedCodexWithoutFacade(t *testing.T) {
 	isolateLLMEnv(t)
 
 	ctx := context.Background()
 	root := t.TempDir()
 	config := &appconfig.Config{
-		DataRoot:      root,
-		DbAddr:        filepath.Join(root, "data.db"),
-		HttpListen:    "127.0.0.1:7410",
-		GuestHomePath: "/root",
+		DataRoot:       root,
+		DbAddr:         filepath.Join(root, "data.db"),
+		RuntimeBaseURL: "http://agent-compose.test:7410",
+		HttpListen:     "127.0.0.1:7410",
+		GuestHomePath:  "/root",
 	}
 	di := do.New()
 	do.ProvideValue(di, ctx)
@@ -270,7 +231,6 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 	config := &appconfig.Config{
 		DataRoot:       root,
 		DbAddr:         filepath.Join(root, "data.db"),
-		LLMAPIKey:      "global-provider-key",
 		RuntimeBaseURL: "http://agent-compose.test:7410",
 		GuestHomePath:  "/root",
 	}
@@ -281,50 +241,79 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewConfigStore returned error: %v", err)
 	}
+	// The agent facade resolves against the model catalog; a bare model is
+	// selected by the catalog default or by the one connection that serves it.
+	if err := store.ApplyModelCatalog(ctx, llms.ModelCatalog{
+		Default: "openai/gpt-test",
+		Providers: map[string]llms.CatalogProvider{
+			"openai": {
+				BaseURL:  catalogStringPointer("https://openai.example.test/v1"),
+				Protocol: catalogStringPointer(llms.APIProtocolResponses),
+				APIKey:   catalogStringPointer("openai-key"),
+				Models:   []llms.CatalogModel{{ID: "gpt-test"}},
+			},
+			"anthropic": {
+				BaseURL:  catalogStringPointer("https://anthropic.example.test"),
+				Protocol: catalogStringPointer(llms.APIProtocolMessages),
+				APIKey:   catalogStringPointer("anthropic-key"),
+				Models:   []llms.CatalogModel{{ID: "claude-test"}},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("apply model catalog: %v", err)
+	}
 	session := &domain.Sandbox{
 		Summary: domain.SandboxSummary{
 			ID:            "sandbox-claude",
 			Driver:        driverpkg.RuntimeDriverDocker,
 			WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-claude", "workspace"),
 		},
-		ProviderEnvItems: []domain.SandboxEnvVar{
-			{Name: "ANTHROPIC_BASE_URL", Value: "https://anthropic.example.test"},
-			{Name: "ANTHROPIC_API_KEY", Value: "anthropic-key"},
-			{Name: "ANTHROPIC_MODEL", Value: "claude-test"},
-			{Name: "LLM_API_ENDPOINT", Value: "https://openai.example.test/v1"},
-			{Name: "LLM_API_KEY", Value: "openai-key"},
-			{Name: "LLM_MODEL", Value: "gpt-test"},
-		},
 	}
+
+	// claude declares no model, so the catalog default supplies one. That
+	// default is served over responses while claude speaks messages, so the
+	// facade converts and LLM_API_PROTOCOL still names the upstream.
 	claude, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "claude", Model: "", Source: "agent", RunID: "run-claude"})
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig claude returned error: %v", err)
 	}
-	if claude.Env["LLM_API_PROTOCOL"] != llms.APIProtocolMessages || claude.Env["ANTHROPIC_MODEL"] != "claude-test" {
-		t.Fatalf("claude env = %#v", claude.Env)
+	if claude.Model != "gpt-test" || claude.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses || claude.Env["ANTHROPIC_MODEL"] != "gpt-test" {
+		t.Fatalf("claude env = %#v, model = %q", claude.Env, claude.Model)
 	}
 	if claude.Env["ANTHROPIC_BASE_URL"] == "" || claude.Env["ANTHROPIC_AUTH_TOKEN"] == "" || claude.Env["ANTHROPIC_AUTH_TOKEN"] != claude.Env["ANTHROPIC_API_KEY"] {
 		t.Fatalf("claude anthropic facade env = %#v", claude.Env)
 	}
-	if _, err := store.GetLLMFacadeToken(ctx, claude.Env["AGENT_COMPOSE_SANDBOX_TOKEN"]); err != nil {
+	claudeToken, err := store.GetLLMFacadeToken(ctx, claude.Env["AGENT_COMPOSE_SANDBOX_TOKEN"])
+	if err != nil {
 		t.Fatalf("claude token not stored: %v", err)
+	}
+	if claudeToken.ProviderID != "openai" || claudeToken.WireAPI != llms.APIProtocolMessages {
+		t.Fatalf("claude token = %#v, want the messages ingress to the openai connection", claudeToken)
 	}
 	if claude.Env["AGENT_COMPOSE_SESSION_TOKEN"] != "" {
 		t.Fatalf("claude emitted deprecated session token env")
 	}
 
-	openAI, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "openai/gpt-test", Source: TokenSourceAgent, RunID: "run-openai"})
+	// gpt-test is bound to exactly one connection, so opencode resolves it
+	// without the agent naming the connection.
+	openAI, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "gpt-test", Source: TokenSourceAgent, RunID: "run-openai"})
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode openai returned error: %v", err)
 	}
-	// LLM_API_PROTOCOL carries the upstream protocol, not the chat-completions
-	// ingress the facade token pins: the mixed env declares no LLM_API_PROTOCOL,
-	// so the session env OpenAI provider keeps its responses default.
-	if openAI.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses || openAI.Env["OPENCODE_CONFIG"] == "" {
-		t.Fatalf("opencode openai env = %#v", openAI.Env)
+	if openAI.Model != "agent-compose/gpt-test" || openAI.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses || openAI.Env["OPENCODE_CONFIG"] == "" {
+		t.Fatalf("opencode openai env = %#v, model = %q", openAI.Env, openAI.Model)
+	}
+	openAIToken, err := store.GetLLMFacadeToken(ctx, openAI.Env["AGENT_COMPOSE_SANDBOX_TOKEN"])
+	if err != nil {
+		t.Fatalf("opencode openai token not stored: %v", err)
+	}
+	// OpenCode cannot speak responses, so the ingress is chat completions even
+	// though the upstream is responses.
+	if openAIToken.ProviderID != "openai" || openAIToken.WireAPI != llms.APIProtocolChatCompletions {
+		t.Fatalf("opencode openai token = %#v, want chat completions to the openai connection", openAIToken)
 	}
 
-	anthropic, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "anthropic/claude-test", Source: TokenSourceAgent, RunID: "run-anthropic"})
+	anthropic, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "claude-test", Source: TokenSourceAgent, RunID: "run-anthropic"})
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode anthropic returned error: %v", err)
 	}
@@ -332,12 +321,12 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 		t.Fatalf("opencode anthropic env = %#v", anthropic.Env)
 	}
 
-	pi, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "pi", Model: "openai/gpt-test", Source: TokenSourceAgent, RunID: "run-pi"})
+	pi, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "pi", Model: "gpt-test", Source: TokenSourceAgent, RunID: "run-pi"})
 	if err != nil {
 		t.Fatalf("EnsureSessionAgentRuntimeConfig pi returned error: %v", err)
 	}
-	if pi.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses || pi.Env["PI_CODING_AGENT_DIR"] != "/root/.pi/agent" || pi.Env["OPENAI_API_KEY"] == "" {
-		t.Fatalf("pi env = %#v", pi.Env)
+	if pi.Model != "agent-compose/gpt-test" || pi.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses || pi.Env["PI_CODING_AGENT_DIR"] != "/root/.pi/agent" || pi.Env["OPENAI_API_KEY"] == "" {
+		t.Fatalf("pi env = %#v, model = %q", pi.Env, pi.Model)
 	}
 	piConfigPath := filepath.Join(execution.HostSandboxHome(session), ".pi", "agent", "models.json")
 	piConfig, err := os.ReadFile(piConfigPath)
@@ -353,92 +342,28 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 		t.Fatal("pi config persisted the run-scoped token")
 	}
 	token, err := store.GetLLMFacadeToken(ctx, pi.Env["AGENT_COMPOSE_SANDBOX_TOKEN"])
-	if err != nil || token.RunID != "run-pi" || token.ProviderID == "" {
+	if err != nil || token.RunID != "run-pi" || token.ProviderID != "openai" {
 		t.Fatalf("pi token = %#v, err=%v", token, err)
 	}
 
-	custom, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "custom/gpt-custom", Source: TokenSourceSchedulerCommand, RunID: "run-custom"})
+	// An opaque model no connection declares is still served: a model id is
+	// opaque, so the daemon picks among the connections by protocol affinity
+	// instead of failing. OpenCode speaks messages natively, and the responses
+	// connection is not something it can speak at all, so the Anthropic
+	// connection wins.
+	unknown, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "unknown-model", Source: "", RunID: "run-unknown"})
 	if err != nil {
-		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode custom returned error: %v", err)
+		t.Fatalf("unknown model returned error: %v", err)
 	}
-	// A custom endpoint that declares no wire api resolves to the responses
-	// default, so that is the protocol published as the upstream the gateway
-	// serves; the opencode guest still posts chat completions to the facade.
-	if custom.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses || custom.Env["OPENAI_BASE_URL"] == "" {
-		t.Fatalf("opencode custom env = %#v", custom.Env)
-	}
-
-	noop, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "opencode/local", Source: "", RunID: ""})
+	unknownToken, err := store.GetLLMFacadeToken(ctx, unknown.Env["AGENT_COMPOSE_SANDBOX_TOKEN"])
 	if err != nil {
-		t.Fatalf("EnsureSessionAgentRuntimeConfig opencode local returned error: %v", err)
+		t.Fatalf("GetLLMFacadeToken(unknown-model) returned error: %v", err)
 	}
-	if len(noop.Env) != 0 {
-		t.Fatalf("opencode local env = %#v", noop.Env)
-	}
-	// An unqualified model is valid: the daemon's default connection resolves
-	// it, so agent configuration no longer has to name a provider.
-	bare, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "bare-model", Source: "", RunID: ""})
-	if err != nil {
-		t.Fatalf("opencode unqualified model returned error: %v", err)
-	}
-	if bare.Env["OPENCODE_CONFIG"] == "" || bare.Env["LLM_API_KEY"] == "" {
-		t.Fatalf("opencode unqualified env = %#v", bare.Env)
+	if unknownToken.ProviderID != "anthropic" || unknownToken.Model != "unknown-model" {
+		t.Fatalf("unknown model token = %#v, want the messages connection over the opaque model", unknownToken)
 	}
 	if env, err := EnsureSessionLLMFacadeConfig(ctx, SessionFacadeConfigRequest{Config: nil, Store: store, Session: session, Agent: "codex", Model: "", Source: "", RunID: ""}); err != nil || env != nil {
 		t.Fatalf("nil config env=%#v err=%v", env, err)
-	}
-	if !HasAnthropicProviderKey(ctx, config, store) {
-		t.Fatalf("expected anthropic provider key")
-	}
-	if got := firstNonEmpty(" \t", "value"); got != "value" {
-		t.Fatalf("firstNonEmpty = %q, want value", got)
-	}
-}
-
-func TestEnsureSessionAgentRuntimeConfigClaudePreservesProviderlessCompatibilityToken(t *testing.T) {
-	isolateLLMEnv(t)
-
-	ctx := context.Background()
-	root := t.TempDir()
-	config := &appconfig.Config{
-		DataRoot:       root,
-		DbAddr:         filepath.Join(root, "data.db"),
-		LLMAPIEndpoint: "https://openai.example.test/base",
-		LLMAPIProtocol: llms.APIProtocolResponses,
-		LLMAPIKey:      "generic-provider-key",
-		LLMModel:       "generic-model",
-		RuntimeBaseURL: "http://agent-compose.test:7410",
-	}
-	di := do.New()
-	do.ProvideValue(di, ctx)
-	do.ProvideValue(di, config)
-	store, err := testutil.OpenConfigStore(t, di)
-	if err != nil {
-		t.Fatalf("NewConfigStore returned error: %v", err)
-	}
-	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-claude-compat", Driver: driverpkg.RuntimeDriverDocker}}
-
-	runtimeConfig, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "claude", Model: "", Source: "test", RunID: "run-compat"})
-	if err != nil {
-		t.Fatalf("EnsureSessionAgentRuntimeConfig returned error: %v", err)
-	}
-	rawToken := runtimeConfig.Env["AGENT_COMPOSE_SANDBOX_TOKEN"]
-	if rawToken == "" {
-		t.Fatal("AGENT_COMPOSE_SANDBOX_TOKEN is empty")
-	}
-	token, err := store.GetLLMFacadeToken(ctx, rawToken)
-	if err != nil {
-		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
-	}
-	if token.ProviderID != "" || token.Model != "" {
-		t.Fatalf("compatibility token = %#v", token)
-	}
-	target, err := llms.ResolveRuntimeLLMTarget(ctx, config, store, config.LLMModel, token.ProviderID)
-	if err != nil {
-		t.Fatalf("resolve providerless compatibility target: %v", err)
-	}
-	if target.Provider.ProviderType != llms.ProviderFamilyOpenAI || target.WireAPI != llms.APIProtocolResponses || target.Provider.APIKey == "" {
-		t.Fatalf("providerless compatibility target = family %q, wire API %q", target.Provider.ProviderType, target.WireAPI)
 	}
 }
 
@@ -463,9 +388,8 @@ func isolateLLMEnv(t *testing.T) {
 }
 
 // Every facade reports the model the guest runner must address, not only
-// opencode. Forwarding the declared model instead left the runner addressing an
-// unresolved <connection>/<model> reference, or nothing at all when the agent
-// declared no model and resolution supplied one.
+// opencode: the runner forwards it to the agent CLI verbatim, and pi/opencode
+// address models through the provider key the facade wrote into their config.
 func TestEnsureSessionAgentRuntimeConfigReportsResolvedGuestModel(t *testing.T) {
 	isolateLLMEnv(t)
 
@@ -474,7 +398,6 @@ func TestEnsureSessionAgentRuntimeConfigReportsResolvedGuestModel(t *testing.T) 
 	config := &appconfig.Config{
 		DataRoot:       root,
 		DbAddr:         filepath.Join(root, "data.db"),
-		LLMAPIKey:      "global-provider-key",
 		RuntimeBaseURL: "http://agent-compose.test:7410",
 		GuestHomePath:  "/root",
 	}
@@ -485,59 +408,65 @@ func TestEnsureSessionAgentRuntimeConfigReportsResolvedGuestModel(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewConfigStore returned error: %v", err)
 	}
+	if err := store.ApplyModelCatalog(ctx, llms.ModelCatalog{
+		Default: "openai/gpt-test",
+		Providers: map[string]llms.CatalogProvider{
+			"openai": {
+				BaseURL:  catalogStringPointer("https://openai.example.test/v1"),
+				Protocol: catalogStringPointer(llms.APIProtocolResponses),
+				APIKey:   catalogStringPointer("openai-key"),
+				Models:   []llms.CatalogModel{{ID: "gpt-test"}},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("apply model catalog: %v", err)
+	}
 	session := &domain.Sandbox{
 		Summary: domain.SandboxSummary{
 			ID:            "sandbox-guest-model",
 			Driver:        driverpkg.RuntimeDriverDocker,
 			WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-guest-model", "workspace"),
 		},
-		ProviderEnvItems: []domain.SandboxEnvVar{
-			{Name: "LLM_API_ENDPOINT", Value: "https://openai.example.test/v1"},
-			{Name: "LLM_API_KEY", Value: "openai-key"},
-			{Name: "LLM_MODEL", Value: "gpt-test"},
-		},
 	}
-	for _, agent := range []string{"codex", "claude", "pi", "dsh", "opencode"} {
-		t.Run(agent, func(t *testing.T) {
+	for _, tc := range []struct {
+		agent string
+		want  string
+	}{
+		{agent: "codex", want: "gpt-test"},
+		{agent: "claude", want: "gpt-test"},
+		{agent: "pi", want: "agent-compose/gpt-test"},
+		{agent: "dsh", want: "gpt-test"},
+		{agent: "opencode", want: "agent-compose/gpt-test"},
+	} {
+		t.Run(tc.agent, func(t *testing.T) {
 			result, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{
-				Config: config, Store: store, Session: session, Agent: agent, Model: "gpt-test", Source: TokenSourceAgent, RunID: "run-" + agent,
+				Config: config, Store: store, Session: session, Agent: tc.agent, Model: "gpt-test", Source: TokenSourceAgent, RunID: "run-" + tc.agent,
 			})
 			if err != nil {
-				t.Fatalf("EnsureSessionAgentRuntimeConfig %s returned error: %v", agent, err)
+				t.Fatalf("EnsureSessionAgentRuntimeConfig %s returned error: %v", tc.agent, err)
 			}
-			if result.Model == "" {
-				t.Fatalf("%s reported no resolved model: env = %#v", agent, result.Env)
+			if result.Model != tc.want {
+				t.Fatalf("%s runtime model = %q, want %q", tc.agent, result.Model, tc.want)
 			}
-			guestModel := result.Model
-			if agent == "dsh" {
-				if result.Model != "agent-compose/gpt-test" {
-					t.Fatalf("legacy DSH argument = %q", result.Model)
-				}
-				guestModel = "gpt-test"
-			}
-			if got := result.Env[llms.GuestModelEnvName]; got != guestModel {
-				t.Fatalf("%s model = %q, env[%s] = %q", agent, result.Model, llms.GuestModelEnvName, got)
-			}
-			// pi and opencode address the model through the provider key written
-			// into their config, so their guest reference carries that namespace;
-			// the other agents pass a bare model literal.
-			if strings.Contains(guestModel, "/") && agent != "opencode" && agent != "pi" {
-				t.Fatalf("%s model = %q, want the resolved model name", agent, result.Model)
+			if got := result.Env[llms.GuestModelEnvName]; got != tc.want {
+				t.Fatalf("%s env[%s] = %q, want %q", tc.agent, llms.GuestModelEnvName, got, tc.want)
 			}
 		})
 	}
 }
 
-// Claude's session facade passes the raw declaration to the resolver instead of
-// splitting it first, so an unknown connection prefix used to resolve against
-// the daemon's default connection with the prefix left in the model name. It is
-// a configuration error and must not be swallowed into claude's own-login
-// fallback either.
-func TestEnsureSessionLLMFacadeConfigRejectsUnknownClaudeConnectionPrefix(t *testing.T) {
-	isolateLLMEnv(t)
-	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key")
-	t.Setenv("ANTHROPIC_MODEL", "claude-default")
+// catalogStringPointer adapts a literal to ModelCatalog's optional fields,
+// which distinguish "unset" from "explicitly empty".
+func catalogStringPointer(value string) *string {
+	return &value
+}
 
+// TestEnsureSessionAgentRuntimeConfigChoosesBetweenEquivalentConnections pins
+// that a model two connections serve over the same protocol resolves at the
+// facade boundary: the connections are interchangeable, so one is chosen and
+// the run is not reported as unresolved.
+func TestEnsureSessionAgentRuntimeConfigChoosesBetweenEquivalentConnections(t *testing.T) {
+	isolateLLMEnv(t)
 	ctx := context.Background()
 	root := t.TempDir()
 	config := &appconfig.Config{
@@ -551,25 +480,50 @@ func TestEnsureSessionLLMFacadeConfigRejectsUnknownClaudeConnectionPrefix(t *tes
 	do.ProvideValue(di, config)
 	store, err := testutil.OpenConfigStore(t, di)
 	if err != nil {
-		t.Fatalf("NewConfigStore returned error: %v", err)
+		t.Fatalf("OpenConfigStore returned error: %v", err)
 	}
-	session := &domain.Sandbox{Summary: domain.SandboxSummary{
-		ID:            "sandbox-claude-unknown-connection",
-		Driver:        driverpkg.RuntimeDriverDocker,
-		WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-claude-unknown-connection", "workspace"),
-	}}
+	// Two connections serve the same model, so model inference alone cannot
+	// choose between them.
+	if err := store.ApplyModelCatalog(ctx, llms.ModelCatalog{
+		Providers: map[string]llms.CatalogProvider{
+			"gateway": {
+				BaseURL:  catalogStringPointer("https://gateway.example.test/v1"),
+				Protocol: catalogStringPointer(llms.APIProtocolResponses),
+				APIKey:   catalogStringPointer("gateway-key"),
+				Models:   []llms.CatalogModel{{ID: "shared-model"}},
+			},
+			"backup": {
+				BaseURL:  catalogStringPointer("https://backup.example.test/v1"),
+				Protocol: catalogStringPointer(llms.APIProtocolResponses),
+				APIKey:   catalogStringPointer("backup-key"),
+				Models:   []llms.CatalogModel{{ID: "shared-model"}},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("apply model catalog: %v", err)
+	}
+	session := &domain.Sandbox{
+		Summary: domain.SandboxSummary{
+			ID:            "sandbox-agent-connection",
+			Driver:        driverpkg.RuntimeDriverDocker,
+			WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-agent-connection", "workspace"),
+		},
+	}
 
-	env, err := EnsureSessionLLMFacadeConfig(ctx, SessionFacadeConfigRequest{
-		Config: config, Store: store, Session: session, Agent: "claude",
-		Model: "matrix-chat/deepseek-flash", Source: TokenSourceAgent, RunID: "run-claude-unknown-connection",
+	// Two connections serve the same model over the same protocol. They are
+	// interchangeable, so the run proceeds on one of them: the tie-break picks
+	// rather than reporting the model as unresolved.
+	shared, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{
+		Config: config, Store: store, Session: session, Agent: "pi", Model: "shared-model", Source: TokenSourceAgent, RunID: "run-connection-bare",
 	})
-	if !errors.Is(err, domain.ErrFailedPrecondition) {
-		t.Fatalf("unknown claude connection prefix err = %v, want failed precondition", err)
+	if err != nil {
+		t.Fatalf("EnsureSessionAgentRuntimeConfig returned error: %v", err)
 	}
-	if !strings.Contains(err.Error(), `llm provider "matrix-chat" is not configured`) {
-		t.Fatalf("err = %v, want the unknown connection named", err)
+	token, err := store.GetLLMFacadeToken(ctx, shared.Env["AGENT_COMPOSE_SANDBOX_TOKEN"])
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
 	}
-	if len(env) != 0 {
-		t.Fatalf("env = %#v, want no partial facade environment", env)
+	if token.ProviderID != "gateway" && token.ProviderID != "backup" {
+		t.Fatalf("token provider = %q, want one of the equivalent connections", token.ProviderID)
 	}
 }

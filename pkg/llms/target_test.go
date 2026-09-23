@@ -1,29 +1,12 @@
 package llms
 
 import (
-	"context"
 	"testing"
 )
 
-type targetModelConfigStore struct {
-	config ProviderModelConfig
-	found  bool
-}
-
-func (s *targetModelConfigStore) LLMProviderModelConfig(context.Context, string, string) (ProviderModelConfig, bool, error) {
-	return s.config, s.found, nil
-}
-
-func (s *targetModelConfigStore) LLMProviderModelWireAPI(context.Context, string, string) (string, bool, error) {
-	return "", false, nil
-}
-
-func TestBuildResolvedTargetDropsForbiddenPerModelHeaders(t *testing.T) {
-	store := &targetModelConfigStore{
-		found: true,
-		config: ProviderModelConfig{
-			HeadersJSON: `{"Authorization":"Bearer stolen","X-Model-Header":"allowed"}`,
-		},
+func TestNewResolvedTargetDropsForbiddenPerModelHeaders(t *testing.T) {
+	config := ProviderModelConfig{
+		HeadersJSON: `{"Authorization":"Bearer stolen","X-Model-Header":"allowed"}`,
 	}
 	provider := Provider{
 		ID:             "provider-1",
@@ -35,9 +18,9 @@ func TestBuildResolvedTargetDropsForbiddenPerModelHeaders(t *testing.T) {
 	}
 	model := Model{ID: "model-1", Name: "model-1"}
 
-	target, err := BuildResolvedTarget(context.Background(), store, ResolvedTargetInput{Provider: provider, Model: model})
+	target, err := NewResolvedTarget(provider, model, config)
 	if err != nil {
-		t.Fatalf("BuildResolvedTarget returned error: %v", err)
+		t.Fatalf("NewResolvedTarget returned error: %v", err)
 	}
 	if got := target.Headers.Get("Authorization"); got != "Bearer provider-secret" {
 		t.Fatalf("Authorization header = %q, want provider credential to survive unclobbered", got)
@@ -53,13 +36,10 @@ func TestBuildResolvedTargetDropsForbiddenPerModelHeaders(t *testing.T) {
 // idempotent, so canonical(rawKey) == canonical(trim(rawKey)) always holds.
 // This test pins that guarantee against case and whitespace variants of the
 // auth header name.
-func TestBuildResolvedTargetDropsForbiddenPerModelHeaderCaseAndWhitespaceVariants(t *testing.T) {
+func TestNewResolvedTargetDropsForbiddenPerModelHeaderCaseAndWhitespaceVariants(t *testing.T) {
 	for _, key := range []string{"authorization", " Authorization", "AUTHORIZATION", " authorization "} {
 		t.Run(key, func(t *testing.T) {
-			store := &targetModelConfigStore{
-				found:  true,
-				config: ProviderModelConfig{HeadersJSON: `{"` + key + `":"Bearer stolen"}`},
-			}
+			config := ProviderModelConfig{HeadersJSON: `{"` + key + `":"Bearer stolen"}`}
 			provider := Provider{
 				ID:             "provider-1",
 				BaseURL:        "https://provider.test",
@@ -70,9 +50,9 @@ func TestBuildResolvedTargetDropsForbiddenPerModelHeaderCaseAndWhitespaceVariant
 			}
 			model := Model{ID: "model-1", Name: "model-1"}
 
-			target, err := BuildResolvedTarget(context.Background(), store, ResolvedTargetInput{Provider: provider, Model: model})
+			target, err := NewResolvedTarget(provider, model, config)
 			if err != nil {
-				t.Fatalf("BuildResolvedTarget returned error: %v", err)
+				t.Fatalf("NewResolvedTarget returned error: %v", err)
 			}
 			if got := target.Headers.Get("Authorization"); got != "Bearer provider-secret" {
 				t.Fatalf("Authorization header = %q for per-model key %q, want provider credential to survive unclobbered", got, key)

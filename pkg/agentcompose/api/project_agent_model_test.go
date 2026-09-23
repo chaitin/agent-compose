@@ -55,3 +55,25 @@ func TestEnrichProjectAgentModelsReturnsInternalResolverError(t *testing.T) {
 		t.Fatalf("error = %v, want internal wrapping %v", err, wantErr)
 	}
 }
+
+func TestAgentModelSourceToProtoMapsEverySource(t *testing.T) {
+	tests := []struct {
+		source llms.AgentModelSource
+		want   agentcomposev2.AgentModelSource
+	}{
+		{source: llms.AgentModelSourceProject, want: agentcomposev2.AgentModelSource_AGENT_MODEL_SOURCE_PROJECT},
+		{source: llms.AgentModelSourceAgentEnv, want: agentcomposev2.AgentModelSource_AGENT_MODEL_SOURCE_AGENT_ENV},
+		{source: llms.AgentModelSourceDaemonDefault, want: agentcomposev2.AgentModelSource_AGENT_MODEL_SOURCE_DAEMON_DEFAULT},
+		{source: llms.AgentModelSourceProviderDefault, want: agentcomposev2.AgentModelSource_AGENT_MODEL_SOURCE_PROVIDER_DEFAULT},
+		{source: llms.AgentModelSourceUnresolved, want: agentcomposev2.AgentModelSource_AGENT_MODEL_SOURCE_UNRESOLVED},
+		{source: llms.AgentModelSource(""), want: agentcomposev2.AgentModelSource_AGENT_MODEL_SOURCE_UNSPECIFIED},
+		{source: llms.AgentModelSource("unknown"), want: agentcomposev2.AgentModelSource_AGENT_MODEL_SOURCE_UNSPECIFIED},
+	}
+	for _, test := range tests {
+		t.Run(string(test.source), func(t *testing.T) {
+			if got := agentModelSourceToProto(test.source); got != test.want {
+				t.Fatalf("agentModelSourceToProto(%q) = %v, want %v", test.source, got, test.want)
+			}
+		})
+	}
+}

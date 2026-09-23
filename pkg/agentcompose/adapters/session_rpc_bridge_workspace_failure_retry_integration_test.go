@@ -173,6 +173,7 @@ func TestIntegrationSandboxRPCBridgeRuntimeStartFailureRetryPreservesReadyWorksp
 	bridge.config.LLMAPIKey = "provider-key"
 	bridge.config.LLMModel = "gpt-retry"
 	bridge.config.LLMAPIProtocol = "responses"
+	projectTestDaemonLLMConfig(t, ctx, bridge)
 	recordingStore := installIntegrationRecordingProvisioner(bridge)
 
 	const workspaceID = "runtime-failure-ready-retry"

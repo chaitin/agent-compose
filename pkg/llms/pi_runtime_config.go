@@ -13,8 +13,6 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
-const piFacadeProviderID = "agent-compose"
-
 func GuestPiAgentDir(config *appconfig.Config) string {
 	appconfig.ApplyDefaultGuestPaths(config)
 	return filepath.Join(config.GuestHomePath, ".pi", "agent")
@@ -22,20 +20,26 @@ func GuestPiAgentDir(config *appconfig.Config) string {
 
 // WritePiRuntimeConfig atomically replaces agent-compose's Pi model catalog.
 // The API key remains an environment reference so no facade token is persisted.
-func WritePiRuntimeConfig(sandbox *domain.Sandbox, model, baseURL, api string) error {
+// credentialEnv names the variable holding the key: the facade token for a
+// managed run, the vendor key for a direct one.
+func WritePiRuntimeConfig(sandbox *domain.Sandbox, model, baseURL, api, credentialEnv string) error {
 	if sandbox == nil {
 		return nil
 	}
 	model = strings.TrimSpace(model)
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	api = strings.TrimSpace(api)
+	credentialEnv = strings.TrimSpace(credentialEnv)
+	if credentialEnv == "" {
+		credentialEnv = guestFacadeTokenEnvName
+	}
 	if model == "" || baseURL == "" || api == "" {
 		return nil
 	}
 	payload := map[string]any{"providers": map[string]any{
-		piFacadeProviderID: map[string]any{
+		GuestProviderAgentCompose: map[string]any{
 			"baseUrl": baseURL,
-			"apiKey":  "$AGENT_COMPOSE_SANDBOX_TOKEN",
+			"apiKey":  "$" + credentialEnv,
 			"api":     api,
 			"models": []map[string]any{{
 				"id": model, "name": model,

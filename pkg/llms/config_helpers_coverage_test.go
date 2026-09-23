@@ -28,11 +28,11 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if err != nil || !strings.Contains(string(codexConfig), `wire_api = "responses"`) || !strings.Contains(string(codexConfig), `AGENT_COMPOSE_SANDBOX_TOKEN`) {
 		t.Fatalf("codex config=%q err=%v", string(codexConfig), err)
 	}
-	if err := WriteOpenCodeRuntimeConfig(session, "custom", "gpt-custom", "http://runtime/openai/v1/"); err != nil {
+	if err := WriteOpenCodeRuntimeConfig(session, ProtocolChatCompletions, "gpt-custom", "http://runtime/openai/v1/", guestFacadeTokenEnvName); err != nil {
 		t.Fatalf("WriteOpenCodeRuntimeConfig returned error: %v", err)
 	}
-	if err := WriteOpenCodeAnthropicRuntimeConfig(session, "claude", "http://runtime/anthropic/"); err != nil {
-		t.Fatalf("WriteOpenCodeAnthropicRuntimeConfig returned error: %v", err)
+	if err := WriteOpenCodeRuntimeConfig(session, ProtocolMessages, "claude", "http://runtime/anthropic/", guestFacadeTokenEnvName); err != nil {
+		t.Fatalf("WriteOpenCodeRuntimeConfig anthropic returned error: %v", err)
 	}
 	openCodeConfig, err := os.ReadFile(filepath.Join(execution.HostSandboxHome(session), ".config", "opencode", "opencode.json"))
 	if err != nil || !strings.Contains(string(openCodeConfig), "@ai-sdk/anthropic") || !strings.Contains(string(openCodeConfig), "AGENT_COMPOSE_SANDBOX_TOKEN") {
@@ -115,20 +115,25 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if len(filtered) != 1 || filtered[0].Name != "VISIBLE" {
 		t.Fatalf("filtered = %#v", filtered)
 	}
-	if env := RuntimeEnvMap([]domain.SandboxEnvVar{{Name: "OPENAI_API_KEY", Value: "secret"}, {Name: "VISIBLE", Value: "1"}}); env["VISIBLE"] != "1" || env["OPENAI_API_KEY"] != "" {
-		t.Fatalf("runtime env = %#v", env)
-	}
-	if got := NormalizeAPIEndpoint("https://api.example.test/openai"); got != "https://api.example.test/openai/v1/responses" {
-		t.Fatalf("NormalizeAPIEndpoint = %q", got)
-	}
 	if got := NormalizeAPIEndpointForProtocol("https://api.example.test/openai/v1", APIProtocolChatCompletions); got != "https://api.example.test/openai/v1/chat/completions" {
 		t.Fatalf("NormalizeAPIEndpointForProtocol chat = %q", got)
 	}
 	if got := NormalizeAPIEndpointForProtocol("https://api.example.test", APIProtocolChatCompletions); got != "https://api.example.test/v1/chat/completions" {
 		t.Fatalf("NormalizeAPIEndpointForProtocol root = %q", got)
 	}
-	merged := MergeManagedExecEnv(map[string]string{"OPENAI_API_KEY": "secret", "A": "1"}, map[string]string{"B": "2"})
-	if merged["OPENAI_API_KEY"] != "" || merged["A"] != "1" || merged["B"] != "2" {
+	// A declared provider credential in the base environment must survive the
+	// merge; only keys the managed layer actually sets are overwritten.
+	merged := MergeManagedExecEnv(
+		map[string]string{"OPENAI_API_KEY": "declared", "ANTHROPIC_API_KEY": "base-only", "A": "1"},
+		map[string]string{"OPENAI_API_KEY": "managed", "B": "2"},
+	)
+	if merged["OPENAI_API_KEY"] != "managed" {
+		t.Fatalf("managed provider key did not win: %#v", merged)
+	}
+	if merged["ANTHROPIC_API_KEY"] != "base-only" {
+		t.Fatalf("declared provider key was stripped: %#v", merged)
+	}
+	if merged["A"] != "1" || merged["B"] != "2" {
 		t.Fatalf("merged env = %#v", merged)
 	}
 	if items := EnvItemsFromMap(map[string]string{"B": "2", "A": "1"}, true); len(items) != 2 || !items[0].Secret || items[0].Name != "A" {
@@ -249,8 +254,8 @@ func TestWriteCodexMCPConfigSkipsGuestPushWhenNothingWasEverWritten(t *testing.T
 
 	var pushCount int
 	// No prior WriteCodexRuntimeConfig/WriteCodexMCPConfig call ever touched
-	// this sandbox's .codex/config.toml (e.g. no managed LLM provider - see
-	// EnsureCodexFacadeConfig's "let Codex use its own login" no-op path).
+	// this sandbox's .codex/config.toml (e.g. no managed LLM catalog entry -
+	// the "let Codex use its own login" no-op path).
 	// Calling with zero MCP servers must not push an empty file to a guest
 	// that never had anything pushed there in the first place.
 	if err := WriteCodexMCPConfig(context.Background(), config, session, nil, func(context.Context, string, []byte) error {
@@ -383,56 +388,4 @@ func TestConfigHelperEdgeBranches(t *testing.T) {
 		t.Fatalf("AppendAPIEndpointToBaseURL base responses = %q", got)
 	}
 	joinAPIBasePath(nil, "/v1", "responses")
-}
-
-func TestClientConfigAndSelectionWorkflows(t *testing.T) {
-	ctx := context.Background()
-	store := llmCoverageEnvStore{items: []domain.SandboxEnvVar{{Name: "LLM_API_ENDPOINT", Value: "https://example.test"}, {Name: "LLM_API_PROTOCOL", Value: "chat"}}}
-	if got := ResolveProtocol(ctx, store, ClientConfig{}); got != APIProtocolChatCompletions {
-		t.Fatalf("ResolveProtocol = %q", got)
-	}
-	if got := ResolveEndpoint(ctx, store, ClientConfig{}); !strings.Contains(got, "chat/completions") {
-		t.Fatalf("ResolveEndpoint = %q", got)
-	}
-	t.Setenv("LLM_API_ENDPOINT", "https://env.test")
-	if got := ResolveEndpoint(ctx, nil, ClientConfig{Protocol: APIProtocolResponses}); got != "https://env.test/v1/responses" {
-		t.Fatalf("env endpoint = %q", got)
-	}
-	if got := ResolveSetting(ctx, nil, "fallback", "MISSING_SETTING"); got != "fallback" {
-		t.Fatalf("ResolveSetting fallback = %q", got)
-	}
-
-	models := []Model{{ID: "m1", Name: "gpt-1"}, {ID: "m2", Name: "gpt-2", DefaultModel: true}}
-	providers := []Provider{{ID: "p2", ProviderType: ProviderFamilyOpenAI, Scope: ProviderScopeEnvDefault, Weight: 10}, {ID: "p1", ProviderType: ProviderFamilyOpenAI, Weight: 1}}
-	selected, provider, wireAPI, ok, err := SelectModelAndProvider(ctx, llmCoverageWireStore{ok: true, wireAPI: APIProtocolResponses}, ModelProviderSelection{Models: models, Providers: providers, ProviderFamily: ProviderFamilyOpenAI})
-	if err != nil || !ok || selected.ID != "m2" || provider.ID != "p2" || wireAPI != APIProtocolResponses {
-		t.Fatalf("selected=%#v provider=%#v wire=%q ok=%v err=%v", selected, provider, wireAPI, ok, err)
-	}
-	if _, _, _, ok, err := SelectModelAndProvider(ctx, llmCoverageWireStore{}, ModelProviderSelection{Models: models, Providers: providers, RequestedModel: "missing"}); err != nil || ok {
-		t.Fatalf("expected missing model ok=false err=%v", err)
-	}
-	if priority := ProviderSelectionPriority(ProviderScopeSessionEnv); priority != 0 {
-		t.Fatalf("session env priority = %d", priority)
-	}
-}
-
-func TestE2EClientConfigAndSelectionWorkflows(t *testing.T) {
-	TestClientConfigAndSelectionWorkflows(t)
-}
-
-type llmCoverageEnvStore struct {
-	items []domain.SandboxEnvVar
-}
-
-func (s llmCoverageEnvStore) ListGlobalEnv(context.Context) ([]domain.SandboxEnvVar, error) {
-	return s.items, nil
-}
-
-type llmCoverageWireStore struct {
-	ok      bool
-	wireAPI string
-}
-
-func (s llmCoverageWireStore) LLMProviderModelWireAPI(context.Context, string, string) (string, bool, error) {
-	return s.wireAPI, s.ok, nil
 }

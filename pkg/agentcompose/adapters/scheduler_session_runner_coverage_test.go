@@ -26,6 +26,7 @@ func TestSchedulerSandboxRunnerLoadResumeAndShutdownCoverage(t *testing.T) {
 	bridge.config.LLMAPIKey = "provider-key"
 	bridge.config.LLMModel = "gpt-scheduler-retry"
 	bridge.config.LLMAPIProtocol = "responses"
+	projectTestDaemonLLMConfig(t, ctx, bridge)
 	publisher := &schedulerSessionPublisherFake{}
 	runner := NewSchedulerSandboxRunner(SchedulerSandboxRunnerDeps{
 		Config:           bridge.config,
@@ -120,6 +121,7 @@ func TestSchedulerSandboxRunnerReleasedRuntimeResumePreparesAgentEnvironment(t *
 	bridge.config.LLMAPIKey = "provider-key"
 	bridge.config.LLMModel = "gpt-scheduler-retry"
 	bridge.config.LLMAPIProtocol = "responses"
+	projectTestDaemonLLMConfig(t, ctx, bridge)
 	runner := NewSchedulerSandboxRunner(SchedulerSandboxRunnerDeps{
 		Config:           bridge.config,
 		Store:            bridge.store,
