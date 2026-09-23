@@ -346,10 +346,21 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 		t.Fatalf("pi token = %#v, err=%v", token, err)
 	}
 
-	// A model no configured connection serves is a configuration error rather
-	// than a silent no-op.
-	if _, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "unknown-model", Source: "", RunID: ""}); !errors.Is(err, llms.ErrAmbiguousConnection) {
-		t.Fatalf("unknown model error = %v, want an ambiguous-connection error", err)
+	// An opaque model no connection declares is still served: a model id is
+	// opaque, so the daemon picks among the connections by protocol affinity
+	// instead of failing. OpenCode speaks messages natively, and the responses
+	// connection is not something it can speak at all, so the Anthropic
+	// connection wins.
+	unknown, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "unknown-model", Source: "", RunID: "run-unknown"})
+	if err != nil {
+		t.Fatalf("unknown model returned error: %v", err)
+	}
+	unknownToken, err := store.GetLLMFacadeToken(ctx, unknown.Env["AGENT_COMPOSE_SANDBOX_TOKEN"])
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken(unknown-model) returned error: %v", err)
+	}
+	if unknownToken.ProviderID != "anthropic" || unknownToken.Model != "unknown-model" {
+		t.Fatalf("unknown model token = %#v, want the messages connection over the opaque model", unknownToken)
 	}
 	if env, err := EnsureSessionLLMFacadeConfig(ctx, SessionFacadeConfigRequest{Config: nil, Store: store, Session: session, Agent: "codex", Model: "", Source: "", RunID: ""}); err != nil || env != nil {
 		t.Fatalf("nil config env=%#v err=%v", env, err)
@@ -450,10 +461,11 @@ func catalogStringPointer(value string) *string {
 	return &value
 }
 
-// TestEnsureSessionAgentRuntimeConfigRejectsAnAmbiguousModel pins that a model
-// two connections serve is reported through the facade boundary instead of one
-// of them being chosen silently.
-func TestEnsureSessionAgentRuntimeConfigRejectsAnAmbiguousModel(t *testing.T) {
+// TestEnsureSessionAgentRuntimeConfigChoosesBetweenEquivalentConnections pins
+// that a model two connections serve over the same protocol resolves at the
+// facade boundary: the connections are interchangeable, so one is chosen and
+// the run is not reported as unresolved.
+func TestEnsureSessionAgentRuntimeConfigChoosesBetweenEquivalentConnections(t *testing.T) {
 	isolateLLMEnv(t)
 	ctx := context.Background()
 	root := t.TempDir()
@@ -498,10 +510,20 @@ func TestEnsureSessionAgentRuntimeConfigRejectsAnAmbiguousModel(t *testing.T) {
 		},
 	}
 
-	_, err = EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{
+	// Two connections serve the same model over the same protocol. They are
+	// interchangeable, so the run proceeds on one of them: the tie-break picks
+	// rather than reporting the model as unresolved.
+	shared, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{
 		Config: config, Store: store, Session: session, Agent: "pi", Model: "shared-model", Source: TokenSourceAgent, RunID: "run-connection-bare",
 	})
-	if !errors.Is(err, llms.ErrAmbiguousConnection) {
-		t.Fatalf("EnsureSessionAgentRuntimeConfig error = %v, want ErrAmbiguousConnection", err)
+	if err != nil {
+		t.Fatalf("EnsureSessionAgentRuntimeConfig returned error: %v", err)
+	}
+	token, err := store.GetLLMFacadeToken(ctx, shared.Env["AGENT_COMPOSE_SANDBOX_TOKEN"])
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
+	}
+	if token.ProviderID != "gateway" && token.ProviderID != "backup" {
+		t.Fatalf("token provider = %q, want one of the equivalent connections", token.ProviderID)
 	}
 }

@@ -34,8 +34,9 @@ func NewLLMClient(config *appconfig.Config, store *configstore.ConfigStore) *LLM
 }
 
 // Generate makes one daemon-owned LLM call. The model is opaque: an empty model
-// selects the catalog default, and connection selection is the catalog's fixed
-// precedence. A daemon-owned call has no sandbox and therefore no per-scope
+// selects the catalog default, and connection selection follows the catalog's
+// fixed precedence with the default protocol preference, because a daemon-owned
+// call belongs to no agent CLI. It has no sandbox and therefore no per-scope
 // environment to layer on top of the catalog.
 func (c *LLMClient) Generate(ctx context.Context, prompt, model, outputSchemaJSON string) (llms.GenerateResult, error) {
 	if c == nil || c.store == nil {
@@ -49,7 +50,7 @@ func (c *LLMClient) Generate(ctx context.Context, prompt, model, outputSchemaJSO
 	if err != nil {
 		return llms.GenerateResult{}, err
 	}
-	target, err := catalog.Resolve("", selected)
+	target, err := catalog.Resolve("", selected, llms.DefaultProtocolPreference())
 	if err != nil {
 		return llms.GenerateResult{}, err
 	}

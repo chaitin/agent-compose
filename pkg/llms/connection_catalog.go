@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"sort"
 	"strings"
 )
@@ -13,14 +14,11 @@ var (
 	ErrNoModel = errors.New("no llm model configured")
 	// ErrNoConnection reports that the daemon has no upstream connection at all.
 	// It is the "nothing is configured" counterpart to ErrNoModel, and callers
-	// treat it the same way: the agent keeps its own authentication. Ambiguity
-	// between configured connections is a different failure and stays fatal.
+	// treat it the same way: the agent keeps its own authentication.
 	ErrNoConnection = errors.New("no llm connection configured")
 	// ErrConnectionNotFound reports a connection id that matches no configured
 	// connection.
 	ErrConnectionNotFound = errors.New("llm connection not found")
-	// ErrAmbiguousConnection reports that a model did not identify one connection.
-	ErrAmbiguousConnection = errors.New("ambiguous llm connection")
 	// ErrLegacyQualifiedModel reports a model written as "<connection>/<model>",
 	// the syntax the connection-aware catalog replaced. It is not sniffed from
 	// the shape alone: a model id is opaque and may legitimately contain a slash,
@@ -52,26 +50,59 @@ type CatalogStore interface {
 //
 // Model ids are opaque. A Catalog never splits, prefixes, or otherwise reads
 // structure out of a model string. Connection selection is a lookup with a
-// fixed precedence and no fallback:
+// fixed precedence:
 //
 //  1. the connection the caller names, which is how the facade token's already
 //     resolved connection is looked up again at request time;
-//  2. the connection declared as the owner of the catalog default model;
-//  3. the only connection that serves the model;
-//  4. the only configured connection when exactly one exists.
-//
-// Every other case is an error that names the candidate connections, so an
-// operator learns about the ambiguity instead of the daemon guessing.
+//  2. among the connections that declare the model, the one serving the
+//     caller's most preferred protocol, so a run is served by a passthrough
+//     whenever a connection can do that; connections that serve the model over
+//     the same protocol are interchangeable and one of them is chosen at
+//     random, which spreads runs instead of pinning whichever id sorts first;
+//  3. the connection the catalog default model names, when no connection
+//     declares the model;
+//  4. the only configured connection, when exactly one exists;
+//  5. otherwise every configured connection, ranked the same way: a model id is
+//     opaque, so a connection that never declared the model may still serve it.
 type Catalog struct {
 	providers         map[string]Provider
 	bindings          map[string]map[string]ProviderModelConfig
 	serving           map[string][]string
 	defaultConnection string
 	defaultModel      string
+	chooser           ConnectionChooser
+}
+
+// ConnectionChooser picks one index out of connections that are otherwise
+// interchangeable to the caller.
+type ConnectionChooser func(candidates int) int
+
+// CatalogOption customizes how a loaded Catalog resolves a connection.
+type CatalogOption func(*Catalog)
+
+// WithConnectionChooser replaces the random tie-break a Catalog applies when
+// several connections serve a model over equally preferred protocols. Tests
+// inject a chooser to make that pick observable; production keeps the default.
+func WithConnectionChooser(chooser ConnectionChooser) CatalogOption {
+	return func(catalog *Catalog) {
+		if chooser != nil {
+			catalog.chooser = chooser
+		}
+	}
+}
+
+// chooseRandomCandidate is the default tie-break. Connections that serve one
+// model over the same protocol are interchangeable, so spreading runs across
+// them beats pinning whichever id sorts first.
+func chooseRandomCandidate(candidates int) int {
+	if candidates <= 1 {
+		return 0
+	}
+	return rand.IntN(candidates)
 }
 
 // LoadCatalog builds a Catalog snapshot from the configuration store.
-func LoadCatalog(ctx context.Context, store CatalogStore) (*Catalog, error) {
+func LoadCatalog(ctx context.Context, store CatalogStore, options ...CatalogOption) (*Catalog, error) {
 	if store == nil {
 		return nil, errors.New("llm catalog store is required")
 	}
@@ -103,6 +134,9 @@ func LoadCatalog(ctx context.Context, store CatalogStore) (*Catalog, error) {
 		sort.Strings(catalog.serving[modelID])
 	}
 	catalog.setDefault(defaultProviderID, defaultModelID, hasDefault, models)
+	for _, option := range options {
+		option(catalog)
+	}
 	return catalog, nil
 }
 
@@ -205,7 +239,13 @@ func (c *Catalog) SelectModel(agentModel string) (string, error) {
 // Resolve returns the upstream connection and its effective per-model
 // overrides for model. The returned target carries the upstream protocol and
 // endpoint the daemon will forward to.
-func (c *Catalog) Resolve(connectionID, model string) (ResolvedTarget, error) {
+//
+// preference orders the upstream protocols the caller can serve, best first, so
+// a model that several connections serve resolves to a connection the caller
+// speaks natively whenever one exists. A caller that names a connection outright
+// does not need a preference; nil means "no preference", which leaves only the
+// random tie-break between equally ranked connections.
+func (c *Catalog) Resolve(connectionID, model string, preference ProtocolPreference) (ResolvedTarget, error) {
 	if c == nil {
 		return ResolvedTarget{}, errors.New("llm catalog is required")
 	}
@@ -213,7 +253,7 @@ func (c *Catalog) Resolve(connectionID, model string) (ResolvedTarget, error) {
 	if model == "" {
 		return ResolvedTarget{}, ErrNoModel
 	}
-	provider, err := c.connectionFor(connectionID, model)
+	provider, err := c.connectionFor(connectionID, model, preference)
 	if err != nil {
 		return ResolvedTarget{}, err
 	}
@@ -221,7 +261,7 @@ func (c *Catalog) Resolve(connectionID, model string) (ResolvedTarget, error) {
 	return NewResolvedTarget(provider, Model{ID: model, Name: model, Enabled: true}, bound)
 }
 
-func (c *Catalog) connectionFor(connectionID, model string) (Provider, error) {
+func (c *Catalog) connectionFor(connectionID, model string, preference ProtocolPreference) (Provider, error) {
 	if id := strings.TrimSpace(connectionID); id != "" {
 		provider, ok := c.providers[id]
 		if !ok {
@@ -230,35 +270,73 @@ func (c *Catalog) connectionFor(connectionID, model string) (Provider, error) {
 		return provider, nil
 	}
 	// A daemon with no connection at all has nothing to manage: report that
-	// plainly rather than as an ambiguity between zero candidates.
+	// plainly rather than as a choice between zero candidates.
 	if len(c.providers) == 0 {
 		return Provider{}, ErrNoConnection
 	}
+	if err := c.legacyQualifiedModelError(model); err != nil {
+		return Provider{}, err
+	}
+	if candidates := c.serving[model]; len(candidates) != 0 {
+		return c.chooseConnection(candidates, model, preference)
+	}
+	// No connection declares this model. The catalog default is the operator's
+	// explicit answer for exactly this model, so it is consulted before the
+	// catalog falls back to treating every connection as a candidate.
 	if c.defaultModel != "" && c.defaultModel == model && c.defaultConnection != "" {
 		if provider, ok := c.providers[c.defaultConnection]; ok {
 			return provider, nil
 		}
-	}
-	if serving := c.serving[model]; len(serving) == 1 {
-		return c.providers[serving[0]], nil
-	}
-	if err := c.legacyQualifiedModelError(model); err != nil {
-		return Provider{}, err
 	}
 	if len(c.providers) == 1 {
 		for _, provider := range c.providers {
 			return provider, nil
 		}
 	}
-	return Provider{}, c.ambiguousConnectionError(model)
+	return c.chooseConnection(c.Connections(), model, preference)
+}
+
+// chooseConnection returns the candidate that serves model over the most
+// preferred protocol, breaking ties with the catalog's chooser. Candidates are
+// configured connection ids, so at least one of them always qualifies.
+func (c *Catalog) chooseConnection(candidates []string, model string, preference ProtocolPreference) (Provider, error) {
+	var best []string
+	bestRank := 0
+	for _, id := range candidates {
+		if _, ok := c.providers[id]; !ok {
+			continue
+		}
+		rank := preference.rank(c.effectiveWireAPI(id, model))
+		switch {
+		case best == nil || rank < bestRank:
+			best, bestRank = []string{id}, rank
+		case rank == bestRank:
+			best = append(best, id)
+		}
+	}
+	if len(best) == 0 {
+		return Provider{}, fmt.Errorf("no llm connection serves model %q", model)
+	}
+	chooser := c.chooser
+	if chooser == nil {
+		chooser = chooseRandomCandidate
+	}
+	return c.providers[best[chooser(len(best))]], nil
+}
+
+// effectiveWireAPI is the protocol a connection really serves model over: a
+// per-model binding may override the connection's own protocol, and the
+// preference has to rank what the run would actually use.
+func (c *Catalog) effectiveWireAPI(connectionID, model string) Protocol {
+	provider := c.providers[connectionID]
+	return NormalizeProtocol(firstNonEmptyTrimmed(c.bindingFor(connectionID, model).WireAPI, provider.DefaultWireAPI))
 }
 
 // legacyQualifiedModelError diagnoses the retired "<connection>/<model>" syntax.
 //
 // Nothing reinterprets such a value: guessing would corrupt a legitimate model id,
-// which stays opaque. Without this the operator sees either an upstream "unknown
-// model" rejection or an ambiguity error listing connections, and neither says
-// that the model string itself is what needs changing.
+// which stays opaque. Without this the operator only sees an upstream "unknown
+// model" rejection, which does not say that the model string itself needs fixing.
 func (c *Catalog) legacyQualifiedModelError(model string) error {
 	if len(c.serving[model]) != 0 {
 		return nil
@@ -284,14 +362,6 @@ func serves(connectionIDs []string, connectionID string) bool {
 		}
 	}
 	return false
-}
-
-func (c *Catalog) ambiguousConnectionError(model string) error {
-	candidates := c.serving[model]
-	if len(candidates) == 0 {
-		candidates = c.Connections()
-	}
-	return fmt.Errorf("%w: model %q matches %s; bind the model to exactly one connection or set a default model", ErrAmbiguousConnection, model, strings.Join(candidates, ", "))
 }
 
 func (c *Catalog) bindingFor(connectionID, model string) ProviderModelConfig {

@@ -19,11 +19,12 @@ var ErrUnsupportedAgentDialect = errors.New("unsupported agent llm dialect")
 
 // Dialect describes how one agent CLI talks to a model server.
 //
-// Supported lists the inbound protocols the CLI can speak natively. Canonical
-// is the inbound protocol used when the upstream serves something the CLI
-// cannot speak; that is the only situation that requires protocol conversion.
-// GuestProvider is the provider key used when the CLI addresses models as
-// "<provider>/<model>", and is empty when the CLI addresses the model directly.
+// Supported lists the inbound protocols the CLI can speak natively, most
+// preferred first. Canonical is the inbound protocol used when the upstream
+// serves something the CLI cannot speak; that is the only situation that
+// requires protocol conversion. GuestProvider is the provider key used when the
+// CLI addresses models as "<provider>/<model>", and is empty when the CLI
+// addresses the model directly.
 type Dialect struct {
 	Kind          string
 	Supported     []Protocol
@@ -60,9 +61,12 @@ func DialectFor(agentKind string) (Dialect, error) {
 			GuestProvider: GuestProviderAgentCompose,
 		}, nil
 	case "pi":
+		// Pi speaks all three protocols natively. When one model is served over
+		// several of them, the response API is the one it runs best against, so
+		// the order below is an affinity rather than an enumeration.
 		return Dialect{
 			Kind:          kind,
-			Supported:     []Protocol{ProtocolChatCompletions, ProtocolResponses, ProtocolMessages},
+			Supported:     []Protocol{ProtocolResponses, ProtocolChatCompletions, ProtocolMessages},
 			Canonical:     ProtocolChatCompletions,
 			GuestProvider: GuestProviderAgentCompose,
 		}, nil
@@ -79,7 +83,7 @@ func DialectFor(agentKind string) (Dialect, error) {
 		// Do not reintroduce the prefix without changing that document.
 		return Dialect{
 			Kind:      kind,
-			Supported: []Protocol{ProtocolChatCompletions, ProtocolResponses, ProtocolMessages},
+			Supported: []Protocol{ProtocolResponses, ProtocolChatCompletions, ProtocolMessages},
 			Canonical: ProtocolChatCompletions,
 		}, nil
 	default:
@@ -105,6 +109,25 @@ func (d Dialect) InboundProtocol(upstream Protocol) Protocol {
 		return upstream
 	}
 	return d.Canonical
+}
+
+// PreferredProtocols returns every upstream protocol ordered by this dialect's
+// affinity: the protocols the CLI speaks natively first, so that a model
+// several connections serve is resolved to a passthrough whenever one is
+// available, then the protocols it cannot speak. A configuration that only
+// offers conversions still resolves, because refusing to run would be worse
+// than converting; among those, the order is stable and keeps the two OpenAI
+// protocols ahead of the Anthropic one.
+func (d Dialect) PreferredProtocols() ProtocolPreference {
+	conversionOrder := DefaultProtocolPreference()
+	preference := make(ProtocolPreference, 0, len(conversionOrder))
+	preference = append(preference, d.Supported...)
+	for _, protocol := range conversionOrder {
+		if !d.Supports(protocol) {
+			preference = append(preference, protocol)
+		}
+	}
+	return preference
 }
 
 // NeedsConversion reports whether serving this CLI requires converting between

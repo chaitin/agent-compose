@@ -2,6 +2,7 @@ package llms
 
 import (
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -147,6 +148,55 @@ func TestProtocolHelpers(t *testing.T) {
 	}
 	if ProtocolResponses.Family() != ProviderFamilyOpenAI || ProtocolMessages.Family() != ProviderFamilyAnthropic {
 		t.Error("Protocol.Family returned the wrong family")
+	}
+}
+
+// TestDialectPreferredProtocols pins the affinity order that connection
+// selection ranks candidates by: the protocols the CLI speaks natively first, in
+// the order the daemon considers them best for that CLI, then the remainder in
+// the default order. Every protocol has to appear, because a protocol the
+// preference omits ranks last and would silently lose to every listed one.
+func TestDialectPreferredProtocols(t *testing.T) {
+	all := []Protocol{ProtocolResponses, ProtocolChatCompletions, ProtocolMessages}
+	cases := []struct {
+		agent string
+		want  []Protocol
+	}{
+		// Codex speaks only the response API, so any other upstream is converted.
+		{"codex", []Protocol{ProtocolResponses, ProtocolChatCompletions, ProtocolMessages}},
+		// Claude speaks only messages; the response API precedes chat completions
+		// among the conversions it needs.
+		{"claude", []Protocol{ProtocolMessages, ProtocolResponses, ProtocolChatCompletions}},
+		// OpenCode speaks chat completions and messages; the response API is the
+		// one upstream it cannot use.
+		{"opencode", []Protocol{ProtocolChatCompletions, ProtocolMessages, ProtocolResponses}},
+		// Pi and dsh speak all three and run best against the response API.
+		{"pi", []Protocol{ProtocolResponses, ProtocolChatCompletions, ProtocolMessages}},
+		{"dsh", []Protocol{ProtocolResponses, ProtocolChatCompletions, ProtocolMessages}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.agent, func(t *testing.T) {
+			dialect, err := DialectFor(tc.agent)
+			if err != nil {
+				t.Fatalf("DialectFor(%q) error = %v", tc.agent, err)
+			}
+			got := dialect.PreferredProtocols()
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("PreferredProtocols() = %v, want %v", got, tc.want)
+			}
+			for _, protocol := range all {
+				if !slices.Contains(got, protocol) {
+					t.Errorf("PreferredProtocols() = %v, missing %s", got, protocol)
+				}
+			}
+			// The native protocols come first, so a candidate that can be served
+			// directly always outranks one that needs a bridge.
+			for index, protocol := range got {
+				if dialect.Supports(protocol) != (index < len(dialect.Supported)) {
+					t.Errorf("PreferredProtocols()[%d] = %s, want native protocols first", index, protocol)
+				}
+			}
+		})
 	}
 }
 

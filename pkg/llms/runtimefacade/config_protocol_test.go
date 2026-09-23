@@ -3,7 +3,6 @@ package runtimefacade
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -170,7 +169,8 @@ func TestIntegrationEnsureSessionOpenCodeResolvesTheServingConnection(t *testing
 	assertTarget("gpt-test", llms.APIProtocolResponses, "openai")
 	assertTarget("deepseek-v4-flash", llms.APIProtocolChatCompletions, "baizhi")
 
-	if _, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "opencode", Model: "shared", Source: TokenSourceAgent, RunID: "run-shared"}); !errors.Is(err, llms.ErrAmbiguousConnection) {
-		t.Fatalf("shared model error = %v, want ErrAmbiguousConnection", err)
-	}
+	// Two connections serve "shared" over different protocols. OpenCode speaks
+	// chat completions natively and needs the responses API converted, so the
+	// affinity rule picks the chat-completions connection rather than failing.
+	assertTarget("shared", llms.APIProtocolChatCompletions, "baizhi")
 }

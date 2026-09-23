@@ -3,7 +3,6 @@ package llms
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -36,39 +35,90 @@ func TestPrepareAgentLLMBareModelUsesSoleConnection(t *testing.T) {
 	}
 }
 
-// TestPrepareAgentLLMRejectsAmbiguousBareModel pins the operator-visible
-// failure: several connections and nothing that identifies one of them is not
-// guessed at, and no facade token is minted.
-func TestPrepareAgentLLMRejectsAmbiguousBareModel(t *testing.T) {
-	isolateLLMEnv(t)
-	root := t.TempDir()
-	store := &prepareAgentLLMStore{fakeCatalogStore: fakeCatalogStore{providers: []Provider{
-		catalogOpenAIConnection("gateway", "https://gateway.test"),
-		catalogOpenAIConnection("backup", "https://backup.test"),
-	}}}
-
-	_, err := PrepareAgentLLM(context.Background(), AgentLLMRequest{
-		Config: bareModelConfig(root), Store: store, Sandbox: bareModelSandbox(root, agentLLMSandboxID),
-		AgentKind: "pi", Model: "qwen3-8b",
-	})
-	if !errors.Is(err, ErrAmbiguousConnection) {
-		t.Fatalf("PrepareAgentLLM error = %v, want ErrAmbiguousConnection", err)
+// TestPrepareAgentLLMPrefersAPassthroughConnection pins the affinity rule at
+// the entry point: when one model is served over several protocols, the run is
+// pinned to the connection the agent speaks natively, so the daemon proxies
+// instead of converting.
+func TestPrepareAgentLLMPrefersAPassthroughConnection(t *testing.T) {
+	providers := []Provider{
+		catalogOpenAIConnection("shared-responses", "https://responses.test"),
+		catalogChatConnection("shared-chat", "https://chat.test"),
+		catalogAnthropicConnection("shared-messages", "https://messages.test"),
 	}
-	for _, id := range []string{"gateway", "backup"} {
-		if !strings.Contains(err.Error(), id) {
-			t.Errorf("error %q does not name candidate %q", err, id)
-		}
+	bindings := []ProviderModelBinding{
+		{ProviderID: "shared-responses", ModelID: "shared-model"},
+		{ProviderID: "shared-chat", ModelID: "shared-model"},
+		{ProviderID: "shared-messages", ModelID: "shared-model"},
 	}
-	if len(store.savedTokens) != 0 {
-		t.Fatalf("saved tokens = %#v, want none for an ambiguous model", store.savedTokens)
+	cases := []struct {
+		agent        string
+		wantProvider string
+		wantInbound  Protocol
+	}{
+		{"codex", "shared-responses", ProtocolResponses},
+		{"claude", "shared-messages", ProtocolMessages},
+		{"opencode", "shared-chat", ProtocolChatCompletions},
+		{"pi", "shared-responses", ProtocolResponses},
+		{"dsh", "shared-responses", ProtocolResponses},
+	}
+	for _, tc := range cases {
+		t.Run(tc.agent, func(t *testing.T) {
+			isolateLLMEnv(t)
+			root := t.TempDir()
+			store := &prepareAgentLLMStore{fakeCatalogStore: fakeCatalogStore{providers: providers, bindings: bindings}}
+			prepared, err := PrepareAgentLLM(context.Background(), AgentLLMRequest{
+				Config: bareModelConfig(root), Store: store, Sandbox: bareModelSandbox(root, agentLLMSandboxID),
+				AgentKind: tc.agent, Model: "shared-model", Source: "agent", RunID: "run-" + tc.agent,
+			})
+			if err != nil {
+				t.Fatalf("PrepareAgentLLM returned error: %v", err)
+			}
+			if prepared.Target.Provider.ID != tc.wantProvider {
+				t.Fatalf("provider = %q, want %q", prepared.Target.Provider.ID, tc.wantProvider)
+			}
+			if prepared.Convert || prepared.Upstream != tc.wantInbound || prepared.Inbound != tc.wantInbound {
+				t.Fatalf("upstream/inbound/convert = %s/%s/%v, want a %s passthrough",
+					prepared.Upstream, prepared.Inbound, prepared.Convert, tc.wantInbound)
+			}
+			if len(store.savedTokens) != 1 || store.savedTokens[0].ProviderID != tc.wantProvider {
+				t.Fatalf("saved tokens = %#v, want one token for %q", store.savedTokens, tc.wantProvider)
+			}
+		})
 	}
 }
 
-// TestPrepareAgentLLMReportsNoConnectionWhenCatalogIsEmpty pins the "nothing is
-// configured" failure: a declared model against a daemon with zero connections
-// is unmanaged (ErrNoConnection), not an ambiguity between zero candidates. The
-// facade entry points treat that sentinel as a no-op, so it must not surface as
-// the fatal ErrAmbiguousConnection.
+// TestPrepareAgentLLMBreaksProtocolTiesWithoutFailing pins that two connections
+// serving a model over the same protocol no longer stop the run: one of them is
+// chosen, and the ambiguity never reaches the operator as an error.
+func TestPrepareAgentLLMBreaksProtocolTiesWithoutFailing(t *testing.T) {
+	isolateLLMEnv(t)
+	root := t.TempDir()
+	store := &prepareAgentLLMStore{fakeCatalogStore: fakeCatalogStore{
+		providers: []Provider{
+			catalogOpenAIConnection("gateway", "https://gateway.test"),
+			catalogOpenAIConnection("backup", "https://backup.test"),
+		},
+		bindings: []ProviderModelBinding{
+			{ProviderID: "gateway", ModelID: "shared-model"},
+			{ProviderID: "backup", ModelID: "shared-model"},
+		},
+	}}
+
+	prepared, err := PrepareAgentLLM(context.Background(), AgentLLMRequest{
+		Config: bareModelConfig(root), Store: store, Sandbox: bareModelSandbox(root, agentLLMSandboxID),
+		AgentKind: "pi", Model: "shared-model", Source: "agent", RunID: "run-shared",
+	})
+	if err != nil {
+		t.Fatalf("PrepareAgentLLM returned error: %v", err)
+	}
+	if id := prepared.Target.Provider.ID; id != "gateway" && id != "backup" {
+		t.Fatalf("provider = %q, want one of the two equivalent connections", id)
+	}
+	if len(store.savedTokens) != 1 || store.savedTokens[0].ProviderID != prepared.Target.Provider.ID {
+		t.Fatalf("saved tokens = %#v, want the chosen connection", store.savedTokens)
+	}
+}
+
 func TestPrepareAgentLLMReportsNoConnectionWhenCatalogIsEmpty(t *testing.T) {
 	isolateLLMEnv(t)
 	root := t.TempDir()
@@ -77,10 +127,8 @@ func TestPrepareAgentLLMReportsNoConnectionWhenCatalogIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCatalog returned error: %v", err)
 	}
-	if _, err := catalog.Resolve("", "qwen3-8b"); !errors.Is(err, ErrNoConnection) {
+	if _, err := catalog.Resolve("", "qwen3-8b", nil); !errors.Is(err, ErrNoConnection) {
 		t.Fatalf("Resolve error = %v, want ErrNoConnection", err)
-	} else if errors.Is(err, ErrAmbiguousConnection) {
-		t.Fatalf("Resolve error = %v, must not be reported as ambiguous", err)
 	}
 
 	store := &prepareAgentLLMStore{}
@@ -90,9 +138,6 @@ func TestPrepareAgentLLMReportsNoConnectionWhenCatalogIsEmpty(t *testing.T) {
 	})
 	if !errors.Is(err, ErrNoConnection) {
 		t.Fatalf("PrepareAgentLLM error = %v, want ErrNoConnection", err)
-	}
-	if errors.Is(err, ErrAmbiguousConnection) {
-		t.Fatalf("PrepareAgentLLM error = %v, must not be reported as ambiguous", err)
 	}
 	if !IsUnmanagedAgentLLMError(err) {
 		t.Fatalf("IsUnmanagedAgentLLMError(%v) = false, want true", err)
@@ -129,30 +174,30 @@ func TestPrepareAgentLLMReturnsErrNoModel(t *testing.T) {
 	}
 }
 
-// TestPrepareAgentLLMReportsAnAmbiguousModel pins that an agent declaring only
-// an opaque model the daemon cannot attribute to one connection fails loudly at
-// the entry point, instead of the daemon guessing an upstream.
-func TestPrepareAgentLLMReportsAnAmbiguousModel(t *testing.T) {
+// TestPrepareAgentLLMFallsBackToConversion pins that a model only reachable
+// through a protocol the agent cannot speak still runs: the daemon converts
+// rather than refusing, and the minted token carries the conversion.
+func TestPrepareAgentLLMFallsBackToConversion(t *testing.T) {
 	isolateLLMEnv(t)
-	providers := []Provider{
-		catalogOpenAIConnection("gateway", "https://gateway.test"),
-		catalogOpenAIConnection("backup", "https://backup.test"),
-	}
-	bindings := []ProviderModelBinding{
-		{ProviderID: "gateway", ModelID: "shared-model"},
-		{ProviderID: "backup", ModelID: "shared-model"},
-	}
-
 	root := t.TempDir()
-	store := &prepareAgentLLMStore{fakeCatalogStore: fakeCatalogStore{providers: providers, bindings: bindings}}
-	if _, err := PrepareAgentLLM(context.Background(), AgentLLMRequest{
+	store := &prepareAgentLLMStore{fakeCatalogStore: fakeCatalogStore{
+		providers: []Provider{catalogChatConnection("gateway-chat", "https://gateway.test")},
+		bindings:  []ProviderModelBinding{{ProviderID: "gateway-chat", ModelID: "shared-model"}},
+	}}
+
+	prepared, err := PrepareAgentLLM(context.Background(), AgentLLMRequest{
 		Config: bareModelConfig(root), Store: store, Sandbox: bareModelSandbox(root, agentLLMSandboxID),
-		AgentKind: "pi", Model: "shared-model",
-	}); !errors.Is(err, ErrAmbiguousConnection) {
-		t.Fatalf("PrepareAgentLLM error = %v, want ErrAmbiguousConnection", err)
+		AgentKind: "codex", Model: "shared-model", Source: "agent", RunID: "run-converted",
+	})
+	if err != nil {
+		t.Fatalf("PrepareAgentLLM returned error: %v", err)
 	}
-	if len(store.savedTokens) != 0 {
-		t.Fatalf("saved tokens = %#v, want none for an ambiguous model", store.savedTokens)
+	if !prepared.Convert || prepared.Upstream != ProtocolChatCompletions || prepared.Inbound != ProtocolResponses {
+		t.Fatalf("upstream/inbound/convert = %s/%s/%v, want chat completions converted to responses",
+			prepared.Upstream, prepared.Inbound, prepared.Convert)
+	}
+	if prepared.Target.Provider.ID != "gateway-chat" {
+		t.Fatalf("provider = %q, want gateway-chat", prepared.Target.Provider.ID)
 	}
 }
 

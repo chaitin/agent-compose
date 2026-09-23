@@ -541,7 +541,7 @@ agents:
     model: gpt-5.4
 ```
 
-The model stays opaque: the daemon never splits it in order to select an upstream. Which connection serves it is daemon configuration — the default model's owning connection, the only connection bound to the model, or the only configured connection — and an ambiguity between several candidates fails the run and names them. For pi, dsh, and opencode the daemon composes the `<llm-provider-id>/<model>` reference those CLIs expect from the selected connection, so the compose file never writes one. The retired `model: <connection>/<model>` form is rejected when its prefix names a connection that serves the remainder.
+The model stays opaque: the daemon never splits it in order to select an upstream. Which connection serves it is daemon configuration — the connections that declare the model, the default model's owning connection, or the only configured connection. When several connections could serve one model, the daemon prefers a connection the agent can speak natively, so the call is passed through instead of converted; connections that speak the same protocol are interchangeable and one is chosen at random, so several upstreams offering the same model never fail a run. For pi, dsh, and opencode the daemon composes the `<llm-provider-id>/<model>` reference those CLIs expect from the selected connection, so the compose file never writes one. The retired `model: <connection>/<model>` form is rejected when its prefix names a connection that serves the remainder.
 
 An Agent-level `LLM_API_*` environment is the higher-priority compatibility path: an agent that publishes its own upstream is served by it, and the model it injects may itself be a qualified name (for example a gateway that publishes `<provider>/<model>` logical names). Such a value reaches the upstream verbatim.
 
@@ -600,23 +600,16 @@ For example, call `CreateProvider` using Connect JSON:
 ```
 
 The request path is `/agentcompose.v2.LLMService/CreateProvider`, using existing
-daemon API authentication. Then set an Agent model to `team-gateway/model-id`;
-models do not need to be enumerated. A bare `model-id` resolves to the daemon
-default connection: the reserved bootstrap connection (`default`/`anthropic`)
-wins, otherwise the only configured connection is used, and several connections
-without a reserved one are reported as an ambiguity. Qualify the model as
-`<connection>/<model-id>` to select a connection explicitly. An Agent model value
-that carries a `/` is such a reference: a literal upstream model id that itself
-contains slashes is written with its connection (for example
-`team-gateway/meta-llama/Llama-3.1-8B-Instruct`). A prefix that names no
-configured connection, family alias, or session-environment provider is reported
-as a configuration error instead of being forwarded upstream as part of the model
-name. This is a behavior change for codex and claude: a declaration that wrote a
-slash-containing model id verbatim and relied on the default connection (for
-example `meta-llama/Llama-3.1-8B-Instruct`) now fails with
-`llm provider "meta-llama" is not configured`; rewrite it with the connection
-that serves the model (`team-gateway/meta-llama/Llama-3.1-8B-Instruct`). Other
-methods share the service path prefix.
+daemon API authentication. Then point an Agent at the model with its bare `model`
+value (for example `model-id`); models do not need to be enumerated. The daemon
+picks the connection: a model the created connection declares is served by it,
+otherwise the default model's owning connection or the only configured connection
+is used. Several connections serving one model are not an error — the daemon
+prefers one the agent can speak natively and otherwise picks among them. Do not
+write `<connection>/<model-id>`: that form is retired and rejected when its prefix
+names a connection that serves the remainder. A slash-containing upstream model
+id (for example `meta-llama/Llama-3.1-8B-Instruct`) is still forwarded verbatim.
+Other methods share the service path prefix.
 
 - IDs are immutable, 1–128 ASCII letters, digits, dots, underscores or hyphens,
   starting with a letter or digit. `default`, `anthropic`, and session environment

@@ -86,8 +86,8 @@ type AgentLLM struct {
 //
 // A catalog with no model to apply returns ErrNoModel, which callers treat as
 // "the agent manages its own authentication". Every other failure is a real
-// configuration error: an ambiguous connection, an unknown model binding, an
-// unreachable daemon URL, or an upstream protocol the agent cannot be served.
+// configuration error: an unreachable daemon URL, an unknown connection, or an
+// upstream protocol that cannot be served to this agent.
 func PrepareAgentLLM(ctx context.Context, req AgentLLMRequest) (*AgentLLM, error) {
 	if req.Store == nil {
 		return nil, errors.New("llm preparation requires a catalog store")
@@ -119,7 +119,7 @@ func PrepareAgentLLM(ctx context.Context, req AgentLLMRequest) (*AgentLLM, error
 		return nil, domain.ClassifyError(domain.ErrFailedPrecondition,
 			fmt.Sprintf("agent %q needs a daemon URL reachable from the sandbox; configure %s", dialect.Kind, RuntimeBaseURLEnvName), nil)
 	}
-	target, err := catalog.Resolve("", model)
+	target, err := catalog.Resolve("", model, dialect.PreferredProtocols())
 	if err != nil {
 		return nil, err
 	}

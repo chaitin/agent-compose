@@ -18,13 +18,14 @@ func boolPtr(value bool) *bool {
 }
 
 // resolveProviderTarget resolves one (connection, opaque model) pair through the
-// catalog snapshot the store feeds, mirroring the request path.
+// catalog snapshot the store feeds, mirroring the request path. The connection
+// is named outright, so no protocol preference applies.
 func resolveProviderTarget(ctx context.Context, store *ConfigStore, connectionID, model string) (llms.ResolvedTarget, error) {
 	snapshot, err := llms.LoadCatalog(ctx, store)
 	if err != nil {
 		return llms.ResolvedTarget{}, err
 	}
-	return snapshot.Resolve(connectionID, model)
+	return snapshot.Resolve(connectionID, model, nil)
 }
 
 func TestIntegrationManagedProviderLifecycleAndRouting(t *testing.T) {
@@ -253,14 +254,19 @@ func TestIntegrationManagedProviderServesBareModel(t *testing.T) {
 		t.Fatalf("target = %#v, want gateway/qwen3-8b over chat completions", target)
 	}
 
-	// A second configured connection makes the bare model ambiguous instead of
-	// silently picking one; the qualified form still routes explicitly.
+	// A second configured connection serving the same protocol makes the bare
+	// model a choice between two equivalent connections. Either of them may
+	// serve it, and naming one still routes explicitly.
 	second := "second-key"
 	if _, err := store.CreateLLMProvider(ctx, llms.ProviderReplacement{ID: "other", BaseURL: "https://other.example/v1", Protocol: llms.APIProtocolChatCompletions, APIKey: &second, Enabled: boolPtr(true)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveProviderTarget(ctx, store, "", "qwen3-8b"); err == nil {
-		t.Fatal("ambiguous bare model resolved without an error")
+	equivalent, err := resolveProviderTarget(ctx, store, "", "qwen3-8b")
+	if err != nil {
+		t.Fatalf("bare model did not resolve against two equivalent providers: %v", err)
+	}
+	if equivalent.Provider.ID != "gateway" && equivalent.Provider.ID != "other" {
+		t.Fatalf("equivalent target = %#v, want one of the two configured connections", equivalent)
 	}
 	qualified, err := resolveProviderTarget(ctx, store, "other", "qwen3-8b")
 	if err != nil {

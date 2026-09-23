@@ -772,7 +772,7 @@ func resolveCatalogConnection(ctx context.Context, store *ConfigStore, connectio
 	if err != nil {
 		return llms.ResolvedTarget{}, err
 	}
-	return snapshot.Resolve(connectionID, model)
+	return snapshot.Resolve(connectionID, model, nil)
 }
 
 func isolateConfigStoreLLMEnv(t *testing.T) {

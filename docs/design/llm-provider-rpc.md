@@ -97,16 +97,21 @@ part of it consults the environment again.
 1. **Model.** The agent's declared `model`, else the catalog's default model,
    else `ErrNoModel`. A model id is opaque: it is never split on `/` and never
    matched against a connection to infer anything.
-2. **Connection.** In order: the connection that owns the default model; the
-   single connection that serves the model; the only configured connection. If
-   two or more remain, the run fails with `ErrAmbiguousConnection` naming the
-   candidates — it is never resolved by accident. With no connection at all the
-   answer is `ErrNoConnection`, and the agent keeps its own authentication. The
-   runtime facade re-resolves the connection its token already names; that is a
-   lookup of a decision already made, not a second choice.
+2. **Connection.** The runtime facade re-resolves the connection its token already
+   names; that is a lookup of a decision already made, not a second choice. For
+   every other caller, in order: among the connections that serve the model, the
+   one speaking the caller's most preferred protocol; the connection that owns
+   the default model; the only configured connection; otherwise every configured
+   connection, ranked the same way, because a model id is opaque and a connection
+   that never declared the model may still serve it. Preference exists so an
+   agent is served by a passthrough whenever a connection can do that; connections
+   that speak the model over the same protocol are interchangeable, and one of
+   them is chosen at random instead of failing the run. With no connection at all
+   the answer is `ErrNoConnection`, and the agent keeps its own authentication.
 3. **Protocol.** The dialect table gives each agent the protocols it speaks
-   natively and one canonical protocol. An upstream protocol the agent speaks is
-   passed through; anything else is converted to the agent's canonical protocol.
+   natively, in affinity order, and one canonical protocol. Because step 2 ranks
+   candidates by that order, an upstream protocol the agent speaks is passed
+   through; anything else is converted to the agent's canonical protocol.
    If no conversion exists the run fails while preparing, not on the first
    request.
 

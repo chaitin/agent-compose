@@ -615,14 +615,15 @@ func registerRuntimeLLMFacadeRoutes(app *echo.Echo, di do.Injector) {
 		Tokens:    configDB,
 		Sandboxes: do.MustInvoke[*sandboxstore.Store](di),
 		// The token names the connection, so the proxy looks it up rather than
-		// choosing one. The requested model is forwarded to that connection
+		// choosing one, and no protocol preference applies: the request already
+		// belongs to that connection. The requested model is forwarded to it
 		// verbatim, which is what makes the daemon a weak caller.
 		Connections: func(ctx context.Context, connectionID, model string) (llms.ResolvedTarget, error) {
 			catalog, err := llms.LoadCatalog(ctx, configDB)
 			if err != nil {
 				return llms.ResolvedTarget{}, err
 			}
-			return catalog.Resolve(connectionID, model)
+			return catalog.Resolve(connectionID, model, nil)
 		},
 		Client:          proxy.NewRuntimeLLMHTTPClient(config.LLMTimeout),
 		MaxOutputTokens: config.LLMMaxOutputTokens,

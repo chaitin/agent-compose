@@ -225,6 +225,10 @@ func (c *Catalog) connectionFor(explicitID, model string) (Connection, error) {
 - 没有"请求家族没有连接就借另一个家族"（`default_connection.go:46-49`）；
 - 没有 family 参与解析。家族只在 §3.7 的转换矩阵里出现。
 
+> **修订（后续实现）**：上面代码里的 `ErrAmbiguous` 已被删除。多个连接服务同一模型时
+> 不再报错，而是按调用方的协议亲和性选路并优先透传；协议相同的候选随机选一个。
+> 只有 `ErrNoConnection`（零连接）仍然是失败。详见 §8「未完成与偏差」。
+
 `models.json.default: "gateway/model"` 仍然是 `provider/model`——
 它是 daemon 自有的、无歧义的文档格式，解析它不违反 R-A。
 
@@ -695,3 +699,18 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   `.github/pull_request_template.md` 也不要求，发布说明是在打 tag 时写进 GitHub
   release body 的（`.github/workflows/notify-dingtalk-release.yml` 消费它）。
   因此这不是一个待补的文件，而是发布时的动作；相关素材在各 commit message 里。
+
+- **连接选择：歧义报错改为按协议亲和性选路**（§3.3 的 `ErrAmbiguous` 已删除，
+  `docs/design/llm-provider-rpc.md` 与 YAML 手册 en / zh-CN 同步改写）。同一模型由多个
+  连接提供时不再让运行失败：按调用方（agent dialect）的协议亲和性排序候选，优先可透传
+  的连接，避免把本可透传的调用降级为转换；协议相同的候选彼此等价，用 `math/rand/v2`
+  随机选一个（`Catalog.chooser` 可注入，测试用 `WithConnectionChooser` 固定结果）。
+  没有任何连接声明该模型时，所有已配置连接都进入候选——模型名是不透明的，未声明不等于
+  不支持——这与"唯一连接服务任意模型"的既有行为一致；只有 `ErrNoConnection`（零连接）
+  仍然是失败。显式连接 id 的路径不变，它仍服务于 facade token 的再查询。
+
+  排序入口是 `ProtocolPreference` 与 `Dialect.PreferredProtocols()`；`pi` / `dsh` 的
+  `Supported` 随之从"枚举"改为亲和性顺序（`responses` → `chat_completions` →
+  `messages`）。若没有任何连接能透传，则按 `DefaultProtocolPreference()` 的顺序退化到
+  转换——转换优于拒绝运行——并且按 per-model binding 覆盖后的**实际**上游协议排序，
+  而不是连接自身的 `defaultWireAPI`。

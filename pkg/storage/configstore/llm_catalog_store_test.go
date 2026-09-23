@@ -105,7 +105,7 @@ func resolveCatalogModel(ctx context.Context, store *ConfigStore, requested stri
 	if err != nil {
 		return llms.ResolvedTarget{}, err
 	}
-	return snapshot.Resolve("", model)
+	return snapshot.Resolve("", model, llms.DefaultProtocolPreference())
 }
 
 func TestIntegrationApplyEmptyModelCatalogOnlyClearsCatalogOwnedState(t *testing.T) {

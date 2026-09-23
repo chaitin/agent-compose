@@ -129,7 +129,7 @@ func resolveCatalogTarget(t *testing.T, ctx context.Context, store llms.CatalogS
 	if err != nil {
 		t.Fatalf("SelectModel(%q): %v", requested, err)
 	}
-	target, err := snapshot.Resolve(connectionID, model)
+	target, err := snapshot.Resolve(connectionID, model, nil)
 	if err != nil {
 		t.Fatalf("Resolve(%q, %q): %v", connectionID, model, err)
 	}
