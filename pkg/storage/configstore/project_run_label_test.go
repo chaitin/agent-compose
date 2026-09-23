@@ -164,9 +164,9 @@ func TestInsertProjectRunLabelsTxRejectsInvalidKeysAndValues(t *testing.T) {
 				t.Fatalf("create run: %v", err)
 			}
 			for key, value := range tt.labels {
-				gotResult, ok := created.Labels[key]
-				if !ok || gotResult != value {
-					t.Fatalf("created run label %q = (%q, present=%v), want (%q, present=true)", key, gotResult, ok, value)
+				got, ok := created.Labels[key]
+				if !ok || got != value {
+					t.Fatalf("created run label %q = (%q, present=%v), want (%q, present=true)", key, got, ok, value)
 				}
 			}
 			fetched, err := store.GetProjectRun(ctx, tt.runID)
@@ -174,9 +174,9 @@ func TestInsertProjectRunLabelsTxRejectsInvalidKeysAndValues(t *testing.T) {
 				t.Fatalf("get run: %v", err)
 			}
 			for key, value := range tt.labels {
-				gotResult, ok := fetched.Labels[key]
-				if !ok || gotResult != value {
-					t.Fatalf("fetched run label %q = (%q, present=%v), want (%q, present=true)", key, gotResult, ok, value)
+				got, ok := fetched.Labels[key]
+				if !ok || got != value {
+					t.Fatalf("fetched run label %q = (%q, present=%v), want (%q, present=true)", key, got, ok, value)
 				}
 			}
 		})

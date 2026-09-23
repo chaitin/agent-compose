@@ -61,7 +61,34 @@ func (s *eventRunStub) ListRuns(_ context.Context, req *connect.Request[agentcom
 }
 
 func (s *eventRunStub) GetRun(_ context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, run := range s.runs {
+		if run.GetRunId() == req.Msg.GetRunId() {
+			return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: eventLogRunDetail(req.Msg.GetProjectId(), run)}), nil
+		}
+	}
 	return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), "run-event-review", "reviewer", "session-event", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "event output\n")}), nil
+}
+
+func eventLogRunDetail(projectID string, summary *agentcomposev2.RunSummary) *agentcomposev2.RunDetail {
+	detail := testRunDetail(projectID, summary.GetRunId(), summary.GetAgentName(), summary.GetSandboxId(), summary.GetStatus(), 0, "event output\n")
+	if summary.GetStartedAt() != nil {
+		detail.Summary.StartedAt = summary.GetStartedAt()
+	} else {
+		detail.Summary.StartedAt = mustProtoTimestamp("2026-06-10T00:00:00Z")
+		detail.Summary.UpdatedAt = mustProtoTimestamp("2026-06-10T00:00:01Z")
+	}
+	if summary.GetCreatedAt() != nil {
+		detail.Summary.CreatedAt = summary.GetCreatedAt()
+	}
+	if summary.GetUpdatedAt() != nil {
+		detail.Summary.UpdatedAt = summary.GetUpdatedAt()
+	}
+	if summary.GetCompletedAt() != nil {
+		detail.Summary.CompletedAt = summary.GetCompletedAt()
+	}
+	return detail
 }
 
 func (s *eventRunStub) FollowRunLogs(_ context.Context, req *connect.Request[agentcomposev2.FollowRunLogsRequest], stream *connect.ServerStream[agentcomposev2.RunLogChunk]) error {
@@ -187,6 +214,41 @@ agents:
 	}
 	if !strings.Contains(stderr, "evt_missing") {
 		t.Fatalf("logs --event not-found stderr = %q", stderr)
+	}
+}
+
+func TestIntegrationCLILogsEventRefreshesEmptyTimestampsBeforeSort(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-logs-event-sort
+agents:
+  reviewer:
+    provider: codex
+`)
+	newer := &agentcomposev2.RunSummary{
+		RunId:     "run-newer",
+		ProjectId: "project-event",
+		AgentName: "reviewer",
+		Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
+		SandboxId: "session-event",
+		StartedAt: mustProtoTimestamp("2026-06-11T00:00:10Z"),
+	}
+	older := &agentcomposev2.RunSummary{
+		RunId:     "run-older",
+		ProjectId: "project-event",
+		AgentName: "reviewer",
+		Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
+		SandboxId: "session-event",
+	}
+	server := newEventRunStubServer(t, &eventRunStub{runs: []*agentcomposev2.RunSummary{newer, older}})
+
+	stdout, stderr, _, exitCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--event", "evt_sort")
+	if exitCode != 0 {
+		t.Fatalf("logs --event sort exit code = %d, stderr = %q", exitCode, stderr)
+	}
+	olderIndex := strings.Index(stdout, "run-older")
+	newerIndex := strings.Index(stdout, "run-newer")
+	if olderIndex < 0 || newerIndex < 0 || olderIndex > newerIndex {
+		t.Fatalf("logs --event replay order = %q, want run-older before run-newer", stdout)
 	}
 }
 

@@ -660,7 +660,7 @@ agent-compose logs -t
 
 `--run` 和 `--sandbox` 是互斥的资源选择器。同时指定二者会返回用法错误，且不会发送日志请求。
 
-`--event` 只接受完整事件 ID，不支持前缀匹配。daemon 服务端会解析该事件、其子孙事件及共享 correlation id 的事件，返回关联的 agent run，因此 `--event` 不能与 `--run` 或 `--sandbox` 同时使用。`--event --follow` 只跟随查询时已知的 run，不会自动发现之后新建的 run。事件没有关联 run 时输出提示（JSON 模式输出空文档）并正常退出。`--event` 与 `--agent` 组合时由服务端过滤该 agent 的 run；过滤后没有 run 时输出同样的提示。
+`--event` 只接受完整事件 ID，不支持前缀匹配。daemon 服务端会解析该事件、其子孙事件及共享 correlation id 的事件，返回关联的 agent run，因此 `--event` 不能与 `--run` 或 `--sandbox` 同时使用。`--event --follow` 只跟随查询时已知的 run，不会自动发现之后新建的 run。`logs --json` 不能与 `--follow` 同时使用（用法错误），因此 `--event` 的 JSON 输出恒为单次快照。事件没有关联 run 时输出提示（JSON 模式输出空文档）并正常退出。`--event` 与 `--agent` 组合时由服务端过滤该 agent 的 run；过滤后没有 run 时输出同样的提示。
 
 事件作用域上限为 1000 个事件（与事件 trace 视图一致）。若某事件的子孙事件与其 correlation 关联事件合计超过上限，超出部分事件——以及仅关联到它们的 run——不会出现在结果中；此时 CLI 会在 stderr 输出警告，`ListRuns` 响应也会通过 `event_scope_truncated` 字段标记截断。超大规模事件链建议改用事件 trace 视图排查。
 

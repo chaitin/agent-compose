@@ -123,10 +123,6 @@ func (s *eventStore) ListEventSummaries(ctx context.Context, filter domain.Topic
 	return items, total, nil
 }
 
-func (s *eventStore) getEventSummary(ctx context.Context, eventID string) (domain.EventSummary, error) {
-	return eventSummaryByID(ctx, s.db, eventID)
-}
-
 // eventSummaryByID loads one event by exact id. Unknown or blank ids return
 // NotFound / argument errors respectively.
 func eventSummaryByID(ctx context.Context, db *sql.DB, eventID string) (domain.EventSummary, error) {
@@ -208,26 +204,10 @@ func (s *eventStore) ListEventTopics(ctx context.Context, source string, offset,
 }
 
 func (s *eventStore) GetEventTrace(ctx context.Context, eventID string, descendantLimit int) (domain.EventTrace, error) {
-	root, err := s.getEventSummary(ctx, eventID)
+	root, eventIDs, truncated, err := eventScopeIDs(ctx, s.db, eventID, descendantLimit)
 	if err != nil {
 		return domain.EventTrace{}, err
 	}
-	if descendantLimit <= 0 || descendantLimit > 1000 {
-		descendantLimit = 1000
-	}
-	eventIDs, truncated, err := s.listEventDescendantIDs(ctx, root.ID, descendantLimit)
-	if err != nil {
-		return domain.EventTrace{}, err
-	}
-	// Webhook forwarders that POST into a separate topic do not set
-	// parent_event_id, so the CTE traversal above does not discover them.
-	// Collect events that share the same correlation_id but are outside the
-	// parent chain so that sandbox links and run traces are still visible.
-	eventIDs, correlationTruncated, err := s.mergeCorrelationEventIDs(ctx, root, eventIDs, descendantLimit)
-	if err != nil {
-		return domain.EventTrace{}, err
-	}
-	truncated = truncated || correlationTruncated
 	runs, err := s.listEventRunTraces(ctx, eventIDs)
 	if err != nil {
 		return domain.EventTrace{}, err
@@ -244,8 +224,31 @@ func (s *eventStore) GetEventTrace(ctx context.Context, eventID string, descenda
 	}, nil
 }
 
-func (s *eventStore) mergeCorrelationEventIDs(ctx context.Context, root domain.EventSummary, descendants []string, limit int) ([]string, bool, error) {
-	return mergeCorrelationEventIDs(ctx, s.db, root, descendants, limit)
+// eventScopeIDs resolves the event-scope walk shared by GetEventTrace and
+// ListRuns event_id filtering: the event, its parent_event_id descendants,
+// and events sharing its correlation id. A non-positive or oversized limit
+// falls back to MaxEventScopeEvents.
+func eventScopeIDs(ctx context.Context, db *sql.DB, eventID string, limit int) (domain.EventSummary, []string, bool, error) {
+	root, err := eventSummaryByID(ctx, db, eventID)
+	if err != nil {
+		return domain.EventSummary{}, nil, false, err
+	}
+	if limit <= 0 || limit > domain.MaxEventScopeEvents {
+		limit = domain.MaxEventScopeEvents
+	}
+	eventIDs, truncated, err := listEventDescendantIDs(ctx, db, root.ID, limit)
+	if err != nil {
+		return domain.EventSummary{}, nil, false, err
+	}
+	// Webhook forwarders that POST into a separate topic do not set
+	// parent_event_id, so the CTE traversal above does not discover them.
+	// Collect events that share the same correlation_id but are outside the
+	// parent chain so that sandbox links and run traces are still visible.
+	eventIDs, correlationTruncated, err := mergeCorrelationEventIDs(ctx, db, root, eventIDs, limit)
+	if err != nil {
+		return domain.EventSummary{}, nil, false, err
+	}
+	return root, eventIDs, truncated || correlationTruncated, nil
 }
 
 // mergeCorrelationEventIDs appends events that share the root's correlation id
@@ -291,10 +294,6 @@ func mergeCorrelationEventIDs(ctx context.Context, db *sql.DB, root domain.Event
 		correlationIDs = correlationIDs[:remaining]
 	}
 	return append(descendants, correlationIDs...), truncated, nil
-}
-
-func (s *eventStore) listEventDescendantIDs(ctx context.Context, eventID string, limit int) ([]string, bool, error) {
-	return listEventDescendantIDs(ctx, s.db, eventID, limit)
 }
 
 // listEventDescendantIDs walks the event's parent_event_id chain starting at

@@ -173,7 +173,7 @@ func TestEventTraceIncludesDescendantRunWithoutExposingSeparateRoot(t *testing.T
 	}); err != nil {
 		t.Fatalf("add sandbox link: %v", err)
 	}
-	trace, err := store.GetEventTrace(ctx, root.ID, 1000)
+	trace, err := store.GetEventTrace(ctx, root.ID, domain.MaxEventScopeEvents)
 	if err != nil {
 		t.Fatalf("get event trace: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestEventTraceFallsBackToAgentNameForInvalidSchedulerPresentation(t *testin
 		t.Fatalf("upsert delivery: %v", err)
 	}
 
-	trace, err := store.GetEventTrace(ctx, event.ID, 1000)
+	trace, err := store.GetEventTrace(ctx, event.ID, domain.MaxEventScopeEvents)
 	if err != nil {
 		t.Fatalf("get event trace: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestEventTraceIncludesCorrelationSiblingsWithoutParentLink(t *testing.T) {
 		t.Fatalf("add sandbox link: %v", err)
 	}
 
-	trace, err := store.GetEventTrace(ctx, root.ID, 1000)
+	trace, err := store.GetEventTrace(ctx, root.ID, domain.MaxEventScopeEvents)
 	if err != nil {
 		t.Fatalf("get event trace: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestEventTraceIncludesCorrelationSiblingWhenRootUsesDefaultCorrelation(t *t
 		t.Fatalf("add sandbox link: %v", err)
 	}
 
-	trace, err := store.GetEventTrace(ctx, root.ID, 1000)
+	trace, err := store.GetEventTrace(ctx, root.ID, domain.MaxEventScopeEvents)
 	if err != nil {
 		t.Fatalf("get event trace: %v", err)
 	}

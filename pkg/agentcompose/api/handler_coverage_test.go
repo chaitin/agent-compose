@@ -1573,6 +1573,13 @@ func (s *apiProjectRunStore) ListProjectRunsByOptions(_ context.Context, options
 	return domain.ProjectRunListResult{Runs: items}, nil
 }
 
+func (s *apiProjectRunStore) CountProjectRuns(_ context.Context, options domain.ProjectRunListOptions) (int, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastRunListOptions = options
+	return len(s.runs), false, nil
+}
+
 func (s *apiProjectRunStore) ListProjectAgentRunStates(_ context.Context, _ string) ([]domain.ProjectAgentRunState, error) {
 	s.agentRunStateCalls++
 	return s.agentRunStates, nil

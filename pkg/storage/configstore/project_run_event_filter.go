@@ -4,34 +4,24 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-)
 
-// maxEventScopeEvents bounds the event scope walk (descendants plus
-// correlation siblings) to the same limit GetEventTrace applies.
-const maxEventScopeEvents = 1000
+	domain "github.com/chaitin/agent-compose/pkg/model"
+)
 
 // eventRunScope resolves an event id to the set of scheduler run ids recorded
 // against the event scope: the event itself, its descendant events, and events
 // sharing its correlation id — the same scope GetEventTrace presents. An
 // unknown event id returns a NotFound resource error. The scope walk caps at
-// maxEventScopeEvents like GetEventTrace; truncated reports that the cap was
+// MaxEventScopeEvents like GetEventTrace; truncated reports that the cap was
 // hit, so runs recorded only against events beyond it are missing from the
 // filter.
 func eventRunScope(ctx context.Context, db *sql.DB, eventID string) (schedulerRunIDs []string, truncated bool, err error) {
-	root, err := eventSummaryByID(ctx, db, eventID)
-	if err != nil {
-		return nil, false, err
-	}
-	scope, descendantsTruncated, err := listEventDescendantIDs(ctx, db, root.ID, maxEventScopeEvents)
-	if err != nil {
-		return nil, false, err
-	}
-	scope, correlationTruncated, err := mergeCorrelationEventIDs(ctx, db, root, scope, maxEventScopeEvents)
+	_, scope, truncated, err := eventScopeIDs(ctx, db, eventID, domain.MaxEventScopeEvents)
 	if err != nil {
 		return nil, false, err
 	}
 	schedulerRunIDs, err = eventScopeSchedulerRunIDs(ctx, db, scope)
-	return schedulerRunIDs, descendantsTruncated || correlationTruncated, err
+	return schedulerRunIDs, truncated, err
 }
 
 // eventScopeSchedulerRunIDs collects the distinct non-empty scheduler run ids

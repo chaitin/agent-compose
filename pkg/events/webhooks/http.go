@@ -392,7 +392,7 @@ func (h routeHandler) handleGetEventSandboxes(c echo.Context) error {
 		}
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load event"})
 	}
-	eventIDs, err := h.store().ListDescendantEventIDs(c.Request().Context(), eventID, 1000)
+	eventIDs, err := h.store().ListDescendantEventIDs(c.Request().Context(), eventID, domain.MaxEventScopeEvents)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to trace event descendants"})
 	}
@@ -412,7 +412,7 @@ func (h routeHandler) handleGetEventRuns(c echo.Context) error {
 		}
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load event"})
 	}
-	eventIDs, err := h.store().ListDescendantEventIDs(c.Request().Context(), eventID, 1000)
+	eventIDs, err := h.store().ListDescendantEventIDs(c.Request().Context(), eventID, domain.MaxEventScopeEvents)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to trace event descendants"})
 	}

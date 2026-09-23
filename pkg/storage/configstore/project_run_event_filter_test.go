@@ -200,9 +200,9 @@ func TestListProjectRunsByOptionsEventScopeTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create root event: %v", err)
 	}
-	// maxEventScopeEvents plus one descendant forces the descendant walk to
+	// MaxEventScopeEvents plus one descendant forces the descendant walk to
 	// truncate: root + 1000 children fit, the last child falls outside.
-	for i := 0; i <= maxEventScopeEvents; i++ {
+	for i := 0; i <= domain.MaxEventScopeEvents; i++ {
 		if _, err := store.CreateEvent(ctx, domain.TopicEventRecord{
 			ID: fmt.Sprintf("evt-overflow-child-%04d", i), Topic: "runtime.completed", Source: domain.TopicEventSourceScheduler,
 			CorrelationID: root.CorrelationID, ParentEventID: root.ID,

@@ -567,8 +567,8 @@ func (s *projectStore) CountProjectRuns(ctx context.Context, options ProjectRunL
 // no filter. eventScopeTruncated reports that the event scope hit its cap, so
 // runs recorded only against events beyond it are missing from the result.
 //
-// The derived IN list is bounded only indirectly, through the 1000-event scope
-// cap in eventRunScope, so each list/count pair re-resolves the scope and
+// The derived IN list is bounded only indirectly, through MaxEventScopeEvents
+// in eventRunScope, so each list/count pair re-resolves the scope and
 // carries one bound parameter per scheduler run. Rewriting this as an
 // EXISTS/JOIN subquery over event_delivery would remove both the parameter
 // fan-out and the duplicate resolution, at the cost of restructuring the

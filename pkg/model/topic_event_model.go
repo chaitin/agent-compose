@@ -11,6 +11,11 @@ const (
 	TopicEventSourceScheduler = "scheduler"
 	TopicEventSourceSystem    = "system"
 
+	// MaxEventScopeEvents caps the event-scope walk used by GetEventTrace and
+	// ListRuns event_id filtering: the event, its parent_event_id descendants,
+	// and events sharing its correlation id.
+	MaxEventScopeEvents = 1000
+
 	TopicEventDispatchPending        = "pending"
 	TopicEventDispatchPublishing     = "publishing_to_bus"
 	TopicEventDispatchPublishedToBus = "published_to_bus"

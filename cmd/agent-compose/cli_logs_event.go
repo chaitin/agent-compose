@@ -7,15 +7,12 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
+	domain "github.com/chaitin/agent-compose/pkg/model"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 	"github.com/spf13/cobra"
 )
 
 const eventLogPrefix = "evt_"
-
-// eventLogScopeCap mirrors the daemon-resolved event scope limit (see
-// ListRunsRequest.event_id); the CLI only uses it in the truncation warning.
-const eventLogScopeCap = 1000
 
 // validateEventLogTarget rejects values that are not full event-bus event
 // ids. Prefix matching is intentionally unsupported for --event.
@@ -55,7 +52,7 @@ func runComposeLogsForEvent(cmd *cobra.Command, cli cliOptions, clients cliServi
 		}
 	}
 	if eventScopeTruncated {
-		_, err := fmt.Fprintf(cmd.ErrOrStderr(), "Warning: event %s has more associated events than the daemon resolves (cap %d); runs recorded only against events beyond the cap are missing from this output\n", options.EventID, eventLogScopeCap)
+		_, err := fmt.Fprintf(cmd.ErrOrStderr(), "Warning: event %s has more associated events than the daemon resolves (cap %d); runs recorded only against events beyond the cap are missing from this output\n", options.EventID, domain.MaxEventScopeEvents)
 		if err != nil {
 			return err
 		}
@@ -72,6 +69,9 @@ func runComposeLogsForEvent(cmd *cobra.Command, cli cliOptions, clients cliServi
 		return err
 	}
 	// ListRuns returns newest first; replay oldest first like the other logs paths.
+	if err := refreshLogRunSummariesForSort(cmd.Context(), clients.run, projectID, projectName, runs); err != nil {
+		return err
+	}
 	sort.SliceStable(runs, func(i, j int) bool { return logRunSummaryLess(runs[i], runs[j]) })
 	if cli.JSON {
 		output := composeLogsOutput{Runs: make([]composeLogRunOutput, 0, len(runs))}

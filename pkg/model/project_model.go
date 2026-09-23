@@ -264,9 +264,9 @@ type ProjectRunListOptions struct {
 }
 
 // ProjectRunListResult is a listing of project runs plus metadata about how it
-// was produced. EventScopeTruncated reports that the event scope hit its
-// 1000-event cap, so runs recorded only against events beyond the cap are
-// missing from Runs and TotalCount.
+// was produced. EventScopeTruncated reports that the event scope hit
+// MaxEventScopeEvents, so runs recorded only against events beyond the cap
+// are missing from Runs.
 type ProjectRunListResult struct {
 	Runs                []ProjectRunRecord
 	EventScopeTruncated bool

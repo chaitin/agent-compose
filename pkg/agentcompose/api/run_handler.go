@@ -34,11 +34,8 @@ type ActiveRunStopper interface {
 type RunStore interface {
 	runs.Store
 	ListProjectRunsByOptions(context.Context, domain.ProjectRunListOptions) (domain.ProjectRunListResult, error)
-	ListProjectRunsForSandbox(context.Context, string) ([]domain.ProjectRunRecord, error)
-}
-
-type projectRunCountStore interface {
 	CountProjectRuns(context.Context, domain.ProjectRunListOptions) (int, bool, error)
+	ListProjectRunsForSandbox(context.Context, string) ([]domain.ProjectRunRecord, error)
 }
 
 type RunEventStore interface {
@@ -257,16 +254,12 @@ func (h *RunHandler) ListRuns(ctx context.Context, req *connect.Request[agentcom
 	for _, run := range result.Runs {
 		items = append(items, ProjectRunSummaryToProto(run))
 	}
-	total := offset + len(result.Runs)
-	eventScopeTruncated := result.EventScopeTruncated
-	if countStore, ok := h.store.(projectRunCountStore); ok {
-		total, eventScopeTruncated, err = countStore.CountProjectRuns(ctx, options)
-		if err != nil {
-			if errors.Is(err, domain.ErrNotFound) {
-				return nil, connect.NewError(connect.CodeNotFound, err)
-			}
-			return nil, connect.NewError(connect.CodeInternal, err)
+	total, eventScopeTruncated, err := h.store.CountProjectRuns(ctx, options)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, connect.NewError(connect.CodeNotFound, err)
 		}
+		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: items, Total: uint32(total), EventScopeTruncated: eventScopeTruncated}), nil
 }
