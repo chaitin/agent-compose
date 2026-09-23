@@ -23,9 +23,11 @@ func (c *Controller) ensurePromptAttachLLMFacadeEnv(ctx context.Context, sandbox
 		Sandbox:   sandbox,
 		AgentKind: agent.Provider,
 		Model:     agent.Model,
-		AgentEnv:  agent.EnvItems,
-		Source:    "agent",
-		RunID:     runID,
+		// The same declaration a sandbox start and a run use: the sandbox's
+		// prepared provider environment merged with the agent's own.
+		AgentEnv: sandbox.DeclaredProviderEnv(agent.EnvItems),
+		Source:   "agent",
+		RunID:    runID,
 	})
 	if err != nil {
 		if llms.IsUnmanagedAgentLLMError(err) {

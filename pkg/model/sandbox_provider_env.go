@@ -16,6 +16,27 @@ func (s *Sandbox) SetProviderEnvItems(items []SandboxEnvVar) {
 	s.ProviderEnvOverrideNames = providerEnvOverrideNames(items)
 }
 
+// DeclaredProviderEnv returns the provider environment one execution declares
+// for its agent: the environment the sandbox was prepared with, plus the agent
+// definition's own environment.
+//
+// Every entry point that prepares an agent's LLM configuration (sandbox start,
+// release resume, run, prompt attach, scheduler command) decides direct versus
+// managed from this declaration, so no entry point can disagree with another
+// about which side owns the upstream.
+//
+// The prepared values are transient by design: they may hold credentials, so
+// only their names survive in ProviderEnvOverrideNames and ProviderEnvItems is
+// empty on a sandbox loaded back from storage. Merging the definition's
+// environment keeps the part of the declaration that is persisted in play there,
+// which is why this merges rather than replaces.
+func (s *Sandbox) DeclaredProviderEnv(agentEnv []SandboxEnvVar) []SandboxEnvVar {
+	if s == nil {
+		return MergeEnvItems(nil, agentEnv)
+	}
+	return MergeEnvItems(s.ProviderEnvItems, agentEnv)
+}
+
 func providerEnvOverrideNames(items []SandboxEnvVar) []string {
 	names := make([]string, 0, len(items))
 	seen := make(map[string]struct{}, len(items))

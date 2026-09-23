@@ -57,6 +57,50 @@ func TestEnsureSessionCommandFacadeConfigConfiguresSelectedAgent(t *testing.T) {
 	}
 }
 
+func TestEnsureSessionCommandFacadeConfigHonoursADeclaredUpstream(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config, store := commandFacadeTestStore(t, ctx, root)
+	seedCommandFacadeProviders(t, ctx, store)
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{
+		ID:            "sandbox-command-declared-upstream",
+		Driver:        driverpkg.RuntimeDriverDocker,
+		WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-command-declared-upstream", "workspace"),
+	}}
+
+	result, err := EnsureSessionCommandFacadeConfig(ctx, CommandFacadeConfigRequest{
+		Config: config, Store: store, Session: session, Agent: "codex", Model: "",
+		AgentEnv: []domain.SandboxEnvVar{
+			{Name: "LLM_API_ENDPOINT", Value: "https://declared.upstream.test/v1"},
+			{Name: "LLM_API_KEY", Value: "declared-upstream-key"},
+			{Name: "LLM_MODEL", Value: "declared-model"},
+		},
+		Source: TokenSourceSchedulerCommand, RunID: "run-declared-upstream",
+	})
+	if err != nil {
+		t.Fatalf("EnsureSessionCommandFacadeConfig returned error: %v", err)
+	}
+	// The declared upstream owns the command: the CLI is pointed straight at it
+	// with its own key and no facade token exists to present to a facade.
+	if token := result.Env["AGENT_COMPOSE_SANDBOX_TOKEN"]; token != "" {
+		t.Fatalf("command facade token for a declared upstream = %q", token)
+	}
+	if result.Env["OPENAI_BASE_URL"] != "https://declared.upstream.test/v1" || result.Env["OPENAI_API_KEY"] != "declared-upstream-key" {
+		t.Fatalf("declared command environment = %#v", result.Env)
+	}
+	if result.Env["CODEX_MODEL"] != "declared-model" || result.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses {
+		t.Fatalf("declared command model/protocol = %#v", result.Env)
+	}
+	if len(result.TokenHashes) != 0 {
+		t.Fatalf("command token hashes = %#v, want none", result.TokenHashes)
+	}
+	if got := countCommandFacadeTokens(t, ctx, store, "run-declared-upstream"); got != 0 {
+		t.Fatalf("persisted command facade tokens for a declared upstream = %d, want 0", got)
+	}
+}
+
 func TestEnsureSessionCommandFacadeConfigCleansTokenAfterPartialFailure(t *testing.T) {
 	isolateLLMEnv(t)
 

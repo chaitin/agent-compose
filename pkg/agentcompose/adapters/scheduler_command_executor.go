@@ -308,9 +308,11 @@ func (e *SchedulerCommandExecutor) prepareSchedulerCommandLLMFacadeEnv(ctx conte
 
 	// This path selects its agent and model from the scheduler command's own
 	// environment, not from a project agent definition, so the catalog infers
-	// the connection from the model.
+	// the connection from the model. The same environment decides whether the
+	// command's agent owns its upstream, so a declared upstream is not routed
+	// through the catalog just because this entry point was used.
 	managedConfig, err := runtimefacade.EnsureSessionCommandFacadeConfig(ctx, runtimefacade.CommandFacadeConfigRequest{
-		Config: e.Config, Store: commandFacadeStoreFor(e.ConfigDB), Session: &execSession, Agent: agent, Model: model, Source: runtimefacade.TokenSourceSchedulerCommand, RunID: runID,
+		Config: e.Config, Store: commandFacadeStoreFor(e.ConfigDB), Session: &execSession, Agent: agent, Model: model, AgentEnv: execSession.ProviderEnvItems, Source: runtimefacade.TokenSourceSchedulerCommand, RunID: runID,
 	})
 	if err != nil {
 		return nil, nil, err

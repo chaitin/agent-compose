@@ -315,6 +315,84 @@ func TestAgentRunnerRetainsFacadeTokenOnlyWhenExecTerminationIsUnconfirmed(t *te
 	}
 }
 
+func TestAgentRunnerExecuteAgentRunHonoursTheSandboxProviderEnv(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:            root,
+		DbAddr:              filepath.Join(root, "data.db"),
+		SandboxRoot:         filepath.Join(root, "sandboxes"),
+		RuntimeDriver:       driverpkg.RuntimeDriverDocker,
+		DefaultImage:        "guest:latest",
+		GuestWorkspacePath:  "/workspace",
+		GuestStateRoot:      "/data/state",
+		GuestRuntimeRoot:    "/data/runtime",
+		GuestHomePath:       "/root",
+		RuntimeBaseURL:      "http://agent-compose.test:7410",
+		LLMAPIKey:           "provider-key",
+		SandboxStartTimeout: 2 * time.Second,
+	}
+	configDB, store, err := testutil.OpenStores(t, config)
+	if err != nil {
+		t.Fatalf("OpenStores returned error: %v", err)
+	}
+	// A catalog connection serves claude here, so a run that decided managed
+	// instead of honouring the sandbox's declaration would mint a facade token
+	// and point the CLI at the facade route.
+	if err := configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+		ID: "anthropic-primary", Name: "Anthropic", ProviderType: llms.ProviderFamilyAnthropic,
+		BaseURL: "https://anthropic.upstream.test", APIKey: "anthropic-upstream-secret", Scope: llms.ProviderScopeSystem,
+	}, llms.Model{ID: "claude-agent", Name: "claude-agent", DefaultModel: true, Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
+		t.Fatalf("seed llm catalog: %v", err)
+	}
+	session, err := store.CreateSandbox(ctx, "declared upstream", "", driverpkg.RuntimeDriverDocker, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	session.Summary.VMStatus = domain.VMStatusRunning
+	if err := store.UpdateSandbox(ctx, session); err != nil {
+		t.Fatalf("UpdateSandbox returned error: %v", err)
+	}
+	if err := store.SaveVMState(session.Summary.ID, domain.VMState{Driver: driverpkg.RuntimeDriverDocker, BoxID: "container-1"}); err != nil {
+		t.Fatalf("SaveVMState returned error: %v", err)
+	}
+	// This is the declaration the sandbox start path decided from: a project
+	// variable published the credential before the sandbox existed, so the
+	// definition this run resolves carries no environment of its own.
+	session.SetProviderEnvItems([]domain.SandboxEnvVar{
+		{Name: "LLM_API_ENDPOINT", Value: "https://declared.upstream.test"},
+		{Name: "LLM_API_KEY", Value: "declared-upstream-key"},
+		{Name: "LLM_MODEL", Value: "declared-model"},
+	})
+	payload := execution.AgentResultPrefix + `{"provider":"claude","threadId":"declared-thread","finalText":"done","transcript":"trace","stopReason":"completed"}`
+	runtime := &fakeAgentRuntime{result: domain.ExecResult{Stdout: payload, Output: payload, ExitCode: 0, Success: true}}
+	runner := NewAgentRunner(AgentRunnerDeps{Config: config, Store: store, ConfigDB: configDB, Runtimes: fakeRuntimeProvider{runtime: runtime}})
+
+	if _, _, err := runner.ExecuteAgentRun(ctx, AgentRunRequest{Session: session, Agent: "claude", RunID: "run-declared", Message: "hello"}, nil); err != nil {
+		t.Fatalf("ExecuteAgentRun returned error: %v", err)
+	}
+	if len(runtime.specs) != 1 {
+		t.Fatalf("runtime specs = %#v", runtime.specs)
+	}
+	env := runtime.specs[0].Env
+	if token := env["AGENT_COMPOSE_SANDBOX_TOKEN"]; token != "" {
+		t.Fatalf("run minted a facade token for a declared upstream: %q", token)
+	}
+	if env["ANTHROPIC_BASE_URL"] != "https://declared.upstream.test" || env["ANTHROPIC_API_KEY"] != "declared-upstream-key" {
+		t.Fatalf("declared run environment = %#v", env)
+	}
+	if env["ANTHROPIC_MODEL"] != "declared-model" || env["CLAUDE_MODEL"] != "declared-model" {
+		t.Fatalf("run did not use the declared model: %#v", env)
+	}
+	var tokens int
+	if err := configDB.DB().QueryRowContext(ctx, `SELECT COUNT(1) FROM llm_facade_token WHERE sandbox_id = ?`, session.Summary.ID).Scan(&tokens); err != nil {
+		t.Fatalf("count facade tokens: %v", err)
+	}
+	if tokens != 0 {
+		t.Fatalf("facade tokens minted for a declared upstream = %d, want 0", tokens)
+	}
+}
+
 func TestAgentRunnerExecuteAgentRunWritesSystemPromptAndParsesResult(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

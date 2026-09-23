@@ -714,3 +714,26 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   `messages`）。若没有任何连接能透传，则按 `DefaultProtocolPreference()` 的顺序退化到
   转换——转换优于拒绝运行——并且按 per-model binding 覆盖后的**实际**上游协议排序，
   而不是连接自身的 `defaultWireAPI`。
+
+- **direct/managed 的判定来源统一**（此前各入口不一致）。direct 判定只看传入
+  `PrepareAgentLLM` 的 `AgentEnv`，而各调用点的来源曾经不同：sandbox 启动传
+  `session.ProviderEnvItems`（project `variables` + agent `env` + 创建请求 env），
+  run 传运行时重新解析的 `agentDef.EnvItems`，prompt attach 传 `agent.EnvItems`，
+  scheduler command 根本没有这个入参。于是同一个 sandbox 在启动阶段与之后的 run/命令
+  阶段可能被判成不同模式；更糟的是 agent 定义解析失败时 `agentDef` 为 nil，run 会静默
+  退化成 managed，为一个自带上游的 agent 签令牌并把调用改道到 catalog。
+
+  现在五个入口统一经 `(*domain.Sandbox).DeclaredProviderEnv(agentEnv)`：把沙箱**已准备**
+  的 provider env 与 agent 定义自身的 env 合并，判定规则因此是"任何一处声明了凭据，就由
+  agent 拥有上游"，也让 scheduler command 的 direct 变为可达。
+
+  为什么是合并，而不是让 run 也直接读 `session.ProviderEnvItems`：provider env 的值是
+  **故意不持久化**的（可能含密钥，落库的只有 `ProviderEnvOverrideNames`），从存储加载
+  回来的 sandbox 上该字段必为空；单独使用它会把 RPC 驱动的 run 从 direct 静默变成
+  managed，恰好是这条规则要消除的漂移的反方向。合并保留了每条路径能看到的全部声明：
+  进程内路径（新沙箱的启动与运行、scheduler 命令）用快照，存储回读路径（RPC run、
+  prompt attach、release resume）至少还有定义里的那一份。
+
+  已知边界：只写在 project `variables` 或 sandbox 创建请求 env 里的凭据，在存储回读的
+  run/命令上无法复原（值不落库），这类会话按 managed 运行；要在 RPC 驱动的 sandbox 上
+  稳定使用 direct，应把凭据写在 agent 自己的 `env` 里。

@@ -127,12 +127,17 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 	// The agent's own environment decides which side owns the upstream: an
 	// agent that publishes an LLM connection there is configured against it,
 	// and one that publishes none falls back to the daemon's catalog.
-	var agentEnvItems []domain.SandboxEnvVar
+	//
+	// The declaration is the sandbox's prepared provider environment merged
+	// with the definition this run resolved, the same one the sandbox start
+	// path used, so a run cannot decide the mode differently from the
+	// environment the guest was prepared with.
+	var agentDefEnvItems []domain.SandboxEnvVar
 	if agentDef != nil {
-		agentEnvItems = agentDef.EnvItems
+		agentDefEnvItems = agentDef.EnvItems
 	}
 	runtimeConfig, err := runtimefacade.EnsureSessionAgentRuntimeConfig(ctx, runtimefacade.SessionFacadeConfigRequest{
-		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent, Model: effectiveModel, AgentEnv: agentEnvItems, Source: runtimefacade.TokenSourceAgent, RunID: runID,
+		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent, Model: effectiveModel, AgentEnv: session.DeclaredProviderEnv(agentDefEnvItems), Source: runtimefacade.TokenSourceAgent, RunID: runID,
 	})
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
@@ -231,8 +236,15 @@ func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, sessio
 		}
 		return err
 	}
+	// A sandbox start, a release resume, and a run all decide direct versus
+	// managed from the same declaration: the provider environment the sandbox
+	// carries plus the definition it was prepared for.
+	var definitionEnvItems []domain.SandboxEnvVar
+	if definition != nil {
+		definitionEnvItems = definition.EnvItems
+	}
 	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, runtimefacade.SessionFacadeConfigRequest{
-		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent.Provider, Model: agent.Model, AgentEnv: session.ProviderEnvItems, Source: "session", RunID: "",
+		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent.Provider, Model: agent.Model, AgentEnv: session.DeclaredProviderEnv(definitionEnvItems), Source: "session", RunID: "",
 	})
 	if err != nil {
 		if r.configDB != nil {

@@ -188,9 +188,11 @@ func TestSchedulerCommandExecutorRebuildsAndOwnsCommandFacadeTokens(t *testing.T
 				t.Fatalf("OpenStores returned error: %v", err)
 			}
 			seedSchedulerCommandFacadeProviders(t, ctx, configDB)
+			// The sandbox declares no upstream of its own: this test is about the
+			// managed facade token lifecycle. A command that does declare one is
+			// covered by TestSchedulerCommandExecutorHonoursADeclaredCommandUpstream.
 			session, err := store.CreateSandbox(ctx, "scheduler facade command", "", driverpkg.RuntimeDriverDocker, "guest:latest", "", domain.SandboxTypeScript, nil, []domain.SandboxEnvVar{
-				{Name: "ANTHROPIC_BASE_URL", Value: "https://anthropic.persisted.test"},
-				{Name: "ANTHROPIC_API_KEY", Value: "persisted-upstream-key", Secret: true},
+				{Name: "CUSTOM_SANDBOX_ENV", Value: "preserved-sandbox-env"},
 			}, nil)
 			if err != nil {
 				t.Fatalf("CreateSandbox returned error: %v", err)
@@ -257,6 +259,63 @@ func TestSchedulerCommandExecutorRebuildsAndOwnsCommandFacadeTokens(t *testing.T
 			}
 			assertSchedulerCommandTokenState(t, ctx, configDB, env["AGENT_COMPOSE_SANDBOX_TOKEN"], tt.wantTokenExists)
 		})
+	}
+}
+
+func TestSchedulerCommandExecutorHonoursADeclaredCommandUpstream(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := schedulerCommandFacadeTestConfig(root)
+	configDB, store, err := testutil.OpenStores(t, config)
+	if err != nil {
+		t.Fatalf("OpenStores returned error: %v", err)
+	}
+	seedSchedulerCommandFacadeProviders(t, ctx, configDB)
+	session, err := store.CreateSandbox(ctx, "scheduler declared upstream", "", driverpkg.RuntimeDriverDocker, "guest:latest", "", domain.SandboxTypeScript, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	session.Summary.VMStatus = domain.VMStatusRunning
+	if err := store.UpdateSandbox(ctx, session); err != nil {
+		t.Fatalf("UpdateSandbox returned error: %v", err)
+	}
+	if err := store.SaveVMState(session.Summary.ID, domain.VMState{Driver: driverpkg.RuntimeDriverDocker, BoxID: "container-1"}); err != nil {
+		t.Fatalf("SaveVMState returned error: %v", err)
+	}
+
+	runtime := &capturingSchedulerCommandRuntime{}
+	executor := NewSchedulerCommandExecutor(SchedulerCommandExecutorDeps{Config: config, Store: store, ConfigDB: configDB, Runtimes: fakeRuntimeProvider{runtime: runtime}, Streams: sandboxes.NewStreamBrokerForTest()})
+	if _, err := executor.ExecuteSchedulerCommand(ctx, session, domain.SchedulerCommandRequest{
+		Mode:   "shell",
+		Script: "echo declared",
+		Env: map[string]string{
+			"PROJECT_AGENT_LLM_PROVIDER": "codex",
+			"CODEX_MODEL":                "declared-model",
+		},
+		// The command declares the upstream its agent runs against, in the same
+		// way a project variable or an agent's own environment would.
+		SandboxEnv: []domain.SandboxEnvVar{
+			{Name: "OPENAI_BASE_URL", Value: "https://declared.upstream.test/v1"},
+			{Name: "OPENAI_API_KEY", Value: "declared-upstream-key"},
+		},
+	}); err != nil {
+		t.Fatalf("ExecuteSchedulerCommand returned error: %v", err)
+	}
+	if runtime.session == nil {
+		t.Fatal("runtime did not receive command Sandbox clone")
+	}
+	env := domain.SandboxEnvMap(runtime.session.RuntimeEnvItems)
+	if token := env["AGENT_COMPOSE_SANDBOX_TOKEN"]; token != "" {
+		t.Fatalf("command minted a facade token for a declared upstream: %q", token)
+	}
+	if env["OPENAI_BASE_URL"] != "https://declared.upstream.test/v1" || env["OPENAI_API_KEY"] != "declared-upstream-key" {
+		t.Fatalf("declared command environment = %#v", env)
+	}
+	if env["CODEX_MODEL"] != "declared-model" {
+		t.Fatalf("declared command model = %#v", env)
+	}
+	if got := countSchedulerCommandFacadeTokens(t, ctx, configDB); got != 0 {
+		t.Fatalf("persisted scheduler command tokens for a declared upstream = %d, want 0", got)
 	}
 }
 

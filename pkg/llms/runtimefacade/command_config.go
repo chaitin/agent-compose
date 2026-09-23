@@ -46,8 +46,13 @@ type CommandFacadeConfigRequest struct {
 	Session *domain.Sandbox
 	Agent   string
 	Model   string
-	Source  string
-	RunID   string
+	// AgentEnv is the provider environment this command declares for the agent:
+	// the sandbox's own provider environment plus the command's. It decides
+	// whether the agent owns its upstream, exactly as it does for a sandbox
+	// start, a run, and an attached prompt.
+	AgentEnv []domain.SandboxEnvVar
+	Source   string
+	RunID    string
 }
 
 // EnsureSessionCommandFacadeConfig prepares the managed LLM configuration of
@@ -85,7 +90,7 @@ func EnsureSessionCommandFacadeConfig(ctx context.Context, req CommandFacadeConf
 	}()
 
 	prepared, err := llms.PrepareAgentLLM(ctx, llms.AgentLLMRequest{
-		Config: config, Store: tracker, Sandbox: session, AgentKind: agent, Model: model, Source: source, RunID: runID,
+		Config: config, Store: tracker, Sandbox: session, AgentKind: agent, Model: model, AgentEnv: req.AgentEnv, Source: source, RunID: runID,
 	})
 	if err != nil {
 		if llms.IsUnmanagedAgentLLMError(err) {
