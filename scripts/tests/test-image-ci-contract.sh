@@ -501,6 +501,8 @@ if [[ -f $TASKFILE ]]; then
     'Arch Linux guest amd64 build platform'
   require_regex "$taskfile_source" "DOCKER_DEFAULT_PLATFORM:.*linux/\{\{\.GOARCH\}\}" \
     'daemon Docker platform derived from GOARCH'
+  require_regex "$taskfile_source" 'IMAGE_TAG:.*agent-compose:latest.*\.IMAGE_TAG' \
+    'daemon image task IMAGE_TAG mapping'
   for standard_variable in \
     VERSION GOARCH HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY GOPROXY \
     NPM_CONFIG_REGISTRY PIP_INDEX_URL PIP_TRUSTED_HOST DOCKER_DEFAULT_PLATFORM; do
@@ -685,7 +687,7 @@ run_daemon_builder() { # remaining arguments are environment overrides
   env \
     PATH="$FAKE_BIN:$PATH" \
     FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \
-    IMAGE_NAME=agent-compose:contract \
+    IMAGE_TAG=agent-compose:contract \
     DOCKERFILE=Dockerfile \
     BUILD_CONTEXT="$ROOT_DIR" \
     VERSION=contract \
@@ -713,10 +715,13 @@ run_guest_builder() { # remaining arguments are environment overrides
     "$GUEST_BUILDER" >/dev/null
 }
 
+# Regression: the daemon helper read only IMAGE_NAME, so IMAGE_TAG was ignored
+# and the build fell back to agent-compose:latest instead of the requested tag.
 if ! run_daemon_builder; then
   fail 'daemon image helper default build invocation'
 else
   require_regex "$(<"$FAKE_DOCKER_LOG")" '^VERSION=contract$' 'daemon VERSION build argument'
+  require_regex "$(<"$FAKE_DOCKER_LOG")" '^agent-compose:contract$' 'daemon IMAGE_TAG'
   for omitted in HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY REGISTRY_MIRROR GOPROXY GITHUB_MIRROR GO_VERSION BUF_VERSION BOXLITE_VERSION MICROSANDBOX_VERSION; do
     forbid_regex "$(<"$FAKE_DOCKER_LOG")" "^$omitted=" "empty daemon $omitted build argument"
   done

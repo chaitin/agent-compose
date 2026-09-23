@@ -404,7 +404,7 @@ The remaining build controls are:
 | Variable | Scope |
 | --- | --- |
 | `DOCKER_DEFAULT_PLATFORM` | Docker target platform; the daemon task derives it from `GOARCH`, while the Arch Linux guest defaults to `linux/amd64` |
-| `IMAGE_NAME`, `IMAGE_TAG` | Local daemon and guest image tags |
+| `IMAGE_TAG` | Local image tag for the daemon task and both guest tasks |
 | `NO_CACHE=1` | Passes Docker's `--no-cache` flag |
 | `GO_VERSION`, `GRPCURL_VERSION`, `NODE_MAJOR` | Default guest toolchain inputs; `NODE_MAJOR` applies only to the Debian guest |
 | `ARCHLINUX_TAG` | Arch Linux guest base-image tag |

@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
-IMAGE_NAME="${IMAGE_NAME:-agent-compose:latest}"
+IMAGE_TAG="${IMAGE_TAG:-agent-compose:latest}"
 DOCKERFILE="${DOCKERFILE:-Dockerfile}"
 BUILD_CONTEXT="${BUILD_CONTEXT:-$ROOT_DIR}"
 VERSION="${VERSION:-$(git -C "$ROOT_DIR" describe --always --tags --long 2>/dev/null || git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || echo 'unknown')}"
@@ -13,7 +13,7 @@ cd "$ROOT_DIR"
 
 build_args=(
   -f "$DOCKERFILE"
-  -t "$IMAGE_NAME"
+  -t "$IMAGE_TAG"
   --build-arg "VERSION=$VERSION"
 )
 
@@ -54,3 +54,5 @@ if [[ "${NO_CACHE:-}" == "1" ]]; then
 fi
 
 docker build "${build_args[@]}" "$BUILD_CONTEXT"
+
+echo "Built daemon image: $IMAGE_TAG"
