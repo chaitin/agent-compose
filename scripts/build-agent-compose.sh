@@ -4,6 +4,14 @@ set -euo pipefail
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
+# IMAGE_NAME was this helper's original tag input. It is removed in favor of
+# IMAGE_TAG, which the guest helper already uses; reject it instead of silently
+# building the default tag for callers that still pass it.
+if [[ -n ${IMAGE_NAME:-} ]]; then
+  printf 'IMAGE_NAME is no longer supported; set IMAGE_TAG instead\n' >&2
+  exit 1
+fi
+
 IMAGE_TAG="${IMAGE_TAG:-agent-compose:latest}"
 DOCKERFILE="${DOCKERFILE:-Dockerfile}"
 BUILD_CONTEXT="${BUILD_CONTEXT:-$ROOT_DIR}"
