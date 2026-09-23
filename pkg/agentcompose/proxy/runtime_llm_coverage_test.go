@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -292,6 +293,63 @@ func TestRuntimeLLMFacadeProtocolAndStreamCoverage(t *testing.T) {
 		}
 	})
 
+	t.Run("messages stream bridge to chat upstream keeps late usage", func(t *testing.T) {
+		// An OpenAI upstream reports usage in a chunk of its own, after the chunk
+		// carrying finish_reason. The bridge holds that finish until the usage
+		// arrives, so the Anthropic message_delta carries the real input token
+		// count rather than nothing or zero — the defect that once forced this
+		// cell back out of the protocol matrix.
+		body := strings.Join([]string{
+			`data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":0,"model":"gpt","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}`,
+			"",
+			`data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":0,"model":"gpt","choices":[{"index":0,"delta":{"content":"The directory holds three files."},"finish_reason":null}]}`,
+			"",
+			`data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":0,"model":"gpt","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_7f3a","type":"function","function":{"name":"Read","arguments":"{\"file_path\":"}}]},"finish_reason":null}]}`,
+			"",
+			`data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":0,"model":"gpt","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"/workspace/main.go\"}"}}]},"finish_reason":null}]}`,
+			"",
+			`data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":0,"model":"gpt","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+			"",
+			`data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":0,"model":"gpt","choices":[],"usage":{"prompt_tokens":12000,"completion_tokens":45,"total_tokens":12045,"prompt_tokens_details":{"cached_tokens":11000}}}`,
+			"",
+			"data: [DONE]",
+			"",
+			"",
+		}, "\n")
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}
+		c := echo.New().NewContext(httptest.NewRequest(http.MethodPost, "/", nil), httptest.NewRecorder())
+		if err := BridgeRuntimeLLMStreamResponse(c, resp, runtimeLLMStreamBridgeRequest{
+			InboundProtocol:  protocolbridge.ProtocolAnthropicMessages,
+			UpstreamProtocol: protocolbridge.ProtocolOpenAIChat,
+			Model:            "claude-sonnet-4-5",
+		}); err != nil {
+			t.Fatalf("BridgeRuntimeLLMStreamResponse returned error: %v", err)
+		}
+		rec := c.Response().Writer.(*httptest.ResponseRecorder)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("messages stream bridge status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		inputTokens, cacheReadInputTokens, outputTokens, stopReason := anthropicStreamDeltaUsage(t, rec.Body.String())
+		// 12000 prompt tokens of which 11000 were cached: Anthropic counts only
+		// the uncached remainder as input and reports the rest as cache reads.
+		if inputTokens == nil || *inputTokens != 1000 {
+			t.Errorf("message_delta input_tokens = %v, want 1000 (12000 total minus 11000 cached)", formatOptionalInt(inputTokens))
+		}
+		if cacheReadInputTokens == nil || *cacheReadInputTokens != 11000 {
+			t.Errorf("message_delta cache_read_input_tokens = %v, want 11000", formatOptionalInt(cacheReadInputTokens))
+		}
+		if outputTokens == nil || *outputTokens != 45 {
+			t.Errorf("message_delta output_tokens = %v, want 45", formatOptionalInt(outputTokens))
+		}
+		if stopReason != "tool_use" {
+			t.Errorf("message_delta stop_reason = %q, want tool_use", stopReason)
+		}
+	})
+
 	t.Run("stream bridge decode error is encoded", func(t *testing.T) {
 		resp := &http.Response{
 			StatusCode: http.StatusOK,
@@ -327,6 +385,58 @@ func TestRuntimeLLMFacadeProtocolAndStreamCoverage(t *testing.T) {
 			t.Fatalf("BridgeRuntimeLLMStreamResponse returned nil for unsupported bridge")
 		}
 	})
+}
+
+// anthropicStreamDeltaUsage returns the token counts and stop reason the bridge
+// reported in the message_delta of an Anthropic SSE body. The message that
+// carries the final usage is the one that closes the turn, so it must exist.
+func anthropicStreamDeltaUsage(t *testing.T, body string) (inputTokens, cacheReadInputTokens, outputTokens *int, stopReason string) {
+	t.Helper()
+	type deltaUsage struct {
+		InputTokens          *int `json:"input_tokens"`
+		OutputTokens         *int `json:"output_tokens"`
+		CacheReadInputTokens *int `json:"cache_read_input_tokens"`
+	}
+	found := false
+	for _, line := range strings.Split(body, "\n") {
+		payload, ok := strings.CutPrefix(strings.TrimSpace(line), "data:")
+		if !ok {
+			continue
+		}
+		payload = strings.TrimSpace(payload)
+		if payload == "" || payload == "[DONE]" {
+			continue
+		}
+		var event struct {
+			Type  string `json:"type"`
+			Delta *struct {
+				StopReason string `json:"stop_reason"`
+			} `json:"delta"`
+			Usage *deltaUsage `json:"usage"`
+		}
+		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			t.Fatalf("decode bridged stream event %s: %v", payload, err)
+		}
+		if event.Type != "message_delta" || event.Usage == nil {
+			continue
+		}
+		inputTokens, cacheReadInputTokens, outputTokens = event.Usage.InputTokens, event.Usage.CacheReadInputTokens, event.Usage.OutputTokens
+		if event.Delta != nil {
+			stopReason = event.Delta.StopReason
+		}
+		found = true
+	}
+	if !found {
+		t.Fatalf("bridged stream carried no message_delta usage: %s", body)
+	}
+	return inputTokens, cacheReadInputTokens, outputTokens, stopReason
+}
+
+func formatOptionalInt(value *int) string {
+	if value == nil {
+		return "unset"
+	}
+	return strconv.Itoa(*value)
 }
 
 func TestRuntimeLLMFacadeRejectsInvalidSecurityContext(t *testing.T) {
