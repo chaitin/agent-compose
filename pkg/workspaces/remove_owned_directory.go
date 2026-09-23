@@ -27,9 +27,16 @@ func removeOwnedRootDirectory(root *os.Root, path string) error {
 	// Use existing permissions first: even a foreign empty 0000 directory can
 	// be removed through its writable parent, and writable foreign trees need
 	// no ownership change. Only copied read-only trees need permission repair.
-	if err := root.RemoveAll(path); err == nil || !errors.Is(err, os.ErrPermission) {
-		return err
-	}
+	//
+	// The bulk removal's error is deliberately discarded rather than used to
+	// decide whether to fall back. On Go 1.26.2, RemoveAll returns a *PathError
+	// wrapping the standard library's internal errSymlink sentinel instead of
+	// ErrPermission when a directory it cannot write contains a symlink, and
+	// that error panics when formatted (golang/go#78490, fixed in Go 1.26.5).
+	// The entry-by-entry removal below reaches the same tree, repairs only the
+	// permissions it needs, and never follows the symlink, so it is the path
+	// that decides the outcome for every failure.
+	_ = root.RemoveAll(path)
 	info, err := root.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
