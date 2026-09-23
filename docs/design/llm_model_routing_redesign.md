@@ -624,6 +624,10 @@ codex/claude 不再限制上游家族（由矩阵决定）。
 - 直接回归覆盖两张真实的失败面：`TestCrossFamilyBridgeServesMessagesToChat`、
   `TestCrossFamilyBridgeKeepsToolResultsForChatUpstream`、
   `TestPrepareAgentLLMClaudeConvertsChatUpstream`。
+- 流式路径同样被钉住：proxy 的 messages→chat 用例回放「usage 分片在
+  `finish_reason` 之后才到」的 chat SSE，断言转出的 Anthropic `message_delta`
+  报 `input_tokens=1000`（12000 减去 11000 命中缓存）与
+  `cache_read_input_tokens=11000`，而不是 0 或缺失。
 
 ### 未完成与偏差
 
