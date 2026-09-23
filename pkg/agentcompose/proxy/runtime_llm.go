@@ -213,7 +213,6 @@ func (h runtimeLLMHandler) handle(c echo.Context, inboundProtocol protocolbridge
 		return BridgeRuntimeLLMStreamResponse(c, resp, runtimeLLMStreamBridgeRequest{
 			InboundProtocol:  inboundProtocol,
 			UpstreamProtocol: upstreamProtocol,
-			UpstreamFamily:   llms.NormalizeProviderType(target.Provider.ProviderType),
 			Model:            target.Model.Name,
 		})
 	}
@@ -305,7 +304,6 @@ func (h runtimeLLMHandler) proxyTransparent(c echo.Context, req proxyTransparent
 			return BridgeRuntimeLLMStreamResponse(c, resp, runtimeLLMStreamBridgeRequest{
 				InboundProtocol:  protocolbridge.ProtocolOpenAIResponses,
 				UpstreamProtocol: protocolbridge.ProtocolOpenAIResponses,
-				UpstreamFamily:   llms.ProviderFamilyOpenAI,
 				Model:            target.Model.Name,
 			})
 		}
@@ -354,13 +352,12 @@ func WriteRuntimeLLMEncodedError(c echo.Context, raw []byte, status int) error {
 type runtimeLLMStreamBridgeRequest struct {
 	InboundProtocol  protocolbridge.Protocol
 	UpstreamProtocol protocolbridge.Protocol
-	UpstreamFamily   string
 	Model            string
 }
 
 func BridgeRuntimeLLMStreamResponse(c echo.Context, resp *http.Response, req runtimeLLMStreamBridgeRequest) error {
 	inboundProtocol := req.InboundProtocol
-	decoder, encoder, err := llms.RuntimeStreamBridge(req.InboundProtocol, req.UpstreamProtocol, req.UpstreamFamily, req.Model)
+	decoder, encoder, err := llms.RuntimeStreamBridge(req.InboundProtocol, req.UpstreamProtocol, req.Model)
 	if err != nil {
 		return err
 	}

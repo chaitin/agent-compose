@@ -245,7 +245,6 @@ func TestRuntimeLLMFacadeProtocolAndStreamCoverage(t *testing.T) {
 		if err := BridgeRuntimeLLMStreamResponse(c, resp, runtimeLLMStreamBridgeRequest{
 			InboundProtocol:  protocolbridge.ProtocolOpenAIChat,
 			UpstreamProtocol: protocolbridge.ProtocolOpenAIChat,
-			UpstreamFamily:   llms.ProviderFamilyOpenAI,
 			Model:            "gpt",
 		}); err != nil {
 			t.Fatalf("BridgeRuntimeLLMStreamResponse returned error: %v", err)
@@ -283,7 +282,6 @@ func TestRuntimeLLMFacadeProtocolAndStreamCoverage(t *testing.T) {
 		if err := BridgeRuntimeLLMStreamResponse(c, resp, runtimeLLMStreamBridgeRequest{
 			InboundProtocol:  protocolbridge.ProtocolOpenAIResponses,
 			UpstreamProtocol: protocolbridge.ProtocolOpenAIChat,
-			UpstreamFamily:   llms.ProviderFamilyOpenAI,
 			Model:            "gpt",
 		}); err != nil {
 			t.Fatalf("BridgeRuntimeLLMStreamResponse returned error: %v", err)
@@ -304,7 +302,6 @@ func TestRuntimeLLMFacadeProtocolAndStreamCoverage(t *testing.T) {
 		if err := BridgeRuntimeLLMStreamResponse(c, resp, runtimeLLMStreamBridgeRequest{
 			InboundProtocol:  protocolbridge.ProtocolOpenAIChat,
 			UpstreamProtocol: protocolbridge.ProtocolOpenAIChat,
-			UpstreamFamily:   llms.ProviderFamilyOpenAI,
 			Model:            "gpt",
 		}); err != nil {
 			t.Fatalf("BridgeRuntimeLLMStreamResponse returned error: %v", err)
@@ -324,8 +321,7 @@ func TestRuntimeLLMFacadeProtocolAndStreamCoverage(t *testing.T) {
 		c := echo.New().NewContext(httptest.NewRequest(http.MethodPost, "/", nil), httptest.NewRecorder())
 		if err := BridgeRuntimeLLMStreamResponse(c, resp, runtimeLLMStreamBridgeRequest{
 			InboundProtocol:  protocolbridge.ProtocolOpenAIResponses,
-			UpstreamProtocol: protocolbridge.ProtocolAnthropicMessages,
-			UpstreamFamily:   "unknown",
+			UpstreamProtocol: protocolbridge.Protocol("bogus"),
 			Model:            "gpt",
 		}); err == nil {
 			t.Fatalf("BridgeRuntimeLLMStreamResponse returned nil for unsupported bridge")

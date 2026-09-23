@@ -2,6 +2,7 @@ package llms
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	protocolbridge "github.com/chaitin/ai-api-protocol-bridge"
@@ -98,5 +99,84 @@ func TestRewriteRuntimeRequestForUpstreamNormalizesResponsesTextTypesByRole(t *t
 				}
 			}
 		})
+	}
+}
+
+// TestCrossFamilyBridgeServesMessagesToChat pins the last cell of the conversion
+// matrix. An Anthropic inbound has two OpenAI targets, so a family lookup always
+// returned the Responses bridge; the library's protocol-precise constructor is
+// what lets claude reach a chat-completions-only upstream at all.
+func TestCrossFamilyBridgeServesMessagesToChat(t *testing.T) {
+	bridge, err := crossFamilyBridge(protocolbridge.ProtocolAnthropicMessages, protocolbridge.ProtocolOpenAIChat)
+	if err != nil {
+		t.Fatalf("crossFamilyBridge() error = %v", err)
+	}
+	if got := bridge.UpstreamProtocol(); got != protocolbridge.ProtocolOpenAIChat {
+		t.Fatalf("UpstreamProtocol() = %q, want %q", got, protocolbridge.ProtocolOpenAIChat)
+	}
+
+	req := &protocolbridge.LLMRequest{
+		Protocol: protocolbridge.ProtocolAnthropicMessages,
+		Model:    "claude-sonnet-4",
+		Prompt: []protocolbridge.Message{
+			{Role: protocolbridge.RoleUser, Parts: []protocolbridge.Part{{Type: protocolbridge.PartText, Text: &protocolbridge.TextPart{Text: "Hello"}}}},
+		},
+	}
+	raw, err := EncodeRuntimeUpstreamRequest(protocolbridge.ProtocolAnthropicMessages, protocolbridge.ProtocolOpenAIChat, ResolvedTarget{Model: Model{Name: "claude-sonnet-4"}}, req)
+	if err != nil {
+		t.Fatalf("EncodeRuntimeUpstreamRequest() error = %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if _, present := decoded["input"]; present {
+		t.Fatal("a Responses-shaped payload was posted to a chat upstream")
+	}
+	if _, present := decoded["messages"]; !present {
+		t.Fatalf("payload = %s, want chat messages", raw)
+	}
+}
+
+// TestCrossFamilyBridgeKeepsToolResultsForChatUpstream pins the traffic defect
+// that once forced this cell back to "unsupported": Anthropic carries a tool
+// result in a user message, and an encoder that only reads text, refusal and
+// tool-call parts would turn that turn into an empty user message, so the model
+// silently receives no tool output from the second turn on.
+func TestCrossFamilyBridgeKeepsToolResultsForChatUpstream(t *testing.T) {
+	req := &protocolbridge.LLMRequest{
+		Protocol: protocolbridge.ProtocolAnthropicMessages,
+		Model:    "claude-sonnet-4",
+		Prompt: []protocolbridge.Message{
+			{
+				Role: protocolbridge.RoleUser,
+				Parts: []protocolbridge.Part{{
+					Type: protocolbridge.PartToolResult,
+					ToolResult: &protocolbridge.ToolResultPart{
+						ToolCallID: "call_1",
+						ToolName:   "search",
+						Output:     protocolbridge.ToolResultOutput{Type: protocolbridge.ToolResultText, Text: "tool-output"},
+					},
+				}},
+			},
+		},
+	}
+	raw, err := EncodeRuntimeUpstreamRequest(protocolbridge.ProtocolAnthropicMessages, protocolbridge.ProtocolOpenAIChat, ResolvedTarget{Model: Model{Name: "claude-sonnet-4"}}, req)
+	if err != nil {
+		t.Fatalf("EncodeRuntimeUpstreamRequest() error = %v", err)
+	}
+	if !strings.Contains(string(raw), "tool-output") {
+		t.Fatalf("payload = %s, want the tool result text preserved", raw)
+	}
+}
+
+// TestCrossFamilyBridgeStillRejectsUnservedPairs guards the other half: the
+// helper must keep failing for pairings nothing can serve.
+func TestCrossFamilyBridgeStillRejectsUnservedPairs(t *testing.T) {
+	if _, err := crossFamilyBridge(protocolbridge.Protocol("bogus"), protocolbridge.ProtocolOpenAIChat); err == nil {
+		t.Fatal("crossFamilyBridge() served an unknown inbound protocol")
+	}
+	if _, err := crossFamilyBridge(protocolbridge.ProtocolAnthropicMessages, protocolbridge.Protocol("bogus")); err == nil {
+		t.Fatal("crossFamilyBridge() served an unknown upstream protocol")
 	}
 }

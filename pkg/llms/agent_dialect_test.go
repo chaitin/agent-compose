@@ -73,12 +73,12 @@ func TestDialectConversionMatrix(t *testing.T) {
 			ProtocolMessages:        {ProtocolMessages, false},
 		},
 	}
-	// The one cell no bridge can serve today. An Anthropic inbound has two
-	// OpenAI targets and the protocol library selects a cross-family bridge by
-	// family, so messages -> chat has no bridge yet (design phase P0). Listing
-	// it here makes this table the complete statement of the matrix: every
-	// other cell must be servable.
-	unservable := map[string]bool{"claude/chat_completions": true}
+	// Cells no bridge can serve. It is empty: every combination is servable,
+	// including claude against a chat-only upstream, because the protocol
+	// library now selects a cross-family bridge by the exact protocol pair. The
+	// map stays so that a future gap has to be declared here rather than left
+	// implicit, which is how the last one went unnoticed.
+	unservable := map[string]bool{}
 
 	for agentKind, byUpstream := range matrix {
 		dialect, err := DialectFor(agentKind)
@@ -152,10 +152,10 @@ func TestProtocolHelpers(t *testing.T) {
 
 // TestCanConvertPinsBridgeCoverage records exactly which (inbound, upstream)
 // pairs the daemon can serve. Every same-family pair re-encodes through the
-// shared adapters. Cross-family pairs depend on the bridge registry, and
-// messages -> chat is the one pair it does not register, so PrepareAgentLLM
-// must reject that combination at configuration time instead of failing on the
-// first request.
+// shared adapters. Cross-family pairs depend on the bridge registry, which now
+// registers every pair the daemon's three protocols can form, so PrepareAgentLLM
+// never has to reject a combination at configuration time and fail on the first
+// request only because a bridge was missing.
 func TestCanConvertPinsBridgeCoverage(t *testing.T) {
 	cases := []struct {
 		inbound  Protocol
@@ -170,7 +170,7 @@ func TestCanConvertPinsBridgeCoverage(t *testing.T) {
 		{ProtocolChatCompletions, ProtocolMessages, true},
 		{ProtocolMessages, ProtocolMessages, true},
 		{ProtocolMessages, ProtocolResponses, true},
-		{ProtocolMessages, ProtocolChatCompletions, false},
+		{ProtocolMessages, ProtocolChatCompletions, true},
 		{ProtocolMessages, Protocol("bogus"), false},
 	}
 	for _, tc := range cases {

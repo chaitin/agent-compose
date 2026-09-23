@@ -52,7 +52,7 @@ func CanConvert(inbound, upstream Protocol) bool {
 	if inboundBridge == upstreamBridge || ProtocolsShareFamily(inboundBridge, upstreamBridge) {
 		return true
 	}
-	_, err = crossFamilyBridge(inboundBridge, upstreamBridge, upstream.Family())
+	_, err = crossFamilyBridge(inboundBridge, upstreamBridge)
 	return err == nil
 }
 
