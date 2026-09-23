@@ -283,7 +283,7 @@ task image:agent-compose-guest-archlinux
 | 变量 | 作用范围 |
 | --- | --- |
 | `DOCKER_DEFAULT_PLATFORM` | Docker 目标平台；daemon task 从 `GOARCH` 推导，Arch Linux guest 默认为 `linux/amd64` |
-| `IMAGE_NAME`、`IMAGE_TAG` | 本地 daemon 与 guest 镜像 tag |
+| `IMAGE_TAG` | daemon task 与两种 guest task 的本地镜像 tag |
 | `NO_CACHE=1` | 传递 Docker `--no-cache` 参数 |
 | `GO_VERSION`、`GRPCURL_VERSION`、`NODE_MAJOR` | 默认 guest 工具链参数；`NODE_MAJOR` 仅适用于 Debian guest |
 | `ARCHLINUX_TAG` | Arch Linux guest 基础镜像 tag |

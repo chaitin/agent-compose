@@ -57,7 +57,6 @@ env:
   PI_MCP_ADAPTER_VERSION: '{{default "" .PI_MCP_ADAPTER_VERSION}}'
   BOXLITE_VERSION: '{{default "" .BOXLITE_VERSION}}'
   MICROSANDBOX_VERSION: '{{default "" .MICROSANDBOX_VERSION}}'
-  IMAGE_NAME: '{{default "" .IMAGE_NAME}}'
   IMAGE_TAG: '{{default "" .IMAGE_TAG}}'
   DOCKER_DEFAULT_PLATFORM: '{{default "" .DOCKER_DEFAULT_PLATFORM}}'
   NO_CACHE: '{{default "" .NO_CACHE}}'
@@ -592,7 +591,10 @@ tasks:
     dir: '{{.TASKFILE_DIR}}'
     deps: ['prepare:boxlite-dev', 'prepare:microsandbox-dev']
     env:
-      IMAGE_NAME: '{{default "agent-compose:latest" .IMAGE_NAME}}'
+      IMAGE_TAG: '{{default "agent-compose:latest" .IMAGE_TAG}}'
+      # Surface the removed variable so build-agent-compose.sh can reject it
+      # loudly instead of silently building the default tag.
+      IMAGE_NAME: '{{default "" .IMAGE_NAME}}'
       DOCKERFILE: Dockerfile.agent-compose-local
       BUILD_CONTEXT: '{{.TASKFILE_DIR}}'
       DOCKER_DEFAULT_PLATFORM: 'linux/{{.GOARCH}}'

@@ -139,7 +139,7 @@ Current Docker build behavior:
 - `Dockerfile` is the self-contained source for the published full Linux daemon image and also exports BoxLite and Microsandbox development artifacts
 - `Dockerfile.agent-compose-local` builds a local daemon image from artifacts already exported under `build/`; `task image:agent-compose` selects this local-development Dockerfile
 - `guest-images/Dockerfile.agent-compose-guest` builds the guest image used by sandbox deployments
-- `scripts/build-agent-compose.sh` defaults to `IMAGE_NAME=agent-compose:latest` and `DOCKERFILE=Dockerfile`
+- `scripts/build-agent-compose.sh` defaults to `IMAGE_TAG=agent-compose:latest` and `DOCKERFILE=Dockerfile`
 - `task build:agent-compose:boxlite` is a deprecated alias for `task build:agent-compose:linux`; it does not define a separate BoxLite-only profile
 - native binaries are local/CI verification artifacts; supported deployment remains the registry images plus GitHub Release installer assets, not per-platform binaries
 
