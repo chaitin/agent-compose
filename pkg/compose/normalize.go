@@ -53,28 +53,25 @@ type NormalizedProjectSpec struct {
 }
 
 type NormalizedAgentSpec struct {
-	Name        string `yaml:"name" json:"name"`
-	Enabled     bool   `yaml:"enabled" json:"enabled"`
-	DisplayName string `yaml:"display_name,omitempty" json:"display_name,omitempty"`
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-	Provider    string `yaml:"provider,omitempty" json:"provider,omitempty"`
-	Model       string `yaml:"model,omitempty" json:"model,omitempty"`
-	// LLMConnection names the daemon connection this agent must use. Empty
-	// infers the connection from the model.
-	LLMConnection string                             `yaml:"llm_connection,omitempty" json:"llm_connection,omitempty"`
-	SystemPrompt  string                             `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
-	Image         string                             `yaml:"image,omitempty" json:"image,omitempty"`
-	Build         *NormalizedBuildSpec               `yaml:"build,omitempty" json:"build,omitempty"`
-	Driver        *NormalizedDriverSpec              `yaml:"driver" json:"driver"`
-	Env           map[string]EnvVarSpec              `yaml:"env,omitempty" json:"env,omitempty"`
-	MCPServers    map[string]NormalizedMCPServerSpec `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
-	CapsetIDs     []string                           `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
-	Skills        []NormalizedSkillSpec              `yaml:"skills,omitempty" json:"skills,omitempty"`
-	Volumes       []NormalizedVolumeMountSpec        `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	Workspace     *WorkspaceSpec                     `yaml:"workspace,omitempty" json:"workspace,omitempty"`
-	Sandbox       *NormalizedSandboxSpec             `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
-	Scheduler     *NormalizedSchedulerSpec           `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
-	Jupyter       *JupyterSpec                       `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
+	Name         string                             `yaml:"name" json:"name"`
+	Enabled      bool                               `yaml:"enabled" json:"enabled"`
+	DisplayName  string                             `yaml:"display_name,omitempty" json:"display_name,omitempty"`
+	Description  string                             `yaml:"description,omitempty" json:"description,omitempty"`
+	Provider     string                             `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Model        string                             `yaml:"model,omitempty" json:"model,omitempty"`
+	SystemPrompt string                             `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
+	Image        string                             `yaml:"image,omitempty" json:"image,omitempty"`
+	Build        *NormalizedBuildSpec               `yaml:"build,omitempty" json:"build,omitempty"`
+	Driver       *NormalizedDriverSpec              `yaml:"driver" json:"driver"`
+	Env          map[string]EnvVarSpec              `yaml:"env,omitempty" json:"env,omitempty"`
+	MCPServers   map[string]NormalizedMCPServerSpec `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
+	CapsetIDs    []string                           `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
+	Skills       []NormalizedSkillSpec              `yaml:"skills,omitempty" json:"skills,omitempty"`
+	Volumes      []NormalizedVolumeMountSpec        `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Workspace    *WorkspaceSpec                     `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+	Sandbox      *NormalizedSandboxSpec             `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
+	Scheduler    *NormalizedSchedulerSpec           `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
+	Jupyter      *JupyterSpec                       `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
 }
 
 type NormalizedSandboxSpec struct {
@@ -315,10 +312,6 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
-	llmConnection, err := interpolateEnvValue(joinPath("agents", name)+".llm_connection", strings.TrimSpace(agent.LLMConnection), options)
-	if err != nil {
-		return NormalizedAgentSpec{}, err
-	}
 	workspace, err := resolveAgentWorkspace(joinPath("agents", name)+".workspace", agent.Workspace, project.Workspaces, options)
 	if err != nil {
 		return NormalizedAgentSpec{}, err
@@ -341,26 +334,25 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 		return NormalizedAgentSpec{}, err
 	}
 	return NormalizedAgentSpec{
-		Name:          name,
-		Enabled:       enabled,
-		DisplayName:   strings.TrimSpace(agent.DisplayName),
-		Description:   strings.TrimSpace(agent.Description),
-		Provider:      strings.TrimSpace(agent.Provider),
-		Model:         model,
-		LLMConnection: llmConnection,
-		SystemPrompt:  agent.SystemPrompt,
-		Image:         strings.TrimSpace(agent.Image),
-		Build:         build,
-		Driver:        driver,
-		Env:           env,
-		MCPServers:    agentMCPServers,
-		CapsetIDs:     capsetIDs,
-		Skills:        skills,
-		Volumes:       volumes,
-		Workspace:     workspace,
-		Sandbox:       sandbox,
-		Scheduler:     scheduler,
-		Jupyter:       jupyter,
+		Name:         name,
+		Enabled:      enabled,
+		DisplayName:  strings.TrimSpace(agent.DisplayName),
+		Description:  strings.TrimSpace(agent.Description),
+		Provider:     strings.TrimSpace(agent.Provider),
+		Model:        model,
+		SystemPrompt: agent.SystemPrompt,
+		Image:        strings.TrimSpace(agent.Image),
+		Build:        build,
+		Driver:       driver,
+		Env:          env,
+		MCPServers:   agentMCPServers,
+		CapsetIDs:    capsetIDs,
+		Skills:       skills,
+		Volumes:      volumes,
+		Workspace:    workspace,
+		Sandbox:      sandbox,
+		Scheduler:    scheduler,
+		Jupyter:      jupyter,
 	}, nil
 }
 

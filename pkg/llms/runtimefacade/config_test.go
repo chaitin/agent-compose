@@ -450,11 +450,10 @@ func catalogStringPointer(value string) *string {
 	return &value
 }
 
-// TestEnsureSessionAgentRuntimeConfigHonoursAgentLLMConnection pins the whole
-// wiring of the declarative field: an agent definition's llm_connection reaches
-// Catalog.Resolve through the facade request and selects that connection even
-// when the model is ambiguous, while the same run without it is rejected.
-func TestEnsureSessionAgentRuntimeConfigHonoursAgentLLMConnection(t *testing.T) {
+// TestEnsureSessionAgentRuntimeConfigRejectsAnAmbiguousModel pins that a model
+// two connections serve is reported through the facade boundary instead of one
+// of them being chosen silently.
+func TestEnsureSessionAgentRuntimeConfigRejectsAnAmbiguousModel(t *testing.T) {
 	isolateLLMEnv(t)
 	ctx := context.Background()
 	root := t.TempDir()
@@ -498,34 +497,11 @@ func TestEnsureSessionAgentRuntimeConfigHonoursAgentLLMConnection(t *testing.T) 
 			WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-agent-connection", "workspace"),
 		},
 	}
-	definition := domain.AgentDefinition{
-		ID: "agent-connection", Name: "worker", Provider: "pi",
-		Model: "shared-model", LLMConnection: "backup",
-	}
-	agent := execution.AgentConfigFromDefinition(definition, domain.DefaultAgentProvider)
-	if agent.LLMConnection != "backup" {
-		t.Fatalf("AgentConfigFromDefinition LLMConnection = %q, want backup", agent.LLMConnection)
-	}
-
-	prepared, err := EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{
-		Config: config, Store: store, Session: session, Agent: agent.Provider, Model: agent.Model,
-		ConnectionID: agent.LLMConnection, AgentEnv: agent.EnvItems, Source: TokenSourceAgent, RunID: "run-connection",
-	})
-	if err != nil {
-		t.Fatalf("EnsureSessionAgentRuntimeConfig returned error: %v", err)
-	}
-	token, err := store.GetLLMFacadeToken(ctx, prepared.Env["AGENT_COMPOSE_SANDBOX_TOKEN"])
-	if err != nil {
-		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
-	}
-	if token.ProviderID != "backup" {
-		t.Fatalf("facade token connection = %q, want the agent's llm_connection", token.ProviderID)
-	}
 
 	_, err = EnsureSessionAgentRuntimeConfig(ctx, SessionFacadeConfigRequest{
 		Config: config, Store: store, Session: session, Agent: "pi", Model: "shared-model", Source: TokenSourceAgent, RunID: "run-connection-bare",
 	})
 	if !errors.Is(err, llms.ErrAmbiguousConnection) {
-		t.Fatalf("EnsureSessionAgentRuntimeConfig without a connection error = %v, want ErrAmbiguousConnection", err)
+		t.Fatalf("EnsureSessionAgentRuntimeConfig error = %v, want ErrAmbiguousConnection", err)
 	}
 }

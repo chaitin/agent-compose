@@ -49,28 +49,25 @@ type orderedNamedWorkspace struct {
 }
 
 type orderedAgentSpec struct {
-	Name        string `yaml:"name" json:"name"`
-	Enabled     bool   `yaml:"enabled" json:"enabled"`
-	DisplayName string `yaml:"display_name,omitempty" json:"display_name,omitempty"`
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-	Provider    string `yaml:"provider,omitempty" json:"provider,omitempty"`
-	Model       string `yaml:"model,omitempty" json:"model,omitempty"`
-	// LLMConnection names the daemon connection this agent must use. Empty
-	// infers the connection from the model.
-	LLMConnection string                      `yaml:"llm_connection,omitempty" json:"llm_connection,omitempty"`
-	SystemPrompt  string                      `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
-	Image         string                      `yaml:"image,omitempty" json:"image,omitempty"`
-	Build         *NormalizedBuildSpec        `yaml:"build,omitempty" json:"build,omitempty"`
-	Driver        *NormalizedDriverSpec       `yaml:"driver" json:"driver"`
-	Env           []orderedEnvVarSpec         `yaml:"env,omitempty" json:"env,omitempty"`
-	MCPServers    []orderedMCPServerSpec      `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
-	CapsetIDs     []string                    `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
-	Skills        []NormalizedSkillSpec       `yaml:"skills,omitempty" json:"skills,omitempty"`
-	Volumes       []NormalizedVolumeMountSpec `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	Workspace     *WorkspaceSpec              `yaml:"workspace,omitempty" json:"workspace,omitempty"`
-	Sandbox       *NormalizedSandboxSpec      `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
-	Scheduler     *NormalizedSchedulerSpec    `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
-	Jupyter       *JupyterSpec                `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
+	Name         string                      `yaml:"name" json:"name"`
+	Enabled      bool                        `yaml:"enabled" json:"enabled"`
+	DisplayName  string                      `yaml:"display_name,omitempty" json:"display_name,omitempty"`
+	Description  string                      `yaml:"description,omitempty" json:"description,omitempty"`
+	Provider     string                      `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Model        string                      `yaml:"model,omitempty" json:"model,omitempty"`
+	SystemPrompt string                      `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
+	Image        string                      `yaml:"image,omitempty" json:"image,omitempty"`
+	Build        *NormalizedBuildSpec        `yaml:"build,omitempty" json:"build,omitempty"`
+	Driver       *NormalizedDriverSpec       `yaml:"driver" json:"driver"`
+	Env          []orderedEnvVarSpec         `yaml:"env,omitempty" json:"env,omitempty"`
+	MCPServers   []orderedMCPServerSpec      `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
+	CapsetIDs    []string                    `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
+	Skills       []NormalizedSkillSpec       `yaml:"skills,omitempty" json:"skills,omitempty"`
+	Volumes      []NormalizedVolumeMountSpec `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Workspace    *WorkspaceSpec              `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+	Sandbox      *NormalizedSandboxSpec      `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
+	Scheduler    *NormalizedSchedulerSpec    `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
+	Jupyter      *JupyterSpec                `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
 }
 
 type orderedMCPServerSpec struct {
@@ -155,26 +152,25 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 	agents := make([]orderedAgentSpec, 0, len(s.Agents))
 	for _, agent := range s.Agents {
 		agents = append(agents, orderedAgentSpec{
-			Name:          agent.Name,
-			Enabled:       agent.Enabled,
-			DisplayName:   agent.DisplayName,
-			Description:   agent.Description,
-			Provider:      agent.Provider,
-			Model:         agent.Model,
-			LLMConnection: agent.LLMConnection,
-			SystemPrompt:  agent.SystemPrompt,
-			Image:         agent.Image,
-			Build:         cloneNormalizedBuildSpec(agent.Build),
-			Driver:        cloneNormalizedDriverSpec(agent.Driver),
-			Env:           orderedEnvVars(agent.Env, redactSecrets),
-			MCPServers:    orderedMCPServers(agent.MCPServers, redactSecrets),
-			CapsetIDs:     slices.Clone(agent.CapsetIDs),
-			Skills:        outputSkillSpecs(agent.Skills, redactSecrets),
-			Volumes:       cloneNormalizedVolumeMountSpecs(agent.Volumes),
-			Workspace:     outputWorkspace(agent.Workspace, redactSecrets),
-			Sandbox:       agent.Sandbox,
-			Scheduler:     cloneNormalizedSchedulerSpec(agent.Scheduler),
-			Jupyter:       cloneJupyterSpec(agent.Jupyter),
+			Name:         agent.Name,
+			Enabled:      agent.Enabled,
+			DisplayName:  agent.DisplayName,
+			Description:  agent.Description,
+			Provider:     agent.Provider,
+			Model:        agent.Model,
+			SystemPrompt: agent.SystemPrompt,
+			Image:        agent.Image,
+			Build:        cloneNormalizedBuildSpec(agent.Build),
+			Driver:       cloneNormalizedDriverSpec(agent.Driver),
+			Env:          orderedEnvVars(agent.Env, redactSecrets),
+			MCPServers:   orderedMCPServers(agent.MCPServers, redactSecrets),
+			CapsetIDs:    slices.Clone(agent.CapsetIDs),
+			Skills:       outputSkillSpecs(agent.Skills, redactSecrets),
+			Volumes:      cloneNormalizedVolumeMountSpecs(agent.Volumes),
+			Workspace:    outputWorkspace(agent.Workspace, redactSecrets),
+			Sandbox:      agent.Sandbox,
+			Scheduler:    cloneNormalizedSchedulerSpec(agent.Scheduler),
+			Jupyter:      cloneJupyterSpec(agent.Jupyter),
 		})
 	}
 	slices.SortFunc(agents, func(a, b orderedAgentSpec) int {
@@ -203,26 +199,25 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 	}
 	for _, agent := range ordered.Agents {
 		cloned.Agents = append(cloned.Agents, NormalizedAgentSpec{
-			Name:          agent.Name,
-			Enabled:       agent.Enabled,
-			DisplayName:   agent.DisplayName,
-			Description:   agent.Description,
-			Provider:      agent.Provider,
-			Model:         agent.Model,
-			LLMConnection: agent.LLMConnection,
-			SystemPrompt:  agent.SystemPrompt,
-			Image:         agent.Image,
-			Build:         agent.Build,
-			Driver:        agent.Driver,
-			Env:           envVarMapFromOrdered(agent.Env),
-			MCPServers:    mcpMapFromOrdered(agent.MCPServers),
-			CapsetIDs:     slices.Clone(agent.CapsetIDs),
-			Skills:        cloneNormalizedSkillSpecs(agent.Skills),
-			Volumes:       cloneNormalizedVolumeMountSpecs(agent.Volumes),
-			Workspace:     agent.Workspace,
-			Sandbox:       agent.Sandbox,
-			Scheduler:     agent.Scheduler,
-			Jupyter:       agent.Jupyter,
+			Name:         agent.Name,
+			Enabled:      agent.Enabled,
+			DisplayName:  agent.DisplayName,
+			Description:  agent.Description,
+			Provider:     agent.Provider,
+			Model:        agent.Model,
+			SystemPrompt: agent.SystemPrompt,
+			Image:        agent.Image,
+			Build:        agent.Build,
+			Driver:       agent.Driver,
+			Env:          envVarMapFromOrdered(agent.Env),
+			MCPServers:   mcpMapFromOrdered(agent.MCPServers),
+			CapsetIDs:    slices.Clone(agent.CapsetIDs),
+			Skills:       cloneNormalizedSkillSpecs(agent.Skills),
+			Volumes:      cloneNormalizedVolumeMountSpecs(agent.Volumes),
+			Workspace:    agent.Workspace,
+			Sandbox:      agent.Sandbox,
+			Scheduler:    agent.Scheduler,
+			Jupyter:      agent.Jupyter,
 		})
 	}
 	return cloned

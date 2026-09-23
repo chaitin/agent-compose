@@ -97,12 +97,13 @@ part of it consults the environment again.
 1. **Model.** The agent's declared `model`, else the catalog's default model,
    else `ErrNoModel`. A model id is opaque: it is never split on `/` and never
    matched against a connection to infer anything.
-2. **Connection.** In order: the connection named by the agent's
-   `llm_connection`; the connection that owns the default model; the single
-   connection that serves the model; the only configured connection. If two or
-   more remain, the run fails with `ErrAmbiguousConnection` naming the
+2. **Connection.** In order: the connection that owns the default model; the
+   single connection that serves the model; the only configured connection. If
+   two or more remain, the run fails with `ErrAmbiguousConnection` naming the
    candidates — it is never resolved by accident. With no connection at all the
-   answer is `ErrNoConnection`, and the agent keeps its own authentication.
+   answer is `ErrNoConnection`, and the agent keeps its own authentication. The
+   runtime facade re-resolves the connection its token already names; that is a
+   lookup of a decision already made, not a second choice.
 3. **Protocol.** The dialect table gives each agent the protocols it speaks
    natively and one canonical protocol. An upstream protocol the agent speaks is
    passed through; anything else is converted to the agent's canonical protocol.
@@ -115,18 +116,14 @@ authorization boundary. Family plays no part in any of the above. There is no
 reserved `default` or `anthropic` connection that wins by name, and no search
 that widens to another family when the first has no connection.
 
-To pin a specific connection, declare `llm_connection` on the agent. This is the
-only way to disambiguate, and it is also what the ambiguity error tells the
-operator to do. The retired `<connection>/<model>` form is not interpreted, and
+Connection selection is daemon configuration, not agent configuration: an agent
+declares only its `model`, and an operator resolves a tie by making one
+connection the owner of the default model or by binding the model to exactly one
+connection. The retired `<connection>/<model>` form is not interpreted, and
 splitting it would corrupt a legitimate model id that contains a slash; when such
 a value is served by no connection while its prefix names a connection that
-serves the remainder, the daemon reports `ErrLegacyQualifiedModel` with the
-`llm_connection` and `model` to write instead.
-
-Naming a connection and also declaring an upstream in the agent's own `env` is a
-contradiction — the declared upstream would win and the named connection would be
-ignored — so it is rejected as a failed precondition rather than letting either
-side win silently.
+serves the remainder, the daemon reports `ErrLegacyQualifiedModel` naming the
+model to write and the connection to configure instead.
 
 **Protocol coverage.** Every (agent, upstream protocol) combination is served;
 the agent's protocol never restricts which connection it may use.
@@ -172,8 +169,8 @@ Update the guest image before or together with the daemon. See
 
 Ambiguous defaulting is reported instead of silently falling back to an agent's
 own credentials. When multiple managed connections exist and no connection can
-be selected, the run fails naming the candidates; declare `llm_connection` on
-the agent to choose one.
+be selected, the run fails naming the candidates; make one of them the owner of
+the default model or bind the model to exactly one connection.
 
 The next target resolution reads current provider settings, so address/key
 updates require no restart. Existing in-flight requests use their resolved
@@ -186,7 +183,7 @@ provider existence when constructing a new reference after deletion.
 
 Domain tests cover ID/protocol/URL/key/auth validation and input ownership, and
 the resolution rules above: model selection with and without a catalog default,
-connection precedence from an explicit `llm_connection` down to the only
+connection precedence from the catalog default model down to the only
 connection, ambiguity rejection naming its candidates, the no-connection case,
 disabled-connection exclusion, binding precedence, and the diagnostic for the
 retired `<connection>/<model>` form. SQLite

@@ -7,32 +7,6 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
-// directConnectionEnvKeys are the environment keys that declare, or intend to
-// declare, an agent-owned LLM connection. Any of them in an agent's own `env`
-// conflicts with an explicit `llm_connection`: the two name different owners of
-// the same upstream, and letting one silently win would serve a configuration
-// the operator did not ask for.
-var directConnectionEnvKeys = []string{
-	"LLM_API_ENDPOINT",
-	"LLM_API_KEY",
-	"OPENAI_API_KEY",
-	"OPENAI_BASE_URL",
-	"ANTHROPIC_API_KEY",
-	"ANTHROPIC_AUTH_TOKEN",
-	"ANTHROPIC_BASE_URL",
-}
-
-// declaredDirectConnectionEnvKey returns the first environment key in env that
-// declares an agent-owned LLM connection, or "" when the agent declares none.
-func declaredDirectConnectionEnvKey(env []domain.SandboxEnvVar) string {
-	for _, key := range directConnectionEnvKeys {
-		if envItemFirst(env, key) != "" {
-			return key
-		}
-	}
-	return ""
-}
-
 // directEndpointDefaults are the public endpoints a declared credential is used
 // against when the agent names no endpoint. They are the same endpoints the
 // previous environment-backed provider bootstrap assumed, and they are a

@@ -97,7 +97,6 @@ func ProjectAgentsToProto(agents []domain.ProjectAgentRecord) []*agentcomposev2.
 			ManagedAgentId:   agent.ID,
 			Provider:         agent.Provider,
 			Model:            agent.Model,
-			LlmConnection:    agent.LLMConnection,
 			Image:            agent.Image,
 			Driver:           agent.Driver,
 			SchedulerEnabled: agent.SchedulerEnabled,

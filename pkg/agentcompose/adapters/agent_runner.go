@@ -131,14 +131,8 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 	if agentDef != nil {
 		agentEnvItems = agentDef.EnvItems
 	}
-	// The agent definition's explicit connection is what makes the catalog's
-	// highest-precedence lookup reachable; it wins over model inference.
-	var llmConnection string
-	if agentDef != nil {
-		llmConnection = agentDef.LLMConnection
-	}
 	runtimeConfig, err := runtimefacade.EnsureSessionAgentRuntimeConfig(ctx, runtimefacade.SessionFacadeConfigRequest{
-		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent, Model: effectiveModel, ConnectionID: llmConnection, AgentEnv: agentEnvItems, Source: runtimefacade.TokenSourceAgent, RunID: runID,
+		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent, Model: effectiveModel, AgentEnv: agentEnvItems, Source: runtimefacade.TokenSourceAgent, RunID: runID,
 	})
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
@@ -216,7 +210,6 @@ func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, sessio
 		if agent.Model == "" {
 			agent.Model = strings.TrimSpace(definition.Model)
 		}
-		agent.LLMConnection = strings.TrimSpace(definition.LLMConnection)
 	}
 	if r.configDB != nil {
 		if err := r.configDB.RevokeLLMFacadeTokensForSandbox(ctx, session.Summary.ID); err != nil {
@@ -239,7 +232,7 @@ func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, sessio
 		return err
 	}
 	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, runtimefacade.SessionFacadeConfigRequest{
-		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent.Provider, Model: agent.Model, ConnectionID: agent.LLMConnection, AgentEnv: session.ProviderEnvItems, Source: "session", RunID: "",
+		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent.Provider, Model: agent.Model, AgentEnv: session.ProviderEnvItems, Source: "session", RunID: "",
 	})
 	if err != nil {
 		if r.configDB != nil {

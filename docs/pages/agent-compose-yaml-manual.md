@@ -503,8 +503,7 @@ agents:
 | `display_name` | string | Empty | Human-readable agent label. |
 | `description` | string | Empty | Human-readable explanation of the agent's role. |
 | `provider` | string | `codex` | Agent provider: `codex`, `claude`, `gemini`, `opencode`, `pi`, or `dsh`. Compatibility aliases are normalized at persistence boundaries. |
-| `model` | string | Provider/daemon default | Model name. Pi, opencode, and dsh accept an optional `<llm-provider-id>/` prefix; without it the daemon's default connection resolves the model. Supports `${NAME}` interpolation. |
-| `llm_connection` | string | Empty (inferred from `model`) | Daemon connection ID this agent must use, for example an LLM provider configured in `models.json`, the daemon environment, or `LLMService`. Supports `${NAME}` interpolation. Declaring it together with an LLM connection key in the agent's `env` is an error. |
+| `model` | string | Daemon default model | Opaque model name. Omitting it selects the daemon's default model. Supports `${NAME}` interpolation. |
 | `system_prompt` | string | Empty | Additional system instructions; YAML block scalars are recommended for multiline text. |
 | `image` | string | Daemon default image | Guest image reference and an output tag when `build` is used. |
 | `build` | string/object | None | Image build configuration used by `agent-compose build`. |
@@ -533,50 +532,18 @@ agents:
 
 Canonical providers are `codex`, `claude`, `gemini`, `opencode`, `pi`, and `dsh`. Compatibility normalization also accepts `claude-code` / `claude_code`, `gemini-cli` / `gemini_cli`, `open-code` / `open_code`, `pi-agent` / `pi_agent`, and `deepseek` / `deepseek-harness` / `deepseek_harness`; new files should use canonical names.
 
-Pi and dsh are multi-model agents, so their model must identify both the configured LLM provider and model, for example:
+Pi, dsh, and opencode are multi-model agents, so their model is worth declaring explicitly:
 
 ```yaml
 agents:
   reviewer:
     provider: pi
-    model: openai/gpt-5.4
+    model: gpt-5.4
 ```
 
-The part before the first slash is an LLM provider ID configured in agent-compose; the entire remainder is the literal upstream model ID and may contain additional slashes. Pi and dsh model traffic is routed through the sandbox runtime LLM facade, so upstream credentials remain on the daemon.
+The model stays opaque: the daemon never splits it in order to select an upstream. Which connection serves it is daemon configuration — the default model's owning connection, the only connection bound to the model, or the only configured connection — and an ambiguity between several candidates fails the run and names them. For pi, dsh, and opencode the daemon composes the `<llm-provider-id>/<model>` reference those CLIs expect from the selected connection, so the compose file never writes one. The retired `model: <connection>/<model>` form is rejected when its prefix names a connection that serves the remainder.
 
-An Agent-level `LLM_API_*` environment is the higher-priority compatibility path, and the model it injects may itself be a qualified name (for example a gateway that publishes `<provider>/<model>` logical names). A model declaration that repeats exactly that injected value is therefore resolved verbatim instead of being split at its first slash, so the qualified name reaches the upstream intact. Any other declaration keeps the behavior above: its prefix selects the route and the remainder is the literal upstream model ID.
-
-### `llm_connection`
-
-`llm_connection` names the daemon connection this agent must use. An empty value
-keeps the default behaviour: the connection is inferred from the model. Supports
-`${NAME}` interpolation.
-
-```yaml
-agents:
-  reviewer:
-    provider: codex
-    model: gpt-5.5
-    llm_connection: team-gateway
-```
-
-Connection selection is a lookup, not a guess: an explicit `llm_connection` wins
-first, then the default model's owning connection, then the unique connection
-bound to the model, then the only configured connection. When several
-connections serve the model and none of those ties applies, the run fails with
-an ambiguity error that names the candidates; `llm_connection` is how the
-operator resolves it. The model itself stays opaque: a model ID that contains a
-slash is never split in order to select a connection.
-
-An agent may not both name an `llm_connection` and publish its own LLM
-connection in `env`. The following keys count as an agent-owned connection:
-`LLM_API_ENDPOINT`, `LLM_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`,
-`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_BASE_URL`. The two
-declarations ask different owners to serve the same run, so `agent-compose`
-rejects the configuration with a failed-precondition error naming the agent, the
-connection, and the offending key instead of letting one silently win. To have
-the daemon own the upstream, keep `llm_connection` and remove those keys from the
-agent's `env`; to have the agent own it, remove `llm_connection`.
+An Agent-level `LLM_API_*` environment is the higher-priority compatibility path: an agent that publishes its own upstream is served by it, and the model it injects may itself be a qualified name (for example a gateway that publishes `<provider>/<model>` logical names). Such a value reaches the upstream verbatim.
 
 ### Daemon `models.json`
 

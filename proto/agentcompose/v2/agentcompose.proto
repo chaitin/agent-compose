@@ -558,8 +558,6 @@ message ProjectAgent {
   // Model selected for a new run when no request- or session-level override is present.
   string resolved_model = 16;
   AgentModelSource model_source = 17;
-  // Daemon connection the agent must use. Empty infers it from the model.
-  string llm_connection = 18;
 }
 
 enum AgentModelSource {

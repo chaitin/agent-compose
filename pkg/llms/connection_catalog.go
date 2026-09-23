@@ -16,7 +16,8 @@ var (
 	// treat it the same way: the agent keeps its own authentication. Ambiguity
 	// between configured connections is a different failure and stays fatal.
 	ErrNoConnection = errors.New("no llm connection configured")
-	// ErrConnectionNotFound reports an llm_connection that matches no connection.
+	// ErrConnectionNotFound reports a connection id that matches no configured
+	// connection.
 	ErrConnectionNotFound = errors.New("llm connection not found")
 	// ErrAmbiguousConnection reports that a model did not identify one connection.
 	ErrAmbiguousConnection = errors.New("ambiguous llm connection")
@@ -53,7 +54,8 @@ type CatalogStore interface {
 // structure out of a model string. Connection selection is a lookup with a
 // fixed precedence and no fallback:
 //
-//  1. the connection the caller named;
+//  1. the connection the caller names, which is how the facade token's already
+//     resolved connection is looked up again at request time;
 //  2. the connection declared as the owner of the catalog default model;
 //  3. the only connection that serves the model;
 //  4. the only configured connection when exactly one exists.
@@ -271,8 +273,8 @@ func (c *Catalog) legacyQualifiedModelError(model string) error {
 	if !serves(c.serving[remainder], connection) {
 		return nil
 	}
-	return fmt.Errorf("%w: model %q is served by no connection, but connection %q serves %q; declare llm_connection: %s with model: %s",
-		ErrLegacyQualifiedModel, model, connection, remainder, connection, remainder)
+	return fmt.Errorf("%w: model %q is served by no connection, but connection %q serves %q; use model: %s and make connection %q serve it",
+		ErrLegacyQualifiedModel, model, connection, remainder, remainder, connection)
 }
 
 func serves(connectionIDs []string, connectionID string) bool {
@@ -289,7 +291,7 @@ func (c *Catalog) ambiguousConnectionError(model string) error {
 	if len(candidates) == 0 {
 		candidates = c.Connections()
 	}
-	return fmt.Errorf("%w: model %q matches %s; declare llm_connection", ErrAmbiguousConnection, model, strings.Join(candidates, ", "))
+	return fmt.Errorf("%w: model %q matches %s; bind the model to exactly one connection or set a default model", ErrAmbiguousConnection, model, strings.Join(candidates, ", "))
 }
 
 func (c *Catalog) bindingFor(connectionID, model string) ProviderModelConfig {

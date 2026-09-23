@@ -18,25 +18,22 @@ const (
 )
 
 type AgentDefinition struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	Enabled     bool      `json:"enabled"`
-	DeletedAt   time.Time `json:"deleted_at,omitempty"`
-	Provider    string    `json:"provider"`
-	Model       string    `json:"model,omitempty"`
-	// LLMConnection names the daemon connection this agent must use. Empty
-	// infers the connection from the model.
-	LLMConnection string            `json:"llm_connection,omitempty"`
-	SystemPrompt  string            `json:"system_prompt,omitempty"`
-	Driver        string            `json:"driver,omitempty"`
-	GuestImage    string            `json:"guest_image,omitempty"`
-	WorkspaceID   string            `json:"workspace_id,omitempty"`
-	EnvItems      []SandboxEnvVar   `json:"env_items,omitempty"`
-	Volumes       []VolumeMountSpec `json:"volumes,omitempty"`
-	ConfigJSON    string            `json:"config_json"`
-	CapsetIDs     []string          `json:"capset_ids,omitempty"`
-	Skills        []AgentSkill      `json:"skills,omitempty"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description,omitempty"`
+	Enabled      bool              `json:"enabled"`
+	DeletedAt    time.Time         `json:"deleted_at,omitempty"`
+	Provider     string            `json:"provider"`
+	Model        string            `json:"model,omitempty"`
+	SystemPrompt string            `json:"system_prompt,omitempty"`
+	Driver       string            `json:"driver,omitempty"`
+	GuestImage   string            `json:"guest_image,omitempty"`
+	WorkspaceID  string            `json:"workspace_id,omitempty"`
+	EnvItems     []SandboxEnvVar   `json:"env_items,omitempty"`
+	Volumes      []VolumeMountSpec `json:"volumes,omitempty"`
+	ConfigJSON   string            `json:"config_json"`
+	CapsetIDs    []string          `json:"capset_ids,omitempty"`
+	Skills       []AgentSkill      `json:"skills,omitempty"`
 	// Project ownership uses native v2 names internally. The JSON tags retain
 	// their historical names for existing event and runtime consumers.
 	ProjectID       string    `json:"managed_project_id,omitempty"`

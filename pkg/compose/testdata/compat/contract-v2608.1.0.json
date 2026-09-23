@@ -178,11 +178,6 @@
       "optional": true
     },
     {
-      "path": "agents.*.llm_connection",
-      "go_type": "string",
-      "optional": true
-    },
-    {
       "path": "agents.*.mcp_servers",
       "go_type": "sequence\u003cmapping\u003ccompose.AgentMCPEntrySpec\u003e\u003e",
       "optional": true

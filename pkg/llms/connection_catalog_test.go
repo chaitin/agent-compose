@@ -185,9 +185,9 @@ func TestCatalogDiagnosesRetiredQualifiedModelSyntax(t *testing.T) {
 		if !errors.Is(err, ErrLegacyQualifiedModel) {
 			t.Fatalf("Resolve() error = %v, want ErrLegacyQualifiedModel", err)
 		}
-		// The hint has to be actionable: it names the connection and the model
-		// the operator should write instead.
-		for _, want := range []string{"gateway", "gpt-5.5", "llm_connection"} {
+		// The hint has to be actionable: it names the connection to configure
+		// and the model to write instead of the retired syntax.
+		for _, want := range []string{"gateway", "gpt-5.5", "use model"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("error %q does not mention %q", err, want)
 			}

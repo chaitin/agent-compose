@@ -24,7 +24,6 @@ func NormalizeAgentDefinition(item domain.AgentDefinition, assignDefaults bool) 
 		item.Provider = domain.DefaultAgentProvider
 	}
 	item.Model = strings.TrimSpace(item.Model)
-	item.LLMConnection = strings.TrimSpace(item.LLMConnection)
 	item.SystemPrompt = strings.TrimSpace(item.SystemPrompt)
 	item.Driver = strings.TrimSpace(item.Driver)
 	item.GuestImage = strings.TrimSpace(item.GuestImage)

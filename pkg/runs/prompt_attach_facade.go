@@ -18,15 +18,14 @@ func (c *Controller) ensurePromptAttachLLMFacadeEnv(ctx context.Context, sandbox
 		return nil, nil
 	}
 	prepared, err := llms.PrepareAgentLLM(ctx, llms.AgentLLMRequest{
-		Config:       c.config,
-		Store:        store,
-		Sandbox:      sandbox,
-		AgentKind:    agent.Provider,
-		Model:        agent.Model,
-		ConnectionID: agent.LLMConnection,
-		AgentEnv:     agent.EnvItems,
-		Source:       "agent",
-		RunID:        runID,
+		Config:    c.config,
+		Store:     store,
+		Sandbox:   sandbox,
+		AgentKind: agent.Provider,
+		Model:     agent.Model,
+		AgentEnv:  agent.EnvItems,
+		Source:    "agent",
+		RunID:     runID,
 	})
 	if err != nil {
 		if llms.IsUnmanagedAgentLLMError(err) {

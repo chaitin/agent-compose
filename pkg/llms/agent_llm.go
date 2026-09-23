@@ -26,9 +26,6 @@ type AgentLLMRequest struct {
 	// Model is the opaque model the agent declared. Empty selects the catalog
 	// default model.
 	Model string
-	// ConnectionID names the upstream connection explicitly. Empty infers it
-	// from the model.
-	ConnectionID string
 	// AgentEnv is the environment the agent declared for itself. When it
 	// publishes an LLM connection, that connection owns this run and the catalog
 	// is not consulted at all.
@@ -102,14 +99,6 @@ func PrepareAgentLLM(ctx context.Context, req AgentLLMRequest) (*AgentLLM, error
 	if err != nil {
 		return nil, err
 	}
-	connectionID := strings.TrimSpace(req.ConnectionID)
-	if connectionID != "" {
-		if key := declaredDirectConnectionEnvKey(req.AgentEnv); key != "" {
-			return nil, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf(
-				"agent %q names llm_connection %q and also declares %s in its own environment; a named connection and an agent-owned upstream are mutually exclusive",
-				dialect.Kind, connectionID, key), nil)
-		}
-	}
 	if upstream, declared := directUpstreamFromAgentEnv(req.AgentEnv, dialect); declared {
 		return prepareDirectAgentLLM(req, dialect, upstream)
 	}
@@ -130,7 +119,7 @@ func PrepareAgentLLM(ctx context.Context, req AgentLLMRequest) (*AgentLLM, error
 		return nil, domain.ClassifyError(domain.ErrFailedPrecondition,
 			fmt.Sprintf("agent %q needs a daemon URL reachable from the sandbox; configure %s", dialect.Kind, RuntimeBaseURLEnvName), nil)
 	}
-	target, err := catalog.Resolve(connectionID, model)
+	target, err := catalog.Resolve("", model)
 	if err != nil {
 		return nil, err
 	}

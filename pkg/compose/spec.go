@@ -51,27 +51,24 @@ func (s *EnvFileSpec) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type AgentSpec struct {
-	Enabled     *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	DisplayName string `yaml:"display_name,omitempty" json:"display_name,omitempty"`
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-	Provider    string `yaml:"provider,omitempty" json:"provider,omitempty"`
-	Model       string `yaml:"model,omitempty" json:"model,omitempty"`
-	// LLMConnection names the daemon connection this agent must use. Empty
-	// infers the connection from the model.
-	LLMConnection string                `yaml:"llm_connection,omitempty" json:"llm_connection,omitempty"`
-	SystemPrompt  string                `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
-	Image         string                `yaml:"image,omitempty" json:"image,omitempty"`
-	Build         *BuildSpec            `yaml:"build,omitempty" json:"build,omitempty"`
-	Driver        *DriverSpec           `yaml:"driver,omitempty" json:"driver,omitempty"`
-	Env           map[string]EnvVarSpec `yaml:"env,omitempty" json:"env,omitempty"`
-	MCPServers    AgentMCPEntriesSpec   `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
-	CapsetIDs     []string              `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
-	Skills        []SkillSpec           `yaml:"skills,omitempty" json:"skills,omitempty"`
-	Volumes       []VolumeMountSpec     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	Workspace     *WorkspaceSpec        `yaml:"workspace,omitempty" json:"workspace,omitempty"`
-	Sandbox       *SandboxSpec          `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
-	Scheduler     *SchedulerSpec        `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
-	Jupyter       *JupyterSpec          `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
+	Enabled      *bool                 `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	DisplayName  string                `yaml:"display_name,omitempty" json:"display_name,omitempty"`
+	Description  string                `yaml:"description,omitempty" json:"description,omitempty"`
+	Provider     string                `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Model        string                `yaml:"model,omitempty" json:"model,omitempty"`
+	SystemPrompt string                `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
+	Image        string                `yaml:"image,omitempty" json:"image,omitempty"`
+	Build        *BuildSpec            `yaml:"build,omitempty" json:"build,omitempty"`
+	Driver       *DriverSpec           `yaml:"driver,omitempty" json:"driver,omitempty"`
+	Env          map[string]EnvVarSpec `yaml:"env,omitempty" json:"env,omitempty"`
+	MCPServers   AgentMCPEntriesSpec   `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
+	CapsetIDs    []string              `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
+	Skills       []SkillSpec           `yaml:"skills,omitempty" json:"skills,omitempty"`
+	Volumes      []VolumeMountSpec     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Workspace    *WorkspaceSpec        `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+	Sandbox      *SandboxSpec          `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
+	Scheduler    *SchedulerSpec        `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
+	Jupyter      *JupyterSpec          `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
 }
 
 type SandboxSpec struct {
@@ -530,25 +527,24 @@ func validateAgentMap(node *yaml.Node, path string) error {
 
 func validateAgent(node *yaml.Node, path string) error {
 	return validateMapping(node, path, map[string]nodeValidator{
-		"enabled":        validateBool,
-		"display_name":   validateScalar,
-		"description":    validateScalar,
-		"provider":       validateScalar,
-		"model":          validateScalar,
-		"llm_connection": validateScalar,
-		"system_prompt":  validateScalar,
-		"image":          validateScalar,
-		"build":          validateBuild,
-		"driver":         validateDriver,
-		"env":            validateEnvVarMap,
-		"mcp_servers":    validateAgentMCPEntries,
-		"capset_ids":     validateStringList,
-		"skills":         validateSkillList,
-		"volumes":        validateVolumeMountList,
-		"workspace":      validateWorkspace,
-		"sandbox":        validateSandbox,
-		"scheduler":      validateScheduler,
-		"jupyter":        validateJupyter,
+		"enabled":       validateBool,
+		"display_name":  validateScalar,
+		"description":   validateScalar,
+		"provider":      validateScalar,
+		"model":         validateScalar,
+		"system_prompt": validateScalar,
+		"image":         validateScalar,
+		"build":         validateBuild,
+		"driver":        validateDriver,
+		"env":           validateEnvVarMap,
+		"mcp_servers":   validateAgentMCPEntries,
+		"capset_ids":    validateStringList,
+		"skills":        validateSkillList,
+		"volumes":       validateVolumeMountList,
+		"workspace":     validateWorkspace,
+		"sandbox":       validateSandbox,
+		"scheduler":     validateScheduler,
+		"jupyter":       validateJupyter,
 	})
 }
 

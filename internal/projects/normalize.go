@@ -53,7 +53,6 @@ func NormalizeAgentRecord(agent domain.ProjectAgentRecord) (domain.ProjectAgentR
 	agent.AgentName = strings.TrimSpace(agent.AgentName)
 	agent.Provider = strings.TrimSpace(agent.Provider)
 	agent.Model = strings.TrimSpace(agent.Model)
-	agent.LLMConnection = strings.TrimSpace(agent.LLMConnection)
 	agent.Image = strings.TrimSpace(agent.Image)
 	agent.Driver = strings.TrimSpace(agent.Driver)
 	agent.SpecJSON = strings.TrimSpace(agent.SpecJSON)

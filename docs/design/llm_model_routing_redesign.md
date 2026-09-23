@@ -420,9 +420,11 @@ guest `resolveFacadeModel` / `RuntimeModelArgument` 删除，guest 只读
 **P3 — direct/managed 分叉**：agent env 命中 LLM key → direct；
 删除 session-env provider 与所有 env 探测函数。
 
-**P4 — 配置面显式化**：`agents.*.llm_connection` + `model` 字面化。
+**P4 — model 字面化与诊断**：`model` 保持不透明，不再按 `/` 解释。
 按旧语义解释 `model` 前缀的方案已否决：那正是本设计要消灭的第二套解释，
 且 model 是整体、可以合法含 `/`。改为**只诊断、不解释**（见 §6）。
+agent 侧的 connection 选择配置（一度以 `agents.*.llm_connection` 落地）已移除：
+connection 选择完全属于 daemon 的 LLM 配置，agent 只声明 `model`。
 
 **P5 — 删除 fallback 与 family 约束**：删 §4.1 剩余项；
 codex/claude 不再限制上游家族（由矩阵决定）。
@@ -431,11 +433,12 @@ codex/claude 不再限制上游家族（由矩阵决定）。
 
 ## 6. 迁移
 
-- 配置：`model: gateway/model` → `llm_connection: gateway` + `model: model`。
-  迁移提示已落地为 `Catalog.legacyQualifiedModelError`：当一个 model
+- 配置：`model: gateway/model` 需改写为字面 `model: model`，并让 gateway 成为该模型
+  的唯一提供者（或默认模型的所有者）。迁移提示已落地为
+  `Catalog.legacyQualifiedModelError`：当一个 model
   **不被任何连接提供**、而它的第一个 `/` 前缀**是某个连接**且该连接**确实提供
-  剩余部分**时，返回 `ErrLegacyQualifiedModel`，错误信息直接给出应改写的
-  `llm_connection` 与 `model`。
+  剩余部分**时，返回 `ErrLegacyQualifiedModel`，错误信息给出应写下的 `model`
+  与应配置的连接。
 
   这不是兜底：行为完全不改，值也不会被重新解释。三个条件同时成立才触发，
   所以合法含 `/` 的 model（如 `meta-llama/Llama-3.1-8B`）不受影响；它只是把
@@ -520,7 +523,7 @@ codex/claude 不再限制上游家族（由矩阵决定）。
    修复：`llms.ProjectDaemonLLMConfig` 由 `app.loadLLMConfig` 在启动时与
    models.json 一起投影一次；请求路径不再写配置。无 key 的环境不注册连接。
 2. **零连接被报成"歧义"**。`connectionFor` 在 `len(providers)==0` 时走进歧义
-   分支，产生 `model "x" matches ; declare llm_connection` 这种无候选的错误。
+   分支，产生 `model "x" matches `（候选为空）这种无候选的错误。
    修复：新增 `ErrNoConnection`。三个哨兵统一由
    `llms.IsUnmanagedAgentLLMError` 判定为"daemon 不管这个 agent"。
 3. **检查顺序**。未托管的 agent 在 daemon 没有可达 URL 时应当是 `ErrNoModel`
@@ -592,17 +595,21 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   保护 daemon 托管 facade 不被 sandbox 自己的 provider env 覆盖；direct 模式下
   要保住的恰是 agent 自己的声明，managed 值仍按 key 覆盖。
 
-**M4 显式连接 + 预览对齐**
+**M4 显式连接（已回退）+ 预览对齐**
 
-- `agents.<name>.llm_connection`（compose schema / `NormalizedAgentSpec` /
+- `Catalog.Resolve` 的**最高优先级**（显式连接）在生产中曾经不可达，而
+  `ambiguousConnectionError` 却要求运维 "declare llm_connection"——即错误信息让人去
+  写一个不存在的字段。
+- 曾以 `agents.<name>.llm_connection`（compose schema / `NormalizedAgentSpec` /
   canonical JSON / spec hash / mig 17 / `project_agent.llm_connection` /
-  `ProjectAgent.llm_connection = 18` / API 映射）打通到
-  `AgentLLMRequest.ConnectionID`。此前 `Catalog.Resolve` 的**最高优先级**
-  （显式连接）在生产中不可达，而 `ambiguousConnectionError` 却要求运维
-  "declare llm_connection"——即错误信息让人去写一个不存在的字段。
-- 一个 agent 同时写 `llm_connection` 与自己的上游 env（7 个 key 之一）是
-  **矛盾配置**，返回 `ErrFailedPrecondition`，不让任何一方静默胜出。
-- scheduler command 路径没有项目 agent 定义可读，`ConnectionID` 留空并注明。
+  `ProjectAgent.llm_connection = 18` / API 映射）补齐到
+  `AgentLLMRequest.ConnectionID`。该字段已**整体移除**：agent 侧只声明 `model`
+  （或省略，由 daemon 用默认模型），connection 选择属于 daemon 的 LLM 配置
+  （models.json / daemon env / RPC）。`Resolve` 的显式连接参数只保留给 facade
+  token 的再查询，不再存在任何 agent 配置入口；歧义错误改为提示"把模型绑定到唯一
+  连接或设置默认模型"。migration 17 一并删除（PR 未合并，无历史数据）。
+- 同时删除的还有"命名连接 vs agent 自带上游 env"的矛盾检查：agent 自带上游 env 走
+  direct 模式，daemon 托管走 catalog，两者不再可能同时由 agent 声明。
 - 预览改为与 `PrepareAgentLLM` 同一套优先级，且**只在 direct 模式生效时**才读
   agent 环境里的 model。此前"agent env 里有 model"会直接作为预览结果，而 managed
   运行根本不读该环境，UI 会承诺一个不会发生的模型。
