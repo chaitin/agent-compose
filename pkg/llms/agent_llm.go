@@ -157,9 +157,6 @@ func PrepareAgentLLM(ctx context.Context, req AgentLLMRequest) (*AgentLLM, error
 	if err != nil {
 		return nil, err
 	}
-	if err := req.Store.SaveLLMFacadeToken(ctx, token); err != nil {
-		return nil, err
-	}
 	daemonBaseURL := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	prepared := &AgentLLM{
 		Dialect:    dialect,
@@ -174,8 +171,16 @@ func PrepareAgentLLM(ctx context.Context, req AgentLLMRequest) (*AgentLLM, error
 		Endpoint:   facadeEndpoint(daemonBaseURL, req.Sandbox.Summary.ID, inbound),
 		Credential: tokenValue,
 	}
+	// Write the guest configuration before persisting the token. A writer can
+	// fail (an unsupported dialect/provider package, an unwritable sandbox home),
+	// and if the token were already stored that failure would orphan a live
+	// credential for a run that never starts. The reverse order leaves at worst a
+	// stale config file, which the next run overwrites.
 	env, err := writeDialectGuestConfig(req.Config, req.Sandbox, prepared)
 	if err != nil {
+		return nil, err
+	}
+	if err := req.Store.SaveLLMFacadeToken(ctx, token); err != nil {
 		return nil, err
 	}
 	prepared.Env = env

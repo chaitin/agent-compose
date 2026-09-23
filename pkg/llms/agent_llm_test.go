@@ -401,3 +401,37 @@ func TestPrepareAgentLLMKeepsLiteralModelWithSlashes(t *testing.T) {
 		})
 	}
 }
+
+// TestPrepareAgentLLMGuestConfigFailurePersistsNoToken pins the ordering between
+// writing the guest configuration and storing the facade token. The token is
+// run-scoped, and callers only learn its value through the returned env; if the
+// store already held it when the config write failed, nothing would ever delete
+// it and dead credentials would accumulate in the table.
+func TestPrepareAgentLLMGuestConfigFailurePersistsNoToken(t *testing.T) {
+	isolateLLMEnv(t)
+	root := t.TempDir()
+	sandbox := bareModelSandbox(root, agentLLMSandboxID)
+	// A regular file where the sandbox home belongs makes every config writer's
+	// MkdirAll fail, which is the failure this ordering exists to tolerate.
+	home := filepath.Join(root, "sandboxes", agentLLMSandboxID, "home")
+	if err := os.MkdirAll(filepath.Dir(home), 0o755); err != nil {
+		t.Fatalf("create sandbox dir: %v", err)
+	}
+	if err := os.WriteFile(home, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write sandbox home file: %v", err)
+	}
+	store := &prepareAgentLLMStore{fakeCatalogStore: fakeCatalogStore{
+		providers: []Provider{catalogOpenAIConnection("gateway", "https://gateway.test")},
+	}}
+
+	_, err := PrepareAgentLLM(context.Background(), AgentLLMRequest{
+		Config: bareModelConfig(root), Store: store, Sandbox: sandbox,
+		AgentKind: "codex", Model: "gpt-5.5",
+	})
+	if err == nil {
+		t.Fatal("PrepareAgentLLM succeeded although the guest config could not be written")
+	}
+	if len(store.savedTokens) != 0 {
+		t.Fatalf("saved tokens = %#v, want none after the guest config failed", store.savedTokens)
+	}
+}
