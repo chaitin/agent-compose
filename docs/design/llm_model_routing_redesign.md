@@ -33,7 +33,7 @@ thinking 签名（网关不是 Anthropic，本来也不校验）、`cache_contro
 
 **结论（已确认）**：补上这个桥，矩阵补全，从而删掉"codex 仅 openai /
 claude 仅 anthropic"这类家族约束。桥在 `github.com/chaitin/ai-api-protocol-bridge`
-仓库实现，本仓库升依赖版本。实现规格见 §5.0。
+仓库实现，本仓库升依赖版本。实现规格见 §5 P0。
 
 ### 2. model name 是整体，不掺杂语义
 
@@ -257,6 +257,12 @@ codex/claude 的"保留自己登录"兜底。
 > 改用 daemon 侧 Catalog（daemon env / models.json / RPC）。direct 路径下
 > daemon 仍会用同一套 Dialect writer 把 guest CLI 指向声明的上游，否则 pi/opencode
 > 没有 provider 条目无法启动；"不介入"指的是不代理、不转换、不签发 token。
+>
+> writer 生成的是"配置文件引用哪个环境变量"，因此凭据变量名必须随模式切换：managed
+> 指向 `AGENT_COMPOSE_SANDBOX_TOKEN`（facade token），direct 指向 writer 自己导出的
+> vendor 变量（`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`）。codex 的 `env_key`、pi 的
+> `apiKey`、opencode 的 `{env:...}` 都由同一个 `guestCredentialEnvName` 决定，避免
+> 配置文件引用一个 direct 模式根本不存在的变量。
 
 ### 3.5 Facade：dialect 表 + 一个 writer
 
@@ -281,6 +287,8 @@ type Dialect struct {
 
 `PrepareAgentLLM` = 选模型 → 选连接 → 算入站协议 → 写配置 → mint token → 返回 env。
 一次性运行、prompt attach、scheduler command 三个入口都调它。
+配置写在 token 落库之前是有意的：writer 可能失败，若 token 已落库，这次失败就会留下
+一条没有任何运行会使用的凭据；反过来失败最多留下一份会被下次运行覆盖的旧配置文件。
 
 ### 3.6 代理：connection-bound token + 弱转发
 
@@ -307,12 +315,12 @@ convert(inbound, conn.Protocol)
 | agent | 上游 messages | 上游 responses | 上游 chat |
 | --- | --- | --- | --- |
 | codex | 转 responses→messages ✓ | 透传 | 转 responses→chat ✓ |
-| claude | 透传 | 转 messages→responses ✓ | **转 messages→chat（缺口）** |
+| claude | 透传 | 转 messages→responses ✓ | 转 messages→chat ✓ |
 | opencode | 转 chat→messages ✓ | 转 chat→responses ✓ | 透传 |
 | pi | 透传 | 透传 | 透传 |
 | dsh | 透传 | 透传 | 透传 |
 
-全表只有一格缺失，且**已确认补齐**（§5.0）。补桥后家族约束从代码里彻底消失：
+全表 15 格全部可服务。补齐 messages→chat 后家族约束从代码里彻底消失：
 `connectionFor` 不认识 family，`PrepareAgentLLM` 只做 `Supported` 集合判断，
 `runtime_llm.go` 只做 `inbound==upstream ? 透传 : 转换`。
 
@@ -367,10 +375,10 @@ CRUD、token、env headers 等），路由核心本身已是 8 个文件。
 
 **P0 — 补桥，补全矩阵**（改 `ai-api-protocol-bridge` 仓库）。
 
-*状态：已实现并提 PR，但**尚未并入本仓库**。* 该库对本环境只读（`git push` 403），
-所以改动走 fork：`chaitin/ai-api-protocol-bridge#1`。本仓库依赖的是 `v1.0.0`，
-而该 PR 尚未发布，因此**矩阵这一格在本仓库暂时保持缺口**，`PrepareAgentLLM` 对
-claude × chat 仍然明确报错（比"静默发错协议"或"静默丢数据"都好）。
+*状态：已闭环。* 上游 PR `chaitin/ai-api-protocol-bridge#1` 已合入该库 `main`，
+本仓库把依赖从 `v1.0.0` 升级到包含该桥的提交。该提交尚无 tag，因此 go.mod 记录
+伪版本 `v1.1.6-0.20260922130207-cfe67158b4c7`；该库发版后再换成正式 tag 即可。
+`PrepareAgentLLM` 不再拒绝 claude × chat，这一格由库按协议精确选出的桥服务。
 
 *实现方式*：`NewCrossFamilyBridgeForProtocol(inbound, upstream Protocol)` 按协议精确
 选桥，旧的按家族版本行为不变；`anthropicToOpenAIChatBridge` 把请求编码、响应解码、
@@ -379,7 +387,11 @@ claude × chat 仍然明确报错（比"静默发错协议"或"静默丢数据"�
 `LLMRequest`，再手写一遍等于复制该库的 chat 编解码器。唯一需要自带的是 Anthropic 的
 usage 口径，直接复用该库的 `responsesUsageToAnthropicUsage`。
 
-*顺带修掉两个真实缺陷*（都是回放 agent-compose 实际流量才暴露的，且 `v1.0.0` 同样存在）：
+本仓库因此不需要新增桥文件：`crossFamilyBridge` 改调该构造函数，并按协议成对传参，
+家族参数从该 helper 及其调用链上移除。`CanConvert` 早就改为询问注册表而不是复制表，
+所以这一格自动变为可服务。
+
+*上游顺带修掉的两个真实缺陷*（都是回放 agent-compose 实际流量才暴露的，且 `v1.0.0` 同样存在）：
 
 1. **工具结果被丢弃**。Anthropic 把 tool result 放在**user** 消息里的 `tool_result`
    块中，而 `encodeOpenAIChatMessages` 只看 text/refusal/tool-call，于是编码成
@@ -390,11 +402,13 @@ usage 口径，直接复用该库的 `responsesUsageToAnthropicUsage`。
    返回 nil。结果：12000 prompt（11000 命中缓存）的一轮报成 `input_tokens=0`。
    已改为把没有 usage 的 finish 暂存，等 usage 到达再发；`Close` 兜底补发。
 
-*重新纳入本仓库的前提*：该 PR 合并并发布后，升级依赖——届时本仓库不需要新增
-`bridge_anthropic_to_chat.go`，直接调用该库的按协议构造函数即可，`CanConvert`
-已经是询问注册表而不是复制表，所以改动只在 `crossFamilyBridge` 一处。
-`UpstreamProtocol()` 校验保留：家族查找的返回值是库的实现细节，删掉它会让"明确报错"
-退化成"静默走错协议"。
+本仓库的测试从两侧钉住这一格：`TestCrossFamilyBridgeServesMessagesToChat` 断言
+按协议选桥返回 chat，`TestCrossFamilyBridgeKeepsToolResultsForChatUpstream` 断言
+工具结果出现在 chat 报文里，`TestPrepareAgentLLMClaudeConvertsChatUpstream` 断言
+运行准备成功且 token 仍锁 messages。
+
+*`UpstreamProtocol()` 校验保留*：按协议选桥是库的行为，不是本仓库能假设的不变量；
+保留该校验后，将来库若返回另一协议，本地会明确报错而不是静默把请求发错上游。
 
 **P1 — Catalog 与纯函数解析**：建立 `Catalog`，把 env/models.json/RPC 合并到装载期；
 `SelectModel` + `connectionFor` 落地；旧解析路径保留薄适配层以便增量切换。
@@ -430,8 +444,9 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   **agent 级 `LLM_API_*` 语义由"daemon 代理的环境上游"改为"agent 直连"**，
   真实 key 进入 guest。这是唯一需要显式通告的行为变更，需要在 release note
   与管理手册中标注；依赖 daemon 隐藏 key 的部署应迁移到 models.json/RPC。
-- 协议：补齐 `anthropic_messages→chat_completions` 前，claude + chat-only 上游
-  在运行期报 `unsupported llm protocol bridge`；补齐后该格变为可用。
+- 协议：`anthropic_messages→chat_completions` 已随依赖升级补齐（见 P0），
+  claude + chat-only 上游可直接服务；此前该格在运行期报
+  `unsupported llm protocol bridge`。
 - 文档：`docs/pages/agent-compose-yaml-manual.md`（中英）第 506/535-546/603-619 行、
   `docs/design/llm-provider-rpc.md` 是契约来源，P4 同步更新并跑 `task docs:build`。
 
@@ -443,7 +458,7 @@ codex/claude 不再限制上游家族（由矩阵决定）。
 - `GuestModel` 合成：含 `/` 的字面 model（`baizhi/gpt-5.5`、`meta-llama/Llama-3.1-8B`）
   必须以 `agent-compose/baizhi/gpt-5.5` 形式到达 pi/opencode，且整体不被切分。
 - 转换矩阵表驱动：15 个 `(dialect, upstream)` 组合的成功/失败与所选入站协议；
-  claude × chat 必须走通（依赖 P0 的桥）。
+  claude × chat 必须走通（P0 的桥已随依赖升级到位）。
 - direct/managed 分叉：命中 LLM env 的 agent 不产生 token、不写 facade 配置、
   真实 key 出现在 guest 环境；未命中的 agent 一定产生 token 且不泄漏上游 key。
 - 回归：删除 `ValidateFacadeModelReference` 后，原"unknown prefix"用例转为
@@ -478,13 +493,14 @@ codex/claude 不再限制上游家族（由矩阵决定）。
 - opencode 的 `Supported` 是 `{chat, messages}` 而非 `{chat}`：它经 AI SDK 的
   Anthropic provider 原生说 messages，因此 `messages` 上游对它是**透传**。
 - `CanConvert` 不复制 bridge 注册表，而是直接询问
-  `protocolbridge.NewCrossFamilyBridge`。于是全矩阵只剩一格缺口
-  （`messages → chat`），且补桥后本仓库无需改动。
+  `protocolbridge.NewCrossFamilyBridge`。于是当时全矩阵只剩一格缺口
+  （`messages → chat`），且补桥后本仓库无需改动——该缺口已在 M6 随依赖升级补齐。
 
 **M2 facade 收敛**（`80946581`）
 
 - `PrepareAgentLLM` 成为唯一入口，一次完成选模型 → 选连接 → 定入站协议 →
-  校验可转换 → 签发 token → 写 guest 配置 → 返回 env。
+  校验可转换 → 写 guest 配置 → 签发 token → 返回 env。写配置在前、落库在后，
+  配置写入失败就不会留下无人引用的 token（见 §3.5）。
 - `pkg/llms/dialect_writers.go`：五个 agent 各自写 env/文件，全部只消费已解析
   结果，不做任何解析。
 - opencode 的 writer 合并为一个，provider key 恒为 `agent-compose`：删除了
@@ -594,17 +610,32 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   `OPENCODE_MODEL`，与预览的 key 列表已经漂移；现在由 `directModelFromEnv`
   单点承担，两条路径共用。
 
+**M6 P0 补桥：messages→chat 到位**（依赖升级）
+
+- 上游 `chaitin/ai-api-protocol-bridge#1` 合入库 `main` 后，go.mod 从 `v1.0.0`
+  升级到包含该桥的提交（`v1.1.6-0.20260922130207-cfe67158b4c7`，尚无 tag）。
+- `crossFamilyBridge` 改用 `NewCrossFamilyBridgeForProtocol(inbound, upstream)`，
+  家族参数随之从 helper、`EncodeRuntimeUpstreamRequest` /
+  `EncodeRuntimeClientResponse` / `RuntimeStreamBridge` 及其调用方移除：
+  `UpstreamFamily` 这个转发的中间字段不再存在。
+- 矩阵第 15 格从"配置期明确拒绝"变回可服务：`CanConvert(messages, chat)` 为真，
+  `TestDialectConversionMatrix` 的 `unservable` 声明表清空，
+  `TestCanConvertPinsBridgeCoverage` 断言 messages→chat 为真。
+- 直接回归覆盖两张真实的失败面：`TestCrossFamilyBridgeServesMessagesToChat`、
+  `TestCrossFamilyBridgeKeepsToolResultsForChatUpstream`、
+  `TestPrepareAgentLLMClaudeConvertsChatUpstream`。
+
 ### 未完成与偏差
 
 此节区分三类：已经完成但落点与原计划不同的、刻意保留的、以及真正还没做的。
 
-- **P0 桥：已在上游提 PR，本仓库本轮不包含**。缺口属实：该库 `v1.0.0` 只有按**家族**
+- **P0 桥：已闭环，落点在上游而非本仓库**。缺口曾属实：该库 `v1.0.0` 只有按**家族**
   选桥的 `NewCrossFamilyBridge(inbound, upstreamFamily)`，而 Anthropic 入站去 OpenAI
   有 responses / chat 两条，家族无法区分，所以它只返回 messages→responses。
 
   该库对本环境只读（`git push` 403），改动走 fork 提在
-  `chaitin/ai-api-protocol-bridge#1`。**本轮先从本仓库撤掉这一格**，原因不是实现不了，
-  而是用真实流量回放时发现两个缺陷，且它们同时存在于 `v1.0.0`——本仓库锁的正是它：
+  `chaitin/ai-api-protocol-bridge#1`。提 PR 时用真实流量回放发现两个缺陷，且它们同时
+  存在于 `v1.0.0`——本仓库当时锁的正是它：
 
   1. **tool result 被静默丢弃**。Anthropic 把它放在 user 消息的 `tool_result` 块里，
      而 chat 编码器只看 text/refusal/tool-call，于是编码成
@@ -615,14 +646,10 @@ codex/claude 不再限制上游家族（由矩阵决定）。
      返回 nil。12000 prompt（11000 命中缓存）的一轮报成 `input_tokens=0`。
 
   两者都已在该 PR 内修掉，并配有"去掉修复即失败"的回归测试；测试本身用的就是
-  agent-compose 实际收发的报文形状（去掉域名与凭据）。但本仓库**消费不了未发布的
-  库**，所以在升级依赖之前这一格保持缺口：`PrepareAgentLLM` 对 claude × chat 明确报错，
-  不会静默丢数据。这正是"宁可明确失败，也不要静默错解"的取舍。
+  agent-compose 实际收发的报文形状（去掉域名与凭据）。该 PR 现已合并，本仓库升级
+  依赖后这一格直接转为可服务（见 M6），本仓库没有保留任何桥实现。
 
-  **重新纳入的步骤**：PR #1 合并发版后升级依赖。届时本仓库不需要新增桥文件——直接调用
-  该库的按协议构造函数即可，改动只在 `crossFamilyBridge` 一处，因为 `CanConvert` 早已
-  改为询问注册表而不是复制表。`UpstreamProtocol()` 校验保留：它是防"静默走错协议"的，
-  不是重复表达请求。
+  `UpstreamProtocol()` 校验保留：它是防"静默走错协议"的，不是重复表达请求。
 
 - **guest 侧 `resolveFacadeModel` 保留是刻意的**。`docs/pages/guest-image-abi.md`
   明文承诺滚动升级期间新 runtime 仍接受旧 daemon 传的 legacy 参数，并声明该兼容
@@ -643,8 +670,8 @@ codex/claude 不再限制上游家族（由矩阵决定）。
 - **§7 的 15 格转换矩阵表驱动测试：已补齐**。`TestDialectConversionMatrix` 单表覆盖
   全部 15 格，并断言"需要转换的格只有在 `CanConvert` 也同意时才可服务"——此前它只断言
   入站协议决定，于是 claude×chat 看起来和普通转换格一样，缺口因此长期不可见。
-  它同时保留 `unservable` 声明表——当前唯一一项是 `claude/chat_completions`，理由见上；
-  将来若再有缺口，也必须在表里写明理由，否则测试失败。
+  它同时保留 `unservable` 声明表，当前为空（M6 补上最后一格后）；将来若再有缺口，
+  必须在表里写明理由，否则测试失败。
 
 - **文档：已同步**。`docs/pages` 的 YAML 手册 en / zh-CN 随 M4 更新并通过
   `task docs:build`；`guest-image-abi.md` 中英两版按 dsh 的决策改写；
