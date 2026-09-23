@@ -734,6 +734,14 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   进程内路径（新沙箱的启动与运行、scheduler 命令）用快照，存储回读路径（RPC run、
   prompt attach、release resume）至少还有定义里的那一份。
 
-  已知边界：只写在 project `variables` 或 sandbox 创建请求 env 里的凭据，在存储回读的
-  run/命令上无法复原（值不落库），这类会话按 managed 运行；要在 RPC 驱动的 sandbox 上
-  稳定使用 direct，应把凭据写在 agent 自己的 `env` 里。
+  回落规则统一在 `DeclaredProviderEnv` 内部，不再由各调用点各写一份：已准备的
+  `ProviderEnvItems` 优先；它为空且 provenance 名缺失（在 provenance 拆分之前创建的旧
+  sandbox）时回落到持久化的 `EnvItems`——对那批元数据来说它就是当时的声明，
+  `execution.ApplyAgentProviderEnv` 与 scheduler command 一直用这个回落。传入的定义 /
+  请求 / 命令 env 覆盖回落值。于是同一个 sandbox 在五个入口上要么都 direct、要么都
+  managed，不会再写出互相覆盖的 guest 配置。
+
+  已知边界：provenance 拆分之后创建的 sandbox，凭据值已被过滤出 `EnvItems`（落库的只有
+  名字），因此当运行来自存储回读（RPC run、prompt attach、release resume），且凭据只写在
+  project `variables` 或创建请求 env 里时无法复原，这类会话按 managed 运行；要在 RPC
+  驱动的 sandbox 上稳定使用 direct，应把凭据写在 agent 自己的 `env` 里。

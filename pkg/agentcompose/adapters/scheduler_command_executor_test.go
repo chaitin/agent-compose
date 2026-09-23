@@ -319,6 +319,63 @@ func TestSchedulerCommandExecutorHonoursADeclaredCommandUpstream(t *testing.T) {
 	}
 }
 
+func TestSchedulerCommandExecutorRecoversLegacyProviderEnv(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := schedulerCommandFacadeTestConfig(root)
+	configDB, store, err := testutil.OpenStores(t, config)
+	if err != nil {
+		t.Fatalf("OpenStores returned error: %v", err)
+	}
+	seedSchedulerCommandFacadeProviders(t, ctx, configDB)
+	// Provider provenance did not exist when this sandbox was created, so its
+	// persisted environment is the only record of the upstream it declared.
+	session, err := store.CreateSandbox(ctx, "scheduler legacy provider env", "", driverpkg.RuntimeDriverDocker, "guest:latest", "", domain.SandboxTypeScript, nil, []domain.SandboxEnvVar{
+		{Name: "OPENAI_BASE_URL", Value: "https://legacy.upstream.test/v1"},
+		{Name: "OPENAI_API_KEY", Value: "legacy-upstream-key", Secret: true},
+		{Name: "CODEX_MODEL", Value: "legacy-model"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	if session.ProviderEnvOverrideNames != nil {
+		t.Fatalf("fixture is not provenance-less: %#v", session.ProviderEnvOverrideNames)
+	}
+	session.Summary.VMStatus = domain.VMStatusRunning
+	if err := store.UpdateSandbox(ctx, session); err != nil {
+		t.Fatalf("UpdateSandbox returned error: %v", err)
+	}
+	if err := store.SaveVMState(session.Summary.ID, domain.VMState{Driver: driverpkg.RuntimeDriverDocker, BoxID: "container-1"}); err != nil {
+		t.Fatalf("SaveVMState returned error: %v", err)
+	}
+
+	runtime := &capturingSchedulerCommandRuntime{}
+	executor := NewSchedulerCommandExecutor(SchedulerCommandExecutorDeps{Config: config, Store: store, ConfigDB: configDB, Runtimes: fakeRuntimeProvider{runtime: runtime}, Streams: sandboxes.NewStreamBrokerForTest()})
+	if _, err := executor.ExecuteSchedulerCommand(ctx, session, domain.SchedulerCommandRequest{
+		Mode:   "shell",
+		Script: "echo legacy",
+		Env:    map[string]string{"PROJECT_AGENT_LLM_PROVIDER": "codex"},
+	}); err != nil {
+		t.Fatalf("ExecuteSchedulerCommand returned error: %v", err)
+	}
+	if runtime.session == nil {
+		t.Fatal("runtime did not receive command Sandbox clone")
+	}
+	env := domain.SandboxEnvMap(runtime.session.RuntimeEnvItems)
+	if token := env["AGENT_COMPOSE_SANDBOX_TOKEN"]; token != "" {
+		t.Fatalf("command minted a facade token for a recovered legacy upstream: %q", token)
+	}
+	if env["OPENAI_BASE_URL"] != "https://legacy.upstream.test/v1" || env["OPENAI_API_KEY"] != "legacy-upstream-key" {
+		t.Fatalf("recovered legacy command environment = %#v", env)
+	}
+	if env["CODEX_MODEL"] != "legacy-model" {
+		t.Fatalf("command did not use the recovered legacy model: %#v", env)
+	}
+	if got := countSchedulerCommandFacadeTokens(t, ctx, configDB); got != 0 {
+		t.Fatalf("persisted scheduler command tokens for a recovered legacy upstream = %d, want 0", got)
+	}
+}
+
 func TestSchedulerCommandExecutorSkipsFacadeReconstructionWithoutSupportedAgentOverride(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

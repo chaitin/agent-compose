@@ -27,6 +27,35 @@ func TestSandboxDeclaredProviderEnvMergesPreparedAndDefinitionEnv(t *testing.T) 
 			want:     map[string]string{"LLM_API_KEY": "definition-key"},
 		},
 		{
+			name: "provenance-less metadata recovers its persisted environment",
+			// A sandbox created before provider provenance existed kept the
+			// provider environment in EnvItems, and that snapshot is the only
+			// record of what it declared.
+			sandbox: &Sandbox{EnvItems: []SandboxEnvVar{
+				{Name: "LLM_API_KEY", Value: "legacy-key"},
+				{Name: "ORDINARY", Value: "ordinary"},
+			}},
+			agentEnv: nil,
+			want:     map[string]string{"LLM_API_KEY": "legacy-key", "ORDINARY": "ordinary"},
+		},
+		{
+			name: "provenance-less metadata never overrides a fresh declaration",
+			sandbox: &Sandbox{EnvItems: []SandboxEnvVar{
+				{Name: "LLM_API_ENDPOINT", Value: "https://legacy.example/v1"},
+				{Name: "LLM_API_KEY", Value: "legacy-key"},
+			}},
+			agentEnv: []SandboxEnvVar{{Name: "LLM_API_ENDPOINT", Value: "https://definition.example/v1"}},
+			want:     map[string]string{"LLM_API_ENDPOINT": "https://definition.example/v1", "LLM_API_KEY": "legacy-key"},
+		},
+		{
+			name: "provenance without values is not recovered",
+			// The sandbox already recorded that it declared provider overrides, so
+			// its persisted environment is filtered and carries no credentials.
+			sandbox:  &Sandbox{EnvItems: []SandboxEnvVar{{Name: "LLM_API_KEY", Value: "filtered-away"}}, ProviderEnvOverrideNames: []string{"LLM_API_KEY"}},
+			agentEnv: nil,
+			want:     map[string]string{},
+		},
+		{
 			name:     "definition declaration wins over a stale prepared value",
 			sandbox:  sandboxWithProviderEnv(SandboxEnvVar{Name: "LLM_API_ENDPOINT", Value: "https://prepared.example/v1"}),
 			agentEnv: []SandboxEnvVar{{Name: "LLM_API_ENDPOINT", Value: "https://definition.example/v1"}},

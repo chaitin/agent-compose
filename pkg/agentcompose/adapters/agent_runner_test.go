@@ -393,6 +393,85 @@ func TestAgentRunnerExecuteAgentRunHonoursTheSandboxProviderEnv(t *testing.T) {
 	}
 }
 
+func TestAgentRunnerExecuteAgentRunRecoversLegacyProviderEnv(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:            root,
+		DbAddr:              filepath.Join(root, "data.db"),
+		SandboxRoot:         filepath.Join(root, "sandboxes"),
+		RuntimeDriver:       driverpkg.RuntimeDriverDocker,
+		DefaultImage:        "guest:latest",
+		GuestWorkspacePath:  "/workspace",
+		GuestStateRoot:      "/data/state",
+		GuestRuntimeRoot:    "/data/runtime",
+		GuestHomePath:       "/root",
+		RuntimeBaseURL:      "http://agent-compose.test:7410",
+		SandboxStartTimeout: 2 * time.Second,
+	}
+	configDB, store, err := testutil.OpenStores(t, config)
+	if err != nil {
+		t.Fatalf("OpenStores returned error: %v", err)
+	}
+	// A catalog connection serves codex here, so a run that decided managed
+	// instead of recovering the sandbox's own declaration would mint a facade
+	// token and use the catalog model.
+	if err := configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+		ID: "openai-primary", Name: "OpenAI", ProviderType: llms.ProviderFamilyOpenAI,
+		DefaultWireAPI: llms.APIProtocolResponses,
+		BaseURL:        "https://openai.upstream.test/v1", APIKey: "openai-upstream-secret", Scope: llms.ProviderScopeSystem,
+	}, llms.Model{ID: "gpt-agent", Name: "gpt-agent", DefaultModel: true, Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
+		t.Fatalf("seed llm catalog: %v", err)
+	}
+	// Provider provenance did not exist when this sandbox was created, so its
+	// persisted environment is the only record of the upstream it declared.
+	session, err := store.CreateSandbox(ctx, "legacy provider env", "", driverpkg.RuntimeDriverDocker, "guest:latest", "", domain.SandboxTypeManual, nil, []domain.SandboxEnvVar{
+		{Name: "OPENAI_BASE_URL", Value: "https://legacy.upstream.test/v1"},
+		{Name: "OPENAI_API_KEY", Value: "legacy-upstream-key", Secret: true},
+		{Name: "CODEX_MODEL", Value: "legacy-model"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	if session.ProviderEnvOverrideNames != nil {
+		t.Fatalf("fixture is not provenance-less: %#v", session.ProviderEnvOverrideNames)
+	}
+	session.Summary.VMStatus = domain.VMStatusRunning
+	if err := store.UpdateSandbox(ctx, session); err != nil {
+		t.Fatalf("UpdateSandbox returned error: %v", err)
+	}
+	if err := store.SaveVMState(session.Summary.ID, domain.VMState{Driver: driverpkg.RuntimeDriverDocker, BoxID: "container-1"}); err != nil {
+		t.Fatalf("SaveVMState returned error: %v", err)
+	}
+	payload := execution.AgentResultPrefix + `{"provider":"codex","threadId":"legacy-thread","finalText":"done","transcript":"trace","stopReason":"completed"}`
+	runtime := &fakeAgentRuntime{result: domain.ExecResult{Stdout: payload, Output: payload, ExitCode: 0, Success: true}}
+	runner := NewAgentRunner(AgentRunnerDeps{Config: config, Store: store, ConfigDB: configDB, Runtimes: fakeRuntimeProvider{runtime: runtime}})
+
+	if _, _, err := runner.ExecuteAgentRun(ctx, AgentRunRequest{Session: session, Agent: "codex", RunID: "run-legacy", Message: "hello"}, nil); err != nil {
+		t.Fatalf("ExecuteAgentRun returned error: %v", err)
+	}
+	if len(runtime.specs) != 1 {
+		t.Fatalf("runtime specs = %#v", runtime.specs)
+	}
+	env := runtime.specs[0].Env
+	if token := env["AGENT_COMPOSE_SANDBOX_TOKEN"]; token != "" {
+		t.Fatalf("run minted a facade token for a recovered legacy upstream: %q", token)
+	}
+	if env["OPENAI_BASE_URL"] != "https://legacy.upstream.test/v1" || env["OPENAI_API_KEY"] != "legacy-upstream-key" {
+		t.Fatalf("recovered legacy run environment = %#v", env)
+	}
+	if env["CODEX_MODEL"] != "legacy-model" {
+		t.Fatalf("run did not use the recovered legacy model: %#v", env)
+	}
+	var tokens int
+	if err := configDB.DB().QueryRowContext(ctx, `SELECT COUNT(1) FROM llm_facade_token WHERE sandbox_id = ?`, session.Summary.ID).Scan(&tokens); err != nil {
+		t.Fatalf("count facade tokens: %v", err)
+	}
+	if tokens != 0 {
+		t.Fatalf("facade tokens minted for a recovered legacy upstream = %d, want 0", tokens)
+	}
+}
+
 func TestAgentRunnerExecuteAgentRunWritesSystemPromptAndParsesResult(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

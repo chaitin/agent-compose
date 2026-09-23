@@ -27,14 +27,23 @@ func (s *Sandbox) SetProviderEnvItems(items []SandboxEnvVar) {
 //
 // The prepared values are transient by design: they may hold credentials, so
 // only their names survive in ProviderEnvOverrideNames and ProviderEnvItems is
-// empty on a sandbox loaded back from storage. Merging the definition's
-// environment keeps the part of the declaration that is persisted in play there,
-// which is why this merges rather than replaces.
+// empty on a sandbox loaded back from storage. A sandbox that predates provider
+// provenance keeps no names either, and its persisted environment is then the
+// only recovery of what it declared, which is why this falls back to it and why
+// it merges rather than replaces.
 func (s *Sandbox) DeclaredProviderEnv(agentEnv []SandboxEnvVar) []SandboxEnvVar {
 	if s == nil {
 		return MergeEnvItems(nil, agentEnv)
 	}
-	return MergeEnvItems(s.ProviderEnvItems, agentEnv)
+	declared := s.ProviderEnvItems
+	if len(declared) == 0 && s.ProviderEnvOverrideNames == nil {
+		// Metadata without provider provenance cannot identify which items were
+		// declared and which the daemon added, so its persisted environment
+		// snapshot is the compatible recovery of the declaration. This is the
+		// same fallback execution.ApplyAgentProviderEnv applies for a run.
+		declared = s.EnvItems
+	}
+	return MergeEnvItems(declared, agentEnv)
 }
 
 func providerEnvOverrideNames(items []SandboxEnvVar) []string {
