@@ -139,7 +139,7 @@ catalog Provider 只有在最终定义包含非空 API Key 时才可用。
 
 具体规则：
 
-1. 完整的 run/session 环境 Provider 优先。它的 endpoint、protocol、key 和选定模型属于同一个来源层；缺失值不能从 catalog 或 daemon 环境借用。
+1. run/session 环境里声明的凭据，如果 daemon 能识别，会被吸收成一条 scope 为 `declared` 的连接（ID 为 `session-env:<sandbox-id>:<family>`），再用 Catalog 正常解析它的 endpoint、protocol、key 和选定模型；缺失值不能从 catalog 或 daemon 环境借用。识别不了的 `*_API_KEY` 不参与连接解析，原样下发到 sandbox 环境。
 2. `baizhi/model` 这样的显式自定义引用固定选择 `baizhi`，即使 daemon 已存在完整的默认 `.env` Provider。
 3. Legacy 引用 `openai/model` 和 `anthropic/model` 可以继续使用兼容且完整的 run/session 或 daemon 环境 Provider，但发给上游的模型名只取右侧的 `model`。
 4. 没有显式模型时，完整的 daemon 环境 Provider 仍是全局默认值。
@@ -162,6 +162,31 @@ CLAUDE_MODEL
 ```
 
 项目的 `env_file` 用于插值项目 YAML，不会替代 daemon 全局环境来源。Agent 的 `env` 作为 run/session 兼容层参与解析。
+
+### 声明的第一方凭据
+
+project 的 `variables` 和 agent 的 `env` 里如果出现 daemon 认识的第一方 LLM key，
+daemon 会把它写进自己的连接配置，而不是把它交给 agent runtime：
+
+```text
+可吸收（写进连接并代理）: LLM_API_KEY（配 LLM_API_PROTOCOL / LLM_API_ENDPOINT）
+  ANTHROPIC_API_KEY  ANTHROPIC_AUTH_TOKEN  OPENAI_API_KEY
+  CODEX_API_KEY  DEEPSEEK_API_KEY  OPENROUTER_API_KEY
+识别但不吸收（原样下发）: AZURE_OPENAI_API_KEY  GOOGLE_API_KEY  GEMINI_API_KEY
+不识别（原样下发）: 其它 *_API_KEY / *_AUTH_TOKEN
+```
+
+吸收后的连接只按显式 ID 寻址，不进入 `Catalog.serving`、唯一连接兜底与
+`Connections()`，因此一个 sandbox 的声明凭据不会服务另一个 sandbox。sandbox 停止或
+移除时，`RevokeLLMFacadeTokensForSandbox` 会同时删除该 sandbox 的声明连接。
+
+项目检查（`ValidateProject` / `ApplyProject`）对以上三类分别给出 warning：可吸收的
+说明 key 会留在 daemon 并且不会进入 sandbox；识别但不吸收与不识别的说明值会进入
+agent runtime，需要改用 daemon 侧连接才能保护。
+
+daemon 不做流量劫持，因此无法识别或无法代理的凭据只能告警，不能被保护。长期凭据
+仍然建议配置在 daemon 侧（daemon env / models.json / RPC），那是它可以被显式管理、
+轮换和共享的地方；project 里写下的官方 key 只是被识别后自动保护。
 
 ## Coding Agent 写法
 
@@ -240,7 +265,7 @@ models.json / daemon environment
         -> upstream provider
 ```
 
-sandbox 只能收到 facade URL 和受限 facade token，不会收到 `models.json` 中的上游 `apiKey` 或 Secret Header。
+上游凭据始终只保留在 daemon：无论是 models.json 里的 `apiKey`、daemon 环境的 Secret，还是 project/agent 环境声明并被吸收成 `declared` 连接的第一方 key，sandbox 都只能收到 facade URL 和受限 facade token，不会收到上游 `apiKey` 或 Secret Header。
 
 facade token 与 sandbox 和 Provider 绑定。daemon 校验 token 后，才在向上游发起请求时重新构造认证 Header。
 

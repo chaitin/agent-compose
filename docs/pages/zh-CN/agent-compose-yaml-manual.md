@@ -248,6 +248,8 @@ variables:
 
 `variables` 当前用于保存项目级配置值和脱敏语义。若某个值要传入 sandbox，仍需在对应 Agent 的 `env` 中声明。
 
+在这里声明的第一方 LLM 凭据不会交给 sandbox：daemon 会把它导入自己的 LLM 连接并代理本次 run，sandbox 只会收到本次 run 的 facade token。可识别的变量名包括 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、`CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`，以及可配合 `LLM_API_PROTOCOL`、`LLM_API_ENDPOINT` 的 `LLM_API_KEY`。`AZURE_OPENAI_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY` 能被识别但无法代理，其它 `*_API_KEY` 则完全不被识别；这些值会原样进入 sandbox。项目检查会对这三种情况分别告警，并建议改用 daemon 侧的 LLM 配置——那才是凭据可以被显式管理、轮换和共享的地方。
+
 ## `workspaces`：项目级工作区
 
 顶层必须使用 `workspaces`：
@@ -578,7 +580,7 @@ daemon 在启动时加载一次 `$DATA_ROOT/models.json`。文件不存在是合
 
 可选的 `models` 数组只补充模型级元数据和行为，包括 `id`、`name`、`baseUrl`、`protocol`、`headers` 和正整数 `maxOutputTokens`。模型级 `protocol` 必须与 Provider 的协议族兼容：OpenAI Provider（`responses` 或 `chat_completions`）只允许 `responses` 和 `chat_completions`，Anthropic Provider（`anthropic_messages`）只允许 `anthropic_messages`。这些属性属于具体的 Provider/Model 部署，共享同一 Model ID 的 Provider 不会相互覆盖；该数组也不是白名单。只要 `gateway` Provider 已配置，`gateway/a-model-not-listed-here` 仍会使用 Provider 默认配置，把右侧 Model ID 原样发送给上游。
 
-所有兼容的 Coding Agent 和 `scheduler.llm` 使用这份目录完成 agent-compose 的 Provider 路由和模型选择；它不替代 Agent 自身的模型能力目录。Agent 中完整配置的 `LLM_API_ENDPOINT`、`LLM_API_PROTOCOL` 和 `LLM_API_KEY` 仍是更高优先级的兼容路径。可选的 daemon 或 Agent `LLM_API_HEADERS` 是该 env Provider 上的静态额外 HTTP Header JSON 对象，它不替代 catalog 的 `headers`，原始值也不会暴露给 guest runtime。该变量由 env-backed OpenAI 和 Anthropic Provider 共用，因此每个 Header 都必须适合发送给所有已配置的上游。daemon 自身完整的 `LLM_*` 配置也继续作为默认值，并优先于 `models.json.default`。Catalog Provider ID 如果与已有非 catalog Provider 冲突，daemon 会在不覆盖原配置的前提下启动失败。
+所有兼容的 Coding Agent 和 `scheduler.llm` 使用这份目录完成 agent-compose 的 Provider 路由和模型选择；它不替代 Agent 自身的模型能力目录。在项目 `variables` 或 Agent `env` 中声明的第一方凭据会被作为 daemon 自有的连接导入同一份目录并经 facade 代理，因此 key 留在 daemon，sandbox 只拿到本次 run 的 facade token；这既是完整 `LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`LLM_API_KEY` 声明的兼容路径，也适用于 `variables` 和 `env` 下列出的各厂商变量名。可选的 daemon 或 Agent `LLM_API_HEADERS` 是该 env Provider 上的静态额外 HTTP Header JSON 对象，它不替代 catalog 的 `headers`，原始值也不会暴露给 guest runtime。该变量由 env-backed OpenAI 和 Anthropic Provider 共用，因此每个 Header 都必须适合发送给所有已配置的上游。daemon 自身完整的 `LLM_*` 配置也继续作为默认值，并优先于 `models.json.default`。Catalog Provider ID 如果与已有非 catalog Provider 冲突，daemon 会在不覆盖原配置的前提下启动失败。
 
 ### 通过 RPC 管理 LLM Provider
 
@@ -793,6 +795,8 @@ env:
 ```
 
 这些值进入 Agent sandbox。相同名称的空项会在后续边界归一化；`secret: true` 控制展示脱敏。
+
+在这里声明的可识别第一方 LLM 凭据是例外——`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、`CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`、`LLM_API_KEY`：daemon 会把它们导入自己的 LLM 连接并代理本次 run，sandbox 只会收到 facade token。daemon 无法代理的凭据（`AZURE_OPENAI_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY`）以及无法识别的 `*_API_KEY` 会原样下发，sandbox 内任何进程都能读到，项目检查会对此告警。
 
 ### `mcp_servers`
 

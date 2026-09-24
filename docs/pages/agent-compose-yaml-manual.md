@@ -249,6 +249,8 @@ variables:
 
 Project variables are retained as project configuration values with redaction semantics. They are not automatically inherited by agent `env`, and they are not a source for other `${NAME}` expressions. Declare a value again under an agent's `env` when it must enter that agent's sandbox.
 
+A first-party LLM credential declared here is not handed to the sandbox: the daemon imports it into its own LLM connections and proxies the run, so the sandbox only ever receives a run-scoped facade token. The recognized names are `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, and `LLM_API_KEY` (optionally with `LLM_API_PROTOCOL` and `LLM_API_ENDPOINT`). `AZURE_OPENAI_API_KEY`, `GOOGLE_API_KEY`, and `GEMINI_API_KEY` are recognized but cannot be proxied, and any other `*_API_KEY` is not recognized at all; those values reach the sandbox unchanged. Project checks warn about all three cases and recommend the daemon's LLM configuration, which is where a credential is managed, rotated, and shared deliberately.
+
 ## `workspaces`: project workspaces
 
 The top-level key must be plural:
@@ -577,7 +579,7 @@ The daemon loads `$DATA_ROOT/models.json` once during startup. A missing file is
 
 The optional `models` array adds per-model metadata and behavior: `id`, `name`, `baseUrl`, `protocol`, `headers`, and the positive integer `maxOutputTokens`. A model-level `protocol` must remain in the Provider's protocol family: OpenAI Providers (`responses` or `chat_completions`) allow `responses` and `chat_completions`, while Anthropic Providers (`anthropic_messages`) allow only `anthropic_messages`. These attributes belong to the specific Provider/model deployment, so Providers that share a model ID do not overwrite one another. The array is not an allowlist. For a configured `gateway` Provider, `gateway/a-model-not-listed-here` is still forwarded as the literal upstream model ID using Provider defaults.
 
-All compatible coding agents and `scheduler.llm` use this catalog for agent-compose Provider routing and model selection; it does not replace an agent's native model-capability catalog. A complete Agent-level `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, and `LLM_API_KEY` configuration remains the higher-priority compatibility path. Optional daemon or Agent `LLM_API_HEADERS` is a JSON object of static extra HTTP headers on that env-backed Provider; it does not replace catalog `headers`, and the raw value is not exposed to the guest runtime. The variable is shared by env-backed OpenAI and Anthropic Providers, so each configured header must be safe to send to every configured upstream. The daemon's complete `LLM_*` configuration remains the default ahead of `models.json.default`. A catalog Provider ID that conflicts with an existing non-catalog Provider causes startup to fail without overwriting the existing configuration.
+All compatible coding agents and `scheduler.llm` use this catalog for agent-compose Provider routing and model selection; it does not replace an agent's native model-capability catalog. A first-party credential declared in project `variables` or agent `env` is imported into this same catalog as a daemon-owned connection and served through the facade, so the key stays on the daemon and the sandbox only sees a run-scoped facade token; this is the compatibility path for a complete `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, and `LLM_API_KEY` declaration as well as for the vendor-specific names listed under `variables` and `env`. Optional daemon or Agent `LLM_API_HEADERS` is a JSON object of static extra HTTP headers on that env-backed Provider; it does not replace catalog `headers`, and the raw value is not exposed to the guest runtime. The variable is shared by env-backed OpenAI and Anthropic Providers, so each configured header must be safe to send to every configured upstream. The daemon's complete `LLM_*` configuration remains the default ahead of `models.json.default`. A catalog Provider ID that conflicts with an existing non-catalog Provider causes startup to fail without overwriting the existing configuration.
 
 ### Managing LLM providers through RPC
 
@@ -807,6 +809,8 @@ env:
 ```
 
 These values enter the agent sandbox. Secret values are redacted from normalized display but remain available to the runtime.
+
+A recognized first-party LLM credential declared here — `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, or `LLM_API_KEY` — is the exception: the daemon imports it into its own LLM connections and proxies the run, so the sandbox receives only a facade token. Credentials the daemon cannot proxy (`AZURE_OPENAI_API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY`) and unrecognized `*_API_KEY` names are passed through and can be read by anything running in the sandbox; project checks warn about them.
 
 ### `mcp_servers`
 

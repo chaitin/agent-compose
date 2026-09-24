@@ -97,12 +97,14 @@ route(入站协议) + token.connection + request.model(不透明)
 
 ### 8. 职责明确：env-key 配置 = 走 env 链路，不走 daemon 链路
 
-采纳为**两条互斥路径**（见 §3.4），并已确认为 **direct：agent 直连，daemon 完全不介入
-请求路径**（真实 key 进 guest）。这条一落地，`session_env` provider、
-`SandboxProviderEnvItems`、`HasOpenAIEnvProviderInput`/`genericLLMEnvProviderFamily`、
-`SessionEnvProviderID`、opencode 的 `opencode` 原生 provider 特例
-（`openCodeNativeProviderID`）、codex 的"保留自己的登录"兜底
-（`OptionalFacadeConfigError`）全都可以删除。
+原结论是**两条互斥路径**（见 §3.4），并曾确认为 **direct：agent 直连，daemon 完全不介入
+请求路径**（真实 key 进 guest）。**该结论已废弃**：识别的第一方声明现在由 daemon 吸收成
+自己的连接并代理，真实 key 不进 guest；只有 daemon 识别不了的 `*_API_KEY` 才原样下发。
+`session_env` provider、`SandboxProviderEnvItems`、
+`HasOpenAIEnvProviderInput`/`genericLLMEnvProviderFamily`、`SessionEnvProviderID`、
+opencode 的 `opencode` 原生 provider 特例（`openCodeNativeProviderID`）、codex 的
+"保留自己的登录"兜底（`OptionalFacadeConfigError`）仍然删除——吸收走的是普通 Catalog
+连接，不需要这些特例。
 
 ### 9. 兼容层归一
 
@@ -232,41 +234,42 @@ func (c *Catalog) connectionFor(explicitID, model string) (Connection, error) {
 `models.json.default: "gateway/model"` 仍然是 `provider/model`——
 它是 daemon 自有的、无歧义的文档格式，解析它不违反 R-A。
 
-### 3.4 两条互斥路径：direct vs managed
+### 3.4 单一路径：可识别的声明由 daemon 吸收，其余照原样下发
 
-判据是**该 agent 是否自带 LLM 连接配置**（`agents.*.env` 里出现任一：
-`LLM_API_ENDPOINT`/`LLM_API_KEY`/`OPENAI_API_KEY`/`OPENAI_BASE_URL`/
-`ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`）。
+判据是**这个声明是否是 daemon 认识的第一方凭据**，而不是"agent 是否自带 LLM 连接配置"。
 
 ```
-direct  : agent 自带上游
-          - 不 mint facade token，不代理，不转换
-          - daemon 仍用同一个 Dialect writer 把 agent 指向 env 里的上游
-          - model = agent.model 原样
-          - 协议兼容由配置者负责（同 agent 原生协议）
+declared(可吸收) : daemon 认识的官方/知名 vendor 凭据
+          - daemon 把它写成自己的连接（`session-env:<sandbox>:<family>`，scope=declared）
+          - 用同一个 Catalog 解析这条连接，mint 绑定它的 facade token
+          - guest 只拿到 facade URL + token，真实 key 不进 guest
+          - 协议转换、模型选择与 daemon 托管路径完全一致
 
-managed : daemon 拥有上游
-          - Catalog 解析 Connection + model
-          - mint token(绑定 Connection)
-          - daemon 指向 facade，按矩阵转换
-          - model = GuestModel（仅 pi/opencode 合成 <key>/<model>）
+declared(不可吸收) : daemon 认识但代理不了（Azure / Google 专属协议），
+                    或完全不认识的 `*_API_KEY`
+          - 原样下发到 guest 环境
+          - daemon 无法保护，只能在项目检查里告警
 ```
 
-这条规则替代了现在散落的：session-env provider、`opencode` 原生 provider 特例、
-codex/claude 的"保留自己登录"兜底。
+可吸收集合：`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、
+`CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`，以及通用的
+`LLM_API_KEY`（配合 `LLM_API_PROTOCOL` / `LLM_API_ENDPOINT`）。识别但不吸收：
+`AZURE_OPENAI_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY`。
 
-> 已确认采用 direct 语义：环境里声明的真实 key 会进入 guest（现状
-> `MergeManagedExecEnv` 只在 managed 分支剥掉 provider key）。这是"agent 自带凭据"
-> 的明确定义：**要隐藏 key 或要协议转换，就不要在 agent env 里写 LLM 连接**，
-> 改用 daemon 侧 Catalog（daemon env / models.json / RPC）。direct 路径下
-> daemon 仍会用同一套 Dialect writer 把 guest CLI 指向声明的上游，否则 pi/opencode
-> 没有 provider 条目无法启动；"不介入"指的是不代理、不转换、不签发 token。
+声明的连接只按显式 ID 寻址，不进入 `Catalog.serving`、唯一连接兜底和
+`Connections()`，所以一个 agent 的凭据永远不会服务另一个 agent。同一个 run 的
+base 环境在应用 managed 环境之前会剥掉这些 provider 变量名，因此 facade token
+写在 vendor 变量名下也能存活。
+
+> 这条替代了 PR #715 的 direct 语义。当时的结论是"agent 自带凭据就让真实 key 进
+> guest"，但那会让 operator 写在 project/agent 环境里的官方 key 出现在 agent
+> runtime 中，与"上游凭据只保留在 daemon"的既有边界冲突。现在一律保护：可识别的
+> 声明被吸收并代理，daemon 不做流量劫持；不可识别的声明明确不受保护，并在项目
+> 检查时告警。
 >
-> writer 生成的是"配置文件引用哪个环境变量"，因此凭据变量名必须随模式切换：managed
-> 指向 `AGENT_COMPOSE_SANDBOX_TOKEN`（facade token），direct 指向 writer 自己导出的
-> vendor 变量（`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`）。codex 的 `env_key`、pi 的
-> `apiKey`、opencode 的 `{env:...}` 都由同一个 `guestCredentialEnvName` 决定，避免
-> 配置文件引用一个 direct 模式根本不存在的变量。
+> writer 生成的是"配置文件引用哪个环境变量"，现在只有一种模式：永远指向
+> `AGENT_COMPOSE_SANDBOX_TOKEN`（facade token）。codex 的 `env_key`、pi 的
+> `apiKey`、opencode 的 `{env:...}` 都由同一个 `guestCredentialEnvName` 决定。
 
 ### 3.5 Facade：dialect 表 + 一个 writer
 
@@ -421,7 +424,8 @@ usage 口径，直接复用该库的 `responsesUsageToAnthropicUsage`。
 guest `resolveFacadeModel` / `RuntimeModelArgument` 删除，guest 只读
 `AGENT_COMPOSE_RESOLVED_MODEL`。
 
-**P3 — direct/managed 分叉**：agent env 命中 LLM key → direct；
+**P3 — 声明凭据的判定**：agent/project env 命中可识别的第一方 key →
+吸收成 daemon 侧声明连接并代理；不可识别的 `*_API_KEY` 原样下发。
 删除 session-env provider 与所有 env 探测函数。
 
 **P4 — model 字面化与诊断**：`model` 保持不透明，不再按 `/` 解释。
@@ -448,9 +452,10 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   所以合法含 `/` 的 model（如 `meta-llama/Llama-3.1-8B`）不受影响；它只是把
   本来会出现的上游 "unknown model" 或令人困惑的歧义错误，换成本地可执行的提示。
 - 部署：daemon env / models.json / RPC 继续作为连接来源；
-  **agent 级 `LLM_API_*` 语义由"daemon 代理的环境上游"改为"agent 直连"**，
-  真实 key 进入 guest。这是唯一需要显式通告的行为变更，需要在 release note
-  与管理手册中标注；依赖 daemon 隐藏 key 的部署应迁移到 models.json/RPC。
+  **agent 级 `LLM_API_*`（以及认识的 vendor key）现在由 daemon 吸收成声明连接并代理**，
+  真实 key 不进 guest；只有 daemon 识别不了的 `*_API_KEY` 才原样下发。项目检查会对两种
+  情况分别告警。仍然建议把长期凭据配置在 daemon 侧（daemon env / models.json / RPC），
+  因为那才是能被显式管理、轮换和共享的地方；project 里的官方 key 只是被识别后自动保护。
 - 协议：`anthropic_messages→chat_completions` 已随依赖升级补齐（见 P0），
   claude + chat-only 上游可直接服务；此前该格在运行期报
   `unsupported llm protocol bridge`。
@@ -466,14 +471,21 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   必须以 `agent-compose/baizhi/gpt-5.5` 形式到达 pi/opencode，且整体不被切分。
 - 转换矩阵表驱动：15 个 `(dialect, upstream)` 组合的成功/失败与所选入站协议；
   claude × chat 必须走通（P0 的桥已随依赖升级到位）。
-- direct/managed 分叉：命中 LLM env 的 agent 不产生 token、不写 facade 配置、
-  真实 key 出现在 guest 环境；未命中的 agent 一定产生 token 且不泄漏上游 key。
+- 声明凭据的吸收：命中可识别第一方 key 的 agent 产生 token、把真实 key 写进
+  daemon 侧的 `declared` 连接，且 guest 环境只有 facade token；不可识别的
+  `*_API_KEY` 原样出现在 guest 环境；daemon 托管的 agent 一定产生 token 且不泄漏上游 key。
+- 隔离：`declared` 连接不出现在 `Catalog.serving` / 唯一连接兜底 / `Connections()` 中，
+  一个 sandbox 的声明凭据不会服务另一个 sandbox。
 - 回归：删除 `ValidateFacadeModelReference` 后，原"unknown prefix"用例转为
   "字面 id 透传"用例。
 
 ---
 
 ## 8. 实现进度（分支 `feat/llm-call-chain`）
+
+> 下面的里程碑记录是当时的实现过程，其中的 **direct 模式已被 §3.4 的单一路径取代**：
+> 可识别的第一方声明现在由 daemon 吸收并代理，真实 key 不进 guest。M5/M6 中所有
+> "direct 让真实 key 进 guest"的描述只作为历史阅读。
 
 基线 `origin/main` `5a21a5c1`。每个里程碑各自提交，提交时
 `gofmt -l` / `go build ./...` / `go vet ./pkg/...` / `go test ./pkg/...` 全绿
