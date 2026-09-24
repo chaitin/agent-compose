@@ -40,7 +40,7 @@ func newTraceService(store eventTraceStore, sandboxes SandboxSummaryReader) *tra
 }
 
 func (s *traceService) trace(ctx context.Context, eventID string) (eventTraceView, error) {
-	trace, err := s.store.GetEventTrace(ctx, eventID, 1000)
+	trace, err := s.store.GetEventTrace(ctx, eventID, domain.MaxEventScopeEvents)
 	if err != nil {
 		return eventTraceView{}, err
 	}

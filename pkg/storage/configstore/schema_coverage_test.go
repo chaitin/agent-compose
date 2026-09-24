@@ -215,11 +215,11 @@ func testConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 	if runs, err := store.ListProjectRuns(ctx, project.ID, 10); err != nil || len(runs) != 1 {
 		t.Fatalf("ListProjectRuns runs=%#v err=%v", runs, err)
 	}
-	if runs, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{Limit: 500, Offset: -1}); err != nil || len(runs) != 1 {
-		t.Fatalf("ListProjectRunsByOptions unfiltered runs=%#v err=%v", runs, err)
+	if result, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{Limit: 500, Offset: -1}); err != nil || len(result.Runs) != 1 {
+		t.Fatalf("ListProjectRunsByOptions unfiltered runs=%#v err=%v", result.Runs, err)
 	}
-	if runs, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: project.ID, AgentName: "worker", SandboxID: "sandbox-1", SchedulerID: scheduler.SchedulerID, Status: domain.ProjectRunStatusRunning, Source: domain.ProjectRunSourceAPI, Limit: 10}); err != nil || len(runs) != 1 {
-		t.Fatalf("ListProjectRunsByOptions runs=%#v err=%v", runs, err)
+	if result, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: project.ID, AgentName: "worker", SandboxID: "sandbox-1", SchedulerID: scheduler.SchedulerID, Status: domain.ProjectRunStatusRunning, Source: domain.ProjectRunSourceAPI, Limit: 10}); err != nil || len(result.Runs) != 1 {
+		t.Fatalf("ListProjectRunsByOptions runs=%#v err=%v", result.Runs, err)
 	}
 	if runs, err := store.ListProjectSandboxRuns(ctx, domain.ProjectSandboxRelationFilter{ProjectID: project.ID, AgentName: "worker", SandboxID: "sandbox-1", Statuses: []string{domain.ProjectRunStatusRunning}, Limit: 10}); err != nil || len(runs) != 1 {
 		t.Fatalf("ListProjectSandboxRuns runs=%#v err=%v", runs, err)

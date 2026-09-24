@@ -33,12 +33,9 @@ type ActiveRunStopper interface {
 
 type RunStore interface {
 	runs.Store
-	ListProjectRunsByOptions(context.Context, domain.ProjectRunListOptions) ([]domain.ProjectRunRecord, error)
+	ListProjectRunsByOptions(context.Context, domain.ProjectRunListOptions) (domain.ProjectRunListResult, error)
+	CountProjectRuns(context.Context, domain.ProjectRunListOptions) (int, bool, error)
 	ListProjectRunsForSandbox(context.Context, string) ([]domain.ProjectRunRecord, error)
-}
-
-type projectRunCountStore interface {
-	CountProjectRuns(context.Context, domain.ProjectRunListOptions) (int, error)
 }
 
 type RunEventStore interface {
@@ -244,23 +241,27 @@ func (h *RunHandler) ListRuns(ctx context.Context, req *connect.Request[agentcom
 		Offset:         offset,
 		Limit:          limit,
 		Labels:         labels,
+		EventID:        strings.TrimSpace(req.Msg.GetEventId()),
 	}
-	runs, err := h.store.ListProjectRunsByOptions(ctx, options)
+	result, err := h.store.ListProjectRunsByOptions(ctx, options)
 	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	items := make([]*agentcomposev2.RunSummary, 0, len(runs))
-	for _, run := range runs {
+	items := make([]*agentcomposev2.RunSummary, 0, len(result.Runs))
+	for _, run := range result.Runs {
 		items = append(items, ProjectRunSummaryToProto(run))
 	}
-	total := offset + len(runs)
-	if countStore, ok := h.store.(projectRunCountStore); ok {
-		total, err = countStore.CountProjectRuns(ctx, options)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
+	total, eventScopeTruncated, err := h.store.CountProjectRuns(ctx, options)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, connect.NewError(connect.CodeNotFound, err)
 		}
+		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: items, Total: uint32(total)}), nil
+	return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: items, Total: uint32(total), EventScopeTruncated: eventScopeTruncated}), nil
 }
 
 func (h *RunHandler) FollowRunLogs(ctx context.Context, req *connect.Request[agentcomposev2.FollowRunLogsRequest], stream *connect.ServerStream[agentcomposev2.RunLogChunk]) error {

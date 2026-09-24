@@ -25,6 +25,7 @@ type composeLogsOptions struct {
 	AgentName  string
 	RunID      string
 	SandboxID  string
+	EventID    string
 	TailLines  int
 	Follow     bool
 	Timestamp  bool
@@ -64,15 +65,22 @@ func runComposeLogsCommand(cmd *cobra.Command, cli cliOptions, options composeLo
 		}
 		return writeLogsForRun(cmd.OutOrStdout(), run.Msg.GetRun(), cli.JSON, normalizedOptions)
 	}
+	if normalizedOptions.EventID != "" {
+		return runComposeLogsForEvent(cmd, cli, clients, projectID, runtimeProject.name(), normalizedOptions)
+	}
 	return followOrPrintProjectLogs(cmd, cli, clients, projectID, runtimeProject.name(), normalizedOptions)
 }
 
 func normalizeComposeLogsOptions(cmd *cobra.Command, options composeLogsOptions, args []string) (composeLogsOptions, error) {
 	options.RunID = strings.TrimSpace(options.RunID)
 	options.SandboxID = strings.TrimSpace(options.SandboxID)
+	options.EventID = strings.TrimSpace(options.EventID)
 	if len(args) > 0 {
 		if cmd.Flags().Changed("agent") {
 			return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs agent can be specified either positionally or with --agent, not both")}
+		}
+		if options.EventID != "" {
+			return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --event cannot be combined with a positional target")}
 		}
 		if identity.IsIDPrefix(args[0]) {
 			options.ResourceID = strings.TrimSpace(args[0])
@@ -83,8 +91,19 @@ func normalizeComposeLogsOptions(cmd *cobra.Command, options composeLogsOptions,
 	if options.RunID != "" && options.SandboxID != "" {
 		return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --run cannot be combined with --sandbox")}
 	}
+	if options.RunID != "" && options.EventID != "" {
+		return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --run cannot be combined with --event")}
+	}
+	if options.EventID != "" && options.SandboxID != "" {
+		return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --event cannot be combined with --sandbox")}
+	}
 	if options.TailLines < -1 {
 		return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --tail must be -1 or greater")}
+	}
+	if options.EventID != "" {
+		if err := validateEventLogTarget(options.EventID); err != nil {
+			return options, err
+		}
 	}
 	return options, nil
 }
@@ -146,17 +165,8 @@ func followOrPrintProjectLogs(cmd *cobra.Command, cli cliOptions, clients cliSer
 		if len(runs) == 0 && options.SandboxID != "" {
 			return writeSandboxHistoryLogs(cmd, cli, clients.sandbox, projectID, options)
 		}
-		for index, summary := range runs {
-			if _, ok := parseComposeLogSortTimestamp(runLogSortTimestamp(summary)); ok {
-				continue
-			}
-			detail, detailErr := getRunDetail(cmd.Context(), client, projectID, summary.GetRunId())
-			if detailErr != nil {
-				return commandExitErrorForConnect(fmt.Errorf("get run %s for project %s: %w", summary.GetRunId(), projectName, detailErr))
-			}
-			if detailSummary := detail.Msg.GetRun().GetSummary(); detailSummary != nil {
-				runs[index] = detailSummary
-			}
+		if err := refreshLogRunSummariesForSort(cmd.Context(), client, projectID, projectName, runs); err != nil {
+			return err
 		}
 		sort.SliceStable(runs, func(i, j int) bool { return logRunSummaryLess(runs[i], runs[j]) })
 		for _, summary := range runs {
@@ -604,6 +614,24 @@ func sortLogRunDetails(details []*agentcomposev2.RunDetail) {
 	sort.SliceStable(details, func(i, j int) bool {
 		return logRunSummaryLess(details[i].GetSummary(), details[j].GetSummary())
 	})
+}
+
+// refreshLogRunSummariesForSort fills in ListRuns summaries that have no
+// usable sort timestamp so replay order matches the other logs paths.
+func refreshLogRunSummariesForSort(ctx context.Context, client agentcomposev2connect.RunServiceClient, projectID, projectName string, runs []*agentcomposev2.RunSummary) error {
+	for index, summary := range runs {
+		if _, ok := parseComposeLogSortTimestamp(runLogSortTimestamp(summary)); ok {
+			continue
+		}
+		detail, err := getRunDetail(ctx, client, projectID, summary.GetRunId())
+		if err != nil {
+			return commandExitErrorForConnect(fmt.Errorf("get run %s for project %s: %w", summary.GetRunId(), projectName, err))
+		}
+		if detailSummary := detail.Msg.GetRun().GetSummary(); detailSummary != nil {
+			runs[index] = detailSummary
+		}
+	}
+	return nil
 }
 
 func logRunSummaryLess(left, right *agentcomposev2.RunSummary) bool {

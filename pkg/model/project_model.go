@@ -257,6 +257,19 @@ type ProjectRunListOptions struct {
 	// Labels filters to runs carrying every given key/value pair (AND semantics).
 	// An empty map applies no filter.
 	Labels map[string]string
+	// EventID filters to runs recorded against the event, its descendant
+	// events, and events sharing its correlation id. An unknown event id
+	// resolves to a NotFound error, not an empty result.
+	EventID string
+}
+
+// ProjectRunListResult is a listing of project runs plus metadata about how it
+// was produced. EventScopeTruncated reports that the event scope hit
+// MaxEventScopeEvents, so runs recorded only against events beyond the cap
+// are missing from Runs.
+type ProjectRunListResult struct {
+	Runs                []ProjectRunRecord
+	EventScopeTruncated bool
 }
 
 type ProjectAgentRunState struct {

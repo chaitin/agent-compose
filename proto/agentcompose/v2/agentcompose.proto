@@ -1182,12 +1182,23 @@ message ListRunsRequest {
   string scheduler_run_id = 11;
   // Optional exact-match label filters, ANDed together. An empty map applies no filter.
   map<string, string> labels = 12;
+  // Optional event-bus event id (evt_...). Resolves the event, its descendant
+  // events, and events sharing its correlation id, then filters to the Agent
+  // Runs recorded against them. Unknown event ids return NOT_FOUND. The event
+  // scope is capped at 1000 events like GetEventTrace; events beyond the cap
+  // (and runs recorded only against them) are left out, and the response
+  // reports it via event_scope_truncated.
+  string event_id = 13;
 }
 
 message ListRunsResponse {
   repeated RunSummary runs = 1;
   // Total matching resources before offset and limit are applied.
   uint32 total = 2;
+  // True when the request filtered by event_id and the event scope hit the
+  // 1000-event cap, so runs recorded only against events beyond the cap are
+  // missing from runs and total. Mirrors GetEventTrace's descendants_truncated.
+  bool event_scope_truncated = 3;
 }
 
 message FollowRunLogsRequest {

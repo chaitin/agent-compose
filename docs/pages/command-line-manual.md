@@ -663,6 +663,7 @@ agent-compose logs <project|agent|run|sandbox-id>
 agent-compose logs --agent reviewer
 agent-compose logs --run <run-id>
 agent-compose logs --sandbox <sandbox>
+agent-compose logs --event <evt-id>
 agent-compose logs --follow
 agent-compose logs -n 100
 agent-compose logs -t
@@ -676,8 +677,13 @@ agent-compose logs -t
 | `--agent <agent>` | Filter by agent. |
 | `--run <run-id>` | Filter by run id. |
 | `--sandbox <sandbox>` | Filter by sandbox. |
+| `--event <evt-id>` | Filter by event-bus event id (`evt_...`). Shows the runs triggered by the event and its correlated events. |
 
 `--run` and `--sandbox` are mutually exclusive resource selectors. Combining them is a usage error, and no log request is sent.
+
+`--event` accepts a full event id only; prefix matching is not supported. The daemon resolves the event, its descendant events, and events sharing its correlation id, and returns the agent runs recorded against them, so `--run` and `--sandbox` cannot be combined with `--event`. `--event --follow` follows the runs known at query time; runs created afterwards are not picked up. `logs --json` cannot be combined with `--follow` (usage error), so the `--event` JSON output is always a single snapshot. An event without recorded runs prints a notice (or an empty JSON document) and exits successfully. Combining `--event` with `--agent` filters the runs to that agent server-side; when the narrowing leaves no runs, the same notice is printed.
+
+The event scope is capped at 1000 events (the same limit the event trace view applies). If an event's descendants plus its correlation group exceed the cap, events beyond it — and the runs recorded only against them — are left out of the result; the CLI prints a warning on stderr when this happens, and the `ListRuns` response reports it via `event_scope_truncated`. Very large event chains should be inspected with the event trace view instead.
 
 Examples:
 
@@ -687,6 +693,7 @@ agent-compose logs reviewer
 agent-compose logs --agent reviewer --tail 200
 agent-compose logs --sandbox sandbox_123 --follow -t
 agent-compose logs --run run_123 --json
+agent-compose logs --event evt_0e1c7bd2-8f5a-4c1d-9b3e-2f6a7d8c9e01
 ```
 
 ## `inspect`: Inspect Resources

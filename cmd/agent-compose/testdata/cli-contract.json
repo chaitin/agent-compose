@@ -1374,6 +1374,11 @@
           "default": ""
         },
         {
+          "name": "event",
+          "type": "string",
+          "default": ""
+        },
+        {
           "name": "file",
           "shorthand": "f",
           "type": "string",

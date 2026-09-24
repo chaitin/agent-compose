@@ -40,36 +40,36 @@ func TestListProjectRunsByOptionsReturnsNewestFirstAcrossPages(t *testing.T) {
 		}
 	}
 
-	all, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: "project-order"})
+	allResult, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: "project-order"})
 	if err != nil {
 		t.Fatalf("list runs: %v", err)
 	}
 	want := []string{"run-newest", "run-middle", "run-oldest"}
-	if len(all) != len(want) {
-		t.Fatalf("listed %d runs, want %d", len(all), len(want))
+	if len(allResult.Runs) != len(want) {
+		t.Fatalf("listed %d runs, want %d", len(allResult.Runs), len(want))
 	}
 	for index, runID := range want {
-		if all[index].RunID != runID {
-			t.Fatalf("run %d = %s, want %s: the list must be newest first", index, all[index].RunID, runID)
+		if allResult.Runs[index].RunID != runID {
+			t.Fatalf("run %d = %s, want %s: the list must be newest first", index, allResult.Runs[index].RunID, runID)
 		}
 	}
 
 	// A client that wants only the newest run asks for one row, so the first
 	// page of one has to be the newest and not merely some matching run.
-	first, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: "project-order", Limit: 1})
+	firstResult, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: "project-order", Limit: 1})
 	if err != nil {
 		t.Fatalf("list newest run: %v", err)
 	}
-	if len(first) != 1 || first[0].RunID != "run-newest" {
-		t.Fatalf("first page = %#v, want just run-newest", first)
+	if len(firstResult.Runs) != 1 || firstResult.Runs[0].RunID != "run-newest" {
+		t.Fatalf("first page = %#v, want just run-newest", firstResult)
 	}
 
 	// Paging continues in the same order, so a walk sees every run once.
-	page, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: "project-order", Offset: 1, Limit: 1})
+	pageResult, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: "project-order", Offset: 1, Limit: 1})
 	if err != nil {
 		t.Fatalf("list second page: %v", err)
 	}
-	if len(page) != 1 || page[0].RunID != "run-middle" {
-		t.Fatalf("second page = %#v, want just run-middle", page)
+	if len(pageResult.Runs) != 1 || pageResult.Runs[0].RunID != "run-middle" {
+		t.Fatalf("second page = %#v, want just run-middle", pageResult)
 	}
 }
