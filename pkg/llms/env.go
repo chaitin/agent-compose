@@ -63,10 +63,14 @@ func SchedulerCommandFacadeAgentModel(env map[string]string) (string, string) {
 	}
 }
 
+// FilterPersistedRuntimeEnv removes the LLM provider configuration an operator
+// declared from the environment a sandbox persists and shows. The declaration
+// itself is kept in ProviderEnvItems, which is what the facade resolves against;
+// the guest only ever receives the facade address and a run-scoped token.
 func FilterPersistedRuntimeEnv(items []domain.SandboxEnvVar) []domain.SandboxEnvVar {
 	result := make([]domain.SandboxEnvVar, 0, len(items))
 	for _, item := range domain.NormalizeEnvItems(items) {
-		if driverpkg.LLMProviderKeyName(item.Name) || strings.EqualFold(strings.TrimSpace(item.Name), RuntimeBaseURLEnvName) {
+		if driverpkg.LLMProviderEnvName(item.Name) || strings.EqualFold(strings.TrimSpace(item.Name), RuntimeBaseURLEnvName) {
 			continue
 		}
 		result = append(result, item)

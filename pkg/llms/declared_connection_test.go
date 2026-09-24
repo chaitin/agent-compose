@@ -290,23 +290,32 @@ func TestCatalogNeverSelectsADeclaredConnection(t *testing.T) {
 }
 
 // TestMergeManagedExecEnvStripsDeclaredProviderKeys pins the last line of the
-// base environment: a provider credential an operator declared never survives
-// into the guest, while the facade token the managed layer installs does.
+// base environment: the upstream an operator declared never survives into the
+// guest, while the facade token and address the managed layer installs do.
 func TestMergeManagedExecEnvStripsDeclaredProviderKeys(t *testing.T) {
 	base := map[string]string{
 		"OPENAI_API_KEY":    "sk-declared",
+		"OPENAI_BASE_URL":   "https://declared-upstream.example",
+		"LLM_API_ENDPOINT":  "https://declared-upstream.example/v1",
+		"LLM_API_PROTOCOL":  "chat_completions",
 		"GOOGLE_API_KEY":    "sk-google-declared",
 		"LLM_API_HEADERS":   `{"x-secret":"1"}`,
 		"UNRELATED_SETTING": "kept",
 	}
 	managed := map[string]string{
 		"OPENAI_API_KEY":               "facade-token",
+		"OPENAI_BASE_URL":              "http://daemon.test/llm/openai/v1",
+		"LLM_API_ENDPOINT":             "http://daemon.test/llm/openai/v1",
+		"LLM_API_PROTOCOL":             "responses",
 		guestFacadeTokenEnvName:        "facade-token",
 		"AGENT_COMPOSE_RESOLVED_MODEL": "gpt-5.5",
 	}
 	merged := MergeManagedExecEnv(base, managed)
 	if got := merged["OPENAI_API_KEY"]; got != "facade-token" {
 		t.Errorf("OPENAI_API_KEY = %q, want the managed facade token", got)
+	}
+	if got := merged["OPENAI_BASE_URL"]; got != "http://daemon.test/llm/openai/v1" {
+		t.Errorf("OPENAI_BASE_URL = %q, want the managed facade address", got)
 	}
 	for _, stripped := range []string{"GOOGLE_API_KEY", "LLM_API_HEADERS"} {
 		if _, ok := merged[stripped]; ok {
@@ -315,5 +324,27 @@ func TestMergeManagedExecEnvStripsDeclaredProviderKeys(t *testing.T) {
 	}
 	if got := merged["UNRELATED_SETTING"]; got != "kept" {
 		t.Errorf("UNRELATED_SETTING = %q, want the base value", got)
+	}
+}
+
+// TestDeclaredEndpointNamesStayOffTheGuestEnv is the end-to-end shape of the
+// same rule for every declaration spelling the daemon recognizes: whichever
+// vendor variable carries the endpoint, the value must not reach the guest.
+func TestDeclaredEndpointNamesStayOffTheGuestEnv(t *testing.T) {
+	for _, name := range []string{
+		"LLM_API_ENDPOINT", "LLM_API_PROTOCOL",
+		"ANTHROPIC_BASE_URL", "ANTHROPIC_API_ENDPOINT",
+		"OPENAI_BASE_URL", "DEEPSEEK_BASE_URL", "OPENROUTER_BASE_URL",
+	} {
+		t.Run(name, func(t *testing.T) {
+			base := map[string]string{name: "https://declared-upstream.example", "KEPT": "1"}
+			merged := MergeManagedExecEnv(base, nil)
+			if _, ok := merged[name]; ok {
+				t.Fatalf("%s reached the guest runtime", name)
+			}
+			if merged["KEPT"] != "1" {
+				t.Fatalf("unrelated base env was dropped: %#v", merged)
+			}
+		})
 	}
 }

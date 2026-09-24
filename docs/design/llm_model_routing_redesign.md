@@ -259,7 +259,13 @@ declared(不可吸收) : daemon 认识但代理不了（Azure / Google 专属协
 声明的连接只按显式 ID 寻址，不进入 `Catalog.serving`、唯一连接兜底和
 `Connections()`，所以一个 agent 的凭据永远不会服务另一个 agent。同一个 run 的
 base 环境在应用 managed 环境之前会剥掉这些 provider 变量名，因此 facade token
-写在 vendor 变量名下也能存活。
+写在 vendor 变量名下也能存活。剥离范围是**声明本身**而不只是 key：端点与协议
+变量（`LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`ANTHROPIC_BASE_URL`、
+`ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、
+`OPENROUTER_BASE_URL`）同样被移除，否则 guest 会拿到一个它已无法用 facade token
+认证的上游地址——那是更容易误判的失败，而不是一项能力。工程与 Agent 的显示视图
+读的是声明（project spec），因此仍然显示原值；某次 run 真正使用的 facade 地址与
+token 只存在于该 run 的 `RuntimeEnvItems`，从不落盘。
 
 > 这条替代了 PR #715 的 direct 语义。当时的结论是"agent 自带凭据就让真实 key 进
 > guest"，但那会让 operator 写在 project/agent 环境里的官方 key 出现在 agent

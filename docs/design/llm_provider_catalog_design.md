@@ -180,6 +180,13 @@ daemon 会把它写进自己的连接配置，而不是把它交给 agent runtim
 `Connections()`，因此一个 sandbox 的声明凭据不会服务另一个 sandbox。sandbox 停止或
 移除时，`RevokeLLMFacadeTokensForSandbox` 会同时删除该 sandbox 的声明连接。
 
+被吸收的声明连同它的端点变量一起留在 daemon：`LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、
+`ANTHROPIC_BASE_URL`、`ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、
+`OPENROUTER_BASE_URL` 都会从 guest 环境中移除，由 managed 层在原处装上 facade 地址。
+只剥 key 是不够的：guest 拿到一个自己已无法认证的上游地址，只会把失败伪装成连通性问题。
+工程与 Agent 的显示视图读的是声明本身，所以仍按原值展示；某次 run 的 facade 地址与 token
+只存在于该 run 的 `RuntimeEnvItems`（`json:"-"`），既不持久化也不显示。
+
 项目检查（`ValidateProject` / `ApplyProject`）对以上三类分别给出 warning：可吸收的
 说明 key 会留在 daemon 并且不会进入 sandbox；识别但不吸收与不识别的说明值会进入
 agent runtime，需要改用 daemon 侧连接才能保护。

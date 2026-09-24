@@ -10,19 +10,21 @@ import (
 // MergeManagedExecEnv layers the daemon-managed LLM environment over the base
 // environment an execution was built with. The managed values win per key.
 //
-// Provider credential names are dropped from the base before the managed layer
-// is applied. A sandbox may carry a credential an operator declared in its
-// project or agent environment, and that value must never reach the guest: the
-// only credential a guest may present is the facade token the managed layer
-// installs under the vendor's conventional variable. Stripping before the merge
-// keeps that token, because the managed layer writes the names the daemon owns.
+// Provider configuration names are dropped from the base before the managed
+// layer is applied. A sandbox may carry an upstream an operator declared in its
+// project or agent environment, and neither the credential nor the address may
+// reach the guest: the only credential a guest may present is the facade token
+// the managed layer installs under the vendor's conventional variable, and the
+// only address it may use is the facade route installed alongside it. Stripping
+// before the merge keeps those, because the managed layer writes the names the
+// daemon owns.
 func MergeManagedExecEnv(base map[string]string, managed map[string]string) map[string]string {
 	if len(base) == 0 && len(managed) == 0 {
 		return nil
 	}
 	result := make(map[string]string, len(base)+len(managed))
 	for key, value := range base {
-		if driverpkg.LLMProviderKeyName(key) {
+		if driverpkg.LLMProviderEnvName(key) {
 			continue
 		}
 		result[key] = value
