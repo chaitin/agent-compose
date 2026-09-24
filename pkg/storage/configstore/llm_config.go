@@ -49,10 +49,8 @@ func (s *llmStore) UpsertDefaultLLMConfig(ctx context.Context, provider llms.Pro
 	// migration used: only a presentation that differs from the protocol
 	// convention is an override worth preserving.
 	authIntent := llms.InferLegacyProviderAuth(provider.DefaultWireAPI, provider.AuthHeader, provider.AuthScheme)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_provider(id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, auth, headers_json, use_generic_responses_text_parts, weight, enabled, scope, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET name = excluded.name, provider_type = excluded.provider_type, default_wire_api = excluded.default_wire_api, base_url = excluded.base_url, api_key = excluded.api_key, auth_header = excluded.auth_header, auth_scheme = excluded.auth_scheme, auth = excluded.auth, headers_json = excluded.headers_json, use_generic_responses_text_parts = excluded.use_generic_responses_text_parts, weight = excluded.weight, enabled = excluded.enabled, scope = excluded.scope, updated_at = excluded.updated_at`, provider.ID, provider.Name, provider.ProviderType, provider.DefaultWireAPI, provider.BaseURL, provider.APIKey, provider.AuthHeader, provider.AuthScheme, string(authIntent), provider.HeadersJSON, BoolToInt(provider.UseGenericResponsesTextParts), provider.Weight, provider.Scope, now, now); err != nil {
-		return fmt.Errorf("insert default llm provider: %w", err)
+	if err := upsertLLMProvider(ctx, tx, provider, authIntent, now); err != nil {
+		return err
 	}
 	if model.DefaultModel {
 		if _, err := tx.ExecContext(ctx, `UPDATE llm_model SET default_model = 0 WHERE default_model != 0`); err != nil {
@@ -70,6 +68,44 @@ func (s *llmStore) UpsertDefaultLLMConfig(ctx context.Context, provider llms.Pro
 		return fmt.Errorf("insert default llm provider model: %w", err)
 	}
 	return tx.Commit()
+}
+
+// UpsertDeclaredConnection persists a connection derived from an agent's own
+// environment declaration. It is run-scoped: its id is in a reserved namespace,
+// it is never part of the daemon's shared catalog, and it is deleted when the
+// sandbox's LLM state is revoked.
+//
+// No llm_model row is written. The model a declared run uses comes from the
+// declaration and is opaque to the daemon, so a session connection must not add
+// a model to the shared catalog.
+func (s *llmStore) UpsertDeclaredConnection(ctx context.Context, provider llms.Provider) error {
+	if !llms.IsDeclaredConnectionID(provider.ID) {
+		return fmt.Errorf("connection %q is not in the reserved declared namespace", provider.ID)
+	}
+	provider = llms.NormalizeDeclaredConnection(provider)
+	if strings.TrimSpace(provider.APIKey) == "" || strings.TrimSpace(provider.BaseURL) == "" {
+		return fmt.Errorf("declared connection %q requires a credential and a base URL", provider.ID)
+	}
+	now := time.Now().UTC().Unix()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin declared llm connection tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	authIntent := llms.InferLegacyProviderAuth(provider.DefaultWireAPI, provider.AuthHeader, provider.AuthScheme)
+	if err := upsertLLMProvider(ctx, tx, provider, authIntent, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func upsertLLMProvider(ctx context.Context, tx *sql.Tx, provider llms.Provider, auth llms.ProviderAuth, now int64) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_provider(id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, auth, headers_json, use_generic_responses_text_parts, weight, enabled, scope, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET name = excluded.name, provider_type = excluded.provider_type, default_wire_api = excluded.default_wire_api, base_url = excluded.base_url, api_key = excluded.api_key, auth_header = excluded.auth_header, auth_scheme = excluded.auth_scheme, auth = excluded.auth, headers_json = excluded.headers_json, use_generic_responses_text_parts = excluded.use_generic_responses_text_parts, weight = excluded.weight, enabled = excluded.enabled, scope = excluded.scope, updated_at = excluded.updated_at`, provider.ID, provider.Name, provider.ProviderType, provider.DefaultWireAPI, provider.BaseURL, provider.APIKey, provider.AuthHeader, provider.AuthScheme, string(auth), provider.HeadersJSON, BoolToInt(provider.UseGenericResponsesTextParts), provider.Weight, provider.Scope, now, now); err != nil {
+		return fmt.Errorf("upsert llm provider %q: %w", provider.ID, err)
+	}
+	return nil
 }
 
 func (s *llmStore) ListEnabledLLMProviders(ctx context.Context) ([]llms.Provider, error) {
@@ -199,10 +235,18 @@ const llmFacadeTokenRetention = time.Hour
 
 const LLMFacadeTokenRetention = llmFacadeTokenRetention
 
+// RevokeLLMFacadeTokensForSandbox releases the LLM state one sandbox owns: its
+// facade tokens and any connection the daemon derived from the sandbox's own
+// environment declaration. A declared connection holds a real upstream
+// credential, so it is deleted rather than left for the next run to overwrite.
 func (s *llmStore) RevokeLLMFacadeTokensForSandbox(ctx context.Context, sandboxID string) error {
+	sandboxID = strings.TrimSpace(sandboxID)
 	now := time.Now().UTC()
-	if _, err := s.db.ExecContext(ctx, `UPDATE llm_facade_token SET revoked_at = ? WHERE sandbox_id = ? AND revoked_at = 0`, now.Unix(), strings.TrimSpace(sandboxID)); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE llm_facade_token SET revoked_at = ? WHERE sandbox_id = ? AND revoked_at = 0`, now.Unix(), sandboxID); err != nil {
 		return fmt.Errorf("revoke llm facade tokens for sandbox: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM llm_provider WHERE id LIKE ? ESCAPE '\'`, declaredConnectionIDPattern(sandboxID)); err != nil {
+		return fmt.Errorf("delete declared llm connections for sandbox: %w", err)
 	}
 	// Opportunistically prune long-dead rows (revoked beyond the retention grace,
 	// or expired) so the table stays bounded across sandboxes. Both states already
@@ -212,4 +256,13 @@ func (s *llmStore) RevokeLLMFacadeTokensForSandbox(ctx context.Context, sandboxI
 		return fmt.Errorf("prune llm facade tokens: %w", err)
 	}
 	return nil
+}
+
+// declaredConnectionIDPattern is the LIKE pattern that matches every declared
+// connection of one sandbox. Because an identifier may contain LIKE
+// metacharacters, they are escaped and the statement uses an explicit escape
+// character.
+func declaredConnectionIDPattern(sandboxID string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(sandboxID)
+	return llms.DeclaredConnectionPrefix + escaped + ":%"
 }

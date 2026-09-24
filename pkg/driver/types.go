@@ -180,7 +180,7 @@ func sandboxEnvMap(groups ...[]SandboxEnvVar) map[string]string {
 	for groupIndex, items := range groups {
 		for _, item := range items {
 			name := strings.TrimSpace(item.Name)
-			if name == "" || (groupIndex == 0 && LLMProviderKeyName(name)) {
+			if name == "" || (groupIndex == 0 && LLMProviderEnvName(name)) {
 				continue
 			}
 			env[name] = item.Value
@@ -192,12 +192,50 @@ func sandboxEnvMap(groups ...[]SandboxEnvVar) map[string]string {
 	return env
 }
 
-// LLMProviderKeyName reports whether name is long-lived LLM provider
-// configuration that must never be passed through to a guest runtime. It is
-// the canonical denylist shared by driver env assembly and the facade layer.
-func LLMProviderKeyName(name string) bool {
+// LLMProviderEnvName reports whether name is long-lived LLM provider
+// configuration that must never be passed through to a guest runtime. It is the
+// canonical denylist shared by driver env assembly and the facade layer.
+//
+// It covers the endpoint variables as well as the credentials, because both
+// belong to the declaration the daemon absorbs: once an agent or project
+// declares an upstream, the daemon holds the address and the key, and the guest
+// is given the facade address and a run-scoped token instead. Leaving the
+// declared endpoint behind would hand the guest an address it can no longer
+// authenticate against, which is a confusing failure rather than a useful
+// capability.
+func LLMProviderEnvName(name string) bool {
+	return LLMProviderCredentialEnvName(name) || llmProviderEndpointName(name)
+}
+
+// LLMProviderCredentialEnvName reports whether name carries provider credential
+// material. It is the single list of credential names the daemon keeps off a
+// guest, and it also decides whether a view of a declaration may echo the value:
+// a name on this list never reaches the guest, so the daemon holds it alone and
+// a user-facing response must not return it.
+//
+// Every credential the facade can absorb belongs here, including the aliases a
+// vendor accepts (CODEX_API_KEY for an OpenAI credential) and the credentials
+// the daemon can recognize but not proxy. A name the daemon does not recognize
+// is deliberately absent: that value is passed through to the guest, so a view
+// that hid it would describe an exposed value as protected without changing the
+// exposure.
+func LLMProviderCredentialEnvName(name string) bool {
 	switch strings.ToUpper(strings.TrimSpace(name)) {
-	case "LLM_API_KEY", "LLM_API_HEADERS", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENROUTER_API_KEY", "AZURE_OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY":
+	case "LLM_API_KEY", "LLM_API_HEADERS", "OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "AZURE_OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY":
+		return true
+	default:
+		return false
+	}
+}
+
+// llmProviderEndpointName reports whether name selects which upstream the
+// provider traffic goes to, or how it is encoded on the wire. LLM_API_PROTOCOL
+// is included even though no guest runner reads it: it is the daemon's
+// description of the connection it resolved, so a declared value would only
+// contradict what the facade is actually serving.
+func llmProviderEndpointName(name string) bool {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "LLM_API_ENDPOINT", "LLM_API_PROTOCOL", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_ENDPOINT", "OPENAI_BASE_URL", "DEEPSEEK_BASE_URL", "OPENROUTER_BASE_URL":
 		return true
 	default:
 		return false
