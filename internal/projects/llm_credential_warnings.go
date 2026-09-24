@@ -18,10 +18,12 @@ import (
 // is managed, rotated, and shared deliberately.
 //
 // The warning states what will actually happen to the value, which differs by
-// name: a recognized first-party credential is imported and proxied, so the key
-// never reaches the sandbox; a credential the daemon cannot proxy, or a name it
-// does not recognize at all, is passed through to the agent runtime and can be
-// read by anything running there.
+// name: a recognized first-party credential is imported and proxied, so only the
+// facade token reaches the sandbox; a recognized credential the daemon cannot
+// proxy is still removed from the agent environment, because every provider key
+// name is on the passthrough denylist, so the agent never sees it either; a
+// credential-looking name the daemon does not recognize is passed through to the
+// agent runtime and can be read by anything running there.
 func llmCredentialWarnings(spec *projectdef.NormalizedProjectSpec) []ValidationIssue {
 	if spec == nil {
 		return nil
@@ -86,7 +88,7 @@ func credentialIssuesForScope(scope string, values map[string]compose.EnvVarSpec
 func declaredCredentialMessage(name string, credential llms.DeclaredCredential) string {
 	if !credential.Absorbed {
 		return fmt.Sprintf(
-			"%s is a %s credential the daemon cannot proxy, so its value is passed to the agent runtime and can be read there; configure this provider as a daemon LLM connection instead",
+			"%s is a %s credential the daemon cannot proxy, so the daemon removes it from the agent environment and the agent never sees it; configure this provider as a daemon LLM connection to use it",
 			name, credential.Family)
 	}
 	where := "with no endpoint override, so it points at the vendor's own endpoint"
