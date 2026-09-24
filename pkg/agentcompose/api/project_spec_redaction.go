@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/chaitin/agent-compose/pkg/compose"
+	"github.com/chaitin/agent-compose/pkg/llms"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 
 	"google.golang.org/protobuf/proto"
@@ -18,8 +19,15 @@ func ProjectSpecToProtoRedacted(spec *compose.NormalizedProjectSpec) *agentcompo
 
 // RedactProjectSpecSecrets returns a user-facing copy of a project spec. It
 // leaves the persisted/runtime representation untouched while hiding every
-// explicitly secret environment value and every inherently secret source or
+// explicitly secret environment value, every first-party LLM credential the
+// daemon absorbs into its own connection, and every inherently secret source or
 // OctoBus credential.
+//
+// An absorbed credential is redacted whether or not the declaration marked it
+// secret. Its value never reaches the sandbox, so a view that echoed it would
+// hand out a daemon-held credential through an API whose other responses are
+// careful not to. The variable name stays visible: the operator needs to see
+// what they declared, and the project check already reports it.
 func RedactProjectSpecSecrets(spec *agentcomposev2.ProjectSpec) *agentcomposev2.ProjectSpec {
 	if spec == nil {
 		return nil
@@ -83,7 +91,10 @@ func redactWorkspaceSpec(value *agentcomposev2.WorkspaceSpec) {
 
 func redactEnvVarSpecs(values []*agentcomposev2.EnvVarSpec) {
 	for _, value := range values {
-		if value != nil && value.GetSecret() {
+		if value == nil {
+			continue
+		}
+		if value.GetSecret() || (value.GetValue() != "" && llms.AbsorbedCredentialEnvName(value.GetName())) {
 			value.Value = secretRedactedValue
 		}
 	}

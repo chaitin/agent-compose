@@ -184,8 +184,10 @@ daemon 会把它写进自己的连接配置，而不是把它交给 agent runtim
 `ANTHROPIC_BASE_URL`、`ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、
 `OPENROUTER_BASE_URL` 都会从 guest 环境中移除，由 managed 层在原处装上 facade 地址。
 只剥 key 是不够的：guest 拿到一个自己已无法认证的上游地址，只会把失败伪装成连通性问题。
-工程与 Agent 的显示视图读的是声明本身，所以仍按原值展示；某次 run 的 facade 地址与 token
-只存在于该 run 的 `RuntimeEnvItems`（`json:"-"`），既不持久化也不显示。
+工程与 Agent 的显示视图读的是声明本身，因此被吸收的凭据按 `********` 展示（变量名保留）：
+值只属于 daemon，视图回显就等于经由 API 把它发出去。识别但不吸收的凭据不脱敏，它们会进入
+sandbox，项目检查的告警才是运维的信号。某次 run 的 facade 地址与 token 只存在于该 run 的
+`RuntimeEnvItems`（`json:"-"`），既不持久化也不显示。
 
 项目检查（`ValidateProject` / `ApplyProject`）对以上三类分别给出 warning：可吸收的
 说明 key 会留在 daemon 并且不会进入 sandbox；识别但不吸收与不识别的说明值会进入

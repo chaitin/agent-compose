@@ -24,6 +24,11 @@ const ProviderScopeDeclared = "declared"
 // check report the exposure instead of passing it through silently.
 const providerFamilyGoogle = "google"
 
+// genericCredentialEnvName is the vendor-neutral declaration. It is handled
+// apart from declaredCredentialSpecs because its protocol follows the agent
+// unless LLM_API_PROTOCOL names one.
+const genericCredentialEnvName = "LLM_API_KEY"
+
 // DeclaredConnectionID is the deterministic id of the connection a sandbox
 // declared for one provider family. It is per sandbox and family so concurrent
 // runs of one sandbox rewrite a single row while different sandboxes never
@@ -201,6 +206,35 @@ func UnprotectedCredentialEnvName(name string) bool {
 	return strings.HasSuffix(normalized, "_API_KEY") || strings.HasSuffix(normalized, "_AUTH_TOKEN")
 }
 
+// AbsorbedCredentialEnvName reports whether name carries a first-party LLM
+// credential the daemon absorbs into its own connection.
+//
+// An absorbed value stays on the daemon and never reaches the sandbox, so any
+// view of the declaration must not echo it: the operator still sees which
+// variable they declared, but a reader of a project response cannot recover the
+// credential from it. Names the daemon cannot absorb are deliberately excluded.
+// They are passed through to the agent runtime, so the project check warning
+// about them is the operator's only signal; hiding the value in a view would
+// not change that exposure and would describe the value as protected when it is
+// not.
+func AbsorbedCredentialEnvName(name string) bool {
+	normalized := strings.ToUpper(strings.TrimSpace(name))
+	if normalized == "" {
+		return false
+	}
+	for _, spec := range declaredCredentialSpecs {
+		if !spec.Absorbable {
+			continue
+		}
+		for _, candidate := range spec.EnvNames {
+			if normalized == strings.ToUpper(candidate) {
+				return true
+			}
+		}
+	}
+	return normalized == genericCredentialEnvName
+}
+
 // recognizeDeclaredCredential is the credential a run uses: the most specific
 // declaration the environment publishes.
 func recognizeDeclaredCredential(items []domain.SandboxEnvVar, canonical Protocol) (declaredCredential, bool) {
@@ -262,7 +296,7 @@ func newDeclaredCredential(spec declaredCredentialSpec, envName, apiKey, declare
 // credential differs between the two. An undeclared protocol falls back to the
 // protocol the agent speaks, which is what the CLI would have picked.
 func genericDeclaredCredential(items []domain.SandboxEnvVar, canonical Protocol) (declaredCredential, bool) {
-	key := envItemFirst(items, "LLM_API_KEY")
+	key := envItemFirst(items, genericCredentialEnvName)
 	if key == "" {
 		return declaredCredential{}, false
 	}
@@ -296,7 +330,7 @@ func genericDeclaredCredential(items []domain.SandboxEnvVar, canonical Protocol)
 		spec.Endpoint = "https://api.anthropic.com"
 		spec.OfficialHosts = []string{"api.anthropic.com"}
 	}
-	return newDeclaredCredential(spec, "LLM_API_KEY", key, envItemFirst(items, "LLM_API_ENDPOINT")), true
+	return newDeclaredCredential(spec, genericCredentialEnvName, key, envItemFirst(items, "LLM_API_ENDPOINT")), true
 }
 
 func isOfficialEndpoint(endpoint string, hosts []string) bool {

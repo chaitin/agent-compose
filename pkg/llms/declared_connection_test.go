@@ -348,3 +348,40 @@ func TestDeclaredEndpointNamesStayOffTheGuestEnv(t *testing.T) {
 		})
 	}
 }
+
+// TestAbsorbedCredentialEnvName pins which declarations the daemon takes over.
+// The set decides both what a run proxies and what a project response redacts,
+// so it is worth stating explicitly rather than deriving it from the specs at
+// the call site.
+func TestAbsorbedCredentialEnvName(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"ANTHROPIC_API_KEY", true},
+		{"ANTHROPIC_AUTH_TOKEN", true},
+		{"OPENAI_API_KEY", true},
+		{"CODEX_API_KEY", true},
+		{"DEEPSEEK_API_KEY", true},
+		{"OPENROUTER_API_KEY", true},
+		{"LLM_API_KEY", true},
+		{"openai_api_key", true},
+		{"  OPENAI_API_KEY  ", true},
+		// Recognized but not absorbable: the value reaches the sandbox, so the
+		// project check warning is the operator's signal and the view keeps it.
+		{"AZURE_OPENAI_API_KEY", false},
+		{"GOOGLE_API_KEY", false},
+		{"GEMINI_API_KEY", false},
+		// Not a credential at all.
+		{"MYCORP_API_KEY", false},
+		{"OPENAI_BASE_URL", false},
+		{"LLM_API_PROTOCOL", false},
+		{"MODE", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := AbsorbedCredentialEnvName(tt.name); got != tt.want {
+			t.Errorf("AbsorbedCredentialEnvName(%q) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}

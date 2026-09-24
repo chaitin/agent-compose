@@ -264,8 +264,12 @@ base 环境在应用 managed 环境之前会剥掉这些 provider 变量名，�
 `ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、
 `OPENROUTER_BASE_URL`）同样被移除，否则 guest 会拿到一个它已无法用 facade token
 认证的上游地址——那是更容易误判的失败，而不是一项能力。工程与 Agent 的显示视图
-读的是声明（project spec），因此仍然显示原值；某次 run 真正使用的 facade 地址与
-token 只存在于该 run 的 `RuntimeEnvItems`，从不落盘。
+读的是声明（project spec），而显示层对**被吸收的凭据**一律脱敏（变量名保留、值显示
+`********`，与该变量是否写 `secret: true` 无关）：吸收后的值只属于 daemon，若视图仍回显，
+就等于经由一个其它响应都很克制的 API 把 daemon 持有的凭据发出去。识别但不吸收的
+`*_API_KEY` 刻意不脱敏——它们会进入 sandbox，项目检查的告警才是运维的信号，在视图里
+遮住值既不会改变暴露，又会把未受保护的值说成受保护。某次 run 真正使用的 facade 地址
+与 token 只存在于该 run 的 `RuntimeEnvItems`，从不落盘。
 
 > 这条替代了 PR #715 的 direct 语义。当时的结论是"agent 自带凭据就让真实 key 进
 > guest"，但那会让 operator 写在 project/agent 环境里的官方 key 出现在 agent
