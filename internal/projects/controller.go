@@ -153,6 +153,7 @@ func (c *Controller) ValidateProject(ctx context.Context, normalized NormalizedP
 	if err != nil {
 		return ValidateResult{}, err
 	}
+	warnings = append(warnings, llmCredentialWarnings(normalized.Spec)...)
 	return ValidateResult{Valid: true, Issues: append(issues, warnings...), SpecHash: normalized.SpecHash}, nil
 }
 
@@ -298,6 +299,7 @@ func (c *Controller) applyProject(ctx context.Context, req ApplyRequest, lifecyc
 	if err != nil {
 		return ApplyResult{}, err
 	}
+	warnings = append(warnings, llmCredentialWarnings(normalized.Spec)...)
 	agentRecords, agentDefinitions, schedulerRecords, _, err := c.projectArtifacts(ctx, project, 0, normalized)
 	if err != nil {
 		return ApplyResult{}, fmt.Errorf("%w: apply project %s: %w", ErrInvalidRequest, normalized.Spec.Name, err)
