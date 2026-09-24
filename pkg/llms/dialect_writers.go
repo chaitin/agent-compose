@@ -30,48 +30,34 @@ func writeDialectGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox, 
 	}
 }
 
-// guestFacadeTokenEnvName is the environment variable a managed guest presents
-// its run-scoped facade token through. A direct guest has no facade and no
-// token, so its CLI reads the vendor's own variable instead.
+// guestFacadeTokenEnvName is the environment variable a guest presents its
+// run-scoped facade token through. Every run goes through the facade, so this is
+// the only credential a guest ever receives.
 const guestFacadeTokenEnvName = "AGENT_COMPOSE_SANDBOX_TOKEN"
 
 // guestCredentialEnv is the generic LLM environment every agent receives: the
 // endpoint to send calls to, the credential to present, and the protocol in use.
 //
-// AGENT_COMPOSE_SANDBOX_TOKEN is deliberately absent in direct mode: there is no
-// facade, so there is no token to present to one.
+// The credential is always the run-scoped facade token. An upstream credential
+// an operator published in project or agent environment is imported into the
+// daemon's connection configuration, so no path puts a real key in a guest.
 func guestCredentialEnv(prepared *AgentLLM) map[string]string {
-	env := map[string]string{
+	return map[string]string{
 		"LLM_API_ENDPOINT": prepared.Endpoint,
 		"LLM_API_KEY":      prepared.Credential,
 		// The protocol in use, for operators and for restart inspection. No guest
 		// runner reads it: the agent's own protocol is pinned by the route it is
 		// configured with.
-		"LLM_API_PROTOCOL": string(prepared.Upstream),
+		"LLM_API_PROTOCOL":      string(prepared.Upstream),
+		guestFacadeTokenEnvName: prepared.Credential,
 	}
-	if !prepared.Direct {
-		env[guestFacadeTokenEnvName] = prepared.Credential
-	}
-	return env
 }
 
 // guestCredentialEnvName is the environment variable the guest CLI reads its
-// credential from. It is exactly the variable guestCredentialEnv, and the
-// dialect writer below, export the credential into.
-//
-// A managed run presents the facade token, so its CLI configuration points at
-// guestFacadeTokenEnvName. A direct run presents the agent's own upstream key,
-// which is exported under the vendor's conventional name; a generated CLI
-// config that still referenced the facade token would read an unset variable and
-// fail to authenticate against the declared upstream.
+// credential from. Every run presents the facade token, so its generated CLI
+// configuration always points at guestFacadeTokenEnvName.
 func guestCredentialEnvName(prepared *AgentLLM) string {
-	if !prepared.Direct {
-		return guestFacadeTokenEnvName
-	}
-	if prepared.Inbound == ProtocolMessages {
-		return "ANTHROPIC_API_KEY"
-	}
-	return "OPENAI_API_KEY"
+	return guestFacadeTokenEnvName
 }
 
 // facadeEndpoint returns the facade route that serves inbound. The route path
@@ -132,10 +118,9 @@ func writeClaudeGuestConfig(_ *appconfig.Config, sandbox *domain.Sandbox, prepar
 func writeOpenCodeGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox, prepared *AgentLLM) (map[string]string, error) {
 	endpoint := prepared.Endpoint
 	// The Anthropic SDK appends the version segment itself, so its provider
-	// base carries /v1 explicitly while the raw facade route does not. A
-	// declared upstream is passed through untouched: the operator owns its path.
+	// base carries /v1 explicitly while the raw facade route does not.
 	configBaseURL := endpoint
-	if prepared.Inbound == ProtocolMessages && !prepared.Direct {
+	if prepared.Inbound == ProtocolMessages {
 		configBaseURL = endpoint + "/v1"
 	}
 	if err := WriteOpenCodeRuntimeConfig(sandbox, prepared.Inbound, prepared.Model, configBaseURL, guestCredentialEnvName(prepared)); err != nil {

@@ -20,6 +20,7 @@ type prepareAgentLLMStore struct {
 	fakeCatalogStore
 	savedTokens []FacadeToken
 	saveErr     error
+	declared    []Provider
 }
 
 func (s *prepareAgentLLMStore) SaveLLMFacadeToken(_ context.Context, token FacadeToken) error {
@@ -27,6 +28,14 @@ func (s *prepareAgentLLMStore) SaveLLMFacadeToken(_ context.Context, token Facad
 		return s.saveErr
 	}
 	s.savedTokens = append(s.savedTokens, token)
+	return nil
+}
+
+// UpsertDeclaredConnection records the connection and makes it visible to the
+// catalog snapshot PrepareAgentLLM reloads, which is what a real store does.
+func (s *prepareAgentLLMStore) UpsertDeclaredConnection(_ context.Context, provider Provider) error {
+	s.declared = append(s.declared, provider)
+	s.providers = append(s.providers, provider)
 	return nil
 }
 

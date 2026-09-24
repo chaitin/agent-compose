@@ -305,17 +305,38 @@ func TestSchedulerCommandExecutorHonoursADeclaredCommandUpstream(t *testing.T) {
 		t.Fatal("runtime did not receive command Sandbox clone")
 	}
 	env := domain.SandboxEnvMap(runtime.session.RuntimeEnvItems)
-	if token := env["AGENT_COMPOSE_SANDBOX_TOKEN"]; token != "" {
-		t.Fatalf("command minted a facade token for a declared upstream: %q", token)
+	// The command's declared upstream is imported and proxied: the guest carries
+	// the facade token, and the declared key stays on the daemon.
+	token := env["AGENT_COMPOSE_SANDBOX_TOKEN"]
+	if token == "" {
+		t.Fatalf("command did not proxy the declared upstream: %#v", env)
 	}
-	if env["OPENAI_BASE_URL"] != "https://declared.upstream.test/v1" || env["OPENAI_API_KEY"] != "declared-upstream-key" {
-		t.Fatalf("declared command environment = %#v", env)
+	if env["OPENAI_API_KEY"] != token {
+		t.Fatalf("declared command did not present the facade token: %#v", env)
+	}
+	if env["OPENAI_BASE_URL"] == "https://declared.upstream.test/v1" {
+		t.Fatalf("guest still points at the declared upstream: %#v", env)
+	}
+	for name, value := range env {
+		if strings.Contains(value, "declared-upstream-key") {
+			t.Fatalf("env[%s] carries the declared upstream key", name)
+		}
 	}
 	if env["CODEX_MODEL"] != "declared-model" {
 		t.Fatalf("declared command model = %#v", env)
 	}
 	if got := countSchedulerCommandFacadeTokens(t, ctx, configDB); got != 0 {
-		t.Fatalf("persisted scheduler command tokens for a declared upstream = %d, want 0", got)
+		t.Fatalf("scheduler command tokens still live after completion = %d, want 0", got)
+	}
+	// The declaration was imported into the daemon's own connection
+	// configuration, which is what let the command proxy it.
+	var apiKey string
+	declaredID := llms.DeclaredConnectionID(session.Summary.ID, llms.ProviderFamilyOpenAI)
+	if err := configDB.DB().QueryRowContext(ctx, `SELECT api_key FROM llm_provider WHERE id = ?`, declaredID).Scan(&apiKey); err != nil {
+		t.Fatalf("read declared connection %q: %v", declaredID, err)
+	}
+	if apiKey != "declared-upstream-key" {
+		t.Error("the daemon-side connection does not carry the declared credential")
 	}
 }
 
@@ -362,17 +383,38 @@ func TestSchedulerCommandExecutorRecoversLegacyProviderEnv(t *testing.T) {
 		t.Fatal("runtime did not receive command Sandbox clone")
 	}
 	env := domain.SandboxEnvMap(runtime.session.RuntimeEnvItems)
-	if token := env["AGENT_COMPOSE_SANDBOX_TOKEN"]; token != "" {
-		t.Fatalf("command minted a facade token for a recovered legacy upstream: %q", token)
+	// The recovered legacy declaration is proxied too: the command presents the
+	// facade token and the recovered key stays on the daemon.
+	token := env["AGENT_COMPOSE_SANDBOX_TOKEN"]
+	if token == "" {
+		t.Fatalf("command did not proxy the recovered legacy upstream: %#v", env)
 	}
-	if env["OPENAI_BASE_URL"] != "https://legacy.upstream.test/v1" || env["OPENAI_API_KEY"] != "legacy-upstream-key" {
-		t.Fatalf("recovered legacy command environment = %#v", env)
+	if env["OPENAI_API_KEY"] != token {
+		t.Fatalf("recovered legacy command did not present the facade token: %#v", env)
+	}
+	if env["OPENAI_BASE_URL"] == "https://legacy.upstream.test/v1" {
+		t.Fatalf("guest still points at the recovered legacy upstream: %#v", env)
+	}
+	for name, value := range env {
+		if strings.Contains(value, "legacy-upstream-key") {
+			t.Fatalf("env[%s] carries the recovered legacy key", name)
+		}
 	}
 	if env["CODEX_MODEL"] != "legacy-model" {
 		t.Fatalf("command did not use the recovered legacy model: %#v", env)
 	}
 	if got := countSchedulerCommandFacadeTokens(t, ctx, configDB); got != 0 {
-		t.Fatalf("persisted scheduler command tokens for a recovered legacy upstream = %d, want 0", got)
+		t.Fatalf("scheduler command tokens still live after a recovered legacy run = %d, want 0", got)
+	}
+	// The recovered declaration was imported into the daemon's own connection
+	// configuration, which is what let the command proxy it.
+	var apiKey string
+	declaredID := llms.DeclaredConnectionID(session.Summary.ID, llms.ProviderFamilyOpenAI)
+	if err := configDB.DB().QueryRowContext(ctx, `SELECT api_key FROM llm_provider WHERE id = ?`, declaredID).Scan(&apiKey); err != nil {
+		t.Fatalf("read declared connection %q: %v", declaredID, err)
+	}
+	if apiKey != "legacy-upstream-key" {
+		t.Error("the daemon-side connection does not carry the recovered legacy credential")
 	}
 }
 

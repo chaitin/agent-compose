@@ -57,7 +57,7 @@ func TestEnsureSessionCommandFacadeConfigConfiguresSelectedAgent(t *testing.T) {
 	}
 }
 
-func TestEnsureSessionCommandFacadeConfigHonoursADeclaredUpstream(t *testing.T) {
+func TestEnsureSessionCommandFacadeConfigProxiesADeclaredUpstream(t *testing.T) {
 	isolateLLMEnv(t)
 
 	ctx := context.Background()
@@ -82,22 +82,48 @@ func TestEnsureSessionCommandFacadeConfigHonoursADeclaredUpstream(t *testing.T) 
 	if err != nil {
 		t.Fatalf("EnsureSessionCommandFacadeConfig returned error: %v", err)
 	}
-	// The declared upstream owns the command: the CLI is pointed straight at it
-	// with its own key and no facade token exists to present to a facade.
-	if token := result.Env["AGENT_COMPOSE_SANDBOX_TOKEN"]; token != "" {
-		t.Fatalf("command facade token for a declared upstream = %q", token)
+	// The daemon owns the declared upstream: the command is pointed at the
+	// facade with a run-scoped token, and the declared key stays on the daemon.
+	token := result.Env["AGENT_COMPOSE_SANDBOX_TOKEN"]
+	if token == "" {
+		t.Fatalf("command facade token for a declared upstream is empty: %#v", result.Env)
 	}
-	if result.Env["OPENAI_BASE_URL"] != "https://declared.upstream.test/v1" || result.Env["OPENAI_API_KEY"] != "declared-upstream-key" {
-		t.Fatalf("declared command environment = %#v", result.Env)
+	if result.Env["OPENAI_API_KEY"] != token {
+		t.Fatalf("OPENAI_API_KEY = %q, want the facade token", result.Env["OPENAI_API_KEY"])
+	}
+	wantEndpoint := "http://agent-compose.test:7410/api/runtime/sandboxes/sandbox-command-declared-upstream/llm/openai/v1"
+	if result.Env["OPENAI_BASE_URL"] != wantEndpoint {
+		t.Fatalf("OPENAI_BASE_URL = %q, want the facade route %q", result.Env["OPENAI_BASE_URL"], wantEndpoint)
+	}
+	for name, value := range result.Env {
+		if strings.Contains(value, "declared-upstream-key") {
+			t.Fatalf("env[%s] carries the declared upstream key", name)
+		}
 	}
 	if result.Env["CODEX_MODEL"] != "declared-model" || result.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses {
 		t.Fatalf("declared command model/protocol = %#v", result.Env)
 	}
-	if len(result.TokenHashes) != 0 {
-		t.Fatalf("command token hashes = %#v, want none", result.TokenHashes)
+	if len(result.TokenHashes) != 1 {
+		t.Fatalf("command token hashes = %#v, want exactly one", result.TokenHashes)
 	}
-	if got := countCommandFacadeTokens(t, ctx, store, "run-declared-upstream"); got != 0 {
-		t.Fatalf("persisted command facade tokens for a declared upstream = %d, want 0", got)
+	if got := countCommandFacadeTokens(t, ctx, store, "run-declared-upstream"); got != 1 {
+		t.Fatalf("persisted command facade tokens for a declared upstream = %d, want 1", got)
+	}
+	// The declaration was imported into the daemon's own connection
+	// configuration, which is what leaves the guest with nothing but a token.
+	var apiKey, baseURL, scope string
+	declaredID := llms.DeclaredConnectionID(session.Summary.ID, llms.ProviderFamilyOpenAI)
+	if err := store.DB().QueryRowContext(ctx, `SELECT api_key, base_url, scope FROM llm_provider WHERE id = ?`, declaredID).Scan(&apiKey, &baseURL, &scope); err != nil {
+		t.Fatalf("read declared connection %q: %v", declaredID, err)
+	}
+	if apiKey != "declared-upstream-key" {
+		t.Error("the daemon-side connection does not carry the declared credential")
+	}
+	if !strings.Contains(baseURL, "declared.upstream.test") {
+		t.Errorf("declared connection base_url = %q, want the declared endpoint", baseURL)
+	}
+	if scope != llms.ProviderScopeDeclared {
+		t.Errorf("declared connection scope = %q, want %q", scope, llms.ProviderScopeDeclared)
 	}
 }
 

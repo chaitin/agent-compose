@@ -375,11 +375,23 @@ func TestAgentRunnerExecuteAgentRunHonoursTheSandboxProviderEnv(t *testing.T) {
 		t.Fatalf("runtime specs = %#v", runtime.specs)
 	}
 	env := runtime.specs[0].Env
-	if token := env["AGENT_COMPOSE_SANDBOX_TOKEN"]; token != "" {
-		t.Fatalf("run minted a facade token for a declared upstream: %q", token)
+	// The declared upstream is imported into the daemon's connection
+	// configuration and proxied, so the run presents only a facade token and the
+	// declared key never reaches the guest.
+	token := env["AGENT_COMPOSE_SANDBOX_TOKEN"]
+	if token == "" {
+		t.Fatalf("run did not proxy the declared upstream: %#v", env)
 	}
-	if env["ANTHROPIC_BASE_URL"] != "https://declared.upstream.test" || env["ANTHROPIC_API_KEY"] != "declared-upstream-key" {
-		t.Fatalf("declared run environment = %#v", env)
+	if env["ANTHROPIC_API_KEY"] != token || env["ANTHROPIC_AUTH_TOKEN"] != token {
+		t.Fatalf("declared run did not present the facade token: %#v", env)
+	}
+	if env["ANTHROPIC_BASE_URL"] == "https://declared.upstream.test" {
+		t.Fatalf("guest still points at the declared upstream: %#v", env)
+	}
+	for name, value := range env {
+		if strings.Contains(value, "declared-upstream-key") {
+			t.Fatalf("env[%s] carries the declared upstream key", name)
+		}
 	}
 	if env["ANTHROPIC_MODEL"] != "declared-model" || env["CLAUDE_MODEL"] != "declared-model" {
 		t.Fatalf("run did not use the declared model: %#v", env)
@@ -389,7 +401,17 @@ func TestAgentRunnerExecuteAgentRunHonoursTheSandboxProviderEnv(t *testing.T) {
 		t.Fatalf("count facade tokens: %v", err)
 	}
 	if tokens != 0 {
-		t.Fatalf("facade tokens minted for a declared upstream = %d, want 0", tokens)
+		t.Fatalf("facade tokens still live after a completed declared run = %d, want 0", tokens)
+	}
+	// The declaration was imported into the daemon's own connection
+	// configuration, which is what let the run proxy it.
+	var apiKey string
+	declaredID := llms.DeclaredConnectionID(session.Summary.ID, llms.ProviderFamilyAnthropic)
+	if err := configDB.DB().QueryRowContext(ctx, `SELECT api_key FROM llm_provider WHERE id = ?`, declaredID).Scan(&apiKey); err != nil {
+		t.Fatalf("read declared connection %q: %v", declaredID, err)
+	}
+	if apiKey != "declared-upstream-key" {
+		t.Error("the daemon-side connection does not carry the declared credential")
 	}
 }
 
@@ -454,11 +476,22 @@ func TestAgentRunnerExecuteAgentRunRecoversLegacyProviderEnv(t *testing.T) {
 		t.Fatalf("runtime specs = %#v", runtime.specs)
 	}
 	env := runtime.specs[0].Env
-	if token := env["AGENT_COMPOSE_SANDBOX_TOKEN"]; token != "" {
-		t.Fatalf("run minted a facade token for a recovered legacy upstream: %q", token)
+	// The recovered legacy declaration is proxied like any other: the run
+	// presents the facade token and the recovered key stays on the daemon.
+	token := env["AGENT_COMPOSE_SANDBOX_TOKEN"]
+	if token == "" {
+		t.Fatalf("run did not proxy the recovered legacy upstream: %#v", env)
 	}
-	if env["OPENAI_BASE_URL"] != "https://legacy.upstream.test/v1" || env["OPENAI_API_KEY"] != "legacy-upstream-key" {
-		t.Fatalf("recovered legacy run environment = %#v", env)
+	if env["OPENAI_API_KEY"] != token {
+		t.Fatalf("recovered legacy run did not present the facade token: %#v", env)
+	}
+	if env["OPENAI_BASE_URL"] == "https://legacy.upstream.test/v1" {
+		t.Fatalf("guest still points at the recovered legacy upstream: %#v", env)
+	}
+	for name, value := range env {
+		if strings.Contains(value, "legacy-upstream-key") {
+			t.Fatalf("env[%s] carries the recovered legacy key", name)
+		}
 	}
 	if env["CODEX_MODEL"] != "legacy-model" {
 		t.Fatalf("run did not use the recovered legacy model: %#v", env)
@@ -468,7 +501,17 @@ func TestAgentRunnerExecuteAgentRunRecoversLegacyProviderEnv(t *testing.T) {
 		t.Fatalf("count facade tokens: %v", err)
 	}
 	if tokens != 0 {
-		t.Fatalf("facade tokens minted for a recovered legacy upstream = %d, want 0", tokens)
+		t.Fatalf("facade tokens still live after a completed recovered legacy run = %d, want 0", tokens)
+	}
+	// The recovered declaration was imported into the daemon's own connection
+	// configuration, which is what let the run proxy it.
+	var apiKey string
+	declaredID := llms.DeclaredConnectionID(session.Summary.ID, llms.ProviderFamilyOpenAI)
+	if err := configDB.DB().QueryRowContext(ctx, `SELECT api_key FROM llm_provider WHERE id = ?`, declaredID).Scan(&apiKey); err != nil {
+		t.Fatalf("read declared connection %q: %v", declaredID, err)
+	}
+	if apiKey != "legacy-upstream-key" {
+		t.Error("the daemon-side connection does not carry the recovered legacy credential")
 	}
 }
 

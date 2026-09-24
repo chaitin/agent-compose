@@ -11,10 +11,16 @@ import (
 )
 
 // AgentLLMStore is the persistence surface PrepareAgentLLM needs: the
-// connection catalog it resolves against and the facade token it mints.
+// connection catalog it resolves against, the facade token it mints, and the
+// connection it derives from an agent's own declaration.
 type AgentLLMStore interface {
 	CatalogStore
 	SaveLLMFacadeToken(ctx context.Context, token FacadeToken) error
+	// UpsertDeclaredConnection persists an upstream an agent declared in its own
+	// environment as a run-scoped connection. Persisting it is what lets the
+	// proxy resolve the connection by id at request time, so the declared
+	// credential never has to reach the guest.
+	UpsertDeclaredConnection(ctx context.Context, provider Provider) error
 }
 
 // AgentLLMRequest describes the managed LLM configuration of one agent run.
@@ -26,9 +32,9 @@ type AgentLLMRequest struct {
 	// Model is the opaque model the agent declared. Empty selects the catalog
 	// default model.
 	Model string
-	// AgentEnv is the environment the agent declared for itself. When it
-	// publishes an LLM connection, that connection owns this run and the catalog
-	// is not consulted at all.
+	// AgentEnv is the environment the agent declared for itself. A first-party
+	// LLM credential it publishes becomes a daemon-owned connection, so the run
+	// is proxied and the credential stays on the daemon.
 	AgentEnv []domain.SandboxEnvVar
 	Source   string
 	RunID    string
@@ -60,29 +66,29 @@ type AgentLLM struct {
 	Token      string
 	BaseURL    string
 	// Endpoint is the base URL the guest is pointed at: the daemon's facade
-	// route in managed mode, or the upstream the agent declared in direct mode.
+	// route.
 	Endpoint string
 	// Credential is what the guest presents at Endpoint: a run-scoped facade
-	// token in managed mode, or the agent's own upstream key in direct mode.
+	// token. The daemon never exports an upstream credential to the guest.
 	Credential string
-	// Direct reports that the agent declared its own upstream, so the daemon
-	// neither proxies nor converts this run's calls.
-	Direct bool
-	Env    map[string]string
+	Env        map[string]string
 }
 
 // PrepareAgentLLM is the single entry point that turns configured connections
 // into the guest-facing LLM configuration of one agent run.
 //
-// It makes every LLM decision in one place: whether the agent or the daemon owns
-// the upstream, which model, which connection, which inbound protocol the agent
-// needs, and whether that implies protocol conversion. The guest resolves
-// nothing; it receives an endpoint, a credential, and an already-composed model
-// string.
+// It makes every LLM decision in one place: which model, which connection,
+// which inbound protocol the agent needs, and whether that implies protocol
+// conversion. The guest resolves nothing; it receives an endpoint, a credential,
+// and an already-composed model string.
 //
-// The two modes are mutually exclusive. An agent that declares its own LLM
-// connection in its environment is served by that connection and the catalog is
-// not consulted; an agent that declares none is served by the catalog.
+// A first-party credential an agent declares in its own environment does not
+// make the agent the owner of the upstream. The declaration is imported into the
+// daemon's connection configuration and the run is served through the facade
+// like any other managed run, so the upstream key stays on the daemon and only a
+// run-scoped token reaches the sandbox. This is what makes publishing a key in
+// project or agent environment safe; the alternative — handing the key to the
+// guest — is exactly the exposure the daemon exists to prevent.
 //
 // A catalog with no model to apply returns ErrNoModel, which callers treat as
 // "the agent manages its own authentication". Every other failure is a real
@@ -99,27 +105,44 @@ func PrepareAgentLLM(ctx context.Context, req AgentLLMRequest) (*AgentLLM, error
 	if err != nil {
 		return nil, err
 	}
-	if upstream, declared := directUpstreamFromAgentEnv(req.AgentEnv, dialect); declared {
-		return prepareDirectAgentLLM(req, dialect, upstream)
+	declared, hasDeclared := DeclaredUpstreamFromAgentEnv(req.Sandbox.Summary.ID, req.AgentEnv, dialect, req.Model)
+	if hasDeclared && declared.Model == "" {
+		// A declaration that names no model has nothing to serve: guessing the
+		// catalog default would send an arbitrary model to the endpoint the agent
+		// named. Report it before persisting so a run that cannot use the
+		// credential does not leave it in the daemon's configuration.
+		return nil, ErrNoModel
+	}
+	if hasDeclared {
+		if err := req.Store.UpsertDeclaredConnection(ctx, declared.Provider); err != nil {
+			return nil, err
+		}
 	}
 	catalog, err := LoadCatalog(ctx, req.Store)
 	if err != nil {
 		return nil, err
 	}
-	// Select the model before checking anything the facade needs, so an agent
-	// the daemon does not manage reports ErrNoModel even when this daemon has no
-	// sandbox-reachable URL. Such an agent keeps its own endpoint and credential,
-	// and a missing daemon URL is not its problem.
-	model, err := catalog.SelectModel(req.Model)
-	if err != nil {
-		return nil, err
+	var model string
+	connectionID := ""
+	if hasDeclared {
+		connectionID = declared.Provider.ID
+		model = declared.Model
+	} else {
+		// Select the model before checking anything the facade needs, so an agent
+		// the daemon does not manage reports ErrNoModel even when this daemon has
+		// no sandbox-reachable URL. Such an agent keeps its own endpoint and
+		// credential, and a missing daemon URL is not its problem.
+		model, err = catalog.SelectModel(req.Model)
+		if err != nil {
+			return nil, err
+		}
 	}
 	baseURL := GuestRuntimeBaseURL(req.Config, req.Sandbox)
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, domain.ClassifyError(domain.ErrFailedPrecondition,
 			fmt.Sprintf("agent %q needs a daemon URL reachable from the sandbox; configure %s", dialect.Kind, RuntimeBaseURLEnvName), nil)
 	}
-	target, err := catalog.Resolve("", model, dialect.PreferredProtocols())
+	target, err := catalog.Resolve(connectionID, model, dialect.PreferredProtocols())
 	if err != nil {
 		return nil, err
 	}

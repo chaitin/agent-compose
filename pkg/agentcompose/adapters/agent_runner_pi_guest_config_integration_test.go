@@ -208,9 +208,10 @@ func TestIntegrationAgentRunnerFreshGuestHomeIncludesEveryGeneratedProviderFile(
 			if !slices.Equal(runtime.dirWrites, []string{"/workspace", "/root"}) {
 				t.Fatalf("initial seeding order = %v", runtime.dirWrites)
 			}
-			// The sandbox declares its own upstream, so the declared credential
-			// is passed through: direct mode mints no facade token. An agent
-			// kind with no LLM dialect receives no configuration at all.
+			// The sandbox declares its own upstream, so the daemon imports the
+			// declaration and proxies it: the guest environment carries only the
+			// run-scoped facade token, never the declared key. An agent kind with
+			// no LLM dialect receives no configuration at all.
 			environment := map[string]string{}
 			for _, item := range sandbox.RuntimeEnvItems {
 				environment[item.Name] = item.Value
@@ -221,11 +222,20 @@ func TestIntegrationAgentRunnerFreshGuestHomeIncludesEveryGeneratedProviderFile(
 				}
 				return
 			}
-			if environment["LLM_API_KEY"] != "fixture-upstream-key" || environment["LLM_API_ENDPOINT"] != "https://upstream.example.test/v1" {
-				t.Fatalf("declared upstream was not passed through for %s: %#v", test.provider, environment)
+			token := environment["AGENT_COMPOSE_SANDBOX_TOKEN"]
+			if token == "" {
+				t.Fatalf("declared upstream was not proxied for %s: %#v", test.provider, environment)
 			}
-			if environment["AGENT_COMPOSE_SANDBOX_TOKEN"] != "" {
-				t.Fatalf("direct preparation minted a facade token for %s: %#v", test.provider, environment)
+			if environment["LLM_API_KEY"] != token {
+				t.Fatalf("LLM_API_KEY = %q, want the facade token for %s", environment["LLM_API_KEY"], test.provider)
+			}
+			if !strings.Contains(environment["LLM_API_ENDPOINT"], "/api/runtime/sandboxes/") {
+				t.Fatalf("LLM_API_ENDPOINT = %q, want the daemon facade route for %s", environment["LLM_API_ENDPOINT"], test.provider)
+			}
+			for name, value := range environment {
+				if strings.Contains(value, "fixture-upstream-key") {
+					t.Fatalf("env[%s] carries the declared upstream key for %s", name, test.provider)
+				}
 			}
 		})
 	}
