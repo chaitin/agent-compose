@@ -139,7 +139,7 @@ catalog Provider 只有在最终定义包含非空 API Key 时才可用。
 
 具体规则：
 
-1. run/session 环境里声明的凭据，如果 daemon 能识别，会被吸收成一条 scope 为 `declared` 的连接（ID 为 `session-env:<sandbox-id>:<family>`），再用 Catalog 正常解析它的 endpoint、protocol、key 和选定模型；缺失值不能从 catalog 或 daemon 环境借用。识别不了的 `*_API_KEY` 不参与连接解析，原样下发到 sandbox 环境。
+1. run/session 环境里声明的凭据，如果 daemon 能识别**且能代理**，会被吸收成一条 scope 为 `declared` 的连接（ID 为 `session-env:<sandbox-id>:<family>:<declaration-digest>`，digest 是声明内容的摘要，见 §声明的第一方凭据），再用 Catalog 正常解析它的 endpoint、protocol、key 和选定模型；缺失值不能从 catalog 或 daemon 环境借用。识别不了的 `*_API_KEY` 不参与连接解析，原样下发到 sandbox 环境。
 2. `baizhi/model` 这样的显式自定义引用固定选择 `baizhi`，即使 daemon 已存在完整的默认 `.env` Provider。
 3. Legacy 引用 `openai/model` 和 `anthropic/model` 可以继续使用兼容且完整的 run/session 或 daemon 环境 Provider，但发给上游的模型名只取右侧的 `model`。
 4. 没有显式模型时，完整的 daemon 环境 Provider 仍是全局默认值。
@@ -172,8 +172,8 @@ daemon 会把它写进自己的连接配置，而不是把它交给 agent runtim
 可吸收（写进连接并代理）: LLM_API_KEY（配 LLM_API_PROTOCOL / LLM_API_ENDPOINT）
   ANTHROPIC_API_KEY  ANTHROPIC_AUTH_TOKEN  OPENAI_API_KEY
   CODEX_API_KEY  DEEPSEEK_API_KEY  OPENROUTER_API_KEY
-识别但不吸收（原样下发）: AZURE_OPENAI_API_KEY  GOOGLE_API_KEY  GEMINI_API_KEY
-不识别（原样下发）: 其它 *_API_KEY / *_AUTH_TOKEN
+识别但不吸收（也留在 daemon、从 guest 环境移除）: AZURE_OPENAI_API_KEY  GOOGLE_API_KEY  GEMINI_API_KEY
+不识别（原样下发到 guest）: 其它 *_API_KEY / *_AUTH_TOKEN
 ```
 
 吸收后的连接只按显式 ID 寻址，不进入 `Catalog.serving`、唯一连接兜底与
@@ -184,9 +184,11 @@ daemon 会把它写进自己的连接配置，而不是把它交给 agent runtim
 `ANTHROPIC_BASE_URL`、`ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、
 `OPENROUTER_BASE_URL` 都会从 guest 环境中移除，由 managed 层在原处装上 facade 地址。
 只剥 key 是不够的：guest 拿到一个自己已无法认证的上游地址，只会把失败伪装成连通性问题。
-工程与 Agent 的显示视图读的是声明本身，因此被吸收的凭据按 `********` 展示（变量名保留）：
-值只属于 daemon，视图回显就等于经由 API 把它发出去。识别但不吸收的凭据不脱敏，它们会进入
-sandbox，项目检查的告警才是运维的信号。某次 run 的 facade 地址与 token 只存在于该 run 的
+工程与 Agent 的显示视图读的是声明本身，因此凡是留在 daemon 的凭据（被吸收的，也包括
+识别但不可吸收的）都按 `********` 展示（变量名保留）：值只属于 daemon，视图回显就等于经由
+API 把它发出去。判定直接复用剥离名单 `driver.LLMProviderCredentialEnvName`，所以"视图遮住的"
+与"guest 实际收不到的"不可能不一致。识别不了的 `*_API_KEY` 不脱敏，它们会进入 sandbox，
+项目检查的告警才是运维的信号。某次 run 的 facade 地址与 token 只存在于该 run 的
 `RuntimeEnvItems`（`json:"-"`），既不持久化也不显示。
 
 项目检查（`ValidateProject` / `ApplyProject`）对以上三类分别给出 warning：可吸收的

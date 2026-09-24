@@ -234,22 +234,32 @@ func (c *Catalog) connectionFor(explicitID, model string) (Connection, error) {
 `models.json.default: "gateway/model"` 仍然是 `provider/model`——
 它是 daemon 自有的、无歧义的文档格式，解析它不违反 R-A。
 
-### 3.4 单一路径：可识别的声明由 daemon 吸收，其余照原样下发
+### 3.4 单一路径：可识别的声明由 daemon 持有，只有识别不了的才照原样下发
 
 判据是**这个声明是否是 daemon 认识的第一方凭据**，而不是"agent 是否自带 LLM 连接配置"。
 
 ```
 declared(可吸收) : daemon 认识的官方/知名 vendor 凭据
-          - daemon 把它写成自己的连接（`session-env:<sandbox>:<family>`，scope=declared）
+          - daemon 把它写成自己的连接
+            （`session-env:<sandbox>:<family>:<declaration-digest>`，scope=declared）
           - 用同一个 Catalog 解析这条连接，mint 绑定它的 facade token
           - guest 只拿到 facade URL + token，真实 key 不进 guest
           - 协议转换、模型选择与 daemon 托管路径完全一致
 
-declared(不可吸收) : daemon 认识但代理不了（Azure / Google 专属协议），
-                    或完全不认识的 `*_API_KEY`
+declared(识别但不可吸收) : daemon 认识但代理不了（Azure / Google 专属协议）
+          - 不建连接、不代理，但 name 在剥离名单上，guest 环境里同样没有它
+          - 值只留在 daemon 侧的声明里，项目检查说明它不会被转发
+
+declared(不可识别) : 完全不认识的 `*_API_KEY` / `*_AUTH_TOKEN`
           - 原样下发到 guest 环境
           - daemon 无法保护，只能在项目检查里告警
 ```
+
+连接 ID 里的 digest 是**声明内容**的摘要（endpoint、凭据、呈现方式）。声明是 run 级的
+——run 请求可以自带 env，所以同一个 sandbox 的两个 run 可以声明不同的上游；只按
+sandbox+family 作键会让一个 run 的 preparation 覆盖另一个 run 仍在自己 facade token
+里解析的上游，把后者的请求用错误的凭据发出去。声明相同的两个 run 仍然共用一行，
+重复 preparation 因此是幂等的。
 
 可吸收集合：`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、
 `CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`，以及通用的
@@ -264,9 +274,11 @@ base 环境在应用 managed 环境之前会剥掉这些 provider 变量名，�
 `ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、
 `OPENROUTER_BASE_URL`）同样被移除，否则 guest 会拿到一个它已无法用 facade token
 认证的上游地址——那是更容易误判的失败，而不是一项能力。工程与 Agent 的显示视图
-读的是声明（project spec），而显示层对**被吸收的凭据**一律脱敏（变量名保留、值显示
-`********`，与该变量是否写 `secret: true` 无关）：吸收后的值只属于 daemon，若视图仍回显，
-就等于经由一个其它响应都很克制的 API 把 daemon 持有的凭据发出去。识别但不吸收的
+读的是声明（project spec），而显示层对**所有留在 daemon 的凭据**一律脱敏（变量名保留、
+值显示 `********`，与该变量是否写 `secret: true` 无关）：这类值只属于 daemon，若视图仍
+回显，就等于经由一个其它响应都很克制的 API 把 daemon 持有的凭据发出去。判定用的是
+**剥离名单本身**（`driver.LLMProviderCredentialEnvName`）而不是"可吸收"子集，因为
+不可吸收的已识别凭据同样不会进入 guest——用可吸收子集会漏掉它们。识别不了的
 `*_API_KEY` 刻意不脱敏——它们会进入 sandbox，项目检查的告警才是运维的信号，在视图里
 遮住值既不会改变暴露，又会把未受保护的值说成受保护。某次 run 真正使用的 facade 地址
 与 token 只存在于该 run 的 `RuntimeEnvItems`，从不落盘。

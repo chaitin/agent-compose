@@ -248,7 +248,7 @@ variables:
 
 `variables` 当前用于保存项目级配置值和脱敏语义。若某个值要传入 sandbox，仍需在对应 Agent 的 `env` 中声明。
 
-在这里声明的第一方 LLM 凭据不会交给 sandbox：daemon 会把它导入自己的 LLM 连接并代理本次 run，sandbox 只会收到本次 run 的 facade token。可识别的变量名包括 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、`CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`，以及可配合 `LLM_API_PROTOCOL`、`LLM_API_ENDPOINT` 的 `LLM_API_KEY`。被吸收的声明会连同它的端点变量一起留在 daemon：`LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、`OPENROUTER_BASE_URL` 都不会进入 sandbox，daemon 会在原处装上同一协议对应的 facade 地址。`AZURE_OPENAI_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY` 能被识别但无法代理，其它 `*_API_KEY` 则完全不被识别；这些值会原样进入 sandbox。项目检查会对这三种情况分别告警，并建议改用 daemon 侧的 LLM 配置——那才是凭据可以被显式管理、轮换和共享的地方。另外，被吸收的凭据在工程与 Agent 视图中一律脱敏显示为 `********`，无论声明里有没有写 `secret: true`：变量名仍然保留，运维能看到自己声明了什么，但值不再回显。这只影响展示，不影响 daemon 解析到的声明；某次 run 实际使用的 facade 地址与 token 只存在于该次 run 的环境中，不会被持久化。
+在这里声明的第一方 LLM 凭据不会交给 sandbox：daemon 会把它导入自己的 LLM 连接并代理本次 run，sandbox 只会收到本次 run 的 facade token。可识别的变量名包括 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、`CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`，以及可配合 `LLM_API_PROTOCOL`、`LLM_API_ENDPOINT` 的 `LLM_API_KEY`。被吸收的声明会连同它的端点变量一起留在 daemon：`LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、`OPENROUTER_BASE_URL` 都不会进入 sandbox，daemon 会在原处装上同一协议对应的 facade 地址。`AZURE_OPENAI_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY` 能被识别但无法代理：daemon 会把它们从 sandbox 环境中移除，而不是转发一个自己无法服务的凭据，因此 agent 同样看不到它们。只有 daemon 完全不认识的形似凭据的名字（其它 `*_API_KEY`、`*_AUTH_TOKEN`）才会原样进入 sandbox，sandbox 内的进程可以读到。项目检查会分别说明每个声明属于哪种情况，并建议改用 daemon 侧的 LLM 配置——那才是凭据可以被显式管理、轮换和共享的地方。凡是 daemon 不交给 sandbox 的凭据——无论是否被吸收——在工程与 Agent 视图中一律脱敏为 `********`，无论声明里有没有写 `secret: true`；变量名仍然保留，运维能看到自己声明了什么。`OPENAI_BASE_URL` 这类端点是地址而非凭据，仍按原值显示。这只影响展示，不影响 daemon 解析到的声明；某次 run 实际使用的 facade 地址与 token 只存在于该次 run 的环境中，不会被持久化。
 
 ## `workspaces`：项目级工作区
 
@@ -796,7 +796,7 @@ env:
 
 这些值进入 Agent sandbox。相同名称的空项会在后续边界归一化；`secret: true` 控制展示脱敏。
 
-在这里声明的可识别第一方 LLM 凭据是例外——`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、`CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`、`LLM_API_KEY`：daemon 会把它们导入自己的 LLM 连接并代理本次 run，sandbox 只会收到 facade token。被吸收的声明会连同端点变量一起留在 daemon——`LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、`OPENROUTER_BASE_URL` 都会从 sandbox 环境中移除，并在原处装上 facade 地址。daemon 无法代理的凭据（`AZURE_OPENAI_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY`）以及无法识别的 `*_API_KEY` 会原样下发，sandbox 内任何进程都能读到，项目检查会对此告警。
+在这里声明的可识别第一方 LLM 凭据是例外——`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、`CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`、`LLM_API_KEY`：daemon 会把它们导入自己的 LLM 连接并代理本次 run，sandbox 只会收到 facade token。被吸收的声明会连同端点变量一起留在 daemon——`LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、`OPENROUTER_BASE_URL` 都会从 sandbox 环境中移除，并在原处装上 facade 地址。daemon 能识别但无法代理的凭据（`AZURE_OPENAI_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY`）同样会从 sandbox 环境中移除，并在工程/Agent 视图中与被吸收的凭据一起脱敏。只有无法识别的形似凭据的名字（其它 `*_API_KEY`、`*_AUTH_TOKEN`）才会原样下发，sandbox 内任何进程都能读到；项目检查会说明每个声明属于哪种情况。
 
 ### `mcp_servers`
 
