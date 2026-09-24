@@ -82,11 +82,17 @@ func TestSandboxEnvMapDropsDeclaredProviderEndpoints(t *testing.T) {
 	}
 }
 
-// TestLLMProviderCredentialEnvNameCoversEveryVendorAlias pins the credential
-// denylist itself. pkg/llms recognizes a superset of spellings per vendor, and a
-// name the recognition table knows but this list does not would let a real
-// upstream credential reach the guest under its own name while the run was being
-// proxied — the exact gap a review found in CODEX_API_KEY and DEEPSEEK_API_KEY.
+// TestLLMProviderCredentialEnvNameCoversEveryVendorAlias pins the driver-side
+// denylist itself, including that an address is not a credential and that an
+// unrecognized name is not reported as held by the daemon.
+//
+// This test cannot detect the drift that matters, because it restates the list it
+// checks. That guarantee lives on the other side of the dependency edge: pkg/llms
+// cannot be imported here, so
+// llms.TestDeclaredCredentialNamesAreAllOnTheGuestDenylist walks the recognition
+// table and asserts every name it knows is denied below. Adding a vendor alias to
+// pkg/llms without adding it here therefore fails in pkg/llms — the package the
+// new alias is written in, which is where the author sees it.
 func TestLLMProviderCredentialEnvNameCoversEveryVendorAlias(t *testing.T) {
 	denied := []string{
 		"LLM_API_KEY", "LLM_API_HEADERS",

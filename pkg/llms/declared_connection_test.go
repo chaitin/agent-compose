@@ -363,12 +363,12 @@ func TestDeclaredCredentialNamesAreAllOnTheGuestDenylist(t *testing.T) {
 	for _, spec := range declaredCredentialSpecs {
 		for _, name := range spec.EnvNames {
 			if !driverpkg.LLMProviderCredentialEnvName(name) {
-				t.Errorf("credential %s (family %s) is recognized but not on the guest denylist: the declared value would reach the sandbox", name, spec.Family)
+				t.Errorf("credential %s (family %s) is recognized but not on the guest denylist: the declared value would reach the sandbox; add it to driver.LLMProviderCredentialEnvName", name, spec.Family)
 			}
 		}
 		for _, name := range spec.EndpointEnvNames {
 			if !driverpkg.LLMProviderEnvName(name) {
-				t.Errorf("endpoint %s (family %s) is recognized but not on the guest denylist: the declared address would reach the sandbox", name, spec.Family)
+				t.Errorf("endpoint %s (family %s) is recognized but not on the guest denylist: the declared address would reach the sandbox; add it to driver.LLMProviderEnvName", name, spec.Family)
 			}
 		}
 	}

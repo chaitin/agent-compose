@@ -107,6 +107,14 @@ type declaredCredentialSpec struct {
 // credentials. Order matters only between names that can both be set for one
 // vendor: the API key is the more specific declaration, so it wins over a
 // bearer token.
+//
+// Adding a name here is not sufficient. Every name in this table, and every
+// endpoint name in EndpointEnvNames, must also be on the driver's guest denylist
+// (pkg/driver), or the daemon will proxy a credential while the same real value
+// rides the base environment into the sandbox under its own name. That
+// requirement is what TestDeclaredCredentialNamesAreAllOnTheGuestDenylist reads
+// this table for; it is the only thing comparing the two lists, because
+// pkg/driver cannot import pkg/llms.
 var declaredCredentialSpecs = []declaredCredentialSpec{
 	{
 		EnvNames:         []string{"ANTHROPIC_API_KEY"},
