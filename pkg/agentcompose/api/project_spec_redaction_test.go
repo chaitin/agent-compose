@@ -44,27 +44,56 @@ func TestRedactProjectSpecSecretsHidesAbsorbedCredentials(t *testing.T) {
 	}
 }
 
-// TestRedactProjectSpecSecretsKeepsUnprotectedCredentialsVisible pins the
-// deliberate limit of the rule. A credential the daemon cannot absorb reaches
-// the agent runtime, so the project check warns about it; redacting it here
-// would describe a value as protected when it is not, and would hide the one
-// signal an operator gets.
-func TestRedactProjectSpecSecretsKeepsUnprotectedCredentialsVisible(t *testing.T) {
-	spec := &agentcomposev2.ProjectSpec{
+// TestRedactProjectSpecSecretsHidesEveryProviderCredential pins the rule to the
+// denylist rather than to the subset the daemon can proxy. A recognized
+// credential the facade cannot absorb is still removed from the guest
+// environment, so the declaration is again the only place the value survives and
+// a view must not return it.
+func TestRedactProjectSpecSecretsHidesEveryProviderCredential(t *testing.T) {
+	redacted := RedactProjectSpecSecrets(&agentcomposev2.ProjectSpec{
 		Agents: []*agentcomposev2.AgentSpec{{
 			Name: "reviewer",
 			Env: []*agentcomposev2.EnvVarSpec{
 				{Name: "GOOGLE_API_KEY", Value: "unproxyable"},
 				{Name: "AZURE_OPENAI_API_KEY", Value: "unproxyable"},
+				{Name: "GEMINI_API_KEY", Value: "unproxyable"},
+				{Name: "CODEX_API_KEY", Value: "absorbed"},
+				{Name: "DEEPSEEK_API_KEY", Value: "absorbed"},
+				{Name: "LLM_API_HEADERS", Value: `{"X-Gateway-Token":"header"}`},
+			},
+		}},
+	})
+
+	for _, item := range redacted.Agents[0].Env {
+		if got := item.GetValue(); got != secretRedactedValue {
+			t.Errorf("%s = %q, want %q", item.GetName(), got, secretRedactedValue)
+		}
+	}
+}
+
+// TestRedactProjectSpecSecretsKeepsUnrecognizedCredentialsVisible pins the
+// deliberate limit of the rule. A credential-looking name the denylist does not
+// know really is passed through to the guest, so the project check warning is
+// the operator's only signal; redacting the view would describe the value as
+// protected without changing the exposure.
+func TestRedactProjectSpecSecretsKeepsUnrecognizedCredentialsVisible(t *testing.T) {
+	spec := &agentcomposev2.ProjectSpec{
+		Agents: []*agentcomposev2.AgentSpec{{
+			Name: "reviewer",
+			Env: []*agentcomposev2.EnvVarSpec{
 				{Name: "MYCORP_API_KEY", Value: "unrecognized"},
+				{Name: "MYCORP_AUTH_TOKEN", Value: "unrecognized"},
+				// An address is not a credential: the operator declared it for the
+				// daemon, and the views keep showing what they wrote.
 				{Name: "ANTHROPIC_BASE_URL", Value: "https://upstream.example"},
+				{Name: "LLM_API_ENDPOINT", Value: "https://upstream.example/v1"},
 			},
 		}},
 	}
 
 	redacted := RedactProjectSpecSecrets(spec)
 
-	for index, want := range []string{"unproxyable", "unproxyable", "unrecognized", "https://upstream.example"} {
+	for index, want := range []string{"unrecognized", "unrecognized", "https://upstream.example", "https://upstream.example/v1"} {
 		if got := redacted.Agents[0].Env[index].GetValue(); got != want {
 			t.Errorf("env[%d] = %q, want %q to stay visible", index, got, want)
 		}

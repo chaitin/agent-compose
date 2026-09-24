@@ -204,13 +204,24 @@ func sandboxEnvMap(groups ...[]SandboxEnvVar) map[string]string {
 // authenticate against, which is a confusing failure rather than a useful
 // capability.
 func LLMProviderEnvName(name string) bool {
-	return llmProviderCredentialName(name) || llmProviderEndpointName(name)
+	return LLMProviderCredentialEnvName(name) || llmProviderEndpointName(name)
 }
 
-// llmProviderCredentialName reports whether name is a credential.
-func llmProviderCredentialName(name string) bool {
+// LLMProviderCredentialEnvName reports whether name carries provider credential
+// material. It is the single list of credential names the daemon keeps off a
+// guest, and it also decides whether a view of a declaration may echo the value:
+// a name on this list never reaches the guest, so the daemon holds it alone and
+// a user-facing response must not return it.
+//
+// Every credential the facade can absorb belongs here, including the aliases a
+// vendor accepts (CODEX_API_KEY for an OpenAI credential) and the credentials
+// the daemon can recognize but not proxy. A name the daemon does not recognize
+// is deliberately absent: that value is passed through to the guest, so a view
+// that hid it would describe an exposed value as protected without changing the
+// exposure.
+func LLMProviderCredentialEnvName(name string) bool {
 	switch strings.ToUpper(strings.TrimSpace(name)) {
-	case "LLM_API_KEY", "LLM_API_HEADERS", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENROUTER_API_KEY", "AZURE_OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY":
+	case "LLM_API_KEY", "LLM_API_HEADERS", "OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "AZURE_OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY":
 		return true
 	default:
 		return false

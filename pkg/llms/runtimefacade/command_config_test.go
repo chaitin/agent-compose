@@ -112,9 +112,8 @@ func TestEnsureSessionCommandFacadeConfigProxiesADeclaredUpstream(t *testing.T) 
 	// The declaration was imported into the daemon's own connection
 	// configuration, which is what leaves the guest with nothing but a token.
 	var apiKey, baseURL, scope string
-	declaredID := llms.DeclaredConnectionID(session.Summary.ID, llms.ProviderFamilyOpenAI)
-	if err := store.DB().QueryRowContext(ctx, `SELECT api_key, base_url, scope FROM llm_provider WHERE id = ?`, declaredID).Scan(&apiKey, &baseURL, &scope); err != nil {
-		t.Fatalf("read declared connection %q: %v", declaredID, err)
+	if err := store.DB().QueryRowContext(ctx, `SELECT api_key, base_url, scope FROM llm_provider WHERE id LIKE ?`, llms.DeclaredConnectionPrefix+session.Summary.ID+":%").Scan(&apiKey, &baseURL, &scope); err != nil {
+		t.Fatalf("read declared connection for sandbox %s: %v", session.Summary.ID, err)
 	}
 	if apiKey != "declared-upstream-key" {
 		t.Error("the daemon-side connection does not carry the declared credential")

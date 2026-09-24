@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -140,8 +141,8 @@ func TestDeclaredUpstreamFromAgentEnvBuildsADaemonOwnedConnection(t *testing.T) 
 	if !ok {
 		t.Fatal("DeclaredUpstreamFromAgentEnv reported no upstream")
 	}
-	if got, want := upstream.Provider.ID, DeclaredConnectionID("sandbox-1", ProviderFamilyAnthropic); got != want {
-		t.Errorf("Provider.ID = %q, want %q", got, want)
+	if !strings.HasPrefix(upstream.Provider.ID, DeclaredConnectionPrefix+"sandbox-1:"+ProviderFamilyAnthropic+":") {
+		t.Errorf("Provider.ID = %q, want it scoped to the sandbox, family and declaration", upstream.Provider.ID)
 	}
 	if upstream.Provider.APIKey != "sk-ant-token" {
 		t.Error("the declared credential is not carried by the daemon-owned connection")
@@ -299,6 +300,8 @@ func TestMergeManagedExecEnvStripsDeclaredProviderKeys(t *testing.T) {
 		"LLM_API_ENDPOINT":  "https://declared-upstream.example/v1",
 		"LLM_API_PROTOCOL":  "chat_completions",
 		"GOOGLE_API_KEY":    "sk-google-declared",
+		"CODEX_API_KEY":     "sk-codex-declared",
+		"DEEPSEEK_API_KEY":  "sk-deepseek-declared",
 		"LLM_API_HEADERS":   `{"x-secret":"1"}`,
 		"UNRELATED_SETTING": "kept",
 	}
@@ -317,9 +320,9 @@ func TestMergeManagedExecEnvStripsDeclaredProviderKeys(t *testing.T) {
 	if got := merged["OPENAI_BASE_URL"]; got != "http://daemon.test/llm/openai/v1" {
 		t.Errorf("OPENAI_BASE_URL = %q, want the managed facade address", got)
 	}
-	for _, stripped := range []string{"GOOGLE_API_KEY", "LLM_API_HEADERS"} {
-		if _, ok := merged[stripped]; ok {
-			t.Errorf("%s survived the managed merge, but it is a declared provider credential", stripped)
+	for _, stripped := range []string{"GOOGLE_API_KEY", "CODEX_API_KEY", "DEEPSEEK_API_KEY", "LLM_API_HEADERS"} {
+		if value, ok := merged[stripped]; ok {
+			t.Errorf("%s = %q survived the managed merge, but it is a declared provider credential", stripped, value)
 		}
 	}
 	if got := merged["UNRELATED_SETTING"]; got != "kept" {
@@ -349,39 +352,63 @@ func TestDeclaredEndpointNamesStayOffTheGuestEnv(t *testing.T) {
 	}
 }
 
-// TestAbsorbedCredentialEnvName pins which declarations the daemon takes over.
-// The set decides both what a run proxies and what a project response redacts,
-// so it is worth stating explicitly rather than deriving it from the specs at
-// the call site.
-func TestAbsorbedCredentialEnvName(t *testing.T) {
-	tests := []struct {
-		name string
-		want bool
-	}{
-		{"ANTHROPIC_API_KEY", true},
-		{"ANTHROPIC_AUTH_TOKEN", true},
-		{"OPENAI_API_KEY", true},
-		{"CODEX_API_KEY", true},
-		{"DEEPSEEK_API_KEY", true},
-		{"OPENROUTER_API_KEY", true},
-		{"LLM_API_KEY", true},
-		{"openai_api_key", true},
-		{"  OPENAI_API_KEY  ", true},
-		// Recognized but not absorbable: the value reaches the sandbox, so the
-		// project check warning is the operator's signal and the view keeps it.
-		{"AZURE_OPENAI_API_KEY", false},
-		{"GOOGLE_API_KEY", false},
-		{"GEMINI_API_KEY", false},
-		// Not a credential at all.
-		{"MYCORP_API_KEY", false},
-		{"OPENAI_BASE_URL", false},
-		{"LLM_API_PROTOCOL", false},
-		{"MODE", false},
-		{"", false},
+// TestDeclaredCredentialNamesAreAllOnTheGuestDenylist is the regression test for
+// the gap the review found: the recognition table and the denylist are separate
+// lists in separate packages, so a credential the daemon imports and proxies
+// could still be passed through to the guest under its own name. A declaration
+// whose name is not on the denylist reaches the sandbox in plaintext even though
+// the run is proxied, which contradicts both the project check and the view
+// redaction that key off the same guarantee.
+func TestDeclaredCredentialNamesAreAllOnTheGuestDenylist(t *testing.T) {
+	for _, spec := range declaredCredentialSpecs {
+		for _, name := range spec.EnvNames {
+			if !driverpkg.LLMProviderCredentialEnvName(name) {
+				t.Errorf("credential %s (family %s) is recognized but not on the guest denylist: the declared value would reach the sandbox", name, spec.Family)
+			}
+		}
+		for _, name := range spec.EndpointEnvNames {
+			if !driverpkg.LLMProviderEnvName(name) {
+				t.Errorf("endpoint %s (family %s) is recognized but not on the guest denylist: the declared address would reach the sandbox", name, spec.Family)
+			}
+		}
 	}
-	for _, tt := range tests {
-		if got := AbsorbedCredentialEnvName(tt.name); got != tt.want {
-			t.Errorf("AbsorbedCredentialEnvName(%q) = %v, want %v", tt.name, got, tt.want)
+	if !driverpkg.LLMProviderCredentialEnvName(genericCredentialEnvName) {
+		t.Errorf("%s is absorbed but not on the guest denylist", genericCredentialEnvName)
+	}
+}
+
+// TestDeclaredConnectionIDDependsOnTheDeclaration is the regression test for the
+// cross-run credential hazard the review found. The declaration is per run — a
+// run request may carry its own environment — so a row keyed only by sandbox and
+// family would let one run's preparation overwrite the upstream another run is
+// still resolving through its own facade token.
+func TestDeclaredConnectionIDDependsOnTheDeclaration(t *testing.T) {
+	dialect, err := DialectFor("codex")
+	if err != nil {
+		t.Fatalf("DialectFor(codex): %v", err)
+	}
+	idFor := func(key string) string {
+		t.Helper()
+		upstream, ok := DeclaredUpstreamFromAgentEnv("sandbox-1", declaredEnvItems("OPENAI_API_KEY", key), dialect, "gpt-5")
+		if !ok {
+			t.Fatalf("DeclaredUpstreamFromAgentEnv reported no upstream for %q", key)
+		}
+		return upstream.Provider.ID
+	}
+
+	first, second := idFor("key-a"), idFor("key-b")
+	if first == second {
+		t.Fatalf("two declarations of one sandbox share the connection id %q", first)
+	}
+	if again := idFor("key-a"); again != first {
+		t.Errorf("the same declaration is not stable: %q then %q", first, again)
+	}
+	for _, id := range []string{first, second} {
+		if !IsDeclaredConnectionID(id) {
+			t.Errorf("id %q is not in the reserved declared namespace", id)
+		}
+		if !strings.HasPrefix(id, DeclaredConnectionPrefix+"sandbox-1:"+ProviderFamilyOpenAI+":") {
+			t.Errorf("id %q is not scoped to the sandbox and family", id)
 		}
 	}
 }

@@ -331,9 +331,8 @@ func TestSchedulerCommandExecutorHonoursADeclaredCommandUpstream(t *testing.T) {
 	// The declaration was imported into the daemon's own connection
 	// configuration, which is what let the command proxy it.
 	var apiKey string
-	declaredID := llms.DeclaredConnectionID(session.Summary.ID, llms.ProviderFamilyOpenAI)
-	if err := configDB.DB().QueryRowContext(ctx, `SELECT api_key FROM llm_provider WHERE id = ?`, declaredID).Scan(&apiKey); err != nil {
-		t.Fatalf("read declared connection %q: %v", declaredID, err)
+	if err := configDB.DB().QueryRowContext(ctx, `SELECT api_key FROM llm_provider WHERE id LIKE ?`, llms.DeclaredConnectionPrefix+session.Summary.ID+":%").Scan(&apiKey); err != nil {
+		t.Fatalf("read declared connection for sandbox %s: %v", session.Summary.ID, err)
 	}
 	if apiKey != "declared-upstream-key" {
 		t.Error("the daemon-side connection does not carry the declared credential")
@@ -409,9 +408,8 @@ func TestSchedulerCommandExecutorRecoversLegacyProviderEnv(t *testing.T) {
 	// The recovered declaration was imported into the daemon's own connection
 	// configuration, which is what let the command proxy it.
 	var apiKey string
-	declaredID := llms.DeclaredConnectionID(session.Summary.ID, llms.ProviderFamilyOpenAI)
-	if err := configDB.DB().QueryRowContext(ctx, `SELECT api_key FROM llm_provider WHERE id = ?`, declaredID).Scan(&apiKey); err != nil {
-		t.Fatalf("read declared connection %q: %v", declaredID, err)
+	if err := configDB.DB().QueryRowContext(ctx, `SELECT api_key FROM llm_provider WHERE id LIKE ?`, llms.DeclaredConnectionPrefix+session.Summary.ID+":%").Scan(&apiKey); err != nil {
+		t.Fatalf("read declared connection for sandbox %s: %v", session.Summary.ID, err)
 	}
 	if apiKey != "legacy-upstream-key" {
 		t.Error("the daemon-side connection does not carry the recovered legacy credential")

@@ -1,6 +1,8 @@
 package llms
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/url"
 	"strings"
 
@@ -30,17 +32,50 @@ const providerFamilyGoogle = "google"
 const genericCredentialEnvName = "LLM_API_KEY"
 
 // DeclaredConnectionID is the deterministic id of the connection a sandbox
-// declared for one provider family. It is per sandbox and family so concurrent
-// runs of one sandbox rewrite a single row while different sandboxes never
-// share a credential.
-func DeclaredConnectionID(sandboxID, family string) string {
-	return DeclaredConnectionPrefix + strings.TrimSpace(sandboxID) + ":" + strings.TrimSpace(family)
+// declared for one upstream. The declaration digest is part of the id because
+// the declaration is per run, not per sandbox: a run request may carry its own
+// environment, so two runs of one sandbox can declare different credentials. A
+// row keyed by sandbox and family alone would let an interleaved preparation of
+// one run overwrite the upstream another run is still resolving through its
+// facade token, sending that run's requests with the wrong credential.
+//
+// Two runs that declare the same upstream still share one row, so a repeated
+// preparation is idempotent rather than a new credential.
+func DeclaredConnectionID(sandboxID, family, declaration string) string {
+	return DeclaredConnectionPrefix + strings.TrimSpace(sandboxID) + ":" + strings.TrimSpace(family) + ":" + declarationDigest(declaration)
 }
 
 // IsDeclaredConnectionID reports whether id names a connection the daemon
 // derived from an agent declaration.
 func IsDeclaredConnectionID(id string) bool {
 	return strings.HasPrefix(strings.TrimSpace(id), DeclaredConnectionPrefix)
+}
+
+// declarationDigest shortens a declaration to the fixed-width segment an id can
+// carry. It is a content digest of credential material, which is acceptable only
+// because the id never leaves the daemon: the guest receives an opaque facade
+// token, and the plaintext credential the digest is derived from is stored in
+// the same row. Truncating keeps the id readable and the collision space is
+// still far larger than the handful of declarations one sandbox can hold.
+func declarationDigest(declaration string) string {
+	sum := sha256.Sum256([]byte(declaration))
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+// declaredProviderDeclaration is the part of a declaration that decides which
+// upstream it resolves to: the address, the credential, and how the credential
+// is presented. Declarations that agree on all of them resolve the same
+// upstream, so they share a connection; anything else gets its own.
+func declaredProviderDeclaration(provider Provider) string {
+	return strings.Join([]string{
+		provider.ProviderType,
+		provider.DefaultWireAPI,
+		provider.BaseURL,
+		provider.APIKey,
+		provider.AuthHeader,
+		provider.AuthScheme,
+		provider.HeadersJSON,
+	}, "\x00")
 }
 
 // declaredCredentialSpec is one vendor's first-party credential convention.
@@ -206,35 +241,6 @@ func UnprotectedCredentialEnvName(name string) bool {
 	return strings.HasSuffix(normalized, "_API_KEY") || strings.HasSuffix(normalized, "_AUTH_TOKEN")
 }
 
-// AbsorbedCredentialEnvName reports whether name carries a first-party LLM
-// credential the daemon absorbs into its own connection.
-//
-// An absorbed value stays on the daemon and never reaches the sandbox, so any
-// view of the declaration must not echo it: the operator still sees which
-// variable they declared, but a reader of a project response cannot recover the
-// credential from it. Names the daemon cannot absorb are deliberately excluded.
-// They are passed through to the agent runtime, so the project check warning
-// about them is the operator's only signal; hiding the value in a view would
-// not change that exposure and would describe the value as protected when it is
-// not.
-func AbsorbedCredentialEnvName(name string) bool {
-	normalized := strings.ToUpper(strings.TrimSpace(name))
-	if normalized == "" {
-		return false
-	}
-	for _, spec := range declaredCredentialSpecs {
-		if !spec.Absorbable {
-			continue
-		}
-		for _, candidate := range spec.EnvNames {
-			if normalized == strings.ToUpper(candidate) {
-				return true
-			}
-		}
-	}
-	return normalized == genericCredentialEnvName
-}
-
 // recognizeDeclaredCredential is the credential a run uses: the most specific
 // declaration the environment publishes.
 func recognizeDeclaredCredential(items []domain.SandboxEnvVar, canonical Protocol) (declaredCredential, bool) {
@@ -379,20 +385,21 @@ func DeclaredUpstreamFromAgentEnv(sandboxID string, env []domain.SandboxEnvVar, 
 		model = declaredModelFromEnv(dialect.Kind, env)
 	}
 	authHeader, authScheme := ProviderAuthWire(credential.auth)
+	provider := Provider{
+		Name:           "declared " + credential.Family,
+		ProviderType:   credential.Family,
+		DefaultWireAPI: string(credential.protocol),
+		BaseURL:        credential.Endpoint,
+		APIKey:         credential.apiKey,
+		AuthHeader:     authHeader,
+		AuthScheme:     authScheme,
+		HeadersJSON:    ManagedProviderHeadersJSON(string(credential.protocol)),
+		Enabled:        true,
+		Scope:          ProviderScopeDeclared,
+	}
+	provider.ID = DeclaredConnectionID(sandboxID, credential.Family, declaredProviderDeclaration(provider))
 	return DeclaredUpstream{
-		Provider: Provider{
-			ID:             DeclaredConnectionID(sandboxID, credential.Family),
-			Name:           "declared " + credential.Family,
-			ProviderType:   credential.Family,
-			DefaultWireAPI: string(credential.protocol),
-			BaseURL:        credential.Endpoint,
-			APIKey:         credential.apiKey,
-			AuthHeader:     authHeader,
-			AuthScheme:     authScheme,
-			HeadersJSON:    ManagedProviderHeadersJSON(string(credential.protocol)),
-			Enabled:        true,
-			Scope:          ProviderScopeDeclared,
-		},
+		Provider:   provider,
 		Model:      model,
 		Credential: credential.DeclaredCredential,
 	}, true
