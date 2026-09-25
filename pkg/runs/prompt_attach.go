@@ -369,7 +369,7 @@ func (w *promptWrapperInput) send(frame map[string]any) error {
 type promptInputPump struct {
 	Input          *promptWrapperInput
 	TurnReady      <-chan struct{}
-	OnHumanMessage func(string, string) error
+	OnHumanMessage func(string, string) (bool, error)
 }
 
 func pumpRunPromptAttachInput(ctx context.Context, receive RunAttachReceiver, pump promptInputPump) {
@@ -411,8 +411,12 @@ func forwardPromptHumanMessage(ctx context.Context, pump promptInputPump, text, 
 		}
 	}
 	if pump.OnHumanMessage != nil {
-		if err := pump.OnHumanMessage(text, clientFrameID); err != nil {
+		recorded, err := pump.OnHumanMessage(text, clientFrameID)
+		if err != nil {
 			return false
+		}
+		if !recorded {
+			return true
 		}
 	}
 	return pump.Input.HumanMessage(text) == nil
