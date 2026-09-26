@@ -192,6 +192,8 @@ require_regex "$header" '^[[:space:]]*-[[:space:]]*"\*"[[:space:]]*$' \
   'all-tag image publication trigger'
 forbid_regex "$header" '^[[:space:]]*-[[:space:]]*"v\*"[[:space:]]*$' \
   'version-only image publication trigger'
+require_regex "$header" 'types:.*labeled' 'image CI label trigger'
+require_regex "$header" 'types:.*unlabeled' 'image CI label removal trigger'
 
 load_job setup setup_job
 load_job build build_job
@@ -201,6 +203,8 @@ load_job merge merge_job
 load_job release release_job
 
 if [[ -n $setup_job ]]; then
+  require_regex "$setup_job" "contains\\(github\\.event\\.pull_request\\.labels\\.\\*\\.name, 'ci:full'\\)" \
+    'image setup gated by ci:full label'
   require_regex "$setup_job" 'actions/checkout@v4' 'setup checkout for contract audit'
   require_regex "$setup_job" '(\./)?scripts/tests/test-image-ci-contract\.sh' \
     'setup execution of image CI contract test'

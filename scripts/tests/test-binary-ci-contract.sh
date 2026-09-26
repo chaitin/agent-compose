@@ -70,6 +70,19 @@ require_regex "$trigger_block" '^[[:space:]]*branches:[[:space:]]*$' 'CI push br
 require_regex "$trigger_block" '^[[:space:]]*-[[:space:]]*main[[:space:]]*$' 'CI push on main'
 require_regex "$trigger_block" '^[[:space:]]*tags:[[:space:]]*$' 'CI push tag filter'
 require_regex "$trigger_block" "^[[:space:]]*-[[:space:]]*[\"']?v\\*[\"']?[[:space:]]*$" 'CI push on v* tags'
+require_regex "$trigger_block" 'types:.*labeled' 'CI label trigger'
+require_regex "$trigger_block" 'types:.*unlabeled' 'CI label removal trigger'
+
+load_job "$CI_WORKFLOW" coverage coverage_job
+load_job "$CI_WORKFLOW" driver-race driver_race_job
+load_job "$CI_WORKFLOW" full-validation full_validation_job
+require_regex "$coverage_job" "contains\\(github\\.event\\.pull_request\\.labels\\.\\*\\.name, 'ci:full'\\)" \
+  'coverage gated by ci:full label'
+require_regex "$driver_race_job" "contains\\(github\\.event\\.pull_request\\.labels\\.\\*\\.name, 'ci:full'\\)" \
+  'driver race gated by ci:full label'
+require_regex "$full_validation_job" 'if: always\(\)' 'stable full validation gate'
+require_regex "$full_validation_job" 'needs:' 'full validation dependencies'
+require_regex "$full_validation_job" 'FULL_REQUESTED' 'full validation label decision'
 
 load_job "$CI_WORKFLOW" binary-matrix binary_matrix
 load_job "$CI_WORKFLOW" binary-darwin binary_darwin

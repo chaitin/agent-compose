@@ -91,10 +91,19 @@ cd runtime/javascript && npm run test:unit
 
 ## Pull Requests
 
-Draft PRs skip CI, image builds, and Protobuf compatibility checks. Mark a PR
-as **Ready for review** to run the checks; subsequent commits run them while the
-PR is ready. Image checks still follow their existing path filters. GitHub may
-show skipped workflow runs for drafts.
+Draft PRs skip the PR checks. Mark a PR as **Ready for review** to run Fast CI;
+subsequent commits run it while the PR is ready. Fast CI covers generated-source
+validation, lint, compilation, regular tests, SDK tests, and binary checks. The
+coverage gate, full driver race tests, and image builds are reserved for Full
+CI: add the `ci:full` label when the PR is ready for complete validation. Adding
+or removing that label reruns the workflows, and a new commit while the label
+is present validates the new head. Image checks continue to follow their path
+filters.
+
+The `Full PR validation` check is the stable required-check candidate for
+branch protection. It succeeds without running the expensive jobs when
+`ci:full` is absent, and reflects the coverage and driver-race results when the
+label is present. Main and release pushes keep their existing complete checks.
 
 - Keep PRs scoped to one change.
 - Include a clear problem statement and solution summary.
