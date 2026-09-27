@@ -1,10 +1,12 @@
 package runs
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/chaitin/agent-compose/pkg/events"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -110,4 +112,19 @@ func sandboxRunOwnershipDescription(ownership sandboxRunOwnership) string {
 		return "an unowned sandbox"
 	}
 	return strings.Join(parts, " ")
+}
+
+// projectRunSandboxPublisherProject attributes a project-run sandbox's
+// lifecycle events to the Project that owns the sandbox. Conflicting ownership
+// tags attribute the event to no Project, so it cannot reach another Project's
+// subscribers.
+func projectRunSandboxPublisherProject(ctx context.Context, sandbox *domain.Sandbox) string {
+	ownership, err := projectRunSandboxOwnership(sandbox)
+	if err != nil {
+		return ""
+	}
+	if ownership.ProjectID != "" {
+		return ownership.ProjectID
+	}
+	return events.PublisherProject(ctx)
 }

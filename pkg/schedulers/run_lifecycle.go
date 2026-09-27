@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chaitin/agent-compose/pkg/events"
 	"github.com/chaitin/agent-compose/pkg/identity"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
@@ -184,6 +185,7 @@ func (e *RunExecutor) Execute(ctx context.Context, prepared PreparedRun) (domain
 		return prepared.Run, nil
 	}
 	defer e.leaveRun(prepared.Scheduler.Summary.ID)
+	ctx = events.WithPublisherProject(ctx, prepared.Scheduler.Summary.ProjectID)
 	run := prepared.Run
 	host := e.deps.HostFactory(prepared.Scheduler, RuntimeExecutionContext{
 		ID:        run.ID,

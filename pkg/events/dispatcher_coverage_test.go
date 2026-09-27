@@ -52,6 +52,18 @@ func TestDispatcherDispatchOnceAckRetryAndDecodeWorkflows(t *testing.T) {
 	(*Dispatcher)(nil).SetInterval(time.Second)
 }
 
+func TestDispatcherCarriesPersistedPublisherProject(t *testing.T) {
+	ctx := context.Background()
+	store := &dispatcherCoverageStore{events: []domain.TopicEventRecord{
+		{ID: "event-project", Topic: "workflow.x.ready", Source: domain.TopicEventSourceScheduler, PublisherProjectID: "project-a", PayloadJSON: `{}`},
+	}}
+	bus := &dispatcherCoverageBus{}
+	NewDispatcher(ctx, store, bus).DispatchOnce(ctx, 10)
+	if len(bus.events) != 1 || bus.events[0].PublisherProjectID != "project-a" {
+		t.Fatalf("bus events = %#v, want publisher project-a", bus.events)
+	}
+}
+
 func TestNormalizeTopicEventScanHelpers(t *testing.T) {
 	if sql := SelectTopicEventSQL(); sql == "" {
 		t.Fatalf("SelectTopicEventSQL returned empty")
@@ -69,7 +81,7 @@ func TestNormalizeTopicEventScanHelpers(t *testing.T) {
 	if _, err := db.ExecContext(context.Background(), `CREATE TABLE event (
 		sequence INTEGER, id TEXT, topic TEXT, source TEXT, provider TEXT, intent TEXT, correlation_id TEXT,
 		idempotency_key TEXT, delivery_id TEXT, payload_hash TEXT, payload_json TEXT, dispatch_status TEXT,
-		parent_event_id TEXT, publisher_type TEXT, publisher_id TEXT, publisher_run_id TEXT, replay_of_event_id TEXT,
+		parent_event_id TEXT, publisher_type TEXT, publisher_id TEXT, publisher_run_id TEXT, publisher_project_id TEXT, replay_of_event_id TEXT,
 		claim_id TEXT, claim_until INTEGER, attempt_count INTEGER, next_attempt_at INTEGER, last_error TEXT,
 		dead_letter_at INTEGER, created_at INTEGER, dispatched_at INTEGER
 	)`); err != nil {
@@ -78,10 +90,10 @@ func TestNormalizeTopicEventScanHelpers(t *testing.T) {
 	if _, err := db.ExecContext(context.Background(), `INSERT INTO event (
 		sequence, id, topic, source, provider, intent, correlation_id, idempotency_key, delivery_id,
 		payload_hash, payload_json, dispatch_status, parent_event_id, publisher_type, publisher_id,
-		publisher_run_id, replay_of_event_id, claim_id, claim_until, attempt_count, next_attempt_at,
+		publisher_run_id, publisher_project_id, replay_of_event_id, claim_id, claim_until, attempt_count, next_attempt_at,
 		last_error, dead_letter_at, created_at, dispatched_at
 	) VALUES (1, 'event-1', 'runtime.topic', 'source', 'provider', 'intent', 'corr', 'idem', 'delivery',
-		'hash', '{"ok":true}', 'pending', '', 'scheduler', 'scheduler-1', 'run-1', '', 'claim-1',
+		'hash', '{"ok":true}', 'pending', '', 'scheduler', 'scheduler-1', 'run-1', 'project-1', '', 'claim-1',
 		1700000000, 2, 1700000001, '', 0, 1700000002, 1700000003)`); err != nil {
 		t.Fatalf("insert event: %v", err)
 	}
@@ -94,7 +106,7 @@ func TestNormalizeTopicEventScanHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanTopicEvents returned error: %v", err)
 	}
-	if len(items) != 1 || items[0].ID != "event-1" || items[0].AttemptCount != 2 || items[0].ClaimUntil.IsZero() {
+	if len(items) != 1 || items[0].ID != "event-1" || items[0].AttemptCount != 2 || items[0].ClaimUntil.IsZero() || items[0].PublisherProjectID != "project-1" {
 		t.Fatalf("scanned events = %#v", items)
 	}
 }

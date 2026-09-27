@@ -14,6 +14,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/capabilities"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
+	"github.com/chaitin/agent-compose/pkg/events"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -83,14 +84,14 @@ func (r *SchedulerSandboxRunner) Shutdown(ctx context.Context, sessionID string)
 	outcome, stopErr := r.stopLifecycle().StopLoaded(stopCtx, session)
 	if stopErr != nil {
 		if outcome.DriverStopped && outcome.Sandbox != nil {
-			r.publish("agent-compose.session.stopped", schedulers.SessionTopicPayload(outcome.Sandbox, "scheduler"))
+			r.publish(stopCtx, "agent-compose.session.stopped", schedulers.SessionTopicPayload(outcome.Sandbox, "scheduler"))
 		}
 		return stopErr
 	}
 	if !outcome.Changed() || outcome.Sandbox == nil {
 		return nil
 	}
-	r.publish("agent-compose.session.stopped", schedulers.SessionTopicPayload(outcome.Sandbox, "scheduler"))
+	r.publish(stopCtx, "agent-compose.session.stopped", schedulers.SessionTopicPayload(outcome.Sandbox, "scheduler"))
 	return nil
 }
 
@@ -371,7 +372,7 @@ func (r *SchedulerSandboxRunner) Ensure(ctx context.Context, scheduler domain.Sc
 	}
 	domain.RestoreSandboxTransientFields(loaded, session)
 	r.indexCapabilitySandbox(loaded)
-	r.publish("agent-compose.session.created", map[string]any{
+	r.publish(events.WithPublisherProject(ctx, scheduler.Summary.ProjectID), "agent-compose.session.created", map[string]any{
 		"sandboxId":     loaded.Summary.ID,
 		"title":         loaded.Summary.Title,
 		"driver":        loaded.Summary.Driver,
@@ -454,7 +455,7 @@ func (r *SchedulerSandboxRunner) loadOrResumeLocked(ctx context.Context, session
 	}
 	domain.RestoreSandboxTransientFields(loaded, session)
 	r.indexCapabilitySandbox(loaded)
-	r.publish("agent-compose.session.resumed", map[string]any{
+	r.publish(ctx, "agent-compose.session.resumed", map[string]any{
 		"sandboxId": loaded.Summary.ID,
 		"title":     loaded.Summary.Title,
 		"driver":    loaded.Summary.Driver,
@@ -681,12 +682,15 @@ func (r *SchedulerSandboxRunner) recordVolumeWarnings(ctx context.Context, sessi
 	}
 }
 
-func (r *SchedulerSandboxRunner) publish(topic string, payload map[string]any) {
+// publish raises a sandbox lifecycle topic attributed to the Project that ctx
+// acts for.
+func (r *SchedulerSandboxRunner) publish(ctx context.Context, topic string, payload map[string]any) {
 	if r.Publisher != nil {
 		_ = r.Publisher.Publish(domain.SchedulerTopicEvent{
-			Topic:     strings.TrimSpace(topic),
-			Payload:   payload,
-			CreatedAt: time.Now().UTC(),
+			Topic:              strings.TrimSpace(topic),
+			PublisherProjectID: events.PublisherProject(ctx),
+			Payload:            payload,
+			CreatedAt:          time.Now().UTC(),
 		})
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/chaitin/agent-compose/pkg/events"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
@@ -93,7 +94,7 @@ func SandboxCreationContextFromContext(ctx context.Context) SandboxCreationConte
 }
 
 type HostPublisher interface {
-	Publish(topic string, payload map[string]any)
+	Publish(ctx context.Context, topic string, payload map[string]any)
 }
 
 type RunHostDependencies struct {
@@ -147,6 +148,7 @@ func (h *RuntimeHost) PublishEvent(ctx context.Context, topic string, payloadJSO
 	}
 	published, err := NewPublishedTopicEvent(PublishTopicEventRequest{
 		Topic: topic, PayloadJSON: payloadJSON, Trigger: h.triggerEvent, SchedulerID: h.scheduler.Summary.ID, RunID: publisherRunID,
+		ProjectID: h.scheduler.Summary.ProjectID,
 	})
 	if err != nil {
 		return domain.TopicEventRecord{}, err
@@ -317,7 +319,7 @@ func (h *RuntimeHost) Agent(ctx context.Context, prompt string, request domain.S
 		LinkedCellID:        result.CellID,
 		LinkedAgentThreadID: result.AgentThreadID,
 	})
-	h.publishAgentCompleted(result, nil)
+	h.publishAgentCompleted(ctx, result, nil)
 	h.shutdownSessionAndRecordEvent(ctx, session.Summary.ID, "scheduler sandbox after agent run", "scheduler sandbox stopped after agent run")
 	if execErr != nil {
 		return result, execErr
@@ -590,7 +592,7 @@ func (h *RuntimeHost) addEventSandboxLink(ctx context.Context, event domain.Sche
 	}
 }
 
-func (h *RuntimeHost) publishAgentCompleted(result domain.SchedulerAgentResult, projectRun *domain.ProjectRunRecord) {
+func (h *RuntimeHost) publishAgentCompleted(ctx context.Context, result domain.SchedulerAgentResult, projectRun *domain.ProjectRunRecord) {
 	if h.deps.Publisher == nil {
 		return
 	}
@@ -611,7 +613,7 @@ func (h *RuntimeHost) publishAgentCompleted(result domain.SchedulerAgentResult, 
 		payload["projectId"] = projectRun.ProjectID
 		payload["projectRunId"] = projectRun.RunID
 	}
-	h.deps.Publisher.Publish("agent-compose.agent.completed", payload)
+	h.deps.Publisher.Publish(events.WithPublisherProject(ctx, h.scheduler.Summary.ProjectID), "agent-compose.agent.completed", payload)
 }
 
 func (h *RuntimeHost) commandRequiresCleanup(request domain.SchedulerCommandRequest) bool {

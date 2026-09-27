@@ -93,7 +93,7 @@ func TestCommandAndEventHelperWorkflows(t *testing.T) {
 		{Summary: domain.SchedulerSummary{ID: "scheduler-2", Enabled: false}, Triggers: []domain.SchedulerTrigger{{ID: "disabled-scheduler", Enabled: true, Kind: domain.SchedulerTriggerKindEvent, Topic: "runtime.demo"}}},
 		{Summary: domain.SchedulerSummary{ID: "scheduler-3", Enabled: true}, Triggers: []domain.SchedulerTrigger{{ID: "disabled-trigger", Enabled: false, Kind: domain.SchedulerTriggerKindEvent, Topic: "runtime.demo"}}},
 	}
-	targets := CollectEventTargets(schedulers, "runtime.demo")
+	targets := CollectEventTargets(schedulers, domain.SchedulerTopicEvent{Topic: "runtime.demo"}, domain.EventDeliveryScopeProject)
 	if len(targets) != 1 || targets[0].Scheduler.Summary.ID != "scheduler-1" {
 		t.Fatalf("targets = %#v", targets)
 	}

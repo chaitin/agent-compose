@@ -45,9 +45,9 @@ func (s *eventStore) CreateEvent(ctx context.Context, item domain.TopicEventReco
 func insertTopicEvent(ctx context.Context, tx *sql.Tx, item domain.TopicEventRecord) (sql.Result, error) {
 	return tx.ExecContext(ctx, `INSERT INTO event(
 		id, topic, source, provider, intent, correlation_id, idempotency_key, delivery_id, payload_hash, payload_json,
-		dispatch_status, parent_event_id, publisher_type, publisher_id, publisher_run_id, replay_of_event_id,
-		claim_id, claim_until, attempt_count, next_attempt_at, last_error, dead_letter_at, created_at, dispatched_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		dispatch_status, parent_event_id, publisher_type, publisher_id, publisher_run_id, publisher_project_id,
+		replay_of_event_id, claim_id, claim_until, attempt_count, next_attempt_at, last_error, dead_letter_at, created_at, dispatched_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		item.ID,
 		item.Topic,
 		item.Source,
@@ -63,6 +63,7 @@ func insertTopicEvent(ctx context.Context, tx *sql.Tx, item domain.TopicEventRec
 		item.PublisherType,
 		item.PublisherID,
 		item.PublisherRunID,
+		item.PublisherProjectID,
 		item.ReplayOfEventID,
 		item.ClaimID,
 		domain.NonZeroTimeUnixMilli(item.ClaimUntil),

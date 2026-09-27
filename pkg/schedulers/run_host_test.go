@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chaitin/agent-compose/pkg/events"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 )
@@ -255,6 +256,9 @@ func TestRuntimeHostProjectAgentPath(t *testing.T) {
 	result, err := host.Agent(ctx, "review", domain.SchedulerAgentRequest{})
 	if err != nil {
 		t.Fatalf("Project Agent returned error: %v", err)
+	}
+	if len(publisher.events) != 1 || publisher.events[0].projectID != "project-1" {
+		t.Fatalf("agent completed publisher project = %#v, want project-1", publisher.events)
 	}
 	if result.Text != "project output" || projectRunner.request.ProjectID != "project-1" || projectRunner.request.ClientRequestID != run.ID+":agent:1" || projectRunner.request.TriggerID != run.TriggerID || projectRunner.request.SandboxConfigHash != expectedConfigHash {
 		t.Fatalf("project result/request = %#v/%#v", result, projectRunner.request)
@@ -598,6 +602,18 @@ func TestRuntimeHostLogPublishEventAndState(t *testing.T) {
 	if created.PublisherRunID != run.ID {
 		t.Fatalf("trigger publisher run ID = %q, want %q", created.PublisherRunID, run.ID)
 	}
+	if created.PublisherProjectID != "" {
+		t.Fatalf("unmanaged scheduler publisher project = %q, want empty", created.PublisherProjectID)
+	}
+	projectScheduler := domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-project", ProjectID: "project-a", AgentName: "agent", ProjectSchedulerID: "scheduler"}}
+	projectHost := schedulers.NewRuntimeHost(schedulers.RunHostDependencies{Store: &hostStoreFake{}}, projectScheduler, triggerExecution(run), schedulers.TriggerEventMetadata{})
+	projectEvent, err := projectHost.PublishEvent(ctx, "workflow.x.ready", `{"marker":"abc"}`)
+	if err != nil {
+		t.Fatalf("project PublishEvent returned error: %v", err)
+	}
+	if projectEvent.PublisherProjectID != "project-a" {
+		t.Fatalf("project publisher = %q, want project-a", projectEvent.PublisherProjectID)
+	}
 	if !events.contains("scheduler.event.published") {
 		t.Fatalf("events after PublishEvent = %#v", events.types())
 	}
@@ -868,12 +884,13 @@ type hostPublisherFake struct {
 }
 
 type publishedEvent struct {
-	topic   string
-	payload map[string]any
+	topic     string
+	projectID string
+	payload   map[string]any
 }
 
-func (p *hostPublisherFake) Publish(topic string, payload map[string]any) {
-	p.events = append(p.events, publishedEvent{topic: topic, payload: payload})
+func (p *hostPublisherFake) Publish(ctx context.Context, topic string, payload map[string]any) {
+	p.events = append(p.events, publishedEvent{topic: topic, projectID: events.PublisherProject(ctx), payload: payload})
 }
 
 func firstNonEmptyTest(values ...string) string {

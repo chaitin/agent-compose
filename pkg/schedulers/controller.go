@@ -3,6 +3,7 @@ package schedulers
 import (
 	"context"
 	"fmt"
+	"github.com/chaitin/agent-compose/pkg/events"
 	"github.com/chaitin/agent-compose/pkg/events/webhooks"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"log/slog"
@@ -75,10 +76,13 @@ type ControllerDependencies struct {
 	Wake         chan struct{}
 	RunTimeout   func(time.Duration) time.Duration
 	ReserveSlots func(event domain.SchedulerTopicEvent, count int) ([]*webhooks.Reservation, bool)
-	Schedulers   map[string]domain.Scheduler
-	Running      map[string]int
-	Now          func() time.Time
-	NewID        func() string
+	// EventDeliveryScope bounds which Projects receive a published event. An
+	// empty value selects the Project scope.
+	EventDeliveryScope domain.EventDeliveryScope
+	Schedulers         map[string]domain.Scheduler
+	Running            map[string]int
+	Now                func() time.Time
+	NewID              func() string
 }
 
 type Controller struct {
@@ -118,6 +122,9 @@ func NewController(deps ControllerDependencies) *Controller {
 	}
 	if deps.NewID == nil {
 		deps.NewID = uuid.NewString
+	}
+	if deps.EventDeliveryScope == "" {
+		deps.EventDeliveryScope = domain.EventDeliveryScopeProject
 	}
 	c := &Controller{
 		deps:       deps,
@@ -177,9 +184,11 @@ func (c *Controller) init() {
 	}
 	if c.eventDispatcher == nil {
 		c.eventDispatcher = NewEventDispatcher(EventDispatcherDependencies{
-			RootCtx:      c.deps.RootCtx,
-			Store:        c.deps.Store,
-			Targets:      func(topic string) []EventTarget { return CollectEventTargets(c.SnapshotSchedulers(), topic) },
+			RootCtx: c.deps.RootCtx,
+			Store:   c.deps.Store,
+			Targets: func(event domain.SchedulerTopicEvent) []EventTarget {
+				return CollectEventTargets(c.SnapshotSchedulers(), event, c.EventDeliveryScope())
+			},
 			IsBusy:       c.AnyTargetBusy,
 			ReserveSlots: c.deps.ReserveSlots,
 			Run:          c.schedulerRuns.runTrigger,
@@ -292,14 +301,16 @@ func (c *Controller) Abort(ctx context.Context, prepared PreparedRun, reason str
 	c.runExecutor.Abort(ctx, prepared, reason)
 }
 
-func (c *Controller) Publish(topic string, payload map[string]any) {
+// Publish raises a system topic attributed to the Project that ctx acts for.
+func (c *Controller) Publish(ctx context.Context, topic string, payload map[string]any) {
 	if c.deps.Publisher == nil {
 		return
 	}
 	_ = c.deps.Publisher.Publish(domain.SchedulerTopicEvent{
-		Topic:     strings.TrimSpace(topic),
-		Payload:   payload,
-		CreatedAt: c.now(),
+		Topic:              strings.TrimSpace(topic),
+		PublisherProjectID: events.PublisherProject(ctx),
+		Payload:            payload,
+		CreatedAt:          c.now(),
 	})
 }
 
@@ -365,6 +376,12 @@ func (c *Controller) ReplaceCachedSchedulers(updatedSchedulers map[string]domain
 	for id, item := range updatedSchedulers {
 		c.schedulers[id] = CloneScheduler(item)
 	}
+}
+
+// EventDeliveryScope reports the scope that bounds which Projects receive a
+// published event.
+func (c *Controller) EventDeliveryScope() domain.EventDeliveryScope {
+	return c.deps.EventDeliveryScope
 }
 
 func (c *Controller) SnapshotSchedulers() []domain.Scheduler {

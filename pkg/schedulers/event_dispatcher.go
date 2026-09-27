@@ -18,7 +18,7 @@ type EventDeliveryStore interface {
 type EventDispatcherDependencies struct {
 	RootCtx      context.Context
 	Store        EventDeliveryStore
-	Targets      func(topic string) []EventTarget
+	Targets      func(event domain.SchedulerTopicEvent) []EventTarget
 	IsBusy       func(targets []EventTarget) bool
 	ReserveSlots func(event domain.SchedulerTopicEvent, count int) ([]*webhooks.Reservation, bool)
 	Run          func(ctx context.Context, req RunTriggerRequest, triggerEventAck ...func(context.Context) error) (domain.SchedulerRunSummary, error)
@@ -51,7 +51,7 @@ func (d *EventDispatcher) Dispatch(event domain.SchedulerTopicEvent) {
 		slog.Warn("failed to encode scheduler topic event payload", "topic", event.Topic, "error", err)
 		return
 	}
-	targets := d.collectTargets(event.Topic)
+	targets := d.collectTargets(event)
 	targets = DedupeWebhookEventTargets(event, targets)
 	if len(targets) == 0 {
 		d.ackNoSubscriber(event)
@@ -209,11 +209,11 @@ func (d *EventDispatcher) retry(event domain.SchedulerTopicEvent, reason string)
 	}
 }
 
-func (d *EventDispatcher) collectTargets(topic string) []EventTarget {
+func (d *EventDispatcher) collectTargets(event domain.SchedulerTopicEvent) []EventTarget {
 	if d.deps.Targets == nil {
 		return nil
 	}
-	return d.deps.Targets(topic)
+	return d.deps.Targets(event)
 }
 
 func (d *EventDispatcher) shouldRetryForBusy(event domain.SchedulerTopicEvent, targets []EventTarget) bool {

@@ -53,6 +53,7 @@ func NormalizeTopicEventRecord(item domain.TopicEventRecord, assignID bool) (dom
 	item.PublisherType = strings.TrimSpace(item.PublisherType)
 	item.PublisherID = strings.TrimSpace(item.PublisherID)
 	item.PublisherRunID = strings.TrimSpace(item.PublisherRunID)
+	item.PublisherProjectID = strings.TrimSpace(item.PublisherProjectID)
 	item.ReplayOfEventID = strings.TrimSpace(item.ReplayOfEventID)
 	item.ClaimID = strings.TrimSpace(item.ClaimID)
 	if !item.ClaimUntil.IsZero() {

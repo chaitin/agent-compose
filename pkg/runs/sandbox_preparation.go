@@ -516,9 +516,10 @@ func (c *Controller) publishProjectRunSandboxStarted(ctx context.Context, sandbo
 			topic = "agent-compose.sandbox.resumed"
 		}
 		c.bus.Publish(domain.SchedulerTopicEvent{
-			Topic:     topic,
-			Payload:   schedulers.SessionTopicPayload(sandbox, "project-run"),
-			CreatedAt: time.Now().UTC(),
+			Topic:              topic,
+			PublisherProjectID: projectRunSandboxPublisherProject(ctx, sandbox),
+			Payload:            schedulers.SessionTopicPayload(sandbox, "project-run"),
+			CreatedAt:          time.Now().UTC(),
 		})
 	}
 }

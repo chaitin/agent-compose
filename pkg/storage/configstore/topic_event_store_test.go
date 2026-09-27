@@ -65,6 +65,34 @@ func TestCreateEventAcceptsIdempotentPayloadWithSequencePlaceholder(t *testing.T
 	}
 }
 
+func TestCreateEventStoresPublisherProjectForDispatch(t *testing.T) {
+	ctx := context.Background()
+	store := FromDB(newMemoryDB(t))
+	if err := store.initSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+	if _, err := store.CreateEvent(ctx, domain.TopicEventRecord{
+		ID:                 "event-project",
+		Topic:              "workflow.x.ready",
+		Source:             domain.TopicEventSourceScheduler,
+		PayloadJSON:        `{"marker":"abc"}`,
+		DispatchStatus:     domain.TopicEventDispatchPending,
+		PublisherType:      domain.TopicEventSourceScheduler,
+		PublisherID:        "scheduler-a",
+		PublisherProjectID: " project-a ",
+	}); err != nil {
+		t.Fatalf("CreateEvent: %v", err)
+	}
+	stored, err := store.GetEvent(ctx, "event-project")
+	if err != nil || stored.PublisherProjectID != "project-a" {
+		t.Fatalf("GetEvent publisher project = %q, err %v; want project-a", stored.PublisherProjectID, err)
+	}
+	dispatchable, err := store.ListDispatchableEvents(ctx, time.Now().UTC(), 10)
+	if err != nil || len(dispatchable) != 1 || dispatchable[0].PublisherProjectID != "project-a" {
+		t.Fatalf("ListDispatchableEvents = %#v, err %v; want publisher project-a", dispatchable, err)
+	}
+}
+
 func TestCreateEventPayloadConflictCarriesExistingEvent(t *testing.T) {
 	ctx := context.Background()
 	store := FromDB(newMemoryDB(t))

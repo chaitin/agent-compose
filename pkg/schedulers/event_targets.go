@@ -12,14 +12,16 @@ type EventTarget struct {
 	Trigger   domain.SchedulerTrigger
 }
 
-func CollectEventTargets(items []domain.Scheduler, topic string) []EventTarget {
+// CollectEventTargets returns the enabled event triggers that subscribe to the
+// event's topic and that the delivery scope lets the event reach.
+func CollectEventTargets(items []domain.Scheduler, event domain.SchedulerTopicEvent, scope domain.EventDeliveryScope) []EventTarget {
 	targets := make([]EventTarget, 0)
 	for _, scheduler := range items {
-		if !scheduler.Summary.Enabled {
+		if !scheduler.Summary.Enabled || !scope.Reaches(event, scheduler.Summary.ProjectID) {
 			continue
 		}
 		for _, trigger := range scheduler.Triggers {
-			if !trigger.Enabled || trigger.Kind != domain.SchedulerTriggerKindEvent || !events.TriggerTopicMatches(trigger.Topic, topic) {
+			if !trigger.Enabled || trigger.Kind != domain.SchedulerTriggerKindEvent || !events.TriggerTopicMatches(trigger.Topic, event.Topic) {
 				continue
 			}
 			targets = append(targets, EventTarget{

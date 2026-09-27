@@ -1051,6 +1051,19 @@ scheduler:
 
 Daemon 本地时区优先取 `TZ`，未设置时取操作系统的 `/etc/localtime`。项目提供的 Docker Compose 会以只读方式挂载宿主机 `/etc/localtime`；仅当 daemon 需要有意使用不同于宿主机的时区时，才在 `.env` 中设置 `TZ`。修改时区后需要重启 daemon。持久化时间戳仍统一使用 UTC。
 
+#### 事件投递范围
+
+事件能到达哪些 Project 由 daemon 运维方决定，而不是由 Project 决定。daemon 环境变量 `EVENT_DELIVERY_SCOPE` 接受两个值：
+
+| 取值 | 行为 |
+| --- | --- |
+| `project`（默认） | 某个 Project 发布的事件只投递给同一 Project 中的 `event` trigger。 |
+| `daemon` | 某个 Project 发布的事件投递给 daemon 上所有 Project 中匹配的 `event` trigger。 |
+
+投递范围作用于 scheduler 脚本通过 `scheduler.event.publish` 发布的主题（`runtime.*`、`workflow.*`、`external.*`），以及 Engine 代表某个 Project 发出的系统主题（`agent-compose.session.*`、`agent-compose.sandbox.*`、`agent-compose.agent.completed`）。Webhook 主题不是由 Project 发布的，而是由运维方配置的 webhook source 接入，在两种范围下都会投递给所有 Project 中匹配的 trigger。
+
+`agent-compose.yml` 和 scheduler 脚本都不能修改投递范围，主题名也不代表任何权限：在 `project` 范围下，订阅 `*` 仍然只会收到本 Project 的事件。控制面可以通过 `SettingsService.GetEventDeliveryScope` 查询当前生效的范围。单一使用者部署、并且依赖跨 Project 事件的 daemon，应设置 `EVENT_DELIVERY_SCOPE=daemon`。
+
 #### 内联脚本
 
 ```yaml

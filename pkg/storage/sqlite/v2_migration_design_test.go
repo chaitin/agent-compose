@@ -430,8 +430,8 @@ func loadV2MigrationDesignChain(t *testing.T) []migration {
 	}
 	// The count is asserted so a migration that is added or removed without
 	// extending the historical-prefix coverage below fails loudly.
-	if len(chain) != 16 {
-		t.Fatalf("migration count = %d, want 16", len(chain))
+	if len(chain) != 17 {
+		t.Fatalf("migration count = %d, want 17", len(chain))
 	}
 	return chain
 }

@@ -42,11 +42,12 @@ func NewSchedulerController(di do.Injector) (*schedulers.Controller, error) {
 			}
 			return 20 * time.Minute
 		},
-		Store:     configDB,
-		Engine:    do.MustInvoke[schedulers.SchedulerEngine](di),
-		Publisher: bus,
-		Notifier:  notifier,
-		Artifacts: schedulers.FSArtifacts{DataRoot: config.DataRoot},
+		Store:              configDB,
+		EventDeliveryScope: config.EventDeliveryScope,
+		Engine:             do.MustInvoke[schedulers.SchedulerEngine](di),
+		Publisher:          bus,
+		Notifier:           notifier,
+		Artifacts:          schedulers.FSArtifacts{DataRoot: config.DataRoot},
 		ReserveSlots: func(event domain.SchedulerTopicEvent, count int) ([]*webhooks.Reservation, bool) {
 			return reserveSchedulerEventQueueSlots(config, &queue, event, count)
 		},

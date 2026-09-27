@@ -133,6 +133,9 @@ service SettingsService {
   rpc UpdateGlobalEnv(UpdateGlobalEnvRequest) returns (UpdateGlobalEnvResponse);
   rpc GetCapabilityGatewayConfig(GetCapabilityGatewayConfigRequest) returns (GetCapabilityGatewayConfigResponse);
   rpc UpdateCapabilityGatewayConfig(UpdateCapabilityGatewayConfigRequest) returns (UpdateCapabilityGatewayConfigResponse);
+  // Reports the event delivery scope in effect on this daemon. The operator
+  // sets it with EVENT_DELIVERY_SCOPE; Project content cannot change it.
+  rpc GetEventDeliveryScope(GetEventDeliveryScopeRequest) returns (GetEventDeliveryScopeResponse);
   rpc ListWorkspacePresets(ListWorkspacePresetsRequest) returns (ListWorkspacePresetsResponse);
   rpc CreateWorkspacePreset(CreateWorkspacePresetRequest) returns (WorkspacePresetResponse);
   rpc UpdateWorkspacePreset(UpdateWorkspacePresetRequest) returns (WorkspacePresetResponse);
@@ -2054,6 +2057,20 @@ message UpdateCapabilityGatewayConfigRequest {
   optional string token = 2;
 }
 message UpdateCapabilityGatewayConfigResponse { CapabilityGatewayConfig config = 1; }
+
+// Bounds which Projects receive an event published from a Project: by a
+// scheduler script (scheduler.event.publish) or by the Engine on the Project's
+// behalf (agent-compose.* system topics). Webhook events are not published by a
+// Project and reach subscribers in every Project under either scope.
+enum EventDeliveryScope {
+  EVENT_DELIVERY_SCOPE_UNSPECIFIED = 0;
+  // Only subscribers in the publisher's own Project receive the event.
+  EVENT_DELIVERY_SCOPE_PROJECT = 1;
+  // Subscribers in every Project on the daemon receive the event.
+  EVENT_DELIVERY_SCOPE_DAEMON = 2;
+}
+message GetEventDeliveryScopeRequest {}
+message GetEventDeliveryScopeResponse { EventDeliveryScope scope = 1; }
 
 message WorkspacePreset {
   string id = 1;

@@ -84,7 +84,7 @@ func TestControllerCoverageWorkflow(t *testing.T) {
 		t.Fatalf("Prepare before Abort returned error: %v", err)
 	}
 	controller.Abort(ctx, prepared, "")
-	controller.Publish("topic.test", map[string]any{"ok": true})
+	controller.Publish(ctx, "topic.test", map[string]any{"ok": true})
 	if len(publisher.events) != 1 {
 		t.Fatalf("publisher events = %#v", publisher.events)
 	}
