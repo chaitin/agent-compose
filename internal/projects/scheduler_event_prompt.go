@@ -19,17 +19,22 @@ const eventPromptPayloadLimit = 64 * 1024
 // Bus delivery wraps the payload in a {topic, createdAt, payload} envelope,
 // while StartSchedulerRun hands the callback the raw request payload. The
 // envelope is unwrapped and the raw payload is paired with the declared topic,
-// so the agent sees the same block for either path. A run without a payload
-// gets the declared prompt unchanged.
+// so the agent sees the same block for either path. The envelope is recognized
+// by its exact shape, so a manual run replaying a stored run's payload_json
+// renders like the original delivery. A run without a payload, or with an
+// empty object (what a manual run without one sends), gets the declared prompt
+// unchanged.
 var eventPromptFormatter = fmt.Sprintf(`function(topic, event) {
     if (event === undefined || event === null) { return ""; }
     var payload = event;
     if (typeof event === "object" && !Array.isArray(event) && typeof event.topic === "string" &&
-        Object.keys(event).sort().join(",") === "createdAt,payload,topic") {
+        typeof event.createdAt === "string" && Object.keys(event).sort().join(",") === "createdAt,payload,topic") {
       topic = event.topic;
       payload = event.payload;
     }
-    var json = JSON.stringify(payload === undefined ? null : payload);
+    if (payload === undefined || payload === null) { return ""; }
+    if (typeof payload === "object" && !Array.isArray(payload) && Object.keys(payload).length === 0) { return ""; }
+    var json = JSON.stringify(payload);
     var attributes = " topic=\"" + topic + "\"";
     if (json.length > %[1]d) {
       attributes += " truncated=\"true\" original-length=\"" + json.length + "\"";

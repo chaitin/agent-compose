@@ -105,10 +105,41 @@ func TestDeclaredEventTriggerReportsPublishedTopic(t *testing.T) {
 	}
 }
 
+// A manual run without a payload reaches the callback as {} (the run
+// resolver substitutes it for an empty payload), and a bus event may carry an
+// empty payload; neither says anything about the object to work on.
 func TestDeclaredEventTriggerWithoutPayloadKeepsDeclaredPrompt(t *testing.T) {
-	prompt, _ := runDeclaredEventTrigger(t, eventTrigger("webhook.example.push", "Review."), "")
-	if prompt != "Review." {
-		t.Fatalf("prompt = %q, want the declared prompt unchanged", prompt)
+	for name, payloadJSON := range map[string]string{
+		"absent":             "",
+		"null":               "null",
+		"empty object":       "{}",
+		"empty bus envelope": `{"topic":"webhook.example.push","createdAt":"2026-09-27T00:00:00Z","payload":{}}`,
+		"null bus envelope":  `{"topic":"webhook.example.push","createdAt":"2026-09-27T00:00:00Z","payload":null}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			prompt, _ := runDeclaredEventTrigger(t, eventTrigger("webhook.example.push", "Review."), payloadJSON)
+			if prompt != "Review." {
+				t.Fatalf("prompt = %q, want the declared prompt unchanged", prompt)
+			}
+		})
+	}
+}
+
+// Only the exact envelope shape is unwrapped; a manual payload that merely
+// shares some of its keys is shown whole under the declared topic.
+func TestDeclaredEventTriggerKeepsEnvelopeLikeManualPayloadWhole(t *testing.T) {
+	for name, payloadJSON := range map[string]string{
+		"extra key":            `{"topic":"x","createdAt":"2026-09-27T00:00:00Z","payload":{},"id":1}`,
+		"non-string createdAt": `{"topic":"x","createdAt":1,"payload":{"id":1}}`,
+		"missing createdAt":    `{"topic":"x","payload":{"id":1}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			prompt, _ := runDeclaredEventTrigger(t, eventTrigger("webhook.example.push", "Review."), payloadJSON)
+			want := "Review.\n\n<trigger-event topic=\"webhook.example.push\">\n" + payloadJSON + "\n</trigger-event>"
+			if prompt != want {
+				t.Fatalf("prompt = %q, want %q", prompt, want)
+			}
+		})
 	}
 }
 
