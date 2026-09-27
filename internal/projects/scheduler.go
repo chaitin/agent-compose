@@ -49,9 +49,13 @@ func ProjectSchedulerTriggerAndRegistration(id, agentName string, trigger projec
 	if prompt == "" {
 		prompt = fmt.Sprintf("Run agent %s.", agentName)
 	}
-	agentCall := fmt.Sprintf("scheduler.agent(%s)", JSStringLiteral(prompt))
+	promptExpression := JSStringLiteral(prompt)
+	if trigger.Kind == "event" && trigger.Event != nil {
+		promptExpression = eventTriggerPromptExpression(prompt, strings.TrimSpace(trigger.Event.Topic))
+	}
+	agentCall := fmt.Sprintf("scheduler.agent(%s)", promptExpression)
 	if trigger.SandboxPolicy != "" {
-		agentCall = fmt.Sprintf("scheduler.agent(%s, { sandboxPolicy: %s })", JSStringLiteral(prompt), JSStringLiteral(trigger.SandboxPolicy))
+		agentCall = fmt.Sprintf("scheduler.agent(%s, { sandboxPolicy: %s })", promptExpression, JSStringLiteral(trigger.SandboxPolicy))
 	}
 	callback := fmt.Sprintf("async function(event) { return %s; }", agentCall)
 	switch trigger.Kind {

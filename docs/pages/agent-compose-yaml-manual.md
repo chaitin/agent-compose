@@ -1069,6 +1069,18 @@ scheduler:
 | `prompt` | string | No | Prompt sent to the agent. An empty prompt becomes `Run agent <name>.` |
 | `sandbox_policy` | string | No | `sticky` or `new` for this generated agent call. If omitted, no call-level override is emitted. |
 
+An `event` trigger appends the triggering event to its prompt, so the agent knows which object to work on:
+
+```text
+Review the pushed changes.
+
+<trigger-event topic="webhook.github.push">
+{"ref":"refs/heads/main", ...}
+</trigger-event>
+```
+
+The block holds the event payload as compact JSON. An event delivered through the event bus and a manual `StartSchedulerRun` with the same payload produce the same block: the bus envelope (`topic`, `createdAt`, `payload`) is unwrapped and `topic` is the published topic, while a manual run's raw payload is paired with the declared `event.topic`. A run without a payload sends the declared prompt unchanged. Payload JSON longer than 65,536 characters is cut to that length and the tag gains `truncated="true"` and `original-length="<n>"`. Use an inline scheduler script when the agent needs a different rendering of the event.
+
 The daemon local timezone comes from `TZ` when it is set, otherwise from the operating system's `/etc/localtime`. The shipped Docker Compose deployment mounts the host's `/etc/localtime` read-only. Set `TZ` in `.env` only when the daemon should intentionally differ from the host. Restart the daemon after changing its timezone. Stored timestamps remain UTC.
 
 #### Inline script
