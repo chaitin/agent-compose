@@ -3,6 +3,7 @@ package adapters
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -630,6 +631,7 @@ func TestSchedulerSandboxRunnerAdoptsLegacyStickyBindingWithoutStoppingSandbox(t
 func TestSchedulerSandboxRunnerConcurrentStickyClaimReusesWinner(t *testing.T) {
 	ctx := context.Background()
 	bridge, driver := newTestSandboxRPCBridge(t)
+	publisher := &schedulerSessionPublisherFake{}
 	runner := NewSchedulerSandboxRunner(SchedulerSandboxRunnerDeps{
 		Config:           bridge.config,
 		Store:            bridge.store,
@@ -639,7 +641,7 @@ func TestSchedulerSandboxRunnerConcurrentStickyClaimReusesWinner(t *testing.T) {
 		Cap:              nil,
 		VolumeResolver:   nil,
 		Streams:          bridge.streams,
-		Publisher:        nil,
+		Publisher:        publisher,
 		CapTokens:        nil,
 		AgentExecutor:    bridge.agentExecutor,
 	})
@@ -715,6 +717,19 @@ func TestSchedulerSandboxRunnerConcurrentStickyClaimReusesWinner(t *testing.T) {
 	}
 	if loser.Summary.VMStatus != domain.VMStatusStopped {
 		t.Fatalf("losing sandbox status = %q, want stopped", loser.Summary.VMStatus)
+	}
+	// Ensure acts for the scheduler's Project even when the caller's context
+	// carries none, so every lifecycle topic it raises (the losing sandbox's
+	// created and stopped) stays within that Project's delivery scope.
+	topics := make([]string, 0, len(publisher.events))
+	for _, event := range publisher.events {
+		topics = append(topics, event.Topic)
+		if event.PublisherProjectID != scheduler.Summary.ProjectID {
+			t.Fatalf("%s publisher project = %q, want scheduler project %q", event.Topic, event.PublisherProjectID, scheduler.Summary.ProjectID)
+		}
+	}
+	if !slices.Contains(topics, "agent-compose.session.stopped") {
+		t.Fatalf("published topics = %v, want the losing sandbox's agent-compose.session.stopped", topics)
 	}
 }
 

@@ -275,6 +275,10 @@ func (r *SchedulerSandboxRunner) createSchedulerSandbox(ctx context.Context, sch
 }
 
 func (r *SchedulerSandboxRunner) Ensure(ctx context.Context, scheduler domain.Scheduler, request domain.SchedulerAgentRequest, titleOverridesSession bool) (*domain.Sandbox, string, error) {
+	// Every lifecycle topic raised while ensuring the sandbox (created, a
+	// sticky sandbox resumed, a stale or losing sandbox stopped) acts for the
+	// scheduler's Project, whatever the caller's context carries.
+	ctx = events.WithPublisherProject(ctx, scheduler.Summary.ProjectID)
 	cfg, err := r.resolveSchedulerSandboxConfig(ctx, scheduler, request, titleOverridesSession)
 	if err != nil {
 		return nil, "", err
@@ -372,7 +376,7 @@ func (r *SchedulerSandboxRunner) Ensure(ctx context.Context, scheduler domain.Sc
 	}
 	domain.RestoreSandboxTransientFields(loaded, session)
 	r.indexCapabilitySandbox(loaded)
-	r.publish(events.WithPublisherProject(ctx, scheduler.Summary.ProjectID), "agent-compose.session.created", map[string]any{
+	r.publish(ctx, "agent-compose.session.created", map[string]any{
 		"sandboxId":     loaded.Summary.ID,
 		"title":         loaded.Summary.Title,
 		"driver":        loaded.Summary.Driver,
