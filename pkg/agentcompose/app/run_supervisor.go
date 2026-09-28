@@ -49,12 +49,14 @@ func NewRunSupervisor(di do.Injector) (*RunSupervisor, error) {
 
 // detachedRunContext is the parent of a run that outlives the request starting
 // it. The run's lifetime belongs to the daemon root, not to the request, but
-// the request's trusted ingress headers must still reach sandbox preparation,
-// where they become the sandbox's capability binding. Only that metadata is
+// the request's metadata must still reach the execution: trusted ingress
+// headers become the sandbox's capability binding, and the caller's trace
+// context links agent telemetry to the caller's trace. Only that metadata is
 // carried over, not the transport context, matching how StartProjectRun's
 // asynchronous Execute restores it (runs.Controller.StartProjectRun).
 func (s *RunSupervisor) detachedRunContext(request context.Context) context.Context {
-	return domain.NewContextWithTrustedHeaders(s.root, domain.TrustedHeadersFromContext(request))
+	ctx := domain.NewContextWithTrustedHeaders(s.root, domain.TrustedHeadersFromContext(request))
+	return domain.NewContextWithTraceContext(ctx, domain.TraceContextFromContext(request))
 }
 
 func (s *RunSupervisor) StartRun(ctx context.Context, req runs.RunAgentRequest) (domain.ProjectRunRecord, error) {
