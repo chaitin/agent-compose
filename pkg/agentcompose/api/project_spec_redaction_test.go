@@ -3,7 +3,11 @@ package api
 import (
 	"testing"
 
+	"github.com/chaitin/agent-compose/internal/projects"
+	"github.com/chaitin/agent-compose/pkg/compose"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestRedactProjectSpecSecretsHidesAbsorbedCredentials pins the display half of
@@ -128,4 +132,79 @@ func TestRedactProjectSpecSecretsDoesNotMutateTheSource(t *testing.T) {
 	if got := spec.Variables[0].GetValue(); got != "absorbed" {
 		t.Fatalf("redaction mutated the source spec: %q", got)
 	}
+}
+
+// TestRedactedProjectViewRoundTripsThroughPatch pins the contract between the
+// two rules that decide whether an edit survives: the view redacts a provider
+// credential by name whether or not the declaration set secret: true, and the
+// restore step (internal/projects) must recover that value from the stored
+// revision. When the two disagree, "read the project, change one field, save it
+// back" fails closed for every project that declares a credential through the
+// plain form, so the operator can no longer edit anything.
+func TestRedactedProjectViewRoundTripsThroughPatch(t *testing.T) {
+	parsed, err := compose.Parse([]byte(`
+name: demo
+variables:
+  OPENAI_API_KEY: sk-real-project-credential
+  MODE: review
+agents:
+  reviewer:
+    provider: openai
+    model: gpt-5
+    env:
+      DEEPSEEK_API_KEY: sk-real-agent-credential
+`))
+	if err != nil {
+		t.Fatalf("compose.Parse() error = %v", err)
+	}
+	persisted, err := compose.Normalize(parsed, compose.NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("compose.Normalize() error = %v", err)
+	}
+
+	view := ProjectSpecToProtoRedacted(persisted)
+	if got := envValueByName(view.GetVariables(), "OPENAI_API_KEY"); got != secretRedactedValue {
+		t.Fatalf("view credential = %q, want %q", got, secretRedactedValue)
+	}
+
+	// The client sends the view back through the same parse path the transport
+	// uses for PatchProject.
+	raw, shapeIssues := ProjectSpecYAMLShape(view)
+	if len(shapeIssues) > 0 {
+		t.Fatalf("redacted view is not a valid request shape: %#v", shapeIssues)
+	}
+	encoded, err := yaml.Marshal(raw)
+	if err != nil {
+		t.Fatalf("marshal view: %v", err)
+	}
+	submitted, err := compose.Parse(encoded)
+	if err != nil {
+		t.Fatalf("client re-parse view: %v", err)
+	}
+
+	restored, issues, err := projects.RestoreProjectSecrets(persisted, submitted)
+	if err != nil {
+		t.Fatalf("RestoreProjectSecrets() error = %v", err)
+	}
+	if len(issues) > 0 {
+		t.Fatalf("round trip rejected: %#v", issues)
+	}
+	if got := restored.Variables["OPENAI_API_KEY"].Value; got != "sk-real-project-credential" {
+		t.Fatalf("project credential = %q, want the stored value", got)
+	}
+	if got := restored.Variables["MODE"].Value; got != "review" {
+		t.Fatalf("unrelated variable = %q", got)
+	}
+	if got := restored.Agents["reviewer"].Env["DEEPSEEK_API_KEY"].Value; got != "sk-real-agent-credential" {
+		t.Fatalf("agent credential = %q, want the stored value", got)
+	}
+}
+
+func envValueByName(items []*agentcomposev2.EnvVarSpec, name string) string {
+	for _, item := range items {
+		if item.GetName() == name {
+			return item.GetValue()
+		}
+	}
+	return ""
 }

@@ -62,19 +62,28 @@ func cloneProjectSpec(spec *projectdef.ProjectSpec) (*projectdef.ProjectSpec, er
 	return cloned, nil
 }
 
+// restoreEnvSecrets replaces a redaction marker with the value the current
+// revision already stores. The marker is reserved: a view hides every value it
+// will not echo, and a client is expected to send the view back unchanged, so a
+// marker that has a stored value behind it always means "keep that value".
+//
+// The rule deliberately does not consult secret: true. Redaction is decided by
+// the variable name as well as by the flag (pkg/agentcompose/api), so a
+// credential the view hid may well carry no secret flag; requiring one would
+// reject the very round trip the view invites. The submitted secret flag is
+// kept because promoting a variable to secret is a legitimate edit — the value
+// is what the client never saw, not the intent.
+//
+// A marker with no stored value is rejected: nothing can be restored, so the
+// client is trying to persist the marker itself.
 func restoreEnvSecrets(path string, current, submitted map[string]projectdef.EnvVarSpec, issues *[]ValidationIssue) {
 	for name, value := range submitted {
 		if value.Value != secretRedactionMarker {
 			continue
 		}
-		itemPath := path + "." + name + ".value"
-		if !value.Secret {
-			*issues = append(*issues, ValidationIssue{Path: itemPath, Message: "redacted secret marker requires secret: true"})
-			continue
-		}
 		existing, found := current[name]
-		if !found || !existing.Secret {
-			*issues = append(*issues, ValidationIssue{Path: itemPath, Message: "redacted secret marker has no existing secret to preserve"})
+		if !found {
+			*issues = append(*issues, ValidationIssue{Path: path + "." + name + ".value", Message: "redacted value marker has no existing value to preserve"})
 			continue
 		}
 		value.Value = existing.Value
