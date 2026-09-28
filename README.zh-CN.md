@@ -235,7 +235,7 @@ Bearer Token 不会加密网络流量。跨机器连接时，请使用 HTTPS、S
 
 ## Runtime Driver
 
-- **`k8s`**：每个 guest 运行在一个 Kubernetes Pod 中；daemon 必须运行在目标集群内，并通过 Helm Chart 部署。
+- **`k8s`**：每个 guest 运行在一个 Kubernetes Pod 中。driver 通过 kubeconfig（`K8S_KUBECONFIG`/`KUBECONFIG`，其次 `~/.kube/config`，最后才回退到集群内配置）构建 client，Pod 通过 `K8S_RUNTIME_BASE_URL` 访问 daemon；对外支持的安装入口是 `charts/agent-compose` Helm Chart。
 
 - **`docker`**（默认）：使用 Docker 容器运行 guest，需要可用的 Docker daemon。
 - **`boxlite`**：使用 BoxLite runtime artifact 以 microVM 运行 guest。

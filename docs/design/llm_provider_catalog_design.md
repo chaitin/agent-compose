@@ -4,7 +4,7 @@
 
 本文定义 daemon 全局 `models.json` 的产品行为：支持多个上游 Provider、literal 模型路由、Scheduler 集成，并兼容已有的 `LLM_*` 环境变量配置。
 
-这里的 catalog 只负责 agent-compose 的 Provider 路由、模型选择和 daemon 侧请求行为，不替代 Codex、Claude Code、OpenCode 或 Pi 自身维护的模型能力目录。
+这里的 catalog 只负责 agent-compose 的 Provider 路由、模型选择和 daemon 侧请求行为，不替代 Codex、Claude Code、OpenCode、Pi 或 DSH 自身维护的模型能力目录。
 
 本设计只包含 API Key 认证。账号登录、OAuth、订阅账号凭据、Token 刷新、登出和账号选择 API 不在本文范围内。
 

@@ -7,7 +7,7 @@ image without copying every tool from the published
 
 The contract is capability-based. A sandbox image used only for direct command
 execution needs much less software than an image that runs Codex, Claude,
-OpenCode, Pi, JupyterLab, and every supported notebook cell type.
+OpenCode, Pi, DSH, JupyterLab, and every supported notebook cell type.
 
 Normative terms such as **MUST**, **SHOULD**, and **MAY** describe compatibility
 requirements in this document.
@@ -81,7 +81,7 @@ required initialization **MUST** be baked into the image filesystem.
 
 ### 3.2 Commands required by the control plane
 
-For all three runtime drivers, the image **MUST** provide `sh` with `-lc`
+For all four runtime drivers, the image **MUST** provide `sh` with `-lc`
 support. A cross-driver image **MUST** also provide these commands in the fixed
 runtime `PATH`:
 
@@ -496,7 +496,7 @@ RUN cd /tmp/agent-compose-runtime \
     && rm -rf /tmp/agent-compose-runtime /root/.npm
 
 RUN mkdir -p \
-      /root/.agents /root/.claude /root/.codex /root/.opencode /root/.pi \
+      /root/.agents /root/.claude /root/.codex /root/.opencode /root/.pi /root/.dsh \
       /workspace /data/state /data/runtime /data/logs
 
 ENV HOME=/root

@@ -286,7 +286,7 @@ protected daemon control-plane API must also inject the same
 
 ## Runtime drivers
 
-- **`k8s`**: runs each guest as a Kubernetes Pod; the daemon must run inside the target cluster and be installed with the Helm chart.
+- **`k8s`**: runs each guest as a Kubernetes Pod. The driver builds its client from kubeconfig (`K8S_KUBECONFIG`/`KUBECONFIG`, then `~/.kube/config`, then in-cluster configuration only as the last fallback), and Pods reach the daemon through `K8S_RUNTIME_BASE_URL`. The supported installation entry point is the Helm chart at `charts/agent-compose`.
 
 - **`docker`** (default): runs guests in Docker containers; requires a working Docker daemon.
 - **`boxlite`**: runs guests as microVMs using BoxLite runtime artifacts.

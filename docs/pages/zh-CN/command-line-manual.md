@@ -926,7 +926,7 @@ agent-compose llm provider rm <id>
 | `--protocol <protocol>` | 上游协议：`responses`、`chat_completions` 或 `anthropic_messages`。 |
 | `--api-key <key>` | 上游 API key 明文。 |
 | `--enabled` | provider 是否启用；默认 `true`。 |
-| `--auth <mode>` | 凭据呈现方式覆盖：`x-api-key` 或 `bearer`；使用协议默认时清除该项。 |
+| `--auth <mode>` | 凭据呈现方式覆盖：`x-api-key`、`bearer` 或 `protocol-default`；`protocol-default` 清除该项。 |
 
 ## `status`：检查 daemon 状态
 

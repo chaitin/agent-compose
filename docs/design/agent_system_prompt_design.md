@@ -14,7 +14,7 @@ Only the MPI (Model Program Interface) capability catalog reached provider
 system/developer instruction channels.
 
 The Phase 1 provider matrix below is historical. The current runtime has since
-added OpenCode, Pi, and dsh; all six runners receive the composed context, using
+added OpenCode, Pi, and dsh; all five runners receive the composed context, using
 native system channels where available and prompt/file fallbacks elsewhere. dsh
 takes the file-based route: `runtime/javascript/src/runners/dsh.ts` writes the
 system context to `system-context.txt` and sets `DSH_SYSTEM_CONTEXT_FILE`.

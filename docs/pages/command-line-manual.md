@@ -948,7 +948,7 @@ Options:
 | `--protocol <protocol>` | Upstream protocol: `responses`, `chat_completions`, or `anthropic_messages`. |
 | `--api-key <key>` | Literal upstream API key. |
 | `--enabled` | Whether the provider is enabled; defaults to `true`. |
-| `--auth <mode>` | Credential presentation override: `x-api-key` or `bearer`; the protocol default clears it. |
+| `--auth <mode>` | Credential presentation override: `x-api-key`, `bearer`, or `protocol-default`; `protocol-default` clears the override. |
 
 ## `status`: Query Daemon Status
 

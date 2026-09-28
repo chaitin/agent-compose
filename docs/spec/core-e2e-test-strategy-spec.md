@@ -21,7 +21,7 @@ agent-compose 是负责 project、run、sandbox、runtime driver、workspace、s
 ### 项目 harness
 
 - `AGENTS.md` 规定主入口为 `cmd/agent-compose/main.go`、`pkg/agentcompose/app/`、`pkg/agentcompose/api/`、`pkg/agentcompose/adapters/`、`pkg/agentcompose/proxy/` 和 owner packages；测试方案必须覆盖这些边界的实际协作，而不是绕过 service graph。
-- `AGENTS.md` 规定支持 `docker`、`boxlite`、`microsandbox` 三种 runtime driver，默认 driver 是 Docker；完整 E2E 必须显式记录被测 driver，不得把 Docker 结果视作其他 driver 的替代证明。
+- `AGENTS.md` 规定支持 `docker`、`boxlite`、`microsandbox`、`k8s` 四种 runtime driver，默认 driver 是 Docker；完整 E2E 必须显式记录被测 driver，不得把 Docker 结果视作其他 driver 的替代证明。
 - `TESTING.md` 将 unit、integration、E2E 定义为三种互补测试形态，并要求跨 API、持久化、runtime driver 或用户工作流的变更具有更宽的测试覆盖。
 - `Taskfile.yml` 的主门禁为 `task lint`、`task build`、`task test`；现有 runtime 真实 smoke 通过 `task test:runtime-smoke` 和 `SMOKE_RUNTIME_DRIVERS` 显式启用。
 - `.github/workflows/ci.yml` 当前在 GitHub-hosted runner 上执行 lint、Go tests、coverage、runtime SDK、scheduler runtime 和 proto-client 构建，不准备 KVM runtime 产物或完整 guest image，因此不具备稳定运行三 driver 真实 E2E 的前提。

@@ -3,7 +3,7 @@
 本文定义当前 `agent-compose` 与 OCI guest image 之间的最小约定，并说明如何构建、选择和验证自定义镜像，而不必照搬官方
 Docker Hub 上 `chaitin/agent-compose-guest` 镜像中的全部工具。
 
-这是一份按能力分层的约定。只用于直接执行命令的 sandbox 镜像，所需软件远少于同时运行 Codex、Claude、OpenCode、Pi、JupyterLab 和所有 notebook cell 类型的镜像。
+这是一份按能力分层的约定。只用于直接执行命令的 sandbox 镜像，所需软件远少于同时运行 Codex、Claude、OpenCode、Pi、DSH、JupyterLab 和所有 notebook cell 类型的镜像。
 
 本文使用 **必须**、**应该** 和 **可以** 描述兼容性要求。
 
@@ -53,7 +53,7 @@ Docker 和 BoxLite 在启动 sandbox 时会替换镜像 entrypoint 和 command�
 
 ### 3.2 控制面所需命令
 
-对于三个 runtime driver，镜像都**必须**提供支持 `-lc` 的 `sh`。跨 driver 镜像还**必须**在固定 runtime `PATH` 中提供：
+对于四个 runtime driver，镜像都**必须**提供支持 `-lc` 的 `sh`。跨 driver 镜像还**必须**在固定 runtime `PATH` 中提供：
 
 ```text
 mkdir  test  rm  ln  readlink  mountpoint  tail  sleep
@@ -360,7 +360,7 @@ RUN cd /tmp/agent-compose-runtime \
     && rm -rf /tmp/agent-compose-runtime /root/.npm
 
 RUN mkdir -p \
-      /root/.agents /root/.claude /root/.codex /root/.opencode /root/.pi \
+      /root/.agents /root/.claude /root/.codex /root/.opencode /root/.pi /root/.dsh \
       /workspace /data/state /data/runtime /data/logs
 
 ENV HOME=/root
