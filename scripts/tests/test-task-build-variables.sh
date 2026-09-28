@@ -38,6 +38,7 @@ clear_build_environment=(
   -u ARCHLINUX_TAG -u ARCHLINUX_MIRROR
   -u CODEX_VERSION -u CLAUDE_CODE_VERSION -u GEMINI_CLI_VERSION
   -u OPENCODE_VERSION -u PI_AGENT_VERSION -u PI_MCP_ADAPTER_VERSION
+  -u DSH_VERSION
   -u IMAGE_TAG -u DOCKER_DEFAULT_PLATFORM -u NO_CACHE
 )
 
@@ -62,6 +63,7 @@ common_values=(
   OPENCODE_VERSION=9.4.0
   PI_AGENT_VERSION=9.5.0
   PI_MCP_ADAPTER_VERSION=9.6.0
+  DSH_VERSION=9.7.0
   IMAGE_TAG=example.invalid/agent-compose-guest:contract
   DOCKER_DEFAULT_PLATFORM=linux/arm64
   NO_CACHE=1
@@ -105,7 +107,8 @@ for forwarded in \
   'GEMINI_CLI_VERSION=9.3.0' \
   'OPENCODE_VERSION=9.4.0' \
   'PI_AGENT_VERSION=9.5.0' \
-  'PI_MCP_ADAPTER_VERSION=9.6.0'; do
+  'PI_MCP_ADAPTER_VERSION=9.6.0' \
+  'DSH_VERSION=9.7.0'; do
   require_line "$forwarded"
 done
 require_line '--platform'

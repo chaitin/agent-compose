@@ -55,6 +55,7 @@ env:
   OPENCODE_VERSION: '{{default "" .OPENCODE_VERSION}}'
   PI_AGENT_VERSION: '{{default "" .PI_AGENT_VERSION}}'
   PI_MCP_ADAPTER_VERSION: '{{default "" .PI_MCP_ADAPTER_VERSION}}'
+  DSH_VERSION: '{{default "" .DSH_VERSION}}'
   BOXLITE_VERSION: '{{default "" .BOXLITE_VERSION}}'
   MICROSANDBOX_VERSION: '{{default "" .MICROSANDBOX_VERSION}}'
   IMAGE_TAG: '{{default "" .IMAGE_TAG}}'
