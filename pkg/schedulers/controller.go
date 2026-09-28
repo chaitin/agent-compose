@@ -286,7 +286,7 @@ func (c *Controller) RunNow(ctx context.Context, req RunNowRequest) (domain.Sche
 	}
 	runCtx, cancel := context.WithTimeout(detachedSchedulerRunContext(c.deps.RootCtx, ctx), effectiveSchedulerRunTimeout(scheduler, req.Timeout, c.deps.RunTimeout))
 	defer cancel()
-	return c.Run(runCtx, RunTriggerRequest{Scheduler: scheduler, Trigger: trigger, PayloadJSON: req.PayloadJSON, Source: "manual"})
+	return c.Run(runCtx, RunTriggerRequest{Scheduler: scheduler, Trigger: trigger, PayloadJSON: req.PayloadJSON, Source: "manual", StartedByRequest: true})
 }
 
 func (c *Controller) Run(ctx context.Context, req RunTriggerRequest, triggerEventAck ...func(context.Context) error) (domain.SchedulerRunSummary, error) {

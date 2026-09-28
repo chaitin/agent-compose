@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
@@ -20,6 +21,9 @@ func TestSchedulerRunSupervisorStartCarriesRequestTrustedHeaders(t *testing.T) {
 			return domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-1"}}, nil, nil
 		},
 		Prepare: func(_ context.Context, req RunTriggerRequest) (PreparedRun, error) {
+			if !req.StartedByRequest {
+				t.Error("manually started run is not marked as started by a request")
+			}
 			return PreparedRun{Scheduler: req.Scheduler, Run: domain.SchedulerRunSummary{ID: "run-1", SchedulerID: "scheduler-1", Status: domain.SchedulerRunStatusRunning}}, nil
 		},
 		Execute: func(ctx context.Context, prepared PreparedRun) (domain.SchedulerRunSummary, error) {
@@ -61,10 +65,11 @@ func TestRunExecutorRunActsAsTrustedIdentity(t *testing.T) {
 	tests := []struct {
 		name      string
 		scheduler domain.Scheduler
-		request   []domain.TrustedHeader
-		lookup    func(context.Context, string) ([]domain.TrustedHeader, error)
-		want      []domain.TrustedHeader
-		wantErr   error
+		// request is nil for runs with no request of their own.
+		request *[]domain.TrustedHeader
+		lookup  func(context.Context, string) ([]domain.TrustedHeader, error)
+		want    []domain.TrustedHeader
+		wantErr error
 	}{
 		{
 			name:      "run without a request acts as the project applier",
@@ -80,12 +85,21 @@ func TestRunExecutorRunActsAsTrustedIdentity(t *testing.T) {
 		{
 			name:      "run started by a request acts as the requester",
 			scheduler: projectScheduler,
-			request:   requester,
+			request:   &requester,
 			lookup: func(context.Context, string) ([]domain.TrustedHeader, error) {
 				t.Error("request identity must not be replaced by the applier")
 				return applier, nil
 			},
 			want: requester,
+		},
+		{
+			name:      "run started by a request without trusted headers does not borrow the applier",
+			scheduler: projectScheduler,
+			request:   &[]domain.TrustedHeader{},
+			lookup: func(context.Context, string) ([]domain.TrustedHeader, error) {
+				t.Error("a request without trusted headers must not act as the applier")
+				return applier, nil
+			},
 		},
 		{
 			name:      "scheduler without a project has no identity",
@@ -118,10 +132,12 @@ func TestRunExecutorRunActsAsTrustedIdentity(t *testing.T) {
 				ProjectApplyTrustedHeaders: tt.lookup,
 			})
 			ctx := context.Background()
+			request := RunTriggerRequest{Scheduler: tt.scheduler, PayloadJSON: `{}`, Source: "cron"}
 			if tt.request != nil {
-				ctx = domain.NewContextWithTrustedHeaders(ctx, tt.request)
+				ctx = domain.NewContextWithTrustedHeaders(ctx, *tt.request)
+				request.Source, request.StartedByRequest = "manual", true
 			}
-			_, err := executor.Run(ctx, RunTriggerRequest{Scheduler: tt.scheduler, PayloadJSON: `{}`, Source: "cron"})
+			_, err := executor.Run(ctx, request)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Run error = %v, want %v", err, tt.wantErr)
 			}
@@ -135,5 +151,47 @@ func TestRunExecutorRunActsAsTrustedIdentity(t *testing.T) {
 				t.Fatalf("executed trusted headers = %#v, want %#v", engine.executed, tt.want)
 			}
 		})
+	}
+}
+
+func TestControllerRunNowActsAsRequesterNotApplier(t *testing.T) {
+	ctx := context.Background()
+	store := newControllerTestStore()
+	scheduler := domain.Scheduler{
+		Summary:  domain.SchedulerSummary{ID: "scheduler-1", Name: "Scheduler", Runtime: domain.SchedulerRuntimeScheduler, Enabled: true, ProjectID: "project-1"},
+		Script:   "function main(){}",
+		Triggers: []domain.SchedulerTrigger{{SchedulerID: "scheduler-1", ID: "trigger-1", Kind: domain.SchedulerTriggerKindEvent, Topic: "topic.test", Enabled: true}},
+	}
+	store.schedulers[scheduler.Summary.ID] = scheduler
+	engine := &trustedHeadersRecordingEngine{}
+	controller := NewController(ControllerDependencies{
+		Store:       store,
+		Engine:      engine,
+		HostFactory: func(domain.Scheduler, RuntimeExecutionContext, TriggerEventMetadata) RunHost { return nil },
+		Artifacts:   FSArtifacts{DataRoot: t.TempDir()},
+		RunTimeout:  func(time.Duration) time.Duration { return time.Second },
+		ProjectApplyTrustedHeaders: func(context.Context, string) ([]domain.TrustedHeader, error) {
+			return []domain.TrustedHeader{{Name: "x-mpi-user-id", Value: "applier"}}, nil
+		},
+	})
+	if err := controller.Refresh(ctx); err != nil {
+		t.Fatalf("Refresh returned error: %v", err)
+	}
+
+	// A request that reaches the daemon without trusted headers stays without
+	// an identity instead of acting as whoever last applied the Project.
+	if _, err := controller.RunNow(ctx, RunNowRequest{SchedulerID: "scheduler-1", TriggerID: "trigger-1", PayloadJSON: `{}`}); err != nil {
+		t.Fatalf("RunNow returned error: %v", err)
+	}
+	if engine.executed != nil {
+		t.Fatalf("anonymous RunNow executed as %#v", engine.executed)
+	}
+
+	requester := []domain.TrustedHeader{{Name: "x-mpi-user-id", Value: "requester"}}
+	if _, err := controller.RunNow(domain.NewContextWithTrustedHeaders(ctx, requester), RunNowRequest{SchedulerID: "scheduler-1", TriggerID: "trigger-1", PayloadJSON: `{}`}); err != nil {
+		t.Fatalf("RunNow returned error: %v", err)
+	}
+	if !reflect.DeepEqual(engine.executed, requester) {
+		t.Fatalf("RunNow executed as %#v, want %#v", engine.executed, requester)
 	}
 }

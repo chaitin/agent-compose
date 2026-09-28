@@ -54,6 +54,11 @@ type RunTriggerRequest struct {
 	PayloadJSON string
 	Source      string
 	Options     RunOptions
+	// StartedByRequest marks a run started by an API request. It acts as that
+	// request's trusted headers, read from the context, even when there are
+	// none. Other runs (cron and event triggers) act as the Project's last
+	// applier.
+	StartedByRequest bool
 }
 
 type PreparedRun struct {
@@ -117,7 +122,7 @@ func (e *RunExecutor) Prepare(ctx context.Context, req RunTriggerRequest) (Prepa
 		}
 		return PreparedRun{}, err
 	}
-	trustedHeaders, err := e.runTrustedHeaders(ctx, scheduler)
+	trustedHeaders, err := e.runTrustedHeaders(ctx, scheduler, req.StartedByRequest)
 	if err != nil {
 		if options.AlreadyEntered {
 			e.leaveRun(scheduler.Summary.ID)
@@ -196,11 +201,12 @@ func (e *RunExecutor) Prepare(ctx context.Context, req RunTriggerRequest) (Prepa
 }
 
 // runTrustedHeaders picks the identity a run acts as. A run started by a
-// request keeps that request's trusted headers; a run without them falls back
-// to those recorded by the last apply of the scheduler's Project.
-func (e *RunExecutor) runTrustedHeaders(ctx context.Context, scheduler domain.Scheduler) ([]domain.TrustedHeader, error) {
-	if headers := domain.TrustedHeadersFromContext(ctx); len(headers) > 0 {
-		return headers, nil
+// request acts as that request, and one without trusted headers stays without
+// them rather than borrowing the applier's identity. Only runs with no request
+// of their own act as the last applier of the scheduler's Project.
+func (e *RunExecutor) runTrustedHeaders(ctx context.Context, scheduler domain.Scheduler, startedByRequest bool) ([]domain.TrustedHeader, error) {
+	if startedByRequest {
+		return domain.TrustedHeadersFromContext(ctx), nil
 	}
 	projectID := strings.TrimSpace(scheduler.Summary.ProjectID)
 	if projectID == "" || e.deps.ProjectApplyTrustedHeaders == nil {

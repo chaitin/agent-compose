@@ -123,7 +123,7 @@ func (s *SchedulerRunSupervisor) start(ctx context.Context, request SchedulerRun
 	if err != nil {
 		return domain.SchedulerRunSummary{}, nil, err
 	}
-	prepared, err := s.deps.Prepare(ctx, RunTriggerRequest{Scheduler: scheduler, Trigger: trigger, PayloadJSON: request.PayloadJSON, Source: "manual"})
+	prepared, err := s.deps.Prepare(ctx, RunTriggerRequest{Scheduler: scheduler, Trigger: trigger, PayloadJSON: request.PayloadJSON, Source: "manual", StartedByRequest: true})
 	if err != nil {
 		return domain.SchedulerRunSummary{}, nil, err
 	}
