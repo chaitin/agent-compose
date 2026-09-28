@@ -125,7 +125,7 @@ func TestRestoreProjectSecretsPreservesStableRedactedValues(t *testing.T) {
 	}
 }
 
-func TestRestoreProjectSecretsRejectsUnmatchedAndNonSecretMarkers(t *testing.T) {
+func TestRestoreProjectSecretsRejectsMarkersWithoutAStoredValue(t *testing.T) {
 	current := normalizedProjectForSecretRestoreTest(t, strings.Join([]string{
 		"name: demo",
 		"variables:",
@@ -156,18 +156,75 @@ func TestRestoreProjectSecretsRejectsUnmatchedAndNonSecretMarkers(t *testing.T) 
 	if err != nil {
 		t.Fatalf("RestoreProjectSecrets() error = %v", err)
 	}
-	if len(issues) != 3 {
-		t.Fatalf("issues = %#v, want 3", issues)
+	if len(issues) != 2 {
+		t.Fatalf("issues = %#v, want 2", issues)
 	}
 	var paths strings.Builder
 	for _, issue := range issues {
 		paths.WriteString(issue.Path)
 		paths.WriteByte('\n')
 	}
-	for _, path := range []string{"variables.NEW_SECRET.value", "variables.PUBLIC.value", "agents.reviewer.skills.private-skill.token"} {
+	for _, path := range []string{"variables.NEW_SECRET.value", "agents.reviewer.skills.private-skill.token"} {
 		if !strings.Contains(paths.String(), path) {
 			t.Fatalf("issue paths %q do not contain %q", paths.String(), path)
 		}
+	}
+	if strings.Contains(paths.String(), "variables.PUBLIC.value") {
+		t.Fatalf("a marker with a stored value was rejected: %q", paths.String())
+	}
+}
+
+// TestRestoreProjectSecretsRestoresMarkersForNonSecretValues pins the round trip
+// a redacted view invites. A credential name is redacted by name whether or not
+// the declaration set secret: true, so the client sends the marker back without
+// the flag and the daemon must still recover the stored value. Regression guard
+// for "editing a project fails": requiring secret: true here rejected every
+// project that declared a provider credential through the plain form.
+func TestRestoreProjectSecretsRestoresMarkersForNonSecretValues(t *testing.T) {
+	current := normalizedProjectForSecretRestoreTest(t, strings.Join([]string{
+		"name: demo",
+		"variables:",
+		"  OPENAI_API_KEY: sk-stored-credential",
+		"  MODE: review",
+		"agents:",
+		"  reviewer:",
+		"    provider: openai",
+		"    model: gpt-5",
+		"    env:",
+		"      DEEPSEEK_API_KEY: sk-stored-agent-credential",
+	}, "\n"))
+	submitted := projectSpecForSecretRestoreTest(t, strings.Join([]string{
+		"name: demo",
+		"variables:",
+		"  OPENAI_API_KEY: '********'",
+		"  MODE: review",
+		"agents:",
+		"  reviewer:",
+		"    provider: openai",
+		"    model: gpt-5",
+		"    env:",
+		"      DEEPSEEK_API_KEY: {value: '********', secret: true}",
+	}, "\n"))
+
+	restored, issues, err := RestoreProjectSecrets(current, submitted)
+	if err != nil || len(issues) != 0 {
+		t.Fatalf("RestoreProjectSecrets() issues=%#v err=%v", issues, err)
+	}
+	if got := restored.Variables["OPENAI_API_KEY"].Value; got != "sk-stored-credential" {
+		t.Fatalf("project credential = %q, want the stored value", got)
+	}
+	if restored.Variables["OPENAI_API_KEY"].Secret {
+		t.Fatalf("restore forced the secret flag on a variable the client left plain")
+	}
+	if got := restored.Variables["MODE"].Value; got != "review" {
+		t.Fatalf("unrelated variable = %q", got)
+	}
+	agent := restored.Agents["reviewer"]
+	if got := agent.Env["DEEPSEEK_API_KEY"].Value; got != "sk-stored-agent-credential" {
+		t.Fatalf("agent credential = %q, want the stored value", got)
+	}
+	if !agent.Env["DEEPSEEK_API_KEY"].Secret {
+		t.Fatalf("restore dropped the secret flag the client submitted")
 	}
 }
 

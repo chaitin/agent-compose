@@ -438,6 +438,23 @@ func formatProjectValidationIssues(issues []*agentcomposev2.ProjectValidationIss
 	return strings.Join(parts, "; ")
 }
 
+// splitProjectValidationIssues separates the issues that must stop an apply from
+// the warnings that only deserve the operator's attention, rendering each warning
+// for printing. A project that merely declares something worth reporting is still
+// deployable, so a warning must never become a usage error; an unspecified
+// severity stays blocking, which is how every issue that is not explicitly a
+// warning behaves.
+func splitProjectValidationIssues(issues []*agentcomposev2.ProjectValidationIssue) (blocking []*agentcomposev2.ProjectValidationIssue, warnings []string) {
+	for _, issue := range issues {
+		if issue.GetSeverity() == agentcomposev2.ProjectValidationSeverity_PROJECT_VALIDATION_SEVERITY_WARNING {
+			warnings = append(warnings, formatProjectValidationIssues([]*agentcomposev2.ProjectValidationIssue{issue}))
+			continue
+		}
+		blocking = append(blocking, issue)
+	}
+	return blocking, warnings
+}
+
 func composePSOutputFromProject(ctx context.Context, clients cliServiceClients, project *agentcomposev2.Project, options composePSOptions) (composePSOutput, error) {
 	output := composePSOutput{Project: composeProjectSummaryOutput(project.GetSummary())}
 	statusFilter, err := composePSStatusFilter(options)

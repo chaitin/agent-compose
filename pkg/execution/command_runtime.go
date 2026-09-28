@@ -142,7 +142,7 @@ func runtimeEnvMap(items []domain.SandboxEnvVar) map[string]string {
 	env := make(map[string]string, len(items))
 	for _, item := range domain.NormalizeEnvItems(items) {
 		name := strings.TrimSpace(item.Name)
-		if name == "" || driverpkg.LLMProviderKeyName(name) {
+		if name == "" || driverpkg.LLMProviderEnvName(name) {
 			continue
 		}
 		env[name] = item.Value

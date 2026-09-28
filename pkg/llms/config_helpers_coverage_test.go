@@ -111,7 +111,7 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if provider, model := SchedulerCommandFacadeAgentModel(map[string]string{"AGENT_PROVIDER": "opencode"}); provider != "" || model != "" {
 		t.Fatalf("opencode missing model provider=%q model=%q", provider, model)
 	}
-	filtered := FilterPersistedRuntimeEnv([]domain.SandboxEnvVar{{Name: "OPENAI_API_KEY", Value: "secret"}, {Name: "LLM_API_HEADERS", Value: `{"X-Token":"secret"}`}, {Name: "AGENT_COMPOSE_RUNTIME_BASE_URL", Value: "http://runtime"}, {Name: "VISIBLE", Value: "1"}})
+	filtered := FilterPersistedRuntimeEnv([]domain.SandboxEnvVar{{Name: "OPENAI_API_KEY", Value: "secret"}, {Name: "OPENAI_BASE_URL", Value: "https://upstream.example"}, {Name: "LLM_API_HEADERS", Value: `{"X-Token":"secret"}`}, {Name: "AGENT_COMPOSE_RUNTIME_BASE_URL", Value: "http://runtime"}, {Name: "VISIBLE", Value: "1"}})
 	if len(filtered) != 1 || filtered[0].Name != "VISIBLE" {
 		t.Fatalf("filtered = %#v", filtered)
 	}
@@ -121,8 +121,9 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if got := NormalizeAPIEndpointForProtocol("https://api.example.test", APIProtocolChatCompletions); got != "https://api.example.test/v1/chat/completions" {
 		t.Fatalf("NormalizeAPIEndpointForProtocol root = %q", got)
 	}
-	// A declared provider credential in the base environment must survive the
-	// merge; only keys the managed layer actually sets are overwritten.
+	// A provider credential in the base environment never reaches the guest.
+	// The managed layer's token wins where it writes a name, and every other
+	// provider name is dropped rather than passed through.
 	merged := MergeManagedExecEnv(
 		map[string]string{"OPENAI_API_KEY": "declared", "ANTHROPIC_API_KEY": "base-only", "A": "1"},
 		map[string]string{"OPENAI_API_KEY": "managed", "B": "2"},
@@ -130,8 +131,8 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if merged["OPENAI_API_KEY"] != "managed" {
 		t.Fatalf("managed provider key did not win: %#v", merged)
 	}
-	if merged["ANTHROPIC_API_KEY"] != "base-only" {
-		t.Fatalf("declared provider key was stripped: %#v", merged)
+	if _, ok := merged["ANTHROPIC_API_KEY"]; ok {
+		t.Fatalf("declared provider key survived the merge: %#v", merged)
 	}
 	if merged["A"] != "1" || merged["B"] != "2" {
 		t.Fatalf("merged env = %#v", merged)

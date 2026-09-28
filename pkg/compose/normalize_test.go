@@ -1486,3 +1486,49 @@ func mustParseCompose(t *testing.T, raw string) *ProjectSpec {
 	}
 	return spec
 }
+
+// TestNormalizeRejectsRedactedValuePlaceholder pins the placeholder as reserved
+// for every environment value, not only OctoBus tokens. A view the daemon
+// returned hides a credential behind the placeholder; applying that view instead
+// of patching it must fail loudly rather than persist eight asterisks as the
+// credential.
+func TestNormalizeRejectsRedactedValuePlaceholder(t *testing.T) {
+	cases := []struct {
+		name string
+		spec string
+		path string
+	}{
+		{
+			name: "project variable",
+			spec: "name: demo\nvariables:\n  OPENAI_API_KEY: '********'\n",
+			path: "variables.OPENAI_API_KEY.value",
+		},
+		{
+			name: "agent env",
+			spec: "name: demo\nagents:\n  reviewer:\n    provider: codex\n    env:\n      DEEPSEEK_API_KEY: '********'\n",
+			path: "agents.reviewer.env.DEEPSEEK_API_KEY.value",
+		},
+		{
+			name: "mcp header",
+			spec: "name: demo\nmcp_servers:\n  tools:\n    type: remote\n    transport: http\n    url: https://example.test/mcp\n    headers:\n      Authorization: '********'\n",
+			path: "mcp_servers.tools.headers.Authorization.value",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec, err := Parse([]byte(tc.spec))
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			_, err = Normalize(spec, NormalizeOptions{})
+			var validationErr *ValidationError
+			if !errors.As(err, &validationErr) {
+				t.Fatalf("Normalize() error = %v, want a ValidationError", err)
+			}
+			if validationErr.Path != tc.path {
+				t.Fatalf("Normalize() path = %q, want %q", validationErr.Path, tc.path)
+			}
+		})
+	}
+}

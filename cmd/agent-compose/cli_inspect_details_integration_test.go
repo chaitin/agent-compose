@@ -62,13 +62,13 @@ func inspectDetailsProject(script string) *agentcomposev2.Project {
 	project := testCLIProject(strings.Repeat("a", 64), "demo", "/deployed/agent-compose.yml")
 	project.Spec = &agentcomposev2.ProjectSpec{
 		Name:           "demo",
-		Variables:      []*agentcomposev2.EnvVarSpec{{Name: "PROJECT_SECRET", Value: "project-private", Secret: true}},
+		Variables:      []*agentcomposev2.EnvVarSpec{{Name: "PROJECT_SECRET", Value: "project-private", Secret: true}, {Name: "ANTHROPIC_AUTH_TOKEN", Value: "absorbed-private"}},
 		OctobusServers: []*agentcomposev2.OctoBusServerSpec{{Name: "events", Token: "octobus-private"}},
 		Workspaces:     []*agentcomposev2.NamedWorkspaceSpec{{Name: "shared", Workspace: &agentcomposev2.WorkspaceSpec{Provider: "git", Token: "workspace-private"}}},
 		Agents: []*agentcomposev2.AgentSpec{{
 			Name: "reviewer", Provider: "codex", SystemPrompt: "review carefully", Image: "guest:v1",
 			Driver:     &agentcomposev2.DriverSpec{Name: "docker", Config: &agentcomposev2.DriverSpec_Docker{Docker: &agentcomposev2.DockerDriverSpec{}}},
-			Env:        []*agentcomposev2.EnvVarSpec{{Name: "TOKEN", Value: "env-private", Secret: true}, {Name: "MODE", Value: "review"}},
+			Env:        []*agentcomposev2.EnvVarSpec{{Name: "TOKEN", Value: "env-private", Secret: true}, {Name: "MODE", Value: "review"}, {Name: "OPENAI_API_KEY", Value: "absorbed-agent-private"}, {Name: "GOOGLE_API_KEY", Value: "unproxyable-private"}, {Name: "MYCORP_API_KEY", Value: "unrecognized-private"}},
 			Workspace:  &agentcomposev2.WorkspaceSpec{Provider: "git", Token: "agent-workspace-private"},
 			Skills:     []*agentcomposev2.SkillSpec{{Name: "review", Provider: "git", Password: "skill-private"}},
 			McpServers: []*agentcomposev2.MCPServerSpec{{Name: "tools", Headers: []*agentcomposev2.EnvVarSpec{{Name: "Authorization", Value: "header-private", Secret: true}}}},
@@ -139,9 +139,21 @@ func assertInspectDetails(t *testing.T, stdout string, project *agentcomposev2.P
 	if declaration.Model != "" || !declaration.Scheduler.Enabled || runtime.ResolvedModel != "daemon-model" || runtime.SchedulerEnabled || runtime.CurrentRun.GetRunningSchedulerRunCount() != 2 || runtime.Health != agentcomposev2.ProjectAgentHealth_PROJECT_AGENT_HEALTH_AT_RISK {
 		t.Fatal("declared configuration and effective runtime were not kept separate")
 	}
-	for _, secret := range []string{"project-private", "octobus-private", "workspace-private", "env-private", "agent-workspace-private", "skill-private", "header-private"} {
+	for _, secret := range []string{"project-private", "octobus-private", "workspace-private", "env-private", "agent-workspace-private", "skill-private", "header-private", "absorbed-private", "absorbed-agent-private", "unproxyable-private"} {
 		if strings.Contains(stdout, secret) {
 			t.Fatalf("inspect leaked %s", secret)
+		}
+	}
+	// An absorbed credential is redacted, but the operator still sees that they
+	// declared one and under which name. The agent declaration carries the
+	// agent's own variable; the project variable only appears in a project view.
+	names := []string{"OPENAI_API_KEY"}
+	if kind == agentcomposev2.ResourceKind_RESOURCE_KIND_PROJECT {
+		names = append(names, "ANTHROPIC_AUTH_TOKEN")
+	}
+	for _, name := range names {
+		if !strings.Contains(stdout, name) {
+			t.Fatalf("inspect hid the declared variable name %s", name)
 		}
 	}
 	if !omit {

@@ -110,7 +110,9 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 	}
 	if opts.LoadDotEnv {
 		if err := godotenv.Load(); err != nil {
-			log.Printf("dotenv load skipped: %v", err)
+			// The parser embeds the unparsed remainder of the file in its
+			// message, which can include provider credentials.
+			log.Printf("dotenv load skipped: %v", sanitizeDotenvError(err))
 		}
 	}
 	if opts.SetRlimit {

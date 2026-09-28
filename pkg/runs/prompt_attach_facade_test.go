@@ -66,6 +66,13 @@ func (s *promptAttachFacadeStore) SaveLLMFacadeToken(_ context.Context, token ll
 	return nil
 }
 
+// UpsertDeclaredConnection records the connection and makes it visible to the
+// catalog snapshot a prepare call reloads, which is what a real store does.
+func (s *promptAttachFacadeStore) UpsertDeclaredConnection(_ context.Context, provider llms.Provider) error {
+	s.providers = append(s.providers, provider)
+	return nil
+}
+
 // openAIFacadeStore serves gpt-test over responses from one connection and makes
 // it the catalog default.
 func openAIFacadeStore() *promptAttachFacadeStore {

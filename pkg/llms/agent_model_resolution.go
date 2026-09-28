@@ -48,17 +48,20 @@ func ResolveAgentModels(ctx context.Context, store CatalogStore, agents []domain
 // model named by an upstream the agent declared itself, then the configured
 // catalog default, then nothing.
 //
-// The agent's environment is consulted only when direct mode would actually
-// engage, which is what directUpstreamFromAgentEnv decides. Reading a model out
-// of the environment in managed mode would report a model the run will not use,
-// because a managed run never consults the agent's environment.
+// The agent's environment is consulted only when a declared upstream would
+// actually own the run, which is what recognizeDeclaredCredential decides.
+// Reading a model out of the environment otherwise would report a model the run
+// will not use, because the environment only supplies the model when its
+// declaration is absorbed.
 func resolveAgentModel(catalog *Catalog, agent domain.AgentDefinition) AgentModelResolution {
 	if model := strings.TrimSpace(agent.Model); model != "" {
 		return AgentModelResolution{Model: model, Source: AgentModelSourceProject}
 	}
 	if dialect, err := DialectFor(domain.NormalizeAgentKind(agent.Provider)); err == nil {
-		if upstream, declared := directUpstreamFromAgentEnv(agent.EnvItems, dialect); declared && upstream.Model != "" {
-			return AgentModelResolution{Model: upstream.Model, Source: AgentModelSourceAgentEnv}
+		if credential, declared := recognizeDeclaredCredential(agent.EnvItems, dialect.Canonical); declared && credential.Absorbed {
+			if model := declaredModelFromEnv(dialect.Kind, agent.EnvItems); model != "" {
+				return AgentModelResolution{Model: model, Source: AgentModelSourceAgentEnv}
+			}
 		}
 	}
 	if model := catalog.DefaultModel(); model != "" {
