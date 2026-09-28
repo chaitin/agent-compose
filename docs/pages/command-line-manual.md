@@ -418,7 +418,7 @@ Rules:
 - REPL mode is not TTY/PTY or running stdin passthrough. Each input is one independent `StreamAgentRun` call that reuses the same sandbox.
 - `--sandbox` can reuse only a sandbox owned by the selected project and agent. Cross-project or cross-agent reuse is rejected without modifying or stopping the owner sandbox.
 - Detached runs can be observed with the printed `agent-compose logs --run <run-id> --follow` command, or managed later with `stop` and `logs`.
-- `run -i --prompt` supports providers with reusable provider conversations: Codex, Claude/cc, OpenCode, and Pi. Gemini currently returns unsupported.
+- `run -i --prompt` supports providers with reusable provider conversations: Codex, Claude/cc, OpenCode, Pi, and DSH (`dsh`, `deepseek`, `deepseek-harness`, `deepseek_harness`). Gemini currently returns unsupported.
 - A run becomes terminal only after its completion cleanup succeeds. The default policy stops the sandbox; remove-on-completion fully deletes a sandbox created by that run, while a reused sandbox is only stopped. Keep-running is the explicit exception and performs no cleanup.
 - Cleanup failures leave the run `running` with `cleanup_error` populated. The daemon retries immediately and then with bounded backoff, including after restart; foreground and streaming calls continue waiting, while detached starts remain asynchronous.
 - `StopRun` requests cancellation and can return `stop_requested=true` while the run is still `running`. Execution records the cancellation result, performs the configured cleanup, and only then commits `canceled`. Pending/running runs left behind after daemon restart follow the same path to `failed` with a `daemon interrupted` error.

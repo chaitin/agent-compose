@@ -593,7 +593,7 @@ func testComposeRunExecAndLogsEdgeHelpers(t *testing.T) {
 		Name: "Project",
 		Agents: []compose.NormalizedAgentSpec{{
 			Name:     "reviewer",
-			Provider: "gemini",
+			Provider: "aider",
 			Scheduler: &compose.NormalizedSchedulerSpec{Triggers: []compose.NormalizedTriggerSpec{
 				{Name: "nightly"},
 			}},
@@ -612,7 +612,7 @@ func testComposeRunExecAndLogsEdgeHelpers(t *testing.T) {
 	if normalizeInteractivePromptProvider("claude_code") != "claude" ||
 		normalizeInteractivePromptProvider("open-code") != "opencode" ||
 		normalizeInteractivePromptProvider("PI_AGENT") != "pi" ||
-		normalizeInteractivePromptProvider(" Gemini ") != "gemini" {
+		normalizeInteractivePromptProvider(" DeepSeek_Harness ") != "dsh" {
 		t.Fatalf("normalizeInteractivePromptProvider returned unexpected values")
 	}
 	if err := validateInteractivePromptProvider(project, "reviewer", false); commandExitCode(err) != exitCodeUnsupported {
@@ -636,6 +636,17 @@ func testComposeRunExecAndLogsEdgeHelpers(t *testing.T) {
 	project.Agents[0].Provider = "pi-agent"
 	if err := validateInteractivePromptProvider(project, "reviewer", true); err != nil {
 		t.Fatalf("validateInteractivePromptProvider pi-agent returned error: %v", err)
+	}
+	// dsh resumes its provider session, so both interactive modes must accept it,
+	// including through its compatibility aliases.
+	for _, provider := range []string{"dsh", "deepseek", "deepseek-harness", "deepseek_harness"} {
+		project.Agents[0].Provider = provider
+		if err := validateInteractivePromptProvider(project, "reviewer", false); err != nil {
+			t.Fatalf("validateInteractivePromptProvider %s returned error: %v", provider, err)
+		}
+		if err := validateInteractivePromptProvider(project, "reviewer", true); err != nil {
+			t.Fatalf("validateInteractivePromptProvider %s attach returned error: %v", provider, err)
+		}
 	}
 
 	failed := &agentcomposev2.RunSummary{RunId: "run-failed", Status: agentcomposev2.RunStatus_RUN_STATUS_FAILED, ExitCode: 9, Error: "boom"}
