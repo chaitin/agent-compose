@@ -44,11 +44,13 @@ agents:
 ```
 
 `provider: file` 使用 `path`，无 scheme 的相对路径以 compose 文件目录为基准，
-也支持绝对路径和 `file://`；`provider: http` 和 `provider: git` 使用 `url`
-（`http://` 或 `https://`）。这是 CLI authoring 能力：`agent-compose config` 和
-`agent-compose up` 在本机获取一次并生成内联内容快照，daemon、v2 API、revision
-和 scheduler 只看到脚本文本。它不是运行时 `import`，来源内容变化只会在下次
-`up` 时生效。当前仍不支持 `import` / `require`、bundling、鉴权 header 或后台刷新。
+也支持绝对路径和 `file://`；`provider: http` 使用 `url`（`http://` 或
+`https://`），可用 `token`（`Authorization: Bearer`）或 `username`/`password`
+做鉴权；`provider: git` 使用 `url`、可选的 `ref`，以及仓库内必填的 `path`。这是
+CLI authoring 能力：`agent-compose config` 和 `agent-compose up` 在本机获取一次并
+生成内联内容快照，daemon、v2 API、revision 和 scheduler 只看到脚本文本。它不是
+运行时 `import`，来源内容变化只会在下次 `up` 时生效。当前仍不支持
+`import` / `require`、bundling 或后台刷新。
 
 ## 触发器 ID
 

@@ -136,7 +136,7 @@ agent-compose down                                # 停止 sandbox、禁用 sche
 
 ## Compose 配置
 
-**顶层字段：** `name`、`env_file`、`variables`、`workspaces`、`agents`、`mcp_servers`、`volumes`。
+**顶层字段：** `name`、`env_file`、`variables`、`workspaces`、`agents`、`mcp_servers`、`octobus_servers`、`volumes`。
 
 **agent 常用字段：** `provider`、`model`、`system_prompt`、`image`、`driver`、
 `env`（scalar 或 `{ value, secret }`）、`workspace`、`scheduler`、`mcp_servers`、`skills`、`volumes`。
@@ -208,15 +208,16 @@ agents:
 `AGENT_COMPOSE_SOCKET`（Unix socket 路径）。完整参考见[命令行使用手册](docs/pages/zh-CN/command-line-manual.md)。
 
 `scheduler.script` 支持内联 JavaScript，或使用显式的来源对象（`provider`
-必填）：`provider: file` 配 `path`，`provider: http` 或 `provider: git` 配
-`url`。`config` 和 `up` 在 CLI 本机获取来源并向 daemon 发送内联快照；同一
-scheduler 中 `scheduler.script` 和 `scheduler.triggers` 二选一。
+必填）：`provider: file` 配 `path`；`provider: http` 配 `url`（可选鉴权）；
+`provider: git` 配 `url`、可选的 `ref`，以及仓库内的必填 `path`。`config` 和
+`up` 在 CLI 本机获取来源并向 daemon 发送内联快照；同一 scheduler 中
+`scheduler.script` 和 `scheduler.triggers` 二选一。
 
 ## Daemon 认证
 
 在 daemon 环境中设置 `AGENT_COMPOSE_AUTH_TOKEN` 后，HTTP(S) 控制面请求必须携带共享 Bearer Token；配置为空或未配置时，认证保持关闭。受信任的本地 Unix socket 连接不需要此 Token。
 
-Health RPC 和 webhook ingestion 继续使用各自已有的认证或信任边界，不使用 daemon Token。
+Health RPC、runtime LLM facade、Jupyter proxy 和 webhook ingestion 继续使用各自已有的认证或信任边界，不使用 daemon Token。
 
 为一个 daemon 站点验证并保存 Token：
 

@@ -8,7 +8,7 @@ This repo contains the agent-compose daemon and CLI control plane. It applies de
 - `pkg/agentcompose/app`: use-case and component lifecycle orchestration.
 - `pkg/agentcompose/api`: Connect transport handlers and transport/domain mapping.
 - `pkg/agentcompose/adapters`, `pkg/agentcompose/proxy`, `pkg/storage`, and `pkg/driver`: external and infrastructure boundaries.
-- `pkg/schedulers`, `pkg/projects`, `pkg/runs`, and `pkg/sessions`: domain owners. Other `pkg` packages provide focused capabilities; location under `pkg` alone does not make a package a domain owner.
+- `pkg/schedulers`, `pkg/runs`, `pkg/sandboxes`, and `internal/projects`: domain owners. Other `pkg` packages provide focused capabilities; location under `pkg` alone does not make a package a domain owner.
 - `pkg/compose`: compose-file schema, validation, normalization, and source loading; `pkg/resources` resolves resource identifiers; `pkg/cache` owns shared runtime cache policy; `pkg/skills` resolves skill sources.
 - `proto`: v2 and health API sources plus generated Go and Connect clients. Edit `.proto` sources and regenerate; do not edit generated files manually.
 - `runtime`: the guest JavaScript runtime, runtime SDK, and Jupyter JavaScript kernel metadata.
@@ -21,7 +21,7 @@ These rules apply to new and modified handwritten code. Existing large files are
 
 ### Package ownership and dependency direction
 
-- Put business concepts and rules in the owning domain package under `pkg/` (for example, runs in `pkg/runs`, projects in `pkg/projects`, and sessions in `pkg/sessions`). Do not add domain logic to `cmd/agent-compose`, `pkg/agentcompose/api`, or a generic `util`, `common`, or `helpers` package.
+- Put business concepts and rules in the owning domain package under `pkg/` (for example, runs in `pkg/runs`, sandboxes in `pkg/sandboxes`, and projects in `internal/projects`). Do not add domain logic to `cmd/agent-compose`, `pkg/agentcompose/api`, or a generic `util`, `common`, or `helpers` package.
 - `cmd/agent-compose` is a composition and process-boundary layer only: CLI parsing, dependency wiring, server startup, and shutdown. Move reusable behavior out of `main.go` into an owning package.
 - `pkg/agentcompose/api` translates transport requests and responses and calls domain/application services. It must not own persistence, runtime-driver policy, or reusable business rules.
 - `pkg/agentcompose/app` coordinates use cases and component lifecycles. Keep domain rules in domain packages and infrastructure implementations in adapters or storage packages.

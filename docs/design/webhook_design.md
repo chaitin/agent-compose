@@ -178,16 +178,13 @@ configured source token remains required in unsigned mode. Both modes route
 from `X-GitHub-Event`; generic token-authenticated sources, including legacy
 sources with an empty signature type, retain the URL-derived topic.
 
-Target behavior:
+Remaining target behavior:
 
-- Webhook handler must match enabled source configuration by `:topic`.
-- Token auth uses `Authorization: Bearer <source-token>` or
-  `X-WEBHOOK-TOKEN: <source-token>`.
-- Provider signature auth is enabled by source configuration; `github_sha256`
-  (`X-Hub-Signature-256`) is implemented, while other provider verifiers such as
-  GitLab token remain target work.
-- Legacy project-prefixed environment variables, table names, or headers should
-  not be kept as target naming.
+- Add provider verifiers beyond the implemented `github_sha256`
+  (`X-Hub-Signature-256`) signature and token authentication, such as a GitLab
+  token check.
+- Do not carry legacy project-prefixed environment variables, table names, or
+  headers forward as target naming.
 
 ### Webhook Source Configuration
 
@@ -406,7 +403,8 @@ Event delivery state and scheduler business state are separated:
 | `published_to_bus` | Current in-process bus delivery acknowledged |
 | `no_subscriber` | No matching scheduler; event needs no business handling |
 | `retrying` | This publish or ack attempt failed; waiting for retry |
-| `dead_letter` | Retry exhausted or payload cannot be decoded; needs manual handling |
+| `dead_letter` | Payload cannot be decoded; needs manual handling |
+| `canceled` | Withdrawn from the dispatch queue through the event stop API before a run started |
 
 The claim and retry state is persisted on the event row so multiple processes or
 retries are not judged only by memory state:
@@ -459,6 +457,7 @@ CREATE TABLE event_delivery (
 
 CREATE INDEX idx_event_delivery_scheduler_run ON event_delivery(scheduler_run_id);
 CREATE INDEX idx_event_delivery_status ON event_delivery(status, updated_at);
+CREATE INDEX idx_event_delivery_scheduler ON event_delivery(scheduler_id, scheduler_run_id);
 ```
 
 Delivery is written as `matched` when a scheduler trigger matches, updated to

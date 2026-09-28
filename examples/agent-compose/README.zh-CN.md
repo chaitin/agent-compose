@@ -12,13 +12,18 @@
 | [docker-scheduler-timeout](docker-scheduler-timeout/) | 端到端的定时运行：触发、执行 agent 并持久化日志。 | 定时运行需要 |
 | [k8s-scheduler-skills-mcp](k8s-scheduler-skills-mcp/) | 在 `k8s` driver 上演示 scheduler、Git 来源 skill、MCP 以及 PVC 支撑的 volume。 | 定时运行需要 |
 
-## 通用前置条件
+## 前置条件
+
+Docker 示例需要：
 
 - Docker daemon 正在运行。
 - `agent-compose` daemon 已经启动。
 - 本地存在 `agent-compose-guest:latest` 镜像。
 
-`k8s-scheduler-skills-mcp` 示例改为要求 daemon 以 `driver: k8s` 运行、集群节点可以拉取 guest 镜像，并提供满足其 `cache` volume 的 StorageClass。
+`k8s-scheduler-skills-mcp` 示例改为要求 daemon 运行在 `k8s` driver 上
+（`charts/agent-compose` 的 `runtime.driver: k8s`，或原生 daemon 的
+`RUNTIME_DRIVER=k8s`）、集群节点可以拉取 guest 镜像，并提供满足其 `cache` volume
+的 StorageClass。
 
 如需构建 guest 镜像，在仓库根目录执行：
 

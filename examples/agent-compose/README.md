@@ -13,15 +13,18 @@ runtime drivers, ordered from simplest to most complete.
 | [docker-scheduler-timeout](docker-scheduler-timeout/) | End-to-end scheduled run that fires, executes the agent, and persists logs. | Yes, for the scheduled run |
 | [k8s-scheduler-skills-mcp](k8s-scheduler-skills-mcp/) | Scheduler, Git-sourced skills, MCP, and a PVC-backed volume on the `k8s` driver. | Yes, for the scheduled run |
 
-## Common prerequisites
+## Prerequisites
+
+For the Docker examples:
 
 - Docker daemon is running.
 - The `agent-compose` daemon is already running.
 - The `agent-compose-guest:latest` image exists locally.
 
-The `k8s-scheduler-skills-mcp` example instead needs a daemon running with
-`driver: k8s`, a guest image the cluster nodes can pull, and a StorageClass for
-its `cache` volume.
+The `k8s-scheduler-skills-mcp` example instead needs a daemon running on the
+`k8s` driver (`runtime.driver: k8s` in `charts/agent-compose`, or
+`RUNTIME_DRIVER=k8s` for a native daemon), a guest image the cluster nodes can
+pull, and a StorageClass for its `cache` volume.
 
 From the repository root, build the guest image if needed:
 

@@ -165,7 +165,7 @@ sophisticated file-based RPC mechanism
 (`pkg/agentcompose/api/exec_execution.go`, an in-guest Node.js runtime
 helper) that assumes the shared mount docker, boxlite, and microsandbox
 all have and fails
-with `ENOENT ... command-request.json` on k8s (see design doc §5.1 - a
+with `ENOENT ... command-request.json` on k8s (see design doc §4.3 - a
 real, separate gap, not fixed yet). `kubectl exec` bypasses the daemon and
 this mechanism entirely, so it works fine for verification purposes:
 
@@ -408,9 +408,13 @@ Then confirm the two unsupported forms are rejected before any Pod is created by
 `resolveProjectRunVolumeMounts` (`pkg/runs/sandbox_preparation.go`), which
 delegates to `pkg/volumes/normalize.go` - not silently dropped or mis-mounted:
 
-- `type: bind` fails with `k8s driver does not support local bind mounts
-  (source "...", target "..."); use a named volume instead` - a bind source is a
-  daemon-host path that has no meaning inside a Pod.
+- `type: bind` is rejected while normalizing an agent that declares a `k8s`
+  driver (`pkg/compose/normalize.go`, path `agents.<name>.volumes[i].type`) with
+  `k8s driver does not support local bind mounts; use a named volume instead`.
+  The resolved-volume path (`pkg/volumes/normalize.go`, reached through
+  `resolveProjectRunVolumeMounts`) reports the same rejection with the source and
+  target included - a bind source is a daemon-host path that has no meaning
+  inside a Pod.
 - A named volume whose driver is not `k8s` (for example the `local` default)
   fails with `k8s driver does not support volume driver "<driver>" for source
   "..."; use a volume with driver k8s`.

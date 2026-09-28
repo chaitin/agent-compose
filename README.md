@@ -256,8 +256,9 @@ control-plane requests must carry that shared Bearer token; when it is empty or
 unset, authentication stays off. Trusted local Unix socket connections do not
 need the token.
 
-Health RPCs and webhook ingestion keep their own existing authentication or
-trust boundaries and do not use the daemon token.
+Health RPCs, runtime LLM facade traffic, Jupyter proxy traffic, and webhook
+ingestion keep their own existing authentication or trust boundaries and do not
+use the daemon token.
 
 To verify and save a token for one daemon site:
 

@@ -24,7 +24,7 @@ agent-compose 是负责 project、run、sandbox、runtime driver、workspace、s
 - `AGENTS.md` 规定支持 `docker`、`boxlite`、`microsandbox`、`k8s` 四种 runtime driver，默认 driver 是 Docker；完整 E2E 必须显式记录被测 driver，不得把 Docker 结果视作其他 driver 的替代证明。
 - `TESTING.md` 将 unit、integration、E2E 定义为三种互补测试形态，并要求跨 API、持久化、runtime driver 或用户工作流的变更具有更宽的测试覆盖。
 - `Taskfile.yml` 的主门禁为 `task lint`、`task build`、`task test`；现有 runtime 真实 smoke 通过 `task test:runtime-smoke` 和 `SMOKE_RUNTIME_DRIVERS` 显式启用。
-- `.github/workflows/ci.yml` 当前在 GitHub-hosted runner 上执行 lint、Go tests、coverage、runtime SDK、scheduler runtime 和 proto-client 构建，不准备 KVM runtime 产物或完整 guest image，因此不具备稳定运行三 driver 真实 E2E 的前提。
+- `.github/workflows/ci.yml` 当前在 GitHub-hosted runner 上执行 lint、Go tests、coverage、runtime SDK、scheduler runtime 和 proto-client 构建，并在 `binary-linux` job 里构建与校验 BoxLite/Microsandbox 的原生产物（`boxlite-shim`、`msb`、`libkrunfw.so`）；但它既不提供 guest 镜像，也没有可用的 KVM 与 host daemon，因此不具备稳定运行三 driver 真实 E2E 的前提。
 - `docs/design/agent-compose_design.md` 定义 daemon、v2 API、project/run pipeline、sandbox/runtime、scheduler、LLM、image/cache 和持久化边界；本规格中的业务场景以这些已实现能力为准。
 - `docs/design/agent-compose-runtime_contract.md` 定义 guest runtime 的 workspace、state、runtime、home、stdio、provider 和 resume 合同；driver 等价场景必须验证该合同，而不只验证 runtime 进程启动。
 
