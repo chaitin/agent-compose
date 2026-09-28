@@ -61,6 +61,10 @@ type PreparedRun struct {
 	Trigger     *domain.SchedulerTrigger
 	Run         domain.SchedulerRunSummary
 	PayloadJSON string
+	// TrustedHeaders is the identity the run acts as: the headers of the
+	// request that started it, or for runs without one (cron and event
+	// triggers) the headers recorded by the Project's last apply.
+	TrustedHeaders []domain.TrustedHeader
 }
 
 type RunExecutorDependencies struct {
@@ -75,6 +79,10 @@ type RunExecutorDependencies struct {
 	UpdateTriggerEventDelivery func(ctx context.Context, run domain.SchedulerRunSummary)
 	Notify                     func(reason string)
 	Refresh                    func(ctx context.Context) error
+	// ProjectApplyTrustedHeaders returns the trusted headers recorded by the
+	// last apply of a Project. Nil leaves runs without a request of their own
+	// without trusted headers.
+	ProjectApplyTrustedHeaders func(ctx context.Context, projectID string) ([]domain.TrustedHeader, error)
 }
 
 type RunExecutor struct {
@@ -103,6 +111,13 @@ func (e *RunExecutor) Run(ctx context.Context, req RunTriggerRequest, triggerEve
 func (e *RunExecutor) Prepare(ctx context.Context, req RunTriggerRequest) (PreparedRun, error) {
 	scheduler, trigger, source, options := req.Scheduler, req.Trigger, req.Source, req.Options
 	payloadJSON, err := domain.NormalizeJSONDocument(req.PayloadJSON)
+	if err != nil {
+		if options.AlreadyEntered {
+			e.leaveRun(scheduler.Summary.ID)
+		}
+		return PreparedRun{}, err
+	}
+	trustedHeaders, err := e.runTrustedHeaders(ctx, scheduler)
 	if err != nil {
 		if options.AlreadyEntered {
 			e.leaveRun(scheduler.Summary.ID)
@@ -153,7 +168,7 @@ func (e *RunExecutor) Prepare(ctx context.Context, req RunTriggerRequest) (Prepa
 			Message:     run.Error,
 		})
 		_ = e.writeArtifact(run.ArtifactsDir, "error.txt", run.Error)
-		return PreparedRun{Scheduler: scheduler, Trigger: trigger, Run: run, PayloadJSON: payloadJSON}, nil
+		return PreparedRun{Scheduler: scheduler, Trigger: trigger, Run: run, PayloadJSON: payloadJSON, TrustedHeaders: trustedHeaders}, nil
 	}
 
 	if err := os.MkdirAll(run.ArtifactsDir, 0o755); err != nil {
@@ -177,7 +192,25 @@ func (e *RunExecutor) Prepare(ctx context.Context, req RunTriggerRequest) (Prepa
 		Message:     "scheduler run started",
 		Payload:     map[string]any{"source": run.TriggerSource},
 	})
-	return PreparedRun{Scheduler: scheduler, Trigger: trigger, Run: run, PayloadJSON: payloadJSON}, nil
+	return PreparedRun{Scheduler: scheduler, Trigger: trigger, Run: run, PayloadJSON: payloadJSON, TrustedHeaders: trustedHeaders}, nil
+}
+
+// runTrustedHeaders picks the identity a run acts as. A run started by a
+// request keeps that request's trusted headers; a run without them falls back
+// to those recorded by the last apply of the scheduler's Project.
+func (e *RunExecutor) runTrustedHeaders(ctx context.Context, scheduler domain.Scheduler) ([]domain.TrustedHeader, error) {
+	if headers := domain.TrustedHeadersFromContext(ctx); len(headers) > 0 {
+		return headers, nil
+	}
+	projectID := strings.TrimSpace(scheduler.Summary.ProjectID)
+	if projectID == "" || e.deps.ProjectApplyTrustedHeaders == nil {
+		return nil, nil
+	}
+	headers, err := e.deps.ProjectApplyTrustedHeaders(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("load scheduler %s apply trusted headers: %w", scheduler.Summary.ID, err)
+	}
+	return headers, nil
 }
 
 func (e *RunExecutor) Execute(ctx context.Context, prepared PreparedRun) (domain.SchedulerRunSummary, error) {
@@ -186,6 +219,7 @@ func (e *RunExecutor) Execute(ctx context.Context, prepared PreparedRun) (domain
 	}
 	defer e.leaveRun(prepared.Scheduler.Summary.ID)
 	ctx = events.WithPublisherProject(ctx, prepared.Scheduler.Summary.ProjectID)
+	ctx = domain.NewContextWithTrustedHeaders(ctx, prepared.TrustedHeaders)
 	run := prepared.Run
 	host := e.deps.HostFactory(prepared.Scheduler, RuntimeExecutionContext{
 		ID:        run.ID,

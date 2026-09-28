@@ -380,6 +380,9 @@ func (h *ProjectHandler) schedulerResponse(ctx context.Context, scheduler domain
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("decode scheduler spec: %w", err))
 	}
 	response := &agentcomposev2.GetSchedulerResponse{Scheduler: ProjectSchedulersToProto([]domain.ProjectSchedulerRecord{scheduler})[0], Spec: spec}
+	if response.RunTrustedHeaders, err = h.schedulerRunTrustedHeaders(ctx, scheduler.ProjectID); err != nil {
+		return nil, err
+	}
 	schedulerStore, ok := h.store.(ProjectSchedulerStore)
 	if !ok || scheduler.ID == "" {
 		return response, nil

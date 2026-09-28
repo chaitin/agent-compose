@@ -82,6 +82,10 @@ func (s *pr551Store) UpsertProject(_ context.Context, p domain.ProjectRecord) (d
 	return p, nil
 }
 
+func (s *pr551Store) SetProjectApplyTrustedHeaders(context.Context, string, []domain.TrustedHeader) error {
+	return nil
+}
+
 func (s *pr551Store) MarkProjectRemoved(_ context.Context, _ string) (domain.ProjectRecord, error) {
 	return domain.ProjectRecord{}, nil
 }

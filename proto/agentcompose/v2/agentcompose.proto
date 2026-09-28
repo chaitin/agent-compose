@@ -608,6 +608,16 @@ message GetSchedulerResponse {
   SchedulerSpec spec = 2;
   repeated ResolvedTrigger triggers = 3;
   bool overridden = 4;
+  // Trusted ingress headers (x-mpi-*) that cron and event runs of this
+  // scheduler act as: those of the most recent ApplyProject of its Project.
+  // Empty when that apply carried none. Runs started by a request act as that
+  // request instead.
+  repeated TrustedHeader run_trusted_headers = 5;
+}
+
+message TrustedHeader {
+  string name = 1;
+  string value = 2;
 }
 
 message ResolvedTrigger {

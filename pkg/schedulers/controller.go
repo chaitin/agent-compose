@@ -79,10 +79,13 @@ type ControllerDependencies struct {
 	// EventDeliveryScope bounds which Projects receive a published event. An
 	// empty value selects the Project scope.
 	EventDeliveryScope domain.EventDeliveryScope
-	Schedulers         map[string]domain.Scheduler
-	Running            map[string]int
-	Now                func() time.Time
-	NewID              func() string
+	// ProjectApplyTrustedHeaders gives cron and event runs the identity of
+	// whoever last applied their Project.
+	ProjectApplyTrustedHeaders func(ctx context.Context, projectID string) ([]domain.TrustedHeader, error)
+	Schedulers                 map[string]domain.Scheduler
+	Running                    map[string]int
+	Now                        func() time.Time
+	NewID                      func() string
 }
 
 type Controller struct {
@@ -149,6 +152,7 @@ func (c *Controller) init() {
 			UpdateTriggerEventDelivery: c.UpdateTriggerEventDelivery,
 			Notify:                     c.notify,
 			Refresh:                    c.Refresh,
+			ProjectApplyTrustedHeaders: c.deps.ProjectApplyTrustedHeaders,
 		})
 	}
 	if c.invocations == nil {

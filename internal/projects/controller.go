@@ -60,6 +60,7 @@ type ControllerStore interface {
 	GetProjectIfExists(context.Context, string, bool) (domain.ProjectRecord, bool, error)
 	ListProjects(context.Context, domain.ProjectListOptions) (domain.ProjectListResult, error)
 	UpsertProject(context.Context, domain.ProjectRecord) (domain.ProjectRecord, error)
+	SetProjectApplyTrustedHeaders(context.Context, string, []domain.TrustedHeader) error
 	MarkProjectRemoved(context.Context, string) (domain.ProjectRecord, error)
 	SaveProjectRevision(context.Context, domain.ProjectRevisionRecord) (domain.ProjectRevisionRecord, bool, error)
 	GetProjectRevision(context.Context, string, int64) (domain.ProjectRevisionRecord, error)
@@ -333,6 +334,12 @@ func (c *Controller) applyProject(ctx context.Context, req ApplyRequest, lifecyc
 	project, err = c.store.UpsertProject(ctx, project)
 	if err != nil {
 		return ApplyResult{}, fmt.Errorf("apply project %s: upsert project: %w", normalized.Spec.Name, err)
+	}
+	// Cron and event scheduler runs have no request of their own; they act as
+	// whoever last applied the Project, including when this apply carries no
+	// trusted headers and so clears an earlier identity.
+	if err := c.store.SetProjectApplyTrustedHeaders(ctx, project.ID, domain.TrustedHeadersFromContext(ctx)); err != nil {
+		return ApplyResult{}, fmt.Errorf("apply project %s: record apply trusted headers: %w", normalized.Spec.Name, err)
 	}
 	specJSON, err := normalized.Spec.MarshalCanonicalJSON(false)
 	if err != nil {

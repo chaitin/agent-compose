@@ -379,6 +379,10 @@ func (s *controllerCoverageStore) UpsertProject(context.Context, domain.ProjectR
 	return domain.ProjectRecord{}, nil
 }
 
+func (s *controllerCoverageStore) SetProjectApplyTrustedHeaders(context.Context, string, []domain.TrustedHeader) error {
+	return nil
+}
+
 func (s *controllerCoverageStore) MarkProjectRemoved(_ context.Context, projectID string) (domain.ProjectRecord, error) {
 	for i, project := range s.projects {
 		if project.ID == projectID {
