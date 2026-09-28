@@ -44,6 +44,7 @@ Rules:
 - Connection establishment and explicit health probes retain their own bounded timeouts even when `--timeout` is `0`.
 - `--timeout` only controls the CLI request. Daemon-side limits such as `AGENT_TIMEOUT`, `SANDBOX_START_TIMEOUT`, and `SANDBOX_STOP_TIMEOUT` remain independent.
 - `JUPYTER_READY_TIMEOUT` controls how long the daemon waits for guest Jupyter readiness, defaulting to `120s` to accommodate cold starts. Startup continues as soon as Jupyter is ready. Set a positive Go duration to override it; unset, invalid, or non-positive values use the default.
+- The daemon no longer consumes the browser-login `AUTH_*` / `OAUTH_*` configuration; UI browser authentication is handled by the agent-compose-ui server.
 - Automation should use `--json` and avoid parsing human-readable tables.
 
 ### Daemon authentication
@@ -389,11 +390,14 @@ Additional positional arguments are not supported.
 | --- | --- |
 | `--keep-running` | Keep the sandbox runtime after the run completes. |
 | `--sandbox <sandbox>` | Reuse an existing sandbox. |
+| `--driver <name>` | Override the runtime driver for a new sandbox. |
 | `--rm` | Remove the sandbox after the run reaches a terminal state. |
 | `--jupyter` | Enable Jupyter for this run. When unset, the agent YAML default is used; when YAML is unset, Jupyter is disabled. |
 | `--jupyter-expose` | Mark the Jupyter agent-compose proxy endpoint for this run as explicitly exposed. This does not request runtime-driver host port exposure and also enables Jupyter. |
 | `-d, --detach` | Submit the run to the daemon and return immediately with the run id, initial status, and a `logs --follow` command. |
 | `-i, --interactive` | Enter prompt or command REPL mode. Must be combined with `--prompt` or `--command`. |
+| `-t, --tty` | Allocate a TTY for interactive command runs. |
+| `--label <key=value>` | Attach a label to this run; may be repeated. |
 
 Examples:
 
@@ -468,6 +472,7 @@ agent-compose ps --json
 | `-a, --all` | Show current project sandboxes in all statuses. |
 | `--verbose` | Show additional columns. |
 | `--status <status>[,<status>...]` | Filter by `pending`, `running`, `stopped`, `failed`, or `deleting`. Every non-empty comma-separated value must be valid. |
+| `--label <key=value>` | Filter by run label; may be repeated. Multiple labels are ANDed. |
 
 Default columns:
 
@@ -503,7 +508,7 @@ Subcommands:
 
 | Command | Description |
 | --- | --- |
-| `sandbox ls` | Equivalent to `ps`; supports `--all/-a`, `--status`, `--verbose`, and `--json`. |
+| `sandbox ls` | Equivalent to `ps`; supports `--all/-a`, `--status`, `--label`, `--verbose`, and `--json`. |
 | `sandbox stop <sandbox...>` | Equivalent to `stop`; stops one or more sandboxes. The default remains force; use `--graceful` to terminate active guest JS runtime executions first. |
 | `sandbox resume <sandbox...>` | Equivalent to `resume`; resumes one or more stopped sandboxes. |
 | `sandbox rm <sandbox...>` | Equivalent to `rm`; removes one or more sandboxes. Use `--force` only when intentionally removing running sandboxes. |
@@ -632,8 +637,9 @@ agent-compose exec <sandbox> --prompt "..."
 | --- | --- |
 | `--command "..."` | Pass a shell command as a flag. It is executed as `bash -lc "..."` in the sandbox. |
 | `--prompt "..."` | Run one agent prompt in the existing sandbox and exit after the response. Add `-i` (and optionally `-t`) for a multi-turn attached session. |
+| `-i, --interactive` | Attach stdin to the sandbox command. |
+| `-t, --tty` | Allocate a TTY for interactive exec. |
 | `--cwd <path>` | Set the working directory inside the sandbox. |
-| `--agent <agent>` | Deprecated target selection option; use `exec <sandbox>` instead. |
 | `--run <run-id>` | Deprecated target selection option; use `exec <sandbox>` instead. |
 
 The positional `<sandbox>` target and deprecated `--run` target are mutually exclusive. If both are provided, `exec` exits with a usage error before resolving either target or sending an execution request.
@@ -704,12 +710,13 @@ Inspect project resources, daemon images, or runtime cache items.
 ```bash
 agent-compose inspect project
 agent-compose inspect project <project-name|project-id|short-id>
-agent-compose inspect <project|agent|run|sandbox|image|cache-id>
+agent-compose inspect <project|agent|run|sandbox|image|cache|volume-id>
 agent-compose inspect agent <agent>
 agent-compose inspect run <run-id>
 agent-compose inspect sandbox <sandbox>
 agent-compose inspect image <image>
 agent-compose inspect cache <cache-id>
+agent-compose inspect volume <volume>
 ```
 
 When a full ID or hexadecimal short ID is passed as the only argument, `inspect` resolves its resource type through the daemon. Names still require the explicit typed form. Ambiguous short IDs are rejected with the matching resource types.
@@ -724,6 +731,7 @@ Details:
 - `inspect sandbox <sandbox>` shows sandbox/runtime details.
 - `inspect image <image>` shows image details.
 - `inspect cache <cache-id>` shows one daemon runtime cache item, including references, blocked reasons, and warnings.
+- `inspect volume <volume>` shows one daemon volume, including its driver, labels, options, and project owner.
 
 Project and agent inspection includes two separate views:
 
@@ -870,11 +878,77 @@ Archives are written as `tar.zst` plus a SHA-256 JSON sidecar under `SANDBOX_ARC
 
 Compatibility:
 
-- `agent-compose image ls` is deprecated; use `agent-compose images`.
-- `agent-compose image pull <image>` is deprecated; use `agent-compose pull <image>`.
-- `agent-compose image rm <image>` is deprecated; use `agent-compose rmi <image>`.
-- `agent-compose image inspect <image>` is deprecated; use `agent-compose inspect image <image>`.
-- The old `image` command tree still works and prints warnings to stderr, but it may be removed in a future release.
+- The `image` command group is canonical: `image ls`, `image pull`, `image build`, `image rm`, and `image inspect`.
+- The top-level `images`, `pull`, `build`, and `rmi` commands are shortcuts for the corresponding `image` subcommands. Both spellings remain supported, and neither prints a deprecation warning.
+
+## Volume Commands
+
+Manage volumes owned by the daemon.
+
+```bash
+agent-compose volume ls
+agent-compose volume create <name>
+agent-compose volume inspect <name>
+agent-compose volume rm <name>
+agent-compose volume prune
+```
+
+Commands:
+
+| Command | Description |
+| --- | --- |
+| `volume ls` | List daemon volumes. |
+| `volume create <name>` | Create a daemon volume. |
+| `volume inspect <name>` | Inspect a daemon volume. |
+| `volume rm <name> [<name N>]` | Remove one or more daemon volumes. `remove` is an alias. |
+| `volume prune` | Remove unused daemon volumes; dry-run without `--force`. |
+
+Common options:
+
+| Command | Option | Description |
+| --- | --- | --- |
+| `volume ls`, `volume prune` | `--query <text>` | Filter by volume name or id. |
+| `volume ls`, `volume prune` | `--driver <driver>` | Filter by volume driver. |
+| `volume ls`, `volume prune` | `--project-id <id>` | Filter by project id. |
+| `volume ls` | `--verbose` | Show the full project id. |
+| `volume create` | `--driver <driver>` | Volume driver; defaults to `local`. |
+| `volume create` | `--label key=value` | Set a volume label; may be repeated. |
+| `volume create` | `--opt key=value` | Set a volume driver option; may be repeated. |
+| `volume rm` | `--force` | Force volume removal. |
+| `volume prune` | `--force` | Actually remove matched volumes. Without this flag, `volume prune` is a dry-run. |
+
+## LLM Provider Commands
+
+Manage API-owned upstream LLM providers configured on the daemon.
+
+```bash
+agent-compose llm provider ls
+agent-compose llm provider create <id> --base-url <url> --protocol <protocol> --api-key <key>
+agent-compose llm provider inspect <id>
+agent-compose llm provider update <id> --name <name>
+agent-compose llm provider rm <id>
+```
+
+Commands:
+
+| Command | Description |
+| --- | --- |
+| `llm provider ls` | List API-owned upstream LLM providers. |
+| `llm provider create <id>` | Create a provider. `--base-url`, `--protocol`, and `--api-key` are required. |
+| `llm provider inspect <id>` | Inspect a provider. |
+| `llm provider update <id>` | Update a provider; only the flags supplied on the command line change. |
+| `llm provider rm <id>` | Remove a provider. `remove` is an alias. |
+
+Options:
+
+| Option | Description |
+| --- | --- |
+| `--name <name>` | Display name; defaults to the provider id on create. |
+| `--base-url <url>` | Absolute HTTP(S) upstream base URL. |
+| `--protocol <protocol>` | Upstream protocol: `responses`, `chat_completions`, or `anthropic_messages`. |
+| `--api-key <key>` | Literal upstream API key. |
+| `--enabled` | Whether the provider is enabled; defaults to `true`. |
+| `--auth <mode>` | Credential presentation override: `x-api-key` or `bearer`; the protocol default clears it. |
 
 ## `status`: Query Daemon Status
 

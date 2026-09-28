@@ -103,6 +103,7 @@ Linux shell 的传输测试验证此工具合同，不能替代真实集群部�
 | `/root/.claude` | Claude config 和 state | 持久化 |
 | `/root/.opencode` | OpenCode state | 持久化 |
 | `/root/.pi` | Pi config 和 state | 持久化 |
+| `/root/.dsh` | DSH profile 和 state | 持久化 |
 | `/root/.claude.json` | Claude root config | 持久化文件 |
 | `/root/.gitconfig` | Git config | 持久化文件 |
 | 指定的 `/root/.config/...` 路径 | Provider state | 持久化 |
@@ -128,7 +129,7 @@ Agent prompt 和受管 scheduler command 不会由 daemon 直接调用 provider 
 - 普通 run 使用的 `prompt` 和 `exec` 子命令；
 - 需要交互式 prompt attach 时使用的 `stream` 子命令。
 
-Prompt mode 的 `stream` session 支持 `codex`、`claude`、`opencode` 和 `pi` provider。其他 provider 会在 guest runtime interaction 打开前被拒绝。
+Prompt mode 的 `stream` session 支持 `codex`、`claude`、`opencode`、`pi` 和 `dsh` provider。其他 provider 会在 guest runtime interaction 打开前被拒绝。
 
 daemon 会显式传递 workspace、state 和 home 路径，并注入：
 
@@ -195,6 +196,7 @@ guest 进程。
 | Claude | `@anthropic-ai/claude-agent-sdk` 和 Claude Code；通过 `CLAUDE_CODE_EXECUTABLE`/`CLAUDE_CODE_PATH`、`/usr/bin/claude` 或 SDK 支持的默认位置选择 |
 | OpenCode | `PATH` 中的 `opencode` 可执行文件 |
 | Pi | `PATH` 中的 `pi` 可执行文件；使用 MCP 的 project 还需要 `/usr/local/share/agent-compose/pi-mcp-adapter/index.ts` 中固定版本的 `pi-mcp-adapter` extension |
+| DSH | `PATH` 中的 `dsh` 可执行文件（官方 guest 会全局安装 `@deepseek-ai/dsh`）；`dsh --profile agent-compose` 还需要 `/root/.dsh/profiles/agent-compose` 下的 profile 资源 |
 
 Provider credential 和 endpoint variable 会在执行时注入，**不得**写入镜像。
 

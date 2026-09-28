@@ -148,6 +148,7 @@ With default daemon configuration, the guest-visible contract is:
 | `/root/.claude` | Claude config and state | Persisted |
 | `/root/.opencode` | OpenCode state | Persisted |
 | `/root/.pi` | Pi configuration and state | Persisted |
+| `/root/.dsh` | DSH profile and state | Persisted |
 | `/root/.claude.json` | Claude root config | Persisted file |
 | `/root/.gitconfig` | Git config | Persisted file |
 | Selected `/root/.config/...` paths | Provider state | Persisted |
@@ -185,7 +186,7 @@ An image supporting these capabilities **MUST** provide:
 - the `prompt` and `exec` subcommands used by normal runs; and
 - the `stream` subcommand when interactive prompt attach is required.
 
-Prompt-mode `stream` sessions support the `codex`, `claude`, `opencode`, and `pi` providers.
+Prompt-mode `stream` sessions support the `codex`, `claude`, `opencode`, `pi`, and `dsh` providers.
 Other providers are rejected before the guest runtime interaction is opened.
 
 The daemon passes explicit workspace, state, and home paths. It also injects:
@@ -265,6 +266,7 @@ guest Dockerfile unless a combination has been independently tested.
 | Claude | `@anthropic-ai/claude-agent-sdk` plus Claude Code; use `CLAUDE_CODE_EXECUTABLE`/`CLAUDE_CODE_PATH`, `/usr/bin/claude`, or the SDK-supported default |
 | OpenCode | An `opencode` executable in `PATH` |
 | Pi | A `pi` executable in `PATH`; projects using MCP also require the pinned `pi-mcp-adapter` extension at `/usr/local/share/agent-compose/pi-mcp-adapter/index.ts` |
+| DSH | A `dsh` executable in `PATH` (the published guest installs `@deepseek-ai/dsh` globally); `dsh --profile agent-compose` also requires the profile assets under `/root/.dsh/profiles/agent-compose` |
 
 Provider credentials and endpoint variables are injected at execution time.
 They **MUST NOT** be embedded in the image.

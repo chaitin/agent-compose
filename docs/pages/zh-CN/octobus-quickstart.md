@@ -183,7 +183,7 @@ agent-compose inspect <sandbox-id> --json
 直接让 agent 用计算器即可：
 
 ```bash
-agent-compose run coder "Use the calculator capability to add 20 and 22, and tell me the result."
+agent-compose run coder --prompt "Use the calculator capability to add 20 and 22, and tell me the result."
 ```
 
 底层发生的调用过程：

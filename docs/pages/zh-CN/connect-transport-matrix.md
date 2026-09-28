@@ -1,6 +1,6 @@
 # Connect 传输支持矩阵
 
-本矩阵说明 daemon 的 Connect 控制面 RPC 所需的传输方式。“Unary”表示请求/响应 RPC，“server-stream”表示 daemon 发送多个响应，“bidi”表示 `RunAttach`/`ExecAttach` 一类双方都可能发送消息的交互调用。
+本矩阵说明 daemon 的 Connect 控制面 RPC 所需的传输方式。“Unary”表示请求/响应 RPC，“server-stream”表示 daemon 发送多个响应，“bidi”表示 `AttachAgentRun`/`AttachExec` 一类双方都可能发送消息的交互调用。
 
 | 传输方式 | Unary | Server-stream | Bidi attach | 部署说明 |
 | --- | --- | --- | --- | --- |

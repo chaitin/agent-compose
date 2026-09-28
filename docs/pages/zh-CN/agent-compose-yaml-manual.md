@@ -656,7 +656,7 @@ agents:
     image: chaitin/agent-compose-guest:latest
 ```
 
-运行时会确保所选 driver 能使用该镜像。若同时配置 `build`，`image` 也会加入构建 tag；若两者均未提供 tag，执行 `agent-compose build` 会失败。
+运行时会确保所选 driver 能使用该镜像。若同时配置 `build`，`image` 也会加入构建 tag；只有 `image`、`build.tags` 或 `--tag` 参数至少提供一个 tag 时，`agent-compose build` 才会成功。
 
 GitHub CI 会向 Docker Hub 发布以下镜像：
 
@@ -757,7 +757,10 @@ driver:
 | `k8s` | `context`, `namespace` | 通过 Kubernetes 创建 sandbox Pod。`context` 选择 kubeconfig context；省略时由 client-go 使用 kubeconfig 当前 context 或集群内配置。`namespace` 覆盖 `K8S_NAMESPACE`，最终回退到 `default`。 |
 | `firecracker` | `kernel`, `rootfs` | 仅保留在解析 schema 中；当前规范化会明确报 `unsupported runtime driver firecracker`，不可使用。 |
 
-k8s driver 要求 daemon 运行在目标集群内部。对外支持的安装入口是
+k8s driver 通过 kubeconfig 构建 client：设置了显式的 `K8S_KUBECONFIG`/`KUBECONFIG`
+路径时使用该路径，否则使用 `~/.kube/config` 的加载规则；只有两者都解析不到配置时才回退到
+集群内配置。Sandbox Pod 通过 `K8S_RUNTIME_BASE_URL`（会覆盖
+`AGENT_COMPOSE_RUNTIME_BASE_URL`）配置的地址访问 daemon。对外支持的安装入口是
 `charts/agent-compose` Helm Chart：
 
 ```bash

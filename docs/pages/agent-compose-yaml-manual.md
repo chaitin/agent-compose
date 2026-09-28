@@ -674,7 +674,7 @@ agents:
     image: chaitin/agent-compose-guest:latest
 ```
 
-At runtime, the selected driver must be able to obtain this image. When `build` is also configured, `image` becomes one of the build output tags. `agent-compose build` fails if neither `image` nor `build.tags` provides a tag.
+At runtime, the selected driver must be able to obtain this image. When `build` is also configured, `image` becomes one of the build output tags. `agent-compose build` fails unless `image`, `build.tags`, or the `--tag` flag provides at least one tag.
 
 GitHub CI publishes these images to Docker Hub:
 
@@ -769,9 +769,13 @@ driver:
 | `k8s` | `context`, `namespace` | Creates sandbox Pods through Kubernetes. `context` selects a kubeconfig context; when omitted, client-go uses the kubeconfig current context or in-cluster configuration. `namespace` overrides `K8S_NAMESPACE`, whose final fallback is `default`. |
 | `firecracker` | `kernel`, `rootfs` | Reserved in the parser schema. Normalization currently returns `unsupported runtime driver firecracker`, so it cannot be used. |
 
-The k8s driver requires the daemon to run inside the target cluster. The
-supported installation entry point is the Helm chart at
-`charts/agent-compose`:
+The k8s driver builds its client from kubeconfig: it uses an explicit
+`K8S_KUBECONFIG`/`KUBECONFIG` path when set, otherwise the `~/.kube/config`
+loading rules, and falls back to in-cluster configuration only when neither
+resolves to a configuration. Sandbox Pods reach the daemon through the URL
+configured by `K8S_RUNTIME_BASE_URL`, which overrides
+`AGENT_COMPOSE_RUNTIME_BASE_URL`. The supported installation entry point is the
+Helm chart at `charts/agent-compose`:
 
 ```bash
 helm install agent-compose ./charts/agent-compose \

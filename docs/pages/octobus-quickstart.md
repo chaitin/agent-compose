@@ -183,7 +183,7 @@ Injection is **best-effort by design**: if OctoBus is temporarily unreachable wh
 Now just ask the agent to use the calculator:
 
 ```bash
-agent-compose run coder "Use the calculator capability to add 20 and 22, and tell me the result."
+agent-compose run coder --prompt "Use the calculator capability to add 20 and 22, and tell me the result."
 ```
 
 Under the hood, the agent:
