@@ -8,6 +8,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/capabilities"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
 
 func TestReusingSandboxUnderAnotherIdentityWaitsForUnfinishedRun(t *testing.T) {
@@ -74,5 +75,51 @@ func TestReusingSandboxUnderAnotherIdentityWaitsForUnfinishedRun(t *testing.T) {
 	}
 	if got := indexer.trustedHeaders[len(indexer.trustedHeaders)-1]; !reflect.DeepEqual(got, userB) {
 		t.Fatalf("sandbox bound to %#v after reuse, want %#v", got, userB)
+	}
+}
+
+func TestStickySchedulerReuseUnderAnotherIdentityWaitsForUnfinishedRun(t *testing.T) {
+	fixture := newControllerRunFixture(t)
+	indexer := &recordingCapabilitySandboxIndexer{}
+	fixture.controller.capTokens = indexer
+	runSticky := func(headers []domain.TrustedHeader, requestID string) (domain.ProjectRunRecord, error) {
+		t.Helper()
+		run, execErr, err := fixture.controller.RunProjectAgent(domain.NewContextWithTrustedHeaders(fixture.ctx, headers), RunAgentRequest{
+			ProjectID:                "project-1",
+			AgentName:                "worker",
+			Prompt:                   "do sticky work",
+			Source:                   domain.ProjectRunSourceScheduler,
+			SchedulerID:              "scheduler-1",
+			TriggerID:                "trigger-a",
+			ClientRequestID:          requestID,
+			CleanupPolicy:            agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_KEEP_RUNNING,
+			StickyBindingSchedulerID: "scheduler-1",
+			StickyBindingTriggerID:   "trigger-a",
+		}, nil)
+		return run, errors.Join(err, execErr)
+	}
+	userA := []domain.TrustedHeader{{Name: "x-mpi-user-id", Value: "user-a"}}
+	userB := []domain.TrustedHeader{{Name: "x-mpi-user-id", Value: "user-b"}}
+
+	first, err := runSticky(userA, "sticky-1")
+	if err != nil || first.SandboxID == "" {
+		t.Fatalf("first sticky run=%#v err=%v", first, err)
+	}
+	// Another run, for example a manual one pointed at the sticky sandbox, is
+	// still using it.
+	persistControllerFixtureRun(t, fixture, domain.ProjectRunRecord{
+		RunID: "holder", ProjectID: "project-1", AgentName: "worker", AgentID: "agent-1",
+		SandboxID: first.SandboxID, Status: domain.ProjectRunStatusRunning,
+	})
+
+	if _, err := runSticky(userB, "sticky-2"); !errors.Is(err, domain.ErrFailedPrecondition) {
+		t.Fatalf("sticky reuse under another identity: err = %v, want failed precondition", err)
+	}
+	if got := indexer.trustedHeaders[len(indexer.trustedHeaders)-1]; !reflect.DeepEqual(got, userA) {
+		t.Fatalf("rejected sticky reuse rebound the sandbox to %#v", got)
+	}
+	same, err := runSticky(userA, "sticky-3")
+	if err != nil || same.SandboxID != first.SandboxID {
+		t.Fatalf("sticky reuse under the same identity run=%#v err=%v", same, err)
 	}
 }
