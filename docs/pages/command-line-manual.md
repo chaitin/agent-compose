@@ -418,7 +418,7 @@ Rules:
 - REPL mode is not TTY/PTY or running stdin passthrough. Each input is one independent `StreamAgentRun` call that reuses the same sandbox.
 - `--sandbox` can reuse only a sandbox owned by the selected project and agent. Cross-project or cross-agent reuse is rejected without modifying or stopping the owner sandbox.
 - Detached runs can be observed with the printed `agent-compose logs --run <run-id> --follow` command, or managed later with `stop` and `logs`.
-- `run -i --prompt` supports providers with reusable provider conversations: Codex, Claude/cc, OpenCode, Pi, and DSH (`dsh`, `deepseek`, `deepseek-harness`, `deepseek_harness`). Gemini currently returns unsupported.
+- `run -i --prompt` supports providers with reusable provider conversations: Codex, Claude, OpenCode, Pi, and DSH (`dsh`, `deepseek`, `deepseek-harness`, `deepseek_harness`).
 - A run becomes terminal only after its completion cleanup succeeds. The default policy stops the sandbox; remove-on-completion fully deletes a sandbox created by that run, while a reused sandbox is only stopped. Keep-running is the explicit exception and performs no cleanup.
 - Cleanup failures leave the run `running` with `cleanup_error` populated. The daemon retries immediately and then with bounded backoff, including after restart; foreground and streaming calls continue waiting, while detached starts remain asynchronous.
 - `StopRun` requests cancellation and can return `stop_requested=true` while the run is still `running`. Execution records the cancellation result, performs the configured cleanup, and only then commits `canceled`. Pending/running runs left behind after daemon restart follow the same path to `failed` with a `daemon interrupted` error.
@@ -654,7 +654,7 @@ agent-compose exec sandbox_123 --cwd /workspace --command "pwd"
 
 Show logs for agents, sandboxes, or runs in the current project. By default, logs for all project agents are shown.
 
-Current `logs` output is based on run log artifacts returned by the v2 RunService. `--follow` is served by the daemon from the log file referenced by `logs_path`; non-follow views use the run record output and artifact summary. It does not automatically read private provider log files from Codex, Claude, Gemini, or other provider CLIs.
+Current `logs` output is based on run log artifacts returned by the v2 RunService. `--follow` is served by the daemon from the log file referenced by `logs_path`; non-follow views use the run record output and artifact summary. It does not automatically read private provider log files from Codex, Claude, or other provider CLIs.
 
 ```bash
 agent-compose logs
@@ -961,7 +961,6 @@ daemon, and does not synthesize spans from agent-compose's event stream. Pi's
 [official observability design](https://github.com/badlogic/pi-mono/blob/v0.82.1/packages/agent/docs/observability.md)
 describes external listeners and a possible future OTel package, not a shipped
 exporter. Its `PI_TELEMETRY` switch controls installation statistics, not OTLP.
-Gemini is outside this integration and also receives no managed collector credentials.
 
 An empty endpoint disables daemon-managed export. Explicit native settings supplied
 by the guest/user remain native settings; disabling this feature does not erase

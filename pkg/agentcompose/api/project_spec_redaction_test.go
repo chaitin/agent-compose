@@ -58,9 +58,7 @@ func TestRedactProjectSpecSecretsHidesEveryProviderCredential(t *testing.T) {
 		Agents: []*agentcomposev2.AgentSpec{{
 			Name: "reviewer",
 			Env: []*agentcomposev2.EnvVarSpec{
-				{Name: "GOOGLE_API_KEY", Value: "unproxyable"},
 				{Name: "AZURE_OPENAI_API_KEY", Value: "unproxyable"},
-				{Name: "GEMINI_API_KEY", Value: "unproxyable"},
 				{Name: "CODEX_API_KEY", Value: "absorbed"},
 				{Name: "DEEPSEEK_API_KEY", Value: "absorbed"},
 				{Name: "LLM_API_HEADERS", Value: `{"X-Gateway-Token":"header"}`},

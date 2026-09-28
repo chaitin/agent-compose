@@ -264,7 +264,7 @@ sandbox+family 作键会让一个 run 的 preparation 覆盖另一个 run 仍在
 可吸收集合：`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、
 `CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`，以及通用的
 `LLM_API_KEY`（配合 `LLM_API_PROTOCOL` / `LLM_API_ENDPOINT`）。识别但不吸收：
-`AZURE_OPENAI_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY`。
+`AZURE_OPENAI_API_KEY`。
 
 声明的连接只按显式 ID 寻址，不进入 `Catalog.serving`、唯一连接兜底和
 `Connections()`，所以一个 agent 的凭据永远不会服务另一个 agent。同一个 run 的

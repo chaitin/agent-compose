@@ -27,7 +27,7 @@ export function createProgram(options: { exitOverride?: boolean } = {}): Command
 
   program
     .command("prompt")
-    .requiredOption("--provider <provider>", "agent provider: codex, claude, gemini, opencode, pi, or dsh")
+    .requiredOption("--provider <provider>", "agent provider: codex, claude, opencode, pi, or dsh")
     .requiredOption("--message-file <path>", "prompt file path")
     .option("--state-root <path>", "agent-compose runtime state root")
     .option("--workspace <path>", "agent working directory")

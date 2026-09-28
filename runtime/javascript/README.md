@@ -4,7 +4,7 @@
 
 ```sh
 agent-compose-runtime prompt \
-  --provider <codex|claude|gemini|opencode|pi|dsh> \
+  --provider <codex|claude|opencode|pi|dsh> \
   --message-file <path> \
   --output-schema-file <path> \
   --state-root <path> \
@@ -14,7 +14,7 @@ agent-compose-runtime prompt \
 
 Successful runs write a single structured result line to stdout with the `__AGENT_RESULT__` prefix. Human-readable agent transcript output is written to stderr.
 
-`--output-schema-file` is optional. When set, the file must contain a JSON Schema object. The runtime passes it to the provider's native structured-output mechanism where supported. Codex and Claude support schema-based output; Gemini, OpenCode, Pi, and DSH currently reject schema requests until a native provider mechanism is wired.
+`--output-schema-file` is optional. When set, the file must contain a JSON Schema object. The runtime passes it to the provider's native structured-output mechanism where supported. Codex and Claude support schema-based output; OpenCode, Pi, and DSH currently reject schema requests until a native provider mechanism is wired.
 
 ## Dynamic workflows
 
@@ -83,7 +83,7 @@ The TypeScript source lives in `src/`:
 - `cli.ts`: commander-based CLI.
 - `prompt.ts`: command orchestration and default path resolution.
 - `system-context.ts`: agent identity + MPI composition.
-- `runners/`: provider adapters for Codex, Claude, Gemini, OpenCode, Pi, and DSH.
+- `runners/`: provider adapters for Codex, Claude, OpenCode, Pi, and DSH.
 - `mpi.ts`: MPI catalog discovery and context formatting.
 - `session-state.ts`: provider thread resume state persistence.
 - `workflow/`: workflow parsing, execution, events, persistence, resume cache, and worktree isolation.

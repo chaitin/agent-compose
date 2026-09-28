@@ -32,7 +32,7 @@ export function readAgentTelemetry(provider: Provider, env: NodeJS.ProcessEnv): 
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
     throw new Error("Invalid agent telemetry endpoint");
   }
-  if (provider === "pi" || provider === "gemini") {
+  if (provider === "pi") {
     process.stderr.write(`[agent-compose-runtime] native telemetry integration is unavailable for ${provider}; no collector credentials forwarded\n`);
     return undefined;
   }
@@ -85,7 +85,7 @@ export function providerTelemetryEnv(provider: Provider, telemetry: AgentTelemet
   // `claude_code.interaction` in Agent SDK / `-p` sessions and stamps its OTLP
   // event records with the resulting trace_id/span_id even while the traces
   // exporter stays disabled. Providers with no supported parent input
-  // (opencode, dsh, pi, gemini) never receive either value.
+  // (opencode, dsh, pi) never receive either value.
   if (telemetry.traceparent !== undefined && (provider === "codex" || provider === "claude")) {
     env.TRACEPARENT = telemetry.traceparent;
     if (telemetry.tracestate !== undefined) env.TRACESTATE = telemetry.tracestate;

@@ -82,12 +82,9 @@ The logical list is the source of truth for all drivers:
 | `home/.opencode` | `/root/.opencode` | dir |
 | `home/.claude.json` | `/root/.claude.json` | file |
 | `home/.gitconfig` | `/root/.gitconfig` | file |
-| `home/.gemini` | `/root/.gemini` | dir |
 | `home/.config/claude` | `/root/.config/claude` | dir |
 | `home/.config/Claude` | `/root/.config/Claude` | dir |
-| `home/.config/gemini` | `/root/.config/gemini` | dir |
 | `home/.config/opencode` | `/root/.config/opencode` | dir |
-| `home/.local/share/gemini` | `/root/.local/share/gemini` | dir |
 
 Paths under `/root` that are not listed here are not guaranteed to persist for
 directory-only runtimes.
@@ -107,12 +104,9 @@ Docker manifest keeps fine-grained sources derived from the logical list:
 | `<sandbox>/home/.opencode` | `/root/.opencode` |
 | `<sandbox>/home/.claude.json` | `/root/.claude.json` |
 | `<sandbox>/home/.gitconfig` | `/root/.gitconfig` |
-| `<sandbox>/home/.gemini` | `/root/.gemini` |
 | `<sandbox>/home/.config/claude` | `/root/.config/claude` |
 | `<sandbox>/home/.config/Claude` | `/root/.config/Claude` |
-| `<sandbox>/home/.config/gemini` | `/root/.config/gemini` |
 | `<sandbox>/home/.config/opencode` | `/root/.config/opencode` |
-| `<sandbox>/home/.local/share/gemini` | `/root/.local/share/gemini` |
 
 Docker runtime applies `DOCKER_HOST_SANDBOX_ROOT` rebase to each source. File
 entries such as `.claude.json` and `.gitconfig` remain file bind sources.
@@ -170,15 +164,10 @@ sources:
     .opencode/
     .claude.json
     .gitconfig
-    .gemini/
     .config/
       claude/
       Claude/
-      gemini/
       opencode/
-    .local/
-      share/
-        gemini/
   vm/
     mount-manifest.json
 ```

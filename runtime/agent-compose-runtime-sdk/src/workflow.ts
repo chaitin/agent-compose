@@ -9,7 +9,7 @@ import { paths } from "./env.js";
 const WORKFLOW_RESULT_PREFIX = "__WORKFLOW_RESULT__";
 const WORKFLOW_EVENT_PREFIX = "__WORKFLOW_EVENT__";
 
-export type RuntimeWorkflowProvider = "codex" | "claude" | "gemini" | "opencode" | "pi" | "dsh";
+export type RuntimeWorkflowProvider = "codex" | "claude" | "opencode" | "pi" | "dsh";
 
 export interface RuntimeWorkflowMeta {
   name: string;

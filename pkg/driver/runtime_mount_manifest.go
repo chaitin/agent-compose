@@ -237,12 +237,9 @@ func runtimeMountEntries(config *appconfig.Config) []logicalRuntimeMountEntry {
 		{sandboxPath: "home/.dsh", guestPath: filepath.Join(config.GuestHomePath, ".dsh"), directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.claude.json", guestPath: filepath.Join(config.GuestHomePath, ".claude.json"), isFile: true, directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.gitconfig", guestPath: filepath.Join(config.GuestHomePath, ".gitconfig"), isFile: true, directoryOnlyExposure: directoryOnlyExposureSymlink},
-		{sandboxPath: "home/.gemini", guestPath: filepath.Join(config.GuestHomePath, ".gemini"), directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.config/claude", guestPath: filepath.Join(config.GuestHomePath, ".config", "claude"), directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.config/Claude", guestPath: filepath.Join(config.GuestHomePath, ".config", "Claude"), directoryOnlyExposure: directoryOnlyExposureSymlink},
-		{sandboxPath: "home/.config/gemini", guestPath: filepath.Join(config.GuestHomePath, ".config", "gemini"), directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.config/opencode", guestPath: filepath.Join(config.GuestHomePath, ".config", "opencode"), directoryOnlyExposure: directoryOnlyExposureSymlink},
-		{sandboxPath: "home/.local/share/gemini", guestPath: filepath.Join(config.GuestHomePath, ".local", "share", "gemini"), directoryOnlyExposure: directoryOnlyExposureSymlink},
 	}
 }
 

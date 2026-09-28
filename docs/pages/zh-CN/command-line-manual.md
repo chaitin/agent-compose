@@ -389,7 +389,7 @@ agent-compose run reviewer --jupyter --jupyter-expose --prompt "Inspect the note
 - REPL 不是 TTY/PTY 或运行中 stdin 透传；每条输入都是一次独立 `StreamAgentRun`，但复用同一个 sandbox。
 - `--sandbox` 只能复用属于当前 project 和所选 agent 的 sandbox；跨 project 或跨 agent 复用会被拒绝，且不会修改或停止原 sandbox。
 - detached run 可通过输出的 `agent-compose logs --run <run-id> --follow` 命令观察输出，也可继续使用 `stop`/`logs` 操作该 run。
-- `run -i --prompt` 仅支持可复用 provider conversation 的 Codex、Claude/cc、OpenCode、Pi 和 DSH（`dsh`、`deepseek`、`deepseek-harness`、`deepseek_harness`）；Gemini 当前会返回 unsupported。
+- `run -i --prompt` 仅支持可复用 provider conversation 的 Codex、Claude、OpenCode、Pi 和 DSH（`dsh`、`deepseek`、`deepseek-harness`、`deepseek_harness`）。
 - run 只有在 completion cleanup 成功后才进入终态。默认策略停止 sandbox；remove-on-completion 会完整删除由本 run 新建的 sandbox，但复用的 sandbox 只会停止；keep-running 是不执行清理的显式例外。
 - cleanup 失败时 run 保持 `running` 并写入 `cleanup_error`。daemon 会立即重试并采用有上限的退避，重启后也会继续；前台与流式调用继续等待，detached start 仍立即返回。
 - `StopRun` 只请求取消，因此可能返回 `stop_requested=true` 而 run 仍为 `running`。执行路径先记录取消结果并完成配置的 cleanup，再提交 `canceled`；daemon 重启后遗留的 running/pending run 也通过同一路径在清理后变为 `failed`，错误为 `daemon interrupted`。
@@ -631,7 +631,7 @@ agent-compose exec sandbox_123 --cwd /workspace --command "pwd"
 
 查看当前 project 下 agent、sandbox 或 run 的日志。默认展示 project 下所有 agent 日志。
 
-当前 `logs` 基于 agent-compose v2 RunService 返回的 run log artifact 展示。`--follow` 由服务端按 `logs_path` 指向的日志文件增量读取；普通查看会使用 run 记录中的输出和 artifact 汇总。它不会默认读取 Codex、Claude、Gemini 等 provider 的私有日志文件。
+当前 `logs` 基于 agent-compose v2 RunService 返回的 run log artifact 展示。`--follow` 由服务端按 `logs_path` 指向的日志文件增量读取；普通查看会使用 run 记录中的输出和 artifact 汇总。它不会默认读取 Codex、Claude 等 provider 的私有日志文件。
 
 ```bash
 agent-compose logs
@@ -936,7 +936,7 @@ DSH 使用其原生 OTLP/HTTP logs exporter。此集成不支持仅接受 gRPC �
 也不把 agent-compose 事件流转换为 spans。Pi 的
 [官方 observability 设计](https://github.com/badlogic/pi-mono/blob/v0.82.1/packages/agent/docs/observability.md)
 描述了外部监听器及可能的未来 OTel 包，并非已发布的 exporter；其 `PI_TELEMETRY` 开关
-控制安装统计，不是 OTLP。Gemini 不在此集成范围内，同样不会收到受管理的 collector 凭证。
+控制安装统计，不是 OTLP。
 
 endpoint 为空时关闭 daemon 管理的导出，但不会删除用户在 guest 中自行配置的原生遥测设置。
 启用时，受支持 provider 继承的 `OTEL_*` 地址、headers 和 beta tracing 地址会被替换，

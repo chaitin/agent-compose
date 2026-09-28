@@ -8,7 +8,6 @@ import { normalizeProvider } from "./provider.js";
 import { ClaudeRunner } from "./runners/claude.js";
 import { CodexRunner } from "./runners/codex.js";
 import { DshRunner } from "./runners/dsh.js";
-import { GeminiRunner } from "./runners/gemini.js";
 import { OpenCodeRunner } from "./runners/opencode.js";
 import { PiRunner } from "./runners/pi.js";
 import { readMCPConfig } from "./mcp-config.js";
@@ -60,7 +59,7 @@ export async function buildPromptRuntimeOptions(commandOptions: Omit<PromptComma
     workspace,
     home,
     runtimeRoot: mpi.runtimeRoot,
-    systemContext: provider === "gemini" || provider === "codex"
+    systemContext: provider === "codex"
       ? await appendSkillCatalogContext(systemContext, home, skills)
       : systemContext,
     mcpConfig: mcpConfig.mcp_servers,
@@ -93,7 +92,9 @@ export async function runPromptCommand(commandOptions: PromptCommandOptions): Pr
   if (provider === "dsh") {
     return await new DshRunner(options).runPrompt(promptText);
   }
-  return await new GeminiRunner(options).runPrompt(promptText);
+  // normalizeProvider accepts only the Provider union, so this guard is
+  // unreachable; it keeps the dispatch total for the type checker.
+  throw new Error(`unsupported provider ${JSON.stringify(provider)}`);
 }
 
 function normalizeSkills(skills: string[] | undefined): string[] {

@@ -177,7 +177,7 @@ export class ClaudeRunner {
           step: this.step,
           scope: "step",
           // Claude reports input_tokens exclusive of cache already, so no
-          // subtraction here (unlike codex/gemini).
+          // subtraction here (unlike codex).
           inputTokens: Number(usage.input_tokens ?? 0),
           outputTokens: Number(usage.output_tokens ?? 0),
           reasoningTokens: typeof details?.thinking_tokens === "number" ? details.thinking_tokens : undefined,

@@ -162,12 +162,6 @@ func AgentThreadLogRoots(homeDir, provider string) []string {
 			filepath.Join(homeDir, ".config", "claude"),
 			filepath.Join(homeDir, ".config", "Claude"),
 		}
-	case "gemini":
-		return []string{
-			filepath.Join(homeDir, ".gemini"),
-			filepath.Join(homeDir, ".config", "gemini"),
-			filepath.Join(homeDir, ".local", "share", "gemini"),
-		}
 	default:
 		return nil
 	}

@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-`dsh` (DeepSeek Harness) is a Cordis-based agent runtime, added to agent-compose as a sixth provider alongside `codex`, `claude`, `gemini`, `opencode`, `pi`. Unlike the others, `dsh` is not a single CLI binary with flags — it boots a *profile*: an ordered stack of plugin-bundle patch layers. agent-compose ships its own profile (`assets/.dsh/profiles/agent-compose/`) rather than passing flags to a generic binary.
+`dsh` (DeepSeek Harness) is a Cordis-based agent runtime, added to agent-compose as a fifth provider alongside `codex`, `claude`, `opencode`, `pi`. Unlike the others, `dsh` is not a single CLI binary with flags — it boots a *profile*: an ordered stack of plugin-bundle patch layers. agent-compose ships its own profile (`assets/.dsh/profiles/agent-compose/`) rather than passing flags to a generic binary.
 
 ## 2. Composition model
 

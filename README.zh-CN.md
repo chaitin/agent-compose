@@ -24,14 +24,14 @@
 
 ## agent-compose 是什么？
 
-如果你了解 Docker Compose，这里的心智模型很类似：你声明的不是容器，而是 **agent**。每个 agent 选择一个 provider CLI —— `codex`、`claude`（Claude Code）、`gemini`、`opencode` 或 `pi` —— daemon 给它一个带 workspace 的隔离 sandbox，然后按 prompt、shell 命令、定时或事件来运行它。
+如果你了解 Docker Compose，这里的心智模型很类似：你声明的不是容器，而是 **agent**。每个 agent 选择一个 provider CLI —— `codex`、`claude`（Claude Code）、`opencode`、`pi` 或 `dsh` —— daemon 给它一个带 workspace 的隔离 sandbox，然后按 prompt、shell 命令、定时或事件来运行它。
 
 你用 Compose 风格的 CLI（`up`、`run`、`ps`、`logs`、`down`）管理整个生命周期，一切由一个声明式文件驱动。
 
 具体能力：
 
 - **声明式 compose 模型**（`agent-compose.yml`），支持 `${ENV}` 插值。
-- **多 provider guest agent**：Codex、Claude Code、Gemini、OpenCode、Pi CLI。
+- **多 provider guest agent**：Codex、Claude Code、OpenCode、Pi、DSH CLI。
 - **三种 runtime driver**：`docker`（默认）、`boxlite`（microVM）、`microsandbox`。
 - **scheduler**：`cron`、`interval`、`timeout`、`event` 四种 trigger，或内联 JavaScript scheduler 脚本。
 - **事件触发与 webhook**，支持事件驱动的 agent run。
@@ -253,7 +253,6 @@ Bearer Token 不会加密网络流量。跨机器连接时，请使用 HTTPS、S
 | --- | --- |
 | `codex` | Codex CLI |
 | `claude` | Claude Code CLI |
-| `gemini` | Gemini CLI |
 | `opencode` | OpenCode CLI |
 | `pi` | Pi coding agent CLI |
 | `dsh` | DeepSeek Harness CLI |
@@ -276,8 +275,6 @@ ANTHROPIC_MODEL=claude-...
 ```
 
 设置 `LLM_API_PROTOCOL=chat_completions` 可对接任意 OpenAI 兼容 endpoint（DeepSeek、vLLM、Ollama）。
-
-**Gemini** 不会拿到任何 LLM key（`GEMINI_API_KEY` / `GOOGLE_API_KEY` 会从 guest 中过滤），而是通过 Gemini CLI 自身登录，凭据持久化在 sandbox home（`~/.gemini`）。
 
 完整变量（超时、endpoint 别名、`OPENAI_API_KEY` / `ANTHROPIC_AUTH_TOKEN` 等）见 [`.env.example`](.env.example)。
 

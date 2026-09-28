@@ -285,7 +285,7 @@ starts normally.**
 
 Coverage: all five current guest runners receive the composed `systemContext`,
 which contains the MPI catalog. Codex and Claude use native system/developer
-context channels; Gemini and OpenCode prepend it to the user prompt, and Pi
+context channels; OpenCode prepends it to the user prompt, and Pi
 passes it through an appended system-prompt file.
 
 Timing constraint: env injection runs before `Store.CreateSandbox` and returns

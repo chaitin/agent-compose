@@ -17,7 +17,7 @@ import (
 func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 	ctx := context.Background()
 	scheduler := domain.Scheduler{
-		Summary: domain.SchedulerSummary{ID: "scheduler-host", Name: "Scheduler Host", Runtime: domain.SchedulerRuntimeScheduler, DefaultAgent: "gemini"},
+		Summary: domain.SchedulerSummary{ID: "scheduler-host", Name: "Scheduler Host", Runtime: domain.SchedulerRuntimeScheduler, DefaultAgent: "claude"},
 	}
 	run := &domain.SchedulerRunSummary{ID: "run-host", SchedulerID: scheduler.Summary.ID, TriggerID: "trigger-host"}
 	store := &hostStoreFake{}
@@ -28,7 +28,7 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 	agentExecutor := &hostAgentExecutorFake{cell: domain.NotebookCell{
 		ID:            "cell-agent",
 		Output:        "agent text",
-		Agent:         "gemini",
+		Agent:         "claude",
 		AgentThreadID: "agent-session",
 		StopReason:    "complete",
 		Success:       true,
@@ -67,7 +67,7 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Agent returned error: %v", err)
 	}
-	if agentResult.Text != "agent text" || agentExecutor.request.Provider != "gemini" || len(sandboxes.shutdowns) != 1 {
+	if agentResult.Text != "agent text" || agentExecutor.request.Provider != "claude" || len(sandboxes.shutdowns) != 1 {
 		t.Fatalf("agent result/request/shutdowns = %#v/%#v/%#v", agentResult, agentExecutor.request, sandboxes.shutdowns)
 	}
 	if len(publisher.events) != 1 || publisher.events[0].topic != "agent-compose.agent.completed" {
@@ -114,7 +114,7 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 	if responseJSON != rpc.response || rpc.source != domain.SandboxTypeScript+":"+scheduler.Summary.ID {
 		t.Fatalf("rpc response/source = %q/%q", responseJSON, rpc.source)
 	}
-	if rpc.creation.Provider != "gemini" || rpc.creation.AgentDefinitionID != "" {
+	if rpc.creation.Provider != "claude" || rpc.creation.AgentDefinitionID != "" {
 		t.Fatalf("rpc sandbox creation context = %#v", rpc.creation)
 	}
 	if !store.containsLink("sandbox-rpc", "sandbox_rpc_completed") {

@@ -187,8 +187,8 @@ Agent execution should:
 
 ## Structured Output
 
-The existing runtime supports structured JSON output for Codex and Claude, but
-Gemini currently rejects `outputSchema`. OpenCode CLI docs list `--format json`
+The existing runtime supports structured JSON output for Codex and Claude.
+OpenCode CLI docs list `--format json`
 as raw event formatting, not strict schema enforcement. The first implementation
 should therefore reject `outputSchema` for `opencode` with a clear error unless
 OpenCode exposes a documented structured-output contract during implementation.
@@ -205,7 +205,7 @@ so OpenCode will use a new file:
 /data/state/agents/providers/opencode.json
 ```
 
-Existing `codex`, `claude`, and `gemini` provider thread state continues using
+Existing `codex` and `claude` provider thread state continues using
 the current state files and command paths.
 
 ## Remaining Follow-Up Checks
@@ -215,6 +215,6 @@ the current state files and command paths.
 - Confirm whether OpenCode honors common provider API keys directly from the
   environment, or whether a default config file should be mounted under
   `/root/.opencode`.
-- Decide separately whether existing Codex/Claude/Gemini runners should consume
+- Decide separately whether existing Codex/Claude runners should consume
   forwarded `model` / `system_prompt` or leave them as OpenCode-only runtime
   options.

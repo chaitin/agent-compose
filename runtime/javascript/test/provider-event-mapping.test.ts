@@ -5,7 +5,6 @@ import type { AgentEvent } from "../src/agent-event.js";
 import { ClaudeRunner } from "../src/runners/claude.js";
 import { CodexRunner } from "../src/runners/codex.js";
 import { DshRunner } from "../src/runners/dsh.js";
-import { GeminiRunner } from "../src/runners/gemini.js";
 import { OpenCodeRunner } from "../src/runners/opencode.js";
 import { PiRunner } from "../src/runners/pi.js";
 import type { AgentResult, Provider, RunnerOptions } from "../src/types.js";
@@ -57,13 +56,6 @@ function replay(provider: Provider): AgentEvent[] {
     }
     return events;
   }
-  if (provider === "gemini") {
-    const runner = new GeminiRunner(options(provider, push));
-    for (const event of lines) {
-      runner.handleEvent(event, result);
-    }
-    return events;
-  }
   if (provider === "dsh") {
     const runner = new DshRunner(options(provider, push), silentWriter);
     for (const line of lines) {
@@ -85,7 +77,7 @@ function replay(provider: Provider): AgentEvent[] {
   return events;
 }
 
-const providers: Provider[] = ["codex", "claude", "gemini", "opencode", "pi", "dsh"];
+const providers: Provider[] = ["codex", "claude", "opencode", "pi", "dsh"];
 
 describe("provider event mapping", () => {
   // Per-provider coverage without a snapshot: a serialised dump would be
@@ -137,7 +129,7 @@ describe("provider event mapping", () => {
     // DSH publishes identical usage twice (assistant/chunk and
     // assistant/message); only one may be mapped or every count doubles.
     const expected: Record<Provider, number> = {
-      codex: 1, claude: 3, gemini: 1, opencode: 2, pi: 3, dsh: 3,
+      codex: 1, claude: 3, opencode: 2, pi: 3, dsh: 3,
     };
     for (const provider of providers) {
       const usage = replay(provider).filter((event) => event.kind === "usage");
@@ -149,20 +141,18 @@ describe("provider event mapping", () => {
   });
 
   it("attributes run-scope usage to the model that spent the tokens", () => {
-    // Neither provider lists that model first: claude's fixture leads with the
-    // haiku sidecar (931/15) and gemini's with an all-zero flash-lite entry,
-    // so indexing the breakdown by position charges the wrong model.
+    // Claude does not list that model first: its fixture leads with the haiku
+    // sidecar (931/15), so indexing the breakdown by position charges the wrong
+    // model.
     const claudeUsage = replay("claude").filter((event) => event.kind === "usage");
     expect(claudeUsage.at(-1)).toMatchObject({ scope: "run", model: "claude-opus-5", inputTokens: 4, outputTokens: 104 });
-    const geminiUsage = replay("gemini").find((event) => event.kind === "usage");
-    expect(geminiUsage).toMatchObject({ model: "gemini-3.1-pro-preview" });
   });
 
   it("marks a turn terminator so it is not counted as a step boundary", () => {
-    // claude, gemini and dsh close the turn with a step-less step_end after
-    // their last step. Without the scope marker, pairing or counting step
-    // boundaries invents one phantom step per turn.
-    for (const provider of ["claude", "gemini", "dsh"] as Provider[]) {
+    // claude and dsh close the turn with a step-less step_end after their last
+    // step. Without the scope marker, pairing or counting step boundaries
+    // invents one phantom step per turn.
+    for (const provider of ["claude", "dsh"] as Provider[]) {
       const ends = replay(provider).filter((event) => event.kind === "step_end");
       const terminators = ends.filter((event) => event.scope === "run");
       expect(terminators.length, provider).toBe(1);
@@ -177,7 +167,7 @@ describe("provider event mapping", () => {
     // sends both item.started and item.completed, so the event count is a
     // provider detail — only the distinct ids are portable.
     const perProvider: Record<Provider, number> = {
-      codex: 2, claude: 1, gemini: 1, opencode: 1, pi: 2, dsh: 2,
+      codex: 2, claude: 1, opencode: 1, pi: 2, dsh: 2,
     };
     for (const provider of providers) {
       const calls = replay(provider).filter((event) => event.kind === "tool_call");
@@ -186,12 +176,10 @@ describe("provider event mapping", () => {
   });
 
   it("keeps inputTokens exclusive of cached tokens", () => {
-    // codex and gemini report an inclusive prompt count upstream; the mappers
-    // subtract so the field means the same thing everywhere.
+    // codex reports an inclusive prompt count upstream; the mapper subtracts so
+    // the field means the same thing everywhere.
     const codexUsage = replay("codex").find((event) => event.kind === "usage");
     expect(codexUsage).toMatchObject({ scope: "turn", inputTokens: 25788, cachedTokens: 2816 });
-    const geminiUsage = replay("gemini").find((event) => event.kind === "usage");
-    expect(geminiUsage).toMatchObject({ scope: "run", inputTokens: 5216, cachedTokens: 1024 });
   });
 
   it("omits kinds the provider cannot produce rather than emitting empty ones", () => {
@@ -200,8 +188,8 @@ describe("provider event mapping", () => {
     for (const provider of providers) {
       expect(replay(provider).some((event) => event.kind === "reasoning_delta"), provider).toBe(false);
     }
-    // codex and gemini expose no per-model-call boundary at all.
-    for (const provider of ["codex", "gemini"] as Provider[]) {
+    // codex exposes no per-model-call boundary at all.
+    for (const provider of ["codex"] as Provider[]) {
       expect(replay(provider).some((event) => event.kind === "step_start"), provider).toBe(false);
     }
   });

@@ -5,7 +5,7 @@ This document describes the call boundary between the Go host side
 `agent-compose-runtime` inside the sandbox. The current runtime is primarily
 used by the daemon's agent execution services: the host executes a unified
 entry command inside the sandbox, the JavaScript runtime adapts Codex, Claude,
-Gemini, OpenCode, and Pi, and structured results are returned to the host.
+OpenCode, Pi, and DSH, and structured results are returned to the host.
 
 Related code:
 
@@ -188,7 +188,7 @@ Command arguments:
 
 | Argument | Required | Description |
 | --- | ---: | --- |
-| `--provider` | yes | `codex`, `claude`, `gemini`, `opencode`, `pi`, with a small set of aliases |
+| `--provider` | yes | `codex`, `claude`, `opencode`, `pi`, `dsh`, with a small set of aliases |
 | `--message-file` | yes | Prompt file path |
 | `--state-root` | no | agent-compose runtime state root; default `/srv/agent-compose/sandbox/state`. Guest discovers agent identity at `agents/system-prompts/system-prompt.txt` and MPI catalog from this root |
 | `--workspace` | no | Agent working directory; default `WORKSPACE` or `/workspace` |
@@ -552,8 +552,6 @@ unsupported, or different, the runtime writes a warning to stderr. A reset
 preserves instruction correctness but does not preserve the previous provider
 conversation history.
 
-Gemini currently does not write provider state.
-
 After agent execution completes, the host also generates a cell-level manifest:
 
 ```text
@@ -685,19 +683,7 @@ If `/data/state/agents/system-prompts/system-prompt.txt` and/or
 composes Agent Identity + MPI into `systemContext` and injects it through
 `systemPrompt: { type: "preset", preset: "claude_code", append: <systemContext> }`.
 
-### 10.3 Gemini
-
-The JavaScript runtime invokes Gemini as a subprocess:
-
-```sh
-gemini -p <systemContext + user prompt> --output-format stream-json --approval-mode yolo
-```
-
-When `systemContext` is non-empty, it is prepended to the user prompt separated
-by a blank line. The current Gemini runner reads stream-json and generates a
-transcript, but does not write `/data/state/agents/providers/gemini.json`.
-
-### 10.4 OpenCode
+### 10.3 OpenCode
 
 The JavaScript runtime invokes OpenCode as a subprocess:
 
@@ -855,9 +841,9 @@ type RuntimeCommandResult = {
 ```
 
 `runtime.agent(prompt, options?)` writes a temporary message file and invokes the
-existing `agent-compose-runtime prompt` inside the guest. It reuses Codex,
-Claude, and Gemini provider adapters, MPI injection, and provider state, but
-does not call back to the host to create a separate agent cell.
+existing `agent-compose-runtime prompt` inside the guest. It reuses the Codex,
+Claude, OpenCode, Pi, and DSH provider adapters, MPI injection, and provider
+state, but does not call back to the host to create a separate agent cell.
 
 `runtime.agent` supports `outputSchema`. It accepts either a Zod schema or a
 plain JSON Schema object. Zod schemas are converted to JSON Schema and written to

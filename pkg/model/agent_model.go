@@ -81,8 +81,6 @@ func NormalizeAgentKind(agent string) string {
 		return "codex"
 	case "claude", "claude-code", "claude_code":
 		return "claude"
-	case "gemini", "gemini-cli", "gemini_cli":
-		return "gemini"
 	case "opencode", "open-code", "open_code":
 		return "opencode"
 	case "pi", "pi-agent", "pi_agent":

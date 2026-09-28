@@ -36,10 +36,10 @@ func TestLLMCredentialWarningsDescribeWhatHappensToTheValue(t *testing.T) {
 		},
 		{
 			name:      "credential the daemon cannot proxy is removed, not forwarded",
-			env:       map[string]compose.EnvVarSpec{"GOOGLE_API_KEY": {Value: "google-secret"}},
-			wantPaths: []string{"agents.worker.env.GOOGLE_API_KEY"},
+			env:       map[string]compose.EnvVarSpec{"AZURE_OPENAI_API_KEY": {Value: "azure-secret"}},
+			wantPaths: []string{"agents.worker.env.AZURE_OPENAI_API_KEY"},
 			wantContains: map[string]string{
-				"agents.worker.env.GOOGLE_API_KEY": "the agent never sees it",
+				"agents.worker.env.AZURE_OPENAI_API_KEY": "the agent never sees it",
 			},
 		},
 		{

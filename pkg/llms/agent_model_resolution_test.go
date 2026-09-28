@@ -64,7 +64,7 @@ func TestResolveAgentModelsPrecedence(t *testing.T) {
 		},
 		{
 			name:  "model id containing a slash is reported intact",
-			agent: domain.AgentDefinition{Provider: "gemini", Model: "dev/gpt-5.5"},
+			agent: domain.AgentDefinition{Provider: "opencode", Model: "dev/gpt-5.5"},
 			want:  AgentModelResolution{Model: "dev/gpt-5.5", Source: AgentModelSourceProject},
 		},
 		{
@@ -151,7 +151,7 @@ func TestResolveAgentModelsReportsProviderDefaultWhenNoModelExists(t *testing.T)
 		providers: []Provider{{ID: "gateway", ProviderType: ProviderFamilyOpenAI, Enabled: true}},
 		models:    []Model{{ID: "catalog-model", Name: "catalog-model", Enabled: true}},
 	}
-	agents := []domain.AgentDefinition{{Provider: "gemini"}, {Provider: "opencode"}, {Provider: "pi"}, {Provider: "dsh"}}
+	agents := []domain.AgentDefinition{{Provider: "opencode"}, {Provider: "pi"}, {Provider: "dsh"}}
 	resolutions, err := ResolveAgentModels(context.Background(), store, agents)
 	if err != nil {
 		t.Fatal(err)

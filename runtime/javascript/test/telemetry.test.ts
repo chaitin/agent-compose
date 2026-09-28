@@ -35,7 +35,7 @@ describe("agent telemetry", () => {
       expect(env.TRACEPARENT).toBe(traceparent);
       expect(env.TRACESTATE).toBe(tracestate);
     }
-    for (const provider of ["opencode", "dsh", "pi", "gemini"] as const) {
+    for (const provider of ["opencode", "dsh", "pi"] as const) {
       const env = providerTelemetryEnv(provider, result, {});
       expect(env.TRACEPARENT).toBeUndefined();
       expect(env.TRACESTATE).toBeUndefined();
@@ -121,7 +121,7 @@ describe("agent telemetry", () => {
     expect(source.AGENT_COMPOSE_TELEMETRY).toBe("secret");
   });
 
-  it.each(["pi", "gemini"] as const)("does not claim or pass managed telemetry to %s", (provider) => {
+  it.each(["pi"] as const)("does not claim or pass managed telemetry to %s", (provider) => {
     const warning = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     const source = { AGENT_COMPOSE_TELEMETRY: JSON.stringify(telemetry) };
     const config = readAgentTelemetry(provider, source);

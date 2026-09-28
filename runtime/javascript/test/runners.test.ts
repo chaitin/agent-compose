@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { ClaudeRunner } from "../src/runners/claude.js";
 import { CodexRunner } from "../src/runners/codex.js";
-import { GeminiRunner } from "../src/runners/gemini.js";
 import { OpenCodeRunner } from "../src/runners/opencode.js";
 import { captureStdio, runnerOptions, withTempSession } from "./helpers.js";
 
@@ -377,34 +376,6 @@ describe("ClaudeRunner", () => {
         stdio.restore();
       }
       expect(stdio.stderr).toBe("");
-    });
-  });
-});
-
-describe("GeminiRunner", () => {
-  it("can be constructed with compatible options", async () => {
-    await withTempSession(async (root) => {
-      const runner = new GeminiRunner(runnerOptions(root, "", "gemini"));
-      expect(runner).toBeInstanceOf(GeminiRunner);
-    });
-  });
-
-  it("removes stale Gemini MCP settings when current config is empty", async () => {
-    await withTempSession(async (root) => {
-      const settingsDir = path.join(root, "home", ".gemini");
-      await fs.mkdir(settingsDir, { recursive: true });
-      const settingsPath = path.join(settingsDir, "settings.json");
-      await fs.writeFile(settingsPath, JSON.stringify({ theme: "dark", mcpServers: { stale: { url: "http://stale" } } }, null, 2) + "\n", "utf-8");
-
-      const runner = new GeminiRunner({
-        ...runnerOptions(root, "", "gemini"),
-        mcpConfig: {},
-      });
-      await runner.writeSettingsFile();
-
-      const settings = JSON.parse(await fs.readFile(settingsPath, "utf-8")) as Record<string, unknown>;
-      expect(settings.theme).toBe("dark");
-      expect(settings).not.toHaveProperty("mcpServers");
     });
   });
 });

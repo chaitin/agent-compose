@@ -476,8 +476,7 @@ Resolution paths:
 
 The guest JS runtime (`runtime/javascript`) reads the convention file from
 `--state-root`, composes identity + MPI via `buildSystemContext`, and injects the
-result into Codex `developer_instructions`, Claude `systemPrompt.append`, or
-Gemini user prompt prepend.
+result into Codex `developer_instructions`, or Claude `systemPrompt.append`.
 
 See [agent_system_prompt_design.md](agent_system_prompt_design.md) and
 [agent-compose-runtime_contract.md](agent-compose-runtime_contract.md) for
@@ -894,7 +893,7 @@ Default guest paths:
 | `<sandbox>/state` | `/data/state` | Cell artifacts, agent prompt, provider state |
 | `<sandbox>/runtime` | `/data/runtime` | Runtime shared resources |
 | `<sandbox>/logs` | `/data/logs` | Jupyter logs |
-| `<sandbox>/home` or child paths | `/root` or child paths | Tool config and state for Codex, Claude, Gemini, git, and related tools |
+| `<sandbox>/home` or child paths | `/root` or child paths | Tool config and state for Codex, Claude, git, and related tools |
 
 For the more detailed mount manifest design, see
 [runtime_mount_manifest_design.md](runtime_mount_manifest_design.md) and
@@ -991,10 +990,9 @@ create workspace-capable agent sandboxes or grant file, command, or MCP tool
 access. With `outputSchema`, it uses prompt guidance and `json_object` instead
 of Responses API strict JSON Schema.
 
-Guest agent providers (`codex`, `claude`, `gemini`, `opencode`, `pi`) remain
-separate CLI runners with provider-native session state. Codex, Claude,
-OpenCode, and Pi normally receive scoped Runtime LLM Facade credentials rather
-than daemon provider keys; Gemini uses its CLI-native login flow.
+Guest agent providers (`codex`, `claude`, `opencode`, `pi`, `dsh`) remain
+separate CLI runners with provider-native session state. They normally receive
+scoped Runtime LLM Facade credentials rather than daemon provider keys.
 
 The scheduler's primary sandbox lifecycle API is:
 

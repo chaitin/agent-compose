@@ -3,7 +3,7 @@
 本文定义当前 `agent-compose` 与 OCI guest image 之间的最小约定，并说明如何构建、选择和验证自定义镜像，而不必照搬官方
 Docker Hub 上 `chaitin/agent-compose-guest` 镜像中的全部工具。
 
-这是一份按能力分层的约定。只用于直接执行命令的 sandbox 镜像，所需软件远少于同时运行 Codex、Claude、Gemini、OpenCode、Pi、JupyterLab 和所有 notebook cell 类型的镜像。
+这是一份按能力分层的约定。只用于直接执行命令的 sandbox 镜像，所需软件远少于同时运行 Codex、Claude、OpenCode、Pi、JupyterLab 和所有 notebook cell 类型的镜像。
 
 本文使用 **必须**、**应该** 和 **可以** 描述兼容性要求。
 
@@ -103,10 +103,9 @@ Linux shell 的传输测试验证此工具合同，不能替代真实集群部�
 | `/root/.claude` | Claude config 和 state | 持久化 |
 | `/root/.opencode` | OpenCode state | 持久化 |
 | `/root/.pi` | Pi config 和 state | 持久化 |
-| `/root/.gemini` | Gemini state | 持久化 |
 | `/root/.claude.json` | Claude root config | 持久化文件 |
 | `/root/.gitconfig` | Git config | 持久化文件 |
-| 指定的 `/root/.config/...` 和 `/root/.local/share/gemini` 路径 | Provider state | 持久化 |
+| 指定的 `/root/.config/...` 路径 | Provider state | 持久化 |
 
 daemon 会准备 host 侧 mount source。镜像**应该**预先将 `/workspace`、`/data/state`、`/data/runtime` 和 `/data/logs` 创建为目录，但**不得**在这些路径中存放不可被覆盖的镜像内容：
 
@@ -194,7 +193,6 @@ guest 进程。
 | --- | --- |
 | Codex | Runtime package 中的 `@openai/codex-sdk`，以及通过 `CODEX_BIN`、`AGENT_COMPOSE_CODEX_BIN`、`/usr/bin/codex`、`/usr/local/bin/codex` 或 `PATH` 中 `codex` 选择的可执行文件 |
 | Claude | `@anthropic-ai/claude-agent-sdk` 和 Claude Code；通过 `CLAUDE_CODE_EXECUTABLE`/`CLAUDE_CODE_PATH`、`/usr/bin/claude` 或 SDK 支持的默认位置选择 |
-| Gemini | `PATH` 中的 `gemini` 可执行文件 |
 | OpenCode | `PATH` 中的 `opencode` 可执行文件 |
 | Pi | `PATH` 中的 `pi` 可执行文件；使用 MCP 的 project 还需要 `/usr/local/share/agent-compose/pi-mcp-adapter/index.ts` 中固定版本的 `pi-mcp-adapter` extension |
 
@@ -288,7 +286,7 @@ task image:agent-compose-guest-archlinux
 | `NO_CACHE=1` | 传递 Docker `--no-cache` 参数 |
 | `GO_VERSION`、`GRPCURL_VERSION`、`NODE_MAJOR` | 默认 guest 工具链参数；`NODE_MAJOR` 仅适用于 Debian guest |
 | `ARCHLINUX_TAG` | Arch Linux guest 基础镜像 tag |
-| `CODEX_VERSION`、`CLAUDE_CODE_VERSION`、`GEMINI_CLI_VERSION`、`OPENCODE_VERSION`、`PI_AGENT_VERSION`、`PI_MCP_ADAPTER_VERSION`、`DSH_VERSION` | guest provider 包版本 |
+| `CODEX_VERSION`、`CLAUDE_CODE_VERSION`、`OPENCODE_VERSION`、`PI_AGENT_VERSION`、`PI_MCP_ADAPTER_VERSION`、`DSH_VERSION` | guest provider 包版本 |
 
 `REGISTRY_MIRROR`、`GITHUB_MIRROR` 和 `ARCHLINUX_MIRROR` 没有跨工具通用的标准环境变量，因此保留为作用域明确的项目参数。`REGISTRY_MIRROR` 不是 dockerd mirror 配置，只负责改写仓库 Dockerfile 中的基础镜像地址。
 
@@ -360,7 +358,7 @@ RUN cd /tmp/agent-compose-runtime \
     && rm -rf /tmp/agent-compose-runtime /root/.npm
 
 RUN mkdir -p \
-      /root/.agents /root/.claude /root/.codex /root/.gemini /root/.opencode /root/.pi \
+      /root/.agents /root/.claude /root/.codex /root/.opencode /root/.pi \
       /workspace /data/state /data/runtime /data/logs
 
 ENV HOME=/root

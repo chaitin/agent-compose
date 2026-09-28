@@ -7,8 +7,6 @@ describe("provider normalization", () => {
     ["CLAUDE", "claude"],
     ["claude-code", "claude"],
     ["claude_code", "claude"],
-    ["gemini-cli", "gemini"],
-    ["gemini_cli", "gemini"],
     ["opencode", "opencode"],
     ["open-code", "opencode"],
   ["open_code", "opencode"],
@@ -20,7 +18,7 @@ describe("provider normalization", () => {
   });
 
   it("rejects unsupported providers", () => {
-    expect(() => normalizeProvider("qwen")).toThrow(/unsupported provider "qwen"; expected one of: codex, claude, gemini, opencode, pi/);
+    expect(() => normalizeProvider("qwen")).toThrow(/unsupported provider "qwen"; expected one of: codex, claude, opencode, pi/);
   });
 
   it.each([
@@ -29,7 +27,7 @@ describe("provider normalization", () => {
     undefined,
     null,
   ])("rejects missing provider %j", (input) => {
-    expect(() => normalizeProvider(input)).toThrow(/provider is required; expected one of: codex, claude, gemini, opencode, pi/);
+    expect(() => normalizeProvider(input)).toThrow(/provider is required; expected one of: codex, claude, opencode, pi/);
   });
 
   it("trims provider names before normalization", () => {

@@ -210,7 +210,7 @@ func TestPrepareAgentLLMRejectsUnsupportedAgentKind(t *testing.T) {
 
 	_, err := PrepareAgentLLM(context.Background(), AgentLLMRequest{
 		Config: bareModelConfig(root), Store: store, Sandbox: bareModelSandbox(root, agentLLMSandboxID),
-		AgentKind: "gemini", Model: "gpt-5.5",
+		AgentKind: "aider", Model: "gpt-5.5",
 	})
 	if !errors.Is(err, ErrUnsupportedAgentDialect) {
 		t.Fatalf("PrepareAgentLLM error = %v, want ErrUnsupportedAgentDialect", err)

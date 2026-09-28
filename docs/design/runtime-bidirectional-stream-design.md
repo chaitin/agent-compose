@@ -278,7 +278,6 @@ Provider capability must be explicit:
 |---|---|
 | Codex | implement first |
 | Claude | integrate after confirming SDK session/continue support |
-| Gemini | integrate after confirming SDK session/continue support |
 | OpenCode | integrate after confirming capability |
 
 If a provider does not support an agent turn loop, return an explicit error.
@@ -542,7 +541,7 @@ Rules:
 3. Transcript representation after TTY merges stdout/stderr.
 4. Connect bidirectional stream backpressure and runtime cleanup after either direction disconnects.
 5. Accurate agent turn boundary definition in prompt interactive mode.
-6. Provider SDK multi-turn capability differences, especially for Claude/Gemini/OpenCode.
+6. Provider SDK multi-turn capability differences, especially for Claude/OpenCode.
 7. Consistency between the new stream and old artifact double-write.
 8. `RunLogHub` and file offset deduplication, compensation, and backpressure.
 9. Memory limits and truncation semantics for large-output unary projection.

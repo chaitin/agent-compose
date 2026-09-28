@@ -172,7 +172,7 @@ daemon 会把它写进自己的连接配置，而不是把它交给 agent runtim
 可吸收（写进连接并代理）: LLM_API_KEY（配 LLM_API_PROTOCOL / LLM_API_ENDPOINT）
   ANTHROPIC_API_KEY  ANTHROPIC_AUTH_TOKEN  OPENAI_API_KEY
   CODEX_API_KEY  DEEPSEEK_API_KEY  OPENROUTER_API_KEY
-识别但不吸收（也留在 daemon、从 guest 环境移除）: AZURE_OPENAI_API_KEY  GOOGLE_API_KEY  GEMINI_API_KEY
+识别但不吸收（也留在 daemon、从 guest 环境移除）: AZURE_OPENAI_API_KEY
 不识别（原样下发到 guest）: 其它 *_API_KEY / *_AUTH_TOKEN
 ```
 

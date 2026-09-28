@@ -8,7 +8,7 @@ agent-compose 当前已经具备 guest runtime、provider runner、runtime SDK�
 
 - 用户或 workspace 脚本可以提供一段确定性 JavaScript workflow 脚本。
 - workflow 脚本可以通过 `agent()`、`parallel()`、`pipeline()`、`phase()`、`log()`、`workflow()` 等内置函数编排多个子 agent。
-- 子 agent 继续复用 agent-compose 已有 provider runners，包括 `codex`、`claude`、`gemini`、`opencode`、`pi`、`dsh`。
+- 子 agent 继续复用 agent-compose 已有 provider runners，包括 `codex`、`claude`、`opencode`、`pi`、`dsh`。
 - workflow run 可以持久化运行状态，并在 `resumeRunId` 下复用已完成且输入 hash 匹配的子 agent 结果。
 - workflow 可以通过 CLI 协议输出最终结果和流式进度事件，SDK 可以解析这些协议并暴露给调用方。
 - `agent(..., { isolation: "worktree" })` 首版提供真实 git worktree 隔离，不做静默降级。
@@ -59,7 +59,6 @@ task test
 
 - `CodexRunner` 使用 `@openai/codex-sdk`，支持 `outputSchema`、session resume、workspace、additional directories、danger-full-access sandbox。
 - `ClaudeRunner` 使用 `@anthropic-ai/claude-agent-sdk`，支持 `outputFormat: { type: "json_schema" }`、session resume、system prompt、additional directories。
-- `GeminiRunner` 支持普通 prompt，遇到 `outputSchema` 时返回 `structured JSON output is not supported by gemini runner`。
 - `OpenCodeRunner` 支持普通 prompt 和 session resume，遇到 `outputSchema` 时返回 `structured JSON output is not supported by opencode runner`。
 
 `runtime/agent-compose-runtime-sdk/src/agent.ts` 当前通过临时 message/schema 文件调用 `agent-compose-runtime prompt`，解析 stdout 中的 `__AGENT_RESULT__` 行，并在 SDK 侧解析 JSON。该 SDK API 不回调 Go host。
@@ -408,7 +407,7 @@ type WorkflowAgentOptions = {
   label?: string
   phase?: string
   schema?: Record<string, unknown>
-  provider?: "codex" | "claude" | "gemini" | "opencode" | "pi" | "dsh"
+  provider?: "codex" | "claude" | "opencode" | "pi" | "dsh"
   model?: string
   effort?: "low" | "medium" | "high" | "xhigh" | "max"
   isolation?: "worktree"
@@ -444,14 +443,13 @@ label，避免相同 `invocationKey` 在 replay 时产生不同的 system contex
 
 - Codex：`ThreadOptions.model`。
 - Claude：query options `model`。
-- Gemini：CLI 参数中加入 provider 支持的 model 参数；如当前 Gemini runner 未实现 model 参数，本方案要求补齐。
 - OpenCode：已支持 `--model`。
 
 `effort`：
 
 - Codex：映射到 `ThreadOptions.modelReasoningEffort`。`max` 不在 Codex SDK 当前类型内，收到 `max` 时返回 unsupported error，避免静默降级。
 - Claude：映射到 query options `effort`。
-- Gemini/OpenCode：首版返回 unsupported error。
+- OpenCode：首版返回 unsupported error。
 
 `agentType` 首版注入 system context，格式为：
 
@@ -490,7 +488,7 @@ SDK 类型：
 ```ts
 type RuntimeWorkflowOptions = {
   args?: unknown
-  provider?: "codex" | "claude" | "gemini" | "opencode" | "pi" | "dsh"
+  provider?: "codex" | "claude" | "opencode" | "pi" | "dsh"
   model?: string
   concurrency?: number
   tokenBudget?: number
@@ -873,7 +871,7 @@ workflow result must be JSON-serializable; did you forget to await agent(), para
 - `provider`、`model`、`schema` 传入 prompt command。
 - Codex runner 透传 `modelReasoningEffort`。
 - Claude runner 透传 `effort`。
-- Gemini/OpenCode 收到 `effort` 或 `schema` 时保持明确 unsupported error。
+- OpenCode 收到 `effort` 或 `schema` 时保持明确 unsupported error。
 - git worktree isolation 在临时 git repo 中创建真实 worktree，并记录 `gitStatus`。
 
 ### runtime/javascript E2E tests
@@ -949,7 +947,7 @@ task image:agent-compose-guest
 - 分布式 workflow 队列。
 - 多层 nested workflow。
 - 强安全沙箱声明。
-- Gemini/OpenCode 结构化输出补齐。
+- OpenCode 结构化输出补齐。
 - Claude native subagent registry / agent-compose agent definition registry 与 `agentType` 的稳定绑定。
 
 ## 关键假设和已确认决策

@@ -25,7 +25,7 @@ Pi 官方刻意不内置 MCP；当前 guest image 通过固定版本的
 
 ## 2. 当前 agent provider 执行链
 
-当前实现实际支持五种 provider：`codex`、`claude`、`gemini`、`opencode`、`pi`。一次 agent run 的主要链路如下：
+当前实现实际支持五种 provider：`codex`、`claude`、`opencode`、`pi`、`dsh`。一次 agent run 的主要链路如下：
 
 ```text
 AgentDefinition / compose agent
@@ -63,7 +63,7 @@ Pi 不应被实现成新的 Go domain package。agent provider 的进程协议�
 
 Pi 提供 interactive、print/JSON、RPC 和 SDK 四种模式。首版选择 `--mode json`：
 
-- 与 `OpenCodeRunner`、`GeminiRunner` 的“一次 turn 一个进程”模型一致。
+- 与 `OpenCodeRunner` 的“一次 turn 一个进程”模型一致。
 - stdout 是 LF 分隔 JSON，第一条是带 `id` 的 session header，后续是稳定的 agent/message/tool 生命周期事件。
 - `--session-id <id>` 用于恢复已有 session；首次执行省略该参数，让 Pi 走
   原生 session 创建路径，再把返回的 ID 写入 `stateRoot` 下的 provider state。
@@ -205,7 +205,7 @@ Pi 原生实现 Agent Skills standard，并扫描 `~/.agents/skills`。现有 `e
 
 为保证一个 agent 只能看到自己声明的 skill，runner 应把 `RunnerOptions.skills` 中的名称解析为 `<home>/.agents/skills/<name>/SKILL.md`（或目录），验证 real path 未逃逸 skills root，然后逐个传 `--skill`。同时使用 `--no-skills` 禁止额外发现。这样无需新增 Pi 专用 skill copy/link。
 
-不要再像 Codex/Gemini 那样手工 append skill catalog；Pi 会从显式 skill source 生成自己的 catalog，双重注入会浪费上下文并可能产生冲突。
+不要再像 Codex 那样手工 append skill catalog；Pi 会从显式 skill source 生成自己的 catalog，双重注入会浪费上下文并可能产生冲突。
 
 ### 5.2 Context files
 
@@ -365,7 +365,7 @@ task image:agent-compose-guest
 | session 文件与 transcript 双份状态 | 排障混淆、磁盘增长 | 分离职责、stateRoot 定向、沿用 sandbox retention；文档说明 |
 | 并发 run 改写 models.json | 配置竞争 | 原子写；确认同 sandbox run 串行保证，否则实例级 keyed lock |
 | npm 依赖增加镜像体积 | 拉取和启动成本 | 记录 size budget；必要时再评估上游 standalone release |
-| structured output | Pi CLI 无等价 schema flag | 首版像 OpenCode/Gemini 一样明确拒绝；后续用受控 extension 实现，不用 prompt 伪约束冒充 schema guarantee |
+| structured output | Pi CLI 无等价 schema flag | 首版像 OpenCode 一样明确拒绝；后续用受控 extension 实现，不用 prompt 伪约束冒充 schema guarantee |
 
 最终实现结论：JSON mode + facade + session + skills 主链路与固定版本的
 Pi MCP extension 均已落地。RPC 仍是未来可选的交互升级，不应与当前普通

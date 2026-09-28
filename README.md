@@ -24,7 +24,7 @@
 
 If you know Docker Compose, the mental model is familiar: instead of declaring
 containers, you declare **agents**. Each agent picks a provider CLI — `codex`,
-`claude` (Claude Code), `gemini`, `opencode`, or `pi` — and the daemon gives it its own
+`claude` (Claude Code), `opencode`, `pi`, or `dsh` — and the daemon gives it its own
 isolated sandbox with a workspace, then runs it on a prompt, a shell command, a
 schedule, or an event.
 
@@ -34,7 +34,7 @@ You manage the whole lifecycle with a Compose-style CLI (`up`, `run`, `ps`,
 Concretely, agent-compose provides:
 
 - A **declarative compose model** (`agent-compose.yml`) with `${ENV}` interpolation.
-- **Multi-provider guest agents**: Codex, Claude Code, Gemini, OpenCode, and Pi CLIs.
+- **Multi-provider guest agents**: Codex, Claude Code, OpenCode, Pi, and DSH CLIs.
 - **Three runtime drivers**: `docker` (default), `boxlite` (microVM), and `microsandbox`.
 - A **scheduler** with `cron`, `interval`, `timeout`, and `event` triggers — or full inline JavaScript scheduler scripts.
 - **Event triggers and webhooks** for event-driven agent runs.
@@ -285,7 +285,6 @@ Each agent sets a `provider`, which selects the CLI it runs inside the sandbox:
 | --- | --- |
 | `codex` | Codex CLI |
 | `claude` | Claude Code CLI |
-| `gemini` | Gemini CLI |
 | `opencode` | OpenCode CLI |
 | `pi` | Pi coding agent CLI |
 | `dsh` | DeepSeek Harness CLI |
@@ -310,10 +309,6 @@ ANTHROPIC_MODEL=claude-...
 
 Set `LLM_API_PROTOCOL=chat_completions` to target any OpenAI-compatible endpoint
 (DeepSeek, vLLM, Ollama).
-
-**Gemini** is never handed an LLM key (`GEMINI_API_KEY` /
-`GOOGLE_API_KEY` are filtered out of the guest) and authenticates through the
-Gemini CLI's own login, persisted under the sandbox home (`~/.gemini`).
 
 See [`.env.example`](.env.example) for the full list (timeouts, endpoint aliases,
 `OPENAI_API_KEY` / `ANTHROPIC_AUTH_TOKEN`).

@@ -103,7 +103,7 @@ func TestProjectAgentModelResolverUsesProjectDeclaredModel(t *testing.T) {
 
 func TestProjectAgentModelResolverReportsProviderDefaultWithoutModel(t *testing.T) {
 	project, agents, resolver := newProjectAgentModelResolverFixture(t,
-		"name: model-empty\nagents:\n  coder:\n    provider: gemini\n",
+		"name: model-empty\nagents:\n  coder:\n    provider: opencode\n",
 		"")
 	resolutions, err := resolver.ResolveProjectAgentModels(context.Background(), project, agents)
 	if err != nil {
