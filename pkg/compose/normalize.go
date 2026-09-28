@@ -1456,15 +1456,32 @@ func defaultProjectName(options NormalizeOptions) string {
 	return strings.TrimLeft(name, "-_")
 }
 
+// normalizeEnvVarMap interpolates and validates one map of environment values.
+//
+// A value that is still the redaction placeholder after interpolation is
+// rejected. The placeholder is reserved: every view the daemon returns hides a
+// credential behind it, and a client that feeds such a view back must have the
+// value restored before normalization (restoreEnvSecrets does that for
+// PatchProject). Reaching normalization with the placeholder means either the
+// client tried to apply a redacted view or wrote the placeholder by hand, and
+// persisting it would replace a real credential with eight asterisks. OctoBus
+// tokens already fail this way; environment values must not be an exception.
 func normalizeEnvVarMap(path string, values map[string]EnvVarSpec, options NormalizeOptions) (map[string]EnvVarSpec, error) {
 	if len(values) == 0 {
 		return nil, nil
 	}
 	normalized := make(map[string]EnvVarSpec, len(values))
 	for key, value := range values {
-		interpolated, err := interpolateEnvValue(joinPath(path, key)+".value", value.Value, options)
+		itemPath := joinPath(path, key) + ".value"
+		interpolated, err := interpolateEnvValue(itemPath, value.Value, options)
 		if err != nil {
 			return nil, err
+		}
+		if interpolated == redactedEnvValue {
+			return nil, &ValidationError{
+				Path:    itemPath,
+				Message: "redacted value placeholder cannot be used as an environment value",
+			}
 		}
 		value.Value = interpolated
 		normalized[key] = value
