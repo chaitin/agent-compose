@@ -15,11 +15,12 @@ import (
 // Runs that outlive their request execute under the daemon root context, but
 // the metadata of the request that started them must still reach execution:
 // trusted ingress headers become the sandbox's capability binding, and the
-// caller's trace context links agent telemetry to the caller's trace.
+// caller's trace context links agent telemetry to the caller's trace. Nothing
+// else from the request context is carried over.
 func TestRunSupervisorDetachedRunsKeepRequestMetadata(t *testing.T) {
-	want := runSupervisorRequestMetadata{
-		headers: []domain.TrustedHeader{{Name: "x-mpi-username", Value: "alice"}},
-		trace: domain.TraceContext{
+	want := domain.RequestMetadata{
+		TrustedHeaders: []domain.TrustedHeader{{Name: "x-mpi-username", Value: "alice"}},
+		TraceContext: domain.TraceContext{
 			Traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
 			Tracestate:  "vendor=value",
 		},
@@ -51,21 +52,24 @@ func TestRunSupervisorDetachedRunsKeepRequestMetadata(t *testing.T) {
 			t.Cleanup(cancelRoot)
 			controller := newRunSupervisorHeaderController()
 			supervisor := &RunSupervisor{root: rootCtx, controller: controller, active: map[string]*activeRun{}}
-			requestCtx := domain.NewContextWithTrustedHeaders(context.Background(), want.headers)
-			requestCtx = domain.NewContextWithTraceContext(requestCtx, want.trace)
+			requestCtx := domain.NewContextWithRequestMetadata(context.Background(), want)
+			requestCtx = context.WithValue(requestCtx, runSupervisorTransportValueKey{}, "transport")
 			requestCtx, cancelRequest := context.WithCancel(requestCtx)
 			t.Cleanup(cancelRequest)
 
 			done := make(chan error, 1)
 			go func() { done <- run(requestCtx, supervisor) }()
-			var got runSupervisorRequestMetadata
+			var got runSupervisorExecution
 			select {
-			case got = <-controller.metadata:
+			case got = <-controller.executions:
 			case <-time.After(time.Second):
 				t.Fatal("run did not start")
 			}
-			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("execution request metadata = %#v, want %#v", got, want)
+			if !reflect.DeepEqual(got.metadata, want) {
+				t.Fatalf("execution request metadata = %#v, want %#v", got.metadata, want)
+			}
+			if got.transportValue != nil {
+				t.Fatalf("execution context retained request value %#v", got.transportValue)
 			}
 
 			// Carrying the headers must not change the run's lifetime: it still
@@ -97,9 +101,9 @@ func TestRunSupervisorDetachedRunWithoutRequestMetadata(t *testing.T) {
 		_, _ = supervisor.StartRun(context.Background(), runs.RunAgentRequest{Interactive: true, Prompt: "hello"})
 	}()
 	select {
-	case got := <-controller.metadata:
-		if !reflect.DeepEqual(got, runSupervisorRequestMetadata{}) {
-			t.Fatalf("execution request metadata = %#v, want none", got)
+	case got := <-controller.executions:
+		if !reflect.DeepEqual(got.metadata, domain.RequestMetadata{}) {
+			t.Fatalf("execution request metadata = %#v, want none", got.metadata)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("run did not start")
@@ -107,26 +111,30 @@ func TestRunSupervisorDetachedRunWithoutRequestMetadata(t *testing.T) {
 	close(controller.finish)
 }
 
-// runSupervisorRequestMetadata is the request metadata visible on an execution
-// context.
-type runSupervisorRequestMetadata struct {
-	headers []domain.TrustedHeader
-	trace   domain.TraceContext
+// runSupervisorTransportValueKey marks a request context value that is not
+// request metadata, so a detached run must not see it.
+type runSupervisorTransportValueKey struct{}
+
+// runSupervisorExecution is what an execution context carries from the request
+// that started the run.
+type runSupervisorExecution struct {
+	metadata       domain.RequestMetadata
+	transportValue any
 }
 
-// runSupervisorHeaderController reports the request metadata visible on the
-// execution context, which is the context StartProjectRun reads it from.
+// runSupervisorHeaderController reports what the execution context carries from
+// the request, which is the context StartProjectRun reads metadata from.
 type runSupervisorHeaderController struct {
-	metadata chan runSupervisorRequestMetadata
-	canceled chan struct{}
-	finish   chan struct{}
+	executions chan runSupervisorExecution
+	canceled   chan struct{}
+	finish     chan struct{}
 }
 
 func newRunSupervisorHeaderController() *runSupervisorHeaderController {
 	return &runSupervisorHeaderController{
-		metadata: make(chan runSupervisorRequestMetadata, 1),
-		canceled: make(chan struct{}),
-		finish:   make(chan struct{}),
+		executions: make(chan runSupervisorExecution, 1),
+		canceled:   make(chan struct{}),
+		finish:     make(chan struct{}),
 	}
 }
 
@@ -145,9 +153,9 @@ func (c *runSupervisorHeaderController) RunProjectCommandAttachRegistered(
 		return err
 	}
 	onStarted("run-1", make(chan struct{}))
-	c.metadata <- runSupervisorRequestMetadata{
-		headers: domain.TrustedHeadersFromContext(execCtx),
-		trace:   domain.TraceContextFromContext(execCtx),
+	c.executions <- runSupervisorExecution{
+		metadata:       domain.RequestMetadataFromContext(execCtx),
+		transportValue: execCtx.Value(runSupervisorTransportValueKey{}),
 	}
 	select {
 	case <-execCtx.Done():
