@@ -4,7 +4,7 @@
 
 agent-compose 是负责 project、run、sandbox、runtime driver、workspace、scheduler、事件、镜像、缓存、Jupyter 和 LLM facade 的控制面。核心用户工作流跨越 CLI、Connect/HTTP API、SQLite 与文件持久化、后台 controller、guest runtime 和外部依赖边界，单包测试或使用 fake 的多组件测试无法证明部署后的完整流程可用。
 
-仓库当前通过测试函数名称中的 `Integration` 和 `E2E` 区分测试形态，并在 `scripts/test-coverage.sh` 中分别计算 unit、integration、E2E 和 combined statement coverage。当前约有 77 个 `TestE2E...` 分散在 `cmd/`、`pkg/` 和 `test/e2e`：其中多数是复用 unit/integration helper 的 coverage-shape wrapper，只有少量测试真正启动 daemon、Docker sandbox 或后台 scheduler。现有 E2E statement coverage 因此主要反映代码执行数量，而不是用户可观察业务流程的完整性。
+仓库当前通过测试函数名称中的 `Integration` 和 `E2E` 区分测试形态，并在 `scripts/test-coverage.sh` 中分别计算 unit、integration、E2E 和 combined statement coverage。当前约有 129 个 `TestE2E...` 分散在 `cmd/`、`pkg/`、`test/e2e` 和 `internal/`：其中多数是复用 unit/integration helper 的 coverage-shape wrapper，只有少量测试真正启动 daemon、Docker sandbox 或后台 scheduler。现有 E2E statement coverage 因此主要反映代码执行数量，而不是用户可观察业务流程的完整性。
 
 本规格定义一套真实、可重复、可诊断的核心业务 E2E 测试体系。目标状态：
 
@@ -35,7 +35,6 @@ agent-compose 是负责 project、run、sandbox、runtime driver、workspace、s
 - `cmd/agent-compose/e2e_docker_scheduler_test.go` 能启动完整 service graph、使用真实 Docker guest、通过 CLI 应用项目，并等待 scheduler run 完成，是当前接近真实 E2E 的基线。
 - `test/e2e/docker_jupyter_host_daemon_test.go` 能启动外部宿主机 daemon，通过 Connect API 创建 Docker Jupyter sandbox，并验证 stale port 在 stop/resume 后由 Docker inspect 修复。
 - `test/e2e/docker_workspace_resume_host_daemon_test.go` 中的 `TestE2EDockerFileWorkspaceResumePreservesState` 已通过正式 Connect/HTTP API 和真实 Docker guest 验证 file workspace 一次性 provisioning、宿主机 daemon 重启、原 runtime handle 复用、ready workspace 状态保持、新 sandbox 获取最新 source、无反向同步以及资源泄漏清理。该证据仅适用于宿主机 daemon + Docker，不代表 BoxLite/Microsandbox 等价。
-- `test/e2e/api_smoke_test.go` 只注册了一个临时 Echo `/api/version` handler，不代表真实 daemon E2E，应重新归类或由真实 daemon health 场景替代。
 - `pkg/driver` 下的 BoxLite、Microsandbox 和 Docker smoke 已覆盖部分启动、挂载和 writable layer 行为，但没有通过 project/run/CLI/API 控制面执行完整业务流程。
 
 ### 约束结论

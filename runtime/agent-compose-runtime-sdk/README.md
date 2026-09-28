@@ -9,7 +9,7 @@ const { runtime } = require("@chaitin-ai/agent-compose-runtime-sdk");
 ```
 
 ```js
-import runtime, { exec, shell, agent, llm, workflowFile } from "@chaitin-ai/agent-compose-runtime-sdk";
+import runtime, { exec, shell, agent, llm, workflowFile, ssh } from "@chaitin-ai/agent-compose-runtime-sdk";
 ```
 
 ## Installation
@@ -52,6 +52,8 @@ main().catch((error) => {
 | `stateRoot` | `STATE_ROOT` | `/data/state` |
 | `runtimeRoot` | `RUNTIME_ROOT` | `/data/runtime` |
 | `home` | `HOME` | `/root` |
+
+`workspace`, `stateRoot`, and `runtimeRoot` also accept the legacy aliases `AGENT_COMPOSE_WORKSPACE`, `AGENT_COMPOSE_STATE_ROOT`, and `AGENT_COMPOSE_RUNTIME_ROOT` when the primary variable is unset. `home` has no alias.
 
 ## API
 
@@ -204,7 +206,7 @@ Error behavior:
 | --- | --- |
 | `outputSchema` is not a plain JSON object | `runtime.agent()` throws before calling the runtime. |
 | A Zod schema cannot be converted to JSON Schema | `runtime.agent()` throws before calling the runtime. |
-| The provider does not support schema-based output | The runtime throws a provider-specific error. The current OpenCode runner reports unsupported output. |
+| The provider does not support schema-based output | The runtime throws a provider-specific error. Codex and Claude support schema-based output; the OpenCode, Pi, and DSH runners report unsupported output. |
 | The provider returns `finalText` that is not valid JSON | `runtime.agent()` throws a parse error. |
 | The provider returns JSON that does not satisfy the Zod schema | `runtime.agent()` throws a validation error. |
 
@@ -299,7 +301,7 @@ Options:
 | Option | Description |
 | --- | --- |
 | `model` | LLM model name. When omitted, agent-compose uses the server-side configuration. |
-| `baseUrl` | agent-compose service URL. Defaults to `BASE_URL`, then `HTTP_URL`, then `http://127.0.0.1:7410`. |
+| `baseUrl` | agent-compose service URL. Defaults to `BASE_URL`, then `HTTP_URL`, then `AGENT_COMPOSE_BASE_URL`, then `AGENT_COMPOSE_HTTP_URL`, then `http://127.0.0.1:7410`. |
 | `timeoutMs` | Terminates the LLM service request after this number of milliseconds. |
 | `outputSchema` | Zod schema or JSON Schema object. When set, the returned `json` field is parsed from `text`. |
 
@@ -375,6 +377,55 @@ Options:
 | `dir` | Output directory. Defaults to `runtime.paths.workspace`. |
 
 File names are normalized with `path.basename()`, so callers should pass a file name rather than a nested path.
+
+### `runtime.ssh.prepareConfig(options)`
+
+Writes SSH client configuration for reaching a host and returns the resolved paths. It creates the SSH directory, optionally writes a private key, and maintains a marked block in `~/.ssh/config` that points at a `known_hosts` file.
+
+```js
+const sshConfig = await runtime.ssh.prepareConfig({
+  hostAlias: "sandbox",
+  hostName: "10.0.0.5",
+  user: "root",
+  privateKey: process.env.SANDBOX_SSH_KEY,
+});
+
+const command = runtime.ssh.command(sshConfig);
+```
+
+Options:
+
+| Option | Description |
+| --- | --- |
+| `hostAlias` | Required `Host` alias written to `~/.ssh/config`. |
+| `hostName` | Required host name or address. |
+| `user` | SSH user. Defaults to `root`. |
+| `port` | SSH port. Defaults to `22`. |
+| `proxyJump` | Optional `ProxyJump` target. |
+| `privateKey` | Private key contents to write. The value must contain `PRIVATE KEY`; escaped `\n` sequences are normalized. |
+| `privateKeyName` | File name for the written key under `~/.ssh`. Defaults to `id_rsa`. |
+| `home` | Home directory used to resolve `~/.ssh`. Defaults to `runtime.paths.home`. |
+| `blockName` | Marker name for the managed config block. Defaults to `agent-compose-runtime-sdk`. |
+| `strictHostKeyChecking` | One of `accept-new`, `yes`, or `no`. Defaults to `accept-new`. |
+
+Return value:
+
+```ts
+{
+  hostAlias: string;
+  hostName: string;
+  user: string;
+  port: string;
+  proxyJump?: string;
+  privateKeyPath?: string;
+  configPath: string;
+  knownHostsPath: string;
+  blockName: string;
+  strictHostKeyChecking: "accept-new" | "yes" | "no";
+}
+```
+
+The returned config can be turned into shell commands with `runtime.ssh.command(config)` (`ssh …`), `runtime.ssh.scpCommand(config)` (`scp …`), and `runtime.ssh.options(config)` (the shared `-F`, `UserKnownHostsFile`, and `StrictHostKeyChecking` flags).
 
 ## Errors
 

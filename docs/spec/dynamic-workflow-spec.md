@@ -48,10 +48,12 @@ task test
 
 ### 现有 runtime 能力
 
-`runtime/javascript` 当前 CLI 暴露两个 host-dependent 子命令：
+`runtime/javascript` 当前 CLI 暴露四个 host-dependent 子命令：
 
 - `agent-compose-runtime prompt`
+- `agent-compose-runtime workflow`
 - `agent-compose-runtime exec`
+- `agent-compose-runtime stream`
 
 `runtime/javascript/src/prompt.ts` 读取 message file、output schema file、state root、workspace、home、model，并分发到 provider runner。
 
@@ -60,17 +62,17 @@ task test
 - `CodexRunner` 使用 `@openai/codex-sdk`，支持 `outputSchema`、session resume、workspace、additional directories、danger-full-access sandbox。
 - `ClaudeRunner` 使用 `@anthropic-ai/claude-agent-sdk`，支持 `outputFormat: { type: "json_schema" }`、session resume、system prompt、additional directories。
 - `OpenCodeRunner` 支持普通 prompt 和 session resume，遇到 `outputSchema` 时返回 `structured JSON output is not supported by opencode runner`。
+- `PiRunner` 支持普通 prompt 和 session resume，遇到 `outputSchema` 时返回 `structured JSON output is not supported by pi runner`。
+- `DshRunner` 支持普通 prompt 和 session resume，遇到 `outputSchema` 时返回 `structured JSON output is not supported by dsh runner`。
 
 `runtime/agent-compose-runtime-sdk/src/agent.ts` 当前通过临时 message/schema 文件调用 `agent-compose-runtime prompt`，解析 stdout 中的 `__AGENT_RESULT__` 行，并在 SDK 侧解析 JSON。该 SDK API 不回调 Go host。
 
-`docs/design/agent-compose-runtime_contract.md` 当前明确说明还没有：
+`docs/design/agent-compose-runtime_contract.md` 现已描述 `workflow` 子命令、`__WORKFLOW_RESULT__` stdout 协议与 `__WORKFLOW_EVENT__` stderr 事件流，以及 SDK 的 `runtime.workflow()` / `runtime.workflowFile()`。该文档仍明确说明还没有：
 
-- `workflow` 子命令。
-- `__WORKFLOW_RESULT__` stdout 协议。
 - scheduler 到 Node workflow 的专用 bridge token。
 - 让 Node workflow 直接操作 scheduler state/event/artifact 的 context object。
 
-本方案实现后需要同步更新该设计文档，避免文档继续描述“未实现”状态。
+该设计文档已随本方案同步更新。
 
 ### 现有 scheduler 边界
 
@@ -444,12 +446,14 @@ label，避免相同 `invocationKey` 在 replay 时产生不同的 system contex
 - Codex：`ThreadOptions.model`。
 - Claude：query options `model`。
 - OpenCode：已支持 `--model`。
+- Pi：已支持 `--model`。
+- DSH：通过 `DSH_MODEL` 透传 model。
 
 `effort`：
 
 - Codex：映射到 `ThreadOptions.modelReasoningEffort`。`max` 不在 Codex SDK 当前类型内，收到 `max` 时返回 unsupported error，避免静默降级。
 - Claude：映射到 query options `effort`。
-- OpenCode：首版返回 unsupported error。
+- OpenCode、Pi、DSH：workflow 层对所有非 codex/claude provider 返回 `workflow agent effort is not supported by <provider> runner` unsupported error。
 
 `agentType` 首版注入 system context，格式为：
 
@@ -632,7 +636,7 @@ SDK behavior：
 
 `runtime/javascript/package-lock.json` 更新。
 
-`runtime/javascript` 和 `runtime/agent-compose-runtime-sdk` package version 从当前 `0.9.0` 升到 `0.10.0`。`dist/` 不在 Git 跟踪文件内，不手工提交。
+`runtime/javascript` 和 `runtime/agent-compose-runtime-sdk` package version 当前均为 `0.11.0`；本方案原计划从 `0.9.0` 升到 `0.10.0`。`dist/` 不在 Git 跟踪文件内，不手工提交。
 
 ## 工作流和失败语义
 
@@ -871,7 +875,7 @@ workflow result must be JSON-serializable; did you forget to await agent(), para
 - `provider`、`model`、`schema` 传入 prompt command。
 - Codex runner 透传 `modelReasoningEffort`。
 - Claude runner 透传 `effort`。
-- OpenCode 收到 `effort` 或 `schema` 时保持明确 unsupported error。
+- 非 codex/claude provider（opencode、pi、dsh）收到 `effort` 或 `schema` 时保持明确 unsupported error。
 - git worktree isolation 在临时 git repo 中创建真实 worktree，并记录 `gitStatus`。
 
 ### runtime/javascript E2E tests
