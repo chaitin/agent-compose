@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/chaitin/agent-compose/pkg/compose"
 	"github.com/chaitin/agent-compose/pkg/identity"
+	"slices"
 	"strings"
 )
 
@@ -45,6 +46,14 @@ func resourceIDMatchesRef(id, shortID, ref string) bool {
 	return strings.HasPrefix(normalizedID, normalizedRef)
 }
 
+// interactivePromptProviders is the ordered set of providers whose guest runner
+// can drive the interactive `run -i --prompt` loop, and it is also the list the
+// unsupported error reports. It mirrors the daemon's prompt attach support in
+// pkg/runs/prompt_attach.go: a provider absent from either set has no resumable
+// provider session, so the loop would silently lose the previous turn's context.
+// Keep both sets in the same commit when a provider gains or loses resume.
+var interactivePromptProviders = [...]string{"codex", "claude", "opencode", "pi", "dsh"}
+
 func validateInteractivePromptProvider(project *compose.NormalizedProjectSpec, agentName string, attach bool) error {
 	provider := "codex"
 	for _, agent := range project.Agents {
@@ -55,25 +64,16 @@ func validateInteractivePromptProvider(project *compose.NormalizedProjectSpec, a
 			break
 		}
 	}
-	if !attach {
-		switch provider {
-		case "codex", "claude", "opencode", "pi":
-			return nil
-		default:
-			return commandExitError{
-				Code: exitCodeUnsupported,
-				Err:  fmt.Errorf("run -i --prompt is unsupported for provider %s; supported providers: codex, claude, opencode, pi", provider),
-			}
-		}
-	}
-	switch provider {
-	case "codex", "claude", "opencode", "pi":
+	if slices.Contains(interactivePromptProviders[:], provider) {
 		return nil
-	default:
-		return commandExitError{
-			Code: exitCodeUnsupported,
-			Err:  fmt.Errorf("run --prompt -it is unsupported for provider %s; supported providers: codex, claude, opencode, pi", provider),
-		}
+	}
+	flag := "run -i --prompt"
+	if attach {
+		flag = "run --prompt -it"
+	}
+	return commandExitError{
+		Code: exitCodeUnsupported,
+		Err:  fmt.Errorf("%s is unsupported for provider %s; supported providers: %s", flag, provider, strings.Join(interactivePromptProviders[:], ", ")),
 	}
 }
 
@@ -87,6 +87,8 @@ func normalizeInteractivePromptProvider(provider string) string {
 		return "opencode"
 	case "pi-agent", "pi_agent":
 		return "pi"
+	case "deepseek", "deepseek-harness", "deepseek_harness":
+		return "dsh"
 	default:
 		return strings.ToLower(strings.TrimSpace(provider))
 	}
