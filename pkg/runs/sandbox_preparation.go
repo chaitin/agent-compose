@@ -180,6 +180,9 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 			} else if pending && pendingRunID != run.RunID {
 				return SandboxResult{}, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf("sandbox %s has pending completion for run %s", sandboxID, pendingRunID), nil)
 			}
+			if err := c.rejectCrossIdentitySandboxReuse(ctx, sandboxID, run.RunID, trustedHeaders); err != nil {
+				return SandboxResult{}, err
+			}
 			if sandbox.Summary.VMStatus == domain.VMStatusDeleting {
 				return SandboxResult{Sandbox: sandbox}, fmt.Errorf("sandbox %s is being deleted", sandboxID)
 			}

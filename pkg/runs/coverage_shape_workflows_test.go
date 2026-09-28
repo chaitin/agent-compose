@@ -2714,6 +2714,15 @@ func (s *fakeControllerStore) CreateProjectRunWithEvents(ctx context.Context, ru
 	return created, nil
 }
 
+func (s *fakeControllerStore) UnfinishedProjectRunForSandbox(_ context.Context, sandboxID, excludeRunID string) (string, bool, error) {
+	for _, run := range s.runs {
+		if run.SandboxID == sandboxID && run.RunID != excludeRunID && !StatusIsTerminal(run.Status) {
+			return run.RunID, true, nil
+		}
+	}
+	return "", false, nil
+}
+
 func (s *fakeControllerStore) GetProjectRun(_ context.Context, runID string) (domain.ProjectRunRecord, error) {
 	run, ok := s.runs[runID]
 	if !ok {

@@ -3,6 +3,7 @@ package adapters
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -73,6 +74,24 @@ func (r *CapabilitySandboxResolver) IndexSandbox(sandbox *domain.Sandbox, header
 	r.ensureMapsLocked()
 	r.revokeSandboxLocked(sandbox.Summary.ID)
 	indexCapabilitySandbox(r.tokens, r.tokensBySandbox, sandbox, headers)
+}
+
+// TrustedHeadersConflict reports whether the sandbox's capability token is
+// bound to trusted headers other than headers. A sandbox without a binding has
+// no identity to conflict with.
+func (r *CapabilitySandboxResolver) TrustedHeadersConflict(sandboxID string, headers []domain.TrustedHeader) bool {
+	if r == nil {
+		return false
+	}
+	candidate := translateTrustedHeaders(headers)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for token := range r.tokensBySandbox[strings.TrimSpace(sandboxID)] {
+		if !slices.Equal(r.tokens[token].TrustedHeaders, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *CapabilitySandboxResolver) RevokeSandbox(sandboxID string) {

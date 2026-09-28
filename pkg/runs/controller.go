@@ -62,6 +62,7 @@ type DashboardNotifier interface {
 type CapabilitySandboxIndexer interface {
 	IndexSandbox(*domain.Sandbox, []domain.TrustedHeader)
 	RevokeSandbox(string)
+	TrustedHeadersConflict(string, []domain.TrustedHeader) bool
 }
 
 type VolumeResolver interface {
@@ -73,6 +74,7 @@ type ControllerStore interface {
 	PreparationStore
 	TriggerResolverStore
 	workspaces.Store
+	UnfinishedSandboxRunStore
 }
 
 type TriggerResolverStore interface {
