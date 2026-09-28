@@ -127,9 +127,13 @@ tasks:
       - '../../build/pages/command-line-manual.html'
       - '../../build/pages/agent-compose-yaml-manual.html'
       - '../../build/pages/guest-image-abi.html'
+      - '../../build/pages/connect-transport-matrix.html'
+      - '../../build/pages/octobus-quickstart.html'
       - '../../build/pages/zh-CN/command-line-manual.html'
       - '../../build/pages/zh-CN/agent-compose-yaml-manual.html'
       - '../../build/pages/zh-CN/guest-image-abi.html'
+      - '../../build/pages/zh-CN/connect-transport-matrix.html'
+      - '../../build/pages/zh-CN/octobus-quickstart.html'
     cmds:
       - npm ci --no-audit --no-fund
       - npm run build
@@ -580,7 +584,7 @@ tasks:
   build:agent-compose:boxlite:
     desc: Deprecated alias for the Linux full agent-compose binary
     cmds:
-      - echo "build:agent-compose:boxlite is deprecated; use build:agent-compose:linux (Docker, BoxLite, and Microsandbox)"
+      - echo "build:agent-compose:boxlite is deprecated; use build:agent-compose:linux (Docker, BoxLite, Microsandbox, and k8s)"
       - task: build:agent-compose:linux
         vars:
           GOARCH: '{{.GOARCH}}'

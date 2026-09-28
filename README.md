@@ -35,7 +35,7 @@ Concretely, agent-compose provides:
 
 - A **declarative compose model** (`agent-compose.yml`) with `${ENV}` interpolation.
 - **Multi-provider guest agents**: Codex, Claude Code, OpenCode, Pi, and DSH CLIs.
-- **Three runtime drivers**: `docker` (default), `boxlite` (microVM), and `microsandbox`.
+- **Four runtime drivers**: `docker` (default), `boxlite` (microVM), `microsandbox`, and `k8s` (Kubernetes Pods).
 - A **scheduler** with `cron`, `interval`, `timeout`, and `event` triggers — or full inline JavaScript scheduler scripts.
 - **Event triggers and webhooks** for event-driven agent runs.
 - **Workspaces** provisioned from a local directory or a Git repository.
@@ -126,9 +126,10 @@ agent-compose daemon
 ```
 
 The host build is platform-specific: macOS produces a Docker-only native
-binary, while Linux produces a full binary with Docker, BoxLite, and
-Microsandbox compiled in. A Linux build prepares both native runtime artifact
-sets through Docker when matching local artifacts are not already available.
+binary, while Linux produces a full binary with Docker, BoxLite, Microsandbox,
+and Kubernetes (k8s) compiled in. A Linux build prepares both native runtime
+artifact sets through Docker when matching local artifacts are not already
+available.
 These native binaries are development and CI verification artifacts, not
 GitHub Release downloads.
 
@@ -170,7 +171,7 @@ More runnable examples (cron, timeout, scheduler scripts) live in
 
 ## The compose file
 
-**Top-level fields:** `name`, `env_file`, `variables`, `workspaces`, `agents`, `mcp_servers`, `volumes`.
+**Top-level fields:** `name`, `env_file`, `variables`, `workspaces`, `agents`, `mcp_servers`, `octobus_servers`, `volumes`.
 
 **Common agent fields:** `provider`, `model`, `system_prompt`, `image`,
 `driver`, `env` (scalars or `{ value, secret }`), `workspace`, `scheduler`,
@@ -234,11 +235,12 @@ See the [Connect transport support matrix](docs/pages/connect-transport-matrix.m
 | `agent-compose exec <sandbox>` | Execute a command or prompt in a running sandbox. |
 | `agent-compose ps` / `stats` | List project sandboxes / show sandbox resource stats. |
 | `agent-compose logs` | Print project run logs; a project, agent, run, or sandbox ID can be passed without its resource type. |
-| `agent-compose scheduler ls\|invoke\|runs\|logs\|trigger\|inspect\|prune` | Invoke schedulers, list triggers and runs, read logs, manually run triggers, inspect resources, or prune terminal trigger-run history. |
+| `agent-compose scheduler ls\|invoke\|runs\|logs\|trigger\|inspect\|prune\|stop` | Invoke schedulers, list triggers and runs, read logs, manually run triggers, inspect resources, prune terminal trigger-run history, or stop an active run. |
 | `agent-compose sandbox ls\|stop\|resume\|rm\|prune` | Manage project sandboxes. |
 | `agent-compose image ls\|pull\|build\|rm\|inspect` | Manage daemon images and build agent images; top-level shortcuts remain available. |
 | `agent-compose volume ls\|create\|inspect\|rm\|prune` | Manage daemon volumes. |
 | `agent-compose cache ls\|inspect\|prune\|rm` | Inspect and clean daemon runtime caches. |
+| `agent-compose auth login\|logout\|ls` | Verify, remove, or list saved daemon Bearer tokens. |
 | `agent-compose down` | Disable managed schedulers and stop sandboxes. |
 | `agent-compose status` | Check daemon status. |
 
@@ -246,6 +248,41 @@ Useful global flags: `--file, -f` (choose a compose file), `--project-name, -p` 
 `--json` (stable JSON for scripts), `--host` / `AGENT_COMPOSE_HOST` (connect to a
 TCP daemon), and `AGENT_COMPOSE_SOCKET` (Unix socket path). Full reference:
 [docs/pages/command-line-manual.md](docs/pages/command-line-manual.md).
+
+## Daemon authentication
+
+When `AGENT_COMPOSE_AUTH_TOKEN` is set in the daemon environment, HTTP(S)
+control-plane requests must carry that shared Bearer token; when it is empty or
+unset, authentication stays off. Trusted local Unix socket connections do not
+need the token.
+
+Health RPCs and webhook ingestion keep their own existing authentication or
+trust boundaries and do not use the daemon token.
+
+To verify and save a token for one daemon site:
+
+```bash
+export AGENT_COMPOSE_AUTH_TOKEN='your-token'
+export HTTP_LISTEN='127.0.0.1:7410'
+agent-compose daemon
+
+agent-compose --host http://127.0.0.1:7410 auth login --token 'your-token'
+agent-compose --host http://127.0.0.1:7410 status
+```
+
+`auth login` verifies the token against the daemon first, then saves the
+credential under the platform user config directory; on standard Linux that is
+`~/.config/agent-compose/config.yml`, readable and writable only by the current
+user. Later connections through the same `--host` or `AGENT_COMPOSE_HOST` carry
+the matching token automatically. Use `agent-compose auth ls` to list saved
+sites and `agent-compose --host <site> auth logout` to remove a site's
+credential.
+
+The Bearer token does not encrypt network traffic. Across machines, use HTTPS,
+an SSH tunnel, a VPN, or another protected network; a token sent over plain HTTP
+can be captured and replayed. A UI server or reverse proxy that calls the
+protected daemon control-plane API must also inject the same
+`Authorization: Bearer <token>` header.
 
 ## Runtime drivers
 
@@ -255,13 +292,13 @@ TCP daemon), and `AGENT_COMPOSE_SOCKET` (Unix socket path). Full reference:
 - **`boxlite`**: runs guests as microVMs using BoxLite runtime artifacts.
 - **`microsandbox`**: runs guests using the Microsandbox VM runtime.
 
-The three names describe product-supported drivers; a particular artifact may
+The four names describe product-supported drivers; a particular artifact may
 compile a subset:
 
 | Artifact | Compiled drivers |
 | --- | --- |
 | macOS native binary | `docker` |
-| Linux native binary | `docker`, `boxlite`, `microsandbox` |
+| Linux native binary | `docker`, `boxlite`, `microsandbox`, `k8s` |
 | Published Linux daemon image (`amd64` and `arm64`) | `docker`, `boxlite`, `microsandbox`, `k8s` |
 
 Inspect an artifact with `agent-compose --json version` or `/api/version`.
@@ -363,7 +400,7 @@ behavior.
 **[`.env.example`](.env.example) is the authoritative, fully commented
 configuration reference.** At minimum, review these before exposing a deployment:
 
-- `AUTH_PASSWORD`, `AUTH_SECRET` — UI server login secrets (replace the examples).
+- `AUTH_PASSWORD`, `AUTH_SECRET` — required UI server login secrets; generate them with `openssl rand` (see above) instead of leaving them unset.
 - `AGENT_COMPOSE_AUTH_TOKEN` — optional shared Bearer token for daemon HTTP(S) control-plane access.
 - `AGENT_COMPOSE_HTTP_PORT` — host port for the web UI / reverse proxy (`with-ui`).
 - `RUNTIME_DRIVER` — default runtime driver.
@@ -398,8 +435,8 @@ task test          # includes deterministic installer/Compose/release checks
 
 Build guest and daemon images with `task image:agent-compose-guest` and
 `task image:agent-compose`. `task build:agent-compose` builds the native host
-profile: Docker-only on Darwin and the full Docker, BoxLite, and Microsandbox
-profile on Linux. Use `task build:agent-compose:darwin` or
+profile: Docker-only on Darwin and the full Docker, BoxLite, Microsandbox, and
+Kubernetes profile on Linux. Use `task build:agent-compose:darwin` or
 `task build:agent-compose:linux` to select one explicitly. The old
 `build:agent-compose:boxlite` task is a deprecated alias for the Linux full
 profile. It is not a separate BoxLite-only build. `compiled_drivers` can verify
@@ -435,7 +472,7 @@ task image:agent-compose-guest
 task test:e2e:image-docker
 ```
 
-The image smoke runs the full three-driver Linux image through its Docker path
+The image smoke runs the full four-driver Linux image through its Docker path
 without privilege or KVM. Real BoxLite/Microsandbox smoke remains an explicit
 Linux/KVM operation via `task test:runtime-smoke`.
 
@@ -455,8 +492,9 @@ components live under `runtime/`.
 ## One-time V2 storage migration
 
 `agent-compose-v2-storage-migrator` is a transitional, one-time tool for data
-roots created by the legacy storage layout. It is intentionally not included
-in daemon images or the default `task build`.
+roots created by the legacy storage layout. This repository no longer builds,
+publishes, or tests it, so the migration instructions below apply only to older
+releases that still ship the binary.
 
 The migrator applies to data roots created by agent-compose ≤ v2607.10.0.
 Starting from v2608.1.0, the daemon uses V2 storage natively and upgrades
@@ -495,19 +533,11 @@ the old daemon must persist their stopped state.
 
 ### Run a published binary
 
-Download `SHASUMS256.txt` and the matching manually published Linux release
-asset:
-
-- `agent-compose-v2-storage-migrator-linux-amd64`
-- `agent-compose-v2-storage-migrator-linux-arm64`
-
-Verify it, make it executable, and select it. For example, on amd64:
-
-```bash
-grep '  agent-compose-v2-storage-migrator-linux-amd64$' SHASUMS256.txt | sha256sum -c -
-chmod +x agent-compose-v2-storage-migrator-linux-amd64
-MIGRATOR=./agent-compose-v2-storage-migrator-linux-amd64
-```
+The one-time V2 storage migrator is no longer built, published, or tested by
+this repository. These instructions therefore apply only to older releases that
+still ship the `agent-compose-v2-storage-migrator-linux-amd64` or
+`agent-compose-v2-storage-migrator-linux-arm64` asset; download the matching
+binary from such a release and set `MIGRATOR` to its path.
 
 ### Perform the migration
 

@@ -32,7 +32,7 @@
 
 - **声明式 compose 模型**（`agent-compose.yml`），支持 `${ENV}` 插值。
 - **多 provider guest agent**：Codex、Claude Code、OpenCode、Pi、DSH CLI。
-- **三种 runtime driver**：`docker`（默认）、`boxlite`（microVM）、`microsandbox`。
+- **四种 runtime driver**：`docker`（默认）、`boxlite`（microVM）、`microsandbox`、`k8s`（Kubernetes Pod）。
 - **scheduler**：`cron`、`interval`、`timeout`、`event` 四种 trigger，或内联 JavaScript scheduler 脚本。
 - **事件触发与 webhook**，支持事件驱动的 agent run。
 - **workspace** 从本地目录或 Git 仓库拉取。
@@ -194,23 +194,23 @@ agents:
 | `agent-compose exec <sandbox>` | 在运行中的 sandbox 内执行命令或 prompt。 |
 | `agent-compose ps` / `stats` | 列出 project sandbox / 查看 sandbox 资源统计。 |
 | `agent-compose logs` | 查看 project run 日志；可直接传入 project、agent、run 或 sandbox ID，无需指定资源类型。 |
-| `agent-compose scheduler ls\|runs\|logs\|trigger\|inspect` | 查看 trigger 和 run、读取 scheduler 日志、手动执行 trigger 或检查 scheduler 资源。 |
+| `agent-compose scheduler ls\|invoke\|runs\|logs\|trigger\|inspect\|prune\|stop` | 查看 trigger 和 run、读取 scheduler 日志、手动执行 trigger、检查 scheduler 资源、清理已结束的 trigger run 或停止运行中的 run。 |
 | `agent-compose sandbox ls\|stop\|resume\|rm\|prune` | 管理 project sandbox。 |
-| `agent-compose images\|pull\|build\|rmi\|inspect` | 管理 daemon 镜像并构建 agent 镜像。 |
+| `agent-compose image ls\|pull\|build\|rm\|inspect` | 管理 daemon 镜像并构建 agent 镜像；顶层快捷命令仍然可用。 |
 | `agent-compose volume ls\|create\|inspect\|rm\|prune` | 管理 daemon volume。 |
 | `agent-compose cache ls\|inspect\|prune\|rm` | 查看并清理 daemon runtime cache。 |
 | `agent-compose auth login\|logout\|ls` | 验证、删除或列出已保存的 daemon Bearer Token。 |
 | `agent-compose down` | 禁用受管 scheduler 并停止 sandbox。 |
 | `agent-compose status` | 查看 daemon 状态。 |
 
-常用全局参数：`--file, -f`（指定 compose 文件）、`--project-name`（按名称选择已部署项目）、`--json`
+常用全局参数：`--file, -f`（指定 compose 文件）、`--project-name, -p`（按名称选择已部署项目）、`--json`
 （脚本用的稳定 JSON 输出）、`--host` / `AGENT_COMPOSE_HOST`（连接 TCP daemon）、
 `AGENT_COMPOSE_SOCKET`（Unix socket 路径）。完整参考见[命令行使用手册](docs/pages/zh-CN/command-line-manual.md)。
 
-`scheduler.script` 支持内联 JavaScript，或使用显式的 `{ url: ... }` 来源
-（本地路径、`file://`、`http://`、`https://`）。`config` 和 `up` 在 CLI 本机
-获取来源并向 daemon 发送内联快照；同一 scheduler 中 `scheduler.script` 和
-`scheduler.triggers` 二选一。
+`scheduler.script` 支持内联 JavaScript，或使用显式的来源对象（`provider`
+必填）：`provider: file` 配 `path`，`provider: http` 或 `provider: git` 配
+`url`。`config` 和 `up` 在 CLI 本机获取来源并向 daemon 发送内联快照；同一
+scheduler 中 `scheduler.script` 和 `scheduler.triggers` 二选一。
 
 ## Daemon 认证
 
@@ -241,7 +241,7 @@ Bearer Token 不会加密网络流量。跨机器连接时，请使用 HTTPS、S
 - **`boxlite`**：使用 BoxLite runtime artifact 以 microVM 运行 guest。
 - **`microsandbox`**：使用 Microsandbox VM runtime 运行 guest。
 
-产物的平台能力并不相同：macOS 原生二进制只编译 `docker`；Linux 原生二进制和发布的 Linux daemon 镜像编译 `docker`、`boxlite`、`microsandbox`。`agent-compose --json version` 和 `/api/version` 中的 `compiled_drivers` 只表示真实 driver 实现已编入当前产物，不代表 Docker daemon、KVM、native artifact 或 runtime 本身当前可用或健康。BoxLite 和 Microsandbox 的真实运行仍要求 Linux/KVM 及对应 runtime artifact；完整 Linux 镜像可以在 macOS Docker Desktop 中以 Docker driver 运行，但不承诺在该环境运行两种 KVM driver。
+产物的平台能力并不相同：macOS 原生二进制只编译 `docker`；Linux 原生二进制和发布的 Linux daemon 镜像编译 `docker`、`boxlite`、`microsandbox`、`k8s`。`agent-compose --json version` 和 `/api/version` 中的 `compiled_drivers` 只表示真实 driver 实现已编入当前产物，不代表 Docker daemon、KVM、native artifact 或 runtime 本身当前可用或健康。BoxLite 和 Microsandbox 的真实运行仍要求 Linux/KVM 及对应 runtime artifact；完整 Linux 镜像可以在 macOS Docker Desktop 中以 Docker driver 运行，但不承诺在该环境运行两种 KVM driver。
 
 镜像处理由 `IMAGE_STORE_MODE` 选择（`auto` / `docker` / `oci`，其中 `oci` 使用无 daemon 的镜像缓存）。新 sandbox 使用 `DEFAULT_IMAGE` 指定的镜像；自带的 `.env.example` 和安装脚本将其设为 `chaitin/agent-compose-guest:latest`，该镜像内置 agent runtime 和各 provider CLI。
 
@@ -310,7 +310,7 @@ Daemon 还会以只读方式挂载 Linux 宿主机的 `/etc/localtime`，因此�
 
 **[`.env.example`](.env.example) 是权威的、带完整注释的配置参考。** 对外部署前至少检查这些：
 
-- `AUTH_PASSWORD`、`AUTH_SECRET` —— UI server 登录 secret（务必替换示例值）。
+- `AUTH_PASSWORD`、`AUTH_SECRET` —— UI server 必需的登录 secret；请用 `openssl rand` 生成（见上），不要留空。
 - `AGENT_COMPOSE_AUTH_TOKEN` —— daemon HTTP(S) 控制面可选的共享 Bearer Token。
 - `AGENT_COMPOSE_HTTP_PORT` —— 启用 `with-ui` 时 Web UI / 反向代理的宿主机端口。
 - `RUNTIME_DRIVER` —— 默认 runtime driver。
@@ -339,7 +339,7 @@ task build
 task test          # 或：task test:unit / task test:integration / task test:e2e
 ```
 
-用 `task image:agent-compose-guest` 和 `task image:agent-compose` 构建 guest 和 daemon 镜像。`task build:agent-compose` 按当前宿主选择原生 profile：Darwin 构建仅支持 Docker 的二进制，Linux 构建同时支持 Docker、BoxLite 和 Microsandbox；Linux full 构建会通过 Docker 准备两种 native runtime artifact。也可通过 `task build:agent-compose:darwin` 或 `task build:agent-compose:linux` 显式选择。旧任务 `build:agent-compose:boxlite` 已废弃，仅作为 Linux full profile 的兼容 alias。JavaScript runtime 组件在 `runtime/` 下。
+用 `task image:agent-compose-guest` 和 `task image:agent-compose` 构建 guest 和 daemon 镜像。`task build:agent-compose` 按当前宿主选择原生 profile：Darwin 构建仅支持 Docker 的二进制，Linux 构建同时支持 Docker、BoxLite、Microsandbox 和 Kubernetes（k8s）；Linux full 构建会通过 Docker 准备两种 native runtime artifact。也可通过 `task build:agent-compose:darwin` 或 `task build:agent-compose:linux` 显式选择。旧任务 `build:agent-compose:boxlite` 已废弃，仅作为 Linux full profile 的兼容 alias。JavaScript runtime 组件在 `runtime/` 下。
 
 镜像构建直接使用标准生态变量；不覆盖时使用公网默认值。受限网络可以把同名变量写在 `task` 命令后，或提前导出到环境中，例如：
 
@@ -365,7 +365,7 @@ macOS/Linux daemon 原生二进制只用于本地开发和 CI 验证。独立的
 
 ## 一次性 V2 存储迁移
 
-`agent-compose-v2-storage-migrator` 是用于旧存储布局 data root 的一次性过渡工具。它不会进入 daemon 镜像，也不属于默认的 `task build`。
+`agent-compose-v2-storage-migrator` 是用于旧存储布局 data root 的一次性过渡工具。本仓库已不再构建、发布或测试它，因此下面的迁移说明仅适用于仍携带该二进制的旧版本 Release。
 
 migrator 适用于 agent-compose ≤ v2607.10.0 创建的 data root。自 v2608.1.0 起，daemon 原生采用 V2 存储，对于具有合法 versioned migration prefix、且只包含 project-managed agent 和 scheduler 的数据库，可直接由新 daemon 自动升级。legacy 或 unversioned data root（包括 standalone 或 mixed agent/loader 布局）需要使用 migrator。
 
@@ -396,18 +396,10 @@ sandbox；必须由旧 daemon 持久化其 stopped 状态。
 
 ### 使用发布的 Binary
 
-下载 `SHASUMS256.txt` 和手动发布的对应 Linux 架构产物：
-
-- `agent-compose-v2-storage-migrator-linux-amd64`
-- `agent-compose-v2-storage-migrator-linux-arm64`
-
-校验并赋予执行权限，然后选择该二进制。例如 amd64：
-
-```bash
-grep '  agent-compose-v2-storage-migrator-linux-amd64$' SHASUMS256.txt | sha256sum -c -
-chmod +x agent-compose-v2-storage-migrator-linux-amd64
-MIGRATOR=./agent-compose-v2-storage-migrator-linux-amd64
-```
+本仓库已不再构建、发布或测试一次性 V2 存储迁移工具。因此这些说明仅适用于仍
+携带 `agent-compose-v2-storage-migrator-linux-amd64` 或
+`agent-compose-v2-storage-migrator-linux-arm64` 产物的旧版本 Release；请从这类
+Release 下载对应二进制，并把 `MIGRATOR` 指向它的路径。
 
 ### 执行迁移
 

@@ -117,8 +117,8 @@ Product support and compiled capability are separate. The stable build matrix is
 | Artifact | Build entry | Compiled drivers |
 | --- | --- | --- |
 | macOS native binary | `task build:agent-compose` on macOS, or `task build:agent-compose:darwin` | `docker` |
-| Linux native binary | `task build:agent-compose` on Linux, or `task build:agent-compose:linux` | `docker`, `boxlite`, `microsandbox` |
-| Linux daemon image | `task image:agent-compose` | `docker`, `boxlite`, `microsandbox` |
+| Linux native binary | `task build:agent-compose` on Linux, or `task build:agent-compose:linux` | `docker`, `boxlite`, `microsandbox`, `k8s` |
+| Linux daemon image | `task image:agent-compose` | `docker`, `boxlite`, `microsandbox`, `k8s` |
 
 `compiled_drivers` in `agent-compose --json version` and `/api/version` reports what was built into the binary. It does not check Docker daemon reachability, KVM access, runtime artifact health, or whether a driver can start. The default driver remains `docker`; BoxLite and Microsandbox runtime initialization is lazy, and operations that select a driver absent from the current binary fail as unsupported before runtime state is created or changed.
 

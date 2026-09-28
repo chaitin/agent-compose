@@ -82,7 +82,8 @@ also sets them (as the daemon dev `.env.example` does, for the local Docker
 callback path) - only the LLM_* values from the file actually take effect.
 
 For multiple providers or per-model metadata, use `$DATA_ROOT/models.json`
-instead (see the main project README's "Daemon `models.json`" section). The
+instead (see the [agent-compose.yml manual's "Daemon `models.json`"
+section](../../docs/pages/agent-compose-yaml-manual.md#daemon-modelsjson)). The
 chart has no dedicated field for it today - with `persistence.enabled: true`
 (the default), `$DATA_ROOT` is the daemon's PVC (mounted at `/data`), so
 `kubectl cp models.json <pod>:/data/models.json` and a rollout restart works;
