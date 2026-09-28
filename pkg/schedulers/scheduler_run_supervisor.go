@@ -131,7 +131,7 @@ func (s *SchedulerRunSupervisor) start(ctx context.Context, request SchedulerRun
 		return prepared.Run, nil, nil
 	}
 
-	runCtx, cancel := context.WithCancelCause(s.deps.RootCtx)
+	runCtx, cancel := context.WithCancelCause(detachedSchedulerRunContext(s.deps.RootCtx, ctx))
 	cleanup := func() { cancel(context.Canceled) }
 	if timeout := effectiveSchedulerRunTimeout(scheduler, request.Timeout, s.deps.RunTimeout); timeout > 0 {
 		var timeoutCancel context.CancelFunc
@@ -145,6 +145,15 @@ func (s *SchedulerRunSupervisor) start(ctx context.Context, request SchedulerRun
 	s.register(request.SchedulerID, prepared.Run.ID, active)
 	go s.execute(runCtx, cleanup, prepared, active)
 	return prepared.Run, active, nil
+}
+
+// detachedSchedulerRunContext is the parent of a manually started scheduler
+// run. The run's lifetime belongs to the daemon root, not to the request, but
+// the request's metadata must still reach the execution so agent runs it
+// starts carry the caller's trusted ingress headers and trace context, the same
+// way detached project runs do (runs.Controller.StartProjectRun).
+func detachedSchedulerRunContext(root, request context.Context) context.Context {
+	return domain.NewContextWithRequestMetadata(root, domain.RequestMetadataFromContext(request))
 }
 
 func (s *SchedulerRunSupervisor) execute(ctx context.Context, cleanup func(), prepared PreparedRun, active *activeSchedulerRun) {

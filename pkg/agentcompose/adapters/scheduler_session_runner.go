@@ -375,7 +375,7 @@ func (r *SchedulerSandboxRunner) Ensure(ctx context.Context, scheduler domain.Sc
 		return nil, "", err
 	}
 	domain.RestoreSandboxTransientFields(loaded, session)
-	r.indexCapabilitySandbox(loaded)
+	r.indexCapabilitySandbox(ctx, loaded)
 	r.publish(ctx, "agent-compose.session.created", map[string]any{
 		"sandboxId":     loaded.Summary.ID,
 		"title":         loaded.Summary.Title,
@@ -403,6 +403,9 @@ func (r *SchedulerSandboxRunner) loadOrResumeLocked(ctx context.Context, session
 		return nil, "", err
 	}
 	if session.Summary.VMStatus == domain.VMStatusRunning {
+		// A running sticky sandbox keeps its token, so rebind it to this run's
+		// trusted headers instead of the ones from the run that started it.
+		r.indexCapabilitySandbox(ctx, session)
 		return session, "", nil
 	}
 	if session.Summary.VMStatus == domain.VMStatusDeleting {
@@ -458,7 +461,7 @@ func (r *SchedulerSandboxRunner) loadOrResumeLocked(ctx context.Context, session
 		return nil, "", err
 	}
 	domain.RestoreSandboxTransientFields(loaded, session)
-	r.indexCapabilitySandbox(loaded)
+	r.indexCapabilitySandbox(ctx, loaded)
 	r.publish(ctx, "agent-compose.session.resumed", map[string]any{
 		"sandboxId": loaded.Summary.ID,
 		"title":     loaded.Summary.Title,
@@ -468,9 +471,12 @@ func (r *SchedulerSandboxRunner) loadOrResumeLocked(ctx context.Context, session
 	return loaded, "scheduler.sandbox.resumed", nil
 }
 
-func (r *SchedulerSandboxRunner) indexCapabilitySandbox(session *domain.Sandbox) {
+// indexCapabilitySandbox binds the sandbox's capability token to the trusted
+// headers of the scheduler run that is using it, or clears them when the run
+// carries none.
+func (r *SchedulerSandboxRunner) indexCapabilitySandbox(ctx context.Context, session *domain.Sandbox) {
 	if r != nil && r.CapTokens != nil {
-		r.CapTokens.IndexSandbox(session, nil)
+		r.CapTokens.IndexSandbox(session, domain.TrustedHeadersFromContext(ctx))
 	}
 }
 

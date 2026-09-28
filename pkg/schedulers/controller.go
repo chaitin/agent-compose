@@ -280,7 +280,7 @@ func (c *Controller) RunNow(ctx context.Context, req RunNowRequest) (domain.Sche
 	if err != nil {
 		return domain.SchedulerRunSummary{}, err
 	}
-	runCtx, cancel := context.WithTimeout(c.deps.RootCtx, effectiveSchedulerRunTimeout(scheduler, req.Timeout, c.deps.RunTimeout))
+	runCtx, cancel := context.WithTimeout(detachedSchedulerRunContext(c.deps.RootCtx, ctx), effectiveSchedulerRunTimeout(scheduler, req.Timeout, c.deps.RunTimeout))
 	defer cancel()
 	return c.Run(runCtx, RunTriggerRequest{Scheduler: scheduler, Trigger: trigger, PayloadJSON: req.PayloadJSON, Source: "manual"})
 }
