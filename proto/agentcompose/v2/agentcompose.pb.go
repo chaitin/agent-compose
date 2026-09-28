@@ -7122,7 +7122,10 @@ type TriggerSpec struct {
 	Prompt        string                 `protobuf:"bytes,7,opt,name=prompt,proto3" json:"prompt,omitempty"`
 	SandboxPolicy SchedulerSandboxPolicy `protobuf:"varint,8,opt,name=sandbox_policy,json=sandboxPolicy,proto3,enum=agentcompose.v2.SchedulerSandboxPolicy" json:"sandbox_policy,omitempty"`
 	// Optional IANA timezone. Unset cron triggers use the daemon's local timezone.
-	Timezone      string `protobuf:"bytes,9,opt,name=timezone,proto3" json:"timezone,omitempty"`
+	Timezone string `protobuf:"bytes,9,opt,name=timezone,proto3" json:"timezone,omitempty"`
+	// Event triggers only. Unset or true appends the triggering event to the
+	// prompt as a <trigger-event> block; false sends the declared prompt as is.
+	IncludeEvent  *bool `protobuf:"varint,10,opt,name=include_event,json=includeEvent,proto3,oneof" json:"include_event,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7218,6 +7221,13 @@ func (x *TriggerSpec) GetTimezone() string {
 		return x.Timezone
 	}
 	return ""
+}
+
+func (x *TriggerSpec) GetIncludeEvent() bool {
+	if x != nil && x.IncludeEvent != nil {
+		return *x.IncludeEvent
+	}
+	return false
 }
 
 type EventTriggerSpec struct {
@@ -20252,7 +20262,7 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\x12concurrency_policy\x18\a \x01(\x0e2+.agentcompose.v2.SchedulerConcurrencyPolicyR\x11concurrencyPolicy\x12\x14\n" +
 	"\x05model\x18\b \x01(\tR\x05model\x12\x1f\n" +
 	"\vrun_timeout\x18\t \x01(\tR\n" +
-	"runTimeout\"\xda\x02\n" +
+	"runTimeout\"\x96\x03\n" +
 	"\vTriggerSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x120\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x1c.agentcompose.v2.TriggerKindR\x04kind\x12\x12\n" +
@@ -20262,7 +20272,10 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\x05event\x18\x06 \x01(\v2!.agentcompose.v2.EventTriggerSpecR\x05event\x12\x16\n" +
 	"\x06prompt\x18\a \x01(\tR\x06prompt\x12N\n" +
 	"\x0esandbox_policy\x18\b \x01(\x0e2'.agentcompose.v2.SchedulerSandboxPolicyR\rsandboxPolicy\x12\x1a\n" +
-	"\btimezone\x18\t \x01(\tR\btimezone\"(\n" +
+	"\btimezone\x18\t \x01(\tR\btimezone\x12(\n" +
+	"\rinclude_event\x18\n" +
+	" \x01(\bH\x00R\fincludeEvent\x88\x01\x01B\x10\n" +
+	"\x0e_include_event\"(\n" +
 	"\x10EventTriggerSpec\x12\x14\n" +
 	"\x05topic\x18\x01 \x01(\tR\x05topic\"\xaa\x02\n" +
 	"\n" +
@@ -22480,6 +22493,7 @@ func file_agentcompose_v2_agentcompose_proto_init() {
 	}
 	file_agentcompose_v2_agentcompose_proto_msgTypes[58].OneofWrappers = []any{}
 	file_agentcompose_v2_agentcompose_proto_msgTypes[66].OneofWrappers = []any{}
+	file_agentcompose_v2_agentcompose_proto_msgTypes[69].OneofWrappers = []any{}
 	file_agentcompose_v2_agentcompose_proto_msgTypes[71].OneofWrappers = []any{
 		(*DriverSpec_Boxlite)(nil),
 		(*DriverSpec_Docker)(nil),

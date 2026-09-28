@@ -472,6 +472,9 @@ func TriggerYAMLShape(trigger *agentcomposev2.TriggerSpec) map[string]any {
 			raw["event"] = map[string]any{"topic": trigger.GetEvent().GetTopic()}
 		}
 	}
+	if trigger.IncludeEvent != nil {
+		raw["include_event"] = trigger.GetIncludeEvent()
+	}
 	if kind != "" && kind != "cron" && kind != "interval" && kind != "timeout" && kind != "event" {
 		raw[kind] = ""
 	}

@@ -41,12 +41,19 @@ func NewEventDispatcher(deps EventDispatcherDependencies) *EventDispatcher {
 	return &EventDispatcher{deps: deps}
 }
 
-func (d *EventDispatcher) Dispatch(event domain.SchedulerTopicEvent) {
-	payloadJSON, err := domain.MarshalJSONCompact(map[string]any{
+// TopicEventCallbackPayloadJSON is the payload a scheduler callback receives
+// for a bus-delivered topic event: the event payload wrapped in a
+// {topic, createdAt, payload} envelope.
+func TopicEventCallbackPayloadJSON(event domain.SchedulerTopicEvent) (string, error) {
+	return domain.MarshalJSONCompact(map[string]any{
 		"topic":     event.Topic,
 		"createdAt": event.CreatedAt.Format(time.RFC3339Nano),
 		"payload":   event.Payload,
 	})
+}
+
+func (d *EventDispatcher) Dispatch(event domain.SchedulerTopicEvent) {
+	payloadJSON, err := TopicEventCallbackPayloadJSON(event)
 	if err != nil {
 		slog.Warn("failed to encode scheduler topic event payload", "topic", event.Topic, "error", err)
 		return

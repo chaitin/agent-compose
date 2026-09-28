@@ -172,7 +172,15 @@ type NormalizedTriggerSpec struct {
 	Timeout       string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	Event         *EventTriggerSpec `yaml:"event,omitempty" json:"event,omitempty"`
 	Prompt        string            `yaml:"prompt,omitempty" json:"prompt,omitempty"`
+	IncludeEvent  *bool             `yaml:"include_event,omitempty" json:"include_event,omitempty"`
 	SandboxPolicy string            `yaml:"sandbox_policy,omitempty" json:"sandbox_policy,omitempty"`
+}
+
+// IncludesEvent reports whether the trigger appends its triggering event to
+// the prompt. Only event triggers do, unless they set include_event: false;
+// normalization keeps IncludeEvent nil for the default.
+func (t NormalizedTriggerSpec) IncludesEvent() bool {
+	return t.Kind == "event" && t.Event != nil && (t.IncludeEvent == nil || *t.IncludeEvent)
 }
 
 type ValidationError struct {
@@ -1374,6 +1382,12 @@ func normalizeTriggerSpec(path string, trigger TriggerSpec) (NormalizedTriggerSp
 			return NormalizedTriggerSpec{}, &ValidationError{Path: path + ".event.topic", Message: "event trigger topic is required"}
 		}
 		normalized.Event = &EventTriggerSpec{Topic: topic}
+		if trigger.IncludeEvent != nil && !*trigger.IncludeEvent {
+			normalized.IncludeEvent = trigger.IncludeEvent
+		}
+	}
+	if trigger.IncludeEvent != nil && normalized.Kind != "event" {
+		return NormalizedTriggerSpec{}, &ValidationError{Path: path + ".include_event", Message: "include_event is only supported for event triggers"}
 	}
 
 	return normalized, nil
