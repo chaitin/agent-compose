@@ -59,6 +59,9 @@ export async function buildPromptRuntimeOptions(commandOptions: Omit<PromptComma
     workspace,
     home,
     runtimeRoot: mpi.runtimeRoot,
+    // Codex has no native skill discovery, so its catalog is appended to the
+    // system prompt here. The other runners receive `skills` and materialize or
+    // register them themselves.
     systemContext: provider === "codex"
       ? await appendSkillCatalogContext(systemContext, home, skills)
       : systemContext,
