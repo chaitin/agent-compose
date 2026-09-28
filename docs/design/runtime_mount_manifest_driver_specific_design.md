@@ -1,10 +1,11 @@
 # Driver-Specific Runtime Mount Manifest
 
-This document describes current mount manifest behavior for the three runtime
+This document describes current mount manifest behavior for the four runtime
 drivers. The core rule is: keep one logical runtime mount list, then apply it
 with driver-specific mechanics. Docker can use fine-grained directory and file
 binds. BoxLite and Microsandbox use directory sources only and expose compatible
-guest paths through bootstrap.
+guest paths through bootstrap. Kubernetes declares no mounts at all: a Pod has no
+shared filesystem with the daemon, so sandbox data travels over `Exec` instead.
 
 ## Background
 
@@ -23,6 +24,8 @@ BoxLite reports an error for file sources:
 The implementation therefore applies one logical list by driver:
 
 - `docker`: turn logical entries into fine-grained directory and file binds.
+- `k8s`: declare no mounts at all; sandbox data is pushed to and pulled from the
+  Pod over `Exec`.
 - `boxlite`: mount only `<sandbox> -> /data`, then expose logical entries in
   guest bootstrap.
 - `microsandbox`: mount only `<sandbox> -> /data`, then expose logical entries
@@ -69,7 +72,8 @@ is a directory. BoxLite and Microsandbox use this loader.
 
 ## Logical Runtime Mount List
 
-The logical list is the source of truth for all drivers:
+The logical list is the source of truth for all drivers, though the `k8s` driver
+applies none of it (it declares no mounts):
 
 | Sandbox source | Guest path | Type |
 | --- | --- | --- |
@@ -78,16 +82,16 @@ The logical list is the source of truth for all drivers:
 | `runtime` | `/data/runtime` | dir |
 | `logs` | `/data/logs` | dir |
 | `home/.codex` | `/root/.codex` | dir |
+| `home/.agents` | `/root/.agents` | dir |
 | `home/.claude` | `/root/.claude` | dir |
 | `home/.opencode` | `/root/.opencode` | dir |
+| `home/.pi` | `/root/.pi` | dir |
+| `home/.dsh` | `/root/.dsh` | dir |
 | `home/.claude.json` | `/root/.claude.json` | file |
 | `home/.gitconfig` | `/root/.gitconfig` | file |
-| `home/.gemini` | `/root/.gemini` | dir |
 | `home/.config/claude` | `/root/.config/claude` | dir |
 | `home/.config/Claude` | `/root/.config/Claude` | dir |
-| `home/.config/gemini` | `/root/.config/gemini` | dir |
 | `home/.config/opencode` | `/root/.config/opencode` | dir |
-| `home/.local/share/gemini` | `/root/.local/share/gemini` | dir |
 
 Paths under `/root` that are not listed here are not guaranteed to persist for
 directory-only runtimes.
@@ -103,16 +107,16 @@ Docker manifest keeps fine-grained sources derived from the logical list:
 | `<sandbox>/runtime` | `/data/runtime` |
 | `<sandbox>/logs` | `/data/logs` |
 | `<sandbox>/home/.codex` | `/root/.codex` |
+| `<sandbox>/home/.agents` | `/root/.agents` |
 | `<sandbox>/home/.claude` | `/root/.claude` |
 | `<sandbox>/home/.opencode` | `/root/.opencode` |
+| `<sandbox>/home/.pi` | `/root/.pi` |
+| `<sandbox>/home/.dsh` | `/root/.dsh` |
 | `<sandbox>/home/.claude.json` | `/root/.claude.json` |
 | `<sandbox>/home/.gitconfig` | `/root/.gitconfig` |
-| `<sandbox>/home/.gemini` | `/root/.gemini` |
 | `<sandbox>/home/.config/claude` | `/root/.config/claude` |
 | `<sandbox>/home/.config/Claude` | `/root/.config/Claude` |
-| `<sandbox>/home/.config/gemini` | `/root/.config/gemini` |
 | `<sandbox>/home/.config/opencode` | `/root/.config/opencode` |
-| `<sandbox>/home/.local/share/gemini` | `/root/.local/share/gemini` |
 
 Docker runtime applies `DOCKER_HOST_SANDBOX_ROOT` rebase to each source. File
 entries such as `.claude.json` and `.gitconfig` remain file bind sources.
@@ -166,19 +170,17 @@ sources:
   logs/
   home/
     .codex/
+    .agents/
     .claude/
     .opencode/
+    .pi/
+    .dsh/
     .claude.json
     .gitconfig
-    .gemini/
     .config/
       claude/
       Claude/
-      gemini/
       opencode/
-    .local/
-      share/
-        gemini/
   vm/
     mount-manifest.json
 ```

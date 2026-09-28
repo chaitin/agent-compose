@@ -111,8 +111,10 @@ Manifest structure:
 Constraints:
 
 - `version` is currently `1`.
-- `driver` is the resolved runtime driver: `docker`, `boxlite`, or
-  `microsandbox`.
+- `driver` is the resolved runtime driver: `docker`, `k8s`, `boxlite`, or
+  `microsandbox`. The `k8s` driver produces an empty manifest (no mounts): a Pod
+  has no shared filesystem with the daemon, so sandbox data is pushed over
+  `Exec` instead of mounted (see `k8s_pod_runtime_driver_design.md` §2.3).
 - `type` currently supports only `bind`.
 - `hostPath` and `guestPath` must both be absolute paths.
 - All required host sources are created before the manifest is generated.
@@ -133,14 +135,15 @@ Before generating the manifest, agent-compose initializes default config under
 | `assets/.claude` | `<sandbox>/home/.claude` |
 | `assets/.claude.json` | `<sandbox>/home/.claude.json` |
 | `assets/.gitconfig` | `<sandbox>/home/.gitconfig` |
+| `assets/.dsh` | `<sandbox>/home/.dsh` |
 
 The guest side no longer runs `.codex` copy synchronization logic. Tools still
 see `$HOME` as `/root`, but related config and state are persisted by host
 sandbox home.
 
 The logical mount list also creates declared home directories used by current
-providers, including `.opencode`, `.pi`, `.gemini`, `.config/{claude,Claude,gemini,opencode}`,
-and `.local/share/gemini`.
+providers, including `.agents`, `.opencode`, `.pi`, `.dsh`, and
+`.config/{claude,Claude,opencode}`.
 
 ## Driver Differences
 
@@ -161,7 +164,8 @@ For the detailed driver-specific layout, see
 
 ## Runtime Consumers
 
-Each runtime driver reads `<sandbox>/vm/mount-manifest.json`:
+The Docker, BoxLite, and Microsandbox drivers read
+`<sandbox>/vm/mount-manifest.json`:
 
 - Docker uses `loadRuntimeMountManifest(sandbox, RuntimeDriverDocker)` and
   applies `DOCKER_HOST_SANDBOX_ROOT` rebase to each source.
@@ -172,6 +176,9 @@ Each runtime driver reads `<sandbox>/vm/mount-manifest.json`:
   `loadDirectoryRuntimeMountManifest(sandbox, RuntimeDriverMicrosandbox)` and
   validates that all sources are directories before constructing
   `microsandbox.Mount.Bind`.
+
+The `k8s` driver is not a manifest consumer: its manifest has no mounts, and
+sandbox data is pushed to and pulled from the Pod over `Exec` instead.
 
 BoxLite and Microsandbox execute `directoryOnlyGuestSandboxBootstrapCommand`
 after a sandbox starts or is reconnected, before Jupyter readiness checks, and

@@ -36,10 +36,10 @@ func TestLLMCredentialWarningsDescribeWhatHappensToTheValue(t *testing.T) {
 		},
 		{
 			name:      "credential the daemon cannot proxy is removed, not forwarded",
-			env:       map[string]compose.EnvVarSpec{"GOOGLE_API_KEY": {Value: "google-secret"}},
-			wantPaths: []string{"agents.worker.env.GOOGLE_API_KEY"},
+			env:       map[string]compose.EnvVarSpec{"AZURE_OPENAI_API_KEY": {Value: "azure-secret"}},
+			wantPaths: []string{"agents.worker.env.AZURE_OPENAI_API_KEY"},
 			wantContains: map[string]string{
-				"agents.worker.env.GOOGLE_API_KEY": "the agent never sees it",
+				"agents.worker.env.AZURE_OPENAI_API_KEY": "the agent never sees it",
 			},
 		},
 		{
@@ -48,6 +48,15 @@ func TestLLMCredentialWarningsDescribeWhatHappensToTheValue(t *testing.T) {
 			wantPaths: []string{"agents.worker.env.ACME_API_KEY"},
 			wantContains: map[string]string{
 				"agents.worker.env.ACME_API_KEY": "not a provider the daemon recognizes",
+			},
+		},
+		{
+			name:      "google credential from the removed provider is passed through",
+			env:       map[string]compose.EnvVarSpec{"GOOGLE_API_KEY": {Value: "google-secret"}, "GEMINI_API_KEY": {Value: "gemini-secret"}},
+			wantPaths: []string{"agents.worker.env.GOOGLE_API_KEY", "agents.worker.env.GEMINI_API_KEY"},
+			wantContains: map[string]string{
+				"agents.worker.env.GOOGLE_API_KEY": "not a provider the daemon recognizes",
+				"agents.worker.env.GEMINI_API_KEY": "not a provider the daemon recognizes",
 			},
 		},
 		{

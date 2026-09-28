@@ -1368,7 +1368,7 @@ func receiveProjectorRunLogEvent(t *testing.T, sub *RunLogSubscription) RunLogEv
 }
 
 func TestRunsControllerRunProjectPromptAttachUnsupportedProvidersDoNotOpenRuntime(t *testing.T) {
-	for _, provider := range []string{"gemini"} {
+	for _, provider := range []string{"aider"} {
 		t.Run(provider, func(t *testing.T) {
 			ctx := context.Background()
 			controller, configDB, runtime := newTestRunAttachController(t, nil)

@@ -4,17 +4,39 @@
 
 ```sh
 agent-compose-runtime prompt \
-  --provider <codex|claude|gemini|opencode|pi|dsh> \
+  --provider <codex|claude|opencode|pi|dsh> \
   --message-file <path> \
   --output-schema-file <path> \
   --state-root <path> \
   --workspace <path> \
-  --home <path>
+  --home <path> \
+  --model <model> \
+  --skill <name>
 ```
+
+`--skill` may be repeated to enable multiple agent skills.
 
 Successful runs write a single structured result line to stdout with the `__AGENT_RESULT__` prefix. Human-readable agent transcript output is written to stderr.
 
-`--output-schema-file` is optional. When set, the file must contain a JSON Schema object. The runtime passes it to the provider's native structured-output mechanism where supported. Codex and Claude support schema-based output; Gemini, OpenCode, Pi, and DSH currently reject schema requests until a native provider mechanism is wired.
+`--output-schema-file` is optional. When set, the file must contain a JSON Schema object. The runtime passes it to the provider's native structured-output mechanism where supported. Codex and Claude support schema-based output; OpenCode, Pi, and DSH currently reject schema requests until a native provider mechanism is wired.
+
+## Command and stream subcommands
+
+The `exec` command runs one command request read from a JSON file and writes a single structured result line to stdout with the `__COMMAND_RESULT__` prefix:
+
+```sh
+agent-compose-runtime exec \
+  --request-file /tmp/request.json \
+  --state-root /data/state \
+  --workspace /workspace \
+  --home /root
+```
+
+The `stream` command runs the runtime NDJSON stream protocol on stdin/stdout and takes no options:
+
+```sh
+agent-compose-runtime stream
+```
 
 ## Dynamic workflows
 
@@ -31,7 +53,8 @@ agent-compose-runtime workflow \
 ```
 
 The script begins with static metadata and can use `agent`, `parallel`,
-`pipeline`, `phase`, `log`, `workflow`, `args`, and `budget`:
+`pipeline`, `phase`, `log`, `workflow`, `args`, `budget`, `cwd`, and a frozen
+`process` object:
 
 ```js
 export const meta = {
@@ -83,7 +106,7 @@ The TypeScript source lives in `src/`:
 - `cli.ts`: commander-based CLI.
 - `prompt.ts`: command orchestration and default path resolution.
 - `system-context.ts`: agent identity + MPI composition.
-- `runners/`: provider adapters for Codex, Claude, Gemini, OpenCode, Pi, and DSH.
+- `runners/`: provider adapters for Codex, Claude, OpenCode, Pi, and DSH.
 - `mpi.ts`: MPI catalog discovery and context formatting.
 - `session-state.ts`: provider thread resume state persistence.
 - `workflow/`: workflow parsing, execution, events, persistence, resume cache, and worktree isolation.

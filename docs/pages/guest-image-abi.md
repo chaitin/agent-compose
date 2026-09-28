@@ -7,7 +7,7 @@ image without copying every tool from the published
 
 The contract is capability-based. A sandbox image used only for direct command
 execution needs much less software than an image that runs Codex, Claude,
-Gemini, OpenCode, Pi, JupyterLab, and every supported notebook cell type.
+OpenCode, Pi, DSH, JupyterLab, and every supported notebook cell type.
 
 Normative terms such as **MUST**, **SHOULD**, and **MAY** describe compatibility
 requirements in this document.
@@ -81,7 +81,7 @@ required initialization **MUST** be baked into the image filesystem.
 
 ### 3.2 Commands required by the control plane
 
-For all three runtime drivers, the image **MUST** provide `sh` with `-lc`
+For all four runtime drivers, the image **MUST** provide `sh` with `-lc`
 support. A cross-driver image **MUST** also provide these commands in the fixed
 runtime `PATH`:
 
@@ -148,10 +148,10 @@ With default daemon configuration, the guest-visible contract is:
 | `/root/.claude` | Claude config and state | Persisted |
 | `/root/.opencode` | OpenCode state | Persisted |
 | `/root/.pi` | Pi configuration and state | Persisted |
-| `/root/.gemini` | Gemini state | Persisted |
+| `/root/.dsh` | DSH profile and state | Persisted |
 | `/root/.claude.json` | Claude root config | Persisted file |
 | `/root/.gitconfig` | Git config | Persisted file |
-| Selected `/root/.config/...` and `/root/.local/share/gemini` paths | Provider state | Persisted |
+| Selected `/root/.config/...` paths | Provider state | Persisted |
 
 The daemon prepares host-side mount sources. The image **SHOULD** pre-create
 `/workspace`, `/data/state`, `/data/runtime`, and `/data/logs` as directories,
@@ -186,7 +186,7 @@ An image supporting these capabilities **MUST** provide:
 - the `prompt` and `exec` subcommands used by normal runs; and
 - the `stream` subcommand when interactive prompt attach is required.
 
-Prompt-mode `stream` sessions support the `codex`, `claude`, `opencode`, and `pi` providers.
+Prompt-mode `stream` sessions support the `codex`, `claude`, `opencode`, `pi`, and `dsh` providers.
 Other providers are rejected before the guest runtime interaction is opened.
 
 The daemon passes explicit workspace, state, and home paths. It also injects:
@@ -264,9 +264,9 @@ guest Dockerfile unless a combination has been independently tested.
 | --- | --- |
 | Codex | `@openai/codex-sdk` in the runtime package plus an executable selected by `CODEX_BIN`, `AGENT_COMPOSE_CODEX_BIN`, `/usr/bin/codex`, `/usr/local/bin/codex`, or `codex` in `PATH` |
 | Claude | `@anthropic-ai/claude-agent-sdk` plus Claude Code; use `CLAUDE_CODE_EXECUTABLE`/`CLAUDE_CODE_PATH`, `/usr/bin/claude`, or the SDK-supported default |
-| Gemini | A `gemini` executable in `PATH` |
 | OpenCode | An `opencode` executable in `PATH` |
 | Pi | A `pi` executable in `PATH`; projects using MCP also require the pinned `pi-mcp-adapter` extension at `/usr/local/share/agent-compose/pi-mcp-adapter/index.ts` |
+| DSH | A `dsh` executable in `PATH` (the published guest installs `@deepseek-ai/dsh` globally); `dsh --profile agent-compose` also requires the profile assets under `/root/.dsh/profiles/agent-compose` |
 
 Provider credentials and endpoint variables are injected at execution time.
 They **MUST NOT** be embedded in the image.
@@ -411,7 +411,7 @@ The remaining build controls are:
 | `NO_CACHE=1` | Passes Docker's `--no-cache` flag |
 | `GO_VERSION`, `GRPCURL_VERSION`, `NODE_MAJOR` | Default guest toolchain inputs; `NODE_MAJOR` applies only to the Debian guest |
 | `ARCHLINUX_TAG` | Arch Linux guest base-image tag |
-| `CODEX_VERSION`, `CLAUDE_CODE_VERSION`, `GEMINI_CLI_VERSION`, `OPENCODE_VERSION`, `PI_AGENT_VERSION`, `PI_MCP_ADAPTER_VERSION`, `DSH_VERSION` | Guest provider package versions |
+| `CODEX_VERSION`, `CLAUDE_CODE_VERSION`, `OPENCODE_VERSION`, `PI_AGENT_VERSION`, `PI_MCP_ADAPTER_VERSION`, `DSH_VERSION` | Guest provider package versions |
 
 `REGISTRY_MIRROR`, `GITHUB_MIRROR`, and `ARCHLINUX_MIRROR` have no equivalent
 cross-tool standard environment variable, so they remain narrowly scoped
@@ -496,7 +496,7 @@ RUN cd /tmp/agent-compose-runtime \
     && rm -rf /tmp/agent-compose-runtime /root/.npm
 
 RUN mkdir -p \
-      /root/.agents /root/.claude /root/.codex /root/.gemini /root/.opencode /root/.pi \
+      /root/.agents /root/.claude /root/.codex /root/.opencode /root/.pi /root/.dsh \
       /workspace /data/state /data/runtime /data/logs
 
 ENV HOME=/root

@@ -21,11 +21,6 @@ const DeclaredConnectionPrefix = "session-env:"
 // environment declaration. Like env_default it is not operator configuration.
 const ProviderScopeDeclared = "declared"
 
-// providerFamilyGoogle is the family of the Google Generative Language API. The
-// daemon cannot proxy it today, but recognizing the credential lets a project
-// check report the exposure instead of passing it through silently.
-const providerFamilyGoogle = "google"
-
 // genericCredentialEnvName is the vendor-neutral declaration. It is handled
 // apart from declaredCredentialSpecs because its protocol follows the agent
 // unless LLM_API_PROTOCOL names one.
@@ -172,16 +167,6 @@ var declaredCredentialSpecs = []declaredCredentialSpec{
 		Protocol:   ProtocolChatCompletions,
 		Auth:       ProviderAuthBearer,
 		Absorbable: false,
-	},
-	{
-		EnvNames:         []string{"GOOGLE_API_KEY", "GEMINI_API_KEY"},
-		Family:           providerFamilyGoogle,
-		Protocol:         ProtocolChatCompletions,
-		Auth:             ProviderAuthBearer,
-		Endpoint:         "https://generativelanguage.googleapis.com",
-		EndpointEnvNames: []string{"LLM_API_ENDPOINT"},
-		OfficialHosts:    []string{"generativelanguage.googleapis.com"},
-		Absorbable:       false,
 	},
 }
 

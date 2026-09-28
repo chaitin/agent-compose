@@ -19,7 +19,7 @@ The current code facts are anchored by these entry points:
   orchestration in `pkg/agentcompose/app/scheduler_controller.go` and
   `pkg/agentcompose/adapters/scheduler_session_runner.go`
 - Domain model helpers: `pkg/model/`
-- Project/run owner helpers: `pkg/projects/` and `pkg/runs/`
+- Project/run owner helpers: `internal/projects/` and `pkg/runs/`
 - Sandbox execution helpers: `pkg/execution/`, with lifecycle orchestration in
   `pkg/agentcompose/adapters/` and filesystem ownership in
   `pkg/storage/sandboxstore/`
@@ -58,7 +58,7 @@ project / run / scheduler / sandbox control plane
   |
   | runtime driver
   v
-boxlite / docker / microsandbox runtime
+boxlite / docker / microsandbox / k8s runtime
   |
   v
 guest Jupyter + agent runtime
@@ -222,7 +222,7 @@ Normalization rules:
 
 - If `name` is empty, it is derived from the compose file directory.
 - Agent map keys must be stable identifiers. Output is sorted by agent name.
-- Driver is a one-of shape: `boxlite`, `docker`, or `microsandbox`. When
+- Driver is a one-of shape: `boxlite`, `docker`, `microsandbox`, or `k8s`. When
   omitted, the default is `docker`.
 - `firecracker` may appear in the schema, but current normalization returns
   unsupported.
@@ -294,7 +294,7 @@ owned by `ProjectService` alongside project reconciliation:
   - `GetProject`
   - `ListProjects`
   - `RemoveProject`
-  - `WatchProject` is currently covered only by an unimplemented handler.
+  - `WatchProject`, which streams project changes to the caller.
   - `GetScheduler`
   - `ListSchedulers`
   - scheduler invocation, run/event query, pruning, stop, and enable operations
@@ -476,8 +476,7 @@ Resolution paths:
 
 The guest JS runtime (`runtime/javascript`) reads the convention file from
 `--state-root`, composes identity + MPI via `buildSystemContext`, and injects the
-result into Codex `developer_instructions`, Claude `systemPrompt.append`, or
-Gemini user prompt prepend.
+result into Codex `developer_instructions`, or Claude `systemPrompt.append`.
 
 See [agent_system_prompt_design.md](agent_system_prompt_design.md) and
 [agent-compose-runtime_contract.md](agent-compose-runtime_contract.md) for
@@ -717,12 +716,13 @@ Agent and scheduler ownership is represented directly by `project_id`,
 
 ## Sandbox And Runtime
 
-Sandbox is the low-level runtime lifecycle unit. Three runtime drivers are
+Sandbox is the low-level runtime lifecycle unit. Four runtime drivers are
 currently supported:
 
 - `boxlite`
 - `docker`
 - `microsandbox`
+- `k8s`
 
 The default driver is controlled by `RUNTIME_DRIVER`; when empty, it is
 `docker`. The native application default guest image is
@@ -738,8 +738,8 @@ specific binary or image:
 | Artifact/profile | Compiled drivers |
 | --- | --- |
 | macOS native binary (`darwin-docker`) | `docker` |
-| Linux native binary (`linux-full`) | `docker`, `boxlite`, `microsandbox` |
-| Linux daemon image (`linux-full`; `linux/amd64`, `linux/arm64`) | `docker`, `boxlite`, `microsandbox` |
+| Linux native binary (`linux-full`) | `docker`, `boxlite`, `microsandbox`, `k8s` |
+| Linux daemon image (`linux-full`; `linux/amd64`, `linux/arm64`) | `docker`, `boxlite`, `microsandbox`, `k8s` |
 
 The platform Task entry dispatches to the macOS Docker-only build on Darwin and
 the Linux full build on Linux. `scripts/build-agent-compose-binary.sh` is the
@@ -765,7 +765,7 @@ envelope, and `status --json` preserves the complete response. The text form of
 `CompiledRuntimeDrivers` owns the ordered driver list. It reports build
 capability only and does not probe Docker daemon reachability, `/dev/kvm`,
 runtime libraries or executables, image access, or driver health. The full
-image therefore reports all three drivers even when running on macOS Docker
+image therefore reports all four drivers even when running on macOS Docker
 Desktop without KVM, while its default runtime remains Docker.
 
 Compiled capability is validated before persistence or runtime side effects.
@@ -894,7 +894,7 @@ Default guest paths:
 | `<sandbox>/state` | `/data/state` | Cell artifacts, agent prompt, provider state |
 | `<sandbox>/runtime` | `/data/runtime` | Runtime shared resources |
 | `<sandbox>/logs` | `/data/logs` | Jupyter logs |
-| `<sandbox>/home` or child paths | `/root` or child paths | Tool config and state for Codex, Claude, Gemini, git, and related tools |
+| `<sandbox>/home` or child paths | `/root` or child paths | Tool config and state for Codex, Claude, git, and related tools |
 
 For the more detailed mount manifest design, see
 [runtime_mount_manifest_design.md](runtime_mount_manifest_design.md) and
@@ -991,10 +991,9 @@ create workspace-capable agent sandboxes or grant file, command, or MCP tool
 access. With `outputSchema`, it uses prompt guidance and `json_object` instead
 of Responses API strict JSON Schema.
 
-Guest agent providers (`codex`, `claude`, `gemini`, `opencode`, `pi`) remain
-separate CLI runners with provider-native session state. Codex, Claude,
-OpenCode, and Pi normally receive scoped Runtime LLM Facade credentials rather
-than daemon provider keys; Gemini uses its CLI-native login flow.
+Guest agent providers (`codex`, `claude`, `opencode`, `pi`, `dsh`) remain
+separate CLI runners with provider-native session state. They normally receive
+scoped Runtime LLM Facade credentials rather than daemon provider keys.
 
 The scheduler's primary sandbox lifecycle API is:
 

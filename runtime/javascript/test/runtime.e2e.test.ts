@@ -18,6 +18,10 @@ const claudeMockState = vi.hoisted(() => ({
 	lastArgs: null as unknown,
 }));
 
+const piMockState = vi.hoisted(() => ({
+	spawnCalls: [] as Array<{ command: string; args: string[]; options: Record<string, unknown> }>,
+}));
+
 vi.mock("@openai/codex-sdk", () => ({
   Codex: vi.fn().mockImplementation(function Codex(options: unknown) {
     codexMockState.constructorOptions = options;
@@ -94,23 +98,28 @@ vi.mock("node:child_process", async (importOriginal) => {
   return {
     ...original,
     spawn: vi.fn((command: string, args: string[], options: Record<string, unknown>) => {
-      if (command !== "gemini" && command !== "opencode") {
+      if (command !== "opencode" && command !== "pi") {
         return original.spawn(command, args, options);
       }
+      if (command === "pi") {
+        piMockState.spawnCalls.push({ command, args, options });
+      }
       const child = new EventEmitter() as EventEmitter & { stdout: Readable; stderr: EventEmitter };
-      child.stdout = Readable.from(command === "gemini"
-		? [
-			JSON.stringify({ type: "init", sessionId: "e2e-gemini-session" }) + "\n",
-			JSON.stringify({ type: "message", content: "gemini says ok" }) + "\n",
-			JSON.stringify({ type: "result", result: "gemini final" }) + "\n",
-		]
-		: [
-			JSON.stringify({ type: "result", result: "opencode final", sessionId: "e2e-opencode-session" }) + "\n",
-		]);
+      child.stdout = Readable.from(command === "pi"
+        ? [
+            JSON.stringify({ type: "session", version: 3, id: "e2e-pi-session", cwd: options.cwd }) + "\n",
+            JSON.stringify({ type: "turn_start" }) + "\n",
+            JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "pi final answer", contentIndex: 0 } }) + "\n",
+            JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "pi final answer" }], stopReason: "stop" } }) + "\n",
+            JSON.stringify({ type: "agent_end", stopReason: "stop" }) + "\n",
+          ]
+        : [
+            JSON.stringify({ type: "result", result: "opencode final", sessionId: "e2e-opencode-session" }) + "\n",
+          ]);
       child.stderr = new EventEmitter();
       const originalOnce = child.once.bind(child);
       child.once = ((eventName: string | symbol, listener: (...args: unknown[]) => void) => {
-        if (eventName === "exit") {
+        if (eventName === "exit" || eventName === "close") {
           queueMicrotask(() => listener(0));
           return child;
         }
@@ -295,55 +304,6 @@ describe("runtime JavaScript E2E", () => {
     });
   });
 
-  it("runs the Gemini prompt path through stream-json protocol output", async () => {
-    await withTempSession(async (root) => {
-      const messageFile = path.join(root, "message.txt");
-      const stateRoot = path.join(root, "state");
-      await fs.writeFile(messageFile, "gemini prompt", "utf8");
-      await fs.mkdir(path.join(stateRoot, "agents", "mcp"), { recursive: true });
-      await fs.writeFile(path.join(stateRoot, "agents", "mcp", "config.json"), JSON.stringify({
-		mcp_servers: {
-			docs: {
-				type: "remote",
-				transport: "http",
-				url: "https://docs.example/mcp",
-				headers: { Authorization: { value: "Bearer token" } },
-			},
-		},
-	  }), "utf8");
-
-      const stdio = captureStdio();
-      try {
-        await createProgram({ exitOverride: true }).parseAsync([
-          "node",
-          "cli",
-          "prompt",
-          "--provider",
-          "gemini",
-          "--message-file",
-          messageFile,
-          "--state-root",
-          stateRoot,
-          "--workspace",
-          path.join(root, "workspace"),
-          "--home",
-          path.join(root, "home"),
-        ]);
-      } finally {
-        stdio.restore();
-      }
-
-      expect(stdio.stdout).toContain(`${RESULT_PREFIX}{`);
-      expect(stdio.stdout).toContain("e2e-gemini-session");
-      expect(stdio.stdout).toContain("gemini final");
-      expect(stdio.stderr).toContain("gemini says ok");
-      const settings = JSON.parse(await fs.readFile(path.join(root, "home", ".gemini", "settings.json"), "utf8")) as Record<string, unknown>;
-      expect(settings.mcpServers).toMatchObject({
-		docs: { httpUrl: "https://docs.example/mcp", headers: { Authorization: "Bearer token" } },
-	  });
-    });
-  });
-
   it("runs the Claude prompt path with structured output and transcript events", async () => {
     await withTempSession(async (root) => {
       const messageFile = path.join(root, "message.txt");
@@ -455,4 +415,63 @@ describe("runtime JavaScript E2E", () => {
 			});
 		});
 	});
+
+  it("runs the Pi prompt path through the stream-json event protocol", async () => {
+    await withTempSession(async (root) => {
+      const messageFile = path.join(root, "message.txt");
+      const stateRoot = path.join(root, "state");
+      await fs.writeFile(messageFile, "pi prompt", "utf8");
+      await fs.mkdir(path.join(stateRoot, "agents", "mcp"), { recursive: true });
+      await fs.writeFile(path.join(stateRoot, "agents", "mcp", "config.json"), JSON.stringify({
+        mcp_servers: {
+          docs: {
+            type: "remote",
+            transport: "http",
+            url: "https://docs.example/mcp",
+            headers: { Authorization: { value: "Bearer token" } },
+          },
+        },
+      }), "utf8");
+      piMockState.spawnCalls = [];
+
+      const stdio = captureStdio();
+      try {
+        await createProgram({ exitOverride: true }).parseAsync([
+          "node",
+          "cli",
+          "prompt",
+          "--provider",
+          "pi",
+          "--message-file",
+          messageFile,
+          "--state-root",
+          stateRoot,
+          "--workspace",
+          path.join(root, "workspace"),
+          "--home",
+          path.join(root, "home"),
+        ]);
+      } finally {
+        stdio.restore();
+      }
+
+      expect(stdio.stdout).toContain(`${RESULT_PREFIX}{`);
+      expect(stdio.stdout).toContain("e2e-pi-session");
+      expect(stdio.stdout).toContain("pi final answer");
+
+      const stored = JSON.parse(await fs.readFile(path.join(stateRoot, "agents", "providers", "pi.json"), "utf8")) as Record<string, unknown>;
+      expect(stored.threadId).toBe("e2e-pi-session");
+
+      const call = piMockState.spawnCalls.at(-1);
+      expect(call?.command).toBe("pi");
+      // Pi owns session creation on a fresh run: passing a synthetic
+      // --session-id would be treated as a resume miss.
+      expect(call?.args).not.toContain("--session-id");
+      expect(call?.args).toContain("--offline");
+      expect(call?.args).toContain("--extension");
+      expect(call?.args).toContain("--mcp-config");
+      expect(call?.args.at(-1)).toBe("pi prompt");
+      expect((call?.options.env as Record<string, string>).PI_OFFLINE).toBe("1");
+    });
+  });
 });

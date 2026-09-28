@@ -43,24 +43,21 @@ func TestRuntimeMountEntriesDefineSharedLogicalMountList(t *testing.T) {
 		isFile      bool
 		exposure    directoryOnlyExposure
 	}{
-		"/workspace":                {sandboxPath: "workspace", exposure: directoryOnlyExposureSymlink},
-		"/data/state":               {sandboxPath: "state", exposure: directoryOnlyExposureAlreadyInData},
-		"/data/runtime":             {sandboxPath: "runtime", exposure: directoryOnlyExposureAlreadyInData},
-		"/data/logs":                {sandboxPath: "logs", exposure: directoryOnlyExposureAlreadyInData},
-		"/root/.codex":              {sandboxPath: "home/.codex", exposure: directoryOnlyExposureSymlink},
-		"/root/.agents":             {sandboxPath: "home/.agents", exposure: directoryOnlyExposureSymlink},
-		"/root/.claude":             {sandboxPath: "home/.claude", exposure: directoryOnlyExposureSymlink},
-		"/root/.opencode":           {sandboxPath: "home/.opencode", exposure: directoryOnlyExposureSymlink},
-		"/root/.pi":                 {sandboxPath: "home/.pi", exposure: directoryOnlyExposureSymlink},
-		"/root/.dsh":                {sandboxPath: "home/.dsh", exposure: directoryOnlyExposureSymlink},
-		"/root/.claude.json":        {sandboxPath: "home/.claude.json", isFile: true, exposure: directoryOnlyExposureSymlink},
-		"/root/.gitconfig":          {sandboxPath: "home/.gitconfig", isFile: true, exposure: directoryOnlyExposureSymlink},
-		"/root/.gemini":             {sandboxPath: "home/.gemini", exposure: directoryOnlyExposureSymlink},
-		"/root/.config/claude":      {sandboxPath: "home/.config/claude", exposure: directoryOnlyExposureSymlink},
-		"/root/.config/Claude":      {sandboxPath: "home/.config/Claude", exposure: directoryOnlyExposureSymlink},
-		"/root/.config/gemini":      {sandboxPath: "home/.config/gemini", exposure: directoryOnlyExposureSymlink},
-		"/root/.config/opencode":    {sandboxPath: "home/.config/opencode", exposure: directoryOnlyExposureSymlink},
-		"/root/.local/share/gemini": {sandboxPath: "home/.local/share/gemini", exposure: directoryOnlyExposureSymlink},
+		"/workspace":             {sandboxPath: "workspace", exposure: directoryOnlyExposureSymlink},
+		"/data/state":            {sandboxPath: "state", exposure: directoryOnlyExposureAlreadyInData},
+		"/data/runtime":          {sandboxPath: "runtime", exposure: directoryOnlyExposureAlreadyInData},
+		"/data/logs":             {sandboxPath: "logs", exposure: directoryOnlyExposureAlreadyInData},
+		"/root/.codex":           {sandboxPath: "home/.codex", exposure: directoryOnlyExposureSymlink},
+		"/root/.agents":          {sandboxPath: "home/.agents", exposure: directoryOnlyExposureSymlink},
+		"/root/.claude":          {sandboxPath: "home/.claude", exposure: directoryOnlyExposureSymlink},
+		"/root/.opencode":        {sandboxPath: "home/.opencode", exposure: directoryOnlyExposureSymlink},
+		"/root/.pi":              {sandboxPath: "home/.pi", exposure: directoryOnlyExposureSymlink},
+		"/root/.dsh":             {sandboxPath: "home/.dsh", exposure: directoryOnlyExposureSymlink},
+		"/root/.claude.json":     {sandboxPath: "home/.claude.json", isFile: true, exposure: directoryOnlyExposureSymlink},
+		"/root/.gitconfig":       {sandboxPath: "home/.gitconfig", isFile: true, exposure: directoryOnlyExposureSymlink},
+		"/root/.config/claude":   {sandboxPath: "home/.config/claude", exposure: directoryOnlyExposureSymlink},
+		"/root/.config/Claude":   {sandboxPath: "home/.config/Claude", exposure: directoryOnlyExposureSymlink},
+		"/root/.config/opencode": {sandboxPath: "home/.config/opencode", exposure: directoryOnlyExposureSymlink},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("logical mount count = %d, want %d: %#v", len(got), len(want), got)
@@ -69,6 +66,13 @@ func TestRuntimeMountEntriesDefineSharedLogicalMountList(t *testing.T) {
 		entry := got[guestPath]
 		if entry.sandboxPath != wantEntry.sandboxPath || entry.isFile != wantEntry.isFile || entry.directoryOnlyExposure != wantEntry.exposure {
 			t.Fatalf("logical entry %s = %#v, want sandboxPath=%s isFile=%v exposure=%s", guestPath, entry, wantEntry.sandboxPath, wantEntry.isFile, wantEntry.exposure)
+		}
+	}
+	// The removed Gemini provider must not leave a guest mount behind: a stale
+	// entry would recreate a directory nothing writes to.
+	for guestPath := range got {
+		if strings.Contains(strings.ToLower(guestPath), "gemini") {
+			t.Fatalf("logical entry %s belongs to the removed Gemini provider", guestPath)
 		}
 	}
 }
@@ -393,12 +397,9 @@ func TestPrepareRuntimeMountManifestIgnoresCustomGuestHomePath(t *testing.T) {
 		"/root/.dsh",
 		"/root/.claude.json",
 		"/root/.gitconfig",
-		"/root/.gemini",
 		"/root/.config/claude",
 		"/root/.config/Claude",
-		"/root/.config/gemini",
 		"/root/.config/opencode",
-		"/root/.local/share/gemini",
 	} {
 		if got[guestPath] == "" {
 			t.Fatalf("manifest missing fixed home mount %s: %#v", guestPath, got)
@@ -542,12 +543,9 @@ func TestDirectoryOnlyGuestSandboxBootstrapUsesDataMountRoot(t *testing.T) {
 		"ln -sfn '/data/home/.dsh' '/root/.dsh'",
 		"ln -sfn '/data/home/.claude.json' '/root/.claude.json'",
 		"ln -sfn '/data/home/.gitconfig' '/root/.gitconfig'",
-		"ln -sfn '/data/home/.gemini' '/root/.gemini'",
 		"ln -sfn '/data/home/.config/claude' '/root/.config/claude'",
 		"ln -sfn '/data/home/.config/Claude' '/root/.config/Claude'",
-		"ln -sfn '/data/home/.config/gemini' '/root/.config/gemini'",
 		"ln -sfn '/data/home/.config/opencode' '/root/.config/opencode'",
-		"ln -sfn '/data/home/.local/share/gemini' '/root/.local/share/gemini'",
 		"test \"$(readlink '/root/.gitconfig')\" = '/data/home/.gitconfig'",
 		"test \"$(readlink '/root/.codex')\" = '/data/home/.codex'",
 	} {

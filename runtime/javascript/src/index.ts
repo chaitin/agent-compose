@@ -11,7 +11,6 @@ export { decodeBinary, decodeFrame, encodeBinary, encodeFrame, FRAME_VERSION } f
 export { CodexInteractiveSession, createInteractiveSession, UnsupportedProviderError } from "./interactive.js";
 export { ClaudeRunner } from "./runners/claude.js";
 export { CodexRunner } from "./runners/codex.js";
-export { GeminiRunner } from "./runners/gemini.js";
 export { OpenCodeRunner } from "./runners/opencode.js";
 export { PiRunner } from "./runners/pi.js";
 export { providerStatePath, readStoredThread, writeStoredThread } from "./session-state.js";

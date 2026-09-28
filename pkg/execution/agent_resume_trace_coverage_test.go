@@ -195,11 +195,11 @@ func TestAgentSandboxRootsAndTraceDetails(t *testing.T) {
 	if roots := AgentThreadLogRoots(home, "claude"); len(roots) != 3 || !strings.Contains(roots[0], ".claude") {
 		t.Fatalf("claude roots = %#v", roots)
 	}
-	if roots := AgentThreadLogRoots(home, "gemini"); len(roots) != 3 || !strings.Contains(roots[0], ".gemini") {
-		t.Fatalf("gemini roots = %#v", roots)
-	}
 	if roots := AgentThreadLogRoots(home, "opencode"); roots != nil {
 		t.Fatalf("opencode roots = %#v, want nil", roots)
+	}
+	if roots := AgentThreadLogRoots(home, "gemini"); roots != nil {
+		t.Fatalf("removed gemini provider roots = %#v, want nil", roots)
 	}
 
 	details, consumed := CollectAgentTraceDetails("agent.tool", []string{"one", "  ", "two"})

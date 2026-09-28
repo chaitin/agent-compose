@@ -35,8 +35,8 @@ type preparedPromptInteraction struct {
 // promptAttachProviders lists the providers whose guest runner can drive the
 // interactive `agent-compose-runtime stream` loop. Membership requires the
 // runner to resume its provider session between turns, because each turn spawns
-// a fresh runPrompt: gemini is absent because GeminiRunner persists no thread
-// id and would silently lose the previous turn's context.
+// a fresh runPrompt: a provider whose runner persists no resume thread id is
+// absent, since it would silently lose the previous turn's context.
 var promptAttachProviders = map[string]bool{
 	"codex":    true,
 	"claude":   true,

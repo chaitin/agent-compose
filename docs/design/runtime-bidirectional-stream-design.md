@@ -272,16 +272,17 @@ interface AgentInteractiveRunner {
 
 The Codex implementation can reuse the same thread and call `thread.runStreamed(prompt)` for each user input. After each turn completes, the runtime sends `agent_turn_completed`; only then should the daemon/CLI display the next input prompt.
 
-Provider capability must be explicit:
+Provider capability is explicit. Codex was the first implementation of the interactive turn loop; the supported set now covers every provider whose runner persists a resume thread:
 
-| provider | first-phase prompt interactive strategy |
+| provider | prompt interactive status |
 |---|---|
-| Codex | implement first |
-| Claude | integrate after confirming SDK session/continue support |
-| Gemini | integrate after confirming SDK session/continue support |
-| OpenCode | integrate after confirming capability |
+| Codex | supported |
+| Claude | supported |
+| OpenCode | supported |
+| Pi | supported |
+| dsh | supported |
 
-If a provider does not support an agent turn loop, return an explicit error.
+A provider whose runner cannot resume its session between turns is deliberately excluded, because each turn spawns a fresh run and would otherwise lose the previous turn's context. If a provider does not support an agent turn loop, return an explicit error.
 
 ### `--prompt -it` and Output Schema
 
@@ -542,7 +543,7 @@ Rules:
 3. Transcript representation after TTY merges stdout/stderr.
 4. Connect bidirectional stream backpressure and runtime cleanup after either direction disconnects.
 5. Accurate agent turn boundary definition in prompt interactive mode.
-6. Provider SDK multi-turn capability differences, especially for Claude/Gemini/OpenCode.
+6. Provider SDK multi-turn capability differences, especially for Claude/OpenCode.
 7. Consistency between the new stream and old artifact double-write.
 8. `RunLogHub` and file offset deduplication, compensation, and backpressure.
 9. Memory limits and truncation semantics for large-output unary projection.

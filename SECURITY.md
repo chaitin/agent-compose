@@ -41,7 +41,7 @@ development branch until versioned release support is documented.
 
 ## Runtime Isolation
 
-agent-compose can run guest workloads with Docker, BoxLite, or Microsandbox.
+agent-compose can run guest workloads with Docker, BoxLite, Microsandbox, or Kubernetes.
 Isolation properties vary by driver and host configuration. Do not assume a
 driver is suitable for hostile code without a separate threat model and runtime
 hardening review.

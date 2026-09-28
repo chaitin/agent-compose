@@ -360,11 +360,14 @@ prompt 输入必须使用 `--prompt`；非交互 run 必须选择 `--prompt` 或
 | --- | --- |
 | `--keep-running` | 运行结束后保留 sandbox runtime。 |
 | `--sandbox <sandbox>` | 指定已有 sandbox。 |
+| `--driver <name>` | 为新 sandbox 覆盖 runtime driver。 |
 | `--rm` | 运行结束后删除 sandbox。 |
 | `--jupyter` | 为本次 run 启用 Jupyter；未设置时使用 agent YAML 默认，YAML 未设置时默认关闭。 |
 | `--jupyter-expose` | 标记本次 run 的 Jupyter agent-compose proxy 入口为显式暴露意图；该参数不请求 runtime driver 暴露 host port，并会同时启用 Jupyter。 |
 | `-d, --detach` | 将 run 提交给 daemon 后立即返回；输出 run id、初始状态和 `logs --follow` 查看命令。 |
 | `-i, --interactive` | 进入 prompt 或 command REPL；必须与 `--prompt` 或 `--command` 组合。 |
+| `-t, --tty` | 为交互式 command run 分配 TTY。 |
+| `--label <key=value>` | 为该 run 附加 label；可重复。 |
 
 示例：
 
@@ -389,7 +392,7 @@ agent-compose run reviewer --jupyter --jupyter-expose --prompt "Inspect the note
 - REPL 不是 TTY/PTY 或运行中 stdin 透传；每条输入都是一次独立 `StreamAgentRun`，但复用同一个 sandbox。
 - `--sandbox` 只能复用属于当前 project 和所选 agent 的 sandbox；跨 project 或跨 agent 复用会被拒绝，且不会修改或停止原 sandbox。
 - detached run 可通过输出的 `agent-compose logs --run <run-id> --follow` 命令观察输出，也可继续使用 `stop`/`logs` 操作该 run。
-- `run -i --prompt` 仅支持可复用 provider conversation 的 Codex、Claude/cc、OpenCode、Pi 和 DSH（`dsh`、`deepseek`、`deepseek-harness`、`deepseek_harness`）；Gemini 当前会返回 unsupported。
+- `run -i --prompt` 仅支持可复用 provider conversation 的 Codex、Claude、OpenCode、Pi 和 DSH（`dsh`、`deepseek`、`deepseek-harness`、`deepseek_harness`）。
 - run 只有在 completion cleanup 成功后才进入终态。默认策略停止 sandbox；remove-on-completion 会完整删除由本 run 新建的 sandbox，但复用的 sandbox 只会停止；keep-running 是不执行清理的显式例外。
 - cleanup 失败时 run 保持 `running` 并写入 `cleanup_error`。daemon 会立即重试并采用有上限的退避，重启后也会继续；前台与流式调用继续等待，detached start 仍立即返回。
 - `StopRun` 只请求取消，因此可能返回 `stop_requested=true` 而 run 仍为 `running`。执行路径先记录取消结果并完成配置的 cleanup，再提交 `canceled`；daemon 重启后遗留的 running/pending run 也通过同一路径在清理后变为 `failed`，错误为 `daemon interrupted`。
@@ -441,6 +444,7 @@ agent-compose ps --json
 | `-a, --all` | 显示当前 project 中所有状态的 sandbox。 |
 | `--verbose` | 显示更多列。 |
 | `--status <status>[,<status>...]` | 按 `pending`、`running`、`stopped`、`failed` 或 `deleting` 过滤；逗号分隔的每个非空值都必须合法。 |
+| `--label <key=value>` | 按 run label 过滤；可重复，多个 label 之间为 AND 关系。 |
 
 默认输出字段：
 
@@ -476,7 +480,7 @@ agent-compose sandbox prune --include-orphans
 
 | 命令 | 说明 |
 | --- | --- |
-| `sandbox ls` | 等价于 `ps`；支持 `--all/-a`、`--status`、`--verbose` 和 `--json`。 |
+| `sandbox ls` | 等价于 `ps`；支持 `--all/-a`、`--status`、`--label`、`--verbose` 和 `--json`。 |
 | `sandbox stop <sandbox...>` | 等价于 `stop`；停止一个或多个 sandbox。默认仍为 force；使用 `--graceful` 时会先终止 active guest JS runtime execution。 |
 | `sandbox resume <sandbox...>` | 等价于 `resume`；恢复一个或多个 stopped sandbox。 |
 | `sandbox rm <sandbox...>` | 等价于 `rm`；删除一个或多个 sandbox。仅在确认要删除 running sandbox 时使用 `--force`。 |
@@ -609,8 +613,9 @@ agent-compose exec <sandbox> --prompt "..."
 | --- | --- |
 | `--command "..."` | 以 flag 形式传入 shell 命令，等价于在 sandbox 中执行 `bash -lc "..."`。 |
 | `--prompt "..."` | 在已有 sandbox 中执行一次 agent prompt，输出回复后退出；增加 `-i`（以及可选的 `-t`）进入多轮 attach 会话。 |
+| `-i, --interactive` | 将 stdin 接入 sandbox command。 |
+| `-t, --tty` | 为交互式 exec 分配 TTY。 |
 | `--cwd <path>` | 指定 sandbox 内工作目录。 |
-| `--agent <agent>` | 兼容旧目标选择参数，会输出 deprecated warning；新命令应使用 `exec <sandbox>`。 |
 | `--run <run-id>` | 兼容旧目标选择参数，会输出 deprecated warning；新命令应使用 `exec <sandbox>`。 |
 
 位置参数 `<sandbox>` 与已弃用的 `--run` 目标互斥。如果同时提供，`exec` 会在解析任一目标或发送执行请求之前返回用法错误。
@@ -631,7 +636,7 @@ agent-compose exec sandbox_123 --cwd /workspace --command "pwd"
 
 查看当前 project 下 agent、sandbox 或 run 的日志。默认展示 project 下所有 agent 日志。
 
-当前 `logs` 基于 agent-compose v2 RunService 返回的 run log artifact 展示。`--follow` 由服务端按 `logs_path` 指向的日志文件增量读取；普通查看会使用 run 记录中的输出和 artifact 汇总。它不会默认读取 Codex、Claude、Gemini 等 provider 的私有日志文件。
+当前 `logs` 基于 agent-compose v2 RunService 返回的 run log artifact 展示。`--follow` 由服务端按 `logs_path` 指向的日志文件增量读取；普通查看会使用 run 记录中的输出和 artifact 汇总。它不会默认读取 Codex、Claude 等 provider 的私有日志文件。
 
 ```bash
 agent-compose logs
@@ -683,12 +688,13 @@ agent-compose logs --event evt_0e1c7bd2-8f5a-4c1d-9b3e-2f6a7d8c9e01
 ```bash
 agent-compose inspect project
 agent-compose inspect project <project-name|project-id|short-id>
-agent-compose inspect <project|agent|run|sandbox|image|cache-id>
+agent-compose inspect <project|agent|run|sandbox|image|cache>
 agent-compose inspect agent <agent>
 agent-compose inspect run <run-id>
 agent-compose inspect sandbox <sandbox>
 agent-compose inspect image <image>
 agent-compose inspect cache <cache-id>
+agent-compose inspect volume <volume>
 ```
 
 当唯一参数是完整 ID 或十六进制短 ID 时，`inspect` 会通过 daemon 自动识别资源类型。名称仍需使用显式类型形式；短 ID 命中多个资源时，命令会报告歧义及候选资源类型。
@@ -703,6 +709,7 @@ agent-compose inspect cache <cache-id>
 - `inspect sandbox <sandbox>` 查看 sandbox/runtime 详情。
 - `inspect image <image>` 查看镜像详情。
 - `inspect cache <cache-id>` 查看一个 daemon runtime cache item，包括引用、阻止删除原因和 warnings。
+- `inspect volume <volume>` 查看一个 daemon volume，包括 driver、label、option 和所属 project。
 
 Project 和 agent 的 inspect 输出包含两个独立视图：
 
@@ -849,11 +856,77 @@ sandbox retention 归档包含 metadata、VM/proxy 状态、logs、home、state�
 
 兼容说明：
 
-- `agent-compose image ls` 已废弃，请使用 `agent-compose images`。
-- `agent-compose image pull <image>` 已废弃，请使用 `agent-compose pull <image>`。
-- `agent-compose image rm <image>` 已废弃，请使用 `agent-compose rmi <image>`。
-- `agent-compose image inspect <image>` 已废弃，请使用 `agent-compose inspect image <image>`。
-- 旧 `image` 命令树仍可用，但会在 stderr 输出 deprecated warning，后续版本会评估删除。
+- `image` 命令组是规范形式：`image ls`、`image pull`、`image build`、`image rm` 和 `image inspect`。
+- 顶层 `images`、`pull`、`build` 和 `rmi` 命令是对应 `image` 子命令的快捷入口。两种写法都受支持，且都不会输出 deprecated warning。
+
+## Volume 命令
+
+管理 daemon 拥有的 volume。
+
+```bash
+agent-compose volume ls
+agent-compose volume create <name>
+agent-compose volume inspect <name>
+agent-compose volume rm <name>
+agent-compose volume prune
+```
+
+命令：
+
+| 命令 | 说明 |
+| --- | --- |
+| `volume ls` | 列出 daemon volume。 |
+| `volume create <name>` | 创建 daemon volume。 |
+| `volume inspect <name>` | 查看 daemon volume 详情。 |
+| `volume rm <name> [<name N>]` | 删除一个或多个 daemon volume；`remove` 为别名。 |
+| `volume prune` | 清理未使用的 daemon volume；不带 `--force` 时为 dry-run。 |
+
+常用参数：
+
+| 命令 | 参数 | 说明 |
+| --- | --- | --- |
+| `volume ls`、`volume prune` | `--query <text>` | 按 volume name 或 id 过滤。 |
+| `volume ls`、`volume prune` | `--driver <driver>` | 按 volume driver 过滤。 |
+| `volume ls`、`volume prune` | `--project-id <id>` | 按 project id 过滤。 |
+| `volume ls` | `--verbose` | 显示完整 project id。 |
+| `volume create` | `--driver <driver>` | Volume driver，默认 `local`。 |
+| `volume create` | `--label key=value` | 设置 volume label；可重复。 |
+| `volume create` | `--opt key=value` | 设置 volume driver option；可重复。 |
+| `volume rm` | `--force` | 强制删除 volume。 |
+| `volume prune` | `--force` | 实际删除匹配的 volume；不带该参数时 `volume prune` 只做 dry-run。 |
+
+## LLM Provider 命令
+
+管理 daemon 上由 API 拥有的上游 LLM provider。
+
+```bash
+agent-compose llm provider ls
+agent-compose llm provider create <id> --base-url <url> --protocol <protocol> --api-key <key>
+agent-compose llm provider inspect <id>
+agent-compose llm provider update <id> --name <name>
+agent-compose llm provider rm <id>
+```
+
+命令：
+
+| 命令 | 说明 |
+| --- | --- |
+| `llm provider ls` | 列出 API 拥有的上游 LLM provider。 |
+| `llm provider create <id>` | 创建一个 provider；`--base-url`、`--protocol` 和 `--api-key` 为必填。 |
+| `llm provider inspect <id>` | 查看 provider 详情。 |
+| `llm provider update <id>` | 更新 provider；只有命令行实际传入的 flag 会被修改。 |
+| `llm provider rm <id>` | 删除一个 provider；`remove` 为别名。 |
+
+参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `--name <name>` | 显示名称；create 时默认使用 provider id。 |
+| `--base-url <url>` | 上游 HTTP(S) 绝对 base URL。 |
+| `--protocol <protocol>` | 上游协议：`responses`、`chat_completions` 或 `anthropic_messages`。 |
+| `--api-key <key>` | 上游 API key 明文。 |
+| `--enabled` | provider 是否启用；默认 `true`。 |
+| `--auth <mode>` | 凭据呈现方式覆盖：`x-api-key`、`bearer` 或 `protocol-default`；`protocol-default` 清除该项。 |
 
 ## `status`：检查 daemon 状态
 
@@ -936,7 +1009,7 @@ DSH 使用其原生 OTLP/HTTP logs exporter。此集成不支持仅接受 gRPC �
 也不把 agent-compose 事件流转换为 spans。Pi 的
 [官方 observability 设计](https://github.com/badlogic/pi-mono/blob/v0.82.1/packages/agent/docs/observability.md)
 描述了外部监听器及可能的未来 OTel 包，并非已发布的 exporter；其 `PI_TELEMETRY` 开关
-控制安装统计，不是 OTLP。Gemini 不在此集成范围内，同样不会收到受管理的 collector 凭证。
+控制安装统计，不是 OTLP。
 
 endpoint 为空时关闭 daemon 管理的导出，但不会删除用户在 guest 中自行配置的原生遥测设置。
 启用时，受支持 provider 继承的 `OTEL_*` 地址、headers 和 beta tracing 地址会被替换，

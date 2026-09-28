@@ -25,7 +25,7 @@ describe("runtime shape E2E workflows", () => {
       expect(result.success).toBe(true);
       expect(result.stdout).toBe("shape-e2e");
 
-      expect(normalizeProvider("gemini-cli")).toBe("gemini");
+      expect(normalizeProvider("claude-code")).toBe("claude");
       const writer = new TranscriptWriter();
       writer.write("agent ");
       writer.line("output");

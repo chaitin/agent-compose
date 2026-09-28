@@ -4,7 +4,7 @@
 
 agent-compose 是负责 project、run、sandbox、runtime driver、workspace、scheduler、事件、镜像、缓存、Jupyter 和 LLM facade 的控制面。核心用户工作流跨越 CLI、Connect/HTTP API、SQLite 与文件持久化、后台 controller、guest runtime 和外部依赖边界，单包测试或使用 fake 的多组件测试无法证明部署后的完整流程可用。
 
-仓库当前通过测试函数名称中的 `Integration` 和 `E2E` 区分测试形态，并在 `scripts/test-coverage.sh` 中分别计算 unit、integration、E2E 和 combined statement coverage。当前约有 77 个 `TestE2E...` 分散在 `cmd/`、`pkg/` 和 `test/e2e`：其中多数是复用 unit/integration helper 的 coverage-shape wrapper，只有少量测试真正启动 daemon、Docker sandbox 或后台 scheduler。现有 E2E statement coverage 因此主要反映代码执行数量，而不是用户可观察业务流程的完整性。
+仓库当前通过测试函数名称中的 `Integration` 和 `E2E` 区分测试形态，并在 `scripts/test-coverage.sh` 中分别计算 unit、integration、E2E 和 combined statement coverage。当前约有 129 个 `TestE2E...` 分散在 `cmd/`、`pkg/`、`test/e2e` 和 `internal/`：其中多数是复用 unit/integration helper 的 coverage-shape wrapper，只有少量测试真正启动 daemon、Docker sandbox 或后台 scheduler。现有 E2E statement coverage 因此主要反映代码执行数量，而不是用户可观察业务流程的完整性。
 
 本规格定义一套真实、可重复、可诊断的核心业务 E2E 测试体系。目标状态：
 
@@ -21,10 +21,10 @@ agent-compose 是负责 project、run、sandbox、runtime driver、workspace、s
 ### 项目 harness
 
 - `AGENTS.md` 规定主入口为 `cmd/agent-compose/main.go`、`pkg/agentcompose/app/`、`pkg/agentcompose/api/`、`pkg/agentcompose/adapters/`、`pkg/agentcompose/proxy/` 和 owner packages；测试方案必须覆盖这些边界的实际协作，而不是绕过 service graph。
-- `AGENTS.md` 规定支持 `docker`、`boxlite`、`microsandbox` 三种 runtime driver，默认 driver 是 Docker；完整 E2E 必须显式记录被测 driver，不得把 Docker 结果视作其他 driver 的替代证明。
+- `AGENTS.md` 规定支持 `docker`、`boxlite`、`microsandbox`、`k8s` 四种 runtime driver，默认 driver 是 Docker；完整 E2E 必须显式记录被测 driver，不得把 Docker 结果视作其他 driver 的替代证明。
 - `TESTING.md` 将 unit、integration、E2E 定义为三种互补测试形态，并要求跨 API、持久化、runtime driver 或用户工作流的变更具有更宽的测试覆盖。
 - `Taskfile.yml` 的主门禁为 `task lint`、`task build`、`task test`；现有 runtime 真实 smoke 通过 `task test:runtime-smoke` 和 `SMOKE_RUNTIME_DRIVERS` 显式启用。
-- `.github/workflows/ci.yml` 当前在 GitHub-hosted runner 上执行 lint、Go tests、coverage、runtime SDK、scheduler runtime 和 proto-client 构建，不准备 KVM runtime 产物或完整 guest image，因此不具备稳定运行三 driver 真实 E2E 的前提。
+- `.github/workflows/ci.yml` 当前在 GitHub-hosted runner 上执行 lint、Go tests、coverage、runtime SDK、scheduler runtime 和 proto-client 构建，并在 `binary-linux` job 里构建与校验 BoxLite/Microsandbox 的原生产物（`boxlite-shim`、`msb`、`libkrunfw.so`）；但它既不提供 guest 镜像，也没有可用的 KVM 与 host daemon，因此不具备稳定运行三 driver 真实 E2E 的前提。
 - `docs/design/agent-compose_design.md` 定义 daemon、v2 API、project/run pipeline、sandbox/runtime、scheduler、LLM、image/cache 和持久化边界；本规格中的业务场景以这些已实现能力为准。
 - `docs/design/agent-compose-runtime_contract.md` 定义 guest runtime 的 workspace、state、runtime、home、stdio、provider 和 resume 合同；driver 等价场景必须验证该合同，而不只验证 runtime 进程启动。
 
@@ -35,7 +35,6 @@ agent-compose 是负责 project、run、sandbox、runtime driver、workspace、s
 - `cmd/agent-compose/e2e_docker_scheduler_test.go` 能启动完整 service graph、使用真实 Docker guest、通过 CLI 应用项目，并等待 scheduler run 完成，是当前接近真实 E2E 的基线。
 - `test/e2e/docker_jupyter_host_daemon_test.go` 能启动外部宿主机 daemon，通过 Connect API 创建 Docker Jupyter sandbox，并验证 stale port 在 stop/resume 后由 Docker inspect 修复。
 - `test/e2e/docker_workspace_resume_host_daemon_test.go` 中的 `TestE2EDockerFileWorkspaceResumePreservesState` 已通过正式 Connect/HTTP API 和真实 Docker guest 验证 file workspace 一次性 provisioning、宿主机 daemon 重启、原 runtime handle 复用、ready workspace 状态保持、新 sandbox 获取最新 source、无反向同步以及资源泄漏清理。该证据仅适用于宿主机 daemon + Docker，不代表 BoxLite/Microsandbox 等价。
-- `test/e2e/api_smoke_test.go` 只注册了一个临时 Echo `/api/version` handler，不代表真实 daemon E2E，应重新归类或由真实 daemon health 场景替代。
 - `pkg/driver` 下的 BoxLite、Microsandbox 和 Docker smoke 已覆盖部分启动、挂载和 writable layer 行为，但没有通过 project/run/CLI/API 控制面执行完整业务流程。
 
 ### 约束结论

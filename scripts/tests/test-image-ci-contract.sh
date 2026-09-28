@@ -105,7 +105,7 @@ done
 guest_builder_source=$(<"$GUEST_BUILDER")
 for common_guest_arg in \
   REGISTRY_MIRROR GOPROXY GO_VERSION GRPCURL_VERSION PIP_INDEX_URL PIP_TRUSTED_HOST \
-  NPM_CONFIG_REGISTRY CODEX_VERSION CLAUDE_CODE_VERSION GEMINI_CLI_VERSION \
+  NPM_CONFIG_REGISTRY CODEX_VERSION CLAUDE_CODE_VERSION \
   OPENCODE_VERSION PI_AGENT_VERSION PI_MCP_ADAPTER_VERSION DSH_VERSION; do
   default_value() { # $1=Dockerfile $2=ARG name
     sed -n "s/^ARG[[:space:]]\+$2=\{0,1\}\(.*\)$/\1/p" "$1" | head -n 1
@@ -643,7 +643,7 @@ if [[ -f $ARCHLINUX_GUEST_DOCKERFILE ]]; then
     'catatonit entrypoint in Arch Linux guest image'
   require_regex "$archlinux_guest_source" 'CMD[[:space:]]+\["/usr/local/bin/agent-compose-env"' \
     'long-running default command in Arch Linux guest image'
-  for provider_cli in codex claude gemini opencode pi dsh; do
+  for provider_cli in codex claude opencode pi dsh; do
     require_regex "$archlinux_guest_source" "$provider_cli[[:space:]]+--version" \
       "$provider_cli build-time validation in Arch Linux guest image"
   done
@@ -664,12 +664,13 @@ for provider_dockerfile in "$GUEST_DOCKERFILE" "$ARCHLINUX_GUEST_DOCKERFILE" "$D
   for provider_package in \
     '@openai/codex' \
     '@anthropic-ai/claude-code' \
-    '@google/gemini-cli' \
     'opencode-ai' \
     '@earendil-works/pi-coding-agent'; do
     require_regex "$provider_source" "$provider_package" \
       "provider package $provider_package in $(basename "$provider_dockerfile")"
   done
+  forbid_regex "$provider_source" 'gemini|GOOGLE_API_KEY|GEMINI_API_KEY' \
+    "removed Gemini provider in $(basename "$provider_dockerfile")"
 done
 
 FAKE_BIN="$TEST_ROOT/fake-bin"
@@ -712,7 +713,7 @@ run_guest_builder() { # remaining arguments are environment overrides
     HTTP_PROXY= http_proxy= HTTPS_PROXY= https_proxy= ALL_PROXY= all_proxy= NO_PROXY= no_proxy= \
     REGISTRY_MIRROR= GOPROXY= GO_VERSION= GRPCURL_VERSION= NODE_MAJOR= NPM_CONFIG_REGISTRY= \
     PIP_INDEX_URL= PIP_TRUSTED_HOST= ARCHLINUX_TAG= ARCHLINUX_MIRROR= \
-    CODEX_VERSION= CLAUDE_CODE_VERSION= GEMINI_CLI_VERSION= OPENCODE_VERSION= \
+    CODEX_VERSION= CLAUDE_CODE_VERSION= OPENCODE_VERSION= \
     PI_AGENT_VERSION= PI_MCP_ADAPTER_VERSION= \
     "$@" \
     "$GUEST_BUILDER" >/dev/null
@@ -783,7 +784,7 @@ else
   guest_log=$(<"$FAKE_DOCKER_LOG")
   for omitted in HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY REGISTRY_MIRROR GOPROXY GO_VERSION GRPCURL_VERSION \
     NODE_MAJOR NPM_CONFIG_REGISTRY PIP_INDEX_URL PIP_TRUSTED_HOST \
-    ARCHLINUX_TAG ARCHLINUX_MIRROR CODEX_VERSION CLAUDE_CODE_VERSION GEMINI_CLI_VERSION OPENCODE_VERSION \
+    ARCHLINUX_TAG ARCHLINUX_MIRROR CODEX_VERSION CLAUDE_CODE_VERSION OPENCODE_VERSION \
     PI_AGENT_VERSION PI_MCP_ADAPTER_VERSION; do
     forbid_regex "$guest_log" "^$omitted=" "empty guest $omitted build argument"
   done
@@ -812,7 +813,6 @@ if ! run_guest_builder \
   PIP_TRUSTED_HOST=python.example.invalid \
   CODEX_VERSION=9.1.0 \
   CLAUDE_CODE_VERSION=9.2.0 \
-  GEMINI_CLI_VERSION=9.3.0 \
   OPENCODE_VERSION=9.4.0 \
   PI_AGENT_VERSION=9.5.0 \
   PI_MCP_ADAPTER_VERSION=9.6.0; then
@@ -834,7 +834,6 @@ else
     'PIP_TRUSTED_HOST=python.example.invalid' \
     'CODEX_VERSION=9.1.0' \
     'CLAUDE_CODE_VERSION=9.2.0' \
-    'GEMINI_CLI_VERSION=9.3.0' \
     'OPENCODE_VERSION=9.4.0' \
     'PI_AGENT_VERSION=9.5.0' \
     'PI_MCP_ADAPTER_VERSION=9.6.0'; do

@@ -214,14 +214,14 @@ func LLMProviderEnvName(name string) bool {
 // a user-facing response must not return it.
 //
 // Every credential the facade can absorb belongs here, including the aliases a
-// vendor accepts (CODEX_API_KEY for an OpenAI credential) and the credentials
-// the daemon can recognize but not proxy. A name the daemon does not recognize
-// is deliberately absent: that value is passed through to the guest, so a view
-// that hid it would describe an exposed value as protected without changing the
-// exposure.
+// vendor accepts (CODEX_API_KEY for an OpenAI credential), and so does every
+// credential the daemon recognizes but cannot proxy. The list is exhaustive for
+// recognition: a name the daemon does not recognize is deliberately absent,
+// because that value is passed through to the guest, so a view that hid it would
+// describe an exposed value as protected without changing the exposure.
 func LLMProviderCredentialEnvName(name string) bool {
 	switch strings.ToUpper(strings.TrimSpace(name)) {
-	case "LLM_API_KEY", "LLM_API_HEADERS", "OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "AZURE_OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY":
+	case "LLM_API_KEY", "LLM_API_HEADERS", "OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "AZURE_OPENAI_API_KEY":
 		return true
 	default:
 		return false

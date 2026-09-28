@@ -246,9 +246,13 @@ declared(可吸收) : daemon 认识的官方/知名 vendor 凭据
           - guest 只拿到 facade URL + token，真实 key 不进 guest
           - 协议转换、模型选择与 daemon 托管路径完全一致
 
-declared(识别但不可吸收) : daemon 认识但代理不了（Azure / Google 专属协议）
+declared(识别但不可吸收) : daemon 认识但代理不了（Azure 专属协议）
           - 不建连接、不代理，但 name 在剥离名单上，guest 环境里同样没有它
           - 值只留在 daemon 侧的声明里，项目检查说明它不会被转发
+
+`GOOGLE_API_KEY` / `GEMINI_API_KEY` 曾属于这一类。Gemini provider 移除后，它们也
+从识别表与剥离名单中一并删除，因此现在归入下面的不可识别类别：daemon 不认识、不持有，
+值原样下发到 guest，项目检查只提示它不是 daemon 认识的 provider 凭据。
 
 declared(不可识别) : 完全不认识的 `*_API_KEY` / `*_AUTH_TOKEN`
           - 原样下发到 guest 环境
@@ -264,7 +268,7 @@ sandbox+family 作键会让一个 run 的 preparation 覆盖另一个 run 仍在
 可吸收集合：`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、
 `CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`，以及通用的
 `LLM_API_KEY`（配合 `LLM_API_PROTOCOL` / `LLM_API_ENDPOINT`）。识别但不吸收：
-`AZURE_OPENAI_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY`。
+`AZURE_OPENAI_API_KEY`。
 
 声明的连接只按显式 ID 寻址，不进入 `Catalog.serving`、唯一连接兜底和
 `Connections()`，所以一个 agent 的凭据永远不会服务另一个 agent。同一个 run 的

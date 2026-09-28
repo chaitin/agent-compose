@@ -120,9 +120,9 @@ describe("provider thread state", () => {
     await withTempSession(async (root) => {
       const stateRoot = path.join(root, "state");
 
-      await writeStoredThread(stateRoot, "gemini", "");
+      await writeStoredThread(stateRoot, "opencode", "");
 
-      await expect(fs.stat(providerStatePath(stateRoot, "gemini"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.stat(providerStatePath(stateRoot, "opencode"))).rejects.toMatchObject({ code: "ENOENT" });
     });
   });
 });

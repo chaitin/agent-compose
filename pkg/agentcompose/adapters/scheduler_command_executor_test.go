@@ -219,7 +219,7 @@ func TestSchedulerCommandExecutorRebuildsAndOwnsCommandFacadeTokens(t *testing.T
 					"OPENAI_BASE_URL":             "https://openai.request.test/v1",
 					"AGENT_COMPOSE_SANDBOX_TOKEN": "stale-request-facade-token",
 					"CUSTOM_REQUEST_ENV":          "preserved",
-					"GOOGLE_API_KEY":              "preserved-google-key",
+					"AZURE_OPENAI_API_KEY":        "preserved-azure-key",
 				},
 			})
 			if tt.runtimeErr == nil && err != nil {
@@ -251,7 +251,7 @@ func TestSchedulerCommandExecutorRebuildsAndOwnsCommandFacadeTokens(t *testing.T
 			if runtimeRequest.Env["ANTHROPIC_API_KEY"] != "request-upstream-anthropic-key" || runtimeRequest.Env["ANTHROPIC_BASE_URL"] != "https://anthropic.request.test" || runtimeRequest.Env["OPENAI_API_KEY"] != "request-upstream-openai-key" {
 				t.Fatalf("runtime child request did not preserve explicit request environment: %#v", runtimeRequest.Env)
 			}
-			if runtimeRequest.Env["AGENT_COMPOSE_SANDBOX_TOKEN"] != "stale-request-facade-token" || runtimeRequest.Env["CUSTOM_REQUEST_ENV"] != "preserved" || runtimeRequest.Env["GOOGLE_API_KEY"] != "preserved-google-key" {
+			if runtimeRequest.Env["AGENT_COMPOSE_SANDBOX_TOKEN"] != "stale-request-facade-token" || runtimeRequest.Env["CUSTOM_REQUEST_ENV"] != "preserved" || runtimeRequest.Env["AZURE_OPENAI_API_KEY"] != "preserved-azure-key" {
 				t.Fatalf("runtime child request token/custom environment = %#v", runtimeRequest.Env)
 			}
 			if got := countSchedulerCommandFacadeTokens(t, ctx, configDB); got != tt.wantTokenCount {

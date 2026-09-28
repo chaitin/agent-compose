@@ -78,15 +78,6 @@ func TestClassifyDeclaredLLMCredential(t *testing.T) {
 			wantAbsorbed: true,
 		},
 		{
-			name:         "a google key is recognized but cannot be proxied",
-			env:          declaredEnvItems("GEMINI_API_KEY", "sk-gemini"),
-			wantEnvName:  "GEMINI_API_KEY",
-			wantFamily:   providerFamilyGoogle,
-			wantEndpoint: "https://generativelanguage.googleapis.com",
-			wantOfficial: true,
-			wantAbsorbed: false,
-		},
-		{
 			name:         "an azure key names no endpoint and cannot be proxied",
 			env:          declaredEnvItems("AZURE_OPENAI_API_KEY", "sk-azure"),
 			wantEnvName:  "AZURE_OPENAI_API_KEY",
@@ -299,7 +290,6 @@ func TestMergeManagedExecEnvStripsDeclaredProviderKeys(t *testing.T) {
 		"OPENAI_BASE_URL":   "https://declared-upstream.example",
 		"LLM_API_ENDPOINT":  "https://declared-upstream.example/v1",
 		"LLM_API_PROTOCOL":  "chat_completions",
-		"GOOGLE_API_KEY":    "sk-google-declared",
 		"CODEX_API_KEY":     "sk-codex-declared",
 		"DEEPSEEK_API_KEY":  "sk-deepseek-declared",
 		"LLM_API_HEADERS":   `{"x-secret":"1"}`,
@@ -320,7 +310,7 @@ func TestMergeManagedExecEnvStripsDeclaredProviderKeys(t *testing.T) {
 	if got := merged["OPENAI_BASE_URL"]; got != "http://daemon.test/llm/openai/v1" {
 		t.Errorf("OPENAI_BASE_URL = %q, want the managed facade address", got)
 	}
-	for _, stripped := range []string{"GOOGLE_API_KEY", "CODEX_API_KEY", "DEEPSEEK_API_KEY", "LLM_API_HEADERS"} {
+	for _, stripped := range []string{"CODEX_API_KEY", "DEEPSEEK_API_KEY", "LLM_API_HEADERS"} {
 		if value, ok := merged[stripped]; ok {
 			t.Errorf("%s = %q survived the managed merge, but it is a declared provider credential", stripped, value)
 		}

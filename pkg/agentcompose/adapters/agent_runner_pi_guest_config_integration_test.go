@@ -129,7 +129,6 @@ func TestIntegrationAgentRunnerFreshGuestHomeIncludesEveryGeneratedProviderFile(
 		{"opencode", "openai/first", ".config/opencode/opencode.json"},
 		{"pi", "openai/first", ".pi/agent/models.json"},
 		{"dsh", "openai/first", ""},
-		{"gemini", "first", ""},
 	} {
 		t.Run(test.provider, func(t *testing.T) {
 			root := t.TempDir()
@@ -210,17 +209,10 @@ func TestIntegrationAgentRunnerFreshGuestHomeIncludesEveryGeneratedProviderFile(
 			}
 			// The sandbox declares its own upstream, so the daemon imports the
 			// declaration and proxies it: the guest environment carries only the
-			// run-scoped facade token, never the declared key. An agent kind with
-			// no LLM dialect receives no configuration at all.
+			// run-scoped facade token, never the declared key.
 			environment := map[string]string{}
 			for _, item := range sandbox.RuntimeEnvItems {
 				environment[item.Name] = item.Value
-			}
-			if test.provider == "gemini" {
-				if len(environment) != 0 {
-					t.Fatalf("agent without an LLM dialect received an environment: %#v", environment)
-				}
-				return
 			}
 			token := environment["AGENT_COMPOSE_SANDBOX_TOKEN"]
 			if token == "" {

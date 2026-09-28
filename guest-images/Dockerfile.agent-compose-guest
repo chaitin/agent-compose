@@ -8,7 +8,6 @@ ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org
 ARG NODE_MAJOR=22
 ARG CODEX_VERSION=0.146.0
 ARG CLAUDE_CODE_VERSION=2.1.220
-ARG GEMINI_CLI_VERSION=0.53.0
 ARG OPENCODE_VERSION=1.18.9
 ARG PI_AGENT_VERSION=0.82.1
 ARG PI_MCP_ADAPTER_VERSION=2.11.0
@@ -32,7 +31,6 @@ ARG NPM_CONFIG_REGISTRY
 ARG NODE_MAJOR
 ARG CODEX_VERSION
 ARG CLAUDE_CODE_VERSION
-ARG GEMINI_CLI_VERSION
 ARG OPENCODE_VERSION
 ARG PI_AGENT_VERSION
 ARG PI_MCP_ADAPTER_VERSION
@@ -74,7 +72,6 @@ RUN set -e; \
       "@openai/codex@${CODEX_VERSION}" \
       "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
       "${CLAUDE_CODE_PLATFORM_PACKAGE}@${CLAUDE_CODE_VERSION}" \
-      "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
       "opencode-ai@${OPENCODE_VERSION}" \
       "@earendil-works/pi-coding-agent@${PI_AGENT_VERSION}" \
       "pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}" \
@@ -104,7 +101,6 @@ RUN cd /tmp/agent-compose-runtime && \
     ln -sfv ../lib/node_modules/@chaitin-ai/agent-compose-runtime/dist/cli.js /usr/bin/agent-compose-runtime && \
     ln -sf ../lib/node_modules/@openai/codex/bin/codex.js /usr/bin/codex && \
     ln -sf ../lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe /usr/bin/claude && \
-    ln -sf ../lib/node_modules/@google/gemini-cli/bundle/gemini.js /usr/bin/gemini && \
     ln -sf ../lib/node_modules/opencode-ai/bin/opencode.exe /usr/bin/opencode && \
     ln -sf ../lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js /usr/bin/pi && \
     ln -sf ../lib/node_modules/@deepseek-ai/dsh/lib/bin.js /usr/bin/dsh && \

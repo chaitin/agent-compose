@@ -14,8 +14,8 @@ Languages: [English](README.md) | 中文
 
 ## 前置条件
 
-- 一个以 `driver: k8s` 运行的 `agent-compose` daemon（参考 `charts/agent-compose`），
-  且集群节点上能拉到 `agent-compose-guest:latest`。
+- 一个运行在 `k8s` driver 上的 `agent-compose` daemon（`charts/agent-compose`
+  的 `runtime.driver: k8s`），且集群节点上能拉到 `agent-compose-guest:latest`。
 - daemon 所在的 guest 镜像需要 `git`（`skilled` agent 用），以及 Node.js（
   `agent-compose-guest:latest` 已自带，供 MCP server 用）。
 - 集群需要有能满足 `volumed` agent 的 `cache` volume PVC 的 StorageClass。

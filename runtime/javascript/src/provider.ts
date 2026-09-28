@@ -1,6 +1,6 @@
 import type { Provider } from "./types.js";
 
-const providerList = "codex, claude, gemini, opencode, pi, dsh";
+const providerList = "codex, claude, opencode, pi, dsh";
 
 export function normalizeProvider(raw: unknown): Provider {
   const provider = String(raw ?? "").trim().toLowerCase();
@@ -14,10 +14,6 @@ export function normalizeProvider(raw: unknown): Provider {
     case "claude-code":
     case "claude_code":
       return "claude";
-    case "gemini":
-    case "gemini-cli":
-    case "gemini_cli":
-      return "gemini";
     case "opencode":
     case "open-code":
     case "open_code":

@@ -14,8 +14,10 @@ Only the MPI (Model Program Interface) capability catalog reached provider
 system/developer instruction channels.
 
 The Phase 1 provider matrix below is historical. The current runtime has since
-added OpenCode and Pi; all five runners receive the composed context, using
-native system channels where available and prompt/file fallbacks elsewhere.
+added OpenCode, Pi, and dsh; all five runners receive the composed context, using
+native system channels where available and prompt/file fallbacks elsewhere. dsh
+takes the file-based route: `runtime/javascript/src/runners/dsh.ts` writes the
+system context to `system-context.txt` and sets `DSH_SYSTEM_CONTEXT_FILE`.
 
 Phase 1 closed that gap by wiring agent identity into a layered prompt model
 without introducing a full platform runtime brief.
@@ -36,7 +38,6 @@ Provider injection before Phase 1:
 | --- | --- |
 | Codex | `config.developer_instructions = mpiContext` |
 | Claude | `systemPrompt: { preset: "claude_code", append: mpiContext }` |
-| Gemini | No system context (MPI ignored) |
 
 ### Prompt model
 
@@ -54,7 +55,7 @@ skills discovery.
 
 ### Phase 1 scope (delivered)
 
-- Make configured `system_prompt` affect Codex, Claude, and Gemini runs
+- Make configured `system_prompt` affect Codex and Claude runs
 - Preserve per-turn message isolation (`--message-file` carries task text only)
 - Compose Agent Identity **before** the MPI catalog when both are present
 - Remain backward compatible when `system_prompt` is empty or no agent binding exists
@@ -116,7 +117,7 @@ Rules:
                               ┌────────────────────────────────┐
                               │ guest: agent-compose-runtime   │
                               │   prompt                       │
-                              │   --provider codex|claude|gemini│
+                              │   --provider codex|claude      │
                               │   --message-file …/prompts/…   │
                               │   --state-root /data/state     │
                               └────────┬───────────────────────┘
@@ -125,10 +126,10 @@ Rules:
                                        │
                               buildSystemContext()
                                        │
-              ┌────────────────────────┼────────────────────────┐
-              ▼                        ▼                        ▼
-         CodexRunner              ClaudeRunner            GeminiRunner
-    developer_instructions    systemPrompt.append      prepend to -p
+              ┌────────────────────────┴────────────────────────┐
+              ▼                                                 ▼
+         CodexRunner                                       ClaudeRunner
+    developer_instructions                             systemPrompt.append
 ```
 
 Guest command shape:
@@ -176,7 +177,11 @@ On DB lookup failure, the host logs a warning and runs without agent identity
 
 ### Write system prompt file
 
-**Function:** `execution.WriteAgentSystemPromptFile(sandbox, systemPrompt string) error`
+**Function (in `pkg/execution/agent_files.go`):** `execution.WriteAgentSystemPromptFile(ctx context.Context, config *appconfig.Config, session *domain.Sandbox, systemPrompt string, writeGuestFile GuestFileWriterFunc) error`
+
+`writeGuestFile` is the guest writer a driver without a shared filesystem uses
+(k8s pushes the file through exec/tar); drivers with a shared mount pass `nil`
+and the guest reads the host file directly.
 
 | Property | Value |
 | --- | --- |
@@ -307,23 +312,6 @@ systemPrompt: {
 }
 ```
 
-### Gemini
-
-Gemini has no native system-instruction channel in the current runner. The
-implemented fallback prepends the composed context to the user prompt:
-
-```typescript
-const userPrompt = systemContext
-  ? `${systemContext}\n\n${promptText}`
-  : promptText;
-```
-
-The subprocess is invoked with `-p userPrompt`. This intentionally merges identity
-and task into one CLI argument until a native system channel exists.
-
-No Gemini trust or permission flags are changed in Phase 1; those remain outside
-the system prompt wiring scope.
-
 ## Binding Scenarios
 
 | Run type | How agent identity is resolved |
@@ -390,7 +378,6 @@ or changed context state.
 | `runtime/javascript/src/runners/codex.ts` | `developer_instructions` from `systemContext`; fingerprint-gated resume |
 | `runtime/javascript/src/session-state.ts` | Validated provider-state parsing and optional fingerprint persistence |
 | `runtime/javascript/src/runners/claude.ts` | `systemPrompt.append` from `systemContext` |
-| `runtime/javascript/src/runners/gemini.ts` | Prepend `systemContext` to `-p` |
 | `runtime/javascript/test/system-context.test.ts` | **new** — composition unit tests |
 | `runtime/javascript/test/runners.test.ts` | Updated for `systemContext` |
 | `runtime/javascript/test/codex-thread-resume.test.ts` | Hash, version, reset-reason, and resume-policy coverage |
@@ -431,12 +418,6 @@ discovery for `local_directory` workspaces.
 
 Discover and inject skill summaries or on-demand `SKILL.md` sections into the
 composed brief, similar to Cursor Agent Skills.
-
-### Gemini native system channel
-
-Replace the `-p` prepend fallback when the Gemini CLI or SDK exposes a dedicated
-system-instruction parameter. Until then, per-turn message isolation remains
-relaxed for Gemini only.
 
 ### Field rename: `system_prompt` → `instructions`
 

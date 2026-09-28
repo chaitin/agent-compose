@@ -58,9 +58,7 @@ func TestRedactProjectSpecSecretsHidesEveryProviderCredential(t *testing.T) {
 		Agents: []*agentcomposev2.AgentSpec{{
 			Name: "reviewer",
 			Env: []*agentcomposev2.EnvVarSpec{
-				{Name: "GOOGLE_API_KEY", Value: "unproxyable"},
 				{Name: "AZURE_OPENAI_API_KEY", Value: "unproxyable"},
-				{Name: "GEMINI_API_KEY", Value: "unproxyable"},
 				{Name: "CODEX_API_KEY", Value: "absorbed"},
 				{Name: "DEEPSEEK_API_KEY", Value: "absorbed"},
 				{Name: "LLM_API_HEADERS", Value: `{"X-Gateway-Token":"header"}`},
@@ -87,6 +85,10 @@ func TestRedactProjectSpecSecretsKeepsUnrecognizedCredentialsVisible(t *testing.
 			Env: []*agentcomposev2.EnvVarSpec{
 				{Name: "MYCORP_API_KEY", Value: "unrecognized"},
 				{Name: "MYCORP_AUTH_TOKEN", Value: "unrecognized"},
+				// Google credentials stopped being recognized with the Gemini
+				// provider, so they are exposed exactly like the names above.
+				{Name: "GOOGLE_API_KEY", Value: "unrecognized"},
+				{Name: "GEMINI_API_KEY", Value: "unrecognized"},
 				// An address is not a credential: the operator declared it for the
 				// daemon, and the views keep showing what they wrote.
 				{Name: "ANTHROPIC_BASE_URL", Value: "https://upstream.example"},
@@ -97,7 +99,7 @@ func TestRedactProjectSpecSecretsKeepsUnrecognizedCredentialsVisible(t *testing.
 
 	redacted := RedactProjectSpecSecrets(spec)
 
-	for index, want := range []string{"unrecognized", "unrecognized", "https://upstream.example", "https://upstream.example/v1"} {
+	for index, want := range []string{"unrecognized", "unrecognized", "unrecognized", "unrecognized", "https://upstream.example", "https://upstream.example/v1"} {
 		if got := redacted.Agents[0].Env[index].GetValue(); got != want {
 			t.Errorf("env[%d] = %q, want %q to stay visible", index, got, want)
 		}

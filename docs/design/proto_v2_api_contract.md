@@ -26,10 +26,10 @@ is `InvalidArgument`.
 
 ## Driver model
 
-`DriverSpec` is a single-config model. Exactly one of `boxlite`, `docker`, or
-`microsandbox` is selected in `config`, and the required `name` field must
-match that case. `name` remains in the wire and JSON representation for
-compatibility with existing project output; the server always emits both.
+`DriverSpec` is a single-config model. Exactly one of `boxlite`, `docker`,
+`microsandbox`, or `k8s` is selected in `config`, and the required `name`
+field must match that case. `name` remains in the wire and JSON representation
+for compatibility with existing project output; the server always emits both.
 There is no persistence of inactive driver configurations. A missing config,
 missing name, or mismatch is invalid. This matches compose normalization,
 which has always required exactly one runtime configuration, and prevents

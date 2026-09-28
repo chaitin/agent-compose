@@ -248,7 +248,7 @@ variables:
 
 `variables` 当前用于保存项目级配置值和脱敏语义。若某个值要传入 sandbox，仍需在对应 Agent 的 `env` 中声明。
 
-在这里声明的第一方 LLM 凭据不会交给 sandbox：daemon 会把它导入自己的 LLM 连接并代理本次 run，sandbox 只会收到本次 run 的 facade token。可识别的变量名包括 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、`CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`，以及可配合 `LLM_API_PROTOCOL`、`LLM_API_ENDPOINT` 的 `LLM_API_KEY`。被吸收的声明会连同它的端点变量一起留在 daemon：`LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、`OPENROUTER_BASE_URL` 都不会进入 sandbox，daemon 会在原处装上同一协议对应的 facade 地址。`AZURE_OPENAI_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY` 能被识别但无法代理：daemon 会把它们从 sandbox 环境中移除，而不是转发一个自己无法服务的凭据，因此 agent 同样看不到它们。只有 daemon 完全不认识的形似凭据的名字（其它 `*_API_KEY`、`*_AUTH_TOKEN`）才会原样进入 sandbox，sandbox 内的进程可以读到。项目检查会分别说明每个声明属于哪种情况，并建议改用 daemon 侧的 LLM 配置——那才是凭据可以被显式管理、轮换和共享的地方。凡是 daemon 不交给 sandbox 的凭据——无论是否被吸收——在工程与 Agent 视图中一律脱敏为 `********`，无论声明里有没有写 `secret: true`；变量名仍然保留，运维能看到自己声明了什么。`OPENAI_BASE_URL` 这类端点是地址而非凭据，仍按原值显示。这只影响展示，不影响 daemon 解析到的声明；某次 run 实际使用的 facade 地址与 token 只存在于该次 run 的环境中，不会被持久化。
+在这里声明的第一方 LLM 凭据不会交给 sandbox：daemon 会把它导入自己的 LLM 连接并代理本次 run，sandbox 只会收到本次 run 的 facade token。可识别的变量名包括 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、`CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`，以及可配合 `LLM_API_PROTOCOL`、`LLM_API_ENDPOINT` 的 `LLM_API_KEY`。被吸收的声明会连同它的端点变量一起留在 daemon：`LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、`OPENROUTER_BASE_URL` 都不会进入 sandbox，daemon 会在原处装上同一协议对应的 facade 地址。`AZURE_OPENAI_API_KEY` 能被识别但无法代理：daemon 会把它从 sandbox 环境中移除，而不是转发一个自己无法服务的凭据，因此 agent 同样看不到它。只有 daemon 完全不认识的形似凭据的名字（其它 `*_API_KEY`、`*_AUTH_TOKEN`）才会原样进入 sandbox，sandbox 内的进程可以读到。项目检查会分别说明每个声明属于哪种情况，并建议改用 daemon 侧的 LLM 配置——那才是凭据可以被显式管理、轮换和共享的地方。凡是 daemon 不交给 sandbox 的凭据——无论是否被吸收——在工程与 Agent 视图中一律脱敏为 `********`，无论声明里有没有写 `secret: true`；变量名仍然保留，运维能看到自己声明了什么。`OPENAI_BASE_URL` 这类端点是地址而非凭据，仍按原值显示。这只影响展示，不影响 daemon 解析到的声明；某次 run 实际使用的 facade 地址与 token 只存在于该次 run 的环境中，不会被持久化。
 
 ## `workspaces`：项目级工作区
 
@@ -505,7 +505,7 @@ agents:
 | `enabled` | bool | `true` | 是否启用 Agent。禁用后定义保留但不可按正常流程运行，Scheduler 也不会启用。 |
 | `display_name` | string | 空 | Agent 的可读显示名称。 |
 | `description` | string | 空 | Agent 职责的可读说明。 |
-| `provider` | string | `codex` | Agent CLI/provider：`codex`、`claude`、`gemini`、`opencode`、`pi` 或 `dsh`。兼容别名会在持久化边界归一化。 |
+| `provider` | string | `codex` | Agent CLI/provider：`codex`、`claude`、`opencode`、`pi` 或 `dsh`。兼容别名会在持久化边界归一化。 |
 | `model` | string | daemon 默认模型 | 不透明的模型名；省略时使用 daemon 的默认模型；支持 `${NAME}` 插值。 |
 | `system_prompt` | string | 空 | 附加的系统提示，适合使用 YAML `|` 多行标量。 |
 | `image` | string | daemon 默认镜像 | Guest 镜像引用，也会作为 `build` 的一个输出 tag。 |
@@ -533,7 +533,7 @@ agents:
       Focus on correctness, security, and regression risk.
 ```
 
-Provider 支持 `codex`、`claude`、`gemini`、`opencode`、`pi` 和 `dsh`。当前兼容归一化还接受 `claude-code` / `claude_code`、`gemini-cli` / `gemini_cli`、`open-code` / `open_code`、`pi-agent` / `pi_agent`、`deepseek` / `deepseek-harness` / `deepseek_harness`，新配置建议使用规范名称。
+Provider 支持 `codex`、`claude`、`opencode`、`pi` 和 `dsh`。当前兼容归一化还接受 `claude-code` / `claude_code`、`open-code` / `open_code`、`pi-agent` / `pi_agent`、`deepseek` / `deepseek-harness` / `deepseek_harness`，新配置建议使用规范名称。
 
 Pi、dsh 和 opencode 是多模型 Agent，建议显式声明其模型：
 
@@ -656,7 +656,7 @@ agents:
     image: chaitin/agent-compose-guest:latest
 ```
 
-运行时会确保所选 driver 能使用该镜像。若同时配置 `build`，`image` 也会加入构建 tag；若两者均未提供 tag，执行 `agent-compose build` 会失败。
+运行时会确保所选 driver 能使用该镜像。若同时配置 `build`，`image` 也会加入构建 tag；只有 `image`、`build.tags` 或 `--tag` 参数至少提供一个 tag 时，`agent-compose build` 才会成功。
 
 GitHub CI 会向 Docker Hub 发布以下镜像：
 
@@ -757,7 +757,10 @@ driver:
 | `k8s` | `context`, `namespace` | 通过 Kubernetes 创建 sandbox Pod。`context` 选择 kubeconfig context；省略时由 client-go 使用 kubeconfig 当前 context 或集群内配置。`namespace` 覆盖 `K8S_NAMESPACE`，最终回退到 `default`。 |
 | `firecracker` | `kernel`, `rootfs` | 仅保留在解析 schema 中；当前规范化会明确报 `unsupported runtime driver firecracker`，不可使用。 |
 
-k8s driver 要求 daemon 运行在目标集群内部。对外支持的安装入口是
+k8s driver 通过 kubeconfig 构建 client：设置了显式的 `K8S_KUBECONFIG`/`KUBECONFIG`
+路径时使用该路径，否则使用 `~/.kube/config` 的加载规则；只有两者都解析不到配置时才回退到
+集群内配置。Sandbox Pod 通过 `K8S_RUNTIME_BASE_URL`（会覆盖
+`AGENT_COMPOSE_RUNTIME_BASE_URL`）配置的地址访问 daemon。对外支持的安装入口是
 `charts/agent-compose` Helm Chart：
 
 ```bash
@@ -796,7 +799,7 @@ env:
 
 这些值进入 Agent sandbox。相同名称的空项会在后续边界归一化；`secret: true` 控制展示脱敏。
 
-在这里声明的可识别第一方 LLM 凭据是例外——`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、`CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`、`LLM_API_KEY`：daemon 会把它们导入自己的 LLM 连接并代理本次 run，sandbox 只会收到 facade token。被吸收的声明会连同端点变量一起留在 daemon——`LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、`OPENROUTER_BASE_URL` 都会从 sandbox 环境中移除，并在原处装上 facade 地址。daemon 能识别但无法代理的凭据（`AZURE_OPENAI_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY`）同样会从 sandbox 环境中移除，并在工程/Agent 视图中与被吸收的凭据一起脱敏。只有无法识别的形似凭据的名字（其它 `*_API_KEY`、`*_AUTH_TOKEN`）才会原样下发，sandbox 内任何进程都能读到；项目检查会说明每个声明属于哪种情况。
+在这里声明的可识别第一方 LLM 凭据是例外——`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、`CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`、`LLM_API_KEY`：daemon 会把它们导入自己的 LLM 连接并代理本次 run，sandbox 只会收到 facade token。被吸收的声明会连同端点变量一起留在 daemon——`LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、`OPENROUTER_BASE_URL` 都会从 sandbox 环境中移除，并在原处装上 facade 地址。daemon 能识别但无法代理的凭据（`AZURE_OPENAI_API_KEY`）同样会从 sandbox 环境中移除，并在工程/Agent 视图中与被吸收的凭据一起脱敏。只有无法识别的形似凭据的名字（其它 `*_API_KEY`、`*_AUTH_TOKEN`）才会原样下发，sandbox 内任何进程都能读到；项目检查会说明每个声明属于哪种情况。
 
 ### `mcp_servers`
 

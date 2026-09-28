@@ -6,7 +6,6 @@ ARG GOPROXY=https://proxy.golang.org
 ARG ARCHLINUX_MIRROR
 ARG CODEX_VERSION=0.146.0
 ARG CLAUDE_CODE_VERSION=2.1.220
-ARG GEMINI_CLI_VERSION=0.53.0
 ARG OPENCODE_VERSION=1.18.9
 ARG PI_AGENT_VERSION=0.82.1
 ARG PI_MCP_ADAPTER_VERSION=2.11.0
@@ -41,7 +40,6 @@ RUN npm config set prefix /usr/local/ &&\
     npm install -g @openai/codex@${CODEX_VERSION} &&\
     npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} &&\
     npm install -g @anthropic-ai/claude-code-linux-x64@${CLAUDE_CODE_VERSION} &&\
-    npm install -g @google/gemini-cli@${GEMINI_CLI_VERSION} &&\
     npm install -g opencode-ai@${OPENCODE_VERSION} &&\
     npm install -g @earendil-works/pi-coding-agent@${PI_AGENT_VERSION} &&\
     npm install -g pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION} &&\

@@ -32,7 +32,7 @@ func TestDialectForNormalizesAgentAliases(t *testing.T) {
 }
 
 func TestDialectForRejectsAgentsWithoutManagedLLM(t *testing.T) {
-	for _, kind := range []string{"gemini", "gemini-cli", "unknown-agent", ""} {
+	for _, kind := range []string{"unknown-agent", ""} {
 		if _, err := DialectFor(kind); !errors.Is(err, ErrUnsupportedAgentDialect) {
 			t.Errorf("DialectFor(%q) error = %v, want ErrUnsupportedAgentDialect", kind, err)
 		}

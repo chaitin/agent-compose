@@ -283,10 +283,11 @@ and uses only the `grpc` section. **If OctoBus is
 unreachable or rendering fails, record an event and continue; sandbox/scheduler
 starts normally.**
 
-Coverage: all five current guest runners receive the composed `systemContext`,
+Coverage: every current guest runner receives the composed `systemContext`,
 which contains the MPI catalog. Codex and Claude use native system/developer
-context channels; Gemini and OpenCode prepend it to the user prompt, and Pi
-passes it through an appended system-prompt file.
+context channels; OpenCode prepends it to the user prompt, Pi passes it through
+an appended system-prompt file, and dsh writes it to a file named by
+`DSH_SYSTEM_CONTEXT_FILE`.
 
 Timing constraint: env injection runs before `Store.CreateSandbox` and returns
 values that are merged into the create request, when sandbox directory does not

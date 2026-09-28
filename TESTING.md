@@ -249,22 +249,6 @@ compiled only with the `docker_e2e` build tag, so the ordinary `task test`
 coverage gate does not include this scheduler Docker E2E or create its runtime
 containers.
 
-The one-time V2 storage migration has an opt-in host-daemon Docker cutover E2E:
-
-```bash
-task image:agent-compose-guest
-task test:e2e:docker-v2-storage-cutover
-```
-
-Set `AGENT_COMPOSE_E2E_V2_STORAGE_CUTOVER_IMAGE` to use another compatible
-local guest image. The test creates an isolated version 4 data root containing
-a standalone scheduler and persisted environment, runs the standalone migrator
-in place, then starts the candidate daemon. Through public APIs it runs the
-migrated scheduler in a real Docker sandbox and verifies its environment,
-persisted run, linked scheduler events, result, sandbox visibility, and cleanup.
-This focused task is intentionally opt-in because it requires a local Docker
-Engine and a prebuilt guest image.
-
 The full daemon image Docker lifecycle E2E is opt-in because it starts the
 daemon image and Docker sandbox containers through a local Docker socket. Run
 it after building both local images:

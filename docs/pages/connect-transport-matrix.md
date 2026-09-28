@@ -1,6 +1,6 @@
 # Connect transport support matrix
 
-This matrix describes the transports required by the daemon's Connect control-plane RPCs. “Unary” means request/response RPCs, “server-stream” means the daemon sends multiple responses, and “bidi” means `RunAttach`/`ExecAttach` style interactive calls where both sides may send messages.
+This matrix describes the transports required by the daemon's Connect control-plane RPCs. “Unary” means request/response RPCs, “server-stream” means the daemon sends multiple responses, and “bidi” means `AttachAgentRun`/`AttachExec` style interactive calls where both sides may send messages.
 
 | Transport | Unary | Server-stream | Bidi attach | Deployment notes |
 | --- | --- | --- | --- | --- |

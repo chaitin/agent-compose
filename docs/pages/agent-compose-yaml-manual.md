@@ -249,7 +249,7 @@ variables:
 
 Project variables are retained as project configuration values with redaction semantics. They are not automatically inherited by agent `env`, and they are not a source for other `${NAME}` expressions. Declare a value again under an agent's `env` when it must enter that agent's sandbox.
 
-A first-party LLM credential declared here is not handed to the sandbox: the daemon imports it into its own LLM connections and proxies the run, so the sandbox only ever receives a run-scoped facade token. The recognized names are `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, and `LLM_API_KEY` (optionally with `LLM_API_PROTOCOL` and `LLM_API_ENDPOINT`). The declaration's endpoint variables — `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_ENDPOINT`, `OPENAI_BASE_URL`, `DEEPSEEK_BASE_URL`, `OPENROUTER_BASE_URL` — belong to the absorbed declaration and do not reach the sandbox either; the sandbox is given the facade address that serves the same protocol. `AZURE_OPENAI_API_KEY`, `GOOGLE_API_KEY`, and `GEMINI_API_KEY` are recognized but cannot be proxied: the daemon removes them from the sandbox environment rather than forwarding a credential it cannot serve, so the agent never sees them either. Only a credential-looking name the daemon does not recognize at all (any other `*_API_KEY` or `*_AUTH_TOKEN`) is passed through to the sandbox, where anything running there can read it. Project checks report which of the three cases each declaration falls into and recommend the daemon's LLM configuration, which is where a credential is managed, rotated, and shared deliberately. Every credential the daemon keeps off the sandbox — absorbed or only recognized — is redacted in project and agent views whether or not the declaration set `secret: true`: the variable name stays visible so an operator can see what they declared, but the value is shown as `********`. Endpoint variables such as `OPENAI_BASE_URL` are addresses rather than credentials and stay visible. The declaration the daemon resolved is not affected, and the facade address and token a run actually uses live only in the run's environment and are never persisted.
+A first-party LLM credential declared here is not handed to the sandbox: the daemon imports it into its own LLM connections and proxies the run, so the sandbox only ever receives a run-scoped facade token. The recognized names are `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, and `LLM_API_KEY` (optionally with `LLM_API_PROTOCOL` and `LLM_API_ENDPOINT`). The declaration's endpoint variables — `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_ENDPOINT`, `OPENAI_BASE_URL`, `DEEPSEEK_BASE_URL`, `OPENROUTER_BASE_URL` — belong to the absorbed declaration and do not reach the sandbox either; the sandbox is given the facade address that serves the same protocol. `AZURE_OPENAI_API_KEY` is recognized but cannot be proxied: the daemon removes it from the sandbox environment rather than forwarding a credential it cannot serve, so the agent never sees it either. Only a credential-looking name the daemon does not recognize at all (any other `*_API_KEY` or `*_AUTH_TOKEN`) is passed through to the sandbox, where anything running there can read it. Project checks report which of the three cases each declaration falls into and recommend the daemon's LLM configuration, which is where a credential is managed, rotated, and shared deliberately. Every credential the daemon keeps off the sandbox — absorbed or only recognized — is redacted in project and agent views whether or not the declaration set `secret: true`: the variable name stays visible so an operator can see what they declared, but the value is shown as `********`. Endpoint variables such as `OPENAI_BASE_URL` are addresses rather than credentials and stay visible. The declaration the daemon resolved is not affected, and the facade address and token a run actually uses live only in the run's environment and are never persisted.
 
 ## `workspaces`: project workspaces
 
@@ -504,7 +504,7 @@ agents:
 | `enabled` | bool | `true` | Whether the Agent is enabled. A disabled definition remains stored but cannot run normally, and its scheduler is not enabled. |
 | `display_name` | string | Empty | Human-readable agent label. |
 | `description` | string | Empty | Human-readable explanation of the agent's role. |
-| `provider` | string | `codex` | Agent provider: `codex`, `claude`, `gemini`, `opencode`, `pi`, or `dsh`. Compatibility aliases are normalized at persistence boundaries. |
+| `provider` | string | `codex` | Agent provider: `codex`, `claude`, `opencode`, `pi`, or `dsh`. Compatibility aliases are normalized at persistence boundaries. |
 | `model` | string | Daemon default model | Opaque model name. Omitting it selects the daemon's default model. Supports `${NAME}` interpolation. |
 | `system_prompt` | string | Empty | Additional system instructions; YAML block scalars are recommended for multiline text. |
 | `image` | string | Daemon default image | Guest image reference and an output tag when `build` is used. |
@@ -532,7 +532,7 @@ agents:
       Focus on correctness, security, and regression risk.
 ```
 
-Canonical providers are `codex`, `claude`, `gemini`, `opencode`, `pi`, and `dsh`. Compatibility normalization also accepts `claude-code` / `claude_code`, `gemini-cli` / `gemini_cli`, `open-code` / `open_code`, `pi-agent` / `pi_agent`, and `deepseek` / `deepseek-harness` / `deepseek_harness`; new files should use canonical names.
+Canonical providers are `codex`, `claude`, `opencode`, `pi`, and `dsh`. Compatibility normalization also accepts `claude-code` / `claude_code`, `open-code` / `open_code`, `pi-agent` / `pi_agent`, and `deepseek` / `deepseek-harness` / `deepseek_harness`; new files should use canonical names.
 
 Pi, dsh, and opencode are multi-model agents, so their model is worth declaring explicitly:
 
@@ -674,7 +674,7 @@ agents:
     image: chaitin/agent-compose-guest:latest
 ```
 
-At runtime, the selected driver must be able to obtain this image. When `build` is also configured, `image` becomes one of the build output tags. `agent-compose build` fails if neither `image` nor `build.tags` provides a tag.
+At runtime, the selected driver must be able to obtain this image. When `build` is also configured, `image` becomes one of the build output tags. `agent-compose build` fails unless `image`, `build.tags`, or the `--tag` flag provides at least one tag.
 
 GitHub CI publishes these images to Docker Hub:
 
@@ -769,9 +769,13 @@ driver:
 | `k8s` | `context`, `namespace` | Creates sandbox Pods through Kubernetes. `context` selects a kubeconfig context; when omitted, client-go uses the kubeconfig current context or in-cluster configuration. `namespace` overrides `K8S_NAMESPACE`, whose final fallback is `default`. |
 | `firecracker` | `kernel`, `rootfs` | Reserved in the parser schema. Normalization currently returns `unsupported runtime driver firecracker`, so it cannot be used. |
 
-The k8s driver requires the daemon to run inside the target cluster. The
-supported installation entry point is the Helm chart at
-`charts/agent-compose`:
+The k8s driver builds its client from kubeconfig: it uses an explicit
+`K8S_KUBECONFIG`/`KUBECONFIG` path when set, otherwise the `~/.kube/config`
+loading rules, and falls back to in-cluster configuration only when neither
+resolves to a configuration. Sandbox Pods reach the daemon through the URL
+configured by `K8S_RUNTIME_BASE_URL`, which overrides
+`AGENT_COMPOSE_RUNTIME_BASE_URL`. The supported installation entry point is the
+Helm chart at `charts/agent-compose`:
 
 ```bash
 helm install agent-compose ./charts/agent-compose \
@@ -810,7 +814,7 @@ env:
 
 These values enter the agent sandbox. Secret values are redacted from normalized display but remain available to the runtime.
 
-A recognized first-party LLM credential declared here — `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, or `LLM_API_KEY` — is the exception: the daemon imports it into its own LLM connections and proxies the run, so the sandbox receives only a facade token. An absorbed declaration takes its endpoint variables with it: `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_ENDPOINT`, `OPENAI_BASE_URL`, `DEEPSEEK_BASE_URL`, and `OPENROUTER_BASE_URL` are removed from the sandbox environment, and the managed facade address is installed in their place. Credentials the daemon recognizes but cannot proxy (`AZURE_OPENAI_API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY`) are removed from the sandbox environment too, and are redacted in project and agent views along with the absorbed ones. Only an unrecognized credential-looking name (any other `*_API_KEY` or `*_AUTH_TOKEN`) is passed through and can be read by anything running in the sandbox; project checks report which case each declaration falls into.
+A recognized first-party LLM credential declared here — `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, or `LLM_API_KEY` — is the exception: the daemon imports it into its own LLM connections and proxies the run, so the sandbox receives only a facade token. An absorbed declaration takes its endpoint variables with it: `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_ENDPOINT`, `OPENAI_BASE_URL`, `DEEPSEEK_BASE_URL`, and `OPENROUTER_BASE_URL` are removed from the sandbox environment, and the managed facade address is installed in their place. Credentials the daemon recognizes but cannot proxy (`AZURE_OPENAI_API_KEY`) are removed from the sandbox environment too, and are redacted in project and agent views along with the absorbed ones. Only an unrecognized credential-looking name (any other `*_API_KEY` or `*_AUTH_TOKEN`) is passed through and can be read by anything running in the sandbox; project checks report which case each declaration falls into.
 
 ### `mcp_servers`
 

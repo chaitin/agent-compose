@@ -236,21 +236,6 @@ describe("runner execution", () => {
     });
   });
 
-  it("writes Gemini MCP settings before spawning", async () => {
-    const { GeminiRunner } = await import("../src/runners/gemini.js");
-    await withTempSession(async (root) => {
-      const runner = new GeminiRunner({
-        ...runnerOptions(root, "catalog body", "gemini"),
-        mcpConfig: {
-          docs: { type: "remote", transport: "http", url: "https://docs.example/mcp", headers: { Authorization: { value: "Bearer token" } } },
-        },
-      });
-      await runner.runPrompt("prompt");
-      const settings = JSON.parse(await fs.readFile(path.join(root, "home", ".gemini", "settings.json"), "utf-8"));
-      expect(settings.mcpServers.docs).toMatchObject({ httpUrl: "https://docs.example/mcp", headers: { Authorization: "Bearer token" } });
-    });
-  });
-
   it("writes OpenCode MCP config before spawning", async () => {
     const { OpenCodeRunner } = await import("../src/runners/opencode.js");
     await withTempSession(async (root) => {
@@ -654,52 +639,6 @@ describe("runner execution", () => {
     });
   });
 
-  it("marks Gemini transcript fallback when no result message is present", async () => {
-    const { GeminiRunner } = await import("../src/runners/gemini.js");
-    await withTempSession(async (root) => {
-      childProcessState.stdoutLines = [
-        JSON.stringify({ type: "message", message: { text: "working" } }),
-        JSON.stringify({ type: "tool_result", result: { text: "tool output" } }),
-      ];
-      const result = await new GeminiRunner(runnerOptions(root, "", "gemini")).runPrompt("prompt");
-      expect(result.finalText).toContain("tool output");
-      expect(result.finalTextSource).toBe("transcript_fallback");
-      expect(result.transcript).toBe(result.finalText);
-    });
-  });
-
-  it("runs Gemini stream-json output and prepends system context to the user prompt", async () => {
-    const { GeminiRunner } = await import("../src/runners/gemini.js");
-    await withTempSession(async (root) => {
-      childProcessState.stdoutLines = [
-        JSON.stringify({ type: "init", sessionId: "gemini-session" }),
-        JSON.stringify({ type: "message", message: { text: "hello" } }),
-        JSON.stringify({ type: "result", response: "gemini final" }),
-      ];
-      childProcessState.stderrChunks = [];
-      childProcessState.exitCode = 0;
-      childProcessState.error = null;
-      const systemContext = "## Agent Identity\n\nReply only in Chinese";
-      const stdio = captureStdio();
-      try {
-        const result = await new GeminiRunner(runnerOptions(root, systemContext, "gemini")).runPrompt("prompt");
-
-        expect(result).toMatchObject({
-          provider: "gemini",
-          threadId: "gemini-session",
-          finalText: "gemini final",
-          finalTextSource: "provider_message",
-        });
-        expect(childProcessState.spawnCalls.at(-1)).toMatchObject({
-          command: "gemini",
-          args: ["-p", `${systemContext}\n\nprompt`, "--output-format", "stream-json", "--approval-mode", "yolo"],
-        });
-      } finally {
-        stdio.restore();
-      }
-    });
-  });
-
   it("reuses the same OpenCode provider thread file across two prompt turns", async () => {
     const { OpenCodeRunner } = await import("../src/runners/opencode.js");
     await withTempSession(async (root) => {
@@ -773,125 +712,6 @@ describe("runner execution", () => {
         finalTextSource: "provider_message",
         transcript: "OpenCode final",
       });
-    });
-  });
-
-  it("runs Gemini stream-json output and keeps stdout protocol clean", async () => {
-    const { GeminiRunner } = await import("../src/runners/gemini.js");
-    await withTempSession(async (root) => {
-      childProcessState.stdoutLines = [
-        JSON.stringify({ type: "init", sessionId: "gemini-session" }),
-        JSON.stringify({ type: "message", message: { text: "hello" } }),
-        JSON.stringify({ type: "tool_use", tool: { name: "ReadFile" } }),
-        JSON.stringify({ type: "tool_result", result: { text: "file contents" } }),
-        JSON.stringify({ type: "result", response: "gemini final" }),
-        "not-json",
-        "",
-      ];
-      childProcessState.stderrChunks = ["warn\n"];
-      childProcessState.exitCode = 0;
-      childProcessState.error = null;
-      const stdio = captureStdio();
-      try {
-        const result = await new GeminiRunner(runnerOptions(root, "", "gemini")).runPrompt("prompt");
-
-        expect(result).toMatchObject({
-          provider: "gemini",
-          threadId: "gemini-session",
-          finalText: "gemini final",
-          finalTextSource: "provider_message",
-        });
-        expect(result.transcript).toContain("hello");
-        expect(result.transcript).toContain("[tool:ReadFile]");
-        expect(result.transcript).toContain("file contents");
-        expect(childProcessState.spawnCalls.at(-1)).toMatchObject({
-          command: "gemini",
-          args: ["-p", "prompt", "--output-format", "stream-json", "--approval-mode", "yolo"],
-        });
-      } finally {
-        stdio.restore();
-      }
-    });
-  });
-
-  it("rejects structured output for Gemini until a native schema flag is available", async () => {
-    const { GeminiRunner } = await import("../src/runners/gemini.js");
-    await withTempSession(async (root) => {
-      await expect(new GeminiRunner({
-        ...runnerOptions(root, "", "gemini"),
-        outputSchema: { type: "object" },
-      }).runPrompt("prompt")).rejects.toThrow("structured JSON output is not supported by gemini runner");
-    });
-  });
-
-  it("throws when Gemini exits unsuccessfully", async () => {
-    const { GeminiRunner } = await import("../src/runners/gemini.js");
-    await withTempSession(async (root) => {
-      childProcessState.stdoutLines = [];
-      childProcessState.stderrChunks = ["bad"];
-      childProcessState.exitCode = 2;
-      childProcessState.error = null;
-
-      const stdio = captureStdio();
-      try {
-        await expect(new GeminiRunner(runnerOptions(root, "", "gemini")).runPrompt("prompt")).rejects.toThrow(
-          "gemini exited with code 2: bad",
-        );
-      } finally {
-        stdio.restore();
-      }
-    });
-  });
-
-  it("handles Gemini error and fallback result events", async () => {
-    const { GeminiRunner } = await import("../src/runners/gemini.js");
-    await withTempSession(async (root) => {
-      childProcessState.stdoutLines = [
-        JSON.stringify({ type: "message", content: { text: "content text" } }),
-        JSON.stringify({ type: "message", text: { text: "text payload" } }),
-        JSON.stringify({ type: "tool_use", name: "NamedTool" }),
-        JSON.stringify({ type: "tool_use", toolName: "ToolName" }),
-        JSON.stringify({ type: "tool_use" }),
-        JSON.stringify({ type: "error", error: { message: "model error" } }),
-        JSON.stringify({ type: "error", message: { text: "message error" } }),
-        JSON.stringify({ type: "error", other: true }),
-        JSON.stringify({ type: "tool_result", result: { nested: true } }),
-        JSON.stringify({ type: "result", result: "fallback final", error: true }),
-      ];
-      childProcessState.stderrChunks = [];
-      childProcessState.exitCode = 0;
-      childProcessState.error = null;
-
-      const stdio = captureStdio();
-      try {
-        const result = await new GeminiRunner(runnerOptions(root, "", "gemini")).runPrompt("prompt");
-        expect(result.finalText).toBe("fallback final");
-        expect(result.stopReason).toBe("error");
-        expect(result.transcript).toContain("content text");
-        expect(result.transcript).toContain("text payload");
-        expect(result.transcript).toContain("[tool:NamedTool]");
-        expect(result.transcript).toContain("[tool:ToolName]");
-        expect(result.transcript).toContain("[tool:tool]");
-        expect(result.transcript).toContain("model error");
-        expect(result.transcript).toContain("message error");
-        expect(result.transcript).toContain("\"other\": true");
-        expect(result.transcript).toContain("\"nested\": true");
-      } finally {
-        stdio.restore();
-      }
-    });
-  });
-
-  it("rejects when the Gemini child process errors", async () => {
-    const { GeminiRunner } = await import("../src/runners/gemini.js");
-    await withTempSession(async (root) => {
-      childProcessState.stdoutLines = [];
-      childProcessState.stderrChunks = [];
-      childProcessState.exitCode = 0;
-      childProcessState.error = new Error("spawn failed");
-
-      await expect(new GeminiRunner(runnerOptions(root, "", "gemini")).runPrompt("prompt")).rejects.toThrow("spawn failed");
-      childProcessState.error = null;
     });
   });
 

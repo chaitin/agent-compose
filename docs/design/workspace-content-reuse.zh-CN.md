@@ -269,12 +269,16 @@ AGENT_COMPOSE_E2E_SKILL_FILES=257 \
 
 后续 [PR #689](https://github.com/chaitin/agent-compose/pull/689) 也已合并，`proto/v0.1.4` 指向同时包含两条协议的 main 提交 `9c860f53c157c03d08dcb0b013e56ad06ac193a1`。本轮将该 main 合入 #686，保留完整 LLM 服务、存储和 CLI 实现，并把根模块 require 更新为 `v0.1.4`；开发时保留仓库原有的 `replace => ./proto`。
 
+下表是 #686 验证时点的快照，不是当前依赖状态：当前仓库根 `go.mod` 已把
+`github.com/chaitin/agent-compose/proto` 要求提升到更新版本（截至本文校对为
+`v0.1.7`），表中“当时的 require”只描述该 PR 合并时的选择。
+
 | 版本 | 实际内容 | 本次处理 |
 | --- | --- | --- |
 | `v0.1.0` | 不含 Workspace 新字段 | 原依赖，已升级 |
 | `v0.1.1` | 包含五个 LLM Provider RPC，但没有 Workspace 字段 | 隔离构建确认失败，不采用 |
 | `v0.1.2` | 包含 Workspace，但未保留 v0.1.1 的五个 RPC、十二个消息 | 隔离构建可通过；跨版本 Buf 检查报告 17 项删除，不作为最终依赖 |
-| `v0.1.4` | 同时包含 Workspace 和完整 LLM Provider 协议 | 当前 require；对应完整 main 实现已同步 |
+| `v0.1.4` | 同时包含 Workspace 和完整 LLM Provider 协议 | 当时的 require；对应完整 main 实现已同步 |
 
 官方 Go proxy/sumdb 下载后的 `v0.1.4` 模块与合并后工作树的 18 个协议文件逐字节相同，没有缺失、额外或不同文件。真实模块校验和为 `h1:SCOKbG9Zu2tkysIGYKSq/Aw6g9vf9aoVnXlT3tF+wtw=`，go.mod 校验和为 `h1:sgEGuy3xcx0uneY7QeNdCd6CP8DJ+GuxblSAwvyt3wg=`，均写入 go.sum。
 

@@ -36,7 +36,9 @@ The removed fields and their former tags were confirmed from git history:
 
 `AttachAgentRunRequest`, `AttachAgentRunResponse`, `AttachExecRequest`, and
 `AttachExecResponse` intentionally keep frame variants in the low-number range
-and envelope metadata at tags 15 and 16. This separation leaves tags available
+and envelope metadata at tags 15 and 16. The request messages define
+`client_frame_id = 15`; the response messages define `server_frame_id = 15` and
+`created_at = 16`. This separation leaves tags available
 for future frame variants and is asserted by the field-layout contract test.
 
 ## Persistence and upgrade impact

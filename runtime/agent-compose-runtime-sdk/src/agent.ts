@@ -18,7 +18,7 @@ const AGENT_RESULT_PREFIX = "__AGENT_RESULT__";
 export type RuntimeAgentOutputSchema = RuntimeOutputSchema;
 
 export interface RuntimeAgentOptions<S extends RuntimeAgentOutputSchema = RuntimeAgentOutputSchema> {
-  provider?: "codex" | "claude" | "gemini" | "opencode" | "pi" | "dsh";
+  provider?: "codex" | "claude" | "opencode" | "pi" | "dsh";
   stateRoot?: string;
   workspace?: string;
   home?: string;

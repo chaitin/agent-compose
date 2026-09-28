@@ -1,7 +1,7 @@
 import type { AgentTelemetry } from "./telemetry.js";
 import type { AgentEventSink } from "./agent-event.js";
 
-export type Provider = "codex" | "claude" | "gemini" | "opencode" | "pi" | "dsh";
+export type Provider = "codex" | "claude" | "opencode" | "pi" | "dsh";
 export type RuntimeJsonSchema = Record<string, unknown>;
 export type FinalTextSource = "none" | "provider_message" | "transcript_fallback";
 

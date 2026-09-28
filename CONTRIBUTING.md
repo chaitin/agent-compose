@@ -78,8 +78,8 @@ task test
 ```
 
 These tasks regenerate protobuf message sources from `proto/**/*.proto` when
-needed. The generated `*.pb.go` message files are intentionally ignored; do not
-force-add them to a commit.
+needed. The generated `*.pb.go` message and Connect sources are tracked; commit
+them together with the `.proto` change that produced them.
 
 For smaller loops:
 

@@ -59,14 +59,14 @@ describe("runtime shape integration workflows", () => {
       const messageFile = path.join(root, "message.txt");
       await fs.writeFile(messageFile, "hello", "utf8");
       const runPrompt = vi.fn().mockResolvedValue({
-          provider: "gemini",
+          provider: "claude",
           threadId: "shape-session",
           stopReason: "completed",
           finalText: "done",
           transcript: "done",
           stderr: "",
         });
-      const geminiSpy = vi.spyOn(await import("../src/runners/gemini.js"), "GeminiRunner").mockImplementation(function mockGemini(this: unknown, options: unknown) {
+      const claudeSpy = vi.spyOn(await import("../src/runners/claude.js"), "ClaudeRunner").mockImplementation(function mockClaude(this: unknown, options: unknown) {
         Object.assign(this as object, { options, runPrompt });
       } as never);
       const abortController = new AbortController();
@@ -77,7 +77,7 @@ describe("runtime shape integration workflows", () => {
           "cli",
           "prompt",
           "--provider",
-          "gemini",
+          "claude",
           "--message-file",
           messageFile,
           "--state-root",
@@ -88,7 +88,7 @@ describe("runtime shape integration workflows", () => {
           path.join(root, "home"),
         ]);
         const result = await runPromptCommand({
-          provider: "gemini",
+          provider: "claude",
           messageFile,
           stateRoot: path.join(root, "state"),
           workspace: path.join(root, "workspace"),
@@ -96,10 +96,10 @@ describe("runtime shape integration workflows", () => {
           abortController,
         });
         expect(result.threadId).toBe("shape-session");
-        expect(geminiSpy).toHaveBeenLastCalledWith(expect.objectContaining({ abortController }));
+        expect(claudeSpy).toHaveBeenLastCalledWith(expect.objectContaining({ abortController }));
       } finally {
         stdio.restore();
-        geminiSpy.mockRestore();
+        claudeSpy.mockRestore();
       }
 
       expect(runPrompt).toHaveBeenCalledWith("hello");

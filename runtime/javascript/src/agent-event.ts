@@ -1,6 +1,6 @@
 /**
  * Provider-neutral agent event model. Every runner maps its provider's native
- * event stream onto this union so consumers do not need six parsers.
+ * event stream onto this union so consumers do not need five parsers.
  *
  * Two rules the mappers must honour, both derived from measured provider
  * behaviour against the recorded fixtures under
@@ -10,7 +10,7 @@
  *   kind at all. Never emit a placeholder with empty fields: consumers cannot
  *   distinguish "did not happen" from "this provider never reports it".
  * - `inputTokens` always EXCLUDES cached tokens. Providers that report an
- *   inclusive count (codex, gemini) subtract before emitting.
+ *   inclusive count (codex) subtract before emitting.
  * - A tool call may be announced more than once. claude and codex report a
  *   call twice (`in_progress` then `completed`), the others once, so anything
  *   counting or listing tool calls must de-duplicate by `id` — the number of
@@ -35,7 +35,7 @@ export type ToolCallStatus = "pending" | "in_progress" | "completed" | "failed";
 
 /**
  * Which aggregation level a usage record covers. Providers disagree: codex
- * reports per turn, gemini per run, the rest per step. Consumers must not sum
+ * reports per turn, the rest per step. Consumers must not sum
  * records of differing scope.
  */
 export type UsageScope = "step" | "turn" | "run";
@@ -54,7 +54,7 @@ export type AgentEvent =
   | { kind: "step_start"; step?: number }
   /**
    * `scope: "run"` marks a turn/run terminator that closes no individual step
-   * — claude, gemini and dsh emit one after their last step. Consumers pairing
+   * — claude and dsh emit one after their last step. Consumers pairing
    * step boundaries must ignore it, or every turn gains a phantom step.
    */
   | { kind: "step_end"; step?: number; scope?: "step" | "run"; stopReason?: AgentStopReason; rawStopReason?: string }
@@ -173,10 +173,9 @@ export function toolOutputText(value: unknown): string | undefined {
  * per-model breakdown.
  *
  * The first key is not the run's model: claude lists its sidecar (haiku) ahead
- * of the model that answered, and gemini lists an all-zero entry first, so
- * indexing position 0 charges one model with another's tokens. Pick the entry
- * that actually spent tokens; when none did, name no model rather than one at
- * random.
+ * of the model that answered, so indexing position 0 charges one model with
+ * another's tokens. Pick the entry that actually spent tokens; when none did,
+ * name no model rather than one at random.
  */
 export function dominantUsageModel(
   breakdown: Record<string, unknown>,

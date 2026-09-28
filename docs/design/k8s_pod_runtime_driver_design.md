@@ -21,7 +21,10 @@ Kubernetes 运行时驱动把一个 Agent-Compose sandbox 作为一个 Kubernete
 
 ### 2.1 部署拓扑
 
-使用 `driver.k8s` 的 daemon 必须运行在目标 Kubernetes 集群内部：
+使用 `driver.k8s` 的 daemon 不要求运行在目标集群内部：驱动用 kubeconfig 构建 client
+（`K8S_KUBECONFIG`、`KUBECONFIG`、`~/.kube/config`，可用 `driver.k8s.context` /
+`namespace` 覆盖），只有拿不到 kubeconfig 时才回退到 Pod 内的 ServiceAccount 配置。
+V1 推荐的默认拓扑是 daemon 与 sandbox Pod 在同一个集群内：
 
 ```text
 调用方（CLI / Run API / Scheduler）
@@ -42,16 +45,16 @@ Agent-Compose daemon（1 副本） ---- 创建/exec/删除 ----> Sandbox Pod
 - daemon 可以把自己的状态持久化在集群内的 PVC 上。
 
 部署模型是**一个集群一个 daemon，V1 不支持一个 daemon 管理多个集群**。原因不只是
-"没必要"：daemon 部署在集群内、靠 ServiceAccount 认证时没有 kubeconfig 文件，
-`driver.k8s.context` 这个覆盖字段在这种情况下无论填什么都会静默落回 daemon 自己
-所在的集群，不会真的切到别的集群；就算额外挂一份带多集群凭证的 kubeconfig 让
-context 切换生效，guest → daemon 的回调问题（本节开头两条）也只对 daemon 物理所
-在的那个集群成立，对其他集群原样复现，等于又要在那个集群单独解决一遍——不比直接
-部署第二个 daemon 省事。`context`/`namespace` 覆盖字段作为代码保留（同一集群内切
-换 namespace 仍然有效、有用），但跨集群不是这个驱动要支持的能力。
+"没必要"：sandbox 必须能回调到 daemon 可达的地址（`K8S_RUNTIME_BASE_URL`），跨集群
+时这个地址要在每个集群里分别打通一次，guest → daemon 的回调问题也就在每个集群原样
+复现，等于又要在那个集群单独解决一遍——不比直接部署第二个 daemon 省事。
+`context`/`namespace` 覆盖字段作为代码保留（同一集群内切换 namespace 仍然有效、
+有用），但跨集群不是这个驱动要支持的能力。
 
 把 daemon 部署在集群外，再通过 VPN、ingress 或导出宿主机文件系统的方式打通回调路径
-——这种方式不在主设计的支持范围内。
+——驱动允许这种拓扑（kubeconfig 优先就包含了集群外场景），但需要自行保证
+`K8S_RUNTIME_BASE_URL` 对 sandbox Pod 可达，因此它不是主设计推荐的部署方式。Helm
+Chart 是**受支持的安装入口**，而不是驱动的硬性要求。
 
 ### 2.2 Pod 模型与调度
 

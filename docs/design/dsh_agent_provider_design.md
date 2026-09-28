@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-`dsh` (DeepSeek Harness) is a Cordis-based agent runtime, added to agent-compose as a sixth provider alongside `codex`, `claude`, `gemini`, `opencode`, `pi`. Unlike the others, `dsh` is not a single CLI binary with flags — it boots a *profile*: an ordered stack of plugin-bundle patch layers. agent-compose ships its own profile (`assets/.dsh/profiles/agent-compose/`) rather than passing flags to a generic binary.
+`dsh` (DeepSeek Harness) is a Cordis-based agent runtime, added to agent-compose as a fifth provider alongside `codex`, `claude`, `opencode`, `pi`. Unlike the others, `dsh` is not a single CLI binary with flags — it boots a *profile*: an ordered stack of plugin-bundle patch layers. agent-compose ships its own profile (`assets/.dsh/profiles/agent-compose/`) rather than passing flags to a generic binary.
 
 ## 2. Composition model
 
@@ -38,7 +38,7 @@ Env vars aren't unbounded: Linux caps a single `argv`/`envp` string at `MAX_ARG_
 
 | Variable | Set by | Purpose |
 | --- | --- | --- |
-| `DSH_MODEL` | facade config + `dsh.ts` | Model literal (provider routing and any `<connection>/` prefix are resolved host-side; `dsh.ts` forwards the resolved value untouched) |
+| `DSH_MODEL` | `writeDshGuestConfig` + `dsh.ts` | Opaque model literal resolved host-side; the retired `<connection>/<model>` routing form is rejected, and `dsh.ts` forwards the resolved value untouched |
 | `DSH_REASONING_EFFORT` | `dsh.ts` | agent-compose's 5-level `effort` collapsed onto the `low`/`high`/`max` the `llm-pi-ai` route declares (§6 has no equivalent collapse — this is the reasoning-effort case). No daemon-driven path sets an effort today, so the route's `'max'` fallback is what every run actually gets; it preserves the static `thinking: enabled` + `reasoningEffort: 'max'` the replaced `llm-deepseek` row carried |
 | `DSH_PERMISSION_MODE` | facade config + `dsh.ts` | Always `danger-full-access`; guest sandboxing is the agent-compose sandbox, not a nested DSH one (§5.3/§5.5) |
 | `DSH_SESSION_ROOT`, `DSH_SESSION_ID`, `DSH_RESUME` | `dsh.ts` | Session persistence and resume (§3.3) |
@@ -55,7 +55,9 @@ Env vars aren't unbounded: Linux caps a single `argv`/`envp` string at `MAX_ARG_
 
 ### 4.1 Facade token and wire protocol
 
-`EnsureDshFacadeConfig` (`pkg/llms/dsh_facade.go`) issues a facade token whose wire API **follows the resolved provider**, and exports the same choice as `DSH_WIRE_API` for the profile's `llm-pi-ai` route to name its protocol. Matching the provider keeps the request on the proxy's passthrough path instead of the conversion path, where an upstream event the bridge does not model would reach the guest as assistant text. It was unconditionally chat-completions while the profile used `llm-deepseek`, whose Config has no protocol field at all (see §4.2). Model selection is an optional `<llm-provider-id>/<model-name>` reference (`SplitModelReference` in `pkg/llms/model_reference.go`), the same shape Pi and OpenCode use. When the prefix names a configured connection the request dispatches on that id; without it, the daemon's default connection resolves the literal model, and an agent naming no model at all falls back to the daemon's default catalog entry. The facade publishes the resolved model literal as `DSH_MODEL` and `AGENT_COMPOSE_RESOLVED_MODEL`; `dsh.ts` forwards that value unchanged, so prefix stripping stays the daemon's job and a model id containing slashes survives.
+`PrepareAgentLLM` (`pkg/llms/agent_llm.go`) is the single entry point that resolves a run's managed LLM configuration and mints its facade token; the DSH-specific guest environment is then written by `writeDshGuestConfig` (`pkg/llms/dialect_writers.go`), one of the writers `writeDialectGuestConfig` dispatches to by resolved dialect kind. The token's wire API **follows the resolved provider**, and `writeDshGuestConfig` exports the same choice as `DSH_WIRE_API` (spelled by `agentProtocolSpelling`) for the profile's `llm-pi-ai` route to name its protocol. Matching the provider keeps the request on the proxy's passthrough path instead of the conversion path, where an upstream event the bridge does not model would reach the guest as assistant text. It was unconditionally chat-completions while the profile used `llm-deepseek`, whose Config has no protocol field at all (see §4.2).
+
+Model selection is opaque: a model id is a literal the daemon never splits or matches against a connection, so an id containing slashes survives intact. The former `<llm-provider-id>/<model-name>` routing form is retired — `Catalog.Resolve` rejects it with `ErrLegacyQualifiedModel` (`pkg/llms/connection_catalog.go`). The connection is instead chosen from a connection the agent declared in its own credentials, or the daemon's configured connection, and an agent naming no model at all falls back to the daemon's default catalog entry. The facade publishes the resolved model literal as `DSH_MODEL` and `AGENT_COMPOSE_RESOLVED_MODEL`; `dsh.ts` forwards that value unchanged. A legacy compatibility shim in `runtime/javascript/src/runners/model-reference.ts` only applies when a daemon predating `AGENT_COMPOSE_RESOLVED_MODEL` sends the declared argument.
 
 ### 4.2 LLM adapter and route
 
@@ -73,7 +75,7 @@ The profile declares one hand-declared route, `agent-compose`: pi-ai ships nothi
 
 ### 5.2 Model/provider resolution
 
-Resolution mirrors Pi's: `resolveDshFacadeTarget` mirrors `resolvePiFacadeTarget`'s branch structure (configured provider id → family → custom OpenAI), Anthropic-family branch included. `dshFacadeProtocol` then mirrors `piFacadeProtocol`, routing an Anthropic provider to the `/llm/anthropic` facade endpoint with an `anthropic-messages` token rather than bridging it down to chat completions.
+Resolution is shared rather than DSH-specific: `PrepareAgentLLM` (`pkg/llms/agent_llm.go`) picks the connection (an agent-declared credential, else the catalog selection), resolves the target through `Catalog.Resolve`, and derives the inbound protocol from `DialectFor("dsh").InboundProtocol`, so an Anthropic upstream is served at the `/llm/anthropic` facade endpoint with an `anthropic-messages` token rather than being bridged down to chat completions.
 
 ### 5.3 Sandbox policy / permission mode
 

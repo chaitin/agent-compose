@@ -343,12 +343,9 @@ test "$(readlink /root/.opencode)" = "/data/home/.opencode"
 test "$(readlink /root/.pi)" = "/data/home/.pi"
 test "$(readlink /root/.gitconfig)" = "/data/home/.gitconfig"
 test "$(readlink /root/.claude.json)" = "/data/home/.claude.json"
-test "$(readlink /root/.gemini)" = "/data/home/.gemini"
 test "$(readlink /root/.config/claude)" = "/data/home/.config/claude"
 test "$(readlink /root/.config/Claude)" = "/data/home/.config/Claude"
-test "$(readlink /root/.config/gemini)" = "/data/home/.config/gemini"
 test "$(readlink /root/.config/opencode)" = "/data/home/.config/opencode"
-test "$(readlink /root/.local/share/gemini)" = "/data/home/.local/share/gemini"
 test -f /root/.codex/config.toml
 test -f /root/.gitconfig
 test -f /root/.claude.json

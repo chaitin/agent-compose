@@ -57,16 +57,16 @@ Home persistence is handled by the mount manifest:
 | Host path | Docker guest path | BoxLite/Microsandbox guest path |
 | --- | --- | --- |
 | `<sandbox>/home/.codex` | `/root/.codex` | Symlink `/root/.codex -> /data/home/.codex` |
+| `<sandbox>/home/.agents` | `/root/.agents` | Symlink `/root/.agents -> /data/home/.agents` |
 | `<sandbox>/home/.claude` | `/root/.claude` | Symlink `/root/.claude -> /data/home/.claude` |
 | `<sandbox>/home/.opencode` | `/root/.opencode` | Symlink `/root/.opencode -> /data/home/.opencode` |
+| `<sandbox>/home/.pi` | `/root/.pi` | Symlink `/root/.pi -> /data/home/.pi` |
+| `<sandbox>/home/.dsh` | `/root/.dsh` | Symlink `/root/.dsh -> /data/home/.dsh` |
 | `<sandbox>/home/.claude.json` | `/root/.claude.json` | Symlink `/root/.claude.json -> /data/home/.claude.json` |
 | `<sandbox>/home/.gitconfig` | `/root/.gitconfig` | Symlink `/root/.gitconfig -> /data/home/.gitconfig` |
-| `<sandbox>/home/.gemini` | `/root/.gemini` | Symlink `/root/.gemini -> /data/home/.gemini` |
 | `<sandbox>/home/.config/claude` | `/root/.config/claude` | Symlink |
 | `<sandbox>/home/.config/Claude` | `/root/.config/Claude` | Symlink |
-| `<sandbox>/home/.config/gemini` | `/root/.config/gemini` | Symlink |
 | `<sandbox>/home/.config/opencode` | `/root/.config/opencode` | Symlink |
-| `<sandbox>/home/.local/share/gemini` | `/root/.local/share/gemini` | Symlink |
 
 Docker fine-grain mounts these home subpaths directly. BoxLite and Microsandbox
 mount only the whole `<sandbox>` directory at `/data`; guest bootstrap keeps

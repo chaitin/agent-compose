@@ -32,21 +32,25 @@ agents:
 
 `scheduler.script` 和声明式 `scheduler.triggers` 是二选一关系。需要简单 cron/interval/event/timeout 加 prompt 时用 `scheduler.triggers`；需要共享状态、多个 trigger 共用 workflow、调用 `scheduler.llm` / `scheduler.exec` / `scheduler.event.publish` 等能力时用 `scheduler.script`。inline scalar 和下面的 URL object 都使用同一套 scheduler runtime。
 
-脚本也可以保存在独立文件中，并通过显式 URL 对象引用：
+脚本也可以保存在独立文件中，并通过显式来源对象引用（`provider` 必填）：
 
 ```yaml
 agents:
   reviewer:
     scheduler:
       script:
-        url: ./02-interval-heartbeat.js
+        provider: file
+        path: ./02-interval-heartbeat.js
 ```
 
-无 scheme 的相对路径以 compose 文件目录为基准；也支持绝对路径、`file://`、
-`http://` 和 `https://`。这是 CLI authoring 能力：`agent-compose config` 和
-`agent-compose up` 在本机获取一次并生成内联内容快照，daemon、v2 API、revision
-和 scheduler 只看到脚本文本。它不是运行时 `import`，来源内容变化只会在下次
-`up` 时生效。当前仍不支持 `import` / `require`、bundling、鉴权 header 或后台刷新。
+`provider: file` 使用 `path`，无 scheme 的相对路径以 compose 文件目录为基准，
+也支持绝对路径和 `file://`；`provider: http` 使用 `url`（`http://` 或
+`https://`），可用 `token`（`Authorization: Bearer`）或 `username`/`password`
+做鉴权；`provider: git` 使用 `url`、可选的 `ref`，以及仓库内必填的 `path`。这是
+CLI authoring 能力：`agent-compose config` 和 `agent-compose up` 在本机获取一次并
+生成内联内容快照，daemon、v2 API、revision 和 scheduler 只看到脚本文本。它不是
+运行时 `import`，来源内容变化只会在下次 `up` 时生效。当前仍不支持
+`import` / `require`、bundling 或后台刷新。
 
 ## 触发器 ID
 
