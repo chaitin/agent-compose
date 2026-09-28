@@ -1,19 +1,28 @@
 # agent-compose 文档准确性审计报告
 
 - **审计基准**：`origin/main` @ `2fb4e84771f351a80b86c8be1e0b706b06b8185b`
+- **清理基准**：本分支已变基到 `origin/main` @ `435717ae`，下表全部结论在该基线上修复完毕
 - **审计范围**：仓库内全部人类可读文档 —— 根级文档（`README.md`、`README.zh-CN.md`、`AGENTS.md`、`CONTRIBUTING.md`、`TESTING.md`、`SECURITY.md`）、`docs/pages/` 及 `docs/pages/zh-CN/` 公开手册、`docs/design/`、`docs/spec/`、`runtime/*/README.md`、`examples/**`、`charts/**`、`deploy/**`、`tools/migrations/**`
 - **对照物**：Go 代码、TypeScript runtime、proto 定义、`Taskfile.yml`、`scripts/**`、`guest-images/**`、`Dockerfile*`、`.env.example`、`.github/workflows/**`
 
 ## 一、结论摘要
 
-审计共确认 **64 项文档缺陷**，按性质分为四类：
+审计共确认 **80 行缺陷，其中 79 项为独立问题**（`I24` 是 `I23`/`O18` 的重复指向），按性质分为四类：
 
 | 类别 | 数量 | 含义 |
 | --- | ---: | --- |
 | **错误（WRONG）** | 21 | 文档描述与当前代码/配置**直接冲突**，照做会失败或得到相反结论 |
-| **过时（OUTDATED）** | 27 | 代码已演进（新功能、新驱动、新工具、版本升级），文档停留在旧状态 |
-| **描述不准确（INACCURATE）** | 13 | 结论方向正确但范围不全、遗漏字段/参数/子命令，或中英文版本漂移 |
+| **过时（OUTDATED）** | 30 | 代码已演进（新功能、新驱动、新工具、版本升级），文档停留在旧状态 |
+| **描述不准确（INACCURATE）** | 26 | 结论方向正确但范围不全、遗漏字段/参数/子命令，或中英文版本漂移 |
 | **计划未落地（NEVER-IMPLEMENTED-PLAN）** | 3 | 文档把未实现的设计写成现状，或把已实现的能力写成"待做" |
+
+**修复状态：本分支已逐项修复全部 80 行**，共改动 44 个文档文件（`+724 / -308`），并拆分为独立的 `docs:` 提交。修复时逐条回到代码复核，因此有三处结论被修正或降级：
+
+- `O18`、`I24` 在审计基线上确实缺失 `dsh`，但**已被同一分支的 Gemini 清理提交 `a2260e30` 顺带修好**，因此无需再次改动。
+- `agent-compose-runtime_contract.md` 的"协议 payload 标记只有两个"经复核**是准确的**：宿主侧仅 `pkg/execution/parse.go:12-13` 定义 `__AGENT_RESULT__`/`__COMMAND_RESULT__`，`__WORKFLOW_RESULT__`/`__WORKFLOW_EVENT__` 只由 runtime/SDK 解析，宿主从不检索它们，故保留原文。
+- `k8s_pod_runtime_driver_k3d_test_plan.md` 中"与 docker/boxlite 同样的共享挂载"被补全为 docker、boxlite、microsandbox（`runtimeMountSpecsForMicrosandbox` 复用 BoxLite 的挂载集合）。
+
+**仍未修复的是代码侧问题，不属于文档审计范围**，在第九节末尾单独列出。
 
 **问题最集中的三条主线：**
 
@@ -197,16 +206,26 @@
 - **文档已同步**：`README.md`、`README.zh-CN.md`、`docs/pages/{agent-compose-yaml-manual,command-line-manual,guest-image-abi}.md` 及 zh 变体、`docs/spec/dynamic-workflow-spec.md`、`docs/design/` 下 13 份文档、两个 runtime README、`runtime/agent-compose-runtime-sdk/README.md`。`grep -rn -i gemini` 在 `pkg/ internal/ cmd/ runtime/ docs/ *.md guest-images/ scripts/ Taskfile.yml` 范围内已无命中。
 - **唯一保留项**：`.github/workflows/notify-dingtalk-release.yml:96` 的发布说明翻译提示词把 "Gemini" 列在"需保持原样的技术产品名"中。它不声明支持，且 release notes 里可能出现"移除 Gemini provider"这类文本，故**有意保留**；如需彻底清除可一并删除该词。
 
-## 九、建议的修复顺序
+## 九、修复顺序与实际落地
+
+原计划的修复优先级如下，本分支按同一顺序落地：
 
 1. **先修高危及误导性**：W1、W2（已删除的迁移工具仍教用户下载运行）；W3（与 CI 策略相反的 proto 提交指引）；W5、W6、W7（照抄即命令失败的 CLI 手册示例）；W8、W11、W15（"未实现/不校验"等与代码相反的结论）。
-2. **再做跨文档一致性扫描**：I1/O1–O6（k8s 驱动）；I2–I5/O18–O21（dsh provider）；I23（"两个子命令"）。这几类同根因，建议一次性批量修，并考虑在 `docs:build` 或 CI 中加一条"驱动/provider 枚举一致性"检查以防再次漂移。
+2. **再做跨文档一致性扫描**：I1/O1–O6（k8s 驱动）；I2–I5/O18–O21（dsh provider）；I23（"两个子命令"）。这几类同根因，一次性批量修正。
 3. **然后修"已实现写成未实现"**：O7–O12、P1–P3。
-4. **最后补全性缺陷**：第五、六节的遗漏项（CLI 参数表、SDK README API 覆盖、`docs:build` 的 `generates` 列表）。其中 I15（`Taskfile.yml` 的 `generates` 不全）成本极低、收益明确，可提前。
-5. **代码侧跟进项（非文档）**：`cmd/agent-compose/cli_resource_reference.go:56-76` 的 `run -i --prompt` provider 白名单仍是 codex/claude/opencode/pi，缺 `dsh`（与 `pkg/runs/prompt_attach.go` 不一致）；`DSH_VERSION` 未接入 `Taskfile.yml` 与 guest 构建脚本，无法覆盖。
+4. **最后补全性缺陷**：第五、六节的遗漏项（CLI 参数表、SDK README API 覆盖、`docs:build` 的 `generates` 列表）。
 
-## 十、审计过程说明
+**仍未处理的是代码侧问题，不属于文档审计范围**，建议单独排期：
 
-- 审计与 Gemini 清理**并行**进行，工作树在审计期间被持续修改（最多 79 个改动路径）。`docs/design` / `docs/spec` 的全部结论均固定到 `origin/main`（`2fb4e847`）验证，因此不受影响；`docs/pages` 的结论基于工作树当前行号，且明确排除了已由本次清理修复的 Gemini 内容。
-- 一处子代理结论已证伪（见第二节），请勿据此修改代码。
-- 本次审计未修改任何被审计文档；Gemini 清理是唯一被修改的内容，位于独立 commit。
+- `cmd/agent-compose/cli_resource_reference.go:56-76` 的 `run -i --prompt` provider 白名单仍是 codex/claude/opencode/pi，缺 `dsh`，与 `pkg/runs/prompt_attach.go` 的集合不一致。手册已按 CLI 的**实际**行为记录（`I6` 修复时未擅自写入 `dsh`），因此文档与代码当前是自洽的，但 CLI 行为本身是缺陷。
+- `DSH_VERSION` 未接入 `Taskfile.yml` 与 `scripts/build-agent-compose-guest.sh`，guest 镜像只能使用 Dockerfile 默认值。guest ABI 文档已在相应条目注明这一点（见 `I4`）。
+- 建议在 `docs:build` 或 CI 中增加一条"runtime driver / agent provider 枚举一致性"检查，防止这两类漂移再次发生。
+
+## 十、审计与清理过程说明
+
+- 审计基于 `origin/main` @ `2fb4e847`；随后上游合入 10 个提交（至 `435717ae`），本分支先变基再清理。上游改动与本分支仅 4 个文件重叠（两份 YAML 手册与两个 Go 测试），变基无冲突，两侧改动均已保留。
+- 上游新增的公开文档（事件 payload 提示块、`include_event`、`EVENT_DELIVERY_SCOPE`）已逐条对照 `internal/projects/scheduler_event_prompt.go`、`pkg/compose/normalize.go`、`pkg/config/event_delivery.go` 复核，**未发现新的不准确之处**；`docs:build` 的 schema 覆盖从 73 个字段增至 74 个，两份手册均已覆盖新字段。
+- `docs/design` / `docs/spec` 的全部结论在审计阶段固定到 `origin/main`（`2fb4e847`）验证，因此不受工作树并发编辑影响；`docs/pages` 的结论基于工作树当前行号。
+- 清理阶段按文件所有权分片并行执行（5 个互斥文件集，共 44 个文件），避免并发编辑互相覆盖；每片均要求先回代码复核再改，并回报无法验证或拒绝修改的条目。
+- 一处子代理结论已证伪（见第二节），请勿据此修改代码。修复过程中另有两条子代理观察被复核后**否决**：runtime contract 的"两个协议标记"表述准确；`O18`/`I24` 已由 Gemini 清理提交修复，无需二次改动。
+- 审计本身未修改任何被审计文档；Gemini 清理、审计报告、文档清理分属三个独立提交，便于单独回退。
