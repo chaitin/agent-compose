@@ -18,7 +18,6 @@ import (
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/dashboard"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
-	"github.com/chaitin/agent-compose/pkg/events"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -165,20 +164,6 @@ func (b *SandboxRPCBridge) CallJSONWithSource(ctx context.Context, method, reque
 	default:
 		return "", fmt.Errorf("unsupported sandbox rpc %q", method)
 	}
-}
-
-// publishSchedulerTopic raises a sandbox lifecycle topic attributed to the
-// Project whose scheduler script issued the sandbox RPC.
-func (b *SandboxRPCBridge) publishSchedulerTopic(ctx context.Context, topic string, payload map[string]any) {
-	if b == nil || b.bus == nil {
-		return
-	}
-	b.bus.Publish(domain.SchedulerTopicEvent{
-		Topic:              topic,
-		PublisherProjectID: events.PublisherProject(ctx),
-		Payload:            payload,
-		CreatedAt:          time.Now().UTC(),
-	})
 }
 
 func (b *SandboxRPCBridge) createSandbox(ctx context.Context, req sandboxRPCCreateRequest, source string) (*domain.Sandbox, error) {
@@ -332,7 +317,7 @@ func (b *SandboxRPCBridge) createSandboxWithAgent(ctx context.Context, req sandb
 	}
 	domain.RestoreSandboxTransientFields(loaded, session)
 	b.indexCapabilitySandbox(loaded)
-	b.publishSchedulerTopic(ctx, "agent-compose.session.created", schedulers.SessionTopicPayload(loaded, source))
+	b.publishSandboxLifecycle(ctx, "agent-compose.session.created", loaded, source)
 	return loaded, nil
 }
 
@@ -363,7 +348,7 @@ func (b *SandboxRPCBridge) resumeSandbox(ctx context.Context, sandboxID, source 
 		return nil, api.ConnectErrorForDomain(err)
 	}
 	b.indexCapabilitySandbox(loaded)
-	b.publishSchedulerTopic(ctx, "agent-compose.session.resumed", schedulers.SessionTopicPayload(loaded, source))
+	b.publishSandboxLifecycle(ctx, "agent-compose.session.resumed", loaded, source)
 	return loaded, nil
 }
 
@@ -404,7 +389,7 @@ func (b *SandboxRPCBridge) stopSandboxWithOptions(ctx context.Context, sandboxID
 		slog.Warn("graceful sandbox stop escalated to force", "sandbox_id", session.Summary.ID, "outcome", outcome.Preparation.Outcome, "error", outcome.Preparation.Error)
 	}
 	if outcome.DriverStopped && outcome.Sandbox != nil {
-		b.publishSchedulerTopic(ctx, "agent-compose.session.stopped", schedulers.SessionTopicPayload(outcome.Sandbox, source))
+		b.publishSandboxLifecycle(ctx, "agent-compose.session.stopped", outcome.Sandbox, source)
 	}
 	if stopErr != nil {
 		return outcome, api.ConnectErrorForDomain(stopErr)
