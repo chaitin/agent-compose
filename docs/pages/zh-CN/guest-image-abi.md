@@ -288,7 +288,7 @@ task image:agent-compose-guest-archlinux
 | `NO_CACHE=1` | 传递 Docker `--no-cache` 参数 |
 | `GO_VERSION`、`GRPCURL_VERSION`、`NODE_MAJOR` | 默认 guest 工具链参数；`NODE_MAJOR` 仅适用于 Debian guest |
 | `ARCHLINUX_TAG` | Arch Linux guest 基础镜像 tag |
-| `CODEX_VERSION`、`CLAUDE_CODE_VERSION`、`GEMINI_CLI_VERSION`、`OPENCODE_VERSION`、`PI_AGENT_VERSION`、`PI_MCP_ADAPTER_VERSION` | guest provider 包版本 |
+| `CODEX_VERSION`、`CLAUDE_CODE_VERSION`、`GEMINI_CLI_VERSION`、`OPENCODE_VERSION`、`PI_AGENT_VERSION`、`PI_MCP_ADAPTER_VERSION`、`DSH_VERSION` | guest provider 包版本 |
 
 `REGISTRY_MIRROR`、`GITHUB_MIRROR` 和 `ARCHLINUX_MIRROR` 没有跨工具通用的标准环境变量，因此保留为作用域明确的项目参数。`REGISTRY_MIRROR` 不是 dockerd mirror 配置，只负责改写仓库 Dockerfile 中的基础镜像地址。
 

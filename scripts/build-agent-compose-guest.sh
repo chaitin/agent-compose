@@ -40,6 +40,7 @@ append_build_arg GEMINI_CLI_VERSION "${GEMINI_CLI_VERSION:-}"
 append_build_arg OPENCODE_VERSION "${OPENCODE_VERSION:-}"
 append_build_arg PI_AGENT_VERSION "${PI_AGENT_VERSION:-}"
 append_build_arg PI_MCP_ADAPTER_VERSION "${PI_MCP_ADAPTER_VERSION:-}"
+append_build_arg DSH_VERSION "${DSH_VERSION:-}"
 
 case "$(basename "$GUEST_IMAGE_DOCKERFILE")" in
   Dockerfile.agent-compose-guest-archlinux)

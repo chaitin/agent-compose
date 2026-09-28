@@ -411,7 +411,7 @@ The remaining build controls are:
 | `NO_CACHE=1` | Passes Docker's `--no-cache` flag |
 | `GO_VERSION`, `GRPCURL_VERSION`, `NODE_MAJOR` | Default guest toolchain inputs; `NODE_MAJOR` applies only to the Debian guest |
 | `ARCHLINUX_TAG` | Arch Linux guest base-image tag |
-| `CODEX_VERSION`, `CLAUDE_CODE_VERSION`, `GEMINI_CLI_VERSION`, `OPENCODE_VERSION`, `PI_AGENT_VERSION`, `PI_MCP_ADAPTER_VERSION` | Guest provider package versions |
+| `CODEX_VERSION`, `CLAUDE_CODE_VERSION`, `GEMINI_CLI_VERSION`, `OPENCODE_VERSION`, `PI_AGENT_VERSION`, `PI_MCP_ADAPTER_VERSION`, `DSH_VERSION` | Guest provider package versions |
 
 `REGISTRY_MIRROR`, `GITHUB_MIRROR`, and `ARCHLINUX_MIRROR` have no equivalent
 cross-tool standard environment variable, so they remain narrowly scoped
