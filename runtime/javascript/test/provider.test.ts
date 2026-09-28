@@ -17,8 +17,10 @@ describe("provider normalization", () => {
     expect(normalizeProvider(input)).toBe(expected);
   });
 
-  it("rejects unsupported providers", () => {
-    expect(() => normalizeProvider("qwen")).toThrow(/unsupported provider "qwen"; expected one of: codex, claude, opencode, pi/);
+  it.each(["qwen", "gemini", "gemini-cli", "gemini_cli"])("rejects unsupported provider %j", (provider) => {
+    expect(() => normalizeProvider(provider)).toThrow(
+      /unsupported provider .*; expected one of: codex, claude, opencode, pi, dsh/,
+    );
   });
 
   it.each([

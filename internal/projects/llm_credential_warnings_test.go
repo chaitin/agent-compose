@@ -51,6 +51,15 @@ func TestLLMCredentialWarningsDescribeWhatHappensToTheValue(t *testing.T) {
 			},
 		},
 		{
+			name:      "google credential from the removed provider is passed through",
+			env:       map[string]compose.EnvVarSpec{"GOOGLE_API_KEY": {Value: "google-secret"}, "GEMINI_API_KEY": {Value: "gemini-secret"}},
+			wantPaths: []string{"agents.worker.env.GOOGLE_API_KEY", "agents.worker.env.GEMINI_API_KEY"},
+			wantContains: map[string]string{
+				"agents.worker.env.GOOGLE_API_KEY": "not a provider the daemon recognizes",
+				"agents.worker.env.GEMINI_API_KEY": "not a provider the daemon recognizes",
+			},
+		},
+		{
 			name: "every declared credential is reported",
 			variables: map[string]compose.EnvVarSpec{
 				"ANTHROPIC_API_KEY": {Value: "sk-ant-secret"},

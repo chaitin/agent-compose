@@ -68,6 +68,13 @@ func TestRuntimeMountEntriesDefineSharedLogicalMountList(t *testing.T) {
 			t.Fatalf("logical entry %s = %#v, want sandboxPath=%s isFile=%v exposure=%s", guestPath, entry, wantEntry.sandboxPath, wantEntry.isFile, wantEntry.exposure)
 		}
 	}
+	// The removed Gemini provider must not leave a guest mount behind: a stale
+	// entry would recreate a directory nothing writes to.
+	for guestPath := range got {
+		if strings.Contains(strings.ToLower(guestPath), "gemini") {
+			t.Fatalf("logical entry %s belongs to the removed Gemini provider", guestPath)
+		}
+	}
 }
 
 func TestPrepareRuntimeMountManifestForDockerIncludesRequiredMountsOnly(t *testing.T) {

@@ -119,7 +119,10 @@ func TestLLMProviderCredentialEnvNameCoversEveryVendorAlias(t *testing.T) {
 	}
 	// A name the daemon does not know is passed through, so it must not be
 	// reported as credential material the daemon holds.
-	for _, name := range []string{"MYCORP_API_KEY", "MYCORP_AUTH_TOKEN", "MODE", ""} {
+	// GOOGLE_API_KEY and GEMINI_API_KEY joined this group when the Gemini
+	// provider was removed: the daemon no longer recognizes or strips them, so
+	// the values really do reach the guest and must not be reported as held.
+	for _, name := range []string{"MYCORP_API_KEY", "MYCORP_AUTH_TOKEN", "GOOGLE_API_KEY", "GEMINI_API_KEY", "MODE", ""} {
 		if LLMProviderCredentialEnvName(name) {
 			t.Errorf("LLMProviderCredentialEnvName(%q) = true, want an unrecognized name left visible", name)
 		}
