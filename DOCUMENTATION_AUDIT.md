@@ -16,7 +16,7 @@
 | **描述不准确（INACCURATE）** | 26 | 结论方向正确但范围不全、遗漏字段/参数/子命令，或中英文版本漂移 |
 | **计划未落地（NEVER-IMPLEMENTED-PLAN）** | 3 | 文档把未实现的设计写成现状，或把已实现的能力写成"待做" |
 
-**修复状态：本分支已逐项修复全部 80 行**，共改动 45 个文件（含本审计文件），并拆分为独立的 `docs:` 提交。修复时逐条回到代码复核，因此有三处结论被修正或降级：
+**修复状态：本分支已逐项修复全部 80 行**，并在此后两轮复核（见第十、十一、十二节）继续收敛，合计改动 51 个文档文件（含本审计文件；`git diff --name-only d8a2ea28..HEAD | grep -v '_test\.'`），拆分为独立的 `docs:` 提交。修复时逐条回到代码复核，因此有三处结论被修正或降级：
 
 - `O18`、`I24` 在审计基线上确实缺失 `dsh`，但**已被同一分支的 Gemini 清理提交（本分支第 1 个提交）顺带修好**，因此无需再次改动。
 - `agent-compose-runtime_contract.md` 的"协议 payload 标记只有两个"经复核**是准确的**：宿主侧仅 `pkg/execution/parse.go:12-13` 定义 `__AGENT_RESULT__`/`__COMMAND_RESULT__`，`__WORKFLOW_RESULT__`/`__WORKFLOW_EVENT__` 只由 runtime/SDK 解析，宿主从不检索它们，故保留原文。
@@ -35,7 +35,7 @@
 ## 二、审计方法与可信度
 
 - 每个结论都同时给出**文档位置**与**代码证据位置**。`docs/design` 与 `docs/spec` 全部结论由子代理用 `git show HEAD:<file>` / `git grep HEAD` 固定到 `origin/main` 基线，避免受工作树并发编辑影响。
-- 公开手册（`docs/pages/**`）结论通过**实际编译 CLI 并 dump 每个子命令的 `--help`** 与文档逐条比对得出；YAML schema 覆盖用模拟 `tools/genpages/schema-coverage.mjs` 的方式复核（73 个字段全部覆盖）。
+- 公开手册（`docs/pages/**`）结论通过**实际编译 CLI 并 dump 每个子命令的 `--help`** 与文档逐条比对得出；YAML schema 覆盖用模拟 `tools/genpages/schema-coverage.mjs` 的方式复核（74 个字段全部覆盖）。
 - 交叉复核：报告作者对其中 **20 余项**高价值结论独立复验（见第四节标注的依据均为复验过的命令）。
 - **一处子代理结论已证伪**：有子代理报告"`pkg/driver/types_test.go:92-110` 仍断言 `GOOGLE_API_KEY`/`GEMINI_API_KEY` 被拒绝，该测试当前失败"。实测 `go test -count=1 ./pkg/driver/...` **通过**（`ok ... 1.370s`）。该观察来自 Gemini 清理过程中的中间态竞态，**不是**真实问题，请勿按此修改。
 - `docs/spec/core-e2e-test-strategy-spec.md:7` 的数量结论亦做了修正：子代理报"实际 126 个"，实测唯一 `TestE2E*` 函数为 **129 个**（`cmd/` 27、`pkg/` 88、`test/e2e/` 11、`internal/` 3）。
@@ -52,7 +52,7 @@
 | W6 | `docs/pages/command-line-manual.md:873-877`、zh:851-856 | `image ls\|pull\|rm\|inspect` 树已废弃、会向 stderr 打印警告、未来可能移除 | 代码中没有任何 `Deprecated:` 字段或警告（唯一的 `writeDeprecatedWarning` 调用点是 exec `--run` 与 `inspect session`）；`cmd/agent-compose/cli_image_test.go:663-674` 甚至断言 `image --help` 中**不得**出现 "deprecated"。代码中反而把顶层 `pull`/`build`/`rmi` 三个命令视为 legacy 别名（`images` 不在其中） | 改为中性的"两种写法都支持"，并说明哪一种是规范形式 |
 | W7 | `docs/pages/octobus-quickstart.md:186`、`docs/pages/zh-CN/octobus-quickstart.md:186` | `agent-compose run coder "Use the calculator capability to add 20 and 22, ..."` | `run` 不接受位置参数形式的提示词：`cmd/agent-compose/cli_run_command.go:246-253` 返回 `run does not accept positional trigger arguments`（只有显式传 `--prompt`/`--command` 且无值时才会消费位置参数）。手册自身 `command-line-manual.md:385-386` 也说明了这一点 | 两处都改为 `run coder --prompt "..."` |
 | W8 | `docs/design/agent-compose_design.md:297` | `WatchProject` "目前只有未实现的 handler" | 已实现：`pkg/agentcompose/api/project_handler.go:187` `func (h *ProjectHandler) WatchProject(...)`，委托给 `pkg/agentcompose/app/project_controller.go:194`；且 `cmd/agent-compose/rpc_transport_contract_test.go` 会因任何 RPC 仍由 `Unimplemented*Handler` 提供而失败 | 删除该句，或说明 `WatchProject` 流式返回项目变更 |
-| W9 | `docs/design/agent-compose_design.md:22`（`AGENTS.md` 同样过时） | "Project/run owner helpers: `pkg/projects/` and `pkg/runs/`" | `pkg/projects` 不存在（`git ls-tree origin/main pkg/` 无此项）；项目域归属 `internal/projects`（如 `internal/projects/controller.go:512,523`） | 改为 `internal/projects/` |
+| W9 | `docs/design/agent-compose_design.md:22`（`AGENTS.md` 同样过时） | "Project/run owner helpers: `pkg/projects/` and `pkg/runs/`" | `pkg/projects` 不存在（`git ls-tree origin/main pkg/` 无此项）；项目域归属 `internal/projects`（如 `internal/projects/controller.go:512,523`） | 改为 `internal/projects/`；`AGENTS.md:11,24` 的 `pkg/projects`/`pkg/sessions` 同步改为 `internal/projects`/`pkg/sandboxes`（第三次复核） |
 | W10 | `docs/design/agent-compose_design.md:738-742` | Linux native binary / Linux daemon image 的编译驱动为 `docker, boxlite, microsandbox` | `scripts/build-agent-compose-binary.sh:154-159`：`linux-full` 使用 `tags=netgo,osusergo,boxlitecgo,microsandboxcgo,k8scompose`，`compiled_drivers=docker,boxlite,microsandbox,k8s`；`pkg/driver/runtime_driver_compiled_full_k8s_test.go` 断言四个驱动 | 两个 `linux-full` 行都补上 `k8s` |
 | W11 | `docs/design/control_plane_transport_contract.md:35` | `project down`/`down` 调用 `GetProject`、`ListSchedulers`、`SetSchedulerEnabled`、`ListSandboxes`、`StopSandbox` | `cmd/agent-compose/cli_run_command.go:137-150` 只调用一次 `clients.project.RemoveProject(...)`；列举/停止等效果发生在服务端 `internal/projects/controller.go:523` → `DownProject` | RPC 列改为 `ProjectService.RemoveProject` |
 | W12 | `docs/design/dsh_agent_provider_design.md:58` | `EnsureDshFacadeConfig`（`pkg/llms/dsh_facade.go`）签发 facade token；模型选择是 `<llm-provider-id>/<model-name>` 引用（`SplitModelReference`，`pkg/llms/model_reference.go`） | 两个文件都不存在，两个符号在全仓库 0 次出现；实际是 `pkg/llms/dialect_writers.go:160` 的 `writeDshGuestConfig`（设置 `DSH_WIRE_API`/`DSH_MODEL`/`GuestModelEnvName`/`DSH_PERMISSION_MODE`，由 `:16-30` 分发）。`provider/model` 形式对所有 agent 均已退役：`pkg/llms/agent_dialect.go:73`、`pkg/llms/agent_model_resolution.go:29-31` | 改写 §4.1，指向 `dialect_writers.go`/`writeDshGuestConfig`，并说明 `DSH_MODEL` 是不透明 model id |
@@ -94,7 +94,7 @@
 | O15 | `docs/design/pi_agent_provider_design.md:11-12,263` | Pi 固定版本 `v0.81.1` / `@earendil-works/pi-coding-agent@0.81.1` / `ARG PI_AGENT_VERSION=0.81.1` | `guest-images/Dockerfile.agent-compose-guest:13` 为 `0.82.1`（`:14` 的 `PI_MCP_ADAPTER_VERSION=2.11.0`） | 更新版本或直接引用 Dockerfile |
 | O16 | `docs/design/octobus_integration.md:286` | "all five current guest runners receive the composed `systemContext`" | 基线六个 runner（含 dsh，见 O13），本分支移除 Gemini 后为五个 | 去掉数量，写"所有 guest runner" |
 | O17 | `docs/design/runtime-bidirectional-stream-design.md:277-283` | prompt 交互策略表：Codex 先实现，Claude/**Gemini**/OpenCode "待确认 SDK 会话能力后接入" | prompt attach 实际支持 `codex`、`claude`、`opencode`、`pi`、`dsh`（`pkg/runs/prompt_attach.go:41-45`；`:38` 注释"gemini 缺席因为 GeminiRunner 不持久化 thread"；`:82` 报错文本列出五个 provider） | 用 `prompt_attach.go` 的当前集合替换矩阵 |
-| O18 | `docs/design/agent-compose-runtime_contract.md:8,191` | provider 枚举为 "Codex, Claude, Gemini, OpenCode, and Pi" / `codex, claude, gemini, opencode, pi` | `dsh` 是一等 provider（`pkg/model/agent_model.go:90-91`、`runtime/javascript/src/runners/dsh.ts`）。**注**：Gemini 部分已由本次清理修复（见第六节），此处残留的是 dsh 缺失 | 两处补 `dsh` |
+| O18 | `docs/design/agent-compose-runtime_contract.md:8,191` | provider 枚举为 "Codex, Claude, Gemini, OpenCode, and Pi" / `codex, claude, gemini, opencode, pi` | `dsh` 是一等 provider（`pkg/model/agent_model.go:88-89`、`runtime/javascript/src/runners/dsh.ts`）。**注**：Gemini 部分已由本次清理修复（见第六节），此处残留的是 dsh 缺失 | 两处补 `dsh` |
 | O19 | `docs/design/agent-compose-runtime_contract.md:635-720` | §10 "Provider Adapter Behavior" 只有 `10.1 Codex`、`10.2 Claude`、`10.3 Gemini`、`10.4 OpenCode` | Pi 与 dsh runner 都已存在且可选（`runtime/javascript/src/runners/pi.ts`、`dsh.ts`；`pkg/runs/prompt_attach.go:38-45`），但契约读者无法从中了解 Pi 的 appended system-prompt file 与 dsh 的 `DSH_*` 契约 | 补 §10.5 Pi 与 §10.6 dsh（或明确指向对应 provider 设计文档） |
 | O20 | `docs/design/runtime_mount_manifest_design.md:130-143` | Home 初始化表只有 `.codex/.claude/.claude.json/.gitconfig`；logical home 列表为 `.opencode`、`.pi`、`.config/{claude,Claude,opencode}` | `pkg/driver/runtime_mount_manifest.go:352` 迭代 `{".codex", ".claude", ".claude.json", ".gitconfig", ".dsh"}`；logical 列表（`:225-247`）还含 `home/.agents`、`home/.pi`、`home/.dsh` | 补 `.dsh`（及 `.agents`） |
 | O21 | `docs/design/runtime_mount_manifest_driver_specific_design.md:74-90,99-115,161-184` | "logical list 是所有 driver 的 source of truth"（15 行），Docker/BoxLite/Microsandbox 布局表同样缺项 | 规范列表（`pkg/driver/runtime_mount_manifest.go:225-247`）额外含 `home/.agents`、`home/.pi`、`home/.dsh` | 依据 `runtimeMountManifestLogicalList` 重新生成表格 |
@@ -189,7 +189,7 @@
 - **配置默认值**：`.env.example` 中 `SQLITE_MAX_OPEN_CONNS=4`、`CACHE_TTL=168h`、`CLEANUP_INTERVAL=1h`、`SANDBOX_CPUS=4`、`SANDBOX_MEMORY_MIB=4096`、`SANDBOX_DISK_SIZE_GB=6`、`AGENT_TIMEOUT=10h`、`SCHEDULER_RUN_TIMEOUT=20m`、`SANDBOX_START_TIMEOUT=30m`、`SANDBOX_STOP_TIMEOUT=30s`、`SANDBOX_GRACEFUL_STOP_TIMEOUT=10s`、`JUPYTER_READY_TIMEOUT=120s`、`WEBHOOK_BODY_LIMIT_BYTES`、`WORKSPACE_UPLOAD_LIMIT_BYTES`、`JUPYTER_GUEST_PORT=8888`、`DEFAULT_IMAGE`、`RUNTIME_DRIVER=docker`、`JUPYTER_PROXY_BASE=/jupyter`，以及 `SANDBOX_*`→`SESSION_*` legacy 别名优先级（`pkg/config/config.go:1150-1164`）与 `AGENT_TELEMETRY_*` 语义（`pkg/config/agent_telemetry.go:19-67`）。
 - **daemon 鉴权**：`docs/design/daemon_bearer_auth.md` —— token hash + `subtle.ConstantTimeCompare`、401 形状、豁免清单、客户端配置路径均与 `cmd/agent-compose/daemon_auth.go:17-68`、`pkg/config/config.go:416`、`pkg/clientconfig/auth.go:27,34` 一致。
 - **proto 契约**：`proto-v2-string-enum-boundaries.md`（所有 enum 都有零值 `UNSPECIFIED`，字段/枚举形状与 proto 一致）；`llm-provider-rpc.md`（服务/方法名与"`<connection>/<model>` 已退役"的表述一致）。
-- **k8s**：`k8s_pod_runtime_driver_design.md`（chart、环境变量、k8s volume driver、guest 文件推送）全部核对通过；`k8s_pod_runtime_driver_k3d_test_plan.md` 的构建 profile 断言、Pod 标签（`pkg/driver/k8s_runtime.go:38-40`）、`pkg/runs/sandbox_preparation.go:343` 亦正确。
+- **k8s**：`k8s_pod_runtime_driver_design.md` 的 chart、环境变量、k8s volume driver、guest 文件推送核对通过，但 §2.1 的部署拓扑（"必须在集群内部"）与 kubeconfig 优先的实现不符（见 I13），已在本分支修正；`k8s_pod_runtime_driver_k3d_test_plan.md` 的构建 profile 断言、Pod 标签（`pkg/driver/k8s_runtime.go:38-40`）、`pkg/runs/sandbox_preparation.go:343` 亦正确。
 - **runtime 环境变量**：`runtime_environment_variables_design.md` —— `GUEST_WORKSPACE`/`GUEST_STATE_ROOT`/`GUEST_RUNTIME_ROOT`/`GUEST_LOG_ROOT` 与"`GUEST_HOME` 不再是公开配置输入"的表述与 `pkg/config/config.go` 一致。
 - **LLM 路由**：`llm_model_routing_redesign.md` 准确性很高 —— `pkg/llms` 生产文件数 26、五个 dialect writer 与 `dialect_writers.go` 对应、bridge 伪版本 `v1.1.6-0.20260922130207-cfe67158b4c7` 与 `go.mod:8` 一致、迁移 16/17 说明与迁移目录一致。
 - **公开手册**：YAML schema 覆盖（74 个字段在中英文手册中均被覆盖）、`env_file` 解析、capset 路由与校验、`build.platforms`、firecracker 拒绝、并发/超时默认值、`/etc/localtime` 挂载、GUI/MPI catalog + `x-capability-sandbox-token` + `capset` 标签、webhook 路由与 daemon route allowlist 的一致性、guest ready-file/graceful-stop ABI 均正确。
@@ -249,3 +249,22 @@
 | 本文件 | 文件数/增删统计、"73 个字段"、`grep gemini` 结论、W6/W8/O2 的行号与表述 | 逐条按实测改正 |
 
 新增测试只用于钉住这次破坏性变更：gemini 的各种拼写被拒、Google 两个变量名不再被识别或脱敏、镜像构建不再包含 gemini CLI 或相关凭据名、guest 不再有 gemini 挂载项与 thread log roots。
+
+## 十二、评审反馈修正（本分支第三次复核）
+
+上游评审（`winterfx`，`CHANGES_REQUESTED`）对本报告未覆盖的文档位置提出 P1–P6 若干项。逐条复核后按下表处理（全部为文档、测试或注释，无生产行为变化）：
+
+| 评审项 | 位置 | 问题 | 处理 |
+| --- | --- | --- | --- |
+| P1.2 | `docs/pages/command-line-manual.md:713`、zh:691 | 裸 ID 的 `inspect` 语法里多出 `volume-id` | 改为 `<project\|agent\|run\|sandbox\|image\|cache>`：`pkg/resources/locator.go:23-30` 没有 volume kind，`inspect volume <name>` 是另一条子命令 |
+| P1.3 | `docs/design/webhook_design.md:402-410` | `dead_letter` 写成 "Retry exhausted or payload cannot be decoded"；漏 `canceled` | `dead_letter` 只由 payload 解码失败写入（`pkg/events/dispatcher.go:117`，无重试上限），改为该描述；补 `canceled`（`CancelEventDispatch`，`pkg/storage/configstore/topic_event_store.go:346`） |
+| P2.1 | `docs/design/k8s_pod_runtime_driver_design.md:22-54` | 仍写 daemon "必须运行在目标集群内部"，与本分支已修的 README/I13 冲突 | §2.1 改为 kubeconfig 优先、集群内为推荐拓扑与回退；保留"一个集群一个 daemon"的结论，并说明 Helm Chart 是受支持的安装入口而非硬性要求 |
+| P2.3 | `docs/spec/core-e2e-test-strategy-spec.md:27` | 称 CI "不准备 KVM runtime 产物" | CI 的 `binary-linux` 会构建并校验 `boxlite-shim`/`msb`/`libkrunfw.so`（`.github/workflows/ci.yml:399-411`）；改为"有原生产物，但无 guest 镜像与 KVM/host daemon" |
+| P2.5 | `docs/design/runtime_environment_variables_design.md:57-71` | home 挂载表漏 `.agents`/`.pi`/`.dsh`，使"只对表中条目录入创建符号链接"不成立 | 按 `pkg/driver/runtime_mount_manifest.go:233-238` 补三行 |
+| P2.6 | `README.zh-CN.md:139` | 顶层字段漏 `octobus_servers` | 补上（与 `README.md:174` 一致） |
+| P2.7 | `README.zh-CN.md:210-213`、`examples/scheduler-script/README.md:46-51` | `provider: git` 只写 `url`（实际 `path` 必填）；又声称不支持鉴权 header | 按 `pkg/compose/normalize.go:1291-1296`（git 需 `url`+`path`）与 `pkg/sources/source.go:82-93`（http 支持 token / 基本认证）改写 |
+| P2.8 | `README.md:259-261`、`README.zh-CN.md:219` | daemon token 豁免清单漏 runtime LLM facade 与 Jupyter proxy | 补全（`cmd/agent-compose/daemon_auth.go:54-68`） |
+| P3 | `AGENTS.md:11,24`、本文件 `:38`、`:97`、`:192` | 领域包写成不存在的 `pkg/projects`/`pkg/sessions`；schema 字段数仍写 73；`agent_model.go` 行号偏差；§7 称 k8s 全部核对通过与 I13 冲突 | 分别改为 `pkg/sandboxes` + `internal/projects`、74、`:88-89`，并在 §7 标注 §2.1 这一例外 |
+| P6 | `examples/agent-compose/README.md`/`README.zh-CN.md:15-24`、`docs/design/k8s_pod_runtime_driver_k3d_test_plan.md:168,411-416`、`docs/design/webhook_design.md:174-188,455-461` | k8s 前置条件写成 `driver: k8s` 且混在 Docker 前置条件里；悬空的 "§5.1"；bind mount 报错串的来源写错；`event_delivery` 少一条索引；已实现的 `github_sha256` 留在 "Target behavior" 标题下 | 改为 `runtime.driver`/`RUNTIME_DRIVER` 并拆开前置条件；改为 §4.3；区分 compose 归一化与 resolved-volume 两条报错路径；补 `idx_event_delivery_scheduler`；该节改为 "Remaining target behavior" |
+
+`docs/pages/guest-image-abi.md` 的参考 `mkdir` 已在前一轮补上 `/root/.dsh`。P4（发布说明）与 P5（拆分 PR）属于 PR 流程问题：破坏性变更的两条后果与迁移说明已补进提交 footer 与 PR 描述，是否拆分由维护者决定。
