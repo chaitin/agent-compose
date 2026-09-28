@@ -249,6 +249,8 @@ variables:
 
 Project variables are retained as project configuration values with redaction semantics. They are not automatically inherited by agent `env`, and they are not a source for other `${NAME}` expressions. Declare a value again under an agent's `env` when it must enter that agent's sandbox.
 
+A first-party LLM credential declared here is not handed to the sandbox: the daemon imports it into its own LLM connections and proxies the run, so the sandbox only ever receives a run-scoped facade token. The recognized names are `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, and `LLM_API_KEY` (optionally with `LLM_API_PROTOCOL` and `LLM_API_ENDPOINT`). The declaration's endpoint variables — `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_ENDPOINT`, `OPENAI_BASE_URL`, `DEEPSEEK_BASE_URL`, `OPENROUTER_BASE_URL` — belong to the absorbed declaration and do not reach the sandbox either; the sandbox is given the facade address that serves the same protocol. `AZURE_OPENAI_API_KEY`, `GOOGLE_API_KEY`, and `GEMINI_API_KEY` are recognized but cannot be proxied: the daemon removes them from the sandbox environment rather than forwarding a credential it cannot serve, so the agent never sees them either. Only a credential-looking name the daemon does not recognize at all (any other `*_API_KEY` or `*_AUTH_TOKEN`) is passed through to the sandbox, where anything running there can read it. Project checks report which of the three cases each declaration falls into and recommend the daemon's LLM configuration, which is where a credential is managed, rotated, and shared deliberately. Every credential the daemon keeps off the sandbox — absorbed or only recognized — is redacted in project and agent views whether or not the declaration set `secret: true`: the variable name stays visible so an operator can see what they declared, but the value is shown as `********`. Endpoint variables such as `OPENAI_BASE_URL` are addresses rather than credentials and stay visible. The declaration the daemon resolved is not affected, and the facade address and token a run actually uses live only in the run's environment and are never persisted.
+
 ## `workspaces`: project workspaces
 
 The top-level key must be plural:
@@ -577,7 +579,7 @@ The daemon loads `$DATA_ROOT/models.json` once during startup. A missing file is
 
 The optional `models` array adds per-model metadata and behavior: `id`, `name`, `baseUrl`, `protocol`, `headers`, and the positive integer `maxOutputTokens`. A model-level `protocol` must remain in the Provider's protocol family: OpenAI Providers (`responses` or `chat_completions`) allow `responses` and `chat_completions`, while Anthropic Providers (`anthropic_messages`) allow only `anthropic_messages`. These attributes belong to the specific Provider/model deployment, so Providers that share a model ID do not overwrite one another. The array is not an allowlist. For a configured `gateway` Provider, `gateway/a-model-not-listed-here` is still forwarded as the literal upstream model ID using Provider defaults.
 
-All compatible coding agents and `scheduler.llm` use this catalog for agent-compose Provider routing and model selection; it does not replace an agent's native model-capability catalog. A complete Agent-level `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, and `LLM_API_KEY` configuration remains the higher-priority compatibility path. Optional daemon or Agent `LLM_API_HEADERS` is a JSON object of static extra HTTP headers on that env-backed Provider; it does not replace catalog `headers`, and the raw value is not exposed to the guest runtime. The variable is shared by env-backed OpenAI and Anthropic Providers, so each configured header must be safe to send to every configured upstream. The daemon's complete `LLM_*` configuration remains the default ahead of `models.json.default`. A catalog Provider ID that conflicts with an existing non-catalog Provider causes startup to fail without overwriting the existing configuration.
+All compatible coding agents and `scheduler.llm` use this catalog for agent-compose Provider routing and model selection; it does not replace an agent's native model-capability catalog. A first-party credential declared in project `variables` or agent `env` is imported into this same catalog as a daemon-owned connection and served through the facade, so the key stays on the daemon and the sandbox only sees a run-scoped facade token; this is the compatibility path for a complete `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, and `LLM_API_KEY` declaration as well as for the vendor-specific names listed under `variables` and `env`. Optional daemon or Agent `LLM_API_HEADERS` is a JSON object of static extra HTTP headers on that env-backed Provider; it does not replace catalog `headers`, and the raw value is not exposed to the guest runtime. The variable is shared by env-backed OpenAI and Anthropic Providers, so each configured header must be safe to send to every configured upstream. The daemon's complete `LLM_*` configuration remains the default ahead of `models.json.default`. A catalog Provider ID that conflicts with an existing non-catalog Provider causes startup to fail without overwriting the existing configuration.
 
 ### Managing LLM providers through RPC
 
@@ -807,6 +809,8 @@ env:
 ```
 
 These values enter the agent sandbox. Secret values are redacted from normalized display but remain available to the runtime.
+
+A recognized first-party LLM credential declared here — `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, or `LLM_API_KEY` — is the exception: the daemon imports it into its own LLM connections and proxies the run, so the sandbox receives only a facade token. An absorbed declaration takes its endpoint variables with it: `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_ENDPOINT`, `OPENAI_BASE_URL`, `DEEPSEEK_BASE_URL`, and `OPENROUTER_BASE_URL` are removed from the sandbox environment, and the managed facade address is installed in their place. Credentials the daemon recognizes but cannot proxy (`AZURE_OPENAI_API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY`) are removed from the sandbox environment too, and are redacted in project and agent views along with the absorbed ones. Only an unrecognized credential-looking name (any other `*_API_KEY` or `*_AUTH_TOKEN`) is passed through and can be read by anything running in the sandbox; project checks report which case each declaration falls into.
 
 ### `mcp_servers`
 
@@ -1067,9 +1071,28 @@ scheduler:
 | `timeout` | duration | One of four | Positive one-shot delay such as `15s`; registration precision is at least 1 ms. |
 | `event.topic` | string | One of four | The nested `topic` is the non-empty subscribed topic, for example `webhook.github.push`. |
 | `prompt` | string | No | Prompt sent to the agent. An empty prompt becomes `Run agent <name>.` |
+| `include_event` | bool | No | `event` triggers only. Defaults to `true`, which appends the triggering event to the prompt; `false` sends the declared prompt alone. |
 | `sandbox_policy` | string | No | `sticky` or `new` for this generated agent call. If omitted, no call-level override is emitted. |
 
 The daemon local timezone comes from `TZ` when it is set, otherwise from the operating system's `/etc/localtime`. The shipped Docker Compose deployment mounts the host's `/etc/localtime` read-only. Set `TZ` in `.env` only when the daemon should intentionally differ from the host. Restart the daemon after changing its timezone. Stored timestamps remain UTC.
+
+##### Event payload in the prompt
+
+An `event` trigger appends the triggering event to its prompt, so the agent knows which object to work on. For a webhook event the payload is the delivery record, with the request body under `body`:
+
+```text
+Review the pushed changes.
+
+<trigger-event topic="webhook.github.push">
+{"body":{"ref":"refs/heads/main",...},"eventId":"...","headers":{"x-github-event":"push",...},"method":"POST","path":"/api/webhooks/...","topic":"webhook.github.push",...}
+</trigger-event>
+```
+
+The block holds the event payload as compact JSON. An event delivered through the event bus and a manual `StartSchedulerRun` with the same payload produce the same block: the bus envelope (`topic`, `createdAt`, `payload`) is unwrapped and `topic` is the published topic, while a manual run's raw payload is paired with the declared `event.topic`. Only a JSON object with exactly the keys `topic`, `createdAt` (a string), and `payload` is treated as an envelope, so a manual run that replays a stored run's `payload_json` renders like the original delivery. A run without a payload, or whose payload is `null` or an empty object, sends the declared prompt unchanged.
+
+The topic is escaped as an attribute value, and a `</trigger-event` string inside the payload is written as `<\/trigger-event`, which decodes to the same JSON value; neither can end the block early. The block content is at most 65,536 UTF-16 code units. Longer content is cut to that length, so it is no longer valid JSON, and the tag gains `truncated="true"` and `original-length="<n>"`.
+
+Set `include_event: false` on the trigger to send the declared prompt without the block. Use an inline scheduler script when the agent needs a different rendering of the event.
 
 #### Event delivery scope
 

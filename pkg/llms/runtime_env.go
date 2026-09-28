@@ -3,26 +3,30 @@ package llms
 import (
 	"sort"
 
+	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
 // MergeManagedExecEnv layers the daemon-managed LLM environment over the base
 // environment an execution was built with. The managed values win per key.
 //
-// The base environment is copied in full, including provider keys. An earlier
-// revision stripped provider keys from the base so a sandbox's own provider
-// environment could not leak past a daemon-managed facade, where the managed
-// token was the only credential that was supposed to reach the guest. That
-// stripping is wrong under direct mode: an agent that declares its own upstream
-// is deliberately served by that declaration, with its real credential in the
-// guest, so blanking the base is exactly what would break it. Managed values
-// still overwrite the keys the daemon owns.
+// Provider configuration names are dropped from the base before the managed
+// layer is applied. A sandbox may carry an upstream an operator declared in its
+// project or agent environment, and neither the credential nor the address may
+// reach the guest: the only credential a guest may present is the facade token
+// the managed layer installs under the vendor's conventional variable, and the
+// only address it may use is the facade route installed alongside it. Stripping
+// before the merge keeps those, because the managed layer writes the names the
+// daemon owns.
 func MergeManagedExecEnv(base map[string]string, managed map[string]string) map[string]string {
 	if len(base) == 0 && len(managed) == 0 {
 		return nil
 	}
 	result := make(map[string]string, len(base)+len(managed))
 	for key, value := range base {
+		if driverpkg.LLMProviderEnvName(key) {
+			continue
+		}
 		result[key] = value
 	}
 	for key, value := range managed {

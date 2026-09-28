@@ -29,7 +29,10 @@ func resolveCLIProjectEnvFromDir(spec *compose.ProjectSpec, composePath, working
 	for _, path := range envFiles {
 		fileValues, err := godotenv.Read(path)
 		if err != nil {
-			return nil, fmt.Errorf("load project env file %s: %w", path, err)
+			// The parser embeds the unparsed remainder of the file in its
+			// message, which for a project env file is where the real provider
+			// credentials live.
+			return nil, fmt.Errorf("load project env file %s: %w", path, sanitizeDotenvError(err))
 		}
 		for key, value := range fileValues {
 			values[key] = value

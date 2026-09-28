@@ -942,6 +942,57 @@ agents:
 	}
 }
 
+func TestNormalizeEventTriggerIncludeEvent(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: include-event
+agents:
+  reviewer:
+    scheduler:
+      triggers:
+        - event:
+            topic: webhook.github.push
+        - event:
+            topic: webhook.github.push
+          include_event: true
+        - event:
+            topic: webhook.github.push
+          include_event: false
+`)
+
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	triggers := normalized.Agents[0].Scheduler.Triggers
+	for i, want := range []bool{true, true, false} {
+		if got := triggers[i].IncludesEvent(); got != want {
+			t.Fatalf("triggers[%d].IncludesEvent() = %v, want %v", i, got, want)
+		}
+	}
+	// The default is stored as unset, so an explicit true does not change the
+	// normalized spec.
+	if triggers[1].IncludeEvent != nil {
+		t.Fatalf("triggers[1].IncludeEvent = %v, want nil", *triggers[1].IncludeEvent)
+	}
+}
+
+func TestNormalizeRejectsIncludeEventOnNonEventTrigger(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: interval-include-event
+agents:
+  reviewer:
+    scheduler:
+      triggers:
+        - interval: 1m
+          include_event: false
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{})
+	if err == nil || !strings.Contains(err.Error(), "triggers[0].include_event") || !strings.Contains(err.Error(), "only supported for event") {
+		t.Fatalf("Normalize non-event include_event error = %v", err)
+	}
+}
+
 func TestNormalizePreservesSchedulerScript(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: inline-script
@@ -1485,4 +1536,50 @@ func mustParseCompose(t *testing.T, raw string) *ProjectSpec {
 		spec.Workspaces = map[string]WorkspaceSpec{"default": {Provider: "file", Path: "."}}
 	}
 	return spec
+}
+
+// TestNormalizeRejectsRedactedValuePlaceholder pins the placeholder as reserved
+// for every environment value, not only OctoBus tokens. A view the daemon
+// returned hides a credential behind the placeholder; applying that view instead
+// of patching it must fail loudly rather than persist eight asterisks as the
+// credential.
+func TestNormalizeRejectsRedactedValuePlaceholder(t *testing.T) {
+	cases := []struct {
+		name string
+		spec string
+		path string
+	}{
+		{
+			name: "project variable",
+			spec: "name: demo\nvariables:\n  OPENAI_API_KEY: '********'\n",
+			path: "variables.OPENAI_API_KEY.value",
+		},
+		{
+			name: "agent env",
+			spec: "name: demo\nagents:\n  reviewer:\n    provider: codex\n    env:\n      DEEPSEEK_API_KEY: '********'\n",
+			path: "agents.reviewer.env.DEEPSEEK_API_KEY.value",
+		},
+		{
+			name: "mcp header",
+			spec: "name: demo\nmcp_servers:\n  tools:\n    type: remote\n    transport: http\n    url: https://example.test/mcp\n    headers:\n      Authorization: '********'\n",
+			path: "mcp_servers.tools.headers.Authorization.value",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec, err := Parse([]byte(tc.spec))
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			_, err = Normalize(spec, NormalizeOptions{})
+			var validationErr *ValidationError
+			if !errors.As(err, &validationErr) {
+				t.Fatalf("Normalize() error = %v, want a ValidationError", err)
+			}
+			if validationErr.Path != tc.path {
+				t.Fatalf("Normalize() path = %q, want %q", validationErr.Path, tc.path)
+			}
+		})
+	}
 }

@@ -117,8 +117,12 @@ func runComposeUpCommand(cmd *cobra.Command, cli cliOptions) error {
 		return commandExitErrorForConnect(fmt.Errorf("apply project %s: %w", normalized.Name, err))
 	}
 	msg := resp.Msg
-	if len(msg.GetIssues()) > 0 {
-		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("apply project %s: %s", normalized.Name, formatProjectValidationIssues(msg.GetIssues()))}
+	blocking, warnings := splitProjectValidationIssues(msg.GetIssues())
+	if len(blocking) > 0 {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("apply project %s: %s", normalized.Name, formatProjectValidationIssues(blocking))}
+	}
+	if err := writeRunWarnings(cmd.ErrOrStderr(), warnings); err != nil {
+		return err
 	}
 	if cli.JSON {
 		data, err := json.MarshalIndent(composeUpOutputFromResponse(msg), "", "  ")

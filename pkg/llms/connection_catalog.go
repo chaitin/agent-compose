@@ -162,7 +162,13 @@ func (c *Catalog) indexBindings(bindings []ProviderModelBinding) {
 			c.bindings[providerID] = make(map[string]ProviderModelConfig)
 		}
 		c.bindings[providerID][modelID] = binding.Config
-		c.serving[modelID] = append(c.serving[modelID], providerID)
+		// A connection derived from an agent's own declaration is addressable
+		// only by the run that declared it. Adding it to serving would make one
+		// agent's credential a candidate for every other agent that names the
+		// same model.
+		if !IsDeclaredConnectionID(providerID) {
+			c.serving[modelID] = append(c.serving[modelID], providerID)
+		}
 	}
 }
 
@@ -200,13 +206,24 @@ func (c *Catalog) defaultFromModelFlag(models []Model) (string, string) {
 	return "", ""
 }
 
-// Connections returns the configured connection ids in a stable order.
+// Connections returns the operator-configured connection ids in a stable order.
+// Connections derived from an agent declaration are excluded: they belong to one
+// run and are never part of the daemon's shared configuration.
 func (c *Catalog) Connections() []string {
+	return c.configuredConnectionIDs()
+}
+
+// configuredConnectionIDs returns the operator-configured connection ids in a
+// stable order.
+func (c *Catalog) configuredConnectionIDs() []string {
 	if c == nil {
 		return nil
 	}
 	ids := make([]string, 0, len(c.providers))
 	for id := range c.providers {
+		if IsDeclaredConnectionID(id) {
+			continue
+		}
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
@@ -269,9 +286,12 @@ func (c *Catalog) connectionFor(connectionID, model string, preference ProtocolP
 		}
 		return provider, nil
 	}
-	// A daemon with no connection at all has nothing to manage: report that
-	// plainly rather than as a choice between zero candidates.
-	if len(c.providers) == 0 {
+	// A daemon with no configured connection has nothing to manage: report that
+	// plainly rather than as a choice between zero candidates. Connections
+	// derived from an agent declaration do not count, because they are not
+	// candidates for any run but the one that declared them.
+	configured := c.configuredConnectionIDs()
+	if len(configured) == 0 {
 		return Provider{}, ErrNoConnection
 	}
 	if err := c.legacyQualifiedModelError(model); err != nil {
@@ -288,12 +308,10 @@ func (c *Catalog) connectionFor(connectionID, model string, preference ProtocolP
 			return provider, nil
 		}
 	}
-	if len(c.providers) == 1 {
-		for _, provider := range c.providers {
-			return provider, nil
-		}
+	if len(configured) == 1 {
+		return c.providers[configured[0]], nil
 	}
-	return c.chooseConnection(c.Connections(), model, preference)
+	return c.chooseConnection(configured, model, preference)
 }
 
 // chooseConnection returns the candidate that serves model over the most

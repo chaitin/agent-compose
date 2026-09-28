@@ -248,6 +248,8 @@ variables:
 
 `variables` 当前用于保存项目级配置值和脱敏语义。若某个值要传入 sandbox，仍需在对应 Agent 的 `env` 中声明。
 
+在这里声明的第一方 LLM 凭据不会交给 sandbox：daemon 会把它导入自己的 LLM 连接并代理本次 run，sandbox 只会收到本次 run 的 facade token。可识别的变量名包括 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、`CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`，以及可配合 `LLM_API_PROTOCOL`、`LLM_API_ENDPOINT` 的 `LLM_API_KEY`。被吸收的声明会连同它的端点变量一起留在 daemon：`LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、`OPENROUTER_BASE_URL` 都不会进入 sandbox，daemon 会在原处装上同一协议对应的 facade 地址。`AZURE_OPENAI_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY` 能被识别但无法代理：daemon 会把它们从 sandbox 环境中移除，而不是转发一个自己无法服务的凭据，因此 agent 同样看不到它们。只有 daemon 完全不认识的形似凭据的名字（其它 `*_API_KEY`、`*_AUTH_TOKEN`）才会原样进入 sandbox，sandbox 内的进程可以读到。项目检查会分别说明每个声明属于哪种情况，并建议改用 daemon 侧的 LLM 配置——那才是凭据可以被显式管理、轮换和共享的地方。凡是 daemon 不交给 sandbox 的凭据——无论是否被吸收——在工程与 Agent 视图中一律脱敏为 `********`，无论声明里有没有写 `secret: true`；变量名仍然保留，运维能看到自己声明了什么。`OPENAI_BASE_URL` 这类端点是地址而非凭据，仍按原值显示。这只影响展示，不影响 daemon 解析到的声明；某次 run 实际使用的 facade 地址与 token 只存在于该次 run 的环境中，不会被持久化。
+
 ## `workspaces`：项目级工作区
 
 顶层必须使用 `workspaces`：
@@ -578,7 +580,7 @@ daemon 在启动时加载一次 `$DATA_ROOT/models.json`。文件不存在是合
 
 可选的 `models` 数组只补充模型级元数据和行为，包括 `id`、`name`、`baseUrl`、`protocol`、`headers` 和正整数 `maxOutputTokens`。模型级 `protocol` 必须与 Provider 的协议族兼容：OpenAI Provider（`responses` 或 `chat_completions`）只允许 `responses` 和 `chat_completions`，Anthropic Provider（`anthropic_messages`）只允许 `anthropic_messages`。这些属性属于具体的 Provider/Model 部署，共享同一 Model ID 的 Provider 不会相互覆盖；该数组也不是白名单。只要 `gateway` Provider 已配置，`gateway/a-model-not-listed-here` 仍会使用 Provider 默认配置，把右侧 Model ID 原样发送给上游。
 
-所有兼容的 Coding Agent 和 `scheduler.llm` 使用这份目录完成 agent-compose 的 Provider 路由和模型选择；它不替代 Agent 自身的模型能力目录。Agent 中完整配置的 `LLM_API_ENDPOINT`、`LLM_API_PROTOCOL` 和 `LLM_API_KEY` 仍是更高优先级的兼容路径。可选的 daemon 或 Agent `LLM_API_HEADERS` 是该 env Provider 上的静态额外 HTTP Header JSON 对象，它不替代 catalog 的 `headers`，原始值也不会暴露给 guest runtime。该变量由 env-backed OpenAI 和 Anthropic Provider 共用，因此每个 Header 都必须适合发送给所有已配置的上游。daemon 自身完整的 `LLM_*` 配置也继续作为默认值，并优先于 `models.json.default`。Catalog Provider ID 如果与已有非 catalog Provider 冲突，daemon 会在不覆盖原配置的前提下启动失败。
+所有兼容的 Coding Agent 和 `scheduler.llm` 使用这份目录完成 agent-compose 的 Provider 路由和模型选择；它不替代 Agent 自身的模型能力目录。在项目 `variables` 或 Agent `env` 中声明的第一方凭据会被作为 daemon 自有的连接导入同一份目录并经 facade 代理，因此 key 留在 daemon，sandbox 只拿到本次 run 的 facade token；这既是完整 `LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`LLM_API_KEY` 声明的兼容路径，也适用于 `variables` 和 `env` 下列出的各厂商变量名。可选的 daemon 或 Agent `LLM_API_HEADERS` 是该 env Provider 上的静态额外 HTTP Header JSON 对象，它不替代 catalog 的 `headers`，原始值也不会暴露给 guest runtime。该变量由 env-backed OpenAI 和 Anthropic Provider 共用，因此每个 Header 都必须适合发送给所有已配置的上游。daemon 自身完整的 `LLM_*` 配置也继续作为默认值，并优先于 `models.json.default`。Catalog Provider ID 如果与已有非 catalog Provider 冲突，daemon 会在不覆盖原配置的前提下启动失败。
 
 ### 通过 RPC 管理 LLM Provider
 
@@ -793,6 +795,8 @@ env:
 ```
 
 这些值进入 Agent sandbox。相同名称的空项会在后续边界归一化；`secret: true` 控制展示脱敏。
+
+在这里声明的可识别第一方 LLM 凭据是例外——`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、`CODEX_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`、`LLM_API_KEY`：daemon 会把它们导入自己的 LLM 连接并代理本次 run，sandbox 只会收到 facade token。被吸收的声明会连同端点变量一起留在 daemon——`LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_API_ENDPOINT`、`OPENAI_BASE_URL`、`DEEPSEEK_BASE_URL`、`OPENROUTER_BASE_URL` 都会从 sandbox 环境中移除，并在原处装上 facade 地址。daemon 能识别但无法代理的凭据（`AZURE_OPENAI_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY`）同样会从 sandbox 环境中移除，并在工程/Agent 视图中与被吸收的凭据一起脱敏。只有无法识别的形似凭据的名字（其它 `*_API_KEY`、`*_AUTH_TOKEN`）才会原样下发，sandbox 内任何进程都能读到；项目检查会说明每个声明属于哪种情况。
 
 ### `mcp_servers`
 
@@ -1047,9 +1051,28 @@ scheduler:
 | `timeout` | duration | 四选一 | 一次性延迟，例如 `15s`；必须大于 0，实际注册精度至少 1ms。 |
 | `event.topic` | string | 四选一 | 内层 `topic` 是订阅的非空 topic，可使用如 `webhook.github.push`。 |
 | `prompt` | string | 否 | 触发后发送给 Agent 的 prompt；空值默认为 `Run agent <name>.`。 |
+| `include_event` | bool | 否 | 仅用于 `event` trigger。默认 `true`，把触发事件追加到 prompt 之后；`false` 时只发送声明的 prompt。 |
 | `sandbox_policy` | string | 否 | 本次 Agent 调用使用 `sticky` 或 `new`；省略时不在生成的调用中显式覆盖。 |
 
 Daemon 本地时区优先取 `TZ`，未设置时取操作系统的 `/etc/localtime`。项目提供的 Docker Compose 会以只读方式挂载宿主机 `/etc/localtime`；仅当 daemon 需要有意使用不同于宿主机的时区时，才在 `.env` 中设置 `TZ`。修改时区后需要重启 daemon。持久化时间戳仍统一使用 UTC。
+
+##### Prompt 中的事件内容
+
+`event` trigger 会把触发事件追加到 prompt 之后，让 Agent 知道要处理哪个对象。webhook 事件的 payload 是投递记录，请求体在 `body` 字段中：
+
+```text
+Review the pushed changes.
+
+<trigger-event topic="webhook.github.push">
+{"body":{"ref":"refs/heads/main",...},"eventId":"...","headers":{"x-github-event":"push",...},"method":"POST","path":"/api/webhooks/...","topic":"webhook.github.push",...}
+</trigger-event>
+```
+
+块内是事件 payload 的紧凑 JSON。通过事件总线投递的事件与携带相同 payload 的手动 `StartSchedulerRun` 生成相同的块：总线信封（`topic`、`createdAt`、`payload`）会被拆开，`topic` 取实际发布的 topic；手动启动的原始 payload 则搭配声明的 `event.topic`。只有恰好包含 `topic`、`createdAt`（字符串）和 `payload` 三个键的 JSON 对象才会被当作信封，因此用已保存运行的 `payload_json` 手动重跑时，渲染结果与原始投递一致。没有 payload、或 payload 为 `null` 或空对象的运行按声明的 prompt 原样发送。
+
+topic 会按属性值转义，payload 中的 `</trigger-event` 会写成 `<\/trigger-event`（解码后是同一个 JSON 值），两者都无法提前结束这个块。块内容最多 65,536 个 UTF-16 码元；超出部分被截掉，此时块内不再是合法 JSON，标签上增加 `truncated="true"` 和 `original-length="<n>"`。
+
+在 trigger 上设置 `include_event: false` 可只发送声明的 prompt、不附加这个块。如果 Agent 需要其他形式的事件内容，请改用 inline scheduler 脚本。
 
 #### 事件投递范围
 
