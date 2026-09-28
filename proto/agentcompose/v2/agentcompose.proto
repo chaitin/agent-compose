@@ -1019,6 +1019,9 @@ message TriggerSpec {
   SchedulerSandboxPolicy sandbox_policy = 8;
   // Optional IANA timezone. Unset cron triggers use the daemon's local timezone.
   string timezone = 9;
+  // Event triggers only. Unset or true appends the triggering event to the
+  // prompt as a <trigger-event> block; false sends the declared prompt as is.
+  optional bool include_event = 10;
 }
 
 message EventTriggerSpec {

@@ -310,6 +310,7 @@ func TriggerSpecToProto(trigger compose.NormalizedTriggerSpec) *agentcomposev2.T
 		if trigger.Event != nil {
 			result.Event.Topic = trigger.Event.Topic
 		}
+		result.IncludeEvent = trigger.IncludeEvent
 	}
 	return result
 }

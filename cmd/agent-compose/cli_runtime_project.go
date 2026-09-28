@@ -171,6 +171,7 @@ func normalizedRuntimeAgentSpec(agent *agentcomposev2.AgentSpec) compose.Normali
 				Interval:      trigger.GetInterval(),
 				Timeout:       trigger.GetTimeout(),
 				Prompt:        trigger.GetPrompt(),
+				IncludeEvent:  trigger.IncludeEvent,
 				SandboxPolicy: schedulerSandboxPolicyText(trigger.GetSandboxPolicy()),
 			}
 			if event := trigger.GetEvent(); event != nil {

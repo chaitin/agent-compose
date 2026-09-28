@@ -203,6 +203,7 @@ type TriggerSpec struct {
 	Timeout       string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	Event         *EventTriggerSpec `yaml:"event,omitempty" json:"event,omitempty"`
 	Prompt        string            `yaml:"prompt,omitempty" json:"prompt,omitempty"`
+	IncludeEvent  *bool             `yaml:"include_event,omitempty" json:"include_event,omitempty"`
 	SandboxPolicy *string           `yaml:"sandbox_policy,omitempty" json:"sandbox_policy,omitempty"`
 
 	cronSet     bool
@@ -763,6 +764,7 @@ func validateTrigger(node *yaml.Node, path string) error {
 		"timeout":        validateScalar,
 		"event":          validateEventTrigger,
 		"prompt":         validateScalar,
+		"include_event":  validateBool,
 		"sandbox_policy": validateScalar,
 	})
 }

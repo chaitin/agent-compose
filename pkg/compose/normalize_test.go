@@ -942,6 +942,57 @@ agents:
 	}
 }
 
+func TestNormalizeEventTriggerIncludeEvent(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: include-event
+agents:
+  reviewer:
+    scheduler:
+      triggers:
+        - event:
+            topic: webhook.github.push
+        - event:
+            topic: webhook.github.push
+          include_event: true
+        - event:
+            topic: webhook.github.push
+          include_event: false
+`)
+
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	triggers := normalized.Agents[0].Scheduler.Triggers
+	for i, want := range []bool{true, true, false} {
+		if got := triggers[i].IncludesEvent(); got != want {
+			t.Fatalf("triggers[%d].IncludesEvent() = %v, want %v", i, got, want)
+		}
+	}
+	// The default is stored as unset, so an explicit true does not change the
+	// normalized spec.
+	if triggers[1].IncludeEvent != nil {
+		t.Fatalf("triggers[1].IncludeEvent = %v, want nil", *triggers[1].IncludeEvent)
+	}
+}
+
+func TestNormalizeRejectsIncludeEventOnNonEventTrigger(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: interval-include-event
+agents:
+  reviewer:
+    scheduler:
+      triggers:
+        - interval: 1m
+          include_event: false
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{})
+	if err == nil || !strings.Contains(err.Error(), "triggers[0].include_event") || !strings.Contains(err.Error(), "only supported for event") {
+		t.Fatalf("Normalize non-event include_event error = %v", err)
+	}
+}
+
 func TestNormalizePreservesSchedulerScript(t *testing.T) {
 	spec := mustParseCompose(t, `
 name: inline-script

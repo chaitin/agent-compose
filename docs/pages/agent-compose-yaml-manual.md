@@ -1067,21 +1067,28 @@ scheduler:
 | `timeout` | duration | One of four | Positive one-shot delay such as `15s`; registration precision is at least 1 ms. |
 | `event.topic` | string | One of four | The nested `topic` is the non-empty subscribed topic, for example `webhook.github.push`. |
 | `prompt` | string | No | Prompt sent to the agent. An empty prompt becomes `Run agent <name>.` |
+| `include_event` | bool | No | `event` triggers only. Defaults to `true`, which appends the triggering event to the prompt; `false` sends the declared prompt alone. |
 | `sandbox_policy` | string | No | `sticky` or `new` for this generated agent call. If omitted, no call-level override is emitted. |
 
-An `event` trigger appends the triggering event to its prompt, so the agent knows which object to work on:
+The daemon local timezone comes from `TZ` when it is set, otherwise from the operating system's `/etc/localtime`. The shipped Docker Compose deployment mounts the host's `/etc/localtime` read-only. Set `TZ` in `.env` only when the daemon should intentionally differ from the host. Restart the daemon after changing its timezone. Stored timestamps remain UTC.
+
+##### Event payload in the prompt
+
+An `event` trigger appends the triggering event to its prompt, so the agent knows which object to work on. For a webhook event the payload is the delivery record, with the request body under `body`:
 
 ```text
 Review the pushed changes.
 
 <trigger-event topic="webhook.github.push">
-{"ref":"refs/heads/main", ...}
+{"body":{"ref":"refs/heads/main",...},"eventId":"...","headers":{"x-github-event":"push",...},"method":"POST","path":"/api/webhooks/...","topic":"webhook.github.push",...}
 </trigger-event>
 ```
 
-The block holds the event payload as compact JSON. An event delivered through the event bus and a manual `StartSchedulerRun` with the same payload produce the same block: the bus envelope (`topic`, `createdAt`, `payload`) is unwrapped and `topic` is the published topic, while a manual run's raw payload is paired with the declared `event.topic`. Only a JSON object with exactly the keys `topic`, `createdAt` (a string), and `payload` is treated as an envelope, so a manual run that replays a stored run's `payload_json` renders like the original delivery. A run without a payload, or whose payload is `null` or an empty object, sends the declared prompt unchanged. Payload JSON longer than 65,536 characters is cut to that length and the tag gains `truncated="true"` and `original-length="<n>"`. Use an inline scheduler script when the agent needs a different rendering of the event.
+The block holds the event payload as compact JSON. An event delivered through the event bus and a manual `StartSchedulerRun` with the same payload produce the same block: the bus envelope (`topic`, `createdAt`, `payload`) is unwrapped and `topic` is the published topic, while a manual run's raw payload is paired with the declared `event.topic`. Only a JSON object with exactly the keys `topic`, `createdAt` (a string), and `payload` is treated as an envelope, so a manual run that replays a stored run's `payload_json` renders like the original delivery. A run without a payload, or whose payload is `null` or an empty object, sends the declared prompt unchanged.
 
-The daemon local timezone comes from `TZ` when it is set, otherwise from the operating system's `/etc/localtime`. The shipped Docker Compose deployment mounts the host's `/etc/localtime` read-only. Set `TZ` in `.env` only when the daemon should intentionally differ from the host. Restart the daemon after changing its timezone. Stored timestamps remain UTC.
+The topic is escaped as an attribute value, and a `</trigger-event` string inside the payload is written as `<\/trigger-event`, which decodes to the same JSON value; neither can end the block early. The block content is at most 65,536 UTF-16 code units. Longer content is cut to that length, so it is no longer valid JSON, and the tag gains `truncated="true"` and `original-length="<n>"`.
+
+Set `include_event: false` on the trigger to send the declared prompt without the block. Use an inline scheduler script when the agent needs a different rendering of the event.
 
 #### Inline script
 

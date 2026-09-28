@@ -328,6 +328,11 @@
       "optional": true
     },
     {
+      "path": "agents.*.scheduler.triggers[].include_event",
+      "go_type": "optional\u003cbool\u003e",
+      "optional": true
+    },
+    {
       "path": "agents.*.scheduler.triggers[].interval",
       "go_type": "string",
       "optional": true
