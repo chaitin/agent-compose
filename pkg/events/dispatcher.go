@@ -119,12 +119,15 @@ func (d *Dispatcher) publishOne(ctx context.Context, item domain.TopicEventRecor
 	}
 	d.setInFlight(item.ID)
 	if ok := d.bus.Publish(domain.SchedulerTopicEvent{
-		EventID:   item.ID,
-		Topic:     item.Topic,
-		Source:    item.Source,
-		Provider:  item.Provider,
-		Payload:   payload,
-		CreatedAt: item.CreatedAt,
+		EventID:  item.ID,
+		Topic:    item.Topic,
+		Source:   item.Source,
+		Provider: item.Provider,
+		// Carry the persisted publisher Project so delivery scope still holds
+		// when the event is dispatched after a restart or a retry.
+		PublisherProjectID: item.PublisherProjectID,
+		Payload:            payload,
+		CreatedAt:          item.CreatedAt,
 		Ack: func(ctx context.Context) error {
 			defer d.clearInFlight(item.ID)
 			return d.configDB.MarkEventPublished(ctx, item.ID, claimID, time.Now().UTC())

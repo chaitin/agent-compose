@@ -29,6 +29,9 @@ type PublishTopicEventRequest struct {
 	Trigger     TriggerEventMetadata
 	SchedulerID string
 	RunID       string
+	// ProjectID is the publishing scheduler's Project; delivery scope is
+	// decided against it.
+	ProjectID string
 }
 
 func NewPublishedTopicEvent(req PublishTopicEventRequest) (PublishedTopicEvent, error) {
@@ -82,18 +85,19 @@ func NewPublishedTopicEvent(req PublishTopicEventRequest) (PublishedTopicEvent, 
 	}
 	return PublishedTopicEvent{
 		Record: domain.TopicEventRecord{
-			ID:             eventID,
-			Topic:          topic,
-			Source:         domain.TopicEventSourceScheduler,
-			Provider:       provider,
-			CorrelationID:  correlationID,
-			PayloadHash:    events.PayloadSHA256(envelopeJSON),
-			PayloadJSON:    envelopeJSON,
-			DispatchStatus: domain.TopicEventDispatchPending,
-			ParentEventID:  parentEventID,
-			PublisherType:  domain.TopicEventSourceScheduler,
-			PublisherID:    strings.TrimSpace(schedulerID),
-			PublisherRunID: strings.TrimSpace(runID),
+			ID:                 eventID,
+			Topic:              topic,
+			Source:             domain.TopicEventSourceScheduler,
+			Provider:           provider,
+			CorrelationID:      correlationID,
+			PayloadHash:        events.PayloadSHA256(envelopeJSON),
+			PayloadJSON:        envelopeJSON,
+			DispatchStatus:     domain.TopicEventDispatchPending,
+			ParentEventID:      parentEventID,
+			PublisherType:      domain.TopicEventSourceScheduler,
+			PublisherID:        strings.TrimSpace(schedulerID),
+			PublisherRunID:     strings.TrimSpace(runID),
+			PublisherProjectID: strings.TrimSpace(req.ProjectID),
 		},
 		Envelope: envelope,
 	}, nil

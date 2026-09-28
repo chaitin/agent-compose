@@ -1094,6 +1094,21 @@ The topic is escaped as an attribute value, and a `</trigger-event` string insid
 
 Set `include_event: false` on the trigger to send the declared prompt without the block. Use an inline scheduler script when the agent needs a different rendering of the event.
 
+#### Event delivery scope
+
+The daemon operator, not the Project, decides which Projects an event reaches. `EVENT_DELIVERY_SCOPE` in the daemon environment accepts two values:
+
+| Value | Behavior |
+| --- | --- |
+| `project` (default) | An event published from a Project reaches only `event` triggers in that same Project. |
+| `daemon` | An event published from a Project reaches matching `event` triggers in every Project on the daemon. |
+
+The scope applies to topics a scheduler script publishes with `scheduler.event.publish` (`runtime.*`, `workflow.*`, `external.*`) and to the Engine system topics raised on a Project's behalf (`agent-compose.session.*`, `agent-compose.sandbox.*`, `agent-compose.agent.completed`). Webhook topics are not published by a Project: an operator-configured webhook source admits them, and they reach matching triggers in every Project under either scope.
+
+The webhook exception assumes only the operator can configure webhook sources. The webhook source API is protected only when `AGENT_COMPOSE_AUTH_TOKEN` is set; without it, anyone who can reach the daemon API can add a source and inject webhook events. Even with it set, webhook events are shared: every Project that subscribes to `webhook.*` or `*` receives every webhook payload. A daemon shared by mutually untrusted users must set `AGENT_COMPOSE_AUTH_TOKEN` and should not route tenant-private data through webhooks.
+
+Neither `agent-compose.yml` nor a scheduler script can change the scope, and a topic name grants no access: under `project` scope, subscribing to `*` still receives only the Project's own events. A control plane can read the scope in effect with `SettingsService.GetEventDeliveryScope`. A daemon shared by a single user that relies on cross-Project events sets `EVENT_DELIVERY_SCOPE=daemon`.
+
 #### Inline script
 
 ```yaml

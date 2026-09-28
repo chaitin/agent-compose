@@ -86,10 +86,11 @@ func (b *SandboxRPCBridge) SubscribeSandbox(sandboxID string) (<-chan sandboxes.
 	return b.streams.Subscribe(sandboxID)
 }
 
-func (b *SandboxRPCBridge) CallJSON(ctx context.Context, method, requestJSON string) (string, error) {
-	return b.CallJSONWithSource(ctx, method, requestJSON, domain.SandboxTypeScript)
-}
-
+// CallJSONWithSource serves a scheduler script's sandbox RPC. source must name
+// the scheduler (script:<scheduler id>): it is recorded as the trigger source
+// of a sandbox the call creates, and it is how the daemon later tells which
+// Project owns that sandbox. A source naming no scheduler would leave the
+// sandbox's owner to be inferred from tags the script chose.
 func (b *SandboxRPCBridge) CallJSONWithSource(ctx context.Context, method, requestJSON, source string) (string, error) {
 	method = strings.TrimSpace(method)
 	switch method {
@@ -164,17 +165,6 @@ func (b *SandboxRPCBridge) CallJSONWithSource(ctx context.Context, method, reque
 	default:
 		return "", fmt.Errorf("unsupported sandbox rpc %q", method)
 	}
-}
-
-func (b *SandboxRPCBridge) publishSchedulerTopic(topic string, payload map[string]any) {
-	if b == nil || b.bus == nil {
-		return
-	}
-	b.bus.Publish(domain.SchedulerTopicEvent{
-		Topic:     topic,
-		Payload:   payload,
-		CreatedAt: time.Now().UTC(),
-	})
 }
 
 func (b *SandboxRPCBridge) createSandbox(ctx context.Context, req sandboxRPCCreateRequest, source string) (*domain.Sandbox, error) {
@@ -328,7 +318,7 @@ func (b *SandboxRPCBridge) createSandboxWithAgent(ctx context.Context, req sandb
 	}
 	domain.RestoreSandboxTransientFields(loaded, session)
 	b.indexCapabilitySandbox(loaded)
-	b.publishSchedulerTopic("agent-compose.session.created", schedulers.SessionTopicPayload(loaded, source))
+	b.publishSandboxLifecycle(ctx, "agent-compose.session.created", loaded, source)
 	return loaded, nil
 }
 
@@ -359,7 +349,7 @@ func (b *SandboxRPCBridge) resumeSandbox(ctx context.Context, sandboxID, source 
 		return nil, api.ConnectErrorForDomain(err)
 	}
 	b.indexCapabilitySandbox(loaded)
-	b.publishSchedulerTopic("agent-compose.session.resumed", schedulers.SessionTopicPayload(loaded, source))
+	b.publishSandboxLifecycle(ctx, "agent-compose.session.resumed", loaded, source)
 	return loaded, nil
 }
 
@@ -400,7 +390,7 @@ func (b *SandboxRPCBridge) stopSandboxWithOptions(ctx context.Context, sandboxID
 		slog.Warn("graceful sandbox stop escalated to force", "sandbox_id", session.Summary.ID, "outcome", outcome.Preparation.Outcome, "error", outcome.Preparation.Error)
 	}
 	if outcome.DriverStopped && outcome.Sandbox != nil {
-		b.publishSchedulerTopic("agent-compose.session.stopped", schedulers.SessionTopicPayload(outcome.Sandbox, source))
+		b.publishSandboxLifecycle(ctx, "agent-compose.session.stopped", outcome.Sandbox, source)
 	}
 	if stopErr != nil {
 		return outcome, api.ConnectErrorForDomain(stopErr)

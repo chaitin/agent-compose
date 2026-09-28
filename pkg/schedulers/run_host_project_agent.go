@@ -78,7 +78,7 @@ func (h *RuntimeHost) ProjectAgent(ctx context.Context, prompt string, request d
 		LinkedCellID:        result.CellID,
 		LinkedAgentThreadID: result.AgentThreadID,
 	})
-	h.publishAgentCompleted(result, &run)
+	h.publishAgentCompleted(ctx, result, &run)
 	if execErr != nil {
 		return result, execErr
 	}

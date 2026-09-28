@@ -239,6 +239,9 @@ const (
 	// SettingsServiceUpdateCapabilityGatewayConfigProcedure is the fully-qualified name of the
 	// SettingsService's UpdateCapabilityGatewayConfig RPC.
 	SettingsServiceUpdateCapabilityGatewayConfigProcedure = "/agentcompose.v2.SettingsService/UpdateCapabilityGatewayConfig"
+	// SettingsServiceGetEventDeliveryScopeProcedure is the fully-qualified name of the
+	// SettingsService's GetEventDeliveryScope RPC.
+	SettingsServiceGetEventDeliveryScopeProcedure = "/agentcompose.v2.SettingsService/GetEventDeliveryScope"
 	// SettingsServiceListWorkspacePresetsProcedure is the fully-qualified name of the SettingsService's
 	// ListWorkspacePresets RPC.
 	SettingsServiceListWorkspacePresetsProcedure = "/agentcompose.v2.SettingsService/ListWorkspacePresets"
@@ -2297,6 +2300,9 @@ type SettingsServiceClient interface {
 	UpdateGlobalEnv(context.Context, *connect.Request[v2.UpdateGlobalEnvRequest]) (*connect.Response[v2.UpdateGlobalEnvResponse], error)
 	GetCapabilityGatewayConfig(context.Context, *connect.Request[v2.GetCapabilityGatewayConfigRequest]) (*connect.Response[v2.GetCapabilityGatewayConfigResponse], error)
 	UpdateCapabilityGatewayConfig(context.Context, *connect.Request[v2.UpdateCapabilityGatewayConfigRequest]) (*connect.Response[v2.UpdateCapabilityGatewayConfigResponse], error)
+	// Reports the event delivery scope in effect on this daemon. The operator
+	// sets it with EVENT_DELIVERY_SCOPE; Project content cannot change it.
+	GetEventDeliveryScope(context.Context, *connect.Request[v2.GetEventDeliveryScopeRequest]) (*connect.Response[v2.GetEventDeliveryScopeResponse], error)
 	ListWorkspacePresets(context.Context, *connect.Request[v2.ListWorkspacePresetsRequest]) (*connect.Response[v2.ListWorkspacePresetsResponse], error)
 	CreateWorkspacePreset(context.Context, *connect.Request[v2.CreateWorkspacePresetRequest]) (*connect.Response[v2.WorkspacePresetResponse], error)
 	UpdateWorkspacePreset(context.Context, *connect.Request[v2.UpdateWorkspacePresetRequest]) (*connect.Response[v2.WorkspacePresetResponse], error)
@@ -2338,6 +2344,12 @@ func NewSettingsServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(settingsServiceMethods.ByName("UpdateCapabilityGatewayConfig")),
 			connect.WithClientOptions(opts...),
 		),
+		getEventDeliveryScope: connect.NewClient[v2.GetEventDeliveryScopeRequest, v2.GetEventDeliveryScopeResponse](
+			httpClient,
+			baseURL+SettingsServiceGetEventDeliveryScopeProcedure,
+			connect.WithSchema(settingsServiceMethods.ByName("GetEventDeliveryScope")),
+			connect.WithClientOptions(opts...),
+		),
 		listWorkspacePresets: connect.NewClient[v2.ListWorkspacePresetsRequest, v2.ListWorkspacePresetsResponse](
 			httpClient,
 			baseURL+SettingsServiceListWorkspacePresetsProcedure,
@@ -2371,6 +2383,7 @@ type settingsServiceClient struct {
 	updateGlobalEnv               *connect.Client[v2.UpdateGlobalEnvRequest, v2.UpdateGlobalEnvResponse]
 	getCapabilityGatewayConfig    *connect.Client[v2.GetCapabilityGatewayConfigRequest, v2.GetCapabilityGatewayConfigResponse]
 	updateCapabilityGatewayConfig *connect.Client[v2.UpdateCapabilityGatewayConfigRequest, v2.UpdateCapabilityGatewayConfigResponse]
+	getEventDeliveryScope         *connect.Client[v2.GetEventDeliveryScopeRequest, v2.GetEventDeliveryScopeResponse]
 	listWorkspacePresets          *connect.Client[v2.ListWorkspacePresetsRequest, v2.ListWorkspacePresetsResponse]
 	createWorkspacePreset         *connect.Client[v2.CreateWorkspacePresetRequest, v2.WorkspacePresetResponse]
 	updateWorkspacePreset         *connect.Client[v2.UpdateWorkspacePresetRequest, v2.WorkspacePresetResponse]
@@ -2396,6 +2409,11 @@ func (c *settingsServiceClient) GetCapabilityGatewayConfig(ctx context.Context, 
 // agentcompose.v2.SettingsService.UpdateCapabilityGatewayConfig.
 func (c *settingsServiceClient) UpdateCapabilityGatewayConfig(ctx context.Context, req *connect.Request[v2.UpdateCapabilityGatewayConfigRequest]) (*connect.Response[v2.UpdateCapabilityGatewayConfigResponse], error) {
 	return c.updateCapabilityGatewayConfig.CallUnary(ctx, req)
+}
+
+// GetEventDeliveryScope calls agentcompose.v2.SettingsService.GetEventDeliveryScope.
+func (c *settingsServiceClient) GetEventDeliveryScope(ctx context.Context, req *connect.Request[v2.GetEventDeliveryScopeRequest]) (*connect.Response[v2.GetEventDeliveryScopeResponse], error) {
+	return c.getEventDeliveryScope.CallUnary(ctx, req)
 }
 
 // ListWorkspacePresets calls agentcompose.v2.SettingsService.ListWorkspacePresets.
@@ -2424,6 +2442,9 @@ type SettingsServiceHandler interface {
 	UpdateGlobalEnv(context.Context, *connect.Request[v2.UpdateGlobalEnvRequest]) (*connect.Response[v2.UpdateGlobalEnvResponse], error)
 	GetCapabilityGatewayConfig(context.Context, *connect.Request[v2.GetCapabilityGatewayConfigRequest]) (*connect.Response[v2.GetCapabilityGatewayConfigResponse], error)
 	UpdateCapabilityGatewayConfig(context.Context, *connect.Request[v2.UpdateCapabilityGatewayConfigRequest]) (*connect.Response[v2.UpdateCapabilityGatewayConfigResponse], error)
+	// Reports the event delivery scope in effect on this daemon. The operator
+	// sets it with EVENT_DELIVERY_SCOPE; Project content cannot change it.
+	GetEventDeliveryScope(context.Context, *connect.Request[v2.GetEventDeliveryScopeRequest]) (*connect.Response[v2.GetEventDeliveryScopeResponse], error)
 	ListWorkspacePresets(context.Context, *connect.Request[v2.ListWorkspacePresetsRequest]) (*connect.Response[v2.ListWorkspacePresetsResponse], error)
 	CreateWorkspacePreset(context.Context, *connect.Request[v2.CreateWorkspacePresetRequest]) (*connect.Response[v2.WorkspacePresetResponse], error)
 	UpdateWorkspacePreset(context.Context, *connect.Request[v2.UpdateWorkspacePresetRequest]) (*connect.Response[v2.WorkspacePresetResponse], error)
@@ -2461,6 +2482,12 @@ func NewSettingsServiceHandler(svc SettingsServiceHandler, opts ...connect.Handl
 		connect.WithSchema(settingsServiceMethods.ByName("UpdateCapabilityGatewayConfig")),
 		connect.WithHandlerOptions(opts...),
 	)
+	settingsServiceGetEventDeliveryScopeHandler := connect.NewUnaryHandler(
+		SettingsServiceGetEventDeliveryScopeProcedure,
+		svc.GetEventDeliveryScope,
+		connect.WithSchema(settingsServiceMethods.ByName("GetEventDeliveryScope")),
+		connect.WithHandlerOptions(opts...),
+	)
 	settingsServiceListWorkspacePresetsHandler := connect.NewUnaryHandler(
 		SettingsServiceListWorkspacePresetsProcedure,
 		svc.ListWorkspacePresets,
@@ -2495,6 +2522,8 @@ func NewSettingsServiceHandler(svc SettingsServiceHandler, opts ...connect.Handl
 			settingsServiceGetCapabilityGatewayConfigHandler.ServeHTTP(w, r)
 		case SettingsServiceUpdateCapabilityGatewayConfigProcedure:
 			settingsServiceUpdateCapabilityGatewayConfigHandler.ServeHTTP(w, r)
+		case SettingsServiceGetEventDeliveryScopeProcedure:
+			settingsServiceGetEventDeliveryScopeHandler.ServeHTTP(w, r)
 		case SettingsServiceListWorkspacePresetsProcedure:
 			settingsServiceListWorkspacePresetsHandler.ServeHTTP(w, r)
 		case SettingsServiceCreateWorkspacePresetProcedure:
@@ -2526,6 +2555,10 @@ func (UnimplementedSettingsServiceHandler) GetCapabilityGatewayConfig(context.Co
 
 func (UnimplementedSettingsServiceHandler) UpdateCapabilityGatewayConfig(context.Context, *connect.Request[v2.UpdateCapabilityGatewayConfigRequest]) (*connect.Response[v2.UpdateCapabilityGatewayConfigResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SettingsService.UpdateCapabilityGatewayConfig is not implemented"))
+}
+
+func (UnimplementedSettingsServiceHandler) GetEventDeliveryScope(context.Context, *connect.Request[v2.GetEventDeliveryScopeRequest]) (*connect.Response[v2.GetEventDeliveryScopeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SettingsService.GetEventDeliveryScope is not implemented"))
 }
 
 func (UnimplementedSettingsServiceHandler) ListWorkspacePresets(context.Context, *connect.Request[v2.ListWorkspacePresetsRequest]) (*connect.Response[v2.ListWorkspacePresetsResponse], error) {

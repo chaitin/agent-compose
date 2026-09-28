@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/chaitin/agent-compose/pkg/events"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -54,6 +55,7 @@ func (e *InvocationExecutor) Invoke(ctx context.Context, scheduler domain.Schedu
 			correlationID = generatedID
 		}
 	}
+	ctx = events.WithPublisherProject(ctx, scheduler.Summary.ProjectID)
 	host := e.deps.HostFactory(scheduler, RuntimeExecutionContext{ID: correlationID, Kind: ExecutionKindInvocation}, TriggerEventMetadata{})
 	startedAt := time.Now().UTC()
 	maxAsyncLLM, maxAsyncAgent := AsyncConcurrencyFromSchedulerEnv(scheduler.EnvItems)

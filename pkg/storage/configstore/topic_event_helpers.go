@@ -56,6 +56,7 @@ func normalizeTopicEventRecord(item domain.TopicEventRecord, assignID bool) (dom
 	item.PublisherType = strings.TrimSpace(item.PublisherType)
 	item.PublisherID = strings.TrimSpace(item.PublisherID)
 	item.PublisherRunID = strings.TrimSpace(item.PublisherRunID)
+	item.PublisherProjectID = strings.TrimSpace(item.PublisherProjectID)
 	item.ReplayOfEventID = strings.TrimSpace(item.ReplayOfEventID)
 	item.ClaimID = strings.TrimSpace(item.ClaimID)
 	if !item.ClaimUntil.IsZero() {
@@ -121,6 +122,7 @@ func scanTopicEvent(scan func(dest ...any) error) (domain.TopicEventRecord, erro
 		&item.PublisherType,
 		&item.PublisherID,
 		&item.PublisherRunID,
+		&item.PublisherProjectID,
 		&item.ReplayOfEventID,
 		&item.ClaimID,
 		&claimUntilRaw,
@@ -144,6 +146,6 @@ func scanTopicEvent(scan func(dest ...any) error) (domain.TopicEventRecord, erro
 func selectTopicEventSQL() string {
 	return `SELECT sequence, id, topic, source, provider, intent, correlation_id, idempotency_key, delivery_id,
 		payload_hash, payload_json, dispatch_status, parent_event_id, publisher_type, publisher_id, publisher_run_id,
-		replay_of_event_id, claim_id, claim_until, attempt_count, next_attempt_at, last_error, dead_letter_at, created_at, dispatched_at
+		publisher_project_id, replay_of_event_id, claim_id, claim_until, attempt_count, next_attempt_at, last_error, dead_letter_at, created_at, dispatched_at
 		FROM event`
 }

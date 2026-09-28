@@ -120,7 +120,7 @@ func TestEventDispatcherWorkflows(t *testing.T) {
 	noSubscriberAcked := false
 	dispatcher := schedulers.NewEventDispatcher(schedulers.EventDispatcherDependencies{
 		RootCtx: ctx,
-		Targets: func(string) []schedulers.EventTarget {
+		Targets: func(domain.SchedulerTopicEvent) []schedulers.EventTarget {
 			return nil
 		},
 	})
@@ -135,7 +135,7 @@ func TestEventDispatcherWorkflows(t *testing.T) {
 	retryReason := ""
 	dispatcher = schedulers.NewEventDispatcher(schedulers.EventDispatcherDependencies{
 		RootCtx: ctx,
-		Targets: func(string) []schedulers.EventTarget {
+		Targets: func(domain.SchedulerTopicEvent) []schedulers.EventTarget {
 			return []schedulers.EventTarget{{Scheduler: scheduler, Trigger: scheduler.Triggers[0]}}
 		},
 		IsBusy: func([]schedulers.EventTarget) bool { return true },
@@ -154,7 +154,7 @@ func TestEventDispatcherWorkflows(t *testing.T) {
 	dispatcher = schedulers.NewEventDispatcher(schedulers.EventDispatcherDependencies{
 		RootCtx: ctx,
 		Store:   store,
-		Targets: func(string) []schedulers.EventTarget {
+		Targets: func(domain.SchedulerTopicEvent) []schedulers.EventTarget {
 			return []schedulers.EventTarget{{Scheduler: scheduler, Trigger: scheduler.Triggers[0]}}
 		},
 		ReserveSlots: func(domain.SchedulerTopicEvent, int) ([]*webhooks.Reservation, bool) {
@@ -225,7 +225,7 @@ func TestEventDispatcherWebhookAndWrapperWorkflows(t *testing.T) {
 	retryReason := ""
 	dispatcher = schedulers.NewEventDispatcher(schedulers.EventDispatcherDependencies{
 		RootCtx: ctx,
-		Targets: func(string) []schedulers.EventTarget {
+		Targets: func(domain.SchedulerTopicEvent) []schedulers.EventTarget {
 			return []schedulers.EventTarget{target}
 		},
 		ReserveSlots: func(domain.SchedulerTopicEvent, int) ([]*webhooks.Reservation, bool) {
@@ -244,7 +244,7 @@ func TestEventDispatcherWebhookAndWrapperWorkflows(t *testing.T) {
 	webhookAcked := false
 	dispatcher = schedulers.NewEventDispatcher(schedulers.EventDispatcherDependencies{
 		RootCtx: ctx,
-		Targets: func(string) []schedulers.EventTarget {
+		Targets: func(domain.SchedulerTopicEvent) []schedulers.EventTarget {
 			return []schedulers.EventTarget{target}
 		},
 		ReserveSlots: func(domain.SchedulerTopicEvent, int) ([]*webhooks.Reservation, bool) {
@@ -289,7 +289,7 @@ func TestEventDispatcherWebhookAndWrapperWorkflows(t *testing.T) {
 	retryReason = ""
 	dispatcher = schedulers.NewEventDispatcher(schedulers.EventDispatcherDependencies{
 		RootCtx: ctx,
-		Targets: func(string) []schedulers.EventTarget {
+		Targets: func(domain.SchedulerTopicEvent) []schedulers.EventTarget {
 			second := scheduler
 			second.Summary.ID = "scheduler-2"
 			return []schedulers.EventTarget{target, {Scheduler: second, Trigger: second.Triggers[0]}}
@@ -317,7 +317,7 @@ func TestEventDispatcherWebhookAndWrapperWorkflows(t *testing.T) {
 	retryReason = ""
 	dispatcher = schedulers.NewEventDispatcher(schedulers.EventDispatcherDependencies{
 		RootCtx: ctx,
-		Targets: func(string) []schedulers.EventTarget {
+		Targets: func(domain.SchedulerTopicEvent) []schedulers.EventTarget {
 			second := scheduler
 			second.Summary.ID = "scheduler-2"
 			return []schedulers.EventTarget{target, {Scheduler: second, Trigger: second.Triggers[0]}}

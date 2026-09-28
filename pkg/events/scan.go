@@ -47,6 +47,7 @@ func ScanTopicEvent(scan func(dest ...any) error) (domain.TopicEventRecord, erro
 		&item.PublisherType,
 		&item.PublisherID,
 		&item.PublisherRunID,
+		&item.PublisherProjectID,
 		&item.ReplayOfEventID,
 		&item.ClaimID,
 		&claimUntilRaw,
@@ -70,6 +71,6 @@ func ScanTopicEvent(scan func(dest ...any) error) (domain.TopicEventRecord, erro
 func SelectTopicEventSQL() string {
 	return `SELECT sequence, id, topic, source, provider, intent, correlation_id, idempotency_key, delivery_id,
 		payload_hash, payload_json, dispatch_status, parent_event_id, publisher_type, publisher_id, publisher_run_id,
-		replay_of_event_id, claim_id, claim_until, attempt_count, next_attempt_at, last_error, dead_letter_at, created_at, dispatched_at
+		publisher_project_id, replay_of_event_id, claim_id, claim_until, attempt_count, next_attempt_at, last_error, dead_letter_at, created_at, dispatched_at
 		FROM event`
 }

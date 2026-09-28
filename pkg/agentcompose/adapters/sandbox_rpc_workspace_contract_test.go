@@ -92,7 +92,7 @@ func TestSandboxRPCRequestsRejectInternalWorkspaceOwnership(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				_, err = bridge.CallJSON(context.Background(), method, string(payload))
+				_, err = callSandboxRPC(context.Background(), bridge, method, string(payload))
 				if err == nil || !strings.Contains(err.Error(), "unknown field") {
 					t.Fatalf("internal ownership input was not rejected during decoding: %v", err)
 				}

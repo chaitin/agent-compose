@@ -15,12 +15,17 @@ import (
 )
 
 type SettingsV2Handler struct {
-	store      ConfigStore
-	workspaces *workspaceSettings
+	store              ConfigStore
+	workspaces         *workspaceSettings
+	eventDeliveryScope domain.EventDeliveryScope
 }
 
 func NewSettingsV2Handler(config *appconfig.Config, store ConfigStore) *SettingsV2Handler {
-	return &SettingsV2Handler{store: store, workspaces: newWorkspaceSettings(config, store)}
+	handler := &SettingsV2Handler{store: store, workspaces: newWorkspaceSettings(config, store)}
+	if config != nil {
+		handler.eventDeliveryScope = config.EventDeliveryScope
+	}
+	return handler
 }
 
 func (h *SettingsV2Handler) GetGlobalEnv(ctx context.Context, _ *connect.Request[agentcomposev2.GetGlobalEnvRequest]) (*connect.Response[agentcomposev2.GetGlobalEnvResponse], error) {

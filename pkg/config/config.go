@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/samber/do/v2"
+
+	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
 const DefaultWorkspaceUploadLimitBytes int64 = 1 << 30
@@ -70,6 +72,9 @@ type Config struct {
 	RuntimeBaseURL             string
 	AgentTimeout               time.Duration
 	SchedulerRunTimeout        time.Duration
+	// EventDeliveryScope bounds which Projects receive an event a Project
+	// published. Project content cannot change it.
+	EventDeliveryScope         domain.EventDeliveryScope
 	RuntimeDriver              string
 	BoxliteHome                string
 	BoxliteRuntimeDir          string
@@ -173,6 +178,7 @@ type configSources struct {
 	GuestPaths      *Config
 	SandboxTimeouts sandboxTimeoutsConfig
 	HTTPLimits      httpLimitsConfig
+	EventDelivery   domain.EventDeliveryScope
 }
 
 func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, error) {
@@ -219,6 +225,10 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 	if err != nil {
 		return configSources{}, err
 	}
+	eventDelivery, err := loadEventDeliveryScope()
+	if err != nil {
+		return configSources{}, err
+	}
 	return configSources{
 		AgentTelemetry:  telemetry,
 		Database:        database,
@@ -233,6 +243,7 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 		GuestPaths:      guestPaths,
 		SandboxTimeouts: sandboxTimeouts,
 		HTTPLimits:      loadHTTPLimitsConfig(logger),
+		EventDelivery:   eventDelivery,
 	}, nil
 }
 
@@ -288,6 +299,7 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		RuntimeBaseURL:             llm.RuntimeBaseURL,
 		AgentTimeout:               timeouts.AgentTimeout,
 		SchedulerRunTimeout:        timeouts.SchedulerRunTimeout,
+		EventDeliveryScope:         sources.EventDelivery,
 		RuntimeDriver:              drivers.RuntimeDriver,
 		BoxliteHome:                normalized.BoxliteHome,
 		BoxliteRuntimeDir:          normalized.BoxliteRuntimeDir,

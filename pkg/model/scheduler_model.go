@@ -199,16 +199,19 @@ type SchedulerLLMResult struct {
 }
 
 type SchedulerTopicEvent struct {
-	EventID         string                                         `json:"event_id,omitempty"`
-	Topic           string                                         `json:"topic"`
-	Source          string                                         `json:"source,omitempty"`
-	Provider        string                                         `json:"provider,omitempty"`
-	Payload         map[string]any                                 `json:"payload,omitempty"`
-	CreatedAt       time.Time                                      `json:"created_at"`
-	Ack             func(context.Context) error                    `json:"-"`
-	NoSubscriberAck func(context.Context) error                    `json:"-"`
-	Retry           func(context.Context, string, time.Time) error `json:"-"`
-	Release         func()                                         `json:"-"`
+	EventID  string `json:"event_id,omitempty"`
+	Topic    string `json:"topic"`
+	Source   string `json:"source,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	// PublisherProjectID is the Engine Project that published the event, or
+	// empty for daemon-level publishers. Delivery scope is decided against it.
+	PublisherProjectID string                                         `json:"publisher_project_id,omitempty"`
+	Payload            map[string]any                                 `json:"payload,omitempty"`
+	CreatedAt          time.Time                                      `json:"created_at"`
+	Ack                func(context.Context) error                    `json:"-"`
+	NoSubscriberAck    func(context.Context) error                    `json:"-"`
+	Retry              func(context.Context, string, time.Time) error `json:"-"`
+	Release            func()                                         `json:"-"`
 }
 
 func TimeIsSet(value time.Time) bool {

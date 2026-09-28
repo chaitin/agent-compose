@@ -209,7 +209,7 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 			}
 			sandbox.EnvItems = domain.MergeEnvItems(sandbox.EnvItems, capabilityVars)
 			sandbox.Summary.Tags = MergeSandboxTags(sandbox.Summary.Tags, tags)
-			if err := c.startProjectRunSandbox(ctx, sandbox, sandboxStartEvent{Type: "sandbox.resumed", Message: "sandbox resumed for project run"}, trustedHeaders); err != nil {
+			if err := c.startProjectRunSandbox(ctx, sandbox, sandboxStartEvent{Type: "sandbox.resumed", Message: "sandbox resumed for project run", ProjectID: run.ProjectID}, trustedHeaders); err != nil {
 				return SandboxResult{Sandbox: sandbox}, err
 			}
 			return SandboxResult{Sandbox: sandbox, Warnings: warnings}, nil
@@ -281,7 +281,7 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 		_ = c.store.UpdateSandbox(ctx, sandbox)
 		return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, err
 	}
-	if err := c.startProjectRunSandboxRuntime(ctx, sandbox, sandboxStartEvent{Type: "sandbox.created", Message: "sandbox started for project run"}, trustedHeaders); err != nil {
+	if err := c.startProjectRunSandboxRuntime(ctx, sandbox, sandboxStartEvent{Type: "sandbox.created", Message: "sandbox started for project run", ProjectID: run.ProjectID}, trustedHeaders); err != nil {
 		return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, err
 	}
 	if stickySchedulerID != "" {
@@ -413,6 +413,9 @@ func (c *Controller) applyJupyterOptionsToSandbox(sandbox *domain.Sandbox, optio
 type sandboxStartEvent struct {
 	Type    string
 	Message string
+	// ProjectID is the run's Project. The sandbox lifecycle topic is
+	// published within its delivery scope.
+	ProjectID string
 }
 
 func (c *Controller) startProjectRunSandbox(ctx context.Context, sandbox *domain.Sandbox, event sandboxStartEvent, trustedHeaders []domain.TrustedHeader) error {
@@ -479,7 +482,7 @@ func (c *Controller) startProjectRunSandboxRuntime(ctx context.Context, sandbox 
 	if err := c.store.UpdateSandbox(ctx, sandbox); err != nil {
 		return err
 	}
-	c.publishProjectRunSandboxStarted(ctx, sandbox, event.Type, event.Message)
+	c.publishProjectRunSandboxStarted(ctx, sandbox, event)
 	loaded, err := c.store.GetSandbox(ctx, sandbox.Summary.ID)
 	if err != nil {
 		return err
@@ -492,7 +495,8 @@ func (c *Controller) startProjectRunSandboxRuntime(ctx context.Context, sandbox 
 	return nil
 }
 
-func (c *Controller) publishProjectRunSandboxStarted(ctx context.Context, sandbox *domain.Sandbox, eventType, message string) {
+func (c *Controller) publishProjectRunSandboxStarted(ctx context.Context, sandbox *domain.Sandbox, start sandboxStartEvent) {
+	eventType, message := start.Type, start.Message
 	if c.streams != nil {
 		c.streams.PublishSandboxUpdated(&sandbox.Summary)
 	}
@@ -516,9 +520,10 @@ func (c *Controller) publishProjectRunSandboxStarted(ctx context.Context, sandbo
 			topic = "agent-compose.sandbox.resumed"
 		}
 		c.bus.Publish(domain.SchedulerTopicEvent{
-			Topic:     topic,
-			Payload:   schedulers.SessionTopicPayload(sandbox, "project-run"),
-			CreatedAt: time.Now().UTC(),
+			Topic:              topic,
+			PublisherProjectID: strings.TrimSpace(start.ProjectID),
+			Payload:            schedulers.SessionTopicPayload(sandbox, "project-run"),
+			CreatedAt:          time.Now().UTC(),
 		})
 	}
 }
