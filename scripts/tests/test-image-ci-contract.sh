@@ -669,6 +669,8 @@ for provider_dockerfile in "$GUEST_DOCKERFILE" "$ARCHLINUX_GUEST_DOCKERFILE" "$D
     require_regex "$provider_source" "$provider_package" \
       "provider package $provider_package in $(basename "$provider_dockerfile")"
   done
+  forbid_regex "$provider_source" 'gemini|GOOGLE_API_KEY|GEMINI_API_KEY' \
+    "removed Gemini provider in $(basename "$provider_dockerfile")"
 done
 
 FAKE_BIN="$TEST_ROOT/fake-bin"
