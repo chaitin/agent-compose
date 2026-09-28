@@ -471,7 +471,7 @@ k3d image import my-image:dev -c agent-compose-dev
   assertions do).
 - **Scenario 1 has actually been run end-to-end** (2026-08-25, against a
   real k3d cluster with working codex credentials) - it's what found and
-  fixed the two bugs documented in design doc §5.1, and is where the note
+  fixed the two bugs documented in design doc §5, and is where the note
   above about `agent-compose exec` not working on k8s came from. Scenarios
   2-8 are still design-reviewed but not run yet.
 - CLI surface used above (`run --keep-running`, `down` taking no args,

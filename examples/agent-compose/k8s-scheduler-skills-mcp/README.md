@@ -17,9 +17,9 @@ guest-sync path that has no shared filesystem to fall back on (see
 
 ## Prerequisites
 
-- An `agent-compose` daemon running with `driver: k8s` (see
-  `charts/agent-compose`), pointed at a cluster where `agent-compose-guest:latest`
-  is available to the nodes.
+- An `agent-compose` daemon running on the `k8s` driver
+  (`runtime.driver: k8s` in `charts/agent-compose`), pointed at a cluster where
+  `agent-compose-guest:latest` is available to the nodes.
 - The daemon's guest image needs `git` for the `skilled` agent, and Node.js
   (already in `agent-compose-guest:latest`) for the MCP server.
 - A StorageClass able to satisfy the `cache` volume's PVC for the `volumed`

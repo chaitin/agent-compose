@@ -459,7 +459,7 @@ token、Authorization、完整带 query/userinfo 的敏感 URL，或其他 proje
 | 责任 | 所属位置 |
 | --- | --- |
 | YAML schema、normalize、canonical output | `pkg/compose` |
-| agent config payload 和 server selection | `pkg/projects` |
+| agent config payload 和 server selection | `internal/projects` |
 | agent definition config 解码 | `pkg/capabilities` 或消费它的相邻包 |
 | sandbox identity/binding 构建 | `pkg/agentcompose/adapters` |
 | server/capset reference 解析与 gateway provider | `pkg/capabilities` |

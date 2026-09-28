@@ -16,7 +16,7 @@
 | **描述不准确（INACCURATE）** | 26 | 结论方向正确但范围不全、遗漏字段/参数/子命令，或中英文版本漂移 |
 | **计划未落地（NEVER-IMPLEMENTED-PLAN）** | 3 | 文档把未实现的设计写成现状，或把已实现的能力写成"待做" |
 
-**修复状态：本分支已逐项修复全部 80 行**，并在此后两轮复核（见第十、十一、十二节）继续收敛，合计改动 51 个文档文件（含本审计文件；`git diff --name-only d8a2ea28..HEAD | grep -v '_test\.'`），拆分为独立的 `docs:` 提交。修复时逐条回到代码复核，因此有三处结论被修正或降级：
+**修复状态：本分支已逐项修复全部 80 行**，并在此后两轮复核（见第十、十一、十二节）继续收敛，合计改动 54 个文档文件（含本审计文件；`git diff --name-only d8a2ea28..HEAD | grep -v '_test\.'`），拆分为独立的 `docs:` 提交。修复时逐条回到代码复核，因此有三处结论被修正或降级：
 
 - `O18`、`I24` 在审计基线上确实缺失 `dsh`，但**已被同一分支的 Gemini 清理提交（本分支第 1 个提交）顺带修好**，因此无需再次改动。
 - `agent-compose-runtime_contract.md` 的"协议 payload 标记只有两个"经复核**是准确的**：宿主侧仅 `pkg/execution/parse.go:12-13` 定义 `__AGENT_RESULT__`/`__COMMAND_RESULT__`，`__WORKFLOW_RESULT__`/`__WORKFLOW_EVENT__` 只由 runtime/SDK 解析，宿主从不检索它们，故保留原文。
@@ -264,7 +264,7 @@
 | P2.6 | `README.zh-CN.md:139` | 顶层字段漏 `octobus_servers` | 补上（与 `README.md:174` 一致） |
 | P2.7 | `README.zh-CN.md:210-213`、`examples/scheduler-script/README.md:46-51` | `provider: git` 只写 `url`（实际 `path` 必填）；又声称不支持鉴权 header | 按 `pkg/compose/normalize.go:1291-1296`（git 需 `url`+`path`）与 `pkg/sources/source.go:82-93`（http 支持 token / 基本认证）改写 |
 | P2.8 | `README.md:259-261`、`README.zh-CN.md:219` | daemon token 豁免清单漏 runtime LLM facade 与 Jupyter proxy | 补全（`cmd/agent-compose/daemon_auth.go:54-68`） |
-| P3 | `AGENTS.md:11,24`、本文件 `:38`、`:97`、`:192` | 领域包写成不存在的 `pkg/projects`/`pkg/sessions`；schema 字段数仍写 73；`agent_model.go` 行号偏差；§7 称 k8s 全部核对通过与 I13 冲突 | 分别改为 `pkg/sandboxes` + `internal/projects`、74、`:88-89`，并在 §7 标注 §2.1 这一例外 |
-| P6 | `examples/agent-compose/README.md`/`README.zh-CN.md:15-24`、`docs/design/k8s_pod_runtime_driver_k3d_test_plan.md:168,411-416`、`docs/design/webhook_design.md:174-188,455-461` | k8s 前置条件写成 `driver: k8s` 且混在 Docker 前置条件里；悬空的 "§5.1"；bind mount 报错串的来源写错；`event_delivery` 少一条索引；已实现的 `github_sha256` 留在 "Target behavior" 标题下 | 改为 `runtime.driver`/`RUNTIME_DRIVER` 并拆开前置条件；改为 §4.3；区分 compose 归一化与 resolved-volume 两条报错路径；补 `idx_event_delivery_scheduler`；该节改为 "Remaining target behavior" |
+| P3 | `AGENTS.md:11,24`、本文件 `:38`、`:97`、`:192` | 领域包写成不存在的 `pkg/projects`/`pkg/sessions`；schema 字段数仍写 73；`agent_model.go` 行号偏差；§7 称 k8s 全部核对通过与 I13 冲突 | 分别改为 `pkg/sandboxes` + `internal/projects`、74、`:88-89`，并在 §7 标注 §2.1 这一例外；顺带修掉同一根因的 `docs/design/project_octobus_servers_design.md:462`（`pkg/projects` → `internal/projects`） |
+| P6 | `examples/agent-compose/README.md`/`README.zh-CN.md:15-24`、`docs/design/k8s_pod_runtime_driver_k3d_test_plan.md:168,411-416,474`、`docs/design/webhook_design.md:174-188,455-461`、`examples/agent-compose/k8s-scheduler-skills-mcp/README*.md:17-22` | k8s 前置条件写成 `driver: k8s` 且混在 Docker 前置条件里；悬空的 "§5.1"；bind mount 报错串的来源写错；`event_delivery` 少一条索引；已实现的 `github_sha256` 留在 "Target behavior" 标题下 | 改为 `runtime.driver`/`RUNTIME_DRIVER` 并拆开前置条件（k8s 示例自身的 README 同步）；改为 §4.3 与 §5；区分 compose 归一化与 resolved-volume 两条报错路径；补 `idx_event_delivery_scheduler`；该节改为 "Remaining target behavior" |
 
 `docs/pages/guest-image-abi.md` 的参考 `mkdir` 已在前一轮补上 `/root/.dsh`。P4（发布说明）与 P5（拆分 PR）属于 PR 流程问题：破坏性变更的两条后果与迁移说明已补进提交 footer 与 PR 描述，是否拆分由维护者决定。
