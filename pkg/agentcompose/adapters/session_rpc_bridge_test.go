@@ -115,7 +115,7 @@ func TestSandboxRPCBridgeCallJSONSupportsSandboxRPCs(t *testing.T) {
 	ctx := context.Background()
 	bridge, driver := newTestSandboxRPCBridge(t)
 
-	createJSON, err := bridge.CallJSON(ctx, "CreateSandbox", `{"title":"Scheduler Created","tags":[{"name":"origin","value":"test"}]}`)
+	createJSON, err := callSandboxRPC(ctx, bridge, "CreateSandbox", `{"title":"Scheduler Created","tags":[{"name":"origin","value":"test"}]}`)
 	if err != nil {
 		t.Fatalf("CreateSandbox returned error: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestSandboxRPCBridgeCallJSONSupportsSandboxRPCs(t *testing.T) {
 		t.Fatalf("StartSandboxVM call count = %d, want 1", len(driver.startCalls))
 	}
 
-	getJSON, err := bridge.CallJSON(ctx, "GetSandbox", `{"sandboxId":"`+sandboxID+`"}`)
+	getJSON, err := callSandboxRPC(ctx, bridge, "GetSandbox", `{"sandboxId":"`+sandboxID+`"}`)
 	if err != nil {
 		t.Fatalf("GetSandbox returned error: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestSandboxRPCBridgeCallJSONSupportsSandboxRPCs(t *testing.T) {
 		t.Fatalf("GetSandbox sandbox id = %q, want %q", gotSession.Sandbox.Summary.SandboxID, sandboxID)
 	}
 
-	listJSON, err := bridge.CallJSON(ctx, "ListSandboxes", `{"vmStatus":" running "}`)
+	listJSON, err := callSandboxRPC(ctx, bridge, "ListSandboxes", `{"vmStatus":" running "}`)
 	if err != nil {
 		t.Fatalf("ListSandboxes returned error: %v", err)
 	}
@@ -157,15 +157,15 @@ func TestSandboxRPCBridgeCallJSONSupportsSandboxRPCs(t *testing.T) {
 	if len(listed.Sandboxes) != 1 || listed.Sandboxes[0].SandboxID != sandboxID {
 		t.Fatalf("listed sandboxes = %#v, want one sandbox %s", listed.Sandboxes, sandboxID)
 	}
-	if _, err := bridge.CallJSON(ctx, "ListSandboxes", `{"vmStatus":"definitely-invalid"}`); !errors.Is(err, domain.ErrInvalidArgument) || !strings.Contains(err.Error(), `invalid sandbox status "definitely-invalid"`) {
+	if _, err := callSandboxRPC(ctx, bridge, "ListSandboxes", `{"vmStatus":"definitely-invalid"}`); !errors.Is(err, domain.ErrInvalidArgument) || !strings.Contains(err.Error(), `invalid sandbox status "definitely-invalid"`) {
 		t.Fatalf("ListSandboxes invalid vmStatus error = %v", err)
 	}
 
-	if _, err := bridge.CallJSON(ctx, "GetSandboxProxy", `{"sandboxId":"`+sandboxID+`"}`); err == nil || !strings.Contains(err.Error(), "jupyter is not enabled") {
+	if _, err := callSandboxRPC(ctx, bridge, "GetSandboxProxy", `{"sandboxId":"`+sandboxID+`"}`); err == nil || !strings.Contains(err.Error(), "jupyter is not enabled") {
 		t.Fatalf("GetSandboxProxy error = %v, want jupyter disabled error", err)
 	}
 
-	stopJSON, err := bridge.CallJSON(ctx, "StopSandbox", `{"sandboxId":"`+sandboxID+`"}`)
+	stopJSON, err := callSandboxRPC(ctx, bridge, "StopSandbox", `{"sandboxId":"`+sandboxID+`"}`)
 	if err != nil {
 		t.Fatalf("StopSandbox returned error: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestSandboxRPCBridgeCallJSONSupportsSandboxRPCs(t *testing.T) {
 		t.Fatalf("StopSandboxVM call count = %d, want 1", len(driver.stopCalls))
 	}
 
-	resumeJSON, err := bridge.CallJSON(ctx, "ResumeSandbox", `{"sandboxId":"`+sandboxID+`"}`)
+	resumeJSON, err := callSandboxRPC(ctx, bridge, "ResumeSandbox", `{"sandboxId":"`+sandboxID+`"}`)
 	if err != nil {
 		t.Fatalf("ResumeSandbox returned error: %v", err)
 	}
@@ -195,10 +195,10 @@ func TestSandboxRPCBridgeCallJSONSupportsSandboxRPCs(t *testing.T) {
 		t.Fatalf("StartSandboxVM call count after resume = %d, want 2", len(driver.startCalls))
 	}
 
-	if _, err := bridge.CallJSON(ctx, "MissingRPC", `{}`); err == nil || !strings.Contains(err.Error(), "unsupported sandbox rpc") {
+	if _, err := callSandboxRPC(ctx, bridge, "MissingRPC", `{}`); err == nil || !strings.Contains(err.Error(), "unsupported sandbox rpc") {
 		t.Fatalf("unsupported rpc error = %v", err)
 	}
-	if _, err := bridge.CallJSON(ctx, "GetSandbox", `{bad json`); err == nil || !strings.Contains(err.Error(), "decode sandbox rpc request") {
+	if _, err := callSandboxRPC(ctx, bridge, "GetSandbox", `{bad json`); err == nil || !strings.Contains(err.Error(), "decode sandbox rpc request") {
 		t.Fatalf("bad json error = %v", err)
 	}
 }
@@ -707,4 +707,11 @@ type staticGatewaySource struct {
 
 func (s staticGatewaySource) GetCapabilityGateway(context.Context) (domain.CapabilityGatewaySettings, error) {
 	return domain.CapabilityGatewaySettings{Addr: s.addr}, nil
+}
+
+// callSandboxRPC issues a sandbox RPC under a source that names no scheduler.
+// Only tests do this; production calls always name the scheduler through
+// CallJSONWithSource.
+func callSandboxRPC(ctx context.Context, bridge *SandboxRPCBridge, method, requestJSON string) (string, error) {
+	return bridge.CallJSONWithSource(ctx, method, requestJSON, domain.SandboxTypeScript)
 }

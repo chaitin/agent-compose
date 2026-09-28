@@ -1,14 +1,12 @@
 package runs
 
 import (
-	"context"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
-	"github.com/chaitin/agent-compose/pkg/events"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -170,26 +168,5 @@ func TestRunsControllerRejectsCrossAgentSandboxReuseWithoutMutatingOwnerSandbox(
 	}
 	if !reflect.DeepEqual(stored.Workspace, originalWorkspace) {
 		t.Fatalf("owner sandbox workspace changed: got %#v want %#v", stored.Workspace, originalWorkspace)
-	}
-}
-
-func TestProjectRunSandboxPublisherProject(t *testing.T) {
-	t.Parallel()
-	actingForB := events.WithPublisherProject(context.Background(), "project-b")
-	tagged := func(values ...string) *domain.Sandbox {
-		sandbox := &domain.Sandbox{}
-		for _, value := range values {
-			sandbox.Summary.Tags = append(sandbox.Summary.Tags, domain.SandboxTag{Name: "project", Value: value})
-		}
-		return sandbox
-	}
-	if got := projectRunSandboxPublisherProject(actingForB, tagged("project-a")); got != "project-a" {
-		t.Fatalf("owned sandbox publisher = %q, want the owning project-a", got)
-	}
-	if got := projectRunSandboxPublisherProject(actingForB, tagged()); got != "project-b" {
-		t.Fatalf("untagged sandbox publisher = %q, want the acting project-b", got)
-	}
-	if got := projectRunSandboxPublisherProject(actingForB, tagged("project-a", "project-c")); got != "" {
-		t.Fatalf("conflicting ownership publisher = %q, want none", got)
 	}
 }

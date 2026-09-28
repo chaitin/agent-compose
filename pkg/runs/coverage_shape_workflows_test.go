@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -397,6 +398,16 @@ func TestRunsControllerRunProjectAgentSuccessWorkflow(t *testing.T) {
 	}
 	if len(bus.events) == 0 || len(dashboard.reasons) == 0 {
 		t.Fatalf("bus=%#v dashboard=%#v", bus.events, dashboard.reasons)
+	}
+	// The run's sandbox lifecycle topic belongs to the run's Project, so it is
+	// delivered to that Project's subscribers under the project scope.
+	for _, event := range bus.events {
+		if event.Topic == "agent-compose.sandbox.created" && event.PublisherProjectID != "project-1" {
+			t.Fatalf("sandbox created publisher project = %q, want project-1", event.PublisherProjectID)
+		}
+	}
+	if !slices.ContainsFunc(bus.events, func(event domain.SchedulerTopicEvent) bool { return event.Topic == "agent-compose.sandbox.created" }) {
+		t.Fatalf("bus topics = %#v, want agent-compose.sandbox.created", bus.events)
 	}
 }
 

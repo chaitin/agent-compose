@@ -34,6 +34,7 @@ func TestEventDeliveryScopeReaches(t *testing.T) {
 	}{
 		{name: "project scope reaches own project", scope: EventDeliveryScopeProject, event: fromA, subscriber: "project-a", want: true},
 		{name: "project scope stops at other project", scope: EventDeliveryScopeProject, event: fromA, subscriber: "project-b", want: false},
+		{name: "project scope delivers system topic within own project", scope: EventDeliveryScopeProject, event: system, subscriber: "project-a", want: true},
 		{name: "project scope stops system topic at other project", scope: EventDeliveryScopeProject, event: system, subscriber: "project-b", want: false},
 		{name: "project scope keeps project events from unmanaged schedulers", scope: EventDeliveryScopeProject, event: fromA, subscriber: "", want: false},
 		{name: "daemon scope reaches other project", scope: EventDeliveryScopeDaemon, event: fromA, subscriber: "project-b", want: true},

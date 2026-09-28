@@ -38,6 +38,12 @@ func (b *SandboxRPCBridge) publishSandboxLifecycle(ctx context.Context, topic st
 // a script sandbox's trigger source, or the project tag the daemon writes on a
 // project-run sandbox. A script sandbox's tags are never consulted, because a
 // script chooses them when it creates the sandbox.
+//
+// This relies on every sandbox carrying an explicit trigger source. The store
+// normalizes the source to manual or script:<scheduler id>, deriving it from
+// tags only when none was recorded; scheduler scripts always create sandboxes
+// through CallJSONWithSource with their scheduler named, and project runs
+// record manual with daemon-written tags.
 func (b *SandboxRPCBridge) sandboxLifecyclePublisherProject(ctx context.Context, sandbox *domain.Sandbox) string {
 	if projectID := events.PublisherProject(ctx); projectID != "" {
 		return projectID

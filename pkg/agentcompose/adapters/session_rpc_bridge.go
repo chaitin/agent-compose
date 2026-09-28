@@ -86,10 +86,11 @@ func (b *SandboxRPCBridge) SubscribeSandbox(sandboxID string) (<-chan sandboxes.
 	return b.streams.Subscribe(sandboxID)
 }
 
-func (b *SandboxRPCBridge) CallJSON(ctx context.Context, method, requestJSON string) (string, error) {
-	return b.CallJSONWithSource(ctx, method, requestJSON, domain.SandboxTypeScript)
-}
-
+// CallJSONWithSource serves a scheduler script's sandbox RPC. source must name
+// the scheduler (script:<scheduler id>): it is recorded as the trigger source
+// of a sandbox the call creates, and it is how the daemon later tells which
+// Project owns that sandbox. A source naming no scheduler would leave the
+// sandbox's owner to be inferred from tags the script chose.
 func (b *SandboxRPCBridge) CallJSONWithSource(ctx context.Context, method, requestJSON, source string) (string, error) {
 	method = strings.TrimSpace(method)
 	switch method {

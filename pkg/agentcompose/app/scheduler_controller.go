@@ -31,6 +31,11 @@ func NewSchedulerController(di do.Injector) (*schedulers.Controller, error) {
 	if hub, err := do.Invoke[*dashboard.Hub](di); err == nil {
 		notifier = hub
 	}
+	// The default keeps events within the publisher's Project. A deployment
+	// that relied on daemon-wide delivery sees its cross-Project events
+	// acknowledged as having no subscriber, so the effective scope is logged
+	// where an operator will look first.
+	slog.Info("scheduler event delivery scope", "scope", config.EventDeliveryScope, "env", "EVENT_DELIVERY_SCOPE")
 	controller = schedulers.NewController(schedulers.ControllerDependencies{
 		RootCtx: do.MustInvoke[context.Context](di),
 		RunTimeout: func(override time.Duration) time.Duration {
