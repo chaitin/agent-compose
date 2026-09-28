@@ -4,9 +4,11 @@
 
 在不破坏现有 `AttachAgentRun` 客户端语义的前提下，支持 Web 刷新、网络重连以及 IM/Web 切换后继续同一个 Agent 交互会话。`waiting_human` 等上层业务状态不属于 agent-compose 领域模型。
 
-## 当前边界
+## 此前的边界（现已实现）
 
-`RunAgent`/`StartAgentRun` 面向非交互执行；`AttachAgentRun` 的首帧携带完整 `RunAgentRequest` 并创建新 run，输入和 runtime interaction 绑定在该 RPC 生命周期内。断开连接会请求取消运行。因此现有 API 不支持按 `run_id` 恢复交互，也不能让 `StartAgentRun` 创建的普通后台 run 获得输入通道。
+本节记录设计落地前的边界，这里列出的缺口现已全部关闭。当时 `RunAgent`/`StartAgentRun` 面向非交互执行；`AttachAgentRun` 的首帧携带完整 `RunAgentRequest` 并创建新 run，输入和 runtime interaction 绑定在该 RPC 生命周期内，断开连接会请求取消运行。因此当时的 API 不支持按 `run_id` 恢复交互，也不能让 `StartAgentRun` 创建的普通后台 run 获得输入通道。
+
+现状：`AttachAgentRunStart` 的 `run_id` 与 `disconnect_policy` 字段已生效（`proto/agentcompose/v2/agentcompose.proto`），断开策略含 `ATTACH_DISCONNECT_POLICY_DETACH`；`StartAgentRunRequest.interactive` 可启动可被 attach 的 detached 交互运行。进程内 `InteractiveSession`（`pkg/runs/interactive_session.go`）与 `RunSupervisor`（`pkg/agentcompose/app/run_supervisor.go`）已接管 attach/detach 生命周期。
 
 ## 核心模型
 

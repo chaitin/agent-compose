@@ -19,7 +19,7 @@ The current code facts are anchored by these entry points:
   orchestration in `pkg/agentcompose/app/scheduler_controller.go` and
   `pkg/agentcompose/adapters/scheduler_session_runner.go`
 - Domain model helpers: `pkg/model/`
-- Project/run owner helpers: `pkg/projects/` and `pkg/runs/`
+- Project/run owner helpers: `internal/projects/` and `pkg/runs/`
 - Sandbox execution helpers: `pkg/execution/`, with lifecycle orchestration in
   `pkg/agentcompose/adapters/` and filesystem ownership in
   `pkg/storage/sandboxstore/`
@@ -58,7 +58,7 @@ project / run / scheduler / sandbox control plane
   |
   | runtime driver
   v
-boxlite / docker / microsandbox runtime
+boxlite / docker / microsandbox / k8s runtime
   |
   v
 guest Jupyter + agent runtime
@@ -222,7 +222,7 @@ Normalization rules:
 
 - If `name` is empty, it is derived from the compose file directory.
 - Agent map keys must be stable identifiers. Output is sorted by agent name.
-- Driver is a one-of shape: `boxlite`, `docker`, or `microsandbox`. When
+- Driver is a one-of shape: `boxlite`, `docker`, `microsandbox`, or `k8s`. When
   omitted, the default is `docker`.
 - `firecracker` may appear in the schema, but current normalization returns
   unsupported.
@@ -294,7 +294,7 @@ owned by `ProjectService` alongside project reconciliation:
   - `GetProject`
   - `ListProjects`
   - `RemoveProject`
-  - `WatchProject` is currently covered only by an unimplemented handler.
+  - `WatchProject`, which streams project changes to the caller.
   - `GetScheduler`
   - `ListSchedulers`
   - scheduler invocation, run/event query, pruning, stop, and enable operations
@@ -716,12 +716,13 @@ Agent and scheduler ownership is represented directly by `project_id`,
 
 ## Sandbox And Runtime
 
-Sandbox is the low-level runtime lifecycle unit. Three runtime drivers are
+Sandbox is the low-level runtime lifecycle unit. Four runtime drivers are
 currently supported:
 
 - `boxlite`
 - `docker`
 - `microsandbox`
+- `k8s`
 
 The default driver is controlled by `RUNTIME_DRIVER`; when empty, it is
 `docker`. The native application default guest image is
@@ -737,8 +738,8 @@ specific binary or image:
 | Artifact/profile | Compiled drivers |
 | --- | --- |
 | macOS native binary (`darwin-docker`) | `docker` |
-| Linux native binary (`linux-full`) | `docker`, `boxlite`, `microsandbox` |
-| Linux daemon image (`linux-full`; `linux/amd64`, `linux/arm64`) | `docker`, `boxlite`, `microsandbox` |
+| Linux native binary (`linux-full`) | `docker`, `boxlite`, `microsandbox`, `k8s` |
+| Linux daemon image (`linux-full`; `linux/amd64`, `linux/arm64`) | `docker`, `boxlite`, `microsandbox`, `k8s` |
 
 The platform Task entry dispatches to the macOS Docker-only build on Darwin and
 the Linux full build on Linux. `scripts/build-agent-compose-binary.sh` is the
@@ -764,7 +765,7 @@ envelope, and `status --json` preserves the complete response. The text form of
 `CompiledRuntimeDrivers` owns the ordered driver list. It reports build
 capability only and does not probe Docker daemon reachability, `/dev/kvm`,
 runtime libraries or executables, image access, or driver health. The full
-image therefore reports all three drivers even when running on macOS Docker
+image therefore reports all four drivers even when running on macOS Docker
 Desktop without KVM, while its default runtime remains Docker.
 
 Compiled capability is validated before persistence or runtime side effects.

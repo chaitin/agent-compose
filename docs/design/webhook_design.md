@@ -2,9 +2,10 @@
 
 This document describes the external event ingress and topic event dispatch
 model currently implemented in code, and records the target design still to be
-completed. Sections explicitly labeled as current describe implemented behavior;
-target delivery and provider verification sections remain proposals. Relevant
-implementation lives mainly in:
+completed. Sections explicitly labeled as current describe implemented behavior.
+Provider signature verification and the delivery-state machine have since
+shipped and are documented as current below; manual replay and per-source stats
+remain proposals. Relevant implementation lives mainly in:
 
 - HTTP handler: `pkg/events/webhooks/http.go`
 - Topic event model: `pkg/model/`
@@ -182,16 +183,18 @@ Target behavior:
 - Webhook handler must match enabled source configuration by `:topic`.
 - Token auth uses `Authorization: Bearer <source-token>` or
   `X-WEBHOOK-TOKEN: <source-token>`.
-- Provider signature auth is enabled by source configuration, for example GitHub
-  `X-Hub-Signature-256` or GitLab token.
+- Provider signature auth is enabled by source configuration; `github_sha256`
+  (`X-Hub-Signature-256`) is implemented, while other provider verifiers such as
+  GitLab token remain target work.
 - Legacy project-prefixed environment variables, table names, or headers should
   not be kept as target naming.
 
-### Webhook Source Configuration Enhancement
+### Webhook Source Configuration
 
-Explicit webhook source configuration is needed to constrain ingress,
-authentication, and UI display. Suggested new `webhook_source` table and
-management API:
+Explicit webhook source configuration constrains ingress, authentication, and UI
+display. The `webhook_source` table is created by the numbered SQLite migrations
+(`pkg/storage/sqlite/migrations/000001_baseline.sql`) and read/written by
+`pkg/storage/configstore/topic_event_store.go`:
 
 | Field | Description |
 | --- | --- |
@@ -201,7 +204,8 @@ management API:
 | `provider` | `github`, `gitlab`, `generic`, etc. |
 | `topic_prefix` | Allowed topic prefix, for example `webhook.github.` |
 | `token_hash` | Source-level bearer token hash, replacing plaintext storage |
-| `signature_type` | `none`, `github_sha256`, `gitlab_token` |
+| `token_header` | Header the source token is read from; empty falls back to `Authorization: Bearer` or `X-WEBHOOK-TOKEN` |
+| `signature_type` | Signature verifier; `github_sha256` is implemented, and an empty value keeps the legacy generic path |
 | `signature_secret` | Provider signature secret, encrypted or managed by secret mechanism |
 | `body_limit_bytes` | Source-level body limit; defaults to global limit |
 | `created_at` / `updated_at` | Metadata |
@@ -292,12 +296,15 @@ Headers keep only an allowlist:
 Sensitive headers are filtered, for example `authorization`, `cookie`,
 `set-cookie`, and `x-webhook-token`.
 
-Currently, provider signature-related headers are stored only for audit and
-future extension input. Provider signature verification is not performed yet.
+Provider signature verification is implemented for GitHub sources:
+`pkg/events/webhooks/github.go` reads `X-Hub-Signature-256` and compares it with
+`hmac.Equal`. The signature-related headers remain stored for audit and for
+future provider verification modes.
 
 ## Event Log
 
-The event table is `event`, initialized by `ConfigStore.initSchema`. Go type is
+The event table is `event`, created by the numbered SQLite migrations under
+`pkg/storage/sqlite/migrations/` (`000001_baseline.sql` and later). Go type is
 `TopicEventRecord`.
 
 Core fields:
@@ -315,25 +322,28 @@ Core fields:
 | `delivery_id` | Provider delivery id |
 | `payload_hash` | Raw payload hash, excluding sequence |
 | `payload_json` | Standard event payload |
-| `dispatch_status` | Currently `pending` or `published_to_bus`; target delivery states below |
+| `dispatch_status` | Delivery state; see [Dispatch State Completion](#dispatch-state-completion) |
 | `parent_event_id` | Upstream event for derived events |
 | `publisher_type` | `webhook`, `scheduler`, `system` |
 | `publisher_id` | Scheduler id and similar ids |
 | `publisher_run_id` | Scheduler run id |
+| `replay_of_event_id` | Source event id for manual replay; empty for non-replay events |
+| `claim_id` | Dispatcher claim token; empty means unclaimed |
+| `claim_until` | Claim expiry, Unix milli |
+| `attempt_count` | Dispatcher delivery attempt count |
+| `next_attempt_at` | Next retry time, Unix milli |
+| `last_error` | Last delivery error |
+| `dead_letter_at` | Dead letter time, Unix milli |
 | `created_at` | Unix milli |
 | `dispatched_at` | Unix milli |
-
-Target field to add:
-
-| Field | Description |
-| --- | --- |
-| `replay_of_event_id` | Source event id for manual replay; empty for non-replay events |
 
 Indexes:
 
 - `correlation_id, sequence`
 - `topic, sequence`
 - `dispatch_status, sequence`
+- `dispatch_status, next_attempt_at, sequence`
+- `parent_event_id, sequence`
 - unique index on `topic, idempotency_key`, ignoring empty idempotency keys
 
 Idempotency rules:
@@ -365,9 +375,10 @@ Idempotency rules:
 5. After ack succeeds, mark `published_to_bus` and `dispatched_at`.
 6. If bus is full or publish fails, keep `pending` for the next retry.
 
-There is currently no cross-process claim, lease, ack, consumer group, or
-durable delivery. Atomic claim and lease mechanisms are needed before
-multi-replica deployment.
+Claims, leases, and acks are persisted on the event row, so dispatch state is
+shared across processes. There is still no durable consumer group: delivery
+remains at-most-once into the in-process scheduler bus, so the unreliable
+windows below still apply.
 
 Known unreliable windows:
 
@@ -384,11 +395,9 @@ idempotent by `eventId`, `correlationId`, or business id.
 
 ### Dispatch State Completion
 
-Event delivery state and scheduler business state need to be separated.
-`dispatch_status` should not mean "business completed".
-
-Suggested first phase: extend current event table `dispatch_status` to delivery
-states:
+Event delivery state and scheduler business state are separated:
+`dispatch_status` never means "business completed". The event table
+`dispatch_status` carries the delivery states:
 
 | State | Meaning |
 | --- | --- |
@@ -399,8 +408,8 @@ states:
 | `retrying` | This publish or ack attempt failed; waiting for retry |
 | `dead_letter` | Retry exhausted or payload cannot be decoded; needs manual handling |
 
-Delivery state completion needs these fields so multiple processes or retries
-are not judged only by memory state:
+The claim and retry state is persisted on the event row so multiple processes or
+retries are not judged only by memory state:
 
 | Field | Description |
 | --- | --- |
@@ -411,14 +420,17 @@ are not judged only by memory state:
 | `last_error` | Last delivery error |
 | `dead_letter_at` | Dead letter time, Unix milli |
 
-Dispatcher scan condition should become:
-`dispatch_status IN ('pending', 'retrying') AND next_attempt_at <= now`, with
-atomic claim through a single conditional update. After claim expiry, other
-processes may claim again.
+Dispatcher scan condition is
+`dispatch_status IN ('pending', 'retrying', 'publishing_to_bus')` with
+`(next_attempt_at = 0 OR next_attempt_at <= now)` and
+`(claim_until = 0 OR claim_until <= now)`, and each event is claimed atomically
+through a single conditional update. After claim expiry, another process may
+claim again.
 
-Add `event_delivery` table to represent one event's processing result for
-multiple scheduler triggers, avoiding loss of multi-subscriber information in a
-single event row:
+The `event_delivery` table represents one event's processing result for multiple
+scheduler triggers, avoiding loss of multi-subscriber information in a single
+event row. `pkg/storage/sqlite/migrations/000007_event_scheduler_links.sql`
+rebuilt it to key on schedulers:
 
 | Field | Description |
 | --- | --- |
@@ -430,7 +442,7 @@ single event row:
 | `error` | Failure reason |
 | `created_at` / `updated_at` | Metadata |
 
-Suggested schema:
+Schema (`000007_event_scheduler_links.sql`):
 
 ```sql
 CREATE TABLE event_delivery (
@@ -459,13 +471,20 @@ business processing.
 
 ### Observability And Operations
 
-HTTP APIs for UI and troubleshooting:
+HTTP APIs for UI and troubleshooting.
+
+Implemented:
 
 ```http
 GET /api/events/:event_id/trace
 GET /api/events/:event_id/sandboxes
-POST /api/events/:event_id/replay
 GET /api/webhook-sources
+```
+
+Proposed (not yet registered in the daemon route allowlist):
+
+```http
+POST /api/events/:event_id/replay
 GET /api/webhook-sources/:source_id/stats
 ```
 

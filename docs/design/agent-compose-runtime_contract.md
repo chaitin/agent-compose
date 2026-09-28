@@ -78,15 +78,18 @@ Therefore these paths correspond:
 | `<sandbox>/runtime` | `/data/runtime` | Reserved runtime resource and extension directory |
 | `<sandbox>/logs` | `/data/logs` | Jupyter and related logs |
 
-The `boxlite`, `docker`, and `microsandbox` drivers all consume
+The `docker`, `boxlite`, and `microsandbox` drivers all consume
 `<sandbox>/vm/mount-manifest.json`, but manifest content is generated per
-driver from the same logical runtime mount list. Docker keeps fine-grained home
-subpath mounts, including file sources such as `.claude.json` and `.gitconfig`.
-BoxLite and Microsandbox use directory sources only. They expose
-`/workspace -> /data/workspace` through guest-side symlink and keep `/root` as a
-real image directory, while declared home entries such as `/root/.codex` and
-`/root/.gitconfig` are symlinked to `/data/home/...`. `/data/state`,
-`/data/runtime`, and `/data/logs` come directly from mounted directories.
+driver from the same logical runtime mount list. The `k8s` driver declares no
+mounts and consumes none of the manifest: a Pod has no shared filesystem with
+the daemon, so sandbox data is pushed to and pulled from the Pod over `Exec`.
+Docker keeps fine-grained home subpath mounts, including file sources such as
+`.claude.json` and `.gitconfig`. BoxLite and Microsandbox use directory sources
+only. They expose `/workspace -> /data/workspace` through guest-side symlink and
+keep `/root` as a real image directory, while declared home entries such as
+`/root/.codex` and `/root/.gitconfig` are symlinked to `/data/home/...`.
+`/data/state`, `/data/runtime`, and `/data/logs` come directly from mounted
+directories.
 
 ## 3. Host Resource Preparation
 
@@ -154,9 +157,9 @@ RUNTIME_ROOT=/data/runtime
 ```
 
 agent-compose no longer overrides `HOME`; guest tools use the image default
-`HOME=/root`. Default Codex, Claude, and Git config is initialized by the host in
-sandbox home and exposed to the corresponding paths under `/root` through the
-mount manifest or directory-only bootstrap.
+`HOME=/root`. Default Codex, Claude, DSH, and Git config is initialized by the
+host in sandbox home and exposed to the corresponding paths under `/root`
+through the mount manifest or directory-only bootstrap.
 
 ## 4. Entry Command
 
@@ -172,11 +175,13 @@ sh -lc 'set -e && cd /workspace && agent-compose-runtime prompt \
   --home /root'
 ```
 
-The JavaScript runtime supports two subcommands:
+The JavaScript runtime exposes four subcommands:
 
 ```text
 prompt
+workflow
 exec
+stream
 ```
 
 The CLI uses `commander` to parse commands and arguments. The
@@ -330,7 +335,7 @@ The only protocol payload markers are:
 
 The host decides whether bytes are protocol payload by searching for those
 markers, never by checking stdout/stderr. Driver implementations (`docker`,
-`boxlite`, and `microsandbox`) do not parse or filter these markers.
+`k8s`, `boxlite`, and `microsandbox`) do not parse or filter these markers.
 
 The v2 Connect API exposes the same channel concept with `StdioStream`:
 
@@ -703,6 +708,62 @@ OpenCode raw JSON events are converted into a human-readable transcript. The
 runner writes `/data/state/agents/providers/opencode.json` after a successful
 run with a non-empty provider thread id.
 
+### 10.4 Pi
+
+The JavaScript runtime invokes Pi as a subprocess:
+
+```sh
+pi --mode json --session-dir /data/state/agents/providers/pi/sessions \
+  --no-extensions --no-skills --no-prompt-templates --no-themes \
+  --no-context-files --no-approve --offline <prompt>
+```
+
+When a model is provided by the host, the runner appends `--model <model>`. When
+a stored provider thread exists, the runner appends
+`--session-id <stored thread id>`; it never passes a new id, because Pi treats an
+unseen id as a resume miss and warns. When `systemContext` is non-empty, the
+runner writes it to a temporary file and appends
+`--append-system-prompt <file>`. Enabled skills are resolved under
+`$HOME/.agents/skills` and appended as `--skill <path>`. A declared MCP config is
+passed through `--extension <pi MCP adapter> --mcp-config <file>`.
+
+The runner sets `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, and `PI_TELEMETRY=0`,
+and points `PI_CODING_AGENT_DIR` at an existing environment value or
+`$HOME/.pi/agent`. Pi `--mode json` events are converted into a human-readable
+transcript. The runner stores the session id Pi emits in
+`/data/state/agents/providers/pi.json` after a successful run; a run that never
+emits one fails.
+
+Structured JSON output is not supported by the Pi runner.
+
+### 10.5 DSH
+
+The JavaScript runtime invokes DSH as a subprocess:
+
+```sh
+dsh --profile agent-compose
+```
+
+The runner drives DSH through spawn-time environment variables rather than CLI
+arguments. The prompt is written to a temporary file named by `DSH_PROMPT_FILE`;
+`DSH_SESSION_ROOT`, `DSH_SESSION_ID`, and `DSH_RESUME=1` (on resume) select the
+session; `DSH_PERMISSION_MODE` is always `danger-full-access`; `DSH_MODEL` is set
+when the invocation resolves a model (an inherited daemon facade value otherwise
+passes through unchanged) and `DSH_REASONING_EFFORT` only when the invocation
+provides an effort; `DSH_MCP_SERVERS` carries the MCP server list as JSON and is
+rejected with an actionable error when it would exceed the 128 KiB `exec()`
+argument limit; and `DSH_SKILL_DIRS` carries the resolved skill directories. When
+`systemContext` is non-empty, the runner writes it to a temporary file and passes
+its path as `DSH_SYSTEM_CONTEXT_FILE`.
+
+DSH writes one JSON line per event on stdout, each a
+`{"type":"session_event","sessionId":...,"event":...}` envelope. The runner
+cross-checks `sessionId` when present, maps provider events into a
+human-readable transcript, and stores the session id in
+`/data/state/agents/providers/dsh.json` after a successful run.
+
+Structured JSON output is not supported by the DSH runner.
+
 ## 11. Error Semantics
 
 JavaScript runtime top-level error handling:
@@ -789,10 +850,11 @@ host directly. The host still sees only the outer command cell's
 stdout/stderr/output and artifacts. `runtime.llm` calls the agent-compose
 `LLMService.Generate` Connect JSON endpoint.
 
-The runtime CLI provides `prompt`, `exec`, and `workflow` host-dependent
-subcommands. `workflow` executes a restricted JavaScript orchestration script,
-writes one `__WORKFLOW_RESULT__` payload to stdout, and streams prefixed
-`__WORKFLOW_EVENT__` records on stderr alongside unprefixed provider transcript.
+The runtime CLI provides `prompt`, `workflow`, `exec`, and `stream`
+host-dependent subcommands. `workflow` executes a restricted JavaScript
+orchestration script, writes one `__WORKFLOW_RESULT__` payload to stdout, and
+streams prefixed `__WORKFLOW_EVENT__` records on stderr alongside unprefixed
+provider transcript.
 The SDK exposes `runtime.workflow()` and `runtime.workflowFile()` and decodes
 those events incrementally.
 

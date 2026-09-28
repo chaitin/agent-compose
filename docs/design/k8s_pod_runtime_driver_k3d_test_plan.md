@@ -24,7 +24,7 @@ reflect the current implementation, not the original hostPath-based one.
 | 5 | Bad `driver.k8s.context` name | `client()` surfaces a clear error and doesn't poison the cache for other, valid contexts |
 | 6 | Pod stuck `Pending` (bad image) | `waitForPodRunning()` times out (`SandboxStartTimeout`) with a clear error instead of hanging |
 | 7 | Stop → re-run | Pod is actually deleted; the next run creates a fresh Pod rather than colliding with a stale name |
-| 8 | Named volume declared for a k8s agent | `resolveProjectRunVolumeMounts` rejects it with a clear error instead of silently dropping or mis-mounting it |
+| 8 | Named volume declared for a k8s agent | Maps to a PVC and mounts into the Pod, while bind mounts and non-`k8s` volume drivers are rejected by `resolveProjectRunVolumeMounts` with a clear error |
 
 Scenario 1's push-verification is the one that matters most now - it's the
 direct functional test for design doc §6's write-call-site work (without it,
@@ -38,9 +38,11 @@ time for two scenarios, do those.
   nodes as Docker containers.
 - `k3d` (`brew install k3d`), `kubectl`, and `jq` (for the compiled-driver
   assertion below).
-- This branch checked out; `buf` available (`buf generate` already run per
-  the design doc, or re-run it if `proto/agentcompose/v2/agentcompose.pb.go`
-  is missing/stale — it's gitignored, generated on demand).
+- This branch checked out; `buf` available. The generated Go/Connect sources
+  (`proto/agentcompose/v2/agentcompose.pb.go` and
+  `proto/agentcompose/v2/agentcomposev2connect/agentcompose.connect.go`) are
+  tracked and committed, so they are present already; regenerate them with
+  `task generate` (or `task generate:proto`) only if they are stale.
 
 ## 2. Build the daemon with k8s support
 
@@ -161,7 +163,8 @@ unlike the driver's own low-level `Exec` used throughout this design
 document, the `exec` CLI command goes through a separate, more
 sophisticated file-based RPC mechanism
 (`pkg/agentcompose/api/exec_execution.go`, an in-guest Node.js runtime
-helper) that assumes the same shared mount docker/boxlite have and fails
+helper) that assumes the shared mount docker, boxlite, and microsandbox
+all have and fails
 with `ENOENT ... command-request.json` on k8s (see design doc §5.1 - a
 real, separate gap, not fixed yet). `kubectl exec` bypasses the daemon and
 this mechanism entirely, so it works fine for verification purposes:
@@ -340,7 +343,7 @@ have corrupted the client cache for the others).
 agent-compose run worker-bad-image --prompt "echo hello" --keep-running
 ```
 
-Expect the run to fail once `SandboxStartTimeout` elapses (default 2 minutes
+Expect the run to fail once `SandboxStartTimeout` elapses (default 30 minutes
 if unset). For a fast manual check, stop and restart the daemon before this
 scenario with `SANDBOX_START_TIMEOUT=10s` in its environment. While the run is
 waiting, inspect the Pod with:
@@ -366,13 +369,13 @@ agent-compose run worker --prompt "echo hello once more" --keep-running
 kubectl -n agent-compose-test get pods        # expect a fresh Pod, not an error about an existing name
 ```
 
-## 10. Scenario 8 — named volume rejected for a k8s agent
+## 10. Scenario 8 — named volume mapped to a PVC, bind mount rejected
 
 ```yaml
-name: k3d-volume-reject
+name: k3d-volume
 volumes:
   cache:
-    driver: local
+    driver: k8s
 agents:
   worker-with-volume:
     provider: codex
@@ -387,14 +390,30 @@ agents:
 
 ```bash
 agent-compose up
+kubectl -n agent-compose-test get pvc          # expect the cache PVC
 agent-compose run worker-with-volume --prompt "echo hello" --keep-running
+kubectl -n agent-compose-test get pod <pod-name> -o jsonpath='{.spec.volumes}{"\n"}'
 ```
 
-Expect this to fail immediately with a clear error (`k8s driver does not
-support volume mounts ...`), not a hang, not a Pod created with a
-silently-ignored or mis-mounted volume. This is the design doc §2.1
-"named volumes are out of scope for k8s v1" validation
-(`pkg/runs/sandbox_preparation.go`'s `resolveProjectRunVolumeMounts`).
+Named volumes are the **supported** k8s mount path: `driver: k8s` selects the
+PVC-backed volume driver (`pkg/volumes/k8s_driver.go`), and the Pod gets a
+`PersistentVolumeClaim` volume for it (`pkg/driver/k8s_runtime.go`'s
+`podVolumeSpecs`). Expect the PVC to exist and the Pod to mount it at `/cache`.
+Defaults are `size: 1Gi` and `access_mode: ReadWriteOnce`, overridable together
+with `storage_class` and `namespace` under the volume's `options`; the PVC and
+the Pod must share a namespace or sandbox creation fails. This is the design doc
+§2.3 "named volumes map to PVCs" validation.
+
+Then confirm the two unsupported forms are rejected before any Pod is created by
+`resolveProjectRunVolumeMounts` (`pkg/runs/sandbox_preparation.go`), which
+delegates to `pkg/volumes/normalize.go` - not silently dropped or mis-mounted:
+
+- `type: bind` fails with `k8s driver does not support local bind mounts
+  (source "...", target "..."); use a named volume instead` - a bind source is a
+  daemon-host path that has no meaning inside a Pod.
+- A named volume whose driver is not `k8s` (for example the `local` default)
+  fails with `k8s driver does not support volume driver "<driver>" for source
+  "..."; use a volume with driver k8s`.
 
 ## 11. Cleanup
 

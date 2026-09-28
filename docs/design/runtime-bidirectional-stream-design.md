@@ -272,15 +272,17 @@ interface AgentInteractiveRunner {
 
 The Codex implementation can reuse the same thread and call `thread.runStreamed(prompt)` for each user input. After each turn completes, the runtime sends `agent_turn_completed`; only then should the daemon/CLI display the next input prompt.
 
-Provider capability must be explicit:
+Provider capability is explicit. Codex was the first implementation of the interactive turn loop; the supported set now covers every provider whose runner persists a resume thread:
 
-| provider | first-phase prompt interactive strategy |
+| provider | prompt interactive status |
 |---|---|
-| Codex | implement first |
-| Claude | integrate after confirming SDK session/continue support |
-| OpenCode | integrate after confirming capability |
+| Codex | supported |
+| Claude | supported |
+| OpenCode | supported |
+| Pi | supported |
+| dsh | supported |
 
-If a provider does not support an agent turn loop, return an explicit error.
+A provider whose runner cannot resume its session between turns is deliberately excluded, because each turn spawns a fresh run and would otherwise lose the previous turn's context. If a provider does not support an agent turn loop, return an explicit error.
 
 ### `--prompt -it` and Output Schema
 

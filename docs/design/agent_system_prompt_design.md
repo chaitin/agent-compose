@@ -14,8 +14,10 @@ Only the MPI (Model Program Interface) capability catalog reached provider
 system/developer instruction channels.
 
 The Phase 1 provider matrix below is historical. The current runtime has since
-added OpenCode and Pi; all five runners receive the composed context, using
-native system channels where available and prompt/file fallbacks elsewhere.
+added OpenCode, Pi, and dsh; all six runners receive the composed context, using
+native system channels where available and prompt/file fallbacks elsewhere. dsh
+takes the file-based route: `runtime/javascript/src/runners/dsh.ts` writes the
+system context to `system-context.txt` and sets `DSH_SYSTEM_CONTEXT_FILE`.
 
 Phase 1 closed that gap by wiring agent identity into a layered prompt model
 without introducing a full platform runtime brief.
@@ -175,7 +177,11 @@ On DB lookup failure, the host logs a warning and runs without agent identity
 
 ### Write system prompt file
 
-**Function:** `execution.WriteAgentSystemPromptFile(sandbox, systemPrompt string) error`
+**Function (in `pkg/execution/agent_files.go`):** `execution.WriteAgentSystemPromptFile(ctx context.Context, config *appconfig.Config, session *domain.Sandbox, systemPrompt string, writeGuestFile GuestFileWriterFunc) error`
+
+`writeGuestFile` is the guest writer a driver without a shared filesystem uses
+(k8s pushes the file through exec/tar); drivers with a shared mount pass `nil`
+and the guest reads the host file directly.
 
 | Property | Value |
 | --- | --- |

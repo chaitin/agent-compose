@@ -8,8 +8,8 @@
 
 - 调研基线：本文保留原始实现评审基线；当前代码和 guest image 以本仓库
   `main` 分支为准。
-- Pi：[`earendil-works/pi`](https://github.com/earendil-works/pi)，提交 [`bc41f612`](https://github.com/earendil-works/pi/commit/bc41f612da8c15c4acc5f7ab7a7178a4fe17c942)，发布版 `v0.81.1`。
-- Pi npm 包：`@earendil-works/pi-coding-agent@0.81.1`，要求 Node.js `>=22.19.0`；当前 guest image 使用 Node.js 22，满足要求。
+- Pi：[`earendil-works/pi`](https://github.com/earendil-works/pi)，调研提交 [`bc41f612`](https://github.com/earendil-works/pi/commit/bc41f612da8c15c4acc5f7ab7a7178a4fe17c942)，调研时发布版 `v0.81.1`。
+- Pi npm 包：调研基线为 `@earendil-works/pi-coding-agent@0.81.1`，要求 Node.js `>=22.19.0`；当前 guest image 使用 Node.js 22，满足要求。当前 pin 的版本以 `guest-images/Dockerfile.agent-compose-guest` 的 `PI_AGENT_VERSION` 为准（现为 `0.82.1`）。
 
 建议将规范 provider 名称定为 `pi`，兼容输入别名 `pi-agent` 和 `pi_agent`。首版使用 Pi 的 JSON event stream 模式，每个 agent-compose prompt turn 启动一个 `pi --mode json` 子进程，并用 Pi session ID 延续上下文。暂不以 RPC 模式作为首版执行通道。
 
@@ -134,31 +134,27 @@ Pi 自带自动 compaction。首版保留 Pi 默认值，但在文档中说明 s
 
 ### 4.1 为什么需要生成 Pi `models.json`
 
-Pi 是多模型 harness，不等价于某个固定协议。agent-compose 又要求 sandbox 内的 agent 通过短期 token 访问 runtime LLM facade，不能把上游 provider secret 直接注入 guest。因此新增：
+Pi 是多模型 harness，不等价于某个固定协议。agent-compose 又要求 sandbox 内的 agent 通过短期 token 访问 runtime LLM facade，不能把上游 provider secret 直接注入 guest。当前实现由以下部分组成（原方案的 `pkg/llms/pi_facade.go` 已并入共享的 `PrepareAgentLLM` 路径）：
 
-- `pkg/llms/pi_facade.go`：解析模型选择、选择 LLM target、签发 facade token。
+- `pkg/llms/agent_llm.go` 的 `PrepareAgentLLM`：解析模型/连接、选择 LLM target 并签发 facade token。
+- `pkg/llms/dialect_writers.go` 的 `writePiGuestConfig`：写入 Pi 的 guest 环境并生成宿主侧配置。
 - `pkg/llms/pi_runtime_config.go`：纯配置生成逻辑，写 host sandbox home 下的 `.pi/agent/models.json`。
-- `runtimefacade.EnsureSessionAgentRuntimeConfig` 增加 `case "pi"`。
+- `runtimefacade.EnsureSessionAgentRuntimeConfig` 经 `PrepareAgentLLM` 按 dialect 分派，不再需要 provider 专用的 `case "pi"`。
 
 不要复用名为 OpenCode 的函数或配置类型；两者只是都支持多 provider 模型，配置格式和协议能力并不相同。
 
 ### 4.2 模型字符串契约
 
-建议 Pi 与 OpenCode 统一采用：
+模型 id 是不透明的：`model` 是调用方提供的字面量，daemon 只把它原样传给上游，从不拆分它或用它选择连接。连接由 agent 自己声明的凭据、或 catalog 的模型/默认条目决定。旧的 `<llm-provider-id>/<model-name>` 路由形式已退役，`Catalog.Resolve` 会以 `ErrLegacyQualifiedModel`（`pkg/llms/connection_catalog.go`）拒绝它。
 
-```text
-<llm-provider-id>/<model-name>
-```
+当下行协议不能从模型名推断时，它由目标连接的 `wireApi`（`Catalog.Resolve` 的解析结果）决定：
 
-示例：`openai/gpt-5.4`、`anthropic/claude-sonnet-4-6`、`my-openai-compatible/qwen3-coder`。
+1. 连接先由声明的凭据或 catalog 选择确定，模型保持不透明。
+2. OpenAI family 优先使用 runtime facade Responses API；确实只支持 chat completions 的 target 使用 chat completions。
+3. Anthropic family 使用 Messages API。
+4. session env provider 继续复用现有 bootstrap 规则，但最终仍生成明确 provider family 的 Pi model entry。
 
-理由：只给模型名无法在同时配置 OpenAI-family 与 Anthropic-family provider 时可靠确定 facade 下行协议。解析规则：
-
-1. 必须能拆成非空 `providerID/modelName`，否则 startup/execute 阶段返回验证错误。
-2. 根据配置存储中的 provider ID 解析 provider family。
-3. OpenAI family 优先使用 runtime facade Responses API；确实只支持 chat completions 的 target 使用 chat completions。
-4. Anthropic family使用 Messages API。
-5. session env provider 继续复用现有 bootstrap 规则，但最终仍生成明确 provider family 的 Pi model entry。
+Pi 自身按 `<provider>/<model>` 寻址模型，这个 `agent-compose` provider key 由 daemon 写死（`Dialect.GuestProvider`），与上游连接名无关，因此重命名上游 connection 不会改变 guest 看到的值。
 
 为了减少与现有 OpenCode 分支的重复，实施时可抽取一个以“已解析 provider ID + model name + target family”为输入的内部 resolver；不要创建泛化但无行为的 `common` package。
 
@@ -253,14 +249,15 @@ provider 版本参数一样在构建时覆盖版本，而运行时不联网安�
 
 ### 6.3 LLM facade
 
-- 新增 `pkg/llms/pi_facade.go`：模型字符串解析、target resolution、token 与 env。
-- 新增 `pkg/llms/pi_runtime_config.go`：纯 payload 构建和原子落盘。
-- `pkg/llms/runtimefacade/config.go` 只增加薄分派。
+- `pkg/llms/agent_llm.go` 的 `PrepareAgentLLM`：模型/连接解析、target resolution、token 与 env（原方案的 `pkg/llms/pi_facade.go` 已并入此处）。
+- `pkg/llms/dialect_writers.go` 的 `writePiGuestConfig`：Pi guest 环境写入。
+- `pkg/llms/pi_runtime_config.go`：纯 payload 构建和原子落盘。
+- `pkg/llms/runtimefacade/config.go` 只做薄分派。
 - 配置写入采用 temp file + rename，防止并发读取半文件；若同一 sandbox 允许并发 Pi run，还需按 sandbox/config path 加实例级锁。不能用 package global mutex。
 
 ### 6.4 Guest image 与供应链
 
-- `guest-images/Dockerfile.agent-compose-guest` 增加 `ARG PI_AGENT_VERSION=0.81.1`，安装 `@earendil-works/pi-coding-agent@${PI_AGENT_VERSION}`。
+- `guest-images/Dockerfile.agent-compose-guest` 增加 `ARG PI_AGENT_VERSION=0.82.1`，安装 `@earendil-works/pi-coding-agent@${PI_AGENT_VERSION}`。
 - `Dockerfile.devbox-archlinux` 同步安装，确保开发镜像语义一致。
 - 为 `/usr/bin/pi` 建显式 symlink 或断言 npm bin 已在 PATH，并执行 `pi --version` 构建时 smoke。
 - 更新镜像 CI contract，断言版本 pin、CLI 存在且不使用 floating `latest`。
@@ -271,7 +268,7 @@ provider 版本参数一样在构建时覆盖版本，而运行时不联网安�
 
 - 同步修改 `docs/pages/agent-compose-yaml-manual.md` 与 `docs/pages/zh-CN/agent-compose-yaml-manual.md`。
 - 更新 `docs/pages/guest-image-abi.md` 及中文版本的 built-in provider/CLI 要求。
-- 提供 Pi 模型例子，并明确格式是 `<llm-provider-id>/<model-name>`。
+- 提供 Pi 模型例子，并说明模型 id 是不透明字面量（`agent-compose/<model>` 的 provider 前缀由 daemon 生成，`<connection>/<model>` 路由形式已退役）。
 - 如果 MCP 未同期交付，公开记录限制。
 - 运行 `task docs:build`，不直接修改 `build/pages`。
 
@@ -293,7 +290,7 @@ provider 版本参数一样在构建时覆盖版本，而运行时不联网安�
 ### 7.2 Go unit/integration tests
 
 - `pkg/model`：provider/alias normalize 与 validation。
-- `pkg/llms`：Pi model split、OpenAI Responses、OpenAI chat、Anthropic Messages 配置；secret 不落盘；文件权限；可选配置错误。
+- `pkg/llms`：不透明 Pi 模型的 OpenAI Responses、OpenAI chat、Anthropic Messages 配置；secret 不落盘；文件权限；可选配置错误。
 - `pkg/llms/runtimefacade`：target、token、env、config path 和 protocol。
 - `pkg/agentcompose/adapters`：Pi 经过 facade 和 MCP preparation，run scoped token 被清理。
 - `cmd/agent-compose`：provider 支持列表与 prompt attach 行为。
@@ -359,7 +356,7 @@ task image:agent-compose-guest
 | --- | --- | --- |
 | Pi 上游迭代快、JSON schema 演进 | runner 解析失效 | pin npm 版本；fixture + real CLI image smoke；对未知事件前向兼容，对必需字段严格校验 |
 | Pi 不原生支持 MCP | 功能不对等 | runtime-owned extension；交付前 fail-fast，不静默忽略 |
-| Pi 同时支持多 LLM family | 模型名无法决定协议 | 强制 `provider-id/model`，由 config store 决定 family |
+| Pi 同时支持多 LLM family | 模型名无法决定协议 | 模型保持不透明，协议由 catalog 选定连接的 `wireApi` 决定；`<connection>/<model>` 路由已退役 |
 | 隐式加载 workspace/global 配置 | 不可重复、越权 | `--no-*`、`--no-context-files`、`--no-approve`，只显式加载编排资源 |
 | 更新检查/telemetry | 启动慢、非预期外网 | `--offline` + Pi 环境开关；镜像 smoke 断言无公共网络依赖 |
 | session 文件与 transcript 双份状态 | 排障混淆、磁盘增长 | 分离职责、stateRoot 定向、沿用 sandbox retention；文档说明 |

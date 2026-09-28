@@ -11,7 +11,7 @@
 ## 目标
 
 - 一个 daemon 同时配置多个上游 LLM Provider。
-- 使用 `provider/model` 选择 Provider 和上游 literal 模型名。
+- `model` 是不透明的上游 literal 模型名；连接由声明的凭据、模型归属或 `default` 决定。
 - 保持依赖 daemon 或项目 `LLM_*` 环境变量的旧项目继续工作。
 - 允许模型条目定制行为，但不把模型目录变成白名单。
 - 上游凭据只保留在 daemon，sandbox 只能拿到受限的 facade token。
@@ -71,7 +71,7 @@ daemon 在启动后台组件前加载：
 
 顶层对象包含：
 
-- `default`：可选的 `provider/model` 引用。
+- `default`：可选的 `provider/model` 引用。这是唯一仍按该语法解析的字段（`SplitProviderModelReference`，`pkg/llms/catalog.go`），它同时指定默认连接与默认模型。
 - `providers`：以稳定 Provider ID 为 key 的 Provider 定义。
 
 Provider 支持以下字段：
@@ -107,16 +107,9 @@ Provider ID 不触发 catalog 模板继承。即使 ID 是 `openai` 或 `anthrop
 
 `models` 数组可以省略。它只用于给已知模型 ID 附加行为。
 
-假设 `baizhi` 已配置且可用，以下两个选择都合法：
+假设 `baizhi` 已配置且可用，agent 声明 `model: deepseek-v4-flash`：如果 `baizhi`（或另一个连接）声明了该模型，连接解析会选中它并应用匹配的模型级覆盖；如果没有任何连接声明该模型，`baizhi` 是唯一已配置连接或 catalog default 时仍会服务它，此时使用 Provider 默认配置，并把 `deepseek-v4-flash` 原样发送给上游。模型是否合法由上游 Provider 判断。
 
-```text
-baizhi/deepseek-v4-flash
-baizhi/a-new-model-not-listed-in-models-json
-```
-
-第一个模型会应用匹配的模型级覆盖；第二个模型使用 Provider 默认配置，并把 `a-new-model-not-listed-in-models-json` 原样发送给上游。模型是否合法由上游 Provider 判断。
-
-显式指定未知或不可用 Provider 是另一种情况：daemon 必须在本地失败，不能把请求悄悄转发给默认 Provider。
+模型 ID 始终是不透明的：daemon 不拆分它，也不用它选择连接。退役的 `<connection>/<model>` 写法不再解析 —— 当前缀命名了一个确实服务右侧模型的连接时，`Catalog.Resolve` 返回 `ErrLegacyQualifiedModel`（`pkg/llms/connection_catalog.go`）。没有可用连接能服务该模型时，daemon 必须在本地失败，不能把请求悄悄转发给默认 Provider。
 
 ## Provider 可用性
 
@@ -128,23 +121,31 @@ catalog Provider 只有在最终定义包含非空 API Key 时才可用。
 
 ## 选择优先级与兼容规则
 
-连接 Provider 的优先级为：
+模型选择的优先级为：
 
 ```text
-完整的 run/session LLM 环境 Provider
-> 显式的非 legacy provider/model
-> 完整的 daemon LLM 环境 Provider
-> models.json default
+agent 声明的 model
+> models.json default / daemon 环境声明的默认模型
+> 配置前置条件错误
+```
+
+连接选择的优先级为：
+
+```text
+agent 声明凭据被吸收成的 declared 连接
+> 声明了该模型的连接（按调用方协议偏好排序）
+> models.json default 命名的连接（当 default 模型正是本次模型）
+> 唯一的已配置连接
+> 其余全部已配置连接（同样按协议偏好排序）
 ```
 
 具体规则：
 
 1. run/session 环境里声明的凭据，如果 daemon 能识别**且能代理**，会被吸收成一条 scope 为 `declared` 的连接（ID 为 `session-env:<sandbox-id>:<family>:<declaration-digest>`，digest 是声明内容的摘要，见 §声明的第一方凭据），再用 Catalog 正常解析它的 endpoint、protocol、key 和选定模型；缺失值不能从 catalog 或 daemon 环境借用。识别不了的 `*_API_KEY` 不参与连接解析，原样下发到 sandbox 环境。
-2. `baizhi/model` 这样的显式自定义引用固定选择 `baizhi`，即使 daemon 已存在完整的默认 `.env` Provider。
-3. Legacy 引用 `openai/model` 和 `anthropic/model` 可以继续使用兼容且完整的 run/session 或 daemon 环境 Provider，但发给上游的模型名只取右侧的 `model`。
-4. 没有显式模型时，完整的 daemon 环境 Provider 仍是全局默认值。
-5. daemon 环境不完整时，使用 `models.json.default`。
-6. 所有来源都无法得到可用 Provider 和模型时，以配置前置条件错误失败。
+2. 没有声明凭据时，daemon 先在声明了该模型的连接中选择；同一模型被多个连接声明时，按调用方协议偏好优先 passthrough，同协议候选随机择一。
+3. `models.json` 顶层 `default` 用 `provider/model` 指定默认连接与默认模型；agent 的 `model` 不会被再次拆分。没有连接声明该模型时，它优先于其他兜底规则。
+4. agent 未声明模型时，使用 catalog default 模型（`models.json.default` 的右侧，或 daemon 环境声明的默认模型）。
+5. 所有来源都无法得到可用连接和模型时，以配置前置条件错误失败。
 
 继续兼容的环境变量包括：
 
@@ -201,28 +202,30 @@ daemon 不做流量劫持，因此无法识别或无法代理的凭据只能告�
 
 ## Coding Agent 写法
 
-Agent 继续使用已有的 `model` 字段：
+Agent 继续使用已有的 `model` 字段，值是上游 literal 模型 ID；连接按 §选择优先级与兼容规则 解析：
 
 ```yaml
 agents:
   baizhi-coder:
     provider: opencode
-    model: baizhi/deepseek-v4-flash
+    model: deepseek-v4-flash
     image: chaitin/agent-compose-guest:latest
 
   review:
     provider: codex
-    model: openai/gpt-5.6-sol
+    model: gpt-5.6-sol
     image: chaitin/agent-compose-guest:latest
 ```
 
-Pi 的旧配置继续有效：
+要让某个模型固定走某个连接，就在该连接下声明这个模型，或在 `models.json` 的 `default` 里写 `连接/模型`。写进 agent `model` 的 `<connection>/<model>` 形式已退役。
+
+Pi 的旧配置继续有效；声明的 `LLM_*` 端点与凭据会被吸收成 declared 连接：
 
 ```yaml
 agents:
   reviewer:
     provider: pi
-    model: openai/gpt-5.4
+    model: gpt-5.4
     env:
       LLM_API_ENDPOINT: ${PI_API_ENDPOINT}
       LLM_API_PROTOCOL: responses
@@ -245,9 +248,9 @@ Scheduler 可以定义自己的默认模型：
 agents:
   reviewer:
     provider: pi
-    model: openai/gpt-5.4
+    model: gpt-5.4
     scheduler:
-      model: baizhi/deepseek-v4-flash
+      model: deepseek-v4-flash
       script: |
         // scheduler.llm(...) 可以在单次调用中覆盖该模型。
 ```
@@ -315,9 +318,9 @@ llm_provider_model.display_name
 - `models.json` 不存在：继续启动，catalog-owned 状态为空，system/env 配置和默认模型保持不变。
 - 文件非法或 Secret 环境变量无法解析：启动失败。
 - Provider ID 与已有非 catalog Provider 冲突：启动失败，原配置保持不变。
-- 显式 Provider 未知：失败，不使用默认 Provider。
-- 显式 Provider 没有 API Key：以不可用失败。
-- 可用的显式 Provider 下模型未知：原样转发 literal 模型 ID。
+- 显式指定的连接未知：失败，不使用默认连接。
+- 目标连接没有 API Key：以不可用失败。
+- 目标连接未声明该模型：原样转发 literal 模型 ID。
 - run/session 环境 Provider 不完整：不能与低优先级来源拼接。
 - 没有可用默认值：以配置前置条件错误失败。
 
@@ -327,7 +330,7 @@ llm_provider_model.display_name
 
 这些能力应当把凭据绑定到既有逻辑 Provider 上，同时保持以下契约不变：
 
-- `provider/model` 选择语义；
+- 不透明的 `model` 与固定的连接选择优先级（`models.json` 顶层 `default` 仍使用 `provider/model`）；
 - 模型元数据不是白名单；
 - 配置优先级；
 - sandbox 不接触上游 Secret 的安全边界。

@@ -30,9 +30,9 @@ daemon controller or store directly.
 
 | CLI operation | Connect RPC(s) | Stream | Fallback or local responsibility |
 | --- | --- | --- | --- |
-| `project up`, `up` | `ProjectService.ValidateProject`, `ApplyProject` | no | Reads compose and `.env` locally before RPC |
+| `project up`, `up` | `ProjectService.ApplyProject` | no | Reads compose and `.env` locally before RPC |
 | `project ls` | `ProjectService.ListProjects` | no | none |
-| `project down`, `down` | `GetProject`, `ListSchedulers`, `SetSchedulerEnabled`, `ListSandboxes`, `StopSandbox` | no | local compose only selects the project |
+| `project down`, `down` | `ProjectService.RemoveProject` | no | local compose only selects the project; the server-side removal stops sandboxes and disables schedulers |
 | `agent ls`, `ls` | `ProjectService.GetProject` | no | none |
 | `run` | `ResourceService.ResolveID`, `RunService.RunAgent`, `StreamAgentRun`, or `AttachAgentRun` | server or bidi | streaming mode selects the matching RPC |
 | `exec` | `ResourceService.ResolveID`, `ExecService.Exec`, `StreamExec`, or `AttachExec` | server or bidi | streaming mode selects the matching RPC |

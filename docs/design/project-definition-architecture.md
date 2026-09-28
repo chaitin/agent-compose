@@ -9,17 +9,21 @@ runtime management.
 
 ## Target layout
 
-`pkg/projectdef` is the supported reusable API. It owns the project schema,
-YAML/JSON loading, deterministic normalization, canonical JSON/hash, static
-validation, and definition-only references.
+`pkg/projectdef` is the supported reusable API surface. Today it is a façade
+over `pkg/compose`: it re-exports the definition types as aliases and forwards
+`Parse`, `ParseFile`, `Normalize`, `NormalizeFile`, `Validate`, and
+`ParseCanonicalJSON`. `pkg/compose` still owns the project schema, YAML/JSON
+loading, deterministic normalization, canonical JSON/hash, static validation,
+and definition-only references.
 
 `internal/projects` owns agent-compose application behavior: records,
 revisions, stores, controller workflows, scheduler reconciliation, sandbox and
 volume lifecycle, secrets, and runtime capability checks.
 
-The existing `pkg/compose` package is split along this boundary during
-migration. It may retain file-format compatibility helpers, but it must not
-remain a second implementation of definition semantics.
+The existing `pkg/compose` package is to be split along this boundary during
+migration, at which point `pkg/projectdef` becomes the owner rather than a
+façade. It may retain file-format compatibility helpers, but it must not remain
+a second implementation of definition semantics.
 
 ## Dependency rule
 
@@ -32,7 +36,8 @@ is layered by `internal/projects` after static validation returns.
 For every existing project fixture, migration must preserve normalized output,
 canonical JSON, spec hash, validation paths/messages, and runtime behavior.
 Compatibility wrappers are temporary migration mechanics only; the final
-layout has no duplicate project-definition implementation in `pkg/projects`.
+layout has no duplicate project-definition implementation in
+`internal/projects`.
 
 ## Public API principles
 
