@@ -710,7 +710,7 @@ Inspect project resources, daemon images, or runtime cache items.
 ```bash
 agent-compose inspect project
 agent-compose inspect project <project-name|project-id|short-id>
-agent-compose inspect <project|agent|run|sandbox|image|cache|volume-id>
+agent-compose inspect <project|agent|run|sandbox|image|cache>
 agent-compose inspect agent <agent>
 agent-compose inspect run <run-id>
 agent-compose inspect sandbox <sandbox>

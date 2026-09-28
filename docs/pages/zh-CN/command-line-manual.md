@@ -688,7 +688,7 @@ agent-compose logs --event evt_0e1c7bd2-8f5a-4c1d-9b3e-2f6a7d8c9e01
 ```bash
 agent-compose inspect project
 agent-compose inspect project <project-name|project-id|short-id>
-agent-compose inspect <project|agent|run|sandbox|image|cache|volume-id>
+agent-compose inspect <project|agent|run|sandbox|image|cache>
 agent-compose inspect agent <agent>
 agent-compose inspect run <run-id>
 agent-compose inspect sandbox <sandbox>
