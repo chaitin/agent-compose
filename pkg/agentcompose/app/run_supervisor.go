@@ -47,6 +47,17 @@ func NewRunSupervisor(di do.Injector) (*RunSupervisor, error) {
 	}, nil
 }
 
+// detachedRunContext is the parent of a run that outlives the request starting
+// it. The run's lifetime belongs to the daemon root, not to the request, but
+// the request's metadata must still reach the execution: trusted ingress
+// headers become the sandbox's capability binding, and the caller's trace
+// context links agent telemetry to the caller's trace. Only that metadata is
+// carried over, not the transport context, matching how StartProjectRun's
+// asynchronous Execute restores it (runs.Controller.StartProjectRun).
+func (s *RunSupervisor) detachedRunContext(request context.Context) context.Context {
+	return domain.NewContextWithRequestMetadata(s.root, domain.RequestMetadataFromContext(request))
+}
+
 func (s *RunSupervisor) StartRun(ctx context.Context, req runs.RunAgentRequest) (domain.ProjectRunRecord, error) {
 	if req.Interactive {
 		return s.startInteractiveRun(ctx, req)
@@ -70,7 +81,7 @@ func (s *RunSupervisor) StartRun(ctx context.Context, req runs.RunAgentRequest) 
 }
 
 func (s *RunSupervisor) startInteractiveRun(ctx context.Context, req runs.RunAgentRequest) (domain.ProjectRunRecord, error) {
-	execCtx, cancel := context.WithCancelCause(s.root)
+	execCtx, cancel := context.WithCancelCause(s.detachedRunContext(ctx))
 	type interactiveRunStarted struct {
 		runID         string
 		inputReleased <-chan struct{}
@@ -149,7 +160,7 @@ func (s *RunSupervisor) Attach(ctx context.Context, receive runs.RunAttachReceiv
 	}
 	parent := ctx
 	if first.DisconnectPolicy == runs.AttachDisconnectDetach && first.RunID == "" {
-		parent = s.root
+		parent = s.detachedRunContext(ctx)
 	}
 	execCtx, cancel := context.WithCancelCause(parent)
 	defer cancel(nil)
