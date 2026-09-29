@@ -60,19 +60,22 @@ func NewFacadeToken(req NewFacadeTokenRequest) (string, FacadeToken, error) {
 // opencode use <connection>/<model>), and a model id that itself contains a
 // slash survives because nothing is split.
 //
-// A request that matches neither name is forwarded verbatim: the token is bound
-// to a connection, and that upstream decides which models it serves. Only a
-// token with no connection keeps the legacy behaviour of pinning one model.
+// A connection-bound token without a model is invalid for proxying; it must not
+// become a capability for every model served by that connection.
 func (t FacadeToken) ResolveUpstreamModel(requested string) (string, bool) {
 	requested = strings.TrimSpace(requested)
 	if guestModel := strings.TrimSpace(t.GuestModel); guestModel != "" && requested == guestModel {
-		return strings.TrimSpace(t.Model), true
+		model := strings.TrimSpace(t.Model)
+		return model, model != ""
 	}
 	pinned := strings.TrimSpace(t.Model)
-	if t.ProviderID == "" && pinned != "" {
-		return pinned, pinned == requested
+	if pinned != "" {
+		if requested == pinned {
+			return pinned, true
+		}
+		return "", false
 	}
-	return requested, true
+	return "", false
 }
 
 func HashFacadeToken(value string) (string, string) {

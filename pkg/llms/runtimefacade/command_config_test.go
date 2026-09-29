@@ -34,8 +34,8 @@ func TestEnsureSessionCommandFacadeConfigConfiguresSelectedAgentAndLegacyAliases
 	if err != nil {
 		t.Fatalf("EnsureSessionCommandFacadeConfig returned error: %v", err)
 	}
-	if result.Env["ANTHROPIC_API_KEY"] == "" || result.Env["ANTHROPIC_AUTH_TOKEN"] != result.Env["ANTHROPIC_API_KEY"] || result.Env["ANTHROPIC_BASE_URL"] == "" {
-		t.Fatalf("command environment is missing the legacy Anthropic facade = %#v", result.Env)
+	if result.Env["ANTHROPIC_API_KEY"] != "" || result.Env["ANTHROPIC_BASE_URL"] != "" {
+		t.Fatalf("command environment exposed an unrelated Anthropic facade = %#v", result.Env)
 	}
 	if result.Env["AGENT_COMPOSE_SANDBOX_TOKEN"] == "" || result.Env["OPENAI_API_KEY"] != result.Env["AGENT_COMPOSE_SANDBOX_TOKEN"] {
 		t.Fatalf("selected Codex environment = %#v", result.Env)
@@ -43,15 +43,15 @@ func TestEnsureSessionCommandFacadeConfigConfiguresSelectedAgentAndLegacyAliases
 	if result.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses {
 		t.Fatalf("LLM_API_PROTOCOL = %q, want responses", result.Env["LLM_API_PROTOCOL"])
 	}
-	if len(result.TokenHashes) != 3 {
-		t.Fatalf("command token hashes = %#v, want both legacy aliases and the selected Codex token", result.TokenHashes)
+	if len(result.TokenHashes) != 2 {
+		t.Fatalf("command token hashes = %#v, want the OpenAI startup alias and selected Codex token", result.TokenHashes)
 	}
 	selectedHash, _ := llms.HashFacadeToken(result.Env["AGENT_COMPOSE_SANDBOX_TOKEN"])
 	if result.TokenHashes[len(result.TokenHashes)-1] != selectedHash {
 		t.Fatalf("command token hash ordering = %#v, want selected token last", result.TokenHashes)
 	}
-	if got := countCommandFacadeTokens(t, ctx, store, "run-command"); got != 3 {
-		t.Fatalf("persisted command facade tokens = %d, want 3", got)
+	if got := countCommandFacadeTokens(t, ctx, store, "run-command"); got != 2 {
+		t.Fatalf("persisted command facade tokens = %d, want 2", got)
 	}
 }
 
@@ -83,14 +83,14 @@ func TestEnsureSessionCommandFacadeConfigReturnsStartupTokensForUnmanagedAgent(t
 	if err != nil {
 		t.Fatalf("EnsureSessionCommandFacadeConfig returned error: %v", err)
 	}
-	if result.Env["ANTHROPIC_API_KEY"] == "" || result.Env["ANTHROPIC_AUTH_TOKEN"] != result.Env["ANTHROPIC_API_KEY"] {
-		t.Fatalf("unmanaged command startup environment = %#v", result.Env)
+	if result.Env["ANTHROPIC_API_KEY"] != "" || result.Env["OPENAI_API_KEY"] != "" {
+		t.Fatalf("unmanaged command exposed a startup facade without a model = %#v", result.Env)
 	}
-	if len(result.TokenHashes) == 0 {
-		t.Fatalf("unmanaged command token hashes = %#v, want startup token ownership", result.TokenHashes)
+	if len(result.TokenHashes) != 0 {
+		t.Fatalf("unmanaged command token hashes = %#v, want no startup token without a model", result.TokenHashes)
 	}
-	if got := countCommandFacadeTokens(t, ctx, store, "run-unmanaged"); got != len(result.TokenHashes) {
-		t.Fatalf("persisted startup facade tokens = %d, want %d", got, len(result.TokenHashes))
+	if got := countCommandFacadeTokens(t, ctx, store, "run-unmanaged"); got != 0 {
+		t.Fatalf("persisted startup facade tokens = %d, want 0", got)
 	}
 	for _, hash := range result.TokenHashes {
 		if err := store.DeleteLLMFacadeTokenHash(ctx, hash); err != nil {
@@ -148,11 +148,11 @@ func TestEnsureSessionCommandFacadeConfigProxiesADeclaredUpstream(t *testing.T) 
 	if result.Env["CODEX_MODEL"] != "declared-model" || result.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses {
 		t.Fatalf("declared command model/protocol = %#v", result.Env)
 	}
-	if len(result.TokenHashes) != 3 {
-		t.Fatalf("command token hashes = %#v, want two legacy aliases and the selected token", result.TokenHashes)
+	if len(result.TokenHashes) != 2 {
+		t.Fatalf("command token hashes = %#v, want the OpenAI startup alias and selected token", result.TokenHashes)
 	}
-	if got := countCommandFacadeTokens(t, ctx, store, "run-declared-upstream"); got != 3 {
-		t.Fatalf("persisted command facade tokens for a declared upstream = %d, want 3", got)
+	if got := countCommandFacadeTokens(t, ctx, store, "run-declared-upstream"); got != 2 {
+		t.Fatalf("persisted command facade tokens for a declared upstream = %d, want 2", got)
 	}
 	// The declaration was imported into the daemon's own connection
 	// configuration, which is what leaves the guest with nothing but a token.

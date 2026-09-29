@@ -99,7 +99,7 @@ func EnsureSessionCommandFacadeConfig(ctx context.Context, req CommandFacadeConf
 	}()
 
 	startupEnv, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{
-		Config: config, Store: tracker, Session: session, AgentEnv: req.AgentEnv, Source: source, RunID: runID,
+		Config: config, Store: tracker, Session: session, Agent: agent, Model: model, AgentEnv: req.AgentEnv, Source: source, RunID: runID,
 	})
 	if err != nil {
 		return CommandFacadeConfig{}, err

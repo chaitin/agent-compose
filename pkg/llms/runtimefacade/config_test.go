@@ -170,6 +170,23 @@ func TestEnsureSessionStartupFacadeConfigSupportsLegacyProviderAliases(t *testin
 	if openAIToken.ProviderID != "openai-primary" || openAIToken.WireAPI != "" {
 		t.Fatalf("OpenAI startup token = %#v", openAIToken)
 	}
+
+	codexEnv, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{
+		Config: config, Store: store, Session: session, Agent: "codex", Model: "openai-model", Source: TokenSourceAgent,
+	})
+	if err != nil {
+		t.Fatalf("EnsureSessionStartupFacadeConfig codex returned error: %v", err)
+	}
+	if codexEnv["ANTHROPIC_API_KEY"] != "" || codexEnv["ANTHROPIC_BASE_URL"] != "" {
+		t.Fatalf("Codex startup environment exposed Anthropic aliases: %#v", codexEnv)
+	}
+	codexToken, err := store.GetLLMFacadeToken(ctx, codexEnv["OPENAI_API_KEY"])
+	if err != nil {
+		t.Fatalf("load Codex startup token: %v", err)
+	}
+	if codexToken.Model != "openai-model" || codexToken.GuestModel != "openai-model" {
+		t.Fatalf("Codex startup token = %#v", codexToken)
+	}
 }
 
 func TestEnsureSessionStartupFacadeConfigProjectsGlobalAnthropicCredential(t *testing.T) {
@@ -193,7 +210,7 @@ func TestEnsureSessionStartupFacadeConfigProjectsGlobalAnthropicCredential(t *te
 		t.Fatalf("ReplaceGlobalEnv returned error: %v", err)
 	}
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-global-anthropic", Driver: driverpkg.RuntimeDriverDocker}}
-	env, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Source: TokenSourceAgent})
+	env, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "claude", Source: TokenSourceAgent})
 	if err != nil {
 		t.Fatalf("EnsureSessionStartupFacadeConfig returned error: %v", err)
 	}
@@ -207,6 +224,9 @@ func TestEnsureSessionStartupFacadeConfigProjectsGlobalAnthropicCredential(t *te
 	}
 	if !strings.HasPrefix(token.ProviderID, llms.DeclaredConnectionPrefix+session.Summary.ID+":"+llms.ProviderFamilyAnthropic+":") {
 		t.Fatalf("startup token provider = %q, want sandbox-scoped Anthropic connection", token.ProviderID)
+	}
+	if token.Model != "claude-global" || token.GuestModel != "claude-global" {
+		t.Fatalf("global Anthropic startup token = %#v", token)
 	}
 }
 

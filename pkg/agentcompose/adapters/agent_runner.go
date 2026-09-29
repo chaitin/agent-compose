@@ -227,6 +227,7 @@ func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, sessio
 	}
 	startupEnv, err := runtimefacade.EnsureSessionStartupFacadeConfig(ctx, runtimefacade.SessionFacadeConfigRequest{
 		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session,
+		Agent: agent.Provider, Model: agent.Model,
 		AgentEnv: session.DeclaredProviderEnv(definitionEnvItems), Source: runtimefacade.TokenSourceAgent, RunID: "",
 	})
 	if err != nil {

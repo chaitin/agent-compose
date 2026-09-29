@@ -124,11 +124,8 @@ func TestAgentRunnerPrepareSandboxAgentEnvironmentUsesOnlyCurrentAgent(t *testin
 	if env["OPENAI_API_KEY"] == "" || env["OPENAI_BASE_URL"] == "" {
 		t.Fatalf("missing current Codex environment: %#v", env)
 	}
-	// Legacy images may still read Anthropic's provider-specific names. They
-	// receive a separate facade token while the selected Codex token remains
-	// authoritative for the common LLM_* variables.
-	if env["ANTHROPIC_API_KEY"] == "" || env["ANTHROPIC_BASE_URL"] == "" || env["ANTHROPIC_API_KEY"] == env["AGENT_COMPOSE_SANDBOX_TOKEN"] {
-		t.Fatalf("missing isolated legacy Anthropic facade: %#v", env)
+	if env["ANTHROPIC_API_KEY"] != "" || env["ANTHROPIC_BASE_URL"] != "" {
+		t.Fatalf("Codex received an unrelated Anthropic facade: %#v", env)
 	}
 	if data, err := os.ReadFile(execution.HostAgentSystemPromptPath(session)); err != nil || string(data) != definition.SystemPrompt {
 		t.Fatalf("system prompt = %q err=%v", string(data), err)
