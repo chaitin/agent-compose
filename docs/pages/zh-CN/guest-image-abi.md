@@ -184,6 +184,25 @@ stop。不完整或已失效的 readiness 最终也会超时；缺少 control ut
 被视为信号发送失败。两种结果都会安全升级，daemon 都不会扫描或管理任意
 guest 进程。
 
+### 4.2 LLM facade 变量
+
+daemon 托管 agent 的 LLM 连接时，会把这些 facade 变量发布到 sandbox 环境里，因此在容器启动时读取它们的镜像能直接拿到。所有值都是 facade 路由和 facade token，上游凭据不会下发到 guest。
+
+| 变量 | 内容 |
+| --- | --- |
+| `AGENT_COMPOSE_SANDBOX_TOKEN` | 本次托管调用的 facade token |
+| `LLM_API_ENDPOINT` | 已解析连接的 facade endpoint |
+| `LLM_API_KEY` | 同一个 facade token，供读取通用契约的镜像使用 |
+| `LLM_API_PROTOCOL` | facade 为该连接使用的上游协议 |
+| `LLM_MODEL` | facade token 授权的模型引用 |
+| `AGENT_COMPOSE_RESOLVED_MODEL` | 同一模型在 agent 侧寻址命名空间中的写法 |
+
+被选中的 agent 还会带上自己 dialect 的变量名：codex 是 `CODEX_MODEL`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`；claude 是 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL`、`CLAUDE_MODEL`；opencode 是 `OPENCODE_CONFIG`、`OPENCODE_MODEL`；pi 是 `PI_CODING_AGENT_DIR`。
+
+早于通用 `LLM_*` 契约的旧镜像由 provider 专属变量名服务。`ANTHROPIC_MODEL` 与 `CLAUDE_MODEL` 是一对，`CODEX_MODEL` 与 `OPENAI_MODEL` 是另一对。daemon 只发布被选中 agent 所在 provider family 的那一对，取值来自 catalog 默认模型、声明的上游，或 sandbox / 全局环境里的 provider 凭据。
+
+这些变量里的模型名就是已下发 token 授权的模型；facade 对任何其他模型的请求返回 403。镜像**必须**使用被下发的模型或已解析的引用，而不是镜像内置的模型名：token 只绑定一个模型，token 未记录的模型名会被拒绝，而不是被原样转发。
+
 ## 5. 可选能力要求
 
 ### 5.1 Agent Provider
