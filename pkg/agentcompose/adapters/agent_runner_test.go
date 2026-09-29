@@ -124,10 +124,8 @@ func TestAgentRunnerPrepareSandboxAgentEnvironmentUsesOnlyCurrentAgent(t *testin
 	if env["OPENAI_API_KEY"] == "" || env["OPENAI_BASE_URL"] == "" {
 		t.Fatalf("missing current Codex environment: %#v", env)
 	}
-	// The agent is configured once, for the dialect it names: a Codex run must
-	// not receive the other provider family's environment.
 	if env["ANTHROPIC_API_KEY"] != "" || env["ANTHROPIC_BASE_URL"] != "" {
-		t.Fatalf("another agent's Claude environment leaked: %#v", env)
+		t.Fatalf("Codex received an unrelated Anthropic facade: %#v", env)
 	}
 	if data, err := os.ReadFile(execution.HostAgentSystemPromptPath(session)); err != nil || string(data) != definition.SystemPrompt {
 		t.Fatalf("system prompt = %q err=%v", string(data), err)
@@ -989,4 +987,207 @@ func TestAgentRunnerPrepareManagedMCPConfigForProviders(t *testing.T) {
 			t.Fatalf("stale codex config not cleared: %q", string(data))
 		}
 	})
+}
+
+// An older guest image reads the provider-specific variables of the startup
+// compatibility facade, not the generic LLM_* contract. Those variables are
+// published into the sandbox environment, which is where an image that reads
+// them at startup finds them, and every model name among them must be the model
+// the delivered facade token authorizes.
+//
+// The startup facade publishes its variables before the selected agent's own
+// configuration, so a name the managed dialect writer does not write keeps the
+// startup facade's value. A daemon LLM_MODEL that the catalog does not resolve
+// is the case that separates the two.
+func TestAgentRunnerPublishesProviderAliasesAuthorizedByTheFacadeToken(t *testing.T) {
+	tests := []struct {
+		name           string
+		agent          string
+		legacyLLMModel string
+		seedCatalog    bool
+		globalEnv      []domain.SandboxEnvVar
+		wantKeys       []string
+		absentKeys     []string
+		tokenKey       string
+		endpointKey    string
+		routeSuffix    string
+		modelKeys      []string
+		wantModel      string
+	}{
+		{
+			// The reported failure: a legacy Claude image on a sandbox whose only
+			// credential is the persisted global environment. No connection is
+			// configured, so the daemon cannot manage the run and the startup
+			// facade is the whole facade.
+			name:  "unmanaged Claude publishes the global provider variables",
+			agent: "claude",
+			globalEnv: []domain.SandboxEnvVar{
+				{Name: "ANTHROPIC_API_KEY", Value: "global-anthropic-secret", Secret: true},
+				{Name: "ANTHROPIC_BASE_URL", Value: "https://anthropic.request.test"},
+				{Name: "ANTHROPIC_MODEL", Value: "claude-global"},
+			},
+			wantKeys:    []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CLAUDE_MODEL"},
+			absentKeys:  []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
+			tokenKey:    "ANTHROPIC_API_KEY",
+			endpointKey: "ANTHROPIC_BASE_URL",
+			routeSuffix: "/llm/anthropic",
+			modelKeys:   []string{"ANTHROPIC_MODEL", "CLAUDE_MODEL"},
+			wantModel:   "claude-global",
+		},
+		{
+			// The catalog default wins over the Anthropic binding and the Claude
+			// dialect is served by converting to it, so the legacy Anthropic
+			// variables name the OpenAI model the token authorizes.
+			name: "managed Claude publishes the catalog provider variables", agent: "claude", seedCatalog: true,
+			wantKeys:    []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CLAUDE_MODEL"},
+			absentKeys:  []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
+			tokenKey:    "ANTHROPIC_API_KEY",
+			endpointKey: "ANTHROPIC_BASE_URL",
+			routeSuffix: "/llm/anthropic",
+			modelKeys:   []string{"ANTHROPIC_MODEL", "CLAUDE_MODEL"},
+			wantModel:   "gpt-agent",
+		},
+		{
+			name:  "managed Codex overrides a daemon model the catalog does not resolve",
+			agent: "codex", seedCatalog: true, legacyLLMModel: "gpt-default",
+			wantKeys:    []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
+			tokenKey:    "OPENAI_API_KEY",
+			endpointKey: "OPENAI_BASE_URL",
+			routeSuffix: "/llm/openai/v1",
+			modelKeys:   []string{"CODEX_MODEL", "OPENAI_MODEL"},
+			wantModel:   "gpt-agent",
+		},
+		{
+			name:  "managed opencode overrides a daemon model the catalog does not resolve",
+			agent: "opencode", seedCatalog: true, legacyLLMModel: "gpt-default",
+			wantKeys:    []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
+			tokenKey:    "OPENAI_API_KEY",
+			endpointKey: "OPENAI_BASE_URL",
+			routeSuffix: "/llm/openai/v1",
+			modelKeys:   []string{"CODEX_MODEL", "OPENAI_MODEL"},
+			wantModel:   "gpt-agent",
+		},
+		{
+			// pi publishes the credential of the family it addresses, so the
+			// endpoint and model names of that family must come from this run
+			// too rather than from the startup facade.
+			name:  "managed pi publishes the family endpoint and model it authorizes",
+			agent: "pi", seedCatalog: true, legacyLLMModel: "gpt-default",
+			wantKeys:    []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
+			tokenKey:    "OPENAI_API_KEY",
+			endpointKey: "OPENAI_BASE_URL",
+			routeSuffix: "/llm/openai/v1",
+			modelKeys:   []string{"CODEX_MODEL", "OPENAI_MODEL"},
+			wantModel:   "gpt-agent",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			root := t.TempDir()
+			config := &appconfig.Config{
+				DataRoot:             root,
+				DbAddr:               filepath.Join(root, "data.db"),
+				SandboxRoot:          filepath.Join(root, "sandboxes"),
+				RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
+				DefaultImage:         "guest:latest",
+				GuestWorkspacePath:   "/workspace",
+				GuestStateRoot:       "/data/state",
+				GuestRuntimeRoot:     "/data/runtime",
+				GuestHomePath:        "/root",
+				RuntimeBaseURL:       "http://agent-compose.test:7410",
+				JupyterProxyBasePath: "/agent-compose/session",
+				SandboxStartTimeout:  2 * time.Second,
+				LLMModel:             tt.legacyLLMModel,
+			}
+			configDB, store, err := testutil.OpenStores(t, config)
+			if err != nil {
+				t.Fatalf("OpenStores returned error: %v", err)
+			}
+			if len(tt.globalEnv) > 0 {
+				if _, err := configDB.ReplaceGlobalEnv(ctx, tt.globalEnv); err != nil {
+					t.Fatalf("ReplaceGlobalEnv returned error: %v", err)
+				}
+			}
+			if tt.seedCatalog {
+				if err := configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+					ID: "anthropic-primary", Name: "Anthropic", ProviderType: llms.ProviderFamilyAnthropic,
+					DefaultWireAPI: llms.APIProtocolMessages, BaseURL: "https://anthropic.upstream.test",
+					APIKey: "anthropic-upstream-secret", Scope: llms.ProviderScopeSystem, Weight: 1,
+				}, llms.Model{ID: "claude-agent", Name: "claude-agent", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
+					t.Fatalf("seed Anthropic provider: %v", err)
+				}
+				if err := configDB.UpsertDefaultLLMConfig(ctx, llms.Provider{
+					ID: "openai-primary", Name: "OpenAI", ProviderType: llms.ProviderFamilyOpenAI,
+					DefaultWireAPI: llms.APIProtocolResponses, BaseURL: "https://openai.upstream.test/v1",
+					APIKey: "openai-upstream-secret", Scope: llms.ProviderScopeSystem, Weight: 2,
+				}, llms.Model{ID: "gpt-agent", Name: "gpt-agent", Enabled: true, DefaultModel: true, Scope: llms.ProviderScopeSystem}); err != nil {
+					t.Fatalf("seed OpenAI provider: %v", err)
+				}
+			}
+			session, err := store.CreateSandbox(ctx, "provider aliases", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, []domain.SandboxTag{
+				{Name: domain.AgentSandboxTagSource, Value: domain.AgentSandboxTagSourceVal},
+				{Name: domain.AgentSandboxTagProvider, Value: tt.agent},
+				{Name: domain.AgentSandboxTagID, Value: "agent-aliases"},
+			})
+			if err != nil {
+				t.Fatalf("CreateSandbox returned error: %v", err)
+			}
+			if err := store.SaveVMState(session.Summary.ID, domain.VMState{Driver: driverpkg.RuntimeDriverDocker, BoxID: "container-aliases"}); err != nil {
+				t.Fatalf("SaveVMState returned error: %v", err)
+			}
+			definition := domain.AgentDefinition{
+				ID: "agent-aliases", Enabled: true, Provider: tt.agent, Model: "",
+				SystemPrompt: "aliases", ConfigJSON: "{}",
+			}
+			runner := NewAgentRunner(AgentRunnerDeps{
+				Config: config, Store: store, ConfigDB: configDB,
+				Agents: fakeAgentDefinitionStore{agent: definition},
+				// pi republishes its model catalog into a reused guest, which
+				// resolves the session runtime before the environment is built.
+				Runtimes: fakeRuntimeProvider{runtime: &fakeAgentRuntime{}},
+			})
+
+			if err := runner.PrepareSandboxAgentEnvironmentFromTags(ctx, session); err != nil {
+				t.Fatalf("PrepareSandboxAgentEnvironmentFromTags returned error: %v", err)
+			}
+			env := domain.SandboxEnvMap(session.RuntimeEnvItems)
+			for _, name := range tt.wantKeys {
+				if strings.TrimSpace(env[name]) == "" {
+					t.Fatalf("sandbox env[%s] is empty: %#v", name, env)
+				}
+			}
+			for _, name := range tt.absentKeys {
+				if value, ok := env[name]; ok {
+					t.Fatalf("sandbox env[%s] = %q, want the unselected family to stay absent", name, value)
+				}
+			}
+			for _, secret := range []string{"anthropic-upstream-secret", "openai-upstream-secret", "global-anthropic-secret"} {
+				for name, value := range env {
+					if strings.Contains(value, secret) {
+						t.Fatalf("sandbox env[%s] carries the upstream credential", name)
+					}
+				}
+			}
+			token, err := configDB.GetLLMFacadeToken(ctx, env[tt.tokenKey])
+			if err != nil {
+				t.Fatalf("GetLLMFacadeToken returned error: %v", err)
+			}
+			// The token decides which model a request may name. An alias that
+			// disagrees is a model the guest may use and the facade rejects.
+			for _, name := range tt.modelKeys {
+				if env[name] != tt.wantModel {
+					t.Fatalf("sandbox env[%s] = %q, want %q", name, env[name], tt.wantModel)
+				}
+				if env[name] != token.Model {
+					t.Fatalf("sandbox env[%s] = %q, but the facade token authorizes %q", name, env[name], token.Model)
+				}
+			}
+			// The endpoint names the family route the credential is presented
+			// at, so it must belong to the same family as the credential.
+			if endpoint := env[tt.endpointKey]; !strings.HasSuffix(endpoint, tt.routeSuffix) {
+				t.Fatalf("sandbox env[%s] = %q, want a route ending in %q", tt.endpointKey, endpoint, tt.routeSuffix)
+			}
+		})
+	}
 }

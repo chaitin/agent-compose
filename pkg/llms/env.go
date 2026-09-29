@@ -19,6 +19,51 @@ const RuntimeBaseURLEnvName = "AGENT_COMPOSE_RUNTIME_BASE_URL"
 // facade token disagree, which the agent reports as a hung or failed model call.
 const GuestModelEnvName = "AGENT_COMPOSE_RESOLVED_MODEL"
 
+// ProviderFamilyEnv returns the provider-specific variables that address one
+// provider family through the runtime facade: the credential, the endpoint the
+// credential is presented at, and the model names.
+//
+// They are compatibility names: an older guest image that predates the generic
+// LLM_* contract reads them instead. Two writers publish them — the startup
+// compatibility facade, which serves an image whose selected agent the daemon
+// does not configure, and the dialect writer of the agent itself. Both call
+// this function so the two sets cannot drift.
+//
+// A dialect writer must publish the whole set for a family or none of it. The
+// managed environment is applied after the startup facade, so a family name only
+// the startup facade writes keeps the startup facade's value: a writer that
+// replaces the family credential while leaving its model behind hands the guest
+// a token and a model that disagree, and the facade rejects the request. dsh
+// publishes none of these names, which leaves the startup facade's token,
+// endpoint and model intact as one consistent set.
+func ProviderFamilyEnv(family, credential, endpoint, model string) map[string]string {
+	family = NormalizeProviderType(family)
+	env := make(map[string]string, 5)
+	if family == ProviderFamilyAnthropic {
+		env["ANTHROPIC_API_KEY"] = credential
+		env["ANTHROPIC_AUTH_TOKEN"] = credential
+		env["ANTHROPIC_BASE_URL"] = endpoint
+	} else {
+		env["OPENAI_API_KEY"] = credential
+		env["OPENAI_BASE_URL"] = endpoint
+	}
+	for name, value := range providerModelEnvAliases(family, model) {
+		env[name] = value
+	}
+	return env
+}
+
+func providerModelEnvAliases(family, model string) map[string]string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	if NormalizeProviderType(family) == ProviderFamilyAnthropic {
+		return map[string]string{"ANTHROPIC_MODEL": model, "CLAUDE_MODEL": model}
+	}
+	return map[string]string{"CODEX_MODEL": model, "OPENAI_MODEL": model}
+}
+
 // EnvItemValue returns the value of one environment item, matched
 // case-insensitively and trimmed, or "" when the item is absent.
 func EnvItemValue(items []domain.SandboxEnvVar, key string) string {

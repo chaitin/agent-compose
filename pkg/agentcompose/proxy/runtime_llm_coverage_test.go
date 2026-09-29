@@ -40,7 +40,7 @@ func TestRuntimeLLMFacadeRoutesCoverageWorkflow(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer raw-token")
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || client.calls != 2 || !strings.Contains(client.requestBody, `"model":"other"`) {
+	if rec.Code != http.StatusForbidden || client.calls != 1 || !strings.Contains(rec.Body.String(), "model mismatch") {
 		t.Fatalf("alternate model status=%d body=%s calls=%d upstream_body=%s", rec.Code, rec.Body.String(), client.calls, client.requestBody)
 	}
 
@@ -81,6 +81,7 @@ func TestRuntimeLLMFacadeConnectionBoundTokenModelMapping(t *testing.T) {
 		name         string
 		requestModel string
 		wantModel    string
+		wantStatus   int
 	}{
 		{
 			name:         "guest model maps to the literal upstream model",
@@ -88,11 +89,9 @@ func TestRuntimeLLMFacadeConnectionBoundTokenModelMapping(t *testing.T) {
 			wantModel:    literalModel,
 		},
 		{
-			// A connection-bound token does not pin the model, so an unrelated
-			// model is forwarded exactly as the guest spelled it.
-			name:         "unrelated model is forwarded untouched",
+			name:         "unrelated model is rejected",
 			requestModel: "other-vendor/model-x",
-			wantModel:    "other-vendor/model-x",
+			wantStatus:   http.StatusForbidden,
 		},
 	}
 	for _, tc := range tests {
@@ -125,8 +124,15 @@ func TestRuntimeLLMFacadeConnectionBoundTokenModelMapping(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
 			e.ServeHTTP(rec, req)
-			if rec.Code != http.StatusOK || client.calls != 1 {
+			wantStatus := tc.wantStatus
+			if wantStatus == 0 {
+				wantStatus = http.StatusOK
+			}
+			if rec.Code != wantStatus || (wantStatus == http.StatusOK && client.calls != 1) {
 				t.Fatalf("status=%d body=%s calls=%d", rec.Code, rec.Body.String(), client.calls)
+			}
+			if wantStatus != http.StatusOK {
+				return
 			}
 			if resolvedConnectionID != connectionID {
 				t.Fatalf("resolver connection id = %q, want the token's connection %q", resolvedConnectionID, connectionID)
@@ -163,7 +169,7 @@ func TestRuntimeLLMFacadeOpenAIStartupTokenAllowsBothIngressProtocols(t *testing
 			e := echo.New()
 			client := &fakeRuntimeLLMHTTPClient{status: http.StatusOK, body: `{"id":"resp-1","model":"gpt","output":[]}`}
 			RegisterRuntimeLLMFacadeRoutes(e, RuntimeLLMOptions{
-				Tokens:      fakeRuntimeLLMTokens{token: llms.FacadeToken{SandboxID: "sandbox-1", ProviderID: "provider-1", WireAPI: "", ExpiresAt: time.Now().Add(time.Hour)}},
+				Tokens:      fakeRuntimeLLMTokens{token: llms.FacadeToken{SandboxID: "sandbox-1", Model: "gpt", GuestModel: "gpt", ProviderID: "provider-1", WireAPI: "", ExpiresAt: time.Now().Add(time.Hour)}},
 				Sandboxes:   fakeRuntimeLLMSessions{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}}},
 				Connections: fakeRuntimeLLMTargetResolver("http://upstream.test/v1"),
 				Client:      client,
@@ -645,7 +651,7 @@ func TestRuntimeLLMFacadeHandlerEdgeBranches(t *testing.T) {
 		{
 			name:     "transparent upstream non success",
 			path:     "/api/runtime/sandboxes/sandbox-1/llm/openai/v1/responses",
-			body:     `{"model":"upstream-only-model","input":"hi"}`,
+			body:     `{"model":"gpt","input":"hi"}`,
 			tokens:   fakeRuntimeLLMTokens{token: validToken},
 			sessions: fakeRuntimeLLMSessions{session: runningSession},
 			resolver: fakeRuntimeLLMTargetResolver("http://upstream.test/v1"),

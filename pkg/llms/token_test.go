@@ -18,11 +18,11 @@ func TestFacadeTokenResolveUpstreamModel(t *testing.T) {
 			wantOK:    true,
 		},
 		{
-			name:      "connection-bound token forwards a model it does not name",
+			name:      "connection-bound token rejects a model it does not name",
 			token:     FacadeToken{ProviderID: "baizhi", Model: "baizhi/deepseek-v4", GuestModel: "agent-compose/baizhi/deepseek-v4"},
 			requested: "baizhi/other-model",
-			wantModel: "baizhi/other-model",
-			wantOK:    true,
+			wantModel: "",
+			wantOK:    false,
 		},
 		{
 			name:      "connection-bound token without a guest model forwards verbatim",
@@ -49,15 +49,22 @@ func TestFacadeTokenResolveUpstreamModel(t *testing.T) {
 			name:      "legacy pinned token rejects another model",
 			token:     FacadeToken{Model: "gpt"},
 			requested: "other",
-			wantModel: "gpt",
+			wantModel: "",
 			wantOK:    false,
 		},
 		{
-			name:      "token without a model forwards verbatim",
+			name:      "connection-bound token without a model is rejected",
+			token:     FacadeToken{ProviderID: "baizhi"},
+			requested: "anything",
+			wantModel: "",
+			wantOK:    false,
+		},
+		{
+			name:      "unbound token without a model is rejected",
 			token:     FacadeToken{},
 			requested: "anything",
-			wantModel: "anything",
-			wantOK:    true,
+			wantModel: "",
+			wantOK:    false,
 		},
 	}
 	for _, tc := range tests {

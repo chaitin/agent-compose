@@ -221,6 +221,21 @@ func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, sessio
 			return err
 		}
 	}
+	var definitionEnvItems []domain.SandboxEnvVar
+	if definition != nil {
+		definitionEnvItems = definition.EnvItems
+	}
+	startupEnv, err := runtimefacade.EnsureSessionStartupFacadeConfig(ctx, runtimefacade.SessionFacadeConfigRequest{
+		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session,
+		Agent: agent.Provider, Model: agent.Model,
+		AgentEnv: session.DeclaredProviderEnv(definitionEnvItems), Source: runtimefacade.TokenSourceAgent, RunID: "",
+	})
+	if err != nil {
+		if r.configDB != nil {
+			_ = r.configDB.RevokeLLMFacadeTokensForSandbox(context.WithoutCancel(ctx), session.Summary.ID)
+		}
+		return err
+	}
 	// Seed private directories before publishing per-run managed files. In
 	// particular, a later home archive must not replace the canonical skills
 	// publication or materialize the provider projection a second time.
@@ -239,10 +254,6 @@ func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, sessio
 	// A sandbox start, a release resume, and a run all decide direct versus
 	// managed from the same declaration: the provider environment the sandbox
 	// carries plus the definition it was prepared for.
-	var definitionEnvItems []domain.SandboxEnvVar
-	if definition != nil {
-		definitionEnvItems = definition.EnvItems
-	}
 	managedEnv, err := runtimefacade.EnsureSessionLLMFacadeConfig(ctx, runtimefacade.SessionFacadeConfigRequest{
 		Config: r.config, Store: facadeStoreFor(r.configDB), Session: session, Agent: agent.Provider, Model: agent.Model, AgentEnv: session.DeclaredProviderEnv(definitionEnvItems), Source: "session", RunID: "",
 	})
@@ -263,6 +274,9 @@ func (r *AgentRunner) PrepareSandboxAgentEnvironment(ctx context.Context, sessio
 			_ = r.configDB.RevokeLLMFacadeTokensForSandbox(context.WithoutCancel(ctx), session.Summary.ID)
 		}
 		return err
+	}
+	if len(startupEnv) > 0 {
+		session.RuntimeEnvItems = domain.MergeEnvItems(session.RuntimeEnvItems, llms.EnvItemsFromMap(startupEnv, true))
 	}
 	if len(managedEnv) > 0 {
 		session.RuntimeEnvItems = domain.MergeEnvItems(session.RuntimeEnvItems, llms.EnvItemsFromMap(managedEnv, true))

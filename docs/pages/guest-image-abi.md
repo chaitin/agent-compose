@@ -252,6 +252,46 @@ also eventually times out, while a missing control utility is treated as a
 signaling failure. Both outcomes escalate safely; neither causes the daemon to
 scan or manage arbitrary guest processes.
 
+### 4.2 LLM facade variables
+
+When the daemon manages an agent's LLM connection, it publishes the facade in the
+sandbox environment, so an image that reads these variables at container start
+finds them. Every value is a facade route and a facade token; the upstream
+credential never reaches the guest.
+
+| Variable | Value |
+| --- | --- |
+| `AGENT_COMPOSE_SANDBOX_TOKEN` | Facade token for the managed invocation |
+| `LLM_API_ENDPOINT` | Facade endpoint of the resolved connection |
+| `LLM_API_KEY` | Same facade token, for images that read the generic contract |
+| `LLM_API_PROTOCOL` | Upstream protocol the facade speaks for this connection |
+| `LLM_MODEL` | Model reference the facade token authorizes |
+| `AGENT_COMPOSE_RESOLVED_MODEL` | The same model in the namespace the agent addresses models by |
+
+The selected agent's dialect then adds its own names. Codex, Claude, opencode,
+and pi each address one provider family, so each publishes that family's whole
+set: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `CODEX_MODEL`, and `OPENAI_MODEL` for
+the OpenAI family, or `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, and `CLAUDE_MODEL` for the Anthropic
+family. A dialect that replaced only part of the set would leave the rest at the
+startup compatibility facade's value, pairing this run's token with a model it
+does not authorize. opencode adds `OPENCODE_CONFIG` and `OPENCODE_MODEL`, pi adds
+`PI_CODING_AGENT_DIR`, and dsh publishes no provider-specific name at all, which
+leaves the startup compatibility facade's set intact.
+
+Older images that predate the generic `LLM_*` contract are served by the
+provider-specific names. `ANTHROPIC_MODEL` and `CLAUDE_MODEL` are one pair;
+`CODEX_MODEL` and `OPENAI_MODEL` are another. The daemon publishes the pair of
+the provider family the selected agent addresses, from the catalog default, the
+declared upstream, or a provider credential in the sandbox or global
+environment.
+
+A model name in any of these variables is the model the delivered token
+authorizes, and the facade rejects a request for any other model with 403. An
+image **MUST** send the model it was given, or the resolved reference, rather
+than a model name built into the image: the token is bound to one model, and a
+name the token does not record is refused instead of forwarded.
+
 ## 5. Optional Capability Requirements
 
 ### 5.1 Agent providers

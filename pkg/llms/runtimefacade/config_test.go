@@ -100,6 +100,137 @@ func TestEnsureSessionLLMFacadeConfigCreatesCodexEnvAndToken(t *testing.T) {
 	}
 }
 
+func TestEnsureSessionStartupFacadeConfigSupportsLegacyProviderAliases(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:       root,
+		DbAddr:         filepath.Join(root, "data.db"),
+		RuntimeBaseURL: "http://agent-compose.test:7410",
+		GuestHomePath:  "/root",
+	}
+	di := do.New()
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, config)
+	store, err := testutil.OpenConfigStore(t, di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	if err := store.UpsertDefaultLLMConfig(ctx, llms.Provider{
+		ID: "anthropic-primary", Name: "Anthropic", ProviderType: llms.ProviderFamilyAnthropic,
+		DefaultWireAPI: llms.APIProtocolMessages, BaseURL: "https://anthropic.example.test",
+		APIKey: "anthropic-upstream-secret", Scope: llms.ProviderScopeSystem, Weight: 1,
+	}, llms.Model{ID: "claude-model", Name: "claude-model", Enabled: true, DefaultModel: true, Scope: llms.ProviderScopeSystem}); err != nil {
+		t.Fatalf("save Anthropic provider: %v", err)
+	}
+	if err := store.UpsertDefaultLLMConfig(ctx, llms.Provider{
+		ID: "openai-primary", Name: "OpenAI", ProviderType: llms.ProviderFamilyOpenAI,
+		DefaultWireAPI: llms.APIProtocolResponses, BaseURL: "https://openai.example.test",
+		APIKey: "openai-upstream-secret", Scope: llms.ProviderScopeSystem, Weight: 2,
+	}, llms.Model{ID: "openai-model", Name: "openai-model", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
+		t.Fatalf("save OpenAI provider: %v", err)
+	}
+
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-startup-facades", Driver: driverpkg.RuntimeDriverDocker}}
+	claudeEnv, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{
+		Config: config, Store: store, Session: session, Agent: "claude", Source: TokenSourceAgent,
+	})
+	if err != nil {
+		t.Fatalf("EnsureSessionStartupFacadeConfig returned error: %v", err)
+	}
+	if claudeEnv["ANTHROPIC_API_KEY"] == "" || claudeEnv["ANTHROPIC_AUTH_TOKEN"] != claudeEnv["ANTHROPIC_API_KEY"] || claudeEnv["ANTHROPIC_BASE_URL"] == "" || claudeEnv["ANTHROPIC_MODEL"] != "claude-model" || claudeEnv["CLAUDE_MODEL"] != "claude-model" {
+		t.Fatalf("Anthropic startup environment = %#v", claudeEnv)
+	}
+	// The selected agent decides the family: a Claude agent has no use for an
+	// OpenAI alias, and minting one would cost a facade token no run can reach.
+	if claudeEnv["OPENAI_API_KEY"] != "" || claudeEnv["OPENAI_BASE_URL"] != "" || claudeEnv["CODEX_MODEL"] != "" || claudeEnv["OPENAI_MODEL"] != "" {
+		t.Fatalf("Claude startup environment exposed OpenAI aliases: %#v", claudeEnv)
+	}
+	if claudeEnv["LLM_API_KEY"] != "" || claudeEnv["AGENT_COMPOSE_SANDBOX_TOKEN"] != "" {
+		t.Fatalf("startup environment contains common facade variables = %#v", claudeEnv)
+	}
+	for _, secret := range []string{"anthropic-upstream-secret", "openai-upstream-secret"} {
+		for name, value := range claudeEnv {
+			if strings.Contains(value, secret) {
+				t.Fatalf("startup env[%s] leaked upstream credential", name)
+			}
+		}
+	}
+	anthropicToken, err := store.GetLLMFacadeToken(ctx, claudeEnv["ANTHROPIC_API_KEY"])
+	if err != nil {
+		t.Fatalf("load Anthropic startup token: %v", err)
+	}
+	if anthropicToken.ProviderID != "anthropic-primary" || anthropicToken.WireAPI != llms.APIProtocolMessages {
+		t.Fatalf("Anthropic startup token = %#v", anthropicToken)
+	}
+
+	codexEnv, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{
+		Config: config, Store: store, Session: session, Agent: "codex", Model: "openai-model", Source: TokenSourceAgent,
+	})
+	if err != nil {
+		t.Fatalf("EnsureSessionStartupFacadeConfig codex returned error: %v", err)
+	}
+	if codexEnv["OPENAI_API_KEY"] == "" || codexEnv["OPENAI_BASE_URL"] == "" || codexEnv["CODEX_MODEL"] != "openai-model" || codexEnv["OPENAI_MODEL"] != "openai-model" {
+		t.Fatalf("OpenAI startup environment = %#v", codexEnv)
+	}
+	if codexEnv["ANTHROPIC_API_KEY"] != "" || codexEnv["ANTHROPIC_BASE_URL"] != "" {
+		t.Fatalf("Codex startup environment exposed Anthropic aliases: %#v", codexEnv)
+	}
+	openAIToken, err := store.GetLLMFacadeToken(ctx, codexEnv["OPENAI_API_KEY"])
+	if err != nil {
+		t.Fatalf("load OpenAI startup token: %v", err)
+	}
+	if openAIToken.ProviderID != "openai-primary" || openAIToken.WireAPI != "" {
+		t.Fatalf("OpenAI startup token = %#v", openAIToken)
+	}
+	if openAIToken.Model != "openai-model" || openAIToken.GuestModel != "openai-model" {
+		t.Fatalf("Codex startup token = %#v", openAIToken)
+	}
+}
+
+func TestEnsureSessionStartupFacadeConfigProjectsGlobalAnthropicCredential(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{DataRoot: root, DbAddr: filepath.Join(root, "data.db"), RuntimeBaseURL: "http://agent-compose.test:7410"}
+	di := do.New()
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, config)
+	store, err := testutil.OpenConfigStore(t, di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	if _, err := store.ReplaceGlobalEnv(ctx, []domain.SandboxEnvVar{
+		{Name: "ANTHROPIC_API_KEY", Value: "global-anthropic-secret", Secret: true},
+		{Name: "ANTHROPIC_BASE_URL", Value: "https://anthropic.example.test"},
+		{Name: "ANTHROPIC_MODEL", Value: "claude-global"},
+	}); err != nil {
+		t.Fatalf("ReplaceGlobalEnv returned error: %v", err)
+	}
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-global-anthropic", Driver: driverpkg.RuntimeDriverDocker}}
+	env, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "claude", Source: TokenSourceAgent})
+	if err != nil {
+		t.Fatalf("EnsureSessionStartupFacadeConfig returned error: %v", err)
+	}
+	tokenValue := env["ANTHROPIC_API_KEY"]
+	if tokenValue == "" || env["ANTHROPIC_AUTH_TOKEN"] != tokenValue || strings.Contains(tokenValue, "global-anthropic-secret") {
+		t.Fatalf("global Anthropic startup environment = %#v", env)
+	}
+	token, err := store.GetLLMFacadeToken(ctx, tokenValue)
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
+	}
+	if !strings.HasPrefix(token.ProviderID, llms.DeclaredConnectionPrefix+session.Summary.ID+":"+llms.ProviderFamilyAnthropic+":") {
+		t.Fatalf("startup token provider = %q, want sandbox-scoped Anthropic connection", token.ProviderID)
+	}
+	if token.Model != "claude-global" || token.GuestModel != "claude-global" || env["ANTHROPIC_MODEL"] != "claude-global" || env["CLAUDE_MODEL"] != "claude-global" {
+		t.Fatalf("global Anthropic startup token = %#v", token)
+	}
+}
+
 // unreachableFacadeDaemonConfig is a daemon that binds only loopback and has no
 // sandbox-reachable runtime base URL, so a managed facade could never reach it.
 func unreachableFacadeDaemonConfig(root string) *appconfig.Config {
@@ -525,5 +656,62 @@ func TestEnsureSessionAgentRuntimeConfigChoosesBetweenEquivalentConnections(t *t
 	}
 	if token.ProviderID != "gateway" && token.ProviderID != "backup" {
 		t.Fatalf("token provider = %q, want one of the equivalent connections", token.ProviderID)
+	}
+}
+
+// The startup compatibility facade publishes provider aliases before the
+// managed environment, so the managed environment decides the value of every
+// name the two share. A name the managed environment does not define keeps the
+// startup facade's value, and that value can name a model the delivered token
+// does not authorize — the guest then reads a model the facade rejects.
+//
+// A dialect that publishes a family's credential must therefore publish that
+// family's model names too, because its credential replaces the startup
+// facade's for that family. dsh is deliberately not in that set: it publishes
+// no family credential, so the startup facade's token, endpoint and model all
+// survive together and stay consistent with one another.
+func TestManagedEnvironmentCoversStartupCompatibilityAliases(t *testing.T) {
+	for _, agent := range []string{"codex", "claude", "opencode", "pi"} {
+		t.Run(agent, func(t *testing.T) {
+			isolateLLMEnv(t)
+
+			ctx := context.Background()
+			root := t.TempDir()
+			config, store := commandFacadeTestStore(t, ctx, root)
+			seedCommandFacadeProviders(t, ctx, store)
+			// A daemon model the catalog does not resolve: the startup facade
+			// prefers it while the managed environment resolves the catalog, so
+			// a startup alias left in place would carry a different model.
+			config.LLMModel = "legacy-model"
+			session := &domain.Sandbox{Summary: domain.SandboxSummary{
+				ID:            "sandbox-alias-coverage-" + agent,
+				Driver:        driverpkg.RuntimeDriverDocker,
+				WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-alias-coverage-"+agent, "workspace"),
+			}}
+			request := SessionFacadeConfigRequest{
+				Config: config, Store: store, Session: session, Agent: agent, Source: TokenSourceAgent,
+			}
+
+			startupEnv, err := EnsureSessionStartupFacadeConfig(ctx, request)
+			if err != nil {
+				t.Fatalf("EnsureSessionStartupFacadeConfig returned error: %v", err)
+			}
+			if len(startupEnv) == 0 {
+				t.Fatalf("startup facade published no aliases for %s", agent)
+			}
+			managedEnv, err := EnsureSessionLLMFacadeConfig(ctx, request)
+			if err != nil {
+				t.Fatalf("EnsureSessionLLMFacadeConfig returned error: %v", err)
+			}
+			if len(managedEnv) == 0 {
+				t.Fatalf("managed facade published no environment for %s", agent)
+			}
+			for name := range startupEnv {
+				if _, ok := managedEnv[name]; !ok {
+					t.Errorf("startup alias %s is not covered by the managed environment: startup=%q managed=%#v",
+						name, startupEnv[name], managedEnv)
+				}
+			}
+		})
 	}
 }

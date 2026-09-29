@@ -95,10 +95,10 @@ func writeCodexGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox, pr
 	}
 	env := guestCredentialEnv(prepared)
 	env["LLM_MODEL"] = prepared.Model
-	env["CODEX_MODEL"] = prepared.Model
 	env[GuestModelEnvName] = prepared.Model
-	env["OPENAI_API_KEY"] = prepared.Credential
-	env["OPENAI_BASE_URL"] = prepared.Endpoint
+	for name, value := range ProviderFamilyEnv(ProviderFamilyOpenAI, prepared.Credential, prepared.Endpoint, prepared.Model) {
+		env[name] = value
+	}
 	return env, nil
 }
 
@@ -106,11 +106,9 @@ func writeClaudeGuestConfig(_ *appconfig.Config, sandbox *domain.Sandbox, prepar
 	env := guestCredentialEnv(prepared)
 	// The claude runner maps the generic LLM_* variables onto Anthropic's own
 	// names, and the CLI reads the latter.
-	env["ANTHROPIC_API_KEY"] = prepared.Credential
-	env["ANTHROPIC_AUTH_TOKEN"] = prepared.Credential
-	env["ANTHROPIC_BASE_URL"] = prepared.Endpoint
-	env["ANTHROPIC_MODEL"] = prepared.Model
-	env["CLAUDE_MODEL"] = prepared.Model
+	for name, value := range ProviderFamilyEnv(ProviderFamilyAnthropic, prepared.Credential, prepared.Endpoint, prepared.Model) {
+		env[name] = value
+	}
 	env[GuestModelEnvName] = prepared.Model
 	return env, nil
 }
@@ -131,13 +129,15 @@ func writeOpenCodeGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox,
 	env["LLM_MODEL"] = prepared.GuestModel
 	env["OPENCODE_MODEL"] = prepared.GuestModel
 	env[GuestModelEnvName] = prepared.GuestModel
+	// opencode addresses one provider family, so it publishes that family's
+	// whole compatibility set: a credential it replaced without the matching
+	// endpoint and model would leave the guest with the startup facade's.
+	family := ProviderFamilyOpenAI
 	if prepared.Inbound == ProtocolMessages {
-		env["ANTHROPIC_API_KEY"] = prepared.Credential
-		env["ANTHROPIC_AUTH_TOKEN"] = prepared.Credential
-		env["ANTHROPIC_BASE_URL"] = endpoint
-	} else {
-		env["OPENAI_API_KEY"] = prepared.Credential
-		env["OPENAI_BASE_URL"] = endpoint
+		family = ProviderFamilyAnthropic
+	}
+	for name, value := range ProviderFamilyEnv(family, prepared.Credential, endpoint, prepared.Model) {
+		env[name] = value
 	}
 	return env, nil
 }
@@ -149,10 +149,16 @@ func writePiGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox, prepa
 	env := guestCredentialEnv(prepared)
 	env["PI_CODING_AGENT_DIR"] = GuestPiAgentDir(config)
 	env[GuestModelEnvName] = prepared.GuestModel
+	// pi publishes the credential of the family it addresses, so it publishes
+	// that family's endpoint and model names as well. Leaving them to the
+	// startup compatibility facade pairs this run's token with the model the
+	// facade resolved, which the token does not authorize.
+	family := ProviderFamilyOpenAI
 	if prepared.Inbound == ProtocolMessages {
-		env["ANTHROPIC_API_KEY"] = prepared.Credential
-	} else {
-		env["OPENAI_API_KEY"] = prepared.Credential
+		family = ProviderFamilyAnthropic
+	}
+	for name, value := range ProviderFamilyEnv(family, prepared.Credential, prepared.Endpoint, prepared.Model) {
+		env[name] = value
 	}
 	return env, nil
 }
