@@ -665,13 +665,13 @@ func TestEnsureSessionAgentRuntimeConfigChoosesBetweenEquivalentConnections(t *t
 // startup facade's value, and that value can name a model the delivered token
 // does not authorize — the guest then reads a model the facade rejects.
 //
-// A dialect that serves a provider family directly must therefore publish every
-// name the startup facade can publish for that family. dsh and pi are
-// deliberately not in that set: they address models through the generic LLM_*
-// contract, so their provider aliases survive and stay self-consistent, with
-// the token, endpoint and model all coming from the same facade.
+// A dialect that publishes a family's credential must therefore publish that
+// family's model names too, because its credential replaces the startup
+// facade's for that family. dsh is deliberately not in that set: it publishes
+// no family credential, so the startup facade's token, endpoint and model all
+// survive together and stay consistent with one another.
 func TestManagedEnvironmentCoversStartupCompatibilityAliases(t *testing.T) {
-	for _, agent := range []string{"codex", "claude", "opencode"} {
+	for _, agent := range []string{"codex", "claude", "opencode", "pi"} {
 		t.Run(agent, func(t *testing.T) {
 			isolateLLMEnv(t)
 

@@ -997,7 +997,7 @@ func TestAgentRunnerPrepareManagedMCPConfigForProviders(t *testing.T) {
 //
 // The startup facade publishes its variables before the selected agent's own
 // configuration, so a name the managed dialect writer does not write keeps the
-// startup facade's model. A daemon LLM_MODEL that the catalog does not resolve
+// startup facade's value. A daemon LLM_MODEL that the catalog does not resolve
 // is the case that separates the two.
 func TestAgentRunnerPublishesProviderAliasesAuthorizedByTheFacadeToken(t *testing.T) {
 	tests := []struct {
@@ -1009,6 +1009,8 @@ func TestAgentRunnerPublishesProviderAliasesAuthorizedByTheFacadeToken(t *testin
 		wantKeys       []string
 		absentKeys     []string
 		tokenKey       string
+		endpointKey    string
+		routeSuffix    string
 		modelKeys      []string
 		wantModel      string
 	}{
@@ -1024,38 +1026,59 @@ func TestAgentRunnerPublishesProviderAliasesAuthorizedByTheFacadeToken(t *testin
 				{Name: "ANTHROPIC_BASE_URL", Value: "https://anthropic.request.test"},
 				{Name: "ANTHROPIC_MODEL", Value: "claude-global"},
 			},
-			wantKeys:   []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CLAUDE_MODEL"},
-			absentKeys: []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
-			tokenKey:   "ANTHROPIC_API_KEY",
-			modelKeys:  []string{"ANTHROPIC_MODEL", "CLAUDE_MODEL"},
-			wantModel:  "claude-global",
+			wantKeys:    []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CLAUDE_MODEL"},
+			absentKeys:  []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
+			tokenKey:    "ANTHROPIC_API_KEY",
+			endpointKey: "ANTHROPIC_BASE_URL",
+			routeSuffix: "/llm/anthropic",
+			modelKeys:   []string{"ANTHROPIC_MODEL", "CLAUDE_MODEL"},
+			wantModel:   "claude-global",
 		},
 		{
 			// The catalog default wins over the Anthropic binding and the Claude
 			// dialect is served by converting to it, so the legacy Anthropic
 			// variables name the OpenAI model the token authorizes.
 			name: "managed Claude publishes the catalog provider variables", agent: "claude", seedCatalog: true,
-			wantKeys:   []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CLAUDE_MODEL"},
-			absentKeys: []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
-			tokenKey:   "ANTHROPIC_API_KEY",
-			modelKeys:  []string{"ANTHROPIC_MODEL", "CLAUDE_MODEL"},
-			wantModel:  "gpt-agent",
+			wantKeys:    []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CLAUDE_MODEL"},
+			absentKeys:  []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
+			tokenKey:    "ANTHROPIC_API_KEY",
+			endpointKey: "ANTHROPIC_BASE_URL",
+			routeSuffix: "/llm/anthropic",
+			modelKeys:   []string{"ANTHROPIC_MODEL", "CLAUDE_MODEL"},
+			wantModel:   "gpt-agent",
 		},
 		{
 			name:  "managed Codex overrides a daemon model the catalog does not resolve",
 			agent: "codex", seedCatalog: true, legacyLLMModel: "gpt-default",
-			wantKeys:  []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
-			tokenKey:  "OPENAI_API_KEY",
-			modelKeys: []string{"CODEX_MODEL", "OPENAI_MODEL"},
-			wantModel: "gpt-agent",
+			wantKeys:    []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
+			tokenKey:    "OPENAI_API_KEY",
+			endpointKey: "OPENAI_BASE_URL",
+			routeSuffix: "/llm/openai/v1",
+			modelKeys:   []string{"CODEX_MODEL", "OPENAI_MODEL"},
+			wantModel:   "gpt-agent",
 		},
 		{
 			name:  "managed opencode overrides a daemon model the catalog does not resolve",
 			agent: "opencode", seedCatalog: true, legacyLLMModel: "gpt-default",
-			wantKeys:  []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
-			tokenKey:  "OPENAI_API_KEY",
-			modelKeys: []string{"CODEX_MODEL", "OPENAI_MODEL"},
-			wantModel: "gpt-agent",
+			wantKeys:    []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
+			tokenKey:    "OPENAI_API_KEY",
+			endpointKey: "OPENAI_BASE_URL",
+			routeSuffix: "/llm/openai/v1",
+			modelKeys:   []string{"CODEX_MODEL", "OPENAI_MODEL"},
+			wantModel:   "gpt-agent",
+		},
+		{
+			// pi publishes the credential of the family it addresses, so the
+			// endpoint and model names of that family must come from this run
+			// too rather than from the startup facade.
+			name:  "managed pi publishes the family endpoint and model it authorizes",
+			agent: "pi", seedCatalog: true, legacyLLMModel: "gpt-default",
+			wantKeys:    []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
+			tokenKey:    "OPENAI_API_KEY",
+			endpointKey: "OPENAI_BASE_URL",
+			routeSuffix: "/llm/openai/v1",
+			modelKeys:   []string{"CODEX_MODEL", "OPENAI_MODEL"},
+			wantModel:   "gpt-agent",
 		},
 	}
 	for _, tt := range tests {
@@ -1110,6 +1133,9 @@ func TestAgentRunnerPublishesProviderAliasesAuthorizedByTheFacadeToken(t *testin
 			if err != nil {
 				t.Fatalf("CreateSandbox returned error: %v", err)
 			}
+			if err := store.SaveVMState(session.Summary.ID, domain.VMState{Driver: driverpkg.RuntimeDriverDocker, BoxID: "container-aliases"}); err != nil {
+				t.Fatalf("SaveVMState returned error: %v", err)
+			}
 			definition := domain.AgentDefinition{
 				ID: "agent-aliases", Enabled: true, Provider: tt.agent, Model: "",
 				SystemPrompt: "aliases", ConfigJSON: "{}",
@@ -1117,6 +1143,9 @@ func TestAgentRunnerPublishesProviderAliasesAuthorizedByTheFacadeToken(t *testin
 			runner := NewAgentRunner(AgentRunnerDeps{
 				Config: config, Store: store, ConfigDB: configDB,
 				Agents: fakeAgentDefinitionStore{agent: definition},
+				// pi republishes its model catalog into a reused guest, which
+				// resolves the session runtime before the environment is built.
+				Runtimes: fakeRuntimeProvider{runtime: &fakeAgentRuntime{}},
 			})
 
 			if err := runner.PrepareSandboxAgentEnvironmentFromTags(ctx, session); err != nil {
@@ -1153,6 +1182,11 @@ func TestAgentRunnerPublishesProviderAliasesAuthorizedByTheFacadeToken(t *testin
 				if env[name] != token.Model {
 					t.Fatalf("sandbox env[%s] = %q, but the facade token authorizes %q", name, env[name], token.Model)
 				}
+			}
+			// The endpoint names the family route the credential is presented
+			// at, so it must belong to the same family as the credential.
+			if endpoint := env[tt.endpointKey]; !strings.HasSuffix(endpoint, tt.routeSuffix) {
+				t.Fatalf("sandbox env[%s] = %q, want a route ending in %q", tt.endpointKey, endpoint, tt.routeSuffix)
 			}
 		})
 	}

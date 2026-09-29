@@ -253,7 +253,14 @@ func TestPrepareAgentLLMDialectGuestConfig(t *testing.T) {
 				"LLM_API_PROTOCOL":            string(ProtocolResponses),
 				"PI_CODING_AGENT_DIR":         "/root/.pi/agent",
 				GuestModelEnvName:             "agent-compose/gpt-5.5",
-				"OPENAI_API_KEY":              facadeTokenPlaceholder,
+				// The credential this writer publishes belongs to the OpenAI
+				// family, so that family's endpoint and model names are
+				// published with it. Leaving them to the startup facade would
+				// pair this run's token with the model the facade resolved.
+				"OPENAI_API_KEY":  facadeTokenPlaceholder,
+				"OPENAI_BASE_URL": openAIEndpoint,
+				"CODEX_MODEL":     "gpt-5.5",
+				"OPENAI_MODEL":    "gpt-5.5",
 			},
 			checkFile: func(t *testing.T, root string) {
 				t.Helper()

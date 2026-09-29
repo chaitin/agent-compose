@@ -28,10 +28,10 @@ type globalEnvStore interface {
 //
 // The returned variables are published before the managed environment, so the
 // selected agent's own configuration overwrites every name it writes. Only the
-// names an agent does not write survive, such as the provider aliases of an
-// agent like dsh that has no provider-specific contract: those are this
-// facade's whole purpose. A dialect writer that serves the same family must
-// therefore write the same model names — see llms.ProviderModelEnvAliases.
+// names an agent does not write survive: for an agent like dsh that publishes no
+// provider-specific name, this facade's whole set does, which is its purpose. A
+// dialect writer that publishes one family name therefore publishes that
+// family's whole set — see llms.ProviderFamilyEnv.
 func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConfigRequest) (map[string]string, error) {
 	if req.Config == nil || req.Store == nil || req.Session == nil {
 		return nil, nil
@@ -102,15 +102,11 @@ func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConf
 		if err := req.Store.SaveLLMFacadeToken(ctx, token); err != nil {
 			return nil, fmt.Errorf("save %s startup facade token: %w", family, err)
 		}
+		route := baseURL + "/api/runtime/sandboxes/" + req.Session.Summary.ID + "/llm/openai/v1"
 		if family == llms.ProviderFamilyAnthropic {
-			env["ANTHROPIC_API_KEY"] = rawToken
-			env["ANTHROPIC_AUTH_TOKEN"] = rawToken
-			env["ANTHROPIC_BASE_URL"] = baseURL + "/api/runtime/sandboxes/" + req.Session.Summary.ID + "/llm/anthropic"
-		} else {
-			env["OPENAI_API_KEY"] = rawToken
-			env["OPENAI_BASE_URL"] = baseURL + "/api/runtime/sandboxes/" + req.Session.Summary.ID + "/llm/openai/v1"
+			route = baseURL + "/api/runtime/sandboxes/" + req.Session.Summary.ID + "/llm/anthropic"
 		}
-		for name, value := range llms.ProviderModelEnvAliases(family, model) {
+		for name, value := range llms.ProviderFamilyEnv(family, rawToken, route, model) {
 			env[name] = value
 		}
 	}

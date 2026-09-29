@@ -197,7 +197,7 @@ daemon 托管 agent 的 LLM 连接时，会把这些 facade 变量发布到 sand
 | `LLM_MODEL` | facade token 授权的模型引用 |
 | `AGENT_COMPOSE_RESOLVED_MODEL` | 同一模型在 agent 侧寻址命名空间中的写法 |
 
-被选中的 agent 还会带上自己 dialect 的变量名：codex 是 `CODEX_MODEL`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`；claude 是 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL`、`CLAUDE_MODEL`；opencode 是 `OPENCODE_CONFIG`、`OPENCODE_MODEL`；pi 是 `PI_CODING_AGENT_DIR`。
+被选中的 agent 还会带上自己 dialect 的变量名。codex、claude、opencode、pi 各自只面向一个 provider family，因此都会写全该家族的整套变量：OpenAI 家族为 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`CODEX_MODEL`、`OPENAI_MODEL`；Anthropic 家族为 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL`、`CLAUDE_MODEL`。只覆盖其中一部分的 dialect 会让其余变量保留启动兼容 facade 的值，从而把本次运行的 token 与它并未授权的模型凑在一起。此外 opencode 还有 `OPENCODE_CONFIG`、`OPENCODE_MODEL`，pi 还有 `PI_CODING_AGENT_DIR`；dsh 不写任何 provider 专属变量，启动兼容 facade 的整套值因此原样保留。
 
 早于通用 `LLM_*` 契约的旧镜像由 provider 专属变量名服务。`ANTHROPIC_MODEL` 与 `CLAUDE_MODEL` 是一对，`CODEX_MODEL` 与 `OPENAI_MODEL` 是另一对。daemon 只发布被选中 agent 所在 provider family 的那一对，取值来自 catalog 默认模型、声明的上游，或 sandbox / 全局环境里的 provider 凭据。
 

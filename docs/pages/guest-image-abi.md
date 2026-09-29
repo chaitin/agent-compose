@@ -268,11 +268,16 @@ credential never reaches the guest.
 | `LLM_MODEL` | Model reference the facade token authorizes |
 | `AGENT_COMPOSE_RESOLVED_MODEL` | The same model in the namespace the agent addresses models by |
 
-The selected agent's dialect then adds its own names. Codex gets `CODEX_MODEL`,
-`OPENAI_API_KEY`, and `OPENAI_BASE_URL`; Claude gets `ANTHROPIC_API_KEY`,
-`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, and
-`CLAUDE_MODEL`; opencode gets `OPENCODE_CONFIG` and `OPENCODE_MODEL`; pi gets
-`PI_CODING_AGENT_DIR`.
+The selected agent's dialect then adds its own names. Codex, Claude, opencode,
+and pi each address one provider family, so each publishes that family's whole
+set: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `CODEX_MODEL`, and `OPENAI_MODEL` for
+the OpenAI family, or `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, and `CLAUDE_MODEL` for the Anthropic
+family. A dialect that replaced only part of the set would leave the rest at the
+startup compatibility facade's value, pairing this run's token with a model it
+does not authorize. opencode adds `OPENCODE_CONFIG` and `OPENCODE_MODEL`, pi adds
+`PI_CODING_AGENT_DIR`, and dsh publishes no provider-specific name at all, which
+leaves the startup compatibility facade's set intact.
 
 Older images that predate the generic `LLM_*` contract are served by the
 provider-specific names. `ANTHROPIC_MODEL` and `CLAUDE_MODEL` are one pair;
