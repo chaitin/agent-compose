@@ -28,6 +28,17 @@ type trackingCommandFacadeStore struct {
 	tokenHashes []string
 }
 
+// ListGlobalEnv preserves the optional global-environment capability through
+// the token-tracking wrapper. Command startup compatibility needs the same
+// daemon-level provider inputs as sandbox preparation.
+func (s *trackingCommandFacadeStore) ListGlobalEnv(ctx context.Context) ([]domain.SandboxEnvVar, error) {
+	store, ok := s.CommandFacadeStore.(globalEnvStore)
+	if !ok {
+		return nil, nil
+	}
+	return store.ListGlobalEnv(ctx)
+}
+
 func (s *trackingCommandFacadeStore) SaveLLMFacadeToken(ctx context.Context, token llms.FacadeToken) error {
 	if err := s.CommandFacadeStore.SaveLLMFacadeToken(ctx, token); err != nil {
 		return err
@@ -59,11 +70,9 @@ type CommandFacadeConfigRequest struct {
 // the command's selected agent on the command's in-memory Sandbox clone.
 //
 // The selected agent determines the dialect and the catalog supplies the
-// connection, so there is exactly one preparation. Earlier revisions also
-// provisioned a startup facade for both provider families before the agent was
-// known; that belonged to the retired resolver stack, where an agent could be
-// served by either family depending on the environment. PrepareAgentLLM decides
-// that once, for the agent this command actually names.
+// connection. The startup compatibility facade is prepared first so old guest
+// images can read provider-specific variables before the selected agent's
+// common facade variables are applied.
 //
 // Any failure removes every token successfully persisted by this invocation.
 // Successful callers own the returned token hashes until command termination.
@@ -89,17 +98,35 @@ func EnsureSessionCommandFacadeConfig(ctx context.Context, req CommandFacadeConf
 		returnErr = errors.Join(returnErr, cleanupErr)
 	}()
 
+	startupEnv, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{
+		Config: config, Store: tracker, Session: session, AgentEnv: req.AgentEnv, Source: source, RunID: runID,
+	})
+	if err != nil {
+		return CommandFacadeConfig{}, err
+	}
+	startupTokenHashes := append([]string(nil), tracker.tokenHashes...)
+
 	prepared, err := llms.PrepareAgentLLM(ctx, llms.AgentLLMRequest{
 		Config: config, Store: tracker, Sandbox: session, AgentKind: agent, Model: model, AgentEnv: req.AgentEnv, Source: source, RunID: runID,
 	})
 	if err != nil {
 		if llms.IsUnmanagedAgentLLMError(err) {
-			return CommandFacadeConfig{}, nil
+			return CommandFacadeConfig{
+				Env: startupEnv, TokenHashes: startupTokenHashes,
+			}, nil
 		}
 		return CommandFacadeConfig{}, err
 	}
+	selectedTokenHashes := append([]string(nil), tracker.tokenHashes[len(startupTokenHashes):]...)
+	managedEnv := make(map[string]string, len(startupEnv)+len(prepared.Env))
+	for name, value := range startupEnv {
+		managedEnv[name] = value
+	}
+	for name, value := range prepared.Env {
+		managedEnv[name] = value
+	}
 	return CommandFacadeConfig{
-		Env:         prepared.Env,
-		TokenHashes: append([]string(nil), tracker.tokenHashes...),
+		Env:         managedEnv,
+		TokenHashes: append(append([]string(nil), startupTokenHashes...), selectedTokenHashes...),
 	}, nil
 }

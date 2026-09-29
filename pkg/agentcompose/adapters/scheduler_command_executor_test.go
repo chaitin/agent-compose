@@ -176,7 +176,7 @@ func TestSchedulerCommandExecutorRebuildsAndOwnsCommandFacadeTokens(t *testing.T
 		wantTokenExists bool
 	}{
 		{name: "normal completion cleans every command token"},
-		{name: "unconfirmed termination retains every command token", runtimeErr: domain.ErrExecTerminationUnconfirmed, wantTokenCount: 1, wantTokenExists: true},
+		{name: "unconfirmed termination retains every command token", runtimeErr: domain.ErrExecTerminationUnconfirmed, wantTokenCount: 3, wantTokenExists: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -232,10 +232,11 @@ func TestSchedulerCommandExecutorRebuildsAndOwnsCommandFacadeTokens(t *testing.T
 				t.Fatal("runtime did not receive command Sandbox clone")
 			}
 			env := domain.SandboxEnvMap(runtime.session.RuntimeEnvItems)
-			// One dialect is prepared for the agent the command names, so the
-			// other provider family's facade must not appear.
-			if env["ANTHROPIC_API_KEY"] != "" || env["ANTHROPIC_BASE_URL"] != "" {
-				t.Fatalf("command reconstructed another family's startup facade: %#v", env)
+			// The command keeps both compatibility aliases so old images can
+			// start, while the selected Codex token remains authoritative for
+			// the common variables.
+			if env["ANTHROPIC_API_KEY"] == "" || env["ANTHROPIC_BASE_URL"] == "" || env["ANTHROPIC_API_KEY"] == env["AGENT_COMPOSE_SANDBOX_TOKEN"] {
+				t.Fatalf("command is missing an isolated legacy Anthropic facade: %#v", env)
 			}
 			if env["OPENAI_API_KEY"] == "" || env["OPENAI_API_KEY"] != env["AGENT_COMPOSE_SANDBOX_TOKEN"] {
 				t.Fatalf("selected Codex facade environment = %#v", env)

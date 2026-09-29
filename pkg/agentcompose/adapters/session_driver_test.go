@@ -358,8 +358,8 @@ func TestSandboxDriverFreshStartFailureRevokesPreparedAgentToken(t *testing.T) {
 	if rawToken == "" {
 		t.Fatal("prepared sandbox token is empty")
 	}
-	if env := domain.SandboxEnvMap(session.RuntimeEnvItems); env["ANTHROPIC_API_KEY"] != "" || env["ANTHROPIC_BASE_URL"] != "" {
-		t.Fatalf("preparation minted another family's startup facade: %#v", env)
+	if env := domain.SandboxEnvMap(session.RuntimeEnvItems); env["ANTHROPIC_API_KEY"] == "" || env["ANTHROPIC_BASE_URL"] == "" || env["ANTHROPIC_API_KEY"] == rawToken {
+		t.Fatalf("preparation is missing an isolated legacy Anthropic facade: %#v", env)
 	}
 	startErr := errors.New("runtime start failed")
 	driver := NewSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{ensureErr: startErr}})
@@ -427,8 +427,8 @@ func TestSandboxDriverReleasedRuntimeRecreationFailureRevokesPreparedAgentToken(
 	if rawToken == "" {
 		t.Fatal("prepared sandbox token is empty")
 	}
-	if env := domain.SandboxEnvMap(session.RuntimeEnvItems); env["ANTHROPIC_API_KEY"] != "" || env["ANTHROPIC_BASE_URL"] != "" {
-		t.Fatalf("preparation minted another family's startup facade: %#v", env)
+	if env := domain.SandboxEnvMap(session.RuntimeEnvItems); env["ANTHROPIC_API_KEY"] == "" || env["ANTHROPIC_BASE_URL"] == "" || env["ANTHROPIC_API_KEY"] == rawToken {
+		t.Fatalf("preparation is missing an isolated legacy Anthropic facade: %#v", env)
 	}
 	if err := store.SaveVMState(session.Summary.ID, domain.VMState{
 		Driver:    driverpkg.RuntimeDriverBoxlite,

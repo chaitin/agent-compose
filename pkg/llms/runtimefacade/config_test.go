@@ -100,6 +100,116 @@ func TestEnsureSessionLLMFacadeConfigCreatesCodexEnvAndToken(t *testing.T) {
 	}
 }
 
+func TestEnsureSessionStartupFacadeConfigSupportsLegacyProviderAliases(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:       root,
+		DbAddr:         filepath.Join(root, "data.db"),
+		RuntimeBaseURL: "http://agent-compose.test:7410",
+		GuestHomePath:  "/root",
+	}
+	di := do.New()
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, config)
+	store, err := testutil.OpenConfigStore(t, di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	if err := store.UpsertDefaultLLMConfig(ctx, llms.Provider{
+		ID: "anthropic-primary", Name: "Anthropic", ProviderType: llms.ProviderFamilyAnthropic,
+		DefaultWireAPI: llms.APIProtocolMessages, BaseURL: "https://anthropic.example.test",
+		APIKey: "anthropic-upstream-secret", Scope: llms.ProviderScopeSystem, Weight: 1,
+	}, llms.Model{ID: "claude-model", Name: "claude-model", Enabled: true, DefaultModel: true, Scope: llms.ProviderScopeSystem}); err != nil {
+		t.Fatalf("save Anthropic provider: %v", err)
+	}
+	if err := store.UpsertDefaultLLMConfig(ctx, llms.Provider{
+		ID: "openai-primary", Name: "OpenAI", ProviderType: llms.ProviderFamilyOpenAI,
+		DefaultWireAPI: llms.APIProtocolResponses, BaseURL: "https://openai.example.test",
+		APIKey: "openai-upstream-secret", Scope: llms.ProviderScopeSystem, Weight: 2,
+	}, llms.Model{ID: "openai-model", Name: "openai-model", Enabled: true, Scope: llms.ProviderScopeSystem}); err != nil {
+		t.Fatalf("save OpenAI provider: %v", err)
+	}
+
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-startup-facades", Driver: driverpkg.RuntimeDriverDocker}}
+	env, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{
+		Config: config, Store: store, Session: session, Source: TokenSourceAgent,
+	})
+	if err != nil {
+		t.Fatalf("EnsureSessionStartupFacadeConfig returned error: %v", err)
+	}
+	if env["ANTHROPIC_API_KEY"] == "" || env["ANTHROPIC_AUTH_TOKEN"] != env["ANTHROPIC_API_KEY"] || env["ANTHROPIC_BASE_URL"] == "" {
+		t.Fatalf("Anthropic startup environment = %#v", env)
+	}
+	if env["OPENAI_API_KEY"] == "" || env["OPENAI_BASE_URL"] == "" {
+		t.Fatalf("OpenAI startup environment = %#v", env)
+	}
+	if env["LLM_API_KEY"] != "" || env["AGENT_COMPOSE_SANDBOX_TOKEN"] != "" {
+		t.Fatalf("startup environment contains common facade variables = %#v", env)
+	}
+	for _, secret := range []string{"anthropic-upstream-secret", "openai-upstream-secret"} {
+		for name, value := range env {
+			if strings.Contains(value, secret) {
+				t.Fatalf("startup env[%s] leaked upstream credential", name)
+			}
+		}
+	}
+	anthropicToken, err := store.GetLLMFacadeToken(ctx, env["ANTHROPIC_API_KEY"])
+	if err != nil {
+		t.Fatalf("load Anthropic startup token: %v", err)
+	}
+	if anthropicToken.ProviderID != "anthropic-primary" || anthropicToken.WireAPI != llms.APIProtocolMessages {
+		t.Fatalf("Anthropic startup token = %#v", anthropicToken)
+	}
+	openAIToken, err := store.GetLLMFacadeToken(ctx, env["OPENAI_API_KEY"])
+	if err != nil {
+		t.Fatalf("load OpenAI startup token: %v", err)
+	}
+	if openAIToken.ProviderID != "openai-primary" || openAIToken.WireAPI != "" {
+		t.Fatalf("OpenAI startup token = %#v", openAIToken)
+	}
+}
+
+func TestEnsureSessionStartupFacadeConfigProjectsGlobalAnthropicCredential(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{DataRoot: root, DbAddr: filepath.Join(root, "data.db"), RuntimeBaseURL: "http://agent-compose.test:7410"}
+	di := do.New()
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, config)
+	store, err := testutil.OpenConfigStore(t, di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	if _, err := store.ReplaceGlobalEnv(ctx, []domain.SandboxEnvVar{
+		{Name: "ANTHROPIC_API_KEY", Value: "global-anthropic-secret", Secret: true},
+		{Name: "ANTHROPIC_BASE_URL", Value: "https://anthropic.example.test"},
+		{Name: "ANTHROPIC_MODEL", Value: "claude-global"},
+	}); err != nil {
+		t.Fatalf("ReplaceGlobalEnv returned error: %v", err)
+	}
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-global-anthropic", Driver: driverpkg.RuntimeDriverDocker}}
+	env, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{Config: config, Store: store, Session: session, Source: TokenSourceAgent})
+	if err != nil {
+		t.Fatalf("EnsureSessionStartupFacadeConfig returned error: %v", err)
+	}
+	tokenValue := env["ANTHROPIC_API_KEY"]
+	if tokenValue == "" || env["ANTHROPIC_AUTH_TOKEN"] != tokenValue || strings.Contains(tokenValue, "global-anthropic-secret") {
+		t.Fatalf("global Anthropic startup environment = %#v", env)
+	}
+	token, err := store.GetLLMFacadeToken(ctx, tokenValue)
+	if err != nil {
+		t.Fatalf("GetLLMFacadeToken returned error: %v", err)
+	}
+	if !strings.HasPrefix(token.ProviderID, llms.DeclaredConnectionPrefix+session.Summary.ID+":"+llms.ProviderFamilyAnthropic+":") {
+		t.Fatalf("startup token provider = %q, want sandbox-scoped Anthropic connection", token.ProviderID)
+	}
+}
+
 // unreachableFacadeDaemonConfig is a daemon that binds only loopback and has no
 // sandbox-reachable runtime base URL, so a managed facade could never reach it.
 func unreachableFacadeDaemonConfig(root string) *appconfig.Config {
