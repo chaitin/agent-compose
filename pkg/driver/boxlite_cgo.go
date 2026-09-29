@@ -11,6 +11,7 @@ package driver
 
 extern void agentcomposeBoxliteHandleCallback(CBoxHandle *box, CBoxliteError *err, uintptr_t handle);
 extern void agentcomposeBoxliteVoidCallback(CBoxliteError *err, uintptr_t handle);
+extern void agentcomposeBoxliteBoxInfoCallback(struct CBoxInfo *info, CBoxliteError *err, uintptr_t handle);
 extern void agentcomposeBoxliteExecStdoutCallback(uint8_t *data, size_t len, uintptr_t handle);
 extern void agentcomposeBoxliteExecStderrCallback(uint8_t *data, size_t len, uintptr_t handle);
 extern void agentcomposeBoxliteExecWaitCallback(int exit_code, CBoxliteError *err, uintptr_t handle);
@@ -22,6 +23,10 @@ static void agentcomposeBoxliteHandleCallbackBridge(CBoxHandle *box, CBoxliteErr
 
 static void agentcomposeBoxliteVoidCallbackBridge(CBoxliteError *err, void *user_data) {
 	agentcomposeBoxliteVoidCallback(err, (uintptr_t)user_data);
+}
+
+static void agentcomposeBoxliteBoxInfoCallbackBridge(struct CBoxInfo *info, CBoxliteError *err, void *user_data) {
+	agentcomposeBoxliteBoxInfoCallback(info, err, (uintptr_t)user_data);
 }
 
 static void agentcomposeBoxliteExecStdoutCallbackBridge(const uint8_t *data, size_t len, void *user_data) {
@@ -58,6 +63,15 @@ static enum BoxliteErrorCode agentcompose_boxlite_get(
 ) {
 	void *user_data = (void *)user_handle;
 	return boxlite_get(runtime, id_or_name, agentcomposeBoxliteHandleCallbackBridge, user_data, out_error);
+}
+
+static enum BoxliteErrorCode agentcompose_boxlite_box_info(
+	CBoxHandle *handle,
+	uintptr_t user_handle,
+	CBoxliteError *out_error
+) {
+	void *user_data = (void *)user_handle;
+	return boxlite_box_info(handle, agentcomposeBoxliteBoxInfoCallbackBridge, user_data, out_error);
 }
 
 static enum BoxliteErrorCode agentcompose_boxlite_start_box(
@@ -203,6 +217,15 @@ type boxliteVoidAwaiter struct {
 	ch chan error
 }
 
+type boxliteBoxInfoResult struct {
+	info cgoBoxInfo
+	err  error
+}
+
+type boxliteBoxInfoAwaiter struct {
+	ch chan boxliteBoxInfoResult
+}
+
 type boxliteExecAwaiter struct {
 	collector *cgoExecCollector
 	waitCh    chan boxliteExecWaitResult
@@ -263,6 +286,15 @@ func lookupVoidAwaiter(handle uintptr) (*boxliteVoidAwaiter, bool) {
 		return nil, false
 	}
 	typed, ok := awaiter.(*boxliteVoidAwaiter)
+	return typed, ok
+}
+
+func lookupBoxInfoAwaiter(handle uintptr) (*boxliteBoxInfoAwaiter, bool) {
+	awaiter, ok := globalBoxliteAwaiters.lookup(handle)
+	if !ok {
+		return nil, false
+	}
+	typed, ok := awaiter.(*boxliteBoxInfoAwaiter)
 	return typed, ok
 }
 
@@ -340,6 +372,28 @@ func agentcomposeBoxliteVoidCallback(ffiErr *C.CBoxliteError, handle C.uintptr_t
 		return
 	}
 	awaiter.ch <- boxliteAsyncError(ffiErr, "boxlite async operation")
+}
+
+// agentcomposeBoxliteBoxInfoCallback receives box metadata through the BoxLite
+// v0.10 callback API. The metadata pointer is owned by the callback and must be
+// released with boxlite_free_box_info, so the fields are copied into a Go value
+// before the C struct is freed. The awaiter may already be gone when a caller
+// stops waiting, so the free happens unconditionally.
+//
+//export agentcomposeBoxliteBoxInfoCallback
+func agentcomposeBoxliteBoxInfoCallback(info *C.struct_CBoxInfo, ffiErr *C.CBoxliteError, handle C.uintptr_t) {
+	result := boxliteBoxInfoResult{err: boxliteAsyncError(ffiErr, "inspect box")}
+	if info != nil {
+		result.info = cgoBoxInfoFromC(info)
+		C.boxlite_free_box_info(info)
+	} else if result.err == nil {
+		result.err = fmt.Errorf("inspect box: boxlite returned no box info")
+	}
+	awaiter, ok := lookupBoxInfoAwaiter(uintptr(handle))
+	if !ok {
+		return
+	}
+	awaiter.ch <- result
 }
 
 //export agentcomposeBoxliteExecStdoutCallback
@@ -547,7 +601,7 @@ func (r *cgoSandboxRuntime) execWithStream(ctx context.Context, sandbox *Sandbox
 	}
 	defer box.free()
 
-	info, err := r.boxInfo(box)
+	info, err := r.boxInfo(ctx, box)
 	if err != nil {
 		return ExecResult{}, err
 	}
@@ -749,7 +803,7 @@ func (r *cgoSandboxRuntime) getOrCreateBox(ctx context.Context, sandbox *Sandbox
 	if existingID := strings.TrimSpace(vmState.BoxID); existingID != "" {
 		box, err := r.getBox(ctx, existingID)
 		if err == nil {
-			info, infoErr := r.boxInfo(box)
+			info, infoErr := r.boxInfo(ctx, box)
 			if infoErr == nil {
 				status := normalizeBoxliteStatus(info.State.Status)
 				if shouldRecreateBoxForStatus(status) {
@@ -831,6 +885,16 @@ func cStringOrEmpty(value *C.char) string {
 		return ""
 	}
 	return C.GoString(value)
+}
+
+// cgoBoxInfoFromC copies the fields this runtime consumes out of a BoxLite
+// metadata struct. BoxLite v0.10 extended CBoxInfo with fields this runtime does
+// not read yet, so the conversion stays explicit about what is used.
+func cgoBoxInfoFromC(raw *C.struct_CBoxInfo) cgoBoxInfo {
+	info := cgoBoxInfo{ID: cStringOrEmpty(raw.id), Name: cStringOrEmpty(raw.name)}
+	info.State.Status = cStringOrEmpty(raw.status)
+	info.State.Running = raw.running != 0
+	return info
 }
 
 func boxliteAsyncError(ffiErr *C.CBoxliteError, action string) error {
@@ -942,6 +1006,22 @@ func (r *cgoSandboxRuntime) waitForVoidResult(ctx context.Context, runtimeHandle
 		}
 		if _, err := r.drainRuntimeCallbacks(ctx, runtimeHandle, 100*time.Millisecond); err != nil {
 			return err
+		}
+	}
+}
+
+func (r *cgoSandboxRuntime) waitForBoxInfoResult(ctx context.Context, runtimeHandle *C.CBoxliteRuntime, ch <-chan boxliteBoxInfoResult) (cgoBoxInfo, error) {
+	for {
+		select {
+		case result := <-ch:
+			return result.info, result.err
+		default:
+		}
+		if err := ctx.Err(); err != nil {
+			return cgoBoxInfo{}, err
+		}
+		if _, err := r.drainRuntimeCallbacks(ctx, runtimeHandle, 100*time.Millisecond); err != nil {
+			return cgoBoxInfo{}, err
 		}
 	}
 }
@@ -1071,7 +1151,11 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 		if mount.ReadOnly {
 			readOnly = 1
 		}
-		C.boxlite_options_add_volume(options, hostPathCString, guestPathCString, readOnly)
+		// BoxLite v0.10 renamed the host bind-mount option
+		// (boxlite_options_add_volume -> boxlite_options_add_bind_mount). The
+		// host/guest/read-only contract is unchanged and still local-runtime
+		// only, which is the only runtime this driver uses.
+		C.boxlite_options_add_bind_mount(options, hostPathCString, guestPathCString, readOnly)
 		C.free(unsafe.Pointer(hostPathCString))
 		C.free(unsafe.Pointer(guestPathCString))
 	}
@@ -1242,18 +1326,23 @@ func (r *cgoSandboxRuntime) boxID(box *cgoBoxHandle) (string, error) {
 	return C.GoString(raw), nil
 }
 
-func (r *cgoSandboxRuntime) boxInfo(box *cgoBoxHandle) (cgoBoxInfo, error) {
+// boxInfo reads box metadata through the BoxLite v0.10 callback API
+// (boxlite_box_info delivers CBoxInfo to a callback instead of an out-parameter)
+// and waits for the runtime to dispatch it, mirroring the other async calls.
+func (r *cgoSandboxRuntime) boxInfo(ctx context.Context, box *cgoBoxHandle) (cgoBoxInfo, error) {
+	runtimeHandle, err := r.runtimeHandle()
+	if err != nil {
+		return cgoBoxInfo{}, err
+	}
+	awaiter := &boxliteBoxInfoAwaiter{ch: make(chan boxliteBoxInfoResult, 1)}
+	awaiterHandle := globalBoxliteAwaiters.register(awaiter)
+	defer globalBoxliteAwaiters.delete(awaiterHandle)
 	var ffiErr C.CBoxliteError
-	var raw *C.struct_CBoxInfo
-	code := C.boxlite_box_info(box.ptr, &raw, &ffiErr)
+	code := C.agentcompose_boxlite_box_info(box.ptr, C.uintptr_t(awaiterHandle), &ffiErr)
 	if err := boxliteStatusError(code, &ffiErr, "inspect box"); err != nil {
 		return cgoBoxInfo{}, err
 	}
-	defer C.boxlite_free_box_info(raw)
-	info := cgoBoxInfo{ID: cStringOrEmpty(raw.id), Name: cStringOrEmpty(raw.name)}
-	info.State.Status = cStringOrEmpty(raw.status)
-	info.State.Running = raw.running != 0
-	return info, nil
+	return r.waitForBoxInfoResult(ctx, runtimeHandle, awaiter.ch)
 }
 
 func (r *cgoSandboxRuntime) executeBox(ctx context.Context, box *cgoBoxHandle, spec ExecSpec, stream ExecStreamWriter) (ExecResult, error) {

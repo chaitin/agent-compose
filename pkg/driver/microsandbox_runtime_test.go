@@ -575,7 +575,7 @@ func TestMicrosandboxPrepareEnvironmentPreservesDockerDisks(t *testing.T) {
 		t.Fatalf("mkdir docker-disks subdir: %v", err)
 	}
 
-	if err := runtime.prepareEnvironment(); err != nil {
+	if _, err := runtime.prepareEnvironment(); err != nil {
 		t.Fatalf("prepareEnvironment: %v", err)
 	}
 	for _, path := range []string{disk, ignored, subdir} {
