@@ -551,6 +551,8 @@ if [[ -f $GUEST_DOCKERFILE ]]; then
     'versioned Pi coding agent install in default guest image'
   require_regex "$guest_dockerfile_source" 'pi[[:space:]]+--version' \
     'Pi coding agent build-time smoke in default guest image'
+  require_regex "$guest_dockerfile_source" 'dsh[[:space:]]+--profile[[:space:]]+agent-compose[[:space:]]+--dump-config-schema' \
+    'DSH profile compose/import smoke in default guest image'
 
   npm_install_run_count=0
   run_block=''
@@ -647,8 +649,10 @@ if [[ -f $ARCHLINUX_GUEST_DOCKERFILE ]]; then
     require_regex "$archlinux_guest_source" "$provider_cli[[:space:]]+--version" \
       "$provider_cli build-time validation in Arch Linux guest image"
   done
+  require_regex "$archlinux_guest_source" 'dsh[[:space:]]+--profile[[:space:]]+agent-compose[[:space:]]+--dump-config-schema' \
+    'DSH profile compose/import smoke in Arch Linux guest image'
   runtime_cleanup_line=$(awk '/rm -rf \/tmp\/agent-compose-runtime[[:space:]]*&&|rm -rf \/tmp\/agent-compose-runtime[[:space:]]*$/ { print NR; exit }' "$ARCHLINUX_GUEST_DOCKERFILE")
-  provider_validation_end_line=$(awk '/dsh --version/ { print NR; exit }' "$ARCHLINUX_GUEST_DOCKERFILE")
+  provider_validation_end_line=$(awk '/dsh[[:space:]]+--profile[[:space:]]+agent-compose[[:space:]]+--dump-config-schema/ { print NR; exit }' "$ARCHLINUX_GUEST_DOCKERFILE")
   if [[ -z $runtime_cleanup_line || -z $provider_validation_end_line ]] ||
     ((runtime_cleanup_line <= provider_validation_end_line)); then
     fail 'Arch Linux guest runtime cleanup after provider build-time validation'

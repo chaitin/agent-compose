@@ -12,8 +12,10 @@ ARG OPENCODE_VERSION=1.18.9
 ARG PI_AGENT_VERSION=0.82.1
 ARG PI_MCP_ADAPTER_VERSION=2.11.0
 # @deepseek-ai/dsh-root's engines is ^22.19.0 || >=24.0.0 — keep NODE_MAJOR at
-# or above that when bumping DSH_VERSION.
-ARG DSH_VERSION=0.1.0-rc.6
+# or above that when bumping DSH_VERSION. The agent-compose profile's runner
+# uses the DSH persona-prefix API (0.1.5+) and the build-time profile smoke
+# below needs `--dump-config-schema` (0.1.7+), so older pins no longer build.
+ARG DSH_VERSION=0.2.0-rc.1
 
 FROM ${REGISTRY_MIRROR}/library/golang:${GO_VERSION}-alpine AS grpcurl-builder
 ARG GOPROXY
@@ -109,7 +111,8 @@ RUN cd /tmp/agent-compose-runtime && \
     test -f /usr/local/share/agent-compose/pi-mcp-adapter/index.ts && \
     cd / && \
     pi --version && \
-    dsh --version
+    dsh --version && \
+    HOME=/root dsh --profile agent-compose --dump-config-schema > /dev/null
 
 RUN mkdir -p /opt/agent-compose/npm && \
     cd /tmp/agent-compose-runtime-sdk && \
