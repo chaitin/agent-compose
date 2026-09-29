@@ -143,7 +143,7 @@ func (r *cgoSandboxRuntime) openBoxliteInteraction(ctx context.Context, sandbox 
 		cancel()
 		return nil, err
 	}
-	info, err := r.boxInfo(box)
+	info, err := r.boxInfo(childCtx, box)
 	if err != nil {
 		box.free()
 		cancel()

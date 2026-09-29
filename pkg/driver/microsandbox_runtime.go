@@ -626,38 +626,54 @@ func (r *microsandboxRuntime) ensureReady(ctx context.Context) error {
 	if r.ready {
 		return nil
 	}
-	if err := r.prepareEnvironment(); err != nil {
+	runtimeConfig, err := r.prepareEnvironment()
+	if err != nil {
 		return err
 	}
-	if err := microsandbox.EnsureInstalled(ctx, microsandbox.WithSkipDownload()); err != nil {
+	// The v0.7 SDK replaced EnsureInstalled(WithSkipDownload) with an explicit
+	// runtime resolution that takes no context, so honor caller cancellation
+	// before entering it.
+	if err := ctx.Err(); err != nil {
 		return err
+	}
+	// ResolveRuntime is the SDK's availability check, not a config lookup: it
+	// requires a complete msb + libkrunfw pair under the configured paths and
+	// fails otherwise (the SDK defines IsRuntimeInstalled as ResolveRuntime
+	// succeeding). Resolution never downloads, unlike EnsureRuntime, which
+	// installs the SDK's pinned runtime whenever nothing resolves. The resolved
+	// pair is intentionally discarded: prepareEnvironment has just installed
+	// and recorded exactly these paths.
+	if _, err := microsandbox.ResolveRuntime(runtimeConfig); err != nil {
+		return fmt.Errorf("resolve microsandbox runtime: %w", err)
 	}
 	r.ready = true
 	return nil
 }
 
-func (r *microsandboxRuntime) prepareEnvironment() error {
+// prepareEnvironment provisions the mounted deployment paths and returns the
+// runtime pair the v0.7 SDK resolves before any sandbox operation.
+func (r *microsandboxRuntime) prepareEnvironment() (microsandbox.RuntimeConfig, error) {
 	if err := os.MkdirAll(r.config.MicrosandboxHome, 0o755); err != nil {
-		return fmt.Errorf("create microsandbox home: %w", err)
+		return microsandbox.RuntimeConfig{}, fmt.Errorf("create microsandbox home: %w", err)
 	}
 	if _, err := os.Stat(r.config.MicrosandboxMSBPath); err != nil {
-		return fmt.Errorf("microsandbox msb binary missing at %s: %w", r.config.MicrosandboxMSBPath, err)
+		return microsandbox.RuntimeConfig{}, fmt.Errorf("microsandbox msb binary missing at %s: %w", r.config.MicrosandboxMSBPath, err)
 	}
 	if _, err := os.Stat(r.config.MicrosandboxLibPath); err != nil {
-		return fmt.Errorf("microsandbox Go FFI library missing at %s: %w", r.config.MicrosandboxLibPath, err)
+		return microsandbox.RuntimeConfig{}, fmt.Errorf("microsandbox Go FFI library missing at %s: %w", r.config.MicrosandboxLibPath, err)
 	}
 	if err := validateMicrosandboxDiskTools(); err != nil {
-		return err
+		return microsandbox.RuntimeConfig{}, err
 	}
 	libkrunfwPath, err := r.resolveLibkrunfwPath()
 	if err != nil {
-		return err
+		return microsandbox.RuntimeConfig{}, err
 	}
 	if libkrunfwPath == "" {
-		return fmt.Errorf("microsandbox libkrunfw not found next to %s", r.config.MicrosandboxLibPath)
+		return microsandbox.RuntimeConfig{}, fmt.Errorf("microsandbox libkrunfw not found next to %s", r.config.MicrosandboxLibPath)
 	}
 	if err := r.installMicrosandboxRuntime(r.config.MicrosandboxMSBPath, libkrunfwPath); err != nil {
-		return err
+		return microsandbox.RuntimeConfig{}, err
 	}
 
 	prependEnvPath("PATH", filepath.Dir(r.config.MicrosandboxMSBPath))
@@ -665,9 +681,13 @@ func (r *microsandboxRuntime) prepareEnvironment() error {
 	_ = os.Setenv("MSB_HOME", r.config.MicrosandboxHome)
 	_ = os.Setenv("MSB_PATH", r.config.MicrosandboxMSBPath)
 	if err := r.writeMicrosandboxConfig(libkrunfwPath); err != nil {
-		return err
+		return microsandbox.RuntimeConfig{}, err
 	}
-	return nil
+	return microsandbox.RuntimeConfig{
+		Home:          r.config.MicrosandboxHome,
+		MSBPath:       r.config.MicrosandboxMSBPath,
+		LibkrunfwPath: libkrunfwPath,
+	}, nil
 }
 
 func (r *microsandboxRuntime) resolveLibkrunfwPath() (string, error) {

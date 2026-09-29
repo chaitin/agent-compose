@@ -7,7 +7,7 @@ ARG GO_VERSION=1.26.7
 FROM ${REGISTRY_MIRROR}/library/golang:${GO_VERSION}-alpine AS golang-toolchain
 
 FROM ${REGISTRY_MIRROR}/library/debian:bookworm AS boxlite-build
-ARG BOXLITE_VERSION=v0.9.7
+ARG BOXLITE_VERSION=v0.10.4
 ARG GITHUB_MIRROR
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl python3 tar &&     rm -rf /var/lib/apt/lists/*
@@ -20,7 +20,7 @@ RUN set -e;     target_arch="${TARGETARCH:-$(dpkg --print-architecture)}";     c
 # published checksums. This keeps the FFI lib in lockstep with the
 # microsandbox/sdk/go module pinned in go.mod.
 FROM ${REGISTRY_MIRROR}/library/debian:bookworm AS microsandbox-fetch
-ARG MICROSANDBOX_VERSION=v0.6.14
+ARG MICROSANDBOX_VERSION=v0.7.3
 ARG GITHUB_MIRROR
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl binutils tar &&     rm -rf /var/lib/apt/lists/*

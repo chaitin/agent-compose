@@ -573,7 +573,7 @@ of trusting a request path.
 The daemon composes `cache.Source` implementations for OCI physical storage,
 materialized images, skill artifacts, and compiled runtime drivers. Ordinary
 CGO does not implicitly add a native driver capability. Microsandbox shared
-images are inventoried and removed through the SDK. BoxLite v0.9.7 image cache
+images are inventoried and removed through the SDK. BoxLite v0.10.4 image cache
 is inventory-only and `unknown`, because the ABI does not expose a safe image
 remove/prune operation; agent-compose never deletes BoxLite internal image
 directories directly.

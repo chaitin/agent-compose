@@ -24,7 +24,7 @@ func (r *cgoSandboxRuntime) SignalGuestRuntime(ctx context.Context, _ *Sandbox, 
 		return fmt.Errorf("attach BoxLite guest runtime signal control: %w", err)
 	}
 	defer box.free()
-	info, err := r.boxInfo(box)
+	info, err := r.boxInfo(ctx, box)
 	if err != nil {
 		return err
 	}
