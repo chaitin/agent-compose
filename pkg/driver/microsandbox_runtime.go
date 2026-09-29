@@ -636,9 +636,13 @@ func (r *microsandboxRuntime) ensureReady(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// Deployments provision msb, the Go FFI library and libkrunfw at fixed paths,
-	// so only resolve that pair instead of acquiring a runtime: EnsureRuntime
-	// would download the SDK's pinned runtime whenever nothing resolves.
+	// ResolveRuntime is the SDK's availability check, not a config lookup: it
+	// requires a complete msb + libkrunfw pair under the configured paths and
+	// fails otherwise (the SDK defines IsRuntimeInstalled as ResolveRuntime
+	// succeeding). Resolution never downloads, unlike EnsureRuntime, which
+	// installs the SDK's pinned runtime whenever nothing resolves. The resolved
+	// pair is intentionally discarded: prepareEnvironment has just installed
+	// and recorded exactly these paths.
 	if _, err := microsandbox.ResolveRuntime(runtimeConfig); err != nil {
 		return fmt.Errorf("resolve microsandbox runtime: %w", err)
 	}
