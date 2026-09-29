@@ -92,9 +92,13 @@ func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConf
 			env["ANTHROPIC_API_KEY"] = rawToken
 			env["ANTHROPIC_AUTH_TOKEN"] = rawToken
 			env["ANTHROPIC_BASE_URL"] = baseURL + "/api/runtime/sandboxes/" + req.Session.Summary.ID + "/llm/anthropic"
+			env["ANTHROPIC_MODEL"] = model
+			env["CLAUDE_MODEL"] = model
 		} else {
 			env["OPENAI_API_KEY"] = rawToken
 			env["OPENAI_BASE_URL"] = baseURL + "/api/runtime/sandboxes/" + req.Session.Summary.ID + "/llm/openai/v1"
+			env["CODEX_MODEL"] = model
+			env["OPENAI_MODEL"] = model
 		}
 	}
 	if len(env) == 0 {

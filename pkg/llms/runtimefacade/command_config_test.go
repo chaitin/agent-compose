@@ -40,6 +40,9 @@ func TestEnsureSessionCommandFacadeConfigConfiguresSelectedAgentAndLegacyAliases
 	if result.Env["AGENT_COMPOSE_SANDBOX_TOKEN"] == "" || result.Env["OPENAI_API_KEY"] != result.Env["AGENT_COMPOSE_SANDBOX_TOKEN"] {
 		t.Fatalf("selected Codex environment = %#v", result.Env)
 	}
+	if result.Env["CODEX_MODEL"] != "openai-model" || result.Env["OPENAI_MODEL"] != "openai-model" {
+		t.Fatalf("startup Codex model environment = %#v", result.Env)
+	}
 	if result.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses {
 		t.Fatalf("LLM_API_PROTOCOL = %q, want responses", result.Env["LLM_API_PROTOCOL"])
 	}

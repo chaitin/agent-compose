@@ -140,10 +140,10 @@ func TestEnsureSessionStartupFacadeConfigSupportsLegacyProviderAliases(t *testin
 	if err != nil {
 		t.Fatalf("EnsureSessionStartupFacadeConfig returned error: %v", err)
 	}
-	if env["ANTHROPIC_API_KEY"] == "" || env["ANTHROPIC_AUTH_TOKEN"] != env["ANTHROPIC_API_KEY"] || env["ANTHROPIC_BASE_URL"] == "" {
+	if env["ANTHROPIC_API_KEY"] == "" || env["ANTHROPIC_AUTH_TOKEN"] != env["ANTHROPIC_API_KEY"] || env["ANTHROPIC_BASE_URL"] == "" || env["ANTHROPIC_MODEL"] != "claude-model" || env["CLAUDE_MODEL"] != "claude-model" {
 		t.Fatalf("Anthropic startup environment = %#v", env)
 	}
-	if env["OPENAI_API_KEY"] == "" || env["OPENAI_BASE_URL"] == "" {
+	if env["OPENAI_API_KEY"] == "" || env["OPENAI_BASE_URL"] == "" || env["CODEX_MODEL"] != "openai-model" || env["OPENAI_MODEL"] != "openai-model" {
 		t.Fatalf("OpenAI startup environment = %#v", env)
 	}
 	if env["LLM_API_KEY"] != "" || env["AGENT_COMPOSE_SANDBOX_TOKEN"] != "" {
@@ -225,7 +225,7 @@ func TestEnsureSessionStartupFacadeConfigProjectsGlobalAnthropicCredential(t *te
 	if !strings.HasPrefix(token.ProviderID, llms.DeclaredConnectionPrefix+session.Summary.ID+":"+llms.ProviderFamilyAnthropic+":") {
 		t.Fatalf("startup token provider = %q, want sandbox-scoped Anthropic connection", token.ProviderID)
 	}
-	if token.Model != "claude-global" || token.GuestModel != "claude-global" {
+	if token.Model != "claude-global" || token.GuestModel != "claude-global" || env["ANTHROPIC_MODEL"] != "claude-global" || env["CLAUDE_MODEL"] != "claude-global" {
 		t.Fatalf("global Anthropic startup token = %#v", token)
 	}
 }
