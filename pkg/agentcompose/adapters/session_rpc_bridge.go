@@ -317,7 +317,7 @@ func (b *SandboxRPCBridge) createSandboxWithAgent(ctx context.Context, req sandb
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	domain.RestoreSandboxTransientFields(loaded, session)
-	b.indexCapabilitySandbox(loaded)
+	b.indexCapabilitySandbox(ctx, loaded)
 	b.publishSandboxLifecycle(ctx, "agent-compose.session.created", loaded, source)
 	return loaded, nil
 }
@@ -348,7 +348,7 @@ func (b *SandboxRPCBridge) resumeSandbox(ctx context.Context, sandboxID, source 
 	if err != nil {
 		return nil, api.ConnectErrorForDomain(err)
 	}
-	b.indexCapabilitySandbox(loaded)
+	b.indexCapabilitySandbox(ctx, loaded)
 	b.publishSandboxLifecycle(ctx, "agent-compose.session.resumed", loaded, source)
 	return loaded, nil
 }
@@ -398,9 +398,12 @@ func (b *SandboxRPCBridge) stopSandboxWithOptions(ctx context.Context, sandboxID
 	return outcome, nil
 }
 
-func (b *SandboxRPCBridge) indexCapabilitySandbox(session *domain.Sandbox) {
+// indexCapabilitySandbox binds the sandbox to the trusted headers of the request
+// or scheduler run that created or resumed it. A caller without trusted headers
+// leaves the sandbox without an identity.
+func (b *SandboxRPCBridge) indexCapabilitySandbox(ctx context.Context, session *domain.Sandbox) {
 	if b != nil && b.capTokens != nil {
-		b.capTokens.IndexSandbox(session, nil)
+		b.capTokens.IndexSandbox(session, domain.TrustedHeadersFromContext(ctx))
 	}
 }
 
