@@ -134,41 +134,36 @@ func TestEnsureSessionStartupFacadeConfigSupportsLegacyProviderAliases(t *testin
 	}
 
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-startup-facades", Driver: driverpkg.RuntimeDriverDocker}}
-	env, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{
-		Config: config, Store: store, Session: session, Source: TokenSourceAgent,
+	claudeEnv, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{
+		Config: config, Store: store, Session: session, Agent: "claude", Source: TokenSourceAgent,
 	})
 	if err != nil {
 		t.Fatalf("EnsureSessionStartupFacadeConfig returned error: %v", err)
 	}
-	if env["ANTHROPIC_API_KEY"] == "" || env["ANTHROPIC_AUTH_TOKEN"] != env["ANTHROPIC_API_KEY"] || env["ANTHROPIC_BASE_URL"] == "" || env["ANTHROPIC_MODEL"] != "claude-model" || env["CLAUDE_MODEL"] != "claude-model" {
-		t.Fatalf("Anthropic startup environment = %#v", env)
+	if claudeEnv["ANTHROPIC_API_KEY"] == "" || claudeEnv["ANTHROPIC_AUTH_TOKEN"] != claudeEnv["ANTHROPIC_API_KEY"] || claudeEnv["ANTHROPIC_BASE_URL"] == "" || claudeEnv["ANTHROPIC_MODEL"] != "claude-model" || claudeEnv["CLAUDE_MODEL"] != "claude-model" {
+		t.Fatalf("Anthropic startup environment = %#v", claudeEnv)
 	}
-	if env["OPENAI_API_KEY"] == "" || env["OPENAI_BASE_URL"] == "" || env["CODEX_MODEL"] != "openai-model" || env["OPENAI_MODEL"] != "openai-model" {
-		t.Fatalf("OpenAI startup environment = %#v", env)
+	// The selected agent decides the family: a Claude agent has no use for an
+	// OpenAI alias, and minting one would cost a facade token no run can reach.
+	if claudeEnv["OPENAI_API_KEY"] != "" || claudeEnv["OPENAI_BASE_URL"] != "" || claudeEnv["CODEX_MODEL"] != "" || claudeEnv["OPENAI_MODEL"] != "" {
+		t.Fatalf("Claude startup environment exposed OpenAI aliases: %#v", claudeEnv)
 	}
-	if env["LLM_API_KEY"] != "" || env["AGENT_COMPOSE_SANDBOX_TOKEN"] != "" {
-		t.Fatalf("startup environment contains common facade variables = %#v", env)
+	if claudeEnv["LLM_API_KEY"] != "" || claudeEnv["AGENT_COMPOSE_SANDBOX_TOKEN"] != "" {
+		t.Fatalf("startup environment contains common facade variables = %#v", claudeEnv)
 	}
 	for _, secret := range []string{"anthropic-upstream-secret", "openai-upstream-secret"} {
-		for name, value := range env {
+		for name, value := range claudeEnv {
 			if strings.Contains(value, secret) {
 				t.Fatalf("startup env[%s] leaked upstream credential", name)
 			}
 		}
 	}
-	anthropicToken, err := store.GetLLMFacadeToken(ctx, env["ANTHROPIC_API_KEY"])
+	anthropicToken, err := store.GetLLMFacadeToken(ctx, claudeEnv["ANTHROPIC_API_KEY"])
 	if err != nil {
 		t.Fatalf("load Anthropic startup token: %v", err)
 	}
 	if anthropicToken.ProviderID != "anthropic-primary" || anthropicToken.WireAPI != llms.APIProtocolMessages {
 		t.Fatalf("Anthropic startup token = %#v", anthropicToken)
-	}
-	openAIToken, err := store.GetLLMFacadeToken(ctx, env["OPENAI_API_KEY"])
-	if err != nil {
-		t.Fatalf("load OpenAI startup token: %v", err)
-	}
-	if openAIToken.ProviderID != "openai-primary" || openAIToken.WireAPI != "" {
-		t.Fatalf("OpenAI startup token = %#v", openAIToken)
 	}
 
 	codexEnv, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{
@@ -177,15 +172,21 @@ func TestEnsureSessionStartupFacadeConfigSupportsLegacyProviderAliases(t *testin
 	if err != nil {
 		t.Fatalf("EnsureSessionStartupFacadeConfig codex returned error: %v", err)
 	}
+	if codexEnv["OPENAI_API_KEY"] == "" || codexEnv["OPENAI_BASE_URL"] == "" || codexEnv["CODEX_MODEL"] != "openai-model" || codexEnv["OPENAI_MODEL"] != "openai-model" {
+		t.Fatalf("OpenAI startup environment = %#v", codexEnv)
+	}
 	if codexEnv["ANTHROPIC_API_KEY"] != "" || codexEnv["ANTHROPIC_BASE_URL"] != "" {
 		t.Fatalf("Codex startup environment exposed Anthropic aliases: %#v", codexEnv)
 	}
-	codexToken, err := store.GetLLMFacadeToken(ctx, codexEnv["OPENAI_API_KEY"])
+	openAIToken, err := store.GetLLMFacadeToken(ctx, codexEnv["OPENAI_API_KEY"])
 	if err != nil {
-		t.Fatalf("load Codex startup token: %v", err)
+		t.Fatalf("load OpenAI startup token: %v", err)
 	}
-	if codexToken.Model != "openai-model" || codexToken.GuestModel != "openai-model" {
-		t.Fatalf("Codex startup token = %#v", codexToken)
+	if openAIToken.ProviderID != "openai-primary" || openAIToken.WireAPI != "" {
+		t.Fatalf("OpenAI startup token = %#v", openAIToken)
+	}
+	if openAIToken.Model != "openai-model" || openAIToken.GuestModel != "openai-model" {
+		t.Fatalf("Codex startup token = %#v", openAIToken)
 	}
 }
 
@@ -655,5 +656,62 @@ func TestEnsureSessionAgentRuntimeConfigChoosesBetweenEquivalentConnections(t *t
 	}
 	if token.ProviderID != "gateway" && token.ProviderID != "backup" {
 		t.Fatalf("token provider = %q, want one of the equivalent connections", token.ProviderID)
+	}
+}
+
+// The startup compatibility facade publishes provider aliases before the
+// managed environment, so the managed environment decides the value of every
+// name the two share. A name the managed environment does not define keeps the
+// startup facade's value, and that value can name a model the delivered token
+// does not authorize — the guest then reads a model the facade rejects.
+//
+// A dialect that serves a provider family directly must therefore publish every
+// name the startup facade can publish for that family. dsh and pi are
+// deliberately not in that set: they address models through the generic LLM_*
+// contract, so their provider aliases survive and stay self-consistent, with
+// the token, endpoint and model all coming from the same facade.
+func TestManagedEnvironmentCoversStartupCompatibilityAliases(t *testing.T) {
+	for _, agent := range []string{"codex", "claude", "opencode"} {
+		t.Run(agent, func(t *testing.T) {
+			isolateLLMEnv(t)
+
+			ctx := context.Background()
+			root := t.TempDir()
+			config, store := commandFacadeTestStore(t, ctx, root)
+			seedCommandFacadeProviders(t, ctx, store)
+			// A daemon model the catalog does not resolve: the startup facade
+			// prefers it while the managed environment resolves the catalog, so
+			// a startup alias left in place would carry a different model.
+			config.LLMModel = "legacy-model"
+			session := &domain.Sandbox{Summary: domain.SandboxSummary{
+				ID:            "sandbox-alias-coverage-" + agent,
+				Driver:        driverpkg.RuntimeDriverDocker,
+				WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-alias-coverage-"+agent, "workspace"),
+			}}
+			request := SessionFacadeConfigRequest{
+				Config: config, Store: store, Session: session, Agent: agent, Source: TokenSourceAgent,
+			}
+
+			startupEnv, err := EnsureSessionStartupFacadeConfig(ctx, request)
+			if err != nil {
+				t.Fatalf("EnsureSessionStartupFacadeConfig returned error: %v", err)
+			}
+			if len(startupEnv) == 0 {
+				t.Fatalf("startup facade published no aliases for %s", agent)
+			}
+			managedEnv, err := EnsureSessionLLMFacadeConfig(ctx, request)
+			if err != nil {
+				t.Fatalf("EnsureSessionLLMFacadeConfig returned error: %v", err)
+			}
+			if len(managedEnv) == 0 {
+				t.Fatalf("managed facade published no environment for %s", agent)
+			}
+			for name := range startupEnv {
+				if _, ok := managedEnv[name]; !ok {
+					t.Errorf("startup alias %s is not covered by the managed environment: startup=%q managed=%#v",
+						name, startupEnv[name], managedEnv)
+				}
+			}
+		})
 	}
 }

@@ -22,8 +22,16 @@ type globalEnvStore interface {
 // EnsureSessionStartupFacadeConfig restores the provider-specific startup
 // compatibility facade used by older guest images. New images use the common
 // LLM_* variables emitted by EnsureSessionAgentRuntimeConfig; older images
-// still need one provider-specific token and endpoint for each configured
-// provider family.
+// still need one provider-specific token and endpoint for the provider family
+// the selected agent addresses, which is derived from the agent, the declared
+// upstream or the connection the catalog would resolve.
+//
+// The returned variables are published before the managed environment, so the
+// selected agent's own configuration overwrites every name it writes. Only the
+// names an agent does not write survive, such as the provider aliases of an
+// agent like dsh that has no provider-specific contract: those are this
+// facade's whole purpose. A dialect writer that serves the same family must
+// therefore write the same model names — see llms.ProviderModelEnvAliases.
 func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConfigRequest) (map[string]string, error) {
 	if req.Config == nil || req.Store == nil || req.Session == nil {
 		return nil, nil
@@ -41,17 +49,23 @@ func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConf
 		}
 		providerEnv = domain.MergeEnvItems(items, providerEnv)
 	}
-	if err := ensureDeclaredStartupProviders(ctx, req.Store, req.Session.Summary.ID, providerEnv); err != nil {
+	// The families are resolved before the declared connections are imported, so
+	// only the family the selected agent can use is imported: a credential from
+	// an unselected family leaves a daemon-held secret no run can reach. It also
+	// keeps the two resolutions consistent, because a family this facade derives
+	// from the catalog now sees the same catalog the managed path sees, rather
+	// than one that a connection imported in this call has already extended.
+	families, err := startupFamilies(ctx, req, providerEnv)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureDeclaredStartupProviders(ctx, req.Store, req, providerEnv, families); err != nil {
 		return nil, err
 	}
 
 	providers, err := req.Store.ListEnabledLLMProviders(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list startup facade providers: %w", err)
-	}
-	families, err := startupFamilies(ctx, req, providerEnv)
-	if err != nil {
-		return nil, err
 	}
 	env := make(map[string]string)
 	for _, family := range families {
@@ -92,13 +106,12 @@ func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConf
 			env["ANTHROPIC_API_KEY"] = rawToken
 			env["ANTHROPIC_AUTH_TOKEN"] = rawToken
 			env["ANTHROPIC_BASE_URL"] = baseURL + "/api/runtime/sandboxes/" + req.Session.Summary.ID + "/llm/anthropic"
-			env["ANTHROPIC_MODEL"] = model
-			env["CLAUDE_MODEL"] = model
 		} else {
 			env["OPENAI_API_KEY"] = rawToken
 			env["OPENAI_BASE_URL"] = baseURL + "/api/runtime/sandboxes/" + req.Session.Summary.ID + "/llm/openai/v1"
-			env["CODEX_MODEL"] = model
-			env["OPENAI_MODEL"] = model
+		}
+		for name, value := range llms.ProviderModelEnvAliases(family, model) {
+			env[name] = value
 		}
 	}
 	if len(env) == 0 {
@@ -108,13 +121,12 @@ func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConf
 }
 
 // startupFamilies limits compatibility aliases to the family the selected
-// agent can actually use. The empty-agent case is retained for old callers
-// that use this helper only to project persisted provider aliases; production
-// sandbox and command paths always pass the selected agent.
+// agent can actually use. Every caller names the agent: a sandbox start, a
+// release resume, a run and a scheduler command all resolve the selected agent
+// before preparing the facade. An agent with no dialect gets no compatibility
+// aliases at all, rather than one family's aliases that no selected agent can
+// use and that would cost a facade token per family.
 func startupFamilies(ctx context.Context, req SessionFacadeConfigRequest, providerEnv []domain.SandboxEnvVar) ([]string, error) {
-	if strings.TrimSpace(req.Agent) == "" {
-		return []string{llms.ProviderFamilyAnthropic, llms.ProviderFamilyOpenAI}, nil
-	}
 	dialect, err := llms.DialectFor(req.Agent)
 	if err != nil {
 		if errors.Is(err, llms.ErrUnsupportedAgentDialect) {
@@ -242,8 +254,16 @@ func startupProvider(providers []llms.Provider, sandboxID, family string) (llms.
 // the sandbox/global environment into daemon-owned connections. This keeps
 // compatibility aliases useful even when the only credential came from the
 // persisted global environment rather than the catalog.
-func ensureDeclaredStartupProviders(ctx context.Context, store FacadeStore, sandboxID string, env []domain.SandboxEnvVar) error {
-	for _, family := range []string{llms.ProviderFamilyAnthropic, llms.ProviderFamilyOpenAI} {
+//
+// Only the families the selected agent can use are imported, and a declaration
+// that names no model is skipped. The second rule mirrors
+// llms.PrepareAgentLLM, which refuses the same declaration for the same reason:
+// without a model the credential cannot serve a request, so importing it would
+// only leave a managed secret no run can use. The request model counts as a
+// name, because that is what llms.PrepareAgentLLM passes.
+func ensureDeclaredStartupProviders(ctx context.Context, store FacadeStore, req SessionFacadeConfigRequest, providerEnv []domain.SandboxEnvVar, families []string) error {
+	sandboxID := req.Session.Summary.ID
+	for _, family := range families {
 		kind := "codex"
 		if family == llms.ProviderFamilyAnthropic {
 			kind = "claude"
@@ -252,12 +272,12 @@ func ensureDeclaredStartupProviders(ctx context.Context, store FacadeStore, sand
 		if err != nil {
 			return err
 		}
-		filtered := startupFamilyEnv(env, family)
+		filtered := startupFamilyEnv(providerEnv, family)
 		if len(filtered) == 0 {
 			continue
 		}
-		declared, ok := llms.DeclaredUpstreamFromAgentEnv(sandboxID, filtered, dialect, "")
-		if !ok {
+		declared, ok := llms.DeclaredUpstreamFromAgentEnv(sandboxID, filtered, dialect, req.Model)
+		if !ok || strings.TrimSpace(declared.Model) == "" {
 			continue
 		}
 		if err := store.UpsertDeclaredConnection(ctx, declared.Provider); err != nil {

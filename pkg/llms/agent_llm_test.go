@@ -154,9 +154,13 @@ func TestPrepareAgentLLMDialectGuestConfig(t *testing.T) {
 				"LLM_API_PROTOCOL":            string(ProtocolResponses),
 				"LLM_MODEL":                   "gpt-5.5",
 				"CODEX_MODEL":                 "gpt-5.5",
-				GuestModelEnvName:             "gpt-5.5",
-				"OPENAI_API_KEY":              facadeTokenPlaceholder,
-				"OPENAI_BASE_URL":             openAIEndpoint,
+				// The startup compatibility facade can publish this model under
+				// either OpenAI name, so the managed environment writes both and
+				// stays authoritative for the alias.
+				"OPENAI_MODEL":    "gpt-5.5",
+				GuestModelEnvName: "gpt-5.5",
+				"OPENAI_API_KEY":  facadeTokenPlaceholder,
+				"OPENAI_BASE_URL": openAIEndpoint,
 			},
 			checkFile: func(t *testing.T, root string) {
 				t.Helper()
@@ -203,8 +207,12 @@ func TestPrepareAgentLLMDialectGuestConfig(t *testing.T) {
 				"LLM_MODEL":                   "agent-compose/gpt-5.5",
 				"OPENCODE_MODEL":              "agent-compose/gpt-5.5",
 				GuestModelEnvName:             "agent-compose/gpt-5.5",
-				"OPENAI_API_KEY":              facadeTokenPlaceholder,
-				"OPENAI_BASE_URL":             openAIEndpoint,
+				// Same OpenAI alias pair as codex: the startup compatibility
+				// facade publishes the literal model under either name.
+				"CODEX_MODEL":     "gpt-5.5",
+				"OPENAI_MODEL":    "gpt-5.5",
+				"OPENAI_API_KEY":  facadeTokenPlaceholder,
+				"OPENAI_BASE_URL": openAIEndpoint,
 			},
 			checkFile: func(t *testing.T, root string) {
 				t.Helper()

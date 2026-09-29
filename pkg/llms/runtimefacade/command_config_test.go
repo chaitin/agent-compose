@@ -58,7 +58,7 @@ func TestEnsureSessionCommandFacadeConfigConfiguresSelectedAgentAndLegacyAliases
 	}
 }
 
-func TestEnsureSessionCommandFacadeConfigReturnsStartupTokensForUnmanagedAgent(t *testing.T) {
+func TestEnsureSessionCommandFacadeConfigMintsNoStartupTokenForUnmanagedAgent(t *testing.T) {
 	isolateLLMEnv(t)
 
 	ctx := context.Background()
@@ -95,6 +95,12 @@ func TestEnsureSessionCommandFacadeConfigReturnsStartupTokensForUnmanagedAgent(t
 	if got := countCommandFacadeTokens(t, ctx, store, "run-unmanaged"); got != 0 {
 		t.Fatalf("persisted startup facade tokens = %d, want 0", got)
 	}
+	// The declaration names no model, so no run can use the credential it
+	// carries. Importing it would keep a daemon-held secret that
+	// llms.PrepareAgentLLM deliberately refuses to persist.
+	if got := countDeclaredConnections(t, ctx, store, session.Summary.ID); got != 0 {
+		t.Fatalf("declared connections imported for a model-less declaration = %d, want 0", got)
+	}
 	for _, hash := range result.TokenHashes {
 		if err := store.DeleteLLMFacadeTokenHash(ctx, hash); err != nil {
 			t.Fatalf("delete returned startup token: %v", err)
@@ -103,6 +109,72 @@ func TestEnsureSessionCommandFacadeConfigReturnsStartupTokensForUnmanagedAgent(t
 	if got := countCommandFacadeTokens(t, ctx, store, "run-unmanaged"); got != 0 {
 		t.Fatalf("startup facade tokens after owner cleanup = %d, want 0", got)
 	}
+}
+
+// A declaration from a family the selected agent cannot use must not become a
+// daemon connection. The facade mints no token for that family, so importing it
+// only stores a credential nothing can reach — and scope=declared rows are
+// dropped again on the next preparation or sandbox revoke, which is the wrong
+// lifetime for a credential an operator declared.
+func TestEnsureSessionCommandFacadeConfigImportsOnlySelectedFamilyDeclarations(t *testing.T) {
+	tests := []struct {
+		name         string
+		agent        string
+		wantDeclared int
+		wantAlias    string
+	}{
+		{name: "unselected family stays out of the daemon", agent: "codex", wantDeclared: 0},
+		{name: "selected family is imported", agent: "claude", wantDeclared: 1, wantAlias: "ANTHROPIC_MODEL"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isolateLLMEnv(t)
+
+			ctx := context.Background()
+			root := t.TempDir()
+			config, store := commandFacadeTestStore(t, ctx, root)
+			seedCommandFacadeProviders(t, ctx, store)
+			session := &domain.Sandbox{Summary: domain.SandboxSummary{
+				ID:            "sandbox-command-family-" + tt.agent,
+				Driver:        driverpkg.RuntimeDriverDocker,
+				WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-command-family-"+tt.agent, "workspace"),
+			}}
+
+			result, err := EnsureSessionCommandFacadeConfig(ctx, CommandFacadeConfigRequest{
+				Config: config, Store: store, Session: session, Agent: tt.agent, Model: "",
+				AgentEnv: []domain.SandboxEnvVar{
+					{Name: "ANTHROPIC_API_KEY", Value: "declared-anthropic-key", Secret: true},
+					{Name: "ANTHROPIC_BASE_URL", Value: "https://anthropic.request.test"},
+					{Name: "ANTHROPIC_MODEL", Value: "claude-declared"},
+				},
+				Source: TokenSourceSchedulerCommand, RunID: "run-family-" + tt.agent,
+			})
+			if err != nil {
+				t.Fatalf("EnsureSessionCommandFacadeConfig returned error: %v", err)
+			}
+			if got := countDeclaredConnections(t, ctx, store, session.Summary.ID); got != tt.wantDeclared {
+				t.Fatalf("declared connections for a %s command = %d, want %d", tt.agent, got, tt.wantDeclared)
+			}
+			if tt.wantAlias != "" && result.Env[tt.wantAlias] == "" {
+				t.Fatalf("command environment = %#v, want %s", result.Env, tt.wantAlias)
+			}
+			for name, value := range result.Env {
+				if strings.Contains(value, "declared-anthropic-key") {
+					t.Fatalf("command env[%s] carries the declared key", name)
+				}
+			}
+		})
+	}
+}
+
+func countDeclaredConnections(t *testing.T, ctx context.Context, store *configstore.ConfigStore, sandboxID string) int {
+	t.Helper()
+	var count int
+	if err := store.DB().QueryRowContext(ctx, `SELECT COUNT(1) FROM llm_provider WHERE id LIKE ?`,
+		llms.DeclaredConnectionPrefix+sandboxID+":%").Scan(&count); err != nil {
+		t.Fatalf("count declared connections for sandbox %s: %v", sandboxID, err)
+	}
+	return count
 }
 
 func TestEnsureSessionCommandFacadeConfigProxiesADeclaredUpstream(t *testing.T) {

@@ -19,6 +19,28 @@ const RuntimeBaseURLEnvName = "AGENT_COMPOSE_RUNTIME_BASE_URL"
 // facade token disagree, which the agent reports as a hung or failed model call.
 const GuestModelEnvName = "AGENT_COMPOSE_RESOLVED_MODEL"
 
+// ProviderModelEnvAliases returns the provider-specific model variables that
+// name model for one provider family.
+//
+// They are compatibility names: an older guest image that predates the generic
+// LLM_* facade reads one of them instead. Two writers publish them — the
+// startup compatibility facade, which serves an image whose selected agent the
+// daemon cannot manage, and the dialect writer of an agent that addresses the
+// family directly. Both call this function so the two name sets cannot drift:
+// the managed environment is applied last, and a name only the startup facade
+// writes would keep the startup facade's model, which the delivered token does
+// not authorize.
+func ProviderModelEnvAliases(family, model string) map[string]string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	if NormalizeProviderType(family) == ProviderFamilyAnthropic {
+		return map[string]string{"ANTHROPIC_MODEL": model, "CLAUDE_MODEL": model}
+	}
+	return map[string]string{"CODEX_MODEL": model, "OPENAI_MODEL": model}
+}
+
 // EnvItemValue returns the value of one environment item, matched
 // case-insensitively and trimmed, or "" when the item is absent.
 func EnvItemValue(items []domain.SandboxEnvVar, key string) string {

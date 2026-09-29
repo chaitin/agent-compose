@@ -95,8 +95,10 @@ func writeCodexGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox, pr
 	}
 	env := guestCredentialEnv(prepared)
 	env["LLM_MODEL"] = prepared.Model
-	env["CODEX_MODEL"] = prepared.Model
 	env[GuestModelEnvName] = prepared.Model
+	for name, value := range ProviderModelEnvAliases(ProviderFamilyOpenAI, prepared.Model) {
+		env[name] = value
+	}
 	env["OPENAI_API_KEY"] = prepared.Credential
 	env["OPENAI_BASE_URL"] = prepared.Endpoint
 	return env, nil
@@ -109,8 +111,9 @@ func writeClaudeGuestConfig(_ *appconfig.Config, sandbox *domain.Sandbox, prepar
 	env["ANTHROPIC_API_KEY"] = prepared.Credential
 	env["ANTHROPIC_AUTH_TOKEN"] = prepared.Credential
 	env["ANTHROPIC_BASE_URL"] = prepared.Endpoint
-	env["ANTHROPIC_MODEL"] = prepared.Model
-	env["CLAUDE_MODEL"] = prepared.Model
+	for name, value := range ProviderModelEnvAliases(ProviderFamilyAnthropic, prepared.Model) {
+		env[name] = value
+	}
 	env[GuestModelEnvName] = prepared.Model
 	return env, nil
 }
@@ -131,6 +134,17 @@ func writeOpenCodeGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox,
 	env["LLM_MODEL"] = prepared.GuestModel
 	env["OPENCODE_MODEL"] = prepared.GuestModel
 	env[GuestModelEnvName] = prepared.GuestModel
+	// opencode addresses the same provider family as the startup compatibility
+	// facade publishes aliases for, so it must publish that family's model
+	// names too: whichever of the two writes them last decides the model the
+	// image sees, and only the managed token is authorized to serve it.
+	family := ProviderFamilyOpenAI
+	if prepared.Inbound == ProtocolMessages {
+		family = ProviderFamilyAnthropic
+	}
+	for name, value := range ProviderModelEnvAliases(family, prepared.Model) {
+		env[name] = value
+	}
 	if prepared.Inbound == ProtocolMessages {
 		env["ANTHROPIC_API_KEY"] = prepared.Credential
 		env["ANTHROPIC_AUTH_TOKEN"] = prepared.Credential
