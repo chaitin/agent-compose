@@ -40,7 +40,9 @@ func TestRuntimeLLMFacadeRoutesCoverageWorkflow(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer raw-token")
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden || client.calls != 1 || !strings.Contains(rec.Body.String(), "model mismatch") {
+	// A token names a connection rather than one model on it, so a model the
+	// token does not recognize is forwarded verbatim and the upstream decides.
+	if rec.Code != http.StatusOK || client.calls != 2 || !strings.Contains(client.requestBody, `"model":"other"`) {
 		t.Fatalf("alternate model status=%d body=%s calls=%d upstream_body=%s", rec.Code, rec.Body.String(), client.calls, client.requestBody)
 	}
 
@@ -89,9 +91,9 @@ func TestRuntimeLLMFacadeConnectionBoundTokenModelMapping(t *testing.T) {
 			wantModel:    literalModel,
 		},
 		{
-			name:         "unrelated model is rejected",
+			name:         "unrelated model is forwarded untouched",
 			requestModel: "other-vendor/model-x",
-			wantStatus:   http.StatusForbidden,
+			wantModel:    "other-vendor/model-x",
 		},
 	}
 	for _, tc := range tests {

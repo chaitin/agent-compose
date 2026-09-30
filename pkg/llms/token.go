@@ -52,16 +52,20 @@ func NewFacadeToken(req NewFacadeTokenRequest) (string, FacadeToken, error) {
 }
 
 // ResolveUpstreamModel maps the model a guest asked for to the model the
-// upstream knows, reporting ok=false when the token does not authorize it.
+// upstream knows, reporting ok=false only when the token names no upstream the
+// request could belong to.
 //
-// A connection-bound token already records both names, so the daemon resolves
-// this by exact string comparison and never parses a model reference. The guest
+// A token that names a connection authorizes that connection rather than one
+// model on it: a request that matches neither recorded name is forwarded
+// verbatim, and the upstream decides which models it serves. The daemon is a
+// weak caller by design — see the note on the Connections resolver in
+// pkg/agentcompose/app/app.go — and it never parses a model reference. The guest
 // addresses the model in whatever namespace its own configuration uses (pi and
 // opencode use <connection>/<model>), and a model id that itself contains a
 // slash survives because nothing is split.
 //
-// A connection-bound token without a model is invalid for proxying; it must not
-// become a capability for every model served by that connection.
+// Only a token with no connection keeps the legacy behaviour of pinning one
+// model, because there is no upstream for a request to belong to.
 func (t FacadeToken) ResolveUpstreamModel(requested string) (string, bool) {
 	requested = strings.TrimSpace(requested)
 	if guestModel := strings.TrimSpace(t.GuestModel); guestModel != "" && requested == guestModel {
@@ -69,13 +73,10 @@ func (t FacadeToken) ResolveUpstreamModel(requested string) (string, bool) {
 		return model, model != ""
 	}
 	pinned := strings.TrimSpace(t.Model)
-	if pinned != "" {
-		if requested == pinned {
-			return pinned, true
-		}
-		return "", false
+	if t.ProviderID == "" && pinned != "" {
+		return pinned, pinned == requested
 	}
-	return "", false
+	return requested, true
 }
 
 func HashFacadeToken(value string) (string, string) {

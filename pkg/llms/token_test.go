@@ -2,6 +2,15 @@ package llms
 
 import "testing"
 
+// TestFacadeTokenResolveUpstreamModel pins what a token authorizes.
+//
+// A token that names a connection authorizes that connection, not one model on
+// it: a request it does not recognize is forwarded verbatim and the upstream
+// decides. Only a token with no connection pins a single model, because there is
+// no upstream for a request to belong to. Narrowing the connection-bound case
+// rejects models the upstream serves — agents whose model comes from their own
+// configuration rather than from the daemon's resolution — so see the doc
+// comment on ResolveUpstreamModel before changing either branch.
 func TestFacadeTokenResolveUpstreamModel(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -18,11 +27,11 @@ func TestFacadeTokenResolveUpstreamModel(t *testing.T) {
 			wantOK:    true,
 		},
 		{
-			name:      "connection-bound token rejects a model it does not name",
+			name:      "connection-bound token forwards a model it does not name",
 			token:     FacadeToken{ProviderID: "baizhi", Model: "baizhi/deepseek-v4", GuestModel: "agent-compose/baizhi/deepseek-v4"},
 			requested: "baizhi/other-model",
-			wantModel: "",
-			wantOK:    false,
+			wantModel: "baizhi/other-model",
+			wantOK:    true,
 		},
 		{
 			name:      "connection-bound token without a guest model forwards verbatim",
@@ -46,25 +55,27 @@ func TestFacadeTokenResolveUpstreamModel(t *testing.T) {
 			wantOK:    true,
 		},
 		{
-			name:      "legacy pinned token rejects another model",
+			name:      "a token with no connection rejects another model, returning its pin",
 			token:     FacadeToken{Model: "gpt"},
 			requested: "other",
-			wantModel: "",
+			wantModel: "gpt",
 			wantOK:    false,
 		},
 		{
-			name:      "connection-bound token without a model is rejected",
+			name:      "token without a model forwards verbatim",
 			token:     FacadeToken{ProviderID: "baizhi"},
 			requested: "anything",
-			wantModel: "",
-			wantOK:    false,
+			wantModel: "anything",
+			wantOK:    true,
 		},
 		{
-			name:      "unbound token without a model is rejected",
+			// Forwarding here is not a capability: the proxy rejects a token
+			// with no connection immediately after this call.
+			name:      "token without a model or a connection forwards verbatim",
 			token:     FacadeToken{},
 			requested: "anything",
-			wantModel: "",
-			wantOK:    false,
+			wantModel: "anything",
+			wantOK:    true,
 		},
 	}
 	for _, tc := range tests {

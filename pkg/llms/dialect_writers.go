@@ -151,8 +151,10 @@ func writePiGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox, prepa
 	env[GuestModelEnvName] = prepared.GuestModel
 	// pi publishes the credential of the family it addresses, so it publishes
 	// that family's endpoint and model names as well. Leaving them to the
-	// startup compatibility facade pairs this run's token with the model the
-	// facade resolved, which the token does not authorize.
+	// startup compatibility facade would pair this run's credential with the
+	// model that facade resolved, so the guest would address a model this run
+	// never chose — a mismatch the facade forwards to the provider rather than
+	// catching.
 	family := ProviderFamilyOpenAI
 	if prepared.Inbound == ProtocolMessages {
 		family = ProviderFamilyAnthropic
