@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   push:
     branches:
       - main
@@ -101,12 +101,22 @@ jobs:
       # pkg/driver/k8s_runtime_test.go and friends) - without it, this step
       # silently ran zero of them.
       - run: go test -tags k8scompose ./cmd/... ./pkg/...
-      # A dedicated -race pass scoped to pkg/driver: the k8s driver hands
-      # remotecommand.StreamWithContext two writers (Stdout/Stderr) that its
-      # real SPDY executor fills from two concurrent goroutines, unlike the
-      # sequential fake used above - see TestK8sExecConcurrentStdoutStderrRace.
-      # Scoped rather than -race on the whole matrix above to keep this fast.
-      - run: go test -tags k8scompose -race ./pkg/driver/...
+
+  driver-race:
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:full'))
+    name: Driver race tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run driver race tests
+        # The k8s driver hands remotecommand.StreamWithContext two writers
+        # that its real SPDY executor fills concurrently. Keep this expensive
+        # pass in Full CI instead of repeating it for every PR commit.
+        run: go test -tags k8scompose -race ./pkg/driver/...
 
   installer-build:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -153,7 +163,7 @@ jobs:
           go test -race ./...
 
   coverage:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:full'))
     name: Coverage gate
     runs-on: ubuntu-latest
     steps:
@@ -182,6 +192,30 @@ jobs:
         run: ./scripts/tests/test-coverage-contract.sh
       - name: Run coverage thresholds
         run: ./scripts/test-coverage.sh
+
+  full-validation:
+    if: always()
+    name: Full PR validation
+    needs:
+      - coverage
+      - driver-race
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require Full CI when requested
+        env:
+          FULL_REQUESTED: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+          DRIVER_RACE_RESULT: ${{ needs.driver-race.result }}
+        run: |
+          if [[ "$FULL_REQUESTED" != "true" ]]; then
+            echo "Full CI was not requested; add the ci:full label when the PR is ready for complete validation."
+            exit 0
+          fi
+          if [[ "$COVERAGE_RESULT" != "success" || "$DRIVER_RACE_RESULT" != "success" ]]; then
+            echo "Full CI failed: coverage=$COVERAGE_RESULT driver-race=$DRIVER_RACE_RESULT" >&2
+            exit 1
+          fi
+          echo "Full CI completed successfully."
 
   runtime-sdk:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
