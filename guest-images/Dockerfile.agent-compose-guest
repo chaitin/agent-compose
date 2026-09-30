@@ -19,7 +19,9 @@ ARG PI_MCP_ADAPTER_VERSION=2.11.0
 # imports the entries: a runner whose injected services are missing still renders
 # its Config schema there and would pass. A real boot activates the runner only
 # once those services resolve, and an activated runner creates a session, which
-# is what the smoke asserts.
+# is what the smoke asserts. The boot's `|| true` stays scoped inside its own
+# `{ ...; }` group: a trailing `|| true` on the `&&` chain would swallow a failure
+# from any earlier step and misreport it as an inactive runner.
 ARG DSH_VERSION=0.2.0-rc.1
 
 FROM ${REGISTRY_MIRROR}/library/golang:${GO_VERSION}-alpine AS grpcurl-builder
@@ -120,13 +122,14 @@ RUN cd /tmp/agent-compose-runtime && \
     HOME=/root dsh --profile agent-compose --dump-config-schema > /dev/null && \
     printf 'profile smoke\n' > /tmp/dsh-profile-smoke-prompt.txt && \
     mkdir -p /tmp/dsh-profile-smoke-sessions && \
-    HOME=/root DSH_PROMPT_FILE=/tmp/dsh-profile-smoke-prompt.txt \
+    { HOME=/root DSH_PROMPT_FILE=/tmp/dsh-profile-smoke-prompt.txt \
       DSH_SESSION_ROOT=/tmp/dsh-profile-smoke-sessions DSH_SESSION_ID=profile-smoke \
       DSH_MODEL=profile-smoke LLM_API_ENDPOINT=http://127.0.0.1:1/v1 LLM_API_KEY=profile-smoke \
       DSH_WIRE_API=openai-completions \
-      timeout 60 dsh --profile agent-compose > /dev/null 2> /tmp/dsh-profile-smoke.err || true; \
-    test -n "$(find /tmp/dsh-profile-smoke-sessions -mindepth 1 -print -quit)" || \
-      { echo 'STATUS profile smoke: agent-compose-runner did not activate'; cat /tmp/dsh-profile-smoke.err; exit 1; }; \
+      timeout 60 dsh --profile agent-compose > /dev/null 2> /tmp/dsh-profile-smoke.err || true; } && \
+    if [ -z "$(find /tmp/dsh-profile-smoke-sessions -mindepth 1 -print -quit)" ]; then \
+      echo 'STATUS profile smoke: agent-compose-runner did not activate'; cat /tmp/dsh-profile-smoke.err; exit 1; \
+    fi && \
     rm -rf /tmp/dsh-profile-smoke-sessions /tmp/dsh-profile-smoke-prompt.txt /tmp/dsh-profile-smoke.err
 
 RUN mkdir -p /opt/agent-compose/npm && \
