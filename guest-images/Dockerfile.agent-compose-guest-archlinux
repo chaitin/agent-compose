@@ -141,8 +141,10 @@ RUN cd /tmp/agent-compose-runtime && \
     dsh --version && \
     HOME=/root dsh --profile agent-compose --dump-config-schema > /dev/null && \
     printf 'profile smoke\n' > /tmp/dsh-profile-smoke-prompt.txt && \
+    printf 'profile smoke context\n' > /tmp/dsh-profile-smoke-context.txt && \
     mkdir -p /tmp/dsh-profile-smoke-sessions && \
     { HOME=/root DSH_PROMPT_FILE=/tmp/dsh-profile-smoke-prompt.txt \
+      DSH_SYSTEM_CONTEXT_FILE=/tmp/dsh-profile-smoke-context.txt \
       DSH_SESSION_ROOT=/tmp/dsh-profile-smoke-sessions DSH_SESSION_ID=profile-smoke \
       DSH_MODEL=profile-smoke LLM_API_ENDPOINT=http://127.0.0.1:1/v1 LLM_API_KEY=profile-smoke \
       DSH_WIRE_API=openai-completions \
@@ -150,7 +152,10 @@ RUN cd /tmp/agent-compose-runtime && \
     if [ -z "$(find /tmp/dsh-profile-smoke-sessions -mindepth 1 -print -quit)" ]; then \
       echo 'STATUS profile smoke: agent-compose-runner did not activate'; cat /tmp/dsh-profile-smoke.err; exit 1; \
     fi && \
-    rm -rf /tmp/dsh-profile-smoke-sessions /tmp/dsh-profile-smoke-prompt.txt /tmp/dsh-profile-smoke.err && \
+    if grep -q '^agent-compose-runner:' /tmp/dsh-profile-smoke.err; then \
+      echo 'STATUS profile smoke: agent-compose-runner failed after activation'; cat /tmp/dsh-profile-smoke.err; exit 1; \
+    fi && \
+    rm -rf /tmp/dsh-profile-smoke-sessions /tmp/dsh-profile-smoke-prompt.txt /tmp/dsh-profile-smoke-context.txt /tmp/dsh-profile-smoke.err && \
     rm -rf /tmp/agent-compose-runtime
 
 RUN mkdir -p /opt/agent-compose/npm && \

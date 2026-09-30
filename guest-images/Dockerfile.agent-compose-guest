@@ -19,7 +19,12 @@ ARG PI_MCP_ADAPTER_VERSION=2.11.0
 # imports the entries: a runner whose injected services are missing still renders
 # its Config schema there and would pass. A real boot activates the runner only
 # once those services resolve, and an activated runner creates a session, which
-# is what the smoke asserts. The boot's `|| true` stays scoped inside its own
+# is what the smoke asserts. The boot passes DSH_SYSTEM_CONTEXT_FILE because the
+# runner returns early from injectPersona without it, which would leave the
+# persona-prefix calls this image is pinned for unexecuted; and since the session
+# is created before injectPersona runs, the session check alone cannot see a
+# failure there, so the boot also asserts the runner logged no error of its own.
+# The boot's `|| true` stays scoped inside its own
 # `{ ...; }` group: a trailing `|| true` on the `&&` chain would swallow a failure
 # from any earlier step and misreport it as an inactive runner.
 ARG DSH_VERSION=0.2.0-rc.1
@@ -121,8 +126,10 @@ RUN cd /tmp/agent-compose-runtime && \
     dsh --version && \
     HOME=/root dsh --profile agent-compose --dump-config-schema > /dev/null && \
     printf 'profile smoke\n' > /tmp/dsh-profile-smoke-prompt.txt && \
+    printf 'profile smoke context\n' > /tmp/dsh-profile-smoke-context.txt && \
     mkdir -p /tmp/dsh-profile-smoke-sessions && \
     { HOME=/root DSH_PROMPT_FILE=/tmp/dsh-profile-smoke-prompt.txt \
+      DSH_SYSTEM_CONTEXT_FILE=/tmp/dsh-profile-smoke-context.txt \
       DSH_SESSION_ROOT=/tmp/dsh-profile-smoke-sessions DSH_SESSION_ID=profile-smoke \
       DSH_MODEL=profile-smoke LLM_API_ENDPOINT=http://127.0.0.1:1/v1 LLM_API_KEY=profile-smoke \
       DSH_WIRE_API=openai-completions \
@@ -130,7 +137,10 @@ RUN cd /tmp/agent-compose-runtime && \
     if [ -z "$(find /tmp/dsh-profile-smoke-sessions -mindepth 1 -print -quit)" ]; then \
       echo 'STATUS profile smoke: agent-compose-runner did not activate'; cat /tmp/dsh-profile-smoke.err; exit 1; \
     fi && \
-    rm -rf /tmp/dsh-profile-smoke-sessions /tmp/dsh-profile-smoke-prompt.txt /tmp/dsh-profile-smoke.err
+    if grep -q '^agent-compose-runner:' /tmp/dsh-profile-smoke.err; then \
+      echo 'STATUS profile smoke: agent-compose-runner failed after activation'; cat /tmp/dsh-profile-smoke.err; exit 1; \
+    fi && \
+    rm -rf /tmp/dsh-profile-smoke-sessions /tmp/dsh-profile-smoke-prompt.txt /tmp/dsh-profile-smoke-context.txt /tmp/dsh-profile-smoke.err
 
 RUN mkdir -p /opt/agent-compose/npm && \
     cd /tmp/agent-compose-runtime-sdk && \
