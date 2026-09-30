@@ -2,6 +2,15 @@ package llms
 
 import "testing"
 
+// TestFacadeTokenResolveUpstreamModel pins the asymmetry between a token that
+// records a model and one that does not.
+//
+// A token that records a model — every token the daemon mints for a run it
+// configures itself — is pinned to that model. A token that records none — only
+// the startup compatibility facade mints those — forwards verbatim, because the
+// image it serves decides which model to ask for and the daemon cannot predict
+// it. Widening the pinned case or narrowing the unbound one breaks a guarantee
+// the managed path depends on; see the doc comment on ResolveUpstreamModel.
 func TestFacadeTokenResolveUpstreamModel(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -53,18 +62,20 @@ func TestFacadeTokenResolveUpstreamModel(t *testing.T) {
 			wantOK:    false,
 		},
 		{
-			name:      "connection-bound token without a model is rejected",
+			name:      "token without a model forwards verbatim",
 			token:     FacadeToken{ProviderID: "baizhi"},
 			requested: "anything",
-			wantModel: "",
-			wantOK:    false,
+			wantModel: "anything",
+			wantOK:    true,
 		},
 		{
-			name:      "unbound token without a model is rejected",
+			// Forwarding here is not a capability: the proxy rejects a token
+			// with no connection immediately after this call.
+			name:      "token without a model or a connection forwards verbatim",
 			token:     FacadeToken{},
 			requested: "anything",
-			wantModel: "",
-			wantOK:    false,
+			wantModel: "anything",
+			wantOK:    true,
 		},
 	}
 	for _, tc := range tests {

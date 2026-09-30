@@ -281,16 +281,29 @@ leaves the startup compatibility facade's set intact.
 
 Older images that predate the generic `LLM_*` contract are served by the
 provider-specific names. `ANTHROPIC_MODEL` and `CLAUDE_MODEL` are one pair;
-`CODEX_MODEL` and `OPENAI_MODEL` are another. The daemon publishes the pair of
-the provider family the selected agent addresses, from the catalog default, the
-declared upstream, or a provider credential in the sandbox or global
-environment.
+`CODEX_MODEL` and `OPENAI_MODEL` are another. The daemon publishes **both pairs**,
+each from an enabled provider plus the catalog default, the declared upstream, or
+a provider credential in the sandbox or global environment. Which family an image
+reads is a property of its entrypoint, not of the agent the daemon selected: a
+sandbox whose agent is codex can run an image whose entrypoint reads
+`ANTHROPIC_API_KEY`, and publishing only the selected agent's family leaves that
+image without the variables it needs to start. A family is skipped only when it
+has no enabled provider or no model to publish.
 
-A model name in any of these variables is the model the delivered token
-authorizes, and the facade rejects a request for any other model with 403. An
-image **MUST** send the model it was given, or the resolved reference, rather
-than a model name built into the image: the token is bound to one model, and a
-name the token does not record is refused instead of forwarded.
+The two pairs are not equivalent to the guest. The family the selected agent
+addresses is also written by that agent's own configuration, which replaces the
+startup compatibility facade's names for it and pins them to the model this run
+resolved to: the facade rejects a request for any other model with 403, so an
+image reading that family **MUST** send the model it was given, or the resolved
+reference, rather than a model name built into the image.
+
+The other family has no such owner. It is published so an image whose entrypoint
+reads only that family still starts, and its token deliberately records no model:
+the daemon does not configure that image and cannot predict which model its
+entrypoint will ask for. A request on that token is forwarded to the connection
+the token names, and **that connection decides which models it serves**, rather
+than the facade. Do not build an image that depends on the 403 for a family it
+does not itself address.
 
 ## 5. Optional Capability Requirements
 

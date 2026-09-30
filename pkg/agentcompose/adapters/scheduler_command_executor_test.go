@@ -176,7 +176,7 @@ func TestSchedulerCommandExecutorRebuildsAndOwnsCommandFacadeTokens(t *testing.T
 		wantTokenExists bool
 	}{
 		{name: "normal completion cleans every command token"},
-		{name: "unconfirmed termination retains every command token", runtimeErr: domain.ErrExecTerminationUnconfirmed, wantTokenCount: 2, wantTokenExists: true},
+		{name: "unconfirmed termination retains every command token", runtimeErr: domain.ErrExecTerminationUnconfirmed, wantTokenCount: 3, wantTokenExists: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -232,10 +232,15 @@ func TestSchedulerCommandExecutorRebuildsAndOwnsCommandFacadeTokens(t *testing.T
 				t.Fatal("runtime did not receive command Sandbox clone")
 			}
 			env := domain.SandboxEnvMap(runtime.session.RuntimeEnvItems)
-			// Startup compatibility is limited to the selected Codex family;
-			// the request's unrelated Anthropic values remain caller-owned.
-			if env["ANTHROPIC_API_KEY"] != "" || env["ANTHROPIC_BASE_URL"] != "" {
-				t.Fatalf("command exposed an unrelated Anthropic facade: %#v", env)
+			// The startup facade publishes both families, including the one this
+			// Codex command does not address, because the command's image decides
+			// which family it reads. The request's own Anthropic values stay
+			// caller-owned and never reach the guest as credentials.
+			if env["ANTHROPIC_API_KEY"] == "" || !strings.HasSuffix(env["ANTHROPIC_BASE_URL"], "/llm/anthropic") {
+				t.Fatalf("command is missing the Anthropic startup facade: %#v", env)
+			}
+			if env["ANTHROPIC_API_KEY"] == "request-upstream-anthropic-key" {
+				t.Fatalf("command exposed the request's Anthropic credential: %#v", env)
 			}
 			if env["OPENAI_API_KEY"] == "" || env["OPENAI_API_KEY"] != env["AGENT_COMPOSE_SANDBOX_TOKEN"] {
 				t.Fatalf("selected Codex facade environment = %#v", env)

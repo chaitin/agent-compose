@@ -199,9 +199,11 @@ daemon 托管 agent 的 LLM 连接时，会把这些 facade 变量发布到 sand
 
 被选中的 agent 还会带上自己 dialect 的变量名。codex、claude、opencode、pi 各自只面向一个 provider family，因此都会写全该家族的整套变量：OpenAI 家族为 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`CODEX_MODEL`、`OPENAI_MODEL`；Anthropic 家族为 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL`、`CLAUDE_MODEL`。只覆盖其中一部分的 dialect 会让其余变量保留启动兼容 facade 的值，从而把本次运行的 token 与它并未授权的模型凑在一起。此外 opencode 还有 `OPENCODE_CONFIG`、`OPENCODE_MODEL`，pi 还有 `PI_CODING_AGENT_DIR`；dsh 不写任何 provider 专属变量，启动兼容 facade 的整套值因此原样保留。
 
-早于通用 `LLM_*` 契约的旧镜像由 provider 专属变量名服务。`ANTHROPIC_MODEL` 与 `CLAUDE_MODEL` 是一对，`CODEX_MODEL` 与 `OPENAI_MODEL` 是另一对。daemon 只发布被选中 agent 所在 provider family 的那一对，取值来自 catalog 默认模型、声明的上游，或 sandbox / 全局环境里的 provider 凭据。
+早于通用 `LLM_*` 契约的旧镜像由 provider 专属变量名服务。`ANTHROPIC_MODEL` 与 `CLAUDE_MODEL` 是一对，`CODEX_MODEL` 与 `OPENAI_MODEL` 是另一对。daemon **两对都会发布**，取值来自已启用的 provider，外加 catalog 默认模型、声明的上游，或 sandbox / 全局环境里的 provider 凭据。镜像读哪个家族取决于它自己的 entrypoint，而不是 daemon 选中的 agent：agent 是 codex 的 sandbox 完全可能跑一个读 `ANTHROPIC_API_KEY` 的镜像，只发布被选中 agent 的家族会让这种镜像拿不到启动所需的变量。只有当某个家族没有已启用的 provider、或没有可发布的模型时才会跳过它。
 
-这些变量里的模型名就是已下发 token 授权的模型；facade 对任何其他模型的请求返回 403。镜像**必须**使用被下发的模型或已解析的引用，而不是镜像内置的模型名：token 只绑定一个模型，token 未记录的模型名会被拒绝，而不是被原样转发。
+这两对变量对 guest 而言并不等价。被选中 agent 所在家族还会被该 agent 自己的配置写入，从而覆盖启动兼容 facade 为该家族写的名字，并把它们钉死为本次运行解析出的模型：facade 对任何其他模型的请求返回 403，因此读这个家族的镜像**必须**使用被下发的模型或已解析的引用，而不是镜像内置的模型名。
+
+另一个家族没有这样的归属者。它存在的意义是让只读该家族的镜像也能启动，其 token **故意不记录模型**：daemon 并不配置那个镜像，无从预知它的 entrypoint 会要哪个模型。用该 token 发起的请求会被原样转发给 token 记录的连接，**由该连接决定自己服务哪些模型**，而不是由 facade 决定。不要构建依赖该 403 行为的镜像。
 
 ## 5. 可选能力要求
 

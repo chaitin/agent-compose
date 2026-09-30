@@ -340,18 +340,24 @@ convert(inbound, conn.Protocol)
 没有 per-request resolution、没有 provider family 偏好、代理也不会查询 catalog 去判断
 "这个模型是否可用"。
 
-但 token 是 **model-bound** 的：`Model` 与 `GuestModel` 都是字面字符串，
+但 token 通常是 **model-bound** 的：`Model` 与 `GuestModel` 都是字面字符串，
 `ResolveUpstreamModel` 只做精确相等比较（不切分，含 `/` 的字面 model 因此完好）：
 
 | 请求里的 model | 结果 |
 | --- | --- |
 | `token.GuestModel`（guest 自己配置里的拼写，pi/opencode 为 `<connection>/<model>`） | 换成字面 `token.Model` |
 | `token.Model` 本身 | 原样通过 |
-| 其他任何值 | `ok=false` → 403 `llm facade token model mismatch` |
-| `token.Model` 为空（连接模式下的非法 token） | `ok=false`，不构成"该连接下所有模型"的能力 |
+| 其他任何值（`token.Model` 非空） | `ok=false` → 403 `llm facade token model mismatch` |
+| `token.Model` 为空 | 原样转发，由 token 记录的连接决定它服务哪些模型 |
 
 所以"模型不透明"指的是 daemon 不解析 model 引用，而不是"任何 model 都原样转发"：一次运行
 只能使用 token 记下的那个模型。校验在 `7e91d6a3` 收紧（此前是原样转发，见 M3）。
+
+最后一行是 `893bcca4` 之后**有限放开**的例外，只有一个签点会走到它：启动兼容 facade
+（`runtimefacade/startup_config.go`）刻意不把模型写进 token。它服务的是 daemon 不配置的旧镜像，
+无从预知镜像 entrypoint 会发什么模型名，只能原样转发；`PrepareAgentLLM` 这条托管路径始终绑定
+模型，因此托管运行不受影响。再次收紧时不要把这一行一起收掉，否则只读某个 provider family 的
+旧镜像会因为 403 而无法启动。
 
 ### 3.7 转换矩阵：一条规则
 
@@ -596,6 +602,10 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   mismatch`，见 §3.6。这是一次不兼容收紧：guest 若请求 token 未记下的模型，
   升级后会从"转发"变成拒绝，例如同一连接下切换模型，或忽略 model 环境变量、
   使用自带默认模型名的旧镜像。）
+  该 403 后来被**有限放开**：只有 `token.Model` 为空时才原样转发，非空的 token 一律
+  仍然严格。走这一支的只有启动兼容 facade —— 它服务 daemon 不配置的旧镜像，无从
+  预知镜像 entrypoint 会发什么模型名。托管路径（`PrepareAgentLLM`）始终绑定模型，
+  所以那次收紧在托管侧完整保留。见 §3.6。
 - `RuntimeLLMTargetResolver`（参数含 sandbox / providerFamily）换成
   `RuntimeLLMConnectionResolver(ctx, connectionID, model)`。代理不再选择连接，
   原来的 `token.ProviderID != target.Provider.ID` 校验随之消失——连接来自
@@ -639,6 +649,8 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   `runtime_facade_provider.go`、`runtime_target_sandbox.go`、
   `runtime_facade_target.go`、`model_reference.go`（含 `SplitModelReference`）、
   `runtimefacade/startup_config.go` 及其专属测试。
+  （`startup_config.go` 后来由 `893bcca4` **恢复**：删除它让只读 provider 专属变量名的
+  旧镜像无法启动，见下。）
 - scheduler 自己的 LLM client 不再读 per-scope env，改为
   `LoadCatalog` → `SelectModel` → `Resolve`：daemon 自己发起的调用不是 agent
   运行，没有 sandbox。
@@ -648,6 +660,11 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   生效的入口。
 - scheduler command facade 原本合并 startup token 与 selected token（一次命令
   3 个 token），现在只签 1 个。
+  （又被推翻：`startup_config.go` 恢复后重新合并，且恒定发布**两个** family，
+  所以一次命令又回到 3 个 token —— 2 个 startup + 1 个 selected。理由是读哪个
+  家族是**镜像 entrypoint** 的属性，不是被选中 agent 的属性：agent 为 codex 的
+  sandbox 会跑读 `ANTHROPIC_API_KEY` 的镜像，按 agent kind 收窄会让它启动失败。
+  这两个 family 的 token 不绑定模型，见 §3.6。）
 - `SetSandboxProviderEnvItems` 移到数据的所有者：`(*domain.Sandbox).SetProviderEnvItems`
   （实际有 3 个调用点，不是 1 个）。
 - `MergeManagedExecEnv` 不再抹掉 base env 里的 provider key。那层剥离是为了
