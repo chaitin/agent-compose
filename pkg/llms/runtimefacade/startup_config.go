@@ -136,11 +136,20 @@ func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConf
 }
 
 func startupModel(ctx context.Context, req SessionFacadeConfigRequest, provider llms.Provider, family string, providerEnv []domain.SandboxEnvVar) (string, error) {
-	// req.Model is the model this run resolved for the selected agent, so it is
-	// spelled in that agent's family. Offering it to the other family would
-	// publish an alias naming a model that family's connection need not serve —
-	// the very failure this facade exists to prevent, moved from startup to the
-	// first request. The family's own sources answer instead.
+	// req.Model is the model this run resolved, and a run resolves it against one
+	// connection, so it is spelled in that connection's family. Offering it to
+	// the other family publishes an alias naming a model that family's connection
+	// need not serve — the failure this facade prevents, moved from startup to
+	// the first request. The family's own sources answer instead.
+	//
+	// Only an agent that addresses exactly one family can be told apart from the
+	// other, so only those are protected. For opencode, pi and dsh both families
+	// keep req.Model, and the unselected family's alias can name a model only the
+	// other connection serves. Withholding it from both instead would be worse:
+	// a family with no model from any source is skipped by the caller, so an
+	// image reading that family loses the variables it needs to start at all —
+	// trading the case this facade exists for against the accuracy of an alias
+	// nothing may read. See startupAgentFamily.
 	requested := strings.TrimSpace(req.Model)
 	if agentFamily := startupAgentFamily(req.Agent); agentFamily != "" && agentFamily != family {
 		requested = ""
@@ -281,9 +290,12 @@ func ensureDeclaredStartupProviders(ctx context.Context, store FacadeStore, req 
 
 // startupAgentFamily returns the provider family the selected agent addresses,
 // or "" when it does not address exactly one. Codex and Claude each speak one
-// family; opencode, pi and dsh resolve theirs from the catalog, and an agent
-// with no dialect addresses none, so for those the caller learns nothing and
-// must not assume a model this run resolved belongs to any particular family.
+// family. opencode, pi and dsh resolve theirs from the catalog, and an agent
+// with no dialect addresses none, so for those the caller learns nothing.
+//
+// A "" answer means startupModel cannot tell the two families apart for this
+// run and therefore keeps the run's resolved model for both, rather than for
+// neither; that tradeoff is argued where it is made.
 func startupAgentFamily(agent string) string {
 	dialect, err := llms.DialectFor(agent)
 	if err != nil {
