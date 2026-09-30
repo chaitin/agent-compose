@@ -52,10 +52,10 @@ var startupFacadeFamilies = []string{llms.ProviderFamilyAnthropic, llms.Provider
 // dialect writer that publishes one family name therefore publishes that
 // family's whole set — see llms.ProviderFamilyEnv.
 //
-// The request's Agent and Model fields are read only to resolve each family's
-// model, never to choose the families: those are fixed (see
-// startupFacadeFamilies) because the image, not the selected agent, decides
-// which family it reads.
+// The families are fixed (see startupFacadeFamilies) because the image, not the
+// selected agent, decides which family it reads, so the request's Agent field is
+// not consulted at all. Model is read only to decide whether a declaration names
+// enough to import as a connection.
 func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConfigRequest) (map[string]string, error) {
 	if req.Config == nil || req.Store == nil || req.Session == nil {
 		return nil, nil
@@ -136,43 +136,19 @@ func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConf
 }
 
 func startupModel(ctx context.Context, req SessionFacadeConfigRequest, provider llms.Provider, family string, providerEnv []domain.SandboxEnvVar) (string, error) {
-	// req.Model is the model this run resolved, and a run resolves it against one
-	// connection, so it is spelled in that connection's family. Offering it to
-	// the other family publishes an alias naming a model that family's connection
-	// need not serve — the failure this facade prevents, moved from startup to
-	// the first request. The family's own sources answer instead.
+	// Each family answers from its own sources, in one order. The model this run
+	// resolved is deliberately not one of them: a run resolves its model against
+	// one connection, so offering that name to the other family publishes an alias
+	// naming a model that family's connection need not serve — the failure this
+	// facade prevents, moved from startup to the first request. Which family a run
+	// addresses is also not knowable for every agent kind, so any rule that had to
+	// know it would leave the agents it cannot attribute publishing the same wrong
+	// name.
 	//
-	// Only an agent that addresses exactly one family can be told apart from the
-	// other, so only those are protected. For opencode, pi and dsh both families
-	// keep req.Model, and the unselected family's alias can name a model only the
-	// other connection serves. Withholding it from both instead would be worse:
-	// a family with no model from any source is skipped by the caller, so an
-	// image reading that family loses the variables it needs to start at all —
-	// trading the case this facade exists for against the accuracy of an alias
-	// nothing may read. See startupAgentFamily.
-	requested := strings.TrimSpace(req.Model)
-	if agentFamily := startupAgentFamily(req.Agent); agentFamily != "" && agentFamily != family {
-		requested = ""
-	}
-	// The declaration is read with the family's own dialect, not the selected
-	// agent's. The two must agree: ensureDeclaredStartupProviders creates the
-	// connection with that dialect, so reading the same declaration back with
-	// another one can find no model where a model exists — which is how a codex
-	// sandbox lost the Anthropic family entirely, because the codex dialect does
-	// not read ANTHROPIC_MODEL and the family was skipped as model-less.
-	if dialect, dialectErr := startupFamilyDialect(family); dialectErr == nil {
-		if declared, ok := llms.DeclaredUpstreamFromAgentEnv(req.Session.Summary.ID, providerEnv, dialect, requested); ok && declared.Provider.ID == provider.ID {
-			// Fall through when the declaration names no model, so the sources
-			// below still get their turn; a match on the connection alone must
-			// not end the search with nothing.
-			if model := strings.TrimSpace(declared.Model); model != "" {
-				return model, nil
-			}
-		}
-	}
-	if requested != "" {
-		return requested, nil
-	}
+	// The family's own names come first for the family the run does address too,
+	// and that agrees with the run rather than contradicting it: directModelFromEnv
+	// reads these same names when an agent owns its upstream, and when the daemon
+	// serves a family the agent's own configuration overrides this alias anyway.
 	if model := startupFamilyModel(providerEnv, family); model != "" {
 		return model, nil
 	}
@@ -286,29 +262,6 @@ func ensureDeclaredStartupProviders(ctx context.Context, store FacadeStore, req 
 		}
 	}
 	return nil
-}
-
-// startupAgentFamily returns the provider family the selected agent addresses,
-// or "" when it does not address exactly one. Codex and Claude each speak one
-// family. opencode, pi and dsh resolve theirs from the catalog, and an agent
-// with no dialect addresses none, so for those the caller learns nothing.
-//
-// A "" answer means startupModel cannot tell the two families apart for this
-// run and therefore keeps the run's resolved model for both, rather than for
-// neither; that tradeoff is argued where it is made.
-func startupAgentFamily(agent string) string {
-	dialect, err := llms.DialectFor(agent)
-	if err != nil {
-		return ""
-	}
-	switch dialect.Kind {
-	case "codex":
-		return llms.ProviderFamilyOpenAI
-	case "claude":
-		return llms.ProviderFamilyAnthropic
-	default:
-		return ""
-	}
 }
 
 // startupFamilyDialect returns the agent dialect that reads one provider

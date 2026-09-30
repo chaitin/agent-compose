@@ -211,6 +211,24 @@ func TestEnsureSessionStartupFacadeConfigSupportsLegacyProviderAliases(t *testin
 	if openAIToken.Model != "" || openAIToken.GuestModel != "" {
 		t.Fatalf("startup token records a model, want an unbound token = %#v", openAIToken)
 	}
+
+	// opencode is the case an alias rule keyed on the agent kind cannot cover: it
+	// does not address exactly one family, so "is this the run's family?" has no
+	// answer for it. Both families must still name their own model rather than the
+	// run's, which is why the family's own sources answer first for every agent.
+	opencodeEnv, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{
+		Config: config, Store: store, Session: session, Agent: "opencode", Model: "openai-model", Source: TokenSourceAgent,
+	})
+	if err != nil {
+		t.Fatalf("EnsureSessionStartupFacadeConfig opencode returned error: %v", err)
+	}
+	if opencodeEnv["OPENAI_MODEL"] != "openai-model" {
+		t.Fatalf("opencode OpenAI alias = %q, want the OpenAI provider's own model", opencodeEnv["OPENAI_MODEL"])
+	}
+	if opencodeEnv["ANTHROPIC_MODEL"] != "claude-model" || opencodeEnv["CLAUDE_MODEL"] != "claude-model" {
+		t.Fatalf("opencode run published %q/%q as the Anthropic model, want the Anthropic provider's own model",
+			opencodeEnv["ANTHROPIC_MODEL"], opencodeEnv["CLAUDE_MODEL"])
+	}
 }
 
 func TestEnsureSessionStartupFacadeConfigProjectsGlobalAnthropicCredential(t *testing.T) {
