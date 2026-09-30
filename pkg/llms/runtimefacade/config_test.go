@@ -231,6 +231,47 @@ func TestEnsureSessionStartupFacadeConfigSupportsLegacyProviderAliases(t *testin
 	}
 }
 
+// A family that declares a credential but no model name must still publish its
+// whole set. Nothing declares a model of its own, so the run's resolved model is
+// the last resort — and publishing it is better than the alternative: the caller
+// skips a family whose model is empty, which withholds that family's credential
+// and endpoint as well, and an image reading them cannot start at all.
+func TestEnsureSessionStartupFacadeConfigPublishesAFamilyThatDeclaresOnlyACredential(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{DataRoot: root, DbAddr: filepath.Join(root, "data.db"), RuntimeBaseURL: "http://agent-compose.test:7410"}
+	di := do.New()
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, config)
+	store, err := testutil.OpenConfigStore(t, di)
+	if err != nil {
+		t.Fatalf("NewConfigStore returned error: %v", err)
+	}
+	// A credential and an endpoint, and deliberately no ANTHROPIC_MODEL: the
+	// declaration names nothing this family could publish beside its token.
+	if _, err := store.ReplaceGlobalEnv(ctx, []domain.SandboxEnvVar{
+		{Name: "ANTHROPIC_API_KEY", Value: "global-anthropic-secret", Secret: true},
+		{Name: "ANTHROPIC_BASE_URL", Value: "https://anthropic.example.test"},
+	}); err != nil {
+		t.Fatalf("ReplaceGlobalEnv returned error: %v", err)
+	}
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-credential-only", Driver: driverpkg.RuntimeDriverDocker}}
+	env, err := EnsureSessionStartupFacadeConfig(ctx, SessionFacadeConfigRequest{
+		Config: config, Store: store, Session: session, Agent: "codex", Model: "openai-model", Source: TokenSourceAgent,
+	})
+	if err != nil {
+		t.Fatalf("EnsureSessionStartupFacadeConfig returned error: %v", err)
+	}
+	if env["ANTHROPIC_API_KEY"] == "" || !strings.HasSuffix(env["ANTHROPIC_BASE_URL"], "/llm/anthropic") {
+		t.Fatalf("a family declaring only a credential published nothing: %#v", env)
+	}
+	if env["ANTHROPIC_MODEL"] != "openai-model" {
+		t.Fatalf("ANTHROPIC_MODEL = %q, want the run's resolved model as the last resort", env["ANTHROPIC_MODEL"])
+	}
+}
+
 func TestEnsureSessionStartupFacadeConfigProjectsGlobalAnthropicCredential(t *testing.T) {
 	isolateLLMEnv(t)
 

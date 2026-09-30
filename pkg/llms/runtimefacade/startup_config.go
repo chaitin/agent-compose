@@ -136,14 +136,16 @@ func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConf
 }
 
 func startupModel(ctx context.Context, req SessionFacadeConfigRequest, provider llms.Provider, family string, providerEnv []domain.SandboxEnvVar) (string, error) {
-	// Each family answers from its own sources, in one order. The model this run
-	// resolved is deliberately not one of them: a run resolves its model against
-	// one connection, so offering that name to the other family publishes an alias
-	// naming a model that family's connection need not serve — the failure this
-	// facade prevents, moved from startup to the first request. Which family a run
-	// addresses is also not knowable for every agent kind, so any rule that had to
-	// know it would leave the agents it cannot attribute publishing the same wrong
-	// name.
+	// Each family answers from its own sources, in one order: its own variable
+	// names, then the daemon default, then the connection's bound models, and only
+	// then the model this run resolved — see the last resort below.
+	//
+	// Order matters. A run resolves its model against one connection, so that name
+	// is spelled in that connection's family; letting it answer first would publish
+	// an alias naming a model the other family's connection need not serve. Which
+	// family a run addresses is also not knowable for every agent kind, so a rule
+	// that had to know it would leave the agents it cannot attribute with that same
+	// wrong name.
 	//
 	// The family's own names come first for the family the run does address too,
 	// and that agrees with the run rather than contradicting it: directModelFromEnv
@@ -176,7 +178,19 @@ func startupModel(ctx context.Context, req SessionFacadeConfigRequest, provider 
 	if len(models) > 0 {
 		return models[0], nil
 	}
-	return "", nil
+	// Last resort: the model this run resolved. It is spelled in the family the
+	// run's agent addresses, so an alias carrying it can name a model this family's
+	// connection need not serve. The alternative is worse: the caller skips a family
+	// whose model is empty, which withholds that family's credential and endpoint as
+	// well, and an image reading them cannot start at all — the failure this facade
+	// exists to prevent. A name the upstream may refuse costs a request; no
+	// variables at all costs the run.
+	//
+	// This is reachable when a family declares only a credential — a key and an
+	// endpoint with no model name — which is also the shape
+	// ensureDeclaredStartupProviders imports on the strength of req.Model. The two
+	// ends agree: what the import accepts, the alias can name.
+	return strings.TrimSpace(req.Model), nil
 }
 
 func startupFamilyModel(env []domain.SandboxEnvVar, family string) string {
