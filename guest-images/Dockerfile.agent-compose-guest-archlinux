@@ -14,7 +14,17 @@ ARG PI_AGENT_VERSION=0.82.1
 ARG PI_MCP_ADAPTER_VERSION=2.11.0
 # @deepseek-ai/dsh-root's engines is ^22.19.0 || >=24.0.0. Arch's
 # nodejs-lts-jod package provides Node.js 22; keep it compatible when bumping DSH_VERSION.
-ARG DSH_VERSION=0.1.0-rc.6
+# The agent-compose profile's runner uses the DSH persona-prefix API (0.1.5+)
+# and the build-time profile smoke below needs `--dump-config-schema` (0.1.7+),
+# The smoke also boots the profile for real, because `--dump-config-schema` only
+# imports the entries: a runner whose injected services are missing still renders
+# its Config schema there and would pass. A real boot activates the runner only
+# once those services resolve, and an activated runner creates a session, which
+# is what the smoke asserts. The boot needs `timeout` (coreutils), and its
+# `|| true` stays scoped inside its own `{ ...; }` group: a trailing `|| true` on
+# the `&&` chain would swallow a failure from any earlier step and misreport it
+# as an inactive runner.
+ARG DSH_VERSION=0.2.0-rc.1
 
 FROM ${REGISTRY_MIRROR}/library/golang:${GO_VERSION}-alpine AS grpcurl-builder
 ARG GOPROXY
@@ -129,6 +139,23 @@ RUN cd /tmp/agent-compose-runtime && \
     OPENCODE_DISABLE_AUTOUPDATE=true OPENCODE_DISABLE_MODELS_FETCH=1 opencode --version && \
     pi --version && \
     dsh --version && \
+    HOME=/root dsh --profile agent-compose --dump-config-schema > /dev/null && \
+    printf 'profile smoke\n' > /tmp/dsh-profile-smoke-prompt.txt && \
+    printf 'profile smoke context\n' > /tmp/dsh-profile-smoke-context.txt && \
+    mkdir -p /tmp/dsh-profile-smoke-sessions && \
+    { HOME=/root DSH_PROMPT_FILE=/tmp/dsh-profile-smoke-prompt.txt \
+      DSH_SYSTEM_CONTEXT_FILE=/tmp/dsh-profile-smoke-context.txt \
+      DSH_SESSION_ROOT=/tmp/dsh-profile-smoke-sessions DSH_SESSION_ID=profile-smoke \
+      DSH_MODEL=profile-smoke LLM_API_ENDPOINT=http://127.0.0.1:1/v1 LLM_API_KEY=profile-smoke \
+      DSH_WIRE_API=openai-completions \
+      timeout 60 dsh --profile agent-compose > /dev/null 2> /tmp/dsh-profile-smoke.err || true; } && \
+    if [ -z "$(find /tmp/dsh-profile-smoke-sessions -mindepth 1 -print -quit)" ]; then \
+      echo 'STATUS profile smoke: agent-compose-runner did not activate'; cat /tmp/dsh-profile-smoke.err; exit 1; \
+    fi && \
+    if grep -q '^agent-compose-runner:' /tmp/dsh-profile-smoke.err; then \
+      echo 'STATUS profile smoke: agent-compose-runner failed after activation'; cat /tmp/dsh-profile-smoke.err; exit 1; \
+    fi && \
+    rm -rf /tmp/dsh-profile-smoke-sessions /tmp/dsh-profile-smoke-prompt.txt /tmp/dsh-profile-smoke-context.txt /tmp/dsh-profile-smoke.err && \
     rm -rf /tmp/agent-compose-runtime
 
 RUN mkdir -p /opt/agent-compose/npm && \

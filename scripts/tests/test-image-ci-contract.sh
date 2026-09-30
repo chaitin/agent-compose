@@ -551,6 +551,26 @@ if [[ -f $GUEST_DOCKERFILE ]]; then
     'versioned Pi coding agent install in default guest image'
   require_regex "$guest_dockerfile_source" 'pi[[:space:]]+--version' \
     'Pi coding agent build-time smoke in default guest image'
+  require_regex "$guest_dockerfile_source" 'dsh[[:space:]]+--profile[[:space:]]+agent-compose[[:space:]]+--dump-config-schema' \
+    'DSH profile compose/import smoke in default guest image'
+  require_regex "$guest_dockerfile_source" 'timeout[[:space:]]+60[[:space:]]+dsh[[:space:]]+--profile[[:space:]]+agent-compose' \
+    'DSH profile boot smoke in default guest image'
+  require_regex "$guest_dockerfile_source" '\{[[:space:]]+HOME=/root[[:space:]]+DSH_PROMPT_FILE=' \
+    'DSH profile boot smoke scoped in its own command group in default guest image'
+  require_regex "$guest_dockerfile_source" '\|\|[[:space:]]+true;[[:space:]]+\}[[:space:]]+&&' \
+    'DSH profile boot smoke tolerating only the boot failure in default guest image'
+  require_regex "$guest_dockerfile_source" '\[[[:space:]]+-z[[:space:]]+.+find[[:space:]]+/tmp/dsh-profile-smoke-sessions.+mindepth[[:space:]]+1' \
+    'DSH profile smoke asserting the runner activated in default guest image'
+  require_regex "$guest_dockerfile_source" 'STATUS profile smoke: agent-compose-runner did not activate.*exit 1' \
+    'DSH profile smoke failing the build when the runner never activates in default guest image'
+  require_regex "$guest_dockerfile_source" 'printf[[:space:]]+.profile smoke context\\n.[[:space:]]+>[[:space:]]+/tmp/dsh-profile-smoke-context\.txt' \
+    'DSH profile boot smoke creating a system context file in default guest image'
+  require_regex "$guest_dockerfile_source" 'DSH_SYSTEM_CONTEXT_FILE=/tmp/dsh-profile-smoke-context\.txt' \
+    'DSH profile boot smoke exercising the persona injection path in default guest image'
+  require_regex "$guest_dockerfile_source" 'grep[[:space:]]+-q[[:space:]]+.\^agent-compose-runner:.[[:space:]]+/tmp/dsh-profile-smoke\.err' \
+    'DSH profile boot smoke detecting a runner that failed after activation in default guest image'
+  require_regex "$guest_dockerfile_source" 'STATUS profile smoke: agent-compose-runner failed after activation.*exit 1' \
+    'DSH profile smoke failing the build when the runner errors after activation in default guest image'
 
   npm_install_run_count=0
   run_block=''
@@ -647,8 +667,28 @@ if [[ -f $ARCHLINUX_GUEST_DOCKERFILE ]]; then
     require_regex "$archlinux_guest_source" "$provider_cli[[:space:]]+--version" \
       "$provider_cli build-time validation in Arch Linux guest image"
   done
+  require_regex "$archlinux_guest_source" 'dsh[[:space:]]+--profile[[:space:]]+agent-compose[[:space:]]+--dump-config-schema' \
+    'DSH profile compose/import smoke in Arch Linux guest image'
+  require_regex "$archlinux_guest_source" 'timeout[[:space:]]+60[[:space:]]+dsh[[:space:]]+--profile[[:space:]]+agent-compose' \
+    'DSH profile boot smoke in Arch Linux guest image'
+  require_regex "$archlinux_guest_source" '\{[[:space:]]+HOME=/root[[:space:]]+DSH_PROMPT_FILE=' \
+    'DSH profile boot smoke scoped in its own command group in Arch Linux guest image'
+  require_regex "$archlinux_guest_source" '\|\|[[:space:]]+true;[[:space:]]+\}[[:space:]]+&&' \
+    'DSH profile boot smoke tolerating only the boot failure in Arch Linux guest image'
+  require_regex "$archlinux_guest_source" '\[[[:space:]]+-z[[:space:]]+.+find[[:space:]]+/tmp/dsh-profile-smoke-sessions.+mindepth[[:space:]]+1' \
+    'DSH profile smoke asserting the runner activated in Arch Linux guest image'
+  require_regex "$archlinux_guest_source" 'STATUS profile smoke: agent-compose-runner did not activate.*exit 1' \
+    'DSH profile smoke failing the build when the runner never activates in Arch Linux guest image'
+  require_regex "$archlinux_guest_source" 'printf[[:space:]]+.profile smoke context\\n.[[:space:]]+>[[:space:]]+/tmp/dsh-profile-smoke-context\.txt' \
+    'DSH profile boot smoke creating a system context file in Arch Linux guest image'
+  require_regex "$archlinux_guest_source" 'DSH_SYSTEM_CONTEXT_FILE=/tmp/dsh-profile-smoke-context\.txt' \
+    'DSH profile boot smoke exercising the persona injection path in Arch Linux guest image'
+  require_regex "$archlinux_guest_source" 'grep[[:space:]]+-q[[:space:]]+.\^agent-compose-runner:.[[:space:]]+/tmp/dsh-profile-smoke\.err' \
+    'DSH profile boot smoke detecting a runner that failed after activation in Arch Linux guest image'
+  require_regex "$archlinux_guest_source" 'STATUS profile smoke: agent-compose-runner failed after activation.*exit 1' \
+    'DSH profile smoke failing the build when the runner errors after activation in Arch Linux guest image'
   runtime_cleanup_line=$(awk '/rm -rf \/tmp\/agent-compose-runtime[[:space:]]*&&|rm -rf \/tmp\/agent-compose-runtime[[:space:]]*$/ { print NR; exit }' "$ARCHLINUX_GUEST_DOCKERFILE")
-  provider_validation_end_line=$(awk '/dsh --version/ { print NR; exit }' "$ARCHLINUX_GUEST_DOCKERFILE")
+  provider_validation_end_line=$(awk '/\/tmp\/dsh-profile-smoke\.err[[:space:]]*&&/ { print NR; exit }' "$ARCHLINUX_GUEST_DOCKERFILE")
   if [[ -z $runtime_cleanup_line || -z $provider_validation_end_line ]] ||
     ((runtime_cleanup_line <= provider_validation_end_line)); then
     fail 'Arch Linux guest runtime cleanup after provider build-time validation'

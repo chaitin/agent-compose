@@ -16,7 +16,7 @@ import fs from 'node:fs/promises';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import * as dshMcpClient from '@deepseek-ai/dsh-mcp-client';
 import { SessionId } from '@deepseek-ai/dsh-session';
-import { PERSONA_ORDER, PERSONA_SECTION } from '@deepseek-ai/dsh-system-prompt';
+import { PERSONA_PREFIX_SECTION } from '@deepseek-ai/dsh-system-prompt';
 import z from '@deepseek-ai/schemastery';
 
 export const name = 'agent-compose-runner';
@@ -48,17 +48,25 @@ async function registerMcpServers(ctx) {
   await Promise.all(servers.map((server) => ctx.plugin(dshMcpClient, server)));
 }
 
-// PERSONA_SECTION/PERSONA_ORDER are exported by dsh-system-prompt specifically
-// so a composition can shadow the deployment persona per-agent instead of
-// duplicating the slot ("an agent preset shadows the deployment's persona
-// with its own" — dsh-system-prompt's own doc comment). agent.ctx is
-// agent-scoped, so this can't collide with the (now-empty) global persona
-// default the cordis.patch.yml `system-prompt` row leaves in place. See
-// docs/design/dsh_agent_provider_design.md §3.2.
+// DSH 0.1.5 renamed the deployment persona slot to the *prefix* section and
+// moved its placement behind SystemPrompt.getSectionOrder(); 0.2 removed the
+// old PERSONA_SECTION/PERSONA_ORDER exports outright, which made this module
+// fail to import and left every dsh run hanging. The prefix slot is still the
+// agent-scoped override this runner needs: a scoped contribution shadows the
+// deployment's own section of the same name ("an agent preset shadows the
+// deployment's persona with its own" — dsh-system-prompt's doc comment), and
+// agent.ctx is agent-scoped, so this replaces the empty global default the
+// cordis.patch.yml `system-prompt` row leaves in place instead of duplicating
+// it. See docs/design/dsh_agent_provider_design.md §7.
 async function injectPersona(agent, config) {
   if (!config.systemContextFile) return;
   const text = await fs.readFile(config.systemContextFile, 'utf8');
-  agent.ctx.systemPrompt.section({ name: PERSONA_SECTION, order: PERSONA_ORDER, text });
+  const prompt = agent.ctx.systemPrompt;
+  prompt.section({
+    name: PERSONA_PREFIX_SECTION,
+    order: prompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX'),
+    text,
+  });
 }
 
 /** Request a bounded process exit once the tree disposes (mirrors dsh-headless / dsh-cc-tui). */
@@ -122,8 +130,13 @@ async function run(ctx, config) {
   await injectPersona(agent, config);
 
   const sessionId = agent.session.id;
+  // DSH 0.2 removed the Session.events getter (the snapshot readers are
+  // deprecated in favor of an explicitly owned interval), so retain the last
+  // event as the subscription delivers it instead of reading the log back.
+  let lastEvent;
   const unsubscribe = ctx.on('session/event', (session, event) => {
     if (session.id !== sessionId) return;
+    lastEvent = event;
     writeSessionEventLine(sessionId, event);
   });
 
@@ -136,7 +149,6 @@ async function run(ctx, config) {
     }));
     await agent.whenIdle();
     await sessions.flush(agent.session);
-    const lastEvent = agent.session.events.at(-1);
     if (lastEvent?.type === 'turn/end' && lastEvent.data.reason.kind !== 'completed') {
       exitCode = 1;
     }

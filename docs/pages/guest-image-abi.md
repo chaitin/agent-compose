@@ -662,6 +662,34 @@ For every daemon upgrade:
 5. Publish an immutable tag or digest and update project/deployment references
    deliberately; do not silently move a production compatibility tag.
 
+### 11.1 The DSH profile comes from the daemon, and is frozen per sandbox
+
+The `dsh` provider is the one provider whose behavior depends on a daemon
+artifact rather than only on the image: the daemon embeds the `agent-compose`
+profile and copies it into a sandbox's `home/.dsh` the first time that sandbox
+home is initialized. Those two must therefore match.
+
+- The daemon seeds `home/.dsh` only when the target does not already exist
+  (`initializeSandboxHomeDefaults` in
+  [`pkg/driver/runtime_mount_manifest.go`](https://github.com/chaitin/agent-compose/blob/main/pkg/driver/runtime_mount_manifest.go)
+  skips existing entries), and the home directory persists per sandbox.
+- A sandbox therefore runs the profile of the daemon that **first seeded its
+  home**, not of the daemon that is deployed now. Upgrading the daemon does not
+  refresh an existing sandbox.
+- The k8s driver pushes the same host-side home snapshot into the guest on
+  demand, so this applies to every driver.
+
+Consequences:
+
+- Install or upgrade the daemon and the guest image **in the same batch**. A
+  guest image built against the older DSH API cannot activate the profile a
+  newer daemon embeds, and vice versa.
+- Sandboxes created before the upgrade keep the old profile. Recreate
+  long-lived sandboxes after a daemon upgrade rather than expecting them to pick
+  up the new profile.
+- When the profile cannot activate, the runtime now reports an actionable
+  error and stops the run instead of waiting indefinitely.
+
 The implementation sources of truth are:
 
 - [`guest-images/Dockerfile.agent-compose-guest`](https://github.com/chaitin/agent-compose/blob/main/guest-images/Dockerfile.agent-compose-guest)

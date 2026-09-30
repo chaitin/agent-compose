@@ -1,6 +1,6 @@
 import { providerTelemetryEnv } from "../telemetry.js";
 import { createHash, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
@@ -16,6 +16,24 @@ import { waitForChildExit } from "../child-process.js";
 import { resolveFacadeModel } from "./model-reference.js";
 
 const maxDiagnosticBytes = 64 * 1024;
+
+// A healthy boot always reports the entries that wait on credentials as
+// "N entries did not activate", so that warning text cannot be used on its own
+// to detect a broken profile. Match this profile's own entry instead: DSH names
+// it there only when it failed to import or is waiting on a service that will
+// never arrive, which are the two shapes a guest/daemon version mismatch takes.
+const dshProfileEntryInactivePattern = /(?:^|\n)agent-compose-runner .*?(?:failed to import|pending)/;
+// Emitted by Node's ESM loader as "The requested module '<specifier>' does not
+// provide an export named '<name>'", e.g. for the PERSONA_ORDER removed in 0.2.
+// dsh's stderr also carries the output of the MCP servers it spawns — their
+// stdio transport defaults to inheriting it — so the message alone says nothing
+// about the profile. Require the missing export to be named in a DSH package,
+// which is what the profile imports and what makes this a version mismatch.
+const dshMissingExportPattern = /(?:^|\n)[^\n]*@deepseek-ai\/dsh-[^\n]*does not provide an export named/;
+
+function dshProfileIncompatible(stderrText: string): boolean {
+  return dshProfileEntryInactivePattern.test(stderrText) || dshMissingExportPattern.test(stderrText);
+}
 
 // Linux caps a single argv/envp string at MAX_ARG_STRLEN (PAGE_SIZE * 32,
 // conventionally 128 KiB); exceeding it fails spawn() with E2BIG. DSH_MCP_SERVERS
@@ -157,6 +175,7 @@ export class DshRunner {
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk || ""));
         stderrBytes = appendBounded(stderrBytes, bytes, maxDiagnosticBytes);
         process.stderr.write(bytes);
+        this.reportProfileIncompatibility(child, stderrBytes);
       });
 
       let protocolError: Error | null = null;
@@ -208,6 +227,28 @@ export class DshRunner {
     } finally {
       await fs.rm(invocationDir, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * A guest `dsh` that cannot activate the daemon-embedded `agent-compose`
+   * profile does not fail on its own: DSH reports the inactive entry as a
+   * warning and keeps running, and nothing ever calls `agent.followup()`. The
+   * run then waits on a child that will never do anything — there is no
+   * run-level timeout here, so it stays RUNNING until something kills it.
+   *
+   * The profile reaches a sandbox from the daemon that first seeded that
+   * sandbox's home, so a guest/daemon version mismatch is reachable during a
+   * rolling upgrade. Report it once and stop the child so the run fails with an
+   * actionable message instead of hanging (see docs/pages/guest-image-abi.md).
+   */
+  private reportProfileIncompatibility(child: ChildProcess, stderrBytes: Buffer): void {
+    if (this.reportedError || !dshProfileIncompatible(stderrBytes.toString("utf8"))) return;
+    this.reportedError = new Error(
+      "dsh could not activate the agent-compose profile, so this run would wait forever: " +
+        "the guest image's dsh is incompatible with the profile the daemon embeds. " +
+        "Deploy matching daemon and guest images (docs/pages/guest-image-abi.md).",
+    );
+    child.kill();
   }
 
   private emit(event: AgentEvent): void {

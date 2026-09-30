@@ -490,6 +490,20 @@ task test:e2e:docker-jupyter
 4. 对已启用能力重新运行 Jupyter、provider 和所选 driver 验收测试。
 5. 发布不可变 tag 或 digest，并显式更新 project/deployment reference；不要静默移动生产兼容 tag。
 
+### 11.1 DSH profile 来自 daemon，且按 sandbox 冻结
+
+`dsh` 是唯一行为依赖 daemon 产物而不只依赖镜像的 provider：daemon 内嵌 `agent-compose` profile，并在 sandbox home 首次初始化时把它复制进该 sandbox 的 `home/.dsh`。因此两者必须匹配。
+
+- daemon 只在目标不存在时才写入 `home/.dsh`（[`pkg/driver/runtime_mount_manifest.go`](https://github.com/chaitin/agent-compose/blob/main/pkg/driver/runtime_mount_manifest.go) 中的 `initializeSandboxHomeDefaults` 会跳过已存在的条目），而 home 目录是按 sandbox 持久化的。
+- 因此 sandbox 运行的是**首次初始化其 home 的那个 daemon** 的 profile，而不是当前部署的 daemon 的 profile。升级 daemon 不会刷新已有 sandbox。
+- k8s driver 按需把同一份宿主 home 快照推送到 guest，所以这条规则对三种 driver 都成立。
+
+后果：
+
+- 请**同批**安装或升级 daemon 与 guest 镜像。基于旧 DSH API 构建的 guest 镜像无法激活新 daemon 内嵌的 profile，反之亦然。
+- 升级前创建的 sandbox 会继续使用旧 profile。daemon 升级后请重建长期存活的 sandbox，不要指望它们自动采用新 profile。
+- 当 profile 无法激活时，runtime 现在会报出可操作的错误并终止 run，而不是无限等待。
+
 实现的事实来源包括：
 
 - [`guest-images/Dockerfile.agent-compose-guest`](https://github.com/chaitin/agent-compose/blob/main/guest-images/Dockerfile.agent-compose-guest)
