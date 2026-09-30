@@ -16,7 +16,10 @@ ARG PI_MCP_ADAPTER_VERSION=2.11.0
 # nodejs-lts-jod package provides Node.js 22; keep it compatible when bumping DSH_VERSION.
 # The agent-compose profile's runner uses the DSH persona-prefix API (0.1.5+)
 # and the build-time profile smoke below needs `--dump-config-schema` (0.1.7+),
-# so older pins no longer build.
+# so older pins no longer build. The smoke asserts the runner's own config
+# schema is composed rather than only that dsh exited 0: a plugin that imports
+# but never activates (a service it needs is missing) leaves
+# `--dump-config-schema` at exit 0 with no warning.
 ARG DSH_VERSION=0.2.0-rc.1
 
 FROM ${REGISTRY_MIRROR}/library/golang:${GO_VERSION}-alpine AS grpcurl-builder
@@ -132,7 +135,10 @@ RUN cd /tmp/agent-compose-runtime && \
     OPENCODE_DISABLE_AUTOUPDATE=true OPENCODE_DISABLE_MODELS_FETCH=1 opencode --version && \
     pi --version && \
     dsh --version && \
-    HOME=/root dsh --profile agent-compose --dump-config-schema > /dev/null && \
+    HOME=/root dsh --profile agent-compose --dump-config-schema > /tmp/dsh-profile-schema.json && \
+    grep -q '"promptFile"' /tmp/dsh-profile-schema.json && \
+    grep -q '"systemContextFile"' /tmp/dsh-profile-schema.json && \
+    rm -f /tmp/dsh-profile-schema.json && \
     rm -rf /tmp/agent-compose-runtime
 
 RUN mkdir -p /opt/agent-compose/npm && \
