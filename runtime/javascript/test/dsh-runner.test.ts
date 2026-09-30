@@ -11,6 +11,7 @@ const processState = vi.hoisted(() => ({
   stderr: [] as Array<string | Buffer>,
   exitCode: 0,
   error: null as Error | null,
+  kills: 0,
   calls: [] as Array<{ command: string; args: string[]; options: Record<string, unknown>; systemContextFileContent: string | undefined }>,
 }));
 
@@ -21,7 +22,11 @@ vi.mock("node:child_process", () => ({
     const systemContextFile = (options.env as Record<string, string> | undefined)?.DSH_SYSTEM_CONTEXT_FILE;
     const systemContextFileContent = systemContextFile ? readFileSync(systemContextFile, "utf8") : undefined;
     processState.calls.push({ command, args, options, systemContextFileContent });
-    const child = new EventEmitter() as EventEmitter & { stdout: Readable; stderr: EventEmitter };
+    const child = new EventEmitter() as EventEmitter & { stdout: Readable; stderr: EventEmitter; kill: () => boolean };
+    child.kill = () => {
+      processState.kills += 1;
+      return true;
+    };
     child.stdout = Readable.from(processState.lines.map((line) => `${line}\n`));
     child.stderr = new EventEmitter();
     const once = child.once.bind(child);
@@ -60,6 +65,7 @@ describe("DshRunner", () => {
     processState.stderr = [];
     processState.exitCode = 0;
     processState.error = null;
+    processState.kills = 0;
     processState.calls = [];
   });
 
@@ -415,6 +421,53 @@ describe("DshRunner", () => {
       processState.lines = [sessionEventLine("some-other-session", { type: "turn/end", seq: 1, time: 1, data: { turn: 0, reason: { kind: "completed" } } })];
       await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt"))
         .rejects.toThrow("unexpected session");
+    });
+  });
+
+  it("fails fast when dsh cannot activate the agent-compose profile", async () => {
+    const { DshRunner } = await import("../src/runners/dsh.js");
+    await withTempSession(async (root) => {
+      processState.stderr = [
+        "dsh: warning: 3 entries did not activate\n",
+        "authorization (@deepseek-ai/dsh-authorization): pending (waiting for service: credentials)\n",
+        "agent-compose-runner (file:///root/.dsh/profiles/agent-compose/runner.js): failed to import\n",
+      ];
+
+      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt"))
+        .rejects.toThrow("could not activate the agent-compose profile");
+      // Stopping the child is what makes this fail instead of waiting forever.
+      expect(processState.kills).toBe(1);
+    });
+  });
+
+  it("fails fast on a missing DSH export named by the profile", async () => {
+    const { DshRunner } = await import("../src/runners/dsh.js");
+    await withTempSession(async (root) => {
+      processState.stderr = [
+        "dsh: error: The requested module '@deepseek-ai/dsh-system-prompt' does not provide an export named 'PERSONA_ORDER'\n",
+      ];
+
+      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt"))
+        .rejects.toThrow("could not activate the agent-compose profile");
+      expect(processState.kills).toBe(1);
+    });
+  });
+
+  it("does not treat the credentials-pending warning as a profile mismatch", async () => {
+    const { DshRunner } = await import("../src/runners/dsh.js");
+    await withTempSession(async (root) => {
+      // This is what a healthy boot prints: the generic warning and other
+      // entries waiting on credentials, with no mention of this profile's entry.
+      processState.stderr = [
+        "dsh: warning: 2 entries did not activate\n",
+        "authorization (@deepseek-ai/dsh-authorization): pending (waiting for service: credentials)\n",
+        "deepseek-account (@deepseek-ai/dsh-deepseek-account-platform): pending (waiting for services: credentials, authorization)\n",
+      ];
+
+      const result = await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
+
+      expect(result.stderr).toContain("2 entries did not activate");
+      expect(processState.kills).toBe(0);
     });
   });
 
