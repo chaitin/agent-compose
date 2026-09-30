@@ -23,9 +23,13 @@ const maxDiagnosticBytes = 64 * 1024;
 // it there only when it failed to import or is waiting on a service that will
 // never arrive, which are the two shapes a guest/daemon version mismatch takes.
 const dshProfileEntryInactivePattern = /(?:^|\n)agent-compose-runner .*?(?:failed to import|pending)/;
-// Emitted by Node's ESM loader when an import names an export the installed DSH
-// does not provide, such as the PERSONA_ORDER removed in 0.2.
-const dshMissingExportPattern = /does not provide an export named/;
+// Emitted by Node's ESM loader as "The requested module '<specifier>' does not
+// provide an export named '<name>'", e.g. for the PERSONA_ORDER removed in 0.2.
+// dsh's stderr also carries the output of the MCP servers it spawns — their
+// stdio transport defaults to inheriting it — so the message alone says nothing
+// about the profile. Require the missing export to be named in a DSH package,
+// which is what the profile imports and what makes this a version mismatch.
+const dshMissingExportPattern = /(?:^|\n)[^\n]*@deepseek-ai\/dsh-[^\n]*does not provide an export named/;
 
 function dshProfileIncompatible(stderrText: string): boolean {
   return dshProfileEntryInactivePattern.test(stderrText) || dshMissingExportPattern.test(stderrText);

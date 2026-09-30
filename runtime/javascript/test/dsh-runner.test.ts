@@ -453,6 +453,24 @@ describe("DshRunner", () => {
     });
   });
 
+  it("does not treat a spawned MCP server's own missing export as a profile mismatch", async () => {
+    const { DshRunner } = await import("../src/runners/dsh.js");
+    await withTempSession(async (root) => {
+      // dsh's stderr also carries the output of the MCP servers it spawns, whose
+      // stdio transport inherits it. A child's own broken import is its own
+      // problem and must not abort the run as a guest/daemon version mismatch.
+      processState.stderr = [
+        "MCP server 'probe' failed to start\n",
+        "The requested module 'left-pad' does not provide an export named 'pad'\n",
+      ];
+
+      const result = await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
+
+      expect(result.stderr).toContain("does not provide an export named");
+      expect(processState.kills).toBe(0);
+    });
+  });
+
   it("does not treat the credentials-pending warning as a profile mismatch", async () => {
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
