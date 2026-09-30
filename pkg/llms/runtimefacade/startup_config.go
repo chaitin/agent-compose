@@ -135,6 +135,15 @@ func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConf
 }
 
 func startupModel(ctx context.Context, req SessionFacadeConfigRequest, provider llms.Provider, family string, providerEnv []domain.SandboxEnvVar) (string, error) {
+	// req.Model is the model this run resolved for the selected agent, so it is
+	// spelled in that agent's family. Offering it to the other family would
+	// publish an alias naming a model that family's connection need not serve —
+	// the very failure this facade exists to prevent, moved from startup to the
+	// first request. The family's own sources answer instead.
+	requested := strings.TrimSpace(req.Model)
+	if agentFamily := startupAgentFamily(req.Agent); agentFamily != "" && agentFamily != family {
+		requested = ""
+	}
 	// The declaration is read with the family's own dialect, not the selected
 	// agent's. The two must agree: ensureDeclaredStartupProviders creates the
 	// connection with that dialect, so reading the same declaration back with
@@ -142,12 +151,17 @@ func startupModel(ctx context.Context, req SessionFacadeConfigRequest, provider 
 	// sandbox lost the Anthropic family entirely, because the codex dialect does
 	// not read ANTHROPIC_MODEL and the family was skipped as model-less.
 	if dialect, dialectErr := startupFamilyDialect(family); dialectErr == nil {
-		if declared, ok := llms.DeclaredUpstreamFromAgentEnv(req.Session.Summary.ID, providerEnv, dialect, req.Model); ok && declared.Provider.ID == provider.ID {
-			return strings.TrimSpace(declared.Model), nil
+		if declared, ok := llms.DeclaredUpstreamFromAgentEnv(req.Session.Summary.ID, providerEnv, dialect, requested); ok && declared.Provider.ID == provider.ID {
+			// Fall through when the declaration names no model, so the sources
+			// below still get their turn; a match on the connection alone must
+			// not end the search with nothing.
+			if model := strings.TrimSpace(declared.Model); model != "" {
+				return model, nil
+			}
 		}
 	}
-	if model := strings.TrimSpace(req.Model); model != "" {
-		return model, nil
+	if requested != "" {
+		return requested, nil
 	}
 	if model := startupFamilyModel(providerEnv, family); model != "" {
 		return model, nil
@@ -262,6 +276,26 @@ func ensureDeclaredStartupProviders(ctx context.Context, store FacadeStore, req 
 		}
 	}
 	return nil
+}
+
+// startupAgentFamily returns the provider family the selected agent addresses,
+// or "" when it does not address exactly one. Codex and Claude each speak one
+// family; opencode, pi and dsh resolve theirs from the catalog, and an agent
+// with no dialect addresses none, so for those the caller learns nothing and
+// must not assume a model this run resolved belongs to any particular family.
+func startupAgentFamily(agent string) string {
+	dialect, err := llms.DialectFor(agent)
+	if err != nil {
+		return ""
+	}
+	switch dialect.Kind {
+	case "codex":
+		return llms.ProviderFamilyOpenAI
+	case "claude":
+		return llms.ProviderFamilyAnthropic
+	default:
+		return ""
+	}
 }
 
 // startupFamilyDialect returns the agent dialect that reads one provider

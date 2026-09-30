@@ -190,6 +190,15 @@ func TestEnsureSessionStartupFacadeConfigSupportsLegacyProviderAliases(t *testin
 	if codexEnv["ANTHROPIC_API_KEY"] == "" || !strings.HasSuffix(codexEnv["ANTHROPIC_BASE_URL"], "/llm/anthropic") || codexEnv["ANTHROPIC_AUTH_TOKEN"] != codexEnv["ANTHROPIC_API_KEY"] {
 		t.Fatalf("Codex startup environment is missing the Anthropic aliases: %#v", codexEnv)
 	}
+	// Those aliases must name an Anthropic model, not the codex run's. req.Model
+	// is spelled in the family the selected agent addresses, so publishing it
+	// here would hand an image reading ANTHROPIC_MODEL a name this connection
+	// need not serve — the startup failure this facade prevents, moved to the
+	// first request.
+	if codexEnv["ANTHROPIC_MODEL"] != "claude-model" || codexEnv["CLAUDE_MODEL"] != "claude-model" {
+		t.Fatalf("codex run published %q/%q as the Anthropic model, want the Anthropic provider's own model",
+			codexEnv["ANTHROPIC_MODEL"], codexEnv["CLAUDE_MODEL"])
+	}
 	openAIToken, err := store.GetLLMFacadeToken(ctx, codexEnv["OPENAI_API_KEY"])
 	if err != nil {
 		t.Fatalf("load OpenAI startup token: %v", err)
