@@ -15,9 +15,11 @@ ARG PI_MCP_ADAPTER_VERSION=2.11.0
 # or above that when bumping DSH_VERSION. The agent-compose profile's runner
 # uses the DSH persona-prefix API (0.1.5+) and the build-time profile smoke
 # below needs `--dump-config-schema` (0.1.7+), so older pins no longer build.
-# The smoke asserts the runner's own config schema is composed rather than only
-# that dsh exited 0: a plugin that imports but never activates (a service it
-# needs is missing) leaves `--dump-config-schema` at exit 0 with no warning.
+# The smoke also boots the profile for real, because `--dump-config-schema` only
+# imports the entries: a runner whose injected services are missing still renders
+# its Config schema there and would pass. A real boot activates the runner only
+# once those services resolve, and an activated runner creates a session, which
+# is what the smoke asserts.
 ARG DSH_VERSION=0.2.0-rc.1
 
 FROM ${REGISTRY_MIRROR}/library/golang:${GO_VERSION}-alpine AS grpcurl-builder
@@ -115,10 +117,17 @@ RUN cd /tmp/agent-compose-runtime && \
     cd / && \
     pi --version && \
     dsh --version && \
-    HOME=/root dsh --profile agent-compose --dump-config-schema > /tmp/dsh-profile-schema.json && \
-    grep -q '"promptFile"' /tmp/dsh-profile-schema.json && \
-    grep -q '"systemContextFile"' /tmp/dsh-profile-schema.json && \
-    rm -f /tmp/dsh-profile-schema.json
+    HOME=/root dsh --profile agent-compose --dump-config-schema > /dev/null && \
+    printf 'profile smoke\n' > /tmp/dsh-profile-smoke-prompt.txt && \
+    mkdir -p /tmp/dsh-profile-smoke-sessions && \
+    HOME=/root DSH_PROMPT_FILE=/tmp/dsh-profile-smoke-prompt.txt \
+      DSH_SESSION_ROOT=/tmp/dsh-profile-smoke-sessions DSH_SESSION_ID=profile-smoke \
+      DSH_MODEL=profile-smoke LLM_API_ENDPOINT=http://127.0.0.1:1/v1 LLM_API_KEY=profile-smoke \
+      DSH_WIRE_API=openai-completions \
+      timeout 60 dsh --profile agent-compose > /dev/null 2> /tmp/dsh-profile-smoke.err || true; \
+    test -n "$(find /tmp/dsh-profile-smoke-sessions -mindepth 1 -print -quit)" || \
+      { echo 'STATUS profile smoke: agent-compose-runner did not activate'; cat /tmp/dsh-profile-smoke.err; exit 1; }; \
+    rm -rf /tmp/dsh-profile-smoke-sessions /tmp/dsh-profile-smoke-prompt.txt /tmp/dsh-profile-smoke.err
 
 RUN mkdir -p /opt/agent-compose/npm && \
     cd /tmp/agent-compose-runtime-sdk && \
