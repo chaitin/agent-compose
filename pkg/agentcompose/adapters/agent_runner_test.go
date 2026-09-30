@@ -38,7 +38,10 @@ type fakeAgentRuntime struct {
 	err          error
 }
 
-func TestAgentRunnerPrepareSandboxAgentEnvironmentUsesOnlyCurrentAgent(t *testing.T) {
+// The managed environment configures the selected agent's own family. The
+// startup facade publishes both families on top of that, so a codex sandbox also
+// carries the Anthropic aliases for an image whose entrypoint reads them.
+func TestAgentRunnerPrepareSandboxAgentEnvironmentConfiguresTheCurrentAgent(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	config := &appconfig.Config{
@@ -124,8 +127,8 @@ func TestAgentRunnerPrepareSandboxAgentEnvironmentUsesOnlyCurrentAgent(t *testin
 	if env["OPENAI_API_KEY"] == "" || env["OPENAI_BASE_URL"] == "" {
 		t.Fatalf("missing current Codex environment: %#v", env)
 	}
-	if env["ANTHROPIC_API_KEY"] != "" || env["ANTHROPIC_BASE_URL"] != "" {
-		t.Fatalf("Codex received an unrelated Anthropic facade: %#v", env)
+	if env := domain.SandboxEnvMap(session.RuntimeEnvItems); env["ANTHROPIC_API_KEY"] == "" || !strings.HasSuffix(env["ANTHROPIC_BASE_URL"], "/llm/anthropic") {
+		t.Fatalf("Codex is missing the Anthropic startup facade: %#v", env)
 	}
 	if data, err := os.ReadFile(execution.HostAgentSystemPromptPath(session)); err != nil || string(data) != definition.SystemPrompt {
 		t.Fatalf("system prompt = %q err=%v", string(data), err)
@@ -1037,10 +1040,11 @@ func TestAgentRunnerPublishesProviderAliasesAuthorizedByTheFacadeToken(t *testin
 		{
 			// The catalog default wins over the Anthropic binding and the Claude
 			// dialect is served by converting to it, so the legacy Anthropic
-			// variables name the OpenAI model the token authorizes.
+			// variables name the OpenAI model the token authorizes. The OpenAI
+			// aliases stay too: they come from the startup facade, which serves
+			// an image whose entrypoint reads them.
 			name: "managed Claude publishes the catalog provider variables", agent: "claude", seedCatalog: true,
 			wantKeys:    []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CLAUDE_MODEL"},
-			absentKeys:  []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_MODEL", "OPENAI_MODEL"},
 			tokenKey:    "ANTHROPIC_API_KEY",
 			endpointKey: "ANTHROPIC_BASE_URL",
 			routeSuffix: "/llm/anthropic",
@@ -1173,13 +1177,18 @@ func TestAgentRunnerPublishesProviderAliasesAuthorizedByTheFacadeToken(t *testin
 			if err != nil {
 				t.Fatalf("GetLLMFacadeToken returned error: %v", err)
 			}
-			// The token decides which model a request may name. An alias that
-			// disagrees is a model the guest may use and the facade rejects.
+			// An alias must publish the model this run resolved, which is the
+			// model its token records. The facade no longer refuses a name that
+			// token does not record — it forwards it — so the check below is an
+			// invariant on what the daemon publishes, not on what the facade
+			// accepts. A startup facade token records no model on purpose: the
+			// image decides which one to send, so there the alias is advice
+			// rather than a constraint.
 			for _, name := range tt.modelKeys {
 				if env[name] != tt.wantModel {
 					t.Fatalf("sandbox env[%s] = %q, want %q", name, env[name], tt.wantModel)
 				}
-				if env[name] != token.Model {
+				if token.Model != "" && env[name] != token.Model {
 					t.Fatalf("sandbox env[%s] = %q, but the facade token authorizes %q", name, env[name], token.Model)
 				}
 			}

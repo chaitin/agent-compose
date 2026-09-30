@@ -2,7 +2,6 @@ package runtimefacade
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -19,12 +18,32 @@ type globalEnvStore interface {
 	ListGlobalEnv(context.Context) ([]domain.SandboxEnvVar, error)
 }
 
+// startupFacadeFamilies is the fixed pair of provider families the startup
+// compatibility facade publishes.
+//
+// Which family an image reads is a property of the image's entrypoint, not of
+// the agent the daemon selected: a sandbox whose agent is codex can run an image
+// whose entrypoint reads ANTHROPIC_API_KEY, and a facade keyed on the selected
+// agent leaves that image without the variables it needs to start. Both families
+// are therefore resolved independently, and one is skipped only when it has no
+// enabled provider or no model to bind.
+//
+// Publishing both is deliberate and widens what a sandbox start does. Each
+// family gets its own token, so a run mints one it will not use, and a
+// credential declared for the family the selected agent does not address is
+// imported as a daemon connection too. This facade's tokens record no model, so
+// the upstream each one names decides which models it serves — see
+// llms.FacadeToken.ResolveUpstreamModel. The managed path is unaffected: the
+// selected agent's own configuration overwrites its family's names, and that is
+// what a run the daemon configures actually reads.
+var startupFacadeFamilies = []string{llms.ProviderFamilyAnthropic, llms.ProviderFamilyOpenAI}
+
 // EnsureSessionStartupFacadeConfig restores the provider-specific startup
 // compatibility facade used by older guest images. New images use the common
 // LLM_* variables emitted by EnsureSessionAgentRuntimeConfig; older images
-// still need one provider-specific token and endpoint for the provider family
-// the selected agent addresses, which is derived from the agent, the declared
-// upstream or the connection the catalog would resolve.
+// still need provider-specific tokens and endpoints, one set per provider
+// family, because the image's entrypoint decides which family it reads and the
+// daemon does not configure that image. See startupFacadeFamilies.
 //
 // The returned variables are published before the managed environment, so the
 // selected agent's own configuration overwrites every name it writes. Only the
@@ -32,6 +51,11 @@ type globalEnvStore interface {
 // provider-specific name, this facade's whole set does, which is its purpose. A
 // dialect writer that publishes one family name therefore publishes that
 // family's whole set — see llms.ProviderFamilyEnv.
+//
+// The families are fixed (see startupFacadeFamilies) because the image, not the
+// selected agent, decides which family it reads, so the request's Agent field is
+// not consulted at all. Model is read only to decide whether a declaration names
+// enough to import as a connection.
 func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConfigRequest) (map[string]string, error) {
 	if req.Config == nil || req.Store == nil || req.Session == nil {
 		return nil, nil
@@ -49,17 +73,11 @@ func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConf
 		}
 		providerEnv = domain.MergeEnvItems(items, providerEnv)
 	}
-	// The families are resolved before the declared connections are imported, so
-	// only the family the selected agent can use is imported: a credential from
-	// an unselected family leaves a daemon-held secret no run can reach. It also
-	// keeps the two resolutions consistent, because a family this facade derives
-	// from the catalog now sees the same catalog the managed path sees, rather
-	// than one that a connection imported in this call has already extended.
-	families, err := startupFamilies(ctx, req, providerEnv)
-	if err != nil {
-		return nil, err
-	}
-	if err := ensureDeclaredStartupProviders(ctx, req.Store, req, providerEnv, families); err != nil {
+	// Both families are imported, because both are published: an image may read
+	// either one's credential. A declaration that names no model is skipped
+	// inside, so a credential that cannot be bound to a model does not become a
+	// connection.
+	if err := ensureDeclaredStartupProviders(ctx, req.Store, req, providerEnv, startupFacadeFamilies); err != nil {
 		return nil, err
 	}
 
@@ -68,7 +86,7 @@ func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConf
 		return nil, fmt.Errorf("list startup facade providers: %w", err)
 	}
 	env := make(map[string]string)
-	for _, family := range families {
+	for _, family := range startupFacadeFamilies {
 		provider, ok := startupProvider(providers, req.Session.Summary.ID, family)
 		if !ok {
 			continue
@@ -78,21 +96,22 @@ func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConf
 			return nil, err
 		}
 		if model == "" {
-			// A startup token must be bound to one model. If the selected
-			// provider has no model declaration, it cannot safely be exposed by
-			// the compatibility facade.
+			// The family's provider declares no model, so there is none to
+			// publish beside its token. An image reading only this family would
+			// have no model name to send, which is the whole point of the
+			// aliases, so the family is skipped rather than half-published.
 			continue
 		}
-		guestModel := model
-		if dialect, dialectErr := llms.DialectFor(req.Agent); dialectErr == nil {
-			guestModel = dialect.GuestModel(model)
-		}
+		// The token records no model, on purpose. This facade serves images the
+		// daemon does not configure, so the model an entrypoint sends cannot be
+		// predicted and has to be forwarded verbatim; GuestModel stays empty for
+		// the same reason, because a guest name here would resolve to the empty
+		// recorded model instead of reaching the upstream. The model resolved
+		// above is still published as this family's model alias.
 		rawToken, token, err := llms.NewFacadeToken(llms.NewFacadeTokenRequest{
 			SandboxID:  req.Session.Summary.ID,
-			Model:      model,
 			ProviderID: provider.ID,
 			WireAPI:    startupWireAPI(family),
-			GuestModel: guestModel,
 			Source:     req.Source,
 			RunID:      req.RunID,
 		})
@@ -116,54 +135,22 @@ func EnsureSessionStartupFacadeConfig(ctx context.Context, req SessionFacadeConf
 	return env, nil
 }
 
-// startupFamilies limits compatibility aliases to the family the selected
-// agent can actually use. Every caller names the agent: a sandbox start, a
-// release resume, a run and a scheduler command all resolve the selected agent
-// before preparing the facade. An agent with no dialect gets no compatibility
-// aliases at all, rather than one family's aliases that no selected agent can
-// use and that would cost a facade token per family.
-func startupFamilies(ctx context.Context, req SessionFacadeConfigRequest, providerEnv []domain.SandboxEnvVar) ([]string, error) {
-	dialect, err := llms.DialectFor(req.Agent)
-	if err != nil {
-		if errors.Is(err, llms.ErrUnsupportedAgentDialect) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("resolve startup facade agent %q: %w", req.Agent, err)
-	}
-	switch dialect.Kind {
-	case "codex":
-		return []string{llms.ProviderFamilyOpenAI}, nil
-	case "claude":
-		return []string{llms.ProviderFamilyAnthropic}, nil
-	}
-	if declared, ok := llms.DeclaredUpstreamFromAgentEnv(req.Session.Summary.ID, providerEnv, dialect, req.Model); ok {
-		return []string{llms.NormalizeProviderType(declared.Provider.ProviderType)}, nil
-	}
-	catalog, err := llms.LoadCatalog(ctx, req.Store)
-	if err != nil {
-		return nil, fmt.Errorf("load startup facade catalog: %w", err)
-	}
-	model, err := catalog.SelectModel(req.Model)
-	if err != nil {
-		return nil, nil
-	}
-	target, err := catalog.Resolve("", model, dialect.PreferredProtocols())
-	if err != nil {
-		return nil, nil
-	}
-	return []string{llms.NormalizeProviderType(target.Provider.ProviderType)}, nil
-}
-
 func startupModel(ctx context.Context, req SessionFacadeConfigRequest, provider llms.Provider, family string, providerEnv []domain.SandboxEnvVar) (string, error) {
-	dialect, dialectErr := llms.DialectFor(req.Agent)
-	if dialectErr == nil {
-		if declared, ok := llms.DeclaredUpstreamFromAgentEnv(req.Session.Summary.ID, providerEnv, dialect, req.Model); ok && declared.Provider.ID == provider.ID {
-			return strings.TrimSpace(declared.Model), nil
-		}
-	}
-	if model := strings.TrimSpace(req.Model); model != "" {
-		return model, nil
-	}
+	// Each family answers from its own sources, in one order: its own variable
+	// names, then the daemon default, then the connection's bound models, and only
+	// then the model this run resolved — see the last resort below.
+	//
+	// Order matters. A run resolves its model against one connection, so that name
+	// is spelled in that connection's family; letting it answer first would publish
+	// an alias naming a model the other family's connection need not serve. Which
+	// family a run addresses is also not knowable for every agent kind, so a rule
+	// that had to know it would leave the agents it cannot attribute with that same
+	// wrong name.
+	//
+	// The family's own names come first for the family the run does address too,
+	// and that agrees with the run rather than contradicting it: directModelFromEnv
+	// reads these same names when an agent owns its upstream, and when the daemon
+	// serves a family the agent's own configuration overrides this alias anyway.
 	if model := startupFamilyModel(providerEnv, family); model != "" {
 		return model, nil
 	}
@@ -191,7 +178,19 @@ func startupModel(ctx context.Context, req SessionFacadeConfigRequest, provider 
 	if len(models) > 0 {
 		return models[0], nil
 	}
-	return "", nil
+	// Last resort: the model this run resolved. It is spelled in the family the
+	// run's agent addresses, so an alias carrying it can name a model this family's
+	// connection need not serve. The alternative is worse: the caller skips a family
+	// whose model is empty, which withholds that family's credential and endpoint as
+	// well, and an image reading them cannot start at all — the failure this facade
+	// exists to prevent. A name the upstream may refuse costs a request; no
+	// variables at all costs the run.
+	//
+	// This is reachable when a family declares only a credential — a key and an
+	// endpoint with no model name — which is also the shape
+	// ensureDeclaredStartupProviders imports on the strength of req.Model. The two
+	// ends agree: what the import accepts, the alias can name.
+	return strings.TrimSpace(req.Model), nil
 }
 
 func startupFamilyModel(env []domain.SandboxEnvVar, family string) string {
@@ -251,20 +250,16 @@ func startupProvider(providers []llms.Provider, sandboxID, family string) (llms.
 // compatibility aliases useful even when the only credential came from the
 // persisted global environment rather than the catalog.
 //
-// Only the families the selected agent can use are imported, and a declaration
-// that names no model is skipped. The second rule mirrors
+// A declaration that names no model is skipped. That rule mirrors
 // llms.PrepareAgentLLM, which refuses the same declaration for the same reason:
 // without a model the credential cannot serve a request, so importing it would
 // only leave a managed secret no run can use. The request model counts as a
-// name, because that is what llms.PrepareAgentLLM passes.
+// name, because that is what llms.PrepareAgentLLM passes. It is also what keeps
+// a stray credential for a family nothing declares from becoming a connection.
 func ensureDeclaredStartupProviders(ctx context.Context, store FacadeStore, req SessionFacadeConfigRequest, providerEnv []domain.SandboxEnvVar, families []string) error {
 	sandboxID := req.Session.Summary.ID
 	for _, family := range families {
-		kind := "codex"
-		if family == llms.ProviderFamilyAnthropic {
-			kind = "claude"
-		}
-		dialect, err := llms.DialectFor(kind)
+		dialect, err := startupFamilyDialect(family)
 		if err != nil {
 			return err
 		}
@@ -281,6 +276,19 @@ func ensureDeclaredStartupProviders(ctx context.Context, store FacadeStore, req 
 		}
 	}
 	return nil
+}
+
+// startupFamilyDialect returns the agent dialect that reads one provider
+// family's declared variables. A declaration is recognized and later read back
+// through the same dialect, so both readers must use this rather than the
+// selected agent's kind: the selected agent decides which family it addresses,
+// never how another family's declaration is spelled.
+func startupFamilyDialect(family string) (llms.Dialect, error) {
+	kind := "codex"
+	if family == llms.ProviderFamilyAnthropic {
+		kind = "claude"
+	}
+	return llms.DialectFor(kind)
 }
 
 func startupFamilyEnv(env []domain.SandboxEnvVar, family string) []domain.SandboxEnvVar {

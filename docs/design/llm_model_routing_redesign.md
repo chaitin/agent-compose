@@ -359,6 +359,12 @@ token 绑定的是**连接**，不是连接上的某一个模型：`Model` 与 `
 一次持久化的会话时沿用会话记录的模型名 —— 而上游本来服务那些模型，请求却在 facade 被 403
 挡住。回退后只有**没有连接**的旧 token 仍然 pin 单模型，因为它没有上游可归属。
 
+启动兼容 facade（`runtimefacade/startup_config.go`）是唯一**刻意不记录模型**的签点：它同时发布两个
+provider family，服务的是 daemon 不配置的旧镜像，无从预知镜像 entrypoint 会发什么模型名。托管路径
+`PrepareAgentLLM` 仍然把本次运行解析出的模型记进 token、并把它发布为该家族的别名，但按上表它同样
+不拒绝其他模型名，区别只在于「guest 该发哪个名字」由谁决定。若要再次收紧，注意只读某个 provider
+family 的旧镜像会因为 403 而无法启动。
+
 ### 3.7 转换矩阵：一条规则
 
 `inbound = (conn.Protocol ∈ dialect.Supported) ? conn.Protocol : dialect.Canonical`，
@@ -649,6 +655,8 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   `runtime_facade_provider.go`、`runtime_target_sandbox.go`、
   `runtime_facade_target.go`、`model_reference.go`（含 `SplitModelReference`）、
   `runtimefacade/startup_config.go` 及其专属测试。
+  （`startup_config.go` 后来由 `893bcca4` **恢复**：删除它让只读 provider 专属变量名的
+  旧镜像无法启动，见下。）
 - scheduler 自己的 LLM client 不再读 per-scope env，改为
   `LoadCatalog` → `SelectModel` → `Resolve`：daemon 自己发起的调用不是 agent
   运行，没有 sandbox。
@@ -658,6 +666,11 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   生效的入口。
 - scheduler command facade 原本合并 startup token 与 selected token（一次命令
   3 个 token），现在只签 1 个。
+  （又被推翻：`startup_config.go` 恢复后重新合并，且恒定发布**两个** family，
+  所以一次命令又回到 3 个 token —— 2 个 startup + 1 个 selected。理由是读哪个
+  家族是**镜像 entrypoint** 的属性，不是被选中 agent 的属性：agent 为 codex 的
+  sandbox 会跑读 `ANTHROPIC_API_KEY` 的镜像，按 agent kind 收窄会让它启动失败。
+  这两个 family 的 token 不绑定模型，见 §3.6。）
 - `SetSandboxProviderEnvItems` 移到数据的所有者：`(*domain.Sandbox).SetProviderEnvItems`
   （实际有 3 个调用点，不是 1 个）。
 - `MergeManagedExecEnv` 不再抹掉 base env 里的 provider key。那层剥离是为了

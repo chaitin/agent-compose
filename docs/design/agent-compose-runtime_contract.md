@@ -495,9 +495,12 @@ environment. An explicit `scheduler.shell`/`scheduler.exec` request environment
 is preserved unchanged in `command-request.json` and, per the guest runtime
 contract, overrides same-name outer values only for that workload child; raw
 managed facade tokens are therefore not copied into the request artifact.
-Commands for which no supported facade agent is selected do not perform facade
+Commands whose environment names no facade agent at all do not perform facade
 reconstruction, so that command path is not coupled to LLM provider
-configuration health.
+configuration health. A command whose agent kind has no LLM dialect still
+receives both startup facades: which provider family an image's entrypoint reads
+is a property of the image, not of the selected agent, so no agent kind can
+justify omitting one.
 The executor tracks every token hash persisted by this command. Partial setup
 failure and confirmed command termination delete all of them; an
 `ErrExecTerminationUnconfirmed` result retains them for later Sandbox lifecycle

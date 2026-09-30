@@ -274,25 +274,39 @@ set: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `CODEX_MODEL`, and `OPENAI_MODEL` for
 the OpenAI family, or `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
 `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, and `CLAUDE_MODEL` for the Anthropic
 family. A dialect that replaced only part of the set would leave the rest at the
-startup compatibility facade's value, pairing this run's token with a model it
-does not authorize. opencode adds `OPENCODE_CONFIG` and `OPENCODE_MODEL`, pi adds
-`PI_CODING_AGENT_DIR`, and dsh publishes no provider-specific name at all, which
-leaves the startup compatibility facade's set intact.
+startup compatibility facade's value, pairing this run's token with the model that
+facade resolved rather than the one this run did. opencode adds `OPENCODE_CONFIG`
+and `OPENCODE_MODEL`, pi adds `PI_CODING_AGENT_DIR`, and dsh publishes no
+provider-specific name at all, which leaves the startup compatibility facade's set
+intact.
 
 Older images that predate the generic `LLM_*` contract are served by the
 provider-specific names. `ANTHROPIC_MODEL` and `CLAUDE_MODEL` are one pair;
-`CODEX_MODEL` and `OPENAI_MODEL` are another. The daemon publishes the pair of
-the provider family the selected agent addresses, from the catalog default, the
-declared upstream, or a provider credential in the sandbox or global
-environment.
+`CODEX_MODEL` and `OPENAI_MODEL` are another. The daemon publishes **both pairs**,
+each from an enabled provider plus the catalog default, the declared upstream, or
+a provider credential in the sandbox or global environment. Which family an image
+reads is a property of its entrypoint, not of the agent the daemon selected: a
+sandbox whose agent is codex can run an image whose entrypoint reads
+`ANTHROPIC_API_KEY`, and publishing only the selected agent's family leaves that
+image without the variables it needs to start. A family is skipped only when it
+has no enabled provider or no model to publish.
 
-A model name in any of these variables is the model the delivered token
-authorizes, but the token authorizes the connection it names rather than that one
+A model name in any of these variables is the model the delivered token was
+issued for, but the token authorizes the connection it names rather than that one
 model: a request for a model it does not record is forwarded there, and **that
 connection decides which models it serves**. An image **SHOULD** therefore send
 the model it was given, or the resolved reference, rather than a model name built
 into the image — a name the upstream does not serve fails there, with an error the
 image has to interpret, instead of being caught at the facade.
+
+The two pairs are not equivalent to the guest. The family the selected agent
+addresses is also written by that agent's own configuration, which replaces the
+startup compatibility facade's names for it and points them at the model this run
+resolved to. The other family has no such owner: it is published so an image whose
+entrypoint reads only that family still starts, and its token records no model,
+because the daemon does not configure that image and cannot predict which model
+its entrypoint will ask for. Either way, a request that names a model the token
+does not record is forwarded to the connection the token names.
 
 ## 5. Optional Capability Requirements
 
