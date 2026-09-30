@@ -33,8 +33,10 @@ const GuestModelEnvName = "AGENT_COMPOSE_RESOLVED_MODEL"
 // managed environment is applied after the startup facade, so a family name only
 // the startup facade writes keeps the startup facade's value: a writer that
 // replaces the family credential while leaving its model behind hands the guest
-// a token and a model that disagree, and the facade rejects the request. dsh
-// publishes none of these names, which leaves the startup facade's token,
+// a token and a model that disagree. The guest then asks that connection for a
+// model this run never resolved, and the facade forwards it rather than
+// refusing, so the mistake reaches the provider instead of being caught here.
+// dsh publishes none of these names, which leaves the startup facade's token,
 // endpoint and model intact as one consistent set.
 func ProviderFamilyEnv(family, credential, endpoint, model string) map[string]string {
 	family = NormalizeProviderType(family)

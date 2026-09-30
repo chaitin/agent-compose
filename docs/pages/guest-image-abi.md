@@ -287,10 +287,12 @@ declared upstream, or a provider credential in the sandbox or global
 environment.
 
 A model name in any of these variables is the model the delivered token
-authorizes, and the facade rejects a request for any other model with 403. An
-image **MUST** send the model it was given, or the resolved reference, rather
-than a model name built into the image: the token is bound to one model, and a
-name the token does not record is refused instead of forwarded.
+authorizes, but the token authorizes the connection it names rather than that one
+model: a request for a model it does not record is forwarded there, and **that
+connection decides which models it serves**. An image **SHOULD** therefore send
+the model it was given, or the resolved reference, rather than a model name built
+into the image — a name the upstream does not serve fails there, with an error the
+image has to interpret, instead of being caught at the facade.
 
 ## 5. Optional Capability Requirements
 

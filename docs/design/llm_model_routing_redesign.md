@@ -323,7 +323,7 @@ type Dialect struct {
 配置写在 token 落库之前是有意的：writer 可能失败，若 token 已落库，这次失败就会留下
 一条没有任何运行会使用的凭据；反过来失败最多留下一份会被下次运行覆盖的旧配置文件。
 
-### 3.6 代理：connection-bound token + model-bound 校验
+### 3.6 代理：connection-bound token + 原样转发
 
 token 绑定 `{SandboxID, ConnectionID, InboundProtocol, Model, GuestModel}`。
 运行期：
@@ -340,18 +340,24 @@ convert(inbound, conn.Protocol)
 没有 per-request resolution、没有 provider family 偏好、代理也不会查询 catalog 去判断
 "这个模型是否可用"。
 
-但 token 是 **model-bound** 的：`Model` 与 `GuestModel` 都是字面字符串，
+token 绑定的是**连接**，不是连接上的某一个模型：`Model` 与 `GuestModel` 都是字面字符串，
 `ResolveUpstreamModel` 只做精确相等比较（不切分，含 `/` 的字面 model 因此完好）：
 
 | 请求里的 model | 结果 |
 | --- | --- |
 | `token.GuestModel`（guest 自己配置里的拼写，pi/opencode 为 `<connection>/<model>`） | 换成字面 `token.Model` |
 | `token.Model` 本身 | 原样通过 |
-| 其他任何值 | `ok=false` → 403 `llm facade token model mismatch` |
-| `token.Model` 为空（连接模式下的非法 token） | `ok=false`，不构成"该连接下所有模型"的能力 |
+| 其他任何值，且 token 命名了连接 | 原样转发，由该连接决定它服务哪些模型 |
+| 其他任何值，且 token 没有连接 | `ok=false` |
 
-所以"模型不透明"指的是 daemon 不解析 model 引用，而不是"任何 model 都原样转发"：一次运行
-只能使用 token 记下的那个模型。校验在 `7e91d6a3` 收紧（此前是原样转发，见 M3）。
+所以"模型不透明"指的是 daemon 不解析 model 引用 —— 它既不做前缀推断，也不按模型拒绝请求，
+而是把请求原样交给 token 记录的那条连接，由上游裁决。这正是 `pkg/agentcompose/app/app.go`
+里 Connections resolver 注释所说：请求模型原样转发给该连接，daemon 因此是**弱调用方**。
+
+模型绑定（`token.Model` 非空即拒绝其他名字）是 `7e91d6a3` 引入的收紧，随后被回退。它让
+**模型名来自 agent 自己配置**的运行硬失败：harness 从自己的 provider 配置取模型，或续跑上
+一次持久化的会话时沿用会话记录的模型名 —— 而上游本来服务那些模型，请求却在 facade 被 403
+挡住。回退后只有**没有连接**的旧 token 仍然 pin 单模型，因为它没有上游可归属。
 
 ### 3.7 转换矩阵：一条规则
 
@@ -596,6 +602,10 @@ codex/claude 不再限制上游家族（由矩阵决定）。
   mismatch`，见 §3.6。这是一次不兼容收紧：guest 若请求 token 未记下的模型，
   升级后会从"转发"变成拒绝，例如同一连接下切换模型，或忽略 model 环境变量、
   使用自带默认模型名的旧镜像。）
+  该 403 后来被**完整回退**：失败的从来不是「模型为空」，而是「模型名来自 agent
+  自己的配置」—— harness 从自己的 provider 配置取模型，或续跑上一次持久化的
+  会话时沿用会话记录的模型名，而上游本来服务那些模型。回退后连接绑定的 token
+  一律原样转发，只有没有连接的旧 token 仍然 pin 单模型。见 §3.6。
 - `RuntimeLLMTargetResolver`（参数含 sandbox / providerFamily）换成
   `RuntimeLLMConnectionResolver(ctx, connectionID, model)`。代理不再选择连接，
   原来的 `token.ProviderID != target.Provider.ID` 校验随之消失——连接来自
