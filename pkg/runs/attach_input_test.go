@@ -116,6 +116,28 @@ func TestPromptAttachInputCancellationUnblocksTurnWait(t *testing.T) {
 	}
 }
 
+func TestPromptAttachDuplicateDoesNotConsumeReadyTurn(t *testing.T) {
+	interaction := newObservedRuntimeInteraction()
+	turnReady := make(chan struct{}, 1)
+	turnReady <- struct{}{}
+	pump := promptInputPump{
+		Input: &promptWrapperInput{interaction: interaction}, TurnReady: turnReady,
+		OnHumanMessage: func(_ string, frameID string) (bool, error) {
+			return frameID != "duplicate", nil
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if !forwardPromptHumanMessage(ctx, pump, "old", "duplicate") {
+		t.Fatal("duplicate frame stopped the input pump")
+	}
+	assertNoRuntimeInputFrame(t, interaction.sent)
+	if !forwardPromptHumanMessage(ctx, pump, "new", "new-frame") {
+		t.Fatal("duplicate consumed the turn needed by the next message")
+	}
+	assertPromptRuntimeFrame(t, receiveRuntimeInputFrame(t, interaction.sent), "human_message", "new")
+}
+
 func humanMessageAttachRequest(message string) RunAttachInput {
 	return RunAttachInput{Kind: RunAttachInputHumanMessage, Text: message}
 }

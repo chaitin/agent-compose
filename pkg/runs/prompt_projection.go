@@ -324,6 +324,15 @@ func (p *promptAttachProjector) AppendHumanMessageFrame(message, clientFrameID s
 	text := promptAttachHumanLogText(message)
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.events != nil && strings.TrimSpace(message) != "" {
+		p.humanIndex++
+		_, created, err := p.events.AppendProjectRunEvent(p.eventContext(), domain.ProjectRunEventRecord{
+			ID: attachedHumanEventID(p.run.RunID, clientFrameID, p.humanIndex, message), RunID: p.run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: message, Agent: p.run.AgentName,
+		})
+		if err != nil || !created {
+			return false, err
+		}
+	}
 	p.persistedAssistantTurn = false
 	if text != "" {
 		if p.hasLoggedText && !p.logEndsWithNewline {
@@ -333,14 +342,7 @@ func (p *promptAttachProjector) AppendHumanMessageFrame(message, clientFrameID s
 			return false, err
 		}
 	}
-	if p.events == nil || strings.TrimSpace(message) == "" {
-		return true, nil
-	}
-	p.humanIndex++
-	_, created, err := p.events.AppendProjectRunEvent(p.eventContext(), domain.ProjectRunEventRecord{
-		ID: attachedHumanEventID(p.run.RunID, clientFrameID, uint64(p.humanIndex), message), RunID: p.run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: message, Agent: p.run.AgentName,
-	})
-	return created, err
+	return true, nil
 }
 
 func (p *promptAttachProjector) AppendStderr(text string) error {

@@ -1248,6 +1248,10 @@ func TestPromptAttachProjectorPersistsEachFrameIdempotently(t *testing.T) {
 	} else if created {
 		t.Fatalf("expected duplicate human frame to not be recorded, but created was true")
 	}
+	transcript, err := os.ReadFile(projector.logsPath)
+	if err != nil || string(transcript) != "question\n" {
+		t.Fatalf("human transcript = %q err=%v", transcript, err)
+	}
 	activity := []byte(`{"seq":41,"type":"agent_event","event":{"kind":"text_delta","text":"\\n$ curl https://weather.test\\n{\"temperature\":26}\n"}}` + "\n")
 	if _, _, err := projector.Project(activity); err != nil {
 		t.Fatalf("project activity: %v", err)

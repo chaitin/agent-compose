@@ -368,7 +368,7 @@ func (w *promptWrapperInput) send(frame map[string]any) error {
 // turn, and the callback notified of each forwarded human message.
 type promptInputPump struct {
 	Input          *promptWrapperInput
-	TurnReady      <-chan struct{}
+	TurnReady      chan struct{}
 	OnHumanMessage func(string, string) (bool, error)
 }
 
@@ -416,6 +416,9 @@ func forwardPromptHumanMessage(ctx context.Context, pump promptInputPump, text, 
 			return false
 		}
 		if !recorded {
+			if pump.TurnReady != nil {
+				releasePromptTurn(pump.TurnReady)
+			}
 			return true
 		}
 	}
