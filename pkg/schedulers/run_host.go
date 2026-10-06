@@ -237,6 +237,7 @@ func (h *RuntimeHost) Agent(ctx context.Context, prompt string, request domain.S
 	if err != nil {
 		return domain.SchedulerAgentResult{}, err
 	}
+	h.recordSandboxStopScheduled(ctx, session.Summary.ID)
 	if eventType != "" {
 		_ = h.addLinkedSchedulerEvent(ctx, SchedulerEventInput{
 			EventType:       eventType,
@@ -360,7 +361,9 @@ func (h *RuntimeHost) Command(ctx context.Context, request domain.SchedulerComma
 			LinkedSandboxID: session.Summary.ID,
 		})
 	}
-	h.trackCommandSession(session.Summary.ID, cleanupSession)
+	if h.trackCommandSession(session.Summary.ID, cleanupSession) {
+		h.recordSandboxStopScheduled(ctx, session.Summary.ID)
+	}
 	if err := h.persistCommandSandboxLink(ctx, request, session.Summary.ID); err != nil {
 		return domain.SchedulerCommandResult{}, err
 	}
@@ -512,19 +515,40 @@ func (h *RuntimeHost) ensureCommandSession(ctx context.Context, request domain.S
 	return session, eventType, nil
 }
 
-func (h *RuntimeHost) trackCommandSession(sessionID string, cleanup bool) {
+// trackCommandSession registers a sandbox for cleanup after the run and
+// reports whether this call registered it.
+func (h *RuntimeHost) trackCommandSession(sessionID string, cleanup bool) bool {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" || !cleanup {
-		return
+		return false
 	}
 	if h.commandSessionIDs == nil {
 		h.commandSessionIDs = map[string]struct{}{}
 	}
 	if _, ok := h.commandSessionIDs[sessionID]; ok {
-		return
+		return false
 	}
 	h.commandSessionIDs[sessionID] = struct{}{}
 	h.commandSessionIDOrder = append(h.commandSessionIDOrder, sessionID)
+	return true
+}
+
+// SandboxStopScheduledEventType marks a sandbox that its run stops when the
+// run ends. The stop happens in this process, so a daemon restart mid-run
+// would skip it; RecoverInterruptedRuns reads this event to stop the sandbox
+// on the next startup instead.
+const SandboxStopScheduledEventType = "scheduler.sandbox.stop_scheduled"
+
+func (h *RuntimeHost) recordSandboxStopScheduled(ctx context.Context, sandboxID string) {
+	if err := h.addLinkedSchedulerEvent(ctx, SchedulerEventInput{
+		EventType:       SandboxStopScheduledEventType,
+		Level:           "info",
+		Message:         "scheduler sandbox will be stopped after run",
+		Payload:         map[string]any{"sandboxId": sandboxID},
+		LinkedSandboxID: sandboxID,
+	}); err != nil {
+		slog.Warn("failed to record scheduled scheduler sandbox stop", "scheduler_id", h.scheduler.Summary.ID, "run_id", h.execution.ID, "sandbox_id", sandboxID, "error", err)
+	}
 }
 
 // SchedulerEventInput describes one scheduler event to record, for both the

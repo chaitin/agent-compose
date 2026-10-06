@@ -520,6 +520,16 @@ that run. After the run ends, the host stops command sandboxes used by that run
 and records `scheduler.sandbox.stopped`. `scheduler.agent` sandbox stop behavior
 still follows the agent path.
 
+Both paths stop the sandbox from the daemon process that ran the trigger, so the
+host records `scheduler.sandbox.stop_scheduled` as soon as a run acquires a
+sandbox it will stop. When a daemon restart interrupts the run, startup recovery
+marks the run failed and stops every sandbox the run had scheduled, recording
+`scheduler.sandbox.stopped` with reason `daemon_interrupted`. Sandboxes a run
+leaves running by design, such as a sticky command sandbox, record no scheduled
+stop and are left alone. This matters for every runtime driver whose sandboxes
+outlive the daemon process, which is all of them: Docker containers, BoxLite
+boxes, and detached Microsandbox VMs.
+
 ## 8. Resume State Convention
 
 The JavaScript runtime is responsible for saving provider-level resume indexes:

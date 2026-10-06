@@ -122,6 +122,67 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 	}
 }
 
+func TestRuntimeHostRecordsScheduledSandboxStop(t *testing.T) {
+	ctx := context.Background()
+	scheduler := domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-stop", DefaultAgent: "claude"}}
+	scheduledStops := func(events *hostEventsFake) []string {
+		var sandboxIDs []string
+		for _, event := range events.items {
+			if event.Type == schedulers.SandboxStopScheduledEventType {
+				sandboxIDs = append(sandboxIDs, event.LinkedSandboxID)
+			}
+		}
+		return sandboxIDs
+	}
+	newHost := func(events *hostEventsFake, cleanup bool) *schedulers.RuntimeHost {
+		run := &domain.SchedulerRunSummary{ID: "run-stop", SchedulerID: scheduler.Summary.ID, TriggerID: "trigger-stop"}
+		return schedulers.NewRuntimeHost(schedulers.RunHostDependencies{
+			Events:           events,
+			Sessions:         &hostSessionsFake{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-stop", VMStatus: domain.VMStatusRunning}}},
+			AgentDefinitions: hostAgentDefinitionsFake{},
+			AgentExecutor:    &hostAgentExecutorFake{cell: domain.NotebookCell{ID: "cell", Success: true}},
+			CommandExecutor:  &hostCommandExecutorFake{},
+			CommandRequiresCleanup: func(domain.Scheduler, domain.SchedulerCommandRequest) bool {
+				return cleanup
+			},
+		}, scheduler, triggerExecution(run), schedulers.TriggerEventMetadata{})
+	}
+
+	t.Run("agent sandbox is stopped after the run", func(t *testing.T) {
+		events := &hostEventsFake{}
+		if _, err := newHost(events, false).Agent(ctx, "prompt", domain.SchedulerAgentRequest{}); err != nil {
+			t.Fatalf("Agent returned error: %v", err)
+		}
+		if got := scheduledStops(events); len(got) != 1 || got[0] != "sandbox-stop" {
+			t.Fatalf("scheduled stops = %#v, want [sandbox-stop]", got)
+		}
+		if first := events.items[0]; first.Type != schedulers.SandboxStopScheduledEventType {
+			t.Fatalf("first event = %#v, want the scheduled stop recorded before any work", first)
+		}
+	})
+	t.Run("command sandbox cleaned up after the run", func(t *testing.T) {
+		events := &hostEventsFake{}
+		host := newHost(events, true)
+		for range 2 {
+			if _, err := host.Command(ctx, domain.SchedulerCommandRequest{Mode: "shell", Command: "true"}); err != nil {
+				t.Fatalf("Command returned error: %v", err)
+			}
+		}
+		if got := scheduledStops(events); len(got) != 1 || got[0] != "sandbox-stop" {
+			t.Fatalf("scheduled stops = %#v, want one for the reused sandbox", got)
+		}
+	})
+	t.Run("command sandbox kept running", func(t *testing.T) {
+		events := &hostEventsFake{}
+		if _, err := newHost(events, false).Command(ctx, domain.SchedulerCommandRequest{Mode: "shell", Command: "true"}); err != nil {
+			t.Fatalf("Command returned error: %v", err)
+		}
+		if got := scheduledStops(events); len(got) != 0 {
+			t.Fatalf("scheduled stops = %#v, want none for a sandbox the run leaves running", got)
+		}
+	})
+}
+
 func TestRuntimeHostAgentPrefersAssistantMessageOverTranscript(t *testing.T) {
 	ctx := context.Background()
 	scheduler := domain.Scheduler{
