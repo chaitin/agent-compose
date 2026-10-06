@@ -385,18 +385,34 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 		return SandboxVMInfo{}, err
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
-	if err := r.prepareStartedSandbox(ctx, sandbox, startedSandboxTarget{Session: session, Name: name, ProxyState: proxyState, Booted: created || restarted}); err != nil {
-		if restarted {
-			// The start is reported as failed, so no caller will stop the VM
-			// this call booted; it would otherwise run until the daemon exits.
-			err = r.stopSandboxAfterEnsureFailure(ctx, session, vmState, err)
-		}
+	booted := created || restarted
+	if err := finishSandboxStart(booted,
+		func() error {
+			return r.prepareStartedSandbox(ctx, sandbox, startedSandboxTarget{Session: session, Name: name, ProxyState: proxyState, Booted: booted})
+		},
+		func() error { return r.stopSandboxAfterEnsureFailure(ctx, session, vmState) },
+	); err != nil {
 		return SandboxVMInfo{}, err
 	}
 	return SandboxVMInfo{
 		BoxID:      name,
 		JupyterURL: jupyterDirectURL(proxyState),
 	}, nil
+}
+
+// finishSandboxStart runs the steps that follow a boot or reconnect. When they
+// fail for a VM this start booted, it stops that VM: the start is reported as
+// failed, so no caller would, and the VM would run until the daemon exits. A
+// VM that was already running is left alone.
+func finishSandboxStart(booted bool, prepare, stop func() error) error {
+	err := prepare()
+	if err == nil || !booted {
+		return err
+	}
+	if stopErr := stop(); stopErr != nil {
+		return fmt.Errorf("%w; stop microsandbox after failed start: %w", err, stopErr)
+	}
+	return err
 }
 
 // startedSandboxTarget identifies the sandbox prepareStartedSandbox prepares.
@@ -444,16 +460,13 @@ func (r *microsandboxRuntime) prepareStartedSandbox(ctx context.Context, sandbox
 	return nil
 }
 
-// stopSandboxAfterEnsureFailure stops a VM that this EnsureSandbox call booted
-// and then failed to prepare. It outlives the caller's context so a start
-// timeout cannot leave the VM running.
-func (r *microsandboxRuntime) stopSandboxAfterEnsureFailure(ctx context.Context, session *Sandbox, vmState VMState, cause error) error {
+// stopSandboxAfterEnsureFailure stops the VM of a start that failed. It
+// outlives the caller's context so a start that timed out still stops the VM.
+func (r *microsandboxRuntime) stopSandboxAfterEnsureFailure(ctx context.Context, session *Sandbox, vmState VMState) error {
 	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), microsandboxEnsureFailureStopTimeout)
 	defer cancel()
-	if _, err := r.StopSandbox(stopCtx, session, vmState); err != nil {
-		return fmt.Errorf("%w; stop microsandbox %s after failed ensure: %w", cause, r.sandboxName(session, vmState), err)
-	}
-	return cause
+	_, err := r.StopSandbox(stopCtx, session, vmState)
+	return err
 }
 
 func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox, vmState VMState) (bool, error) {

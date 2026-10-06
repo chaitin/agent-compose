@@ -19,6 +19,45 @@ import (
 	microsandbox "github.com/superradcompany/microsandbox/sdk/go"
 )
 
+func TestFinishSandboxStartStopsOnlyAVMThisStartBooted(t *testing.T) {
+	prepareErr := errors.New("jupyter did not become ready")
+	stopErr := errors.New("stop timed out")
+	tests := []struct {
+		name       string
+		booted     bool
+		prepareErr error
+		stopErr    error
+		wantStop   bool
+		wantErrs   []error
+	}{
+		{name: "booted and prepared", booted: true},
+		{name: "booted, prepare failed", booted: true, prepareErr: prepareErr, wantStop: true, wantErrs: []error{prepareErr}},
+		{name: "booted, prepare and stop failed", booted: true, prepareErr: prepareErr, stopErr: stopErr, wantStop: true, wantErrs: []error{prepareErr, stopErr}},
+		{name: "already running, prepare failed", prepareErr: prepareErr, wantErrs: []error{prepareErr}},
+		{name: "already running and prepared"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stopped := false
+			err := finishSandboxStart(tt.booted,
+				func() error { return tt.prepareErr },
+				func() error { stopped = true; return tt.stopErr },
+			)
+			if stopped != tt.wantStop {
+				t.Fatalf("stopped = %v, want %v", stopped, tt.wantStop)
+			}
+			if len(tt.wantErrs) == 0 && err != nil {
+				t.Fatalf("error = %v, want nil", err)
+			}
+			for _, want := range tt.wantErrs {
+				if !errors.Is(err, want) {
+					t.Fatalf("error = %v, want it to wrap %v", err, want)
+				}
+			}
+		})
+	}
+}
+
 func TestMicrosandboxExecCollectorMapsStdioStreams(t *testing.T) {
 	var streamed []ExecChunk
 	collector := &microsandboxExecCollector{stream: func(chunk ExecChunk) {
