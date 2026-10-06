@@ -218,3 +218,69 @@ func (*closingRuntimeInteraction) Recv() (driverpkg.RuntimeOutputFrame, error) {
 func (*closingRuntimeInteraction) Wait() (driverpkg.RuntimeResult, error) {
 	return driverpkg.RuntimeResult{}, errors.New("unused")
 }
+
+// TestForwardPromptHumanMessageSkipsRefetchOnDuplicateFrame verifies the fix
+// for issue #680: when the human-message frame was already persisted (an
+// idempotent retry), the projector reports recorded=false and the message is
+// NOT fed to the agent a second time; the caller still treats it as accepted.
+func TestForwardPromptHumanMessageSkipsRefetchOnDuplicateFrame(t *testing.T) {
+	t.Run("new frame is recorded then forwarded", func(t *testing.T) {
+		interaction := newObservedRuntimeInteraction()
+		input := &promptWrapperInput{interaction: interaction}
+		pump := promptInputPump{
+			Input: input,
+			OnHumanMessage: func(string, string) (bool, error) {
+				return true, nil // newly persisted
+			},
+		}
+		if !forwardPromptHumanMessage(context.Background(), pump, "question", "frame-new") {
+			t.Fatal("forwardPromptHumanMessage = false, want true for a new frame")
+		}
+		assertPromptRuntimeFrame(t, receiveRuntimeInputFrame(t, interaction.sent), "human_message", "question")
+	})
+
+	t.Run("duplicate frame is skipped but accepted", func(t *testing.T) {
+		interaction := newObservedRuntimeInteraction()
+		input := &promptWrapperInput{interaction: interaction}
+		pump := promptInputPump{
+			Input: input,
+			OnHumanMessage: func(string, string) (bool, error) {
+				return false, nil // already persisted (idempotent retry)
+			},
+		}
+		if !forwardPromptHumanMessage(context.Background(), pump, "question", "frame-dup") {
+			t.Fatal("forwardPromptHumanMessage = false, want true for an idempotent retry")
+		}
+		assertNoRuntimeInputFrame(t, interaction.sent)
+	})
+
+	t.Run("unpersisted frame still forwards", func(t *testing.T) {
+		interaction := newObservedRuntimeInteraction()
+		input := &promptWrapperInput{interaction: interaction}
+		pump := promptInputPump{
+			Input: input,
+			OnHumanMessage: func(string, string) (bool, error) {
+				return true, nil // not persisted (empty message / no event store)
+			},
+		}
+		if !forwardPromptHumanMessage(context.Background(), pump, "", "frame-empty") {
+			t.Fatal("forwardPromptHumanMessage = false, want true when nothing was persisted")
+		}
+		assertPromptRuntimeFrame(t, receiveRuntimeInputFrame(t, interaction.sent), "human_message", "")
+	})
+
+	t.Run("record error aborts without forwarding", func(t *testing.T) {
+		interaction := newObservedRuntimeInteraction()
+		input := &promptWrapperInput{interaction: interaction}
+		pump := promptInputPump{
+			Input: input,
+			OnHumanMessage: func(string, string) (bool, error) {
+				return false, errors.New("store unavailable")
+			},
+		}
+		if forwardPromptHumanMessage(context.Background(), pump, "question", "frame-err") {
+			t.Fatal("forwardPromptHumanMessage = true, want false on record error")
+		}
+		assertNoRuntimeInputFrame(t, interaction.sent)
+	})
+}
