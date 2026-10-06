@@ -25,3 +25,14 @@ func NewContextWithRequestMetadata(ctx context.Context, metadata RequestMetadata
 	ctx = NewContextWithTrustedHeaders(ctx, metadata.TrustedHeaders)
 	return NewContextWithTraceContext(ctx, metadata.TraceContext)
 }
+
+// DetachedContextFromRequest returns a context derived from root that carries
+// only the metadata of request. An execution that outlives the request starting
+// it belongs to the daemon root rather than to the request, so it must not
+// retain the transport context; but it still runs on behalf of that caller, so
+// the trusted headers identifying the caller and the caller's trace context
+// have to travel with it. Values other than that metadata are deliberately not
+// inherited.
+func DetachedContextFromRequest(root, request context.Context) context.Context {
+	return NewContextWithRequestMetadata(root, RequestMetadataFromContext(request))
+}

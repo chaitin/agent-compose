@@ -55,7 +55,7 @@ func NewRunSupervisor(di do.Injector) (*RunSupervisor, error) {
 // carried over, not the transport context, matching how StartProjectRun's
 // asynchronous Execute restores it (runs.Controller.StartProjectRun).
 func (s *RunSupervisor) detachedRunContext(request context.Context) context.Context {
-	return domain.NewContextWithRequestMetadata(s.root, domain.RequestMetadataFromContext(request))
+	return domain.DetachedContextFromRequest(s.root, request)
 }
 
 func (s *RunSupervisor) StartRun(ctx context.Context, req runs.RunAgentRequest) (domain.ProjectRunRecord, error) {

@@ -131,7 +131,10 @@ func (s *SchedulerRunSupervisor) start(ctx context.Context, request SchedulerRun
 		return prepared.Run, nil, nil
 	}
 
-	runCtx, cancel := context.WithCancelCause(s.deps.RootCtx)
+	// The run outlives the request that started it, so it runs under the root
+	// context while still carrying the request's metadata: trusted ingress
+	// headers are the identity of the user who started this run.
+	runCtx, cancel := context.WithCancelCause(domain.DetachedContextFromRequest(s.deps.RootCtx, ctx))
 	cleanup := func() { cancel(context.Canceled) }
 	if timeout := effectiveSchedulerRunTimeout(scheduler, request.Timeout, s.deps.RunTimeout); timeout > 0 {
 		var timeoutCancel context.CancelFunc
