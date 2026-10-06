@@ -317,7 +317,7 @@ func (b *SandboxRPCBridge) createSandboxWithAgent(ctx context.Context, req sandb
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	domain.RestoreSandboxTransientFields(loaded, session)
-	b.indexCapabilitySandbox(loaded)
+	b.indexCapabilitySandbox(ctx, loaded)
 	b.publishSandboxLifecycle(ctx, "agent-compose.session.created", loaded, source)
 	return loaded, nil
 }
@@ -335,8 +335,13 @@ func sandboxTagsWithoutAgentIdentity(tags []domain.SandboxTag) []domain.SandboxT
 	return filtered
 }
 
+// ResumeSandbox serves the SandboxService RPC. Resuming is a lifecycle
+// operation, not a run: whoever resumes a sandbox is not necessarily who uses
+// it afterwards, and nothing ends that would clear the binding again. So the
+// resumed sandbox is bound without an identity, whatever the request carries;
+// the next run binds its own.
 func (b *SandboxRPCBridge) ResumeSandbox(ctx context.Context, sandboxID string) (*domain.Sandbox, error) {
-	return b.resumeSandbox(ctx, sandboxID, domain.SandboxTypeManual)
+	return b.resumeSandbox(domain.NewContextWithTrustedHeaders(ctx, nil), sandboxID, domain.SandboxTypeManual)
 }
 
 func (b *SandboxRPCBridge) resumeSandbox(ctx context.Context, sandboxID, source string) (*domain.Sandbox, error) {
@@ -348,7 +353,7 @@ func (b *SandboxRPCBridge) resumeSandbox(ctx context.Context, sandboxID, source 
 	if err != nil {
 		return nil, api.ConnectErrorForDomain(err)
 	}
-	b.indexCapabilitySandbox(loaded)
+	b.indexCapabilitySandbox(ctx, loaded)
 	b.publishSandboxLifecycle(ctx, "agent-compose.session.resumed", loaded, source)
 	return loaded, nil
 }
@@ -398,9 +403,12 @@ func (b *SandboxRPCBridge) stopSandboxWithOptions(ctx context.Context, sandboxID
 	return outcome, nil
 }
 
-func (b *SandboxRPCBridge) indexCapabilitySandbox(session *domain.Sandbox) {
+// indexCapabilitySandbox binds the sandbox's capability token to the trusted
+// headers on ctx. Only scheduler executions reach it with any: a script's
+// sandbox calls act as the execution they belong to.
+func (b *SandboxRPCBridge) indexCapabilitySandbox(ctx context.Context, session *domain.Sandbox) {
 	if b != nil && b.capTokens != nil {
-		b.capTokens.IndexSandbox(session, nil)
+		b.capTokens.IndexSandbox(session, domain.TrustedHeadersFromContext(ctx))
 	}
 }
 
