@@ -122,23 +122,35 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 	}
 }
 
-func TestRuntimeHostRecordsScheduledSandboxStop(t *testing.T) {
+func TestRuntimeHostRecordsPendingSandboxStop(t *testing.T) {
 	ctx := context.Background()
 	scheduler := domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-stop", DefaultAgent: "claude"}}
-	scheduledStops := func(events *hostEventsFake) []string {
+	pendingStops := func(events *hostEventsFake) []string {
 		var sandboxIDs []string
 		for _, event := range events.items {
-			if event.Type == schedulers.SandboxStopScheduledEventType {
+			if event.Type == schedulers.SandboxStopPendingEventType {
 				sandboxIDs = append(sandboxIDs, event.LinkedSandboxID)
 			}
 		}
 		return sandboxIDs
 	}
-	newHost := func(events *hostEventsFake, cleanup bool) *schedulers.RuntimeHost {
+	type hostParts struct {
+		host     *schedulers.RuntimeHost
+		events   *hostEventsFake
+		sessions *acquiringSessionsFake
+	}
+	newHost := func(cleanup bool) hostParts {
+		events := &hostEventsFake{}
+		sessions := &acquiringSessionsFake{hostSessionsFake: hostSessionsFake{
+			session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-stop", VMStatus: domain.VMStatusRunning}},
+		}}
+		// The runner reports the sandbox before starting its runtime; snapshot
+		// what the host has recorded at that point.
+		sessions.afterAcquire = func() { sessions.pendingAtStart = pendingStops(events) }
 		run := &domain.SchedulerRunSummary{ID: "run-stop", SchedulerID: scheduler.Summary.ID, TriggerID: "trigger-stop"}
-		return schedulers.NewRuntimeHost(schedulers.RunHostDependencies{
+		host := schedulers.NewRuntimeHost(schedulers.RunHostDependencies{
 			Events:           events,
-			Sessions:         &hostSessionsFake{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-stop", VMStatus: domain.VMStatusRunning}}},
+			Sessions:         sessions,
 			AgentDefinitions: hostAgentDefinitionsFake{},
 			AgentExecutor:    &hostAgentExecutorFake{cell: domain.NotebookCell{ID: "cell", Success: true}},
 			CommandExecutor:  &hostCommandExecutorFake{},
@@ -146,41 +158,73 @@ func TestRuntimeHostRecordsScheduledSandboxStop(t *testing.T) {
 				return cleanup
 			},
 		}, scheduler, triggerExecution(run), schedulers.TriggerEventMetadata{})
+		return hostParts{host: host, events: events, sessions: sessions}
 	}
 
 	t.Run("agent sandbox is stopped after the run", func(t *testing.T) {
-		events := &hostEventsFake{}
-		if _, err := newHost(events, false).Agent(ctx, "prompt", domain.SchedulerAgentRequest{}); err != nil {
+		parts := newHost(false)
+		if _, err := parts.host.Agent(ctx, "prompt", domain.SchedulerAgentRequest{}); err != nil {
 			t.Fatalf("Agent returned error: %v", err)
 		}
-		if got := scheduledStops(events); len(got) != 1 || got[0] != "sandbox-stop" {
-			t.Fatalf("scheduled stops = %#v, want [sandbox-stop]", got)
+		if got := parts.sessions.pendingAtStart; len(got) != 1 || got[0] != "sandbox-stop" {
+			t.Fatalf("pending stops when the runtime starts = %#v, want [sandbox-stop]", got)
 		}
-		if first := events.items[0]; first.Type != schedulers.SandboxStopScheduledEventType {
-			t.Fatalf("first event = %#v, want the scheduled stop recorded before any work", first)
+		if got := pendingStops(parts.events); len(got) != 1 {
+			t.Fatalf("pending stops = %#v, want exactly one", got)
 		}
 	})
 	t.Run("command sandbox cleaned up after the run", func(t *testing.T) {
-		events := &hostEventsFake{}
-		host := newHost(events, true)
+		parts := newHost(true)
 		for range 2 {
-			if _, err := host.Command(ctx, domain.SchedulerCommandRequest{Mode: "shell", Command: "true"}); err != nil {
+			if _, err := parts.host.Command(ctx, domain.SchedulerCommandRequest{Mode: "shell", Command: "true"}); err != nil {
 				t.Fatalf("Command returned error: %v", err)
 			}
 		}
-		if got := scheduledStops(events); len(got) != 1 || got[0] != "sandbox-stop" {
-			t.Fatalf("scheduled stops = %#v, want one for the reused sandbox", got)
+		if got := parts.sessions.pendingAtStart; len(got) != 1 || got[0] != "sandbox-stop" {
+			t.Fatalf("pending stops when the runtime starts = %#v, want [sandbox-stop]", got)
+		}
+		if got := pendingStops(parts.events); len(got) != 1 {
+			t.Fatalf("pending stops = %#v, want one for the reused sandbox", got)
 		}
 	})
 	t.Run("command sandbox kept running", func(t *testing.T) {
-		events := &hostEventsFake{}
-		if _, err := newHost(events, false).Command(ctx, domain.SchedulerCommandRequest{Mode: "shell", Command: "true"}); err != nil {
+		parts := newHost(false)
+		if _, err := parts.host.Command(ctx, domain.SchedulerCommandRequest{Mode: "shell", Command: "true"}); err != nil {
 			t.Fatalf("Command returned error: %v", err)
 		}
-		if got := scheduledStops(events); len(got) != 0 {
-			t.Fatalf("scheduled stops = %#v, want none for a sandbox the run leaves running", got)
+		if got := pendingStops(parts.events); len(got) != 0 {
+			t.Fatalf("pending stops = %#v, want none for a sandbox the run leaves running", got)
 		}
 	})
+	t.Run("runner that does not report the sandbox", func(t *testing.T) {
+		parts := newHost(false)
+		parts.sessions.silent = true
+		if _, err := parts.host.Agent(ctx, "prompt", domain.SchedulerAgentRequest{}); err != nil {
+			t.Fatalf("Agent returned error: %v", err)
+		}
+		if got := pendingStops(parts.events); len(got) != 1 || got[0] != "sandbox-stop" {
+			t.Fatalf("pending stops = %#v, want the host to record it after Ensure", got)
+		}
+	})
+}
+
+// acquiringSessionsFake reports the sandbox the way a sandbox runner does:
+// before its runtime starts.
+type acquiringSessionsFake struct {
+	hostSessionsFake
+	silent         bool
+	afterAcquire   func()
+	pendingAtStart []string
+}
+
+func (s *acquiringSessionsFake) Ensure(ctx context.Context, scheduler domain.Scheduler, request domain.SchedulerAgentRequest, titleOverridesSession bool) (*domain.Sandbox, string, error) {
+	if !s.silent {
+		schedulers.NotifySandboxAcquired(ctx, s.session.Summary.ID)
+	}
+	if s.afterAcquire != nil {
+		s.afterAcquire()
+	}
+	return s.hostSessionsFake.Ensure(ctx, scheduler, request, titleOverridesSession)
 }
 
 func TestRuntimeHostAgentPrefersAssistantMessageOverTranscript(t *testing.T) {

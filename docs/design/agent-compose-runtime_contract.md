@@ -521,14 +521,15 @@ and records `scheduler.sandbox.stopped`. `scheduler.agent` sandbox stop behavior
 still follows the agent path.
 
 Both paths stop the sandbox from the daemon process that ran the trigger, so the
-host records `scheduler.sandbox.stop_scheduled` as soon as a run acquires a
-sandbox it will stop. When a daemon restart interrupts the run, startup recovery
-marks the run failed and stops every sandbox the run had scheduled, recording
-`scheduler.sandbox.stopped` with reason `daemon_interrupted`. Sandboxes a run
-leaves running by design, such as a sticky command sandbox, record no scheduled
-stop and are left alone. This matters for every runtime driver whose sandboxes
-outlive the daemon process, which is all of them: Docker containers, BoxLite
-boxes, and detached Microsandbox VMs.
+host records `scheduler.sandbox.stop_pending` for each sandbox a run will stop.
+The event is written once the sandbox has an ID and before its runtime starts,
+so a running runtime never precedes its record. When a daemon restart interrupts
+the run, startup recovery stops every sandbox whose stop the run left pending,
+recording `scheduler.sandbox.stopped` with reason `daemon_interrupted`, and
+marks the run failed. Sandboxes a run leaves running by design, such as a sticky
+command sandbox, record no pending stop and are left alone. This matters for
+every runtime driver, because all of their sandboxes outlive the daemon process:
+Docker containers, BoxLite boxes, and detached Microsandbox VMs.
 
 ## 8. Resume State Convention
 

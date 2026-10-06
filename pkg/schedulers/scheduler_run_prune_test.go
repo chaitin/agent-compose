@@ -205,7 +205,7 @@ func TestControllerRecoverInterruptedRunsStopsScheduledSandboxes(t *testing.T) {
 	startedAt := time.Date(2026, 7, 22, 9, 0, 0, 0, time.UTC)
 	run := domain.SchedulerRunSummary{ID: "run-a", SchedulerID: "scheduler-a", TriggerID: "trigger-a", Status: domain.SchedulerRunStatusRunning, StartedAt: startedAt}
 	scheduled := func(sandboxID string) domain.SchedulerEvent {
-		return domain.SchedulerEvent{SchedulerID: run.SchedulerID, RunID: run.ID, Type: SandboxStopScheduledEventType, LinkedSandboxID: sandboxID}
+		return domain.SchedulerEvent{SchedulerID: run.SchedulerID, RunID: run.ID, Type: SandboxStopPendingEventType, LinkedSandboxID: sandboxID}
 	}
 	store := &schedulerRunPruneStoreFake{
 		interrupted: []domain.SchedulerRunSummary{run},
@@ -248,6 +248,29 @@ func TestControllerRecoverInterruptedRunsStopsScheduledSandboxes(t *testing.T) {
 	}
 }
 
+func TestControllerRecoverInterruptedRunsStopsSandboxesWhenRunUpdateFails(t *testing.T) {
+	startedAt := time.Date(2026, 7, 22, 9, 0, 0, 0, time.UTC)
+	run := domain.SchedulerRunSummary{ID: "run-a", SchedulerID: "scheduler-a", TriggerID: "trigger-a", Status: domain.SchedulerRunStatusRunning, StartedAt: startedAt}
+	store := &schedulerRunPruneStoreFake{
+		interrupted: []domain.SchedulerRunSummary{run},
+		updateErr:   errors.New("database is locked"),
+		runEvents: map[string][]domain.SchedulerEvent{run.ID: {
+			{SchedulerID: run.SchedulerID, RunID: run.ID, Type: SandboxStopPendingEventType, LinkedSandboxID: "sandbox-stop"},
+		}},
+	}
+	stopper := &interruptedSandboxStopperFake{}
+	controller := newSchedulerRunPruneController(store, nil, nil)
+	controller.deps.InterruptedSandboxes = stopper
+
+	err := controller.RecoverInterruptedRuns(context.Background(), startedAt.Add(time.Hour))
+	if err == nil || !strings.Contains(err.Error(), "database is locked") {
+		t.Fatalf("recover error = %v, want the run update failure", err)
+	}
+	if want := []string{"sandbox-stop"}; !slices.Equal(stopper.stopped, want) {
+		t.Fatalf("stopped sandboxes = %#v, want %#v despite the failed run update", stopper.stopped, want)
+	}
+}
+
 type interruptedSandboxStopperFake struct {
 	stopped []string
 	errs    map[string]error
@@ -273,6 +296,7 @@ type schedulerRunPruneStoreFake struct {
 	updatedRuns []domain.SchedulerRunSummary
 	events      []domain.SchedulerEvent
 	runEvents   map[string][]domain.SchedulerEvent
+	updateErr   error
 }
 
 func (s *schedulerRunPruneStoreFake) ListSchedulerEventsPage(_ context.Context, filter SchedulerEventPageFilter) ([]domain.SchedulerEvent, error) {
@@ -292,6 +316,9 @@ func (s *schedulerRunPruneStoreFake) ListInterruptedSchedulerRuns(context.Contex
 }
 
 func (s *schedulerRunPruneStoreFake) UpdateSchedulerRun(_ context.Context, run domain.SchedulerRunSummary) error {
+	if s.updateErr != nil {
+		return s.updateErr
+	}
 	s.updatedRuns = append(s.updatedRuns, run)
 	return nil
 }

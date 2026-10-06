@@ -41,6 +41,11 @@ func (c *Controller) RecoverInterruptedRuns(ctx context.Context, startedAt time.
 	completedAt := c.now()
 	var recoveryErrors []error
 	for _, run := range runs {
+		// Stopping the sandboxes does not depend on the run record: a failed
+		// write below must not leave them running until the next restart.
+		if err := c.stopInterruptedRunSandboxes(ctx, run); err != nil {
+			recoveryErrors = append(recoveryErrors, err)
+		}
 		run.Status = domain.SchedulerRunStatusFailed
 		run.CompletedAt = completedAt
 		run.DurationMs = max(completedAt.Sub(run.StartedAt).Milliseconds(), 0)
@@ -56,21 +61,18 @@ func (c *Controller) RecoverInterruptedRuns(ctx context.Context, startedAt time.
 		}); err != nil {
 			recoveryErrors = append(recoveryErrors, fmt.Errorf("record interrupted scheduler run event %s/%s: %w", run.SchedulerID, run.ID, err))
 		}
-		if err := c.stopInterruptedRunSandboxes(ctx, run); err != nil {
-			recoveryErrors = append(recoveryErrors, err)
-		}
 	}
 	return errors.Join(recoveryErrors...)
 }
 
-// stopInterruptedRunSandboxes stops the sandboxes run had scheduled to stop at
-// its end. Sandboxes a run leaves running by design record no such event and
-// are not touched.
+// stopInterruptedRunSandboxes stops the sandboxes whose stop run left pending.
+// Sandboxes a run leaves running by design record no pending stop and are not
+// touched.
 func (c *Controller) stopInterruptedRunSandboxes(ctx context.Context, run domain.SchedulerRunSummary) error {
 	if c.deps.InterruptedSandboxes == nil {
 		return nil
 	}
-	sandboxIDs, err := c.interruptedRunScheduledStops(ctx, run)
+	sandboxIDs, err := c.interruptedRunPendingStops(ctx, run)
 	if err != nil {
 		return fmt.Errorf("list sandboxes of interrupted scheduler run %s/%s: %w", run.SchedulerID, run.ID, err)
 	}
@@ -95,7 +97,7 @@ func (c *Controller) stopInterruptedRunSandboxes(ctx context.Context, run domain
 	return errors.Join(stopErrors...)
 }
 
-func (c *Controller) interruptedRunScheduledStops(ctx context.Context, run domain.SchedulerRunSummary) ([]string, error) {
+func (c *Controller) interruptedRunPendingStops(ctx context.Context, run domain.SchedulerRunSummary) ([]string, error) {
 	store, ok := c.deps.Store.(interruptedSchedulerRunEventStore)
 	if !ok || store == nil {
 		return nil, fmt.Errorf("scheduler event store is unavailable")
@@ -112,7 +114,7 @@ func (c *Controller) interruptedRunScheduledStops(ctx context.Context, run domai
 		}
 		for _, event := range events {
 			sandboxID := strings.TrimSpace(event.LinkedSandboxID)
-			if event.Type != SandboxStopScheduledEventType || sandboxID == "" {
+			if event.Type != SandboxStopPendingEventType || sandboxID == "" {
 				continue
 			}
 			if _, ok := seen[sandboxID]; ok {
