@@ -196,6 +196,19 @@ func TestRuntimeHostRecordsPendingSandboxStop(t *testing.T) {
 			t.Fatalf("pending stops = %#v, want none for a sandbox the run leaves running", got)
 		}
 	})
+	t.Run("failed write is retried after Ensure", func(t *testing.T) {
+		parts := newHost(false)
+		parts.events.failType, parts.events.addRecordErr = schedulers.SandboxStopPendingEventType, errors.New("database is locked")
+		// The write made when the runner reports the sandbox fails; the store
+		// recovers before Ensure returns.
+		parts.sessions.afterAcquire = func() { parts.events.addRecordErr = nil }
+		if _, err := parts.host.Agent(ctx, "prompt", domain.SchedulerAgentRequest{}); err != nil {
+			t.Fatalf("Agent returned error: %v", err)
+		}
+		if got := pendingStops(parts.events); len(got) != 1 || got[0] != "sandbox-stop" {
+			t.Fatalf("pending stops = %#v, want the failed write retried once Ensure returned", got)
+		}
+	})
 	t.Run("runner that does not report the sandbox", func(t *testing.T) {
 		parts := newHost(false)
 		parts.sessions.silent = true

@@ -569,21 +569,18 @@ func (h *RuntimeHost) withSandboxStopPending(ctx context.Context) context.Contex
 }
 
 // recordSandboxStopPending records the pending stop once per sandbox and run.
+// A sandbox counts as recorded only once its event is written, so a failed
+// write is retried by the next call for the same sandbox.
 func (h *RuntimeHost) recordSandboxStopPending(ctx context.Context, sandboxID string) {
 	sandboxID = strings.TrimSpace(sandboxID)
 	if sandboxID == "" {
 		return
 	}
 	h.stopPendingMu.Lock()
+	defer h.stopPendingMu.Unlock()
 	if _, recorded := h.stopPending[sandboxID]; recorded {
-		h.stopPendingMu.Unlock()
 		return
 	}
-	if h.stopPending == nil {
-		h.stopPending = map[string]struct{}{}
-	}
-	h.stopPending[sandboxID] = struct{}{}
-	h.stopPendingMu.Unlock()
 	if err := h.addLinkedSchedulerEvent(ctx, SchedulerEventInput{
 		EventType:       SandboxStopPendingEventType,
 		Level:           "info",
@@ -592,7 +589,12 @@ func (h *RuntimeHost) recordSandboxStopPending(ctx context.Context, sandboxID st
 		LinkedSandboxID: sandboxID,
 	}); err != nil {
 		slog.Warn("failed to record pending scheduler sandbox stop", "scheduler_id", h.scheduler.Summary.ID, "run_id", h.execution.ID, "sandbox_id", sandboxID, "error", err)
+		return
 	}
+	if h.stopPending == nil {
+		h.stopPending = map[string]struct{}{}
+	}
+	h.stopPending[sandboxID] = struct{}{}
 }
 
 // SchedulerEventInput describes one scheduler event to record, for both the
