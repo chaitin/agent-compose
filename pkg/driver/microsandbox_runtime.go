@@ -1168,16 +1168,19 @@ func (r *microsandboxRuntime) startDetachedSandbox(ctx context.Context, handle *
 // reconnectDetachedSandbox trades the handle that booted a detached VM for an
 // ordinary connection. Closing the booting handle stops the VM, so it is
 // detached instead; every later caller then holds a handle that is safe to
-// close. If the trade fails the VM is stopped rather than left unreachable.
+// close. If the trade fails the VM is stopped rather than left unreachable,
+// which is why the by-name handle is looked up while the booting handle can
+// still stop the VM.
 func (r *microsandboxRuntime) reconnectDetachedSandbox(ctx context.Context, started *microsandbox.Sandbox, name string) (*microsandbox.Sandbox, error) {
+	handle, err := microsandbox.GetSandbox(ctx, name)
+	if err != nil {
+		r.closeSandboxHandle(started)
+		return nil, fmt.Errorf("look up detached microsandbox %s: %w", name, err)
+	}
 	if err := started.Detach(ctx); err != nil {
 		// Detach failed, so the handle still owns the VM and Close stops it.
 		r.closeSandboxHandle(started)
 		return nil, fmt.Errorf("detach microsandbox %s: %w", name, err)
-	}
-	handle, err := microsandbox.GetSandbox(ctx, name)
-	if err != nil {
-		return nil, fmt.Errorf("look up detached microsandbox %s: %w", name, err)
 	}
 	sandbox, err := handle.Connect(ctx)
 	if err == nil {
