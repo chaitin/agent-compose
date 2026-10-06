@@ -19,12 +19,11 @@ func (r *microsandboxRuntime) SignalGuestRuntime(ctx context.Context, session *S
 	if err := r.ensureReady(ctx); err != nil {
 		return err
 	}
-	name := r.sandboxName(session, vmState)
 	sandbox, err := r.connectSandbox(ctx, session, vmState, false)
 	if err != nil {
 		return fmt.Errorf("connect Microsandbox guest runtime signal control: %w", err)
 	}
-	defer r.releaseSandboxHandle(name, sandbox)
+	defer r.closeSandboxHandle(sandbox)
 	output, err := sandbox.Exec(ctx, command[0], command[1:], microsandbox.WithExecCwd("/"))
 	if err != nil {
 		return fmt.Errorf("run Microsandbox guest runtime signal control: %w", err)

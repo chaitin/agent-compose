@@ -90,7 +90,7 @@ func (r *microsandboxRuntime) OpenInteraction(ctx context.Context, session *Sand
 		cancel()
 		return nil, err
 	}
-	release := func() { r.releaseSandboxHandle(name, sandbox) }
+	release := func() { r.closeSandboxHandle(sandbox) }
 	if err := r.ensureDirectoryOnlyGuestSandboxBootstrap(childCtx, sandbox, session, name); err != nil {
 		cancel()
 		release()

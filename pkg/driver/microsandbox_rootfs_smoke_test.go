@@ -10,8 +10,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	microsandbox "github.com/superradcompany/microsandbox/sdk/go"
 )
 
 func TestSmokeMicrosandboxRootfsIsolation(t *testing.T) {
@@ -19,7 +17,7 @@ func TestSmokeMicrosandboxRootfsIsolation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	config := newRuntimeSmokeConfig(t, RuntimeDriverMicrosandbox)
-	runtimeDriver := &microsandboxRuntime{config: config, lifecycleHandles: map[string]*microsandbox.Sandbox{}}
+	runtimeDriver := &microsandboxRuntime{config: config}
 
 	first, firstState, firstProxy := newRuntimeSmokeSandbox(t, ctx, config, RuntimeDriverMicrosandbox)
 	second, secondState, secondProxy := newRuntimeSmokeSandbox(t, ctx, config, RuntimeDriverMicrosandbox)

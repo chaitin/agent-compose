@@ -29,10 +29,8 @@ type microsandboxRuntime struct {
 	initMu sync.Mutex
 	ready  bool
 
-	lifecycleMu      sync.Mutex
-	lifecycleHandles map[string]*microsandbox.Sandbox
-	createLocks      microsandboxKeyedLocks
-	baseBuilds       singleflight.Group
+	createLocks microsandboxKeyedLocks
+	baseBuilds  singleflight.Group
 }
 
 type microsandboxExecCollector struct {
@@ -62,6 +60,10 @@ const microsandboxExecSilenceProbeInterval = 2 * time.Minute
 // a guest agent that has stopped answering cannot turn the probe into a second
 // place to hang.
 const microsandboxExecLivenessProbeTimeout = 30 * time.Second
+
+// microsandboxEnsureFailureStopTimeout bounds stopping a VM whose start was
+// reported as failed.
+const microsandboxEnsureFailureStopTimeout = 30 * time.Second
 
 const (
 	microsandboxManagedLabel   = "agent-compose.managed"
@@ -324,7 +326,7 @@ func microsandboxExecProcessGone(ctx context.Context, probeAlive microsandboxExe
 }
 
 func newMicrosandboxRuntime(config *appconfig.Config) (SandboxRuntime, error) {
-	return &microsandboxRuntime{config: config, lifecycleHandles: map[string]*microsandbox.Sandbox{}}, nil
+	return &microsandboxRuntime{config: config}, nil
 }
 
 func (c *microsandboxExecCollector) writeChunk(chunk ExecChunk) {
@@ -380,13 +382,39 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 	if err != nil {
 		return SandboxVMInfo{}, err
 	}
-	defer r.releaseSandboxHandle(name, sandbox)
-
-	if err := r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name); err != nil {
+	defer r.closeSandboxHandle(sandbox)
+	if err := r.prepareStartedSandbox(ctx, sandbox, startedSandboxTarget{Session: session, Name: name, ProxyState: proxyState, Booted: created || restarted}); err != nil {
+		if restarted {
+			// The VM is detached, so nothing else stops it once this start is
+			// reported as failed.
+			err = r.stopSandboxAfterEnsureFailure(ctx, sandbox, name, err)
+		}
 		return SandboxVMInfo{}, err
 	}
+	return SandboxVMInfo{
+		BoxID:      name,
+		JupyterURL: jupyterDirectURL(proxyState),
+	}, nil
+}
 
-	needLaunch := created || restarted
+// startedSandboxTarget identifies the sandbox prepareStartedSandbox prepares.
+// Booted is true when this EnsureSandbox call booted the VM rather than
+// reconnecting to a running one.
+type startedSandboxTarget struct {
+	Session    *Sandbox
+	Name       string
+	ProxyState ProxyState
+	Booted     bool
+}
+
+// prepareStartedSandbox runs the guest-side steps that follow a successful
+// boot or reconnect.
+func (r *microsandboxRuntime) prepareStartedSandbox(ctx context.Context, sandbox *microsandbox.Sandbox, target startedSandboxTarget) error {
+	session, name, proxyState, needLaunch := target.Session, target.Name, target.ProxyState, target.Booted
+	if err := r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name); err != nil {
+		return err
+	}
+
 	if jupyterEnabled(proxyState) && !needLaunch {
 		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		probeErr := waitForJupyterProxy(probeCtx, proxyState)
@@ -395,7 +423,7 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 	}
 	if jupyterEnabled(proxyState) && needLaunch {
 		if err := r.launchJupyter(ctx, sandbox, proxyState); err != nil {
-			return SandboxVMInfo{}, err
+			return err
 		}
 	}
 	if jupyterEnabled(proxyState) {
@@ -406,16 +434,25 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 			if logText := readSandboxJupyterLog(session); jupyterLogIndicatesReady(logText) {
 				slog.Warn("microsandbox jupyter probe timed out after guest reported ready", "sandbox_id", session.Summary.ID, "error", readyErr)
 			} else if logText != "" {
-				return SandboxVMInfo{}, fmt.Errorf("%w\nGuest log:\n%s", readyErr, logText)
+				return fmt.Errorf("%w\nGuest log:\n%s", readyErr, logText)
 			} else {
-				return SandboxVMInfo{}, readyErr
+				return readyErr
 			}
 		}
 	}
-	return SandboxVMInfo{
-		BoxID:      name,
-		JupyterURL: jupyterDirectURL(proxyState),
-	}, nil
+	return nil
+}
+
+// stopSandboxAfterEnsureFailure stops a VM that this EnsureSandbox call booted
+// and then failed to prepare. It outlives the caller's context so a start
+// timeout cannot leave the VM running.
+func (r *microsandboxRuntime) stopSandboxAfterEnsureFailure(ctx context.Context, sandbox *microsandbox.Sandbox, name string, cause error) error {
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), microsandboxEnsureFailureStopTimeout)
+	defer cancel()
+	if err := sandbox.Stop(stopCtx); err != nil && !microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
+		return fmt.Errorf("%w; stop microsandbox %s after failed ensure: %w", cause, name, err)
+	}
+	return cause
 }
 
 func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox, vmState VMState) (bool, error) {
@@ -431,24 +468,6 @@ func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox,
 		return false, err
 	}
 	if handle.Status() != microsandbox.SandboxStatusRunning && handle.Status() != microsandbox.SandboxStatusDraining {
-		r.discardLifecycleHandle(name)
-		return false, nil
-	}
-
-	if sandbox := r.takeLifecycleHandle(name); sandbox != nil {
-		defer func() {
-			if sandbox != nil {
-				r.closeSandboxHandle(sandbox)
-			}
-		}()
-		if err := sandbox.Stop(ctx); err != nil {
-			if microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
-				return true, nil
-			}
-			r.trackLifecycleHandle(name, sandbox)
-			sandbox = nil
-			return false, err
-		}
 		return false, nil
 	}
 
@@ -457,10 +476,9 @@ func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox,
 		return false, err
 	}
 	if stale || sandbox == nil {
-		r.discardLifecycleHandle(name)
 		return true, nil
 	}
-	defer r.releaseSandboxHandle(name, sandbox)
+	defer r.closeSandboxHandle(sandbox)
 	if err := sandbox.Stop(ctx); err != nil {
 		if microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
 			return true, nil
@@ -477,7 +495,6 @@ func (r *microsandboxRuntime) RemoveSandbox(ctx context.Context, session *Sandbo
 		return err
 	}
 	name := r.sandboxName(session, vmState)
-	r.discardLifecycleHandle(name)
 	if err := microsandbox.RemoveSandbox(ctx, name); err != nil &&
 		!microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
 		return fmt.Errorf("remove microsandbox %s: %w", name, err)
@@ -498,7 +515,7 @@ func (r *microsandboxRuntime) Exec(ctx context.Context, session *Sandbox, vmStat
 	if err != nil {
 		return ExecResult{}, err
 	}
-	defer r.releaseSandboxHandle(name, sandbox)
+	defer r.closeSandboxHandle(sandbox)
 	return executeUserCommandAfterBootstrap(
 		func() error {
 			return r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name)
@@ -529,7 +546,7 @@ func (r *microsandboxRuntime) ExecStream(ctx context.Context, session *Sandbox, 
 	if err != nil {
 		return ExecResult{}, err
 	}
-	defer r.releaseSandboxHandle(name, sandbox)
+	defer r.closeSandboxHandle(sandbox)
 	return executeUserCommandAfterBootstrap(
 		func() error {
 			return r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name)
@@ -982,7 +999,6 @@ func (r *microsandboxRuntime) IsSandboxAlive(ctx context.Context, session *Sandb
 		return false, err
 	}
 	if handle.Status() != microsandbox.SandboxStatusRunning && handle.Status() != microsandbox.SandboxStatusDraining {
-		r.discardLifecycleHandle(name)
 		return false, nil
 	}
 	sandbox, stale, err := r.connectLiveSandbox(ctx, handle, name)
@@ -990,10 +1006,9 @@ func (r *microsandboxRuntime) IsSandboxAlive(ctx context.Context, session *Sandb
 		return false, err
 	}
 	if stale || sandbox == nil {
-		r.discardLifecycleHandle(name)
 		return false, nil
 	}
-	r.releaseSandboxHandle(name, sandbox)
+	r.closeSandboxHandle(sandbox)
 	return true, nil
 }
 
@@ -1010,9 +1025,6 @@ func (r *microsandboxRuntime) getOrCreateSandbox(ctx context.Context, session *S
 			return nil, false, false, fmt.Errorf("microsandbox runtime state for stopped sandbox %s is missing; refusing to recreate it during resume", session.Summary.ID)
 		}
 		sandbox, err := r.createSandbox(ctx, session, vmState, proxyState, name)
-		if err == nil {
-			r.trackLifecycleHandle(name, sandbox)
-		}
 		return sandbox, true, true, err
 	}
 	if handle.Status() == microsandbox.SandboxStatusRunning || handle.Status() == microsandbox.SandboxStatusDraining {
@@ -1022,17 +1034,11 @@ func (r *microsandboxRuntime) getOrCreateSandbox(ctx context.Context, session *S
 		}
 		if stale {
 			sandbox, err := r.createSandbox(ctx, session, vmState, proxyState, name)
-			if err == nil {
-				r.trackLifecycleHandle(name, sandbox)
-			}
 			return sandbox, true, true, err
 		}
 		return sandbox, false, false, nil
 	}
-	sandbox, err := handle.Start(ctx)
-	if err == nil {
-		r.trackLifecycleHandle(name, sandbox)
-	}
+	sandbox, err := r.startDetachedSandbox(ctx, handle, name)
 	return sandbox, false, true, err
 }
 
@@ -1063,11 +1069,7 @@ func (r *microsandboxRuntime) connectSandbox(ctx context.Context, session *Sandb
 			panic(r)
 		}
 	}()
-	sandbox, startErr := handle.Start(ctx)
-	if startErr == nil {
-		r.trackLifecycleHandle(name, sandbox)
-	}
-	return sandbox, startErr
+	return r.startDetachedSandbox(ctx, handle, name)
 }
 
 func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbox, vmState VMState, proxyState ProxyState, name string) (*microsandbox.Sandbox, error) {
@@ -1137,6 +1139,10 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 		microsandbox.WithLabels(map[string]string{microsandboxManagedLabel: "true", microsandboxSandboxIDLabel: session.Summary.ID}),
 		microsandbox.WithMemory(resources.MemoryMiB),
 		microsandbox.WithCPUs(resources.CPUs),
+		// Detached, so the VM outlives this daemon process like a Docker
+		// container or a BoxLite box does, and a restarted daemon reconnects
+		// to it by name.
+		microsandbox.WithDetached(),
 	}
 	if jupyterEnabled(proxyState) && proxyState.HostPort > 0 {
 		options = append(options, microsandbox.WithPorts(map[uint16]uint16{uint16(proxyState.HostPort): uint16(proxyState.GuestPort)}))
@@ -1146,7 +1152,44 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 		return nil, err
 	}
 	rootfsCreated = false
-	return sandbox, nil
+	return r.reconnectDetachedSandbox(ctx, sandbox, name)
+}
+
+// startDetachedSandbox boots a stopped sandbox without tying the VM to this
+// process.
+func (r *microsandboxRuntime) startDetachedSandbox(ctx context.Context, handle *microsandbox.SandboxHandle, name string) (*microsandbox.Sandbox, error) {
+	sandbox, err := handle.StartDetached(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.reconnectDetachedSandbox(ctx, sandbox, name)
+}
+
+// reconnectDetachedSandbox trades the handle that booted a detached VM for an
+// ordinary connection. Closing the booting handle stops the VM, so it is
+// detached instead; every later caller then holds a handle that is safe to
+// close. If the trade fails the VM is stopped rather than left unreachable.
+func (r *microsandboxRuntime) reconnectDetachedSandbox(ctx context.Context, started *microsandbox.Sandbox, name string) (*microsandbox.Sandbox, error) {
+	if err := started.Detach(ctx); err != nil {
+		// Detach failed, so the handle still owns the VM and Close stops it.
+		r.closeSandboxHandle(started)
+		return nil, fmt.Errorf("detach microsandbox %s: %w", name, err)
+	}
+	handle, err := microsandbox.GetSandbox(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("look up detached microsandbox %s: %w", name, err)
+	}
+	sandbox, err := handle.Connect(ctx)
+	if err == nil {
+		return sandbox, nil
+	}
+	err = fmt.Errorf("reconnect detached microsandbox %s: %w", name, err)
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), microsandboxEnsureFailureStopTimeout)
+	defer cancel()
+	if stopErr := handle.Stop(stopCtx); stopErr != nil && !microsandbox.IsKind(stopErr, microsandbox.ErrSandboxNotFound) {
+		return nil, fmt.Errorf("%w; stop unreachable microsandbox: %w", err, stopErr)
+	}
+	return nil, err
 }
 
 func (r *microsandboxRuntime) microsandboxBindMount(hostPath string, readonly bool) microsandbox.MountConfig {
@@ -1278,61 +1321,6 @@ func microsandboxStatsFromMetrics(session *Sandbox, vmState VMState, metrics *mi
 		stats.MemoryPercent = metricOK(float64(metrics.MemoryBytes)/float64(metrics.MemoryLimitBytes)*100, MetricUnitPercent)
 	}
 	return stats
-}
-
-func (r *microsandboxRuntime) releaseSandboxHandle(name string, sandbox *microsandbox.Sandbox) {
-	if sandbox == nil {
-		return
-	}
-	if sandbox.OwnsLifecycleOrFalse() && r.isTrackedLifecycleHandle(name, sandbox) {
-		return
-	}
-	r.closeSandboxHandle(sandbox)
-}
-
-func (r *microsandboxRuntime) trackLifecycleHandle(name string, sandbox *microsandbox.Sandbox) {
-	if sandbox == nil || !sandbox.OwnsLifecycleOrFalse() {
-		return
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return
-	}
-	r.lifecycleMu.Lock()
-	previous := r.lifecycleHandles[name]
-	r.lifecycleHandles[name] = sandbox
-	r.lifecycleMu.Unlock()
-	if previous != nil && previous != sandbox {
-		r.closeSandboxHandle(previous)
-	}
-}
-
-func (r *microsandboxRuntime) takeLifecycleHandle(name string) *microsandbox.Sandbox {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil
-	}
-	r.lifecycleMu.Lock()
-	defer r.lifecycleMu.Unlock()
-	handle := r.lifecycleHandles[name]
-	delete(r.lifecycleHandles, name)
-	return handle
-}
-
-func (r *microsandboxRuntime) discardLifecycleHandle(name string) {
-	if handle := r.takeLifecycleHandle(name); handle != nil {
-		r.closeSandboxHandle(handle)
-	}
-}
-
-func (r *microsandboxRuntime) isTrackedLifecycleHandle(name string, sandbox *microsandbox.Sandbox) bool {
-	name = strings.TrimSpace(name)
-	if name == "" || sandbox == nil {
-		return false
-	}
-	r.lifecycleMu.Lock()
-	defer r.lifecycleMu.Unlock()
-	return r.lifecycleHandles[name] == sandbox
 }
 
 func (r *microsandboxRuntime) closeSandboxHandle(sandbox *microsandbox.Sandbox) {

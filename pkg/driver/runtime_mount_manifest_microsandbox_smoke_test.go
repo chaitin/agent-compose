@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	microsandbox "github.com/superradcompany/microsandbox/sdk/go"
 )
 
 func TestSmokeMicrosandboxExecStreamRecoversLostExitAfterLiveSilenceProbe(t *testing.T) {
@@ -18,7 +16,7 @@ func TestSmokeMicrosandboxExecStreamRecoversLostExitAfterLiveSilenceProbe(t *tes
 
 	config := newRuntimeSmokeConfig(t, RuntimeDriverMicrosandbox)
 	session, vmState, proxyState := newRuntimeSmokeSandbox(t, ctx, config, RuntimeDriverMicrosandbox)
-	runtime := &microsandboxRuntime{config: config, lifecycleHandles: map[string]*microsandbox.Sandbox{}}
+	runtime := &microsandboxRuntime{config: config}
 	info, err := runtime.EnsureSandbox(ctx, session, vmState, proxyState)
 	if err != nil {
 		t.Fatalf("EnsureSandbox returned error: %v", err)
@@ -52,7 +50,7 @@ func TestSmokeMicrosandboxRuntimeRetentionAndRelease(t *testing.T) {
 	defer cancel()
 	config := newRuntimeSmokeConfig(t, RuntimeDriverMicrosandbox)
 	session, vmState, proxyState := newRuntimeSmokeSandbox(t, ctx, config, RuntimeDriverMicrosandbox)
-	runtime := &microsandboxRuntime{config: config, lifecycleHandles: map[string]*microsandbox.Sandbox{}}
+	runtime := &microsandboxRuntime{config: config}
 	assertRuntimeRetentionAndRelease(t, ctx, config, runtime, session, vmState, proxyState)
 }
 
@@ -65,7 +63,7 @@ func TestSmokeMicrosandboxRuntimeMountManifestDirectoryOnlyStarts(t *testing.T) 
 	session, vmState, proxyState := newRuntimeSmokeSandbox(t, ctx, config, RuntimeDriverMicrosandbox)
 	assertDirectoryOnlyRuntimeSmokeManifest(t, session, RuntimeDriverMicrosandbox)
 
-	runtime := &microsandboxRuntime{config: config, lifecycleHandles: map[string]*microsandbox.Sandbox{}}
+	runtime := &microsandboxRuntime{config: config}
 	info, err := runtime.EnsureSandbox(ctx, session, vmState, proxyState)
 	if err != nil {
 		t.Fatalf("EnsureSandbox returned error: %v", err)
