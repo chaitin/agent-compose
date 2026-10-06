@@ -63,6 +63,10 @@ const microsandboxExecSilenceProbeInterval = 2 * time.Minute
 // place to hang.
 const microsandboxExecLivenessProbeTimeout = 30 * time.Second
 
+// microsandboxEnsureFailureStopTimeout bounds stopping a VM whose start was
+// reported as failed.
+const microsandboxEnsureFailureStopTimeout = 30 * time.Second
+
 const (
 	microsandboxManagedLabel   = "agent-compose.managed"
 	microsandboxSandboxIDLabel = "agent-compose.sandbox_id"
@@ -381,12 +385,53 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 		return SandboxVMInfo{}, err
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
-
-	if err := r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name); err != nil {
+	booted := created || restarted
+	if err := finishSandboxStart(booted,
+		func() error {
+			return r.prepareStartedSandbox(ctx, sandbox, startedSandboxTarget{Session: session, Name: name, ProxyState: proxyState, Booted: booted})
+		},
+		func() error { return r.stopSandboxAfterEnsureFailure(ctx, session, vmState) },
+	); err != nil {
 		return SandboxVMInfo{}, err
 	}
+	return SandboxVMInfo{
+		BoxID:      name,
+		JupyterURL: jupyterDirectURL(proxyState),
+	}, nil
+}
 
-	needLaunch := created || restarted
+// finishSandboxStart runs the steps that follow a boot or reconnect. When they
+// fail for a VM this start booted, it stops that VM: the start is reported as
+// failed, so no caller would, and the VM would run until the daemon exits. A
+// VM that was already running is left alone.
+func finishSandboxStart(booted bool, prepare, stop func() error) error {
+	err := prepare()
+	if err == nil || !booted {
+		return err
+	}
+	if stopErr := stop(); stopErr != nil {
+		return fmt.Errorf("%w; stop microsandbox after failed start: %w", err, stopErr)
+	}
+	return err
+}
+
+// startedSandboxTarget identifies the sandbox prepareStartedSandbox prepares.
+// Booted is true when this EnsureSandbox call booted the VM rather than
+// reconnecting to a running one.
+type startedSandboxTarget struct {
+	Session    *Sandbox
+	Name       string
+	ProxyState ProxyState
+	Booted     bool
+}
+
+// prepareStartedSandbox runs the guest-side steps that follow a successful
+// boot or reconnect.
+func (r *microsandboxRuntime) prepareStartedSandbox(ctx context.Context, sandbox *microsandbox.Sandbox, target startedSandboxTarget) error {
+	session, name, proxyState, needLaunch := target.Session, target.Name, target.ProxyState, target.Booted
+	if err := r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name); err != nil {
+		return err
+	}
 	if jupyterEnabled(proxyState) && !needLaunch {
 		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		probeErr := waitForJupyterProxy(probeCtx, proxyState)
@@ -395,7 +440,7 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 	}
 	if jupyterEnabled(proxyState) && needLaunch {
 		if err := r.launchJupyter(ctx, sandbox, proxyState); err != nil {
-			return SandboxVMInfo{}, err
+			return err
 		}
 	}
 	if jupyterEnabled(proxyState) {
@@ -406,16 +451,22 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 			if logText := readSandboxJupyterLog(session); jupyterLogIndicatesReady(logText) {
 				slog.Warn("microsandbox jupyter probe timed out after guest reported ready", "sandbox_id", session.Summary.ID, "error", readyErr)
 			} else if logText != "" {
-				return SandboxVMInfo{}, fmt.Errorf("%w\nGuest log:\n%s", readyErr, logText)
+				return fmt.Errorf("%w\nGuest log:\n%s", readyErr, logText)
 			} else {
-				return SandboxVMInfo{}, readyErr
+				return readyErr
 			}
 		}
 	}
-	return SandboxVMInfo{
-		BoxID:      name,
-		JupyterURL: jupyterDirectURL(proxyState),
-	}, nil
+	return nil
+}
+
+// stopSandboxAfterEnsureFailure stops the VM of a start that failed. It
+// outlives the caller's context so a start that timed out still stops the VM.
+func (r *microsandboxRuntime) stopSandboxAfterEnsureFailure(ctx context.Context, session *Sandbox, vmState VMState) error {
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), microsandboxEnsureFailureStopTimeout)
+	defer cancel()
+	_, err := r.StopSandbox(stopCtx, session, vmState)
+	return err
 }
 
 func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox, vmState VMState) (bool, error) {
