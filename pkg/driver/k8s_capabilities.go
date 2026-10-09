@@ -21,12 +21,7 @@ func k8sRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 		UserNamespaces: "no PodSecurityContext is set, so no user-namespace remapping is requested",
 	})...)
 	dimensions = append(dimensions,
-		RuntimeCapabilityDimensionFacts{
-			Dimension:       dimensionEgressPolicy,
-			Mechanism:       reasonNotConfigured,
-			Observed:        "createPod creates only a Pod; no NetworkPolicy is created and Pod egress is unrestricted",
-			DefaultBehavior: "outbound access from the Pod is unrestricted; an undeclared network policy is not deny, and when a sandbox declares default: deny the engine auto-allows its own runtime LLM facade and telemetry endpoints as non-overridable engine-side rules",
-		},
+		egressPolicyFacts(RuntimeDriverK8s),
 		RuntimeCapabilityDimensionFacts{
 			Dimension:       dimensionCredentialPlaceholder,
 			Mechanism:       reasonUnsupported,

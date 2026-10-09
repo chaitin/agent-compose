@@ -3,6 +3,7 @@ package driver
 import (
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -71,11 +72,27 @@ func TestDockerCapabilitiesMatchHostConfig(t *testing.T) {
 		t.Fatalf("gpu_and_devices declaration = %+v, want not enforced", devices)
 	}
 
+	// A declared default-deny policy is refused at the top of EnsureSandbox
+	// (RequireSandboxNetworkEnforcement), so the driver never selects Docker's
+	// "none" network: that is a real outer deny, but it would also sever the
+	// engine's own LLM facade and telemetry endpoints and leave a
+	// healthy-looking sandbox that cannot call its model. The declaration must
+	// therefore report no egress enforcement for Docker.
 	if hostConfig.NetworkMode == "none" {
-		t.Fatal("HostConfig.NetworkMode is now none; the egress_policy declaration is stale")
+		t.Fatal("HostConfig.NetworkMode is unexpectedly none for the default topology")
 	}
-	if egress := capabilityDimensionForTest(t, facts, dimensionEgressPolicy); egress.Enforced {
-		t.Fatalf("egress_policy declaration = %+v, want not enforced", egress)
+	egressCapability := capabilityDimensionForTest(t, facts, dimensionEgressPolicy)
+	if egressCapability.Enforced || egressCapability.Mechanism != reasonNotConfigured {
+		t.Fatalf("egress_policy declaration = %+v, want not enforced via %q", egressCapability, reasonNotConfigured)
+	}
+	if !strings.Contains(egressCapability.Observed, string(SandboxEgressStrengthNone)) {
+		t.Fatalf("egress_policy Observed = %q, want it to report strength=%s", egressCapability.Observed, SandboxEgressStrengthNone)
+	}
+	if !strings.Contains(egressCapability.Observed, "refused before any container is created") {
+		t.Fatalf("egress_policy Observed = %q, want it to state that a declared default-deny policy is refused", egressCapability.Observed)
+	}
+	if !strings.Contains(egressCapability.Observed, "LLM facade") {
+		t.Fatalf("egress_policy Observed = %q, want it to name the engine endpoints the refusal protects", egressCapability.Observed)
 	}
 }
 
