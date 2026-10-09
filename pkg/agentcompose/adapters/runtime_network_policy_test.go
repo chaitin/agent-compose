@@ -148,7 +148,7 @@ func TestEnsureSandboxCarriesDeclaredNetworkPolicyToDriverBoundary(t *testing.T)
 
 // TestEnsureSandboxDeclaredDenyFiresTheEnforcementGate pins that the policy the
 // adapter builds is strong enough for the existing fail-closed gate: Docker and
-// BoxLite cannot apply it and must refuse, while k8s and microsandbox engage.
+// BoxLite and k8s cannot apply it and must refuse, while microsandbox engages.
 func TestEnsureSandboxDeclaredDenyFiresTheEnforcementGate(t *testing.T) {
 	declaration := &egress.NetworkDeclaration{Default: egress.Deny}
 	runtime := &capturingNetworkRuntime{}
@@ -168,14 +168,14 @@ func TestEnsureSandboxDeclaredDenyFiresTheEnforcementGate(t *testing.T) {
 	}
 	policy := runtime.sandbox.NetworkPolicy
 
-	for _, driver := range []string{driverpkg.RuntimeDriverDocker, driverpkg.RuntimeDriverBoxlite} {
+	for _, driver := range []string{driverpkg.RuntimeDriverDocker, driverpkg.RuntimeDriverBoxlite, driverpkg.RuntimeDriverK8s} {
 		if err := driverpkg.RequireSandboxNetworkEnforcement(driver, policy); err == nil {
 			t.Fatalf("RequireSandboxNetworkEnforcement(%q) = nil, want a fail-closed refusal", driver)
 		} else if !errors.Is(err, driverpkg.ErrSandboxNetworkEnforcementUnavailable) {
 			t.Fatalf("RequireSandboxNetworkEnforcement(%q) error = %v, want ErrSandboxNetworkEnforcementUnavailable", driver, err)
 		}
 	}
-	for _, driver := range []string{driverpkg.RuntimeDriverK8s, driverpkg.RuntimeDriverMicrosandbox} {
+	for _, driver := range []string{driverpkg.RuntimeDriverMicrosandbox} {
 		if err := driverpkg.RequireSandboxNetworkEnforcement(driver, policy); err != nil {
 			t.Fatalf("RequireSandboxNetworkEnforcement(%q) error = %v, want nil so the driver engages", driver, err)
 		}
