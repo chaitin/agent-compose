@@ -128,3 +128,43 @@ func TestLLMProviderCredentialEnvNameCoversEveryVendorAlias(t *testing.T) {
 		}
 	}
 }
+
+// TestSandboxEnvMapTrustAsymmetryIsExplicit pins the two-source contract of
+// sandboxEnvMap: a declared credential name is filtered, the same name written
+// by the daemon's runtime layer survives. The runtime group carries the facade
+// token the guest must present, so filtering it by name would break the very
+// isolation the declared-side filter provides.
+func TestSandboxEnvMapTrustAsymmetryIsExplicit(t *testing.T) {
+	declared := []SandboxEnvVar{
+		{Name: "OPENAI_API_KEY", Value: "upstream-key"},
+		{Name: "OPENAI_BASE_URL", Value: "https://upstream.example"},
+	}
+	managed := []SandboxEnvVar{
+		{Name: "OPENAI_API_KEY", Value: "facade-token"},
+	}
+	env := sandboxEnvMap(declared, managed)
+	if _, ok := env["OPENAI_BASE_URL"]; ok {
+		t.Fatal("a declared provider endpoint must not reach the guest")
+	}
+	if env["OPENAI_API_KEY"] != "facade-token" {
+		t.Fatalf("OPENAI_API_KEY = %q, want the daemon-authored facade token", env["OPENAI_API_KEY"])
+	}
+}
+
+// TestSandboxEnvMapPassesThroughUnabsorbedCredentials documents the deliberate
+// limit of the env filter: a recognized non-LLM credential has no scoped
+// endpoint to replace it yet, so dropping it would break the tool without
+// isolating anything. It is enumerated by CredentialEnvName and owned by the
+// deferred broker instead.
+func TestSandboxEnvMapPassesThroughUnabsorbedCredentials(t *testing.T) {
+	env := sandboxEnvMap([]SandboxEnvVar{
+		{Name: "GITHUB_TOKEN", Value: "plaintext-git-token", Secret: true},
+		{Name: "MCP_TOKEN", Value: "plaintext-mcp-token", Secret: true},
+	}, nil)
+	if env["GITHUB_TOKEN"] != "plaintext-git-token" || env["MCP_TOKEN"] != "plaintext-mcp-token" {
+		t.Fatalf("unabsorbed credentials must still be delivered until the broker lands: %#v", env)
+	}
+	if surface, ok := CredentialEnvName("GITHUB_TOKEN"); !ok || surface.Absorbable {
+		t.Fatalf("GITHUB_TOKEN surface = %#v/%v, want a recognized, not-yet-absorbable credential", surface, ok)
+	}
+}

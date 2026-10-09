@@ -172,19 +172,40 @@ type SandboxRuntime interface {
 	ExecStream(context.Context, *Sandbox, VMState, ExecSpec, ExecStreamWriter) (ExecResult, error)
 }
 
-func sandboxEnvMap(groups ...[]SandboxEnvVar) map[string]string {
-	if len(groups) == 0 {
-		return nil
-	}
+// sandboxEnvMap merges guest environment from two sources with different trust.
+//
+//   - declared is what the project or agent declared. It is filtered through
+//     LLMProviderEnvName, because the daemon absorbs a declared LLM provider and
+//     replaces it with facade values: a surviving declared key, endpoint, or
+//     protocol would contradict the connection the guest is actually given.
+//   - runtime is what the daemon computed for this sandbox (sandbox id,
+//     workspace roots, proxy state, facade tokens). It is deliberately not
+//     filtered by name: every value there was authored by the daemon, and the
+//     facade token the guest must present is addressed by a name the denylist
+//     would otherwise hide. The two groups are separate parameters rather than a
+//     variadic list so this asymmetry is stated at the call site instead of
+//     depending on argument order.
+//
+// Non-LLM credentials (git, MCP, registry) are recognized by CredentialEnvName
+// but are not filtered here. Dropping the plaintext value without a scoped
+// endpoint to replace it would break the tool while providing no isolation, so
+// they are redacted from views instead and the credential broker owns the
+// migration out of plaintext.
+func sandboxEnvMap(declared, runtime []SandboxEnvVar) map[string]string {
 	env := make(map[string]string)
-	for groupIndex, items := range groups {
-		for _, item := range items {
-			name := strings.TrimSpace(item.Name)
-			if name == "" || (groupIndex == 0 && LLMProviderEnvName(name)) {
-				continue
-			}
-			env[name] = item.Value
+	for _, item := range declared {
+		name := strings.TrimSpace(item.Name)
+		if name == "" || LLMProviderEnvName(name) {
+			continue
 		}
+		env[name] = item.Value
+	}
+	for _, item := range runtime {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			continue
+		}
+		env[name] = item.Value
 	}
 	if len(env) == 0 {
 		return nil

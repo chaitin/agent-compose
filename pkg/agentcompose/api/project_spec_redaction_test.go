@@ -210,3 +210,39 @@ func envValueByName(items []*agentcomposev2.EnvVarSpec, name string) string {
 	}
 	return ""
 }
+
+// TestRedactProjectSpecSecretsKeepsUnabsorbedCredentialsVisible pins the
+// boundary the credential surface draws. A recognized but not-yet-absorbed
+// credential (git, MCP, registry) still reaches the guest as plaintext, so the
+// view keeps showing it: redacting it would claim an isolation the runtime does
+// not provide. The LLM credential beside it is held by the daemon and is
+// redacted as before.
+func TestRedactProjectSpecSecretsKeepsUnabsorbedCredentialsVisible(t *testing.T) {
+	spec := &agentcomposev2.ProjectSpec{
+		Agents: []*agentcomposev2.AgentSpec{{
+			Name: "reviewer",
+			Env: []*agentcomposev2.EnvVarSpec{
+				{Name: "GITHUB_TOKEN", Value: "plaintext-git"},
+				{Name: "MCP_TOKEN", Value: "plaintext-mcp"},
+				{Name: "REGISTRY_TOKEN", Value: "plaintext-registry"},
+				{Name: "OPENAI_API_KEY", Value: "held-by-daemon"},
+			},
+			McpServers: []*agentcomposev2.MCPServerSpec{{
+				Headers: []*agentcomposev2.EnvVarSpec{
+					{Name: "Authorization", Value: "Bearer plaintext-header"},
+				},
+			}},
+		}},
+	}
+
+	redacted := RedactProjectSpecSecrets(spec)
+
+	for index, want := range []string{"plaintext-git", "plaintext-mcp", "plaintext-registry", secretRedactedValue} {
+		if got := redacted.Agents[0].Env[index].GetValue(); got != want {
+			t.Errorf("env[%d] = %q, want %q", index, got, want)
+		}
+	}
+	if got := redacted.Agents[0].McpServers[0].Headers[0].GetValue(); got != "Bearer plaintext-header" {
+		t.Errorf("MCP header = %q, want the unabsorbed header left visible", got)
+	}
+}
