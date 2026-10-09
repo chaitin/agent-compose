@@ -61,12 +61,16 @@ func TestDriverRuntimeAdapterExportsOperationSpans(t *testing.T) {
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1"}}
 	vmState := domain.VMState{Driver: driverpkg.RuntimeDriverDocker}
 
-	if _, err := adapter.EnsureSandbox(context.Background(), session, vmState, domain.ProxyState{}); err != nil {
+	// Driver operations run inside the run that requested them, so every driver
+	// span must be a child of the run span that owns the context.
+	ctx, runSpan := recorder.Start(context.Background(), telemetry.SpanInvokeAgent)
+	if _, err := adapter.EnsureSandbox(ctx, session, vmState, domain.ProxyState{}); err != nil {
 		t.Fatalf("EnsureSandbox returned error: %v", err)
 	}
-	if _, err := adapter.ExecStream(context.Background(), session, vmState, domain.ExecSpec{Command: "sh"}, nil); err != nil {
+	if _, err := adapter.ExecStream(ctx, session, vmState, domain.ExecSpec{Command: "sh"}, nil); err != nil {
 		t.Fatalf("ExecStream returned error: %v", err)
 	}
+	telemetry.EndSpan(runSpan, nil)
 
 	spans := map[string]sdktrace.ReadOnlySpan{}
 	for _, span := range spansRecorded.Ended() {
@@ -76,6 +80,9 @@ func TestDriverRuntimeAdapterExportsOperationSpans(t *testing.T) {
 		span, ok := spans[name]
 		if !ok {
 			t.Fatalf("no %s span recorded (got %#v)", name, spans)
+		}
+		if got := span.Parent().SpanID(); got != runSpan.SpanContext().SpanID() {
+			t.Fatalf("%s parent span id = %s, want the run span %s", name, got, runSpan.SpanContext().SpanID())
 		}
 		attributes := map[attribute.Key]string{}
 		for _, kv := range span.Attributes() {
