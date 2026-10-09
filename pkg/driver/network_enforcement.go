@@ -128,7 +128,7 @@ func egressPolicyFacts(driver string) RuntimeCapabilityDimensionFacts {
 	facts := RuntimeCapabilityDimensionFacts{
 		Dimension:       dimensionEgressPolicy,
 		Observed:        fmt.Sprintf("strength=%s; %s", enforcement.Strength, enforcement.Notes),
-		DefaultBehavior: "an undeclared network policy leaves egress unrestricted (D3)",
+		DefaultBehavior: "an undeclared network policy is not deny, so egress stays unrestricted (D3); when a sandbox declares default: deny the engine auto-allows its own runtime LLM facade and telemetry endpoints as non-overridable engine-side rules, and a driver that cannot apply the declaration refuses to start instead of running the sandbox with unrestricted egress",
 	}
 	if enforcement.Strength == SandboxEgressStrengthNone {
 		facts.Mechanism = reasonNotConfigured

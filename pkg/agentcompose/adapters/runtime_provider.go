@@ -68,6 +68,11 @@ type runtimeProvider struct {
 type driverRuntimeAdapter struct {
 	runtime    driverpkg.SandboxRuntime
 	executions *sandboxExecutions
+	// networkPolicies derives the driver-boundary egress policy from the
+	// sandbox's declared compose network policy. Its zero value is inert: an
+	// adapter built without a resolver resolves no declaration and leaves
+	// NetworkPolicy nil (D3).
+	networkPolicies driverSandboxNetworkPolicy
 }
 
 // guestFileRuntimeAdapter adds the no-shared-filesystem capabilities only to
@@ -87,7 +92,7 @@ type ProxyStateGetter interface {
 	GetProxyState(sandboxID string) (domain.ProxyState, error)
 }
 
-func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGetter) (RuntimeProvider, error) {
+func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGetter, networkDeclarations SandboxNetworkDeclarationResolver) (RuntimeProvider, error) {
 	if config == nil {
 		return nil, fmt.Errorf("runtime provider config is required")
 	}
@@ -122,14 +127,15 @@ func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGet
 		return nil, err
 	}
 	executions := newSandboxExecutions()
+	networkPolicies := driverSandboxNetworkPolicy{config: config, declarations: networkDeclarations}
 	return &runtimeProvider{
 		config: config,
 		runtimes: map[string]SandboxRuntime{
-			driverpkg.RuntimeDriverBoxlite:      driverRuntimeAdapter{runtime: boxliteRuntime, executions: executions},
-			driverpkg.RuntimeDriverDocker:       driverRuntimeAdapter{runtime: dockerRuntime, executions: executions},
-			driverpkg.RuntimeDriverMicrosandbox: driverRuntimeAdapter{runtime: microsandboxRuntime, executions: executions},
+			driverpkg.RuntimeDriverBoxlite:      driverRuntimeAdapter{runtime: boxliteRuntime, executions: executions, networkPolicies: networkPolicies},
+			driverpkg.RuntimeDriverDocker:       driverRuntimeAdapter{runtime: dockerRuntime, executions: executions, networkPolicies: networkPolicies},
+			driverpkg.RuntimeDriverMicrosandbox: driverRuntimeAdapter{runtime: microsandboxRuntime, executions: executions, networkPolicies: networkPolicies},
 			driverpkg.RuntimeDriverK8s: guestFileRuntimeAdapter{driverRuntimeAdapter{
-				runtime: k8sRuntime, executions: executions,
+				runtime: k8sRuntime, executions: executions, networkPolicies: networkPolicies,
 			}},
 		},
 	}, nil
@@ -169,7 +175,18 @@ func (p *runtimeProvider) ForSession(session *domain.Sandbox) (SandboxRuntime, e
 }
 
 func (r driverRuntimeAdapter) EnsureSandbox(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, proxyState domain.ProxyState) (domain.SandboxVMInfo, error) {
-	info, err := r.runtime.EnsureSandbox(ctx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState), execution.ToDriverProxyState(proxyState))
+	driverSandbox := execution.ToDriverSandbox(session)
+	// The driver-boundary policy is derived from the project's normalized
+	// declaration, not from the domain session, and only a declared policy sets
+	// it. An undeclared sandbox keeps a nil policy and today's behavior (D3).
+	policy, err := r.networkPolicies.policy(ctx, session)
+	if err != nil {
+		return domain.SandboxVMInfo{}, err
+	}
+	if driverSandbox != nil {
+		driverSandbox.NetworkPolicy = policy
+	}
+	info, err := r.runtime.EnsureSandbox(ctx, driverSandbox, execution.ToDriverVMState(vmState), execution.ToDriverProxyState(proxyState))
 	if err != nil {
 		return domain.SandboxVMInfo{}, err
 	}

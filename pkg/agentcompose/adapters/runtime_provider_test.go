@@ -14,7 +14,7 @@ import (
 )
 
 func TestNewRuntimeProviderValidatesConfiguredDefaultCompiled(t *testing.T) {
-	if provider, err := NewRuntimeProvider(nil, nil); err == nil || provider != nil || !strings.Contains(err.Error(), "config is required") {
+	if provider, err := NewRuntimeProvider(nil, nil, nil); err == nil || provider != nil || !strings.Contains(err.Error(), "config is required") {
 		t.Fatalf("NewRuntimeProvider(nil) = %T, %v; want nil provider and config error", provider, err)
 	}
 
@@ -23,7 +23,7 @@ func TestNewRuntimeProviderValidatesConfiguredDefaultCompiled(t *testing.T) {
 		t.Skip("all recognized runtime drivers are compiled")
 	}
 
-	provider, err := NewRuntimeProvider(&appconfig.Config{RuntimeDriver: uncompiledDriver}, nil)
+	provider, err := NewRuntimeProvider(&appconfig.Config{RuntimeDriver: uncompiledDriver}, nil, nil)
 	if provider != nil {
 		t.Fatalf("NewRuntimeProvider(%q) provider = %T, want nil", uncompiledDriver, provider)
 	}
@@ -50,7 +50,7 @@ func TestNewRuntimeProviderConstructionIsLazy(t *testing.T) {
 		MicrosandboxLibPath: filepath.Join(missingRoot, "lib", "libmicrosandbox_go_ffi.so"),
 	}
 
-	provider, err := NewRuntimeProvider(config, nil)
+	provider, err := NewRuntimeProvider(config, nil, nil)
 	if err != nil {
 		t.Fatalf("NewRuntimeProvider() with unavailable native paths returned error: %v", err)
 	}
