@@ -29,7 +29,7 @@ func TestHistoricalUncompiledRuntimeOperationsPreserveState(t *testing.T) {
 		t.Fatalf("GetProxyState before operations returned error: %v", err)
 	}
 
-	sandboxDriver := NewSandboxDriver(config, store, nil, provider)
+	sandboxDriver := newTestSandboxDriver(config, store, nil, provider)
 	operations := []struct {
 		name string
 		call func() error
