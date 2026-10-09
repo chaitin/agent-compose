@@ -20,9 +20,7 @@ import (
 // DNS names - so the declared allowance list and the engine-owned endpoints are
 // deliberately NOT expressed here. The honest strength is an outer deny: every
 // egress connection from the selected Pod is refused. The strength report in
-// network_enforcement.go states that limit, and SandboxNetworkEnforcementFor
-// reports the same outer-deny strength the Docker driver reports for
-// NetworkMode=none.
+// network_enforcement.go states that limit.
 
 // k8sEgressNetworkPolicyName is the deterministic name for a sandbox Pod's
 // egress NetworkPolicy. Deriving it from the Pod name (which podName already
@@ -39,7 +37,7 @@ func k8sEgressNetworkPolicyName(podName string) string {
 //
 // A policy is needed only for a declared default-deny policy. An undeclared or
 // permissive policy returns false so the driver leaves egress as open as it is
-// without a declaration (D3) - the same shape as dockerSandboxNetworkMode.
+// without a declaration (D3).
 //
 // The returned policy selects the Pod by the same sandbox-ID label createPod
 // sets, declares the Egress policy type, and carries no egress rules: with

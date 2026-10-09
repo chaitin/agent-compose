@@ -28,5 +28,4 @@ const (
 	mechanismStoppedMicroVMRuntime   = "stopped_microvm_retention"
 	mechanismSDKNetworkPolicy        = "sdk_network_policy"
 	mechanismNetworkPolicyEgress     = "networkpolicy_egress"
-	mechanismDockerNetworkModeNone   = "network_mode_none"
 )

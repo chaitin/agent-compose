@@ -78,14 +78,20 @@ func SandboxNetworkEnforcementFor(driver string) SandboxNetworkEnforcement {
 			Notes:                  "a per-sandbox egress NetworkPolicy denies all egress for the sandbox Pod; the declared allowances and the engine-owned endpoints are NOT applied because NetworkPolicy is L3/L4 and cannot match DNS names (that needs an FQDN-capable CNI or the deferred L7 mediator), the cluster CNI must enforce NetworkPolicy, and a declared allow list therefore currently yields no egress at all",
 		}
 	case RuntimeDriverDocker:
+		// NetworkMode=none is a real outer deny, but it also severs the
+		// engine's OWN endpoints: the sandbox reaches the daemon's LLM facade
+		// and telemetry over host:port HTTP, and a loopback-only network
+		// namespace cannot reach them. Applying it would produce a
+		// healthy-looking sandbox that can never call its model, so the engine
+		// refuses a declared default-deny instead.
 		return SandboxNetworkEnforcement{
 			Driver:                 RuntimeDriverDocker,
-			Strength:               SandboxEgressStrengthOuterDeny,
-			Mechanism:              mechanismDockerNetworkModeNone,
+			Strength:               SandboxEgressStrengthNone,
+			Mechanism:              reasonNotConfigured,
 			AppliesAllowEntries:    false,
 			AppliesEngineEndpoints: false,
 			AppliesDenyDomains:     false,
-			Notes:                  "a declared deny sets NetworkMode=none, which refuses all egress including the engine-owned endpoints; the declared allowances and engine endpoints are not applied, because the allowance list needs a per-sandbox netns plus a connect(2)/L7 mediator and the base compose does not grant NET_ADMIN/root",
+			Notes:                  "a declared default-deny policy is refused before any container is created, because NetworkMode=none would also deny the engine's own LLM facade and telemetry endpoints, leaving a healthy-looking sandbox that can never call its model; applying the declared allowances and preserving those endpoints needs a per-sandbox netns plus the deferred connect(2)/L7 mediator, and the base compose grants neither NET_ADMIN nor root",
 		}
 	case RuntimeDriverBoxlite:
 		return SandboxNetworkEnforcement{

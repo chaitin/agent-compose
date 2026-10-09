@@ -30,8 +30,10 @@ func TestSandboxNetworkEnforcementFor(t *testing.T) {
 			wantMechanism: mechanismNetworkPolicyEgress, wantCNI: true,
 		},
 		{
-			driver: RuntimeDriverDocker, wantStrength: SandboxEgressStrengthOuterDeny,
-			wantMechanism: mechanismDockerNetworkModeNone, wantAppliesAllow: false, wantAppliesEngine: false, wantAppliesDomains: false,
+			// Docker refuses a declared default-deny policy, because
+			// NetworkMode=none would also cut the engine's own endpoints.
+			driver: RuntimeDriverDocker, wantStrength: SandboxEgressStrengthNone,
+			wantMechanism: reasonNotConfigured,
 		},
 		{
 			driver: RuntimeDriverBoxlite, wantStrength: SandboxEgressStrengthNone,
@@ -92,7 +94,7 @@ func TestRequireSandboxNetworkEnforcementFailsClosed(t *testing.T) {
 	}{
 		{name: "boxlite denies and fails closed", driver: RuntimeDriverBoxlite, policy: &deny, wantErr: true},
 		{name: "unknown driver fails closed", driver: "mystery", policy: &deny, wantErr: true},
-		{name: "docker enforces an outer deny", driver: RuntimeDriverDocker, policy: &deny},
+		{name: "docker fails closed because it cannot keep the engine endpoints reachable", driver: RuntimeDriverDocker, policy: &deny, wantErr: true},
 		{name: "k8s enforces an outer deny", driver: RuntimeDriverK8s, policy: &deny},
 		{name: "microsandbox enforces an allow list", driver: RuntimeDriverMicrosandbox, policy: &deny},
 		{name: "undeclared policy is unchanged", driver: RuntimeDriverBoxlite, policy: nil},
