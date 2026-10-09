@@ -918,6 +918,34 @@ message AgentSpec {
 message SandboxSpec {
   // Runtime handling after a confirmed stop. Empty defaults to "remove".
   string stopped_runtime_policy = 1;
+  // Declared outbound network policy. Absent means undeclared, and undeclared
+  // keeps the engine's existing behavior: unrestricted outbound access.
+  // Default-deny is a policy that takes effect only because this message is
+  // present; it is not an engine default (D3).
+  SandboxNetworkSpec network = 2;
+}
+
+// SandboxNetworkSpec is the declared outbound network policy for one agent's
+// sandboxes. User-declarable only; the engine's own auto-allowed endpoints are
+// engine-side policy entries and never appear here.
+message SandboxNetworkSpec {
+  // "allow-all" (the value an omitted default normalizes to) or "deny".
+  string default = 1;
+  // Explicit allowances. Host patterns separate labels with "." and use "*"
+  // to match exactly one label.
+  repeated SandboxNetworkAllowSpec allow = 2;
+}
+
+// SandboxNetworkAllowSpec is one declared allowance.
+message SandboxNetworkAllowSpec {
+  // Required. A host, or a host pattern whose labels are separated by ".".
+  string host = 1;
+  // Required. The concrete destination port.
+  int32 port = 2;
+  // Optional. "any" (the value an omitted protocol normalizes to), "http",
+  // "https", "tcp", or "udp". Only "http" and "https" are L7-inspectable;
+  // "any", "tcp", and "udp" are opaque allowances, not checked ones.
+  string protocol = 3;
 }
 
 message MCPServerSpec {

@@ -76,6 +76,27 @@ type NormalizedAgentSpec struct {
 
 type NormalizedSandboxSpec struct {
 	StoppedRuntimePolicy string `yaml:"stopped_runtime_policy" json:"stopped_runtime_policy"`
+	// Network is nil when the sandbox declared no network policy. The
+	// omitempty tag is what keeps an undeclared sandbox byte-identical in
+	// canonical JSON, and therefore in the spec hash.
+	Network *NormalizedSandboxNetworkSpec `yaml:"network,omitempty" json:"network,omitempty"`
+}
+
+// NormalizedSandboxNetworkSpec is the validated declaration. Default is always
+// present ("allow-all" or "deny"); Allow is sorted and deduplicated so the
+// canonical JSON and hash do not depend on declaration order.
+type NormalizedSandboxNetworkSpec struct {
+	Default string                              `yaml:"default" json:"default"`
+	Allow   []NormalizedSandboxNetworkAllowSpec `yaml:"allow,omitempty" json:"allow,omitempty"`
+}
+
+// NormalizedSandboxNetworkAllowSpec is one validated allowance. Protocol is
+// always present after normalization, with "any" meaning "the engine does not
+// claim to inspect this traffic".
+type NormalizedSandboxNetworkAllowSpec struct {
+	Host     string `yaml:"host" json:"host"`
+	Port     int    `yaml:"port" json:"port"`
+	Protocol string `yaml:"protocol" json:"protocol"`
 }
 
 type NormalizedMCPServerSpec struct {
@@ -372,7 +393,11 @@ func normalizeSandboxSpec(path string, sandbox *SandboxSpec) (*NormalizedSandbox
 	if err != nil {
 		return nil, &ValidationError{Path: path + ".stopped_runtime_policy", Message: err.Error()}
 	}
-	return &NormalizedSandboxSpec{StoppedRuntimePolicy: policy}, nil
+	network, err := NormalizeSandboxNetworkSpec(path+".network", sandbox.Network)
+	if err != nil {
+		return nil, err
+	}
+	return &NormalizedSandboxSpec{StoppedRuntimePolicy: policy, Network: network}, nil
 }
 
 func normalizeProjectWorkspaces(values map[string]WorkspaceSpec, options NormalizeOptions) (map[string]WorkspaceSpec, error) {
