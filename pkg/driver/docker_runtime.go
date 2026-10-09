@@ -192,6 +192,9 @@ func (w *dockerExecWriter) Write(p []byte) (int, error) {
 }
 
 func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
+	if err := RequireSandboxNetworkEnforcement(RuntimeDriverDocker, sandbox.NetworkPolicy); err != nil {
+		return SandboxVMInfo{}, err
+	}
 	if _, err := workspaceRuntimeMountSpec(r.config, sandbox, RuntimeDriverDocker); err != nil {
 		return SandboxVMInfo{}, err
 	}
@@ -202,8 +205,12 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	defer func() { _ = dockerClient.Close() }()
 
 	topology := r.dockerDaemonTopology(ctx, dockerClient)
+	networkMode := dockerSandboxNetworkMode(topology.networkMode, sandbox.NetworkPolicy)
+	if networkMode == containerapi.NetworkMode("none") && topology.networkMode != networkMode {
+		slog.Warn("docker sandbox egress is denied at the network layer; declared allow entries and engine-owned endpoints are not applied without the deferred connect(2)/L7 mediator", "sandbox_id", sandbox.Summary.ID)
+	}
 	containerInfo, created, err := r.getOrCreateContainer(ctx, dockerClient, dockerContainerCreateRequest{
-		Sandbox: sandbox, VMState: vmState, ProxyState: proxyState, NetworkMode: topology.networkMode,
+		Sandbox: sandbox, VMState: vmState, ProxyState: proxyState, NetworkMode: networkMode,
 	})
 	if err != nil {
 		return SandboxVMInfo{}, err
@@ -215,7 +222,9 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 		}
 		started = true
 	}
-	if topology.containerized {
+	// A denied sandbox must not be attached to the daemon network: doing so
+	// would hand back the egress the policy just removed.
+	if topology.containerized && networkMode != containerapi.NetworkMode("none") {
 		if err := ensureDockerContainerNetwork(ctx, dockerClient, containerInfo, string(topology.networkMode)); err != nil {
 			return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, err)
 		}

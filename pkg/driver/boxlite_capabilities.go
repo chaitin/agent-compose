@@ -11,7 +11,6 @@ func boxliteRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 			NonRootUser:    "the guest workload runs as root; the bound C option surface has no user override",
 			UserNamespaces: "the bound C option surface has no user-namespace option; isolation comes from the VM boundary instead",
 		},
-		Egress:                "the driver calls boxlite_options_set_network_enabled and binds no boxlite_options_add_network_allow rule",
 		CredentialPlaceholder: "the SDK exposes boxlite_options_add_secret but the engine binds no secret",
 	})
 }

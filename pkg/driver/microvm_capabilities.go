@@ -5,7 +5,6 @@ package driver
 type microVMObserved struct {
 	ResourceLimits        string
 	SecurityContext       securityContextObserved
-	Egress                string
 	CredentialPlaceholder string
 }
 
@@ -25,12 +24,7 @@ func microVMRuntimeCapabilityFacts(driver string, observed microVMObserved) Runt
 	}
 	dimensions = append(dimensions, securityContextFacts(reasonUnsupported, observed.SecurityContext)...)
 	dimensions = append(dimensions,
-		RuntimeCapabilityDimensionFacts{
-			Dimension:       dimensionEgressPolicy,
-			Mechanism:       reasonNotConfigured,
-			Observed:        observed.Egress,
-			DefaultBehavior: "outbound access from the guest is unrestricted",
-		},
+		egressPolicyFacts(driver),
 		RuntimeCapabilityDimensionFacts{
 			Dimension:       dimensionCredentialPlaceholder,
 			Mechanism:       reasonNotConfigured,

@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
+
+	"github.com/chaitin/agent-compose/pkg/egress"
 )
 
 // planAllows reports whether a rendered plan has an allow rule for the given
@@ -23,8 +25,8 @@ func planAllows(plan microsandboxNetworkPlan, destination, port, protocol string
 }
 
 func TestPlanMicrosandboxNetwork(t *testing.T) {
-	engineEndpoint := SandboxNetworkEntry{Host: "facade.internal", Port: 7410, Protocol: SandboxNetworkProtocolHTTPS}
-	declaredAllow := SandboxNetworkEntry{Host: "api.example.com", Port: 443, Protocol: SandboxNetworkProtocolHTTPS}
+	engineEndpoint := mustEngineEndpoint(t, egress.PurposeLLMFacade, "facade.internal", 7410, egress.ProtocolHTTPS)
+	declaredAllow := mustEndpoint(t, "api.example.com", 443, egress.ProtocolHTTPS)
 
 	tests := []struct {
 		name    string
@@ -41,10 +43,10 @@ func TestPlanMicrosandboxNetwork(t *testing.T) {
 			},
 		},
 		{
-			name: "declared allow-all renders no rules",
+			name: "declared allow renders no enforceful rules",
 			policy: &SandboxNetworkPolicy{
-				Default: SandboxNetworkDefaultAllowAll,
-				Allow:   []SandboxNetworkEntry{declaredAllow},
+				Default: egress.Allow,
+				Allow:   []egress.Endpoint{declaredAllow},
 			},
 			want: microsandboxNetworkPlan{
 				DefaultEgress:    microsandboxPlanDefaultEgressAllow,
@@ -54,9 +56,9 @@ func TestPlanMicrosandboxNetwork(t *testing.T) {
 		{
 			name: "deny renders engine endpoints first then declared entries",
 			policy: &SandboxNetworkPolicy{
-				Default:         SandboxNetworkDefaultDeny,
-				Allow:           []SandboxNetworkEntry{declaredAllow},
-				EngineEndpoints: []SandboxNetworkEntry{engineEndpoint},
+				Default:         egress.Deny,
+				Allow:           []egress.Endpoint{declaredAllow},
+				EngineEndpoints: []egress.EngineEndpoint{engineEndpoint},
 				DenyDomains:     []string{"ads.example.com", "evil.example.com"},
 			},
 			want: microsandboxNetworkPlan{
@@ -72,8 +74,8 @@ func TestPlanMicrosandboxNetwork(t *testing.T) {
 		{
 			name: "single leading wildcard becomes the SDK domain suffix",
 			policy: &SandboxNetworkPolicy{
-				Default: SandboxNetworkDefaultDeny,
-				Allow:   []SandboxNetworkEntry{{Host: "*.example.com", Port: 443, Protocol: SandboxNetworkProtocolHTTPS}},
+				Default: egress.Deny,
+				Allow:   []egress.Endpoint{mustEndpoint(t, "*.example.com", 443, egress.ProtocolHTTPS)},
 			},
 			want: microsandboxNetworkPlan{
 				DefaultEgress: microsandboxPlanDefaultEgressDeny,
@@ -86,10 +88,10 @@ func TestPlanMicrosandboxNetwork(t *testing.T) {
 		{
 			name: "udp and any protocols map to the SDK L4 values",
 			policy: &SandboxNetworkPolicy{
-				Default: SandboxNetworkDefaultDeny,
-				Allow: []SandboxNetworkEntry{
-					{Host: "dns.example.com", Port: 53, Protocol: SandboxNetworkProtocolUDP},
-					{Host: "raw.example.com", Port: 9000, Protocol: SandboxNetworkProtocolAny},
+				Default: egress.Deny,
+				Allow: []egress.Endpoint{
+					mustEndpoint(t, "dns.example.com", 53, egress.ProtocolUDP),
+					mustEndpoint(t, "raw.example.com", 9000, egress.ProtocolAny),
 				},
 			},
 			want: microsandboxNetworkPlan{
@@ -104,8 +106,8 @@ func TestPlanMicrosandboxNetwork(t *testing.T) {
 		{
 			name: "an inexpressible host pattern is rejected",
 			policy: &SandboxNetworkPolicy{
-				Default: SandboxNetworkDefaultDeny,
-				Allow:   []SandboxNetworkEntry{{Host: "*.*.example.com", Port: 443, Protocol: "https"}},
+				Default: egress.Deny,
+				Allow:   []egress.Endpoint{{Host: "*.*.example.com", Port: 443, Protocol: egress.ProtocolHTTPS}},
 			},
 			wantErr: true,
 		},
@@ -138,17 +140,19 @@ func TestPlanMicrosandboxNetwork(t *testing.T) {
 // the caller stay allowed, declared allowances stay allowed, and an endpoint
 // nobody declared falls through to the deny default.
 func TestPlanMicrosandboxDenyPermitsEngineEndpointsAndBlocksOthers(t *testing.T) {
-	policy, err := NewSandboxNetworkPolicy(
-		"deny",
-		[]SandboxNetworkEntry{{Host: "api.example.com", Port: 443, Protocol: "https"}},
-		[]SandboxNetworkEntry{
-			{Host: "facade.internal", Port: 7410, Protocol: "https"},
-			{Host: "telemetry.internal", Port: 4318, Protocol: "http"},
+	policy, err := SandboxNetworkPolicyFromDeclaration(
+		&egress.NetworkDeclaration{
+			Default: egress.Deny,
+			Allow:   []egress.AllowEntry{{Host: "api.example.com", Port: 443, Protocol: egress.ProtocolHTTPS}},
+		},
+		[]egress.EngineEndpoint{
+			mustEngineEndpoint(t, egress.PurposeLLMFacade, "facade.internal", 7410, egress.ProtocolHTTPS),
+			mustEngineEndpoint(t, egress.PurposeTelemetry, "telemetry.internal", 4318, egress.ProtocolHTTP),
 		},
 		nil,
 	)
 	if err != nil {
-		t.Fatalf("NewSandboxNetworkPolicy() error = %v", err)
+		t.Fatalf("SandboxNetworkPolicyFromDeclaration() error = %v", err)
 	}
 
 	plan, err := planMicrosandboxNetwork(&policy)
@@ -159,7 +163,7 @@ func TestPlanMicrosandboxDenyPermitsEngineEndpointsAndBlocksOthers(t *testing.T)
 		t.Fatalf("DefaultEgress = %q, want %q", plan.DefaultEgress, microsandboxPlanDefaultEgressDeny)
 	}
 	for _, engineEndpoint := range policy.EngineEndpoints {
-		if !planAllows(plan, engineEndpoint.Host, strconv.Itoa(engineEndpoint.Port), "tcp") {
+		if !planAllows(plan, engineEndpoint.Endpoint.Host, strconv.Itoa(engineEndpoint.Endpoint.Port), "tcp") {
 			t.Fatalf("engine endpoint %+v is not permitted by plan %+v", engineEndpoint, plan)
 		}
 	}

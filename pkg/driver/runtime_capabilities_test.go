@@ -3,9 +3,13 @@ package driver
 import (
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
+	containerapi "github.com/docker/docker/api/types/container"
+
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
+	"github.com/chaitin/agent-compose/pkg/egress"
 )
 
 func capabilityFactsForTest(t *testing.T, driver string) RuntimeCapabilityFacts {
@@ -71,11 +75,29 @@ func TestDockerCapabilitiesMatchHostConfig(t *testing.T) {
 		t.Fatalf("gpu_and_devices declaration = %+v, want not enforced", devices)
 	}
 
-	if hostConfig.NetworkMode == "none" {
-		t.Fatal("HostConfig.NetworkMode is now none; the egress_policy declaration is stale")
+	// An undeclared policy keeps the topology network untouched (D3), while a
+	// declared default-deny policy selects Docker's "none" network. The
+	// declaration must describe that outer denial without claiming the
+	// allowance list is applied.
+	if got := dockerSandboxNetworkMode(containerapi.NetworkMode("default"), nil); got != containerapi.NetworkMode("default") {
+		t.Fatalf("undeclared network mode = %q, want default", got)
 	}
-	if egress := capabilityDimensionForTest(t, facts, dimensionEgressPolicy); egress.Enforced {
-		t.Fatalf("egress_policy declaration = %+v, want not enforced", egress)
+	denyPolicy := SandboxNetworkPolicy{Default: egress.Deny}
+	if got := dockerSandboxNetworkMode(containerapi.NetworkMode("default"), &denyPolicy); got != containerapi.NetworkMode("none") {
+		t.Fatalf("denied network mode = %q, want none", got)
+	}
+	if hostConfig.NetworkMode == "none" {
+		t.Fatal("HostConfig.NetworkMode is unexpectedly none for the default topology")
+	}
+	egress := capabilityDimensionForTest(t, facts, dimensionEgressPolicy)
+	if !egress.Enforced || egress.Mechanism != mechanismDockerNetworkModeNone {
+		t.Fatalf("egress_policy declaration = %+v, want enforced via %q", egress, mechanismDockerNetworkModeNone)
+	}
+	if !strings.Contains(egress.Observed, string(SandboxEgressStrengthOuterDeny)) {
+		t.Fatalf("egress_policy Observed = %q, want it to report strength=%s", egress.Observed, SandboxEgressStrengthOuterDeny)
+	}
+	if !strings.Contains(egress.Observed, "not applied") {
+		t.Fatalf("egress_policy Observed = %q, want it to state that the allowance list is not applied", egress.Observed)
 	}
 }
 

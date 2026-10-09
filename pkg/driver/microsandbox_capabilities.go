@@ -11,7 +11,6 @@ func microsandboxRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 			NonRootUser:    "the guest workload runs as root; the bound Go SDK option surface has no user override",
 			UserNamespaces: "the bound Go SDK option surface has no user-namespace option; isolation comes from the VM boundary instead",
 		},
-		Egress:                "the driver constructs microsandbox.NetworkPolicy.AllowAll and disables DNS rebind protection",
 		CredentialPlaceholder: "the SDK exposes SecretEntry but the engine binds no secret",
 	})
 }

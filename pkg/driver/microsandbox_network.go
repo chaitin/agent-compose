@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/chaitin/agent-compose/pkg/egress"
 )
 
 // This file owns the pure mapping from the driver-boundary SandboxNetworkPolicy
@@ -85,7 +87,7 @@ func planMicrosandboxNetwork(policy *SandboxNetworkPolicy) (microsandboxNetworkP
 		return plan, nil
 	}
 	plan.DefaultEgress = microsandboxPlanDefaultEgressDeny
-	for _, entry := range policy.permittingEntries() {
+	for _, entry := range policy.permittingEndpoints() {
 		destination, err := microsandboxDestination(entry.Host)
 		if err != nil {
 			return microsandboxNetworkPlan{}, err
@@ -94,7 +96,7 @@ func planMicrosandboxNetwork(policy *SandboxNetworkPolicy) (microsandboxNetworkP
 			Action:      "allow",
 			Destination: destination,
 			Port:        strconv.Itoa(entry.Port),
-			Protocol:    microsandboxProtocol(entry.normalizedProtocol()),
+			Protocol:    microsandboxProtocol(entry.Protocol),
 		})
 	}
 	return plan, nil
@@ -120,11 +122,11 @@ func microsandboxDestination(host string) (string, error) {
 // http/https intent is enforced as TCP because a firewall rule cannot itself
 // inspect a request. Attempting to map http to anything narrower would claim
 // enforcement the rule does not provide.
-func microsandboxProtocol(protocol SandboxNetworkProtocol) string {
+func microsandboxProtocol(protocol egress.Protocol) string {
 	switch protocol {
-	case SandboxNetworkProtocolTCP, SandboxNetworkProtocolHTTP, SandboxNetworkProtocolHTTPS:
+	case egress.ProtocolTCP, egress.ProtocolHTTP, egress.ProtocolHTTPS:
 		return "tcp"
-	case SandboxNetworkProtocolUDP:
+	case egress.ProtocolUDP:
 		return "udp"
 	default:
 		return ""

@@ -63,12 +63,7 @@ func dockerRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 		UserNamespaces: "HostConfig.UsernsMode is unset",
 	})...)
 	dimensions = append(dimensions,
-		RuntimeCapabilityDimensionFacts{
-			Dimension:       dimensionEgressPolicy,
-			Mechanism:       reasonNotConfigured,
-			Observed:        "HostConfig.NetworkMode joins the daemon's own container network (or default) and no egress rule is written",
-			DefaultBehavior: "outbound access from the sandbox is unrestricted",
-		},
+		egressPolicyFacts(RuntimeDriverDocker),
 		RuntimeCapabilityDimensionFacts{
 			Dimension:       dimensionCredentialPlaceholder,
 			Mechanism:       reasonUnsupported,
