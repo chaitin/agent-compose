@@ -92,7 +92,7 @@ func (r *Recorder) RecordSandboxCreate(ctx context.Context, driver string, durat
 
 // RecordDriverOperation records one runtime-driver operation by outcome, which
 // gives the driver error rate without per-run label cardinality.
-func (r *Recorder) RecordDriverOperation(ctx context.Context, operation, driver string, duration time.Duration, err error) {
+func (r *Recorder) RecordDriverOperation(ctx context.Context, operation, driver string, err error) {
 	if r == nil || r.metrics == nil {
 		return
 	}

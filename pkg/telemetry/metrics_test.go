@@ -96,8 +96,8 @@ func TestRecorderRecordsRunMetrics(t *testing.T) {
 func TestRecorderRecordsSandboxAndDriverOutcomes(t *testing.T) {
 	recorder, reader := newMetricRecorder(t)
 	recorder.RecordSandboxCreate(context.Background(), "boxlite", 3*time.Second, nil)
-	recorder.RecordDriverOperation(context.Background(), SpanSandboxExec, "boxlite", time.Second, nil)
-	recorder.RecordDriverOperation(context.Background(), SpanSandboxExec, "boxlite", time.Second, errors.New("driver failure"))
+	recorder.RecordDriverOperation(context.Background(), SpanSandboxExec, "boxlite", nil)
+	recorder.RecordDriverOperation(context.Background(), SpanSandboxExec, "boxlite", errors.New("driver failure"))
 
 	metrics := collectMetrics(t, reader)
 	create, ok := metrics[MetricSandboxCreateDuration].Data.(metricdata.Histogram[float64])

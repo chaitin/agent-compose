@@ -68,6 +68,15 @@ func TestRunsControllerAttachRunSpanJoinsCallerTrace(t *testing.T) {
 	if runSpan.SpanContext().TraceID() != wantTraceID {
 		t.Fatalf("attach run trace id = %s, want caller trace %s", runSpan.SpanContext().TraceID(), wantTraceID)
 	}
+	var sandboxID string
+	for _, attr := range runSpan.Attributes() {
+		if attr.Key == telemetry.AttrSandboxID {
+			sandboxID = attr.Value.AsString()
+		}
+	}
+	if sandboxID == "" {
+		t.Fatal("attach run span has no sandbox id")
+	}
 	if runtime.openCtx == nil {
 		t.Fatal("runtime interaction received no context")
 	}

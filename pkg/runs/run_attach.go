@@ -15,6 +15,7 @@ import (
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/telemetry"
 )
 
 // startedRunAttachContext bundles the started run's state and the first
@@ -61,6 +62,7 @@ func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, attach 
 		run, markErr := c.completeProjectRunError(transitionCtx, ctx, transition, err)
 		return withRunWarnings(run, warnings), err, markErr
 	}
+	span.SetAttributes(telemetry.AttrSandboxID.String(sandboxResult.Sandbox.Summary.ID))
 	warnings = append(warnings, sandboxResult.Warnings...)
 	run, err = coordinator.MarkRunning(transitionCtx, run.RunID, sandboxResult.Sandbox.Summary.ID)
 	if err != nil {

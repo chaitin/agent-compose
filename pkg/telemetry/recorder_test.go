@@ -47,7 +47,7 @@ func TestRecorderDisabledStartsNoopSpans(t *testing.T) {
 	// Metric recordings without a meter provider must be safe no-ops too.
 	recorder.RecordRun(ctx, RunMeasurement{Duration: 0, Status: "succeeded"})
 	recorder.RecordSandboxCreate(ctx, "docker", 0, nil)
-	recorder.RecordDriverOperation(ctx, SpanSandboxExec, "docker", 0, errors.New("boom"))
+	recorder.RecordDriverOperation(ctx, SpanSandboxExec, "docker", errors.New("boom"))
 }
 
 func TestRecorderExportsSpanAttributes(t *testing.T) {

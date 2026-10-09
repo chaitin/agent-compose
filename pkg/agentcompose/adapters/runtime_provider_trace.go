@@ -2,7 +2,6 @@ package adapters
 
 import (
 	"context"
-	"time"
 
 	"go.opentelemetry.io/otel/trace"
 
@@ -27,9 +26,8 @@ func startRuntimeSpan(ctx context.Context, recorder *telemetry.Recorder, operati
 			telemetry.AttrDriver.String(driver),
 		),
 	)
-	startedAt := time.Now()
 	return ctx, func(err error) {
-		recorder.RecordDriverOperation(ctx, operation, driver, time.Since(startedAt), err)
+		recorder.RecordDriverOperation(ctx, operation, driver, err)
 		telemetry.EndSpan(span, err)
 	}
 }

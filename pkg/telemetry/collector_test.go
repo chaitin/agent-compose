@@ -58,8 +58,8 @@ func TestProviderExportsTracesAndMetricsToCollector(t *testing.T) {
 	EndSpan(span, nil)
 	recorder.RecordRun(ctx, RunMeasurement{Duration: 1500 * time.Millisecond, Status: "succeeded", Driver: "docker"})
 	recorder.RecordSandboxCreate(ctx, "docker", 250*time.Millisecond, nil)
-	recorder.RecordDriverOperation(ctx, SpanSandboxExec, "docker", 10*time.Millisecond, errors.New("driver failure"))
-	recorder.RecordDriverOperation(ctx, SpanSandboxExec, "docker", 10*time.Millisecond, nil)
+	recorder.RecordDriverOperation(ctx, SpanSandboxExec, "docker", errors.New("driver failure"))
+	recorder.RecordDriverOperation(ctx, SpanSandboxExec, "docker", nil)
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
