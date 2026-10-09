@@ -274,11 +274,12 @@ func receiveMicrosandboxExecEvents(ctx context.Context, recv microsandboxExecEve
 
 func microsandboxExecResult(collector *microsandboxExecCollector, exitCode int, success bool) ExecResult {
 	return ExecResult{
-		ExitCode: exitCode,
-		Success:  success,
-		Stdout:   collector.stdout.String(),
-		Stderr:   collector.stderr.String(),
-		Output:   collector.output.String(),
+		ExitCode:      exitCode,
+		Success:       success,
+		Stdout:        collector.stdout.String(),
+		Stderr:        collector.stderr.String(),
+		Output:        collector.output.String(),
+		SecurityFacts: collector.filter.SecurityFacts(),
 	}
 }
 
@@ -509,11 +510,12 @@ func (r *microsandboxRuntime) Exec(ctx context.Context, session *Sandbox, vmStat
 				return ExecResult{}, err
 			}
 			return ExecResult{
-				ExitCode: output.ExitCode(),
-				Stdout:   output.Stdout(),
-				Stderr:   output.Stderr(),
-				Output:   output.Stdout() + output.Stderr(),
-				Success:  output.Success(),
+				ExitCode:      output.ExitCode(),
+				Stdout:        output.Stdout(),
+				Stderr:        output.Stderr(),
+				Output:        output.Stdout() + output.Stderr(),
+				Success:       output.Success(),
+				SecurityFacts: countExecSecurityFacts(output.Stderr()),
 			}, nil
 		},
 	)
@@ -574,11 +576,12 @@ func (r *microsandboxRuntime) ensureDirectoryOnlyGuestSandboxBootstrap(ctx conte
 	result := ExecResult{}
 	if output != nil {
 		result = ExecResult{
-			ExitCode: output.ExitCode(),
-			Stdout:   output.Stdout(),
-			Stderr:   output.Stderr(),
-			Output:   output.Stdout() + output.Stderr(),
-			Success:  output.Success(),
+			ExitCode:      output.ExitCode(),
+			Stdout:        output.Stdout(),
+			Stderr:        output.Stderr(),
+			Output:        output.Stdout() + output.Stderr(),
+			Success:       output.Success(),
+			SecurityFacts: countExecSecurityFacts(output.Stderr()),
 		}
 	}
 	sandboxID := ""

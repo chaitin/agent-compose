@@ -133,6 +133,10 @@ type RuntimeResult struct {
 	StartedAt   time.Time         `json:"started_at,omitempty"`
 	CompletedAt time.Time         `json:"completed_at,omitempty"`
 	Artifacts   map[string]string `json:"artifacts,omitempty"`
+	// SecurityFacts carries the lower-layer isolation failures observed during
+	// this operation. It is nil when the lower layer reported nothing, so the
+	// common case adds no payload.
+	SecurityFacts *ExecSecurityFacts `json:"security_facts,omitempty"`
 }
 
 type RuntimeInteractionCapabilities struct {
@@ -358,11 +362,12 @@ func (i *execStreamInteraction) run(ctx context.Context, runtime SandboxRuntime,
 
 	completedAt := time.Now()
 	i.result = RuntimeResult{
-		OperationID: spec.OperationID,
-		ExitCode:    result.ExitCode,
-		Success:     result.Success,
-		StartedAt:   startedAt,
-		CompletedAt: completedAt,
+		OperationID:   spec.OperationID,
+		ExitCode:      result.ExitCode,
+		Success:       result.Success,
+		StartedAt:     startedAt,
+		CompletedAt:   completedAt,
+		SecurityFacts: result.SecurityFacts.Pointer(),
 	}
 	if err != nil {
 		i.err = err
