@@ -71,6 +71,11 @@ const (
 	// ReasonNotConfigured means a configuration surface exists but the engine
 	// does not set it.
 	ReasonNotConfigured = "not_configured"
+	// ReasonLowerLayerUnavailable means the engine handed the dimension to a
+	// lower layer and that layer reported it could not enforce it. It is the
+	// honest answer for the libcontainer seccomp/no_new_privileges failures
+	// that used to be filtered out of exec stderr.
+	ReasonLowerLayerUnavailable = "lower_layer_unavailable"
 )
 
 var canonicalDimensions = []Dimension{
@@ -97,7 +102,7 @@ func RequiredDimensions() []Dimension {
 // when a capability is not enforced.
 func IsNotEnforcedReason(value string) bool {
 	switch strings.TrimSpace(value) {
-	case ReasonUnsupported, ReasonNotConfigured:
+	case ReasonUnsupported, ReasonNotConfigured, ReasonLowerLayerUnavailable:
 		return true
 	default:
 		return false
@@ -108,7 +113,9 @@ func IsNotEnforcedReason(value string) bool {
 // behind it.
 type Capability struct {
 	Dimension Dimension
-	// Enforced is true only when the engine actively imposes the dimension.
+	// Enforced is true only when the engine actively imposes the dimension. It
+	// is exactly true for State == enforced and is retained for backward
+	// compatibility with consumers of the API-7 contract.
 	Enforced bool
 	// Mechanism names what enforces the dimension when Enforced is true, and
 	// one of the not-enforced reasons otherwise. It is never empty.
@@ -122,28 +129,54 @@ type Capability struct {
 	// DefaultBehavior states the engine's behavior when the declaration is
 	// absent or silent.
 	DefaultBehavior string
+	// State is the three-state enforcement answer. An omitted state is derived
+	// from Enforced so an API-7-era declaration keeps its meaning.
+	State CapabilityState
+	// Source distinguishes a code declaration from a measured fact and from a
+	// simulation. An omitted source defaults to declared.
+	Source CapabilitySource
 }
 
 // Validate enforces the capability invariant: an enforced capability always
-// names a non-empty mechanism, and a capability that is not enforced always
-// carries a closed reason instead of a mechanism.
+// names a non-empty mechanism, a capability that is not enforced always
+// carries a closed reason instead of a mechanism, and a simulated capability
+// never claims the enforced state.
 func (c Capability) Validate() error {
 	if !c.Dimension.valid() {
 		return fmt.Errorf("%w: unknown dimension %q", ErrInvalidCapability, c.Dimension)
 	}
-	mechanism := strings.TrimSpace(c.Mechanism)
-	switch {
-	case c.Enforced && mechanism == "":
-		return fmt.Errorf("%w: dimension %q is enforced but names no mechanism", ErrInvalidCapability, c.Dimension)
-	case c.Enforced && IsNotEnforcedReason(mechanism):
-		return fmt.Errorf("%w: dimension %q is enforced but mechanism %q is a not-enforced reason", ErrInvalidCapability, c.Dimension, mechanism)
-	case !c.Enforced && !IsNotEnforcedReason(mechanism):
-		return fmt.Errorf("%w: dimension %q is not enforced but mechanism %q is neither %q nor %q", ErrInvalidCapability, c.Dimension, mechanism, ReasonUnsupported, ReasonNotConfigured)
-	}
-	if !c.Enforced && len(c.Preconditions) > 0 {
-		return fmt.Errorf("%w: dimension %q is not enforced but declares preconditions", ErrInvalidCapability, c.Dimension)
+	if _, err := (assertion{
+		label:         fmt.Sprintf("dimension %q", c.Dimension),
+		enforced:      c.Enforced,
+		state:         c.State,
+		source:        c.Source,
+		mechanism:     c.Mechanism,
+		preconditions: c.Preconditions,
+	}).normalize(); err != nil {
+		return err
 	}
 	return nil
+}
+
+// Normalized returns the capability with the explicit state and source filled
+// in. An invalid claim is returned unchanged so Validate remains the single
+// authority on rejection; callers serialize only validated capabilities.
+func (c Capability) Normalized() Capability {
+	normalized, err := (assertion{
+		label:         fmt.Sprintf("dimension %q", c.Dimension),
+		enforced:      c.Enforced,
+		state:         c.State,
+		source:        c.Source,
+		mechanism:     c.Mechanism,
+		preconditions: c.Preconditions,
+	}).normalize()
+	if err != nil {
+		return c
+	}
+	c.Enforced = normalized.enforced
+	c.State = normalized.state
+	c.Source = normalized.source
+	return c
 }
 
 func (d Dimension) valid() bool {

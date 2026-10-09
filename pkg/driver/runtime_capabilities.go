@@ -12,6 +12,11 @@ import (
 //
 // The facts are deliberately a driver-local shape. pkg/llms imports pkg/driver,
 // so pkg/driver cannot import pkg/capmatrix without creating an import cycle.
+//
+// This is the static half of the engine's capability answer. The other
+// driver-side capability shape, RuntimeInteractionCapabilities, describes what
+// a live instance can do for one operation and is intentionally not converged
+// into this registry; see the comment on that type for the boundary.
 type RuntimeCapabilityFacts struct {
 	// Driver is the normalized runtime driver name.
 	Driver string
@@ -27,6 +32,15 @@ type RuntimeCapabilityDimensionFacts struct {
 	Preconditions   []string
 	Observed        string
 	DefaultBehavior string
+	// State is the three-state answer ("enforced", "degraded", "unsupported").
+	// Empty means the reader derives it from Enforced, which keeps an API-7
+	// declaration valid unchanged.
+	State string
+	// Source is "declared", "measured", or "simulated". A driver declaration
+	// itself is declared evidence: it states what the driver writes into its
+	// runtime configuration, never what it observed. Empty defaults to
+	// declared.
+	Source string
 }
 
 // RuntimeCapabilityFactsFor returns the capability declaration for one runtime

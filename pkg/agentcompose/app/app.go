@@ -412,6 +412,7 @@ func NewSandboxDriver(di do.Injector) (*adapters.SandboxDriver, error) {
 		do.MustInvoke[*sandboxstore.Store](di),
 		do.MustInvoke[*configstore.ConfigStore](di),
 		do.MustInvoke[adapters.RuntimeProvider](di),
+		do.MustInvoke[capmatrix.Snapshot](di),
 	), nil
 }
 

@@ -133,8 +133,21 @@ type RuntimeResult struct {
 	StartedAt   time.Time         `json:"started_at,omitempty"`
 	CompletedAt time.Time         `json:"completed_at,omitempty"`
 	Artifacts   map[string]string `json:"artifacts,omitempty"`
+	// SecurityFacts carries the lower-layer isolation failures observed during
+	// this operation. It is nil when the lower layer reported nothing, so the
+	// common case adds no payload.
+	SecurityFacts *ExecSecurityFacts `json:"security_facts,omitempty"`
 }
 
+// RuntimeInteractionCapabilities describes what one live runtime instance can
+// do for a single operation right now: stream over a wrapper, accept stdin,
+// resize a TTY, deliver a signal. It is deliberately not part of the
+// capmatrix isolation matrix, which answers a different question ("what does
+// the engine enforce, by what mechanism"). This surface is instance-local and
+// operation-local, so folding it into the static driver declarations would
+// claim facts the engine never measured or declared. The two stay separate;
+// callers that need an isolation decision use capmatrix, callers that need to
+// know whether an operation is supported use this.
 type RuntimeInteractionCapabilities struct {
 	NativeExec    bool `json:"native_exec"`
 	WrapperStream bool `json:"wrapper_stream"`
@@ -358,11 +371,12 @@ func (i *execStreamInteraction) run(ctx context.Context, runtime SandboxRuntime,
 
 	completedAt := time.Now()
 	i.result = RuntimeResult{
-		OperationID: spec.OperationID,
-		ExitCode:    result.ExitCode,
-		Success:     result.Success,
-		StartedAt:   startedAt,
-		CompletedAt: completedAt,
+		OperationID:   spec.OperationID,
+		ExitCode:      result.ExitCode,
+		Success:       result.Success,
+		StartedAt:     startedAt,
+		CompletedAt:   completedAt,
+		SecurityFacts: result.SecurityFacts.Pointer(),
 	}
 	if err != nil {
 		i.err = err

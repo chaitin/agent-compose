@@ -2443,6 +2443,42 @@ message EngineCapability {
   // The engine's behavior when the declaration is absent or silent, for example
   // "an undeclared resource limit is not applied".
   string default_behavior = 6;
+  // The three-state enforcement answer: "enforced", "degraded", or
+  // "unsupported". It refines the backward-compatible enforced boolean:
+  // degraded is not enforced for a hard requirement and must never be read as
+  // enforcement. Empty means the reader derives the state from enforced.
+  string state = 7;
+  // Where the claim came from: "declared" (a static statement about the code,
+  // which every per-driver entry is), "measured" (the engine established it by
+  // probing or observing), or "simulated" (an emulation, which never shares the
+  // enforced state). Empty defaults to "declared".
+  string source = 8;
+}
+
+// EngineObservedCapability is one engine-measured capability: the system layer
+// (what this host and kernel actually provide) or the process layer (what the
+// engine observed the sandbox's lower layer enforce). These claims never come
+// from asking a driver whether it is ready.
+message EngineObservedCapability {
+  // Stable machine-readable key, for example "system.landlock" or
+  // "process.seccomp".
+  string dimension = 1;
+  // The three-state answer: "enforced", "degraded", or "unsupported".
+  string state = 2;
+  // True only for state "enforced", so a consumer that only understands the
+  // boolean still sees the honest answer.
+  bool enforced = 3;
+  // The probed mechanism when enforced or degraded, or a closed not-enforced
+  // reason ("unsupported", "not_configured", "lower_layer_unavailable").
+  string mechanism = 4;
+  // Conditions the mechanism depends on, reported when it is degraded.
+  repeated string preconditions = 5;
+  // The probe evidence: what the kernel or the lower layer actually answered.
+  string observed = 6;
+  // The unmet precondition when the dimension is not enforced.
+  string missing = 7;
+  // "measured" for a real probe or observation, "simulated" for an emulation.
+  string source = 8;
 }
 
 message EngineDriverCapabilities {
@@ -2486,4 +2522,8 @@ message GetEngineCapabilitiesResponse {
   string compiled_drivers_note = 4;
   // When the startup snapshot was captured.
   google.protobuf.Timestamp captured_at = 5;
+  // The engine-measured layer captured with the same startup snapshot: the host
+  // system probe plus any measured process facts frozen with it. Source on each
+  // entry is "measured" or "simulated", never "declared".
+  repeated EngineObservedCapability observations = 6;
 }

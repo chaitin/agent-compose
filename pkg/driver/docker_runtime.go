@@ -126,6 +126,10 @@ type dockerCommandInteraction struct {
 	closeSendOnce sync.Once
 	result        RuntimeResult
 	err           error
+	// securityFacts accumulates the lower-layer isolation failures observed on
+	// this exec's stderr. It is written and read on the interaction's own
+	// goroutine (copyOutput then run), never concurrently.
+	securityFacts ExecSecurityFacts
 }
 
 type dockerInteractionWriter struct {
@@ -595,10 +599,11 @@ func (r *dockerRuntime) execWithStream(ctx context.Context, request dockerExecRe
 		return ExecResult{}, execTerminationResultError(RuntimeDriverDocker, execResp.ID, err, terminationErr)
 	}
 	result := ExecResult{
-		ExitCode: execInfo.ExitCode,
-		Stdout:   collector.stdout.String(),
-		Stderr:   collector.stderr.String(),
-		Output:   collector.output.String(),
+		ExitCode:      execInfo.ExitCode,
+		Stdout:        collector.stdout.String(),
+		Stderr:        collector.stderr.String(),
+		Output:        collector.output.String(),
+		SecurityFacts: collector.filter.SecurityFacts(),
 	}
 	result.Success = result.ExitCode == 0
 	return result, nil
@@ -705,11 +710,12 @@ func (i *dockerCommandInteraction) run() {
 
 	completedAt := time.Now()
 	i.result = RuntimeResult{
-		OperationID: i.operationID,
-		ExitCode:    exitCode,
-		Success:     runErr == nil && exitCode == 0,
-		StartedAt:   i.startedAt,
-		CompletedAt: completedAt,
+		OperationID:   i.operationID,
+		ExitCode:      exitCode,
+		Success:       runErr == nil && exitCode == 0,
+		StartedAt:     i.startedAt,
+		CompletedAt:   completedAt,
+		SecurityFacts: i.securityFacts.Pointer(),
 	}
 	if runErr != nil {
 		i.err = runErr
@@ -739,6 +745,7 @@ func (i *dockerCommandInteraction) copyOutput() error {
 	)
 	stdoutWriter.finish()
 	stderrWriter.finish()
+	i.securityFacts = i.securityFacts.Merge(stderrWriter.filter.SecurityFacts())
 	return err
 }
 

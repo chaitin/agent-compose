@@ -126,6 +126,10 @@ type ExecResult struct {
 	Stderr   string
 	Output   string
 	Success  bool
+	// SecurityFacts carries the isolation failures the lower layer reported on
+	// this exec's stderr. It is engine-measured evidence, not a driver
+	// declaration, and is zero when the lower layer reported nothing.
+	SecurityFacts ExecSecurityFacts
 }
 
 const (

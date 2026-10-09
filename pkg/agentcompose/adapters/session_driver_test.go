@@ -135,7 +135,7 @@ func (p fakeRuntimeProvider) ForSession(*domain.Sandbox) (SandboxRuntime, error)
 }
 
 func TestSandboxDriverRejectsStoppedRuntimeRetentionForK8s(t *testing.T) {
-	driver := NewSandboxDriver(
+	driver := newTestSandboxDriver(
 		&appconfig.Config{RuntimeDriver: driverpkg.RuntimeDriverK8s},
 		nil,
 		nil,
@@ -187,7 +187,7 @@ func TestSandboxDriverStartSandboxVMSavesRuntimeState(t *testing.T) {
 		JupyterURL: "http://127.0.0.1:39000/lab?token=secret",
 		Token:      "secret",
 	}
-	driver := NewSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: fakeSessionRuntime{info: domain.SandboxVMInfo{
+	driver := newTestSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: fakeSessionRuntime{info: domain.SandboxVMInfo{
 		BoxID:      "container-1",
 		JupyterURL: updatedProxyState.JupyterURL,
 		ProxyState: &updatedProxyState,
@@ -238,7 +238,7 @@ func TestSandboxDriverRollsBackRuntimeWhenOwnershipUpdateFails(t *testing.T) {
 		info:       domain.SandboxVMInfo{BoxID: "unowned-runtime"},
 		removeHook: func(*domain.Sandbox) { removed = true },
 	}
-	driver := NewSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: runtime})
+	driver := newTestSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: runtime})
 
 	err = driver.StartSandboxVM(ctx, sandbox)
 	if err == nil || !removed {
@@ -290,7 +290,7 @@ func TestSandboxDriverRecreatesOnlyAfterIntentionalRuntimeRelease(t *testing.T) 
 		removeHook:      func(*domain.Sandbox) { removed = true },
 		ensureStateHook: func(state domain.VMState) { ensureState = state },
 	}
-	driver := NewSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: runtime})
+	driver := newTestSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: runtime})
 	if err := driver.StartSandboxVM(ctx, sandbox); err != nil {
 		t.Fatalf("StartSandboxVM returned error: %v", err)
 	}
@@ -362,7 +362,7 @@ func TestSandboxDriverFreshStartFailureRevokesPreparedAgentToken(t *testing.T) {
 		t.Fatalf("preparation is missing the Anthropic startup facade: %#v", env)
 	}
 	startErr := errors.New("runtime start failed")
-	driver := NewSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{ensureErr: startErr}})
+	driver := newTestSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{ensureErr: startErr}})
 	if err := driver.StartSandboxVM(ctx, session); !errors.Is(err, startErr) {
 		t.Fatalf("StartSandboxVM error = %v, want %v", err, startErr)
 	}
@@ -438,7 +438,7 @@ func TestSandboxDriverReleasedRuntimeRecreationFailureRevokesPreparedAgentToken(
 	}
 
 	startErr := errors.New("runtime recreation failed")
-	driver := NewSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{ensureErr: startErr}})
+	driver := newTestSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{ensureErr: startErr}})
 	if err := driver.StartSandboxVM(ctx, session); !errors.Is(err, startErr) {
 		t.Fatalf("StartSandboxVM error = %v, want %v", err, startErr)
 	}
@@ -504,7 +504,7 @@ func TestSandboxDriverFailedRunningSandboxCheckKeepsPreparedAgentToken(t *testin
 	}
 
 	startErr := errors.New("runtime check failed")
-	driver := NewSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{ensureErr: startErr}})
+	driver := newTestSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{ensureErr: startErr}})
 	if err := driver.StartSandboxVM(ctx, session); !errors.Is(err, startErr) {
 		t.Fatalf("StartSandboxVM error = %v, want %v", err, startErr)
 	}
@@ -562,7 +562,7 @@ func TestSandboxDriverPostStartPersistenceFailureKeepsPreparedAgentToken(t *test
 		t.Fatal("prepared sandbox token is empty")
 	}
 
-	driver := NewSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{
+	driver := newTestSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: fakeSessionRuntime{
 		info: domain.SandboxVMInfo{BoxID: "container-1"},
 		ensureHook: func(*domain.Sandbox) {
 			proxyDir := filepath.Dir(store.ProxyStatePath(session.Summary.ID))
@@ -618,7 +618,7 @@ func TestSandboxDriverStopSandboxVMAddsDockerStopContextMargin(t *testing.T) {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 	runtime := &fakeStopDeadlineRuntime{}
-	driver := NewSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: runtime})
+	driver := newTestSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: runtime})
 
 	if err := driver.StopSandboxVM(ctx, session); err != nil {
 		t.Fatalf("StopSandboxVM returned error: %v", err)
@@ -681,7 +681,7 @@ func TestSandboxDriverStopPreservesFacadeTokensUntilRuntimeRelease(t *testing.T)
 			removeCalls++
 		}
 	}}
-	driver := NewSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: runtime})
+	driver := newTestSandboxDriver(config, store, configDB, fakeRuntimeProvider{runtime: runtime})
 
 	if err := driver.StopSandboxVM(ctx, session); err != nil {
 		t.Fatalf("StopSandboxVM returned error: %v", err)
@@ -755,7 +755,7 @@ func TestSandboxDriverResumeReusesRuntimeWithoutRefreshingStartupEnv(t *testing.
 			t.Fatal("retained runtime was removed during resume")
 		},
 	}
-	driver := NewSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: runtime})
+	driver := newTestSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: runtime})
 
 	if err := driver.StartSandboxVM(ctx, session); err != nil {
 		t.Fatalf("StartSandboxVM returned error: %v", err)
@@ -793,7 +793,7 @@ func TestSandboxDriverResumeRecordsAttemptBeforeRuntimeFailure(t *testing.T) {
 	}
 	startErr := errors.New("runtime partially started")
 	var runtimeState domain.VMState
-	driver := NewSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: fakeSessionRuntime{
+	driver := newTestSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: fakeSessionRuntime{
 		ensureErr: startErr, ensureStateHook: func(state domain.VMState) { runtimeState = state },
 	}})
 
@@ -836,7 +836,7 @@ func TestSandboxDriverStartSandboxVMUsesPreparedAgentEnvironmentWithoutAddingPro
 		{Name: "OPENAI_BASE_URL", Value: "http://prepared.example/v1"},
 	}
 	var runtimeEnv map[string]string
-	driver := NewSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: fakeSessionRuntime{
+	driver := newTestSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: fakeSessionRuntime{
 		info: domain.SandboxVMInfo{BoxID: "container-1"},
 		ensureHook: func(started *domain.Sandbox) {
 			runtimeEnv = domain.SandboxEnvMap(started.RuntimeEnvItems)

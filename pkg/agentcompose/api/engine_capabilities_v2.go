@@ -34,6 +34,7 @@ func (h *EngineCapabilitiesV2Handler) GetCapabilities(_ context.Context, _ *conn
 		CompiledDrivers:     h.snapshot.CompiledDrivers(),
 		CompiledDriversNote: capmatrix.CompiledDriversSemantics,
 		CapturedAt:          timestamppb.New(h.snapshot.CapturedAt()),
+		Observations:        engineObservedCapabilitiesV2(h.snapshot.Observations()),
 	}
 	for _, declaration := range h.snapshot.Drivers() {
 		driver := &agentcomposev2.EngineDriverCapabilities{Driver: declaration.Driver}
@@ -56,6 +57,8 @@ func engineCapabilityV2(capability capmatrix.Capability) *agentcomposev2.EngineC
 		Preconditions:   append([]string(nil), capability.Preconditions...),
 		Observed:        capability.Observed,
 		DefaultBehavior: capability.DefaultBehavior,
+		State:           string(capability.State),
+		Source:          string(capability.Source),
 	}
 }
 

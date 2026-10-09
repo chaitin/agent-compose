@@ -195,7 +195,7 @@ func TestDockerExecEnvMarkerIsDriverOwnedAndIsolatesExecutions(t *testing.T) {
 	}
 }
 
-func TestDockerInteractionWriterProjectsFramesAndFiltersStderr(t *testing.T) {
+func TestDockerInteractionWriterProjectsFramesAndReportsStderr(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	interaction := &dockerCommandInteraction{
@@ -217,16 +217,25 @@ func TestDockerInteractionWriterProjectsFramesAndFiltersStderr(t *testing.T) {
 		stream:      StdioStderr,
 		filter:      newExecOutputFilter(),
 	}
-	if _, err := stderrWriter.Write([]byte("libcontainer::process::init::process seccomp not available, unable to set seccomp privileges!\n")); err != nil {
-		t.Fatalf("ignored stderr Write() error = %v", err)
+	warning := "libcontainer::process::init::process seccomp not available, unable to set seccomp privileges!\n"
+	if _, err := stderrWriter.Write([]byte(warning)); err != nil {
+		t.Fatalf("reported stderr Write() error = %v", err)
 	}
 	if _, err := stderrWriter.Write([]byte("err")); err != nil {
 		t.Fatalf("stderr Write() error = %v", err)
 	}
 	stderrWriter.finish()
+	// The isolation warning is no longer dropped: it is a real stderr frame.
+	frame = mustRecvDockerInteractionFrame(t, interaction)
+	if frame.Type != RuntimeOutputStderr || string(frame.Data) != warning {
+		t.Fatalf("isolation warning frame = %#v", frame)
+	}
 	frame = mustRecvDockerInteractionFrame(t, interaction)
 	if frame.Type != RuntimeOutputStderr || string(frame.Data) != "err" {
 		t.Fatalf("stderr frame = %#v", frame)
+	}
+	if facts := stderrWriter.filter.SecurityFacts(); facts.SeccompUnavailable != 1 {
+		t.Fatalf("SecurityFacts() = %+v, want the warning counted", facts)
 	}
 	select {
 	case frame := <-interaction.output:
