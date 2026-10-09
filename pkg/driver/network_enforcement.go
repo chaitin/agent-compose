@@ -67,21 +67,15 @@ func SandboxNetworkEnforcementFor(driver string) SandboxNetworkEnforcement {
 			Notes:                  "the SDK NetworkConfig applies ordered allow rules, a deny egress default, and the deny-domain list; the hypervisor's exact domain-suffix semantics still need a real KVM run",
 		}
 	case RuntimeDriverK8s:
-		// The NetworkPolicy egress path is designed but NOT generated yet: the
-		// cluster driver creates no networkingv1.NetworkPolicy and the chart's
-		// clusterrole grants no networkpolicies permission. Declaring an allow
-		// list here would make egress_policy report Enforced=true and let
-		// RequireSandboxNetworkEnforcement pass, so a declared default-deny
-		// would silently leave egress open while the engine claimed otherwise.
-		// Report none until the generation and the RBAC land.
 		return SandboxNetworkEnforcement{
 			Driver:                 RuntimeDriverK8s,
-			Strength:               SandboxEgressStrengthNone,
-			Mechanism:              reasonNotConfigured,
+			Strength:               SandboxEgressStrengthOuterDeny,
+			Mechanism:              mechanismNetworkPolicyEgress,
 			AppliesAllowEntries:    false,
 			AppliesEngineEndpoints: false,
 			AppliesDenyDomains:     false,
-			Notes:                  "no per-sandbox NetworkPolicy is generated yet and the chart grants no networkpolicies RBAC, so a declared default-deny fails closed instead of leaving egress open; deny domains are in any case not expressible at L3/L4",
+			RequiresCNI:            true,
+			Notes:                  "a per-sandbox egress NetworkPolicy denies all egress for the sandbox Pod; the declared allowances and the engine-owned endpoints are NOT applied because NetworkPolicy is L3/L4 and cannot match DNS names (that needs an FQDN-capable CNI or the deferred L7 mediator), the cluster CNI must enforce NetworkPolicy, and a declared allow list therefore currently yields no egress at all",
 		}
 	case RuntimeDriverDocker:
 		return SandboxNetworkEnforcement{
