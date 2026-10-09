@@ -67,6 +67,7 @@ Home persistence is handled by the mount manifest:
 | `<sandbox>/home/.config/claude` | `/root/.config/claude` | Symlink |
 | `<sandbox>/home/.config/Claude` | `/root/.config/Claude` | Symlink |
 | `<sandbox>/home/.config/opencode` | `/root/.config/opencode` | Symlink |
+| `<sandbox>/home/.local/share/opencode` | `/root/.local/share/opencode` | Symlink `/root/.local/share/opencode -> /data/home/.local/share/opencode` |
 
 Docker fine-grain mounts these home subpaths directly. BoxLite and Microsandbox
 mount only the whole `<sandbox>` directory at `/data`; guest bootstrap keeps

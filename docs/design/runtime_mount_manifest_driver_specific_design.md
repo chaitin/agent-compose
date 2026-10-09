@@ -92,6 +92,7 @@ applies none of it (it declares no mounts):
 | `home/.config/claude` | `/root/.config/claude` | dir |
 | `home/.config/Claude` | `/root/.config/Claude` | dir |
 | `home/.config/opencode` | `/root/.config/opencode` | dir |
+| `home/.local/share/opencode` | `/root/.local/share/opencode` | dir |
 
 Paths under `/root` that are not listed here are not guaranteed to persist for
 directory-only runtimes.
@@ -117,6 +118,7 @@ Docker manifest keeps fine-grained sources derived from the logical list:
 | `<sandbox>/home/.config/claude` | `/root/.config/claude` |
 | `<sandbox>/home/.config/Claude` | `/root/.config/Claude` |
 | `<sandbox>/home/.config/opencode` | `/root/.config/opencode` |
+| `<sandbox>/home/.local/share/opencode` | `/root/.local/share/opencode` |
 
 Docker runtime applies `DOCKER_HOST_SANDBOX_ROOT` rebase to each source. File
 entries such as `.claude.json` and `.gitconfig` remain file bind sources.
@@ -181,6 +183,9 @@ sources:
       claude/
       Claude/
       opencode/
+    .local/
+      share/
+        opencode/
   vm/
     mount-manifest.json
 ```

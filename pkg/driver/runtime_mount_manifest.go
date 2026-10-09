@@ -240,6 +240,12 @@ func runtimeMountEntries(config *appconfig.Config) []logicalRuntimeMountEntry {
 		{sandboxPath: "home/.config/claude", guestPath: filepath.Join(config.GuestHomePath, ".config", "claude"), directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.config/Claude", guestPath: filepath.Join(config.GuestHomePath, ".config", "Claude"), directoryOnlyExposure: directoryOnlyExposureSymlink},
 		{sandboxPath: "home/.config/opencode", guestPath: filepath.Join(config.GuestHomePath, ".config", "opencode"), directoryOnlyExposure: directoryOnlyExposureSymlink},
+		// OpenCode keeps the sessions it resumes with, and the thread state the
+		// runner reads back, under its XDG data directory. A sandbox whose
+		// container is recreated for the next turn keeps only the declared home
+		// entries, so without this entry the second turn starts the CLI with a
+		// session id whose session no longer exists.
+		{sandboxPath: "home/.local/share/opencode", guestPath: filepath.Join(config.GuestHomePath, ".local", "share", "opencode"), directoryOnlyExposure: directoryOnlyExposureSymlink},
 	}
 }
 

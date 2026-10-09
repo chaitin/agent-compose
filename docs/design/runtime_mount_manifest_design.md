@@ -142,8 +142,11 @@ see `$HOME` as `/root`, but related config and state are persisted by host
 sandbox home.
 
 The logical mount list also creates declared home directories used by current
-providers, including `.agents`, `.opencode`, `.pi`, `.dsh`, and
-`.config/{claude,Claude,opencode}`.
+providers, including `.agents`, `.opencode`, `.pi`, `.dsh`,
+`.config/{claude,Claude,opencode}`, and `.local/share/opencode`. The last one is
+where OpenCode keeps the sessions it resumes with: a sandbox whose container is
+recreated for the next turn keeps only the declared entries, so a session stored
+anywhere else is gone while the recorded session id survives.
 
 ## Driver Differences
 

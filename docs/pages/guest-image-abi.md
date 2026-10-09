@@ -149,6 +149,7 @@ With default daemon configuration, the guest-visible contract is:
 | `/root/.opencode` | OpenCode state | Persisted |
 | `/root/.pi` | Pi configuration and state | Persisted |
 | `/root/.dsh` | DSH profile and state | Persisted |
+| `/root/.local/share/opencode` | OpenCode session data it resumes from | Persisted |
 | `/root/.claude.json` | Claude root config | Persisted file |
 | `/root/.gitconfig` | Git config | Persisted file |
 | Selected `/root/.config/...` paths | Provider state | Persisted |
