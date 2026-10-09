@@ -40,9 +40,6 @@ type SandboxNetworkEnforcement struct {
 	// AppliesDenyDomains reports whether the declared deny domains reach the
 	// driver's DNS resolution path.
 	AppliesDenyDomains bool
-	// RequiresCNI reports enforcement that depends on a cluster add-on rather
-	// than on the engine alone.
-	RequiresCNI bool
 	// Notes is the human-readable limit of what the driver applies, so a report
 	// never presents a partial mechanism as complete.
 	Notes string
@@ -137,9 +134,6 @@ func egressPolicyFacts(driver string) RuntimeCapabilityDimensionFacts {
 	}
 	facts.Enforced = true
 	facts.Mechanism = enforcement.Mechanism
-	if enforcement.RequiresCNI {
-		facts.Preconditions = []string{"the cluster CNI must enforce NetworkPolicy"}
-	}
 	return facts
 }
 

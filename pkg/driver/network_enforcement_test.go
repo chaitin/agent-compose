@@ -16,7 +16,6 @@ func TestSandboxNetworkEnforcementFor(t *testing.T) {
 		wantAppliesAllow   bool
 		wantAppliesEngine  bool
 		wantAppliesDomains bool
-		wantCNI            bool
 	}{
 		{
 			driver: RuntimeDriverMicrosandbox, wantStrength: SandboxEgressStrengthAllowList,
@@ -61,9 +60,6 @@ func TestSandboxNetworkEnforcementFor(t *testing.T) {
 			}
 			if enforcement.AppliesDenyDomains != test.wantAppliesDomains {
 				t.Fatalf("AppliesDenyDomains = %v, want %v", enforcement.AppliesDenyDomains, test.wantAppliesDomains)
-			}
-			if enforcement.RequiresCNI != test.wantCNI {
-				t.Fatalf("RequiresCNI = %v, want %v", enforcement.RequiresCNI, test.wantCNI)
 			}
 			if strings.TrimSpace(enforcement.Notes) == "" {
 				t.Fatal("Notes is empty; the strength report must state what is not applied")
