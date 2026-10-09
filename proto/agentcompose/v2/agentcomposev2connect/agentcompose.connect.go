@@ -45,6 +45,8 @@ const (
 	LLMServiceName = "agentcompose.v2.LLMService"
 	// ResourceServiceName is the fully-qualified name of the ResourceService service.
 	ResourceServiceName = "agentcompose.v2.ResourceService"
+	// EngineServiceName is the fully-qualified name of the EngineService service.
+	EngineServiceName = "agentcompose.v2.EngineService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -282,6 +284,9 @@ const (
 	// ResourceServiceResolveIDProcedure is the fully-qualified name of the ResourceService's ResolveID
 	// RPC.
 	ResourceServiceResolveIDProcedure = "/agentcompose.v2.ResourceService/ResolveID"
+	// EngineServiceGetCapabilitiesProcedure is the fully-qualified name of the EngineService's
+	// GetCapabilities RPC.
+	EngineServiceGetCapabilitiesProcedure = "/agentcompose.v2.EngineService/GetCapabilities"
 )
 
 // ProjectServiceClient is a client for the agentcompose.v2.ProjectService service.
@@ -2969,4 +2974,74 @@ type UnimplementedResourceServiceHandler struct{}
 
 func (UnimplementedResourceServiceHandler) ResolveID(context.Context, *connect.Request[v2.ResolveResourceIDRequest]) (*connect.Response[v2.ResolveResourceIDResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ResourceService.ResolveID is not implemented"))
+}
+
+// EngineServiceClient is a client for the agentcompose.v2.EngineService service.
+type EngineServiceClient interface {
+	GetCapabilities(context.Context, *connect.Request[v2.GetEngineCapabilitiesRequest]) (*connect.Response[v2.GetEngineCapabilitiesResponse], error)
+}
+
+// NewEngineServiceClient constructs a client for the agentcompose.v2.EngineService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewEngineServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) EngineServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	engineServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("EngineService").Methods()
+	return &engineServiceClient{
+		getCapabilities: connect.NewClient[v2.GetEngineCapabilitiesRequest, v2.GetEngineCapabilitiesResponse](
+			httpClient,
+			baseURL+EngineServiceGetCapabilitiesProcedure,
+			connect.WithSchema(engineServiceMethods.ByName("GetCapabilities")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// engineServiceClient implements EngineServiceClient.
+type engineServiceClient struct {
+	getCapabilities *connect.Client[v2.GetEngineCapabilitiesRequest, v2.GetEngineCapabilitiesResponse]
+}
+
+// GetCapabilities calls agentcompose.v2.EngineService.GetCapabilities.
+func (c *engineServiceClient) GetCapabilities(ctx context.Context, req *connect.Request[v2.GetEngineCapabilitiesRequest]) (*connect.Response[v2.GetEngineCapabilitiesResponse], error) {
+	return c.getCapabilities.CallUnary(ctx, req)
+}
+
+// EngineServiceHandler is an implementation of the agentcompose.v2.EngineService service.
+type EngineServiceHandler interface {
+	GetCapabilities(context.Context, *connect.Request[v2.GetEngineCapabilitiesRequest]) (*connect.Response[v2.GetEngineCapabilitiesResponse], error)
+}
+
+// NewEngineServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewEngineServiceHandler(svc EngineServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	engineServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("EngineService").Methods()
+	engineServiceGetCapabilitiesHandler := connect.NewUnaryHandler(
+		EngineServiceGetCapabilitiesProcedure,
+		svc.GetCapabilities,
+		connect.WithSchema(engineServiceMethods.ByName("GetCapabilities")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/agentcompose.v2.EngineService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case EngineServiceGetCapabilitiesProcedure:
+			engineServiceGetCapabilitiesHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedEngineServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedEngineServiceHandler struct{}
+
+func (UnimplementedEngineServiceHandler) GetCapabilities(context.Context, *connect.Request[v2.GetEngineCapabilitiesRequest]) (*connect.Response[v2.GetEngineCapabilitiesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.EngineService.GetCapabilities is not implemented"))
 }
