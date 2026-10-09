@@ -139,6 +139,15 @@ type RuntimeResult struct {
 	SecurityFacts *ExecSecurityFacts `json:"security_facts,omitempty"`
 }
 
+// RuntimeInteractionCapabilities describes what one live runtime instance can
+// do for a single operation right now: stream over a wrapper, accept stdin,
+// resize a TTY, deliver a signal. It is deliberately not part of the
+// capmatrix isolation matrix, which answers a different question ("what does
+// the engine enforce, by what mechanism"). This surface is instance-local and
+// operation-local, so folding it into the static driver declarations would
+// claim facts the engine never measured or declared. The two stay separate;
+// callers that need an isolation decision use capmatrix, callers that need to
+// know whether an operation is supported use this.
 type RuntimeInteractionCapabilities struct {
 	NativeExec    bool `json:"native_exec"`
 	WrapperStream bool `json:"wrapper_stream"`

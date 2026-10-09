@@ -12,6 +12,11 @@ import (
 //
 // The facts are deliberately a driver-local shape. pkg/llms imports pkg/driver,
 // so pkg/driver cannot import pkg/capmatrix without creating an import cycle.
+//
+// This is the static half of the engine's capability answer. The other
+// driver-side capability shape, RuntimeInteractionCapabilities, describes what
+// a live instance can do for one operation and is intentionally not converged
+// into this registry; see the comment on that type for the boundary.
 type RuntimeCapabilityFacts struct {
 	// Driver is the normalized runtime driver name.
 	Driver string
