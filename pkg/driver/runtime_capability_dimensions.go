@@ -27,5 +27,4 @@ const (
 	mechanismStoppedContainerRuntime = "stopped_container_retention"
 	mechanismStoppedMicroVMRuntime   = "stopped_microvm_retention"
 	mechanismSDKNetworkPolicy        = "sdk_network_policy"
-	mechanismNetworkPolicyEgress     = "networkpolicy_egress"
 )

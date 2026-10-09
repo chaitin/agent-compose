@@ -269,12 +269,6 @@ func (r *k8sRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmStat
 			if err := clientset.CoreV1().Pods(r.namespaceFor(vmState)).Delete(ctx, pod.Name, metav1.DeleteOptions{GracePeriodSeconds: new(int64)}); err != nil && !apierrors.IsNotFound(err) {
 				return SandboxVMInfo{}, fmt.Errorf("delete stale k8s pod %s (%s): %w", pod.Name, reason, err)
 			}
-			// The stale Pod's egress policy goes with it. createPod below
-			// re-applies it for the replacement Pod, so removing it here only
-			// prevents a leftover policy from selecting nothing.
-			if err := r.removeSandboxEgressNetworkPolicy(ctx, clientset, r.namespaceFor(vmState), pod.Name); err != nil {
-				return SandboxVMInfo{}, fmt.Errorf("remove stale k8s egress NetworkPolicy for pod %s (%s): %w", pod.Name, reason, err)
-			}
 			if err := r.waitForPodDeleted(ctx, clientset, r.namespaceFor(vmState), pod.Name, k8sPodDeleteTimeout); err != nil {
 				return SandboxVMInfo{}, fmt.Errorf("wait for stale k8s pod %s (%s) deletion: %w", pod.Name, reason, err)
 			}
@@ -368,11 +362,6 @@ func (r *k8sRuntime) ensureSandboxResult(ctx context.Context, clientset kubernet
 		if delErr := clientset.CoreV1().Pods(namespace).Delete(cleanupCtx, pod.Name, metav1.DeleteOptions{GracePeriodSeconds: new(int64)}); delErr != nil && !apierrors.IsNotFound(delErr) {
 			return SandboxVMInfo{}, fmt.Errorf("%w; cleanup jupyter-unready k8s pod %s: %w", cause, pod.Name, delErr)
 		}
-		// The Pod's egress policy is deleted with it so a jupyter-unready
-		// sandbox leaves no NetworkPolicy selecting nothing behind.
-		if policyErr := r.removeSandboxEgressNetworkPolicy(cleanupCtx, clientset, namespace, pod.Name); policyErr != nil {
-			return SandboxVMInfo{}, fmt.Errorf("%w; cleanup egress NetworkPolicy for k8s pod %s: %w", cause, pod.Name, policyErr)
-		}
 		if waitErr := r.waitForPodDeleted(cleanupCtx, clientset, namespace, pod.Name, k8sPodDeleteTimeout); waitErr != nil {
 			return SandboxVMInfo{}, fmt.Errorf("%w; wait for jupyter-unready k8s pod %s deletion: %w", cause, pod.Name, waitErr)
 		}
@@ -424,11 +413,6 @@ func (r *k8sRuntime) cleanupK8sPodAfterEnsureFailure(ctx context.Context, client
 	// of proceeding straight to createPod.
 	if err := clientset.CoreV1().Pods(attempt.Namespace).Delete(cleanupCtx, attempt.PodName, metav1.DeleteOptions{GracePeriodSeconds: new(int64)}); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("%w; cleanup newly created k8s pod %s: %w", cause, attempt.PodName, err)
-	}
-	// The policy this same attempt applied in createPod is cleaned up with the
-	// Pod it selected.
-	if err := r.removeSandboxEgressNetworkPolicy(cleanupCtx, clientset, attempt.Namespace, attempt.PodName); err != nil {
-		return fmt.Errorf("%w; cleanup egress NetworkPolicy for k8s pod %s: %w", cause, attempt.PodName, err)
 	}
 	return cause
 }
@@ -486,34 +470,8 @@ func (r *k8sRuntime) createPod(ctx context.Context, clientset kubernetes.Interfa
 			Volumes: volumes,
 		},
 	}
-	// A NetworkPolicy only selects a Pod once one exists, so it is applied
-	// before the Pod is created: the reverse order would leave a window where
-	// the container is scheduled and running with unrestricted egress. The
-	// policy name is derived from the same podName the Pod uses, so a recreated
-	// Pod reuses (and overwrites) its predecessor's policy.
-	networkPolicy, enforceEgress := r.k8sSandboxEgressNetworkPolicy(sandbox, vmState)
-	policyCreated := false
-	if enforceEgress {
-		policyCreated, err = r.applySandboxEgressNetworkPolicy(ctx, clientset, networkPolicy)
-		if err != nil {
-			return nil, fmt.Errorf("apply k8s egress NetworkPolicy for sandbox %s: %w", sandbox.Summary.ID, err)
-		}
-	}
 	created, err := clientset.CoreV1().Pods(r.namespaceFor(vmState)).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
-		// Roll the policy back so a failed create does not leave a deny
-		// selecting a Pod that was never created - but only when this call
-		// introduced the policy. An AlreadyExists on the Pod means another Pod
-		// owns this name and its pre-existing policy must stay, or that Pod
-		// would run with unrestricted egress. A canceled caller context must
-		// not abort the rollback, hence WithoutCancel.
-		if policyCreated {
-			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), k8sCleanupTimeout)
-			defer cancel()
-			if removeErr := r.removeSandboxEgressNetworkPolicy(rollbackCtx, clientset, r.namespaceFor(vmState), name); removeErr != nil {
-				return nil, fmt.Errorf("create k8s pod for sandbox %s: %w; remove egress NetworkPolicy %s: %w", sandbox.Summary.ID, err, k8sEgressNetworkPolicyName(name), removeErr)
-			}
-		}
 		return nil, fmt.Errorf("create k8s pod for sandbox %s: %w", sandbox.Summary.ID, err)
 	}
 	return created, nil
@@ -836,12 +794,6 @@ func (r *k8sRuntime) deletePod(ctx context.Context, sandbox *Sandbox, vmState VM
 	}
 	if err := clientset.CoreV1().Pods(r.namespaceFor(vmState)).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		return false, fmt.Errorf("delete k8s pod %s: %w", pod.Name, err)
-	}
-	// StopSandbox and RemoveSandbox both land here; deleting the policy with
-	// the Pod keeps a stopped sandbox from leaving an egress deny behind that
-	// would apply to a future Pod under the same deterministic name.
-	if err := r.removeSandboxEgressNetworkPolicy(ctx, clientset, r.namespaceFor(vmState), pod.Name); err != nil {
-		return false, err
 	}
 	return false, nil
 }

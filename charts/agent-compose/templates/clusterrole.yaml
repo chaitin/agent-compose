@@ -15,10 +15,4 @@ rules:
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "create", "delete"]
-  # Per-sandbox egress NetworkPolicy for a declared default-deny policy (see
-  # pkg/driver/k8s_network_policy.go). Update re-applies the policy for a
-  # recreated Pod under the same deterministic name.
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["networkpolicies"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 {{- end }}
