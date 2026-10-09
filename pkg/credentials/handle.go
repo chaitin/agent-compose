@@ -31,6 +31,11 @@ var (
 	// ErrInvalidHandle reports a handle that cannot describe an authorization
 	// (missing identity, malformed scope, non-positive lifetime, ...).
 	ErrInvalidHandle = errors.New("invalid credential handle")
+	// ErrHandleLifetimeUnsupported reports a credential whose lifetime the
+	// handle model cannot express. A handle is a bounded, non-renewable lease,
+	// so a credential that never expires is not representable as one: it keeps
+	// its own revocation model instead of being forced into a handle.
+	ErrHandleLifetimeUnsupported = errors.New("credential lifetime is not representable as a handle")
 	// ErrUnattributable reports a use with no owner. Empty owner means the call
 	// cannot be attributed, which is always a denial.
 	ErrUnattributable = errors.New("credential use has no owner")

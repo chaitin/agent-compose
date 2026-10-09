@@ -24,6 +24,15 @@ const FacadeCredentialEnvName = "LLM_API_KEY"
 // attributed or scoped, so it maps to an error instead of a handle with empty
 // fields. That is the same denial the handle model applies to every credential:
 // no owner metadata means no grant.
+//
+// Lifetime is the other hard boundary, and the reason the facade token is not
+// routed through this model. A handle is a bounded, non-renewable lease
+// (credentials.MaxHandleTTL, and deliberately no renew operation), whereas
+// NewFacadeToken mints a token with no ExpiresAt at all: the facade token never
+// expires and is ended by explicit revocation, so it keeps its own
+// endpoint-scoped model. A never-expiring token is therefore intentionally not
+// representable as a handle, and a token whose finite lifetime exceeds the cap
+// is refused for the same reason a mint request would be.
 func (t FacadeToken) CredentialHandle() (credentials.Handle, error) {
 	providerID := strings.TrimSpace(t.ProviderID)
 	if providerID == "" {
@@ -55,8 +64,30 @@ func (t FacadeToken) CredentialHandle() (credentials.Handle, error) {
 		ExpiresAt: t.ExpiresAt,
 		RevokedAt: t.RevokedAt,
 	}
+	if err := facadeHandleLifetimeError(t); err != nil {
+		return credentials.Handle{}, fmt.Errorf("map facade token to credential handle: %w", err)
+	}
 	if err := handle.Validate(); err != nil {
 		return credentials.Handle{}, fmt.Errorf("map facade token to credential handle: %w", err)
 	}
 	return handle.Normalized(), nil
+}
+
+// facadeHandleLifetimeError decides whether a facade token's lifetime fits the
+// handle model. Handle.Validate would reject a never-expiring token too, but
+// only incidentally, as an expiry-after-issuance violation, which hides the
+// design rule; stating it here keeps the denial diagnosable and applies the
+// same cap that minting enforces. A missing issuance time is left to Validate,
+// which names the missing field instead of a misleading lifetime problem.
+func facadeHandleLifetimeError(t FacadeToken) error {
+	if t.IssuedAt.IsZero() {
+		return nil
+	}
+	if t.ExpiresAt.IsZero() {
+		return fmt.Errorf("%w: a facade token with no expiry is intentionally not representable as a credential handle; handles are bounded, non-renewable leases, while the facade token keeps its own endpoint-scoped, explicitly-revocable lifetime", credentials.ErrHandleLifetimeUnsupported)
+	}
+	if lifetime := t.ExpiresAt.Sub(t.IssuedAt); lifetime > credentials.MaxHandleTTL {
+		return fmt.Errorf("%w: token lifetime %s exceeds the credential handle maximum %s", credentials.ErrInvalidHandle, lifetime, credentials.MaxHandleTTL)
+	}
+	return nil
 }
