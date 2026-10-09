@@ -18,14 +18,18 @@ const CompiledDriversSemantics = "compiled_drivers reports what was compiled int
 type Snapshot struct {
 	drivers         []DriverCapabilities
 	providers       []ProviderCapabilities
+	observations    []ObservedCapability
 	compiledDrivers []string
 	capturedAt      time.Time
 }
 
 // BuildSnapshot converts the driver package's static facts into the contract
-// model, derives the provider matrix from pkg/llms, and freezes both. It
-// returns an error instead of a snapshot containing an invalid enforcement
-// claim.
+// model, derives the provider matrix from pkg/llms, probes the host for the
+// measured system layer, and freezes all of it. It returns an error instead of
+// a snapshot containing an invalid enforcement claim.
+//
+// The host probe runs here, once, at composition time. Every query path reads
+// the frozen result, so a GetCapabilities call never triggers a live probe.
 func BuildSnapshot(driverFacts []driver.RuntimeCapabilityFacts, capturedAt time.Time) (Snapshot, error) {
 	drivers := make([]DriverCapabilities, 0, len(driverFacts))
 	for _, facts := range driverFacts {
@@ -35,12 +39,27 @@ func BuildSnapshot(driverFacts []driver.RuntimeCapabilityFacts, capturedAt time.
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return NewSnapshot(drivers, providers, driver.CompiledRuntimeDrivers(), capturedAt)
+	observations, err := ProbeSystemCapabilities()
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return newSnapshot(drivers, providers, driver.CompiledRuntimeDrivers(), observations, capturedAt)
 }
 
-// NewSnapshot validates and freezes an already-modeled capability matrix. It
-// is the seam the invalid-state test uses, and the path BuildSnapshot takes.
+// NewSnapshot validates and freezes an already-modeled capability matrix
+// without a host measurement. It is the seam the invalid-state test uses.
 func NewSnapshot(drivers []DriverCapabilities, providers []ProviderCapabilities, compiledDrivers []string, capturedAt time.Time) (Snapshot, error) {
+	return newSnapshot(drivers, providers, compiledDrivers, nil, capturedAt)
+}
+
+// NewSnapshotWithObservations freezes a matrix together with explicit
+// engine-measured observations. It is the seam a test uses to inject a host
+// measurement without running the real probe.
+func NewSnapshotWithObservations(drivers []DriverCapabilities, providers []ProviderCapabilities, compiledDrivers []string, observations []ObservedCapability, capturedAt time.Time) (Snapshot, error) {
+	return newSnapshot(drivers, providers, compiledDrivers, observations, capturedAt)
+}
+
+func newSnapshot(drivers []DriverCapabilities, providers []ProviderCapabilities, compiledDrivers []string, observations []ObservedCapability, capturedAt time.Time) (Snapshot, error) {
 	compiled := make(map[string]struct{}, len(compiledDrivers))
 	for _, name := range compiledDrivers {
 		compiled[name] = struct{}{}
@@ -63,9 +82,14 @@ func NewSnapshot(drivers []DriverCapabilities, providers []ProviderCapabilities,
 			return Snapshot{}, err
 		}
 	}
+	normalizedObservations, err := normalizeObservedCapabilities(observations)
+	if err != nil {
+		return Snapshot{}, err
+	}
 	return Snapshot{
 		drivers:         cloneDrivers(drivers),
 		providers:       cloneProviders(providers),
+		observations:    normalizedObservations,
 		compiledDrivers: append([]string(nil), compiledDrivers...),
 		capturedAt:      capturedAt,
 	}, nil
@@ -85,12 +109,24 @@ func (s Snapshot) Validate() error {
 			return err
 		}
 	}
+	for _, observation := range s.observations {
+		if err := observation.Validate(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 // Drivers returns the frozen per-driver declarations.
 func (s Snapshot) Drivers() []DriverCapabilities {
 	return cloneDrivers(s.drivers)
+}
+
+// Observations returns the frozen engine-measured layer: the host system probe
+// captured at startup plus any measured facts frozen with the snapshot. These
+// are measured claims, never driver declarations.
+func (s Snapshot) Observations() []ObservedCapability {
+	return cloneObservedCapabilities(s.observations)
 }
 
 // Providers returns the frozen per-provider declarations.
@@ -139,7 +175,9 @@ func driverCapabilitiesFromFacts(facts driver.RuntimeCapabilityFacts) DriverCapa
 			Preconditions:   append([]string(nil), dimension.Preconditions...),
 			Observed:        dimension.Observed,
 			DefaultBehavior: dimension.DefaultBehavior,
-		})
+			State:           CapabilityState(dimension.State),
+			Source:          CapabilitySource(dimension.Source),
+		}.Normalized())
 	}
 	return declaration
 }

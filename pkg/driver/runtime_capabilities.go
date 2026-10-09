@@ -27,6 +27,15 @@ type RuntimeCapabilityDimensionFacts struct {
 	Preconditions   []string
 	Observed        string
 	DefaultBehavior string
+	// State is the three-state answer ("enforced", "degraded", "unsupported").
+	// Empty means the reader derives it from Enforced, which keeps an API-7
+	// declaration valid unchanged.
+	State string
+	// Source is "declared", "measured", or "simulated". A driver declaration
+	// itself is declared evidence: it states what the driver writes into its
+	// runtime configuration, never what it observed. Empty defaults to
+	// declared.
+	Source string
 }
 
 // RuntimeCapabilityFactsFor returns the capability declaration for one runtime
