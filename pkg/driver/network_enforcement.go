@@ -22,10 +22,6 @@ const (
 	// SandboxEgressStrengthNone means the driver applies no part of a declared
 	// policy; egress stays as open as it is without one.
 	SandboxEgressStrengthNone SandboxEgressStrength = "none"
-	// SandboxEgressStrengthOuterDeny means the driver can refuse all egress at
-	// once but cannot express the allowance list, so the engine-owned endpoints
-	// and declared allowances are not applied either.
-	SandboxEgressStrengthOuterDeny SandboxEgressStrength = "outer-deny"
 	// SandboxEgressStrengthAllowList means the driver applies default deny plus
 	// the ordered allowance list, including the engine-owned endpoints.
 	SandboxEgressStrengthAllowList SandboxEgressStrength = "allowlist"
@@ -44,9 +40,6 @@ type SandboxNetworkEnforcement struct {
 	// AppliesDenyDomains reports whether the declared deny domains reach the
 	// driver's DNS resolution path.
 	AppliesDenyDomains bool
-	// RequiresCNI reports enforcement that depends on a cluster add-on rather
-	// than on the engine alone.
-	RequiresCNI bool
 	// Notes is the human-readable limit of what the driver applies, so a report
 	// never presents a partial mechanism as complete.
 	Notes string
@@ -67,15 +60,20 @@ func SandboxNetworkEnforcementFor(driver string) SandboxNetworkEnforcement {
 			Notes:                  "the SDK NetworkConfig applies ordered allow rules, a deny egress default, and the deny-domain list; the hypervisor's exact domain-suffix semantics still need a real KVM run",
 		}
 	case RuntimeDriverK8s:
+		// A per-sandbox egress NetworkPolicy would deny all egress, including
+		// the engine's OWN LLM facade and telemetry endpoints: NetworkPolicy is
+		// L3/L4 and cannot express the declared allowances or those endpoints,
+		// and the engine cannot even verify that the cluster CNI enforces
+		// NetworkPolicy. Applying it would produce a healthy-looking sandbox
+		// that can never call its model, so the engine refuses instead.
 		return SandboxNetworkEnforcement{
 			Driver:                 RuntimeDriverK8s,
-			Strength:               SandboxEgressStrengthOuterDeny,
-			Mechanism:              mechanismNetworkPolicyEgress,
+			Strength:               SandboxEgressStrengthNone,
+			Mechanism:              reasonNotConfigured,
 			AppliesAllowEntries:    false,
 			AppliesEngineEndpoints: false,
 			AppliesDenyDomains:     false,
-			RequiresCNI:            true,
-			Notes:                  "a per-sandbox egress NetworkPolicy denies all egress for the sandbox Pod; the declared allowances and the engine-owned endpoints are NOT applied because NetworkPolicy is L3/L4 and cannot match DNS names (that needs an FQDN-capable CNI or the deferred L7 mediator), the cluster CNI must enforce NetworkPolicy, and a declared allow list therefore currently yields no egress at all",
+			Notes:                  "a declared default-deny policy is refused before any Pod is created, because a per-sandbox egress NetworkPolicy would also deny the engine's own LLM facade and telemetry endpoints (NetworkPolicy is L3/L4 and cannot match DNS names, so the declared allowances and those endpoints are not expressible), and the engine cannot verify that the cluster CNI enforces NetworkPolicy",
 		}
 	case RuntimeDriverDocker:
 		// NetworkMode=none is a real outer deny, but it also severs the
@@ -136,9 +134,6 @@ func egressPolicyFacts(driver string) RuntimeCapabilityDimensionFacts {
 	}
 	facts.Enforced = true
 	facts.Mechanism = enforcement.Mechanism
-	if enforcement.RequiresCNI {
-		facts.Preconditions = []string{"the cluster CNI must enforce NetworkPolicy"}
-	}
 	return facts
 }
 
