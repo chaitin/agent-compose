@@ -4,7 +4,7 @@
 //
 // It is deliberately not part of pkg/capability or pkg/capabilities. Those
 // packages are the capability-gateway (capset/catalog) client and its
-// transport-facing types. This package owns a different concept: the drive
+// transport-facing types. This package owns a different concept: the driver
 // and provider capability snapshot a later isolation requirement check
 // (SEC-3) can depend on without touching a driver.
 //

@@ -133,10 +133,10 @@ func TestRuntimeCapabilityFactsCoverEveryDimension(t *testing.T) {
 			if dimension.Mechanism == "" {
 				t.Fatalf("driver %q dimension %q has an empty mechanism", driver, dimension.Dimension)
 			}
-			if dimension.Enforced && IsNotEnforcedReasonForTest(dimension.Mechanism) {
+			if dimension.Enforced && isNotEnforcedReasonForTest(dimension.Mechanism) {
 				t.Fatalf("driver %q dimension %q is enforced but uses reason %q", driver, dimension.Dimension, dimension.Mechanism)
 			}
-			if !dimension.Enforced && !IsNotEnforcedReasonForTest(dimension.Mechanism) {
+			if !dimension.Enforced && !isNotEnforcedReasonForTest(dimension.Mechanism) {
 				t.Fatalf("driver %q dimension %q is not enforced but mechanism %q is not a reason", driver, dimension.Dimension, dimension.Mechanism)
 			}
 			if dimension.Observed == "" || dimension.DefaultBehavior == "" {
@@ -151,9 +151,9 @@ func TestRuntimeCapabilityFactsCoverEveryDimension(t *testing.T) {
 	}
 }
 
-// IsNotEnforcedReasonForTest mirrors capmatrix's closed reason set locally,
+// isNotEnforcedReasonForTest mirrors capmatrix's closed reason set locally,
 // because pkg/driver cannot import pkg/capmatrix.
-func IsNotEnforcedReasonForTest(value string) bool {
+func isNotEnforcedReasonForTest(value string) bool {
 	return value == reasonUnsupported || value == reasonNotConfigured
 }
 

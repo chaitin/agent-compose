@@ -4,7 +4,7 @@ package driver
 //
 // They intentionally mirror pkg/capmatrix's contract strings. pkg/driver cannot
 // import pkg/capmatrix (pkg/llms imports pkg/driver), so the mirror is checked
-// by TestRuntimeCapabilityFactsCoverTheCapmatrixContract, which compares these
+// by capmatrix.TestDriverFactsMatchCapmatrixContract, which validates these
 // declarations against capmatrix.RequiredDimensions.
 const (
 	dimensionResourceLimits          = "resource_limits"
