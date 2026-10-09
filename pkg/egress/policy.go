@@ -21,6 +21,22 @@ const (
 // the decision no longer applies.
 type Generation uint64
 
+// MatchMode selects how a rule interprets its Names. It stays inside the single
+// policy model on purpose: a declared network allowance is an ordinary rule,
+// not a second policy representation that could drift from this one.
+type MatchMode string
+
+const (
+	// MatchExact compares each name with the request name literally. It is the
+	// zero value, so every rule that does not opt into endpoint matching keeps
+	// its existing behavior.
+	MatchExact MatchMode = "exact"
+	// MatchEndpoint treats each name as an endpoint pattern
+	// "host:port/protocol" as produced by FormatEndpointPattern. The host part
+	// is evaluated label by label, where "*" matches exactly one label.
+	MatchEndpoint MatchMode = "endpoint"
+)
+
 // Rule is one entry in a policy. Rules are evaluated in order and the first one
 // whose Names contain the requested resource decides the request; a rule with
 // no Names matches any name.
@@ -29,8 +45,10 @@ type Rule struct {
 	// policy rebuilds so a record can be traced back to the rule that produced
 	// it.
 	ID string
-	// Names are the exact resource names this rule matches. Empty matches any
-	// name.
+	// Match selects how Names are interpreted. The zero value is MatchExact.
+	Match MatchMode
+	// Names are the resource names this rule matches, interpreted according to
+	// Match. Empty matches any name.
 	Names []string
 	// Action is the outcome when this rule matches. Any value other than Allow
 	// is normalized to Deny, so an unset action fails closed.
@@ -61,6 +79,7 @@ func NewPolicy(defaultAction Action, rules ...Rule) Policy {
 	for i, rule := range rules {
 		copied[i] = rule
 		copied[i].Action = normalizeAction(rule.Action)
+		copied[i].Match = normalizeMatch(rule.Match)
 		copied[i].Names = append([]string(nil), rule.Names...)
 	}
 	policy := Policy{defaultAction: normalizeAction(defaultAction), rules: copied}
@@ -98,11 +117,37 @@ func (p Policy) Rules() []Rule {
 }
 
 func (r Rule) matches(name string) bool {
+	if r.Match == MatchEndpoint {
+		return r.matchesEndpoint(name)
+	}
 	if len(r.Names) == 0 {
 		return true
 	}
 	for _, candidate := range r.Names {
 		if candidate == name {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesEndpoint matches a canonical endpoint name against the rule's
+// patterns. An unparsable request name matches nothing, so a malformed request
+// falls through to the policy default instead of being allowed by accident.
+func (r Rule) matchesEndpoint(name string) bool {
+	if len(r.Names) == 0 {
+		return true
+	}
+	target, err := ParseEndpoint(name)
+	if err != nil {
+		return false
+	}
+	for _, candidate := range r.Names {
+		pattern, err := parseEndpointPattern(candidate)
+		if err != nil {
+			continue
+		}
+		if pattern.matches(target) {
 			return true
 		}
 	}
@@ -116,6 +161,13 @@ func normalizeAction(action Action) Action {
 	return Deny
 }
 
+func normalizeMatch(mode MatchMode) MatchMode {
+	if mode == MatchEndpoint {
+		return MatchEndpoint
+	}
+	return MatchExact
+}
+
 // contentGeneration hashes every field that can change a decision, with length
 // prefixes so that distinct rule shapes cannot hash to the same bytes.
 func (p Policy) contentGeneration() Generation {
@@ -123,6 +175,9 @@ func (p Policy) contentGeneration() Generation {
 	writeField(h, string(p.defaultAction))
 	for _, rule := range p.rules {
 		writeField(h, rule.ID)
+		// Match is always written so an endpoint rule and an exact rule with a
+		// name that happens to read like a match mode cannot collide.
+		writeField(h, string(rule.Match))
 		writeField(h, string(rule.Action))
 		writeField(h, rule.Target)
 		writeField(h, rule.Reason)
