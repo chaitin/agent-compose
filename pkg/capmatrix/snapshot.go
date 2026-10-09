@@ -71,6 +71,23 @@ func NewSnapshot(drivers []DriverCapabilities, providers []ProviderCapabilities,
 	}, nil
 }
 
+// Validate re-checks every declaration in the snapshot. NewSnapshot already
+// rejects an invalid matrix, so this exists for the transport boundary to
+// assert the invariant before serializing it.
+func (s Snapshot) Validate() error {
+	for _, declaration := range s.drivers {
+		if err := declaration.Validate(); err != nil {
+			return err
+		}
+	}
+	for _, declaration := range s.providers {
+		if err := declaration.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Drivers returns the frozen per-driver declarations.
 func (s Snapshot) Drivers() []DriverCapabilities {
 	return cloneDrivers(s.drivers)
