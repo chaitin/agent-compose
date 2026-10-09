@@ -1019,9 +1019,10 @@ URL credentials, queries and fragments are rejected at startup. The collector
 must accept OTLP/HTTP JSON for Claude, Codex and OpenCode. DSH uses its native
 OTLP/HTTP log exporter. gRPC-only collectors are not supported by this integration.
 The address must be reachable **from the sandbox**, not just the daemon:
-`localhost` is the guest itself. The daemon also exports its own spans to the same
-endpoint, so the collector must additionally be reachable **from the daemon host**
-while daemon tracing is enabled. No collector or port is automatically deployed.
+`localhost` is the guest itself. The daemon also exports its own spans and metrics
+to the same endpoint, so the collector must additionally be reachable **from the
+daemon host** while daemon telemetry is enabled. No collector or port is
+automatically deployed.
 
 | Provider in the default guest | Managed native export |
 | --- | --- |
@@ -1033,14 +1034,30 @@ while daemon tracing is enabled. No collector or port is automatically deployed.
 
 All native signals listed for a provider are enabled together; there is no
 per-signal selector in this initial integration. The same endpoint also makes the
-daemon emit its own OTLP/HTTP traces: one server span per daemon RPC, an
-`invoke_agent` span per execution, and `sandbox.ensure`, `sandbox.stop`,
-`sandbox.remove`, `sandbox.exec` and `sandbox.interaction` spans for runtime-driver
-operations. These spans carry `agent_compose.run.id`, `agent_compose.project.id`,
-`agent_compose.agent.name`, `agent_compose.sandbox.id`, `agent_compose.driver` and
-`gen_ai.*` attributes as they become available. Daemon instrumentation records
-operation status only: the daemon never synthesizes spans from agent-compose's
-event stream, and never exports prompt, tool, or error text. Pi's
+daemon emit its own OTLP/HTTP traces and metrics: one server span per daemon RPC,
+an `invoke_agent` span per execution (streamed and attach), `sandbox.ensure`,
+`sandbox.stop`, `sandbox.remove`, `sandbox.exec` and `sandbox.interaction` spans
+for runtime-driver operations, `image.pull` for guest-image resolution, and
+`volume.prepare` for run volume resolution. These spans carry
+`agent_compose.run.id`, `agent_compose.project.id`, `agent_compose.agent.name`,
+`agent_compose.sandbox.id`, `agent_compose.driver` and `gen_ai.*` attributes as
+they become available. `invoke_agent` and its `gen_ai.*` attributes follow the
+OpenTelemetry GenAI semantic conventions, which are still marked Development: the
+names may change in a later release and are not a compatibility contract. The
+daemon records no `invoke_workflow` or `execute_tool` span because workflow and
+tool execution happen inside the guest; a provider that exports its own spans nests
+them under the daemon's `invoke_agent` span instead.
+
+The daemon exports these metrics to the same endpoint: `agent_compose.run.duration`
+and `agent_compose.run.count` (run duration and success rate by terminal status),
+`agent_compose.sandbox.create.duration`, and `agent_compose.driver.operation.count`
+(driver error rate by operation and outcome). Metric labels stay low cardinality
+(driver, operation, outcome, run status); run, project and agent identifiers stay
+on spans and events, so metrics never become a per-run identity store.
+
+Daemon instrumentation records operation status only: the daemon never synthesizes
+spans from agent-compose's event stream, and never exports prompt, tool, or error
+text. Pi's
 [official observability design](https://github.com/badlogic/pi-mono/blob/v0.82.1/packages/agent/docs/observability.md)
 describes external listeners and a possible future OTel package, not a shipped
 exporter. Its `PI_TELEMETRY` switch controls installation statistics, not OTLP.

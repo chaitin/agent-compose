@@ -351,10 +351,7 @@ func (c *Controller) resolveProjectRunVolumeMounts(ctx context.Context, driver s
 	if err := volumes.ValidateDriverMountSpecs(driver, specs); err != nil {
 		return nil, nil, err
 	}
-	if c.volumes == nil {
-		return nil, nil, fmt.Errorf("volume resolver is required")
-	}
-	mounts, warnings, err := c.volumes.ResolveMounts(ctx, specs, volumes.ResolveOptions{
+	mounts, warnings, err := c.resolveRunVolumeMounts(ctx, driver, specs, volumes.ResolveOptions{
 		ProjectRoot:    prepared.ProjectRoot,
 		ProjectVolumes: prepared.ProjectVolumes,
 	})

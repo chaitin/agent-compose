@@ -56,6 +56,10 @@ func TestRunsControllerRunSpanJoinsCallerTrace(t *testing.T) {
 			t.Fatalf("shutdown tracer provider: %v", err)
 		}
 	})
+	telemetryRecorder, err := telemetry.NewRecorder(provider, nil)
+	if err != nil {
+		t.Fatalf("NewRecorder returned error: %v", err)
+	}
 	controller := NewController(ControllerDependencies{
 		Config:           config,
 		Store:            store,
@@ -65,7 +69,7 @@ func TestRunsControllerRunSpanJoinsCallerTrace(t *testing.T) {
 		Executor:         &fakeControllerExecutor{},
 		Runtime:          func(*domain.Sandbox) (Runtime, error) { return &fakeControllerRuntime{}, nil },
 		Images:           fakeControllerImages{},
-		Tracer:           telemetry.NewTracer(provider),
+		Recorder:         telemetryRecorder,
 	})
 	ctx := domain.NewContextWithTraceContext(context.Background(), domain.TraceContext{Traceparent: traceparent})
 	stream := &StreamSink{

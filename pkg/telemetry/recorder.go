@@ -5,6 +5,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -19,6 +20,8 @@ const (
 	SpanSandboxRemove      = "sandbox.remove"
 	SpanSandboxExec        = "sandbox.exec"
 	SpanSandboxInteraction = "sandbox.interaction"
+	SpanImagePull          = "image.pull"
+	SpanVolumePrepare      = "volume.prepare"
 )
 
 // Attribute keys carried by daemon spans. agent_compose.* identifies the
@@ -29,34 +32,56 @@ var (
 	AttrProjectID          = attribute.Key("agent_compose.project.id")
 	AttrAgentName          = attribute.Key("agent_compose.agent.name")
 	AttrDriver             = attribute.Key("agent_compose.driver")
+	AttrRunStatus          = attribute.Key("agent_compose.run.status")
+	AttrOperation          = attribute.Key("agent_compose.operation")
+	AttrOutcome            = attribute.Key("agent_compose.outcome")
+	AttrVolumeMountCount   = attribute.Key("agent_compose.volume.mount_count")
 	AttrGenAIOperationName = attribute.Key("gen_ai.operation.name")
 	AttrGenAIAgentName     = attribute.Key("gen_ai.agent.name")
 	AttrHTTPRequestMethod  = attribute.Key("http.request.method")
 	AttrHTTPRoute          = attribute.Key("http.route")
 )
 
-// Tracer starts daemon spans. A nil Tracer and a Tracer built from a nil
-// provider both start no-op spans, so callers never need to branch on whether
-// export is enabled.
-type Tracer struct {
-	tracer trace.Tracer
+// Operation outcomes recorded as metric attributes.
+const (
+	outcomeSuccess = "success"
+	outcomeFailure = "failure"
+)
+
+// Recorder starts daemon spans and records daemon metrics. A nil Recorder, and
+// a Recorder built from nil providers, start no-op spans and record nothing, so
+// callers never need to branch on whether export is enabled.
+type Recorder struct {
+	tracer  trace.Tracer
+	metrics *metricInstruments
 }
 
-// NewTracer wraps provider. A nil provider yields a no-op tracer.
-func NewTracer(provider trace.TracerProvider) *Tracer {
-	if provider == nil {
-		return &Tracer{}
+// NewRecorder wraps the providers that export daemon telemetry. A nil provider
+// disables that signal: nil tracing starts no-op spans, nil metrics records
+// nothing. It returns an error only when a metric instrument cannot be created,
+// which means a programming error in the fixed instrument set.
+func NewRecorder(tracerProvider trace.TracerProvider, meterProvider metric.MeterProvider) (*Recorder, error) {
+	recorder := &Recorder{}
+	if tracerProvider != nil {
+		recorder.tracer = tracerProvider.Tracer(scopeName)
 	}
-	return &Tracer{tracer: provider.Tracer(scopeName)}
+	if meterProvider != nil {
+		instruments, err := newMetricInstruments(meterProvider.Meter(scopeName))
+		if err != nil {
+			return nil, err
+		}
+		recorder.metrics = instruments
+	}
+	return recorder, nil
 }
 
 // Start begins a span named name. With export disabled the returned span is a
 // no-op that ignores attributes and status, and the context is unchanged.
-func (t *Tracer) Start(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
-	if t == nil || t.tracer == nil {
+func (r *Recorder) Start(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+	if r == nil || r.tracer == nil {
 		return ctx, noop.Span{}
 	}
-	return t.tracer.Start(ctx, name, opts...)
+	return r.tracer.Start(ctx, name, opts...)
 }
 
 // EndSpan ends span and marks it failed when err is non-nil. It deliberately

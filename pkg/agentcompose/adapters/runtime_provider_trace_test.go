@@ -39,21 +39,25 @@ func (r *recordingDriverRuntime) ExecStream(context.Context, *driverpkg.Sandbox,
 	return driverpkg.ExecResult{Output: "ok", Success: true}, r.execErr
 }
 
-func newDriverSpanRecorder(t *testing.T) (*telemetry.Tracer, *tracetest.SpanRecorder) {
+func newDriverSpanRecorder(t *testing.T) (*telemetry.Recorder, *tracetest.SpanRecorder) {
 	t.Helper()
-	recorder := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	spans := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
 	t.Cleanup(func() {
 		if err := provider.Shutdown(context.Background()); err != nil {
 			t.Fatalf("shutdown tracer provider: %v", err)
 		}
 	})
-	return telemetry.NewTracer(provider), recorder
+	recorder, err := telemetry.NewRecorder(provider, nil)
+	if err != nil {
+		t.Fatalf("NewRecorder returned error: %v", err)
+	}
+	return recorder, spans
 }
 
 func TestDriverRuntimeAdapterExportsOperationSpans(t *testing.T) {
-	tracer, recorder := newDriverSpanRecorder(t)
-	adapter := driverRuntimeAdapter{runtime: &recordingDriverRuntime{}, tracer: tracer}
+	recorder, spansRecorded := newDriverSpanRecorder(t)
+	adapter := driverRuntimeAdapter{runtime: &recordingDriverRuntime{}, recorder: recorder}
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1"}}
 	vmState := domain.VMState{Driver: driverpkg.RuntimeDriverDocker}
 
@@ -65,7 +69,7 @@ func TestDriverRuntimeAdapterExportsOperationSpans(t *testing.T) {
 	}
 
 	spans := map[string]sdktrace.ReadOnlySpan{}
-	for _, span := range recorder.Ended() {
+	for _, span := range spansRecorded.Ended() {
 		spans[span.Name()] = span
 	}
 	for _, name := range []string{telemetry.SpanSandboxEnsure, telemetry.SpanSandboxExec} {
@@ -87,15 +91,15 @@ func TestDriverRuntimeAdapterExportsOperationSpans(t *testing.T) {
 }
 
 func TestDriverRuntimeAdapterMarksFailedOperations(t *testing.T) {
-	tracer, recorder := newDriverSpanRecorder(t)
-	adapter := driverRuntimeAdapter{runtime: &recordingDriverRuntime{execErr: errors.New("driver failure")}, tracer: tracer}
+	recorder, spansRecorded := newDriverSpanRecorder(t)
+	adapter := driverRuntimeAdapter{runtime: &recordingDriverRuntime{execErr: errors.New("driver failure")}, recorder: recorder}
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1"}}
 	vmState := domain.VMState{Driver: driverpkg.RuntimeDriverDocker}
 
 	if _, err := adapter.ExecStream(context.Background(), session, vmState, domain.ExecSpec{Command: "sh"}, nil); err == nil {
 		t.Fatal("ExecStream returned no error")
 	}
-	ended := recorder.Ended()
+	ended := spansRecorded.Ended()
 	if len(ended) != 1 {
 		t.Fatalf("ended spans = %d, want 1", len(ended))
 	}

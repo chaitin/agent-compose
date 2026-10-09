@@ -16,8 +16,8 @@ func NewTelemetryProvider(di do.Injector) (*telemetry.Provider, error) {
 	return telemetry.NewProvider(conf.AgentTelemetry.Endpoint, conf.AgentTelemetry.Headers, conf.Version)
 }
 
-// NewTelemetryTracer exposes the daemon tracer to the components that start
-// spans. It is a no-op tracer while the provider is disabled.
-func NewTelemetryTracer(di do.Injector) (*telemetry.Tracer, error) {
-	return do.MustInvoke[*telemetry.Provider](di).Tracer(), nil
+// NewTelemetryRecorder exposes the daemon recorder to the components that start
+// spans and record metrics. It is a no-op recorder while the provider is disabled.
+func NewTelemetryRecorder(di do.Injector) (*telemetry.Recorder, error) {
+	return do.MustInvoke[*telemetry.Provider](di).Recorder()
 }

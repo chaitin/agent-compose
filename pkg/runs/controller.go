@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"go.opentelemetry.io/otel/trace"
-
 	"github.com/chaitin/agent-compose/internal/projects"
 	"github.com/chaitin/agent-compose/pkg/capabilities"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -127,7 +125,7 @@ type Controller struct {
 	removal             SandboxRemoval
 	completion          *CompletionManager
 	interactiveSessions *InteractiveSessionManager
-	tracer              *telemetry.Tracer
+	recorder            *telemetry.Recorder
 }
 
 type llmFacadeTokenDeleter interface {
@@ -159,8 +157,8 @@ type ControllerDependencies struct {
 	Removal             SandboxRemoval
 	Completion          *CompletionManager
 	InteractiveSessions *InteractiveSessionManager
-	// Tracer is optional: a nil tracer keeps daemon tracing disabled.
-	Tracer *telemetry.Tracer
+	// Recorder is optional: a nil recorder keeps daemon telemetry disabled.
+	Recorder *telemetry.Recorder
 }
 
 type SandboxRemoval interface {
@@ -193,7 +191,7 @@ func NewController(deps ControllerDependencies) *Controller {
 		removal:             deps.Removal,
 		completion:          deps.Completion,
 		interactiveSessions: interactiveSessions,
-		tracer:              deps.Tracer,
+		recorder:            deps.Recorder,
 	}
 }
 
@@ -519,22 +517,9 @@ type startedProjectRunContext struct {
 }
 
 func (c *Controller) executeStartedProjectRun(ctx context.Context, started startedProjectRunContext, stream *StreamSink) (record domain.ProjectRunRecord, execErr error, err error) {
-	// The run span continues the caller's trace. Detached runs restore only the
-	// request-scoped W3C strings, so re-attach them as a remote parent when the
-	// live request span is absent.
-	traceContext := domain.TraceContextFromContext(ctx)
-	ctx = telemetry.ContextWithRemoteTraceContext(ctx, traceContext.Traceparent, traceContext.Tracestate)
-	ctx, span := c.tracer.Start(ctx, telemetry.SpanInvokeAgent,
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(
-			telemetry.AttrRunID.String(started.Run.RunID),
-			telemetry.AttrProjectID.String(started.Request.ProjectID),
-			telemetry.AttrAgentName.String(started.Request.AgentName),
-			telemetry.AttrGenAIAgentName.String(started.Request.AgentName),
-			telemetry.AttrGenAIOperationName.String(telemetry.SpanInvokeAgent),
-		),
-	)
-	defer func() { telemetry.EndSpan(span, errors.Join(err, execErr)) }()
+	runStartedAt := time.Now()
+	ctx, span := c.startRunSpan(ctx, started.Run.RunID, started.Request.ProjectID, started.Request.AgentName)
+	defer func() { c.endRunSpan(ctx, span, runStartedAt, record, errors.Join(err, execErr)) }()
 	coordinator := started.Coordinator
 	run := started.Run
 	req := started.Request

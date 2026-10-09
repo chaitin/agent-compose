@@ -28,11 +28,11 @@ func TestContextWithRemoteTraceContextBecomesParent(t *testing.T) {
 	want := callerSpanContext(t, testTraceparent, tracestate)
 	ctx := ContextWithRemoteTraceContext(context.Background(), testTraceparent, tracestate)
 
-	tracer, recorder := newTestTracer(t)
-	_, span := tracer.Start(ctx, "child")
+	recorder, spans := newSpanRecorder(t)
+	_, span := recorder.Start(ctx, "child")
 	span.End()
 
-	ended := recorder.Ended()
+	ended := spans.Ended()
 	if len(ended) != 1 {
 		t.Fatalf("ended spans = %d, want 1", len(ended))
 	}
@@ -59,16 +59,16 @@ func TestContextWithRemoteTraceContextIgnoresMalformedValues(t *testing.T) {
 }
 
 func TestContextWithRemoteTraceContextKeepsActiveSpan(t *testing.T) {
-	tracer, recorder := newTestTracer(t)
-	ctx, active := tracer.Start(context.Background(), "active")
+	recorder, spans := newSpanRecorder(t)
+	ctx, active := recorder.Start(context.Background(), "active")
 	activeContext := active.SpanContext()
 	ctx = ContextWithRemoteTraceContext(ctx, testTraceparent, "")
 
-	_, child := tracer.Start(ctx, "child")
+	_, child := recorder.Start(ctx, "child")
 	child.End()
 	active.End()
 
-	for _, span := range recorder.Ended() {
+	for _, span := range spans.Ended() {
 		if span.Name() != "child" {
 			continue
 		}
@@ -82,8 +82,8 @@ func TestContextWithRemoteTraceContextKeepsActiveSpan(t *testing.T) {
 }
 
 func TestTraceparentFromContextFormatsActiveSpan(t *testing.T) {
-	tracer, _ := newTestTracer(t)
-	ctx, span := tracer.Start(context.Background(), "span")
+	recorder, _ := newSpanRecorder(t)
+	ctx, span := recorder.Start(context.Background(), "span")
 	defer span.End()
 
 	spanContext := span.SpanContext()

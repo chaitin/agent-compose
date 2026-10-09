@@ -995,8 +995,8 @@ AGENT_TELEMETRY_OTLP_ENDPOINT=http://collector.example:4318
 会在启动时被拒绝。collector 必须支持 Codex、Claude 和 OpenCode 使用的 OTLP/HTTP JSON；
 DSH 使用其原生 OTLP/HTTP logs exporter。此集成不支持仅接受 gRPC 的 collector。
 地址必须从 **sandbox 内部**可达，不能仅从 daemon 可达；`localhost` 指向 guest 自身。
-daemon 也会把自身 span 导出到同一地址，因此在启用（endpoint 非空）时 collector 还必须
-从 **daemon 主机**可达。系统不会自动部署 collector 或开放端口。
+daemon 也会把自身 span 与 metrics 导出到同一地址，因此在启用（endpoint 非空）时
+collector 还必须从 **daemon 主机**可达。系统不会自动部署 collector 或开放端口。
 
 | 默认 guest 中的 provider | 受管理的原生导出 |
 | --- | --- |
@@ -1007,13 +1007,26 @@ daemon 也会把自身 span 导出到同一地址，因此在启用（endpoint �
 | Pi 0.82.1 | 尚无已集成的官方原生 exporter；runtime 提示后继续执行，不向 Pi 传递 collector 凭证 |
 
 此初版同时启用表中 provider 支持的信号，没有单独的信号选择器。同一地址还使 daemon 导出
-自身的 OTLP/HTTP traces：每个 daemon RPC 一个 server span，每次执行一个 `invoke_agent`
-span，以及 runtime driver 操作的 `sandbox.ensure`、`sandbox.stop`、`sandbox.remove`、
-`sandbox.exec`、`sandbox.interaction` span。这些 span 会按可用情况携带
+自身的 OTLP/HTTP traces 与 metrics：每个 daemon RPC 一个 server span，每次执行（流式与
+attach）一个 `invoke_agent` span，runtime driver 操作的 `sandbox.ensure`、`sandbox.stop`、
+`sandbox.remove`、`sandbox.exec`、`sandbox.interaction` span，guest 镜像解析的
+`image.pull` span，以及 run volume 解析的 `volume.prepare` span。这些 span 会按可用情况携带
 `agent_compose.run.id`、`agent_compose.project.id`、`agent_compose.agent.name`、
-`agent_compose.sandbox.id`、`agent_compose.driver` 和 `gen_ai.*` 属性。daemon 插桩只记录
-操作状态：daemon 不把 agent-compose 事件流转换为 spans，也不导出 prompt、工具或错误文本。
-Pi 的
+`agent_compose.sandbox.id`、`agent_compose.driver` 和 `gen_ai.*` 属性。`invoke_agent` 及其
+`gen_ai.*` 属性遵循 OpenTelemetry GenAI 语义约定，该约定仍标记为 Development：名称可能在后续
+版本变化，不构成兼容性承诺。daemon 不记录 `invoke_workflow` 或 `execute_tool` span，因为
+workflow 与工具执行都发生在 guest 内；provider 自行导出的 span 会挂在 daemon 的
+`invoke_agent` span 之下。
+
+daemon 还向同一地址导出以下 metrics：`agent_compose.run.duration` 与
+`agent_compose.run.count`（按终态的 run 时长与成功率）、
+`agent_compose.sandbox.create.duration`，以及 `agent_compose.driver.operation.count`
+（按操作与结果统计的 driver 错误率）。metric 标签保持低基数（driver、operation、outcome、
+run 状态）；run、project、agent 标识只保留在 span 与事件中，因此 metrics 不会成为逐 run 的
+身份存储。
+
+daemon 插桩只记录操作状态：daemon 不把 agent-compose 事件流转换为 spans，也不导出
+prompt、工具或错误文本。Pi 的
 [官方 observability 设计](https://github.com/badlogic/pi-mono/blob/v0.82.1/packages/agent/docs/observability.md)
 描述了外部监听器及可能的未来 OTel 包，并非已发布的 exporter；其 `PI_TELEMETRY` 开关
 控制安装统计，不是 OTLP。

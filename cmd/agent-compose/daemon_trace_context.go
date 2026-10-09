@@ -16,11 +16,11 @@ import (
 // continuous. The value is request-scoped and is never persisted; a request
 // without a trace context is left untouched.
 //
-// When daemon tracing is enabled the middleware also starts a server span that
-// is a child of the caller's context, so the daemon's own operations export as
-// part of the caller's trace. With tracing disabled the tracer is a no-op and
-// the request is handled exactly as before.
-func newDaemonTraceContextMiddleware(tracer *telemetry.Tracer) echo.MiddlewareFunc {
+// When daemon telemetry is enabled the middleware also starts a server span
+// that is a child of the caller's context, so the daemon's own operations
+// export as part of the caller's trace. With telemetry disabled the recorder is
+// a no-op and the request is handled exactly as before.
+func newDaemonTraceContextMiddleware(recorder *telemetry.Recorder) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			ctx := c.Request().Context()
@@ -33,7 +33,7 @@ func newDaemonTraceContextMiddleware(tracer *telemetry.Tracer) echo.MiddlewareFu
 				})
 				ctx = telemetry.ContextWithRemoteTraceContext(ctx, traceparent, tracestate)
 			}
-			ctx, span := tracer.Start(ctx, requestSpanName(c), trace.WithSpanKind(trace.SpanKindServer))
+			ctx, span := recorder.Start(ctx, requestSpanName(c), trace.WithSpanKind(trace.SpanKindServer))
 			var handlerErr error
 			defer func() { telemetry.EndSpan(span, handlerErr) }()
 			span.SetAttributes(

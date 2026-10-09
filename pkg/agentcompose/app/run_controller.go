@@ -57,7 +57,7 @@ func NewRunController(di do.Injector) (*runs.Controller, error) {
 		LifecycleLocks:  do.MustInvoke[*sandboxes.LifecycleLocks](di),
 		Removal:         do.MustInvoke[*sandboxes.RemovalCoordinator](di),
 		Completion:      do.MustInvoke[*runs.CompletionManager](di),
-		Tracer:          do.MustInvoke[*telemetry.Tracer](di),
+		Recorder:        do.MustInvoke[*telemetry.Recorder](di),
 	}), nil
 }
 

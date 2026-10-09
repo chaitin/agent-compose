@@ -16,17 +16,21 @@ import (
 	"github.com/chaitin/agent-compose/pkg/telemetry"
 )
 
-// newRecordingTracer returns a tracer backed by an in-memory exporter.
-func newRecordingTracer(t *testing.T) (*telemetry.Tracer, *tracetest.SpanRecorder) {
+// newRecordingTracer returns a recorder backed by an in-memory exporter.
+func newRecordingTracer(t *testing.T) (*telemetry.Recorder, *tracetest.SpanRecorder) {
 	t.Helper()
-	recorder := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	spans := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
 	t.Cleanup(func() {
 		if err := provider.Shutdown(context.Background()); err != nil {
 			t.Fatalf("shutdown tracer provider: %v", err)
 		}
 	})
-	return telemetry.NewTracer(provider), recorder
+	recorder, err := telemetry.NewRecorder(provider, nil)
+	if err != nil {
+		t.Fatalf("NewRecorder returned error: %v", err)
+	}
+	return recorder, spans
 }
 
 func TestDaemonTraceContextMiddleware(t *testing.T) {
@@ -140,8 +144,12 @@ func TestDaemonTraceContextMiddlewareStartsServerSpan(t *testing.T) {
 	})
 
 	t.Run("disabled tracer exports nothing", func(t *testing.T) {
+		recorder, err := telemetry.NewRecorder(nil, nil)
+		if err != nil {
+			t.Fatalf("NewRecorder returned error: %v", err)
+		}
 		app := echo.New()
-		app.Use(newDaemonTraceContextMiddleware(telemetry.NewTracer(nil)))
+		app.Use(newDaemonTraceContextMiddleware(recorder))
 		app.Any("/v1/run", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
 		req := httptest.NewRequest(http.MethodGet, "/v1/run", nil)
 		rec := httptest.NewRecorder()

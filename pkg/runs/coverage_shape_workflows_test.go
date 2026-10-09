@@ -2987,13 +2987,15 @@ func newTestRunAttachController(t *testing.T, frames []driverpkg.RuntimeOutputFr
 type fakeRunAttachRuntime struct {
 	fakeControllerRuntime
 	spec                driverpkg.RuntimeStartSpec
+	openCtx             context.Context
 	frames              []driverpkg.RuntimeOutputFrame
 	interaction         *fakeRunAttachInteraction
 	interactionOverride driverpkg.RuntimeInteraction
 }
 
-func (r *fakeRunAttachRuntime) OpenInteraction(_ context.Context, _ *domain.Sandbox, _ domain.VMState, spec driverpkg.RuntimeStartSpec) (driverpkg.RuntimeInteraction, error) {
+func (r *fakeRunAttachRuntime) OpenInteraction(ctx context.Context, _ *domain.Sandbox, _ domain.VMState, spec driverpkg.RuntimeStartSpec) (driverpkg.RuntimeInteraction, error) {
 	r.spec = spec
+	r.openCtx = ctx
 	if r.interactionOverride != nil {
 		return r.interactionOverride, nil
 	}

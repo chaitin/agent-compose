@@ -12,41 +12,53 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func newTestTracer(t *testing.T) (*Tracer, *tracetest.SpanRecorder) {
+func newSpanRecorder(t *testing.T) (*Recorder, *tracetest.SpanRecorder) {
 	t.Helper()
-	recorder := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	spans := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
 	t.Cleanup(func() {
 		if err := provider.Shutdown(context.Background()); err != nil {
 			t.Fatalf("shutdown tracer provider: %v", err)
 		}
 	})
-	return NewTracer(provider), recorder
+	recorder, err := NewRecorder(provider, nil)
+	if err != nil {
+		t.Fatalf("NewRecorder returned error: %v", err)
+	}
+	return recorder, spans
 }
 
-func TestTracerDisabledStartsNoopSpans(t *testing.T) {
+func TestRecorderDisabledStartsNoopSpans(t *testing.T) {
 	ctx := context.Background()
-	gotCtx, span := NewTracer(nil).Start(ctx, SpanInvokeAgent, trace.WithAttributes(AttrRunID.String("run-1")))
+	recorder, err := NewRecorder(nil, nil)
+	if err != nil {
+		t.Fatalf("NewRecorder returned error: %v", err)
+	}
+	gotCtx, span := recorder.Start(ctx, SpanInvokeAgent, trace.WithAttributes(AttrRunID.String("run-1")))
 	if gotCtx != ctx {
-		t.Fatal("disabled tracer replaced the context")
+		t.Fatal("disabled recorder replaced the context")
 	}
 	if trace.SpanContextFromContext(gotCtx).IsValid() {
-		t.Fatal("disabled tracer installed a span context")
+		t.Fatal("disabled recorder installed a span context")
 	}
 	// Attribute and status calls on a disabled span must be safe no-ops.
 	span.SetAttributes(AttrRunID.String("run-1"))
 	EndSpan(span, errors.New("boom"))
+	// Metric recordings without a meter provider must be safe no-ops too.
+	recorder.RecordRun(ctx, RunMeasurement{Duration: 0, Status: "succeeded"})
+	recorder.RecordSandboxCreate(ctx, "docker", 0, nil)
+	recorder.RecordDriverOperation(ctx, SpanSandboxExec, "docker", 0, errors.New("boom"))
 }
 
-func TestTracerExportsSpanAttributes(t *testing.T) {
-	tracer, recorder := newTestTracer(t)
-	_, span := tracer.Start(context.Background(), SpanInvokeAgent, trace.WithAttributes(
+func TestRecorderExportsSpanAttributes(t *testing.T) {
+	recorder, spans := newSpanRecorder(t)
+	_, span := recorder.Start(context.Background(), SpanInvokeAgent, trace.WithAttributes(
 		AttrRunID.String("run-1"),
 		AttrProjectID.String("project-1"),
 	))
 	EndSpan(span, nil)
 
-	ended := recorder.Ended()
+	ended := spans.Ended()
 	if len(ended) != 1 {
 		t.Fatalf("ended spans = %d, want 1", len(ended))
 	}
@@ -66,11 +78,11 @@ func TestTracerExportsSpanAttributes(t *testing.T) {
 }
 
 func TestEndSpanMarksFailuresWithoutExportingErrorText(t *testing.T) {
-	tracer, recorder := newTestTracer(t)
-	_, span := tracer.Start(context.Background(), SpanSandboxExec)
+	recorder, spans := newSpanRecorder(t)
+	_, span := recorder.Start(context.Background(), SpanSandboxExec)
 	EndSpan(span, errors.New("prompt content must not be exported"))
 
-	ended := recorder.Ended()
+	ended := spans.Ended()
 	if len(ended) != 1 {
 		t.Fatalf("ended spans = %d, want 1", len(ended))
 	}

@@ -840,6 +840,7 @@ func (e *hostCommandExecutorFake) ExecuteSchedulerCommand(context.Context, *doma
 }
 
 type hostProjectAgentRunnerFake struct {
+	ctx      context.Context
 	request  schedulers.HostProjectAgentRequest
 	requests []schedulers.HostProjectAgentRequest
 	run      domain.ProjectRunRecord
@@ -847,7 +848,8 @@ type hostProjectAgentRunnerFake struct {
 	err      error
 }
 
-func (r *hostProjectAgentRunnerFake) RunProjectAgent(_ context.Context, request schedulers.HostProjectAgentRequest) (domain.ProjectRunRecord, error, error) {
+func (r *hostProjectAgentRunnerFake) RunProjectAgent(ctx context.Context, request schedulers.HostProjectAgentRequest) (domain.ProjectRunRecord, error, error) {
+	r.ctx = ctx
 	r.request = request
 	r.requests = append(r.requests, request)
 	return r.run, r.execErr, r.err

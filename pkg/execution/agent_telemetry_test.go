@@ -112,10 +112,13 @@ func TestAgentTelemetryNestsGuestUnderActiveDaemonSpan(t *testing.T) {
 			t.Fatalf("shutdown tracer provider: %v", err)
 		}
 	})
-	tracer := telemetry.NewTracer(provider)
+	telemetryRecorder, err := telemetry.NewRecorder(provider, nil)
+	if err != nil {
+		t.Fatalf("NewRecorder returned error: %v", err)
+	}
 
 	ctx := domain.NewContextWithTraceContext(context.Background(), domain.TraceContext{Traceparent: testTraceparent, Tracestate: testTracestate})
-	ctx, span := tracer.Start(ctx, telemetry.SpanInvokeAgent)
+	ctx, span := telemetryRecorder.Start(ctx, telemetry.SpanInvokeAgent)
 	defer span.End()
 	env := BuildSandboxExecEnv(ctx, cfg, sandbox, "/root")
 

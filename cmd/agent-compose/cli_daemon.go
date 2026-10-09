@@ -135,7 +135,11 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 	logger := do.MustInvoke[*slog.Logger](di)
 	conf := do.MustInvoke[*config.Config](di)
 	telemetryProvider := do.MustInvoke[*telemetry.Provider](di)
-	installDaemonMiddleware(app, conf, telemetryProvider.Tracer())
+	telemetryRecorder, err := telemetryProvider.Recorder()
+	if err != nil {
+		return nil, err
+	}
+	installDaemonMiddleware(app, conf, telemetryRecorder)
 
 	startBackground := opts.StartBackground
 	stopBackground := opts.StopBackground
@@ -159,12 +163,12 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 	}, nil
 }
 
-func installDaemonMiddleware(app *echo.Echo, conf *config.Config, tracer *telemetry.Tracer) {
+func installDaemonMiddleware(app *echo.Echo, conf *config.Config, recorder *telemetry.Recorder) {
 	app.Use(middleware.RequestLogger())
 	app.Use(middleware.Recover())
 	app.Use(newDaemonAuthMiddleware(conf))
 	app.Use(newDaemonTrustedHeadersMiddleware())
-	app.Use(newDaemonTraceContextMiddleware(tracer))
+	app.Use(newDaemonTraceContextMiddleware(recorder))
 }
 
 func (a *DaemonApp) StartBackground() error {
