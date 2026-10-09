@@ -1012,6 +1012,42 @@ The effective policy is snapshotted when the sandbox is created. Editing the pro
 
 For `remove`, the daemon first persists `release_pending`, then confirms a driver stop when the lifecycle record contains a start or start attempt newer than the last confirmed stop, even if the coarse VM status is `failed` rather than `running`. Only then does it remove the runtime and mark the record `released`. This ordering prevents a partially started runtime from being skipped or destructively released without a confirmed stop. The on-disk ownership-record layout is internal recovery state and is not a stable operator-facing format.
 
+### `sandbox.network`: declared outbound network policy
+
+`network` declares what this agent's sandboxes may reach. **It is optional, and an undeclared policy is not deny**: when `sandbox.network` is absent the engine keeps its existing behavior exactly, and outbound access stays unrestricted. `default: deny` is a policy that takes effect only because the block was declared; it is not an engine default.
+
+| Field | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `default` | string | `allow-all` | Action for traffic no `allow` entry matches: `allow-all` or `deny`. |
+| `allow` | list | Empty | Explicit allowances. |
+
+Each `allow` entry:
+
+| Field | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `host` | string | Required | A host or host pattern. Labels are separated by `.`, and `*` matches exactly one label: `*.example.com` matches `api.example.com` but neither `example.com` nor `a.b.example.com`. IPv6 literals are not supported. |
+| `port` | int | Required | Destination port, 1–65535. |
+| `protocol` | string | `any` | `http`, `https`, `tcp`, `udp`, or `any`. Only `http` and `https` are inspectable at L7; `any`, `tcp`, and `udp` are opaque allowances and are never presented as checked ones. |
+
+```yaml
+sandbox:
+  network:
+    default: deny
+    allow:
+      - host: api.github.com
+        port: 443
+        protocol: https
+      - host: "*.internal.example.com"
+        port: 8080
+        protocol: tcp
+```
+
+Hosts are lowercased, duplicate entries are rejected, and entries are sorted, so the normalized declaration enters canonical JSON and the spec hash independently of declaration order. Declaring `network` changes the hash; leaving it out keeps the hash byte-identical to a spec written before the field existed.
+
+When `default: deny` applies, the engine automatically allows its own endpoints: the runtime LLM facade and the telemetry endpoint a guest exports to. These are engine-side entries, not user declarations: a project cannot declare, remove, or override them, they are as narrow as the exact endpoint the engine hands the guest, and every request they allow is recorded against an engine rule (`engine.llm-facade`, `engine.telemetry`) so the exemption is visible rather than hidden.
+
+The declaration is validated, hashed, round-trips through the API, and compiles into the engine's single egress decision model. **It does not by itself enforce anything yet**: enforcement on the runtime drivers and the transparent mediator that consumes this policy are a later step. Until that lands, a declared `default: deny` does not block traffic; treat it as a validated declaration, not as an active network restriction.
+
 ### `scheduler`
 
 A scheduler uses either declarative `triggers` or JavaScript `script`; the two forms are mutually exclusive.

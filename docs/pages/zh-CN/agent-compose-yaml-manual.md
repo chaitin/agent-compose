@@ -991,6 +991,42 @@ Kubernetes driver 不接受 `retain`：Kubernetes Pod 没有“已停止但仍�
 
 对于 `remove`，daemon 会先持久化 `release_pending`。如果生命周期记录中存在晚于最近一次确认 stop 的启动或启动尝试，即使粗粒度 VM 状态是 `failed` 而不是 `running`，也会先确认 driver stop；之后才删除 runtime 并把记录标记为 `released`。这个顺序可避免部分启动的 runtime 被跳过 stop，或未经确认便被破坏性释放。磁盘上的 ownership record 格式属于内部恢复状态，不是稳定的运维接口。
 
+### `sandbox.network`：出网策略声明
+
+`network` 用于声明该 Agent 的 sandbox 可以访问什么。**它是可选的，且“未声明”不等于拒绝**：未声明 `sandbox.network` 时，引擎行为与今天完全一致，出网不受限制。`default: deny` 是因为声明了这个块才生效的策略，**不是引擎的新默认值**（D3）。
+
+| 字段 | 类型 | 默认值 | 作用 |
+| --- | --- | --- | --- |
+| `default` | string | `allow-all` | 没有任何 `allow` 命中时采用的动作：`allow-all` 或 `deny`。 |
+| `allow` | list | 空 | 显式放行项。 |
+
+每个 `allow` 项：
+
+| 字段 | 类型 | 默认值 | 作用 |
+| --- | --- | --- | --- |
+| `host` | string | 必填 | 主机或主机模式。各段以 `.` 分隔，`*` 只匹配一段：`*.example.com` 匹配 `api.example.com`，但不匹配 `example.com`，也不匹配 `a.b.example.com`。不支持 IPv6 字面量。 |
+| `port` | int | 必填 | 目标端口，取值 1–65535。 |
+| `protocol` | string | `any` | `http`、`https`、`tcp`、`udp` 或 `any`。只有 `http` 与 `https` 可在 L7 被检查；`any`、`tcp`、`udp` 属于不可检查的放行，永远不会被呈现为“已检查”。 |
+
+```yaml
+sandbox:
+  network:
+    default: deny
+    allow:
+      - host: api.github.com
+        port: 443
+        protocol: https
+      - host: "*.internal.example.com"
+        port: 8080
+        protocol: tcp
+```
+
+主机名会被转为小写，重复项会被拒绝，放行项会被排序，因此规范化后的声明进入 canonical JSON 与 spec hash，且与声明顺序无关。声明 `network` 会改变 hash；不声明则与引入该字段之前的 spec 逐字节一致。
+
+当 `default: deny` 生效时，引擎会自动放行自身的端点：runtime LLM facade 与 guest 上报使用的遥测端点。这些是**引擎侧**条目，不是用户声明：项目无法声明、删除或覆盖它们；放行范围就是引擎交给 guest 的那个精确端点；每一次放行都会记录在引擎规则（`engine.llm-facade`、`engine.telemetry`）名下，使这条例外可见而非隐藏。
+
+该声明会被校验、进入 hash、经 API 往返，并编译进引擎统一的出网判定模型。**但它本身目前还不会强制任何东西**：在各 runtime driver 上的强制、以及消费该策略的透明中介属于后续步骤。在它们落地之前，声明 `default: deny` 并不会阻断流量；请把它当作一份已校验的声明，而不是已经生效的网络限制。
+
 ### `scheduler`
 
 Scheduler 可以使用声明式 `triggers`，也可以使用 JavaScript `script`；两者互斥。
