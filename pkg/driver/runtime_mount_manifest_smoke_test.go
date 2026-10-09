@@ -346,6 +346,7 @@ test "$(readlink /root/.claude.json)" = "/data/home/.claude.json"
 test "$(readlink /root/.config/claude)" = "/data/home/.config/claude"
 test "$(readlink /root/.config/Claude)" = "/data/home/.config/Claude"
 test "$(readlink /root/.config/opencode)" = "/data/home/.config/opencode"
+test "$(readlink /root/.local/share/opencode)" = "/data/home/.local/share/opencode"
 test -f /root/.codex/config.toml
 test -f /root/.gitconfig
 test -f /root/.claude.json

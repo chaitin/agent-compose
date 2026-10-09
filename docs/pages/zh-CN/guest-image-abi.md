@@ -104,6 +104,7 @@ Linux shell 的传输测试验证此工具合同，不能替代真实集群部�
 | `/root/.opencode` | OpenCode state | 持久化 |
 | `/root/.pi` | Pi config 和 state | 持久化 |
 | `/root/.dsh` | DSH profile 和 state | 持久化 |
+| `/root/.local/share/opencode` | OpenCode 用于续接的 session 数据 | 持久化 |
 | `/root/.claude.json` | Claude root config | 持久化文件 |
 | `/root/.gitconfig` | Git config | 持久化文件 |
 | 指定的 `/root/.config/...` 路径 | Provider state | 持久化 |

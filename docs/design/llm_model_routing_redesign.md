@@ -323,6 +323,13 @@ type Dialect struct {
 配置写在 token 落库之前是有意的：writer 可能失败，若 token 已落库，这次失败就会留下
 一条没有任何运行会使用的凭据；反过来失败最多留下一份会被下次运行覆盖的旧配置文件。
 
+dialect writer 与 managed MCP writer 共用同一个 guest provider 配置文件（codex
+`.codex/config.toml`、opencode `.config/opencode/opencode.json`）：dialect writer
+拥有 LLM 字段，MCP writer 拥有它自己写入的那段 MCP 区域。两者的调用顺序并不固定——
+sandbox 启动先写 dialect 配置再写 MCP，prompt attach 则在 MCP 之后按轮重写 dialect
+配置——因此每个 writer 只能重写自己拥有的区域并保留对方的区域，任一方都不能假设
+另一方已经运行过。dialect writer 覆盖整份文件会直接删掉本轮对话需要的 MCP 配置。
+
 ### 3.6 代理：connection-bound token + 原样转发
 
 token 绑定 `{SandboxID, ConnectionID, InboundProtocol, Model, GuestModel}`。

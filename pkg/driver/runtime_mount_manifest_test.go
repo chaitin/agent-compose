@@ -58,6 +58,9 @@ func TestRuntimeMountEntriesDefineSharedLogicalMountList(t *testing.T) {
 		"/root/.config/claude":   {sandboxPath: "home/.config/claude", exposure: directoryOnlyExposureSymlink},
 		"/root/.config/Claude":   {sandboxPath: "home/.config/Claude", exposure: directoryOnlyExposureSymlink},
 		"/root/.config/opencode": {sandboxPath: "home/.config/opencode", exposure: directoryOnlyExposureSymlink},
+		// OpenCode keeps the sessions it resumes under its XDG data directory,
+		// which a directory-only runtime must expose the same way.
+		"/root/.local/share/opencode": {sandboxPath: "home/.local/share/opencode", exposure: directoryOnlyExposureSymlink},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("logical mount count = %d, want %d: %#v", len(got), len(want), got)
@@ -400,6 +403,7 @@ func TestPrepareRuntimeMountManifestIgnoresCustomGuestHomePath(t *testing.T) {
 		"/root/.config/claude",
 		"/root/.config/Claude",
 		"/root/.config/opencode",
+		"/root/.local/share/opencode",
 	} {
 		if got[guestPath] == "" {
 			t.Fatalf("manifest missing fixed home mount %s: %#v", guestPath, got)
@@ -546,6 +550,7 @@ func TestDirectoryOnlyGuestSandboxBootstrapUsesDataMountRoot(t *testing.T) {
 		"ln -sfn '/data/home/.config/claude' '/root/.config/claude'",
 		"ln -sfn '/data/home/.config/Claude' '/root/.config/Claude'",
 		"ln -sfn '/data/home/.config/opencode' '/root/.config/opencode'",
+		"ln -sfn '/data/home/.local/share/opencode' '/root/.local/share/opencode'",
 		"test \"$(readlink '/root/.gitconfig')\" = '/data/home/.gitconfig'",
 		"test \"$(readlink '/root/.codex')\" = '/data/home/.codex'",
 	} {
@@ -607,6 +612,7 @@ func TestDirectoryOnlyGuestSandboxBootstrapConvergesImageHomeTargets(t *testing.
 		{source: "/data/home/.pi", target: "/root/.pi"},
 		{source: "/data/home/.claude.json", target: "/root/.claude.json"},
 		{source: "/data/home/.gitconfig", target: "/root/.gitconfig"},
+		{source: "/data/home/.local/share/opencode", target: "/root/.local/share/opencode"},
 	} {
 		guard := "while [ \"$(readlink '" + target.target + "' 2>/dev/null)\" != '" + target.source + "' ]; do"
 		if !strings.Contains(command, guard) {
