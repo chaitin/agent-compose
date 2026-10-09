@@ -67,7 +67,7 @@ func dockerRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 			Dimension:       dimensionEgressPolicy,
 			Mechanism:       reasonNotConfigured,
 			Observed:        "HostConfig.NetworkMode joins the daemon's own container network (or default) and no egress rule is written",
-			DefaultBehavior: "outbound access from the sandbox is unrestricted",
+			DefaultBehavior: "outbound access from the sandbox is unrestricted; an undeclared network policy is not deny, and when a sandbox declares default: deny the engine auto-allows its own runtime LLM facade and telemetry endpoints as non-overridable engine-side rules",
 		},
 		RuntimeCapabilityDimensionFacts{
 			Dimension:       dimensionCredentialPlaceholder,

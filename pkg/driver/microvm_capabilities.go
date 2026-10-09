@@ -29,7 +29,7 @@ func microVMRuntimeCapabilityFacts(driver string, observed microVMObserved) Runt
 			Dimension:       dimensionEgressPolicy,
 			Mechanism:       reasonNotConfigured,
 			Observed:        observed.Egress,
-			DefaultBehavior: "outbound access from the guest is unrestricted",
+			DefaultBehavior: "outbound access from the guest is unrestricted; an undeclared network policy is not deny, and when a sandbox declares default: deny the engine auto-allows its own runtime LLM facade and telemetry endpoints as non-overridable engine-side rules",
 		},
 		RuntimeCapabilityDimensionFacts{
 			Dimension:       dimensionCredentialPlaceholder,
