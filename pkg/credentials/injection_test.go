@@ -117,6 +117,9 @@ func TestSnapshotIsFixedAfterConstruction(t *testing.T) {
 	materials[0].Handle.Scope.Owners[0].ID = "tampered-owner"
 	materials[0].Handle.Scope.Owners = nil
 	materials = append(materials, credentials.Material{Handle: credentials.Handle{ID: "cred_injected"}, Value: "injected"})
+	if len(materials) != 2 {
+		t.Fatalf("source slice length = %d, want 2 after the append", len(materials))
+	}
 
 	stored, ok := snapshot.Lookup(handle.ID)
 	if !ok {

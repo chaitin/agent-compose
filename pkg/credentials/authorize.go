@@ -1,6 +1,9 @@
 package credentials
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // Request is one credential use: the endpoint the caller wants the credential
 // presented to, and the owners the call is attributed to.
@@ -74,13 +77,13 @@ func (h Handle) AuthorizeBatch(reqs []Request, now time.Time) (Authorization, er
 	if len(reqs) == 0 {
 		return Authorization{}, ErrUnattributable
 	}
-	owners := make([]Owner, 0, len(reqs))
+	// Every sub-call must be valid on its own, so an out-of-scope endpoint or an
+	// ungranted owner fails the whole batch rather than being masked by the
+	// intersection, which only decides attribution.
 	for _, req := range reqs {
-		authorization, err := h.Authorize(req, now)
-		if err != nil {
+		if _, err := h.Authorize(req, now); err != nil {
 			return Authorization{}, err
 		}
-		owners = append(owners, authorization.Owners...)
 	}
 	intersection := IntersectOwners(reqs)
 	if len(intersection) == 0 {
@@ -151,7 +154,7 @@ type ScopeError struct {
 
 func (e *ScopeError) Error() string {
 	switch {
-	case e.Err == ErrOwnerNotGranted:
+	case errors.Is(e.Err, ErrOwnerNotGranted):
 		return "credential handle " + e.HandleID + " is not granted to owner " + e.Owner.Kind + "/" + e.Owner.ID
 	case e.Requested != "":
 		return "credential handle " + e.HandleID + " is scoped to endpoint " + e.Granted + ", not " + e.Requested
