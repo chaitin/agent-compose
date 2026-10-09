@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/execution"
@@ -214,6 +215,62 @@ func TestEnsurePromptAttachLLMFacadeEnvOpenCodeUsesSharedRuntimeConfig(t *testin
 		!strings.Contains(string(data), `"agent-compose"`) ||
 		strings.Contains(string(data), `"agent-compose agent-compose"`) {
 		t.Fatalf("OpenCode runtime config = %s", data)
+	}
+}
+
+// Every console conversation turn mints a fresh facade token and rewrites the
+// provider configuration through this entry point. Starting the sandbox wrote
+// the project's MCP servers into the same provider files, so a turn that
+// refreshes the facade configuration must not leave the guest CLI without them.
+func TestEnsurePromptAttachLLMFacadeEnvKeepsProviderMCPConfig(t *testing.T) {
+	isolatePromptAttachLLMEnv(t)
+	mcps := map[string]compose.NormalizedMCPServerSpec{
+		"docs": {Type: "remote", Transport: "http", URL: "https://docs.example/mcp"},
+	}
+	tests := []struct {
+		provider string
+		relPath  string
+		marker   string
+	}{
+		{provider: "codex", relPath: filepath.Join(".codex", "config.toml"), marker: "[mcp_servers.docs]"},
+		{provider: "opencode", relPath: filepath.Join(".config", "opencode", "opencode.json"), marker: `"docs"`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.provider, func(t *testing.T) {
+			root := t.TempDir()
+			config := &appconfig.Config{
+				RuntimeBaseURL: "http://agent-compose.test:7410",
+				GuestHomePath:  "/root",
+			}
+			sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{
+				ID:            "sandbox-" + tc.provider + "-mcp",
+				Driver:        driver.RuntimeDriverDocker,
+				WorkspacePath: filepath.Join(root, "sandbox", "workspace"),
+			}}
+			seedMCPConfig := llms.WriteOpenCodeMCPConfig
+			if tc.provider == "codex" {
+				seedMCPConfig = llms.WriteCodexMCPConfig
+			}
+			if err := seedMCPConfig(context.Background(), config, sandbox, mcps, nil); err != nil {
+				t.Fatalf("seed %s mcp config: %v", tc.provider, err)
+			}
+			controller := &Controller{config: config, configDB: openAIFacadeStore()}
+			if _, err := controller.ensurePromptAttachLLMFacadeEnv(
+				context.Background(),
+				sandbox,
+				execution.AgentConfig{Provider: tc.provider, Model: "gpt-test"},
+				"run-"+tc.provider+"-mcp",
+			); err != nil {
+				t.Fatalf("ensurePromptAttachLLMFacadeEnv returned error: %v", err)
+			}
+			data, err := os.ReadFile(filepath.Join(root, "sandbox", "home", tc.relPath))
+			if err != nil {
+				t.Fatalf("read %s runtime config: %v", tc.provider, err)
+			}
+			if !strings.Contains(string(data), tc.marker) {
+				t.Fatalf("%s prompt attach dropped the managed MCP config: %s", tc.provider, data)
+			}
+		})
 	}
 }
 

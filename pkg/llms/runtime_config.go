@@ -128,6 +128,15 @@ ignore_default_excludes = false
 [history]
 persistence = "save-all"
 `, model, baseURL, credentialEnv, wireAPI, policy.RequestMaxRetries, policy.StreamMaxRetries, policy.StreamIdleTimeout.Milliseconds())
+	// This writer replaces the whole file, and WriteCodexMCPConfig keeps the
+	// project's MCP servers in the same file. An interactive prompt attach
+	// refreshes this configuration after the MCP region was written, so without
+	// carrying the region across, every turn would start codex with no MCP
+	// server configured.
+	payload, err := preserveManagedTextBlock(path, payload, codexManagedMCPStart, codexManagedMCPEnd)
+	if err != nil {
+		return fmt.Errorf("preserve codex mcp config: %w", err)
+	}
 	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
 		return fmt.Errorf("write codex config: %w", err)
 	}
@@ -297,6 +306,14 @@ func WriteOpenCodeRuntimeConfig(session *domain.Sandbox, inbound Protocol, model
 			},
 		},
 	}
+	// This writer replaces the whole document, and WriteOpenCodeMCPConfig keeps
+	// the project's MCP servers in the same document. An interactive prompt
+	// attach refreshes this configuration after the MCP section was written, so
+	// without carrying the section across, every turn would start opencode with
+	// no MCP server configured.
+	if mcp, ok := readOpenCodeManagedMCP(path); ok {
+		payload["mcp"] = mcp
+	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode opencode config: %w", err)
@@ -320,6 +337,24 @@ func openCodeProviderPackage(inbound Protocol) (string, error) {
 	default:
 		return "", fmt.Errorf("opencode cannot speak %s to the llm facade", inbound)
 	}
+}
+
+// readOpenCodeManagedMCP returns the MCP section of the OpenCode configuration
+// at path so a writer that replaces the whole document can keep it. A file that
+// does not exist, cannot be read, or is not a JSON object contributes no MCP
+// section: the writer that follows creates or replaces the document either way,
+// and an unparsable file has no section left to preserve.
+func readOpenCodeManagedMCP(path string) (any, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	var existing map[string]any
+	if err := json.Unmarshal(data, &existing); err != nil {
+		return nil, false
+	}
+	mcp, ok := existing["mcp"]
+	return mcp, ok
 }
 
 func WriteOpenCodeMCPConfig(ctx context.Context, config *appconfig.Config, session *domain.Sandbox, mcps map[string]compose.NormalizedMCPServerSpec, writeGuestFile execution.GuestFileWriterFunc) error {
@@ -374,34 +409,6 @@ func WriteOpenCodeMCPConfig(ctx context.Context, config *appconfig.Config, sessi
 		}
 	}
 	return nil
-}
-
-func replaceManagedTextBlock(existing, startMarker, endMarker, managed string) string {
-	start := strings.Index(existing, startMarker)
-	if start >= 0 {
-		end := strings.Index(existing[start:], endMarker)
-		if end >= 0 {
-			end += start + len(endMarker)
-			if end < len(existing) && existing[end] == '\n' {
-				end++
-			}
-			existing = existing[:start] + existing[end:]
-		} else {
-			existing = existing[:start]
-		}
-	}
-	existing = strings.TrimRight(existing, "\n")
-	managed = strings.TrimSpace(managed)
-	if managed == "" {
-		if existing == "" {
-			return ""
-		}
-		return existing + "\n"
-	}
-	if existing == "" {
-		return managed + "\n"
-	}
-	return existing + "\n\n" + managed + "\n"
 }
 
 func GuestOpenCodeConfigPath(config *appconfig.Config) string {
