@@ -11,6 +11,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
+	"github.com/chaitin/agent-compose/pkg/telemetry"
 )
 
 type SandboxRuntime interface {
@@ -62,12 +63,14 @@ type RuntimeProvider interface {
 
 type runtimeProvider struct {
 	config   *appconfig.Config
+	tracer   *telemetry.Tracer
 	runtimes map[string]SandboxRuntime
 }
 
 type driverRuntimeAdapter struct {
 	runtime    driverpkg.SandboxRuntime
 	executions *sandboxExecutions
+	tracer     *telemetry.Tracer
 }
 
 // guestFileRuntimeAdapter adds the no-shared-filesystem capabilities only to
@@ -87,12 +90,27 @@ type ProxyStateGetter interface {
 	GetProxyState(sandboxID string) (domain.ProxyState, error)
 }
 
-func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGetter) (RuntimeProvider, error) {
+// RuntimeProviderOption customizes how the provider decorates the driver
+// runtimes it hands out.
+type RuntimeProviderOption func(*runtimeProvider)
+
+// WithRuntimeTracer attaches the daemon tracer to every driver runtime, so
+// driver operations export as child spans of the run that requested them. A nil
+// tracer leaves the runtimes untraced.
+func WithRuntimeTracer(tracer *telemetry.Tracer) RuntimeProviderOption {
+	return func(provider *runtimeProvider) { provider.tracer = tracer }
+}
+
+func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGetter, opts ...RuntimeProviderOption) (RuntimeProvider, error) {
 	if config == nil {
 		return nil, fmt.Errorf("runtime provider config is required")
 	}
 	if err := driverpkg.ValidateCompiledRuntimeDriver(config.RuntimeDriver); err != nil {
 		return nil, classifyRuntimeProviderError(err)
+	}
+	provider := &runtimeProvider{config: config}
+	for _, option := range opts {
+		option(provider)
 	}
 
 	boxliteRuntime, err := driverpkg.NewBoxliteRuntime(config)
@@ -122,17 +140,15 @@ func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGet
 		return nil, err
 	}
 	executions := newSandboxExecutions()
-	return &runtimeProvider{
-		config: config,
-		runtimes: map[string]SandboxRuntime{
-			driverpkg.RuntimeDriverBoxlite:      driverRuntimeAdapter{runtime: boxliteRuntime, executions: executions},
-			driverpkg.RuntimeDriverDocker:       driverRuntimeAdapter{runtime: dockerRuntime, executions: executions},
-			driverpkg.RuntimeDriverMicrosandbox: driverRuntimeAdapter{runtime: microsandboxRuntime, executions: executions},
-			driverpkg.RuntimeDriverK8s: guestFileRuntimeAdapter{driverRuntimeAdapter{
-				runtime: k8sRuntime, executions: executions,
-			}},
-		},
-	}, nil
+	provider.runtimes = map[string]SandboxRuntime{
+		driverpkg.RuntimeDriverBoxlite:      driverRuntimeAdapter{runtime: boxliteRuntime, executions: executions, tracer: provider.tracer},
+		driverpkg.RuntimeDriverDocker:       driverRuntimeAdapter{runtime: dockerRuntime, executions: executions, tracer: provider.tracer},
+		driverpkg.RuntimeDriverMicrosandbox: driverRuntimeAdapter{runtime: microsandboxRuntime, executions: executions, tracer: provider.tracer},
+		driverpkg.RuntimeDriverK8s: guestFileRuntimeAdapter{driverRuntimeAdapter{
+			runtime: k8sRuntime, executions: executions, tracer: provider.tracer,
+		}},
+	}
+	return provider, nil
 }
 
 func (p *runtimeProvider) ForDriver(driver string) (SandboxRuntime, error) {
@@ -169,7 +185,9 @@ func (p *runtimeProvider) ForSession(session *domain.Sandbox) (SandboxRuntime, e
 }
 
 func (r driverRuntimeAdapter) EnsureSandbox(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, proxyState domain.ProxyState) (domain.SandboxVMInfo, error) {
+	ctx, endSpan := startRuntimeSpan(ctx, r.tracer, telemetry.SpanSandboxEnsure, session, vmState.Driver)
 	info, err := r.runtime.EnsureSandbox(ctx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState), execution.ToDriverProxyState(proxyState))
+	endSpan(err)
 	if err != nil {
 		return domain.SandboxVMInfo{}, err
 	}
@@ -177,6 +195,7 @@ func (r driverRuntimeAdapter) EnsureSandbox(ctx context.Context, session *domain
 }
 
 func (r driverRuntimeAdapter) StopSandbox(ctx context.Context, session *domain.Sandbox, vmState domain.VMState) (bool, error) {
+	ctx, endSpan := startRuntimeSpan(ctx, r.tracer, telemetry.SpanSandboxStop, session, vmState.Driver)
 	if r.executions != nil {
 		r.executions.ensureBlocked(session.Summary.ID)
 		// Preserve the runtime driver's complete stop deadline. The sandbox stop
@@ -185,26 +204,35 @@ func (r driverRuntimeAdapter) StopSandbox(ctx context.Context, session *domain.S
 		r.executions.cancel(session.Summary.ID)
 	}
 	missing, err := r.runtime.StopSandbox(ctx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState))
+	endSpan(err)
 	return missing, err
 }
 
 func (r driverRuntimeAdapter) RemoveSandbox(ctx context.Context, session *domain.Sandbox, vmState domain.VMState) error {
-	return r.runtime.RemoveSandbox(ctx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState))
+	ctx, endSpan := startRuntimeSpan(ctx, r.tracer, telemetry.SpanSandboxRemove, session, vmState.Driver)
+	err := r.runtime.RemoveSandbox(ctx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState))
+	endSpan(err)
+	return err
 }
 
 func (r driverRuntimeAdapter) Exec(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, spec domain.ExecSpec) (domain.ExecResult, error) {
+	ctx, endSpan := startRuntimeSpan(ctx, r.tracer, telemetry.SpanSandboxExec, session, vmState.Driver)
 	execCtx, marked, finish, err := r.beginExecution(ctx, session, spec)
 	if err != nil {
+		endSpan(err)
 		return domain.ExecResult{}, err
 	}
 	defer finish()
 	result, err := r.runtime.Exec(execCtx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState), execution.ToDriverExecSpec(marked))
+	endSpan(err)
 	return execution.FromDriverExecResult(result), classifyExecTerminationError(err)
 }
 
 func (r driverRuntimeAdapter) ExecStream(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, spec domain.ExecSpec, stream domain.ExecStreamWriter) (domain.ExecResult, error) {
+	ctx, endSpan := startRuntimeSpan(ctx, r.tracer, telemetry.SpanSandboxExec, session, vmState.Driver)
 	execCtx, marked, finish, err := r.beginExecution(ctx, session, spec)
 	if err != nil {
+		endSpan(err)
 		return domain.ExecResult{}, err
 	}
 	defer finish()
@@ -214,6 +242,7 @@ func (r driverRuntimeAdapter) ExecStream(ctx context.Context, session *domain.Sa
 		}
 	}
 	result, err := r.runtime.ExecStream(execCtx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState), execution.ToDriverExecSpec(marked), driverStream)
+	endSpan(err)
 	return execution.FromDriverExecResult(result), classifyExecTerminationError(err)
 }
 
@@ -233,7 +262,9 @@ func (r driverRuntimeAdapter) OpenInteraction(ctx context.Context, session *doma
 	if err != nil {
 		return nil, err
 	}
+	execCtx, endSpan := startRuntimeSpan(execCtx, r.tracer, telemetry.SpanSandboxInteraction, session, vmState.Driver)
 	interaction, err := interactor.OpenInteraction(execCtx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState), marked)
+	endSpan(err)
 	if err != nil {
 		finish()
 		return nil, err

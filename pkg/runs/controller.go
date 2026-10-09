@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/chaitin/agent-compose/internal/projects"
 	"github.com/chaitin/agent-compose/pkg/capabilities"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -19,6 +21,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
+	"github.com/chaitin/agent-compose/pkg/telemetry"
 	"github.com/chaitin/agent-compose/pkg/volumes"
 	"github.com/chaitin/agent-compose/pkg/workspaces"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
@@ -124,6 +127,7 @@ type Controller struct {
 	removal             SandboxRemoval
 	completion          *CompletionManager
 	interactiveSessions *InteractiveSessionManager
+	tracer              *telemetry.Tracer
 }
 
 type llmFacadeTokenDeleter interface {
@@ -155,6 +159,8 @@ type ControllerDependencies struct {
 	Removal             SandboxRemoval
 	Completion          *CompletionManager
 	InteractiveSessions *InteractiveSessionManager
+	// Tracer is optional: a nil tracer keeps daemon tracing disabled.
+	Tracer *telemetry.Tracer
 }
 
 type SandboxRemoval interface {
@@ -187,6 +193,7 @@ func NewController(deps ControllerDependencies) *Controller {
 		removal:             deps.Removal,
 		completion:          deps.Completion,
 		interactiveSessions: interactiveSessions,
+		tracer:              deps.Tracer,
 	}
 }
 
@@ -511,7 +518,23 @@ type startedProjectRunContext struct {
 	Warnings    []string
 }
 
-func (c *Controller) executeStartedProjectRun(ctx context.Context, started startedProjectRunContext, stream *StreamSink) (domain.ProjectRunRecord, error, error) {
+func (c *Controller) executeStartedProjectRun(ctx context.Context, started startedProjectRunContext, stream *StreamSink) (record domain.ProjectRunRecord, execErr error, err error) {
+	// The run span continues the caller's trace. Detached runs restore only the
+	// request-scoped W3C strings, so re-attach them as a remote parent when the
+	// live request span is absent.
+	traceContext := domain.TraceContextFromContext(ctx)
+	ctx = telemetry.ContextWithRemoteTraceContext(ctx, traceContext.Traceparent, traceContext.Tracestate)
+	ctx, span := c.tracer.Start(ctx, telemetry.SpanInvokeAgent,
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(
+			telemetry.AttrRunID.String(started.Run.RunID),
+			telemetry.AttrProjectID.String(started.Request.ProjectID),
+			telemetry.AttrAgentName.String(started.Request.AgentName),
+			telemetry.AttrGenAIAgentName.String(started.Request.AgentName),
+			telemetry.AttrGenAIOperationName.String(telemetry.SpanInvokeAgent),
+		),
+	)
+	defer func() { telemetry.EndSpan(span, errors.Join(err, execErr)) }()
 	coordinator := started.Coordinator
 	run := started.Run
 	req := started.Request
@@ -548,6 +571,9 @@ func (c *Controller) executeStartedProjectRun(ctx context.Context, started start
 		return run, err, nil
 	}
 	warnings = append(warnings, sandboxResult.Warnings...)
+	if sandboxResult.Sandbox != nil {
+		span.SetAttributes(telemetry.AttrSandboxID.String(sandboxResult.Sandbox.Summary.ID))
+	}
 	if err := ctx.Err(); err != nil {
 		stopReason := err.Error()
 		if cause := context.Cause(ctx); cause != nil {

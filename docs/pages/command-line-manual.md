@@ -1019,7 +1019,9 @@ URL credentials, queries and fragments are rejected at startup. The collector
 must accept OTLP/HTTP JSON for Claude, Codex and OpenCode. DSH uses its native
 OTLP/HTTP log exporter. gRPC-only collectors are not supported by this integration.
 The address must be reachable **from the sandbox**, not just the daemon:
-`localhost` is the guest itself. No collector or port is automatically deployed.
+`localhost` is the guest itself. The daemon also exports its own spans to the same
+endpoint, so the collector must additionally be reachable **from the daemon host**
+while daemon tracing is enabled. No collector or port is automatically deployed.
 
 | Provider in the default guest | Managed native export |
 | --- | --- |
@@ -1030,8 +1032,15 @@ The address must be reachable **from the sandbox**, not just the daemon:
 | Pi 0.82.1 | No integrated official native exporter; a runtime warning is emitted and collector credentials are not passed to Pi |
 
 All native signals listed for a provider are enabled together; there is no
-per-signal selector in this initial integration. This does not instrument the
-daemon, and does not synthesize spans from agent-compose's event stream. Pi's
+per-signal selector in this initial integration. The same endpoint also makes the
+daemon emit its own OTLP/HTTP traces: one server span per daemon RPC, an
+`invoke_agent` span per execution, and `sandbox.ensure`, `sandbox.stop`,
+`sandbox.remove`, `sandbox.exec` and `sandbox.interaction` spans for runtime-driver
+operations. These spans carry `agent_compose.run.id`, `agent_compose.project.id`,
+`agent_compose.agent.name`, `agent_compose.sandbox.id`, `agent_compose.driver` and
+`gen_ai.*` attributes as they become available. Daemon instrumentation records
+operation status only: the daemon never synthesizes spans from agent-compose's
+event stream, and never exports prompt, tool, or error text. Pi's
 [official observability design](https://github.com/badlogic/pi-mono/blob/v0.82.1/packages/agent/docs/observability.md)
 describes external listeners and a possible future OTel package, not a shipped
 exporter. Its `PI_TELEMETRY` switch controls installation statistics, not OTLP.
@@ -1064,9 +1073,13 @@ do not automatically produce a shared distributed trace across providers.
 
 Callers that already run a distributed trace can pass their W3C trace context as a
 `traceparent` (and optional `tracestate`) header on the daemon RPC that starts the
-execution. The daemon validates both values and relays them through the agent
-telemetry payload to providers that support an inbound parent context, so their
-exported spans join the caller's trace instead of starting a new one. Codex and
+execution. When daemon tracing is enabled, the daemon's own server, run and
+runtime-driver spans join that trace as children of the caller's context, so a
+request's daemon work and guest provider spans share one trace ID. The daemon
+validates both values and relays them through the agent telemetry payload to
+providers that support an inbound parent context, so their exported spans join the
+caller's trace instead of starting a new one; providers that inherit the daemon run
+span from the payload nest under the daemon's `invoke_agent` span. Codex and
 Claude Code honour the pair; OpenCode and DSH expose no inbound parent mechanism in
 the supported versions, so they still begin their own trace root. The relay rides the
 per-execution telemetry payload, so agent telemetry must be enabled
