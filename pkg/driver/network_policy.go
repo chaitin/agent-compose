@@ -89,7 +89,7 @@ func SandboxNetworkPolicyFromDeclaration(declaration *egress.NetworkDeclaration,
 	}
 	allow := make([]egress.Endpoint, 0, len(declaration.Allow))
 	for _, entry := range declaration.Allow {
-		allow = append(allow, egress.Endpoint{Host: entry.Host, Port: entry.Port, Protocol: entry.Protocol})
+		allow = append(allow, egress.Endpoint(entry))
 	}
 	return NewSandboxNetworkPolicy(declaration.Default, allow, engineEndpoints, denyDomains)
 }

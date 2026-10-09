@@ -25,11 +25,7 @@ func SandboxNetworkEgressPolicy(policy SandboxNetworkPolicy) (egress.Policy, err
 	}
 	declaration := egress.NetworkDeclaration{Default: normalizedDefault}
 	for _, endpoint := range policy.Allow {
-		declaration.Allow = append(declaration.Allow, egress.AllowEntry{
-			Host:     endpoint.Host,
-			Port:     endpoint.Port,
-			Protocol: endpoint.Protocol,
-		})
+		declaration.Allow = append(declaration.Allow, egress.AllowEntry(endpoint))
 	}
 	return egress.EffectiveNetworkPolicy(&declaration, policy.EngineEndpoints)
 }
