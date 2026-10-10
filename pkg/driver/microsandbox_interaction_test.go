@@ -74,6 +74,53 @@ func TestMicrosandboxCommandInteractionMergesTTYOutput(t *testing.T) {
 	}
 }
 
+// TestMicrosandboxCommandInteractionCountsSplitSeccompWarning is the regression
+// test for decoded-chunk counting: the lower layer reports one warning, but the
+// stream splits it across two stderr events, so neither event contains the
+// whole message. The interaction must still report exactly one security fact,
+// matching the streaming exec path.
+func TestMicrosandboxCommandInteractionCountsSplitSeccompWarning(t *testing.T) {
+	handle := &fakeMicrosandboxInteractionExec{events: []*microsandbox.ExecEvent{
+		{Kind: microsandbox.ExecEventStarted},
+		{Kind: microsandbox.ExecEventStderr, Data: []byte("libcontainer::process::init::process: seccomp not available, unable to set se")},
+		{Kind: microsandbox.ExecEventStderr, Data: []byte("ccomp privileges!\n")},
+		{Kind: microsandbox.ExecEventExited, ExitCode: 0},
+		{Kind: microsandbox.ExecEventDone},
+	}}
+	interaction := newTestMicrosandboxInteraction(handle, nil, false, nil)
+	receiveAllMicrosandboxInteractionFrames(t, interaction)
+	result, err := interaction.Wait()
+	if err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if result.SecurityFacts == nil {
+		t.Fatal("SecurityFacts = nil, want the split seccomp warning to be reported")
+	}
+	if result.SecurityFacts.SeccompUnavailable != 1 || result.SecurityFacts.NoNewPrivilegesUnavailable != 0 {
+		t.Fatalf("SecurityFacts = %+v, want exactly one seccomp report", result.SecurityFacts)
+	}
+}
+
+// TestMicrosandboxCommandInteractionCountsUnterminatedSeccompWarning covers the
+// final stderr line that never receives a newline: it must still be counted.
+func TestMicrosandboxCommandInteractionCountsUnterminatedSeccompWarning(t *testing.T) {
+	handle := &fakeMicrosandboxInteractionExec{events: []*microsandbox.ExecEvent{
+		{Kind: microsandbox.ExecEventStarted},
+		{Kind: microsandbox.ExecEventStderr, Data: []byte("seccomp not available, unable to enforce no_new_privileges!")},
+		{Kind: microsandbox.ExecEventExited, ExitCode: 0},
+		{Kind: microsandbox.ExecEventDone},
+	}}
+	interaction := newTestMicrosandboxInteraction(handle, nil, false, nil)
+	receiveAllMicrosandboxInteractionFrames(t, interaction)
+	result, err := interaction.Wait()
+	if err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if result.SecurityFacts == nil || result.SecurityFacts.NoNewPrivilegesUnavailable != 1 {
+		t.Fatalf("SecurityFacts = %+v, want one no_new_privileges report", result.SecurityFacts)
+	}
+}
+
 func TestMicrosandboxCommandInteractionBoundsDrainAfterExit(t *testing.T) {
 	handle := &fakeMicrosandboxInteractionExec{
 		events: []*microsandbox.ExecEvent{
